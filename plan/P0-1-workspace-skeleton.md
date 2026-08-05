@@ -26,6 +26,8 @@
 - [x] `cargo build --workspace`（空）通过
 - [ ] CI 在三平台（或至少 ubuntu）绿（yaml 已就位，待首次 push 触发验证）
 
+**验证状态**：本地 `metadata`、`fmt`、`clippy -D warnings`、全 targets 构建与 workspace 测试已通过；三平台 GitHub Actions 仍需在首次 push 后验证，未把远程运行结果误记为已通过。
+
 **相关文档**：[workspace 结构](../docs/architecture/workspace-layout.md) · [总体架构](../docs/architecture/overview.md) · [ROADMAP](../ROADMAP.md)
 
 **依赖建议（2026-08 review）**：`[workspace.dependencies]` 一次性纳入 [ROADMAP「依赖选型基线」](../ROADMAP.md#依赖选型基线) 中「直接采用」的包清单，统一版本基线。

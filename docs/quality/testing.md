@@ -21,6 +21,8 @@ MockScript::new()
     .complete();
 ```
 
+Phase 0 的实现位于 `test-support`：脚本可输出 text、多个 tool call、跨 chunk partial JSON、完成或等待取消；`MockProvider` / `MockTool` 均记录调用并提供顺序与参数断言。最小链路测试不访问网络，覆盖 text → tool call → tool result → complete 以及 provider/tool 取消传播。
+
 ## Golden Tests
 
 固定：System Prompt；Tool Schema；Context；Session Events；Compaction；Pi Import；Diff；API JSON Schema。

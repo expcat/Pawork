@@ -1,6 +1,6 @@
 # P0-7：错误与取消模型
 
-> Phase 0 · 架构与协议冻结 · 状态：🟡未开始 · 依赖：P0-4、P0-5
+> Phase 0 · 架构与协议冻结 · 状态：🟢已完成 · 依赖：P0-4、P0-5
 
 **最终目的**：在跨 crate 层面统一错误类别与取消语义。否则各模块各自定义互不兼容的错误/取消，上层无法一致地 catch、重试与取消，会导致行为碎片化。
 
@@ -19,8 +19,8 @@
 
 ## 验收标准
 
-- [ ] 跨 crate 错误类别统一
-- [ ] 取消语义一致（provider 与 tool 都能被取消）
-- [ ] 错误类别齐全（含 Cancelled/Timeout/RateLimit/Auth）
+- [x] 跨 crate 错误类别统一
+- [x] 取消语义一致（provider 与 tool 都能被取消）
+- [x] 错误类别齐全（含 Cancelled/Timeout/RateLimit/Auth）
 
 **相关文档**：[控制流](../docs/architecture/control-flow.md) · [ROADMAP](../ROADMAP.md)

@@ -1,0 +1,19 @@
+[package]
+name = "plugin-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 外部扩展的 manifest 与生命周期协议骨架"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+tool-api = { path = "../tool-api" }
+async-trait.workspace = true
+semver.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

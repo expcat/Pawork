@@ -15,7 +15,7 @@ pub trait AgentTool: Send + Sync {
         &self,
         request: ToolRequest,
         context: ToolExecutionContext,
-        sink: ToolEventSink,
+        sink: &dyn ToolEventSink,
         cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError>;
 }
@@ -32,6 +32,7 @@ pub struct ToolResult {
     pub metadata: serde_json::Value,
     pub truncated: bool,
     pub success: bool,
+    pub error: Option<ErrorContext>,
 }
 ```
 

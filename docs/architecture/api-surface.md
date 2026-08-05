@@ -78,6 +78,7 @@ CLI 和 GUI 发起的命令统一转换为信封，所有状态变化都记录�
 
 ```rust
 pub struct AppCommandEnvelope {
+    pub api_version: ApiVersion,
     pub command_id: CommandId,
     pub source: CommandSource,
     pub identity: ActorIdentity,
@@ -113,9 +114,10 @@ core-runtime → Event Hub ─┬─ CLI Renderer
 
 ```rust
 pub struct AppEventEnvelope {
+    pub api_version: ApiVersion,
     pub instance_id: CoreInstanceId,
     pub event_id: EventId,
-    pub global_sequence: u64,
+    pub global_sequence: GlobalSequence,
     pub stream: EventStream,
     pub stream_sequence: u64,
     pub timestamp: Timestamp,
@@ -123,6 +125,8 @@ pub struct AppEventEnvelope {
     pub payload: AppEvent,
 }
 ```
+
+文件相关的 Core API 参数使用构造与反序列化时均校验的 `WorkspaceRelativePath`；跨平台拒绝绝对路径、Windows drive/UNC 前缀与 `..` traversal。唯一例外是登记新 Workspace 时的 `workspace.add.root_path`，它由后续 Workspace/Policy 服务解析并建立 `workspace_id` 边界。
 
 ## 5. 多客户端同步模型
 
@@ -149,6 +153,8 @@ GUI 重连：提交 `last_global_sequence`，事件仍可重放则发送缺失�
 - GUI 断开不影响 Run（[ADR-026](../adr/ADR-026-gui-disconnect-safe.md)）
 - GUI 重连可获取 Snapshot 或 Event Replay
 - 一个 Core 实例同时连接多个本地与远程 GUI（[ADR-023](../adr/ADR-023-one-core-many-guis.md)）
+
+生成入口为 `cargo run -p schema-typegen`，输出提交到 `schemas/core-api/` 与 `schemas/gui-protocol/`；`--check` 模式和 CI 会拒绝类型漂移。
 
 大型 payload 传递见 [ADR-018](../adr/ADR-018-large-payload-artifact-id.md)；GUI 不直接访问底层见 [ADR-017](../adr/ADR-017-gui-no-direct-access.md)；GUI 经协议连接 CLI 见 [ADR-022](../adr/ADR-022-gui-connects-via-cli.md)；共享 app-service 与 Event Hub 见 [ADR-024](../adr/ADR-024-shared-app-service-event-hub.md)。
 

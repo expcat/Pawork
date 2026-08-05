@@ -2,9 +2,19 @@
 resolver = "2"
 members = [
     "apps/pawork",
+    "benches",
+    "crates/agent-domain",
+    "crates/agent-events",
+    "crates/provider-api",
+    "crates/tool-api",
+    "crates/plugin-api",
+    "crates/transport-api",
+    "crates/test-support",
+    "crates/core-api",
+    "crates/gui-protocol",
+    "crates/schema-typegen",
 ]
-# crates/ 下的核心 crate 随对应任务（P0-2 起）陆续创建并登记到 members；
-# 本阶段（P0-1）workspace 仅含占位入口 apps/pawork，保证 cargo metadata / 空构建通过。
+# crates/ 下的核心 crate 随对应任务陆续创建并登记到 members。
 
 [workspace.package]
 version = "0.0.0"
@@ -20,6 +30,7 @@ authors = ["Pawork Contributors"]
 [workspace.dependencies]
 # 异步运行时 / 序列化 / 错误
 tokio = "1"
+async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -69,7 +80,7 @@ encoding_rs = "0.8"
 
 # Token 计数 / TS 类型导出 / 系统目录
 tiktoken-rs = "0.6"
-ts-rs = "11"
+ts-rs = { version = "11", features = ["serde-json-impl"] }
 directories = "5"
 
 # 平台沙箱 / 绑定

@@ -39,3 +39,5 @@ jobs:
         run: cargo build --workspace --all-targets
       - name: cargo test
         run: cargo test --workspace
+      - name: TypeScript schema drift check
+        run: cargo run -p schema-typegen -- --check

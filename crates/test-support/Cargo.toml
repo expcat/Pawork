@@ -1,0 +1,19 @@
+[package]
+name = "test-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 可编程 Mock Provider、Mock Tool 与协议测试辅助"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+provider-api = { path = "../provider-api" }
+tool-api = { path = "../tool-api" }
+async-trait.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

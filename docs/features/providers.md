@@ -13,13 +13,13 @@ pub trait ModelProvider: Send + Sync {
 
     async fn list_models(
         &self,
-        auth: &ResolvedCredential,
+        credential: Option<&ResolvedCredential>,
     ) -> Result<Vec<ModelDefinition>, ProviderError>;
 
     async fn stream(
         &self,
         request: CanonicalModelRequest,
-        sink: ProviderEventSink,
+        sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError>;
 }
@@ -42,8 +42,11 @@ pub enum ProviderStreamEvent {
     UsageUpdated(TokenUsage),
     ResponseCompleted(StopReason),
     ProviderMetadata(serde_json::Value),
+    Error(ProviderError),
 }
 ```
+
+`ProviderEventSink` 是 push-based 异步 sink：adapter 逐事件 `emit`，上层可在实现中施加有界背压；`stream` 返回最终 stop reason、usage 与脱敏 metadata 摘要。
 
 需正确处理：SSE；JSON Lines；chunked HTTP；Partial JSON；Tool Arguments 跨多 Chunk；Unicode 边界；Provider 提前断开；Provider 返回错误事件；多个 Tool Call 并行流式返回。
 

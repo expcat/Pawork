@@ -1,0 +1,51 @@
+# Pawork 性能基准 crate（P0-12 基准框架骨架）。
+#
+# 六个基准组对应六类计时域：core / git / provider / model / command / gui，
+# 计时口径定义见 docs/quality/benchmark-methodology.md。
+#
+[package]
+name = "pawork-benches"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 性能基准骨架：Core/Git/Provider/Model/Command/GUI 六类计时域空基准"
+
+[lib]
+# 共享辅助库本身没有基准；禁用默认 lib bench 目标，
+# 避免向 criterion 透传参数时报 Unrecognized option。
+bench = false
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "core"
+path = "core/bench.rs"
+harness = false
+
+[[bench]]
+name = "git"
+path = "git/bench.rs"
+harness = false
+
+[[bench]]
+name = "provider"
+path = "provider/bench.rs"
+harness = false
+
+[[bench]]
+name = "model"
+path = "model/bench.rs"
+harness = false
+
+[[bench]]
+name = "command"
+path = "command/bench.rs"
+harness = false
+
+[[bench]]
+name = "gui"
+path = "gui/bench.rs"
+harness = false

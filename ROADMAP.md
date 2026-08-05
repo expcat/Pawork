@@ -19,7 +19,7 @@
 
 | Phase | 主题 | 任务数 | 已完成 | 状态 |
 | --- | --- | --- | --- | --- |
-| 0 | 架构与协议冻结 | 12 | 2 | 🔵进行中 |
+| 0 | 架构与协议冻结 | 12 | 12 | 🟢已完成 |
 | 1 | 基础设施 | 12 | 0 | 🟡未开始 |
 | 2 | 首个真实 Provider | 11 | 0 | 🟡未开始 |
 | 3 | Agent Loop | 10 | 0 | 🟡未开始 |
@@ -33,15 +33,17 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **2** | — |
+| **合计** | — | **128** | **12** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
+>
+> Phase 0 的实现与本地自动门禁已完成；P0-1 配置的三平台 GitHub Actions 需在首次 push 后取得远程运行结果，详见对应 plan 的「验证状态」。
 
 ## 下一个推荐任务
 
-> 🎯 **P0-2 领域类型基线** —— 冻结消息 / 角色 / 内容块 / 元数据 / ID 领域类型，建立所有 crate 的最底层依赖 `agent-domain`（仅 serde + 标准库，零 IO/HTTP/DB/Tauri）。详情见 [plan/P0-2-domain-types.md](plan/P0-2-domain-types.md)。
+> 🎯 **P1-1 配置系统** —— 实现全局 / 工作区 / Session / CLI 的确定性配置层级与优先级合并。详情见 [plan/P1-1-config.md](plan/P1-1-config.md)。
 > 
-> 开始方式：在 `crates/agent-domain` 创建 crate 并登记到 workspace members，按 [workspace 结构](docs/architecture/workspace-layout.md) 守住纯领域约束（无禁依赖）。
+> 开始方式：先确定独立 config crate 的归属并登记到 [workspace 结构](docs/architecture/workspace-layout.md)，再冻结配置 schema、来源优先级与合并测试。
 
 ## 关键路径
 
@@ -69,6 +71,7 @@
 | 类别 | 包 | 关联任务 | 理由与使用范围 |
 | --- | --- | --- | --- |
 | 异步运行时 | tokio | P0-1 | 事实标准；按需启用 feature |
+| 异步 Trait | async-trait | P0-4、P0-5、P0-6、P0-8 | 稳定 Rust 上统一对象安全的异步接口，协议 crate 不绑定具体 runtime |
 | 序列化 | serde / serde_json | P0-1 | 生态统一 |
 | 错误 | thiserror（库）+ anyhow（应用层） | P0-7 | Rust 惯用分工 |
 | 标识 / 哈希 / 版本 | uuid、blake3、semver | P0-2、P1-6 | blake3 用于 Blob 内容寻址 |
@@ -146,17 +149,17 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
 | P0-1 | 🟢 | 仓库与 workspace 骨架 | 建立 workspace 根与目录骨架、CI 占位 | [详情](plan/P0-1-workspace-skeleton.md) |
-| P0-2 | 🟡 | 领域类型基线 | 冻结消息/角色/内容块/元数据/ID 领域类型 | [详情](plan/P0-2-domain-types.md) |
-| P0-3 | 🟡 | 事件模型 | 可持久化、可重放的事件与 schema version | [详情](plan/P0-3-event-model.md) |
-| P0-4 | 🟡 | Provider 协议 | canonical 请求/流式事件/错误统一契约 | [详情](plan/P0-4-provider-api.md) |
-| P0-5 | 🟡 | Tool 协议 | AgentTool/描述/结果/capability/取消 | [详情](plan/P0-5-tool-api.md) |
-| P0-6 | 🟡 | 插件协议骨架 | manifest/生命周期事件接口（不实现宿主） | [详情](plan/P0-6-plugin-api.md) |
-| P0-7 | 🟡 | 错误与取消模型 | 跨 crate 统一错误类别与取消语义 | [详情](plan/P0-7-error-cancel.md) |
-| P0-8 | 🟡 | Core Command/Event 协议 | 面向 GUI/CLI 的稳定 Core API | [详情](plan/P0-8-core-api.md) |
-| P0-9 | 🟡 | Mock Provider / Mock Tool | 可编程 mock，跑通最小链路 | [详情](plan/P0-9-mock-provider-tool.md) |
-| P0-10 | 🟡 | TS 类型生成脚手架 | Rust→TS 生成管线占位 | [详情](plan/P0-10-ts-typegen.md) |
+| P0-2 | 🟢 | 领域类型基线 | 冻结消息/角色/内容块/元数据/ID 领域类型 | [详情](plan/P0-2-domain-types.md) |
+| P0-3 | 🟢 | 事件模型 | 可持久化、可重放的事件与 schema version | [详情](plan/P0-3-event-model.md) |
+| P0-4 | 🟢 | Provider 协议 | canonical 请求/流式事件/错误统一契约 | [详情](plan/P0-4-provider-api.md) |
+| P0-5 | 🟢 | Tool 协议 | AgentTool/描述/结果/capability/取消 | [详情](plan/P0-5-tool-api.md) |
+| P0-6 | 🟢 | 插件协议骨架 | manifest/生命周期事件接口（不实现宿主） | [详情](plan/P0-6-plugin-api.md) |
+| P0-7 | 🟢 | 错误与取消模型 | 跨 crate 统一错误类别与取消语义 | [详情](plan/P0-7-error-cancel.md) |
+| P0-8 | 🟢 | Core Command/Event 协议 | 面向 GUI/CLI 的稳定 Core API | [详情](plan/P0-8-core-api.md) |
+| P0-9 | 🟢 | Mock Provider / Mock Tool | 可编程 mock，跑通最小链路 | [详情](plan/P0-9-mock-provider-tool.md) |
+| P0-10 | 🟢 | TS 类型生成脚手架 | Rust→TS 生成管线占位 | [详情](plan/P0-10-ts-typegen.md) |
 | P0-11 | 🟢 | ADR 与文档基线 | ADR-001~030 定稿与链接校验（含 CLI Host 架构修正） | [详情](plan/P0-11-adr-docs.md) |
-| P0-12 | 🟡 | 基准框架骨架 | benches 目录与计时口径 | [详情](plan/P0-12-bench-skeleton.md) |
+| P0-12 | 🟢 | 基准框架骨架 | benches 目录与计时口径 | [详情](plan/P0-12-bench-skeleton.md) |
 
 ### Phase 1：基础设施
 

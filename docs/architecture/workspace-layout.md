@@ -8,7 +8,7 @@
 Pawork/
 ├── crates/      # 核心 crate
 ├── apps/        # 可执行入口
-├── schemas/     # JSON Schema
+├── schemas/     # JSON Schema 与生成的 TypeScript declarations
 ├── fixtures/    # 测试夹具
 ├── benches/     # 性能基准
 ├── docs/        # 文档
@@ -59,7 +59,7 @@ Pawork/
 | `mcp-client` | MCP Transport、Tools / Resources / Prompts | 依赖 plugin-api |
 | `hook-runtime` | 生命周期 Hook 派发 | 依赖 plugin-api |
 | `orchestration` | Multi-Agent、Supervisor、Worker、任务图（优先级 P2） | 依赖 agent-engine / workspace-service |
-| `core-api` | 应用层 Command / Event / Query 类型（CLI 与 GUI 共享的 schema source） | 依赖 agent-api / agent-events |
+| `core-api` | 应用层 Command / Event / Query 类型（CLI 与 GUI 共享的 schema source） | Phase 0 依赖 agent-domain / agent-events；后续由 app-service 使用 |
 | `core-runtime` | 完整 Core 生命周期与业务运行时装配 | 依赖 agent-api 及几乎所有核心 |
 | `app-service` | CLI 与 GUI 共享的应用 API、状态聚合、监督 | 依赖 core-runtime |
 | `cli-host` | 将 Core、CLI、GUI Server 装配到同一进程、生命周期管理 | 依赖 app-service |
@@ -78,6 +78,7 @@ Pawork/
 | `transport-remote-placeholder` | 远程 Transport 占位接口（可替换 Adapter） | 依赖 transport-api |
 | `diagnostics` | 诊断包、脱敏日志、metrics | 横切 |
 | `test-support` | Mock Provider / Mock Tool、测试工具 | 仅测试依赖 |
+| `schema-typegen` | 从 core-api / gui-protocol 生成并校验 `.d.ts` | 仅构建工具依赖 core-api / gui-protocol，不进入运行时 |
 
 ## 3. apps/
 
@@ -93,8 +94,8 @@ Pawork/
 
 | 目录 | 说明 |
 | --- | --- |
-| `core-api/` | app-service Command / Event / Query 语义契约（CLI 与 GUI 共享的 schema source） |
-| `gui-protocol/` | GUI Connection Protocol 线上协议（握手、帧、信封） |
+| `core-api/` | app-service Command / Event / Query 的生成 `.d.ts`（Rust 类型是 schema source） |
+| `gui-protocol/` | GUI Connection Protocol 握手、帧、Snapshot 的生成 `.d.ts` |
 | `events/` | Core Event 序列化 schema |
 | `transport/` | Transport 帧与端点 schema |
 | `authentication/` | 客户端认证 schema |

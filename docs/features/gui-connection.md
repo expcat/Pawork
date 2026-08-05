@@ -64,8 +64,8 @@ pub trait GuiListener: Send + Sync {
 
 #[async_trait]
 pub trait GuiConnection: Send + Sync {
-    async fn send(&self, frame: ServerFrame) -> Result<(), TransportError>;
-    async fn receive(&self) -> Result<ClientFrame, TransportError>;
+    async fn send(&self, frame: TransportFrame) -> Result<(), TransportError>;
+    async fn receive(&self) -> Result<TransportFrame, TransportError>;
     async fn close(&self) -> Result<(), TransportError>;
     fn info(&self) -> ConnectionInfo;
 }
@@ -76,6 +76,8 @@ pub trait GuiTransportClient: Send + Sync {
         -> Result<Box<dyn GuiConnection>, TransportError>;
 }
 ```
+
+`TransportFrame` 只拥有一段有界字节；`ClientFrame` / `ServerFrame` 的 JSON 编解码、1 MiB 帧上限与 64 KiB Artifact chunk 上限由 `gui-protocol` 负责。由此 Transport 无需依赖业务协议类型，本地与远程实现只处理连接和字节搬运。
 
 Local Transport：macOS/Linux 使用 Unix Domain Socket，Windows 使用 Named Pipe。Remote Transport 通过 `RemoteGuiTransportProvider`（CLI 端发布）与 `RemoteGuiConnector`（GUI 端连接）暴露占位接口；后续内网穿透库负责节点发现、NAT 穿透、中继、P2P、连接加密、网络切换与底层重连，CLI/Core 与 GUI Protocol 不感知其内部实现。
 

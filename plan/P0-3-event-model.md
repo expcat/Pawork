@@ -1,6 +1,6 @@
 # P0-3：事件模型
 
-> Phase 0 · 架构与协议冻结 · 状态：🟡未开始 · 依赖：P0-2
+> Phase 0 · 架构与协议冻结 · 状态：🟢已完成 · 依赖：P0-2
 
 **最终目的**：建立可持久化、可重放的事件模型（ADR-016）。它是崩溃恢复、分支、压缩、审计与差分测试的共同前提——没有事件链就没有重放。
 
@@ -19,8 +19,8 @@
 
 ## 验收标准
 
-- [ ] 事件可序列化、sequence 严格递增
-- [ ] 含 schema version
-- [ ] 序列化往返无损
+- [x] 事件可序列化、sequence 严格递增
+- [x] 含 schema version
+- [x] 序列化往返无损
 
 **相关文档**：[领域模型](../docs/architecture/domain-model.md) · [ADR-003 Event Store](../docs/adr/ADR-003-sqlite-event-store.md) · [ADR-016](../docs/adr/ADR-016-core-event-persist-replay.md) · [ROADMAP](../ROADMAP.md)
