@@ -1,9 +1,15 @@
 name: CI
 
+# 触发策略：默认所有 Actions 都不自动触发，只有在这里显式声明的触发器才会运行。
+# 当前仅保留手动触发（workflow_dispatch）：在 GitHub 仓库的 Actions 页面点击
+# "Run workflow"，或通过 gh workflow run / API 指定运行时才会执行。
+#
+# 如需对特定场景重新启用自动触发，在下方 `on:` 显式加回对应触发器，例如：
+#   push:
+#     branches: [main]
+#   pull_request:
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -23,7 +29,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: cargo metadata
-        run: cargo metadata --no-deps --format-version 1 >/dev/null
+        shell: bash
+        run: cargo metadata --no-deps --format-version 1 >/dev/null 2>&1
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
       - name: cargo clippy
