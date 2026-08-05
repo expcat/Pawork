@@ -1,0 +1,19 @@
+[package]
+name = "model-registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 模型目录、别名、能力过滤与费用估算"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+provider-api = { path = "../provider-api" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

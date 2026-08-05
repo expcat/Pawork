@@ -1,5 +1,7 @@
 //! 可编程 Mock Provider、Mock Tool 与断言辅助。
 
+pub mod contract;
+
 use std::sync::{Arc, Mutex};
 
 use agent_domain::{

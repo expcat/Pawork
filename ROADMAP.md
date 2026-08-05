@@ -21,7 +21,7 @@
 | --- | --- | --- | --- | --- |
 | 0 | 架构与协议冻结 | 12 | 12 | 🟢已完成 |
 | 1 | 基础设施 | 12 | 12 | 🟢已完成 |
-| 2 | 首个真实 Provider | 11 | 0 | 🟡未开始 |
+| 2 | 首个真实 Provider | 11 | 11 | 🟢已完成 |
 | 3 | Agent Loop | 10 | 0 | 🟡未开始 |
 | 4 | 核心工具与权限 | 12 | 0 | 🟡未开始 |
 | 5 | Session、Branch 与 Compaction | 9 | 0 | 🟡未开始 |
@@ -33,7 +33,7 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **24** | — |
+| **合计** | — | **128** | **35** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -41,9 +41,9 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P2-1 HTTP 运行时** —— 实现 Provider 共用的超时、代理、取消与 trace 注入。详情见 [plan/P2-1-http-runtime.md](plan/P2-1-http-runtime.md)。
+> 🎯 **P3-1 Run 状态机** —— 实现完整 Run 状态转换并事件化。详情见 [plan/P3-1-run-state-machine.md](plan/P3-1-run-state-machine.md)。
 > 
-> 开始方式：在 `provider-runtime` 中先冻结 HTTP Client 配置与取消边界，再用本地 mock server 覆盖超时、代理和 trace 传播。
+> 开始方式：在 `agent-engine` 中定义 Run 的状态机（全状态转换 + 事件化），用单元测试覆盖合法/非法转换。
 
 ## 关键路径
 
@@ -185,17 +185,17 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P2-1 | 🟡 | HTTP 运行时 | 超时/代理/cancel/trace | [详情](plan/P2-1-http-runtime.md) |
-| P2-2 | 🟡 | SSE 解析器 | 跨 chunk/Unicode/fuzz | [详情](plan/P2-2-sse-parser.md) |
-| P2-3 | 🟡 | JSON Lines 解析器 | 提前断开/错误事件/fuzz | [详情](plan/P2-3-jsonl-parser.md) |
-| P2-4 | 🟡 | Partial JSON 拼接 | 跨 chunk tool arguments | [详情](plan/P2-4-partial-json.md) |
-| P2-5 | 🟡 | OpenAI-compatible 适配 | canonical 转换+流式组装 | [详情](plan/P2-5-openai-compatible.md) |
-| P2-6 | 🟡 | API Key 认证 | OS Keychain 存取不落库 | [详情](plan/P2-6-apikey-auth.md) |
-| P2-7 | 🟡 | Model Registry | 目录/别名/能力/费用 | [详情](plan/P2-7-model-registry.md) |
-| P2-8 | 🟡 | 流式组装 | 事件→领域消息 | [详情](plan/P2-8-stream-assembly.md) |
-| P2-9 | 🟡 | Usage 与 stop reason | token/费用/完成原因归一 | [详情](plan/P2-9-usage-stopreason.md) |
-| P2-10 | 🟡 | 重试与错误归一化 | 可重试判定/退避 | [详情](plan/P2-10-retry-error.md) |
-| P2-11 | 🟡 | Provider Contract Tests | 统一测试套件 | [详情](plan/P2-11-contract-tests.md) |
+| P2-1 | 🟢 | HTTP 运行时 | 超时/代理/cancel/trace | [详情](plan/P2-1-http-runtime.md) |
+| P2-2 | 🟢 | SSE 解析器 | 跨 chunk/Unicode/fuzz | [详情](plan/P2-2-sse-parser.md) |
+| P2-3 | 🟢 | JSON Lines 解析器 | 提前断开/错误事件/fuzz | [详情](plan/P2-3-jsonl-parser.md) |
+| P2-4 | 🟢 | Partial JSON 拼接 | 跨 chunk tool arguments | [详情](plan/P2-4-partial-json.md) |
+| P2-5 | 🟢 | OpenAI-compatible 适配 | canonical 转换+流式组装 | [详情](plan/P2-5-openai-compatible.md) |
+| P2-6 | 🟢 | API Key 认证 | OS Keychain 存取不落库 | [详情](plan/P2-6-apikey-auth.md) |
+| P2-7 | 🟢 | Model Registry | 目录/别名/能力/费用 | [详情](plan/P2-7-model-registry.md) |
+| P2-8 | 🟢 | 流式组装 | 事件→领域消息 | [详情](plan/P2-8-stream-assembly.md) |
+| P2-9 | 🟢 | Usage 与 stop reason | token/费用/完成原因归一 | [详情](plan/P2-9-usage-stopreason.md) |
+| P2-10 | 🟢 | 重试与错误归一化 | 可重试判定/退避 | [详情](plan/P2-10-retry-error.md) |
+| P2-11 | 🟢 | Provider Contract Tests | 统一测试套件 | [详情](plan/P2-11-contract-tests.md) |
 
 ### Phase 3：Agent Loop
 
