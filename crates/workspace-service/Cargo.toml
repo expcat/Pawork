@@ -1,0 +1,17 @@
+[package]
+name = "workspace-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 工作区生命周期、多 Root、信任状态与 Git 元数据检测"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+

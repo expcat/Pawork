@@ -1,6 +1,6 @@
 # P1-11：诊断包导出
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P1-9
+> Phase 1 · 基础设施 · 状态：🟢已完成 · 依赖：P1-9
 
 **最终目的**：实现诊断包导出（版本 / OS / Provider / 模型 / DB schema / 插件 / MCP / 脱敏日志），便于排障且默认不含 secret / 消息 / 文件内容。
 
@@ -18,6 +18,6 @@
 
 ## 验收标准
 
-- [ ] 默认不含 secret / 消息内容 / 文件内容
+- [x] 默认不含 secret / 消息内容 / 文件内容
 
 **相关文档**：[observability](../docs/features/observability.md) · [安全验收](../docs/quality/security-acceptance.md) · [ROADMAP](../ROADMAP.md)

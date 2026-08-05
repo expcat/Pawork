@@ -69,6 +69,12 @@ pawork doctor
 
 保留的开发/自动化命令：`models list`、`tools list`、`import-pi`、`benchmark`、`--json` 稳定输出。
 
+## Phase 1 骨架状态
+
+`apps/pawork`、`cli-host`、`cli-command`、`cli-renderer` 与进程内 `app-service` 骨架已经落地。`serve --once` 与 `doctor --json` 有端到端测试；serve / shell / run / watch / status / shutdown 及 Workspace、Session、Run、Approval、GUI、Remote、Provider、Auth、Plugin、MCP、Service 等命令族均已冻结解析入口。CLI 持有同一进程中的 `Arc<AppService>` 并直接派发 `LocalCli` 请求，不创建回连自身的 IPC。
+
+当前 `run`、GUI、Remote、Provider 等后续业务命令只完成路由骨架；真实 Agent Loop、完整 app-service / Event Hub 与 GUI Connection Protocol Server 分别由 Phase 3 和 Phase 13 完成。
+
 ## `pawork gui clients`
 
 显示当前连接的 GUI：名称、版本、本地或远程、连接时间、最后心跳、当前订阅、最后确认的事件序列、权限、网络状态。

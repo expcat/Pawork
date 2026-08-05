@@ -1,8 +1,19 @@
 //! `pawork` —— Pawork 的唯一正式可执行宿主（CLI 与 Core 同进程同二进制）。
-//!
-//! 当前为 P0-1 的占位入口：仅打印版本，确保 workspace 可构建。
-//! 子命令与 Core 装配（serve/run/shell/watch/service）将在 P1-12 实现。
 
-fn main() {
-    println!("pawork {}", env!("CARGO_PKG_VERSION"));
+use std::sync::Arc;
+
+use app_service::AppService;
+use clap::Parser;
+use cli_command::Cli;
+use cli_host::CliHost;
+
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+    let service = Arc::new(AppService::new(cli.instance.clone()));
+    let outcome = CliHost::new(service).execute(cli).await;
+    println!("{}", outcome.output);
+    if outcome.exit_code != 0 {
+        std::process::exit(outcome.exit_code);
+    }
 }

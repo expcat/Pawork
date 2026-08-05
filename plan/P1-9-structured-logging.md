@@ -1,6 +1,6 @@
 # P1-9：结构化日志
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P0-8
+> Phase 1 · 基础设施 · 状态：🟢已完成 · 依赖：P0-8
 
 **最终目的**：实现结构化日志与自动脱敏，保证明文 secret 不进日志（ADR-014），为可观测性与安全验收奠基。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] 日志不含明文 secret（含 OAuth/Authorization/Cookie）
+- [x] 日志不含明文 secret（含 OAuth/Authorization/Cookie）
 
 **相关文档**：[observability](../docs/features/observability.md) · [ADR-014 Secret Keychain](../docs/adr/ADR-014-secret-os-keychain.md) · [安全验收](../docs/quality/security-acceptance.md) · [ROADMAP](../ROADMAP.md)

@@ -20,7 +20,7 @@
 | Phase | 主题 | 任务数 | 已完成 | 状态 |
 | --- | --- | --- | --- | --- |
 | 0 | 架构与协议冻结 | 12 | 12 | 🟢已完成 |
-| 1 | 基础设施 | 12 | 0 | 🟡未开始 |
+| 1 | 基础设施 | 12 | 12 | 🟢已完成 |
 | 2 | 首个真实 Provider | 11 | 0 | 🟡未开始 |
 | 3 | Agent Loop | 10 | 0 | 🟡未开始 |
 | 4 | 核心工具与权限 | 12 | 0 | 🟡未开始 |
@@ -33,17 +33,17 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **12** | — |
+| **合计** | — | **128** | **24** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
-> Phase 0 的实现与本地自动门禁已完成；P0-1 配置的三平台 GitHub Actions 需在首次 push 后取得远程运行结果，详见对应 plan 的「验证状态」。
+> Phase 0 与 Phase 1 的实现、本地构建、测试和 Clippy 门禁已完成；三平台 GitHub Actions 仍按 `workflow_dispatch` 手动触发，其远程结果不计入本地完成状态。
 
 ## 下一个推荐任务
 
-> 🎯 **P1-1 配置系统** —— 实现全局 / 工作区 / Session / CLI 的确定性配置层级与优先级合并。详情见 [plan/P1-1-config.md](plan/P1-1-config.md)。
+> 🎯 **P2-1 HTTP 运行时** —— 实现 Provider 共用的超时、代理、取消与 trace 注入。详情见 [plan/P2-1-http-runtime.md](plan/P2-1-http-runtime.md)。
 > 
-> 开始方式：先确定独立 config crate 的归属并登记到 [workspace 结构](docs/architecture/workspace-layout.md)，再冻结配置 schema、来源优先级与合并测试。
+> 开始方式：在 `provider-runtime` 中先冻结 HTTP Client 配置与取消边界，再用本地 mock server 覆盖超时、代理和 trace 传播。
 
 ## 关键路径
 
@@ -133,7 +133,6 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | 事项 | 说明 | 解决时点 |
 | --- | --- | --- |
-| P1-1 crate 归属 | 独立 config crate 还是并入 context-engine；倾向独立 config crate（P1-1 早于 context-engine 使用点、合并语义独立），选定后按 [workspace-layout §7](docs/architecture/workspace-layout.md) 登记 | P1-1 开工前 |
 | agent-api 职责边界 | 评估与 core-api / app-service 的重叠；workspace-layout §6 依赖图仅画主干链（完整清单以其 §2 为准，含 agent-api / app-database / transport-memory / hook-runtime） | Phase 13 前 |
 | provider-bedrock / provider-mistral | 已在 workspace-layout 登记但 ROADMAP 无对应任务（MVP 可推迟） | 启动时补任务 |
 | 缺失功能文档 | audit-log、client-auth 尚无独立 `docs/features/` 文档 | 对应 crate 实现时 |
@@ -167,18 +166,18 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P1-1 | 🟡 | 配置系统 | 确定性配置层级与优先级合并 | [详情](plan/P1-1-config.md) |
-| P1-2 | 🟡 | SQLite Actor | 串行化 DB 访问、WAL | [详情](plan/P1-2-sqlite-actor.md) |
-| P1-3 | 🟡 | 数据库 schema 与迁移 | 核心表与向前迁移框架 | [详情](plan/P1-3-db-schema-migration.md) |
-| P1-4 | 🟡 | Event Store | 事件 append 与按 sequence 重放 | [详情](plan/P1-4-event-store.md) |
-| P1-5 | 🟡 | Projection | 可重建投影 | [详情](plan/P1-5-projection.md) |
-| P1-6 | 🟡 | Blob Store | BLAKE3 寻址+引用计数+GC | [详情](plan/P1-6-blob-store.md) |
-| P1-7 | 🟡 | Workspace 服务 | 增删改/多 root/Git 检测 | [详情](plan/P1-7-workspace-service.md) |
-| P1-8 | 🟡 | 文件索引 | 异步扫描+ignore+去抖 | [详情](plan/P1-8-file-index.md) |
-| P1-9 | 🟡 | 结构化日志 | 规范字段+自动脱敏 | [详情](plan/P1-9-structured-logging.md) |
-| P1-10 | 🟡 | Metrics | 关键指标采集 | [详情](plan/P1-10-metrics.md) |
-| P1-11 | 🟡 | 诊断包导出 | 脱敏可分享诊断包 | [详情](plan/P1-11-diagnostics-export.md) |
-| P1-12 | 🟡 | CLI Host 骨架（pawork） | serve/run/shell/watch 子命令骨架（CLI=Core 宿主） | [详情](plan/P1-12-cli-skeleton.md) |
+| P1-1 | 🟢 | 配置系统 | 确定性配置层级与优先级合并 | [详情](plan/P1-1-config.md) |
+| P1-2 | 🟢 | SQLite Actor | 串行化 DB 访问、WAL | [详情](plan/P1-2-sqlite-actor.md) |
+| P1-3 | 🟢 | 数据库 schema 与迁移 | 核心表与向前迁移框架 | [详情](plan/P1-3-db-schema-migration.md) |
+| P1-4 | 🟢 | Event Store | 事件 append 与按 sequence 重放 | [详情](plan/P1-4-event-store.md) |
+| P1-5 | 🟢 | Projection | 可重建投影 | [详情](plan/P1-5-projection.md) |
+| P1-6 | 🟢 | Blob Store | BLAKE3 寻址+引用计数+GC | [详情](plan/P1-6-blob-store.md) |
+| P1-7 | 🟢 | Workspace 服务 | 增删改/多 root/Git 检测 | [详情](plan/P1-7-workspace-service.md) |
+| P1-8 | 🟢 | 文件索引 | 异步扫描+ignore+去抖 | [详情](plan/P1-8-file-index.md) |
+| P1-9 | 🟢 | 结构化日志 | 规范字段+自动脱敏 | [详情](plan/P1-9-structured-logging.md) |
+| P1-10 | 🟢 | Metrics | 关键指标采集 | [详情](plan/P1-10-metrics.md) |
+| P1-11 | 🟢 | 诊断包导出 | 脱敏可分享诊断包 | [详情](plan/P1-11-diagnostics-export.md) |
+| P1-12 | 🟢 | CLI Host 骨架（pawork） | serve/run/shell/watch 子命令骨架（CLI=Core 宿主） | [详情](plan/P1-12-cli-skeleton.md) |
 
 ### Phase 2：首个真实 Provider
 

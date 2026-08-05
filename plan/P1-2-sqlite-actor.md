@@ -1,6 +1,6 @@
 # P1-2：SQLite Actor
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P0-3
+> Phase 1 · 基础设施 · 状态：🟢已完成 · 依赖：P0-3
 
 **最终目的**：建立专用 SQLite Actor，所有 DB 访问经单一 Actor 串行化，避免 Tokio Task 并发写导致锁竞争与损坏，为 Event Store 提供可靠底层。
 
@@ -19,8 +19,8 @@
 
 ## 验收标准
 
-- [ ] 不在任意 Tokio Task 直接并发操作 DB
-- [ ] WAL 启用
+- [x] 不在任意 Tokio Task 直接并发操作 DB
+- [x] WAL 启用
 
 **相关文档**：[ADR-003 Event Store](../docs/adr/ADR-003-sqlite-event-store.md) · [ROADMAP](../ROADMAP.md)
 

@@ -1,6 +1,6 @@
 # P1-6：Blob Store
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P1-2
+> Phase 1 · 基础设施 · 状态：🟢已完成 · 依赖：P1-2
 
 **最终目的**：实现内容寻址 Blob Store（BLAKE3 + 引用计数 + GC），为大 payload（tool output / diff / artifact）提供去重存储（ADR-004/018）。
 
@@ -19,8 +19,8 @@
 
 ## 验收标准
 
-- [ ] 相同内容去重
-- [ ] GC 可回收无引用 blob
-- [ ] integrity check 可用
+- [x] 相同内容去重
+- [x] GC 可回收无引用 blob
+- [x] integrity check 可用
 
 **相关文档**：[artifacts](../docs/features/artifacts.md) · [ADR-004 Blob Store](../docs/adr/ADR-004-blob-store.md) · [ADR-018](../docs/adr/ADR-018-large-payload-artifact-id.md) · [ROADMAP](../ROADMAP.md)

@@ -1,6 +1,6 @@
 # P1-3：数据库 schema 与迁移
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P1-2
+> Phase 1 · 基础设施 · 状态：🟢已完成 · 依赖：P1-2
 
 **最终目的**：建立核心表与向前迁移框架，保证 schema 可随版本演进而无损升级，升级前自动备份，迁移失败可回退。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 迁移可恢复
-- [ ] 升级前自动备份
+- [x] 迁移可恢复
+- [x] 升级前自动备份
 
 **相关文档**：[sessions](../docs/features/sessions.md) · [ADR-003](../docs/adr/ADR-003-sqlite-event-store.md) · [ROADMAP](../ROADMAP.md)

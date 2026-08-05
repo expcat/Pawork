@@ -1,0 +1,13 @@
+[package]
+name = "cli-renderer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork CLI 文本与稳定 JSON 渲染"
+
+[dependencies]
+app-service = { path = "../app-service" }
+serde_json.workspace = true
+

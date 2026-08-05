@@ -48,6 +48,10 @@ blobs/
 
 WAL；Foreign Keys；Busy Timeout；Migration；定期 Checkpoint；Integrity Check；Vacuum 策略；备份；只读恢复模式。推荐专用数据库 Actor，而非在任意 Tokio Task 直接并发操作。
 
+## Phase 1 存储基线
+
+`app-database` 已实现单连接、专用线程和有界异步命令通道，并启用 WAL、Foreign Keys 与 Busy Timeout；支持一致性备份、恢复和只读恢复模式。`session-store` 已实现只向前迁移、升级前备份、append-only Event Store、严格连续 sequence、尾部读取和可删除重建的 Projection。`artifact-store` 已实现 BLAKE3 内容寻址、持久化引用计数、完整性检查、磁盘预算与仅回收零引用 Blob 的 GC。
+
 ## Migration 原则
 
 Migration 只向前；每次升级前备份；Migration 可恢复；Projection 可删除重建；Event Store 不可破坏；插件状态独立版本；导入器版本单独记录。

@@ -7,5 +7,13 @@ publish.workspace = true
 authors.workspace = true
 description = "Pawork — 纯 Rust 编码智能体核心平台的唯一正式可执行宿主（CLI 与 Core 同进程同二进制）"
 
-# P0-1 占位入口：仅打印版本，确保 workspace 可构建。
-# 子命令与 Core 装配（serve/run/shell/watch/service）见 P1-12。
+[dependencies]
+app-service = { path = "../../crates/app-service" }
+clap.workspace = true
+cli-command = { path = "../../crates/cli-command" }
+cli-host = { path = "../../crates/cli-host" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+serde_json.workspace = true

@@ -25,6 +25,10 @@ TerminalCapture
 
 GUI 通过 Artifact ID 获取内容，不在事件中直接携带数 MB 数据。
 
+## Phase 1 Blob 基线
+
+`artifact-store` 已实现 `blobs/ab/cd/<blake3-hash>` 内容寻址布局、原子写入、相同内容去重、SQLite 持久化引用计数、读取时哈希校验、missing / corrupt / orphan 完整性报告、磁盘预算，以及仅删除零引用 Blob 的 GC。MIME、Session / Run 关联、Secret 扫描与 GUI Artifact API 由后续任务补齐。
+
 ## 验收标准
 
 - 大型 Tool Output / Provider 响应 / 文件快照走 Artifact

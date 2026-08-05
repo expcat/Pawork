@@ -1,0 +1,14 @@
+[package]
+name = "app-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 进程内应用服务与命令路由骨架"
+
+[dependencies]
+core-api = { path = "../core-api" }
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true

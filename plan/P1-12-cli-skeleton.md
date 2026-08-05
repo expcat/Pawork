@@ -1,6 +1,6 @@
 # P1-12：CLI Host 骨架（pawork）
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P0-8
+> Phase 1 · 基础设施 · 状态：🟢已完成 · 依赖：P0-8
 
 **最终目的**：搭建 `pawork` 主二进制骨架，作为 Core 的唯一正式宿主入口（CLI 与 Core 同进程，[ADR-021](../docs/adr/ADR-021-cli-core-same-process.md)/[025](../docs/adr/ADR-025-cli-is-sole-host.md)）。提供 serve/run/shell/watch/status 子命令骨架与 `doctor` 自检，为开发、自动化与无头集成测试提供入口。完整 GUI Connection Protocol Server 留待 [Phase 13](../ROADMAP.md)。
 
@@ -20,7 +20,7 @@
 
 ## 验收标准
 
-- [ ] `pawork serve` 与 `pawork doctor` 可跑
-- [ ] CLI 命令经 app-service 访问 Core，不建立自环 IPC
+- [x] `pawork serve` 与 `pawork doctor` 可跑
+- [x] CLI 命令经 app-service 访问 Core，不建立自环 IPC
 
 **相关文档**：[CLI Host](../docs/features/cli-host.md) · [总体架构](../docs/architecture/overview.md) · [ADR-019 不实现 TUI](../docs/adr/ADR-019-no-tui.md) · [ADR-021 CLI 与 Core 同进程](../docs/adr/ADR-021-cli-core-same-process.md) · [ADR-025 CLI 是唯一宿主](../docs/adr/ADR-025-cli-is-sole-host.md) · [ROADMAP](../ROADMAP.md)

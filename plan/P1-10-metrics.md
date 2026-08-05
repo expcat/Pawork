@@ -1,6 +1,6 @@
 # P1-10：Metrics
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P1-9
+> Phase 1 · 基础设施 · 状态：🟢已完成 · 依赖：P1-9
 
 **最终目的**：实现关键 metrics 采集（初始化时间 / 首 token / tool 耗时 / token / 内存 / backlog），为性能门禁提供量化依据。
 
@@ -18,6 +18,6 @@
 
 ## 验收标准
 
-- [ ] 关键指标可采集（初始化/首 token/tool 耗时/token/内存/backlog）
+- [x] 关键指标可采集（初始化/首 token/tool 耗时/token/内存/backlog）
 
 **相关文档**：[observability](../docs/features/observability.md) · [性能目标](../docs/quality/performance-targets.md) · [ROADMAP](../ROADMAP.md)

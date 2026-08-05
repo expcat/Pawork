@@ -72,6 +72,14 @@
 - 实现阶段：边界清晰、写入集互不重叠的任务可并行派发，遵循服务级 `AGENTS.md` 的路由与并发上限。
 - 确定性检查先于模型审查；每个门禁只调用一个审查者。
 
-## 10. 常用命令（实现阶段补充）
+## 10. 常用命令
 
-实现开始后在此补充构建、测试、基准命令。当前仅有文档，无构建命令。
+```bash
+cargo fmt --all -- --check
+cargo build --workspace --all-targets
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo run -p schema-typegen -- --check
+```
+
+定向验证使用 `cargo test -p <crate>`；基准入口为 `cargo bench -p pawork-benches`。

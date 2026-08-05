@@ -1,6 +1,6 @@
 # P1-7：Workspace 服务
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P0-2
+> Phase 1 · 基础设施 · 状态：🟢已完成 · 依赖：P0-2
 
 **最终目的**：实现工作区管理（增删改 / 信任 / 多 root / Git 检测），为文件索引、资源加载、Git 提供统一的工作区语义。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 多 root 行为一致
-- [ ] Git 检测正确
+- [x] 多 root 行为一致
+- [x] Git 检测正确
 
 **相关文档**：[workspace-index](../docs/features/workspace-index.md) · [policy](../docs/features/policy.md) · [ROADMAP](../ROADMAP.md)

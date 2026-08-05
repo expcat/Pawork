@@ -35,11 +35,12 @@ Pawork/
 | `provider-mistral` | Mistral（优先级 P1） | 依赖 provider-runtime |
 | `auth-service` | 认证方式、Secret 后端、状态机 | 依赖 provider-api |
 | `model-registry` | 模型目录、别名、能力、定价 | 依赖 provider-api |
+| `config-service` | 确定性配置 schema、来源发现与层级合并 | 独立；供 context-engine / policy / resource-loader 等消费 |
 | `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain |
 | `compaction-engine` | 自动 / 手动压缩、摘要 | 依赖 agent-events / session-store |
 | `session-store` | SQLite Event Store、Projection、迁移 | 依赖 agent-events |
 | `artifact-store` | Blob Store、内容寻址、GC | 独立，被 session-store / tools 引用 |
-| `app-database` | SQLite Actor、连接、备份、只读恢复 | 依赖 session-store schema |
+| `app-database` | SQLite Actor、连接、备份、只读恢复 | 独立连接层，不依赖具体 schema；session-store 依赖它 |
 | `tool-api` | AgentTool Trait、Descriptor、Result | 依赖 agent-domain |
 | `tool-runtime` | Tool Scheduler、并发 / 串行策略 | 依赖 tool-api |
 | `builtin-tools` | read / write / edit / apply_patch / command / search / find / list | 依赖 tool-api |
@@ -61,10 +62,10 @@ Pawork/
 | `orchestration` | Multi-Agent、Supervisor、Worker、任务图（优先级 P2） | 依赖 agent-engine / workspace-service |
 | `core-api` | 应用层 Command / Event / Query 类型（CLI 与 GUI 共享的 schema source） | Phase 0 依赖 agent-domain / agent-events；后续由 app-service 使用 |
 | `core-runtime` | 完整 Core 生命周期与业务运行时装配 | 依赖 agent-api 及几乎所有核心 |
-| `app-service` | CLI 与 GUI 共享的应用 API、状态聚合、监督 | 依赖 core-runtime |
+| `app-service` | CLI 与 GUI 共享的应用 API、状态聚合、监督 | P1 骨架依赖 core-api；Phase 13 接入 core-runtime |
 | `cli-host` | 将 Core、CLI、GUI Server 装配到同一进程、生命周期管理 | 依赖 app-service |
-| `cli-command` | 命令解析与命令执行（Command Router） | 依赖 app-service |
-| `cli-renderer` | CLI 文本 / JSON / 流式输出（消费 Event Hub） | 依赖 core-api / agent-events |
+| `cli-command` | 命令解析与稳定命令模型 | 独立；由 cli-host 映射到 app-service |
+| `cli-renderer` | CLI 文本 / JSON / 流式输出（消费 Event Hub） | P1 骨架依赖 app-service；Phase 13 接入 core-api / agent-events |
 | `gui-protocol` | GUI Command / Query / Event / Snapshot 协议类型 | 依赖 core-api |
 | `gui-server` | CLI 内部运行的 GUI 协议服务器 | 依赖 gui-protocol / app-service |
 | `gui-client` | Tauri GUI 使用的连接 SDK | 依赖 gui-protocol / transport-api |

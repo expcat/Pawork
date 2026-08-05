@@ -14,6 +14,10 @@
 
 要求：初次异步扫描；增量更新；`.gitignore`；全局 ignore；工作区 ignore；symlink 策略；大型目录排除；`node_modules` 等默认排除；文件事件去抖；索引损坏重建。
 
+## Phase 1 实现状态
+
+`workspace-service` 已实现 Workspace 增删改、默认不信任、信任切换、多 Root 规范化去重、稳定快照与目录 / gitfile 两种 Git 仓库检测。`file-index` 已实现 blocking 池异步扫描、ignore 规则、大目录排除、文本/二进制与语言元数据、模糊搜索，以及通过有界通道合并的增量去抖更新；Windows 事件路径规范化已有回归覆盖。
+
 ## `@file` 搜索
 
 文件名模糊搜索；路径搜索；最近访问排序；Git changed 优先；大小限制；文件预览；多文件选择。

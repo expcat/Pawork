@@ -34,6 +34,10 @@
 
 不得依赖文件扫描顺序。
 
+## Phase 1 配置基线
+
+`config-service` 已落地内置默认值、用户全局、Profile、Workspace、Session 与单次 Run 六级来源。来源先按层级、再按稳定的 `source_key` 排序；对象递归合并，标量与数组由高优先级来源替换。配置文件定位、解析与 schema 错误均保留来源路径，跨平台系统目录与最近 Workspace 配置发现已有回归测试。
+
 ## Token 预算
 
 Context Engine 负责：Provider Token 估算；System Prompt 占用；Tool Schema 占用；附件占用；历史消息占用；Output Reserve；Thinking Reserve；超限前 Compaction；不支持精确 tokenizer 时的安全估算。

@@ -1,6 +1,6 @@
 # P1-4：Event Store
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P1-3
+> Phase 1 · 基础设施 · 状态：🟢已完成 · 依赖：P1-3
 
 **最终目的**：实现事件 append-only 持久化与按 sequence 重放（ADR-003/016）。这是可重放、崩溃恢复、分支、审计、差分测试的存储基础。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 事件不破坏、可按 sequence 重放
-- [ ] sequence 唯一不跳号
+- [x] 事件不破坏、可按 sequence 重放
+- [x] sequence 唯一不跳号
 
 **相关文档**：[sessions](../docs/features/sessions.md) · [ADR-003](../docs/adr/ADR-003-sqlite-event-store.md) · [ADR-016](../docs/adr/ADR-016-core-event-persist-replay.md) · [ROADMAP](../ROADMAP.md)

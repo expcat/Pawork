@@ -13,6 +13,17 @@ members = [
     "crates/core-api",
     "crates/gui-protocol",
     "crates/schema-typegen",
+    "crates/config-service",
+    "crates/app-database",
+    "crates/session-store",
+    "crates/artifact-store",
+    "crates/workspace-service",
+    "crates/file-index",
+    "crates/diagnostics",
+    "crates/app-service",
+    "crates/cli-host",
+    "crates/cli-command",
+    "crates/cli-renderer",
 ]
 # crates/ 下的核心 crate 随对应任务陆续创建并登记到 members。
 
@@ -51,7 +62,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 
 # 存储（SQLite Event Store 绑定层，rusqlite 仅绑定，语义自实现）
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 
 # HTTP / 网络（Provider 与 MCP Streamable HTTP）
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
