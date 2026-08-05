@@ -1,0 +1,11 @@
+[package]
+name = "pawork"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork — 纯 Rust 编码智能体核心平台的唯一正式可执行宿主（CLI 与 Core 同进程同二进制）"
+
+# P0-1 占位入口：仅打印版本，确保 workspace 可构建。
+# 子命令与 Core 装配（serve/run/shell/watch/service）见 P1-12。

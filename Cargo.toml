@@ -1,0 +1,92 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/pawork",
+]
+# crates/ 下的核心 crate 随对应任务（P0-2 起）陆续创建并登记到 members；
+# 本阶段（P0-1）workspace 仅含占位入口 apps/pawork，保证 cargo metadata / 空构建通过。
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+authors = ["Pawork Contributors"]
+# license 待定（首次实现提交前确定，见 README「许可证」）。
+
+# 依赖选型基线（ROADMAP「依赖选型基线 · 直接采用」）。
+# 版本为本阶段初始基线；各 crate 首次引用时按需 pin 到精确补丁版本并回填此处。
+# 未被任何 crate 引用的依赖不会影响 cargo metadata / cargo build。
+[workspace.dependencies]
+# 异步运行时 / 序列化 / 错误
+tokio = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+
+# 标识 / 哈希 / 版本
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+blake3 = "1"
+semver = { version = "1", features = ["serde"] }
+
+# 配置 / CLI
+toml = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+
+# 结构化日志（redaction 规则自实现）
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# 存储（SQLite Event Store 绑定层，rusqlite 仅绑定，语义自实现）
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# HTTP / 网络（Provider 与 MCP Streamable HTTP）
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+
+# 认证 / Secret / OAuth
+keyring = "3"
+oauth2 = "5"
+
+# 扩展机制（MCP / WASM）
+rmcp = "2"
+wasmtime = "27"
+wit-bindgen = "0.40"
+
+# 文件遍历 / 搜索 / 正则 / 监听
+ignore = "0.4"
+globset = "0.4"
+regex = "1"
+notify = "7"
+notify-debouncer-full = "0.5"
+
+# 路径规范化 / 编码检测
+dunce = "1"
+content-inspector = "0.2"
+chardetng = "0.1"
+encoding_rs = "0.8"
+
+# Token 计数 / TS 类型导出 / 系统目录
+tiktoken-rs = "0.6"
+ts-rs = "11"
+directories = "5"
+
+# 平台沙箱 / 绑定
+landlock = "0.4"
+windows = "0.58"
+windows-service = "0.7"
+
+# Diff / PTY / 重试 / 签名
+similar = { version = "2", features = ["text"] }
+portable-pty = "0.8"
+backon = "1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+
+# 测试与基准（dev-dependencies 候选）
+criterion = "0.5"
+proptest = "1"
+arbitrary = { version = "1", features = ["derive"] }
+wiremock = "0.6"
+insta = "1"
+assert_cmd = "2"

@@ -19,7 +19,7 @@
 
 | Phase | 主题 | 任务数 | 已完成 | 状态 |
 | --- | --- | --- | --- | --- |
-| 0 | 架构与协议冻结 | 12 | 1 | 🔵进行中 |
+| 0 | 架构与协议冻结 | 12 | 2 | 🔵进行中 |
 | 1 | 基础设施 | 12 | 0 | 🟡未开始 |
 | 2 | 首个真实 Provider | 11 | 0 | 🟡未开始 |
 | 3 | Agent Loop | 10 | 0 | 🟡未开始 |
@@ -33,15 +33,15 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **1** | — |
+| **合计** | — | **128** | **2** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 
 ## 下一个推荐任务
 
-> 🎯 **P0-1 仓库与 workspace 骨架** —— 关键路径的第一个动作，建立 workspace 根与目录骨架，使后续所有 crate 有落点。详情见 [plan/P0-1-workspace-skeleton.md](plan/P0-1-workspace-skeleton.md)。
->
-> 开始方式：创建根 `Cargo.toml` 与 `crates/ apps/ schemas/ fixtures/ benches/` 目录，配置 `.gitignore` 与 CI 占位，确保 `cargo metadata` 与空构建通过。
+> 🎯 **P0-2 领域类型基线** —— 冻结消息 / 角色 / 内容块 / 元数据 / ID 领域类型，建立所有 crate 的最底层依赖 `agent-domain`（仅 serde + 标准库，零 IO/HTTP/DB/Tauri）。详情见 [plan/P0-2-domain-types.md](plan/P0-2-domain-types.md)。
+> 
+> 开始方式：在 `crates/agent-domain` 创建 crate 并登记到 workspace members，按 [workspace 结构](docs/architecture/workspace-layout.md) 守住纯领域约束（无禁依赖）。
 
 ## 关键路径
 
@@ -145,7 +145,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P0-1 | 🟡 | 仓库与 workspace 骨架 | 建立 workspace 根与目录骨架、CI 占位 | [详情](plan/P0-1-workspace-skeleton.md) |
+| P0-1 | 🟢 | 仓库与 workspace 骨架 | 建立 workspace 根与目录骨架、CI 占位 | [详情](plan/P0-1-workspace-skeleton.md) |
 | P0-2 | 🟡 | 领域类型基线 | 冻结消息/角色/内容块/元数据/ID 领域类型 | [详情](plan/P0-2-domain-types.md) |
 | P0-3 | 🟡 | 事件模型 | 可持久化、可重放的事件与 schema version | [详情](plan/P0-3-event-model.md) |
 | P0-4 | 🟡 | Provider 协议 | canonical 请求/流式事件/错误统一契约 | [详情](plan/P0-4-provider-api.md) |

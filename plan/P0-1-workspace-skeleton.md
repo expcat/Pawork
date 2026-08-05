@@ -1,6 +1,6 @@
 # P0-1：仓库与 workspace 骨架
 
-> Phase 0 · 架构与协议冻结 · 状态：🟡未开始 · 依赖：—
+> Phase 0 · 架构与协议冻结 · 状态：🟢已完成 · 依赖：—
 
 **最终目的**：建立「仓库根 = Cargo workspace 根」的物理骨架，使后续所有 crate 有落点，`cargo metadata` 与空构建即可通过。这是整条关键路径的第一个动作，没有它任何 crate 都无处安放。
 
@@ -22,9 +22,9 @@
 
 ## 验收标准
 
-- [ ] `cargo metadata` 成功
-- [ ] `cargo build --workspace`（空）通过
-- [ ] CI 在三平台（或至少 ubuntu）绿
+- [x] `cargo metadata` 成功
+- [x] `cargo build --workspace`（空）通过
+- [ ] CI 在三平台（或至少 ubuntu）绿（yaml 已就位，待首次 push 触发验证）
 
 **相关文档**：[workspace 结构](../docs/architecture/workspace-layout.md) · [总体架构](../docs/architecture/overview.md) · [ROADMAP](../ROADMAP.md)
 

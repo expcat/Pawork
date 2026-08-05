@@ -1,0 +1,18 @@
+# 统一文本文件行尾为 LF（跨平台 Rust 项目，三平台 CI）。
+* text=auto eol=lf
+
+# 明确二进制文件（不进行行尾转换、不当文本 diff）。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.db binary
+*.sqlite binary
+*.wasm binary
+*.pdb binary

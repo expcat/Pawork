@@ -1,0 +1,32 @@
+# Rust 构建产物
+/target
+
+# 本地 SQLite / 数据库文件
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Secret / 凭据（绝不入库）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# OS 元数据
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 诊断包 / 临时输出
+*.diagnostics.zip
