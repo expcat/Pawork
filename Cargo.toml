@@ -21,6 +21,7 @@ members = [
     "crates/app-database",
     "crates/session-store",
     "crates/artifact-store",
+    "crates/compaction-engine",
     "crates/workspace-service",
     "crates/file-index",
     "crates/diagnostics",

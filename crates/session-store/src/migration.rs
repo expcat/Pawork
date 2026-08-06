@@ -5,7 +5,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::SessionStoreError;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 struct Migration {
     version: u32,
@@ -92,6 +92,35 @@ const MIGRATIONS: &[Migration] = &[
             BEGIN
                 SELECT RAISE(ABORT, 'session_events is append-only');
             END;
+        "#,
+    },
+    Migration {
+        version: 3,
+        name: "branch_active_and_session_leases",
+        sql: r#"
+            ALTER TABLE sessions
+                ADD COLUMN active_branch TEXT NOT NULL DEFAULT 'main';
+            CREATE INDEX idx_session_events_branch_sequence
+                ON session_events(session_id, branch_id, sequence);
+            CREATE TABLE session_leases (
+                session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+                holder TEXT NOT NULL,
+                acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0),
+                expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms >= 0),
+                CHECK (acquired_at_ms <= expires_at_ms)
+            );
+        "#,
+    },
+    Migration {
+        version: 4,
+        name: "session_tags_and_search",
+        sql: r#"
+            CREATE TABLE IF NOT EXISTS session_tags (
+                session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                tag TEXT NOT NULL,
+                PRIMARY KEY(session_id, tag)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag);
         "#,
     },
 ];
@@ -236,7 +265,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("open store");
         assert_eq!(report.from_version, 0);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![1, 2]);
+        assert_eq!(report.applied_versions, vec![1, 2, 3, 4]);
         assert!(report.backup_path.is_none());
         let tables: Vec<String> = store
             .database()

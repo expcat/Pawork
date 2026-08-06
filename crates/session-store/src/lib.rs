@@ -3,15 +3,25 @@
 //! `session_events` 是事实来源；其他表均为可删除、可从事件重建的 Projection。
 
 mod event_store;
+mod export_import;
+mod lifecycle;
 mod migration;
+mod pi_import;
 mod projection;
+mod search;
+mod session_tree;
 
 use std::path::{Path, PathBuf};
 
 use app_database::{DatabaseActor, DatabaseError};
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
+pub use export_import::{ExportedBranch, ImportReport, SessionExport, EXPORT_SCHEMA_VERSION};
+pub use lifecycle::{IntegrityReport, LeaseReceipt, MissingParent, SequenceGap};
 pub use migration::{MigrationReport, CURRENT_SCHEMA_VERSION};
+pub use pi_import::{parse_pi_line, PiEntryKind, PiImportReport, PiParsedEntry, PiPayload};
 pub use projection::{ProjectedRun, ProjectedToolCall, ProjectionSnapshot};
+pub use search::{SearchMatch, SessionSearchHit};
+pub use session_tree::{BranchNode, SessionTree};
 use thiserror::Error;
 
 #[derive(Clone)]
@@ -84,6 +94,8 @@ pub enum SessionStoreError {
     },
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),
+    #[error("export schema version {found} is not supported (expected {supported})")]
+    ExportSchemaVersion { found: u32, supported: u32 },
     #[error("session not found: {0}")]
     SessionNotFound(String),
     #[error("branch not found for session {session_id}: {branch_id}")]
@@ -91,6 +103,29 @@ pub enum SessionStoreError {
         session_id: String,
         branch_id: String,
     },
+    #[error("branch already exists for session {session_id}: {branch_id}")]
+    BranchAlreadyExists {
+        session_id: String,
+        branch_id: String,
+    },
+    #[error(
+        "branch {requested_branch} is not the active branch of session {session_id}; active is {active_branch}"
+    )]
+    BranchNotActive {
+        session_id: String,
+        active_branch: String,
+        requested_branch: String,
+    },
+    #[error("session {session_id} still has persisted events; archive instead of deleting")]
+    SessionHasEvents { session_id: String },
+    #[error("lease for session {session_id} is held by {holder} until {expires_at_ms}ms")]
+    LeaseHeld {
+        session_id: String,
+        holder: String,
+        expires_at_ms: i64,
+    },
+    #[error("no lease is held for session {session_id} by the requested holder")]
+    LeaseNotHeld { session_id: String },
     #[error("event belongs to session {event_session_id}, not {expected_session_id}")]
     EventSessionMismatch {
         expected_session_id: String,

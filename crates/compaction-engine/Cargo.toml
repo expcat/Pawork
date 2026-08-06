@@ -1,20 +1,20 @@
 [package]
-name = "session-store"
+name = "compaction-engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork Session schema、向前迁移、Event Store 与可重建 Projection"
+description = "Pawork 自动/手动 Compaction 引擎：版本化 CompactionSnapshot 与保留策略"
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
 agent-events = { path = "../agent-events" }
-app-database = { path = "../app-database" }
+session-store = { path = "../session-store" }
 serde.workspace = true
-rusqlite.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+rusqlite = { workspace = true }

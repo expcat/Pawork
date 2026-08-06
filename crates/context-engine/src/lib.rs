@@ -9,6 +9,7 @@
 //! - [`TokenEstimator`]（[`TiktokenEstimator`] / [`HeuristicEstimator`]）：Token 估算。
 //! - [`ContextBudget`]：输出/思考预留与输入硬上限。
 //! - [`CompactionTrigger`]：超限触发信号（不在此 crate 执行压缩）。
+//! - [`trim_tool_result`] / [`TrimThresholds`] / [`TrimmedToolResult`]：Tool Result 分级裁剪（P5-7）。
 
 mod budget;
 mod builder;
@@ -16,6 +17,7 @@ mod compaction;
 mod error;
 mod source;
 mod token;
+mod tool_result_trim;
 
 pub use budget::{ContextBudget, ContextBudgetBreakdown};
 pub use builder::{BuiltContext, ContextBuilder};
@@ -24,4 +26,8 @@ pub use error::ContextBuildError;
 pub use source::{sort_contributions, ContextContribution, ContextSource};
 pub use token::{
     default_estimator_for, HeuristicEstimator, TiktokenEstimator, TokenEstimator, ToolSchema,
+};
+pub use tool_result_trim::{
+    byte_len_of_tool_result, trim_tool_result, trim_tool_result_with, ResultSize, TrimStrategy,
+    TrimThresholds, TrimmedToolResult,
 };

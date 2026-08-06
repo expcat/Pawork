@@ -84,6 +84,47 @@ impl SessionStore {
         Ok(())
     }
 
+    /// 切换 session 的 active branch；后续 [`SessionStore::append_event`] 只允许写入该 branch。
+    pub async fn switch_branch(
+        &self,
+        session_id: &SessionId,
+        branch_id: impl Into<String>,
+    ) -> Result<(), SessionStoreError> {
+        let session_id = session_id.to_string();
+        let branch_id = branch_id.into();
+        self.database()
+            .call(move |connection| -> Result<(), SessionStoreError> {
+                let transaction = connection.transaction()?;
+                let exists: bool = transaction.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?1)",
+                    [&session_id],
+                    |row| row.get(0),
+                )?;
+                if !exists {
+                    return Err(SessionStoreError::SessionNotFound(session_id));
+                }
+                let branch_exists: bool = transaction.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM session_branches \
+                     WHERE session_id=?1 AND branch_id=?2)",
+                    params![session_id, branch_id.clone()],
+                    |row| row.get(0),
+                )?;
+                if !branch_exists {
+                    return Err(SessionStoreError::BranchNotFound {
+                        session_id,
+                        branch_id,
+                    });
+                }
+                transaction.execute(
+                    "UPDATE sessions SET active_branch=?1 WHERE session_id=?2",
+                    params![branch_id, session_id],
+                )?;
+                transaction.commit()?;
+                Ok(())
+            })
+            .await?
+    }
+
     pub async fn append_event(
         &self,
         branch_id: impl Into<String>,
@@ -113,10 +154,23 @@ impl SessionStore {
                         params![session_id, branch_id],
                         |row| row.get(0),
                     )?;
-                if !branch_exists {
-                    return Err(SessionStoreError::BranchNotFound {
+               if !branch_exists {
+                   return Err(SessionStoreError::BranchNotFound {
+                       session_id,
+                       branch_id,
+                   });
+               }
+                // 只允许向 session 当前 active branch 追加事件，保护多分支并发写。
+                let active_branch: String = transaction.query_row(
+                    "SELECT active_branch FROM sessions WHERE session_id=?1",
+                    [&session_id],
+                    |row| row.get(0),
+                )?;
+                if active_branch != branch_id {
+                    return Err(SessionStoreError::BranchNotActive {
                         session_id,
-                        branch_id,
+                        active_branch,
+                        requested_branch: branch_id,
                     });
                 }
 
@@ -250,5 +304,151 @@ fn event_type(event: &AgentEvent) -> &'static str {
         AgentEvent::RunCancelled { .. } => "run_cancelled",
         AgentEvent::RunFailed { .. } => "run_failed",
         AgentEvent::Diagnostic { .. } => "diagnostic",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use agent_domain::{EventId, MessageId, RunId, SessionId, Timestamp};
+    use agent_events::{AgentEvent, AgentEventEnvelope, EventSequence};
+
+    use super::*;
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_path() -> PathBuf {
+        let unique = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "pawork-branch-switch-{}-{unique}.sqlite3",
+            std::process::id()
+        ))
+    }
+
+    fn event(session: &SessionId, sequence: u64, payload: AgentEvent) -> AgentEventEnvelope {
+        AgentEventEnvelope::new(
+            EventId::from(format!("event-{sequence}")),
+            session.clone(),
+            RunId::from("run-1"),
+            EventSequence::new(sequence),
+            Timestamp::from_unix_millis(1_000 + sequence),
+            payload,
+        )
+    }
+
+    #[tokio::test]
+    async fn switch_branch_routes_appends_to_active_branch_only() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-switch");
+        store
+            .create_session(&session, "switch", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::RunStarted {
+                        trigger_message_id: MessageId::from("t"),
+                    },
+                ),
+            )
+            .await
+            .expect("append main 1");
+        store
+            .fork_from_event(&session, "exp", &EventId::from("event-1"))
+            .await
+            .expect("fork");
+
+        // active 仍是 main：写入 exp 被拒绝。
+        let blocked = store
+            .append_event(
+                "exp",
+                event(&session, 2, AgentEvent::RunCancelled { reason: None }),
+            )
+            .await;
+        assert!(matches!(
+            blocked,
+            Err(SessionStoreError::BranchNotActive {
+                ref active_branch,
+                ref requested_branch,
+                ..
+            }) if active_branch == DEFAULT_BRANCH_ID && requested_branch == "exp"
+        ));
+
+        // 切换到 exp 后写入成功；写回 main 被拒绝。
+        store
+            .switch_branch(&session, "exp")
+            .await
+            .expect("switch to exp");
+        store
+            .append_event(
+                "exp",
+                event(&session, 2, AgentEvent::RunCancelled { reason: None }),
+            )
+            .await
+            .expect("append exp 2");
+        let blocked_main = store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 3, AgentEvent::RunCancelled { reason: None }),
+            )
+            .await;
+        assert!(matches!(
+            blocked_main,
+            Err(SessionStoreError::BranchNotActive {
+                ref active_branch,
+                ..
+            }) if active_branch == "exp"
+        ));
+
+        // 切回 main：sequence 3 仍是下一个全局连续值。
+        store
+            .switch_branch(&session, DEFAULT_BRANCH_ID)
+            .await
+            .expect("switch back");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 3, AgentEvent::RunCancelled { reason: None }),
+            )
+            .await
+            .expect("append main 3");
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn switch_branch_rejects_unknown_session_and_branch() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-switch-err");
+        store
+            .create_session(&session, "switch-err", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        let missing_session = store
+            .switch_branch(&SessionId::from("nope"), DEFAULT_BRANCH_ID)
+            .await;
+        assert!(matches!(
+            missing_session,
+            Err(SessionStoreError::SessionNotFound(_))
+        ));
+        let missing_branch = store.switch_branch(&session, "ghost").await;
+        assert!(matches!(
+            missing_branch,
+            Err(SessionStoreError::BranchNotFound { ref branch_id, .. }) if branch_id == "ghost"
+        ));
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
     }
 }

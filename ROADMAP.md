@@ -24,7 +24,7 @@
 | 2 | 首个真实 Provider | 11 | 11 | 🟢已完成 |
 | 3 | Agent Loop | 10 | 10 | 🟢已完成 |
 | 4 | 核心工具与权限 | 12 | 12 | 🟢已完成 |
-| 5 | Session、Branch 与 Compaction | 9 | 0 | 🟡未开始 |
+| 5 | Session、Branch 与 Compaction | 9 | 9 | 🟢已完成 |
 | 6 | 主要 Provider | 9 | 0 | 🟡未开始 |
 | 7 | Git、Diff 与 Worktree | 8 | 0 | 🟡未开始 |
 | 8 | Skills、Prompts 与 Instructions | 8 | 0 | 🟡未开始 |
@@ -33,7 +33,7 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **57** | — |
+| **合计** | — | **128** | **66** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -41,7 +41,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P5-1 Session Tree / Fork** —— 从任意事件分叉（Phase 4 已交付全部内置工具与权限）。详情见 [plan/P5-1-session-fork.md](plan/P5-1-session-fork.md)。
+> 🎯 **P6-1 OpenAI 适配** —— Phase 5（Session、Branch 与 Compaction）已全部交付，进入主要 Provider 适配。详情见 [plan/P6-1-openai.md](plan/P6-1-openai.md)。
 
 ## 关键路径
 
@@ -237,15 +237,15 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P5-1 | 🟡 | Session Tree / Fork | 从任意事件分叉 | [详情](plan/P5-1-session-fork.md) |
-| P5-2 | 🟡 | Branch 切换 | 切换+并发写保护 | [详情](plan/P5-2-branch-switch.md) |
-| P5-3 | 🟡 | Resume/归档/删除/重命名 | lease+损坏检测 | [详情](plan/P5-3-session-lifecycle.md) |
-| P5-4 | 🟡 | 搜索 / 标签 | session 搜索与标签 | [详情](plan/P5-4-session-search.md) |
-| P5-5 | 🟡 | Compaction 引擎 | 自动/手动压缩+快照 | [详情](plan/P5-5-compaction-engine.md) |
-| P5-6 | 🟡 | 压缩保留策略 | 保留约束/任务/待处理 | [详情](plan/P5-6-compaction-retention.md) |
-| P5-7 | 🟡 | Tool Result 裁剪 | 分级裁剪+artifact 引用 | [详情](plan/P5-7-toolresult-trim.md) |
-| P5-8 | 🟡 | Export / Import | 稳定 schema 往返 | [详情](plan/P5-8-session-export-import.md) |
-| P5-9 | 🟡 | Pi JSONL Importer | 解析/未知字段/不改原文件 | [详情](plan/P5-9-pi-jsonl-import.md) |
+| P5-1 | 🟢 | Session Tree / Fork | 从任意事件分叉 | [详情](plan/P5-1-session-fork.md) |
+| P5-2 | 🟢 | Branch 切换 | 切换+并发写保护 | [详情](plan/P5-2-branch-switch.md) |
+| P5-3 | 🟢 | Resume/归档/删除/重命名 | lease+损坏检测 | [详情](plan/P5-3-session-lifecycle.md) |
+| P5-4 | 🟢 | 搜索 / 标签 | session 搜索与标签 | [详情](plan/P5-4-session-search.md) |
+| P5-5 | 🟢 | Compaction 引擎 | 自动/手动压缩+快照 | [详情](plan/P5-5-compaction-engine.md) |
+| P5-6 | 🟢 | 压缩保留策略 | 保留约束/任务/待处理 | [详情](plan/P5-6-compaction-retention.md) |
+| P5-7 | 🟢 | Tool Result 裁剪 | 分级裁剪+artifact 引用 | [详情](plan/P5-7-toolresult-trim.md) |
+| P5-8 | 🟢 | Export / Import | 稳定 schema 往返 | [详情](plan/P5-8-session-export-import.md) |
+| P5-9 | 🟢 | Pi JSONL Importer | 解析/未知字段/不改原文件 | [详情](plan/P5-9-pi-jsonl-import.md) |
 
 ### Phase 6：主要 Provider
 

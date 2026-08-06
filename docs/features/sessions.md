@@ -56,6 +56,10 @@ WAL；Foreign Keys；Busy Timeout；Migration；定期 Checkpoint；Integrity Ch
 
 Migration 只向前；每次升级前备份；Migration 可恢复；Projection 可删除重建；Event Store 不可破坏；插件状态独立版本；导入器版本单独记录。
 
+## Phase 5 Session 基线
+
+`session-store`（schema v4）已实现 Session Tree / Fork（从任意事件分叉、按 branch 分页读取事件）、Branch 切换（active_branch + 并发写保护）、完整生命周期（rename / archive / unarchive / delete / resume）、Session Lease（过期可抢占）、损坏检测（只读 parent 缺失 / sequence 间隙检测）、搜索与标签（`session_tags` + 确定性 LIKE 标题/标签/内容搜索）以及稳定 schema 的 Export / Import（`SessionExport` 往返等价）。`compaction-engine` 已实现版本化 `CompactionSnapshot`、自动/手动压缩入口（压缩前 Fork recovery branch）、保留策略（最近 N 轮、未解决任务、用户约束、修改文件、待处理/失败 tool call）与 Golden Session 回归。Pi JSONL Importer（`import_pi_jsonl`）解析 header / 消息 / tool call / 模型切换 / compaction / branch，保存未知字段，生成迁移报告，且不修改原始 Pi 文件（ADR-005）。
+
 ## 验收标准
 
 - 事件可重放、Projection 可重建
