@@ -39,6 +39,8 @@ members = [
     "crates/checkpoint-service",
     "crates/process-runtime",
     "crates/builtin-tools",
+    "crates/git-service",
+    "crates/diff-service",
 ]
 # crates/ 下的核心 crate 随对应任务陆续创建并登记到 members。
 

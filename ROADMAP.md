@@ -26,14 +26,14 @@
 | 4 | 核心工具与权限 | 12 | 12 | 🟢已完成 |
 | 5 | Session、Branch 与 Compaction | 9 | 9 | 🟢已完成 |
 | 6 | 主要 Provider | 9 | 9 | 🟢已完成 |
-| 7 | Git、Diff 与 Worktree | 8 | 0 | 🟡未开始 |
+| 7 | Git、Diff 与 Worktree | 8 | 6 | 🔵进行中 |
 | 8 | Skills、Prompts 与 Instructions | 8 | 0 | 🟡未开始 |
 | 9 | MCP | 7 | 0 | 🟡未开始 |
 | 10 | WASM Plugin | 6 | 0 | 🟡未开始 |
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **75** | — |
+| **合计** | — | **128** | **81** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -41,7 +41,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P7-1 Repo 检测 / branch / HEAD** —— Phase 6（主要 Provider）已全部交付，进入 Git、Diff 与 Worktree。详情见 [plan/P7-1-git-repo.md](plan/P7-1-git-repo.md)。
+> 🎯 **P8-1 Resource Loader** —— Phase 7（Git、Diff 与 Worktree）P0 任务已全部交付（P7-1 ~ P7-6），进入 Skills、Prompts 与 Instructions。详情见 [plan/P8-1-resource-loader.md](plan/P8-1-resource-loader.md)。
 
 ## 关键路径
 
@@ -269,12 +269,12 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P7-1 | 🟡 | Repo 检测 / branch / HEAD | 系统 Git 封装 | [详情](plan/P7-1-git-repo.md) |
-| P7-2 | 🟡 | status / changed files | staged/unstaged/untracked | [详情](plan/P7-2-git-status.md) |
-| P7-3 | 🟡 | 结构化 Diff | DiffFile/Hunk/分页/100k 行 | [详情](plan/P7-3-structured-diff.md) |
-| P7-4 | 🟡 | stage / unstage / discard | 暂存操作 | [详情](plan/P7-4-git-stage.md) |
-| P7-5 | 🟡 | Worktree | 创建/删除/不删用户数据 | [详情](plan/P7-5-worktree.md) |
-| P7-6 | 🟡 | Git 缓存 / watcher | status 缓存+切换<50ms | [详情](plan/P7-6-git-cache.md) |
+| P7-1 | 🟢 | Repo 检测 / branch / HEAD | 系统 Git 封装 | [详情](plan/P7-1-git-repo.md) |
+| P7-2 | 🟢 | status / changed files | staged/unstaged/untracked | [详情](plan/P7-2-git-status.md) |
+| P7-3 | 🟢 | 结构化 Diff | DiffFile/Hunk/分页/100k 行 | [详情](plan/P7-3-structured-diff.md) |
+| P7-4 | 🟢 | stage / unstage / discard | 暂存操作 | [详情](plan/P7-4-git-stage.md) |
+| P7-5 | 🟢 | Worktree | 创建/删除/不删用户数据 | [详情](plan/P7-5-worktree.md) |
+| P7-6 | 🟢 | Git 缓存 / watcher | status 缓存+切换<50ms | [详情](plan/P7-6-git-cache.md) |
 | P7-7 | ⚪ | Hunk / Line stage（优先级 P1） | 块/行暂存 | [详情](plan/P7-7-hunk-stage.md) |
 | P7-8 | ⚪ | commit / branch / ...（优先级 P1） | P1 Git 操作 | [详情](plan/P7-8-git-operations.md) |
 

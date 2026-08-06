@@ -53,6 +53,12 @@ Unified Diff 解析；文件摘要；分页 Hunk；Context Lines；binary；rena
 - 已缓存 Diff 切换 < 50ms
 - Worktree 清理不删用户数据
 
+## 实现状态（Phase 7 P0）
+
+- `git-service` crate：系统 Git 封装（`GitRunner` 调用入口 + `GitError` 归一）、repo 检测 / branch / HEAD（`GitService`）、status / changed files（`StatusService`）、stage / unstage / discard（`StageService`，discard 标记高风险）、Worktree 创建/删除（`WorktreeService`，remove 先校验受管理、绝不递归删除用户数据）、status 缓存 + notify watcher 失效（`StatusCache` / `CachedStatusService`，命中纯内存读 < 50ms）。
+- `diff-service` crate：结构化 Diff（`DiffFile`/`DiffHunk`/`DiffLine`），解析 `--raw -z` + `--numstat -z` 文件清单与 unified patch hunks，支持 rename/binary/无末尾换行、`paginate` 分页；unified 解析器为纯字符串状态机，100k 行 < 500ms。
+- P1 优先级的 commit / branch / hunk / line stage 见 [P7-7](../../plan/P7-7-hunk-stage.md) / [P7-8](../../plan/P7-8-git-operations.md)（⚪ 推迟）。
+
 ## 相关文档
 
 - [checkpoint](checkpoint.md) · [process](process.md) · [api-surface（diff.*）](../architecture/api-surface.md)

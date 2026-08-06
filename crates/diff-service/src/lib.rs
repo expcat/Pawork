@@ -1,0 +1,17 @@
+//! Pawork 结构化 Diff（Phase 7 P7-3）。
+//!
+//! 把系统 git 的 diff 输出解析为结构化 [`model::DiffFile`] / [`model::DiffHunk`] /
+//! [`model::DiffLine`]，支持 rename/binary/untracked/submodule、CRLF、无末尾换行、
+//! Unicode 文件名，并可分页。HunkId 全局自增。
+//!
+//! - [`service::DiffService`]：调 git + 解析。
+//! - [`parser`]：unified diff 状态机解析（纯内存，100k 行 < 500ms）。
+//! - [`service::paginate`]：分页。
+
+pub mod model;
+pub mod parser;
+pub mod service;
+
+pub use model::{DiffFile, DiffHunk, DiffLine, FileStatus, HunkId, LineKind};
+pub use parser::parse_unified;
+pub use service::{paginate, DiffOptions, DiffPage, DiffService};
