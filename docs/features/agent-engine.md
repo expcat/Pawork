@@ -4,6 +4,23 @@
 
 实现完整 Agent 循环：状态机、运行控制、预算、Tool 调度、重试、取消、事件流与中断恢复。
 
+## 实现模块（Phase 3）
+
+落地于 `agent-engine` crate，按子模块组织（详见各模块文档注释）：
+
+- `state`：Run 状态机（全部状态与转换、事件 hint、非法转换防御）。
+- `appender`：Provider 流式增量组装为助手消息与 tool call。
+- `provider_loop`：Provider Loop 主干（多轮工具循环、审批、执行、回填）。
+- `budget`：多维预算控制（软/硬阈值、达预算产生决策而非静默停）。
+- `queue`：用户消息队列（排队、replace queued、崩溃可恢复快照）。
+- `broadcast`：事件广播（bounded channel + backpressure + Lagged 丢弃）。
+- `retry`：Agent 层重试（断流/last call/run、退避、retry_after 尊重）。
+- `cancel`：取消传播（根令牌 + 进程树清理抽象）。
+- `recovery`：Interrupted Run 恢复（事件重放重建状态、<1s）。
+
+工具执行与审批通过 trait 注入（`LoopContext` / `ApprovalResolver`），使 Provider Loop
+与 SQLite / `tool-runtime::ToolScheduler` 解耦，便于单测与替换。
+
 ## Agent Loop
 
 14 步循环见 [控制流](../architecture/control-flow.md) §2。状态机与事件见 [领域模型](../architecture/domain-model.md)。

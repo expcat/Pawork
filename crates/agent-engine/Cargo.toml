@@ -1,0 +1,25 @@
+[package]
+name = "agent-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork Agent 循环：状态机、运行控制、预算、调度、重试、取消、事件流与中断恢复"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+agent-events = { path = "../agent-events" }
+provider-api = { path = "../provider-api" }
+tool-api = { path = "../tool-api" }
+tokio = { workspace = true, features = ["sync", "macros", "time", "rt"] }
+async-trait.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+test-support = { path = "../test-support" }
+tokio = { workspace = true, features = ["sync", "macros", "time", "rt", "rt-multi-thread"] }

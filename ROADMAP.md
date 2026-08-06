@@ -22,7 +22,7 @@
 | 0 | 架构与协议冻结 | 12 | 12 | 🟢已完成 |
 | 1 | 基础设施 | 12 | 12 | 🟢已完成 |
 | 2 | 首个真实 Provider | 11 | 11 | 🟢已完成 |
-| 3 | Agent Loop | 10 | 0 | 🟡未开始 |
+| 3 | Agent Loop | 10 | 10 | 🟢已完成 |
 | 4 | 核心工具与权限 | 12 | 0 | 🟡未开始 |
 | 5 | Session、Branch 与 Compaction | 9 | 0 | 🟡未开始 |
 | 6 | 主要 Provider | 9 | 0 | 🟡未开始 |
@@ -33,7 +33,7 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **35** | — |
+| **合计** | — | **128** | **45** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -41,9 +41,9 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P3-1 Run 状态机** —— 实现完整 Run 状态转换并事件化。详情见 [plan/P3-1-run-state-machine.md](plan/P3-1-run-state-machine.md)。
+> 🎯 **P4-1 read_file** —— 实现首个内置工具（offset/limit/编码/二进制/路径安全）。详情见 [plan/P4-1-read-file.md](plan/P4-1-read-file.md)。
 > 
-> 开始方式：在 `agent-engine` 中定义 Run 的状态机（全状态转换 + 事件化），用单元测试覆盖合法/非法转换。
+> 开始方式：在 `builtin-tools` 中实现 read_file，经 `tool-runtime` 调度器执行，并接入 `agent-engine` 的 Provider Loop。
 
 ## 关键路径
 
@@ -203,16 +203,16 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P3-1 | 🟡 | Run 状态机 | 全状态转换+事件化 | [详情](plan/P3-1-run-state-machine.md) |
-| P3-2 | 🟡 | 上下文构建与预算 | 来源优先级+token 预算 | [详情](plan/P3-2-context-budget.md) |
-| P3-3 | 🟡 | Provider Loop | 流式提交/解析 tool call/多轮 | [详情](plan/P3-3-provider-loop.md) |
-| P3-4 | 🟡 | Tool Scheduler | 并发/串行/审批暂停 | [详情](plan/P3-4-tool-scheduler.md) |
-| P3-5 | 🟡 | 消息队列 | 排队/replace queued | [详情](plan/P3-5-message-queue.md) |
-| P3-6 | 🟡 | 预算控制 | 多维预算+事件不静默停 | [详情](plan/P3-6-budget-control.md) |
-| P3-7 | 🟡 | 重试 | 断流重试/retry last call/run | [详情](plan/P3-7-retry.md) |
-| P3-8 | 🟡 | 取消 | 取消 provider/tool+进程清理 | [详情](plan/P3-8-cancel.md) |
-| P3-9 | 🟡 | 事件流式分发 | 广播+背压+<2ms | [详情](plan/P3-9-event-broadcast.md) |
-| P3-10 | 🟡 | Interrupted Run 恢复 | 崩溃后 <1s 恢复 | [详情](plan/P3-10-interrupted-run-recovery.md) |
+| P3-1 | 🟢 | Run 状态机 | 全状态转换+事件化 | [详情](plan/P3-1-run-state-machine.md) |
+| P3-2 | 🟢 | 上下文构建与预算 | 来源优先级+token 预算 | [详情](plan/P3-2-context-budget.md) |
+| P3-3 | 🟢 | Provider Loop | 流式提交/解析 tool call/多轮 | [详情](plan/P3-3-provider-loop.md) |
+| P3-4 | 🟢 | Tool Scheduler | 并发/串行/审批暂停 | [详情](plan/P3-4-tool-scheduler.md) |
+| P3-5 | 🟢 | 消息队列 | 排队/replace queued | [详情](plan/P3-5-message-queue.md) |
+| P3-6 | 🟢 | 预算控制 | 多维预算+事件不静默停 | [详情](plan/P3-6-budget-control.md) |
+| P3-7 | 🟢 | 重试 | 断流重试/retry last call/run | [详情](plan/P3-7-retry.md) |
+| P3-8 | 🟢 | 取消 | 取消 provider/tool+进程清理 | [详情](plan/P3-8-cancel.md) |
+| P3-9 | 🟢 | 事件流式分发 | 广播+背压+<2ms | [详情](plan/P3-9-event-broadcast.md) |
+| P3-10 | 🟢 | Interrupted Run 恢复 | 崩溃后 <1s 恢复 | [详情](plan/P3-10-interrupted-run-recovery.md) |
 
 ### Phase 4：核心工具与权限
 
