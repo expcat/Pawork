@@ -1,6 +1,6 @@
 # P4-4：apply_patch
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P4-2
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P4-2
 
 **最终目的**：实现多文件 apply_patch（create/delete/rename、dry run、原子、部分失败回滚），让 Agent 能一次性安全地应用多文件改动。
 
@@ -19,8 +19,8 @@
 
 ## 验收标准
 
-- [ ] 多文件原子提交
-- [ ] 部分失败回滚
-- [ ] 路径安全（无穿越）
+- [x] 多文件原子提交
+- [x] 部分失败回滚
+- [x] 路径安全（无穿越）
 
 **相关文档**：[tools](../docs/features/tools.md) · [checkpoint](../docs/features/checkpoint.md) · [policy](../docs/features/policy.md) · [ROADMAP](../ROADMAP.md)

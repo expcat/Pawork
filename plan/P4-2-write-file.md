@@ -1,6 +1,6 @@
 # P4-2：write_file
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P4-9、P4-11
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P4-9、P4-11
 
 **最终目的**：实现原子 write_file（建父目录、保留权限/换行、覆盖审批、写入前 checkpoint），让 Agent 写文件安全且可回滚。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 写入可经 checkpoint 回滚
-- [ ] 覆盖需审批
+- [x] 写入可经 checkpoint 回滚
+- [x] 覆盖需审批
 
 **相关文档**：[tools](../docs/features/tools.md) · [checkpoint](../docs/features/checkpoint.md) · [policy](../docs/features/policy.md) · [ROADMAP](../ROADMAP.md)

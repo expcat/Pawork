@@ -1,6 +1,6 @@
 # P4-7：find_files
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P4-1
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P4-1
 
 **最终目的**：实现 find_files（glob、类型过滤、ignore、最大深度/结果、排序），让 Agent 能按模式定位文件。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] glob 与 ignore 正确
-- [ ] 结果受限且稳定排序
+- [x] glob 与 ignore 正确
+- [x] 结果受限且稳定排序
 
 **相关文档**：[tools](../docs/features/tools.md) · [ROADMAP](../ROADMAP.md)

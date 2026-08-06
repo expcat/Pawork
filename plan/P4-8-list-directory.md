@@ -1,6 +1,6 @@
 # P4-8：list_directory
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P4-1
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P4-1
 
 **最终目的**：实现 list_directory（类型/大小/mtime/symlink/分页），让 Agent 能浏览目录结构并识别 symlink。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] symlink 信息正确
-- [ ] 分页可用
+- [x] symlink 信息正确
+- [x] 分页可用
 
 **相关文档**：[tools](../docs/features/tools.md) · [ROADMAP](../ROADMAP.md)

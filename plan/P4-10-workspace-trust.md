@@ -1,6 +1,6 @@
 # P4-10：Workspace Trust
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P4-9
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P4-9
 
 **最终目的**：实现 Workspace Trust（默认受限、信任后放宽），让未信任工作区默认限制写与命令，满足默认安全（ADR-009）。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] 未信任工作区默认限制写/命令
+- [x] 未信任工作区默认限制写/命令
 
 **相关文档**：[policy](../docs/features/policy.md) · [sandbox](../docs/features/sandbox.md) · [ADR-009 默认信任](../docs/adr/ADR-009-default-workspace-trust.md) · [安全验收](../docs/quality/security-acceptance.md) · [ROADMAP](../ROADMAP.md)

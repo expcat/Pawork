@@ -1,6 +1,6 @@
 # P4-12：Process Runtime
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P0-1
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P0-1
 
 **最终目的**：实现跨平台 Process Runtime（Unix Process Group、Windows Job Object、无死锁 IO、超大输出、cancel），为命令执行与 PTY 提供可靠底层。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 三平台可创建/取消并清理进程树
-- [ ] 大输出无死锁
+- [x] 三平台可创建/取消并清理进程树
+- [x] 大输出无死锁
 
 **相关文档**：[process](../docs/features/process.md) · [sandbox](../docs/features/sandbox.md) · [ROADMAP](../ROADMAP.md)

@@ -316,6 +316,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "builtin-tools"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "artifact-store",
+ "async-trait",
+ "chardetng",
+ "checkpoint-service",
+ "encoding_rs",
+ "globset",
+ "ignore",
+ "policy-engine",
+ "process-runtime",
+ "regex",
+ "serde",
+ "serde_json",
+ "test-support",
+ "thiserror 2.0.19",
+ "tokio",
+ "tool-api",
+ "tracing",
+ "workspace-service",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -364,6 +389,31 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "chardetng"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14b8f0b65b7b08ae3c8187e8d77174de20cb6777864c6b832d8ad365999cf1ea"
+dependencies = [
+ "cfg-if",
+ "encoding_rs",
+ "memchr",
+]
+
+[[package]]
+name = "checkpoint-service"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "artifact-store",
+ "blake3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -664,6 +714,15 @@ name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
+
+[[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
 
 [[package]]
 name = "equivalent"
@@ -1623,6 +1682,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "policy-engine"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tool-api",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1674,6 +1746,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "process-runtime"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "bytes",
+ "futures",
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

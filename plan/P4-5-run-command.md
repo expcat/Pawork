@@ -1,6 +1,6 @@
 # P4-5：run_command
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P4-11、P4-12
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P4-11、P4-12
 
 **最终目的**：实现非 PTY 的 run_command（流式 stdout/stderr、cwd、timeout、env 白名单、cancel、exit code），让 Agent 能运行测试与构建命令并安全终止。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 流式 stdout/stderr 正确
-- [ ] cancel 清理进程树
+- [x] 流式 stdout/stderr 正确
+- [x] cancel 清理进程树
 
 **相关文档**：[tools](../docs/features/tools.md) · [process](../docs/features/process.md) · [sandbox](../docs/features/sandbox.md) · [ROADMAP](../ROADMAP.md)

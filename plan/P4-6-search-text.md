@@ -1,6 +1,6 @@
 # P4-6：search_text
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P4-1
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P4-1
 
 **最终目的**：实现 search_text（固定串/正则、文件过滤、ignore、结果限制、上下文行、Unicode），让 Agent 能在代码库中精确检索。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 正则/固定串正确
-- [ ] ignore 生效、结果受限
+- [x] 正则/固定串正确
+- [x] ignore 生效、结果受限
 
 **相关文档**：[tools](../docs/features/tools.md) · [ROADMAP](../ROADMAP.md)

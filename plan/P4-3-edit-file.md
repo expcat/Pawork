@@ -1,6 +1,6 @@
 # P4-3：edit_file
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P4-1
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P4-1
 
 **最终目的**：实现精确的 edit_file（精确替换、多段、unified patch、上下文校验、模糊匹配、冲突报告），让 Agent 能可靠地局部修改代码。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 精确替换与多段编辑正确
-- [ ] 冲突产生结构化 diff 报告
+- [x] 精确替换与多段编辑正确
+- [x] 冲突产生结构化 diff 报告
 
 **相关文档**：[tools](../docs/features/tools.md) · [git-diff](../docs/features/git-diff.md) · [ROADMAP](../ROADMAP.md)

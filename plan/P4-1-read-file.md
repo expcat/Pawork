@@ -1,6 +1,6 @@
 # P4-1：read_file
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P0-5
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 依赖：P0-5
 
 **最终目的**：实现只读的 read_file 工具，支持 offset/limit、行号、编码与二进制检测、图片 attachment 与路径安全，是 Agent 读取代码的基础能力。
 
@@ -19,8 +19,8 @@
 
 ## 验收标准
 
-- [ ] 行号/offset/limit 正确
-- [ ] 二进制与编码检测正确
-- [ ] 路径基于 workspace_id + relative_path
+- [x] 行号/offset/limit 正确
+- [x] 二进制与编码检测正确
+- [x] 路径基于 workspace_id + relative_path
 
 **相关文档**：[tools](../docs/features/tools.md) · [policy](../docs/features/policy.md) · [ROADMAP](../ROADMAP.md)

@@ -23,7 +23,7 @@
 | 1 | 基础设施 | 12 | 12 | 🟢已完成 |
 | 2 | 首个真实 Provider | 11 | 11 | 🟢已完成 |
 | 3 | Agent Loop | 10 | 10 | 🟢已完成 |
-| 4 | 核心工具与权限 | 12 | 0 | 🟡未开始 |
+| 4 | 核心工具与权限 | 12 | 12 | 🟢已完成 |
 | 5 | Session、Branch 与 Compaction | 9 | 0 | 🟡未开始 |
 | 6 | 主要 Provider | 9 | 0 | 🟡未开始 |
 | 7 | Git、Diff 与 Worktree | 8 | 0 | 🟡未开始 |
@@ -33,7 +33,7 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **45** | — |
+| **合计** | — | **128** | **57** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -41,9 +41,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P4-1 read_file** —— 实现首个内置工具（offset/limit/编码/二进制/路径安全）。详情见 [plan/P4-1-read-file.md](plan/P4-1-read-file.md)。
-> 
-> 开始方式：在 `builtin-tools` 中实现 read_file，经 `tool-runtime` 调度器执行，并接入 `agent-engine` 的 Provider Loop。
+> 🎯 **P5-1 Session Tree / Fork** —— 从任意事件分叉（Phase 4 已交付全部内置工具与权限）。详情见 [plan/P5-1-session-fork.md](plan/P5-1-session-fork.md)。
 
 ## 关键路径
 
@@ -220,18 +218,18 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P4-1 | 🟡 | read_file | offset/limit/编码/二进制/路径安全 | [详情](plan/P4-1-read-file.md) |
-| P4-2 | 🟡 | write_file | 原子写/审批/checkpoint | [详情](plan/P4-2-write-file.md) |
-| P4-3 | 🟡 | edit_file | 精确替换/unified patch/模糊匹配 | [详情](plan/P4-3-edit-file.md) |
-| P4-4 | 🟡 | apply_patch | 多文件/dry run/原子/回滚 | [详情](plan/P4-4-apply-patch.md) |
-| P4-5 | 🟡 | run_command | 流式/cwd/env/timeout/cancel | [详情](plan/P4-5-run-command.md) |
-| P4-6 | 🟡 | search_text | 正则/ignore/上下文行 | [详情](plan/P4-6-search-text.md) |
-| P4-7 | 🟡 | find_files | glob/ignore/排序 | [详情](plan/P4-7-find-files.md) |
-| P4-8 | 🟡 | list_directory | 类型/symlink/分页 | [详情](plan/P4-8-list-directory.md) |
-| P4-9 | 🟡 | Policy Engine | 审批/路径安全/Shell 风险 | [详情](plan/P4-9-policy-engine.md) |
-| P4-10 | 🟡 | Workspace Trust | 默认受限/信任放宽 | [详情](plan/P4-10-workspace-trust.md) |
-| P4-11 | 🟡 | Checkpoint 与回滚 | 单次/整 run 回滚+冲突检测 | [详情](plan/P4-11-checkpoint-rollback.md) |
-| P4-12 | 🟡 | Process Runtime | 进程组/Job/无死锁 IO/cancel | [详情](plan/P4-12-process-runtime.md) |
+| P4-1 | 🟢 | read_file | offset/limit/编码/二进制/路径安全 | [详情](plan/P4-1-read-file.md) |
+| P4-2 | 🟢 | write_file | 原子写/审批/checkpoint | [详情](plan/P4-2-write-file.md) |
+| P4-3 | 🟢 | edit_file | 精确替换/unified patch/模糊匹配 | [详情](plan/P4-3-edit-file.md) |
+| P4-4 | 🟢 | apply_patch | 多文件/dry run/原子/回滚 | [详情](plan/P4-4-apply-patch.md) |
+| P4-5 | 🟢 | run_command | 流式/cwd/env/timeout/cancel | [详情](plan/P4-5-run-command.md) |
+| P4-6 | 🟢 | search_text | 正则/ignore/上下文行 | [详情](plan/P4-6-search-text.md) |
+| P4-7 | 🟢 | find_files | glob/ignore/排序 | [详情](plan/P4-7-find-files.md) |
+| P4-8 | 🟢 | list_directory | 类型/symlink/分页 | [详情](plan/P4-8-list-directory.md) |
+| P4-9 | 🟢 | Policy Engine | 审批/路径安全/Shell 风险 | [详情](plan/P4-9-policy-engine.md) |
+| P4-10 | 🟢 | Workspace Trust | 默认受限/信任放宽 | [详情](plan/P4-10-workspace-trust.md) |
+| P4-11 | 🟢 | Checkpoint 与回滚 | 单次/整 run 回滚+冲突检测 | [详情](plan/P4-11-checkpoint-rollback.md) |
+| P4-12 | 🟢 | Process Runtime | 进程组/Job/无死锁 IO/cancel | [详情](plan/P4-12-process-runtime.md) |
 
 ### Phase 5：Session、Branch 与 Compaction
 

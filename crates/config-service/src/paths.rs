@@ -93,6 +93,9 @@ mod paths_integration {
     fn locate_finds_nearest_workspace_config_when_walking_up() {
         use std::fs;
         let tmp = tempfile_dir();
+        // canonicalize：macOS 下 /var 是 /private/var 的符号链接，
+        // locate 内部 canonicalize 返回 /private/var，需与期望路径一致。
+        let tmp = std::fs::canonicalize(&tmp).unwrap_or(tmp);
         let nested = tmp.join("a/b/c");
         fs::create_dir_all(&nested).unwrap();
 

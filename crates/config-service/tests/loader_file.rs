@@ -99,6 +99,8 @@ fn schema_mismatch_error_carries_path() {
 #[test]
 fn locate_workspace_config_finds_nearest() {
     let root = tempdir("locate");
+    // canonicalize：macOS /var -> /private/var 符号链接，需与 locate 返回值一致。
+    let root = fs::canonicalize(&root).unwrap_or(root);
     let nested = root.join("a/b/c");
     fs::create_dir_all(&nested).unwrap();
 

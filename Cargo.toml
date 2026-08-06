@@ -31,6 +31,10 @@ members = [
     "crates/context-engine",
     "crates/tool-runtime",
     "crates/agent-engine",
+    "crates/policy-engine",
+    "crates/checkpoint-service",
+    "crates/process-runtime",
+    "crates/builtin-tools",
 ]
 # crates/ 下的核心 crate 随对应任务陆续创建并登记到 members。
 
@@ -61,6 +65,9 @@ bytes = "1"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 blake3 = "1"
 semver = { version = "1", features = ["serde"] }
+
+# 平台原语（Unix 进程组信号）
+libc = "0.2"
 
 # 配置 / CLI
 toml = "0.8"

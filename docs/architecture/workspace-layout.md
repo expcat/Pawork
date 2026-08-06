@@ -55,6 +55,7 @@ Pawork/
 | `git-service` | 系统 Git 封装、缓存、Worktree | 依赖 process-runtime |
 | `diff-service` | 结构化 Diff 解析、分页 Hunk | 依赖 git-service |
 | `checkpoint-service` | Run 写操作快照、回滚 | 依赖 git-service / artifact-store |
+> 注：Phase 4 交付的 checkpoint-service 基于 artifact-store 实现 Blob 快照与回滚；git-service 接入（导出 patch / 固化为 commit）随 Phase 7 完成。
 | `plugin-api` | 插件 Trait、Manifest、生命周期事件 | 依赖 agent-domain / tool-api |
 | `wasm-plugin-host` | WASM Component 宿主、capability / fuel | 依赖 plugin-api |
 | `mcp-client` | MCP Transport、Tools / Resources / Prompts | 依赖 plugin-api |

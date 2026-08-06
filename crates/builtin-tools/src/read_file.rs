@@ -1,0 +1,318 @@
+//! `read_file` 工具（P4-1）。
+//!
+//! 只读读取工作区相对文件：行号、offset/limit、编码检测与二进制检测；
+//! 路径基于 `workspace_id + relative_path`，经 policy-engine 安全校验。
+
+use std::path::Path;
+
+use agent_domain::{ContentPart, TextContent, WorkspaceId};
+use async_trait::async_trait;
+use chardetng::EncodingDetector;
+use serde_json::{json, Value};
+use tool_api::AgentTool;
+use tool_api::CancellationToken;
+use tool_api::ToolCapability;
+use tool_api::ToolDescriptor;
+use tool_api::ToolError;
+use tool_api::ToolEventSink;
+use tool_api::ToolExecutionContext;
+use tool_api::ToolRequest;
+use tool_api::ToolResult;
+use workspace_service::WorkspaceService;
+
+use crate::common::opt_u64;
+use crate::common::require_str;
+use crate::common::resolve_rel;
+use crate::common::workspace_roots;
+use crate::common::BuiltinToolError;
+
+const DEFAULT_LIMIT: u64 = 2000;
+const MAX_OUTPUT_BYTES: u64 = 256 * 1024;
+
+/// `read_file` 工具。
+#[derive(Clone)]
+pub struct ReadFileTool {
+    workspaces: WorkspaceService,
+}
+
+impl ReadFileTool {
+    pub fn new(workspaces: WorkspaceService) -> Self {
+        Self { workspaces }
+    }
+}
+
+#[async_trait]
+impl AgentTool for ReadFileTool {
+    fn descriptor(&self) -> ToolDescriptor {
+        ToolDescriptor {
+            name: "read_file".into(),
+            description: "Read a workspace-relative file with line numbers, offset/limit, encoding and binary detection.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "offset": { "type": "integer", "minimum": 1 },
+                    "limit": { "type": "integer", "minimum": 1 }
+                },
+                "required": ["path"]
+            }),
+            capability: ToolCapability::ReadOnly,
+            read_only: true,
+            supports_concurrency: true,
+            default_timeout_ms: Some(10_000),
+            max_output_bytes: MAX_OUTPUT_BYTES,
+            allowed_in_untrusted_workspace: true,
+        }
+    }
+
+    async fn execute(
+        &self,
+        request: ToolRequest,
+        context: ToolExecutionContext,
+        _sink: &dyn ToolEventSink,
+        _cancel: CancellationToken,
+    ) -> Result<ToolResult, ToolError> {
+        match read(&self.workspaces, &context.workspace_id, &request.input) {
+            Ok(output) => Ok(output),
+            Err(error) => Err(BuiltinToolError::from(error).into()),
+        }
+    }
+}
+
+fn read(
+    service: &WorkspaceService,
+    workspace_id: &WorkspaceId,
+    input: &Value,
+) -> Result<ToolResult, ReadFileError> {
+    let path = require_str(input, "path")?;
+    let offset = opt_u64(input, "offset").unwrap_or(1).max(1) as usize;
+    let limit = opt_u64(input, "limit").unwrap_or(DEFAULT_LIMIT).max(1) as usize;
+
+    let roots = workspace_roots(service, workspace_id)?;
+    let absolute = resolve_rel(&roots, &path)?;
+    let bytes = std::fs::read(&absolute)?;
+
+    if is_binary(&bytes) {
+        return Ok(binary_result(&path, &absolute, bytes.len()));
+    }
+
+    let text = decode(&bytes);
+    let total_lines = text.lines().count();
+    let (rendered, truncated) = render_lines(&text, offset, limit);
+
+    let metadata = json!({
+        "path": path,
+        "absolute": absolute.display().to_string(),
+        "bytes": bytes.len(),
+        "lines_total": total_lines,
+        "offset": offset,
+        "limit": limit,
+        "binary": false,
+    });
+    Ok(ToolResult {
+        content: vec![ContentPart::Text(TextContent { text: rendered })],
+        artifacts: Vec::new(),
+        metadata,
+        truncated,
+        success: true,
+        error: None,
+    })
+}
+
+/// 输出带行号的行片段，返回 (正文, 是否被行数或字节上限截断)。
+fn render_lines(text: &str, offset: usize, limit: usize) -> (String, bool) {
+    let mut out = String::new();
+    let mut budget = MAX_OUTPUT_BYTES as usize;
+    let mut truncated = false;
+    for (idx, line) in text.lines().enumerate() {
+        let line_no = idx + 1;
+        if line_no < offset {
+            continue;
+        }
+        if line_no >= offset + limit {
+            truncated = true;
+            break;
+        }
+        let entry = format!("{line_no:>6}\t{line}\n");
+        if entry.len() > budget {
+            truncated = true;
+            break;
+        }
+        budget -= entry.len();
+        out.push_str(&entry);
+    }
+    (out, truncated)
+}
+
+/// 二进制检测：NUL 字节或大量非文本控制字节即判定为二进制。
+fn is_binary(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    if bytes.contains(&0u8) {
+        return true;
+    }
+    let mut textish = 0usize;
+    let mut ctrl = 0usize;
+    let sample = bytes.len().min(1024);
+    for &b in &bytes[..sample] {
+        if b == 0x09 || b == 0x0a || b == 0x0d || (0x20..=0x7e).contains(&b) || b >= 0x80 {
+            textish += 1;
+        } else {
+            ctrl += 1;
+        }
+    }
+    ctrl > 0 && ctrl * 10 > textish
+}
+
+/// 检测编码并解码为 UTF-8（损失式兜底并标注）。
+fn decode(bytes: &[u8]) -> String {
+    let mut detector = EncodingDetector::new();
+    detector.feed(bytes, true);
+    let encoding = detector.guess(None, true);
+    let (cow, _used, had_errors) = encoding.decode(bytes);
+    let mut text = cow.into_owned();
+    if had_errors {
+        text.push_str("\n\n[warning: contained bytes that were not valid in detected encoding]\n");
+    }
+    text
+}
+
+fn binary_result(path: &str, absolute: &Path, size: usize) -> ToolResult {
+    let metadata = json!({
+        "path": path,
+        "absolute": absolute.display().to_string(),
+        "bytes": size,
+        "binary": true,
+    });
+    let text = format!(
+        "{path}: binary file ({size} bytes); content omitted.\nUse a dedicated tool to inspect binary content."
+    );
+    ToolResult {
+        content: vec![ContentPart::Text(TextContent { text })],
+        artifacts: Vec::new(),
+        metadata,
+        truncated: false,
+        success: true,
+        error: None,
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReadFileError {
+    #[error(transparent)]
+    Common(#[from] BuiltinToolError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+impl From<ReadFileError> for BuiltinToolError {
+    fn from(error: ReadFileError) -> Self {
+        match error {
+            ReadFileError::Common(common) => common,
+            ReadFileError::Io(io) => BuiltinToolError::Io(io),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_domain::Timestamp;
+    use agent_domain::WorkspaceId;
+    use std::fs;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::Ordering;
+
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "pawork-readfile-{}-{}-{name}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).expect("mkdir");
+        path
+    }
+
+    fn make_service() -> (WorkspaceService, WorkspaceId, std::path::PathBuf) {
+        let root = temp_root("ws");
+        let service = WorkspaceService::new();
+        let id = WorkspaceId::from("ws-1");
+        service
+            .add(
+                id.clone(),
+                "demo",
+                [root.clone()],
+                Timestamp::from_unix_millis(1),
+            )
+            .expect("add");
+        (service, id, root)
+    }
+
+    fn run_read(service: &WorkspaceService, id: &WorkspaceId, input: Value) -> ToolResult {
+        read(service, id, &input).expect("read ok")
+    }
+
+    #[test]
+    fn line_numbers_offset_and_limit() {
+        let (service, id, root) = make_service();
+        fs::write(root.join("a.txt"), "one\ntwo\nthree\nfour\nfive\n").unwrap();
+        let res = run_read(
+            &service,
+            &id,
+            json!({"path": "a.txt", "offset": 2, "limit": 2}),
+        );
+        assert!(res.success);
+        assert!(res.truncated);
+        let text = text_of(&res);
+        assert!(text.contains("     2\ttwo"));
+        assert!(text.contains("     3\tthree"));
+        assert!(!text.contains("four"));
+    }
+
+    #[test]
+    fn binary_file_is_detected_and_omitted() {
+        let (service, id, root) = make_service();
+        let mut bytes = vec![0u8; 64];
+        bytes[0] = 1;
+        fs::write(root.join("bin.dat"), &bytes).unwrap();
+        let res = run_read(&service, &id, json!({"path": "bin.dat"}));
+        assert_eq!(res.metadata["binary"], true);
+        assert!(text_of(&res).contains("binary file"));
+    }
+
+    #[test]
+    fn rejects_absolute_and_traversal_paths() {
+        let (service, id, root) = make_service();
+        fs::write(root.join("ok.txt"), "hi").unwrap();
+        let abs = root.join("ok.txt");
+        let err = read(&service, &id, &json!({"path": abs.display().to_string()})).unwrap_err();
+        assert!(matches!(
+            err,
+            ReadFileError::Common(BuiltinToolError::Path(_))
+        ));
+        let err = read(&service, &id, &json!({"path": "../escape.txt"})).unwrap_err();
+        assert!(matches!(
+            err,
+            ReadFileError::Common(BuiltinToolError::Path(_))
+        ));
+    }
+
+    #[test]
+    fn missing_file_returns_not_found_kind() {
+        let (service, id, _root) = make_service();
+        let error: ToolError =
+            BuiltinToolError::from(read(&service, &id, &json!({"path": "nope.txt"})).unwrap_err())
+                .into();
+        assert_eq!(error.kind, tool_api::ToolErrorKind::NotFound);
+    }
+
+    fn text_of(res: &ToolResult) -> String {
+        match &res.content[0] {
+            ContentPart::Text(t) => t.text.clone(),
+            _ => String::new(),
+        }
+    }
+}
