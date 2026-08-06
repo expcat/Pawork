@@ -4,10 +4,13 @@
 //! - unstage：`git reset -q -- <paths>`。
 //! - discard：`git checkout -- <paths>`，**会丢失工作区改动**，故 [`StageService::classify`]
 //!   将 discard 标记为 [`StageRisk::Dangerous`]，供上层强制审批。
+//! - apply_patch_to_index：`git apply --cached [--reverse] <patchfile>`，
+//!   hunk / line 级暂存的底层通道（patch 经临时文件传入，不触碰工作区）。
 //!
 //! 路径经 `git` 的 `--` 字面参数传入，天然防 shell 注入，绝不拼接 shell 字符串。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use agent_domain::CancellationToken;
 
@@ -112,6 +115,45 @@ impl<'a> StageService<'a> {
         }
     }
 
+    /// 把 unified patch 应用到 index（`git apply --cached`），不触碰工作区。
+    ///
+    /// `reverse = true` 时执行 `--reverse`（用于取消暂存已暂存的 hunk）。
+    /// patch 经进程内唯一的临时文件传入（[`crate::process::GitRunner`] 不支持
+    /// stdin），用后即删。patch 与 index 不匹配（如 index 已变化）归一为
+    /// [`GitError::PatchDoesNotApply`]。
+    pub async fn apply_patch_to_index(
+        &self,
+        patch: &str,
+        reverse: bool,
+        cancel: CancellationToken,
+    ) -> Result<(), GitError> {
+        if patch.trim().is_empty() {
+            return Ok(());
+        }
+        let patch_file = temp_patch_path();
+        std::fs::write(&patch_file, patch)?;
+        let file_arg = patch_file.to_string_lossy().into_owned();
+        let args: Vec<&str> = if reverse {
+            vec!["apply", "--cached", "--reverse", &file_arg]
+        } else {
+            vec!["apply", "--cached", &file_arg]
+        };
+        let result = self.runner.run(&self.work_dir, &args, cancel).await;
+        // 无论成败都清理临时文件。
+        let _ = std::fs::remove_file(&patch_file);
+        match result {
+            Ok(_) => Ok(()),
+            Err(GitError::GitFailed { stderr, .. }) => {
+                if stderr.contains("does not apply") || stderr.contains("patch failed") {
+                    Err(GitError::PatchDoesNotApply)
+                } else {
+                    Err(GitError::GitFailed { code: None, stderr })
+                }
+            }
+            Err(other) => Err(other),
+        }
+    }
+
     /// 执行形如 `git <prefix...> -- <path1> <path2> ...` 的命令。
     async fn run_path_op(
         &self,
@@ -129,6 +171,16 @@ impl<'a> StageService<'a> {
     }
 }
 
+/// 生成进程内唯一的 patch 临时文件路径（pid + 自增计数）。
+fn temp_patch_path() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let name = format!(
+        "pawork-hunk-stage-{}-{}.patch",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    std::env::temp_dir().join(name)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +216,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmpdir");
         let repo = dir.path().to_path_buf();
         run_git(&repo, &["init", "-q"]);
+        // 隔离系统级 core.autocrlf=true（Windows 常见），保证内容断言确定。
+        run_git(&repo, &["config", "core.autocrlf", "false"]);
         std::fs::write(repo.join("a.txt"), "line1\n").expect("write");
         run_git(&repo, &["add", "a.txt"]);
         run_git(&repo, &["commit", "-q", "-m", "init"]);
@@ -269,5 +323,46 @@ mod tests {
             .await
             .expect("noop stage");
         assert_eq!(porcelain(&repo), "");
+    }
+
+    /// 手写 patch：a.txt 在 line1 后追加 line2。
+    fn append_line2_patch() -> String {
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n line1\n+line2\n"
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn apply_patch_to_index_stages_and_reverses() {
+        let (_dir, repo) = make_repo();
+        let runner = GitRunner::new();
+        let svc = StageService::new(&runner, &repo);
+        svc.apply_patch_to_index(&append_line2_patch(), false, CancellationToken::new())
+            .await
+            .expect("apply");
+        // 改动进 index，工作区不动：index≠HEAD 且 worktree≠index → "MM"。
+        assert_eq!(porcelain(&repo), "MM a.txt\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "line1\n"
+        );
+        svc.apply_patch_to_index(&append_line2_patch(), true, CancellationToken::new())
+            .await
+            .expect("reverse");
+        assert_eq!(porcelain(&repo), "");
+    }
+
+    #[tokio::test]
+    async fn apply_patch_with_stale_index_is_patch_does_not_apply() {
+        let (_dir, repo) = make_repo();
+        let runner = GitRunner::new();
+        let svc = StageService::new(&runner, &repo);
+        // 先让 index 变成另一份内容，patch 的 preimage 不再匹配。
+        std::fs::write(repo.join("a.txt"), "totally different\n").expect("write");
+        run_git(&repo, &["add", "a.txt"]);
+        let err = svc
+            .apply_patch_to_index(&append_line2_patch(), false, CancellationToken::new())
+            .await
+            .expect_err("过期 patch 应失败");
+        assert!(matches!(err, GitError::PatchDoesNotApply), "err = {err:?}");
     }
 }

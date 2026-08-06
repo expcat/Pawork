@@ -7,11 +7,15 @@
 //! - [`service::DiffService`]：调 git + 解析。
 //! - [`parser`]：unified diff 状态机解析（纯内存，100k 行 < 500ms）。
 //! - [`service::paginate`]：分页。
+//! - [`hunk_stage::HunkStageService`]：基于结构化 Diff 的 hunk / line 级暂存
+//!   与取消暂存（P7-7）。
 
+pub mod hunk_stage;
 pub mod model;
 pub mod parser;
 pub mod service;
 
+pub use hunk_stage::{build_hunk_patch, build_line_patch, HunkStageService};
 pub use model::{DiffFile, DiffHunk, DiffLine, FileStatus, HunkId, LineKind};
 pub use parser::parse_unified;
 pub use service::{paginate, DiffOptions, DiffPage, DiffService};

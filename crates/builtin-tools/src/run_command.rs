@@ -209,8 +209,29 @@ fn parse_command(input: &Value) -> Result<(String, Vec<String>), RunCommandError
         return Ok((program, args));
     }
     let command = require_str(input, "command")?;
-    // command 字符串保持 shell 语义：通过 `sh -c` 执行，避免手工词法分析。
-    Ok(("sh".to_string(), vec!["-c".to_string(), command]))
+    // command 字符串保持 shell 语义：unix 走 `sh -c`、Windows 走
+    // `cmd /d /s /c`，避免手工词法分析。
+    Ok(shell_argv(command))
+}
+
+/// 把 command 字符串包装为平台 shell 的 argv。
+#[cfg(not(windows))]
+fn shell_argv(command: String) -> (String, Vec<String>) {
+    ("sh".to_string(), vec!["-c".to_string(), command])
+}
+
+/// 把 command 字符串包装为平台 shell 的 argv（Windows：`cmd /d /s /c`）。
+#[cfg(windows)]
+fn shell_argv(command: String) -> (String, Vec<String>) {
+    (
+        "cmd".to_string(),
+        vec![
+            "/d".to_string(),
+            "/s".to_string(),
+            "/c".to_string(),
+            command,
+        ],
+    )
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -303,11 +324,15 @@ mod tests {
     async fn non_zero_exit_is_not_success() {
         let (service, id, _root) = make_service();
         let sink = RecordingToolSink::default();
+        #[cfg(windows)]
+        let command = "exit 7";
+        #[cfg(not(windows))]
+        let command = "sh -c \"exit 7\"";
         let res = run(
             &service,
             ProcessRuntime::new(),
             &id,
-            &json!({"command": "sh -c \"exit 7\""}),
+            &json!({"command": command}),
             &sink,
             CancellationToken::new(),
         )
@@ -321,11 +346,16 @@ mod tests {
     async fn timeout_produces_failure() {
         let (service, id, _root) = make_service();
         let sink = RecordingToolSink::default();
+        // Windows 无 sleep，用 ping 制造长时进程。
+        #[cfg(windows)]
+        let command = "ping -n 30 127.0.0.1";
+        #[cfg(not(windows))]
+        let command = "sleep 10";
         let res = run(
             &service,
             ProcessRuntime::new(),
             &id,
-            &json!({"command": "sleep 10", "timeout_ms": 200}),
+            &json!({"command": command, "timeout_ms": 200}),
             &sink,
             CancellationToken::new(),
         )

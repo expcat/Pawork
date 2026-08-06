@@ -384,9 +384,17 @@ where
 mod tests {
     use super::*;
 
-    fn sh(args: &[&str]) -> CommandSpec {
-        let mut spec = CommandSpec::new("sh");
-        spec = spec.args(args.iter().map(|s| s.to_string()));
+    /// 在平台 shell 中执行脚本（unix：`sh -c`；Windows：`cmd /d /s /c`）。
+    fn shell(script: &str) -> CommandSpec {
+        #[cfg(not(windows))]
+        let mut spec = CommandSpec::new("sh").args(["-c".to_string(), script.to_string()]);
+        #[cfg(windows)]
+        let mut spec = CommandSpec::new("cmd").args([
+            "/d".to_string(),
+            "/s".to_string(),
+            "/c".to_string(),
+            script.to_string(),
+        ]);
         spec.max_output_bytes = 4 * 1024 * 1024;
         spec
     }
@@ -394,13 +402,26 @@ mod tests {
     #[tokio::test]
     async fn captures_stdout_and_stderr() {
         let runtime = ProcessRuntime::new();
-        let spec = sh(&["-c", "echo hello; echo world >&2"]);
+        #[cfg(not(windows))]
+        let spec = shell("echo hello; echo world >&2");
+        #[cfg(windows)]
+        // 注意：cmd 的 echo 会保留 `&` 与重定向前的空格/数字，因此这些位置不留空格。
+        let spec = shell("echo hello& echo world>&2");
         let out = runtime
             .run(spec, CancellationToken::new())
             .await
             .expect("run");
-        assert_eq!(out.stdout, b"hello\n");
-        assert_eq!(out.stderr, b"world\n");
+        // cmd 的行尾为 CRLF。
+        #[cfg(not(windows))]
+        {
+            assert_eq!(out.stdout, b"hello\n");
+            assert_eq!(out.stderr, b"world\n");
+        }
+        #[cfg(windows)]
+        {
+            assert_eq!(out.stdout, b"hello\r\n");
+            assert_eq!(out.stderr, b"world\r\n");
+        }
         assert_eq!(out.exit_code, Some(0));
         assert!(!out.timed_out && !out.killed);
     }
@@ -408,7 +429,11 @@ mod tests {
     #[tokio::test]
     async fn large_output_is_truncated() {
         let runtime = ProcessRuntime::new();
-        let mut spec = sh(&["-c", "seq 1000000"]);
+        #[cfg(not(windows))]
+        let mut spec = shell("seq 1000000");
+        // Windows 无 seq：用 PowerShell 产生足量输出。
+        #[cfg(windows)]
+        let mut spec = shell("powershell -NoProfile -Command 1..200000");
         spec.max_output_bytes = 1024;
         let out = runtime
             .run(spec, CancellationToken::new())
@@ -421,7 +446,11 @@ mod tests {
     #[tokio::test]
     async fn timeout_kills_process() {
         let runtime = ProcessRuntime::new();
-        let mut spec = sh(&["-c", "sleep 30"]);
+        #[cfg(not(windows))]
+        let mut spec = shell("sleep 30");
+        // Windows 无 sleep：ping 约 60s。
+        #[cfg(windows)]
+        let mut spec = shell("ping -n 61 127.0.0.1");
         spec.timeout = Some(Duration::from_millis(200));
         let out = runtime
             .run(spec, CancellationToken::new())
@@ -436,7 +465,10 @@ mod tests {
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         let handle = tokio::spawn(async move {
-            let mut spec = sh(&["-c", "sleep 30"]);
+            #[cfg(not(windows))]
+            let mut spec = shell("sleep 30");
+            #[cfg(windows)]
+            let mut spec = shell("ping -n 61 127.0.0.1");
             spec.timeout = Some(Duration::from_secs(60));
             runtime.run(spec, cancel_clone).await
         });
@@ -453,7 +485,10 @@ mod tests {
     #[tokio::test]
     async fn stream_events_emitted() {
         let runtime = ProcessRuntime::new();
-        let mut spec = sh(&["-c", "echo a; echo b >&2"]);
+        #[cfg(not(windows))]
+        let mut spec = shell("echo a; echo b >&2");
+        #[cfg(windows)]
+        let mut spec = shell("echo a & echo b 1>&2");
         spec.timeout = Some(Duration::from_secs(5));
         let (mut rx, _handle) = runtime
             .spawn_stream(spec, CancellationToken::new())

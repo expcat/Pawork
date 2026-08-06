@@ -16,6 +16,22 @@ pub enum GitError {
     DetachedHead,
     #[error("git failed (exit code {code:?}): {stderr}")]
     GitFailed { code: Option<i32>, stderr: String },
+    #[error("nothing to commit")]
+    NothingToCommit,
+    #[error("branch already exists: {0}")]
+    BranchAlreadyExists(String),
+    #[error("branch not found: {0}")]
+    BranchNotFound(String),
+    #[error("branch not fully merged: {0}")]
+    BranchNotMerged(String),
+    #[error("reference not found: {0}")]
+    ReferenceNotFound(String),
+    #[error("local changes would be overwritten: {0:?}")]
+    LocalChangesWouldBeOverwritten(Vec<String>),
+    #[error("patch does not apply (index changed since diff?)")]
+    PatchDoesNotApply,
+    #[error("merge conflict: {0}")]
+    Conflict(String),
     #[error("git operation timed out")]
     Timeout,
     #[error("git operation cancelled")]

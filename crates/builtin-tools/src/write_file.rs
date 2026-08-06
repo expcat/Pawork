@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
@@ -139,7 +140,8 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), WriteFileError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    // 保留已有文件的 unix 权限（覆盖场景）。
+    // 保留已有文件的 unix 权限（覆盖场景）；非 unix 平台无 mode 概念。
+    #[cfg(unix)]
     let existing_mode = path.metadata().ok().map(|m| m.permissions().mode());
 
     let tmp = path.with_file_name(format!(
@@ -158,10 +160,9 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), WriteFileError> {
     }
     result?;
 
+    #[cfg(unix)]
     if let Some(mode) = existing_mode {
-        if cfg!(unix) {
-            let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
-        }
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
     }
     Ok(())
 }

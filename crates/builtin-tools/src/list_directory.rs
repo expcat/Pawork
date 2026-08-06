@@ -218,6 +218,7 @@ mod tests {
     use agent_domain::Timestamp;
     use agent_domain::WorkspaceId;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
@@ -266,8 +267,12 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert!(lines[0].contains("sub"));
         assert!(text.contains("a.txt"));
-        assert!(text.contains("symlink"));
-        assert!(text.contains("link.txt -> "));
+        // symlink 仅在 unix 测试中创建（见上）。
+        #[cfg(unix)]
+        {
+            assert!(text.contains("symlink"));
+            assert!(text.contains("link.txt -> "));
+        }
     }
 
     #[test]

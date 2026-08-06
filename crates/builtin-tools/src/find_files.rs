@@ -253,7 +253,11 @@ mod tests {
             _ => panic!("text"),
         };
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines, vec!["src/a.rs", "src/b.rs"]);
+        // 路径分隔符随平台（Windows 为反斜杠）。
+        let sep = std::path::MAIN_SEPARATOR;
+        let a = format!("src{sep}a.rs");
+        let b = format!("src{sep}b.rs");
+        assert_eq!(lines, vec![a.as_str(), b.as_str()]);
     }
 
     #[test]

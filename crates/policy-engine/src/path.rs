@@ -263,7 +263,12 @@ mod tests {
     #[test]
     fn rejects_absolute() {
         let tmp = TempDir::new();
-        let err = resolve_workspace_path(&roots(&tmp), "/etc/passwd").unwrap_err();
+        // 平台各自构造一个真正的绝对路径。
+        #[cfg(not(windows))]
+        let abs = "/etc/passwd";
+        #[cfg(windows)]
+        let abs = r"C:\Windows\System32\cmd.exe";
+        let err = resolve_workspace_path(&roots(&tmp), abs).unwrap_err();
         assert!(matches!(err, PathSafetyError::AbsolutePath), "{err:?}");
     }
 

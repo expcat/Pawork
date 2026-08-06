@@ -1,6 +1,6 @@
 # P7-7：Hunk / Line stage（P1）
 
-> Phase 7 · Git、Diff 与 Worktree · 状态：⚪P1（可推迟）· 依赖：P7-3
+> Phase 7 · Git、Diff 与 Worktree · 状态：🟢已完成 · 依赖：P7-3
 
 **最终目的**：实现按 hunk / 按行暂存，让用户能精细控制提交内容。标记为 P1，可在 MVP 后交付。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] 按块/按行暂存结果正确
+- [x] 按块/按行暂存结果正确（`HunkStageService`：hunk/line 级 stage/unstage，真实 git 仓库测试覆盖）
 
 **相关文档**：[git-diff](../docs/features/git-diff.md) · [ROADMAP](../ROADMAP.md)
