@@ -8,6 +8,7 @@
 //! - [`usage`]：token / 费用 / stop reason 归一；
 //! - [`stream_assembly`]：`ProviderStreamEvent` → 领域消息组装。
 
+pub mod capability;
 pub mod http;
 pub mod jsonl;
 pub mod partial_json;

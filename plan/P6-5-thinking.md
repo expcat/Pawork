@@ -1,6 +1,6 @@
 # P6-5：Thinking / Reasoning
 
-> Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P6-1、P6-2、P6-3
+> Phase 6 · 主要 Provider · 状态：🟢已完成 · 依赖：P6-1、P6-2、P6-3
 
 **最终目的**：统一 thinking / reasoning 能力（thinking level、stream thinking delta），让 Agent 能利用推理过程且校验 level 合法。
 

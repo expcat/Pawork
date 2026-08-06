@@ -1,0 +1,23 @@
+[package]
+name = "provider-openai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork OpenAI 原生适配器（官方 Chat Completions 端点与模型目录）"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+provider-api = { path = "../provider-api" }
+provider-runtime = { path = "../provider-runtime" }
+provider-openai-compatible = { path = "../provider-openai-compatible" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+wiremock.workspace = true
+test-support = { path = "../test-support" }

@@ -1,6 +1,6 @@
 # P6-2：Anthropic 适配
 
-> Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P2-11
+> Phase 6 · 主要 Provider · 状态：🟢已完成 · 依赖：P2-11
 
 **最终目的**：实现 Anthropic 适配并通过 Contract Tests，覆盖其 thinking / tool / cache 等差异，核心无特例。
 

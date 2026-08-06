@@ -1,6 +1,6 @@
 # P6-4：OAuth
 
-> Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P2-6
+> Phase 6 · 主要 Provider · 状态：🟢已完成 · 依赖：P2-6
 
 **最终目的**：实现 OAuth（PKCE / Device Flow / auto refresh / callback 接收），为需要 OAuth 的 provider 与 MCP 提供鉴权基础。
 

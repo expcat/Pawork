@@ -1,6 +1,6 @@
 # P6-6：图片输入
 
-> Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P6-1、P6-2、P6-3
+> Phase 6 · 主要 Provider · 状态：🟢已完成 · 依赖：P6-1、P6-2、P6-3
 
 **最终目的**：统一图片输入（image content part），让 Agent 可接收并传递图片给多模态模型。
 

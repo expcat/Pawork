@@ -14,8 +14,15 @@ mod backend;
 mod credential;
 mod error;
 mod masked;
+pub mod oauth;
 
 pub use backend::{KeychainBackend, MemoryBackend, SecretBackend};
 pub use credential::{ApiKeyCredential, CredentialId, StoredCredential};
 pub use error::AuthError;
 pub use masked::MaskedCredential;
+pub use oauth::{
+    exchange_pkce_code, needs_refresh, poll_device_token, random_state, read_refresh_token,
+    refresh_access_token, request_device_authorization, resolve_oauth_credential, start_pkce_flow,
+    store_oauth_token, CallbackServer, DeviceFlowConfig, DeviceUserPrompt, Pkce, PkceFlowConfig,
+    PkceSession, TokenSet,
+};

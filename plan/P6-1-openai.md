@@ -1,6 +1,6 @@
 # P6-1：OpenAI 适配
 
-> Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P2-11
+> Phase 6 · 主要 Provider · 状态：🟢已完成 · 依赖：P2-11
 
 **最终目的**：实现 OpenAI 原生适配并通过统一 Contract Tests，覆盖关键能力，核心 Agent 不含 OpenAI 特例。
 

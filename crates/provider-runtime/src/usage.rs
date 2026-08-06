@@ -14,35 +14,30 @@ use serde_json::Value;
 ///
 /// 缺失字段按 0 处理，绝不 panic。
 pub fn normalize_usage(raw: &Value) -> TokenUsage {
-    let input_tokens = read_u64(raw, &["input_tokens", "prompt_tokens"])
-        .or_else(|| read_u64_in(raw, "usage", &["input_tokens", "prompt_tokens"]))
-        .unwrap_or(0);
-    let output_tokens = read_u64(raw, &["output_tokens", "completion_tokens"])
-        .or_else(|| read_u64_in(raw, "usage", &["output_tokens", "completion_tokens"]))
-        .unwrap_or(0);
-
-    let cache_read_tokens = read_u64(raw, &["cache_read_input_tokens", "cache_read_tokens"])
-        .or_else(|| {
-            raw.get("prompt_tokens_details")
-                .and_then(|d| d.get("cached_tokens"))
-                .and_then(|v| v.as_u64())
-        })
-        .unwrap_or(0);
-    let cache_write_tokens = read_u64(
-        raw,
-        &[
-            "cache_creation_input_tokens",
-            "cache_write_tokens",
-            "cache_write_input_tokens",
-        ],
-    )
-    .unwrap_or(0);
+    // token 字段可能位于 `raw` 顶层，也可能嵌套在 "usage" 下（OpenAI / Anthropic
+    // 流式均把 usage 嵌在 "usage" 键内）。先解析出有效 usage 视图，再回退到顶层。
+    let view = raw
+        .get("usage")
+        .filter(|value| value.is_object())
+        .unwrap_or(raw);
 
     TokenUsage {
-        input_tokens,
-        output_tokens,
-        cache_read_tokens,
-        cache_write_tokens,
+        input_tokens: pick_u64(view, raw, &["input_tokens", "prompt_tokens"]).unwrap_or(0),
+        output_tokens: pick_u64(view, raw, &["output_tokens", "completion_tokens"]).unwrap_or(0),
+        cache_read_tokens: pick_u64(view, raw, &["cache_read_input_tokens", "cache_read_tokens"])
+            .or_else(|| prompt_cached_tokens(view))
+            .or_else(|| prompt_cached_tokens(raw))
+            .unwrap_or(0),
+        cache_write_tokens: pick_u64(
+            view,
+            raw,
+            &[
+                "cache_creation_input_tokens",
+                "cache_write_tokens",
+                "cache_write_input_tokens",
+            ],
+        )
+        .unwrap_or(0),
     }
 }
 
@@ -110,9 +105,16 @@ fn read_u64(value: &Value, keys: &[&str]) -> Option<u64> {
     }
     None
 }
+/// 先从 `primary` 读字段，失败再从 `fallback` 读。
+fn pick_u64(primary: &Value, fallback: &Value, keys: &[&str]) -> Option<u64> {
+    read_u64(primary, keys).or_else(|| read_u64(fallback, keys))
+}
 
-fn read_u64_in(value: &Value, container: &str, keys: &[&str]) -> Option<u64> {
-    value.get(container).and_then(|inner| read_u64(inner, keys))
+/// 读取 OpenAI 的 `prompt_tokens_details.cached_tokens`（缓存命中）。
+fn prompt_cached_tokens(view: &Value) -> Option<u64> {
+    view.get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_u64())
 }
 
 #[cfg(test)]

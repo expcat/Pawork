@@ -47,6 +47,16 @@ pub fn chunk_to_events(data: &str, pending: &mut ChunkState) -> Vec<ProviderStre
         }
     }
 
+    // reasoning / thinking delta（OpenAI o-series：delta.reasoning_content / reasoning）
+    if let Some(reasoning) = delta
+        .and_then(|d| d.get("reasoning_content").or_else(|| d.get("reasoning")))
+        .and_then(|c| c.as_str())
+    {
+        if !reasoning.is_empty() {
+            events.push(ProviderStreamEvent::ThinkingDelta(reasoning.to_string()));
+        }
+    }
+
     // tool_calls delta（OpenAI 用 index 标识并行 tool call）
     if let Some(tool_calls) = delta
         .and_then(|d| d.get("tool_calls"))
@@ -197,5 +207,28 @@ mod tests {
         assert!(is_done("[DONE]"));
         assert!(is_done(" [DONE] "));
         assert!(!is_done("data"));
+    }
+
+    #[test]
+    fn reasoning_delta_maps_to_thinking() {
+        let mut state = ChunkState::default();
+        let events = chunk_to_events(
+            r#"{"choices":[{"delta":{"reasoning_content":"thinking hard"}}]}"#,
+            &mut state,
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ProviderStreamEvent::ThinkingDelta(t) if t == "thinking hard"
+        )));
+
+        // 兼容部分兼容服务使用 `reasoning` 字段名
+        let events2 = chunk_to_events(
+            r#"{"choices":[{"delta":{"reasoning":"more"}}]}"#,
+            &mut state,
+        );
+        assert!(events2.iter().any(|e| matches!(
+            e,
+            ProviderStreamEvent::ThinkingDelta(t) if t == "more"
+        )));
     }
 }

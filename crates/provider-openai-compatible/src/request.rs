@@ -86,6 +86,13 @@ pub fn to_chat_completions_body(request: &CanonicalModelRequest) -> Value {
         }
     }
 
+    // provider-specific options 透传（P6-9）：把 provider_options 合并进请求体顶层，
+    // 让 provider 专属参数（top_p / seed / service_tier 等）直达远端。
+    // 语义为「覆盖」：与 canonical 同名时以 provider_options 为准。
+    for (key, value) in &request.provider_options {
+        body.insert(key.clone(), value.clone());
+    }
+
     Value::Object(body)
 }
 
@@ -103,12 +110,16 @@ fn message_to_openai(message: &agent_domain::Message) -> Vec<Value> {
 
     // 先把 tool_result 单独抽出（OpenAI 要求 role=tool + tool_call_id）
     let mut out = Vec::new();
-    let mut text_parts = Vec::new();
     let mut tool_calls = Vec::new();
+    // 按 message 内顺序收集 text / image 内容片段；无图片时退化为纯字符串。
+    let mut ordered_parts: Vec<Value> = Vec::new();
+    let mut has_image = false;
 
     for part in &message.content {
         match part {
-            ContentPart::Text(t) => text_parts.push(t.text.clone()),
+            ContentPart::Text(t) => {
+                ordered_parts.push(json!({"type":"text","text": t.text.clone()}))
+            }
             ContentPart::Thinking(_) => { /* 推理内容不回传给 provider */ }
             ContentPart::ToolCall(call) => {
                 let args = if call.arguments.is_null() {
@@ -138,8 +149,14 @@ fn message_to_openai(message: &agent_domain::Message) -> Vec<Value> {
                     "content": content,
                 }));
             }
-            ContentPart::Image(_) | ContentPart::ArtifactRef(_) => {
-                // 图片输入见 P6-6，此处保守跳过
+            ContentPart::Image(image) => {
+                if let Some(url) = image_to_openai_url(image) {
+                    has_image = true;
+                    ordered_parts.push(json!({"type":"image_url","image_url":{"url": url}}));
+                }
+            }
+            ContentPart::ArtifactRef(_) => {
+                // artifact 由 context-engine 解析为 base64/url 后再进入 provider，此处跳过
             }
         }
     }
@@ -147,8 +164,15 @@ fn message_to_openai(message: &agent_domain::Message) -> Vec<Value> {
     // 主消息（若还有文本或 tool_calls）
     let mut main = Map::new();
     main.insert("role".into(), Value::String(role.into()));
-    if !text_parts.is_empty() {
-        main.insert("content".into(), Value::String(text_parts.join("\n")));
+    if has_image {
+        main.insert("content".into(), Value::Array(ordered_parts));
+    } else if !ordered_parts.is_empty() {
+        let text: String = ordered_parts
+            .into_iter()
+            .filter_map(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
+            .collect::<Vec<_>>()
+            .join("\n");
+        main.insert("content".into(), Value::String(text));
     }
     if !tool_calls.is_empty() {
         main.insert("tool_calls".into(), Value::Array(tool_calls));
@@ -163,6 +187,30 @@ fn message_to_openai(message: &agent_domain::Message) -> Vec<Value> {
     }
 
     out
+}
+
+/// 把 canonical 图片转换为 OpenAI `image_url` 的 url 字符串。
+///
+/// - `Url`：直接透传；
+/// - `Base64`：拼成 `data:<media_type>;base64,<data>`；
+/// - `Artifact`：由 context-engine 解析后再进入 provider，此处返回 `None`。
+fn image_to_openai_url(image: &agent_domain::ImageContent) -> Option<String> {
+    use agent_domain::ImageSource;
+    let url = match &image.source {
+        ImageSource::Url(u) => u.clone(),
+        ImageSource::Base64(data) => {
+            if data.is_empty() {
+                return None;
+            }
+            format!("data:{};base64,{}", image.media_type, data)
+        }
+        ImageSource::Artifact(_) => return None,
+    };
+    if url.is_empty() {
+        None
+    } else {
+        Some(url)
+    }
 }
 
 fn tool_choice_to_openai(choice: &ToolChoice) -> Value {
@@ -301,5 +349,46 @@ mod tests {
         assert_eq!(tool_msg["role"], "tool");
         assert_eq!(tool_msg["tool_call_id"], "call-1");
         assert_eq!(tool_msg["content"], "body");
+    }
+
+    #[test]
+    fn image_content_maps_to_image_url_array() {
+        use agent_domain::{ImageContent, ImageSource};
+
+        let mut req = base_request();
+        req.messages.push(Message {
+            id: MessageId::new("u2"),
+            role: MessageRole::User,
+            content: vec![
+                ContentPart::Text(TextContent {
+                    text: "what is this".into(),
+                }),
+                ContentPart::Image(ImageContent {
+                    source: ImageSource::Url("https://example.com/a.png".into()),
+                    media_type: "image/png".into(),
+                    alt_text: None,
+                }),
+                ContentPart::Image(ImageContent {
+                    source: ImageSource::Base64("QkFTRTY0".into()),
+                    media_type: "image/png".into(),
+                    alt_text: None,
+                }),
+            ],
+            metadata: MessageMetadata::default(),
+        });
+        let body = to_chat_completions_body(&req);
+        let msg = &body["messages"][1];
+        assert_eq!(msg["role"], "user");
+        // 有图片时 content 为数组：text + image_url(url) + image_url(data:)
+        let content = msg["content"].as_array().expect("content 应为数组");
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "https://example.com/a.png");
+        assert_eq!(content[2]["type"], "image_url");
+        assert_eq!(
+            content[2]["image_url"]["url"],
+            "data:image/png;base64,QkFTRTY0"
+        );
     }
 }

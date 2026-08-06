@@ -1,6 +1,6 @@
 # P6-9：Provider-specific options
 
-> Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P6-1、P6-2、P6-3
+> Phase 6 · 主要 Provider · 状态：🟢已完成 · 依赖：P6-1、P6-2、P6-3
 
 **最终目的**：实现 provider 特有选项透传与原始 metadata 保存，让用户可访问 provider 专属能力，同时核心 Agent 不含特例（ADR-002）。
 

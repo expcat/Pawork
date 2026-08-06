@@ -56,6 +56,21 @@ pub enum ProviderStreamEvent {
 - **P1**：AWS Bedrock；Mistral；Azure OpenAI；Google Vertex AI；GitHub Models；自定义 Endpoint。
 - **P2**：Provider WASM Plugin；动态模型发现；Provider 路由；多 Provider fallback；自动成本和延迟路由。
 
+## 已实现 Provider（Phase 6）
+
+| Provider | crate | 协议 | 关键能力 |
+| --- | --- | --- | --- |
+| OpenAI（原生） | `provider-openai` | Chat Completions | reasoning 流、图片输入、结构化输出、provider options 透传、prompt cache 自动命中 |
+| OpenAI-compatible / 本地服务 | `provider-openai-compatible` | Chat Completions | 覆盖云端兼容接口与 Ollama / vLLM / LM Studio；图片输入、reasoning、options 透传 |
+| Anthropic | `provider-anthropic` | Messages API | thinking、tool_use、prompt cache（`cache_control`）、图片、`top_k` 等透传 |
+| Google Gemini | `provider-google` | `generateContent`（`alt=sse`） | `function_call`、`thought` 流、`responseSchema`、`thinkingConfig`、`cachedContentTokenCount` |
+
+跨切能力（Phase 6）：thinking/reasoning level（P6-5）、图片输入（P6-6）、prompt cache 控制+命中（P6-7）、结构化输出（P6-8）、provider-specific options 透传+raw metadata（P6-9）。Agent Core 经 [`agent-engine/tests/no_provider_branch.rs`](../../crates/agent-engine/tests/no_provider_branch.rs) 回归守护，禁止按 provider 名走分支。
+
+## 认证
+
+API Key 与 OS Keychain 见 [auth](auth.md)；OAuth（PKCE / Device Flow / auto refresh / callback）由 `auth-service::oauth` 提供，明文 token 只存 SecretBackend。
+
 ## 错误模型
 
 统一错误类别：Authentication / Authorization / RateLimited / QuotaExceeded / InvalidRequest / ModelNotFound / ContextTooLarge / ContentFiltered / Network / Timeout / ProviderUnavailable / StreamInterrupted / MalformedResponse / Cancelled / Unknown。

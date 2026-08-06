@@ -33,7 +33,7 @@ Pawork/
 | `provider-openai-compatible` | OpenAI 兼容适配（含 Ollama / vLLM / LM Studio） | 依赖 provider-runtime |
 | `provider-bedrock` | AWS Bedrock（优先级 P1） | 依赖 provider-runtime |
 | `provider-mistral` | Mistral（优先级 P1） | 依赖 provider-runtime |
-| `auth-service` | 认证方式、Secret 后端、状态机 | 依赖 provider-api |
+| `auth-service` | 认证方式、Secret 后端、OAuth（PKCE/Device Flow/refresh/callback） | 依赖 provider-api |
 | `model-registry` | 模型目录、别名、能力、定价 | 依赖 provider-api |
 | `config-service` | 确定性配置 schema、来源发现与层级合并 | 独立；供 context-engine / policy / resource-loader 等消费 |
 | `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain |

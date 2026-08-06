@@ -1,6 +1,6 @@
 # P6-7：Prompt Cache
 
-> Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P6-1、P6-2
+> Phase 6 · 主要 Provider · 状态：🟢已完成 · 依赖：P6-1、P6-2
 
 **最终目的**：实现 prompt cache 控制（主要 Anthropic），降低重复上下文成本。
 

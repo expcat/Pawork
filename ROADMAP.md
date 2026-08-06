@@ -25,7 +25,7 @@
 | 3 | Agent Loop | 10 | 10 | 🟢已完成 |
 | 4 | 核心工具与权限 | 12 | 12 | 🟢已完成 |
 | 5 | Session、Branch 与 Compaction | 9 | 9 | 🟢已完成 |
-| 6 | 主要 Provider | 9 | 0 | 🟡未开始 |
+| 6 | 主要 Provider | 9 | 9 | 🟢已完成 |
 | 7 | Git、Diff 与 Worktree | 8 | 0 | 🟡未开始 |
 | 8 | Skills、Prompts 与 Instructions | 8 | 0 | 🟡未开始 |
 | 9 | MCP | 7 | 0 | 🟡未开始 |
@@ -33,7 +33,7 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **66** | — |
+| **合计** | — | **128** | **75** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -41,7 +41,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P6-1 OpenAI 适配** —— Phase 5（Session、Branch 与 Compaction）已全部交付，进入主要 Provider 适配。详情见 [plan/P6-1-openai.md](plan/P6-1-openai.md)。
+> 🎯 **P7-1 Repo 检测 / branch / HEAD** —— Phase 6（主要 Provider）已全部交付，进入 Git、Diff 与 Worktree。详情见 [plan/P7-1-git-repo.md](plan/P7-1-git-repo.md)。
 
 ## 关键路径
 
@@ -253,15 +253,15 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P6-1 | 🟡 | OpenAI 适配 | 适配+contract tests | [详情](plan/P6-1-openai.md) |
-| P6-2 | 🟡 | Anthropic 适配 | 适配+contract tests | [详情](plan/P6-2-anthropic.md) |
-| P6-3 | 🟡 | Google Gemini 适配 | 适配+contract tests | [详情](plan/P6-3-gemini.md) |
-| P6-4 | 🟡 | OAuth | PKCE/Device/refresh/callback | [详情](plan/P6-4-oauth.md) |
-| P6-5 | 🟡 | Thinking / Reasoning | level+stream delta | [详情](plan/P6-5-thinking.md) |
-| P6-6 | 🟡 | 图片输入 | image content part | [详情](plan/P6-6-image-input.md) |
-| P6-7 | 🟡 | Prompt Cache | 缓存控制+命中 | [详情](plan/P6-7-prompt-cache.md) |
-| P6-8 | 🟡 | 结构化输出 | JSON/structured | [详情](plan/P6-8-structured-output.md) |
-| P6-9 | 🟡 | Provider-specific options | 透传+raw metadata | [详情](plan/P6-9-provider-options.md) |
+| P6-1 | 🟢 | OpenAI 适配 | 适配+contract tests | [详情](plan/P6-1-openai.md) |
+| P6-2 | 🟢 | Anthropic 适配 | 适配+contract tests | [详情](plan/P6-2-anthropic.md) |
+| P6-3 | 🟢 | Google Gemini 适配 | 适配+contract tests | [详情](plan/P6-3-gemini.md) |
+| P6-4 | 🟢 | OAuth | PKCE/Device/refresh/callback | [详情](plan/P6-4-oauth.md) |
+| P6-5 | 🟢 | Thinking / Reasoning | level+stream delta | [详情](plan/P6-5-thinking.md) |
+| P6-6 | 🟢 | 图片输入 | image content part | [详情](plan/P6-6-image-input.md) |
+| P6-7 | 🟢 | Prompt Cache | 缓存控制+命中 | [详情](plan/P6-7-prompt-cache.md) |
+| P6-8 | 🟢 | 结构化输出 | JSON/structured | [详情](plan/P6-8-structured-output.md) |
+| P6-9 | 🟢 | Provider-specific options | 透传+raw metadata | [详情](plan/P6-9-provider-options.md) |
 
 ### Phase 7：Git、Diff 与 Worktree
 
