@@ -1,0 +1,20 @@
+[package]
+name = "sandbox-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork Sandbox Runtime：在 process-runtime 之上叠加执行隔离（NativeRestricted 软沙箱 + 平台原生硬隔离后端）"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+process-runtime = { path = "../process-runtime" }
+policy-engine = { path = "../policy-engine" }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }

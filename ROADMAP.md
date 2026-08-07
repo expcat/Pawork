@@ -30,7 +30,7 @@
 | 8 | Skills、Prompts 与 Instructions | 8 | 0 | 🟡未开始 |
 | 9 | MCP | 7 | 0 | 🟡未开始 |
 | 10 | WASM Plugin | 6 | 0 | 🟡未开始 |
-| 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
+| 11 | Sandbox 与跨平台强化 | 8 | 0 | 🔵进行中（P11-1 骨架） |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
 | 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
@@ -324,11 +324,11 @@ WASM 作为第一代码插件机制，能力受控。
 
 ### Phase 11：Sandbox 与跨平台强化
 
-三平台核心可用，沙箱可控，进程树可清理。
+三平台核心可用，沙箱可控，进程树可清理。架构见 [ADR-031](docs/adr/ADR-031-sandbox-backend-architecture.md)：NativeRestricted 软沙箱（P11-1，骨架已建）永远可用作兜底，平台原生硬隔离（bwrap/sandbox-exec/AppContainer，P11-2/3/4）在其上叠加并探测回退。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P11-1 | 🟡 | NativeRestricted backend | 路径/env/资源限制 | [详情](plan/P11-1-sandbox-native-restricted.md) |
+| P11-1 | 🔵 | NativeRestricted backend | trait+软沙箱+探测回退骨架 | [详情](plan/P11-1-sandbox-native-restricted.md) |
 | P11-2 | 🟡 | macOS Sandbox profile | 系统 sandbox | [详情](plan/P11-2-sandbox-macos.md) |
 | P11-3 | 🟡 | Linux Bubblewrap | bwrap 隔离 | [详情](plan/P11-3-sandbox-linux.md) |
 | P11-4 | 🟡 | Windows AppContainer / Job | 进程级隔离 | [详情](plan/P11-4-sandbox-windows.md) |
