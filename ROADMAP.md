@@ -33,7 +33,8 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🟡未开始 |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
-| **合计** | — | **128** | **83** | — |
+| 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
+| **合计** | — | **137** | **83** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -97,6 +98,7 @@
 | 重试 | backon | P2-10 | 退避策略完整 |
 | 签名 | ed25519-dalek | P10-1 | 插件 manifest 签名 |
 | 测试与基准 | criterion、proptest、cargo-fuzz + arbitrary、wiremock、insta、assert_cmd | P0-12、P2-11 等 | 基准 / 属性 / fuzz / HTTP mock / 快照 / CLI e2e |
+| HTML 解析 | scraper | P14-4 | html5ever + selectors；仅最小子集（解析 + 选择器匹配），用于额度控制台页面抓取 |
 
 ### 参考 + 自实现（第三方包仅作设计参照，只实现所需最小子集）
 
@@ -364,6 +366,22 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P13-8 | 🟡 | 大型 payload Artifact API | 按 ID 传递 | [详情](plan/P13-8-artifact-api.md) |
 | P13-9 | 🟡 | 测试 GUI Client 与 API Contract Tests | 协议测试端 + 契约套件 | [详情](plan/P13-9-gui-client-contract-tests.md) |
 | P13-10 | 🟡 | GUI Protocol schema 版本化 | 版本 + 兼容策略 | [详情](plan/P13-10-protocol-schema-version.md) |
+
+### Phase 14：模型用量与额度监控
+
+显示每个绑定模型的用量与剩余额度，支持 API Key 直连 / OAuth 登录授权 / 网页抓取三种适配器，按具体供应商落地，覆盖整体 / 5 小时滚动 / 周 / 月等额度窗口。依赖 P2-9、P2-7、P6-4、P3-6，建议在 Phase 13 之后推进。
+
+| ID | 状态 | 任务 | 简介 | 详情 |
+| --- | --- | --- | --- | --- |
+| P14-1 | 🟡 | Quota 领域模型与适配器 Trait | 快照/窗口/适配器种类/Trait | [详情](plan/P14-1-quota-domain-adapter.md) |
+| P14-2 | 🟡 | API Key 直连适配器 | key+REST billing/usage | [详情](plan/P14-2-quota-apikey-adapter.md) |
+| P14-3 | 🟡 | OAuth 登录授权适配器 | 复用 OAuth 取 console API | [详情](plan/P14-3-quota-oauth-adapter.md) |
+| P14-4 | 🟡 | 网页抓取适配器 | 无 API 平台页面解析 | [详情](plan/P14-4-quota-webscrape-adapter.md) |
+| P14-5 | 🟡 | 具体供应商实现 | OpenAI/Anthropic/Google | [详情](plan/P14-5-quota-provider-implementations.md) |
+| P14-6 | 🟡 | 多窗口额度聚合与归一 | 5h/周/月/整体+倒计时+缓存 | [详情](plan/P14-6-quota-window-aggregation.md) |
+| P14-7 | 🟡 | 本地用量累计与预算联动 | 对照远端+触限推算+预算 | [详情](plan/P14-7-quota-local-usage-budget.md) |
+| P14-8 | 🟡 | Quota 查询 API 与展示 | core-api/CLI/GUI 脱敏 | [详情](plan/P14-8-quota-query-api-display.md) |
+| P14-9 | 🟡 | 刷新调度与限额告警 | 定时刷新/退避/告警建议 | [详情](plan/P14-9-quota-refresh-alerting.md) |
 
 ---
 

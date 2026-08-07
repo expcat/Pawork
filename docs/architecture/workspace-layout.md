@@ -35,6 +35,7 @@ Pawork/
 | `provider-mistral` | Mistral（优先级 P1） | 依赖 provider-runtime |
 | `auth-service` | 认证方式、Secret 后端、OAuth（PKCE/Device Flow/refresh/callback） | 依赖 provider-api |
 | `model-registry` | 模型目录、别名、能力、定价 | 依赖 provider-api |
+| `quota-service` | 绑定模型用量与额度监控、多适配器（API Key / OAuth / 网页抓取）、窗口聚合与缓存 | 依赖 provider-api；复用 auth-service / provider-runtime |
 | `config-service` | 确定性配置 schema、来源发现与层级合并 | 独立；供 context-engine / policy / resource-loader 等消费 |
 | `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain |
 | `compaction-engine` | 自动 / 手动压缩、摘要 | 依赖 agent-events / session-store |
