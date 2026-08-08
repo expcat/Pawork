@@ -8,6 +8,8 @@
 
 Parent Agent；Worker Agent；任务分解；子 Session；独立 Worktree；Worker 模型选择；Worker Token 预算；并发上限；结果聚合；Worker 取消；Worker 重试；共享 Artifact；冲突检测；文件锁；状态汇总。
 
+P12 首先交付 `AgentSupervisor` / `TaskGraph` / `AgentTree`，再由 tool 或外部 Client 触发 spawn；禁止把 `spawn_agent` 直接实现为脱离监督的 `tokio::spawn`。最低生命周期为 Created → Admitted → Starting → Running/Waiting → Completed，任何阶段可进入 Cancelling → Cancelled 或 Failed，状态变化均事件化并可重放。
+
 ## 调度规则
 
 ```text
@@ -17,6 +19,8 @@ Parent Agent；Worker Agent；任务分解；子 Session；独立 Worktree；Wor
 Worker 不直接修改 Parent Workspace
 Parent 决定是否合并 Worker Patch
 ```
+
+Agent 与账号控制面只通过 `AcquireRequest` / `CredentialLease` 交互。Worker 不读取 API key，不实现 credential rotation；Agent cancel 产生 `LeaseOutcome::Cancelled`，不得降低 account health。所有 AgentInstance、TaskGraph、usage 与 audit 记录带 `tenant_id`，Parent/Worker 不可跨 tenant 委派。
 
 ## Phase 15–17 边界
 
@@ -32,8 +36,10 @@ Parent 决定是否合并 Worker Patch
 - 取消 Parent 会取消所有 Worker
 - 并发预算可控
 - Provider-side Multi-Agent 与本地 AgentTeam 的身份、预算、事件和执行所有权不混用
+- Agent lifecycle、TaskGraph 与 cancellation cascade 可重放；无脱离 Supervisor 的悬挂 Worker
+- Worker 只经 CredentialPool lease 使用 Provider，cancel 不污染账号健康
 
 ## 相关文档
 
-- [agent-engine](agent-engine.md) · [git-diff（worktree）](git-diff.md) · [checkpoint](checkpoint.md) · [sessions（子 session）](sessions.md)
-- [ROADMAP Phase 12](../../ROADMAP.md)
+- [agent-engine](agent-engine.md) · [provider-control-plane](provider-control-plane.md) · [tenant-audit](tenant-audit.md) · [git-diff（worktree）](git-diff.md) · [checkpoint](checkpoint.md) · [sessions（子 session）](sessions.md)
+- [ADR-033 控制面分离](../adr/ADR-033-control-plane-separation.md) · [ROADMAP Phase 12 / Phase 18](../../ROADMAP.md)

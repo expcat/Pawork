@@ -38,7 +38,8 @@
 | 15 | Provider Native Capabilities | 9 | 0 | 🟡未开始 |
 | 16 | Modern Agent Workflow | 9 | 0 | 🟡未开始 |
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
-| **合计** | — | **179** | **83** | — |
+| 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
+| **合计** | — | **194** | **83** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -54,10 +55,11 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 
 1. **主干补线**：完成 P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P6-14 / P7-9，优先消除安全红线与“模块存在但未接入 Agent Loop”的缺口；每项只跑受影响 crate 的定向测试。
 2. **Provider v2 前置**：完成 P15-1～P15-8，再由 P15-9 一次性执行 GPT / Claude / Grok 的完整 Provider Contract v2 门禁。P6-1 / P6-2 / P6-10 保留基础协议路径，Responses / modern server tools 在 Phase 15 扩展。
-3. **资源与 Host 基础**：推进 Phase 8、Phase 9、P13-1 / P13-2 与 P16-1 / P16-2，先形成确定性资源、MCP、CLI/Core 正式宿主和可审批 Plan 的最小闭环。
-4. **Process 与扩展生态**：完成 Phase 10、Phase 11，再推进 P16-4 / P16-6 与 P17-1～P17-4；可安装插件、用户 Hook、LSP 与后台进程闭环后执行一次相关 crates 的 L2，不跑无关功能簇。
-5. **Workflow 与编排**：推进 Phase 12、P16-3 / P16-5 / P16-7～P16-9、P17-5 / P17-6 与 Phase 14；Goal/Automation/Review/Memory、Agent Profile/Teams 稳定后执行 workflow/orchestration L2。
-6. **公共 Host 与远程能力**：完成 P13-3～P13-10 与 P17-7～P17-13；最终发布候选才执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
+3. **账号控制面基础**：完成 P18-1～P18-9。先建立 `Tenant/Principal`、`ProviderAccount/Credential`、Lease、错误/健康状态机、确定性路由、Session Affinity 与多维 Usage Ledger；`ModelProvider` 保持不变，旧配置映射到 `local/default + SingleCandidate`。Phase 12、Phase 14 与外部 Client Adapter 不得各自复制账号选择逻辑。
+4. **资源与 Host 基础**：推进 Phase 8、Phase 9、P13-1 / P13-2、P16-1 / P16-2 与 P18-10，先形成确定性资源、MCP、CLI/Core 正式宿主、可审批 Plan 和统一 Client Adapter 契约的最小闭环。
+5. **Process 与扩展生态**：完成 Phase 10、Phase 11，再推进 P16-4 / P16-6 与 P17-1～P17-4；可安装插件、用户 Hook、LSP 与后台进程闭环后执行一次相关 crates 的 L2，不跑无关功能簇。
+6. **Workflow、额度与编排**：推进 Phase 14、Phase 12、P16-3 / P16-5 / P16-7～P16-9、P17-5 / P17-6 与 P18-13 / P18-14；Quota 视图消费 P18-8 账本，Agent 只经 Lease 获取 Provider 资源，稳定后执行 workflow/orchestration L2。
+7. **公共 Client 与远程能力**：完成 P18-11 / P18-12、P17-7～P17-13，最后由 P18-15 集中执行账号池属性/并发、迁移、跨租户隔离、Codex/Claude/ACP golden 与故障注入门禁；发布候选再执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
 
 开发期不得为追求“全绿”阻塞快速迭代，但安全红线、事件可重放、Secret 不落库、路径越界和破坏性进程清理必须随改动立即定向验证。完整策略与清理命令见 [plan/README](plan/README.md#测试节奏与缓存清理)。
 
@@ -67,12 +69,13 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
           → Agent Loop 主干补线 → Built-in Tools / Policy
           → Sessions/Compaction → Git/Diff → Canonical Tool v2
           → OpenAI / Anthropic / xAI Native APIs
-          → Skills / MCP → Plan / Background Task
-          → Hooks / Multi-Agent / Agent Profile
-          → Marketplace / LSP → Goal / Automation / Memory
-          → ACP / SDK / Remote / Browser
+          → Tenant/Principal → ProviderAccount/Credential Lease
+          → ErrorClassifier / RoutingPolicy / Usage Ledger
+          → Skills / MCP → Plan / Background Task → ClientAdapter
+          → Hooks / Multi-Agent / Agent Profile → Codex / Claude / ACP
+          → Marketplace / LSP → Goal / Automation / Memory → SDK / Remote / Browser
 
-在核心 Coding Agent 能可靠完成真实仓库任务、Provider v2 语义稳定前，不进入 Multi-Agent 与复杂插件开发；Phase 15 是 Phase 8～17 大规模扩展前的结构性前置，而不是等待 Phase 14 完成后才启动。
+在核心 Coding Agent 能可靠完成真实仓库任务、Provider v2 语义与 Phase 18 账号控制面基础稳定前，不进入 Multi-Agent 与外部 Agent Client 大规模接入；Phase 15 与 P18-1～P18-9 是 Phase 8～18 扩展前的结构性前置，不按 Phase 编号机械串行。
 
 > CLI Host 与多 GUI 协议（Phase 13）是 Core 的正式运行入口与 GUI 接入边界；其协议冻结部分（GUI Connection Protocol / Transport 抽象类型）随 [P0-8](plan/P0-8-core-api.md) 提前完成，运行时实现按依赖关系推进。
 
@@ -138,7 +141,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 
 ### 完全自实现（架构红线或安全关键）
 
-Agent Loop / 状态机 / Tool Scheduler / 预算 / 消息队列（P3-*）；Event Store 与 Projection 语义（P1-4、P1-5，rusqlite 只是绑定层）；Policy Engine / Workspace Trust / 路径与 shell 安全（P4-9、P4-10）；Checkpoint / 回滚编排（P4-11）；Compaction 引擎（P5-5、P5-6）；JSONL 流式解析（P2-3、P5-9，serde_json 逐行即可）；沙箱编排：macOS sandbox-exec、bwrap、Windows AppContainer / Job Object 与进程树清理（P11-1~4、P11-7）；PTY 会话层：重连 / 有界缓冲 / 归属（P11-6，在 portable-pty 之上）；GUI Connection Protocol 编解码 / 快照 / 订阅 / 慢客户端隔离（P13-3、P13-5）；日志 redaction 规则（P1-9）。
+Agent Loop / 状态机 / Tool Scheduler / 预算 / 消息队列（P3-*）；Event Store 与 Projection 语义（P1-4、P1-5，rusqlite 只是绑定层）；Policy Engine / Workspace Trust / 路径与 shell 安全（P4-9、P4-10）；Checkpoint / 回滚编排（P4-11）；Compaction 引擎（P5-5、P5-6）；JSONL 流式解析（P2-3、P5-9，serde_json 逐行即可）；沙箱编排：macOS sandbox-exec、bwrap、Windows AppContainer / Job Object 与进程树清理（P11-1~4、P11-7）；PTY 会话层：重连 / 有界缓冲 / 归属（P11-6，在 portable-pty 之上）；GUI Connection Protocol 编解码 / 快照 / 订阅 / 慢客户端隔离（P13-3、P13-5）；Credential Lease / 路由策略 / 错误健康状态机 / Tenant 隔离（P18-2～P18-9）；日志 redaction 规则（P1-9）。
 
 ### 行为参照（不作为依赖）
 
@@ -165,6 +168,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | http-runtime 收敛（次优先级） | Marketplace / User Hooks / Forge Adapter 等应复用通用 `http-runtime`，避免反向依赖 `provider-runtime`；具体抽离时机随相关 Phase 推进 | 启动 P17-3 / Review Forge Adapter 时 |
 | Automation 外部 Trigger（次优先级） | 预留 Webhook / HTTP API / GitHub / GitLab / External MCP 经 adapter 接入，不塞进 Automation Core | 随 P16-5 / 16-8 推进 |
 | Review Forge Adapter（次优先级） | Review Engine 本体平台无关；预留 GitHub / GitLab / Generic forge adapter 发布评论 | 随 P16-8 后续推进 |
+| 深度研究控制面缺口（2026-08-08） | Credential Pool、RoutePolicy/ErrorClassifier、Tenant/Principal、统一 ClientAdapter、Codex/Claude adapter 与多维 Usage/Audit 已拆入 Phase 18；P12 Supervisor/TaskGraph 与 P14 Quota 保留并补依赖，不重复立项 | 已映射到 P18-1～P18-15 |
 
 ---
 
@@ -474,6 +478,28 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P17-11 | 🟡 | Real Remote Transport | 安全远程发布/连接/重连 | [详情](plan/P17-11-real-remote-transport.md) |
 | P17-12 | 🟡 | Mobile / Remote Control Protocol | 受限控制、审批与通知 | [详情](plan/P17-12-mobile-remote-control.md) |
 | P17-13 | 🟡 | Cross-Agent Compatibility Loader | Claude/Codex/Grok/Cursor/Pi 配置兼容 | [详情](plan/P17-13-compatibility-loader.md) |
+
+### Phase 18：Account Control Plane & Client Adapters
+
+在现有 `ModelProvider`、`auth-service`、Event Store 与 `app-service` 之间补齐账号资源治理和外部 Agent Client 接入层。Provider routing、Credential Pool、Agent scheduling、Client protocol 是不同状态机；所有新持久化实体带版本与 tenant boundary，未配置的新旧单用户统一映射到 `local/default`，默认路由保持 `SingleCandidate`。架构决策见 [ADR-033](docs/adr/ADR-033-control-plane-separation.md)。
+
+| ID | 状态 | 任务 | 简介 | 详情 |
+| --- | --- | --- | --- | --- |
+| P18-1 | 🟡 | Control Plane 契约与迁移基线 | 分层、状态机、版本、feature flag、回滚 | [详情](plan/P18-1-control-plane-contract.md) |
+| P18-2 | 🟡 | Tenant / Principal 身份基线 | `local/default`、身份传播、versioned migration | [详情](plan/P18-2-tenant-principal.md) |
+| P18-3 | 🟡 | ProviderAccount / Credential 模型 | account 与 secret metadata 分离、legacy synthetic account | [详情](plan/P18-3-provider-account.md) |
+| P18-4 | 🟡 | CredentialPool / Lease | acquire/release、并发准入、幂等回收 | [详情](plan/P18-4-credential-lease.md) |
+| P18-5 | 🟡 | ErrorClassifier / Health | scope-aware 分类、cooldown、circuit breaker | [详情](plan/P18-5-error-health.md) |
+| P18-6 | 🟡 | RoutingPolicy Chain | capability/tenant/health 过滤、priority/weight/fill-first | [详情](plan/P18-6-routing-policy.md) |
+| P18-7 | 🟡 | Session Affinity / Binding | 粘性、rebind、revision/ownership epoch | [详情](plan/P18-7-session-affinity.md) |
+| P18-8 | 🟡 | Usage / Cost Ledger | tenant/account/session/agent 多维账本 | [详情](plan/P18-8-usage-cost-ledger.md) |
+| P18-9 | 🟡 | Tenant Policy / RBAC | provider/model/account ACL、并发/预算/保留策略 | [详情](plan/P18-9-tenant-policy.md) |
+| P18-10 | 🟡 | ClientAdapter Framework | adapter/factory、capability snapshot、Session Registry | [详情](plan/P18-10-client-adapter-framework.md) |
+| P18-11 | 🟡 | Codex App-Server Adapter | Thread/Turn/Item、approval、subagent、interrupt | [详情](plan/P18-11-codex-app-server.md) |
+| P18-12 | 🟡 | Claude Gateway Adapter | session/agent headers、Messages stream、usage attribution | [详情](plan/P18-12-claude-gateway.md) |
+| P18-13 | 🟡 | Canonical Audit / OTel | 控制面审计、脱敏导出、trace 维度 | [详情](plan/P18-13-audit-otel.md) |
+| P18-14 | 🟡 | Provider Registry / Pool Reconciliation | factory 注册、主动健康、lease 回收、事务式热切换 | [详情](plan/P18-14-pool-reconciliation.md) |
+| P18-15 | 🟡 | Control Plane Contract Gate | property/concurrency/golden/migration/isolation/chaos | [详情](plan/P18-15-control-plane-gate.md) |
 
 ---
 

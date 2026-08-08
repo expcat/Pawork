@@ -116,9 +116,9 @@ pub enum AgentEvent {
 
 事件持久化与重放约束见 [ADR-016](../adr/ADR-016-core-event-persist-replay.md) 与 [sessions](../features/sessions.md)。
 
-## 5. Phase 15–17 扩展领域类型（登记在册）
+## 5. Phase 15–18 扩展领域类型（登记在册）
 
-以下类型是 Phase 15–17 引入的 canonical 领域词汇，按职责落在 `agent-domain` 或纯 API crate（如 `provider-api`），均不携带外部 IO 实现；运行时语义见对应 feature / plan。新增类型不得按 Provider 名称分支（ADR-002），敏感制品只存安全引用（ADR-032）。
+以下类型是 Phase 15–18 引入的 canonical 领域词汇，按职责落在 `agent-domain` 或纯 API crate（如 `provider-api` / `client-adapter-api`），均不携带外部 IO 实现；运行时语义见对应 feature / plan。新增类型不得按 Provider 名称分支（ADR-002），敏感制品只存安全引用（ADR-032）。
 
 **Provider Native（Phase 15）**
 
@@ -147,12 +147,29 @@ pub enum AgentEvent {
 - `AgentTeam`（peer messaging / shared task board）
 - `BrowserComputerCapability`（Local/MCP/ProviderHosted 三执行位点 facade）
 
+**Account Control Plane & Client Adapters（Phase 18）**
+
+- `TenantId` / `PrincipalId` / `TenantPolicy`（legacy 默认 `local/default` / `local/user`）
+- `ProviderAccount` / `CredentialMetadata { secret_ref, expires_at, refresh_state }`（禁止 plaintext secret）
+- `AcquireRequest { tenant_id, session_id, agent_id?, provider_id, model_id, required_capabilities }`
+- `CredentialLease` / `LeaseOutcome { Success(UsageRecord), Failure(ClassifiedFailure), Cancelled }`
+- `HealthState` / `ClassifiedFailure { class, scope, retryable, retry_after, health_impact, safe_to_failover }`
+- `RouteContext` / `RouteCandidate` / `RouteDecision` / `SessionBinding { ownership_epoch, revision, capability_hash }`
+- `UsageRecord`（tenant/principal/account/credential/session/agent/provider/model/trace 多维归属）
+- `CanonicalClientEvent` / `CanonicalCoreEvent` / `ClientCapabilities` / `ClientCapabilitySnapshot`
+- `ExternalAgentIdentity { session_id?, agent_id?, parent_agent_id? }`
+- `AuditEventV1`（actor/action/target/decision/trace/tenant；只含脱敏 allowlist）
+
+上述持久化类型与 canonical event 必须带 schema/event version。Provider、Account、Agent、Session 与 Client Protocol 的状态机独立推进，只通过显式 ID、事件和 lease 交互。
+
 ## 6. 相关文档
 - [控制流](control-flow.md)
 - [sessions](../features/sessions.md)
 - [agent-engine](../features/agent-engine.md)
-- [providers](../features/providers.md) · [tools](../features/tools.md) · [plugins](../features/plugins.md)
+- [providers](../features/providers.md) · [provider-control-plane](../features/provider-control-plane.md) · [client-adapters](../features/client-adapters.md) · [tenant-audit](../features/tenant-audit.md)
+- [tools](../features/tools.md) · [plugins](../features/plugins.md)
 - [ADR-002 Agent Engine 与 Provider 解耦](../adr/ADR-002-agent-engine-provider-decoupled.md)
 - [ADR-016 事件持久化重放](../adr/ADR-016-core-event-persist-replay.md)
 - [ADR-032 Protected Blob Store](../adr/ADR-032-protected-blob-store.md)
-- [ROADMAP Phase 15–17](../../ROADMAP.md)
+- [ADR-033 Provider、Account、Agent 与 Client Protocol 控制面分离](../adr/ADR-033-control-plane-separation.md)
+- [ROADMAP Phase 15–18](../../ROADMAP.md)

@@ -4,6 +4,8 @@
 
 将不同模型供应商抽象为统一接口。所有 Provider 转换成统一请求（`CanonicalModelRequest`）和流式事件（`ProviderStreamEvent`），Agent Engine 只依赖 canonical domain，不感知具体 Provider。
 
+Provider Runtime 只负责“如何调用某个 Provider”。账号池、并发租约、优先级/权重、session affinity、tenant policy 与跨 Provider fallback 由 [Provider Account Control Plane](provider-control-plane.md) 承担，不扩张 `ModelProvider`。
+
 ## 接口
 
 ```rust
@@ -84,6 +86,8 @@ pub enum ProviderStreamEvent {
 - **P1（已实现或次要）**：Google Gemini（已实现 `provider-google`，2026-08-08 降级为次要）；AWS Bedrock；Mistral；Azure OpenAI；Google Vertex AI；GitHub Models；自定义 Endpoint。
 - **P2**：Provider WASM Plugin；动态模型发现；Provider 路由；多 Provider fallback；自动成本和延迟路由。
 
+其中 Provider routing / fallback 的确定性基础在 Phase 18 实现；自动成本和延迟路由仍为 P2，必须等 Usage/Cost Ledger 与 Health 数据稳定后再启用。
+
 ## 已实现 Provider（Phase 6）
 
 | Provider | crate | 协议 | 关键能力 |
@@ -114,11 +118,14 @@ API Key 与 OS Keychain 见 [auth](auth.md)；OAuth（PKCE / Device Flow / auto 
 
 错误携带：是否可重试；建议重试时间；Provider request ID；HTTP 状态；脱敏后的错误内容；用户可读消息；诊断信息。
 
+`provider-runtime` 负责协议/transport 错误归一与同一请求内 bounded retry；P18 `ErrorClassifier` 再把 `UpstreamFailure` 分类为 failure class/scope/health impact，并决定是否允许 credential/model/provider/protocol failover。HTTP status 只是分类输入：`ClientCancelled`、`InvalidRequest`、`ContextTooLarge` 与 `ProtocolIncompatible` 不默认轮换 credential。
+
 ## 验收标准
 
 - 每个 Provider 通过统一 Contract Tests（见 [testing](../quality/testing.md) §contract）
 - Agent Core 不含 Provider 特例（禁止按 Provider 名走分支）
 - 重试与错误归一化覆盖各类错误
+- `ModelProvider` 不承担 account scheduling；credential lease 与 fallback 决策有独立 contract/property tests
 - embedding model 目录及逐模型 capabilities 与实际 Provider 行为一致；memory-service 只经 `EmbeddingProvider` 调用
 
 ## 现代能力分层（Phase 6 vs Phase 15）
@@ -132,6 +139,6 @@ Phase 15 不替换 Phase 2/6 的兼容路径：旧路径保留，现代能力经
 
 ## 相关文档
 
-- [models](models.md) · [auth](auth.md) · [agent-engine](agent-engine.md)
+- [models](models.md) · [auth](auth.md) · [provider-control-plane](provider-control-plane.md) · [tenant-audit](tenant-audit.md) · [agent-engine](agent-engine.md)
 - [ADR-002 解耦](../adr/ADR-002-agent-engine-provider-decoupled.md) · [ADR-015 Contract Tests](../adr/ADR-015-provider-contract-tests.md)
-- [ROADMAP Phase 2 / Phase 6](../../ROADMAP.md)
+- [ADR-033 控制面分离](../adr/ADR-033-control-plane-separation.md) · [ROADMAP Phase 2 / Phase 6 / Phase 18](../../ROADMAP.md)

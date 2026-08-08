@@ -25,8 +25,8 @@ Remote GUI ──┘                                   │
 2. 加载工作区上下文
 3. 计算 Token Budget
 4. 判断是否需要 Compaction
-5. 构建 Provider Request
-6. 调用 Provider
+5. 构建 `RouteContext` 与 Provider Request
+6. 经 TenantPolicy、RoutingPolicy 与 CredentialPool 获取 `CredentialLease`，再调用 Provider
 7. 流式提交 Assistant 内容
 8. 解析 Tool Call，并按 `ToolKind` / `ExecutionOwner` 分类
 9. 执行 Policy；需要时请求用户审批
@@ -34,9 +34,28 @@ Remote GUI ──┘                                   │
 11. `ClientFunction` 提交 `ToolResult(CoreSuppliedResult)`；`ProviderHosted` / `ProviderExtension` 只记录 `ServerToolEvent(ProviderTranscript)`
 12. 按 `ContinuationMode` 构建下一轮 Provider continuation，不跨位点伪造结果
 13. 判断是否继续模型循环
-14. 提交最终状态
+14. 用 `LeaseOutcome` 释放租约并提交最终状态；cancel 不降低 account health
 
 状态机与事件见 [领域模型](domain-model.md)。
+
+### 2.1 Provider 资源控制（Phase 18）
+
+```text
+RouteContext
+   ↓ capability filter
+TenantPolicy filter
+   ↓
+Health + priority + affinity + weight/fill-first
+   ↓ concurrency admission
+CredentialLease
+   ↓
+ModelProvider
+   ↓
+ErrorClassifier → retry same credential / failover credential /
+                  fallback model / fallback provider / fallback protocol
+```
+
+`ModelProvider` contract 不变；Provider Runtime 的 transport retry（P2-10）与账号健康/轮换（P18-5）分层。`ClientCancelled`、`InvalidRequest`、`ContextTooLarge`、`ProtocolIncompatible` 不默认触发 credential rotation。
 
 ## 3. 运行控制
 
@@ -123,4 +142,5 @@ ProviderExtension→ Provider 中介外部通道执行 → Core 审批/审计 �
 - [tools](../features/tools.md)
 - [context](../features/context.md)
 - [providers](../features/providers.md)
-- [ROADMAP Phase 15](../../ROADMAP.md)
+- [Provider Control Plane](../features/provider-control-plane.md) · [Tenant、Usage 与 Audit](../features/tenant-audit.md)
+- [ADR-033 控制面分离](../adr/ADR-033-control-plane-separation.md) · [ROADMAP Phase 15 / Phase 18](../../ROADMAP.md)

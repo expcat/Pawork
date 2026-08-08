@@ -25,6 +25,12 @@
 
 适配器开发期只运行变更路径对应的最小 contract 子集；基础协议矩阵在对应适配任务收尾执行，现代 hosted tools / reasoning / citation / capability negotiation 的完整矩阵集中在 P15-9 与 L3，不在 P15-1～P15-8 重复跑三家全套。
 
+## Control Plane Contract Tests
+
+P18 使用独立于 Provider wire contract 的测试簇：selector property tests（priority/weighted/fill-first/affinity）、lease concurrency/reclaim、scope-aware error/cooldown、legacy migration、cross-tenant isolation、usage replay/idempotency 与 audit redaction。Agent cancel、`ContextTooLarge`、`ProtocolIncompatible` 必须验证不会误伤 credential health。
+
+Codex/Claude/ACP 的协议 fixture 按 client + protocol version 固定：Codex 覆盖 Thread/Turn/Item/approval/subagent/interrupt；Claude 覆盖 Messages/tool/三类 identity header/signed reasoning；ACP 覆盖 initialize/session/prompt/update/permission/cancel/unsupported method。完整矩阵集中在 P18-15，单 adapter 任务只跑自身 golden 子集。
+
 ## Mock Provider
 
 先实现完全可编程的 Mock Provider，绝大部分 Agent 测试不依赖真实 API。
@@ -42,7 +48,7 @@ Phase 0 的实现位于 `test-support`：脚本可输出 text、多个 tool call
 
 ## Golden Tests
 
-固定：System Prompt；Tool Schema；Context；Session Events；Compaction；Pi Import；Diff；API JSON Schema。
+固定：System Prompt；Tool Schema；Context；Session Events；Compaction；Pi Import；Diff；API JSON Schema；Codex/Claude/ACP protocol frames 与 capability snapshots。
 
 Golden 仅在相关序列化或用户可见语义稳定后进入 L2。开发中允许先生成候选快照，但更新基线必须人工审阅；已确认基线不是缓存，不随清理删除。
 
@@ -54,7 +60,7 @@ Golden 仅在相关序列化或用户可见语义稳定后进入 L2。开发中�
 
 ## Chaos Tests
 
-模拟：Provider 中途断网；Core 崩溃；数据库锁；磁盘满；Tool 进程不退出；Side process 持有 stdout；文件被用户同时修改；Git Index 变化；Plugin 崩溃；MCP Server 崩溃。
+模拟：Provider 中途断网；Core 崩溃；数据库锁；磁盘满；Tool 进程不退出；Side process 持有 stdout；文件被用户同时修改；Git Index 变化；Plugin 崩溃；MCP Server 崩溃；lease owner 崩溃；account cooldown/recovery；热切换回滚；session ownership epoch 冲突；跨 tenant 并发访问。
 
 Chaos 默认在功能主干接线完成后的 L2/L3 执行，不阻塞前期领域模型、协议骨架或单个 adapter 的频繁迭代。
 

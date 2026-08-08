@@ -20,6 +20,8 @@ Pawork 不是「Pi 的桌面壳」，而是一个独立的 Rust Coding Agent 平
 - Skills、Prompt 与项目指令
 - MCP 与 WASM 插件
 - 多 Agent 调度
+- Provider Account / Credential Lease、确定性路由、Tenant/Usage/Audit 控制面
+- Codex App Server、Claude Gateway、ACP 等外部 Agent Client Adapter
 - 为 GUI 提供稳定的 CLI/Core 宿主与接入协议
 - `pawork` CLI 是 Core 的唯一正式宿主，可脱离 GUI 独立运行
 - 一个 CLI/Core 实例可同时服务多个本地与远程 GUI
@@ -40,11 +42,12 @@ Pawork 不是「Pi 的桌面壳」，而是一个独立的 Rust Coding Agent 平
 │ CLI + Rust Core（同一进程，二进制 pawork）     │
 │  CLI Commands / Renderers   GUI Server        │
 │  Agent Engine          Provider Runtime       │
+│  Agent Supervisor      Account Control Plane  │
 │  Context Engine        Tool Runtime           │
 │  Session Store         Policy Engine          │
 │  Workspace Service     Git / Diff             │
 │  Plugin / MCP Host     Artifact Store         │
-│  Auth / Models         Observability          │
+│  Auth / Models         Tenant / Usage / Audit │
 └────────────────────┬─────────────────────────┘
             │ GUI Connection Protocol（Local / Remote Transport）
 ┌───────────▼─────────┐  ┌─────────────────────┐
@@ -84,16 +87,17 @@ Pawork/                       # 仓库根 = Cargo workspace 根
 | 类别 | 内容 |
 | --- | --- |
 | 总体架构 | [overview](docs/architecture/overview.md) · [workspace 结构](docs/architecture/workspace-layout.md) · [领域模型](docs/architecture/domain-model.md) · [控制流](docs/architecture/control-flow.md) · [GUI Connection Protocol](docs/architecture/api-surface.md) |
+| Control Plane / Client | [Provider Account Control Plane](docs/features/provider-control-plane.md) · [Tenant、Usage 与 Audit](docs/features/tenant-audit.md) · [Agent Client Adapters](docs/features/client-adapters.md) |
 | CLI Host / GUI 接入 | [CLI Host](docs/features/cli-host.md) · [GUI 连接与多客户端](docs/features/gui-connection.md) |
 | 功能模块 | [docs/features/](docs/features/) |
 | 质量门槛 | [性能目标](docs/quality/performance-targets.md) · [安全验收](docs/quality/security-acceptance.md) · [测试体系](docs/quality/testing.md) |
-| 架构决策 | [docs/adr/](docs/adr/)（ADR-001 ~ ADR-030） |
+| 架构决策 | [docs/adr/](docs/adr/)（ADR-001 ~ ADR-033） |
 | 术语 | [glossary](docs/glossary.md) |
 | 路线图 | [ROADMAP.md](ROADMAP.md) |
 
 ## 项目状态
 
-处于 **Phase 0：架构与协议冻结**：文档基线已完成（P0-11），workspace 骨架已就位（P0-1）；协议与领域类型冻结任务（P0-2 起）待开始。代码实现将严格按 [ROADMAP](ROADMAP.md) 推进（进度见其「进度总览」）。
+Phase 0 已完成；Phase 1～7 的主体实现已落地，当前优先处理七个 review remediation（从 P1-13 开始）与 P11-1 沙箱骨架。Provider Native、Modern Workflow、Ecosystem/Host，以及新增的 Account Control Plane & Client Adapters（Phase 15～18）仍处于规划阶段。任务完成度和下一项工作以 [ROADMAP](ROADMAP.md) 的实时进度表为准，不再用 README 固定阶段文字替代源码与路线图事实。
 
 ## 贡献
 

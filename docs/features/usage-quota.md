@@ -2,7 +2,9 @@
 
 ## 职责
 
-显示每个绑定模型的用量与剩余额度，通过多种适配器从各供应商获取真实额度数据，覆盖整体 API 用量、5 小时滚动、一周、一月等不同限制窗口，并归一为统一视图供预算、CLI 与 GUI 使用。Agent Core 与 UI 只依赖 canonical 额度数据，不感知供应商差异。
+显示每个 tenant/account/model 绑定的用量与剩余额度，通过多种适配器从各供应商获取真实额度数据，覆盖整体 API 用量、5 小时滚动、一周、一月等不同限制窗口，并归一为统一视图供预算、CLI 与 GUI 使用。Agent Core 与 UI 只依赖 canonical 额度数据，不感知供应商差异。
+
+本功能负责“远端额度快照与窗口视图”；P18 `Usage/Cost Ledger` 负责 tenant/account/session/agent 多维本地归属与成本账本。两者通过 canonical `UsageRecord` 对账，不用 quota snapshot 代替不可变 usage ledger。
 
 ## 额度窗口
 
@@ -31,6 +33,8 @@
 pub enum QuotaWindow { Overall, Rolling5h, Weekly, Monthly }
 
 pub struct QuotaSnapshot {
+    pub tenant_id: TenantId,
+    pub account_id: AccountId,
     pub provider: ProviderId,
     pub model: Option<String>,
     pub window: QuotaWindow,
@@ -58,10 +62,11 @@ pub struct QuotaSnapshot {
 
 ## 与既有能力的关系
 
-- 单次请求的 token / 费用归一见 [P2-9](../plan/P2-9-usage-stopreason.md)，本特性在此基础上做窗口级累计与对照。
-- 模型定价与费用估算见 [models](models.md) 与 [P2-7](../plan/P2-7-model-registry.md)。
+- 单次请求的 token / 费用归一见 [P2-9](../../plan/P2-9-usage-stopreason.md)，本特性在此基础上做窗口级累计与对照。
+- P18-8 先把 Usage 按 tenant/account/session/agent 持久归属；P14-7 消费该账本做窗口累计、远端对照与触限推算。
+- 模型定价与费用估算见 [models](models.md) 与 [P2-7](../../plan/P2-7-model-registry.md)。
 - 凭据与 Secret 见 [auth](auth.md)；明文凭据不落库不进日志。
-- 预算联动见 [context（token 预算）](context.md) 与 [P3-6](../plan/P3-6-budget-control.md)，触限动作有事件可追溯。
+- 预算联动见 [context（token 预算）](context.md) 与 [P3-6](../../plan/P3-6-budget-control.md)，触限动作有事件可追溯。
 - 错误模型复用 `QuotaExceeded` / `RateLimited`。
 
 ## 展示
@@ -74,9 +79,10 @@ CLI 经 `pawork usage` 输出各绑定模型的多窗口额度、重置倒计时
 - 明文凭据不写入数据库与日志
 - 多窗口以统一视图呈现，来源与可信度被清晰标注
 - 限额接近 / 触及时触发告警与可执行建议
+- quota 查询与 usage 聚合强制 tenant scope，不跨 account 误合并不同额度窗口
 
 ## 相关文档
 
-- [providers](providers.md) · [models](models.md) · [auth](auth.md) · [context](context.md) · [observability](observability.md)
+- [providers](providers.md) · [provider-control-plane](provider-control-plane.md) · [tenant-audit](tenant-audit.md) · [models](models.md) · [auth](auth.md) · [context](context.md) · [observability](observability.md)
 - [workspace-layout](../architecture/workspace-layout.md)（`quota-service`）
-- [ROADMAP Phase 14](../ROADMAP.md)
+- [ROADMAP Phase 14 / Phase 18](../../ROADMAP.md)

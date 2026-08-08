@@ -2,7 +2,7 @@
 
 > Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 依赖：P0-4
 
-**最终目的**：实现可重试判定、建议重试时间与退避策略，将各 provider 五花八门的错误归一为统一可处理的模型。
+**最终目的**：实现单次 Provider 调用内的 transport/protocol 错误归一、建议重试时间与 bounded backoff。账号健康、credential failover、model/provider/protocol fallback 不在本任务决定，由 P18-5/P18-6 消费 `UpstreamFailure` 后处理。
 
 **涉及范围**：`provider-runtime`
 
@@ -12,6 +12,7 @@
 2. **建议重试时间（Retry-After 等）** —— 目的：尊重服务端节流。
 3. **退避策略** —— 指数 + 抖动。目的：避免雪崩。
 4. **错误类别归一测试** —— 目的：一致。
+5. **控制面边界** —— `ClientCancelled`、`InvalidRequest`、`ContextTooLarge`、`ProtocolIncompatible` 只输出 canonical failure，不在 `provider-runtime` 轮换 credential；目的：避免 transport retry 与 account scheduling 耦合。
 
 ## 主要产出物
 
@@ -21,5 +22,6 @@
 
 - [ ] 错误类别齐全
 - [ ] 退避遵守 Retry-After
+- [ ] 本任务不读取账号池、不轮换 credential、不按 Provider 名在 core 走特例
 
-**相关文档**：[providers](../docs/features/providers.md) · [ROADMAP](../ROADMAP.md)
+**相关文档**：[providers](../docs/features/providers.md) · [provider-control-plane](../docs/features/provider-control-plane.md) · [P18-5](P18-5-error-health.md) · [P18-6](P18-6-routing-policy.md) · [ROADMAP](../ROADMAP.md)

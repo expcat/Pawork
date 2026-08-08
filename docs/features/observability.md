@@ -7,13 +7,16 @@
 ## 日志字段
 
 ```text
-timestamp / level / component / workspace_id / session_id / run_id
-provider / model / tool_call_id / trace_id / duration / error_code
+timestamp / level / component / tenant_id / principal_id / workspace_id
+session_id / agent_id / run_id / provider / account_id / model
+client_kind / tool_call_id / trace_id / duration / error_code
 ```
 
 ## 自动脱敏
 
 API Key；Bearer Token；Cookie；OAuth Code；Authorization Header；用户配置的 Secret Pattern。
+
+控制面日志只记录 `account_id` / `credential_id` 等 opaque ID 与脱敏状态，不记录 `secret_ref` 的可解析内容、credential 明文、prompt/tool output 或 Protected Blob。Tenant-scoped Audit Event 与 OTel exporter 见 P18-13。
 
 ## Metrics
 
@@ -38,8 +41,9 @@ Metrics Registry 已预注册初始化、数据库、Provider 首 Token / 总时
 - 日志与诊断包默认不含明文 Secret
 - 关键指标可采集
 - 诊断包可离线导出
+- route/lease/rebind/policy/agent/client 关键决策可按 tenant/session/agent/provider/account/trace 关联且不跨 tenant 查询
 
 ## 相关文档
 
-- [auth（脱敏状态）](auth.md) · [CLI Host（doctor）](cli-host.md)
+- [auth（脱敏状态）](auth.md) · [tenant-audit](tenant-audit.md) · [provider-control-plane](provider-control-plane.md) · [CLI Host（doctor）](cli-host.md)
 - [ROADMAP P1-9 / P1-10 / P1-11](../../ROADMAP.md)

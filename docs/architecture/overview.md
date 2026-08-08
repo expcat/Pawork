@@ -18,8 +18,9 @@ Pawork 是一个纯 Rust 编码智能体核心平台。**CLI 与 Rust Core 是�
 │ │  Service Mode        Authentication                       │ │
 │ │  CLI Renderers       Subscription Hub                     │ │
 │ │  Agent Engine        Provider Runtime                     │ │
+│ │  Agent Supervisor    Provider Account Control Plane       │ │
 │ │  Context Engine      Tool Runtime                         │ │
-│ │  Session Store       Policy Engine                        │ │
+│ │  Session Store       Tenant / Policy / Usage / Audit      │ │
 │ │  Workspace Service   Git / Diff                           │ │
 │ │  Plugin / MCP Host   Artifact Store                       │ │
 │ └───────────────┬──────────────────────────────┬───────────┘ │
@@ -50,21 +51,22 @@ Timeline / Composer / Diff / Terminal / Settings / Workspaces / Sessions。GUI �
 
 所有能力实现层。职责拆分沿用 Pi 的领域划分，但不沿用其 TypeScript 实现。模块映射见 [workspace 结构](workspace-layout.md) 第 6 节。
 
-### 2.5 Host Adapters / Client Channels（Phase 17）
+### 2.5 Host Adapters / Client Channels（Phase 17–18）
 
 `pawork` 是 Core 的唯一正式宿主；除 CLI 自身外，所有外部接入方都是「连接到 `pawork` Host 的 Client Channel / Host Adapter」，各自不构造第二个 Core、不替代 GUI Connection Protocol，并列存在：
 
 ```text
 GUI ─────────┐
-IDE ─────────┤   IDE Host Adapter → Agent SDK / Headless Protocol ─┐
-ACP ─────────┼─▶ 连接 pawork Host ─▶ Core（单一事实源）
-Mobile ──────┤   ACP Host / Mobile Remote Control Adapter ──────────┘
-SDK / CI ────┘
+IDE ─────────┤   IDE Host Adapter → Agent SDK / Headless Protocol ──┐
+Codex ───────┤   Codex / Claude / ACP ClientAdapter ────────────────┤
+Claude ──────┼─▶ 连接 pawork Host ─▶ Core（单一事实源）
+ACP ─────────┤   Mobile Remote Control Adapter ──────────────────────┘
+Mobile/SDK ──┘
 ```
 
 - **GUI**：独立进程经 GUI Connection Protocol 连接（[ADR-022](../adr/ADR-022-gui-connects-via-cli.md)）。
 - **IDE**：经 IDE Host Adapter → Agent SDK / Headless 协议连接（P17-9/P17-8），**不「通过 SDK 嵌入第二个 Core」**；可选向 IDE 暴露 LSP Server 输出（复用 P17-4 LSP Client 聚合结果）。
-- **ACP / SDK / Mobile**：各自是连接 `pawork` Host 的 Client Channel（P17-7 / P17-8 / P17-12），共享同一 `app-service` 与 Event Hub，互不触达对方协议帧。
+- **Codex / Claude / ACP / SDK / Mobile**：各自是连接 `pawork` Host 的 Client Channel（P18-11 / P18-12 / P17-7 / P17-8 / P17-12），外部 Agent Client 复用 P18-10 `ClientAdapter`/Session Registry，GUI 仍使用自己的 GUI Connection Protocol。所有 channel 共享同一 `app-service` 与 Event Hub，互不触达对方协议帧。
 
 ## 3. 核心原则
 
@@ -77,6 +79,8 @@ SDK / CI ────┘
 - 协议先行：GUI Connection Protocol 必须先冻结，Rust 类型是唯一 schema source，自动生成 TypeScript 类型。
 - 可重放：所有 Agent 事件可持久化、可重放，崩溃后可恢复。
 - 解耦：Agent Engine 与 Provider 通过 canonical domain 解耦，禁止按 Provider 名称走特例。
+- 控制面分离：Provider protocol、Credential Pool、RoutingPolicy、Agent scheduling 与 ClientAdapter 是不同状态机；`ModelProvider` 不承担账号池或客户端职责（[ADR-033](../adr/ADR-033-control-plane-separation.md)）。
+- Tenant 边界：Session/Agent/Account/Usage/Audit 都有 tenant scope；本地单用户默认映射到 `local/default`，跨 tenant 查询和 binding fail-closed。
 - Host 唯一：`pawork` 是 Core 唯一正式宿主；GUI / IDE / ACP / SDK / Mobile 都是连接该宿主的 Client Channel / Host Adapter，并列存在，不构造第二 Core、不互相替代（[ADR-021](../adr/ADR-021-cli-core-same-process.md)、[ADR-025](../adr/ADR-025-cli-is-sole-host.md)、[ADR-030](../adr/ADR-030-core-sole-source-of-truth.md)）。
 - 大数据用引用：大型内容走 Blob Store / Artifact ID，不在事件里内联数 MB 数据。
 - 敏感制品隔离：reasoning 等敏感凭证走 Protected Blob Store 加密落盘，Event 只存安全引用，不内联、不入日志、不入 OS Keychain（[ADR-032](../adr/ADR-032-protected-blob-store.md)）。
@@ -107,7 +111,7 @@ cli-host
 gui-client ↑ Tauri GUI（独立进程）
 ```
 
-Phase 15–17 在该主干上按以下方向扩展，箭头表示“上层依赖下层”；组合统一发生在 `app-service` / `core-runtime`，不会形成第二宿主：
+Phase 15–18 在该主干上按以下方向扩展，箭头表示“上层依赖下层”；组合统一发生在 `app-service` / `core-runtime`，不会形成第二宿主：
 
 ```text
 provider-api ← provider-* / memory-service
@@ -116,9 +120,9 @@ agent-engine ← plan-service / goal-service / task-manager / automation-service
       ↑
 core-runtime ← protected-blob-store / user-hooks / plugin-package / lsp-runtime
       ↑
-app-service ← gui-server / headless-json / acp-host / ide-host-adapter / remote-control-adapter
+app-service ← gui-server / client-adapter-api / headless-json / ide-host-adapter / remote-control-adapter
                    ↑
-             GUI / SDK / IDE / ACP / Mobile clients
+             GUI / SDK / IDE / Codex / Claude / ACP / Mobile clients
 ```
 
 `http-runtime` 是 Provider、User Hooks、Marketplace 与 Forge Adapter 共享的无 Provider 通用网络底层；`agent-sdk` 只依赖公开 schema/framing 并连接 `pawork`，不依赖 `core-runtime`。完整规划 crate 清单与依赖方向见 [workspace 结构 §2.1](workspace-layout.md)。
@@ -163,5 +167,6 @@ app-service ← gui-server / headless-json / acp-host / ide-host-adapter / remot
 - [控制流](control-flow.md)
 - [GUI Connection Protocol](api-surface.md)
 - [GUI 连接与多客户端](../features/gui-connection.md)
+- [Provider Account Control Plane](../features/provider-control-plane.md) · [Agent Client Adapters](../features/client-adapters.md) · [Tenant、Usage 与 Audit](../features/tenant-audit.md)
 - [CLI Host](../features/cli-host.md)
 - [ROADMAP](../../ROADMAP.md)

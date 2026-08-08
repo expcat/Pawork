@@ -47,12 +47,13 @@
           → Agent Loop 主干补线 → Built-in Tools / Policy
           → Sessions/Compaction → Git/Diff → Canonical Tool v2
           → OpenAI / Anthropic / xAI Native APIs
-          → Skills / MCP → Plan / Background Task
-          → Hooks / Multi-Agent / Agent Profile
-          → Marketplace / LSP → Goal / Automation / Memory
-          → ACP / SDK / Remote / Browser
+          → Tenant/Principal → ProviderAccount/Credential Lease
+          → ErrorClassifier / RoutingPolicy / Usage Ledger
+          → Skills / MCP → Plan / Background Task → ClientAdapter
+          → Hooks / Multi-Agent / Agent Profile → Codex / Claude / ACP
+          → Marketplace / LSP → Goal / Automation / Memory → SDK / Remote / Browser
 
-在核心 Coding Agent 能可靠完成真实仓库任务、Provider v2 canonical 语义稳定前，不进入 Multi-Agent 与复杂插件开发。Phase 15 是 Phase 8～17 大规模扩展前的结构性前置；其编号表示新增规划批次，不表示必须等 Phase 14 完成。
+在核心 Coding Agent 能可靠完成真实仓库任务、Provider v2 canonical 语义与 Phase 18 账号控制面基础稳定前，不进入 Multi-Agent 与外部 Agent Client 大规模接入。Phase 编号是文档索引，不是机械串行顺序；实际波次见 ROADMAP。
 
 > CLI Host 与多 GUI 协议（Phase 13）是 Core 的正式运行入口与 GUI 接入边界；协议冻结部分（GUI Connection Protocol / Transport 抽象类型）随 [P0-8](P0-8-core-api.md) 提前完成，Remote Transport 真实内网穿透库可推迟。
 
@@ -73,8 +74,9 @@
 - **Provider Native**：Client Function / Provider Hosted / Provider Extension；Responses / Modern Messages；Web/X/File/Collection Search、Code Execution、Hosted Shell、Computer Use、Image Generation、server-side MCP、Tool Search、citation/source、reasoning continuation 与 capability negotiation。
 - **Agent Workflow**：Plan review、Goal、Background Task、Scheduled Automation、Persistent Monitor、Review Engine、跨产品 Session Import；Long-term Memory 为 P2，不阻塞前述闭环。
 - **Ecosystem / Host**：用户 Shell/HTTP/Prompt Hooks、Plugin Package/Marketplace、LSP、完整 Agent Profile、Agent Teams、ACP、Rust/JSON SDK、IDE adapter、Browser/Computer、真实 Remote Transport 与受限移动端控制。
+- **Account / Client Control Plane**：Tenant/Principal、ProviderAccount/Credential Lease、scope-aware ErrorClassifier、确定性 RoutingPolicy、Session Affinity、多维 Usage/Cost Ledger、统一 ClientAdapter，以及 Codex App-Server / Claude Gateway / ACP adapter。
 
-这些目标分别落在 Phase 15～17；不得用 `provider_options` 或 Provider 名称分支绕过 canonical domain，也不得破坏 CLI/Core 同进程同二进制、Core 单一事实源与 GUI 只经 GUI Connection Protocol 接入的架构红线。
+这些目标分别落在 Phase 15～18；不得用 `provider_options`、HTTP status 直译或 Provider/Client 名称分支绕过 canonical domain，也不得破坏 CLI/Core 同进程同二进制、Core 单一事实源与 GUI 只经 GUI Connection Protocol 接入的架构红线。
 
 ## MVP 验收清单
 

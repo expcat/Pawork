@@ -13,7 +13,7 @@ GUI → GUI Connection Protocol → gui-server → app-service → core-runtime
 
 两条路径共享同一个 `app-service` 实例、同一个 Command Router 与同一个 Event Hub，保证 CLI 与 GUI 的业务行为一致，同时避免 CLI 对自身建立不必要的 IPC 连接。
 
-> 边界：GUI Connection Protocol 仅用于 GUI↔`pawork` Host。IDE（P17-9）/ Agent SDK / Headless（P17-8）/ ACP（P17-7）/ Mobile（P17-12）是并列的 Client Channel，各自走自己的接入语义（Headless JSON / SDK framing / ACP / 远程控制），共享同一 `app-service` 但**不消费 GUI 协议帧**，也不构造第二 Core（[ADR-021](../adr/ADR-021-cli-core-same-process.md)、[ADR-025](../adr/ADR-025-cli-is-sole-host.md)、[ADR-030](../adr/ADR-030-core-sole-source-of-truth.md)、总体架构 §2.5）。
+> 边界：GUI Connection Protocol 仅用于 GUI↔`pawork` Host。Codex App Server / Claude Gateway（P18-11/12）、IDE（P17-9）/ Agent SDK / Headless（P17-8）/ ACP（P17-7）/ Mobile（P17-12）是并列的 Client Channel，各自走自己的接入语义，共享同一 `app-service` 但**不消费 GUI 协议帧**，也不构造第二 Core。外部 Agent Client 统一实现 P18-10 `ClientAdapter` 契约；GUI 不实现该契约（[ADR-021](../adr/ADR-021-cli-core-same-process.md)、[ADR-025](../adr/ADR-025-cli-is-sole-host.md)、[ADR-030](../adr/ADR-030-core-sole-source-of-truth.md)、[ADR-033](../adr/ADR-033-control-plane-separation.md)、总体架构 §2.5）。
 
 ## 2. Command / Query / Event / Snapshot 示例
 

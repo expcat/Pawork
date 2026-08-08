@@ -27,6 +27,7 @@ Pawork/
 | `agent-api` | 对外领域 API 聚合 | 依赖 agent-engine |
 | `provider-api` | Provider Trait、canonical 请求 / 事件 / 错误 | 依赖 agent-domain |
 | `provider-runtime` | Provider 协议运行时、SSE/JSONL 解析、重试；Phase 2 现有 HTTP 基线后续抽到通用 `http-runtime` | 依赖 provider-api；抽离后依赖 http-runtime |
+| `provider-control` | ProviderAccount、CredentialPool/Lease、RoutingPolicy、ErrorClassifier、Health 与 Session Affinity | 依赖 provider-api / model-registry / agent-domain；Secret 解析由组合层注入，不持久化明文；P18-3～P18-7/P18-14 |
 | `provider-openai` | OpenAI 适配 | 依赖 provider-runtime |
 | `provider-anthropic` | Anthropic 适配 | 依赖 provider-runtime |
 | `provider-google` | Google Gemini 适配 | 依赖 provider-runtime |
@@ -39,7 +40,9 @@ Pawork/
 | `provider-mistral` | Mistral（优先级 P1） | 依赖 provider-runtime |
 | `auth-service` | 认证方式、Secret 后端、OAuth（PKCE/Device Flow/refresh/callback） | 依赖 provider-api |
 | `model-registry` | 模型目录、别名、能力、定价 | 依赖 provider-api |
-| `quota-service` | 绑定模型用量与额度监控、多适配器（API Key / OAuth / 网页抓取）、窗口聚合与缓存 | 依赖 provider-api；复用 auth-service / provider-runtime |
+| `tenant-service` | Tenant/Principal、RBAC、provider/model/account policy、legacy `local/default` 映射 | 依赖 agent-domain；通过 API 与 policy-engine 组合，不反向依赖 Provider adapter；P18-2/P18-9 |
+| `usage-ledger` | tenant/account/session/agent 多维 Usage/Cost 持久账本 | 依赖 agent-domain / agent-events / model-registry；P18-8 |
+| `quota-service` | account-scoped 用量与额度监控、多适配器、窗口聚合与缓存 | 依赖 provider-api；消费 tenant-service / usage-ledger，复用 auth-service / provider-runtime |
 | `config-service` | 确定性配置 schema、来源发现与层级合并 | 独立；供 context-engine / policy / resource-loader 等消费 |
 | `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain |
 | `compaction-engine` | 自动 / 手动压缩、摘要 | 依赖 agent-events / session-store |
@@ -53,7 +56,7 @@ Pawork/
 | `pty-service` | 集成终端 PTY | 依赖 process-runtime |
 | `policy-engine` | Approval、Policy 决策、路径 / Shell 安全 | 依赖 tool-api |
 | `sandbox-runtime` | Sandbox Backend、capability 策略 | 依赖 process-runtime / policy-engine |
-| `audit-log` | 审计事件 | 独立 |
+| `audit-log` | versioned canonical 审计事件、tenant-scoped 查询与 OTel/SIEM 脱敏导出 | 依赖 agent-domain；运行时由组合层接入 tenant-service / usage-ledger；P18-13 |
 | `workspace-service` | 工作区、多 Root、Git 检测、设置 | 依赖 agent-domain |
 | `file-index` | 文件索引、ignore、`@file` 搜索 | 依赖 workspace-service |
 | `resource-loader` | AGENTS.md / Skills / Prompt / Profile 加载 | 依赖 workspace-service |
@@ -87,9 +90,9 @@ Pawork/
 | `test-support` | Mock Provider / Mock Tool、测试工具 | 仅测试依赖 |
 | `schema-typegen` | 从 core-api / gui-protocol 生成并校验 `.d.ts` | 仅构建工具依赖 core-api / gui-protocol，不进入运行时 |
 
-### 2.1 Phase 15–17 与跨阶段规划新增 crate（登记在册，尚未实现）
+### 2.1 Phase 15–18 与跨阶段规划新增 crate（登记在册，尚未实现）
 
-> 登记即冻结 crate 名、职责与依赖方向；落地计划见 [ROADMAP](../../ROADMAP.md) Phase 15–17。新增 crate 遵循 §6/§7 规则，`agent-domain` 保持零外部 IO 依赖。embedding 经评估**不新增独立 crate**，扩展 `provider-api`（见下表脚注）。
+> 登记即冻结 crate 名、职责与依赖方向；落地计划见 [ROADMAP](../../ROADMAP.md) Phase 15–18。新增 crate 遵循 §6/§7 规则，`agent-domain` 保持零外部 IO 依赖。embedding 经评估**不新增独立 crate**，扩展 `provider-api`（见下表脚注）。
 
 | crate | 职责 | 依赖方向备注 |
 | --- | --- | --- |
@@ -107,7 +110,10 @@ Pawork/
 | `marketplace` | 扩展市场：发现/安装/更新/卸载/签名/trust/team-policy | 依赖 `plugin-package` / `http-runtime`；P17-3 |
 | `lsp-runtime` | LSP **Client** Runtime：启动/管理/调用现有 Language Server | 依赖 `agent-domain` / `process-runtime` / `sandbox-runtime`；P17-4 |
 | `teams` | Agent Teams / peer messaging / shared task board | 依赖 `agent-domain` / `orchestration`；P17-6 |
-| `acp-host` | 公共 Agent Client Protocol adapter | 依赖 `agent-domain` / `core-api`（连接 pawork Host）；P17-7 |
+| `client-adapter-api` | 外部 Agent Client 的统一 adapter/factory、capability snapshot、Session Registry 契约 | 依赖 `agent-domain` / `core-api`；P18-10 |
+| `client-codex-app-server` | Codex App Server Thread/Turn/Item/approval/subagent adapter | 依赖 `client-adapter-api` / `app-service`；P18-11 |
+| `client-claude-gateway` | Claude Gateway session/agent identity、Messages stream 与审计归属 adapter | 依赖 `client-adapter-api` / `app-service`；P18-12 |
+| `acp-host` | 公共 Agent Client Protocol adapter 与协议宿主 | 依赖 `client-adapter-api` / `core-api` / `app-service` / `agent-events` / `subscription-hub`（连接 pawork Host）；P17-7 |
 | `agent-sdk` | Rust client SDK + Headless JSON 协议接入 | 依赖公开 schema/framing（不依赖 `core-runtime`）；P17-8 |
 | `ide-host-adapter` | IDE 生命周期/诊断/交互桥接 + 可选 LSP Server 输出 | 依赖 `agent-sdk` / `core-api`；与 `gui-server` 平级；P17-9 |
 | `browser-computer-runtime` | Browser/Computer 能力 facade（Local/MCP/ProviderHosted 三执行位点） | 依赖 `tool-api` / `provider-api` / `sandbox-runtime`；P17-10 |
@@ -170,6 +176,20 @@ cli-host
         └── transport-remote-placeholder
 
 gui-client ↑ Tauri GUI（独立进程）
+```
+
+Provider 调用与外部 Agent Client 的扩展链保持单向：
+
+```text
+Codex / Claude / ACP
+        ↓
+client-*-adapter → client-adapter-api → app-service
+                                          ↓
+                               tenant-service / orchestration
+                                          ↓
+                                  provider-control
+                                          ↓
+                               provider-api / provider-runtime
 ```
 
 > 本图仅画主干链；完整 crate 清单以 §2 为准（含 agent-api、app-database、transport-memory、hook-runtime 等）。

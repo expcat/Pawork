@@ -31,6 +31,15 @@
 | Compaction | 会话压缩，保留关键约束与未完成任务 |
 | Canonical | Provider 无关的统一请求/事件领域 |
 | Provider Runtime | 统一封装各模型供应商的运行时 |
+| Provider Account | 某 Provider 下可被策略和健康状态管理的账号资源；与 Credential/Secret 分离 |
+| Credential Pool | 按 tenant、capability、health、policy 与并发限制获取 Credential Lease 的资源池 |
+| Credential Lease | 一次有期限、可释放/回收的账号使用权；不等于 Secret 明文 |
+| Routing Policy | 对合法候选执行 priority/weight/fill-first/affinity/fallback 的可组合策略，不承担 Agent 调度 |
+| Error Classifier | 把 Provider/协议错误归一成 failure class/scope/health impact/failover safety 的扩展点 |
+| Tenant / Principal | 组织/逻辑租户与当前用户/服务账号；本地默认分别为 `local/default` / `local/user` |
+| Usage Ledger | 按 tenant/account/session/agent/provider/model 记录 canonical usage/cost 的持久事实源 |
+| Client Adapter | 外部 Agent Client 协议与 Pawork canonical event 之间的版本化翻译层 |
+| Session Registry | 保存外部/内部 session 映射、连接、revision、ownership epoch 与 capability snapshot 的权威登记表 |
 | Model Registry | 模型目录、能力、别名、定价 |
 | Tool Scheduler | 按 capability 调度工具并发/串行 |
 | capability | 工具类别：ReadOnly / WorkspaceWrite / GitWrite / Process / Network / UserInteraction / ExternalPlugin |
@@ -43,6 +52,6 @@
 | Diagnostics Bundle | 可导出的脱敏诊断包 |
 | ADR | Architecture Decision Record，架构决策记录 |
 | P0 / P1 / P2 | 优先级分级：P0 必须、P1 重要、P2 可推迟；与任务 ID 中的 Phase 序号无关 |
-| Phase | 路线图阶段（Phase 0–13）；任务 ID `P{n}-{seq}` 中的 `P{n}` 是 Phase 序号，不是优先级 |
+| Phase | 路线图阶段（当前 Phase 0–18）；任务 ID `P{n}-{seq}` 中的 `P{n}` 是 Phase 序号，不是优先级 |
 | Streamable HTTP | MCP 远程传输规范（2025-03-26 起），取代旧 HTTP+SSE |
 | 权威状态 | Core 是所有客户端状态的唯一权威来源，CLI 输出与所有 GUI 都是其观察者与操作入口（[ADR-030](adr/ADR-030-core-sole-source-of-truth.md)） |
