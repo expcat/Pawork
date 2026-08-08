@@ -53,15 +53,15 @@
 
 首个可发布 Core 的能力边界。详细依据见 [性能目标](../docs/quality/performance-targets.md) 与各 Phase 退出标准。
 
-**必须具备**：纯 Rust 无 Node/Bun；OpenAI-compatible / OpenAI / Anthropic / Gemini；API Key + 基础 OAuth；Agent Loop + Streaming；Text/Image/Tool Call；read/write/edit/apply_patch；shell/search/find/list；Policy 与 Approval；Workspace Trust；SQLite Session；Fork/Resume/Branch；Compaction；Git status/diff/stage/unstage；Worktree；Checkpoint 与 Rollback；Skills 与 `AGENTS.md`；Pi JSONL 导入；CLI Host（`pawork`，CLI=Core 宿主，可脱离 GUI 运行）；GUI Connection Protocol 与多 GUI 连接（含本地 Transport、Snapshot/重放、Remote 占位接口）；macOS/Windows/Linux 基础支持。
+**必须具备**：纯 Rust 无 Node/Bun；OpenAI-compatible / OpenAI（GPT）/ Anthropic（Claude）/ xAI Grok / 智谱 GLM / 阿里 Qwen / Moonshot Kimi；API Key + OAuth 订阅；Agent Loop + Streaming；Text/Image/Tool Call；read/write/edit/apply_patch；shell/search/find/list；Policy 与 Approval；Workspace Trust；SQLite Session；Fork/Resume/Branch；Compaction；Git status/diff/stage/unstage；Worktree；Checkpoint 与 Rollback；Skills 与 `AGENTS.md`；Pi JSONL 导入；CLI Host（`pawork`，CLI=Core 宿主，可脱离 GUI 运行）；GUI Connection Protocol 与多 GUI 连接（含本地 Transport、Snapshot/重放、Remote 占位接口）；macOS/Windows/Linux 基础支持。
 
-**可推迟**：Bedrock、Mistral、Vertex；MCP OAuth；WASM Provider；高级 Sandbox；Multi-Agent；Hunk/Line Stage；真实 Remote Transport（内网穿透库）；远程开发；云同步；长期语义记忆。
+**可推迟**：Bedrock、Mistral、Vertex、Google Gemini（已实现但降级次要）；MCP OAuth；WASM Provider；高级 Sandbox；Multi-Agent；Hunk/Line Stage；真实 Remote Transport（内网穿透库）；远程开发；云同步；长期语义记忆。
 
 ## MVP 验收清单
 
 1. Core 启动不加载任何 JavaScript Runtime
 2. 可从空工作区创建 Session
-3. 可流式调用至少三个主要 Provider
+3. 可流式调用至少三个主要 Provider（初始集合：OpenAI / Anthropic / xAI / 智谱 / 阿里 / Moonshot）
 4. 可接收多个 Tool Call
 5. 可取消 Provider 和 Tool
 6. 可安全读取和修改文件

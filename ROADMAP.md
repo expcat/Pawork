@@ -20,13 +20,13 @@
 | Phase | 主题 | 任务数 | 已完成 | 状态 |
 | --- | --- | --- | --- | --- |
 | 0 | 架构与协议冻结 | 12 | 12 | 🟢已完成 |
-| 1 | 基础设施 | 12 | 12 | 🟢已完成 |
-| 2 | 首个真实 Provider | 11 | 11 | 🟢已完成 |
-| 3 | Agent Loop | 10 | 10 | 🟢已完成 |
-| 4 | 核心工具与权限 | 12 | 12 | 🟢已完成 |
-| 5 | Session、Branch 与 Compaction | 9 | 9 | 🟢已完成 |
-| 6 | 主要 Provider | 9 | 9 | 🟢已完成 |
-| 7 | Git、Diff 与 Worktree | 8 | 8 | 🟢已完成 |
+| 1 | 基础设施 | 13 | 12 | 🔵进行中（P1-13 评审修复待启动） |
+| 2 | 首个真实 Provider | 12 | 11 | 🔵进行中（P2-12 评审修复待启动） |
+| 3 | Agent Loop | 11 | 10 | 🔵进行中（P3-11 评审修复待启动） |
+| 4 | 核心工具与权限 | 13 | 12 | 🔵进行中（P4-13 评审修复待启动） |
+| 5 | Session、Branch 与 Compaction | 10 | 9 | 🔵进行中（P5-10 评审修复待启动） |
+| 6 | 主要 Provider | 14 | 9 | 🔵进行中（P6-10~13、P6-14 评审修复待启动） |
+| 7 | Git、Diff 与 Worktree | 9 | 8 | 🔵进行中（P7-9 评审修复待启动） |
 | 8 | Skills、Prompts 与 Instructions | 8 | 0 | 🟡未开始 |
 | 9 | MCP | 7 | 0 | 🟡未开始 |
 | 10 | WASM Plugin | 6 | 0 | 🟡未开始 |
@@ -34,7 +34,7 @@
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
 | 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
-| **合计** | — | **137** | **83** | — |
+| **合计** | — | **148** | **83** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -42,7 +42,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P8-1 Resource Loader** —— Phase 7（Git、Diff 与 Worktree）已全部交付（P7-1 ~ P7-8，含 P1 的 hunk/line stage 与 commit/branch/stash/log/show 等 Git 操作），进入 Skills、Prompts 与 Instructions。详情见 [plan/P8-1-resource-loader.md](plan/P8-1-resource-loader.md)。
+> 🎯 **P1-13 Phase 1 评审修复** —— [REVIEW.md](REVIEW.md) Phase 1–7 评审完成，新增七份汇总修复任务（P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P6-14 / P7-9），每份覆盖该阶段全部 V 项与基线/依赖/文档漂移。优先处理 P1-13：消除 Event Store「Secret 落库」红线（V2）与 `trust_workspaces` 自我提权面（V1）。详情见 [plan/P1-13-review-remediation.md](plan/P1-13-review-remediation.md)。
 
 ## 关键路径
 
@@ -135,6 +135,8 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | --- | --- | --- |
 | agent-api 职责边界 | 评估与 core-api / app-service 的重叠；workspace-layout §6 依赖图仅画主干链（完整清单以其 §2 为准，含 agent-api / app-database / transport-memory / hook-runtime） | Phase 13 前 |
 | provider-bedrock / provider-mistral | 已在 workspace-layout 登记但 ROADMAP 无对应任务（MVP 可推迟） | 启动时补任务 |
+| 六初始供应商 crate 登记 | P6-10~13 新增 `provider-xai` / `provider-zhipu` / `provider-qwen` / `provider-moonshot`，需在 workspace-layout §2 登记并在 `ProviderId` 枚举补 Xai / Zhipu / Qwen / Moonshot | P6-10 启动时 |
+| Google Gemini 降级次要 | 初始供应商集合调整为 OpenAI / Anthropic / xAI Grok / 智谱 GLM / 阿里 Qwen / Moonshot Kimi；Gemini 保留已实现的 `provider-google` 但不纳入初始范围 | 已确认（2026-08-08） |
 | 缺失功能文档 | audit-log、client-auth 尚无独立 `docs/features/` 文档 | 对应 crate 实现时 |
 
 ---
@@ -178,6 +180,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P1-10 | 🟢 | Metrics | 关键指标采集 | [详情](plan/P1-10-metrics.md) |
 | P1-11 | 🟢 | 诊断包导出 | 脱敏可分享诊断包 | [详情](plan/P1-11-diagnostics-export.md) |
 | P1-12 | 🟢 | CLI Host 骨架（pawork） | serve/run/shell/watch 子命令骨架（CLI=Core 宿主） | [详情](plan/P1-12-cli-skeleton.md) |
+| P1-13 | 🟡 | Phase 1 评审修复 | 安全红线（V1/V2）+ 健壮性（V3~V8）+ 基线清理 | [详情](plan/P1-13-review-remediation.md) |
 
 ### Phase 2：首个真实 Provider
 
@@ -196,6 +199,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P2-9 | 🟢 | Usage 与 stop reason | token/费用/完成原因归一 | [详情](plan/P2-9-usage-stopreason.md) |
 | P2-10 | 🟢 | 重试与错误归一化 | 可重试判定/退避 | [详情](plan/P2-10-retry-error.md) |
 | P2-11 | 🟢 | Provider Contract Tests | 统一测试套件 | [详情](plan/P2-11-contract-tests.md) |
+| P2-12 | 🟡 | Phase 2 评审修复 | 正确性高危（V1~V4）+ 退避死代码（V8）+ 契约/文档漂移 | [详情](plan/P2-12-review-remediation.md) |
 
 ### Phase 3：Agent Loop
 
@@ -213,6 +217,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P3-8 | 🟢 | 取消 | 取消 provider/tool+进程清理 | [详情](plan/P3-8-cancel.md) |
 | P3-9 | 🟢 | 事件流式分发 | 广播+背压+<2ms | [详情](plan/P3-9-event-broadcast.md) |
 | P3-10 | 🟢 | Interrupted Run 恢复 | 崩溃后 <1s 恢复 | [详情](plan/P3-10-interrupted-run-recovery.md) |
+| P3-11 | 🟡 | Phase 3 评审修复 | 主干接线（V1~V9）+ 预算/重放（V4~V6）+ 文档漂移 | [详情](plan/P3-11-review-remediation.md) |
 
 ### Phase 4：核心工具与权限
 
@@ -232,6 +237,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P4-10 | 🟢 | Workspace Trust | 默认受限/信任放宽 | [详情](plan/P4-10-workspace-trust.md) |
 | P4-11 | 🟢 | Checkpoint 与回滚 | 单次/整 run 回滚+冲突检测 | [详情](plan/P4-11-checkpoint-rollback.md) |
 | P4-12 | 🟢 | Process Runtime | 进程组/Job/无死锁 IO/cancel | [详情](plan/P4-12-process-runtime.md) |
+| P4-13 | 🟡 | Phase 4 评审修复 | 策略接线（V1/V4）+ 数据完整性（V3）+ checkpoint 持久化（V9）+ 基线/fuzz | [详情](plan/P4-13-review-remediation.md) |
 
 ### Phase 5：Session、Branch 与 Compaction
 
@@ -248,22 +254,28 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P5-7 | 🟢 | Tool Result 裁剪 | 分级裁剪+artifact 引用 | [详情](plan/P5-7-toolresult-trim.md) |
 | P5-8 | 🟢 | Export / Import | 稳定 schema 往返 | [详情](plan/P5-8-session-export-import.md) |
 | P5-9 | 🟢 | Pi JSONL Importer | 解析/未知字段/不改原文件 | [详情](plan/P5-9-pi-jsonl-import.md) |
+| P5-10 | 🟡 | Phase 5 评审修复 | 多分支正确性（V1/V2/V8）+ Pi 导入（V3~V5）+ CJK token（V6） | [详情](plan/P5-10-review-remediation.md) |
 
 ### Phase 6：主要 Provider
 
-覆盖三大主 Provider 与高级能力，Agent Core 不含 Provider 特例。
+覆盖初始主要 Provider（OpenAI / Anthropic / xAI Grok / 智谱 GLM / 阿里 Qwen / Moonshot Kimi）与高级能力，Agent Core 不含 Provider 特例。Google Gemini 已实现但降级为次要（P1）供应商，见「遗留待决项」。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
 | P6-1 | 🟢 | OpenAI 适配 | 适配+contract tests | [详情](plan/P6-1-openai.md) |
 | P6-2 | 🟢 | Anthropic 适配 | 适配+contract tests | [详情](plan/P6-2-anthropic.md) |
-| P6-3 | 🟢 | Google Gemini 适配 | 适配+contract tests | [详情](plan/P6-3-gemini.md) |
+| P6-3 | 🟢 | Google Gemini 适配 | 适配+contract tests（已降级次要 P1） | [详情](plan/P6-3-gemini.md) |
 | P6-4 | 🟢 | OAuth | PKCE/Device/refresh/callback | [详情](plan/P6-4-oauth.md) |
 | P6-5 | 🟢 | Thinking / Reasoning | level+stream delta | [详情](plan/P6-5-thinking.md) |
 | P6-6 | 🟢 | 图片输入 | image content part | [详情](plan/P6-6-image-input.md) |
 | P6-7 | 🟢 | Prompt Cache | 缓存控制+命中 | [详情](plan/P6-7-prompt-cache.md) |
 | P6-8 | 🟢 | 结构化输出 | JSON/structured | [详情](plan/P6-8-structured-output.md) |
 | P6-9 | 🟢 | Provider-specific options | 透传+raw metadata | [详情](plan/P6-9-provider-options.md) |
+| P6-10 | 🟡 | xAI Grok 适配 | API Key 直连 + OAuth 订阅+reasoning | [详情](plan/P6-10-xai-grok.md) |
+| P6-11 | 🟡 | 智谱 GLM 适配 | API Key 直连+reasoning_content | [详情](plan/P6-11-zhipu-glm.md) |
+| P6-12 | 🟡 | 阿里 Qwen 适配 | DashScope API Key+thinking | [详情](plan/P6-12-qwen.md) |
+| P6-13 | 🟡 | Moonshot Kimi 适配 | API Key 直连+reasoning | [详情](plan/P6-13-moonshot-kimi.md) |
+| P6-14 | 🟡 | Phase 6 评审修复 | 安全/正确性（V1~V3）+ OAuth 接线（V4）+ 基线（oauth2/四依赖） | [详情](plan/P6-14-review-remediation.md) |
 
 ### Phase 7：Git、Diff 与 Worktree
 
@@ -279,6 +291,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P7-6 | 🟢 | Git 缓存 / watcher | status 缓存+切换<50ms | [详情](plan/P7-6-git-cache.md) |
 | P7-7 | 🟢 | Hunk / Line stage（优先级 P1） | 块/行暂存 | [详情](plan/P7-7-hunk-stage.md) |
 | P7-8 | 🟢 | commit / branch / ...（优先级 P1） | P1 Git 操作 | [详情](plan/P7-8-git-operations.md) |
+| P7-9 | 🟡 | Phase 7 评审修复 | 安全（V1/V2）+ 语义（V3/V4）+ 基线（similar/依赖）+ 文档漂移 | [详情](plan/P7-9-review-remediation.md) |
 
 ### Phase 8：Skills、Prompts 与 Instructions
 
@@ -369,7 +382,7 @@ Parent/Worker 编排，写入隔离，取消传播。
 
 ### Phase 14：模型用量与额度监控
 
-显示每个绑定模型的用量与剩余额度，支持 API Key 直连 / OAuth 登录授权 / 网页抓取三种适配器，按具体供应商落地，覆盖整体 / 5 小时滚动 / 周 / 月等额度窗口。依赖 P2-9、P2-7、P6-4、P3-6，建议在 Phase 13 之后推进。
+显示每个绑定模型的用量与剩余额度，支持 API Key 直连 / OAuth 订阅授权 / 网页抓取三种适配器，按六个初始供应商（OpenAI / Anthropic / xAI / 智谱 / 阿里 / Moonshot）各自真实的额度机制落地，覆盖整体 / 5 小时滚动 / 周 / 月等额度窗口。依赖 P2-9、P2-7、P6-4、P3-6，建议在 Phase 13 之后推进。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
@@ -377,7 +390,7 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P14-2 | 🟡 | API Key 直连适配器 | key+REST billing/usage | [详情](plan/P14-2-quota-apikey-adapter.md) |
 | P14-3 | 🟡 | OAuth 登录授权适配器 | 复用 OAuth 取 console API | [详情](plan/P14-3-quota-oauth-adapter.md) |
 | P14-4 | 🟡 | 网页抓取适配器 | 无 API 平台页面解析 | [详情](plan/P14-4-quota-webscrape-adapter.md) |
-| P14-5 | 🟡 | 具体供应商实现 | OpenAI/Anthropic/Google | [详情](plan/P14-5-quota-provider-implementations.md) |
+| P14-5 | 🟡 | 具体供应商实现 | 六初始供应商额度适配 | [详情](plan/P14-5-quota-provider-implementations.md) |
 | P14-6 | 🟡 | 多窗口额度聚合与归一 | 5h/周/月/整体+倒计时+缓存 | [详情](plan/P14-6-quota-window-aggregation.md) |
 | P14-7 | 🟡 | 本地用量累计与预算联动 | 对照远端+触限推算+预算 | [详情](plan/P14-7-quota-local-usage-budget.md) |
 | P14-8 | 🟡 | Quota 查询 API 与展示 | core-api/CLI/GUI 脱敏 | [详情](plan/P14-8-quota-query-api-display.md) |

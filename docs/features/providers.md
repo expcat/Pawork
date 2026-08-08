@@ -52,8 +52,8 @@ pub enum ProviderStreamEvent {
 
 ## Provider 优先级
 
-- **P0**：OpenAI；Anthropic；Google Gemini；OpenAI-compatible；本地兼容服务（Ollama、vLLM、LM Studio）。
-- **P1**：AWS Bedrock；Mistral；Azure OpenAI；Google Vertex AI；GitHub Models；自定义 Endpoint。
+- **P0（初始主要供应商）**：OpenAI（GPT）；Anthropic（Claude）；xAI Grok（API Key + OAuth 订阅）；智谱 GLM；阿里 Qwen（DashScope）；Moonshot Kimi；OpenAI-compatible；本地兼容服务（Ollama、vLLM、LM Studio）。
+- **P1（已实现或次要）**：Google Gemini（已实现 `provider-google`，2026-08-08 降级为次要）；AWS Bedrock；Mistral；Azure OpenAI；Google Vertex AI；GitHub Models；自定义 Endpoint。
 - **P2**：Provider WASM Plugin；动态模型发现；Provider 路由；多 Provider fallback；自动成本和延迟路由。
 
 ## 已实现 Provider（Phase 6）
@@ -63,9 +63,18 @@ pub enum ProviderStreamEvent {
 | OpenAI（原生） | `provider-openai` | Chat Completions | reasoning 流、图片输入、结构化输出、provider options 透传、prompt cache 自动命中 |
 | OpenAI-compatible / 本地服务 | `provider-openai-compatible` | Chat Completions | 覆盖云端兼容接口与 Ollama / vLLM / LM Studio；图片输入、reasoning、options 透传 |
 | Anthropic | `provider-anthropic` | Messages API | thinking、tool_use、prompt cache（`cache_control`）、图片、`top_k` 等透传 |
-| Google Gemini | `provider-google` | `generateContent`（`alt=sse`） | `function_call`、`thought` 流、`responseSchema`、`thinkingConfig`、`cachedContentTokenCount` |
+| Google Gemini | `provider-google` | `generateContent`（`alt=sse`） | `function_call`、`thought` 流、`responseSchema`、`thinkingConfig`、`cachedContentTokenCount`（已降级次要 P1） |
 
 跨切能力（Phase 6）：thinking/reasoning level（P6-5）、图片输入（P6-6）、prompt cache 控制+命中（P6-7）、结构化输出（P6-8）、provider-specific options 透传+raw metadata（P6-9）。Agent Core 经 [`agent-engine/tests/no_provider_branch.rs`](../../crates/agent-engine/tests/no_provider_branch.rs) 回归守护，禁止按 provider 名走分支。
+
+## 计划中 Provider（Phase 6，P6-10~13）
+
+| Provider | crate | 鉴权 | 协议 | 关键能力 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| xAI Grok | `provider-xai`（计划） | API Key / OAuth 订阅 | Chat Completions（`api.x.ai`） | reasoning 流归一；OAuth 订阅按订阅配额而非 token 计费 | 🟡 P6-10 |
+| 智谱 GLM | `provider-zhipu`（计划） | API Key | OpenAI-compatible（`open.bigmodel.cn/api/paas/v4`） | GLM-4.6 `reasoning_content` 归一 | 🟡 P6-11 |
+| 阿里 Qwen | `provider-qwen`（计划） | API Key（DashScope） | OpenAI-compatible（`compatible-mode/v1`） | Qwen3 `enable_thinking` 归一 | 🟡 P6-12 |
+| Moonshot Kimi | `provider-moonshot`（计划） | API Key | OpenAI-compatible（`api.moonshot.cn/v1`） | Kimi K2 reasoning 归一；原生余额查询 | 🟡 P6-13 |
 
 ## 认证
 

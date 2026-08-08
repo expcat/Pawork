@@ -46,11 +46,15 @@ pub struct QuotaSnapshot {
 
 ## 供应商能力矩阵（P14-5 落地后更新）
 
-| 供应商 | 主适配器 | 支持窗口 | 说明 |
-| --- | --- | --- | --- |
-| OpenAI | `ApiKeyApi` | Overall / Monthly / 速率 | 经 billing / usage API 直取 |
-| Anthropic | `OAuthApi` / `WebScrape` | Weekly / Overall | 登录控制台取周窗口 |
-| Google Gemini | `OAuthApi` | RPM / TPM / 项目配额 | OAuth + quota API |
+| 供应商 | 鉴权方式 | 主适配器 | 支持窗口 | 说明 |
+| --- | --- | --- | --- | --- |
+| OpenAI（GPT） | API Key | `ApiKeyApi` | Overall / Monthly / 速率 | 经 billing / usage API 直取，`exact` |
+| Anthropic（Claude） | API Key / Console | `OAuthApi` / `WebScrape` | Weekly / Overall | 登录控制台取周窗口，`exact` 或 `scraped` |
+| xAI Grok | OAuth 订阅 / API Key | `OAuthApi`（订阅）/ `ApiKeyApi`（key） | Weekly / Overall | 订阅按请求配额；key 按 token 用量，订阅端点不稳定时降级抓取 |
+| 智谱 GLM | API Key | `ApiKeyApi` / `WebScrape` | Overall / Monthly | `GET /api/paas/v4/usage` 取剩余；资源包明细抓控制台 |
+| 阿里 Qwen | DashScope key（不可查余额） | `ApiKeyApi`（AccessKey）/ `WebScrape` / 本地推算 | Overall / Monthly | 需额外阿里云 AccessKey 调 BSS `QueryAccountBalance`；否则抓百炼控制台或仅本地推算 `derived` |
+| Moonshot Kimi | API Key | `ApiKeyApi` | Overall | `GET /v1/users/me/balance` 返回 `available_balance`，`exact` |
+| Google Gemini（次要 P1） | OAuth | `OAuthApi` | RPM / TPM / 项目配额 | OAuth + quota API；已降级次要，非初始集合 |
 
 ## 与既有能力的关系
 
