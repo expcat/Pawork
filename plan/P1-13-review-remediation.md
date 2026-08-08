@@ -1,6 +1,6 @@
 # P1-13：Phase 1 评审修复（REVIEW remediation）
 
-> Phase 1 · 基础设施 · 状态：🟡未开始 · 依赖：P1-1 ~ P1-12
+> Phase 1 · 基础设施 · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P1-1 ~ P1-12
 
 **最终目的**：消除 [REVIEW.md](../REVIEW.md) §1（Phase 1）评审发现的安全红线、健壮性缺陷与基线卫生问题——让「Secret 不落库」红线被 Event Store 序列化边界的脱敏与契约测试守护，关闭 `trust_workspaces` 的自我提权面，收敛 file-index/artifact-store 的阻塞与无界增长隐患，并使 workspace 基线声明与实际依赖一一对应。
 
@@ -49,7 +49,7 @@
 - [ ] **V8**：file-index `errors` 上限 1024 环形淘汰并标注截断（测试）
 - [ ] **基线**：`uuid`、`tracing-appender` 从根 `Cargo.toml` 移除（或补豁免理由），ROADMAP 基线表同步
 - [ ] **归属**：`notify-debouncer-full` 基线关联 P7-6，去抖统一方案记录于 plan
-- [ ] **门禁**：`cargo test`/`clippy -D warnings`/`fmt --check` 干净
+- [ ] **快速验证**：只运行本任务涉及 crate 的定向测试与必要 `cargo check -p <crate>`；Phase 1～7 remediation 全部收尾后统一执行 Core 主干 L2，不在本任务重复 workspace 全量门禁
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §1 · [ADR-014 Secret 走 OS Keychain](../docs/adr/ADR-014-secret-os-keychain.md) · [security-acceptance](../docs/quality/security-acceptance.md) · [ROADMAP 依赖选型基线](../ROADMAP.md#依赖选型基线)
 

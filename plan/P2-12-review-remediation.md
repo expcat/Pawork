@@ -1,6 +1,6 @@
 # P2-12：Phase 2 评审修复（REVIEW remediation）
 
-> Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 依赖：P2-1 ~ P2-11
+> Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P2-1 ~ P2-11
 
 **最终目的**：消除 [REVIEW.md](../REVIEW.md) §2（Phase 2）发现的「mock 过得去、真实端点翻车」型正确性高危与基线/契约/文档漂移——让流式 usage 真实可得（Phase 14 额度的数据源）、长流不被 60s 超时掐断、取消语义与认证头正确，并收敛退避三方并存的死代码与 plan 文档未同步的流程偏差。
 
@@ -54,6 +54,6 @@
 - [ ] **基线**：ROADMAP「依赖选型基线」补登 `futures`/`bytes`（根 `Cargo.toml` 已声明），移除 `backon`/`arbitrary`，ROADMAP 基线表同步
 - [ ] **契约**：timeout、reconnect 用例存在且通过；`assert_error_kind` 不再 vacuous 通过
 - [ ] **文档**：11 篇 `plan/P2-*.md` 状态 🟢、19 验收框勾选；providers.md 补 include_usage/stop reason 语义
-- [ ] **门禁**：`cargo test`/`clippy -D warnings`/`fmt --check`/`schema-typegen --check` 干净
+- [ ] **快速验证**：只运行 Provider/HTTP/parser/auth 受影响 crate 的定向测试；仅在 schema 实际变化时定向检查生成物，Phase 1～7 remediation 收尾后统一执行 Core 主干 L2
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §2 · [ADR-015 Provider 契约测试](../docs/adr/ADR-015-provider-contract-tests.md) · [providers](../docs/features/providers.md) · [ROADMAP 依赖选型基线](../ROADMAP.md#依赖选型基线)

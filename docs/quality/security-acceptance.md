@@ -22,4 +22,4 @@
 
 - [policy](../features/policy.md) · [sandbox](../features/sandbox.md) · [plugins](../features/plugins.md) · [mcp](../features/mcp.md) · [sessions](../features/sessions.md)
 - [ADR-009 默认 Workspace Trust](../adr/ADR-009-default-workspace-trust.md) · [ADR-014 Secret 存 OS Keychain](../adr/ADR-014-secret-os-keychain.md) · [ADR-020 性能与安全是发布门槛](../adr/ADR-020-performance-security-gate.md)
-- [ROADMAP 横切门禁](../../ROADMAP.md)
+- [ROADMAP 实施波次与门禁节奏](../../ROADMAP.md#实施波次与门禁节奏) · [测试后清理](testing.md#测试后清理)

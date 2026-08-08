@@ -1,6 +1,6 @@
 # P3-11：Phase 3 评审修复（REVIEW remediation）
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 依赖：P3-1 ~ P3-10（与 P4-13 在 `scheduler.rs` 上下文注入上同根，序列协调：本任务先做 V8 上下文注入，P4-13 再做 V1 策略接线）
+> Phase 3 · Agent Loop · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P3-1 ~ P3-10（与 P4-13 在 `scheduler.rs` 上下文注入上同根，序列协调：本任务先做 V8 上下文注入，P4-13 再做 V1 策略接线）
 
 **最终目的**：把 [REVIEW.md](../REVIEW.md) §3（Phase 3）评审指出的「组件齐全、主干未接线」状态收口——让 Provider Loop 真正组合状态机、预算、重试、消息队列、取消、广播与工具调度，使终态事件可观察、流式增量对订阅者可见、断流可重试、崩溃重放对工具轮次正确，并把 plan 文档漂移一并处理。
 
@@ -62,7 +62,7 @@
 - [ ] **V10**：`execute()` input.name 路径已废弃/移除
 - [ ] **V11**：取消测试断言 `RunCancelled` 事件被广播
 - [ ] **文档**：10 篇 `plan/P3-*.md` 状态 🟢、18 验收框勾选；provider_loop 模块头注释与实现一致
-- [ ] **门禁**：`cargo test`/`clippy -D warnings`/`fmt --check`/`schema-typegen --check` 干净
+- [ ] **快速验证**：只运行 Agent Loop、预算、队列、事件重放的定向测试与最小 Mock smoke；workspace 全量与 schema 总门禁延后到 Core 主干 L2
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §3 · [ADR-016 核心事件可持久化重放](../docs/adr/ADR-016-core-event-persist-replay.md) · [ROADMAP](../ROADMAP.md)
 

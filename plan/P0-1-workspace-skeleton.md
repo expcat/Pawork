@@ -11,7 +11,7 @@
 1. **创建根 Cargo.toml** —— 声明 `[workspace]`、`members`、`resolver = "2"`、共享的 `[workspace.package]` 与 `[workspace.dependencies]`。目的：单一 workspace 根，统一版本与依赖来源。
 2. **创建目录骨架** —— 按 workspace 结构建 `crates/ apps/ schemas/ fixtures/ benches/`。目的：为每个 crate 预留 home，命名一致。
 3. **配置 .gitignore** —— `target/`、本地 SQLite/`*.db`、secrets、OS 元数据。目的：避免构建产物与本地数据库、密钥入库。
-4. **CI 占位** —— GitHub Actions 跑 `cargo metadata` + `cargo build --workspace` + `clippy` + `fmt --check`。目的：尽早建立门禁，每个 PR 都可验证。
+4. **CI 占位** —— GitHub Actions 保留 `cargo metadata` + `cargo build --workspace` + `clippy` + `fmt --check` 的手动/维护门禁入口；普通开发 PR 按受影响 crate 定向验证。目的：保留可重复的全量入口，同时避免高频开发阶段每次提交都承担 workspace 全量成本。
 5. **构建可复现校验** —— 提交 `Cargo.lock`，确认空 workspace 能构建。目的：保证后续任务的基线可复现。
 
 ## 主要产出物

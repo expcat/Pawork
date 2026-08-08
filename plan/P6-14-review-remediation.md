@@ -1,6 +1,6 @@
 # P6-14：Phase 6 评审修复（REVIEW remediation）
 
-> Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P6-1 ~ P6-9
+> Phase 6 · 主要 Provider · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P6-1 ~ P6-9
 
 **最终目的**：消除 [REVIEW.md](../REVIEW.md) §6（Phase 6）评审发现的安全与正确性缺陷、OAuth 未接线与基线/文档漂移——让 Google API key 不进 URL、Anthropic thinking budget 与 max_tokens 不冲突、结构化输出不静默丢弃、OAuth auto-refresh 与 refresh token 轮换回写进入请求路径，并按评审结论处置 `oauth2` 基线虚置。
 
@@ -53,7 +53,7 @@
 - [ ] **V8**：Gemini functionResponse 按 name/顺序对齐，不依赖合成 id 跨轮稳定（多工具测试）
 - [ ] **基线**：`oauth2` 移除并补自实现说明；`base64`/`rand`/`sha2`/`url` 回填，ROADMAP 基线表同步
 - [ ] **文档**：providers.md 含 include_usage/stop reason/结构化输出/provider_options 覆盖语义；内置目录标注数据日期
-- [ ] **门禁**：`cargo test`/`clippy -D warnings`/`fmt --check`/`schema-typegen --check` 干净
+- [ ] **快速验证**：只运行发生变化的 Provider/OAuth 路径与安全契约子集；仅在 schema 变化时检查生成物，完整三家 modern contract 由 P15-9 集中执行
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §6 · [ADR-002 Agent Engine 与 Provider 解耦](../docs/adr/ADR-002-agent-engine-provider-decoupled.md) · [ADR-015 Provider 契约测试](../docs/adr/ADR-015-provider-contract-tests.md) · [providers](../docs/features/providers.md)
 

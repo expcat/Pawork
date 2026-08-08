@@ -5,9 +5,9 @@
 ## 如何使用
 
 1. 打开 [ROADMAP.md](../ROADMAP.md)，查看顶部的「进度总览」与「下一个推荐任务」。
-2. 按任务 ID 顺序执行（`P0-1 → P0-2 → …`），尊重每个任务的「依赖」字段；前置未完成不开始。
+2. Phase 内按任务 ID 与依赖执行；跨 Phase 按 [ROADMAP「实施波次与门禁节奏」](../ROADMAP.md#实施波次与门禁节奏) 推进，不机械追求 Phase 数字顺序。
 3. 点开对应 `plan/<id>-<slug>.md` 获取该任务的最终目的、细分步骤、产出与验收标准。
-4. 完成任务后：勾选该文件内的验收项，并把 `ROADMAP.md` 中对应行的状态改为 `🟢`、更新进度总览与「下一个推荐任务」。
+4. 完成任务后：勾选该文件内的功能验收与定向验证项，并把 `ROADMAP.md` 中对应行的状态改为 `🟢`、更新进度总览与「下一个推荐任务」。全量 workspace 门禁由功能簇收尾任务负责，不在每个细节任务重复执行。
 5. 任务粒度目标：数小时内可独立完成、独立验收、写入集收敛到单一 crate 或一组紧相关文件。
 
 ## 命名约定
@@ -15,6 +15,7 @@
 - 文件名：`<任务ID>-<英文短名>.md`，例如 `P0-1-workspace-skeleton.md`。
 - 任务 ID 沿用 ROADMAP 的 `P{n}-{seq}`：`P{n}` 是 Phase 序号，`{seq}` 是 Phase 内顺序；与优先级记号 P0–P2（见术语表）无关。
 - 状态符号：`🟡未开始` · `🔵进行中` · `🟢已完成` · `⚪已归档/推迟`。
+- 交付成熟度：`Designed` · `Implemented` · `Wired` · `TargetVerified` · `MaintenanceGated`。状态符号表示排期，成熟度表示证据；新任务和被重新打开的历史任务必须在元信息头记录两者。
 
 ## 依赖选型
 
@@ -24,13 +25,17 @@
 
 每个 `plan/<id>-<slug>.md` 包含以下小节（务必齐全）：
 
-- 元信息头：`> Phase {n} · {Phase 名} · 状态 · 依赖`。
+- 元信息头：`> Phase {n} · {Phase 名} · 状态 · 交付成熟度 · 依赖`。
 - **最终目的**：一段话，说明这一步完成后解锁什么能力、为什么它处于关键路径上。
 - **涉及范围**：涉及的 crate / 目录。
 - **细分步骤**：编号列表，每一步写清「做什么」与「目的」，最后由「最终目的」串起整步交付意义。
 - **主要产出物**：代码 / 文档 / 配置 / 测试的具体清单。
 - **验收标准**：可勾选、可复核的条件。
 - **相关文档**：仓库内相对路径链接。
+
+测试要求按任务风险选择：普通功能至少有存在性/差异检查与受影响 crate 的定向 smoke；安全红线、持久化/重放、路径和进程清理必须随实现补定向回归。不要在每个任务的「验收标准」机械复制 workspace 全量 build/test/clippy。
+
+`🟢` 与交付成熟度不互相替代：新任务至少完成实现、生产主干接线与定向验证（`TargetVerified`）后才能标绿；功能簇通过 L2/L3 后再记 `MaintenanceGated`。现有历史 `🟢` 可能只表示模块实现，若源码/运行证据显示未接线，保留历史状态并由 remediation 补线，不能仅凭勾选项推断 Production Ready。
 
 > 「细分步骤」中每一步都要写清**任务**与**目的**，避免只罗列动作而不交代它服务哪个目标。
 
@@ -39,11 +44,15 @@
 ## 关键路径
 
     Domain → Mock Provider → Event Store → OpenAI-compatible
-          → Agent Loop → Built-in Tools → Policy
-          → Sessions/Compaction → Git/Diff → Main Providers
-          → MCP → WASM → Multi-Agent
+          → Agent Loop 主干补线 → Built-in Tools / Policy
+          → Sessions/Compaction → Git/Diff → Canonical Tool v2
+          → OpenAI / Anthropic / xAI Native APIs
+          → Skills / MCP → Plan / Background Task
+          → Hooks / Multi-Agent / Agent Profile
+          → Marketplace / LSP → Goal / Automation / Memory
+          → ACP / SDK / Remote / Browser
 
-在核心 Coding Agent 能可靠完成真实仓库任务前，不进入 Multi-Agent 与复杂插件开发。
+在核心 Coding Agent 能可靠完成真实仓库任务、Provider v2 canonical 语义稳定前，不进入 Multi-Agent 与复杂插件开发。Phase 15 是 Phase 8～17 大规模扩展前的结构性前置；其编号表示新增规划批次，不表示必须等 Phase 14 完成。
 
 > CLI Host 与多 GUI 协议（Phase 13）是 Core 的正式运行入口与 GUI 接入边界；协议冻结部分（GUI Connection Protocol / Transport 抽象类型）随 [P0-8](P0-8-core-api.md) 提前完成，Remote Transport 真实内网穿透库可推迟。
 
@@ -56,6 +65,16 @@
 **必须具备**：纯 Rust 无 Node/Bun；OpenAI-compatible / OpenAI（GPT）/ Anthropic（Claude）/ xAI Grok / 智谱 GLM / 阿里 Qwen / Moonshot Kimi；API Key + OAuth 订阅；Agent Loop + Streaming；Text/Image/Tool Call；read/write/edit/apply_patch；shell/search/find/list；Policy 与 Approval；Workspace Trust；SQLite Session；Fork/Resume/Branch；Compaction；Git status/diff/stage/unstage；Worktree；Checkpoint 与 Rollback；Skills 与 `AGENTS.md`；Pi JSONL 导入；CLI Host（`pawork`，CLI=Core 宿主，可脱离 GUI 运行）；GUI Connection Protocol 与多 GUI 连接（含本地 Transport、Snapshot/重放、Remote 占位接口）；macOS/Windows/Linux 基础支持。
 
 **可推迟**：Bedrock、Mistral、Vertex、Google Gemini（已实现但降级次要）；MCP OAuth；WASM Provider；高级 Sandbox；Multi-Agent；Hunk/Line Stage；真实 Remote Transport（内网穿透库）；远程开发；云同步；长期语义记忆。
+
+## 长期覆盖目标
+
+在首个可发布 Core 之后，Pawork 的目标是用同一 canonical domain 承载 GPT / Claude / Grok 的现代原生能力，并覆盖主流 Coding Agent 工作流的合理并集：
+
+- **Provider Native**：Client Function / Provider Hosted / Provider Extension；Responses / Modern Messages；Web/X/File/Collection Search、Code Execution、Hosted Shell、Computer Use、Image Generation、server-side MCP、Tool Search、citation/source、reasoning continuation 与 capability negotiation。
+- **Agent Workflow**：Plan review、Goal、Background Task、Scheduled Automation、Persistent Monitor、Review Engine、跨产品 Session Import；Long-term Memory 为 P2，不阻塞前述闭环。
+- **Ecosystem / Host**：用户 Shell/HTTP/Prompt Hooks、Plugin Package/Marketplace、LSP、完整 Agent Profile、Agent Teams、ACP、Rust/JSON SDK、IDE adapter、Browser/Computer、真实 Remote Transport 与受限移动端控制。
+
+这些目标分别落在 Phase 15～17；不得用 `provider_options` 或 Provider 名称分支绕过 canonical domain，也不得破坏 CLI/Core 同进程同二进制、Core 单一事实源与 GUI 只经 GUI Connection Protocol 接入的架构红线。
 
 ## MVP 验收清单
 
@@ -82,13 +101,43 @@
 21. 三个平台的路径和子进程测试通过
 22. 性能指标达到 Core 目标
 
-## 横切门禁
+## 测试节奏与缓存清理
 
-每个 Phase 结束须对照：
+目标是让开发期优先形成真实功能闭环，把昂贵、容易受频繁接口变化影响的门禁后移到功能簇收尾和维护升级阶段；后移的是重复的全量执行，不是放弃关键不变量。
 
-- [性能目标](../docs/quality/performance-targets.md)：区分 Rust Core / Git 子进程 / Provider 网络 / 模型生成 / 外部命令 / GUI 渲染。
-- [安全验收](../docs/quality/security-acceptance.md)：发布前 15 项必过。
-- [测试体系](../docs/quality/testing.md)：单元 / contract / mock / golden / fuzz / chaos / 差分。
+| 层级 | 触发时机 | 默认内容 | 是否阻塞细节任务 |
+| --- | --- | --- | --- |
+| L0 存在性 / 差异 | 每次编辑 | 文件、链接、生成物与 diff 检查 | 是 |
+| L1 定向 smoke | 单个任务收尾 | 受影响 crate 的单元/Mock/最小 contract；必要时 `cargo check -p <crate>` | 是 |
+| L2 功能簇门禁 | 一组高变更功能基本收尾 | 相关 crates 集成/contract/golden/schema；一次性 clippy/fmt | 不阻塞组内未收尾任务 |
+| L3 维护 / 发布门禁 | 发布候选、依赖/协议升级、主干合并前 | workspace 全量、三平台、安全、性能、fuzz/chaos/差分 | 是 |
+
+例外：Secret 不落库、Policy/路径越界、事件持久化与重放、破坏性文件/进程清理、协议向后兼容属于高风险不变量，修改时立即执行对应定向回归，不等待 L2/L3。
+
+功能簇门禁集中在专门的收尾任务（例如 P15-9），Phase 1～7 的七个 remediation 全部结束后再执行一次 Core 主干 L2；不再要求每个 remediation 单独跑 `cargo test --workspace`。具体测试类型与运行频率见 [测试体系](../docs/quality/testing.md)。
+
+本地 L2/L3 使用隔离目标目录，确保无论通过或失败都能清理：
+
+```powershell
+$env:CARGO_TARGET_DIR = "target/gates"
+try {
+    cargo fmt --all -- --check
+    cargo build --workspace --all-targets
+    cargo test --workspace
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo run -p schema-typegen -- --check
+} finally {
+    cargo clean --target-dir "target/gates"
+    Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+}
+```
+
+- L0/L1 继续复用默认 `target/`，避免每次重编；任务结束只清理测试创建的临时目录、fixture 副本、日志、coverage/快照临时输出，测试本身优先用 RAII/tempfile 做失败路径清理。
+- L2/L3 的 `target/gates` 必须在 `finally` 清理；CI runner 若为一次性环境可跳过本地清理步骤。
+- 默认 `target/` 在功能簇收尾时检查体积；达到团队配置阈值或磁盘压力告警时执行一次 `cargo clean`，不要把全量清理放到每个定向测试后，否则会放大后续编译时间。
+- Fuzz corpus、Golden 基线与可复核失败样本是版本化证据，不属于缓存；只清理生成缓存和临时输出，不删除人工确认的回归样本。
+
+发布前仍须对照 [性能目标](../docs/quality/performance-targets.md) 与 [安全验收](../docs/quality/security-acceptance.md)；这些是 L3 维护门槛，不是开发期每个 Phase 的重复前置。
 
 ## 风险监控
 

@@ -1,6 +1,7 @@
 # P8-5：Profiles / Agent Profile
 
 > Phase 8 · Skills、Prompts 与 Instructions · 状态：🟡未开始 · 依赖：P8-1
+> **边界与扩展**：本任务交付 Agent Profile **v1**（可命名配置集 + 单次运行 instructions + 与配置优先级协作）。完整 **Profile v2** 维度（prompt/model/effort/tools 含显式 denied 清单/skills/mcp/permissions/hooks/memory/max-turns/background/isolation）与 v1→v2 迁移**不在本任务范围**，由 [P17-5](P17-5-agent-profile-v2.md) 独立承接并依赖本任务。勿在本任务实现 v2 维度，也勿把 v1 完成误判为 profile 能力完整。
 
 **最终目的**：实现 Agent Profile（agent profile、单次运行 instructions），让单次运行可注入专属指令与配置。
 

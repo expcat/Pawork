@@ -2,16 +2,17 @@
 
 本路线图是**目录式索引**：顶部是任务进度表与「下一个推荐任务」，下方按 Phase 列出每个任务的简短介绍与详情链接。每个任务的**最终目的、细分步骤、产出与验收标准**见 `plan/` 目录下对应文件。
 
-> 范围说明、MVP 边界、横切门禁与风险监控见 [plan/README.md](plan/README.md)。
+> 范围说明、MVP 边界、分层验证与延后门禁、测试缓存清理和风险监控见 [plan/README.md](plan/README.md)。
 
 ## 如何使用
 
 1. 查看「进度总览」了解各 Phase 进度，查看「下一个推荐任务」获取当前应执行的任务。
-2. 按任务 ID 顺序执行（`P0-1 → P0-2 → …`），尊重每个任务的「依赖」字段；前置未完成不开始。
+2. Phase 内按任务 ID 与依赖执行；跨 Phase 按「实施波次」推进，不机械追求数字顺序。
 3. 点开 `plan/<id>-<slug>.md` 获取该任务的细分步骤与最终目的。
-4. 完成任务后：把对应行的状态改为 `🟢`、更新「进度总览」计数与「下一个推荐任务」。
+4. 完成任务后：把对应行的状态改为 `🟢`、更新「进度总览」计数与「下一个推荐任务」。新完成任务须在 plan 元信息记录交付成熟度，至少达到 `TargetVerified`；不要求每个任务重复跑 workspace 全量门禁。历史 `🟢` 只代表既有完成记录，是否已接线仍以源码、运行证据和 remediation 复核为准。
 5. 任务粒度：数小时内可独立完成、独立验收、写入集收敛到单一 crate 或一组紧相关文件。
 6. 引入任何第三方依赖前先对照「依赖选型基线」一节；新增依赖必须同步回该节与对应 plan 任务。
+7. 功能簇开发期只做与写入集直接相关的快速验证；workspace 全量 build/test/clippy、跨平台、完整 contract/fuzz/chaos 在功能簇收尾、发布候选或维护升级时集中执行，门禁后按 [plan/README](plan/README.md#测试节奏与缓存清理) 清理隔离缓存。
 
 状态符号：`🟡未开始` · `🔵进行中` · `🟢已完成` · `⚪已归档/推迟`。架构红线见 [AGENTS.md](AGENTS.md) §2 与各 [ADR](docs/adr/)。
 
@@ -34,24 +35,44 @@
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
 | 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
-| **合计** | — | **148** | **83** | — |
+| 15 | Provider Native Capabilities | 9 | 0 | 🟡未开始 |
+| 16 | Modern Agent Workflow | 9 | 0 | 🟡未开始 |
+| 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
+| **合计** | — | **179** | **83** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
-> Phase 0 与 Phase 1 的实现、本地构建、测试和 Clippy 门禁已完成；三平台 GitHub Actions 仍按 `workflow_dispatch` 手动触发，其远程结果不计入本地完成状态。
+> Phase 0 与 Phase 1 已有历史本地构建、测试和 Clippy 记录；自本次规划起不再把「每个 Phase 重跑 workspace 全量门禁」作为任务完成前提。三平台 GitHub Actions 仍按 `workflow_dispatch` 手动触发，其远程结果不计入本地完成状态。
 
 ## 下一个推荐任务
 
 > 🎯 **P1-13 Phase 1 评审修复** —— [REVIEW.md](REVIEW.md) Phase 1–7 评审完成，新增七份汇总修复任务（P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P6-14 / P7-9），每份覆盖该阶段全部 V 项与基线/依赖/文档漂移。优先处理 P1-13：消除 Event Store「Secret 落库」红线（V2）与 `trust_workspaces` 自我提权面（V1）。详情见 [plan/P1-13-review-remediation.md](plan/P1-13-review-remediation.md)。
 
+## 实施波次与门禁节奏
+
+Phase 编号保留架构与文档索引意义，实际开发按结构性依赖分波推进：
+
+1. **主干补线**：完成 P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P6-14 / P7-9，优先消除安全红线与“模块存在但未接入 Agent Loop”的缺口；每项只跑受影响 crate 的定向测试。
+2. **Provider v2 前置**：完成 P15-1～P15-8，再由 P15-9 一次性执行 GPT / Claude / Grok 的完整 Provider Contract v2 门禁。P6-1 / P6-2 / P6-10 保留基础协议路径，Responses / modern server tools 在 Phase 15 扩展。
+3. **资源与 Host 基础**：推进 Phase 8、Phase 9、P13-1 / P13-2 与 P16-1 / P16-2，先形成确定性资源、MCP、CLI/Core 正式宿主和可审批 Plan 的最小闭环。
+4. **Process 与扩展生态**：完成 Phase 10、Phase 11，再推进 P16-4 / P16-6 与 P17-1～P17-4；可安装插件、用户 Hook、LSP 与后台进程闭环后执行一次相关 crates 的 L2，不跑无关功能簇。
+5. **Workflow 与编排**：推进 Phase 12、P16-3 / P16-5 / P16-7～P16-9、P17-5 / P17-6 与 Phase 14；Goal/Automation/Review/Memory、Agent Profile/Teams 稳定后执行 workflow/orchestration L2。
+6. **公共 Host 与远程能力**：完成 P13-3～P13-10 与 P17-7～P17-13；最终发布候选才执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
+
+开发期不得为追求“全绿”阻塞快速迭代，但安全红线、事件可重放、Secret 不落库、路径越界和破坏性进程清理必须随改动立即定向验证。完整策略与清理命令见 [plan/README](plan/README.md#测试节奏与缓存清理)。
+
 ## 关键路径
 
     Domain → Mock Provider → Event Store → OpenAI-compatible
-          → Agent Loop → Built-in Tools → Policy
-          → Sessions/Compaction → Git/Diff → Main Providers
-          → MCP → WASM → Multi-Agent
+          → Agent Loop 主干补线 → Built-in Tools / Policy
+          → Sessions/Compaction → Git/Diff → Canonical Tool v2
+          → OpenAI / Anthropic / xAI Native APIs
+          → Skills / MCP → Plan / Background Task
+          → Hooks / Multi-Agent / Agent Profile
+          → Marketplace / LSP → Goal / Automation / Memory
+          → ACP / SDK / Remote / Browser
 
-在核心 Coding Agent 能可靠完成真实仓库任务前，不进入 Multi-Agent 与复杂插件开发。
+在核心 Coding Agent 能可靠完成真实仓库任务、Provider v2 语义稳定前，不进入 Multi-Agent 与复杂插件开发；Phase 15 是 Phase 8～17 大规模扩展前的结构性前置，而不是等待 Phase 14 完成后才启动。
 
 > CLI Host 与多 GUI 协议（Phase 13）是 Core 的正式运行入口与 GUI 接入边界；其协议冻结部分（GUI Connection Protocol / Transport 抽象类型）随 [P0-8](plan/P0-8-core-api.md) 提前完成，运行时实现按依赖关系推进。
 
@@ -396,6 +417,58 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P14-8 | 🟡 | Quota 查询 API 与展示 | core-api/CLI/GUI 脱敏 | [详情](plan/P14-8-quota-query-api-display.md) |
 | P14-9 | 🟡 | 刷新调度与限额告警 | 定时刷新/退避/告警建议 | [详情](plan/P14-9-quota-refresh-alerting.md) |
 
+### Phase 15：Provider Native Capabilities
+
+把三家现代 API 的 hosted tools、reasoning state 与生命周期事件提升为 canonical domain。OpenAI Responses、Anthropic Modern Messages 与 xAI Responses 分别适配，不替换 Phase 2/6 的兼容路径；P15-9 是本功能簇的集中维护门禁。
+
+| ID | 状态 | 任务 | 简介 | 详情 |
+| --- | --- | --- | --- | --- |
+| P15-1 | 🟡 | Canonical Tool v2 | Client Function / Provider Hosted / Extension | [详情](plan/P15-1-canonical-tool-v2.md) |
+| P15-2 | 🟡 | OpenAI Responses API | hosted tools + continuation | [详情](plan/P15-2-openai-responses.md) |
+| P15-3 | 🟡 | Anthropic Modern Messages | effort/adaptive thinking/server tools | [详情](plan/P15-3-anthropic-modern-messages.md) |
+| P15-4 | 🟡 | xAI Responses API | Web/X/Code/Collections/MCP | [详情](plan/P15-4-xai-responses.md) |
+| P15-5 | 🟡 | Server Tool Events | citation/source/search/execution/computer events | [详情](plan/P15-5-server-tool-events.md) |
+| P15-6 | 🟡 | Tool Search | 动态发现与 lazy schema loading | [详情](plan/P15-6-tool-search.md) |
+| P15-7 | 🟡 | Reasoning State | effort levels/encrypted continuation | [详情](plan/P15-7-reasoning-state.md) |
+| P15-8 | 🟡 | Capability Discovery | ModelCapabilities v2 + negotiation | [详情](plan/P15-8-capability-discovery.md) |
+| P15-9 | 🟡 | Provider Contract v2 | 三家集中 contract/golden/兼容门禁 | [详情](plan/P15-9-provider-contract-v2.md) |
+
+### Phase 16：Modern Agent Workflow
+
+把 Agent 从单次前台 run 扩展为可审阅计划、持久目标、后台任务与自动化工作流；状态必须事件化、可恢复，GUI 断连不得取消任务。Long-term Memory 保持 P2，不阻塞 Plan / Background / Automation 的首轮交付。
+
+| ID | 状态 | 任务 | 简介 | 详情 |
+| --- | --- | --- | --- | --- |
+| P16-1 | 🟡 | Plan Mode | 只读规划状态与 PlanArtifact | [详情](plan/P16-1-plan-mode.md) |
+| P16-2 | 🟡 | Plan Review / Revision / Approval | 评论、修订、批准与拒绝 | [详情](plan/P16-2-plan-review-approval.md) |
+| P16-3 | 🟡 | Goal Mode | durable objective + success criteria | [详情](plan/P16-3-goal-mode.md) |
+| P16-4 | 🟡 | Background Task Manager | process/agent/monitor/automation 统一管理 | [详情](plan/P16-4-background-task-manager.md) |
+| P16-5 | 🟡 | Scheduled Automation | cron/interval/once/event trigger + inbox | [详情](plan/P16-5-scheduled-automation.md) |
+| P16-6 | 🟡 | Persistent Process / Monitor | attach/detach/restart/notification | [详情](plan/P16-6-persistent-process-monitor.md) |
+| P16-7 | 🟡 | Long-term Memory（优先级 P2） | project/user/episodic/semantic retrieval | [详情](plan/P16-7-long-term-memory.md) |
+| P16-8 | 🟡 | Review Engine | finding/line anchor/suggested patch/resolution | [详情](plan/P16-8-review-engine.md) |
+| P16-9 | 🟡 | Session Compatibility Import | Claude/Codex/Grok/Cursor 无损导入 | [详情](plan/P16-9-session-compat-import.md) |
+
+### Phase 17：Ecosystem & Host Compatibility
+
+补齐用户 Hook、Marketplace、LSP、Agent Profile/Teams 与公共 Host/SDK，并把浏览器、真实 Remote Transport 和远程控制作为可替换 Adapter 接入；不得绕过 Core 单一事实源或让 GUI 直连 Provider/Tool。
+
+| ID | 状态 | 任务 | 简介 | 详情 |
+| --- | --- | --- | --- | --- |
+| P17-1 | 🟡 | User Hooks | Shell/HTTP/Prompt/async hook | [详情](plan/P17-1-user-hooks.md) |
+| P17-2 | 🟡 | Plugin Package Format | Skills/Agents/Hooks/MCP/LSP 统一包 | [详情](plan/P17-2-plugin-package-format.md) |
+| P17-3 | 🟡 | Plugin Marketplace / Registry | install/update/remove/trust/policy | [详情](plan/P17-3-plugin-marketplace.md) |
+| P17-4 | 🟡 | LSP Runtime | diagnostics/navigation/symbol/rename | [详情](plan/P17-4-lsp-runtime.md) |
+| P17-5 | 🟡 | Agent Profile v2 | prompt/model/tools/skills/MCP/permission/memory | [详情](plan/P17-5-agent-profile-v2.md) |
+| P17-6 | 🟡 | Agent Teams / Peer Messaging | shared task board/mailbox/presence | [详情](plan/P17-6-agent-teams.md) |
+| P17-7 | 🟡 | ACP Host | 公共 Agent Client Protocol adapter | [详情](plan/P17-7-acp-host.md) |
+| P17-8 | 🟡 | Rust / JSON Agent SDK | embeddable/headless stable API | [详情](plan/P17-8-agent-sdk.md) |
+| P17-9 | 🟡 | IDE Host Adapter | IDE 生命周期、诊断与交互桥接 | [详情](plan/P17-9-ide-host-adapter.md) |
+| P17-10 | 🟡 | Browser / Computer Runtime | local/provider/MCP 可替换后端 | [详情](plan/P17-10-browser-computer-runtime.md) |
+| P17-11 | 🟡 | Real Remote Transport | 安全远程发布/连接/重连 | [详情](plan/P17-11-real-remote-transport.md) |
+| P17-12 | 🟡 | Mobile / Remote Control Protocol | 受限控制、审批与通知 | [详情](plan/P17-12-mobile-remote-control.md) |
+| P17-13 | 🟡 | Cross-Agent Compatibility Loader | Claude/Codex/Grok/Cursor/Pi 配置兼容 | [详情](plan/P17-13-compatibility-loader.md) |
+
 ---
 
-**范围、MVP、横切门禁与风险监控**：见 [plan/README.md](plan/README.md)。
+**范围、MVP、分层验证与延后门禁、缓存清理和风险监控**：见 [plan/README.md](plan/README.md)。

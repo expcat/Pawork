@@ -1,6 +1,6 @@
 # P5-10：Phase 5 评审修复（REVIEW remediation）
 
-> Phase 5 · Session、Branch 与 Compaction · 状态：🟡未开始 · 依赖：P5-1 ~ P5-9
+> Phase 5 · Session、Branch 与 Compaction · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P5-1 ~ P5-9
 
 **最终目的**：消除 [REVIEW.md](../REVIEW.md) §5（Phase 5）评审发现的多分支正确性隐患、Pi 导入器缺陷、CJK token 估算偏差与文档/死代码漂移——让压缩与 export/import 在多分支下保持事件→分支归属正确，Pi 导入器未知字段与异步读取正确，启发式 token 估算对 CJK 不严重低估。
 
@@ -56,7 +56,7 @@
 - [ ] **V10**：二进制为主的 tool result 不被误判 Small（分类测试）
 - [ ] **V9**：`EventSessionMismatch` 移除或补一致性校验 + 测试
 - [ ] **文档**：`compaction.rs` 过时注释修正；`CompactionReason` 同名异构映射明确
-- [ ] **门禁**：`cargo test`/`clippy -D warnings`/`fmt --check` 干净
+- [ ] **快速验证**：只运行 session/branch/compaction/import 受影响 crate 的定向测试与最小重放 smoke；workspace 全量门禁延后到 Core 主干 L2
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §5 · [ADR-005 仅 Pi JSONL 导入](../docs/adr/ADR-005-pi-jsonl-import-only.md) · [context](../docs/features/context.md) · [ROADMAP](../ROADMAP.md)
 

@@ -1,6 +1,6 @@
 # P4-13：Phase 4 评审修复（REVIEW remediation）
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 依赖：P4-1 ~ P4-12、P3-11 V8（scheduler 上下文注入先于本任务的策略接线）
+> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P4-1 ~ P4-12、P3-11 V8（scheduler 上下文注入先于本任务的策略接线）
 
 **最终目的**：消除 [REVIEW.md](../REVIEW.md) §4（Phase 4）评审发现的安全边界未接线、上下文断链、数据完整性缺陷与基线卫生问题——把 `PolicyEngine::decide()` 与 `allowed_in_untrusted_workspace` 接入执行路径，消除调度器 `"default"` 假值，补全 apply_patch 部分失败回滚，让 checkpoint 可崩溃恢复，并清理 crate 内死依赖与缺位的匹配器 fuzz 测试。
 
@@ -43,7 +43,7 @@
 ### G. 基线/包清理与 fuzz
 
 15. **死依赖清理**：移除 `content-inspector` 基线声明；删 `policy-engine`/`checkpoint-service` 的 `agent-domain`、`process-runtime` 的 `bytes`/`futures` 死依赖；`atomic_write` 共五处重复（`checkpoint-service`、`artifact-store`、`builtin-tools` 三处），共享实现落点需避免反向依赖与跨阶段冲突，其中 `artifact-store` 属 Phase 1。目的：基线与 crate 依赖卫生。
-16. **CI 死依赖门禁**：CI 增加 `cargo machete`/`cargo udeps` 门禁。目的：防止死依赖再生。
+16. **维护期死依赖检查**：把 `cargo machete`/`cargo udeps` 放入依赖升级、发布候选或定期维护的 L3 工作流，不加入每次开发提交的阻塞链。目的：在功能簇稳定后防止死依赖再生，同时避免前期频繁依赖调整拖慢实现。
 17. **匹配器属性测试**：为 edit_file/apply_patch 匹配器补 proptest 策略属性测试（随机 old_string/new_string/文件内容组合，断言不 panic、计数一致、回滚后逐字节相等），满足基线「需完整 fuzz 与审计」标准；`arbitrary` 若需使用，必须按基线流程重新引入。目的：安全关键路径覆盖属性测试。
 
 ### H. 文档同步
@@ -54,7 +54,7 @@
 
 - PolicyEngine 接线 + 危险命令地板 + 调度器真实上下文；apply_patch 回滚补全 + checkpoint 持久化
 - Windows env 分桶、edit_file 尾换行、list_directory symlink、run_command 真流式；阻塞 IO 改造
-- 死依赖清理 + machete/udeps 门禁 + 匹配器属性测试
+- 死依赖清理 + machete/udeps 维护工作流 + 匹配器属性测试
 
 ## 验收标准（保留 REVIEW 追踪编号）
 
@@ -70,9 +70,9 @@
 - [ ] **V11**：read_file/search_text/checkpoint 不在 async 中同步阻塞读整文件（审查/基准）
 - [ ] **V10**：search/find 遍历中可中途取消（测试）
 - [ ] **V12 / V13 / V14**：list_directory 分页省成本；edit_file 模糊匹配不退化 O(L·n)；spawn_stream 句柄可 kill 且流式有输出上限
-- [ ] **基线**：`content-inspector` 移出；4 个 crate 死依赖删除；CI 含 machete/udeps 门禁
+- [ ] **基线**：`content-inspector` 移出；4 个 crate 死依赖删除；L3 维护工作流含 machete/udeps（不阻塞普通开发提交）
 - [ ] **fuzz**：edit_file/apply_patch 有 proptest 属性测试（不 panic、计数一致、回滚逐字节相等）
-- [ ] **门禁**：`cargo test`/`clippy -D warnings`/`fmt --check` 干净
+- [ ] **快速验证**：安全红线、Policy、checkpoint、路径与 patch 立即跑定向回归；workspace 全量 build/test/clippy 延后到 Core 主干 L2
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §4 · [ADR-009 默认工作区信任](../docs/adr/ADR-009-default-workspace-trust.md) · [ADR-010 全写 Checkpoint](../docs/adr/ADR-010-checkpoint-all-writes.md) · [ROADMAP 依赖选型基线](../ROADMAP.md#依赖选型基线)
 

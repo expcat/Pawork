@@ -1,6 +1,7 @@
 # P6-2：Anthropic 适配
 
 > Phase 6 · 主要 Provider · 状态：🟢已完成 · 依赖：P2-11
+> **边界与扩展**：本任务交付 Anthropic **Messages** 基线适配（canonical 转换 + thinking/tool/cache 差异 + 错误归一）。**现代 Messages** 升级（Structured Outputs `output_config.format`、request-level effort、adaptive/interleaved thinking、modern prompt cache、thinking `signature` 往返，以及 Web Search/Web Fetch/Code Execution/Advisor/Tool Search/MCP Connector/Memory/Bash/Text Editor/Computer Use 等 server/client tools）**不在本任务范围**，由 [P15-3](P15-3-anthropic-modern-messages.md) 独立承接，二者同 crate 并存。状态 🟢 仅表示 Messages 基线已落地，**不代表现代能力已完整适配**；勿在本任务重复实现，也勿据本状态误判 P15-3 完成。
 
 **最终目的**：实现 Anthropic 适配并通过 Contract Tests，覆盖其 thinking / tool / cache 等差异，核心无特例。
 

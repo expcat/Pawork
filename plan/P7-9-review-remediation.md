@@ -1,6 +1,6 @@
 # P7-9：Phase 7 评审修复（REVIEW remediation）
 
-> Phase 7 · Git、Diff 与 Worktree · 状态：🟡未开始 · 依赖：P7-1 ~ P7-8
+> Phase 7 · Git、Diff 与 Worktree · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P7-1 ~ P7-8
 
 **最终目的**：消除 [REVIEW.md](../REVIEW.md) §7（Phase 7）评审发现的安全面、语义缺口与基线/文档漂移——让 hunk stage 临时文件不可预测、git 位置参数不被注入、`CacheScope::Staged` 不再是 API 谎言、watcher 不全量递归监听，并收敛 `similar` 零引用、diff-service 多余依赖与文档能力清单超前于实现。
 
@@ -54,7 +54,7 @@
 - [ ] **V9**：no-newline 标志语义明确（拆分或回归测试锁定）
 - [ ] **V10**：`repo_info` 进程 spawn 次数减少（基准/审查）
 - [ ] **基线**：`similar` 移除；`parking_lot`/`tempfile` 回填；diff-service `serde_json`/`thiserror` 移除；`notify-debouncer-full` 关联 P7-6
-- [ ] **门禁**：`cargo test`/`clippy -D warnings`/`fmt --check` 干净
+- [ ] **快速验证**：Git 参数、临时文件、watcher/cache 与路径风险立即跑定向回归；workspace 全量与三平台门禁延后到 Core 主干 L2/L3
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §7 · [ADR-007 系统 Git](../docs/adr/ADR-007-system-git.md) · [git-diff](../docs/features/git-diff.md) · [ROADMAP 依赖选型基线](../ROADMAP.md#依赖选型基线)
 

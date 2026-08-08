@@ -1,6 +1,7 @@
 # P6-1：OpenAI 适配
 
 > Phase 6 · 主要 Provider · 状态：🟢已完成 · 依赖：P2-11
+> **边界与扩展**：本任务交付 OpenAI **Chat Completions** 原生适配（canonical 转换 + 流式 + tool call/thinking/image 差异 + 错误归一）。OpenAI **Responses API** 及其原生能力（reasoning items、Web/File Search、Image Generation、Code Interpreter、Hosted Shell、Apply Patch、Skills、Computer Use、server-side MCP、Tool Search、Programmatic Tool Calling、API Multi-Agent、citations）**不在本任务范围**，由 [P15-2](P15-2-openai-responses.md) 独立承接，二者同 crate 并存、由 [P15-8](P15-8-capability-discovery.md) 协商选择传输路径，不支持 Responses 时降级回本任务的 Chat Completions。状态 🟢 仅表示 Chat Completions 基线已落地，**不代表 OpenAI 现代能力已完整适配**；实现扩展勿在本任务内重复，也勿据本状态误判 P15-2 完成。
 
 **最终目的**：实现 OpenAI 原生适配并通过统一 Contract Tests，覆盖关键能力，核心 Agent 不含 OpenAI 特例。
 

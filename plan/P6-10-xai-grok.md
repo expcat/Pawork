@@ -1,6 +1,7 @@
 # P6-10：xAI Grok 适配
 
 > Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P2-11、P6-4、P6-5
+> **边界与扩展**：本任务交付 xAI Grok 的 **Chat Completions**（OpenAI-compatible）+ API Key / OAuth 订阅双鉴权 + reasoning 归一基线。xAI **Responses API** 及 Live Search 原生能力（Web/X Search、Collection Search、Code Execution、server-side MCP、`sources`/`citations` 归一）**不在本任务范围**，由 [P15-4](P15-4-xai-responses.md) 独立承接，二者同 crate 并存、由 [P15-8](P15-8-capability-discovery.md) 协商传输路径、复用本任务的双鉴权。状态 🟡 仅表示 Chat Completions 基线排期；勿在本任务实现 Responses 现代能力，也勿把 Chat Completions 完成误判为 xAI 能力完整。
 
 **最终目的**：接入 xAI Grok，同时支持两条鉴权路径——API Key 直连（`api.x.ai`，OpenAI-compatible）与 OAuth 订阅授权（消费级 Grok / SuperGrok 订阅登录），核心 Agent 不含 Grok 特例。
 

@@ -22,5 +22,5 @@
 
 ## 相关文档
 
-- [测试体系](testing.md) · [ROADMAP 横切门禁](../../ROADMAP.md)
+- [测试体系](testing.md) · [ROADMAP 实施波次与门禁节奏](../../ROADMAP.md#实施波次与门禁节奏)
 - [ADR-020 性能与安全是发布门槛](../adr/ADR-020-performance-security-gate.md)

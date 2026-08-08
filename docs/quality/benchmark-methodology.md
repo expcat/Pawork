@@ -53,6 +53,8 @@ cargo bench -p pawork-benches -- --baseline p0        # 与基线对比
 
 P0-12 的空基准占位不需要任何外部依赖，默认可运行。后续接入真实负载（Git 仓库、Mock 服务、子进程、GUI）后，默认仍必须可无外部依赖运行；真实负载以环境变量放行：`PAWORK_BENCH_GIT=1`、`PAWORK_BENCH_PROVIDER=1`、`PAWORK_BENCH_MODEL=1`、`PAWORK_BENCH_COMMAND=1`、`PAWORK_BENCH_GUI=1`（辅助函数：`benches/src/lib.rs::group_enabled`）。未放行时对应组运行占位基准并跳过真实负载。
 
+完整基准属于 L3 维护/发布门禁，不要求每个功能任务运行。临时基准使用独立 `CARGO_TARGET_DIR=target/bench-gates`，结果记录或导出后执行 `cargo clean --target-dir target/bench-gates`；需要长期比较的人工确认 baseline 应导出为版本化证据，不与临时 criterion 缓存一起删除。
+
 ## 指标映射
 
 性能目标（[performance-targets.md](performance-targets.md)）到计时域的映射：
@@ -75,4 +77,4 @@ P0-12 的空基准占位不需要任何外部依赖，默认可运行。后续�
 ## 相关文档
 
 - [性能目标](performance-targets.md) · [测试体系](testing.md) · [安全验收](security-acceptance.md)
-- [ADR-020 性能与安全是发布门槛](../adr/ADR-020-performance-security-gate.md) · [ROADMAP 横切门禁](../../ROADMAP.md)
+- [ADR-020 性能与安全是发布门槛](../adr/ADR-020-performance-security-gate.md) · [ROADMAP 实施波次与门禁节奏](../../ROADMAP.md#实施波次与门禁节奏)
