@@ -11,8 +11,8 @@
 1. **Selector/property gate** —— priority、weighted distribution、fill-first、affinity/rebind、fallback explanation；目的：路由可证明。
 2. **Concurrency/recovery gate** —— lease/Agent 并发上限、cancel/drop/crash/reclaim、hot reload；目的：无泄漏和超配。
 3. **Migration/security gate** —— legacy default migration、Secret 扫描、cross-tenant credential/session/agent/usage/audit chaos；目的：安全边界。
-4. **Protocol golden gate** —— Codex Thread/Turn/Item/approval/subagent、Claude Messages/identity/reasoning、ACP initialize/session/permission/cancel；目的：客户端版本回归可见。
-5. **错误/故障注入 gate** —— 401/402/provider-specific 400/429/5xx/cancel/context/protocol/stream interruption；目的：失败域不串味。
+4. **Protocol golden gate** —— Codex Thread/Turn/Item/approval/subagent（并区分 remote compaction 与 local compaction 两类 fixture）、Claude Messages/identity/reasoning、ACP initialize/session create/resume/prompt/update/permission/tool event/cancel 与 custom model；目的：客户端版本回归可见，每条重要协议消息一个 fixture。
+5. **错误/故障注入 gate** —— 401/402/provider-specific 400/429/QuotaExceeded（hard/soft）/5xx/cancel/context/protocol/stream interruption；目的：失败域不串味。
 6. **回滚演练与 L2** —— 关闭 feature flags、回退 synthetic account/SingleCandidate、schema forward/rollback/restore，在独立构建目录跑相关 fmt/test/clippy/schema；目的：可发布、可撤回。
 
 ## 主要产出物

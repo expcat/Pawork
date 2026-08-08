@@ -56,6 +56,7 @@ SessionBinding: Unbound → Bound → Rebinding → Bound
 | `AuthRejected` | credential | refresh-once；失败后 cooldown/disable | 是 |
 | `PaymentRequired` / `AccountBlocked` | account | billing blocked；failover | 是 |
 | `RateLimited` | account/model/provider | 尊重 Retry-After，scope-aware cooldown | 条件式 |
+| `QuotaExceeded` | account/model | hard quota → 账号 failover；soft quota → 策略（降级/告警），不与 RateLimited 语义混淆 | 是/策略 |
 | `ProviderUnavailable` | provider/account | bounded retry + circuit breaker | 条件式 |
 | `ContextTooLarge` | request/model | compact 或选择更大模型 | 否 |
 | `ProtocolIncompatible` | protocol | 显式失败或协议降级 | 否盲目轮换 |

@@ -12,7 +12,7 @@
 2. **Provider-specific classifier** —— 允许 adapter 识别 400 中的 account blocked、402、429 scope 与协议错误；目的：特例不泄漏进 core。
 3. **Health 状态机** —— Healthy/Degraded/CoolingDown/BillingBlocked/Disabled 与 scope-aware Retry-After；目的：账号、模型、Provider 分别恢复。
 4. **Circuit breaker** —— bounded retry、half-open probe、成功复原与连续失败阈值；目的：避免故障风暴。
-5. **错误矩阵测试** —— 覆盖 401 refresh-once、402、provider-specific 400、429 有/无 Retry-After、5xx、cancel、context-too-large、protocol incompatible、stream interruption；目的：锁定行为。
+5. **错误矩阵测试** —— 覆盖 401 refresh-once、402、provider-specific 400、429 有/无 Retry-After、QuotaExceeded（hard/soft 区分）、5xx、cancel、context-too-large、protocol incompatible、stream interruption；目的：锁定行为。
 
 ## 主要产出物
 
