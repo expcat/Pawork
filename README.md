@@ -33,8 +33,6 @@ Pawork 不是「Pi 的桌面壳」，而是一个独立的 Rust Coding Agent 平
 - Pi 内部类名、事件名兼容
 - Provider SDK 行为逐行复刻
 
-保留的兼容能力：Pi JSONL Session 导入、`AGENTS.md` / Skills / Prompt 概念兼容、模型与 Provider 配置迁移工具、Coding Agent 工作流与交互习惯。
-
 ## 架构总览
 
 ```text
