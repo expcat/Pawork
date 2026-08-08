@@ -37,6 +37,14 @@ Cancel / Pause / Resume / Retry Last Provider Call / Retry Run / Fork From Messa
 
 默认策略与 capability 分类见 [控制流](../architecture/control-flow.md) §5 与 [tools](tools.md)。
 
+## Phase 15–17 canonical 边界
+
+- Engine 只消费 `CanonicalModelRequest` / `ProviderStreamEvent` / canonical workflow event，不按 Provider 名称分支。
+- `ToolKind` 决定执行路径：只有 `ClientFunction/CoreSuppliedResult` 进入 Tool Scheduler 并产生本地 `ToolResult`；`ProviderHosted` / `ProviderExtension` 只记录 `ServerToolEvent/ProviderTranscript`，不得调用本地 `AgentTool::execute()`。
+- reasoning 只在事件中保存 `ReasoningItem` 摘要与 `protected_blob_ref`；解密 continuation 由受信 Provider 调用边界完成，Engine 不读取明文。
+- `AgentProfile.effort` 归一为 `ReasoningConfig`，经 `CapabilityNegotiator` 映射或显式降级，不使用 `provider_options` 绕过 canonical。
+- Plan / Goal / BackgroundTask / Automation / Monitor / Memory / Review / Hook 的状态变化均进入可持久化事件流，崩溃恢复仍以重放为准。
+
 ## 验收标准
 
 - Mock Provider 可完成多轮工具循环
@@ -44,6 +52,7 @@ Cancel / Pause / Resume / Retry Last Provider Call / Retry Run / Fork From Messa
 - 所有状态转换都有事件
 - 重启后可识别 Interrupted Run
 - Agent Engine 不含 Provider 特例
+- hosted/extension tool 不进入本地 Tool Scheduler，reasoning 明文不进入 Engine Event
 
 ## 相关文档
 

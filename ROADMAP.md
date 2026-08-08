@@ -159,6 +159,12 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | 六初始供应商 crate 登记 | P6-10~13 新增 `provider-xai` / `provider-zhipu` / `provider-qwen` / `provider-moonshot`，需在 workspace-layout §2 登记并在 `ProviderId` 枚举补 Xai / Zhipu / Qwen / Moonshot | P6-10 启动时 |
 | Google Gemini 降级次要 | 初始供应商集合调整为 OpenAI / Anthropic / xAI Grok / 智谱 GLM / 阿里 Qwen / Moonshot Kimi；Gemini 保留已实现的 `provider-google` 但不纳入初始范围 | 已确认（2026-08-08） |
 | 缺失功能文档 | audit-log、client-auth 尚无独立 `docs/features/` 文档 | 对应 crate 实现时 |
+| Phase 15–17 架构基线同步（2026-08-08 完成） | P17-4 重定位为 LSP Client Runtime；P15-7 reasoning 走 Protected Blob Store（ADR-032，不入 Keychain）；P16-7 embedding 扩展 `provider-api`（不新增 crate）；P17-1 hooks 拆 6 类 handler；P17-2 Plugin Package 增 Monitors；P17-5 effort 走 canonical；P17-9/SDK 经 pawork Host；P17-10 服从三执行位点。新 crate 已登记 workspace-layout §2.1，领域类型登记 domain-model §5 | 已确认 |
+| Embedding canonical 决策 | 不新增独立 `embedding-api`/`embedding-runtime` crate；扩展 `provider-api`（`EmbeddingProvider` trait），memory-service 依赖 provider-api 保持 Provider 无关 | 已冻结（2026-08-08） |
+| Protected Blob Store | reasoning 凭证等敏感制品加密落盘，ADR-032；ADR-014 收窄为小型凭证；新增 `protected-blob-store` crate（登记 workspace-layout §2.1） | 已确认（2026-08-08） |
+| http-runtime 收敛（次优先级） | Marketplace / User Hooks / Forge Adapter 等应复用通用 `http-runtime`，避免反向依赖 `provider-runtime`；具体抽离时机随相关 Phase 推进 | 启动 P17-3 / Review Forge Adapter 时 |
+| Automation 外部 Trigger（次优先级） | 预留 Webhook / HTTP API / GitHub / GitLab / External MCP 经 adapter 接入，不塞进 Automation Core | 随 P16-5 / 16-8 推进 |
+| Review Forge Adapter（次优先级） | Review Engine 本体平台无关；预留 GitHub / GitLab / Generic forge adapter 发布评论 | 随 P16-8 后续推进 |
 
 ---
 
@@ -445,7 +451,7 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P16-4 | 🟡 | Background Task Manager | process/agent/monitor/automation 统一管理 | [详情](plan/P16-4-background-task-manager.md) |
 | P16-5 | 🟡 | Scheduled Automation | cron/interval/once/event trigger + inbox | [详情](plan/P16-5-scheduled-automation.md) |
 | P16-6 | 🟡 | Persistent Process / Monitor | attach/detach/restart/notification | [详情](plan/P16-6-persistent-process-monitor.md) |
-| P16-7 | 🟡 | Long-term Memory（优先级 P2） | project/user/episodic/semantic retrieval | [详情](plan/P16-7-long-term-memory.md) |
+| P16-7 | 🟡 | Long-term Memory（优先级 P2） | canonical EmbeddingProvider + 检索注入 | [详情](plan/P16-7-long-term-memory.md) |
 | P16-8 | 🟡 | Review Engine | finding/line anchor/suggested patch/resolution | [详情](plan/P16-8-review-engine.md) |
 | P16-9 | 🟡 | Session Compatibility Import | Claude/Codex/Grok/Cursor 无损导入 | [详情](plan/P16-9-session-compat-import.md) |
 
@@ -455,16 +461,16 @@ Parent/Worker 编排，写入隔离，取消传播。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P17-1 | 🟡 | User Hooks | Shell/HTTP/Prompt/async hook | [详情](plan/P17-1-user-hooks.md) |
-| P17-2 | 🟡 | Plugin Package Format | Skills/Agents/Hooks/MCP/LSP 统一包 | [详情](plan/P17-2-plugin-package-format.md) |
+| P17-1 | 🟡 | User Hooks | Command/Http/PromptTransform/PromptEval/AgentEval/McpTool + 扩展 trigger | [详情](plan/P17-1-user-hooks.md) |
+| P17-2 | 🟡 | Plugin Package Format | Skills/Agents/Hooks/MCP/LSP/Monitors 统一包 | [详情](plan/P17-2-plugin-package-format.md) |
 | P17-3 | 🟡 | Plugin Marketplace / Registry | install/update/remove/trust/policy | [详情](plan/P17-3-plugin-marketplace.md) |
-| P17-4 | 🟡 | LSP Runtime | diagnostics/navigation/symbol/rename | [详情](plan/P17-4-lsp-runtime.md) |
-| P17-5 | 🟡 | Agent Profile v2 | prompt/model/tools/skills/MCP/permission/memory | [详情](plan/P17-5-agent-profile-v2.md) |
+| P17-4 | 🟡 | LSP Client Runtime | 启动/管理/调用现有 Language Server（Client，非 Server） | [详情](plan/P17-4-lsp-runtime.md) |
+| P17-5 | 🟡 | Agent Profile v2 | prompt/model/canonical-effort/tools/skills/MCP/permission/memory | [详情](plan/P17-5-agent-profile-v2.md) |
 | P17-6 | 🟡 | Agent Teams / Peer Messaging | shared task board/mailbox/presence | [详情](plan/P17-6-agent-teams.md) |
 | P17-7 | 🟡 | ACP Host | 公共 Agent Client Protocol adapter | [详情](plan/P17-7-acp-host.md) |
-| P17-8 | 🟡 | Rust / JSON Agent SDK | embeddable/headless stable API | [详情](plan/P17-8-agent-sdk.md) |
-| P17-9 | 🟡 | IDE Host Adapter | IDE 生命周期、诊断与交互桥接 | [详情](plan/P17-9-ide-host-adapter.md) |
-| P17-10 | 🟡 | Browser / Computer Runtime | local/provider/MCP 可替换后端 | [详情](plan/P17-10-browser-computer-runtime.md) |
+| P17-8 | 🟡 | Rust / JSON Agent SDK | client/headless stable API；只连接 pawork Host | [详情](plan/P17-8-agent-sdk.md) |
+| P17-9 | 🟡 | IDE Host Adapter | 经 SDK/Headless 连 pawork Host；可选 LSP Server 输出 | [详情](plan/P17-9-ide-host-adapter.md) |
+| P17-10 | 🟡 | Browser / Computer Runtime | capability facade，服从三执行位点 | [详情](plan/P17-10-browser-computer-runtime.md) |
 | P17-11 | 🟡 | Real Remote Transport | 安全远程发布/连接/重连 | [详情](plan/P17-11-real-remote-transport.md) |
 | P17-12 | 🟡 | Mobile / Remote Control Protocol | 受限控制、审批与通知 | [详情](plan/P17-12-mobile-remote-control.md) |
 | P17-13 | 🟡 | Cross-Agent Compatibility Loader | Claude/Codex/Grok/Cursor/Pi 配置兼容 | [详情](plan/P17-13-compatibility-loader.md) |

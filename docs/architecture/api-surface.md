@@ -13,6 +13,8 @@ GUI → GUI Connection Protocol → gui-server → app-service → core-runtime
 
 两条路径共享同一个 `app-service` 实例、同一个 Command Router 与同一个 Event Hub，保证 CLI 与 GUI 的业务行为一致，同时避免 CLI 对自身建立不必要的 IPC 连接。
 
+> 边界：GUI Connection Protocol 仅用于 GUI↔`pawork` Host。IDE（P17-9）/ Agent SDK / Headless（P17-8）/ ACP（P17-7）/ Mobile（P17-12）是并列的 Client Channel，各自走自己的接入语义（Headless JSON / SDK framing / ACP / 远程控制），共享同一 `app-service` 但**不消费 GUI 协议帧**，也不构造第二 Core（[ADR-021](../adr/ADR-021-cli-core-same-process.md)、[ADR-025](../adr/ADR-025-cli-is-sole-host.md)、[ADR-030](../adr/ADR-030-core-sole-source-of-truth.md)、总体架构 §2.5）。
+
 ## 2. Command / Query / Event / Snapshot 示例
 
 Command（写操作，进入 Command Router）：
@@ -30,6 +32,14 @@ git.stage
 terminal.create / terminal.write / terminal.resize
 plugin.list
 mcp.list
+plan.create / plan.review / plan.approve
+goal.create / goal.update / goal.complete
+task.cancel / task.resume
+automation.create / automation.trigger / automation.pause
+monitor.start / monitor.stop
+memory.forget
+review.resolve
+hook.approve
 ```
 
 Query（只读，可返回 Artifact ID 或 Snapshot 片段）：
@@ -40,6 +50,9 @@ run.status
 diff.get
 artifact.read
 snapshot.fetch
+plan.get / goal.get / task.list
+automation.list / automation.inbox
+monitor.status / memory.search / review.list
 ```
 
 Event（由 Event Hub 扇出到 CLI 渲染器与所有 GUI）：
@@ -57,6 +70,11 @@ terminal.output
 auth.changed
 provider.status
 plugin.error
+server_tool.started / server_tool.progress / server_tool.completed
+reasoning.committed
+plan.changed / goal.changed / task.changed
+automation.triggered / automation.result_archived
+monitor.changed / memory.changed / review.changed / hook.completed
 diagnostic
 gui.client.connected / gui.client.disconnected
 ```
@@ -70,7 +88,15 @@ run.active
 tool.pending_approval
 terminal.sessions
 provider.status
+plan.active
+goal.active
+task.background
+automation.schedules
+monitor.active
+review.open_findings
 ```
+
+`reasoning.committed` 只携带 `ReasoningItem` 摘要与 `protected_blob_ref`。GUI Command / Query / Event / Snapshot 均不得返回 Protected Blob 明文、解密句柄或密钥材料；只有 Provider continuation 的受信运行时可按作用域解析引用（ADR-032）。
 
 ## 3. 统一 Command Source
 
@@ -92,6 +118,10 @@ pub enum CommandSource {
     LocalCli { terminal_session_id: Option<TerminalSessionId> },
     LocalGui { client_id: GuiClientId },
     RemoteGui { client_id: GuiClientId, connection_id: ConnectionId },
+    HeadlessClient { client_id: ClientId },
+    Ide { client_id: ClientId },
+    Acp { client_id: ClientId },
+    Mobile { client_id: ClientId },
     Automation,
     Plugin,
     Mcp,

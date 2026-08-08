@@ -42,6 +42,14 @@ pawork service stop
 
 同一二进制可注册为 macOS LaunchAgent / Linux systemd service / Windows Service。
 
+### 无头模式（Headless，Phase 17 / P17-8）
+
+```bash
+pawork headless --json-stdio
+```
+
+无头 JSON 模式与 `serve` / `shell` / `run` 并列：进程读 NDJSON 请求（`AppCommand`）、写 NDJSON 事件（`AppEvent`），复用同一 `app-service` 装配，不渲染 TUI/CLI 文本。它是脚本 / CI 与 Agent SDK（P17-8）/ IDE Host Adapter（P17-9）/ ACP（P17-7）的统一程序化入口；`pawork` 仍是唯一正式宿主，SDK/IDE/ACP 都连接该模式而非构造第二 Core。
+
 ## 命令总览
 
 ```bash

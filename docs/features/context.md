@@ -71,10 +71,18 @@ pub struct CompactionSnapshot {
 - 压缩后保留任务、用户约束与修改文件列表
 - 压缩前后 Token 统计可查
 - 可恢复压缩前 Branch
+- PromptTransform 不能修改或绕过不可变安全层；compaction 不破坏 reasoning continuation 引用
 
 ## Phase 5 上下文与压缩基线
 
 `context-engine` 已实现 Tool Result 分级裁剪（`trim_tool_result`）：按字节体量分为小（完整保留）/ 中（头部 + 尾部 + 截断说明）/ 大（摘要 + ArtifactReference 占位）/ 超大（仅元数据 + ArtifactReference），大/超大输出原文经 `retained_full` 暂存以便回溯（ADR-018）。`compaction-engine`（新 crate）已落地版本化 `CompactionSnapshot`（`SnapshotVersion` + `validate()`）、自动/手动压缩统一入口（压缩前用 `create_branch` Fork recovery branch）、保留策略 `RetentionPolicy`（最近 N 轮、未解决任务、用户约束、修改文件、待处理/失败 tool call）与 Golden Session 回归；引擎只产快照与决策，向事件流追加 `CompactionStarted/Completed` 与上下文重建由调用方完成。
+
+## Phase 16–17 上下文扩展
+
+- 长期记忆由 `memory-service` 通过 canonical `EmbeddingProvider` 检索，按来源、置信度、过期状态与 token budget 注入；Context Engine 不直接调用具体 embedding API。
+- `PromptTransform` User Hook 只可修改明确标记为 transformable 的 Agent Profile / 用户 / 工作区 / 注入上下文层。Core System Prompt 与安全/权限策略先锁定，transform 后重新校验；输入、diff、作用域、决策与失败均记录 canonical audit event。
+- Compaction 保留当前 reasoning chain 的 `protected_blob_ref` 与引用计数，不复制明文、不把 Protected Blob 降级成普通 Artifact；被替换事件释放引用前必须证明无活动 continuation 使用。
+- Provider hosted transcript、Plan/Goal 未完成约束、后台任务与审批状态属于 retention 约束，不能被摘要静默丢弃。
 
 ## 相关文档
 

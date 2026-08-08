@@ -85,6 +85,12 @@ Local Transport：macOS/Linux 使用 Unix Domain Socket，Windows 使用 Named P
 
 多个 GUI；本地和远程 GUI 同时在线；单个用户多窗口；单个用户多设备；GUI 心跳；GUI 断线；GUI 重连；事件补发；Snapshot 重建；慢客户端隔离；每个 GUI 独立权限；每个 GUI 独立订阅。单/多实例与退出策略见 [CLI Host](cli-host.md)。
 
+## Phase 15–17 事件与 Client Channel 边界
+
+GUI 可订阅 `ServerToolEvent`、ReasoningItem 摘要/引用、Plan/Goal/BackgroundTask/Automation/Monitor/Memory/Review/Hook 等状态事件并在 Snapshot 中恢复其投影，但绝不能请求 Protected Blob 明文、解密句柄或密钥材料。大型 server tool 输出继续只暴露 Artifact 引用。
+
+IDE、Agent SDK / Headless、ACP 与 Mobile 是连接同一 `pawork` Host 的并列 Client Channel：它们共享 `app-service`、Command Router 与 Event Hub 的业务语义，但不复用或隧穿 GUI protocol frame；GUI 也不经这些 adapter 访问 Core。任何 channel 都不能构造第二个 Core。
+
 ## 优先级
 
 P0（协议冻结）：GUI Connection Protocol 类型与 Transport 抽象在 [Phase 0](../../ROADMAP.md) 冻结。P0 实现：GUI Server、Local Transport、Connection Manager、Subscription Hub、Snapshot/Event Replay、多 GUI 支持、Remote 占位接口在 [Phase 13](../../ROADMAP.md) 落地。
@@ -99,6 +105,7 @@ P0（协议冻结）：GUI Connection Protocol 类型与 Transport 抽象在 [Ph
 - [ ] 慢 GUI 不阻塞 Agent 或其他 GUI
 - [ ] GUI 不能直接访问 Core 数据库
 - [ ] Remote Transport 可通过 Mock 实现完成端到端测试
+- [ ] GUI 只能看到 Protected Blob 安全引用；IDE/SDK/ACP/Mobile 与 GUI 协议帧保持隔离
 
 ## 相关文档
 

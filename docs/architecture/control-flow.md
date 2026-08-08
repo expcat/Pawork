@@ -28,11 +28,11 @@ Remote GUI ──┘                                   │
 5. 构建 Provider Request
 6. 调用 Provider
 7. 流式提交 Assistant 内容
-8. 解析 Tool Call
-9. 执行 Policy
-10. 请求用户审批
-11. 执行工具
-12. 提交 Tool Result
+8. 解析 Tool Call，并按 `ToolKind` / `ExecutionOwner` 分类
+9. 执行 Policy；需要时请求用户审批
+10. 仅对 `ClientFunction` 调用 Tool Scheduler 本地执行
+11. `ClientFunction` 提交 `ToolResult(CoreSuppliedResult)`；`ProviderHosted` / `ProviderExtension` 只记录 `ServerToolEvent(ProviderTranscript)`
+12. 按 `ContinuationMode` 构建下一轮 Provider continuation，不跨位点伪造结果
 13. 判断是否继续模型循环
 14. 提交最终状态
 
@@ -98,6 +98,20 @@ UserInteraction
 ExternalPlugin
 ```
 
+### 5.1 ToolKind 三执行位点路由（Phase 15 起）
+
+自 Phase 15（P15-1）起，Tool Scheduler 还按 `ToolKind` / `ExecutionOwner` 决定「谁执行、结果如何回填」，三类位点互不串味：
+
+```text
+ClientFunction   → Core 本地执行 → ToolResult(CoreSuppliedResult) → 回灌 Provider
+ProviderHosted   → Provider 自执行 → Core 只记录/归一/重放 → ServerToolEvent(ProviderTranscript)
+ProviderExtension→ Provider 中介外部通道执行 → Core 审批/审计 → 回填(ProviderTranscript)
+```
+
+- `ProviderHosted` / `ProviderExtension` 的 tool_call **不触发本地 `AgentTool::execute()`**；结果属 `ContinuationMode::ProviderTranscript`，归一为 [P15-5](../../plan/P15-5-server-tool-events.md) `ServerToolEvent`，不伪装成本地 `ToolResult`。
+- `ClientFunction` 才走 §5 的本地调度策略（写串行 / 只读并发 / 审批暂停等）。
+- Browser/Computer（P17-10）等能力 facade 也必须服从该位点模型：Local/Playwright→ClientFunction、ProviderHosted Computer Use→ServerToolEvent、MCP→ClientFunction 或 ProviderExtension。
+
 详见 [tools](../features/tools.md) 与 [policy](../features/policy.md)。
 
 ## 6. 相关文档
@@ -108,3 +122,5 @@ ExternalPlugin
 - [agent-engine](../features/agent-engine.md)
 - [tools](../features/tools.md)
 - [context](../features/context.md)
+- [providers](../features/providers.md)
+- [ROADMAP Phase 15](../../ROADMAP.md)

@@ -50,6 +50,22 @@ Timeline / Composer / Diff / Terminal / Settings / Workspaces / Sessions。GUI �
 
 所有能力实现层。职责拆分沿用 Pi 的领域划分，但不沿用其 TypeScript 实现。模块映射见 [workspace 结构](workspace-layout.md) 第 6 节。
 
+### 2.5 Host Adapters / Client Channels（Phase 17）
+
+`pawork` 是 Core 的唯一正式宿主；除 CLI 自身外，所有外部接入方都是「连接到 `pawork` Host 的 Client Channel / Host Adapter」，各自不构造第二个 Core、不替代 GUI Connection Protocol，并列存在：
+
+```text
+GUI ─────────┐
+IDE ─────────┤   IDE Host Adapter → Agent SDK / Headless Protocol ─┐
+ACP ─────────┼─▶ 连接 pawork Host ─▶ Core（单一事实源）
+Mobile ──────┤   ACP Host / Mobile Remote Control Adapter ──────────┘
+SDK / CI ────┘
+```
+
+- **GUI**：独立进程经 GUI Connection Protocol 连接（[ADR-022](../adr/ADR-022-gui-connects-via-cli.md)）。
+- **IDE**：经 IDE Host Adapter → Agent SDK / Headless 协议连接（P17-9/P17-8），**不「通过 SDK 嵌入第二个 Core」**；可选向 IDE 暴露 LSP Server 输出（复用 P17-4 LSP Client 聚合结果）。
+- **ACP / SDK / Mobile**：各自是连接 `pawork` Host 的 Client Channel（P17-7 / P17-8 / P17-12），共享同一 `app-service` 与 Event Hub，互不触达对方协议帧。
+
 ## 3. 核心原则
 
 - CLI/Core 单进程单二进制：`pawork` 是 Core 的唯一正式宿主；CLI 与 Core 同进程，不启动外部 Sidecar（[ADR-021](../adr/ADR-021-cli-core-same-process.md)、[ADR-025](../adr/ADR-025-cli-is-sole-host.md)）。
@@ -61,7 +77,9 @@ Timeline / Composer / Diff / Terminal / Settings / Workspaces / Sessions。GUI �
 - 协议先行：GUI Connection Protocol 必须先冻结，Rust 类型是唯一 schema source，自动生成 TypeScript 类型。
 - 可重放：所有 Agent 事件可持久化、可重放，崩溃后可恢复。
 - 解耦：Agent Engine 与 Provider 通过 canonical domain 解耦，禁止按 Provider 名称走特例。
+- Host 唯一：`pawork` 是 Core 唯一正式宿主；GUI / IDE / ACP / SDK / Mobile 都是连接该宿主的 Client Channel / Host Adapter，并列存在，不构造第二 Core、不互相替代（[ADR-021](../adr/ADR-021-cli-core-same-process.md)、[ADR-025](../adr/ADR-025-cli-is-sole-host.md)、[ADR-030](../adr/ADR-030-core-sole-source-of-truth.md)）。
 - 大数据用引用：大型内容走 Blob Store / Artifact ID，不在事件里内联数 MB 数据。
+- 敏感制品隔离：reasoning 等敏感凭证走 Protected Blob Store 加密落盘，Event 只存安全引用，不内联、不入日志、不入 OS Keychain（[ADR-032](../adr/ADR-032-protected-blob-store.md)）。
 
 ## 4. 依赖方向
 
@@ -88,6 +106,22 @@ cli-host
 
 gui-client ↑ Tauri GUI（独立进程）
 ```
+
+Phase 15–17 在该主干上按以下方向扩展，箭头表示“上层依赖下层”；组合统一发生在 `app-service` / `core-runtime`，不会形成第二宿主：
+
+```text
+provider-api ← provider-* / memory-service
+      ↑
+agent-engine ← plan-service / goal-service / task-manager / automation-service
+      ↑
+core-runtime ← protected-blob-store / user-hooks / plugin-package / lsp-runtime
+      ↑
+app-service ← gui-server / headless-json / acp-host / ide-host-adapter / remote-control-adapter
+                   ↑
+             GUI / SDK / IDE / ACP / Mobile clients
+```
+
+`http-runtime` 是 Provider、User Hooks、Marketplace 与 Forge Adapter 共享的无 Provider 通用网络底层；`agent-sdk` 只依赖公开 schema/framing 并连接 `pawork`，不依赖 `core-runtime`。完整规划 crate 清单与依赖方向见 [workspace 结构 §2.1](workspace-layout.md)。
 
 必须禁止循环依赖。`agent-domain` 不得依赖 Tauri、SQLite、HTTP Client、OS Keychain、Git、具体 Provider。
 
@@ -119,7 +153,7 @@ gui-client ↑ Tauri GUI（独立进程）
 - 存储：SQLite Event Store + Materialized Projections + Content-addressed Blob Store（[ADR-003](../adr/ADR-003-sqlite-event-store.md)、[ADR-004](../adr/ADR-004-blob-store.md)）。
 - Git：第一版调用系统 Git（[ADR-007](../adr/ADR-007-system-git.md)），非完全依赖 libgit2。
 - 扩展：MCP 第一外部扩展机制（[ADR-011](../adr/ADR-011-mcp-first-extension.md)），WASM 第一代码插件机制（[ADR-012](../adr/ADR-012-wasm-first-plugin.md)），不公开 Native dylib API（[ADR-013](../adr/ADR-013-no-native-dylib-plugin.md)）。
-- Secret：存 OS Keychain（[ADR-014](../adr/ADR-014-secret-os-keychain.md)），不落库明文。
+- Secret：API Key / OAuth Token 等小型用户凭证存 OS Keychain（[ADR-014](../adr/ADR-014-secret-os-keychain.md)），不落库明文；reasoning continuation 等高频敏感制品走 Protected Blob Store（[ADR-032](../adr/ADR-032-protected-blob-store.md)），不写 Keychain。
 - 写操作：建立 Checkpoint 可回滚（[ADR-010](../adr/ADR-010-checkpoint-all-writes.md)），默认启用 Workspace Trust（[ADR-009](../adr/ADR-009-default-workspace-trust.md)）。
 
 ## 8. 相关文档

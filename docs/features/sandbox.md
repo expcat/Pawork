@@ -115,6 +115,10 @@ Windows: AppContainer API 可用 → AppContainer(含 Job Object)；否则 Job O
 2. **sandbox-runtime → process-runtime**：后端在内部调用 process-runtime 的 spawn 与 IO 收集，确保 `killpg`/Job 一致、超大输出/timeout/cancel 行为与 `run_command` 既有语义不回退。
 3. **builtin-tools（run_command）**：改经 `SandboxBackend::spawn` 而非直接 `ProcessRuntime`；env 白名单逻辑下沉为 `SandboxPolicy.environment`。其他带副作用的工具（apply_patch 写盘、search 遍历）复用 `SandboxPolicy.filesystem` 做路径收敛。
 
+### Phase 15–17 执行所有权
+
+Sandbox 只对 `ExecutionOwner::Core` 的本地执行给出隔离保证，包括 ClientFunction、Command Hook、LSP language server、本地 MCP、Local/Playwright Browser/Computer 与 Agent Worker 子进程。`ProviderHosted` / `ProviderExtension` 在外部 trust boundary 执行，Core 只做 Policy、审批、审计与 transcript 归一，**不得**将其标记为经过本地 `SandboxBackend`。跨边界 fallback 必须重新审批并在事件中记录实际 owner / backend / isolation level。
+
 ## 测试分层
 
 - **L0 单元（三平台共享，无 OS 依赖）**：`SandboxPolicy` 构造/合并/序列化；各后端的 profile/profile 文本/命令行生成（纯函数）；`From<ExecutionConstraints>` 归一化。
@@ -130,6 +134,7 @@ Windows: AppContainer API 可用 → AppContainer(含 Job Object)；否则 Job O
 - [ ] 回退可观测：后端选择/回退写入审计与诊断包
 - [ ] 取消能清理整树（三平台，含 Windows Job Object crash 路径，满足安全验收 #11）
 - [ ] L0/L1 在三平台 CI 通过；L2 在具备能力的平台 CI 通过、其余 skip 可见
+- [ ] 只有 Core-owned 进程可声明本地 sandbox 级别；hosted/extension 事件不会伪造本地隔离证明
 
 ## MVP 边界与安全差距
 

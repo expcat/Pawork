@@ -10,7 +10,7 @@
 
 1. **ModelCapabilities v2** —— 目的：定义稳定 capability vocabulary，至少覆盖 Responses/Chat 传输、Web Search、Web Fetch、File/Collection Search、X Search、Code Execution、Hosted Shell、Provider Apply Patch、Computer Use、Image Generation、server-side MCP、Tool Search、Citations/Sources、Memory、Programmatic Tool Calling、server-side Multi-Agent、Structured Output、Prompt Cache，以及可枚举的 reasoning effort levels（`none/low/medium/high/xhigh/max`）、Thinking Signature/Encrypted/Interleaved state；与 P15-1 工具标签对齐。
 2. **能力来源** —— 目的：能力来自三处并按优先级合并——(a) model-registry（P2-7）静态声明；(b) Provider 能力探测（运行时一次，可缓存）；(c) 夹具/配置覆盖；取交集而非并集，避免声明了但实际不可用。
-3. **CapabilityNegotiator** —— 目的：提供 `negotiate(model_id, requested_capabilities) -> ResolvedCapabilities { supported, unsupported, chosen_transport, fallback }`，按请求侧 `hosted_tools`（P15-1）与 reasoning 需求（P15-7）匹配；输出可观测的协商记录。
+3. **CapabilityNegotiator（canonical effort 的协商入口）** —— 目的：提供 `negotiate(model_id, requested_capabilities) -> ResolvedCapabilities { supported, unsupported, chosen_transport, fallback }`，按请求侧 `hosted_tools`（P15-1）与 reasoning 需求（P15-7）匹配；输出可观测的协商记录。本任务定义并持有 canonical `ReasoningEffort { None, Low, Medium, High, XHigh, Max }` 与 `ReasoningConfig`，作为 [P17-5](P17-5-agent-profile-v2.md) `AgentProfile.effort` 的唯一翻译入口（`effort → ReasoningConfig → negotiate → Provider Adapter`）；effort 不经 `provider_options`（P6-9），Agent Core 不按 Provider 名分支。
 4. **传输选择决策** —— 目的：协商结果驱动 P15-2/3/4 的传输选择——模型支持 Responses / 现代 Messages 时走现代路径，否则降级到 Chat Completions / P6 基线；降级路径写入协商记录，供诊断与 P15-9 夹具。
 5. **降级与回退策略** —— 目的：被请求但未支持的能力（如 server web_search）明确降级——退化为客户端工具（P15-6 搜索）或拒绝并给可读原因；禁止静默丢弃或伪造。
 6. **协商记录持久化** —— 目的：协商结果（supported/unsupported/chosen transport/fallback）落入可观测/诊断通道（P1-9/P1-11），便于排查「为什么走了降级」。

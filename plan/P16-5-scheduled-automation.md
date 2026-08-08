@@ -10,11 +10,12 @@
 
 1. **Automation 定义** —— 目的：`Automation` 描述触发器（`cron` / `interval` / `once` / `event`）与动作（prompt / goal / tool call / 启动 background task），纯领域类型，可序列化持久。
 2. **触发器引擎** —— 目的：`cron` 解析五/六字段表达式（参考 cron 语义自实现最小子集，不引入调度框架）；`interval` 用 `tokio` time；`once` 为一次性延时；`event` 订阅 canonical event 流做模式匹配触发。统一调度、可启停、可手动触发。
-3. **执行派发** —— 目的：触发后经 `task-manager`（P16-4）派发为 background task，受 `policy-engine` 审批/`agent-engine` 预算（P3-4/P3-6）约束，自动化不享受特权。
-4. **Result Inbox** —— 目的：每次自动化执行的产出归档为 artifact（复用 `artifact-store`）并登记进 result inbox（按 automation / 时间 / 状态检索），inbox 项为 canonical event `AutomationResultArchived`，可重放。
-5. **失败与重试** —— 目的：执行失败按退避重试（复用 `provider-runtime` 退避思路），连续失败暂停该 automation 并告警，不静默吞错。
-6. **查询面** —— 目的：`core-api` 暴露 automation CRUD、手动触发、inbox 查询与订阅，GUI/CLI 呈现调度面板与收件箱。
-7. **定向 / Mock 测试** —— 目的：cron/interval/once/event 四触发器命中、event 模式匹配、inbox 归档与检索、失败退避。用 Mock 时间/事件，仅定向 + Mock smoke，不要求 workspace 全量门禁。
+3. **外部 Trigger Adapter（P2 扩展）** —— 目的：预留 `ExternalTrigger { Webhook, HttpApi, GitHubEvent, GitLabEvent, ExternalMcpEvent }` 的 provider-neutral 输入 envelope。具体 adapter 在 Core 边界完成认证、签名校验、速率限制、重放防护与平台 payload → canonical event 映射；`automation-service` 只匹配已认证 canonical event，不依赖 GitHub/GitLab/MCP/HTTP 实现。
+4. **执行派发** —— 目的：触发后经 `task-manager`（P16-4）派发为 background task，受 `policy-engine` 审批/`agent-engine` 预算（P3-4/P3-6）约束，自动化不享受特权。
+5. **Result Inbox** —— 目的：每次自动化执行的产出归档为 artifact（复用 `artifact-store`）并登记进 result inbox（按 automation / 时间 / 状态检索），inbox 项为 canonical event `AutomationResultArchived`，可重放。
+6. **失败与重试** —— 目的：执行失败按退避重试（复用通用 `http-runtime` 的退避策略语义），连续失败暂停该 automation 并告警，不静默吞错。
+7. **查询面** —— 目的：`core-api` 暴露 automation CRUD、手动触发、inbox 查询与订阅，GUI/CLI 呈现调度面板与收件箱。
+8. **定向 / Mock 测试** —— 目的：cron/interval/once/event 四触发器命中、event 模式匹配、外部 adapter 认证/去重、inbox 归档与检索、失败退避。用 Mock 时间/事件，仅定向 + Mock smoke，不要求 workspace 全量门禁。
 
 ## 主要产出物
 
@@ -29,6 +30,7 @@
 - [ ] 自动化执行经 `task-manager` 派发并受 policy/预算约束，无特权
 - [ ] 每次产出归档进 result inbox 且可按 automation/时间/状态检索
 - [ ] 触发与结果均为 canonical event，可重放；失败退避且不静默吞错
+- [ ] Webhook/HTTP API/GitHub/GitLab/External MCP 只能经认证 adapter 转为 canonical event；Automation Core 不含平台分支
 
 **相关文档**：[background-task-manager (P16-4)](P16-4-background-task-manager.md) · [artifacts](../docs/features/artifacts.md) · [policy](../docs/features/policy.md) · [observability](../docs/features/observability.md) · [ROADMAP](../ROADMAP.md)
 

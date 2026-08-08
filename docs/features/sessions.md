@@ -44,6 +44,14 @@ blobs/
         └── <blake3-hash>
 ```
 
+## Protected Blob 与现代工作流
+
+存储分为三条边界：Event Store 保存可重放业务事实；普通 Blob Store 保存大型非敏感内容；[Protected Blob Store](../adr/ADR-032-protected-blob-store.md) 保存 reasoning signature / encrypted continuation 等敏感制品。`session_events` 只保存 `ReasoningItem.protected_blob_ref` 与脱敏摘要，不保存明文、密钥或解密句柄；GUI、导出文件、日志、诊断包和 OS Keychain 均不得收到 blob 内容。
+
+Protected Blob 按 Provider + Session 作用域校验，采用独立引用计数、retention、完整性验证与 GC。Fork / Branch / retry / compaction / crash recovery 必须原子调整引用；活动 continuation 仍引用时不可回收，密钥缺失或密文损坏时产生显式脱敏错误，禁止回退普通 Blob/Event 明文。
+
+Plan、Goal、BackgroundTask、Automation、Monitor、Memory、Review 与 Hook 状态都以 canonical event 为事实源；Projection 可删除重建，后台与无人值守流程在宿主重启后按事件恢复，不依赖 GUI 在线。
+
 ## 数据库设置
 
 WAL；Foreign Keys；Busy Timeout；Migration；定期 Checkpoint；Integrity Check；Vacuum 策略；备份；只读恢复模式。推荐专用数据库 Actor，而非在任意 Tokio Task 直接并发操作。
@@ -66,6 +74,7 @@ Migration 只向前；每次升级前备份；Migration 可恢复；Projection �
 - 大型 Session 不需全量读取即可打开尾部
 - 崩溃后 Session 可恢复
 - Pi 导入测试通过
+- Protected Blob 明文不进入 Event/Projection/导出/日志/Keychain，引用在 Fork/compaction/GC/crash 后保持一致
 
 ## 相关文档
 

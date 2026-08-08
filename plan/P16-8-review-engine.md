@@ -12,9 +12,10 @@
 2. **行锚点稳定化** —— 目的：锚点经 `diff-service`（P7-3）解析为带上下文的稳定位置（文件 + 邻近语义指纹），在文件后续编辑后尽量重新定位（re-anchor），漂移时标注 `stale` 而非静默失效。
 3. **SuggestedPatch 与 resolution 生命周期** —— 目的：建议补丁先 dry-run/checkpoint，再由现有 Tool/Policy 执行；状态转移均为 canonical event，解决时关联修复 commit/patch/Agent Run，形成「finding → suggestion → fix → resolution」可追溯链。
 4. **批量、PR 与聚合** —— 目的：支持按文件/严重度/状态聚合，导入 PR diff/commit 范围并生成待发布评论；实际向托管平台发送评论是独立 adapter/用户动作，不由 Review Engine 自行产生外部副作用。
-5. **只读与权限** —— 目的：评审引擎对工作区只读（仅读取文件做锚点），写动作交由既有工具并受 policy 约束，评审本身不赋权。
-6. **查询面** —— 目的：`core-api` 暴露评审列表/过滤/订阅，GUI/CLI 呈现行内评审与解决状态。
-7. **定向 / Mock 测试** —— 目的：锚点解析与 re-anchor、漂移标 `stale`、resolution 转移与修复关联。仅定向 + Mock smoke，不要求 workspace 全量门禁。
+5. **ForgeAdapter（P2 扩展）** —— 目的：定义独立 `ForgeAdapter { GitHub, GitLab, Generic }` 接口，负责拉取 PR/MR context、把平台字段映射为 `PRContext`，并在用户显式 publish 后发送 `PRComment` / resolution。adapter 依赖通用 `http-runtime` / auth，`review-engine` 不依赖平台 SDK、名称或远程副作用实现。
+6. **只读与权限** —— 目的：评审引擎对工作区只读（仅读取文件做锚点），写动作交由既有工具并受 policy 约束，评审本身不赋权。
+7. **查询面** —— 目的：`core-api` 暴露评审列表/过滤/订阅，GUI/CLI 呈现行内评审与解决状态。
+8. **定向 / Mock 测试** —— 目的：锚点解析与 re-anchor、漂移标 `stale`、resolution 转移与修复关联，以及 Forge adapter 未经 publish 不产生外部请求。仅定向 + Mock smoke，不要求 workspace 全量门禁。
 
 ## 主要产出物
 
@@ -30,6 +31,7 @@
 - [ ] resolution 状态转移为 canonical event，解决可关联到修复 commit/patch/Run
 - [ ] 评审引擎对工作区只读，写动作仍走既有工具与 policy
 - [ ] 可按文件/严重度/状态聚合，供 Plan 评审与 Agent 评审复用
+- [ ] ForgeAdapter 可替换且仅在显式 publish 后产生外部副作用；Review Engine 无 GitHub/GitLab 名称分支
 
 **相关文档**：[git-diff](../docs/features/git-diff.md) · [workspace-index](../docs/features/workspace-index.md) · [plan-review-approval (P16-2)](P16-2-plan-review-approval.md) · [ROADMAP](../ROADMAP.md)
 

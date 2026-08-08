@@ -1,7 +1,7 @@
 # P10-3：Tool / command registration + hooks
 
 > Phase 10 · WASM Plugin · 状态：🟡未开始 · 依赖：P10-2
-> **边界与扩展**：本任务交付 **WASM 插件**的工具/命令注册与**进程内、沙箱化、capability 门控**的 lifecycle hook 派发（`hook-runtime`）。**进程外、用户配置驱动**的事件钩子（Shell / HTTP / Prompt / async 外部桥接）**不在本任务范围**，由 [P17-1](P17-1-user-hooks.md) 独立承接；二者共享同一组 trigger point 但走不同 dispatcher、不同运行时与不同信任边界，互不重复执行。勿把插件 lifecycle hook 误认为已覆盖用户外部钩子。
+> **边界与扩展**：本任务交付 **WASM 插件**的工具/命令注册与**进程内、沙箱化、capability 门控**的 lifecycle hook 派发（`hook-runtime`）。**用户配置驱动**的事件钩子（Command / Http / PromptTransform / PromptEval / AgentEval / McpTool 外部桥接，见 [P17-1](P17-1-user-hooks.md)）**不在本任务范围**，由 P17-1 独立承接；二者共享同一组 trigger point 词汇但走不同 dispatcher、不同运行时与不同信任边界，互不重复执行。勿把插件 lifecycle hook 误认为已覆盖用户外部钩子。
 
 **最终目的**：实现插件注册工具/命令与生命周期 hook 派发，让 WASM 插件可扩展 Agent 行为。
 

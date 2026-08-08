@@ -25,9 +25,33 @@ pub trait ModelProvider: Send + Sync {
 }
 ```
 
+### Canonical Embedding（Phase 16 / P16-7）
+
+```rust
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    fn id(&self) -> ProviderId;
+
+    async fn list_embedding_models(
+        &self,
+        credential: Option<&ResolvedCredential>,
+    ) -> Result<Vec<EmbeddingModelDefinition>, ProviderError>;
+
+    async fn embed(
+        &self,
+        request: EmbeddingRequest,
+        cancel: CancellationToken,
+    ) -> Result<EmbeddingResponse, ProviderError>;
+}
+```
+
+embedding 是 Provider 的另一项 canonical 能力，与 `ModelProvider` 平级落在 `provider-api`（不新增独立 crate）。`memory-service` 只依赖该 trait，**禁止按 Provider 名调用不同 API、禁止用 `provider_options` 绕过 canonical、禁止私自实现 Provider-specific 请求**；各 `provider-*` 实现 `EmbeddingProvider`。每个 `EmbeddingModelDefinition` 携带自己的 `EmbeddingCapabilities`（维度 / `max_input_tokens` / `max_batch_size` 等），能力不假定在同一 Provider 的所有 embedding model 间相同。
+
 ## 统一请求能力
 
 System Prompt；历史消息；Text 和 Image 输入；Tool Schema；Tool Choice；Temperature；Max Output Tokens；Stop Sequence；Thinking/Reasoning Level；JSON 或结构化输出；Provider-specific options；Prompt Cache；自定义 HTTP Header；Proxy；超时；请求取消；Trace ID。
+
+> reasoning effort 不属于「Provider-specific options」：`ReasoningEffort { None, Low, Medium, High, XHigh, Max }` 是 canonical 一等字段，经 P15-8 `CapabilityNegotiator` 协商翻译（P17-5 `AgentProfile.effort` 走此路径，不经 `provider_options`）。
 
 ## 统一流式事件
 
@@ -39,6 +63,10 @@ pub enum ProviderStreamEvent {
     ToolCallStarted { id: String, name: String },
     ToolCallArgumentsDelta { id: String, json: String },
     ToolCallCompleted { id: String },
+    ServerTool(ServerToolEvent),
+    CitationAdded(Citation),
+    SourceAdded(Source),
+    ReasoningItemCommitted(ReasoningItem),
     UsageUpdated(TokenUsage),
     ResponseCompleted(StopReason),
     ProviderMetadata(serde_json::Value),
@@ -91,6 +119,16 @@ API Key 与 OS Keychain 见 [auth](auth.md)；OAuth（PKCE / Device Flow / auto 
 - 每个 Provider 通过统一 Contract Tests（见 [testing](../quality/testing.md) §contract）
 - Agent Core 不含 Provider 特例（禁止按 Provider 名走分支）
 - 重试与错误归一化覆盖各类错误
+- embedding model 目录及逐模型 capabilities 与实际 Provider 行为一致；memory-service 只经 `EmbeddingProvider` 调用
+
+## 现代能力分层（Phase 6 vs Phase 15）
+
+| 层 | 范围 | 能力 |
+| --- | --- | --- |
+| **Phase 6 = 基线兼容** | Chat Completions / Messages 基础协议 | text/image 输入、tool call、thinking/reasoning level、structured output、prompt cache、provider options 透传、raw metadata |
+| **Phase 15 = 现代原生** | Canonical Tool v2 + Responses / Modern Messages | Responses 传输、Provider Hosted Tools（web_search / file_search / code_execution）、Provider Extension、reasoning continuation（加密凭证）、Citation / Source、Capability negotiation、Computer Use |
+
+Phase 15 不替换 Phase 2/6 的兼容路径：旧路径保留，现代能力经 P15-8 协商降级时退回基线。Agent Core 始终不感知 Provider 名（`no_provider_branch`）。embedding（P16-7）经 `provider-api` 的 canonical `EmbeddingProvider` 暴露。
 
 ## 相关文档
 

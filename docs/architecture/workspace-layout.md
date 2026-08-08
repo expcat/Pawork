@@ -26,7 +26,7 @@ Pawork/
 | `agent-engine` | Agent Loop、运行控制、预算 | 依赖 provider-api / tool-api / plugin-api |
 | `agent-api` | 对外领域 API 聚合 | 依赖 agent-engine |
 | `provider-api` | Provider Trait、canonical 请求 / 事件 / 错误 | 依赖 agent-domain |
-| `provider-runtime` | HTTP 运行时、SSE/JSONL 解析、重试 | 依赖 provider-api |
+| `provider-runtime` | Provider 协议运行时、SSE/JSONL 解析、重试；Phase 2 现有 HTTP 基线后续抽到通用 `http-runtime` | 依赖 provider-api；抽离后依赖 http-runtime |
 | `provider-openai` | OpenAI 适配 | 依赖 provider-runtime |
 | `provider-anthropic` | Anthropic 适配 | 依赖 provider-runtime |
 | `provider-google` | Google Gemini 适配 | 依赖 provider-runtime |
@@ -86,6 +86,36 @@ Pawork/
 | `diagnostics` | 诊断包、脱敏日志、metrics | 横切 |
 | `test-support` | Mock Provider / Mock Tool、测试工具 | 仅测试依赖 |
 | `schema-typegen` | 从 core-api / gui-protocol 生成并校验 `.d.ts` | 仅构建工具依赖 core-api / gui-protocol，不进入运行时 |
+
+### 2.1 Phase 15–17 与跨阶段规划新增 crate（登记在册，尚未实现）
+
+> 登记即冻结 crate 名、职责与依赖方向；落地计划见 [ROADMAP](../../ROADMAP.md) Phase 15–17。新增 crate 遵循 §6/§7 规则，`agent-domain` 保持零外部 IO 依赖。embedding 经评估**不新增独立 crate**，扩展 `provider-api`（见下表脚注）。
+
+| crate | 职责 | 依赖方向备注 |
+| --- | --- | --- |
+| `http-runtime` | 通用 HTTP client、超时、代理、header、trace、取消、重试；供 Provider、Hooks、Marketplace、Forge 等复用 | 从 `provider-runtime::http` 抽离；不得依赖具体 Provider；P2-1 后续收敛 |
+| `protected-blob-store` | 受保护敏感制品（reasoning 凭证等）加密落盘：encrypted-at-rest、Provider/Session 作用域、retention、引用计数 GC、完整性校验 | 依赖 `agent-domain`；与 `artifact-store`（非加密）平级、共享存储底层但不混用安全语义；ADR-032 |
+| `monitor-service` | 声明式监视循环 + 常驻进程托管；Plugin Package Monitors 的唯一运行时执行宿主 | 依赖 `agent-domain` / `process-runtime`；P16-6 |
+| `memory-service` | 跨会话长期记忆；提炼 / 嵌入检索 / 失效 | 依赖 `agent-domain` / `provider-api`（canonical `EmbeddingProvider`）；P16-7 |
+| `plan-service` | Plan 模式与 PlanArtifact | 依赖 `agent-domain` / `context-engine`；P16-1/P16-2 |
+| `goal-service` | durable objective + success criteria | 依赖 `agent-domain`；P16-3 |
+| `task-manager` | process/agent/monitor/automation 统一后台任务管理 | 依赖 `agent-domain` / `process-runtime`；P16-4 |
+| `automation-service` | cron/interval/once/event trigger + inbox；外部 trigger 经 adapter | 依赖 `agent-domain`；P16-5 |
+| `review-engine` | 行锚点评审 + re-anchor + resolution 生命周期 | 依赖 `agent-domain` / `diff-service`；P16-8 |
+| `user-hooks` | 用户声明式事件钩子（Command/Http/PromptTransform/PromptEval/AgentEval/McpTool） | 依赖 `agent-domain` / `provider-api` / `mcp-client`；与 `hook-runtime` 并列；P17-1 |
+| `plugin-package` | Plugin Package 聚合格式（Skills/Agents/Hooks/MCP/LSP/Monitors） | 依赖 `agent-domain` / `resource-loader`；P17-2 |
+| `marketplace` | 扩展市场：发现/安装/更新/卸载/签名/trust/team-policy | 依赖 `plugin-package` / `http-runtime`；P17-3 |
+| `lsp-runtime` | LSP **Client** Runtime：启动/管理/调用现有 Language Server | 依赖 `agent-domain` / `process-runtime` / `sandbox-runtime`；P17-4 |
+| `teams` | Agent Teams / peer messaging / shared task board | 依赖 `agent-domain` / `orchestration`；P17-6 |
+| `acp-host` | 公共 Agent Client Protocol adapter | 依赖 `agent-domain` / `core-api`（连接 pawork Host）；P17-7 |
+| `agent-sdk` | Rust client SDK + Headless JSON 协议接入 | 依赖公开 schema/framing（不依赖 `core-runtime`）；P17-8 |
+| `ide-host-adapter` | IDE 生命周期/诊断/交互桥接 + 可选 LSP Server 输出 | 依赖 `agent-sdk` / `core-api`；与 `gui-server` 平级；P17-9 |
+| `browser-computer-runtime` | Browser/Computer 能力 facade（Local/MCP/ProviderHosted 三执行位点） | 依赖 `tool-api` / `provider-api` / `sandbox-runtime`；P17-10 |
+| `transport-remote` | 真实远程 Transport（替代 placeholder） | 依赖 `transport-api`；P17-11 |
+| `remote-control-adapter` | Mobile / 远程控制受限通道 | 依赖 `transport-api` / `core-api`；P17-12 |
+| `compat-loader` | Claude/Codex/Grok/Cursor/Pi 配置兼容导入（只读） | 依赖 `agent-domain` / `resource-loader`；P17-13 |
+
+> embedding 决策（2026-08 冻结）：**不新增独立 `embedding-api` / `embedding-runtime` crate**。canonical embedding 抽象（`EmbeddingProvider` trait + `EmbeddingRequest` / `EmbeddingResponse` / `EmbeddingModelDefinition` / `EmbeddingCapabilities`）扩展进 `provider-api`——embedding 是 Provider 的另一项 canonical 能力，与 `ModelProvider` 平级放在同一层最契合现有依赖方向，复用同一套凭证与 model-registry，并使 `memory-service` 只依赖 `provider-api`（Provider 无关）。各 `provider-*` 实现 `EmbeddingProvider`。
 
 ## 3. apps/
 

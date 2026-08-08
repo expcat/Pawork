@@ -116,9 +116,43 @@ pub enum AgentEvent {
 
 事件持久化与重放约束见 [ADR-016](../adr/ADR-016-core-event-persist-replay.md) 与 [sessions](../features/sessions.md)。
 
-## 5. 相关文档
+## 5. Phase 15–17 扩展领域类型（登记在册）
 
+以下类型是 Phase 15–17 引入的 canonical 领域词汇，按职责落在 `agent-domain` 或纯 API crate（如 `provider-api`），均不携带外部 IO 实现；运行时语义见对应 feature / plan。新增类型不得按 Provider 名称分支（ADR-002），敏感制品只存安全引用（ADR-032）。
+
+**Provider Native（Phase 15）**
+
+- `ToolKind { ClientFunction, ProviderHosted, ProviderExtension }` + `ExecutionOwner { Core, Provider, Extension }`（一一对应）+ `ContinuationMode { CoreSuppliedResult, ProviderTranscript }`
+- `HostedToolRequest`（声明启用 server tools，不含 Provider 名）
+- `ServerToolEvent`（生命周期：Started/Progress/Completed、CitationAdded/SourceAdded、ComputerActionRequested/Screenshot、ProgramStarted/Output）
+- `Citation` / `Source`（三家引用归一）
+- `ReasoningItem { id, summary?, protected_blob_ref, opaque_metadata, continuation_metadata }`（安全引用；原文在 Protected Blob Store）
+- `ReasoningEffort { None, Low, Medium, High, XHigh, Max }` + `ReasoningConfig`（canonical effort，经 P15-8 协商）
+- `EmbeddingRequest` / `EmbeddingResponse` / `EmbeddingModelDefinition` / `EmbeddingCapabilities`（canonical embedding，落 `provider-api`）
+
+**Modern Agent Workflow（Phase 16）**
+
+- `Plan` / `PlanStep` / `PlanReview`（Plan 模式与评审）
+- `Goal` / `SuccessCriterion`（durable objective）
+- `BackgroundTask` / `Automation` / `Monitor`（后台任务、调度自动化、监视循环）
+- `Memory`（跨会话长期记忆条目）
+- `ReviewFinding` / `SuggestedPatch` / `PRComment` / `Resolution`（行锚点评审）
+
+**Ecosystem & Host（Phase 17）**
+
+- `HookHandler { Command, Http, PromptTransform, PromptEval, AgentEval, McpTool }` + trigger vocabulary（Session/Run/Prompt/Tool/Permission/Subagent/Task/Compact/Notification）
+- `PluginPackage`（聚合 Skills/Agents/Hooks/MCP/LSP/Monitors）
+- `LanguageServerDescriptor`（LSP Client Runtime 描述符）
+- `AgentProfileV2`（prompt/model/effort/tools(denied)/skills/mcp/permissions/hooks/memory/max-turns/background/isolation；effort 为 canonical 一等字段）
+- `AgentTeam`（peer messaging / shared task board）
+- `BrowserComputerCapability`（Local/MCP/ProviderHosted 三执行位点 facade）
+
+## 6. 相关文档
 - [控制流](control-flow.md)
 - [sessions](../features/sessions.md)
 - [agent-engine](../features/agent-engine.md)
+- [providers](../features/providers.md) · [tools](../features/tools.md) · [plugins](../features/plugins.md)
 - [ADR-002 Agent Engine 与 Provider 解耦](../adr/ADR-002-agent-engine-provider-decoupled.md)
+- [ADR-016 事件持久化重放](../adr/ADR-016-core-event-persist-replay.md)
+- [ADR-032 Protected Blob Store](../adr/ADR-032-protected-blob-store.md)
+- [ROADMAP Phase 15–17](../../ROADMAP.md)

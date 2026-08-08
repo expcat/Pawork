@@ -17,9 +17,13 @@
 13. 数据库 Migration 故障测试
 14. 未信任工作区测试
 15. Sandbox 逃逸测试
+16. 敏感制品隔离测试（reasoning 凭证走 Protected Blob Store；不落普通 Event payload / 日志 / OS Keychain；ADR-032）
+17. Hosted Tool 执行位点测试（ProviderHosted / ProviderExtension 不触发本地 `AgentTool::execute`，结果走 ServerToolEvent）
+18. User Hook 策略与信任边界测试（PromptTransform 不可绕过 system/security policy；User Hook 与 WASM lifecycle hook 信任边界隔离、不重复执行；secret 不入库/日志）
+19. Canonical 解耦回归（Agent Core / memory-service / user-hooks 不含 Provider 名分支；effort 走 canonical，不经 `provider_options`）
 
 ## 相关文档
 
 - [policy](../features/policy.md) · [sandbox](../features/sandbox.md) · [plugins](../features/plugins.md) · [mcp](../features/mcp.md) · [sessions](../features/sessions.md)
-- [ADR-009 默认 Workspace Trust](../adr/ADR-009-default-workspace-trust.md) · [ADR-014 Secret 存 OS Keychain](../adr/ADR-014-secret-os-keychain.md) · [ADR-020 性能与安全是发布门槛](../adr/ADR-020-performance-security-gate.md)
+- [ADR-009 默认 Workspace Trust](../adr/ADR-009-default-workspace-trust.md) · [ADR-014 Secret 存 OS Keychain](../adr/ADR-014-secret-os-keychain.md) · [ADR-020 性能与安全是发布门槛](../adr/ADR-020-performance-security-gate.md) · [ADR-032 Protected Blob Store](../adr/ADR-032-protected-blob-store.md)
 - [ROADMAP 实施波次与门禁节奏](../../ROADMAP.md#实施波次与门禁节奏) · [测试后清理](testing.md#测试后清理)

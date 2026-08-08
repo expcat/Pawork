@@ -9,7 +9,7 @@
 ## 细分步骤
 
 1. **常驻进程模型** —— 目的：在 `process-runtime` 之上定义 `PersistentProcess`——绑定到一个 workspace，生命周期跨 Run/连接，重启 Core 后可重新发现并接管（基于持久化的 PID/句柄与 canonical event 日志）。
-2. **Monitor 循环** —— 目的：`monitor-service` 提供声明式监视循环（文件变化/进程退出/正则命中/端口状态），命中后产出 canonical event，可作为 P16-5 `event` 触发器的来源，形成「监视 → 触发自动化」链路。
+2. **Monitor 循环（Plugin Package 的统一执行宿主）** —— 目的：`monitor-service` 提供声明式监视循环（文件变化/进程退出/正则命中/端口状态），命中后产出 canonical event，可作为 P16-5 `event` 触发器的来源，形成「监视 → 触发自动化」链路。同时作为 [P17-2](P17-2-plugin-package-format.md) Plugin Package 中 Monitors 类型声明的**唯一运行时执行点**：package manifest 只声明 monitor 配置/trigger/permissions/lifecycle/required capability，统一进入 `monitor-service` / `task-manager` 执行，不重定义运行时语义。
 3. **输出捕获与节流** —— 目的：常驻进程的 stdout/stderr 流式捕获为事件流，超量输出走 artifact（P13-8）+ 滚动裁剪，复用慢客户端隔离（P13-5）避免高吞吐进程回压 Core。
 4. **断连续存与重连接管** —— 目的：复用 PTY Service 的重连能力（P11-6），断连不杀进程；重连按 snapshot 恢复视图并续接增量；进程异常退出按进程树清理（P11-7）不留孤儿。
 5. **资源与安全** —— 目的：常驻进程同样受 sandbox（P11）与 policy 约束；监视循环的文件访问范围限定在 workspace（复用 file-index 信任边界）。
@@ -27,6 +27,7 @@
 
 - [ ] 常驻进程断连后继续运行，重连可恢复视图并续接增量输出
 - [ ] Monitor 循环命中产出 canonical event，可作为 `event` 触发器来源
+- [ ] `monitor-service` / `task-manager` 是 Plugin Package Monitors（P17-2）声明的唯一执行宿主，package 不自带运行时
 - [ ] 高吞吐输出经 artifact + 裁剪，不回压 Core
 - [ ] 进程异常退出经进程树清理无孤儿；常驻进程受 sandbox/policy 约束
 
