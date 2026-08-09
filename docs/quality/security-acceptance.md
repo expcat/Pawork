@@ -16,7 +16,11 @@
 12. Plugin 无限循环测试
 13. 数据库 Migration 故障测试
 14. 未信任工作区测试
-15. Sandbox 逃逸测试
+15. Sandbox 逃逸测试（分平台验收，backend 维度以 [sandbox](../features/sandbox.md) 为准）
+    - Linux（bwrap + Landlock）：workspace allowed / sibling deny / Secret deny / direct TCP deny / UNIX socket scope / PATH 最小授权 / ABI downgrade
+    - Windows（AppContainer + Job）：workspace read/write / sibling deny / Secret deny / direct network deny / child limit / Job / AppContainer child crash cleanup / temp permission cleanup / probe-fallback
+    - macOS（Seatbelt）：workspace allowed / sibling deny / Secret deny / network deny / fork / timeout-cancel / 进程树清理
+    - 只有 filesystem/network 真由 OS 拒绝，才允许把对应 backend 报为 hard；未实现的保证不得报为 hard。
 16. 敏感制品隔离测试（reasoning 凭证走 Protected Blob Store；不落普通 Event payload / 日志 / OS Keychain；ADR-032）
 17. Hosted Tool 执行位点测试（ProviderHosted / ProviderExtension 不触发本地 `AgentTool::execute`，结果走 ServerToolEvent）
 18. User Hook 策略与信任边界测试（PromptTransform 不可绕过 system/security policy；User Hook 与 WASM lifecycle hook 信任边界隔离、不重复执行；secret 不入库/日志）

@@ -41,6 +41,21 @@ Agent 调度的子进程（run_command、MCP stdio、Git、外部工具）具备
 - 探测结果影响安全姿态，须进入 Tool metadata、tracing，并在审计层接线后纳入诊断包。
 - 容器/VM（P11-5）作为更强一档延后。
 
+## Amendment / 演进（2026-08-09）
+
+本 Amendment 依据 Phase 11 架构级增量规划（P11-1.E1/E2、P11-2.E2、P11-3.E1/E2、P11-4.E1/E2/E3）对 ADR-031 作澄清与演进方向记录，不改变本 ADR 的 Accepted 状态，不删除原文。实验性 / 随系统演进能力（Linux Landlock ABI、Windows experimental sandbox API、macOS App Sandbox）的官方资料查询日期为 2026-08-09，落地前须重新核实，避免把实验能力误认为稳定契约。
+
+1. Docker/Podman 继续不进 Core selector：P11-5 维持归档；不实现 Docker daemon、不要求 Podman、不引入 OCI image 作 shell 前提。
+2. container/VM 属未来 Execution Environment 问题：Sandbox 决定「当前进程可访问什么」，Execution Environment 决定「当前进程运行在哪种系统/镜像/VM 中」；本阶段不为 OCI/VM 提前创建抽象。
+3. Landlock 与 bwrap 是不同保证层，非同义 backend：Landlock 是 daemonless 内核 LSM（文件系统 + 目标 ABI 可用时的 TCP 按端口 / abstract UNIX socket scope / audit），bwrap 是 namespace 级硬隔离（mount/PID/独立 /proc/IPC/UTS/network）；selector 须显式表达差异，「自实现 mini-bwrap / mini-container runtime」默认拒绝。
+4. Windows experimental API 永远 capability-gated：`Experimental_CreateProcessInSandbox` / `Experimental_CreateProcessAsUserInSandbox`（processmodel.dll、FlatBuffer spec、schema 未公开）只作动态探测后的可选增强，不得作产品硬基线或稳定契约；不可用时回退 classic AppContainer+Job。
+5. classic AppContainer+Job 保留稳定 fallback：Job-only 为当前 Windows 基线（degraded）；AppContainer 接线后仍与统一 Process Runtime 生命周期整合，避免不可撤销的宽泛 ACL。
+6. macOS Seatbelt 继续作 CLI/Core 路线：Desktop App Sandbox / XPC 不替代 Phase 11 CLI backend。
+7. Desktop App Sandbox / XPC 只能是额外 host-level defense：XPC helper 不自动继承 sandbox extension；CLI/Core 不依赖 Desktop App Sandbox，也不复制第二套 policy model。
+8. IsolationLevel 是摘要，不应成未来唯一安全判定依据：安全敏感调用方应查询多维 `SandboxGuarantees`（filesystem/network/process_tree/process_namespace/resource_limits/ipc_scope/syscall_filter/kernel_boundary 等），降级明确到维度，metadata/tracing 记录「要求了什么 vs 实际获得什么」。
+
+演进方向：NativeRestricted baseline + platform native enforcement + capability-aware selection/planning（评估 `plan(policy, requirements)` 组合 enforcement layer，不做 big-bang rewrite）+ actual SandboxGuarantees + observable fallback。老 ABI / 低能力平台按维度降级可观测，任何平台不得把未实现保证报成 hard，也不得静默移除 capability probe。
+
 ## 相关
 
 - [sandbox](../features/sandbox.md) · [process](../features/process.md) · [policy](../features/policy.md)

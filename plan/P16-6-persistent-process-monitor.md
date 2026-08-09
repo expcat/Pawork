@@ -16,6 +16,17 @@
 6. **查询面** —— 目的：`core-api` 暴露常驻进程/监视器列表、输出流订阅与控制（重启/停止）。
 7. **定向 / Mock 测试** —— 目的：常驻进程断连存活与重连接管、监视循环命中触发事件、超量输出裁剪、异常退出无孤儿。仅定向 + Mock smoke，不要求 workspace 全量门禁。
 
+### Core-owned 进程统一 Sandbox/Process Runtime 所有权（显式约束）
+
+> 对齐 `.codex-brief/ENHANCEMENT-BRIEF.md` §4「后续 Runtime 执行所有权」：所有 Core-owned 本地进程必须经 `Sandbox Runtime → Process Runtime` 统一执行，常驻/后台执行不构成例外。
+
+- 常驻进程 / monitor 禁止直接 `tokio::process::Command` / `tokio::spawn` 绕过 Sandbox Runtime；统一经 `Sandbox Runtime → Process Runtime` 执行。
+- 不自复制 Job Object / process-group cleanup：统一复用 P11-7 进程树清理，`process-runtime` / `monitor-service` 不另起一套清理逻辑。
+- 不自定另一套 filesystem / network policy：统一复用 `sandbox-runtime` 的 `SandboxPolicy`，常驻进程不因 persistent 而放宽。
+- 不因 persistent/background 绕过 guarantee reporting：进程实际获得的 `SandboxGuarantees`（含各维度降级）照常上报、可持久化、可观测。
+- **policy/guarantee 跨生命周期一致**：同一 persistent process 的 sandbox policy 与 guarantee 在 spawn / restart / reattach / recovery 全流程保持一致；restart 必须走同一受沙箱路径，不得降级为 unsandboxed 重启；重连接管与崩溃恢复后重新核对 guarantee 状态并上报，禁止「先 unsandboxed 拉起再补沙箱」。
+- 已有 ExecutionOwner 设计（见 [P17-10](P17-10-browser-computer-runtime.md) 与 [sandbox](../docs/features/sandbox.md)）则直接复用，不另起一套进程所有权 / 执行模型。
+
 ## 主要产出物
 
 - `process-runtime` 的 `PersistentProcess` 扩展

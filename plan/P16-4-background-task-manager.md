@@ -16,6 +16,15 @@
 6. **查询面** —— 目的：`core-api` 暴露任务列表/详情/输出流订阅，GUI/CLI 呈现后台任务面板。
 7. **定向 / Mock 测试** —— 目的：四类任务的状态机、断连后任务继续与重连 snapshot 恢复、取消传播无孤儿。仅定向 + Mock smoke（模拟断连/重连），不要求 workspace 全量门禁。
 
+### Core-owned 进程统一 Sandbox/Process Runtime 所有权（显式约束）
+
+> 对齐 `.codex-brief/ENHANCEMENT-BRIEF.md` §4「后续 Runtime 执行所有权」：所有 Core-owned 本地进程必须经 `Sandbox Runtime → Process Runtime` 统一执行，后台执行不构成例外。
+
+- process / monitor 任务禁止直接 `tokio::process::Command` / `tokio::spawn` 绕过 Sandbox Runtime；即使任务在后台运行、CLI/GUI 已断连，也必须走同一受沙箱执行路径。
+- 不自复制 Job Object / process-group cleanup：统一复用 P11-7 进程树清理，禁止在 `task-manager` 内另写一套清理逻辑造成双重管理或孤儿。
+- 不自定另一套 filesystem / network policy：统一复用 `sandbox-runtime` 的 `SandboxPolicy`，后台任务不因「后台」获得额外越权。
+- 不因 background 绕过 guarantee reporting：任务实际获得的 `SandboxGuarantees`（含各维度降级）照常上报、可持久化、可观测，与前台任务一致。
+
 ## 主要产出物
 
 - `task-manager` 统一抽象（四 kind）+ 状态机 + canonical event

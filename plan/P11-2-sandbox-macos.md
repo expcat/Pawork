@@ -32,4 +32,31 @@
 - `cargo check -p process-runtime -p sandbox-runtime -p pty-service --target aarch64-apple-darwin` 通过。
 - 交付成熟度为 TargetVerified；真实 macOS Seatbelt 越权读/联网/进程 L2 仍须在 macOS runner 执行后才能升级为 MaintenanceGated，不以交叉编译冒充运行证明。
 
+## 后续增强 / Maintenance Tasks
+
+> 以下为后续增强任务（child task，ID 形如 `P11-{n}.E{k}`，状态符号一律 `🟡未开始`，交付成熟度 `Designed`），不改变 P11-2 主任务 🟢 状态。macOS App Sandbox 等随系统演进的能力记录查询日期 2026-08-09，避免把实验/演进中能力误认为稳定契约。
+
+### P11-2.E1 macOS Real L2 Verification
+
+状态：🟡未开始 · 交付成熟度：Designed（平台门禁：MaintenanceGated） · 依赖：P11-2、macOS CI/runner
+
+- **最终目的**：在真实 macOS runner 上验证 Seatbelt 后端的 L2 语义，将交付成熟度从 TargetVerified 升级为 MaintenanceGated；不以交叉编译冒充运行证明。
+- **涉及范围**：`sandbox-runtime` macOS 测试。
+- **依赖**：P11-2；macOS CI/runner（平台门禁）。
+- **产出物**：真实 macOS 环境可重复运行的 L2 验证用例；验证通过记录；backend 交付成熟度升级。
+- **验收标准**：allowed workspace / sibling deny / Secret deny / network deny / fork 限制 / timeout-cancel / 进程树清理 / probe-fallback / sandbox metadata 均在真实 macOS 环境验证通过；target compile 不作为运行证明。
+- **相关文档**：[sandbox](../docs/features/sandbox.md) · [P11-2 主任务](P11-2-sandbox-macos.md)
+
+### P11-2.E2 Desktop App Sandbox / XPC Feasibility（研究任务）
+
+状态：🟡未开始 · 交付成熟度：Designed · 依赖：Phase 19、P11-2
+
+- **最终目的**：结合 Phase 19 Desktop 方向，调查 App Sandbox / sandboxed helper / XPC service / security-scoped workspace 是否适合 Desktop 长期隔离，明确采用或拒绝及理由。
+- **涉及范围**：`docs/features/desktop-gui.md` 研究 + ADR 交叉引用；不改 Phase 11 CLI backend。
+- **原则**：CLI/Core 不依赖 Desktop App Sandbox；GUI 不成 Core Sandbox 前置；Desktop helper 仍消费 Core policy；不复制第二套 policy model。
+- **依赖**：Phase 19、P11-2。
+- **产出物**：desktop-gui.md 中的可行性研究章节与 ADR 交叉引用记录（查询日期 2026-08-09）。
+- **验收标准**：平台事实准确记录——security-scoped bookmarks（implicit，需 entitlement `files.bookmarks.app-scope`）传 workspace 访问；XPC helper 不自动继承 sandbox extension；明确 Desktop App Sandbox/XPC 只能是额外 host-level defense，不替代 Phase 11 CLI Seatbelt backend。
+- **相关文档**：[desktop-gui](../docs/features/desktop-gui.md) · [ADR-031](../docs/adr/ADR-031-sandbox-backend-architecture.md) · [ADR-034](../docs/adr/ADR-034-desktop-gui-client-boundary.md) · [P11-2 主任务](P11-2-sandbox-macos.md)
+
 **相关文档**：[sandbox](../docs/features/sandbox.md) · [process](../docs/features/process.md) · [安全验收](../docs/quality/security-acceptance.md) · [ROADMAP](../ROADMAP.md)

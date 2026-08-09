@@ -11,7 +11,7 @@
 ## 细分步骤
 
 1. **LanguageServerDescriptor 模型** —— 目的：在 `agent-domain` / `lsp-runtime` 定义语言服务描述符，统一 `command` / `args` / `transport` / `env` / `language | extension mapping` / `initialization_options` / `settings` / `workspace_folder` / `startup_timeout` / `shutdown_timeout` / `restart_on_crash` / `max_restarts`；首版 `transport=stdio`，为未来显式配置 socket 预留枚举，描述符纯领域类型，不绑定具体实现。
-2. **LSP framing 与客户端进程托管** —— 目的：实现 JSON-RPC over stdio 的 `Content-Length: N\r\n...\r\n\r\n<body>` 增量解帧，正确处理 header/body 跨 chunk、多个连续 frame、大小上限、重复/缺失/非法 header 与 EOF 半帧；随后完成 `initialize` / `initialized` / `shutdown` / `exit` 握手与能力协商，崩溃按策略重启。子进程经 `sandbox-runtime::SandboxBackend::spawn` 执行，不绕过沙箱。
+2. **LSP framing 与客户端进程托管** —— 目的：实现 JSON-RPC over stdio 的 `Content-Length: N\r\n...\r\n\r\n<body>` 增量解帧，正确处理 header/body 跨 chunk、多个连续 frame、大小上限、重复/缺失/非法 header 与 EOF 半帧；随后完成 `initialize` / `initialized` / `shutdown` / `exit` 握手与能力协商，崩溃按策略重启。子进程经 `sandbox-runtime::SandboxBackend::spawn` 执行，不绕过沙箱。**执行所有权约束**：language server 子进程属 Core-owned 本地进程，必须经 `Sandbox Runtime（P11）→ Process Runtime` 统一路径启动，禁止以 `tokio::process::Command`（或任何直连 spawn 方式）绕过；崩溃后 restart 仍走同一 sandbox 路径，spawn/restart/recovery 各阶段的 sandbox guarantee 保持一致，不因 restart 降级为 unsandboxed；进程树清理统一由 Sandbox/Process Runtime 承担，不自复制进程树清理逻辑。
 3. **文档同步** —— 目的：以 LSP Client 身份向语言服务发送 `textDocument/didOpen | didChange | didClose`，维护文档版本与增量同步，作为所有请求的源数据；Agent 侧文件变更驱动文档同步。
 4. **统一消费接口** —— 目的：定义 Agent 统一消费接口，把语言服务能力归一为 canonical 结果——`diagnostics`、`hover`、`definition`、`references`、`document_symbols`、`workspace_symbols`、`call_hierarchy`、`rename`、`code_actions`；接口屏蔽具体语言服务差异，Agent 不感知后端。
 5. **配置发现与接入** —— 目的：支持内置预设（rust-analyzer / pyright / typescript-language-server / gopls / clangd）与用户配置接入其他 LSP Server；配置经 `resource-loader` 加载，工作区作用域与既有资源一致。

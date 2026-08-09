@@ -22,7 +22,7 @@
 | --- | --- | --- | --- | --- |
 | `NativeRestricted`（全平台） | 只校验 cwd/授权根并清洗环境；不能拦截已启动命令内部的任意文件访问 | 仅提示，不能硬阻断 | Process Runtime 资源限额与整树清理 | `soft` |
 | Linux `bwrap` | workspace/读根只读 bind，写根可写 bind，deny 子树以空 tmpfs 覆盖 | `Enforce` 使用独立 network namespace；当前不实现按 hostname 放行 | PID/IPC/UTS/cgroup namespace + Unix rlimit + die-with-parent | `hard` |
-| Linux Landlock | ruleset 白名单在 child `pre_exec` 生效；不能表达 allow 根内再减 deny 子树时拒绝启动 | 不支持 | Unix rlimit + process group + `/proc` 后代清理 | `hard_filesystem_only` |
+| Linux Landlock | ruleset 白名单在 child `pre_exec` 生效；不能表达 allow 根内再减 deny 子树时拒绝启动 | 0.4.x 起支持 TCP(ABI4)、UNIX scope(ABI6/v9)，按运行时 ABI probe | Unix rlimit + process group + `/proc` 后代清理 | `hard_filesystem_only` |
 | macOS `sandbox-exec` | Seatbelt `file-read*` / `file-write*` / deny profile | `Enforce` 全部拒绝；hostname allowlist 不安全解析时保持拒绝 | Seatbelt + Unix rlimit/process group | `hard` |
 | Windows Job-only | 路径校验仍是软限制；无 AppContainer 文件边界 | 无硬网络隔离 | suspended spawn 后先绑定 Job；CPU、memory、active-process limit 与 `KILL_ON_JOB_CLOSE` | `degraded` |
 
@@ -62,6 +62,27 @@ Windows: AppContainer spawn 能力（当前不可用）→ Job Object-only
 - Process Runtime 以 `CREATE_SUSPENDED` 创建进程，Job attach 成功后才恢复，消除「先运行、后绑定」窗口。
 - Job 使用 `KILL_ON_JOB_CLOSE`、active-process、Job memory 与 Job CPU time；kill、timeout、取消和 host 句柄关闭都沿同一路径回收后代。
 - `open_fds` 没有等价 Job 限制；文件/网络硬隔离也不在 Job-only 保证内，均通过结构化降级信息暴露。
+
+## Sandbox vs Execution Environment
+
+- Sandbox 决定「当前进程可访问什么」：文件、网络、进程与能力（capability）。Phase 11 的 Sandbox Runtime 只负责前者。
+- Execution Environment 决定「当前进程运行在哪种系统/镜像/VM 中」：OCI 容器、VM 等属未来 Execution Environment 问题，不是 Sandbox Runtime 的默认实现；本阶段不为 OCI/VM 提前创建抽象，不实现 Docker daemon、不要求 Podman，也不以 OCI image 作为 shell 前提。
+- 分开两者的收益：sandbox-runtime 的保证模型可独立演进，未来 Execution Environment 作为叠加层引入，不改变现有 SandboxBackend 契约。
+
+## Sandbox Guarantee 演进方向
+
+- 现状：调用方通过 `BackendSelection.isolation`（soft / hard / hard_filesystem_only / degraded）四个摘要值判断安全姿态。
+- 演进：引入多维 `SandboxGuarantees` 模型（filesystem / network / process_tree / process_namespace / resource_limits / ipc_scope / syscall_filter / kernel_boundary 等维度，字段名结合 sandbox-runtime 现有代码设计），安全敏感调用方直接查询具体 capability/guarantee。
+- `IsolationLevel` 保留作 UI/telemetry 摘要；真正安全判断查 guarantee；metadata/tracing 表示「要求了什么 vs 实际获得什么」，降级明确到维度。
+- 向后兼容增量演进：不重构所有调用方、不删 SandboxBackend trait；`SandboxSelector::pick()` 是否演进为 `plan(policy, requirements)` 组合 enforcement layer 属设计评估项（P11-1.E2），须记录选择理由与拒绝的替代方案。
+- 约束：不静默移除 capability probe；任何平台不得把未实现保证报成 hard；老 ABI / 低能力平台按维度降级可观测。
+
+## 网络策略边界
+
+- Sandbox Runtime 负责 direct network containment：deny direct / allow port / allow proxy，由平台 backend 承担（Landlock TCP 按端口、bwrap 独立 network namespace、Seatbelt 全拒等）。
+- hostname/domain/URL 层策略（DNS rebinding、IP rotation、IPv6、SNI）平台 backend 无法可靠实现：`network_allow_hosts` 只是把这一能力缺口显式化，不是可靠实现。
+- 未来由统一 egress broker / proxy 实现 hostname/domain/URL policy：OS sandbox 只允许访问该 broker；本次只形成计划与边界，不提前实现完整 broker。
+- 不把 hostname allowlist 简化成「启动前 DNS→IP 静态映射」：IP rotation、IPv6 与 DNS rebinding 会使静态映射失效；本阶段不实现功能代码。
 
 ## 与 run_command 集成
 

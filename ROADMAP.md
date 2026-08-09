@@ -122,7 +122,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | Token 计数 | tiktoken-rs | P3-2 | 仅对 OpenAI 系精确；其它 Provider 用启发式估算 |
 | TS 类型导出 | ts-rs | P0-10、P13-7 | GUI Contract 类型生成，比 typeshare / specta 轻 |
 | 系统目录 | directories | P1-12 | 配置 / 数据目录标准路径 |
-| Linux 沙箱 | landlock | P11-3 | 基于 LSM；bwrap 不可用时提供文件系统硬隔离，ruleset 在父进程准备并于 child pre-exec 生效 |
+| Linux 沙箱 | landlock（0.4.x，当前锁定 0.4） | P11-3、P11-3.E1 | 基于 LSM；bwrap 不可用时提供文件系统硬隔离，ruleset 在父进程准备并于 child pre-exec 生效。0.4.x 已支持 TCP 端口（ABI4）、UNIX socket scope（ABI6/v9）、audit（ABI7），按运行时 ABI probe 启用；UDP(v10) 尚未进 crate。P11-3.E1 评估升级到 0.4.7 获完整能力，仍在锁定小版本内、无 breaking change |
 | Windows 绑定 | windows-rs（+ windows-service） | P11-4、P1-12 | 官方绑定 |
 | PTY 基础 | portable-pty 0.8.1 | P11-6 | 采用最小 PTY 层；重连/有界缓冲/归属/清理由 Pawork 自实现，并串行化 Unix spawn 临界区 |
 | 签名 | ed25519-dalek | P10-1 | 插件 manifest 签名 |
@@ -396,6 +396,25 @@ WASM 作为第一代码插件机制，能力受控。
 ### Phase 11：Sandbox 与跨平台强化
 
 三平台核心可用，沙箱可控，进程树可清理。架构见 [ADR-031](docs/adr/ADR-031-sandbox-backend-architecture.md)：NativeRestricted 永远可用；Linux 依次选择 bwrap/Landlock，macOS 选择 sandbox-exec，Windows 当前选择 Job-only 并明确标记文件/网络隔离降级。P11-5 Docker/Podman 按 P1 决策归档，不进入运行时选择链。
+
+> Sandbox 仅决定「当前进程可访问什么」（文件/网络/进程/能力）；进程运行在哪种系统/镜像/VM 中是 Execution Environment 问题，OCI/VM 属未来范畴，不在本阶段为它提前创建抽象（见 ADR-031 Amendment 与 [sandbox](docs/features/sandbox.md)）。Phase 11 主任务（P11-1～P11-8）已完成，下列「后续增强 / Maintenance Tasks」（`P11-*.E*`）是独立排期的增量演进，**不计入 Phase 11 主任务统计**，也不改变既有 🟢 历史完成记录。
+
+| 增强任务 | 主题 | 成熟度 | 详情 |
+| --- | --- | --- | --- |
+| P11-1.E1 | Sandbox Guarantee Model（多维 guarantee，IsolationLevel 降为摘要） | 🟡 Designed | [详情](plan/P11-1-sandbox-native-restricted.md) |
+| P11-1.E2 | Policy-aware Sandbox Planning（设计：pick → plan，不 big-bang rewrite） | 🟡 Designed | [详情](plan/P11-1-sandbox-native-restricted.md) |
+| P11-2.E1 | macOS Real L2 Verification（真实 runner，非交叉编译冒充） | 🟡 MaintenanceGated | [详情](plan/P11-2-sandbox-macos.md) |
+| P11-2.E2 | Desktop App Sandbox / XPC Feasibility（研究，Phase 19） | 🟡 Designed | [详情](plan/P11-2-sandbox-macos.md) |
+| P11-3.E1 | Modern Landlock Capability Upgrade（ABI4 TCP / ABI6 UNIX scope / 运行时 probe） | 🟡 Designed | [详情](plan/P11-3-sandbox-linux.md) |
+| P11-3.E2 | Bubblewrap Role Clarification（Landlock vs bwrap 保证差异） | 🟡 Designed | [详情](plan/P11-3-sandbox-linux.md) |
+| P11-3.E3 | Linux Negative Security Tests（真实内核 deny 矩阵） | 🟡 MaintenanceGated | [详情](plan/P11-3-sandbox-linux.md) |
+| P11-4.E1 | Classic AppContainer + Job Completion（受限令牌 spawn + 可撤销 ACL） | 🟡 Designed | [详情](plan/P11-4-sandbox-windows.md) |
+| P11-4.E2 | Windows CreateProcessInSandbox Experimental Probe（capability-gated） | 🟡 MaintenanceGated(experimental) | [详情](plan/P11-4-sandbox-windows.md) |
+| P11-4.E3 | Windows Hard Isolation L2（OS 真拒绝后才升 hard） | 🟡 MaintenanceGated | [详情](plan/P11-4-sandbox-windows.md) |
+
+> 网络策略边界（2026-08-09 决策）：Sandbox Runtime 只负责 direct network containment（deny direct / allow port / allow proxy）；hostname/domain/URL allowlist 因 DNS rebinding/IPv6/SNI 无法由 OS sandbox 可靠实现，未来归位为统一 egress broker / proxy，本次仅形成计划边界，不提前实现，也不简化为 DNS→IP 静态映射（见 [sandbox 网络策略边界](docs/features/sandbox.md)）。
+
+> 后续 Runtime 执行所有权：P16-4 Background Task、P16-6 Persistent Process、P17-1 User Hooks、P17-4 LSP 与 P9-1 MCP stdio 等 Core-owned 本地进程均须经 `Sandbox Runtime → Process Runtime`，禁止绕过（见各 plan 的「执行所有权约束」与 [sandbox Phase 15–17 执行所有权](docs/features/sandbox.md)）；persistent process 在 spawn/restart/reattach/recovery 必须保持一致 guarantee，不因 restart 降级为 unsandboxed。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
