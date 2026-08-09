@@ -14,7 +14,7 @@
 - `env_clear`、环境白名单与 Secret denylist；
 - CPU、内存、fd、wall time 与输出预算。
 
-`ExecutionConstraints` 的 timeout/output budget 可直接归一化为 `SandboxPolicy` 资源基线，workspace、capability 与 trust posture 再由调用方收紧。未信任工作区默认只读、禁 spawn、清洗环境并要求禁网；`run_command` 本身也不允许在未信任工作区静默执行。
+`ExecutionConstraints` 的 timeout/output budget 反映工具运行时的资源与信任约束（归一化映射在 P11-1.E2 Policy-aware Sandbox Planning 中统一设计，当前 `run_command` 手工构造基线 `SandboxPolicy`），workspace、capability 与 trust posture 再由调用方收紧。未信任工作区默认只读、禁 spawn、清洗环境并要求禁网；`run_command` 本身也不允许在未信任工作区静默执行。
 
 ## 后端与真实保证
 
@@ -86,7 +86,7 @@ Windows: AppContainer spawn 能力（当前不可用）→ Job Object-only
 
 ## 与 run_command 集成
 
-`builtin-tools::run_command` 总是解析真实 workspace roots，以 workspace 为默认 cwd，构造环境 allowlist/Secret denylist、文件 roots 与资源预算，再经 `SandboxSelector` spawn。该工具只声明 `Process` capability，因此模型输入不能自行关闭网络隔离：策略固定为 `Enforce`，旧 `needs_network` 输入只记审计且 `granted=false`。默认上限为 60 CPU 秒、2048 MiB、1024 fd、64 进程和 30 秒 wall time；所有可调值还有 schema 与运行时双重上界。stdout/stderr 继续实时发送 `OutputDelta`，最终 metadata 包含：
+`builtin-tools::run_command` 总是解析真实 workspace roots，以 workspace 为默认 cwd，构造环境 allowlist/Secret denylist（单一权威来源由 sandbox-runtime 导出）、文件 roots 与资源预算，再经 `SandboxSelector` spawn。该工具只声明 `Process` capability，因此模型输入不能自行关闭网络隔离：策略固定为 `Enforce`，网络恒 fail-closed，不在 metadata 中暴露恒为常量的 `requested/granted` 审计字段。默认上限为 60 CPU 秒、2048 MiB、1024 fd、64 进程和 30 秒 wall time；所有可调值还有 schema 与运行时双重上界。stdout/stderr 继续实时发送 `OutputDelta`，最终 metadata 包含：
 
 ```text
 sandbox.backend
@@ -94,9 +94,12 @@ sandbox.isolation
 sandbox.fallback
 sandbox.note
 sandbox.attempted[]
-sandbox.network.{requested,granted,mode}
 sandbox.limits.{timeout_ms,cpu_seconds,memory_mb,open_fds,max_procs,max_output_bytes}
 ```
+
+## 主流程集成边界
+
+Sandbox Runtime 与 `builtin-tools::run_command` 已在代码层面接线（经 `SandboxSelector::pick()` → `backend.spawn()` 执行），但当前证据限于工具实现自身与定向测试：`builtin-tools` / `pty-service` 在整个 workspace 中尚无生产消费方，`RunCommandTool` 未被 agent-engine / app-service / cli-host / tool-runtime 注册。即「`run_command` 经沙箱执行」「进程树清理」这些能力的真实 agent 循环通电发生在工具注册（P4 接线）与 GUI Connection Protocol（Phase 13 CLI Host 装配）完成之后；当前不应据此误读为「沙箱已保护真实运行」。
 
 ## 验证分层与当前证据
 

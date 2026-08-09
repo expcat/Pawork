@@ -95,6 +95,8 @@ pub fn generate_seatbelt_profile(policy: &SandboxPolicy, workspace_roots: &[Path
     match policy.network_mode {
         NetworkMode::Enforce => {
             let _ = writeln!(s, "(deny network*)");
+            // not implemented, awaiting egress broker: network_allow_hosts 仅记录意图，
+            // 不编译进 profile（Seatbelt 需解析后的 endpoint filter），Enforce 下网络保持全拒。
             if !policy.network_allow_hosts.is_empty() {
                 let _ = writeln!(
                     s,
@@ -204,7 +206,10 @@ mod seatbelt {
                 .spawn_stream(spec.command, cancel)
                 .await
                 .map_err(SandboxError::Process)?;
-            Ok(SandboxProcess { events, handle })
+            Ok(SandboxProcess {
+                events,
+                _handle: handle,
+            })
         }
     }
 }

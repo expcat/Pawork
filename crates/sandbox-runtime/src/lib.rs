@@ -26,8 +26,8 @@ pub use backends::macos::{
     SANDBOX_EXEC_PATH,
 };
 pub use backends::windows::{
-    policy_to_appcontainer_config, policy_to_job_limits, probe_appcontainer_job,
-    AppContainerCapability, AppContainerConfig, JobLimitsConfig,
+    policy_to_appcontainer_config, probe_appcontainer_job, AppContainerCapability,
+    AppContainerConfig,
 };
 
 use tokio::sync::mpsc;
@@ -69,16 +69,6 @@ pub struct ResourceLimits {
     pub max_output_bytes: Option<u64>,
 }
 
-impl From<&policy_engine::ExecutionConstraints> for ResourceLimits {
-    fn from(c: &policy_engine::ExecutionConstraints) -> Self {
-        Self {
-            wall_time_ms: c.timeout_ms,
-            max_output_bytes: c.max_output_bytes,
-            ..Default::default()
-        }
-    }
-}
-
 /// 沙箱策略：声明式，后端据此构造平台原生约束。
 ///
 /// 最终语义以后端实际能力为准（见 docs/features/sandbox.md）。
@@ -114,38 +104,21 @@ impl SandboxPolicy {
     }
 }
 
-/// 把 Policy Engine 的通用执行约束归一化为沙箱策略基线。
-/// capability、workspace roots 与 trust posture 由调用方在此基线上继续收紧。
-impl From<&policy_engine::ExecutionConstraints> for SandboxPolicy {
-    fn from(constraints: &policy_engine::ExecutionConstraints) -> Self {
-        Self {
-            resources: ResourceLimits::from(constraints),
-            ..Default::default()
-        }
-    }
-}
-
 /// 沙箱进程规格：在 CommandSpec 上增加沙箱注解。
 #[derive(Clone, Debug)]
 pub struct SandboxProcessSpec {
     pub command: CommandSpec,
     pub workspace_roots: Vec<PathBuf>,
-    /// 工具声明需要网络（ToolCapability::Network）。
-    pub needs_network: bool,
 }
 
-/// 受控进程句柄：事件流 + 进程树终止。
+/// 受控进程：事件流 + 进程树生命周期。
 pub struct SandboxProcess {
     /// 与 process_runtime::ProcessRuntime::spawn_stream 一致的事件流。
     pub events: mpsc::Receiver<ProcessEvent>,
-    handle: ProcessHandle,
-}
-
-impl SandboxProcess {
-    /// 终止整个进程树（复用 process-runtime 的统一路径）。
-    pub async fn kill(&mut self) -> Result<(), SandboxError> {
-        self.handle.kill().await.map_err(SandboxError::Process)
-    }
+    /// 进程树生命周期守卫：`ProcessHandle::drop` 会取消 kill token 并终止整棵进程树，
+    /// 因此必须与 `events` 同生命周期（§2.6(b)：`kill` 方法已删，字段保留不可移除）。
+    #[allow(dead_code)]
+    _handle: ProcessHandle,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -222,7 +195,7 @@ impl SandboxBackend for NativeRestricted {
             tracing::warn!(
                 target: "pawork.sandbox",
                 backend = "native_restricted",
-                needs_network = spec.needs_network,
+                network_mode = ?policy.network_mode,
                 "network_mode=Enforce not enforceable by NativeRestricted; degraded to Hint (audit only, no hard isolation)"
             );
         }
@@ -232,7 +205,10 @@ impl SandboxBackend for NativeRestricted {
             .spawn_stream(spec.command, cancel)
             .await
             .map_err(SandboxError::Process)?;
-        Ok(SandboxProcess { events, handle })
+        Ok(SandboxProcess {
+            events,
+            _handle: handle,
+        })
     }
 }
 
@@ -537,26 +513,37 @@ fn env_matches(pattern: &str, name: &str) -> bool {
     }
 }
 
-fn default_secret_paths() -> Vec<PathBuf> {
-    // 平台精确密钥路径在 P11-2/3/4 细化；此处给基线。
-    #[cfg(unix)]
-    if let Some(home) = std::env::var_os("HOME") {
-        return vec![PathBuf::from(home).join(".ssh")];
+/// 平台密钥/凭据目录拒绝清单（权威单一来源，`untrusted_default` 与
+/// builtin-tools 的 run_command 共用；平台精确路径在 P11-2/3/4 细化）。
+pub fn default_secret_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+        let home = PathBuf::from(home);
+        paths.extend([".ssh", ".aws", ".azure", ".kube"].map(|name| home.join(name)));
     }
     #[cfg(windows)]
     if let Some(appdata) = std::env::var_os("APPDATA") {
-        return vec![PathBuf::from(appdata)];
+        paths.push(PathBuf::from(appdata).join("gcloud"));
     }
-    Vec::new()
+    paths
 }
 
-fn default_env_allowlist() -> Vec<String> {
+/// 环境变量透传白名单（权威单一来源，`untrusted_default` 与 builtin-tools 的
+/// run_command 共用；unix/Windows 历史平台清单的并集，多出的条目在不存在时自然不生效）。
+pub fn default_env_allowlist() -> Vec<String> {
     vec![
         "PATH".into(),
         "HOME".into(),
         "LANG".into(),
         "LC_ALL".into(),
         "TERM".into(),
+        "TMPDIR".into(),
+        "SYSTEMROOT".into(),
+        "TEMP".into(),
+        "TMP".into(),
+        "USERPROFILE".into(),
+        "COMSPEC".into(),
+        "PATHEXT".into(),
     ]
 }
 
@@ -606,17 +593,6 @@ mod tests {
         assert!(cmd.env.iter().any(|(k, _)| k == "PATH"));
         assert!(!cmd.env.iter().any(|(k, _)| k == "GITHUB_TOKEN"));
         assert!(!cmd.env.iter().any(|(k, _)| k == "AWS_SECRET_KEY"));
-    }
-
-    #[test]
-    fn execution_constraints_map_to_sandbox_policy() {
-        let c = policy_engine::ExecutionConstraints {
-            timeout_ms: Some(30_000),
-            max_output_bytes: Some(1_048_576),
-        };
-        let policy = SandboxPolicy::from(&c);
-        assert_eq!(policy.resources.wall_time_ms, Some(30_000));
-        assert_eq!(policy.resources.max_output_bytes, Some(1_048_576));
     }
 
     #[test]
@@ -673,7 +649,6 @@ mod tests {
         let mut spec = SandboxProcessSpec {
             command: CommandSpec::new("noop"),
             workspace_roots: Vec::new(),
-            needs_network: false,
         };
         let policy = SandboxPolicy {
             allow_spawn: true,
@@ -703,7 +678,6 @@ mod tests {
         let mut spec = SandboxProcessSpec {
             command: CommandSpec::new("noop"),
             workspace_roots: vec![root.clone()],
-            needs_network: false,
         };
         spec.command.cwd = Some(sibling.clone());
         let policy = SandboxPolicy {
@@ -728,7 +702,6 @@ mod tests {
         let mut spec = SandboxProcessSpec {
             command: CommandSpec::new("noop"),
             workspace_roots: vec![root.clone()],
-            needs_network: false,
         };
         spec.command.cwd = Some(denied.clone());
         let policy = SandboxPolicy {
@@ -767,7 +740,6 @@ mod tests {
         let spec = SandboxProcessSpec {
             command,
             workspace_roots: Vec::new(),
-            needs_network: false,
         };
         let mut proc = backend
             .spawn(spec, policy, CancellationToken::new())
@@ -788,6 +760,49 @@ mod tests {
             !text.contains("leak-canary"),
             "secret 未被沙箱剔除，发生泄漏: {text}"
         );
+    }
+
+    /// 单一来源清单必须是历史平台清单并集的超集（§2.2 防漂移回归）。
+    #[test]
+    fn default_allowlists_are_authoritative_supersets() {
+        let env = default_env_allowlist();
+        for name in [
+            "PATH",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "TERM",
+            "TMPDIR",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "COMSPEC",
+            "PATHEXT",
+        ] {
+            assert!(
+                env.iter().any(|item| item == name),
+                "env allowlist 缺少 {name}"
+            );
+        }
+
+        let secrets = default_secret_paths();
+        if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+            for name in [".ssh", ".aws", ".azure", ".kube"] {
+                let expected = PathBuf::from(&home).join(name);
+                assert!(
+                    secrets.iter().any(|p| p == &expected),
+                    "secret paths 缺少 {}",
+                    expected.display()
+                );
+            }
+        }
+        #[cfg(windows)]
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            assert!(secrets
+                .iter()
+                .any(|p| p == &PathBuf::from(&appdata).join("gcloud")));
+        }
     }
 
     /// 平台 shell 打印 secret 的 argv。

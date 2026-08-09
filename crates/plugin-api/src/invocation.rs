@@ -33,14 +33,6 @@ pub enum PluginOperation {
 }
 
 impl PluginOperation {
-    pub fn plugin_context(&self) -> Option<&PluginContext> {
-        match self {
-            Self::Command(invocation) => Some(&invocation.context),
-            Self::Lifecycle { context, .. } => Some(context),
-            Self::Tool { .. } => None,
-        }
-    }
-
     pub fn state_scope(&self) -> PluginStateScope {
         match self {
             Self::Tool { context, .. } => PluginStateScope::Workspace(context.workspace_id.clone()),
@@ -98,7 +90,7 @@ pub enum PluginStateMutation {
 
 #[cfg(test)]
 mod tests {
-    use agent_domain::{CoreInstanceId, RunId, ToolCallId, WorkspaceId};
+    use agent_domain::{RunId, ToolCallId, WorkspaceId};
 
     use super::*;
     use crate::plugin_api_version;
@@ -127,23 +119,6 @@ mod tests {
         let decoded: PluginInvocation =
             serde_json::from_slice(&bytes).expect("deserialize invocation");
         assert_eq!(decoded, invocation);
-    }
-
-    #[test]
-    fn command_exposes_plugin_context() {
-        let context = PluginContext {
-            instance_id: CoreInstanceId::from("core"),
-            workspace_id: None,
-            session_id: None,
-            run_id: None,
-        };
-        let operation = PluginOperation::Command(PluginCommandInvocation {
-            name: "hello".into(),
-            input: Value::Null,
-            context: context.clone(),
-        });
-        assert_eq!(operation.plugin_context(), Some(&context));
-        assert_eq!(operation.state_scope(), PluginStateScope::Global);
     }
 
     #[test]

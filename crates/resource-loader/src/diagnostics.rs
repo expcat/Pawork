@@ -73,9 +73,6 @@ impl ResourceDiagnosticView {
 
 fn redact_origin(origin: &ResourceOrigin, redactor: &Redactor) -> ResourceOrigin {
     match origin {
-        ResourceOrigin::Builtin { name } => ResourceOrigin::Builtin {
-            name: redactor.redact(name),
-        },
         ResourceOrigin::Global { relative_path } => ResourceOrigin::Global {
             relative_path: redactor.redact(relative_path),
         },
@@ -97,7 +94,6 @@ fn redact_origin(origin: &ResourceOrigin, redactor: &Redactor) -> ResourceOrigin
 
 fn origin_label(origin: &ResourceOrigin) -> String {
     match origin {
-        ResourceOrigin::Builtin { name } => format!("builtin:{}", escape_controls(name)),
         ResourceOrigin::Global { relative_path } => {
             format!("global:{}", escape_controls(relative_path))
         }

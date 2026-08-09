@@ -27,3 +27,5 @@
 - Server 配置可直接构造延迟解密 connector 与 `ManagedMcpClient`，timeout / restart 语义有定向断言；后续 Resource Loader 只需向 `config-service` 提供配置层。
 
 **相关文档**：[mcp](../docs/features/mcp.md) · [skills](../docs/features/skills.md) · [ROADMAP](../ROADMAP.md)
+
+> Plan/实现范围订正（2026-08-10 P9 review）：本任务「涉及范围」原文提及 `resource-loader`，但实际实现中 `resource-loader` 的 Profile v1 把 MCP 维度显式划给 P17-5 v2（`crates/resource-loader/src/profiles.rs` 注释），`McpConfig` 仅从 `config-service::ResolvedConfig.extra["mcp"]` 强类型投影，resource-loader 不参与 MCP 配置解析。该范围不符项不改变 P9-6 的 🟢 与验收（workspace/global 作用域正确），仅记录以免误读为「resource-loader 已承载 MCP 配置」。

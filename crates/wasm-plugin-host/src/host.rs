@@ -135,6 +135,58 @@ impl LoadedPlugin {
         Ok(output)
     }
 
+    /// 统一 invoke 事务：operation_lock → ensure_active → 状态快照 →
+    /// 序列化 → invoke_checked（已含 input 长度检查）→ 解析 → 原子应用状态变更。
+    ///
+    /// 这是 `on_lifecycle_event` 与 `invoke_operation` 两条路径的共同实现；
+    /// 调用方按各自契约先做 no-op 判断（路径 A）或 capability/registration
+    /// 校验（路径 B）。`operation_lock` 只在这里取一次（tokio Mutex 不可重入），
+    /// `invoke_checked` 只取 `inner` 锁，无重入问题。
+    async fn invoke_with_state(
+        &self,
+        operation: PluginOperation,
+        scope: plugin_api::PluginStateScope,
+        cancel: CancellationToken,
+    ) -> Result<PluginInvocationOutput, PluginError> {
+        let _operation_guard = self.operation_lock.lock().await;
+        self.ensure_active()?;
+        // PersistentState 闸门：未声明该能力的插件读取/写入状态被拒。
+        // 这里仍允许调用（组件可能用 state snapshot 做无副作用只读决策），
+        // 但 apply 阶段会再次校验；快照本身是只读复制，不构成越权。
+        let snapshot = state_snapshot(
+            &self.manifest,
+            self.state.as_ref(),
+            &self.manifest.id,
+            &scope,
+        )?;
+        let invocation = PluginInvocation {
+            api_version: plugin_api_version(),
+            plugin_id: self.manifest.id.clone(),
+            operation,
+            state: snapshot.clone(),
+        };
+        let input = serde_json::to_string(&invocation)
+            .map_err(|err| PluginError::new(PluginErrorKind::Internal, err.to_string()))?;
+        let output_str = self.invoke_checked(input, cancel).await?;
+        let output: PluginInvocationOutput = serde_json::from_str(&output_str).map_err(|err| {
+            PluginError::new(
+                PluginErrorKind::InvalidInvocation,
+                format!("plugin returned invalid invocation output JSON: {err}"),
+            )
+        })?;
+        if let PluginInvocationOutput::Success(response) = &output {
+            apply_state_mutations(
+                &self.manifest,
+                self.state.as_ref(),
+                &scope,
+                &snapshot,
+                &response.state_mutations,
+                &self.config,
+            )?;
+        }
+        Ok(output)
+    }
+
     /// 执行一次 `invoke(input) -> output`，应用 fuel/内存/超时/取消。
     pub(crate) async fn invoke(
         &self,
@@ -215,52 +267,12 @@ impl Plugin for LoadedPlugin {
             // 插件未声明该事件 hook：no-op 成功返回（不是错误）。
             return Ok(());
         }
-        let _operation_guard = self.operation_lock.lock().await;
-        self.ensure_active()?;
+        // 先取 event.kind() 与 state_scope 再 move 进 operation。
         let scope = context.state_scope();
-        // PersistentState 闸门：未声明该能力的插件读取/写入状态被拒。
-        // 这里仍允许调用（组件可能用 state snapshot 做无副作用只读决策），
-        // 但 apply 阶段会再次校验；快照本身是只读复制，不构成越权。
-        let snapshot = if self
-            .manifest
-            .capabilities
-            .contains(&PluginCapability::PersistentState)
-        {
-            self.state
-                .snapshot(&self.manifest.id, &scope)
-                .map_err(state_error_to_plugin)?
-        } else {
-            plugin_api::PluginStateSnapshot::default()
-        };
-
         let operation = PluginOperation::Lifecycle { event, context };
-        let invocation = PluginInvocation {
-            api_version: plugin_api_version(),
-            plugin_id: self.manifest.id.clone(),
-            operation,
-            state: snapshot.clone(),
-        };
-        let input = serde_json::to_string(&invocation)
-            .map_err(|err| PluginError::new(PluginErrorKind::Internal, err.to_string()))?;
-        let output = self.invoke_checked(input, cancel).await?;
-        let parsed: PluginInvocationOutput = serde_json::from_str(&output).map_err(|err| {
-            PluginError::new(
-                PluginErrorKind::InvalidInvocation,
-                format!("plugin returned invalid invocation output JSON: {err}"),
-            )
-        })?;
-        match parsed {
-            PluginInvocationOutput::Success(response) => {
-                apply_state_mutations(
-                    &self.manifest,
-                    self.state.as_ref(),
-                    &scope,
-                    &snapshot,
-                    &response.state_mutations,
-                    &self.config,
-                )?;
-                Ok(())
-            }
+        let output = self.invoke_with_state(operation, scope, cancel).await?;
+        match output {
+            PluginInvocationOutput::Success(_) => Ok(()),
             PluginInvocationOutput::Error { error } => Err(error),
         }
     }
@@ -486,7 +498,6 @@ impl WasmPluginHost {
         cancel: CancellationToken,
     ) -> Result<PluginInvocationOutput, PluginError> {
         let plugin = self.get(plugin_id)?;
-        let _operation_guard = plugin.operation_lock.lock().await;
         plugin.ensure_active()?;
         // Capability 闸门：按 operation 类别校验 manifest 声明的能力。
         // manifest.validate() 已保证 tools/commands/lifecycle_hooks 非空时
@@ -495,47 +506,7 @@ impl WasmPluginHost {
         enforce_operation_capability(&plugin.manifest, &operation)?;
         enforce_operation_registration(&plugin.manifest, &operation)?;
         let scope = operation.state_scope();
-        let snapshot = state_snapshot(&plugin.manifest, self.state.as_ref(), plugin_id, &scope)?;
-
-        let invocation = PluginInvocation {
-            api_version: plugin_api_version(),
-            plugin_id: plugin_id.clone(),
-            operation: operation.clone(),
-            state: snapshot.clone(),
-        };
-        let input = serde_json::to_string(&invocation)
-            .map_err(|err| PluginError::new(PluginErrorKind::Internal, err.to_string()))?;
-        if input.len() > self.config.max_input_bytes {
-            return Err(PluginError::new(
-                PluginErrorKind::InvalidInvocation,
-                format!(
-                    "plugin input too large: {} > {}",
-                    input.len(),
-                    self.config.max_input_bytes
-                ),
-            ));
-        }
-
-        let output_str = plugin.invoke_checked(input, cancel).await?;
-
-        let output: PluginInvocationOutput = serde_json::from_str(&output_str).map_err(|err| {
-            PluginError::new(
-                PluginErrorKind::InvalidInvocation,
-                format!("plugin returned invalid invocation output JSON: {err}"),
-            )
-        })?;
-
-        if let PluginInvocationOutput::Success(response) = &output {
-            apply_state_mutations(
-                &plugin.manifest,
-                self.state.as_ref(),
-                &scope,
-                &snapshot,
-                &response.state_mutations,
-                &self.config,
-            )?;
-        }
-
+        let output = plugin.invoke_with_state(operation, scope, cancel).await?;
         Ok(output)
     }
 

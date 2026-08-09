@@ -118,8 +118,6 @@ pub struct ResourceLimits {
     pub max_file_bytes: u64,
     /// 每类最多发现的资源数量。
     pub max_resources_per_kind: usize,
-    /// 为后续递归 include 语义预留的深度上限。
-    pub max_include_depth: usize,
     /// 单个 Prompt 声明和渲染时最多使用的文件引用数。
     pub max_template_file_refs: usize,
     /// Prompt 参数与文件引用展开后的总字节上限。
@@ -131,7 +129,6 @@ impl Default for ResourceLimits {
         Self {
             max_file_bytes: 1024 * 1024,
             max_resources_per_kind: 1024,
-            max_include_depth: 16,
             max_template_file_refs: 32,
             max_rendered_prompt_bytes: 4 * 1024 * 1024,
         }

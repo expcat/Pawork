@@ -17,7 +17,12 @@
 
 ## 插件能力
 
-注册工具；注册命令；接收生命周期事件；修改上下文；提供 Compaction Strategy；注册 Provider；保存插件状态；请求用户交互；访问受限文件；访问受限网络；声明 Monitor（监视循环）。
+插件能力按实现状态逐项标注如下：
+
+- 注册工具、注册命令、接收生命周期事件、保存插件状态：P0 已实现。
+- 修改上下文、提供 Compaction Strategy、注册 Provider、请求用户交互：P2 预留，等 P13 接线决策。
+- 访问受限文件、访问受限网络：预留；host Linker 默认不注入 WASI import（见 [ADR-012](../adr/ADR-012-wasm-first-plugin.md)）。
+- 声明 Monitor（监视循环）：P17-2 / P16-6。
 
 ## Plugin Package（Phase 17 / P17-2）
 

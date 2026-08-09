@@ -953,7 +953,7 @@ async fn tool_registry_namespaces_external_plugins() {
     assert_eq!(desc.name, "tool.plugin::ping");
     assert_eq!(desc.capability, tool_api::ToolCapability::ExternalPlugin);
 
-    let tr = registry.into_tool_registry();
+    let tr = registry.to_tool_registry();
     assert_eq!(tr.len(), 1);
 }
 
@@ -977,7 +977,7 @@ async fn command_registry_namespaces_commands() {
         .register(&pid, &manifest.commands)
         .expect("register");
     assert_eq!(commands.owner("cmd.plugin::run"), Some(&pid));
-    assert_eq!(commands.len(), 1);
+    assert_eq!(commands.names().len(), 1);
 
     let result = commands
         .invoke(
@@ -1333,7 +1333,7 @@ async fn tool_call_routes_through_real_host_invoke() {
     assert_eq!(result.content.len(), 1);
 
     let scheduler = tool_runtime::ToolScheduler::new(
-        registry.into_tool_registry(),
+        registry.to_tool_registry(),
         tool_runtime::ToolSchedulerConfig {
             max_concurrent: 2,
             approval_mode: tool_runtime::ApprovalMode::NeverAsk,

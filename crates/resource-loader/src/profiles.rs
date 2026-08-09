@@ -298,12 +298,13 @@ fn parse_profile(
             source_key.clone(),
         )
     })?;
-    let file: ProfileFile = toml::from_str(&content).map_err(|_| {
-        ResourceIssue::error(
-            "agent_profile_invalid",
-            "agent profile has invalid TOML syntax or unsupported v1 fields",
-        )
-        .for_resource(
+    let file: ProfileFile = crate::io::parse_toml_resource(
+        &content,
+        "agent_profile_invalid",
+        "agent profile has invalid TOML syntax or unsupported v1 fields",
+    )
+    .map_err(|issue| {
+        issue.for_resource(
             ResourceKind::AgentProfile,
             &fallback_name,
             source_key.clone(),
@@ -338,11 +339,7 @@ fn parse_profile(
 }
 
 fn validate_name(name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    {
+    if !crate::io::is_valid_identifier(name, true) {
         return Err(format!(
             "agent profile name '{name}' must contain only ASCII letters, digits, '.', '-' or '_'"
         ));

@@ -198,3 +198,37 @@ Phase 9 的**架构方向是对的**：单一 `mcp-client` 叶子 crate 把 rmcp
 - **canonical 抽象一致性**：config 合并 vs config-service、security vs auth-service 脱敏、oauth vs auth-service OAuth、transport vs rmcp、capabilities 映射 vs tool-api、canonical domain 红线核查。
 
 Commander 独立复核的关键事实：双 `is_loopback_url` 重复（`config.rs:451` / `transport.rs:403`）；`SecretValue` 单变体（`config.rs:292`）；`build_client` 全 workspace 零调用；`profiles.rs:16` 注释把 MCP 划给 P17-5；`cli-host` 将 `Command::Mcp` 映射为 `Placeholder`；`CommandSource::Mcp` 仅为遥测标签。
+
+---
+
+## 修复记录（review-remediation · 2026-08-10）
+
+本任务执行 §3.x 冗余/过度设计收口（§3.6 删 `McpConfig::merge`、§3.3 删 `SecretValue`、§3.2 合并双 `RestartPolicy`、§3.5 收敛 `is_loopback_url`/URL 校验、§3.4 删 `McpInvocationPolicy` 保留门禁、§3.8 并文件、§3.1 deferred-consumer 标记），写入集仅 `crates/mcp-client/src/`（error.rs/session.rs 删除）；净减约 +315/−376 行；§4.1/§4.3/§4.4/§3.7/§4.2 显式延后（理由见下）。
+
+### 已落地
+
+| 评审项 | 处理 | 证据（file:line） | 状态 |
+| --- | --- | --- | --- |
+| §3.6 | 删 `McpConfig::merge` | config.rs:55 仅留 from_resolved/from_value/validate/server | 🟢 已修复·TargetVerified |
+| §3.3 | 删 `SecretValue`，env·headers 用 `SecretRef` | config.rs:181/189, security.rs:27 | 🟢 已修复·TargetVerified |
+| §3.2 | 单 `config::RestartPolicy{max_attempts, base_delay_ms, max_delay_ms}` | config.rs:307; manager.rs:66/187/206/213/190 | 🟢 已修复·TargetVerified |
+| §3.5 | 单 `pub(crate)` `is_loopback_url` | config.rs:423; transport.rs:27/299-311 | 🟢 已修复·TargetVerified |
+| §3.4 | 删 `McpInvocationPolicy`，adapter 用 `McpPermissions`+`trusted`，五门禁不变 | capabilities.rs:120/221/234/253/260-271/303 | 🟢 已修复·TargetVerified |
+| §3.8 | error.rs+session.rs 并入 lib.rs，两文件删除 | lib.rs:24/58/78; manager.rs:29 | 🟢 已修复·TargetVerified |
+| §3.1 | DEFERRED-CONSUMER 文档标记 | lib.rs:85-102; capabilities.rs:54 | 🟢 已修复·TargetVerified |
+
+### 显式延后
+
+- **§4.1** adapter 门禁 vs 调度器门禁取舍（P0，接入时与 P15-1 Canonical Tool v2 + ADR 协同）——消除双重裁决/双审批通道，接入即走 canonical 路径。
+- **§4.3** stdio 进程纳入 Sandbox/Process Runtime（接入时，P9-1 plan 已记）——符合执行所有权红线，需跑 spawn/resize 门禁。
+- **§4.4** `McpPeer` canonical DTO（接入前评估）——真正兑现「rmcp 不出 crate」。
+- **§3.1** Resources/Prompts 半套 API 接入前明确 deferred-consumer 或下线（已加标记）——避免死 API 误导。
+- **§3.7** 输出截断上移 tool-runtime（与 P15 协同）——职责归位，服务未来适配器。
+- **§4.2** OAuth 双 bearer 解析合并（P3，零风险小优化，接入时可顺手）。
+
+### 验证
+
+- `cargo test -p mcp-client`：48 passed / 0 failed。
+- `cargo clippy --all-targets -- -D warnings`：干净。
+- `cargo fmt -- --check`：干净。
+- deepseek_reviewer 独立复核 VERDICT: PASS（七项全 PASS，门禁逻辑完整，无越界）；Commander 已复核 diff。

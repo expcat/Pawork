@@ -99,24 +99,9 @@ impl NamespacedToolRegistry {
         self.tools.contains_key(name)
     }
 
-    pub fn len(&self) -> usize {
-        self.tools.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
-    }
-
     /// 输出按名排序的描述符（与 ToolRegistry::descriptors 一致）。
     pub fn descriptors(&self) -> Vec<ToolDescriptor> {
         self.tools.values().map(|t| t.descriptor()).collect()
-    }
-
-    /// 转入 `tool-runtime::ToolRegistry`，供调度器装配。
-    pub fn into_tool_registry(self) -> ToolRegistry {
-        let mut registry = ToolRegistry::new();
-        registry.extend(self.tools.into_values());
-        registry
     }
 
     /// 克隆当前工具快照为 canonical `ToolRegistry`，供调度器重建时使用。
@@ -284,18 +269,6 @@ impl PluginCommandRegistry {
         self.commands.get(name)
     }
 
-    pub fn contains(&self, name: &str) -> bool {
-        self.descriptors.contains_key(name)
-    }
-
-    pub fn len(&self) -> usize {
-        self.descriptors.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.descriptors.is_empty()
-    }
-
     /// 全部命令名（稳定排序）。
     pub fn names(&self) -> Vec<String> {
         self.descriptors.keys().cloned().collect()
@@ -449,7 +422,7 @@ mod tests {
         assert_eq!(err.kind, PluginErrorKind::Conflict);
 
         assert_eq!(registry.owner("a.plugin::run"), Some(&a));
-        assert_eq!(registry.len(), 2);
+        assert_eq!(registry.names().len(), 2);
     }
 
     #[test]

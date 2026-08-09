@@ -30,7 +30,7 @@
 | 7 | Git、Diff 与 Worktree | 9 | 9 | 🟢已完成 |
 | 8 | Skills、Prompts 与 Instructions | 8 | 8 | 🟢已完成 |
 | 9 | MCP | 7 | 7 | 🟢已完成（P9-1～P9-7 TargetVerified） |
-| 10 | WASM Plugin | 6 | 6 | 🟢已完成（P10-1～P10-6 TargetVerified） |
+| 10 | WASM Plugin | 7 | 7 | 🟢已完成（P10-1～P10-7 TargetVerified） |
 | 11 | Sandbox 与跨平台强化 | 8 | 8 | 🟢已完成（7 项 TargetVerified；P11-5 已归档） |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
@@ -55,6 +55,8 @@
 Phase 编号保留架构与文档索引意义，实际开发按结构性依赖分波推进：
 
 1. **主干补线**：P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P6-14 / P7-9 已完成；后续变更继续守住安全红线与 Agent Loop 正式接线，每项先跑受影响 crate 的定向测试。
+   - **评审修复补线**：P8-9 已完成（resource-loader 死 API 收缩、Skills 依赖引擎简化、校验合并、双优先级表守护测试）；P8 的零端到端消费者、ResourceBundle 双状态、session/run 重映射、watch/诊断视图接线统一延后到 P13 CLI Host 装配。
+   - P9-8 已完成（mcp-client 冗余/过度设计收口：删 `McpConfig::merge` 与单变体 `SecretValue`、合并双 `RestartPolicy`、收敛 `is_loopback_url`/URL 校验、删 `McpInvocationPolicy` 保留 adapter 五道门禁、`error.rs`+`session.rs` 并入 `lib.rs`、Resources/Prompts deferred-consumer 标记）；§4.1 adapter 门禁 vs 调度器门禁（P0，与 P15-1+ADR 协同）等接入期项显式延后。
 2. **Provider v2 前置**：完成 P15-1～P15-8，再由 P15-9 一次性执行 GPT / Claude / Grok 的完整 Provider Contract v2 门禁。P6-1 / P6-2 / P6-10 保留基础协议路径，Responses / modern server tools 在 Phase 15 扩展。
 3. **账号控制面基础**：完成 P18-1～P18-9。先建立 `Tenant/Principal`、`ProviderAccount/Credential`、Lease、错误/健康状态机、确定性路由、Session Affinity 与多维 Usage Ledger；`ModelProvider` 保持不变，旧配置映射到 `local/default + SingleCandidate`。Phase 12、Phase 14 与外部 Client Adapter 不得各自复制账号选择逻辑。
 4. **资源与 Host 基础**：Phase 8～9 已完成；继续推进 P13-1 / P13-2、P16-1 / P16-2 与 P18-10，形成 CLI/Core 正式宿主、可审批 Plan 和统一 Client Adapter 契约的最小闭环。
@@ -360,6 +362,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P8-6 | 🟢 | 配置优先级（确定性） | 确定性合并 | [详情](plan/P8-6-config-priority.md) |
 | P8-7 | 🟢 | Resource Diagnostics | 显示生效来源 | [详情](plan/P8-7-resource-diagnostics.md) |
 | P8-8 | 🟢 | Hot Reload | 变更去抖重载 | [详情](plan/P8-8-hot-reload.md) |
+| P8-9 | 🟢 | Phase 8 评审修复 | 死 API 删除（§3.3）+ Skills 引擎简化（§3.1）+ 校验合并（§3.5）+ 优先级表守护（§4.1）+ deferred-consumer 文档 | [详情](plan/P8-9-review-remediation.md) |
 
 ### Phase 9：MCP
 
@@ -376,6 +379,7 @@ MCP 作为第一外部扩展机制，server 故障隔离。
 | P9-5 | 🟢 | Approval / 输出限制 / Secret 注入 | 每 server 独立权限 | [详情](plan/P9-5-mcp-approval.md) |
 | P9-6 | 🟢 | MCP Config | workspace/global | [详情](plan/P9-6-mcp-config.md) |
 | P9-7 | 🟢 | OAuth（优先级 P1） | 保护型 server 鉴权 | [详情](plan/P9-7-mcp-oauth.md) |
+| P9-8 | 🟢 | Phase 9 评审修复 | 类型/文件去冗余（§3.6/§3.3/§3.2/§3.5/§3.4/§3.8）+ deferred-consumer 文档（§3.1）；adapter 门禁逻辑保留 | [详情](plan/P9-8-mcp-review-remediation.md) |
 
 ### Phase 10：WASM Plugin
 
@@ -389,6 +393,7 @@ WASM 作为第一代码插件机制，能力受控。
 | P10-4 | 🟢 | Plugin state | 状态保存 | [详情](plan/P10-4-plugin-state.md) |
 | P10-5 | 🟢 | Capability / fuel / 内存 / 时间 | 默认无文件/网络/进程 | [详情](plan/P10-5-plugin-capability.md) |
 | P10-6 | 🟢 | API version 兼容测试 | 版本兼容套件 | [详情](plan/P10-6-plugin-apiversion.md) |
+| P10-7 | 🟢 | Phase 10 评审修复 | 死 API 删除 + Lifecycle 双路径合并 + 文档 | [详情](plan/P10-7-review-remediation.md) |
 
 > Phase 10 已交付 `PluginRuntime` 子系统闭环（验签/load → 工具/命令/hook 注册 → 派发 → 完整撤销）；
 > `app-service` / `core-runtime` / `pawork` 的正式进程装配仍按 P13-1/P13-2 推进，不重复定义插件契约。
@@ -426,6 +431,7 @@ WASM 作为第一代码插件机制，能力受控。
 | P11-6 | 🟢 | PTY Service | 终端/重连/有界缓冲/自动清理 | [详情](plan/P11-6-pty-service.md) |
 | P11-7 | 🟢 | 进程树清理 | Unix process group + Windows Job Object | [详情](plan/P11-7-process-tree-cleanup.md) |
 | P11-8 | 🟢 | 跨平台路径 | dunce/component boundary/symlink/junction | [详情](plan/P11-8-cross-platform-path.md) |
+| P11-9 | 🟢 | Phase 11 Review remediation | §2.1/§2.2/§2.3/§2.4/§2.5/§2.6/§3.1/§3.2/§3.3 收敛重复映射与集成边界标注（NetworkMode 合并→P11-1.E1、文件拆分→下次触碰显式延后） | [详情](plan/P11-9-review-remediation.md) |
 
 > Phase 11 本地证据（2026-08-09）：Windows 受影响 crates 定向测试通过；WSL 真实运行 bwrap、Landlock、`setsid` 逃逸清理与 PTY 测试；run_command 网络请求 fail-closed 且资源默认/上界有回归；Linux GNU/musl、macOS aarch64 目标检查通过。真实 macOS Seatbelt 与 Windows AppContainer restricted-token 属后续 MaintenanceGated 平台证据，当前文档不将其误报为已运行。
 

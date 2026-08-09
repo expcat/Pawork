@@ -866,6 +866,26 @@ impl ProcessTreeGuard {
     ///
     /// Unix 要求目标已经是自己的 process-group leader（PTY 子进程经 `setsid` 满足）；
     /// Windows 为目标创建并绑定带 `KILL_ON_JOB_CLOSE` 的 Job Object。
+    ///
+    /// # `limits` 参数语义
+    ///
+    /// 仅 Windows 生效。Unix 分支忽略该参数（`let _ = limits`），只用 `pgid`
+    /// 构造守卫；Windows 分支用 `limits` 创建 Job Object，并向
+    /// `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` 写入限制。
+    ///
+    /// # 前置条件（Unix）
+    ///
+    /// 目标进程必须是自身进程组的 leader（`pgid == pid`），否则返回
+    /// [`std::io::ErrorKind::InvalidInput`]。调用方须保证该前置条件——例如
+    /// `pty-service` 经 portable-pty 的 `setsid` 满足。
+    ///
+    /// # 耗时（Windows 收养既有后代）
+    ///
+    /// 为收编绑定窗口内已产生的后代，本函数在 `spawn_blocking` 内同步执行
+    /// `adopt_existing_descendants`：封顶 `MAX_ADOPTION_ROUNDS = 16` 轮，每轮
+    /// 做一次全量进程快照与句柄操作，最坏耗时取决于系统进程数。仅
+    /// `attach_external`（PTY 会话）路径触发收养；`spawn_stream` 自身以
+    /// `CREATE_SUSPENDED` 启动子进程，不收养既有后代。
     pub fn attach_external(process_id: u32, limits: ProcessLimits) -> std::io::Result<Self> {
         #[cfg(unix)]
         {

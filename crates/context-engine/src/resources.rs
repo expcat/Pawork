@@ -106,6 +106,65 @@ mod tests {
         }
     }
 
+    /// 交叉校验两张优先级表（ResourceInstructionKind::priority 与
+    /// ContextSource::priority）保持数值一致，防止静默的确定性漂移
+    /// （P8 review §4.1）。
+    #[test]
+    fn priority_tables_stay_consistent() {
+        let direct = [
+            (
+                ResourceInstructionKind::AgentProfile,
+                ContextSource::AgentProfile,
+                2,
+            ),
+            (
+                ResourceInstructionKind::UserGlobalInstructions,
+                ContextSource::UserGlobalInstructions,
+                4,
+            ),
+            (
+                ResourceInstructionKind::WorkspaceInstructions,
+                ContextSource::WorkspaceInstructions,
+                5,
+            ),
+            (
+                ResourceInstructionKind::RootAgentsFile,
+                ContextSource::RootAgentsFile,
+                6,
+            ),
+            (
+                ResourceInstructionKind::PathAgentsFile,
+                ContextSource::PathAgentsFile,
+                7,
+            ),
+            (
+                ResourceInstructionKind::ActiveSkill,
+                ContextSource::ActiveSkills,
+                8,
+            ),
+            (
+                ResourceInstructionKind::PromptTemplate,
+                ContextSource::PromptTemplate,
+                9,
+            ),
+        ];
+        for (kind, source, expected) in direct {
+            assert_eq!(kind.priority(), expected, "{kind:?} 优先级漂移");
+            assert_eq!(source.priority(), expected, "{source:?} 优先级漂移");
+            assert_eq!(
+                kind.priority(),
+                source.priority(),
+                "{kind:?} 与 {source:?} 两张优先级表不一致"
+            );
+        }
+
+        // SessionInstructions(13) / RunInstructions(14) 有意重映射到
+        // ContextSource::AdHocInstructions(14)（P8 §4.2），不参与直接映射。
+        assert_eq!(ResourceInstructionKind::SessionInstructions.priority(), 13);
+        assert_eq!(ResourceInstructionKind::RunInstructions.priority(), 14);
+        assert_eq!(ContextSource::AdHocInstructions.priority(), 14);
+    }
+
     #[test]
     fn mapping_is_deterministic_for_reversed_input() {
         let resources = vec![

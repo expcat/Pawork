@@ -1,7 +1,7 @@
 //! Windows AppContainer 配置/探测与 Job Object 执行后端。
 //!
-//! 配置纯函数 [`policy_to_job_limits`] / [`policy_to_appcontainer_config`] 跨平台编译
-//! 并单测；[`probe_appcontainer_job`] 在 Windows 经 kernel32 `IsProcessInJob` 真实探测
+//! 配置纯函数 [`policy_to_appcontainer_config`] 跨平台编译并单测；
+//! [`probe_appcontainer_job`] 在 Windows 经 kernel32 `IsProcessInJob` 真实探测
 //! 当前进程是否已身处 Job（影响 Job 嵌套），非 Windows 返回不可用 stub。
 //!
 //! AppContainer 受限令牌 spawn 仍需要 `EXTENDED_STARTUPINFO_PRESENT`，因此探测结果
@@ -12,6 +12,8 @@ use crate::{NetworkMode, ProbeOutcome, SandboxPolicy};
 use std::sync::OnceLock;
 
 /// AppContainer capability（最小权限集；默认不授予 Internet 以实现网络隔离）。
+// frozen, awaiting P11-4.E1: AppContainer restricted-token spawn 尚未接入，
+// 生成器仅保留供诊断/审计与 L0 单测，不做任何 spawn 承诺。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppContainerCapability {
     InternetClient,
@@ -24,6 +26,7 @@ pub enum AppContainerCapability {
 }
 
 /// AppContainer 配置（纯数据，供后续 spawn 后端消费）。
+// frozen, awaiting P11-4.E1: 无 spawn 消费方，保留至 AppContainer 后端接入。
 #[derive(Clone, Debug, Default)]
 pub struct AppContainerConfig {
     pub capabilities: Vec<AppContainerCapability>,
@@ -34,43 +37,11 @@ pub struct AppContainerConfig {
     pub denied_paths: Vec<std::path::PathBuf>,
 }
 
-/// Job Object 资源/进程限额配置（纯数据，映射 `JOB_OBJECT_LIMIT_*`）。
-#[derive(Clone, Debug)]
-pub struct JobLimitsConfig {
-    /// `JOB_OBJECT_LIMIT_ACTIVE_PROCESS`（防 fork 炸弹）。
-    pub max_active_processes: Option<u32>,
-    /// `JOB_OBJECT_LIMIT_PROCESS_MEMORY`。
-    pub max_memory_bytes: Option<u64>,
-    /// 句柄关闭即整树终止（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`），默认 true。
-    pub kill_on_job_close: bool,
-}
-
-impl Default for JobLimitsConfig {
-    fn default() -> Self {
-        Self {
-            max_active_processes: None,
-            max_memory_bytes: None,
-            kill_on_job_close: true,
-        }
-    }
-}
-
-/// 从 [`SandboxPolicy`] 生成 Job Object 限额配置。
-pub fn policy_to_job_limits(policy: &SandboxPolicy) -> JobLimitsConfig {
-    JobLimitsConfig {
-        max_active_processes: policy.max_procs,
-        max_memory_bytes: policy
-            .resources
-            .memory_mb
-            .map(|mb| mb.saturating_mul(1024 * 1024)),
-        kill_on_job_close: true,
-    }
-}
-
 /// 从 [`SandboxPolicy`] 生成 AppContainer 配置。
 ///
 /// 网络语义：`Enforce` → 不授予 Internet（出站隔离）；`Off`/`Hint` → 授予 Internet
 /// （AppContainer 作为硬隔离后端，仅在 `Enforce` 时强制网络隔离）。
+// frozen, awaiting P11-4.E1: AppContainer spawn 后端未接入，生成器保留不删。
 pub fn policy_to_appcontainer_config(policy: &SandboxPolicy) -> AppContainerConfig {
     let internet_granted = !matches!(policy.network_mode, NetworkMode::Enforce);
     let mut capabilities = Vec::new();
@@ -192,7 +163,10 @@ mod job {
                 .spawn_stream(spec.command, cancel)
                 .await
                 .map_err(SandboxError::Process)?;
-            Ok(SandboxProcess { events, handle })
+            Ok(SandboxProcess {
+                events,
+                _handle: handle,
+            })
         }
     }
 }
@@ -203,24 +177,8 @@ pub use job::WindowsJobBackend;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FilesystemPolicy, ResourceLimits};
+    use crate::FilesystemPolicy;
     use std::path::PathBuf;
-
-    #[test]
-    fn job_limits_map_max_procs_and_memory() {
-        let policy = SandboxPolicy {
-            max_procs: Some(4),
-            resources: ResourceLimits {
-                memory_mb: Some(512),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let limits = policy_to_job_limits(&policy);
-        assert_eq!(limits.max_active_processes, Some(4));
-        assert_eq!(limits.max_memory_bytes, Some(512 * 1024 * 1024));
-        assert!(limits.kill_on_job_close);
-    }
 
     #[test]
     fn appcontainer_denies_internet_by_default() {

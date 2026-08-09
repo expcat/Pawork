@@ -105,6 +105,19 @@ Builtin < Global < Profile < Workspace < Session < Run
 
 `ResourceLoader::watch` 使用 `notify-debouncer-full` 递归监听全局资源目录与 Workspace Roots；全局资源目录尚不存在时监听最近的既存父目录，以捕获后续创建。注册 watcher 后立即补做一次 reload，覆盖初次加载到注册完成之间的窗口；所有 reload 通过独立互斥量串行化，但资源构建期间不持有快照状态锁。成功后以 `Arc` 原子替换并递增 generation；致命重建失败保留最后一次成功快照并记录脱敏错误。`ResourceWatcher` drop 即停止监听，也支持 `reload_now` 手动刷新。
 
+## 已解析但暂无消费者（deferred-consumer）
+
+以下字段在 Phase 8 已完成解析与校验，但截至当前没有任何运行期消费者；它们是为 Phase 13 Host-Run 接线预留的前向兼容契约（见 [p8-review §3.2](../../review/p8-review.md#32-skillstemplates-字段解析后从不读取)），不应被误读为「已生效」：
+
+- Skills `manifest.parameters` / `scripts` / `assets` / `permissions`：只作为声明加载，Resource Loader 不执行脚本、不应用权限。
+- Templates `PromptDefaults.{model,thinking,tools,budget}` 与 `RenderedPrompt.included_files`：渲染结果携带但无人读取。
+- AgentProfile `default_provider` / `default_model`：仅 resource-loader 自持副本；config-service 另有独立生效副本。
+- ResourceBundle 结构化字段（agents/skills/templates/profiles/resolved_instructions）：仅 crate 内部测试消费，context-engine 只读取 `.instructions`。
+- `ResourceDiagnosticView`：诊断视图基础设施，按 [p8-review §4.3](../../review/p8-review.md#43-热重载--诊断视图实现质量高但属过早基础设施p2) 延迟至 P13 接线。
+- ResourceHotReload / `watch`（P8-8）：实现并测试完毕，等待 P13 接线（同见 §4.3）。
+
+这些字段被完整解析、校验并携带，但尚无运行期消费者；P13 接线前请勿将其视为已生效配置。
+
 ## 验收标准
 
 - [x] 能显示所有有效指令来源

@@ -182,3 +182,42 @@ P11-8 验收称「policy-engine、git-service、resource-loader 与 sandbox-runt
 - 主代理独立复核三项关键论断并全部确认：(a) `builtin-tools`/`pty-service` 无生产消费方（`rg` 全仓 toml + rust）；(b) `resource-loader` 重写 `relative_to_root`；(c) `From<&ExecutionConstraints>` 仅单测调用。
 - 未运行构建（本次为只读审查）；所有行号与符号名基于当前工作区源码，未使用记忆中的旧版本。
 - 不修改任何实现；本文件为 Review 结论。
+
+---
+
+## 7. 修复记录（review-remediation）
+
+**修复任务**：[P11-9](../../plan/P11-9-review-remediation.md) · 状态：🟢已完成 · TargetVerified · 修复日期：2026-08-10
+
+Commander 统筹 + 4 个 `deepseek_explorer` 并行核对（§2.1/§2.2/§2.6、§2.3/§2.5/§3.1、§2.4、§3.2/§3.3/§3.4）全部确认成立（§2.1 核心成立，两处细节已过时并记录）+ 4 个 `deepseek_worker` 并行执行（写集互不重叠）+ `deepseek_reviewer` 独立复核。
+
+### 已修复（§2/§3）
+
+| 章节 | 问题 | 处置 |
+| --- | --- | --- |
+| §2.1 | `From<&ExecutionConstraints>` 两 impl 仅单测消费，映射写三份 | 删两 impl + 单测；归一化统一映射延后 P11-1.E2；sandbox.md 描述同步 |
+| §2.2 | env 白名单 / secret deny 清单双写并漂移 | sandbox-runtime 导出权威超集（pub），run_command 删本地副本复用；超集回归测试 |
+| §2.3 | Linux 系统路径白名单双写（13 项重叠） | 提取共享 `SYSTEM_READ_PATHS` const，bwrap/Landlock 共用 |
+| §2.4 | 跨平台路径规范化未真正统一 | policy-engine 开放 `relative_to_root` pub，resource-loader 复用，删本地同构副本，移除 dunce 直接依赖 |
+| §2.5 | Windows 死代码（JobLimitsConfig/policy_to_job_limits）+ AppContainer 平行映射 | 删 JobLimitsConfig + policy_to_job_limits + 测试；AppContainer 生成器 frozen 标注（P11-4.E1） |
+| §2.6 | needs_network/kill+handle/NetworkMode Off=Hint/network_allow_hosts/timeout 双写 | 删 needs_network + kill()（`_handle` 保留为 Drop 生命周期守卫）；network_allow_hosts 标注；timeout 双写消除；NetworkMode 合并延后 P11-1.E1 |
+| §3.1 | 沙箱与 PTY 仅工具自身/单测证明，未接入主流程 | sandbox.md/process.md 新增「主流程集成边界」段；不改实现（接线属 P4/Phase 13） |
+| §3.2 | attach_external 契约不对称、无文档 | doc-comment 补全（limits 仅 Windows/leader 前置/收养 16 轮上限） |
+| §3.3 | PTY 输出双通道静默丢弃 | `dropped_events: AtomicU64` + `PtySnapshot` 暴露；PtyEvent 不变；2 个测试 |
+
+### 显式延后
+
+- **§2.6 NetworkMode::Off/Hint 合并** → P11-1.E1（多维 SandboxGuarantees 重设计）
+- **§3.4 process-runtime 文件拆分** → 下次触碰该 crate 时顺手（纯组织性）
+- **§3.1 主流程接线** → P4 工具注册 + Phase 13 CLI Host + P19-9 Terminal/Process
+
+### 验证记录（2026-08-10）
+
+- `cargo test -p sandbox-runtime -p builtin-tools -p policy-engine -p resource-loader -p process-runtime -p pty-service`：206 passed / 0 failed
+- `cargo clippy`（同 6 crate，`--all-targets -- -D warnings`）：通过
+- `cargo fmt`（同 6 crate，`--check`）：通过
+- 跨 crate 引用一致性 `rg` 复核：`needs_network`（仅 input schema 测试）、`From<&ExecutionConstraints>`（零残留）、`ENV_ALLOWLIST`（零残留）、`JobLimitsConfig`/`policy_to_job_limits`（零残留）
+
+### 关键实证修正
+
+review §2.6(b) 称私有 `handle` 零消费方建议删除，但实测它是 `ProcessHandle::Drop` 生命周期守卫——Drop 时 cancel kill token 杀整棵进程树，删除字段会导致 spawn 端到端测试子进程瞬间被杀（`Exit{code:None}`）。故保留 `_handle` 字段（`#[allow(dead_code)]` + 文档说明），仅删零调用方的 `kill()` 方法。review 在该字段上的「冗余」判断不成立，已如实记录。

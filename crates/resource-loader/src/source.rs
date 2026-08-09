@@ -28,9 +28,6 @@ impl ResourceKind {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum ResourceOrigin {
-    Builtin {
-        name: String,
-    },
     Global {
         relative_path: String,
     },

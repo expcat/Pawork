@@ -21,9 +21,7 @@ pub use config_service::ConfigTier;
 pub use agents::{AgentsDocument, AgentsHierarchy};
 pub use diagnostics::ResourceDiagnosticView;
 pub use error::ResourceLoadError;
-pub use loader::{
-    LoadResources, ResourceBundle, ResourceInstruction, ResourceInstructionKind, ResourceLoader,
-};
+pub use loader::{ResourceBundle, ResourceInstruction, ResourceInstructionKind, ResourceLoader};
 pub use profiles::{AgentProfile, ResolvedInstructions};
 pub use request::{
     CurrentPathKind, ResourceLimits, ResourceLoaderOptions, ResourceRequest, ResourceSelection,

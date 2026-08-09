@@ -10,7 +10,6 @@
 //! - tool and workspace allowlists;
 //! - a hard byte output cap that marks oversized output as truncated.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use agent_domain::{
@@ -18,7 +17,7 @@ use agent_domain::{
     TextContent,
 };
 use async_trait::async_trait;
-use policy_engine::{ApprovalMode, PolicyDecision, PolicyEngine, PolicyInput};
+use policy_engine::{PolicyDecision, PolicyEngine, PolicyInput};
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, Prompt, Resource, ResourceTemplate, Tool,
 };
@@ -51,6 +50,12 @@ pub struct McpCapabilities {
 
 impl McpCapabilities {
     /// Discover all capability lists from `peer`.
+    ///
+    /// DEFERRED-CONSUMER: only `tools` is consumed today (see
+    /// [`register_discovered_tools`]). The resources / resource-templates /
+    /// prompts branches are discovered for completeness but have no adapter
+    /// consumer yet — resource/prompt adaptation lands with P15 (Canonical
+    /// Tool v2) / P19 (GUI Resources·MCP).
     pub async fn discover(peer: &dyn McpPeer) -> Result<Self, McpError> {
         let advertised = peer.server_capabilities().await?;
         let tools = if advertised.tools {
@@ -77,48 +82,6 @@ impl McpCapabilities {
             resource_templates,
             prompts,
         })
-    }
-}
-
-/// Per-server invocation policy carried by every adapted tool.
-#[derive(Clone, Debug)]
-pub struct McpInvocationPolicy {
-    pub approval_mode: ApprovalMode,
-    /// Trust floor for this server. When false the policy engine's untrusted
-    /// floor denies every non-read-only capability regardless of approval.
-    pub trusted: bool,
-    pub allowed_workspaces: BTreeSet<String>,
-    pub allowed_tools: BTreeSet<String>,
-    pub max_output_bytes: u64,
-}
-
-impl Default for McpInvocationPolicy {
-    fn default() -> Self {
-        Self {
-            approval_mode: ApprovalMode::ReadOnly,
-            trusted: false,
-            allowed_workspaces: BTreeSet::new(),
-            allowed_tools: BTreeSet::new(),
-            max_output_bytes: 1024 * 1024,
-        }
-    }
-}
-
-impl McpInvocationPolicy {
-    /// Build the invocation policy from a server's parsed permissions + trust.
-    pub fn from_permissions(permissions: &McpPermissions, trusted: bool) -> Self {
-        Self {
-            approval_mode: permissions.approval_mode,
-            trusted,
-            allowed_workspaces: permissions.allowed_workspaces.clone(),
-            allowed_tools: permissions.allowed_tools.clone(),
-            max_output_bytes: permissions.max_output_bytes,
-        }
-    }
-
-    /// Build the invocation policy from a parsed server configuration.
-    pub fn from_server_config(server: &crate::config::McpServerConfig) -> Self {
-        Self::from_permissions(&server.permissions, server.trusted)
     }
 }
 
@@ -164,7 +127,8 @@ pub struct McpToolAdapter {
     read_only: bool,
     peer: Arc<dyn McpPeer>,
     policy_engine: PolicyEngine,
-    invocation: McpInvocationPolicy,
+    permissions: McpPermissions,
+    trusted: bool,
     approval: Arc<dyn McpApproval>,
 }
 
@@ -174,7 +138,8 @@ impl McpToolAdapter {
         server: impl Into<String>,
         tool: &Tool,
         peer: Arc<dyn McpPeer>,
-        invocation: McpInvocationPolicy,
+        permissions: McpPermissions,
+        trusted: bool,
         approval: Arc<dyn McpApproval>,
     ) -> Self {
         let server = server.into();
@@ -194,8 +159,9 @@ impl McpToolAdapter {
             capability,
             read_only,
             peer,
-            policy_engine: PolicyEngine::new(invocation.approval_mode),
-            invocation,
+            policy_engine: PolicyEngine::new(permissions.approval_mode),
+            permissions,
+            trusted,
             approval,
         }
     }
@@ -239,8 +205,8 @@ impl AgentTool for McpToolAdapter {
             read_only: self.read_only,
             supports_concurrency: self.capability.permits_concurrent_execution(),
             default_timeout_ms: None,
-            max_output_bytes: self.invocation.max_output_bytes,
-            allowed_in_untrusted_workspace: self.read_only || self.invocation.trusted,
+            max_output_bytes: self.permissions.max_output_bytes,
+            allowed_in_untrusted_workspace: self.read_only || self.trusted,
         }
     }
 
@@ -252,9 +218,9 @@ impl AgentTool for McpToolAdapter {
         cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
         // 1. Workspace allowlist.
-        if !self.invocation.allowed_workspaces.is_empty()
+        if !self.permissions.allowed_workspaces.is_empty()
             && !self
-                .invocation
+                .permissions
                 .allowed_workspaces
                 .contains(context.workspace_id.as_str())
         {
@@ -265,8 +231,8 @@ impl AgentTool for McpToolAdapter {
         }
 
         // 2. Tool allowlist.
-        if !self.invocation.allowed_tools.is_empty()
-            && !self.invocation.allowed_tools.contains(self.tool.as_str())
+        if !self.permissions.allowed_tools.is_empty()
+            && !self.permissions.allowed_tools.contains(self.tool.as_str())
         {
             return Ok(denied_result(format!(
                 "tool '{}' is not on the allowlist for MCP server '{}'",
@@ -285,9 +251,9 @@ impl AgentTool for McpToolAdapter {
         let decision = self.policy_engine.decide(&PolicyInput {
             capability: self.capability.clone(),
             input: request.input.clone(),
-            trusted: self.invocation.trusted,
-            allowed_in_untrusted_workspace: self.read_only || self.invocation.trusted,
-            approval_mode: self.invocation.approval_mode,
+            trusted: self.trusted,
+            allowed_in_untrusted_workspace: self.read_only || self.trusted,
+            approval_mode: self.permissions.approval_mode,
         });
         match decision {
             PolicyDecision::Deny { reason } => return Ok(denied_result(reason)),
@@ -336,7 +302,7 @@ impl AgentTool for McpToolAdapter {
         // 7. Convert + enforce the byte output cap.
         Ok(convert_call_tool_result(
             &result,
-            self.invocation.max_output_bytes,
+            self.permissions.max_output_bytes,
         ))
     }
 }
@@ -345,13 +311,14 @@ impl AgentTool for McpToolAdapter {
 /// `server` namespace, returning their descriptors.
 ///
 /// Discovery is async (lists all four capability kinds); only tools are
-/// adapted. Tools outside `invocation.allowed_tools` are filtered out before
+/// adapted. Tools outside `permissions.allowed_tools` are filtered out before
 /// registration.
 pub async fn register_server_tools(
     registry: &mut ToolRegistry,
     server: &str,
     peer: Arc<dyn McpPeer>,
-    invocation: McpInvocationPolicy,
+    permissions: McpPermissions,
+    trusted: bool,
     approval: Arc<dyn McpApproval>,
 ) -> Result<Vec<ToolDescriptor>, McpError> {
     let capabilities = McpCapabilities::discover(peer.as_ref()).await?;
@@ -360,7 +327,8 @@ pub async fn register_server_tools(
         server,
         &capabilities,
         peer,
-        invocation,
+        permissions,
+        trusted,
         approval,
     ))
 }
@@ -373,13 +341,14 @@ pub fn register_discovered_tools(
     server: &str,
     capabilities: &McpCapabilities,
     peer: Arc<dyn McpPeer>,
-    invocation: McpInvocationPolicy,
+    permissions: McpPermissions,
+    trusted: bool,
     approval: Arc<dyn McpApproval>,
 ) -> Vec<ToolDescriptor> {
     let mut descriptors = Vec::new();
     for tool in &capabilities.tools {
-        if !invocation.allowed_tools.is_empty()
-            && !invocation.allowed_tools.contains(tool.name.as_ref())
+        if !permissions.allowed_tools.is_empty()
+            && !permissions.allowed_tools.contains(tool.name.as_ref())
         {
             continue;
         }
@@ -387,7 +356,8 @@ pub fn register_discovered_tools(
             server,
             tool,
             peer.clone(),
-            invocation.clone(),
+            permissions.clone(),
+            trusted,
             approval.clone(),
         ));
         descriptors.push(adapter.descriptor());
@@ -584,8 +554,10 @@ fn image_byte_size(image: &ImageContent) -> usize {
 mod tests {
     use super::*;
     use agent_domain::{RunId, WorkspaceId};
+    use policy_engine::ApprovalMode;
     use rmcp::model::{ContentBlock, Prompt, Resource, ResourceTemplate};
     use serde_json::{json, Value};
+    use std::collections::BTreeSet;
     use std::sync::Mutex as StdMutex;
     use tool_api::ToolRequest;
 
@@ -764,7 +736,8 @@ mod tests {
             &mut registry,
             "github",
             peer,
-            McpInvocationPolicy::default(),
+            McpPermissions::default(),
+            false,
             Arc::new(RecordingApproval::approve()),
         )
         .await
@@ -783,7 +756,8 @@ mod tests {
             "github",
             &make_tool("search", true),
             peer,
-            McpInvocationPolicy::default(),
+            McpPermissions::default(),
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         let result = run_adapter(
@@ -810,7 +784,8 @@ mod tests {
             "github",
             &make_tool("create_issue", false),
             peer,
-            McpInvocationPolicy::default(),
+            McpPermissions::default(),
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         let result = run_adapter(&adapter, json!({}), "ws", CancellationToken::new()).await;
@@ -824,10 +799,9 @@ mod tests {
     #[tokio::test]
     async fn ask_for_writes_routes_through_approval_channel() {
         let peer = Arc::new(make_peer(false, "created"));
-        let invocation = McpInvocationPolicy {
+        let permissions = McpPermissions {
             approval_mode: ApprovalMode::AskForWrites,
-            trusted: true,
-            ..McpInvocationPolicy::default()
+            ..McpPermissions::default()
         };
 
         // Denied by approval channel → tool never invoked.
@@ -836,7 +810,8 @@ mod tests {
             "github",
             &make_tool("create_issue", false),
             peer.clone(),
-            invocation.clone(),
+            permissions.clone(),
+            true,
             deny.clone(),
         );
         let denied = run_adapter(
@@ -858,7 +833,8 @@ mod tests {
             "github",
             &make_tool("create_issue", false),
             peer,
-            invocation,
+            permissions,
+            true,
             approve,
         );
         let approved = run_adapter(
@@ -878,7 +854,8 @@ mod tests {
             "github",
             &make_tool("search", true),
             peer,
-            McpInvocationPolicy::default(),
+            McpPermissions::default(),
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         let cancel = CancellationToken::new();
@@ -901,15 +878,16 @@ mod tests {
     async fn output_cap_truncates_and_flags() {
         let big = "x".repeat(1024);
         let peer = Arc::new(make_peer(true, &big));
-        let invocation = McpInvocationPolicy {
+        let permissions = McpPermissions {
             max_output_bytes: 16,
-            ..McpInvocationPolicy::default()
+            ..McpPermissions::default()
         };
         let adapter = McpToolAdapter::new(
             "github",
             &make_tool("search", true),
             peer,
-            invocation,
+            permissions,
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         let result = run_adapter(&adapter, json!({}), "ws", CancellationToken::new()).await;
@@ -928,7 +906,8 @@ mod tests {
             "github",
             &make_tool("search", true),
             peer,
-            McpInvocationPolicy::default(),
+            McpPermissions::default(),
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         let error = adapter
@@ -951,10 +930,11 @@ mod tests {
             "github",
             &make_tool("search", true),
             Arc::new(peer),
-            McpInvocationPolicy {
+            McpPermissions {
                 max_output_bytes: 256,
-                ..McpInvocationPolicy::default()
+                ..McpPermissions::default()
             },
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         let result = run_adapter(&adapter, json!({}), "ws", CancellationToken::new()).await;
@@ -967,15 +947,16 @@ mod tests {
         let peer = Arc::new(make_peer(true, "ok"));
         let mut allowed = BTreeSet::new();
         allowed.insert("trusted-ws".to_string());
-        let invocation = McpInvocationPolicy {
+        let permissions = McpPermissions {
             allowed_workspaces: allowed,
-            ..McpInvocationPolicy::default()
+            ..McpPermissions::default()
         };
         let adapter = McpToolAdapter::new(
             "github",
             &make_tool("search", true),
             peer,
-            invocation,
+            permissions,
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         let denied = run_adapter(&adapter, json!({}), "other-ws", CancellationToken::new()).await;
@@ -990,9 +971,9 @@ mod tests {
         let peer = Arc::new(make_peer(true, "ok"));
         let mut allowed = BTreeSet::new();
         allowed.insert("other_tool".to_string());
-        let invocation = McpInvocationPolicy {
+        let permissions = McpPermissions {
             allowed_tools: allowed,
-            ..McpInvocationPolicy::default()
+            ..McpPermissions::default()
         };
 
         // Registration filter drops the unallowed tool entirely.
@@ -1005,7 +986,8 @@ mod tests {
                 ..McpCapabilities::default()
             },
             peer.clone(),
-            invocation.clone(),
+            permissions.clone(),
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         assert!(descriptors.is_empty());
@@ -1016,7 +998,8 @@ mod tests {
             "github",
             &make_tool("search", true),
             peer,
-            invocation,
+            permissions,
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         let result = run_adapter(&adapter, json!({}), "ws", CancellationToken::new()).await;
@@ -1040,7 +1023,8 @@ mod tests {
             "github",
             &make_tool("search", true),
             peer,
-            McpInvocationPolicy::default(),
+            McpPermissions::default(),
+            false,
             Arc::new(RecordingApproval::approve()),
         );
         let result = run_adapter(&adapter, json!({}), "ws", CancellationToken::new()).await;
@@ -1085,20 +1069,5 @@ mod tests {
         assert!(caps.resources.is_empty());
         assert!(caps.resource_templates.is_empty());
         assert!(caps.prompts.is_empty());
-    }
-
-    #[test]
-    fn invocation_policy_bridges_from_config_permissions() {
-        let permissions = McpPermissions {
-            approval_mode: ApprovalMode::AskForWrites,
-            max_output_bytes: 4096,
-            allowed_tools: BTreeSet::from(["read".into()]),
-            ..McpPermissions::default()
-        };
-        let policy = McpInvocationPolicy::from_permissions(&permissions, true);
-        assert_eq!(policy.approval_mode, ApprovalMode::AskForWrites);
-        assert!(policy.trusted);
-        assert_eq!(policy.max_output_bytes, 4096);
-        assert!(policy.allowed_tools.contains("read"));
     }
 }

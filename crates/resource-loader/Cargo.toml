@@ -11,8 +11,8 @@ description = "Pawork AGENTS.md、Skills、Prompt 与 Profile 的确定性资源
 agent-domain = { path = "../agent-domain" }
 config-service = { path = "../config-service" }
 diagnostics = { path = "../diagnostics" }
+policy-engine = { path = "../policy-engine" }
 workspace-service = { path = "../workspace-service" }
-dunce.workspace = true
 notify-debouncer-full.workspace = true
 semver.workspace = true
 serde.workspace = true

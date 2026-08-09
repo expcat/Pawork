@@ -2,7 +2,8 @@
 
 - **性质**：本文件是各 Phase 评审的**目录索引**与**修复复核状态**记录。各 Phase 的逐任务证据、行号级证据、漏洞清单（V1–Vn）、优化建议，以及对应的**修复记录**（细分步骤、产出物、验收标准、验证记录）均归档于独立文档 `docs/review/pN-review.md` 的「修复记录（review-remediation）」章节。
 - **评审日期**：2026-08-08（P1–P7 整合评审）；2026-08-09（P8–P11 评审）。
-- **复核日期**：2026-08-09（P1–P7 修复复核，详见 [§复核结论](#复核结论2026-08-09)）。
+**复核日期**：2026-08-09（P1–P7 修复复核，详见 [§复核结论](#复核结论2026-08-09)）；2026-08-10（P8、P9、P10 修复复核）。
+**P11 复核**（2026-08-10）：见下方整合说明。
 - **评审基线**：P1 以 `de76839` 为基线；P2–P7 以 `67d6c4d` 为基线；P8–P11 以各自提交为基线。
 - **V 编号约定**：各阶段内部独立使用 V1–Vn 编号；跨阶段引用以 `P<阶段>-V<n>` 前缀区分。
 - **引用兼容**：`plan/P{1..7}-*-review-remediation.md` 中的 `[REVIEW.md](../REVIEW.md) §N` 链接仍指向本文件，各 §N 对应 `docs/review/pN-review.md`。
@@ -18,10 +19,10 @@
 | P5 | Session 树、Compaction 与上下文裁剪 | [p5-review.md](docs/review/p5-review.md) | [P5-10](plan/P5-10-review-remediation.md) 🟢 | ✅ V1–V10 + 文档全部确认修复（基线由跨阶段任务收口） |
 | P6 | OpenAI / Anthropic / Google 三家 Provider 适配 | [p6-review.md](docs/review/p6-review.md) | [P6-14](plan/P6-14-review-remediation.md) 🟢 | ✅ V1–V8 + 基线全部确认修复 |
 | P7 | Git、Diff 与 Worktree | [p7-review.md](docs/review/p7-review.md) | [P7-9](plan/P7-9-review-remediation.md) 🟢 | ✅ V1–V10 + 基线全部确认修复 |
-| P8 | Skills、Prompts 与 Instructions（resource-loader） | [p8-review.md](docs/review/p8-review.md) | — | 未复核（无对应修复任务） |
-| P9 | MCP（mcp-client） | [p9-review.md](docs/review/p9-review.md) | — | 未复核（无对应修复任务） |
-| P10 | WASM Plugin（plugin-api / wasm-plugin-host / hook-runtime） | [p10-review.md](docs/review/p10-review.md) | — | 未复核（无对应修复任务） |
-| P11 | Sandbox 与跨平台强化 | [p11-review.md](docs/review/p11-review.md) | — | 未复核（无对应修复任务） |
+| P8 | Skills、Prompts 与 Instructions（resource-loader） | [p8-review.md](docs/review/p8-review.md) | [P8-9](plan/P8-9-review-remediation.md) 🟢 | ✅ §3.3/§3.1/§3.5/§4.1/§3.2 全部确认修复（§2/§3.4/§4.2/§4.3 显式延后 P13） |
+| P9 | MCP（mcp-client） | [p9-review.md](docs/review/p9-review.md) | [P9-8](plan/P9-8-mcp-review-remediation.md) 🟢 | ✅ §3.6/§3.3/§3.2/§3.5/§3.4/§3.8/§3.1 全部确认修复（§4.1/§4.3/§4.4/§3.7/§4.2 显式延后） |
+| P10 | WASM Plugin（plugin-api / wasm-plugin-host / hook-runtime） | [p10-review.md](docs/review/p10-review.md) | [P10-7](plan/P10-7-review-remediation.md) 🟢 | ✅ §3.1/§3.4/§3.5/§3.6 死 API 删除、§4.1 Lifecycle 双路径合并、§3.2/§3.3 重复消除、§4.3a 超时约束、§3.9/§4.4 文档全部确认修复（§2/§3.7/§3.8/§4.3b,c/§4.5 显式延后） |
+| P11 | Sandbox 与跨平台强化 | [p11-review.md](docs/review/p11-review.md) | [P11-9](plan/P11-9-review-remediation.md) 🟢 | ✅ §2.1/§2.2/§2.3/§2.4/§2.5/§2.6/§3.1/§3.2/§3.3 全部确认修复（§2.6 NetworkMode 合并、§3.4 文件拆分显式延后） |
 
 ## 复核结论（2026-08-09）
 
@@ -168,5 +169,9 @@
 - **跨阶段总览**：§0 为评审当时（2026-08-08）的整合视角，原样保留以记录评审快照。
 - **修复复核**：2026-08-09 对 P1–P7 全部 V 项 + 基线偏差逐项核对，结论见 [§复核结论](#复核结论2026-08-09)。
 - **各阶段内部 V1–Vn 编号独立**；跨阶段引用以 `P<阶段>-V<n>` 前缀区分。
-- **P8–P11 评审**：独立评审文档，无对应修复任务，本次未纳入复核范围。
+- **P8–P11 评审**：独立评审文档。P8/P9/P11 已有对应修复任务并复核；P10 待复核。
+- **P8 修复复核**（2026-08-10）：[P8-9](plan/P8-9-review-remediation.md) 已落地 §3.3 死 API 删除、§3.1 Skills 依赖引擎简化、§3.5 校验合并、§4.1 双优先级表守护测试、§3.2 deferred-consumer 文档标记；§2 零端到端消费者、§3.4 ResourceBundle 双状态、§4.2 session/run 重映射、§4.3 watch/诊断视图接线显式延后到 P13。验证：`cargo test -p resource-loader`（54 passed）、`-p context-engine`（31 passed）、clippy/fmt 干净；deepseek_reviewer 独立复核无阻塞项。
+- **P10 修复复核**（2026-08-10）：[P10-7](plan/P10-7-review-remediation.md) 已落地 §3.1/§3.4/§3.5/§3.6 死 pub API 删除（qualified_name/plugin_context/into_tool_registry/registry 与 trust 查询方法）、§4.1 Lifecycle 双路径合并为单一 `invoke_with_state`（吃掉 §3.2 重复 input 预检与 §3.3 内联快照闸门）、§4.3a `HostConfig::validate` 新增 `invoke_timeout>=epoch_tick` 约束、§3.9/§4.4 文档不一致修正；§2 零端到端消费者、§3.7 四个预留 capability、§3.8 Load/Register/Unload 死事件、§4.3b,c Drop/epoch 微优化、§4.5 PluginStateStore trait 上移显式延后到 P13/P17-2/durable backend。验证：`cargo test -p wasm-plugin-host --lib`（8 passed）、`--test host_wat`（29 passed / 4 既有 trap 测试因 Windows debug 下 wasmtime 27 abort 跳过，git stash 基线复现确认非回归）、`-p plugin-api`（15 passed）、clippy/fmt 干净；deepseek_reviewer 独立复核无阻塞项。
+- **P9 修复复核**（2026-08-10）：[P9-8](plan/P9-8-mcp-review-remediation.md) 已落地 §3.6 删 `McpConfig::merge`、§3.3 删单变体 `SecretValue`、§3.2 合并双 `RestartPolicy`（去 +1/×16）、§3.5 收敛 `is_loopback_url`/URL 校验、§3.4 删 `McpInvocationPolicy`（adapter 五道门禁逻辑保留）、§3.8 `error.rs`+`session.rs` 并入 `lib.rs`、§3.1 deferred-consumer 文档标记；写入集仅 `crates/mcp-client/src/`（净 +315/−376）；§4.1 adapter 门禁 vs 调度器门禁（P0，与 P15-1+ADR 协同）、§4.3 stdio→Sandbox Runtime、§4.4 McpPeer canonical DTO、§3.7 输出截断→tool-runtime、§4.2 OAuth 双 bearer 合并显式延后。验证：`cargo test -p mcp-client`（48 passed）、clippy `--all-targets -D warnings`、fmt `--check` 全绿；deepseek_reviewer 独立复核 VERDICT: PASS（七项全 PASS，门禁逻辑完整，无越界）。P11 仍无对应修复任务。
+- **P11 修复复核**（2026-08-10）：[P11-9](plan/P11-9-review-remediation.md) 已落地 §2.1 删未接线的两个 `From<&ExecutionConstraints>` impl + 单测、§2.2 env/secret 单一权威来源（sandbox-runtime pub 导出，run_command 删本地副本）、§2.3 Linux `SYSTEM_READ_PATHS` 共享 const（bwrap/Landlock 共用）、§2.4 跨平台路径统一（resource-loader 复用 policy-engine 符号，删本地同构副本，移除 dunce 直接依赖）、§2.5 删 Windows `JobLimitsConfig`/`policy_to_job_limits`（AppContainer 生成器 frozen 标注）、§2.6 删 `SandboxProcessSpec.needs_network`/`SandboxProcess::kill`（`_handle` 保留为生命周期守卫）、`network_allow_hosts` 标注、run_command timeout 双写消除、§3.1 sandbox.md/process.md 新增「主流程集成边界」段、§3.2 attach_external 契约 doc-comment 补全、§3.3 PTY `dropped_events` 可观测性 + 两个测试；§2.6 NetworkMode::Off/Hint 合并（P11-1.E1）、§3.4 process-runtime 文件拆分（下次触碰）显式延后。验证：受影响 6 crate 联合 test（206 passed）、clippy `--all-targets -D warnings`、fmt `--check` 全绿。**关键实证修正**：review §2.6(b) 称私有 `handle` 零消费方，实测为 `ProcessHandle::Drop` 生命周期守卫，保留字段仅删 `kill()` 方法。
 - 本文为评审记录与索引，不代表已批准的变更；所有结论均有文件与行号级证据，见各 `docs/review/pN-review.md`。

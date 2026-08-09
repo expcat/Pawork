@@ -8,7 +8,7 @@
 //! 输出与文件系统扫描顺序无关。
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use config_service::ConfigTier;
 use semver::{Version, VersionReq};
@@ -230,10 +230,11 @@ pub(crate) fn load_skills(
         .cloned()
         .collect();
 
-    // 候选集 = 从显式激活出发、经由「存在且版本满足且未禁用」的依赖边可达的技能。
-    let candidates = bfs_supported(&merged, &seeds, disabled, None);
-    issues.extend(collect_dep_issues(&merged, &candidates, disabled));
-    let mut active = resolve_active(&merged, &seeds, disabled);
+    // 单次 BFS：可达集与每条依赖边的判定一次性算出；激活收敛与诊断均复用其结果，
+    // 不再二次匹配 semver。
+    let traversal = traverse_dependencies(&merged, &seeds, disabled);
+    let mut active = active_from(&seeds, &traversal);
+    issues.extend(dep_issues(&merged, &traversal));
 
     // 双向冲突：任一方声明即视为冲突，冲突方从激活集中剔除并重新收敛依赖闭包。
     let (conflict_ids, conflict_issues) = detect_conflicts(&merged, &active);
@@ -241,7 +242,7 @@ pub(crate) fn load_skills(
     if !conflict_ids.is_empty() {
         let mut excluded = disabled.clone();
         excluded.extend(conflict_ids);
-        active = resolve_active(&merged, &seeds, &excluded);
+        active = active_from(&seeds, &traverse_dependencies(&merged, &seeds, &excluded));
     }
 
     // 诊断条目：global 被覆盖记 Overridden，其余按激活状态标注。
@@ -250,12 +251,12 @@ pub(crate) fn load_skills(
         let status = if workspace_map.contains_key(id) {
             ResourceDiagnosticStatus::Overridden
         } else {
-            status_for(id, &active, disabled, &candidates)
+            status_for(id, &active, disabled, &traversal.candidates)
         };
         entries.push(make_entry(skill, status));
     }
     for skill in workspace_map.values() {
-        let status = status_for(&skill.manifest.id, &active, disabled, &candidates);
+        let status = status_for(&skill.manifest.id, &active, disabled, &traversal.candidates);
         entries.push(make_entry(skill, status));
     }
 
@@ -360,20 +361,18 @@ fn load_skill_dir(
             }
         };
 
-    let raw: RawManifest = match toml::from_str(&manifest_content) {
-        Ok(raw) => raw,
-        Err(_) => {
-            return Err(ResourceIssue::error(
-                "skill_manifest_parse",
-                "skill manifest has invalid TOML syntax",
-            )
-            .for_resource(
-                ResourceKind::Skill,
-                skill_dir_name.to_string(),
-                source_key.clone(),
-            ))
-        }
-    };
+    let raw: RawManifest = crate::io::parse_toml_resource(
+        &manifest_content,
+        "skill_manifest_parse",
+        "skill manifest has invalid TOML syntax",
+    )
+    .map_err(|issue| {
+        issue.for_resource(
+            ResourceKind::Skill,
+            skill_dir_name.to_string(),
+            source_key.clone(),
+        )
+    })?;
 
     let resource_id = if raw.id.trim().is_empty() {
         skill_dir_name.to_string()
@@ -532,22 +531,7 @@ fn file_issue(
 
 /// 声明路径必须非空、相对、且仅由正常分量构成（拒绝 `..`、绝对路径、前缀）。
 fn validate_declared_path(raw: &str) -> Result<(), ()> {
-    if raw.trim().is_empty() {
-        return Err(());
-    }
-    let path = Path::new(raw);
-    if path.is_absolute() {
-        return Err(());
-    }
-    let mut has_normal = false;
-    for component in path.components() {
-        match component {
-            Component::Normal(_) => has_normal = true,
-            Component::CurDir => {}
-            _ => return Err(()),
-        }
-    }
-    if has_normal {
+    if crate::io::is_safe_relative_reference(raw) {
         Ok(())
     } else {
         Err(())
@@ -555,182 +539,172 @@ fn validate_declared_path(raw: &str) -> Result<(), ()> {
 }
 
 fn valid_identifier(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    crate::io::is_valid_identifier(value, true)
 }
 
 fn parse_req(raw: &str) -> VersionReq {
     VersionReq::parse(raw.trim()).unwrap_or(VersionReq::STAR)
 }
 
-/// 从 `seeds` 出发，沿「存在、版本满足、未排除」的依赖边广度遍历。
-///
-/// `allowed` 为 `Some` 时仅遍历并保留属于该集合的技能，用于在缩小后的激活集上
-/// 重新计算可达性（支持性）。
-fn bfs_supported(
-    merged: &BTreeMap<String, LoadedSkill>,
-    seeds: &BTreeSet<String>,
-    excluded: &BTreeSet<String>,
-    allowed: Option<&BTreeSet<String>>,
-) -> BTreeSet<String> {
-    let mut visited: BTreeSet<String> = BTreeSet::new();
-    let mut queue: VecDeque<String> = VecDeque::new();
-    for seed in seeds {
-        if excluded.contains(seed) || !merged.contains_key(seed) {
-            continue;
-        }
-        if let Some(set) = allowed {
-            if !set.contains(seed) {
-                continue;
-            }
-        }
-        queue.push_back(seed.clone());
-    }
-    while let Some(id) = queue.pop_front() {
-        if !visited.insert(id.clone()) {
-            continue;
-        }
-        let Some(skill) = merged.get(&id) else {
-            continue;
-        };
-        for dependency in &skill.manifest.dependencies {
-            if excluded.contains(&dependency.id) {
-                continue;
-            }
-            let Some(dep_skill) = merged.get(&dependency.id) else {
-                continue;
-            };
-            let requirement = parse_req(&dependency.version);
-            if !requirement.matches(&dep_skill.manifest.version) {
-                continue;
-            }
-            if let Some(set) = allowed {
-                if !set.contains(&dependency.id) {
-                    continue;
-                }
-            }
-            if !visited.contains(&dependency.id) {
-                queue.push_back(dependency.id.clone());
-            }
-        }
-    }
-    visited
+/// 依赖遍历结果：`candidates` 为单次 BFS 的可达集（含依赖断裂的技能本身），
+/// `outcomes` 记录每条依赖边的判定，供激活收敛与诊断直接复用（不再二次匹配 semver）。
+struct DepTraversal {
+    candidates: BTreeSet<String>,
+    outcomes: BTreeMap<String, Vec<DepEdge>>,
 }
 
-/// 计算最大激活子集：所有依赖须存在、版本满足、未被排除且仍在集合内，
-/// 且每个技能都能从 `seeds` 经集合内有效边得到「支持」。
-fn resolve_active(
+/// 一条依赖边的判定结果。
+enum DepEdge {
+    /// 依赖存在、未排除且版本满足；该边参与 BFS 扩展。
+    Valid(String),
+    /// 依赖被显式禁用。
+    Disabled(String),
+    /// 依赖未加载。
+    Missing(String),
+    /// 依赖已加载但版本不满足。
+    VersionMismatch {
+        id: String,
+        requirement: String,
+        actual: Version,
+    },
+}
+
+/// 从 `seeds` 出发的单次 BFS：跳过被排除/缺失/版本不满足的依赖边，把可达技能
+/// 收入 `candidates`，同时记录每条边的判定（供诊断复用，不做第二次 semver 匹配）。
+fn traverse_dependencies(
     merged: &BTreeMap<String, LoadedSkill>,
     seeds: &BTreeSet<String>,
     excluded: &BTreeSet<String>,
-) -> BTreeSet<String> {
-    let mut active = bfs_supported(merged, seeds, excluded, None);
-    loop {
-        let before = active.clone();
-        let mut next = active.clone();
-
-        let unsatisfied: Vec<String> = next
+) -> DepTraversal {
+    let mut candidates: BTreeSet<String> = BTreeSet::new();
+    let mut outcomes: BTreeMap<String, Vec<DepEdge>> = BTreeMap::new();
+    let mut queue: VecDeque<String> = seeds
+        .iter()
+        .filter(|id| !excluded.contains(*id) && merged.contains_key(*id))
+        .cloned()
+        .collect();
+    while let Some(id) = queue.pop_front() {
+        if !candidates.insert(id.clone()) {
+            continue;
+        }
+        let edges: Vec<DepEdge> = merged[&id]
+            .manifest
+            .dependencies
             .iter()
-            .filter_map(|id| {
-                let skill = merged.get(id)?;
-                let broken = skill.manifest.dependencies.iter().any(|dependency| {
-                    if excluded.contains(&dependency.id) {
-                        return true;
-                    }
-                    match merged.get(&dependency.id) {
-                        None => true,
-                        Some(dep_skill) => {
-                            let requirement = parse_req(&dependency.version);
-                            !requirement.matches(&dep_skill.manifest.version)
-                                || !next.contains(&dependency.id)
+            .map(|dependency| {
+                if excluded.contains(&dependency.id) {
+                    DepEdge::Disabled(dependency.id.clone())
+                } else if let Some(dep_skill) = merged.get(&dependency.id) {
+                    let requirement = parse_req(&dependency.version);
+                    if requirement.matches(&dep_skill.manifest.version) {
+                        DepEdge::Valid(dependency.id.clone())
+                    } else {
+                        DepEdge::VersionMismatch {
+                            id: dependency.id.clone(),
+                            requirement: dependency.version.clone(),
+                            actual: dep_skill.manifest.version.clone(),
                         }
                     }
-                });
-                if broken {
-                    Some(id.clone())
                 } else {
-                    None
+                    DepEdge::Missing(dependency.id.clone())
                 }
             })
             .collect();
-        for id in unsatisfied {
-            next.remove(&id);
+        for edge in &edges {
+            if let DepEdge::Valid(dep) = edge {
+                if !candidates.contains(dep) {
+                    queue.push_back(dep.clone());
+                }
+            }
         }
+        outcomes.insert(id, edges);
+    }
+    DepTraversal {
+        candidates,
+        outcomes,
+    }
+}
 
-        let supported = bfs_supported(merged, seeds, excluded, Some(&next));
-        next = next.intersection(&supported).cloned().collect();
-
-        active = next;
-        if active == before {
-            break;
+/// 由遍历结果收敛激活集：先反向剔除「依赖链断裂」的技能（依赖缺失/被排除/
+/// 版本不满足，或递归地依赖这类技能），再从 `seeds` 仅沿完好技能的有效边 BFS。
+fn active_from(seeds: &BTreeSet<String>, traversal: &DepTraversal) -> BTreeSet<String> {
+    // 1) 坏集：直接断裂的技能，再沿有效依赖边反向传播。
+    let mut bad: BTreeSet<String> = traversal
+        .outcomes
+        .iter()
+        .filter(|(_, edges)| edges.iter().any(|edge| !matches!(edge, DepEdge::Valid(_))))
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut reverse: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (id, edges) in &traversal.outcomes {
+        for edge in edges {
+            if let DepEdge::Valid(dep) = edge {
+                reverse.entry(dep.as_str()).or_default().push(id.as_str());
+            }
+        }
+    }
+    let mut queue: VecDeque<String> = bad.iter().cloned().collect();
+    while let Some(id) = queue.pop_front() {
+        for dependent in reverse.get(id.as_str()).into_iter().flatten() {
+            if bad.insert(dependent.to_string()) {
+                queue.push_back(dependent.to_string());
+            }
+        }
+    }
+    // 2) 从 seeds 出发，仅经「依赖链完好」的技能沿有效边 BFS。
+    let mut active: BTreeSet<String> = BTreeSet::new();
+    let mut queue: VecDeque<String> = seeds
+        .iter()
+        .filter(|id| traversal.outcomes.contains_key(*id) && !bad.contains(*id))
+        .cloned()
+        .collect();
+    while let Some(id) = queue.pop_front() {
+        if !active.insert(id.clone()) {
+            continue;
+        }
+        for edge in traversal.outcomes.get(&id).into_iter().flatten() {
+            if let DepEdge::Valid(dep) = edge {
+                if !bad.contains(dep) && !active.contains(dep) {
+                    queue.push_back(dep.clone());
+                }
+            }
         }
     }
     active
 }
 
-fn collect_dep_issues(
+/// 从遍历记录的边判定生成依赖诊断（复用 BFS 的匹配结果，不做第二次 semver 匹配）。
+fn dep_issues(
     merged: &BTreeMap<String, LoadedSkill>,
-    candidates: &BTreeSet<String>,
-    disabled: &BTreeSet<String>,
+    traversal: &DepTraversal,
 ) -> Vec<ResourceIssue> {
     let mut issues = Vec::new();
-    for id in candidates {
-        let Some(skill) = merged.get(id) else {
+    for id in &traversal.candidates {
+        let Some(edges) = traversal.outcomes.get(id) else {
             continue;
         };
-        let source = skill.provenance.source_key.clone();
-        for dependency in &skill.manifest.dependencies {
-            let dependency_id = &dependency.id;
-            if disabled.contains(dependency_id) {
-                issues.push(
-                    ResourceIssue::error(
-                        "skill_dependency_disabled",
-                        format!("skill '{id}' depends on disabled skill '{dependency_id}'"),
-                    )
-                    .for_resource(
-                        ResourceKind::Skill,
-                        id.clone(),
-                        source.clone(),
-                    ),
-                );
-            } else if !merged.contains_key(dependency_id) {
-                issues.push(
-                    ResourceIssue::error(
-                        "skill_dependency_missing",
-                        format!("skill '{id}' depends on missing skill '{dependency_id}'"),
-                    )
-                    .for_resource(
-                        ResourceKind::Skill,
-                        id.clone(),
-                        source.clone(),
-                    ),
-                );
-            } else {
-                let requirement = parse_req(&dependency.version);
-                let actual = &merged
-                    .get(dependency_id)
-                    .expect("dependency presence checked above")
-                    .manifest
-                    .version;
-                if !requirement.matches(actual) {
-                    issues.push(
-                        ResourceIssue::error(
-                            "skill_dependency_version",
-                            format!(
-                                "skill '{id}' requires '{dependency_id} {}' but {actual} is loaded",
-                                dependency.version
-                            ),
-                        )
-                        .for_resource(
-                            ResourceKind::Skill,
-                            id.clone(),
-                            source.clone(),
-                        ),
-                    );
-                }
-            }
+        let source = merged[id].provenance.source_key.clone();
+        for edge in edges {
+            let issue = match edge {
+                DepEdge::Disabled(dep) => ResourceIssue::error(
+                    "skill_dependency_disabled",
+                    format!("skill '{id}' depends on disabled skill '{dep}'"),
+                ),
+                DepEdge::Missing(dep) => ResourceIssue::error(
+                    "skill_dependency_missing",
+                    format!("skill '{id}' depends on missing skill '{dep}'"),
+                ),
+                DepEdge::VersionMismatch {
+                    id: dep,
+                    requirement,
+                    actual,
+                } => ResourceIssue::error(
+                    "skill_dependency_version",
+                    format!("skill '{id}' requires '{dep} {requirement}' but {actual} is loaded"),
+                ),
+                DepEdge::Valid(_) => continue,
+            };
+            issues.push(issue.for_resource(ResourceKind::Skill, id.clone(), source.clone()));
         }
     }
     issues

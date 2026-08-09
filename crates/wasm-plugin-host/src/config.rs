@@ -19,6 +19,8 @@ use thiserror::Error;
 pub enum HostConfigError {
     #[error("host config field must be greater than zero: {0}")]
     Zero(&'static str),
+    #[error("invoke_timeout must be greater than or equal to epoch_tick")]
+    TimeoutSmallerThanTick,
 }
 
 /// WASM 插件宿主的资源与安全配置。
@@ -103,6 +105,9 @@ impl HostConfig {
         if self.epoch_tick.is_zero() {
             return Err(HostConfigError::Zero("epoch_tick"));
         }
+        if self.invoke_timeout < self.epoch_tick {
+            return Err(HostConfigError::TimeoutSmallerThanTick);
+        }
         Ok(())
     }
 
@@ -130,5 +135,17 @@ mod tests {
             ..HostConfig::default()
         };
         assert_eq!(invalid.validate(), Err(HostConfigError::Zero("epoch_tick")));
+    }
+
+    #[test]
+    fn timeout_smaller_than_tick_is_rejected() {
+        let invalid = HostConfig {
+            invoke_timeout: Duration::from_millis(5),
+            ..HostConfig::default()
+        };
+        assert_eq!(
+            invalid.validate(),
+            Err(HostConfigError::TimeoutSmallerThanTick)
+        );
     }
 }

@@ -23,9 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use crate::manager::{
-    ManagedMcpClient, ManagedMcpClientOptions, RestartPolicy as RuntimeRestartPolicy,
-};
+use crate::manager::{ManagedMcpClient, ManagedMcpClientOptions};
 use crate::security::SecretRef;
 use crate::transport::{
     DefaultConnector, HttpTransportConfig, McpConnector, RunningClient, StdioTransportConfig,
@@ -37,8 +35,12 @@ use crate::McpError;
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
 /// Minimum sane output cap.
 const MIN_MAX_OUTPUT_BYTES: u64 = 1;
-/// Default restart back-off delay.
-const DEFAULT_RESTART_DELAY_MS: u64 = 1_000;
+/// Default total restart attempt budget (1 = no reconnect).
+const DEFAULT_RESTART_MAX_ATTEMPTS: u32 = 1;
+/// Default initial restart back-off delay.
+const DEFAULT_RESTART_BASE_DELAY_MS: u64 = 200;
+/// Default cap for the per-attempt restart back-off delay.
+const DEFAULT_RESTART_MAX_DELAY_MS: u64 = 10_000;
 /// Default request/handshake timeout when a server does not override it.
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
@@ -87,17 +89,6 @@ impl McpConfig {
             server.validate(name)?;
         }
         Ok(())
-    }
-
-    /// Merge a higher-priority layer into `self` at whole-server granularity:
-    /// a server present in `higher` replaces the one in `self`. Field-level
-    /// merging across global/workspace tiers is performed by config-service at
-    /// the JSON level before this type is constructed; this method is for
-    /// callers that layer explicit [`McpConfig`] values.
-    pub fn merge(&mut self, higher: &McpConfig) {
-        for (name, server) in &higher.servers {
-            self.servers.insert(name.clone(), server.clone());
-        }
     }
 
     /// Look up a server by name.
@@ -165,24 +156,12 @@ impl McpServerConfig {
 
     /// Map persisted timeout/restart settings into lifecycle-manager options.
     pub fn runtime_options(&self, name: impl Into<Arc<str>>) -> ManagedMcpClientOptions {
-        let base_delay = Duration::from_millis(self.restart.delay_ms);
-        let max_attempts = if self.restart.enabled {
-            // Config expresses retries after the initial attempt; the manager
-            // expresses the total bounded attempt count.
-            self.restart.max_restarts.saturating_add(1)
-        } else {
-            1
-        };
         ManagedMcpClientOptions {
             name: name.into(),
             request_timeout: Duration::from_millis(
                 self.timeout_ms.unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS),
             ),
-            restart: RuntimeRestartPolicy {
-                max_attempts,
-                base_delay,
-                max_delay: base_delay.saturating_mul(16),
-            },
+            restart: self.restart.clone(),
         }
     }
 }
@@ -199,13 +178,13 @@ pub enum TransportSpec {
         #[serde(default)]
         args: Vec<String>,
         #[serde(default)]
-        env: BTreeMap<String, SecretValue>,
+        env: BTreeMap<String, SecretRef>,
     },
     /// Connect to a streamable-http MCP endpoint.
     Http {
         url: String,
         #[serde(default)]
-        headers: BTreeMap<String, SecretValue>,
+        headers: BTreeMap<String, SecretRef>,
     },
 }
 
@@ -283,38 +262,6 @@ impl TransportSpec {
     }
 }
 
-/// A secret-bearing configuration value.
-///
-/// Inline plaintext is intentionally not representable: persisted MCP config
-/// contains only the backend locator and resolves it just in time.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum SecretValue {
-    /// Reference into a `SecretBackend`.
-    SecretRef(SecretRef),
-}
-
-impl SecretValue {
-    /// Resolve to plaintext against `backend`.
-    pub fn resolve(&self, backend: &dyn auth_service::SecretBackend) -> Result<String, McpError> {
-        match self {
-            SecretValue::SecretRef(reference) => {
-                Ok(reference.resolve(backend)?.expose_secret().to_string())
-            }
-        }
-    }
-}
-
-impl std::fmt::Debug for SecretValue {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SecretValue::SecretRef(reference) => {
-                formatter.debug_tuple("SecretRef").field(reference).finish()
-            }
-        }
-    }
-}
-
 /// Connector that keeps persisted references at rest and resolves them only
 /// while constructing a concrete transport.
 #[derive(Clone)]
@@ -352,44 +299,57 @@ impl McpConnector for SecretResolvingConnector {
 }
 
 /// Restart-on-crash policy.
+///
+/// A single serializable struct consumed by both the config layer and the
+/// lifecycle manager — there is no separate runtime shape and no magic
+/// conversion between them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestartPolicy {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub max_restarts: u32,
-    #[serde(default = "default_restart_delay_ms")]
-    pub delay_ms: u64,
+    /// Total bounded attempt budget per back-off window. `1` means no
+    /// reconnect (the initial attempt is the only one).
+    #[serde(default = "default_restart_max_attempts")]
+    pub max_attempts: u32,
+    /// Initial back-off delay between failed attempts.
+    #[serde(default = "default_restart_base_delay_ms")]
+    pub base_delay_ms: u64,
+    /// Cap for the per-attempt back-off delay.
+    #[serde(default = "default_restart_max_delay_ms")]
+    pub max_delay_ms: u64,
 }
 
 impl Default for RestartPolicy {
     fn default() -> Self {
         Self {
-            enabled: false,
-            max_restarts: 0,
-            delay_ms: DEFAULT_RESTART_DELAY_MS,
+            max_attempts: DEFAULT_RESTART_MAX_ATTEMPTS,
+            base_delay_ms: DEFAULT_RESTART_BASE_DELAY_MS,
+            max_delay_ms: DEFAULT_RESTART_MAX_DELAY_MS,
         }
     }
 }
 
 impl RestartPolicy {
     fn validate(&self, name: &str) -> Result<(), McpError> {
-        if self.enabled && self.max_restarts == 0 {
+        if self.max_attempts == 0 {
             return Err(McpError::Config(format!(
-                "server '{name}': restart is enabled but max_restarts is 0"
+                "server '{name}': restart max_attempts must be at least 1"
             )));
         }
-        if self.enabled && self.delay_ms == 0 {
+        if self.base_delay_ms == 0 {
             return Err(McpError::Config(format!(
-                "server '{name}': restart delay_ms must be greater than 0"
+                "server '{name}': restart base_delay_ms must be greater than 0"
+            )));
+        }
+        if self.max_delay_ms < self.base_delay_ms {
+            return Err(McpError::Config(format!(
+                "server '{name}': restart max_delay_ms must be >= base_delay_ms"
             )));
         }
         Ok(())
     }
 }
 
-/// Per-server invocation policy and allowlists, surfaced to the capability
-/// adapter (see `capabilities::McpInvocationPolicy`).
+/// Per-server invocation policy and allowlists, consumed directly by the
+/// capability adapter (`capabilities::McpToolAdapter`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpPermissions {
     /// Approval mode used by the per-server [`policy_engine::PolicyEngine`].
@@ -434,21 +394,33 @@ fn default_max_output_bytes() -> u64 {
     DEFAULT_MAX_OUTPUT_BYTES
 }
 
-fn default_restart_delay_ms() -> u64 {
-    DEFAULT_RESTART_DELAY_MS
+fn default_restart_max_attempts() -> u32 {
+    DEFAULT_RESTART_MAX_ATTEMPTS
+}
+
+fn default_restart_base_delay_ms() -> u64 {
+    DEFAULT_RESTART_BASE_DELAY_MS
+}
+
+fn default_restart_max_delay_ms() -> u64 {
+    DEFAULT_RESTART_MAX_DELAY_MS
 }
 
 fn resolve_secret_map(
-    values: &BTreeMap<String, SecretValue>,
+    values: &BTreeMap<String, SecretRef>,
     backend: &dyn SecretBackend,
 ) -> Result<HashMap<String, String>, McpError> {
     values
         .iter()
-        .map(|(key, value)| value.resolve(backend).map(|value| (key.clone(), value)))
+        .map(|(key, value)| {
+            value
+                .resolve(backend)
+                .map(|secret| (key.clone(), secret.expose_secret().to_string()))
+        })
         .collect()
 }
 
-fn is_loopback_url(url: &Url) -> bool {
+pub(crate) fn is_loopback_url(url: &Url) -> bool {
     match url.host() {
         Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
         Some(url::Host::Ipv4(address)) => address.is_loopback(),
@@ -484,7 +456,7 @@ mod tests {
             "transport": { "kind": "stdio", "command": command },
             "auto_start": true,
             "timeout_ms": 30_000,
-            "restart": { "enabled": true, "max_restarts": 3 },
+            "restart": { "max_attempts": 4 },
             "permissions": { "approval_mode": "ask_for_writes", "max_output_bytes": 2048 }
         })
     }
@@ -506,8 +478,7 @@ mod tests {
         assert_eq!(fs.transport.kind(), "stdio");
         assert!(fs.auto_start);
         assert_eq!(fs.timeout_ms, Some(30_000));
-        assert!(fs.restart.enabled);
-        assert_eq!(fs.restart.max_restarts, 3);
+        assert_eq!(fs.restart.max_attempts, 4);
         assert_eq!(fs.permissions.approval_mode, ApprovalMode::AskForWrites);
         assert_eq!(fs.permissions.max_output_bytes, 2048);
 
@@ -545,12 +516,46 @@ mod tests {
         .expect_err("zero timeout");
         assert!(err.to_string().contains("timeout_ms"));
 
-        // restart enabled with zero restarts
+        // restart with a zero attempt budget
         let err = McpConfig::from_value(&json!({
-            "servers": { "fs": { "transport": { "kind": "stdio", "command": "x" }, "restart": { "enabled": true, "max_restarts": 0 } } }
+            "servers": { "fs": { "transport": { "kind": "stdio", "command": "x" }, "restart": { "max_attempts": 0 } } }
         }))
         .expect_err("bad restart");
-        assert!(err.to_string().contains("max_restarts"));
+        assert!(err.to_string().contains("max_attempts"));
+
+        // restart with a zero base delay
+        let err = McpConfig::from_value(&json!({
+            "servers": { "fs": { "transport": { "kind": "stdio", "command": "x" }, "restart": { "base_delay_ms": 0 } } }
+        }))
+        .expect_err("zero base delay");
+        assert!(err.to_string().contains("base_delay_ms"));
+
+        // restart with max_delay below base_delay
+        let err = McpConfig::from_value(&json!({
+            "servers": { "fs": { "transport": { "kind": "stdio", "command": "x" }, "restart": { "base_delay_ms": 500, "max_delay_ms": 100 } } }
+        }))
+        .expect_err("max below base");
+        assert!(err.to_string().contains("max_delay_ms"));
+
+        // secret-bearing headers require HTTPS for non-loopback endpoints
+        let err = McpConfig::from_value(&json!({
+            "servers": {
+                "fs": {
+                    "transport": {
+                        "kind": "http",
+                        "url": "http://remote.example/mcp",
+                        "headers": {
+                            "X-API-Key": {
+                                "service": "pawork.mcp",
+                                "account": "cred-1"
+                            }
+                        }
+                    }
+                }
+            }
+        }))
+        .expect_err("plaintext http headers");
+        assert!(err.to_string().contains("HTTPS"));
 
         // server name with dot
         let err = McpConfig::from_value(&json!({
@@ -653,37 +658,24 @@ mod tests {
     }
 
     #[test]
-    fn from_resolved_handles_absent_and_explicit_layer_merge() {
+    fn from_resolved_handles_absent_section() {
         // No mcp section at all.
         let empty = Loader::new().resolve().expect("resolve");
         assert!(McpConfig::from_resolved(&empty).unwrap().servers.is_empty());
-
-        // Explicit whole-server merge: workspace fully redefines filesystem.
-        let mut lower = McpConfig::from_value(&json!({
-            "servers": { "filesystem": stdio_server("old-command") }
-        }))
-        .unwrap();
-        let higher = McpConfig::from_value(&json!({
-            "servers": {
-                "filesystem": {
-                    "transport": { "kind": "http", "url": "https://example.com/mcp" }
-                }
-            }
-        }))
-        .unwrap();
-        lower.merge(&higher);
-        assert_eq!(lower.server("filesystem").unwrap().transport.kind(), "http");
     }
 
     #[test]
-    fn secret_value_resolves_ref_and_inline_config_is_rejected() {
+    fn secret_ref_resolves_and_inline_plaintext_is_rejected() {
         let backend = MemoryBackend::new();
         backend
             .store("pawork.mcp", "cred-1", "sk-mcp-token")
             .expect("store");
 
-        let reference = SecretValue::SecretRef(SecretRef::new("pawork.mcp", "cred-1"));
-        assert_eq!(reference.resolve(&backend).unwrap(), "sk-mcp-token");
+        let reference = SecretRef::new("pawork.mcp", "cred-1");
+        assert_eq!(
+            reference.resolve(&backend).unwrap().expose_secret(),
+            "sk-mcp-token"
+        );
 
         let error = McpConfig::from_value(&json!({
             "servers": {
@@ -705,6 +697,28 @@ mod tests {
         assert!(!error
             .to_string()
             .contains("plaintext-should-not-be-accepted"));
+    }
+
+    #[test]
+    fn rejects_url_userinfo_and_fragment() {
+        // URL userinfo is rejected at parse time: credentials must use
+        // SecretRef headers, not the URL.
+        let err = McpConfig::from_value(&json!({
+            "servers": {
+                "fs": { "transport": { "kind": "http", "url": "https://user:pass@example.com/mcp" } }
+            }
+        }))
+        .expect_err("userinfo");
+        assert!(err.to_string().contains("userinfo"));
+
+        // URL fragments are rejected at parse time.
+        let err = McpConfig::from_value(&json!({
+            "servers": {
+                "fs": { "transport": { "kind": "http", "url": "https://example.com/mcp#frag" } }
+            }
+        }))
+        .expect_err("fragment");
+        assert!(err.to_string().contains("fragment"));
     }
 
     #[test]
@@ -746,7 +760,7 @@ mod tests {
         let options = config.server("fs").unwrap().runtime_options("fs");
         assert_eq!(options.request_timeout, Duration::from_secs(30));
         assert_eq!(options.restart.max_attempts, 4);
-        assert_eq!(options.restart.base_delay, Duration::from_secs(1));
-        assert_eq!(options.restart.max_delay, Duration::from_secs(16));
+        assert_eq!(options.restart.base_delay_ms, 200);
+        assert_eq!(options.restart.max_delay_ms, 10_000);
     }
 }

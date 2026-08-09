@@ -30,13 +30,6 @@ pub struct AgentsDocument {
 }
 
 impl AgentsDocument {
-    pub fn new(provenance: ResourceProvenance, body: impl Into<String>) -> Self {
-        Self {
-            provenance,
-            body: body.into(),
-        }
-    }
-
     /// 该文档相对于工作区根的稳定相对路径（正斜杠分隔）。
     pub fn relative_path(&self) -> &str {
         match &self.provenance.origin {
@@ -64,18 +57,9 @@ impl AgentsHierarchy {
         &self.documents
     }
 
-    pub fn into_documents(self) -> Vec<AgentsDocument> {
-        self.documents
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &AgentsDocument> {
-        self.documents.iter()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.documents.is_empty()
-    }
-
+    /// 层级中的文档数（`bundle.agents.len()` 在 loader 中使用）。`is_empty` 因零调用
+    /// 已删除；clippy `len_without_is_empty` 在此显式允许。
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.documents.len()
     }
@@ -99,7 +83,7 @@ pub(crate) fn load_agents_hierarchy(
     current_path_kind: CurrentPathKind,
     limits: ResourceLimits,
 ) -> (AgentsHierarchy, Vec<ResourceIssue>) {
-    let canonical_root = dunce::canonicalize(root).ok();
+    let canonical_root = policy_engine::canonicalize_platform(root).ok();
     let chain = target_directory_chain(current_path, current_path_kind);
 
     let mut found: Vec<(usize, AgentsDocument)> = Vec::new();
@@ -164,14 +148,14 @@ fn load_one(
 ) -> Result<Option<AgentsDocument>, ResourceIssue> {
     // 通过 canonicalize 同时完成「存在性」与「越界 symlink」校验：缺失文件返回
     // NotFound（静默跳过该层级），解析后的目标若逃出 canonical 根则视为越界。
-    let canonical_target = match dunce::canonicalize(absolute) {
+    let canonical_target = match policy_engine::canonicalize_platform(absolute) {
         Ok(path) => path,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(file_issue(relative, ResourceFileError::Io(error))),
     };
 
     if let Some(root) = canonical_root {
-        if !io::path_is_within(&canonical_target, root) {
+        if !policy_engine::path_within_root(&canonical_target, root) {
             return Err(out_of_bounds_issue(relative));
         }
     }

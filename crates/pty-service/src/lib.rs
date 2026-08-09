@@ -150,6 +150,8 @@ pub struct PtySnapshot {
     pub buffered: Vec<u8>,
     pub exit_code: Option<i32>,
     pub exit_signal: Option<String>,
+    /// 实时广播因容量满被覆写丢弃的事件数；重连消费者可据此感知实时流缺失。
+    pub dropped_events: u64,
 }
 
 /// 增量读取结果。
@@ -212,6 +214,10 @@ struct SessionInner {
     killer: Mutex<Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
     process_tree: Mutex<Option<ProcessTreeGuard>>,
     events: broadcast::Sender<PtyEvent>,
+    /// 实时广播通道容量（事件条数），用于检测满队列覆写。
+    event_capacity: usize,
+    /// 实时广播因容量满被覆写丢弃的事件数（慢消费者可见性）。
+    dropped_events: AtomicU64,
     /// 关闭通知：reader / waiter 退出后触发。
     closed: Notify,
     /// 防止重复 cleanup。
@@ -295,6 +301,8 @@ impl PtyService {
             killer: Mutex::new(Some(killer)),
             process_tree: Mutex::new(process_tree),
             events: events.clone(),
+            event_capacity: DEFAULT_EVENT_CAPACITY,
+            dropped_events: AtomicU64::new(0),
             closed: Notify::new(),
             cleaned: Mutex::new(false),
         });
@@ -326,7 +334,7 @@ impl PtyService {
                                 ring.push(&chunk);
                                 ring.end()
                             };
-                            let _ = reader_session.events.send(PtyEvent::Output {
+                            reader_session.send_event(PtyEvent::Output {
                                 data: chunk,
                                 cursor_end,
                             });
@@ -363,7 +371,7 @@ impl PtyService {
                             runtime.exit_code = code;
                             runtime.exit_signal = signal.clone();
                         }
-                        let _ = waiter_session.events.send(PtyEvent::Exit { code, signal });
+                        waiter_session.send_event(PtyEvent::Exit { code, signal });
                     }
                     Err(err) => {
                         warn!(error = %err, "pty wait failed");
@@ -376,7 +384,7 @@ impl PtyService {
                             runtime.exit_code = None;
                             runtime.exit_signal = Some(format!("wait error: {err}"));
                         }
-                        let _ = waiter_session.events.send(PtyEvent::Exit {
+                        waiter_session.send_event(PtyEvent::Exit {
                             code: None,
                             signal: Some(err.to_string()),
                         });
@@ -477,6 +485,7 @@ impl PtyService {
             buffered,
             exit_code: runtime.exit_code,
             exit_signal: runtime.exit_signal,
+            dropped_events: session.dropped_events.load(Ordering::Relaxed),
         })
     }
 
@@ -642,6 +651,20 @@ impl SessionInner {
         } else {
             Err(PtyError::Closed(self.id.clone()))
         }
+    }
+
+    /// 发送实时事件。tokio 1.53 broadcast 满时静默覆写最旧未读事件
+    /// （发送方无错误信号），因此在发送前检测队列已满：本次发送必然
+    /// 使一个事件对慢消费者不可达，递增 `dropped_events` 使丢弃事实
+    /// 可被快照观察。
+    fn send_event(&self, event: PtyEvent) {
+        if self.events.receiver_count() == 0 {
+            return;
+        }
+        if self.events.len() >= self.event_capacity {
+            self.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
+        let _ = self.events.send(event);
     }
 
     fn cleanup_handles(&self) {
@@ -938,6 +961,42 @@ mod tests {
         }
     }
 
+    /// 一次性倾倒远超广播容量（256 事件）的输出，用于验证丢弃可观测性。
+    fn flood_spec(owner_session: SessionId) -> PtyCreateSpec {
+        #[cfg(windows)]
+        {
+            PtyCreateSpec {
+                owner_session,
+                shell: Some("powershell.exe".into()),
+                args: vec![
+                    "-NoProfile".into(),
+                    "-NonInteractive".into(),
+                    "-Command".into(),
+                    "[Console]::Out.Write(('x'*8192)*2048)".into(),
+                ],
+                cwd: None,
+                env: Vec::new(),
+                size: PtyWindowSize::default(),
+                buffer_capacity: DEFAULT_BUFFER_CAPACITY,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            PtyCreateSpec {
+                owner_session,
+                shell: Some("/bin/sh".into()),
+                args: vec![
+                    "-c".into(),
+                    "dd if=/dev/zero bs=4096 count=2048 2>/dev/null".into(),
+                ],
+                cwd: None,
+                env: Vec::new(),
+                size: PtyWindowSize::default(),
+                buffer_capacity: DEFAULT_BUFFER_CAPACITY,
+            }
+        }
+    }
+
     async fn wait_for_output(
         service: &PtyService,
         id: &TerminalSessionId,
@@ -1023,6 +1082,47 @@ mod tests {
             .expect("read end");
         assert!(empty.data.is_empty());
 
+        service.cleanup(&id, &owner).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn broadcast_overflow_is_observable_via_snapshot() {
+        let service = PtyService::new();
+        let owner = owner("dropped-observe");
+        let id = service
+            .create(flood_spec(owner.clone()))
+            .await
+            .expect("create");
+        // 慢消费者：订阅但从不读取，使 broadcast 持续满并覆写旧事件。
+        let _slow = service.subscribe(&id, &owner).expect("subscribe");
+
+        let (_code, _) = service.wait_exit(&id, &owner).await.expect("wait");
+        // reader 线程可能在子进程退出后仍排空管道残留，轮询至计数稳定。
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let mut last = 0u64;
+        let mut stable_rounds = 0u32;
+        loop {
+            let snap = service.snapshot(&id, &owner).expect("snapshot");
+            if snap.dropped_events == last {
+                stable_rounds += 1;
+                if stable_rounds >= 3 {
+                    assert!(
+                        snap.dropped_events > 0,
+                        "expected broadcast drops, got {}",
+                        snap.dropped_events
+                    );
+                    break;
+                }
+            } else {
+                last = snap.dropped_events;
+                stable_rounds = 0;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "dropped counter never stabilized at {last}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         service.cleanup(&id, &owner).await.expect("cleanup");
     }
 
@@ -1195,5 +1295,43 @@ mod tests {
         let mut ring = RingBuffer::new(3);
         ring.push(b"abcd");
         assert_eq!(ring.snapshot().2, b"bcd");
+    }
+
+    #[test]
+    fn broadcast_overflow_increments_dropped_events() {
+        let (tx, mut rx) = broadcast::channel(4);
+        let session = SessionInner {
+            id: TerminalSessionId::new("pty-dropped"),
+            owner: owner("dropped-unit"),
+            state: Mutex::new(SessionRuntime::default()),
+            buffer: Mutex::new(RingBuffer::new(1024)),
+            size: Mutex::new(PtyWindowSize::default()),
+            master: Mutex::new(None),
+            writer: Mutex::new(None),
+            killer: Mutex::new(None),
+            process_tree: Mutex::new(None),
+            events: tx,
+            event_capacity: 4,
+            dropped_events: AtomicU64::new(0),
+            closed: Notify::new(),
+            cleaned: Mutex::new(false),
+        };
+        for i in 0..10u64 {
+            session.send_event(PtyEvent::Output {
+                data: vec![i as u8],
+                cursor_end: i,
+            });
+        }
+        // 容量 4，发送 10 → 6 个最旧事件被覆写丢弃。
+        assert_eq!(session.dropped_events.load(Ordering::Relaxed), 6);
+        // 慢消费者报告落后 6 条，随后仍可收到最新事件（覆写语义）。
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(6))
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(PtyEvent::Output { cursor_end: 6, .. })
+        ));
     }
 }

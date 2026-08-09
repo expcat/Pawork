@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use config_service::ConfigTier;
@@ -75,24 +75,6 @@ struct PromptHeader {
 struct Candidate {
     template: PromptTemplate,
     workspace_root: Option<PathBuf>,
-}
-
-impl PromptTemplate {
-    /// 渲染纯参数模板。包含 `{{file:...}}` 时应通过 [`ResourceLoader`](crate::ResourceLoader)
-    /// 渲染，以便执行工作区边界和大小限制。
-    pub fn render(
-        &self,
-        arguments: &BTreeMap<String, String>,
-    ) -> Result<RenderedPrompt, ResourceIssue> {
-        render_candidate(
-            &Candidate {
-                template: self.clone(),
-                workspace_root: None,
-            },
-            arguments,
-            ResourceLimits::default(),
-        )
-    }
 }
 
 pub(crate) fn load_templates(
@@ -292,12 +274,13 @@ fn parse_template(
             source_key.clone(),
         )
     })?;
-    let mut header: PromptHeader = toml::from_str(header).map_err(|_| {
-        ResourceIssue::error(
-            "prompt_frontmatter_invalid",
-            "prompt frontmatter has invalid TOML syntax",
-        )
-        .for_resource(
+    let mut header: PromptHeader = crate::io::parse_toml_resource::<PromptHeader>(
+        header,
+        "prompt_frontmatter_invalid",
+        "prompt frontmatter has invalid TOML syntax",
+    )
+    .map_err(|issue| {
+        issue.for_resource(
             ResourceKind::PromptTemplate,
             file_stem(path),
             source_key.clone(),
@@ -493,12 +476,12 @@ fn push_bounded(output: &mut String, value: &str, maximum: usize) -> Result<(), 
 
 fn checked_workspace_file(root: &Path, reference: &str) -> Result<PathBuf, String> {
     validate_relative_reference(reference)?;
-    let root = dunce::canonicalize(root)
+    let root = policy_engine::canonicalize_platform(root)
         .map_err(|error| format!("workspace root could not be resolved: {error}"))?;
     let candidate = root.join(reference);
-    let canonical = dunce::canonicalize(&candidate)
+    let canonical = policy_engine::canonicalize_platform(&candidate)
         .map_err(|error| format!("file reference '{reference}' could not be resolved: {error}"))?;
-    if !crate::io::path_is_within(&canonical, &root) {
+    if !policy_engine::path_within_root(&canonical, &root) {
         return Err(format!(
             "file reference '{reference}' leaves the workspace root"
         ));
@@ -512,45 +495,31 @@ fn checked_workspace_file(root: &Path, reference: &str) -> Result<PathBuf, Strin
 }
 
 fn validate_relative_reference(reference: &str) -> Result<(), String> {
-    let path = Path::new(reference);
-    if reference.is_empty()
-        || path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return Err(format!(
+    if crate::io::is_safe_relative_reference(reference) {
+        Ok(())
+    } else {
+        Err(format!(
             "file reference '{reference}' must be a non-empty workspace-relative path without '..'"
-        ));
+        ))
     }
-    Ok(())
 }
 
 fn validate_id(id: &str) -> Result<(), String> {
-    if id.is_empty()
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    {
-        return Err(format!(
+    if crate::io::is_valid_identifier(id, true) {
+        Ok(())
+    } else {
+        Err(format!(
             "prompt id '{id}' must contain only ASCII letters, digits, '.', '-' or '_'"
-        ));
+        ))
     }
-    Ok(())
 }
 
 fn validate_parameter_name(name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        return Err(format!("prompt parameter name '{name}' is invalid"));
+    if crate::io::is_valid_identifier(name, false) {
+        Ok(())
+    } else {
+        Err(format!("prompt parameter name '{name}' is invalid"))
     }
-    Ok(())
 }
 
 fn file_stem(path: &Path) -> String {

@@ -3,14 +3,12 @@
 //! 非 PTY 执行：经 SandboxSelector 选择隔离后端，并保留流式输出、timeout、
 //! cancel、资源限制与进程树清理语义。
 
-use std::time::Duration;
-
 use agent_domain::{ContentPart, TextContent, WorkspaceId};
 use async_trait::async_trait;
 use process_runtime::{CommandSpec, ProcessEvent, ProcessRuntime};
 use sandbox_runtime::{
-    FilesystemPolicy, NetworkMode, ResourceLimits, SandboxPolicy, SandboxProcessSpec,
-    SandboxSelector,
+    default_env_allowlist, default_secret_paths, FilesystemPolicy, NetworkMode, ResourceLimits,
+    SandboxPolicy, SandboxProcessSpec, SandboxSelector,
 };
 use serde_json::{json, Value};
 use tool_api::AgentTool;
@@ -31,24 +29,6 @@ use crate::common::require_str;
 use crate::common::resolve_rel;
 use crate::common::workspace_roots;
 use crate::common::BuiltinToolError;
-
-/// 环境变量白名单：仅这些变量透传，避免泄漏 Secret。
-#[cfg(not(windows))]
-const ENV_ALLOWLIST: &[&str] = &["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR"];
-#[cfg(windows)]
-const ENV_ALLOWLIST: &[&str] = &[
-    "PATH",
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "TERM",
-    "SYSTEMROOT",
-    "TEMP",
-    "TMP",
-    "USERPROFILE",
-    "COMSPEC",
-    "PATHEXT",
-];
 
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 10 * 60_000;
@@ -173,7 +153,6 @@ async fn run(
     let env_map = input.get("env").and_then(|v| v.as_object());
 
     let mut spec = CommandSpec::new(program).args(args);
-    spec.timeout = Some(Duration::from_millis(timeout_ms));
     spec.cwd = cwd;
     spec.max_output_bytes = opt_u64(input, "max_output_bytes")
         .unwrap_or(MAX_OUTPUT_BYTES)
@@ -181,13 +160,14 @@ async fn run(
     let max_output_bytes = spec.max_output_bytes;
     spec.env_clear = true;
     // 仅透传白名单变量 + 显式 env。
-    for name in ENV_ALLOWLIST {
+    let allowlist = default_env_allowlist();
+    for name in &allowlist {
         if let Ok(value) = std::env::var(name) {
-            spec.env.push(((*name).to_string(), value));
+            spec.env.push((name.clone(), value));
         }
     }
     for name in extra_env_allowlist {
-        if ENV_ALLOWLIST.contains(&name.as_str()) {
+        if allowlist.contains(name) {
             continue;
         }
         if let Ok(value) = std::env::var(name) {
@@ -202,23 +182,14 @@ async fn run(
         }
     }
 
-    let mut env_allowlist = ENV_ALLOWLIST
-        .iter()
-        .map(|name| (*name).to_string())
-        .chain(extra_env_allowlist.iter().cloned())
-        .collect::<Vec<_>>();
+    let mut env_allowlist = allowlist.clone();
+    env_allowlist.extend(extra_env_allowlist.iter().cloned());
     if let Some(map) = env_map {
         env_allowlist.extend(map.keys().cloned());
     }
     env_allowlist.sort_unstable();
     env_allowlist.dedup();
 
-    // `run_command` 只声明 Process capability；模型输入不能据此自行取得 Network
-    // capability。保留旧字段仅用于审计，真正策略始终 fail-closed。
-    let network_requested = input
-        .get("needs_network")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let cpu_seconds = opt_u64(input, "cpu_seconds")
         .unwrap_or(DEFAULT_CPU_SECONDS)
         .clamp(1, MAX_CPU_SECONDS);
@@ -262,7 +233,6 @@ async fn run(
             SandboxProcessSpec {
                 command: spec,
                 workspace_roots: roots,
-                needs_network: false,
             },
             policy,
             cancel,
@@ -319,11 +289,6 @@ async fn run(
             "fallback": selection.fallback,
             "note": selection.note,
             "attempted": selection.attempted,
-            "network": {
-                "requested": network_requested,
-                "granted": false,
-                "mode": "enforce",
-            },
             "limits": {
                 "timeout_ms": timeout_ms,
                 "cpu_seconds": cpu_seconds,
@@ -412,19 +377,6 @@ impl From<RunCommandError> for BuiltinToolError {
     }
 }
 
-fn default_secret_paths() -> Vec<std::path::PathBuf> {
-    let mut paths = Vec::new();
-    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
-        let home = std::path::PathBuf::from(home);
-        paths.extend([".ssh", ".aws", ".azure", ".kube"].map(|name| home.join(name)));
-    }
-    #[cfg(windows)]
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        paths.push(std::path::PathBuf::from(appdata).join("gcloud"));
-    }
-    paths
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +384,7 @@ mod tests {
     use agent_domain::WorkspaceId;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
+    use std::time::Duration;
     use test_support::RecordingToolSink;
     use tool_api::ToolOutputChannel;
     use tool_api::ToolStreamEvent;
@@ -615,7 +568,9 @@ mod tests {
 
     #[test]
     fn platform_environment_allowlist_contains_runtime_basics() {
-        assert!(ENV_ALLOWLIST.contains(&"PATH"));
+        // 单一来源：白名单取自 sandbox-runtime 导出的权威清单。
+        let allowlist = default_env_allowlist();
+        assert!(allowlist.iter().any(|name| name == "PATH"));
         #[cfg(windows)]
         for name in [
             "SYSTEMROOT",
@@ -625,7 +580,7 @@ mod tests {
             "COMSPEC",
             "PATHEXT",
         ] {
-            assert!(ENV_ALLOWLIST.contains(&name), "missing {name}");
+            assert!(allowlist.iter().any(|item| item == name), "missing {name}");
         }
     }
 
@@ -643,7 +598,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_network_request_is_audited_but_not_granted_and_limits_are_clamped() {
+    async fn limits_are_clamped_when_inputs_exceed_maximum() {
         let (service, id, _root, _ws_dir) = make_service();
         let result = run(
             &service,
@@ -665,9 +620,6 @@ mod tests {
         .await
         .expect("run");
         let sandbox = &result.metadata["sandbox"];
-        assert_eq!(sandbox["network"]["requested"], true);
-        assert_eq!(sandbox["network"]["granted"], false);
-        assert_eq!(sandbox["network"]["mode"], "enforce");
         assert_eq!(sandbox["limits"]["timeout_ms"], MAX_TIMEOUT_MS);
         assert_eq!(sandbox["limits"]["cpu_seconds"], MAX_CPU_SECONDS);
         assert_eq!(sandbox["limits"]["memory_mb"], MAX_MEMORY_MB);

@@ -23,7 +23,7 @@ Pawork/
 | --- | --- | --- |
 | `agent-domain` | 领域类型：消息、Run、事件、ID | 最底层，零外部 IO 依赖 |
 | `agent-events` | 事件类型与序列化、schema version | 依赖 agent-domain |
-| `agent-engine` | Agent Loop、运行控制、预算 | 依赖 provider-api / tool-api / plugin-api |
+| `agent-engine` | Agent Loop、运行控制、预算 | 依赖 provider-api / tool-api（plugin-api 接线由 P13 决策） |
 | `agent-api` | 对外领域 API 聚合 | 依赖 agent-engine |
 | `provider-api` | Provider Trait、canonical 请求 / 事件 / 错误 | 依赖 agent-domain |
 | `provider-runtime` | Provider 协议运行时、SSE/JSONL 解析、重试；Phase 2 现有 HTTP 基线后续抽到通用 `http-runtime` | 依赖 provider-api；抽离后依赖 http-runtime |
@@ -159,7 +159,7 @@ agent-domain
      ↑
 provider-api  tool-api  plugin-api
      ↑
-provider-*   builtin-tools   plugin-host
+provider-*   builtin-tools   wasm-plugin-host
      ↑
 agent-engine
      ↑

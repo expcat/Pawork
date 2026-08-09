@@ -1,10 +1,10 @@
 use std::{
     fs::{self, File},
     io::Read,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
-use crate::error::ResourceFileError;
+use crate::{error::ResourceFileError, source::ResourceIssue};
 
 pub(crate) fn read_utf8_bounded(
     path: &Path,
@@ -86,15 +86,16 @@ pub(crate) fn sorted_children_within(
 }
 
 fn canonical_within(path: &Path, root: &Path) -> Result<PathBuf, ResourceFileError> {
-    let canonical_root = dunce::canonicalize(root).map_err(ResourceFileError::Io)?;
-    let canonical_path = match dunce::canonicalize(path) {
+    let canonical_root =
+        policy_engine::canonicalize_platform(root).map_err(ResourceFileError::Io)?;
+    let canonical_path = match policy_engine::canonicalize_platform(path) {
         Ok(path) => path,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(ResourceFileError::NotFound)
         }
         Err(error) => return Err(ResourceFileError::Io(error)),
     };
-    if !path_is_within(&canonical_path, &canonical_root) {
+    if !policy_engine::path_within_root(&canonical_path, &canonical_root) {
         return Err(ResourceFileError::OutsideRoot);
     }
     Ok(canonical_path)
@@ -105,7 +106,7 @@ pub(crate) fn path_key(path: &Path) -> String {
 }
 
 pub(crate) fn workspace_relative_key(path: &Path, root: &Path) -> String {
-    relative_to_root(path, root).map_or_else(
+    policy_engine::relative_to_root(path, root).map_or_else(
         || {
             path_key(
                 path.file_name()
@@ -116,33 +117,54 @@ pub(crate) fn workspace_relative_key(path: &Path, root: &Path) -> String {
     )
 }
 
-pub(crate) fn path_is_within(path: &Path, root: &Path) -> bool {
-    relative_to_root(path, root).is_some()
+/// 资源 id / 参数名共用校验：非空，且仅由 ASCII 字母数字与 `-`、`_`（可选 `.`）组成。
+pub(crate) fn is_valid_identifier(id: &str, allow_dot: bool) -> bool {
+    !id.is_empty()
+        && id.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'-' | b'_')
+                || (allow_dot && byte == b'.')
+        })
 }
 
-#[cfg(not(windows))]
-fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
-    path.strip_prefix(root).ok().map(Path::to_path_buf)
-}
-
-#[cfg(windows)]
-fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
-    let mut path_components = path.components();
-    for root_component in root.components() {
-        let path_component = path_components.next()?;
-        if !path_component
-            .as_os_str()
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&root_component.as_os_str().to_string_lossy())
-        {
-            return None;
+/// 资源声明的相对路径校验：拒绝空串（含纯空白）、绝对路径、`..`、Windows 盘符前缀，
+/// 以及不含正常分量的路径；允许普通相对路径与 `./` 前缀。
+pub(crate) fn is_safe_relative_reference(raw: &str) -> bool {
+    if raw.trim().is_empty() {
+        return false;
+    }
+    let bytes = raw.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return false;
+    }
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        return false;
+    }
+    let mut has_normal = false;
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => has_normal = true,
+            Component::CurDir => {}
+            _ => return false,
         }
     }
-    Some(path_components.collect())
+    has_normal
+}
+
+/// TOML 解析的共用样板：解析失败时返回带 `issue_code` / `message` 的 [`ResourceIssue`]。
+pub(crate) fn parse_toml_resource<T: serde::de::DeserializeOwned>(
+    content: &str,
+    issue_code: &str,
+    message: &str,
+) -> Result<T, ResourceIssue> {
+    toml::from_str(content).map_err(|_| ResourceIssue::error(issue_code, message))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
@@ -175,5 +197,81 @@ mod tests {
             read_utf8_bounded_within(&root.path().join("linked"), root.path(), 1024),
             Err(ResourceFileError::OutsideRoot)
         ));
+    }
+
+    #[test]
+    fn identifier_allows_dot_only_when_requested() {
+        for id in ["abc", "ABC123", "a-b_c"] {
+            assert!(
+                is_valid_identifier(id, true),
+                "expected {id:?} valid with dot"
+            );
+            assert!(
+                is_valid_identifier(id, false),
+                "expected {id:?} valid without dot"
+            );
+        }
+        for id in ["a.b", "a.b-c_d", "x.y.z"] {
+            assert!(
+                is_valid_identifier(id, true),
+                "expected {id:?} valid with dot"
+            );
+        }
+        assert!(!is_valid_identifier("a.b", false));
+        for id in ["", "a b", "a/b", "aé"] {
+            assert!(
+                !is_valid_identifier(id, true),
+                "expected {id:?} invalid with dot"
+            );
+        }
+    }
+
+    #[test]
+    fn relative_reference_accepts_only_safe_normal_paths() {
+        for reference in [
+            "foo",
+            "foo/bar",
+            "./foo",
+            "foo/./bar",
+            "foo/bar.txt",
+            "foo/.",
+        ] {
+            assert!(
+                is_safe_relative_reference(reference),
+                "expected {reference:?} safe"
+            );
+        }
+        for reference in [
+            "",
+            "   ",
+            ".",
+            "./",
+            "..",
+            "foo/../bar",
+            "/abs",
+            "C:foo",
+            "C:/foo",
+        ] {
+            assert!(
+                !is_safe_relative_reference(reference),
+                "expected {reference:?} unsafe"
+            );
+        }
+    }
+
+    #[test]
+    fn toml_resource_parse_reports_issue_on_error() {
+        let parsed: BTreeMap<String, String> =
+            parse_toml_resource("key = \"value\"", "test_code", "boom").expect("valid TOML");
+        assert_eq!(parsed.get("key").map(String::as_str), Some("value"));
+
+        let issue = parse_toml_resource::<BTreeMap<String, String>>(
+            "key = [unclosed",
+            "test_parse",
+            "bad TOML",
+        )
+        .expect_err("invalid TOML must fail");
+        assert_eq!(issue.code, "test_parse");
+        assert_eq!(issue.message, "bad TOML");
     }
 }

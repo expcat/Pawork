@@ -112,10 +112,6 @@ impl PluginManifest {
         }
     }
 
-    pub fn qualified_name(&self, local_name: &str) -> String {
-        format!("{}::{local_name}", self.id)
-    }
-
     /// 构造 Ed25519 的稳定签名消息，并把组件内容摘要绑定到 manifest。
     pub fn canonical_signing_payload(
         &self,
@@ -529,11 +525,6 @@ mod tests {
             manifest.ensure_api_compatible(&Version::new(2, 0, 0)),
             Err(ManifestValidationError::IncompatibleApi { .. })
         ));
-    }
-
-    #[test]
-    fn host_namespaces_plugin_registrations() {
-        assert_eq!(manifest().qualified_name("echo"), "example.plugin::echo");
     }
 
     #[test]

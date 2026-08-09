@@ -25,9 +25,9 @@ use rmcp::model::{
 use rmcp::service::{Peer, PeerRequestOptions, RoleClient, ServiceError};
 use tokio::sync::Mutex;
 
-use crate::error::McpError;
-use crate::session::{McpPeer, McpServerCapabilities};
+use crate::config::RestartPolicy;
 use crate::transport::{McpConnector, RunningClient};
+use crate::{McpError, McpPeer, McpServerCapabilities};
 
 /// Coarse lifecycle state shown in [`HealthSnapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,33 +57,14 @@ pub struct HealthSnapshot {
     pub max_restart_attempts: u32,
 }
 
-/// Bounded exponential back-off for reconnect attempts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RestartPolicy {
-    /// Maximum consecutive failed attempts before giving up (per back-off window).
-    pub max_attempts: u32,
-    /// Initial delay; doubled after each failure.
-    pub base_delay: Duration,
-    /// Cap for the per-attempt delay.
-    pub max_delay: Duration,
-}
-
-impl Default for RestartPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: 4,
-            base_delay: Duration::from_millis(200),
-            max_delay: Duration::from_secs(10),
-        }
-    }
-}
-
 /// Tunables for [`ManagedMcpClient`].
 #[derive(Debug, Clone)]
 pub struct ManagedMcpClientOptions {
     pub name: Arc<str>,
     /// Per-request deadline applied to every peer operation.
     pub request_timeout: Duration,
+    /// Bounded exponential back-off for reconnect attempts (see
+    /// [`crate::config::RestartPolicy`]).
     pub restart: RestartPolicy,
 }
 
@@ -192,7 +173,7 @@ impl ManagedMcpClient {
     /// Reconnect while the caller holds the lifecycle gate. State updates are
     /// deliberately short; no state lock is held across sleep, auth or I/O.
     async fn reconnect(&self, cancel: Option<&CancellationToken>) -> Result<(), McpError> {
-        let policy = self.options.restart;
+        let policy = self.options.restart.clone();
         {
             let mut state = self.state.lock().await;
             // Drop any stale handle; its background task cleans up the transport/child.
@@ -206,7 +187,7 @@ impl ManagedMcpClient {
             if state.restart_attempts >= policy.max_attempts {
                 let cooldown = state
                     .last_connect_attempt
-                    .is_none_or(|t| t.elapsed() >= policy.max_delay * 4);
+                    .is_none_or(|t| t.elapsed() >= Duration::from_millis(policy.max_delay_ms) * 4);
                 if !cooldown {
                     return Err(disconnected_error(&state, &self.options.name));
                 }
@@ -232,7 +213,11 @@ impl ManagedMcpClient {
             if failed_attempts == 0 {
                 tracing::info!(name = %self.options.name, transport = self.connector.transport_name(), "connecting mcp client");
             } else {
-                let delay = backoff(policy.base_delay, policy.max_delay, failed_attempts - 1);
+                let delay = backoff(
+                    Duration::from_millis(policy.base_delay_ms),
+                    Duration::from_millis(policy.max_delay_ms),
+                    failed_attempts - 1,
+                );
                 tracing::warn!(
                     name = %self.options.name,
                     attempt = failed_attempts,
@@ -780,8 +765,8 @@ mod tests {
             request_timeout: Duration::from_secs(5),
             restart: RestartPolicy {
                 max_attempts: 4,
-                base_delay: Duration::from_millis(1),
-                max_delay: Duration::from_millis(10),
+                base_delay_ms: 1,
+                max_delay_ms: 10,
             },
         }
     }
@@ -936,8 +921,8 @@ mod tests {
         let mut options = fast_options("dead");
         options.restart = RestartPolicy {
             max_attempts: 2,
-            base_delay: Duration::from_millis(1),
-            max_delay: Duration::from_millis(5),
+            base_delay_ms: 1,
+            max_delay_ms: 5,
         };
         let client = client(connector, options);
 

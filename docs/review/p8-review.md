@@ -194,3 +194,45 @@ Phase 8 的**架构选择是正确的**：单一 `resource-loader` crate + 中�
 - Skills + Templates：`skills.rs`（~44KB）/ `templates.rs`（~25KB）全读 + 依赖/冲突机器逐函数行数核算。
 - Watch + IO + Diagnostics + Profiles + Agents：`watch.rs` / `io.rs` / `diagnostics.rs` / `profiles.rs` / `agents.rs` 全读 + 跨仓库 `rg` 消费者核查。
 - 集成与消费者：`context-engine` 的 `resources.rs` / `source.rs` / `builder.rs` + 全仓库依赖与调用核查（确认 app-service/cli-host/agent-engine 零依赖）。
+
+## 修复记录（review-remediation）
+
+> Phase 8 · Skills、Prompts 与 Instructions（resource-loader）· 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P8-1 ~ P8-8
+
+**最终目的**：执行本评审 §5「减少」导向——删死抽象、合并重复校验、简化 Skills 依赖引擎，并为双优先级表加守护测试；把「解析后暂无消费者」的字段标记为 deferred-consumer。零端到端消费者（§2）、ResourceBundle 双状态（§3.4）、session/run 泄漏（§4.2）、热重载/诊断视图（§4.3）按评审结论显式延后到 P13 Host-Run 接线。详见 [P8-9 修复任务](../../plan/P8-9-review-remediation.md)。
+
+**涉及范围**：`resource-loader`（loader/lib/agents/source/diagnostics/request/skills/templates/profiles/io）、`context-engine`（resources.rs 测试模块）、`docs/features/skills.md`
+
+### 处置策略（按 §5 / §6 矩阵）
+
+- **现在修复（落地）**：§3.3 死 API/死字段删除；§3.1 Skills 依赖引擎简化；§3.5 重复校验/解析合并；§4.1 双优先级表 cross-check；§3.2 deferred-consumer 文档标记。
+- **显式延后（P13 接线时处理）**：§2 零端到端消费者（首次通电验证）；§3.4 ResourceBundle 双重状态（与接线一起做更稳）；§4.2 session/run → AdHocInstructions 的 tier-prefix 隐性依赖；§4.3 热重载/诊断视图（实现质量已达标，等待消费者）。延后项在 `docs/features/skills.md`「已解析但暂无消费者」小节登记。
+
+### 主要产出物
+
+- 删除：`LoadResources` trait、`ResourceBundle::diagnostic_view`、`ResourceLoader::options`、`PromptTemplate::render`、`AgentsDocument::{new,into_documents,iter,is_empty}`、`ResourceOrigin::Builtin`、`ResourceLimits.max_include_depth`。
+- 简化：skills.rs 依赖引擎单次 BFS + 裁决复用（净 −26 行）。**诚实记录**：评审预估 −113 行，实际 −26 行——级联拒绝测试（`cascade_rejection_when_inner_dependency_missing` 等）证明「损坏依赖方必须剔除」是不可约简语义，plain BFS 不可达性无法复现；`active_from` 仍需一次沿 Valid 边的反向消除（O(V+E)、无重匹配）。简化仍达成核心目标（消除不动点循环 + 重复 semver 匹配）。
+- 合并：io.rs 三个共享 helper（`is_valid_identifier`/`is_safe_relative_reference`/`parse_toml_resource`），9 处调用点收口。
+- 测试：§4.1 双优先级表 cross-check（context-engine +1）；io.rs helper 单测（+3）。
+- 文档：skills.md deferred-consumer 标记小节。
+
+### 验收标准（保留 REVIEW 追踪章节）
+
+- [x] **§3.3 死 API**：LoadResources / diagnostic_view / options / PromptTemplate::render / AgentsDocument 4 方法 / ResourceOrigin::Builtin / max_include_depth 全部删除，`rg` 全仓库零残留
+- [x] **§3.1 Skills 引擎**：依赖解析单次 BFS、无重复 semver 匹配；21 项 skills 测试零改动通过；激活集与诊断（code/message）与改前逐字节一致
+- [x] **§3.5 重复校验**：io.rs 三 helper 收口 9 处调用点；原 issue code/message 逐字节保留
+- [x] **§4.1 优先级表**：cross-check 测试落地，7 直接映射变体数值一致，Session/Run→AdHoc 重映射有断言与注释
+- [x] **§3.2 deferred-consumer**：skills.md 新增标记小节，覆盖 §3.2 全部字段与 §4.3 的 watch/诊断视图
+- [x] **显式延后**：§2/§3.4/§4.2/§4.3 在修复任务与 skills.md 中明确标注归属 P13，未误标完成
+
+### 验证记录（2026-08-09）
+
+- `cargo test -p resource-loader`：54 passed（baseline 51 + io.rs helper 3），0 failed；其中 skills 21 项零改动通过。
+- `cargo test -p context-engine`：31 passed（baseline 30 + §4.1 cross-check 1），0 failed。
+- `cargo clippy -p resource-loader -p context-engine --all-targets -- -D warnings`：通过（agents.rs `len_without_is_empty` 已 `#[allow]` 并注释）。
+- `cargo fmt -p resource-loader -p context-engine -- --check` 与 `git diff --check`：通过。
+- `git diff --stat`：12 文件、+399/−309，净 +90；其中 skills.rs −26、templates.rs −31。
+- **独立 reviewer 复核**（deepseek_reviewer）：dead-code 逐项 `rg` 复核、skills 简化逐场景行为等价追踪、io.rs helper 与原实现逐行比对、§4.1 测试数值对照两表——无阻塞项。唯一 [ISSUE]：`is_safe_relative_reference` 对 `.`/`./`/`C:foo` 等病态输入改为解析期前置拒绝（原为渲染期 `is not a regular file`），属有测试覆盖的有意加固，无真实输入回归。
+- 按本任务门禁节奏只执行受影响 crate 的定向门禁；workspace 全量、三平台与发布门禁留待 Core 主干 L2/L3。
+
+**相关文档**：[REVIEW.md](../../REVIEW.md) §Phase 8 · [P8-9 修复任务](../../plan/P8-9-review-remediation.md) · [docs/features/skills.md](../features/skills.md)

@@ -19,6 +19,7 @@ pub use decision::{ApprovalPrompt, CommandRisk, ExecutionConstraints, PolicyDeci
 pub use engine::{PolicyEngine, PolicyInput};
 pub use mode::ApprovalMode;
 pub use path::{
-    canonicalize_platform, path_within_root, resolve_workspace_path, PathSafetyError, ResolvedPath,
+    canonicalize_platform, path_within_root, relative_to_root, resolve_workspace_path,
+    PathSafetyError, ResolvedPath,
 };
 pub use shell::classify_command;

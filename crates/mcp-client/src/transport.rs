@@ -24,6 +24,7 @@ use rmcp::{RoleClient, ServiceExt};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
+use crate::config::is_loopback_url;
 use crate::McpError;
 
 /// Placeholder written in place of every secret-bearing field when formatting a config
@@ -273,7 +274,10 @@ async fn connect_http(cfg: &HttpTransportConfig) -> Result<RunningClient, McpErr
 /// Translate a Pawork [`HttpTransportConfig`] into the rmcp transport config.
 ///
 /// Exposed (crate-private) so tests can assert redaction-bearing inputs are wired
-/// correctly without performing real network IO.
+/// correctly without performing real network IO. Scheme / userinfo / fragment
+/// validation already happened at config parse time ([`crate::config`]), so this
+/// function only keeps the runtime guards that depend on the resolved config
+/// (empty/conflicting auth, loopback+HTTPS for secrets, header validity).
 pub(crate) fn build_http_transport_config(
     cfg: &HttpTransportConfig,
 ) -> Result<StreamableHttpClientTransportConfig, McpError> {
@@ -285,21 +289,6 @@ pub(crate) fn build_http_transport_config(
     }
     let parsed = url::Url::parse(url)
         .map_err(|error| McpError::Config(format!("invalid http url: {error}")))?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(McpError::Config(
-            "http transport requires an http/https url".into(),
-        ));
-    }
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(McpError::Config(
-            "http credentials must not be embedded in URL userinfo".into(),
-        ));
-    }
-    if parsed.fragment().is_some() {
-        return Err(McpError::Config(
-            "http endpoint must not contain a URL fragment".into(),
-        ));
-    }
     if cfg.auth_token.as_deref().is_some_and(str::is_empty) {
         return Err(McpError::Config("auth_token must not be empty".into()));
     }
@@ -398,15 +387,6 @@ fn safe_url_for_debug(value: &str) -> String {
         safe.push_str("?[REDACTED]");
     }
     safe
-}
-
-fn is_loopback_url(url: &url::Url) -> bool {
-    match url.host() {
-        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(address)) => address.is_loopback(),
-        Some(url::Host::Ipv6(address)) => address.is_loopback(),
-        None => false,
-    }
 }
 
 /// Debug helper that renders a string map with all values replaced by [`REDACTED`].
@@ -539,19 +519,6 @@ mod tests {
             ),
             Err(McpError::Config(_))
         ));
-        assert!(matches!(
-            build_http_transport_config(&HttpTransportConfig::new(
-                "https://user:password@remote.example/mcp"
-            )),
-            Err(McpError::Config(_))
-        ));
-        assert!(matches!(
-            build_http_transport_config(&HttpTransportConfig::new(
-                "https://remote.example/mcp#fragment"
-            )),
-            Err(McpError::Config(_))
-        ));
-
         let mut headers = HashMap::new();
         headers.insert("authorization".into(), "Bearer duplicate".into());
         assert!(matches!(

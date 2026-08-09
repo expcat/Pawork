@@ -9,6 +9,31 @@ use std::sync::OnceLock;
 
 use crate::{NetworkMode, SandboxPolicy};
 
+/// 系统只读路径单一来源（§2.3）：bwrap ro-bind 与 Landlock read_paths 共用，
+/// 各消费方按需筛选（bwrap 跳过 /proc 与 /dev，由 --proc/--dev 挂载）。
+const SYSTEM_READ_PATHS: &[&str] = &[
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/sbin",
+    "/nix",
+    "/proc",
+    "/etc/ld.so.cache",
+    "/etc/ld.so.preload",
+    "/etc/ssl",
+    "/etc/ca-certificates",
+    "/etc/resolv.conf",
+    "/etc/hosts",
+    "/etc/nsswitch.conf",
+    "/etc/passwd",
+    "/etc/group",
+    "/dev/urandom",
+    "/dev/random",
+    "/dev/null",
+    "/dev/zero",
+];
+
 /// landlock 能力探测结果。
 #[derive(Clone, Debug)]
 pub struct LandlockSupport {
@@ -52,25 +77,16 @@ pub fn probe_landlock_support() -> LandlockSupport {
 /// 进程 `--unshare-pid`、生命周期 `--die-with-parent`。系统只读目录仅绑定实际存在的。
 pub fn generate_bwrap_argv(policy: &SandboxPolicy, workspace_roots: &[PathBuf]) -> Vec<String> {
     let mut argv: Vec<String> = Vec::new();
-    for (host, dest) in [
-        ("/usr", "/usr"),
-        ("/lib", "/lib"),
-        ("/lib64", "/lib64"),
-        ("/bin", "/bin"),
-        ("/sbin", "/sbin"),
-        ("/nix", "/nix"),
-        ("/etc/ssl", "/etc/ssl"),
-        ("/etc/ca-certificates", "/etc/ca-certificates"),
-        ("/etc/resolv.conf", "/etc/resolv.conf"),
-        ("/etc/hosts", "/etc/hosts"),
-        ("/etc/nsswitch.conf", "/etc/nsswitch.conf"),
-        ("/etc/passwd", "/etc/passwd"),
-        ("/etc/group", "/etc/group"),
-    ] {
+    // 与 Landlock 共用 SYSTEM_READ_PATHS 单一来源；/proc 与 /dev/* 由
+    // --proc/--dev 挂载，不重复 ro-bind；仅绑定实际存在的路径。
+    for host in SYSTEM_READ_PATHS {
+        if host.starts_with("/proc") || host.starts_with("/dev") {
+            continue;
+        }
         if std::path::Path::new(host).exists() {
             argv.push("--ro-bind".into());
-            argv.push(host.into());
-            argv.push(dest.into());
+            argv.push((*host).into());
+            argv.push((*host).into());
         }
     }
     argv.push("--dev".into());
@@ -209,7 +225,10 @@ mod bwrap {
                 .spawn_stream(spec.command, cancel)
                 .await
                 .map_err(SandboxError::Process)?;
-            Ok(SandboxProcess { events, handle })
+            Ok(SandboxProcess {
+                events,
+                _handle: handle,
+            })
         }
     }
 }
@@ -225,34 +244,12 @@ mod landlock_backend {
     use async_trait::async_trait;
     use process_runtime::{LinuxLandlockPolicy, ProcessRuntime};
 
-    use super::probe_landlock_support;
+    use super::{probe_landlock_support, SYSTEM_READ_PATHS};
     use crate::{
         apply_soft_restrictions, NetworkMode, SandboxBackend, SandboxError, SandboxPolicy,
         SandboxProcess, SandboxProcessSpec,
     };
 
-    const SYSTEM_READ_PATHS: &[&str] = &[
-        "/usr",
-        "/lib",
-        "/lib64",
-        "/bin",
-        "/sbin",
-        "/nix",
-        "/proc",
-        "/etc/ld.so.cache",
-        "/etc/ld.so.preload",
-        "/etc/ssl",
-        "/etc/ca-certificates",
-        "/etc/resolv.conf",
-        "/etc/hosts",
-        "/etc/nsswitch.conf",
-        "/etc/passwd",
-        "/etc/group",
-        "/dev/urandom",
-        "/dev/random",
-        "/dev/null",
-        "/dev/zero",
-    ];
     const SYSTEM_WRITE_PATHS: &[&str] = &["/dev/null", "/dev/zero"];
 
     fn normalized_or_original(path: &Path) -> PathBuf {
@@ -409,7 +406,10 @@ mod landlock_backend {
                 .spawn_stream(spec.command, cancel)
                 .await
                 .map_err(SandboxError::Process)?;
-            Ok(SandboxProcess { events, handle })
+            Ok(SandboxProcess {
+                events,
+                _handle: handle,
+            })
         }
     }
 
@@ -433,7 +433,6 @@ mod landlock_backend {
             let spec = SandboxProcessSpec {
                 command: CommandSpec::new("true"),
                 workspace_roots: vec![root],
-                needs_network: false,
             };
             assert!(matches!(
                 compile_policy(&spec, &policy),
@@ -470,7 +469,6 @@ mod landlock_backend {
             let spec = SandboxProcessSpec {
                 command,
                 workspace_roots: vec![workspace.clone()],
-                needs_network: false,
             };
             let policy = SandboxPolicy {
                 filesystem: FilesystemPolicy {
@@ -532,7 +530,6 @@ mod landlock_backend {
                         SandboxProcessSpec {
                             command,
                             workspace_roots: vec![workspace.to_path_buf()],
-                            needs_network: false,
                         },
                         policy,
                         CancellationToken::new(),
@@ -713,7 +710,6 @@ mod tests {
                     SandboxProcessSpec {
                         command,
                         workspace_roots: vec![workspace.to_path_buf()],
-                        needs_network: false,
                     },
                     policy,
                     CancellationToken::new(),

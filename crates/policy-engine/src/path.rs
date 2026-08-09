@@ -165,12 +165,12 @@ pub fn path_within_root(path: &Path, root: &Path) -> bool {
 }
 
 #[cfg(not(windows))]
-fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
+pub fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
     path.strip_prefix(root).ok().map(Path::to_path_buf)
 }
 
 #[cfg(windows)]
-fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
+pub fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
     let mut path_components = path.components();
     for root_component in root.components() {
         let path_component = path_components.next()?;

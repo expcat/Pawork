@@ -17,10 +17,9 @@ use crate::{
     skills::load_skills,
     templates::load_templates,
     AgentProfile, AgentsHierarchy, ResolvedInstructions, ResourceDiagnosticEntry,
-    ResourceDiagnosticStatus, ResourceDiagnosticView, ResourceDiagnostics, ResourceHotReload,
-    ResourceIssue, ResourceKind, ResourceLimits, ResourceLoadError, ResourceLoaderOptions,
-    ResourceOrigin, ResourceProvenance, ResourceRequest, ResourceWatcher, SkillResolution,
-    TemplateResolution,
+    ResourceDiagnosticStatus, ResourceDiagnostics, ResourceHotReload, ResourceIssue, ResourceKind,
+    ResourceLimits, ResourceLoadError, ResourceLoaderOptions, ResourceOrigin, ResourceProvenance,
+    ResourceRequest, ResourceWatcher, SkillResolution, TemplateResolution,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -38,7 +37,7 @@ pub enum ResourceInstructionKind {
 }
 
 impl ResourceInstructionKind {
-    const fn priority(self) -> u8 {
+    pub const fn priority(self) -> u8 {
         match self {
             Self::AgentProfile => 2,
             Self::UserGlobalInstructions => 4,
@@ -75,16 +74,6 @@ pub struct ResourceBundle {
     pub diagnostics: ResourceDiagnostics,
 }
 
-impl ResourceBundle {
-    pub fn diagnostic_view(&self) -> ResourceDiagnosticView {
-        ResourceDiagnosticView::build(&self.diagnostics, &diagnostics::Redactor::default())
-    }
-}
-
-pub trait LoadResources: Send + Sync {
-    fn load(&self, request: &ResourceRequest) -> Result<ResourceBundle, ResourceLoadError>;
-}
-
 #[derive(Clone)]
 pub struct ResourceLoader {
     workspaces: WorkspaceService,
@@ -97,10 +86,6 @@ impl ResourceLoader {
             workspaces,
             options,
         }
-    }
-
-    pub fn options(&self) -> &ResourceLoaderOptions {
-        &self.options
     }
 
     /// 加载当前快照，并监听全局资源目录与全部 workspace roots。`AGENTS.md` 可位于
@@ -144,16 +129,9 @@ impl ResourceLoader {
         }
         Ok(())
     }
-}
 
-fn nearest_existing_watch_root(path: &Path) -> Option<PathBuf> {
-    path.ancestors()
-        .find(|ancestor| ancestor.is_dir() && ancestor.parent().is_some())
-        .map(Path::to_path_buf)
-}
-
-impl LoadResources for ResourceLoader {
-    fn load(&self, request: &ResourceRequest) -> Result<ResourceBundle, ResourceLoadError> {
+    /// 加载当前快照。
+    pub fn load(&self, request: &ResourceRequest) -> Result<ResourceBundle, ResourceLoadError> {
         self.validate_workspace_resource_dir()?;
         request.current_path.validate()?;
         let workspace = self.workspaces.get(&request.workspace_id)?.ok_or_else(|| {
@@ -242,6 +220,12 @@ impl LoadResources for ResourceLoader {
             diagnostics,
         })
     }
+}
+
+fn nearest_existing_watch_root(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|ancestor| ancestor.is_dir() && ancestor.parent().is_some())
+        .map(Path::to_path_buf)
 }
 
 fn load_plain_instructions(

@@ -242,3 +242,51 @@ Phase 10 的**架构方向正确，实现质量是 P8–P9 同期家族里最好
 - **canonical 一致性与边界**（Singer）：ExternalPlugin vs policy-engine 集成、hook-runtime vs P17-1 user-hooks 边界、PluginStateStore trait 归属、命名/登记一致性、文档 vs 实现承诺。
 
 Commander 独立复核的关键事实：`PluginCapability` 实为 8 变体（用 4 个）；`PluginLifecycleEvent::{Load,Register,Unload}` 全 workspace 零构造点；`wasm-plugin-host`/`hook-runtime` 无 `PolicyEngine`/`ApprovalResolver` 引用（仅测试一处 `ApprovalMode`）；`into_tool_registry` 仅 2 处测试调用、生产用 `to_tool_registry`；`qualified_name` 仅 1 测试调用；`agent-engine/Cargo.toml` 无 `plugin-api`（与 workspace-layout.md:26 冲突）；`invoke_operation` 的 Lifecycle 分支仅测试调用、生产 lifecycle 只经 `on_lifecycle_event`。
+
+---
+
+## 修复记录（review-remediation）
+
+> Phase 10 · WASM Plugin（plugin-api / wasm-plugin-host / hook-runtime）· 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P10-1 ~ P10-6
+
+**最终目的**：执行本评审 §5/§6 的「减少」导向——删死 pub API、合并重复校验、收敛 Lifecycle 双路径，让 P13 接线时面对一个更小、门禁单一、没有死概念与语义分叉的插件子系统。零端到端消费者（§2）、4 个预留 capability（§3.7）、3 个死 lifecycle 事件（§3.8）、Drop/epoch 微优化（§4.3b,c）、PluginStateStore trait 上移（§4.5）按评审结论显式延后。详见 [P10-7 修复任务](../../plan/P10-7-review-remediation.md)。
+
+### 现在修复（落地）
+
+| 评审项 | 处置 | 证据 |
+| --- | --- | --- |
+| §3.1 死 pub API | 删 `NamespacedToolRegistry::{into_tool_registry,len,is_empty}`、`PluginCommandRegistry::{contains,len,is_empty}`、`TrustStore::{install,contains,get,len,is_empty,remove}` | registry.rs / trust.rs；host_wat.rs `into→to`、`len→names().len`；`rg` 全 workspace 零残留 |
+| §3.4 `qualified_name` | 删方法 + 唯一测试 | manifest.rs；生产用 `registry::external_tool_name` |
+| §3.5 `plugin_context` | 删方法 + 唯一测试 + 悬空 import | invocation.rs；生产只走 `state_scope()` |
+| §4.1 Lifecycle 双路径 | 新增 `LoadedPlugin::invoke_with_state`，`on_lifecycle_event` 与 `invoke_operation` 均委托它 | host.rs；净 −13 行；`operation_lock` 单次获取 |
+| §3.2 重复 input 预检 | 由 `invoke_checked` 统一承担（合并进 §4.1） | host.rs invoke_with_state |
+| §3.3 内联快照闸门 | 改调 `state_snapshot` 函数（合并进 §4.1） | host.rs invoke_with_state |
+| §4.3a 超时确定性 | `HostConfig::validate` 新增 `invoke_timeout>=epoch_tick` + `TimeoutSmallerThanTick` + 测试 | config.rs |
+| §3.9 文档 typo | 依赖图 `plugin-host→wasm-plugin-host` | workspace-layout.md §6 |
+| §4.4 文档超前 | agent-engine 依赖行去掉 `plugin-api`；plugins.md 能力清单标注实现状态 | workspace-layout.md §2；plugins.md |
+
+**语义保持**：路径 A（on_lifecycle_event）未声明事件仍 `Ok(())` no-op；路径 B（invoke_operation）未声明仍 `PermissionDenied`；`enforce_operation_capability/registration` 读 `Arc<PluginManifest>`（共享不可变）置于锁外，`operation_lock` 只在 `invoke_with_state` 取一次（tokio Mutex 不可重入）。
+
+### 显式延后（不在本任务范围）
+
+| 评审项 | 延后到 | 原因 |
+| --- | --- | --- |
+| §2 零端到端消费者 | P13-1/P13-2 | 首次通电才能观测 |
+| §3.7 四个预留 capability | P13 规划明确后 | ADR 级契约，接线决策前删/留均可能误导 |
+| §3.8 Load/Register/Unload 死事件 | P17-2 package 生命周期 | 届时由 host 显式补发或删除 |
+| §4.3b Drop 不排空在途调用 | 接入时 | 仅当 host 被 Arc 共享才有风险 |
+| §4.3c epoch deadline invoke 不重置 | 接入时 | 微优化 |
+| §4.5 PluginStateStore trait 上移 plugin-api | durable backend 落地时 | 需先解耦 HostConfig 配额 |
+
+### 验证记录（2026-08-10）
+
+- `cargo test -p wasm-plugin-host --lib`：8 passed / 0 failed（含新增 `timeout_smaller_than_tick_is_rejected`）。
+- `cargo test -p wasm-plugin-host --test host_wat`：29 passed / 4 filtered。4 个 trap 测试（`fuel_exhaustion_is_reported`/`memory_growth_is_rejected`/`invoke_timeout_aborts_loop`/`cancellation_aborts_loop`）是 **Windows debug 下 wasmtime 27「panic in a function that cannot unwind」直接 abort 测试进程的既有问题**——Commander 用 `git stash` 在未含本次改动的基线上逐个复现（5/5 确定性，`STATUS_STACK_BUFFER_OVERRUN`），与本次改动无关。整体 run 在首个 trap 测试处终止，故用 `--skip` 跑完其余 29 项。该既有问题建议接入 P13 前由独立任务处理。
+- `cargo test -p plugin-api`：15 passed（13 单元 + 2 v1_contract）/ 0 failed。
+- `cargo clippy -p wasm-plugin-host -p plugin-api -p hook-runtime --all-targets -- -D warnings`：通过，0 警告。
+- `cargo fmt -p wasm-plugin-host -p plugin-api -p hook-runtime -- --check`：通过。
+- **独立 reviewer 复核**（deepseek_reviewer）：删除项零残留、双路径合并语义保持、§4.3a 自洽、文档与源码事实一致——无阻塞项（详见 P10-7 验证记录）。
+
+**整体 diff**：9 文件、+87/−188，净 −101 行（占 P10 四 crate 源码约 4%，与评审预估一致）。
+
+**相关文档**：[REVIEW.md](../../REVIEW.md) §Phase 10 · [P10-7 修复任务](../../plan/P10-7-review-remediation.md) · [docs/features/plugins.md](../features/plugins.md) · [ROADMAP Phase 10](../../ROADMAP.md)

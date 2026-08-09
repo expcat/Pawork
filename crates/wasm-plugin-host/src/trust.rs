@@ -49,42 +49,9 @@ impl TrustStore {
         }
     }
 
-    /// 安装一个 32 字节 Ed25519 公钥。无效的公钥字节返回
-    /// [`SignatureError::InvalidEncoding`]。
-    pub fn install(
-        &mut self,
-        key_id: impl Into<String>,
-        public_key: [u8; 32],
-    ) -> Result<(), SignatureError> {
-        let verifying = VerifyingKey::from_bytes(&public_key)
-            .map_err(|error| SignatureError::InvalidEncoding(error.to_string()))?;
-        self.keys.insert(key_id.into(), verifying);
-        Ok(())
-    }
-
     /// 直接安装一个已构造的 `VerifyingKey`（测试或外部密钥管理场景）。
     pub fn install_verifying_key(&mut self, key_id: impl Into<String>, verifying: VerifyingKey) {
         self.keys.insert(key_id.into(), verifying);
-    }
-
-    pub fn contains(&self, key_id: &str) -> bool {
-        self.keys.contains_key(key_id)
-    }
-
-    pub fn get(&self, key_id: &str) -> Option<&VerifyingKey> {
-        self.keys.get(key_id)
-    }
-
-    pub fn len(&self) -> usize {
-        self.keys.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
-    }
-
-    pub fn remove(&mut self, key_id: &str) -> Option<VerifyingKey> {
-        self.keys.remove(key_id)
     }
 
     /// 校验签名。`canonical_signing_payload` 由 `PluginManifest` 计算，已把
