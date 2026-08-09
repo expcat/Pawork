@@ -480,6 +480,7 @@ mod tests {
         std::fs::create_dir_all(linked.join("ignored").join("nested"))
             .expect("create ignored tree");
         std::fs::create_dir_all(linked.join("kept").join("nested")).expect("create watched tree");
+        let canonical_linked = dunce::canonicalize(&linked).expect("canonical linked worktree");
 
         let repo_service = GitService::open(&linked, CancellationToken::new())
             .await
@@ -507,9 +508,12 @@ mod tests {
             .map(|path| dunce::simplified(path).to_path_buf())
             .collect();
         assert!(watched.contains(&dunce::simplified(&git_dir).to_path_buf()));
-        assert!(watched.contains(&dunce::simplified(&linked.join("kept")).to_path_buf()));
+        assert!(
+            watched.contains(&dunce::simplified(&canonical_linked.join("kept")).to_path_buf()),
+            "watched={watched:?}"
+        );
         assert!(!watched
             .iter()
-            .any(|path| path.starts_with(linked.join("ignored"))));
+            .any(|path| path.starts_with(canonical_linked.join("ignored"))));
     }
 }
