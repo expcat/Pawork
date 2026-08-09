@@ -1,6 +1,6 @@
 # P2-8：流式组装
 
-> Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 依赖：P2-5
+> Phase 2 · 首个真实 Provider · 状态：🟢已完成 · 依赖：P2-5
 
 **最终目的**：将 `ProviderStreamEvent` 组装为领域消息（含 partial 消息表达），让 Agent Engine 拿到的是结构化、可增量呈现的消息。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] partial 消息可表达
-- [ ] 多 tool call 正确组装
+- [x] partial 消息可表达
+- [x] 多 tool call 正确组装
 
 **相关文档**：[agent-engine](../docs/features/agent-engine.md) · [ROADMAP](../ROADMAP.md)

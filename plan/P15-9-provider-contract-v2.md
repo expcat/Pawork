@@ -36,4 +36,4 @@
 
 **相关文档**：[providers](../docs/features/providers.md) · [ADR-015 Contract Tests](../docs/adr/ADR-015-provider-contract-tests.md) · [ADR-016 事件持久化重放](../docs/adr/ADR-016-core-event-persist-replay.md) · [测试体系](../docs/quality/testing.md) · [P2-11 Contract Tests](P2-11-contract-tests.md) · [P2-12 Phase 2 评审修复](P2-12-review-remediation.md) · [ROADMAP](../ROADMAP.md)
 
-**依赖建议（2026-08 规划）**：不新增依赖，复用基线已列测试栈（insta / proptest / arbitrary / wiremock）；fuzz 若需 `cargo-fuzz` 按基线既有流程，不在此新增。独立 target 目录仅作隔离，门禁脚本负责清理。
+**依赖建议（2026-08 规划）**：不新增依赖，复用基线已列测试栈（insta / proptest / wiremock）；若后续确需独立 libFuzzer target，再随任务显式引入 `cargo-fuzz` / `arbitrary` 并回填基线。独立 target 目录仅作隔离，门禁脚本负责清理。

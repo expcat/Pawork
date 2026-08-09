@@ -22,7 +22,7 @@
 | --- | --- | --- | --- | --- |
 | 0 | 架构与协议冻结 | 12 | 12 | 🟢已完成 |
 | 1 | 基础设施 | 13 | 13 | 🟢已完成 |
-| 2 | 首个真实 Provider | 12 | 11 | 🔵进行中（P2-12 评审修复待启动） |
+| 2 | 首个真实 Provider | 12 | 12 | 🟢已完成 |
 | 3 | Agent Loop | 11 | 10 | 🔵进行中（P3-11 评审修复待启动） |
 | 4 | 核心工具与权限 | 13 | 12 | 🔵进行中（P4-13 评审修复待启动） |
 | 5 | Session、Branch 与 Compaction | 10 | 9 | 🔵进行中（P5-10 评审修复待启动） |
@@ -40,7 +40,7 @@
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **84** | — |
+| **合计** | — | **210** | **85** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -48,7 +48,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P2-12 Phase 2 评审修复** —— 修复真实 Provider 端点下的长流超时、预取消、usage-only chunk 与 `/models` 认证问题，并收敛退避死代码、契约和文档漂移。详情见 [plan/P2-12-review-remediation.md](plan/P2-12-review-remediation.md)。
+> 🎯 **P3-11 Phase 3 评审修复** —— 完成 Agent Loop 主干接线、预算/重放修复与文档收敛。详情见 [plan/P3-11-review-remediation.md](plan/P3-11-review-remediation.md)。
 
 ## 实施波次与门禁节奏
 
@@ -99,6 +99,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | --- | --- | --- | --- |
 | 异步运行时 | tokio | P0-1 | 事实标准；按需启用 feature |
 | 异步 Trait | async-trait | P0-4、P0-5、P0-6、P0-8 | 稳定 Rust 上统一对象安全的异步接口，协议 crate 不绑定具体 runtime |
+| 异步流 / 字节 | futures、bytes | P2-1、P2-5 | Provider 流式字节传输与异步消费的基础抽象 |
 | 序列化 | serde / serde_json | P0-1 | 生态统一 |
 | 错误 | thiserror（库）+ anyhow（应用层） | P0-7 | Rust 惯用分工 |
 | 哈希 / 版本 | blake3、semver | P0-6、P1-6、P4-11 | blake3 用于 Blob 内容寻址与 checkpoint 完整性；semver 用于 Plugin API 版本 |
@@ -123,9 +124,8 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | Windows 绑定 | windows-rs（+ windows-service） | P11-4、P1-12 | 官方绑定 |
 | Diff 生成 | similar | P7-3 | word-level diff，纯 Rust |
 | PTY 基础 | portable-pty（或维护 fork） | P11-6 | 上游迭代慢，开工前先评估 fork |
-| 重试 | backon | P2-10 | 退避策略完整 |
 | 签名 | ed25519-dalek | P10-1 | 插件 manifest 签名 |
-| 测试与基准 | criterion、proptest、cargo-fuzz + arbitrary、wiremock、insta、assert_cmd | P0-12、P2-11 等 | 基准 / 属性 / fuzz / HTTP mock / 快照 / CLI e2e |
+| 测试与基准 | criterion、proptest、wiremock、insta、assert_cmd | P0-12、P2-11 等 | 基准 / 属性 / HTTP mock / 快照 / CLI e2e；解析器 fuzz 当前由 proptest 覆盖 |
 | HTML 解析 | scraper | P14-4 | html5ever + selectors；仅最小子集（解析 + 选择器匹配），用于额度控制台页面抓取 |
 
 ### Desktop GUI 单独依赖基线
@@ -251,7 +251,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P2-9 | 🟢 | Usage 与 stop reason | token/费用/完成原因归一 | [详情](plan/P2-9-usage-stopreason.md) |
 | P2-10 | 🟢 | 重试与错误归一化 | 可重试判定/退避 | [详情](plan/P2-10-retry-error.md) |
 | P2-11 | 🟢 | Provider Contract Tests | 统一测试套件 | [详情](plan/P2-11-contract-tests.md) |
-| P2-12 | 🟡 | Phase 2 评审修复 | 正确性高危（V1~V4）+ 退避死代码（V8）+ 契约/文档漂移 | [详情](plan/P2-12-review-remediation.md) |
+| P2-12 | 🟢 | Phase 2 评审修复 | 正确性高危（V1~V4）+ 退避死代码（V8）+ 契约/文档漂移 | [详情](plan/P2-12-review-remediation.md) |
 
 ### Phase 3：Agent Loop
 

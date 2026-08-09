@@ -268,6 +268,20 @@ mod tests {
     }
 
     #[test]
+    fn message_stop_without_reason_is_completed() {
+        let mut state = AnthropicStreamState::default();
+        let events = event_to_events(r#"{"type":"message_stop"}"#, &mut state);
+
+        assert!(matches!(
+            events.as_slice(),
+            [ProviderStreamEvent::ResponseCompleted(
+                agent_domain::StopReason::Completed
+            )]
+        ));
+        assert!(state.finished);
+    }
+
+    #[test]
     fn cache_tokens_reflected_in_usage() {
         let mut state = AnthropicStreamState::default();
         let _ = event_to_events(

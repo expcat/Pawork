@@ -1,6 +1,6 @@
 # P2-5：OpenAI-compatible 适配
 
-> Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 依赖：P2-2、P2-4
+> Phase 2 · 首个真实 Provider · 状态：🟢已完成 · 依赖：P2-2、P2-4
 
 **最终目的**：实现 OpenAI-compatible 适配器（canonical 转换 + 流式组装），用一个适配同时覆盖云端兼容接口与多数本地服务（Ollama/vLLM/LM Studio），是关键路径上第一个真实 provider。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 文本对话与 tool call 流式可用
-- [ ] 云端与本地服务均可连
+- [x] 文本对话与 tool call 流式可用
+- [x] 云端与本地服务均可连
 
 **相关文档**：[providers](../docs/features/providers.md) · [ADR-002 解耦](../docs/adr/ADR-002-agent-engine-provider-decoupled.md) · [ROADMAP](../ROADMAP.md)

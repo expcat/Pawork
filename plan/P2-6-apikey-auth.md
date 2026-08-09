@@ -1,6 +1,6 @@
 # P2-6：API Key 认证
 
-> Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 依赖：P0-4
+> Phase 2 · 首个真实 Provider · 状态：🟢已完成 · 依赖：P0-4
 
 **最终目的**：实现 API Key 认证方式，明文 token 存 OS Keychain 不落库，为首个真实 provider 提供鉴权（ADR-014）。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] 明文 token 不写入数据库与日志
+- [x] 明文 token 不写入数据库与日志
 
 **相关文档**：[auth](../docs/features/auth.md) · [ADR-014 Secret Keychain](../docs/adr/ADR-014-secret-os-keychain.md) · [ROADMAP](../ROADMAP.md)

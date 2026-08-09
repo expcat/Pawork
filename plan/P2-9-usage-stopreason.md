@@ -1,6 +1,6 @@
 # P2-9：Usage 与 stop reason
 
-> Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 依赖：P2-5
+> Phase 2 · 首个真实 Provider · 状态：🟢已完成 · 依赖：P2-5
 
 **最终目的**：规范化 token / 费用信息与完成原因（stop reason），为预算控制与计费提供结构化数据。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] usage 与 stop reason 结构化
+- [x] usage 与 stop reason 结构化
 
 **相关文档**：[providers](../docs/features/providers.md) · [ROADMAP](../ROADMAP.md)

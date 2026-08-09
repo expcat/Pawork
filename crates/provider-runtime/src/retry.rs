@@ -154,59 +154,6 @@ fn current_unix_seconds() -> i64 {
         .unwrap_or(0)
 }
 
-/// 指数退避 + 抖动策略。遵守 Retry-After：每次取 `max(退避, retry_after)`。
-#[derive(Clone, Debug)]
-pub struct ExponentialBackoff {
-    cap: Duration,
-    jitter: bool,
-    current: Duration,
-    // 简易线性同余生成器，保证可测试的确定性（种子固定）。
-    rng_state: u64,
-}
-
-impl ExponentialBackoff {
-    pub fn new(base: Duration, cap: Duration, jitter: bool) -> Self {
-        Self {
-            cap,
-            jitter,
-            current: base,
-            rng_state: 0x2545_f491_4f6c_dd1d,
-        }
-    }
-
-    /// 默认策略：基数 100ms，因子 2，上限 30s，带抖动。
-    pub fn default_strategy() -> Self {
-        Self::new(Duration::from_millis(100), Duration::from_secs(30), true)
-    }
-
-    /// 计算下一次等待时长（并推进内部状态），考虑可选的 Retry-After。
-    pub fn next_delay(&mut self, retry_after: Option<Duration>) -> Option<Duration> {
-        let backoff = if self.jitter {
-            // 全抖动：在 [current, min(current*2, cap)) 区间取值，用确定性 LCG。
-            self.rng_state = self
-                .rng_state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            let r = (self.rng_state >> 33) as f64 / (u32::MAX as f64);
-            let lo = self.current.as_secs_f64();
-            let hi = (self.current * 2).as_secs_f64().min(self.cap.as_secs_f64());
-            Duration::from_secs_f64(lo + (hi - lo) * r)
-        } else {
-            self.current.min(self.cap)
-        };
-
-        let delay = match retry_after {
-            Some(after) => backoff.max(after),
-            None => backoff,
-        };
-
-        // 推进内部状态（指数 ×2，受上限约束）
-        self.current = (self.current * 2).min(self.cap);
-
-        Some(delay.min(self.cap))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,26 +193,6 @@ mod tests {
 
         // 非法值
         assert_eq!(parse_retry_after("not-a-date"), None);
-    }
-
-    #[test]
-    fn backoff_grows_and_respects_cap() {
-        let mut backoff =
-            ExponentialBackoff::new(Duration::from_millis(100), Duration::from_secs(1), false);
-        let d1 = backoff.next_delay(None).unwrap();
-        let d2 = backoff.next_delay(None).unwrap();
-        let d3 = backoff.next_delay(None).unwrap();
-        assert_eq!(d1, Duration::from_millis(100));
-        assert_eq!(d2, Duration::from_millis(200));
-        assert!(d3 <= Duration::from_secs(1)); // 受上限约束
-    }
-
-    #[test]
-    fn backoff_respects_retry_after() {
-        let mut backoff =
-            ExponentialBackoff::new(Duration::from_millis(100), Duration::from_secs(30), false);
-        let delay = backoff.next_delay(Some(Duration::from_secs(5))).unwrap();
-        assert_eq!(delay, Duration::from_secs(5));
     }
 
     #[test]

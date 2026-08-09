@@ -12,6 +12,7 @@ pub fn to_chat_completions_body(request: &CanonicalModelRequest) -> Value {
     let mut body = Map::new();
     body.insert("model".into(), Value::String(request.model.to_string()));
     body.insert("stream".into(), Value::Bool(true));
+    body.insert("stream_options".into(), json!({ "include_usage": true }));
 
     // messages
     let mut messages = Vec::new();
@@ -88,12 +89,36 @@ pub fn to_chat_completions_body(request: &CanonicalModelRequest) -> Value {
 
     // provider-specific options 透传（P6-9）：把 provider_options 合并进请求体顶层，
     // 让 provider 专属参数（top_p / seed / service_tier 等）直达远端。
-    // 语义为「覆盖」：与 canonical 同名时以 provider_options 为准。
+    // canonical 关键字段与认证字段属于保留键，不允许 provider_options 覆盖。
     for (key, value) in &request.provider_options {
+        if is_reserved_provider_option(key) {
+            tracing::warn!(
+                provider_option = %key,
+                "ignored reserved OpenAI-compatible provider option"
+            );
+            continue;
+        }
         body.insert(key.clone(), value.clone());
     }
 
     Value::Object(body)
+}
+
+fn is_reserved_provider_option(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "model"
+            | "messages"
+            | "stream"
+            | "stream_options"
+            | "tools"
+            | "tool_choice"
+            | "authorization"
+            | "proxy-authorization"
+            | "api_key"
+            | "api-key"
+            | "x-api-key"
+    )
 }
 
 /// 把 agent-domain Message 转为 OpenAI message(s)。
@@ -277,11 +302,31 @@ mod tests {
         let body = to_chat_completions_body(&base_request());
         assert_eq!(body["model"], "gpt-4o");
         assert_eq!(body["stream"], true);
+        assert_eq!(body["stream_options"]["include_usage"], true);
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["messages"][0]["content"], "hi");
         assert_eq!(body["temperature"], 0.5);
         assert_eq!(body["max_tokens"], 128);
         assert_eq!(body["stop"], serde_json::json!(["END"]));
+    }
+
+    #[test]
+    fn provider_options_ignore_reserved_keys_and_keep_custom_keys() {
+        let mut req = base_request();
+        req.provider_options
+            .insert("MODEL".into(), json!("attacker-model"));
+        req.provider_options
+            .insert("stream_options".into(), json!({"include_usage": false}));
+        req.provider_options
+            .insert("authorization".into(), json!("Bearer secret"));
+        req.provider_options.insert("top_p".into(), json!(0.9));
+
+        let body = to_chat_completions_body(&req);
+
+        assert_eq!(body["model"], "gpt-4o");
+        assert_eq!(body["stream_options"]["include_usage"], true);
+        assert!(body.get("authorization").is_none());
+        assert_eq!(body["top_p"], 0.9);
     }
 
     #[test]

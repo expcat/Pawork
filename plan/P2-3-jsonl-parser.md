@@ -1,6 +1,6 @@
 # P2-3：JSON Lines 解析器
 
-> Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 依赖：P2-1
+> Phase 2 · 首个真实 Provider · 状态：🟢已完成 · 依赖：P2-1
 
 **最终目的**：实现 JSON Lines 流解析，正确处理 provider 提前断开与错误事件，为非 SSE 的流式 provider 提供解析。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 提前断开可识别
-- [ ] fuzz 不 panic
+- [x] 提前断开可识别
+- [x] fuzz 不 panic
 
 **相关文档**：[providers](../docs/features/providers.md) · [测试体系](../docs/quality/testing.md) · [ROADMAP](../ROADMAP.md)

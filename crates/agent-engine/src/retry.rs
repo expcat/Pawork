@@ -10,7 +10,7 @@
 //! 保证「重试与事件一致性：可追溯」。
 //!
 //! 重试策略基于 `ProviderError` 的 `retryable` 与 `retry_after_ms`（P2-10 已归一），
-//! 退避用指数退避（jitter 可选），与 `backon` 的设计一致但自实现最小子集（安全关键路径）。
+//! 退避用指数退避（jitter 可选），在 Agent Engine 安全关键路径内保持单一实现。
 
 use std::time::Duration;
 

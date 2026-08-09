@@ -16,7 +16,9 @@ use crate::retry::{classify_request_error, classify_status};
 /// HTTP 客户端配置。
 #[derive(Clone, Debug)]
 pub struct HttpClientConfig {
-    /// 整体请求超时（含建立连接）。`None` 表示不限。
+    /// 建立连接及单次读操作的超时；每次成功读取后重置读计时，`None` 表示不限。
+    ///
+    /// 流式响应没有总时长上限，只有在连续超过该时长未收到新数据时才超时。
     pub timeout: Option<Duration>,
     /// HTTP(S) 代理地址（如 `http://proxy:8080`）。
     pub proxy: Option<String>,
@@ -99,7 +101,7 @@ impl HttpClient {
         let mut builder = reqwest::Client::builder();
 
         if let Some(timeout) = config.timeout {
-            builder = builder.timeout(timeout);
+            builder = builder.connect_timeout(timeout).read_timeout(timeout);
         }
         if let Some(proxy) = &config.proxy {
             builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|err| {
@@ -172,7 +174,7 @@ impl HttpClient {
         tokio::pin!(send_fut);
         tokio::select! {
             biased;
-            _ = cancel.cancelled(), if !cancel.is_cancelled() => Err(ProviderError::cancelled("http request cancelled")),
+            _ = cancel.cancelled() => Err(ProviderError::cancelled("http request cancelled")),
             response = &mut send_fut => {
                 let response = response.map_err(http_error)?;
                 self.handle_response(response).await
@@ -215,7 +217,7 @@ impl HttpClient {
         tokio::pin!(send_fut);
         tokio::select! {
             biased;
-            _ = cancel.cancelled(), if !cancel.is_cancelled() => {
+            _ = cancel.cancelled() => {
                 return Err(ProviderError::cancelled("http request cancelled"));
             }
             response = &mut send_fut => {

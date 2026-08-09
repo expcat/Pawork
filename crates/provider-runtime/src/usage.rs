@@ -42,13 +42,14 @@ pub fn normalize_usage(raw: &Value) -> TokenUsage {
 }
 
 /// 把 Provider 的 finish_reason 字符串映射为 canonical [`StopReason`]。
-/// `has_tool_calls` 为 true 时优先返回 [`StopReason::ToolUse`]。
+/// `has_tool_calls` 为 true 时优先返回 [`StopReason::ToolUse`]；协议已正常收尾但未提供
+/// finish reason 时按 [`StopReason::Completed`] 处理。
 pub fn map_stop_reason(finish: Option<&str>, has_tool_calls: bool) -> StopReason {
     if has_tool_calls {
         return StopReason::ToolUse;
     }
     match finish {
-        None => StopReason::Error,
+        None => StopReason::Completed,
         Some(reason) => match reason.to_ascii_lowercase().as_str() {
             "stop" | "end_turn" | "ended" => StopReason::Completed,
             "length" | "max_tokens" | "max_output_tokens" => StopReason::MaxTokens,
@@ -184,7 +185,7 @@ mod tests {
         );
         // tool_calls 优先（即使 finish 不是 tool）
         assert_eq!(map_stop_reason(Some("stop"), true), StopReason::ToolUse);
-        assert_eq!(map_stop_reason(None, false), StopReason::Error);
+        assert_eq!(map_stop_reason(None, false), StopReason::Completed);
         assert_eq!(
             map_stop_reason(Some("weird"), false),
             StopReason::Other("weird".into())

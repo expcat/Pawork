@@ -80,6 +80,15 @@ pub enum ProviderStreamEvent {
 
 需正确处理：SSE；JSON Lines；chunked HTTP；Partial JSON；Tool Arguments 跨多 Chunk；Unicode 边界；Provider 提前断开；Provider 返回错误事件；多个 Tool Call 并行流式返回。
 
+### 流式传输语义
+
+- HTTP `timeout` 同时约束建连阶段与按单次读操作重置的 inactivity timeout；流持续产出 chunk 时不设总时长上限，连续无数据才归一为 `Timeout`。
+- SSE / JSONL 单条缓冲上限为 1 MiB；超限产生解析错误并重置，确定非法的 UTF-8 字节按线性扫描批量移除。
+- OpenAI-compatible 请求固定发送 `stream_options.include_usage = true`；末尾 `choices: []` 的 usage-only chunk 仍归一为 `UsageUpdated`。
+- 协议正常以 `[DONE]` 收尾但没有 `finish_reason` 时归一为 `Completed`，不把成功响应误记为 `Error`。
+- `provider_options` 不得覆盖 `model`、`messages`、`stream`、`stream_options`、`tools`、`tool_choice` 或认证字段；命中保留键时忽略并记录告警。
+- 远端模型目录请求与流式请求复用同一认证头，受保护的 `/models` 端点不得匿名访问。
+
 ## Provider 优先级
 
 - **P0（初始主要供应商）**：OpenAI（GPT）；Anthropic（Claude）；xAI Grok（API Key + OAuth 订阅）；智谱 GLM；阿里 Qwen（DashScope）；Moonshot Kimi；OpenAI-compatible；本地兼容服务（Ollama、vLLM、LM Studio）。
@@ -118,7 +127,7 @@ API Key 与 OS Keychain 见 [auth](auth.md)；OAuth（PKCE / Device Flow / auto 
 
 错误携带：是否可重试；建议重试时间；Provider request ID；HTTP 状态；脱敏后的错误内容；用户可读消息；诊断信息。
 
-`provider-runtime` 负责协议/transport 错误归一与同一请求内 bounded retry；P18 `ErrorClassifier` 再把 `UpstreamFailure` 分类为 failure class/scope/health impact，并决定是否允许 credential/model/provider/protocol failover。HTTP status 只是分类输入：`ClientCancelled`、`InvalidRequest`、`ContextTooLarge` 与 `ProtocolIncompatible` 不默认轮换 credential。
+`provider-runtime` 负责协议/transport 错误归一与可重试性判断；生产环境的 bounded retry 与退避由 `agent-engine` 统一执行。P18 `ErrorClassifier` 再把 `UpstreamFailure` 分类为 failure class/scope/health impact，并决定是否允许 credential/model/provider/protocol failover。HTTP status 只是分类输入：`ClientCancelled`、`InvalidRequest`、`ContextTooLarge` 与 `ProtocolIncompatible` 不默认轮换 credential。
 
 ## 验收标准
 

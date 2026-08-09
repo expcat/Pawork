@@ -140,6 +140,10 @@ impl GoogleProvider {
             }
             let bytes = item?;
             for event in sse.feed(&bytes) {
+                if cancel.is_cancelled() {
+                    return Err(ProviderError::cancelled("stream cancelled"));
+                }
+                let event = event?;
                 let data = event.data.trim();
                 if data.is_empty() {
                     continue;
@@ -152,7 +156,7 @@ impl GoogleProvider {
         }
 
         // 冲刷残留
-        if let Some(event) = sse.finish() {
+        if let Some(event) = sse.finish()? {
             let data = event.data.trim();
             if !data.is_empty() {
                 for ev in chunk_to_events(data, &mut chunk_state) {

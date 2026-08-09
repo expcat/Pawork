@@ -1,6 +1,6 @@
 # P2-2：SSE 解析器
 
-> Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 依赖：P2-1
+> Phase 2 · 首个真实 Provider · 状态：🟢已完成 · 依赖：P2-1
 
 **最终目的**：实现健壮的 SSE（Server-Sent Events）流解析，正确处理跨 chunk、Unicode 边界，为流式 provider 响应提供可靠解析。
 
@@ -19,8 +19,8 @@
 
 ## 验收标准
 
-- [ ] 跨 chunk、Unicode 边界正确
-- [ ] fuzz 不 panic
+- [x] 跨 chunk、Unicode 边界正确
+- [x] fuzz 不 panic
 
 **相关文档**：[providers](../docs/features/providers.md) · [测试体系](../docs/quality/testing.md) · [ROADMAP](../ROADMAP.md)
 

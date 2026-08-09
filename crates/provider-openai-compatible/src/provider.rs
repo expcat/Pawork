@@ -26,7 +26,7 @@ pub struct OpenAiCompatibleConfig {
     pub provider_id: ProviderId,
     /// HTTP 客户端配置。
     pub http: HttpClientConfig,
-    /// 请求超时（覆盖 http.timeout 时的便捷字段）。
+    /// 建连及流式读取无数据超时（覆盖 `http.timeout` 时的便捷字段）。
     pub request_timeout: Option<Duration>,
 }
 
@@ -149,8 +149,15 @@ impl OpenAiCompatibleProvider {
             }
             let bytes = item?;
             for event in sse.feed(&bytes) {
+                if cancel.is_cancelled() {
+                    return Err(ProviderError::cancelled("stream cancelled"));
+                }
+                let event = event?;
                 let data = event.data.trim();
                 if is_done(data) {
+                    if summary.stop_reason == StopReason::Error {
+                        summary.stop_reason = StopReason::Completed;
+                    }
                     saw_completion = true;
                     break;
                 }
@@ -172,9 +179,14 @@ impl OpenAiCompatibleProvider {
         }
 
         // 冲刷残留
-        if let Some(event) = sse.finish() {
+        if let Some(event) = sse.finish()? {
             let data = event.data.trim();
-            if !is_done(data) && !data.is_empty() {
+            if is_done(data) {
+                if summary.stop_reason == StopReason::Error {
+                    summary.stop_reason = StopReason::Completed;
+                }
+                saw_completion = true;
+            } else if !data.is_empty() {
                 for ev in chunk_to_events(data, &mut chunk_state) {
                     match &ev {
                         ProviderStreamEvent::UsageUpdated(u) => summary.usage = u.clone(),
@@ -211,9 +223,16 @@ impl ModelProvider for OpenAiCompatibleProvider {
         &self,
         _credential: Option<&ResolvedCredential>,
     ) -> Result<Vec<ModelDefinition>, ProviderError> {
+        let auth_header = self.auth_header();
+        let per_request_headers = auth_header.as_slice();
         let value = self
             .client
-            .get_json(&self.config.models_url(), None, CancellationToken::new())
+            .get_json_with_headers(
+                &self.config.models_url(),
+                None,
+                per_request_headers,
+                CancellationToken::new(),
+            )
             .await?;
 
         let models = value

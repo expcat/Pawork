@@ -1,6 +1,6 @@
 # P2-4：Partial JSON 拼接
 
-> Phase 2 · 首个真实 Provider · 状态：🟡未开始 · 依赖：P2-3
+> Phase 2 · 首个真实 Provider · 状态：🟢已完成 · 依赖：P2-3
 
 **最终目的**：实现 tool arguments 跨多 chunk 的 partial JSON 增量拼接，支持多个 tool call 并行流的实时组装。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 多 tool call 并行流可正确组装
+- [x] 多 tool call 并行流可正确组装
 
 **相关文档**：[providers](../docs/features/providers.md) · [ROADMAP](../ROADMAP.md)
 

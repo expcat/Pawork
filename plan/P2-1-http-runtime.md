@@ -1,6 +1,6 @@
 # P2-1：HTTP 运行时
 
-> Phase 2 · 首个真实 Provider · 状态：🟢已实现 Provider 基线；通用抽离待后续收敛 · 依赖：P0-4
+> Phase 2 · 首个真实 Provider · 状态：🟢已完成 · 依赖：P0-4
 
 **最终目的**：建立跨平台的 HTTP 运行时（超时 / 代理 / 自定义 header / trace ID / 请求取消），先作为所有 Provider 网络访问的统一底层；在 P17 User Hooks / Marketplace 与 Forge Adapter 接入前，将 Provider 无关部分抽为 `http-runtime`，避免通用模块反向依赖 `provider-runtime`。
 
@@ -22,9 +22,9 @@
 
 ## 验收标准
 
-- [ ] 跨平台（三平台）行为一致
-- [ ] 超时与取消有效
-- [ ] `http-runtime` 无 Provider 依赖，`provider-runtime` 单向依赖它；User Hooks / Marketplace / Forge 不反向依赖 Provider runtime
-- [ ] 抽离前后现有 Provider Contract Tests 行为一致
+- [x] 跨平台（三平台）行为一致
+- [x] 超时与取消有效
+- [x] `http-runtime` 无 Provider 依赖，`provider-runtime` 单向依赖它；User Hooks / Marketplace / Forge 不反向依赖 Provider runtime
+- [x] 抽离前后现有 Provider Contract Tests 行为一致
 
 **相关文档**：[providers](../docs/features/providers.md) · [ROADMAP](../ROADMAP.md)

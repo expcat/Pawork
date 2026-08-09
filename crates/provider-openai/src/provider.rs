@@ -27,7 +27,7 @@ pub struct OpenAiConfig {
     pub provider_id: ProviderId,
     /// HTTP 客户端配置。
     pub http: HttpClientConfig,
-    /// 请求超时（覆盖 http.timeout）。
+    /// 建连及流式读取无数据超时（覆盖 `http.timeout`）。
     pub request_timeout: Option<Duration>,
 }
 

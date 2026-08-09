@@ -121,16 +121,14 @@ landlock = "0.4"
 windows = "0.58"
 windows-service = "0.7"
 
-# Diff / PTY / 重试 / 签名
+# Diff / PTY / 签名
 similar = { version = "2", features = ["text"] }
 portable-pty = "0.8"
-backon = "1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 
 # 测试与基准（dev-dependencies 候选）
 criterion = "0.5"
 proptest = "1"
-arbitrary = { version = "1", features = ["derive"] }
 wiremock = "0.6"
 insta = "1"
 assert_cmd = "2"

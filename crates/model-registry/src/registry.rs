@@ -55,10 +55,13 @@ impl ModelRegistry {
         let mut registry = Self::empty();
         for entry in builtin_entries() {
             // 内置目录自身假定无冲突，直接写入（覆盖语义）。
+            let normalized_id = normalized_model_id(&entry.id);
             for alias in &entry.aliases {
-                registry.alias_to_id.insert(alias.clone(), entry.id.clone());
+                registry
+                    .alias_to_id
+                    .insert(alias.to_ascii_lowercase(), normalized_id.clone());
             }
-            registry.entries.insert(entry.id.clone(), entry);
+            registry.entries.insert(normalized_id, entry);
         }
         registry
     }
@@ -70,9 +73,11 @@ impl ModelRegistry {
 
     /// 注册并在别名冲突时返回错误（别名预检后写入）。
     pub fn try_register(&mut self, entry: CatalogEntry) -> Result<(), RegistryError> {
+        let normalized_id = normalized_model_id(&entry.id);
         for alias in &entry.aliases {
-            if let Some(existing) = self.alias_to_id.get(alias) {
-                if *existing != entry.id {
+            let normalized_alias = alias.to_ascii_lowercase();
+            if let Some(existing) = self.alias_to_id.get(&normalized_alias) {
+                if *existing != normalized_id {
                     return Err(RegistryError::DuplicateAlias {
                         alias: alias.clone(),
                         existing: existing.to_string(),
@@ -81,9 +86,10 @@ impl ModelRegistry {
             }
         }
         for alias in &entry.aliases {
-            self.alias_to_id.insert(alias.clone(), entry.id.clone());
+            self.alias_to_id
+                .insert(alias.to_ascii_lowercase(), normalized_id.clone());
         }
-        self.entries.insert(entry.id.clone(), entry);
+        self.entries.insert(normalized_id, entry);
         Ok(())
     }
 
@@ -91,21 +97,24 @@ impl ModelRegistry {
     pub fn extend_with(&mut self, entries: Vec<CatalogEntry>) {
         for entry in entries {
             // 覆盖语义：同 id 直接替换；别名以新条目为准（覆盖旧映射）。
+            let normalized_id = normalized_model_id(&entry.id);
             for alias in &entry.aliases {
-                self.alias_to_id.insert(alias.clone(), entry.id.clone());
+                self.alias_to_id
+                    .insert(alias.to_ascii_lowercase(), normalized_id.clone());
             }
-            self.entries.insert(entry.id.clone(), entry);
+            self.entries.insert(normalized_id, entry);
         }
     }
 
     /// 按 id 或别名解析条目。
     pub fn resolve(&self, id_or_alias: &str) -> Option<&CatalogEntry> {
-        let id = self.alias_to_id.get(id_or_alias).cloned();
+        let normalized = id_or_alias.to_ascii_lowercase();
+        let id = self.alias_to_id.get(&normalized).cloned();
         if let Some(id) = id {
             return self.entries.get(&id);
         }
-        // 也允许直接用真实 model id（不区分大小写匹配别名表后回退精确 id）
-        self.entries.get(&ModelId::new(id_or_alias))
+        // 也允许直接用真实 model id；ASCII 大小写在入口统一归一。
+        self.entries.get(&ModelId::new(normalized))
     }
 
     /// 列出全部条目（按 id 排序）。
@@ -135,6 +144,10 @@ impl ModelRegistry {
         let pricing = entry.pricing.as_ref()?;
         Some(estimate_cost(usage, pricing))
     }
+}
+
+fn normalized_model_id(id: &ModelId) -> ModelId {
+    ModelId::new(id.as_str().to_ascii_lowercase())
 }
 
 fn caps_satisfied(have: &ModelCapabilities, required: &ModelCapabilities) -> bool {
@@ -285,7 +298,9 @@ mod tests {
     fn builtin_catalog_resolves_real_ids_and_aliases() {
         let registry = ModelRegistry::builtin();
         assert!(registry.resolve("gpt-4o").is_some());
+        assert_eq!(registry.resolve("GPT-4O"), registry.resolve("gpt-4o"));
         assert!(registry.resolve("gpt4o").is_some(), "别名须可解析");
+        assert_eq!(registry.resolve("GPT4O"), registry.resolve("gpt4o"));
         assert!(registry.resolve("sonnet").is_some());
         assert!(registry.resolve("gemini-pro").is_some());
         assert!(registry.resolve("nonexistent").is_none());
@@ -321,6 +336,64 @@ mod tests {
             .try_register(conflicting)
             .expect_err("重复别名必须报错");
         assert!(matches!(err, RegistryError::DuplicateAlias { .. }));
+    }
+
+    #[test]
+    fn alias_conflict_is_ascii_case_insensitive() {
+        let mut registry = ModelRegistry::empty();
+        let first = CatalogEntry {
+            id: ModelId::new("a"),
+            provider: ProviderId::new("p"),
+            display_name: "A".into(),
+            context_window_tokens: 1000,
+            max_output_tokens: 100,
+            capabilities: caps(true, false, false, false, false, false, false),
+            pricing: None,
+            aliases: vec!["Shared".into()],
+        };
+        registry.try_register(first).expect("首次注册成功");
+
+        let conflicting = CatalogEntry {
+            id: ModelId::new("b"),
+            provider: ProviderId::new("p"),
+            display_name: "B".into(),
+            context_window_tokens: 1000,
+            max_output_tokens: 100,
+            capabilities: caps(true, false, false, false, false, false, false),
+            pricing: None,
+            aliases: vec!["SHARED".into()],
+        };
+
+        assert!(matches!(
+            registry.try_register(conflicting),
+            Err(RegistryError::DuplicateAlias { .. })
+        ));
+        assert_eq!(
+            registry.resolve("shared").map(|entry| &entry.id),
+            Some(&ModelId::new("a"))
+        );
+    }
+
+    #[test]
+    fn direct_model_ids_are_ascii_case_insensitive() {
+        let mut registry = ModelRegistry::empty();
+        registry
+            .try_register(CatalogEntry {
+                id: ModelId::new("Custom-Model"),
+                provider: ProviderId::new("p"),
+                display_name: "Custom".into(),
+                context_window_tokens: 1000,
+                max_output_tokens: 100,
+                capabilities: caps(true, false, false, false, false, false, false),
+                pricing: None,
+                aliases: Vec::new(),
+            })
+            .expect("register mixed-case id");
+
+        assert_eq!(
+            registry.resolve("CUSTOM-MODEL").map(|entry| &entry.id),
+            Some(&ModelId::new("Custom-Model"))
+        );
     }
 
     #[test]

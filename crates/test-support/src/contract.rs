@@ -4,7 +4,7 @@
 //! 断言函数。每个新增 Provider 须通过这些断言（覆盖 ADR-015 的用例集）。
 
 use agent_domain::StopReason;
-use provider_api::{ProviderErrorKind, ProviderStreamEvent};
+use provider_api::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
 
 /// 断言文本流：至少含一条 TextDelta，并以 ResponseCompleted 收尾。
 pub fn assert_text_stream(events: &[ProviderStreamEvent]) {
@@ -81,16 +81,20 @@ pub fn assert_usage_and_stop(events: &[ProviderStreamEvent], expected_stop: Stop
     assert_eq!(actual_stop, Some(expected_stop), "stop reason 不符预期");
 }
 
-/// 断言错误事件归一为指定类别（用于 ratelimit / malformed / overflow 等场景）。
-pub fn assert_error_kind(events: &[ProviderStreamEvent], kind: ProviderErrorKind) {
-    let found = events.iter().any(|e| match e {
+/// 断言错误事件或 `stream()` 返回错误至少有一处归一为指定类别。
+pub fn assert_error_kind(
+    events: &[ProviderStreamEvent],
+    stream_error: Option<&ProviderError>,
+    kind: ProviderErrorKind,
+) {
+    let event_matches = events.iter().any(|e| match e {
         ProviderStreamEvent::Error(err) => err.kind == kind,
         _ => false,
     });
-    // 部分场景错误以 stream() 返回值而非事件表达，二者取其一即通过。
+    let return_matches = stream_error.is_some_and(|error| error.kind == kind);
     assert!(
-        found || events.is_empty(),
-        "应存在 kind={kind:?} 的 Error 事件，实际：{events:?}"
+        event_matches || return_matches,
+        "应存在 kind={kind:?} 的 Error 事件或 stream 返回错误，事件：{events:?}，返回错误：{stream_error:?}"
     );
 }
 
@@ -168,5 +172,17 @@ mod tests {
             ProviderStreamEvent::ResponseCompleted(StopReason::MaxTokens),
         ];
         assert_usage_and_stop(&events, StopReason::MaxTokens);
+    }
+
+    #[test]
+    fn error_kind_accepts_matching_stream_error() {
+        let error = ProviderError::new(ProviderErrorKind::Timeout, "timed out");
+        assert_error_kind(&[], Some(&error), ProviderErrorKind::Timeout);
+    }
+
+    #[test]
+    #[should_panic(expected = "应存在")]
+    fn error_kind_rejects_empty_evidence() {
+        assert_error_kind(&[], None, ProviderErrorKind::Timeout);
     }
 }
