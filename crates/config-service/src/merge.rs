@@ -30,6 +30,11 @@ impl ConfigValue {
         &self.value
     }
 
+    /// 可变访问内部 JSON 值（供 loader 在合并前就地剥离受限键）。
+    pub(crate) fn as_value_mut(&mut self) -> &mut Value {
+        &mut self.value
+    }
+
     /// 是否为 object。只有 object 才会递归合并。
     pub fn is_object(&self) -> bool {
         self.value.is_object()

@@ -145,10 +145,11 @@ impl WorkspaceService {
     }
 
     pub fn remove_root(&self, id: &WorkspaceId, path: &Path) -> Result<u64, WorkspaceError> {
-        let canonical = fs::canonicalize(path).map_err(|source| WorkspaceError::InvalidRoot {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        let canonical =
+            canonicalize_simplified(path).map_err(|source| WorkspaceError::InvalidRoot {
+                path: path.to_path_buf(),
+                source,
+            })?;
         let mut guard = self
             .workspaces
             .write()
@@ -231,16 +232,17 @@ impl WorkspaceService {
 }
 
 pub fn detect_git(path: &Path) -> Result<Option<GitRepository>, WorkspaceError> {
-    let canonical = fs::canonicalize(path).map_err(|source| WorkspaceError::InvalidRoot {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let canonical =
+        canonicalize_simplified(path).map_err(|source| WorkspaceError::InvalidRoot {
+            path: path.to_path_buf(),
+            source,
+        })?;
     for candidate in canonical.ancestors() {
         let marker = candidate.join(".git");
         if marker.is_dir() {
             return Ok(Some(GitRepository {
                 work_tree: Some(candidate.to_path_buf()),
-                git_dir: fs::canonicalize(&marker).map_err(|source| {
+                git_dir: canonicalize_simplified(&marker).map_err(|source| {
                     WorkspaceError::InvalidGitDir {
                         path: marker,
                         source,
@@ -267,11 +269,12 @@ pub fn detect_git(path: &Path) -> Result<Option<GitRepository>, WorkspaceError> 
             } else {
                 candidate.join(raw)
             };
-            let git_dir =
-                fs::canonicalize(&git_dir).map_err(|source| WorkspaceError::InvalidGitDir {
+            let git_dir = canonicalize_simplified(&git_dir).map_err(|source| {
+                WorkspaceError::InvalidGitDir {
                     path: git_dir,
                     source,
-                })?;
+                }
+            })?;
             return Ok(Some(GitRepository {
                 work_tree: Some(candidate.to_path_buf()),
                 git_dir,
@@ -307,10 +310,11 @@ where
 }
 
 fn normalize_root(path: PathBuf) -> Result<WorkspaceRoot, WorkspaceError> {
-    let canonical = fs::canonicalize(&path).map_err(|source| WorkspaceError::InvalidRoot {
-        path: path.clone(),
-        source,
-    })?;
+    let canonical =
+        canonicalize_simplified(&path).map_err(|source| WorkspaceError::InvalidRoot {
+            path: path.clone(),
+            source,
+        })?;
     if !canonical.is_dir() {
         return Err(WorkspaceError::RootIsNotDirectory(canonical));
     }
@@ -319,6 +323,11 @@ fn normalize_root(path: PathBuf) -> Result<WorkspaceRoot, WorkspaceError> {
         path: canonical,
         git,
     })
+}
+
+/// Canonicalize paths at the workspace boundary without leaking Windows verbatim prefixes.
+fn canonicalize_simplified(path: &Path) -> std::io::Result<PathBuf> {
+    fs::canonicalize(path).map(|canonical| dunce::simplified(&canonical).to_path_buf())
 }
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
@@ -388,6 +397,11 @@ mod tests {
         path
     }
 
+    fn simplified_canonical(path: &Path) -> PathBuf {
+        let canonical = fs::canonicalize(path).expect("canonicalize test path");
+        dunce::simplified(&canonical).to_path_buf()
+    }
+
     #[test]
     fn multiple_roots_are_canonical_deduplicated_and_snapshot_stable() {
         let first = temp_dir("first");
@@ -403,6 +417,15 @@ mod tests {
             )
             .expect("add workspace");
         assert_eq!(workspace.roots.len(), 2);
+        assert!(workspace
+            .roots
+            .iter()
+            .all(|root| root.path == simplified_canonical(&root.path)));
+        #[cfg(windows)]
+        assert!(workspace
+            .roots
+            .iter()
+            .all(|root| { !root.path.as_os_str().to_string_lossy().starts_with(r"\\?\") }));
         assert_eq!(workspace.trust, TrustState::Untrusted);
         service.set_trust(&id, TrustState::Trusted).expect("trust");
         service.rename(&id, "renamed").expect("rename");
@@ -426,9 +449,10 @@ mod tests {
         let detected = detect_git(&nested)
             .expect("detect")
             .expect("git repository");
+        assert_eq!(detected.work_tree, Some(simplified_canonical(&repository)));
         assert_eq!(
-            detected.work_tree,
-            Some(fs::canonicalize(&repository).expect("canonical"))
+            detected.git_dir,
+            simplified_canonical(&repository.join(".git"))
         );
 
         let common = temp_dir("common-git-dir");
@@ -439,10 +463,14 @@ mod tests {
         )
         .expect("gitfile");
         let detected = detect_git(&worktree).expect("detect").expect("worktree");
-        assert_eq!(
-            detected.git_dir,
-            fs::canonicalize(&common).expect("canonical")
-        );
+        assert_eq!(detected.git_dir, simplified_canonical(&common));
+        #[cfg(windows)]
+        for path in [detected.work_tree.as_ref(), Some(&detected.git_dir)]
+            .into_iter()
+            .flatten()
+        {
+            assert!(!path.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+        }
         let _ = fs::remove_dir_all(repository);
         let _ = fs::remove_dir_all(common);
         let _ = fs::remove_dir_all(worktree);

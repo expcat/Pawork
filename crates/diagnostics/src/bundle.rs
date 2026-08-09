@@ -176,38 +176,46 @@ impl DiagnosticBundle {
         Ok(bundle)
     }
 
-    /// 以 create-new + fsync + rename 写出单个离线 JSON 文件；不覆盖已有文件。
+    /// 以 create-new + fsync 写出单个离线 JSON 文件；不覆盖已有文件。
+    ///
+    /// 最终路径直接使用 `create_new` 打开，消除「先 exists 再 rename」的 TOCTOU 覆盖窗口。
     pub fn export(&self, destination: impl AsRef<Path>) -> Result<(), DiagnosticError> {
         let destination = destination.as_ref();
-        if destination.exists() {
-            return Err(DiagnosticError::DestinationExists(destination.into()));
+        if let Some(parent) = destination.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(DiagnosticError::Io)?;
+            }
         }
-        let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-        let file_name = destination
+        if destination
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| DiagnosticError::InvalidDestination(destination.into()))?;
-        let temporary = parent.join(format!(
-            ".{file_name}.tmp-{}-{}",
-            std::process::id(),
-            now_unix_ms()
-        ));
+            .is_none()
+        {
+            return Err(DiagnosticError::InvalidDestination(destination.into()));
+        }
+
         let bytes = serde_json::to_vec_pretty(self)?;
-        let result = (|| {
-            let mut file = OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&temporary)?;
+        let mut file = match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(destination)
+        {
+            Ok(file) => file,
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(DiagnosticError::DestinationExists(destination.into()));
+            }
+            Err(source) => return Err(DiagnosticError::Io(source)),
+        };
+
+        let write_result = (|| -> std::io::Result<()> {
             file.write_all(&bytes)?;
             file.sync_all()?;
-            drop(file);
-            fs::rename(&temporary, destination)?;
-            Ok::<(), std::io::Error>(())
+            Ok(())
         })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
+        if let Err(source) = write_result {
+            return Err(DiagnosticError::Io(source));
         }
-        result.map_err(DiagnosticError::Io)
+        Ok(())
     }
 }
 
@@ -356,5 +364,131 @@ mod tests {
         assert!(bundle.truncated);
         assert_eq!(bundle.logs.len(), 2);
         assert_eq!(bundle.logs[0].timestamp_unix_ms, 1);
+    }
+
+    fn sample_bundle() -> DiagnosticBundle {
+        DiagnosticBundle::build(
+            DiagnosticInput {
+                core_version: "0.0.1".into(),
+                providers: Vec::new(),
+                models: Vec::new(),
+                database_schema_version: 1,
+                plugins: Vec::new(),
+                mcp_servers: Vec::new(),
+                logs: Vec::new(),
+                metrics: MetricSnapshot::default(),
+                crashes: Vec::new(),
+            },
+            &Redactor::default(),
+            DiagnosticLimits::default(),
+        )
+        .expect("bundle")
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "pawork-diagnostics-{}-{}-{name}",
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    #[test]
+    fn export_refuses_existing_destination_without_overwrite() {
+        let dir = temp_path("export-exists");
+        fs::create_dir_all(&dir).expect("mkdir");
+        let destination = dir.join("bundle.json");
+        fs::write(&destination, b"existing").expect("seed");
+        let error = sample_bundle()
+            .export(&destination)
+            .expect_err("must not overwrite");
+        assert!(matches!(error, DiagnosticError::DestinationExists(_)));
+        assert_eq!(fs::read(&destination).expect("read"), b"existing");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn export_create_new_makes_concurrent_writer_lose_without_overwrite() {
+        let dir = temp_path("export-race");
+        fs::create_dir_all(&dir).expect("mkdir");
+        let destination = dir.join("bundle.json");
+        let first = sample_bundle();
+        first.export(&destination).expect("first export");
+        assert!(destination.exists());
+        let original = fs::read(&destination).expect("read first");
+
+        let second = sample_bundle();
+        let error = second
+            .export(&destination)
+            .expect_err("second export must fail");
+        assert!(matches!(error, DiagnosticError::DestinationExists(_)));
+        assert_eq!(fs::read(&destination).expect("read after race"), original);
+
+        // 并发预占：模拟另一进程 create_new 已占位。
+        let racing = dir.join("racing.json");
+        let hold = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&racing)
+            .expect("preempt");
+        let error = sample_bundle()
+            .export(&racing)
+            .expect_err("preempted destination");
+        assert!(matches!(error, DiagnosticError::DestinationExists(_)));
+        drop(hold);
+        assert_eq!(fs::metadata(&racing).expect("meta").len(), 0);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn bundle_redacts_url_query_nested_json_and_custom_headers() {
+        let token = "super-secret-token-xyz";
+        let api_key = "api-key-should-hide";
+        let nested_secret = "nested-json-secret-999";
+        let header_secret = "custom-header-secret-abc";
+        let nested = format!(
+            r#"{{\"auth\":{{\"token\":\"{nested_secret}\",\"note\":\"api_key={api_key}\"}}}}"#
+        );
+        let input = DiagnosticInput {
+            core_version: "0.0.0".into(),
+            providers: vec![ProviderDiagnostic {
+                name: format!("https://api.example/v1?token={token}&api_key={api_key}"),
+                status: "ready".into(),
+            }],
+            models: vec![nested],
+            database_schema_version: 1,
+            plugins: Vec::new(),
+            mcp_servers: Vec::new(),
+            logs: vec![DiagnosticLog {
+                timestamp_unix_ms: 1,
+                level: "info".into(),
+                component: format!("X-Custom-Token: {header_secret}"),
+                workspace_id: None,
+                session_id: None,
+                run_id: None,
+                provider: None,
+                model: None,
+                tool_call_id: None,
+                trace_id: None,
+                duration_ms: None,
+                error_code: None,
+            }],
+            metrics: MetricSnapshot::default(),
+            crashes: Vec::new(),
+        };
+        let bundle =
+            DiagnosticBundle::build(input, &Redactor::default(), DiagnosticLimits::default())
+                .expect("bundle");
+        let json = serde_json::to_string(&bundle).expect("serialize");
+        for forbidden in [token, api_key, nested_secret, header_secret] {
+            assert!(
+                !json.contains(forbidden),
+                "forbidden content leaked: {forbidden} in {json}"
+            );
+        }
     }
 }

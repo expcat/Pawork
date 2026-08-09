@@ -9,9 +9,9 @@ description = "Pawork 工作区生命周期、多 Root、信任状态与 Git 元
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+dunce.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
-

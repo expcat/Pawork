@@ -41,6 +41,20 @@ pub struct LoadedSource {
     pub value: ConfigValue,
 }
 
+/// 配置解析过程中的非致命告警，供调用方审计与测试断言。
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConfigWarning {
+    /// 非 builtin/global 层尝试设置 `trust_workspaces`（自我提权风险），已被忽略。
+    ///
+    /// `trust_workspaces` 是安全开关，只能由安全默认值或用户全局层决定；
+    /// profile/workspace/session/run 层级的覆盖一律剥离。
+    TrustWorkspacesIgnored {
+        tier: ConfigTier,
+        source_key: String,
+        path: Option<PathBuf>,
+    },
+}
+
 /// 合并解析结果：最终配置 + 按合并顺序排列的来源记录 + 每个顶层键的生效来源。
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedConfig {
@@ -49,6 +63,8 @@ pub struct ResolvedConfig {
     pub sources: Vec<LoadedSource>,
     /// 实际生效的 profile 名称（如果有）。
     pub active_profile: Option<String>,
+    /// 解析过程中产生的非致命告警（如安全红线的覆盖尝试）。
+    pub warnings: Vec<ConfigWarning>,
 }
 
 /// 配置加载器。
@@ -200,6 +216,23 @@ fn resolve_sources(sources: Vec<ConfigSource>) -> Result<ResolvedConfig, ConfigE
             .cmp(&right.tier)
             .then_with(|| left.source_key.cmp(&right.source_key))
     });
+
+    // 安全红线：`trust_workspaces` 仅 builtin 安全默认值与用户全局层可生效。
+    // profile/workspace/session/run 对该键的覆盖一律剥离，关闭工作区自我提权的攻击面。
+    let mut warnings: Vec<ConfigWarning> = Vec::new();
+    for src in &mut final_sources {
+        if matches!(src.tier, ConfigTier::Builtin | ConfigTier::Global) {
+            continue;
+        }
+        if !remove_top_level_key(src.value.as_value_mut(), "trust_workspaces") {
+            continue;
+        }
+        warnings.push(ConfigWarning::TrustWorkspacesIgnored {
+            tier: src.tier,
+            source_key: src.source_key.clone(),
+            path: src.path.clone(),
+        });
+    }
     let mut final_order: Vec<LoadedSource> = Vec::new();
     let mut merged = ConfigValue::new(Value::Object(Default::default()));
     for src in final_sources {
@@ -220,6 +253,7 @@ fn resolve_sources(sources: Vec<ConfigSource>) -> Result<ResolvedConfig, ConfigE
         config,
         sources: final_order,
         active_profile,
+        warnings,
     })
 }
 
@@ -231,6 +265,15 @@ fn loaded_from(src: ConfigSource) -> LoadedSource {
             path: src.path,
         },
         value: src.value,
+    }
+}
+
+/// 删除顶层对象键；非对象或键不存在返回 `false`。
+fn remove_top_level_key(value: &mut Value, key: &str) -> bool {
+    if let Value::Object(map) = value {
+        map.remove(key).is_some()
+    } else {
+        false
     }
 }
 
@@ -266,6 +309,46 @@ mod tests {
         let resolved = Loader::new().resolve().unwrap();
         assert_eq!(resolved.config, PaworkConfig::default());
         assert!(resolved.sources.is_empty());
+        assert!(resolved.warnings.is_empty());
+    }
+
+    #[test]
+    fn trust_workspaces_only_accepts_builtin_and_global_layers() {
+        let resolved = Loader::new()
+            .with_value(
+                ConfigTier::Builtin,
+                "builtin",
+                json!({ "trust_workspaces": false }),
+            )
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({ "trust_workspaces": false }),
+            )
+            .with_value(
+                ConfigTier::Workspace,
+                "workspace",
+                json!({ "trust_workspaces": true }),
+            )
+            .resolve()
+            .expect("resolve");
+
+        assert_eq!(resolved.config.trust_workspaces, Some(false));
+        assert_eq!(resolved.warnings.len(), 1);
+        assert!(matches!(
+            &resolved.warnings[0],
+            ConfigWarning::TrustWorkspacesIgnored {
+                tier: ConfigTier::Workspace,
+                source_key,
+                ..
+            } if source_key == "workspace"
+        ));
+        let workspace = resolved
+            .sources
+            .iter()
+            .find(|source| source.span.tier == ConfigTier::Workspace)
+            .expect("workspace source");
+        assert!(workspace.value.as_value().get("trust_workspaces").is_none());
     }
 
     #[test]

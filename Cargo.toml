@@ -69,7 +69,6 @@ futures = "0.3"
 bytes = "1"
 
 # 标识 / 哈希 / 版本
-uuid = { version = "1", features = ["v4", "v7", "serde"] }
 blake3 = "1"
 semver = { version = "1", features = ["serde"] }
 
@@ -83,7 +82,6 @@ clap = { version = "4", features = ["derive", "env"] }
 # 结构化日志（redaction 规则自实现）
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-tracing-appender = "0.2"
 
 # 存储（SQLite Event Store 绑定层，rusqlite 仅绑定，语义自实现）
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }

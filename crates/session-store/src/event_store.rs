@@ -1,10 +1,12 @@
 use agent_domain::{SessionId, Timestamp};
 use agent_events::{AgentEvent, AgentEventEnvelope};
 use rusqlite::{params, OptionalExtension};
+use serde_json::Value;
 
 use crate::{projection::apply_projection, SessionStore, SessionStoreError};
 
 pub const DEFAULT_BRANCH_ID: &str = "main";
+const REDACTED_SECRET: &str = "[REDACTED]";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppendReceipt {
@@ -131,6 +133,8 @@ impl SessionStore {
         event: AgentEventEnvelope,
     ) -> Result<AppendReceipt, SessionStoreError> {
         let branch_id = branch_id.into();
+        // Event Store 是持久化安全边界：写入事实表和 Projection 的必须是同一份脱敏事件。
+        let event = redact_event_for_persistence(&event)?;
         let event_id = event.event_id.to_string();
         let session_id = event.session_id.to_string();
         let sequence = event.sequence.value();
@@ -154,12 +158,12 @@ impl SessionStore {
                         params![session_id, branch_id],
                         |row| row.get(0),
                     )?;
-               if !branch_exists {
-                   return Err(SessionStoreError::BranchNotFound {
-                       session_id,
-                       branch_id,
-                   });
-               }
+                if !branch_exists {
+                    return Err(SessionStoreError::BranchNotFound {
+                        session_id,
+                        branch_id,
+                    });
+                }
                 // 只允许向 session 当前 active branch 追加事件，保护多分支并发写。
                 let active_branch: String = transaction.query_row(
                     "SELECT active_branch FROM sessions WHERE session_id=?1",
@@ -281,6 +285,127 @@ impl SessionStore {
     }
 }
 
+fn redact_event_for_persistence(
+    event: &AgentEventEnvelope,
+) -> Result<AgentEventEnvelope, serde_json::Error> {
+    let mut value = serde_json::to_value(event)?;
+    redact_sensitive_json(&mut value);
+    serde_json::from_value(value)
+}
+
+fn redact_sensitive_json(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            for (key, child) in fields {
+                if is_sensitive_key(key) || is_sensitive_container(key) {
+                    redact_value_preserving_shape(child);
+                } else {
+                    redact_sensitive_json(child);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_sensitive_json(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_value_preserving_shape(value: &mut Value) {
+    match value {
+        Value::Null => {}
+        Value::Bool(value) => *value = false,
+        Value::Number(value) => *value = 0.into(),
+        Value::String(value) => {
+            value.clear();
+            value.push_str(REDACTED_SECRET);
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_value_preserving_shape(item);
+            }
+        }
+        Value::Object(fields) => {
+            for child in fields.values_mut() {
+                redact_value_preserving_shape(child);
+            }
+        }
+    }
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let normalized = normalize_json_key(key);
+    if [
+        "authorization",
+        "apikey",
+        "accesskey",
+        "privatekey",
+        "secret",
+        "password",
+        "cookie",
+        "oauthcode",
+    ]
+    .iter()
+    .any(|fragment| normalized.contains(fragment))
+    {
+        return true;
+    }
+
+    if [
+        "accesstoken",
+        "refreshtoken",
+        "authtoken",
+        "bearertoken",
+        "idtoken",
+    ]
+    .iter()
+    .any(|fragment| normalized.contains(fragment))
+    {
+        return true;
+    }
+
+    // Token 计数/预算是可重放语义，不是凭证。其余 singular token 形态默认按敏感值处理。
+    if normalized.contains("token") {
+        let known_count_or_metadata = normalized.ends_with("tokens")
+            || matches!(
+                normalized.as_str(),
+                "tokenusage"
+                    | "tokencount"
+                    | "tokenbudget"
+                    | "tokenlimit"
+                    | "tokenestimate"
+                    | "tokenizer"
+                    | "tokenspersecond"
+                    | "tokentype"
+                    | "tokenendpoint"
+            );
+        if !known_count_or_metadata {
+            return true;
+        }
+    }
+
+    matches!(
+        normalized.as_str(),
+        "credential" | "credentials" | "credentialvalue"
+    )
+}
+
+fn is_sensitive_container(key: &str) -> bool {
+    matches!(
+        normalize_json_key(key).as_str(),
+        "headers" | "requestheaders" | "responseheaders"
+    )
+}
+
+fn normalize_json_key(key: &str) -> String {
+    key.chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_lowercase())
+        .collect()
+}
+
 fn event_type(event: &AgentEvent) -> &'static str {
     match event {
         AgentEvent::RunStarted { .. } => "run_started",
@@ -315,7 +440,10 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use agent_domain::{EventId, MessageId, RunId, SessionId, Timestamp};
+    use agent_domain::{
+        EventId, Message, MessageId, MessageMetadata, MessageRole, RunId, SessionId, Timestamp,
+        TokenUsage,
+    };
     use agent_events::{AgentEvent, AgentEventEnvelope, EventSequence};
 
     use super::*;
@@ -339,6 +467,133 @@ mod tests {
             Timestamp::from_unix_millis(1_000 + sequence),
             payload,
         )
+    }
+
+    #[tokio::test]
+    async fn append_redacts_sensitive_values_before_event_projection_and_replay() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-redaction");
+        store
+            .create_session(&session, "redaction", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+
+        let api_key = "fake-api-key-that-must-not-reach-sqlite";
+        let header_secret = "fake-custom-header-secret";
+        let access_token = "fake-access-token";
+        let secret_key = "fake-secret-key";
+        let secret_access_key = "fake-secret-access-key";
+        let aws_secret_access_key = "fake-aws-secret-access-key";
+        let password_hash = "fake-password-hash";
+        let provider_metadata = [
+            (
+                "provider_options".into(),
+                serde_json::json!({
+                    "temperature": 0.2,
+                    "api_key": api_key,
+                }),
+            ),
+            (
+                "headers".into(),
+                serde_json::json!({ "X-Custom-Auth": header_secret }),
+            ),
+            ("access_token".into(), serde_json::json!(access_token)),
+            ("secret_key".into(), serde_json::json!(secret_key)),
+            (
+                "secret_access_key".into(),
+                serde_json::json!(secret_access_key),
+            ),
+            (
+                "AWS_SECRET_ACCESS_KEY".into(),
+                serde_json::json!(aws_secret_access_key),
+            ),
+            ("password_hash".into(), serde_json::json!(password_hash)),
+            ("safe".into(), serde_json::json!("preserved")),
+        ]
+        .into_iter()
+        .collect();
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::MessageCommitted {
+                        message: Message {
+                            id: MessageId::from("message-redacted"),
+                            role: MessageRole::Assistant,
+                            content: Vec::new(),
+                            metadata: MessageMetadata {
+                                usage: Some(TokenUsage {
+                                    input_tokens: 12,
+                                    output_tokens: 3,
+                                    ..TokenUsage::default()
+                                }),
+                                provider_metadata,
+                                ..MessageMetadata::default()
+                            },
+                        },
+                    },
+                ),
+            )
+            .await
+            .expect("append");
+
+        let (event_json, projection_json): (String, String) = store
+            .database()
+            .call(|connection| {
+                connection.query_row(
+                    "SELECT e.payload_json, m.message_json FROM session_events e \
+                     JOIN messages m ON m.message_id='message-redacted' \
+                     WHERE e.event_id='event-1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+            })
+            .await
+            .expect("database actor")
+            .expect("persistence query");
+        for forbidden in [
+            api_key,
+            header_secret,
+            access_token,
+            secret_key,
+            secret_access_key,
+            aws_secret_access_key,
+            password_hash,
+        ] {
+            assert!(!event_json.contains(forbidden), "event leaked: {forbidden}");
+            assert!(
+                !projection_json.contains(forbidden),
+                "projection leaked: {forbidden}"
+            );
+        }
+        assert!(event_json.contains(REDACTED_SECRET));
+        assert!(projection_json.contains(REDACTED_SECRET));
+
+        let replayed = store.replay_events(&session, 1, 10).await.expect("replay");
+        assert_eq!(replayed.len(), 1);
+        let AgentEvent::MessageCommitted { message } = &replayed[0].payload else {
+            panic!("redacted event must keep its schema");
+        };
+        let details = &message.metadata.provider_metadata;
+        assert_eq!(details["provider_options"]["temperature"], 0.2);
+        assert_eq!(details["provider_options"]["api_key"], REDACTED_SECRET);
+        assert_eq!(details["headers"]["X-Custom-Auth"], REDACTED_SECRET);
+        assert_eq!(details["access_token"], REDACTED_SECRET);
+        assert_eq!(details["secret_key"], REDACTED_SECRET);
+        assert_eq!(details["secret_access_key"], REDACTED_SECRET);
+        assert_eq!(details["AWS_SECRET_ACCESS_KEY"], REDACTED_SECRET);
+        assert_eq!(details["password_hash"], REDACTED_SECRET);
+        assert_eq!(details["safe"], "preserved");
+        assert_eq!(
+            message.metadata.usage.as_ref().expect("usage").input_tokens,
+            12
+        );
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
     }
 
     #[tokio::test]

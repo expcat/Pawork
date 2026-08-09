@@ -21,7 +21,7 @@
 | Phase | 主题 | 任务数 | 已完成 | 状态 |
 | --- | --- | --- | --- | --- |
 | 0 | 架构与协议冻结 | 12 | 12 | 🟢已完成 |
-| 1 | 基础设施 | 13 | 12 | 🔵进行中（P1-13 评审修复待启动） |
+| 1 | 基础设施 | 13 | 13 | 🟢已完成 |
 | 2 | 首个真实 Provider | 12 | 11 | 🔵进行中（P2-12 评审修复待启动） |
 | 3 | Agent Loop | 11 | 10 | 🔵进行中（P3-11 评审修复待启动） |
 | 4 | 核心工具与权限 | 13 | 12 | 🔵进行中（P4-13 评审修复待启动） |
@@ -40,7 +40,7 @@
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **83** | — |
+| **合计** | — | **210** | **84** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -48,7 +48,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P1-13 Phase 1 评审修复** —— [REVIEW.md](REVIEW.md) Phase 1–7 评审完成，新增七份汇总修复任务（P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P6-14 / P7-9），每份覆盖该阶段全部 V 项与基线/依赖/文档漂移。优先处理 P1-13：消除 Event Store「Secret 落库」红线（V2）与 `trust_workspaces` 自我提权面（V1）。详情见 [plan/P1-13-review-remediation.md](plan/P1-13-review-remediation.md)。
+> 🎯 **P2-12 Phase 2 评审修复** —— 修复真实 Provider 端点下的长流超时、预取消、usage-only chunk 与 `/models` 认证问题，并收敛退避死代码、契约和文档漂移。详情见 [plan/P2-12-review-remediation.md](plan/P2-12-review-remediation.md)。
 
 ## 实施波次与门禁节奏
 
@@ -101,10 +101,10 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | 异步 Trait | async-trait | P0-4、P0-5、P0-6、P0-8 | 稳定 Rust 上统一对象安全的异步接口，协议 crate 不绑定具体 runtime |
 | 序列化 | serde / serde_json | P0-1 | 生态统一 |
 | 错误 | thiserror（库）+ anyhow（应用层） | P0-7 | Rust 惯用分工 |
-| 标识 / 哈希 / 版本 | uuid、blake3、semver | P0-2、P1-6 | blake3 用于 Blob 内容寻址 |
+| 哈希 / 版本 | blake3、semver | P0-6、P1-6、P4-11 | blake3 用于 Blob 内容寻址与 checkpoint 完整性；semver 用于 Plugin API 版本 |
 | 配置解析 | toml | P1-1 | 与 serde 配合 |
 | CLI | clap | P1-12 | derive 宏最小化胶水 |
-| 结构化日志 | tracing + tracing-subscriber + tracing-appender | P1-9 | 脱敏（redaction）规则仍自实现 |
+| 结构化日志 | tracing + tracing-subscriber | P1-9 | 脱敏（redaction）规则仍自实现；暂无线性日志文件 appender 需求 |
 | SQLite 绑定 | rusqlite | P1-2 | 契合「SQLite Actor 单连接」设计；sqlx 亦活跃，但其异步池 + 编译期 SQL 检查与该设计不匹配，集成成本更高 |
 | HTTP 客户端 | reqwest（rustls + stream） | P2-1、P9-2 | Provider 与 MCP Streamable HTTP 所需 |
 | OS Keychain | keyring（v3） | P2-6 | Secret 不落库不入日志 |
@@ -113,8 +113,8 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | WASM 宿主 | wasmtime + wit-bindgen | P10-2、P10-5 | Component Model 成熟；fuel / 内存上限对应 ADR-012 |
 | 文件遍历 | ignore + globset | P1-8、P4-6、P4-7 | ripgrep 同源，性能经过验证 |
 | 正则 | regex | P4-6 | 线性时间匹配、无 ReDoS 风险 |
-| 文件监听 | notify + notify-debouncer-full | P1-8、P8-8 | 跨平台统一抽象 |
-| 路径规范化 | dunce | P11-8 | Windows 短路径 / UNC |
+| 文件监听 | notify + notify-debouncer-full | P1-8、P7-6、P8-8 | file-index 以 notify + 有界通道做扫描级合并；git-service/P7-6 使用 debouncer 做缓存失效；P8-8 复用统一事件语义 |
+| 路径规范化 | dunce | P1-13、P11-8 | Workspace 出口移除 Windows verbatim 前缀；后续统一短路径 / UNC 语义 |
 | 编码检测 | content-inspector + chardetng + encoding_rs | P4-1 | Mozilla 系 |
 | Token 计数 | tiktoken-rs | P3-2 | 仅对 OpenAI 系精确；其它 Provider 用启发式估算 |
 | TS 类型导出 | ts-rs | P0-10、P13-7 | GUI Contract 类型生成，比 typeshare / specta 轻 |
@@ -232,7 +232,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P1-10 | 🟢 | Metrics | 关键指标采集 | [详情](plan/P1-10-metrics.md) |
 | P1-11 | 🟢 | 诊断包导出 | 脱敏可分享诊断包 | [详情](plan/P1-11-diagnostics-export.md) |
 | P1-12 | 🟢 | CLI Host 骨架（pawork） | serve/run/shell/watch 子命令骨架（CLI=Core 宿主） | [详情](plan/P1-12-cli-skeleton.md) |
-| P1-13 | 🟡 | Phase 1 评审修复 | 安全红线（V1/V2）+ 健壮性（V3~V8）+ 基线清理 | [详情](plan/P1-13-review-remediation.md) |
+| P1-13 | 🟢 | Phase 1 评审修复 | 安全红线（V1/V2）+ 健壮性（V3~V8）+ 基线清理 | [详情](plan/P1-13-review-remediation.md) |
 
 ### Phase 2：首个真实 Provider
 

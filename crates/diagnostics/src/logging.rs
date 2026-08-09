@@ -39,8 +39,14 @@ impl Redactor {
             Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")?,
             Regex::new(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")?,
             Regex::new(r"\b(?:sk|rk|pk|api)[-_][A-Za-z0-9_-]{12,}\b")?,
+            // URL query：?token=...&api_key=...
             Regex::new(
-                r"(?i)(?:authorization|cookie|set-cookie|api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|token|secret|password|oauth[-_ ]?code)\s*[:=]\s*[^\s,;]+",
+                r#"(?i)(?:[?&])(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|oauth[_-]?code)=([^&#\s]+)"#,
+            )?,
+            // key=value / key:value，覆盖普通/转义 JSON 与自定义 *Token header。
+            // `\\?["']?` 同时接受 `"token"` 与 `\"token\"` 两种键边界。
+            Regex::new(
+                r#"(?i)(?:authorization|cookie|set-cookie|api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|(?:[a-z0-9]+[-_])*(?:token|secret|password)|oauth[-_ ]?code)\\?["']?\s*[:=]\s*\\?["']?[^\s,;\\\"'&#}]+"#,
             )?,
         ];
         for pattern in custom_patterns {
@@ -57,8 +63,18 @@ impl Redactor {
         for pattern in &self.replacements {
             redacted = pattern
                 .replace_all(&redacted, |captures: &Captures<'_>| {
-                    if captures[0].to_ascii_lowercase().starts_with("bearer ") {
+                    let matched = &captures[0];
+                    let lower = matched.to_ascii_lowercase();
+                    if lower.starts_with("bearer ") {
                         format!("Bearer {REDACTED}")
+                    } else if matched.starts_with('?') || matched.starts_with('&') {
+                        // 保留 query 分隔符，仅遮蔽取值。
+                        let sep = &matched[..1];
+                        if let Some(eq) = matched.find('=') {
+                            format!("{sep}{}={REDACTED}", &matched[1..eq])
+                        } else {
+                            REDACTED.to_owned()
+                        }
                     } else {
                         REDACTED.to_owned()
                     }
@@ -297,10 +313,33 @@ mod tests {
                 "eyJabcdefgh.ijklmnop.qrstuvwx",
             ),
             ("CUSTOM-123", "CUSTOM-123"),
+            (
+                "https://api.example/v1?token=url-token-secret&api_key=url-api-key-secret",
+                "url-token-secret",
+            ),
+            (
+                "https://api.example/v1?token=url-token-secret&api_key=url-api-key-secret",
+                "url-api-key-secret",
+            ),
+            (
+                r#"{\"auth\":{\"token\":\"nested-json-secret\",\"note\":\"api_key=nested-api-key\"}}"#,
+                "nested-json-secret",
+            ),
+            (
+                r#"{\"auth\":{\"token\":\"nested-json-secret\",\"note\":\"api_key=nested-api-key\"}}"#,
+                "nested-api-key",
+            ),
+            (
+                "X-Custom-Token: custom-header-secret",
+                "custom-header-secret",
+            ),
         ];
         for (input, secret) in cases {
             let output = redactor.redact(input);
-            assert!(!output.contains(secret), "secret leaked: {secret}");
+            assert!(
+                !output.contains(secret),
+                "secret leaked: {secret} from {input:?} -> {output:?}"
+            );
         }
         assert_eq!(redactor.redact_field("api_key", "plain-secret"), REDACTED);
         assert_eq!(

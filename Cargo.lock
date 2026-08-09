@@ -854,6 +854,7 @@ name = "file-index"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
+ "dunce",
  "ignore",
  "notify 7.0.0",
  "thiserror 2.0.19",
@@ -3581,6 +3582,7 @@ name = "workspace-service"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
+ "dunce",
  "serde",
  "serde_json",
  "thiserror 2.0.19",

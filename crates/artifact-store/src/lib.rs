@@ -21,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use app_database::{DatabaseActor, DatabaseError};
@@ -31,6 +31,8 @@ use thiserror::Error;
 const SCHEMA_VERSION: u32 = 1;
 const BLOBS_DIR: &str = "blobs";
 const DATABASE_FILE: &str = "artifacts.sqlite3";
+/// 崩溃残留的 `.tmp-` 写入临时文件超过该年龄后，由 `gc` 回收。
+const TMP_ORPHAN_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 const SCHEMA_SQL: &str = "
     CREATE TABLE IF NOT EXISTS artifact_blobs (
@@ -123,6 +125,8 @@ pub struct GcReport {
     pub deleted: u64,
     /// 回收的总字节数。
     pub reclaimed_bytes: u64,
+    /// 清理的过期 `.tmp-` 孤儿文件数量。
+    pub deleted_tmp_orphans: u64,
 }
 
 /// `integrity_check` 的结果。
@@ -441,9 +445,11 @@ impl ArtifactStore {
     }
 
     /// 回收引用计数为零的 blob；有引用的 blob 一律不触碰。
+    ///
+    /// 同时清理 `blobs/` 下 mtime 超过 24h 的 `.tmp-` 崩溃残留文件。
     pub async fn gc(&self) -> Result<GcReport, ArtifactStoreError> {
         let root = self.root.clone();
-        let report = self
+        let mut report = self
             .database
             .call(move |connection| -> Result<GcReport, ArtifactStoreError> {
                 let mut statement = connection
@@ -470,6 +476,8 @@ impl ArtifactStore {
                 Ok(report)
             })
             .await??;
+        report.deleted_tmp_orphans =
+            clean_stale_tmp_orphans(&self.root.join(BLOBS_DIR), TMP_ORPHAN_MAX_AGE)?;
         Ok(report)
     }
 
@@ -608,6 +616,78 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.starts_with(".tmp-"));
             if !is_temp {
+                out.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 清理 mtime 超过阈值的 `.tmp-` 崩溃残留文件。
+fn clean_stale_tmp_orphans(dir: &Path, max_age: Duration) -> Result<u64, ArtifactStoreError> {
+    let mut deleted = 0u64;
+    let mut files = Vec::new();
+    collect_tmp_files(dir, &mut files).map_err(|source| ArtifactStoreError::Io {
+        source,
+        path: dir.to_path_buf(),
+    })?;
+    let now = SystemTime::now();
+    for path in files {
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(ArtifactStoreError::Io {
+                    source,
+                    path: path.clone(),
+                });
+            }
+        };
+        let modified = match metadata.modified() {
+            Ok(modified) => modified,
+            Err(source) => {
+                return Err(ArtifactStoreError::Io {
+                    source,
+                    path: path.clone(),
+                });
+            }
+        };
+        let age = match now.duration_since(modified) {
+            Ok(age) => age,
+            Err(_) => continue, // 未来时间戳：跳过，避免误删进行中写入
+        };
+        if age <= max_age {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => deleted += 1,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(ArtifactStoreError::Io { source, path });
+            }
+        }
+    }
+    Ok(deleted)
+}
+
+/// 递归收集 `.tmp-` 前缀的临时文件。
+fn collect_tmp_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            collect_tmp_files(&path, out)?;
+        } else {
+            let is_temp = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".tmp-"));
+            if is_temp {
                 out.push(path);
             }
         }
@@ -775,6 +855,7 @@ mod tests {
         let report = store.gc().await.expect("gc");
         assert_eq!(report.deleted, 1);
         assert_eq!(report.reclaimed_bytes, b"garbage blob".len() as u64);
+        assert_eq!(report.deleted_tmp_orphans, 0);
         assert!(!store.blob_path(&garbage).exists());
         assert!(store.blob_path(&referenced).exists());
         assert_eq!(
@@ -784,6 +865,40 @@ mod tests {
         // 再次 GC 无可回收内容。
         let second = store.gc().await.expect("second gc");
         assert_eq!(second, GcReport::default());
+        store.shutdown().await.expect("shutdown");
+        cleanup(&root);
+    }
+
+    #[tokio::test]
+    async fn gc_cleans_stale_tmp_orphans_but_keeps_fresh_ones() {
+        let root = temp_root("gc-tmp");
+        let store = ArtifactStore::open(&root).await.expect("open store");
+        let referenced = store.put(b"keep me").await.expect("put").id;
+        let blob_dir = store
+            .blob_path(&referenced)
+            .parent()
+            .expect("blob dir")
+            .to_path_buf();
+
+        let stale = blob_dir.join(".tmp-stale-orphan");
+        let fresh = blob_dir.join(".tmp-fresh-orphan");
+        fs::write(&stale, b"stale temp").expect("write stale tmp");
+        fs::write(&fresh, b"fresh temp").expect("write fresh tmp");
+
+        let stale_mtime = SystemTime::now() - Duration::from_secs(25 * 60 * 60);
+        let file = fs::File::options()
+            .write(true)
+            .open(&stale)
+            .expect("open stale tmp");
+        file.set_modified(stale_mtime).expect("set stale mtime");
+        drop(file);
+
+        let report = store.gc().await.expect("gc");
+        assert_eq!(report.deleted, 0);
+        assert_eq!(report.deleted_tmp_orphans, 1);
+        assert!(!stale.exists(), "stale .tmp- orphan must be reclaimed");
+        assert!(fresh.exists(), "fresh .tmp- must survive 24h threshold");
+        assert!(store.blob_path(&referenced).exists());
         store.shutdown().await.expect("shutdown");
         cleanup(&root);
     }

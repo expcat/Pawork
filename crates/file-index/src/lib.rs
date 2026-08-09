@@ -4,11 +4,14 @@
 //! 去抖后批量应用。索引只保存 workspace root 序号与相对路径，不接受模型提供绝对路径。
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, RwLock,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -21,6 +24,10 @@ use tokio::{
     task::JoinHandle,
 };
 use workspace_service::Workspace;
+
+/// watcher / 去抖错误环形缓冲上限。
+const MAX_WATCHER_ERRORS: usize = 1024;
+const ERRORS_TRUNCATED_MARKER: &str = "[truncated: oldest watcher errors discarded]";
 
 #[derive(Clone, Debug)]
 pub struct IndexOptions {
@@ -239,6 +246,7 @@ impl FileIndex {
         let updates = self.start_debounced_updates(workspace.clone(), debounce);
         let sender = updates.sender.clone();
         let errors = updates.errors.clone();
+        let dropped_events = updates.dropped_events.clone();
         let mut watcher =
             notify::recommended_watcher(move |result: notify::Result<Event>| match result {
                 Ok(event) => {
@@ -248,8 +256,12 @@ impl FileIndex {
                         ChangeKind::Upsert
                     };
                     for path in event.paths {
-                        if sender.blocking_send(PathChange { path, kind }).is_err() {
-                            push_error(&errors, "file-index update channel closed".into());
+                        if !enqueue_watcher_change(
+                            &sender,
+                            &errors,
+                            &dropped_events,
+                            PathChange { path, kind },
+                        ) {
                             break;
                         }
                     }
@@ -309,14 +321,16 @@ pub struct DebouncedUpdateHandle {
     sender: mpsc::Sender<PathChange>,
     stop: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
-    errors: Arc<Mutex<Vec<String>>>,
+    errors: Arc<Mutex<ErrorLog>>,
+    dropped_events: Arc<AtomicU64>,
 }
 
 impl DebouncedUpdateHandle {
     fn start(index: FileIndex, workspace: Workspace, debounce: Duration) -> Self {
         let (sender, receiver) = mpsc::channel(256);
         let (stop_tx, stop_rx) = oneshot::channel();
-        let errors = Arc::new(Mutex::new(Vec::new()));
+        let errors = Arc::new(Mutex::new(ErrorLog::default()));
+        let dropped_events = Arc::new(AtomicU64::new(0));
         let task_errors = errors.clone();
         let task = tokio::spawn(debounce_loop(
             index,
@@ -331,6 +345,7 @@ impl DebouncedUpdateHandle {
             stop: Some(stop_tx),
             task: Some(task),
             errors,
+            dropped_events,
         }
     }
 
@@ -344,8 +359,21 @@ impl DebouncedUpdateHandle {
     pub fn errors(&self) -> Vec<String> {
         self.errors
             .lock()
-            .map(|errors| errors.clone())
+            .map(|errors| errors.snapshot())
             .unwrap_or_else(|_| vec!["watcher error lock poisoned".into()])
+    }
+
+    /// 错误缓冲是否因超过上限发生过截断。
+    pub fn errors_truncated(&self) -> bool {
+        self.errors
+            .lock()
+            .map(|errors| errors.truncated)
+            .unwrap_or(false)
+    }
+
+    /// watcher 回调因有界通道满而丢弃的事件总数。
+    pub fn dropped_events(&self) -> u64 {
+        self.dropped_events.load(Ordering::Relaxed)
     }
 
     pub async fn shutdown(mut self) {
@@ -376,6 +404,14 @@ impl WorkspaceWatcher {
         self.updates.errors()
     }
 
+    pub fn errors_truncated(&self) -> bool {
+        self.updates.errors_truncated()
+    }
+
+    pub fn dropped_events(&self) -> u64 {
+        self.updates.dropped_events()
+    }
+
     pub async fn shutdown(self) {
         self.updates.shutdown().await;
     }
@@ -387,7 +423,7 @@ async fn debounce_loop(
     debounce: Duration,
     mut receiver: mpsc::Receiver<PathChange>,
     mut stop: oneshot::Receiver<()>,
-    errors: Arc<Mutex<Vec<String>>>,
+    errors: Arc<Mutex<ErrorLog>>,
 ) {
     loop {
         let first = tokio::select! {
@@ -522,11 +558,11 @@ fn locate_root<'a>(
 
 fn normalize_event_path(path: &Path) -> PathBuf {
     if let Ok(canonical) = fs::canonicalize(path) {
-        return canonical;
+        return dunce::simplified(&canonical).to_path_buf();
     }
     if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
         if let Ok(parent) = fs::canonicalize(parent) {
-            return parent.join(name);
+            return dunce::simplified(&parent).join(name);
         }
     }
     path.to_path_buf()
@@ -693,7 +729,72 @@ fn path_sort_key(path: &Path) -> String {
     }
 }
 
-fn push_error(errors: &Mutex<Vec<String>>, error: String) {
+#[derive(Clone, Debug, Default)]
+struct ErrorLog {
+    entries: VecDeque<String>,
+    truncated: bool,
+}
+
+impl ErrorLog {
+    fn push(&mut self, error: String) {
+        if self.entries.len() >= MAX_WATCHER_ERRORS {
+            self.entries.pop_front();
+            self.truncated = true;
+        }
+        self.entries.push_back(error);
+    }
+
+    fn snapshot(&self) -> Vec<String> {
+        if !self.truncated {
+            return self.entries.iter().cloned().collect();
+        }
+
+        // 截断标记也计入 1024 上限，避免导出端重新变成无界集合。
+        let mut out = Vec::with_capacity(MAX_WATCHER_ERRORS);
+        out.push(ERRORS_TRUNCATED_MARKER.into());
+        out.extend(
+            self.entries
+                .iter()
+                .skip(self.entries.len().saturating_sub(MAX_WATCHER_ERRORS - 1))
+                .cloned(),
+        );
+        out
+    }
+}
+
+fn enqueue_watcher_change(
+    sender: &mpsc::Sender<PathChange>,
+    errors: &Mutex<ErrorLog>,
+    dropped_events: &AtomicU64,
+    change: PathChange,
+) -> bool {
+    match sender.try_send(change) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            let previous = dropped_events
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    Some(current.saturating_add(1))
+                })
+                .unwrap_or(u64::MAX);
+            let total = previous.saturating_add(1);
+            // notify 回调不得等待锁；计数由 Atomic 保证，文本诊断在锁竞争时 best-effort。
+            if let Ok(mut errors) = errors.try_lock() {
+                errors.push(format!(
+                    "file-index update channel full; event dropped (total: {total})"
+                ));
+            }
+            true
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            if let Ok(mut errors) = errors.try_lock() {
+                errors.push("file-index update channel closed".into());
+            }
+            false
+        }
+    }
+}
+
+fn push_error(errors: &Mutex<ErrorLog>, error: String) {
     if let Ok(mut errors) = errors.lock() {
         errors.push(error);
     }
@@ -843,5 +944,63 @@ mod tests {
             .is_empty());
         handle.shutdown().await;
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn try_send_does_not_block_when_channel_full() {
+        // 直接调用 watch_workspace 回调使用的 helper，验证满通道路径不阻塞且可计数。
+        // 不能挂 debounce 消费者，否则窗口内会持续 drain，通道填不满。
+        let (sender, _receiver) = mpsc::channel::<PathChange>(256);
+        for i in 0..256 {
+            sender
+                .try_send(PathChange {
+                    path: PathBuf::from(format!("file-{i}.rs")),
+                    kind: ChangeKind::Upsert,
+                })
+                .expect("fill channel");
+        }
+
+        let errors = Mutex::new(ErrorLog::default());
+        let dropped_events = AtomicU64::new(0);
+        let started = Instant::now();
+        let should_continue = enqueue_watcher_change(
+            &sender,
+            &errors,
+            &dropped_events,
+            PathChange {
+                path: PathBuf::from("overflow.rs"),
+                kind: ChangeKind::Upsert,
+            },
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(50),
+            "try_send must not block"
+        );
+        assert!(should_continue);
+
+        let errors = errors.lock().expect("errors lock");
+        assert_eq!(dropped_events.load(Ordering::Relaxed), 1);
+        let snapshot = errors.snapshot();
+        assert!(
+            snapshot.iter().any(|error| error.contains("channel full")),
+            "full-channel drops must be observable: {snapshot:?}"
+        );
+    }
+
+    #[test]
+    fn watcher_errors_cap_at_1024_and_mark_truncation() {
+        let mut log = ErrorLog::default();
+        for i in 0..1100 {
+            log.push(format!("error-{i}"));
+        }
+        assert!(log.truncated);
+        assert_eq!(log.entries.len(), MAX_WATCHER_ERRORS);
+        assert_eq!(log.entries.front().map(String::as_str), Some("error-76"));
+        assert_eq!(log.entries.back().map(String::as_str), Some("error-1099"));
+        let snapshot = log.snapshot();
+        assert_eq!(snapshot[0], ERRORS_TRUNCATED_MARKER);
+        assert_eq!(snapshot.len(), MAX_WATCHER_ERRORS);
+        assert_eq!(snapshot[1], "error-77");
+        assert_eq!(snapshot.last().map(String::as_str), Some("error-1099"));
     }
 }

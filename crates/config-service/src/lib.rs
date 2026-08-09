@@ -13,7 +13,9 @@ mod paths;
 mod schema;
 
 pub use error::{ConfigError, ConfigParseError};
-pub use loader::{ConfigSource, LoadedSource, LoadedSourceSpan, Loader, ResolvedConfig};
+pub use loader::{
+    ConfigSource, ConfigWarning, LoadedSource, LoadedSourceSpan, Loader, ResolvedConfig,
+};
 pub use merge::{merge_ordered, ConfigValue, Merge};
 pub use paths::{config_dir_for_app, default_search_roots, locate_workspace_config};
 pub use schema::{ModelConfig, PaworkConfig, ProviderConfig, RunOverrides, SessionOverrides};

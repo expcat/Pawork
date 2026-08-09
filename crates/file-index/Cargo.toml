@@ -9,10 +9,11 @@ description = "Pawork 异步文件索引、ignore、增量更新与去抖监听"
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+dunce.workspace = true
 ignore.workspace = true
 notify.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 workspace-service = { path = "../workspace-service" }
 
 [dev-dependencies]
