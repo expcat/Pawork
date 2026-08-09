@@ -22,7 +22,9 @@ pub use error::AuthError;
 pub use masked::MaskedCredential;
 pub use oauth::{
     exchange_pkce_code, needs_refresh, poll_device_token, random_state, read_refresh_token,
-    refresh_access_token, request_device_authorization, resolve_oauth_credential, start_pkce_flow,
-    store_oauth_token, CallbackServer, DeviceFlowConfig, DeviceUserPrompt, Pkce, PkceFlowConfig,
-    PkceSession, TokenSet,
+    refresh_access_token, refresh_oauth_credential_if_needed, request_device_authorization,
+    resolve_oauth_credential, resolve_oauth_credential_for_request, start_pkce_flow,
+    start_pkce_flow_with_callback, store_oauth_token, update_oauth_token, CallbackServer,
+    DeviceFlowConfig, DeviceUserPrompt, OAuthRefreshConfig, Pkce, PkceFlowConfig, PkceSession,
+    TokenSet,
 };

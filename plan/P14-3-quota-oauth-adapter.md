@@ -29,4 +29,4 @@
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [auth](../docs/features/auth.md) · [providers](../docs/features/providers.md) · [ROADMAP](../ROADMAP.md)
 
-**依赖建议（2026-08 review）**：复用 `auth-service::oauth`（oauth2 crate）与 `provider-runtime`，不新增依赖。
+**依赖建议（2026-08 review）**：复用 `auth-service::oauth`（P6-4 最小手写实现）与 `provider-runtime`，不新增 OAuth SDK 依赖。

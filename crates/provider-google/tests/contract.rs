@@ -2,7 +2,7 @@
 //!
 //! 复用统一断言覆盖 ADR-015 核心用例，并额外验证 Gemini 系特性：thinking
 //! 流（P6-5）、图片输入透传（P6-6）、结构化输出（P6-8）、provider_options
-//! 透传（P6-9）、prompt cache 命中（P6-7），以及 Google 特有的 key query 认证。
+//! 透传（P6-9）、prompt cache 命中（P6-7），以及 Google 特有的 header 认证。
 //! 全程 wiremock，不接触真实网络与 Key。
 
 use std::collections::BTreeMap;
@@ -19,7 +19,7 @@ use provider_api::{
 use provider_google::{GoogleConfig, GoogleProvider};
 use provider_runtime::http::HttpClientConfig;
 use test_support::{contract, RecordingProviderSink};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const MODEL: &str = "gemini-2.5-pro";
@@ -83,6 +83,8 @@ fn stream_path(model: &str) -> String {
 async fn mount_stream_ok(server: &MockServer, model: &str, body: String) {
     Mock::given(method("POST"))
         .and(path(stream_path(model)))
+        .and(query_param("alt", "sse"))
+        .and(header("x-goog-api-key", "test-key"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -136,7 +138,7 @@ async fn contract_text_stream() {
 }
 
 #[tokio::test]
-async fn contract_auth_key_in_query_param() {
+async fn contract_auth_key_in_header_and_absent_from_url() {
     let server = MockServer::start().await;
     let body = sse_body(&[
         r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}"#,
@@ -151,7 +153,7 @@ async fn contract_auth_key_in_query_param() {
 
     let url = last_request_url(&server).await;
     assert!(url.contains("alt=sse"), "URL 缺少 alt=sse：{url}");
-    assert!(url.contains("key=test-key"), "URL 缺少 key=test-key：{url}");
+    assert!(!url.contains("key="), "URL 不应包含 API key：{url}");
 }
 
 #[tokio::test]
@@ -226,10 +228,20 @@ async fn contract_parallel_tool_calls() {
 
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
-    p.stream(request(MODEL), &sink, CancellationToken::new())
+    let summary = p
+        .stream(request(MODEL), &sink, CancellationToken::new())
         .await
         .expect("stream ok");
     contract::assert_parallel_tool_calls(&sink.events());
+    let calls = summary.provider_metadata["toolCalls"]
+        .as_array()
+        .expect("保留 toolCalls 元数据");
+    assert_eq!(calls[0]["id"], "gemini-call-0");
+    assert_eq!(calls[0]["name"], "read");
+    assert_eq!(calls[0]["ordinal"], 0);
+    assert_eq!(calls[1]["id"], "gemini-call-1");
+    assert_eq!(calls[1]["name"], "write");
+    assert_eq!(calls[1]["ordinal"], 1);
 }
 
 #[tokio::test]

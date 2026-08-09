@@ -26,7 +26,7 @@
 | 3 | Agent Loop | 11 | 11 | 🟢已完成（P3-11 TargetVerified） |
 | 4 | 核心工具与权限 | 13 | 13 | 🟢已完成（P4-13 TargetVerified） |
 | 5 | Session、Branch 与 Compaction | 10 | 10 | 🟢已完成（P5-10 TargetVerified） |
-| 6 | 主要 Provider | 14 | 9 | 🔵进行中（P6-10~13、P6-14 评审修复待启动） |
+| 6 | 主要 Provider | 14 | 14 | 🟢已完成 |
 | 7 | Git、Diff 与 Worktree | 9 | 9 | 🟢已完成 |
 | 8 | Skills、Prompts 与 Instructions | 8 | 0 | 🟡未开始 |
 | 9 | MCP | 7 | 0 | 🟡未开始 |
@@ -54,7 +54,7 @@
 
 Phase 编号保留架构与文档索引意义，实际开发按结构性依赖分波推进：
 
-1. **主干补线**：完成 P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P6-14 / P7-9，优先消除安全红线与“模块存在但未接入 Agent Loop”的缺口；每项只跑受影响 crate 的定向测试。
+1. **主干补线**：完成 P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P7-9，优先消除安全红线与“模块存在但未接入 Agent Loop”的缺口；每项只跑受影响 crate 的定向测试。
 2. **Provider v2 前置**：完成 P15-1～P15-8，再由 P15-9 一次性执行 GPT / Claude / Grok 的完整 Provider Contract v2 门禁。P6-1 / P6-2 / P6-10 保留基础协议路径，Responses / modern server tools 在 Phase 15 扩展。
 3. **账号控制面基础**：完成 P18-1～P18-9。先建立 `Tenant/Principal`、`ProviderAccount/Credential`、Lease、错误/健康状态机、确定性路由、Session Affinity 与多维 Usage Ledger；`ModelProvider` 保持不变，旧配置映射到 `local/default + SingleCandidate`。Phase 12、Phase 14 与外部 Client Adapter 不得各自复制账号选择逻辑。
 4. **资源与 Host 基础**：推进 Phase 8、Phase 9、P13-1 / P13-2、P16-1 / P16-2 与 P18-10，先形成确定性资源、MCP、CLI/Core 正式宿主、可审批 Plan 和统一 Client Adapter 契约的最小闭环。
@@ -111,7 +111,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | SQLite 绑定 | rusqlite | P1-2 | 契合「SQLite Actor 单连接」设计；sqlx 亦活跃，但其异步池 + 编译期 SQL 检查与该设计不匹配，集成成本更高 |
 | HTTP 客户端 | reqwest（rustls + stream） | P2-1、P9-2 | Provider 与 MCP Streamable HTTP 所需 |
 | OS Keychain | keyring（v3） | P2-6 | Secret 不落库不入日志 |
-| OAuth 基础 | oauth2 | P6-4 | 只用 PKCE + Device Flow 子集 |
+| OAuth 安全原语 | base64、rand、sha2、url | P6-4、P6-14 | 采用成熟编码/随机/哈希/URL 原语；PKCE、token 交换、RFC 8628 编排为最小手写实现，不引入未使用的整套 `oauth2` SDK |
 | MCP SDK | rmcp | P9-1、P9-2 | 官方 SDK、跟进 MCP 2026-07-28 规范；只用 transport + codec 层；锁定小版本（2.x→3.0 有 breaking） |
 | WASM 宿主 | wasmtime + wit-bindgen | P10-2、P10-5 | Component Model 成熟；fuel / 内存上限对应 ADR-012 |
 | 文件遍历 | ignore + globset | P1-8、P4-6、P4-7、P7-9 | ripgrep 同源；P7-9 复用 ignore 语义限制 Git watcher 范围 |
@@ -156,7 +156,7 @@ Desktop authoritative projection、`global_sequence` 去重/补洞、Snapshot/Ev
 | apply_patch / edit_file | patch-apply-rs、mpatch | P4-3、P4-4 | 安全关键路径，需完整 fuzz 与审计；精确匹配与上下文校验语义必须完全可控 |
 | 配置合并 | config-rs | P1-1 | 全局 / 工作区 / session / CLI 合并要求确定性优先级语义，比通用解析更重要 |
 | Metrics 采集 | metrics crate 命名与标签约定 | P1-10 | 采集留在 SQLite Actor 内自实现，只参考命名 |
-| OAuth Device Flow | oauth-device-flows；RFC 8628 | P6-4 | RFC 本身很小，可在 oauth2 之上实现 |
+| OAuth Device Flow | oauth-device-flows；RFC 8628 | P6-4 | 协议面小，基于 reqwest/url 手写最小状态编排；已覆盖 PKCE S256、CSRF state、轮换 refresh token 回写与脱敏错误 |
 | 本地 Transport | tokio 原生 UDS / Named Pipe；interprocess（可选） | P13-4 | 无需引入整套框架 |
 | OAuth 回调服务器 | tiny_http / hyper | P6-4 | 一次性本地临时监听，不引入 axum |
 
@@ -181,7 +181,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | --- | --- | --- |
 | agent-api 职责边界 | 评估与 core-api / app-service 的重叠；workspace-layout §6 依赖图仅画主干链（完整清单以其 §2 为准，含 agent-api / app-database / transport-memory / hook-runtime） | Phase 13 前 |
 | provider-bedrock / provider-mistral | 已在 workspace-layout 登记但 ROADMAP 无对应任务（MVP 可推迟） | 启动时补任务 |
-| 六初始供应商 crate 登记 | P6-10~13 新增 `provider-xai` / `provider-zhipu` / `provider-qwen` / `provider-moonshot`，需在 workspace-layout §2 登记并在 `ProviderId` 枚举补 Xai / Zhipu / Qwen / Moonshot | P6-10 启动时 |
+| 六初始供应商 crate 登记（已完成） | P6-10~13 已新增并登记 `provider-xai` / `provider-zhipu` / `provider-qwen` / `provider-moonshot`；`ProviderId` 为开放 newtype，无需、也不应增加枚举分支 | 已完成（2026-08-09） |
 | Google Gemini 降级次要 | 初始供应商集合调整为 OpenAI / Anthropic / xAI Grok / 智谱 GLM / 阿里 Qwen / Moonshot Kimi；Gemini 保留已实现的 `provider-google` 但不纳入初始范围 | 已确认（2026-08-08） |
 | 缺失功能文档 | audit-log、client-auth 尚无独立 `docs/features/` 文档 | 对应 crate 实现时 |
 | Phase 15–17 架构基线同步（2026-08-08 完成） | P17-4 重定位为 LSP Client Runtime；P15-7 reasoning 走 Protected Blob Store（ADR-032，不入 Keychain）；P16-7 embedding 扩展 `provider-api`（不新增 crate）；P17-1 hooks 拆 6 类 handler；P17-2 Plugin Package 增 Monitors；P17-5 effort 走 canonical；P17-9/SDK 经 pawork Host；P17-10 服从三执行位点。新 crate 已登记 workspace-layout §2.1，领域类型登记 domain-model §5 | 已确认 |
@@ -324,11 +324,11 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P6-7 | 🟢 | Prompt Cache | 缓存控制+命中 | [详情](plan/P6-7-prompt-cache.md) |
 | P6-8 | 🟢 | 结构化输出 | JSON/structured | [详情](plan/P6-8-structured-output.md) |
 | P6-9 | 🟢 | Provider-specific options | 透传+raw metadata | [详情](plan/P6-9-provider-options.md) |
-| P6-10 | 🟡 | xAI Grok 适配 | API Key 直连 + OAuth 订阅+reasoning | [详情](plan/P6-10-xai-grok.md) |
-| P6-11 | 🟡 | 智谱 GLM 适配 | API Key 直连+reasoning_content | [详情](plan/P6-11-zhipu-glm.md) |
-| P6-12 | 🟡 | 阿里 Qwen 适配 | DashScope API Key+thinking | [详情](plan/P6-12-qwen.md) |
-| P6-13 | 🟡 | Moonshot Kimi 适配 | API Key 直连+reasoning | [详情](plan/P6-13-moonshot-kimi.md) |
-| P6-14 | 🟡 | Phase 6 评审修复 | 安全/正确性（V1~V3）+ OAuth 接线（V4）+ 基线（oauth2/四依赖） | [详情](plan/P6-14-review-remediation.md) |
+| P6-10 | 🟢 | xAI Grok 适配 | API Key 直连 + OAuth 订阅+reasoning | [详情](plan/P6-10-xai-grok.md) |
+| P6-11 | 🟢 | 智谱 GLM 适配 | API Key 直连+reasoning_content | [详情](plan/P6-11-zhipu-glm.md) |
+| P6-12 | 🟢 | 阿里 Qwen 适配 | DashScope API Key+thinking | [详情](plan/P6-12-qwen.md) |
+| P6-13 | 🟢 | Moonshot Kimi 适配 | API Key 直连+reasoning | [详情](plan/P6-13-moonshot-kimi.md) |
+| P6-14 | 🟢 | Phase 6 评审修复 | 安全/正确性（V1~V3）+ OAuth 接线（V4）+ 基线（手写 OAuth/四依赖） | [详情](plan/P6-14-review-remediation.md) |
 
 ### Phase 7：Git、Diff 与 Worktree
 

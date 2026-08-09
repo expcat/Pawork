@@ -1,6 +1,6 @@
 # P6-13：Moonshot Kimi 适配
 
-> Phase 6 · 主要 Provider · 状态：🟡未开始 · 依赖：P2-11、P6-5
+> Phase 6 · 主要 Provider · 状态：🟢已完成 · 交付成熟度：Implemented · 依赖：P2-11、P6-5
 
 **最终目的**：接入 Moonshot AI Kimi 模型族（Kimi K2、moonshot-v1 等），以 API Key 直连，复用 Moonshot OpenAI-compatible 接口，核心 Agent 不含 Kimi 特例。
 
@@ -20,9 +20,9 @@
 
 ## 验收标准
 
-- [ ] 通过统一 Contract Tests
-- [ ] Kimi reasoning 流归一到 `ThinkingDelta`
-- [ ] 不在 Agent Core 走 Kimi 名称分支
+- [x] 通过统一 Contract Tests
+- [x] Kimi reasoning 流归一到 `ThinkingDelta`
+- [x] 不在 Agent Core 走 Kimi 名称分支
 
 **相关文档**：[providers](../docs/features/providers.md) · [usage-quota](../docs/features/usage-quota.md) · [ADR-002 解耦](../docs/adr/ADR-002-agent-engine-provider-decoupled.md) · [ADR-015 Contract Tests](../docs/adr/ADR-015-provider-contract-tests.md) · [ROADMAP](../ROADMAP.md)
 

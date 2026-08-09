@@ -86,7 +86,8 @@ pub enum ProviderStreamEvent {
 - SSE / JSONL 单条缓冲上限为 1 MiB；超限产生解析错误并重置，确定非法的 UTF-8 字节按线性扫描批量移除。
 - OpenAI-compatible 请求固定发送 `stream_options.include_usage = true`；末尾 `choices: []` 的 usage-only chunk 仍归一为 `UsageUpdated`。
 - 协议正常以 `[DONE]` 收尾但没有 `finish_reason` 时归一为 `Completed`，不把成功响应误记为 `Error`。
-- `provider_options` 不得覆盖 `model`、`messages`、`stream`、`stream_options`、`tools`、`tool_choice` 或认证字段；命中保留键时忽略并记录告警。
+- `provider_options` 中的非保留键在 canonical 翻译后合并，因此可覆盖同名的非关键 wire 字段；但不得覆盖 `model`、`messages`、`stream`、`stream_options`、`tools`、`tool_choice` 或认证字段，命中保留键时忽略并记录告警。
+- Adapter 还必须保护会破坏协议约束的字段；Anthropic 的 `max_tokens`、`thinking`、`temperature`、`stop_sequences` 均不可由 `provider_options` 覆盖，避免绕过 thinking budget 钳制与 canonical 参数。
 - 远端模型目录请求与流式请求复用同一认证头，受保护的 `/models` 端点不得匿名访问。
 
 ## Provider 优先级
@@ -103,23 +104,22 @@ pub enum ProviderStreamEvent {
 | --- | --- | --- | --- |
 | OpenAI（原生） | `provider-openai` | Chat Completions | reasoning 流、图片输入、结构化输出、provider options 透传、prompt cache 自动命中 |
 | OpenAI-compatible / 本地服务 | `provider-openai-compatible` | Chat Completions | 覆盖云端兼容接口与 Ollama / vLLM / LM Studio；图片输入、reasoning、options 透传 |
-| Anthropic | `provider-anthropic` | Messages API | thinking、tool_use、prompt cache（`cache_control`）、图片、`top_k` 等透传 |
-| Google Gemini | `provider-google` | `generateContent`（`alt=sse`） | `function_call`、`thought` 流、`responseSchema`、`thinkingConfig`、`cachedContentTokenCount`（已降级次要 P1） |
+| Anthropic | `provider-anthropic` | Messages API | thinking budget 与 `max_tokens` 约束、tool_use、有界 prompt cache 断点、图片；JSON/Schema 通过 system 约束注入 |
+| Google Gemini | `provider-google` | `generateContent`（`alt=sse`） | `functionCall`、`thought` 流、`responseSchema`、`thinkingConfig`、cache usage；并行工具保留 id/name/ordinal 元数据（已降级次要 P1） |
+| xAI Grok | `provider-xai` | Chat Completions（`api.x.ai`） | API Key / OAuth bearer 双鉴权、reasoning → `ThinkingDelta`、独立错误归一 |
+| 智谱 GLM | `provider-zhipu` | BigModel OpenAI-compatible | API Key Bearer、`reasoning_content` → `ThinkingDelta`、余额/内容审核错误归一 |
+| 阿里 Qwen | `provider-qwen` | DashScope OpenAI-compatible | API Key Bearer；canonical thinking 仅对能力目录中的模型映射 `enable_thinking`；reasoning 归一 |
+| Moonshot Kimi | `provider-moonshot` | OpenAI-compatible | API Key Bearer、Kimi reasoning → `ThinkingDelta`、限流/余额/内容安全错误归一 |
 
-跨切能力（Phase 6）：thinking/reasoning level（P6-5）、图片输入（P6-6）、prompt cache 控制+命中（P6-7）、结构化输出（P6-8）、provider-specific options 透传+raw metadata（P6-9）。Agent Core 经 [`agent-engine/tests/no_provider_branch.rs`](../../crates/agent-engine/tests/no_provider_branch.rs) 回归守护，禁止按 provider 名走分支。
+跨切能力（Phase 6）：thinking/reasoning level（P6-5）、图片输入（P6-6）、prompt cache 控制+命中（P6-7）、结构化输出（P6-8）、provider-specific options 透传+raw metadata（P6-9）。Agent Core 经 [`agent-engine/tests/no_provider_branch.rs`](../../crates/agent-engine/tests/no_provider_branch.rs) 回归守护，禁止按 provider 名走分支。Moonshot 原生余额查询不属于 Provider 基线，由 P14-2 与额度适配器承接。
 
-## 计划中 Provider（Phase 6，P6-10~13）
+### 内置模型目录新鲜度
 
-| Provider | crate | 鉴权 | 协议 | 关键能力 | 状态 |
-| --- | --- | --- | --- | --- | --- |
-| xAI Grok | `provider-xai`（计划） | API Key / OAuth 订阅 | Chat Completions（`api.x.ai`） | reasoning 流归一；OAuth 订阅按订阅配额而非 token 计费 | 🟡 P6-10 |
-| 智谱 GLM | `provider-zhipu`（计划） | API Key | OpenAI-compatible（`open.bigmodel.cn/api/paas/v4`） | GLM-4.6 `reasoning_content` 归一 | 🟡 P6-11 |
-| 阿里 Qwen | `provider-qwen`（计划） | API Key（DashScope） | OpenAI-compatible（`compatible-mode/v1`） | Qwen3 `enable_thinking` 归一 | 🟡 P6-12 |
-| Moonshot Kimi | `provider-moonshot`（计划） | API Key | OpenAI-compatible（`api.moonshot.cn/v1`） | Kimi K2 reasoning 归一；原生余额查询 | 🟡 P6-13 |
+OpenAI、Anthropic、Google、Qwen 与 Moonshot 的 `builtin_models()` 数据快照日期为 **2026-08-09**，源码入口也标注同一日期。这些目录优先表达能力而非仅列名；发现新模型与远端 `/models` + 能力探测属于后续显式跟踪项。xAI 与智谱当前复用带鉴权的远端目录。
 
 ## 认证
 
-API Key 与 OS Keychain 见 [auth](auth.md)；OAuth（PKCE / Device Flow / auto refresh / callback）由 `auth-service::oauth` 提供，明文 token 只存 SecretBackend。
+API Key 与 OS Keychain 见 [auth](auth.md)；OAuth（PKCE / Device Flow / auto refresh / callback）由 `auth-service::oauth` 提供，明文 token 只存 SecretBackend。xAI 订阅模式在组合层先调用 `resolve_oauth_credential_for_request` 完成刷新与轮换 token 回写，再以 `OAuthBearer` 构造 `provider-xai`；鉴于消费级端点不是稳定公开契约，授权/token endpoint 由 host 配置注入，API Key 仍为默认路径。
 
 ## 错误模型
 

@@ -10,8 +10,9 @@ use serde_json::{json, Value};
 
 /// 解析单条 SSE data 行的 JSON，返回该 chunk 应发射的事件。
 ///
-/// `state` 在 chunk 间保持工具调用计数与是否出现过 `functionCall`，用于在
-/// `finishReason` 到来时判定 stop reason（有工具调用 → ToolUse）。
+/// `state` 在 chunk 间保持工具调用顺序及原始名称，用于在
+/// `finishReason` 到来时判定 stop reason，并为后续 `functionResponse`
+/// 对齐保留稳定元数据。
 pub fn chunk_to_events(data: &str, state: &mut ChunkState) -> Vec<ProviderStreamEvent> {
     let value: Value = match serde_json::from_str(data) {
         Ok(v) => v,
@@ -66,9 +67,15 @@ pub fn chunk_to_events(data: &str, state: &mut ChunkState) -> Vec<ProviderStream
                     .or_else(|| fc.get("arguments"))
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                let id = format!("call-{}", state.tool_counter);
-                state.tool_counter += 1;
-                state.has_tool_calls = true;
+                let ordinal = state.tool_calls.len();
+                // Gemini 流式响应不提供 call id；以顺序生成可重放的稳定 id，
+                // 并把 id/name/ordinal 一起保留在 provider metadata 中。
+                let id = format!("gemini-call-{ordinal}");
+                state.tool_calls.push(GeminiToolCallRef {
+                    id: id.clone(),
+                    name: name.clone(),
+                    ordinal,
+                });
 
                 let args_json = if args.is_null() {
                     "{}".to_string()
@@ -108,10 +115,22 @@ pub fn chunk_to_events(data: &str, state: &mut ChunkState) -> Vec<ProviderStream
         .or_else(|| candidate.get("finish_reason"))
         .and_then(|f| f.as_str())
     {
-        events.push(ProviderStreamEvent::ProviderMetadata(
-            json!({ "finishReason": finish }),
-        ));
-        let stop = map_stop_reason(Some(finish), state.has_tool_calls);
+        let tool_calls: Vec<Value> = state
+            .tool_calls
+            .iter()
+            .map(|call| {
+                json!({
+                    "id": call.id,
+                    "name": call.name,
+                    "ordinal": call.ordinal,
+                })
+            })
+            .collect();
+        events.push(ProviderStreamEvent::ProviderMetadata(json!({
+            "finishReason": finish,
+            "toolCalls": tool_calls,
+        })));
+        let stop = map_stop_reason(Some(finish), !state.tool_calls.is_empty());
         events.push(ProviderStreamEvent::ResponseCompleted(stop));
     }
 
@@ -121,10 +140,15 @@ pub fn chunk_to_events(data: &str, state: &mut ChunkState) -> Vec<ProviderStream
 /// 解析流期间需在 chunk 间保持的状态。
 #[derive(Default)]
 pub struct ChunkState {
-    /// 已发射的工具调用数量，用于生成 id（Gemini 不在 chunk 中提供调用 id）。
-    pub tool_counter: usize,
-    /// 流中是否出现过 functionCall（用于 finishReason 时的 stop 判定）。
-    pub has_tool_calls: bool,
+    /// 已发射的工具调用，按 Gemini parts 出现顺序保留。
+    tool_calls: Vec<GeminiToolCallRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GeminiToolCallRef {
+    id: String,
+    name: String,
+    ordinal: usize,
 }
 
 /// 把 Gemini `usageMetadata` 归一为 [`TokenUsage`]。
@@ -223,6 +247,16 @@ mod tests {
             events.last(),
             Some(ProviderStreamEvent::ResponseCompleted(StopReason::ToolUse))
         ));
+        let metadata = events
+            .iter()
+            .find_map(|event| match event {
+                ProviderStreamEvent::ProviderMetadata(value) => Some(value),
+                _ => None,
+            })
+            .expect("有 provider metadata");
+        assert_eq!(metadata["toolCalls"][0]["id"], "gemini-call-0");
+        assert_eq!(metadata["toolCalls"][0]["name"], "x");
+        assert_eq!(metadata["toolCalls"][0]["ordinal"], 0);
     }
 
     #[test]

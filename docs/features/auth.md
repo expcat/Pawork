@@ -10,6 +10,10 @@
 
 API Key；Bearer Token；OAuth 2.0 PKCE；OAuth Device Flow；自动 Refresh Token；AWS Profile；AWS Environment Credentials；GCP Application Default Credentials；Azure Credential Chain；自定义 Header；环境变量引用。
 
+OAuth 实现保留最小手写协议层：使用 `base64` / `rand` / `sha2` / `url` 提供安全原语，不引入整套 `oauth2` SDK。PKCE verifier 由 48 字节均匀随机数做 base64url 无 padding 编码；callback 仅绑定 loopback，在生成授权 URL 前回填实际监听端口，并以 64 KiB 上限完整读取分片请求头。回调页只返回固定 `text/plain` 文案，不回显授权端 query；TokenSet、PKCE 与 Device Flow 临时 secret 的 `Debug` 输出统一脱敏。
+
+组合层在 Provider 构造或每次请求前调用 `resolve_oauth_credential_for_request`：临近过期时自动刷新，先将新 access token 与可选轮换 refresh token 回写 Secret Backend，再短暂解析为 bearer credential。同一 credential 的并发请求使用 singleflight gate，共享一次刷新结果；成功响应缺少 `expires_in` 时保留既有过期时间，避免误判为永不过期。
+
 ## Secret 存储
 
 存储优先级：

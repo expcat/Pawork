@@ -19,9 +19,9 @@
 
 ## 验收标准
 
-- [ ] PKCE/Device Flow 可完成
-- [ ] callback 测试通过
+- [x] PKCE/Device Flow 可完成
+- [x] callback 测试通过
 
 **相关文档**：[auth](../docs/features/auth.md) · [ROADMAP](../ROADMAP.md)
 
-**依赖建议（2026-08 review）**：基于 oauth2 crate 实现 PKCE / refresh；Device Flow 直接实现 RFC 8628（协议很小，可参考 oauth-device-flows）；回调本地监听用 tiny_http / hyper，不引入 axum。
+**依赖决策（2026-08-09 落地）**：维持最小手写 OAuth，基于 `reqwest` + `url` 实现 PKCE / refresh / RFC 8628，使用 `base64` / `rand` / `sha2` 提供编码、随机与 S256 原语。实现面仅覆盖 Pawork 所需子集，已有 RFC 7636 向量、state 校验、auto-refresh、轮换 token 回写、callback 分片/端口对齐测试，因此移除零引用的 `oauth2` 基线声明。

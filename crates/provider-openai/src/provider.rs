@@ -113,6 +113,7 @@ impl ModelProvider for OpenAiProvider {
 }
 
 /// OpenAI 内置模型目录（含 reasoning / image / tool 能力）。
+/// 数据快照：2026-08-09；目录更新作为显式跟踪项手动执行。
 pub fn builtin_models() -> Vec<ModelDefinition> {
     fn caps(
         text: bool,

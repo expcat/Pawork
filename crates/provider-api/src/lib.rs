@@ -37,6 +37,12 @@ pub struct CanonicalModelRequest {
     pub prompt_cache: PromptCachePreference,
     #[serde(default)]
     pub budget: RequestBudget,
+    /// Provider-specific wire options. Adapters merge non-reserved keys after
+    /// canonical translation, so a same-name non-critical wire field may override
+    /// its translated value. Critical canonical and authentication keys (model,
+    /// messages, stream, tools, tool choice, and auth headers) must be ignored.
+    /// Adapters must also reserve fields whose override would violate a wire-level
+    /// invariant (for example Anthropic `max_tokens` / `thinking`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub provider_options: BTreeMap<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

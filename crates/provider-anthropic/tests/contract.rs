@@ -15,7 +15,7 @@ use provider_api::ModelProvider;
 use provider_api::{
     CanonicalModelRequest, CredentialKind, PromptCachePreference, ProviderErrorKind,
     ProviderStreamEvent, RequestBudget, ResolvedCredential, ResponseFormat, ThinkingConfig,
-    ThinkingLevel, ToolChoice,
+    ThinkingLevel, ToolChoice, ToolDefinition,
 };
 use provider_runtime::http::HttpClientConfig;
 use test_support::{contract, RecordingProviderSink};
@@ -313,6 +313,7 @@ async fn contract_thinking_request_enables_thinking() {
     mount_ok(&server, body).await;
 
     let mut req = request("claude-3-5-sonnet");
+    req.max_output_tokens = Some(4096);
     req.thinking = Some(ThinkingConfig {
         level: ThinkingLevel::Medium,
         budget_tokens: Some(2048),
@@ -327,6 +328,9 @@ async fn contract_thinking_request_enables_thinking() {
     let body = last_request_body(&server).await;
     assert_eq!(body["thinking"]["type"], "enabled");
     assert_eq!(body["thinking"]["budget_tokens"], 2048);
+    assert!(
+        body["thinking"]["budget_tokens"].as_u64().unwrap() < body["max_tokens"].as_u64().unwrap()
+    );
 }
 
 #[tokio::test]
@@ -350,6 +354,12 @@ async fn contract_prompt_cache_marks_blocks() {
             metadata: MessageMetadata::default(),
         },
     );
+    req.messages.push(user("follow-up"));
+    req.tools.push(ToolDefinition {
+        name: "read_file".into(),
+        description: "read a file".into(),
+        input_schema: serde_json::json!({"type":"object"}),
+    });
 
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
@@ -362,6 +372,39 @@ async fn contract_prompt_cache_marks_blocks() {
     let user_blocks = body["messages"][0]["content"].as_array().unwrap();
     let last_block = user_blocks.last().unwrap();
     assert_eq!(last_block["cache_control"]["type"], "ephemeral");
+    assert!(body["messages"][1]["content"][0]
+        .get("cache_control")
+        .is_none());
+    assert_eq!(body["tools"][0]["cache_control"]["type"], "ephemeral");
+    assert_eq!(body.to_string().matches("cache_control").count(), 3);
+}
+
+#[tokio::test]
+async fn contract_structured_output_injects_schema_instruction() {
+    let server = MockServer::start().await;
+    let body = sse(&[
+        r#"{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+        r#"{"type":"message_stop"}"#,
+    ]);
+    mount_ok(&server, body).await;
+
+    let mut req = request("claude-3-5-sonnet");
+    req.response_format = ResponseFormat::JsonSchema {
+        name: "answer".into(),
+        schema: serde_json::json!({"type":"object","required":["ok"]}),
+    };
+
+    let p = provider(&server);
+    let sink = RecordingProviderSink::default();
+    p.stream(req, &sink, agent_domain::CancellationToken::new())
+        .await
+        .expect("stream ok");
+
+    let body = last_request_body(&server).await;
+    let instruction = body["system"]["text"].as_str().expect("system instruction");
+    assert!(instruction.contains("JSON Schema named `answer`"));
+    assert!(instruction.contains("\"required\":[\"ok\"]"));
 }
 
 #[tokio::test]

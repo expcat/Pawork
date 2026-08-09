@@ -1973,6 +1973,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-moonshot"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "async-trait",
+ "provider-api",
+ "provider-openai-compatible",
+ "provider-runtime",
+ "serde_json",
+ "test-support",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
 name = "provider-openai"
 version = "0.0.0"
 dependencies = [
@@ -2010,6 +2025,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-qwen"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "async-trait",
+ "provider-api",
+ "provider-openai-compatible",
+ "provider-runtime",
+ "serde_json",
+ "test-support",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
 name = "provider-runtime"
 version = "0.0.0"
 dependencies = [
@@ -2024,6 +2054,36 @@ dependencies = [
  "serde_json",
  "test-support",
  "thiserror 2.0.19",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
+name = "provider-xai"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "async-trait",
+ "provider-api",
+ "provider-openai-compatible",
+ "provider-runtime",
+ "serde_json",
+ "test-support",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
+name = "provider-zhipu"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "async-trait",
+ "provider-api",
+ "provider-openai-compatible",
+ "provider-runtime",
+ "serde_json",
+ "test-support",
  "tokio",
  "wiremock",
 ]

@@ -88,16 +88,22 @@ impl GoogleProvider {
         })
     }
 
-    /// 构造 streamGenerateContent 端点 URL：把 key 与 `alt=sse` 拼为 query 参数。
+    /// 构造 streamGenerateContent 端点 URL。
+    ///
+    /// API key 必须通过 `x-goog-api-key` 请求头发送，不能进入 URL query，避免
+    /// secret 暴露在代理、重定向或访问日志中。
     fn stream_url(&self, model: &str) -> String {
         let base = self.config.base_url.trim_end_matches('/');
-        match &self.credential {
-            Some(cred) => format!(
-                "{base}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={}",
-                cred.expose_secret()
-            ),
-            None => format!("{base}/v1beta/models/{model}:streamGenerateContent?alt=sse"),
-        }
+        format!("{base}/v1beta/models/{model}:streamGenerateContent?alt=sse")
+    }
+
+    fn auth_header(&self) -> Option<(String, String)> {
+        self.credential.as_ref().map(|credential| {
+            (
+                "x-goog-api-key".to_string(),
+                credential.expose_secret().to_string(),
+            )
+        })
     }
 
     async fn drive_stream(
@@ -111,10 +117,17 @@ impl GoogleProvider {
         let model_str = request.model.to_string();
         let url = self.stream_url(&model_str);
 
-        // 认证信息只在 URL query 中；无额外 per-request 头。
+        let auth_header = self.auth_header();
+        let headers = auth_header.as_slice();
         let mut byte_stream = self
             .client
-            .post_stream_with_headers(&url, body, request.trace_id.as_deref(), &[], cancel.clone())
+            .post_stream_with_headers(
+                &url,
+                body,
+                request.trace_id.as_deref(),
+                headers,
+                cancel.clone(),
+            )
             .await?;
 
         sink.emit(ProviderStreamEvent::ResponseStarted {
@@ -232,6 +245,7 @@ impl ModelProvider for GoogleProvider {
 }
 
 /// Google Gemini 内置模型目录（含 thinking / image / tool 能力）。
+/// 数据快照：2026-08-09；目录更新作为显式跟踪项手动执行。
 pub fn builtin_models() -> Vec<ModelDefinition> {
     fn caps(
         text: bool,
@@ -320,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_url_embeds_key_as_query_param() {
+    fn stream_url_excludes_key_and_auth_header_carries_it() {
         let config = GoogleConfig::new("https://example.test");
         let provider = GoogleProvider::new(
             config,
@@ -333,7 +347,12 @@ mod tests {
         let url = provider.stream_url("gemini-2.5-pro");
         assert!(url.contains("/v1beta/models/gemini-2.5-pro:streamGenerateContent"));
         assert!(url.contains("alt=sse"));
-        assert!(url.contains("key=secret-key"));
+        assert!(!url.contains("secret-key"));
+        assert!(!url.contains("key="));
+        assert_eq!(
+            provider.auth_header(),
+            Some(("x-goog-api-key".into(), "secret-key".into()))
+        );
     }
 
     #[test]

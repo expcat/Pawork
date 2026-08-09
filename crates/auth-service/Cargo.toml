@@ -11,15 +11,15 @@ description = "Pawork 认证方式与 Secret 后端（API Key / OS Keychain / OA
 agent-domain = { path = "../agent-domain" }
 provider-api = { path = "../provider-api" }
 async-trait.workspace = true
-base64 = "0.22"
-rand = "0.8"
+base64.workspace = true
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
+sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "sync", "io-util", "time"] }
 reqwest = { workspace = true }
-url = "2"
+url.workspace = true
 keyring = { workspace = true }
 
 [dev-dependencies]

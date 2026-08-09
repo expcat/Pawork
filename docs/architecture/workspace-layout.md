@@ -32,10 +32,10 @@ Pawork/
 | `provider-anthropic` | Anthropic 适配 | 依赖 provider-runtime |
 | `provider-google` | Google Gemini 适配 | 依赖 provider-runtime |
 | `provider-openai-compatible` | OpenAI 兼容适配（含 Ollama / vLLM / LM Studio） | 依赖 provider-runtime |
-| `provider-xai` | xAI Grok 适配（API Key + OAuth 订阅） | 依赖 provider-runtime；计划 P6-10 |
-| `provider-zhipu` | 智谱 GLM 适配（BigModel OpenAI-compatible） | 依赖 provider-runtime；计划 P6-11 |
-| `provider-qwen` | 阿里 Qwen 适配（DashScope OpenAI-compatible） | 依赖 provider-runtime；计划 P6-12 |
-| `provider-moonshot` | Moonshot Kimi 适配（OpenAI-compatible） | 依赖 provider-runtime；计划 P6-13 |
+| `provider-xai` | xAI Grok 适配（API Key + OAuth bearer 订阅） | 依赖 provider-openai-compatible / provider-runtime；OAuth 登录与刷新由组合层调用 auth-service，不反向引入 |
+| `provider-zhipu` | 智谱 GLM 适配（BigModel OpenAI-compatible） | 依赖 provider-openai-compatible / provider-runtime |
+| `provider-qwen` | 阿里 Qwen 适配（DashScope OpenAI-compatible） | 依赖 provider-openai-compatible / provider-runtime |
+| `provider-moonshot` | Moonshot Kimi 适配（OpenAI-compatible） | 依赖 provider-openai-compatible / provider-runtime |
 | `provider-bedrock` | AWS Bedrock（优先级 P1） | 依赖 provider-runtime |
 | `provider-mistral` | Mistral（优先级 P1） | 依赖 provider-runtime |
 | `auth-service` | 认证方式、Secret 后端、OAuth（PKCE/Device Flow/refresh/callback） | 依赖 provider-api |

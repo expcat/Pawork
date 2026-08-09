@@ -10,6 +10,10 @@ members = [
     "crates/provider-openai",
     "crates/provider-anthropic",
     "crates/provider-google",
+    "crates/provider-xai",
+    "crates/provider-zhipu",
+    "crates/provider-qwen",
+    "crates/provider-moonshot",
     "crates/auth-service",
     "crates/model-registry",
     "crates/provider-api",
@@ -95,7 +99,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 # 认证 / Secret / OAuth
 keyring = "3"
-oauth2 = "5"
+base64 = "0.22"
+rand = "0.8"
+sha2 = "0.10"
+url = "2"
 
 # 扩展机制（MCP / WASM）
 rmcp = "2"
