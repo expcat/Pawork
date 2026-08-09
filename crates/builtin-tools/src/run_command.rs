@@ -430,30 +430,51 @@ mod tests {
         let sink = RecordingToolSink::default();
         let observed = sink.clone();
         #[cfg(windows)]
-        let command = "powershell -NoProfile -Command \"Write-Output first; Start-Sleep -Milliseconds 800; Write-Output second\"";
+        let input = json!({
+            "argv": [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "[Console]::Out.Write('first'); [Console]::Out.Flush(); Start-Sleep -Milliseconds 800; [Console]::Out.Write('second')"
+            ]
+        });
         #[cfg(not(windows))]
-        let command = "printf first; sleep 1; printf second";
+        let input = json!({"argv": ["sh", "-c", "printf first; sleep 1; printf second"]});
         let task = tokio::spawn(async move {
             run(
                 &service,
                 ProcessRuntime::new(),
                 &id,
-                &json!({"command": command}),
+                &input,
                 &[],
                 &sink,
                 CancellationToken::new(),
             )
             .await
         });
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if observed.events().iter().any(|event| {
+                    matches!(
+                        event,
+                        ToolStreamEvent::OutputDelta {
+                            channel: ToolOutputChannel::Stdout,
+                            delta,
+                        } if delta.contains("first")
+                    )
+                }) {
+                    break;
+                }
+                assert!(
+                    !task.is_finished(),
+                    "process exited before emitting its first output"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("first output should arrive before timeout");
         assert!(!task.is_finished(), "process should still be running");
-        assert!(observed.events().iter().any(|event| matches!(
-            event,
-            ToolStreamEvent::OutputDelta {
-                channel: ToolOutputChannel::Stdout,
-                delta,
-            } if delta.contains("first")
-        )));
         assert!(task.await.expect("join").expect("run").success);
     }
 

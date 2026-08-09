@@ -631,9 +631,11 @@ mod tests {
         #[cfg(not(windows))]
         let mut spec = shell("yes x | head -c 8192; yes y | head -c 8192 >&2");
         #[cfg(windows)]
-        let mut spec = shell(
-            "powershell -NoProfile -Command \"'x' * 8192; [Console]::Error.Write('y' * 8192)\"",
-        );
+        let mut spec = CommandSpec::new("powershell").args([
+            "-NoProfile",
+            "-Command",
+            "[Console]::Out.Write('x'.PadLeft(8192, 'x')); [Console]::Error.Write('y'.PadLeft(8192, 'y'))",
+        ]);
         spec.max_output_bytes = 1024;
         let (mut rx, _handle) = runtime
             .spawn_stream(spec, CancellationToken::new())
@@ -650,7 +652,10 @@ mod tests {
                 }
             }
         }
-        assert!(was_truncated);
+        assert!(
+            was_truncated,
+            "stream emitted {bytes} bytes without truncation"
+        );
         assert!(bytes <= 1024, "stream emitted {bytes} bytes");
     }
 }
