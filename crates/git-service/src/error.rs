@@ -57,6 +57,13 @@ impl From<process_runtime::ProcessError> for GitError {
                     GitError::Other(format!("failed to spawn `{program}`: {source}"))
                 }
             }
+            process_runtime::ProcessError::ProcessTree { program, source } => GitError::Other(
+                format!("failed to secure process tree for `{program}`: {source}"),
+            ),
+            process_runtime::ProcessError::Isolation { program, source } => GitError::Other(
+                format!("failed to prepare isolation for `{program}`: {source}"),
+            ),
+            process_runtime::ProcessError::KillTimeout { .. } => GitError::Timeout,
             process_runtime::ProcessError::Io(io) => GitError::Io(io),
         }
     }

@@ -15,6 +15,12 @@ async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+# 结构化降级/回退日志：NativeRestricted 网络降级、bwrap/landlock/sandbox-exec 探测失败需可观测。
+tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tempfile = { workspace = true }
+
+# Landlock 规则由 process-runtime 在 Linux pre_exec 边界实际施加；Windows 在
+# AppContainer 受限令牌不可用时显式降级为可执行的 Job Object-only 后端。

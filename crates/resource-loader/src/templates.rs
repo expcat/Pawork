@@ -498,7 +498,7 @@ fn checked_workspace_file(root: &Path, reference: &str) -> Result<PathBuf, Strin
     let candidate = root.join(reference);
     let canonical = dunce::canonicalize(&candidate)
         .map_err(|error| format!("file reference '{reference}' could not be resolved: {error}"))?;
-    if !canonical.starts_with(&root) {
+    if !crate::io::path_is_within(&canonical, &root) {
         return Err(format!(
             "file reference '{reference}' leaves the workspace root"
         ));

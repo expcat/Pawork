@@ -5,10 +5,7 @@
 //! 错误被隔离为 [`ResourceIssue`]，不影响其他层级加载。来源只保留 `root_index`
 //! 与相对路径，绝不泄漏宿主绝对路径。
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use config_service::ConfigTier;
 
@@ -102,7 +99,7 @@ pub(crate) fn load_agents_hierarchy(
     current_path_kind: CurrentPathKind,
     limits: ResourceLimits,
 ) -> (AgentsHierarchy, Vec<ResourceIssue>) {
-    let canonical_root = fs::canonicalize(root).ok();
+    let canonical_root = dunce::canonicalize(root).ok();
     let chain = target_directory_chain(current_path, current_path_kind);
 
     let mut found: Vec<(usize, AgentsDocument)> = Vec::new();
@@ -167,14 +164,14 @@ fn load_one(
 ) -> Result<Option<AgentsDocument>, ResourceIssue> {
     // 通过 canonicalize 同时完成「存在性」与「越界 symlink」校验：缺失文件返回
     // NotFound（静默跳过该层级），解析后的目标若逃出 canonical 根则视为越界。
-    let canonical_target = match fs::canonicalize(absolute) {
+    let canonical_target = match dunce::canonicalize(absolute) {
         Ok(path) => path,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(file_issue(relative, ResourceFileError::Io(error))),
     };
 
     if let Some(root) = canonical_root {
-        if !canonical_target.starts_with(root) {
+        if !io::path_is_within(&canonical_target, root) {
             return Err(out_of_bounds_issue(relative));
         }
     }

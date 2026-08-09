@@ -52,13 +52,28 @@ impl<T> Clone for ResourceHotReload<T> {
 
 /// 持有 notify debouncer；drop 即停止监听。
 pub struct ResourceWatcher {
-    _debouncer: Option<Debouncer<RecommendedWatcher, RecommendedCache>>,
+    debouncer: Option<Debouncer<RecommendedWatcher, RecommendedCache>>,
+    callback_gate: Option<Arc<Mutex<bool>>>,
     watched_paths: Vec<PathBuf>,
 }
 
 impl ResourceWatcher {
     pub fn watched_paths(&self) -> &[PathBuf] {
         &self.watched_paths
+    }
+}
+
+impl Drop for ResourceWatcher {
+    fn drop(&mut self) {
+        if let Some(callback_gate) = &self.callback_gate {
+            let mut active = callback_gate
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *active = false;
+        }
+        // `active = false` 拒绝尚未进入的回调；持有同一 gate 的在途回调已在上面的
+        // 加锁点完成。随后销毁 debouncer，保证 drop 返回后不再重建快照。
+        self.debouncer.take();
     }
 }
 
@@ -103,27 +118,38 @@ where
             return Ok((
                 store,
                 ResourceWatcher {
-                    _debouncer: None,
+                    debouncer: None,
+                    callback_gate: None,
                     watched_paths,
                 },
             ));
         }
 
         let callback_store = store.clone();
+        let callback_gate = Arc::new(Mutex::new(true));
+        let callback_gate_for_callback = Arc::clone(&callback_gate);
         let mut debouncer = new_debouncer(
             debounce,
             None,
-            move |result: notify_debouncer_full::DebounceEventResult| match result {
-                Ok(_events) => {
-                    callback_store.reload_now();
+            move |result: notify_debouncer_full::DebounceEventResult| {
+                let active = callback_gate_for_callback
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if !*active {
+                    return;
                 }
-                Err(errors) => {
-                    let message = errors
-                        .into_iter()
-                        .map(|error| error.to_string())
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    callback_store.record_error(&format!("resource watch failed: {message}"));
+                match result {
+                    Ok(_events) => {
+                        callback_store.reload_now();
+                    }
+                    Err(errors) => {
+                        let message = errors
+                            .into_iter()
+                            .map(|error| error.to_string())
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        callback_store.record_error(&format!("resource watch failed: {message}"));
+                    }
                 }
             },
         )
@@ -144,7 +170,8 @@ where
         Ok((
             store,
             ResourceWatcher {
-                _debouncer: Some(debouncer),
+                debouncer: Some(debouncer),
+                callback_gate: Some(callback_gate),
                 watched_paths,
             },
         ))

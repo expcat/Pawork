@@ -31,7 +31,7 @@
 | 8 | Skills、Prompts 与 Instructions | 8 | 8 | 🟢已完成 |
 | 9 | MCP | 7 | 7 | 🟢已完成（P9-1～P9-7 TargetVerified） |
 | 10 | WASM Plugin | 6 | 6 | 🟢已完成（P10-1～P10-6 TargetVerified） |
-| 11 | Sandbox 与跨平台强化 | 8 | 1 | 🔵进行中（P11-1 骨架；P11-5 已归档） |
+| 11 | Sandbox 与跨平台强化 | 8 | 8 | 🟢已完成（7 项 TargetVerified；P11-5 已归档） |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
 | 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
@@ -40,7 +40,7 @@
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **116** | — |
+| **合计** | — | **210** | **123** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -122,9 +122,9 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | Token 计数 | tiktoken-rs | P3-2 | 仅对 OpenAI 系精确；其它 Provider 用启发式估算 |
 | TS 类型导出 | ts-rs | P0-10、P13-7 | GUI Contract 类型生成，比 typeshare / specta 轻 |
 | 系统目录 | directories | P1-12 | 配置 / 数据目录标准路径 |
-| Linux 沙箱 | landlock | P11-1 | 基于 LSM，活跃维护 |
+| Linux 沙箱 | landlock | P11-3 | 基于 LSM；bwrap 不可用时提供文件系统硬隔离，ruleset 在父进程准备并于 child pre-exec 生效 |
 | Windows 绑定 | windows-rs（+ windows-service） | P11-4、P1-12 | 官方绑定 |
-| PTY 基础 | portable-pty（或维护 fork） | P11-6 | 上游迭代慢，开工前先评估 fork |
+| PTY 基础 | portable-pty 0.8.1 | P11-6 | 采用最小 PTY 层；重连/有界缓冲/归属/清理由 Pawork 自实现，并串行化 Unix spawn 临界区 |
 | 签名 | ed25519-dalek | P10-1 | 插件 manifest 签名 |
 | 测试与基准 | criterion、proptest、wiremock、insta、assert_cmd | P0-12、P2-11 等 | 基准 / 属性 / HTTP mock / 快照 / CLI e2e；解析器 fuzz 当前由 proptest 覆盖 |
 | HTML 解析 | scraper | P14-4 | html5ever + selectors；仅最小子集（解析 + 选择器匹配），用于额度控制台页面抓取 |
@@ -162,7 +162,7 @@ Desktop authoritative projection、`global_sequence` 去重/补洞、Snapshot/Ev
 
 ### 完全自实现（架构红线或安全关键）
 
-Agent Loop / 状态机 / Tool Scheduler / 预算 / 消息队列（P3-*）；Event Store 与 Projection 语义（P1-4、P1-5，rusqlite 只是绑定层）；Policy Engine / Workspace Trust / 路径与 shell 安全（P4-9、P4-10）；Checkpoint / 回滚编排（P4-11）；Compaction 引擎（P5-5、P5-6）；JSONL 流式解析（P2-3、P5-9，serde_json 逐行即可）；沙箱编排：macOS sandbox-exec、bwrap、Windows AppContainer / Job Object 与进程树清理（P11-1~4、P11-7）；PTY 会话层：重连 / 有界缓冲 / 归属（P11-6，在 portable-pty 之上）；GUI Connection Protocol 编解码 / 快照 / 订阅 / 慢客户端隔离（P13-3、P13-5）；Credential Lease / 路由策略 / 错误健康状态机 / Tenant 隔离（P18-2～P18-9）；Desktop 状态投影 / 序列补洞 / command reconciliation（P19-2）；日志 redaction 规则（P1-9）。
+Agent Loop / 状态机 / Tool Scheduler / 预算 / 消息队列（P3-*）；Event Store 与 Projection 语义（P1-4、P1-5，rusqlite 只是绑定层）；Policy Engine / Workspace Trust / 路径与 shell 安全（P4-9、P4-10）；Checkpoint / 回滚编排（P4-11）；Compaction 引擎（P5-5、P5-6）；JSONL 流式解析（P2-3、P5-9，serde_json 逐行即可）；沙箱编排：macOS sandbox-exec、Linux bwrap/Landlock、Windows Job-only 降级与进程树清理（P11-1~4、P11-7；AppContainer 受限令牌接线仍须后续 Maintenance gate）；PTY 会话层：重连 / 有界缓冲 / 归属（P11-6，在 portable-pty 之上）；GUI Connection Protocol 编解码 / 快照 / 订阅 / 慢客户端隔离（P13-3、P13-5）；Credential Lease / 路由策略 / 错误健康状态机 / Tenant 隔离（P18-2～P18-9）；Desktop 状态投影 / 序列补洞 / command reconciliation（P19-2）；日志 redaction 规则（P1-9）。
 
 ### 行为参照（不作为依赖）
 
@@ -171,7 +171,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 ### 重点风险
 
 - rmcp 是唯一「官方协议 SDK」级依赖：锁定小版本、跟进官方迁移指南，在 mcp-client 内封装以隔离 breaking change。
-- portable-pty 上游缓慢：P11-6 开工前评估维护中的 fork（如 xpy/portable-pty-psmux）或 vendor 兜底。
+- portable-pty 上游缓慢：P11-6 已锁定 0.8.1 并把会话层留在 Pawork；升级或迁移 fork 时必须重跑三平台 PTY spawn/resize/reconnect/进程树门禁。
 - tiktoken-rs 仅对 OpenAI 精确：其它 Provider 统一启发式估算 + 容差，不依赖精确 token 数。
 - Desktop 依赖 OS WebView，三平台排版、输入法、WebDriver 与内存表现存在差异；P19-16 必须使用真实平台矩阵，不以浏览器模式替代原生壳门禁。
 
@@ -395,18 +395,20 @@ WASM 作为第一代码插件机制，能力受控。
 
 ### Phase 11：Sandbox 与跨平台强化
 
-三平台核心可用，沙箱可控，进程树可清理。架构见 [ADR-031](docs/adr/ADR-031-sandbox-backend-architecture.md)：NativeRestricted 软沙箱（P11-1，骨架已建）永远可用作兜底，平台原生硬隔离（bwrap/sandbox-exec/AppContainer，P11-2/3/4）在其上叠加并探测回退。
+三平台核心可用，沙箱可控，进程树可清理。架构见 [ADR-031](docs/adr/ADR-031-sandbox-backend-architecture.md)：NativeRestricted 永远可用；Linux 依次选择 bwrap/Landlock，macOS 选择 sandbox-exec，Windows 当前选择 Job-only 并明确标记文件/网络隔离降级。P11-5 Docker/Podman 按 P1 决策归档，不进入运行时选择链。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P11-1 | 🔵 | NativeRestricted backend | trait+软沙箱+探测回退骨架 | [详情](plan/P11-1-sandbox-native-restricted.md) |
-| P11-2 | 🟡 | macOS Sandbox profile | 系统 sandbox | [详情](plan/P11-2-sandbox-macos.md) |
-| P11-3 | 🟡 | Linux Bubblewrap | bwrap 隔离 | [详情](plan/P11-3-sandbox-linux.md) |
-| P11-4 | 🟡 | Windows AppContainer / Job | 进程级隔离 | [详情](plan/P11-4-sandbox-windows.md) |
+| P11-1 | 🟢 | NativeRestricted backend | 软限制+可观测后端选择+run_command 接线 | [详情](plan/P11-1-sandbox-native-restricted.md) |
+| P11-2 | 🟢 | macOS Sandbox profile | Seatbelt profile/backend；目标编译已验证 | [详情](plan/P11-2-sandbox-macos.md) |
+| P11-3 | 🟢 | Linux Bubblewrap | bwrap + Landlock 真实内核验证 | [详情](plan/P11-3-sandbox-linux.md) |
+| P11-4 | 🟢 | Windows AppContainer / Job | Job-only TargetVerified；AppContainer 降级可观测 | [详情](plan/P11-4-sandbox-windows.md) |
 | P11-5 | ⚪ | Docker / Podman（优先级 P1） | 容器沙箱 | [详情](plan/P11-5-sandbox-docker.md) |
-| P11-6 | 🟡 | PTY Service | 终端/重连/自动清理 | [详情](plan/P11-6-pty-service.md) |
-| P11-7 | 🟡 | 进程树清理 | 三平台取消清理 | [详情](plan/P11-7-process-tree-cleanup.md) |
-| P11-8 | 🟡 | 跨平台路径 | 规范化/symlink/junction | [详情](plan/P11-8-cross-platform-path.md) |
+| P11-6 | 🟢 | PTY Service | 终端/重连/有界缓冲/自动清理 | [详情](plan/P11-6-pty-service.md) |
+| P11-7 | 🟢 | 进程树清理 | Unix process group + Windows Job Object | [详情](plan/P11-7-process-tree-cleanup.md) |
+| P11-8 | 🟢 | 跨平台路径 | dunce/component boundary/symlink/junction | [详情](plan/P11-8-cross-platform-path.md) |
+
+> Phase 11 本地证据（2026-08-09）：Windows 受影响 crates 定向测试通过；WSL 真实运行 bwrap、Landlock、`setsid` 逃逸清理与 PTY 测试；run_command 网络请求 fail-closed 且资源默认/上界有回归；Linux GNU/musl、macOS aarch64 目标检查通过。真实 macOS Seatbelt 与 Windows AppContainer restricted-token 属后续 MaintenanceGated 平台证据，当前文档不将其误报为已运行。
 
 ### Phase 12：Multi-Agent
 

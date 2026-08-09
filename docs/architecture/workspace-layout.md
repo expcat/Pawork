@@ -52,10 +52,10 @@ Pawork/
 | `tool-api` | AgentTool Trait、Descriptor、Result | 依赖 agent-domain |
 | `tool-runtime` | Tool Scheduler、并发 / 串行策略 | 依赖 tool-api |
 | `builtin-tools` | read / write / edit / apply_patch / command / search / find / list | 依赖 tool-api |
-| `process-runtime` | 跨平台进程、超时、取消、进程树终止 | 独立 |
-| `pty-service` | 集成终端 PTY | 依赖 process-runtime |
+| `process-runtime` | 跨平台进程、资源限额、超时/取消、Unix process group / Windows Job Object 整树终止 | 独立（Linux 可选 Landlock syscall 边界） |
+| `pty-service` | 集成终端 PTY、重连、有界缓冲、Session 归属与自动清理 | 依赖 process-runtime；PTY 基础使用 portable-pty |
 | `policy-engine` | Approval、Policy 决策、路径 / Shell 安全 | 依赖 tool-api |
-| `sandbox-runtime` | Sandbox Backend、capability 策略 | 依赖 process-runtime / policy-engine |
+| `sandbox-runtime` | NativeRestricted 与平台 Sandbox Backend、capability 策略、探测/降级证据 | 依赖 process-runtime / policy-engine |
 | `audit-log` | versioned canonical 审计事件、tenant-scoped 查询与 OTel/SIEM 脱敏导出 | 依赖 agent-domain；运行时由组合层接入 tenant-service / usage-ledger；P18-13 |
 | `workspace-service` | 工作区、多 Root、Git 检测、设置 | 依赖 agent-domain |
 | `file-index` | 文件索引、ignore、`@file` 搜索 | 依赖 workspace-service |

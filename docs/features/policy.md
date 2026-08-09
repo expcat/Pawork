@@ -38,6 +38,15 @@ pub enum PolicyDecision {
 
 所有文件操作输入为 `workspace_id + relative_path`，绝不让模型直接传任意绝对路径。
 
+Phase 11 的统一路径边界实现位于 `policy-engine`：
+
+- `canonicalize_platform` 使用 `dunce::canonicalize`，在解析 symlink/junction 后移除 Windows `\\?\` verbatim 前缀；不存在路径由调用方先定位到已存在父级再执行具体写入协议。
+- `path_within_root` 按路径 component 比较，不使用字符串前缀，避免 `C:\repo-other` 被误判为 `C:\repo` 子路径；Windows component 比较大小写不敏感。
+- `.git` 组件在 Windows 大小写不敏感，`.GIT` 不能绕过保护。
+- `policy-engine`、`git-service` 与 `resource-loader` 共用这套 canonical/boundary 语义；真实 Windows junction escape 有回归测试。
+
+canonical check 解决「最终解析路径是否越界」，但不能单独消除检查后替换路径的 TOCTOU；执行写入的工具仍须使用既有原子写/独占创建协议，Sandbox 硬隔离则作为第二道边界。
+
 ## Shell 安全
 
 高风险命令：递归删除；权限修改；磁盘格式化；系统关机；sudo；注册表修改；Credential 读取；网络上传；Git force push；删除分支；破坏工作区外路径。
@@ -55,7 +64,8 @@ Phase 4 remediation 已把 `PolicyEngine::decide()` 接入 Tool Scheduler。`Too
 
 ## 验收标准
 
-- 路径穿越 / symlink escape / junction / UNC 测试通过
+- [x] 路径穿越、字符串前缀碰撞、symlink/junction escape 与 Windows 大小写/verbatim 路径测试通过
+- [x] Git 与 Resource Loader 的路径出口复用统一边界语义
 - Shell 注入与高风险命令可拦截或审批
 - 未信任 Workspace 默认限制写与命令
 - hosted/extension execution、跨 trust-boundary fallback 与 PromptTransform 均不能绕过审批或伪造本地隔离
@@ -64,4 +74,4 @@ Phase 4 remediation 已把 `PolicyEngine::decide()` 接入 Tool Scheduler。`Too
 
 - [tools](tools.md) · [sandbox](sandbox.md) · [workspace-index](workspace-index.md)
 - [ADR-008 capability 分类](../adr/ADR-008-builtin-tools-capability.md) · [ADR-009 默认 Workspace Trust](../adr/ADR-009-default-workspace-trust.md)
-- [ROADMAP P4-9 / P4-10](../../ROADMAP.md)
+- [ROADMAP P4-9 / P4-10 / P11-8](../../ROADMAP.md)

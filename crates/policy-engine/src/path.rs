@@ -59,7 +59,7 @@ pub fn resolve_workspace_path(
     // 任何命中 `.git` 段的路径一律拒绝。
     if rel
         .components()
-        .any(|c| matches!(c, Component::Normal(name) if name == OsStr::new(".git")))
+        .any(|c| matches!(c, Component::Normal(name) if is_git_component(name)))
     {
         return Err(PathSafetyError::GitInternals);
     }
@@ -71,7 +71,7 @@ pub fn resolve_workspace_path(
     }
     let canon_roots: Vec<PathBuf> = roots
         .iter()
-        .filter_map(|r| std::fs::canonicalize(r).ok())
+        .filter_map(|r| canonicalize_platform(r).ok())
         .collect();
     if canon_roots.is_empty() {
         return Err(PathSafetyError::NoRoot);
@@ -118,7 +118,7 @@ fn resolve_against_root(
 
     // 对已存在目标再次 canonicalize，缓解 TOCTOU（解析与使用之间被替换为 symlink），
     // 并校验其为普通文件/目录（拒绝 device/fifo/socket）。
-    let resolved_abs = if let Ok(canon_file) = resolved_abs.canonicalize() {
+    let resolved_abs = if let Ok(canon_file) = canonicalize_platform(&resolved_abs) {
         if !within_any_root(&canon_file, canon_roots) {
             return Err(PathSafetyError::SymlinkEscape);
         }
@@ -133,13 +133,12 @@ fn resolve_against_root(
 
     let matched = canon_roots
         .iter()
-        .find(|r| resolved_abs.starts_with(r))
+        .find(|r| path_within_root(&resolved_abs, r))
         .cloned()
         .ok_or(PathSafetyError::SymlinkEscape)?;
-    let relative = resolved_abs
-        .strip_prefix(&matched)
+    let relative = relative_to_root(&resolved_abs, &matched)
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .ok_or(PathSafetyError::SymlinkEscape)?;
 
     Ok(ResolvedPath {
         absolute: resolved_abs,
@@ -149,7 +148,51 @@ fn resolve_against_root(
 }
 
 fn within_any_root(path: &Path, roots: &[PathBuf]) -> bool {
-    roots.iter().any(|r| path.starts_with(r))
+    roots.iter().any(|r| path_within_root(path, r))
+}
+
+/// 平台一致的 canonicalize：Windows 上移除 `\\?\` verbatim 前缀，
+/// Unix 上与 `std::fs::canonicalize` 等价。
+pub fn canonicalize_platform(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
+
+/// 判断 canonical 路径是否位于 canonical root 内。
+///
+/// Windows 文件系统路径按大小写不敏感比较盘符与组件；Unix 保持字节级比较。
+pub fn path_within_root(path: &Path, root: &Path) -> bool {
+    relative_to_root(path, root).is_some()
+}
+
+#[cfg(not(windows))]
+fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
+    path.strip_prefix(root).ok().map(Path::to_path_buf)
+}
+
+#[cfg(windows)]
+fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
+    let mut path_components = path.components();
+    for root_component in root.components() {
+        let path_component = path_components.next()?;
+        if !path_component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&root_component.as_os_str().to_string_lossy())
+        {
+            return None;
+        }
+    }
+    Some(path_components.collect())
+}
+
+#[cfg(not(windows))]
+fn is_git_component(name: &OsStr) -> bool {
+    name == OsStr::new(".git")
+}
+
+#[cfg(windows)]
+fn is_git_component(name: &OsStr) -> bool {
+    name.to_string_lossy().eq_ignore_ascii_case(".git")
 }
 
 /// 向上找到最深的「已存在」祖先并 canonicalize。
@@ -158,7 +201,7 @@ fn within_any_root(path: &Path, roots: &[PathBuf]) -> bool {
 /// 上溯，首个能 canonicalize 的祖先即为锚点；缺失的不存在组件随后由调用方拼回，
 /// 它们尚不存在、不可能是 symlink，故不影响安全判定。
 fn canonicalize_deepest_existing(dir: &Path) -> Result<PathBuf, PathSafetyError> {
-    match dir.canonicalize() {
+    match canonicalize_platform(dir) {
         Ok(canon) => Ok(canon),
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
             if let Some(parent) = dir.parent() {
@@ -317,7 +360,7 @@ mod tests {
         let tmp = TempDir::new();
         std::fs::write(tmp.path.join("file.txt"), b"hello").expect("write");
         let r = resolve_workspace_path(&roots(&tmp), "file.txt").expect("resolve");
-        let canon_root = std::fs::canonicalize(&tmp.path).expect("canonicalize");
+        let canon_root = canonicalize_platform(&tmp.path).expect("canonicalize");
         assert_eq!(r.absolute, canon_root.join("file.txt"));
         assert_eq!(r.root, canon_root);
         assert_eq!(r.relative, "file.txt");
@@ -346,7 +389,7 @@ mod tests {
         let tmp = TempDir::new();
         let r = resolve_workspace_path(&roots(&tmp), "x/y/z/new.txt").expect("resolve");
         assert!(r.absolute.ends_with("x/y/z/new.txt"));
-        let canon_root = std::fs::canonicalize(&tmp.path).expect("canon root");
+        let canon_root = canonicalize_platform(&tmp.path).expect("canon root");
         assert!(r.absolute.starts_with(&canon_root));
         // 越界穿越仍被拒。
         let err = resolve_workspace_path(&roots(&tmp), "../../escape.txt").unwrap_err();
@@ -357,6 +400,78 @@ mod tests {
     fn no_roots_yields_no_root() {
         let err = resolve_workspace_path(&[], "file.txt").unwrap_err();
         assert!(matches!(err, PathSafetyError::NoRoot), "{err:?}");
+    }
+
+    #[test]
+    fn root_membership_respects_component_boundaries() {
+        #[cfg(not(windows))]
+        {
+            assert!(path_within_root(
+                Path::new("/work/root/a"),
+                Path::new("/work/root")
+            ));
+            assert!(!path_within_root(
+                Path::new("/work/root-other/a"),
+                Path::new("/work/root")
+            ));
+        }
+        #[cfg(windows)]
+        {
+            assert!(path_within_root(
+                Path::new(r"C:\Work\Root\a"),
+                Path::new(r"c:\work\root")
+            ));
+            assert!(!path_within_root(
+                Path::new(r"C:\Work\Root-other\a"),
+                Path::new(r"c:\work\root")
+            ));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_normalizes_case_separators_and_verbatim_prefix() {
+        let tmp = TempDir::new();
+        std::fs::create_dir_all(tmp.path.join("Folder")).expect("mkdir");
+        std::fs::write(tmp.path.join("Folder/File.txt"), b"x").expect("write");
+
+        let upper_root = PathBuf::from(tmp.path.to_string_lossy().to_uppercase());
+        let resolved = resolve_workspace_path(&[upper_root], r"folder\FILE.txt")
+            .expect("case-insensitive resolve");
+        assert_eq!(resolved.relative.replace('\\', "/"), "Folder/File.txt");
+        assert!(
+            !resolved.absolute.to_string_lossy().starts_with(r"\\?\"),
+            "dunce should remove the verbatim prefix: {:?}",
+            resolved.absolute
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_rejects_case_variant_git_directory() {
+        let tmp = TempDir::new();
+        let err = resolve_workspace_path(&roots(&tmp), r"sub\.GIT\config").unwrap_err();
+        assert!(matches!(err, PathSafetyError::GitInternals), "{err:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_junction_escape() {
+        let tmp = TempDir::new();
+        let outside = TempDir::new();
+        std::fs::write(outside.path.join("secret"), b"top").expect("write");
+        let junction = tmp.path.join("escape-junction");
+        let status = std::process::Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside.path)
+            .status()
+            .expect("mklink /J");
+        assert!(status.success(), "mklink /J is required for this test");
+
+        let err = resolve_workspace_path(&roots(&tmp), "escape-junction/secret").unwrap_err();
+        assert!(matches!(err, PathSafetyError::SymlinkEscape), "{err:?}");
+        std::fs::remove_dir(&junction).expect("remove junction");
     }
 
     #[cfg(unix)]

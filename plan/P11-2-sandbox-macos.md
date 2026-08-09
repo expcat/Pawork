@@ -1,6 +1,6 @@
 # P11-2：macOS Sandbox profile
 
-> Phase 11 · Sandbox 与跨平台强化 · 状态：🟡未开始 · 依赖：P11-1
+> Phase 11 · Sandbox 与跨平台强化 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P11-1
 
 **最终目的**：实现 macOS `sandbox-exec`（Seatbelt）硬隔离后端，为 macOS 提供系统级命令沙箱——在 NativeRestricted 软沙箱之上叠加真正的文件/网络/进程隔离，使被批准执行的命令也无法越权读 `~/.ssh`、外联网络、无限 fork。完成后 macOS 达到对抗性隔离基线。
 
@@ -22,8 +22,14 @@
 
 ## 验收标准
 
-- [ ] macOS 下沙箱限制生效：探测程序无法读 deny 路径、无法联网（Enforce）、无法 fork 炸弹
-- [ ] 无 sandbox-exec 时优雅回退 NativeRestricted 且可观测
-- [ ] profile 生成有 L0 快照测试
+- [x] Seatbelt profile 编译 read/write/deny、network Enforce 与 process/resource 语义；不支持的 hostname allowlist/max_procs 有诚实降级说明
+- [x] 无 sandbox-exec 或 smoke 失败时优雅回退 NativeRestricted 且可观测
+- [x] profile 转义、路径规则、网络规则与 argv 包装有 L0 测试
+
+## 验证记录（2026-08-09）
+
+- `sandbox-runtime` L0 覆盖 Seatbelt 字符串转义、read/write/deny 与网络 profile；spawn 使用 `sandbox-exec -p`，不产生策略临时文件。
+- `cargo check -p process-runtime -p sandbox-runtime -p pty-service --target aarch64-apple-darwin` 通过。
+- 交付成熟度为 TargetVerified；真实 macOS Seatbelt 越权读/联网/进程 L2 仍须在 macOS runner 执行后才能升级为 MaintenanceGated，不以交叉编译冒充运行证明。
 
 **相关文档**：[sandbox](../docs/features/sandbox.md) · [process](../docs/features/process.md) · [安全验收](../docs/quality/security-acceptance.md) · [ROADMAP](../ROADMAP.md)

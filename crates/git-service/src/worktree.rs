@@ -39,7 +39,7 @@ impl<'a> WorktreeService<'a> {
 
     /// 规范化路径用于与 git 返回的绝对路径比较（解析 symlink，如 macOS /var→/private/var）。
     fn canon(path: &Path) -> PathBuf {
-        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+        dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
 
     /// 列出全部 worktree（含主工作树）。解析 `git worktree list --porcelain -z`。
@@ -253,10 +253,10 @@ mod tests {
             .add(&wt_dir, "feature-x", None, CancellationToken::new())
             .await
             .expect("add");
-        assert_eq!(wt.path, std::fs::canonicalize(&wt_dir).unwrap());
+        assert_eq!(wt.path, dunce::canonicalize(&wt_dir).unwrap());
         assert_eq!(wt.branch.as_deref(), Some("feature-x"));
         let listed = svc.list(CancellationToken::new()).await.expect("list");
-        let canon_wt_dir = std::fs::canonicalize(&wt_dir).unwrap();
+        let canon_wt_dir = dunce::canonicalize(&wt_dir).unwrap();
         assert!(listed.iter().any(|w| w.path == canon_wt_dir));
         svc.remove(&wt_dir, false, CancellationToken::new())
             .await

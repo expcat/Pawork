@@ -1,12 +1,17 @@
 //! `run_command` 工具（P4-5）。
 //!
-//! 非 PTY 执行：流式 stdout/stderr、cwd、timeout、env 白名单、cancel、exit code。
+//! 非 PTY 执行：经 SandboxSelector 选择隔离后端，并保留流式输出、timeout、
+//! cancel、资源限制与进程树清理语义。
 
 use std::time::Duration;
 
 use agent_domain::{ContentPart, TextContent, WorkspaceId};
 use async_trait::async_trait;
 use process_runtime::{CommandSpec, ProcessEvent, ProcessRuntime};
+use sandbox_runtime::{
+    FilesystemPolicy, NetworkMode, ResourceLimits, SandboxPolicy, SandboxProcessSpec,
+    SandboxSelector,
+};
 use serde_json::{json, Value};
 use tool_api::AgentTool;
 use tool_api::CancellationToken;
@@ -46,7 +51,16 @@ const ENV_ALLOWLIST: &[&str] = &[
 ];
 
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+const MAX_TIMEOUT_MS: u64 = 10 * 60_000;
 const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
+const DEFAULT_CPU_SECONDS: u64 = 60;
+const MAX_CPU_SECONDS: u64 = 10 * 60;
+const DEFAULT_MEMORY_MB: u64 = 2 * 1024;
+const MAX_MEMORY_MB: u64 = 8 * 1024;
+const DEFAULT_OPEN_FDS: u64 = 1_024;
+const MAX_OPEN_FDS: u64 = 4_096;
+const DEFAULT_MAX_PROCS: u32 = 64;
+const MAX_MAX_PROCS: u32 = 256;
 
 /// `run_command` 工具。
 #[derive(Clone)]
@@ -96,8 +110,12 @@ impl AgentTool for RunCommandTool {
                     "command": { "type": "string" },
                     "argv": { "type": "array", "items": { "type": "string" } },
                     "cwd": { "type": "string" },
-                    "timeout_ms": { "type": "integer", "minimum": 100 },
+                    "timeout_ms": { "type": "integer", "minimum": 100, "maximum": MAX_TIMEOUT_MS },
                     "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": MAX_OUTPUT_BYTES },
+                    "cpu_seconds": { "type": "integer", "minimum": 1, "maximum": MAX_CPU_SECONDS, "default": DEFAULT_CPU_SECONDS },
+                    "memory_mb": { "type": "integer", "minimum": 1, "maximum": MAX_MEMORY_MB, "default": DEFAULT_MEMORY_MB },
+                    "open_fds": { "type": "integer", "minimum": 3, "maximum": MAX_OPEN_FDS, "default": DEFAULT_OPEN_FDS },
+                    "max_procs": { "type": "integer", "minimum": 1, "maximum": MAX_MAX_PROCS, "default": DEFAULT_MAX_PROCS },
                     "env": { "type": "object" }
                 }
             }),
@@ -144,14 +162,14 @@ async fn run(
     cancel: CancellationToken,
 ) -> Result<ToolResult, RunCommandError> {
     let (program, args) = parse_command(input)?;
+    let roots = workspace_roots(service, workspace_id)?;
     let cwd = match crate::common::opt_str(input, "cwd") {
-        Some(rel) => {
-            let roots = workspace_roots(service, workspace_id)?;
-            Some(resolve_rel(&roots, &rel)?)
-        }
-        None => None,
+        Some(rel) => Some(resolve_rel(&roots, &rel)?),
+        None => roots.first().cloned(),
     };
-    let timeout_ms = opt_u64(input, "timeout_ms").unwrap_or(DEFAULT_TIMEOUT_MS);
+    let timeout_ms = opt_u64(input, "timeout_ms")
+        .unwrap_or(DEFAULT_TIMEOUT_MS)
+        .clamp(100, MAX_TIMEOUT_MS);
     let env_map = input.get("env").and_then(|v| v.as_object());
 
     let mut spec = CommandSpec::new(program).args(args);
@@ -159,7 +177,8 @@ async fn run(
     spec.cwd = cwd;
     spec.max_output_bytes = opt_u64(input, "max_output_bytes")
         .unwrap_or(MAX_OUTPUT_BYTES)
-        .min(MAX_OUTPUT_BYTES);
+        .clamp(1, MAX_OUTPUT_BYTES);
+    let max_output_bytes = spec.max_output_bytes;
     spec.env_clear = true;
     // 仅透传白名单变量 + 显式 env。
     for name in ENV_ALLOWLIST {
@@ -183,11 +202,74 @@ async fn run(
         }
     }
 
-    // 真流式执行：进程运行期间立即向 sink 发出增量，同时保留有界最终结果。
-    let (mut events, _handle) = runtime
-        .spawn_stream(spec, cancel)
+    let mut env_allowlist = ENV_ALLOWLIST
+        .iter()
+        .map(|name| (*name).to_string())
+        .chain(extra_env_allowlist.iter().cloned())
+        .collect::<Vec<_>>();
+    if let Some(map) = env_map {
+        env_allowlist.extend(map.keys().cloned());
+    }
+    env_allowlist.sort_unstable();
+    env_allowlist.dedup();
+
+    // `run_command` 只声明 Process capability；模型输入不能据此自行取得 Network
+    // capability。保留旧字段仅用于审计，真正策略始终 fail-closed。
+    let network_requested = input
+        .get("needs_network")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let cpu_seconds = opt_u64(input, "cpu_seconds")
+        .unwrap_or(DEFAULT_CPU_SECONDS)
+        .clamp(1, MAX_CPU_SECONDS);
+    let memory_mb = opt_u64(input, "memory_mb")
+        .unwrap_or(DEFAULT_MEMORY_MB)
+        .clamp(1, MAX_MEMORY_MB);
+    let open_fds = opt_u64(input, "open_fds")
+        .unwrap_or(DEFAULT_OPEN_FDS)
+        .clamp(3, MAX_OPEN_FDS);
+    let max_procs = opt_u64(input, "max_procs")
+        .unwrap_or(u64::from(DEFAULT_MAX_PROCS))
+        .clamp(1, u64::from(MAX_MAX_PROCS)) as u32;
+    let policy = SandboxPolicy {
+        filesystem: FilesystemPolicy {
+            read_roots: roots.clone(),
+            write_roots: roots.clone(),
+            deny: default_secret_paths(),
+        },
+        network_mode: NetworkMode::Enforce,
+        allow_spawn: true,
+        max_procs: Some(max_procs),
+        env_clear: true,
+        env_allowlist,
+        env_denylist: vec!["*TOKEN*".into(), "*KEY*".into(), "*SECRET*".into()],
+        resources: ResourceLimits {
+            cpu_seconds: Some(cpu_seconds),
+            memory_mb: Some(memory_mb),
+            open_fds: Some(open_fds),
+            wall_time_ms: Some(timeout_ms),
+            max_output_bytes: Some(max_output_bytes),
+        },
+        ..Default::default()
+    };
+
+    // 真流式执行：选择器优先硬隔离，缺失时结构化回退；进程运行期间立即向 sink
+    // 发出增量，同时保留有界最终结果。
+    let selector = SandboxSelector::with_runtime(runtime);
+    let (backend, selection) = selector.pick();
+    let mut process = backend
+        .spawn(
+            SandboxProcessSpec {
+                command: spec,
+                workspace_roots: roots,
+                needs_network: false,
+            },
+            policy,
+            cancel,
+        )
         .await
-        .map_err(|e| RunCommandError::Process(e.to_string()))?;
+        .map_err(|e| RunCommandError::Sandbox(e.to_string()))?;
+    let events = &mut process.events;
     let mut stdout_bytes = Vec::new();
     let mut stderr_bytes = Vec::new();
     let mut exit_code = None;
@@ -231,6 +313,26 @@ async fn run(
         "stderr_bytes": stderr_bytes.len(),
         "truncated": truncated,
         "success": success,
+        "sandbox": {
+            "backend": selection.id,
+            "isolation": selection.isolation.as_str(),
+            "fallback": selection.fallback,
+            "note": selection.note,
+            "attempted": selection.attempted,
+            "network": {
+                "requested": network_requested,
+                "granted": false,
+                "mode": "enforce",
+            },
+            "limits": {
+                "timeout_ms": timeout_ms,
+                "cpu_seconds": cpu_seconds,
+                "memory_mb": memory_mb,
+                "open_fds": open_fds,
+                "max_procs": max_procs,
+                "max_output_bytes": max_output_bytes,
+            },
+        },
     });
     let mut text = stdout;
     if !stderr.is_empty() {
@@ -296,6 +398,8 @@ pub enum RunCommandError {
     Common(#[from] BuiltinToolError),
     #[error("process error: {0}")]
     Process(String),
+    #[error("sandbox error: {0}")]
+    Sandbox(String),
 }
 
 impl From<RunCommandError> for BuiltinToolError {
@@ -303,8 +407,22 @@ impl From<RunCommandError> for BuiltinToolError {
         match error {
             RunCommandError::Common(common) => common,
             RunCommandError::Process(msg) => BuiltinToolError::Process(msg),
+            RunCommandError::Sandbox(msg) => BuiltinToolError::Process(msg),
         }
     }
+}
+
+fn default_secret_paths() -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+        let home = std::path::PathBuf::from(home);
+        paths.extend([".ssh", ".aws", ".azure", ".kube"].map(|name| home.join(name)));
+    }
+    #[cfg(windows)]
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        paths.push(std::path::PathBuf::from(appdata).join("gcloud"));
+    }
+    paths
 }
 
 #[cfg(test)]
@@ -363,6 +481,17 @@ mod tests {
         .expect("run");
         assert!(res.success);
         assert_eq!(res.metadata["exit_code"], 0);
+        assert!(res.metadata["sandbox"]["backend"].is_string());
+        assert!(res.metadata["sandbox"]["isolation"].is_string());
+        assert!(res.metadata["sandbox"]["attempted"].is_array());
+        assert_eq!(
+            res.metadata["sandbox"]["limits"]["max_procs"],
+            DEFAULT_MAX_PROCS
+        );
+        assert_eq!(
+            res.metadata["sandbox"]["limits"]["memory_mb"],
+            DEFAULT_MEMORY_MB
+        );
         let text = match &res.content[0] {
             ContentPart::Text(t) => &t.text,
             _ => panic!("text"),
@@ -492,5 +621,99 @@ mod tests {
         ] {
             assert!(ENV_ALLOWLIST.contains(&name), "missing {name}");
         }
+    }
+
+    #[test]
+    fn descriptor_does_not_offer_model_controlled_network_bypass() {
+        let (service, _, _) = make_service();
+        let descriptor = RunCommandTool::new(service).descriptor();
+        let properties = descriptor.input_schema["properties"]
+            .as_object()
+            .expect("properties");
+        assert!(!properties.contains_key("needs_network"));
+        assert_eq!(properties["max_procs"]["maximum"], MAX_MAX_PROCS);
+        assert_eq!(properties["memory_mb"]["maximum"], MAX_MEMORY_MB);
+        assert_eq!(properties["timeout_ms"]["maximum"], MAX_TIMEOUT_MS);
+    }
+
+    #[tokio::test]
+    async fn legacy_network_request_is_audited_but_not_granted_and_limits_are_clamped() {
+        let (service, id, _root) = make_service();
+        let result = run(
+            &service,
+            ProcessRuntime::new(),
+            &id,
+            &json!({
+                "command": "echo bounded",
+                "needs_network": true,
+                "timeout_ms": u64::MAX,
+                "cpu_seconds": u64::MAX,
+                "memory_mb": u64::MAX,
+                "open_fds": u64::MAX,
+                "max_procs": u64::MAX,
+            }),
+            &[],
+            &RecordingToolSink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("run");
+        let sandbox = &result.metadata["sandbox"];
+        assert_eq!(sandbox["network"]["requested"], true);
+        assert_eq!(sandbox["network"]["granted"], false);
+        assert_eq!(sandbox["network"]["mode"], "enforce");
+        assert_eq!(sandbox["limits"]["timeout_ms"], MAX_TIMEOUT_MS);
+        assert_eq!(sandbox["limits"]["cpu_seconds"], MAX_CPU_SECONDS);
+        assert_eq!(sandbox["limits"]["memory_mb"], MAX_MEMORY_MB);
+        assert_eq!(sandbox["limits"]["open_fds"], MAX_OPEN_FDS);
+        assert_eq!(sandbox["limits"]["max_procs"], MAX_MAX_PROCS);
+    }
+
+    #[tokio::test]
+    async fn sandbox_strips_explicit_secret_environment() {
+        let (service, id, _root) = make_service();
+        let sink = RecordingToolSink::default();
+        #[cfg(windows)]
+        let input = json!({
+            "argv": [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "[Console]::Out.WriteLine(\"VISIBLE=$env:PAWORK_TEST_VISIBLE SECRET=$env:PAWORK_TEST_SECRET\")"
+            ],
+            "env": {
+                "PAWORK_TEST_VISIBLE": "visible-canary",
+                "PAWORK_TEST_SECRET": "secret-canary"
+            }
+        });
+        #[cfg(not(windows))]
+        let input = json!({
+            "argv": ["sh", "-c", "printf 'VISIBLE=%s SECRET=%s' \"$PAWORK_TEST_VISIBLE\" \"$PAWORK_TEST_SECRET\""],
+            "env": {
+                "PAWORK_TEST_VISIBLE": "visible-canary",
+                "PAWORK_TEST_SECRET": "secret-canary"
+            }
+        });
+        let result = run(
+            &service,
+            ProcessRuntime::new(),
+            &id,
+            &input,
+            &[],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("sandboxed run");
+        let text = match &result.content[0] {
+            ContentPart::Text(text) => &text.text,
+            _ => panic!("expected text"),
+        };
+        assert!(
+            text.contains("visible-canary"),
+            "visible env missing: {text}"
+        );
+        assert!(!text.contains("secret-canary"), "secret leaked: {text}");
     }
 }

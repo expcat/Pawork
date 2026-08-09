@@ -18,5 +18,7 @@ mod shell;
 pub use decision::{ApprovalPrompt, CommandRisk, ExecutionConstraints, PolicyDecision, RiskLevel};
 pub use engine::{PolicyEngine, PolicyInput};
 pub use mode::ApprovalMode;
-pub use path::{resolve_workspace_path, PathSafetyError, ResolvedPath};
+pub use path::{
+    canonicalize_platform, path_within_root, resolve_workspace_path, PathSafetyError, ResolvedPath,
+};
 pub use shell::classify_command;

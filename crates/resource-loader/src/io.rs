@@ -94,7 +94,7 @@ fn canonical_within(path: &Path, root: &Path) -> Result<PathBuf, ResourceFileErr
         }
         Err(error) => return Err(ResourceFileError::Io(error)),
     };
-    if !canonical_path.starts_with(canonical_root) {
+    if !path_is_within(&canonical_path, &canonical_root) {
         return Err(ResourceFileError::OutsideRoot);
     }
     Ok(canonical_path)
@@ -105,15 +105,40 @@ pub(crate) fn path_key(path: &Path) -> String {
 }
 
 pub(crate) fn workspace_relative_key(path: &Path, root: &Path) -> String {
-    path.strip_prefix(root).map_or_else(
-        |_| {
+    relative_to_root(path, root).map_or_else(
+        || {
             path_key(
                 path.file_name()
                     .map_or_else(|| Path::new("resource"), Path::new),
             )
         },
-        path_key,
+        |relative| path_key(&relative),
     )
+}
+
+pub(crate) fn path_is_within(path: &Path, root: &Path) -> bool {
+    relative_to_root(path, root).is_some()
+}
+
+#[cfg(not(windows))]
+fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
+    path.strip_prefix(root).ok().map(Path::to_path_buf)
+}
+
+#[cfg(windows)]
+fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
+    let mut path_components = path.components();
+    for root_component in root.components() {
+        let path_component = path_components.next()?;
+        if !path_component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&root_component.as_os_str().to_string_lossy())
+        {
+            return None;
+        }
+    }
+    Some(path_components.collect())
 }
 
 #[cfg(test)]

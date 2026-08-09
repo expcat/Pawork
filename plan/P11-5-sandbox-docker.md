@@ -1,6 +1,6 @@
 # P11-5：Docker / Podman（P1）
 
-> Phase 11 · Sandbox 与跨平台强化 · 状态：⚪P1（可推迟）· 依赖：P11-1
+> Phase 11 · Sandbox 与跨平台强化 · 状态：⚪已归档/推迟（P1） · 依赖：P11-1
 
 **最终目的**：实现 Docker / Podman 容器沙箱后端，为强隔离场景提供容器级执行。标记为 P1，可在 MVP 后交付。
 
@@ -20,5 +20,10 @@
 ## 验收标准
 
 - [ ] 容器内执行隔离生效（或优雅回退）
+
+## 归档记录（2026-08-09）
+
+- Phase 11 选择平台原生后端作为当前交付边界；Docker/Podman 需要外部 daemon、镜像供应链与挂载/网络生命周期，维持 P1 归档，不进入 `SandboxSelector`。
+- 路线图计数按约定包含归档任务；本记录不表示容器 backend 已实现。
 
 **相关文档**：[sandbox](../docs/features/sandbox.md) · [ROADMAP](../ROADMAP.md)

@@ -44,6 +44,7 @@ members = [
     "crates/policy-engine",
     "crates/checkpoint-service",
     "crates/process-runtime",
+    "crates/pty-service",
     "crates/builtin-tools",
     "crates/resource-loader",
     "crates/git-service",
