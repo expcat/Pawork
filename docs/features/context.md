@@ -79,6 +79,12 @@ pub struct CompactionSnapshot {
 
 `compaction-engine` 已落地版本化 `CompactionSnapshot`（`SnapshotVersion` + `validate()`）、自动/手动压缩统一入口（压缩前用 `create_branch` Fork recovery branch）、保留策略 `RetentionPolicy`（最近 N 轮、未解决任务、用户约束、修改文件、待处理/失败 tool call）与 Golden Session 回归；压缩只读取目标 branch，`context-engine::CompactionReason` 到引擎原因有显式映射。引擎只产快照与决策，向事件流追加 `CompactionStarted/Completed` 与上下文重建由调用方完成。
 
+## Phase 8 Resource 基线
+
+`resource-loader` 已实现全局/Workspace Instructions、路径层级 `AGENTS.md`、Skills、Prompt Templates、Agent Profile v1、Session/Run Instructions、来源诊断与去抖热重载。它输出中性 `ResourceInstruction`，不依赖 `context-engine`；`context-engine::contributions_from_resources` 单向消费并映射到既有 `ContextSource`，`ContextBuilder::resource_instructions` 提供 Resource/Context 契约入口。最终 Host Run 装配属于 Phase 13，当前 `app-service` 骨架不在 P8 中伪造未实现的运行时调用。
+
+配置层复用 `ConfigTier`：Builtin < Global < Profile < Workspace < Session < Run；同层再按稳定 `source_key` 排序。路径级 `AGENTS.md` 从根到最近目录、Profile/Session/Run 从低到高排列。排序键不使用目录遍历或 HashMap 插入顺序，反向输入测试必须得到相同贡献序列。
+
 ## Phase 16–17 上下文扩展
 
 - 长期记忆由 `memory-service` 通过 canonical `EmbeddingProvider` 检索，按来源、置信度、过期状态与 token budget 注入；Context Engine 不直接调用具体 embedding API。

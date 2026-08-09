@@ -28,7 +28,7 @@
 | 5 | Session、Branch 与 Compaction | 10 | 10 | 🟢已完成（P5-10 TargetVerified） |
 | 6 | 主要 Provider | 14 | 14 | 🟢已完成 |
 | 7 | Git、Diff 与 Worktree | 9 | 9 | 🟢已完成 |
-| 8 | Skills、Prompts 与 Instructions | 8 | 0 | 🟡未开始 |
+| 8 | Skills、Prompts 与 Instructions | 8 | 8 | 🟢已完成 |
 | 9 | MCP | 7 | 0 | 🟡未开始 |
 | 10 | WASM Plugin | 6 | 0 | 🟡未开始 |
 | 11 | Sandbox 与跨平台强化 | 8 | 0 | 🔵进行中（P11-1 骨架） |
@@ -40,7 +40,7 @@
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **88** | — |
+| **合计** | — | **210** | **102** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -48,16 +48,16 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P6-14 Phase 6 评审修复** —— P1-13 / P2-12 / P3-11 / P4-13 / P5-10 已完成，Phase 1–5 连续达到完成状态；剩余汇总评审任务为 P6-14 / P7-9。下一项处理 Provider 安全/正确性、OAuth 接线与依赖基线，详情见 [plan/P6-14-review-remediation.md](plan/P6-14-review-remediation.md)。
+> 🎯 **P9-1 MCP stdio** —— Phase 6～8 已完成，确定性 Resource/Context 契约已可作为 MCP Resources/Prompts 的下游；下一项建立 MCP stdio transport 与进程生命周期，详情见 [plan/P9-1-mcp-stdio.md](plan/P9-1-mcp-stdio.md)。
 
 ## 实施波次与门禁节奏
 
 Phase 编号保留架构与文档索引意义，实际开发按结构性依赖分波推进：
 
-1. **主干补线**：完成 P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P7-9，优先消除安全红线与“模块存在但未接入 Agent Loop”的缺口；每项只跑受影响 crate 的定向测试。
+1. **主干补线**：P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P6-14 / P7-9 已完成；后续变更继续守住安全红线与 Agent Loop 正式接线，每项先跑受影响 crate 的定向测试。
 2. **Provider v2 前置**：完成 P15-1～P15-8，再由 P15-9 一次性执行 GPT / Claude / Grok 的完整 Provider Contract v2 门禁。P6-1 / P6-2 / P6-10 保留基础协议路径，Responses / modern server tools 在 Phase 15 扩展。
 3. **账号控制面基础**：完成 P18-1～P18-9。先建立 `Tenant/Principal`、`ProviderAccount/Credential`、Lease、错误/健康状态机、确定性路由、Session Affinity 与多维 Usage Ledger；`ModelProvider` 保持不变，旧配置映射到 `local/default + SingleCandidate`。Phase 12、Phase 14 与外部 Client Adapter 不得各自复制账号选择逻辑。
-4. **资源与 Host 基础**：推进 Phase 8、Phase 9、P13-1 / P13-2、P16-1 / P16-2 与 P18-10，先形成确定性资源、MCP、CLI/Core 正式宿主、可审批 Plan 和统一 Client Adapter 契约的最小闭环。
+4. **资源与 Host 基础**：Phase 8 已完成；继续推进 Phase 9、P13-1 / P13-2、P16-1 / P16-2 与 P18-10，形成 MCP、CLI/Core 正式宿主、可审批 Plan 和统一 Client Adapter 契约的最小闭环。
 5. **Process 与扩展生态**：完成 Phase 10、Phase 11，再推进 P16-4 / P16-6 与 P17-1～P17-4；可安装插件、用户 Hook、LSP 与后台进程闭环后执行一次相关 crates 的 L2，不跑无关功能簇。
 6. **Workflow、额度与编排**：推进 Phase 14、Phase 12、P16-3 / P16-5 / P16-7～P16-9、P17-5 / P17-6 与 P18-13 / P18-14；Quota 视图消费 P18-8 账本，Agent 只经 Lease 获取 Provider 资源，稳定后执行 workflow/orchestration L2。
 7. **公共 Client 与远程能力**：完成 P18-11 / P18-12、P17-7～P17-13，最后由 P18-15 集中执行账号池属性/并发、迁移、跨租户隔离、Codex/Claude/ACP golden 与故障注入门禁；发布候选再执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
@@ -101,11 +101,11 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | 异步 Trait | async-trait | P0-4、P0-5、P0-6、P0-8 | 稳定 Rust 上统一对象安全的异步接口，协议 crate 不绑定具体 runtime |
 | 异步流 / 字节 | futures、bytes | P2-1、P2-5 | Provider 流式字节传输与异步消费的基础抽象 |
 | 同步锁 | parking_lot | P7-6、P7-9 | status 缓存命中热路径使用无毒化读写锁，并由 P7-9 补 TTL/LRU 上限 |
-| 安全临时文件 | tempfile | P7-1～P7-9 | 真实 Git 测试仓库隔离；P7-9 用 NamedTempFile 承载 hunk patch，保证随机名、独占创建与自动清理 |
+| 安全临时文件 | tempfile | P7-1～P7-9、P8 | 真实 Git 与 Resource Loader 测试目录隔离；P7-9 用 NamedTempFile 承载 hunk patch，保证随机名、独占创建与自动清理 |
 | 序列化 | serde / serde_json | P0-1 | 生态统一 |
 | 错误 | thiserror（库）+ anyhow（应用层） | P0-7 | Rust 惯用分工 |
-| 哈希 / 版本 | blake3、semver | P0-6、P1-6、P4-11 | blake3 用于 Blob 内容寻址与 checkpoint 完整性；semver 用于 Plugin API 版本 |
-| 配置解析 | toml | P1-1 | 与 serde 配合 |
+| 哈希 / 版本 | blake3、semver | P0-6、P1-6、P4-11、P8-3 | blake3 用于 Blob 内容寻址与 checkpoint 完整性；semver 用于 Plugin API 与 Skill 版本/依赖 |
+| 配置解析 | toml | P1-1、P8-3～P8-5 | 与 serde 配合，解析配置、Skill manifest、Prompt frontmatter 与 Profile v1 |
 | CLI | clap | P1-12 | derive 宏最小化胶水 |
 | 结构化日志 | tracing + tracing-subscriber | P1-9 | 脱敏（redaction）规则仍自实现；暂无线性日志文件 appender 需求 |
 | SQLite 绑定 | rusqlite | P1-2 | 契合「SQLite Actor 单连接」设计；sqlx 亦活跃，但其异步池 + 编译期 SQL 检查与该设计不匹配，集成成本更高 |
@@ -117,7 +117,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | 文件遍历 | ignore + globset | P1-8、P4-6、P4-7、P7-9 | ripgrep 同源；P7-9 复用 ignore 语义限制 Git watcher 范围 |
 | 正则 | regex | P4-6 | 线性时间匹配、无 ReDoS 风险 |
 | 文件监听 | notify + notify-debouncer-full | P1-8、P7-6、P8-8 | file-index 以 notify + 有界通道做扫描级合并；git-service/P7-6 使用 debouncer 做缓存失效；P8-8 复用统一事件语义 |
-| 路径规范化 | dunce | P1-13、P7-9、P11-8 | Workspace 与 git 子进程出口移除 Windows verbatim 前缀；后续统一短路径 / UNC 语义 |
+| 路径规范化 | dunce | P1-13、P7-9、P8、P11-8 | Workspace、Git 与 Resource Loader canonical 边界移除 Windows verbatim 前缀；后续统一短路径 / UNC 语义 |
 | 编码检测 | chardetng + encoding_rs | P4-1 | Mozilla 系；二进制探测由内置启发式完成 |
 | Token 计数 | tiktoken-rs | P3-2 | 仅对 OpenAI 系精确；其它 Provider 用启发式估算 |
 | TS 类型导出 | ts-rs | P0-10、P13-7 | GUI Contract 类型生成，比 typeshare / specta 轻 |
@@ -352,14 +352,14 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P8-1 | 🟡 | Resource Loader | 加载 AGENTS.md/Skills/Prompt | [详情](plan/P8-1-resource-loader.md) |
-| P8-2 | 🟡 | AGENTS.md 层级 | 根+路径层级聚合 | [详情](plan/P8-2-agents-md.md) |
-| P8-3 | 🟡 | Skills | manifest/激活/冲突/热重载 | [详情](plan/P8-3-skills.md) |
-| P8-4 | 🟡 | Prompt Templates | 参数/默认配置/覆盖 | [详情](plan/P8-4-prompt-templates.md) |
-| P8-5 | 🟡 | Profiles / Agent Profile | 运行期 instructions | [详情](plan/P8-5-profiles.md) |
-| P8-6 | 🟡 | 配置优先级（确定性） | 确定性合并 | [详情](plan/P8-6-config-priority.md) |
-| P8-7 | 🟡 | Resource Diagnostics | 显示生效来源 | [详情](plan/P8-7-resource-diagnostics.md) |
-| P8-8 | 🟡 | Hot Reload | 变更去抖重载 | [详情](plan/P8-8-hot-reload.md) |
+| P8-1 | 🟢 | Resource Loader | 加载 AGENTS.md/Skills/Prompt | [详情](plan/P8-1-resource-loader.md) |
+| P8-2 | 🟢 | AGENTS.md 层级 | 根+路径层级聚合 | [详情](plan/P8-2-agents-md.md) |
+| P8-3 | 🟢 | Skills | manifest/激活/冲突/热重载 | [详情](plan/P8-3-skills.md) |
+| P8-4 | 🟢 | Prompt Templates | 参数/默认配置/覆盖 | [详情](plan/P8-4-prompt-templates.md) |
+| P8-5 | 🟢 | Profiles / Agent Profile | 运行期 instructions | [详情](plan/P8-5-profiles.md) |
+| P8-6 | 🟢 | 配置优先级（确定性） | 确定性合并 | [详情](plan/P8-6-config-priority.md) |
+| P8-7 | 🟢 | Resource Diagnostics | 显示生效来源 | [详情](plan/P8-7-resource-diagnostics.md) |
+| P8-8 | 🟢 | Hot Reload | 变更去抖重载 | [详情](plan/P8-8-hot-reload.md) |
 
 ### Phase 9：MCP
 

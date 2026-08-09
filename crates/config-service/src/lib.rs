@@ -12,6 +12,8 @@ mod merge;
 mod paths;
 mod schema;
 
+use serde::{Deserialize, Serialize};
+
 pub use error::{ConfigError, ConfigParseError};
 pub use loader::{
     ConfigSource, ConfigWarning, LoadedSource, LoadedSourceSpan, Loader, ResolvedConfig,
@@ -25,7 +27,8 @@ pub use schema::{ModelConfig, PaworkConfig, ProviderConfig, RunOverrides, Sessio
 /// 优先级：`Builtin < Global < Profile < Workspace < Session < Run`。
 /// 同一层级内仍可能存在多个来源（例如多个工作区根），此时按 `source key`
 /// 升序合并，保证结果与扫描顺序无关。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ConfigTier {
     /// 内置默认值，优先级最低。
     Builtin,
@@ -42,8 +45,20 @@ pub enum ConfigTier {
 }
 
 impl ConfigTier {
+    /// 数值越大优先级越高；用于跨 crate 构造稳定排序键。
+    pub const fn priority(self) -> u8 {
+        match self {
+            ConfigTier::Builtin => 0,
+            ConfigTier::Global => 1,
+            ConfigTier::Profile => 2,
+            ConfigTier::Workspace => 3,
+            ConfigTier::Session => 4,
+            ConfigTier::Run => 5,
+        }
+    }
+
     /// 该层级内置的稳定排序键，同层多来源合并时使用。
-    pub fn source_key(self) -> &'static str {
+    pub const fn source_key(self) -> &'static str {
         match self {
             ConfigTier::Builtin => "builtin",
             ConfigTier::Global => "global",
@@ -52,5 +67,10 @@ impl ConfigTier {
             ConfigTier::Session => "session",
             ConfigTier::Run => "run",
         }
+    }
+
+    /// 稳定的诊断标识。
+    pub const fn as_str(self) -> &'static str {
+        self.source_key()
     }
 }

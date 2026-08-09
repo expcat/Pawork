@@ -1,6 +1,6 @@
 # P8-2：AGENTS.md（根 + 路径层级）
 
-> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟡未开始 · 依赖：P8-1
+> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟢已完成 · 依赖：P8-1
 
 **最终目的**：实现 `AGENTS.md` 的根 + 路径层级聚合，按当前文件路径层级确定生效指令，保证确定性优先级。
 
@@ -19,6 +19,8 @@
 
 ## 验收标准
 
-- [ ] 按路径层级确定性聚合
+- [x] 按路径层级确定性聚合
+
+**实现**：`resource-loader::AgentsHierarchy` 从 Workspace Root 到当前路径逐层发现并稳定排序 `AGENTS.md`，越界 symlink、非 UTF-8 与超限文件均按单文件隔离。
 
 **相关文档**：[skills](../docs/features/skills.md) · [context](../docs/features/context.md) · [ROADMAP](../ROADMAP.md)

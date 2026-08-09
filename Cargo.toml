@@ -43,6 +43,7 @@ members = [
     "crates/checkpoint-service",
     "crates/process-runtime",
     "crates/builtin-tools",
+    "crates/resource-loader",
     "crates/git-service",
     "crates/diff-service",
     "crates/sandbox-runtime",

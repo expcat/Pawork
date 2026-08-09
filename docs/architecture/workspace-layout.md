@@ -44,7 +44,7 @@ Pawork/
 | `usage-ledger` | tenant/account/session/agent 多维 Usage/Cost 持久账本 | 依赖 agent-domain / agent-events / model-registry；P18-8 |
 | `quota-service` | account-scoped 用量与额度监控、多适配器、窗口聚合与缓存 | 依赖 provider-api；消费 tenant-service / usage-ledger，复用 auth-service / provider-runtime |
 | `config-service` | 确定性配置 schema、来源发现与层级合并 | 独立；供 context-engine / policy / resource-loader 等消费 |
-| `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain |
+| `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain / resource-loader；只消费中性 DTO，不参与文件 IO |
 | `compaction-engine` | 自动 / 手动压缩、摘要 | 依赖 agent-events / session-store |
 | `session-store` | SQLite Event Store、Projection、迁移 | 依赖 agent-events |
 | `artifact-store` | Blob Store、内容寻址、GC | 独立，被 session-store / tools 引用 |
@@ -59,7 +59,7 @@ Pawork/
 | `audit-log` | versioned canonical 审计事件、tenant-scoped 查询与 OTel/SIEM 脱敏导出 | 依赖 agent-domain；运行时由组合层接入 tenant-service / usage-ledger；P18-13 |
 | `workspace-service` | 工作区、多 Root、Git 检测、设置 | 依赖 agent-domain |
 | `file-index` | 文件索引、ignore、`@file` 搜索 | 依赖 workspace-service |
-| `resource-loader` | AGENTS.md / Skills / Prompt / Profile 加载 | 依赖 workspace-service |
+| `resource-loader` | AGENTS.md / Skills / Prompt / Profile 加载 | 依赖 agent-domain / config-service / workspace-service / diagnostics；不依赖 context-engine |
 | `git-service` | 系统 Git 封装、缓存、Worktree | 依赖 process-runtime |
 | `diff-service` | 结构化 Diff 解析、分页 Hunk | 依赖 git-service |
 | `checkpoint-service` | Run 写操作快照、回滚 | 依赖 git-service / artifact-store |

@@ -1,6 +1,6 @@
 # P8-3：Skills
 
-> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟡未开始 · 依赖：P8-1
+> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟢已完成 · 依赖：P8-1
 
 **最终目的**：实现 Skills（manifest、激活、参数、脚本、权限、版本、依赖、冲突检测、热重载），作为声明式扩展的主入口。
 
@@ -19,6 +19,8 @@
 
 ## 验收标准
 
-- [ ] manifest 可激活、冲突可检测、支持热重载
+- [x] manifest 可激活、冲突可检测、支持热重载
+
+**实现**：`resource-loader::SkillResolution` 支持 manifest/SKILL.md、显式激活/禁用、semver 依赖、双向冲突、工作区覆盖与来源状态；脚本只声明不执行，统一由 P8-8 watcher 重载。
 
 **相关文档**：[skills](../docs/features/skills.md) · [ROADMAP](../ROADMAP.md)

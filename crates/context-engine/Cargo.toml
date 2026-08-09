@@ -9,6 +9,7 @@ description = "Pawork 确定性上下文构建与 Token 预算分配"
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+resource-loader = { path = "../resource-loader" }
 tiktoken-rs.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -13,6 +13,7 @@ use agent_domain::{ContentPart, Message, MessageId, MessageMetadata, MessageRole
 
 use crate::budget::{ContextBudget, ContextBudgetBreakdown};
 use crate::compaction::{CompactionReason, CompactionTrigger};
+use crate::resources::contributions_from_resources;
 use crate::source::{sort_contributions, ContextContribution};
 use crate::token::{message_framing_tokens, reply_primer_tokens, TokenEstimator, ToolSchema};
 
@@ -72,6 +73,21 @@ impl<'a> ContextBuilder<'a> {
     ) -> Self {
         self.contributions.extend(contributions);
         self
+    }
+
+    /// 追加 resource-loader 解析出的有效 instructions，并映射为 canonical 来源。
+    pub fn resource_instructions<'b>(
+        mut self,
+        resources: impl IntoIterator<Item = &'b resource_loader::ResourceInstruction>,
+    ) -> Self {
+        self.contributions
+            .extend(contributions_from_resources(resources));
+        self
+    }
+
+    /// 追加一个完整 Resource Loader 快照中的有效 instruction 层。
+    pub fn resource_bundle(self, bundle: &resource_loader::ResourceBundle) -> Self {
+        self.resource_instructions(&bundle.instructions)
     }
 
     /// 追加历史消息。

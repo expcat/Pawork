@@ -15,6 +15,7 @@ mod budget;
 mod builder;
 mod compaction;
 mod error;
+mod resources;
 mod source;
 mod token;
 mod tool_result_trim;
@@ -23,6 +24,7 @@ pub use budget::{ContextBudget, ContextBudgetBreakdown};
 pub use builder::{BuiltContext, ContextBuilder};
 pub use compaction::{CompactionReason, CompactionTrigger};
 pub use error::ContextBuildError;
+pub use resources::{contribution_from_resource, contributions_from_resources};
 pub use source::{sort_contributions, ContextContribution, ContextSource};
 pub use token::{
     default_estimator_for, HeuristicEstimator, TiktokenEstimator, TokenEstimator, ToolSchema,

@@ -1,6 +1,6 @@
 # P8-8：Hot Reload
 
-> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟡未开始 · 依赖：P8-3
+> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟢已完成 · 依赖：P8-3
 
 **最终目的**：实现资源文件变更热重载（去抖），让开发期修改 Skills/资源即时生效而不频繁重建。
 
@@ -19,6 +19,8 @@
 
 ## 验收标准
 
-- [ ] 文件变更后去抖重载生效
+- [x] 文件变更后去抖重载生效
+
+**实现**：`ResourceHotReload/ResourceWatcher` 以 notify debouncer 监听、锁外重建、Arc 原子换代；失败保留旧快照，drop 停止 watcher，真实文件事件测试覆盖重载路径。
 
 **相关文档**：[skills](../docs/features/skills.md) · [ROADMAP](../ROADMAP.md)

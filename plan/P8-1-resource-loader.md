@@ -1,6 +1,6 @@
 # P8-1：Resource Loader
 
-> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟡未开始 · 依赖：P1-7、P1-8
+> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟢已完成 · 依赖：P1-7、P1-8
 
 **最终目的**：实现 Resource Loader（加载 `AGENTS.md` / Skills / Prompt / Profile），保证资源加载错误不崩溃，为确定性上下文提供来源。
 
@@ -19,6 +19,8 @@
 
 ## 验收标准
 
-- [ ] 加载错误不导致 Core 崩溃
+- [x] 加载错误不导致 Core 崩溃
+
+**实现**：新增 `crates/resource-loader`，以 `ResourceBundle + ResourceIssue` 隔离单资源错误，并用 workspace-relative request 约束所有模型可影响的路径。
 
 **相关文档**：[skills](../docs/features/skills.md) · [context](../docs/features/context.md) · [ROADMAP](../ROADMAP.md)

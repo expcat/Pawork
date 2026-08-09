@@ -561,6 +561,7 @@ name = "context-engine"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
+ "resource-loader",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -2373,6 +2374,24 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "webpki-roots",
+]
+
+[[package]]
+name = "resource-loader"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "config-service",
+ "diagnostics",
+ "dunce",
+ "notify-debouncer-full",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "toml",
+ "workspace-service",
 ]
 
 [[package]]

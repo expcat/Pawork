@@ -1,6 +1,6 @@
 # P8-4：Prompt Templates
 
-> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟡未开始 · 依赖：P8-1
+> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟢已完成 · 依赖：P8-1
 
 **最终目的**：实现 Prompt Templates（markdown、参数、文件引用、默认 model/thinking/tools/budget、工作区覆盖），让常用提示可复用。
 
@@ -19,6 +19,8 @@
 
 ## 验收标准
 
-- [ ] 模板可参数化、可带默认配置
+- [x] 模板可参数化、可带默认配置
+
+**实现**：Prompt Template 使用 TOML `+++` frontmatter + Markdown body，支持参数/default、workspace-relative 文件引用、model/thinking/tools/budget 默认值与 Workspace 覆盖。
 
 **相关文档**：[skills](../docs/features/skills.md) · [context](../docs/features/context.md) · [ROADMAP](../ROADMAP.md)

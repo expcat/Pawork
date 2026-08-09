@@ -38,7 +38,9 @@ impl Redactor {
             Regex::new(r"(?i)\b(?:set[-_ ]?)?cookie\s*[:=]\s*[^\r\n]+")?,
             Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")?,
             Regex::new(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")?,
-            Regex::new(r"\b(?:sk|rk|pk|api)[-_][A-Za-z0-9_-]{12,}\b")?,
+            // 不要求单词边界：Secret 可能嵌在 source_key/error_code（例如
+            // `load_failed_sk-...`）中，`_` 属于 regex word character，会绕过 `\b`。
+            Regex::new(r"(?:sk|rk|pk|api)[-_][A-Za-z0-9_-]{12,}")?,
             // URL query：?token=...&api_key=...
             Regex::new(
                 r#"(?i)(?:[?&])(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|oauth[_-]?code)=([^&#\s]+)"#,
@@ -306,6 +308,10 @@ mod tests {
             ("oauth_code=code-1", "code-1"),
             (
                 "sk-abcdefghijklmnopqrstuvwxyz",
+                "sk-abcdefghijklmnopqrstuvwxyz",
+            ),
+            (
+                "load_failed_sk-abcdefghijklmnopqrstuvwxyz",
                 "sk-abcdefghijklmnopqrstuvwxyz",
             ),
             (

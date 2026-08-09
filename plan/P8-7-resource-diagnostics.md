@@ -1,6 +1,6 @@
 # P8-7：Resource Diagnostics
 
-> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟡未开始 · 依赖：P8-6
+> Phase 8 · Skills、Prompts 与 Instructions · 状态：🟢已完成 · 依赖：P8-6
 
 **最终目的**：实现 Resource Diagnostics，显示所有生效来源，让用户与 Agent 可诊断「为什么这条指令生效」。
 
@@ -19,6 +19,8 @@
 
 ## 验收标准
 
-- [ ] 可显示所有生效来源
+- [x] 可显示所有生效来源
+
+**实现**：`ResourceDiagnostics/ResourceDiagnosticView` 展示所有候选的来源、层级与状态；视图不包含正文/绝对路径，并复用 diagnostics Redactor 脱敏问题消息。
 
 **相关文档**：[skills](../docs/features/skills.md) · [observability](../docs/features/observability.md) · [ROADMAP](../ROADMAP.md)
