@@ -9,7 +9,7 @@
 
 ## 决策
 
-以 MCP 为第一外部扩展机制，优先于 WASM。支持 stdio / HTTP / 流式 HTTP，提供 Tools / Resources / Prompts、能力发现、健康检查、重启、取消、OAuth、输出限制、Secret 注入，每个 Server 独立配置权限。
+以 MCP 为第一外部扩展机制，优先于 WASM。支持 stdio / Streamable HTTP（不实现已弃用的旧 HTTP+SSE transport），提供 Tools / Resources / Prompts、能力发现、健康检查、重启、取消、OAuth、输出限制、Secret 注入，每个 Server 独立配置权限。MCP SDK 封装在 `mcp-client` 内，不向 Agent Engine 引入按 Server 或 Provider 名称分支。
 
 ## 后果
 

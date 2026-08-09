@@ -66,7 +66,7 @@ Pawork/
 > 注：Phase 4 交付的 checkpoint-service 基于 artifact-store 实现 Blob 快照与回滚；git-service 接入（导出 patch / 固化为 commit）随 Phase 7 完成。
 | `plugin-api` | 插件 Trait、Manifest、生命周期事件 | 依赖 agent-domain / tool-api |
 | `wasm-plugin-host` | WASM Component 宿主、capability / fuel | 依赖 plugin-api |
-| `mcp-client` | MCP Transport、Tools / Resources / Prompts | 依赖 plugin-api |
+| `mcp-client` | MCP Transport、Tools / Resources / Prompts、Server 生命周期与安全边界 | 依赖 agent-domain / tool-api / tool-runtime / policy-engine / config-service / auth-service；MCP 协议与 transport 由 crate 内部封装的 `rmcp` 提供，不向 Core 泄漏 SDK 类型之外的运行时职责 |
 | `hook-runtime` | 生命周期 Hook 派发 | 依赖 plugin-api |
 | `orchestration` | Multi-Agent、Supervisor、Worker、任务图（优先级 P2） | 依赖 agent-engine / workspace-service |
 | `core-api` | 应用层 Command / Event / Query 类型（CLI 与 GUI 共享的 schema source） | Phase 0 依赖 agent-domain / agent-events；后续由 app-service 使用 |

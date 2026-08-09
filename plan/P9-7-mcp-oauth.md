@@ -1,6 +1,6 @@
 # P9-7：OAuth（P1）
 
-> Phase 9 · MCP · 状态：⚪P1（可推迟）· 依赖：P6-4
+> Phase 9 · MCP · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P6-4
 
 **最终目的**：为需要鉴权的 MCP server 接入 OAuth。标记为 P1，可在 MVP 后交付。
 
@@ -19,6 +19,11 @@
 
 ## 验收标准
 
-- [ ] 保护型 MCP server 可完成 OAuth
+- [x] 保护型 MCP server 可完成 OAuth
+
+## 验证记录（2026-08-09）
+
+- 复用 `auth-service` PKCE、CSRF state、credential storage、singleflight refresh 与 refresh-token rotation；MCP 不复制 Token 生命周期。
+- `OAuthHttpConnector` 注入 bearer，并在请求前检测轮换、要求 manager 重建 transport；fresh token、自动刷新、轮换持久化、PKCE 与 connector 脱敏均通过定向测试。
 
 **相关文档**：[mcp](../docs/features/mcp.md) · [auth](../docs/features/auth.md) · [ROADMAP](../ROADMAP.md)

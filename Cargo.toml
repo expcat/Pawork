@@ -47,13 +47,14 @@ members = [
     "crates/git-service",
     "crates/diff-service",
     "crates/sandbox-runtime",
+    "crates/mcp-client",
 ]
 # crates/ 下的核心 crate 随对应任务陆续创建并登记到 members。
 
 [workspace.package]
 version = "0.0.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 publish = false
 authors = ["Pawork Contributors"]
 # license 待定（首次实现提交前确定，见 README「许可证」）。
@@ -106,7 +107,7 @@ sha2 = "0.10"
 url = "2"
 
 # 扩展机制（MCP / WASM）
-rmcp = "2"
+rmcp = { version = "=2.2.0", default-features = false }
 wasmtime = "27"
 wit-bindgen = "0.40"
 

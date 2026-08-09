@@ -29,9 +29,9 @@
 | 6 | 主要 Provider | 14 | 14 | 🟢已完成 |
 | 7 | Git、Diff 与 Worktree | 9 | 9 | 🟢已完成 |
 | 8 | Skills、Prompts 与 Instructions | 8 | 8 | 🟢已完成 |
-| 9 | MCP | 7 | 0 | 🟡未开始 |
+| 9 | MCP | 7 | 7 | 🟢已完成（P9-1～P9-7 TargetVerified） |
 | 10 | WASM Plugin | 6 | 0 | 🟡未开始 |
-| 11 | Sandbox 与跨平台强化 | 8 | 0 | 🔵进行中（P11-1 骨架） |
+| 11 | Sandbox 与跨平台强化 | 8 | 1 | 🔵进行中（P11-1 骨架；P11-5 已归档） |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
 | 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
@@ -40,7 +40,7 @@
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **102** | — |
+| **合计** | — | **210** | **110** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -48,7 +48,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P9-1 MCP stdio** —— Phase 6～8 已完成，确定性 Resource/Context 契约已可作为 MCP Resources/Prompts 的下游；下一项建立 MCP stdio transport 与进程生命周期，详情见 [plan/P9-1-mcp-stdio.md](plan/P9-1-mcp-stdio.md)。
+> 🎯 **P15-1 Canonical Tool v2** —— Phase 9 MCP 已形成外部 Tool 接入闭环；下一项按实施波次与关键路径统一 Client Function / Provider Hosted / Extension 的 canonical tool 契约，为 Provider v2 与后续 Tool Search 打基础。详情见 [plan/P15-1-canonical-tool-v2.md](plan/P15-1-canonical-tool-v2.md)。
 
 ## 实施波次与门禁节奏
 
@@ -57,7 +57,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 1. **主干补线**：P1-13 / P2-12 / P3-11 / P4-13 / P5-10 / P6-14 / P7-9 已完成；后续变更继续守住安全红线与 Agent Loop 正式接线，每项先跑受影响 crate 的定向测试。
 2. **Provider v2 前置**：完成 P15-1～P15-8，再由 P15-9 一次性执行 GPT / Claude / Grok 的完整 Provider Contract v2 门禁。P6-1 / P6-2 / P6-10 保留基础协议路径，Responses / modern server tools 在 Phase 15 扩展。
 3. **账号控制面基础**：完成 P18-1～P18-9。先建立 `Tenant/Principal`、`ProviderAccount/Credential`、Lease、错误/健康状态机、确定性路由、Session Affinity 与多维 Usage Ledger；`ModelProvider` 保持不变，旧配置映射到 `local/default + SingleCandidate`。Phase 12、Phase 14 与外部 Client Adapter 不得各自复制账号选择逻辑。
-4. **资源与 Host 基础**：Phase 8 已完成；继续推进 Phase 9、P13-1 / P13-2、P16-1 / P16-2 与 P18-10，形成 MCP、CLI/Core 正式宿主、可审批 Plan 和统一 Client Adapter 契约的最小闭环。
+4. **资源与 Host 基础**：Phase 8～9 已完成；继续推进 P13-1 / P13-2、P16-1 / P16-2 与 P18-10，形成 CLI/Core 正式宿主、可审批 Plan 和统一 Client Adapter 契约的最小闭环。
 5. **Process 与扩展生态**：完成 Phase 10、Phase 11，再推进 P16-4 / P16-6 与 P17-1～P17-4；可安装插件、用户 Hook、LSP 与后台进程闭环后执行一次相关 crates 的 L2，不跑无关功能簇。
 6. **Workflow、额度与编排**：推进 Phase 14、Phase 12、P16-3 / P16-5 / P16-7～P16-9、P17-5 / P17-6 与 P18-13 / P18-14；Quota 视图消费 P18-8 账本，Agent 只经 Lease 获取 Provider 资源，稳定后执行 workflow/orchestration L2。
 7. **公共 Client 与远程能力**：完成 P18-11 / P18-12、P17-7～P17-13，最后由 P18-15 集中执行账号池属性/并发、迁移、跨租户隔离、Codex/Claude/ACP golden 与故障注入门禁；发布候选再执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
@@ -112,7 +112,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | HTTP 客户端 | reqwest（rustls + stream） | P2-1、P9-2 | Provider 与 MCP Streamable HTTP 所需 |
 | OS Keychain | keyring（v3） | P2-6 | Secret 不落库不入日志 |
 | OAuth 安全原语 | base64、rand、sha2、url | P6-4、P6-14 | 采用成熟编码/随机/哈希/URL 原语；PKCE、token 交换、RFC 8628 编排为最小手写实现，不引入未使用的整套 `oauth2` SDK |
-| MCP SDK | rmcp | P9-1、P9-2 | 官方 SDK、跟进 MCP 2026-07-28 规范；只用 transport + codec 层；锁定小版本（2.x→3.0 有 breaking） |
+| MCP SDK | rmcp `=2.2.0` | P9-1、P9-2 | 官方 SDK；在 `mcp-client` 内封装 transport / protocol client 以隔离升级；该版本要求 workspace MSRV 为 Rust 1.85，2.x→3.x breaking 升级须单独执行迁移门禁 |
 | WASM 宿主 | wasmtime + wit-bindgen | P10-2、P10-5 | Component Model 成熟；fuel / 内存上限对应 ADR-012 |
 | 文件遍历 | ignore + globset | P1-8、P4-6、P4-7、P7-9 | ripgrep 同源；P7-9 复用 ignore 语义限制 Git watcher 范围 |
 | 正则 | regex | P4-6 | 线性时间匹配、无 ReDoS 风险 |
@@ -365,15 +365,17 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 MCP 作为第一外部扩展机制，server 故障隔离。
 
+> 验证记录（2026-08-09）：`cargo test -p mcp-client`（48 passed，含重连握手取消与连接期健康快照回归）、`cargo build --workspace --all-targets`、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo run -p schema-typegen -- --check` 与 `git diff --check` 均通过。
+
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P9-1 | 🟡 | stdio Transport | 本地进程接入 | [详情](plan/P9-1-mcp-stdio.md) |
-| P9-2 | 🟡 | Streamable HTTP Transport | 远程接入+timeout/restart | [详情](plan/P9-2-mcp-http.md) |
-| P9-3 | 🟡 | Tools / Resources / Prompts | 能力发现+注册 | [详情](plan/P9-3-mcp-capabilities.md) |
-| P9-4 | 🟡 | Health / restart / cancel / logging | 故障隔离 | [详情](plan/P9-4-mcp-health.md) |
-| P9-5 | 🟡 | Approval / 输出限制 / Secret 注入 | 每 server 独立权限 | [详情](plan/P9-5-mcp-approval.md) |
-| P9-6 | 🟡 | MCP Config | workspace/global | [详情](plan/P9-6-mcp-config.md) |
-| P9-7 | ⚪ | OAuth（优先级 P1） | 保护型 server 鉴权 | [详情](plan/P9-7-mcp-oauth.md) |
+| P9-1 | 🟢 | stdio Transport | 本地进程接入 | [详情](plan/P9-1-mcp-stdio.md) |
+| P9-2 | 🟢 | Streamable HTTP Transport | 远程接入+timeout/restart | [详情](plan/P9-2-mcp-http.md) |
+| P9-3 | 🟢 | Tools / Resources / Prompts | 能力发现+注册 | [详情](plan/P9-3-mcp-capabilities.md) |
+| P9-4 | 🟢 | Health / restart / cancel / logging | 故障隔离 | [详情](plan/P9-4-mcp-health.md) |
+| P9-5 | 🟢 | Approval / 输出限制 / Secret 注入 | 每 server 独立权限 | [详情](plan/P9-5-mcp-approval.md) |
+| P9-6 | 🟢 | MCP Config | workspace/global | [详情](plan/P9-6-mcp-config.md) |
+| P9-7 | 🟢 | OAuth（优先级 P1） | 保护型 server 鉴权 | [详情](plan/P9-7-mcp-oauth.md) |
 
 ### Phase 10：WASM Plugin
 
