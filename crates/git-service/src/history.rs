@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use agent_domain::CancellationToken;
 
 use crate::error::GitError;
-use crate::process::GitRunner;
+use crate::process::{validate_position_arg, GitRunner};
 
 /// pretty format 中的字段分隔符（unit separator），不会出现在提交信息中。
 const FS: &str = "%x1f";
@@ -79,6 +79,9 @@ impl<'a> HistoryService<'a> {
         opts: &LogOptions,
         cancel: CancellationToken,
     ) -> Result<Vec<CommitInfo>, GitError> {
+        if let Some(range) = &opts.range {
+            validate_position_arg("range", range)?;
+        }
         let limit = if opts.limit == 0 { 100 } else { opts.limit };
         let format = format!("%H{FS}%h{FS}%an{FS}%ae{FS}%aI{FS}%P{FS}%s");
         let limit_arg = format!("-n{limit}");
@@ -111,6 +114,7 @@ impl<'a> HistoryService<'a> {
         rev: &str,
         cancel: CancellationToken,
     ) -> Result<CommitDetail, GitError> {
+        validate_position_arg("revision", rev)?;
         let format = format!("%H{FS}%h{FS}%an{FS}%ae{FS}%aI{FS}%P{FS}%s{FS}%B");
         let fmt_arg = format!("--pretty=format:{format}");
         match self
@@ -156,6 +160,8 @@ impl<'a> HistoryService<'a> {
         b: &str,
         cancel: CancellationToken,
     ) -> Result<Option<String>, GitError> {
+        validate_position_arg("revision", a)?;
+        validate_position_arg("revision", b)?;
         match self
             .runner
             .run(&self.work_dir, &["merge-base", a, b], cancel)
@@ -401,5 +407,52 @@ mod tests {
             .await
             .expect("merge_base");
         assert_eq!(mb, None, "orphan 分支不应有公共祖先");
+    }
+
+    #[tokio::test]
+    async fn option_like_revisions_are_rejected_at_service_boundaries() {
+        let runner = GitRunner::new();
+        let svc = HistoryService::new(&runner, Path::new("."));
+
+        let log_error = svc
+            .log(
+                &LogOptions {
+                    range: Some("--all".into()),
+                    ..Default::default()
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("option-like range must be rejected");
+        assert!(matches!(
+            log_error,
+            GitError::InvalidPositionArgument { name: "range", .. }
+        ));
+
+        let show_error = svc
+            .show("--stat", CancellationToken::new())
+            .await
+            .expect_err("option-like revision must be rejected");
+        assert!(matches!(
+            show_error,
+            GitError::InvalidPositionArgument {
+                name: "revision",
+                ..
+            }
+        ));
+
+        for (a, b) in [("--octopus", "HEAD"), ("HEAD", "--all")] {
+            let error = svc
+                .merge_base(a, b, CancellationToken::new())
+                .await
+                .expect_err("option-like merge-base revision must be rejected");
+            assert!(matches!(
+                error,
+                GitError::InvalidPositionArgument {
+                    name: "revision",
+                    ..
+                }
+            ));
+        }
     }
 }

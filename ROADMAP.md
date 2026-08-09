@@ -27,7 +27,7 @@
 | 4 | 核心工具与权限 | 13 | 13 | 🟢已完成（P4-13 TargetVerified） |
 | 5 | Session、Branch 与 Compaction | 10 | 10 | 🟢已完成（P5-10 TargetVerified） |
 | 6 | 主要 Provider | 14 | 9 | 🔵进行中（P6-10~13、P6-14 评审修复待启动） |
-| 7 | Git、Diff 与 Worktree | 9 | 8 | 🔵进行中（P7-9 评审修复待启动） |
+| 7 | Git、Diff 与 Worktree | 9 | 9 | 🟢已完成 |
 | 8 | Skills、Prompts 与 Instructions | 8 | 0 | 🟡未开始 |
 | 9 | MCP | 7 | 0 | 🟡未开始 |
 | 10 | WASM Plugin | 6 | 0 | 🟡未开始 |
@@ -100,6 +100,8 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | 异步运行时 | tokio | P0-1 | 事实标准；按需启用 feature |
 | 异步 Trait | async-trait | P0-4、P0-5、P0-6、P0-8 | 稳定 Rust 上统一对象安全的异步接口，协议 crate 不绑定具体 runtime |
 | 异步流 / 字节 | futures、bytes | P2-1、P2-5 | Provider 流式字节传输与异步消费的基础抽象 |
+| 同步锁 | parking_lot | P7-6、P7-9 | status 缓存命中热路径使用无毒化读写锁，并由 P7-9 补 TTL/LRU 上限 |
+| 安全临时文件 | tempfile | P7-1～P7-9 | 真实 Git 测试仓库隔离；P7-9 用 NamedTempFile 承载 hunk patch，保证随机名、独占创建与自动清理 |
 | 序列化 | serde / serde_json | P0-1 | 生态统一 |
 | 错误 | thiserror（库）+ anyhow（应用层） | P0-7 | Rust 惯用分工 |
 | 哈希 / 版本 | blake3、semver | P0-6、P1-6、P4-11 | blake3 用于 Blob 内容寻址与 checkpoint 完整性；semver 用于 Plugin API 版本 |
@@ -112,17 +114,16 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | OAuth 基础 | oauth2 | P6-4 | 只用 PKCE + Device Flow 子集 |
 | MCP SDK | rmcp | P9-1、P9-2 | 官方 SDK、跟进 MCP 2026-07-28 规范；只用 transport + codec 层；锁定小版本（2.x→3.0 有 breaking） |
 | WASM 宿主 | wasmtime + wit-bindgen | P10-2、P10-5 | Component Model 成熟；fuel / 内存上限对应 ADR-012 |
-| 文件遍历 | ignore + globset | P1-8、P4-6、P4-7 | ripgrep 同源，性能经过验证 |
+| 文件遍历 | ignore + globset | P1-8、P4-6、P4-7、P7-9 | ripgrep 同源；P7-9 复用 ignore 语义限制 Git watcher 范围 |
 | 正则 | regex | P4-6 | 线性时间匹配、无 ReDoS 风险 |
 | 文件监听 | notify + notify-debouncer-full | P1-8、P7-6、P8-8 | file-index 以 notify + 有界通道做扫描级合并；git-service/P7-6 使用 debouncer 做缓存失效；P8-8 复用统一事件语义 |
-| 路径规范化 | dunce | P1-13、P11-8 | Workspace 出口移除 Windows verbatim 前缀；后续统一短路径 / UNC 语义 |
+| 路径规范化 | dunce | P1-13、P7-9、P11-8 | Workspace 与 git 子进程出口移除 Windows verbatim 前缀；后续统一短路径 / UNC 语义 |
 | 编码检测 | chardetng + encoding_rs | P4-1 | Mozilla 系；二进制探测由内置启发式完成 |
 | Token 计数 | tiktoken-rs | P3-2 | 仅对 OpenAI 系精确；其它 Provider 用启发式估算 |
 | TS 类型导出 | ts-rs | P0-10、P13-7 | GUI Contract 类型生成，比 typeshare / specta 轻 |
 | 系统目录 | directories | P1-12 | 配置 / 数据目录标准路径 |
 | Linux 沙箱 | landlock | P11-1 | 基于 LSM，活跃维护 |
 | Windows 绑定 | windows-rs（+ windows-service） | P11-4、P1-12 | 官方绑定 |
-| Diff 生成 | similar | P7-3 | word-level diff，纯 Rust |
 | PTY 基础 | portable-pty（或维护 fork） | P11-6 | 上游迭代慢，开工前先评估 fork |
 | 签名 | ed25519-dalek | P10-1 | 插件 manifest 签名 |
 | 测试与基准 | criterion、proptest、wiremock、insta、assert_cmd | P0-12、P2-11 等 | 基准 / 属性 / HTTP mock / 快照 / CLI e2e；解析器 fuzz 当前由 proptest 覆盖 |
@@ -343,7 +344,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P7-6 | 🟢 | Git 缓存 / watcher | status 缓存+切换<50ms | [详情](plan/P7-6-git-cache.md) |
 | P7-7 | 🟢 | Hunk / Line stage（优先级 P1） | 块/行暂存 | [详情](plan/P7-7-hunk-stage.md) |
 | P7-8 | 🟢 | commit / branch / ...（优先级 P1） | P1 Git 操作 | [详情](plan/P7-8-git-operations.md) |
-| P7-9 | 🟡 | Phase 7 评审修复 | 安全（V1/V2）+ 语义（V3/V4）+ 基线（similar/依赖）+ 文档漂移 | [详情](plan/P7-9-review-remediation.md) |
+| P7-9 | 🟢 | Phase 7 评审修复 | 安全（V1/V2）+ 语义（V3/V4）+ 基线（similar/依赖）+ 文档漂移 | [详情](plan/P7-9-review-remediation.md) |
 
 ### Phase 8：Skills、Prompts 与 Instructions
 

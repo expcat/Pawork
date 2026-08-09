@@ -26,6 +26,10 @@ pub enum GitError {
     BranchNotMerged(String),
     #[error("reference not found: {0}")]
     ReferenceNotFound(String),
+    #[error(
+        "invalid git positional argument `{name}`: values starting with '-' are not allowed ({value})"
+    )]
+    InvalidPositionArgument { name: &'static str, value: String },
     #[error("local changes would be overwritten: {0:?}")]
     LocalChangesWouldBeOverwritten(Vec<String>),
     #[error("patch does not apply (index changed since diff?)")]

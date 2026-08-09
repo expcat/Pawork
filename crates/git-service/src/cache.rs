@@ -1,10 +1,10 @@
 //! Git status 缓存与文件监听失效（[`StatusCache`] / [`CachedStatusService`]）。
 //!
-//! - [`StatusCache`]：进程内 `parking_lot::RwLock<HashMap>`，命中路径为纯内存读，
-//!   满足「已缓存 status 切换 < 50ms」。
+//! - [`StatusCache`]：进程内有 TTL 与容量上限的 `parking_lot::RwLock<HashMap>`，
+//!   命中路径为纯内存读，满足「已缓存 status 切换 < 50ms」。
 //! - [`CachedStatusService`]：先查缓存，未命中再跑 `git status` 写回。
-//! - [`spawn_invalidator`]：用 notify 监听 worktree（含 `.git`）变更，去抖后
-//!   `invalidate` 对应 work_dir 的缓存。
+//! - [`spawn_invalidator`]：按 ignore 规则枚举 worktree 目录作非递归监听，并通过
+//!   `git rev-parse` 解析真实 git-dir；去抖后 `invalidate` 对应 work_dir 的缓存。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,10 +12,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent_domain::CancellationToken;
+use ignore::WalkBuilder;
 
 use crate::error::GitError;
 use crate::process::GitRunner;
+use crate::repo::GitService;
 use crate::status::{StatusService, StatusSnapshot};
+
+const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(30);
+const DEFAULT_MAX_ENTRIES: usize = 128;
 
 /// 缓存的视角范围。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -35,14 +40,25 @@ struct CacheKey {
 #[derive(Clone, Debug)]
 struct CacheEntry {
     snapshot: StatusSnapshot,
-    #[allow(dead_code)]
     computed_at: Instant,
+    last_accessed: Instant,
 }
 
-/// Git status 缓存：进程内读写锁保护的 HashMap。
-#[derive(Default)]
+/// Git status 缓存：进程内读写锁保护、带 TTL 与 LRU 容量上限的 HashMap。
 pub struct StatusCache {
     inner: parking_lot::RwLock<HashMap<CacheKey, CacheEntry>>,
+    ttl: Duration,
+    max_entries: usize,
+}
+
+impl Default for StatusCache {
+    fn default() -> Self {
+        Self {
+            inner: parking_lot::RwLock::new(HashMap::new()),
+            ttl: DEFAULT_CACHE_TTL,
+            max_entries: DEFAULT_MAX_ENTRIES,
+        }
+    }
 }
 
 impl StatusCache {
@@ -50,26 +66,60 @@ impl StatusCache {
         Self::default()
     }
 
-    /// 读缓存（命中返回快照拷贝）。未命中返回 None。
-    pub fn get(&self, work_dir: &Path, scope: CacheScope) -> Option<StatusSnapshot> {
-        let key = CacheKey {
-            work_dir: work_dir.to_path_buf(),
-            scope,
-        };
-        self.inner.read().get(&key).map(|e| e.snapshot.clone())
+    #[cfg(test)]
+    fn with_limits(ttl: Duration, max_entries: usize) -> Self {
+        Self {
+            inner: parking_lot::RwLock::new(HashMap::new()),
+            ttl,
+            max_entries: max_entries.max(1),
+        }
     }
 
-    /// 写入缓存。
-    pub fn put(&self, work_dir: &Path, scope: CacheScope, snapshot: StatusSnapshot) {
+    /// 读缓存（命中返回快照拷贝并刷新 LRU 时间）。过期或未命中返回 None。
+    pub fn get(&self, work_dir: &Path, scope: CacheScope) -> Option<StatusSnapshot> {
         let key = CacheKey {
-            work_dir: work_dir.to_path_buf(),
+            work_dir: dunce::simplified(work_dir).to_path_buf(),
             scope,
         };
-        self.inner.write().insert(
+        let now = Instant::now();
+        let mut map = self.inner.write();
+        let expired = map
+            .get(&key)
+            .is_some_and(|entry| now.duration_since(entry.computed_at) >= self.ttl);
+        if expired {
+            map.remove(&key);
+            return None;
+        }
+        map.get_mut(&key).map(|entry| {
+            entry.last_accessed = now;
+            entry.snapshot.clone()
+        })
+    }
+
+    /// 写入缓存；先清理过期项，达到上限时淘汰最久未访问的条目。
+    pub fn put(&self, work_dir: &Path, scope: CacheScope, snapshot: StatusSnapshot) {
+        let key = CacheKey {
+            work_dir: dunce::simplified(work_dir).to_path_buf(),
+            scope,
+        };
+        let now = Instant::now();
+        let mut map = self.inner.write();
+        map.retain(|_, entry| now.duration_since(entry.computed_at) < self.ttl);
+        if !map.contains_key(&key) && map.len() >= self.max_entries {
+            if let Some(oldest) = map
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_accessed)
+                .map(|(key, _)| key.clone())
+            {
+                map.remove(&oldest);
+            }
+        }
+        map.insert(
             key,
             CacheEntry {
                 snapshot,
-                computed_at: Instant::now(),
+                computed_at: now,
+                last_accessed: now,
             },
         );
     }
@@ -77,7 +127,7 @@ impl StatusCache {
     /// 失效指定 work_dir 的全部 scope。
     pub fn invalidate(&self, work_dir: &Path) {
         let mut map = self.inner.write();
-        let prefix = work_dir.to_path_buf();
+        let prefix = dunce::simplified(work_dir).to_path_buf();
         map.retain(|k, _| k.work_dir != prefix);
     }
 
@@ -122,10 +172,19 @@ impl CachedStatusService {
         cancel: CancellationToken,
     ) -> Result<StatusSnapshot, GitError> {
         let svc = StatusService::new(&self.runner, &self.work_dir);
-        // 当前 status 解析器统一返回 staged+unstaged+untracked 视角；
-        // scope 仅影响缓存槽位区分，语义与 worktree 视图一致。
-        let _ = scope;
-        let snapshot = svc.status(cancel).await?;
+        let mut snapshot = svc.status(cancel).await?;
+        if scope == CacheScope::Staged {
+            // porcelain 的 X 列就是 index 视图：仅保留 X 非空的条目，并清掉
+            // worktree 列，避免同一文件的未暂存改动泄漏进 staged-only 结果。
+            snapshot.changes.retain(|change| {
+                change.index_status != crate::status::FileStatus::Unmodified
+                    && change.index_status != crate::status::FileStatus::Untracked
+            });
+            for change in &mut snapshot.changes {
+                change.worktree_status = crate::status::FileStatus::Unmodified;
+                change.untracked = false;
+            }
+        }
         self.cache.put(&self.work_dir, scope, snapshot.clone());
         Ok(snapshot)
     }
@@ -138,19 +197,33 @@ pub struct WatcherGuard {
         notify_debouncer_full::notify::RecommendedWatcher,
         notify_debouncer_full::RecommendedCache,
     >,
+    #[cfg(test)]
+    watched_paths: Vec<PathBuf>,
 }
 
-/// 启动后台 watcher：监听 `work_dir`（含 `.git`）文件变更，去抖（300ms）后对
-/// 该 work_dir 调 `cache.invalidate`。返回 guard，drop 即停止监听。
+/// 启动后台 watcher：先用 git 解析仓库根与真实 git-dir，再按 ignore 规则枚举
+/// worktree 中需要监听的目录。worktree 目录逐个非递归监听，git-dir 单独递归监听，
+/// 从而避开 node_modules/构建产物等 ignored 子树并兼容 linked worktree。
 ///
 /// 任何 watch 错误仅记录日志、不影响主流程。
-pub fn spawn_invalidator(
+pub async fn spawn_invalidator(
     work_dir: &Path,
+    cache: Arc<StatusCache>,
+    cancel: CancellationToken,
+) -> Result<WatcherGuard, GitError> {
+    let repo = GitService::open(work_dir, cancel.clone()).await?;
+    let git_dir = repo.git_dir(cancel).await?;
+    spawn_invalidator_for_paths(repo.work_dir(), &git_dir, cache).map_err(GitError::Io)
+}
+
+fn spawn_invalidator_for_paths(
+    work_dir: &Path,
+    git_dir: &Path,
     cache: Arc<StatusCache>,
 ) -> std::io::Result<WatcherGuard> {
     use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
 
-    let wd = work_dir.to_path_buf();
+    let wd = dunce::simplified(work_dir).to_path_buf();
     let debouncer = new_debouncer(
         Duration::from_millis(300),
         None,
@@ -162,19 +235,70 @@ pub fn spawn_invalidator(
     .map_err(std::io::Error::other)?;
 
     let mut debouncer = debouncer;
-    if let Err(e) = debouncer.watch(work_dir, RecursiveMode::Recursive) {
-        tracing::warn!(error = ?e, dir = %work_dir.display(), "watch work_dir failed");
+    #[cfg(test)]
+    let mut watched_paths = Vec::new();
+    for directory in collect_watch_directories(work_dir) {
+        match debouncer.watch(&directory, RecursiveMode::NonRecursive) {
+            Ok(()) => {
+                #[cfg(test)]
+                watched_paths.push(directory);
+            }
+            Err(error) => {
+                tracing::warn!(error = ?error, dir = %directory.display(), "watch worktree directory failed");
+            }
+        }
     }
-    let git_dir = work_dir.join(".git");
-    if git_dir.exists() {
-        if let Err(e) = debouncer.watch(&git_dir, RecursiveMode::Recursive) {
-            tracing::warn!(error = ?e, dir = %git_dir.display(), "watch .git failed");
+
+    let git_dir = dunce::simplified(git_dir).to_path_buf();
+    if git_dir.is_dir() {
+        match debouncer.watch(&git_dir, RecursiveMode::Recursive) {
+            Ok(()) => {
+                #[cfg(test)]
+                watched_paths.push(git_dir.clone());
+            }
+            Err(error) => {
+                tracing::warn!(error = ?error, dir = %git_dir.display(), "watch git-dir failed");
+            }
         }
     }
 
     Ok(WatcherGuard {
         _debouncer: debouncer,
+        #[cfg(test)]
+        watched_paths,
     })
+}
+
+/// 用与 file-index 相同的 `ignore` walker 语义枚举非 ignored 目录；`.git`
+/// 元数据不随 worktree 递归枚举，而由解析出的 git-dir 单独监听。
+fn collect_watch_directories(work_dir: &Path) -> Vec<PathBuf> {
+    let root = dunce::simplified(work_dir).to_path_buf();
+    let filter_root = root.clone();
+    let mut builder = WalkBuilder::new(&root);
+    builder
+        .hidden(false)
+        .parents(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .follow_links(false)
+        .filter_entry(move |entry| {
+            entry.path() == filter_root || entry.file_name() != std::ffi::OsStr::new(".git")
+        });
+
+    let mut directories = Vec::new();
+    for result in builder.build() {
+        match result {
+            Ok(entry) if entry.file_type().is_some_and(|kind| kind.is_dir()) => {
+                directories.push(dunce::simplified(entry.path()).to_path_buf());
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(error = ?error, dir = %work_dir.display(), "enumerate watcher directories failed");
+            }
+        }
+    }
+    directories
 }
 
 #[cfg(test)]
@@ -268,5 +392,124 @@ mod tests {
             "1000 cached hits took {:?}, expected < 50ms",
             elapsed
         );
+    }
+
+    #[tokio::test]
+    async fn staged_scope_excludes_unstaged_and_untracked_changes() {
+        let (_dir, repo) = make_repo();
+        std::fs::write(repo.join("staged.txt"), "index version\n").expect("write staged");
+        run_git(&repo, &["add", "staged.txt"]);
+        std::fs::write(repo.join("staged.txt"), "worktree version\n")
+            .expect("add unstaged edit to staged file");
+        std::fs::write(repo.join("README.md"), "unstaged tracked edit\n")
+            .expect("write unstaged tracked file");
+        std::fs::write(repo.join("untracked.txt"), "untracked\n").expect("write untracked");
+
+        let cache = Arc::new(StatusCache::new());
+        let svc = CachedStatusService::new(GitRunner::new(), &repo, cache);
+        let staged = svc
+            .refresh(CacheScope::Staged, CancellationToken::new())
+            .await
+            .expect("staged status");
+
+        assert_eq!(staged.changes.len(), 1, "staged view = {staged:?}");
+        let change = &staged.changes[0];
+        assert_eq!(change.path, "staged.txt");
+        assert_eq!(change.index_status, crate::status::FileStatus::Added);
+        assert_eq!(
+            change.worktree_status,
+            crate::status::FileStatus::Unmodified,
+            "staged-only view must not expose the worktree column"
+        );
+        assert!(!change.untracked);
+    }
+
+    #[test]
+    fn cache_expires_entries_and_enforces_lru_capacity() {
+        let expired = StatusCache::with_limits(Duration::ZERO, 2);
+        expired.put(
+            Path::new("expired"),
+            CacheScope::Worktree,
+            StatusSnapshot::default(),
+        );
+        assert!(expired
+            .get(Path::new("expired"), CacheScope::Worktree)
+            .is_none());
+        assert!(expired.inner.read().is_empty());
+
+        let bounded = StatusCache::with_limits(Duration::from_secs(60), 2);
+        bounded.put(
+            Path::new("a"),
+            CacheScope::Worktree,
+            StatusSnapshot::default(),
+        );
+        std::thread::sleep(Duration::from_millis(2));
+        bounded.put(
+            Path::new("b"),
+            CacheScope::Worktree,
+            StatusSnapshot::default(),
+        );
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(bounded.get(Path::new("a"), CacheScope::Worktree).is_some());
+        std::thread::sleep(Duration::from_millis(2));
+        bounded.put(
+            Path::new("c"),
+            CacheScope::Worktree,
+            StatusSnapshot::default(),
+        );
+
+        assert_eq!(bounded.inner.read().len(), 2);
+        assert!(bounded.get(Path::new("a"), CacheScope::Worktree).is_some());
+        assert!(bounded.get(Path::new("b"), CacheScope::Worktree).is_none());
+        assert!(bounded.get(Path::new("c"), CacheScope::Worktree).is_some());
+    }
+
+    #[tokio::test]
+    async fn watcher_skips_ignored_tree_and_watches_linked_git_dir() {
+        let (_dir, repo) = make_repo();
+        std::fs::write(repo.join(".gitignore"), "ignored/\n").expect("write gitignore");
+        run_git(&repo, &["add", ".gitignore"]);
+        run_git(&repo, &["commit", "-q", "-m", "ignore rules"]);
+
+        let linked = repo.join("linked-watch");
+        let linked_arg = linked.to_string_lossy().into_owned();
+        run_git(
+            &repo,
+            &["worktree", "add", "-q", "-b", "watch-branch", &linked_arg],
+        );
+        std::fs::create_dir_all(linked.join("ignored").join("nested"))
+            .expect("create ignored tree");
+        std::fs::create_dir_all(linked.join("kept").join("nested")).expect("create watched tree");
+
+        let repo_service = GitService::open(&linked, CancellationToken::new())
+            .await
+            .expect("open linked worktree");
+        let git_dir = repo_service
+            .git_dir(CancellationToken::new())
+            .await
+            .expect("resolve linked git-dir");
+        assert!(
+            git_dir.to_string_lossy().contains("worktrees"),
+            "expected linked worktree administrative dir: {}",
+            git_dir.display()
+        );
+
+        let guard = spawn_invalidator(
+            &linked,
+            Arc::new(StatusCache::new()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("spawn watcher");
+        let watched: Vec<PathBuf> = guard
+            .watched_paths
+            .iter()
+            .map(|path| dunce::simplified(path).to_path_buf())
+            .collect();
+        assert!(watched.contains(&dunce::simplified(&git_dir).to_path_buf()));
+        assert!(watched.contains(&dunce::simplified(&linked.join("kept")).to_path_buf()));
+        assert!(!watched
+            .iter()
+            .any(|path| path.starts_with(linked.join("ignored"))));
     }
 }

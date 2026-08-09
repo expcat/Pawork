@@ -712,9 +712,7 @@ dependencies = [
  "agent-domain",
  "git-service",
  "serde",
- "serde_json",
  "tempfile",
- "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -1036,6 +1034,8 @@ name = "git-service"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
+ "dunce",
+ "ignore",
  "notify 7.0.0",
  "notify-debouncer-full",
  "parking_lot",

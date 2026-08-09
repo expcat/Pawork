@@ -245,12 +245,20 @@ fn emit_line(out: &mut String, line: &DiffLine) {
     push_line(out, prefix, line);
 }
 
-/// 输出 `<prefix><text>\n`，并按需附带 `\ No newline at end of file`。
+/// 输出 `<prefix><text>\n`，并按**输出前缀**选择正确的无末尾换行标志：
+/// `-`（删除）看旧侧、`+`（新增）看新侧、` `（context）看两侧
+/// （任一侧无换行即标记）。修复此前对所有前缀都看 `new_no_newline` 导致
+/// 删除行/被转为 context 的旧行漏标旧侧 `\ No newline` 的语义缺陷。
 fn push_line(out: &mut String, prefix: char, line: &DiffLine) {
     out.push(prefix);
     out.push_str(&line.text);
     out.push('\n');
-    if line.new_no_newline {
+    let no_newline = match prefix {
+        '-' => line.old_no_newline,
+        '+' => line.new_no_newline,
+        _ => line.old_no_newline || line.new_no_newline,
+    };
+    if no_newline {
         out.push_str("\\ No newline at end of file\n");
     }
 }
@@ -498,26 +506,31 @@ mod tests {
                 DiffLine {
                     kind: LineKind::Context,
                     text: "a".into(),
+                    old_no_newline: false,
                     new_no_newline: false,
                 },
                 DiffLine {
                     kind: LineKind::Deletion,
                     text: "b".into(),
+                    old_no_newline: false,
                     new_no_newline: false,
                 },
                 DiffLine {
                     kind: LineKind::Addition,
                     text: "B".into(),
+                    old_no_newline: false,
                     new_no_newline: false,
                 },
                 DiffLine {
                     kind: LineKind::Addition,
                     text: "X".into(),
+                    old_no_newline: false,
                     new_no_newline: false,
                 },
                 DiffLine {
                     kind: LineKind::Context,
                     text: "c".into(),
+                    old_no_newline: false,
                     new_no_newline: false,
                 },
             ],
@@ -556,11 +569,13 @@ mod tests {
             DiffLine {
                 kind: LineKind::Deletion,
                 text: "x".into(),
+                old_no_newline: false,
                 new_no_newline: false,
             },
             DiffLine {
                 kind: LineKind::Deletion,
                 text: "y".into(),
+                old_no_newline: false,
                 new_no_newline: false,
             },
         ];
@@ -589,11 +604,13 @@ mod tests {
             DiffLine {
                 kind: LineKind::Deletion,
                 text: "old".into(),
-                new_no_newline: true,
+                old_no_newline: true,
+                new_no_newline: false,
             },
             DiffLine {
                 kind: LineKind::Addition,
                 text: "new".into(),
+                old_no_newline: false,
                 new_no_newline: true,
             },
         ];
@@ -609,5 +626,90 @@ mod tests {
         assert_eq!(file_header(&file).0, "/dev/null");
         file.status = FileStatus::Deleted;
         assert_eq!(file_header(&file).1, "/dev/null");
+    }
+
+    #[test]
+    fn build_line_patch_unselected_deletion_old_no_newline_emits_marker() {
+        // 回归（P7-9 V9）：未选中的 deletion 转为 context 时，须按「输出前缀为
+        // context」选择旧侧 old_no_newline 标志，正确补出 `\ No newline`，
+        // 修复此前只看 new_no_newline 而漏标旧侧、导致生成的 patch 不合法的问题。
+        let file = mk_file();
+        let hunk = DiffHunk {
+            id: HunkId(0),
+            old_start: 1,
+            old_lines: 2,
+            new_start: 1,
+            new_lines: 0,
+            header: "@@ -1,2 +0,0 @@".into(),
+            lines: vec![
+                DiffLine {
+                    kind: LineKind::Deletion,
+                    text: "keep".into(),
+                    old_no_newline: true,
+                    new_no_newline: false,
+                },
+                DiffLine {
+                    kind: LineKind::Deletion,
+                    text: "drop".into(),
+                    old_no_newline: false,
+                    new_no_newline: false,
+                },
+            ],
+        };
+        // 只暂存 drop（选中），keep 不选 → 转为 context 并保留旧侧无末尾换行标记。
+        let patch = build_line_patch(&file, &hunk, &[false, true]).expect("patch");
+        assert!(
+            patch.contains(" keep\n\\ No newline at end of file\n"),
+            "converted context line must carry old-side no-newline marker: {patch}"
+        );
+        assert!(patch.contains("-drop\n"), "{patch}");
+        // old: keep(ctx) + drop(del) = 2；new: keep(ctx) = 1。
+        assert!(patch.contains("@@ -1,2 +1,1 @@"), "{patch}");
+    }
+
+    #[tokio::test]
+    async fn stage_lines_keeps_unselected_deletion_with_old_no_newline() {
+        // 回归（P7-9 V9）：旧文件末行无末尾换行、被删除；用户只暂存同 hunk 的
+        // 另一处改动，不暂存该删除。生成的 patch 须把未选 deletion 转为 context
+        // 并保留旧侧 `\ No newline`，否则 `git apply --cached` 因 preimage 不匹配
+        // （末行换行状态不一致）而失败。
+        let (_dir, repo) = make_repo();
+        // HEAD 基线：x\n a\n last（last 无末尾换行）。
+        std::fs::write(repo.join("f.txt"), "x\na\nlast").expect("write baseline");
+        run_git(&repo, &["add", "f.txt"]);
+        run_git(&repo, &["commit", "-q", "-m", "baseline"]);
+        // 工作区：x→X，且删除末行 last。
+        std::fs::write(repo.join("f.txt"), "X\na\n").expect("write worktree");
+
+        let diff = DiffService::new(GitRunner::new(), &repo);
+        let files = diff
+            .diff(&DiffOptions::default(), CancellationToken::new())
+            .await
+            .expect("diff");
+        let file = &files[0];
+        assert_eq!(file.hunks.len(), 1);
+        let hunk = &file.hunks[0];
+        // 期望行序：del x, add X, ctx a, del last(old_no_newline=true)。
+        let last = hunk.lines.last().expect("has lines");
+        assert_eq!(last.kind, LineKind::Deletion);
+        assert!(
+            last.old_no_newline,
+            "末行删除应标记旧侧无末尾换行: {hunk:?}"
+        );
+
+        let svc = HunkStageService::new(GitRunner::new(), &repo);
+        // 只暂存 del x / add X（索引 0、1）；ctx a(2) 与 del last(3) 不选。
+        let selection = [true, true, false, false];
+        svc.stage_lines(file, hunk.id, &selection, CancellationToken::new())
+            .await
+            .expect("stage_lines");
+
+        // index：保留 last（未暂存删除）且仍无末尾换行，仅应用 x→X。
+        assert_eq!(index_content(&repo, "f.txt"), "X\na\nlast");
+        // 工作区不变。
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "X\na\n"
+        );
     }
 }

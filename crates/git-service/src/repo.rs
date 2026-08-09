@@ -77,11 +77,16 @@ impl GitService {
         &self.runner
     }
 
-    /// `git rev-parse --git-dir`。
+    /// `git rev-parse --absolute-git-dir`，始终返回绝对管理目录；linked worktree
+    /// 会指向主仓库 `.git/worktrees/<name>`，而不是 worktree 根下的 `.git` 文件。
     pub async fn git_dir(&self, cancel: CancellationToken) -> Result<PathBuf, GitError> {
         let stdout = self
             .runner
-            .run(self.work_dir(), &["rev-parse", "--git-dir"], cancel)
+            .run(
+                self.work_dir(),
+                &["rev-parse", "--absolute-git-dir"],
+                cancel,
+            )
             .await?;
         Ok(PathBuf::from(stdout.trim()))
     }
@@ -153,11 +158,71 @@ impl GitService {
 
     /// 汇总仓库元信息。
     pub async fn repo_info(&self, cancel: CancellationToken) -> Result<RepoInfo, GitError> {
-        let head = self.current_head(cancel.clone()).await?;
-        let bare = self.is_bare(cancel.clone()).await?;
-        let git_dir = self.git_dir(cancel).await?;
+        // 一次 rev-parse 同时读取路径、bare 标志与 HEAD SHA；正常/detached 仓库
+        // 再用一次 symbolic-ref 区分 Branch/Detached，总计固定两次 spawn。
+        let combined = self
+            .runner
+            .run_with_stderr(
+                self.work_dir(),
+                &[
+                    "rev-parse",
+                    "--show-toplevel",
+                    "--absolute-git-dir",
+                    "--is-bare-repository",
+                    "HEAD",
+                ],
+                cancel.clone(),
+            )
+            .await;
+
+        let (work_dir, git_dir, bare, head_sha) = match combined {
+            Ok((stdout, _)) => parse_repo_metadata(&stdout, true)?,
+            Err(first_error @ GitError::GitFailed { .. }) => {
+                // unborn HEAD 会使同一 rev-parse 整体退出非零；回退到不含 HEAD 的
+                // 合并查询，仍只需两次 spawn，且无需 symbolic-ref。
+                match self
+                    .runner
+                    .run(
+                        self.work_dir(),
+                        &[
+                            "rev-parse",
+                            "--show-toplevel",
+                            "--absolute-git-dir",
+                            "--is-bare-repository",
+                        ],
+                        cancel.clone(),
+                    )
+                    .await
+                {
+                    Ok(stdout) => parse_repo_metadata(&stdout, false)?,
+                    Err(_) => return Err(first_error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+
+        let head = if let Some(sha) = head_sha {
+            match self
+                .runner
+                .run_with_stderr(
+                    self.work_dir(),
+                    &["symbolic-ref", "--short", "HEAD"],
+                    cancel,
+                )
+                .await
+            {
+                Ok((stdout, _)) if !stdout.trim().is_empty() => {
+                    Head::Branch(stdout.trim().to_string())
+                }
+                Ok(_) | Err(GitError::GitFailed { .. }) => Head::Detached(sha),
+                Err(error) => return Err(error),
+            }
+        } else {
+            Head::Unborn
+        };
+
         Ok(RepoInfo {
-            work_dir: self.work_dir().to_path_buf(),
+            work_dir,
             git_dir,
             head,
             bare,
@@ -165,10 +230,44 @@ impl GitService {
     }
 }
 
+fn parse_repo_metadata(
+    stdout: &str,
+    includes_head: bool,
+) -> Result<(PathBuf, PathBuf, bool, Option<String>), GitError> {
+    let fields: Vec<&str> = stdout
+        .lines()
+        .map(|line| line.trim_end_matches('\r'))
+        .collect();
+    let expected = if includes_head { 4 } else { 3 };
+    if fields.len() != expected || fields.iter().any(|field| field.is_empty()) {
+        return Err(GitError::Other(format!(
+            "unexpected git rev-parse metadata output: expected {expected} fields, got {}",
+            fields.len()
+        )));
+    }
+    let bare = match fields[2] {
+        "true" => true,
+        "false" => false,
+        value => {
+            return Err(GitError::Other(format!(
+                "unexpected --is-bare-repository value: {value}"
+            )))
+        }
+    };
+    Ok((
+        PathBuf::from(fields[0]),
+        PathBuf::from(fields[1]),
+        bare,
+        includes_head.then(|| fields[3].to_string()),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     /// 为测试 git 命令注入确定性的作者/提交者环境，并禁止任何交互提示。
@@ -240,6 +339,61 @@ mod tests {
         assert!(!info.bare, "非裸仓库");
         assert_eq!(info.head, head, "repo_info.head 应与 current_head 一致");
         assert!(info.work_dir.is_dir(), "work_dir 应存在");
+        assert!(info.git_dir.is_absolute(), "git_dir 应为绝对路径");
+    }
+
+    #[tokio::test]
+    async fn repo_info_uses_two_git_processes() {
+        let dir = make_repo();
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let svc = GitService {
+            runner: GitRunner::new().with_call_count(call_count.clone()),
+            work_dir: dir.path().to_path_buf(),
+        };
+
+        let info = svc
+            .repo_info(CancellationToken::new())
+            .await
+            .expect("repo_info");
+        assert!(matches!(info.head, Head::Branch(_)));
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            2,
+            "repo_info should use one combined rev-parse plus symbolic-ref"
+        );
+    }
+
+    #[tokio::test]
+    async fn repo_info_distinguishes_detached_and_unborn_head() {
+        let detached = make_repo();
+        let mut checkout = Command::new("git");
+        checkout
+            .args(["checkout", "-q", "--detach", "HEAD"])
+            .current_dir(detached.path());
+        git_env(&mut checkout);
+        assert!(checkout.status().expect("detach HEAD").success());
+        let detached_service = GitService::open(detached.path(), CancellationToken::new())
+            .await
+            .expect("open detached repo");
+        let detached_info = detached_service
+            .repo_info(CancellationToken::new())
+            .await
+            .expect("detached repo_info");
+        assert!(matches!(detached_info.head, Head::Detached(ref sha) if sha.len() == 40));
+
+        let unborn = TempDir::new().expect("unborn tempdir");
+        let mut init = Command::new("git");
+        init.args(["init", "-q"]).current_dir(unborn.path());
+        git_env(&mut init);
+        assert!(init.status().expect("init unborn repo").success());
+        let unborn_service = GitService::open(unborn.path(), CancellationToken::new())
+            .await
+            .expect("open unborn repo");
+        let unborn_info = unborn_service
+            .repo_info(CancellationToken::new())
+            .await
+            .expect("unborn repo_info");
+        assert_eq!(unborn_info.head, Head::Unborn);
     }
 
     #[tokio::test]

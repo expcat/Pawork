@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use agent_domain::CancellationToken;
-use git_service::{GitError, GitRunner};
+use git_service::{validate_position_arg, GitError, GitRunner};
 
 use crate::model::{DiffFile, FileStatus};
 use crate::parser::parse_unified_with_start;
@@ -130,7 +130,7 @@ impl DiffService {
         opts: &DiffOptions,
         cancel: CancellationToken,
     ) -> Result<String, GitError> {
-        let args = self.base_args(opts);
+        let args = self.base_args(opts)?;
         let mut full: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         full.extend_from_slice(&["--raw", "-z"]);
         self.git.run(&self.work_dir, &full, cancel).await
@@ -142,7 +142,7 @@ impl DiffService {
         opts: &DiffOptions,
         cancel: CancellationToken,
     ) -> Result<String, GitError> {
-        let args = self.base_args(opts);
+        let args = self.base_args(opts)?;
         let mut full: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         full.extend_from_slice(&["--numstat", "-z"]);
         self.git.run(&self.work_dir, &full, cancel).await
@@ -155,7 +155,7 @@ impl DiffService {
         path: &str,
         cancel: CancellationToken,
     ) -> Result<String, GitError> {
-        let args = self.base_args(opts);
+        let args = self.base_args(opts)?;
         let mut full: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let context = format!("-U{}", opts.context);
         full.extend_from_slice(&["--no-color", &context, "--", path]);
@@ -163,9 +163,10 @@ impl DiffService {
     }
 
     /// 构造公共 diff 参数前缀（`diff`、可选 `--cached`、可选 range、可选 `-M`）。
-    fn base_args(&self, opts: &DiffOptions) -> Vec<String> {
+    fn base_args(&self, opts: &DiffOptions) -> Result<Vec<String>, GitError> {
         let mut args: Vec<String> = vec!["diff".into()];
         if let Some(range) = &opts.commit_range {
+            validate_position_arg("commit_range", range)?;
             args.push(range.clone());
         }
         if opts.staged {
@@ -174,7 +175,7 @@ impl DiffService {
         if opts.detect_renames {
             args.push("-M".into());
         }
-        args
+        Ok(args)
     }
 }
 
@@ -456,5 +457,25 @@ mod tests {
         assert_eq!(page.page, 1);
         let page0 = paginate(vec![mk("a"), mk("b"), mk("c")], 1, 0);
         assert_eq!(page0.files.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn option_like_commit_range_is_rejected() {
+        let svc = DiffService::new(GitRunner::new(), Path::new("."));
+        let opts = DiffOptions {
+            commit_range: Some("--output=stolen.patch".into()),
+            ..Default::default()
+        };
+        let error = svc
+            .diff_summary(&opts, CancellationToken::new())
+            .await
+            .expect_err("option-like commit range must be rejected");
+        assert!(matches!(
+            error,
+            GitError::InvalidPositionArgument {
+                name: "commit_range",
+                ..
+            }
+        ));
     }
 }

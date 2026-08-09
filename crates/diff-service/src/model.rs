@@ -38,7 +38,13 @@ pub struct DiffLine {
     pub kind: LineKind,
     /// 行文本（不含行首的 `+`/`-`/` ` 前缀）。
     pub text: String,
-    /// 该行对应的新文件侧无末尾换行（git 的 `\ No newline at end of file`）。
+    /// 该行对应的**旧文件侧**无末尾换行（git 的 `\ No newline at end of file`）。
+    ///
+    /// 对 `Deletion` / `Context` 行有意义；`Addition` 行恒为 `false`。
+    pub old_no_newline: bool,
+    /// 该行对应的**新文件侧**无末尾换行（git 的 `\ No newline at end of file`）。
+    ///
+    /// 对 `Addition` / `Context` 行有意义；`Deletion` 行恒为 `false`。
     pub new_no_newline: bool,
 }
 

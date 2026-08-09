@@ -1,6 +1,6 @@
 # P7-9：Phase 7 评审修复（REVIEW remediation）
 
-> Phase 7 · Git、Diff 与 Worktree · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P7-1 ~ P7-8
+> Phase 7 · Git、Diff 与 Worktree · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P7-1 ~ P7-8
 
 **最终目的**：消除 [REVIEW.md](../REVIEW.md) §7（Phase 7）评审发现的安全面、语义缺口与基线/文档漂移——让 hunk stage 临时文件不可预测、git 位置参数不被注入、`CacheScope::Staged` 不再是 API 谎言、watcher 不全量递归监听，并收敛 `similar` 零引用、diff-service 多余依赖与文档能力清单超前于实现。
 
@@ -43,19 +43,27 @@
 
 ## 验收标准（保留 REVIEW 追踪编号）
 
-- [ ] **V1**：stage patch 用 `NamedTempFile`（随机名、独占），无可预测路径（符号链接竞争测试）
-- [ ] **V2**：以 `-` 开头的 rev/range/branch/start_point 被拒绝（注入回归测试覆盖各位置参数点）
-- [ ] **V3**：`CacheScope::Staged` 返回 staged-only 视图，或变体已移除/重命名并文档化
-- [ ] **V4**：watcher 接 ignore 过滤；linked worktree 的 `.git` 变更被监听（用例）
-- [ ] **V5**：StatusCache 有 TTL 或 LRU 上限（多 worktree 切换不无界增长，测试）
-- [ ] **V6**：git 子进程 cwd 不含 `\\?\` 前缀（Windows 路径测试）
-- [ ] **V7**：「退出码 1 + 空 stderr」的非空暂存失败不被误判 `NothingToCommit`（用例）
-- [ ] **V8**：`git-diff.md` 未实现能力已标注/移除，与实现对齐
-- [ ] **V9**：no-newline 标志语义明确（拆分或回归测试锁定）
-- [ ] **V10**：`repo_info` 进程 spawn 次数减少（基准/审查）
-- [ ] **基线**：`similar` 移除；`parking_lot`/`tempfile` 回填；diff-service `serde_json`/`thiserror` 移除；`notify-debouncer-full` 关联 P7-6
-- [ ] **快速验证**：Git 参数、临时文件、watcher/cache 与路径风险立即跑定向回归；workspace 全量与三平台门禁延后到 Core 主干 L2/L3
+- [x] **V1**：stage patch 用 `NamedTempFile`（随机名、独占），无可预测路径（符号链接竞争测试）
+- [x] **V2**：以 `-` 开头的 rev/range/branch/start_point 被拒绝（注入回归测试覆盖各位置参数点）
+- [x] **V3**：`CacheScope::Staged` 返回 staged-only 视图，或变体已移除/重命名并文档化
+- [x] **V4**：watcher 接 ignore 过滤；linked worktree 的 `.git` 变更被监听（用例）
+- [x] **V5**：StatusCache 有 TTL 或 LRU 上限（多 worktree 切换不无界增长，测试）
+- [x] **V6**：git 子进程 cwd 不含 `\\?\` 前缀（Windows 路径测试）
+- [x] **V7**：「退出码 1 + 空 stderr」的非空暂存失败不被误判 `NothingToCommit`（用例）
+- [x] **V8**：`git-diff.md` 未实现能力已标注/移除，与实现对齐
+- [x] **V9**：no-newline 标志语义明确（拆分或回归测试锁定）
+- [x] **V10**：`repo_info` 进程 spawn 次数减少（基准/审查）
+- [x] **基线**：`similar` 移除；`parking_lot`/`tempfile` 回填；diff-service `serde_json`/`thiserror` 移除；`notify-debouncer-full` 关联 P7-6
+- [x] **快速验证**：Git 参数、临时文件、watcher/cache 与路径风险立即跑定向回归；workspace 全量与三平台门禁延后到 Core 主干 L2/L3
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §7 · [ADR-007 系统 Git](../docs/adr/ADR-007-system-git.md) · [git-diff](../docs/features/git-diff.md) · [ROADMAP 依赖选型基线](../ROADMAP.md#依赖选型基线)
 
 > 跨任务协调（2026-08 review）：V6 verbatim cwd 与 P1-13 V3、P11-8 同根，三任务各自收口出口（workspace-service / git 子进程 / sandbox）；基线 `similar`/`parking_lot`/`tempfile` 与 P1-13、P6-14 在根 `Cargo.toml` 与 ROADMAP 基线表上分行归属，序列执行不撞车。
+
+## 验证记录（2026-08-09）
+
+- `cargo test -p git-service -p diff-service`：89 passed（git-service 64、diff-service 25），0 failed；覆盖前导 `-` 注入、随机临时文件、staged-only、TTL/LRU、ignore + linked git-dir、Windows verbatim cwd、silent hook、no-newline 与 repo_info 两次 spawn。
+- `cargo clippy -p git-service -p diff-service --all-targets -- -D warnings`：通过。
+- `cargo fmt -p git-service -p diff-service -- --check` 与 `git diff --check`：通过。
+- `cargo tree -p diff-service --depth 1`：直接依赖中已无 `serde_json` / `thiserror`；根基线已移除 `similar` 并登记 `parking_lot` / `tempfile`。
+- 按本任务门禁节奏只执行受影响 crate 的定向门禁；workspace 全量、三平台与发布门禁留待 Core 主干 L2/L3。

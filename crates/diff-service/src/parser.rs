@@ -3,7 +3,9 @@
 //! 纯字符串状态机，无正则，100k 行单线程解析远低于 500ms。处理：
 //! - hunk 头 `@@ -o,ol +n,nl @@ optional`；
 //! - 行前缀 ` `(context)/`-`(del)/`+`(add)；
-//! - `\ No newline at end of file`：标记到其**上一行**的 `new_no_newline`；
+//! - `\ No newline at end of file`：标记到其**上一行**；按该行类型区分旧侧
+//!   (`old_no_newline`，作用于 `Deletion` / `Context`) 与新侧
+//!   (`new_no_newline`，作用于 `Addition` / `Context`)，`Context` 行两侧一致；
 //! - 文件级头（`diff --git`、`--- `、`+++ `、`index`、`new file mode`、
 //!   `deleted file mode`、`Binary files`、`similarity`、`rename from/to`）在
 //!   [`crate::service`] 内部跳过/用于标记 binary，不进 hunks。
@@ -19,21 +21,16 @@ pub fn parse_unified(patch: &str) -> Vec<DiffHunk> {
 pub fn parse_unified_with_start(patch: &str, start: u64) -> (Vec<DiffHunk>, u64) {
     let mut hunks = Vec::new();
     let mut next_id = start;
-    // 当前 hunk 与「待处理的无末尾换行标记」。
+    // 当前 hunk。
     let mut cur: Option<DiffHunk> = None;
-    // pending_no_newline：遇到 `\ No newline` 时，标记应作用于最近追加的行。
-    // 该行可能属于当前 hunk 的 lines 末尾。
-    let mut pending_no_newline = false;
 
     for raw in patch.lines() {
         // hunk 头：开新 hunk。
         if raw.strip_prefix("@@").is_some() {
-            // 先把上一个 hunk 收尾。
-            if let Some(mut h) = cur.take() {
-                apply_no_newline(&mut h, pending_no_newline);
+            // 上一个 hunk 收尾：无末尾换行标记已在遇到该标记行时即时落到对应行。
+            if let Some(h) = cur.take() {
                 hunks.push(h);
             }
-            pending_no_newline = false;
 
             let (old_start, old_lines, new_start, new_lines, full_header) = parse_hunk_header(raw);
             cur = Some(DiffHunk {
@@ -55,10 +52,10 @@ pub fn parse_unified_with_start(patch: &str, start: u64) -> (Vec<DiffHunk>, u64)
             None => continue,
         };
 
-        // 无末尾换行标记。
-        if raw.starts_with("\\ No newline at end of file") || raw == "\\ No newline at end of file"
-        {
-            pending_no_newline = true;
+        // 无末尾换行标记：作用到其**上一行**（hunk 当前最后一行），按该行类型
+        // 区分旧侧 / 新侧；Context 行两侧一致。
+        if raw.starts_with("\\ No newline at end of file") {
+            apply_no_newline_marker(h);
             continue;
         }
 
@@ -72,31 +69,34 @@ pub fn parse_unified_with_start(patch: &str, start: u64) -> (Vec<DiffHunk>, u64)
                 continue;
             }
         };
-        // 若上一行已标记无末尾换行，此处先落定再追加新行。
-        if pending_no_newline {
-            apply_no_newline(h, true);
-            pending_no_newline = false;
-        }
         h.lines.push(DiffLine {
             kind,
             text: text.to_string(),
+            old_no_newline: false,
             new_no_newline: false,
         });
     }
 
     // 收尾最后一个 hunk。
-    if let Some(mut h) = cur.take() {
-        apply_no_newline(&mut h, pending_no_newline);
+    if let Some(h) = cur.take() {
         hunks.push(h);
     }
     (hunks, next_id)
 }
 
-/// 把无末尾换行标记作用到 hunk 的最后一行（若存在）。
-fn apply_no_newline(hunk: &mut DiffHunk, no_newline: bool) {
-    if no_newline {
-        if let Some(last) = hunk.lines.last_mut() {
-            last.new_no_newline = true;
+/// 把 `\ No newline at end of file` 标记作用到 hunk 当前最后一行（即标记的上一行）。
+///
+/// 按该行类型选择标记侧：`Deletion` → 仅旧侧；`Addition` → 仅新侧；
+/// `Context` → 两侧一致（同时标记）。无最后一行时为无操作。
+fn apply_no_newline_marker(hunk: &mut DiffHunk) {
+    if let Some(last) = hunk.lines.last_mut() {
+        match last.kind {
+            LineKind::Deletion => last.old_no_newline = true,
+            LineKind::Addition => last.new_no_newline = true,
+            LineKind::Context => {
+                last.old_no_newline = true;
+                last.new_no_newline = true;
+            }
         }
     }
 }
@@ -187,17 +187,56 @@ diff --git a/f.txt b/f.txt
         let hunks = parse_unified(patch);
         assert_eq!(hunks.len(), 1);
         let lines = &hunks[0].lines;
-        // 删除行与新增行均无末尾换行。
+        // 删除行：标记旧侧无末尾换行；新侧仍有换行。
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].kind, LineKind::Deletion);
         assert!(
-            lines[0].new_no_newline,
-            "deletion line should be no-newline"
+            lines[0].old_no_newline,
+            "deletion line should be old-side no-newline"
         );
+        assert!(
+            !lines[0].new_no_newline,
+            "deletion line new side should have newline"
+        );
+        // 新增行：标记新侧无末尾换行；旧侧仍有换行。
         assert_eq!(lines[1].kind, LineKind::Addition);
         assert!(
             lines[1].new_no_newline,
-            "addition line should be no-newline"
+            "addition line should be new-side no-newline"
+        );
+        assert!(
+            !lines[1].old_no_newline,
+            "addition line old side should have newline"
+        );
+    }
+
+    #[test]
+    fn parses_context_no_newline_marks_both_sides() {
+        // 旧、新文件均以无末尾换行的相同末行结尾 → context 行两侧一致标记。
+        let patch = "\
+--- a/f.txt
++++ b/f.txt
+@@ -1,2 +1,2 @@
+ a
+ z
+\\ No newline at end of file
+";
+        let hunks = parse_unified(patch);
+        assert_eq!(hunks.len(), 1);
+        let lines = &hunks[0].lines;
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1].kind, LineKind::Context);
+        assert!(
+            lines[1].old_no_newline,
+            "context no-newline should mark old side"
+        );
+        assert!(
+            lines[1].new_no_newline,
+            "context no-newline should mark new side"
+        );
+        assert!(
+            !lines[0].old_no_newline && !lines[0].new_no_newline,
+            "non-final context line should have no no-newline flags"
         );
     }
 

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use agent_domain::CancellationToken;
 
 use crate::error::GitError;
-use crate::process::GitRunner;
+use crate::process::{validate_position_arg, GitRunner};
 
 /// 一个 Git Worktree。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -70,15 +70,20 @@ impl<'a> WorktreeService<'a> {
         start_point: Option<&str>,
         cancel: CancellationToken,
     ) -> Result<Worktree, GitError> {
+        validate_position_arg("branch", branch_ref)?;
+        if let Some(start_point) = start_point {
+            validate_position_arg("start_point", start_point)?;
+        }
+        let new_path_str = new_path
+            .to_str()
+            .ok_or_else(|| GitError::Other("worktree path is not valid UTF-8".into()))?;
+        validate_position_arg("worktree_path", new_path_str)?;
         if new_path.exists() && path_is_non_empty(new_path) {
             return Err(GitError::Other(format!(
                 "worktree target already exists and is non-empty: {}",
                 new_path.display()
             )));
         }
-        let new_path_str = new_path
-            .to_str()
-            .ok_or_else(|| GitError::Other("worktree path is not valid UTF-8".into()))?;
         let mut args: Vec<String> = vec![
             "worktree".into(),
             "add".into(),
@@ -109,6 +114,10 @@ impl<'a> WorktreeService<'a> {
         force: bool,
         cancel: CancellationToken,
     ) -> Result<(), GitError> {
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| GitError::Other("worktree path is not valid UTF-8".into()))?;
+        validate_position_arg("worktree_path", path_str)?;
         let target = Self::canon(path);
         let managed = self.list(cancel.clone()).await?;
         if !managed.iter().any(|wt| wt.path == target) {
@@ -117,9 +126,6 @@ impl<'a> WorktreeService<'a> {
                 path.display()
             )));
         }
-        let path_str = path
-            .to_str()
-            .ok_or_else(|| GitError::Other("worktree path is not valid UTF-8".into()))?;
         let mut args: Vec<String> = vec!["worktree".into(), "remove".into()];
         if force {
             args.push("--force".into());
@@ -292,5 +298,66 @@ mod tests {
         assert!(res.is_err(), "removing non-managed path must error");
         assert!(outside.is_dir());
         assert!(outside.join("keep.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn option_like_worktree_refs_are_rejected() {
+        let runner = GitRunner::new();
+        let svc = WorktreeService::new(&runner, Path::new("."));
+
+        let branch_error = svc
+            .add(
+                Path::new("unused-worktree"),
+                "--detach",
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("option-like branch must be rejected");
+        assert!(matches!(
+            branch_error,
+            GitError::InvalidPositionArgument { name: "branch", .. }
+        ));
+
+        let start_error = svc
+            .add(
+                Path::new("unused-worktree"),
+                "safe",
+                Some("--checkout"),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("option-like start point must be rejected");
+        assert!(matches!(
+            start_error,
+            GitError::InvalidPositionArgument {
+                name: "start_point",
+                ..
+            }
+        ));
+
+        let add_path_error = svc
+            .add(Path::new("--force"), "safe", None, CancellationToken::new())
+            .await
+            .expect_err("option-like worktree path must be rejected");
+        assert!(matches!(
+            add_path_error,
+            GitError::InvalidPositionArgument {
+                name: "worktree_path",
+                ..
+            }
+        ));
+
+        let remove_path_error = svc
+            .remove(Path::new("--force"), false, CancellationToken::new())
+            .await
+            .expect_err("option-like remove path must be rejected");
+        assert!(matches!(
+            remove_path_error,
+            GitError::InvalidPositionArgument {
+                name: "worktree_path",
+                ..
+            }
+        ));
     }
 }

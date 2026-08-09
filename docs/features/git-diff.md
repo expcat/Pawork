@@ -41,7 +41,9 @@ pub struct DiffHunk {
 
 ## Diff 功能
 
-Unified Diff 解析；文件摘要；分页 Hunk；Context Lines；binary；rename；copied；deleted；added；CRLF；无末尾换行；Unicode 文件名；submodule；大文件保护；Ignore whitespace；word-level diff；缓存；内容指纹；Hunk stage；Hunk discard。
+已交付：Unified Diff 解析；文件摘要；分页 Hunk；Context Lines；binary；rename；copied；deleted；added；CRLF；旧/新两侧无末尾换行标志；Unicode 文件名；submodule；100,000 行解析保护；Hunk stage / unstage；Line stage / unstage。
+
+计划但尚未交付：Ignore whitespace；word-level diff；Diff 内容缓存与内容指纹；Hunk discard。整文件 discard 已由 `StageService` 提供，但不能等同于按 Hunk 丢弃工作区改动。
 
 核心直接输出结构化文件和 Hunk，避免 pi-gui 那样先拿完整 diff 字符串再由前端拆分渲染。
 
@@ -50,13 +52,14 @@ Unified Diff 解析；文件摘要；分页 Hunk；Context Lines；binary；rena
 - rename / binary / untracked / submodule 测试通过
 - Diff 可分页
 - 100,000 行 Diff 解析 < 500ms
-- 已缓存 Diff 切换 < 50ms
+- 已缓存 status 切换 < 50ms
 - Worktree 清理不删用户数据
 
-## 实现状态（Phase 7 已交付 P7-1 ~ P7-8）
+## 实现状态（Phase 7 已交付 P7-1 ~ P7-9）
 
-- `git-service` crate：系统 Git 封装（`GitRunner` 调用入口 + `GitError` 归一）、repo 检测 / branch / HEAD（`GitService`）、status / changed files（`StatusService`）、stage / unstage / discard（`StageService`，discard 标记高风险）、Worktree 创建/删除（`WorktreeService`，remove 先校验受管理、绝不递归删除用户数据）、status 缓存 + notify watcher 失效（`StatusCache` / `CachedStatusService`，命中纯内存读 < 50ms）。
-- `diff-service` crate：结构化 Diff（`DiffFile`/`DiffHunk`/`DiffLine`），解析 `--raw -z` + `--numstat -z` 文件清单与 unified patch hunks，支持 rename/binary/无末尾换行、`paginate` 分页；unified 解析器为纯字符串状态机，100k 行 < 500ms。
+- `git-service` crate：系统 Git 封装（`GitRunner` 调用入口 + `GitError` 归一）、repo 检测 / branch / HEAD（`GitService`）、status / changed files（`StatusService`）、stage / unstage / discard（`StageService`，discard 标记高风险）、Worktree 创建/删除（`WorktreeService`，remove 先校验受管理、绝不递归删除用户数据）。P7-9 后所有 revision/range/branch 位置参数拒绝前导 `-`，hunk patch 使用 `NamedTempFile`；git cwd 统一移除 Windows verbatim 前缀。
+- status 缓存 + notify watcher：`StatusCache` / `CachedStatusService` 命中纯内存读 < 50ms，并有 30 秒 TTL 与 128 条 LRU 上限；`CacheScope::Staged` 只投影 index 列。watcher 按 ignore 规则枚举非递归目录，并监听 `rev-parse --absolute-git-dir` 返回的真实管理目录，兼容 linked worktree。
+- `diff-service` crate：结构化 Diff（`DiffFile`/`DiffHunk`/`DiffLine`），解析 `--raw -z` + `--numstat -z` 文件清单与 unified patch hunks，支持 rename/binary/旧新两侧无末尾换行、`paginate` 分页；unified 解析器为纯字符串状态机，100k 行 < 500ms。
 - P1 已交付（P7-7 / P7-8）：commit 含 amend / allow-empty（`CommitService`）、branch 创建/删除/checkout（`BranchService`）、stash push/list/pop/apply/drop（`StashService`）、log / show / merge-base（`HistoryService`）、未合并路径与 merge 状态识别（`ConflictService`）；hunk / line 级暂存与取消暂存（`diff-service` 的 `HunkStageService`，基于结构化 Diff 生成精确 patch 并经 `git apply --cached` 应用，binary/rename/unmerged 等不可部分暂存的场景显式报错）。
 
 ## 相关文档

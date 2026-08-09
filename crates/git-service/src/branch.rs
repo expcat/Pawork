@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use agent_domain::CancellationToken;
 
 use crate::error::GitError;
-use crate::process::GitRunner;
+use crate::process::{validate_position_arg, GitRunner};
 
 /// branch 创建/删除/切换服务。
 pub struct BranchService<'a> {
@@ -38,6 +38,10 @@ impl<'a> BranchService<'a> {
         force: bool,
         cancel: CancellationToken,
     ) -> Result<(), GitError> {
+        validate_position_arg("branch", name)?;
+        if let Some(start_point) = start_point {
+            validate_position_arg("start_point", start_point)?;
+        }
         let mut args: Vec<String> = vec!["branch".into()];
         if force {
             args.push("-f".into());
@@ -74,6 +78,7 @@ impl<'a> BranchService<'a> {
         force: bool,
         cancel: CancellationToken,
     ) -> Result<(), GitError> {
+        validate_position_arg("branch", name)?;
         let flag = if force { "-D" } else { "-d" };
         match self
             .runner
@@ -99,6 +104,7 @@ impl<'a> BranchService<'a> {
 
     /// 切换到已有分支：`git checkout <name>`。
     pub async fn checkout(&self, name: &str, cancel: CancellationToken) -> Result<(), GitError> {
+        validate_position_arg("branch", name)?;
         match self
             .runner
             .run(&self.work_dir, &["checkout", name], cancel)
@@ -132,6 +138,10 @@ impl<'a> BranchService<'a> {
         force: bool,
         cancel: CancellationToken,
     ) -> Result<(), GitError> {
+        validate_position_arg("branch", name)?;
+        if let Some(start_point) = start_point {
+            validate_position_arg("start_point", start_point)?;
+        }
         let mut args: Vec<String> = vec!["checkout".into()];
         args.push(if force { "-B".into() } else { "-b".into() });
         args.push(name.to_string());
@@ -372,5 +382,36 @@ Please commit your changes or stash them before you switch branches.\nAborting";
         let paths = parse_overwritten_paths(stderr).expect("should parse");
         assert_eq!(paths, vec!["a.txt".to_string(), "sub/b.txt".to_string()]);
         assert!(parse_overwritten_paths("some other error").is_none());
+    }
+
+    #[tokio::test]
+    async fn option_like_branch_arguments_are_rejected_at_service_boundaries() {
+        let runner = GitRunner::new();
+        let svc = BranchService::new(&runner, Path::new("."));
+
+        let errors = [
+            svc.create("--help", None, false, CancellationToken::new())
+                .await
+                .expect_err("create branch name"),
+            svc.create("safe", Some("--help"), false, CancellationToken::new())
+                .await
+                .expect_err("create start point"),
+            svc.delete("--merged", false, CancellationToken::new())
+                .await
+                .expect_err("delete branch name"),
+            svc.checkout("-b", CancellationToken::new())
+                .await
+                .expect_err("checkout branch name"),
+            svc.checkout_new("--orphan", None, false, CancellationToken::new())
+                .await
+                .expect_err("checkout_new branch name"),
+            svc.checkout_new("safe", Some("--detach"), false, CancellationToken::new())
+                .await
+                .expect_err("checkout_new start point"),
+        ];
+
+        assert!(errors
+            .iter()
+            .all(|error| matches!(error, GitError::InvalidPositionArgument { .. })));
     }
 }

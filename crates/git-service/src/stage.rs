@@ -9,8 +9,8 @@
 //!
 //! 路径经 `git` 的 `--` 字面参数传入，天然防 shell 注入，绝不拼接 shell 字符串。
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use agent_domain::CancellationToken;
 
@@ -118,8 +118,8 @@ impl<'a> StageService<'a> {
     /// 把 unified patch 应用到 index（`git apply --cached`），不触碰工作区。
     ///
     /// `reverse = true` 时执行 `--reverse`（用于取消暂存已暂存的 hunk）。
-    /// patch 经进程内唯一的临时文件传入（[`crate::process::GitRunner`] 不支持
-    /// stdin），用后即删。patch 与 index 不匹配（如 index 已变化）归一为
+    /// patch 经随机名、独占创建的临时文件传入（[`crate::process::GitRunner`] 不支持
+    /// stdin），句柄保留到 git 返回并用后即删。patch 与 index 不匹配（如 index 已变化）归一为
     /// [`GitError::PatchDoesNotApply`]。
     pub async fn apply_patch_to_index(
         &self,
@@ -130,24 +130,30 @@ impl<'a> StageService<'a> {
         if patch.trim().is_empty() {
             return Ok(());
         }
-        let patch_file = temp_patch_path();
-        std::fs::write(&patch_file, patch)?;
-        let file_arg = patch_file.to_string_lossy().into_owned();
+        // NamedTempFile 以随机名、0600（Unix）和 create-new 语义创建；句柄在 git
+        // 完成读取前保持打开，消除可预测路径与 write/apply 间的替换窗口。
+        let patch_file = create_patch_file(patch)?;
+        let file_arg = patch_file.path().to_string_lossy().into_owned();
         let args: Vec<&str> = if reverse {
             vec!["apply", "--cached", "--reverse", &file_arg]
         } else {
             vec!["apply", "--cached", &file_arg]
         };
         let result = self.runner.run(&self.work_dir, &args, cancel).await;
-        // 无论成败都清理临时文件。
-        let _ = std::fs::remove_file(&patch_file);
+        // 无论 git 成败都显式关闭并删除；失败路径仍优先保留原始 git 错误。
+        if let Err(error) = patch_file.close() {
+            if result.is_ok() {
+                return Err(GitError::Io(error));
+            }
+            tracing::warn!(?error, "remove hunk-stage patch tempfile failed");
+        }
         match result {
             Ok(_) => Ok(()),
-            Err(GitError::GitFailed { stderr, .. }) => {
+            Err(GitError::GitFailed { code, stderr }) => {
                 if stderr.contains("does not apply") || stderr.contains("patch failed") {
                     Err(GitError::PatchDoesNotApply)
                 } else {
-                    Err(GitError::GitFailed { code: None, stderr })
+                    Err(GitError::GitFailed { code, stderr })
                 }
             }
             Err(other) => Err(other),
@@ -171,15 +177,18 @@ impl<'a> StageService<'a> {
     }
 }
 
-/// 生成进程内唯一的 patch 临时文件路径（pid + 自增计数）。
-fn temp_patch_path() -> PathBuf {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let name = format!(
-        "pawork-hunk-stage-{}-{}.patch",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
-    std::env::temp_dir().join(name)
+fn create_patch_file(patch: &str) -> std::io::Result<tempfile::NamedTempFile> {
+    create_patch_file_in(&std::env::temp_dir(), patch)
+}
+
+fn create_patch_file_in(directory: &Path, patch: &str) -> std::io::Result<tempfile::NamedTempFile> {
+    let mut file = tempfile::Builder::new()
+        .prefix("pawork-hunk-stage-")
+        .suffix(".patch")
+        .tempfile_in(directory)?;
+    file.write_all(patch.as_bytes())?;
+    file.flush()?;
+    Ok(file)
 }
 #[cfg(test)]
 mod tests {
@@ -364,5 +373,57 @@ mod tests {
             .await
             .expect_err("过期 patch 应失败");
         assert!(matches!(err, GitError::PatchDoesNotApply), "err = {err:?}");
+    }
+
+    #[test]
+    fn patch_tempfile_uses_exclusive_random_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let predictable = dir
+            .path()
+            .join(format!("pawork-hunk-stage-{}-0.patch", std::process::id()));
+        std::fs::write(&predictable, "attacker sentinel").expect("precreate predictable path");
+
+        let patch_file = create_patch_file_in(dir.path(), "secret patch").expect("temp patch");
+        assert_ne!(patch_file.path(), predictable);
+        assert_eq!(
+            std::fs::read_to_string(&predictable).expect("read sentinel"),
+            "attacker sentinel"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = patch_file
+                .as_file()
+                .metadata()
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "patch tempfile must be owner-only");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn predictable_symlink_cannot_capture_patch_contents() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let victim = dir.path().join("victim.txt");
+        std::fs::write(&victim, "sentinel").expect("write victim");
+        let predictable = dir
+            .path()
+            .join(format!("pawork-hunk-stage-{}-0.patch", std::process::id()));
+        symlink(&victim, &predictable).expect("create attacker symlink");
+
+        let patch_file = create_patch_file_in(dir.path(), "private source patch")
+            .expect("exclusive random tempfile");
+        assert_ne!(patch_file.path(), predictable);
+        assert_eq!(
+            std::fs::read_to_string(victim).expect("read victim"),
+            "sentinel",
+            "attacker-controlled symlink target must remain untouched"
+        );
     }
 }

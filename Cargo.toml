@@ -68,6 +68,10 @@ anyhow = "1"
 futures = "0.3"
 bytes = "1"
 
+# 同步原语 / 安全临时文件
+parking_lot = "0.12"
+tempfile = "3"
+
 # 标识 / 哈希 / 版本
 blake3 = "1"
 semver = { version = "1", features = ["serde"] }
@@ -120,8 +124,7 @@ landlock = "0.4"
 windows = "0.58"
 windows-service = "0.7"
 
-# Diff / PTY / 签名
-similar = { version = "2", features = ["text"] }
+# PTY / 签名
 portable-pty = "0.8"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 

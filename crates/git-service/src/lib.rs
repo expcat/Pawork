@@ -37,7 +37,7 @@ pub use commit::{CommitOptions, CommitService};
 pub use conflict::{ConflictService, UnmergedEntry};
 pub use error::GitError;
 pub use history::{CommitDetail, CommitInfo, HistoryService, LogOptions};
-pub use process::GitRunner;
+pub use process::{validate_position_arg, GitRunner};
 pub use repo::{GitService, Head, RepoInfo};
 pub use stage::{StageOp, StageRequest, StageRisk, StageService};
 pub use stash::{StashEntry, StashPushOutcome, StashService};

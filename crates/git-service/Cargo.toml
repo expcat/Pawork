@@ -17,10 +17,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "macros", "rt", "time", "fs"] }
 tracing.workspace = true
+ignore.workspace = true
 notify.workspace = true
 notify-debouncer-full.workspace = true
-parking_lot = "0.12"
+parking_lot.workspace = true
+dunce.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
-tempfile = "3"

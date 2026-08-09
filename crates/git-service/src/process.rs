@@ -6,6 +6,11 @@
 
 use std::path::Path;
 use std::time::Duration;
+#[cfg(test)]
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    sync::Arc,
+};
 
 use agent_domain::CancellationToken;
 use process_runtime::{CommandSpec, ProcessRuntime};
@@ -17,6 +22,20 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// 单次输出上限（16MB），防止巨量 diff/log 打爆内存。
 const MAX_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
 
+/// 校验会被 git 当作位置参数解析的 revision / range / branch。
+///
+/// 这些值来自上层（包括模型输出），若以 `-` 开头会被 git 重新解释为选项。
+/// 路径参数应使用 `--` 分隔，不走本校验。
+pub fn validate_position_arg(name: &'static str, value: &str) -> Result<(), GitError> {
+    if value.starts_with('-') {
+        return Err(GitError::InvalidPositionArgument {
+            name,
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// 系统 git 的统一调用入口。
 ///
 /// 持有 [`ProcessRuntime`]、git 可执行路径与默认超时；[`GitRunner::run`] 与
@@ -27,6 +46,8 @@ pub struct GitRunner {
     runtime: ProcessRuntime,
     git_path: String,
     default_timeout: Duration,
+    #[cfg(test)]
+    call_count: Option<Arc<AtomicUsize>>,
 }
 
 impl GitRunner {
@@ -36,6 +57,8 @@ impl GitRunner {
             runtime: ProcessRuntime::new(),
             git_path: "git".to_string(),
             default_timeout: DEFAULT_TIMEOUT,
+            #[cfg(test)]
+            call_count: None,
         }
     }
 
@@ -49,7 +72,15 @@ impl GitRunner {
             runtime,
             git_path: git_path.into(),
             default_timeout: timeout,
+            #[cfg(test)]
+            call_count: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_call_count(mut self, call_count: Arc<AtomicUsize>) -> Self {
+        self.call_count = Some(call_count);
+        self
     }
 
     /// 在 `cwd` 下执行 `git <args>`，stdout 以 lossy UTF-8 返回。
@@ -73,8 +104,14 @@ impl GitRunner {
         args: &[&str],
         cancel: CancellationToken,
     ) -> Result<(String, String), GitError> {
+        #[cfg(test)]
+        if let Some(call_count) = &self.call_count {
+            call_count.fetch_add(1, Ordering::Relaxed);
+        }
         let mut spec = CommandSpec::new(self.git_path.as_str()).args(args.iter().copied());
-        spec.cwd = Some(cwd.to_path_buf());
+        // Windows canonicalize 可能产生 `\\?\` verbatim 前缀；部分 git 版本不能
+        // 稳定处理该形式，因此在唯一子进程出口统一简化。
+        spec.cwd = Some(simplified_cwd(cwd));
         spec.timeout = Some(self.default_timeout);
         spec.max_output_bytes = MAX_OUTPUT_BYTES;
         // env_clear 保持 false：保留环境，便于 git 读取用户配置与 credential。
@@ -96,8 +133,46 @@ impl GitRunner {
     }
 }
 
+fn simplified_cwd(cwd: &Path) -> std::path::PathBuf {
+    dunce::simplified(cwd).to_path_buf()
+}
+
 impl Default for GitRunner {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_option_like_position_arguments() {
+        let error = validate_position_arg("revision", "--help").expect_err("must reject");
+        assert!(matches!(
+            error,
+            GitError::InvalidPositionArgument {
+                name: "revision",
+                ref value
+            } if value == "--help"
+        ));
+        validate_position_arg("revision", "HEAD~1..HEAD").expect("valid revision range");
+    }
+
+    #[test]
+    fn relative_cwd_is_unchanged() {
+        assert_eq!(
+            simplified_cwd(Path::new("repo/subdir")),
+            Path::new("repo/subdir")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_verbatim_cwd_is_simplified() {
+        let simplified = simplified_cwd(Path::new(r"\\?\C:\repo\worktree"));
+        assert_eq!(simplified, Path::new(r"C:\repo\worktree"));
+        assert!(!simplified.to_string_lossy().starts_with(r"\\?\"));
     }
 }

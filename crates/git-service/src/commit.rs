@@ -62,14 +62,21 @@ impl<'a> CommitService<'a> {
         {
             Ok(_) => {}
             Err(GitError::GitFailed { code, stderr }) => {
-                // 「nothing to commit」由 git 写到 stdout，而错误路径只能拿到
-                // stderr，故这里以 stderr 为主、退出码 1 且 stderr 为空兜底。
-                if stderr.contains("nothing to commit")
-                    || (code == Some(1) && stderr.trim().is_empty())
-                {
-                    return Err(GitError::NothingToCommit);
+                // 仅普通 commit 能归类 NothingToCommit；allow-empty / amend 即使
+                // index 为空也应允许，若失败通常是 hook 等真实错误。
+                if !opts.allow_empty && !opts.amend {
+                    match self.index_is_empty(cancel.clone()).await {
+                        Ok(true) => return Err(GitError::NothingToCommit),
+                        Ok(false) => {}
+                        Err(check_error) => {
+                            tracing::warn!(
+                                error = ?check_error,
+                                "failed to verify whether commit index is empty"
+                            );
+                        }
+                    }
                 }
-                return Err(GitError::GitFailed { code: None, stderr });
+                return Err(GitError::GitFailed { code, stderr });
             }
             Err(other) => return Err(other),
         }
@@ -78,6 +85,23 @@ impl<'a> CommitService<'a> {
             .run(&self.work_dir, &["rev-parse", "HEAD"], cancel)
             .await?;
         Ok(sha.trim().to_string())
+    }
+
+    /// `git diff --cached --quiet`：退出 0 表示 index 与 HEAD 相同，退出 1 表示有差异。
+    async fn index_is_empty(&self, cancel: CancellationToken) -> Result<bool, GitError> {
+        match self
+            .runner
+            .run_with_stderr(
+                &self.work_dir,
+                &["diff", "--cached", "--quiet", "--exit-code"],
+                cancel,
+            )
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(GitError::GitFailed { code: Some(1), .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -202,5 +226,45 @@ mod tests {
             .await
             .expect_err("空 message 应报错");
         assert!(matches!(err, GitError::Other(_)), "err = {err:?}");
+    }
+
+    #[tokio::test]
+    async fn silent_hook_failure_with_nonempty_index_stays_git_failed() {
+        let (_dir, repo) = make_repo();
+        let hook = repo.join(".git").join("hooks").join("pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").expect("write pre-commit hook");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&hook)
+                .expect("hook metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&hook, permissions).expect("make hook executable");
+        }
+
+        std::fs::write(repo.join("a.txt"), "staged change\n").expect("write staged change");
+        run_git(&repo, &["add", "a.txt"]);
+
+        let runner = GitRunner::new();
+        let svc = CommitService::new(&runner, &repo);
+        let error = svc
+            .commit(
+                "hook should fail",
+                &CommitOptions::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("silent hook must fail commit");
+        assert!(
+            matches!(
+                error,
+                GitError::GitFailed {
+                    code: Some(1),
+                    ref stderr
+                } if stderr.is_empty()
+            ),
+            "nonempty index failure must retain GitFailed: {error:?}"
+        );
     }
 }
