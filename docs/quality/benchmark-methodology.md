@@ -15,7 +15,7 @@
 | Provider 网络 | `provider` | `pawork` ↔ Mock Provider | **含**：请求发出到响应收完的传输与协议开销；**不含**：真实公网 API。一律用 Mock Provider（wiremock）固定延迟，保证可回归 |
 | 模型生成 | `model` | `pawork` ↔ Mock Provider（脚本化 token 流） | **含**：Core 消费/解析/分发 token 流的开销；**不含**：真实模型推理时间——无真实模型时模型生成不可直接测量，用 [测试体系](testing.md) 的 `MockScript` 脚本化 token 流模拟生成速率 |
 | 外部命令 | `command` | `pawork` 派生的 Tool 子进程 | **含**：子进程 spawn/exec 与调度开销（spawn → 就绪/退出，含 PTY/管道建立）；**不含**：外部命令自身的业务耗时（不计入平台目标） |
-| GUI 渲染 | `gui` | GUI 独立进程 + WebView | **含**：渲染、帧率与交互延迟；GUI 是经 GUI Connection Protocol 连接 CLI 的独立进程，不嵌入 Core，**不经 criterion 测量**，未来使用专用 harness（帧计时/埋点）；当前阶段仅保留占位组 |
+| GUI 渲染 | `gui` | GUI 独立进程 + WebView | **含**：bridge→render commit、帧率、交互、DOM/内存；GUI 经 GUI Connection Protocol 连接 CLI，不嵌入 Core，**不经 criterion 测量**；Phase 19 使用 WebdriverIO Tauri + renderer performance marks，`benches/gui` 只保留跨域入口 |
 
 ### 口径要点
 
@@ -67,7 +67,7 @@ P0-12 的空基准占位不需要任何外部依赖，默认可运行。后续�
 | 中型仓库 Git status | `git` | criterion + 子进程计时（固定 fixture 仓库） |
 | Provider 首 Token 的 Core 附加延迟 | `provider` | Mock Provider 零延迟口径，只计 Core 段 |
 | Built-in Tool 调度开销 | `command` | criterion + 子进程计时 |
-| （GUI 渲染目标后续补充） | `gui` | 专用 harness，不经 criterion |
+| Desktop cold start、Snapshot→interactive、Event→paint、10k Timeline、100k Diff、stream frame/DOM budget | `gui` | WebdriverIO Tauri + renderer performance marks；三平台原生壳，不经 criterion |
 
 ## 验收映射（P0-12）
 
@@ -77,4 +77,5 @@ P0-12 的空基准占位不需要任何外部依赖，默认可运行。后续�
 ## 相关文档
 
 - [性能目标](performance-targets.md) · [测试体系](testing.md) · [安全验收](security-acceptance.md)
+- [Desktop GUI](../features/desktop-gui.md) · [P19-16 Desktop Gate](../../plan/P19-16-desktop-gate.md)
 - [ADR-020 性能与安全是发布门槛](../adr/ADR-020-performance-security-gate.md) · [ROADMAP 实施波次与门禁节奏](../../ROADMAP.md#实施波次与门禁节奏)

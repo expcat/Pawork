@@ -2,7 +2,7 @@
 
 原「Core Client Protocol」更名为 **GUI Connection Protocol**。该协议只用于 GUI 与 CLI/Core 宿主之间的通信。CLI 命令不需要通过网络协议绕回自身，但必须调用与 GUI Command 相同的 Application Service。
 
-本计划不实现 GUI，但协议必须先冻结。Rust 类型（`core-api` / `gui-protocol`）是唯一 schema source，自动生成 TypeScript 类型。
+Phase 13 不实现真实 GUI，但必须先冻结协议；Phase 19 的 Desktop GUI 只消费该契约。Rust 类型（`core-api` / `gui-protocol`）是唯一 schema source，自动生成 TypeScript 类型。
 
 ## 1. 命令路径
 
@@ -193,5 +193,6 @@ GUI 重连：提交 `last_global_sequence`，事件仍可重放则发送缺失�
 - [总体架构](overview.md)
 - [GUI 连接与多客户端](../features/gui-connection.md)
 - [CLI Host](../features/cli-host.md)
+- [Desktop GUI](../features/desktop-gui.md)
 - [artifacts](../features/artifacts.md)
-- [ROADMAP Phase 13](../../ROADMAP.md)
+- [ROADMAP Phase 13 / Phase 19](../../ROADMAP.md)

@@ -77,7 +77,7 @@ Pawork/
 | `cli-renderer` | CLI 文本 / JSON / 流式输出（消费 Event Hub） | P1 骨架依赖 app-service；Phase 13 接入 core-api / agent-events |
 | `gui-protocol` | GUI Command / Query / Event / Snapshot 协议类型 | 依赖 core-api |
 | `gui-server` | CLI 内部运行的 GUI 协议服务器 | 依赖 gui-protocol / app-service |
-| `gui-client` | Tauri GUI 使用的连接 SDK | 依赖 gui-protocol / transport-api |
+| `gui-client` | Tauri GUI 使用的 typed 连接 SDK：握手、认证、订阅、Snapshot/Event 重连 | 依赖 gui-protocol / transport-api；不得依赖 core-runtime / app-service |
 | `connection-manager` | 管理一个 CLI 实例上的多个 GUI 连接 | 依赖 gui-server |
 | `subscription-hub` | 将 Core Event 广播给 CLI 与所有 GUI | 依赖 core-api / agent-events |
 | `snapshot-service` | 为 GUI 提供当前状态快照与重连恢复 | 依赖 app-service |
@@ -90,9 +90,9 @@ Pawork/
 | `test-support` | Mock Provider / Mock Tool、测试工具 | 仅测试依赖 |
 | `schema-typegen` | 从 core-api / gui-protocol 生成并校验 `.d.ts` | 仅构建工具依赖 core-api / gui-protocol，不进入运行时 |
 
-### 2.1 Phase 15–18 与跨阶段规划新增 crate（登记在册，尚未实现）
+### 2.1 Phase 15–19 与跨阶段规划新增 crate（登记在册，尚未实现）
 
-> 登记即冻结 crate 名、职责与依赖方向；落地计划见 [ROADMAP](../../ROADMAP.md) Phase 15–18。新增 crate 遵循 §6/§7 规则，`agent-domain` 保持零外部 IO 依赖。embedding 经评估**不新增独立 crate**，扩展 `provider-api`（见下表脚注）。
+> 登记即冻结 crate 名、职责与依赖方向；落地计划见 [ROADMAP](../../ROADMAP.md) Phase 15–19。新增 crate 遵循 §6/§7 规则，`agent-domain` 保持零外部 IO 依赖。embedding 经评估**不新增独立 crate**，扩展 `provider-api`（见下表脚注）。Phase 19 不新增 Core crate，复用 `gui-client` 并在 `apps/desktop` 内实现 Tauri bridge 与 React renderer。
 
 | crate | 职责 | 依赖方向备注 |
 | --- | --- | --- |
@@ -129,7 +129,7 @@ Pawork/
 | --- | --- |
 | `apps/pawork` | **唯一 CLI/Core 主程序**（二进制名 `pawork`），CLI 与 Core 同进程；提供 run / serve / shell / watch / service 等模式 |
 | `apps/protocol-test-gui` | GUI Connection Protocol 测试客户端，用于在不开真实 GUI 时验证多 GUI 全流程 |
-| `apps/desktop` | 后续 Tauri + React GUI（独立进程，经协议连接 CLI/Core；本次不实现） |
+| `apps/desktop` | Phase 19 Tauri + React GUI；独立进程，经 `gui-client` / GUI Connection Protocol 连接 `pawork`，只保存 UI preference 与可丢弃投影 |
 
 > 已删除的原计划入口：`apps/core-daemon`、`apps/core-cli`、`apps/core-rpc`、`crates/core-server`、`crates/core-client`、`crates/core-daemon`。它们的能力全部并入 `apps/pawork` 与 `cli-host`/`gui-server`。
 
@@ -198,6 +198,7 @@ client-*-adapter → client-adapter-api → app-service
 
 - `pawork` 是 Core 的唯一正式可执行宿主。
 - CLI 命令直接通过 `app-service` 操作同进程 Core；GUI 必须通过 `gui-server` 操作 Core；GUI 不直接链接 `core-runtime`。
+- `apps/desktop/src-tauri` 只链接 `gui-client` 与必要 Tauri 官方插件；不得链接 app-service、数据库、Provider、Tool、Git 或通用 shell/fs/http/sql capability。
 - `gui-server` 与 CLI 命令共享同一个 `app-service` 实例；CLI 与 GUI 的操作进入同一个 Command Router，接收同一个 Event Hub。
 - Transport 不包含 Agent 业务逻辑。
 - 必须禁止循环依赖。
@@ -224,6 +225,7 @@ client-*-adapter → client-adapter-api → app-service
 - [总体架构](overview.md)
 - [GUI Connection Protocol](api-surface.md)
 - [GUI 连接与多客户端](../features/gui-connection.md)
+- [Desktop GUI](../features/desktop-gui.md)
 - [CLI Host](../features/cli-host.md)
 - [ROADMAP](../../ROADMAP.md)
 - [ADR-001 纯 Rust Core](../adr/ADR-001-pure-rust-core.md)

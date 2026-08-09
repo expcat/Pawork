@@ -85,15 +85,17 @@ Local Transport：macOS/Linux 使用 Unix Domain Socket，Windows 使用 Named P
 
 多个 GUI；本地和远程 GUI 同时在线；单个用户多窗口；单个用户多设备；GUI 心跳；GUI 断线；GUI 重连；事件补发；Snapshot 重建；慢客户端隔离；每个 GUI 独立权限；每个 GUI 独立订阅。单/多实例与退出策略见 [CLI Host](cli-host.md)。
 
-## Phase 15–18 事件与 Client Channel 边界
+## Phase 15–19 事件、Desktop 投影与 Client Channel 边界
 
 GUI 可订阅 `ServerToolEvent`、ReasoningItem 摘要/引用、Plan/Goal/BackgroundTask/Automation/Monitor/Memory/Review/Hook 等状态事件并在 Snapshot 中恢复其投影，但绝不能请求 Protected Blob 明文、解密句柄或密钥材料。大型 server tool 输出继续只暴露 Artifact 引用。
 
 Codex App Server、Claude Gateway、IDE、Agent SDK / Headless、ACP 与 Mobile 是连接同一 `pawork` Host 的并列 Client Channel：它们共享 `app-service`、Command Router 与 Event Hub 的业务语义，但不复用或隧穿 GUI protocol frame；GUI 也不经这些 adapter 访问 Core。外部 Agent Client 统一实现 [ClientAdapter](client-adapters.md) 契约并持久化 capability/session ownership snapshot；任何 channel 都不能构造第二个 Core。
 
+Phase 19 的 `apps/desktop` 通过 `gui-client` 实现真实 GUI。Tauri bridge 负责本地/远程 Transport、认证与 frame 验证；React store 只保留由 Snapshot/Event 重建的 materialized view 和纯 UI preference。所有业务写入发送带 `command_id`、`expected_revision` 的 `AppCommandEnvelope`，Core 拒绝或重同步必须覆盖 optimistic 展示。
+
 ## 优先级
 
-P0（协议冻结）：GUI Connection Protocol 类型与 Transport 抽象在 [Phase 0](../../ROADMAP.md) 冻结。P0 实现：GUI Server、Local Transport、Connection Manager、Subscription Hub、Snapshot/Event Replay、多 GUI 支持、Remote 占位接口在 [Phase 13](../../ROADMAP.md) 落地。
+P0（协议冻结）：GUI Connection Protocol 类型与 Transport 抽象在 [Phase 0](../../ROADMAP.md) 冻结。P0 实现：GUI Server、Local Transport、Connection Manager、Subscription Hub、Snapshot/Event Replay、多 GUI 支持、Remote 占位接口在 [Phase 13](../../ROADMAP.md) 落地。真实 Tauri Desktop Client、主交互与三平台发布门禁在 [Phase 19](../../ROADMAP.md) 落地。
 
 ## 验收标准
 
@@ -110,6 +112,6 @@ P0（协议冻结）：GUI Connection Protocol 类型与 Transport 抽象在 [Ph
 ## 相关文档
 
 - [GUI Connection Protocol](../architecture/api-surface.md) · [Agent Client Adapters](client-adapters.md) · [CLI Host](cli-host.md) · [总体架构](../architecture/overview.md)
-- [artifacts](artifacts.md) · [observability](observability.md)
+- [Desktop GUI](desktop-gui.md) · [artifacts](artifacts.md) · [observability](observability.md)
 - [ADR-022 GUI 经 CLI 连接](../adr/ADR-022-gui-connects-via-cli.md) · [ADR-023 一 Core 多 GUI](../adr/ADR-023-one-core-many-guis.md) · [ADR-026 GUI 断线安全](../adr/ADR-026-gui-disconnect-safe.md) · [ADR-027 本地远程同协议](../adr/ADR-027-local-remote-same-protocol.md) · [ADR-028 远程可替换](../adr/ADR-028-replaceable-remote-transport.md) · [ADR-029 不点对点同步](../adr/ADR-029-no-peer-gui-sync.md) · [ADR-030 Core 唯一权威](../adr/ADR-030-core-sole-source-of-truth.md)
-- [ADR-033 控制面分离](../adr/ADR-033-control-plane-separation.md) · [ROADMAP Phase 13 / Phase 18](../../ROADMAP.md)
+- [ADR-033 控制面分离](../adr/ADR-033-control-plane-separation.md) · [ADR-034 Desktop GUI Client 边界](../adr/ADR-034-desktop-gui-client-boundary.md) · [ROADMAP Phase 13 / Phase 19](../../ROADMAP.md)

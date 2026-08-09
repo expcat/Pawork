@@ -39,7 +39,8 @@
 | 16 | Modern Agent Workflow | 9 | 0 | 🟡未开始 |
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
-| **合计** | — | **194** | **83** | — |
+| 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
+| **合计** | — | **210** | **83** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -60,6 +61,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 5. **Process 与扩展生态**：完成 Phase 10、Phase 11，再推进 P16-4 / P16-6 与 P17-1～P17-4；可安装插件、用户 Hook、LSP 与后台进程闭环后执行一次相关 crates 的 L2，不跑无关功能簇。
 6. **Workflow、额度与编排**：推进 Phase 14、Phase 12、P16-3 / P16-5 / P16-7～P16-9、P17-5 / P17-6 与 P18-13 / P18-14；Quota 视图消费 P18-8 账本，Agent 只经 Lease 获取 Provider 资源，稳定后执行 workflow/orchestration L2。
 7. **公共 Client 与远程能力**：完成 P18-11 / P18-12、P17-7～P17-13，最后由 P18-15 集中执行账号池属性/并发、迁移、跨租户隔离、Codex/Claude/ACP golden 与故障注入门禁；发布候选再执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
+8. **Desktop GUI**：P13-2～P13-10 稳定后先完成 P19-1～P19-9，用 Mock/Protocol Client 打通独立 Desktop Shell、状态投影与 Coding Agent 主交互；P19-10～P19-14 随 Phase 8～18 对应能力接线，P19-15 负责签名分发，最后由 P19-16 集中执行 Desktop contract、三平台 E2E、visual、accessibility、性能与安全门禁。GUI 不反向成为 Core 前置。
 
 开发期不得为追求“全绿”阻塞快速迭代，但安全红线、事件可重放、Secret 不落库、路径越界和破坏性进程清理必须随改动立即定向验证。完整策略与清理命令见 [plan/README](plan/README.md#测试节奏与缓存清理)。
 
@@ -74,14 +76,16 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
           → Skills / MCP → Plan / Background Task → ClientAdapter
           → Hooks / Multi-Agent / Agent Profile → Codex / Claude / ACP
           → Marketplace / LSP → Goal / Automation / Memory → SDK / Remote / Browser
+          → Desktop Shell / State Sync → Timeline / Composer / Diff / Terminal
+          → Settings / Workflow UI → Signed Desktop Release
 
-在核心 Coding Agent 能可靠完成真实仓库任务、Provider v2 语义与 Phase 18 账号控制面基础稳定前，不进入 Multi-Agent 与外部 Agent Client 大规模接入；Phase 15 与 P18-1～P18-9 是 Phase 8～18 扩展前的结构性前置，不按 Phase 编号机械串行。
+在核心 Coding Agent 能可靠完成真实仓库任务、Provider v2 语义与 Phase 18 账号控制面基础稳定前，不进入 Multi-Agent 与外部 Agent Client 大规模接入；Phase 15 与 P18-1～P18-9 是 Phase 8～18 扩展前的结构性前置，不按 Phase 编号机械串行。Phase 19 的 Shell/协议投影可在 Phase 13 后并行，但业务页面只能消费已交付的 Core 契约，不能用前端本地状态伪造未实现能力。
 
 > CLI Host 与多 GUI 协议（Phase 13）是 Core 的正式运行入口与 GUI 接入边界；其协议冻结部分（GUI Connection Protocol / Transport 抽象类型）随 [P0-8](plan/P0-8-core-api.md) 提前完成，运行时实现按依赖关系推进。
 
 ## 依赖选型基线
 
-> 2026-08 文档 review 结论。选型准则：**高采用率、文档好、能最小子集使用**；包功能太杂乱时只参考其中需要的部分自己实现。下表是 `[workspace.dependencies]` 的基线（落地见 [P0-1](plan/P0-1-workspace-skeleton.md)）；新增依赖必须先更新本节。
+> 2026-08 文档 review 结论。选型准则：**高采用率、文档好、能最小子集使用**；包功能太杂乱时只参考其中需要的部分自己实现。Rust 依赖表是 `[workspace.dependencies]` 的基线（落地见 [P0-1](plan/P0-1-workspace-skeleton.md)）；Desktop GUI 依赖单独锁定在 `apps/desktop`，不得进入 `pawork` Host 运行时。新增依赖必须先更新本节。
 
 **判断准则**
 
@@ -124,6 +128,22 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | 测试与基准 | criterion、proptest、cargo-fuzz + arbitrary、wiremock、insta、assert_cmd | P0-12、P2-11 等 | 基准 / 属性 / fuzz / HTTP mock / 快照 / CLI e2e |
 | HTML 解析 | scraper | P14-4 | html5ever + selectors；仅最小子集（解析 + 选择器匹配），用于额度控制台页面抓取 |
 
+### Desktop GUI 单独依赖基线
+
+> Node 仅用于 `apps/desktop` 的前端构建与测试，版本以仓库 pin 的当前 LTS 为准；产物由 Tauri WebView 运行，`pawork` Host 不嵌入 Node/Bun/V8，也不依赖前端工具链。使用 lockfile 固定完整依赖图，开工时锁定 Tauri 2.x 小版本并记录升级门禁。
+
+| 类别 | 包 / 工具 | 关联任务 | 理由与使用范围 |
+| --- | --- | --- | --- |
+| Desktop Shell | Tauri 2 + `@tauri-apps/api` | P19-1、P19-14、P19-15 | 仓库已冻结 Tauri 独立进程边界；只启用 window/dialog/clipboard/notification/updater 等最小官方 capability，禁止通用 shell/fs/http/sql 暴露 |
+| UI | React + TypeScript + Vite | P19-1～P19-14 | Tauri 官方推荐 SPA 使用 Vite；静态前端不引入 SSR/本地 Web Server |
+| 长列表 | `@tanstack/react-virtual` | P19-5、P19-8、P19-11 | Timeline、Diff、日志按 viewport 虚拟化；headless API 保留 Pawork 自有渲染与滚动语义 |
+| Terminal | `@xterm/xterm` + `@xterm/addon-fit` | P19-9 | 仅渲染 P11/P13 提供的 PTY stream，不获得直接 spawn 权限 |
+| Markdown | `react-markdown` + `remark-gfm` | P19-5 | 禁用 raw HTML，链接/图片 scheme 走 Pawork allowlist；不加载 CDN 脚本 |
+| Renderer 测试 | Vitest + Testing Library | P19-2～P19-14 | reducer、组件、键盘与 accessibility 的快速 L1 |
+| Desktop E2E | WebdriverIO + `@wdio/tauri-service` | P19-16 | Tauri 官方推荐的三平台 WebDriver 路径；浏览器模式跑快速 Mock，原生壳跑发布门禁 |
+
+Desktop authoritative projection、`global_sequence` 去重/补洞、Snapshot/Event 合并、optimistic command reconciliation 与跨窗口选主语义由 Pawork 自实现并做状态机测试；不引入第二套服务端状态框架。官方依据：[Tauri Frontend](https://v2.tauri.app/start/frontend/)、[Tauri Capabilities](https://v2.tauri.app/security/capabilities/)、[Tauri WebDriver](https://v2.tauri.app/develop/tests/webdriver/)。
+
 ### 参考 + 自实现（第三方包仅作设计参照，只实现所需最小子集）
 
 | 功能 | 参考对象 | 关联任务 | 不直接采用的原因 |
@@ -141,7 +161,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 
 ### 完全自实现（架构红线或安全关键）
 
-Agent Loop / 状态机 / Tool Scheduler / 预算 / 消息队列（P3-*）；Event Store 与 Projection 语义（P1-4、P1-5，rusqlite 只是绑定层）；Policy Engine / Workspace Trust / 路径与 shell 安全（P4-9、P4-10）；Checkpoint / 回滚编排（P4-11）；Compaction 引擎（P5-5、P5-6）；JSONL 流式解析（P2-3、P5-9，serde_json 逐行即可）；沙箱编排：macOS sandbox-exec、bwrap、Windows AppContainer / Job Object 与进程树清理（P11-1~4、P11-7）；PTY 会话层：重连 / 有界缓冲 / 归属（P11-6，在 portable-pty 之上）；GUI Connection Protocol 编解码 / 快照 / 订阅 / 慢客户端隔离（P13-3、P13-5）；Credential Lease / 路由策略 / 错误健康状态机 / Tenant 隔离（P18-2～P18-9）；日志 redaction 规则（P1-9）。
+Agent Loop / 状态机 / Tool Scheduler / 预算 / 消息队列（P3-*）；Event Store 与 Projection 语义（P1-4、P1-5，rusqlite 只是绑定层）；Policy Engine / Workspace Trust / 路径与 shell 安全（P4-9、P4-10）；Checkpoint / 回滚编排（P4-11）；Compaction 引擎（P5-5、P5-6）；JSONL 流式解析（P2-3、P5-9，serde_json 逐行即可）；沙箱编排：macOS sandbox-exec、bwrap、Windows AppContainer / Job Object 与进程树清理（P11-1~4、P11-7）；PTY 会话层：重连 / 有界缓冲 / 归属（P11-6，在 portable-pty 之上）；GUI Connection Protocol 编解码 / 快照 / 订阅 / 慢客户端隔离（P13-3、P13-5）；Credential Lease / 路由策略 / 错误健康状态机 / Tenant 隔离（P18-2～P18-9）；Desktop 状态投影 / 序列补洞 / command reconciliation（P19-2）；日志 redaction 规则（P1-9）。
 
 ### 行为参照（不作为依赖）
 
@@ -152,6 +172,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 - rmcp 是唯一「官方协议 SDK」级依赖：锁定小版本、跟进官方迁移指南，在 mcp-client 内封装以隔离 breaking change。
 - portable-pty 上游缓慢：P11-6 开工前评估维护中的 fork（如 xpy/portable-pty-psmux）或 vendor 兜底。
 - tiktoken-rs 仅对 OpenAI 精确：其它 Provider 统一启发式估算 + 容差，不依赖精确 token 数。
+- Desktop 依赖 OS WebView，三平台排版、输入法、WebDriver 与内存表现存在差异；P19-16 必须使用真实平台矩阵，不以浏览器模式替代原生壳门禁。
 
 ## 遗留待决项（2026-08 review）
 
@@ -500,6 +521,29 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P18-13 | 🟡 | Canonical Audit / OTel | 控制面审计、脱敏导出、trace 维度 | [详情](plan/P18-13-audit-otel.md) |
 | P18-14 | 🟡 | Provider Registry / Pool Reconciliation | factory 注册、主动健康、lease 回收、事务式热切换 | [详情](plan/P18-14-pool-reconciliation.md) |
 | P18-15 | 🟡 | Control Plane Contract Gate | property/concurrency/golden/migration/isolation/chaos | [详情](plan/P18-15-control-plane-gate.md) |
+
+### Phase 19：Desktop GUI
+
+实现真正的 Tauri + React Desktop Client。GUI 是连接 `pawork` Host 的独立进程和可重建视图：只经 GUI Connection Protocol 获取 Snapshot/Event、发送 AppCommand，不链接 `core-runtime`、不访问数据库/Provider/Tool/Git；Node 只用于前端构建，不进入 Host。基础壳与主交互依赖 Phase 13，扩展页面按 Phase 8～18 的生产契约逐项解锁，架构决策见 [ADR-034](docs/adr/ADR-034-desktop-gui-client-boundary.md)。
+
+| ID | 状态 | 任务 | 简介 | 详情 |
+| --- | --- | --- | --- | --- |
+| P19-1 | 🟡 | Desktop Shell 与安全边界 | Tauri/React/Vite 骨架、最小 capabilities、Host 启动/连接 | [详情](plan/P19-1-desktop-shell.md) |
+| P19-2 | 🟡 | GUI Client Bridge 与状态投影 | typed bridge、Snapshot/Event reducer、补洞/重连 | [详情](plan/P19-2-client-state-projection.md) |
+| P19-3 | 🟡 | Design System、Accessibility 与本地化 | tokens、组件原语、键盘/读屏、zh-CN/en-US | [详情](plan/P19-3-design-system-a11y.md) |
+| P19-4 | 🟡 | Workspace / Session 导航 | 实例、工作区、Session/Branch 树、搜索与恢复 | [详情](plan/P19-4-workspace-session-navigation.md) |
+| P19-5 | 🟡 | Timeline / Streaming 渲染 | message/thinking/tool/server event、虚拟滚动、Artifact | [详情](plan/P19-5-timeline-streaming.md) |
+| P19-6 | 🟡 | Composer / Context 输入 | prompt、@file、附件、模型/Profile、发送/取消 | [详情](plan/P19-6-composer-context.md) |
+| P19-7 | 🟡 | Approval / Policy / Workspace Trust | 风险解释、审批竞争、revision、信任状态 | [详情](plan/P19-7-approval-policy-trust.md) |
+| P19-8 | 🟡 | Diff / Git / Checkpoint / Review | 大 Diff、暂存、回滚、finding 与行锚点 | [详情](plan/P19-8-diff-git-review.md) |
+| P19-9 | 🟡 | Terminal / Process | PTY stream、resize、重连、backpressure | [详情](plan/P19-9-terminal-process.md) |
+| P19-10 | 🟡 | Provider / Account / Auth / Quota | 模型、账号、OAuth、Lease 健康、Usage/Quota | [详情](plan/P19-10-provider-account-settings.md) |
+| P19-11 | 🟡 | Resources / MCP / Plugins / Diagnostics | 生效来源、扩展管理、健康与脱敏诊断 | [详情](plan/P19-11-resources-extensions.md) |
+| P19-12 | 🟡 | Plan / Goal / Background / Automation | 计划评审、目标、后台任务、定时与 Monitor | [详情](plan/P19-12-workflow-control.md) |
+| P19-13 | 🟡 | Multi-Agent / Teams / Task Graph | worker、依赖图、预算、patch merge、团队消息 | [详情](plan/P19-13-multi-agent-teams.md) |
+| P19-14 | 🟡 | 多窗口、远程连接与系统通知 | instance/window 路由、presence、断线与通知 | [详情](plan/P19-14-multi-window-remote.md) |
+| P19-15 | 🟡 | 打包、签名与自动更新 | 三平台 bundle、code sign/notarize、签名更新 | [详情](plan/P19-15-packaging-updater.md) |
+| P19-16 | 🟡 | Desktop Contract / E2E / Visual / Performance Gate | reducer contract、三平台 E2E、a11y/visual/perf/security | [详情](plan/P19-16-desktop-gate.md) |
 
 ---
 

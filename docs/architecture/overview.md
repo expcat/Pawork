@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-Pawork 是一个纯 Rust 编码智能体核心平台。**CLI 与 Rust Core 是同一个程序和进程边界**：`pawork` 二进制同时是 Core 的宿主、命令行入口与 GUI 连接服务器；GUI（后续 Tauri + React）作为独立进程，通过 CLI 暴露的 GUI Connection Protocol 连接 Core，而不是直接嵌入 Core。
+Pawork 是一个纯 Rust 编码智能体核心平台。**CLI 与 Rust Core 是同一个程序和进程边界**：`pawork` 二进制同时是 Core 的宿主、命令行入口与 GUI 连接服务器；Desktop GUI（Phase 19，Tauri + React）作为独立进程，通过 CLI 暴露的 GUI Connection Protocol 连接 Core，而不是直接嵌入 Core。
 
 详见 [README](../../README.md) 的项目定位与 [ADR-001](../adr/ADR-001-pure-rust-core.md)、[ADR-021](../adr/ADR-021-cli-core-same-process.md)、[ADR-025](../adr/ADR-025-cli-is-sole-host.md)。
 
@@ -47,11 +47,13 @@ Pawork 是一个纯 Rust 编码智能体核心平台。**CLI 与 Rust Core 是�
 
 Timeline / Composer / Diff / Terminal / Settings / Workspaces / Sessions。GUI 连接指定 CLI/Core 实例，发送 Command、执行 Query、订阅 Event、获取 Snapshot、流式展示 Agent/Tool/Terminal。GUI 不直接加载 Core crate、不直接访问数据库、不直接调用 Provider/工具，本地只保存纯 UI 偏好。
 
+Phase 19 在 `apps/desktop` 落地 Tauri + React 客户端：Tauri Rust bridge 只依赖 `gui-client`，React renderer 只消费生成的 TypeScript schema 与 bridge 事件。权威状态始终在 `pawork`；renderer 的 store 是可从 Snapshot/Event 重建的 materialized view，断线或版本缺口时必须重新同步，不能以 optimistic UI 覆盖 Core 拒绝结果。
+
 ### 2.4 Agent Core
 
 所有能力实现层。职责拆分沿用 Pi 的领域划分，但不沿用其 TypeScript 实现。模块映射见 [workspace 结构](workspace-layout.md) 第 6 节。
 
-### 2.5 Host Adapters / Client Channels（Phase 17–18）
+### 2.5 Host Adapters / Client Channels（Phase 17–19）
 
 `pawork` 是 Core 的唯一正式宿主；除 CLI 自身外，所有外部接入方都是「连接到 `pawork` Host 的 Client Channel / Host Adapter」，各自不构造第二个 Core、不替代 GUI Connection Protocol，并列存在：
 
@@ -111,7 +113,7 @@ cli-host
 gui-client ↑ Tauri GUI（独立进程）
 ```
 
-Phase 15–18 在该主干上按以下方向扩展，箭头表示“上层依赖下层”；组合统一发生在 `app-service` / `core-runtime`，不会形成第二宿主：
+Phase 15–19 在该主干上按以下方向扩展，箭头表示“上层依赖下层”；组合统一发生在 `app-service` / `core-runtime`，不会形成第二宿主：
 
 ```text
 provider-api ← provider-* / memory-service
@@ -123,6 +125,8 @@ core-runtime ← protected-blob-store / user-hooks / plugin-package / lsp-runtim
 app-service ← gui-server / client-adapter-api / headless-json / ide-host-adapter / remote-control-adapter
                    ↑
              GUI / SDK / IDE / Codex / Claude / ACP / Mobile clients
+
+apps/desktop → gui-client → transport-api → gui-server → app-service
 ```
 
 `http-runtime` 是 Provider、User Hooks、Marketplace 与 Forge Adapter 共享的无 Provider 通用网络底层；`agent-sdk` 只依赖公开 schema/framing 并连接 `pawork`，不依赖 `core-runtime`。完整规划 crate 清单与依赖方向见 [workspace 结构 §2.1](workspace-layout.md)。
@@ -167,6 +171,7 @@ app-service ← gui-server / client-adapter-api / headless-json / ide-host-adapt
 - [控制流](control-flow.md)
 - [GUI Connection Protocol](api-surface.md)
 - [GUI 连接与多客户端](../features/gui-connection.md)
+- [Desktop GUI](../features/desktop-gui.md)
 - [Provider Account Control Plane](../features/provider-control-plane.md) · [Agent Client Adapters](../features/client-adapters.md) · [Tenant、Usage 与 Audit](../features/tenant-audit.md)
 - [CLI Host](../features/cli-host.md)
 - [ROADMAP](../../ROADMAP.md)

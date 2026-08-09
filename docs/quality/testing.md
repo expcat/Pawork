@@ -15,7 +15,7 @@
 
 ## 单元测试
 
-覆盖：状态机；Provider parser；Tool arguments；Token budget；Compaction；Diff；Patch；路径；Policy；Session reducer；Plugin manifest；Event ordering。
+覆盖：状态机；Provider parser；Tool arguments；Token budget；Compaction；Diff；Patch；路径；Policy；Session reducer；Plugin manifest；Event ordering；Desktop Snapshot/Event reducer、command reconciliation 与组件交互。
 
 开发期按受影响 crate 定向运行，不以 `cargo test --workspace` 作为每个任务的完成条件。
 
@@ -52,6 +52,12 @@ Phase 0 的实现位于 `test-support`：脚本可输出 text、多个 tool call
 
 Golden 仅在相关序列化或用户可见语义稳定后进入 L2。开发中允许先生成候选快照，但更新基线必须人工审阅；已确认基线不是缓存，不随清理删除。
 
+## Desktop GUI Tests
+
+Phase 19 使用四层证据：Vitest/Testing Library 覆盖 reducer、组件、键盘与 aria；WebdriverIO browser mode 对 Mock bridge 做快速交互；原生 Tauri WebDriver 覆盖 Windows/macOS/Linux 的连接、审批、Timeline、Diff、Terminal 与重连；visual baseline 只固定稳定 viewport、字体 fixture 与主题。浏览器模式不能替代原生 capability/CSP、输入法、窗口、通知、更新与 OS WebView 验证。
+
+协议 reducer 必须对乱序、重复、sequence gap、Snapshot 与 Event 竞态、陈旧 command response、重连回放和 unsupported version 做 property/fixture 测试。Visual 变更须人工审阅；accessibility gate 覆盖全键盘路径、焦点恢复、读屏 live region、对比度与 reduced-motion。
+
 ## Fuzz Tests
 
 重点 Fuzz：SSE；JSON Lines；Tool Partial JSON；Unified Diff；Patch；Session Import；路径；Plugin Manifest；MCP Message；Artifact Metadata。
@@ -60,7 +66,7 @@ Golden 仅在相关序列化或用户可见语义稳定后进入 L2。开发中�
 
 ## Chaos Tests
 
-模拟：Provider 中途断网；Core 崩溃；数据库锁；磁盘满；Tool 进程不退出；Side process 持有 stdout；文件被用户同时修改；Git Index 变化；Plugin 崩溃；MCP Server 崩溃；lease owner 崩溃；account cooldown/recovery；热切换回滚；session ownership epoch 冲突；跨 tenant 并发访问。
+模拟：Provider 中途断网；Core 崩溃；数据库锁；磁盘满；Tool 进程不退出；Side process 持有 stdout；文件被用户同时修改；Git Index 变化；Plugin 崩溃；MCP Server 崩溃；lease owner 崩溃；account cooldown/recovery；热切换回滚；session ownership epoch 冲突；跨 tenant 并发访问；Desktop bridge 断线/重连、事件缺口、慢 renderer、多窗口竞争与更新中断。
 
 Chaos 默认在功能主干接线完成后的 L2/L3 执行，不阻塞前期领域模型、协议骨架或单个 adapter 的频繁迭代。
 
@@ -95,4 +101,5 @@ try {
 ## 相关文档
 
 - [性能目标](performance-targets.md) · [安全验收](security-acceptance.md)
+- [Desktop GUI](../features/desktop-gui.md) · [P19-16 Desktop Gate](../../plan/P19-16-desktop-gate.md)
 - [ROADMAP 实施波次与门禁节奏](../../ROADMAP.md#实施波次与门禁节奏) · [plan 测试节奏与缓存清理](../../plan/README.md#测试节奏与缓存清理)

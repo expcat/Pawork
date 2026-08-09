@@ -15,6 +15,7 @@
 | GUI Connection Protocol | GUI 与 CLI/Core 之间唯一的线上协议（Command/Query/Event/Snapshot） |
 | GUI Server | CLI 进程内运行的 GUI 协议服务器 |
 | GUI Client SDK | Tauri GUI 使用的连接 SDK（`gui-client`） |
+| Desktop Projection Store | Desktop GUI 从 Snapshot/Event 重建的可丢弃 materialized view；不是权威状态，不保存业务事实 |
 | Connection Manager | 管理一个 CLI 实例上多个 GUI 连接的组件 |
 | Snapshot Service | 为 GUI 提供当前状态快照与重连恢复的组件 |
 | Transport | GUI 与 CLI 之间的传输抽象（Local：Unix Socket / Named Pipe；Remote：可替换 Adapter） |
@@ -52,6 +53,6 @@
 | Diagnostics Bundle | 可导出的脱敏诊断包 |
 | ADR | Architecture Decision Record，架构决策记录 |
 | P0 / P1 / P2 | 优先级分级：P0 必须、P1 重要、P2 可推迟；与任务 ID 中的 Phase 序号无关 |
-| Phase | 路线图阶段（当前 Phase 0–18）；任务 ID `P{n}-{seq}` 中的 `P{n}` 是 Phase 序号，不是优先级 |
+| Phase | 路线图阶段（当前 Phase 0–19）；任务 ID `P{n}-{seq}` 中的 `P{n}` 是 Phase 序号，不是优先级 |
 | Streamable HTTP | MCP 远程传输规范（2025-03-26 起），取代旧 HTTP+SSE |
 | 权威状态 | Core 是所有客户端状态的唯一权威来源，CLI 输出与所有 GUI 都是其观察者与操作入口（[ADR-030](adr/ADR-030-core-sole-source-of-truth.md)） |
