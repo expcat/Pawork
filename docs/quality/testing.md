@@ -25,6 +25,21 @@
 
 适配器开发期只运行变更路径对应的最小 contract 子集；基础协议矩阵在对应适配任务收尾执行，现代 hosted tools / reasoning / citation / capability negotiation 的完整矩阵集中在 P15-9 与 L3，不在 P15-1～P15-8 重复跑三家全套。
 
+## Plugin Contract Tests
+
+Phase 10 使用统一的 Plugin API v1 contract：manifest canonical signing payload 必须同时绑定 metadata 与
+component bytes；Ed25519 未知 key/篡改签名 fail closed；host API semver 覆盖兼容范围、minor 演进与跨
+major 拒绝；冻结 JSON golden 与 `wit-bindgen` guest binding 锁定 v1 WIT/JSON；Component ABI 覆盖
+`invoke(string) -> string`、畸形 JSON、trap、Fuel、memory、timeout 与 cancel；注册覆盖统一
+`PluginRuntime` 的 load/回滚/unload、namespace/冲突/`ExternalPlugin` 调度；state 覆盖 revision、
+plugin/scope 隔离、配额与 unload/apply 竞态；lifecycle hook 覆盖确定性顺序、订阅、注销和单插件
+error/panic/cancel 隔离。
+
+兼容矩阵与断言辅助位于 `test-support`，实现测试位于 `plugin-api`、`wasm-plugin-host` 与
+`hook-runtime`。它们自动进入现有 `cargo test --workspace` 三平台 CI，无需额外 wasm target 或外部
+runtime；测试组件使用 Wasmtime 的 Component text fixture 在进程内构造，WIT guest binding 只做
+host-native compile gate。
+
 ## Control Plane Contract Tests
 
 P18 使用独立于 Provider wire contract 的测试簇：selector property tests（priority/weighted/fill-first/affinity）、lease concurrency/reclaim、scope-aware error/cooldown、legacy migration、cross-tenant isolation、usage replay/idempotency 与 audit redaction。Agent cancel、`ContextTooLarge`、`ProtocolIncompatible` 必须验证不会误伤 credential health。

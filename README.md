@@ -96,7 +96,7 @@ Pawork/                       # 仓库根 = Cargo workspace 根
 
 ## 项目状态
 
-Phase 0 已完成；Phase 1～7 的主体实现已落地，当前优先处理七个 review remediation（从 P1-13 开始）与 P11-1 沙箱骨架。Provider Native、Modern Workflow、Ecosystem/Host、Account Control Plane & Client Adapters 与 Desktop GUI（Phase 15～19）仍处于规划阶段。任务完成度和下一项工作以 [ROADMAP](ROADMAP.md) 的实时进度表为准，不再用 README 固定阶段文字替代源码与路线图事实。
+Phase 0～10 已完成，其中 Phase 10 WASM Plugin 已形成独立宿主、签名/资源边界、`PluginRuntime` 原子注册/撤销、状态与 WIT/JSON 兼容门禁闭环；Phase 11 已有 P11-1 沙箱骨架。CLI Host 主干、Provider Native、Modern Workflow、Ecosystem/Host、Account Control Plane & Client Adapters 与 Desktop GUI 仍按 [ROADMAP](ROADMAP.md) 的依赖波次推进。任务完成度和下一项工作以路线图实时进度表为准，不再用 README 固定阶段文字替代源码与运行证据。
 
 ## 贡献
 

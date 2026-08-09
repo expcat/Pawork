@@ -94,7 +94,7 @@ agent-domain
      ↑
 provider-api  tool-api  plugin-api
      ↑
-provider-*   builtin-tools   plugin-host
+provider-*   builtin-tools   wasm-plugin-host / hook-runtime
      ↑
 agent-engine
      ↑

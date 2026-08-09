@@ -19,6 +19,8 @@ members = [
     "crates/provider-api",
     "crates/tool-api",
     "crates/plugin-api",
+    "crates/wasm-plugin-host",
+    "crates/hook-runtime",
     "crates/transport-api",
     "crates/test-support",
     "crates/core-api",
@@ -35,7 +37,7 @@ members = [
     "crates/app-service",
     "crates/cli-host",
     "crates/cli-command",
-   "crates/cli-renderer",
+    "crates/cli-renderer",
     "crates/context-engine",
     "crates/tool-runtime",
     "crates/agent-engine",
@@ -108,7 +110,7 @@ url = "2"
 
 # 扩展机制（MCP / WASM）
 rmcp = { version = "=2.2.0", default-features = false }
-wasmtime = "27"
+wasmtime = { version = "27", default-features = false, features = ["async", "component-model", "cranelift", "runtime", "wat"] }
 wit-bindgen = "0.40"
 
 # 文件遍历 / 搜索 / 正则 / 监听

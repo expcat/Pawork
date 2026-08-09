@@ -1,0 +1,21 @@
+[package]
+name = "hook-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork in-process sandboxed WASM plugin lifecycle hook dispatcher"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+plugin-api = { path = "../plugin-api" }
+semver.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+test-support = { path = "../test-support" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }

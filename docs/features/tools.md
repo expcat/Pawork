@@ -69,6 +69,21 @@ ProviderExtension → Provider 中介外部通道（MCP / Connector / Remote）�
 
 写操作串行；Shell 默认串行；只读文件可并发；搜索可并发；同文件操作串行；Git Index 操作串行；审批期间暂停相关调用；所有调用可取消。每次调用先经 `PolicyEngine::decide()`，未信任 Workspace 还需通过 descriptor gate；`rm -rf /`、`mkfs*` 与 `dd of=/dev/*` 在 `NeverAsk` 下仍必须拒绝或显式审批。Scheduler 只接受显式工具名，并原样传递真实 `ToolExecutionContext`。
 
+## WASM Plugin 工具（Phase 10）
+
+`wasm-plugin-host` 把签名 manifest 中的 tool registration 转为 `AgentTool`，注册名固定为
+`<plugin_id>::<local_name>`；已有名称与同批重复名称均拒绝，不允许覆盖 built-in/MCP/其他插件工具。
+`PluginRuntime` 在同一事务中发布/撤销插件工具、命令与 lifecycle hook；调度器从它取得 canonical
+`ToolRegistry` 快照，卸载后的旧 adapter 也会被 host active gate 拒绝。
+无论插件声明了哪些底层需求，交给 Scheduler 的 capability 始终是 `ExternalPlugin`，并固定
+`read_only=false`、`supports_concurrency=false`、`allowed_in_untrusted_workspace=false`，因此插件不能
+通过自报 descriptor 绕过审批或串行语义。
+
+调用仍走 `ToolScheduler`，随后由 adapter 封装为 versioned `PluginInvocation` JSON 进入受 Fuel、内存、
+时间、输入/输出限制的 Component Store；完整 canonical `ToolResult` 会原样保留，普通 JSON result 则
+安全包装为单个 Text content。取消令牌会同时传到 Scheduler 与 WASM epoch interruption。详见
+[Plugin 系统](plugins.md)。
+
 ## 验收标准
 
 - 所有写操作可回滚（Checkpoint）
@@ -82,4 +97,4 @@ ProviderExtension → Provider 中介外部通道（MCP / Connector / Remote）�
 - [控制流（调度）](../architecture/control-flow.md) · [policy](policy.md) · [process](process.md) · [checkpoint](checkpoint.md) · [artifacts](artifacts.md)
 - [ADR-008 capability 分类](../adr/ADR-008-builtin-tools-capability.md) · [ADR-010 写操作 Checkpoint](../adr/ADR-010-checkpoint-all-writes.md)
 - [ROADMAP Phase 4](../../ROADMAP.md)
-- [ROADMAP Phase 15（Canonical Tool v2）](../../ROADMAP.md)
+- [ROADMAP Phase 10（WASM Plugin）](../../ROADMAP.md) · [ROADMAP Phase 15（Canonical Tool v2）](../../ROADMAP.md)

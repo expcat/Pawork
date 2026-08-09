@@ -1,18 +1,25 @@
 //! 可编程 Mock Provider、Mock Tool 与断言辅助。
 
 pub mod contract;
+pub mod plugin_contract;
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use agent_domain::{
-    CancellationToken, ModelId, ProviderId, RequestId, RunId, StopReason, TokenUsage, ToolCallId,
-    WorkspaceId,
+    CancellationToken, ModelId, PluginId, ProviderId, RequestId, RunId, StopReason, TokenUsage,
+    ToolCallId, WorkspaceId,
 };
 use async_trait::async_trait;
+use plugin_api::{
+    Plugin, PluginCapability, PluginContext, PluginError, PluginLifecycleEvent,
+    PluginLifecycleEventKind, PluginManifest, PluginPermissions,
+};
 use provider_api::{
     CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
     ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, ResolvedCredential,
 };
+use semver::{Version, VersionReq};
 use serde_json::Value;
 use tool_api::{
     AgentTool, ToolCapability, ToolDescriptor, ToolError, ToolEventSink, ToolExecutionContext,
@@ -278,6 +285,168 @@ impl ModelProvider for MockProvider {
         }
         Ok(summary)
     }
+}
+
+/// Mock Plugin 脚本步骤：按调用顺序逐步消费，脚本耗尽后默认成功。
+#[derive(Clone, Debug)]
+pub enum MockPluginStep {
+    /// 返回成功。
+    Ok,
+    /// 返回指定插件错误。
+    Error(PluginError),
+    /// 触发 panic（用于验证 panic 不会终止 Core）。
+    Panic(String),
+    /// 等待取消令牌（插件自身观察取消）。
+    WaitForCancellation,
+}
+
+/// 可编程 Mock Plugin：按 manifest 订阅事件，按脚本逐步响应。
+#[derive(Clone, Debug)]
+pub struct MockPlugin {
+    manifest: PluginManifest,
+    panic_on_manifest: bool,
+    script: Arc<Mutex<VecDeque<MockPluginStep>>>,
+    calls: Arc<Mutex<Vec<MockPluginCallRecord>>>,
+}
+
+impl MockPlugin {
+    pub fn new(manifest: PluginManifest) -> Self {
+        Self {
+            manifest,
+            panic_on_manifest: false,
+            script: Arc::new(Mutex::new(VecDeque::new())),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn with_manifest(mut self, manifest: PluginManifest) -> Self {
+        self.manifest = manifest;
+        self
+    }
+
+    /// 让 trait manifest accessor panic，用于验证注册边界的 panic 隔离。
+    pub fn with_manifest_panic(mut self) -> Self {
+        self.panic_on_manifest = true;
+        self
+    }
+
+    pub fn with_step(self, step: MockPluginStep) -> Self {
+        self.script
+            .lock()
+            .expect("mock plugin script mutex")
+            .push_back(step);
+        self
+    }
+
+    pub fn with_script(self, steps: impl IntoIterator<Item = MockPluginStep>) -> Self {
+        self.script
+            .lock()
+            .expect("mock plugin script mutex")
+            .extend(steps);
+        self
+    }
+
+    pub fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    pub fn calls(&self) -> Vec<MockPluginCallRecord> {
+        self.calls.lock().expect("mock plugin calls mutex").clone()
+    }
+
+    pub fn call_count(&self) -> usize {
+        self.calls().len()
+    }
+
+    fn next_step(&self) -> MockPluginStep {
+        self.script
+            .lock()
+            .expect("mock plugin script mutex")
+            .pop_front()
+            .unwrap_or(MockPluginStep::Ok)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MockPluginCallRecord {
+    pub plugin_id: PluginId,
+    pub event: PluginLifecycleEventKind,
+    pub context: PluginContext,
+    pub cancelled: bool,
+}
+
+#[async_trait]
+impl Plugin for MockPlugin {
+    fn manifest(&self) -> &PluginManifest {
+        assert!(
+            !self.panic_on_manifest,
+            "mock plugin manifest accessor panic"
+        );
+        &self.manifest
+    }
+
+    async fn on_lifecycle_event(
+        &self,
+        event: PluginLifecycleEvent,
+        context: PluginContext,
+        cancel: CancellationToken,
+    ) -> Result<(), PluginError> {
+        let cancelled = cancel.is_cancelled();
+        self.calls
+            .lock()
+            .expect("mock plugin calls mutex")
+            .push(MockPluginCallRecord {
+                plugin_id: self.manifest.id.clone(),
+                event: event.kind(),
+                context,
+                cancelled,
+            });
+        if cancelled {
+            return Err(PluginError::cancelled("mock plugin cancelled"));
+        }
+
+        match self.next_step() {
+            MockPluginStep::Ok => Ok(()),
+            MockPluginStep::Error(error) => Err(error),
+            MockPluginStep::Panic(message) => panic!("{message}"),
+            MockPluginStep::WaitForCancellation => {
+                cancel.cancelled().await;
+                Err(PluginError::cancelled("mock plugin cancelled"))
+            }
+        }
+    }
+}
+
+/// 构造带 `LifecycleHook` capability 的 lifecycle hook 测试插件。
+pub fn hook_plugin(
+    id: impl Into<PluginId>,
+    hooks: impl IntoIterator<Item = PluginLifecycleEventKind>,
+) -> MockPlugin {
+    hook_plugin_with_api(id, "^1", hooks)
+}
+
+/// 构造指定宿主 API 兼容范围的 lifecycle hook 测试插件（P10-6）。
+pub fn hook_plugin_with_api(
+    id: impl Into<PluginId>,
+    api_requirement: &str,
+    hooks: impl IntoIterator<Item = PluginLifecycleEventKind>,
+) -> MockPlugin {
+    let id = id.into();
+    let manifest = PluginManifest {
+        id: id.clone(),
+        name: id.as_str().to_owned(),
+        version: Version::new(1, 0, 0),
+        api_version: VersionReq::parse(api_requirement)
+            .expect("api_requirement must be a valid semver requirement"),
+        description: None,
+        permissions: PluginPermissions::default(),
+        capabilities: vec![PluginCapability::LifecycleHook],
+        tool_capabilities: Vec::new(),
+        tools: Vec::new(),
+        commands: Vec::new(),
+        lifecycle_hooks: hooks.into_iter().collect(),
+    };
+    MockPlugin::new(manifest)
 }
 
 #[derive(Clone, Debug)]
@@ -582,5 +751,70 @@ mod tests {
         assert!(provider.calls()[0].cancelled);
         assert!(tool.calls()[0].cancelled);
         assert_eq!(tool_error.kind, tool_api::ToolErrorKind::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn mock_plugin_consumes_script_records_calls_and_cancellation() {
+        use agent_domain::CoreInstanceId;
+        use plugin_api::{PluginErrorKind, PluginLifecycleEvent};
+
+        let context = PluginContext {
+            instance_id: CoreInstanceId::from("core"),
+            workspace_id: None,
+            session_id: None,
+            run_id: None,
+        };
+        let plugin = hook_plugin("p", [PluginLifecycleEventKind::RunStart]).with_script([
+            MockPluginStep::Error(PluginError::new(PluginErrorKind::Timeout, "scripted error")),
+            MockPluginStep::Panic("scripted panic".into()),
+        ]);
+
+        let first = plugin
+            .on_lifecycle_event(
+                PluginLifecycleEvent::RunStart {
+                    run_id: RunId::from("r-1"),
+                },
+                context.clone(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("scripted error");
+        assert_eq!(first.kind, PluginErrorKind::Timeout);
+        assert_eq!(plugin.call_count(), 1);
+        assert_eq!(plugin.calls()[0].event, PluginLifecycleEventKind::RunStart);
+
+        let panic_task = tokio::spawn({
+            let plugin = plugin.clone();
+            let context = context.clone();
+            async move {
+                plugin
+                    .on_lifecycle_event(
+                        PluginLifecycleEvent::RunStart {
+                            run_id: RunId::from("r-2"),
+                        },
+                        context,
+                        CancellationToken::new(),
+                    )
+                    .await
+            }
+        });
+        let join_error = panic_task.await.expect_err("scripted panic");
+        assert!(join_error.is_panic());
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let cancelled = plugin
+            .on_lifecycle_event(
+                PluginLifecycleEvent::RunStart {
+                    run_id: RunId::from("r-3"),
+                },
+                context,
+                cancel,
+            )
+            .await
+            .expect_err("cancelled");
+        assert_eq!(cancelled.kind, PluginErrorKind::Cancelled);
+        assert_eq!(plugin.call_count(), 3);
+        assert!(plugin.calls()[2].cancelled);
     }
 }

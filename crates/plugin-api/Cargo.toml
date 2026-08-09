@@ -5,15 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork 外部扩展的 manifest 与生命周期协议骨架"
+description = "Pawork WASM 插件的 manifest、调用、状态与生命周期稳定协议"
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
 tool-api = { path = "../tool-api" }
 async-trait.workspace = true
+blake3.workspace = true
 semver.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
+wit-bindgen.workspace = true

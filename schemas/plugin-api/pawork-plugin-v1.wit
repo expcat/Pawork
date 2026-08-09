@@ -1,0 +1,7 @@
+package pawork:plugin@1.0.0;
+
+/// Pawork Plugin API v1. The payloads are versioned JSON values described by
+/// `plugin-api::{PluginInvocation, PluginInvocationOutput}`.
+world plugin {
+    export invoke: func(request: string) -> string;
+}

@@ -30,7 +30,7 @@
 | 7 | Git、Diff 与 Worktree | 9 | 9 | 🟢已完成 |
 | 8 | Skills、Prompts 与 Instructions | 8 | 8 | 🟢已完成 |
 | 9 | MCP | 7 | 7 | 🟢已完成（P9-1～P9-7 TargetVerified） |
-| 10 | WASM Plugin | 6 | 0 | 🟡未开始 |
+| 10 | WASM Plugin | 6 | 6 | 🟢已完成（P10-1～P10-6 TargetVerified） |
 | 11 | Sandbox 与跨平台强化 | 8 | 1 | 🔵进行中（P11-1 骨架；P11-5 已归档） |
 | 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
@@ -40,7 +40,7 @@
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **110** | — |
+| **合计** | — | **210** | **116** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -383,12 +383,15 @@ WASM 作为第一代码插件机制，能力受控。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P10-1 | 🟡 | Plugin Manifest + signature | 元数据+签名校验 | [详情](plan/P10-1-plugin-manifest.md) |
-| P10-2 | 🟡 | WASM Host | component 宿主+加载卸载 | [详情](plan/P10-2-wasm-host.md) |
-| P10-3 | 🟡 | Tool / command + hooks | 注册+生命周期 hook | [详情](plan/P10-3-plugin-registration.md) |
-| P10-4 | 🟡 | Plugin state | 状态保存 | [详情](plan/P10-4-plugin-state.md) |
-| P10-5 | 🟡 | Capability / fuel / 内存 / 时间 | 默认无文件/网络/进程 | [详情](plan/P10-5-plugin-capability.md) |
-| P10-6 | 🟡 | API version 兼容测试 | 版本兼容套件 | [详情](plan/P10-6-plugin-apiversion.md) |
+| P10-1 | 🟢 | Plugin Manifest + signature | 元数据+签名校验 | [详情](plan/P10-1-plugin-manifest.md) |
+| P10-2 | 🟢 | WASM Host | component 宿主+加载卸载 | [详情](plan/P10-2-wasm-host.md) |
+| P10-3 | 🟢 | Tool / command + hooks | 注册+生命周期 hook | [详情](plan/P10-3-plugin-registration.md) |
+| P10-4 | 🟢 | Plugin state | 状态保存 | [详情](plan/P10-4-plugin-state.md) |
+| P10-5 | 🟢 | Capability / fuel / 内存 / 时间 | 默认无文件/网络/进程 | [详情](plan/P10-5-plugin-capability.md) |
+| P10-6 | 🟢 | API version 兼容测试 | 版本兼容套件 | [详情](plan/P10-6-plugin-apiversion.md) |
+
+> Phase 10 已交付 `PluginRuntime` 子系统闭环（验签/load → 工具/命令/hook 注册 → 派发 → 完整撤销）；
+> `app-service` / `core-runtime` / `pawork` 的正式进程装配仍按 P13-1/P13-2 推进，不重复定义插件契约。
 
 ### Phase 11：Sandbox 与跨平台强化
 

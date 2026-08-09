@@ -1,62 +1,51 @@
-//! Pawork 插件协议骨架。
+//! Pawork WASM 插件的稳定宿主协议。
 //!
-//! 本 crate 只冻结 manifest、能力声明与生命周期接口；WASM/MCP 宿主、加载器、
-//! 签名验证和状态存储均不在此实现。
+//! 本 crate 只包含可序列化契约与进程内抽象，不实现 WASM、签名算法、存储或 IO。
+//! 组件宿主位于 `wasm-plugin-host`，生命周期派发位于 `hook-runtime`。
+
+mod invocation;
+mod manifest;
+
+pub use invocation::{
+    PluginCommandInvocation, PluginInvocation, PluginInvocationOutput, PluginInvocationResponse,
+    PluginOperation, PluginStateMutation, PluginStateScope, PluginStateSnapshot,
+};
+pub use manifest::{
+    plugin_api_version, ManifestValidationError, PluginCapability, PluginCommandRegistration,
+    PluginManifest, PluginPermissions, PluginSignature, PluginSignatureAlgorithm,
+    PluginToolRegistration, SignedPluginManifest, MAX_PLUGIN_MANIFEST_BYTES, PLUGIN_API_VERSION,
+    PLUGIN_INVOKE_EXPORT,
+};
 
 use agent_domain::{
-    CancellationToken, CoreInstanceId, ErrorCategory, ErrorContext, PluginId, RunId, SessionId,
-    WorkspaceId,
+    CancellationToken, CoreInstanceId, ErrorCategory, ErrorContext, RunId, SessionId, WorkspaceId,
 };
 use async_trait::async_trait;
-use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tool_api::ToolCapability;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginManifest {
-    pub id: PluginId,
-    pub name: String,
-    pub version: Version,
-    pub api_version: VersionReq,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub permissions: PluginPermissions,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<PluginCapability>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_capabilities: Vec<ToolCapability>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginPermissions {
-    /// Workspace 相对路径或命名 scope；空列表表示无权限。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub filesystem_read: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub filesystem_write: Vec<String>,
-    /// 允许访问的主机名；空列表表示无网络权限。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub network: Vec<String>,
-    #[serde(default)]
-    pub process: bool,
-    /// Secret 引用名，不是明文 Secret。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub secret_refs: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PluginCapability {
-    RegisterTool,
-    RegisterCommand,
-    LifecycleHook,
-    ModifyContext,
-    CompactionStrategy,
-    RegisterProvider,
-    PersistentState,
-    UserInteraction,
+pub enum PluginLifecycleEventKind {
+    Load,
+    Register,
+    Start,
+    Stop,
+    Unload,
+    CoreStart,
+    WorkspaceOpen,
+    SessionCreate,
+    SessionOpen,
+    RunStart,
+    ContextBuild,
+    ProviderRequest,
+    AssistantDelta,
+    ToolCall,
+    ToolResult,
+    Compaction,
+    RunEnd,
+    SessionClose,
+    CoreShutdown,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +72,32 @@ pub enum PluginLifecycleEvent {
     CoreShutdown,
 }
 
+impl PluginLifecycleEvent {
+    pub const fn kind(&self) -> PluginLifecycleEventKind {
+        match self {
+            Self::Load => PluginLifecycleEventKind::Load,
+            Self::Register => PluginLifecycleEventKind::Register,
+            Self::Start => PluginLifecycleEventKind::Start,
+            Self::Stop => PluginLifecycleEventKind::Stop,
+            Self::Unload => PluginLifecycleEventKind::Unload,
+            Self::CoreStart => PluginLifecycleEventKind::CoreStart,
+            Self::WorkspaceOpen { .. } => PluginLifecycleEventKind::WorkspaceOpen,
+            Self::SessionCreate { .. } => PluginLifecycleEventKind::SessionCreate,
+            Self::SessionOpen { .. } => PluginLifecycleEventKind::SessionOpen,
+            Self::RunStart { .. } => PluginLifecycleEventKind::RunStart,
+            Self::ContextBuild { .. } => PluginLifecycleEventKind::ContextBuild,
+            Self::ProviderRequest { .. } => PluginLifecycleEventKind::ProviderRequest,
+            Self::AssistantDelta { .. } => PluginLifecycleEventKind::AssistantDelta,
+            Self::ToolCall { .. } => PluginLifecycleEventKind::ToolCall,
+            Self::ToolResult { .. } => PluginLifecycleEventKind::ToolResult,
+            Self::Compaction { .. } => PluginLifecycleEventKind::Compaction,
+            Self::RunEnd { .. } => PluginLifecycleEventKind::RunEnd,
+            Self::SessionClose { .. } => PluginLifecycleEventKind::SessionClose,
+            Self::CoreShutdown => PluginLifecycleEventKind::CoreShutdown,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginContext {
     pub instance_id: CoreInstanceId,
@@ -92,6 +107,18 @@ pub struct PluginContext {
     pub session_id: Option<SessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<RunId>,
+}
+
+impl PluginContext {
+    pub fn state_scope(&self) -> PluginStateScope {
+        if let Some(session_id) = &self.session_id {
+            PluginStateScope::Session(session_id.clone())
+        } else if let Some(workspace_id) = &self.workspace_id {
+            PluginStateScope::Workspace(workspace_id.clone())
+        } else {
+            PluginStateScope::Global
+        }
+    }
 }
 
 #[async_trait]
@@ -106,18 +133,71 @@ pub trait Plugin: Send + Sync {
     ) -> Result<(), PluginError>;
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginErrorKind {
+    InvalidManifest,
+    SignatureRejected,
+    IncompatibleApi,
+    PermissionDenied,
+    InvalidInvocation,
+    State,
+    FuelExhausted,
+    MemoryLimit,
+    Timeout,
+    Cancelled,
+    Trap,
+    NotLoaded,
+    Conflict,
+    #[default]
+    Internal,
+}
+
 #[derive(Clone, Debug, Error, PartialEq, Eq, Serialize, Deserialize)]
-#[error("{message}")]
+#[error("{kind:?}: {message}")]
 pub struct PluginError {
+    #[serde(default)]
+    pub kind: PluginErrorKind,
     pub message: String,
     #[serde(default)]
     pub retryable: bool,
 }
 
+impl PluginError {
+    pub fn new(kind: PluginErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            retryable: false,
+        }
+    }
+
+    pub fn cancelled(message: impl Into<String>) -> Self {
+        Self::new(PluginErrorKind::Cancelled, message)
+    }
+}
+
 impl From<PluginError> for ErrorContext {
     fn from(error: PluginError) -> Self {
+        let category = match error.kind {
+            PluginErrorKind::InvalidManifest
+            | PluginErrorKind::IncompatibleApi
+            | PluginErrorKind::InvalidInvocation => ErrorCategory::InvalidRequest,
+            PluginErrorKind::SignatureRejected | PluginErrorKind::PermissionDenied => {
+                ErrorCategory::Authorization
+            }
+            PluginErrorKind::Timeout => ErrorCategory::Timeout,
+            PluginErrorKind::Cancelled => ErrorCategory::Cancelled,
+            PluginErrorKind::NotLoaded => ErrorCategory::NotFound,
+            PluginErrorKind::Conflict => ErrorCategory::Conflict,
+            PluginErrorKind::State
+            | PluginErrorKind::FuelExhausted
+            | PluginErrorKind::MemoryLimit
+            | PluginErrorKind::Trap => ErrorCategory::Tool,
+            PluginErrorKind::Internal => ErrorCategory::Internal,
+        };
         Self {
-            category: ErrorCategory::Internal,
+            category,
             message: error.message,
             retryable: error.retryable,
             retry_after_ms: None,
@@ -131,28 +211,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manifest_round_trip_preserves_tool_capabilities() {
-        let manifest = PluginManifest {
-            id: PluginId::from("example.plugin"),
-            name: "Example".into(),
-            version: Version::new(1, 2, 0),
-            api_version: VersionReq::parse(">=1, <2").expect("valid version requirement"),
-            description: None,
-            permissions: PluginPermissions {
-                filesystem_read: vec!["workspace".into()],
-                network: vec!["api.example.com".into()],
-                ..PluginPermissions::default()
-            },
-            capabilities: vec![PluginCapability::RegisterTool],
-            tool_capabilities: vec![ToolCapability::ReadOnly],
-        };
-
-        let encoded = serde_json::to_string(&manifest).expect("serialize manifest");
-        let decoded: PluginManifest = serde_json::from_str(&encoded).expect("deserialize manifest");
-        assert_eq!(decoded, manifest);
-    }
-
-    #[test]
     fn permissions_default_to_deny() {
         let permissions = PluginPermissions::default();
         assert!(permissions.filesystem_read.is_empty());
@@ -160,5 +218,43 @@ mod tests {
         assert!(permissions.network.is_empty());
         assert!(!permissions.process);
         assert!(permissions.secret_refs.is_empty());
+    }
+
+    #[test]
+    fn context_selects_most_specific_persistent_scope() {
+        let context = PluginContext {
+            instance_id: CoreInstanceId::from("core"),
+            workspace_id: Some(WorkspaceId::from("workspace")),
+            session_id: Some(SessionId::from("session")),
+            run_id: Some(RunId::from("run")),
+        };
+
+        assert_eq!(
+            context.state_scope(),
+            PluginStateScope::Session(SessionId::from("session"))
+        );
+    }
+
+    #[test]
+    fn lifecycle_payload_maps_to_stable_kind() {
+        let event = PluginLifecycleEvent::RunStart {
+            run_id: RunId::from("run"),
+        };
+        assert_eq!(event.kind(), PluginLifecycleEventKind::RunStart);
+    }
+
+    #[test]
+    fn plugin_errors_keep_actionable_shared_categories() {
+        let context = ErrorContext::from(PluginError::new(
+            PluginErrorKind::SignatureRejected,
+            "untrusted signer",
+        ));
+        assert_eq!(context.category, ErrorCategory::Authorization);
+
+        let context = ErrorContext::from(PluginError::new(
+            PluginErrorKind::FuelExhausted,
+            "fuel exhausted",
+        ));
+        assert_eq!(context.category, ErrorCategory::Tool);
     }
 }
