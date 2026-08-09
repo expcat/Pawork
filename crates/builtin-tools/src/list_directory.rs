@@ -274,18 +274,25 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pawork-listdir-{}-{}-{name}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!(
+                "pawork-listdir-{}-{}-{name}-",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .tempdir()
+            .expect("create temp dir")
     }
 
-    fn make_service() -> (WorkspaceService, WorkspaceId, std::path::PathBuf) {
-        let root = temp_root("ws");
+    fn make_service() -> (
+        WorkspaceService,
+        WorkspaceId,
+        std::path::PathBuf,
+        tempfile::TempDir,
+    ) {
+        let ws_dir = temp_root("ws");
+        let root = ws_dir.path().to_path_buf();
         let service = WorkspaceService::new();
         let id = WorkspaceId::from("ws-1");
         service
@@ -296,12 +303,12 @@ mod tests {
                 Timestamp::from_unix_millis(1),
             )
             .expect("add");
-        (service, id, root)
+        (service, id, root, ws_dir)
     }
 
     #[test]
     fn lists_entries_with_type_and_symlink() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::create_dir_all(root.join("sub")).unwrap();
         fs::write(root.join("a.txt"), b"hello").unwrap();
         #[cfg(unix)]
@@ -326,7 +333,7 @@ mod tests {
 
     #[test]
     fn pagination_works() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         for i in 0..5 {
             fs::write(root.join(format!("f{i}")), "").unwrap();
         }
@@ -348,7 +355,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dangling_symlink_is_reported_without_failing_listing() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         symlink("missing-target", root.join("broken-link")).unwrap();
         let res = list_dir(&service, &id, &json!({"path": "."})).expect("list");
         assert_eq!(res.metadata["total"], 1);
@@ -358,7 +365,7 @@ mod tests {
 
     #[test]
     fn non_directory_path_errors() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::write(root.join("file.txt"), "x").unwrap();
         let err = list_dir(&service, &id, &json!({"path": "file.txt"})).unwrap_err();
         assert!(matches!(

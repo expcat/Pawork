@@ -237,18 +237,25 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pawork-find-{}-{}-{name}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!(
+                "pawork-find-{}-{}-{name}-",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .tempdir()
+            .expect("create temp dir")
     }
 
-    fn make_service() -> (WorkspaceService, WorkspaceId, std::path::PathBuf) {
-        let root = temp_root("ws");
+    fn make_service() -> (
+        WorkspaceService,
+        WorkspaceId,
+        std::path::PathBuf,
+        tempfile::TempDir,
+    ) {
+        let ws_dir = temp_root("ws");
+        let root = ws_dir.path().to_path_buf();
         let service = WorkspaceService::new();
         let id = WorkspaceId::from("ws-1");
         service
@@ -259,12 +266,12 @@ mod tests {
                 Timestamp::from_unix_millis(1),
             )
             .expect("add");
-        (service, id, root)
+        (service, id, root, ws_dir)
     }
 
     #[test]
     fn glob_matches_files_sorted() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::create_dir_all(root.join("src")).unwrap();
         fs::write(root.join("src/b.rs"), "").unwrap();
         fs::write(root.join("src/a.rs"), "").unwrap();
@@ -290,7 +297,7 @@ mod tests {
 
     #[test]
     fn max_results_truncates() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         for i in 0..10 {
             fs::write(root.join(format!("f{i}.txt")), "").unwrap();
         }
@@ -311,7 +318,7 @@ mod tests {
 
     #[test]
     fn dir_filter() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::create_dir_all(root.join("sub")).unwrap();
         fs::write(root.join("sub/x.rs"), "").unwrap();
         let res = find(
@@ -331,7 +338,7 @@ mod tests {
 
     #[test]
     fn cancelled_find_stops_before_traversal() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let cancel = CancellationToken::new();
         cancel.cancel();
         let error = find(&service, &id, &json!({"pattern": "**/*"}), &cancel).unwrap_err();

@@ -376,14 +376,15 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pawork-editfile-{}-{}-{name}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!(
+                "pawork-editfile-{}-{}-{name}-",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .tempdir()
+            .expect("create temp dir")
     }
 
     async fn make_env() -> (
@@ -391,9 +392,13 @@ mod tests {
         CheckpointService,
         WorkspaceId,
         std::path::PathBuf,
+        tempfile::TempDir,
+        tempfile::TempDir,
     ) {
-        let root = temp_root("ws");
-        let store_root = temp_root("store");
+        let ws_dir = temp_root("ws");
+        let store_dir = temp_root("store");
+        let root = ws_dir.path().to_path_buf();
+        let store_root = store_dir.path().to_path_buf();
         let store = ArtifactStore::open(&store_root).await.expect("open store");
         let checkpoints = CheckpointService::new(store);
         let service = WorkspaceService::new();
@@ -406,7 +411,7 @@ mod tests {
                 Timestamp::from_unix_millis(1),
             )
             .expect("add");
-        (service, checkpoints, id, root)
+        (service, checkpoints, id, root, ws_dir, store_dir)
     }
 
     fn single_edit(path: &str, old: &str, new: &str) -> Value {
@@ -415,7 +420,7 @@ mod tests {
 
     #[tokio::test]
     async fn precise_single_replacement() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         fs::write(root.join("a.txt"), "alpha\nbeta\n").unwrap();
         let rid = agent_domain::RunId::from("r1");
         let tid = agent_domain::ToolCallId::from("t1");
@@ -437,7 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_unique_reports_conflict() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         fs::write(root.join("a.txt"), "dup\ndup\n").unwrap();
         let rid = agent_domain::RunId::from("r1");
         let tid = agent_domain::ToolCallId::from("t1");
@@ -461,7 +466,7 @@ mod tests {
 
     #[tokio::test]
     async fn multi_segment_atomic() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         fs::write(root.join("a.txt"), "foo\nbar\nbaz\n").unwrap();
         let rid = agent_domain::RunId::from("r1");
         let tid = agent_domain::ToolCallId::from("t1");
@@ -483,7 +488,7 @@ mod tests {
 
     #[tokio::test]
     async fn multi_segment_partial_failure_rolls_back() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         fs::write(root.join("a.txt"), "foo\nbar\n").unwrap();
         let rid = agent_domain::RunId::from("r1");
         let tid = agent_domain::ToolCallId::from("t1");
@@ -507,7 +512,7 @@ mod tests {
 
     #[tokio::test]
     async fn fuzzy_match_normalizes_whitespace() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         fs::write(root.join("a.txt"), "  alpha    beta  \n").unwrap();
         let rid = agent_domain::RunId::from("r1");
         let tid = agent_domain::ToolCallId::from("t1");
@@ -528,7 +533,7 @@ mod tests {
 
     #[tokio::test]
     async fn fuzzy_edit_preserves_terminal_newline() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         fs::write(root.join("newline.txt"), "alpha   beta\ngamma\n").unwrap();
         edit(
             &service,

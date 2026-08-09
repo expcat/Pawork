@@ -430,7 +430,6 @@ mod tests {
     use super::*;
     use agent_domain::Timestamp;
     use agent_domain::WorkspaceId;
-    use std::fs;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
     use test_support::RecordingToolSink;
@@ -439,18 +438,25 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pawork-runcmd-{}-{}-{name}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!(
+                "pawork-runcmd-{}-{}-{name}-",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .tempdir()
+            .expect("create temp dir")
     }
 
-    fn make_service() -> (WorkspaceService, WorkspaceId, std::path::PathBuf) {
-        let root = temp_root("ws");
+    fn make_service() -> (
+        WorkspaceService,
+        WorkspaceId,
+        std::path::PathBuf,
+        tempfile::TempDir,
+    ) {
+        let ws_dir = temp_root("ws");
+        let root = ws_dir.path().to_path_buf();
         let service = WorkspaceService::new();
         let id = WorkspaceId::from("ws-1");
         service
@@ -461,12 +467,12 @@ mod tests {
                 Timestamp::from_unix_millis(1),
             )
             .expect("add");
-        (service, id, root)
+        (service, id, root, ws_dir)
     }
 
     #[tokio::test]
     async fn captures_stdout_and_exit_code() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let sink = RecordingToolSink::default();
         let res = run(
             &service,
@@ -508,7 +514,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_zero_exit_is_not_success() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let sink = RecordingToolSink::default();
         #[cfg(windows)]
         let command = "exit 7";
@@ -531,7 +537,7 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_produces_failure() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let sink = RecordingToolSink::default();
         // Windows 无 sleep，用 ping 制造长时进程。
         #[cfg(windows)]
@@ -555,7 +561,7 @@ mod tests {
 
     #[tokio::test]
     async fn emits_output_before_process_exits() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let sink = RecordingToolSink::default();
         let observed = sink.clone();
         #[cfg(windows)]
@@ -625,7 +631,7 @@ mod tests {
 
     #[test]
     fn descriptor_does_not_offer_model_controlled_network_bypass() {
-        let (service, _, _) = make_service();
+        let (service, _, _, _) = make_service();
         let descriptor = RunCommandTool::new(service).descriptor();
         let properties = descriptor.input_schema["properties"]
             .as_object()
@@ -638,7 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_network_request_is_audited_but_not_granted_and_limits_are_clamped() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let result = run(
             &service,
             ProcessRuntime::new(),
@@ -671,7 +677,7 @@ mod tests {
 
     #[tokio::test]
     async fn sandbox_strips_explicit_secret_environment() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let sink = RecordingToolSink::default();
         #[cfg(windows)]
         let input = json!({

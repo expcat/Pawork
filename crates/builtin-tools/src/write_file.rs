@@ -158,14 +158,15 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pawork-writefile-{}-{}-{name}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!(
+                "pawork-writefile-{}-{}-{name}-",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .tempdir()
+            .expect("create temp dir")
     }
 
     struct Env {
@@ -174,11 +175,15 @@ mod tests {
         id: WorkspaceId,
         root: std::path::PathBuf,
         _store: ArtifactStore,
+        _ws_dir: tempfile::TempDir,
+        _store_dir: tempfile::TempDir,
     }
 
     async fn make_env() -> Env {
-        let root = temp_root("ws");
-        let store_root = temp_root("store");
+        let ws_dir = temp_root("ws");
+        let store_dir = temp_root("store");
+        let root = ws_dir.path().to_path_buf();
+        let store_root = store_dir.path().to_path_buf();
         let store = ArtifactStore::open(&store_root).await.expect("open store");
         let checkpoints = CheckpointService::new(store.clone());
         let service = WorkspaceService::new();
@@ -197,6 +202,8 @@ mod tests {
             id,
             root,
             _store: store,
+            _ws_dir: ws_dir,
+            _store_dir: store_dir,
         }
     }
 
@@ -288,7 +295,8 @@ mod tests {
     #[test]
     fn rejects_traversal() {
         // 仅验证路径解析层（无需 async）。
-        let roots = vec![temp_root("ws2")];
+        let ws2_dir = temp_root("ws2");
+        let roots = vec![ws2_dir.path().to_path_buf()];
         let err = resolve_rel(&roots, "../escape.txt").unwrap_err();
         assert!(matches!(err, BuiltinToolError::Path(_)));
     }

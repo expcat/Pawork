@@ -146,3 +146,20 @@ proptest = "1"
 wiremock = "0.6"
 insta = "1"
 assert_cmd = "2"
+
+# —— 构建缓存与 target/ 体积优化（详见 docs/quality/testing.md「Cargo Profile」）——
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false
+
+[profile.debugging]
+inherits = "dev"
+debug = "full"

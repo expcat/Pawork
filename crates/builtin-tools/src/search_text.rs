@@ -346,18 +346,25 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pawork-search-{}-{}-{name}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!(
+                "pawork-search-{}-{}-{name}-",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .tempdir()
+            .expect("create temp dir")
     }
 
-    fn make_service() -> (WorkspaceService, WorkspaceId, std::path::PathBuf) {
-        let root = temp_root("ws");
+    fn make_service() -> (
+        WorkspaceService,
+        WorkspaceId,
+        std::path::PathBuf,
+        tempfile::TempDir,
+    ) {
+        let ws_dir = temp_root("ws");
+        let root = ws_dir.path().to_path_buf();
         let service = WorkspaceService::new();
         let id = WorkspaceId::from("ws-1");
         service
@@ -368,12 +375,12 @@ mod tests {
                 Timestamp::from_unix_millis(1),
             )
             .expect("add");
-        (service, id, root)
+        (service, id, root, ws_dir)
     }
 
     #[test]
     fn fixed_string_match_with_context() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::write(root.join("a.rs"), "alpha\nbeta\ngamma\nbeta\n").unwrap();
         let res = search(
             &service,
@@ -394,7 +401,7 @@ mod tests {
 
     #[test]
     fn regex_match() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::write(root.join("b.txt"), "foo123bar\nqux\n").unwrap();
         let res = search(
             &service,
@@ -413,7 +420,7 @@ mod tests {
 
     #[test]
     fn glob_filter_applies() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::write(root.join("a.rs"), "target\n").unwrap();
         fs::write(root.join("b.txt"), "target\n").unwrap();
         let res = search(
@@ -433,7 +440,7 @@ mod tests {
 
     #[test]
     fn invalid_regex_returns_invalid_input() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let err = search(
             &service,
             &id,
@@ -447,7 +454,7 @@ mod tests {
 
     #[test]
     fn cancelled_search_stops_before_traversal() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let cancel = CancellationToken::new();
         cancel.cancel();
         let error = search(&service, &id, &json!({"pattern": "x"}), &cancel).unwrap_err();

@@ -260,18 +260,25 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pawork-readfile-{}-{}-{name}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!(
+                "pawork-readfile-{}-{}-{name}-",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .tempdir()
+            .expect("create temp dir")
     }
 
-    fn make_service() -> (WorkspaceService, WorkspaceId, std::path::PathBuf) {
-        let root = temp_root("ws");
+    fn make_service() -> (
+        WorkspaceService,
+        WorkspaceId,
+        std::path::PathBuf,
+        tempfile::TempDir,
+    ) {
+        let ws_dir = temp_root("ws");
+        let root = ws_dir.path().to_path_buf();
         let service = WorkspaceService::new();
         let id = WorkspaceId::from("ws-1");
         service
@@ -282,7 +289,7 @@ mod tests {
                 Timestamp::from_unix_millis(1),
             )
             .expect("add");
-        (service, id, root)
+        (service, id, root, ws_dir)
     }
 
     async fn run_read(service: &WorkspaceService, id: &WorkspaceId, input: Value) -> ToolResult {
@@ -293,7 +300,7 @@ mod tests {
 
     #[tokio::test]
     async fn line_numbers_offset_and_limit() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::write(root.join("a.txt"), "one\ntwo\nthree\nfour\nfive\n").unwrap();
         let res = run_read(
             &service,
@@ -311,7 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn binary_file_is_detected_and_omitted() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         let mut bytes = vec![0u8; 64];
         bytes[0] = 1;
         fs::write(root.join("bin.dat"), &bytes).unwrap();
@@ -322,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_absolute_and_traversal_paths() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::write(root.join("ok.txt"), "hi").unwrap();
         let abs = root.join("ok.txt");
         let err = read(
@@ -353,7 +360,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_file_returns_not_found_kind() {
-        let (service, id, _root) = make_service();
+        let (service, id, _root, _ws_dir) = make_service();
         let error: ToolError = BuiltinToolError::from(
             read(
                 &service,
@@ -370,7 +377,7 @@ mod tests {
 
     #[tokio::test]
     async fn large_reads_are_bounded() {
-        let (service, id, root) = make_service();
+        let (service, id, root, _ws_dir) = make_service();
         fs::write(
             root.join("large.txt"),
             vec![b'a'; MAX_READ_BYTES as usize + 1024],

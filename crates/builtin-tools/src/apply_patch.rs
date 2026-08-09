@@ -378,14 +378,15 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pawork-applypatch-{}-{}-{name}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!(
+                "pawork-applypatch-{}-{}-{name}-",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .tempdir()
+            .expect("create temp dir")
     }
 
     async fn make_env() -> (
@@ -393,9 +394,13 @@ mod tests {
         CheckpointService,
         WorkspaceId,
         std::path::PathBuf,
+        tempfile::TempDir,
+        tempfile::TempDir,
     ) {
-        let root = temp_root("ws");
-        let store_root = temp_root("store");
+        let ws_dir = temp_root("ws");
+        let store_dir = temp_root("store");
+        let root = ws_dir.path().to_path_buf();
+        let store_root = store_dir.path().to_path_buf();
         let store = ArtifactStore::open(&store_root).await.expect("open store");
         let checkpoints = CheckpointService::new(store);
         let service = WorkspaceService::new();
@@ -408,7 +413,7 @@ mod tests {
                 Timestamp::from_unix_millis(1),
             )
             .expect("add");
-        (service, checkpoints, id, root)
+        (service, checkpoints, id, root, ws_dir, store_dir)
     }
 
     fn rid() -> agent_domain::RunId {
@@ -420,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn multi_file_create() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         let input = json!({"ops": [
         {"op": "create", "path": "a.txt", "content": "AAA"},
         {"op": "create", "path": "b.txt", "content": "BBB"}
@@ -434,7 +439,7 @@ mod tests {
 
     #[tokio::test]
     async fn dry_run_does_not_write() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         let input = json!({"dry_run": true, "ops": [
         {"op": "create", "path": "c.txt", "content": "CCC"}
         ]});
@@ -447,7 +452,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_and_rename() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         fs::write(root.join("old.txt"), "data").unwrap();
         let input = json!({"ops": [
         {"op": "rename", "path": "old.txt", "to": "new.txt"},
@@ -462,7 +467,7 @@ mod tests {
 
     #[tokio::test]
     async fn partial_failure_rolls_back() {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         // 第二个 op rename 一个不存在的文件 -> 失败；第一个 create 应被回滚删除。
         let input = json!({"ops": [
         {"op": "create", "path": "created.txt", "content": "X"},
@@ -476,7 +481,7 @@ mod tests {
     }
 
     async fn assert_existing_file_restored(first_op: Value) {
-        let (service, checkpoints, id, root) = make_env().await;
+        let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
         fs::write(root.join("target.txt"), "original").unwrap();
         let input = json!({"ops": [
             first_op,
@@ -526,7 +531,7 @@ mod tests {
                 .build()
                 .expect("runtime");
             runtime.block_on(async {
-                let (service, checkpoints, id, root) = make_env().await;
+                let (service, checkpoints, id, root, _ws_dir, _store_dir) = make_env().await;
                 fs::write(root.join("target.bin"), &original).unwrap();
                 let replacement_text = String::from_utf8_lossy(&replacement).into_owned();
                 let input = json!({"ops": [
@@ -545,7 +550,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_traversal_in_op_path() {
-        let (service, checkpoints, id, _root) = make_env().await;
+        let (service, checkpoints, id, _root, _ws_dir, _store_dir) = make_env().await;
         let input = json!({"ops": [
         {"op": "create", "path": "../escape.txt", "content": "X"}
         ]});

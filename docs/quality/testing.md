@@ -91,6 +91,10 @@ Chaos 默认在功能主干接线完成后的 L2/L3 执行，不阻塞前期领�
 
 差分测试用于协议/引擎升级与发布维护，不要求每个细节任务运行。外部参考实现版本必须记录，避免把上游变化误判为 Pawork 回归。
 
+## Cargo Profile
+
+日常 dev/test 采用 line-tables-only 且第三方依赖 debug=false（见根 Cargo.toml），降低 DWARF/PDB 与链接成本；需要完整调试器时显式 `cargo build --profile debugging` / `cargo test --profile debugging`；不以默认关闭 L1 incremental compilation 为手段。
+
 ## 测试后清理
 
 定向 L1 复用默认 `target/`，只清理本任务产生的临时目录、fixture 副本、日志、coverage 与未确认快照输出；测试代码优先使用 RAII/tempfile，确保失败和取消路径也回收。每次 L1 后执行 `cargo clean` 会迫使后续全量重编，默认禁止。
@@ -99,6 +103,7 @@ Chaos 默认在功能主干接线完成后的 L2/L3 执行，不阻塞前期领�
 
 ```powershell
 $env:CARGO_TARGET_DIR = "target/gates"
+$env:CARGO_INCREMENTAL = "0"
 try {
     cargo fmt --all -- --check
     cargo build --workspace --all-targets
@@ -108,10 +113,15 @@ try {
 } finally {
     cargo clean --target-dir "target/gates"
     Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:CARGO_INCREMENTAL -ErrorAction SilentlyContinue
 }
 ```
 
 包含格式或 schema 检查时，把 `cargo fmt --all -- --check` 与 `cargo run -p schema-typegen -- --check` 放入同一个 `try`。默认 `target/` 在功能簇收尾检查体积，达到团队配置阈值或磁盘压力告警时再执行 `cargo clean`。CI 为一次性 runner 时无需为了清理增加额外耗时；持久化 runner 只缓存 lockfile/工具链可复用内容，并设置容量或 TTL。
+
+## Integration Test 组织
+
+当前每个 crate 至多 1 个 tests/*.rs；新增大量顶层 tests/*.rs 前应评估独立 test executable 带来的链接与磁盘成本。对依赖树较大或 integration test 较多的 crate 默认优先「少量 test target + 多 module」组织；不以减少 production crate 数量作为控制 target/ 的手段。
 
 ## 相关文档
 

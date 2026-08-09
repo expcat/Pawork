@@ -1,18 +1,14 @@
 //! 集成测试：基于真实文件系统的配置加载、错误带路径、路径发现与确定性。
 
 use std::fs;
-use std::path::PathBuf;
 
 use config_service::{config_dir_for_app, locate_workspace_config, ConfigTier, Loader};
 
-fn tempdir(prefix: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!("pawork-{prefix}-{nanos}"));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn tempdir(prefix: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("pawork-{prefix}-"))
+        .tempdir()
+        .expect("create temp dir")
 }
 
 fn write(path: &std::path::Path, content: &str) {
@@ -25,8 +21,9 @@ fn write(path: &std::path::Path, content: &str) {
 #[test]
 fn loads_toml_files_and_merges_by_tier() {
     let root = tempdir("merge");
-    let global = root.join("global").join("config.toml");
-    let workspace_dir = root.join("ws");
+    let root_path = root.path();
+    let global = root_path.join("global").join("config.toml");
+    let workspace_dir = root_path.join("ws");
     let workspace = workspace_dir.join(".pawork").join("config.toml");
 
     write(
@@ -68,7 +65,7 @@ default_model = "ws-model"
 #[test]
 fn parse_error_carries_path() {
     let root = tempdir("err");
-    let bad = root.join("bad.toml");
+    let bad = root.path().join("bad.toml");
     write(&bad, "this is = = not valid toml [[");
 
     let err = Loader::new()
@@ -83,7 +80,7 @@ fn parse_error_carries_path() {
 #[test]
 fn schema_mismatch_error_carries_path() {
     let root = tempdir("schema");
-    let bad = root.join("bad.toml");
+    let bad = root.path().join("bad.toml");
     // providers 应为数组，这里给字符串触发 schema 校验失败。
     write(&bad, "providers = \"not-an-array\"\n");
 
@@ -101,12 +98,12 @@ fn locate_workspace_config_finds_nearest() {
     let root = tempdir("locate");
     // canonicalize：macOS /var -> /private/var 符号链接，需与 locate 返回值一致。
     // 与实现一致使用 dunce（Windows 下不带 \\?\ 前缀）。
-    let root = dunce::canonicalize(&root).unwrap_or(root);
-    let nested = root.join("a/b/c");
+    let root_path = dunce::canonicalize(root.path()).unwrap_or_else(|_| root.path().to_path_buf());
+    let nested = root_path.join("a/b/c");
     fs::create_dir_all(&nested).unwrap();
 
     // 在中间目录放置工作区配置。
-    let mid = root.join("a");
+    let mid = root_path.join("a");
     let mid_cfg = mid.join(".pawork").join("config.toml");
     write(&mid_cfg, "default_model = \"mid\"\n");
 
@@ -124,9 +121,10 @@ fn missing_file_is_not_fatal_when_no_source_added() {
 #[test]
 fn deterministic_regardless_of_file_addition_order() {
     let root = tempdir("det");
-    let g = root.join("global.toml");
-    let w = root.join("workspace.toml");
-    let s = root.join("session.toml");
+    let root_path = root.path();
+    let g = root_path.join("global.toml");
+    let w = root_path.join("workspace.toml");
+    let s = root_path.join("session.toml");
     write(&g, "default_provider = \"g\"\n");
     write(&w, "default_provider = \"w\"\n");
     write(&s, "default_provider = \"s\"\n");
