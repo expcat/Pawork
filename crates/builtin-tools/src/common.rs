@@ -1,12 +1,16 @@
 //! 内置工具共享模块：输入解析、工作区路径解析、错误映射。
 
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use agent_domain::{ToolCallId, WorkspaceId};
 use policy_engine::{resolve_workspace_path, PathSafetyError};
 use serde_json::Value;
 use tool_api::{ToolError, ToolErrorKind};
 use workspace_service::{WorkspaceError, WorkspaceService};
+
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// 内置工具统一错误：可转换为 [`ToolError`]。
 #[derive(Debug, thiserror::Error)]
@@ -113,4 +117,40 @@ pub fn resolve_rel(roots: &[PathBuf], relative: &str) -> Result<PathBuf, Builtin
 /// 工具调用标识转 checkpoint 用的字符串 key。
 pub fn call_key(tool_call_id: &ToolCallId) -> String {
     tool_call_id.to_string()
+}
+
+/// 内置写工具共用的同目录原子写；覆盖时保留 Unix mode。
+pub fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    #[cfg(unix)]
+    let existing_mode = {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .ok()
+            .map(|metadata| metadata.permissions().mode())
+    };
+    let temp = path.with_file_name(format!(
+        ".pawork-tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result?;
+    #[cfg(unix)]
+    if let Some(mode) = existing_mode {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+    Ok(())
 }

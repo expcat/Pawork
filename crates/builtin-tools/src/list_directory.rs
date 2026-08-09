@@ -2,6 +2,8 @@
 //!
 //! 类型/大小/mtime 输出、symlink 信息、分页。
 
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::time::UNIX_EPOCH;
 
 use agent_domain::{ContentPart, TextContent, WorkspaceId};
@@ -36,6 +38,29 @@ struct Entry {
     is_symlink: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     symlink_target: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct RankedEntry(Entry);
+
+impl PartialEq for RankedEntry {
+    fn eq(&self, other: &Self) -> bool {
+        entry_cmp(&self.0, &other.0) == Ordering::Equal
+    }
+}
+
+impl Eq for RankedEntry {}
+
+impl PartialOrd for RankedEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RankedEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        entry_cmp(&self.0, &other.0)
+    }
 }
 
 /// `list_directory` 工具。
@@ -107,15 +132,16 @@ fn list_dir(
         ))));
     }
 
-    let mut entries: Vec<Entry> = Vec::new();
+    // 只保留当前页结束位置之前的最小项；仍单次扫描得到准确 total，
+    // 但大目录的内存从 O(total) 收敛为 O(offset + limit)。
+    let keep = offset.saturating_add(limit);
+    let mut candidates = BinaryHeap::with_capacity(keep.min(4096));
+    let mut total = 0usize;
     for entry in std::fs::read_dir(&absolute)? {
         let entry = entry?;
-        let meta = entry.metadata()?;
-        let lmeta = std::fs::symlink_metadata(entry.path()).ok();
-        let is_symlink = lmeta
-            .as_ref()
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false);
+        total += 1;
+        let lmeta = std::fs::symlink_metadata(entry.path())?;
+        let is_symlink = lmeta.file_type().is_symlink();
         let symlink_target = if is_symlink {
             std::fs::read_link(entry.path())
                 .map(|p| p.display().to_string())
@@ -123,12 +149,20 @@ fn list_dir(
         } else {
             None
         };
-        let kind = if is_symlink {
-            "symlink".to_string()
-        } else if meta.is_dir() {
-            "dir".to_string()
+        let followed = if is_symlink {
+            std::fs::metadata(entry.path()).ok()
         } else {
-            "file".to_string()
+            None
+        };
+        let (kind, meta) = if is_symlink {
+            match followed {
+                Some(meta) => ("symlink".to_string(), meta),
+                None => ("broken_symlink".to_string(), lmeta),
+            }
+        } else if lmeta.is_dir() {
+            ("dir".to_string(), lmeta)
+        } else {
+            ("file".to_string(), lmeta)
         };
         let mtime_ms = meta
             .modified()
@@ -136,7 +170,7 @@ fn list_dir(
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        entries.push(Entry {
+        let item = RankedEntry(Entry {
             name: entry.file_name().to_string_lossy().into_owned(),
             kind,
             size: meta.len(),
@@ -144,16 +178,24 @@ fn list_dir(
             is_symlink,
             symlink_target,
         });
+        if keep == 0 {
+            continue;
+        }
+        if candidates.len() < keep {
+            candidates.push(item);
+        } else if candidates
+            .peek()
+            .is_some_and(|worst| entry_cmp(&item.0, &worst.0).is_lt())
+        {
+            candidates.pop();
+            candidates.push(item);
+        }
     }
 
     // 稳定排序：目录优先，再按名字字典序。
-    entries.sort_by(|a, b| {
-        let dir_order = dir_rank(&a.kind).cmp(&dir_rank(&b.kind));
-        dir_order.then_with(|| a.name.cmp(&b.name))
-    });
-
-    let total = entries.len();
-    let truncated = offset + limit < total;
+    let mut entries: Vec<Entry> = candidates.into_iter().map(|item| item.0).collect();
+    entries.sort_by(entry_cmp);
+    let truncated = keep < total;
     let page: Vec<Entry> = entries.into_iter().skip(offset).take(limit).collect();
 
     let lines: Vec<String> = page
@@ -193,6 +235,13 @@ fn dir_rank(kind: &str) -> u8 {
         "dir" => 0,
         _ => 1,
     }
+}
+
+fn entry_cmp(left: &Entry, right: &Entry) -> Ordering {
+    dir_rank(&left.kind)
+        .cmp(&dir_rank(&right.kind))
+        .then_with(|| left.name.cmp(&right.name))
+        .then_with(|| left.kind.cmp(&right.kind))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -293,6 +342,18 @@ mod tests {
             _ => panic!("text"),
         };
         assert_eq!(text.lines().count(), 2);
+        assert_eq!(res.metadata["total"], 5);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_is_reported_without_failing_listing() {
+        let (service, id, root) = make_service();
+        symlink("missing-target", root.join("broken-link")).unwrap();
+        let res = list_dir(&service, &id, &json!({"path": "."})).expect("list");
+        assert_eq!(res.metadata["total"], 1);
+        assert_eq!(res.metadata["entries"][0]["kind"], "broken_symlink");
+        assert_eq!(res.metadata["entries"][0]["is_symlink"], true);
     }
 
     #[test]

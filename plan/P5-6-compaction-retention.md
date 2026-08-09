@@ -1,6 +1,6 @@
 # P5-6：压缩保留策略
 
-> Phase 5 · Session、Branch 与 Compaction · 状态：🟡未开始 · 依赖：P5-5
+> Phase 5 · Session、Branch 与 Compaction · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P5-5
 
 **最终目的**：实现压缩保留策略（最近 N 轮、未解决任务、用户约束、修改文件、失败/待处理 tool call），避免压缩后遗忘关键约束导致 Agent 跑偏。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] 压缩后保留任务与关键约束
+- [x] 压缩后保留任务与关键约束
 
 **相关文档**：[context](../docs/features/context.md) · [测试体系](../docs/quality/testing.md) · [ROADMAP](../ROADMAP.md)

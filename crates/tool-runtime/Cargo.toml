@@ -10,6 +10,7 @@ description = "Pawork Tool 调度器：基于 capability 的并发/串行/审批
 [dependencies]
 tool-api = { path = "../tool-api" }
 agent-domain = { path = "../agent-domain" }
+policy-engine = { path = "../policy-engine" }
 tokio = { workspace = true, features = ["sync", "macros", "time", "rt"] }
 async-trait.workspace = true
 serde_json.workspace = true

@@ -78,11 +78,21 @@ impl AgentTool for FindFilesTool {
         _sink: &dyn ToolEventSink,
         cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
-        if cancel.is_cancelled() {
-            return Err(ToolError::cancelled("find_files cancelled"));
-        }
-        match find(&self.workspaces, &context.workspace_id, &request.input) {
+        let service = self.workspaces.clone();
+        let workspace_id = context.workspace_id;
+        let input = request.input;
+        let result =
+            tokio::task::spawn_blocking(move || find(&service, &workspace_id, &input, &cancel))
+                .await
+                .map_err(|error| ToolError {
+                    kind: tool_api::ToolErrorKind::Internal,
+                    message: format!("find_files worker failed: {error}"),
+                    retryable: false,
+                    retry_after_ms: None,
+                })?;
+        match result {
             Ok(result) => Ok(result),
+            Err(FindFilesError::Cancelled) => Err(ToolError::cancelled("find_files cancelled")),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }
     }
@@ -92,7 +102,11 @@ fn find(
     service: &WorkspaceService,
     workspace_id: &WorkspaceId,
     input: &Value,
+    cancel: &CancellationToken,
 ) -> Result<ToolResult, FindFilesError> {
+    if cancel.is_cancelled() {
+        return Err(FindFilesError::Cancelled);
+    }
     let pattern = require_str(input, "pattern")?;
     let file_type = crate::common::opt_str(input, "file_type")
         .map(|s| match s.as_str() {
@@ -109,6 +123,7 @@ fn find(
 
     let mut found: Vec<String> = Vec::new();
     let mut truncated = false;
+    let mut visited = 0usize;
 
     for root in &roots {
         let mut builder = WalkBuilder::new(root);
@@ -118,6 +133,10 @@ fn find(
         }
         let walker = builder.build();
         for entry in walker {
+            visited += 1;
+            if visited % 64 == 0 && cancel.is_cancelled() {
+                return Err(FindFilesError::Cancelled);
+            }
             if found.len() >= max_results {
                 truncated = true;
                 break;
@@ -192,6 +211,8 @@ pub enum FindFilesError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Ignore(#[from] ignore::Error),
+    #[error("find cancelled")]
+    Cancelled,
 }
 
 impl From<FindFilesError> for BuiltinToolError {
@@ -200,6 +221,7 @@ impl From<FindFilesError> for BuiltinToolError {
             FindFilesError::Common(common) => common,
             FindFilesError::Io(io) => BuiltinToolError::Io(io),
             FindFilesError::Ignore(e) => BuiltinToolError::Other(e.to_string()),
+            FindFilesError::Cancelled => BuiltinToolError::Other("find_files cancelled".into()),
         }
     }
 }
@@ -247,7 +269,13 @@ mod tests {
         fs::write(root.join("src/b.rs"), "").unwrap();
         fs::write(root.join("src/a.rs"), "").unwrap();
         fs::write(root.join("readme.md"), "").unwrap();
-        let res = find(&service, &id, &json!({"pattern": "**/*.rs"})).expect("find");
+        let res = find(
+            &service,
+            &id,
+            &json!({"pattern": "**/*.rs"}),
+            &CancellationToken::new(),
+        )
+        .expect("find");
         let text = match &res.content[0] {
             ContentPart::Text(t) => &t.text,
             _ => panic!("text"),
@@ -270,6 +298,7 @@ mod tests {
             &service,
             &id,
             &json!({"pattern": "*.txt", "max_results": 3}),
+            &CancellationToken::new(),
         )
         .expect("find");
         assert!(res.truncated);
@@ -289,6 +318,7 @@ mod tests {
             &service,
             &id,
             &json!({"pattern": "**/*", "file_type": "dir"}),
+            &CancellationToken::new(),
         )
         .expect("find");
         let text = match &res.content[0] {
@@ -297,5 +327,14 @@ mod tests {
         };
         assert!(text.contains("sub"));
         assert!(!text.contains("x.rs"));
+    }
+
+    #[test]
+    fn cancelled_find_stops_before_traversal() {
+        let (service, id, _root) = make_service();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let error = find(&service, &id, &json!({"pattern": "**/*"}), &cancel).unwrap_err();
+        assert!(matches!(error, FindFilesError::Cancelled));
     }
 }

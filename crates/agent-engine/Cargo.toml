@@ -12,6 +12,8 @@ agent-domain = { path = "../agent-domain" }
 agent-events = { path = "../agent-events" }
 provider-api = { path = "../provider-api" }
 tool-api = { path = "../tool-api" }
+tool-runtime = { path = "../tool-runtime" }
+model-registry = { path = "../model-registry" }
 tokio = { workspace = true, features = ["sync", "macros", "time", "rt"] }
 async-trait.workspace = true
 futures.workspace = true

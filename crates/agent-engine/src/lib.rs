@@ -22,8 +22,8 @@ pub use cancel::{
     CancelHandle, CancelReason, CancelReceipt, NoopProcessTreeCleaner, ProcessTreeCleaner,
 };
 pub use provider_loop::{
-    ApprovalOutcome, LoopContext, LoopError, PendingToolInvocation, ProviderLoop,
-    ProviderLoopConfig, TurnOutcome,
+    ApprovalOutcome, LoopContext, LoopError, LoopEventEmitter, PendingToolInvocation, ProviderLoop,
+    ProviderLoopConfig, SchedulerLoopContext, TurnOutcome,
 };
 pub use queue::{MessageQueue, MessageQueueSnapshot, QueuedMessage};
 pub use recovery::{

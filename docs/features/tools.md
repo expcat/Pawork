@@ -52,14 +52,14 @@ ProviderExtension → Provider 中介外部通道（MCP / Connector / Remote）�
 
 ## P0 工具
 
-- `read_file`：文本读取；offset/limit；行号；编码检测；二进制检测；文件大小限制；图片作为 Attachment；Workspace 路径检查。
+- `read_file`：异步、有界文本读取；offset/limit；行号；编码检测；二进制检测；文件大小限制；图片作为 Attachment；Workspace 路径检查。
 - `write_file`：创建文件；原子写入；自动创建父目录；保留权限；保留换行风格；覆盖审批；写入前 Checkpoint。
-- `edit_file`：精确文本替换；多段替换；Unified Patch；上下文校验；模糊匹配；冲突报告；保留编码；原子提交；生成结构化 Diff。
-- `apply_patch`：多文件 Patch；create/delete/rename；dry run；原子操作；部分失败回滚；路径安全。
-- `run_command`：非 PTY 命令；流式 stdout/stderr；cwd；timeout；环境变量白名单；最大输出；cancel；exit code；进程树终止。
-- `search_text`：固定字符串；正则；文件过滤；ignore；结果限制；上下文行；Unicode。
-- `find_files`：glob；文件类型；ignore；最大深度；最大结果；排序。
-- `list_directory`：文件类型；大小；修改时间；symlink 信息；分页。
+- `edit_file`：精确文本替换；多段替换；上下文校验；线性时间空白模糊匹配；保留尾换行；冲突报告；原子提交。
+- `apply_patch`：多文件 Patch；create/delete/rename；dry run；原子操作；部分失败按 Checkpoint 逐字节回滚（含 create-over-existing）；路径安全。
+- `run_command`：非 PTY 命令；实时 stdout/stderr；cwd；timeout；平台环境变量白名单与配置追加；流式总输出上限；cancel；exit code；可 kill 的进程树句柄。
+- `search_text`：固定字符串；正则；文件过滤；ignore；结果限制；上下文行；Unicode；遍历期取消；阻塞扫描隔离到 blocking worker。
+- `find_files`：glob；文件类型；ignore；最大深度；最大结果；排序；遍历期取消。
+- `list_directory`：文件类型；大小；修改时间；symlink / broken symlink；有界内存分页与准确总数。
 
 ## P1 工具
 
@@ -67,7 +67,7 @@ ProviderExtension → Provider 中介外部通道（MCP / Connector / Remote）�
 
 ## 调度
 
-写操作串行；Shell 默认串行；只读文件可并发；搜索可并发；同文件操作串行；Git Index 操作串行；审批期间暂停相关调用；所有调用可取消。
+写操作串行；Shell 默认串行；只读文件可并发；搜索可并发；同文件操作串行；Git Index 操作串行；审批期间暂停相关调用；所有调用可取消。每次调用先经 `PolicyEngine::decide()`，未信任 Workspace 还需通过 descriptor gate；`rm -rf /`、`mkfs*` 与 `dd of=/dev/*` 在 `NeverAsk` 下仍必须拒绝或显式审批。Scheduler 只接受显式工具名，并原样传递真实 `ToolExecutionContext`。
 
 ## 验收标准
 

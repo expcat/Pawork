@@ -14,7 +14,8 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use agent_domain::{ContentPart, EventId, Message, SessionId};
+use agent_domain::{EventId, Message, SessionId};
+use context_engine::{HeuristicEstimator, TokenEstimator};
 use session_store::SessionStore;
 
 use crate::retention::{apply, RetentionDecision, RetentionInputs, RetentionPolicy};
@@ -30,6 +31,16 @@ pub enum CompactionReason {
     HistorySoftLimit,
     /// 输入超过 `max_input_tokens` 硬上限。
     InputBudgetExceeded,
+}
+
+/// context-engine 只产生自动触发原因；`Manual` 仅属于本引擎的显式调用入口。
+impl From<context_engine::CompactionReason> for CompactionReason {
+    fn from(reason: context_engine::CompactionReason) -> Self {
+        match reason {
+            context_engine::CompactionReason::HistorySoftLimit => Self::HistorySoftLimit,
+            context_engine::CompactionReason::InputBudgetExceeded => Self::InputBudgetExceeded,
+        }
+    }
 }
 
 impl fmt::Display for CompactionReason {
@@ -90,7 +101,10 @@ impl<'a> CompactionEngine<'a> {
         summary_text: &str,
         inputs: &RetentionInputs,
     ) -> Result<CompactionResult, CompactionError> {
-        let events = self.store.replay_events(session_id, 1, usize::MAX).await?;
+        let events = self
+            .store
+            .events_by_branch(session_id, branch_id, 1, usize::MAX)
+            .await?;
         let head = events
             .last()
             .ok_or_else(|| CompactionError::NothingToCompact {
@@ -117,24 +131,28 @@ impl<'a> CompactionEngine<'a> {
             )
             .await?;
 
-        // 2. 应用保留策略。
-        let decision = apply(&self.policy, inputs);
+        // 2. 只让目标 branch 的事件进入保留策略，防止调用方投影混入兄弟分支。
+        let branch_event_ids: HashSet<EventId> =
+            events.iter().map(|event| event.event_id.clone()).collect();
+        let branch_inputs = filter_retention_inputs(inputs, &branch_event_ids);
+        let decision = apply(&self.policy, &branch_inputs);
 
         // 3. 估算压缩前后 token：before = 全部消息；after = 保留消息 + 摘要。
         let retained_ids: HashSet<&EventId> = decision.retained_event_ids.iter().collect();
-        let token_usage_before = inputs
+        let estimator = HeuristicEstimator::default();
+        let token_usage_before = branch_inputs
             .messages
             .iter()
-            .map(|entry| estimate_message_tokens(&entry.message))
+            .map(|entry| estimate_message_tokens(&entry.message, &estimator))
             .sum::<u64>();
-        let retained_message_tokens = inputs
+        let retained_message_tokens = branch_inputs
             .messages
             .iter()
             .filter(|entry| retained_ids.contains(&entry.event_id))
-            .map(|entry| estimate_message_tokens(&entry.message))
+            .map(|entry| estimate_message_tokens(&entry.message, &estimator))
             .sum::<u64>();
         let token_usage_after =
-            retained_message_tokens.saturating_add(estimate_text_tokens(summary_text));
+            retained_message_tokens.saturating_add(estimator.count_text(summary_text));
 
         let snapshot = CompactionSnapshot {
             version: SnapshotVersion::current(),
@@ -156,29 +174,50 @@ impl<'a> CompactionEngine<'a> {
     }
 }
 
-/// 粗略字符级 token 估算（4 字符 ≈ 1 token），用于无精确 tokenizer 时的压缩统计。
-fn estimate_text_tokens(text: &str) -> u64 {
-    u64::try_from(text.chars().count() / 4).unwrap_or(u64::MAX)
+fn filter_retention_inputs(
+    inputs: &RetentionInputs,
+    branch_event_ids: &HashSet<EventId>,
+) -> RetentionInputs {
+    RetentionInputs {
+        messages: inputs
+            .messages
+            .iter()
+            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .cloned()
+            .collect(),
+        tool_calls: inputs
+            .tool_calls
+            .iter()
+            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .cloned()
+            .collect(),
+        tasks: inputs
+            .tasks
+            .iter()
+            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .cloned()
+            .collect(),
+        constraints: inputs
+            .constraints
+            .iter()
+            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .cloned()
+            .collect(),
+        modified_files: inputs
+            .modified_files
+            .iter()
+            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .cloned()
+            .collect(),
+    }
 }
 
 /// 单条消息的 token 估算：优先用 `metadata.usage`，否则按内容启发式估算。
-fn estimate_message_tokens(message: &Message) -> u64 {
+fn estimate_message_tokens(message: &Message, estimator: &dyn TokenEstimator) -> u64 {
     if let Some(usage) = message.metadata.usage.as_ref() {
         return usage.total_tokens();
     }
-    let mut tokens = 0u64;
-    for part in &message.content {
-        match part {
-            ContentPart::Text(text) => {
-                tokens = tokens.saturating_add(estimate_text_tokens(&text.text));
-            }
-            ContentPart::Thinking(thinking) => {
-                tokens = tokens.saturating_add(estimate_text_tokens(&thinking.text));
-            }
-            _ => tokens = tokens.saturating_add(1),
-        }
-    }
-    tokens
+    estimator.count_message(message)
 }
 
 #[cfg(test)]
@@ -473,5 +512,141 @@ mod tests {
 
         store.shutdown().await.expect("shutdown");
         let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn compact_uses_only_the_requested_branch_event_range() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("open store");
+        let session = SessionId::from("session-branch-compaction");
+        store
+            .create_session(&session, "branches", Timestamp::from_unix_millis(1))
+            .await
+            .expect("create session");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::CompactionStarted {
+                        source_event_count: 1,
+                    },
+                ),
+            )
+            .await
+            .expect("main 1");
+        store
+            .create_branch(
+                &session,
+                "experiment",
+                Some(DEFAULT_BRANCH_ID.into()),
+                Some("event-1".into()),
+            )
+            .await
+            .expect("fork experiment");
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch experiment");
+        store
+            .append_event(
+                "experiment",
+                event(
+                    &session,
+                    2,
+                    AgentEvent::CompactionStarted {
+                        source_event_count: 2,
+                    },
+                ),
+            )
+            .await
+            .expect("experiment 2");
+        store
+            .switch_branch(&session, DEFAULT_BRANCH_ID)
+            .await
+            .expect("switch main");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    3,
+                    AgentEvent::CompactionStarted {
+                        source_event_count: 3,
+                    },
+                ),
+            )
+            .await
+            .expect("main 3");
+
+        let mixed_branch_inputs = RetentionInputs {
+            messages: vec![
+                RetentionMessage {
+                    event_id: EventId::from("event-2"),
+                    message: committed("experiment-message", MessageRole::User),
+                },
+                RetentionMessage {
+                    event_id: EventId::from("event-3"),
+                    message: committed("main-message", MessageRole::User),
+                },
+            ],
+            ..RetentionInputs::default()
+        };
+        let result = CompactionEngine::new(&store)
+            .compact(
+                &session,
+                "experiment",
+                CompactionReason::Manual,
+                "实验分支摘要",
+                &mixed_branch_inputs,
+            )
+            .await
+            .expect("compact experiment");
+
+        assert_eq!(result.total_events, 1);
+        assert_eq!(
+            result.snapshot.replaced_range,
+            (EventSequence::new(2), EventSequence::new(2))
+        );
+        assert_eq!(
+            result.snapshot.recovery_branch_id.as_deref(),
+            Some("compaction-recovery-experiment-2")
+        );
+        let forked = read_forked_from(&store, &session, "compaction-recovery-experiment-2").await;
+        assert_eq!(forked.as_deref(), Some("event-2"));
+        assert_eq!(
+            result.decision.retained_event_ids,
+            vec![EventId::from("event-2")]
+        );
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn automatic_compaction_reasons_map_explicitly() {
+        assert_eq!(
+            CompactionReason::from(context_engine::CompactionReason::HistorySoftLimit),
+            CompactionReason::HistorySoftLimit
+        );
+        assert_eq!(
+            CompactionReason::from(context_engine::CompactionReason::InputBudgetExceeded),
+            CompactionReason::InputBudgetExceeded
+        );
+    }
+
+    #[test]
+    fn compaction_message_estimate_uses_cjk_aware_token_estimator() {
+        let message = Message {
+            id: MessageId::from("cjk"),
+            role: MessageRole::User,
+            content: vec![ContentPart::Text(TextContent {
+                text: "你好世界上下文压缩".into(),
+            })],
+            metadata: MessageMetadata::default(),
+        };
+        let estimator = HeuristicEstimator::default();
+        assert!(estimate_message_tokens(&message, &estimator) >= 9);
     }
 }

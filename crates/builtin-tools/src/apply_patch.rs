@@ -3,10 +3,7 @@
 //! 多文件 create/update/delete/rename、dry run、原子提交、部分失败回滚、路径安全。
 
 use std::fs;
-use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 
 use agent_domain::{ContentPart, TextContent, WorkspaceId};
 use async_trait::async_trait;
@@ -24,13 +21,12 @@ use tool_api::ToolRequest;
 use tool_api::ToolResult;
 use workspace_service::WorkspaceService;
 
+use crate::common::atomic_write;
 use crate::common::call_key;
 use crate::common::opt_bool;
 use crate::common::resolve_rel;
 use crate::common::workspace_roots;
 use crate::common::BuiltinToolError;
-
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// `apply_patch` 工具。
 #[derive(Clone)]
@@ -177,15 +173,13 @@ async fn apply(
 
     // 写前 snapshot：对每个将被改/删的路径快照（用于回滚）。
     let call_key = call_key(tool_call_id);
-    for (op, abs, _to) in &planned {
+    for (op, _abs, _to) in &planned {
         match op.kind {
             OpKind::Create => {
-                if abs.exists() {
-                    checkpoints
-                        .snapshot_before_write(run_id.as_ref(), &call_key, &roots, &op.path)
-                        .await
-                        .map_err(|e| ApplyPatchError::Checkpoint(e.to_string()))?;
-                }
+                checkpoints
+                    .snapshot_before_write(run_id.as_ref(), &call_key, &roots, &op.path)
+                    .await
+                    .map_err(|e| ApplyPatchError::Checkpoint(e.to_string()))?;
             }
             OpKind::Update | OpKind::Delete => {
                 checkpoints
@@ -209,7 +203,6 @@ async fn apply(
     }
 
     // 原子执行：记录已完成的操作，失败时回滚已执行部分。
-    let mut done: Vec<(Op, std::path::PathBuf, Option<std::path::PathBuf>)> = Vec::new();
     let mut applied_changes: Vec<PlannedChange> = Vec::new();
     for (op, abs, to_abs) in planned {
         let result = exec_op(&op, &abs, to_abs.as_deref());
@@ -221,14 +214,19 @@ async fn apply(
                     to: op.to.clone(),
                     bytes: op.content.as_ref().map(|c| c.len()).unwrap_or(0),
                 });
-                done.push((op.clone(), abs.clone(), to_abs.clone()));
             }
             Err(err) => {
-                // 回滚已执行操作（逆序），并返回部分失败报告。
-                rollback_done(&done, &applied_changes);
+                // 统一由 checkpoint 恢复原内容；create-over-existing 也不得被误删。
+                let message = match checkpoints
+                    .rollback_tool_call(run_id.as_ref(), &call_key)
+                    .await
+                {
+                    Ok(_) => err.to_string(),
+                    Err(rollback) => format!("{err}; checkpoint rollback failed: {rollback}"),
+                };
                 return Err(ApplyPatchError::Partial {
                     failed_op: op.path.clone(),
-                    message: err.to_string(),
+                    message,
                     applied: applied_changes,
                 });
             }
@@ -308,32 +306,6 @@ fn exec_op(op: &Op, abs: &Path, to: Option<&Path>) -> Result<(), std::io::Error>
     }
 }
 
-/// 回滚已执行操作（逆序）：delete 的恢复靠 checkpoint 后续回滚，
-/// 这里对已 create 的新文件就地删除，对 rename 反向 rename。
-fn rollback_done(
-    done: &[(Op, std::path::PathBuf, Option<std::path::PathBuf>)],
-    _applied: &[PlannedChange],
-) {
-    for (op, abs, to) in done.iter().rev() {
-        match op.kind {
-            OpKind::Create => {
-                let _ = fs::remove_file(abs);
-            }
-            OpKind::Delete => {
-                // 删除的文件由 checkpoint rollback_tool_call 恢复（内容在 blob）。
-            }
-            OpKind::Update => {
-                // 更新的内容由 checkpoint rollback 恢复。
-            }
-            OpKind::Rename => {
-                if let Some(to) = to {
-                    let _ = fs::rename(to, abs);
-                }
-            }
-        }
-    }
-}
-
 fn preview_result(changes: Vec<PlannedChange>, dry_run: bool) -> ToolResult {
     let metadata = json!({
         "dry_run": dry_run,
@@ -366,27 +338,6 @@ fn applied_result(changes: Vec<PlannedChange>, dry_run: bool) -> ToolResult {
         success: true,
         error: None,
     }
-}
-
-fn atomic_write(path: &Path, content: &[u8]) -> Result<(), std::io::Error> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_file_name(format!(
-        ".tmp-{}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| -> std::io::Result<()> {
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(content)?;
-        file.sync_all()?;
-        fs::rename(&tmp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -422,7 +373,8 @@ mod tests {
     use agent_domain::Timestamp;
     use agent_domain::WorkspaceId;
     use artifact_store::ArtifactStore;
-    use std::sync::atomic::AtomicU64;
+    use proptest::prelude::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
@@ -521,6 +473,74 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ApplyPatchError::Partial { .. }));
         assert!(!root.join("created.txt").exists(), "回滚应删除已创建文件");
+    }
+
+    async fn assert_existing_file_restored(first_op: Value) {
+        let (service, checkpoints, id, root) = make_env().await;
+        fs::write(root.join("target.txt"), "original").unwrap();
+        let input = json!({"ops": [
+            first_op,
+            {"op": "rename", "path": "missing.txt", "to": "elsewhere.txt"}
+        ]});
+        let err = apply(&service, &checkpoints, &id, &rid(), &tid(), &input)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ApplyPatchError::Partial { .. }));
+        assert_eq!(
+            fs::read_to_string(root.join("target.txt")).unwrap(),
+            "original"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_over_existing_is_restored_after_partial_failure() {
+        assert_existing_file_restored(
+            json!({"op": "create", "path": "target.txt", "content": "replacement"}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn update_is_restored_after_partial_failure() {
+        assert_existing_file_restored(
+            json!({"op": "update", "path": "target.txt", "content": "replacement"}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn delete_is_restored_after_partial_failure() {
+        assert_existing_file_restored(json!({"op": "delete", "path": "target.txt"})).await;
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn partial_failure_rollback_is_byte_exact(
+            original in proptest::collection::vec(any::<u8>(), 0..256),
+            replacement in proptest::collection::vec(any::<u8>(), 0..256),
+        ) {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            runtime.block_on(async {
+                let (service, checkpoints, id, root) = make_env().await;
+                fs::write(root.join("target.bin"), &original).unwrap();
+                let replacement_text = String::from_utf8_lossy(&replacement).into_owned();
+                let input = json!({"ops": [
+                    {"op": "update", "path": "target.bin", "content": replacement_text},
+                    {"op": "rename", "path": "missing.bin", "to": "elsewhere.bin"}
+                ]});
+                let error = apply(&service, &checkpoints, &id, &rid(), &tid(), &input)
+                    .await
+                    .unwrap_err();
+                assert!(matches!(error, ApplyPatchError::Partial { .. }));
+                prop_assert_eq!(fs::read(root.join("target.bin")).unwrap(), original);
+                Ok(())
+            })?;
+        }
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 # P5-10：Phase 5 评审修复（REVIEW remediation）
 
-> Phase 5 · Session、Branch 与 Compaction · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P5-1 ~ P5-9
+> Phase 5 · Session、Branch 与 Compaction · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P5-1 ~ P5-9
 
 **最终目的**：消除 [REVIEW.md](../REVIEW.md) §5（Phase 5）评审发现的多分支正确性隐患、Pi 导入器缺陷、CJK token 估算偏差与文档/死代码漂移——让压缩与 export/import 在多分支下保持事件→分支归属正确，Pi 导入器未知字段与异步读取正确，启发式 token 估算对 CJK 不严重低估。
 
@@ -45,18 +45,24 @@
 
 ## 验收标准（保留 REVIEW 追踪编号）
 
-- [ ] **V1**：多分支会话压缩后 `replaced_range` 与 recovery fork 的 `branch_id` 与折叠事件集合对应（多分支测试）
-- [ ] **V2**：多分支 export→import 往返后事件 `branch_id` 与导出前一致（多分支往返测试）
-- [ ] **V8**：`replay_events`/`tail_events` 语义文档化或提供分支感知重载
-- [ ] **V3**：Pi 导入多条未知记录全部保留（断言 `report.unknown_entries` 内容）
-- [ ] **V4**：ModelSwitch 策略明确（持久化事件/metadata 或报告标注未持久化）
-- [ ] **V5**：`import_pi_jsonl` 不在 async 中同步读整文件（异步/流式）
-- [ ] **V6**：CJK 文本启发式 token 估算不再 4–6 倍低估；压缩统计复用 `TokenEstimator`
-- [ ] **V7**：内容搜索不命中字段名/role 噪声；snippet 为可读文本（用例）
-- [ ] **V10**：二进制为主的 tool result 不被误判 Small（分类测试）
-- [ ] **V9**：`EventSessionMismatch` 移除或补一致性校验 + 测试
-- [ ] **文档**：`compaction.rs` 过时注释修正；`CompactionReason` 同名异构映射明确
-- [ ] **快速验证**：只运行 session/branch/compaction/import 受影响 crate 的定向测试与最小重放 smoke；workspace 全量门禁延后到 Core 主干 L2
+- [x] **V1**：多分支会话压缩后 `replaced_range` 与 recovery fork 的 `branch_id` 与折叠事件集合对应（多分支测试）
+- [x] **V2**：多分支 export→import 往返后事件 `branch_id` 与导出前一致（多分支往返测试）
+- [x] **V8**：`replay_events`/`tail_events` 语义文档化或提供分支感知重载
+- [x] **V3**：Pi 导入多条未知记录全部保留（断言 `report.unknown_entries` 内容）
+- [x] **V4**：ModelSwitch 策略明确（持久化事件/metadata 或报告标注未持久化）
+- [x] **V5**：`import_pi_jsonl` 不在 async 中同步读整文件（异步/流式）
+- [x] **V6**：CJK 文本启发式 token 估算不再 4–6 倍低估；压缩统计复用 `TokenEstimator`
+- [x] **V7**：内容搜索不命中字段名/role 噪声；snippet 为可读文本（用例）
+- [x] **V10**：二进制为主的 tool result 不被误判 Small（分类测试）
+- [x] **V9**：`EventSessionMismatch` 移除或补一致性校验 + 测试
+- [x] **文档**：`compaction.rs` 过时注释修正；`CompactionReason` 同名异构映射明确
+- [x] **快速验证**：只运行 session/branch/compaction/import 受影响 crate 的定向测试与最小重放 smoke；workspace 全量门禁延后到 Core 主干 L2
+
+## 验证记录（2026-08-09）
+
+- `cargo test -p session-store -p compaction-engine -p context-engine`
+- `cargo clippy -p session-store -p compaction-engine -p context-engine --all-targets -- -D warnings`
+- Export schema v2 多分支往返、v1 读取迁移、Pi 多未知行/ModelSwitch、分支压缩、CJK 估算与非文本裁剪均有回归测试。
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §5 · [ADR-005 仅 Pi JSONL 导入](../docs/adr/ADR-005-pi-jsonl-import-only.md) · [context](../docs/features/context.md) · [ROADMAP](../ROADMAP.md)
 

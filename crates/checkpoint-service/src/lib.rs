@@ -33,6 +33,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use artifact_store::{ArtifactStore, BlobId};
 
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 
 /// 单个文件在某次写操作前的快照。
 ///
@@ -139,43 +140,110 @@ pub enum CheckpointError {
     UnresolvedPath(String),
     #[error("invalid relative path: {0}")]
     InvalidRelativePath(String),
+    #[error("invalid persisted checkpoint state: {0}")]
+    InvalidState(String),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}
+
+const STATE_SCHEMA_VERSION: u32 = 1;
+const STATE_FILE: &str = "checkpoint-state-v1.json";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PersistedCheckpointState {
+    schema_version: u32,
+    #[serde(default)]
+    runs: BTreeMap<String, RunCheckpoint>,
+    /// run_id -> tool_call_id -> relative_path -> absolute path。
+    #[serde(default)]
+    paths: BTreeMap<String, BTreeMap<String, BTreeMap<String, PathBuf>>>,
+}
+
+impl Default for PersistedCheckpointState {
+    fn default() -> Self {
+        Self {
+            schema_version: STATE_SCHEMA_VERSION,
+            runs: BTreeMap::new(),
+            paths: BTreeMap::new(),
+        }
+    }
 }
 
 /// 基于 Blob Store 的 Checkpoint / 回滚服务。
 ///
-/// 克隆只复制句柄；底层状态由 `ArtifactStore` 与内存表承载。
+/// 克隆只复制句柄；元数据原子持久化到 Artifact Store 根目录，Blob 内容仍由
+/// `ArtifactStore` 管理。运行时应优先用 [`CheckpointService::open`] 恢复状态。
 #[derive(Clone)]
 pub struct CheckpointService {
     store: ArtifactStore,
-    /// run_id -> checkpoint。`std::sync::Mutex`：从不跨 `.await` 持锁。
-    state: Arc<Mutex<BTreeMap<String, RunCheckpoint>>>,
-    /// tool_call_id -> { relative_path -> 写前解析出的绝对路径 }。
-    ///
-    /// 回滚 API 不再接收 `roots`，故在快照时记录解析结果，回滚时据此恢复。
-    paths: Arc<Mutex<BTreeMap<String, BTreeMap<String, PathBuf>>>>,
+    state: Arc<Mutex<PersistedCheckpointState>>,
+    state_path: Arc<PathBuf>,
+    persist_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl CheckpointService {
+    /// 创建空状态服务。新代码应使用 [`Self::open`]，测试可用此构造器隔离状态。
     pub fn new(store: ArtifactStore) -> Self {
+        let state_path = store.root().join(STATE_FILE);
         Self {
             store,
-            state: Arc::new(Mutex::new(BTreeMap::new())),
-            paths: Arc::new(Mutex::new(BTreeMap::new())),
+            state: Arc::new(Mutex::new(PersistedCheckpointState::default())),
+            state_path: Arc::new(state_path),
+            persist_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+
+    /// 打开并恢复持久化的 Run→change→blob/path 映射。
+    pub async fn open(store: ArtifactStore) -> Result<Self, CheckpointError> {
+        let state_path = store.root().join(STATE_FILE);
+        let state = match tokio::fs::read(&state_path).await {
+            Ok(bytes) => serde_json::from_slice::<PersistedCheckpointState>(&bytes)?,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                PersistedCheckpointState::default()
+            }
+            Err(source) => {
+                return Err(CheckpointError::Io {
+                    context: format!(" while reading {}", state_path.display()),
+                    source,
+                });
+            }
+        };
+        if state.schema_version != STATE_SCHEMA_VERSION {
+            return Err(CheckpointError::InvalidState(format!(
+                "unsupported schema version {}",
+                state.schema_version
+            )));
+        }
+        Ok(Self {
+            store,
+            state: Arc::new(Mutex::new(state)),
+            state_path: Arc::new(state_path),
+            persist_lock: Arc::new(tokio::sync::Mutex::new(())),
+        })
+    }
+
+    async fn persist(&self) -> Result<(), CheckpointError> {
+        let _serial = self.persist_lock.lock().await;
+        let snapshot = guard(&self.state).clone();
+        let bytes = serde_json::to_vec(&snapshot)?;
+        atomic_write(&self.state_path, &bytes).await
     }
 
     /// 幂等：确保 run 条目存在（`head = None`）。
     pub async fn snapshot_run(&self, run_id: &str) -> Result<(), CheckpointError> {
-        let mut state = guard(&self.state);
-        state
-            .entry(run_id.to_string())
-            .or_insert_with(|| RunCheckpoint {
-                run_id: run_id.to_string(),
-                created_at_ms: now_ms(),
-                head: None,
-                changes: Vec::new(),
-            });
-        Ok(())
+        {
+            let mut state = guard(&self.state);
+            state
+                .runs
+                .entry(run_id.to_string())
+                .or_insert_with(|| RunCheckpoint {
+                    run_id: run_id.to_string(),
+                    created_at_ms: now_ms(),
+                    head: None,
+                    changes: Vec::new(),
+                });
+        }
+        self.persist().await
     }
 
     /// 写前快照：读取当前内容（若存在）存 Blob，挂到该 tool_call 的 change 记录。
@@ -188,10 +256,10 @@ impl CheckpointService {
         roots: &[PathBuf],
         relative_path: &str,
     ) -> Result<FileSnapshot, CheckpointError> {
-        let absolute = resolve_within_roots(roots, relative_path)?;
+        let absolute = resolve_within_roots(roots, relative_path).await?;
 
-        let (existed, bytes, unix_mode) = match std::fs::read(&absolute) {
-            Ok(bytes) => (true, bytes, read_unix_mode(&absolute)),
+        let (existed, bytes, unix_mode) = match tokio::fs::read(&absolute).await {
+            Ok(bytes) => (true, bytes, read_unix_mode(&absolute).await),
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
                 (false, Vec::new(), None)
             }
@@ -223,6 +291,7 @@ impl CheckpointService {
         {
             let mut state = guard(&self.state);
             let run = state
+                .runs
                 .entry(run_id.to_string())
                 .or_insert_with(|| RunCheckpoint {
                     run_id: run_id.to_string(),
@@ -260,15 +329,16 @@ impl CheckpointService {
                 return Ok(existing);
             }
             change.files.push(snapshot.clone());
-        }
-
-        {
-            let mut paths = guard(&self.paths);
-            paths
+            state
+                .paths
+                .entry(run_id.to_string())
+                .or_default()
                 .entry(tool_call_id.to_string())
                 .or_default()
                 .insert(relative_path.to_string(), absolute);
         }
+
+        self.persist().await?;
 
         tracing::debug!(
             run_id = run_id,
@@ -283,9 +353,10 @@ impl CheckpointService {
     /// 从 Blob 恢复该 call 改过的所有文件，删除新增文件。返回被恢复的快照。
     pub async fn rollback_tool_call(
         &self,
+        run_id: &str,
         tool_call_id: &str,
     ) -> Result<Vec<FileSnapshot>, CheckpointError> {
-        let (mut files, abs_map) = self.load_tool_call(tool_call_id)?;
+        let (mut files, abs_map) = self.load_tool_call(run_id, tool_call_id)?;
         // 逆序恢复：后改的先还原，避免中间状态污染。
         files.reverse();
         let mut restored = Vec::with_capacity(files.len());
@@ -296,6 +367,7 @@ impl CheckpointService {
         }
         tracing::debug!(
             tool_call_id = tool_call_id,
+            run_id = run_id,
             restored = restored.len(),
             "tool call rolled back"
         );
@@ -307,7 +379,7 @@ impl CheckpointService {
     pub async fn rollback_run(&self, run_id: &str) -> Result<Vec<FileSnapshot>, CheckpointError> {
         let mut tool_call_ids = {
             let state = guard(&self.state);
-            let run = state.get(run_id).cloned();
+            let run = state.runs.get(run_id).cloned();
             match run {
                 Some(run) => run
                     .changes
@@ -321,7 +393,7 @@ impl CheckpointService {
 
         let mut all = Vec::new();
         for tool_call_id in &tool_call_ids {
-            let mut restored = self.rollback_tool_call(tool_call_id).await?;
+            let mut restored = self.rollback_tool_call(run_id, tool_call_id).await?;
             all.append(&mut restored);
         }
         Ok(all)
@@ -330,21 +402,24 @@ impl CheckpointService {
     /// 冲突检测：重读文件重算 BLAKE3，与 pre 哈希比对。
     pub async fn conflict_check(
         &self,
+        run_id: &str,
         tool_call_id: &str,
         relative_path: &str,
     ) -> Result<ConflictReport, CheckpointError> {
-        let snapshot = self.find_snapshot(tool_call_id, relative_path)?;
+        let snapshot = self.find_snapshot(run_id, tool_call_id, relative_path)?;
         let absolute = {
-            let paths = guard(&self.paths);
-            paths
-                .get(tool_call_id)
+            let state = guard(&self.state);
+            state
+                .paths
+                .get(run_id)
+                .and_then(|calls| calls.get(tool_call_id))
                 .and_then(|map| map.get(relative_path))
                 .cloned()
         };
 
         let user_modified = match (snapshot.pre_hash.as_ref(), absolute.as_ref()) {
             (None, _) => false,
-            (Some(pre_hash), Some(target)) => match std::fs::read(target) {
+            (Some(pre_hash), Some(target)) => match tokio::fs::read(target).await {
                 Ok(bytes) => blake3::hash(&bytes).to_hex().to_string() != *pre_hash,
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => true,
                 Err(source) => {
@@ -366,50 +441,51 @@ impl CheckpointService {
     /// 同步快照：返回某 run 的 checkpoint 克隆。
     pub fn list_changes(&self, run_id: &str) -> Option<RunCheckpoint> {
         let state = guard(&self.state);
-        state.get(run_id).cloned()
+        state.runs.get(run_id).cloned()
     }
 
     fn load_tool_call(
         &self,
+        run_id: &str,
         tool_call_id: &str,
     ) -> Result<(Vec<FileSnapshot>, BTreeMap<String, PathBuf>), CheckpointError> {
         let files = {
             let state = guard(&self.state);
-            let mut found = None;
-            for run in state.values() {
-                if let Some(change) = run
-                    .changes
+            state.runs.get(run_id).and_then(|run| {
+                run.changes
                     .iter()
                     .find(|change| change.tool_call_id == tool_call_id)
-                {
-                    found = Some(change.files.clone());
-                    break;
-                }
-            }
-            found
+                    .map(|change| change.files.clone())
+            })
         };
         let files = match files {
             Some(files) => files,
             None => {
                 return Err(CheckpointError::NotFound(format!(
-                    "tool_call {tool_call_id}"
+                    "run {run_id} / tool_call {tool_call_id}"
                 )));
             }
         };
         let abs_map = {
-            let paths = guard(&self.paths);
-            paths.get(tool_call_id).cloned().unwrap_or_default()
+            let state = guard(&self.state);
+            state
+                .paths
+                .get(run_id)
+                .and_then(|calls| calls.get(tool_call_id))
+                .cloned()
+                .unwrap_or_default()
         };
         Ok((files, abs_map))
     }
 
     fn find_snapshot(
         &self,
+        run_id: &str,
         tool_call_id: &str,
         relative_path: &str,
     ) -> Result<FileSnapshot, CheckpointError> {
         let state = guard(&self.state);
-        for run in state.values() {
+        if let Some(run) = state.runs.get(run_id) {
             if let Some(change) = run
                 .changes
                 .iter()
@@ -425,7 +501,7 @@ impl CheckpointService {
             }
         }
         Err(CheckpointError::NotFound(format!(
-            "tool_call {tool_call_id} / {relative_path}"
+            "run {run_id} / tool_call {tool_call_id} / {relative_path}"
         )))
     }
 }
@@ -434,7 +510,7 @@ impl CheckpointService {
 ///
 /// 拒绝绝对路径与 `..` 穿越组件；对已存在文件 `canonicalize` 后二次校验仍在
 /// root 内，以捕获指向 root 外的 symlink。新文件则取 `canon_root.join(rel)`。
-fn resolve_within_roots(
+async fn resolve_within_roots(
     roots: &[PathBuf],
     relative_path: &str,
 ) -> Result<PathBuf, CheckpointError> {
@@ -459,7 +535,7 @@ fn resolve_within_roots(
     }
 
     for root in roots {
-        let canonical_root = match root.canonicalize() {
+        let canonical_root = match tokio::fs::canonicalize(root).await {
             Ok(path) => path,
             Err(_) => continue,
         };
@@ -467,7 +543,7 @@ fn resolve_within_roots(
         if !candidate.starts_with(&canonical_root) {
             continue;
         }
-        let resolved = match candidate.canonicalize() {
+        let resolved = match tokio::fs::canonicalize(&candidate).await {
             Ok(path) => path,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => candidate,
             Err(source) => {
@@ -503,16 +579,16 @@ async fn restore_snapshot(
     if snapshot.existed {
         if let Some(blob) = &snapshot.pre_blob {
             let content = store.get(blob).await?;
-            atomic_write(target, &content)?;
+            atomic_write(target, &content).await?;
         }
         #[cfg(unix)]
         if let Some(mode) = snapshot.unix_mode {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(target, std::fs::Permissions::from_mode(mode));
+            let _ = tokio::fs::set_permissions(target, std::fs::Permissions::from_mode(mode)).await;
         }
     } else {
         // 写前不存在的文件视为新增：回滚时删除。
-        match std::fs::remove_file(target) {
+        match tokio::fs::remove_file(target).await {
             Ok(()) => {}
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => {
@@ -527,29 +603,30 @@ async fn restore_snapshot(
 }
 
 /// 原子写：同目录临时文件写入并 sync 后 rename 到目标（参考 artifact-store）。
-fn atomic_write(path: &Path, content: &[u8]) -> Result<(), CheckpointError> {
-    use std::io::Write;
-
+async fn atomic_write(path: &Path, content: &[u8]) -> Result<(), CheckpointError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent).map_err(|source| CheckpointError::Io {
-        context: format!(" while creating {}", parent.display()),
-        source,
-    })?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|source| CheckpointError::Io {
+            context: format!(" while creating {}", parent.display()),
+            source,
+        })?;
 
     let temp_path = path.with_file_name(format!(
         ".ckpt-tmp-{}-{}",
         std::process::id(),
         TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    let result = (|| -> std::io::Result<()> {
-        let mut file = std::fs::File::create(&temp_path)?;
-        file.write_all(content)?;
-        file.sync_all()?;
+    let result = async {
+        let mut file = tokio::fs::File::create(&temp_path).await?;
+        file.write_all(content).await?;
+        file.sync_all().await?;
         drop(file);
-        std::fs::rename(&temp_path, path)
-    })();
+        tokio::fs::rename(&temp_path, path).await
+    }
+    .await;
     if result.is_err() {
-        let _ = std::fs::remove_file(&temp_path);
+        let _ = tokio::fs::remove_file(&temp_path).await;
     }
     result.map_err(|source| CheckpointError::Io {
         context: format!(" while writing {}", path.display()),
@@ -558,15 +635,16 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), CheckpointError> {
 }
 
 #[cfg(unix)]
-fn read_unix_mode(path: &Path) -> Option<u32> {
+async fn read_unix_mode(path: &Path) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path)
+    tokio::fs::metadata(path)
+        .await
         .ok()
         .map(|metadata| metadata.permissions().mode())
 }
 
 #[cfg(not(unix))]
-fn read_unix_mode(_path: &Path) -> Option<u32> {
+async fn read_unix_mode(_path: &Path) -> Option<u32> {
     None
 }
 
@@ -649,7 +727,10 @@ mod tests {
         assert!(snap.pre_hash.is_some());
 
         std::fs::write(&target, b"CHANGED BY TOOL").expect("overwrite");
-        let restored = svc.rollback_tool_call("tc1").await.expect("rollback");
+        let restored = svc
+            .rollback_tool_call("run1", "tc1")
+            .await
+            .expect("rollback");
         assert_eq!(restored.len(), 1);
         assert_eq!(std::fs::read(&target).expect("read"), b"original");
         h.shutdown().await;
@@ -668,7 +749,7 @@ mod tests {
         std::fs::remove_file(&target).expect("tool deletes");
         assert!(!target.exists());
 
-        svc.rollback_tool_call("tc").await.expect("rollback");
+        svc.rollback_tool_call("run", "tc").await.expect("rollback");
         assert!(target.exists());
         assert_eq!(std::fs::read(&target).expect("read"), b"keep me");
         h.shutdown().await;
@@ -691,7 +772,7 @@ mod tests {
         std::fs::write(&target, b"created").expect("tool creates");
         assert!(target.exists());
 
-        svc.rollback_tool_call("tc").await.expect("rollback");
+        svc.rollback_tool_call("run", "tc").await.expect("rollback");
         assert!(!target.exists(), "new file should be removed on rollback");
         h.shutdown().await;
     }
@@ -709,7 +790,7 @@ mod tests {
         std::fs::write(&target, b"nested").expect("create");
         assert!(target.exists());
 
-        svc.rollback_tool_call("tc").await.expect("rollback");
+        svc.rollback_tool_call("run", "tc").await.expect("rollback");
         assert!(!target.exists());
         h.shutdown().await;
     }
@@ -726,21 +807,21 @@ mod tests {
             .expect("snapshot");
 
         let report = svc
-            .conflict_check("tc", "f.txt")
+            .conflict_check("run", "tc", "f.txt")
             .await
             .expect("check unchanged");
         assert!(!report.user_modified);
 
         std::fs::write(&target, b"user edit").expect("user modifies");
         let report = svc
-            .conflict_check("tc", "f.txt")
+            .conflict_check("run", "tc", "f.txt")
             .await
             .expect("check modified");
         assert!(report.user_modified);
 
         std::fs::remove_file(&target).expect("user deletes");
         let report = svc
-            .conflict_check("tc", "f.txt")
+            .conflict_check("run", "tc", "f.txt")
             .await
             .expect("check deleted");
         assert!(report.user_modified, "deletion counts as modification");
@@ -754,7 +835,10 @@ mod tests {
         svc.snapshot_before_write("run", "tc", &h.roots(), "fresh.txt")
             .await
             .expect("snapshot");
-        let report = svc.conflict_check("tc", "fresh.txt").await.expect("check");
+        let report = svc
+            .conflict_check("run", "tc", "fresh.txt")
+            .await
+            .expect("check");
         assert!(!report.user_modified);
         h.shutdown().await;
     }
@@ -791,6 +875,59 @@ mod tests {
         let svc = CheckpointService::new(h.store.clone());
         let err = svc.rollback_run("nope").await.unwrap_err();
         assert!(matches!(err, CheckpointError::NotFound(_)));
+        h.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn same_tool_call_id_is_isolated_by_run() {
+        let h = Harness::new("run-isolation").await;
+        let svc = CheckpointService::new(h.store.clone());
+        let first = h.ws.join("first.txt");
+        let second = h.ws.join("second.txt");
+        std::fs::write(&first, b"first-original").expect("write first");
+        std::fs::write(&second, b"second-original").expect("write second");
+
+        svc.snapshot_before_write("run-a", "shared-call", &h.roots(), "first.txt")
+            .await
+            .expect("snapshot first");
+        svc.snapshot_before_write("run-b", "shared-call", &h.roots(), "second.txt")
+            .await
+            .expect("snapshot second");
+        std::fs::write(&first, b"first-changed").expect("change first");
+        std::fs::write(&second, b"second-changed").expect("change second");
+
+        svc.rollback_tool_call("run-a", "shared-call")
+            .await
+            .expect("rollback run-a");
+        assert_eq!(std::fs::read(&first).unwrap(), b"first-original");
+        assert_eq!(std::fs::read(&second).unwrap(), b"second-changed");
+        h.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn persisted_mapping_reopens_and_rolls_back() {
+        let h = Harness::new("restart-mapping").await;
+        let target = h.ws.join("persisted.txt");
+        std::fs::write(&target, b"before-crash").expect("write original");
+        {
+            let svc = CheckpointService::open(h.store.clone())
+                .await
+                .expect("open first service");
+            svc.snapshot_before_write("run", "call", &h.roots(), "persisted.txt")
+                .await
+                .expect("snapshot");
+        }
+        std::fs::write(&target, b"after-crash").expect("change file");
+
+        let recovered = CheckpointService::open(h.store.clone())
+            .await
+            .expect("reopen checkpoint state");
+        assert_eq!(recovered.list_changes("run").unwrap().changes.len(), 1);
+        recovered
+            .rollback_tool_call("run", "call")
+            .await
+            .expect("rollback after reopen");
+        assert_eq!(std::fs::read(&target).unwrap(), b"before-crash");
         h.shutdown().await;
     }
 

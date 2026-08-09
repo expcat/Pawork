@@ -230,6 +230,11 @@ impl SessionStore {
         })
     }
 
+    /// 重放整个 session 的事件流，不区分 branch。
+    ///
+    /// 返回该 session 中 `sequence >= from_sequence` 的事件，按全局 sequence 升序。
+    /// 调用方若只需单一分支，必须使用 [`SessionStore::events_by_branch`]，避免将兄弟
+    /// branch 的事件混入上下文或压缩区间。
     pub async fn replay_events(
         &self,
         session_id: &SessionId,
@@ -258,6 +263,10 @@ impl SessionStore {
             .collect()
     }
 
+    /// 读取整个 session 的尾部事件，不区分 branch。
+    ///
+    /// 结果按全局 sequence 升序返回；`limit` 仅决定从 session 全局事件流尾部取多少条。
+    /// 单一分支读取应使用 [`SessionStore::events_by_branch`] 并由调用方选择起始 sequence。
     pub async fn tail_events(
         &self,
         session_id: &SessionId,

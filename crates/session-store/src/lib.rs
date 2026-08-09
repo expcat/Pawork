@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 
 use app_database::{DatabaseActor, DatabaseError};
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
-pub use export_import::{ExportedBranch, ImportReport, SessionExport, EXPORT_SCHEMA_VERSION};
+pub use export_import::{
+    ExportedBranch, ExportedEvent, ImportReport, SessionExport, EXPORT_SCHEMA_VERSION,
+};
 pub use lifecycle::{IntegrityReport, LeaseReceipt, MissingParent, SequenceGap};
 pub use migration::{MigrationReport, CURRENT_SCHEMA_VERSION};
 pub use pi_import::{parse_pi_line, PiEntryKind, PiImportReport, PiParsedEntry, PiPayload};
@@ -94,6 +96,8 @@ pub enum SessionStoreError {
     },
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
     #[error("export schema version {found} is not supported (expected {supported})")]
     ExportSchemaVersion { found: u32, supported: u32 },
     #[error("session not found: {0}")]

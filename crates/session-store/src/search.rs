@@ -7,10 +7,10 @@
 //!   附 `(session_id, tag)` 主键与 `tag` 索引。
 //! - 搜索：命中标题、标签或内容（messages 抽取文本），按 `updated_at_ms` 倒序。
 //!   `sessions` 主键为 `session_id TEXT`（无单调整数 rowid），FTS5 外部内容表
-//!   （`content_rowid`）难以正确映射且易产生同步错误，故采用确定性 `LIKE` 查询；
-//!   `idx_session_tags_tag` 加速标签过滤；迁移到整数 rowid 后可再引入 FTS5。
+//!   （`content_rowid`）难以正确映射且易产生同步错误，故标题/标签采用确定性 `LIKE`，
+//!   内容反序列化后只匹配 `Text` part；迁移到整数 rowid 后可再引入 FTS5。
 
-use agent_domain::SessionId;
+use agent_domain::{ContentPart, Message, SessionId};
 use rusqlite::{params, Connection};
 
 use crate::{SessionStore, SessionStoreError};
@@ -200,24 +200,69 @@ fn search_with_like(
 
     {
         let mut statement = connection.prepare(
-            "SELECT DISTINCT m.session_id, s.title, substr(m.message_json, 1, 120) \
+            "SELECT m.session_id, s.title, m.message_json \
              FROM messages m JOIN sessions s ON s.session_id = m.session_id \
-             WHERE m.message_json LIKE ?1 ORDER BY s.updated_at_ms DESC, s.session_id",
+             ORDER BY s.updated_at_ms DESC, s.session_id, m.sequence",
         )?;
         let rows = statement
-            .query_map([&like], |row| {
-                Ok(SessionSearchHit {
-                    session_id: row.get(0)?,
-                    title: row.get(1)?,
-                    matched_on: SearchMatch::Content,
-                    snippet: Some(row.get::<_, String>(2)?),
-                })
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        hits.extend(rows);
+        let normalized_query = query.to_lowercase();
+        for (session_id, title, message_json) in rows {
+            let message: Message = serde_json::from_str(&message_json)?;
+            let text = message_plain_text(&message);
+            if text.to_lowercase().contains(&normalized_query) {
+                hits.push(SessionSearchHit {
+                    session_id,
+                    title,
+                    matched_on: SearchMatch::Content,
+                    snippet: Some(readable_snippet(&text)),
+                });
+            }
+        }
     }
 
     Ok(merge_and_dedupe(hits))
+}
+
+/// 只抽取用户可见的 `Text` content；role、metadata 与 JSON 字段名不参与内容搜索。
+fn message_plain_text(message: &Message) -> String {
+    let mut text = String::new();
+    for part in &message.content {
+        collect_text_part(part, &mut text);
+    }
+    text
+}
+
+fn collect_text_part(part: &ContentPart, output: &mut String) {
+    match part {
+        ContentPart::Text(text) => {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&text.text);
+        }
+        ContentPart::ToolResult(result) => {
+            for nested in &result.content {
+                collect_text_part(nested, output);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn readable_snippet(text: &str) -> String {
+    let mut snippet: String = text.chars().take(120).collect();
+    if text.chars().count() > 120 {
+        snippet.push('…');
+    }
+    snippet
 }
 
 /// 合并来源、按 session 去重（标题命中优先保留）。
@@ -361,10 +406,56 @@ mod tests {
         assert!(ids.contains(&"session-tag"));
         assert!(ids.contains(&"session-content"));
 
+        let content_hit = hits
+            .iter()
+            .find(|hit| hit.session_id == "session-content")
+            .expect("content hit");
+        assert_eq!(content_hit.matched_on, super::SearchMatch::Content);
+        assert_eq!(
+            content_hit.snippet.as_deref(),
+            Some("discuss the parser bug")
+        );
+
         let mut sorted = ids.to_vec();
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), 3);
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn content_search_ignores_role_and_json_field_names() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-search-noise");
+        store
+            .create_session(&session, "quiet title", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                committed_event(&session, 1, "only visible words"),
+            )
+            .await
+            .expect("content");
+
+        assert!(store
+            .search_sessions("user")
+            .await
+            .expect("role search")
+            .is_empty());
+        assert!(store
+            .search_sessions("metadata")
+            .await
+            .expect("field search")
+            .is_empty());
+        let hits = store.search_sessions("visible").await.expect("text search");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].snippet.as_deref(), Some("only visible words"));
+        assert!(!hits[0].snippet.as_deref().unwrap().contains('{'));
 
         store.shutdown().await.expect("shutdown");
         let _ = fs::remove_file(path);

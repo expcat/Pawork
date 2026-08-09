@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use agent_domain::{ContentPart, TextContent, WorkspaceId};
 use async_trait::async_trait;
-use process_runtime::{CommandSpec, ProcessRuntime};
+use process_runtime::{CommandSpec, ProcessEvent, ProcessRuntime};
 use serde_json::{json, Value};
 use tool_api::AgentTool;
 use tool_api::CancellationToken;
@@ -28,7 +28,22 @@ use crate::common::workspace_roots;
 use crate::common::BuiltinToolError;
 
 /// 环境变量白名单：仅这些变量透传，避免泄漏 Secret。
-const ENV_ALLOWLIST: &[&str] = &["PATH", "HOME", "LANG", "LC_ALL", "TERM"];
+#[cfg(not(windows))]
+const ENV_ALLOWLIST: &[&str] = &["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR"];
+#[cfg(windows)]
+const ENV_ALLOWLIST: &[&str] = &[
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "COMSPEC",
+    "PATHEXT",
+];
 
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
@@ -38,6 +53,7 @@ const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
 pub struct RunCommandTool {
     workspaces: WorkspaceService,
     runtime: ProcessRuntime,
+    extra_env_allowlist: Vec<String>,
 }
 
 impl RunCommandTool {
@@ -45,6 +61,7 @@ impl RunCommandTool {
         Self {
             workspaces,
             runtime: ProcessRuntime::new(),
+            extra_env_allowlist: Vec::new(),
         }
     }
 
@@ -52,7 +69,18 @@ impl RunCommandTool {
         Self {
             workspaces,
             runtime,
+            extra_env_allowlist: Vec::new(),
         }
+    }
+
+    /// 追加由配置层明确允许继承的环境变量名。
+    pub fn with_extra_env_allowlist<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extra_env_allowlist = names.into_iter().map(Into::into).collect();
+        self
     }
 }
 
@@ -69,6 +97,7 @@ impl AgentTool for RunCommandTool {
                     "argv": { "type": "array", "items": { "type": "string" } },
                     "cwd": { "type": "string" },
                     "timeout_ms": { "type": "integer", "minimum": 100 },
+                    "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": MAX_OUTPUT_BYTES },
                     "env": { "type": "object" }
                 }
             }),
@@ -93,6 +122,7 @@ impl AgentTool for RunCommandTool {
             self.runtime,
             &context.workspace_id,
             &request.input,
+            &self.extra_env_allowlist,
             sink,
             cancel,
         )
@@ -109,6 +139,7 @@ async fn run(
     runtime: ProcessRuntime,
     workspace_id: &WorkspaceId,
     input: &Value,
+    extra_env_allowlist: &[String],
     sink: &dyn ToolEventSink,
     cancel: CancellationToken,
 ) -> Result<ToolResult, RunCommandError> {
@@ -126,12 +157,22 @@ async fn run(
     let mut spec = CommandSpec::new(program).args(args);
     spec.timeout = Some(Duration::from_millis(timeout_ms));
     spec.cwd = cwd;
-    spec.max_output_bytes = MAX_OUTPUT_BYTES;
+    spec.max_output_bytes = opt_u64(input, "max_output_bytes")
+        .unwrap_or(MAX_OUTPUT_BYTES)
+        .min(MAX_OUTPUT_BYTES);
     spec.env_clear = true;
     // 仅透传白名单变量 + 显式 env。
     for name in ENV_ALLOWLIST {
         if let Ok(value) = std::env::var(name) {
             spec.env.push(((*name).to_string(), value));
+        }
+    }
+    for name in extra_env_allowlist {
+        if ENV_ALLOWLIST.contains(&name.as_str()) {
+            continue;
+        }
+        if let Ok(value) = std::env::var(name) {
+            spec.env.push((name.clone(), value));
         }
     }
     if let Some(map) = env_map {
@@ -142,37 +183,52 @@ async fn run(
         }
     }
 
-    // 执行：run() 正确处理 timeout、cancel 与进程树终止。结果以事件回放保证流式可见。
-    let output = runtime
-        .run(spec, cancel.clone())
+    // 真流式执行：进程运行期间立即向 sink 发出增量，同时保留有界最终结果。
+    let (mut events, _handle) = runtime
+        .spawn_stream(spec, cancel)
         .await
         .map_err(|e| RunCommandError::Process(e.to_string()))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    if !stdout.is_empty() {
-        let _ = sink
-            .emit(ToolStreamEvent::OutputDelta {
-                channel: ToolOutputChannel::Stdout,
-                delta: stdout.clone(),
-            })
-            .await;
+    let mut stdout_bytes = Vec::new();
+    let mut stderr_bytes = Vec::new();
+    let mut exit_code = None;
+    let mut truncated = false;
+    while let Some(event) = events.recv().await {
+        match event {
+            ProcessEvent::Stdout(chunk) => {
+                stdout_bytes.extend_from_slice(&chunk);
+                sink.emit(ToolStreamEvent::OutputDelta {
+                    channel: ToolOutputChannel::Stdout,
+                    delta: String::from_utf8_lossy(&chunk).into_owned(),
+                })
+                .await
+                .map_err(|error| RunCommandError::Process(error.to_string()))?;
+            }
+            ProcessEvent::Stderr(chunk) => {
+                stderr_bytes.extend_from_slice(&chunk);
+                sink.emit(ToolStreamEvent::OutputDelta {
+                    channel: ToolOutputChannel::Stderr,
+                    delta: String::from_utf8_lossy(&chunk).into_owned(),
+                })
+                .await
+                .map_err(|error| RunCommandError::Process(error.to_string()))?;
+            }
+            ProcessEvent::Exit {
+                code,
+                truncated: was_truncated,
+            } => {
+                exit_code = code;
+                truncated = was_truncated;
+                break;
+            }
+        }
     }
-    if !stderr.is_empty() {
-        let _ = sink
-            .emit(ToolStreamEvent::OutputDelta {
-                channel: ToolOutputChannel::Stderr,
-                delta: stderr.clone(),
-            })
-            .await;
-    }
-    let exit_code = output.exit_code;
-    let truncated = output.truncated;
-    let success = exit_code == Some(0) && !output.timed_out && !output.killed;
+    let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
+    let success = exit_code == Some(0);
     let metadata = json!({
         "exit_code": exit_code,
-        "stdout_bytes": stdout.len(),
-        "stderr_bytes": stderr.len(),
+        "stdout_bytes": stdout_bytes.len(),
+        "stderr_bytes": stderr_bytes.len(),
         "truncated": truncated,
         "success": success,
     });
@@ -299,6 +355,7 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &json!({"command": "echo hello"}),
+            &[],
             &sink,
             CancellationToken::new(),
         )
@@ -333,6 +390,7 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &json!({"command": command}),
+            &[],
             &sink,
             CancellationToken::new(),
         )
@@ -356,6 +414,7 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &json!({"command": command, "timeout_ms": 200}),
+            &[],
             &sink,
             CancellationToken::new(),
         )
@@ -363,5 +422,54 @@ mod tests {
         .expect("run");
         // 超时：进程被杀，无正常退出码 -> 非成功。
         assert!(!res.success);
+    }
+
+    #[tokio::test]
+    async fn emits_output_before_process_exits() {
+        let (service, id, _root) = make_service();
+        let sink = RecordingToolSink::default();
+        let observed = sink.clone();
+        #[cfg(windows)]
+        let command = "powershell -NoProfile -Command \"Write-Output first; Start-Sleep -Milliseconds 800; Write-Output second\"";
+        #[cfg(not(windows))]
+        let command = "printf first; sleep 1; printf second";
+        let task = tokio::spawn(async move {
+            run(
+                &service,
+                ProcessRuntime::new(),
+                &id,
+                &json!({"command": command}),
+                &[],
+                &sink,
+                CancellationToken::new(),
+            )
+            .await
+        });
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(!task.is_finished(), "process should still be running");
+        assert!(observed.events().iter().any(|event| matches!(
+            event,
+            ToolStreamEvent::OutputDelta {
+                channel: ToolOutputChannel::Stdout,
+                delta,
+            } if delta.contains("first")
+        )));
+        assert!(task.await.expect("join").expect("run").success);
+    }
+
+    #[test]
+    fn platform_environment_allowlist_contains_runtime_basics() {
+        assert!(ENV_ALLOWLIST.contains(&"PATH"));
+        #[cfg(windows)]
+        for name in [
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "COMSPEC",
+            "PATHEXT",
+        ] {
+            assert!(ENV_ALLOWLIST.contains(&name), "missing {name}");
+        }
     }
 }

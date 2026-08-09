@@ -1,6 +1,6 @@
 # P5-8：Export / Import
 
-> Phase 5 · Session、Branch 与 Compaction · 状态：🟡未开始 · 依赖：P1-5
+> Phase 5 · Session、Branch 与 Compaction · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P1-5
 
 **最终目的**：实现 session 导出/导入（schema 稳定），为迁移、备份与 Pi 导入提供基础格式。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 导出/导入 schema 稳定
-- [ ] 往返等价
+- [x] 导出/导入 schema 稳定
+- [x] 往返等价
 
 **相关文档**：[sessions](../docs/features/sessions.md) · [ROADMAP](../ROADMAP.md)

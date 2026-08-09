@@ -7,7 +7,7 @@ use crate::decision::{
     ApprovalPrompt, CommandRisk, ExecutionConstraints, PolicyDecision, RiskLevel,
 };
 use crate::mode::ApprovalMode;
-use crate::shell::classify_command;
+use crate::shell::{classify_command, hits_danger_floor};
 
 /// 进程执行允许时的默认超时（毫秒）。
 const DEFAULT_PROCESS_TIMEOUT_MS: u64 = 60_000;
@@ -20,6 +20,7 @@ pub struct PolicyInput {
     pub capability: ToolCapability,
     pub input: Value,
     pub trusted: bool,
+    pub allowed_in_untrusted_workspace: bool,
     pub approval_mode: ApprovalMode,
 }
 
@@ -44,10 +45,25 @@ impl PolicyEngine {
         let cap = &input.capability;
         let mode = input.approval_mode;
 
-        // 硬性安全：未信任工作区禁止任何有副作用的写/进程/网络能力。
-        if !input.trusted && requires_trust(cap) {
+        // Descriptor 是未信任工作区的第一道硬门：未显式声明可用则一律拒绝。
+        if !input.trusted && !input.allowed_in_untrusted_workspace {
             return PolicyDecision::Deny {
-                reason: format!("untrusted workspace forbids {:?} capability", cap),
+                reason: "tool is not allowed in an untrusted workspace".into(),
+            };
+        }
+
+        // 灾难命令地板：即使 trusted + NeverAsk 也不得静默执行。
+        if matches!(cap, ToolCapability::Process) && command_hits_danger_floor(&input.input) {
+            return match mode {
+                ApprovalMode::NeverAsk | ApprovalMode::OnFailure | ApprovalMode::ReadOnly => {
+                    PolicyDecision::Deny {
+                        reason: "catastrophic command cannot run without explicit pre-approval"
+                            .into(),
+                    }
+                }
+                ApprovalMode::AlwaysAsk
+                | ApprovalMode::AskForWrites
+                | ApprovalMode::AskForDangerous => ask(cap, input, RiskLevel::Dangerous),
             };
         }
 
@@ -79,17 +95,6 @@ impl PolicyEngine {
             }
         }
     }
-}
-
-/// 需要工作区受信任的能力（写/进程/网络）。
-fn requires_trust(cap: &ToolCapability) -> bool {
-    matches!(
-        cap,
-        ToolCapability::WorkspaceWrite
-            | ToolCapability::GitWrite
-            | ToolCapability::Process
-            | ToolCapability::Network
-    )
 }
 
 /// 是否产生副作用（除只读与用户交互外均为是）。
@@ -157,6 +162,10 @@ fn command_risk(input: &Value) -> CommandRisk {
     }
 }
 
+fn command_hits_danger_floor(input: &Value) -> bool {
+    extract_command(input).is_some_and(|(program, args)| hits_danger_floor(&program, &args))
+}
+
 /// 从工具入参中提取命令（支持 `program`/`command`/`cmd` + `args` 多种形状）。
 fn extract_command(input: &Value) -> Option<(String, Vec<String>)> {
     if let Some(prog) = input.get("program").and_then(|v| v.as_str()) {
@@ -202,6 +211,21 @@ mod tests {
             capability: cap,
             input: value,
             trusted,
+            allowed_in_untrusted_workspace: trusted,
+            approval_mode: mode,
+        }
+    }
+
+    fn untrusted_allowed_input(
+        cap: ToolCapability,
+        mode: ApprovalMode,
+        value: serde_json::Value,
+    ) -> PolicyInput {
+        PolicyInput {
+            capability: cap,
+            input: value,
+            trusted: false,
+            allowed_in_untrusted_workspace: true,
             approval_mode: mode,
         }
     }
@@ -245,9 +269,8 @@ mod tests {
     #[test]
     fn untrusted_allows_reads() {
         let eng = PolicyEngine::new(ApprovalMode::ReadOnly);
-        let dec = eng.decide(&input(
+        let dec = eng.decide(&untrusted_allowed_input(
             ToolCapability::ReadOnly,
-            false,
             ApprovalMode::ReadOnly,
             json!({}),
         ));
@@ -265,6 +288,17 @@ mod tests {
             json!({}),
         ));
         assert_eq!(dec, PolicyDecision::Allow, "trusted+NeverAsk 应放行写");
+    }
+
+    #[test]
+    fn untrusted_descriptor_permission_continues_through_policy() {
+        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let dec = eng.decide(&untrusted_allowed_input(
+            ToolCapability::WorkspaceWrite,
+            ApprovalMode::NeverAsk,
+            json!({}),
+        ));
+        assert_eq!(dec, PolicyDecision::Allow);
     }
 
     #[test]
@@ -355,6 +389,27 @@ mod tests {
             matches!(dec, PolicyDecision::AllowWithConstraints { .. }),
             "{dec:?}"
         );
+    }
+
+    #[test]
+    fn never_ask_denies_catastrophic_commands() {
+        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        for command in [
+            json!({"command": "rm", "args": ["-rf", "/"]}),
+            json!({"command": "mkfs", "args": ["/dev/sda1"]}),
+            json!({"command": "dd", "args": ["if=image", "of=/dev/sda"]}),
+        ] {
+            let dec = eng.decide(&input(
+                ToolCapability::Process,
+                true,
+                ApprovalMode::NeverAsk,
+                command,
+            ));
+            assert!(
+                matches!(dec, PolicyDecision::Deny { .. }),
+                "unexpected decision: {dec:?}"
+            );
+        }
     }
 
     #[test]

@@ -220,20 +220,16 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_latency_is_low() {
-        // 验证内存广播分发延迟远低于 2ms 目标。
+        // 从 publish 完成前一刻到订阅者收到事件计时；不把独立生产者等待
+        // Tokio/OS 调度的时间误算为广播通道自身延迟。
         let broadcaster = EventBroadcaster::new();
         let mut sub = broadcaster.subscribe();
         let iterations = 1000u32;
 
-        tokio::spawn(async move {
-            for seq in 1..=iterations as u64 {
-                broadcaster.publish(envelope(seq)).unwrap();
-            }
-        });
-
         let mut max_latency = Duration::ZERO;
-        for _ in 0..iterations {
+        for seq in 1..=iterations as u64 {
             let start = Instant::now();
+            broadcaster.publish(envelope(seq)).unwrap();
             let _ = sub.recv().await.unwrap();
             max_latency = max_latency.max(start.elapsed());
         }

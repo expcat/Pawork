@@ -23,9 +23,9 @@
 | 0 | 架构与协议冻结 | 12 | 12 | 🟢已完成 |
 | 1 | 基础设施 | 13 | 13 | 🟢已完成 |
 | 2 | 首个真实 Provider | 12 | 12 | 🟢已完成 |
-| 3 | Agent Loop | 11 | 10 | 🔵进行中（P3-11 评审修复待启动） |
-| 4 | 核心工具与权限 | 13 | 12 | 🔵进行中（P4-13 评审修复待启动） |
-| 5 | Session、Branch 与 Compaction | 10 | 9 | 🔵进行中（P5-10 评审修复待启动） |
+| 3 | Agent Loop | 11 | 11 | 🟢已完成（P3-11 TargetVerified） |
+| 4 | 核心工具与权限 | 13 | 13 | 🟢已完成（P4-13 TargetVerified） |
+| 5 | Session、Branch 与 Compaction | 10 | 10 | 🟢已完成（P5-10 TargetVerified） |
 | 6 | 主要 Provider | 14 | 9 | 🔵进行中（P6-10~13、P6-14 评审修复待启动） |
 | 7 | Git、Diff 与 Worktree | 9 | 8 | 🔵进行中（P7-9 评审修复待启动） |
 | 8 | Skills、Prompts 与 Instructions | 8 | 0 | 🟡未开始 |
@@ -40,7 +40,7 @@
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **85** | — |
+| **合计** | — | **210** | **88** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -48,7 +48,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P3-11 Phase 3 评审修复** —— 完成 Agent Loop 主干接线、预算/重放修复与文档收敛。详情见 [plan/P3-11-review-remediation.md](plan/P3-11-review-remediation.md)。
+> 🎯 **P6-14 Phase 6 评审修复** —— P1-13 / P2-12 / P3-11 / P4-13 / P5-10 已完成，Phase 1–5 连续达到完成状态；剩余汇总评审任务为 P6-14 / P7-9。下一项处理 Provider 安全/正确性、OAuth 接线与依赖基线，详情见 [plan/P6-14-review-remediation.md](plan/P6-14-review-remediation.md)。
 
 ## 实施波次与门禁节奏
 
@@ -116,7 +116,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | 正则 | regex | P4-6 | 线性时间匹配、无 ReDoS 风险 |
 | 文件监听 | notify + notify-debouncer-full | P1-8、P7-6、P8-8 | file-index 以 notify + 有界通道做扫描级合并；git-service/P7-6 使用 debouncer 做缓存失效；P8-8 复用统一事件语义 |
 | 路径规范化 | dunce | P1-13、P11-8 | Workspace 出口移除 Windows verbatim 前缀；后续统一短路径 / UNC 语义 |
-| 编码检测 | content-inspector + chardetng + encoding_rs | P4-1 | Mozilla 系 |
+| 编码检测 | chardetng + encoding_rs | P4-1 | Mozilla 系；二进制探测由内置启发式完成 |
 | Token 计数 | tiktoken-rs | P3-2 | 仅对 OpenAI 系精确；其它 Provider 用启发式估算 |
 | TS 类型导出 | ts-rs | P0-10、P13-7 | GUI Contract 类型生成，比 typeshare / specta 轻 |
 | 系统目录 | directories | P1-12 | 配置 / 数据目录标准路径 |
@@ -269,7 +269,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P3-8 | 🟢 | 取消 | 取消 provider/tool+进程清理 | [详情](plan/P3-8-cancel.md) |
 | P3-9 | 🟢 | 事件流式分发 | 广播+背压+<2ms | [详情](plan/P3-9-event-broadcast.md) |
 | P3-10 | 🟢 | Interrupted Run 恢复 | 崩溃后 <1s 恢复 | [详情](plan/P3-10-interrupted-run-recovery.md) |
-| P3-11 | 🟡 | Phase 3 评审修复 | 主干接线（V1~V9）+ 预算/重放（V4~V6）+ 文档漂移 | [详情](plan/P3-11-review-remediation.md) |
+| P3-11 | 🟢 | Phase 3 评审修复 | 主干接线（V1~V9）+ 预算/重放（V4~V6）+ 文档漂移 | [详情](plan/P3-11-review-remediation.md) |
 
 ### Phase 4：核心工具与权限
 
@@ -289,7 +289,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P4-10 | 🟢 | Workspace Trust | 默认受限/信任放宽 | [详情](plan/P4-10-workspace-trust.md) |
 | P4-11 | 🟢 | Checkpoint 与回滚 | 单次/整 run 回滚+冲突检测 | [详情](plan/P4-11-checkpoint-rollback.md) |
 | P4-12 | 🟢 | Process Runtime | 进程组/Job/无死锁 IO/cancel | [详情](plan/P4-12-process-runtime.md) |
-| P4-13 | 🟡 | Phase 4 评审修复 | 策略接线（V1/V4）+ 数据完整性（V3）+ checkpoint 持久化（V9）+ 基线/fuzz | [详情](plan/P4-13-review-remediation.md) |
+| P4-13 | 🟢 | Phase 4 评审修复 | 策略接线（V1/V4）+ 数据完整性（V3）+ checkpoint 持久化（V9）+ 基线/fuzz | [详情](plan/P4-13-review-remediation.md) |
 
 ### Phase 5：Session、Branch 与 Compaction
 
@@ -306,7 +306,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 | P5-7 | 🟢 | Tool Result 裁剪 | 分级裁剪+artifact 引用 | [详情](plan/P5-7-toolresult-trim.md) |
 | P5-8 | 🟢 | Export / Import | 稳定 schema 往返 | [详情](plan/P5-8-session-export-import.md) |
 | P5-9 | 🟢 | Pi JSONL Importer | 解析/未知字段/不改原文件 | [详情](plan/P5-9-pi-jsonl-import.md) |
-| P5-10 | 🟡 | Phase 5 评审修复 | 多分支正确性（V1/V2/V8）+ Pi 导入（V3~V5）+ CJK token（V6） | [详情](plan/P5-10-review-remediation.md) |
+| P5-10 | 🟢 | Phase 5 评审修复 | 多分支正确性（V1/V2/V8）+ Pi 导入（V3~V5）+ CJK token（V6） | [详情](plan/P5-10-review-remediation.md) |
 
 ### Phase 6：主要 Provider
 

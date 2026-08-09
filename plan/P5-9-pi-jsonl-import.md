@@ -1,6 +1,6 @@
 # P5-9：Pi JSONL Importer
 
-> Phase 5 · Session、Branch 与 Compaction · 状态：🟡未开始 · 依赖：P5-8
+> Phase 5 · Session、Branch 与 Compaction · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P5-8
 
 **最终目的**：实现 Pi JSONL Session 导入器（扫描/解析 header/消息/tool call/模型切换/compaction/branch、保存未知字段、迁移报告），让用户可迁移历史会话且不修改原文件（ADR-005）。
 
@@ -19,8 +19,8 @@
 
 ## 验收标准
 
-- [ ] 导入不修改原 Pi 文件
-- [ ] 保存未知字段
-- [ ] 生成迁移报告
+- [x] 导入不修改原 Pi 文件
+- [x] 保存未知字段
+- [x] 生成迁移报告
 
 **相关文档**：[sessions](../docs/features/sessions.md) · [ADR-005 Pi JSONL 导入](../docs/adr/ADR-005-pi-jsonl-import-only.md) · [ROADMAP](../ROADMAP.md)

@@ -6,7 +6,7 @@
 
 ## Process Runtime
 
-需解决：Unix 和 Windows 命令差异；Shell 选择；PATH 解析；子进程树终止；stdout/stderr 死锁；管道继承；退出后仍有后代进程持有句柄；超大输出；取消；timeout；Windows Job Object；Unix Process Group。
+已实现非 PTY 路径的 Unix Process Group / Windows `taskkill /T`、并发 stdout/stderr、timeout/cancel 与有界缓冲；流式路径跨 stdout/stderr 共用输出预算并在 Exit 标记截断。`ProcessHandle` 保存 PID 与独立 kill 信号，可在监督任务持有 child 时从外部终止进程树，Drop 也会请求清理。Windows Job Object 的完整实现仍归 P11-7。
 
 ## PTY Service
 

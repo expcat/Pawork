@@ -12,7 +12,9 @@
 //! 详见 `docs/features/context.md`（Tool Result 裁剪）与
 //! `docs/adr/ADR-018-large-payload-artifact-id.md`。
 
-use agent_domain::{ArtifactId, ArtifactReference, ContentPart, TextContent, ToolResultContent};
+use agent_domain::{
+    ArtifactId, ArtifactReference, ContentPart, ImageSource, TextContent, ToolResultContent,
+};
 
 /// 分级裁剪的字节阈值。
 ///
@@ -78,7 +80,8 @@ pub struct TrimmedToolResult {
     pub size: ResultSize,
     /// 原始字节长度（裁剪前）。
     pub original_byte_len: u64,
-    /// 被折叠进 Artifact 的完整原文（仅大 / 超大有值）；调用方可据此写 Blob。
+    /// 被折叠进 Artifact 的完整载荷（仅大 / 超大有值）；纯文本保持原文，含非文本
+    /// content 时保存 content parts 的 JSON，调用方可据此写 Blob。
     pub retained_full: Option<String>,
 }
 
@@ -97,11 +100,13 @@ const PLACEHOLDER_ARTIFACT_ID: &str = "artifact:trimmed-tool-result";
 const PLACEHOLDER_MEDIA_TYPE: &str = "text/plain";
 /// 中等结果头部 / 尾部分别保留的字节数（各占可用窗口的一半）。
 const MEDIUM_HALF_WINDOW: u64 = 2 * 1024;
+/// 无法得知实际字节数的图片采用保守固定成本，避免二进制为主的结果误判为 Small。
+const IMAGE_ESTIMATED_BYTES: u64 = 64 * 1024;
 
-/// 统计一条 `ToolResultContent` 内文本部分的字节数。
+/// 估算一条 `ToolResultContent` 的载荷字节数。
 ///
-/// 仅累计 `Text` 与 `ToolResult` 嵌套中的文本，忽略图片等二进制 content
-/// （它们的体量由调用方在写入 Blob 时另行计算）。文本按 UTF-8 字节数统计，保证确定性。
+/// 文本按 UTF-8 字节数统计；`ArtifactRef` 使用其声明长度；图片使用固定成本并为
+/// base64 加上近似解码长度。这样即使结果几乎不含文本，仍能进入正确裁剪等级。
 pub fn byte_len_of_tool_result(result: &ToolResultContent) -> u64 {
     let mut total = 0u64;
     for part in &result.content {
@@ -113,9 +118,31 @@ pub fn byte_len_of_tool_result(result: &ToolResultContent) -> u64 {
 fn content_part_byte_len(part: &ContentPart) -> u64 {
     match part {
         ContentPart::Text(text) => u64::try_from(text.text.len()).unwrap_or(u64::MAX),
+        ContentPart::Thinking(thinking) => u64::try_from(thinking.text.len()).unwrap_or(u64::MAX),
+        ContentPart::Image(image) => {
+            let encoded_payload = match &image.source {
+                ImageSource::Base64(value) => u64::try_from(value.len())
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(3)
+                    .div_ceil(4),
+                ImageSource::Artifact(_) | ImageSource::Url(_) => 0,
+            };
+            IMAGE_ESTIMATED_BYTES.saturating_add(encoded_payload)
+        }
+        ContentPart::ToolCall(call) => {
+            let arguments = serde_json::to_string(&call.arguments).unwrap_or_default();
+            u64::try_from(call.name.len())
+                .unwrap_or(u64::MAX)
+                .saturating_add(u64::try_from(arguments.len()).unwrap_or(u64::MAX))
+                .saturating_add(
+                    call.raw_arguments
+                        .as_ref()
+                        .map(|raw| u64::try_from(raw.len()).unwrap_or(u64::MAX))
+                        .unwrap_or(0),
+                )
+        }
         ContentPart::ToolResult(nested) => byte_len_of_tool_result(nested),
-        // 二进制内容不在文本裁剪范围内；以 0 计入，交由调用方另行管理。
-        _ => 0,
+        ContentPart::ArtifactRef(reference) => reference.byte_length,
     }
 }
 
@@ -133,6 +160,22 @@ fn collect_text_part(part: &ContentPart, buf: &mut String) {
         ContentPart::Text(text) => buf.push_str(&text.text),
         ContentPart::ToolResult(nested) => buf.push_str(&collect_text(nested)),
         _ => {}
+    }
+}
+
+fn retained_full_payload(result: &ToolResultContent, text: String) -> String {
+    if result.content.iter().any(contains_non_text_part) {
+        serde_json::to_string(&result.content).unwrap_or(text)
+    } else {
+        text
+    }
+}
+
+fn contains_non_text_part(part: &ContentPart) -> bool {
+    match part {
+        ContentPart::Text(_) => false,
+        ContentPart::ToolResult(nested) => nested.content.iter().any(contains_non_text_part),
+        _ => true,
     }
 }
 
@@ -183,6 +226,7 @@ pub fn trim_tool_result_with(
         }
         ResultSize::Large | ResultSize::Huge => {
             let full = collect_text(result);
+            let retained_full = retained_full_payload(result, full.clone());
             let reference = ArtifactReference {
                 id: ArtifactId::from(PLACEHOLDER_ARTIFACT_ID),
                 media_type: PLACEHOLDER_MEDIA_TYPE.into(),
@@ -207,7 +251,7 @@ pub fn trim_tool_result_with(
                 content.push(ContentPart::Text(TextContent { text: summary_text }));
             }
             content.push(ContentPart::ArtifactRef(reference));
-            (content, Some(full))
+            (content, Some(retained_full))
         }
     };
 
@@ -225,7 +269,7 @@ pub fn trim_tool_result_with(
 
 #[cfg(test)]
 mod tests {
-    use agent_domain::{ToolCallId, ToolResultContent};
+    use agent_domain::{ImageContent, ToolCallId, ToolResultContent};
     use serde_json::Value;
 
     use super::*;
@@ -354,5 +398,24 @@ mod tests {
         assert_eq!(trimmed.size, ResultSize::Small);
         assert!(trimmed.content.is_empty());
         assert_eq!(trimmed.original_byte_len, 0);
+    }
+
+    #[test]
+    fn image_only_result_is_not_misclassified_as_small() {
+        let thresholds = TrimThresholds::default();
+        let result = result_with(vec![ContentPart::Image(ImageContent {
+            source: ImageSource::Base64("aGVsbG8=".into()),
+            media_type: "image/png".into(),
+            alt_text: None,
+        })]);
+
+        let trimmed = trim_tool_result(&result, &thresholds);
+        assert_eq!(trimmed.size, ResultSize::Large);
+        assert!(trimmed.original_byte_len >= IMAGE_ESTIMATED_BYTES);
+        assert!(trimmed
+            .retained_full
+            .as_deref()
+            .expect("serialized image payload")
+            .contains("aGVsbG8="));
     }
 }

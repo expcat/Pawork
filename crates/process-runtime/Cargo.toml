@@ -10,8 +10,6 @@ description = "Pawork 跨平台 Process Runtime：进程组/Job、无死锁 IO�
 [dependencies]
 agent-domain = { path = "../agent-domain" }
 libc.workspace = true
-bytes.workspace = true
-futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

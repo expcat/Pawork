@@ -35,6 +35,63 @@ pub fn classify_command(program: &str, args: &[String]) -> CommandRisk {
     }
 }
 
+/// 命中无论审批模式多宽松都不能静默执行的灾难命令地板。
+pub(crate) fn hits_danger_floor(program: &str, args: &[String]) -> bool {
+    if let Some(script) = extract_shell_script(program, args) {
+        return snippet_hits_danger_floor(&script);
+    }
+    if contains_separator(program) {
+        return snippet_hits_danger_floor(program);
+    }
+    let (prog, mut extra) = split_program(program);
+    extra.extend(args.iter().cloned());
+    catastrophic_single(&prog, &extra)
+}
+
+fn snippet_hits_danger_floor(text: &str) -> bool {
+    let segments: Vec<&str> = match separators_regex() {
+        Some(re) => re.split(text).collect(),
+        None => vec![text],
+    };
+    segments.into_iter().any(|segment| {
+        let tokens: Vec<String> = segment
+            .split_whitespace()
+            .map(|token| token.trim_matches(['\'', '"']).to_string())
+            .collect();
+        if tokens.is_empty() {
+            return false;
+        }
+        if catastrophic_single(&tokens[0], &tokens[1..]) {
+            return true;
+        }
+        if is_shell_program(&tokens[0]) {
+            if let Some(index) = tokens.iter().position(|token| token == "-c") {
+                return snippet_hits_danger_floor(&tokens[index + 1..].join(" "));
+            }
+        }
+        false
+    })
+}
+
+fn catastrophic_single(program: &str, args: &[String]) -> bool {
+    let base = basename(program);
+    match base.as_str() {
+        "mkfs" => true,
+        name if name.starts_with("mkfs.") => true,
+        "dd" => args.iter().any(|arg| {
+            let arg = arg.trim_matches(['\'', '"']);
+            arg == "of=/dev" || arg.starts_with("of=/dev/")
+        }),
+        "rm" => {
+            let recursive = args.iter().any(|arg| is_recursive_flag(arg));
+            let force = args.iter().any(|arg| is_force_flag(arg));
+            let root = args.iter().any(|arg| arg.trim_matches(['\'', '"']) == "/");
+            recursive && force && root
+        }
+        _ => false,
+    }
+}
+
 /// 判定一段 shell 脚本（可能含多条命令）的风险。
 fn classify_snippet(text: &str) -> CommandRisk {
     let segments: Vec<&str> = match separators_regex() {
@@ -129,6 +186,14 @@ fn is_recursive_flag(arg: &str) -> bool {
         }
     }
     false
+}
+
+fn is_force_flag(arg: &str) -> bool {
+    if arg == "--force" || arg == "-f" {
+        return true;
+    }
+    arg.strip_prefix('-')
+        .is_some_and(|rest| !rest.starts_with('-') && rest.contains('f'))
 }
 
 fn git_push_force(args: &[String]) -> bool {
@@ -234,12 +299,17 @@ fn text_contains_dangerous(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_command;
+    use super::{classify_command, hits_danger_floor};
     use crate::decision::CommandRisk;
 
     fn danger(program: &str, args: &[&str]) -> CommandRisk {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         classify_command(program, &args)
+    }
+
+    fn floor(program: &str, args: &[&str]) -> bool {
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        hits_danger_floor(program, &args)
     }
 
     #[test]
@@ -277,6 +347,17 @@ mod tests {
         );
         assert_eq!(danger("mkfs.ext4", &["/dev/sda1"]), CommandRisk::Dangerous);
         assert_eq!(danger("mkfs", &["/dev/sda1"]), CommandRisk::Dangerous);
+    }
+
+    #[test]
+    fn danger_floor_only_matches_catastrophic_forms() {
+        assert!(floor("rm", &["-rf", "/"]));
+        assert!(!floor("rm", &["-rf", "/tmp/project"]));
+        assert!(floor("mkfs.ext4", &["/dev/sda1"]));
+        assert!(floor("dd", &["if=image", "of=/dev/sda"]));
+        assert!(!floor("dd", &["if=image", "of=local.img"]));
+        assert!(floor("sh", &["-c", "echo ok && rm -rf /"]));
+        assert!(floor("bash", &["-c", "bash -c 'rm -rf /'"]));
     }
 
     #[test]

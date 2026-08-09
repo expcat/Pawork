@@ -2,16 +2,12 @@
 //!
 //! 精确替换、多段编辑、上下文校验、模糊匹配、冲突报告（结构化 diff）。
 
-use std::fs;
-use std::io::Write;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
-
 use agent_domain::{ContentPart, TextContent, WorkspaceId};
 use async_trait::async_trait;
 use checkpoint_service::CheckpointService;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::fs;
 use tool_api::AgentTool;
 use tool_api::CancellationToken;
 use tool_api::ToolCapability;
@@ -23,6 +19,7 @@ use tool_api::ToolRequest;
 use tool_api::ToolResult;
 use workspace_service::WorkspaceService;
 
+use crate::common::atomic_write;
 use crate::common::call_key;
 use crate::common::opt_bool;
 use crate::common::require_str;
@@ -244,11 +241,14 @@ fn count_and_replace(
     allow_fuzzy: bool,
     path: &str,
 ) -> Result<usize, EditFileError> {
-    let occurrences = if allow_fuzzy {
-        count_fuzzy(content, old)
+    let fuzzy_matches = if allow_fuzzy {
+        Some(fuzzy_match_ranges(content, old))
     } else {
-        content.matches(old).count()
+        None
     };
+    let occurrences = fuzzy_matches
+        .as_ref()
+        .map_or_else(|| content.matches(old).count(), Vec::len);
     if occurrences == 0 {
         // 未匹配：该段无法应用；多段原子语义要求整体失败（尚未写盘）。
         return Err(EditFileError::NotFound {
@@ -260,84 +260,109 @@ fn count_and_replace(
             "old_string is not unique: found {occurrences} occurrences"
         )));
     }
-    if allow_fuzzy {
-        replace_fuzzy(content, old, new);
+    if let Some(matches) = fuzzy_matches {
+        let (start, end) = matches[0];
+        content.replace_range(start..end, new);
     } else {
         *content = content.replacen(old, new, 1);
     }
     Ok(1)
 }
 
-/// 规范化空白：压缩连续空白、去除首尾空白，便于模糊匹配。
-fn normalize_ws(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+#[derive(Clone, Copy)]
+struct LineSpan {
+    start: usize,
+    content_end: usize,
 }
 
-/// 模糊统计：按行块匹配，规范化后比较是否相等，返回匹配窗口数。
-fn count_fuzzy(content: &str, old: &str) -> usize {
-    let norm_old = normalize_ws(old);
-    if norm_old.is_empty() {
-        return 0;
-    }
-    let lines: Vec<&str> = content.lines().collect();
-    let old_lines: Vec<&str> = old.lines().collect();
-    let n = old_lines.len();
-    if n == 0 || lines.len() < n {
-        return 0;
-    }
-    let mut count = 0;
-    for window in lines.windows(n) {
-        let joined = window.join("\n");
-        if normalize_ws(&joined) == norm_old {
-            count += 1;
-        }
-    }
-    count
-}
-
-fn replace_fuzzy(content: &mut String, old: &str, new: &str) {
-    let lines: Vec<&str> = content.lines().collect();
-    let old_lines: Vec<&str> = old.lines().collect();
-    let n = old_lines.len();
-    let norm_old = normalize_ws(old);
-    if n == 0 {
-        return;
-    }
-    let mut out: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        if i + n <= lines.len() && normalize_ws(&lines[i..i + n].join("\n")) == norm_old {
-            out.push(new.to_string());
-            i += n;
+fn line_spans(text: &str) -> Vec<LineSpan> {
+    let mut spans = Vec::new();
+    let mut start = 0;
+    for segment in text.split_inclusive('\n') {
+        let end = start + segment.len();
+        let content_end = if segment.ends_with("\r\n") {
+            end - 2
+        } else if segment.ends_with('\n') {
+            end - 1
         } else {
-            out.push(lines[i].to_string());
-            i += 1;
-        }
+            end
+        };
+        spans.push(LineSpan { start, content_end });
+        start = end;
     }
-    *content = out.join("\n");
+    if start < text.len() {
+        spans.push(LineSpan {
+            start,
+            content_end: text.len(),
+        });
+    }
+    spans
 }
 
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+/// 单次 token 化 + KMP 查找，避免为每个行窗口重复拼接和规范化。
+fn fuzzy_match_ranges(content: &str, old: &str) -> Vec<(usize, usize)> {
+    let content_lines = line_spans(content);
+    let old_lines = line_spans(old);
+    if old_lines.is_empty() || content_lines.len() < old_lines.len() {
+        return Vec::new();
+    }
 
-fn atomic_write(path: &std::path::Path, content: &[u8]) -> Result<(), EditFileError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    let pattern: Vec<&str> = old.split_whitespace().collect();
+    if pattern.is_empty() {
+        return Vec::new();
     }
-    let tmp = path.with_file_name(format!(
-        ".tmp-{}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| -> std::io::Result<()> {
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(content)?;
-        file.sync_all()?;
-        fs::rename(&tmp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
+    let mut tokens = Vec::new();
+    let mut token_offsets = Vec::with_capacity(content_lines.len() + 1);
+    token_offsets.push(0);
+    for line in &content_lines {
+        tokens.extend(content[line.start..line.content_end].split_whitespace());
+        token_offsets.push(tokens.len());
     }
-    result.map_err(EditFileError::Io)
+
+    let starts = kmp_match_starts(&tokens, &pattern);
+    let line_count = old_lines.len();
+    let mut matches = Vec::new();
+    for line_index in 0..=content_lines.len() - line_count {
+        let token_start = token_offsets[line_index];
+        let token_end = token_offsets[line_index + line_count];
+        if token_end - token_start == pattern.len() && starts[token_start] {
+            matches.push((
+                content_lines[line_index].start,
+                content_lines[line_index + line_count - 1].content_end,
+            ));
+        }
+    }
+    matches
+}
+
+fn kmp_match_starts(haystack: &[&str], needle: &[&str]) -> Vec<bool> {
+    let mut prefix = vec![0usize; needle.len()];
+    for index in 1..needle.len() {
+        let mut matched = prefix[index - 1];
+        while matched > 0 && needle[index] != needle[matched] {
+            matched = prefix[matched - 1];
+        }
+        if needle[index] == needle[matched] {
+            matched += 1;
+        }
+        prefix[index] = matched;
+    }
+
+    let mut starts = vec![false; haystack.len() + 1];
+    let mut matched = 0usize;
+    for (index, token) in haystack.iter().enumerate() {
+        while matched > 0 && *token != needle[matched] {
+            matched = prefix[matched - 1];
+        }
+        if *token == needle[matched] {
+            matched += 1;
+        }
+        if matched == needle.len() {
+            starts[index + 1 - needle.len()] = true;
+            matched = prefix[matched - 1];
+        }
+    }
+    starts
 }
 
 #[cfg(test)]
@@ -346,7 +371,8 @@ mod tests {
     use agent_domain::Timestamp;
     use agent_domain::WorkspaceId;
     use artifact_store::ArtifactStore;
-    use std::sync::atomic::AtomicU64;
+    use proptest::prelude::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
@@ -498,5 +524,65 @@ mod tests {
         assert!(fs::read_to_string(root.join("a.txt"))
             .unwrap()
             .contains("REPLACED"));
+    }
+
+    #[tokio::test]
+    async fn fuzzy_edit_preserves_terminal_newline() {
+        let (service, checkpoints, id, root) = make_env().await;
+        fs::write(root.join("newline.txt"), "alpha   beta\ngamma\n").unwrap();
+        edit(
+            &service,
+            &checkpoints,
+            &id,
+            &agent_domain::RunId::from("r-newline"),
+            &agent_domain::ToolCallId::from("t-newline"),
+            &json!({
+                "path": "newline.txt",
+                "old_string": "alpha beta",
+                "new_string": "replaced",
+                "allow_fuzzy": true
+            }),
+        )
+        .await
+        .expect("fuzzy edit");
+        assert_eq!(
+            fs::read_to_string(root.join("newline.txt")).unwrap(),
+            "replaced\ngamma\n"
+        );
+    }
+
+    #[test]
+    fn fuzzy_matcher_counts_unique_line_aligned_windows() {
+        let matches = fuzzy_match_ranges("alpha   beta\nother\nalpha beta\n", "alpha beta");
+        assert_eq!(matches.len(), 2);
+        assert_eq!(
+            &"alpha   beta\nother\nalpha beta\n"[matches[0].0..matches[0].1],
+            "alpha   beta"
+        );
+        assert_eq!(
+            &"alpha   beta\nother\nalpha beta\n"[matches[1].0..matches[1].1],
+            "alpha beta"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn fuzzy_matcher_is_total_and_count_matches_replacement(
+            first in "[a-z]{1,12}",
+            second in "[a-z]{1,12}",
+            replacement in "[A-Z]{1,12}",
+        ) {
+            let old = format!("{first} {second}");
+            let mut content = format!("prefix\n  {first}    {second}  \nsuffix\n");
+            let ranges = fuzzy_match_ranges(&content, &old);
+            prop_assert_eq!(ranges.len(), 1);
+            let count = count_and_replace(&mut content, &old, &replacement, true, "generated.txt")
+                .expect("generated fuzzy match");
+            prop_assert_eq!(count, ranges.len());
+            prop_assert!(content.ends_with('\n'));
+            prop_assert!(content.contains(&replacement));
+        }
     }
 }

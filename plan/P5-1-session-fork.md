@@ -1,6 +1,6 @@
 # P5-1：Session Tree / Fork
 
-> Phase 5 · Session、Branch 与 Compaction · 状态：🟡未开始 · 依赖：P1-5
+> Phase 5 · Session、Branch 与 Compaction · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P1-5
 
 **最终目的**：实现从任意事件创建新 branch 的 Session Tree，让用户可在任意节点分叉探索，且大 session 不需全量读。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 可从任意事件 Fork
-- [ ] 大 session 不全量读
+- [x] 可从任意事件 Fork
+- [x] 大 session 不全量读
 
 **相关文档**：[sessions](../docs/features/sessions.md) · [ROADMAP](../ROADMAP.md)

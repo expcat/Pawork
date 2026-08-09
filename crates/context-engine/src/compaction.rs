@@ -1,8 +1,9 @@
 //! 超限检测与压缩触发信号。
 //!
 //! context-engine **只产出触发决策**，不执行真正的压缩；压缩引擎位于
-//! `compaction-engine`（尚未实现）。调用方拿到 [`CompactionTrigger`] 后自行决定
-//! 是否调用压缩引擎并重建上下文。
+//! `compaction-engine`。调用方拿到 [`CompactionTrigger`] 后自行决定是否调用压缩引擎
+//! 并重建上下文。`compaction-engine::CompactionReason` 另含手动触发的 `Manual`；
+//! 自动原因由该 crate 提供显式 `From` 映射。
 
 use serde::{Deserialize, Serialize};
 

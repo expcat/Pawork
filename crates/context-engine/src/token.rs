@@ -5,7 +5,7 @@
 //!   `count_content_part` / `count_tool_schemas` 均为基于 `count_text` 的默认实现，
 //!   保证两种实现口径一致，且可在 `&dyn TokenEstimator` 上调用。
 //! - OpenAI 系模型用 tiktoken 精确分词；无法获得精确 tokenizer 时走
-//!   [`HeuristicEstimator`]（默认 chars/4，可配 ratio）。
+//!   [`HeuristicEstimator`]（拉丁等脚本默认 chars/4，CJK/Hangul/Kana 保守按 1 字符/token）。
 
 use agent_domain::{ContentPart, Message, MessageRole};
 use serde::{Deserialize, Serialize};
@@ -156,7 +156,10 @@ impl TokenEstimator for TiktokenEstimator {
     }
 }
 
-/// 启发式估算器：无法获得精确 tokenizer 时使用。默认 chars/4，ratio 可配。
+/// 启发式估算器：无法获得精确 tokenizer 时使用。
+///
+/// `chars_per_token` 适用于非 CJK 字符；CJK ideograph、Kana 与 Hangul 独立按
+/// 1 字符/token 估算，避免使用统一 chars/4 时严重低估东亚文本。
 #[derive(Clone, Debug)]
 pub struct HeuristicEstimator {
     chars_per_token: u32,
@@ -184,13 +187,40 @@ impl HeuristicEstimator {
 
 impl TokenEstimator for HeuristicEstimator {
     fn count_text(&self, text: &str) -> u64 {
-        let chars = text.chars().count() as u64;
-        chars.div_ceil(self.chars_per_token as u64)
+        let (cjk_chars, other_chars) = text.chars().fold((0u64, 0u64), |counts, ch| {
+            if is_cjk_like(ch) {
+                (counts.0.saturating_add(1), counts.1)
+            } else {
+                (counts.0, counts.1.saturating_add(1))
+            }
+        });
+        cjk_chars.saturating_add(other_chars.div_ceil(self.chars_per_token as u64))
     }
 
     fn estimator_kind(&self) -> &'static str {
         "heuristic"
     }
+}
+
+fn is_cjk_like(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x11FF // Hangul Jamo
+            | 0x2E80..=0x2FFF // CJK radicals
+            | 0x3000..=0x303F // CJK symbols and punctuation
+            | 0x3040..=0x30FF // Hiragana and Katakana
+            | 0x3100..=0x312F // Bopomofo
+            | 0x3130..=0x318F // Hangul compatibility Jamo
+            | 0x31A0..=0x31BF // Bopomofo extended
+            | 0x31F0..=0x31FF // Katakana phonetic extensions
+            | 0x3400..=0x4DBF // CJK unified ideographs extension A
+            | 0x4E00..=0x9FFF // CJK unified ideographs
+            | 0xA960..=0xA97F // Hangul Jamo extended-A
+            | 0xAC00..=0xD7AF // Hangul syllables
+            | 0xD7B0..=0xD7FF // Hangul Jamo extended-B
+            | 0xF900..=0xFAFF // CJK compatibility ideographs
+            | 0x20000..=0x2FA1F // CJK extensions and compatibility supplement
+    )
 }
 
 /// 选择默认估算器：OpenAI 系（tiktoken 可识别）走精确计数，否则启发式。
@@ -233,6 +263,15 @@ mod tests {
         assert_eq!(est.count_text(""), 0);
         assert_eq!(HeuristicEstimator::new(2).count_text("abcd"), 2);
         assert_eq!(HeuristicEstimator::new(0).count_text("abcd"), 4); // 最小为 1 → chars/1
+    }
+
+    #[test]
+    fn heuristic_counts_cjk_separately_from_latin_ratio() {
+        let est = HeuristicEstimator::default();
+        assert_eq!(est.count_text("你好世界上下文压缩"), 9);
+        assert_eq!(est.count_text("abcd你好"), 3); // latin 4/4 + CJK 2/1
+        assert_eq!(est.count_text("こんにちは"), 5);
+        assert_eq!(est.count_text("안녕하세요"), 5);
     }
 
     #[test]

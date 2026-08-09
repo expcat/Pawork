@@ -1,6 +1,6 @@
 # P5-5：Compaction 引擎
 
-> Phase 5 · Session、Branch 与 Compaction · 状态：🟡未开始 · 依赖：P1-5、P3-2
+> Phase 5 · Session、Branch 与 Compaction · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P1-5、P3-2
 
 **最终目的**：实现自动/手动压缩与 `CompactionSnapshot`（版本化摘要），让长会话不超出上下文窗口且压缩前可恢复。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 摘要版本化
-- [ ] 压缩前 branch 可恢复
+- [x] 摘要版本化
+- [x] 压缩前 branch 可恢复
 
 **相关文档**：[context](../docs/features/context.md) · [sessions](../docs/features/sessions.md) · [ROADMAP](../ROADMAP.md)

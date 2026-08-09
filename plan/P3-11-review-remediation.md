@@ -1,6 +1,6 @@
 # P3-11：Phase 3 评审修复（REVIEW remediation）
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P3-1 ~ P3-10（与 P4-13 在 `scheduler.rs` 上下文注入上同根，序列协调：本任务先做 V8 上下文注入，P4-13 再做 V1 策略接线）
+> Phase 3 · Agent Loop · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P3-1 ~ P3-10（与 P4-13 在 `scheduler.rs` 上下文注入上同根，序列协调：本任务先做 V8 上下文注入，P4-13 再做 V1 策略接线）
 
 **最终目的**：把 [REVIEW.md](../REVIEW.md) §3（Phase 3）评审指出的「组件齐全、主干未接线」状态收口——让 Provider Loop 真正组合状态机、预算、重试、消息队列、取消、广播与工具调度，使终态事件可观察、流式增量对订阅者可见、断流可重试、崩溃重放对工具轮次正确，并把 plan 文档漂移一并处理。
 
@@ -39,7 +39,7 @@
 
 ### G. 文档与基线漂移
 
-12. **plan 漂移**：10 篇 `plan/P3-*.md` 状态回填 🟢、18 个验收框勾选；修订 `provider_loop.rs` 模块头注释使其与实际组合范围一致。目的：纠正 AGENTS.md §4 流程偏差与注释失真。
+12. **plan 漂移**：10 篇 `plan/P3-*.md` 状态回填 🟢、当前 14 个验收框全部勾选；修订 `provider_loop.rs` 模块头注释使其与实际组合范围一致。目的：纠正 AGENTS.md §4 流程偏差与注释失真。
 13. **基线**：`futures` 回填属 P2-12（agent-engine 为其第三个消费者，本任务仅引用，不改基线表，避免与 P2-12 冲突）。目的：跨任务基线编辑不撞车。
 
 ## 主要产出物
@@ -50,19 +50,25 @@
 
 ## 验收标准（保留 REVIEW 追踪编号）
 
-- [ ] **V1**：取消/预算耗尽路径广播 `RunCancelled`/`RunFailed`（订阅者断言）
-- [ ] **V2**：订阅者收到 `AssistantTextDelta` 等 delta（流式广播测试）
-- [ ] **V3**：`StreamInterrupted`/`Network`/`Timeout` 触发重试而非直接 Failed（断流重试测试）
-- [ ] **V4**：含工具轮次的 Run 重放无 `IllegalTransition`，`recovered_state` 正确（回归测试）
-- [ ] **V5**：达软阈值 emit `Diagnostic`（事件断言）
-- [ ] **V6**：Cost/Duration/Concurrency/ArtifactBytes 四维上限可触发（用例）
-- [ ] **V7**：运行中入队消息被消费；取消触发进程树清理（测试）
-- [ ] **V8**：工具收到真实 workspace_id/run_id，非 `"default"`（断言）
-- [ ] **V9**：存在 loop + scheduler + capability 冲突的端到端测试
-- [ ] **V10**：`execute()` input.name 路径已废弃/移除
-- [ ] **V11**：取消测试断言 `RunCancelled` 事件被广播
-- [ ] **文档**：10 篇 `plan/P3-*.md` 状态 🟢、18 验收框勾选；provider_loop 模块头注释与实现一致
-- [ ] **快速验证**：只运行 Agent Loop、预算、队列、事件重放的定向测试与最小 Mock smoke；workspace 全量与 schema 总门禁延后到 Core 主干 L2
+- [x] **V1**：取消/预算耗尽路径广播 `RunCancelled`/`RunFailed`（订阅者断言）
+- [x] **V2**：订阅者收到 `AssistantTextDelta` 等 delta（流式广播测试）
+- [x] **V3**：`StreamInterrupted`/`Network`/`Timeout` 触发重试而非直接 Failed（断流重试测试）
+- [x] **V4**：含工具轮次的 Run 重放无 `IllegalTransition`，`recovered_state` 正确（回归测试）
+- [x] **V5**：达软阈值 emit `Diagnostic`（事件断言）
+- [x] **V6**：Cost/Duration/Concurrency/ArtifactBytes 四维上限可触发（用例）
+- [x] **V7**：运行中入队消息被消费；取消触发进程树清理（测试）
+- [x] **V8**：工具收到真实 workspace_id/run_id，非 `"default"`（断言）
+- [x] **V9**：存在 loop + scheduler + capability 冲突的端到端测试
+- [x] **V10**：`execute()` input.name 路径已废弃/移除
+- [x] **V11**：取消测试断言 `RunCancelled` 事件被广播
+- [x] **文档**：10 篇 `plan/P3-*.md` 状态 🟢、当前 14 个验收框全部勾选；provider_loop 模块头注释与实现一致
+- [x] **快速验证**：只运行 Agent Loop、预算、队列、事件重放的定向测试与最小 Mock smoke；workspace 全量与 schema 总门禁延后到 Core 主干 L2
+
+## 验证记录（2026-08-09）
+
+- `cargo test -p agent-engine -p tool-runtime -p policy-engine`
+- `cargo clippy -p agent-engine -p tool-runtime -p policy-engine --all-targets -- -D warnings`
+- ProviderLoop + Scheduler + 显式 Policy approval 组合测试覆盖批准、拒绝与灾难命令硬拒绝，真实 workspace/run context 与 capability 串行均有断言。
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §3 · [ADR-016 核心事件可持久化重放](../docs/adr/ADR-016-core-event-persist-replay.md) · [ROADMAP](../ROADMAP.md)
 

@@ -107,7 +107,6 @@ notify-debouncer-full = "0.5"
 
 # 路径规范化 / 编码检测
 dunce = "1"
-content-inspector = "0.2"
 chardetng = "0.1"
 encoding_rs = "0.8"
 

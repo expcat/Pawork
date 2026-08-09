@@ -9,6 +9,7 @@ use agent_domain::{ContentPart, TextContent, WorkspaceId};
 use async_trait::async_trait;
 use chardetng::EncodingDetector;
 use serde_json::{json, Value};
+use tokio::io::AsyncReadExt;
 use tool_api::AgentTool;
 use tool_api::CancellationToken;
 use tool_api::ToolCapability;
@@ -28,6 +29,7 @@ use crate::common::BuiltinToolError;
 
 const DEFAULT_LIMIT: u64 = 2000;
 const MAX_OUTPUT_BYTES: u64 = 256 * 1024;
+const MAX_READ_BYTES: u64 = 4 * 1024 * 1024;
 
 /// `read_file` 工具。
 #[derive(Clone)]
@@ -70,19 +72,28 @@ impl AgentTool for ReadFileTool {
         request: ToolRequest,
         context: ToolExecutionContext,
         _sink: &dyn ToolEventSink,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
-        match read(&self.workspaces, &context.workspace_id, &request.input) {
+        match read(
+            &self.workspaces,
+            &context.workspace_id,
+            &request.input,
+            cancel,
+        )
+        .await
+        {
             Ok(output) => Ok(output),
+            Err(ReadFileError::Cancelled) => Err(ToolError::cancelled("read_file cancelled")),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }
     }
 }
 
-fn read(
+async fn read(
     service: &WorkspaceService,
     workspace_id: &WorkspaceId,
     input: &Value,
+    cancel: CancellationToken,
 ) -> Result<ToolResult, ReadFileError> {
     let path = require_str(input, "path")?;
     let offset = opt_u64(input, "offset").unwrap_or(1).max(1) as usize;
@@ -90,20 +101,40 @@ fn read(
 
     let roots = workspace_roots(service, workspace_id)?;
     let absolute = resolve_rel(&roots, &path)?;
-    let bytes = std::fs::read(&absolute)?;
+    let metadata = tokio::fs::metadata(&absolute).await?;
+    let file = tokio::fs::File::open(&absolute).await?;
+    let mut limited = file.take(MAX_READ_BYTES + 1);
+    let mut bytes = Vec::with_capacity(
+        metadata
+            .len()
+            .min(MAX_READ_BYTES + 1)
+            .try_into()
+            .unwrap_or(0),
+    );
+    tokio::select! {
+        _ = cancel.cancelled() => return Err(ReadFileError::Cancelled),
+        result = limited.read_to_end(&mut bytes) => { result?; }
+    }
+    let read_truncated = bytes.len() as u64 > MAX_READ_BYTES;
+    if read_truncated {
+        bytes.truncate(MAX_READ_BYTES as usize);
+    }
 
     if is_binary(&bytes) {
-        return Ok(binary_result(&path, &absolute, bytes.len()));
+        return Ok(binary_result(&path, &absolute, metadata.len()));
     }
 
     let text = decode(&bytes);
     let total_lines = text.lines().count();
-    let (rendered, truncated) = render_lines(&text, offset, limit);
+    let (rendered, output_truncated) = render_lines(&text, offset, limit);
+    let truncated = read_truncated || output_truncated;
 
     let metadata = json!({
         "path": path,
         "absolute": absolute.display().to_string(),
-        "bytes": bytes.len(),
+        "bytes": metadata.len(),
+        "bytes_read": bytes.len(),
+        "read_truncated": read_truncated,
         "lines_total": total_lines,
         "offset": offset,
         "limit": limit,
@@ -129,7 +160,7 @@ fn render_lines(text: &str, offset: usize, limit: usize) -> (String, bool) {
         if line_no < offset {
             continue;
         }
-        if line_no >= offset + limit {
+        if line_no >= offset.saturating_add(limit) {
             truncated = true;
             break;
         }
@@ -178,7 +209,7 @@ fn decode(bytes: &[u8]) -> String {
     text
 }
 
-fn binary_result(path: &str, absolute: &Path, size: usize) -> ToolResult {
+fn binary_result(path: &str, absolute: &Path, size: u64) -> ToolResult {
     let metadata = json!({
         "path": path,
         "absolute": absolute.display().to_string(),
@@ -204,6 +235,8 @@ pub enum ReadFileError {
     Common(#[from] BuiltinToolError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("read cancelled")]
+    Cancelled,
 }
 
 impl From<ReadFileError> for BuiltinToolError {
@@ -211,6 +244,7 @@ impl From<ReadFileError> for BuiltinToolError {
         match error {
             ReadFileError::Common(common) => common,
             ReadFileError::Io(io) => BuiltinToolError::Io(io),
+            ReadFileError::Cancelled => BuiltinToolError::Other("read_file cancelled".into()),
         }
     }
 }
@@ -251,19 +285,22 @@ mod tests {
         (service, id, root)
     }
 
-    fn run_read(service: &WorkspaceService, id: &WorkspaceId, input: Value) -> ToolResult {
-        read(service, id, &input).expect("read ok")
+    async fn run_read(service: &WorkspaceService, id: &WorkspaceId, input: Value) -> ToolResult {
+        read(service, id, &input, CancellationToken::new())
+            .await
+            .expect("read ok")
     }
 
-    #[test]
-    fn line_numbers_offset_and_limit() {
+    #[tokio::test]
+    async fn line_numbers_offset_and_limit() {
         let (service, id, root) = make_service();
         fs::write(root.join("a.txt"), "one\ntwo\nthree\nfour\nfive\n").unwrap();
         let res = run_read(
             &service,
             &id,
             json!({"path": "a.txt", "offset": 2, "limit": 2}),
-        );
+        )
+        .await;
         assert!(res.success);
         assert!(res.truncated);
         let text = text_of(&res);
@@ -272,41 +309,77 @@ mod tests {
         assert!(!text.contains("four"));
     }
 
-    #[test]
-    fn binary_file_is_detected_and_omitted() {
+    #[tokio::test]
+    async fn binary_file_is_detected_and_omitted() {
         let (service, id, root) = make_service();
         let mut bytes = vec![0u8; 64];
         bytes[0] = 1;
         fs::write(root.join("bin.dat"), &bytes).unwrap();
-        let res = run_read(&service, &id, json!({"path": "bin.dat"}));
+        let res = run_read(&service, &id, json!({"path": "bin.dat"})).await;
         assert_eq!(res.metadata["binary"], true);
         assert!(text_of(&res).contains("binary file"));
     }
 
-    #[test]
-    fn rejects_absolute_and_traversal_paths() {
+    #[tokio::test]
+    async fn rejects_absolute_and_traversal_paths() {
         let (service, id, root) = make_service();
         fs::write(root.join("ok.txt"), "hi").unwrap();
         let abs = root.join("ok.txt");
-        let err = read(&service, &id, &json!({"path": abs.display().to_string()})).unwrap_err();
+        let err = read(
+            &service,
+            &id,
+            &json!({"path": abs.display().to_string()}),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(
             err,
             ReadFileError::Common(BuiltinToolError::Path(_))
         ));
-        let err = read(&service, &id, &json!({"path": "../escape.txt"})).unwrap_err();
+        let err = read(
+            &service,
+            &id,
+            &json!({"path": "../escape.txt"}),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(
             err,
             ReadFileError::Common(BuiltinToolError::Path(_))
         ));
     }
 
-    #[test]
-    fn missing_file_returns_not_found_kind() {
+    #[tokio::test]
+    async fn missing_file_returns_not_found_kind() {
         let (service, id, _root) = make_service();
-        let error: ToolError =
-            BuiltinToolError::from(read(&service, &id, &json!({"path": "nope.txt"})).unwrap_err())
-                .into();
+        let error: ToolError = BuiltinToolError::from(
+            read(
+                &service,
+                &id,
+                &json!({"path": "nope.txt"}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err(),
+        )
+        .into();
         assert_eq!(error.kind, tool_api::ToolErrorKind::NotFound);
+    }
+
+    #[tokio::test]
+    async fn large_reads_are_bounded() {
+        let (service, id, root) = make_service();
+        fs::write(
+            root.join("large.txt"),
+            vec![b'a'; MAX_READ_BYTES as usize + 1024],
+        )
+        .unwrap();
+        let result = run_read(&service, &id, json!({"path": "large.txt"})).await;
+        assert_eq!(result.metadata["read_truncated"], true);
+        assert_eq!(result.metadata["bytes_read"], MAX_READ_BYTES);
+        assert!(result.truncated);
     }
 
     fn text_of(res: &ToolResult) -> String {

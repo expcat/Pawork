@@ -19,7 +19,13 @@
 - `recovery`：Interrupted Run 恢复（事件重放重建状态、<1s）。
 
 工具执行与审批通过 trait 注入（`LoopContext` / `ApprovalResolver`），使 Provider Loop
-与 SQLite / `tool-runtime::ToolScheduler` 解耦，便于单测与替换。
+与 SQLite 解耦；`SchedulerLoopContext` 负责把真实 `workspace_id` / `run_id`、流式
+Tool Sink 与 `tool-runtime::ToolScheduler` 连接起来。
+
+Phase 3 remediation 后，Provider Loop 已在正式轮询路径组合 `RetryController`、
+`MessageQueue`、`CancelHandle`、`EventBroadcaster` 与 Tool Scheduler：终态统一广播
+`RunCancelled` / `RunFailed`，文本、thinking、tool arguments/output delta 可实时订阅；
+含 Tool Call 的助手消息可从持久事件重放回 `CollectingToolCalls`。
 
 ## Agent Loop
 
@@ -31,7 +37,7 @@ Cancel / Pause / Resume / Retry Last Provider Call / Retry Run / Fork From Messa
 
 ## 预算控制
 
-迭代次数、Tool Call 次数、运行时间、输入 Token、输出 Token、费用、Shell 输出、Artifact 大小、并发 Tool Call 上限。达预算产生明确事件，不静默停。
+迭代次数、Tool Call 次数、运行时间、输入 Token、输出 Token、费用、Shell 输出、Artifact 大小、并发 Tool Call 上限。Cost / Duration / Concurrency / ArtifactBytes 在主循环实时记录，软阈值只发一次诊断，硬阈值产生明确终态事件，不静默停。
 
 ## Tool Call 调度
 

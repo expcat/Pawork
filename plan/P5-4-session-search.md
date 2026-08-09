@@ -1,6 +1,6 @@
 # P5-4：搜索 / 标签
 
-> Phase 5 · Session、Branch 与 Compaction · 状态：🟡未开始 · 依赖：P1-5
+> Phase 5 · Session、Branch 与 Compaction · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P1-5
 
 **最终目的**：实现 session 搜索与标签，让用户能在大量会话中快速定位。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] 搜索与标签可用
+- [x] 搜索与标签可用
 
 **相关文档**：[sessions](../docs/features/sessions.md) · [ROADMAP](../ROADMAP.md)

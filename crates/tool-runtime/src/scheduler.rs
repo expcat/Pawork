@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use agent_domain::{CancellationToken, ToolCallId};
+pub use policy_engine::ApprovalMode;
+use policy_engine::{ExecutionConstraints, PolicyDecision, PolicyEngine, PolicyInput};
 use tokio::sync::{Mutex, OwnedMutexGuard, Semaphore};
 use tool_api::{
     AgentTool, ToolCapability, ToolDescriptor, ToolError, ToolErrorKind, ToolRequest, ToolResult,
@@ -80,15 +82,18 @@ impl std::fmt::Debug for ToolRegistry {
 pub struct ToolSchedulerConfig {
     /// 全局最大并发执行数（跨所有 capability）。
     pub max_concurrent: usize,
-    /// 是否需要审批才执行写/Shell/网络类工具。
-    pub require_approval_for_writes: bool,
+    /// 每次工具调用使用的审批模式。
+    pub approval_mode: ApprovalMode,
+    /// 当前 workspace 是否已被用户信任。
+    pub workspace_trusted: bool,
 }
 
 impl Default for ToolSchedulerConfig {
     fn default() -> Self {
         Self {
             max_concurrent: 8,
-            require_approval_for_writes: true,
+            approval_mode: ApprovalMode::ReadOnly,
+            workspace_trusted: false,
         }
     }
 }
@@ -105,15 +110,26 @@ pub enum ApprovalOutcome {
 /// 返回值顺序须与输入一致；`Denied` 的工具直接构造拒绝结果回填，不执行。
 #[async_trait::async_trait]
 pub trait ApprovalResolver: Send + Sync {
+    /// 是否代表一次真实、可审计的用户审批通道。
+    ///
+    /// 自动放行器必须返回 `false`，防止其满足 PolicyEngine 产生的 AskUser。
+    fn can_resolve_policy_prompt(&self) -> bool {
+        true
+    }
+
     async fn resolve(&self, requests: &[ToolRequest]) -> Vec<ApprovalOutcome>;
 }
 
-/// 默认全部自动放行（测试与无审批策略场景）。
+/// 仅用于策略已直接 Allow 的无审批路径；不能满足 AskUser。
 #[derive(Debug, Default, Clone)]
 pub struct AutoApproveResolver;
 
 #[async_trait::async_trait]
 impl ApprovalResolver for AutoApproveResolver {
+    fn can_resolve_policy_prompt(&self) -> bool {
+        false
+    }
+
     async fn resolve(&self, requests: &[ToolRequest]) -> Vec<ApprovalOutcome> {
         requests.iter().map(|_| ApprovalOutcome::Approved).collect()
     }
@@ -155,6 +171,7 @@ pub struct ApprovalState {
 pub struct ToolScheduler {
     registry: ToolRegistry,
     config: ToolSchedulerConfig,
+    policy: PolicyEngine,
     global: Arc<Semaphore>,
     /// 每个 capability 一个锁：串行该类别的写/Shell。所有锁为 Arc 以支持 owned guard。
     capability_locks: Mutex<HashMap<ToolCapability, Arc<tokio::sync::Mutex<()>>>>,
@@ -170,9 +187,11 @@ pub struct ToolScheduler {
 impl ToolScheduler {
     pub fn new(registry: ToolRegistry, config: ToolSchedulerConfig) -> Self {
         let max = config.max_concurrent.max(1);
+        let policy = PolicyEngine::new(config.approval_mode);
         Self {
             registry,
             config,
+            policy,
             global: Arc::new(Semaphore::new(max)),
             capability_locks: Mutex::new(HashMap::new()),
             file_locks: Mutex::new(HashMap::new()),
@@ -185,40 +204,18 @@ impl ToolScheduler {
         self.registry.len()
     }
 
-    /// 调度并执行（按 request.input.name 查找工具）。
-    pub async fn execute(
-        &self,
-        request: ToolRequest,
-        cancel: CancellationToken,
-        approval: &(dyn ApprovalResolver + Send + Sync),
-    ) -> Result<ToolResult, ToolError> {
-        let name = request
-            .input
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let tool = match name.and_then(|n| self.registry.get(&n)) {
-            Some(t) => t,
-            None => {
-                return Err(ToolError {
-                    kind: ToolErrorKind::InvalidInput,
-                    message: "tool name missing or unknown in request.input.name".into(),
-                    retryable: false,
-                    retry_after_ms: None,
-                });
-            }
-        };
-        self.execute_with_tool(tool, request, cancel, approval)
-            .await
-    }
-
-    /// 按工具名调度并执行（推荐入口）。
+    /// 按显式工具名调度并执行。
+    ///
+    /// 工具名不从 `request.input` 推断，避免与工具自身名为 `name` 的输入字段冲突。
+    /// 调用方必须同时提供当前 workspace/run 上下文与流式事件 sink。
     pub async fn execute_named(
         &self,
         name: &str,
         request: ToolRequest,
+        context: tool_api::ToolExecutionContext,
         cancel: CancellationToken,
         approval: &(dyn ApprovalResolver + Send + Sync),
+        sink: &dyn tool_api::ToolEventSink,
     ) -> Result<ToolResult, ToolError> {
         let tool = self.registry.get(name).ok_or_else(|| ToolError {
             kind: ToolErrorKind::NotFound,
@@ -226,28 +223,52 @@ impl ToolScheduler {
             retryable: false,
             retry_after_ms: None,
         })?;
-        self.execute_with_tool(tool, request, cancel, approval)
+        self.execute_with_tool(tool, request, context, cancel, approval, sink)
             .await
     }
 
     async fn execute_with_tool(
         &self,
         tool: Arc<dyn AgentTool>,
-        request: ToolRequest,
+        mut request: ToolRequest,
+        context: tool_api::ToolExecutionContext,
         cancel: CancellationToken,
         approval: &(dyn ApprovalResolver + Send + Sync),
+        sink: &dyn tool_api::ToolEventSink,
     ) -> Result<ToolResult, ToolError> {
-        let capability = tool.descriptor().capability.clone();
+        let descriptor = tool.descriptor();
+        let capability = descriptor.capability.clone();
+        let decision = self.policy.decide(&PolicyInput {
+            capability: capability.clone(),
+            input: request.input.clone(),
+            trusted: self.config.workspace_trusted,
+            allowed_in_untrusted_workspace: descriptor.allowed_in_untrusted_workspace,
+            approval_mode: self.config.approval_mode,
+        });
 
-        // 审批：写/Shell/网络/Git 类工具需要审批（受配置控制）。
-        if self.requires_approval(&capability) {
-            let outcomes = approval.resolve(std::slice::from_ref(&request)).await;
-            match outcomes.first() {
-                Some(ApprovalOutcome::Denied) => {
-                    return Ok(denied_result(&request.tool_call_id));
-                }
-                Some(ApprovalOutcome::Approved) | None => {}
+        match decision {
+            PolicyDecision::Deny { reason } => {
+                return Ok(denied_result(&request.tool_call_id, reason));
             }
+            PolicyDecision::AskUser { .. } => {
+                if !approval.can_resolve_policy_prompt() {
+                    return Ok(denied_result(
+                        &request.tool_call_id,
+                        "policy requires explicit user approval; automatic approval is forbidden",
+                    ));
+                }
+                let outcomes = approval.resolve(std::slice::from_ref(&request)).await;
+                if !matches!(outcomes.first(), Some(ApprovalOutcome::Approved)) {
+                    return Ok(denied_result(
+                        &request.tool_call_id,
+                        "tool call denied or approval was not provided",
+                    ));
+                }
+            }
+            PolicyDecision::AllowWithConstraints { constraints } => {
+                apply_execution_constraints(&mut request, &constraints);
+            }
+            PolicyDecision::Allow => {}
         }
 
         if cancel.is_cancelled() {
@@ -257,32 +278,12 @@ impl ToolScheduler {
         // 获取调度锁。
         let handle = self.acquire(&capability, &request, &cancel).await?;
 
-        let ctx = tool_api::ToolExecutionContext {
-            workspace_id: agent_domain::WorkspaceId::from("default"),
-            run_id: agent_domain::RunId::from("default"),
-            working_directory: None,
-        };
-        let sink = NoopToolSink;
         let result = tool
-            .execute(request.clone(), ctx, &sink, cancel.clone())
+            .execute(request.clone(), context, sink, cancel.clone())
             .await;
 
         drop(handle);
         result
-    }
-
-    fn requires_approval(&self, capability: &ToolCapability) -> bool {
-        if !self.config.require_approval_for_writes {
-            return false;
-        }
-        matches!(
-            capability,
-            ToolCapability::WorkspaceWrite
-                | ToolCapability::GitWrite
-                | ToolCapability::Process
-                | ToolCapability::Network
-                | ToolCapability::ExternalPlugin
-        )
     }
 
     /// 获取调度锁。按 capability 决定并发/串行，命中文件 key 时加文件锁。
@@ -369,20 +370,40 @@ pub fn extract_file_key(input: &serde_json::Value) -> Option<String> {
     None
 }
 
-fn denied_result(_tool_call_id: &ToolCallId) -> ToolResult {
+fn apply_execution_constraints(request: &mut ToolRequest, constraints: &ExecutionConstraints) {
+    let Some(input) = request.input.as_object_mut() else {
+        return;
+    };
+    for (key, limit) in [
+        ("timeout_ms", constraints.timeout_ms),
+        ("max_output_bytes", constraints.max_output_bytes),
+    ] {
+        let Some(limit) = limit else { continue };
+        let current = input.get(key).and_then(serde_json::Value::as_u64);
+        if match current {
+            Some(value) => value > limit,
+            None => true,
+        } {
+            input.insert(key.into(), serde_json::Value::from(limit));
+        }
+    }
+}
+
+fn denied_result(_tool_call_id: &ToolCallId, reason: impl Into<String>) -> ToolResult {
     ToolResult::failure(agent_domain::ErrorContext {
         category: agent_domain::ErrorCategory::Authorization,
-        message: "tool call denied by user".into(),
+        message: reason.into(),
         retryable: false,
         retry_after_ms: None,
         diagnostics: Default::default(),
     })
 }
 
-struct NoopToolSink;
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopToolEventSink;
 
 #[async_trait::async_trait]
-impl tool_api::ToolEventSink for NoopToolSink {
+impl tool_api::ToolEventSink for NoopToolEventSink {
     async fn emit(&self, _event: tool_api::ToolStreamEvent) -> Result<(), ToolError> {
         Ok(())
     }
@@ -392,9 +413,12 @@ impl tool_api::ToolEventSink for NoopToolSink {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
     use serde_json::json;
+
+    type SeenPolicyCalls = Arc<StdMutex<Vec<(tool_api::ToolExecutionContext, serde_json::Value)>>>;
 
     fn make_scheduler(
         tools: Vec<Arc<dyn AgentTool>>,
@@ -412,6 +436,45 @@ mod tests {
         }
     }
 
+    fn execution_context() -> tool_api::ToolExecutionContext {
+        tool_api::ToolExecutionContext {
+            workspace_id: agent_domain::WorkspaceId::from("workspace-real"),
+            run_id: agent_domain::RunId::from("run-real"),
+            working_directory: Some("project".into()),
+        }
+    }
+
+    fn policy_config(approval_mode: ApprovalMode, workspace_trusted: bool) -> ToolSchedulerConfig {
+        ToolSchedulerConfig {
+            max_concurrent: 4,
+            approval_mode,
+            workspace_trusted,
+        }
+    }
+
+    struct AutomaticApprovalSpy(Arc<AtomicU64>);
+
+    #[async_trait::async_trait]
+    impl ApprovalResolver for AutomaticApprovalSpy {
+        fn can_resolve_policy_prompt(&self) -> bool {
+            false
+        }
+
+        async fn resolve(&self, requests: &[ToolRequest]) -> Vec<ApprovalOutcome> {
+            self.0.fetch_add(requests.len() as u64, Ordering::SeqCst);
+            requests.iter().map(|_| ApprovalOutcome::Approved).collect()
+        }
+    }
+
+    struct ExplicitApprove;
+
+    #[async_trait::async_trait]
+    impl ApprovalResolver for ExplicitApprove {
+        async fn resolve(&self, requests: &[ToolRequest]) -> Vec<ApprovalOutcome> {
+            requests.iter().map(|_| ApprovalOutcome::Approved).collect()
+        }
+    }
+
     async fn execute_named(
         scheduler: &ToolScheduler,
         name: &str,
@@ -421,8 +484,10 @@ mod tests {
             .execute_named(
                 name,
                 req(name, input),
+                execution_context(),
                 CancellationToken::new(),
                 &AutoApproveResolver,
+                &NoopToolEventSink,
             )
             .await
     }
@@ -456,6 +521,66 @@ mod tests {
         name: &'static str,
         capability: ToolCapability,
         shared: ProbeShared,
+    }
+
+    struct PolicyProbeTool {
+        name: &'static str,
+        capability: ToolCapability,
+        allowed_in_untrusted_workspace: bool,
+        calls: Arc<AtomicU64>,
+        seen: SeenPolicyCalls,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentTool for PolicyProbeTool {
+        fn descriptor(&self) -> ToolDescriptor {
+            ToolDescriptor {
+                name: self.name.into(),
+                description: "policy probe".into(),
+                input_schema: json!({"type": "object"}),
+                capability: self.capability.clone(),
+                read_only: matches!(self.capability, ToolCapability::ReadOnly),
+                supports_concurrency: matches!(self.capability, ToolCapability::ReadOnly),
+                default_timeout_ms: None,
+                max_output_bytes: 2 * 1024 * 1024,
+                allowed_in_untrusted_workspace: self.allowed_in_untrusted_workspace,
+            }
+        }
+
+        async fn execute(
+            &self,
+            request: ToolRequest,
+            context: tool_api::ToolExecutionContext,
+            _sink: &dyn tool_api::ToolEventSink,
+            _cancel: CancellationToken,
+        ) -> Result<ToolResult, ToolError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.seen
+                .lock()
+                .expect("policy probe")
+                .push((context, request.input));
+            Ok(ToolResult::success(Vec::new()))
+        }
+    }
+
+    fn policy_probe(
+        name: &'static str,
+        capability: ToolCapability,
+        allowed_in_untrusted_workspace: bool,
+    ) -> (Arc<dyn AgentTool>, Arc<AtomicU64>, SeenPolicyCalls) {
+        let calls = Arc::new(AtomicU64::new(0));
+        let seen = Arc::new(StdMutex::new(Vec::new()));
+        (
+            Arc::new(PolicyProbeTool {
+                name,
+                capability,
+                allowed_in_untrusted_workspace,
+                calls: calls.clone(),
+                seen: seen.clone(),
+            }),
+            calls,
+            seen,
+        )
     }
 
     #[async_trait::async_trait]
@@ -515,7 +640,8 @@ mod tests {
             vec![a, b],
             ToolSchedulerConfig {
                 max_concurrent: 2,
-                require_approval_for_writes: false,
+                approval_mode: ApprovalMode::ReadOnly,
+                workspace_trusted: false,
             },
         );
         let (r1, r2) = tokio::join!(
@@ -538,7 +664,8 @@ mod tests {
             vec![a, b],
             ToolSchedulerConfig {
                 max_concurrent: 4,
-                require_approval_for_writes: false,
+                approval_mode: ApprovalMode::NeverAsk,
+                workspace_trusted: true,
             },
         );
         let (r1, r2) = tokio::join!(
@@ -561,7 +688,8 @@ mod tests {
             vec![a, b],
             ToolSchedulerConfig {
                 max_concurrent: 4,
-                require_approval_for_writes: false,
+                approval_mode: ApprovalMode::ReadOnly,
+                workspace_trusted: false,
             },
         );
         let (r1, r2) = tokio::join!(
@@ -583,7 +711,8 @@ mod tests {
             vec![a, b],
             ToolSchedulerConfig {
                 max_concurrent: 4,
-                require_approval_for_writes: false,
+                approval_mode: ApprovalMode::NeverAsk,
+                workspace_trusted: true,
             },
         );
         let (r1, r2) = tokio::join!(
@@ -610,15 +739,18 @@ mod tests {
             vec![tool],
             ToolSchedulerConfig {
                 max_concurrent: 4,
-                require_approval_for_writes: true,
+                approval_mode: ApprovalMode::AskForWrites,
+                workspace_trusted: true,
             },
         );
         let result = scheduler
             .execute_named(
                 "write_d",
                 req("write_d", json!({})),
+                execution_context(),
                 CancellationToken::new(),
                 &DenyAll,
+                &NoopToolEventSink,
             )
             .await
             .unwrap();
@@ -632,7 +764,8 @@ mod tests {
             vec![tool],
             ToolSchedulerConfig {
                 max_concurrent: 2,
-                require_approval_for_writes: false,
+                approval_mode: ApprovalMode::ReadOnly,
+                workspace_trusted: false,
             },
         );
         let cancel = CancellationToken::new();
@@ -641,8 +774,10 @@ mod tests {
             .execute_named(
                 "read_x",
                 req("read_x", json!({})),
+                execution_context(),
                 cancel,
                 &AutoApproveResolver,
+                &NoopToolEventSink,
             )
             .await;
         assert!(
@@ -658,8 +793,10 @@ mod tests {
             .execute_named(
                 "ghost",
                 req("ghost", json!({})),
+                execution_context(),
                 CancellationToken::new(),
                 &AutoApproveResolver,
+                &NoopToolEventSink,
             )
             .await
             .unwrap_err();
@@ -688,7 +825,8 @@ mod tests {
             vec![a, b],
             ToolSchedulerConfig {
                 max_concurrent: 1,
-                require_approval_for_writes: false,
+                approval_mode: ApprovalMode::ReadOnly,
+                workspace_trusted: false,
             },
         );
         let (r1, r2) = tokio::join!(
@@ -699,5 +837,259 @@ mod tests {
         r2.unwrap();
         let peak = shared.max_seen.load(Ordering::SeqCst);
         assert_eq!(peak, 1, "全局并发上限=1 应强制串行");
+    }
+
+    #[tokio::test]
+    async fn execute_named_passes_real_workspace_and_run_context() {
+        struct ContextProbe {
+            seen: Arc<std::sync::Mutex<Option<tool_api::ToolExecutionContext>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentTool for ContextProbe {
+            fn descriptor(&self) -> ToolDescriptor {
+                ToolDescriptor {
+                    name: "context_probe".into(),
+                    description: "records context".into(),
+                    input_schema: json!({"type": "object"}),
+                    capability: ToolCapability::ReadOnly,
+                    read_only: true,
+                    supports_concurrency: true,
+                    default_timeout_ms: None,
+                    max_output_bytes: 1024,
+                    allowed_in_untrusted_workspace: true,
+                }
+            }
+
+            async fn execute(
+                &self,
+                _request: ToolRequest,
+                context: tool_api::ToolExecutionContext,
+                _sink: &dyn tool_api::ToolEventSink,
+                _cancel: CancellationToken,
+            ) -> Result<ToolResult, ToolError> {
+                *self.seen.lock().expect("context") = Some(context);
+                Ok(ToolResult::success(Vec::new()))
+            }
+        }
+
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let scheduler = make_scheduler(
+            vec![Arc::new(ContextProbe { seen: seen.clone() })],
+            ToolSchedulerConfig::default(),
+        );
+        scheduler
+            .execute_named(
+                "context_probe",
+                req("context_probe", json!({"name": "input-owned-name"})),
+                execution_context(),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+
+        let context = seen.lock().expect("context").clone().expect("context seen");
+        assert_eq!(context.workspace_id.as_str(), "workspace-real");
+        assert_eq!(context.run_id.as_str(), "run-real");
+        assert_eq!(context.working_directory.as_deref(), Some("project"));
+    }
+
+    #[tokio::test]
+    async fn untrusted_workspace_enforces_descriptor_gate_then_policy() {
+        let (blocked, blocked_calls, _) =
+            policy_probe("blocked_write", ToolCapability::WorkspaceWrite, false);
+        let blocked_scheduler =
+            make_scheduler(vec![blocked], policy_config(ApprovalMode::NeverAsk, false));
+        let blocked_result = blocked_scheduler
+            .execute_named(
+                "blocked_write",
+                req("blocked_write", json!({"path": "a.txt"})),
+                execution_context(),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(blocked_result.is_error());
+        assert_eq!(blocked_calls.load(Ordering::SeqCst), 0);
+
+        let (allowed, allowed_calls, _) =
+            policy_probe("allowed_write", ToolCapability::WorkspaceWrite, true);
+        let allowed_scheduler =
+            make_scheduler(vec![allowed], policy_config(ApprovalMode::NeverAsk, false));
+        let allowed_result = allowed_scheduler
+            .execute_named(
+                "allowed_write",
+                req("allowed_write", json!({"path": "a.txt"})),
+                execution_context(),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(!allowed_result.is_error());
+        assert_eq!(allowed_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn scheduler_loop_context_auto_approve_cannot_bypass_ask_for_writes() {
+        struct NoDecision;
+        #[async_trait::async_trait]
+        impl ApprovalResolver for NoDecision {
+            async fn resolve(&self, _requests: &[ToolRequest]) -> Vec<ApprovalOutcome> {
+                Vec::new()
+            }
+        }
+
+        let (tool, calls, _) = policy_probe("ask_write", ToolCapability::WorkspaceWrite, true);
+        let scheduler = make_scheduler(vec![tool], policy_config(ApprovalMode::AskForWrites, true));
+        assert!(!AutoApproveResolver.can_resolve_policy_prompt());
+        let auto_denied = scheduler
+            .execute_named(
+                "ask_write",
+                req("ask_write", json!({"path": "a.txt"})),
+                execution_context(),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(auto_denied.is_error());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let automatic_calls = Arc::new(AtomicU64::new(0));
+        let automatic = AutomaticApprovalSpy(automatic_calls.clone());
+        let spy_denied = scheduler
+            .execute_named(
+                "ask_write",
+                req("ask_write", json!({"path": "a.txt"})),
+                execution_context(),
+                CancellationToken::new(),
+                &automatic,
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(spy_denied.is_error());
+        assert_eq!(automatic_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let denied = scheduler
+            .execute_named(
+                "ask_write",
+                req("ask_write", json!({"path": "a.txt"})),
+                execution_context(),
+                CancellationToken::new(),
+                &NoDecision,
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(denied.is_error(), "缺失审批必须 fail closed");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let approved = scheduler
+            .execute_named(
+                "ask_write",
+                req("ask_write", json!({"path": "a.txt"})),
+                execution_context(),
+                CancellationToken::new(),
+                &ExplicitApprove,
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(!approved.is_error());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn allow_with_constraints_injects_caps_without_loosening_request() {
+        let (tool, calls, seen) = policy_probe("process", ToolCapability::Process, true);
+        let scheduler = make_scheduler(vec![tool], policy_config(ApprovalMode::NeverAsk, true));
+        let result = scheduler
+            .execute_named(
+                "process",
+                req(
+                    "process",
+                    json!({
+                        "command": "echo",
+                        "args": ["ok"],
+                        "timeout_ms": 120_000,
+                        "max_output_bytes": 512
+                    }),
+                ),
+                execution_context(),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(!result.is_error());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let seen = seen.lock().expect("seen");
+        let input = &seen[0].1;
+        assert_eq!(input["timeout_ms"], json!(60_000));
+        assert_eq!(input["max_output_bytes"], json!(512));
+    }
+
+    #[tokio::test]
+    async fn scheduler_loop_context_auto_approve_cannot_bypass_never_ask_danger_floor() {
+        let (tool, calls, _) = policy_probe("process", ToolCapability::Process, true);
+        let scheduler = make_scheduler(vec![tool], policy_config(ApprovalMode::NeverAsk, true));
+        for input in [
+            json!({"command": "rm", "args": ["-rf", "/"]}),
+            json!({"command": "mkfs", "args": ["/dev/sda1"]}),
+            json!({"command": "dd", "args": ["if=image", "of=/dev/sda"]}),
+        ] {
+            let result = scheduler
+                .execute_named(
+                    "process",
+                    req("process", input),
+                    execution_context(),
+                    CancellationToken::new(),
+                    &AutoApproveResolver,
+                    &NoopToolEventSink,
+                )
+                .await
+                .unwrap();
+            assert!(result.is_error());
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn scheduler_preserves_workspace_and_isolates_cross_run_contexts() {
+        let (tool, calls, seen) = policy_probe("context", ToolCapability::ReadOnly, true);
+        let scheduler = make_scheduler(vec![tool], policy_config(ApprovalMode::ReadOnly, false));
+        for (workspace, run) in [("workspace-a", "run-a"), ("workspace-b", "run-b")] {
+            scheduler
+                .execute_named(
+                    "context",
+                    req("context", json!({})),
+                    tool_api::ToolExecutionContext {
+                        workspace_id: agent_domain::WorkspaceId::from(workspace),
+                        run_id: agent_domain::RunId::from(run),
+                        working_directory: Some(format!("{workspace}/repo")),
+                    },
+                    CancellationToken::new(),
+                    &AutoApproveResolver,
+                    &NoopToolEventSink,
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let seen = seen.lock().expect("seen");
+        assert_eq!(seen[0].0.workspace_id.as_str(), "workspace-a");
+        assert_eq!(seen[0].0.run_id.as_str(), "run-a");
+        assert_eq!(seen[1].0.workspace_id.as_str(), "workspace-b");
+        assert_eq!(seen[1].0.run_id.as_str(), "run-b");
     }
 }

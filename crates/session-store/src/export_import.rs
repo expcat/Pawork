@@ -11,7 +11,7 @@
 //!   等价性由测试断言）。
 //! - 导入只追加事件（经 `append_event` 的连续性校验），不破坏 append-only 红线。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use agent_domain::{SessionId, Timestamp};
 use agent_events::AgentEventEnvelope;
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 
 /// 当前导出 schema 版本。
-pub const EXPORT_SCHEMA_VERSION: u32 = 1;
+pub const EXPORT_SCHEMA_VERSION: u32 = 2;
 
 /// 一个分支的导出表示。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,10 +31,46 @@ pub struct ExportedBranch {
     pub head_sequence: u64,
 }
 
+/// 一条事件及其原始 branch 归属。
+///
+/// `branch_id` 属于 Event Store 的存储维度，并非 [`AgentEventEnvelope`] 的 canonical
+/// 字段，因此必须由导出 schema 显式携带，才能在多分支往返时无损恢复。
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ExportedEvent {
+    pub branch_id: String,
+    pub event: AgentEventEnvelope,
+}
+
+impl<'de> Deserialize<'de> for ExportedEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WireEvent {
+            V2 {
+                branch_id: String,
+                event: AgentEventEnvelope,
+            },
+            /// v1 只携带 envelope，历史导出无法恢复分支归属，安全降级到 main。
+            V1(AgentEventEnvelope),
+        }
+
+        Ok(match WireEvent::deserialize(deserializer)? {
+            WireEvent::V2 { branch_id, event } => Self { branch_id, event },
+            WireEvent::V1(event) => Self {
+                branch_id: DEFAULT_BRANCH_ID.to_string(),
+                event,
+            },
+        })
+    }
+}
+
 /// 一个 session 的完整导出（稳定 schema）。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionExport {
-    /// 导出 schema 版本，导入时必须等于 [`EXPORT_SCHEMA_VERSION`]。
+    /// 导出 schema 版本；当前写 v2，读取兼容 v1～[`EXPORT_SCHEMA_VERSION`]。
     pub schema_version: u32,
     pub session_id: String,
     pub title: String,
@@ -44,8 +80,8 @@ pub struct SessionExport {
     pub active_branch: String,
     /// 分支树（含 main）。
     pub branches: Vec<ExportedBranch>,
-    /// 全部事件（事实来源），按 sequence 升序。
-    pub events: Vec<AgentEventEnvelope>,
+    /// 全部事件（事实来源），按 sequence 升序，并携带原始 branch 归属。
+    pub events: Vec<ExportedEvent>,
     /// 标签（小写归一）。
     #[serde(default)]
     pub tags: Vec<String>,
@@ -64,9 +100,9 @@ impl SessionExport {
         Ok(export)
     }
 
-    /// 校验 schema 版本。
+    /// 校验 schema 版本。v1 可读并按 main 分支迁移，所有新导出均写 v2。
     pub fn validate(&self) -> Result<(), SessionStoreError> {
-        if self.schema_version == EXPORT_SCHEMA_VERSION {
+        if (1..=EXPORT_SCHEMA_VERSION).contains(&self.schema_version) {
             Ok(())
         } else {
             Err(SessionStoreError::ExportSchemaVersion {
@@ -125,13 +161,23 @@ impl SessionStore {
 
                 let events = {
                     let mut statement = connection.prepare(
-                        "SELECT payload_json FROM session_events WHERE session_id=?1 ORDER BY sequence ASC",
+                        "SELECT branch_id, payload_json FROM session_events \
+                         WHERE session_id=?1 ORDER BY sequence ASC",
                     )?;
                     let rows = statement
-                        .query_map([&session_id], |row| row.get::<_, String>(0))?
+                        .query_map([&session_id], |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                        })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     rows.into_iter()
-                        .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
+                        .map(|(branch_id, json)| {
+                            let event = serde_json::from_str(&json)
+                                .map_err(SessionStoreError::from)?;
+                            Ok::<ExportedEvent, SessionStoreError>(ExportedEvent {
+                                branch_id,
+                                event,
+                            })
+                        })
                         .collect::<Result<Vec<_>, _>>()?
                 };
 
@@ -167,6 +213,19 @@ impl SessionStore {
     /// 则返回错误。
     pub async fn import_session(&self, export: &SessionExport) -> Result<(), SessionStoreError> {
         export.validate()?;
+
+        // 在创建任何数据库状态前先校验 envelope 与导出 session 一致，避免部分导入。
+        if let Some(mismatched) = export
+            .events
+            .iter()
+            .find(|exported| exported.event.session_id.as_str() != export.session_id)
+        {
+            return Err(SessionStoreError::EventSessionMismatch {
+                expected_session_id: export.session_id.clone(),
+                event_session_id: mismatched.event.session_id.to_string(),
+            });
+        }
+
         let session_id = SessionId::from(export.session_id.clone());
         self.create_session(
             &session_id,
@@ -175,18 +234,46 @@ impl SessionStore {
         )
         .await?;
 
-        // 建立分支树。main 已由 create_session 创建，跳过；其余按 parent 依赖顺序创建。
-        // 为保证 parent 先于 child，先按 parent_branch_id 是否为 None / main 排序。
-        let mut ordered: Vec<&ExportedBranch> = export.branches.iter().collect();
-        ordered.sort_by_key(|b| match &b.parent_branch_id {
-            None => 0,
-            Some(parent) if parent == DEFAULT_BRANCH_ID => 1,
-            _ => 2,
-        });
-        for branch in &ordered {
-            if branch.branch_id == DEFAULT_BRANCH_ID {
-                continue;
+        let branches: BTreeMap<&str, &ExportedBranch> = export
+            .branches
+            .iter()
+            .map(|branch| (branch.branch_id.as_str(), branch))
+            .collect();
+        let mut created_branches = BTreeSet::from([DEFAULT_BRANCH_ID.to_string()]);
+
+        // 按全局 sequence 追加事件。分支在首次事件前延迟创建，确保其 fork event 已落库；
+        // 每条事件写入前切换 active branch，以兑现 append_event 的并发写保护。
+        for exported in &export.events {
+            if !created_branches.contains(&exported.branch_id) {
+                let branch = branches.get(exported.branch_id.as_str()).ok_or_else(|| {
+                    SessionStoreError::BranchNotFound {
+                        session_id: export.session_id.clone(),
+                        branch_id: exported.branch_id.clone(),
+                    }
+                })?;
+                self.create_branch(
+                    &session_id,
+                    branch.branch_id.clone(),
+                    branch.parent_branch_id.clone(),
+                    branch.forked_from_event_id.clone(),
+                )
+                .await?;
+                created_branches.insert(branch.branch_id.clone());
             }
+            self.switch_branch(&session_id, exported.branch_id.clone())
+                .await?;
+            self.append_event(exported.branch_id.clone(), exported.event.clone())
+                .await?;
+        }
+
+        // 无事件分支也必须恢复；此时全部可能的 fork event 已落库。
+        let mut remaining: Vec<&ExportedBranch> = export
+            .branches
+            .iter()
+            .filter(|branch| !created_branches.contains(&branch.branch_id))
+            .collect();
+        remaining.sort_by_key(|branch| branch.head_sequence);
+        for branch in remaining {
             self.create_branch(
                 &session_id,
                 branch.branch_id.clone(),
@@ -194,13 +281,12 @@ impl SessionStore {
                 branch.forked_from_event_id.clone(),
             )
             .await?;
+            created_branches.insert(branch.branch_id.clone());
         }
 
-        // 逐条追加事件（append_event 校验连续性与 parent）。
-        for event in &export.events {
-            self.append_event(export.active_branch.clone(), event.clone())
-                .await?;
-        }
+        // 导入过程会多次切换，最终恢复导出时的 active branch。
+        self.switch_branch(&session_id, export.active_branch.clone())
+            .await?;
 
         // 回填标签。
         if !export.tags.is_empty() {
@@ -352,6 +438,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn multi_branch_export_import_preserves_event_branch_ownership() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-multi-branch-export");
+        store
+            .create_session(&session, "branches", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::CompactionStarted {
+                        source_event_count: 1,
+                    },
+                ),
+            )
+            .await
+            .expect("main event 1");
+        store
+            .create_branch(
+                &session,
+                "experiment",
+                Some(DEFAULT_BRANCH_ID.into()),
+                Some("event-1".into()),
+            )
+            .await
+            .expect("branch");
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch experiment");
+        store
+            .append_event(
+                "experiment",
+                event(
+                    &session,
+                    2,
+                    AgentEvent::CompactionStarted {
+                        source_event_count: 2,
+                    },
+                ),
+            )
+            .await
+            .expect("experiment event");
+        store
+            .switch_branch(&session, DEFAULT_BRANCH_ID)
+            .await
+            .expect("switch main");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    3,
+                    AgentEvent::CompactionStarted {
+                        source_event_count: 3,
+                    },
+                ),
+            )
+            .await
+            .expect("main event 3");
+
+        let export = store.export_session(&session).await.expect("export");
+        assert_eq!(
+            export
+                .events
+                .iter()
+                .map(|event| (event.event.sequence.value(), event.branch_id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, DEFAULT_BRANCH_ID),
+                (2, "experiment"),
+                (3, DEFAULT_BRANCH_ID)
+            ]
+        );
+
+        let path2 = temp_path();
+        let (store2, _) = SessionStore::open(&path2).await.expect("store2");
+        store2.import_session(&export).await.expect("import");
+        let re_exported = store2.export_session(&session).await.expect("re-export");
+        assert_eq!(re_exported.events, export.events);
+        assert_eq!(re_exported.branches, export.branches);
+        assert_eq!(re_exported.active_branch, export.active_branch);
+        assert_eq!(
+            store2
+                .events_by_branch(&session, "experiment", 1, 10)
+                .await
+                .expect("experiment events")
+                .iter()
+                .map(|event| event.sequence.value())
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+
+        store.shutdown().await.expect("shutdown");
+        store2.shutdown().await.expect("shutdown2");
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(path2);
+    }
+
+    #[tokio::test]
     async fn import_rejects_unsupported_schema_version() {
         let mut export = SessionExport {
             schema_version: 999,
@@ -374,6 +564,75 @@ mod tests {
         assert!(SessionExport::from_json(&json).is_err());
         export.schema_version = EXPORT_SCHEMA_VERSION;
         assert!(export.validate().is_ok());
+    }
+
+    #[test]
+    fn schema_v1_json_migrates_events_to_main_branch() {
+        let session = SessionId::from("legacy-session");
+        let legacy = serde_json::json!({
+            "schema_version": 1,
+            "session_id": session.as_str(),
+            "title": "legacy",
+            "created_at_ms": 1,
+            "updated_at_ms": 1,
+            "archived": false,
+            "active_branch": DEFAULT_BRANCH_ID,
+            "branches": [{
+                "branch_id": DEFAULT_BRANCH_ID,
+                "parent_branch_id": null,
+                "forked_from_event_id": null,
+                "head_sequence": 1
+            }],
+            "events": [event(&session, 1, AgentEvent::RunCancelled { reason: None })],
+            "tags": []
+        });
+        let decoded = SessionExport::from_json(&legacy.to_string()).expect("read v1");
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.events[0].branch_id, DEFAULT_BRANCH_ID);
+    }
+
+    #[tokio::test]
+    async fn import_rejects_event_from_another_session_before_creating_state() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let expected = SessionId::from("expected-session");
+        let other = SessionId::from("other-session");
+        let export = SessionExport {
+            schema_version: EXPORT_SCHEMA_VERSION,
+            session_id: expected.to_string(),
+            title: "mismatch".into(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            archived: false,
+            active_branch: DEFAULT_BRANCH_ID.into(),
+            branches: vec![ExportedBranch {
+                branch_id: DEFAULT_BRANCH_ID.into(),
+                parent_branch_id: None,
+                forked_from_event_id: None,
+                head_sequence: 1,
+            }],
+            events: vec![ExportedEvent {
+                branch_id: DEFAULT_BRANCH_ID.into(),
+                event: event(&other, 1, AgentEvent::RunCancelled { reason: None }),
+            }],
+            tags: vec![],
+        };
+
+        let error = store.import_session(&export).await.expect_err("mismatch");
+        assert!(matches!(
+            error,
+            SessionStoreError::EventSessionMismatch {
+                expected_session_id,
+                event_session_id,
+            } if expected_session_id == "expected-session" && event_session_id == "other-session"
+        ));
+        assert!(matches!(
+            store.export_session(&expected).await,
+            Err(SessionStoreError::SessionNotFound(_))
+        ));
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
     }
 
     #[tokio::test]

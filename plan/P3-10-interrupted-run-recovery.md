@@ -1,6 +1,6 @@
 # P3-10：Interrupted Run 恢复
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 依赖：P1-4、P3-1
+> Phase 3 · Agent Loop · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P1-4、P3-1
 
 **最终目的**：实现崩溃恢复——重启后识别 interrupted Run 并可 resume，让 Core 异常退出后能在 1s 内恢复，是「可重放」承诺的落地。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 重启后可识别 interrupted Run
-- [ ] 崩溃后恢复 < 1s
+- [x] 重启后可识别 interrupted Run
+- [x] 崩溃后恢复 < 1s
 
 **相关文档**：[agent-engine](../docs/features/agent-engine.md) · [sessions](../docs/features/sessions.md) · [ADR-016](../docs/adr/ADR-016-core-event-persist-replay.md) · [ROADMAP](../ROADMAP.md)

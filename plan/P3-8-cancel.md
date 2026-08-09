@@ -1,6 +1,6 @@
 # P3-8：取消
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 依赖：P3-3、P3-4
+> Phase 3 · Agent Loop · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P3-3、P3-4
 
 **最终目的**：实现取消传播（取消 provider、取消 tool），并保证不遗留进程，让用户能可靠地中断 Agent。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] Cancel 不留下运行进程
+- [x] Cancel 不留下运行进程
 
 **相关文档**：[agent-engine](../docs/features/agent-engine.md) · [process](../docs/features/process.md) · [ROADMAP](../ROADMAP.md)

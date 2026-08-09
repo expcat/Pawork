@@ -8,14 +8,13 @@ authors.workspace = true
 description = "Pawork Checkpoint 与回滚：基于 Blob Store 的写操作快照与按 tool call / run 回滚"
 
 [dependencies]
-agent-domain = { path = "../agent-domain" }
 artifact-store = { path = "../artifact-store" }
 blake3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "macros", "rt"] }
+tokio = { workspace = true, features = ["fs", "io-util", "sync", "macros", "rt"] }
 tracing.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread"] }

@@ -6,6 +6,7 @@
 mod scheduler;
 
 pub use scheduler::{
-    extract_file_key, ApprovalOutcome, ApprovalResolver, ApprovalState, AutoApproveResolver,
-    SchedulingKey, ToolRegistry, ToolScheduler, ToolSchedulerConfig, ToolSchedulerError,
+    extract_file_key, ApprovalMode, ApprovalOutcome, ApprovalResolver, ApprovalState,
+    AutoApproveResolver, NoopToolEventSink, SchedulingKey, ToolRegistry, ToolScheduler,
+    ToolSchedulerConfig, ToolSchedulerError,
 };

@@ -1,6 +1,6 @@
 # P3-4：Tool Scheduler
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 依赖：P0-5
+> Phase 3 · Agent Loop · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P0-5
 
 **最终目的**：实现工具调度器（只读并发、写/Shell 串行、同文件串行、Git index 串行、审批暂停），保证工具执行的并发安全与一致性。
 
@@ -19,7 +19,7 @@
 
 ## 验收标准
 
-- [ ] 只读并发、写/Shell 串行、同文件串行生效
-- [ ] 审批可暂停与恢复
+- [x] 只读并发、写/Shell 串行、同文件串行生效
+- [x] 审批可暂停与恢复
 
 **相关文档**：[tools](../docs/features/tools.md) · [policy](../docs/features/policy.md) · [ADR-008 capability](../docs/adr/ADR-008-builtin-tools-capability.md) · [ROADMAP](../ROADMAP.md)

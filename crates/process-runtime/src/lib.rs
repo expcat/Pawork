@@ -7,6 +7,8 @@
 //! - Windows：递归 `taskkill /T`（完整 Job Object 实现见 P11-7）。
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use agent_domain::CancellationToken;
@@ -14,7 +16,7 @@ use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::process::Child;
 use tokio::process::Command;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// 子进程规格。
 #[derive(Clone, Debug)]
@@ -87,29 +89,34 @@ pub enum ProcessError {
     Io(#[from] std::io::Error),
 }
 
-/// 进程树句柄：持有 child，可终止整个进程树。
+/// 进程树句柄：向持有 child 的监督任务发出终止信号。
 pub struct ProcessHandle {
-    child: Option<Child>,
+    process_id: Option<u32>,
+    kill: CancellationToken,
+    done: watch::Receiver<bool>,
 }
 
 impl ProcessHandle {
     /// 终止整个进程树。Unix 用 killpg(-pgid)；Windows 用 taskkill /T。
     pub async fn kill(&mut self) -> Result<(), ProcessError> {
-        if let Some(child) = self.child.as_mut() {
-            kill_child_tree(child).await;
+        self.kill.cancel();
+        while !*self.done.borrow() {
+            if self.done.changed().await.is_err() {
+                break;
+            }
         }
         Ok(())
     }
 
     pub fn id(&self) -> Option<u32> {
-        self.child.as_ref().and_then(|c| c.id())
+        self.process_id
     }
 }
 
 impl Drop for ProcessHandle {
     fn drop(&mut self) {
-        if let Some(child) = self.child.as_mut() {
-            kill_child_tree_blocking(child);
+        if !*self.done.borrow() {
+            self.kill.cancel();
         }
     }
 }
@@ -225,37 +232,96 @@ impl ProcessRuntime {
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let (tx, rx) = mpsc::channel(64);
+        let remaining = Arc::new(AtomicU64::new(spec.max_output_bytes));
+        let truncated = Arc::new(AtomicBool::new(false));
 
-        if let Some(stdout) = stdout {
+        let stdout_task = stdout.map(|stdout| {
             let tx = tx.clone();
-            tokio::spawn(stream_lines(stdout, ProcessEvent::Stdout, tx));
-        }
-        if let Some(stderr) = stderr {
+            let remaining = remaining.clone();
+            let truncated = truncated.clone();
+            tokio::spawn(stream_chunks(
+                stdout,
+                ProcessEvent::Stdout,
+                tx,
+                remaining,
+                truncated,
+            ))
+        });
+        let stderr_task = stderr.map(|stderr| {
             let tx = tx.clone();
-            tokio::spawn(stream_lines(stderr, ProcessEvent::Stderr, tx));
-        }
-        let exit_tx = tx.clone();
+            let remaining = remaining.clone();
+            let truncated = truncated.clone();
+            tokio::spawn(stream_chunks(
+                stderr,
+                ProcessEvent::Stderr,
+                tx,
+                remaining,
+                truncated,
+            ))
+        });
+        let process_id = child.id();
+        let kill = CancellationToken::new();
+        let kill_for_task = kill.clone();
+        let (done_tx, done) = watch::channel(false);
         let cancel_clone = cancel.clone();
+        let timeout = spec.timeout;
         tokio::spawn(async move {
-            let code = tokio::select! {
-                biased;
-                _ = cancel_clone.cancelled() => {
-                    kill_child_tree(&mut child).await;
-                    None
+            let code = if let Some(duration) = timeout {
+                tokio::select! {
+                    biased;
+                    _ = cancel_clone.cancelled() => {
+                        kill_child_tree(&mut child).await;
+                        None
+                    }
+                    _ = kill_for_task.cancelled() => {
+                        kill_child_tree(&mut child).await;
+                        None
+                    }
+                    _ = tokio::time::sleep(duration) => {
+                        kill_child_tree(&mut child).await;
+                        None
+                    }
+                    status = child.wait() => {
+                        status.ok().and_then(|st| st.code())
+                    }
                 }
-                status = child.wait() => {
-                    status.ok().and_then(|st| st.code())
+            } else {
+                tokio::select! {
+                    biased;
+                    _ = cancel_clone.cancelled() => {
+                        kill_child_tree(&mut child).await;
+                        None
+                    }
+                    _ = kill_for_task.cancelled() => {
+                        kill_child_tree(&mut child).await;
+                        None
+                    }
+                    status = child.wait() => {
+                        status.ok().and_then(|st| st.code())
+                    }
                 }
             };
-            let _ = exit_tx
+            // 句柄等待的是进程树退出，不应被未消费的输出通道背压阻塞。
+            let _ = done_tx.send(true);
+            if let Some(task) = stdout_task {
+                let _ = task.await;
+            }
+            if let Some(task) = stderr_task {
+                let _ = task.await;
+            }
+            let _ = tx
                 .send(ProcessEvent::Exit {
                     code,
-                    truncated: false,
+                    truncated: truncated.load(Ordering::Acquire),
                 })
                 .await;
         });
 
-        let handle = ProcessHandle { child: None };
+        let handle = ProcessHandle {
+            process_id,
+            kill,
+            done,
+        };
         Ok((rx, handle))
     }
 }
@@ -315,24 +381,6 @@ async fn kill_child_tree(child: &mut Child) {
     let _ = child.wait().await;
 }
 
-/// Drop 路径上的同步终止（防止句柄析构时进程残留）。
-fn kill_child_tree_blocking(child: &mut Child) {
-    #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        let pgid = pid as i32;
-        unsafe {
-            libc::killpg(-pgid, libc::SIGKILL);
-        }
-    }
-    #[cfg(windows)]
-    if let Some(pid) = child.id() {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
-    }
-    let _ = child.start_kill();
-}
-
 /// 收集流直到达到字节上限，返回 (内容, 是否截断)。
 async fn collect_to_vec<R>(buf: &mut BufReader<R>, max: u64) -> (Vec<u8>, bool)
 where
@@ -360,8 +408,13 @@ where
 }
 
 /// 流式按块读取并发送事件。
-async fn stream_lines<R, F>(reader: R, make_event: F, tx: mpsc::Sender<ProcessEvent>)
-where
+async fn stream_chunks<R, F>(
+    reader: R,
+    make_event: F,
+    tx: mpsc::Sender<ProcessEvent>,
+    remaining: Arc<AtomicU64>,
+    truncated: Arc<AtomicBool>,
+) where
     R: tokio::io::AsyncRead + Unpin,
     F: Fn(Vec<u8>) -> ProcessEvent + Send + Sync + 'static,
 {
@@ -371,11 +424,41 @@ where
         match buf.read(&mut chunk).await {
             Ok(0) => break,
             Ok(n) => {
-                if tx.send(make_event(chunk[..n].to_vec())).await.is_err() {
+                let allowed = reserve_output_bytes(&remaining, n);
+                if allowed < n {
+                    truncated.store(true, Ordering::Release);
+                }
+                if allowed > 0
+                    && tx
+                        .send(make_event(chunk[..allowed].to_vec()))
+                        .await
+                        .is_err()
+                {
                     break;
                 }
             }
             Err(_) => break,
+        }
+    }
+}
+
+fn reserve_output_bytes(remaining: &AtomicU64, requested: usize) -> usize {
+    loop {
+        let available = remaining.load(Ordering::Acquire);
+        if available == 0 {
+            return 0;
+        }
+        let reserved = available.min(requested as u64);
+        if remaining
+            .compare_exchange_weak(
+                available,
+                available - reserved,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            return reserved as usize;
         }
     }
 }
@@ -514,5 +597,60 @@ mod tests {
         assert!(got_stdout);
         assert!(got_stderr);
         assert!(got_exit);
+    }
+
+    #[tokio::test]
+    async fn stream_handle_can_kill_process() {
+        let runtime = ProcessRuntime::new();
+        #[cfg(not(windows))]
+        let spec = shell("sleep 30");
+        #[cfg(windows)]
+        let spec = shell("ping -n 61 127.0.0.1");
+        let (mut rx, mut handle) = runtime
+            .spawn_stream(spec, CancellationToken::new())
+            .await
+            .expect("spawn");
+        assert!(handle.id().is_some());
+        tokio::time::timeout(Duration::from_secs(5), handle.kill())
+            .await
+            .expect("kill timed out")
+            .expect("kill");
+        let mut saw_exit = false;
+        while let Some(event) = rx.recv().await {
+            if matches!(event, ProcessEvent::Exit { code: None, .. }) {
+                saw_exit = true;
+                break;
+            }
+        }
+        assert!(saw_exit);
+    }
+
+    #[tokio::test]
+    async fn stream_output_respects_shared_limit() {
+        let runtime = ProcessRuntime::new();
+        #[cfg(not(windows))]
+        let mut spec = shell("yes x | head -c 8192; yes y | head -c 8192 >&2");
+        #[cfg(windows)]
+        let mut spec = shell(
+            "powershell -NoProfile -Command \"'x' * 8192; [Console]::Error.Write('y' * 8192)\"",
+        );
+        spec.max_output_bytes = 1024;
+        let (mut rx, _handle) = runtime
+            .spawn_stream(spec, CancellationToken::new())
+            .await
+            .expect("spawn");
+        let mut bytes = 0usize;
+        let mut was_truncated = false;
+        while let Some(event) = rx.recv().await {
+            match event {
+                ProcessEvent::Stdout(chunk) | ProcessEvent::Stderr(chunk) => bytes += chunk.len(),
+                ProcessEvent::Exit { truncated, .. } => {
+                    was_truncated = truncated;
+                    break;
+                }
+            }
+        }
+        assert!(was_truncated);
+        assert!(bytes <= 1024, "stream emitted {bytes} bytes");
     }
 }

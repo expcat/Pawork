@@ -1,6 +1,6 @@
 # P4-13：Phase 4 评审修复（REVIEW remediation）
 
-> Phase 4 · 核心工具与权限 · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P4-1 ~ P4-12、P3-11 V8（scheduler 上下文注入先于本任务的策略接线）
+> Phase 4 · 核心工具与权限 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P4-1 ~ P4-12、P3-11 V8（scheduler 上下文注入先于本任务的策略接线）
 
 **最终目的**：消除 [REVIEW.md](../REVIEW.md) §4（Phase 4）评审发现的安全边界未接线、上下文断链、数据完整性缺陷与基线卫生问题——把 `PolicyEngine::decide()` 与 `allowed_in_untrusted_workspace` 接入执行路径，消除调度器 `"default"` 假值，补全 apply_patch 部分失败回滚，让 checkpoint 可崩溃恢复，并清理 crate 内死依赖与缺位的匹配器 fuzz 测试。
 
@@ -30,7 +30,7 @@
 
 ### E. 持久化与性能（V9 / V11）
 
-9. **V9 checkpoint 元数据持久化**：把 Run→change→blob 映射写入 session-store / Event Store 投影，崩溃恢复时重建。目的：ADR-010「所有改动可撤销」在崩溃路径成立。
+9. **V9 checkpoint 元数据持久化**：Run→change→blob/path 映射以版本化状态文件原子写入 Artifact Store 根目录，`CheckpointService::open` 在崩溃恢复时重建；避免 `checkpoint-service` 反向依赖 `session-store`，后续组合层可再投影为事件。目的：ADR-010「所有改动可撤销」在崩溃路径成立。
 10. **V11 阻塞 IO**：read_file/search_text/checkpoint 改 `tokio::fs` + 流式/分块或 `spawn_blocking`，read_file 读取受预算约束。目的：避免 worker 线程阻塞与整文件入内存。
 
 ### F. 其余健壮性（V10 / V12 / V13 / V14）
@@ -42,7 +42,7 @@
 
 ### G. 基线/包清理与 fuzz
 
-15. **死依赖清理**：移除 `content-inspector` 基线声明；删 `policy-engine`/`checkpoint-service` 的 `agent-domain`、`process-runtime` 的 `bytes`/`futures` 死依赖；`atomic_write` 共五处重复（`checkpoint-service`、`artifact-store`、`builtin-tools` 三处），共享实现落点需避免反向依赖与跨阶段冲突，其中 `artifact-store` 属 Phase 1。目的：基线与 crate 依赖卫生。
+15. **死依赖清理**：移除 `content-inspector` 基线声明；删 `policy-engine`/`checkpoint-service` 的 `agent-domain`、`process-runtime` 的 `bytes`/`futures` 死依赖；`builtin-tools` 三处 `atomic_write` 已下沉到 `common`，`checkpoint-service` 与 `artifact-store` 因依赖方向和持久语义不同保留各自实现。目的：基线与 crate 依赖卫生。
 16. **维护期死依赖检查**：把 `cargo machete`/`cargo udeps` 放入依赖升级、发布候选或定期维护的 L3 工作流，不加入每次开发提交的阻塞链。目的：在功能簇稳定后防止死依赖再生，同时避免前期频繁依赖调整拖慢实现。
 17. **匹配器属性测试**：为 edit_file/apply_patch 匹配器补 proptest 策略属性测试（随机 old_string/new_string/文件内容组合，断言不 panic、计数一致、回滚后逐字节相等），满足基线「需完整 fuzz 与审计」标准；`arbitrary` 若需使用，必须按基线流程重新引入。目的：安全关键路径覆盖属性测试。
 
@@ -52,27 +52,33 @@
 
 ## 主要产出物
 
-- PolicyEngine 接线 + 危险命令地板 + 调度器真实上下文；apply_patch 回滚补全 + checkpoint 持久化
+- PolicyEngine 接线 + 危险命令地板 + 调度器真实上下文；apply_patch 回滚补全 + checkpoint 版本化持久状态
 - Windows env 分桶、edit_file 尾换行、list_directory symlink、run_command 真流式；阻塞 IO 改造
 - 死依赖清理 + machete/udeps 维护工作流 + 匹配器属性测试
 
 ## 验收标准（保留 REVIEW 追踪编号）
 
-- [ ] **V1**：`PolicyEngine::decide()` 被调度器调用；未信任工作区 + `allowed_in_untrusted_workspace=false` → Deny（测试）
-- [ ] **V4**：trusted + NeverAsk 下 `rm -rf /` 等被硬拒绝/询问（用例）
-- [ ] **V2**：写工具的 checkpoint 挂在真实 run_id 下，跨 run 不碰撞（测试）
-- [ ] **V3**：apply_patch create-over-existing 不删原文件；update/delete 部分失败可恢复（三类回归测试）
-- [ ] **V5**：Windows env 透传含 SYSTEMROOT/TEMP/TMP/USERPROFILE/COMSPEC/PATHEXT（用例）
-- [ ] **V6**：模糊匹配末行编辑后文件保留结尾 `\n`（回归测试）
-- [ ] **V7**：含 dangling symlink 的目录可列出（broken symlink 降级，测试）
-- [ ] **V8**：run_command 长命令增量输出可见（流式测试）
-- [ ] **V9**：进程崩溃后 checkpoint 映射可重建、可回滚（崩溃恢复测试）
-- [ ] **V11**：read_file/search_text/checkpoint 不在 async 中同步阻塞读整文件（审查/基准）
-- [ ] **V10**：search/find 遍历中可中途取消（测试）
-- [ ] **V12 / V13 / V14**：list_directory 分页省成本；edit_file 模糊匹配不退化 O(L·n)；spawn_stream 句柄可 kill 且流式有输出上限
-- [ ] **基线**：`content-inspector` 移出；4 个 crate 死依赖删除；L3 维护工作流含 machete/udeps（不阻塞普通开发提交）
-- [ ] **fuzz**：edit_file/apply_patch 有 proptest 属性测试（不 panic、计数一致、回滚逐字节相等）
-- [ ] **快速验证**：安全红线、Policy、checkpoint、路径与 patch 立即跑定向回归；workspace 全量 build/test/clippy 延后到 Core 主干 L2
+- [x] **V1**：`PolicyEngine::decide()` 被调度器调用；未信任工作区 + `allowed_in_untrusted_workspace=false` → Deny（测试）
+- [x] **V4**：trusted + NeverAsk 下 `rm -rf /` 等被硬拒绝/询问（用例）
+- [x] **V2**：写工具的 checkpoint 挂在真实 run_id 下，跨 run 不碰撞（测试）
+- [x] **V3**：apply_patch create-over-existing 不删原文件；update/delete 部分失败可恢复（三类回归测试）
+- [x] **V5**：Windows env 透传含 SYSTEMROOT/TEMP/TMP/USERPROFILE/COMSPEC/PATHEXT（用例）
+- [x] **V6**：模糊匹配末行编辑后文件保留结尾 `\n`（回归测试）
+- [x] **V7**：含 dangling symlink 的目录可列出（broken symlink 降级，测试）
+- [x] **V8**：run_command 长命令增量输出可见（流式测试）
+- [x] **V9**：进程崩溃后 checkpoint 映射可由持久状态重建、可回滚（崩溃恢复测试）
+- [x] **V11**：read_file/search_text/checkpoint 不在 async 中同步阻塞读整文件（审查/基准）
+- [x] **V10**：search/find 遍历中可中途取消（测试）
+- [x] **V12 / V13 / V14**：list_directory 分页省成本；edit_file 模糊匹配不退化 O(L·n)；spawn_stream 句柄可 kill 且流式有输出上限
+- [x] **基线**：`content-inspector` 移出；4 个 crate 死依赖删除；L3 维护工作流含 machete/udeps（不阻塞普通开发提交）
+- [x] **fuzz**：edit_file/apply_patch 有 proptest 属性测试（不 panic、计数一致、回滚逐字节相等）
+- [x] **快速验证**：安全红线、Policy、checkpoint、路径与 patch 立即跑定向回归；workspace 全量 build/test/clippy 延后到 Core 主干 L2
+
+## 验证记录（2026-08-09）
+
+- `cargo test -p policy-engine -p tool-runtime -p builtin-tools -p checkpoint-service -p process-runtime`
+- `cargo clippy -p policy-engine -p tool-runtime -p builtin-tools -p checkpoint-service -p process-runtime --all-targets -- -D warnings`
+- 属性测试覆盖模糊匹配总函数/计数一致与 apply_patch 失败后逐字节恢复；checkpoint 重开与跨 Run 同 ToolCall ID 隔离均有回归测试。
 
 **相关文档**：[REVIEW.md](../REVIEW.md) §4 · [ADR-009 默认工作区信任](../docs/adr/ADR-009-default-workspace-trust.md) · [ADR-010 全写 Checkpoint](../docs/adr/ADR-010-checkpoint-all-writes.md) · [ROADMAP 依赖选型基线](../ROADMAP.md#依赖选型基线)
 

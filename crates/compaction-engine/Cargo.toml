@@ -10,6 +10,7 @@ description = "Pawork 自动/手动 Compaction 引擎：版本化 CompactionSnap
 [dependencies]
 agent-domain = { path = "../agent-domain" }
 agent-events = { path = "../agent-events" }
+context-engine = { path = "../context-engine" }
 session-store = { path = "../session-store" }
 serde.workspace = true
 serde_json.workspace = true

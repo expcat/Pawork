@@ -1,6 +1,6 @@
 # P3-9：事件流式分发
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 依赖：P3-1
+> Phase 3 · Agent Loop · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P3-1
 
 **最终目的**：实现事件广播（bounded channel + backpressure），让 GUI/CLI 能低延迟订阅 Run 事件而不拖累核心。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] 事件分发延迟 < 2ms
+- [x] 事件分发延迟 < 2ms
 
 **相关文档**：[agent-engine](../docs/features/agent-engine.md) · [observability](../docs/features/observability.md) · [ROADMAP](../ROADMAP.md)

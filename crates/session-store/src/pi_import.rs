@@ -18,6 +18,7 @@ use agent_domain::{
 };
 use agent_events::{AgentEvent, AgentEventEnvelope, EventSequence};
 use serde_json::Value;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 
 use crate::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 
@@ -89,6 +90,7 @@ pub struct PiImportReport {
     pub header_found: bool,
     pub imported_messages: usize,
     pub imported_tool_calls: usize,
+    /// 已作为 `pi.model_switched` Diagnostic 事件持久化的模型切换数。
     pub imported_model_switches: usize,
     pub imported_compactions: usize,
     pub imported_branches: usize,
@@ -128,7 +130,9 @@ pub fn parse_pi_line(raw: &str) -> Option<PiParsedEntry> {
         "text",
         "message",
         "tool_call",
+        "tool_call_id",
         "tool",
+        "name",
         "model",
         "compaction",
         "summary",
@@ -267,9 +271,8 @@ impl SessionStore {
         &self,
         source_path: &Path,
     ) -> Result<PiImportReport, SessionStoreError> {
-        let content = std::fs::read_to_string(source_path)
-            .map_err(|e| SessionStoreError::ProjectionInvariant(format!("read pi file: {e}")))?;
-        self.import_pi_jsonl_lines(&content).await
+        let file = tokio::fs::File::open(source_path).await?;
+        self.import_pi_jsonl_reader(BufReader::new(file)).await
     }
 
     /// 从已读取的 Pi JSONL 内容导入（便于测试与流式来源）。
@@ -277,144 +280,171 @@ impl SessionStore {
         &self,
         content: &str,
     ) -> Result<PiImportReport, SessionStoreError> {
-        let mut report = PiImportReport::default();
-        let mut header: Option<(String, Option<String>)> = None;
-        let mut parsed_entries: Vec<PiParsedEntry> = Vec::new();
+        self.import_pi_jsonl_reader(BufReader::new(content.as_bytes()))
+            .await
+    }
 
-        for (idx, raw) in content.lines().enumerate() {
+    /// 从异步缓冲流逐行导入；文件入口不会同步读取或把完整 JSONL 放入内存。
+    async fn import_pi_jsonl_reader<R>(
+        &self,
+        reader: R,
+    ) -> Result<PiImportReport, SessionStoreError>
+    where
+        R: AsyncBufRead + Unpin,
+    {
+        let mut report = PiImportReport::default();
+        let mut session: Option<SessionId> = None;
+        let mut pending_entries = Vec::new();
+        let mut next_sequence = 1u64;
+        let mut lines = reader.lines();
+
+        while let Some(raw) = lines.next_line().await? {
             report.total_lines += 1;
             let trimmed = raw.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            match parse_pi_line(raw) {
+            match parse_pi_line(&raw) {
                 Some(entry) => {
-                    if let PiPayload::Header { session_id, title } = &entry.payload {
-                        if header.is_none() {
-                            header = Some((session_id.clone(), title.clone()));
-                        }
-                    }
                     report.parsed_entries += 1;
-                    parsed_entries.push(entry);
+                    if entry.kind == PiEntryKind::Unknown || !entry.unknown_fields.is_empty() {
+                        report.record_unknown_entry(report.total_lines, trimmed.to_string());
+                    }
+
+                    if let PiPayload::Header { session_id, title } = &entry.payload {
+                        if session.is_none() {
+                            let imported_session = SessionId::from(session_id.clone());
+                            self.create_session(
+                                &imported_session,
+                                title.clone().unwrap_or_else(|| "imported".into()),
+                                Timestamp::from_unix_millis(1),
+                            )
+                            .await?;
+                            report.header_found = true;
+                            session = Some(imported_session);
+
+                            for pending in pending_entries.drain(..) {
+                                self.import_pi_entry(
+                                    session.as_ref().expect("session was just initialized"),
+                                    pending,
+                                    &mut next_sequence,
+                                    &mut report,
+                                )
+                                .await?;
+                            }
+                        }
+                        continue;
+                    }
+
+                    if let Some(session) = session.as_ref() {
+                        self.import_pi_entry(session, entry, &mut next_sequence, &mut report)
+                            .await?;
+                    } else {
+                        // 宽松支持 header 前的记录；只缓存 header 前的小段，而非整个文件。
+                        pending_entries.push(entry);
+                    }
                 }
                 None => {
                     // 无法解析为 JSON 的行
-                    report.record_unknown_entry(idx + 1, trimmed.to_string());
+                    report.record_unknown_entry(report.total_lines, trimmed.to_string());
                 }
             }
         }
 
-        let (session_id, title) = header.ok_or_else(|| {
-            SessionStoreError::ProjectionInvariant("pi jsonl missing header (session_id)".into())
-        })?;
-
-        let session = SessionId::from(session_id.clone());
-        let now = Timestamp::from_unix_millis(1);
-        self.create_session(&session, title.unwrap_or_else(|| "imported".into()), now)
-            .await?;
-
-        // 计算下一个可用 sequence（create_session 不占用事件 sequence，从 1 开始）。
-        let mut next_sequence: u64 = 1;
-        for entry in &parsed_entries {
-            match &entry.payload {
-                PiPayload::Message {
-                    sequence,
-                    role,
-                    text,
-                } => {
-                    let msg = Message {
-                        id: MessageId::from(format!("pi-msg-{sequence}")),
-                        role: role.clone().unwrap_or(MessageRole::User),
-                        content: vec![ContentPart::Text(TextContent {
-                            text: text.clone().unwrap_or_default(),
-                        })],
-                        metadata: MessageMetadata::default(),
-                    };
-                    let env = AgentEventEnvelope::new(
-                        agent_domain::EventId::from(format!("pi-event-{next_sequence}")),
-                        session.clone(),
-                        agent_domain::RunId::from("pi-import"),
-                        EventSequence::new(next_sequence),
-                        Timestamp::from_unix_millis(next_sequence),
-                        AgentEvent::MessageCommitted { message: msg },
-                    );
-                    self.append_event(DEFAULT_BRANCH_ID, env).await?;
-                    next_sequence += 1;
-                    report.imported_messages += 1;
-                }
-                PiPayload::ToolCall {
-                    sequence,
-                    tool_call_id,
-                    name,
-                } => {
-                    let env = AgentEventEnvelope::new(
-                        agent_domain::EventId::from(format!("pi-event-{next_sequence}")),
-                        session.clone(),
-                        agent_domain::RunId::from("pi-import"),
-                        EventSequence::new(next_sequence),
-                        Timestamp::from_unix_millis(next_sequence),
-                        AgentEvent::ToolCallStarted {
-                            tool_call_id: ToolCallId::from(
-                                tool_call_id
-                                    .clone()
-                                    .unwrap_or_else(|| format!("pi-tool-{sequence}")),
-                            ),
-                            name: name.clone().unwrap_or_default(),
-                        },
-                    );
-                    self.append_event(DEFAULT_BRANCH_ID, env).await?;
-                    next_sequence += 1;
-                    report.imported_tool_calls += 1;
-                }
-                PiPayload::ModelSwitch { .. } => {
-                    report.imported_model_switches += 1;
-                }
-                PiPayload::Compaction { sequence, summary } => {
-                    let env = AgentEventEnvelope::new(
-                        agent_domain::EventId::from(format!("pi-event-{next_sequence}")),
-                        session.clone(),
-                        agent_domain::RunId::from("pi-import"),
-                        EventSequence::new(next_sequence),
-                        Timestamp::from_unix_millis(next_sequence),
-                        AgentEvent::CompactionCompleted {
-                            summary_message_id: MessageId::from(format!("pi-summary-{sequence}")),
-                            compacted_through: EventSequence::new(*sequence.max(&1)),
-                        },
-                    );
-                    // compaction 事件不依赖 message projection，直接追加。
-                    let _ = summary;
-                    self.append_event(DEFAULT_BRANCH_ID, env).await?;
-                    next_sequence += 1;
-                    report.imported_compactions += 1;
-                }
-                PiPayload::Branch { branch_id, parent } => {
-                    if let Some(bid) = branch_id {
-                        if bid != DEFAULT_BRANCH_ID {
-                            self.create_branch(&session, bid.clone(), parent.clone(), None)
-                                .await?;
-                            report.imported_branches += 1;
-                        }
-                    }
-                }
-                PiPayload::Header { .. } => {
-                    report.header_found = true;
-                }
-                PiPayload::Raw => {
-                    // 已在解析阶段归类 unknown；此处不重复计数。
-                }
-            }
-        }
-
-        // 将 unknown_fields 收集进报告（按出现顺序，简单合并为字符串）。
-        for entry in &parsed_entries {
-            if entry.kind == PiEntryKind::Unknown {
-                for (k, v) in &entry.unknown_fields {
-                    report.unknown_entries.insert(0, format!("{}={}", k, v));
-                }
-            }
+        if session.is_none() {
+            return Err(SessionStoreError::ProjectionInvariant(
+                "pi jsonl missing header (session_id)".into(),
+            ));
         }
 
         Ok(report)
+    }
+
+    async fn import_pi_entry(
+        &self,
+        session: &SessionId,
+        entry: PiParsedEntry,
+        next_sequence: &mut u64,
+        report: &mut PiImportReport,
+    ) -> Result<(), SessionStoreError> {
+        let payload = match entry.payload {
+            PiPayload::Message {
+                sequence,
+                role,
+                text,
+            } => {
+                report.imported_messages += 1;
+                AgentEvent::MessageCommitted {
+                    message: Message {
+                        id: MessageId::from(format!("pi-msg-{sequence}")),
+                        role: role.unwrap_or(MessageRole::User),
+                        content: vec![ContentPart::Text(TextContent {
+                            text: text.unwrap_or_default(),
+                        })],
+                        metadata: MessageMetadata::default(),
+                    },
+                }
+            }
+            PiPayload::ToolCall {
+                sequence,
+                tool_call_id,
+                name,
+            } => {
+                report.imported_tool_calls += 1;
+                AgentEvent::ToolCallStarted {
+                    tool_call_id: ToolCallId::from(
+                        tool_call_id.unwrap_or_else(|| format!("pi-tool-{sequence}")),
+                    ),
+                    name: name.unwrap_or_default(),
+                }
+            }
+            PiPayload::ModelSwitch { sequence, model } => {
+                // agent-events 当前没有专用 ModelSwitched 变体；用 canonical Diagnostic
+                // 如实持久化，而不是只增加报告计数后丢弃原始信息。
+                report.imported_model_switches += 1;
+                AgentEvent::Diagnostic {
+                    code: "pi.model_switched".into(),
+                    details: serde_json::json!({
+                        "source_sequence": sequence,
+                        "model": model,
+                    }),
+                }
+            }
+            PiPayload::Compaction {
+                sequence,
+                summary: _,
+            } => {
+                report.imported_compactions += 1;
+                AgentEvent::CompactionCompleted {
+                    summary_message_id: MessageId::from(format!("pi-summary-{sequence}")),
+                    compacted_through: EventSequence::new(sequence.max(1)),
+                }
+            }
+            PiPayload::Branch { branch_id, parent } => {
+                if let Some(branch_id) = branch_id {
+                    if branch_id != DEFAULT_BRANCH_ID {
+                        self.create_branch(session, branch_id, parent, None).await?;
+                        report.imported_branches += 1;
+                    }
+                }
+                return Ok(());
+            }
+            PiPayload::Header { .. } | PiPayload::Raw => return Ok(()),
+        };
+
+        let envelope = AgentEventEnvelope::new(
+            agent_domain::EventId::from(format!("pi-event-{next_sequence}")),
+            session.clone(),
+            agent_domain::RunId::from("pi-import"),
+            EventSequence::new(*next_sequence),
+            Timestamp::from_unix_millis(*next_sequence),
+            payload,
+        );
+        self.append_event(DEFAULT_BRANCH_ID, envelope).await?;
+        *next_sequence = next_sequence
+            .checked_add(1)
+            .ok_or(SessionStoreError::SequenceOverflow)?;
+        Ok(())
     }
 }
 
@@ -471,6 +501,8 @@ mod tests {
             r#"{"sequence":3,"model":"gpt-x"}"#,
             "\n",
             r#"{"weird":"value"}"#,
+            "\n",
+            r#"{"future_entry":{"enabled":true}}"#,
         );
         let src = pi_file(pi_content);
         let before = fs::read_to_string(&src).unwrap();
@@ -480,6 +512,15 @@ mod tests {
         assert_eq!(report.imported_messages, 1);
         assert_eq!(report.imported_tool_calls, 1);
         assert_eq!(report.imported_model_switches, 1);
+        assert_eq!(report.unknown_entries.len(), 2);
+        assert_eq!(
+            report.unknown_entries.get(&5).map(String::as_str),
+            Some(r#"{"weird":"value"}"#)
+        );
+        assert_eq!(
+            report.unknown_entries.get(&6).map(String::as_str),
+            Some(r#"{"future_entry":{"enabled":true}}"#)
+        );
 
         // 原文件未被修改。
         let after = fs::read_to_string(&src).unwrap();
@@ -490,7 +531,14 @@ mod tests {
             .replay_events(&SessionId::from("pi-session"), 1, 100)
             .await
             .expect("replay");
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            &events[2].payload,
+            AgentEvent::Diagnostic { code, details }
+                if code == "pi.model_switched"
+                    && details.get("source_sequence") == Some(&serde_json::json!(3))
+                    && details.get("model") == Some(&serde_json::json!("gpt-x"))
+        ));
 
         store.shutdown().await.expect("shutdown");
         let _ = fs::remove_file(path);

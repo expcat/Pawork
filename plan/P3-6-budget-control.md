@@ -1,6 +1,6 @@
 # P3-6：预算控制
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 依赖：P3-1
+> Phase 3 · Agent Loop · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P3-1
 
 **最终目的**：实现多维预算控制（迭代 / 工具 / 时间 / token / 费用 / 输出 / artifact / 并发上限），达预算产生事件而非静默停止，让 Run 开销可控可观察。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] 达预算产生事件、不静默停
+- [x] 达预算产生事件、不静默停
 
 **相关文档**：[agent-engine](../docs/features/agent-engine.md) · [ROADMAP](../ROADMAP.md)

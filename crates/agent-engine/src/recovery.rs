@@ -57,15 +57,33 @@ pub fn replay_run(events: &RunEventLog) -> RecoveryPlan {
     let mut started = false;
 
     for envelope in events {
-        let transition = match &envelope.payload {
+        let transitions = match &envelope.payload {
             AgentEvent::RunStarted { .. } => {
                 started = true;
-                Some(RunTransition::Begin)
+                vec![RunTransition::Begin]
             }
-            AgentEvent::ContextPrepared { .. } => Some(RunTransition::ContextPrepared),
-            AgentEvent::ProviderRequestStarted { .. } => Some(RunTransition::ProviderStarted),
-            AgentEvent::ToolApprovalRequested { .. } => Some(RunTransition::ApprovalRequested),
-            AgentEvent::ToolExecutionStarted { .. } => Some(RunTransition::ToolsAutoStarted),
+            AgentEvent::ContextPrepared { .. } => vec![RunTransition::ContextPrepared],
+            AgentEvent::ProviderRequestStarted { .. } => vec![RunTransition::ProviderStarted],
+            AgentEvent::ToolApprovalRequested { .. }
+                if matches!(sm.state(), RunState::CollectingToolCalls) =>
+            {
+                vec![RunTransition::ApprovalRequested]
+            }
+            AgentEvent::ToolExecutionStarted { .. }
+                if matches!(sm.state(), RunState::CollectingToolCalls) =>
+            {
+                vec![RunTransition::ToolsAutoStarted]
+            }
+            AgentEvent::ToolExecutionStarted { .. }
+                if matches!(sm.state(), RunState::WaitingForApproval) =>
+            {
+                vec![RunTransition::ApprovalGranted]
+            }
+            AgentEvent::ToolExecutionCompleted { .. }
+                if matches!(sm.state(), RunState::ExecutingTools) =>
+            {
+                vec![RunTransition::ToolsCompleted]
+            }
             AgentEvent::MessageCommitted { message } => {
                 if seen_messages
                     .insert(message.id.clone(), messages.len())
@@ -76,16 +94,41 @@ pub fn replay_run(events: &RunEventLog) -> RecoveryPlan {
                     });
                 }
                 messages.push(message.clone());
-                // 仅在已进入 CollectingToolCalls 时把 MessageCommitted 当作结果回填。
-                if matches!(sm.state(), RunState::CollectingToolCalls) {
-                    Some(RunTransition::ResultsAppended)
-                } else {
-                    None
+                match sm.state() {
+                    RunState::StreamingResponse
+                        if message.role == agent_domain::MessageRole::Assistant
+                            && message.content.iter().any(|part| {
+                                matches!(part, agent_domain::ContentPart::ToolCall(_))
+                            }) =>
+                    {
+                        vec![RunTransition::StreamFinished {
+                            has_tool_calls: true,
+                        }]
+                    }
+                    RunState::StreamingResponse
+                        if message.role == agent_domain::MessageRole::User =>
+                    {
+                        vec![RunTransition::QueuedMessageAppended]
+                    }
+                    RunState::WaitingForApproval
+                        if message.role == agent_domain::MessageRole::Tool =>
+                    {
+                        vec![
+                            RunTransition::ApprovalDenied,
+                            RunTransition::ResultsAppended,
+                        ]
+                    }
+                    RunState::AppendingToolResults
+                        if message.role == agent_domain::MessageRole::Tool =>
+                    {
+                        vec![RunTransition::ResultsAppended]
+                    }
+                    _ => Vec::new(),
                 }
             }
-            AgentEvent::RunCompleted { .. } => Some(RunTransition::Complete),
-            AgentEvent::RunCancelled { .. } => Some(RunTransition::Cancel),
-            AgentEvent::RunFailed { .. } => Some(RunTransition::Fail),
+            AgentEvent::RunCompleted { .. } => vec![RunTransition::Complete],
+            AgentEvent::RunCancelled { .. } => vec![RunTransition::Cancel],
+            AgentEvent::RunFailed { .. } => vec![RunTransition::Fail],
             // 这些事件不产生独立状态转换，但用于审计。
             AgentEvent::AssistantTextDelta { .. }
             | AgentEvent::AssistantThinkingDelta { .. }
@@ -93,15 +136,17 @@ pub fn replay_run(events: &RunEventLog) -> RecoveryPlan {
             | AgentEvent::ToolCallArgumentsDelta { .. }
             | AgentEvent::ToolApprovalResponded { .. }
             | AgentEvent::ToolOutputDelta { .. }
+            | AgentEvent::ToolApprovalRequested { .. }
+            | AgentEvent::ToolExecutionStarted { .. }
             | AgentEvent::ToolExecutionCompleted { .. }
             | AgentEvent::CompactionStarted { .. }
             | AgentEvent::CompactionCompleted { .. }
             | AgentEvent::CheckpointCreated { .. }
             | AgentEvent::CheckpointRolledBack { .. }
-            | AgentEvent::Diagnostic { .. } => None,
+            | AgentEvent::Diagnostic { .. } => Vec::new(),
         };
 
-        if let Some(t) = transition {
+        for t in transitions {
             match sm.apply(t) {
                 Ok(_) => {}
                 Err(TransitionError::Illegal { state, transition }) => {
@@ -198,6 +243,36 @@ mod tests {
         }
     }
 
+    fn assistant_tool_message(id: &str) -> Message {
+        Message {
+            id: MessageId::from(id),
+            role: MessageRole::Assistant,
+            content: vec![ContentPart::ToolCall(agent_domain::ToolCallContent {
+                id: agent_domain::ToolCallId::from("call-1"),
+                name: "read".into(),
+                arguments: serde_json::json!({"path": "README.md"}),
+                raw_arguments: Some(r#"{"path":"README.md"}"#.into()),
+                complete: true,
+            })],
+            metadata: MessageMetadata::default(),
+        }
+    }
+
+    fn tool_result_message(id: &str) -> Message {
+        Message {
+            id: MessageId::from(id),
+            role: MessageRole::Tool,
+            content: vec![ContentPart::ToolResult(agent_domain::ToolResultContent {
+                tool_call_id: agent_domain::ToolCallId::from("call-1"),
+                tool_name: Some("read".into()),
+                content: vec![ContentPart::Text(TextContent { text: "ok".into() })],
+                is_error: false,
+                metadata: serde_json::Value::Null,
+            })],
+            metadata: MessageMetadata::default(),
+        }
+    }
+
     #[test]
     fn replays_completed_run_and_recovers_messages() {
         let events = vec![
@@ -271,6 +346,105 @@ mod tests {
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].recovered_state, RunState::Interrupted);
         assert!(plans[0].resumable);
+    }
+
+    #[test]
+    fn tool_round_replays_without_illegal_transition() {
+        let events = vec![
+            env(
+                1,
+                "run-tools",
+                AgentEvent::RunStarted {
+                    trigger_message_id: MessageId::from("user-1"),
+                },
+            ),
+            env(
+                2,
+                "run-tools",
+                AgentEvent::ContextPrepared {
+                    message_count: 1,
+                    estimated_input_tokens: 1,
+                },
+            ),
+            env(
+                3,
+                "run-tools",
+                AgentEvent::ProviderRequestStarted {
+                    request_id: RequestId::from("request-1"),
+                    provider_id: agent_domain::ProviderId::from("mock"),
+                    model: "mock".into(),
+                },
+            ),
+            env(
+                4,
+                "run-tools",
+                AgentEvent::MessageCommitted {
+                    message: assistant_tool_message("assistant-1"),
+                },
+            ),
+            env(
+                5,
+                "run-tools",
+                AgentEvent::ToolApprovalRequested {
+                    tool_call_id: agent_domain::ToolCallId::from("call-1"),
+                    reason: "test".into(),
+                },
+            ),
+            env(
+                6,
+                "run-tools",
+                AgentEvent::ToolExecutionStarted {
+                    tool_call_id: agent_domain::ToolCallId::from("call-1"),
+                },
+            ),
+            env(
+                7,
+                "run-tools",
+                AgentEvent::ToolExecutionCompleted {
+                    tool_call_id: agent_domain::ToolCallId::from("call-1"),
+                    result: agent_domain::ToolResultContent {
+                        tool_call_id: agent_domain::ToolCallId::from("call-1"),
+                        tool_name: Some("read".into()),
+                        content: Vec::new(),
+                        is_error: false,
+                        metadata: serde_json::Value::Null,
+                    },
+                },
+            ),
+            env(
+                8,
+                "run-tools",
+                AgentEvent::MessageCommitted {
+                    message: tool_result_message("tool-1"),
+                },
+            ),
+            env(
+                9,
+                "run-tools",
+                AgentEvent::ProviderRequestStarted {
+                    request_id: RequestId::from("request-2"),
+                    provider_id: agent_domain::ProviderId::from("mock"),
+                    model: "mock".into(),
+                },
+            ),
+            env(
+                10,
+                "run-tools",
+                AgentEvent::RunCompleted {
+                    stop_reason: StopReason::Completed,
+                    usage: TokenUsage::default(),
+                },
+            ),
+        ];
+
+        let plan = replay_run(&events);
+        assert_eq!(plan.recovered_state, RunState::Completed);
+        assert!(
+            plan.issues.is_empty(),
+            "unexpected issues: {:?}",
+            plan.issues
+        );
+        assert_eq!(plan.messages.len(), 2);
     }
 
     #[test]

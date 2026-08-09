@@ -1,6 +1,6 @@
 # P3-3：Provider Loop
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 依赖：P2-8、P3-1
+> Phase 3 · Agent Loop · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P2-8、P3-1
 
 **最终目的**：跑通 Agent 的 Provider Loop——流式提交请求、解析 tool call、提交消息，支持多 tool call 多轮，这是 Agent 循环的主干。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] Mock Provider 可完成多轮工具循环
+- [x] Mock Provider 可完成多轮工具循环
 
 **相关文档**：[agent-engine](../docs/features/agent-engine.md) · [控制流](../docs/architecture/control-flow.md) · [ROADMAP](../ROADMAP.md)

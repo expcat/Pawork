@@ -2,14 +2,6 @@
 //!
 //! 原子写（tmp+sync+rename）、建父目录、保留已有文件权限、写入前 checkpoint。
 
-use std::fs;
-use std::io::Write;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
-
 use agent_domain::{ContentPart, TextContent, WorkspaceId};
 use async_trait::async_trait;
 use checkpoint_service::CheckpointService;
@@ -25,13 +17,12 @@ use tool_api::ToolRequest;
 use tool_api::ToolResult;
 use workspace_service::WorkspaceService;
 
+use crate::common::atomic_write;
 use crate::common::call_key;
 use crate::common::require_str;
 use crate::common::resolve_rel;
 use crate::common::workspace_roots;
 use crate::common::BuiltinToolError;
-
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// `write_file` 工具。
 #[derive(Clone)]
@@ -135,38 +126,6 @@ async fn write(
     })
 }
 
-/// 原子写：同目录 tmp+sync+rename，建父目录，保留已有文件权限。
-fn atomic_write(path: &Path, content: &[u8]) -> Result<(), WriteFileError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    // 保留已有文件的 unix 权限（覆盖场景）；非 unix 平台无 mode 概念。
-    #[cfg(unix)]
-    let existing_mode = path.metadata().ok().map(|m| m.permissions().mode());
-
-    let tmp = path.with_file_name(format!(
-        ".tmp-{}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| -> std::io::Result<()> {
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(content)?;
-        file.sync_all()?;
-        fs::rename(&tmp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result?;
-
-    #[cfg(unix)]
-    if let Some(mode) = existing_mode {
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
-    }
-    Ok(())
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum WriteFileError {
     #[error(transparent)]
@@ -194,7 +153,8 @@ mod tests {
     use agent_domain::Timestamp;
     use agent_domain::WorkspaceId;
     use artifact_store::ArtifactStore;
-    use std::sync::atomic::AtomicU64;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
@@ -316,7 +276,7 @@ mod tests {
         );
         // 回滚恢复原内容。
         env.checkpoints
-            .rollback_tool_call(tid.as_ref())
+            .rollback_tool_call(rid.as_ref(), tid.as_ref())
             .await
             .expect("rollback");
         assert_eq!(

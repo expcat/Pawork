@@ -75,7 +75,9 @@ pub struct CompactionSnapshot {
 
 ## Phase 5 上下文与压缩基线
 
-`context-engine` 已实现 Tool Result 分级裁剪（`trim_tool_result`）：按字节体量分为小（完整保留）/ 中（头部 + 尾部 + 截断说明）/ 大（摘要 + ArtifactReference 占位）/ 超大（仅元数据 + ArtifactReference），大/超大输出原文经 `retained_full` 暂存以便回溯（ADR-018）。`compaction-engine`（新 crate）已落地版本化 `CompactionSnapshot`（`SnapshotVersion` + `validate()`）、自动/手动压缩统一入口（压缩前用 `create_branch` Fork recovery branch）、保留策略 `RetentionPolicy`（最近 N 轮、未解决任务、用户约束、修改文件、待处理/失败 tool call）与 Golden Session 回归；引擎只产快照与决策，向事件流追加 `CompactionStarted/Completed` 与上下文重建由调用方完成。
+`context-engine` 已实现 Tool Result 分级裁剪（`trim_tool_result`）：文本、Image、Structured 与 Artifact 均计入权重，按体量分为小（完整保留）/ 中（头部 + 尾部 + 截断说明）/ 大（摘要 + ArtifactReference 占位）/ 超大（仅元数据 + ArtifactReference），大/超大输出原文经 `retained_full` 暂存以便回溯（ADR-018）。启发式 TokenEstimator 对 CJK / Kana / Hangul 使用保守的 1 字符/token 路径，压缩前后统计复用同一估算器。
+
+`compaction-engine` 已落地版本化 `CompactionSnapshot`（`SnapshotVersion` + `validate()`）、自动/手动压缩统一入口（压缩前用 `create_branch` Fork recovery branch）、保留策略 `RetentionPolicy`（最近 N 轮、未解决任务、用户约束、修改文件、待处理/失败 tool call）与 Golden Session 回归；压缩只读取目标 branch，`context-engine::CompactionReason` 到引擎原因有显式映射。引擎只产快照与决策，向事件流追加 `CompactionStarted/Completed` 与上下文重建由调用方完成。
 
 ## Phase 16–17 上下文扩展
 

@@ -7,7 +7,10 @@
 //! 工具执行与审批通过 trait 注入，既可接 `tool-runtime::ToolScheduler`（P3-4），
 //! 也可在测试中用 Mock 注入，保持与调度器解耦。
 
+use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use agent_domain::{
     CancellationToken, Message, MessageId, MessageMetadata, ModelId, RequestId, RunId,
@@ -21,7 +24,10 @@ use thiserror::Error;
 
 use crate::appender::{AssembledTurn, ToolCallResult};
 use crate::broadcast::EventBroadcaster;
-use crate::budget::{BudgetController, BudgetReport};
+use crate::budget::{BudgetController, BudgetDimension, BudgetReport};
+use crate::cancel::{CancelHandle, CancelReason};
+use crate::queue::MessageQueue;
+use crate::retry::{RetryController, RetryDecision, RetryPolicy};
 use crate::state::{EventHint, RunState, RunStateMachine, RunTransition, TransitionError};
 
 /// Agent Loop 执行中需要的回调集合（由调用方/宿主注入）。
@@ -34,6 +40,7 @@ pub trait LoopContext: Send + Sync {
     async fn execute_tools(
         &self,
         calls: Vec<PendingToolInvocation>,
+        events: LoopEventEmitter,
         cancel: CancellationToken,
     ) -> Vec<ToolCallResult>;
 
@@ -116,6 +123,7 @@ pub struct ProviderLoopConfig {
     /// 最大循环迭代次数（安全阀，防止模型无限请求工具）。
     pub max_iterations: u64,
     pub budget: crate::budget::BudgetLimits,
+    pub retry: RetryPolicy,
     pub thinking: Option<provider_api::ThinkingConfig>,
 }
 
@@ -132,9 +140,11 @@ pub struct ProviderLoop {
     budget: BudgetController,
     broadcaster: EventBroadcaster,
     /// 下一个事件序号（同一 Session 内严格递增）。
-    next_sequence: u64,
+    next_sequence: Arc<AtomicU64>,
     /// 已提交的消息历史（每轮追加，供下一轮请求使用）。
     messages: Vec<Message>,
+    started_at: Option<Instant>,
+    warned_budget_dimensions: BTreeSet<BudgetDimension>,
 }
 
 impl ProviderLoop {
@@ -159,8 +169,10 @@ impl ProviderLoop {
             state: RunStateMachine::new(),
             budget,
             broadcaster,
-            next_sequence: start_sequence.max(1),
+            next_sequence: Arc::new(AtomicU64::new(start_sequence.max(1))),
             messages,
+            started_at: None,
+            warned_budget_dimensions: BTreeSet::new(),
         }
     }
 
@@ -177,8 +189,10 @@ impl ProviderLoop {
     /// 运行循环直到完成、取消或预算耗尽。
     pub async fn run(
         &mut self,
-        cancel: CancellationToken,
+        queue: Arc<MessageQueue>,
+        cancel: CancelHandle,
     ) -> Result<(RunState, ModelResponseSummary), LoopError> {
+        self.started_at = Some(Instant::now());
         // Created → PreparingContext → WaitingForProvider
         self.transition(RunTransition::Begin)?;
         self.transition(RunTransition::ContextPrepared)?;
@@ -186,12 +200,24 @@ impl ProviderLoop {
         loop {
             if cancel.is_cancelled() {
                 self.transition(RunTransition::Cancel)?;
+                cancel.cancel(CancelReason::System);
+                self.emit_terminal_payload(AgentEvent::RunCancelled {
+                    reason: Some("cancelled before provider request".into()),
+                });
                 return Err(LoopError::Cancelled);
             }
 
+            self.update_elapsed();
             let report = self.budget.tick_iteration();
+            self.emit_budget_warnings(&report);
             if report.must_stop() {
+                cancel.cancel(CancelReason::Budget);
                 self.transition(RunTransition::Fail)?;
+                self.emit_terminal_payload(AgentEvent::RunFailed {
+                    error: ProviderError::clone_for_event(&LoopError::BudgetExceeded(
+                        report.clone(),
+                    )),
+                });
                 return Err(LoopError::BudgetExceeded(report));
             }
 
@@ -199,16 +225,30 @@ impl ProviderLoop {
             let outcome = match self.run_turn(&cancel).await {
                 Ok(outcome) => outcome,
                 Err(LoopError::Cancelled) => {
+                    cancel.cancel(CancelReason::System);
                     self.transition(RunTransition::Cancel)?;
+                    self.emit_terminal_payload(AgentEvent::RunCancelled {
+                        reason: Some("cancelled during provider or tool execution".into()),
+                    });
                     return Err(LoopError::Cancelled);
                 }
                 Err(LoopError::Provider(err))
                     if err.kind == provider_api::ProviderErrorKind::Cancelled =>
                 {
+                    cancel.cancel(CancelReason::System);
                     self.transition(RunTransition::Cancel)?;
+                    self.emit_terminal_payload(AgentEvent::RunCancelled {
+                        reason: Some("provider stream cancelled".into()),
+                    });
                     return Err(LoopError::Cancelled);
                 }
                 Err(err) => {
+                    let reason = if matches!(&err, LoopError::BudgetExceeded(_)) {
+                        CancelReason::Budget
+                    } else {
+                        CancelReason::System
+                    };
+                    cancel.cancel(reason);
                     self.transition(RunTransition::Fail)?;
                     self.emit_terminal_payload(AgentEvent::RunFailed {
                         error: ProviderError::clone_for_event(&err),
@@ -221,12 +261,16 @@ impl ProviderLoop {
             let requests_tools = outcome.requests_tools();
             let summary = outcome.summary;
 
+            let queued = queue.drain_one().await;
+
             if !requests_tools {
-                // 无工具请求 → 完成。StreamFinished 已将状态推进到 Completed，
-                // 这里仅幂等地补发 Complete（若尚未终态）。
-                if !self.state.state().is_terminal() {
-                    self.transition(RunTransition::Complete)?;
+                if let Some(queued) = queued {
+                    self.transition(RunTransition::QueuedMessageAppended)?;
+                    self.messages.push(queued.message.clone());
+                    self.emit_message_committed(&queued.message);
+                    continue;
                 }
+                self.transition(RunTransition::Complete)?;
                 let usage = summary.usage.clone();
                 self.emit_terminal_payload(AgentEvent::RunCompleted {
                     stop_reason: summary.stop_reason.clone(),
@@ -235,43 +279,88 @@ impl ProviderLoop {
                 return Ok((self.state.state(), summary));
             }
 
+            if let Some(queued) = queued {
+                self.messages.push(queued.message.clone());
+                self.emit_message_committed(&queued.message);
+            }
             // 已请求工具：回填结果后进入下一轮（run_turn 内部已处理审批/执行/回填）。
         }
     }
 
     /// 执行单轮：提交 Provider → 收集 → 审批/执行工具 → 回填结果。
-    async fn run_turn(&mut self, cancel: &CancellationToken) -> Result<TurnOutcome, LoopError> {
+    async fn run_turn(&mut self, cancel: &CancelHandle) -> Result<TurnOutcome, LoopError> {
         // WaitingForProvider → StreamingResponse
         self.transition(RunTransition::ProviderStarted)?;
 
         let request = self.build_request();
-        let sink = LoopSink::new(
-            self.config.session_id.clone(),
-            self.config.run_id.clone(),
-            request.request_id.clone(),
-        );
+        let assistant_message_id = self.context.next_message_id();
         self.emit_payload(AgentEvent::ProviderRequestStarted {
             request_id: request.request_id.clone(),
             provider_id: self.config.provider_id.clone(),
             model: self.config.model.as_str().to_string(),
         });
 
-        let summary = self.provider.stream(request, &sink, cancel.clone()).await?;
+        let mut retry = RetryController::new(self.config.retry.clone());
+        let (summary, sink) = loop {
+            let sink = LoopSink::new(
+                self.event_emitter(),
+                assistant_message_id.clone(),
+                request.request_id.clone(),
+            );
+            match self
+                .provider
+                .stream(request.clone(), &sink, cancel.token())
+                .await
+            {
+                Ok(summary) => break (summary, sink),
+                Err(err) => match retry.on_error(&err) {
+                    RetryDecision::Retry {
+                        attempt,
+                        backoff,
+                        reason,
+                    } => {
+                        self.emit_payload(AgentEvent::Diagnostic {
+                            code: "provider_retry_attempt".into(),
+                            details: serde_json::json!({
+                                "attempt": attempt,
+                                "reason": format!("{reason:?}"),
+                                "backoff_ms": backoff.as_millis() as u64,
+                                "request_id": request.request_id.as_str(),
+                            }),
+                        });
+                        tokio::select! {
+                            _ = tokio::time::sleep(backoff) => {}
+                            _ = cancel.token().cancelled() => return Err(LoopError::Cancelled),
+                        }
+                    }
+                    RetryDecision::Stop { .. } => return Err(LoopError::Provider(err)),
+                },
+            }
+        };
 
         self.budget
             .record_tokens(summary.usage.input_tokens, summary.usage.output_tokens);
+        let estimated_cost = model_registry::ModelRegistry::builtin()
+            .estimate_cost(self.config.model.as_str(), &summary.usage);
+        if let Some(cost) = &estimated_cost {
+            self.budget.record_cost(cost.amount_micros);
+        }
+        self.check_budget()?;
 
         // 把流式增量累积成一条助手消息。
-        let mut turn = AssembledTurn::new(self.context.next_message_id());
-        for event in sink.events() {
+        let mut turn = AssembledTurn::new(assistant_message_id);
+        for event in sink.drain_events() {
             turn.apply(&event);
         }
         turn.summary = Some(summary.clone());
 
-        // StreamingResponse → CollectingToolCalls（有工具）或 Completed（无）
-        self.transition(RunTransition::StreamFinished {
-            has_tool_calls: turn.has_tool_calls(),
-        })?;
+        // 工具轮次立即进入 CollectingToolCalls；无工具轮次由 run 在检查消息队列后
+        // 决定完成或继续，避免过早进入不可逆终态。
+        if turn.has_tool_calls() {
+            self.transition(RunTransition::StreamFinished {
+                has_tool_calls: true,
+            })?;
+        }
 
         // 构建并提交助手消息。
         let metadata = MessageMetadata {
@@ -279,6 +368,7 @@ impl ProviderLoop {
             stop_reason: Some(summary.stop_reason.clone()),
             provider: Some(self.config.provider_id.clone()),
             model: Some(self.config.model.clone()),
+            cost: estimated_cost,
             ..MessageMetadata::default()
         };
         let assistant_message = turn.clone().into_message(metadata);
@@ -318,7 +408,7 @@ impl ProviderLoop {
         }
         let approvals = self
             .context
-            .request_approval(&invocations, cancel.clone())
+            .request_approval(&invocations, cancel.token())
             .await;
 
         // 按原序收集结果：拒绝的直接回填，通过的先占位，执行后回填到原位置，
@@ -348,6 +438,8 @@ impl ProviderLoop {
 
         // 审批通过 → 执行工具（按原序），回填到占位位置以保持顺序。
         if !approved_slots.is_empty() {
+            self.budget.set_concurrency(approved_slots.len() as u64);
+            self.check_budget()?;
             self.transition(RunTransition::ApprovalGranted)?;
             let approved: Vec<PendingToolInvocation> = approved_slots
                 .iter()
@@ -358,7 +450,14 @@ impl ProviderLoop {
                     tool_call_id: inv.tool_call_id.clone(),
                 });
             }
-            let executed = self.context.execute_tools(approved, cancel.clone()).await;
+            let executed = self
+                .context
+                .execute_tools(approved, self.event_emitter(), cancel.token())
+                .await;
+            self.budget.set_concurrency(0);
+            if cancel.is_cancelled() {
+                return Err(LoopError::Cancelled);
+            }
             for (slot, r) in approved_slots.iter().zip(executed) {
                 self.emit_payload(AgentEvent::ToolExecutionCompleted {
                     tool_call_id: r.tool_call_id.clone(),
@@ -366,8 +465,16 @@ impl ProviderLoop {
                 });
                 self.budget
                     .record_output(estimate_output_bytes(&r.result.content));
+                self.budget.record_artifact(
+                    r.result
+                        .artifacts
+                        .iter()
+                        .map(|artifact| artifact.byte_length)
+                        .sum(),
+                );
                 results[*slot] = r;
             }
+            self.check_budget()?;
             self.transition(RunTransition::ToolsCompleted)?;
         } else {
             // 全部拒绝时，状态从 WaitingForApproval → AppendingToolResults
@@ -446,9 +553,48 @@ impl ProviderLoop {
         Ok(result)
     }
 
-    fn next_envelope(&mut self, payload: AgentEvent) -> AgentEventEnvelope {
-        let sequence = EventSequence::new(self.next_sequence);
-        self.next_sequence += 1;
+    fn event_emitter(&self) -> LoopEventEmitter {
+        LoopEventEmitter {
+            session_id: self.config.session_id.clone(),
+            run_id: self.config.run_id.clone(),
+            broadcaster: self.broadcaster.clone(),
+            next_sequence: self.next_sequence.clone(),
+        }
+    }
+
+    fn update_elapsed(&mut self) {
+        if let Some(started_at) = self.started_at {
+            self.budget.set_elapsed(started_at.elapsed());
+        }
+    }
+
+    fn check_budget(&mut self) -> Result<BudgetReport, LoopError> {
+        self.update_elapsed();
+        let report = self.budget.check();
+        self.emit_budget_warnings(&report);
+        if report.must_stop() {
+            Err(LoopError::BudgetExceeded(report))
+        } else {
+            Ok(report)
+        }
+    }
+
+    fn emit_budget_warnings(&mut self, report: &BudgetReport) {
+        for dimension in &report.soft_warnings {
+            if self.warned_budget_dimensions.insert(*dimension) {
+                self.emit_payload(AgentEvent::Diagnostic {
+                    code: "budget_soft_limit".into(),
+                    details: serde_json::json!({
+                        "dimension": dimension.as_str(),
+                        "usage": self.budget.usage(),
+                    }),
+                });
+            }
+        }
+    }
+
+    fn next_envelope(&self, payload: AgentEvent) -> AgentEventEnvelope {
+        let sequence = EventSequence::new(self.next_sequence.fetch_add(1, Ordering::SeqCst));
         AgentEventEnvelope::new(
             agent_domain::EventId::from(format!("evt-{}-{}", self.config.run_id, sequence.value())),
             self.config.session_id.clone(),
@@ -459,17 +605,17 @@ impl ProviderLoop {
         )
     }
 
-    fn emit_payload(&mut self, payload: AgentEvent) {
+    fn emit_payload(&self, payload: AgentEvent) {
         let envelope = self.next_envelope(payload);
         // 广播忽略无订阅者错误（核心不应因此中断）。
         let _ = self.broadcaster.publish(envelope);
     }
 
-    fn emit_terminal_payload(&mut self, payload: AgentEvent) {
+    fn emit_terminal_payload(&self, payload: AgentEvent) {
         self.emit_payload(payload);
     }
 
-    fn emit_message_committed(&mut self, message: &Message) {
+    fn emit_message_committed(&self, message: &Message) {
         self.emit_payload(AgentEvent::MessageCommitted {
             message: message.clone(),
         });
@@ -571,28 +717,218 @@ fn unix_millis_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// 内部 sink：缓存 Provider 流式事件供 loop 累积。
+/// 可克隆的 Loop 事件发射器；Provider 与 Tool 的流式 sink 共用同一序列源。
+#[derive(Clone)]
+pub struct LoopEventEmitter {
+    session_id: agent_domain::SessionId,
+    run_id: RunId,
+    broadcaster: EventBroadcaster,
+    next_sequence: Arc<AtomicU64>,
+}
+
+impl LoopEventEmitter {
+    fn emit(&self, payload: AgentEvent) {
+        let sequence = EventSequence::new(self.next_sequence.fetch_add(1, Ordering::SeqCst));
+        let envelope = AgentEventEnvelope::new(
+            agent_domain::EventId::from(format!("evt-{}-{}", self.run_id, sequence.value())),
+            self.session_id.clone(),
+            self.run_id.clone(),
+            sequence,
+            agent_domain::Timestamp::from_unix_millis(unix_millis_now()),
+            payload,
+        );
+        let _ = self.broadcaster.publish(envelope);
+    }
+
+    pub fn emit_tool_event(
+        &self,
+        tool_call_id: agent_domain::ToolCallId,
+        event: tool_api::ToolStreamEvent,
+    ) {
+        match event {
+            tool_api::ToolStreamEvent::OutputDelta { channel, delta } => {
+                let stream = match channel {
+                    tool_api::ToolOutputChannel::Stdout => agent_events::ToolOutputStream::Stdout,
+                    tool_api::ToolOutputChannel::Stderr => agent_events::ToolOutputStream::Stderr,
+                    tool_api::ToolOutputChannel::Structured => {
+                        agent_events::ToolOutputStream::Structured
+                    }
+                };
+                self.emit(AgentEvent::ToolOutputDelta {
+                    tool_call_id,
+                    stream,
+                    delta,
+                });
+            }
+            tool_api::ToolStreamEvent::Progress { .. }
+            | tool_api::ToolStreamEvent::ArtifactAvailable(_) => {}
+        }
+    }
+}
+
+/// 内部 sink：缓存 Provider 流式事件供 loop 累积，并同步广播 canonical delta。
 struct LoopSink {
     events: std::sync::Mutex<Vec<ProviderStreamEvent>>,
+    emitter: LoopEventEmitter,
+    message_id: MessageId,
+    _request_id: RequestId,
 }
 
 impl LoopSink {
-    fn new(_session_id: agent_domain::SessionId, _run_id: RunId, _request_id: RequestId) -> Self {
+    fn new(emitter: LoopEventEmitter, message_id: MessageId, request_id: RequestId) -> Self {
         Self {
             events: std::sync::Mutex::new(Vec::new()),
+            emitter,
+            message_id,
+            _request_id: request_id,
         }
     }
 
-    fn events(&self) -> Vec<ProviderStreamEvent> {
-        self.events.lock().expect("loop sink mutex").clone()
+    fn drain_events(&self) -> Vec<ProviderStreamEvent> {
+        std::mem::take(&mut *self.events.lock().expect("loop sink mutex"))
     }
 }
 
 #[async_trait::async_trait]
 impl ProviderEventSink for LoopSink {
     async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
+        let payload = match &event {
+            ProviderStreamEvent::TextDelta(delta) => Some(AgentEvent::AssistantTextDelta {
+                message_id: self.message_id.clone(),
+                delta: delta.clone(),
+            }),
+            ProviderStreamEvent::ThinkingDelta(delta) => Some(AgentEvent::AssistantThinkingDelta {
+                message_id: self.message_id.clone(),
+                delta: delta.clone(),
+            }),
+            ProviderStreamEvent::ToolCallStarted { id, name } => {
+                Some(AgentEvent::ToolCallStarted {
+                    tool_call_id: id.clone(),
+                    name: name.clone(),
+                })
+            }
+            ProviderStreamEvent::ToolCallArgumentsDelta { id, json } => {
+                Some(AgentEvent::ToolCallArgumentsDelta {
+                    tool_call_id: id.clone(),
+                    json_delta: json.clone(),
+                })
+            }
+            _ => None,
+        };
+        if let Some(payload) = payload {
+            self.emitter.emit(payload);
+        }
         self.events.lock().expect("loop sink mutex").push(event);
         Ok(())
+    }
+}
+
+/// 将 [`tool_runtime::ToolScheduler`] 适配为 Provider Loop 的工具执行上下文。
+pub struct SchedulerLoopContext {
+    scheduler: Arc<tool_runtime::ToolScheduler>,
+    execution_context: tool_api::ToolExecutionContext,
+    approval: Arc<dyn tool_runtime::ApprovalResolver>,
+    msg_counter: AtomicU64,
+    req_counter: AtomicU64,
+}
+
+impl SchedulerLoopContext {
+    pub fn new(
+        scheduler: Arc<tool_runtime::ToolScheduler>,
+        execution_context: tool_api::ToolExecutionContext,
+        approval: Arc<dyn tool_runtime::ApprovalResolver>,
+    ) -> Self {
+        Self {
+            scheduler,
+            execution_context,
+            approval,
+            msg_counter: AtomicU64::new(0),
+            req_counter: AtomicU64::new(0),
+        }
+    }
+
+    pub fn execution_context(&self) -> &tool_api::ToolExecutionContext {
+        &self.execution_context
+    }
+}
+
+struct SchedulerToolSink {
+    tool_call_id: agent_domain::ToolCallId,
+    events: LoopEventEmitter,
+}
+
+#[async_trait::async_trait]
+impl tool_api::ToolEventSink for SchedulerToolSink {
+    async fn emit(&self, event: tool_api::ToolStreamEvent) -> Result<(), tool_api::ToolError> {
+        self.events
+            .emit_tool_event(self.tool_call_id.clone(), event);
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl LoopContext for SchedulerLoopContext {
+    async fn execute_tools(
+        &self,
+        calls: Vec<PendingToolInvocation>,
+        events: LoopEventEmitter,
+        cancel: CancellationToken,
+    ) -> Vec<ToolCallResult> {
+        let futures = calls.into_iter().map(|call| {
+            let scheduler = self.scheduler.clone();
+            let context = self.execution_context.clone();
+            let approval = self.approval.clone();
+            let cancel = cancel.clone();
+            let events = events.clone();
+            async move {
+                let request = tool_api::ToolRequest {
+                    tool_call_id: call.tool_call_id.clone(),
+                    input: call.arguments.clone(),
+                };
+                let sink = SchedulerToolSink {
+                    tool_call_id: call.tool_call_id.clone(),
+                    events,
+                };
+                let result = scheduler
+                    .execute_named(
+                        &call.name,
+                        request,
+                        context,
+                        cancel,
+                        approval.as_ref(),
+                        &sink,
+                    )
+                    .await
+                    .unwrap_or_else(|error| {
+                        tool_api::ToolResult::failure(agent_domain::ErrorContext::from(error))
+                    });
+                ToolCallResult {
+                    tool_call_id: call.tool_call_id,
+                    tool_name: call.name,
+                    arguments: call.arguments,
+                    result,
+                }
+            }
+        });
+        futures::future::join_all(futures).await
+    }
+
+    async fn request_approval(
+        &self,
+        calls: &[PendingToolInvocation],
+        _cancel: CancellationToken,
+    ) -> Vec<ApprovalOutcome> {
+        calls.iter().map(|_| ApprovalOutcome::Approved).collect()
+    }
+
+    fn next_message_id(&self) -> MessageId {
+        let value = self.msg_counter.fetch_add(1, Ordering::Relaxed);
+        MessageId::from(format!("{}-message-{value}", self.execution_context.run_id))
+    }
+
+    fn next_request_id(&self) -> RequestId {
+        let value = self.req_counter.fetch_add(1, Ordering::Relaxed);
+        RequestId::from(format!("{}-request-{value}", self.execution_context.run_id))
     }
 }
 
@@ -607,6 +943,65 @@ mod tests {
     use test_support::{MockProvider, MockScript, MockTool};
     use tool_api::AgentTool;
     use tool_api::ToolResult;
+
+    #[derive(Clone)]
+    struct SequenceProvider {
+        phases: Arc<Vec<Arc<MockProvider>>>,
+        calls: Arc<AtomicU64>,
+        requests: Arc<Mutex<Vec<CanonicalModelRequest>>>,
+    }
+
+    impl SequenceProvider {
+        fn new(scripts: Vec<MockScript>) -> Self {
+            Self {
+                phases: Arc::new(
+                    scripts
+                        .into_iter()
+                        .map(|script| Arc::new(MockProvider::new(script)))
+                        .collect(),
+                ),
+                calls: Arc::new(AtomicU64::new(0)),
+                requests: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn requests(&self) -> Vec<CanonicalModelRequest> {
+            self.requests.lock().expect("requests").clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ModelProvider for SequenceProvider {
+        fn id(&self) -> agent_domain::ProviderId {
+            agent_domain::ProviderId::from("sequence")
+        }
+
+        async fn list_models(
+            &self,
+            _credential: Option<&provider_api::ResolvedCredential>,
+        ) -> Result<Vec<provider_api::ModelDefinition>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        async fn stream(
+            &self,
+            request: CanonicalModelRequest,
+            sink: &dyn ProviderEventSink,
+            cancel: CancellationToken,
+        ) -> Result<ModelResponseSummary, ProviderError> {
+            self.requests
+                .lock()
+                .expect("requests")
+                .push(request.clone());
+            let index = self.calls.fetch_add(1, Ordering::SeqCst) as usize;
+            let phase = self
+                .phases
+                .get(index)
+                .or_else(|| self.phases.last())
+                .expect("sequence provider requires at least one phase");
+            phase.stream(request, sink, cancel).await
+        }
+    }
 
     /// 测试用 LoopContext：自动审批、直接执行内置 MockTool。
     struct TestContext {
@@ -630,6 +1025,7 @@ mod tests {
         async fn execute_tools(
             &self,
             calls: Vec<PendingToolInvocation>,
+            _events: LoopEventEmitter,
             _cancel: CancellationToken,
         ) -> Vec<ToolCallResult> {
             let tools = self.tools.lock().expect("tools").clone();
@@ -707,8 +1103,25 @@ mod tests {
                 max_iterations: Some(10),
                 ..Default::default()
             },
+            retry: RetryPolicy {
+                initial_backoff: std::time::Duration::ZERO,
+                max_backoff: std::time::Duration::ZERO,
+                jitter: 0.0,
+                ..RetryPolicy::default()
+            },
             thinking: None,
         }
+    }
+
+    fn run_cancel() -> CancelHandle {
+        CancelHandle::new(
+            RunId::from("run-1"),
+            Arc::new(crate::NoopProcessTreeCleaner),
+        )
+    }
+
+    fn message_queue() -> Arc<MessageQueue> {
+        Arc::new(MessageQueue::new())
     }
 
     fn user_message(text: &str) -> Message {
@@ -741,7 +1154,7 @@ mod tests {
             broadcaster,
         );
 
-        let (state, summary) = engine.run(CancellationToken::new()).await.unwrap();
+        let (state, summary) = engine.run(message_queue(), run_cancel()).await.unwrap();
         assert_eq!(state, RunState::Completed);
         assert_eq!(summary.stop_reason, StopReason::Completed);
         // 历史：user + assistant
@@ -824,6 +1237,7 @@ mod tests {
             async fn execute_tools(
                 &self,
                 calls: Vec<PendingToolInvocation>,
+                _events: LoopEventEmitter,
                 cancel: CancellationToken,
             ) -> Vec<ToolCallResult> {
                 let mut results = Vec::new();
@@ -883,7 +1297,7 @@ mod tests {
             1,
             EventBroadcaster::new(),
         );
-        let (state, summary) = engine.run(CancellationToken::new()).await.unwrap();
+        let (state, summary) = engine.run(message_queue(), run_cancel()).await.unwrap();
         assert_eq!(state, RunState::Completed);
         assert_eq!(summary.stop_reason, StopReason::Completed);
         // 历史：user + assistant(tool call) + tool result + assistant(text) = 4
@@ -895,19 +1309,66 @@ mod tests {
         let provider: Arc<dyn ModelProvider> =
             Arc::new(MockProvider::new(MockScript::new().wait_for_cancellation()));
         let context: Arc<dyn LoopContext> = Arc::new(TestContext::new(Vec::new()));
-        let cancel = CancellationToken::new();
-        cancel.cancel();
+        let cancel = run_cancel();
+        cancel.cancel(CancelReason::User);
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
         let mut engine = ProviderLoop::new(
             provider,
             context,
             config(vec![user_message("x")]),
             1,
-            EventBroadcaster::new(),
+            broadcaster,
         );
 
-        let result = engine.run(cancel).await;
+        let result = engine.run(message_queue(), cancel).await;
         assert!(matches!(result, Err(LoopError::Cancelled)));
         assert_eq!(engine.state(), RunState::Cancelled);
+        let mut saw_cancelled = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            saw_cancelled |= matches!(event.payload, AgentEvent::RunCancelled { .. });
+        }
+        assert!(saw_cancelled, "取消路径必须广播 RunCancelled");
+    }
+
+    #[tokio::test]
+    async fn streaming_cancel_runs_process_cleanup_and_emits_terminal_event() {
+        struct Cleaner(Arc<AtomicU64>);
+        impl crate::ProcessTreeCleaner for Cleaner {
+            fn cleanup(&self, run_id: &RunId) -> usize {
+                assert_eq!(run_id.as_str(), "run-1");
+                self.0.fetch_add(1, Ordering::SeqCst);
+                1
+            }
+        }
+
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let cleaned = Arc::new(AtomicU64::new(0));
+        let cancel = CancelHandle::new(RunId::from("run-1"), Arc::new(Cleaner(cleaned.clone())));
+        let trigger = cancel.clone();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            trigger.cancel(CancelReason::User);
+        });
+        let mut engine = ProviderLoop::new(
+            Arc::new(MockProvider::new(MockScript::new().wait_for_cancellation())),
+            Arc::new(TestContext::new(Vec::new())),
+            config(vec![user_message("cancel")]),
+            1,
+            broadcaster,
+        );
+
+        assert!(matches!(
+            engine.run(message_queue(), cancel).await,
+            Err(LoopError::Cancelled)
+        ));
+        assert_eq!(cleaned.load(Ordering::SeqCst), 1);
+        let mut terminal = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            terminal |= matches!(event.payload, AgentEvent::RunCancelled { .. });
+        }
+        assert!(terminal);
     }
 
     /// 验证混合审批（A 通过、B 拒绝、C 通过）下 tool result 仍按原序排列。
@@ -941,6 +1402,7 @@ mod tests {
             async fn execute_tools(
                 &self,
                 calls: Vec<PendingToolInvocation>,
+                _events: LoopEventEmitter,
                 _cancel: CancellationToken,
             ) -> Vec<ToolCallResult> {
                 let tools = self.tools.lock().expect("tools").clone();
@@ -1019,7 +1481,7 @@ mod tests {
         cfg.budget.max_iterations = Some(2);
         let mut engine = ProviderLoop::new(provider, context, cfg, 1, EventBroadcaster::new());
         // 第一轮：三个工具，B 被拒；预算=1 让循环停下。
-        let _ = engine.run(CancellationToken::new()).await;
+        let _ = engine.run(message_queue(), run_cancel()).await;
 
         // 取回填的 Tool 消息（最后一条），其 content 应含三条 tool result，且按 a,b,c 序。
         let tool_msg = engine
@@ -1064,7 +1526,7 @@ mod tests {
             1,
             broadcaster,
         );
-        let _ = engine.run(CancellationToken::new()).await.unwrap();
+        let _ = engine.run(message_queue(), run_cancel()).await.unwrap();
 
         let mut saw_run_started = false;
         let mut saw_context_prepared = false;
@@ -1080,5 +1542,591 @@ mod tests {
         }
         assert!(saw_run_started, "应广播 RunStarted 事件");
         assert!(saw_context_prepared, "应广播 ContextPrepared 事件");
+    }
+
+    #[tokio::test]
+    async fn provider_deltas_are_broadcast_while_streaming() {
+        let provider: Arc<dyn ModelProvider> = Arc::new(MockProvider::new(
+            MockScript::new().thinking("plan").text("answer").complete(),
+        ));
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut engine = ProviderLoop::new(
+            provider,
+            Arc::new(TestContext::new(Vec::new())),
+            config(vec![user_message("hi")]),
+            1,
+            broadcaster,
+        );
+
+        engine.run(message_queue(), run_cancel()).await.unwrap();
+        let mut text = false;
+        let mut thinking = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            match event.payload {
+                AgentEvent::AssistantTextDelta { delta, .. } if delta == "answer" => text = true,
+                AgentEvent::AssistantThinkingDelta { delta, .. } if delta == "plan" => {
+                    thinking = true
+                }
+                _ => {}
+            }
+        }
+        assert!(text && thinking, "文本与 thinking delta 都应实时广播");
+    }
+
+    #[tokio::test]
+    async fn loop_scheduler_bridge_serializes_capability_and_streams_tool_output() {
+        struct SchedulerProbeTool {
+            name: &'static str,
+            current: Arc<AtomicU64>,
+            peak: Arc<AtomicU64>,
+            contexts: Arc<Mutex<Vec<tool_api::ToolExecutionContext>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentTool for SchedulerProbeTool {
+            fn descriptor(&self) -> tool_api::ToolDescriptor {
+                tool_api::ToolDescriptor {
+                    name: self.name.into(),
+                    description: "scheduler bridge probe".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    capability: tool_api::ToolCapability::WorkspaceWrite,
+                    read_only: false,
+                    supports_concurrency: false,
+                    default_timeout_ms: Some(1_000),
+                    max_output_bytes: 1024,
+                    allowed_in_untrusted_workspace: true,
+                }
+            }
+
+            async fn execute(
+                &self,
+                _request: tool_api::ToolRequest,
+                context: tool_api::ToolExecutionContext,
+                sink: &dyn tool_api::ToolEventSink,
+                _cancel: CancellationToken,
+            ) -> Result<ToolResult, tool_api::ToolError> {
+                self.contexts.lock().expect("contexts").push(context);
+                let current = self.current.fetch_add(1, Ordering::SeqCst) + 1;
+                self.peak.fetch_max(current, Ordering::SeqCst);
+                sink.emit(tool_api::ToolStreamEvent::OutputDelta {
+                    channel: tool_api::ToolOutputChannel::Stdout,
+                    delta: self.name.into(),
+                })
+                .await?;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                self.current.fetch_sub(1, Ordering::SeqCst);
+                Ok(ToolResult::success(Vec::new()))
+            }
+        }
+
+        let current = Arc::new(AtomicU64::new(0));
+        let peak = Arc::new(AtomicU64::new(0));
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        let tools: Vec<Arc<dyn AgentTool>> = ["write_a", "write_b"]
+            .into_iter()
+            .map(|name| {
+                Arc::new(SchedulerProbeTool {
+                    name,
+                    current: current.clone(),
+                    peak: peak.clone(),
+                    contexts: contexts.clone(),
+                }) as Arc<dyn AgentTool>
+            })
+            .collect();
+        let mut registry = tool_runtime::ToolRegistry::new();
+        registry.extend(tools);
+        let scheduler = Arc::new(tool_runtime::ToolScheduler::new(
+            registry,
+            tool_runtime::ToolSchedulerConfig {
+                max_concurrent: 2,
+                approval_mode: tool_runtime::ApprovalMode::NeverAsk,
+                workspace_trusted: true,
+            },
+        ));
+        let execution_context = tool_api::ToolExecutionContext {
+            workspace_id: agent_domain::WorkspaceId::from("workspace-e2e"),
+            run_id: RunId::from("run-e2e"),
+            working_directory: Some("repo".into()),
+        };
+        let context: Arc<dyn LoopContext> = Arc::new(SchedulerLoopContext::new(
+            scheduler,
+            execution_context.clone(),
+            Arc::new(tool_runtime::AutoApproveResolver),
+        ));
+        let provider = SequenceProvider::new(vec![
+            MockScript::new()
+                .tool_call("write_a", serde_json::json!({"path": "a"}))
+                .tool_call("write_b", serde_json::json!({"path": "b"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]);
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut cfg = config(vec![user_message("write")]);
+        cfg.run_id = RunId::from("run-e2e");
+        let mut engine = ProviderLoop::new(Arc::new(provider), context, cfg, 1, broadcaster);
+        let cancel = CancelHandle::new(
+            RunId::from("run-e2e"),
+            Arc::new(crate::NoopProcessTreeCleaner),
+        );
+
+        engine.run(message_queue(), cancel).await.unwrap();
+        assert_eq!(peak.load(Ordering::SeqCst), 1, "WorkspaceWrite 必须串行");
+        let seen = contexts.lock().expect("contexts");
+        assert_eq!(seen.len(), 2);
+        assert!(seen.iter().all(|context| context == &execution_context));
+        drop(seen);
+        let mut tool_deltas = 0;
+        let mut tool_started = 0;
+        let mut argument_deltas = 0;
+        while let Ok(Some(event)) = sub.try_recv() {
+            match event.payload {
+                AgentEvent::ToolOutputDelta { .. } => tool_deltas += 1,
+                AgentEvent::ToolCallStarted { .. } => tool_started += 1,
+                AgentEvent::ToolCallArgumentsDelta { .. } => argument_deltas += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(tool_deltas, 2);
+        assert_eq!(tool_started, 2);
+        assert_eq!(argument_deltas, 2);
+    }
+
+    #[tokio::test]
+    async fn scheduler_loop_context_uses_explicit_policy_resolver_once() {
+        struct PolicyProbe {
+            capability: tool_api::ToolCapability,
+            calls: Arc<AtomicU64>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentTool for PolicyProbe {
+            fn descriptor(&self) -> tool_api::ToolDescriptor {
+                tool_api::ToolDescriptor {
+                    name: "policy_probe".into(),
+                    description: "policy bridge probe".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    capability: self.capability.clone(),
+                    read_only: false,
+                    supports_concurrency: false,
+                    default_timeout_ms: None,
+                    max_output_bytes: 1024,
+                    allowed_in_untrusted_workspace: false,
+                }
+            }
+
+            async fn execute(
+                &self,
+                _request: tool_api::ToolRequest,
+                _context: tool_api::ToolExecutionContext,
+                _sink: &dyn tool_api::ToolEventSink,
+                _cancel: CancellationToken,
+            ) -> Result<ToolResult, tool_api::ToolError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(ToolResult::success(Vec::new()))
+            }
+        }
+
+        struct ExplicitResolver {
+            outcome: tool_runtime::ApprovalOutcome,
+            calls: Arc<AtomicU64>,
+        }
+
+        #[async_trait::async_trait]
+        impl tool_runtime::ApprovalResolver for ExplicitResolver {
+            async fn resolve(
+                &self,
+                requests: &[tool_api::ToolRequest],
+            ) -> Vec<tool_runtime::ApprovalOutcome> {
+                self.calls
+                    .fetch_add(requests.len() as u64, Ordering::SeqCst);
+                requests.iter().map(|_| self.outcome).collect()
+            }
+        }
+
+        async fn run_case(
+            mode: tool_runtime::ApprovalMode,
+            capability: tool_api::ToolCapability,
+            input: serde_json::Value,
+            outcome: tool_runtime::ApprovalOutcome,
+        ) -> (u64, u64) {
+            let tool_calls = Arc::new(AtomicU64::new(0));
+            let approval_calls = Arc::new(AtomicU64::new(0));
+            let mut registry = tool_runtime::ToolRegistry::new();
+            registry.register(Arc::new(PolicyProbe {
+                capability,
+                calls: tool_calls.clone(),
+            }));
+            let scheduler = Arc::new(tool_runtime::ToolScheduler::new(
+                registry,
+                tool_runtime::ToolSchedulerConfig {
+                    max_concurrent: 1,
+                    approval_mode: mode,
+                    workspace_trusted: true,
+                },
+            ));
+            let context: Arc<dyn LoopContext> = Arc::new(SchedulerLoopContext::new(
+                scheduler,
+                tool_api::ToolExecutionContext {
+                    workspace_id: agent_domain::WorkspaceId::from("workspace-policy"),
+                    run_id: RunId::from("run-policy"),
+                    working_directory: None,
+                },
+                Arc::new(ExplicitResolver {
+                    outcome,
+                    calls: approval_calls.clone(),
+                }),
+            ));
+            let provider = SequenceProvider::new(vec![
+                MockScript::new()
+                    .tool_call("policy_probe", input)
+                    .complete_with(StopReason::ToolUse),
+                MockScript::new().text("done").complete(),
+            ]);
+            let mut cfg = config(vec![user_message("policy")]);
+            cfg.run_id = RunId::from("run-policy");
+            let mut engine =
+                ProviderLoop::new(Arc::new(provider), context, cfg, 1, EventBroadcaster::new());
+            engine
+                .run(
+                    message_queue(),
+                    CancelHandle::new(
+                        RunId::from("run-policy"),
+                        Arc::new(crate::NoopProcessTreeCleaner),
+                    ),
+                )
+                .await
+                .expect("provider loop");
+            (
+                tool_calls.load(Ordering::SeqCst),
+                approval_calls.load(Ordering::SeqCst),
+            )
+        }
+
+        assert_eq!(
+            run_case(
+                tool_runtime::ApprovalMode::AskForWrites,
+                tool_api::ToolCapability::WorkspaceWrite,
+                serde_json::json!({"path": "a.txt"}),
+                tool_runtime::ApprovalOutcome::Denied,
+            )
+            .await,
+            (0, 1),
+            "明确拒绝不得执行"
+        );
+        assert_eq!(
+            run_case(
+                tool_runtime::ApprovalMode::AskForWrites,
+                tool_api::ToolCapability::WorkspaceWrite,
+                serde_json::json!({"path": "a.txt"}),
+                tool_runtime::ApprovalOutcome::Approved,
+            )
+            .await,
+            (1, 1),
+            "明确批准应只提示一次并执行"
+        );
+        assert_eq!(
+            run_case(
+                tool_runtime::ApprovalMode::NeverAsk,
+                tool_api::ToolCapability::Process,
+                serde_json::json!({"command": "rm", "args": ["-rf", "/"]}),
+                tool_runtime::ApprovalOutcome::Approved,
+            )
+            .await,
+            (0, 0),
+            "灾难命令地板应在 resolver 前直接拒绝"
+        );
+    }
+
+    #[tokio::test]
+    async fn interrupted_stream_retries_with_unchanged_messages() {
+        let mut interrupted = ProviderError::new(
+            provider_api::ProviderErrorKind::StreamInterrupted,
+            "connection reset",
+        );
+        interrupted.retryable = true;
+        interrupted.retry_after_ms = Some(0);
+        let provider = SequenceProvider::new(vec![
+            MockScript::new().text("partial").fail(interrupted),
+            MockScript::new().text("final").complete(),
+        ]);
+        let provider_view = provider.clone();
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut engine = ProviderLoop::new(
+            Arc::new(provider),
+            Arc::new(TestContext::new(Vec::new())),
+            config(vec![user_message("retry")]),
+            1,
+            broadcaster,
+        );
+
+        engine.run(message_queue(), run_cancel()).await.unwrap();
+        let requests = provider_view.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].messages, requests[1].messages);
+        assert_eq!(requests[0].request_id, requests[1].request_id);
+        assert!(engine.messages()[1]
+            .content
+            .iter()
+            .any(|part| matches!(part, ContentPart::Text(text) if text.text == "final")));
+        let mut retry_diagnostic = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            retry_diagnostic |= matches!(
+                event.payload,
+                AgentEvent::Diagnostic { ref code, .. } if code == "provider_retry_attempt"
+            );
+        }
+        assert!(retry_diagnostic, "每次重试必须产生 Diagnostic");
+    }
+
+    #[tokio::test]
+    async fn queued_message_is_consumed_before_follow_up_turn() {
+        let provider = SequenceProvider::new(vec![
+            MockScript::new().text("first").complete(),
+            MockScript::new().text("second").complete(),
+        ]);
+        let provider_view = provider.clone();
+        let queue = message_queue();
+        let queued = Message {
+            id: MessageId::from("queued-user"),
+            role: agent_domain::MessageRole::User,
+            content: vec![ContentPart::Text(TextContent {
+                text: "follow up".into(),
+            })],
+            metadata: MessageMetadata::default(),
+        };
+        queue.enqueue(queued).await;
+        let mut engine = ProviderLoop::new(
+            Arc::new(provider),
+            Arc::new(TestContext::new(Vec::new())),
+            config(vec![user_message("first")]),
+            1,
+            EventBroadcaster::new(),
+        );
+
+        engine.run(queue, run_cancel()).await.unwrap();
+        let requests = provider_view.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1]
+            .messages
+            .iter()
+            .any(|message| message.id.as_str() == "queued-user"));
+    }
+
+    #[tokio::test]
+    async fn budget_soft_warning_is_emitted_once_and_hard_limit_fails_terminally() {
+        let provider = SequenceProvider::new(vec![MockScript::new().text("ok").complete()]);
+        let queue = message_queue();
+        for index in 0..3 {
+            queue
+                .enqueue(Message {
+                    id: MessageId::from(format!("queued-{index}")),
+                    role: agent_domain::MessageRole::User,
+                    content: vec![ContentPart::Text(TextContent { text: "x".into() })],
+                    metadata: MessageMetadata::default(),
+                })
+                .await;
+        }
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut cfg = config(vec![user_message("start")]);
+        cfg.budget.max_iterations = Some(5);
+        let mut engine = ProviderLoop::new(
+            Arc::new(provider),
+            Arc::new(TestContext::new(Vec::new())),
+            cfg,
+            1,
+            broadcaster,
+        );
+        engine.run(queue, run_cancel()).await.unwrap();
+        let mut warnings = 0;
+        while let Ok(Some(event)) = sub.try_recv() {
+            if matches!(event.payload, AgentEvent::Diagnostic { ref code, .. } if code == "budget_soft_limit")
+            {
+                warnings += 1;
+            }
+        }
+        assert_eq!(warnings, 1, "同一预算维度只警告一次");
+
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut cfg = config(vec![user_message("hard")]);
+        cfg.budget.max_iterations = Some(1);
+        let mut engine = ProviderLoop::new(
+            Arc::new(MockProvider::new(MockScript::new().complete())),
+            Arc::new(TestContext::new(Vec::new())),
+            cfg,
+            1,
+            broadcaster,
+        );
+        assert!(matches!(
+            engine.run(message_queue(), run_cancel()).await,
+            Err(LoopError::BudgetExceeded(_))
+        ));
+        let mut failed = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            failed |= matches!(event.payload, AgentEvent::RunFailed { .. });
+        }
+        assert!(failed, "预算硬上限必须广播 RunFailed");
+    }
+
+    #[tokio::test]
+    async fn loop_records_cost_duration_concurrency_and_artifact_budgets() {
+        let mut cost_cfg = config(vec![user_message("cost")]);
+        cost_cfg.model = ModelId::from("gpt-4o");
+        cost_cfg.budget.max_cost_micros = Some(1);
+        let mut cost_engine = ProviderLoop::new(
+            Arc::new(MockProvider::new(
+                MockScript::new()
+                    .usage(TokenUsage {
+                        input_tokens: 1_000_000,
+                        ..TokenUsage::default()
+                    })
+                    .complete(),
+            )),
+            Arc::new(TestContext::new(Vec::new())),
+            cost_cfg,
+            1,
+            EventBroadcaster::new(),
+        );
+        let cost_error = cost_engine
+            .run(message_queue(), run_cancel())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            cost_error,
+            LoopError::BudgetExceeded(ref report)
+                if report.hard_exceeded.contains(&BudgetDimension::Cost)
+        ));
+
+        #[derive(Clone)]
+        struct DelayedProvider(Arc<MockProvider>);
+        #[async_trait::async_trait]
+        impl ModelProvider for DelayedProvider {
+            fn id(&self) -> agent_domain::ProviderId {
+                self.0.id()
+            }
+            async fn list_models(
+                &self,
+                credential: Option<&provider_api::ResolvedCredential>,
+            ) -> Result<Vec<provider_api::ModelDefinition>, ProviderError> {
+                self.0.list_models(credential).await
+            }
+            async fn stream(
+                &self,
+                request: CanonicalModelRequest,
+                sink: &dyn ProviderEventSink,
+                cancel: CancellationToken,
+            ) -> Result<ModelResponseSummary, ProviderError> {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                self.0.stream(request, sink, cancel).await
+            }
+        }
+        let mut duration_cfg = config(vec![user_message("duration")]);
+        duration_cfg.budget.max_duration_ms = Some(1);
+        let mut duration_engine = ProviderLoop::new(
+            Arc::new(DelayedProvider(Arc::new(MockProvider::new(
+                MockScript::new().complete(),
+            )))),
+            Arc::new(TestContext::new(Vec::new())),
+            duration_cfg,
+            1,
+            EventBroadcaster::new(),
+        );
+        let duration_error = duration_engine
+            .run(message_queue(), run_cancel())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            duration_error,
+            LoopError::BudgetExceeded(ref report)
+                if report.hard_exceeded.contains(&BudgetDimension::Duration)
+        ));
+
+        let mut concurrency_cfg = config(vec![user_message("concurrency")]);
+        concurrency_cfg.budget.max_concurrency = Some(1);
+        let mut concurrency_engine = ProviderLoop::new(
+            Arc::new(MockProvider::new(
+                MockScript::new()
+                    .tool_call("unknown", serde_json::json!({}))
+                    .complete_with(StopReason::ToolUse),
+            )),
+            Arc::new(TestContext::new(Vec::new())),
+            concurrency_cfg,
+            1,
+            EventBroadcaster::new(),
+        );
+        let concurrency_error = concurrency_engine
+            .run(message_queue(), run_cancel())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            concurrency_error,
+            LoopError::BudgetExceeded(ref report)
+                if report.hard_exceeded.contains(&BudgetDimension::Concurrency)
+        ));
+
+        let mut artifact_result = ToolResult::success(Vec::new());
+        artifact_result
+            .artifacts
+            .push(agent_domain::ArtifactReference {
+                id: agent_domain::ArtifactId::from("artifact-1"),
+                media_type: "application/octet-stream".into(),
+                byte_length: 10,
+                content_hash: None,
+                label: None,
+            });
+        let artifact_provider = SequenceProvider::new(vec![
+            MockScript::new()
+                .tool_call("artifact", serde_json::json!({}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().complete(),
+        ]);
+        let mut artifact_cfg = config(vec![user_message("artifact")]);
+        artifact_cfg.budget.max_artifact_bytes = Some(10);
+        let mut artifact_engine = ProviderLoop::new(
+            Arc::new(artifact_provider),
+            Arc::new(TestContext::new(vec![MockTool::new(
+                "artifact",
+                artifact_result,
+            )])),
+            artifact_cfg,
+            1,
+            EventBroadcaster::new(),
+        );
+        let artifact_error = artifact_engine
+            .run(message_queue(), run_cancel())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            artifact_error,
+            LoopError::BudgetExceeded(ref report)
+                if report.hard_exceeded.contains(&BudgetDimension::ArtifactBytes)
+        ));
+    }
+
+    #[tokio::test]
+    async fn non_retryable_stream_error_emits_run_failed() {
+        let error = ProviderError::new(provider_api::ProviderErrorKind::InvalidRequest, "bad");
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut engine = ProviderLoop::new(
+            Arc::new(MockProvider::new(MockScript::new().fail(error))),
+            Arc::new(TestContext::new(Vec::new())),
+            config(vec![user_message("bad")]),
+            1,
+            broadcaster,
+        );
+        assert!(matches!(
+            engine.run(message_queue(), run_cancel()).await,
+            Err(LoopError::Provider(_))
+        ));
+        let mut failed = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            failed |= matches!(event.payload, AgentEvent::RunFailed { .. });
+        }
+        assert!(failed);
     }
 }

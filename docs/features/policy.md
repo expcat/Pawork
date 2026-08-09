@@ -44,6 +44,8 @@ pub enum PolicyDecision {
 
 不能只靠字符串黑名单，最终须结合：Sandbox；Workspace Boundary；Environment Filter；用户审批；Resource Limit。
 
+Phase 4 remediation 已把 `PolicyEngine::decide()` 接入 Tool Scheduler。`ToolDescriptor::allowed_in_untrusted_workspace` 是未信任工作区的硬门，Policy 的 Deny / AskUser / AllowWithConstraints 均在执行前生效；灾难命令地板保证最宽松审批模式也不能静默运行 `rm -rf /`、`mkfs*` 或写块设备的 `dd`。
+
 ## Phase 15–17 执行与 Hook 边界
 
 - Policy 输入包含 `ToolKind` / `ExecutionOwner` / `ContinuationMode` 与后端 trust boundary。`ClientFunction` 可授权 Core 本地执行；`ProviderHosted` / `ProviderExtension` 只能授权声明、外部执行与 transcript continuation，授权不会把它们变成本地工具。

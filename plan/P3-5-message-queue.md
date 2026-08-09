@@ -1,6 +1,6 @@
 # P3-5：消息队列
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 依赖：P3-1
+> Phase 3 · Agent Loop · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P3-1
 
 **最终目的**：实现用户消息排队与 replace queued 语义，保证用户在 Agent 运行中发送的消息不丢失、可替换待处理项。
 
@@ -19,6 +19,6 @@
 
 ## 验收标准
 
-- [ ] 排队不丢消息
+- [x] 排队不丢消息
 
 **相关文档**：[agent-engine](../docs/features/agent-engine.md) · [ROADMAP](../ROADMAP.md)

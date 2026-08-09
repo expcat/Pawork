@@ -78,11 +78,21 @@ impl AgentTool for SearchTextTool {
         _sink: &dyn ToolEventSink,
         cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
-        if cancel.is_cancelled() {
-            return Err(ToolError::cancelled("search_text cancelled"));
-        }
-        match search(&self.workspaces, &context.workspace_id, &request.input) {
+        let service = self.workspaces.clone();
+        let workspace_id = context.workspace_id;
+        let input = request.input;
+        let result =
+            tokio::task::spawn_blocking(move || search(&service, &workspace_id, &input, &cancel))
+                .await
+                .map_err(|error| ToolError {
+                    kind: tool_api::ToolErrorKind::Internal,
+                    message: format!("search_text worker failed: {error}"),
+                    retryable: false,
+                    retry_after_ms: None,
+                })?;
+        match result {
             Ok(result) => Ok(result),
+            Err(SearchTextError::Cancelled) => Err(ToolError::cancelled("search_text cancelled")),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }
     }
@@ -92,7 +102,11 @@ fn search(
     service: &WorkspaceService,
     workspace_id: &WorkspaceId,
     input: &Value,
+    cancel: &CancellationToken,
 ) -> Result<ToolResult, SearchTextError> {
+    if cancel.is_cancelled() {
+        return Err(SearchTextError::Cancelled);
+    }
     let pattern = require_str(input, "pattern")?;
     let is_regex = opt_bool(input, "is_regex").unwrap_or(false);
     let glob = crate::common::opt_str(input, "glob");
@@ -117,6 +131,7 @@ fn search(
     let mut matches = Vec::new();
     let mut budget = MAX_OUTPUT_BYTES as usize;
     let mut truncated = false;
+    let mut visited = 0usize;
 
     for root in &roots {
         let walker = WalkBuilder::new(root)
@@ -126,6 +141,10 @@ fn search(
             .git_exclude(true)
             .build();
         for entry in walker {
+            visited += 1;
+            if visited % 64 == 0 && cancel.is_cancelled() {
+                return Err(SearchTextError::Cancelled);
+            }
             if matches.len() >= max_results {
                 truncated = true;
                 break;
@@ -144,8 +163,12 @@ fn search(
                     continue;
                 }
             }
+            if cancel.is_cancelled() {
+                return Err(SearchTextError::Cancelled);
+            }
             if let Ok(text) = std::fs::read_to_string(path) {
-                if let Some(emitted) = scan_file(rel, &text, &matcher, context_lines, &mut budget)?
+                if let Some(emitted) =
+                    scan_file(rel, &text, &matcher, context_lines, &mut budget, cancel)?
                 {
                     matches.push(emitted);
                     if matches.len() >= max_results {
@@ -239,12 +262,16 @@ fn scan_file(
     matcher: &Matcher,
     context_lines: usize,
     budget: &mut usize,
+    cancel: &CancellationToken,
 ) -> Result<Option<String>, SearchTextError> {
     let lines: Vec<&str> = text.lines().collect();
     let rel_str = rel.display().to_string();
     let mut out = String::new();
     let mut matched_any = false;
     for (idx, line) in lines.iter().enumerate() {
+        if idx % 256 == 0 && cancel.is_cancelled() {
+            return Err(SearchTextError::Cancelled);
+        }
         let hay = match matcher {
             Matcher::Fixed(needle) if !needle.is_empty() => line.to_lowercase(),
             _ => line.to_string(),
@@ -289,6 +316,8 @@ pub enum SearchTextError {
     Ignore(#[from] ignore::Error),
     #[error("invalid input: {0}")]
     InvalidInput(String),
+    #[error("search cancelled")]
+    Cancelled,
 }
 
 impl From<SearchTextError> for BuiltinToolError {
@@ -301,6 +330,7 @@ impl From<SearchTextError> for BuiltinToolError {
                 field: "pattern",
                 detail,
             },
+            SearchTextError::Cancelled => BuiltinToolError::Other("search_text cancelled".into()),
         }
     }
 }
@@ -349,6 +379,7 @@ mod tests {
             &service,
             &id,
             &json!({"pattern": "beta", "context_lines": 1}),
+            &CancellationToken::new(),
         )
         .expect("search");
         assert!(res.success);
@@ -369,6 +400,7 @@ mod tests {
             &service,
             &id,
             &json!({"pattern": "[0-9]+", "is_regex": true, "context_lines": 0}),
+            &CancellationToken::new(),
         )
         .expect("search");
         let text = match &res.content[0] {
@@ -388,6 +420,7 @@ mod tests {
             &service,
             &id,
             &json!({"pattern": "target", "glob": "*.rs", "context_lines": 0}),
+            &CancellationToken::new(),
         )
         .expect("search");
         let text = match &res.content[0] {
@@ -401,8 +434,23 @@ mod tests {
     #[test]
     fn invalid_regex_returns_invalid_input() {
         let (service, id, _root) = make_service();
-        let err = search(&service, &id, &json!({"pattern": "[", "is_regex": true})).unwrap_err();
+        let err = search(
+            &service,
+            &id,
+            &json!({"pattern": "[", "is_regex": true}),
+            &CancellationToken::new(),
+        )
+        .unwrap_err();
         let error: ToolError = BuiltinToolError::from(err).into();
         assert_eq!(error.kind, tool_api::ToolErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn cancelled_search_stops_before_traversal() {
+        let (service, id, _root) = make_service();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let error = search(&service, &id, &json!({"pattern": "x"}), &cancel).unwrap_err();
+        assert!(matches!(error, SearchTextError::Cancelled));
     }
 }

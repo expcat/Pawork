@@ -92,6 +92,8 @@ pub enum RunTransition {
     ProviderStarted,
     /// StreamingResponse → CollectingToolCalls（有 tool call）或 Completed（无）。
     StreamFinished { has_tool_calls: bool },
+    /// StreamingResponse → WaitingForProvider：本轮无工具，但运行中消息已入队。
+    QueuedMessageAppended,
     /// CollectingToolCalls → WaitingForApproval：需要用户审批。
     ApprovalRequested,
     /// WaitingForApproval → ExecutingTools：审批通过。
@@ -150,6 +152,7 @@ pub fn transition(from: RunState, t: RunTransition) -> Result<RunState, Transiti
                 S::Completed
             }
         }
+        (S::StreamingResponse, T::QueuedMessageAppended) => S::WaitingForProvider,
         (S::CollectingToolCalls, T::ApprovalRequested) => S::WaitingForApproval,
         (S::CollectingToolCalls, T::ToolsAutoStarted) => S::ExecutingTools,
         (S::WaitingForApproval, T::ApprovalGranted) => S::ExecutingTools,
@@ -202,6 +205,7 @@ pub fn event_hint(t: RunTransition) -> EventHint {
         T::StreamFinished {
             has_tool_calls: true,
         } => EventHint::None,
+        T::QueuedMessageAppended => EventHint::MessageCommitted,
         T::ApprovalRequested => EventHint::ToolApprovalRequested,
         T::ResultsAppended => EventHint::MessageCommitted,
         T::Complete => EventHint::RunCompleted,
@@ -363,6 +367,7 @@ mod tests {
                 RunTransition::StreamFinished {
                     has_tool_calls: true,
                 },
+                RunTransition::QueuedMessageAppended,
                 RunTransition::Complete,
             ] {
                 let err = sm.apply(t).unwrap_err();

@@ -19,7 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
 tracing.workspace = true
 ignore.workspace = true
 globset.workspace = true
@@ -29,4 +29,5 @@ encoding_rs.workspace = true
 
 [dev-dependencies]
 test-support = { path = "../test-support" }
-tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
+proptest.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }

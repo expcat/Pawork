@@ -1,6 +1,6 @@
 # P3-2：上下文构建与预算
 
-> Phase 3 · Agent Loop · 状态：🟡未开始 · 依赖：P1-1
+> Phase 3 · Agent Loop · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P1-1
 
 **最终目的**：实现确定性上下文构建（来源优先级 + token 估算 + output/thinking reserve + 超限前压缩触发），保证每次请求上下文可预测、不越界。
 
@@ -19,8 +19,8 @@
 
 ## 验收标准
 
-- [ ] 构建确定性（同输入同输出）
-- [ ] 超限自动触发压缩
+- [x] 构建确定性（同输入同输出）
+- [x] 超限自动触发压缩
 
 **相关文档**：[context](../docs/features/context.md) · [ROADMAP](../ROADMAP.md)
 
