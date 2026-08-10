@@ -10,8 +10,8 @@
 //! - SnapshotRequest 生成完整 Snapshot；Ack 记录 `last_ack`；Heartbeat /
 //!   任意入站帧刷新活跃，心跳超时断线清理但绝不取消 Run（[ADR-026]）。
 //!
-//! 入站帧用 `gui-protocol` 解码并校验信封版本，出站帧用其编码；宿主侧通过
-//! [`SessionHandle`] 推送帧或关闭连接。
+//! 入站帧用 `gui-protocol` 解码并校验信封版本，出站帧编码前同样校验信封
+//! 版本（[ADR-036]）；宿主侧通过 [`SessionHandle`] 推送帧或关闭连接。
 //!
 //! [ADR-026]: ../../docs/adr/ADR-026-gui-disconnect-safe.md
 
@@ -26,10 +26,10 @@ use connection_manager::{ClientRegistration, ManagerError};
 use core_api::{ApiVersion, GlobalSequence};
 use gui_protocol::{
     codec::decode_client_frame, compute_resume_disposition, decode_client_frame_checked,
-    encode_server_frame, ArtifactChunk, ArtifactReadRequest, ClientFrame, GuiCapability,
-    HandshakeRequest, HandshakeResponse, HandshakeSession, ProtocolError, ProtocolErrorCode,
-    ProtocolErrorEnvelope, ResumeContext, ResumeDisposition, ResumeRequest, ResumeResponse,
-    ServerFrame, MAX_ARTIFACT_CHUNK_BYTES,
+    encode_server_frame, validate_server_frame_api_version, ArtifactChunk, ArtifactReadRequest,
+    ClientFrame, GuiCapability, HandshakeRequest, HandshakeResponse, HandshakeSession,
+    ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext, ResumeDisposition,
+    ResumeRequest, ResumeResponse, ServerFrame, MAX_ARTIFACT_CHUNK_BYTES,
 };
 use subscription_hub::HubError;
 use tokio::sync::{mpsc, oneshot};
@@ -158,7 +158,10 @@ async fn run(
         Err(error) => tracing::warn!(%client_id, %error, "initial snapshot build failed"),
     }
     for frame in initial {
-        if send_frame(connection.as_ref(), &frame).await.is_err() {
+        if send_frame(connection.as_ref(), &frame, Some(negotiated))
+            .await
+            .is_err()
+        {
             inner.connections.unregister(&client_id);
             let _ = connection.close().await;
             return;
@@ -192,7 +195,14 @@ async fn run(
             event = event_rx.recv() => {
                 match event {
                     Some(envelope) => {
-                        if send_frame(connection.as_ref(), &ServerFrame::Event(envelope)).await.is_err() {
+                        if send_frame(
+                            connection.as_ref(),
+                            &ServerFrame::Event(envelope),
+                            Some(negotiated),
+                        )
+                        .await
+                        .is_err()
+                        {
                             break;
                         }
                     }
@@ -225,6 +235,7 @@ async fn run(
                                 request_id: None,
                                 error: protocol_error,
                             }),
+                            Some(negotiated),
                         )
                         .await;
                         break;
@@ -237,7 +248,10 @@ async fn run(
                     FrameOutcome::Reply(replies) => {
                         let mut sent = true;
                         for reply in replies {
-                            if send_frame(connection.as_ref(), &reply).await.is_err() {
+                            if send_frame(connection.as_ref(), &reply, Some(negotiated))
+                                .await
+                                .is_err()
+                            {
                                 sent = false;
                                 break;
                             }
@@ -280,6 +294,7 @@ async fn handshake_phase(
                     request_id: None,
                     error: protocol_error,
                 }),
+                None,
             )
             .await;
             let _ = connection.close().await;
@@ -293,6 +308,7 @@ async fn handshake_phase(
                 request_id: None,
                 error: ProtocolError::invalid_frame("first frame must be ClientFrame::Handshake"),
             }),
+            None,
         )
         .await;
         let _ = connection.close().await;
@@ -319,9 +335,13 @@ async fn handshake_phase(
         } => Some(*selected_api_version),
         HandshakeResponse::Rejected { .. } => None,
     };
-    if send_frame(connection, &ServerFrame::Handshake(response.clone()))
-        .await
-        .is_err()
+    if send_frame(
+        connection,
+        &ServerFrame::Handshake(response.clone()),
+        negotiated,
+    )
+    .await
+    .is_err()
     {
         return None;
     }
@@ -591,10 +611,20 @@ fn artifact_error_to_protocol(error: AppServiceError) -> ProtocolError {
     }
 }
 
+/// 编码并发送一帧；`negotiated` 为握手协商版本（握手完成前为 `None`，此时
+/// 仅编码不校验，非 Response/Event 信封帧本身也不参与版本校验）。
 async fn send_frame(
     connection: &dyn GuiConnection,
     frame: &ServerFrame,
+    negotiated: Option<ApiVersion>,
 ) -> Result<(), TransportError> {
+    if let Some(negotiated) = negotiated {
+        validate_server_frame_api_version(frame, negotiated).map_err(|error| TransportError {
+            kind: TransportErrorKind::Internal,
+            message: error.message,
+            retryable: false,
+        })?;
+    }
     let bytes = encode_server_frame(frame).map_err(|error| TransportError {
         kind: TransportErrorKind::Internal,
         message: error.to_string(),
@@ -620,4 +650,91 @@ fn now_unix_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_domain::{CommandId, QueryId};
+    use core_api::{AppResponse, AppResponseEnvelope, API_VERSION};
+    use std::sync::Mutex;
+
+    /// 只捕获出站字节的测试连接，receive 恒返回 ConnectionClosed（本组测试
+    /// 只覆盖 send_frame 的出站校验路径）。
+    struct CapturingConnection {
+        sent: Mutex<Vec<TransportFrame>>,
+    }
+
+    #[async_trait]
+    impl GuiConnection for CapturingConnection {
+        async fn send(&self, frame: TransportFrame) -> Result<(), TransportError> {
+            self.sent.lock().unwrap().push(frame);
+            Ok(())
+        }
+
+        async fn receive(&self) -> Result<TransportFrame, TransportError> {
+            Err(connection_closed("receive is not used in this test"))
+        }
+
+        async fn close(&self) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn info(&self) -> ConnectionInfo {
+            ConnectionInfo {
+                connection_id: "test".into(),
+                locality: transport_api::ConnectionLocality::InProcess,
+                peer_label: None,
+                encrypted: false,
+                max_frame_bytes: 1024 * 1024,
+            }
+        }
+    }
+
+    fn response_frame(api_version: ApiVersion) -> ServerFrame {
+        ServerFrame::Response(AppResponseEnvelope {
+            api_version,
+            request_id: QueryId::from("q-1"),
+            responded_at: Timestamp::from_unix_millis(1),
+            response: AppResponse::Accepted {
+                command_id: CommandId::from("cmd-1"),
+            },
+        })
+    }
+
+    #[tokio::test]
+    async fn send_frame_validates_api_version() {
+        let connection = CapturingConnection {
+            sent: Mutex::new(Vec::new()),
+        };
+
+        // 信封版本 == 协商版本：正常发送。
+        send_frame(&connection, &response_frame(API_VERSION), Some(API_VERSION))
+            .await
+            .expect("matching version is sent");
+        assert_eq!(connection.sent.lock().unwrap().len(), 1);
+
+        // minor 过高（1.1 > 协商的 1.0）：拒绝发送，映射为 Internal。
+        let error = send_frame(
+            &connection,
+            &response_frame(ApiVersion::new(1, 1)),
+            Some(API_VERSION),
+        )
+        .await
+        .expect_err("too-high minor must be rejected");
+        assert_eq!(error.kind, TransportErrorKind::Internal);
+        assert_eq!(connection.sent.lock().unwrap().len(), 1, "不发送违规帧");
+    }
+
+    #[tokio::test]
+    async fn send_frame_skips_validation_before_negotiation() {
+        // 握手完成前 negotiated 未知（None）：即使信封版本不匹配也仅编码发送。
+        let connection = CapturingConnection {
+            sent: Mutex::new(Vec::new()),
+        };
+        send_frame(&connection, &response_frame(ApiVersion::new(1, 1)), None)
+            .await
+            .expect("pre-negotiation sends are not version-checked");
+        assert_eq!(connection.sent.lock().unwrap().len(), 1);
+    }
 }

@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 use agent_domain::{
-    ArtifactId, ConnectionId, EventId, GuiClientId, ProviderId, RunId, SessionId,
-    TerminalSessionId, Timestamp, ToolCallId, WorkspaceId,
+    ArtifactId, EventId, ProviderId, RunId, SessionId, TerminalSessionId, Timestamp, ToolCallId,
+    WorkspaceId,
 };
 use core_api::CommandSource;
 use diff_service::DiffFile;
@@ -104,15 +104,6 @@ pub struct ArtifactRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GuiClientRecord {
-    pub client_id: GuiClientId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub connection_id: Option<ConnectionId>,
-    pub connected: bool,
-    pub last_seen_at: Timestamp,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TerminalRecord {
     pub terminal_session_id: TerminalSessionId,
     pub workspace_id: WorkspaceId,
@@ -134,7 +125,6 @@ pub struct Snapshot {
     pub approvals: Vec<ApprovalRecord>,
     pub providers: Vec<ProviderRecord>,
     pub artifacts: Vec<ArtifactRecord>,
-    pub gui_clients: Vec<GuiClientRecord>,
     pub terminals: Vec<TerminalRecord>,
 }
 
@@ -148,7 +138,6 @@ struct Inner {
     approvals: BTreeMap<ToolCallId, ApprovalRecord>,
     providers: BTreeMap<ProviderId, ProviderRecord>,
     artifacts: BTreeMap<ArtifactId, ArtifactRecord>,
-    gui_clients: BTreeMap<GuiClientId, GuiClientRecord>,
     terminals: BTreeMap<TerminalSessionId, TerminalRecord>,
     diffs: BTreeMap<WorkspaceId, Vec<DiffFile>>,
     git_stages: BTreeMap<WorkspaceId, Vec<String>>,
@@ -172,7 +161,6 @@ impl AggregateState {
                 approvals: BTreeMap::new(),
                 providers: BTreeMap::new(),
                 artifacts: BTreeMap::new(),
-                gui_clients: BTreeMap::new(),
                 terminals: BTreeMap::new(),
                 diffs: BTreeMap::new(),
                 git_stages: BTreeMap::new(),
@@ -450,12 +438,6 @@ impl AggregateState {
         Ok(())
     }
 
-    pub fn clear_run_approvals(&self, run_id: &RunId) {
-        let mut inner = write(&self.inner);
-        inner.approvals.retain(|_, record| &record.run_id != run_id);
-        inner.revision += 1;
-    }
-
     pub fn approvals(&self) -> Vec<ApprovalRecord> {
         read(&self.inner).approvals.values().cloned().collect()
     }
@@ -602,46 +584,6 @@ impl AggregateState {
         read(&self.inner).artifacts.values().cloned().collect()
     }
 
-    // ---------- gui client ----------
-
-    pub fn note_gui_connect(&self, client_id: GuiClientId, connection_id: ConnectionId) {
-        let mut inner = write(&self.inner);
-        inner.gui_clients.insert(
-            client_id.clone(),
-            GuiClientRecord {
-                client_id,
-                connection_id: Some(connection_id),
-                connected: true,
-                last_seen_at: now_timestamp(),
-            },
-        );
-        inner.revision += 1;
-    }
-
-    /// GUI 断线仅更新连接记录；不取消任何 Run（由 RunCancel 显式取消）。
-    pub fn note_gui_disconnect(&self, client_id: &GuiClientId) {
-        let mut inner = write(&self.inner);
-        inner
-            .gui_clients
-            .entry(client_id.clone())
-            .or_insert_with(|| GuiClientRecord {
-                client_id: client_id.clone(),
-                connection_id: None,
-                connected: false,
-                last_seen_at: now_timestamp(),
-            });
-        if let Some(record) = inner.gui_clients.get_mut(client_id) {
-            record.connected = false;
-            record.connection_id = None;
-            record.last_seen_at = now_timestamp();
-        }
-        inner.revision += 1;
-    }
-
-    pub fn gui_clients(&self) -> Vec<GuiClientRecord> {
-        read(&self.inner).gui_clients.values().cloned().collect()
-    }
-
     // ---------- terminal ----------
 
     pub fn record_terminal(
@@ -700,7 +642,6 @@ impl AggregateState {
             approvals: inner.approvals.values().cloned().collect(),
             providers: inner.providers.values().cloned().collect(),
             artifacts: inner.artifacts.values().cloned().collect(),
-            gui_clients: inner.gui_clients.values().cloned().collect(),
             terminals: inner.terminals.values().cloned().collect(),
         }
     }

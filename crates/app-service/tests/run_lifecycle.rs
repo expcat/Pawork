@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agent_domain::{
-    ActorId, CancellationToken, CommandId, ConnectionId, GuiClientId, ProviderId, QueryId, RunId,
-    SessionId, StopReason, Timestamp, TokenUsage, ToolCallId, WorkspaceId,
+    ActorId, CancellationToken, CommandId, ProviderId, QueryId, RunId, SessionId, StopReason,
+    Timestamp, TokenUsage, ToolCallId, WorkspaceId,
 };
 use app_service::{CommandRouter, RouterConfig};
 use async_trait::async_trait;
@@ -289,99 +289,6 @@ async fn run_streams_merge_delta_events_and_reach_terminal_state() {
     sequences.sort_unstable();
     for window in sequences.windows(2) {
         assert!(window[1] > window[0], "global sequence 必须严格递增");
-    }
-}
-
-/// 取消幂等：重复 cancel 为 no-op；GUI 断线不取消 Run。
-#[tokio::test]
-async fn cancel_is_idempotent_and_gui_disconnect_does_not_cancel_run() {
-    let router = router_with_mock_provider(test_support::MockScript::new().wait_for_cancellation());
-    let session_id = prepare_session(&router);
-    let run_id = start_run(&router, &session_id, "long run");
-
-    // 等待 run 真正开始（引擎进入流式阶段，Provider 脚本在等待取消）。
-    let started = wait_until(
-        || {
-            router
-                .aggregate()
-                .get_run(&run_id)
-                .is_some_and(|run| run.state == RunState::StreamingResponse)
-        },
-        Duration::from_secs(5),
-    )
-    .await;
-    assert!(started, "run 应进入 StreamingResponse");
-
-    // GUI 连接 / 断线：只更新连接记录，不取消 Run。
-    let client_id = GuiClientId::from("gui-1");
-    let connection_id = ConnectionId::from("conn-1");
-    router
-        .aggregate()
-        .note_gui_connect(client_id.clone(), connection_id);
-    router.aggregate().note_gui_disconnect(&client_id);
-    assert!(
-        router.supervisor().is_active(&run_id),
-        "GUI 断线不得取消 Run"
-    );
-    let run = router.aggregate().get_run(&run_id).expect("run");
-    assert_ne!(run.state, RunState::Cancelled);
-    assert!(!router.aggregate().gui_clients()[0].connected);
-
-    // RunCancel：第一次真正取消，第二次幂等 no-op。
-    let first = router.dispatch(command(
-        cli_source(),
-        cli_identity(),
-        AppCommand::RunCancel {
-            run_id: run_id.clone(),
-        },
-    ));
-    match &first.response {
-        AppResponse::Data(value) => {
-            assert_eq!(value["already_cancelled"], json!(false));
-        }
-        other => panic!("expected cancel data, got {other:?}"),
-    }
-    let cancelled = wait_until(
-        || {
-            router
-                .aggregate()
-                .get_run(&run_id)
-                .is_some_and(|run| run.state == RunState::Cancelled)
-        },
-        Duration::from_secs(5),
-    )
-    .await;
-    assert!(cancelled, "取消后 run 应进入 Cancelled");
-    assert!(!router.supervisor().is_active(&run_id));
-
-    let second = router.dispatch(command(
-        cli_source(),
-        cli_identity(),
-        AppCommand::RunCancel {
-            run_id: run_id.clone(),
-        },
-    ));
-    match &second.response {
-        AppResponse::Data(value) => {
-            assert_eq!(
-                value["already_cancelled"],
-                json!(true),
-                "重复取消为幂等 no-op"
-            );
-        }
-        other => panic!("expected cancel data, got {other:?}"),
-    }
-
-    // 快照反映终态。
-    let snapshot =
-        router.dispatch_query(query(cli_source(), cli_identity(), AppQuery::SnapshotFetch));
-    match &snapshot.response {
-        AppResponse::Data(value) => {
-            let runs = value["runs"].as_array().expect("runs");
-            assert_eq!(runs.len(), 1);
-            assert_eq!(runs[0]["state"], "cancelled");
-        }
-        other => panic!("expected snapshot, got {other:?}"),
     }
 }
 

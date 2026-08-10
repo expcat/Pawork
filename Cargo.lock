@@ -2620,15 +2620,25 @@ checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 name = "pawork"
 version = "0.0.0"
 dependencies = [
+ "agent-domain",
  "app-service",
  "assert_cmd",
  "clap",
  "cli-command",
  "cli-host",
+ "client-auth",
+ "core-api",
  "core-runtime",
+ "gui-client",
+ "gui-protocol",
+ "gui-server",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tracing",
  "tracing-subscriber",
+ "transport-api",
+ "transport-local",
 ]
 
 [[package]]

@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub use aggregate::{
-    AggregateError, AggregateState, ApprovalRecord, ApprovalStatus, ArtifactRecord,
-    GuiClientRecord, ProviderRecord, RunRecord, SessionRecord, Snapshot, TerminalRecord,
+    AggregateError, AggregateState, ApprovalRecord, ApprovalStatus, ArtifactRecord, ProviderRecord,
+    RunRecord, SessionRecord, Snapshot, TerminalRecord,
 };
 pub use approval::{ApprovalError, ApprovalRegistry, PendingApproval, Registration};
 pub use error::AppServiceError;

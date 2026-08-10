@@ -33,10 +33,10 @@ use core_api::{
     SUPPORTED_API_VERSIONS,
 };
 use gui_protocol::{
-    decode_server_frame, encode_client_frame, ArtifactChunk, ArtifactReadRequest,
-    ClientAuthentication, ClientFrame, GuiCapability, HandshakeRequest, HandshakeResponse,
-    ProtocolCodecError, ProtocolError, ResumeRequest, ResumeResponse, ServerFrame, Snapshot,
-    SubscribeRequest,
+    decode_server_frame, decode_server_frame_checked, encode_client_frame, ArtifactChunk,
+    ArtifactReadRequest, ClientAuthentication, ClientFrame, GuiCapability, HandshakeRequest,
+    HandshakeResponse, ProtocolCodecError, ProtocolError, ProtocolErrorCode, ResumeRequest,
+    ResumeResponse, ServerFrame, Snapshot, SubscribeRequest,
 };
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
@@ -108,6 +108,7 @@ pub enum ClientErrorKind {
     Codec,
     HandshakeRejected,
     Protocol,
+    Version,
     Timeout,
     Disconnected,
     ProtocolViolation,
@@ -125,6 +126,8 @@ pub enum ClientError {
     HandshakeRejected(ProtocolError),
     #[error("server reported a protocol error: {0:?}")]
     Protocol(ProtocolError),
+    #[error("server frame api_version is incompatible with the negotiated version: {0:?}")]
+    Version(ProtocolError),
     #[error("operation {operation} timed out after {timeout:?}")]
     Timeout {
         operation: &'static str,
@@ -148,6 +151,7 @@ impl ClientError {
             ClientError::Codec(_) => ClientErrorKind::Codec,
             ClientError::HandshakeRejected(_) => ClientErrorKind::HandshakeRejected,
             ClientError::Protocol(_) => ClientErrorKind::Protocol,
+            ClientError::Version(_) => ClientErrorKind::Version,
             ClientError::Timeout { .. } => ClientErrorKind::Timeout,
             ClientError::Disconnected => ClientErrorKind::Disconnected,
             ClientError::UnexpectedFrame { .. } => ClientErrorKind::ProtocolViolation,
@@ -162,6 +166,7 @@ impl ClientError {
             ClientError::Timeout { .. } | ClientError::Disconnected => true,
             ClientError::Codec(_)
             | ClientError::HandshakeRejected(_)
+            | ClientError::Version(_)
             | ClientError::UnexpectedFrame { .. }
             | ClientError::Internal(_) => false,
         }
@@ -175,12 +180,16 @@ impl ClientError {
         )
     }
 
+    /// 错误是否表示版本不兼容：握手被拒，或后续 ServerFrame 信封版本与协商
+    /// 版本不匹配（[ADR-036]）。
     pub fn is_incompatible_version(&self) -> bool {
-        matches!(
-            self,
-            ClientError::HandshakeRejected(error)
-                if error.code == gui_protocol::ProtocolErrorCode::IncompatibleVersion
-        )
+        match self {
+            ClientError::HandshakeRejected(error) => {
+                error.code == gui_protocol::ProtocolErrorCode::IncompatibleVersion
+            }
+            ClientError::Version(_) => true,
+            _ => false,
+        }
     }
 
     pub fn is_request_not_found(&self) -> bool {
@@ -298,7 +307,7 @@ impl GuiClient {
             }),
         )
         .await?;
-        let response = match recv_frame(conn.as_ref(), config.timeout).await? {
+        let response = match recv_frame(conn.as_ref(), config.timeout, None).await? {
             ServerFrame::Handshake(response) => response,
             other => {
                 return Err(unexpected_frame("handshake response", &other));
@@ -318,10 +327,11 @@ impl GuiClient {
             }
         };
         // P13-5：Accepted 后服务端先发首帧 Snapshot。
-        let snapshot = match recv_frame(conn.as_ref(), config.timeout).await? {
-            ServerFrame::Snapshot(snapshot) => snapshot,
-            other => return Err(unexpected_frame("initial snapshot", &other)),
-        };
+        let snapshot =
+            match recv_frame(conn.as_ref(), config.timeout, Some(handle.api_version)).await? {
+                ServerFrame::Snapshot(snapshot) => snapshot,
+                other => return Err(unexpected_frame("initial snapshot", &other)),
+            };
         let info = Arc::new(SessionInfo {
             handle: handle.clone(),
             client_id,
@@ -792,7 +802,8 @@ impl GuiClient {
                     });
                 }
             };
-            let frame = decode_server_frame(bytes.as_bytes()).map_err(ClientError::Codec)?;
+            let frame = decode_server_frame_checked(bytes.as_bytes(), self.api_version())
+                .map_err(decode_error)?;
             match frame {
                 ServerFrame::Heartbeat { nonce } => {
                     send_frame(self.conn.as_ref(), &ClientFrame::Pong { nonce }).await?;
@@ -820,9 +831,12 @@ async fn send_frame(conn: &dyn GuiConnection, frame: &ClientFrame) -> Result<(),
 }
 
 /// 读取并解码一帧（自动回 Pong 服务端 Heartbeat），等待受 `timeout` 约束。
+/// `negotiated` 为握手协商版本：`Some` 时校验信封 api_version（[ADR-036]），
+/// 握手完成前传 `None` 仅解码。
 async fn recv_frame(
     conn: &dyn GuiConnection,
     timeout: Duration,
+    negotiated: Option<ApiVersion>,
 ) -> Result<ServerFrame, ClientError> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
@@ -838,13 +852,27 @@ async fn recv_frame(
                 });
             }
         };
-        let frame = decode_server_frame(bytes.as_bytes()).map_err(ClientError::Codec)?;
+        let frame = match negotiated {
+            Some(version) => decode_server_frame_checked(bytes.as_bytes(), version),
+            None => decode_server_frame(bytes.as_bytes()).map_err(ProtocolError::from),
+        }
+        .map_err(decode_error)?;
         match frame {
             ServerFrame::Heartbeat { nonce } => {
                 send_frame(conn, &ClientFrame::Pong { nonce }).await?;
             }
             other => return Ok(other),
         }
+    }
+}
+
+/// 受检解码失败 → [`ClientError`]：版本不兼容单列 [`ClientError::Version`]，
+/// 其余（编解码失败经 checked 路径折叠为线上错误）按协议错误呈现。
+fn decode_error(error: ProtocolError) -> ClientError {
+    if error.code == ProtocolErrorCode::IncompatibleVersion {
+        ClientError::Version(error)
+    } else {
+        ClientError::Protocol(error)
     }
 }
 
@@ -877,4 +905,129 @@ fn now_timestamp() -> Timestamp {
             .map(|duration| duration.as_millis() as u64)
             .unwrap_or(0),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_domain::{CommandId, QueryId};
+    use core_api::{AppResponse, AppResponseEnvelope, API_VERSION};
+    use gui_protocol::encode_server_frame;
+    use std::future::Future;
+    use std::pin::Pin;
+    use transport_api::{ConnectionLocality, TransportErrorKind};
+
+    /// 返回固定帧字节队列的测试连接。gui-client 无 async-trait 依赖，按
+    /// `#[async_trait]` 的脱糖签名手工实现 `GuiConnection`。
+    struct MockConnection {
+        frames: Mutex<VecDeque<TransportFrame>>,
+    }
+
+    impl GuiConnection for MockConnection {
+        fn send<'life0, 'async_trait>(
+            &'life0 self,
+            _frame: TransportFrame,
+        ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + 'async_trait>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn receive<'life0, 'async_trait>(
+            &'life0 self,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<TransportFrame, TransportError>> + Send + 'async_trait>,
+        >
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async move {
+                self.frames
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .ok_or_else(|| TransportError {
+                        kind: TransportErrorKind::ConnectionClosed,
+                        message: "no more frames".into(),
+                        retryable: false,
+                    })
+            })
+        }
+
+        fn close<'life0, 'async_trait>(
+            &'life0 self,
+        ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + 'async_trait>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn info(&self) -> ConnectionInfo {
+            ConnectionInfo {
+                connection_id: "mock".into(),
+                locality: ConnectionLocality::InProcess,
+                peer_label: None,
+                encrypted: false,
+                max_frame_bytes: 1024 * 1024,
+            }
+        }
+    }
+
+    fn response_bytes(api_version: ApiVersion) -> Vec<u8> {
+        encode_server_frame(&ServerFrame::Response(AppResponseEnvelope {
+            api_version,
+            request_id: QueryId::from("q-1"),
+            responded_at: Timestamp::from_unix_millis(1),
+            response: AppResponse::Accepted {
+                command_id: CommandId::from("cmd-1"),
+            },
+        }))
+        .expect("encode response")
+    }
+
+    fn mock(frames: Vec<TransportFrame>) -> MockConnection {
+        MockConnection {
+            frames: Mutex::new(VecDeque::from(frames)),
+        }
+    }
+
+    #[tokio::test]
+    async fn recv_frame_rejects_mismatched_version() {
+        // 协商为 1.0，服务端帧信封带 1.1（minor 过高）：拒绝并归类 Version。
+        let conn = mock(vec![TransportFrame::new(response_bytes(ApiVersion::new(
+            1, 1,
+        )))]);
+        let error = recv_frame(&conn, Duration::from_millis(100), Some(API_VERSION))
+            .await
+            .expect_err("too-high minor must be rejected");
+        assert!(matches!(error, ClientError::Version(_)));
+        assert_eq!(error.kind(), ClientErrorKind::Version);
+        assert!(error.is_incompatible_version());
+    }
+
+    #[tokio::test]
+    async fn recv_frame_accepts_matching_version() {
+        let conn = mock(vec![TransportFrame::new(response_bytes(API_VERSION))]);
+        let frame = recv_frame(&conn, Duration::from_millis(100), Some(API_VERSION))
+            .await
+            .expect("matching version decodes");
+        assert!(matches!(frame, ServerFrame::Response(_)));
+    }
+
+    #[tokio::test]
+    async fn recv_frame_skips_validation_before_negotiation() {
+        // 握手完成前 negotiated=None：只解码，不做版本校验。
+        let conn = mock(vec![TransportFrame::new(response_bytes(ApiVersion::new(
+            1, 1,
+        )))]);
+        let frame = recv_frame(&conn, Duration::from_millis(100), None)
+            .await
+            .expect("pre-negotiation recv decodes without version check");
+        assert!(matches!(frame, ServerFrame::Response(_)));
+    }
 }

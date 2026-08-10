@@ -83,11 +83,6 @@ impl TokenStore {
 
     /// 生成新 token 并写入文件；文件已存在时报错，绝不覆盖。
     pub fn generate(&self) -> Result<Token, ClientAuthError> {
-        if self.path.exists() {
-            return Err(ClientAuthError::AlreadyExists {
-                path: self.path.clone(),
-            });
-        }
         if let Some(parent) = self.path.parent() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent).map_err(|source| ClientAuthError::CreateDir {
@@ -101,10 +96,22 @@ impl TokenStore {
         let mut bytes = [0u8; TOKEN_BYTES];
         rand::thread_rng().fill_bytes(&mut bytes);
         let token = Token(to_hex(&bytes));
-        let mut file = fs::File::create(&self.path).map_err(|source| ClientAuthError::Write {
-            path: self.path.clone(),
-            source,
-        })?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&self.path)
+            .map_err(|source| {
+                if source.kind() == io::ErrorKind::AlreadyExists {
+                    ClientAuthError::AlreadyExists {
+                        path: self.path.clone(),
+                    }
+                } else {
+                    ClientAuthError::Write {
+                        path: self.path.clone(),
+                        source,
+                    }
+                }
+            })?;
         file.write_all(token.as_str().as_bytes())
             .and_then(|_| file.write_all(b"\n"))
             .and_then(|_| file.sync_all())
@@ -168,14 +175,6 @@ pub struct TokenAuthenticator {
 impl TokenAuthenticator {
     pub fn new(store: TokenStore) -> Self {
         Self { store }
-    }
-
-    pub fn store(&self) -> &TokenStore {
-        &self.store
-    }
-
-    pub fn scheme(&self) -> &'static str {
-        TOKEN_SCHEME
     }
 }
 
@@ -270,6 +269,21 @@ mod tests {
         let error = store.generate().expect_err("must fail");
         assert!(matches!(error, ClientAuthError::AlreadyExists { .. }));
         assert_eq!(store.load().expect("load"), first);
+    }
+
+    #[test]
+    fn generate_is_atomic_under_contention() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("gui.token");
+        fs::write(&path, b"pre-existing content\n").expect("write");
+        let store = TokenStore::new(&path);
+        let error = store.generate().expect_err("must fail");
+        assert!(matches!(error, ClientAuthError::AlreadyExists { .. }));
+        assert_eq!(
+            fs::read(&path).expect("read"),
+            b"pre-existing content\n",
+            "existing file must not be truncated"
+        );
     }
 
     #[test]

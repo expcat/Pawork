@@ -4,6 +4,7 @@
 - **评审日期**：2026-08-08（P1–P7 整合评审）；2026-08-09（P8–P11 评审）。
 **复核日期**：2026-08-09（P1–P7 修复复核，详见 [§复核结论](#复核结论2026-08-09)）；2026-08-10（P8、P9、P10 修复复核）。
 **P11 复核**（2026-08-10）：见下方整合说明。
+**P12 复核**（2026-08-10）· **P13 评审**（2026-08-10）· **P13 修复**（2026-08-11）：见 [P13-11](plan/P13-11-review-remediation.md)。
 - **评审基线**：P1 以 `de76839` 为基线；P2–P7 以 `67d6c4d` 为基线；P8–P11 以各自提交为基线。
 - **V 编号约定**：各阶段内部独立使用 V1–Vn 编号；跨阶段引用以 `P<阶段>-V<n>` 前缀区分。
 - **引用兼容**：`plan/P{1..7}-*-review-remediation.md` 中的 `[REVIEW.md](../REVIEW.md) §N` 链接仍指向本文件，各 §N 对应 `docs/review/pN-review.md`。
@@ -24,8 +25,15 @@
 | P10 | WASM Plugin（plugin-api / wasm-plugin-host / hook-runtime） | [p10-review.md](docs/review/p10-review.md) | [P10-7](plan/P10-7-review-remediation.md) 🟢 | ✅ §3.1/§3.4/§3.5/§3.6 死 API 删除、§4.1 Lifecycle 双路径合并、§3.2/§3.3 重复消除、§4.3a 超时约束、§3.9/§4.4 文档全部确认修复（§2/§3.7/§3.8/§4.3b,c/§4.5 显式延后） |
 | P11 | Sandbox 与跨平台强化 | [p11-review.md](docs/review/p11-review.md) | [P11-9](plan/P11-9-review-remediation.md) 🟢 | ✅ §2.1/§2.2/§2.3/§2.4/§2.5/§2.6/§3.1/§3.2/§3.3 全部确认修复（§2.6 NetworkMode 合并、§3.4 文件拆分显式延后） |
 | P12 | Multi-Agent 编排 | [p12-review.md](docs/review/p12-review.md) | [P12-7](plan/P12-7-review-remediation.md) 🟢 | ✅ §2.1 接线三件套 / §2.2 删 AgentConcurrency / §2.3 11 死事件生产者 / §2.4 ledger 归属+预算数据源 / §2.5 删死依赖 / §2.6 删 parent_id+AgentTree 文档 / §2.7 Drop 反模式 / §3.1 P12-1 措辞 全部确认修复（§3.1 agent-loop 接线、§3.2 主流程接入、§3.3 event store 持久化显式延后） |
+| P13 | CLI Host 与多 GUI 协议 | [p13-review.md](docs/review/p13-review.md) | [P13-11](plan/P13-11-review-remediation.md) 🟢 | ✅ §2.1 宿主装配 GuiServer / §3.5 双向协议版本校验 / §3.7 删 aggregate+connection-manager+client-auth 死公开 API / §3.8 client-auth 原子创建 全部确认修复（§2.2/§2.3/§3.1/§3.2/§3.4/§3.6/§4.1/§4.6 显式延后） |
 
 ## 复核结论（2026-08-09）
+
+## 复核结论（2026-08-11 · P12 + P13）
+
+对 P12 / P13 评审发现的问题逐项核对修复落地情况。复核方法：Commander（GLM）核对 review 仍成立性 + 派发 4 个只读 `deepseek_explorer` / 5 个写集互不重叠的 `deepseek_worker` 并行执行 + 1 个 `deepseek_reviewer` 独立复核 + Commander 后处理（reviewer finding #1 `gui_clients` 死字段清理）。
+
+**总体结论**：P13 评审中可立即落地的 4 项（§2.1 / §3.5 / §3.7 / §3.8）全部修复，workspace 全量 `cargo test`（1155 passed / 0 failed）、clippy、fmt、schema-typegen `--check` 均干净；§4.1 transport 去重经核验确认需扩大 transport-memory 公开面（与减概念冲突）显式延后，其余结构性接线项（§2.2/§2.3/§3.1/§3.2/§3.4/§3.6/§4.6）按后续阶段配套延后并登记。详见 [P13-11](plan/P13-11-review-remediation.md)。
 
 对 P1–P7 评审发现的全部漏洞（V 项）、基线偏差与文档漂移项，在当前源码逐项核对修复落地情况。复核方法：deepseek reviewer 逐项比对 `crates/` 源码与根 `Cargo.toml`，给出 `文件:行` 或 `rg` 命中证据；主代理汇总。
 

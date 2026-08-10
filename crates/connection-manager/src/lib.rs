@@ -191,15 +191,6 @@ impl ConnectionManager {
             .map(|entry| entry.session.clone())
     }
 
-    /// 全部会话副本（按 client_id 排序）。
-    pub fn sessions(&self) -> Vec<GuiClientSession> {
-        lock(&self.inner)
-            .sessions
-            .values()
-            .map(|entry| entry.session.clone())
-            .collect()
-    }
-
     /// 记录一次活跃证据（心跳 / Pong / 任意入站帧），刷新 `last_heartbeat_at`。
     pub fn heartbeat(&self, client_id: &GuiClientId, now: Timestamp) -> Result<(), ManagerError> {
         let mut inner = lock(&self.inner);
@@ -284,14 +275,6 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// 连接当前是否有至少一条订阅。
-    pub fn is_subscribed(&self, client_id: &GuiClientId) -> bool {
-        lock(&self.inner)
-            .sessions
-            .get(client_id)
-            .is_some_and(|entry| !entry.session.subscriptions.is_empty())
-    }
-
     /// 事件是否应投递给该连接：无订阅不投递；任一订阅 streams 为空（全量）或
     /// 包含该事件流则投递。
     pub fn should_forward(&self, client_id: &GuiClientId, stream: &EventStream) -> bool {
@@ -340,21 +323,6 @@ impl ConnectionManager {
         now.as_unix_millis()
             .saturating_sub(entry.session.last_heartbeat_at.as_unix_millis())
             >= timeout
-    }
-
-    /// 当前已超时的连接列表（供宿主批量清理）。
-    pub fn expired_clients(&self, now: Timestamp) -> Vec<GuiClientId> {
-        let timeout = self.config().heartbeat_timeout.as_millis() as u64;
-        lock(&self.inner)
-            .sessions
-            .iter()
-            .filter(|(_, entry)| {
-                now.as_unix_millis()
-                    .saturating_sub(entry.session.last_heartbeat_at.as_unix_millis())
-                    >= timeout
-            })
-            .map(|(client_id, _)| client_id.clone())
-            .collect()
     }
 }
 
@@ -453,12 +421,10 @@ mod tests {
         manager.register(registration("a")).expect("register");
         assert!(!manager.is_timed_out(&client_id, now(99)));
         assert!(manager.is_timed_out(&client_id, now(100)));
-        assert_eq!(manager.expired_clients(now(100)), vec![client_id.clone()]);
 
         manager.heartbeat(&client_id, now(100)).expect("heartbeat");
         assert!(!manager.is_timed_out(&client_id, now(199)));
         assert!(manager.is_timed_out(&client_id, now(200)));
-        assert_eq!(manager.expired_clients(now(200)), vec![client_id.clone()]);
     }
 
     #[test]
@@ -482,14 +448,12 @@ mod tests {
         let other_stream = EventStream::Run(RunId::from("run-2"));
 
         // 未订阅不投递。
-        assert!(!manager.is_subscribed(&client_id));
         assert!(!manager.should_forward(&client_id, &run_stream));
 
         // 空 streams = 全量。
         manager
             .subscribe(&client_id, "sub-1", vec![])
             .expect("subscribe all");
-        assert!(manager.is_subscribed(&client_id));
         assert!(manager.should_forward(&client_id, &run_stream));
         assert!(manager.should_forward(&client_id, &other_stream));
 
@@ -507,7 +471,6 @@ mod tests {
         manager
             .unsubscribe(&client_id, "sub-1")
             .expect("idempotent unsubscribe");
-        assert!(!manager.is_subscribed(&client_id));
         assert!(!manager.should_forward(&client_id, &run_stream));
     }
 

@@ -50,7 +50,7 @@
 
 > 🎯 **P14-1 Quota 领域模型与适配器 Trait** —— Phase 13 CLI Host 与多 GUI 协议已闭环，按 Phase 14 规划「建议在 Phase 13 之后推进」，下一项落地模型用量与额度监控：快照 / 窗口 / 适配器种类 / Trait。详情见 [plan/P14-1-quota-domain-adapter.md](plan/P14-1-quota-domain-adapter.md)。（P15-1 Canonical Tool v2 仍为 Provider v2 波次的关键路径，可在其后并行推进。）
 
-> ✅ **Phase 13 CLI Host 与多 GUI 协议已完成（P13-1～P13-10，TargetVerified）**：交付 `app-service` 统一 Command Router / `AppCommandEnvelope`（幂等、限流、RunSupervisor、审批、聚合状态）；`core-runtime` + `cli-host` + `pawork` 正式宿主与四种运行模式 + Event Hub；GUI Connection Protocol（握手协商 / 编解码 / Snapshot / Resume / 错误帧，ADR-036 版本化）；`gui-server` + `transport-local`（Unix Socket / Named Pipe）+ `transport-memory` + `client-auth`；多 GUI 运行时（Connection Manager 心跳/订阅/有界队列、慢客户端隔离、断线不取消 Run）；Remote Transport 占位 Adapter + Mock + `pawork remote publish/unpublish`；`artifact-store` 分片读取接入 app-service 并按 ≤64KiB 分片回真实 payload；`gui-client` SDK + `apps/protocol-test-gui` + 9 项 Contract Tests（3 GUI 并发、重连 Replay、命令幂等、100k 行 diff 流式、版本拒绝）。schema-typegen 覆盖全部协议类型并经 CI `--check` 防漂移。详见各 [plan/P13-*](plan/) 文档。
+> ✅ **Phase 13 CLI Host 与多 GUI 协议已完成（P13-1～P13-11，TargetVerified）**：交付 `app-service` 统一 Command Router / `AppCommandEnvelope`（幂等、限流、RunSupervisor、审批、聚合状态）；`core-runtime` + `cli-host` + `pawork` 正式宿主与四种运行模式 + Event Hub；GUI Connection Protocol（握手协商 / 编解码 / Snapshot / Resume / 错误帧，ADR-036 版本化）；`gui-server` + `transport-local`（Unix Socket / Named Pipe）+ `transport-memory` + `client-auth`；多 GUI 运行时（Connection Manager 心跳/订阅/有界队列、慢客户端隔离、断线不取消 Run）；Remote Transport 占位 Adapter + Mock + `pawork remote publish/unpublish`；`artifact-store` 分片读取接入 app-service 并按 ≤64KiB 分片回真实 payload；`gui-client` SDK + `apps/protocol-test-gui` + 9 项 Contract Tests（3 GUI 并发、重连 Replay、命令幂等、100k 行 diff 流式、版本拒绝）。schema-typegen 覆盖全部协议类型并经 CI `--check` 防漂移。**P13-11 评审修复**（2026-08-11）：`pawork serve` 真正装配 GuiServer（首个生产 `GuiServerHost` 实现，绑定本地端点 + accept + 真实帧循环）、协议版本校验双向化（ADR-036）、删 11 项死公开 API、client-auth 原子 token 创建。详见各 [plan/P13-*](plan/) 文档。
 
 > ✅ **Phase 12 Multi-Agent 已完成（P12-1～P12-6，TargetVerified）**：交付 `orchestration` crate（Supervisor/Worker 生命周期、TaskGraph、worktree 隔离、双层预算、patch merge、cancel tree），并落地其依赖的 P18 最小契约（`provider-control` / `tenant-service` / `usage-ledger` 与 `agent-domain` 的 Tenant/Principal/Agent 身份）。`agent-domain` 新增 `TenantId` / `PrincipalId` / `AgentId`；事件全部可序列化、可重放，崩溃恢复无悬挂 worker；Agent 只经 `CredentialLease` 使用 Provider，cancel 以 `LeaseOutcome::Cancelled` 幂等释放、不降低账号健康。完整账号控制面（P18-1～P18-15）仍待后续落地，本阶段仅交付 P12 编排实际消费的最小子集。
 
@@ -473,6 +473,7 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P13-8 | 🟢 | 大型 payload Artifact API | 按 ID 传递 | [详情](plan/P13-8-artifact-api.md) |
 | P13-9 | 🟢 | 测试 GUI Client 与 API Contract Tests | 协议测试端 + 契约套件 | [详情](plan/P13-9-gui-client-contract-tests.md) |
 | P13-10 | 🟢 | GUI Protocol schema 版本化 | 版本 + 兼容策略 | [详情](plan/P13-10-protocol-schema-version.md) |
+| P13-11 | 🟢 | 评审修复（review-remediation） | 宿主装配 GuiServer + 双向版本校验 + 删死公开 API + 原子 token 创建 | [详情](plan/P13-11-review-remediation.md) |
 
 ### Phase 14：模型用量与额度监控
 
