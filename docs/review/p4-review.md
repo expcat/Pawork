@@ -171,7 +171,7 @@ checkpoint 的 run→change→blob 映射存于 `Arc<Mutex<BTreeMap<...>>>`（[l
 
 #### P2（顺手/评估项）
 
-12. **基线清理**（§4）：移 `content-inspector` 基线声明、删 4 个 crate 内死依赖、`atomic_write` 四处下沉复用、CI 增 `cargo machete`/`cargo udeps` 门禁。
+12. **基线清理**（§4）：移 `content-inspector` 基线声明、删 4 个 crate 内死依赖、`atomic_write` 四处下沉复用、CI 增 `cargo machete`/`cargo udeps` 门禁（2026-08-10 更新：门禁工作流已移除，转为文档记录的 L3 维护检查项）。
 13. **V10**：search/find 遍历内周期性查 cancel。
 14. **V12**：list_directory 大目录分页优化。
 15. **V13**：edit_file 模糊匹配滚动匹配。
@@ -248,7 +248,7 @@ ROADMAP 中 Phase 4 的 12 个任务**均无 P1 标签**（全部为 P0），故
 #### G. 基线/包清理与 fuzz
 
 15. **死依赖清理**：移除 `content-inspector` 基线声明；删 `policy-engine`/`checkpoint-service` 的 `agent-domain`、`process-runtime` 的 `bytes`/`futures` 死依赖；`builtin-tools` 三处 `atomic_write` 已下沉到 `common`，`checkpoint-service` 与 `artifact-store` 因依赖方向和持久语义不同保留各自实现。目的：基线与 crate 依赖卫生。
-16. **维护期死依赖检查**：把 `cargo machete`/`cargo udeps` 放入依赖升级、发布候选或定期维护的 L3 工作流，不加入每次开发提交的阻塞链。目的：在功能簇稳定后防止死依赖再生，同时避免前期频繁依赖调整拖慢实现。
+16. **维护期死依赖检查**：把 `cargo machete`/`cargo udeps` 放入依赖升级、发布候选或定期维护的 L3 工作流，不加入每次开发提交的阻塞链。目的：在功能簇稳定后防止死依赖再生，同时避免前期频繁依赖调整拖慢实现。（2026-08-10 更新：不在本项目配置自动执行 Actions，`dependency-hygiene.yml` 已移除；检查项保留为文档记录，随 L3 维护人工执行）
 17. **匹配器属性测试**：为 edit_file/apply_patch 匹配器补 proptest 策略属性测试（随机 old_string/new_string/文件内容组合，断言不 panic、计数一致、回滚后逐字节相等），满足基线「需完整 fuzz 与审计」标准；`arbitrary` 若需使用，必须按基线流程重新引入。目的：安全关键路径覆盖属性测试。
 
 #### H. 文档同步
@@ -259,7 +259,7 @@ ROADMAP 中 Phase 4 的 12 个任务**均无 P1 标签**（全部为 P0），故
 
 - PolicyEngine 接线 + 危险命令地板 + 调度器真实上下文；apply_patch 回滚补全 + checkpoint 版本化持久状态
 - Windows env 分桶、edit_file 尾换行、list_directory symlink、run_command 真流式；阻塞 IO 改造
-- 死依赖清理 + machete/udeps 维护工作流 + 匹配器属性测试
+- 死依赖清理 + machete/udeps 维护检查（2026-08-10 起为文档记录项，工作流已移除）+ 匹配器属性测试
 
 ### 验收标准（保留 REVIEW 追踪编号）
 
@@ -275,7 +275,7 @@ ROADMAP 中 Phase 4 的 12 个任务**均无 P1 标签**（全部为 P0），故
 - [x] **V11**：read_file/search_text/checkpoint 不在 async 中同步阻塞读整文件（审查/基准）
 - [x] **V10**：search/find 遍历中可中途取消（测试）
 - [x] **V12 / V13 / V14**：list_directory 分页省成本；edit_file 模糊匹配不退化 O(L·n)；spawn_stream 句柄可 kill 且流式有输出上限
-- [x] **基线**：`content-inspector` 移出；4 个 crate 死依赖删除；L3 维护工作流含 machete/udeps（不阻塞普通开发提交）
+- [x] **基线**：`content-inspector` 移出；4 个 crate 死依赖删除；L3 维护工作流含 machete/udeps（不阻塞普通开发提交；2026-08-10 起工作流移除，转为文档记录项，不在本项目配置自动执行 Actions）
 - [x] **fuzz**：edit_file/apply_patch 有 proptest 属性测试（不 panic、计数一致、回滚逐字节相等）
 - [x] **快速验证**：安全红线、Policy、checkpoint、路径与 patch 立即跑定向回归；workspace 全量 build/test/clippy 延后到 Core 主干 L2
 

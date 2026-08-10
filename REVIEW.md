@@ -134,6 +134,8 @@
 | `serde_json` / `thiserror` | diff-service | P7 |
 
 > 建议：一次小型基线清理任务统一处理以上三表，并在 CI 增加 `cargo machete`/`cargo udeps` 门禁。
+>
+> 更新（2026-08-10）：该门禁曾以 L3 维护工作流实现，后决定**不在本项目配置自动执行的 Actions**，`.github/workflows/dependency-hygiene.yml` 已移除；machete/udeps 保留为文档记录的维护期检查项，随 L3 维护人工执行。
 
 ### 0.5 plan 文档同步状态
 
