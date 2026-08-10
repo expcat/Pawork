@@ -32,7 +32,7 @@
 | 9 | MCP | 7 | 7 | 🟢已完成（P9-1～P9-7 TargetVerified） |
 | 10 | WASM Plugin | 7 | 7 | 🟢已完成（P10-1～P10-7 TargetVerified） |
 | 11 | Sandbox 与跨平台强化 | 8 | 8 | 🟢已完成（7 项 TargetVerified；P11-5 已归档） |
-| 12 | Multi-Agent | 6 | 6 | 🟢已完成（P12-1～P12-6 TargetVerified） |
+| 12 | Multi-Agent | 6 | 7 | 🟢已完成（P12-1～P12-6 TargetVerified；P12-7 review-remediation 已完成） |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
 | 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
 | 15 | Provider Native Capabilities | 9 | 0 | 🟡未开始 |
@@ -51,6 +51,8 @@
 > 🎯 **P15-1 Canonical Tool v2** —— Phase 9 MCP 已形成外部 Tool 接入闭环；下一项按实施波次与关键路径统一 Client Function / Provider Hosted / Extension 的 canonical tool 契约，为 Provider v2 与后续 Tool Search 打基础。详情见 [plan/P15-1-canonical-tool-v2.md](plan/P15-1-canonical-tool-v2.md)。
 
 > ✅ **Phase 12 Multi-Agent 已完成（P12-1～P12-6，TargetVerified）**：交付 `orchestration` crate（Supervisor/Worker 生命周期、TaskGraph、worktree 隔离、双层预算、patch merge、cancel tree），并落地其依赖的 P18 最小契约（`provider-control` / `tenant-service` / `usage-ledger` 与 `agent-domain` 的 Tenant/Principal/Agent 身份）。`agent-domain` 新增 `TenantId` / `PrincipalId` / `AgentId`；事件全部可序列化、可重放，崩溃恢复无悬挂 worker；Agent 只经 `CredentialLease` 使用 Provider，cancel 以 `LeaseOutcome::Cancelled` 幂等释放、不降低账号健康。完整账号控制面（P18-1～P18-15）仍待后续落地，本阶段仅交付 P12 编排实际消费的最小子集。
+
+> **P12-7 评审修复（review-remediation，2026-08-10）**：按 [p12-review](docs/review/p12-review.md) 把 `WorktreeAllocator` / `TaskGraph` / `PatchMerger` 经可选 builder 接进 `AgentSupervisor`（spawn 分配 worktree、推进 TaskGraph、complete/fail/cancel 联动；新增 `record_usage` / `retry_task` / `propose_patch` / `approve_patch`），11 个零生产者的 `Task*` / `Patch*` / `ConcurrencyDenied` / `BudgetExceeded` 事件全部获得 emit 点；删 `AgentConcurrency` / `parent_id()` 死代码与 `agent-events` / `checkpoint-service` 死依赖；修 `LedgerContext` 归属（从 lease 取 account/provider，不再 `"unknown"`）与 `WorktreeGuard::drop` 的 `tokio::spawn` 反模式（改显式 `async release()`）。agent-engine run loop 接线与主流程（CLI/GUI）接入按 ROADMAP 显式延后（核心 Coding Agent 稳定后）。详见 [P12-7](plan/P12-7-review-remediation.md)。
 
 ## 实施波次与门禁节奏
 
@@ -451,6 +453,7 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P12-4 | 🟢 | Worker 预算 / 模型 / 并发 | 预算可控 | [详情](plan/P12-4-worker-budget.md) |
 | P12-5 | 🟢 | 结果聚合 / patch merge | 合并+冲突检测 | [详情](plan/P12-5-result-merge.md) |
 | P12-6 | 🟢 | 取消树 | parent 取消联动 workers | [详情](plan/P12-6-cancel-tree.md) |
+| P12-7 | 🟢 | 评审修复（review-remediation） | 接线四子系统 + 删死代码/死依赖 + 修归属/Drop + 文档对齐 | [详情](plan/P12-7-review-remediation.md) |
 
 ### Phase 13：CLI Host 与多 GUI 协议
 

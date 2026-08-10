@@ -20,7 +20,7 @@ Phase 12 全部 6 项任务已完成（TargetVerified）。落地范围：
 
 Parent Agent；Worker Agent；任务分解；子 Session；独立 Worktree；Worker 模型选择；Worker Token 预算；并发上限；结果聚合；Worker 取消；Worker 重试；共享 Artifact；冲突检测；文件锁；状态汇总。
 
-P12 首先交付 `AgentSupervisor` / `TaskGraph` / `AgentTree`，再由 tool 或外部 Client 触发 spawn；禁止把 `spawn_agent` 直接实现为脱离监督的 `tokio::spawn`。最低生命周期为 Created → Admitted → Starting → Running/Waiting → Completed，任何阶段可进入 Cancelling → Cancelled 或 Failed，状态变化均事件化并可重放。
+P12 首先交付 `AgentSupervisor`（parent/worker 注册表 + 取消树）、`TaskGraph`、`WorktreeAllocator`、`PatchMerger` 四件套，并由 `AgentSupervisor` 经可选 builder（`with_worktree_allocator` / `with_task_graph` / `with_patch_merger`）将它们接入编排；再由 tool 或外部 Client 触发 spawn；禁止把 `spawn_agent` 直接实现为脱离监督的 `tokio::spawn`。最低生命周期为 Created → Admitted → Starting → Running/Waiting → Completed，任何阶段可进入 Cancelling → Cancelled 或 Failed，状态变化均事件化、可序列化、可重放。
 
 ## 调度规则
 

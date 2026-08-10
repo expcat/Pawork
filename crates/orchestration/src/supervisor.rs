@@ -19,11 +19,19 @@ use provider_control::{CredentialPool, LeaseGuard, LeaseOutcome};
 use tenant_service::TenantPolicyEngine;
 use usage_ledger::UsageLedger;
 
-use crate::budget::{LedgerContext, WorkerBudgetController, WorkerBudgetLimits};
+use crate::budget::{
+    LedgerContext, WorkerBudgetController, WorkerBudgetLimits, DIM_COST_MICROS, DIM_INPUT_TOKENS,
+    DIM_OUTPUT_TOKENS,
+};
 use crate::identity::{AgentInstance, WorkerRole};
 use crate::lifecycle::{
     replay_workers, OrchestrationEvent, WorkerState, WorkerStateMachine, WorkerTransition,
 };
+use crate::merge::{
+    ConflictReport, MergeDecision, MergeOutcome, PatchMerger, PatchProposal, WorkerPatch,
+};
+use crate::task_graph::{AgentTask, TaskGraph, TaskId, TaskState};
+use crate::worktree::{WorktreeAllocator, WorktreeGuard};
 
 /// 注册表中的单个 worker 条目。
 pub struct WorkerEntry {
@@ -33,6 +41,10 @@ pub struct WorkerEntry {
     pub state: WorkerStateMachine,
     /// 持有的 credential lease 守卫（未申请时为 `None`）。
     pub lease: Option<LeaseGuard>,
+    /// 分配的 worktree 守卫（未分配时为 `None`）。
+    pub worktree: Option<WorktreeGuard>,
+    /// spawn 请求携带的模型（用于 ledger 归属）。
+    pub model: Option<ModelId>,
 }
 
 /// Supervisor 配置。
@@ -75,6 +87,12 @@ pub struct SpawnRequest {
     pub model: Option<ModelId>,
     /// 申请 credential lease 的请求（`None` 不申请）。
     pub acquire: Option<provider_control::AcquireRequest>,
+    /// 任务依赖（可选；配置 TaskGraph 时注册）。
+    pub task_deps: Vec<TaskId>,
+    /// 任务描述（可选）。
+    pub task_description: Option<String>,
+    /// 最大重试次数（可选）。
+    pub task_max_retries: Option<u32>,
 }
 
 /// 取消树回执。
@@ -113,6 +131,9 @@ pub enum SupervisorError {
     /// lease 相关错误。
     #[error("lease error: {0}")]
     LeaseError(String),
+    /// patch 合并错误。
+    #[error("merge error: {0}")]
+    Merge(String),
 }
 
 /// 编排 Supervisor：集中拥有 spawn / assign / cancel_tree / 恢复。
@@ -127,6 +148,11 @@ pub struct AgentSupervisor {
     next_agent_id: AtomicU64,
     budget: Arc<Mutex<BTreeMap<AgentId, WorkerBudgetController>>>,
     config: SupervisorConfig,
+    parent_workspace: Option<PathBuf>,
+    worktree_allocator: Option<Arc<dyn WorktreeAllocator>>,
+    task_graph: Option<Arc<TaskGraph>>,
+    patch_merger: Option<Arc<PatchMerger>>,
+    pending_patches: Arc<Mutex<BTreeMap<AgentId, PatchProposal>>>,
 }
 
 impl AgentSupervisor {
@@ -148,20 +174,48 @@ impl AgentSupervisor {
             next_agent_id: AtomicU64::new(0),
             budget: Arc::new(Mutex::new(BTreeMap::new())),
             config,
+            parent_workspace: None,
+            worktree_allocator: None,
+            task_graph: None,
+            patch_merger: None,
+            pending_patches: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
-    /// 根 Supervisor 身份（所有 parent 的公共 owner）。
-    pub fn parent_id(&self) -> AgentId {
-        AgentId::new("supervisor")
+    /// 设置 parent 工作区（worktree 分配与 patch 合并的基准目录）。
+    pub fn with_parent_workspace(mut self, path: PathBuf) -> Self {
+        self.parent_workspace = Some(path);
+        self
+    }
+
+    /// 注入 worktree 分配器：spawn 时按需分配隔离 worktree 并持有守卫。
+    pub fn with_worktree_allocator(mut self, allocator: Arc<dyn WorktreeAllocator>) -> Self {
+        self.worktree_allocator = Some(allocator);
+        self
+    }
+
+    /// 注入任务依赖图：spawn / complete / fail / cancel 时注册并推进任务，
+    /// 发出 Task* 事件。
+    pub fn with_task_graph(mut self, graph: Arc<TaskGraph>) -> Self {
+        self.task_graph = Some(graph);
+        self
+    }
+
+    /// 注入 patch 合并器：`propose_patch` / `approve_patch` 使用。
+    pub fn with_patch_merger(mut self, merger: Arc<PatchMerger>) -> Self {
+        self.patch_merger = Some(merger);
+        self
     }
 
     /// 创建并启动一个 worker。
     ///
-    /// 流程：租户 agent 并发与模型白名单闸门 → 创建实例 → `WorkerCreated` →
-    /// Admit → `WorkerAdmitted` → 申请 lease（可选）→ Start → `WorkerStarted`
-    /// → 注册 child 与取消令牌。lease 申请失败时把该 worker 标记 `Failed`
-    /// 后返回错误，保证事件流一致、恢复时不留悬挂 worker。
+    /// 流程：租户 agent 并发与模型白名单闸门（本地并发闸门拒绝时发出
+    /// `ConcurrencyDenied`）→ 创建实例 → Admit → 按需分配 worktree（W1，
+    /// 失败同 lease 失败处理）→ `WorkerCreated` / `WorkerAdmitted` → 申请
+    /// lease（可选）→ Start → `WorkerStarted` → 注册 child 与取消令牌 →
+    /// TaskGraph 注册（W2，发出 Task* 事件）→ 注册 worker 条目与预算控制器。
+    /// lease / worktree 分配失败时把该 worker 标记 `Failed` 后返回错误，
+    /// 保证事件流一致、恢复时不留悬挂 worker。
     pub async fn spawn(&self, req: SpawnRequest) -> Result<AgentId, SupervisorError> {
         // 1. 策略闸门：租户 agent 并发 + 模型白名单。
         let active_for_tenant = self.active_worker_count(Some(&req.tenant_id));
@@ -178,23 +232,24 @@ impl AgentSupervisor {
         // 2. 本地并发闸门（与租户策略相互独立）。
         let active_total = self.active_worker_count(None);
         if active_total >= self.config.max_agent_concurrency {
+            self.emit(OrchestrationEvent::ConcurrencyDenied {
+                kind: "agents".to_string(),
+                current: active_total,
+                limit: self.config.max_agent_concurrency,
+            });
             return Err(SupervisorError::PolicyDenied(format!(
                 "agent concurrency limit reached: active {active_total} of max {}",
                 self.config.max_agent_concurrency
             )));
         }
 
-        // 3. 创建实例并发出 WorkerCreated。
+        // 3. 创建实例（worktree_path 初始来自请求，分配后可能被覆盖）。
         let agent_id = AgentId::new(format!(
             "agent-{}",
             self.next_agent_id.fetch_add(1, Ordering::Relaxed)
         ));
         let now = now_ms();
-        let worktree_path = req
-            .worktree_path
-            .as_ref()
-            .map(|path| path.to_string_lossy().into_owned());
-        let (role, instance) = match &req.parent_id {
+        let (role, mut instance) = match &req.parent_id {
             Some(parent) => (
                 WorkerRole::Worker,
                 AgentInstance::new_worker(
@@ -219,31 +274,83 @@ impl AgentSupervisor {
                 ),
             ),
         };
-        self.emit(OrchestrationEvent::WorkerCreated {
-            agent_id: agent_id.clone(),
-            tenant_id: req.tenant_id.clone(),
-            parent_id: req.parent_id.clone(),
-            role,
-            session_id: req.session_id.clone(),
-            worktree_path,
-            created_at_ms: now,
-        });
 
         // 4. Admit（admit 折叠进 spawn）。
         let mut machine = WorkerStateMachine::from_state(WorkerState::Created);
         machine
             .apply(WorkerTransition::Admit)
             .map_err(SupervisorError::IllegalLifecycle)?;
+
+        // 5. worktree 分配（W1）：Admit 后、申请 lease 前。
+        //    仅当配置了分配器与 parent 工作区、且请求未自带 worktree 路径时
+        //    按需分配；失败处理与 lease 失败一致（Failed + WorkerFailed + 注册）。
+        let mut worktree_guard = None;
+        if let (Some(allocator), Some(parent)) = (&self.worktree_allocator, &self.parent_workspace)
+        {
+            if req.worktree_path.is_none() {
+                match allocator.allocate(parent, agent_id.as_str(), None).await {
+                    Ok(worktree) => {
+                        instance.worktree_path = Some(worktree.path.clone());
+                        worktree_guard = Some(WorktreeGuard::new(worktree, allocator.clone()));
+                    }
+                    Err(error) => {
+                        // 保持事件流一致：标记 Failed 并注册，再返回错误。
+                        let _ = machine.apply(WorkerTransition::Fail);
+                        self.emit(OrchestrationEvent::WorkerFailed {
+                            agent_id: agent_id.clone(),
+                            at_ms: now_ms(),
+                            reason: error.to_string(),
+                        });
+                        let entry = WorkerEntry {
+                            instance,
+                            state: machine,
+                            lease: None,
+                            worktree: None,
+                            model: req.model.clone(),
+                        };
+                        self.workers
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner())
+                            .insert(agent_id.clone(), entry);
+                        return Err(SupervisorError::PoolAcquire(error.to_string()));
+                    }
+                }
+            }
+        }
+
+        // 6. WorkerCreated（worktree_path 用分配后的真实路径）→ WorkerAdmitted。
+        self.emit(OrchestrationEvent::WorkerCreated {
+            agent_id: agent_id.clone(),
+            tenant_id: req.tenant_id.clone(),
+            parent_id: req.parent_id.clone(),
+            role,
+            session_id: req.session_id.clone(),
+            worktree_path: instance
+                .worktree_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
+            created_at_ms: now,
+        });
         self.emit(OrchestrationEvent::WorkerAdmitted {
             agent_id: agent_id.clone(),
             at_ms: now_ms(),
         });
 
-        // 5. 申请 lease（可选）。
+        // 7. 申请 lease（可选）。
         let lease = match &req.acquire {
             Some(acquire) => match self.pool.acquire_guard(acquire.clone()).await {
                 Ok(guard) => Some(guard),
                 Err(error) => {
+                    // 已分配的 worktree 显式释放，避免泄漏。
+                    if let Some(guard) = worktree_guard.take() {
+                        if let Err(release_error) = guard.release().await {
+                            tracing::warn!(
+                                %agent_id,
+                                %release_error,
+                                "failed to release worktree after lease acquire failure"
+                            );
+                        }
+                    }
                     // 保持事件流一致：标记 Failed 并注册，再返回错误。
                     let _ = machine.apply(WorkerTransition::Fail);
                     self.emit(OrchestrationEvent::WorkerFailed {
@@ -255,6 +362,8 @@ impl AgentSupervisor {
                         instance,
                         state: machine,
                         lease: None,
+                        worktree: None,
+                        model: req.model.clone(),
                     };
                     self.workers
                         .lock()
@@ -266,7 +375,7 @@ impl AgentSupervisor {
             None => None,
         };
 
-        // 6. Start → WorkerStarted。
+        // 8. Start → WorkerStarted。
         machine
             .apply(WorkerTransition::Start)
             .map_err(SupervisorError::IllegalLifecycle)?;
@@ -275,7 +384,7 @@ impl AgentSupervisor {
             at_ms: now_ms(),
         });
 
-        // 7. 注册 child 与取消令牌。
+        // 9. 注册 child 与取消令牌。
         if let Some(parent) = &req.parent_id {
             self.children
                 .lock()
@@ -289,7 +398,51 @@ impl AgentSupervisor {
             .unwrap_or_else(|poison| poison.into_inner())
             .insert(agent_id.clone(), CancellationToken::new());
 
-        // 8. 注册 worker 条目与预算控制器。
+        // 10. TaskGraph 注册（W2）：注册 child/取消令牌后、注册 WorkerEntry 前。
+        if let Some(graph) = &self.task_graph {
+            let task_id = TaskId::new(agent_id.as_str());
+            let task = AgentTask {
+                task_id: task_id.clone(),
+                tenant_id: req.tenant_id.clone(),
+                owner: agent_id.clone(),
+                description: req.task_description.clone().unwrap_or_default(),
+                depends_on: req.task_deps.clone(),
+                retry_count: 0,
+                max_retries: req.task_max_retries.unwrap_or(0),
+                state: TaskState::Created,
+            };
+            graph
+                .add_task(task)
+                .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
+            self.emit(OrchestrationEvent::TaskCreated {
+                task_id: task_id.clone(),
+                agent_id: agent_id.clone(),
+                tenant_id: req.tenant_id.clone(),
+            });
+            // add_task 已按依赖完成度把状态置为 Ready / Blocked；无依赖（或
+            // 依赖已全部完成）的任务直接 Ready，发出 TaskReady。
+            if graph.state_of(&task_id) == Some(TaskState::Ready) {
+                self.emit(OrchestrationEvent::TaskReady {
+                    task_id: task_id.clone(),
+                });
+                // Ready 任务立刻指派并启动；Blocked 任务（依赖未完成）保持
+                // Blocked，等待依赖 complete 后由 ready_tasks + mark_ready +
+                // 外部 assign/start 推进——不在 spawn 中强制 assign，避免对
+                // 合法前向依赖报 IllegalState 而破坏事件流一致性。
+                graph
+                    .assign(&task_id)
+                    .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
+                self.emit(OrchestrationEvent::TaskAssigned {
+                    task_id: task_id.clone(),
+                    agent_id: agent_id.clone(),
+                });
+                graph
+                    .start(&task_id)
+                    .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
+            }
+        }
+
+        // 11. 注册 worker 条目与预算控制器。
         self.workers
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -299,6 +452,8 @@ impl AgentSupervisor {
                     instance,
                     state: machine,
                     lease,
+                    worktree: worktree_guard,
+                    model: req.model.clone(),
                 },
             );
         let limits = req.budget.unwrap_or_else(|| self.config.budget.clone());
@@ -333,9 +488,11 @@ impl AgentSupervisor {
 
     /// 正常完成：释放 lease（`LeaseOutcome::Completed`，幂等）→ Complete →
     /// `WorkerCompleted` → 从父的活跃 children 中移除。同时把该 worker 的
-    /// 累计用量 flush 到注入的 usage ledger（无用量时为空操作）。
+    /// 累计用量 flush 到注入的 usage ledger（无用量时为空操作）。归属从
+    /// lease（account / provider）与 spawn 请求（model）取真实值，不再
+    /// 硬编码 `"unknown"`；worktree 显式释放；TaskGraph 推进为 Completed。
     pub async fn complete(&self, agent_id: &AgentId) -> Result<(), SupervisorError> {
-        let (lease, parent, instance, controller) = {
+        let (lease, parent, instance, controller, worktree, model) = {
             let mut workers = self
                 .workers
                 .lock()
@@ -348,6 +505,7 @@ impl AgentSupervisor {
                 .apply(WorkerTransition::Complete)
                 .map_err(SupervisorError::IllegalLifecycle)?;
             let instance = entry.instance.clone();
+            let model = entry.model.clone();
             let controller = self
                 .budget
                 .lock()
@@ -358,20 +516,42 @@ impl AgentSupervisor {
                 entry.instance.parent_id.clone(),
                 instance,
                 controller,
+                entry.worktree.take(),
+                model,
             )
         };
-        // 默认 outcome 即 Completed；Drop 触发同步幂等释放。
+        // 显式释放 worktree（best-effort）。
+        if let Some(guard) = worktree {
+            if let Err(error) = guard.release().await {
+                tracing::warn!(%agent_id, %error, "failed to release worker worktree on complete");
+            }
+        }
+        // TaskGraph：推进任务为 Completed 并发出 TaskCompleted。
+        if let Some(graph) = &self.task_graph {
+            let task_id = TaskId::new(agent_id.as_str());
+            let _ = graph.complete(&task_id);
+            self.emit(OrchestrationEvent::TaskCompleted { task_id });
+        }
+        // 真实归属：account / provider 取自 lease，model 取自 spawn 请求；
+        // 无 lease / 无 model 时回退默认值（保持旧行为）。
+        let (account_id, provider_id) = lease
+            .as_ref()
+            .and_then(|guard| guard.lease())
+            .map(|l| (l.account_id.as_str().to_string(), l.provider_id.clone()))
+            .unwrap_or_else(|| ("local/default".to_string(), ProviderId::new("local")));
+        let model_id = model.unwrap_or_else(|| ModelId::new("unknown"));
+        // 读完归属后释放 lease（默认 outcome 即 Completed；Drop 触发同步幂等释放）。
         drop(lease);
         if let Some(controller) = controller {
             let ctx = LedgerContext {
                 tenant_id: instance.tenant_id.clone(),
                 principal_id: instance.principal_id.clone(),
-                account_id: "unknown".to_string(),
+                account_id,
                 session_id: instance.session_id.clone(),
                 agent_id: instance.agent_id.clone(),
                 run_id: None,
-                provider_id: ProviderId::new("unknown"),
-                model_id: ModelId::new("unknown"),
+                provider_id,
+                model_id,
             };
             if let Err(error) = controller.flush_to_ledger(self.ledger.as_ref(), &ctx).await {
                 tracing::warn!(%agent_id, %error, "failed to flush worker usage to ledger");
@@ -386,9 +566,10 @@ impl AgentSupervisor {
     }
 
     /// 失败：释放 lease（`LeaseOutcome::Failed`，计入连续失败）→ Fail →
-    /// `WorkerFailed` → 从父的活跃 children 中移除。
+    /// `WorkerFailed` → 从父的活跃 children 中移除。worktree 显式释放；
+    /// TaskGraph 推进为 Failed 并发出 TaskFailed。
     pub async fn fail(&self, agent_id: &AgentId, reason: String) -> Result<(), SupervisorError> {
-        let (lease, parent) = {
+        let (lease, parent, worktree) = {
             let mut workers = self
                 .workers
                 .lock()
@@ -400,8 +581,25 @@ impl AgentSupervisor {
                 .state
                 .apply(WorkerTransition::Fail)
                 .map_err(SupervisorError::IllegalLifecycle)?;
-            (entry.lease.take(), entry.instance.parent_id.clone())
+            (
+                entry.lease.take(),
+                entry.instance.parent_id.clone(),
+                entry.worktree.take(),
+            )
         };
+        if let Some(guard) = worktree {
+            if let Err(error) = guard.release().await {
+                tracing::warn!(%agent_id, %error, "failed to release worker worktree on fail");
+            }
+        }
+        if let Some(graph) = &self.task_graph {
+            let task_id = TaskId::new(agent_id.as_str());
+            let _ = graph.fail(&task_id);
+            self.emit(OrchestrationEvent::TaskFailed {
+                task_id,
+                reason: reason.clone(),
+            });
+        }
         if let Some(mut guard) = lease {
             *guard.outcome_mut() = LeaseOutcome::Failed;
             drop(guard);
@@ -419,7 +617,9 @@ impl AgentSupervisor {
     ///
     /// 每个节点：取消令牌 → `Cancelling`（`WorkerCancelling`）→ `Cancelled`
     /// （`WorkerCancelled`）→ 以 [`LeaseOutcome::Cancelled`] 幂等释放 lease。
-    /// 终态节点跳过；重复调用是幂等的（第二次不再取消任何节点、不重复释放）。
+    /// worktree 显式释放（best-effort）；TaskGraph 推进为 Cancelled 并发出
+    /// `TaskCancelled`。终态节点跳过；重复调用是幂等的（第二次不再取消
+    /// 任何节点、不重复释放）。
     pub async fn cancel_tree(
         &self,
         agent_id: &AgentId,
@@ -454,7 +654,7 @@ impl AgentSupervisor {
             if let Some(token) = self.cancel_token(&id) {
                 token.cancel();
             }
-            let (cancelled, lease) = {
+            let (cancelled, lease, worktree) = {
                 let mut workers = self
                     .workers
                     .lock()
@@ -463,11 +663,11 @@ impl AgentSupervisor {
                     continue;
                 };
                 if entry.state.state().is_terminal() {
-                    (false, None)
+                    (false, None, None)
                 } else {
                     let _ = entry.state.apply(WorkerTransition::BeginCancel);
                     let _ = entry.state.apply(WorkerTransition::Cancel);
-                    (true, entry.lease.take())
+                    (true, entry.lease.take(), entry.worktree.take())
                 }
             };
             if !cancelled {
@@ -481,6 +681,16 @@ impl AgentSupervisor {
                 agent_id: id.clone(),
                 at_ms: now_ms(),
             });
+            if let Some(guard) = worktree {
+                if let Err(error) = guard.release().await {
+                    tracing::warn!(%id, %error, "failed to release worktree on cancel");
+                }
+            }
+            if let Some(graph) = &self.task_graph {
+                let task_id = TaskId::new(id.as_str());
+                let _ = graph.cancel(&task_id);
+                self.emit(OrchestrationEvent::TaskCancelled { task_id });
+            }
             if let Some(mut guard) = lease {
                 *guard.outcome_mut() = LeaseOutcome::Cancelled;
                 // Drop 触发同步幂等释放；Cancelled 只累加取消计数，
@@ -494,6 +704,155 @@ impl AgentSupervisor {
             cancelled_ids,
             leases_released,
         })
+    }
+
+    /// 记录一次用量并检查预算（B1）：对硬超限维度发出 `BudgetExceeded`。
+    ///
+    /// 用量经该 worker 的 [`WorkerBudgetController`] 累加；`check()` 报告的
+    /// 每个硬超限维度以当前用量与对应上限发出一个 `BudgetExceeded` 事件。
+    pub async fn record_usage(
+        &self,
+        agent_id: &AgentId,
+        input: u64,
+        output: u64,
+        cost_micros: u64,
+    ) -> Result<(), SupervisorError> {
+        // 直接累加进注册表内的控制器（克隆会丢失写入）。
+        let mut controllers = self
+            .budget
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let controller = controllers
+            .get_mut(agent_id)
+            .ok_or_else(|| SupervisorError::UnknownAgent(agent_id.clone()))?;
+        controller.record_tokens(input, output);
+        controller.record_cost(cost_micros);
+        let report = controller.check();
+        let (used_input, used_output, used_cost) = controller.usage();
+        let limits = controller.limits();
+        for dimension in &report.hard_exceeded {
+            let (used, limit) = match dimension.as_str() {
+                DIM_INPUT_TOKENS => (used_input, limits.max_input_tokens.unwrap_or(0)),
+                DIM_OUTPUT_TOKENS => (used_output, limits.max_output_tokens.unwrap_or(0)),
+                DIM_COST_MICROS => (used_cost, limits.max_cost_micros.unwrap_or(0)),
+                _ => continue,
+            };
+            self.emit(OrchestrationEvent::BudgetExceeded {
+                agent_id: agent_id.clone(),
+                dimension: dimension.clone(),
+                used,
+                limit,
+            });
+        }
+        Ok(())
+    }
+
+    /// 重试任务（W2）：仅复位 TaskGraph 中的任务状态并发出 `TaskRetried`。
+    ///
+    /// 注意：worker 生命周期仍是 `Failed` 终态，重跑需要新的 spawn；本方法
+    /// 只把任务图状态复位（`Failed → Created`）并递增尝试计数。
+    pub async fn retry_task(&self, agent_id: &AgentId) -> Result<u32, SupervisorError> {
+        let Some(graph) = &self.task_graph else {
+            return Err(SupervisorError::PolicyDenied(
+                "task graph not configured".to_string(),
+            ));
+        };
+        let task_id = TaskId::new(agent_id.as_str());
+        let attempt = graph
+            .retry(&task_id)
+            .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
+        self.emit(OrchestrationEvent::TaskRetried { task_id, attempt });
+        Ok(attempt)
+    }
+
+    /// 收集并检测 patch 冲突（W3）：存入待审批表并发出 `PatchProposed`；
+    /// 存在冲突时同时发出 `PatchConflict`。
+    ///
+    /// 要求已配置 [`PatchMerger`] 与 parent 工作区；否则返回
+    /// `PolicyDenied`。
+    pub async fn propose_patch(
+        &self,
+        agent_id: &AgentId,
+        patch: WorkerPatch,
+    ) -> Result<ConflictReport, SupervisorError> {
+        let Some(merger) = &self.patch_merger else {
+            return Err(SupervisorError::PolicyDenied(
+                "patch merger not configured".to_string(),
+            ));
+        };
+        let Some(parent_workspace) = &self.parent_workspace else {
+            return Err(SupervisorError::PolicyDenied(
+                "patch merger not configured".to_string(),
+            ));
+        };
+        let proposal = merger
+            .collect(&patch)
+            .await
+            .map_err(|error| SupervisorError::Merge(error.to_string()))?;
+        let report = merger
+            .detect_conflicts(&proposal, parent_workspace)
+            .await
+            .map_err(|error| SupervisorError::Merge(error.to_string()))?;
+        self.emit(OrchestrationEvent::PatchProposed {
+            agent_id: agent_id.clone(),
+            files: proposal.files.clone(),
+        });
+        if report.has_conflicts() {
+            self.emit(OrchestrationEvent::PatchConflict {
+                agent_id: agent_id.clone(),
+                files: report.conflicting_files.clone(),
+            });
+        }
+        self.pending_patches
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(agent_id.clone(), proposal);
+        Ok(report)
+    }
+
+    /// 依据 parent 决策执行合并（W3）：从待审批表取出提案，发出
+    /// `PatchMerged` / `PatchConflict`。
+    ///
+    /// 无待审批提案返回 `UnknownAgent`；合并 / 冲突检测错误归一为
+    /// `SupervisorError::Merge`。
+    pub async fn approve_patch(
+        &self,
+        agent_id: &AgentId,
+        decision: MergeDecision,
+    ) -> Result<MergeOutcome, SupervisorError> {
+        let Some(merger) = &self.patch_merger else {
+            return Err(SupervisorError::PolicyDenied(
+                "patch merger not configured".to_string(),
+            ));
+        };
+        let Some(parent_workspace) = &self.parent_workspace else {
+            return Err(SupervisorError::PolicyDenied(
+                "patch merger not configured".to_string(),
+            ));
+        };
+        let proposal = self
+            .pending_patches
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(agent_id)
+            .ok_or_else(|| SupervisorError::UnknownAgent(agent_id.clone()))?;
+        let outcome = merger
+            .merge(&proposal, parent_workspace, &decision)
+            .await
+            .map_err(|error| SupervisorError::Merge(error.to_string()))?;
+        if !outcome.merged_files.is_empty() {
+            self.emit(OrchestrationEvent::PatchMerged {
+                agent_id: agent_id.clone(),
+                files: outcome.merged_files.clone(),
+            });
+        }
+        if !outcome.conflicts.is_empty() {
+            self.emit(OrchestrationEvent::PatchConflict {
+                agent_id: agent_id.clone(),
+                files: outcome.conflicts.clone(),
+            });
+        }
+        Ok(outcome)
     }
 
     /// 查询 agent 的取消令牌。
@@ -592,10 +951,17 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_domain::{PrincipalId, SessionId, TenantId};
+    use agent_domain::{ModelId, PrincipalId, SessionId, TenantId};
+    use async_trait::async_trait;
     use provider_control::{AccountId, AcquireRequest, InMemoryCredentialPool};
+    use std::collections::BTreeMap;
+    use std::path::Path;
+    use std::sync::Mutex;
     use tenant_service::{InMemoryTenantPolicyEngine, TenantPolicy};
-    use usage_ledger::InMemoryUsageLedger;
+    use usage_ledger::{InMemoryUsageLedger, UsageQuery};
+
+    use crate::merge::{DiffProvider, MergeError};
+    use crate::worktree::{WorkerWorktree, WorktreeError};
 
     fn acquire_request(agent: &AgentId) -> AcquireRequest {
         AcquireRequest {
@@ -631,7 +997,142 @@ mod tests {
             budget: None,
             model: None,
             acquire: agent_acquire,
+            task_deps: Vec::new(),
+            task_description: None,
+            task_max_retries: None,
         }
+    }
+
+    /// 测试用 worktree 分配器：每次分配创建独立临时目录并写 README；
+    /// `release` 只记录路径、从不删除任何用户数据。
+    pub struct FakeWt {
+        tempdirs: Mutex<Vec<tempfile::TempDir>>,
+        released: Mutex<Vec<PathBuf>>,
+    }
+
+    impl FakeWt {
+        pub fn new() -> Self {
+            Self {
+                tempdirs: Mutex::new(Vec::new()),
+                released: Mutex::new(Vec::new()),
+            }
+        }
+
+        pub fn released(&self) -> Vec<PathBuf> {
+            self.released
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .clone()
+        }
+    }
+
+    impl Default for FakeWt {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    #[async_trait]
+    impl WorktreeAllocator for FakeWt {
+        async fn allocate(
+            &self,
+            _parent_path: &Path,
+            branch: &str,
+            _start_point: Option<&str>,
+        ) -> Result<WorkerWorktree, WorktreeError> {
+            let dir = tempfile::tempdir().map_err(WorktreeError::Io)?;
+            std::fs::write(dir.path().join("README.md"), "fake worktree\n")
+                .map_err(WorktreeError::Io)?;
+            let path = dir.path().to_path_buf();
+            self.tempdirs
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .push(dir);
+            Ok(WorkerWorktree {
+                path,
+                branch: branch.to_string(),
+                managed: true,
+            })
+        }
+
+        async fn release(&self, path: &Path) -> Result<(), WorktreeError> {
+            // 绝不删除用户数据：只记录释放请求。
+            self.released
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .push(path.to_path_buf());
+            Ok(())
+        }
+    }
+
+    /// 测试用 DiffProvider：脚本化 files/base（独立于 merge.rs 测试内的 fake）。
+    #[derive(Clone)]
+    pub struct FakeDiff {
+        files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+        base: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    }
+
+    impl FakeDiff {
+        pub fn new(files: BTreeMap<String, Vec<u8>>) -> Self {
+            Self {
+                files: Arc::new(Mutex::new(files)),
+                base: Arc::new(Mutex::new(BTreeMap::new())),
+            }
+        }
+
+        pub fn with_base(self, base: BTreeMap<String, Vec<u8>>) -> Self {
+            *self
+                .base
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()) = base;
+            self
+        }
+    }
+
+    #[async_trait]
+    impl DiffProvider for FakeDiff {
+        async fn changed_files(&self, _worktree_path: &Path) -> Result<Vec<String>, MergeError> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .keys()
+                .cloned()
+                .collect())
+        }
+
+        async fn file_content(
+            &self,
+            _worktree_path: &Path,
+            rel: &str,
+        ) -> Result<Vec<u8>, MergeError> {
+            self.files
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .get(rel)
+                .cloned()
+                .ok_or_else(|| MergeError::Diff(format!("no such file {rel}")))
+        }
+
+        async fn base_content(
+            &self,
+            _parent_path: &Path,
+            rel: &str,
+        ) -> Result<Vec<u8>, MergeError> {
+            self.base
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .get(rel)
+                .cloned()
+                .ok_or_else(|| MergeError::Diff(format!("no base for {rel}")))
+        }
+    }
+
+    fn events_contain(
+        events: &[OrchestrationEvent],
+        pred: impl Fn(&OrchestrationEvent) -> bool,
+    ) -> bool {
+        events.iter().any(pred)
     }
 
     #[tokio::test]
@@ -937,5 +1438,346 @@ mod tests {
         let snapshot = supervisor.events();
         let states = replay_workers(&snapshot);
         assert_eq!(states[&agent], WorkerState::Running);
+    }
+
+    #[tokio::test]
+    async fn spawn_with_allocator_assigns_isolated_worktree() {
+        let parent_dir = tempfile::tempdir().unwrap();
+        std::fs::write(parent_dir.path().join("notes.txt"), "parent content\n").unwrap();
+        let allocator = Arc::new(FakeWt::new());
+        let supervisor = harness(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        )
+        .with_parent_workspace(parent_dir.path().to_path_buf())
+        .with_worktree_allocator(allocator.clone());
+
+        let agent = supervisor.spawn(spawn_request(None)).await.unwrap();
+        // WorkerCreated 携带分配后的真实路径。
+        let created = supervisor
+            .events()
+            .into_iter()
+            .find_map(|event| match event {
+                OrchestrationEvent::WorkerCreated {
+                    agent_id: id,
+                    worktree_path,
+                    ..
+                } if id == agent => worktree_path,
+                _ => None,
+            })
+            .expect("WorkerCreated event");
+        let worktree_path = PathBuf::from(created);
+        assert!(worktree_path.join("README.md").exists());
+
+        // worker 写入自己的 worktree 副本，不影响 parent 同名文件。
+        std::fs::write(worktree_path.join("notes.txt"), "worker content\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(parent_dir.path().join("notes.txt")).unwrap(),
+            "parent content\n",
+            "worker 写入不得改变 parent 路径下的文件"
+        );
+
+        supervisor.start_worker(&agent).await.unwrap();
+        supervisor.complete(&agent).await.unwrap();
+        assert!(
+            allocator.released().contains(&worktree_path),
+            "complete 必须显式释放 worktree"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_without_allocator_preserves_old_behavior() {
+        let supervisor = harness(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        );
+        let agent = supervisor.spawn(spawn_request(None)).await.unwrap();
+        // 守卫限定在块内，确保在 start_worker / complete 前释放。
+        {
+            let workers = supervisor
+                .workers
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let entry = workers.get(&agent).unwrap();
+            assert!(entry.instance.worktree_path.is_none());
+            assert!(entry.worktree.is_none());
+        }
+        // WorkerCreated 的 worktree_path 为 None。
+        assert!(supervisor.events().iter().all(|event| match event {
+            OrchestrationEvent::WorkerCreated { worktree_path, .. } => worktree_path.is_none(),
+            _ => true,
+        }));
+
+        supervisor.start_worker(&agent).await.unwrap();
+        supervisor.complete(&agent).await.unwrap();
+        assert_eq!(supervisor.state(&agent), Some(WorkerState::Completed));
+    }
+
+    #[tokio::test]
+    async fn task_graph_wiring_emits_task_events() {
+        let graph = Arc::new(TaskGraph::new());
+        let supervisor = harness(
+            Arc::new(InMemoryCredentialPool::new(8)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        )
+        .with_task_graph(graph.clone());
+
+        let completed = supervisor.spawn(spawn_request(None)).await.unwrap();
+        supervisor.start_worker(&completed).await.unwrap();
+        supervisor.complete(&completed).await.unwrap();
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::TaskCreated { task_id, .. }
+                if *task_id == TaskId::new(completed.as_str())
+        )));
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::TaskReady { task_id }
+                if *task_id == TaskId::new(completed.as_str())
+        )));
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::TaskAssigned { task_id, agent_id }
+                if *task_id == TaskId::new(completed.as_str()) && *agent_id == completed
+        )));
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::TaskCompleted { task_id }
+                if *task_id == TaskId::new(completed.as_str())
+        )));
+        assert_eq!(
+            graph.state_of(&TaskId::new(completed.as_str())),
+            Some(TaskState::Completed)
+        );
+
+        let failed = supervisor.spawn(spawn_request(None)).await.unwrap();
+        supervisor.start_worker(&failed).await.unwrap();
+        supervisor.fail(&failed, "boom".to_string()).await.unwrap();
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::TaskFailed { task_id, reason }
+                if *task_id == TaskId::new(failed.as_str()) && reason == "boom"
+        )));
+
+        let cancelled = supervisor.spawn(spawn_request(None)).await.unwrap();
+        supervisor.cancel_tree(&cancelled).await.unwrap();
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::TaskCancelled { task_id }
+                if *task_id == TaskId::new(cancelled.as_str())
+        )));
+    }
+
+    #[tokio::test]
+    async fn spawn_with_unmet_task_deps_stays_blocked_and_consistent() {
+        // 前向依赖（TaskGraph 明确支持）：task 依赖尚未插入的 "dep"。
+        // spawn 必须成功、任务保持 Blocked、不 emit TaskReady/TaskAssigned，
+        // 且 worker 注册表与事件流一致（worker 已注册、状态 Starting）。
+        let graph = Arc::new(TaskGraph::new());
+        let supervisor = harness(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        )
+        .with_task_graph(graph.clone());
+
+        let mut req = spawn_request(None);
+        req.task_deps = vec![TaskId::new("dep")];
+        let agent_id = supervisor.spawn(req).await.unwrap();
+
+        // worker 已注册、状态 Starting（spawn 成功路径）。
+        assert_eq!(supervisor.state(&agent_id), Some(WorkerState::Starting));
+        // 任务保持 Blocked。
+        assert_eq!(
+            graph.state_of(&TaskId::new(agent_id.as_str())),
+            Some(TaskState::Blocked)
+        );
+        // 只 emit 了 TaskCreated，未 emit TaskReady/TaskAssigned。
+        let events = supervisor.events();
+        assert!(events_contain(&events, |event| matches!(
+            event,
+            OrchestrationEvent::TaskCreated { task_id, .. }
+                if *task_id == TaskId::new(agent_id.as_str())
+        )));
+        assert!(!events_contain(&events, |event| matches!(
+            event,
+            OrchestrationEvent::TaskReady { task_id }
+            | OrchestrationEvent::TaskAssigned { task_id, .. }
+                if *task_id == TaskId::new(agent_id.as_str())
+        )));
+    }
+
+    #[tokio::test]
+    async fn retry_task_emits_task_retried() {
+        let graph = Arc::new(TaskGraph::new());
+        let supervisor = harness(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        )
+        .with_task_graph(graph.clone());
+        let mut req = spawn_request(None);
+        req.task_max_retries = Some(2);
+        let agent = supervisor.spawn(req).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+        supervisor
+            .fail(&agent, "retry me".to_string())
+            .await
+            .unwrap();
+
+        let attempt = supervisor.retry_task(&agent).await.unwrap();
+        assert_eq!(attempt, 1);
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::TaskRetried { task_id, attempt }
+                if *task_id == TaskId::new(agent.as_str()) && *attempt == 1
+        )));
+        assert_eq!(
+            graph.state_of(&TaskId::new(agent.as_str())),
+            Some(TaskState::Created)
+        );
+    }
+
+    #[tokio::test]
+    async fn record_usage_emits_budget_exceeded() {
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            Arc::new(InMemoryUsageLedger::new()),
+            SupervisorConfig {
+                budget: WorkerBudgetLimits {
+                    max_input_tokens: Some(10),
+                    ..WorkerBudgetLimits::default()
+                },
+                ..SupervisorConfig::default()
+            },
+        );
+        let agent = supervisor.spawn(spawn_request(None)).await.unwrap();
+        supervisor.record_usage(&agent, 20, 0, 0).await.unwrap();
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::BudgetExceeded {
+                agent_id,
+                dimension,
+                used,
+                limit,
+            } if *agent_id == agent && dimension == "input_tokens" && *used == 20 && *limit == 10
+        )));
+    }
+
+    #[tokio::test]
+    async fn complete_flushes_ledger_with_real_attribution() {
+        let pool = Arc::new(InMemoryCredentialPool::new(4));
+        let ledger = Arc::new(InMemoryUsageLedger::new());
+        let supervisor = AgentSupervisor::new(
+            pool.clone(),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            ledger.clone(),
+            SupervisorConfig::default(),
+        );
+        let mut req = spawn_request(None);
+        req.acquire = Some(acquire_request(&AgentId::new("placeholder")));
+        req.model = Some(ModelId::new("mock-model"));
+        let agent = supervisor.spawn(req).await.unwrap();
+        supervisor.record_usage(&agent, 5, 3, 0).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+        supervisor.complete(&agent).await.unwrap();
+
+        let records = ledger.query(&UsageQuery::default()).await;
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].account_id, "local/default",
+            "account 必须来自 lease 而非 unknown"
+        );
+        assert_eq!(
+            records[0].provider_id,
+            ProviderId::new("default"),
+            "provider 必须来自 lease"
+        );
+        assert_eq!(
+            records[0].model_id,
+            ModelId::new("mock-model"),
+            "model 必须来自 spawn 请求"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrency_denied_event_on_local_limit() {
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            Arc::new(InMemoryUsageLedger::new()),
+            SupervisorConfig {
+                max_agent_concurrency: 1,
+                ..SupervisorConfig::default()
+            },
+        );
+        let first = supervisor.spawn(spawn_request(None)).await.unwrap();
+        assert!(supervisor.state(&first).is_some());
+        let err = supervisor.spawn(spawn_request(None)).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::PolicyDenied(_)));
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::ConcurrencyDenied { kind, current, limit }
+                if kind == "agents" && *current == 1 && *limit == 1
+        )));
+    }
+
+    #[tokio::test]
+    async fn propose_and_approve_patch_emits_events() {
+        let parent_dir = tempfile::tempdir().unwrap();
+        std::fs::write(parent_dir.path().join("a.txt"), b"base").unwrap();
+        let diff = FakeDiff::new(BTreeMap::from([(
+            "a.txt".to_string(),
+            b"worker-v1".to_vec(),
+        )]))
+        .with_base(BTreeMap::from([("a.txt".to_string(), b"base".to_vec())]));
+        let supervisor = harness(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        )
+        .with_parent_workspace(parent_dir.path().to_path_buf())
+        .with_patch_merger(Arc::new(PatchMerger::new(Arc::new(diff))));
+        let agent = AgentId::new("agent-x");
+
+        // 无冲突：propose → PatchProposed；approve(Merge) → PatchMerged。
+        let patch = WorkerPatch {
+            agent_id: agent.clone(),
+            session_id: SessionId::new("session-1"),
+            worktree_path: PathBuf::from("/wt"),
+            changed_files: vec!["a.txt".to_string()],
+        };
+        let report = supervisor.propose_patch(&agent, patch).await.unwrap();
+        assert!(!report.has_conflicts());
+        let outcome = supervisor
+            .approve_patch(&agent, MergeDecision::Merge)
+            .await
+            .unwrap();
+        assert_eq!(outcome.merged_files, vec!["a.txt".to_string()]);
+        let events = supervisor.events();
+        assert!(events_contain(&events, |event| matches!(
+            event,
+            OrchestrationEvent::PatchProposed { agent_id, .. } if *agent_id == agent
+        )));
+        assert!(events_contain(&events, |event| matches!(
+            event,
+            OrchestrationEvent::PatchMerged { agent_id, files }
+                if *agent_id == agent && files == &vec!["a.txt".to_string()]
+        )));
+
+        // 冲突用例：parent 当前内容与基准不一致 → propose 阶段 PatchConflict。
+        std::fs::write(parent_dir.path().join("a.txt"), b"parent-edit").unwrap();
+        let patch = WorkerPatch {
+            agent_id: agent.clone(),
+            session_id: SessionId::new("session-1"),
+            worktree_path: PathBuf::from("/wt2"),
+            changed_files: vec!["a.txt".to_string()],
+        };
+        let report = supervisor.propose_patch(&agent, patch).await.unwrap();
+        assert!(report.has_conflicts());
+        assert_eq!(report.conflicting_files, vec!["a.txt".to_string()]);
+        assert!(events_contain(&supervisor.events(), |event| matches!(
+            event,
+            OrchestrationEvent::PatchConflict { agent_id, files }
+                if *agent_id == agent && files == &vec!["a.txt".to_string()]
+        )));
     }
 }

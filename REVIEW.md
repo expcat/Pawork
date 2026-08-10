@@ -23,6 +23,7 @@
 | P9 | MCP（mcp-client） | [p9-review.md](docs/review/p9-review.md) | [P9-8](plan/P9-8-mcp-review-remediation.md) 🟢 | ✅ §3.6/§3.3/§3.2/§3.5/§3.4/§3.8/§3.1 全部确认修复（§4.1/§4.3/§4.4/§3.7/§4.2 显式延后） |
 | P10 | WASM Plugin（plugin-api / wasm-plugin-host / hook-runtime） | [p10-review.md](docs/review/p10-review.md) | [P10-7](plan/P10-7-review-remediation.md) 🟢 | ✅ §3.1/§3.4/§3.5/§3.6 死 API 删除、§4.1 Lifecycle 双路径合并、§3.2/§3.3 重复消除、§4.3a 超时约束、§3.9/§4.4 文档全部确认修复（§2/§3.7/§3.8/§4.3b,c/§4.5 显式延后） |
 | P11 | Sandbox 与跨平台强化 | [p11-review.md](docs/review/p11-review.md) | [P11-9](plan/P11-9-review-remediation.md) 🟢 | ✅ §2.1/§2.2/§2.3/§2.4/§2.5/§2.6/§3.1/§3.2/§3.3 全部确认修复（§2.6 NetworkMode 合并、§3.4 文件拆分显式延后） |
+| P12 | Multi-Agent 编排 | [p12-review.md](docs/review/p12-review.md) | [P12-7](plan/P12-7-review-remediation.md) 🟢 | ✅ §2.1 接线三件套 / §2.2 删 AgentConcurrency / §2.3 11 死事件生产者 / §2.4 ledger 归属+预算数据源 / §2.5 删死依赖 / §2.6 删 parent_id+AgentTree 文档 / §2.7 Drop 反模式 / §3.1 P12-1 措辞 全部确认修复（§3.1 agent-loop 接线、§3.2 主流程接入、§3.3 event store 持久化显式延后） |
 
 ## 复核结论（2026-08-09）
 

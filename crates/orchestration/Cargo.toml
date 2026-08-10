@@ -9,9 +9,7 @@ description = "Pawork Phase 12 Multi-Agent 编排：Supervisor/Worker 生命周�
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
-agent-events = { path = "../agent-events" }
 git-service = { path = "../git-service" }
-checkpoint-service = { path = "../checkpoint-service" }
 diff-service = { path = "../diff-service" }
 provider-control = { path = "../provider-control" }
 tenant-service = { path = "../tenant-service" }

@@ -68,7 +68,7 @@ Pawork/
 | `wasm-plugin-host` | WASM Component 宿主、签名、状态、capability / fuel / memory / timeout、工具/命令/hook 原子协调 | 依赖 plugin-api / tool-api / tool-runtime / hook-runtime；不链接 WASI |
 | `mcp-client` | MCP Transport、Tools / Resources / Prompts、Server 生命周期与安全边界 | 依赖 agent-domain / tool-api / tool-runtime / policy-engine / config-service / auth-service；MCP 协议与 transport 由 crate 内部封装的 `rmcp` 提供，不向 Core 泄漏 SDK 类型之外的运行时职责 |
 | `hook-runtime` | 进程内 WASM 插件 lifecycle Hook 的确定性、错误隔离派发 | 依赖 plugin-api；与 P17-1 user-hooks 平级且不重复派发 |
-| `orchestration` | Multi-Agent、Supervisor/Worker 生命周期、TaskGraph、worktree 隔离、双层预算、patch merge、cancel tree（Phase 12，P2） | 依赖 agent-domain / agent-events / git-service / checkpoint-service / diff-service / provider-control / tenant-service / usage-ledger；不依赖 agent-engine，复用 agent-domain CancellationToken 与 ids |
+| `orchestration` | Multi-Agent、Supervisor/Worker 生命周期、TaskGraph、worktree 隔离、双层预算、patch merge、cancel tree（Phase 12，P2） | 依赖 agent-domain / git-service / diff-service / provider-control / tenant-service / usage-ledger；不依赖 agent-engine / agent-events / checkpoint-service，复用 agent-domain CancellationToken 与 ids |
 | `core-api` | 应用层 Command / Event / Query 类型（CLI 与 GUI 共享的 schema source） | Phase 0 依赖 agent-domain / agent-events；后续由 app-service 使用 |
 | `core-runtime` | 完整 Core 生命周期与业务运行时装配 | 依赖 agent-api 及几乎所有核心 |
 | `app-service` | CLI 与 GUI 共享的应用 API、状态聚合、监督 | P1 骨架依赖 core-api；Phase 13 接入 core-runtime |

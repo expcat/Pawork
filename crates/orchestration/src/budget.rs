@@ -1,14 +1,14 @@
-//! Worker 预算 / 并发控制（P12-4）。
+//! Worker 预算度量 / 账本 flush（P12-4）。
 //!
-//! 双层并发上限的边界在这里被明确区分并各自实现：
+//! 双层并发上限的实现位置：
 //!
-//! - **Agent 并发**（本模块 [`AgentConcurrency`]）：Supervisor / TenantPolicy
-//!   控制的「同一时刻有多少个 agent 在跑」，独立计数器；
-//! - **请求 / Lease 并发**（`provider-control` 的 `CredentialPool`）：账号侧
-//!   「同一时刻有多少个 Provider 请求」，由 lease 准入控制。
+//! - **Agent 并发**：由 [`crate::AgentSupervisor`] 的活动 worker 计数 +
+//!   `TenantPolicyEngine::check_agent_concurrency` 实现（见 supervisor.rs）；
+//! - **请求 / Lease 并发**：由 `provider-control` 的 `CredentialPool` 实现。
 //!
-//! 两层使用完全独立的计数器与状态机，互不读写对方状态（P12-4 验收标准：
-//! "Agent 并发与 account request concurrency 使用独立计数器/状态机"）。
+//! 两层互不读写对方状态（P12-4 验收标准："Agent 并发与 account request
+//! concurrency 使用独立计数器/状态机"）。本模块只负责 token / cost 度量
+//! 与 ledger flush。
 //!
 //! [`WorkerBudgetController`] 记录 token / cost 用量并输出软告警与硬超限报告；
 //! 达标行为（pause/cancel/reassign/fallback）由调用方依据报告产生显式事件
@@ -152,6 +152,11 @@ impl WorkerBudgetController {
         )
     }
 
+    /// 当前上限配置。
+    pub fn limits(&self) -> &WorkerBudgetLimits {
+        &self.limits
+    }
+
     /// 对照上限出报告：软告警（`used >= ratio × limit`）与硬超限（`used > limit`）。
     pub fn check(&self) -> BudgetReport {
         let mut report = BudgetReport::default();
@@ -231,66 +236,6 @@ pub struct LedgerContext {
     pub model_id: ModelId,
 }
 
-/// Agent 级并发闸门（与 lease/请求并发完全独立的计数器）。
-///
-/// 见模块文档「双层并发上限」。`max = 0` 表示不允许任何并发。
-#[derive(Debug)]
-pub struct AgentConcurrency {
-    active: AtomicU64,
-    max: u64,
-}
-
-impl AgentConcurrency {
-    /// 以指定上限构造。
-    pub fn new(max: u64) -> Self {
-        Self {
-            active: AtomicU64::new(0),
-            max,
-        }
-    }
-
-    /// 当前活跃 agent 数。
-    pub fn active(&self) -> u64 {
-        self.active.load(Ordering::Acquire)
-    }
-
-    /// 上限。
-    pub fn max(&self) -> u64 {
-        self.max
-    }
-
-    /// 尝试占用一个名额；满员返回 `None`。
-    ///
-    /// 返回的 RAII 守卫在 `Drop` 时自动释放名额。
-    pub fn acquire(&self) -> Option<ConcurrencyGuard<'_>> {
-        loop {
-            let current = self.active.load(Ordering::Acquire);
-            if current >= self.max {
-                return None;
-            }
-            if self
-                .active
-                .compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-            {
-                return Some(ConcurrencyGuard { inner: self });
-            }
-        }
-    }
-}
-
-/// Agent 并发名额的 RAII 守卫：`Drop` 时递减计数。
-#[must_use = "守卫 Drop 时才释放并发名额"]
-pub struct ConcurrencyGuard<'a> {
-    inner: &'a AgentConcurrency,
-}
-
-impl Drop for ConcurrencyGuard<'_> {
-    fn drop(&mut self) {
-        self.inner.active.fetch_sub(1, Ordering::Release);
-    }
-}
-
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -301,7 +246,6 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_control::{AcquireRequest, CredentialPool, InMemoryCredentialPool};
     use std::sync::Arc;
     use usage_ledger::{InMemoryUsageLedger, UsageQuery};
 
@@ -406,65 +350,5 @@ mod tests {
             .await
             .unwrap();
         assert!(ledger.query(&UsageQuery::default()).await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn agent_concurrency_independent_from_lease_concurrency() {
-        // Agent 并发上限 2；账号 lease 并发上限 1。
-        let agent_concurrency = AgentConcurrency::new(2);
-        let pool = InMemoryCredentialPool::new(1);
-
-        let request = |agent: &str| AcquireRequest {
-            tenant_id: TenantId::new("tenant-a"),
-            principal_id: PrincipalId::new("principal-1"),
-            session_id: SessionId::new("session-1"),
-            agent_id: AgentId::new(agent),
-            provider_id: None,
-            account_id: None,
-            trace_id: None,
-        };
-
-        // 占用两个 agent 名额。
-        let guard_a = agent_concurrency.acquire().expect("slot a");
-        let guard_b = agent_concurrency.acquire().expect("slot b");
-        assert_eq!(agent_concurrency.active(), 2);
-        // agent 名额耗尽。
-        assert!(agent_concurrency.acquire().is_none());
-
-        // lease 并发独立：agent 名额已满，但账号仍可放行 1 个 lease。
-        let lease = pool.acquire(request("agent-a")).await.expect("lease ok");
-        assert_eq!(
-            pool.active_count(&provider_control::AccountId::new("local/default")),
-            1
-        );
-        // 账号 lease 并发（1/1）已满；agent 名额状态不受影响。
-        assert!(pool.acquire(request("agent-b")).await.is_err());
-        assert_eq!(agent_concurrency.active(), 2);
-
-        // 释放一个 agent 名额：不影响 lease。
-        drop(guard_a);
-        assert_eq!(agent_concurrency.active(), 1);
-        assert_eq!(
-            pool.active_count(&provider_control::AccountId::new("local/default")),
-            1
-        );
-        // agent 名额释放后可再占用（guard_c 持有到测试末尾）。
-        let guard_c = agent_concurrency.acquire().expect("slot c");
-        assert_eq!(agent_concurrency.active(), 2);
-
-        // 释放 lease：不影响 agent 计数。
-        pool.release(lease.lease_id, provider_control::LeaseOutcome::Completed)
-            .await;
-        assert_eq!(agent_concurrency.active(), 2);
-        drop(guard_c);
-        drop(guard_b);
-        assert_eq!(agent_concurrency.active(), 0);
-    }
-
-    #[test]
-    fn zero_max_denies_all() {
-        let concurrency = AgentConcurrency::new(0);
-        assert!(concurrency.acquire().is_none());
-        assert_eq!(concurrency.active(), 0);
     }
 }

@@ -2456,10 +2456,8 @@ name = "orchestration"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
- "agent-events",
  "async-trait",
  "blake3",
- "checkpoint-service",
  "diff-service",
  "git-service",
  "provider-control",

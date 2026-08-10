@@ -6,8 +6,10 @@
 //!
 //! 安全约定（ADR-007）：释放只调用 `git worktree remove`，绝不递归删除
 //! 用户数据目录；`WorktreeService::remove` 内部先校验目标为受管理 worktree。
-//! [`WorktreeGuard`] 在 `Drop` 时尽力释放（失败仅记录日志），
-//! [`WorktreeGuard::into_inner`] 可转移所有权而不再释放。
+//! [`WorktreeGuard`] 需显式 [`WorktreeGuard::release`] 释放；未显式释放就
+//! Drop 的守卫仅记录告警（best-effort，不保证释放，避免 Drop 中 `tokio::spawn`
+//! 与无 runtime 上下文 panic）。[`WorktreeGuard::into_inner`] 可转移所有权
+//! 而不再释放。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -111,7 +113,8 @@ impl WorktreeAllocator for GitWorktreeAllocator {
     }
 }
 
-/// worktree RAII 守卫：`Drop` 时尽力释放（best-effort，失败仅记录日志）。
+/// worktree RAII 守卫：显式 [`WorktreeGuard::release`] 释放；未显式释放的
+/// `Drop` 仅记录告警（best-effort，不保证释放）。
 pub struct WorktreeGuard {
     inner: WorkerWorktree,
     allocator: Arc<dyn WorktreeAllocator>,
@@ -131,6 +134,20 @@ impl WorktreeGuard {
     /// 借用的 worktree 信息。
     pub fn worktree(&self) -> &WorkerWorktree {
         &self.inner
+    }
+
+    /// 显式释放 worktree（消费 self；释放后 `Drop` 为空操作）。
+    ///
+    /// 仅当 worktree 仍受 allocator 管理时调用 `allocator.release`；无论
+    /// 成功与否都把 `managed` 置为 `false`，保证重复释放与 `Drop` 均为
+    /// 空操作。失败时返回错误，由调用方决定告警或上报。
+    pub async fn release(mut self) -> Result<(), WorktreeError> {
+        if self.inner.managed {
+            self.inner.managed = false;
+            let path = self.inner.path.clone();
+            self.allocator.release(&path).await?;
+        }
+        Ok(())
     }
 
     /// 取走 worktree，转移所有权且不触发释放；调用方负责后续释放。
@@ -153,18 +170,12 @@ impl Drop for WorktreeGuard {
             return;
         }
         self.inner.managed = false;
-        let path = self.inner.path.clone();
-        let allocator = self.allocator.clone();
-        // Drop 中无法 await：派发独立任务尽力释放，失败仅记录日志。
-        tokio::spawn(async move {
-            if let Err(error) = allocator.release(&path).await {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %error,
-                    "worktree release failed on guard drop (best-effort)"
-                );
-            }
-        });
+        // Drop 中无法 await，也不派发任务（可能无 runtime）：仅记录告警，
+        // 释放由调用方显式 `release()` 完成。
+        tracing::warn!(
+            path = %self.inner.path.display(),
+            "worktree guard dropped without explicit release; release not guaranteed"
+        );
     }
 }
 
@@ -236,16 +247,6 @@ mod tests {
         }
     }
 
-    async fn wait_for_release(allocator: &FakeWorktreeAllocator, path: &Path) {
-        for _ in 0..100 {
-            if allocator.released().iter().any(|p| p == path) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("worktree release was not observed for {}", path.display());
-    }
-
     #[tokio::test]
     async fn allocate_creates_isolated_worktree() {
         let parent = tempfile::tempdir().unwrap();
@@ -285,7 +286,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guard_drop_releases_worktree() {
+    async fn guard_release_releases_worktree() {
         let allocator = Arc::new(FakeWorktreeAllocator::new());
         let worktree = allocator
             .allocate(Path::new("."), "branch-a", None)
@@ -294,10 +295,31 @@ mod tests {
         let path = worktree.path.clone();
         let guard = WorktreeGuard::new(worktree, allocator.clone());
         assert!(guard.worktree().managed);
-        drop(guard);
-        wait_for_release(&allocator, &path).await;
+        guard.release().await.unwrap();
+        assert!(
+            allocator.released().iter().any(|p| p == &path),
+            "显式 release() 必须调用 allocator.release"
+        );
         // fake 从不删除用户数据。
         assert!(path.join("README.md").exists());
+    }
+
+    #[tokio::test]
+    async fn guard_drop_without_release_does_not_spawn() {
+        let allocator = Arc::new(FakeWorktreeAllocator::new());
+        let worktree = allocator
+            .allocate(Path::new("."), "branch-a", None)
+            .await
+            .unwrap();
+        let path = worktree.path.clone();
+        let guard = WorktreeGuard::new(worktree, allocator.clone());
+        drop(guard);
+        // 未显式 release 的 Drop 不得触发任何释放（也不得 spawn 后台任务）。
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !allocator.released().iter().any(|p| p == &path),
+            "未显式 release 的 Drop 不得触发 allocator.release"
+        );
     }
 
     #[tokio::test]

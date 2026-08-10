@@ -11,7 +11,7 @@
 
 1. **`AgentSupervisor` / parent/worker 抽象** —— 目的：集中拥有 spawn/assign/cancel_tree，禁止 tool 直接 `tokio::spawn` 出脱离监督的 worker。
 2. **worker 生命周期管理** —— Created → Admitted → Starting → Running/Waiting → Completed；任何阶段可进入 Cancelling/Cancelled/Failed，全部事件化、可重放。目的：创建/监控/恢复/结束可解释。
-3. **与 Agent Engine 复用** —— 目的：不重复实现循环。
+3. **Agent Engine 接入点（延后到集成阶段）** —— 本轮 `AgentSupervisor` 为纯状态机编排器（spawn/生命周期/cancel_tree/worktree/TaskGraph/patch 接线），不内嵌 agent loop；agent-engine run loop 的真实接线与 multi-agent 大规模接入在 ROADMAP 明确的集成阶段（核心 Coding Agent 稳定后）落地，避免重复实现循环。
 4. **Tenant 与 Provider 资源边界** —— AgentInstance 带 tenant/session/parent identity；Worker 只经 `AcquireRequest` / lease 使用 Provider，不拿 API key。目的：隔离 Agent 与账号状态机。
 5. **测试** —— 目的：基本编排可用且 crash replay 后无孤儿 worker。
 
