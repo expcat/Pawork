@@ -1,6 +1,6 @@
 # P12-4：Worker 预算 / 模型 / 并发上限
 
-> Phase 12 · Multi-Agent · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P3-6、P12-1、P18-4、P18-6、P18-8、P18-9
+> Phase 12 · Multi-Agent · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P3-6、P12-1、P18-4、P18-6、P18-8、P18-9（消费 `provider-control` lease 并发、`tenant-service` agent 并发、`usage-ledger` 多维归属）
 
 **最终目的**：为 Worker 设定 token/模型/并发预算，让多 Agent 并发开销可控。
 

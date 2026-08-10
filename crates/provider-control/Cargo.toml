@@ -1,0 +1,20 @@
+[package]
+name = "provider-control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 账号控制面：CredentialPool/Lease 与并发准入（P18-4 最小契约，供 Phase 12 编排消费）"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }

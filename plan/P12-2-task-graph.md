@@ -1,6 +1,6 @@
 # P12-2：任务分解 / 任务图
 
-> Phase 12 · Multi-Agent · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P12-1、P18-2、P18-9
+> Phase 12 · Multi-Agent · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P12-1、P18-2、P18-9（消费 `tenant-service` TenantPolicy 做 tenant 隔离）
 
 **最终目的**：实现任务分解与依赖图，让 Parent 能把复杂任务拆分给多个 Worker 并按依赖调度。
 

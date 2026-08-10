@@ -2,7 +2,19 @@
 
 ## 职责
 
-提供 Parent/Worker 多 Agent 编排，隔离写入、传播取消、聚合结果。属 P2 能力，在核心 Coding Agent 稳定前不开发。
+提供 Parent/Worker 多 Agent 编排，隔离写入、传播取消、聚合结果。属 P2 能力；Phase 12（P12-1～P12-6）已交付 `orchestration` crate 与其依赖的最小账号控制面契约（`provider-control` / `tenant-service` / `usage-ledger`）。
+
+## 实现状态
+
+Phase 12 全部 6 项任务已完成（TargetVerified）。落地范围：
+
+- `orchestration` crate：Supervisor/Worker 生命周期、TaskGraph、worktree 隔离、双层预算、patch merge、cancel tree。事件全部可序列化、可重放（ADR-016），崩溃恢复无悬挂 worker。
+- `agent-domain`：新增 `TenantId` / `PrincipalId` / `AgentId` 身份（`local/default` / `local/user` 为默认值）。
+- `provider-control`：最小 CredentialPool/Lease 契约——Agent 只经 `AcquireRequest` 获取 `CredentialLease`，不读取 API key；释放幂等；`LeaseOutcome::Cancelled` 不累加 consecutive_failures（不降低账号健康）。
+- `tenant-service`：最小 TenantPolicy 执行——agent 并发与 request 并发使用独立计数器/状态机；daily token/cost 预算；model allowlist。
+- `usage-ledger`：最小 Usage/Cost 账本——`UsageRecord` 按 tenant/account/session/agent 多维归属，跨 tenant 隔离。
+
+> 完整账号控制面（P18-1～P18-15：错误/健康状态机、确定性路由、Session Affinity、SQLite 持久化、RBAC、审计导出等）仍待后续 Phase 落地。Phase 12 仅交付编排实际消费的最小子集，不复制或绕过这些状态机。
 
 ## 功能
 

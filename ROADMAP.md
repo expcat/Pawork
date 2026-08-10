@@ -32,7 +32,7 @@
 | 9 | MCP | 7 | 7 | 🟢已完成（P9-1～P9-7 TargetVerified） |
 | 10 | WASM Plugin | 7 | 7 | 🟢已完成（P10-1～P10-7 TargetVerified） |
 | 11 | Sandbox 与跨平台强化 | 8 | 8 | 🟢已完成（7 项 TargetVerified；P11-5 已归档） |
-| 12 | Multi-Agent | 6 | 0 | 🟡未开始 |
+| 12 | Multi-Agent | 6 | 6 | 🟢已完成（P12-1～P12-6 TargetVerified） |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
 | 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
 | 15 | Provider Native Capabilities | 9 | 0 | 🟡未开始 |
@@ -40,7 +40,7 @@
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **123** | — |
+| **合计** | — | **210** | **129** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -49,6 +49,8 @@
 ## 下一个推荐任务
 
 > 🎯 **P15-1 Canonical Tool v2** —— Phase 9 MCP 已形成外部 Tool 接入闭环；下一项按实施波次与关键路径统一 Client Function / Provider Hosted / Extension 的 canonical tool 契约，为 Provider v2 与后续 Tool Search 打基础。详情见 [plan/P15-1-canonical-tool-v2.md](plan/P15-1-canonical-tool-v2.md)。
+
+> ✅ **Phase 12 Multi-Agent 已完成（P12-1～P12-6，TargetVerified）**：交付 `orchestration` crate（Supervisor/Worker 生命周期、TaskGraph、worktree 隔离、双层预算、patch merge、cancel tree），并落地其依赖的 P18 最小契约（`provider-control` / `tenant-service` / `usage-ledger` 与 `agent-domain` 的 Tenant/Principal/Agent 身份）。`agent-domain` 新增 `TenantId` / `PrincipalId` / `AgentId`；事件全部可序列化、可重放，崩溃恢复无悬挂 worker；Agent 只经 `CredentialLease` 使用 Provider，cancel 以 `LeaseOutcome::Cancelled` 幂等释放、不降低账号健康。完整账号控制面（P18-1～P18-15）仍待后续落地，本阶段仅交付 P12 编排实际消费的最小子集。
 
 ## 实施波次与门禁节奏
 
@@ -441,12 +443,12 @@ Parent/Worker 编排，写入隔离，取消传播。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P12-1 | 🟡 | Supervisor / Worker | parent/worker 抽象 | [详情](plan/P12-1-supervisor-worker.md) |
-| P12-2 | 🟡 | 任务分解 / 任务图 | 依赖图调度 | [详情](plan/P12-2-task-graph.md) |
-| P12-3 | 🟡 | 子 session / 独立 worktree | 写入隔离 | [详情](plan/P12-3-worker-worktree.md) |
-| P12-4 | 🟡 | Worker 预算 / 模型 / 并发 | 预算可控 | [详情](plan/P12-4-worker-budget.md) |
-| P12-5 | 🟡 | 结果聚合 / patch merge | 合并+冲突检测 | [详情](plan/P12-5-result-merge.md) |
-| P12-6 | 🟡 | 取消树 | parent 取消联动 workers | [详情](plan/P12-6-cancel-tree.md) |
+| P12-1 | 🟢 | Supervisor / Worker | parent/worker 抽象 | [详情](plan/P12-1-supervisor-worker.md) |
+| P12-2 | 🟢 | 任务分解 / 任务图 | 依赖图调度 | [详情](plan/P12-2-task-graph.md) |
+| P12-3 | 🟢 | 子 session / 独立 worktree | 写入隔离 | [详情](plan/P12-3-worker-worktree.md) |
+| P12-4 | 🟢 | Worker 预算 / 模型 / 并发 | 预算可控 | [详情](plan/P12-4-worker-budget.md) |
+| P12-5 | 🟢 | 结果聚合 / patch merge | 合并+冲突检测 | [详情](plan/P12-5-result-merge.md) |
+| P12-6 | 🟢 | 取消树 | parent 取消联动 workers | [详情](plan/P12-6-cancel-tree.md) |
 
 ### Phase 13：CLI Host 与多 GUI 协议
 

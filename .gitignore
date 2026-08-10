@@ -33,3 +33,6 @@ desktop.ini
 
 # 诊断包 / 临时输出
 *.diagnostics.zip
+
+# Phase 12 delegation briefs (scratch, not committed)
+/.p12briefs/

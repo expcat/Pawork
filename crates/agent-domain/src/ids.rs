@@ -53,6 +53,7 @@ macro_rules! string_id {
 
 string_id!(
     ActorId,
+    AgentId,
     ArtifactId,
     CheckpointId,
     CommandId,
@@ -63,11 +64,13 @@ string_id!(
     MessageId,
     ModelId,
     PluginId,
+    PrincipalId,
     ProviderId,
     QueryId,
     RequestId,
     RunId,
     SessionId,
+    TenantId,
     TerminalSessionId,
     ToolCallId,
     ToolExecutionId,

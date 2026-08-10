@@ -51,6 +51,10 @@ members = [
     "crates/diff-service",
     "crates/sandbox-runtime",
     "crates/mcp-client",
+    "crates/tenant-service",
+    "crates/provider-control",
+    "crates/usage-ledger",
+    "crates/orchestration",
 ]
 # crates/ 下的核心 crate 随对应任务陆续创建并登记到 members。
 

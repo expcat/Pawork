@@ -2452,6 +2452,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "orchestration"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "agent-events",
+ "async-trait",
+ "blake3",
+ "checkpoint-service",
+ "diff-service",
+ "git-service",
+ "provider-control",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tenant-service",
+ "test-support",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "usage-ledger",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2771,6 +2794,19 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+]
+
+[[package]]
+name = "provider-control"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4008,6 +4044,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tenant-service"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "termcolor"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4471,6 +4520,19 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+]
+
+[[package]]
+name = "usage-ledger"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

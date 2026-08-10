@@ -1,6 +1,6 @@
 # P12-6：取消树
 
-> Phase 12 · Multi-Agent · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P3-8、P12-1、P18-4
+> Phase 12 · Multi-Agent · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P3-8、P12-1、P18-4（以 `LeaseOutcome::Cancelled` 幂等释放、不降低账号健康）
 
 **最终目的**：实现取消树（cancel parent → cancel all workers），保证多 Agent 取消可可靠传播。
 

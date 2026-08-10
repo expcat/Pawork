@@ -1,6 +1,6 @@
 # P12-3：子 session / 独立 worktree
 
-> Phase 12 · Multi-Agent · 状态：🟡未开始 · 依赖：P12-1、P7-5
+> Phase 12 · Multi-Agent · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P12-1、P7-5（复用 `git-service::WorktreeService`）
 
 **最终目的**：为 Worker 提供子 session 与独立 worktree，实现写入隔离——Worker 不直接改 Parent 工作区。
 

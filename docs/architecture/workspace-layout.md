@@ -27,7 +27,7 @@ Pawork/
 | `agent-api` | 对外领域 API 聚合 | 依赖 agent-engine |
 | `provider-api` | Provider Trait、canonical 请求 / 事件 / 错误 | 依赖 agent-domain |
 | `provider-runtime` | Provider 协议运行时、SSE/JSONL 解析、重试；Phase 2 现有 HTTP 基线后续抽到通用 `http-runtime` | 依赖 provider-api；抽离后依赖 http-runtime |
-| `provider-control` | ProviderAccount、CredentialPool/Lease、RoutingPolicy、ErrorClassifier、Health 与 Session Affinity | 依赖 provider-api / model-registry / agent-domain；Secret 解析由组合层注入，不持久化明文；P18-3～P18-7/P18-14 |
+| `provider-control` | ProviderAccount、CredentialPool/Lease、RoutingPolicy、ErrorClassifier、Health 与 Session Affinity | 依赖 provider-api / model-registry / agent-domain；Secret 解析由组合层注入，不持久化明文；P18-3～P18-7/P18-14。Phase 12 已交付最小契约（`CredentialLease` / `LeaseOutcome` / `AcquireRequest` / `CredentialPool` + `InMemoryCredentialPool`，并发准入与幂等释放，cancel 不惩罚健康）；完整账号池/路由/健康待 P18 |
 | `provider-openai` | OpenAI 适配 | 依赖 provider-runtime |
 | `provider-anthropic` | Anthropic 适配 | 依赖 provider-runtime |
 | `provider-google` | Google Gemini 适配 | 依赖 provider-runtime |
@@ -40,8 +40,8 @@ Pawork/
 | `provider-mistral` | Mistral（优先级 P1） | 依赖 provider-runtime |
 | `auth-service` | 认证方式、Secret 后端、OAuth（PKCE/Device Flow/refresh/callback） | 依赖 provider-api |
 | `model-registry` | 模型目录、别名、能力、定价 | 依赖 provider-api |
-| `tenant-service` | Tenant/Principal、RBAC、provider/model/account policy、legacy `local/default` 映射 | 依赖 agent-domain；通过 API 与 policy-engine 组合，不反向依赖 Provider adapter；P18-2/P18-9 |
-| `usage-ledger` | tenant/account/session/agent 多维 Usage/Cost 持久账本 | 依赖 agent-domain / agent-events / model-registry；P18-8 |
+| `tenant-service` | Tenant/Principal、RBAC、provider/model/account policy、legacy `local/default` 映射 | 依赖 agent-domain；通过 API 与 policy-engine 组合，不反向依赖 Provider adapter；P18-2/P18-9。Phase 12 已交付最小契约（`TenantPolicy` / `TenantPolicyEngine` + `InMemoryTenantPolicyEngine`，agent 与 request 并发独立计数、daily 预算、model allowlist）；完整 RBAC/迁移待 P18 |
+| `usage-ledger` | tenant/account/session/agent 多维 Usage/Cost 持久账本 | 依赖 agent-domain / agent-events / model-registry；P18-8。Phase 12 已交付最小契约（`UsageRecord` / `UsageLedger` + `InMemoryUsageLedger`，多维过滤、聚合、跨 tenant 隔离）；SQLite 持久化与 retention 待 P18 |
 | `quota-service` | account-scoped 用量与额度监控、多适配器、窗口聚合与缓存 | 依赖 provider-api；消费 tenant-service / usage-ledger，复用 auth-service / provider-runtime |
 | `config-service` | 确定性配置 schema、来源发现与层级合并 | 独立；供 context-engine / policy / resource-loader 等消费 |
 | `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain / resource-loader；只消费中性 DTO，不参与文件 IO |
@@ -68,7 +68,7 @@ Pawork/
 | `wasm-plugin-host` | WASM Component 宿主、签名、状态、capability / fuel / memory / timeout、工具/命令/hook 原子协调 | 依赖 plugin-api / tool-api / tool-runtime / hook-runtime；不链接 WASI |
 | `mcp-client` | MCP Transport、Tools / Resources / Prompts、Server 生命周期与安全边界 | 依赖 agent-domain / tool-api / tool-runtime / policy-engine / config-service / auth-service；MCP 协议与 transport 由 crate 内部封装的 `rmcp` 提供，不向 Core 泄漏 SDK 类型之外的运行时职责 |
 | `hook-runtime` | 进程内 WASM 插件 lifecycle Hook 的确定性、错误隔离派发 | 依赖 plugin-api；与 P17-1 user-hooks 平级且不重复派发 |
-| `orchestration` | Multi-Agent、Supervisor、Worker、任务图（优先级 P2） | 依赖 agent-engine / workspace-service |
+| `orchestration` | Multi-Agent、Supervisor/Worker 生命周期、TaskGraph、worktree 隔离、双层预算、patch merge、cancel tree（Phase 12，P2） | 依赖 agent-domain / agent-events / git-service / checkpoint-service / diff-service / provider-control / tenant-service / usage-ledger；不依赖 agent-engine，复用 agent-domain CancellationToken 与 ids |
 | `core-api` | 应用层 Command / Event / Query 类型（CLI 与 GUI 共享的 schema source） | Phase 0 依赖 agent-domain / agent-events；后续由 app-service 使用 |
 | `core-runtime` | 完整 Core 生命周期与业务运行时装配 | 依赖 agent-api 及几乎所有核心 |
 | `app-service` | CLI 与 GUI 共享的应用 API、状态聚合、监督 | P1 骨架依赖 core-api；Phase 13 接入 core-runtime |

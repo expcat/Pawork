@@ -1,6 +1,6 @@
 # P12-5：结果聚合 / patch merge / 冲突检测
 
-> Phase 12 · Multi-Agent · 状态：🟡未开始 · 依赖：P12-3
+> Phase 12 · Multi-Agent · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P12-3（复用 `diff-service`）
 
 **最终目的**：实现 Worker 结果聚合、patch merge 与冲突检测，由 Parent 决定是否合并，保证多 Agent 改动可审查。
 
