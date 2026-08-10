@@ -11,8 +11,8 @@
 
 ## 2. 架构红线（不可违反）
 
-- CLI 与 Core 同进程同二进制（`pawork` 是唯一正式宿主），纯 Rust 实现；不引入 Node / Bun / V8 / 嵌入式 JS Runtime。GUI 作为独立进程经 GUI Connection Protocol 连接 CLI，不嵌入 Core。
-- `agent-domain` 不得依赖 Tauri、SQLite、HTTP Client、OS Keychain、Git、任何具体 Provider。
+- CLI 与 Core 同进程同二进制（`pawork` 是唯一正式宿主），纯 Rust 实现；不引入 Node / Bun / V8 / 嵌入式 JS Runtime。GUI 以独立 GPUI 进程经 GUI Connection Protocol 连接 CLI，不嵌入 Core；Desktop 构建链同样保持纯 Rust。
+- `agent-domain` 不得依赖任何 GUI framework（包括 GPUI/Tauri）、SQLite、HTTP Client、OS Keychain、Git、任何具体 Provider。
 - 禁止 crate 间循环依赖；依赖方向见 [workspace 结构](docs/architecture/workspace-layout.md)。
 - Agent Engine 不得通过判断 Provider 名称走特例逻辑（统一走 canonical domain）。
 - Secret（明文 Token）不写入数据库与日志。

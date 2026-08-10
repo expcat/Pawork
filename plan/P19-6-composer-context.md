@@ -13,7 +13,7 @@
 3. **附件** —— 本地/远程统一走 Artifact upload/chunk API，显示类型、大小、上传/取消/失败。目的：不在 command 内联大型二进制。
 4. **模型/Profile/effort** —— 消费 capability snapshot，只展示合法组合；选择进入 canonical request。目的：避免 Provider-specific options 泄漏。
 5. **发送/排队/取消** —— 使用 idempotency key、pending command 与 run event；重复点击不重复创建 Run。目的：网络重试安全。
-6. **Draft 安全** —— 默认仅内存保存；若后续持久化必须显式 opt-in、无 Secret 并有独立 ADR。目的：避免 prompt 泄漏到 localStorage。
+6. **Draft 安全** —— 默认仅内存保存；若后续持久化必须显式 opt-in、无 Secret 并有独立 ADR。目的：避免 prompt 泄漏到 Desktop 本地偏好存储。
 7. **输入测试** —— CJK/emoji/IME、超长 prompt、附件失败、离线重连、capability 变化。目的：锁定边界行为。
 
 ## 主要产出物
@@ -28,6 +28,6 @@
 - [ ] `@file` 与附件只经 Core query/Artifact API，GUI 不直接读取任意路径
 - [ ] 不合法 model/profile/effort 组合在 command 前被 capability snapshot 阻止，Core 仍最终校验
 - [ ] 重试/双击不创建重复 Run，取消状态由 Event 收敛
-- [ ] Draft 默认不进入 localStorage/log/crash report
+- [ ] Draft 默认不进入 Desktop 本地偏好存储/log/crash report
 
 **相关文档**：[context](../docs/features/context.md) · [models](../docs/features/models.md) · [artifacts](../docs/features/artifacts.md) · [Desktop GUI](../docs/features/desktop-gui.md)

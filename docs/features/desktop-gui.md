@@ -2,14 +2,15 @@
 
 ## 职责
 
-`apps/desktop` 是 Pawork 的独立 Tauri + React 客户端，为本地与远程 `pawork` Host 提供可访问、可恢复的 Coding Agent 图形界面。它负责连接、展示和用户交互，不负责 Agent/Provider/Tool/Git 业务执行，也不保存权威业务状态。
+`apps/desktop` 是 Pawork 的独立 GPUI Rust 客户端，为本地与远程 `pawork` Host 提供可访问、可恢复的 Coding Agent 图形界面。它负责连接、展示和用户交互，不负责 Agent/Provider/Tool/Git 业务执行，也不保存权威业务状态。
 
 ## 设计要点
 
 - **独立进程**：Desktop 不嵌入 Core，只经 `gui-client` / GUI Connection Protocol 连接 `pawork`。
 - **单一事实源**：Snapshot 初始化 projection，严格按 `global_sequence` 应用 Event；重复事件幂等、缺口先补发，无法补齐则重新取 Snapshot。
 - **命令回写**：所有业务动作构造 `AppCommandEnvelope`；pending UI 与最终 Event 分离，Core revision/Policy 结果优先。
-- **安全 WebView**：最小 Tauri capability、严格 CSP、无远程脚本/raw HTML/通用 shell/fs/http/sql；Secret 与 Protected Blob 不进 renderer。
+- **原生能力边界**：`ui` 不直接使用文件系统、进程、socket 或 HTTP；剪贴板、文件选择、通知、窗口与固定 Host bootstrap 只能经 `platform` allowlist facade。无 WebView 不等于自动沙箱，依赖图与源码规则必须持续守卫。
+- **GPUI 分层**：`ui` 只渲染 projection，`projection` 是纯 Rust 可重建状态机，`controller` 只调用 `gui-client`，`platform` 封装最小 OS 能力；View 不持有 Core 或任意系统能力。
 - **大数据有界**：Timeline、Diff、日志和列表虚拟化；Artifact/Terminal 分块流式，bounded queue 与 backpressure 可见。
 - **多 GUI 一致**：CLI、本地窗口、远程 GUI 同时操作时显示 actor/source、revision conflict 和最新权威结果，不做客户端点对点同步。
 - **渐进解锁**：页面按 capability snapshot 和 Core 已实现契约显示；不以静态假数据冒充可用能力。
@@ -35,7 +36,7 @@
 ```text
 connect → handshake/auth → snapshot(N) → subscribe(after=N)
                                       ↓
-renderer projection ← validated events N+1..M ← Tauri bridge
+GPUI view ← Desktop projection ← validated events N+1..M ← controller/gui-client
         ↓ pending command(command_id, expected_revision)
         └──────────────────────────────→ Core → response/event
 ```
@@ -55,13 +56,13 @@ Projection 至少分为 `connection`、`workspace`、`session`、`run`、`approv
 - [ ] 本地与远程 GUI、CLI 同时操作时 actor/revision 可见，审批和破坏性动作 fail-closed
 - [ ] Timeline、100k Diff 与 Terminal stream 使用虚拟化/分块/backpressure，达到 [性能目标](../quality/performance-targets.md)
 - [ ] 全部 P0 路径可键盘操作、读屏可理解、焦点与 reduced-motion 正确
-- [ ] Tauri capabilities/CSP、内容 scheme、Secret/日志/本地存储与 updater 签名通过 [安全验收](../quality/security-acceptance.md)
-- [ ] Windows、macOS、Linux 原生壳 E2E/visual/a11y 证据通过；浏览器 Mock 只作快速补充
+- [ ] DesktopPlatform allowlist、依赖边界、内容 parser/scheme、Secret/日志/本地状态与 updater 签名通过 [安全验收](../quality/security-acceptance.md)
+- [ ] Windows、macOS、Linux 的 GPUI 原生壳 E2E/visual/a11y 证据通过；任何 headless/component harness 都不能替代真实平台证据
 - [ ] 三平台安装包可复现构建并验证签名/升级/失败回退
 
 ## 相关文档
 
-- [ADR-034 Desktop GUI Client 边界](../adr/ADR-034-desktop-gui-client-boundary.md) · [GUI 连接](gui-connection.md) · [CLI Host](cli-host.md)
+- [ADR-035 GPUI Desktop](../adr/ADR-035-gpui-desktop.md) · [ADR-034（已被替代）](../adr/ADR-034-desktop-gui-client-boundary.md) · [GUI 连接](gui-connection.md) · [CLI Host](cli-host.md)
 - [GUI Connection Protocol](../architecture/api-surface.md) · [workspace 结构](../architecture/workspace-layout.md)
 - [性能目标](../quality/performance-targets.md) · [安全验收](../quality/security-acceptance.md) · [测试体系](../quality/testing.md)
 - [ROADMAP Phase 19](../../ROADMAP.md)

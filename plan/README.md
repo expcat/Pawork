@@ -52,7 +52,7 @@
           → Skills / MCP → Plan / Background Task → ClientAdapter
           → Hooks / Multi-Agent / Agent Profile → Codex / Claude / ACP
           → Marketplace / LSP → Goal / Automation / Memory → SDK / Remote / Browser
-          → Desktop Shell / State Sync → Timeline / Composer / Diff / Terminal
+          → GPUI Desktop Gate / State Sync → Timeline / Composer / Diff / Terminal
           → Settings / Workflow UI → Signed Desktop Release
 
 在核心 Coding Agent 能可靠完成真实仓库任务、Provider v2 canonical 语义与 Phase 18 账号控制面基础稳定前，不进入 Multi-Agent 与外部 Agent Client 大规模接入。Phase 编号是文档索引，不是机械串行顺序；实际波次见 ROADMAP。
@@ -77,7 +77,7 @@
 - **Agent Workflow**：Plan review、Goal、Background Task、Scheduled Automation、Persistent Monitor、Review Engine、跨产品 Session Import；Long-term Memory 为 P2，不阻塞前述闭环。
 - **Ecosystem / Host**：用户 Shell/HTTP/Prompt Hooks、Plugin Package/Marketplace、LSP、完整 Agent Profile、Agent Teams、ACP、Rust/JSON SDK、IDE adapter、Browser/Computer、真实 Remote Transport 与受限移动端控制。
 - **Account / Client Control Plane**：Tenant/Principal、ProviderAccount/Credential Lease、scope-aware ErrorClassifier、确定性 RoutingPolicy、Session Affinity、多维 Usage/Cost Ledger、统一 ClientAdapter，以及 Codex App-Server / Claude Gateway / ACP adapter。
-- **Desktop Client**：独立 Tauri + React GUI、可重建 Snapshot/Event 投影、Timeline/Composer/Approval/Diff/Terminal、资源与 Workflow 控制面、多窗口/远程连接，以及三平台签名分发。
+- **Desktop Client**：独立 GPUI Rust GUI、可重建 Snapshot/Event 投影、Timeline/Composer/Approval/Diff/Terminal、资源与 Workflow 控制面、多窗口/远程连接，以及三平台签名分发。
 
 这些目标分别落在 Phase 15～19；不得用 `provider_options`、HTTP status 直译或 Provider/Client 名称分支绕过 canonical domain，也不得破坏 CLI/Core 同进程同二进制、Core 单一事实源与 GUI 只经 GUI Connection Protocol 接入的架构红线。Phase 19 的本地状态只允许保存 UI preference 与可丢弃投影，不能成为第二事实源。
 
@@ -152,5 +152,5 @@ try {
 | Compaction 品质 | 高 | 保留结构化状态/目标/未完成任务/修改文件；Golden Sessions；可检查摘要；可恢复压缩前 branch | [context](../docs/features/context.md) |
 | Shell 跨平台 | 中 | Process Runtime 独立 crate；平台特定实现；三平台 CI | [process](../docs/features/process.md) |
 | 插件生态重建 | 中 | Skills 优先；MCP 优先于 WASM；WASM API 小而稳定；不过早支持 native plugin | [ADR-011](../docs/adr/ADR-011-mcp-first-extension.md)、[ADR-012](../docs/adr/ADR-012-wasm-first-plugin.md) |
-| Desktop WebView 差异 | 中 | 共享 design tokens 与协议 reducer；真实 Windows/macOS/Linux 壳跑 E2E/visual/a11y；浏览器模式只作快速反馈 | [Desktop GUI](../docs/features/desktop-gui.md)、[P19-16](P19-16-desktop-gate.md) |
+| GPUI pre-1.0 与平台/发布成熟度 | 高 | 精确 pin 已过三平台 Gate 的版本/revision；P19-1 先验证 Windows standalone、IME、Terminal、a11y、打包与签名更新，失败时保持协议不变并回退已记录路线；P19-16 用真实 Windows/macOS/Linux 壳验收 | [ADR-035](../docs/adr/ADR-035-gpui-desktop.md)、[Desktop GUI](../docs/features/desktop-gui.md)、[P19-1](P19-1-desktop-shell.md)、[P19-16](P19-16-desktop-gate.md) |
 | 范围过大 | 高 | 严格按关键路径推进；Coding Agent 可靠完成真实任务前不进入 Multi-Agent/复杂插件 | [ROADMAP 关键路径](../ROADMAP.md) |

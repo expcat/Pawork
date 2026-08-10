@@ -135,19 +135,21 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 
 ### Desktop GUI 单独依赖基线
 
-> Node 仅用于 `apps/desktop` 的前端构建与测试，版本以仓库 pin 的当前 LTS 为准；产物由 Tauri WebView 运行，`pawork` Host 不嵌入 Node/Bun/V8，也不依赖前端工具链。使用 lockfile 固定完整依赖图，开工时锁定 Tauri 2.x 小版本并记录升级门禁。
+> Desktop 与 `pawork` Host 均保持纯 Rust，不引入 Node/Bun/V8、React、TypeScript renderer 或 WebView。GPUI 仍为 pre-1.0：P19-1 PoC 使用精确候选版本/revision，禁止通配或跟随 `main`；只有 Windows/macOS/Linux 硬 Gate 通过后才把该 revision、Rust toolchain 与系统依赖固化为生产基线。
 
 | 类别 | 包 / 工具 | 关联任务 | 理由与使用范围 |
 | --- | --- | --- | --- |
-| Desktop Shell | Tauri 2 + `@tauri-apps/api` | P19-1、P19-14、P19-15 | 仓库已冻结 Tauri 独立进程边界；只启用 window/dialog/clipboard/notification/updater 等最小官方 capability，禁止通用 shell/fs/http/sql 暴露 |
-| UI | React + TypeScript + Vite | P19-1～P19-14 | Tauri 官方推荐 SPA 使用 Vite；静态前端不引入 SSR/本地 Web Server |
-| 长列表 | `@tanstack/react-virtual` | P19-5、P19-8、P19-11 | Timeline、Diff、日志按 viewport 虚拟化；headless API 保留 Pawork 自有渲染与滚动语义 |
-| Terminal | `@xterm/xterm` + `@xterm/addon-fit` | P19-9 | 仅渲染 P11/P13 提供的 PTY stream，不获得直接 spawn 权限 |
-| Markdown | `react-markdown` + `remark-gfm` | P19-5 | 禁用 raw HTML，链接/图片 scheme 走 Pawork allowlist；不加载 CDN 脚本 |
-| Renderer 测试 | Vitest + Testing Library | P19-2～P19-14 | reducer、组件、键盘与 accessibility 的快速 L1 |
-| Desktop E2E | WebdriverIO + `@wdio/tauri-service` | P19-16 | Tauri 官方推荐的三平台 WebDriver 路径；浏览器模式跑快速 Mock，原生壳跑发布门禁 |
+| Desktop Shell / UI | GPUI（P19-1 验证后精确 pin） | P19-1、P19-3～P19-14 | Rust 原生 View/Element/Entity；只采用所 pin revision 已在三平台实测的公开能力，不把 Zed 私有 API 当作契约 |
+| Client / 状态 | `gui-client` + Pawork projection/controller | P19-1、P19-2 | 只经 GUI Connection Protocol；纯 Rust projection 可脱离 GPUI 测试，不引入第二事实源 |
+| 平台能力 | `DesktopPlatform` + 最小 OS adapter | P19-1、P19-14、P19-15 | dialog/clipboard/notification/window/deep-link/single-instance/updater allowlist；禁止 View 直接使用通用 fs/process/socket/http |
+| 长列表 / Diff | GPUI 虚拟列表原语或 Pawork Element 实现（Gate 后定） | P19-5、P19-8、P19-11 | Timeline、Diff、日志按 viewport/overscan 有界渲染；以 10k/100k fixture 决定实现，不预设性能优势 |
+| Terminal | 可测试 Rust terminal model + GPUI renderer（后端待 Gate 审计） | P19-1、P19-9 | 仅渲染 P11/P13 PTY stream，不获得直接 spawn 权限；覆盖 ANSI/OSC/CJK/IME/10 MB 输出 |
+| Markdown | Rust parser → 受限 AST → GPUI Element（crate 待审计） | P19-5 | raw HTML/脚本不执行，链接/图片/Artifact scheme 走 Pawork allowlist |
+| Accessibility | 所 pin GPUI/AccessKit 接线 + 三平台真实读屏 | P19-1、P19-3、P19-16 | 基础设施存在不等于可交付；Narrator/VoiceOver/Orca 是硬证据 |
+| 测试 / E2E | Rust unit/property、GPUI test context、OS 原生 harness | P19-2～P19-16 | component/headless 只作 L1；真实窗口、IME、GPU、读屏、通知和签名更新必须在三平台验证 |
+| 打包 / Updater | `cargo-packager` 候选 + 必要平台原生工具（待 Gate 决策） | P19-1、P19-15 | GPUI 不提供一体化发布栈；按格式/签名/验签更新/回退证据选型，未验证 RPM 等格式不作承诺 |
 
-Desktop authoritative projection、`global_sequence` 去重/补洞、Snapshot/Event 合并、optimistic command reconciliation 与跨窗口选主语义由 Pawork 自实现并做状态机测试；不引入第二套服务端状态框架。官方依据：[Tauri Frontend](https://v2.tauri.app/start/frontend/)、[Tauri Capabilities](https://v2.tauri.app/security/capabilities/)、[Tauri WebDriver](https://v2.tauri.app/develop/tests/webdriver/)。
+Desktop authoritative projection、`global_sequence` 去重/补洞、Snapshot/Event 合并、optimistic command reconciliation 与跨窗口选主语义由 Pawork 自实现并做状态机测试。所有 GPUI/组件/Terminal/Markdown/发布依赖须做 license inventory；使用 GPUI 不授权复制 Zed GPL UI 代码。架构与回退条件见 [ADR-035](docs/adr/ADR-035-gpui-desktop.md)。
 
 ### 参考 + 自实现（第三方包仅作设计参照，只实现所需最小子集）
 
@@ -177,7 +179,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 - rmcp 是唯一「官方协议 SDK」级依赖：锁定小版本、跟进官方迁移指南，在 mcp-client 内封装以隔离 breaking change。
 - portable-pty 上游缓慢：P11-6 已锁定 0.8.1 并把会话层留在 Pawork；升级或迁移 fork 时必须重跑三平台 PTY spawn/resize/reconnect/进程树门禁。
 - tiktoken-rs 仅对 OpenAI 精确：其它 Provider 统一启发式估算 + 容差，不依赖精确 token 数。
-- Desktop 依赖 OS WebView，三平台排版、输入法、WebDriver 与内存表现存在差异；P19-16 必须使用真实平台矩阵，不以浏览器模式替代原生壳门禁。
+- GPUI pre-1.0，Windows standalone、IME、accessibility、Terminal、Rust 编译迭代和打包/updater 成熟度均有风险；P19-1 必须先过硬 Gate，P19-16 再跑完整真实平台矩阵，不以 Zed 产品证据或 headless/component 测试替代 Pawork 原生壳证据。
 
 ## 遗留待决项（2026-08 review）
 
@@ -202,7 +204,7 @@ Pi（TS，差分测试对象，P5-9）；goose（Block → Linux Foundation，MC
 
 ### Phase 0：架构与协议冻结
 
-冻结所有协议与领域类型，用 Mock Provider 跑通最小链路，确保无 Tauri 依赖进入 Agent Core。
+冻结所有协议与领域类型，用 Mock Provider 跑通最小链路，确保无任何 GUI framework 依赖进入 Agent Core。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
@@ -557,14 +559,16 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P18-14 | 🟡 | Provider Registry / Pool Reconciliation | factory 注册、主动健康、lease 回收、事务式热切换 | [详情](plan/P18-14-pool-reconciliation.md) |
 | P18-15 | 🟡 | Control Plane Contract Gate | property/concurrency/golden/migration/isolation/chaos | [详情](plan/P18-15-control-plane-gate.md) |
 
-### Phase 19：Desktop GUI
+### Phase 19：Desktop GUI（GPUI）
 
-实现真正的 Tauri + React Desktop Client。GUI 是连接 `pawork` Host 的独立进程和可重建视图：只经 GUI Connection Protocol 获取 Snapshot/Event、发送 AppCommand，不链接 `core-runtime`、不访问数据库/Provider/Tool/Git；Node 只用于前端构建，不进入 Host。基础壳与主交互依赖 Phase 13，扩展页面按 Phase 8～18 的生产契约逐项解锁，架构决策见 [ADR-034](docs/adr/ADR-034-desktop-gui-client-boundary.md)。
+实现纯 Rust GPUI Desktop Client。GUI 是连接 `pawork` Host 的独立进程和可重建视图，数据路径固定为 `GPUI Views → projection/controller → gui-client → GUI Connection Protocol → pawork`：不链接 `core-runtime`，不访问数据库/Provider/Tool/Git，构建与运行均不引入 Node/Bun/V8。`apps/desktop` 按 `ui/projection/controller/platform` 四层隔离视图、可重建状态、协议 I/O 与最小 OS 能力。
+
+P19-1 是后续 Desktop 任务的硬准入 Gate：先在真实 Windows/macOS/Linux 验证 standalone、IME、10k Timeline、100k Diff、Terminal、读屏、打包/签名和验签 updater，再固化精确 GPUI revision。Windows、IME、Terminal、accessibility、signed updater 任一出现不可接受 blocker，就停止 P19-2～P19-15 并重新评审；Core、协议和数据格式保持不变，可恢复 [ADR-034](docs/adr/ADR-034-desktop-gui-client-boundary.md) 的 Tauri 回退路线。目标决策与边界见 [ADR-035](docs/adr/ADR-035-gpui-desktop.md)。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P19-1 | 🟡 | Desktop Shell 与安全边界 | Tauri/React/Vite 骨架、最小 capabilities、Host 启动/连接 | [详情](plan/P19-1-desktop-shell.md) |
-| P19-2 | 🟡 | GUI Client Bridge 与状态投影 | typed bridge、Snapshot/Event reducer、补洞/重连 | [详情](plan/P19-2-client-state-projection.md) |
+| P19-1 | 🟡 | GPUI Desktop Gate 与安全壳 | 三平台 PoC、四层边界、IME/Terminal/a11y/签名更新硬门槛 | [详情](plan/P19-1-desktop-shell.md) |
+| P19-2 | 🟡 | GUI Client 与状态投影 | Rust controller、Snapshot/Event projection、补洞/重连 | [详情](plan/P19-2-client-state-projection.md) |
 | P19-3 | 🟡 | Design System、Accessibility 与本地化 | tokens、组件原语、键盘/读屏、zh-CN/en-US | [详情](plan/P19-3-design-system-a11y.md) |
 | P19-4 | 🟡 | Workspace / Session 导航 | 实例、工作区、Session/Branch 树、搜索与恢复 | [详情](plan/P19-4-workspace-session-navigation.md) |
 | P19-5 | 🟡 | Timeline / Streaming 渲染 | message/thinking/tool/server event、虚拟滚动、Artifact | [详情](plan/P19-5-timeline-streaming.md) |
@@ -577,8 +581,8 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P19-12 | 🟡 | Plan / Goal / Background / Automation | 计划评审、目标、后台任务、定时与 Monitor | [详情](plan/P19-12-workflow-control.md) |
 | P19-13 | 🟡 | Multi-Agent / Teams / Task Graph | worker、依赖图、预算、patch merge、团队消息 | [详情](plan/P19-13-multi-agent-teams.md) |
 | P19-14 | 🟡 | 多窗口、远程连接与系统通知 | instance/window 路由、presence、断线与通知 | [详情](plan/P19-14-multi-window-remote.md) |
-| P19-15 | 🟡 | 打包、签名与自动更新 | 三平台 bundle、code sign/notarize、签名更新 | [详情](plan/P19-15-packaging-updater.md) |
-| P19-16 | 🟡 | Desktop Contract / E2E / Visual / Performance Gate | reducer contract、三平台 E2E、a11y/visual/perf/security | [详情](plan/P19-16-desktop-gate.md) |
+| P19-15 | 🟡 | 打包、签名与自动更新 | 三平台工具选型、code sign/notarize、独立签名更新 | [详情](plan/P19-15-packaging-updater.md) |
+| P19-16 | 🟡 | Desktop Contract / E2E / Visual / Performance Gate | projection contract、GPUI 三平台 E2E、a11y/visual/perf/security | [详情](plan/P19-16-desktop-gate.md) |
 
 ---
 

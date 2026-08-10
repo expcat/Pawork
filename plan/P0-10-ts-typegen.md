@@ -2,7 +2,7 @@
 
 > Phase 0 · 架构与协议冻结 · 状态：🟢已完成 · 依赖：P0-8
 
-**最终目的**：建立「Rust 类型 → TypeScript 类型」生成管线占位，确保 GUI Connection Protocol 契约（`core-api` / `gui-protocol`）可自动同步到 GUI（[ADR-006](../docs/adr/ADR-006-tauri-via-app-service.md)），避免手写 `.d.ts` 与 Rust 实现漂移。
+**最终目的**：建立「Rust 类型 → TypeScript 类型」生成管线占位，确保 GUI Connection Protocol 契约（`core-api` / `gui-protocol`）可自动同步到非 Rust 客户端与契约工具（[ADR-006](../docs/adr/ADR-006-tauri-via-app-service.md)），避免手写 `.d.ts` 与 Rust 实现漂移。Phase 19 的 GPUI Desktop 直接使用 Rust `gui-client`，不依赖该生成物。
 
 **涉及范围**：`crates/schema-typegen`、`schemas/core-api`、`schemas/gui-protocol`、`.github/workflows/ci.yml`
 

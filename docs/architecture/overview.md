@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-Pawork 是一个纯 Rust 编码智能体核心平台。**CLI 与 Rust Core 是同一个程序和进程边界**：`pawork` 二进制同时是 Core 的宿主、命令行入口与 GUI 连接服务器；Desktop GUI（Phase 19，Tauri + React）作为独立进程，通过 CLI 暴露的 GUI Connection Protocol 连接 Core，而不是直接嵌入 Core。
+Pawork 是一个纯 Rust 编码智能体核心平台。**CLI 与 Rust Core 是同一个程序和进程边界**：`pawork` 二进制同时是 Core 的宿主、命令行入口与 GUI 连接服务器；Desktop GUI（Phase 19，GPUI + Rust）作为独立进程，通过 CLI 暴露的 GUI Connection Protocol 连接 Core，而不是直接嵌入 Core。
 
 详见 [README](../../README.md) 的项目定位与 [ADR-001](../adr/ADR-001-pure-rust-core.md)、[ADR-021](../adr/ADR-021-cli-core-same-process.md)、[ADR-025](../adr/ADR-025-cli-is-sole-host.md)。
 
@@ -28,7 +28,7 @@ Pawork 是一个纯 Rust 编码智能体核心平台。**CLI 与 Rust Core 是�
 └─────────────────┼──────────────────────────────┼─────────────┘
           ┌───────▼────────┐             ┌───────▼────────┐
           │ Local GUI A    │             │ Local GUI B    │
-          │ Tauri + React  │             │ Tauri + React  │
+          │ GPUI / Rust    │             │ GPUI / Rust    │
           └────────────────┘             └────────────────┘
                   Remote Transport Adapter ── 内网穿透 ── Remote GUI C/D
 ```
@@ -47,7 +47,7 @@ Pawork 是一个纯 Rust 编码智能体核心平台。**CLI 与 Rust Core 是�
 
 Timeline / Composer / Diff / Terminal / Settings / Workspaces / Sessions。GUI 连接指定 CLI/Core 实例，发送 Command、执行 Query、订阅 Event、获取 Snapshot、流式展示 Agent/Tool/Terminal。GUI 不直接加载 Core crate、不直接访问数据库、不直接调用 Provider/工具，本地只保存纯 UI 偏好。
 
-Phase 19 在 `apps/desktop` 落地 Tauri + React 客户端：Tauri Rust bridge 只依赖 `gui-client`，React renderer 只消费生成的 TypeScript schema 与 bridge 事件。权威状态始终在 `pawork`；renderer 的 store 是可从 Snapshot/Event 重建的 materialized view，断线或版本缺口时必须重新同步，不能以 optimistic UI 覆盖 Core 拒绝结果。
+Phase 19 在 `apps/desktop` 落地 GPUI Rust 客户端：`ui` 只消费经过验证的 projection，`controller` 只通过 `gui-client` 连接协议，`platform` 是剪贴板、文件选择、通知、窗口与固定 Host bootstrap 的唯一 allowlist 出口。权威状态始终在 `pawork`；Desktop projection 是可从 Snapshot/Event 重建的 materialized view，断线或版本缺口时必须重新同步，不能以 optimistic UI 覆盖 Core 拒绝结果。
 
 ### 2.4 Agent Core
 
@@ -77,8 +77,8 @@ Mobile/SDK ──┘
 - 多 GUI 共宿主：一个 CLI/Core 实例可同时服务多个本地与远程 GUI；GUI 之间不做点对点同步，统一由 Core 广播（[ADR-023](../adr/ADR-023-one-core-many-guis.md)、[ADR-029](../adr/ADR-029-no-peer-gui-sync.md)、[ADR-030](../adr/ADR-030-core-sole-source-of-truth.md)）。
 - CLI 与 GUI 一致：共享同一 app-service 与 Event Hub，命令进入同一 Command Router，事件以相同顺序扇出（[ADR-024](../adr/ADR-024-shared-app-service-event-hub.md)）。
 - GUI 断线不影响任务：GUI 退出/断线不结束正在运行的 Agent（[ADR-026](../adr/ADR-026-gui-disconnect-safe.md)）。
-- 纯 Rust：不使用 Node / Bun，不嵌入 JavaScript Runtime。
-- 协议先行：GUI Connection Protocol 必须先冻结，Rust 类型是唯一 schema source，自动生成 TypeScript 类型。
+- 纯 Rust：Core 与 Desktop 均不使用 Node / Bun，不嵌入 JavaScript Runtime。
+- 协议先行：GUI Connection Protocol 必须先冻结，Rust 类型是唯一 schema source；GPUI Desktop 直接消费 Rust `gui-client`，TypeScript 声明继续服务非 Rust 客户端与契约校验。
 - 可重放：所有 Agent 事件可持久化、可重放，崩溃后可恢复。
 - 解耦：Agent Engine 与 Provider 通过 canonical domain 解耦，禁止按 Provider 名称走特例。
 - 控制面分离：Provider protocol、Credential Pool、RoutingPolicy、Agent scheduling 与 ClientAdapter 是不同状态机；`ModelProvider` 不承担账号池或客户端职责（[ADR-033](../adr/ADR-033-control-plane-separation.md)）。
@@ -110,7 +110,7 @@ cli-host
         ├── transport-local
         └── transport-remote-placeholder
 
-gui-client ↑ Tauri GUI（独立进程）
+gui-client ↑ GPUI Desktop（独立进程）
 ```
 
 Phase 15–19 在该主干上按以下方向扩展，箭头表示“上层依赖下层”；组合统一发生在 `app-service` / `core-runtime`，不会形成第二宿主：
@@ -131,7 +131,7 @@ apps/desktop → gui-client → transport-api → gui-server → app-service
 
 `http-runtime` 是 Provider、User Hooks、Marketplace 与 Forge Adapter 共享的无 Provider 通用网络底层；`agent-sdk` 只依赖公开 schema/framing 并连接 `pawork`，不依赖 `core-runtime`。完整规划 crate 清单与依赖方向见 [workspace 结构 §2.1](workspace-layout.md)。
 
-必须禁止循环依赖。`agent-domain` 不得依赖 Tauri、SQLite、HTTP Client、OS Keychain、Git、具体 Provider。
+必须禁止循环依赖。`agent-domain` 不得依赖任何 GUI framework（包括 GPUI/Tauri）、SQLite、HTTP Client、OS Keychain、Git、具体 Provider。
 
 详见 [workspace 结构](workspace-layout.md) 与 [ADR-002](../adr/ADR-002-agent-engine-provider-decoupled.md)。
 

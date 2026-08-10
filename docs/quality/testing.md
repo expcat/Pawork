@@ -69,9 +69,9 @@ Golden 仅在相关序列化或用户可见语义稳定后进入 L2。开发中�
 
 ## Desktop GUI Tests
 
-Phase 19 使用四层证据：Vitest/Testing Library 覆盖 reducer、组件、键盘与 aria；WebdriverIO browser mode 对 Mock bridge 做快速交互；原生 Tauri WebDriver 覆盖 Windows/macOS/Linux 的连接、审批、Timeline、Diff、Terminal 与重连；visual baseline 只固定稳定 viewport、字体 fixture 与主题。浏览器模式不能替代原生 capability/CSP、输入法、窗口、通知、更新与 OS WebView 验证。
+Phase 19 使用四层证据：纯 Rust unit/property tests 覆盖 projection、controller 与 command reconciliation；GPUI component/test context 覆盖 Element、键盘、焦点、选择和虚拟列表；OS 原生场景 harness 覆盖 Windows/macOS/Linux 的连接、审批、Timeline、Diff、Terminal、重连、窗口和通知；visual baseline 只固定稳定窗口尺寸、字体 fixture 与主题。Component/headless harness 不能替代真实平台的 IME、GPU/驱动、窗口、系统通知、AccessKit 读屏、签名包与更新验证。
 
-协议 reducer 必须对乱序、重复、sequence gap、Snapshot 与 Event 竞态、陈旧 command response、重连回放和 unsupported version 做 property/fixture 测试。Visual 变更须人工审阅；accessibility gate 覆盖全键盘路径、焦点恢复、读屏 live region、对比度与 reduced-motion。
+协议 projection 必须对乱序、重复、sequence gap、Snapshot 与 Event 竞态、陈旧 command response、重连回放和 unsupported version 做 property/fixture 测试。Visual 变更须人工审阅；accessibility gate 覆盖全键盘路径、焦点恢复、Windows Narrator/macOS VoiceOver/Linux Orca、状态通知节流、对比度、200% scaling 与 reduced-motion。
 
 ## Fuzz Tests
 
@@ -81,7 +81,7 @@ Phase 19 使用四层证据：Vitest/Testing Library 覆盖 reducer、组件、�
 
 ## Chaos Tests
 
-模拟：Provider 中途断网；Core 崩溃；数据库锁；磁盘满；Tool 进程不退出；Side process 持有 stdout；文件被用户同时修改；Git Index 变化；Plugin 崩溃；MCP Server 崩溃；lease owner 崩溃；account cooldown/recovery；热切换回滚；session ownership epoch 冲突；跨 tenant 并发访问；Desktop bridge 断线/重连、事件缺口、慢 renderer、多窗口竞争与更新中断。
+模拟：Provider 中途断网；Core 崩溃；数据库锁；磁盘满；Tool 进程不退出；Side process 持有 stdout；文件被用户同时修改；Git Index 变化；Plugin 崩溃；MCP Server 崩溃；lease owner 崩溃；account cooldown/recovery；热切换回滚；session ownership epoch 冲突；跨 tenant 并发访问；Desktop controller 断线/重连、事件缺口、慢视图消费、多窗口竞争、GPU/backend 降级与更新中断。
 
 Chaos 默认在功能主干接线完成后的 L2/L3 执行，不阻塞前期领域模型、协议骨架或单个 adapter 的频繁迭代。
 

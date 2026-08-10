@@ -2,7 +2,7 @@
 
 原「Core Client Protocol」更名为 **GUI Connection Protocol**。该协议只用于 GUI 与 CLI/Core 宿主之间的通信。CLI 命令不需要通过网络协议绕回自身，但必须调用与 GUI Command 相同的 Application Service。
 
-Phase 13 不实现真实 GUI，但必须先冻结协议；Phase 19 的 Desktop GUI 只消费该契约。Rust 类型（`core-api` / `gui-protocol`）是唯一 schema source，自动生成 TypeScript 类型。
+Phase 13 不实现真实 GUI，但必须先冻结协议；Phase 19 的 GPUI Desktop 通过 Rust `gui-client` 只消费该契约。Rust 类型（`core-api` / `gui-protocol`）是唯一 schema source；自动生成的 TypeScript 声明继续用于非 Rust 客户端与契约校验，不是 GPUI Desktop 的运行时依赖。
 
 ## 1. 命令路径
 
@@ -172,7 +172,7 @@ GUI 重连：提交 `last_global_sequence`，事件仍可重放则发送缺失�
 
 ## 6. 设计要求
 
-- Rust 类型是唯一 schema source，自动生成 TypeScript 类型
+- Rust 类型是唯一 schema source；GPUI Desktop 直接消费 Rust 类型，TypeScript 声明作为非 Rust 消费与兼容性产物自动生成
 - API version 与版本协商
 - request / command ID 与 idempotency key
 - event sequence（global_sequence 严格递增）

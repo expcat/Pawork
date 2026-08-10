@@ -15,7 +15,7 @@ Remote GUI ──┘                                   │
                           └── Remote GUI C ───┘
 ```
 
-每条命令携带 `CommandSource` 与身份（见 [GUI Connection Protocol §3](api-surface.md)），所有状态变化可追溯来源；每条事件携带 `global_sequence`，CLI 与 GUI 看到完全一致的状态演进。Phase 19 Desktop 先应用 Snapshot，再按 sequence 更新可丢弃 projection；缺口无法补齐时重新 Snapshot，不在 renderer 猜测权威状态。命令路径、统一 Command Source、Event Hub 与多客户端同步见 [GUI Connection Protocol](api-surface.md)、[GUI 连接与多客户端](../features/gui-connection.md) 与 [Desktop GUI](../features/desktop-gui.md)。
+每条命令携带 `CommandSource` 与身份（见 [GUI Connection Protocol §3](api-surface.md)），所有状态变化可追溯来源；每条事件携带 `global_sequence`，CLI 与 GUI 看到完全一致的状态演进。Phase 19 Desktop 先应用 Snapshot，再按 sequence 更新可丢弃 projection；缺口无法补齐时重新 Snapshot，不在视图层猜测权威状态。命令路径、统一 Command Source、Event Hub 与多客户端同步见 [GUI Connection Protocol](api-surface.md)、[GUI 连接与多客户端](../features/gui-connection.md) 与 [Desktop GUI](../features/desktop-gui.md)。
 
 ## 2. Agent Loop
 

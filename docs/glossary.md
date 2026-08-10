@@ -14,7 +14,7 @@
 | Subscription Hub | 将 Core Event 广播给 CLI 与所有 GUI 的订阅中心 |
 | GUI Connection Protocol | GUI 与 CLI/Core 之间唯一的线上协议（Command/Query/Event/Snapshot） |
 | GUI Server | CLI 进程内运行的 GUI 协议服务器 |
-| GUI Client SDK | Tauri GUI 使用的连接 SDK（`gui-client`） |
+| GUI Client SDK | Desktop GUI 与协议测试客户端使用的 Rust typed 连接 SDK（`gui-client`） |
 | Desktop Projection Store | Desktop GUI 从 Snapshot/Event 重建的可丢弃 materialized view；不是权威状态，不保存业务事实 |
 | Connection Manager | 管理一个 CLI 实例上多个 GUI 连接的组件 |
 | Snapshot Service | 为 GUI 提供当前状态快照与重连恢复的组件 |

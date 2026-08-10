@@ -1,6 +1,6 @@
 # 性能目标
 
-Core 指标与 Desktop GUI 指标分别计量，不能把 WebView、网络或模型耗时归因给 Rust Core。性能测试必须区分：Rust Core；Git 子进程；Provider 网络；模型生成；外部命令；GUI bridge；GUI 渲染。
+Core 指标与 Desktop GUI 指标分别计量，不能把 Desktop GPU/窗口、网络或模型耗时归因给 Rust Core。性能测试必须区分：Rust Core；Git 子进程；Provider 网络；模型生成；外部命令；GUI controller/projection；GPUI 渲染。
 
 ## Rust Core 指标
 
@@ -26,13 +26,13 @@ Core 指标与 Desktop GUI 指标分别计量，不能把 WebView、网络或模
 | --- | ---: |
 | Desktop 冷启动到可选择/连接实例 P50 | < 1.5 s |
 | 已连接后 Snapshot 接收完到可交互 P95 | < 500 ms |
-| Event 进入 Desktop bridge 到可见提交 P95 | < 50 ms |
+| Event 经 `gui-client` 进入 Desktop controller 到可见提交 P95 | < 50 ms |
 | 10,000 条 Timeline 打开并定位尾部 P95 | < 750 ms |
-| Timeline / Diff 稳态挂载 DOM 节点 | < 500 |
+| Timeline / Diff 稳态活跃渲染行（可见区 + overscan） | < 500 |
 | 100,000 行 Diff 首屏可交互 P95 | < 1 s |
 | 连续 30 token/s + tool output 流式渲染 | 无持续掉帧；P95 frame < 32 ms |
 
-Desktop 指标在 Windows WebView2、macOS WKWebView、Linux WebKitGTK 分别记录；浏览器模式只做快速回归，不替代真实壳数据。模型、远程 Transport 与 Core 计算时间从 GUI 指标中分段标注，不用端到端总耗时掩盖 renderer 回归。
+Desktop 指标在 Windows、macOS、Linux 的真实 GPUI 原生壳分别记录，并注明 GPU/驱动、显示缩放、窗口系统与软件渲染退化；headless/component harness 不替代真实平台数据。模型、远程 Transport 与 Core 计算时间从 GUI 指标中分段标注，不用端到端总耗时掩盖 UI 回归。
 
 ## 相关文档
 

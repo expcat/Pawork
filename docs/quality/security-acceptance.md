@@ -31,10 +31,10 @@
 23. 跨 Tenant 隔离（Tenant A 不可访问 B 的 credential/session/agent transcript/affinity/usage/audit）
 24. Client Adapter 边界（Codex/Claude/ACP 不持有 credential、不绕过 policy/app-service、不与 GUI protocol frame 混用）
 25. Session ownership/revision（陈旧 `ownership_epoch` 写入被拒，断线重连先重同步）
-26. Desktop crate 边界（`apps/desktop` / `gui-client` 不链接 `core-runtime`、app-service、数据库、Provider、Tool 或 Git；Node 工具链不进入 `pawork`）
-27. Tauri capability 与 CSP（默认拒绝通用 shell/fs/http/sql，禁止远程脚本与 raw HTML；dialog/clipboard/notification/updater 按窗口最小授权）
-28. Desktop 内容安全（Markdown raw HTML 禁用，外链/图片/Artifact scheme allowlist，终端与 Tool Output 不解释为 HTML）
-29. Desktop Secret 与本地状态（token/Protected Blob/明文 credential 不进入 DOM、localStorage、崩溃报告、截图或 renderer log；只保存 UI preference 与可丢弃投影）
+26. Desktop crate 边界（`apps/desktop` / `gui-client` 不链接 `core-runtime`、app-service、数据库、Provider、Tool 或 Git；Desktop 与 `pawork` 构建/运行链均不引入 Node/Bun/V8）
+27. GPUI 原生能力边界（`ui` 禁止直接使用 fs/process/socket/http；dialog/clipboard/notification/window/updater/固定 Host bootstrap 只经 `DesktopPlatform` allowlist，依赖图与源码 deny rule 持续校验）
+28. Desktop 内容安全（Markdown/Tool/Terminal 按文本或受限 AST 渲染，外链/图片/Artifact scheme allowlist；OSC、双向控制符、超大字体/图片/行等不可信输入有界处理）
+29. Desktop Secret 与本地状态（token/Protected Blob/明文 credential 不进入 GPUI Entity、projection、偏好存储、崩溃报告、截图或日志；只保存 UI preference 与可丢弃投影）
 30. Desktop command/revision（审批、信任、discard/rollback/update 等敏感动作带 expected revision；陈旧响应和多窗口竞争 fail-closed）
 31. Desktop 发布供应链（三平台 code signing/notarization；updater 强制验签；私钥仅在受控 CI secret，失败更新可回退）
 32. 诊断包残余风险（URL query、嵌套 JSON 转义、自定义 Header 等典型形态有回归样本；导出明确标注 best-effort；分享前要求人工确认且不得自动上传）
@@ -47,4 +47,4 @@
 - [可观测性与诊断包](../features/observability.md)
 - [ADR-009 默认 Workspace Trust](../adr/ADR-009-default-workspace-trust.md) · [ADR-014 Secret 存 OS Keychain](../adr/ADR-014-secret-os-keychain.md) · [ADR-020 性能与安全是发布门槛](../adr/ADR-020-performance-security-gate.md) · [ADR-032 Protected Blob Store](../adr/ADR-032-protected-blob-store.md)
 - [ADR-033 控制面分离](../adr/ADR-033-control-plane-separation.md) · [ROADMAP 实施波次与门禁节奏](../../ROADMAP.md#实施波次与门禁节奏) · [P18-15 Control Plane Gate](../../plan/P18-15-control-plane-gate.md) · [测试后清理](testing.md#测试后清理)
-- [ADR-034 Desktop GUI Client 边界](../adr/ADR-034-desktop-gui-client-boundary.md) · [P19-16 Desktop Gate](../../plan/P19-16-desktop-gate.md)
+- [ADR-035 GPUI Desktop](../adr/ADR-035-gpui-desktop.md) · [ADR-034（已被替代）](../adr/ADR-034-desktop-gui-client-boundary.md) · [P19-16 Desktop Gate](../../plan/P19-16-desktop-gate.md)

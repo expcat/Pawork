@@ -12,7 +12,7 @@
 2. **定义 ProviderStreamEvent** —— text delta / tool call delta / thinking / usage / stop / error。目的：流式组装的统一事件。
 3. **定义 ModelProvider Trait** —— `async fn stream(request, sink, cancel) -> ModelResponseSummary`，由 push sink 提供流式事件与背压。目的：所有 provider 的统一抽象。
 4. **定义 ProviderError** —— 可重试判定、建议重试时间、错误类别。目的：为上层重试归一提供依据。
-5. **守住解耦约束** —— 不依赖具体 HTTP/Tauri，仅依赖 `agent-domain` + `async-trait`。目的：守住解耦红线。
+5. **守住解耦约束** —— 不依赖具体 HTTP 或 GUI framework，仅依赖 `agent-domain` + `async-trait`。目的：守住解耦红线。
 
 ## 主要产出物
 
@@ -20,7 +20,7 @@
 
 ## 验收标准
 
-- [x] Trait 不绑定 HTTP/Tauri
+- [x] Trait 不绑定 HTTP/GPUI/Tauri
 - [x] canonical 覆盖 text/tool/image/thinking/usage/stop
 - [x] 错误可分类（可重试/不可重试/超时/限流/鉴权）
 

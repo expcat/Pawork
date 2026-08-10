@@ -4,7 +4,7 @@
 
 ## 1. 依赖约束
 
-`agent-domain` 不得依赖 Tauri、SQLite、HTTP Client、OS Keychain、Git、任何具体 Provider。详见 [workspace 结构 §6](workspace-layout.md) 与 [ADR-002](../adr/ADR-002-agent-engine-provider-decoupled.md)。
+`agent-domain` 不得依赖任何 GUI framework（包括 GPUI/Tauri）、SQLite、HTTP Client、OS Keychain、Git、任何具体 Provider。详见 [workspace 结构 §6](workspace-layout.md) 与 [ADR-002](../adr/ADR-002-agent-engine-provider-decoupled.md)。
 
 ## 2. 统一消息模型
 

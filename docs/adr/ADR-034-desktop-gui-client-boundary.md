@@ -1,6 +1,7 @@
 # ADR-034：Desktop GUI 是独立协议客户端与可重建视图
 
-- **状态**：Proposed
+- **状态**：Superseded
+- **取代说明**：2026-08-10 被 [ADR-035 GPUI 原生四层客户端](ADR-035-gpui-desktop.md) 取代——协议客户端与可重建视图的边界结论被继承，仅平台选型（Tauri/React/WebView）被取代。本文作为「可恢复回退」保留；若 [P19-1](../../plan/P19-1-desktop-shell.md) PoC 硬 Gate 失败，可按 ADR-035 可逆条款重新激活本文路径。
 - **日期**：2026-08-09
 
 ## 背景

@@ -9,7 +9,7 @@ Pi 当前以 TypeScript 实现模型接口、Agent Runtime、Coding Agent 与 TU
 
 ## 决策
 
-CLI 与 Rust Core 运行在同一进程、同一二进制（`pawork`）：不使用 Node；不使用 Bun；不嵌入 JavaScript Runtime；不启动 Pi Sidecar；不依赖 `@earendil-works/pi-*`；不实现 TUI。GUI 作为独立进程（后续 Tauri）经 GUI Connection Protocol 连接 CLI/Core，不嵌入 Core。沿用 Pi 的职责拆分，但不沿用其 TypeScript 实现。详见 [ADR-021](ADR-021-cli-core-same-process.md)、[ADR-022](ADR-022-gui-connects-via-cli.md)、[ADR-025](ADR-025-cli-is-sole-host.md)。
+CLI 与 Rust Core 运行在同一进程、同一二进制（`pawork`）：不使用 Node；不使用 Bun；不嵌入 JavaScript Runtime；不启动 Pi Sidecar；不依赖 `@earendil-works/pi-*`；不实现 TUI。GUI 作为独立 GPUI/Rust 进程经 GUI Connection Protocol 连接 CLI/Core，不嵌入 Core。沿用 Pi 的职责拆分，但不沿用其 TypeScript 实现。详见 [ADR-021](ADR-021-cli-core-same-process.md)、[ADR-022](ADR-022-gui-connects-via-cli.md)、[ADR-025](ADR-025-cli-is-sole-host.md)、[ADR-035](ADR-035-gpui-desktop.md)。
 
 ## 后果
 

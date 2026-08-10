@@ -9,7 +9,7 @@
 
 ## 决策
 
-GUI 作为独立进程，经 GUI Connection Protocol 连接 CLI 进程内的 GUI Server，再由 GUI Server 调用 `app-service`；CLI 命令也直接调用同一个 `app-service`。由 `app-service` 提供类型化 Command/Event、状态聚合、事件限流、任务监督与错误转换。Rust 类型（`core-api` / `gui-protocol`）是唯一 schema source，自动生成 TypeScript 类型。两条路径共享同一个 app-service 与 Event Hub（[ADR-024](ADR-024-shared-app-service-event-hub.md)）。
+GUI 作为独立进程，经 GUI Connection Protocol 连接 CLI 进程内的 GUI Server，再由 GUI Server 调用 `app-service`；CLI 命令也直接调用同一个 `app-service`。由 `app-service` 提供类型化 Command/Event、状态聚合、事件限流、任务监督与错误转换。Rust 类型（`core-api` / `gui-protocol`）是唯一 schema source；Rust 客户端直接消费这些类型，TypeScript 声明继续为非 Rust 客户端与契约工具自动生成。两条路径共享同一个 app-service 与 Event Hub（[ADR-024](ADR-024-shared-app-service-event-hub.md)）。
 
 ## 后果
 

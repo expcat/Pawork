@@ -57,6 +57,6 @@
 - **依赖**：Phase 19、P11-2。
 - **产出物**：desktop-gui.md 中的可行性研究章节与 ADR 交叉引用记录（查询日期 2026-08-09）。
 - **验收标准**：平台事实准确记录——security-scoped bookmarks（implicit，需 entitlement `files.bookmarks.app-scope`）传 workspace 访问；XPC helper 不自动继承 sandbox extension；明确 Desktop App Sandbox/XPC 只能是额外 host-level defense，不替代 Phase 11 CLI Seatbelt backend。
-- **相关文档**：[desktop-gui](../docs/features/desktop-gui.md) · [ADR-031](../docs/adr/ADR-031-sandbox-backend-architecture.md) · [ADR-034](../docs/adr/ADR-034-desktop-gui-client-boundary.md) · [P11-2 主任务](P11-2-sandbox-macos.md)
+- **相关文档**：[desktop-gui](../docs/features/desktop-gui.md) · [ADR-031](../docs/adr/ADR-031-sandbox-backend-architecture.md) · [ADR-035](../docs/adr/ADR-035-gpui-desktop.md) · [P11-2 主任务](P11-2-sandbox-macos.md)
 
 **相关文档**：[sandbox](../docs/features/sandbox.md) · [process](../docs/features/process.md) · [安全验收](../docs/quality/security-acceptance.md) · [ROADMAP](../ROADMAP.md)
