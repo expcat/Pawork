@@ -1,0 +1,16 @@
+[package]
+name = "transport-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 进程内 GUI Transport（测试用）：内存 channel 对，locality InProcess"
+
+[dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+transport-api = { path = "../transport-api" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -26,6 +26,7 @@ use std::{
 
 use app_database::{DatabaseActor, DatabaseError};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 const SCHEMA_VERSION: u32 = 1;
@@ -77,6 +78,28 @@ impl FromStr for BlobId {
         blake3::Hash::from_hex(value)
             .map(|hash| Self(hash.to_hex().to_string()))
             .map_err(|_| ArtifactStoreError::InvalidBlobId(value.to_string()))
+    }
+}
+
+// 序列化为 64 字符 hex 字符串（与 checkpoint-service 的字符串绕道格式一致），
+// 反序列化时复用 `FromStr` 校验，非法 hex 报错而非构造出无效 `BlobId`。
+impl Serialize for BlobId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for BlobId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+        let value = String::deserialize(deserializer)?;
+        Self::from_str(&value).map_err(D::Error::custom)
     }
 }
 
@@ -325,6 +348,91 @@ impl ArtifactStore {
         Ok(data)
     }
 
+    /// 按 `[offset, offset + limit)` 读取 blob 的一部分，完整性校验与
+    /// [`Self::get`] 相同（读取时重算 BLAKE3 哈希，检测缺失与损坏）。
+    ///
+    /// 错误语义（结构化可区分）：
+    ///
+    /// - blob 不存在：[`ArtifactStoreError::UnknownBlob`]；
+    /// - `limit == 0`（空范围）：[`ArtifactStoreError::EmptyRange`]；
+    /// - `offset > size`（offset 超尾）：[`ArtifactStoreError::RangeOffsetOutOfBounds`]；
+    /// - `offset == size && limit > 0`：返回空 `Vec`，作为分片循环的自然终止。
+    ///
+    /// 分片读取（如 100k 行 diff 按 ≤64KiB chunk 切分）时循环推进
+    /// `offset += chunk.len()`，直到返回空切片或错误。
+    pub async fn read_range(
+        &self,
+        id: &BlobId,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<u8>, ArtifactStoreError> {
+        let id_for_actor = id.clone();
+        let size = self
+            .database
+            .call(
+                move |connection| -> Result<Option<i64>, ArtifactStoreError> {
+                    let row = fetch_row(connection, &id_for_actor)?;
+                    if row.is_some() {
+                        connection.execute(
+                            "UPDATE artifact_blobs SET last_accessed_at_ms = ?2 WHERE hash = ?1",
+                            params![id_for_actor.as_str(), now_ms()],
+                        )?;
+                    }
+                    Ok(row.map(|(size, _)| size))
+                },
+            )
+            .await??;
+        let Some(size) = size else {
+            return Err(ArtifactStoreError::UnknownBlob { id: id.clone() });
+        };
+        let size = to_stored_u64(size, "size")?;
+        if limit == 0 {
+            return Err(ArtifactStoreError::EmptyRange {
+                id: id.clone(),
+                offset,
+                limit,
+            });
+        }
+        if offset > size {
+            return Err(ArtifactStoreError::RangeOffsetOutOfBounds {
+                id: id.clone(),
+                offset,
+                size,
+            });
+        }
+        let path = self.blob_path(id);
+        let data = fs::read(&path).map_err(|source| {
+            if source.kind() == io::ErrorKind::NotFound {
+                ArtifactStoreError::BlobMissing {
+                    id: id.clone(),
+                    path: path.clone(),
+                }
+            } else {
+                ArtifactStoreError::Io {
+                    source,
+                    path: path.clone(),
+                }
+            }
+        })?;
+        let actual = blake3::hash(&data);
+        let expected = id.to_hash();
+        if actual != expected {
+            return Err(ArtifactStoreError::BlobCorrupted {
+                id: id.clone(),
+                expected: expected.to_hex().to_string(),
+                actual: actual.to_hex().to_string(),
+            });
+        }
+        let start = offset as usize;
+        let end = offset.saturating_add(limit).min(size) as usize;
+        Ok(data[start..end].to_vec())
+    }
+
+    /// 查询 blob 的字节长度（复用 [`Self::metadata`] 的 `size`）。
+    pub async fn byte_length(&self, id: &BlobId) -> Result<u64, ArtifactStoreError> {
+        Ok(self.metadata(id).await?.size)
+    }
+
     /// 释放一个引用，返回剩余引用计数。
     ///
     /// blob 不存在返回 [`ArtifactStoreError::UnknownBlob`]；引用计数已为零返回
@@ -508,6 +616,10 @@ pub enum ArtifactStoreError {
     RefCountUnderflow { id: BlobId },
     #[error("blob {id} is missing from disk (expected at {path})")]
     BlobMissing { id: BlobId, path: PathBuf },
+    #[error("read range of blob {id} at offset {offset} with limit {limit} is empty (limit must be > 0)")]
+    EmptyRange { id: BlobId, offset: u64, limit: u64 },
+    #[error("read range offset {offset} is beyond blob {id} size {size}")]
+    RangeOffsetOutOfBounds { id: BlobId, offset: u64, size: u64 },
     #[error("blob {id} failed BLAKE3 verification: expected {expected}, actual {actual}")]
     BlobCorrupted {
         id: BlobId,

@@ -73,6 +73,7 @@ pub struct RunArgs {
 #[derive(Clone, Debug, Subcommand, PartialEq, Eq)]
 pub enum RunCommand {
     Cancel { run_id: String },
+    Retry { run_id: String },
 }
 
 #[derive(Clone, Debug, Subcommand, PartialEq, Eq)]
@@ -103,8 +104,18 @@ pub enum GuiCommand {
 
 #[derive(Clone, Debug, Subcommand, PartialEq, Eq)]
 pub enum RemoteCommand {
-    Publish,
-    Unpublish,
+    /// 发布一个远程 GUI 端点（P13-6 占位 Adapter）。
+    Publish {
+        /// 端点名称（缺省为 CLI 实例名）。
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// 撤销一个已发布的远程 GUI 端点（handle 来自 publish 输出）。
+    Unpublish {
+        /// publish 返回的 handle id。
+        #[arg(long)]
+        handle: String,
+    },
 }
 
 #[derive(Clone, Debug, Subcommand, PartialEq, Eq)]
@@ -124,9 +135,19 @@ pub enum McpCommand {
 
 #[derive(Clone, Debug, Subcommand, PartialEq, Eq)]
 pub enum ServiceCommand {
-    Install,
-    Start,
-    Stop,
+    /// 注册为系统服务（默认 dry-run，仅打印注册计划；`--apply` 才真正修改系统）。
+    Install {
+        #[arg(long)]
+        apply: bool,
+    },
+    Start {
+        #[arg(long)]
+        apply: bool,
+    },
+    Stop {
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 #[cfg(test)]
@@ -155,14 +176,80 @@ mod tests {
             &["pawork", "workspace", "list"],
             &["pawork", "session", "open", "session-1"],
             &["pawork", "run", "cancel", "run-1"],
+            &["pawork", "run", "retry", "run-1"],
             &["pawork", "approval", "approve", "tool-1"],
+            &["pawork", "remote", "publish"],
+            &["pawork", "remote", "publish", "--name", "edge"],
+            &["pawork", "remote", "unpublish", "--handle", "edge-0"],
             &["pawork", "provider", "list"],
             &["pawork", "auth", "login", "openai"],
             &["pawork", "plugin", "list"],
             &["pawork", "mcp", "doctor"],
+            &["pawork", "service", "install"],
+            &["pawork", "service", "install", "--apply"],
+            &["pawork", "service", "start"],
+            &["pawork", "service", "stop"],
         ];
         for command in commands {
             Cli::try_parse_from(*command).expect("nested command parses");
         }
+    }
+
+    #[test]
+    fn service_apply_flag_is_opt_in() {
+        let dry = Cli::try_parse_from(["pawork", "service", "install"]).expect("dry-run install");
+        let Command::Service(Nested {
+            command: ServiceCommand::Install { apply },
+        }) = &dry.command
+        else {
+            panic!("expected service install");
+        };
+        assert!(!apply, "install must default to dry-run");
+
+        let applied =
+            Cli::try_parse_from(["pawork", "service", "install", "--apply"]).expect("apply");
+        let Command::Service(Nested {
+            command: ServiceCommand::Install { apply },
+        }) = &applied.command
+        else {
+            panic!("expected service install");
+        };
+        assert!(apply);
+    }
+
+    #[test]
+    fn remote_publish_name_defaults_to_none_and_unpublish_requires_handle() {
+        let publish = Cli::try_parse_from(["pawork", "remote", "publish"]).expect("publish");
+        let Command::Remote(Nested {
+            command: RemoteCommand::Publish { name },
+        }) = &publish.command
+        else {
+            panic!("expected remote publish");
+        };
+        assert!(name.is_none(), "name must default to none");
+
+        let named =
+            Cli::try_parse_from(["pawork", "remote", "publish", "--name", "edge"]).expect("named");
+        let Command::Remote(Nested {
+            command: RemoteCommand::Publish { name },
+        }) = &named.command
+        else {
+            panic!("expected remote publish");
+        };
+        assert_eq!(name.as_deref(), Some("edge"));
+
+        let unpublish =
+            Cli::try_parse_from(["pawork", "remote", "unpublish", "--handle", "edge-0"])
+                .expect("unpublish");
+        let Command::Remote(Nested {
+            command: RemoteCommand::Unpublish { handle },
+        }) = &unpublish.command
+        else {
+            panic!("expected remote unpublish");
+        };
+        assert_eq!(handle, "edge-0");
+
+        // unpublish 缺少 handle 解析失败。
+        assert!(Cli::try_parse_from(["pawork", "remote", "unpublish"]).is_err());
     }
 }

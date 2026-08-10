@@ -1,0 +1,17 @@
+[package]
+name = "subscription-hub"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork Event Hub：全局序列 + ring buffer + 有界广播订阅 + replay"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+core-api = { path = "../core-api" }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Pawork CLI 文本与稳定 JSON 渲染"
 
 [dependencies]
+agent-domain = { path = "../agent-domain" }
 app-service = { path = "../app-service" }
+core-api = { path = "../core-api" }
 serde_json.workspace = true
-

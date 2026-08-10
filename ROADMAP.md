@@ -33,14 +33,14 @@
 | 10 | WASM Plugin | 7 | 7 | 🟢已完成（P10-1～P10-7 TargetVerified） |
 | 11 | Sandbox 与跨平台强化 | 8 | 8 | 🟢已完成（7 项 TargetVerified；P11-5 已归档） |
 | 12 | Multi-Agent | 6 | 7 | 🟢已完成（P12-1～P12-6 TargetVerified；P12-7 review-remediation 已完成） |
-| 13 | CLI Host 与多 GUI 协议 | 10 | 0 | 🟡未开始 |
+| 13 | CLI Host 与多 GUI 协议 | 10 | 10 | 🟢已完成（P13-1～P13-10 TargetVerified） |
 | 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
 | 15 | Provider Native Capabilities | 9 | 0 | 🟡未开始 |
 | 16 | Modern Agent Workflow | 9 | 0 | 🟡未开始 |
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **129** | — |
+| **合计** | — | **210** | **139** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -48,7 +48,9 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P15-1 Canonical Tool v2** —— Phase 9 MCP 已形成外部 Tool 接入闭环；下一项按实施波次与关键路径统一 Client Function / Provider Hosted / Extension 的 canonical tool 契约，为 Provider v2 与后续 Tool Search 打基础。详情见 [plan/P15-1-canonical-tool-v2.md](plan/P15-1-canonical-tool-v2.md)。
+> 🎯 **P14-1 Quota 领域模型与适配器 Trait** —— Phase 13 CLI Host 与多 GUI 协议已闭环，按 Phase 14 规划「建议在 Phase 13 之后推进」，下一项落地模型用量与额度监控：快照 / 窗口 / 适配器种类 / Trait。详情见 [plan/P14-1-quota-domain-adapter.md](plan/P14-1-quota-domain-adapter.md)。（P15-1 Canonical Tool v2 仍为 Provider v2 波次的关键路径，可在其后并行推进。）
+
+> ✅ **Phase 13 CLI Host 与多 GUI 协议已完成（P13-1～P13-10，TargetVerified）**：交付 `app-service` 统一 Command Router / `AppCommandEnvelope`（幂等、限流、RunSupervisor、审批、聚合状态）；`core-runtime` + `cli-host` + `pawork` 正式宿主与四种运行模式 + Event Hub；GUI Connection Protocol（握手协商 / 编解码 / Snapshot / Resume / 错误帧，ADR-036 版本化）；`gui-server` + `transport-local`（Unix Socket / Named Pipe）+ `transport-memory` + `client-auth`；多 GUI 运行时（Connection Manager 心跳/订阅/有界队列、慢客户端隔离、断线不取消 Run）；Remote Transport 占位 Adapter + Mock + `pawork remote publish/unpublish`；`artifact-store` 分片读取接入 app-service 并按 ≤64KiB 分片回真实 payload；`gui-client` SDK + `apps/protocol-test-gui` + 9 项 Contract Tests（3 GUI 并发、重连 Replay、命令幂等、100k 行 diff 流式、版本拒绝）。schema-typegen 覆盖全部协议类型并经 CI `--check` 防漂移。详见各 [plan/P13-*](plan/) 文档。
 
 > ✅ **Phase 12 Multi-Agent 已完成（P12-1～P12-6，TargetVerified）**：交付 `orchestration` crate（Supervisor/Worker 生命周期、TaskGraph、worktree 隔离、双层预算、patch merge、cancel tree），并落地其依赖的 P18 最小契约（`provider-control` / `tenant-service` / `usage-ledger` 与 `agent-domain` 的 Tenant/Principal/Agent 身份）。`agent-domain` 新增 `TenantId` / `PrincipalId` / `AgentId`；事件全部可序列化、可重放，崩溃恢复无悬挂 worker；Agent 只经 `CredentialLease` 使用 Provider，cancel 以 `LeaseOutcome::Cancelled` 幂等释放、不降低账号健康。完整账号控制面（P18-1～P18-15）仍待后续落地，本阶段仅交付 P12 编排实际消费的最小子集。
 
@@ -63,7 +65,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
    - P9-8 已完成（mcp-client 冗余/过度设计收口：删 `McpConfig::merge` 与单变体 `SecretValue`、合并双 `RestartPolicy`、收敛 `is_loopback_url`/URL 校验、删 `McpInvocationPolicy` 保留 adapter 五道门禁、`error.rs`+`session.rs` 并入 `lib.rs`、Resources/Prompts deferred-consumer 标记）；§4.1 adapter 门禁 vs 调度器门禁（P0，与 P15-1+ADR 协同）等接入期项显式延后。
 2. **Provider v2 前置**：完成 P15-1～P15-8，再由 P15-9 一次性执行 GPT / Claude / Grok 的完整 Provider Contract v2 门禁。P6-1 / P6-2 / P6-10 保留基础协议路径，Responses / modern server tools 在 Phase 15 扩展。
 3. **账号控制面基础**：完成 P18-1～P18-9。先建立 `Tenant/Principal`、`ProviderAccount/Credential`、Lease、错误/健康状态机、确定性路由、Session Affinity 与多维 Usage Ledger；`ModelProvider` 保持不变，旧配置映射到 `local/default + SingleCandidate`。Phase 12、Phase 14 与外部 Client Adapter 不得各自复制账号选择逻辑。
-4. **资源与 Host 基础**：Phase 8～9 已完成；继续推进 P13-1 / P13-2、P16-1 / P16-2 与 P18-10，形成 CLI/Core 正式宿主、可审批 Plan 和统一 Client Adapter 契约的最小闭环。
+4. **资源与 Host 基础**：Phase 8～9 与 Phase 13（P13-1～P13-10）已完成：CLI/Core 正式宿主（`pawork` 四种运行模式）、统一 app-service 入口、GUI Connection Protocol 与多 GUI 运行时已闭环；继续推进 P16-1 / P16-2 与 P18-10，形成可审批 Plan 和统一 Client Adapter 契约的最小闭环。
 5. **Process 与扩展生态**：完成 Phase 10、Phase 11，再推进 P16-4 / P16-6 与 P17-1～P17-4；可安装插件、用户 Hook、LSP 与后台进程闭环后执行一次相关 crates 的 L2，不跑无关功能簇。
 6. **Workflow、额度与编排**：推进 Phase 14、Phase 12、P16-3 / P16-5 / P16-7～P16-9、P17-5 / P17-6 与 P18-13 / P18-14；Quota 视图消费 P18-8 账本，Agent 只经 Lease 获取 Provider 资源，稳定后执行 workflow/orchestration L2。
 7. **公共 Client 与远程能力**：完成 P18-11 / P18-12、P17-7～P17-13，最后由 P18-15 集中执行账号池属性/并发、迁移、跨租户隔离、Codex/Claude/ACP golden 与故障注入门禁；发布候选再执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
@@ -461,16 +463,16 @@ Parent/Worker 编排，写入隔离，取消传播。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P13-1 | 🟡 | app-service 完整化 + 统一 Command Source | CLI/GUI 共享入口与来源记录 | [详情](plan/P13-1-app-service.md) |
-| P13-2 | 🟡 | CLI Host 装配与运行模式 | core-runtime + cli-host + pawork + 运行模式 + Event Hub | [详情](plan/P13-2-cli-host.md) |
-| P13-3 | 🟡 | GUI Connection Protocol | 协议契约（Command/Query/Event/Snapshot） | [详情](plan/P13-3-gui-protocol.md) |
-| P13-4 | 🟡 | GUI Server 与 Local Transport | CLI 内部协议服务器 + Unix Socket/Named Pipe | [详情](plan/P13-4-gui-server-local-transport.md) |
-| P13-5 | 🟡 | 多 GUI 运行时 | Connection Manager + Subscription Hub + Snapshot/Event Replay + 慢客户端隔离 | [详情](plan/P13-5-multi-gui-runtime.md) |
-| P13-6 | 🟡 | Remote Transport 占位与可替换 Adapter | 占位接口 + Mock 端到端 | [详情](plan/P13-6-remote-transport.md) |
-| P13-7 | 🟡 | TS 类型生成落地 | 自动生成一致 | [详情](plan/P13-7-ts-typegen-final.md) |
-| P13-8 | 🟡 | 大型 payload Artifact API | 按 ID 传递 | [详情](plan/P13-8-artifact-api.md) |
-| P13-9 | 🟡 | 测试 GUI Client 与 API Contract Tests | 协议测试端 + 契约套件 | [详情](plan/P13-9-gui-client-contract-tests.md) |
-| P13-10 | 🟡 | GUI Protocol schema 版本化 | 版本 + 兼容策略 | [详情](plan/P13-10-protocol-schema-version.md) |
+| P13-1 | 🟢 | app-service 完整化 + 统一 Command Source | CLI/GUI 共享入口与来源记录 | [详情](plan/P13-1-app-service.md) |
+| P13-2 | 🟢 | CLI Host 装配与运行模式 | core-runtime + cli-host + pawork + 运行模式 + Event Hub | [详情](plan/P13-2-cli-host.md) |
+| P13-3 | 🟢 | GUI Connection Protocol | 协议契约（Command/Query/Event/Snapshot） | [详情](plan/P13-3-gui-protocol.md) |
+| P13-4 | 🟢 | GUI Server 与 Local Transport | CLI 内部协议服务器 + Unix Socket/Named Pipe | [详情](plan/P13-4-gui-server-local-transport.md) |
+| P13-5 | 🟢 | 多 GUI 运行时 | Connection Manager + Subscription Hub + Snapshot/Event Replay + 慢客户端隔离 | [详情](plan/P13-5-multi-gui-runtime.md) |
+| P13-6 | 🟢 | Remote Transport 占位与可替换 Adapter | 占位接口 + Mock 端到端 | [详情](plan/P13-6-remote-transport.md) |
+| P13-7 | 🟢 | TS 类型生成落地 | 自动生成一致 | [详情](plan/P13-7-ts-typegen-final.md) |
+| P13-8 | 🟢 | 大型 payload Artifact API | 按 ID 传递 | [详情](plan/P13-8-artifact-api.md) |
+| P13-9 | 🟢 | 测试 GUI Client 与 API Contract Tests | 协议测试端 + 契约套件 | [详情](plan/P13-9-gui-client-contract-tests.md) |
+| P13-10 | 🟢 | GUI Protocol schema 版本化 | 版本 + 兼容策略 | [详情](plan/P13-10-protocol-schema-version.md) |
 
 ### Phase 14：模型用量与额度监控
 

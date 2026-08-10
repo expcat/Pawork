@@ -1,0 +1,30 @@
+[package]
+name = "gui-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork GUI Connection Protocol typed 连接 SDK：握手认证、版本协商、Command/Query 往返、订阅、Snapshot/Resume 重连、Artifact 分片读取、Ack/Heartbeat 与断开重连辅助"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+client-auth = { path = "../client-auth" }
+core-api = { path = "../core-api" }
+gui-protocol = { path = "../gui-protocol" }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+transport-api = { path = "../transport-api" }
+
+[dev-dependencies]
+app-service = { path = "../app-service" }
+artifact-store = { path = "../artifact-store" }
+connection-manager = { path = "../connection-manager" }
+gui-server = { path = "../gui-server" }
+provider-api = { path = "../provider-api" }
+serde_json.workspace = true
+subscription-hub = { path = "../subscription-hub" }
+tempfile.workspace = true
+test-support = { path = "../test-support" }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros", "time"] }
+transport-memory = { path = "../transport-memory" }

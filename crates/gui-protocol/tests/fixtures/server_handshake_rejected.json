@@ -1,0 +1,12 @@
+{
+  "data": {
+    "error": {
+      "code": "incompatible_version",
+      "message": "no compatible API version",
+      "retryable": false
+    },
+    "request_id": "request-1",
+    "status": "rejected"
+  },
+  "type": "handshake"
+}

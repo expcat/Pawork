@@ -1,0 +1,33 @@
+[package]
+name = "gui-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork CLI 进程内的 GUI 协议服务器：握手、认证、订阅、快照/重放、Command/Query/Artifact 帧循环"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+app-service = { path = "../app-service" }
+async-trait.workspace = true
+connection-manager = { path = "../connection-manager" }
+core-api = { path = "../core-api" }
+gui-protocol = { path = "../gui-protocol" }
+snapshot-service = { path = "../snapshot-service" }
+subscription-hub = { path = "../subscription-hub" }
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+thiserror.workspace = true
+tracing.workspace = true
+transport-api = { path = "../transport-api" }
+
+[dev-dependencies]
+artifact-store = { path = "../artifact-store" }
+client-auth = { path = "../client-auth" }
+provider-api = { path = "../provider-api" }
+serde_json.workspace = true
+tempfile.workspace = true
+test-support = { path = "../test-support" }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros"] }
+transport-local = { path = "../transport-local" }
+transport-memory = { path = "../transport-memory" }

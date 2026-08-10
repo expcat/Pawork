@@ -14,6 +14,12 @@ use ts_rs::TS;
 
 pub const API_VERSION: ApiVersion = ApiVersion { major: 1, minor: 0 };
 
+/// 宿主支持的完整 API 版本表（P13-10 schema 版本化）。
+///
+/// 同 major 内 minor 只增、已发布 minor 必须继续支持；删除或新增 major 走
+/// [ADR-036](../../docs/adr/ADR-036-gui-protocol-versioning.md) 定义的废弃与删除流程。
+pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[API_VERSION];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 pub struct ApiVersion {
     pub major: u16,
@@ -21,6 +27,18 @@ pub struct ApiVersion {
 }
 
 impl ApiVersion {
+    pub const fn new(major: u16, minor: u16) -> Self {
+        Self { major, minor }
+    }
+
+    /// 返回下一个 minor 版本（minor 只增策略下的常规演进入口）。
+    pub const fn bump_minor(self) -> Self {
+        Self {
+            major: self.major,
+            minor: self.minor + 1,
+        }
+    }
+
     pub const fn is_compatible_with(self, other: Self) -> bool {
         self.major == other.major
     }
@@ -609,5 +627,19 @@ mod tests {
     fn api_major_version_controls_compatibility() {
         assert!(API_VERSION.is_compatible_with(ApiVersion { major: 1, minor: 9 }));
         assert!(!API_VERSION.is_compatible_with(ApiVersion { major: 2, minor: 0 }));
+    }
+
+    #[test]
+    fn version_helpers_and_supported_table_are_consistent() {
+        assert_eq!(ApiVersion::new(1, 0), API_VERSION);
+        assert_eq!(ApiVersion::new(1, 0).bump_minor(), ApiVersion::new(1, 1));
+        assert_eq!(
+            ApiVersion::new(1, 0).bump_minor().bump_minor(),
+            ApiVersion::new(1, 2)
+        );
+        assert!(SUPPORTED_API_VERSIONS.contains(&API_VERSION));
+        assert!(SUPPORTED_API_VERSIONS
+            .iter()
+            .all(|version| version.major == API_VERSION.major));
     }
 }

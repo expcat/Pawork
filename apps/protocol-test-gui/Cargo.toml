@@ -1,0 +1,29 @@
+[package]
+name = "protocol-test-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork GUI Connection Protocol 测试客户端：--self-test 进程内契约场景逐项自检；--connect 外部连接模式仅握手 + status 查询"
+
+[dependencies]
+agent-domain = { path = "../../crates/agent-domain" }
+app-service = { path = "../../crates/app-service" }
+artifact-store = { path = "../../crates/artifact-store" }
+client-auth = { path = "../../crates/client-auth" }
+clap.workspace = true
+connection-manager = { path = "../../crates/connection-manager" }
+core-api = { path = "../../crates/core-api" }
+gui-client = { path = "../../crates/gui-client" }
+gui-protocol = { path = "../../crates/gui-protocol" }
+gui-server = { path = "../../crates/gui-server" }
+provider-api = { path = "../../crates/provider-api" }
+serde_json.workspace = true
+subscription-hub = { path = "../../crates/subscription-hub" }
+tempfile.workspace = true
+test-support = { path = "../../crates/test-support" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+transport-api = { path = "../../crates/transport-api" }
+transport-local = { path = "../../crates/transport-local" }
+transport-memory = { path = "../../crates/transport-memory" }

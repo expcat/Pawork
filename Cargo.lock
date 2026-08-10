@@ -151,10 +151,24 @@ dependencies = [
 name = "app-service"
 version = "0.0.0"
 dependencies = [
+ "agent-domain",
+ "agent-engine",
+ "agent-events",
+ "artifact-store",
+ "async-trait",
  "core-api",
+ "diff-service",
  "directories",
+ "model-registry",
+ "provider-api",
  "serde",
  "serde_json",
+ "tempfile",
+ "test-support",
+ "thiserror 2.0.20",
+ "tokio",
+ "tool-api",
+ "workspace-service",
 ]
 
 [[package]]
@@ -191,6 +205,8 @@ dependencies = [
  "app-database",
  "blake3",
  "rusqlite",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -587,21 +603,38 @@ dependencies = [
 name = "cli-host"
 version = "0.0.0"
 dependencies = [
+ "agent-domain",
  "app-service",
  "clap",
  "cli-command",
  "cli-renderer",
  "core-api",
+ "core-runtime",
  "serde_json",
+ "subscription-hub",
+ "test-support",
  "tokio",
+ "transport-remote-placeholder",
 ]
 
 [[package]]
 name = "cli-renderer"
 version = "0.0.0"
 dependencies = [
+ "agent-domain",
  "app-service",
+ "core-api",
  "serde_json",
+]
+
+[[package]]
+name = "client-auth"
+version = "0.0.0"
+dependencies = [
+ "gui-protocol",
+ "rand 0.8.7",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -667,6 +700,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "connection-manager"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "core-api",
+ "gui-protocol",
+ "thiserror 2.0.20",
+ "tokio",
+ "transport-api",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -718,6 +763,21 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "core-runtime"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "app-service",
+ "core-api",
+ "provider-api",
+ "serde_json",
+ "subscription-hub",
+ "test-support",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "cpufeatures"
@@ -1509,6 +1569,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "gui-client"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "app-service",
+ "artifact-store",
+ "client-auth",
+ "connection-manager",
+ "core-api",
+ "gui-protocol",
+ "gui-server",
+ "provider-api",
+ "serde_json",
+ "subscription-hub",
+ "tempfile",
+ "test-support",
+ "thiserror 2.0.20",
+ "tokio",
+ "transport-api",
+ "transport-memory",
+]
+
+[[package]]
 name = "gui-protocol"
 version = "0.0.0"
 dependencies = [
@@ -1518,6 +1601,32 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "ts-rs",
+]
+
+[[package]]
+name = "gui-server"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "app-service",
+ "artifact-store",
+ "async-trait",
+ "client-auth",
+ "connection-manager",
+ "core-api",
+ "gui-protocol",
+ "provider-api",
+ "serde_json",
+ "snapshot-service",
+ "subscription-hub",
+ "tempfile",
+ "test-support",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "transport-api",
+ "transport-local",
+ "transport-memory",
 ]
 
 [[package]]
@@ -2516,8 +2625,10 @@ dependencies = [
  "clap",
  "cli-command",
  "cli-host",
+ "core-runtime",
  "serde_json",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2760,6 +2871,31 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "protocol-test-gui"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "app-service",
+ "artifact-store",
+ "clap",
+ "client-auth",
+ "connection-manager",
+ "core-api",
+ "gui-client",
+ "gui-protocol",
+ "gui-server",
+ "provider-api",
+ "serde_json",
+ "subscription-hub",
+ "tempfile",
+ "test-support",
+ "tokio",
+ "transport-api",
+ "transport-local",
+ "transport-memory",
 ]
 
 [[package]]
@@ -3915,6 +4051,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "snapshot-service"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "app-service",
+ "core-api",
+ "gui-protocol",
+ "serde_json",
+ "subscription-hub",
+ "thiserror 2.0.20",
+ "workspace-service",
+]
+
+[[package]]
 name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3973,6 +4123,16 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "subscription-hub"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "core-api",
+ "thiserror 2.0.20",
+ "tokio",
+]
 
 [[package]]
 name = "subtle"
@@ -4441,6 +4601,43 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "transport-local"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "tempfile",
+ "tokio",
+ "transport-api",
+]
+
+[[package]]
+name = "transport-memory"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "tokio",
+ "transport-api",
+]
+
+[[package]]
+name = "transport-remote-placeholder"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "app-service",
+ "async-trait",
+ "client-auth",
+ "core-api",
+ "gui-protocol",
+ "gui-server",
+ "serde",
+ "subscription-hub",
+ "tempfile",
+ "tokio",
+ "transport-api",
 ]
 
 [[package]]

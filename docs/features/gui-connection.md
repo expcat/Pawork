@@ -21,6 +21,7 @@
 | `subscription-hub` | 将 Core Event 广播给 CLI 渲染器与所有 GUI，保证相同顺序 |
 | `snapshot-service` | 为 GUI 生成当前状态快照与重连恢复（Snapshot 重建或 Event Replay） |
 | `client-auth` | GUI 客户端身份验证 |
+| `gui-client` | 协议测试客户端与未来 GPUI Desktop 复用的 Rust 连接 SDK（握手/订阅/Snapshot/Resume/Artifact 分片读取/心跳），无 GUI 框架依赖 |
 | `transport-*` | 传输实现：`transport-local`（Unix Socket / Named Pipe）、`transport-memory`（测试）、`transport-remote-placeholder`（可替换远程 Adapter） |
 
 ## 数据模型
@@ -43,6 +44,7 @@ pub struct GuiClientSession {
 pub enum ConnectionLocality {
     Local,
     Remote,
+    InProcess,
 }
 ```
 

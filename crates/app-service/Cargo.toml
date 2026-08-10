@@ -5,10 +5,27 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork 进程内应用服务与命令路由骨架"
+description = "Pawork 进程内应用服务：统一 Command Router、状态聚合、事件限流、任务监督与审批注册"
 
 [dependencies]
+agent-domain = { path = "../agent-domain" }
+agent-engine = { path = "../agent-engine" }
+agent-events = { path = "../agent-events" }
+artifact-store = { path = "../artifact-store" }
+async-trait.workspace = true
 core-api = { path = "../core-api" }
+diff-service = { path = "../diff-service" }
 directories.workspace = true
+model-registry = { path = "../model-registry" }
+provider-api = { path = "../provider-api" }
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+tool-api = { path = "../tool-api" }
+workspace-service = { path = "../workspace-service" }
+
+[dev-dependencies]
+tempfile.workspace = true
+test-support = { path = "../test-support" }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }

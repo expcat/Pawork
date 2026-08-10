@@ -2,19 +2,53 @@
 //!
 //! 本 crate 只定义帧、版本协商、Snapshot 与重连语义，不实现 Server、连接管理
 //! 或 Transport。所有帧都有有界 JSON codec，避免慢客户端或大型 payload 占满内存。
+//!
+//! 模块划分：
+//! - [`codec`]：有界 JSON 编解码与 u32 LE 长度前缀分帧读写；
+//! - [`handshake`]：版本协商、握手服务端逻辑与信封版本校验；
+//! - [`resume`]：重连 disposition 计算；
+//! - [`snapshot`]：Snapshot 结构校验；
+//! - [`error`]：线上结构化错误的构造与 IncompatibleVersion 产生路径。
+//!
+//! 线上 serde 格式（tag/content/rename_all）是冻结契约，见
+//! [ADR-036](../../docs/adr/ADR-036-gui-protocol-versioning.md)。
 
 use agent_domain::{ArtifactId, CommandId, ConnectionId, CoreInstanceId, GuiClientId, Timestamp};
 use core_api::{
     ApiHandle, ApiVersion, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope,
     AppResponseEnvelope, EventStream, GlobalSequence,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use thiserror::Error;
 use ts_rs::TS;
 
+pub mod codec;
+pub mod error;
+pub mod handshake;
+pub mod resume;
+pub mod snapshot;
+
+pub use codec::{
+    decode_client_frame, decode_length_prefixed, decode_server_frame, encode_client_frame,
+    encode_length_prefixed, encode_server_frame, read_client_frame, read_frame, read_server_frame,
+    write_client_frame, write_frame, write_server_frame, ProtocolCodecError,
+    FRAME_LENGTH_PREFIX_BYTES,
+};
+pub use handshake::{
+    decode_client_frame_checked, decode_server_frame_checked, ensure_compatible_api_version,
+    negotiate_api_version, negotiate_api_version_with, validate_client_frame_api_version,
+    validate_server_frame_api_version, ClientAuthenticator, HandshakeService, HandshakeSession,
+};
+pub use resume::{compute_resume_disposition, ResumeContext};
+
+/// 单帧线上 JSON 上限（含长度前缀）。
 pub const MAX_PROTOCOL_FRAME_BYTES: usize = 1024 * 1024;
+/// Artifact chunk 数据上限（大 payload 走 Artifact ID，[ADR-018]）。
+///
+/// [ADR-018]: ../../docs/adr/ADR-018-large-payload-artifact-id.md
 pub const MAX_ARTIFACT_CHUNK_BYTES: usize = 64 * 1024;
+/// Snapshot section 内联 data 的编码后上限；超过则必须改用 `artifact_id`。
+pub const MAX_SNAPSHOT_SECTION_DATA_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
@@ -87,6 +121,9 @@ pub enum HandshakeResponse {
         client_id: GuiClientId,
         connection_id: ConnectionId,
         resume: ResumeDisposition,
+        /// 服务端按自身能力筛选后授予的能力列表；空列表时省略。
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        capabilities: Vec<GuiCapability>,
     },
     Rejected {
         request_id: String,
@@ -168,7 +205,7 @@ pub struct Snapshot {
 pub struct SnapshotSection {
     pub kind: SnapshotSectionKind,
     pub revision: u64,
-    /// Snapshot 必须有界；大型内容改用 `artifact_id`。
+    /// Snapshot 必须有界；大型内容改用 `artifact_id`（与 `artifact_id` 互斥）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -241,174 +278,4 @@ pub enum ProtocolErrorCode {
     ReplayUnavailable,
     FrameTooLarge,
     Internal,
-}
-
-pub fn negotiate_api_version(
-    client_supported: &[ApiVersion],
-    server: ApiVersion,
-) -> Option<ApiVersion> {
-    client_supported
-        .iter()
-        .copied()
-        .filter(|candidate| candidate.major == server.major)
-        .map(|candidate| ApiVersion {
-            major: server.major,
-            minor: candidate.minor.min(server.minor),
-        })
-        .max()
-}
-
-pub fn encode_client_frame(frame: &ClientFrame) -> Result<Vec<u8>, ProtocolCodecError> {
-    encode_bounded(frame)
-}
-
-pub fn decode_client_frame(bytes: &[u8]) -> Result<ClientFrame, ProtocolCodecError> {
-    decode_bounded(bytes)
-}
-
-pub fn encode_server_frame(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolCodecError> {
-    if let ServerFrame::ArtifactChunk(chunk) = frame {
-        chunk.validate()?;
-    }
-    encode_bounded(frame)
-}
-
-pub fn decode_server_frame(bytes: &[u8]) -> Result<ServerFrame, ProtocolCodecError> {
-    let frame: ServerFrame = decode_bounded(bytes)?;
-    if let ServerFrame::ArtifactChunk(chunk) = &frame {
-        chunk.validate()?;
-    }
-    Ok(frame)
-}
-
-fn encode_bounded<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolCodecError> {
-    let bytes = serde_json::to_vec(value).map_err(ProtocolCodecError::InvalidJson)?;
-    ensure_frame_size(bytes.len())?;
-    Ok(bytes)
-}
-
-fn decode_bounded<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolCodecError> {
-    ensure_frame_size(bytes.len())?;
-    serde_json::from_slice(bytes).map_err(ProtocolCodecError::InvalidJson)
-}
-
-fn ensure_frame_size(actual: usize) -> Result<(), ProtocolCodecError> {
-    if actual > MAX_PROTOCOL_FRAME_BYTES {
-        return Err(ProtocolCodecError::FrameTooLarge {
-            actual,
-            limit: MAX_PROTOCOL_FRAME_BYTES,
-        });
-    }
-    Ok(())
-}
-
-#[derive(Debug, Error)]
-pub enum ProtocolCodecError {
-    #[error("invalid protocol JSON: {0}")]
-    InvalidJson(serde_json::Error),
-    #[error("protocol frame is too large: {actual} bytes, limit {limit}")]
-    FrameTooLarge { actual: usize, limit: usize },
-    #[error("artifact chunk is too large: {actual} bytes, limit {limit}")]
-    ArtifactChunkTooLarge { actual: usize, limit: usize },
-}
-
-#[cfg(test)]
-mod tests {
-    use core_api::API_VERSION;
-
-    use super::*;
-
-    #[test]
-    fn handshake_round_trip_and_version_negotiation() {
-        let frame = ClientFrame::Handshake(HandshakeRequest {
-            request_id: "request-1".into(),
-            client_name: "desktop".into(),
-            client_version: "0.1.0".into(),
-            supported_api_versions: vec![
-                ApiVersion { major: 1, minor: 0 },
-                ApiVersion { major: 1, minor: 2 },
-                ApiVersion { major: 2, minor: 0 },
-            ],
-            capabilities: vec![GuiCapability::Events, GuiCapability::Snapshots],
-            authentication: Some(ClientAuthentication {
-                scheme: "bearer".into(),
-                proof: "secret".into(),
-            }),
-        });
-        let bytes = encode_client_frame(&frame).expect("encode frame");
-        let decoded = decode_client_frame(&bytes).expect("decode frame");
-        assert_eq!(decoded, frame);
-        assert_eq!(
-            negotiate_api_version(
-                &[
-                    ApiVersion { major: 1, minor: 2 },
-                    ApiVersion { major: 2, minor: 0 }
-                ],
-                API_VERSION,
-            ),
-            Some(API_VERSION)
-        );
-    }
-
-    #[test]
-    fn resume_explicitly_selects_replay_or_snapshot() {
-        let replay = ResumeDisposition::Replay {
-            from_sequence: GlobalSequence(11),
-            through_sequence: GlobalSequence(20),
-        };
-        let snapshot = ResumeDisposition::SnapshotRequired {
-            earliest_available_sequence: GlobalSequence(15),
-        };
-        assert_ne!(replay, snapshot);
-    }
-
-    #[test]
-    fn oversized_frames_and_artifact_chunks_are_rejected() {
-        let bytes = vec![b' '; MAX_PROTOCOL_FRAME_BYTES + 1];
-        assert!(matches!(
-            decode_client_frame(&bytes),
-            Err(ProtocolCodecError::FrameTooLarge { .. })
-        ));
-
-        let frame = ServerFrame::ArtifactChunk(ArtifactChunk {
-            request_id: "request-1".into(),
-            artifact_id: ArtifactId::from("artifact-1"),
-            offset: 0,
-            data: vec![0; MAX_ARTIFACT_CHUNK_BYTES + 1],
-            eof: false,
-        });
-        assert!(matches!(
-            encode_server_frame(&frame),
-            Err(ProtocolCodecError::ArtifactChunkTooLarge { .. })
-        ));
-    }
-
-    #[test]
-    fn snapshot_is_anchored_to_global_sequence() {
-        let snapshot = Snapshot {
-            instance_id: CoreInstanceId::from("instance-1"),
-            snapshot_sequence: GlobalSequence(42),
-            generated_at: Timestamp::from_unix_millis(1),
-            sections: vec![SnapshotSection {
-                kind: SnapshotSectionKind::ActiveRuns,
-                revision: 3,
-                data: Some(serde_json::json!({"run_ids": ["run-1"]})),
-                artifact_id: None,
-            }],
-        };
-        let frame = ServerFrame::Snapshot(snapshot.clone());
-        let decoded = decode_server_frame(&encode_server_frame(&frame).expect("encode snapshot"))
-            .expect("decode snapshot");
-        assert_eq!(decoded, frame);
-        assert_eq!(snapshot.snapshot_sequence, GlobalSequence(42));
-    }
-
-    #[test]
-    fn authentication_debug_is_redacted() {
-        let auth = ClientAuthentication {
-            scheme: "bearer".into(),
-            proof: "secret".into(),
-        };
-        assert!(!format!("{auth:?}").contains("secret"));
-    }
 }

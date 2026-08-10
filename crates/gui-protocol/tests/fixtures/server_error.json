@@ -1,0 +1,11 @@
+{
+  "data": {
+    "error": {
+      "code": "frame_too_large",
+      "message": "protocol frame is too large",
+      "retryable": false
+    },
+    "request_id": "request-2"
+  },
+  "type": "error"
+}

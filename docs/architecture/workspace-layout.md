@@ -70,22 +70,22 @@ Pawork/
 | `hook-runtime` | 进程内 WASM 插件 lifecycle Hook 的确定性、错误隔离派发 | 依赖 plugin-api；与 P17-1 user-hooks 平级且不重复派发 |
 | `orchestration` | Multi-Agent、Supervisor/Worker 生命周期、TaskGraph、worktree 隔离、双层预算、patch merge、cancel tree（Phase 12，P2） | 依赖 agent-domain / git-service / diff-service / provider-control / tenant-service / usage-ledger；不依赖 agent-engine / agent-events / checkpoint-service，复用 agent-domain CancellationToken 与 ids |
 | `core-api` | 应用层 Command / Event / Query 类型（CLI 与 GUI 共享的 schema source） | Phase 0 依赖 agent-domain / agent-events；后续由 app-service 使用 |
-| `core-runtime` | 完整 Core 生命周期与业务运行时装配 | 依赖 agent-api 及几乎所有核心 |
-| `app-service` | CLI 与 GUI 共享的应用 API、状态聚合、监督 | P1 骨架依赖 core-api；Phase 13 接入 core-runtime |
-| `cli-host` | 将 Core、CLI、GUI Server 装配到同一进程、生命周期管理 | 依赖 app-service |
+| `core-runtime` | 完整 Core 生命周期与业务运行时装配：AppService/CommandRouter + EventHub + EventPump（10ms 轮询 drain_events 发布到 Hub）+ register_provider 透传 + shutdown | 依赖 app-service / subscription-hub；P13-2 已交付 |
+| `app-service` | CLI 与 GUI 共享的应用 API、状态聚合、监督 | P1 骨架依赖 core-api；Phase 13 由 core-runtime 装配 |
+| `cli-host` | 将 Core、CLI、GUI Server 装配到同一进程、生命周期管理；四种运行模式（run / serve / shell / service） | 依赖 app-service / subscription-hub / cli-command / cli-renderer / core-api；P13-2 已交付（GUI Server 装配位为 trait，P13-4 落地） |
 | `cli-command` | 命令解析与稳定命令模型 | 独立；由 cli-host 映射到 app-service |
-| `cli-renderer` | CLI 文本 / JSON / 流式输出（消费 Event Hub） | P1 骨架依赖 app-service；Phase 13 接入 core-api / agent-events |
+| `cli-renderer` | CLI 文本 / JSON / 流式输出（`render_event` 消费 Event Hub 的 AppEventEnvelope） | 依赖 app-service / core-api；P13-2 已交付 |
 | `gui-protocol` | GUI Command / Query / Event / Snapshot 协议类型 | 依赖 core-api |
-| `gui-server` | CLI 内部运行的 GUI 协议服务器 | 依赖 gui-protocol / app-service |
+| `gui-server` | CLI 内部运行的 GUI 协议服务器：bind→accept→每连接握手（HandshakeService + ClientAuthenticator）→帧循环（Command/Query 派发 app-service、ArtifactRead 按 64 KiB 分片、Heartbeat→Pong、Subscribe/Unsubscribe/Resume/SnapshotRequest/Ack 真实接线：首连握手后发 Snapshot，事件经每连接有界队列发送，Resume 按 disposition Replay 或降级 Snapshot，Ack 记录 last_ack，心跳超时断线清理不取消 Run） | 依赖 gui-protocol / app-service / transport-api / core-api / agent-domain / connection-manager / snapshot-service / subscription-hub；P13-4/P13-5 已交付 |
 | `gui-client` | Desktop GUI 与协议测试客户端使用的 Rust typed 连接 SDK：握手、认证、订阅、Snapshot/Event 重连 | 依赖 gui-protocol / transport-api；不得依赖 core-runtime / app-service |
-| `connection-manager` | 管理一个 CLI 实例上的多个 GUI 连接 | 依赖 gui-server |
-| `subscription-hub` | 将 Core Event 广播给 CLI 与所有 GUI | 依赖 core-api / agent-events |
-| `snapshot-service` | 为 GUI 提供当前状态快照与重连恢复 | 依赖 app-service |
-| `client-auth` | GUI 客户端身份验证 | 依赖 auth-service |
+| `connection-manager` | 多 GUI 在线管理：`GuiClientSession`（元数据 / 心跳 / last_ack / 订阅 / lagged 标记）、register/unregister、有界事件队列（满则标记 Lagged，不阻塞发布者）、心跳超时断线清理（绝不取消 Run） | 依赖 agent-domain / core-api / gui-protocol / transport-api；P13-5 已交付 |
+| `subscription-hub` | Event Hub：全局序列（AtomicU64）+ ring buffer（默认 4096）+ 有界广播订阅 + earliest_available / current / replay | 依赖 core-api / agent-domain；P13-2 已交付 |
+| `snapshot-service` | 为 GUI 提供当前状态快照与重连恢复：从 app-service AggregateState 生成六类 section，snapshot_sequence 取 EventHub current() | 依赖 app-service / subscription-hub；P13-5 已交付 |
+| `client-auth` | GUI 客户端身份验证：token 文件生成/加载、constant-time 比较，实现 gui-protocol 的 ClientAuthenticator | 依赖 gui-protocol；auth-service 接入待后续；P13-4 已交付 |
 | `transport-api` | GuiTransportServer / Client / 帧抽象 | 独立 |
-| `transport-local` | 本地 Transport（Unix Socket / Named Pipe） | 依赖 transport-api |
-| `transport-memory` | 进程内 Transport（测试用） | 依赖 transport-api |
-| `transport-remote-placeholder` | 远程 Transport 占位接口（可替换 Adapter） | 依赖 transport-api |
+| `transport-local` | 本地 Transport（Unix Socket / Named Pipe），u32 LE 长度前缀分帧（与 gui-protocol 一致，有界帧校验） | 依赖 transport-api；P13-4 已交付 |
+| `transport-memory` | 进程内 Transport（测试用）：内存 channel 对，locality InProcess | 依赖 transport-api；P13-4 已交付 |
+| `transport-remote-placeholder` | 远程 Transport 可替换 Adapter 占位：`RemoteGuiTransportProvider`（publish/unpublish/描述）与 `RemoteGuiConnector`（connect）+ `MockRemoteTransport`（loopback，locality Remote，端点 `TransportEndpoint::Remote`）；不含真实内网穿透（P17-11 承接） | 依赖 transport-api；P13-6 已交付 |
 | `diagnostics` | 诊断包、脱敏日志、metrics | 横切 |
 | `test-support` | Mock Provider / Mock Tool、测试工具 | 仅测试依赖 |
 | `schema-typegen` | 从 core-api / gui-protocol 生成并校验 `.d.ts` | 仅构建工具依赖 core-api / gui-protocol，不进入运行时 |

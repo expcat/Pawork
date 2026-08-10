@@ -1,0 +1,20 @@
+[package]
+name = "snapshot-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork GUI 快照服务：从 AggregateState 生成 Snapshot sections 与重连恢复"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+app-service = { path = "../app-service" }
+core-api = { path = "../core-api" }
+gui-protocol = { path = "../gui-protocol" }
+serde_json.workspace = true
+subscription-hub = { path = "../subscription-hub" }
+thiserror.workspace = true
+
+[dev-dependencies]
+workspace-service = { path = "../workspace-service" }

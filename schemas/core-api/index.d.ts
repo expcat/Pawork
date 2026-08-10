@@ -40,3 +40,4 @@ export type { ToolCallId } from "./ToolCallId";
 export type { WorkspaceId } from "./WorkspaceId";
 export type { WorkspaceRelativePath } from "./WorkspaceRelativePath";
 export type { JsonValue } from "./serde_json/JsonValue";
+export { API_VERSION, SUPPORTED_API_VERSIONS } from "./versions";

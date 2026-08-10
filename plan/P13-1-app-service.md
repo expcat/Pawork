@@ -1,6 +1,6 @@
 # P13-1：app-service 完整化 + 统一 Command Source
 
-> Phase 13 · CLI Host 与多 GUI 协议 · 状态：🟡未开始 · 依赖：Phase 3（P3-1~P3-10）、P0-8
+> Phase 13 · CLI Host 与多 GUI 协议 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：Phase 3（P3-1~P3-10）、P0-8
 
 **最终目的**：完整化 app-service（全部 Command/Query/Event、状态聚合、事件限流、任务监督、错误转换），并落地统一 Command Source：CLI 与 GUI 命令进入同一 Command Router，统一转换为 `AppCommandEnvelope`（command_id/source/identity/idempotency_key），保证可追溯来源与去重。app-service 是 CLI 与 GUI 共享的唯一稳定入口（[ADR-006](../docs/adr/ADR-006-tauri-via-app-service.md)/[017](../docs/adr/ADR-017-gui-no-direct-access.md)/[024](../docs/adr/ADR-024-shared-app-service-event-hub.md)）。
 
@@ -20,8 +20,24 @@
 
 ## 验收标准
 
-- [ ] app-service 是 CLI 与 GUI 共享的唯一入口
-- [ ] CLI 与 GUI 命令均记录来源与身份
-- [ ] 网络重试不会重复创建 Run 或消息
+- [x] app-service 是 CLI 与 GUI 共享的唯一入口
+- [x] CLI 与 GUI 命令均记录来源与身份
+- [x] 网络重试不会重复创建 Run 或消息
+
+## 实现记录（2026-08-10）
+
+- `CommandRouter`（dispatch / dispatch_query）作为 CLI 与 GUI 的唯一命令/查询
+  入口：`AppCommandEnvelope`（command_id / source / identity / idempotency_key /
+  expected_revision）统一路由，`CommandSource` 区分 LocalCli / LocalGui /
+  RemoteGui，来源与身份计数记录在册。
+- `IdempotencyStore`：同 command_id / idempotency_key 重放返回首次响应，错误
+  响应不缓存；`RateLimiter`（窗口 + 缓冲）与 `RunSupervisor`（真实
+  ProviderLoop，并发上限、取消、失败释放 lease）；`ApprovalRegistry` 集中
+  审批；`AggregateState` 聚合 workspace / session / run / approval / provider /
+  artifact / gui_client / terminal。
+- 所有错误统一转为 `core_api::ErrorContext` 并包装为 `AppResponse::Error`，
+  CLI 与 GUI 看到同一错误协议，不泄漏 Secret。
+- 测试：38 项（app-service 单测 + router_integration / run_lifecycle 集成），
+  覆盖来源记录、幂等重放、限流、Run 生命周期与审批。
 
 **相关文档**：[GUI Connection Protocol](../docs/architecture/api-surface.md) · [ADR-006](../docs/adr/ADR-006-tauri-via-app-service.md) · [ADR-017](../docs/adr/ADR-017-gui-no-direct-access.md) · [ADR-024](../docs/adr/ADR-024-shared-app-service-event-hub.md) · [ROADMAP](../ROADMAP.md)
