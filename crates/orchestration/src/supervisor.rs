@@ -8,7 +8,7 @@
 //! - 恢复：重放事件后，任何仍处于活动态且无存活运行时的 worker 一律标记
 //!   `Failed`，不留悬挂 worker。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,6 +18,8 @@ use agent_domain::{AgentId, CancellationToken, ModelId, ProviderId};
 use provider_control::{CredentialPool, LeaseGuard, LeaseOutcome};
 use tenant_service::TenantPolicyEngine;
 use usage_ledger::UsageLedger;
+#[cfg(test)]
+use usage_ledger::{InMemoryUsageLedger, UsageLedgerError, UsageQuery, UsageRecord, UsageTotals};
 
 use crate::budget::{
     LedgerContext, WorkerBudgetController, WorkerBudgetLimits, DIM_COST_MICROS, DIM_INPUT_TOKENS,
@@ -134,6 +136,57 @@ pub enum SupervisorError {
     /// patch 合并错误。
     #[error("merge error: {0}")]
     Merge(String),
+    /// worker 已终态，拒绝再记录用量（终态后用量 flush 由 `flush_usage` 重试）。
+    #[error("worker terminal, record_usage rejected: {0}")]
+    WorkerTerminal(AgentId),
+    /// 终态用量 flush 失败，controller 已保留在 budget 表中，可经 `flush_usage` 重试。
+    #[error("usage flush pending for terminal worker: {0}")]
+    UsageFlushPending(AgentId),
+    /// worker 尚未终态，`flush_usage` 拒绝执行（终态后才允许 flush）。
+    #[error("worker not terminal, flush_usage rejected: {0}")]
+    FlushNotTerminal(AgentId),
+    /// 终态 worker 的 flush 状态不一致：controller 存在但归属 ctx 缺失。
+    #[error("flush context missing for terminal worker: {0}")]
+    FlushContextMissing(AgentId),
+    /// cancel_tree 已取消全部节点，但部分终态用量 flush 失败待重试。错误携带
+    /// 本次取消结果与待重试 agent 列表，取消本身已完成、不吞 pending。
+    #[error("cancel tree completed, usage flush pending for: {pending:?}")]
+    CancelTreeFlushPending {
+        /// 本次取消的实际结果（节点与 lease 计数）。
+        receipt: CancelTreeReceipt,
+        /// 终态用量 flush 失败、仍待经 `flush_usage` 重试的 agent 列表。
+        pending: Vec<AgentId>,
+    },
+}
+
+/// 用量 flush 在途标记（RAII）：进入 flush 前登记，结束时（含 future 被
+/// drop / 取消）自动清除。仅在同步段操作，不跨 await 持有任何锁。
+struct FlushTicket {
+    inflight: Arc<Mutex<BTreeSet<AgentId>>>,
+    agent_id: AgentId,
+}
+
+impl FlushTicket {
+    /// 登记 `agent_id` 的在途标记并返回票据。
+    fn issue(inflight: &Arc<Mutex<BTreeSet<AgentId>>>, agent_id: &AgentId) -> Self {
+        inflight
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(agent_id.clone());
+        Self {
+            inflight: Arc::clone(inflight),
+            agent_id: agent_id.clone(),
+        }
+    }
+}
+
+impl Drop for FlushTicket {
+    fn drop(&mut self) {
+        self.inflight
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(&self.agent_id);
+    }
 }
 
 /// 编排 Supervisor：集中拥有 spawn / assign / cancel_tree / 恢复。
@@ -153,6 +206,12 @@ pub struct AgentSupervisor {
     task_graph: Option<Arc<TaskGraph>>,
     patch_merger: Option<Arc<PatchMerger>>,
     pending_patches: Arc<Mutex<BTreeMap<AgentId, PatchProposal>>>,
+    /// 终态 flush 失败时缓存的 ledger 归属上下文，供 `flush_usage` 重试复用，
+    /// 保证重试不丢失 account / provider / model 归属（lease 已释放后仍可对账）。
+    flush_ctx: Arc<Mutex<BTreeMap<AgentId, LedgerContext>>>,
+    /// 用量 flush 在途标记（终态路径与 `flush_usage` 重试共用）：flush 在途
+    /// 期间并发调用方收到 [`SupervisorError::UsageFlushPending`] 而非假成功。
+    flush_in_flight: Arc<Mutex<BTreeSet<AgentId>>>,
 }
 
 impl AgentSupervisor {
@@ -179,6 +238,8 @@ impl AgentSupervisor {
             task_graph: None,
             patch_merger: None,
             pending_patches: Arc::new(Mutex::new(BTreeMap::new())),
+            flush_ctx: Arc::new(Mutex::new(BTreeMap::new())),
+            flush_in_flight: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
 
@@ -492,7 +553,7 @@ impl AgentSupervisor {
     /// lease（account / provider）与 spawn 请求（model）取真实值，不再
     /// 硬编码 `"unknown"`；worktree 显式释放；TaskGraph 推进为 Completed。
     pub async fn complete(&self, agent_id: &AgentId) -> Result<(), SupervisorError> {
-        let (lease, parent, instance, controller, worktree, model) = {
+        let (lease, parent, instance, controller, worktree, model, ticket) = {
             let mut workers = self
                 .workers
                 .lock()
@@ -511,6 +572,11 @@ impl AgentSupervisor {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
                 .remove(agent_id);
+            // 与 controller 移除同步登记 flush 在途标记：终态 flush 期间并发
+            // `flush_usage` 收到 `UsageFlushPending`，不会误报成功。
+            let ticket = controller
+                .is_some()
+                .then(|| FlushTicket::issue(&self.flush_in_flight, agent_id));
             (
                 entry.lease.take(),
                 entry.instance.parent_id.clone(),
@@ -518,6 +584,7 @@ impl AgentSupervisor {
                 controller,
                 entry.worktree.take(),
                 model,
+                ticket,
             )
         };
         // 显式释放 worktree（best-effort）。
@@ -542,34 +609,32 @@ impl AgentSupervisor {
         let model_id = model.unwrap_or_else(|| ModelId::new("unknown"));
         // 读完归属后释放 lease（默认 outcome 即 Completed；Drop 触发同步幂等释放）。
         drop(lease);
-        if let Some(controller) = controller {
-            let ctx = LedgerContext {
-                tenant_id: instance.tenant_id.clone(),
-                principal_id: instance.principal_id.clone(),
+        let flush_outcome = self
+            .flush_terminal_usage(
+                agent_id,
+                &instance,
                 account_id,
-                session_id: instance.session_id.clone(),
-                agent_id: instance.agent_id.clone(),
-                run_id: None,
                 provider_id,
                 model_id,
-            };
-            if let Err(error) = controller.flush_to_ledger(self.ledger.as_ref(), &ctx).await {
-                tracing::warn!(%agent_id, %error, "failed to flush worker usage to ledger");
-            }
-        }
+                controller,
+            )
+            .await;
+        drop(ticket);
         self.emit(OrchestrationEvent::WorkerCompleted {
             agent_id: agent_id.clone(),
             at_ms: now_ms(),
         });
         self.remove_child(parent.as_ref(), agent_id);
-        Ok(())
+        flush_outcome
     }
 
     /// 失败：释放 lease（`LeaseOutcome::Failed`，计入连续失败）→ Fail →
     /// `WorkerFailed` → 从父的活跃 children 中移除。worktree 显式释放；
-    /// TaskGraph 推进为 Failed 并发出 TaskFailed。
+    /// TaskGraph 推进为 Failed 并发出 TaskFailed。终态前把累计用量 flush 到
+    /// ledger（与 complete 一致）；flush 失败保留 controller 与归属，可经
+    /// [`AgentSupervisor::flush_usage`] 重试。
     pub async fn fail(&self, agent_id: &AgentId, reason: String) -> Result<(), SupervisorError> {
-        let (lease, parent, worktree) = {
+        let (lease, parent, worktree, instance, model, controller, ticket) = {
             let mut workers = self
                 .workers
                 .lock()
@@ -581,10 +646,23 @@ impl AgentSupervisor {
                 .state
                 .apply(WorkerTransition::Fail)
                 .map_err(SupervisorError::IllegalLifecycle)?;
+            let controller = self
+                .budget
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .remove(agent_id);
+            // 与 controller 移除同步登记 flush 在途标记（见 complete / flush_usage）。
+            let ticket = controller
+                .is_some()
+                .then(|| FlushTicket::issue(&self.flush_in_flight, agent_id));
             (
                 entry.lease.take(),
                 entry.instance.parent_id.clone(),
                 entry.worktree.take(),
+                entry.instance.clone(),
+                entry.model.clone(),
+                controller,
+                ticket,
             )
         };
         if let Some(guard) = worktree {
@@ -600,17 +678,35 @@ impl AgentSupervisor {
                 reason: reason.clone(),
             });
         }
+        // 真实归属：account / provider 取自 lease（释放前读取），model 取自 spawn 请求。
+        let (account_id, provider_id) = lease
+            .as_ref()
+            .and_then(|guard| guard.lease())
+            .map(|l| (l.account_id.as_str().to_string(), l.provider_id.clone()))
+            .unwrap_or_else(|| ("local/default".to_string(), ProviderId::new("local")));
+        let model_id = model.unwrap_or_else(|| ModelId::new("unknown"));
         if let Some(mut guard) = lease {
             *guard.outcome_mut() = LeaseOutcome::Failed;
             drop(guard);
         }
+        let flush_outcome = self
+            .flush_terminal_usage(
+                agent_id,
+                &instance,
+                account_id,
+                provider_id,
+                model_id,
+                controller,
+            )
+            .await;
+        drop(ticket);
         self.emit(OrchestrationEvent::WorkerFailed {
             agent_id: agent_id.clone(),
             at_ms: now_ms(),
             reason,
         });
         self.remove_child(parent.as_ref(), agent_id);
-        Ok(())
+        flush_outcome
     }
 
     /// 取消树：取消 `agent_id` 及其全部后代（BFS 遍历 children 图）。
@@ -620,6 +716,11 @@ impl AgentSupervisor {
     /// worktree 显式释放（best-effort）；TaskGraph 推进为 Cancelled 并发出
     /// `TaskCancelled`。终态节点跳过；重复调用是幂等的（第二次不再取消
     /// 任何节点、不重复释放）。
+    ///
+    /// 取消总是完成（所有非终态节点进入 `Cancelled`）；若任一节点的终态用量
+    /// flush 失败，返回 [`SupervisorError::CancelTreeFlushPending`]——错误携带
+    /// 完整 receipt 与待重试的 agent 列表，调用方可经
+    /// [`AgentSupervisor::flush_usage`] 逐个重试，不吞掉 pending。
     pub async fn cancel_tree(
         &self,
         agent_id: &AgentId,
@@ -650,11 +751,12 @@ impl AgentSupervisor {
 
         let mut cancelled_ids = Vec::new();
         let mut leases_released = 0u64;
+        let mut flush_pending = Vec::new();
         for id in nodes {
             if let Some(token) = self.cancel_token(&id) {
                 token.cancel();
             }
-            let (cancelled, lease, worktree) = {
+            let (cancelled, lease, worktree, instance, model, controller, ticket) = {
                 let mut workers = self
                     .workers
                     .lock()
@@ -663,11 +765,28 @@ impl AgentSupervisor {
                     continue;
                 };
                 if entry.state.state().is_terminal() {
-                    (false, None, None)
+                    (false, None, None, None, None, None, None)
                 } else {
                     let _ = entry.state.apply(WorkerTransition::BeginCancel);
                     let _ = entry.state.apply(WorkerTransition::Cancel);
-                    (true, entry.lease.take(), entry.worktree.take())
+                    let controller = self
+                        .budget
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .remove(&id);
+                    // 与 controller 移除同步登记 flush 在途标记（见 flush_usage）。
+                    let ticket = controller
+                        .is_some()
+                        .then(|| FlushTicket::issue(&self.flush_in_flight, &id));
+                    (
+                        true,
+                        entry.lease.take(),
+                        entry.worktree.take(),
+                        Some(entry.instance.clone()),
+                        entry.model.clone(),
+                        controller,
+                        ticket,
+                    )
                 }
             };
             if !cancelled {
@@ -691,6 +810,14 @@ impl AgentSupervisor {
                 let _ = graph.cancel(&task_id);
                 self.emit(OrchestrationEvent::TaskCancelled { task_id });
             }
+            // 真实归属：account / provider 取自 lease（释放前读取），model 取自 spawn 请求。
+            let instance = instance.unwrap();
+            let (account_id, provider_id) = lease
+                .as_ref()
+                .and_then(|guard| guard.lease())
+                .map(|l| (l.account_id.as_str().to_string(), l.provider_id.clone()))
+                .unwrap_or_else(|| ("local/default".to_string(), ProviderId::new("local")));
+            let model_id = model.unwrap_or_else(|| ModelId::new("unknown"));
             if let Some(mut guard) = lease {
                 *guard.outcome_mut() = LeaseOutcome::Cancelled;
                 // Drop 触发同步幂等释放；Cancelled 只累加取消计数，
@@ -698,18 +825,53 @@ impl AgentSupervisor {
                 drop(guard);
                 leases_released += 1;
             }
+            // 终态前 flush（与 complete/fail 一致）；失败保留 controller 与归属，
+            // 可经 `flush_usage` 重试。取消本身已完成：整体以
+            // `CancelTreeFlushPending` 回报（携带 receipt 与待重试 agent 列表），
+            // 不再吞掉 pending。
+            if self
+                .flush_terminal_usage(
+                    &id,
+                    &instance,
+                    account_id,
+                    provider_id,
+                    model_id,
+                    controller,
+                )
+                .await
+                .is_err()
+            {
+                flush_pending.push(id.clone());
+            }
+            drop(ticket);
             cancelled_ids.push(id);
         }
-        Ok(CancelTreeReceipt {
+        let receipt = CancelTreeReceipt {
             cancelled_ids,
             leases_released,
-        })
+        };
+        if flush_pending.is_empty() {
+            Ok(receipt)
+        } else {
+            Err(SupervisorError::CancelTreeFlushPending {
+                receipt,
+                pending: flush_pending,
+            })
+        }
     }
 
     /// 记录一次用量并检查预算（B1）：对硬超限维度发出 `BudgetExceeded`。
     ///
-    /// 用量经该 worker 的 [`WorkerBudgetController`] 累加；`check()` 报告的
-    /// 每个硬超限维度以当前用量与对应上限发出一个 `BudgetExceeded` 事件。
+    /// 用量经该 worker 的 [`WorkerBudgetController`] 累加；`check()` 报告中
+    /// 「新进入硬超限且尚未发出过事件」的维度经 `diff_hard_exceeded` 去重后
+    /// 以当前用量与对应上限发出一个 `BudgetExceeded` 事件（同一维度持续
+    /// 超限只告警一次；用量回落到上限以下后该维度被「忘记」，恢复后可再告警）。
+    ///
+    /// worker 进入终态（Completed / Cancelled / Failed）后拒绝再记录用量：
+    /// 终态用量已由 `complete` / `fail` / `cancel_tree` flush 到 ledger，
+    /// 此后新增 record 会破坏「终态后不再变更用量」的不变式，因此返回
+    /// [`SupervisorError::WorkerTerminal`]。终态 flush 若失败保留了 controller，
+    /// 调用方应经 [`AgentSupervisor::flush_usage`] 重试。
     pub async fn record_usage(
         &self,
         agent_id: &AgentId,
@@ -717,6 +879,17 @@ impl AgentSupervisor {
         output: u64,
         cost_micros: u64,
     ) -> Result<(), SupervisorError> {
+        // 终态拒绝：worker 已终态时不得再累加用量（避免与终态 flush 竞争/重复）。
+        let terminal = self
+            .workers
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(agent_id)
+            .map(|entry| entry.state.state().is_terminal())
+            .unwrap_or(false);
+        if terminal {
+            return Err(SupervisorError::WorkerTerminal(agent_id.clone()));
+        }
         // 直接累加进注册表内的控制器（克隆会丢失写入）。
         let mut controllers = self
             .budget
@@ -728,9 +901,11 @@ impl AgentSupervisor {
         controller.record_tokens(input, output);
         controller.record_cost(cost_micros);
         let report = controller.check();
+        // 持续超限去重：仅对「新进入硬超限」的维度发事件；恢复后可再告警。
+        let newly_exceeded = controller.diff_hard_exceeded(&report);
         let (used_input, used_output, used_cost) = controller.usage();
-        let limits = controller.limits();
-        for dimension in &report.hard_exceeded {
+        let limits = controller.limits().clone();
+        for dimension in &newly_exceeded {
             let (used, limit) = match dimension.as_str() {
                 DIM_INPUT_TOKENS => (used_input, limits.max_input_tokens.unwrap_or(0)),
                 DIM_OUTPUT_TOKENS => (used_output, limits.max_output_tokens.unwrap_or(0)),
@@ -745,6 +920,151 @@ impl AgentSupervisor {
             });
         }
         Ok(())
+    }
+
+    /// 显式重试终态 worker 的用量 flush。
+    ///
+    /// 仅允许终态 worker：活动 worker 误调用返回 [`SupervisorError::FlushNotTerminal`]，
+    /// 且不会移除 / 丢弃其 controller。controller 与归属 ctx 必须成对存在：
+    /// 不一致（controller 在而 ctx 缺失）时保留 controller 并返回
+    /// [`SupervisorError::FlushContextMissing`]，不吞 pending。
+    ///
+    /// 并发安全：认领（校验在途标记、移除 controller / ctx）在同一临界区完成，
+    /// 认领成功后登记在途标记；flush 在途期间其他调用方收到
+    /// [`SupervisorError::UsageFlushPending`] 而非假成功。提交成功后才丢弃
+    /// controller / ctx；失败时原样放回（放回先于在途标记清除），可重试。
+    /// 账本写入由 controller 内部提交游标串行化，重试按相同 record 幂等重放，
+    /// 不重复计账。controller 不存在时为空操作（无用量或已 flush）。
+    pub async fn flush_usage(&self, agent_id: &AgentId) -> Result<(), SupervisorError> {
+        // 仅允许终态：活动 worker 误调用直接拒绝，不触碰 budget / flush_ctx。
+        let terminal = self
+            .workers
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(agent_id)
+            .map(|entry| entry.state.state().is_terminal())
+            .ok_or_else(|| SupervisorError::UnknownAgent(agent_id.clone()))?;
+        if !terminal {
+            return Err(SupervisorError::FlushNotTerminal(agent_id.clone()));
+        }
+        // 原子认领：controller 与 ctx 必须成对存在；认领成功即登记在途标记，
+        // 并发 flush（终态路径或其他 flush_usage）期间本调用返回
+        // `UsageFlushPending`，避免假成功。
+        let (controller, ctx, _ticket) = {
+            let mut budget = self
+                .budget
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let mut flush_ctx = self
+                .flush_ctx
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let mut inflight = self
+                .flush_in_flight
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if inflight.contains(agent_id) {
+                return Err(SupervisorError::UsageFlushPending(agent_id.clone()));
+            }
+            let controller = budget.remove(agent_id);
+            let ctx = flush_ctx.remove(agent_id);
+            match (controller, ctx) {
+                (None, None) => (None, None, None),
+                (Some(controller), Some(ctx)) => {
+                    inflight.insert(agent_id.clone());
+                    (
+                        Some(controller),
+                        Some(ctx),
+                        Some(FlushTicket {
+                            inflight: Arc::clone(&self.flush_in_flight),
+                            agent_id: agent_id.clone(),
+                        }),
+                    )
+                }
+                (Some(controller), None) => {
+                    // 不一致：controller 在而 ctx 缺失 → 保留 controller，不吞 pending。
+                    budget.insert(agent_id.clone(), controller);
+                    return Err(SupervisorError::FlushContextMissing(agent_id.clone()));
+                }
+                (None, Some(_ctx)) => (None, None, None),
+            }
+        };
+        let Some(controller) = controller else {
+            // 无可 flush：已提交或从未有 pending（残留 ctx 已随认领丢弃）。
+            return Ok(());
+        };
+        let ctx = ctx.expect("controller 与 ctx 成对认领");
+        match controller.flush_to_ledger(self.ledger.as_ref(), &ctx).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // 失败：controller 与 ctx 放回表内（在途标记由票据 Drop 清除，
+                // 且放回先于票据清除完成），等待下一次重试。
+                self.budget
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .insert(agent_id.clone(), controller);
+                self.flush_ctx
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .insert(agent_id.clone(), ctx);
+                tracing::warn!(
+                    %agent_id, %error,
+                    "retry flush failed; controller and ctx retained"
+                );
+                Err(SupervisorError::UsageFlushPending(agent_id.clone()))
+            }
+        }
+    }
+
+    /// 终态 flush：把 controller 的累计用量写入 ledger。成功返回 `Ok`
+    /// （controller 被消费）；失败时把 controller 与归属 ctx 放回 budget /
+    /// flush_ctx 表，返回 [`SupervisorError::UsageFlushPending`]，调用方可经
+    /// [`AgentSupervisor::flush_usage`] 重试。终态转换本身已完成，flush 失败
+    /// 不回滚生命周期，仅保留用量可重试状态。
+    ///
+    /// 注：`std::sync::Mutex` 仅在构造 ctx 时短暂持有并立即 drop，不跨 await；
+    /// ledger 调用期间不持有任何 `std::sync::Mutex`（保持无锁跨 await）。
+    async fn flush_terminal_usage(
+        &self,
+        agent_id: &AgentId,
+        instance: &AgentInstance,
+        account_id: String,
+        provider_id: ProviderId,
+        model_id: ModelId,
+        controller: Option<WorkerBudgetController>,
+    ) -> Result<(), SupervisorError> {
+        let Some(controller) = controller else {
+            return Ok(());
+        };
+        let ctx = LedgerContext {
+            credential_id: None,
+            tenant_id: instance.tenant_id.clone(),
+            principal_id: instance.principal_id.clone(),
+            account_id,
+            session_id: instance.session_id.clone(),
+            agent_id: instance.agent_id.clone(),
+            run_id: None,
+            provider_id,
+            model_id,
+        };
+        match controller.flush_to_ledger(self.ledger.as_ref(), &ctx).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                tracing::warn!(
+                    %agent_id, %error,
+                    "terminal usage flush failed; controller and ctx retained for retry"
+                );
+                self.budget
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .insert(agent_id.clone(), controller);
+                self.flush_ctx
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .insert(agent_id.clone(), ctx);
+                Err(SupervisorError::UsageFlushPending(agent_id.clone()))
+            }
+        }
     }
 
     /// 重试任务（W2）：仅复位 TaskGraph 中的任务状态并发出 `TaskRetried`。
@@ -1780,4 +2100,609 @@ mod tests {
                 if *agent_id == agent && files == &vec!["a.txt".to_string()]
         )));
     }
+}
+
+/// 失败计数测试专用：包装 [`InMemoryUsageLedger`]，前 `fail_until` 次 `record`
+/// 返回错误（模拟 ledger 暂时不可用），之后放行。统计真实写入与重试次数。
+#[cfg(test)]
+struct FailingLedger {
+    inner: InMemoryUsageLedger,
+    fail_until: Mutex<usize>,
+    record_calls: Mutex<usize>,
+}
+
+#[cfg(test)]
+impl FailingLedger {
+    fn fail_first(fail_until: usize) -> Arc<Self> {
+        Arc::new(Self {
+            inner: InMemoryUsageLedger::new(),
+            fail_until: Mutex::new(fail_until),
+            record_calls: Mutex::new(0),
+        })
+    }
+
+    fn record_calls(&self) -> usize {
+        *self.record_calls.lock().unwrap()
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl usage_ledger::UsageLedger for FailingLedger {
+    async fn record(&self, record: UsageRecord) -> Result<(), UsageLedgerError> {
+        let n = {
+            let mut calls = self.record_calls.lock().unwrap();
+            *calls += 1;
+            *calls
+        };
+        // 在任何 await 前释放 std::sync::MutexGuard，保持 future Send。
+        let should_fail = {
+            let mut fail_until = self.fail_until.lock().unwrap();
+            let fail = n <= *fail_until;
+            // 失败名额耗尽后清零，避免后续重试仍被挡。
+            if !fail {
+                *fail_until = 0;
+            }
+            fail
+        };
+        if should_fail {
+            return Err(UsageLedgerError::InvalidRecord {
+                reason: "ledger temporarily unavailable".to_string(),
+            });
+        }
+        self.inner.record(record).await
+    }
+
+    async fn query(&self, query: &UsageQuery) -> Vec<UsageRecord> {
+        self.inner.query(query).await
+    }
+
+    async fn aggregate(&self, query: &UsageQuery) -> Result<UsageTotals, UsageLedgerError> {
+        self.inner.aggregate(query).await
+    }
+}
+
+/// 阻塞式失败注入 ledger：前 `fail_first` 次 `record` 失败，下一次 `record`
+/// 在进入 ledger 前发出 `entered` 信号并等待 `release`（模拟慢 ledger），
+/// 之后正常写入。用于验证并发 flush 的在途标记、假成功拦截与不重复计账。
+#[cfg(test)]
+struct BlockingLedger {
+    inner: InMemoryUsageLedger,
+    fail_first: Mutex<usize>,
+    record_calls: Mutex<usize>,
+    entered_tx: tokio::sync::watch::Sender<bool>,
+    release_tx: tokio::sync::watch::Sender<bool>,
+}
+
+#[cfg(test)]
+impl BlockingLedger {
+    fn new(fail_first: usize) -> Arc<Self> {
+        let (entered_tx, _) = tokio::sync::watch::channel(false);
+        let (release_tx, _) = tokio::sync::watch::channel(false);
+        Arc::new(Self {
+            inner: InMemoryUsageLedger::new(),
+            fail_first: Mutex::new(fail_first),
+            record_calls: Mutex::new(0),
+            entered_tx,
+            release_tx,
+        })
+    }
+
+    fn record_calls(&self) -> usize {
+        *self.record_calls.lock().unwrap()
+    }
+
+    fn entered_rx(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.entered_tx.subscribe()
+    }
+
+    fn release(&self) {
+        let _ = self.release_tx.send(true);
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl usage_ledger::UsageLedger for BlockingLedger {
+    async fn record(&self, record: UsageRecord) -> Result<(), UsageLedgerError> {
+        let n = {
+            let mut calls = self.record_calls.lock().unwrap();
+            *calls += 1;
+            *calls
+        };
+        // 在任何 await 前释放 std::sync::MutexGuard，保持 future Send。
+        let should_fail = {
+            let mut fail_until = self.fail_first.lock().unwrap();
+            let fail = n <= *fail_until;
+            if !fail {
+                *fail_until = 0;
+            }
+            fail
+        };
+        if should_fail {
+            return Err(UsageLedgerError::InvalidRecord {
+                reason: "ledger temporarily unavailable".to_string(),
+            });
+        }
+        // 发出「已进入 ledger」信号并等待放行（watch 保证不丢信号）。
+        let _ = self.entered_tx.send(true);
+        let mut rx = self.release_tx.subscribe();
+        while !*rx.borrow() {
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+        self.inner.record(record).await
+    }
+
+    async fn query(&self, query: &UsageQuery) -> Vec<UsageRecord> {
+        self.inner.query(query).await
+    }
+
+    async fn aggregate(&self, query: &UsageQuery) -> Result<UsageTotals, UsageLedgerError> {
+        self.inner.aggregate(query).await
+    }
+}
+
+#[cfg(test)]
+mod terminal_flush_tests {
+    use super::*;
+    use agent_domain::{PrincipalId, SessionId, TenantId};
+    use provider_control::{AcquireRequest, InMemoryCredentialPool};
+    use std::collections::BTreeSet;
+    use tenant_service::InMemoryTenantPolicyEngine;
+    // usage_ledger 类型（InMemoryUsageLedger / UsageQuery / UsageRecord 等）经
+    // 文件级 cfg(test) `use` + `super::*` 可见。
+
+    fn spawn_req(input_limit: Option<u64>, model: Option<ModelId>) -> SpawnRequest {
+        SpawnRequest {
+            tenant_id: TenantId::new("tenant-a"),
+            principal_id: PrincipalId::new("principal-1"),
+            parent_id: None,
+            session_id: SessionId::new("session-1"),
+            worktree_path: None,
+            budget: Some(WorkerBudgetLimits {
+                max_input_tokens: input_limit,
+                ..WorkerBudgetLimits::default()
+            }),
+            model,
+            acquire: None,
+            task_deps: Vec::new(),
+            task_description: None,
+            task_max_retries: None,
+        }
+    }
+
+    fn acquire_req() -> AcquireRequest {
+        AcquireRequest {
+            tenant_id: TenantId::new("tenant-a"),
+            principal_id: PrincipalId::new("principal-1"),
+            session_id: SessionId::new("session-1"),
+            agent_id: AgentId::new("placeholder"),
+            provider_id: None,
+            account_id: None,
+            trace_id: None,
+        }
+    }
+
+    /// 终态触发方式（fail / cancel）。
+    enum TerminalKind {
+        Fail,
+        Cancel,
+    }
+
+    impl TerminalKind {
+        async fn finalize(self, supervisor: &AgentSupervisor, agent: &AgentId) {
+            match self {
+                TerminalKind::Fail => supervisor.fail(agent, "done".into()).await.unwrap(),
+                TerminalKind::Cancel => {
+                    supervisor.cancel_tree(agent).await.unwrap();
+                }
+            }
+        }
+    }
+
+    fn exceeded_count(supervisor: &AgentSupervisor) -> usize {
+        supervisor
+            .events()
+            .iter()
+            .filter(|event| {
+                matches!(event, OrchestrationEvent::BudgetExceeded { dimension, .. } if dimension == "input_tokens")
+            })
+            .count()
+    }
+
+    #[tokio::test]
+    async fn fail_and_cancel_flush_ledger_like_complete() {
+        for (label, terminal) in [
+            ("fail", TerminalKind::Fail),
+            ("cancel", TerminalKind::Cancel),
+        ] {
+            let ledger = Arc::new(InMemoryUsageLedger::new());
+            let supervisor = AgentSupervisor::new(
+                Arc::new(InMemoryCredentialPool::new(4)),
+                Arc::new(InMemoryTenantPolicyEngine::default()),
+                ledger.clone(),
+                SupervisorConfig::default(),
+            );
+            let mut req = spawn_req(None, Some(ModelId::new("mock-model")));
+            req.acquire = Some(acquire_req());
+            let agent = supervisor.spawn(req).await.unwrap();
+            supervisor.record_usage(&agent, 7, 3, 0).await.unwrap();
+            supervisor.start_worker(&agent).await.unwrap();
+
+            let _ = terminal.finalize(&supervisor, &agent).await;
+
+            let records = ledger.query(&UsageQuery::default()).await;
+            assert_eq!(
+                records.len(),
+                1,
+                "{label}: fail/cancel 必须与 complete 一样 flush ledger"
+            );
+            assert_eq!(records[0].input_tokens, 7);
+            assert_eq!(records[0].output_tokens, 3);
+            assert_eq!(
+                records[0].account_id, "local/default",
+                "{label}: 归属必须来自 lease"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_flush_failure_retains_controller_and_is_retryable() {
+        let ledger = FailingLedger::fail_first(1);
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            ledger.clone() as Arc<dyn UsageLedger>,
+            SupervisorConfig::default(),
+        );
+        let agent = supervisor.spawn(spawn_req(None, None)).await.unwrap();
+        supervisor.record_usage(&agent, 5, 0, 0).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+
+        let err = supervisor.complete(&agent).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::UsageFlushPending(_)));
+        assert_eq!(
+            supervisor.state(&agent),
+            Some(WorkerState::Completed),
+            "终态转换已完成，flush 失败不回滚生命周期"
+        );
+        assert_eq!(ledger.record_calls(), 1);
+        assert_eq!(
+            ledger.query(&UsageQuery::default()).await.len(),
+            0,
+            "flush 失败时账本不得写入"
+        );
+
+        supervisor.flush_usage(&agent).await.unwrap();
+        assert_eq!(ledger.record_calls(), 2);
+        let records = ledger.query(&UsageQuery::default()).await;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].input_tokens, 5);
+
+        supervisor.flush_usage(&agent).await.unwrap();
+        assert_eq!(
+            ledger.record_calls(),
+            2,
+            "controller 已丢弃后不得重复 flush"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_usage_rejected_after_terminal() {
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            Arc::new(InMemoryUsageLedger::new()),
+            SupervisorConfig::default(),
+        );
+        let agent = supervisor.spawn(spawn_req(None, None)).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+        supervisor.record_usage(&agent, 1, 0, 0).await.unwrap();
+        supervisor.complete(&agent).await.unwrap();
+
+        let err = supervisor
+            .record_usage(&agent, 100, 0, 0)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::WorkerTerminal(_)),
+            "终态后 record_usage 必须被拒绝: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn budget_exceeded_deduped_across_record_usage() {
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            Arc::new(InMemoryUsageLedger::new()),
+            SupervisorConfig::default(),
+        );
+        let agent = supervisor.spawn(spawn_req(Some(10), None)).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+
+        supervisor.record_usage(&agent, 20, 0, 0).await.unwrap();
+        assert_eq!(exceeded_count(&supervisor), 1, "首次超限应告警");
+        supervisor.record_usage(&agent, 5, 0, 0).await.unwrap();
+        assert_eq!(exceeded_count(&supervisor), 1, "持续超限去重，不重复告警");
+    }
+
+    #[tokio::test]
+    async fn diff_hard_exceeded_re_alarms_after_recovery() {
+        let mk = || {
+            WorkerBudgetController::new(WorkerBudgetLimits {
+                max_input_tokens: Some(10),
+                ..WorkerBudgetLimits::default()
+            })
+        };
+        let expected = std::iter::once("input_tokens".to_string()).collect::<BTreeSet<String>>();
+        let ctrl = mk();
+        ctrl.record_tokens(20, 0);
+        let over = ctrl.check();
+        assert_eq!(ctrl.diff_hard_exceeded(&over), expected);
+        assert!(ctrl.diff_hard_exceeded(&over).is_empty(), "持续超限去重");
+
+        let ctrl2 = mk();
+        ctrl2.record_tokens(5, 0);
+        assert!(
+            ctrl2.diff_hard_exceeded(&ctrl2.check()).is_empty(),
+            "未超限不发"
+        );
+        ctrl2.record_tokens(15, 0);
+        assert_eq!(
+            ctrl2.diff_hard_exceeded(&ctrl2.check()),
+            expected,
+            "恢复后再次超限应重新告警"
+        );
+    }
+
+    #[tokio::test]
+    async fn hard_limit_is_ge_boundary() {
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            Arc::new(InMemoryUsageLedger::new()),
+            SupervisorConfig::default(),
+        );
+        let agent = supervisor.spawn(spawn_req(Some(10), None)).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+        supervisor.record_usage(&agent, 10, 0, 0).await.unwrap();
+        assert!(
+            supervisor.events().iter().any(|event| {
+                matches!(event, OrchestrationEvent::BudgetExceeded { dimension, used, limit, .. } if dimension == "input_tokens" && *used == 10 && *limit == 10)
+            }),
+            "used == limit 必须判定为硬超限（>= 语义）"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_tree_surfaces_pending_flush_with_receipt() {
+        let ledger = FailingLedger::fail_first(2);
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(8)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            ledger.clone() as Arc<dyn UsageLedger>,
+            SupervisorConfig::default(),
+        );
+        let parent = supervisor.spawn(spawn_req(None, None)).await.unwrap();
+        let child_req = SpawnRequest {
+            parent_id: Some(parent.clone()),
+            ..spawn_req(None, None)
+        };
+        let child = supervisor.spawn(child_req).await.unwrap();
+        supervisor.record_usage(&parent, 3, 0, 0).await.unwrap();
+        supervisor.record_usage(&child, 4, 0, 0).await.unwrap();
+        supervisor.start_worker(&parent).await.unwrap();
+        supervisor.start_worker(&child).await.unwrap();
+
+        let err = supervisor.cancel_tree(&parent).await.unwrap_err();
+        let SupervisorError::CancelTreeFlushPending { receipt, pending } = &err else {
+            panic!("expected CancelTreeFlushPending, got {err:?}");
+        };
+        // 取消仍完成：全部节点 Cancelled、receipt 完整、lease 无泄漏。
+        assert_eq!(receipt.cancelled_ids.len(), 2);
+        assert!(receipt.cancelled_ids.contains(&parent));
+        assert!(receipt.cancelled_ids.contains(&child));
+        assert_eq!(supervisor.state(&parent), Some(WorkerState::Cancelled));
+        assert_eq!(supervisor.state(&child), Some(WorkerState::Cancelled));
+        // pending 必须含 agent id，且失败期间账本不得写入。
+        assert_eq!(pending.len(), 2);
+        assert!(pending.contains(&parent));
+        assert!(pending.contains(&child));
+        assert_eq!(ledger.query(&UsageQuery::default()).await.len(), 0);
+
+        // 逐节点重试：全部落账，不重复。
+        supervisor.flush_usage(&parent).await.unwrap();
+        supervisor.flush_usage(&child).await.unwrap();
+        supervisor.flush_usage(&parent).await.unwrap();
+        supervisor.flush_usage(&child).await.unwrap();
+        let records = ledger.query(&UsageQuery::default()).await;
+        assert_eq!(records.len(), 2);
+        let inputs: BTreeSet<u64> = records.iter().map(|r| r.input_tokens).collect();
+        assert_eq!(inputs, BTreeSet::from([3, 4]));
+        assert_eq!(ledger.record_calls(), 4, "2 次失败 + 2 次重试后不得再写");
+    }
+
+    #[tokio::test]
+    async fn flush_usage_rejected_for_active_worker_keeps_controller() {
+        let ledger = Arc::new(InMemoryUsageLedger::new());
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            ledger.clone(),
+            SupervisorConfig::default(),
+        );
+        let agent = supervisor.spawn(spawn_req(None, None)).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+        supervisor.record_usage(&agent, 9, 1, 0).await.unwrap();
+
+        // 活动 worker 误调用：拒绝且不得移除 controller。
+        let err = supervisor.flush_usage(&agent).await.unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::FlushNotTerminal(_)),
+            "{err:?}"
+        );
+
+        // controller 未被移除：complete 仍能完整 flush（用量不丢）。
+        supervisor.complete(&agent).await.unwrap();
+        let records = ledger.query(&UsageQuery::default()).await;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].input_tokens, 9);
+        assert_eq!(records[0].output_tokens, 1);
+    }
+
+    #[tokio::test]
+    async fn flush_usage_requires_ctx_controller_pair() {
+        let ledger = FailingLedger::fail_first(1);
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            ledger.clone() as Arc<dyn UsageLedger>,
+            SupervisorConfig::default(),
+        );
+        let agent = supervisor.spawn(spawn_req(None, None)).await.unwrap();
+        supervisor.record_usage(&agent, 5, 0, 0).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+        let err = supervisor.complete(&agent).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::UsageFlushPending(_)));
+
+        // 破坏成对性：controller 在、ctx 缺失（内部不一致的防御路径）。
+        supervisor
+            .flush_ctx
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(&agent);
+        let err = supervisor.flush_usage(&agent).await.unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::FlushContextMissing(_)),
+            "{err:?}"
+        );
+        // controller 必须被保留（不吞 pending、不丢账）。
+        assert!(supervisor
+            .budget
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .contains_key(&agent));
+
+        // 恢复 ctx 后重试成功。
+        supervisor
+            .flush_ctx
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(
+                agent.clone(),
+                LedgerContext {
+                    credential_id: None,
+                    tenant_id: TenantId::new("tenant-a"),
+                    principal_id: PrincipalId::new("principal-1"),
+                    account_id: "local/default".to_string(),
+                    session_id: SessionId::new("session-1"),
+                    agent_id: agent.clone(),
+                    run_id: None,
+                    provider_id: ProviderId::new("local"),
+                    model_id: ModelId::new("unknown"),
+                },
+            );
+        supervisor.flush_usage(&agent).await.unwrap();
+        let records = ledger.query(&UsageQuery::default()).await;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].input_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn concurrent_flush_usage_no_false_success_or_double_count() {
+        let ledger = BlockingLedger::new(1);
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            ledger.clone() as Arc<dyn UsageLedger>,
+            SupervisorConfig::default(),
+        );
+        let agent = supervisor.spawn(spawn_req(None, None)).await.unwrap();
+        supervisor.record_usage(&agent, 5, 0, 0).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+
+        // 制造 pending：终态 flush 失败一次，controller + ctx 保留。
+        let err = supervisor.complete(&agent).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::UsageFlushPending(_)));
+
+        let entered_rx = ledger.entered_rx();
+        let flush_a = supervisor.flush_usage(&agent);
+        let flush_b = async {
+            // 等第一个 flush 进入 ledger 调用（在途标记已登记）后再并发调用。
+            let mut rx = entered_rx;
+            while !*rx.borrow() {
+                rx.changed().await.unwrap();
+            }
+            let err = supervisor.flush_usage(&agent).await.unwrap_err();
+            assert!(
+                matches!(err, SupervisorError::UsageFlushPending(_)),
+                "并发 flush 期间不得假成功: {err:?}"
+            );
+            ledger.release();
+        };
+        let (first, _) = tokio::join!(flush_a, flush_b);
+        assert!(
+            first.is_ok(),
+            "第一个 flush 在 ledger 恢复后必须成功: {first:?}"
+        );
+
+        // 收尾 flush 为空操作；账本仅一条、不重复计账。
+        supervisor.flush_usage(&agent).await.unwrap();
+        let records = ledger.query(&UsageQuery::default()).await;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].input_tokens, 5);
+        assert_eq!(
+            ledger.record_calls(),
+            2,
+            "1 次失败 + 1 次并发成功，不得重复写入"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_usage_during_terminal_flush_reports_pending_not_success() {
+        let ledger = BlockingLedger::new(0);
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            ledger.clone() as Arc<dyn UsageLedger>,
+            SupervisorConfig::default(),
+        );
+        let agent = supervisor.spawn(spawn_req(None, None)).await.unwrap();
+        supervisor.record_usage(&agent, 5, 0, 0).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+
+        let entered_rx = ledger.entered_rx();
+        let complete_fut = supervisor.complete(&agent);
+        let check_fut = async {
+            // 终态 flush 在途（controller 已移出 budget、尚未提交）期间，
+            // flush_usage 必须回报 pending 而非假成功。
+            let mut rx = entered_rx;
+            while !*rx.borrow() {
+                rx.changed().await.unwrap();
+            }
+            let err = supervisor.flush_usage(&agent).await.unwrap_err();
+            assert!(
+                matches!(err, SupervisorError::UsageFlushPending(_)),
+                "终态 flush 在途时不得假成功: {err:?}"
+            );
+            ledger.release();
+        };
+        let (completed, _) = tokio::join!(complete_fut, check_fut);
+        assert!(
+            completed.is_ok(),
+            "ledger 恢复后 complete 必须成功: {completed:?}"
+        );
+
+        // 已提交：后续 flush_usage 为空操作，账本仅一条。
+        supervisor.flush_usage(&agent).await.unwrap();
+        let records = ledger.query(&UsageQuery::default()).await;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].input_tokens, 5);
+    }
+
+    // UsageRecord 由 ledger 内部产生；保留导入以表明 query 返回类型。
+    const _: fn(&UsageRecord) = |_| {};
 }

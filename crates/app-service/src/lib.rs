@@ -18,12 +18,13 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use agent_domain::{ActorId, ArtifactId, SessionId, WorkspaceId};
+use agent_domain::{ActorId, ArtifactId, CancellationToken, SessionId, WorkspaceId};
 use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, CommandSource, API_VERSION,
 };
 use provider_api::ModelProvider;
+use quota_service::QuotaAdapter;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -43,6 +44,195 @@ pub use supervisor::{
 use crate::error::now_timestamp;
 
 use artifact_store::{ArtifactStore, BlobId};
+
+/// Quota 运行时（P14-8）：进程内共享的唯一 UsageLedger + QuotaService + Clock。
+///
+/// 这是 app-service 层唯一的用量计数源：成功 run 完成后向 [`Self::ledger`]
+/// 追加幂等 [`usage_ledger::UsageRecord`]；[`Self::quota`] 读取该 ledger 产出
+/// canonical 额度视图。不再引入第二个计数器或存储。查询路径只读缓存，
+/// 不触发网络抓取。
+#[derive(Clone)]
+pub struct QuotaRuntime {
+    /// 进程内唯一共享的用量账本（成功 run 追加 + 查询读取的同一实例）。
+    pub ledger: Arc<dyn usage_ledger::UsageLedger>,
+    /// Quota 服务（已注册适配器，读取共享 ledger）。
+    pub quota: Arc<quota_service::service::QuotaService>,
+    /// 私有持有的本地 Ledger 适配器：同一 Arc 同时 serve 查询注册表、
+    /// ledger reconciler 与 [`Self::refresh_local_cache`] 的本地 fetch，
+    /// 绝无第二套账本。
+    adapter: Arc<quota_service::ledger::LedgerQuotaAdapter>,
+    /// Quota 时钟（与适配器共享，测试可注入 MutableQuotaClock）。
+    pub clock: Arc<dyn quota_service::service::QuotaClock>,
+}
+
+impl std::fmt::Debug for QuotaRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuotaRuntime")
+            .field("ledger", &"Arc<dyn UsageLedger>")
+            .field("quota", &"Arc<QuotaService>")
+            .field("adapter", &"Arc<LedgerQuotaAdapter>")
+            .finish_non_exhaustive()
+    }
+}
+
+/// 本地对账单键失败（可诊断）：scope + window + unit 精确定位失败的缓存键。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalReconcileFailure {
+    pub scope: quota_service::QuotaScope,
+    pub window: quota_service::QuotaWindow,
+    pub unit: quota_service::QuotaUnit,
+    pub error: quota_service::QuotaError,
+}
+
+impl QuotaRuntime {
+    /// 组装共享运行时：以同一 ledger 注册 [`quota_service::LedgerQuotaAdapter`]，
+    /// 适配任意 scope（适配器内部按 scope 过滤）。同一 Arc 同时挂为 ledger
+    /// reconciler（[`quota_service::service::QuotaService::set_ledger_reconciler`]），
+    /// 并私有持有供 [`Self::refresh_local_cache`] 复用；注册表、对账与本地
+    /// 缓存共享同一适配器实例、同一账本，绝无第二套账本。
+    pub fn new(
+        ledger: Arc<dyn usage_ledger::UsageLedger>,
+        clock: Arc<dyn quota_service::service::QuotaClock>,
+    ) -> Arc<Self> {
+        let quota = Arc::new(quota_service::service::QuotaService::new(Arc::clone(
+            &clock,
+        )));
+        let adapter = Arc::new(quota_service::ledger::LedgerQuotaAdapter::new(
+            Arc::clone(&ledger),
+            Arc::clone(&clock),
+        ));
+        let registered: Arc<dyn quota_service::QuotaAdapter> = adapter.clone();
+        quota.register(quota_service::service::ScopeMatch::any(), registered);
+        quota.set_ledger_reconciler(Arc::clone(&adapter));
+        Arc::new(Self {
+            ledger,
+            quota,
+            adapter,
+            clock,
+        })
+    }
+
+    /// 测试/组合构造：注入外部 QuotaService（如 counting-adapter 集成测试
+    /// 自建的 mock 注册表）。私有本地 adapter 仍基于传入的同一 ledger + clock
+    /// 派生，`refresh_local_cache` 因此与 [`Self::new`] 行为一致。
+    ///
+    /// 与 [`Self::new`] 不同，本构造不触碰注册表与 reconciler——注册/对账
+    /// 接线由调用方按需完成，保证测试只运行自己注册的 adapter。
+    pub fn from_parts(
+        ledger: Arc<dyn usage_ledger::UsageLedger>,
+        quota: Arc<quota_service::service::QuotaService>,
+        clock: Arc<dyn quota_service::service::QuotaClock>,
+    ) -> Arc<Self> {
+        let adapter = Arc::new(quota_service::ledger::LedgerQuotaAdapter::new(
+            Arc::clone(&ledger),
+            Arc::clone(&clock),
+        ));
+        Arc::new(Self {
+            ledger,
+            quota,
+            adapter,
+            clock,
+        })
+    }
+
+    /// 生产构造（P14-8 正式接线）：进程内新建共享
+    /// [`usage_ledger::InMemoryUsageLedger`] 与
+    /// [`quota_service::service::SystemQuotaClock`]，同一 ledger 同时服务
+    /// 记账（成功 run 追加）与额度查询（适配器派生）。
+    ///
+    /// 唯一注册的适配器是本地 ledger 派生（[`quota_service::AdapterKind::LocalLedger`]），
+    /// 构造与空查询均不触发任何网络。
+    pub fn production() -> Arc<Self> {
+        let ledger: Arc<dyn usage_ledger::UsageLedger> =
+            Arc::new(usage_ledger::InMemoryUsageLedger::new());
+        let clock: Arc<dyn quota_service::service::QuotaClock> =
+            Arc::new(quota_service::service::SystemQuotaClock);
+        Self::new(ledger, clock)
+    }
+
+    /// 本地 Ledger 对账/缓存（P14-8）：给定一条已成功写入账本的
+    /// [`usage_ledger::UsageRecord`]，按其完整 tenant/account/credential/
+    /// provider/model scope 与 tenant/account/provider 账户级聚合 scope
+    /// （credential/model 均为 `None`），为每个去重 scope 的 Overall /
+    /// Rolling5h / Weekly / Monthly 的 Token 与该记录 `currency` 的 Cost，
+    /// 直接调用本地
+    /// [`quota_service::ledger::LedgerQuotaAdapter::fetch`]（只读同一账本，
+    /// 不触发任何远端适配器或网络），再把每个快照
+    /// [`quota_service::service::QuotaService::publish_local_snapshot`]
+    /// 进进程内缓存。键之间相互独立：单个键失败不中断其余键；全部成功返回
+    /// `Ok(())`，任一失败返回完整可诊断列表（scope + window + unit + 错误）。
+    ///
+    /// 复用 [`Self::new`] 保留的同一 adapter Arc（不每次重建），与注册表/
+    /// 对账路径读写同一个账本实例。
+    pub async fn refresh_local_cache(
+        &self,
+        record: &usage_ledger::UsageRecord,
+    ) -> Result<(), Vec<LocalReconcileFailure>> {
+        let full_scope = quota_service::QuotaScope {
+            tenant_id: record.tenant_id.clone(),
+            account_id: quota_service::AccountId::new(record.account_id.clone()),
+            credential_id: record.credential_id.clone(),
+            provider_id: record.provider_id.clone(),
+            model_id: Some(record.model_id.clone()),
+        };
+        let account_scope = quota_service::QuotaScope {
+            tenant_id: record.tenant_id.clone(),
+            account_id: quota_service::AccountId::new(record.account_id.clone()),
+            credential_id: None,
+            provider_id: record.provider_id.clone(),
+            model_id: None,
+        };
+        let mut scopes = vec![full_scope, account_scope];
+        scopes.sort();
+        scopes.dedup();
+        let cancel = CancellationToken::new();
+        let mut failures = Vec::new();
+        for scope in scopes {
+            for window in [
+                quota_service::QuotaWindow::Overall,
+                quota_service::QuotaWindow::Rolling5h,
+                quota_service::QuotaWindow::Weekly,
+                quota_service::QuotaWindow::Monthly,
+            ] {
+                for unit in [
+                    quota_service::QuotaUnit::Token,
+                    quota_service::QuotaUnit::Cost {
+                        currency: record.currency.clone(),
+                    },
+                ] {
+                    let request = quota_service::QuotaRequest {
+                        scope: scope.clone(),
+                        window,
+                        unit: unit.clone(),
+                    };
+                    match self.adapter.fetch(&request, None, &cancel).await {
+                        Ok(snapshot) => {
+                            if let Err(failure) = self.quota.publish_local_snapshot(snapshot) {
+                                failures.push(LocalReconcileFailure {
+                                    scope: scope.clone(),
+                                    window,
+                                    unit: unit.clone(),
+                                    error: failure.error,
+                                });
+                            }
+                        }
+                        Err(error) => failures.push(LocalReconcileFailure {
+                            scope: scope.clone(),
+                            window,
+                            unit: unit.clone(),
+                            error,
+                        }),
+                    }
+                }
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures)
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,21 +323,44 @@ pub struct AppService {
     state: Mutex<State>,
     router: CommandRouter,
     artifact_store: Option<Arc<ArtifactStore>>,
+    quota_runtime: Option<Arc<QuotaRuntime>>,
 }
 
 impl AppService {
     pub fn new(instance: impl Into<String>) -> Self {
-        Self::build(instance, None)
+        Self::build(instance, None, None)
     }
 
     /// 携带内容寻址 Blob Store 构造（P13-8 接线）；`AppService::new` 等价于
     /// store 为 `None`（此时 `artifact_read` 返回 `Unavailable`）。
     pub fn with_artifact_store(instance: impl Into<String>, store: Arc<ArtifactStore>) -> Self {
-        Self::build(instance, Some(store))
+        Self::build(instance, Some(store), None)
     }
 
-    fn build(instance: impl Into<String>, artifact_store: Option<Arc<ArtifactStore>>) -> Self {
+    /// 携带共享 Quota 运行时构造（P14-8）：注入唯一 ledger + QuotaService。
+    /// 既有 [`AppService::new`] / [`AppService::with_artifact_store`] 保持兼容
+    /// （quota 为 `None`，不记账、不查额度）。
+    pub fn with_quota_runtime(
+        instance: impl Into<String>,
+        store: Option<Arc<ArtifactStore>>,
+        quota_runtime: Arc<QuotaRuntime>,
+    ) -> Self {
+        Self::build(instance, store, Some(quota_runtime))
+    }
+
+    fn build(
+        instance: impl Into<String>,
+        artifact_store: Option<Arc<ArtifactStore>>,
+        quota_runtime: Option<Arc<QuotaRuntime>>,
+    ) -> Self {
         let instance = instance.into();
+        let router = CommandRouter::new(RouterConfig {
+            instance: instance.clone(),
+            ..RouterConfig::default()
+        });
+        if let Some(runtime) = quota_runtime.as_ref() {
+            router.set_quota_runtime(Arc::clone(runtime));
+        }
         Self {
             instance: instance.clone(),
             started_at: Instant::now(),
@@ -156,11 +369,9 @@ impl AppService {
                 commands_handled: 0,
                 sources: BTreeMap::new(),
             }),
-            router: CommandRouter::new(RouterConfig {
-                instance: instance.clone(),
-                ..RouterConfig::default()
-            }),
+            router,
             artifact_store,
+            quota_runtime,
         }
     }
 
@@ -234,6 +445,11 @@ impl AppService {
 
     pub fn router(&self) -> &CommandRouter {
         &self.router
+    }
+
+    /// 进程内共享的 Quota 运行时（P14-8）；未注入时为 `None`。
+    pub fn quota_runtime(&self) -> Option<&Arc<QuotaRuntime>> {
+        self.quota_runtime.as_ref()
     }
 
     /// 注册 Provider 实现（测试注入 / 正式宿主后续由 provider-runtime 注入）。
@@ -584,7 +800,7 @@ fn failed_response(kind: &str, message: &str, data: Value) -> ServiceResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_domain::Timestamp;
+    use agent_domain::{CancellationToken, Timestamp};
     use core_api::AppQuery;
 
     #[test]
@@ -627,5 +843,266 @@ mod tests {
         });
         assert!(matches!(query.response, AppResponse::Data(_)));
         assert_eq!(service.router().source_stats().get("automation"), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn production_runtime_reads_local_ledger_without_network() {
+        let runtime = QuotaRuntime::production();
+        let cancel = CancellationToken::new();
+        let scope = quota_service::QuotaScope::new(
+            agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+            quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
+            agent_domain::ProviderId::from("mock"),
+            None,
+        );
+        let request = quota_service::QuotaRequest {
+            scope,
+            window: quota_service::QuotaWindow::Overall,
+            unit: quota_service::QuotaUnit::Token,
+        };
+        // 空查询：仅本地 ledger 派生，无任何网络适配器参与。
+        let read = runtime
+            .quota
+            .read(&request, &cancel)
+            .await
+            .expect("local ledger read must succeed without network");
+        assert!(
+            read.failures.is_empty(),
+            "no adapter may fail on an empty local read: {:?}",
+            read.failures
+        );
+        assert_eq!(
+            read.snapshot.provenance.adapter_kind,
+            quota_service::AdapterKind::LocalLedger
+        );
+        assert_eq!(
+            read.snapshot.values.used,
+            quota_service::QuotaMeasure::Exact(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn production_quota_runtimes_are_isolated() {
+        let runtime_a = QuotaRuntime::production();
+        let runtime_b = QuotaRuntime::production();
+        let cancel = CancellationToken::new();
+        let scope = quota_service::QuotaScope::new(
+            agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+            quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
+            agent_domain::ProviderId::from("mock"),
+            None,
+        );
+        let request = quota_service::QuotaRequest {
+            scope,
+            window: quota_service::QuotaWindow::Overall,
+            unit: quota_service::QuotaUnit::Token,
+        };
+
+        // 只向 A 的 ledger 记账（成功 run 的追加路径与查询读取同一实例）。
+        runtime_a
+            .ledger
+            .record(usage_ledger::UsageRecord {
+                record_id: "prod-isolation-1".into(),
+                tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+                principal_id: agent_domain::PrincipalId::default(),
+                account_id: core_api::DEFAULT_QUOTA_ACCOUNT.to_string(),
+                credential_id: None,
+                session_id: agent_domain::SessionId::default(),
+                agent_id: agent_domain::AgentId::default(),
+                run_id: Some(agent_domain::RunId::from("run-a")),
+                provider_id: agent_domain::ProviderId::from("mock"),
+                model_id: agent_domain::ModelId::from("mock-model"),
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                cost_micros: 0,
+                currency: "USD".into(),
+                occurred_at_ms: 1,
+            })
+            .await
+            .expect("record into runtime A");
+
+        let read_a = runtime_a
+            .quota
+            .read(&request, &cancel)
+            .await
+            .expect("runtime A read");
+        let read_b = runtime_b
+            .quota
+            .read(&request, &cancel)
+            .await
+            .expect("runtime B read");
+        assert_eq!(
+            read_a.snapshot.values.used,
+            quota_service::QuotaMeasure::Exact(150),
+            "runtime A must see its own ledger"
+        );
+        assert_eq!(
+            read_b.snapshot.values.used,
+            quota_service::QuotaMeasure::Exact(0),
+            "runtime B must stay isolated from runtime A"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_local_cache_publishes_full_and_account_scopes() {
+        let clock = Arc::new(quota_service::service::MutableQuotaClock::at(1_000_000));
+        let ledger: Arc<dyn usage_ledger::UsageLedger> =
+            Arc::new(usage_ledger::InMemoryUsageLedger::new());
+        let runtime = QuotaRuntime::new(ledger, clock);
+        let record = usage_ledger::UsageRecord {
+            record_id: "local-reconcile-1".into(),
+            tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+            principal_id: agent_domain::PrincipalId::default(),
+            account_id: core_api::DEFAULT_QUOTA_ACCOUNT.to_string(),
+            credential_id: None,
+            session_id: agent_domain::SessionId::default(),
+            agent_id: agent_domain::AgentId::default(),
+            run_id: None,
+            provider_id: agent_domain::ProviderId::from("mock"),
+            model_id: agent_domain::ModelId::from("mock-model"),
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 20,
+            cache_write_tokens: 30,
+            cost_micros: 12_345,
+            currency: "USD".into(),
+            occurred_at_ms: 900_000,
+        };
+        runtime
+            .ledger
+            .record(record.clone())
+            .await
+            .expect("record into shared ledger");
+        runtime
+            .ledger
+            .record(usage_ledger::UsageRecord {
+                record_id: "local-reconcile-sibling".into(),
+                tenant_id: record.tenant_id.clone(),
+                principal_id: agent_domain::PrincipalId::default(),
+                account_id: record.account_id.clone(),
+                credential_id: Some("cred-other".into()),
+                session_id: agent_domain::SessionId::default(),
+                agent_id: agent_domain::AgentId::default(),
+                run_id: None,
+                provider_id: record.provider_id.clone(),
+                model_id: agent_domain::ModelId::from("other-model"),
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_read_tokens: 2,
+                cache_write_tokens: 3,
+                cost_micros: 655,
+                currency: "USD".into(),
+                occurred_at_ms: 900_000,
+            })
+            .await
+            .expect("record sibling usage into shared ledger");
+
+        // 同一 adapter 实例已 register + set_ledger_reconciler；直接走本地
+        // fetch + publish，全程无网络。
+        runtime
+            .refresh_local_cache(&record)
+            .await
+            .expect("all full-scope and account-scope keys must reconcile locally");
+
+        // 无 credential 的完整 model scope 仍不同于无 model 的账户级 scope：
+        // 2 scopes × 4 windows ×（Token + Cost<USD>）= 16 keys。
+        assert_eq!(runtime.quota.cache_size(), 16);
+
+        let full_scope = quota_service::QuotaScope {
+            tenant_id: record.tenant_id.clone(),
+            account_id: quota_service::AccountId::new(record.account_id.clone()),
+            credential_id: record.credential_id.clone(),
+            provider_id: record.provider_id.clone(),
+            model_id: Some(record.model_id.clone()),
+        };
+        let account_scope = quota_service::QuotaScope {
+            tenant_id: record.tenant_id.clone(),
+            account_id: quota_service::AccountId::new(record.account_id.clone()),
+            credential_id: None,
+            provider_id: record.provider_id.clone(),
+            model_id: None,
+        };
+        let assert_scope = |scope: &quota_service::QuotaScope, tokens, cost_micros| {
+            for window in [
+                quota_service::QuotaWindow::Overall,
+                quota_service::QuotaWindow::Rolling5h,
+                quota_service::QuotaWindow::Weekly,
+                quota_service::QuotaWindow::Monthly,
+            ] {
+                for (unit, used) in [
+                    (quota_service::QuotaUnit::Token, tokens),
+                    (
+                        quota_service::QuotaUnit::Cost {
+                            currency: "USD".into(),
+                        },
+                        cost_micros,
+                    ),
+                ] {
+                    let read = runtime
+                        .quota
+                        .read_cache_only(&quota_service::QuotaRequest {
+                            scope: scope.clone(),
+                            window,
+                            unit: unit.clone(),
+                        })
+                        .expect("cache-only read must not touch adapters");
+                    match read {
+                        quota_service::CacheRead::Hit {
+                            snapshot,
+                            from_cache: true,
+                        } => {
+                            assert_eq!(snapshot.window, window);
+                            assert_eq!(snapshot.unit, unit);
+                            assert_eq!(
+                                snapshot.values.used,
+                                quota_service::QuotaMeasure::Exact(used)
+                            );
+                            assert_eq!(
+                                snapshot.provenance.adapter_kind,
+                                quota_service::AdapterKind::LocalLedger
+                            );
+                        }
+                        other => {
+                            panic!("expected fresh cache hit for {window:?} {unit:?}: {other:?}")
+                        }
+                    }
+                }
+            }
+        };
+        assert_scope(&full_scope, 200, 12_345);
+        assert_scope(&account_scope, 220, 13_000);
+
+        // 只发布目标完整 scope 与账户级 scope；其他具体 model/credential
+        // 即使已有 ledger 记录，也不会获得具体 scope 的缓存键。
+        let other_model = quota_service::QuotaScope {
+            tenant_id: record.tenant_id.clone(),
+            account_id: quota_service::AccountId::new(record.account_id.clone()),
+            credential_id: None,
+            provider_id: record.provider_id.clone(),
+            model_id: Some(agent_domain::ModelId::from("other-model")),
+        };
+        assert!(
+            runtime
+                .quota
+                .cached_snapshots_for_scope(&other_model)
+                .is_empty(),
+            "account-level entries must not leak to a concrete sibling model"
+        );
+        let other_credential = quota_service::QuotaScope {
+            tenant_id: record.tenant_id.clone(),
+            account_id: quota_service::AccountId::new(record.account_id.clone()),
+            credential_id: Some("cred-other".into()),
+            provider_id: record.provider_id.clone(),
+            model_id: Some(record.model_id.clone()),
+        };
+        assert!(
+            runtime
+                .quota
+                .cached_snapshots_for_scope(&other_credential)
+                .is_empty(),
+            "account-level entries must not leak to a concrete sibling credential"
+        );
     }
 }

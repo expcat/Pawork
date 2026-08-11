@@ -22,6 +22,8 @@
 
 P18 Ledger 记录 canonical `UsageRecord`，至少含：`tenant_id`、`principal_id`、`account_id`、`credential_id`、`session_id`、`agent_id`、`provider_id`、`model_id`、tokens/cache/cost、trace 与时间。Phase 14 Quota 负责外部额度快照、窗口聚合和展示；Ledger 负责本地不可变归属、预算与后续 chargeback，两者不互相冒充。
 
+P14-7 只扩展并消费这一个 Ledger：record ID 的幂等命名空间至少包含 tenant/account；相同 ID 与相同内容 replay 为 no-op，相同 ID 与不同内容显式冲突。complete、failed 与 cancelled 终态都必须提交已发生的用量，提交失败保留稳定记录供重试。Quota 派生查询沿 tenant/account/credential/provider/model 与币种过滤，不得把另一个账号的记录纳入窗口。
+
 ## Audit Event
 
 ```rust
@@ -39,6 +41,8 @@ pub struct AuditEventV1 {
 ```
 
 审计覆盖身份解析、policy decision、route decision、lease acquire/release/rebind、Agent lifecycle、permission/tool、配置变更和数据导出。OTel/SIEM exporter 只能输出 allowlist 字段；凭据、prompt、tool output 与 Protected Blob 明文默认不导出。
+
+Quota 刷新、WebScrape、部分失败、重新授权、阈值触发与恢复同样进入审计。允许记录 provider、account 的脱敏提示、window、adapter kind、confidence、HTTP 错误类别与 selector version；禁止记录 API Key/token/cookie、URL query、认证 header、原始响应正文或 HTML。
 
 ## 优先级
 

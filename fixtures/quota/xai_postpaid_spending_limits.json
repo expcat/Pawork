@@ -1,0 +1,10 @@
+{
+  "_comment": "Synthetic contract fixture for xAI GET /v1/billing/teams/{team_id}/postpaid/spending-limits (management key, https://management-api.x.ai). Real shape: limits[].{period,limit.val} where limit.val is a signed decimal integer in USD cents (the spending ceiling). Current-period consumption (used) is sourced from the invoice-preview endpoint, not from this response.",
+  "_endpoint": "https://management-api.x.ai/v1/billing/teams/{team_id}/postpaid/spending-limits",
+  "_auth": "xAI management API key (Bearer)",
+  "_config": { "team_id": "team-synthetic" },
+  "limits": [
+    { "period": "weekly", "limit": { "val": "2000" } },
+    { "period": "monthly", "limit": { "val": "10000" } }
+  ]
+}

@@ -26,15 +26,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_domain::{
-    ActorId, CommandId, ErrorContext, QueryId, RunId, SessionId, Timestamp, WorkspaceId,
+    ActorId, CommandId, ErrorContext, ModelId, ProviderId, QueryId, RunId, SessionId, TenantId,
+    Timestamp, WorkspaceId,
 };
 use app_service::{AppService, ServiceOperation, ServiceRequest, ServiceResponse};
+use cli_command::UsageArgs;
 use cli_command::{Cli, Command, RemoteCommand, RunArgs, RunCommand, ServiceCommand};
 use cli_renderer::{render, render_event, OutputFormat};
 use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, ApprovalDecision, CommandSource, RunState, API_VERSION,
 };
+use core_api::{QuotaOverviewQuery, QuotaUnit, QuotaWindow};
 use serde_json::Value;
 use subscription_hub::{EventHub, HubError};
 use transport_remote_placeholder::{
@@ -129,6 +132,7 @@ impl CliHost {
             Command::Doctor => self.legacy(ServiceOperation::Doctor, format),
             Command::Service(service) => self.service_mode(service.command, format),
             Command::Remote(remote) => self.remote_mode(remote.command, format).await,
+            Command::Usage(args) => self.usage_mode(args, format),
             other => self.placeholder_for_command(other, format),
         }
     }
@@ -651,6 +655,21 @@ impl CliHost {
         self.envelope_outcome(kind, response, format)
     }
 
+    // ---------- Usage（P14-8） ----------
+
+    /// `pawork usage`：查询 typed QuotaOverview 并渲染（Text / JSON）。
+    fn usage_mode(&self, args: UsageArgs, format: OutputFormat) -> HostOutcome {
+        let query = usage_query_from_args(&args);
+        let response = self.dispatch_query(AppQuery::QuotaOverview { query });
+        match format {
+            OutputFormat::Json => self.envelope_outcome("usage", response, format),
+            OutputFormat::Text => HostOutcome {
+                output: render_usage_text(&response),
+                exit_code: i32::from(!matches!(response.response, AppResponse::Data(_))),
+            },
+        }
+    }
+
     fn ensure_workspace(&self, path: Option<&str>) -> Result<WorkspaceId, String> {
         let path = path.map(str::to_string);
         // 已有 workspace 中按 root 路径复用。
@@ -915,7 +934,8 @@ impl CliHost {
             | Command::Shutdown
             | Command::Doctor
             | Command::Service(_)
-            | Command::Remote(_) => unreachable!("handled before placeholder mapping"),
+            | Command::Remote(_)
+            | Command::Usage(_) => unreachable!("handled before placeholder mapping"),
         };
         let response = self.dispatch(placeholder(name, Vec::new()));
         HostOutcome {
@@ -1115,6 +1135,179 @@ fn now_timestamp() -> Timestamp {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0);
     Timestamp::from_unix_millis(millis)
+}
+
+// ---------- Usage（P14-8）参数 → 查询 / 文本渲染 ----------
+
+/// 把 [`UsageArgs`] 解析为 typed [`QuotaOverviewQuery`]（缺省 local/local/default）。
+fn usage_query_from_args(args: &UsageArgs) -> QuotaOverviewQuery {
+    QuotaOverviewQuery {
+        tenant_id: TenantId::new(args.tenant_or_default()),
+        account_id: args.account_or_default(),
+        provider_id: args.provider.as_deref().map(ProviderId::from),
+        credential_id: args.credential.clone(),
+        model_id: args.model.as_deref().map(ModelId::from),
+        windows: args
+            .window
+            .as_deref()
+            .map(|raw| raw.split(',').filter_map(parse_window).collect())
+            .filter(|w: &Vec<_>| !w.is_empty())
+            .unwrap_or_default(),
+        unit: args.unit.as_deref().and_then(parse_unit),
+    }
+}
+
+fn parse_window(raw: &str) -> Option<QuotaWindow> {
+    match raw.trim() {
+        "overall" => Some(QuotaWindow::Overall),
+        "rolling5h" => Some(QuotaWindow::Rolling5h),
+        "weekly" => Some(QuotaWindow::Weekly),
+        "monthly" => Some(QuotaWindow::Monthly),
+        _ => None,
+    }
+}
+
+fn parse_unit(raw: &str) -> Option<QuotaUnit> {
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("token") {
+        Some(QuotaUnit::Token)
+    } else if trimmed.eq_ignore_ascii_case("count") {
+        Some(QuotaUnit::Count)
+    } else if let Some(currency) = trimmed.strip_prefix("cost:") {
+        let currency = currency.trim().to_string();
+        if currency.is_empty() {
+            None
+        } else {
+            Some(QuotaUnit::Cost { currency })
+        }
+    } else {
+        None
+    }
+}
+
+/// 把 QuotaOverview 响应渲染为人类可读文本：每个窗口一行 + 失败列表。
+fn render_usage_text(response: &AppResponseEnvelope) -> String {
+    let value = match &response.response {
+        AppResponse::Data(value) => value,
+        AppResponse::Error(context) => {
+            return format!("usage: error: {}", context.message);
+        }
+        other => return format!("usage: unexpected response: {other:?}"),
+    };
+    let scope = value.get("scope");
+    let from_cache = value
+        .get("from_cache")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let header = match scope {
+        Some(scope) => format!(
+            "usage for {tenant}/{account} (provider={provider}, cache={cache})",
+            tenant = scope
+                .get("tenant_id")
+                .and_then(Value::as_str)
+                .unwrap_or("?"),
+            account = scope
+                .get("account_id")
+                .and_then(Value::as_str)
+                .unwrap_or("?"),
+            provider = scope
+                .get("provider_id")
+                .and_then(Value::as_str)
+                .unwrap_or("?"),
+            cache = if from_cache { "hit" } else { "miss" },
+        ),
+        None => "usage overview".to_string(),
+    };
+    let mut lines = vec![header];
+    if let Some(windows) = value.get("windows").and_then(Value::as_array) {
+        for entry in windows {
+            let window = entry.get("window").and_then(Value::as_str).unwrap_or("?");
+            let status = entry
+                .get("read")
+                .and_then(|r| r.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("?");
+            let line = match status {
+                "ok" => {
+                    let snap = entry.get("read").and_then(|r| r.get("snapshot"));
+                    let unit = snap
+                        .and_then(|s| s.get("unit"))
+                        .map(unit_label)
+                        .unwrap_or_else(|| "?".into());
+                    let values = snap.and_then(|s| s.get("values"));
+                    let used = read_measure(values, "used");
+                    let limit = read_measure(values, "limit");
+                    let remaining = read_measure(values, "remaining");
+                    let reset = snap
+                        .and_then(|s| s.get("reset"))
+                        .and_then(|r| r.get("kind"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("?");
+                    let confidence = snap
+                        .and_then(|s| s.get("confidence"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("?");
+                    let provenance = snap
+                        .and_then(|s| s.get("provenance"))
+                        .and_then(|p| p.get("source"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("?");
+                    let stale = snap
+                        .and_then(|s| s.get("provenance"))
+                        .and_then(|p| p.get("stale"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    format!(
+                        "{window} {unit}: used={used} limit={limit} remaining={remaining} reset={reset} confidence={confidence} source={provenance} stale={stale}",
+                    )
+                }
+                "failed" => {
+                    let count = entry
+                        .get("read")
+                        .and_then(|r| r.get("failures"))
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0);
+                    format!("{window}: failed ({count} adapter failure(s))")
+                }
+                _ => format!("{window}: no data"),
+            };
+            lines.push(line);
+        }
+    }
+    lines.join("\n")
+}
+
+fn read_measure(values: Option<&Value>, field: &str) -> String {
+    let Some(values) = values else {
+        return "?".into();
+    };
+    let measure = values.get(field);
+    let kind = measure
+        .and_then(|m| m.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    match kind {
+        "exact" => measure
+            .and_then(|m| m.get("value"))
+            .and_then(Value::as_u64)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "?".into()),
+        "infinite" => "inf".into(),
+        _ => "?".into(),
+    }
+}
+
+fn unit_label(unit: &Value) -> String {
+    match unit.get("kind").and_then(Value::as_str) {
+        Some("count") => "count".into(),
+        Some("token") => "token".into(),
+        Some("cost") => format!(
+            "cost:{}",
+            unit.get("currency").and_then(Value::as_str).unwrap_or("?")
+        ),
+        _ => "?".into(),
+    }
 }
 
 fn terminal(state: &RunState) -> bool {
@@ -1385,5 +1578,97 @@ mod tests {
             "output: {}",
             outcome.output
         );
+    }
+
+    #[tokio::test]
+    async fn usage_json_returns_envelope_with_no_data_windows() {
+        // 无 quota runtime：每个窗口 NoData + from_cache=false；JSON envelope 合法。
+        let service = Arc::new(AppService::new("usage-json"));
+        let host = CliHost::new(service);
+        let cli = Cli::try_parse_from(["pawork", "--json", "usage"]).expect("parse");
+        let outcome = host.execute(cli).await;
+        assert_eq!(outcome.exit_code, 0, "output: {}", outcome.output);
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("JSON");
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["kind"], "usage");
+        // 视图落在 data.response.data。
+        let windows = &value["data"]["response"]["data"]["windows"];
+        assert!(windows.is_array(), "windows array: {windows}");
+        assert!(
+            windows
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|w| w["read"]["status"] == "no_data"),
+            "no-data windows: {windows}"
+        );
+        assert_eq!(value["data"]["response"]["data"]["from_cache"], false);
+        // scope 反映默认 local/local/default。
+        assert_eq!(
+            value["data"]["response"]["data"]["scope"]["tenant_id"],
+            "local"
+        );
+        assert_eq!(
+            value["data"]["response"]["data"]["scope"]["account_id"],
+            "local/default"
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_text_lists_windows_and_cache_status() {
+        let service = Arc::new(AppService::new("usage-text"));
+        let host = CliHost::new(service);
+        let cli = Cli::try_parse_from(["pawork", "usage"]).expect("parse");
+        let outcome = host.execute(cli).await;
+        assert_eq!(outcome.exit_code, 0, "output: {}", outcome.output);
+        // 头部含默认作用域与 cache=miss；每个窗口一行 no data。
+        assert!(
+            outcome.output.contains("local/local/default"),
+            "output: {}",
+            outcome.output
+        );
+        assert!(
+            outcome.output.contains("cache=miss"),
+            "output: {}",
+            outcome.output
+        );
+        assert!(
+            outcome.output.contains("no data"),
+            "output: {}",
+            outcome.output
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_filters_parse_into_query() {
+        // 仅验证参数解析 → 查询分发链路不 panic；非默认作用域会被授权拒绝。
+        let service = Arc::new(AppService::new("usage-filter"));
+        let host = CliHost::new(service);
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "--json",
+            "usage",
+            "--tenant",
+            "acme",
+            "--account",
+            "acme/team",
+            "--provider",
+            "anthropic",
+            "--window",
+            "monthly",
+            "--unit",
+            "token",
+        ])
+        .expect("parse");
+        let outcome = host.execute(cli).await;
+        // 非默认作用域 + LocalCli → Authorization 错误（exit_code != 0）。
+        assert_ne!(outcome.exit_code, 0, "expected denial: {}", outcome.output);
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("JSON");
+        assert_eq!(value["ok"], false, "output: {}", outcome.output);
+        // ErrorContext.category 序列化为 snake_case；在 data.response.error.category。
+        let category = value["data"]["response"]["data"]["category"]
+            .as_str()
+            .unwrap_or("?");
+        assert_eq!(category, "authorization", "output: {}", outcome.output);
     }
 }

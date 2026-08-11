@@ -1,0 +1,33 @@
+{
+  "_comment": "Synthetic contract fixture for Anthropic GET /v1/organizations/spend_limits/effective (2026 Enterprise Spend Limits API; Admin key via the x-api-key header, scope read:spend_limits). data[] items carry scope={type:user,user_id}; amount / period_to_date_spend are nullable decimal strings in minor USD cents (fractional cents allowed, up to 4 decimals; 1 cent = 10000 micros); only an explicit null means no hard limit / unknown spend — a missing (non-null) field is a parse error; every user-scoped entry must carry currency=USD and period=monthly; window is monthly and resets at 00:00 UTC on the 1st of each month.",
+  "_endpoint": "https://api.anthropic.com/v1/organizations/spend_limits/effective",
+  "_auth": "Admin API key (x-api-key + anthropic-version) with scope read:spend_limits",
+  "_pagination": "follow next_page; pass the URL-encoded cursor as page=<next_page> until next_page is absent; exceeding the page cap with a live cursor must error",
+  "_unit": "amount / period_to_date_spend are nullable decimal strings in minor USD cents (fractional cents allowed, up to 4 decimals)",
+  "object": "spend_limits_page",
+  "data": [
+    {
+      "object": "user_spend_limit",
+      "scope": {
+        "type": "user",
+        "user_id": "user-alice"
+      },
+      "amount": "10000.50",
+      "currency": "USD",
+      "period": "monthly",
+      "period_to_date_spend": "3000.25"
+    },
+    {
+      "object": "user_spend_limit",
+      "scope": {
+        "type": "user",
+        "user_id": "user-bob"
+      },
+      "amount": null,
+      "currency": "USD",
+      "period": "monthly",
+      "period_to_date_spend": "12.3456"
+    }
+  ],
+  "next_page": null
+}

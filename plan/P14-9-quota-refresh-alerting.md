@@ -1,6 +1,6 @@
 # P14-9：刷新调度、缓存与限额告警
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟡未开始 · 依赖：P14-6、P14-7、P14-8
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-6、P14-7、P14-8
 
 **最终目的**：让额度数据自动保持新鲜、查询不拖累体验，并在额度接近或触及限制时主动告警并给出降级建议，形成完整的「监控—预警—应对」闭环。
 
@@ -24,9 +24,11 @@
 
 ## 验收标准
 
-- [ ] 各窗口按配置周期自动刷新，失败后退避并降级本地推算
-- [ ] 查询额度不显著消耗目标供应商配额
-- [ ] 剩余水位低于阈值时触发告警与可执行建议
-- [ ] 刷新 / 告警行为入审计日志且脱敏
+- [x] 各窗口按配置周期自动刷新，失败后退避并降级本地推算
+- [x] 查询额度不显著消耗目标供应商配额
+- [x] 剩余水位低于阈值时触发告警与可执行建议
+- [x] 刷新 / 告警行为入审计日志且脱敏
+
+接线边界：`RefreshScheduler` 已提供可取消自动循环、幂等 target 注册、手动触发、退避、审计与 `RunSupervisor::alert_sink()` 事件桥；具体远端 target 由后续账号 / 凭据控制面按绑定关系注册。未注册远端 target 时，`pawork usage` 与 GUI 查询保持 cache-only，只消费本地 Ledger 投影，不在交互路径发网络请求。
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [observability](../docs/features/observability.md) · [context（token 预算）](../docs/features/context.md) · [ROADMAP](../ROADMAP.md)

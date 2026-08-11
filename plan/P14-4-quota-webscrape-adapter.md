@@ -1,6 +1,6 @@
 # P14-4：网页抓取适配器
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟡未开始 · 依赖：P14-1、P2-1
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-1、P2-1
 
 **最终目的**：为「无公开 usage API、只能从控制台网页查看额度」的供应商提供网页抓取适配器，以登录态会话抓取控制台页面并解析额度数字，补全 API 类适配器覆盖不到的供应商，同时以明确低可信度标注让用户知晓数据可能因页面改版失效。
 
@@ -24,10 +24,10 @@
 
 ## 验收标准
 
-- [ ] 能从示例控制台页面抽取至少一种窗口额度
-- [ ] 选择器失效时返回可诊断的 `ParseFailed`，不崩溃
-- [ ] 抓取受最低间隔与缓存约束，行为入审计日志
-- [ ] 抓取数据标注 `confidence = scraped`
+- [x] 能从示例控制台页面抽取至少一种窗口额度
+- [x] 选择器失效时返回可诊断的 `ParseFailed`，不崩溃
+- [x] 抓取受最低间隔与缓存约束，行为入审计日志
+- [x] 抓取数据标注 `confidence = scraped`
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [providers](../docs/features/providers.md) · [auth](../docs/features/auth.md) · [observability](../docs/features/observability.md) · [ROADMAP](../ROADMAP.md)
 

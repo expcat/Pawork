@@ -100,6 +100,12 @@ pub enum AgentEvent {
         provider_id: ProviderId,
         model: String,
     },
+    /// Provider 流式用量快照（canonical）：LoopSink 把
+    /// `ProviderStreamEvent::UsageUpdated` 广播到事件流，监督器据此捕获「最近一次
+    /// 观测到的用量」，确保失败/取消时已发生用量不丢失。
+    UsageUpdated {
+        usage: TokenUsage,
+    },
     AssistantTextDelta {
         message_id: MessageId,
         delta: String,

@@ -1,6 +1,6 @@
 # P14-8：Quota 查询 API 与 CLI / GUI 展示
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟡未开始 · 依赖：P14-6、P13-1
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-6、P13-1
 
 **最终目的**：把额度监控能力暴露为稳定查询接口，并在 CLI 与 GUI 上以脱敏、可读的方式展示「绑定模型用量 / 剩余额度 / 各窗口重置倒计时 / 数据来源」，让用户能直观掌握每个绑定模型的用量与限制情况。
 
@@ -24,9 +24,9 @@
 
 ## 验收标准
 
-- [ ] CLI 与 GUI 能查询并展示各绑定模型的多窗口额度
-- [ ] 输出脱敏，不含明文凭据
-- [ ] 数据来源与可信度被清晰标注
-- [ ] 生成的 TS 类型与 Rust 一致
+- [x] CLI 与 GUI 能查询并展示各绑定模型的多窗口额度
+- [x] 输出脱敏，不含明文凭据
+- [x] 数据来源与可信度被清晰标注
+- [x] 生成的 TS 类型与 Rust 一致
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [cli-host](../docs/features/cli-host.md) · [gui-connection](../docs/features/gui-connection.md) · [ROADMAP](../ROADMAP.md)

@@ -121,6 +121,12 @@ OpenAI、Anthropic、Google、Qwen 与 Moonshot 的 `builtin_models()` 数据快
 
 API Key 与 OS Keychain 见 [auth](auth.md)；OAuth（PKCE / Device Flow / auto refresh / callback）由 `auth-service::oauth` 提供，明文 token 只存 SecretBackend。xAI 订阅模式在组合层先调用 `resolve_oauth_credential_for_request` 完成刷新与轮换 token 回写，再以 `OAuthBearer` 构造 `provider-xai`；鉴于消费级端点不是稳定公开契约，授权/token endpoint 由 host 配置注入，API Key 仍为默认路径。
 
+## Quota adapter 边界
+
+Provider 推理 crate 不承担额度累计或控制台抓取。Phase 14 的 `quota-service` 以独立 adapter 读取官方 billing/quota endpoint、OAuth console API 或显式启用的 WebScrape，并归一为 canonical `QuotaSnapshot`；供应商特例不得进入 Agent Engine。普通 inference key 与 Admin/Management/AccessKey 的权限口径必须分开，远端不支持时返回 `Unsupported`，不得根据推理响应猜测总额度。
+
+当前六供应商的 exact/derived/scraped 能力、endpoint 与凭据要求见 [usage-quota](usage-quota.md#供应商能力矩阵)。本地用量统一来自 P18-8 Ledger，远端 billing 读数不创建第二套累计账本。
+
 ## 错误模型
 
 统一错误类别：Authentication / Authorization / RateLimited / QuotaExceeded / InvalidRequest / ModelNotFound / ContextTooLarge / ContentFiltered / Network / Timeout / ProviderUnavailable / StreamInterrupted / MalformedResponse / Cancelled / Unknown。

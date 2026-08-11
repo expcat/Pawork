@@ -50,7 +50,8 @@ pub struct CoreRuntime {
 }
 
 impl CoreRuntime {
-    /// 以默认配置装配（实例名 + 10ms pump + 4096 Hub 容量）。
+    /// 以默认配置装配（实例名 + 10ms pump + 4096 Hub 容量 + 生产 Quota
+    /// 运行时）。
     pub fn new(instance: impl Into<String>) -> Self {
         Self::with_config(CoreRuntimeConfig {
             instance: instance.into(),
@@ -58,9 +59,16 @@ impl CoreRuntime {
         })
     }
 
-    /// 以指定配置装配。
+    /// 以指定配置装配。默认携带生产 Quota 运行时（共享
+    /// [`app_service::QuotaRuntime`]：内存账本 + 系统时钟，唯一本地 ledger
+    /// 适配器，构造与空查询不触发网络）；`from_parts` 注入的既有
+    /// `AppService` 原样保留，不覆盖其 Quota 注入状态。
     pub fn with_config(config: CoreRuntimeConfig) -> Self {
-        let service = Arc::new(AppService::new(config.instance.clone()));
+        let service = Arc::new(AppService::with_quota_runtime(
+            config.instance.clone(),
+            None,
+            app_service::QuotaRuntime::production(),
+        ));
         Self::from_parts(service, config)
     }
 
@@ -326,5 +334,19 @@ mod tests {
         );
         assert!(Arc::ptr_eq(runtime.service(), &service));
         assert_eq!(runtime.hub().capacity(), DEFAULT_HUB_CAPACITY);
+        assert!(
+            runtime.service().quota_runtime().is_none(),
+            "from_parts must keep the injected AppService exactly as given"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_config_defaults_to_production_quota_runtime() {
+        let runtime = CoreRuntime::new("quota-wiring-test");
+        assert!(
+            runtime.service().quota_runtime().is_some(),
+            "default CoreRuntime must carry a production QuotaRuntime"
+        );
+        runtime.shutdown();
     }
 }

@@ -133,9 +133,28 @@ fn collect_declarations_from(
             .to_str()
             .ok_or_else(|| format!("invalid generated file name: {}", path.display()))?
             .replace('\\', "/");
-        declarations.insert(declaration_name, fs::read_to_string(path)?);
+        declarations.insert(
+            declaration_name,
+            normalize_declaration(&fs::read_to_string(path)?),
+        );
     }
     Ok(())
+}
+
+/// ts-rs may wrap long object declarations with a separator space before the
+/// newline. Generated artifacts are checked into Git, so normalize line ends
+/// here to keep `git diff --check` clean without hand-editing generated files.
+fn normalize_declaration(contents: &str) -> String {
+    let trailing_newline = contents.ends_with('\n');
+    let mut normalized = contents
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if trailing_newline {
+        normalized.push('\n');
+    }
+    normalized
 }
 
 fn write_declarations(destination: &Path, declarations: &BTreeMap<String, String>) -> Result<()> {

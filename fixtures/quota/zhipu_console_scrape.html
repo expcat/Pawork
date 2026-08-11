@@ -1,0 +1,16 @@
+<!--
+  Synthetic contract fixture for the Zhipu/BigModel Coding Plan WebScrape fallback.
+  Zhipu has NO official usage/quota API; Exact is Unsupported. This optional
+  scraped profile is low-trust (Confidence::Scraped), selector-versioned
+  (zhipu-coding-plan@2026-08), and requires a logged-in console session. It only
+  exposes Rolling5h / Weekly usage counts. Real DOM will change; this is a
+  synthetic shape.
+-->
+<html>
+  <body>
+    <div data-coding-plan>
+      <div data-window="rolling5h" data-used="1200" data-limit="5000"></div>
+      <div data-window="weekly" data-used="8000" data-limit="50000"></div>
+    </div>
+  </body>
+</html>

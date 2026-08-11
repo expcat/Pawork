@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use agent_domain::{
-    CancellationToken, Message, MessageId, MessageMetadata, ModelId, RequestId, RunId,
+    CancellationToken, Message, MessageId, MessageMetadata, ModelId, RequestId, RunId, TokenUsage,
 };
 use agent_events::{AgentEvent, AgentEventEnvelope, EventSequence};
 use provider_api::{
@@ -24,7 +24,7 @@ use thiserror::Error;
 
 use crate::appender::{AssembledTurn, ToolCallResult};
 use crate::broadcast::EventBroadcaster;
-use crate::budget::{BudgetController, BudgetDimension, BudgetReport};
+use crate::budget::{BudgetController, BudgetDimension, BudgetReport, ExternalQuotaSignal};
 use crate::cancel::{CancelHandle, CancelReason};
 use crate::queue::MessageQueue;
 use crate::retry::{RetryController, RetryDecision, RetryPolicy};
@@ -109,6 +109,20 @@ impl TurnOutcome {
     }
 }
 
+/// 把单轮 usage 饱和累计到 run 级累计值（任一维度溢出时按 u64::MAX 截断）。
+fn saturating_add_usage(acc: &TokenUsage, round: &TokenUsage) -> TokenUsage {
+    TokenUsage {
+        input_tokens: acc.input_tokens.saturating_add(round.input_tokens),
+        output_tokens: acc.output_tokens.saturating_add(round.output_tokens),
+        cache_read_tokens: acc
+            .cache_read_tokens
+            .saturating_add(round.cache_read_tokens),
+        cache_write_tokens: acc
+            .cache_write_tokens
+            .saturating_add(round.cache_write_tokens),
+    }
+}
+
 /// Provider Loop 配置。
 #[derive(Clone, Debug)]
 pub struct ProviderLoopConfig {
@@ -143,6 +157,8 @@ pub struct ProviderLoop {
     next_sequence: Arc<AtomicU64>,
     /// 已提交的消息历史（每轮追加，供下一轮请求使用）。
     messages: Vec<Message>,
+    /// run 级累计 usage（每轮成功后饱和累加；终态 RunCompleted 与返回值使用）。
+    run_usage: TokenUsage,
     started_at: Option<Instant>,
     warned_budget_dimensions: BTreeSet<BudgetDimension>,
 }
@@ -151,9 +167,25 @@ impl ProviderLoop {
     pub fn new(
         provider: Arc<dyn ModelProvider>,
         context: Arc<dyn LoopContext>,
+        config: ProviderLoopConfig,
+        start_sequence: u64,
+        broadcaster: EventBroadcaster,
+    ) -> Self {
+        Self::new_with_external_quota(provider, context, config, start_sequence, broadcaster, None)
+    }
+
+    /// 创建 Provider Loop，并注入可选的供应商中立外部额度信号。
+    ///
+    /// 旧 [`ProviderLoop::new`] 保持兼容并以 `None` 委托到此入口；宿主可在后续
+    /// 接线时传入 quota-service 归一后的 canonical 信号，而无需让本 crate
+    /// 依赖 quota-service。
+    pub fn new_with_external_quota(
+        provider: Arc<dyn ModelProvider>,
+        context: Arc<dyn LoopContext>,
         mut config: ProviderLoopConfig,
         start_sequence: u64,
         broadcaster: EventBroadcaster,
+        external_quota: Option<ExternalQuotaSignal>,
     ) -> Self {
         let messages = config.initial_messages.clone();
         // 若 budget 未设迭代上限，用 config.max_iterations 作为安全阀，
@@ -161,7 +193,10 @@ impl ProviderLoop {
         if config.budget.max_iterations.is_none() && config.max_iterations > 0 {
             config.budget.max_iterations = Some(config.max_iterations);
         }
-        let budget = BudgetController::new(config.budget.clone());
+        let mut budget = BudgetController::new(config.budget.clone());
+        if let Some(signal) = external_quota {
+            budget.set_external_quota(signal);
+        }
         Self {
             provider,
             context,
@@ -171,6 +206,7 @@ impl ProviderLoop {
             broadcaster,
             next_sequence: Arc::new(AtomicU64::new(start_sequence.max(1))),
             messages,
+            run_usage: TokenUsage::default(),
             started_at: None,
             warned_budget_dimensions: BTreeSet::new(),
         }
@@ -257,9 +293,14 @@ impl ProviderLoop {
                 }
             };
 
+            // 每轮成功后把该轮 usage 饱和累计到本 run；终态（RunCompleted 与
+            // 返回的 ModelResponseSummary）使用累计值，MessageCommitted 的
+            // metadata 仍保留单轮值。
+            self.run_usage = saturating_add_usage(&self.run_usage, &outcome.summary.usage);
+
             // 先判断是否请求工具（借引用），再取走 summary。
             let requests_tools = outcome.requests_tools();
-            let summary = outcome.summary;
+            let mut summary = outcome.summary;
 
             let queued = queue.drain_one().await;
 
@@ -271,7 +312,8 @@ impl ProviderLoop {
                     continue;
                 }
                 self.transition(RunTransition::Complete)?;
-                let usage = summary.usage.clone();
+                let usage = self.run_usage.clone();
+                summary.usage = usage.clone();
                 self.emit_terminal_payload(AgentEvent::RunCompleted {
                     stop_reason: summary.stop_reason.clone(),
                     usage,
@@ -582,12 +624,21 @@ impl ProviderLoop {
     fn emit_budget_warnings(&mut self, report: &BudgetReport) {
         for dimension in &report.soft_warnings {
             if self.warned_budget_dimensions.insert(*dimension) {
+                let mut details = serde_json::json!({
+                    "dimension": dimension.as_str(),
+                    "usage": self.budget.usage(),
+                });
+                if *dimension == BudgetDimension::ProviderQuota {
+                    if let Some(note) = self.budget.quota_signal_note() {
+                        details
+                            .as_object_mut()
+                            .expect("budget diagnostic details are an object")
+                            .insert("quota_signal_note".into(), serde_json::Value::String(note));
+                    }
+                }
                 self.emit_payload(AgentEvent::Diagnostic {
                     code: "budget_soft_limit".into(),
-                    details: serde_json::json!({
-                        "dimension": dimension.as_str(),
-                        "usage": self.budget.usage(),
-                    }),
+                    details,
                 });
             }
         }
@@ -813,6 +864,9 @@ impl ProviderEventSink for LoopSink {
                     json_delta: json.clone(),
                 })
             }
+            ProviderStreamEvent::UsageUpdated(usage) => Some(AgentEvent::UsageUpdated {
+                usage: usage.clone(),
+            }),
             _ => None,
         };
         if let Some(payload) = payload {
@@ -1170,6 +1224,8 @@ mod tests {
             .usage(TokenUsage {
                 input_tokens: 10,
                 output_tokens: 2,
+                cache_read_tokens: 100,
+                cache_write_tokens: 4,
                 ..Default::default()
             })
             .complete_with(StopReason::ToolUse);
@@ -1219,6 +1275,8 @@ mod tests {
                     .usage(TokenUsage {
                         input_tokens: 20,
                         output_tokens: 1,
+                        cache_read_tokens: 5,
+                        cache_write_tokens: 8,
                         ..Default::default()
                     })
                     .complete(),
@@ -1290,18 +1348,37 @@ mod tests {
             req_counter: AtomicU64::new(0),
         });
 
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
         let mut engine = ProviderLoop::new(
             provider,
             context,
             config(vec![user_message("echo")]),
             1,
-            EventBroadcaster::new(),
+            broadcaster,
         );
         let (state, summary) = engine.run(message_queue(), run_cancel()).await.unwrap();
         assert_eq!(state, RunState::Completed);
         assert_eq!(summary.stop_reason, StopReason::Completed);
         // 历史：user + assistant(tool call) + tool result + assistant(text) = 4
         assert_eq!(engine.messages().len(), 4);
+        // run 级累计 usage：两轮 input 10+20、output 2+1，cache 各维度饱和累计。
+        assert_eq!(summary.usage.input_tokens, 30);
+        assert_eq!(summary.usage.output_tokens, 3);
+        assert_eq!(summary.usage.cache_read_tokens, 105);
+        assert_eq!(summary.usage.cache_write_tokens, 12);
+        // RunCompleted 广播同样携带 run 级累计 usage，而非最后一轮单轮值。
+        let mut completed_usage = None;
+        while let Ok(Some(event)) = sub.try_recv() {
+            if let AgentEvent::RunCompleted { usage, .. } = event.payload {
+                completed_usage = Some(usage);
+            }
+        }
+        let completed_usage = completed_usage.expect("必须广播 RunCompleted");
+        assert_eq!(completed_usage.input_tokens, 30);
+        assert_eq!(completed_usage.output_tokens, 3);
+        assert_eq!(completed_usage.cache_read_tokens, 105);
+        assert_eq!(completed_usage.cache_write_tokens, 12);
     }
 
     #[tokio::test]
@@ -1943,9 +2020,17 @@ mod tests {
         engine.run(queue, run_cancel()).await.unwrap();
         let mut warnings = 0;
         while let Ok(Some(event)) = sub.try_recv() {
-            if matches!(event.payload, AgentEvent::Diagnostic { ref code, .. } if code == "budget_soft_limit")
-            {
-                warnings += 1;
+            if let AgentEvent::Diagnostic { code, details } = event.payload {
+                if code == "budget_soft_limit" {
+                    warnings += 1;
+                    assert_eq!(
+                        details.get("dimension").and_then(serde_json::Value::as_str),
+                        Some("iterations")
+                    );
+                    assert!(details.get("usage").is_some());
+                    assert!(details.get("quota_signal_note").is_none());
+                    assert_eq!(details.as_object().map(serde_json::Map::len), Some(2));
+                }
             }
         }
         assert_eq!(warnings, 1, "同一预算维度只警告一次");
@@ -1970,6 +2055,63 @@ mod tests {
             failed |= matches!(event.payload, AgentEvent::RunFailed { .. });
         }
         assert!(failed, "预算硬上限必须广播 RunFailed");
+    }
+
+    #[tokio::test]
+    async fn scraped_and_stale_quota_diagnostics_include_signal_note() {
+        for (signal, marker) in [
+            (
+                ExternalQuotaSignal {
+                    remaining_ratio_ppm: 900_000,
+                    exhausted: false,
+                    stale: false,
+                    confidence: crate::budget::QuotaSignalConfidence::Scraped,
+                },
+                "scraped signal",
+            ),
+            (
+                ExternalQuotaSignal {
+                    remaining_ratio_ppm: 900_000,
+                    exhausted: false,
+                    stale: true,
+                    confidence: crate::budget::QuotaSignalConfidence::Exact,
+                },
+                "stale exact signal",
+            ),
+        ] {
+            let broadcaster = EventBroadcaster::new();
+            let mut sub = broadcaster.subscribe();
+            let mut engine = ProviderLoop::new_with_external_quota(
+                Arc::new(MockProvider::new(MockScript::new().text("ok").complete())),
+                Arc::new(TestContext::new(Vec::new())),
+                config(vec![user_message("quota diagnostic")]),
+                1,
+                broadcaster,
+                Some(signal),
+            );
+
+            engine.run(message_queue(), run_cancel()).await.unwrap();
+
+            let mut quota_note = None;
+            while let Ok(Some(event)) = sub.try_recv() {
+                if let AgentEvent::Diagnostic { code, details } = event.payload {
+                    if code == "budget_soft_limit"
+                        && details.get("dimension").and_then(serde_json::Value::as_str)
+                            == Some("provider_quota")
+                    {
+                        assert!(details.get("usage").is_some());
+                        assert_eq!(details.as_object().map(serde_json::Map::len), Some(3));
+                        quota_note = details
+                            .get("quota_signal_note")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned);
+                    }
+                }
+            }
+
+            let quota_note = quota_note.expect("ProviderQuota soft warning must include note");
+            assert!(quota_note.contains(marker), "note: {quota_note}");
+        }
     }
 
     #[tokio::test]

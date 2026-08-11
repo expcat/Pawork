@@ -25,6 +25,7 @@ pub enum Command {
     Watch,
     Status,
     Shutdown,
+    Usage(UsageArgs),
     Workspace(Nested<WorkspaceCommand>),
     Session(Nested<SessionCommand>),
     Approval(Nested<ApprovalCommand>),
@@ -53,6 +54,59 @@ pub struct ServeArgs {
     /// 初始化后立即退出，供自动化烟雾测试使用。
     #[arg(long)]
     pub once: bool,
+}
+
+/// `pawork usage` 参数（P14-8）：默认 legacy 作用域 local / local/default。
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub struct UsageArgs {
+    /// 隔离租户（缺省 `local`）。
+    #[arg(long)]
+    pub tenant: Option<String>,
+
+    /// 账户（缺省 `local/default`）。
+    #[arg(long)]
+    pub account: Option<String>,
+
+    /// 过滤到指定 Provider。
+    #[arg(long)]
+    pub provider: Option<String>,
+
+    /// 凭证元数据 ID（opaque，绝非凭证值）。
+    #[arg(long)]
+    pub credential: Option<String>,
+
+    /// 过滤到指定模型。
+    #[arg(long)]
+    pub model: Option<String>,
+
+    /// 窗口：overall | rolling5h | weekly | monthly（可多次指定）。
+    #[arg(long)]
+    pub window: Option<String>,
+
+    /// 单位：count | token | cost:<ISO-4217>。
+    #[arg(long)]
+    pub unit: Option<String>,
+}
+
+impl UsageArgs {
+    /// 缺省 tenant（与 core-api `DEFAULT_QUOTA_TENANT` 一致）。
+    pub const DEFAULT_TENANT: &'static str = "local";
+    /// 缺省 account（与 core-api `DEFAULT_QUOTA_ACCOUNT` 一致）。
+    pub const DEFAULT_ACCOUNT: &'static str = "local/default";
+
+    /// 解析后的 tenant（缺省 `local`）。
+    pub fn tenant_or_default(&self) -> String {
+        self.tenant
+            .clone()
+            .unwrap_or_else(|| Self::DEFAULT_TENANT.to_string())
+    }
+
+    /// 解析后的 account（缺省 `local/default`）。
+    pub fn account_or_default(&self) -> String {
+        self.account
+            .clone()
+            .unwrap_or_else(|| Self::DEFAULT_ACCOUNT.to_string())
+    }
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -251,5 +305,47 @@ mod tests {
 
         // unpublish 缺少 handle 解析失败。
         assert!(Cli::try_parse_from(["pawork", "remote", "unpublish"]).is_err());
+    }
+
+    #[test]
+    fn parses_usage_defaults_and_filters() {
+        let cli = Cli::try_parse_from(["pawork", "usage"]).expect("usage default");
+        let Command::Usage(args) = &cli.command else {
+            panic!("expected usage command");
+        };
+        assert_eq!(args.tenant_or_default(), "local");
+        assert_eq!(args.account_or_default(), "local/default");
+        assert!(args.provider.is_none());
+        assert!(args.window.is_none());
+
+        let filtered = Cli::try_parse_from([
+            "pawork",
+            "usage",
+            "--tenant",
+            "acme",
+            "--account",
+            "acme/team",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude",
+            "--window",
+            "monthly",
+            "--unit",
+            "token",
+            "--credential",
+            "key-123",
+        ])
+        .expect("usage filtered");
+        let Command::Usage(args) = &filtered.command else {
+            panic!("expected usage command");
+        };
+        assert_eq!(args.tenant.as_deref(), Some("acme"));
+        assert_eq!(args.account.as_deref(), Some("acme/team"));
+        assert_eq!(args.provider.as_deref(), Some("anthropic"));
+        assert_eq!(args.model.as_deref(), Some("claude"));
+        assert_eq!(args.window.as_deref(), Some("monthly"));
+        assert_eq!(args.unit.as_deref(), Some("token"));
+        assert_eq!(args.credential.as_deref(), Some("key-123"));
     }
 }

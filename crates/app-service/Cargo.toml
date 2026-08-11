@@ -18,11 +18,14 @@ diff-service = { path = "../diff-service" }
 directories.workspace = true
 model-registry = { path = "../model-registry" }
 provider-api = { path = "../provider-api" }
+quota-service = { path = "../quota-service" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+tracing.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
 tool-api = { path = "../tool-api" }
+usage-ledger = { path = "../usage-ledger" }
 workspace-service = { path = "../workspace-service" }
 
 [dev-dependencies]

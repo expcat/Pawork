@@ -1,6 +1,6 @@
 # P14-2：API Key 直连适配器
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟡未开始 · 依赖：P14-1、P2-1、P2-6
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-1、P2-1、P2-6
 
 **最终目的**：实现「持有 API Key 即可直接通过官方 REST billing / usage API 获取额度」这一最高可信度适配器，作为多数主流供应商（OpenAI 等）的默认数据来源，奠定 P14-5 具体供应商实现的通用底座。
 
@@ -22,9 +22,9 @@
 
 ## 验收标准
 
-- [ ] 持有有效 API Key 时能获取至少一种窗口的真实额度
-- [ ] 明文 Key 不写入日志与数据库
-- [ ] 401 / 403 / 429 被正确归类，不静默崩溃
+- [x] 持有有效 API Key 时能获取至少一种窗口的真实额度
+- [x] 明文 Key 不写入日志与数据库
+- [x] 401 / 403 / 429 被正确归类，不静默崩溃
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [providers](../docs/features/providers.md) · [auth](../docs/features/auth.md) · [ROADMAP](../ROADMAP.md)
 

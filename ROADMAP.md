@@ -34,13 +34,13 @@
 | 11 | Sandbox 与跨平台强化 | 8 | 8 | 🟢已完成（7 项 TargetVerified；P11-5 已归档） |
 | 12 | Multi-Agent | 6 | 7 | 🟢已完成（P12-1～P12-6 TargetVerified；P12-7 review-remediation 已完成） |
 | 13 | CLI Host 与多 GUI 协议 | 10 | 10 | 🟢已完成（P13-1～P13-10 TargetVerified） |
-| 14 | 模型用量与额度监控 | 9 | 0 | 🟡未开始 |
+| 14 | 模型用量与额度监控 | 9 | 9 | 🟢已完成（P14-1～P14-9 TargetVerified） |
 | 15 | Provider Native Capabilities | 9 | 0 | 🟡未开始 |
 | 16 | Modern Agent Workflow | 9 | 0 | 🟡未开始 |
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **139** | — |
+| **合计** | — | **210** | **148** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -48,7 +48,9 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P14-1 Quota 领域模型与适配器 Trait** —— Phase 13 CLI Host 与多 GUI 协议已闭环，按 Phase 14 规划「建议在 Phase 13 之后推进」，下一项落地模型用量与额度监控：快照 / 窗口 / 适配器种类 / Trait。详情见 [plan/P14-1-quota-domain-adapter.md](plan/P14-1-quota-domain-adapter.md)。（P15-1 Canonical Tool v2 仍为 Provider v2 波次的关键路径，可在其后并行推进。）
+> 🎯 **P15-1 Canonical Tool v2** —— Phase 14 用量与额度监控已闭环，下一项进入 Provider v2 前置波次，统一 Client Function / Provider Hosted / Extension Tool 的 canonical 契约。详情见 [plan/P15-1-canonical-tool-v2.md](plan/P15-1-canonical-tool-v2.md)。
+
+> ✅ **Phase 14 模型用量与额度监控已完成（P14-1～P14-9，TargetVerified）**：交付 `quota-service` canonical 领域模型、API Key / OAuth / WebScrape / Local Ledger 四类 adapter、六初始供应商 contract fixtures、多窗口聚合与 cache-only 查询、Usage/Cost Ledger 写入与预算信号、`pawork usage` 文本/JSON 输出、GUI Protocol 的 `QuotaChanged` / `QuotaAlert` 事件、可取消刷新调度、退避、去重告警与脱敏审计。开发期完成受影响 crate 的定向测试、Clippy、格式与 schema 漂移检查；workspace 全量门禁留待集中 review。远端刷新 target 由后续账号/凭据控制面按绑定关系注册，未配置 target 时查询仍只读本地缓存与 Ledger。
 
 > ✅ **Phase 13 CLI Host 与多 GUI 协议已完成（P13-1～P13-11，TargetVerified）**：交付 `app-service` 统一 Command Router / `AppCommandEnvelope`（幂等、限流、RunSupervisor、审批、聚合状态）；`core-runtime` + `cli-host` + `pawork` 正式宿主与四种运行模式 + Event Hub；GUI Connection Protocol（握手协商 / 编解码 / Snapshot / Resume / 错误帧，ADR-036 版本化）；`gui-server` + `transport-local`（Unix Socket / Named Pipe）+ `transport-memory` + `client-auth`；多 GUI 运行时（Connection Manager 心跳/订阅/有界队列、慢客户端隔离、断线不取消 Run）；Remote Transport 占位 Adapter + Mock + `pawork remote publish/unpublish`；`artifact-store` 分片读取接入 app-service 并按 ≤64KiB 分片回真实 payload；`gui-client` SDK + `apps/protocol-test-gui` + 9 项 Contract Tests（3 GUI 并发、重连 Replay、命令幂等、100k 行 diff 流式、版本拒绝）。schema-typegen 覆盖全部协议类型并经 CI `--check` 防漂移。**P13-11 评审修复**（2026-08-11）：`pawork serve` 真正装配 GuiServer（首个生产 `GuiServerHost` 实现，绑定本地端点 + accept + 真实帧循环）、协议版本校验双向化（ADR-036）、删 11 项死公开 API、client-auth 原子 token 创建。详见各 [plan/P13-*](plan/) 文档。
 
@@ -67,7 +69,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 3. **账号控制面基础**：完成 P18-1～P18-9。先建立 `Tenant/Principal`、`ProviderAccount/Credential`、Lease、错误/健康状态机、确定性路由、Session Affinity 与多维 Usage Ledger；`ModelProvider` 保持不变，旧配置映射到 `local/default + SingleCandidate`。Phase 12、Phase 14 与外部 Client Adapter 不得各自复制账号选择逻辑。
 4. **资源与 Host 基础**：Phase 8～9 与 Phase 13（P13-1～P13-10）已完成：CLI/Core 正式宿主（`pawork` 四种运行模式）、统一 app-service 入口、GUI Connection Protocol 与多 GUI 运行时已闭环；继续推进 P16-1 / P16-2 与 P18-10，形成可审批 Plan 和统一 Client Adapter 契约的最小闭环。
 5. **Process 与扩展生态**：完成 Phase 10、Phase 11，再推进 P16-4 / P16-6 与 P17-1～P17-4；可安装插件、用户 Hook、LSP 与后台进程闭环后执行一次相关 crates 的 L2，不跑无关功能簇。
-6. **Workflow、额度与编排**：推进 Phase 14、Phase 12、P16-3 / P16-5 / P16-7～P16-9、P17-5 / P17-6 与 P18-13 / P18-14；Quota 视图消费 P18-8 账本，Agent 只经 Lease 获取 Provider 资源，稳定后执行 workflow/orchestration L2。
+6. **Workflow、额度与编排**：Phase 14 与 Phase 12 已完成；继续推进 P16-3 / P16-5 / P16-7～P16-9、P17-5 / P17-6 与 P18-13 / P18-14。Quota 视图消费 P18-8 账本，Agent 只经 Lease 获取 Provider 资源，稳定后执行 workflow/orchestration L2。
 7. **公共 Client 与远程能力**：完成 P18-11 / P18-12、P17-7～P17-13，最后由 P18-15 集中执行账号池属性/并发、迁移、跨租户隔离、Codex/Claude/ACP golden 与故障注入门禁；发布候选再执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
 8. **Desktop GUI**：P13-2～P13-10 稳定后先完成 P19-1～P19-9，用 Mock/Protocol Client 打通独立 Desktop Shell、状态投影与 Coding Agent 主交互；P19-10～P19-14 随 Phase 8～18 对应能力接线，P19-15 负责签名分发，最后由 P19-16 集中执行 Desktop contract、三平台 E2E、visual、accessibility、性能与安全门禁。GUI 不反向成为 Core 前置。
 
@@ -120,6 +122,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 | HTTP 客户端 | reqwest（rustls + stream） | P2-1、P9-2 | Provider 与 MCP Streamable HTTP 所需 |
 | OS Keychain | keyring（v3） | P2-6 | Secret 不落库不入日志 |
 | OAuth 安全原语 | base64、rand、sha2、url | P6-4、P6-14 | 采用成熟编码/随机/哈希/URL 原语；PKCE、token 交换、RFC 8628 编排为最小手写实现，不引入未使用的整套 `oauth2` SDK |
+| 请求签名原语 | hmac、sha1 | P14-5 | 仅用于 Alibaba BSS OpenAPI 要求的 HMAC-SHA1 canonical request 签名；Secret 只在进程内参与签名，不进入 URL、日志或持久化 |
 | MCP SDK | rmcp `=2.2.0` | P9-1、P9-2 | 官方 SDK；在 `mcp-client` 内封装 transport / protocol client 以隔离升级；该版本要求 workspace MSRV 为 Rust 1.85，2.x→3.x breaking 升级须单独执行迁移门禁 |
 | WASM 宿主 | wasmtime + wit-bindgen | P10-2、P10-5 | Component Model 成熟；fuel / 内存上限对应 ADR-012 |
 | 文件遍历 | ignore + globset | P1-8、P4-6、P4-7、P7-9 | ripgrep 同源；P7-9 复用 ignore 语义限制 Git watcher 范围 |
@@ -481,15 +484,15 @@ Parent/Worker 编排，写入隔离，取消传播。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P14-1 | 🟡 | Quota 领域模型与适配器 Trait | 快照/窗口/适配器种类/Trait | [详情](plan/P14-1-quota-domain-adapter.md) |
-| P14-2 | 🟡 | API Key 直连适配器 | key+REST billing/usage | [详情](plan/P14-2-quota-apikey-adapter.md) |
-| P14-3 | 🟡 | OAuth 登录授权适配器 | 复用 OAuth 取 console API | [详情](plan/P14-3-quota-oauth-adapter.md) |
-| P14-4 | 🟡 | 网页抓取适配器 | 无 API 平台页面解析 | [详情](plan/P14-4-quota-webscrape-adapter.md) |
-| P14-5 | 🟡 | 具体供应商实现 | 六初始供应商额度适配 | [详情](plan/P14-5-quota-provider-implementations.md) |
-| P14-6 | 🟡 | 多窗口额度聚合与归一 | 5h/周/月/整体+倒计时+缓存 | [详情](plan/P14-6-quota-window-aggregation.md) |
-| P14-7 | 🟡 | 本地用量累计与预算联动 | 对照远端+触限推算+预算 | [详情](plan/P14-7-quota-local-usage-budget.md) |
-| P14-8 | 🟡 | Quota 查询 API 与展示 | core-api/CLI/GUI 脱敏 | [详情](plan/P14-8-quota-query-api-display.md) |
-| P14-9 | 🟡 | 刷新调度与限额告警 | 定时刷新/退避/告警建议 | [详情](plan/P14-9-quota-refresh-alerting.md) |
+| P14-1 | 🟢 | Quota 领域模型与适配器 Trait | 快照/窗口/适配器种类/Trait | [详情](plan/P14-1-quota-domain-adapter.md) |
+| P14-2 | 🟢 | API Key 直连适配器 | key+REST billing/usage | [详情](plan/P14-2-quota-apikey-adapter.md) |
+| P14-3 | 🟢 | OAuth 登录授权适配器 | 复用 OAuth 取 console API | [详情](plan/P14-3-quota-oauth-adapter.md) |
+| P14-4 | 🟢 | 网页抓取适配器 | 无 API 平台页面解析 | [详情](plan/P14-4-quota-webscrape-adapter.md) |
+| P14-5 | 🟢 | 具体供应商实现 | 六初始供应商额度适配 | [详情](plan/P14-5-quota-provider-implementations.md) |
+| P14-6 | 🟢 | 多窗口额度聚合与归一 | 5h/周/月/整体+倒计时+缓存 | [详情](plan/P14-6-quota-window-aggregation.md) |
+| P14-7 | 🟢 | 本地用量累计与预算联动 | 对照远端+触限推算+预算 | [详情](plan/P14-7-quota-local-usage-budget.md) |
+| P14-8 | 🟢 | Quota 查询 API 与展示 | core-api/CLI/GUI 脱敏 | [详情](plan/P14-8-quota-query-api-display.md) |
+| P14-9 | 🟢 | 刷新调度与限额告警 | 定时刷新/退避/告警建议 | [详情](plan/P14-9-quota-refresh-alerting.md) |
 
 ### Phase 15：Provider Native Capabilities
 

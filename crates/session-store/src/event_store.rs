@@ -435,6 +435,7 @@ fn event_type(event: &AgentEvent) -> &'static str {
         AgentEvent::CheckpointCreated { .. } => "checkpoint_created",
         AgentEvent::CheckpointRolledBack { .. } => "checkpoint_rolled_back",
         AgentEvent::RunCompleted { .. } => "run_completed",
+        AgentEvent::UsageUpdated { .. } => "usage_updated",
         AgentEvent::RunCancelled { .. } => "run_cancelled",
         AgentEvent::RunFailed { .. } => "run_failed",
         AgentEvent::Diagnostic { .. } => "diagnostic",

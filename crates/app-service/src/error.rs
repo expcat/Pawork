@@ -31,6 +31,8 @@ pub enum AppServiceError {
     Conflict(String),
     #[error("authentication required: {0}")]
     Authentication(String),
+    #[error("authorization denied: {0}")]
+    Authorization(String),
     #[error("rate limited")]
     RateLimited { retry_after_ms: Option<u64> },
     #[error("resource exhausted: {0}")]
@@ -74,6 +76,9 @@ impl AppServiceError {
             Self::Conflict(message) => (ErrorCategory::Conflict, false, None, message.clone()),
             Self::Authentication(message) => {
                 (ErrorCategory::Authentication, false, None, message.clone())
+            }
+            Self::Authorization(message) => {
+                (ErrorCategory::Authorization, false, None, message.clone())
             }
             Self::RateLimited { retry_after_ms } => (
                 ErrorCategory::RateLimit,

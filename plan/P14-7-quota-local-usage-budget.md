@@ -1,6 +1,6 @@
 # P14-7：本地用量累计与预算联动
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P14-6、P18-8、P3-6、P2-7
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-6、P18-8、P3-6、P2-7
 
 **最终目的**：用本地真实发生的 Usage（P2-9）累计每个绑定模型的实际消耗，与远端额度对照、推算「预计何时触及限制」，并与既有预算控制（P3-6）联动，让用户在远端额度刷新滞后时仍能看到接近实时的剩余估计。
 
@@ -23,9 +23,9 @@
 
 ## 验收标准
 
-- [ ] 远端额度刷新后，本地增量被正确叠加
-- [ ] 各窗口触限时间可推算并带置信度
-- [ ] 预算控制可消费额度水位，触限动作有事件可追溯
-- [ ] ledger 与 quota snapshot 可按 tenant/account 对账，重放不重复累计
+- [x] 远端额度刷新后，本地增量被正确叠加
+- [x] 各窗口触限时间可推算并带置信度
+- [x] 预算控制可消费额度水位，触限动作有事件可追溯
+- [x] ledger 与 quota snapshot 可按 tenant/account 对账，重放不重复累计
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [context（token 预算）](../docs/features/context.md) · [agent-engine](../docs/features/agent-engine.md) · [ROADMAP](../ROADMAP.md)

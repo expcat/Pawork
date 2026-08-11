@@ -3,7 +3,7 @@ import type { ArtifactId } from "./ArtifactId";
 import type { SnapshotSectionKind } from "./SnapshotSectionKind";
 import type { JsonValue } from "./serde_json/JsonValue";
 
-export type SnapshotSection = { kind: SnapshotSectionKind, revision: bigint, 
+export type SnapshotSection = { kind: SnapshotSectionKind, revision: bigint,
 /**
  * Snapshot 必须有界；大型内容改用 `artifact_id`（与 `artifact_id` 互斥）。
  */

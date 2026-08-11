@@ -16,7 +16,8 @@ mod state;
 pub use appender::{tool_results_message, AssembledTurn, PendingToolCall, ToolCallResult};
 pub use broadcast::{BroadcastError, EventBroadcaster, Subscriber, DEFAULT_BROADCAST_CAPACITY};
 pub use budget::{
-    BudgetController, BudgetDimension, BudgetLimits, BudgetReport, BudgetUsage, DEFAULT_SOFT_RATIO,
+    BudgetController, BudgetDimension, BudgetLimits, BudgetReport, BudgetUsage,
+    ExternalQuotaSignal, QuotaSignalConfidence, DEFAULT_SOFT_RATIO,
 };
 pub use cancel::{
     CancelHandle, CancelReason, CancelReceipt, NoopProcessTreeCleaner, ProcessTreeCleaner,

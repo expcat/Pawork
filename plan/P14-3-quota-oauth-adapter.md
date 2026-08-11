@@ -1,6 +1,6 @@
 # P14-3：OAuth 登录授权适配器
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟡未开始 · 依赖：P14-1、P6-4、P2-1
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-1、P6-4、P2-1
 
 **最终目的**：为「需要登录授权才能查看额度」的供应商（如部分平台需用户登录控制台后调用其 console / usage API）提供适配器，复用 Phase 6 的 OAuth 基础设施，自动 refresh，避免用户为查额度反复登录。
 
@@ -23,9 +23,9 @@
 
 ## 验收标准
 
-- [ ] OAuth 过期自动 refresh 后重试成功
-- [ ] refresh 失败时返回可恢复的「需重新登录」状态，不报错中断
-- [ ] 明文 token 不落库不进日志
+- [x] OAuth 过期自动 refresh 后重试成功
+- [x] refresh 失败时返回可恢复的「需重新登录」状态，不报错中断
+- [x] 明文 token 不落库不进日志
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [auth](../docs/features/auth.md) · [providers](../docs/features/providers.md) · [ROADMAP](../ROADMAP.md)
 

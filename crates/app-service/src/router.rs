@@ -13,7 +13,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_domain::{
-    ModelId, ProviderId, QueryId, RunId, SessionId, TerminalSessionId, WorkspaceId,
+    ModelId, ProviderId, QueryId, RunId, SessionId, TenantId, TerminalSessionId, WorkspaceId,
+};
+use core_api::{
+    mask_credential_hint, QuotaOverviewQuery, QuotaOverviewView, QuotaScopeView, QuotaWindow,
+    WindowReadEntry, WindowReadView,
 };
 use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
@@ -31,6 +35,7 @@ use crate::error::{
 use crate::idempotency::{should_cache, IdempotencyCheck, IdempotencyStore};
 use crate::rate_limit::{RateLimiter, DEFAULT_RATE_LIMIT_BUFFER, DEFAULT_RATE_LIMIT_WINDOW};
 use crate::supervisor::{RunRequest, RunSupervisor, DEFAULT_MAX_CONCURRENT_RUNS};
+use crate::QuotaRuntime;
 
 /// 默认幂等缓存容量。
 pub const DEFAULT_IDEMPOTENCY_CAPACITY: usize = 4096;
@@ -73,6 +78,7 @@ pub struct CommandRouter {
     identities: Mutex<BTreeMap<String, u64>>,
     commands_handled: AtomicU64,
     last_started_run: Mutex<Option<RunId>>,
+    quota_runtime: Mutex<Option<Arc<QuotaRuntime>>>,
 }
 
 impl CommandRouter {
@@ -108,6 +114,7 @@ impl CommandRouter {
             identities: Mutex::new(BTreeMap::new()),
             commands_handled: AtomicU64::new(0),
             last_started_run: Mutex::new(None),
+            quota_runtime: Mutex::new(None),
         }
     }
 
@@ -168,6 +175,25 @@ impl CommandRouter {
     /// 最近一次成功启动的 run id（legacy `pawork run` 回显用）。
     pub fn last_started_run(&self) -> Option<RunId> {
         lock(&self.last_started_run).clone()
+    }
+
+    /// 注入进程内共享的 Quota 运行时（P14-8）。同时把同一 ledger 透传给
+    /// supervisor，供成功 run 完成后幂等记账。幂等：重复注入同一实例为 no-op。
+    pub fn set_quota_runtime(&self, runtime: Arc<QuotaRuntime>) {
+        let mut guard = lock(&self.quota_runtime);
+        let already = guard
+            .as_ref()
+            .is_some_and(|existing| Arc::ptr_eq(existing, &runtime));
+        if already {
+            return;
+        }
+        self.supervisor.set_quota_runtime(Arc::clone(&runtime));
+        *guard = Some(runtime);
+    }
+
+    /// 当前注入的 Quota 运行时（测试 / 宿主诊断）。
+    pub fn quota_runtime(&self) -> Option<Arc<QuotaRuntime>> {
+        lock(&self.quota_runtime).clone()
     }
 
     /// 统一命令入口。
@@ -507,8 +533,125 @@ impl CommandRouter {
                 &request_id,
                 serde_json::to_value(self.aggregate.snapshot()).map_err(AppServiceError::Json)?,
             )),
+            AppQuery::QuotaOverview { query } => {
+                self.handle_quota_overview(&request_id, &envelope.source, &envelope.identity, query)
+            }
             AppQuery::PluginList => Ok(data_response(&request_id, json!([]))),
             AppQuery::McpList => Ok(data_response(&request_id, json!([]))),
+        }
+    }
+
+    /// QuotaOverview 查询（P14-8）：授权 + 仅读缓存。
+    ///
+    /// 授权：默认作用域（local/local/default）允许 LocalCli / LocalGui + LocalUser，或任意
+    /// System 身份读取任意 tenant/account；其余远程/插件/MCP 身份与非默认作用域
+    /// 必须有显式 grant（当前无 grant 存储 → 一律拒绝，返回 Authorization 错误）。
+    /// 同步查询只读 quota-service 缓存：缓存空时每个窗口返回
+    /// [`WindowReadView::NoData`] 且 `from_cache = false`，绝不触发 adapter / 网络。
+    #[allow(clippy::too_many_arguments)]
+    fn handle_quota_overview(
+        &self,
+        request_id: &QueryId,
+        source: &CommandSource,
+        identity: &ActorIdentity,
+        query: &QuotaOverviewQuery,
+    ) -> Result<AppResponseEnvelope, AppServiceError> {
+        if !Self::authorize_quota_query(source, identity, query) {
+            return Err(AppServiceError::Authorization(format!(
+                "quota query for tenant {} / account {} is not permitted for this identity",
+                query.tenant_id.as_str(),
+                query.account_id,
+            )));
+        }
+        let runtime = self.quota_runtime();
+        // scope 的 provider_id：显式过滤优先；缺省取首个已注册 Provider（单
+        // provider 常见情形下等价于账户聚合）；都没有时用 default。
+        let provider_id = query
+            .provider_id
+            .clone()
+            .or_else(|| {
+                let providers = lock(&self.providers);
+                providers.keys().next().cloned()
+            })
+            .unwrap_or_default();
+        let view = match runtime {
+            Some(runtime) => Self::cached_quota_overview(&runtime, query, provider_id),
+            None => Self::empty_quota_overview(query, provider_id),
+        };
+        let data = serde_json::to_value(&view).map_err(AppServiceError::Json)?;
+        Ok(data_response(request_id, data))
+    }
+
+    /// 授权判定（P14-8）：见 [`Self::handle_quota_overview`] 文档。
+    fn authorize_quota_query(
+        source: &CommandSource,
+        identity: &ActorIdentity,
+        query: &QuotaOverviewQuery,
+    ) -> bool {
+        // System 身份可读任意作用域（内部监控）。
+        if matches!(identity, ActorIdentity::System) {
+            return true;
+        }
+        // 默认作用域（local/local/default）允许本地 CLI / GUI + LocalUser。
+        let local_frontend = matches!(
+            source,
+            CommandSource::LocalCli { .. } | CommandSource::LocalGui { .. }
+        );
+        let local_user = matches!(identity, ActorIdentity::LocalUser { .. });
+        if query.is_default_scope() && local_frontend && local_user {
+            return true;
+        }
+        // 其余（RemoteGui / AuthenticatedClient / Plugin / Mcp，或非默认作用域）
+        // 需要显式 grant；当前无 grant 存储，一律拒绝。
+        false
+    }
+
+    /// 把 [`QuotaOverviewQuery`] 映射到 canonical scope + 窗口/单位，并通过
+    /// `QuotaService::overview_cache_only` 同步读取缓存。该 API 不会触发 adapter、
+    /// 网络或 singleflight。
+    ///
+    /// `pub(crate)`：仅 supervisor 在成功记账并刷新本地缓存后，为同一
+    /// model/credential scope 构建 [`AppEvent::QuotaChanged`] 视图时复用；
+    /// 不改动查询路径语义。
+    pub(crate) fn cached_quota_overview(
+        runtime: &Arc<QuotaRuntime>,
+        query: &QuotaOverviewQuery,
+        provider_id: ProviderId,
+    ) -> QuotaOverviewView {
+        let scope = quota_scope_for_query(query, provider_id.clone());
+        let requested = requested_windows(query);
+        // overview 需要 canonical（quota_service）窗口；core_api 与 canonical 1:1 镜像。
+        let windows: Vec<quota_service::QuotaWindow> =
+            requested.iter().map(|w| to_canonical_window(*w)).collect();
+        let unit = query
+            .unit
+            .as_ref()
+            .map(to_canonical_unit)
+            .unwrap_or(quota_service::QuotaUnit::Token);
+        match runtime.quota.overview_cache_only(&scope, &windows, &unit) {
+            Ok(overview) => convert_cache_overview(query, &overview, &requested),
+            Err(failure) => failed_cache_overview(query, provider_id, &requested, &failure),
+        }
+    }
+
+    /// 无 quota 运行时 / 缓存未命中：每个请求窗口返回 NoData，from_cache=false。
+    fn empty_quota_overview(
+        query: &QuotaOverviewQuery,
+        provider_id: ProviderId,
+    ) -> QuotaOverviewView {
+        let windows = requested_windows(query);
+        let entries = windows
+            .into_iter()
+            .map(|window| WindowReadEntry {
+                window,
+                read: WindowReadView::NoData,
+            })
+            .collect();
+        QuotaOverviewView {
+            scope: empty_scope_view(query, provider_id),
+            windows: entries,
+            generated_at: now_timestamp(),
+            from_cache: false,
         }
     }
 
@@ -593,6 +736,11 @@ impl CommandRouter {
             envelope.source.clone(),
             now_timestamp(),
         )?;
+        // Run 前查询当前 scope 的缓存额度信号，注入 ProviderLoop（仅新鲜 Exact
+        // exhaustion 才硬停）。无 quota 运行时 / 无缓存 → None（不影响运行）。
+        let external_quota = self
+            .quota_runtime()
+            .and_then(|runtime| cached_quota_signal(&runtime, &provider_id, &model));
         let result = self.supervisor.start(
             RunRequest {
                 run_id: run_id.clone(),
@@ -602,6 +750,7 @@ impl CommandRouter {
                 source: envelope.source.clone(),
                 command_id: envelope.command_id.clone(),
                 user_message,
+                external_quota,
             },
             provider,
         );
@@ -733,4 +882,400 @@ fn lock<T>(inner: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     inner
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+// =========================================================================
+// Quota（P14-8）缓存查询 / 信号派生 / canonical → view 转换。
+// =========================================================================
+
+/// 默认查询窗口（Overall + 常用滚动窗口），与 quota-service 对齐。
+const DEFAULT_QUOTA_WINDOWS: [QuotaWindow; 4] = [
+    QuotaWindow::Overall,
+    QuotaWindow::Rolling5h,
+    QuotaWindow::Weekly,
+    QuotaWindow::Monthly,
+];
+
+fn requested_windows(query: &QuotaOverviewQuery) -> Vec<QuotaWindow> {
+    if query.windows.is_empty() {
+        DEFAULT_QUOTA_WINDOWS.to_vec()
+    } else {
+        query.windows.clone()
+    }
+}
+
+/// core_api 查询 → quota-service canonical scope。
+fn quota_scope_for_query(
+    query: &QuotaOverviewQuery,
+    provider_id: ProviderId,
+) -> quota_service::QuotaScope {
+    let mut scope = quota_service::QuotaScope::new(
+        query.tenant_id.clone(),
+        quota_service::AccountId::new(query.account_id.clone()),
+        provider_id,
+        query.model_id.clone(),
+    );
+    if let Some(cred) = query.credential_id.clone() {
+        scope = scope.with_credential_id(cred);
+    }
+    scope
+}
+
+/// 从缓存中派生 run 前额度信号（remaining_ratio_ppm + exhausted）。
+///
+/// 对当前 canonical scope 的 Token / Count 与全部 canonical window 做 provider-neutral
+/// 扫描；不判断 Provider 名称，也不调用 adapter / 网络。任何 fresh Exact exhausted
+/// 候选优先；其余候选严格按 Exact > Derived > Scraped，再按新鲜度和剩余比例
+/// 择优，仅形成软信号。
+fn cached_quota_signal(
+    runtime: &Arc<QuotaRuntime>,
+    provider_id: &ProviderId,
+    model: &ModelId,
+) -> Option<agent_engine::ExternalQuotaSignal> {
+    let scope = quota_service::QuotaScope::new(
+        TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+        quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
+        provider_id.clone(),
+        Some(model.clone()),
+    );
+    let windows = [
+        quota_service::QuotaWindow::Overall,
+        quota_service::QuotaWindow::Rolling5h,
+        quota_service::QuotaWindow::Weekly,
+        quota_service::QuotaWindow::Monthly,
+    ];
+    let units = [
+        quota_service::QuotaUnit::Token,
+        quota_service::QuotaUnit::Count,
+    ];
+    let mut candidates = Vec::new();
+    for unit in units {
+        let Ok(overview) = runtime.quota.overview_cache_only(&scope, &windows, &unit) else {
+            continue;
+        };
+        for read in overview.windows.values() {
+            let candidate = match read {
+                quota_service::service::CacheWindowRead::Hit(
+                    quota_service::service::CacheRead::Hit { snapshot, .. },
+                ) => quota_signal_from_snapshot(snapshot, false),
+                quota_service::service::CacheWindowRead::Stale(
+                    quota_service::service::CacheRead::Stale { snapshot, .. },
+                ) => quota_signal_from_snapshot(snapshot, true),
+                quota_service::service::CacheWindowRead::NoData(_) => None,
+                _ => None,
+            };
+            if let Some(candidate) = candidate {
+                candidates.push(candidate);
+            }
+        }
+    }
+    candidates.into_iter().max_by_key(quota_signal_rank)
+}
+
+fn quota_signal_from_snapshot(
+    snapshot: &quota_service::QuotaSnapshot,
+    cache_stale: bool,
+) -> Option<agent_engine::ExternalQuotaSignal> {
+    let limit = match snapshot.values.limit {
+        quota_service::QuotaMeasure::Exact(value) => value,
+        quota_service::QuotaMeasure::Infinite => {
+            return Some(agent_engine::ExternalQuotaSignal {
+                remaining_ratio_ppm: 1_000_000,
+                exhausted: false,
+                stale: cache_stale || snapshot.provenance.stale,
+                confidence: convert_signal_confidence(snapshot.confidence),
+            });
+        }
+        quota_service::QuotaMeasure::Unknown => return None,
+    };
+    let used = match snapshot.values.used {
+        quota_service::QuotaMeasure::Exact(value) => Some(value),
+        quota_service::QuotaMeasure::Infinite | quota_service::QuotaMeasure::Unknown => None,
+    };
+    let remaining = match snapshot.values.remaining {
+        quota_service::QuotaMeasure::Exact(value) => value,
+        quota_service::QuotaMeasure::Infinite => return None,
+        quota_service::QuotaMeasure::Unknown => used.map(|value| limit.saturating_sub(value))?,
+    };
+    let remaining_ratio_ppm = if limit == 0 {
+        0
+    } else {
+        (((remaining as u128) * 1_000_000u128) / (limit as u128)).min(1_000_000) as u64
+    };
+    let exhausted = limit == 0 || used.is_some_and(|value| value >= limit) || remaining == 0;
+    Some(agent_engine::ExternalQuotaSignal {
+        remaining_ratio_ppm,
+        exhausted,
+        stale: cache_stale || snapshot.provenance.stale,
+        confidence: convert_signal_confidence(snapshot.confidence),
+    })
+}
+
+fn convert_signal_confidence(
+    confidence: quota_service::Confidence,
+) -> agent_engine::QuotaSignalConfidence {
+    match confidence {
+        quota_service::Confidence::Exact => agent_engine::QuotaSignalConfidence::Exact,
+        quota_service::Confidence::Derived => agent_engine::QuotaSignalConfidence::Derived,
+        quota_service::Confidence::Scraped => agent_engine::QuotaSignalConfidence::Scraped,
+    }
+}
+
+fn quota_signal_rank(signal: &agent_engine::ExternalQuotaSignal) -> (u8, u8, u8, u64) {
+    let hard = signal.exhausted
+        && !signal.stale
+        && signal.confidence == agent_engine::QuotaSignalConfidence::Exact;
+    (
+        u8::from(hard),
+        signal.confidence.priority(),
+        u8::from(!signal.stale),
+        1_000_000u64.saturating_sub(signal.remaining_ratio_ppm.min(1_000_000)),
+    )
+}
+
+/// quota-service cache-only overview → core_api 安全视图（脱敏 credential）。
+fn convert_cache_overview(
+    query: &QuotaOverviewQuery,
+    overview: &quota_service::service::CacheOverview,
+    requested: &[QuotaWindow],
+) -> QuotaOverviewView {
+    let scope_view = scope_view_from(&overview.scope, query.credential_id.as_deref());
+    let mut entries = Vec::with_capacity(requested.len());
+    let mut from_cache = false;
+    for window in requested {
+        let read = overview.windows.get(&to_canonical_window(*window));
+        let view = match read {
+            Some(quota_service::service::CacheWindowRead::Hit(
+                quota_service::service::CacheRead::Hit { snapshot, .. },
+            )) => {
+                from_cache = true;
+                WindowReadView::Ok {
+                    snapshot: Box::new(snapshot_view_from(snapshot, false)),
+                    failures: Vec::new(),
+                }
+            }
+            Some(quota_service::service::CacheWindowRead::Stale(
+                quota_service::service::CacheRead::Stale { snapshot, .. },
+            )) => {
+                from_cache = true;
+                WindowReadView::Ok {
+                    snapshot: Box::new(snapshot_view_from(snapshot, true)),
+                    failures: Vec::new(),
+                }
+            }
+            Some(quota_service::service::CacheWindowRead::NoData(_)) | None => {
+                WindowReadView::NoData
+            }
+            _ => WindowReadView::NoData,
+        };
+        entries.push(WindowReadEntry {
+            window: *window,
+            read: view,
+        });
+    }
+    QuotaOverviewView {
+        scope: scope_view,
+        windows: entries,
+        generated_at: now_timestamp(),
+        from_cache,
+    }
+}
+
+fn failed_cache_overview(
+    query: &QuotaOverviewQuery,
+    provider_id: ProviderId,
+    requested: &[QuotaWindow],
+    failure: &quota_service::service::QuotaFailure,
+) -> QuotaOverviewView {
+    let failure = failure_view_from(failure);
+    QuotaOverviewView {
+        scope: empty_scope_view(query, provider_id),
+        windows: requested
+            .iter()
+            .map(|window| WindowReadEntry {
+                window: *window,
+                read: WindowReadView::Failed {
+                    failures: vec![failure.clone()],
+                },
+            })
+            .collect(),
+        generated_at: now_timestamp(),
+        from_cache: false,
+    }
+}
+
+fn empty_scope_view(query: &QuotaOverviewQuery, provider_id: ProviderId) -> QuotaScopeView {
+    QuotaScopeView {
+        tenant_id: query.tenant_id.clone(),
+        account_id: query.account_id.clone(),
+        provider_id,
+        model_id: query.model_id.clone(),
+        credential_hint: query
+            .credential_id
+            .as_deref()
+            .and_then(mask_credential_hint),
+    }
+}
+
+fn scope_view_from(
+    scope: &quota_service::QuotaScope,
+    credential_id: Option<&str>,
+) -> QuotaScopeView {
+    QuotaScopeView {
+        tenant_id: scope.tenant_id.clone(),
+        account_id: scope.account_id.as_str().to_string(),
+        provider_id: scope.provider_id.clone(),
+        model_id: scope.model_id.clone(),
+        credential_hint: credential_id
+            .or(scope.credential_id.as_deref())
+            .and_then(mask_credential_hint),
+    }
+}
+
+fn snapshot_view_from(
+    snapshot: &quota_service::QuotaSnapshot,
+    served_stale: bool,
+) -> core_api::QuotaSnapshotView {
+    let mut provenance = convert_provenance(&snapshot.provenance);
+    provenance.stale |= served_stale;
+    core_api::QuotaSnapshotView {
+        scope: scope_view_from(&snapshot.scope, None),
+        window: convert_window(snapshot.window),
+        unit: convert_unit(&snapshot.unit),
+        values: convert_values(snapshot.values),
+        reset: convert_reset(snapshot.reset),
+        confidence: convert_confidence(snapshot.confidence),
+        provenance,
+        served_stale,
+    }
+}
+
+fn failure_view_from(failure: &quota_service::service::QuotaFailure) -> core_api::QuotaFailureView {
+    core_api::QuotaFailureView {
+        adapter_kind: convert_adapter_kind(failure.adapter_kind),
+        error_code: quota_error_code(&failure.error),
+        detail: format!("{}", failure.error),
+        retry_after_ms: failure.error.retry_after_ms(),
+    }
+}
+
+/// 把 [`quota_service::QuotaError`] 归类为稳定短码（不泄漏 detail 明文到 code）。
+fn quota_error_code(error: &quota_service::QuotaError) -> String {
+    use quota_service::QuotaError as E;
+    match error {
+        E::Unsupported { .. } => "unsupported",
+        E::Unauthorized { .. } => "unauthorized",
+        E::Forbidden { .. } => "forbidden",
+        E::RateLimited { .. } => "rate_limited",
+        E::ReauthorizationRequired { .. } => "reauthorization_required",
+        E::Timeout { .. } => "timeout",
+        E::Transient { .. } => "transient",
+        E::Parse { .. } => "parse",
+        E::Cancelled => "cancelled",
+        E::Other { .. } => "other",
+    }
+    .into()
+}
+
+fn convert_window(window: quota_service::QuotaWindow) -> QuotaWindow {
+    match window {
+        quota_service::QuotaWindow::Overall => QuotaWindow::Overall,
+        quota_service::QuotaWindow::Rolling5h => QuotaWindow::Rolling5h,
+        quota_service::QuotaWindow::Weekly => QuotaWindow::Weekly,
+        quota_service::QuotaWindow::Monthly => QuotaWindow::Monthly,
+    }
+}
+
+/// core_api 窗口 → quota-service canonical 窗口（1:1 镜像）。
+fn to_canonical_window(window: QuotaWindow) -> quota_service::QuotaWindow {
+    match window {
+        QuotaWindow::Overall => quota_service::QuotaWindow::Overall,
+        QuotaWindow::Rolling5h => quota_service::QuotaWindow::Rolling5h,
+        QuotaWindow::Weekly => quota_service::QuotaWindow::Weekly,
+        QuotaWindow::Monthly => quota_service::QuotaWindow::Monthly,
+    }
+}
+
+fn to_canonical_unit(unit: &core_api::QuotaUnit) -> quota_service::QuotaUnit {
+    match unit {
+        core_api::QuotaUnit::Count => quota_service::QuotaUnit::Count,
+        core_api::QuotaUnit::Token => quota_service::QuotaUnit::Token,
+        core_api::QuotaUnit::Cost { currency } => quota_service::QuotaUnit::Cost {
+            currency: currency.clone(),
+        },
+    }
+}
+
+fn convert_unit(unit: &quota_service::QuotaUnit) -> core_api::QuotaUnit {
+    match unit {
+        quota_service::QuotaUnit::Count => core_api::QuotaUnit::Count,
+        quota_service::QuotaUnit::Token => core_api::QuotaUnit::Token,
+        quota_service::QuotaUnit::Cost { currency } => core_api::QuotaUnit::Cost {
+            currency: currency.clone(),
+        },
+    }
+}
+
+fn convert_measure(measure: quota_service::QuotaMeasure) -> core_api::QuotaMeasure {
+    match measure {
+        quota_service::QuotaMeasure::Exact(v) => core_api::QuotaMeasure::Exact(v),
+        quota_service::QuotaMeasure::Infinite => core_api::QuotaMeasure::Infinite,
+        quota_service::QuotaMeasure::Unknown => core_api::QuotaMeasure::Unknown,
+    }
+}
+
+fn convert_values(values: quota_service::QuotaValues) -> core_api::QuotaValues {
+    core_api::QuotaValues {
+        used: convert_measure(values.used),
+        limit: convert_measure(values.limit),
+        remaining: convert_measure(values.remaining),
+    }
+}
+
+fn convert_confidence(confidence: quota_service::Confidence) -> core_api::QuotaConfidence {
+    match confidence {
+        quota_service::Confidence::Exact => core_api::QuotaConfidence::Exact,
+        quota_service::Confidence::Derived => core_api::QuotaConfidence::Derived,
+        quota_service::Confidence::Scraped => core_api::QuotaConfidence::Scraped,
+    }
+}
+
+fn convert_adapter_kind(kind: quota_service::AdapterKind) -> core_api::QuotaAdapterKind {
+    match kind {
+        quota_service::AdapterKind::ApiKeyApi => core_api::QuotaAdapterKind::ApiKeyApi,
+        quota_service::AdapterKind::OAuthApi => core_api::QuotaAdapterKind::OAuthApi,
+        quota_service::AdapterKind::WebScrape => core_api::QuotaAdapterKind::WebScrape,
+        quota_service::AdapterKind::LocalLedger => core_api::QuotaAdapterKind::LocalLedger,
+    }
+}
+
+fn convert_reset(reset: quota_service::QuotaReset) -> core_api::QuotaReset {
+    match reset {
+        quota_service::QuotaReset::Absolute { at, uncertain } => {
+            core_api::QuotaReset::Absolute { at, uncertain }
+        }
+        quota_service::QuotaReset::Relative {
+            after_secs,
+            observed_at,
+            uncertain,
+        } => core_api::QuotaReset::Relative {
+            after_secs,
+            observed_at,
+            uncertain,
+        },
+        quota_service::QuotaReset::Unknown => core_api::QuotaReset::Unknown,
+    }
+}
+
+fn convert_provenance(
+    provenance: &quota_service::QuotaProvenance,
+) -> core_api::QuotaProvenanceView {
+    core_api::QuotaProvenanceView {
+        adapter_kind: convert_adapter_kind(provenance.adapter_kind),
+        source: provenance.source.clone(),
+        endpoint: provenance.endpoint.clone(),
+        fetched_at: provenance.fetched_at,
+        observed_at: provenance.observed_at,
+        stale: provenance.stale,
+    }
 }

@@ -143,6 +143,7 @@ pub fn replay_run(events: &RunEventLog) -> RecoveryPlan {
             | AgentEvent::CompactionCompleted { .. }
             | AgentEvent::CheckpointCreated { .. }
             | AgentEvent::CheckpointRolledBack { .. }
+            | AgentEvent::UsageUpdated { .. }
             | AgentEvent::Diagnostic { .. } => Vec::new(),
         };
 

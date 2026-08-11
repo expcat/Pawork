@@ -2,84 +2,108 @@
 
 ## 职责
 
-显示每个 tenant/account/model 绑定的用量与剩余额度，通过多种适配器从各供应商获取真实额度数据，覆盖整体 API 用量、5 小时滚动、一周、一月等不同限制窗口，并归一为统一视图供预算、CLI 与 GUI 使用。Agent Core 与 UI 只依赖 canonical 额度数据，不感知供应商差异。
+Phase 14 为每个 `tenant/account/credential/provider/model` 作用域提供统一的额度快照、多窗口聚合、耗尽预测、预算信号、查询展示、自动刷新与告警。Provider 差异只存在于 `quota-service` adapter；Agent Engine、app-service、CLI 与 GUI 只消费 canonical 类型。
 
-本功能负责“远端额度快照与窗口视图”；P18 `Usage/Cost Ledger` 负责 tenant/account/session/agent 多维本地归属与成本账本。两者通过 canonical `UsageRecord` 对账，不用 quota snapshot 代替不可变 usage ledger。
+本功能只维护“当前远端额度读数、派生窗口与刷新状态”。P18-8 `Usage/Cost Ledger` 是本地 Usage/Cost 的唯一事实源：P14 可以扩展其维度、查询和幂等重放能力，但不得创建第二套累计账本。远端 billing/usage 读数也不会回写成一套新的本地累计记录。
 
-## 额度窗口
+架构红线：
 
-| 窗口 | 含义 | 典型来源 |
-| --- | --- | --- |
-| `Overall` | 整体 API 用量剩余 / 账户总额度 | billing / spending limit |
-| `Rolling5h` | 5 小时滚动窗口限制 | 控制台 / 滚动速率窗口 |
-| `Weekly` | 一周额度限制 | Anthropic 周窗口等 |
-| `Monthly` | 月度额度限制 | 月度花费上限 / 月度配额 |
+- 所有缓存键和查询都强制包含 `tenant_id + account_id`；`credential_id` 与 `model_id` 是可选的进一步隔离维度。
+- 明文 API Key、OAuth token、refresh token、AccessKey Secret 与 cookie 只以进程内 `ResolvedCredential` 短暂传给 adapter，不序列化、不落库、不进日志或审计。
+- 不支持的 endpoint、窗口或单位返回 `Unsupported`；未知值使用 `Unknown`，不得推测。
+- 来源优先级固定为 `Exact > Derived > Scraped`，同时向调用方暴露来源、可信度、抓取/观察时间、stale 与部分失败。
 
-每个窗口携带重置时间（绝对或倒计时）与不确定性标记；供应商不支持的窗口返回 `Unsupported`，不伪造。
+## Canonical 契约
 
-## 适配器种类
-
-| 种类 | 适用场景 | 可信度 |
-| --- | --- | --- |
-| `ApiKeyApi` | 持有 API Key，可直接调用官方 billing / usage API（如 OpenAI） | exact |
-| `OAuthApi` | 需登录授权后调用平台 console / usage API | exact |
-| `WebScrape` | 无公开 API，需抓取控制台页面解析额度数字 | scraped |
-
-同一窗口多适配器可用时按 exact > derived > scraped 排序；本地用量推算（基于 P2-9）标记为 `derived`，作为远端未刷新时的兜底。
-
-## 数据模型（节选）
+`QuotaScope` 包含 tenant、account、provider，以及可选 credential/model。`QuotaSnapshot` 的核心字段如下：
 
 ```rust
 pub enum QuotaWindow { Overall, Rolling5h, Weekly, Monthly }
+pub enum QuotaUnit { Count, Token, Cost { currency: String } }
+pub enum QuotaMeasure { Exact(u64), Infinite, Unknown }
+pub enum QuotaReset {
+    Absolute { at: Timestamp, uncertain: bool },
+    Relative { after_secs: u64, observed_at: Timestamp, uncertain: bool },
+    Unknown,
+}
 
 pub struct QuotaSnapshot {
-    pub tenant_id: TenantId,
-    pub account_id: AccountId,
-    pub provider: ProviderId,
-    pub model: Option<String>,
+    pub scope: QuotaScope,
     pub window: QuotaWindow,
-    pub measure: QuotaMeasure,   // Count | Token | Cost
-    pub used: Option<u64>,
-    pub limit: Option<u64>,       // None 表示无限额度或未知总量
-    pub remaining: Option<u64>,
-    pub resets_at: Option<DateTime<Utc>>,
-    pub confidence: QuotaConfidence, // Exact | Derived | Scraped
-    pub fetched_at: DateTime<Utc>,
+    pub unit: QuotaUnit,
+    pub values: QuotaValues, // used / limit / remaining
+    pub reset: QuotaReset,
+    pub confidence: Confidence, // Exact / Derived / Scraped
+    pub provenance: QuotaProvenance,
 }
 ```
 
-## 供应商能力矩阵（P14-5 落地后更新）
+金额统一为对应 ISO-4217 币种的整数 micros，避免浮点累计误差。`Infinite` 与 `Unknown` 分离；`reset` 同时表达绝对时间、相对倒计时和不确定性。`QuotaAdapter` 是对象安全、可取消的异步 trait，adapter 类型为 `ApiKeyApi`、`OAuthApi`、`WebScrape`、`LocalLedger`。
 
-| 供应商 | 鉴权方式 | 主适配器 | 支持窗口 | 说明 |
-| --- | --- | --- | --- | --- |
-| OpenAI（GPT） | API Key | `ApiKeyApi` | Overall / Monthly / 速率 | 经 billing / usage API 直取，`exact` |
-| Anthropic（Claude） | API Key / Console | `OAuthApi` / `WebScrape` | Weekly / Overall | 登录控制台取周窗口，`exact` 或 `scraped` |
-| xAI Grok | OAuth 订阅 / API Key | `OAuthApi`（订阅）/ `ApiKeyApi`（key） | Weekly / Overall | 订阅按请求配额；key 按 token 用量，订阅端点不稳定时降级抓取 |
-| 智谱 GLM | API Key | `ApiKeyApi` / `WebScrape` | Overall / Monthly | `GET /api/paas/v4/usage` 取剩余；资源包明细抓控制台 |
-| 阿里 Qwen | DashScope key（不可查余额） | `ApiKeyApi`（AccessKey）/ `WebScrape` / 本地推算 | Overall / Monthly | 需额外阿里云 AccessKey 调 BSS `QueryAccountBalance`；否则抓百炼控制台或仅本地推算 `derived` |
-| Moonshot Kimi | API Key | `ApiKeyApi` | Overall | `GET /v1/users/me/balance` 返回 `available_balance`，`exact` |
-| Google Gemini（次要 P1） | OAuth | `OAuthApi` | RPM / TPM / 项目配额 | OAuth + quota API；已降级次要，非初始集合 |
+## 供应商能力矩阵
 
-## 与既有能力的关系
+下表按 2026-08-11 的官方公开接口核验。所有供应商均可额外消费 Ledger 得到 `Derived` 本地用量；该派生值不改变远端能力结论。
 
-- 单次请求的 token / 费用归一见 [P2-9](../../plan/P2-9-usage-stopreason.md)，本特性在此基础上做窗口级累计与对照。
-- P18-8 先把 Usage 按 tenant/account/session/agent 持久归属；P14-7 消费该账本做窗口累计、远端对照与触限推算。
-- 模型定价与费用估算见 [models](models.md) 与 [P2-7](../../plan/P2-7-model-registry.md)。
-- 凭据与 Secret 见 [auth](auth.md)；明文凭据不落库不进日志。
-- 预算联动见 [context（token 预算）](context.md) 与 [P3-6](../../plan/P3-6-budget-control.md)，触限动作有事件可追溯。
-- 错误模型复用 `QuotaExceeded` / `RateLimited`。
+| 供应商 | Exact 远端能力 | 凭据与作用域 | 诚实降级 / Unsupported |
+| --- | --- | --- | --- |
+| OpenAI | `Monthly / USD`：组合 `GET /v1/organization/spend_limit` 的硬上限与 `GET /v1/organization/costs` 的分页月度花费 | Organization Admin key；普通 inference key 不具备该权限 | 任一子端点失败时仅保留已知字段并标部分失败；无公开 Overall 余额、token quota 或 5h/周窗口 |
+| Anthropic | `Monthly / USD`：`GET /v1/organizations/spend_limits/effective` | `x-api-key` Admin key、`read:spend_limits`；仅 Claude Enterprise 且组织使用 usage credits；响应按 `scope.type=user` + `user_id` 选择 | 普通 Claude Platform 组织及 consumer 5h/周限制无公开 exact API；`amount = null` 表示无限，金额字符串单位为 cents |
+| xAI | `Overall / USD` prepaid balance；`Monthly / USD` 由 postpaid spending limit 与 invoice preview 组合 | Management API bearer key + 明确 `team_id` | 普通 inference key及 5h/周窗口 Unsupported；子端点失败显式部分失败，不推算另一字段 |
+| 智谱 GLM | 无公开 exact usage/quota endpoint | 可选、显式启用的已登录控制台 session | Coding Plan 的 `Rolling5h / Weekly` 只可作为版本化 `Scraped` 兜底；不把控制台余额伪装成模型 Overall quota |
+| 阿里 Qwen | `Overall / CNY`：Alibaba BSS `QueryAccountBalance` | Alibaba Cloud AccessKey pair + HMAC-SHA1；结果是整个阿里云账号余额 | DashScope inference key 不能查余额；BSS 结果不得标成 DashScope 专属额度，月度/token quota Unsupported |
+| Moonshot Kimi | `Overall / CNY`：`GET /v1/users/me/balance` | Moonshot bearer API key | 无公开月度、5h、周窗口 |
 
-## 展示
+官方口径依据：[OpenAI spend limit](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/spend_limit/methods/retrieve)、[OpenAI costs](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs)、[Anthropic spend limits](https://platform.claude.com/docs/en/manage-claude/spend-limits-api)、[xAI Management Billing](https://docs.x.ai/developers/rest-api-reference/management/billing)、[智谱 Coding Plan FAQ](https://docs.bigmodel.cn/cn/coding-plan/faq)、[Alibaba BSS QueryAccountBalance](https://help.aliyun.com/en/user-center/developer-reference/api-bssopenapi-2017-12-14-queryaccountbalance)、[Moonshot balance](https://platform.kimi.com/docs/api/balance)。
 
-CLI 经 `pawork usage` 输出各绑定模型的多窗口额度、重置倒计时与来源标签；GUI 经 GUI Connection Protocol 订阅额度查询与变更事件，脱敏展示，并明确区分精确 / 推算 / 抓取数据与「需重新登录」「抓取失败」状态。
+## Adapter 行为
+
+### API Key API
+
+通用 adapter 负责凭据缺失、取消、HTTP 状态分类、JSON 解析边界和 provenance 脱敏。401、403、429 分别映射为未授权、权限不足、限频；`Retry-After` 被保留。URL 的 query/fragment、响应正文和认证 header 不进入错误文本。
+
+### OAuth API
+
+OAuth adapter 通过 `auth-service` 解析短期 access token；首次 401 触发一次 refresh 后重试。`invalid_grant`、refresh token 失效等情况转换成 `ReauthorizationRequired`，由上层给出重新登录动作。refresh token 仍只存在 Secret backend。
+
+### WebScrape
+
+WebScrape 默认关闭，只能作为低可信度兜底。每个 profile 必须声明 selector 版本、支持窗口、最小请求间隔和 TTL；相同作用域命中缓存时不发请求。限频采用并发预约，不能让多个 caller 在同一延迟后突发请求。解析失败返回可诊断错误并写脱敏审计，但不记录 URL query、cookie、HTML 正文或 DOM 中可能出现的 secret。
+
+## 聚合、缓存与部分失败
+
+`QuotaService` 按完整 scope/window/unit 缓存并对同 key 并发刷新去重。候选 adapter 并发执行，选择可信度最高且更新较新的快照；其余错误作为 typed partial failures 保留。单窗口失败不影响其他窗口。全部新鲜来源失败时可返回旧缓存，但必须同时标记 `served_stale` 与 `provenance.stale`。
+
+取消只取消当前等待者；共享刷新不由第一个 caller 的取消令牌拥有。singleflight leader 被 abort/drop 后，follower 必须能接管并有界完成，不能永久等待。
+
+## Ledger 派生、预测与预算
+
+`LedgerQuotaAdapter` 直接查询同一个 P18-8 `UsageLedger`，按 tenant/account/credential/provider/model、币种和半开时间范围过滤。重复 replay 使用稳定 record ID 幂等；相同 ID 不同内容报冲突。Rolling5h 与 Weekly 按滚动时间范围派生，当前 `Monthly` 派生采用 30 天近似并把 reset 标为 uncertain；远端 exact 月度仍遵从供应商日历月。
+
+RunSupervisor 在终态汇总 Provider usage，并先以稳定 record ID 写入 Ledger；成功写入后再刷新本地额度缓存。每条 record 同时投影完整 credential/model scope 与 account 级聚合 scope，分别生成 Overall / Rolling5h / Weekly / Monthly 的 Token 与 Cost 快照。这样默认查询能看到账号总量，显式过滤仍保持 credential/model 隔离；Ledger 或缓存刷新失败只记录脱敏告警，不改变 run 终态。
+
+用量增长率可生成耗尽时间预测及置信度。只有 fresh `Exact` 且明确耗尽的信号可触发 Agent Engine 硬停止；Derived、Scraped 或 stale 信号只产生软告警，避免低可信度数据误杀运行。
+
+## 查询、展示与权限
+
+`AppQuery::QuotaOverview` 经 app-service 执行同步、cache-only 查询，不在 GUI/CLI 请求路径阻塞外网。请求必须明确 tenant/account，可选 provider/credential/model/windows；响应包含脱敏 credential hint、窗口值、reset、source、confidence、stale 和 partial failures。默认 `pawork usage` 读取 account 级聚合，显式 provider / credential / model / currency 参数读取对应完整 scope。
+
+本地 CLI 使用 legacy scope `tenant=local, account=local/default`；系统内部可查询任意 scope；Remote GUI、automation、plugin 与 MCP 需要显式 quota read grant。`pawork usage` 提供文本与 JSON 输出。每次 Ledger 投影成功刷新缓存后，app-service 在对应 run stream 发布完整 model scope 的 `QuotaChanged`；刷新调度器通过 `RunSupervisor::alert_sink()` 在 Global stream 发布 `QuotaAlert`。两类事件都消费同一 core-api 类型，生成的 TypeScript schema 由 `schema-typegen --check` 防漂移。
+
+## 自动刷新、退避与告警
+
+刷新按 target 独立运行并支持取消。401/重新授权、403、429、timeout/transient、Unsupported 使用不同状态：只有可重试错误进入带 jitter 的有界指数退避，429 同时尊重 `Retry-After`。刷新失败可以降级到 cache/Ledger，但来源与 stale 必须可见。
+
+`RefreshScheduler` 提供自动循环、幂等 target 注册和手动触发；target 包含 adapter、credential resolver、scope/window/unit 与刷新策略。具体远端 target 由账号 / 凭据控制面按绑定关系注册，Phase 14 不复制账号选择逻辑。当前未注册远端 target 时，查询与 Ledger 投影仍完整可用，且不会在交互查询路径发起网络请求。
+
+阈值告警按 scope/window/threshold/confidence 去重；Scraped 告警升级为 Exact 时允许重新通知，恢复到阈值上方后清除去重状态。只有 fresh Exact 告警可以标为非 advisory，并在事件桥中映射为 Critical；advisory 阈值与 stale/部分失败为 Warning，恢复为 Info，需重新授权为 Critical。刷新、部分失败、重新授权、阈值触发和恢复均写脱敏审计。
 
 ## 验收标准
 
-- 三大供应商各至少一种窗口可获取真实或夹具额度
-- 明文凭据不写入数据库与日志
-- 多窗口以统一视图呈现，来源与可信度被清晰标注
-- 限额接近 / 触及时触发告警与可执行建议
-- quota 查询与 usage 聚合强制 tenant scope，不跨 account 误合并不同额度窗口
+- 六供应商 contract fixtures 覆盖成功、Unsupported 与关键错误口径，且能力矩阵与实现一致。
+- tenant/account/credential 隔离、401/403/429、OAuth refresh/重新授权、窗口 reset、缓存优先级、部分失败和取消并发均有定向测试。
+- Ledger replay 不重复累计，失败/取消运行仍提交已消费用量，预算只对 fresh Exact 执行硬停止。
+- WebScrape 受 opt-in、版本、并发最小间隔、TTL 和脱敏审计约束。
+- CLI、core-api 与 GUI Protocol 输出不含明文凭据，Rust/TypeScript schema 一致。
 
 ## 相关文档
 

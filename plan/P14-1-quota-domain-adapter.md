@@ -1,6 +1,6 @@
 # P14-1：Quota 领域模型与适配器 Trait
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P2-9、P2-7、P6-4、P18-2、P18-3
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P2-9、P2-7、P6-4、P18-2、P18-3
 
 **最终目的**：为「显示绑定模型的用量与剩余额度」建立统一的领域模型与适配器抽象，使后续 P14-2 ~ P14-5 的三种适配器（API Key 直连 / OAuth 登录授权 / 网页抓取）与具体供应商实现都落在同一契约上，Agent Core 与 UI 只依赖 canonical 额度数据，不感知供应商差异。
 
@@ -24,11 +24,11 @@
 
 ## 验收标准
 
-- [ ] `quota-service` 不依赖 `agent-domain` 禁依赖项
-- [ ] `QuotaSnapshot` 能表达剩余 / 已用 / 总量 / 重置时间，并能表示无限额度与未知总量
-- [ ] 四种窗口（Overall / Rolling5h / Weekly / Monthly）均可表达重置倒计时与不确定性
-- [ ] `QuotaAdapter` 对不支持的情形返回 `Unsupported`，不 panic
-- [ ] 不同 tenant/account 的额度窗口不被错误合并；legacy synthetic account 可正常查询
+- [x] `quota-service` 不依赖 `agent-domain` 禁依赖项
+- [x] `QuotaSnapshot` 能表达剩余 / 已用 / 总量 / 重置时间，并能表示无限额度与未知总量
+- [x] 四种窗口（Overall / Rolling5h / Weekly / Monthly）均可表达重置倒计时与不确定性
+- [x] `QuotaAdapter` 对不支持的情形返回 `Unsupported`，不 panic
+- [x] 不同 tenant/account 的额度窗口不被错误合并；legacy synthetic account 可正常查询
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [providers](../docs/features/providers.md) · [models](../docs/features/models.md) · [ROADMAP](../ROADMAP.md)
 

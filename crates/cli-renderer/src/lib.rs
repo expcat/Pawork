@@ -99,6 +99,18 @@ fn render_event_text(envelope: &AppEventEnvelope) -> String {
             client_id,
             connection_id,
         } => format!("{prefix} gui client {client_id} disconnected ({connection_id})"),
+        AppEvent::QuotaChanged { view } => format!(
+            "{prefix} quota changed: {tenant}/{account} (cache={cache})",
+            tenant = view.scope.tenant_id.as_str(),
+            account = view.scope.account_id,
+            cache = if view.from_cache { "hit" } else { "miss" }
+        ),
+        AppEvent::QuotaAlert { alert } => format!(
+            "{prefix} quota alert {}: {} (window={:?})",
+            format!("{:?}", alert.severity).to_lowercase(),
+            alert.message,
+            alert.window
+        ),
     }
 }
 
