@@ -4,9 +4,16 @@
 //! Git index 串行与审批暂停，所有调用可取消。调度策略见 `docs/architecture/control-flow.md` §5。
 
 mod scheduler;
+mod tool_search;
 
 pub use scheduler::{
     extract_file_key, ApprovalMode, ApprovalOutcome, ApprovalResolver, ApprovalState,
     AutoApproveResolver, NoopToolEventSink, ProviderCallDispatch, SchedulingKey, ToolRegistry,
     ToolRegistryError, ToolScheduler, ToolSchedulerConfig, ToolSchedulerError,
+};
+pub use tool_search::{
+    ActivationApprovalResolver, ActivationDenied, AutoActivationApproval, LazyToolIndex,
+    PolicyActivationGate, ToolActivation, ToolActivationGate, ToolIndexConfig, ToolIndexError,
+    ToolManifest, ToolMatch, ToolSource, ToolTokenBudget, HEURISTIC_CHARS_PER_TOKEN,
+    TOOL_SCHEMA_FRAMING_TOKENS,
 };

@@ -196,6 +196,9 @@ pub struct ProviderLoopConfig {
     pub budget: crate::budget::BudgetLimits,
     pub retry: RetryPolicy,
     pub thinking: Option<provider_api::ThinkingConfig>,
+    /// P15-8 canonical reasoning 请求；显式 effort 优先于 `thinking.level`，
+    /// 流入 `CanonicalModelRequest.reasoning` 并驱动 CapabilityNegotiator。
+    pub reasoning: Option<provider_api::ReasoningConfig>,
 }
 
 /// Provider Loop：执行单次 Agent 循环（可含多轮工具）。
@@ -398,6 +401,11 @@ impl ProviderLoop {
             provider_id: self.config.provider_id.clone(),
             model: self.config.model.as_str().to_string(),
         });
+
+        // P15-8：以证据 × 请求能力协商，发出稳定 `provider_capability_negotiated`
+        // Diagnostic（可观测「为何降级」）。协商不触网、不读 Provider 名；缺证据
+        // 时仅记录 chosen_transport=ChatCompletions，不放大任何能力。
+        self.emit_capability_negotiated(&request);
 
         let mut retry = RetryController::new(self.config.retry.clone());
         let (summary, sink) = loop {
@@ -672,6 +680,7 @@ impl ProviderLoop {
             extensions: self.config.extensions.clone(),
             tool_choice: provider_api::ToolChoice::Auto,
             thinking: self.config.thinking.clone(),
+            reasoning: self.config.reasoning.clone(),
             temperature: None,
             max_output_tokens: self.config.budget.max_output_tokens,
             stop_sequences: Vec::new(),
@@ -681,6 +690,69 @@ impl ProviderLoop {
             provider_options: std::collections::BTreeMap::new(),
             trace_id: None,
         }
+    }
+
+    /// P15-8 能力协商诊断：从内置 registry 取证据，按 `reasoning` / hosted tools
+    /// / citations 构造 `CapabilityRequirements`，调用 `CapabilityNegotiator`
+    /// 后以稳定 `provider_capability_negotiated` Diagnostic 落入观测通道。
+    ///
+    /// 纯函数式协商，不触网、不读 Provider 名；无证据时仅记录基线 transport，
+    /// 不放大任何能力。每轮复用同一记录便于排查「为何降级」。
+    fn emit_capability_negotiated(&self, request: &CanonicalModelRequest) {
+        use std::collections::BTreeSet;
+
+        // 从 hosted_tools / extensions 收集请求要求的服务端工具标签。
+        let mut required_tools: BTreeSet<agent_domain::ToolCapabilityTag> = BTreeSet::new();
+        for hosted in &request.hosted_tools {
+            required_tools.insert(hosted.kind);
+        }
+        for ext in &request.extensions {
+            for cap in &ext.capabilities {
+                required_tools.insert(*cap);
+            }
+        }
+
+        let requirements = provider_api::CapabilityRequirements {
+            transport_pref: Vec::new(),
+            required_tools,
+            reasoning: request.reasoning.clone(),
+            citations: false,
+        };
+
+        // 证据来源：内置 registry（与费用估算同一来源）；缺证据时用空证据，
+        // 协商器仍能给出 chosen_transport 与 requested/unsupported 快照。
+        let registry = model_registry::ModelRegistry::builtin();
+        let resolved = match registry.capability_evidence(request.model.as_str()) {
+            Some(evidence) => provider_runtime::negotiate::CapabilityNegotiator::negotiate(
+                &evidence,
+                &requirements,
+            ),
+            None => {
+                let empty = model_registry::CapabilityEvidence {
+                    model: request.model.clone(),
+                    provider: None,
+                    static_declared: None,
+                    probe_declared: None,
+                    override_declared: None,
+                };
+                provider_runtime::negotiate::CapabilityNegotiator::negotiate(&empty, &requirements)
+            }
+        };
+
+        self.emit_payload(AgentEvent::Diagnostic {
+            code: "provider_capability_negotiated".into(),
+            details: serde_json::json!({
+                "model": request.model.as_str(),
+                "chosen_transport": format!("{:?}", resolved.chosen_transport),
+                "supported": resolved.supported.iter().cloned().collect::<Vec<_>>(),
+                "unsupported": resolved.unsupported.iter().cloned().collect::<Vec<_>>(),
+                "fallback": resolved
+                    .fallback
+                    .iter()
+                    .map(|(k, v)| (k.clone(), format!("{v:?}")))
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+            }),
+        });
     }
 
     /// 请求中的 canonical 声明是执行位点的权威来源；registry 仅补充宿主侧
@@ -1361,6 +1433,7 @@ mod tests {
                 ..RetryPolicy::default()
             },
             thinking: None,
+            reasoning: None,
         }
     }
 
@@ -1675,6 +1748,112 @@ mod tests {
                 .iter()
                 .any(|part| part == &ContentPart::Reasoning(reasoning.clone()))
         }));
+    }
+
+    #[tokio::test]
+    async fn p15_8_capability_negotiated_diagnostic_and_reasoning_flow() {
+        // 动态从内置 registry 选一个声明 thinking=true 的模型（不硬编码具体
+        // provider 模型名，避免触碰 no_provider_branch 源码扫描）。
+        let thinking_model = model_registry::ModelRegistry::builtin()
+            .list()
+            .into_iter()
+            .find(|entry| entry.capabilities.thinking)
+            .map(|entry| entry.id.clone())
+            .expect("builtin registry 至少有一个 thinking 模型");
+        let provider = SequenceProvider::new(vec![MockScript::new().text("ok").complete()]);
+        let provider_view = provider.clone();
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut cfg = config(vec![user_message("negotiate")]);
+        cfg.model = thinking_model.clone();
+        cfg.reasoning = Some(provider_api::ReasoningConfig::new(
+            provider_api::ReasoningEffort::High,
+        ));
+        let mut engine = ProviderLoop::new(
+            Arc::new(provider),
+            Arc::new(TestContext::new(Vec::new())),
+            cfg,
+            1,
+            broadcaster,
+        );
+        engine.run(message_queue(), run_cancel()).await.unwrap();
+
+        // CanonicalModelRequest 携带 reasoning（流到 Provider）。
+        let requests = provider_view.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].reasoning.as_ref().map(|r| r.effort),
+            Some(provider_api::ReasoningEffort::High),
+            "reasoning 必须流入 CanonicalModelRequest"
+        );
+
+        // provider_capability_negotiated Diagnostic 至少出现一次，含 chosen_transport
+        // 与 supported/unsupported 字段；thinking 模型 → reasoning 进 supported。
+        let mut found = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            if let AgentEvent::Diagnostic { code, details } = event.payload {
+                if code == "provider_capability_negotiated" {
+                    found = true;
+                    assert_eq!(details["model"], thinking_model.as_str());
+                    assert!(details["chosen_transport"].is_string());
+                    let supported = details["supported"].as_array().unwrap();
+                    assert!(
+                        supported.iter().any(|v| v == "reasoning"),
+                        "reasoning 应进 supported: {supported:?}"
+                    );
+                    let fallback = details["fallback"].as_object().unwrap();
+                    assert!(
+                        !fallback.contains_key("reasoning"),
+                        "不应 reject 已支持的 reasoning: {fallback:?}"
+                    );
+                }
+            }
+        }
+        assert!(found, "必须发射 provider_capability_negotiated Diagnostic");
+    }
+
+    #[tokio::test]
+    async fn p15_8_capability_negotiated_marks_unsupported_reasoning_fail_closed() {
+        // 动态选一个 thinking=false 的基线模型；请求 reasoning 必须进 unsupported
+        // 且 fallback 记录 Reject（fail-closed，不静默丢弃）。
+        let baseline_model = model_registry::ModelRegistry::builtin()
+            .list()
+            .into_iter()
+            .find(|entry| !entry.capabilities.thinking)
+            .map(|entry| entry.id.clone())
+            .expect("builtin registry 至少有一个基线模型");
+        let provider = SequenceProvider::new(vec![MockScript::new().text("ok").complete()]);
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut cfg = config(vec![user_message("negotiate baseline")]);
+        cfg.model = baseline_model.clone();
+        cfg.reasoning = Some(provider_api::ReasoningConfig::new(
+            provider_api::ReasoningEffort::Medium,
+        ));
+        let mut engine = ProviderLoop::new(
+            Arc::new(provider),
+            Arc::new(TestContext::new(Vec::new())),
+            cfg,
+            1,
+            broadcaster,
+        );
+        engine.run(message_queue(), run_cancel()).await.unwrap();
+
+        let mut found = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            if let AgentEvent::Diagnostic { code, details } = event.payload {
+                if code == "provider_capability_negotiated" {
+                    found = true;
+                    let unsupported = details["unsupported"].as_array().unwrap();
+                    assert!(
+                        unsupported.iter().any(|v| v == "reasoning"),
+                        "未声明 reasoning 必须进 unsupported: {unsupported:?}"
+                    );
+                    assert!(details["fallback"]["reasoning"].is_string());
+                }
+            }
+        }
+        assert!(found);
     }
 
     #[tokio::test]

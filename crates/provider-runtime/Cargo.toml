@@ -11,6 +11,7 @@ description = "Pawork Provider 共用的 HTTP 运行时、流式解析、组装�
 agent-domain = { path = "../agent-domain" }
 protected-blob-store = { path = "../protected-blob-store" }
 provider-api = { path = "../provider-api" }
+model-registry = { path = "../model-registry" }
 async-trait.workspace = true
 bytes.workspace = true
 futures.workspace = true

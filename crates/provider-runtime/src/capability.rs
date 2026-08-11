@@ -55,6 +55,7 @@ mod tests {
             thinking,
             structured_output: structured,
             prompt_cache: true,
+            ..ModelCapabilities::default()
         }
     }
 

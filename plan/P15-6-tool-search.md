@@ -1,6 +1,6 @@
 # P15-6：Tool Search（按需工具发现与激活）
 
-> Phase 15 · Provider Native Capabilities · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P0-5、P3-4、P4-9、P9-3、P15-1
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P0-5、P3-4、P4-9、P9-3、P15-1
 
 **最终目的**：让 Agent 在面对大量可用工具（内置 + MCP + GUI 工具 + Provider extension）时，不必把全部工具 schema 一次性塞入上下文，而是按需搜索一个「延迟加载工具索引」并激活匹配项。降低上下文占用、提升工具选择精度，并为 P15-1 的 `ProviderExtension` 提供统一发现入口。Core 不因工具来源不同走特例。
 
@@ -24,12 +24,35 @@
 
 ## 验收标准
 
-- [ ] 搜索仅返回未激活且匹配 query 的工具，已激活项不重复出现
-- [ ] 激活后工具可被 scheduler 路由执行（ClientFunction，Mock smoke）
-- [ ] `ProviderExtension` 激活在未信任工作区被默认拒绝，需显式审批（用例）
-- [ ] `ProviderHosted` 不进入本地搜索/激活流程（边界断言）
-- [ ] 激活后 schema 计入 P3-2 tools token 预算（用例）
-- [ ] 不引入搜索引擎类第三方依赖；仅定向/Mock smoke 验收，不要求 workspace 全量门禁
+- [x] 搜索仅返回未激活且匹配 query 的工具，已激活项不重复出现
+- [x] 激活后工具可被 scheduler 路由执行（ClientFunction，Mock smoke）
+- [x] `ProviderExtension` 激活在未信任工作区被默认拒绝，需显式审批（用例）
+- [x] `ProviderHosted` 不进入本地搜索/激活流程（边界断言）
+- [x] 激活后 schema 计入 P3-2 tools token 预算（用例）
+- [x] 不引入搜索引擎类第三方依赖；仅定向/Mock smoke 验收，不要求 workspace 全量门禁
+
+## 验证记录（2026-08-12）
+
+- 索引与搜索：四来源（内置 / MCP / GUI / Provider extension）批量声明、激活后不再出现在搜索结果、
+  名称 / 描述 / capabilities 三种匹配面、大小写不敏感、空 query 不返回结果。
+- 激活与路由：ClientFunction 激活后经 `ToolScheduler::execute_named` 本地执行成功；幂等重复激活为
+  no-op；Extension 激活后仅可走 `authorize_provider_call`（ProviderTranscript），不进入本地执行。
+- 审批闸门：Extension 激活在未信任工作区默认拒绝；信任工作区 + 自动放行器 fail closed；显式审批
+  放行、显式拒绝不激活（与 P15-1 §6 一致）。
+- 边界：`ProviderHosted` 声明被 `HostedNotIndexed` 拒绝；来源与执行位点不一致被拒绝。
+- 预算联动：schema 计数与 context-engine 启发式口径对齐（JSON + 8 framing、CJK 1:1、其余 4:1）；
+  超限时淘汰「当前轮未使用」工具（`mark_used` / `start_round`），当前轮已用工具占满预算时拒绝激活；
+  被淘汰工具回到已声明集合可重新激活。
+- `ToolRegistry::remove` 用于预算淘汰，移除后不再可路由。
+- 未新增第三方依赖（搜索匹配与 token 计数均为自实现最小子集）。
+
+```text
+Validation Level: L1
+Affected crates: tool-runtime
+Validated: cargo test -p tool-runtime（27 passed）/ cargo clippy -p tool-runtime --all-targets -- -D warnings（0 warning）/ cargo check -p agent-domain -p tool-api（确认未受影响）
+Targeted regressions: 既有 scheduler 全量用例回归（26 项）+ 本任务 7 项新用例；ToolRegistry::remove 定向用例
+Full workspace gate: NOT RUN（未命中升级条件）
+```
 
 **相关文档**：[tools](../docs/features/tools.md) · [mcp](../docs/features/mcp.md) · [policy](../docs/features/policy.md) · [context](../docs/features/context.md) · [ADR-008 capability 分类](../docs/adr/ADR-008-builtin-tools-capability.md) · [P15-1](P15-1-canonical-tool-v2.md) · [ROADMAP](../ROADMAP.md)
 

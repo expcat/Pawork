@@ -651,6 +651,7 @@ mod tests {
             budget: RequestBudget::default(),
             provider_options: BTreeMap::new(),
             trace_id: None,
+                    reasoning: None,
         }
     }
 

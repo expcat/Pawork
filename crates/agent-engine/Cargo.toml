@@ -11,6 +11,7 @@ description = "Pawork Agent 循环：状态机、运行控制、预算、调度�
 agent-domain = { path = "../agent-domain" }
 agent-events = { path = "../agent-events" }
 provider-api = { path = "../provider-api" }
+provider-runtime = { path = "../provider-runtime" }
 tool-api = { path = "../tool-api" }
 tool-runtime = { path = "../tool-runtime" }
 model-registry = { path = "../model-registry" }

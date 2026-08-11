@@ -4,7 +4,8 @@
 //! 断言函数。每个新增 Provider 须通过这些断言（覆盖 ADR-015 的用例集）。
 
 use agent_domain::StopReason;
-use provider_api::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
+use agent_domain::{Citation, CitationSourceKind, ReasoningItem, ServerToolEvent};
+use provider_api::{ProviderError, ProviderErrorKind, ProviderStreamEvent, ResolvedCapabilities};
 
 /// 断言文本流：至少含一条 TextDelta，并以 ResponseCompleted 收尾。
 pub fn assert_text_stream(events: &[ProviderStreamEvent]) {
@@ -104,6 +105,79 @@ where
     F: Fn(&ProviderStreamEvent) -> bool,
 {
     events.iter().filter(|e| predicate(e)).count()
+}
+
+// ----- Phase 15（P15-9）共享断言：citation / reasoning / capability / server tool -----
+//
+// 以下断言不绑定具体 Provider：任意 adapter 归一后的 canonical 结构都应满足，
+// 用于三家 p15_gate.rs 的 contract / fuzz / 兼容性门禁复用，保证 ADR-015 横向
+// 一致与 ADR-032 受保护材料守护。
+
+/// 断言能力协商结果满足 `requested == supported ∪ unsupported`：每项请求必须
+/// 显式落到 supported 或 unsupported，禁止静默丢弃或伪造（P15-8 不变量）。
+pub fn assert_capability_resolution_invariant(resolved: &ResolvedCapabilities) {
+    let union: std::collections::BTreeSet<String> = resolved
+        .supported
+        .iter()
+        .chain(resolved.unsupported.iter())
+        .cloned()
+        .collect();
+    assert_eq!(
+        resolved.requested, union,
+        "requested 必须 == supported ∪ unsupported（禁止静默丢弃/伪造）"
+    );
+}
+
+/// 断言 [`ServerToolEvent`] 经 JSON round-trip 后 `type_name` 与 `tool_call_id`
+/// 保持稳定——可持久化、可重放（ADR-016）。
+pub fn assert_server_tool_event_round_trip(event: &ServerToolEvent) {
+    let type_name = event.type_name();
+    let id = event.tool_call_id().clone();
+    let value = serde_json::to_value(event).expect("serialize server tool event");
+    let decoded: ServerToolEvent =
+        serde_json::from_value(value).expect("deserialize server tool event");
+    assert_eq!(
+        decoded.type_name(),
+        type_name,
+        "type_name 应在 round-trip 后稳定"
+    );
+    assert_eq!(
+        decoded.tool_call_id(),
+        &id,
+        "tool_call_id 应在 round-trip 后稳定"
+    );
+}
+
+/// 断言 [`Citation`] 不在 `source_kind == Unknown` 的同时伪造 url/title——
+/// 缺省字段保持空而非猜值（P15-5 归一契约）。
+pub fn assert_citation_not_fabricated(citation: &Citation) {
+    if citation.source_kind == CitationSourceKind::Unknown {
+        assert!(
+            citation.url.is_none() && citation.title.is_none(),
+            "Unknown citation 不应伪造 url/title：{citation:?}"
+        );
+    }
+}
+
+/// 断言受保护 reasoning 凭证只经 `protected_blob_ref` 引用：canonical
+/// [`ReasoningItem`] 的 JSON 序列化中绝不出现受保护明文材料（ADR-032）。
+///
+/// 仅禁止凭证专有字段名——`encrypted_content`（OpenAI/xAI 密文）、`signature`
+/// （Anthropic 签名）、`reasoning_content`（通用）与密钥前缀 `sk-`。结构性
+/// 翻译提示（Anthropic `anthropic_block_kind` = `"thinking"` / `"redacted_thinking"`，
+/// OpenAI `openai.responses.summary_entries`）是非敏感 kind/条目镜像，放行。
+pub fn assert_reasoning_item_protected_only_via_blob_ref(item: &ReasoningItem) {
+    let json = serde_json::to_string(item).expect("serialize reasoning item");
+    assert!(
+        json.contains("protected_blob_ref"),
+        "ReasoningItem 应携带 protected_blob_ref 引用，实际：{json}"
+    );
+    for forbidden in ["encrypted_content", "signature", "reasoning_content", "sk-"] {
+        assert!(
+            !json.contains(forbidden),
+            "ReasoningItem 序列化不得出现受保护材料 `{forbidden}`（ADR-032），实际：{json}"
+        );
+    }
 }
 
 #[cfg(test)]

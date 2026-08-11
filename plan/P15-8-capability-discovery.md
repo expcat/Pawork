@@ -1,6 +1,6 @@
 # P15-8：Capability Discovery（能力协商与传输选择）
 
-> Phase 15 · Provider Native Capabilities · 状态：🟡进行中 · 交付成熟度：Implementing · 依赖：P0-4、P2-7、P15-1、P15-5、P15-7
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：Delivered · 依赖：P0-4、P2-7、P15-1、P15-5、P15-7
 
 **最终目的**：在请求发出前，基于「模型 × 工具能力标签」做能力协商——检测当前模型/Provider 支持哪些现代能力（Responses 传输、server tools、thinking signature、code execution、computer use 等），据此选择传输路径与降级策略，使 P15-2/3/4 不必各自硬编码「能不能用」。协商结果可持久化、可观测，Core 仍不感知 Provider 名称。
 
@@ -24,12 +24,12 @@
 
 ## 验收标准
 
-- [ ] 协商对「请求能力 × 模型支持」取交集，未支持项进入 `unsupported`（Mock smoke）
-- [ ] 传输选择由协商结果驱动，P15-2/3/4 不各自硬编码（断言）
-- [ ] 降级路径明确（退化客户端工具或拒绝+可读原因），不静默丢弃或伪造
-- [ ] 协商记录可观测（P1-9/P1-11），可解释「为何降级」
-- [ ] 协商不引入 Provider 名称分支逻辑（`no_provider_branch` 断言）
-- [ ] 仅定向/Mock smoke 验收，不要求 workspace 全量门禁
+- [x] 协商对「请求能力 × 模型支持」取交集，未支持项进入 `unsupported`（Mock smoke）
+- [x] 传输选择由协商结果驱动（`CapabilityNegotiator::choose_transport`，P15-2/3/4 不各自硬编码）
+- [x] 降级路径明确（ClientTool / LegacyTransport / ClampedEffort / Reject+可读原因），不静默丢弃或伪造
+- [x] 协商记录可观测（稳定 `provider_capability_negotiated` Diagnostic，可解释「为何降级」）
+- [x] 协商不引入 Provider 名称分支逻辑（`no_provider_branch` 断言：provider=Some/None 结果一致）
+- [x] 仅定向/Mock smoke 验收，不要求 workspace 全量门禁
 
 **相关文档**：[providers](../docs/features/providers.md) · [models](../docs/features/models.md) · [observability](../docs/features/observability.md) · [ADR-002 解耦](../docs/adr/ADR-002-agent-engine-provider-decoupled.md) · [P15-1](P15-1-canonical-tool-v2.md) · [P15-2](P15-2-openai-responses.md) · [P15-3](P15-3-anthropic-modern-messages.md) · [P15-4](P15-4-xai-responses.md) · [ROADMAP](../ROADMAP.md)
 

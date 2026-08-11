@@ -302,6 +302,7 @@ mod tests {
             budget: provider_api::RequestBudget::default(),
             provider_options: BTreeMap::new(),
             trace_id: None,
+                    reasoning: None,
         }
     }
 

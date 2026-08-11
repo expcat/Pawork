@@ -128,6 +128,16 @@ impl ToolRegistry {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
+
+    /// 从注册表移除工具（P15-6 预算淘汰 / 停用）。返回是否确实存在并移除。
+    pub fn remove(&mut self, name: &str) -> bool {
+        let mut map = (*self.tools).clone();
+        let removed = map.remove(name).is_some();
+        if removed {
+            self.tools = Arc::new(map);
+        }
+        removed
+    }
 }
 
 fn validate_descriptor(descriptor: &ToolDescriptor) -> Result<(), ToolRegistryError> {
@@ -1139,6 +1149,32 @@ mod tests {
             )),
             Err(ToolRegistryError::MissingClientFunctionExecutor { .. })
         ));
+    }
+
+    #[test]
+    fn registry_remove_drops_existing_entry_and_reports_missing() {
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(probe("client", ToolCapability::ReadOnly, probe_shared()))
+            .unwrap();
+        registry
+            .register_descriptor(site_descriptor("extension", ToolKind::ProviderExtension))
+            .unwrap();
+        assert_eq!(registry.len(), 2);
+
+        assert!(registry.remove("client"));
+        assert_eq!(registry.len(), 1);
+        assert!(registry.get("client").is_none());
+        assert!(registry.descriptor("client").is_none());
+        assert_eq!(registry.kind_of("client"), None);
+        assert_eq!(
+            registry.kind_of("extension"),
+            Some(ToolKind::ProviderExtension)
+        );
+
+        assert!(!registry.remove("client"), "重复移除返回 false");
+        assert!(!registry.remove("ghost"));
+        assert_eq!(registry.len(), 1);
     }
 
     #[tokio::test]

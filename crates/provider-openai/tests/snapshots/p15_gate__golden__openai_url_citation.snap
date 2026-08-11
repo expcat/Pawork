@@ -1,0 +1,10 @@
+---
+source: crates/provider-openai/tests/p15_gate.rs
+expression: citation
+---
+{
+  "index": 42,
+  "url": "https://example.com/a",
+  "title": "Example",
+  "source_kind": "url"
+}

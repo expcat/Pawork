@@ -1,0 +1,14 @@
+---
+source: crates/provider-openai/tests/p15_gate.rs
+expression: source
+---
+{
+  "url": "https://example.com/s",
+  "title": "S",
+  "snippet": "snippet text",
+  "raw_metadata": {
+    "snippet": "snippet text",
+    "title": "S",
+    "url": "https://example.com/s"
+  }
+}

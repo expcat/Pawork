@@ -7,12 +7,14 @@
 //! - [`retry`]：错误归一与可重试判定（生产退避由 `agent-engine` 单点负责）；
 //! - [`reasoning`]：受保护 reasoning continuation 的统一存取桥；
 //! - [`usage`]：token / 费用 / stop reason 归一；
-//! - [`stream_assembly`]：`ProviderStreamEvent` → 领域消息组装。
+//! - [`stream_assembly`]：`ProviderStreamEvent` → 领域消息组装；
+//! - [`negotiate`]：P15-8 能力协商（CapabilityNegotiator 纯函数）。
 
 pub mod capability;
 pub mod http;
 pub mod jsonl;
 pub mod partial_json;
+pub mod negotiate;
 pub mod reasoning;
 pub mod retry;
 pub mod sse;

@@ -12,12 +12,18 @@ agent-domain = { path = "../agent-domain" }
 provider-api = { path = "../provider-api" }
 provider-runtime = { path = "../provider-runtime" }
 provider-openai-compatible = { path = "../provider-openai-compatible" }
+model-registry = { path = "../model-registry" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+futures.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
 wiremock.workspace = true
 test-support = { path = "../test-support" }
+insta = { workspace = true, features = ["json"] }
+proptest.workspace = true

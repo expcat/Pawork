@@ -377,6 +377,7 @@ mod tests {
             budget: RequestBudget::default(),
             provider_options: BTreeMap::new(),
             trace_id: None,
+                    reasoning: None,
         };
 
         let body = to_generate_content_body(&request);
@@ -416,6 +417,7 @@ mod tests {
             budget: RequestBudget::default(),
             provider_options: BTreeMap::new(),
             trace_id: None,
+                    reasoning: None,
         };
         request
             .provider_options

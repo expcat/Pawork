@@ -39,6 +39,7 @@ fn request(model: &str) -> CanonicalModelRequest {
         budget: RequestBudget::default(),
         provider_options: BTreeMap::new(),
         trace_id: Some("trace-xai".into()),
+        reasoning: None,
     }
 }
 
@@ -81,7 +82,7 @@ async fn unified_contract_api_key_text_reasoning_usage_and_stop() {
         .and(path("/chat/completions"))
         .and(header("authorization", "Bearer xai-key"))
         .and(body_partial_json(serde_json::json!({
-            "model": "grok-4",
+            "model": "grok-2",
             "stream": true,
             "stream_options": {"include_usage": true},
             "messages": [{"role": "user", "content": "hi"}]
@@ -102,7 +103,7 @@ async fn unified_contract_api_key_text_reasoning_usage_and_stop() {
     let adapter = provider(&server, CredentialKind::ApiKey, "xai-key");
     let sink = RecordingProviderSink::default();
     let summary = adapter
-        .stream(request("grok-4"), &sink, CancellationToken::new())
+        .stream(request("grok-2"), &sink, CancellationToken::new())
         .await
         .expect("xAI stream succeeds");
 
@@ -137,7 +138,7 @@ async fn oauth_credential_is_sent_as_bearer() {
     let adapter = provider(&server, CredentialKind::OAuthBearer, "oauth-access");
     adapter
         .stream(
-            request("grok-4-fast"),
+            request("grok-2"),
             &RecordingProviderSink::default(),
             CancellationToken::new(),
         )
@@ -164,7 +165,7 @@ async fn unified_contract_tool_call() {
 
     let sink = RecordingProviderSink::default();
     provider(&server, CredentialKind::ApiKey, "xai-key")
-        .stream(request("grok-4"), &sink, CancellationToken::new())
+        .stream(request("grok-2"), &sink, CancellationToken::new())
         .await
         .expect("tool stream succeeds");
     contract::assert_single_tool_call(&sink.events());
@@ -190,7 +191,7 @@ async fn xai_errors_are_normalized_independently() {
 
         let sink = RecordingProviderSink::default();
         let error = provider(&server, CredentialKind::ApiKey, "xai-key")
-            .stream(request("grok-4"), &sink, CancellationToken::new())
+            .stream(request("grok-2"), &sink, CancellationToken::new())
             .await
             .expect_err("HTTP error must be normalized");
         contract::assert_error_kind(&sink.events(), Some(&error), expected.clone());
@@ -223,11 +224,11 @@ async fn differential_matches_openai_compatible_baseline() {
     let xai_sink = RecordingProviderSink::default();
     let baseline_sink = RecordingProviderSink::default();
     let xai_summary = provider(&server, CredentialKind::ApiKey, "xai-key")
-        .stream(request("grok-4"), &xai_sink, CancellationToken::new())
+        .stream(request("grok-2"), &xai_sink, CancellationToken::new())
         .await
         .expect("xAI stream succeeds");
     let baseline_summary = baseline_provider(&server)
-        .stream(request("grok-4"), &baseline_sink, CancellationToken::new())
+        .stream(request("grok-2"), &baseline_sink, CancellationToken::new())
         .await
         .expect("baseline stream succeeds");
 

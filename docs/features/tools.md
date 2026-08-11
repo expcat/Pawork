@@ -88,6 +88,43 @@ Provider-owned 调用仍受 Core policy 约束：Hosted 工具按 descriptor 的
 安全包装为单个 Text content。取消令牌会同时传到 Scheduler 与 WASM epoch interruption。详见
 [Plugin 系统](plugins.md)。
 
+## Tool Search（P15-6）
+
+面对大量可用工具（内置 + MCP + GUI + Provider extension），不必把全部 schema 一次性塞进上下文：
+`tool-runtime` 维护「延迟加载工具索引」，按需搜索并激活匹配工具。核心类型见
+[`tool_search.rs`](../../crates/tool-runtime/src/tool_search.rs)。
+
+### 设计要点
+
+- **延迟加载索引**：`LazyToolIndex::declare` 登记「已声明但未激活」的工具 manifest（名称 / 描述 /
+  capabilities / 来源 / `requires_approval`），字段全部复用 `ToolDescriptor`，不引入独立 schema。
+  来源（`ToolSource`）覆盖 `ClientFunctionBuiltin` 与 Extension 类（`Mcp` / `Gui` /
+  `ProviderExtension`），并与 `ToolKind` 执行位点一致性校验；激活前工具不进入活跃 registry，
+  因此不会出现在进入 Provider 请求的 tools 列表（`active_descriptors`）中。
+- **搜索**：`search_tools(query)` 自实现最小匹配子集（参考 ignore/globset 思路，不引入第三方
+  依赖）：query 小写并按非字母数字切词，每个词元须命中名称 / 描述 / capabilities 拼接文本；
+  结果按名称 2 分 / 描述 1 分 / capabilities 1 分排序。只返回未激活且匹配的工具，已激活项不重复出现。
+- **激活器**：`activate_tool(id, gate)` 把延迟工具移入活跃 `ToolRegistry`（可被 scheduler 路由），
+  幂等；被预算淘汰的工具回到已声明集合，可再次搜索与激活。
+- **ProviderExtension 审批闸门**：激活 Extension 类工具先过 `ToolActivationGate`；默认实现
+  `PolicyActivationGate` 复用 P4-9 语义——未信任工作区默认拒绝，信任工作区仍需真实、可审计的
+  显式审批（自动放行器 fail closed），与 P15-1 §6 一致。
+- **与 hosted tools 边界**：`ProviderHosted`（server tool）由 P15-8 能力协商在请求侧声明，
+  不进入本地搜索 / 激活流程，`declare` 直接拒绝。
+- **上下文预算联动**：激活后 schema 计入 `ToolTokenBudget`，计数口径与 context-engine
+  `HeuristicEstimator::count_tool_schemas` 对齐（JSON 序列化 + 每工具 8 token；CJK 1 字符/token、
+  其余 4 字符/token）；超限时优先淘汰「当前轮未使用」的工具（`mark_used` / `start_round` 维护轮次），
+  当前轮已用工具保留，仍超限则拒绝激活。
+
+### 验收标准
+
+- 搜索仅返回未激活且匹配的工具，已激活项不重复出现
+- 激活后 ClientFunction 可被 scheduler 路由执行
+- ProviderExtension 激活在未信任工作区被默认拒绝，需显式审批
+- ProviderHosted 不进入本地搜索 / 激活流程（边界断言）
+- 激活后 schema 计入 tools token 预算，超限优先保留当前轮已用工具
+- 不引入搜索引擎类第三方依赖
+
 ## 验收标准
 
 - 所有写操作可回滚（Checkpoint）
@@ -101,4 +138,4 @@ Provider-owned 调用仍受 Core policy 约束：Hosted 工具按 descriptor 的
 - [控制流（调度）](../architecture/control-flow.md) · [policy](policy.md) · [process](process.md) · [checkpoint](checkpoint.md) · [artifacts](artifacts.md)
 - [ADR-008 capability 分类](../adr/ADR-008-builtin-tools-capability.md) · [ADR-010 写操作 Checkpoint](../adr/ADR-010-checkpoint-all-writes.md)
 - [ROADMAP Phase 4](../../ROADMAP.md)
-- [ROADMAP Phase 10（WASM Plugin）](../../ROADMAP.md) · [ROADMAP Phase 15（Canonical Tool v2）](../../ROADMAP.md)
+- [ROADMAP Phase 10（WASM Plugin）](../../ROADMAP.md) · [ROADMAP Phase 15（Canonical Tool v2）](../../ROADMAP.md) · [ROADMAP Phase 15（Tool Search）](../../ROADMAP.md)

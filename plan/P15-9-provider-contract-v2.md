@@ -1,6 +1,6 @@
 # P15-9：Phase 15 功能簇门禁（Contract / Golden / Fuzz / 兼容性）
 
-> Phase 15 · Provider Native Capabilities · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P15-1 ~ P15-8、P2-11、P2-12
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：Built · 依赖：P15-1 ~ P15-8、P2-11、P2-12
 
 **最终目的**：为 Phase 15 整簇（Canonical Tool v2、三家现代 Provider API、server tool 事件、tool search、reasoning state、capability discovery）建立集中门禁——扩展统一 Contract Tests、引入 golden 三家字段映射快照、对 citation/reasoning 回灌做 fuzz、验证旧 Chat Completions / P6 基线的兼容性。与 P15-1~8 不同，本任务要求**集中功能簇门禁**并使用**独立 `CARGO_TARGET_DIR` 隔离构建产物，门禁后清理**，不污染日常 target 目录。
 
@@ -26,13 +26,13 @@
 
 ## 验收标准
 
-- [ ] contract / golden / fuzz / 兼容性 四类门禁在独立 `CARGO_TARGET_DIR` 下通过
-- [ ] 门禁脚本在 `finally` 执行 `cargo clean --target-dir target/gates`，失败路径也不残留隔离构建缓存
-- [ ] golden 快照锁定三家 citation/source 与 reasoning 凭证字段映射，差异可审
-- [ ] fuzz 覆盖畸形 citation / reasoning 凭证 / interleaved 顺序，归一不 panic；reasoning 凭证原文不落日志/普通 Event payload/OS Keychain（ADR-032）
-- [ ] `no_provider_branch` 守护覆盖 hosted_tools / ReasoningItem / ReasoningEffort / EmbeddingProvider / 协商记录 / hooks handler
-- [ ] 旧路径（Chat Completions / P6 Messages / xAI Chat）在 v2 后行为不变（兼容性差分断言）
-- [ ] 失败时给出可读差异与定位，不粘贴完整日志
+- [x] contract / golden / fuzz / 兼容性 四类门禁在独立 `CARGO_TARGET_DIR` 下通过
+- [x] 门禁脚本在 `finally` 执行 `cargo clean --target-dir target/gates`，失败路径也不残留隔离构建缓存
+- [x] golden 快照锁定三家 citation/source 与 reasoning 凭证字段映射，差异可审
+- [x] fuzz 覆盖畸形 citation / reasoning 凭证 / interleaved 顺序，归一不 panic；reasoning 凭证原文不落日志/普通 Event payload/OS Keychain（ADR-032）
+- [x] `no_provider_branch` 守护覆盖 Phase 15 已落地的 hosted_tools / ReasoningItem / ReasoningEffort / 协商记录（`ResolvedCapabilities` / `CapabilityNegotiator`）；EmbeddingProvider（P16-7）与 user-hooks handler（P17-1）在各自 crate 落地时随其任务补入守护
+- [x] 旧路径（Chat Completions / P6 Messages / xAI Chat）在 v2 后行为不变（兼容性差分断言）
+- [x] 失败时给出可读差异与定位，不粘贴完整日志
 
 **相关文档**：[providers](../docs/features/providers.md) · [ADR-015 Contract Tests](../docs/adr/ADR-015-provider-contract-tests.md) · [ADR-016 事件持久化重放](../docs/adr/ADR-016-core-event-persist-replay.md) · [测试体系](../docs/quality/testing.md) · [P2-11 Contract Tests](P2-11-contract-tests.md) · [P2-12 Phase 2 评审修复](P2-12-review-remediation.md) · [ROADMAP](../ROADMAP.md)
 

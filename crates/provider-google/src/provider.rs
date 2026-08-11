@@ -264,6 +264,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             thinking,
             structured_output,
             prompt_cache,
+                    ..ModelCapabilities::default()
         }
     }
 

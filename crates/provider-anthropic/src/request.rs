@@ -7,8 +7,8 @@ use provider_api::{
 };
 use serde_json::{json, Map, Value};
 
-const DEFAULT_MAX_TOKENS: u64 = 4096;
-const DEFAULT_THINKING_OUTPUT_MARGIN: u64 = 1024;
+pub(crate) const DEFAULT_MAX_TOKENS: u64 = 4096;
+pub(crate) const DEFAULT_THINKING_OUTPUT_MARGIN: u64 = 1024;
 
 /// 把 canonical 请求转换为 Anthropic Messages 请求体。
 pub fn to_messages_body(request: &CanonicalModelRequest) -> Value {
@@ -139,7 +139,7 @@ pub fn to_messages_body(request: &CanonicalModelRequest) -> Value {
     Value::Object(body)
 }
 
-fn is_reserved_provider_option(key: &str) -> bool {
+pub(crate) fn is_reserved_provider_option(key: &str) -> bool {
     matches!(
         key.to_ascii_lowercase().as_str(),
         "model"
@@ -166,7 +166,7 @@ fn is_reserved_provider_option(key: &str) -> bool {
 }
 
 /// 把 agent-domain Message 转为 Anthropic message(s)。
-fn message_to_anthropic(message: &Message) -> Vec<Value> {
+pub(crate) fn message_to_anthropic(message: &Message) -> Vec<Value> {
     let role = match message.role {
         MessageRole::User => "user",
         MessageRole::Assistant => "assistant",
@@ -257,7 +257,7 @@ fn structured_output_instruction(format: &ResponseFormat) -> Option<String> {
     }
 }
 
-fn mark_last_block(blocks: &mut [Value]) {
+pub(crate) fn mark_last_block(blocks: &mut [Value]) {
     if let Some(last) = blocks.last_mut() {
         last["cache_control"] = json!({"type":"ephemeral"});
     }
@@ -269,7 +269,7 @@ fn mark_message_last_block(message: &mut Value) {
     }
 }
 
-fn tool_choice_to_anthropic(choice: &ToolChoice) -> Value {
+pub(crate) fn tool_choice_to_anthropic(choice: &ToolChoice) -> Value {
     match choice {
         ToolChoice::None => json!({"type":"none"}),
         ToolChoice::Auto => json!({"type":"auto"}),
@@ -279,7 +279,7 @@ fn tool_choice_to_anthropic(choice: &ToolChoice) -> Value {
 }
 
 /// thinking level → budget_tokens。Off 关闭 thinking。
-fn thinking_budget(config: &ThinkingConfig) -> Option<u64> {
+pub(crate) fn thinking_budget(config: &ThinkingConfig) -> Option<u64> {
     if config.level == ThinkingLevel::Off {
         return None;
     }
@@ -325,6 +325,7 @@ mod tests {
             budget: RequestBudget::default(),
             provider_options: BTreeMap::new(),
             trace_id: None,
+            reasoning: None,
         }
     }
 

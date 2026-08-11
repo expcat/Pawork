@@ -40,6 +40,7 @@ fn request() -> CanonicalModelRequest {
         budget: RequestBudget::default(),
         provider_options: BTreeMap::new(),
         trace_id: Some("trace-1".into()),
+            reasoning: None,
     }
 }
 

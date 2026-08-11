@@ -439,6 +439,7 @@ impl RunSupervisor {
             budget: agent_engine::BudgetLimits::default(),
             retry: agent_engine::RetryPolicy::default(),
             thinking: None,
+            reasoning: None,
         };
         (config, Arc::new(agent_engine::MessageQueue::new()))
     }

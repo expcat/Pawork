@@ -35,12 +35,12 @@
 | 12 | Multi-Agent | 7 | 7 | 🟢已完成（P12-1～P12-6 TargetVerified；P12-7 review-remediation 已完成） |
 | 13 | CLI Host 与多 GUI 协议 | 11 | 11 | 🟢已完成（P13-1～P13-10 TargetVerified；P13-11 review-remediation 已完成） |
 | 14 | 模型用量与额度监控 | 10 | 10 | 🟢已完成（P14-1/2/4～P14-10 TargetVerified；P14-3 已归档） |
-| 15 | Provider Native Capabilities | 9 | 3 | 🟡进行中（P15-1、P15-5、P15-7 TargetVerified） |
+ | 15 | Provider Native Capabilities | 9 | 9 | 🟢已完成（P15-1～P15-9 TargetVerified；P15-9 集中门禁 contract/golden/fuzz/兼容性在独立 target 下全绿） |
 | 16 | Modern Agent Workflow | 9 | 0 | 🟡未开始 |
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **217** | **158** | — |
+ | **合计** | — | **217** | **167** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -48,7 +48,7 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P15-8 Capability Discovery & Negotiation** —— P15-1 Canonical Tool v2、P15-5 Server Tool Events 与 P15-7 Reasoning State 已完成 TargetVerified；下一项统一 `ModelCapabilities v2`、来源/置信度与请求协商边界，为三家真实 adapter 接线提供 fail-closed 能力判断。详情见 [plan/P15-8-capability-discovery.md](plan/P15-8-capability-discovery.md)。
+ > 🎯 **Phase 16 Modern Agent Workflow** —— Phase 15 Provider Native Capabilities 已全部完成（P15-1～P15-9 TargetVerified）。canonical Tool v2（三类执行位点）、ServerToolEvent/Citation/ProviderTranscript、ReasoningItem/Protected Blob Store、ModelCapabilities v2 与 CapabilityNegotiator（纯函数 fail-closed 协商）、Tool Search（延迟激活）、OpenAI Responses / Anthropic Modern Messages / xAI Responses 三家现代传输路径（与 P6 基线并存、经协商降级）、Phase 15 集中门禁（contract/golden/fuzz/兼容性，独立 target dir）均已落地。下一推荐 Phase 16（Modern Agent Workflow）。详见各 [plan/P15-*](plan/) 文档。
 
 > ✅ **Phase 14 模型用量与额度监控完成库级收口（P14-1/2/4～P14-10 TargetVerified）**：交付 `quota-service` canonical 领域模型、API Key / WebScrape / Local Ledger 三类 adapter（通用 OAuth 层无生产消费者已删除，见 [P14-3](plan/P14-3-quota-oauth-adapter.md)）、六初始供应商 contract fixtures、多窗口聚合与 cache-only 查询、Usage/Cost Ledger 进程内写入与预算信号、`pawork usage` 文本/JSON 输出、GUI Protocol 的 `QuotaChanged` / `QuotaAlert` 事件、可取消刷新调度与退避。**有界范围**：远端 refresh target 注册、持久化 Ledger、真实 tenant/account/credential 归属与生产审计 sink 延 Phase 18 接线；GUI 目前仅协议就绪（无实际投影页面）；告警动作由消费端按 `AlertKind` 派生，不跨边界携带 typed suggestions。开发期完成受影响 crate 的定向测试、Clippy、格式与 schema 漂移检查；workspace 全量门禁留待集中 review。未配置远端 target 时查询保持 cache-only，只读本地 Ledger 投影。详见 [P14-10](plan/P14-10-review-remediation.md)。
 
@@ -502,14 +502,14 @@ Parent/Worker 编排，写入隔离，取消传播。
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
 | P15-1 | 🟢 | Canonical Tool v2 | Client Function / Provider Hosted / Extension | [详情](plan/P15-1-canonical-tool-v2.md) |
-| P15-2 | 🟡 | OpenAI Responses API | hosted tools + continuation | [详情](plan/P15-2-openai-responses.md) |
-| P15-3 | 🟡 | Anthropic Modern Messages | effort/adaptive thinking/server tools | [详情](plan/P15-3-anthropic-modern-messages.md) |
-| P15-4 | 🟡 | xAI Responses API | Web/X/Code/Collections/MCP | [详情](plan/P15-4-xai-responses.md) |
-| P15-5 | 🟢 | Server Tool Events | citation/source/search/execution/computer events | [详情](plan/P15-5-server-tool-events.md) |
-| P15-6 | 🟡 | Tool Search | 动态发现与 lazy schema loading | [详情](plan/P15-6-tool-search.md) |
-| P15-7 | 🟢 | Reasoning State | effort levels/encrypted continuation | [详情](plan/P15-7-reasoning-state.md) |
-| P15-8 | 🟡 | Capability Discovery | ModelCapabilities v2 + negotiation | [详情](plan/P15-8-capability-discovery.md) |
-| P15-9 | 🟡 | Provider Contract v2 | 三家集中 contract/golden/兼容门禁 | [详情](plan/P15-9-provider-contract-v2.md) |
+ | P15-2 | 🟢 | OpenAI Responses API | hosted tools + continuation | [详情](plan/P15-2-openai-responses.md) |
+ | P15-3 | 🟢 | Anthropic Modern Messages | effort/adaptive thinking/server tools | [详情](plan/P15-3-anthropic-modern-messages.md) |
+ | P15-4 | 🟢 | xAI Responses API | Web/X/Code/Collections/MCP | [详情](plan/P15-4-xai-responses.md) |
+ | P15-5 | 🟢 | Server Tool Events | citation/source/search/execution/computer events | [详情](plan/P15-5-server-tool-events.md) |
+ | P15-6 | 🟢 | Tool Search | 动态发现与 lazy schema loading | [详情](plan/P15-6-tool-search.md) |
+ | P15-7 | 🟢 | Reasoning State | effort levels/encrypted continuation | [详情](plan/P15-7-reasoning-state.md) |
+ | P15-8 | 🟢 | Capability Discovery | ModelCapabilities v2 + negotiation | [详情](plan/P15-8-capability-discovery.md) |
+ | P15-9 | 🟢 | Provider Contract v2 | 三家集中 contract/golden/兼容门禁 | [详情](plan/P15-9-provider-contract-v2.md) |
 
 ### Phase 16：Modern Agent Workflow
 

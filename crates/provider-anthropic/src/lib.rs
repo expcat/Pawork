@@ -6,8 +6,10 @@
 //!
 //! - 请求转换见 [`request`]；
 //! - 流式事件 → canonical 事件映射见 [`stream`]；
+//! - 现代 Messages（P15-3）请求 / server tool / signature 归一见 [`modern`]；
 //! - [`AnthropicProvider`] 实现了 [`ModelProvider`](provider_api::ModelProvider)。
 
+pub mod modern;
 pub mod provider;
 pub mod reasoning;
 pub mod request;
@@ -21,6 +23,11 @@ pub use reasoning::{
 };
 pub use request::to_messages_body;
 pub use stream::{event_to_events, AnthropicStreamState};
+
+pub use modern::{
+    resolve, server_tool_result_block_to_events, to_modern_messages_body,
+    transcript_to_wire_blocks, ReasoningContinuationStore, TransportChoice,
+};
 
 /// Anthropic API 默认基础 URL。
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";

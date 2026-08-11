@@ -665,13 +665,38 @@ impl Future for WaitForProbe<'_> {
 }
 
 fn caps_satisfied(have: &ModelCapabilities, required: &ModelCapabilities) -> bool {
-    (!required.text || have.text)
+    // v1 布尔能力：required 为 true 时 have 必须满足。
+    let v1 = (!required.text || have.text)
         && (!required.image_input || have.image_input)
         && (!required.tool_calls || have.tool_calls)
         && (!required.parallel_tool_calls || have.parallel_tool_calls)
         && (!required.thinking || have.thinking)
         && (!required.structured_output || have.structured_output)
-        && (!required.prompt_cache || have.prompt_cache)
+        && (!required.prompt_cache || have.prompt_cache);
+    if !v1 {
+        return false;
+    }
+    // P15-8 v2：citations（required 为 true 时 have 必须声明）。
+    if required.citations && !have.citations {
+        return false;
+    }
+    // P15-8 v2：transport——required 声明非默认（非 ChatCompletions）transport 时，
+    // have 必须声明同一 transport（要求 Responses 时只接受 Responses）。
+    // required 为默认 ChatCompletions 视为「不约束」。
+    if required.transport != provider_api::ModelTransport::ChatCompletions
+        && have.transport != required.transport
+    {
+        return false;
+    }
+    // P15-8 v2：hosted tool 标签——required 中的每个标签 have 必须包含（子集）。
+    if !required
+        .hosted_tool_tags
+        .iter()
+        .all(|tag| have.hosted_tool_tags.contains(tag))
+    {
+        return false;
+    }
+    true
 }
 
 /// 构造能力集合的便捷函数。
@@ -1114,6 +1139,66 @@ mod tests {
     fn capability_source_priority_is_static_then_probe_then_override() {
         assert!(CapabilitySource::Static < CapabilitySource::Probe);
         assert!(CapabilitySource::Probe < CapabilitySource::Override);
+    }
+
+    #[test]
+    fn caps_satisfied_v2_citations_and_transport_and_tools() {
+        use provider_api::{ModelCapabilities, ModelTransport};
+
+        let full = ModelCapabilities {
+            citations: true,
+            transport: ModelTransport::Responses,
+            hosted_tool_tags: [agent_domain::ToolCapabilityTag::WebSearch]
+                .into_iter()
+                .collect(),
+            ..caps(true, true, true, true, true, true, true)
+        };
+
+        // 要求 v2 citations：声明即满足。
+        let req = ModelCapabilities {
+            citations: true,
+            ..ModelCapabilities::default()
+        };
+        assert!(caps_satisfied(&full, &req), "citations 声明即满足");
+
+        // 要求 Responses transport：声明即满足；要求 Messages 不满足。
+        let req_responses = ModelCapabilities {
+            transport: ModelTransport::Responses,
+            ..ModelCapabilities::default()
+        };
+        assert!(caps_satisfied(&full, &req_responses));
+        let req_messages = ModelCapabilities {
+            transport: ModelTransport::Messages,
+            ..ModelCapabilities::default()
+        };
+        assert!(
+            !caps_satisfied(&full, &req_messages),
+            "要求 Messages 但模型只声明 Responses → 不满足"
+        );
+
+        // 要求 hosted tool WebSearch：包含即满足；要求 CodeExecution 不满足。
+        let req_tool = ModelCapabilities {
+            hosted_tool_tags: [agent_domain::ToolCapabilityTag::WebSearch]
+                .into_iter()
+                .collect(),
+            ..ModelCapabilities::default()
+        };
+        assert!(caps_satisfied(&full, &req_tool));
+        let req_tool_missing = ModelCapabilities {
+            hosted_tool_tags: [agent_domain::ToolCapabilityTag::CodeExecution]
+                .into_iter()
+                .collect(),
+            ..ModelCapabilities::default()
+        };
+        assert!(
+            !caps_satisfied(&full, &req_tool_missing),
+            "未声明的 hosted tool → 不满足（fail-closed）"
+        );
+
+        // 默认 ChatCompletions required 不约束 transport。
+        let baseline = caps(true, false, false, false, false, false, false);
+        let req_default = ModelCapabilities::default();
+        assert!(caps_satisfied(&baseline, &req_default));
     }
 
     #[test]

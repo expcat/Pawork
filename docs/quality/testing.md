@@ -58,6 +58,21 @@ cargo clippy -p <crate-a> -p <crate-b> --all-targets -- -D warnings
 
 适配器开发期只运行变更路径对应的最小 contract 子集；基础协议矩阵在对应适配任务收尾执行，现代 hosted tools / reasoning / citation / capability negotiation 的完整矩阵集中在 P15-9 与 L3，不在 P15-1～P15-8 重复跑三家全套。
 
+## Phase 15 集中门禁（P15-9）
+
+Phase 15 功能簇（Canonical Tool v2、三家现代 Provider API、server tool 事件、citation/source、reasoning state、capability discovery）整体收尾时执行集中门禁，属于 L2 功能簇 Gate 的特例——它使用独立 `CARGO_TARGET_DIR=target/gates` 隔离构建产物，门禁结束（成功或失败）一律 `cargo clean --target-dir target/gates`，不污染日常 `target/`。
+
+入口脚本：`scripts/p15-gate.sh`。依次运行四类门禁，逐类汇总 PASS/FAIL：
+
+- **contract**：各 provider 的 `tests/p15_gate.rs::contract::` 覆盖 Responses / 现代 Messages 传输归一、server tool 往返、reasoning 加密凭证只经 Protected Blob 引用往返（ADR-032）、capability 协商降级；外加 `agent-engine::no_provider_branch` 守护（覆盖 hosted_tools / ReasoningItem / ReasoningEffort / 协商记录不含 Provider 名分支）。
+- **golden**：`tests/p15_gate.rs::golden::` 用 insta 锁定三家 citation/source 与 reasoning 凭证的「原始字段 → canonical」字段映射快照，差异可审；快照位于各 provider 的 `tests/snapshots/`，运行时 `INSTA_UPDATE=no`，禁止门禁内自动改写。
+- **fuzz**：`tests/p15_gate.rs::fuzz::` 用 proptest 对畸形 / 边界的 citation 列表、reasoning 凭证 blob、interleaved 顺序做 fuzz，断言归一不 panic、不丢字段、reasoning 凭证原文不落 canonical item / Event payload / 日志（ADR-032）。
+- **compat**：`tests/p15_gate.rs::compat::` 用 `CapabilityNegotiator` 做差分——同一 canonical 请求经「现代 transport 模型」与「仅 ChatCompletions 模型（P6 基线）」协商，断言降级一致、`requested == supported ∪ unsupported` 不被破坏、`XHigh/Max` 在不支持细粒度 effort 的旧模型上 clamp 为 `High`。
+
+四类全部为确定性纯函数测试（不触网络、不读真实 Key，wiremock 仅在 `tests/contract.rs` 等既有 smoke 中使用），复用 `test-support::contract` 的 canonical 断言保证三家横向一致。门禁不构成 Workspace Full Gate：它只覆盖 P15-9 写集涉及的 crate 测试 target，按 §运行层级属于功能簇收尾的定向 Gate。
+
+P15-9 不变更任何 `src/` 功能代码，仅补门禁测试、golden 快照与门禁脚本；`CARGO_TARGET_DIR=target/gates` 的隔离与清理是 plan 显式指定的集中门禁要求，不是日常 workspace 全量测试。
+
 ## Plugin Contract Tests
 
 Phase 10 使用统一的 Plugin API v1 contract：manifest canonical signing payload 必须同时绑定 metadata 与

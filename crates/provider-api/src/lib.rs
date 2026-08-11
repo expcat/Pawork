@@ -4,14 +4,14 @@
 //! Provider 名称分支，也不得依赖 HTTP 实现细节。
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt,
 };
 
 use agent_domain::{
     CancellationToken, ErrorCategory, ErrorContext, Message, ModelId, ProviderId,
     ProviderTranscriptEnvelope, ReasoningItem, RequestId, ServerToolEvent, StopReason, TokenUsage,
-    ToolCallId,
+    ToolCallId, ToolCapabilityTag,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,9 @@ pub struct CanonicalModelRequest {
     pub tool_choice: ToolChoice,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<ThinkingConfig>,
+    /// 现代权威 reasoning 请求（P15-8）。显式 effort 优先于 `thinking.level`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -247,7 +250,12 @@ pub struct ModelDefinition {
     pub max_output_tokens: u64,
     pub capabilities: ModelCapabilities,
 }
-
+/// 模型/Provider 能力声明（P15-8 v2）。
+///
+/// v1 布尔字段（text/image_input/.../prompt_cache）保留为兼容基线（P6），
+/// v2 新增字段逐项 `#[serde(default)]`，旧目录 / 旧序列化数据缺字段时按
+/// fail-closed 默认值（不支持）反序列化。`ReasoningConfig` 是现代权威
+/// reasoning 入口，v1 `thinking: bool` 保留为派生源。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelCapabilities {
     pub text: bool,
@@ -257,6 +265,186 @@ pub struct ModelCapabilities {
     pub thinking: bool,
     pub structured_output: bool,
     pub prompt_cache: bool,
+    // ---------- P15-8 v2 ----------
+    /// 模型声明的传输路径（仅声明驱动，禁止按 Provider 名推断）。
+    #[serde(default)]
+    pub transport: ModelTransport,
+    /// Provider 服务端内置工具能力标签（WebSearch / CodeExecution / ...）。
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub hosted_tool_tags: BTreeSet<ToolCapabilityTag>,
+    /// 是否支持 Citation / Source 归一（P15-5）。
+    #[serde(default)]
+    pub citations: bool,
+    /// reasoning continuation 维度能力（encrypted / signature / interleaved）。
+    #[serde(default)]
+    pub reasoning: ReasoningStateCapability,
+}
+
+/// Canonical 传输路径（P15-8）。transport 选择只能由逐模型声明驱动，
+/// `CapabilityNegotiator` 据此选择，不按 Provider 名推断。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelTransport {
+    /// OpenAI Responses（现代路径）。
+    Responses,
+    /// Anthropic Modern Messages。
+    Messages,
+    /// OpenAI Chat Completions / P6 基线（降级 fallback）。
+    #[default]
+    ChatCompletions,
+}
+impl ModelTransport {
+    /// 是否属于「现代」传输（Responses / Messages）。
+    pub fn is_modern(self) -> bool {
+        matches!(self, Self::Responses | Self::Messages)
+    }
+}
+
+/// Canonical reasoning effort（P15-8）。
+///
+/// 显式 `ReasoningConfig` 优先；旧 `ThinkingConfig.level` 仅在缺省时派生；
+/// `XHigh / Max` 进入旧 P6 adapter 时显式 clamp 为 `High`，不形成双轨。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    None,
+    Low,
+    #[default]
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl ReasoningEffort {
+    /// 是否要求模型声明 reasoning 能力（任何非 None effort）。
+    pub fn requires_reasoning_support(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// clamp 到旧 `ThinkingLevel`（XHigh / Max → High），供 P6 adapter 复用。
+    pub fn clamp_to_thinking_level(self) -> ThinkingLevel {
+        match self {
+            Self::None => ThinkingLevel::Off,
+            Self::Low => ThinkingLevel::Low,
+            Self::Medium => ThinkingLevel::Medium,
+            Self::High | Self::XHigh | Self::Max => ThinkingLevel::High,
+        }
+    }
+}
+
+/// reasoning continuation state 最小结构（P15-8 / P15-7）。
+///
+/// 只表达「是否需要」signature / encrypted / interleaved，绝不存明文 token、
+/// encrypted_content、signature 等 protected blob 内容（见 ADR-032）。这是
+/// 模型 *能力* 维度（声明本模型接受/产出这些 wire 字段），与
+/// [`ReasoningConfig`] 的运行时请求不同。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReasoningStateDescriptor {
+    /// 是否需要 / 产出签名（Anthropic signature / Responses encrypted continuation）。
+    #[serde(default)]
+    pub requires_signature: bool,
+    /// 是否需要 / 产出加密 continuation（Responses encrypted_content / redacted_thinking）。
+    #[serde(default)]
+    pub requires_encrypted: bool,
+    /// 是否支持 interleaved thinking + tool call（Anthropic interleaved thinking）。
+    #[serde(default)]
+    pub supports_interleaved: bool,
+}
+
+/// 模型声明的 reasoning 维度能力（v2）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReasoningStateCapability {
+    #[serde(default)]
+    pub state: ReasoningStateDescriptor,
+    /// 是否支持 effort 调节（XHigh / Max 等需要单独声明）。
+    #[serde(default)]
+    pub supports_granular_effort: bool,
+}
+
+/// 现代权威 reasoning 请求字段（P15-8）。
+///
+/// 显式 `effort` 优先于旧 `ThinkingConfig.level`；`state` 只表达是否需要
+/// signature / encrypted / interleaved 维度，不携带明文 / 签名 / 密文。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReasoningConfig {
+    #[serde(default)]
+    pub effort: ReasoningEffort,
+    #[serde(default)]
+    pub state: ReasoningStateDescriptor,
+}
+
+impl ReasoningConfig {
+    pub fn new(effort: ReasoningEffort) -> Self {
+        Self {
+            effort,
+            state: ReasoningStateDescriptor::default(),
+        }
+    }
+
+    /// 是否要求模型声明 reasoning 能力。
+    pub fn requires_reasoning_support(&self) -> bool {
+        self.effort.requires_reasoning_support()
+    }
+}
+
+/// 请求侧能力要求（P15-8 CapabilityNegotiator 输入）。
+///
+/// `transport_pref` 表示请求方偏好的传输集合（按优先级），未声明则由协商
+/// 根据 evidence 选最大支持。`required_tools` 是请求要求的服务端工具标签；
+/// `reasoning` 是运行时 reasoning 请求（None = 不要求 reasoning）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityRequirements {
+    /// 偏好的传输路径，按顺序优先；空表示「不约束，由 evidence 决定」。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transport_pref: Vec<ModelTransport>,
+    /// 要求的服务端工具能力标签（交集判 unsupported）。
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub required_tools: BTreeSet<ToolCapabilityTag>,
+    /// 运行时 reasoning 请求（None = 不要求 reasoning）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
+    /// 是否要求 citation / source 归一。
+    #[serde(default)]
+    pub citations: bool,
+}
+
+/// 协商降级动作（P15-8）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityFallback {
+    /// 退回 Core 本地 ClientFunction 等价承接。
+    ClientTool,
+    /// 退回 P6 基线传输（ChatCompletions）。
+    LegacyTransport,
+    /// effort 被 clamp（XHigh / Max → High）。
+    ClampedEffort,
+    /// 不支持，请求前必须失败并给出可读原因。
+    Reject(String),
+}
+
+/// 协商结果（P15-8 CapabilityNegotiator 输出）。
+///
+/// `requested == supported ∪ unsupported`：每项请求必须显式落到 supported
+/// 或 unsupported，禁止静默丢弃或伪造。`chosen_transport` 是协商后最终传输
+/// 路径；`fallback` 记录逐项降级原因，可解释「为何降级」。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedCapabilities {
+    /// 请求的全部能力标签（reasoning / citations / hosted tools）。
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub requested: BTreeSet<String>,
+    /// 证据层支持的能力（交集）。
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub supported: BTreeSet<String>,
+    /// 请求但未声明支持的能力（fail-closed）。
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub unsupported: BTreeSet<String>,
+    /// 协商后选定的传输路径。
+    #[serde(default)]
+    pub chosen_transport: ModelTransport,
+    /// 逐项降级原因（capability -> reason），可解释「为何降级」。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fallback: BTreeMap<String, CapabilityFallback>,
 }
 
 #[async_trait]
@@ -519,6 +707,7 @@ mod tests {
             extensions: Vec::new(),
             tool_choice: ToolChoice::Auto,
             thinking: None,
+            reasoning: None,
             temperature: None,
             max_output_tokens: Some(128),
             stop_sequences: Vec::new(),
