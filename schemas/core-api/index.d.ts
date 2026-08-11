@@ -34,6 +34,7 @@ export type { ProviderStatus } from "./ProviderStatus";
 export type { QueryId } from "./QueryId";
 export type { QuotaAdapterKind } from "./QuotaAdapterKind";
 export type { QuotaAlert } from "./QuotaAlert";
+export type { QuotaAlertKind } from "./QuotaAlertKind";
 export type { QuotaAlertSeverity } from "./QuotaAlertSeverity";
 export type { QuotaConfidence } from "./QuotaConfidence";
 export type { QuotaFailureView } from "./QuotaFailureView";

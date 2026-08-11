@@ -546,6 +546,9 @@ impl CommandRouter {
     /// 授权：默认作用域（local/local/default）允许 LocalCli / LocalGui + LocalUser，或任意
     /// System 身份读取任意 tenant/account；其余远程/插件/MCP 身份与非默认作用域
     /// 必须有显式 grant（当前无 grant 存储 → 一律拒绝，返回 Authorization 错误）。
+    /// 契约：`provider_id` 必须显式提供（P14 review §2.4）；缺省或空字符串不再
+    /// 选择“首个已注册 provider”或默认 ID，而是返回明确的 validation error。
+    /// 多 provider 聚合语义待 P18 binding enumeration 成为事实源后再批量查询。
     /// 同步查询只读 quota-service 缓存：缓存空时每个窗口返回
     /// [`WindowReadView::NoData`] 且 `from_cache = false`，绝不触发 adapter / 网络。
     #[allow(clippy::too_many_arguments)]
@@ -564,16 +567,18 @@ impl CommandRouter {
             )));
         }
         let runtime = self.quota_runtime();
-        // scope 的 provider_id：显式过滤优先；缺省取首个已注册 Provider（单
-        // provider 常见情形下等价于账户聚合）；都没有时用 default。
-        let provider_id = query
-            .provider_id
-            .clone()
-            .or_else(|| {
-                let providers = lock(&self.providers);
-                providers.keys().next().cloned()
-            })
-            .unwrap_or_default();
+        // P14 review §2.4：不再静默选择首个已注册 provider 或空默认 ID；
+        // 显式 provider 是查询的必要维度，缺失即拒绝。
+        let provider_id = match query.provider_id.as_ref() {
+            Some(provider) if !provider.as_str().is_empty() => provider.clone(),
+            Some(_) | None => {
+                return Err(AppServiceError::InvalidRequest(
+                    "QuotaOverview requires an explicit non-empty provider_id; \
+                     no default provider is selected"
+                        .into(),
+                ));
+            }
+        };
         let view = match runtime {
             Some(runtime) => Self::cached_quota_overview(&runtime, query, provider_id),
             None => Self::empty_quota_overview(query, provider_id),
@@ -630,7 +635,14 @@ impl CommandRouter {
             .unwrap_or(quota_service::QuotaUnit::Token);
         match runtime.quota.overview_cache_only(&scope, &windows, &unit) {
             Ok(overview) => convert_cache_overview(query, &overview, &requested),
-            Err(failure) => failed_cache_overview(query, provider_id, &requested, &failure),
+            Err(error) => failed_cache_overview(
+                query,
+                provider_id,
+                &requested,
+                // 缓存校验失败是查询级错误（scope 非法等），无 adapter 归属：
+                // 包装为 domain failure，视图映射为 adapter_kind = None。
+                &quota_service::service::QuotaFailure::domain(error),
+            ),
         }
     }
 
@@ -954,22 +966,30 @@ fn cached_quota_signal(
             continue;
         };
         for read in overview.windows.values() {
-            let candidate = match read {
-                quota_service::service::CacheWindowRead::Hit(
-                    quota_service::service::CacheRead::Hit { snapshot, .. },
-                ) => quota_signal_from_snapshot(snapshot, false),
-                quota_service::service::CacheWindowRead::Stale(
-                    quota_service::service::CacheRead::Stale { snapshot, .. },
-                ) => quota_signal_from_snapshot(snapshot, true),
-                quota_service::service::CacheWindowRead::NoData(_) => None,
-                _ => None,
-            };
-            if let Some(candidate) = candidate {
-                candidates.push(candidate);
+            if let Some((snapshot, stale)) = cache_window_read_snapshot(read) {
+                if let Some(candidate) = quota_signal_from_snapshot(snapshot, stale) {
+                    candidates.push(candidate);
+                }
             }
         }
     }
     candidates.into_iter().max_by_key(quota_signal_rank)
+}
+
+/// 单窗口缓存读的压平视图：`(snapshot, stale)`。
+///
+/// quota-service 已压平 cache 结果（P14 review §3.6）：每个窗口都是扁平
+/// [`quota_service::service::CacheRead`]，本函数是 app-service 对 cache 读
+/// 形态的唯一匹配点，两个消费点（run 前额度信号、overview 视图）都经它
+/// 取快照与新鲜度。
+fn cache_window_read_snapshot(
+    read: &quota_service::service::CacheRead,
+) -> Option<(&quota_service::QuotaSnapshot, bool)> {
+    match read {
+        quota_service::service::CacheRead::Hit { snapshot } => Some((snapshot, false)),
+        quota_service::service::CacheRead::Stale { snapshot } => Some((snapshot, true)),
+        quota_service::service::CacheRead::NoData => None,
+    }
 }
 
 fn quota_signal_from_snapshot(
@@ -1044,29 +1064,15 @@ fn convert_cache_overview(
     let mut from_cache = false;
     for window in requested {
         let read = overview.windows.get(&to_canonical_window(*window));
-        let view = match read {
-            Some(quota_service::service::CacheWindowRead::Hit(
-                quota_service::service::CacheRead::Hit { snapshot, .. },
-            )) => {
+        let view = match read.and_then(cache_window_read_snapshot) {
+            Some((snapshot, stale)) => {
                 from_cache = true;
                 WindowReadView::Ok {
-                    snapshot: Box::new(snapshot_view_from(snapshot, false)),
+                    snapshot: Box::new(snapshot_view_from(snapshot, stale)),
                     failures: Vec::new(),
                 }
             }
-            Some(quota_service::service::CacheWindowRead::Stale(
-                quota_service::service::CacheRead::Stale { snapshot, .. },
-            )) => {
-                from_cache = true;
-                WindowReadView::Ok {
-                    snapshot: Box::new(snapshot_view_from(snapshot, true)),
-                    failures: Vec::new(),
-                }
-            }
-            Some(quota_service::service::CacheWindowRead::NoData(_)) | None => {
-                WindowReadView::NoData
-            }
-            _ => WindowReadView::NoData,
+            None => WindowReadView::NoData,
         };
         entries.push(WindowReadEntry {
             window: *window,
@@ -1152,7 +1158,7 @@ fn snapshot_view_from(
 
 fn failure_view_from(failure: &quota_service::service::QuotaFailure) -> core_api::QuotaFailureView {
     core_api::QuotaFailureView {
-        adapter_kind: convert_adapter_kind(failure.adapter_kind),
+        adapter_kind: failure.adapter_kind.map(convert_adapter_kind),
         error_code: quota_error_code(&failure.error),
         detail: format!("{}", failure.error),
         retry_after_ms: failure.error.retry_after_ms(),
@@ -1277,5 +1283,109 @@ fn convert_provenance(
         fetched_at: provenance.fetched_at,
         observed_at: provenance.observed_at,
         stale: provenance.stale,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_domain::Timestamp;
+
+    #[test]
+    fn core_to_canonical_window_maps_all_variants() {
+        let cases = [
+            (
+                core_api::QuotaWindow::Overall,
+                quota_service::QuotaWindow::Overall,
+            ),
+            (
+                core_api::QuotaWindow::Rolling5h,
+                quota_service::QuotaWindow::Rolling5h,
+            ),
+            (
+                core_api::QuotaWindow::Weekly,
+                quota_service::QuotaWindow::Weekly,
+            ),
+            (
+                core_api::QuotaWindow::Monthly,
+                quota_service::QuotaWindow::Monthly,
+            ),
+        ];
+        for (core, canonical) in cases {
+            assert_eq!(to_canonical_window(core), canonical);
+            assert_eq!(convert_window(canonical), core);
+        }
+    }
+
+    #[test]
+    fn core_to_canonical_unit_maps_all_variants_including_cost_currency() {
+        let cases = [
+            (core_api::QuotaUnit::Count, quota_service::QuotaUnit::Count),
+            (core_api::QuotaUnit::Token, quota_service::QuotaUnit::Token),
+            (
+                core_api::QuotaUnit::Cost {
+                    currency: "USD".into(),
+                },
+                quota_service::QuotaUnit::Cost {
+                    currency: "USD".into(),
+                },
+            ),
+            (
+                core_api::QuotaUnit::Cost {
+                    currency: "CNY".into(),
+                },
+                quota_service::QuotaUnit::Cost {
+                    currency: "CNY".into(),
+                },
+            ),
+        ];
+        for (core, canonical) in cases {
+            assert_eq!(to_canonical_unit(&core), canonical);
+            assert_eq!(convert_unit(&canonical), core);
+        }
+    }
+
+    #[test]
+    fn cache_window_read_snapshot_flattens_hit_stale_no_data() {
+        // 压平视图语义：Hit → (snapshot, false)，Stale → (snapshot, true)，
+        // NoData → None。quota-service 压平 cache 结果后只改 helper 与构造。
+        let snapshot = quota_service::QuotaSnapshot {
+            scope: quota_service::QuotaScope::new(
+                TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+                quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
+                ProviderId::from("mock"),
+                None,
+            ),
+            window: quota_service::QuotaWindow::Weekly,
+            unit: quota_service::QuotaUnit::Token,
+            values: quota_service::QuotaValues {
+                used: quota_service::QuotaMeasure::Exact(1),
+                limit: quota_service::QuotaMeasure::Exact(10),
+                remaining: quota_service::QuotaMeasure::Exact(9),
+            },
+            reset: quota_service::QuotaReset::Unknown,
+            confidence: quota_service::Confidence::Exact,
+            provenance: quota_service::QuotaProvenance::new(
+                quota_service::AdapterKind::ApiKeyApi,
+                "mock-source",
+                Timestamp::from_unix_millis(1),
+            ),
+        };
+        let hit = quota_service::service::CacheRead::Hit {
+            snapshot: snapshot.clone(),
+        };
+        let (read, stale) = cache_window_read_snapshot(&hit).expect("hit snapshot");
+        assert_eq!(read.window, quota_service::QuotaWindow::Weekly);
+        assert!(!stale, "fresh hit must not be stale");
+
+        let stale_read = quota_service::service::CacheRead::Stale {
+            snapshot: snapshot.clone(),
+        };
+        let (read, stale) = cache_window_read_snapshot(&stale_read).expect("stale snapshot");
+        assert_eq!(read.window, quota_service::QuotaWindow::Weekly);
+        assert!(stale, "stale read must be marked stale");
+
+        let no_data = quota_service::service::CacheRead::NoData;
+        assert_eq!(cache_window_read_snapshot(&no_data), None);
     }
 }

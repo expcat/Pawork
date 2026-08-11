@@ -22,6 +22,10 @@
 - Health/route/affinity/tenant policy diagnostics
 - Secret redaction、OAuth、freshness 与 permission tests
 
+## P14 现状与登记（2026-08-11）
+
+P14-8 的 Usage/Quota 展示待本任务页面化：当前只有协议类型、CLI 输出与协议测试客户端，无实际页面（见 [usage-quota](../docs/features/usage-quota.md)）。`QuotaAlert.kind` / `source` 兼容旧重放（`None`），页面需降级展示。
+
 ## 验收标准
 
 - [ ] Desktop API/状态中无 plaintext credential/Lease secret/Protected Blob
@@ -29,5 +33,7 @@
 - [ ] Account health/routing 只展示 Core explanation，GUI 不做账号轮询
 - [ ] Usage Ledger 与 remote Quota 的来源、窗口、freshness 与误差明确
 - [ ] 跨 tenant/无权限 query 和 command fail-closed
+- [ ] Usage/Quota Settings 页面消费 P19-2 quota projection：account/model/window/cost、数据新鲜度、refresh 与 alert 状态，区分本地 Ledger 与远端 Quota
+- [ ] `QuotaAlert` 渲染兼容旧重放：kind/source 为 `None` 时按 message/severity 降级展示，新事件按 kind 派生动作
 
 **相关文档**：[auth](../docs/features/auth.md) · [models](../docs/features/models.md) · [usage-quota](../docs/features/usage-quota.md) · [provider-control-plane](../docs/features/provider-control-plane.md) · [tenant-audit](../docs/features/tenant-audit.md)

@@ -9,10 +9,10 @@
 1. 查看「进度总览」了解各 Phase 进度，查看「下一个推荐任务」获取当前应执行的任务。
 2. Phase 内按任务 ID 与依赖执行；跨 Phase 按「实施波次」推进，不机械追求数字顺序。
 3. 点开 `plan/<id>-<slug>.md` 获取该任务的细分步骤与最终目的。
-4. 完成任务后：把对应行的状态改为 `🟢`、更新「进度总览」计数与「下一个推荐任务」。新完成任务须在 plan 元信息记录交付成熟度，至少达到 `TargetVerified`；不要求每个任务重复跑 workspace 全量门禁。历史 `🟢` 只代表既有完成记录，是否已接线仍以源码、运行证据和 remediation 复核为准。
+4. 完成任务后：把对应行的状态改为 `🟢`、更新「进度总览」计数与「下一个推荐任务」。新完成任务须在 plan 元信息记录交付成熟度，至少达到 `TargetVerified`；`TargetVerified` 以实际 diff 的 L0/L1 定向证据为准，不要求 Workspace Full Gate。历史 `🟢` 只代表既有完成记录，是否已接线仍以源码、运行证据和 remediation 复核为准。
 5. 任务粒度：数小时内可独立完成、独立验收、写入集收敛到单一 crate 或一组紧相关文件。
 6. 引入任何第三方依赖前先对照「依赖选型基线」一节；新增依赖必须同步回该节与对应 plan 任务。
-7. 功能簇开发期只做与写入集直接相关的快速验证；workspace 全量 build/test/clippy、跨平台、完整 contract/fuzz/chaos 在功能簇收尾、发布候选或维护升级时集中执行，门禁后按 [plan/README](plan/README.md#测试节奏与缓存清理) 清理隔离缓存。
+7. 功能簇开发期按实际 diff 选择 changed crates、必要关键 reverse dependents 与定向 regression，多个相关 crate 使用多个 `-p`；workspace 全量 build/test/clippy 仅在功能簇整体收尾、大规模跨 crate 重构、workspace/toolchain/关键依赖重大变化、canonical protocol/domain 大范围变化、发布/维护 Gate 或用户明确要求时执行。门禁后按 [plan/README](plan/README.md#测试节奏与缓存清理) 清理隔离缓存。
 
 状态符号：`🟡未开始` · `🔵进行中` · `🟢已完成` · `⚪已归档/推迟`。架构红线见 [AGENTS.md](AGENTS.md) §2 与各 [ADR](docs/adr/)。
 
@@ -28,19 +28,19 @@
 | 5 | Session、Branch 与 Compaction | 10 | 10 | 🟢已完成（P5-10 TargetVerified） |
 | 6 | 主要 Provider | 14 | 14 | 🟢已完成 |
 | 7 | Git、Diff 与 Worktree | 9 | 9 | 🟢已完成 |
-| 8 | Skills、Prompts 与 Instructions | 8 | 8 | 🟢已完成 |
-| 9 | MCP | 7 | 7 | 🟢已完成（P9-1～P9-7 TargetVerified） |
+| 8 | Skills、Prompts 与 Instructions | 9 | 9 | 🟢已完成（P8-1～P8-8 TargetVerified；P8-9 review-remediation 已完成） |
+| 9 | MCP | 8 | 8 | 🟢已完成（P9-1～P9-7 TargetVerified；P9-8 review-remediation 已完成） |
 | 10 | WASM Plugin | 7 | 7 | 🟢已完成（P10-1～P10-7 TargetVerified） |
-| 11 | Sandbox 与跨平台强化 | 8 | 8 | 🟢已完成（7 项 TargetVerified；P11-5 已归档） |
-| 12 | Multi-Agent | 6 | 7 | 🟢已完成（P12-1～P12-6 TargetVerified；P12-7 review-remediation 已完成） |
-| 13 | CLI Host 与多 GUI 协议 | 10 | 10 | 🟢已完成（P13-1～P13-10 TargetVerified） |
-| 14 | 模型用量与额度监控 | 9 | 9 | 🟢已完成（P14-1～P14-9 TargetVerified） |
+| 11 | Sandbox 与跨平台强化 | 9 | 9 | 🟢已完成（7 项 TargetVerified；P11-5 已归档；P11-9 review-remediation 已完成） |
+| 12 | Multi-Agent | 7 | 7 | 🟢已完成（P12-1～P12-6 TargetVerified；P12-7 review-remediation 已完成） |
+| 13 | CLI Host 与多 GUI 协议 | 11 | 11 | 🟢已完成（P13-1～P13-10 TargetVerified；P13-11 review-remediation 已完成） |
+| 14 | 模型用量与额度监控 | 10 | 10 | 🟢已完成（P14-1/2/4～P14-10 TargetVerified；P14-3 已归档） |
 | 15 | Provider Native Capabilities | 9 | 0 | 🟡未开始 |
 | 16 | Modern Agent Workflow | 9 | 0 | 🟡未开始 |
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
-| **合计** | — | **210** | **148** | — |
+| **合计** | — | **217** | **155** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
 >
@@ -48,9 +48,9 @@
 
 ## 下一个推荐任务
 
-> 🎯 **P15-1 Canonical Tool v2** —— Phase 14 用量与额度监控已闭环，下一项进入 Provider v2 前置波次，统一 Client Function / Provider Hosted / Extension Tool 的 canonical 契约。详情见 [plan/P15-1-canonical-tool-v2.md](plan/P15-1-canonical-tool-v2.md)。
+> 🎯 **P15-1 Canonical Tool v2** —— Phase 14 用量与额度监控已完成库级收口（生产接线待 P18），下一项进入 Provider v2 前置波次，统一 Client Function / Provider Hosted / Extension Tool 的 canonical 契约。详情见 [plan/P15-1-canonical-tool-v2.md](plan/P15-1-canonical-tool-v2.md)。
 
-> ✅ **Phase 14 模型用量与额度监控已完成（P14-1～P14-9，TargetVerified）**：交付 `quota-service` canonical 领域模型、API Key / OAuth / WebScrape / Local Ledger 四类 adapter、六初始供应商 contract fixtures、多窗口聚合与 cache-only 查询、Usage/Cost Ledger 写入与预算信号、`pawork usage` 文本/JSON 输出、GUI Protocol 的 `QuotaChanged` / `QuotaAlert` 事件、可取消刷新调度、退避、去重告警与脱敏审计。开发期完成受影响 crate 的定向测试、Clippy、格式与 schema 漂移检查；workspace 全量门禁留待集中 review。远端刷新 target 由后续账号/凭据控制面按绑定关系注册，未配置 target 时查询仍只读本地缓存与 Ledger。
+> ✅ **Phase 14 模型用量与额度监控完成库级收口（P14-1/2/4～P14-10 TargetVerified）**：交付 `quota-service` canonical 领域模型、API Key / WebScrape / Local Ledger 三类 adapter（通用 OAuth 层无生产消费者已删除，见 [P14-3](plan/P14-3-quota-oauth-adapter.md)）、六初始供应商 contract fixtures、多窗口聚合与 cache-only 查询、Usage/Cost Ledger 进程内写入与预算信号、`pawork usage` 文本/JSON 输出、GUI Protocol 的 `QuotaChanged` / `QuotaAlert` 事件、可取消刷新调度与退避。**有界范围**：远端 refresh target 注册、持久化 Ledger、真实 tenant/account/credential 归属与生产审计 sink 延 Phase 18 接线；GUI 目前仅协议就绪（无实际投影页面）；告警动作由消费端按 `AlertKind` 派生，不跨边界携带 typed suggestions。开发期完成受影响 crate 的定向测试、Clippy、格式与 schema 漂移检查；workspace 全量门禁留待集中 review。未配置远端 target 时查询保持 cache-only，只读本地 Ledger 投影。详见 [P14-10](plan/P14-10-review-remediation.md)。
 
 > ✅ **Phase 13 CLI Host 与多 GUI 协议已完成（P13-1～P13-11，TargetVerified）**：交付 `app-service` 统一 Command Router / `AppCommandEnvelope`（幂等、限流、RunSupervisor、审批、聚合状态）；`core-runtime` + `cli-host` + `pawork` 正式宿主与四种运行模式 + Event Hub；GUI Connection Protocol（握手协商 / 编解码 / Snapshot / Resume / 错误帧，ADR-036 版本化）；`gui-server` + `transport-local`（Unix Socket / Named Pipe）+ `transport-memory` + `client-auth`；多 GUI 运行时（Connection Manager 心跳/订阅/有界队列、慢客户端隔离、断线不取消 Run）；Remote Transport 占位 Adapter + Mock + `pawork remote publish/unpublish`；`artifact-store` 分片读取接入 app-service 并按 ≤64KiB 分片回真实 payload；`gui-client` SDK + `apps/protocol-test-gui` + 9 项 Contract Tests（3 GUI 并发、重连 Replay、命令幂等、100k 行 diff 流式、版本拒绝）。schema-typegen 覆盖全部协议类型并经 CI `--check` 防漂移。**P13-11 评审修复**（2026-08-11）：`pawork serve` 真正装配 GuiServer（首个生产 `GuiServerHost` 实现，绑定本地端点 + accept + 真实帧循环）、协议版本校验双向化（ADR-036）、删 11 项死公开 API、client-auth 原子 token 创建。详见各 [plan/P13-*](plan/) 文档。
 
@@ -73,7 +73,7 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
 7. **公共 Client 与远程能力**：完成 P18-11 / P18-12、P17-7～P17-13，最后由 P18-15 集中执行账号池属性/并发、迁移、跨租户隔离、Codex/Claude/ACP golden 与故障注入门禁；发布候选再执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
 8. **Desktop GUI**：P13-2～P13-10 稳定后先完成 P19-1～P19-9，用 Mock/Protocol Client 打通独立 Desktop Shell、状态投影与 Coding Agent 主交互；P19-10～P19-14 随 Phase 8～18 对应能力接线，P19-15 负责签名分发，最后由 P19-16 集中执行 Desktop contract、三平台 E2E、visual、accessibility、性能与安全门禁。GUI 不反向成为 Core 前置。
 
-开发期不得为追求“全绿”阻塞快速迭代，但安全红线、事件可重放、Secret 不落库、路径越界和破坏性进程清理必须随改动立即定向验证。完整策略与清理命令见 [plan/README](plan/README.md#测试节奏与缓存清理)。
+开发期不得为追求“全绿”阻塞快速迭代；“保险”“最终确认”“确保没有回归”不构成 Workspace Full Gate 升级理由。安全红线、事件可重放、Secret 不落库、路径越界和破坏性进程清理必须随改动立即定向验证，但也不自动扩大到无关 crate。普通任务应明确报告 `Validation Level`、实际 `Validated` 范围与 `Full workspace gate: NOT RUN`。完整策略与清理命令见 [plan/README](plan/README.md#测试节奏与缓存清理)。
 
 ## 关键路径
 
@@ -480,19 +480,20 @@ Parent/Worker 编排，写入隔离，取消传播。
 
 ### Phase 14：模型用量与额度监控
 
-显示每个绑定模型的用量与剩余额度，支持 API Key 直连 / OAuth 订阅授权 / 网页抓取三种适配器，按六个初始供应商（OpenAI / Anthropic / xAI / 智谱 / 阿里 / Moonshot）各自真实的额度机制落地，覆盖整体 / 5 小时滚动 / 周 / 月等额度窗口。依赖 P2-9、P2-7、P6-4、P3-6，建议在 Phase 13 之后推进。
+显示每个绑定模型的用量与剩余额度，支持 API Key 直连 / 网页抓取两种远端适配器加本地 Ledger 派生（通用 OAuth 层已删除，见 [P14-3](plan/P14-3-quota-oauth-adapter.md)），按六个初始供应商（OpenAI / Anthropic / xAI / 智谱 / 阿里 / Moonshot）各自真实的额度机制落地，覆盖整体 / 5 小时滚动 / 周 / 月等额度窗口。依赖 P2-9、P2-7、P6-4、P3-6，建议在 Phase 13 之后推进。**有界完成**：六家远端 adapter、窗口聚合、Ledger 投影与告警状态机为库级 TargetVerified；正式宿主的 target 注册、持久化 Ledger、真实账号归属、生产审计与 GUI 投影延 Phase 18 / Phase 19 接线。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
 | P14-1 | 🟢 | Quota 领域模型与适配器 Trait | 快照/窗口/适配器种类/Trait | [详情](plan/P14-1-quota-domain-adapter.md) |
 | P14-2 | 🟢 | API Key 直连适配器 | key+REST billing/usage | [详情](plan/P14-2-quota-apikey-adapter.md) |
-| P14-3 | 🟢 | OAuth 登录授权适配器 | 复用 OAuth 取 console API | [详情](plan/P14-3-quota-oauth-adapter.md) |
+| P14-3 | ⚪ | OAuth 登录授权适配器（已归档/推迟） | 通用 OAuth 层已删除，首个真实消费者时重建 | [详情](plan/P14-3-quota-oauth-adapter.md) |
 | P14-4 | 🟢 | 网页抓取适配器 | 无 API 平台页面解析 | [详情](plan/P14-4-quota-webscrape-adapter.md) |
 | P14-5 | 🟢 | 具体供应商实现 | 六初始供应商额度适配 | [详情](plan/P14-5-quota-provider-implementations.md) |
 | P14-6 | 🟢 | 多窗口额度聚合与归一 | 5h/周/月/整体+倒计时+缓存 | [详情](plan/P14-6-quota-window-aggregation.md) |
 | P14-7 | 🟢 | 本地用量累计与预算联动 | 对照远端+触限推算+预算 | [详情](plan/P14-7-quota-local-usage-budget.md) |
 | P14-8 | 🟢 | Quota 查询 API 与展示 | core-api/CLI/GUI 脱敏 | [详情](plan/P14-8-quota-query-api-display.md) |
-| P14-9 | 🟢 | 刷新调度与限额告警 | 定时刷新/退避/告警建议 | [详情](plan/P14-9-quota-refresh-alerting.md) |
+| P14-9 | 🟢 | 刷新调度与限额告警 | 定时刷新/退避/限额告警（动作由 kind 派生） | [详情](plan/P14-9-quota-refresh-alerting.md) |
+| P14-10 | 🟢 | 评审修复（review-remediation） | 删通用 OAuth/capability 矩阵/冗余告警字段，收敛时间/错误/脱敏 helper，provider 必填 | [详情](plan/P14-10-review-remediation.md) |
 
 ### Phase 15：Provider Native Capabilities
 

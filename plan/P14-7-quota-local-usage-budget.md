@@ -1,6 +1,6 @@
 # P14-7：本地用量累计与预算联动
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-6、P18-8、P3-6、P2-7
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：进程内内存 Ledger 与默认身份；持久化与真实归属延 P18） · 依赖：P14-6、P18-8、P3-6、P2-7
 
 **最终目的**：用本地真实发生的 Usage（P2-9）累计每个绑定模型的实际消耗，与远端额度对照、推算「预计何时触及限制」，并与既有预算控制（P3-6）联动，让用户在远端额度刷新滞后时仍能看到接近实时的剩余估计。
 
@@ -27,5 +27,7 @@
 - [x] 各窗口触限时间可推算并带置信度
 - [x] 预算控制可消费额度水位，触限动作有事件可追溯
 - [x] ledger 与 quota snapshot 可按 tenant/account 对账，重放不重复累计
+
+**实现边界（2026-08-11 review-remediation）**：本地累计链路（Run → Ledger → 本地缓存 → 查询）已在同一 runtime 内验证；`QuotaRuntime::production` 使用进程内 `InMemoryUsageLedger`，每次 CLI 启动新建，跨进程持久化与 replay 延 P18-8；`record_run_usage` 当前固定 `tenant=local` / `account=local/default` / `credential=None` 默认身份，真实绑定归属由 P18-2 / P18-3 / P18-4 提供。
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [context（token 预算）](../docs/features/context.md) · [agent-engine](../docs/features/agent-engine.md) · [ROADMAP](../ROADMAP.md)

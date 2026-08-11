@@ -207,12 +207,14 @@ impl QuotaRuntime {
                     };
                     match self.adapter.fetch(&request, None, &cancel).await {
                         Ok(snapshot) => {
-                            if let Err(failure) = self.quota.publish_local_snapshot(snapshot) {
+                            // P14：publish_local_snapshot 直接返回 QuotaError，
+                            // 不再有包装的 .error 字段。
+                            if let Err(error) = self.quota.publish_local_snapshot(snapshot) {
                                 failures.push(LocalReconcileFailure {
                                     scope: scope.clone(),
                                     window,
                                     unit: unit.clone(),
-                                    error: failure.error,
+                                    error,
                                 });
                             }
                         }
@@ -1049,10 +1051,9 @@ mod tests {
                         })
                         .expect("cache-only read must not touch adapters");
                     match read {
-                        quota_service::CacheRead::Hit {
-                            snapshot,
-                            from_cache: true,
-                        } => {
+                        // 只依赖变体判别，不读取恒定的 from_cache 字段
+                        // （P14 review §3.6 压平后该字段被删除）。
+                        quota_service::CacheRead::Hit { snapshot, .. } => {
                             assert_eq!(snapshot.window, window);
                             assert_eq!(snapshot.unit, unit);
                             assert_eq!(

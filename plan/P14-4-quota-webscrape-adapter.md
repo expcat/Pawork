@@ -1,10 +1,10 @@
 # P14-4：网页抓取适配器
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-1、P2-1
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：内置内存审计仅测试断言用，生产审计 sink 延 P18-13） · 依赖：P14-1、P2-1
 
 **最终目的**：为「无公开 usage API、只能从控制台网页查看额度」的供应商提供网页抓取适配器，以登录态会话抓取控制台页面并解析额度数字，补全 API 类适配器覆盖不到的供应商，同时以明确低可信度标注让用户知晓数据可能因页面改版失效。
 
-**涉及范围**：`quota-service`；复用 `provider-runtime`（HTTP）+ HTML 解析
+**涉及范围**：`quota-service`；复用 `provider-runtime`（HTTP）+ HTML 解析；会话凭据经 provider contract 注入（无 `auth-service` 依赖）
 
 ## 细分步骤
 
@@ -26,8 +26,10 @@
 
 - [x] 能从示例控制台页面抽取至少一种窗口额度
 - [x] 选择器失效时返回可诊断的 `ParseFailed`，不崩溃
-- [x] 抓取受最低间隔与缓存约束，行为入审计日志
+- [x] 抓取受最低间隔与缓存约束，行为入审计日志（当前为进程内有界内存 audit Vec，仅测试断言；生产审计归 P18-13）
 - [x] 抓取数据标注 `confidence = scraped`
+
+**实现边界（2026-08-11 review-remediation）**：WebScrape 内置的有界内存 audit Vec 与 `RefreshScheduler::AuditSink` 职责重叠，当前仅用于测试断言，不构成第二份生产审计记录；生产审计统一走 scheduler/控制面 sink，所有权归 P18-13，本任务的审计项相应延后。
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [providers](../docs/features/providers.md) · [auth](../docs/features/auth.md) · [observability](../docs/features/observability.md) · [ROADMAP](../ROADMAP.md)
 

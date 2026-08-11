@@ -646,10 +646,14 @@ pub struct QuotaSnapshotView {
     pub served_stale: bool,
 }
 
-/// typed 失败：适配器种类 + 错误码 + 脱敏详情。
+/// typed 失败：适配器种类（可空）+ 错误码 + 脱敏详情。
+///
+/// `adapter_kind` 仅当失败确实来自某个 adapter 时为 `Some`；scope 校验、
+/// 无候选、取消、内部耗尽等查询级失败为 `None`，不虚构归属。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct QuotaFailureView {
-    pub adapter_kind: QuotaAdapterKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_kind: Option<QuotaAdapterKind>,
     /// 错误短码（如 `forbidden`、`rate_limited`、`timeout`、`unsupported`）。
     pub error_code: String,
     pub detail: String,
@@ -690,6 +694,25 @@ pub struct QuotaOverviewView {
     pub from_cache: bool,
 }
 
+/// 稳定告警种类：与 quota-service `refresh::AlertKind` 1:1 镜像，serde
+/// 形态冻结（snake_case）。消费端按 kind 派生可执行动作与文案，不解析
+/// 自由文本 `message`；`Threshold` 的 advisory 语义由
+/// [`QuotaAlertSeverity`] 区分（Warning = advisory 估算，Critical = 真实触限）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaAlertKind {
+    /// 剩余额度跌破配置阈值（advisory 时为抓取/估算数据，非硬停）。
+    Threshold,
+    /// 此前触发的 Threshold 已恢复。
+    Recovered,
+    /// 新鲜抓取失败，读取以过期缓存兜底。
+    Stale,
+    /// 凭证无效/被吊销，需要用户重新授权。
+    ReauthorizationRequired,
+    /// 部分适配器失败，但仍有其他适配器产出快照。
+    PartialFailure,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum QuotaAlertSeverity {
@@ -699,6 +722,11 @@ pub enum QuotaAlertSeverity {
 }
 
 /// 额度告警（安全 typed 视图，仅含脱敏字段）。
+///
+/// `source` 是已脱敏的来源标签（adapter kind + 短来源名），不携带端点
+/// query/fragment 或 secret/token/cookie 原文；`kind` 是稳定种类，动作由
+/// 消费端派生。二者均为 `Option`：`kind`/`source` 是后加的持久化字段，
+/// 旧事件 JSON 缺省时可解码为 `None`（重放兼容），新事件总是 `Some`。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct QuotaAlert {
     pub tenant_id: TenantId,
@@ -708,7 +736,13 @@ pub struct QuotaAlert {
     pub model_id: Option<ModelId>,
     pub window: QuotaWindow,
     pub unit: QuotaUnit,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<QuotaAlertKind>,
     pub severity: QuotaAlertSeverity,
+    /// 脱敏来源标签（adapter kind + 短来源名），永不包含 query/fragment
+    /// 或 secret/token/cookie 原文。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<QuotaSnapshotView>,
@@ -1010,13 +1044,81 @@ fn quota_alert_round_trip_is_safe() {
         model_id: None,
         window: QuotaWindow::Monthly,
         unit: QuotaUnit::Token,
+        kind: Some(QuotaAlertKind::ReauthorizationRequired),
         severity: QuotaAlertSeverity::Warning,
+        source: Some("ApiKeyApi:api.openai.com/v1/organization/usage".into()),
         message: "low balance".into(),
         snapshot: None,
         credential_hint: mask_credential_hint("sk-leak"),
     };
     let json = serde_json::to_string(&alert).expect("serialize alert");
     assert!(!json.contains("sk-leak"));
+    assert!(
+        json.contains("\"kind\":\"reauthorization_required\""),
+        "kind 必须按冻结的 snake_case 形态序列化: {json}"
+    );
+    assert!(
+        json.contains("\"source\":\"ApiKeyApi:api.openai.com/v1/organization/usage\""),
+        "source 原样往返: {json}"
+    );
     let decoded: QuotaAlert = serde_json::from_str(&json).expect("deserialize alert");
     assert_eq!(decoded, alert);
+}
+
+#[test]
+fn quota_alert_legacy_json_without_kind_source_decodes_to_none() {
+    // kind/source 是后加的持久化字段：旧事件 JSON 缺少二者时必须可解码
+    // （重放兼容），得到 None；其余字段原样保留。
+    let alert = QuotaAlert {
+        tenant_id: TenantId::new("local"),
+        account_id: "local/default".into(),
+        provider_id: ProviderId::from("openai"),
+        model_id: None,
+        window: QuotaWindow::Monthly,
+        unit: QuotaUnit::Token,
+        kind: Some(QuotaAlertKind::Threshold),
+        severity: QuotaAlertSeverity::Warning,
+        source: Some("ApiKeyApi:api.openai.com/v1/usage".into()),
+        message: "low balance".into(),
+        snapshot: None,
+        credential_hint: None,
+    };
+    let mut json: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&alert).expect("serialize")).expect("json");
+    for key in ["kind", "source"] {
+        assert!(
+            json.get(key).is_some(),
+            "precondition: new events serialize {key}"
+        );
+        json.as_object_mut().expect("object").remove(key);
+    }
+    let decoded: QuotaAlert =
+        serde_json::from_value(json).expect("legacy JSON without kind/source must decode");
+    assert_eq!(decoded.kind, None);
+    assert_eq!(decoded.source, None);
+    assert_eq!(decoded.severity, QuotaAlertSeverity::Warning);
+    assert_eq!(decoded.message, "low balance");
+    assert_eq!(decoded.window, QuotaWindow::Monthly);
+}
+
+#[test]
+fn quota_alert_kind_serde_is_stable_and_exhaustive() {
+    // 冻结的线上形态：kind 必须与 quota-service refresh::AlertKind 的
+    // snake_case 序列化一致，消费端依赖该字符串做映射，不可漂移。
+    let wire = [
+        (QuotaAlertKind::Threshold, "threshold"),
+        (QuotaAlertKind::Recovered, "recovered"),
+        (QuotaAlertKind::Stale, "stale"),
+        (
+            QuotaAlertKind::ReauthorizationRequired,
+            "reauthorization_required",
+        ),
+        (QuotaAlertKind::PartialFailure, "partial_failure"),
+    ];
+    for (kind, expected) in wire {
+        let json = serde_json::to_string(&kind).expect("serialize kind");
+        assert_eq!(json, format!("\"{expected}\""));
+        let decoded: QuotaAlertKind = serde_json::from_str(&json).expect("deserialize kind");
+        assert_eq!(decoded, kind);
+    }
 }

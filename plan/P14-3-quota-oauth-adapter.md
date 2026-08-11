@@ -1,10 +1,10 @@
 # P14-3：OAuth 登录授权适配器
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-1、P6-4、P2-1
+> Phase 14 · 模型用量与额度监控 · 状态：⚪已归档/推迟 · 交付成熟度：—（通用 OAuth 层已删除，首个真实消费者时重建） · 依赖：P14-1、P6-4、P2-1（历史依赖）
 
 **最终目的**：为「需要登录授权才能查看额度」的供应商（如部分平台需用户登录控制台后调用其 console / usage API）提供适配器，复用 Phase 6 的 OAuth 基础设施，自动 refresh，避免用户为查额度反复登录。
 
-**涉及范围**：`quota-service`；复用 `auth-service::oauth`、`provider-runtime`
+**涉及范围（历史）**：原计划 `quota-service` 复用 OAuth 基础设施与 `provider-runtime`；实现已删除（`crates/quota-service/src/adapters/oauth.rs` 移除）。
 
 ## 细分步骤
 
@@ -23,10 +23,16 @@
 
 ## 验收标准
 
-- [x] OAuth 过期自动 refresh 后重试成功
-- [x] refresh 失败时返回可恢复的「需重新登录」状态，不报错中断
-- [x] 明文 token 不落库不进日志
+- [ ] OAuth 过期自动 refresh 后重试成功（未实现，已归档）
+- [ ] refresh 失败时返回可恢复的「需重新登录」状态，不报错中断（未实现，已归档）
+- [ ] 明文 token 不落库不进日志（未实现，已归档）
+
+## 归档记录（2026-08-11）
+
+- 通用 OAuth quota 适配器无任何生产消费者：六个首批供应商均未消费该通用层，正式运行时也未装配 OAuth quota target（P14 review §3.2）。
+- 实现已删除（`adapters/oauth.rs` 移除；`AdapterKind::OAuthApi` 枚举保留）；待首个真实消费者（P18 接线时确需 OAuth 的供应商）出现时按 [P14-10](P14-10-review-remediation.md) 记录重建，不提前恢复通用层。
+- 路线图计数按约定包含归档任务；本记录不表示 OAuth 适配器已实现。
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [auth](../docs/features/auth.md) · [providers](../docs/features/providers.md) · [ROADMAP](../ROADMAP.md)
 
-**依赖建议（2026-08 review）**：复用 `auth-service::oauth`（P6-4 最小手写实现）与 `provider-runtime`，不新增 OAuth SDK 依赖。
+**依赖建议（2026-08 review，已随归档失效）**：原计划复用 OAuth 基础设施与 `provider-runtime`，不新增 OAuth SDK 依赖；重建时按当时依赖基线复核。

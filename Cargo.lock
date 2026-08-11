@@ -3426,7 +3426,6 @@ version = "0.0.0"
 dependencies = [
  "agent-domain",
  "async-trait",
- "auth-service",
  "base64 0.22.1",
  "futures",
  "hmac",

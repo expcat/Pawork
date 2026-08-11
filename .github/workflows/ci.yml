@@ -1,4 +1,4 @@
-name: CI
+name: Workspace Full Gate (manual)
 
 # 触发策略：默认所有 Actions 都不自动触发，只有在这里显式声明的触发器才会运行。
 # 当前仅保留手动触发（workflow_dispatch）：在 GitHub 仓库的 Actions 页面点击
@@ -17,7 +17,7 @@ env:
 
 jobs:
   check:
-    name: Build & Lint (${{ matrix.os }})
+    name: Workspace Full Gate (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -33,11 +33,11 @@ jobs:
         run: cargo metadata --no-deps --format-version 1 >/dev/null 2>&1
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
-      - name: cargo clippy
+      - name: Full Gate - cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: cargo build
+      - name: Full Gate - cargo build
         run: cargo build --workspace --all-targets
-      - name: cargo test
+      - name: Full Gate - cargo test
         run: cargo test --workspace
       - name: TypeScript schema drift check
         run: cargo run -p schema-typegen -- --check

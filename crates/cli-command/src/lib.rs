@@ -1,6 +1,7 @@
 //! `pawork` 命令行的稳定解析模型。
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::str::FromStr;
 
 #[derive(Clone, Debug, Parser, PartialEq, Eq)]
 #[command(name = "pawork", version, about = "Pawork Core 的唯一正式宿主")]
@@ -79,13 +80,62 @@ pub struct UsageArgs {
     #[arg(long)]
     pub model: Option<String>,
 
-    /// 窗口：overall | rolling5h | weekly | monthly（可多次指定）。
-    #[arg(long)]
-    pub window: Option<String>,
+    /// 窗口：overall | rolling5h | weekly | monthly（可多次指定或以逗号分隔）。
+    #[arg(long, value_delimiter = ',')]
+    pub window: Vec<UsageWindow>,
 
-    /// 单位：count | token | cost:<ISO-4217>。
+    /// 单位：count | token | cost:<3位ASCII币种>（严格解析，无效值在边界报错）。
     #[arg(long)]
-    pub unit: Option<String>,
+    pub unit: Option<UsageUnit>,
+}
+
+/// `pawork usage --window` 可选窗口（clap typed enum，边界拒绝无效值）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum UsageWindow {
+    Overall,
+    Rolling5h,
+    Weekly,
+    Monthly,
+}
+
+/// `pawork usage --unit` 可选单位：count | token | cost:<3位ASCII币种>。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UsageUnit {
+    Count,
+    Token,
+    Cost { currency: String },
+}
+
+impl FromStr for UsageUnit {
+    type Err = String;
+
+    /// 严格解析：token/count 大小写不敏感；`cost:` 后必须恰好 3 位 ASCII 字母
+    /// （ISO-4217 形态），其余一律报错，由 clap 在解析边界拒绝。
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let trimmed = raw.trim();
+        if trimmed.eq_ignore_ascii_case("token") {
+            Ok(Self::Token)
+        } else if trimmed.eq_ignore_ascii_case("count") {
+            Ok(Self::Count)
+        } else if let Some(currency) = trimmed.strip_prefix("cost:") {
+            if currency.len() == 3
+                && currency.is_ascii()
+                && currency.bytes().all(|byte| byte.is_ascii_alphabetic())
+            {
+                Ok(Self::Cost {
+                    currency: currency.to_string(),
+                })
+            } else {
+                Err(format!(
+                    "cost:<币种> 需要恰好 3 位 ASCII 字母，收到 `{currency}`"
+                ))
+            }
+        } else {
+            Err(format!(
+                "无效单位 `{trimmed}`：支持 count | token | cost:<3位ASCII币种>"
+            ))
+        }
+    }
 }
 
 impl UsageArgs {
@@ -316,7 +366,8 @@ mod tests {
         assert_eq!(args.tenant_or_default(), "local");
         assert_eq!(args.account_or_default(), "local/default");
         assert!(args.provider.is_none());
-        assert!(args.window.is_none());
+        assert!(args.window.is_empty());
+        assert!(args.unit.is_none());
 
         let filtered = Cli::try_parse_from([
             "pawork",
@@ -344,8 +395,82 @@ mod tests {
         assert_eq!(args.account.as_deref(), Some("acme/team"));
         assert_eq!(args.provider.as_deref(), Some("anthropic"));
         assert_eq!(args.model.as_deref(), Some("claude"));
-        assert_eq!(args.window.as_deref(), Some("monthly"));
-        assert_eq!(args.unit.as_deref(), Some("token"));
+        assert_eq!(args.window, vec![UsageWindow::Monthly]);
+        assert_eq!(args.unit, Some(UsageUnit::Token));
         assert_eq!(args.credential.as_deref(), Some("key-123"));
+    }
+
+    #[test]
+    fn usage_window_is_typed_and_rejects_invalid_values() {
+        // 单次指定与逗号分隔等价，多次指定累积。
+        let comma = Cli::try_parse_from(["pawork", "usage", "--window", "overall,rolling5h"])
+            .expect("comma-separated windows");
+        let Command::Usage(args) = &comma.command else {
+            panic!("expected usage command");
+        };
+        assert_eq!(
+            args.window,
+            vec![UsageWindow::Overall, UsageWindow::Rolling5h]
+        );
+
+        let repeated = Cli::try_parse_from([
+            "pawork", "usage", "--window", "weekly", "--window", "monthly",
+        ])
+        .expect("repeated windows");
+        let Command::Usage(args) = &repeated.command else {
+            panic!("expected usage command");
+        };
+        assert_eq!(args.window, vec![UsageWindow::Weekly, UsageWindow::Monthly]);
+
+        // 无效窗口在解析边界被拒绝。
+        for invalid in ["hourly", "daily", "Monthly ", ""] {
+            let parsed = Cli::try_parse_from(["pawork", "usage", "--window", invalid]);
+            assert!(parsed.is_err(), "window `{invalid}` must be rejected");
+        }
+    }
+
+    #[test]
+    fn usage_unit_is_strict_and_rejects_invalid_values() {
+        // token/count 大小写不敏感。
+        for raw in ["token", "TOKEN", "count", "Count"] {
+            let cli = Cli::try_parse_from(["pawork", "usage", "--unit", raw]).expect("unit parses");
+            let Command::Usage(args) = &cli.command else {
+                panic!("expected usage command");
+            };
+            let expected = if raw.eq_ignore_ascii_case("token") {
+                UsageUnit::Token
+            } else {
+                UsageUnit::Count
+            };
+            assert_eq!(args.unit, Some(expected), "unit `{raw}`");
+        }
+
+        // cost 接受恰好 3 位 ASCII 字母币种。
+        let cli =
+            Cli::try_parse_from(["pawork", "usage", "--unit", "cost:USD"]).expect("cost parses");
+        let Command::Usage(args) = &cli.command else {
+            panic!("expected usage command");
+        };
+        assert_eq!(
+            args.unit,
+            Some(UsageUnit::Cost {
+                currency: "USD".into()
+            })
+        );
+
+        // 无效单位在解析边界被拒绝。
+        for invalid in [
+            "tokens",
+            "usd",
+            "cost",
+            "cost:",
+            "cost:US",
+            "cost:USDollar",
+            "cost:USD1",
+            "cost:U$D",
+        ] {
+            let parsed = Cli::try_parse_from(["pawork", "usage", "--unit", invalid]);
+            assert!(parsed.is_err(), "unit `{invalid}` must be rejected");
+        }
     }
 }

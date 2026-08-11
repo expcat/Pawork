@@ -33,7 +33,6 @@
 //! 描述与固定类别标签，非 2xx 响应正文永不进入错误。
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_domain::CancellationToken;
 use async_trait::async_trait;
@@ -41,8 +40,11 @@ use futures::future;
 use provider_api::{CredentialKind, ResolvedCredential};
 use provider_runtime::http::HttpClient;
 
-use crate::adapters::http_util::{api_get, bearer_headers, now_millis, redact_endpoint};
+use crate::adapters::http_util::{api_get, bearer_headers};
 use crate::adapters::money::{cents_to_micros, decimal_string_to_micros, json_decimal_string};
+use crate::util::{
+    month_start_unix_seconds, next_month_start_timestamp, now_millis, redact_endpoint,
+};
 use crate::{
     AdapterKind, Confidence, QuotaAdapter, QuotaError, QuotaMeasure, QuotaProvenance, QuotaRequest,
     QuotaReset, QuotaSnapshot, QuotaUnit, QuotaValues, QuotaWindow,
@@ -147,7 +149,11 @@ impl QuotaAdapter for OpenAiAdapter {
                 // 全部失败：按优先级合并分类（保留 Cancelled / 鉴权 /
                 // RateLimited / Forbidden / retryable），组合消息只含固定标签，
                 // 交由服务层做部分失败处理。
-                Err(combine_endpoint_errors(limit_err, used_err))
+                Err(crate::error::merge_dual_failures(
+                    limit_err,
+                    used_err,
+                    "openai: both endpoints failed",
+                ))
             }
         }
     }
@@ -192,7 +198,7 @@ impl OpenAiAdapter {
         headers: &[(String, String)],
         cancel: &CancellationToken,
     ) -> Result<u64, QuotaError> {
-        let month_start = month_start_unix_seconds();
+        let month_start = month_start_unix_seconds(now_millis());
         let mut total_micros: u64 = 0;
         let mut after: Option<String> = None;
         for _ in 0..MAX_COST_PAGES {
@@ -281,7 +287,7 @@ impl OpenAiAdapter {
             values,
             // 自然月：次月 1 号 00:00 UTC 重置。
             reset: QuotaReset::Absolute {
-                at: next_month_start_timestamp(),
+                at: next_month_start_timestamp(now),
                 uncertain: false,
             },
             confidence: Confidence::Exact,
@@ -296,20 +302,6 @@ impl OpenAiAdapter {
             },
         })
     }
-}
-
-/// 下月 1 号 00:00 UTC 的 Timestamp（自然月 reset 时刻）。
-fn next_month_start_timestamp() -> agent_domain::Timestamp {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = (now / 86_400) as i64;
-    let (y, mo, _, _, _, _) = epoch_to_utc_from_days(days);
-    // 下月：mo in 1..=12；mo==12 → 次年 1 月。
-    let (ny, nmo) = if mo == 12 { (y + 1, 1) } else { (y, mo + 1) };
-    let secs = civil_to_days(ny, nmo, 1) * 86_400;
-    agent_domain::Timestamp::from_unix_millis(secs as u64 * 1_000)
 }
 
 /// 把 costs 的 `amount.value`（USD，JSON 数字或字符串）换算为 micros。
@@ -340,170 +332,6 @@ fn percent_encode_query_param(value: &str) -> String {
         }
     }
     out
-}
-
-/// 当月 UTC 起点的 Unix 秒（half-open 区间 [month_start, now)）。
-fn month_start_unix_seconds() -> u64 {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = (now / 86_400) as i64;
-    let (y, mo, _, _, _, _) = epoch_to_utc_from_days(days);
-    let month_start_day = civil_to_days(y, mo, 1);
-    (month_start_day * 86_400) as u64
-}
-
-/// Unix 天数 → UTC 民用日期（Howard Hinnant 算法）。
-fn epoch_to_utc_from_days(days: i64) -> (i32, u32, u32, u32, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = ((doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365) as i64;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe as u64 + yoe as u64 / 4 - yoe as u64 / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = (if mo <= 2 { y + 1 } else { y }) as i32;
-    (y, mo, d, 0, 0, 0)
-}
-
-/// 民用日期 → Unix 天数（UTC）。
-fn civil_to_days(y: i32, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { (y - 1) as i64 } else { y as i64 };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as u64;
-    let m_adj = if m > 2 { m as i64 - 3 } else { m as i64 + 9 };
-    let doy = (153 * m_adj as u64 + 2) / 5 + d as u64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe as i64 - 719_468
-}
-
-/// 两端点同时失败时的合并分类。
-///
-/// 优先级（高 → 低）：`Cancelled` > 鉴权（`Unauthorized` /
-/// `ReauthorizationRequired`）> `Forbidden` > `RateLimited` > retryable
-/// （`Timeout` / `Transient`）> `Parse` > `Unsupported` > `Other`，不统一
-/// 降级为 `Other`。
-///
-/// - `Cancelled` 是本地意图：任一端取消即整体取消；
-/// - 鉴权类错误走服务层 reauth 路径，不得被其他类别淹没；
-/// - `Forbidden` 是持久权限信号（如非 Admin key），重试无法解决，优先于
-///   限流与瞬时类；
-/// - `RateLimited` / retryable 的 `retry_after_ms` 取两端较大值；
-/// - 组合消息只含固定类别标签，绝不拼接子错误的 detail（可能携带远端正文）。
-fn combine_endpoint_errors(limit: QuotaError, used: QuotaError) -> QuotaError {
-    let detail = format!(
-        "openai: both endpoints failed (limit: {}, used: {})",
-        failure_label(&limit),
-        failure_label(&used)
-    );
-    let retry_after = limit.retry_after_ms().max(used.retry_after_ms());
-    let mut winner = pick_winner(limit, used);
-    match &mut winner {
-        QuotaError::Cancelled => {}
-        QuotaError::RateLimited {
-            detail: d,
-            retry_after_ms: ra,
-        }
-        | QuotaError::Transient {
-            detail: d,
-            retry_after_ms: ra,
-            ..
-        }
-        | QuotaError::Timeout {
-            detail: d,
-            retry_after_ms: ra,
-            ..
-        } => {
-            *d = detail;
-            *ra = retry_after;
-        }
-        QuotaError::Unauthorized { detail: d }
-        | QuotaError::ReauthorizationRequired { detail: d }
-        | QuotaError::Forbidden { detail: d }
-        | QuotaError::Parse { detail: d }
-        | QuotaError::Unsupported { detail: d }
-        | QuotaError::Other { detail: d } => *d = detail,
-    }
-    winner
-}
-
-/// 取两端错误中优先级最高者；同优先级（retryable 类）选 `retry_after_ms`
-/// 更大者。
-fn pick_winner(limit: QuotaError, used: QuotaError) -> QuotaError {
-    let limit_kind = failure_kind(&limit);
-    let used_kind = failure_kind(&used);
-    if limit_kind.rank() > used_kind.rank()
-        || (limit_kind.rank() == used_kind.rank()
-            && limit.retry_after_ms().unwrap_or(0) >= used.retry_after_ms().unwrap_or(0))
-    {
-        limit
-    } else {
-        used
-    }
-}
-
-/// 错误的固定类别标签（仅用于组合消息，不含任何远端文本）。
-fn failure_label(error: &QuotaError) -> &'static str {
-    match failure_kind(error) {
-        FailureKind::Cancelled => "cancelled",
-        FailureKind::Unauthorized => "unauthorized",
-        FailureKind::ReauthorizationRequired => "reauthorization-required",
-        FailureKind::Forbidden => "forbidden",
-        FailureKind::RateLimited => "rate-limited",
-        FailureKind::Timeout => "timeout",
-        FailureKind::Transient => "transient",
-        FailureKind::Parse => "parse",
-        FailureKind::Unsupported => "unsupported",
-        FailureKind::Other => "other",
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum FailureKind {
-    Cancelled,
-    ReauthorizationRequired,
-    Unauthorized,
-    Forbidden,
-    RateLimited,
-    Timeout,
-    Transient,
-    Parse,
-    Unsupported,
-    Other,
-}
-
-impl FailureKind {
-    /// 合并优先级数值（越大越优先）。
-    fn rank(self) -> u8 {
-        match self {
-            Self::Cancelled => 9,
-            Self::ReauthorizationRequired | Self::Unauthorized => 8,
-            Self::Forbidden => 7,
-            Self::RateLimited => 6,
-            Self::Timeout | Self::Transient => 5,
-            Self::Parse => 4,
-            Self::Unsupported => 3,
-            Self::Other => 2,
-        }
-    }
-}
-
-fn failure_kind(error: &QuotaError) -> FailureKind {
-    match error {
-        QuotaError::Cancelled => FailureKind::Cancelled,
-        QuotaError::Unauthorized { .. } => FailureKind::Unauthorized,
-        QuotaError::ReauthorizationRequired { .. } => FailureKind::ReauthorizationRequired,
-        QuotaError::Forbidden { .. } => FailureKind::Forbidden,
-        QuotaError::RateLimited { .. } => FailureKind::RateLimited,
-        QuotaError::Timeout { .. } => FailureKind::Timeout,
-        QuotaError::Transient { .. } => FailureKind::Transient,
-        QuotaError::Parse { .. } => FailureKind::Parse,
-        QuotaError::Unsupported { .. } => FailureKind::Unsupported,
-        QuotaError::Other { .. } => FailureKind::Other,
-    }
 }
 
 #[cfg(test)]
@@ -781,40 +609,13 @@ mod tests {
     }
 
     #[test]
-    fn combine_endpoint_errors_preserves_highest_priority_classification() {
-        // Cancelled 是本地意图，优先于一切。
-        assert!(matches!(
-            combine_endpoint_errors(QuotaError::Cancelled, QuotaError::forbidden("x")),
-            QuotaError::Cancelled
-        ));
-        // 鉴权类优先于 Forbidden（服务层走 reauth 路径）。
-        assert!(matches!(
-            combine_endpoint_errors(QuotaError::forbidden("x"), QuotaError::unauthorized("x")),
-            QuotaError::Unauthorized { .. }
-        ));
-        // Forbidden（持久权限信号）优先于 RateLimited。
-        assert!(matches!(
-            combine_endpoint_errors(
-                QuotaError::rate_limited("x", Some(1_000)),
-                QuotaError::forbidden("x")
-            ),
-            QuotaError::Forbidden { .. }
-        ));
-        // RateLimited 优先于瞬时类，retry_after 取两端较大值。
-        assert!(matches!(
-            combine_endpoint_errors(
-                QuotaError::transient("x", Some(503), None),
-                QuotaError::rate_limited("x", Some(3_000))
-            ),
-            QuotaError::RateLimited {
-                retry_after_ms: Some(3_000),
-                ..
-            }
-        ));
-        // 组合消息只含固定标签，子错误 detail（含远端文本）一律不进入。
-        let combined = combine_endpoint_errors(
+    fn dual_failure_uses_unified_merge_with_provider_context() {
+        // 优先级表与分类语义由 crate::error::merge_dual_failures 统一维护
+        // （P14 review §3.4）；此处只验证 provider 上下文消息与不泄漏。
+        let combined = crate::error::merge_dual_failures(
             QuotaError::forbidden("remote detail from body"),
             QuotaError::parse("remote value: EUR"),
+            "openai: both endpoints failed",
         );
         let detail = match combined {
             QuotaError::Forbidden { detail } => detail,
@@ -882,10 +683,16 @@ mod tests {
 
     #[test]
     fn month_start_is_first_day_of_current_month() {
-        let mar15 = civil_to_days(2026, 3, 15);
-        let mar1 = civil_to_days(2026, 3, 1);
-        assert_eq!(epoch_to_utc_from_days(mar15), (2026, 3, 15, 0, 0, 0));
-        assert_eq!(epoch_to_utc_from_days(mar1), (2026, 3, 1, 0, 0, 0));
+        let mar15 = crate::util::civil_to_days(2026, 3, 15);
+        let mar1 = crate::util::civil_to_days(2026, 3, 1);
+        assert_eq!(
+            crate::util::epoch_to_utc_from_days(mar15),
+            (2026, 3, 15, 0, 0, 0)
+        );
+        assert_eq!(
+            crate::util::epoch_to_utc_from_days(mar1),
+            (2026, 3, 1, 0, 0, 0)
+        );
         assert!(mar15 > mar1);
     }
 
@@ -1122,17 +929,14 @@ mod tests {
 
     #[test]
     fn reset_is_first_day_of_next_month_utc() {
-        // 已知日期起点由 civil_to_days 构造，但 next_month_start_timestamp 读系统时钟；
-        // 此处只验证函数可调用且返回正值（次月 1 号在「现在」之后）。
-        let reset_at = next_month_start_timestamp();
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        let reset_ms = reset_at.as_unix_millis();
-        // reset 至少应在「今天」之后（>= 当前月内任意一天的下月 1 号）。
-        assert!(reset_ms > now_ms, "next-month reset must be in the future");
-        // 且不超过当前时刻 + 32 天（最坏 31 天月份 + 1 天边界）。
-        assert!(reset_ms <= now_ms + 32 * 86_400 * 1_000);
+        // 固定边界：显式 now 而非墙钟（P14 review §3.3）。
+        let now = agent_domain::Timestamp::from_unix_millis(
+            (crate::util::civil_to_days(2026, 3, 15) * 86_400 + 12 * 3_600) as u64 * 1_000,
+        );
+        let reset_at = crate::util::next_month_start_timestamp(now);
+        assert_eq!(
+            reset_at.as_unix_millis(),
+            (crate::util::civil_to_days(2026, 4, 1) * 86_400) as u64 * 1_000
+        );
     }
 }

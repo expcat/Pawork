@@ -7,11 +7,44 @@
 | 层级 | 何时运行 | 内容 | 缓存策略 |
 | --- | --- | --- | --- |
 | L0 | 每次编辑后 | 存在性、链接、diff、生成物检查 | 不创建独立构建缓存 |
-| L1 | 单任务收尾 | 受影响 crate 的单元/Mock/smoke，必要时 `cargo check -p <crate>` | 复用默认 `target/` |
-| L2 | 功能簇基本收尾 | 相关 crates 的 integration/contract/golden/schema、一次 fmt/clippy | 使用 `target/gates`，结束即清理 |
-| L3 | 发布候选、依赖/协议升级、主干合并前 | workspace 全量、三平台、安全、性能、fuzz/chaos/差分 | 隔离目录；本地结束即清理，CI 可使用短期缓存 |
+| L1 | 单任务收尾 | changed crates、必要关键 reverse dependents 与定向 regression | 复用默认 `target/` |
+| L2 | 功能簇基本收尾 | 相关 crates 的 integration/contract/golden/schema、定向 fmt/clippy；必要时经明确升级执行 Workspace Full Gate | 使用 `target/gates`，结束即清理 |
+| L3 | 发布候选、Maintenance/Release Gate、重大依赖/协议升级 | workspace 全量、三平台、安全、性能、fuzz/chaos/差分 | 隔离目录；本地结束即清理，CI 可使用短期缓存 |
 
 任务默认只要求 L0/L1。Secret、Policy/路径、事件持久化/重放、破坏性文件或进程清理、协议兼容等高风险不变量必须随改动执行定向回归，不等待 L2/L3。
+
+## Affected-crate 判断
+
+每个任务先形成验证集合，而不是先选固定 Cargo 命令。推荐步骤如下：
+
+1. **取得任务 diff**：结合 `git status --short`、任务基线到 `HEAD` 的 committed diff、staged/unstaged diff 与本任务新增文件。脏工作区中排除用户原有且与任务无关的改动，不能把整个工作区变化都算成本任务影响面。
+2. **映射 changed crates（A0）**：`crates/<dir>/`、`apps/<dir>/` 可先按目录定位，再用 `cargo metadata --format-version 1 --no-deps` 的 `packages[].manifest_path` 和 package name 校准。文档、fixture、schema、根配置按实际消费者归属，不能只按最近目录猜测。
+3. **判定接口扇出**：检查是否改变 `pub` API、Cargo feature、shared/canonical domain、GUI Connection Protocol、序列化/持久化格式、schema/typegen 或共享测试夹具。crate 私有实现通常令验证集合 `A = A0`。
+4. **选择关键反向依赖（A1）**：需要时运行 `cargo tree --workspace --invert <crate> --depth 1`，或读取不带 `--no-deps` 的 `cargo metadata` 中 `resolve.nodes[].deps`。公共接口改动令 `A = A0 +` 实际消费该接口的关键直接 reverse dependents；不要把所有传递反向依赖无差别加入。
+5. **加入定向回归（R）**：contract、golden、schema、Secret、Policy、路径边界、事件重放、破坏性操作、协议兼容等按语义加入测试 target。最终 L1 范围是 `A0 + 必要 A1 + R`。
+
+根 `Cargo.toml`、`Cargo.lock`、`.cargo/config*`、`rust-toolchain*`、build script 或共享生成配置变化需要单独分析：普通 package 依赖增删通常仍可落到相关 crates；workspace members/resolver/profile、toolchain 或关键依赖的重大变化才是 Full Gate 候选。文件在根目录不是自动全量的理由。
+
+canonical domain / protocol 变化优先选择 changed crate、主要 producer/consumer、serializer/typegen 与 contract crate；只有这些仍不足以覆盖兼容面时才扩大一层。单个 Provider 只验证对应 adapter/runtime/contract，GUI 只验证实际 projection/controller/protocol 消费链及必要视觉/平台回归，平台模块只验证相关 target/harness。Provider、GUI、平台标签本身都不是 workspace 全量理由。
+
+## 最小命令选择
+
+以下命令是候选，不是必须顺序；多个相关 crate 使用多个 `-p`：
+
+```bash
+cargo check -p <crate-a> -p <crate-b>
+cargo test -p <crate-a> -p <crate-b>
+cargo clippy -p <crate-a> -p <crate-b> --all-targets -- -D warnings
+```
+
+- 只需类型、feature 或条件编译反馈时选 `cargo check`。
+- 需要行为证据时选定向 `cargo test`；它已经完成所需测试产物编译，没有 binary/link/build-script/特定 profile 或发布产物行为需要验证时，不再追加 `cargo build`。
+- Rust 代码的 lint 风险、all-targets 测试代码或任务验收明确需要时选定向 `cargo clippy`；不要为了凑齐命令矩阵机械运行。
+- 优先运行具体 test target、test filter、contract、golden、schema 或 regression；schema/typegen 未受影响时不运行 `schema-typegen --check`。
+- 文档或不改变构建行为的配置任务可以不运行 Cargo 编译，只做链接、格式、配置解析、命令一致性与 diff 检查。
+- 不允许因相关 crate 数量变多就把多个 `-p` 换成 `--workspace`。
+
+`check + build + test + clippy` 不是完整性的定义。验证集是否有效取决于它覆盖了实际改动及风险，而不是命令数量。
 
 ## 单元测试
 
@@ -36,9 +69,9 @@ plugin/scope 隔离、配额与 unload/apply 竞态；lifecycle hook 覆盖确�
 error/panic/cancel 隔离。
 
 兼容矩阵与断言辅助位于 `test-support`，实现测试位于 `plugin-api`、`wasm-plugin-host` 与
-`hook-runtime`。它们自动进入现有 `cargo test --workspace` 三平台 CI，无需额外 wasm target 或外部
-runtime；测试组件使用 Wasmtime 的 Component text fixture 在进程内构造，WIT guest binding 只做
-host-native compile gate。
+`hook-runtime`。它们自动进入手动触发的 L3 三平台 Workspace Full Gate CI；开发期仍按实际改动使用
+多个 `-p` 定向运行，无需额外 wasm target 或外部 runtime。测试组件使用 Wasmtime 的 Component text
+fixture 在进程内构造，WIT guest binding 只做 host-native compile gate。
 
 ## Control Plane Contract Tests
 
@@ -95,21 +128,42 @@ Chaos 默认在功能主干接线完成后的 L2/L3 执行，不阻塞前期领�
 
 日常 dev/test 采用 line-tables-only 且第三方依赖 debug=false（见根 Cargo.toml），降低 DWARF/PDB 与链接成本；需要完整调试器时显式 `cargo build --profile debugging` / `cargo test --profile debugging`；不以默认关闭 L1 incremental compilation 为手段。
 
+## Workspace Full Gate
+
+以下任一明确条件成立时，才可把验证升级为 Workspace Full Gate：
+
+- 功能簇整体收尾或专门的 L2 Gate 任务；
+- 大规模跨 crate 重构，无法用 changed crates + 关键消费者充分界定；
+- workspace members/resolver/profile、toolchain 或关键依赖发生重大变化；
+- canonical protocol/domain 大范围变更，影响多组 producer/consumer/serializer/contract；
+- Maintenance/Release Gate；
+- 用户明确要求 workspace 全量验证。
+
+单个 crate 的公共 API 变化、高风险修改或多个相关 crate 都不自动满足升级条件：前者先加入主要消费者，后者执行对应定向 regression。“保险”“最终确认”“确保没有回归”“改动较多”或“任务已经完成”不是升级理由。Agent 在执行前必须指出命中的具体条件；否则 Full Gate 保持 `NOT RUN`。
+
+Workspace Full Gate 保留以下命令：
+
+```bash
+cargo build --workspace --all-targets
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+这三条属于 L2/L3 Maintenance/Release/Full Gate，不是普通任务验收步骤。
+
 ## 测试后清理
 
-定向 L1 复用默认 `target/`，只清理本任务产生的临时目录、fixture 副本、日志、coverage 与未确认快照输出；测试代码优先使用 RAII/tempfile，确保失败和取消路径也回收。每次 L1 后执行 `cargo clean` 会迫使后续全量重编，默认禁止。
+定向 L1 复用默认 `target/` 增量缓存，只清理本任务产生的临时目录、fixture 副本、日志、coverage 与未确认快照输出；测试代码优先使用 RAII/tempfile，确保失败和取消路径也回收。每次 L1 后执行 `cargo clean` 会迫使后续重编，默认禁止。
 
-本地 L2/L3 使用隔离目录并在 `finally` 清理：
+定向 L2 仍使用相关 crates 的多个 `-p`，可放入隔离 `target/gates` 并在 `finally` 定向清理；不能因为使用隔离目录就改成 `--workspace`。只有上一节升级条件成立时，才使用以下 Workspace Full Gate 脚本：
 
 ```powershell
 $env:CARGO_TARGET_DIR = "target/gates"
 $env:CARGO_INCREMENTAL = "0"
 try {
-    cargo fmt --all -- --check
     cargo build --workspace --all-targets
     cargo test --workspace
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo run -p schema-typegen -- --check
 } finally {
     cargo clean --target-dir "target/gates"
     Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
@@ -117,7 +171,21 @@ try {
 }
 ```
 
-包含格式或 schema 检查时，把 `cargo fmt --all -- --check` 与 `cargo run -p schema-typegen -- --check` 放入同一个 `try`。默认 `target/` 在功能簇收尾检查体积，达到团队配置阈值或磁盘压力告警时再执行 `cargo clean`。CI 为一次性 runner 时无需为了清理增加额外耗时；持久化 runner 只缓存 lockfile/工具链可复用内容，并设置容量或 TTL。
+本地 Gate 只有在 Rust 格式或 schema/typegen 确实可能受影响时，才加入 `cargo fmt --all -- --check` 或 `cargo run -p schema-typegen -- --check`；普通 L1 可使用定向 fmt 或 schema check。手动三平台 L3 CI 是固定 Maintenance/Release Gate，始终包含 fmt 与 schema drift check。默认 `target/` 仅在达到团队配置阈值、磁盘压力告警或用户明确要求时清理，不得把任务收尾当作清理触发器。CI 为一次性 runner 时无需为了清理增加额外耗时；持久化 runner 只缓存 lockfile/工具链可复用内容，并设置容量或 TTL。
+
+## 任务验收报告
+
+普通任务完成时明确报告实际验证范围；没有运行 Workspace Full Gate 不是缺口：
+
+```text
+Validation Level: L1
+Affected crates: <changed + selected reverse dependents，或 none>
+Validated: <实际命令 / tests / checks>
+Targeted regressions: <实际覆盖，或 none>
+Full workspace gate: NOT RUN (<未命中升级条件>)
+```
+
+如实际运行 L2/L3 或 Workspace Full Gate，替换层级、范围和结果，并写明触发条件。不得把未运行的命令列入 `Validated`。
 
 ## Integration Test 组织
 

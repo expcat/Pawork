@@ -78,7 +78,13 @@ fn quota_query(
 }
 
 fn default_query() -> core_api::QuotaOverviewQuery {
-    core_api::QuotaOverviewQuery::default_local()
+    core_api::QuotaOverviewQuery {
+        // P14 review §2.4：provider 是查询的必要维度，测试 fixture 显式提供
+        // mock（本文件所有 router 都注册了 mock provider）；scope 仍为默认
+        // local/local/default。
+        provider_id: Some(ProviderId::from("mock")),
+        ..core_api::QuotaOverviewQuery::default_local()
+    }
 }
 
 struct CountingQuotaAdapter {
@@ -398,6 +404,55 @@ async fn no_runtime_returns_no_data_windows() {
         }),
         "all windows should be no_data: {value}"
     );
+}
+
+#[tokio::test]
+async fn missing_or_empty_provider_is_rejected_with_validation_error() {
+    // P14 review §2.4：不再选择“首个已注册 provider”或空默认 ID。即使
+    // 已注册 provider（旧实现会静默选中第一个），缺省/空 provider 也必须
+    // 返回明确的 validation error。
+    let (router, _runtime) = router_with_quota_and_provider();
+
+    let missing = quota_query(
+        cli_source(),
+        cli_identity(),
+        core_api::QuotaOverviewQuery::default_local(),
+    );
+    let response = router.dispatch_query(missing);
+    match response.response {
+        AppResponse::Error(context) => {
+            assert_eq!(
+                context.category,
+                agent_domain::ErrorCategory::InvalidRequest,
+                "missing provider must be a validation error: {context:?}"
+            );
+            assert!(
+                context.message.contains("provider_id"),
+                "error must name the missing dimension: {context:?}"
+            );
+        }
+        other => panic!("expected validation error, got {other:?}"),
+    }
+
+    let empty = quota_query(
+        cli_source(),
+        cli_identity(),
+        core_api::QuotaOverviewQuery {
+            provider_id: Some(ProviderId::default()),
+            ..core_api::QuotaOverviewQuery::default_local()
+        },
+    );
+    let response = router.dispatch_query(empty);
+    match response.response {
+        AppResponse::Error(context) => {
+            assert_eq!(
+                context.category,
+                agent_domain::ErrorCategory::InvalidRequest,
+                "empty provider must be a validation error: {context:?}"
+            );
+        }
+        other => panic!("expected validation error, got {other:?}"),
+    }
 }
 
 #[tokio::test]

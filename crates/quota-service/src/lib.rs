@@ -11,7 +11,7 @@
 //! - 可见来源与新鲜度；endpoint 经清洗去除 query/fragment（[`QuotaProvenance`]）。
 //! - 对象安全的异步适配器（cancel-safe，[`QuotaAdapter`]）与错误
 //!   （[`QuotaError`]，含 retryable / retry_after_ms 分类）。
-//! - 六供应商能力矩阵与真实 API / 版本化 WebScrape 实现（[`providers`]）。
+//! - 六家 Provider 的真实 API / 版本化 WebScrape 适配器（[`providers`]）。
 //! - 多来源并发聚合、singleflight、TTL、stale/部分失败（[`service`]）。
 //! - 直接消费唯一 Usage Ledger 的本地派生与远端增量对账（[`ledger`]）。
 //! - 自动刷新、退避、降级、阈值告警及脱敏审计（[`refresh`]）。
@@ -28,8 +28,9 @@ pub mod ledger;
 pub mod providers;
 pub mod refresh;
 pub mod service;
+mod util;
 
 pub use adapter::{AdapterKind, QuotaAdapter};
 pub use domain::*;
 pub use error::QuotaError;
-pub use service::{CacheOverview, CacheRead, CacheWindowRead};
+pub use service::{CacheOverview, CacheRead};

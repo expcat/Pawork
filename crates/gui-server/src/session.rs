@@ -469,13 +469,18 @@ fn handle_resume(inner: &Inner, request: ResumeRequest) -> FrameOutcome {
 ///
 /// 未订阅不投递；队列满时管理器标记 `Lagged` 并丢弃事件，不阻塞 Hub
 /// 发布者与其他连接。连接注销（发送端释放）后本任务退出。
+///
+/// Hub receiver 在 **spawn 前的同步阶段**创建并移入任务：broadcast 订阅
+/// 不补历史，若推迟到任务内部创建，则任务首次被调度前发布的事件会因尚
+/// 无 receiver 而被丢弃。
 fn spawn_forwarder(
     inner: Arc<Inner>,
     client_id: GuiClientId,
-    mut stop: oneshot::Receiver<()>,
+    stop: oneshot::Receiver<()>,
 ) -> tokio::task::JoinHandle<()> {
+    let mut subscription = inner.hub.subscribe();
     tokio::spawn(async move {
-        let mut subscription = inner.hub.subscribe();
+        let mut stop = stop;
         loop {
             tokio::select! {
                 _ = &mut stop => return,
@@ -659,6 +664,14 @@ mod tests {
     use core_api::{AppResponse, AppResponseEnvelope, API_VERSION};
     use std::sync::Mutex;
 
+    use agent_domain::CoreInstanceId;
+    use app_service::AppService;
+    use connection_manager::ConnectionManager;
+    use core_api::SUPPORTED_API_VERSIONS;
+    use gui_protocol::HandshakeService;
+    use snapshot_service::SnapshotService;
+    use subscription_hub::EventHub;
+
     /// 只捕获出站字节的测试连接，receive 恒返回 ConnectionClosed（本组测试
     /// 只覆盖 send_frame 的出站校验路径）。
     struct CapturingConnection {
@@ -736,5 +749,33 @@ mod tests {
             .await
             .expect("pre-negotiation sends are not version-checked");
         assert_eq!(connection.sent.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn spawn_forwarder_subscribes_before_returning() {
+        // 回归：Hub receiver 必须在 spawn_forwarder 返回前创建，否则任务首次
+        // 被调度前发布的事件会因无 receiver 而丢失（broadcast 不补历史）。
+        let hub = Arc::new(EventHub::new());
+        let app_service = Arc::new(AppService::new("self-test-forwarder"));
+        let inner = Arc::new(Inner {
+            app_service: Arc::clone(&app_service),
+            handshake: HandshakeService::new(
+                CoreInstanceId::from("self-test-forwarder"),
+                SUPPORTED_API_VERSIONS.to_vec(),
+                vec![GuiCapability::Events],
+            ),
+            hub: Arc::clone(&hub),
+            connections: Arc::new(ConnectionManager::default()),
+            snapshots: SnapshotService::new(app_service, Arc::clone(&hub)),
+        });
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let task = spawn_forwarder(Arc::clone(&inner), GuiClientId::from("fwd-test"), stop_rx);
+        assert_eq!(
+            hub.subscriber_count(),
+            1,
+            "spawn_forwarder 返回前 Hub receiver 必须已创建"
+        );
+        let _ = stop_tx.send(());
+        task.await.expect("forwarder task joins cleanly");
     }
 }

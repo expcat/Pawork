@@ -1,10 +1,10 @@
 # P14-2：API Key 直连适配器
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-1、P2-1、P2-6
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：通用 API Key 层仅 Moonshot 一个生产消费者，P18 接线时复评） · 依赖：P14-1、P2-1、P2-6
 
 **最终目的**：实现「持有 API Key 即可直接通过官方 REST billing / usage API 获取额度」这一最高可信度适配器，作为多数主流供应商（OpenAI 等）的默认数据来源，奠定 P14-5 具体供应商实现的通用底座。
 
-**涉及范围**：`quota-service`；复用 `provider-runtime`（HTTP / 超时 / 重试）、`auth-service`（解析 key）
+**涉及范围**：`quota-service`；复用 `provider-runtime`（HTTP / 超时 / 重试）；凭据经 provider contract `ResolvedCredential` 注入（无 `auth-service` 依赖）
 
 ## 细分步骤
 
@@ -28,4 +28,4 @@
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [providers](../docs/features/providers.md) · [auth](../docs/features/auth.md) · [ROADMAP](../ROADMAP.md)
 
-**依赖建议（2026-08 review）**：仅复用 `provider-runtime`（reqwest rustls）与 `auth-service`，不新增第三方依赖。
+**依赖建议（2026-08 review）**：仅复用 `provider-runtime`（reqwest rustls），不新增第三方依赖；无 `auth-service` 依赖。通用 `ApiKeyQuotaAdapter` 当前仅 Moonshot 一个生产消费者（其余供应商因多端点或签名差异直接实现 `QuotaAdapter`），P18 真实接线后复评：若仍单消费者则内联到 Moonshot 并删除 endpoint trait 层。

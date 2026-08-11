@@ -20,12 +20,17 @@
 - Secret resolver 边界 + synthetic default migration
 - 脱敏管理 API 与 migration/security tests
 
+## P14 现状与登记（2026-08-11）
+
+P14-8 的 `QuotaOverview` 查询必须显式 provider_id（缺省即拒绝）；多 provider/多模型聚合语义待 binding enumeration 成为事实源后由 app-service 批量查询（见 [usage-quota](../docs/features/usage-quota.md)）。Quota refresh target 的账号/凭据绑定来源同样是本任务的 ProviderAccount/CredentialMetadata。
+
 ## 验收标准
 
 - [ ] account 与 credential 生命周期、状态和 ID 独立
 - [ ] SQLite/Event/log/diagnostics 不出现 plaintext token/API key
 - [ ] 旧配置迁移后仍调用同一 Provider/model/credential
 - [ ] account/credential 查询强制 tenant scope
+- [ ] ProviderAccount/Credential binding 枚举（按 provider 列出绑定 account/credential）成为 `QuotaOverview` 批量聚合的事实源；无绑定时不做默认 provider 推测
+- [ ] quota refresh target 的 account/credential 绑定来自 ProviderAccount/CredentialMetadata，不再从零散 credential 数组选择
 
 **相关文档**：[auth](../docs/features/auth.md) · [provider-control-plane](../docs/features/provider-control-plane.md) · [ADR-014](../docs/adr/ADR-014-secret-os-keychain.md) · [ROADMAP](../ROADMAP.md)
-

@@ -21,6 +21,10 @@
 - transactional config reload / rollback
 - session binding migration 与故障注入测试
 
+## P14 现状与登记（2026-08-11）
+
+P14-5/9 的六家远端 quota adapter factory 与 `RefreshScheduler` / `AuditSink` / `AlertSink` 只在 quota-service 测试中闭环；`QuotaRuntime::production` 仅注册 `LocalLedger` 适配器，无 scheduler 生命周期与 target 注册（见 [usage-quota](../docs/features/usage-quota.md)）。target 装配与对账由本任务完成。
+
 ## 验收标准
 
 - [ ] stale lease 可幂等回收，运行中 lease 不被热切换误杀
@@ -28,5 +32,7 @@
 - [ ] probe 有独立并发/频率/预算且失败不形成雪崩
 - [ ] 无效配置保持旧配置原子有效，不出现半应用状态
 - [ ] account/capability 变化后 binding 安全迁移并有 audit event
+- [ ] 六家远端 quota adapter factory 注册为 `RefreshScheduler` 生产 targets；scheduler 在生产 composition root 启动、取消与关闭（复用 QuotaRuntime 为生命周期 owner，不新增 manager/daemon）
+- [ ] quota target registry 与 provider/account registry 对账：binding/account 变化时 reconcile target 不悬挂，热切换不误杀运行中 lease
 
 **相关文档**：[provider-control-plane](../docs/features/provider-control-plane.md) · [client-adapters](../docs/features/client-adapters.md) · [P8-8](P8-8-hot-reload.md) · [ROADMAP](../ROADMAP.md)

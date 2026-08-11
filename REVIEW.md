@@ -5,6 +5,7 @@
 **复核日期**：2026-08-09（P1–P7 修复复核，详见 [§复核结论](#复核结论2026-08-09)）；2026-08-10（P8、P9、P10 修复复核）。
 **P11 复核**（2026-08-10）：见下方整合说明。
 **P12 复核**（2026-08-10）· **P13 评审**（2026-08-10）· **P13 修复**（2026-08-11）：见 [P13-11](plan/P13-11-review-remediation.md)。
+**P14 评审**（2026-08-11）· **P14 修复**（2026-08-11）：见 [P14-10](plan/P14-10-review-remediation.md)。
 - **评审基线**：P1 以 `de76839` 为基线；P2–P7 以 `67d6c4d` 为基线；P8–P11 以各自提交为基线。
 - **V 编号约定**：各阶段内部独立使用 V1–Vn 编号；跨阶段引用以 `P<阶段>-V<n>` 前缀区分。
 - **引用兼容**：`plan/P{1..7}-*-review-remediation.md` 中的 `[REVIEW.md](../REVIEW.md) §N` 链接仍指向本文件，各 §N 对应 `docs/review/pN-review.md`。
@@ -26,6 +27,7 @@
 | P11 | Sandbox 与跨平台强化 | [p11-review.md](docs/review/p11-review.md) | [P11-9](plan/P11-9-review-remediation.md) 🟢 | ✅ §2.1/§2.2/§2.3/§2.4/§2.5/§2.6/§3.1/§3.2/§3.3 全部确认修复（§2.6 NetworkMode 合并、§3.4 文件拆分显式延后） |
 | P12 | Multi-Agent 编排 | [p12-review.md](docs/review/p12-review.md) | [P12-7](plan/P12-7-review-remediation.md) 🟢 | ✅ §2.1 接线三件套 / §2.2 删 AgentConcurrency / §2.3 11 死事件生产者 / §2.4 ledger 归属+预算数据源 / §2.5 删死依赖 / §2.6 删 parent_id+AgentTree 文档 / §2.7 Drop 反模式 / §3.1 P12-1 措辞 全部确认修复（§3.1 agent-loop 接线、§3.2 主流程接入、§3.3 event store 持久化显式延后） |
 | P13 | CLI Host 与多 GUI 协议 | [p13-review.md](docs/review/p13-review.md) | [P13-11](plan/P13-11-review-remediation.md) 🟢 | ✅ §2.1 宿主装配 GuiServer / §3.5 双向协议版本校验 / §3.7 删 aggregate+connection-manager+client-auth 死公开 API / §3.8 client-auth 原子创建 全部确认修复（§2.2/§2.3/§3.1/§3.2/§3.4/§3.6/§4.1/§4.6 显式延后） |
+| P14 | Usage / Quota（quota-service 收口） | [p14-review.md](docs/review/p14-review.md) | [P14-10](plan/P14-10-review-remediation.md) 🟢 | ✅ §3.1/§3.2 删 capability+OAuth 通用层 / §3.3/§3.5 时间与脱敏单一事实源 / §3.4 错误归并单一实现 / §3.6 cache 压平+失败归属可空 / §2.6 告警跨边界简化 / §2.4 显式 provider / §3.8 CLI typed 解析渲染 / §6 P0 状态语义 全部确认修复（§2.1/§2.2/§2.3/§2.5/§3.7 显式延后 P18-2/3/4/8/13/14、P19-2/10） |
 
 ## 复核结论（2026-08-09）
 
@@ -50,6 +52,12 @@
 | P7 | V1–V10 + 4 基线项 | 全部 | V1 `stage.rs:163` NamedTempFile 独占创建；V2 `process.rs:44` validate_position_arg 拒绝前导 `-` |
 
 > 注：P5 的基线偏差项（uuid/tracing-appender/similar、parking_lot/tempfile、base64/rand/sha2/url）按计划分工由 P1-13/P6-14/P7-9 跨阶段统一清理，已在 P1/P6/P7 复核中确认 ✅，故 P5-10 范围内不重复处理，符合评审 §0.4 的「一次性基线清理」建议。
+
+## 复核结论（2026-08-11 · P14）
+
+对 P14 评审发现的问题逐项核对修复落地情况。复核方法：Commander 核对 review 仍成立性 + 按实际 diff 定向核对 `quota-service` / `app-service` / `core-api` / `cli-command` / `cli-host` / `cli-renderer` / `gui-protocol` / `protocol-test-gui` 写集落地 + `rg` 残留与 diff 写集合确定性核验 + `gui-server` forwarder 协议竞态（Hub receiver 注册时序）修复核验；独立 `deepseek_reviewer` 复核结论 VERDICT: PASS，其 4 类 findings 已全部处理。
+
+**总体结论**：P14 评审中可立即落地的复杂度与契约项全部修复——§3.1/§3.2 删 capability matrix 与 OAuth 通用层（净删约 1000 行）、§3.3/§3.5 时间与脱敏收敛 `util.rs` 单一事实源、§3.4 双端点错误归并收敛 `error.rs` 单一优先级表、§3.6 cache 压平与失败归属可空化、§2.6 告警跨边界模型简化（删 `Alert.suggestions`，补冻结 `QuotaAlertKind` + 脱敏 `source` 透传，schema 重生成）、§2.4 `QuotaOverview` 显式 provider 必填、§3.8 CLI typed 解析/渲染、§6 P0 状态语义标注（Phase 14「库级收口、生产接线待 P18」，遵循既有 L0/L1 规则）。验证：9 crate 联合 `cargo test`（452 passed / 0 failed）、`protocol-test-gui --self-test` 协议竞态修复后连续 5 次 9/9 且最终再 1 次 9/9（含新 quota-alert-roundtrip）、9 成员 clippy（0 warning）、fmt / schema-typegen / `git diff --check` 均 PASS。`gui-server` forwarder 的 Hub receiver 改为 spawn 前同步注册（broadcast 不补历史，回归测试确认），竞态消除。独立 `deepseek_reviewer` 复核 VERDICT: PASS，其 4 类 findings 均已处理。§2.1 持久化 Ledger 与真实 attribution、§2.2 生产 refresh/audit 生命周期、§2.3/§2.5 GUI 实际投影、§3.7 WebScrape 审计 Vec 合并按评审结论显式延后至 P18-2/3/4/8/13/14 与 P19-2/10 并登记（deferred 保持）。详见 [P14-10](plan/P14-10-review-remediation.md) 与 [p14-review.md](docs/review/p14-review.md) §7.5。
 
 ## 目录（评审当时结构）
 

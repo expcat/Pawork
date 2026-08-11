@@ -1,6 +1,6 @@
 # P14-9：刷新调度、缓存与限额告警
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-6、P14-7、P14-8
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：scheduler/退避/告警状态机库级验证；生产 target 注册与审计 sink 延 P18；动作由 kind 派生） · 依赖：P14-6、P14-7、P14-8
 
 **最终目的**：让额度数据自动保持新鲜、查询不拖累体验，并在额度接近或触及限制时主动告警并给出降级建议，形成完整的「监控—预警—应对」闭环。
 
@@ -12,7 +12,7 @@
 2. **退避与失败回退** —— 目的：请求失败按指数退避，连续失败降级为本地推算（P14-7），并在 UI 标注数据可能过期。
 3. **预算友好** —— 目的：额度查询本身也消耗配额的供应商，限制刷新频率并优先复用缓存，避免「查额度」反向烧额度。
 4. **限额告警** —— 目的：基于水位阈值（如剩余 < 10%）触发告警事件，区分整体 / 5h / 周 / 月窗口。
-5. **应对建议** —— 目的：触限时给出可执行建议（降低并发 / 切换 provider / 等待重置 / 补充额度），交由预算（P3-6）与 UI 呈现。
+5. **应对建议（已收敛）** —— 目的：触限时给出可执行建议（降低并发 / 切换 provider / 等待重置 / 补充额度），交由预算（P3-6）与 UI 呈现。typed `AlertSuggestion` 已随 review-remediation 删除：跨边界只传稳定 `AlertKind` / scope / source，动作由消费端按 kind 派生，不再存储可派生且最终被丢弃的数据。
 6. **可观测与审计** —— 目的：刷新、命中缓存、失败、告警入结构化日志与审计（脱敏），便于排查「为什么额度看不到 / 不准」。
 7. **测试** —— 目的：模拟连续失败退避、水位阈值触发、刷新频率约束。
 
@@ -26,9 +26,9 @@
 
 - [x] 各窗口按配置周期自动刷新，失败后退避并降级本地推算
 - [x] 查询额度不显著消耗目标供应商配额
-- [x] 剩余水位低于阈值时触发告警与可执行建议
+- [x] 剩余水位低于阈值时触发告警（typed suggestions 已删除，动作由消费端按 `AlertKind` 派生）
 - [x] 刷新 / 告警行为入审计日志且脱敏
 
-接线边界：`RefreshScheduler` 已提供可取消自动循环、幂等 target 注册、手动触发、退避、审计与 `RunSupervisor::alert_sink()` 事件桥；具体远端 target 由后续账号 / 凭据控制面按绑定关系注册。未注册远端 target 时，`pawork usage` 与 GUI 查询保持 cache-only，只消费本地 Ledger 投影，不在交互路径发网络请求。
+接线边界：`RefreshScheduler` 已提供可取消自动循环、幂等 target 注册、手动触发、退避、审计与 `RunSupervisor::alert_sink()` 事件桥；具体远端 target 由后续账号 / 凭据控制面按绑定关系注册。未注册远端 target 时，`pawork usage` 与 GUI 查询保持 cache-only，只消费本地 Ledger 投影，不在交互路径发网络请求。scheduler 生命周期、远端 target 注册与持久审计 sink 尚未进入生产 composition root（仅库与测试闭环），延 P18 接线。
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [observability](../docs/features/observability.md) · [context（token 预算）](../docs/features/context.md) · [ROADMAP](../ROADMAP.md)

@@ -30,14 +30,19 @@ use agent_domain::{
     Timestamp, WorkspaceId,
 };
 use app_service::{AppService, ServiceOperation, ServiceRequest, ServiceResponse};
-use cli_command::UsageArgs;
-use cli_command::{Cli, Command, RemoteCommand, RunArgs, RunCommand, ServiceCommand};
+use cli_command::{
+    Cli, Command, RemoteCommand, RunArgs, RunCommand, ServiceCommand, UsageArgs, UsageUnit,
+    UsageWindow,
+};
 use cli_renderer::{render, render_event, OutputFormat};
 use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, ApprovalDecision, CommandSource, RunState, API_VERSION,
 };
-use core_api::{QuotaOverviewQuery, QuotaUnit, QuotaWindow};
+use core_api::{
+    QuotaConfidence, QuotaMeasure, QuotaOverviewQuery, QuotaOverviewView, QuotaReset, QuotaUnit,
+    QuotaWindow, WindowReadView,
+};
 use serde_json::Value;
 use subscription_hub::{EventHub, HubError};
 use transport_remote_placeholder::{
@@ -1139,7 +1144,8 @@ fn now_timestamp() -> Timestamp {
 
 // ---------- Usage（P14-8）参数 → 查询 / 文本渲染 ----------
 
-/// 把 [`UsageArgs`] 解析为 typed [`QuotaOverviewQuery`]（缺省 local/local/default）。
+/// 把 typed [`UsageArgs`] 直接映射为 typed [`QuotaOverviewQuery`]
+/// （缺省 local/local/default；无效 window/unit 已在 clap 解析边界拒绝）。
 fn usage_query_from_args(args: &UsageArgs) -> QuotaOverviewQuery {
     QuotaOverviewQuery {
         tenant_id: TenantId::new(args.tenant_or_default()),
@@ -1149,43 +1155,35 @@ fn usage_query_from_args(args: &UsageArgs) -> QuotaOverviewQuery {
         model_id: args.model.as_deref().map(ModelId::from),
         windows: args
             .window
-            .as_deref()
-            .map(|raw| raw.split(',').filter_map(parse_window).collect())
-            .filter(|w: &Vec<_>| !w.is_empty())
-            .unwrap_or_default(),
-        unit: args.unit.as_deref().and_then(parse_unit),
+            .iter()
+            .copied()
+            .map(usage_window_to_quota)
+            .collect(),
+        unit: args.unit.as_ref().map(usage_unit_to_quota),
     }
 }
 
-fn parse_window(raw: &str) -> Option<QuotaWindow> {
-    match raw.trim() {
-        "overall" => Some(QuotaWindow::Overall),
-        "rolling5h" => Some(QuotaWindow::Rolling5h),
-        "weekly" => Some(QuotaWindow::Weekly),
-        "monthly" => Some(QuotaWindow::Monthly),
-        _ => None,
+fn usage_window_to_quota(window: UsageWindow) -> QuotaWindow {
+    match window {
+        UsageWindow::Overall => QuotaWindow::Overall,
+        UsageWindow::Rolling5h => QuotaWindow::Rolling5h,
+        UsageWindow::Weekly => QuotaWindow::Weekly,
+        UsageWindow::Monthly => QuotaWindow::Monthly,
     }
 }
 
-fn parse_unit(raw: &str) -> Option<QuotaUnit> {
-    let trimmed = raw.trim();
-    if trimmed.eq_ignore_ascii_case("token") {
-        Some(QuotaUnit::Token)
-    } else if trimmed.eq_ignore_ascii_case("count") {
-        Some(QuotaUnit::Count)
-    } else if let Some(currency) = trimmed.strip_prefix("cost:") {
-        let currency = currency.trim().to_string();
-        if currency.is_empty() {
-            None
-        } else {
-            Some(QuotaUnit::Cost { currency })
-        }
-    } else {
-        None
+fn usage_unit_to_quota(unit: &UsageUnit) -> QuotaUnit {
+    match unit {
+        UsageUnit::Count => QuotaUnit::Count,
+        UsageUnit::Token => QuotaUnit::Token,
+        UsageUnit::Cost { currency } => QuotaUnit::Cost {
+            currency: currency.clone(),
+        },
     }
 }
 
-/// 把 QuotaOverview 响应渲染为人类可读文本：每个窗口一行 + 失败列表。
+/// 把 QuotaOverview 响应渲染为人类可读文本：先反序列化为 typed
+/// [`QuotaOverviewView`]，再按字段渲染；每个窗口一行 + 失败列表。
 fn render_usage_text(response: &AppResponseEnvelope) -> String {
     let value = match &response.response {
         AppResponse::Data(value) => value,
@@ -1194,119 +1192,84 @@ fn render_usage_text(response: &AppResponseEnvelope) -> String {
         }
         other => return format!("usage: unexpected response: {other:?}"),
     };
-    let scope = value.get("scope");
-    let from_cache = value
-        .get("from_cache")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let header = match scope {
-        Some(scope) => format!(
-            "usage for {tenant}/{account} (provider={provider}, cache={cache})",
-            tenant = scope
-                .get("tenant_id")
-                .and_then(Value::as_str)
-                .unwrap_or("?"),
-            account = scope
-                .get("account_id")
-                .and_then(Value::as_str)
-                .unwrap_or("?"),
-            provider = scope
-                .get("provider_id")
-                .and_then(Value::as_str)
-                .unwrap_or("?"),
-            cache = if from_cache { "hit" } else { "miss" },
-        ),
-        None => "usage overview".to_string(),
+    let view: QuotaOverviewView = match serde_json::from_value(value.clone()) {
+        Ok(view) => view,
+        Err(error) => return format!("usage: cannot render quota overview: {error}"),
     };
+    let header = format!(
+        "usage for {tenant}/{account} (provider={provider}, cache={cache})",
+        tenant = view.scope.tenant_id,
+        account = view.scope.account_id,
+        provider = view.scope.provider_id,
+        cache = if view.from_cache { "hit" } else { "miss" },
+    );
     let mut lines = vec![header];
-    if let Some(windows) = value.get("windows").and_then(Value::as_array) {
-        for entry in windows {
-            let window = entry.get("window").and_then(Value::as_str).unwrap_or("?");
-            let status = entry
-                .get("read")
-                .and_then(|r| r.get("status"))
-                .and_then(Value::as_str)
-                .unwrap_or("?");
-            let line = match status {
-                "ok" => {
-                    let snap = entry.get("read").and_then(|r| r.get("snapshot"));
-                    let unit = snap
-                        .and_then(|s| s.get("unit"))
-                        .map(unit_label)
-                        .unwrap_or_else(|| "?".into());
-                    let values = snap.and_then(|s| s.get("values"));
-                    let used = read_measure(values, "used");
-                    let limit = read_measure(values, "limit");
-                    let remaining = read_measure(values, "remaining");
-                    let reset = snap
-                        .and_then(|s| s.get("reset"))
-                        .and_then(|r| r.get("kind"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("?");
-                    let confidence = snap
-                        .and_then(|s| s.get("confidence"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("?");
-                    let provenance = snap
-                        .and_then(|s| s.get("provenance"))
-                        .and_then(|p| p.get("source"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("?");
-                    let stale = snap
-                        .and_then(|s| s.get("provenance"))
-                        .and_then(|p| p.get("stale"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
-                    format!(
-                        "{window} {unit}: used={used} limit={limit} remaining={remaining} reset={reset} confidence={confidence} source={provenance} stale={stale}",
-                    )
-                }
-                "failed" => {
-                    let count = entry
-                        .get("read")
-                        .and_then(|r| r.get("failures"))
-                        .and_then(Value::as_array)
-                        .map(Vec::len)
-                        .unwrap_or(0);
-                    format!("{window}: failed ({count} adapter failure(s))")
-                }
-                _ => format!("{window}: no data"),
-            };
-            lines.push(line);
-        }
+    for entry in &view.windows {
+        let window = window_label(entry.window);
+        let line = match &entry.read {
+            WindowReadView::Ok { snapshot, .. } => {
+                let snapshot = snapshot.as_ref();
+                format!(
+                    "{window} {unit}: used={used} limit={limit} remaining={remaining} reset={reset} confidence={confidence} source={source} stale={stale}",
+                    unit = unit_label(&snapshot.unit),
+                    used = measure_label(snapshot.values.used),
+                    limit = measure_label(snapshot.values.limit),
+                    remaining = measure_label(snapshot.values.remaining),
+                    reset = reset_label(&snapshot.reset),
+                    confidence = confidence_label(snapshot.confidence),
+                    source = snapshot.provenance.source,
+                    stale = snapshot.provenance.stale,
+                )
+            }
+            // 失败不一定都来自 adapter（如 scope 校验失败），文案不声称全是 adapter failure。
+            WindowReadView::Failed { failures } => {
+                format!("{window}: failed ({} failure(s))", failures.len())
+            }
+            WindowReadView::NoData => format!("{window}: no data"),
+        };
+        lines.push(line);
     }
     lines.join("\n")
 }
 
-fn read_measure(values: Option<&Value>, field: &str) -> String {
-    let Some(values) = values else {
-        return "?".into();
-    };
-    let measure = values.get(field);
-    let kind = measure
-        .and_then(|m| m.get("kind"))
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    match kind {
-        "exact" => measure
-            .and_then(|m| m.get("value"))
-            .and_then(Value::as_u64)
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "?".into()),
-        "infinite" => "inf".into(),
-        _ => "?".into(),
+fn window_label(window: QuotaWindow) -> &'static str {
+    match window {
+        QuotaWindow::Overall => "overall",
+        QuotaWindow::Rolling5h => "rolling5h",
+        QuotaWindow::Weekly => "weekly",
+        QuotaWindow::Monthly => "monthly",
     }
 }
 
-fn unit_label(unit: &Value) -> String {
-    match unit.get("kind").and_then(Value::as_str) {
-        Some("count") => "count".into(),
-        Some("token") => "token".into(),
-        Some("cost") => format!(
-            "cost:{}",
-            unit.get("currency").and_then(Value::as_str).unwrap_or("?")
-        ),
-        _ => "?".into(),
+fn unit_label(unit: &QuotaUnit) -> String {
+    match unit {
+        QuotaUnit::Count => "count".into(),
+        QuotaUnit::Token => "token".into(),
+        QuotaUnit::Cost { currency } => format!("cost:{currency}"),
+    }
+}
+
+fn measure_label(measure: QuotaMeasure) -> String {
+    match measure {
+        QuotaMeasure::Exact(value) => value.to_string(),
+        QuotaMeasure::Infinite => "inf".into(),
+        QuotaMeasure::Unknown => "?".into(),
+    }
+}
+
+fn reset_label(reset: &QuotaReset) -> &'static str {
+    match reset {
+        QuotaReset::Absolute { .. } => "absolute",
+        QuotaReset::Relative { .. } => "relative",
+        QuotaReset::Unknown => "unknown",
+    }
+}
+
+fn confidence_label(confidence: QuotaConfidence) -> &'static str {
+    match confidence {
+        QuotaConfidence::Exact => "exact",
+        QuotaConfidence::Derived => "derived",
+        QuotaConfidence::Scraped => "scraped",
     }
 }
 
@@ -1582,10 +1545,12 @@ mod tests {
 
     #[tokio::test]
     async fn usage_json_returns_envelope_with_no_data_windows() {
-        // 无 quota runtime：每个窗口 NoData + from_cache=false；JSON envelope 合法。
+        // 显式 provider（P14 review §2.4：缺失即 validation error）；无 quota
+        // runtime：每个窗口 NoData + from_cache=false；JSON envelope 合法。
         let service = Arc::new(AppService::new("usage-json"));
         let host = CliHost::new(service);
-        let cli = Cli::try_parse_from(["pawork", "--json", "usage"]).expect("parse");
+        let cli = Cli::try_parse_from(["pawork", "--json", "usage", "--provider", "mock"])
+            .expect("parse");
         let outcome = host.execute(cli).await;
         assert_eq!(outcome.exit_code, 0, "output: {}", outcome.output);
         let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("JSON");
@@ -1612,18 +1577,25 @@ mod tests {
             value["data"]["response"]["data"]["scope"]["account_id"],
             "local/default"
         );
+        // scope 携带显式 provider。
+        assert_eq!(
+            value["data"]["response"]["data"]["scope"]["provider_id"],
+            "mock"
+        );
     }
 
     #[tokio::test]
     async fn usage_text_lists_windows_and_cache_status() {
         let service = Arc::new(AppService::new("usage-text"));
         let host = CliHost::new(service);
-        let cli = Cli::try_parse_from(["pawork", "usage"]).expect("parse");
+        let cli = Cli::try_parse_from(["pawork", "usage", "--provider", "mock"]).expect("parse");
         let outcome = host.execute(cli).await;
         assert_eq!(outcome.exit_code, 0, "output: {}", outcome.output);
-        // 头部含默认作用域与 cache=miss；每个窗口一行 no data。
+        // 头部含默认作用域、显式 provider 与 cache=miss；每个窗口一行 no data。
         assert!(
-            outcome.output.contains("local/local/default"),
+            outcome
+                .output
+                .contains("usage for local/local/default (provider=mock, cache=miss)"),
             "output: {}",
             outcome.output
         );
@@ -1670,5 +1642,189 @@ mod tests {
             .as_str()
             .unwrap_or("?");
         assert_eq!(category, "authorization", "output: {}", outcome.output);
+    }
+
+    #[test]
+    fn usage_query_maps_typed_window_and_unit_directly() {
+        let args = UsageArgs {
+            tenant: None,
+            account: None,
+            provider: None,
+            credential: None,
+            model: None,
+            window: vec![UsageWindow::Weekly, UsageWindow::Monthly],
+            unit: Some(UsageUnit::Cost {
+                currency: "USD".into(),
+            }),
+        };
+        let query = usage_query_from_args(&args);
+        assert_eq!(query.tenant_id.as_str(), "local");
+        assert_eq!(query.account_id, "local/default");
+        assert_eq!(
+            query.windows,
+            vec![QuotaWindow::Weekly, QuotaWindow::Monthly]
+        );
+        assert_eq!(
+            query.unit,
+            Some(QuotaUnit::Cost {
+                currency: "USD".into()
+            })
+        );
+
+        // 缺省：空窗口表（= 所有窗口）+ 无单位。
+        let defaults = UsageArgs {
+            tenant: None,
+            account: None,
+            provider: None,
+            credential: None,
+            model: None,
+            window: Vec::new(),
+            unit: None,
+        };
+        let query = usage_query_from_args(&defaults);
+        assert!(query.windows.is_empty());
+        assert!(query.unit.is_none());
+        assert_eq!(query.provider_id, None);
+    }
+
+    #[test]
+    fn render_usage_text_renders_typed_view_fields() {
+        use core_api::{
+            QuotaAdapterKind, QuotaFailureView, QuotaProvenanceView, QuotaScopeView,
+            QuotaSnapshotView, QuotaValues, WindowReadEntry,
+        };
+
+        let scope = QuotaScopeView {
+            tenant_id: TenantId::new("local"),
+            account_id: "local/default".into(),
+            provider_id: ProviderId::from("mock"),
+            model_id: None,
+            credential_hint: None,
+        };
+        let view = QuotaOverviewView {
+            scope: scope.clone(),
+            windows: vec![
+                WindowReadEntry {
+                    window: QuotaWindow::Monthly,
+                    read: WindowReadView::Ok {
+                        snapshot: Box::new(QuotaSnapshotView {
+                            scope: scope.clone(),
+                            window: QuotaWindow::Monthly,
+                            unit: QuotaUnit::Cost {
+                                currency: "USD".into(),
+                            },
+                            values: QuotaValues {
+                                used: QuotaMeasure::Exact(120),
+                                limit: QuotaMeasure::Exact(1000),
+                                remaining: QuotaMeasure::Exact(880),
+                            },
+                            reset: QuotaReset::Absolute {
+                                at: Timestamp::from_unix_millis(1_000),
+                                uncertain: false,
+                            },
+                            confidence: QuotaConfidence::Exact,
+                            provenance: QuotaProvenanceView {
+                                adapter_kind: QuotaAdapterKind::ApiKeyApi,
+                                source: "mock-source".into(),
+                                endpoint: Some("https://example.test/billing".into()),
+                                fetched_at: Timestamp::from_unix_millis(1_000),
+                                observed_at: None,
+                                stale: false,
+                            },
+                            served_stale: false,
+                        }),
+                        failures: Vec::new(),
+                    },
+                },
+                WindowReadEntry {
+                    window: QuotaWindow::Weekly,
+                    read: WindowReadView::Ok {
+                        snapshot: Box::new(QuotaSnapshotView {
+                            scope: scope.clone(),
+                            window: QuotaWindow::Weekly,
+                            unit: QuotaUnit::Token,
+                            values: QuotaValues {
+                                used: QuotaMeasure::Exact(50),
+                                limit: QuotaMeasure::Infinite,
+                                remaining: QuotaMeasure::Unknown,
+                            },
+                            reset: QuotaReset::Relative {
+                                after_secs: 3600,
+                                observed_at: Timestamp::from_unix_millis(1_000),
+                                uncertain: true,
+                            },
+                            confidence: QuotaConfidence::Derived,
+                            provenance: QuotaProvenanceView {
+                                adapter_kind: QuotaAdapterKind::LocalLedger,
+                                source: "ledger".into(),
+                                endpoint: None,
+                                fetched_at: Timestamp::from_unix_millis(1_000),
+                                observed_at: Some(Timestamp::from_unix_millis(1_000)),
+                                stale: true,
+                            },
+                            served_stale: true,
+                        }),
+                        failures: Vec::new(),
+                    },
+                },
+                WindowReadEntry {
+                    window: QuotaWindow::Overall,
+                    read: WindowReadView::Failed {
+                        failures: vec![
+                            QuotaFailureView {
+                                adapter_kind: Some(QuotaAdapterKind::ApiKeyApi),
+                                error_code: "forbidden".into(),
+                                detail: "denied".into(),
+                                retry_after_ms: None,
+                            },
+                            QuotaFailureView {
+                                adapter_kind: Some(QuotaAdapterKind::WebScrape),
+                                error_code: "timeout".into(),
+                                detail: "timed out".into(),
+                                retry_after_ms: Some(5000),
+                            },
+                        ],
+                    },
+                },
+                WindowReadEntry {
+                    window: QuotaWindow::Rolling5h,
+                    read: WindowReadView::NoData,
+                },
+            ],
+            generated_at: Timestamp::from_unix_millis(2_000),
+            from_cache: true,
+        };
+        let envelope = AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: QueryId::from("render-test"),
+            responded_at: Timestamp::from_unix_millis(2_000),
+            response: AppResponse::Data(serde_json::to_value(&view).expect("serialize view")),
+        };
+
+        let text = render_usage_text(&envelope);
+        let expected = "\
+usage for local/local/default (provider=mock, cache=hit)
+monthly cost:USD: used=120 limit=1000 remaining=880 reset=absolute confidence=exact source=mock-source stale=false
+weekly token: used=50 limit=inf remaining=? reset=relative confidence=derived source=ledger stale=true
+overall: failed (2 failure(s))
+rolling5h: no data";
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn render_usage_text_handles_error_response() {
+        let envelope = AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: QueryId::from("error-test"),
+            responded_at: now_timestamp(),
+            response: AppResponse::Error(agent_domain::ErrorContext {
+                category: agent_domain::ErrorCategory::Authorization,
+                message: "not allowed".into(),
+                retryable: false,
+                retry_after_ms: None,
+                diagnostics: BTreeMap::new(),
+            }),
+        };
+        assert_eq!(render_usage_text(&envelope), "usage: error: not allowed");
     }
 }

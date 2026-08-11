@@ -20,12 +20,17 @@
 - 并发 admission 与 lease recovery projection
 - 并发、取消、重启回收测试
 
+## P14 现状与登记（2026-08-11）
+
+P14-9 的 `RefreshScheduler` target 需要 credential resolver，当前生产无 target、run usage 的 `credential_id` 恒为 `None`（见 [usage-quota](../docs/features/usage-quota.md)）。远端 quota 刷新与用量归属的凭据都应经 CredentialLease 注入。
+
 ## 验收标准
 
 - [ ] active lease 永不超过 configured account concurrency
 - [ ] release/reclaim 幂等，cancel/drop/restart 后无永久泄漏
 - [ ] `LeaseOutcome::Cancelled` 不降低 account health
 - [ ] Agent/Client 只能获得 lease，不能读取持久 Secret
+- [ ] quota-service refresh target 的 credential resolver 经 CredentialLease acquire → resolve → release 注入，release 不影响 account health
+- [ ] run usage 的 `credential_id` 来自实际 lease；QuotaRuntime 组合层接线后移除 `credential_id=None` 的 synthetic 路径
 
 **相关文档**：[provider-control-plane](../docs/features/provider-control-plane.md) · [multi-agent](../docs/features/multi-agent.md) · [ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [ROADMAP](../ROADMAP.md)
-

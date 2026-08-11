@@ -13,11 +13,11 @@
 //! 字符串绝不进入 [`QuotaError`] detail——错误文本一律固定分类（`Other` /
 //! `Parse` 变体与函数签名不变），防止恶意或异常远端回显 token 形态字符串。
 //!
-//! 凭证契约与 capability hint：能力矩阵（capability.rs）对 qwen 声明
-//! `CredentialKindHint::AccessKeyPair`，语义一致（确实需要 Alibaba AccessKey
-//! pair）；但运行时把 pair 打包进**单个** `provider_api::CredentialKind::ApiKey`
-//! secret（`provider_api` 没有独立的 AccessKeyPair kind），上层按 hint 组装
-//! 凭证时必须打包为 `AccessKeyId=...&AccessKeySecret=...`。
+//! 凭证契约：运行时把 Alibaba AccessKey pair 打包进**单个**
+//! `provider_api::CredentialKind::ApiKey` secret（`provider_api` 没有独立的
+//! AccessKeyPair kind），上层组装凭证时必须打包为
+//! `AccessKeyId=...&AccessKeySecret=...`。能力事实源是本适配器的
+//! [`QuotaAdapter::supports`]，不依赖静态能力矩阵。
 
 use std::sync::Arc;
 
@@ -29,8 +29,9 @@ use provider_api::{CredentialKind, ResolvedCredential};
 use provider_runtime::http::HttpClient;
 use sha1::Sha1;
 
-use crate::adapters::http_util::{api_get, now_millis, redact_endpoint};
+use crate::adapters::http_util::api_get;
 use crate::adapters::money::{decimal_string_to_micros, json_decimal_string};
+use crate::util::{epoch_to_utc, now_millis, redact_endpoint};
 use crate::{
     AdapterKind, Confidence, QuotaAdapter, QuotaError, QuotaMeasure, QuotaProvenance, QuotaRequest,
     QuotaReset, QuotaSnapshot, QuotaUnit, QuotaValues, QuotaWindow,
@@ -107,7 +108,8 @@ impl QuotaAdapter for QwenBssAdapter {
         let provenance = QuotaProvenance {
             adapter_kind: AdapterKind::ApiKeyApi,
             source: "qwen.bss-account".to_string(),
-            endpoint: Some(redact_endpoint(ENDPOINT)),
+            // 请求实际使用的 base（生产为 ENDPOINT，测试为注入的 wiremock URI）。
+            endpoint: Some(redact_endpoint(&self.base)),
             fetched_at: now,
             observed_at: Some(now),
             selector_version: Some(RPC_VERSION.to_string()),
@@ -288,11 +290,8 @@ fn percent_encode(input: &str) -> String {
 }
 
 fn iso8601_utc_now() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // 简化：以固定 epoch 偏移计算 UTC Y/M/D h:m:s（测试不依赖真实时间）。
+    let secs = now_millis().as_unix_millis() / 1_000;
+    // 日期转换复用 crate::util（单一事实源，P14 review §3.3）。
     let (y, mo, d, h, mi, s) = epoch_to_utc(secs);
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
 }
@@ -303,27 +302,6 @@ fn nonce() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     format!("{secs:x}")
-}
-
-/// Unix 秒 → UTC 民用时间（Howard Hinnant 算法）。
-fn epoch_to_utc(secs: u64) -> (i32, u32, u32, u32, u32, u32) {
-    let days = (secs / 86_400) as i64;
-    let rem = secs % 86_400;
-    let h = (rem / 3_600) as u32;
-    let mi = ((rem % 3_600) / 60) as u32;
-    let s = (rem % 60) as u32;
-
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64; // [0, 146096]
-    let yoe = ((doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365) as i64;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe as u64 + yoe as u64 / 4 - yoe as u64 / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = (if mo <= 2 { y + 1 } else { y }) as i32;
-    (y, mo, d, h, mi, s)
 }
 
 #[cfg(test)]
@@ -415,9 +393,10 @@ mod tests {
         assert_eq!(snap.confidence, Confidence::Exact);
         assert_eq!(snap.reset, QuotaReset::Unknown);
         assert_eq!(snap.provenance.source, "qwen.bss-account");
-        // provenance 的 endpoint 不含签名 query string。
+        // provenance 的 endpoint 基于实际请求 base（wiremock URI），不含签名 query。
         let ep = snap.provenance.endpoint.expect("endpoint");
         assert!(!ep.contains("Signature"), "query must be redacted: {ep}");
+        assert_eq!(ep, server.uri());
     }
 
     #[test]
@@ -485,13 +464,6 @@ mod tests {
         assert_eq!(percent_encode("a b"), "a%20b");
         assert_eq!(percent_encode("="), "%3D");
         assert_eq!(percent_encode("A-_.~"), "A-_.~");
-    }
-
-    #[test]
-    fn epoch_to_utc_at_known_timestamp() {
-        // 2026-01-01T00:00:00Z = 1767225600
-        let (y, mo, d, h, mi, s) = epoch_to_utc(1_767_225_600);
-        assert_eq!((y, mo, d, h, mi, s), (2026, 1, 1, 0, 0, 0));
     }
 
     #[test]
@@ -597,9 +569,8 @@ mod tests {
 
     #[test]
     fn runtime_credential_contract_is_api_key_with_packed_pair() {
-        // capability.rs 对 qwen 的 hint 是 AccessKeyPair；运行时契约是把 pair
-        // 打包进单个 CredentialKind::ApiKey secret（provider_api 无独立
-        // AccessKeyPair kind）。hint 消费方按此打包才不会破坏运行时校验。
+        // 运行时契约是把 Alibaba AccessKey pair 打包进单个
+        // CredentialKind::ApiKey secret（provider_api 无独立 AccessKeyPair kind）。
         let cred = ResolvedCredential::new(
             CredentialKind::ApiKey,
             "AccessKeyId=LTAI4xxx&AccessKeySecret=secretValue123",
@@ -608,8 +579,7 @@ mod tests {
         assert_eq!(id, "LTAI4xxx");
         assert_eq!(secret, "secretValue123");
 
-        // 非 ApiKey kind 即使内容格式正确也拒绝——hint 若被直接映射成其他 kind
-        // 会破坏契约。
+        // 非 ApiKey kind 即使内容格式正确也拒绝——上层若映射成其他 kind 会破坏契约。
         for kind in [CredentialKind::OAuthBearer, CredentialKind::SessionToken] {
             let cred = ResolvedCredential::new(
                 kind,

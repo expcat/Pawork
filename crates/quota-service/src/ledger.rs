@@ -437,8 +437,6 @@ fn window_reset(window: crate::QuotaWindow, now: Timestamp) -> QuotaReset {
 pub struct ExhaustionPrediction {
     /// Seconds until `used` reaches `limit` at the observed rate.
     pub seconds_until_exhausted: u64,
-    /// Confidence is always `Derived` because the rate is extrapolated.
-    pub uncertain: bool,
 }
 
 /// Predict when `used` will reach `limit`, given an observed usage rate.
@@ -466,7 +464,6 @@ pub fn predict_exhaustion(
     let seconds = remaining.checked_div(used_per_second)?;
     Some(ExhaustionPrediction {
         seconds_until_exhausted: seconds,
-        uncertain: true,
     })
 }
 
@@ -837,7 +834,6 @@ mod tests {
         let p =
             predict_exhaustion(QuotaMeasure::exact(25), QuotaMeasure::exact(100), 1).expect("some");
         assert_eq!(p.seconds_until_exhausted, 75);
-        assert!(p.uncertain);
     }
 
     #[test]

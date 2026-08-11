@@ -1,15 +1,15 @@
-//! 跨适配器共享的 HTTP / 货币 / 脱敏工具。
+//! 跨适配器共享的 HTTP / 货币工具。
 //!
 //! 所有 Provider 配额接口的底层取数都经这里的小工具收口：把
 //! [`provider_api::ProviderError`] 归一到 [`QuotaError`]，把端点 URL 中的
 //! query string 从 provenance 中抹掉，并为 WebScrape 提供不含明文 cookie /
 //! 原始 HTML 的审计片段。
+//!
+//! 时间与脱敏（[`now_millis`] / [`redact_endpoint`] / [`redact_secrets`]）的
+//! 唯一实现位于 [`crate::util`]，此处仅作 re-export 保持既有调用面不变。
 
-use std::time::SystemTime;
-
-use agent_domain::{CancellationToken, Timestamp};
+use agent_domain::CancellationToken;
 use provider_api::{ProviderError, ProviderErrorKind, ResolvedCredential};
-use url::Url;
 
 use crate::QuotaError;
 
@@ -146,14 +146,8 @@ fn request_error_to_quota_error(error: reqwest::Error) -> QuotaError {
     provider_error_to_quota_error(provider_err)
 }
 
-/// 当前 Unix 毫秒时间戳。适配器统一用此口径，避免引入 `chrono`。
-pub fn now_millis() -> Timestamp {
-    let ms = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or_default();
-    Timestamp::from_unix_millis(ms)
-}
+/// 时间与脱敏的单一事实源（实现见 [`crate::util`]）。
+pub use crate::util::{now_millis, redact_endpoint, redact_secrets};
 
 /// 把 [`provider_api::ProviderError`] 归一为配额错误。
 ///
@@ -230,88 +224,6 @@ pub fn transient_error(error: ProviderError) -> QuotaError {
     }
 }
 
-/// 把端点 URL 中的 query 与 fragment 抹掉，仅保留 scheme://host/path。
-///
-/// provenance 中的 endpoint 不得包含 query string（可能携带凭证或会话标识）。
-pub fn redact_endpoint(raw: &str) -> String {
-    match Url::parse(raw) {
-        Ok(url) => {
-            let mut stripped = String::new();
-            stripped.push_str(url.scheme());
-            stripped.push_str("://");
-            if let Some(host) = url.host_str() {
-                stripped.push_str(host);
-            }
-            if let Some(port) = url.port() {
-                stripped.push(':');
-                stripped.push_str(&port.to_string());
-            }
-            if !url.path().is_empty() && url.path() != "/" {
-                stripped.push_str(url.path());
-            }
-            stripped
-        }
-        Err(_) => redact_secrets(raw),
-    }
-}
-
-/// 抹去疑似 secret 的子串，并截断到安全长度。仅用于错误 / 审计文本。
-///
-/// 该函数是“尽力而为”的最后一道防线：真正的防线是 secret 永不进入这些文本。
-pub fn redact_secrets(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for chunk in value.split_whitespace() {
-        out.push_str(&mask_token_like(chunk));
-        out.push(' ');
-    }
-    let out = out.trim_end().to_string();
-    truncate_chars(&out, 512)
-}
-
-fn mask_token_like(chunk: &str) -> String {
-    // Error strings should carry categories, not credential-shaped values.
-    // Be deliberately conservative here: false-positive redaction is safer
-    // than exposing a short cookie or token returned by a remote endpoint.
-    let lower = chunk.to_ascii_lowercase();
-    let sensitive_label = [
-        "token",
-        "secret",
-        "authorization",
-        "password",
-        "cookie",
-        "access_key",
-        "session",
-    ]
-    .iter()
-    .any(|label| lower.contains(label));
-    let common_prefix = lower.contains("sk-")
-        || lower.contains("sk_")
-        || lower.contains("bearer")
-        || lower.contains("x-api-key");
-    let high_entropy = chunk.len() >= 40
-        && chunk
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/=".contains(&byte));
-    let looks_secret = sensitive_label || common_prefix || high_entropy;
-    if looks_secret {
-        "[REDACTED]".to_string()
-    } else {
-        chunk.to_string()
-    }
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let end = value
-        .char_indices()
-        .nth(max_chars)
-        .map(|(i, _)| i)
-        .unwrap_or(value.len());
-    format!("{}…", &value[..end])
-}
-
 /// 把 API key 包装成标准的 `Authorization: Bearer <key>` 头。
 pub fn bearer_headers(credential: &ResolvedCredential) -> Vec<(String, String)> {
     vec![(
@@ -320,7 +232,7 @@ pub fn bearer_headers(credential: &ResolvedCredential) -> Vec<(String, String)> 
     )]
 }
 
-/// 单次带取消竞争的睡眠。用于 WebScrape 的最小请求间隔与 OAuth 退避。
+/// 单次带取消竞争的睡眠。用于 WebScrape 的最小请求间隔。
 pub async fn sleep_or_cancel(
     duration: std::time::Duration,
     cancel: &CancellationToken,

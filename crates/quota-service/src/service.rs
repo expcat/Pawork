@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use agent_domain::{CancellationToken, Timestamp};
 use futures::future;
@@ -55,11 +55,7 @@ pub struct SystemQuotaClock;
 
 impl QuotaClock for SystemQuotaClock {
     fn now(&self) -> Timestamp {
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        Timestamp::from_unix_millis(millis)
+        crate::util::now_millis()
     }
 }
 
@@ -163,17 +159,31 @@ impl ScopeMatch {
 // Read outcomes
 // =========================================================================
 
-/// A typed failure contributed by one adapter during an aggregated read.
+/// A typed failure observed during an aggregated read.
+///
+/// `adapter_kind` is `Some` only when a real adapter produced the error.
+/// Query-level failures — invalid scope, no candidate adapter, cancelled
+/// singleflight, internal exhaustion — carry `None`: no adapter attribution
+/// is fabricated.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QuotaFailure {
-    pub adapter_kind: AdapterKind,
+    pub adapter_kind: Option<AdapterKind>,
     pub error: QuotaError,
 }
 
 impl QuotaFailure {
     pub fn new(adapter_kind: AdapterKind, error: QuotaError) -> Self {
         Self {
-            adapter_kind,
+            adapter_kind: Some(adapter_kind),
+            error,
+        }
+    }
+
+    /// Query-level failure with no adapter attribution (scope validation,
+    /// no candidate adapter, cancellation, internal exhaustion).
+    pub fn domain(error: QuotaError) -> Self {
+        Self {
+            adapter_kind: None,
             error,
         }
     }
@@ -203,6 +213,8 @@ pub enum WindowRead {
     /// At least one adapter produced a usable (possibly stale) snapshot.
     Ok(QuotaRead),
     /// Every candidate adapter failed and no stale cache fallback existed.
+    /// Per-adapter failures that coexist with a served snapshot stay in
+    /// [`QuotaRead::failures`].
     Failed { failures: Vec<QuotaFailure> },
 }
 
@@ -243,38 +255,21 @@ impl QuotaOverview {
 /// UI poll can never trigger a remote fetch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CacheRead {
-    /// A fresh (within TTL) cached snapshot exists. `from_cache` is always
-    /// `true` here; the field is kept for symmetry with the other variants
-    /// so callers can branch on a single discriminant.
-    Hit {
-        snapshot: QuotaSnapshot,
-        from_cache: bool,
-    },
+    /// A fresh (within TTL) cached snapshot exists.
+    Hit { snapshot: QuotaSnapshot },
     /// A cache entry exists but is older than TTL. Returned instead of serving
     /// potentially-stale data without an explicit refresh decision by the
     /// caller (the read path).
-    Stale {
-        snapshot: QuotaSnapshot,
-        from_cache: bool,
-    },
+    Stale { snapshot: QuotaSnapshot },
     /// No cache entry exists for this key. Distinct from a fetch failure so
     /// callers can decide whether to trigger a refresh.
-    NoData { from_cache: bool },
+    NoData,
 }
 
-/// One window's outcome inside a cache-only overview
-/// ([`QuotaService::overview_cache_only`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CacheWindowRead {
-    Hit(CacheRead),
-    Stale(CacheRead),
-    NoData(CacheRead),
-}
-
-impl CacheWindowRead {
+impl CacheRead {
     /// True if this window has a fresh cached hit.
     pub fn is_hit(&self) -> bool {
-        matches!(self, CacheWindowRead::Hit(_))
+        matches!(self, CacheRead::Hit { .. })
     }
 }
 
@@ -285,7 +280,7 @@ impl CacheWindowRead {
 #[derive(Clone, Debug)]
 pub struct CacheOverview {
     pub scope: QuotaScope,
-    pub windows: HashMap<crate::QuotaWindow, CacheWindowRead>,
+    pub windows: HashMap<crate::QuotaWindow, CacheRead>,
 }
 
 impl CacheOverview {
@@ -682,24 +677,22 @@ impl Singleflight {
 }
 
 /// Validate a request scope: tenant / account / provider must be non-empty.
-/// Returns the first typed failure so callers can short-circuit to `Err`.
-fn validate_scope(scope: &QuotaScope) -> Result<(), QuotaFailure> {
+/// Returns a plain domain error — scope validation is not an adapter failure,
+/// so no `AdapterKind` is fabricated.
+fn validate_scope(scope: &QuotaScope) -> Result<(), QuotaError> {
     if scope.tenant_id.as_str().trim().is_empty() {
-        return Err(QuotaFailure::new(
-            AdapterKind::ApiKeyApi,
-            QuotaError::unsupported("quota scope tenant_id must not be empty"),
+        return Err(QuotaError::unsupported(
+            "quota scope tenant_id must not be empty",
         ));
     }
     if scope.account_id.as_str().trim().is_empty() {
-        return Err(QuotaFailure::new(
-            AdapterKind::ApiKeyApi,
-            QuotaError::unsupported("quota scope account_id must not be empty"),
+        return Err(QuotaError::unsupported(
+            "quota scope account_id must not be empty",
         ));
     }
     if scope.provider_id.as_str().trim().is_empty() {
-        return Err(QuotaFailure::new(
-            AdapterKind::ApiKeyApi,
-            QuotaError::unsupported("quota scope provider_id must not be empty"),
+        return Err(QuotaError::unsupported(
+            "quota scope provider_id must not be empty",
         ));
     }
     Ok(())
@@ -796,16 +789,13 @@ impl QuotaService {
     /// or `Scraped` snapshot must not be republished as ledger-derived. The
     /// scope is validated first and the entry is stored under the full scope +
     /// window + unit key.
-    pub fn publish_local_snapshot(&self, snapshot: QuotaSnapshot) -> Result<(), QuotaFailure> {
+    pub fn publish_local_snapshot(&self, snapshot: QuotaSnapshot) -> Result<(), QuotaError> {
         validate_scope(&snapshot.scope)?;
         let is_local = snapshot.provenance.adapter_kind == AdapterKind::LocalLedger
             || snapshot.confidence == Confidence::Derived;
         if !is_local {
-            return Err(QuotaFailure::new(
-                AdapterKind::LocalLedger,
-                QuotaError::unsupported(
-                    "publish_local_snapshot only accepts LocalLedger/Derived snapshots",
-                ),
+            return Err(QuotaError::unsupported(
+                "publish_local_snapshot only accepts LocalLedger/Derived snapshots",
             ));
         }
         let key = CacheKey {
@@ -829,8 +819,10 @@ impl QuotaService {
     /// Single-window aggregated read.
     ///
     /// Returns [`QuotaRead`] when any candidate (or stale cache fallback)
-    /// produced a snapshot. Returns the typed failures when every candidate
-    /// failed AND no stale cache entry was available.
+    /// produced a snapshot. Returns the typed [`QuotaFailure`]s when every
+    /// candidate failed AND no stale cache entry was available. Adapter
+    /// failures carry their [`AdapterKind`]; query-level failures (scope,
+    /// cancellation, exhaustion) carry no attribution.
     ///
     /// Anonymous convenience entry point: passes `None` to adapters. Use
     /// [`QuotaService::read_with_credential`] to inject a credential.
@@ -925,12 +917,8 @@ impl QuotaService {
     /// [`CacheRead::Stale`] when an entry exists but is older than TTL, and
     /// [`CacheRead::NoData`] when there is no cached entry. `scope` is still
     /// validated (`tenant_id` / `account_id` / `provider_id` non-empty); an
-    /// invalid scope surfaces as a [`CacheRead::NoData`]-equivalent error via
-    /// [`Result::Err`].
-    pub fn read_cache_only(
-        &self,
-        request: &crate::QuotaRequest,
-    ) -> Result<CacheRead, QuotaFailure> {
+    /// invalid scope surfaces as a plain [`QuotaError`] via [`Result::Err`].
+    pub fn read_cache_only(&self, request: &crate::QuotaRequest) -> Result<CacheRead, QuotaError> {
         validate_scope(&request.scope)?;
         let key = CacheKey {
             scope: request.scope.clone(),
@@ -941,13 +929,11 @@ impl QuotaService {
         Ok(match self.inner.cache.get(&key) {
             Some(entry) if entry.is_fresh(now, self.inner.cache_ttl) => CacheRead::Hit {
                 snapshot: entry.snapshot,
-                from_cache: true,
             },
             Some(entry) => CacheRead::Stale {
                 snapshot: entry.snapshot,
-                from_cache: true,
             },
-            None => CacheRead::NoData { from_cache: false },
+            None => CacheRead::NoData,
         })
     }
 
@@ -961,7 +947,7 @@ impl QuotaService {
         scope: &QuotaScope,
         windows: &[crate::QuotaWindow],
         unit: &crate::QuotaUnit,
-    ) -> Result<CacheOverview, QuotaFailure> {
+    ) -> Result<CacheOverview, QuotaError> {
         validate_scope(scope)?;
         let now = self.inner.clock.now();
         let mut map = HashMap::with_capacity(windows.len());
@@ -972,17 +958,13 @@ impl QuotaService {
                 unit: unit.clone(),
             };
             let entry = match self.inner.cache.get(&key) {
-                Some(entry) if entry.is_fresh(now, self.inner.cache_ttl) => {
-                    CacheWindowRead::Hit(CacheRead::Hit {
-                        snapshot: entry.snapshot,
-                        from_cache: true,
-                    })
-                }
-                Some(entry) => CacheWindowRead::Stale(CacheRead::Stale {
+                Some(entry) if entry.is_fresh(now, self.inner.cache_ttl) => CacheRead::Hit {
                     snapshot: entry.snapshot,
-                    from_cache: true,
-                }),
-                None => CacheWindowRead::NoData(CacheRead::NoData { from_cache: false }),
+                },
+                Some(entry) => CacheRead::Stale {
+                    snapshot: entry.snapshot,
+                },
+                None => CacheRead::NoData,
             };
             map.insert(*window, entry);
         }
@@ -1001,8 +983,8 @@ async fn read_impl(
 ) -> Result<QuotaRead, Vec<QuotaFailure>> {
     // Scope validation: tenant / account / provider are mandatory isolation
     // keys and must be non-empty. Reject before touching cache or adapters.
-    if let Err(failure) = validate_scope(&request.scope) {
-        return Err(vec![failure]);
+    if let Err(error) = validate_scope(&request.scope) {
+        return Err(vec![QuotaFailure::domain(error)]);
     }
 
     let key = CacheKey {
@@ -1070,17 +1052,14 @@ async fn read_impl(
             // This caller's token fired — either a follower bowing out of its
             // wait, or a leader that aborted its own in-flight fetch. In both
             // cases shared work continues under a (possibly new) leader.
-            // Report a local Cancelled failure without touching the cache.
-            return Err(vec![QuotaFailure::new(
-                AdapterKind::LocalLedger,
-                QuotaError::Cancelled,
-            )]);
+            // Report a domain-level Cancelled failure without touching the
+            // cache. No adapter produced this error, so no attribution.
+            return Err(vec![QuotaFailure::domain(QuotaError::Cancelled)]);
         }
         SingleflightResult::Exhausted => {
-            return Err(vec![QuotaFailure::new(
-                AdapterKind::LocalLedger,
-                QuotaError::other("singleflight leader promotions exhausted"),
-            )]);
+            return Err(vec![QuotaFailure::domain(QuotaError::other(
+                "singleflight leader promotions exhausted",
+            ))]);
         }
     };
 
@@ -1131,10 +1110,11 @@ async fn fetch_fresh(
     // is never written into a snapshot, cache entry, or log.
     let candidates = candidates_for(inner, request);
     if candidates.is_empty() {
-        return ReadOutcome::AllFailed(vec![QuotaFailure::new(
-            AdapterKind::ApiKeyApi,
-            QuotaError::unsupported("no adapter supports this scope/window/unit"),
-        )]);
+        // No candidate adapter matched: a query-level failure, not an adapter
+        // error, so no `AdapterKind` is fabricated.
+        return ReadOutcome::AllFailed(vec![QuotaFailure::domain(QuotaError::unsupported(
+            "no adapter supports this scope/window/unit",
+        ))]);
     }
 
     // Run every candidate concurrently, racing each against cancellation.
@@ -1481,7 +1461,11 @@ mod tests {
             .expect("ok");
         assert_eq!(read.snapshot.confidence, Confidence::Exact);
         assert_eq!(read.failures.len(), 1);
-        assert_eq!(read.failures[0].adapter_kind, AdapterKind::OAuthApi);
+        assert_eq!(
+            read.failures[0].adapter_kind,
+            Some(AdapterKind::OAuthApi),
+            "real adapter failures must keep their attribution"
+        );
         assert!(matches!(
             read.failures[0].error,
             QuotaError::Forbidden { .. }
@@ -1854,6 +1838,10 @@ mod tests {
                 matches!(err[0].error, QuotaError::Unsupported { .. }),
                 "{label}: must be Unsupported, got {:?}",
                 err[0].error
+            );
+            assert_eq!(
+                err[0].adapter_kind, None,
+                "{label}: scope/no-candidate failures carry no adapter attribution"
             );
         }
     }
@@ -2299,7 +2287,7 @@ mod tests {
         let req = request(QuotaWindow::Monthly);
         let read = svc.read_cache_only(&req).expect("empty cache ok");
         assert!(
-            matches!(read, CacheRead::NoData { from_cache: false }),
+            matches!(read, CacheRead::NoData),
             "empty cache must be NoData, got {read:?}"
         );
         // No adapter, network, or singleflight involvement.
@@ -2328,7 +2316,7 @@ mod tests {
         // A stale entry surfaces as Stale (carrying the snapshot) — distinct
         // from an empty cache (NoData) — but it MUST NOT trigger a refetch.
         match read {
-            CacheRead::Stale { from_cache, .. } => assert!(from_cache),
+            CacheRead::Stale { .. } => {}
             other => panic!("expected Stale for aged entry, got {other:?}"),
         }
         assert_eq!(
@@ -2356,11 +2344,7 @@ mod tests {
         for _ in 0..5 {
             let read = svc.read_cache_only(&req).expect("hit ok");
             match read {
-                CacheRead::Hit {
-                    snapshot,
-                    from_cache,
-                } => {
-                    assert!(from_cache, "hit must carry from_cache=true");
+                CacheRead::Hit { snapshot } => {
                     assert_eq!(snapshot.window, QuotaWindow::Monthly);
                     assert!(!snapshot.provenance.stale);
                 }
@@ -2402,11 +2386,11 @@ mod tests {
         assert_eq!(overview.hit_count(), 1);
         assert!(matches!(
             overview.windows.get(&QuotaWindow::Monthly),
-            Some(CacheWindowRead::Hit(_))
+            Some(CacheRead::Hit { .. })
         ));
         assert!(matches!(
             overview.windows.get(&QuotaWindow::Weekly),
-            Some(CacheWindowRead::NoData(_))
+            Some(CacheRead::NoData)
         ));
         assert_eq!(
             calls.load(Ordering::SeqCst),
@@ -2434,7 +2418,7 @@ mod tests {
             unit: QuotaUnit::Token,
         };
         let err = svc.read_cache_only(&req).expect_err("rejected");
-        assert!(matches!(err.error, QuotaError::Unsupported { .. }));
+        assert!(matches!(err, QuotaError::Unsupported { .. }));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert_eq!(svc.cache_size(), 0);
     }
@@ -2542,7 +2526,10 @@ mod tests {
             AdapterKind::ApiKeyApi
         );
         assert_eq!(read.failures.len(), 1);
-        assert_eq!(read.failures[0].adapter_kind, AdapterKind::LocalLedger);
+        assert_eq!(
+            read.failures[0].adapter_kind,
+            Some(AdapterKind::LocalLedger)
+        );
     }
 
     #[tokio::test]
@@ -2592,7 +2579,7 @@ mod tests {
         let err = svc
             .publish_local_snapshot(snap)
             .expect_err("raw remote rejected");
-        assert!(matches!(err.error, QuotaError::Unsupported { .. }));
+        assert!(matches!(err, QuotaError::Unsupported { .. }));
         assert_eq!(svc.cache_size(), 0);
     }
 

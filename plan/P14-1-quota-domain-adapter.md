@@ -1,10 +1,10 @@
 # P14-1：Quota 领域模型与适配器 Trait
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P2-9、P2-7、P6-4、P18-2、P18-3
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：库级契约验证，生产接线待 P18） · 依赖：P2-9、P2-7、P6-4、P18-2、P18-3
 
 **最终目的**：为「显示绑定模型的用量与剩余额度」建立统一的领域模型与适配器抽象，使后续 P14-2 ~ P14-5 的三种适配器（API Key 直连 / OAuth 登录授权 / 网页抓取）与具体供应商实现都落在同一契约上，Agent Core 与 UI 只依赖 canonical 额度数据，不感知供应商差异。
 
-**涉及范围**：新增 `quota-service` crate；`provider-api`（复用 `ProviderId` / `ResolvedCredential`）
+**涉及范围**：新增 `quota-service` crate；实际依赖 `agent-domain`、`provider-api`、`provider-runtime`、`usage-ledger`（复用 `ProviderId` / `ResolvedCredential`）
 
 ## 细分步骤
 
@@ -32,4 +32,4 @@
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [providers](../docs/features/providers.md) · [models](../docs/features/models.md) · [ROADMAP](../ROADMAP.md)
 
-**依赖建议（2026-08 review）**：领域类型纯数据，复用 `provider-api` 既有 `ProviderId` / `ResolvedCredential` / `ProviderError`；不引入新依赖。Secret 经 `auth-service` 解析为 `ResolvedCredential`，不在本 crate 持有明文。
+**依赖建议（2026-08 review）**：领域类型纯数据，复用 `provider-api` 既有 `ProviderId` / `ResolvedCredential` / `ProviderError`；不引入新依赖。实际依赖与 `Cargo.toml` 一致为 `agent-domain` / `provider-api` / `provider-runtime` / `usage-ledger`（非「只依赖 provider-api」）；无 `auth-service` 参与——凭据经 provider contract 注入 `ResolvedCredential`，真实绑定/租约由 P18 账号控制面提供。

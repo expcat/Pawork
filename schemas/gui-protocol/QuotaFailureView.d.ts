@@ -2,9 +2,12 @@
 import type { QuotaAdapterKind } from "./QuotaAdapterKind";
 
 /**
- * typed 失败：适配器种类 + 错误码 + 脱敏详情。
+ * typed 失败：适配器种类（可空）+ 错误码 + 脱敏详情。
+ *
+ * `adapter_kind` 仅当失败确实来自某个 adapter 时为 `Some`；scope 校验、
+ * 无候选、取消、内部耗尽等查询级失败为 `None`，不虚构归属。
  */
-export type QuotaFailureView = { adapter_kind: QuotaAdapterKind,
+export type QuotaFailureView = { adapter_kind?: QuotaAdapterKind | null,
 /**
  * 错误短码（如 `forbidden`、`rate_limited`、`timeout`、`unsupported`）。
  */

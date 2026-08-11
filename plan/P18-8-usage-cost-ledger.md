@@ -20,12 +20,17 @@
 - pricing snapshot 与多维聚合 API
 - replay/idempotency/reconciliation/isolation tests
 
+## P14 现状与登记（2026-08-11）
+
+P14-7/8 本地 Ledger 为 `InMemoryUsageLedger`：`QuotaRuntime::production` 每次 CLI 进程新建，`pawork run` 的用量无法跨进程被 `pawork usage` 读取。`LedgerQuotaAdapter` / `refresh_local_cache` 的投影与对账已就绪，只等持久化账本注入（见 [usage-quota](../docs/features/usage-quota.md)）。
+
 ## 验收标准
 
 - [ ] usage 可按 tenant/account/session/agent 对账且重放不重复累计
 - [ ] retry/failover 的每次实际上游调用均可归属，客户端只看到合适的汇总
 - [ ] rate-card/version 与 confidence 可追溯
 - [ ] Phase 14 消费 ledger，不另建冲突的本地 usage 事实源
+- [ ] `QuotaRuntime::production` 注入持久化 `UsageLedger` 并在启动时 replay；`pawork run` 后新进程 `pawork usage` 可读到幂等记录
+- [ ] 本地 Quota 投影（`LedgerQuotaAdapter` / `refresh_local_cache`）消费同一持久账本，不另建第二套累计事实源
 
 **相关文档**：[tenant-audit](../docs/features/tenant-audit.md) · [usage-quota](../docs/features/usage-quota.md) · [models](../docs/features/models.md) · [ROADMAP](../ROADMAP.md)
-

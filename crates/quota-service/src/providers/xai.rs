@@ -22,8 +22,9 @@ use futures::future;
 use provider_api::{CredentialKind, ResolvedCredential};
 use provider_runtime::http::HttpClient;
 
-use crate::adapters::http_util::{api_get, bearer_headers, now_millis, redact_endpoint};
+use crate::adapters::http_util::{api_get, bearer_headers};
 use crate::adapters::money::cents_to_micros;
+use crate::util::{next_month_start_timestamp, now_millis, redact_endpoint};
 use crate::{
     AdapterKind, Confidence, QuotaAdapter, QuotaError, QuotaMeasure, QuotaProvenance, QuotaRequest,
     QuotaReset, QuotaSnapshot, QuotaUnit, QuotaValues, QuotaWindow,
@@ -211,7 +212,11 @@ impl XaiAdapter {
                     &used_url,
                 )
             }
-            (Err(limit_err), Err(used_err)) => Err(merge_dual_failures(limit_err, used_err)),
+            (Err(limit_err), Err(used_err)) => Err(crate::error::merge_dual_failures(
+                limit_err,
+                used_err,
+                "xai: both postpaid endpoints failed",
+            )),
         }
     }
 
@@ -227,7 +232,7 @@ impl XaiAdapter {
         // Overall（prepaid 余额）无重置概念。
         let reset = match request.window {
             QuotaWindow::Monthly => QuotaReset::Absolute {
-                at: next_month_start_timestamp(),
+                at: next_month_start_timestamp(now),
                 uncertain: false,
             },
             _ => QuotaReset::Unknown,
@@ -249,101 +254,6 @@ impl XaiAdapter {
                 stale: false,
             },
         })
-    }
-}
-
-/// 两个 postpaid 端点同时失败时的合并分类。
-///
-/// 优先级（高 → 低）：`Cancelled`、`Unauthorized` / `ReauthorizationRequired`、
-/// `RateLimited`（保留两端最大 `retry_after_ms`）、`Forbidden`、retryable
-/// （`Timeout` / `Transient`）、其余（`Unsupported` / `Parse` / `Other`）。
-/// 任一高优分类存在即整体保留该分类，绝不因两端同时失败统一塌缩为 `Other`。
-/// 组合消息只含固定文本与 typed 分类名，不携带任一子错误的 `detail`——远端
-/// detail 与潜在 secret 永不进入错误文本。
-fn merge_dual_failures(limit_err: QuotaError, used_err: QuotaError) -> QuotaError {
-    let combined = format!(
-        "xai: both postpaid endpoints failed (limit: {}; used: {})",
-        failure_kind_label(&limit_err),
-        failure_kind_label(&used_err),
-    );
-    let (dominant, other) = if failure_priority(&limit_err) >= failure_priority(&used_err) {
-        (&limit_err, &used_err)
-    } else {
-        (&used_err, &limit_err)
-    };
-    match dominant {
-        QuotaError::Cancelled => QuotaError::Cancelled,
-        QuotaError::Unauthorized { .. } => QuotaError::unauthorized(combined),
-        QuotaError::ReauthorizationRequired { .. } => {
-            QuotaError::reauthorization_required(combined)
-        }
-        QuotaError::RateLimited { .. } => QuotaError::rate_limited(
-            combined,
-            max_retry_after(dominant.retry_after_ms(), other.retry_after_ms()),
-        ),
-        QuotaError::Forbidden { .. } => QuotaError::forbidden(combined),
-        QuotaError::Timeout {
-            status,
-            retry_after_ms,
-            ..
-        } => QuotaError::Timeout {
-            detail: combined,
-            status: *status,
-            retry_after_ms: *retry_after_ms,
-        },
-        QuotaError::Transient {
-            status,
-            retry_after_ms,
-            ..
-        } => QuotaError::Transient {
-            detail: combined,
-            status: *status,
-            retry_after_ms: *retry_after_ms,
-        },
-        // Unsupported / Parse / Other：无更高优分类时保持 Other 组合消息。
-        _ => QuotaError::other(combined),
-    }
-}
-
-/// 错误分类的合并优先级（数值越大越优先）。
-fn failure_priority(err: &QuotaError) -> u8 {
-    match err {
-        QuotaError::Cancelled => 10,
-        QuotaError::Unauthorized { .. } => 9,
-        QuotaError::ReauthorizationRequired { .. } => 8,
-        QuotaError::RateLimited { .. } => 7,
-        QuotaError::Forbidden { .. } => 6,
-        QuotaError::Timeout { .. } => 5,
-        QuotaError::Transient { .. } => 4,
-        QuotaError::Unsupported { .. } => 3,
-        QuotaError::Parse { .. } => 2,
-        QuotaError::Other { .. } => 1,
-    }
-}
-
-/// 组合消息中使用的固定分类名（不含任何远端 detail）。
-fn failure_kind_label(err: &QuotaError) -> &'static str {
-    match err {
-        QuotaError::Cancelled => "cancelled",
-        QuotaError::Unauthorized { .. } => "unauthorized",
-        QuotaError::ReauthorizationRequired { .. } => "reauthorization required",
-        QuotaError::RateLimited { .. } => "rate limited",
-        QuotaError::Forbidden { .. } => "forbidden",
-        QuotaError::Timeout { .. } => "timed out",
-        QuotaError::Transient { .. } => "transient failure",
-        QuotaError::Unsupported { .. } => "unsupported",
-        QuotaError::Parse { .. } => "parse failure",
-        QuotaError::Other { .. } => "failed",
-    }
-}
-
-/// 两端 `retry_after` 取较大者（保守等待更长），任一缺失取另一侧。
-fn max_retry_after(a: Option<u64>, b: Option<u64>) -> Option<u64> {
-    match (a, b) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
     }
 }
 
@@ -397,46 +307,6 @@ fn expect_usd_currency(
         return Err(QuotaError::parse(format!("{what}: unexpected currency")));
     }
     Ok(())
-}
-
-/// 下月 1 号 00:00 UTC 的 Timestamp（自然月 reset 时刻）。
-fn next_month_start_timestamp() -> agent_domain::Timestamp {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = (now / 86_400) as i64;
-    let (y, mo, _, _, _, _) = epoch_to_utc_from_days(days);
-    // 下月：mo in 1..=12；mo==12 → 次年 1 月。
-    let (ny, nmo) = if mo == 12 { (y + 1, 1) } else { (y, mo + 1) };
-    let secs = civil_to_days(ny, nmo, 1) * 86_400;
-    agent_domain::Timestamp::from_unix_millis(secs as u64 * 1_000)
-}
-
-/// Unix 天数 → UTC 民用日期（Howard Hinnant 算法）。
-fn epoch_to_utc_from_days(days: i64) -> (i32, u32, u32, u32, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = ((doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365) as i64;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe as u64 + yoe as u64 / 4 - yoe as u64 / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = (if mo <= 2 { y + 1 } else { y }) as i32;
-    (y, mo, d, 0, 0, 0)
-}
-
-/// 民用日期 → Unix 天数（UTC）。
-fn civil_to_days(y: i32, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { (y - 1) as i64 } else { y as i64 };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as u64;
-    let m_adj = if m > 2 { m as i64 - 3 } else { m as i64 + 9 };
-    let doy = (153 * m_adj as u64 + 2) / 5 + d as u64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe as i64 - 719_468
 }
 
 /// 在 `value.<outer>` 下按 `inner` 键找整数 cents。
@@ -858,7 +728,7 @@ mod tests {
             QuotaError::Forbidden { detail } => {
                 assert_eq!(
                     detail,
-                    "xai: both postpaid endpoints failed (limit: forbidden; used: forbidden)"
+                    "xai: both postpaid endpoints failed (limit: forbidden, used: forbidden)"
                 );
             }
             other => panic!("expected Forbidden, got {other:?}"),
@@ -986,7 +856,7 @@ mod tests {
                 );
                 assert_eq!(
                     detail,
-                    "xai: both postpaid endpoints failed (limit: forbidden; used: forbidden)"
+                    "xai: both postpaid endpoints failed (limit: forbidden, used: forbidden)"
                 );
             }
             other => panic!("expected Forbidden, got {other:?}"),
@@ -994,14 +864,13 @@ mod tests {
     }
 
     #[test]
-    fn merge_dual_failures_preserves_classifications() {
-        // Cancelled 最高优先。
-        let err = merge_dual_failures(QuotaError::Cancelled, QuotaError::forbidden("x"));
-        assert!(matches!(err, QuotaError::Cancelled));
-        // 鉴权（401）优先于 Forbidden，且组合消息不含子错误 detail（潜在 secret）。
-        let err = merge_dual_failures(
+    fn dual_failure_uses_unified_merge_with_provider_context() {
+        // 优先级表与分类语义由 crate::error::merge_dual_failures 统一维护
+        // （P14 review §3.4）；此处只验证 provider 上下文消息与不泄漏。
+        let err = crate::error::merge_dual_failures(
             QuotaError::unauthorized("sk-secret"),
             QuotaError::forbidden("sk-secret"),
+            "xai: both postpaid endpoints failed",
         );
         match err {
             QuotaError::Unauthorized { detail } => {
@@ -1010,10 +879,11 @@ mod tests {
             }
             other => panic!("expected Unauthorized, got {other:?}"),
         }
-        // RateLimited 保留两端最大 retry_after。
-        let err = merge_dual_failures(
+        // RateLimited 保留两端最大 retry_after（统一归并语义）。
+        let err = crate::error::merge_dual_failures(
             QuotaError::rate_limited("x", Some(3_000)),
             QuotaError::rate_limited("x", Some(5_000)),
+            "xai: both postpaid endpoints failed",
         );
         match err {
             QuotaError::RateLimited { retry_after_ms, .. } => {
@@ -1021,22 +891,17 @@ mod tests {
             }
             other => panic!("expected RateLimited, got {other:?}"),
         }
-        // Forbidden 优先于 retryable。
-        let err = merge_dual_failures(
-            QuotaError::transient("x", Some(503), None),
-            QuotaError::forbidden("x"),
+        // 低优分类保留（Parse 不塌缩为 Other），消息只含固定标签。
+        let err = crate::error::merge_dual_failures(
+            QuotaError::parse("a"),
+            QuotaError::other("b"),
+            "xai: both postpaid endpoints failed",
         );
-        assert!(matches!(err, QuotaError::Forbidden { .. }));
-        // retryable 保留（Timeout）。
-        let err = merge_dual_failures(QuotaError::timeout("x"), QuotaError::parse("x"));
-        assert!(err.retryable());
-        // 两端均无高优分类才走 Other 组合消息。
-        let err = merge_dual_failures(QuotaError::parse("a"), QuotaError::other("b"));
         match err {
-            QuotaError::Other { detail } => {
+            QuotaError::Parse { detail } => {
                 assert!(detail.contains("both postpaid endpoints failed"));
             }
-            other => panic!("expected Other, got {other:?}"),
+            other => panic!("expected Parse, got {other:?}"),
         }
     }
 

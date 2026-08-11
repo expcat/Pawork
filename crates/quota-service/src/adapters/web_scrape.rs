@@ -34,8 +34,8 @@ use sha1::Sha1;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
-    AdapterKind, Confidence, QuotaAdapter, QuotaError, QuotaMeasure, QuotaProvenance, QuotaRequest,
-    QuotaReset, QuotaScope, QuotaSnapshot, QuotaUnit, QuotaValues, QuotaWindow,
+    AdapterKind, Confidence, QuotaAdapter, QuotaError, QuotaProvenance, QuotaRequest, QuotaReset,
+    QuotaScope, QuotaSnapshot, QuotaUnit, QuotaValues, QuotaWindow,
 };
 
 use super::http_util::{api_get_text, now_millis, redact_endpoint, sleep_or_cancel};
@@ -403,13 +403,10 @@ fn extracted_field_count(values: &QuotaValues) -> u32 {
     count
 }
 
-#[allow(dead_code)]
-fn _measure_used(_: QuotaMeasure) {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AccountId;
+    use crate::{AccountId, QuotaMeasure};
     use agent_domain::{ProviderId, TenantId};
     use provider_api::CredentialKind;
     use provider_runtime::http::{HttpClient, HttpClientConfig};

@@ -41,8 +41,8 @@ Pawork/
 | `auth-service` | 认证方式、Secret 后端、OAuth（PKCE/Device Flow/refresh/callback） | 依赖 provider-api |
 | `model-registry` | 模型目录、别名、能力、定价 | 依赖 provider-api |
 | `tenant-service` | Tenant/Principal、RBAC、provider/model/account policy、legacy `local/default` 映射 | 依赖 agent-domain；通过 API 与 policy-engine 组合，不反向依赖 Provider adapter；P18-2/P18-9。Phase 12 已交付最小契约（`TenantPolicy` / `TenantPolicyEngine` + `InMemoryTenantPolicyEngine`，agent 与 request 并发独立计数、daily 预算、model allowlist）；完整 RBAC/迁移待 P18 |
-| `usage-ledger` | tenant/account/session/agent 多维 Usage/Cost 持久账本 | 依赖 agent-domain / agent-events / model-registry；P18-8。Phase 12 已交付最小契约（`UsageRecord` / `UsageLedger` + `InMemoryUsageLedger`，多维过滤、聚合、跨 tenant 隔离）；SQLite 持久化与 retention 待 P18 |
-| `quota-service` | account-scoped 用量与额度监控、多适配器、窗口聚合与缓存 | 依赖 provider-api；消费 tenant-service / usage-ledger，复用 auth-service / provider-runtime |
+| `usage-ledger` | tenant/account/session/agent 多维 Usage/Cost 持久账本 | 依赖 agent-domain / agent-events / model-registry；P18-8。Phase 12 已交付最小契约（`UsageRecord` / `UsageLedger` + `InMemoryUsageLedger`，多维过滤、聚合、跨 tenant 隔离）。Phase 14 生产路径仅使用进程内 `InMemoryUsageLedger`（每次 CLI 进程新建），本地 Quota 投影（`LedgerQuotaAdapter`）消费同一账本；SQLite 持久化、启动 replay 与 retention 待 P18-8 |
+| `quota-service` | account-scoped 用量与额度监控、多适配器、窗口聚合与缓存 | 依赖 agent-domain / provider-api / provider-runtime（HTTP 客户端与错误分类）/ usage-ledger；不依赖 auth-service / tenant-service。Phase 14 现状：无 OAuth 通用层（`AdapterKind::OAuthApi` 仅契约）、API Key 通用层仅 Moonshot 消费、生产仅注册 `LocalLedger` 适配器；远端 refresh target 与 scheduler 生命周期待 P18-14 |
 | `config-service` | 确定性配置 schema、来源发现与层级合并 | 独立；供 context-engine / policy / resource-loader 等消费 |
 | `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain / resource-loader；只消费中性 DTO，不参与文件 IO |
 | `compaction-engine` | 自动 / 手动压缩、摘要 | 依赖 agent-events / session-store |

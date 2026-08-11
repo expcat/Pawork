@@ -20,12 +20,17 @@
 - legacy tenant migration / projection backfill
 - identity propagation 与隔离单元测试
 
+## P14 现状与登记（2026-08-11）
+
+P14-7 的 run usage 归属目前是 synthetic：`RunSupervisor::record_run_usage` 固定 `tenant=local`、`account=local/default`、`credential_id=None`，principal/agent 为默认身份，本地 Ledger 进程内有效（见 [usage-quota](../docs/features/usage-quota.md)）。durable 归属由本任务与 P18-3/4/8 共同闭合。
+
 ## 验收标准
 
 - [ ] 未配置 tenant 的旧用户无感进入 `local/default`
 - [ ] 新 Session/Agent/Account/Usage/Audit 不存在无 tenant 归属的持久记录
 - [ ] Tenant A 的查询不能返回 Tenant B 的记录
 - [ ] migration 可重复执行且失败不留下半迁移状态
+- [ ] `record_run_usage` 的 tenant/principal/account/credential 来自真实 IdentityContext 与 binding/lease，生产路径不再硬编码 synthetic 默认值
+- [ ] usage 记录 durable 归属：CLI 进程重启后仍可按 tenant/account/credential/provider/model 查询（配合 P18-8 持久化）
 
 **相关文档**：[tenant-audit](../docs/features/tenant-audit.md) · [sessions](../docs/features/sessions.md) · [ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [ROADMAP](../ROADMAP.md)
-

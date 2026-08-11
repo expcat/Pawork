@@ -27,7 +27,7 @@ use agent_events::{AgentEvent, AgentEventEnvelope};
 use async_trait::async_trait;
 use core_api::{
     AppEvent, AppEventEnvelope, CommandSource, EventSource, EventStream, GlobalSequence,
-    QuotaOverviewQuery, QuotaUnit, RunState, API_VERSION,
+    QuotaAlertKind, QuotaOverviewQuery, QuotaUnit, RunState, API_VERSION,
 };
 use model_registry::ModelRegistry;
 use provider_api::ModelProvider;
@@ -457,11 +457,14 @@ impl std::fmt::Debug for RunSupervisor {
 ///
 /// - 信封：`Core` source、`Global` stream；`global_sequence` 与 run 事件共享
 ///   （原子递增保持跨流连续），`stream_sequence` 独立维护（Global 流唯一持有者）。
-/// - 负载：稳定 severity（kind → severity 映射稳定，其中 Threshold 依据
-///   `advisory` 区分 Critical/Warning）、window/unit 1:1 镜像、model 原样透传、
+/// - 负载：稳定 `kind`（[`core_api::QuotaAlertKind`]，与 quota-service
+///   `AlertKind` 1:1 镜像）、稳定 severity（kind → severity 映射稳定，其中
+///   Threshold 依据 `advisory` 区分 Critical/Warning）、window/unit 1:1 镜像、
+///   model 原样透传、`source` 经
+///   [`quota_service::adapters::http_util::redact_secrets`] 二次脱敏后透传、
 ///   `credential_hint` 经 [`core_api::mask_credential_hint`] 脱敏；`snapshot`
-///   恒为 `None`（Alert 不携带快照）。消息只含 kind 与剩余百分比，永不包含
-///   `source` 标签或任何凭据。
+///   恒为 `None`（Alert 不携带快照）。消息只含 kind 与剩余百分比，永不
+///   包含 source 或任何凭据。
 struct AppQuotaAlertSink {
     limiter: Arc<RateLimiter>,
     global_sequence: Arc<AtomicU64>,
@@ -500,7 +503,15 @@ fn quota_alert_from(alert: &quota_service::refresh::Alert) -> core_api::QuotaAle
         model_id: alert.scope.model_id.clone(),
         window: quota_window_from(alert.window),
         unit: quota_unit_from(&alert.unit),
+        // 新事件总是带完整归属（Some）；None 仅用于旧持久化 JSON 的重放。
+        kind: Some(quota_alert_kind_from(alert.kind)),
         severity: alert_severity_from(alert),
+        // 生产路径的 Alert.source 已由 quota-service 脱敏；此处再用现有公开
+        // helper 二次脱敏（最后防线），确保异常构造的 source 也不会把
+        // query/fragment/secret 带进可持久化事件。
+        source: Some(quota_service::adapters::http_util::redact_secrets(
+            &alert.source,
+        )),
         message: alert_message(alert),
         snapshot: None,
         credential_hint: alert
@@ -508,6 +519,19 @@ fn quota_alert_from(alert: &quota_service::refresh::Alert) -> core_api::QuotaAle
             .credential_id
             .as_deref()
             .and_then(core_api::mask_credential_hint),
+    }
+}
+
+/// 稳定 kind 映射：与 quota-service `AlertKind` 1:1 镜像，枚举形态冻结。
+fn quota_alert_kind_from(kind: quota_service::refresh::AlertKind) -> QuotaAlertKind {
+    match kind {
+        quota_service::refresh::AlertKind::Threshold => QuotaAlertKind::Threshold,
+        quota_service::refresh::AlertKind::Recovered => QuotaAlertKind::Recovered,
+        quota_service::refresh::AlertKind::Stale => QuotaAlertKind::Stale,
+        quota_service::refresh::AlertKind::ReauthorizationRequired => {
+            QuotaAlertKind::ReauthorizationRequired
+        }
+        quota_service::refresh::AlertKind::PartialFailure => QuotaAlertKind::PartialFailure,
     }
 }
 
@@ -674,7 +698,6 @@ fn envelope_matches_run(
 /// 在当前 run 上下文不可得，留默认（账本不校验其非空）。费用按 builtin 定价
 /// 估算（`cost_micros`/`currency`）；未知模型/无定价回退 0/USD，不影响记账。
 fn record_run_usage(
-    runtime: &Arc<crate::QuotaRuntime>,
     run_id: &RunId,
     session_id: &SessionId,
     provider_id: &ProviderId,
@@ -683,7 +706,6 @@ fn record_run_usage(
     occurred_at_ms: u64,
     usage: &agent_domain::TokenUsage,
 ) -> usage_ledger::UsageRecord {
-    let _ = runtime; // ledger 通过返回的 record 由调用方 await 写入。
     let estimated = ModelRegistry::builtin().estimate_cost(model.as_str(), usage);
     let (cost_micros, currency) = match &estimated {
         Some(cost) => (cost.amount_micros, cost.currency.clone()),
@@ -870,7 +892,6 @@ fn spawn_run_task(
                 };
                 if let Some((usage, occurred_at_ms)) = finalized {
                     let record = record_run_usage(
-                        runtime,
                         &run_id,
                         &session_id,
                         &provider_id,
@@ -1500,7 +1521,6 @@ mod tests {
                     source: "api_key_api:https://api.example.com/v1/billing?key=sk-raw-secret"
                         .to_string(),
                     advisory,
-                    suggestions: kind.suggestions(),
                     at_ms: 1_700_000_000_000,
                 }
             };
@@ -1543,12 +1563,20 @@ mod tests {
 
         match &events[0].payload {
             AppEvent::QuotaAlert { alert } => {
+                assert_eq!(alert.kind, Some(core_api::QuotaAlertKind::Threshold));
                 assert_eq!(alert.severity, core_api::QuotaAlertSeverity::Warning);
                 assert_eq!(alert.window, core_api::QuotaWindow::Monthly);
                 assert_eq!(alert.unit, core_api::QuotaUnit::Token);
                 assert_eq!(alert.provider_id, ProviderId::from("mock"));
                 assert_eq!(alert.model_id.as_ref(), Some(&ModelId::from("gpt-4o")));
                 assert_eq!(alert.snapshot, None);
+                // source 二次脱敏：即使上游异常携带原始凭据，事件也不得泄漏。
+                assert_eq!(
+                    alert.source,
+                    Some("[REDACTED]".to_string()),
+                    "raw secret source must be redacted, got: {}",
+                    alert.source.as_deref().unwrap_or("")
+                );
                 // 脱敏：credential_hint 为掩码，消息不含 source/凭据原文。
                 assert_eq!(
                     alert.credential_hint.as_deref(),
@@ -1567,12 +1595,18 @@ mod tests {
         }
         match &events[1].payload {
             AppEvent::QuotaAlert { alert } => {
+                assert_eq!(
+                    alert.kind,
+                    Some(core_api::QuotaAlertKind::ReauthorizationRequired)
+                );
                 assert_eq!(alert.severity, core_api::QuotaAlertSeverity::Critical);
+                assert_eq!(alert.source.as_deref(), Some("[REDACTED]"));
             }
             other => panic!("unexpected payload: {other:?}"),
         }
         match &events[2].payload {
             AppEvent::QuotaAlert { alert } => {
+                assert_eq!(alert.kind, Some(core_api::QuotaAlertKind::Threshold));
                 assert_eq!(
                     alert.severity,
                     core_api::QuotaAlertSeverity::Critical,
@@ -1580,8 +1614,187 @@ mod tests {
                 );
                 assert_eq!(alert.window, core_api::QuotaWindow::Monthly);
                 assert!(alert.message.contains("3%"), "消息携带剩余百分比");
+                assert_eq!(alert.source.as_deref(), Some("[REDACTED]"));
             }
             other => panic!("unexpected payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quota_alert_kind_mapping_is_exhaustive_and_stable() {
+        // P14 review §2.6：跨边界必须完整映射稳定 AlertKind，不能丢弃。
+        // 每个 quota-service kind → core_api kind + severity 的映射是冻结
+        // 契约（Threshold 按 advisory 区分 Critical/Warning）。
+        let scope = quota_service::QuotaScope {
+            tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+            account_id: quota_service::AccountId::new("account-1".to_string()),
+            credential_id: None,
+            provider_id: ProviderId::from("mock"),
+            model_id: None,
+        };
+        let alert_for = |kind: quota_service::refresh::AlertKind, advisory: bool| {
+            quota_service::refresh::Alert {
+                scope: scope.clone(),
+                window: quota_service::QuotaWindow::Weekly,
+                unit: quota_service::QuotaUnit::Count,
+                kind,
+                remaining_percent: None,
+                source: "ApiKeyApi:api.example.com/v1/usage".to_string(),
+                advisory,
+                at_ms: 1,
+            }
+        };
+        let cases = [
+            (
+                quota_service::refresh::AlertKind::Threshold,
+                false,
+                core_api::QuotaAlertKind::Threshold,
+                core_api::QuotaAlertSeverity::Critical,
+            ),
+            (
+                quota_service::refresh::AlertKind::Threshold,
+                true,
+                core_api::QuotaAlertKind::Threshold,
+                core_api::QuotaAlertSeverity::Warning,
+            ),
+            (
+                quota_service::refresh::AlertKind::Recovered,
+                false,
+                core_api::QuotaAlertKind::Recovered,
+                core_api::QuotaAlertSeverity::Info,
+            ),
+            (
+                quota_service::refresh::AlertKind::Stale,
+                true,
+                core_api::QuotaAlertKind::Stale,
+                core_api::QuotaAlertSeverity::Warning,
+            ),
+            (
+                quota_service::refresh::AlertKind::ReauthorizationRequired,
+                false,
+                core_api::QuotaAlertKind::ReauthorizationRequired,
+                core_api::QuotaAlertSeverity::Critical,
+            ),
+            (
+                quota_service::refresh::AlertKind::PartialFailure,
+                false,
+                core_api::QuotaAlertKind::PartialFailure,
+                core_api::QuotaAlertSeverity::Warning,
+            ),
+        ];
+        for (kind, advisory, expected_kind, expected_severity) in cases {
+            let alert = alert_for(kind, advisory);
+            let view = quota_alert_from(&alert);
+            assert_eq!(view.kind, Some(expected_kind), "kind 映射漂移: {kind:?}");
+            assert_eq!(
+                view.severity, expected_severity,
+                "severity 映射漂移: {kind:?} advisory={advisory}"
+            );
+            assert_eq!(view.window, core_api::QuotaWindow::Weekly);
+            assert_eq!(view.unit, core_api::QuotaUnit::Count);
+            assert_eq!(
+                view.source.as_deref(),
+                Some("ApiKeyApi:api.example.com/v1/usage"),
+                "无敏感标记的安全 source label 应原样透传（二次脱敏不误伤正常来源）"
+            );
+        }
+    }
+
+    #[test]
+    fn quota_alert_source_secondary_redaction_is_conservative() {
+        // P14 review §2.6 二次脱敏契约：`quota_alert_from` 对 source 无条件
+        // 再过一遍 `redact_secrets`（最后防线）。语义是——
+        // - 无敏感标记、非凭据形状的安全 label 原样透传，不误伤正常来源；
+        // - 含 session/token/secret/authorization/password/cookie/access_key
+        //   等敏感标记或 sk-/bearer/x-api-key 前缀的 label 被有意保守遮蔽为
+        //   [REDACTED]（误报优先，绝不泄漏）。
+        let scope = quota_service::QuotaScope {
+            tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+            account_id: quota_service::AccountId::new("account-1".to_string()),
+            credential_id: None,
+            provider_id: ProviderId::from("mock"),
+            model_id: None,
+        };
+        let alert_with = |source: &str| quota_service::refresh::Alert {
+            scope: scope.clone(),
+            window: quota_service::QuotaWindow::Monthly,
+            unit: quota_service::QuotaUnit::Token,
+            kind: quota_service::refresh::AlertKind::Threshold,
+            remaining_percent: None,
+            source: source.to_string(),
+            advisory: true,
+            at_ms: 1,
+        };
+        // 安全 label：原样透传。
+        for safe in [
+            "ApiKeyApi:api.example.com/v1/usage",
+            "WebScrape:https://example.test/quota",
+        ] {
+            assert_eq!(
+                quota_alert_from(&alert_with(safe)).source.as_deref(),
+                Some(safe),
+                "安全 source label 应原样透传: {safe}"
+            );
+        }
+        // marker-like label：有意遮蔽（保守误报优先于泄漏）。
+        for marker in [
+            "SessionSync:https://example.test/session",
+            "token=plain-value",
+            "secret=plain-value",
+            "authorization=plain-value",
+            "password=plain-value",
+            "cookie=plain-value",
+            "access_key=plain-value",
+            "Bearer=plain-value",
+            "x-api-key=plain-value",
+            "sk_raw_secret_value",
+        ] {
+            assert_eq!(
+                quota_alert_from(&alert_with(marker)).source.as_deref(),
+                Some("[REDACTED]"),
+                "含敏感标记的 source label 必须遮蔽: {marker}"
+            );
+        }
+    }
+
+    #[test]
+    fn quota_window_unit_conversions_round_trip_all_variants() {
+        // canonical → core_api：与 core_api → canonical 互为逆映射，
+        // 全部变体（含 Cost 币种透传）必须 1:1。
+        let windows = [
+            quota_service::QuotaWindow::Overall,
+            quota_service::QuotaWindow::Rolling5h,
+            quota_service::QuotaWindow::Weekly,
+            quota_service::QuotaWindow::Monthly,
+        ];
+        for window in windows {
+            assert_eq!(
+                quota_window_from(window),
+                match window {
+                    quota_service::QuotaWindow::Overall => core_api::QuotaWindow::Overall,
+                    quota_service::QuotaWindow::Rolling5h => core_api::QuotaWindow::Rolling5h,
+                    quota_service::QuotaWindow::Weekly => core_api::QuotaWindow::Weekly,
+                    quota_service::QuotaWindow::Monthly => core_api::QuotaWindow::Monthly,
+                }
+            );
+        }
+        let units = [
+            quota_service::QuotaUnit::Count,
+            quota_service::QuotaUnit::Token,
+            quota_service::QuotaUnit::Cost {
+                currency: "USD".into(),
+            },
+        ];
+        for unit in units {
+            assert_eq!(
+                quota_unit_from(&unit),
+                match unit {
+                    quota_service::QuotaUnit::Count => core_api::QuotaUnit::Count,
+                    quota_service::QuotaUnit::Token => core_api::QuotaUnit::Token,
+                    quota_service::QuotaUnit::Cost { currency } =>
+                        core_api::QuotaUnit::Cost { currency },
+                }
+            );
         }
     }
 
@@ -1864,10 +2077,7 @@ mod tests {
         for _ in 0..300 {
             match runtime.quota.read_cache_only(request) {
                 Ok(quota_service::CacheRead::Hit { snapshot, .. }) => return snapshot,
-                Ok(
-                    quota_service::CacheRead::Stale { .. }
-                    | quota_service::CacheRead::NoData { .. },
-                ) => {}
+                Ok(quota_service::CacheRead::Stale { .. } | quota_service::CacheRead::NoData) => {}
                 Err(error) => panic!("cache-only read failed: {error:?}"),
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -1911,12 +2121,6 @@ mod tests {
 
     #[tokio::test]
     async fn record_run_usage_uses_real_session_stable_id_and_real_time() {
-        let runtime = {
-            let ledger: Arc<dyn usage_ledger::UsageLedger> = Arc::new(InMemoryUsageLedger::new());
-            let clock = Arc::new(quota_service::service::SystemQuotaClock)
-                as Arc<dyn quota_service::service::QuotaClock>;
-            crate::QuotaRuntime::new(ledger, clock)
-        };
         let run_id = RunId::from("run-x");
         let session = SessionId::from("session-real");
         let provider = ProviderId::from("mock");
@@ -1926,7 +2130,6 @@ mod tests {
         let occurred_at_ms: u64 = 1_700_000_000_000;
 
         let record = record_run_usage(
-            &runtime,
             &run_id,
             &session,
             &provider,
@@ -1942,7 +2145,6 @@ mod tests {
         assert_eq!(record.occurred_at_ms, occurred_at_ms);
         // record_id 确定性派生：重试同 record 内容稳定。
         let again = record_run_usage(
-            &runtime,
             &run_id,
             &session,
             &provider,
@@ -1962,13 +2164,7 @@ mod tests {
         let session = SessionId::from("session-replay");
         let provider = ProviderId::from("mock");
         let model = ModelId::from("mock-model");
-        let runtime = crate::QuotaRuntime::new(
-            Arc::clone(&ledger),
-            Arc::new(quota_service::service::SystemQuotaClock)
-                as Arc<dyn quota_service::service::QuotaClock>,
-        );
         let record = record_run_usage(
-            &runtime,
             &run_id,
             &session,
             &provider,
@@ -1994,15 +2190,8 @@ mod tests {
 
     #[tokio::test]
     async fn record_run_usage_estimates_cost_for_known_model() {
-        let runtime = {
-            let ledger: Arc<dyn usage_ledger::UsageLedger> = Arc::new(InMemoryUsageLedger::new());
-            let clock = Arc::new(quota_service::service::SystemQuotaClock)
-                as Arc<dyn quota_service::service::QuotaClock>;
-            crate::QuotaRuntime::new(ledger, clock)
-        };
         // gpt-4o 定价：input $2.5/M、output $10/M；usage(100, 50) => 750 micros。
         let record = record_run_usage(
-            &runtime,
             &RunId::from("run-cost"),
             &SessionId::from("session-cost"),
             &ProviderId::from("mock"),
@@ -2019,13 +2208,7 @@ mod tests {
     #[tokio::test]
     async fn record_run_usage_unknown_model_falls_back_to_zero_usd() {
         let ledger: Arc<dyn usage_ledger::UsageLedger> = Arc::new(InMemoryUsageLedger::new());
-        let runtime = crate::QuotaRuntime::new(
-            Arc::clone(&ledger),
-            Arc::new(quota_service::service::SystemQuotaClock)
-                as Arc<dyn quota_service::service::QuotaClock>,
-        );
         let record = record_run_usage(
-            &runtime,
             &RunId::from("run-unknown"),
             &SessionId::from("session-unknown"),
             &ProviderId::from("mock"),
@@ -2402,7 +2585,7 @@ mod tests {
             })
             .expect("cache-only read must not touch adapters");
         assert!(
-            matches!(&read, quota_service::CacheRead::NoData { .. }),
+            matches!(&read, quota_service::CacheRead::NoData),
             "账本失败路径不得发布缓存：{read:?}"
         );
         let events = supervisor.drain_events();

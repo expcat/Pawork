@@ -1,6 +1,6 @@
 # P14-6：多窗口额度聚合与归一
 
-> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P14-1、P14-5
+> Phase 14 · 模型用量与额度监控 · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：单 provider × 凭据 scope 的聚合；全部绑定项聚合延 P18 binding enumeration） · 依赖：P14-1、P14-5
 
 **最终目的**：把各适配器按窗口返回的零散快照聚合成「一个供应商 × 绑定凭据」的多窗口视图，统一重置倒计时口径，并维护本地缓存，使上层（预算、UI）拿到的是一致、可读的额度状态，而非各供应商原始片段。
 
@@ -26,5 +26,7 @@
 - [x] 一个供应商的多窗口额度以统一视图呈现
 - [x] 不同来源的同一窗口按可信度排序，不静默覆盖
 - [x] 缓存生效，标注新鲜度；单窗口失败不影响整视图
+
+**实现边界（2026-08-11 review-remediation）**：`QuotaOverview` 当前为单 provider scope（一个 provider × 绑定凭据）的多窗口聚合；app-service 查询要求显式 `provider_id`，未指定时返回 validation error，不再静默选择「首个已注册 provider」或默认 ID；「所有绑定 provider/model」的聚合语义待 P18 binding enumeration 成为事实源后批量查询。
 
 **相关文档**：[usage-quota](../docs/features/usage-quota.md) · [ROADMAP](../ROADMAP.md)

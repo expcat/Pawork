@@ -9,7 +9,6 @@ description = "Pawork account-scoped 模型用量、额度聚合、刷新与告�
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
-auth-service = { path = "../auth-service" }
 provider-api = { path = "../provider-api" }
 provider-runtime = { path = "../provider-runtime" }
 usage-ledger = { path = "../usage-ledger" }

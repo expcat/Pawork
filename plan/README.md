@@ -33,9 +33,9 @@
 - **验收标准**：可勾选、可复核的条件。
 - **相关文档**：仓库内相对路径链接。
 
-测试要求按任务风险选择：普通功能至少有存在性/差异检查与受影响 crate 的定向 smoke；安全红线、持久化/重放、路径和进程清理必须随实现补定向回归。不要在每个任务的「验收标准」机械复制 workspace 全量 build/test/clippy。
+测试要求按任务实际 diff 与风险选择：普通功能至少有存在性/差异检查、changed crates、必要关键 reverse dependents 与定向 smoke；安全红线、持久化/重放、路径和进程清理必须随实现补定向回归。不要在每个任务的「验收标准」机械复制 workspace 全量 build/test/clippy，也不要固定复制 `check + build + test + clippy`。
 
-`🟢` 与交付成熟度不互相替代：新任务至少完成实现、生产主干接线与定向验证（`TargetVerified`）后才能标绿；功能簇通过 L2/L3 后再记 `MaintenanceGated`。现有历史 `🟢` 可能只表示模块实现，若源码/运行证据显示未接线，保留历史状态并由 remediation 补线，不能仅凭勾选项推断 Production Ready。
+`🟢` 与交付成熟度不互相替代：新任务至少完成实现、生产主干接线与定向验证（`TargetVerified`）后才能标绿；`TargetVerified` 不要求 Workspace Full Gate。功能簇通过 L2/L3 后再记 `MaintenanceGated`。现有历史 `🟢` 可能只表示模块实现，若源码/运行证据显示未接线，保留历史状态并由 remediation 补线，不能仅凭勾选项推断 Production Ready。
 
 > 「细分步骤」中每一步都要写清**任务**与**目的**，避免只罗列动作而不交代它服务哪个目标。
 
@@ -113,34 +113,64 @@
 | 层级 | 触发时机 | 默认内容 | 是否阻塞细节任务 |
 | --- | --- | --- | --- |
 | L0 存在性 / 差异 | 每次编辑 | 文件、链接、生成物与 diff 检查 | 是 |
-| L1 定向 smoke | 单个任务收尾 | 受影响 crate 的单元/Mock/最小 contract；必要时 `cargo check -p <crate>` | 是 |
-| L2 功能簇门禁 | 一组高变更功能基本收尾 | 相关 crates 集成/contract/golden/schema；一次性 clippy/fmt | 不阻塞组内未收尾任务 |
-| L3 维护 / 发布门禁 | 发布候选、依赖/协议升级、主干合并前 | workspace 全量、三平台、安全、性能、fuzz/chaos/差分 | 是 |
+| L1 定向 smoke | 单个任务收尾 | changed crates + 必要关键 reverse dependents + 定向 regression | 是 |
+| L2 功能簇门禁 | 一组高变更功能基本收尾 | 相关 crates 集成/contract/golden/schema；定向 clippy/fmt；必要时明确升级 Full Gate | 不阻塞组内未收尾任务 |
+| L3 维护 / 发布门禁 | 发布候选、Maintenance/Release Gate、重大依赖/协议升级 | workspace 全量、三平台、安全、性能、fuzz/chaos/差分 | 是 |
 
-例外：Secret 不落库、Policy/路径越界、事件持久化与重放、破坏性文件/进程清理、协议向后兼容属于高风险不变量，修改时立即执行对应定向回归，不等待 L2/L3。
+例外：Secret 不落库、Policy/路径越界、事件持久化与重放、破坏性文件/进程清理、协议向后兼容属于高风险不变量，修改时立即执行对应定向回归，不等待 L2/L3；高风险不等于自动执行 workspace 全量。
 
-功能簇门禁集中在专门的收尾任务（例如 P15-9），Phase 1～7 的七个 remediation 全部结束后再执行一次 Core 主干 L2；不再要求每个 remediation 单独跑 `cargo test --workspace`。具体测试类型与运行频率见 [测试体系](../docs/quality/testing.md)。
+任务作者与执行 Agent 按以下方式收敛 L1：
 
-本地 L2/L3 使用隔离目标目录，确保无论通过或失败都能清理：
+1. 从本任务 committed/staged/unstaged/new-file diff 映射 changed crates；脏工作区排除用户原有无关改动。用 `cargo metadata --format-version 1 --no-deps` 校准 path → package。
+2. crate 私有实现通常只验证该 crate。改变 `pub` API、feature、shared/canonical domain、GUI Connection Protocol、序列化/持久化格式或 schema 时，用 `cargo tree --workspace --invert <crate> --depth 1` 或 metadata dependency graph 选择实际关键消费者。
+3. canonical domain/protocol 加主要 producer、consumer、serializer/typegen 与 contract；Provider、GUI、平台代码只加实际受影响 adapter/runtime/projection/controller/target/harness，不按类别扩成 workspace。
+4. 最终集合使用多个 `-p`。相关 crate 多、修改公共 API 或需要定向高风险 regression，都不是切换 `--workspace` 的充分理由。
+
+普通任务从以下模板中选择必要项，不按固定顺序全跑：
+
+```bash
+cargo check -p <crate-a> -p <crate-b>
+cargo test -p <crate-a> -p <crate-b>
+cargo clippy -p <crate-a> -p <crate-b> --all-targets -- -D warnings
+```
+
+`cargo test` 已覆盖所需编译时，没有 binary/link/build script、特定 target/profile 或产物行为需要验证就不再追加 `cargo build`。文档或不影响构建行为的配置任务可以不运行 Cargo 编译。
+
+功能簇门禁集中在专门的收尾任务（例如 P15-9），Phase 1～7 的七个 remediation 全部结束后再执行一次 Core 主干 L2；不再要求每个 remediation 单独跑 `cargo test --workspace`。具体 affected-crate 算法、测试类型与运行频率见 [测试体系](../docs/quality/testing.md)。
+
+Workspace Full Gate 仅在以下条件之一明确成立时执行：功能簇整体收尾/专门 Gate；大规模跨 crate 重构；workspace/resolver/toolchain/关键依赖重大变化；canonical protocol/domain 大范围变化且关键消费者集合不足；Maintenance/Release Gate；用户明确要求。“保险”“最终确认”“确保没有回归”“改动较多”或任务到达收尾阶段不是升级理由。
+
+定向 L2 继续对相关 crates 使用多个 `-p`，可放到隔离 `target/gates`。只有命中上述条件时，本地 L2/L3 才使用以下 **Workspace Full Gate**；三个 workspace 命令保持为维护/发布入口：
 
 ```powershell
 $env:CARGO_TARGET_DIR = "target/gates"
+$env:CARGO_INCREMENTAL = "0"
 try {
-    cargo fmt --all -- --check
     cargo build --workspace --all-targets
     cargo test --workspace
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo run -p schema-typegen -- --check
 } finally {
     cargo clean --target-dir "target/gates"
     Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:CARGO_INCREMENTAL -ErrorAction SilentlyContinue
 }
 ```
 
 - L0/L1 继续复用默认 `target/`，避免每次重编；任务结束只清理测试创建的临时目录、fixture 副本、日志、coverage/快照临时输出，测试本身优先用 RAII/tempfile 做失败路径清理。
 - L2/L3 的 `target/gates` 必须在 `finally` 清理；CI runner 若为一次性环境可跳过本地清理步骤。
-- 默认 `target/` 在功能簇收尾时检查体积；达到团队配置阈值或磁盘压力告警时执行一次 `cargo clean`，不要把全量清理放到每个定向测试后，否则会放大后续编译时间。
+- 本地 Gate 仅在 Rust 格式或 schema/typegen 可能受影响时加入 `cargo fmt --all -- --check` 或 `cargo run -p schema-typegen -- --check`；手动三平台 L3 CI 作为固定 Maintenance/Release Gate 始终包含两项。
+- 默认 `target/` 只在达到团队配置阈值、磁盘压力告警或用户明确要求时执行 `cargo clean`；普通任务结束与功能簇收尾本身都不是清理触发器。
 - Fuzz corpus、Golden 基线与可复核失败样本是版本化证据，不属于缓存；只清理生成缓存和临时输出，不删除人工确认的回归样本。
+
+每个任务的验收记录使用以下字段；未运行 Full Gate 是普通任务的正常完成状态：
+
+```text
+Validation Level: L1
+Affected crates: <changed + selected reverse dependents，或 none>
+Validated: <实际命令 / tests / checks>
+Targeted regressions: <实际覆盖，或 none>
+Full workspace gate: NOT RUN (<未命中升级条件>)
+```
 
 发布前仍须对照 [性能目标](../docs/quality/performance-targets.md) 与 [安全验收](../docs/quality/security-acceptance.md)；这些是 L3 维护门槛，不是开发期每个 Phase 的重复前置。
 

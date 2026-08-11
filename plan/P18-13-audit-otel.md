@@ -20,12 +20,17 @@
 - tracing/metrics 字段规范 + exporter abstraction
 - replay/isolation/redaction tests
 
+## P14 现状与登记（2026-08-11）
+
+P14-4/9 存在两处审计职责重叠：WebScrape adapter 内置有界内存 audit Vec（`audit_entries`，测试/诊断用），`RefreshScheduler` 另有 `AuditSink`，均无生产消费端（见 [usage-quota](../docs/features/usage-quota.md)）。canonical audit 落地后统一为外部 sink，WebScrape 审计事件交给 sink。
+
 ## 验收标准
 
 - [ ] route/fallback/lease/policy/agent/client 关键决策均有可解释 audit event
 - [ ] Tenant A 不能查询或导出 Tenant B 的审计
 - [ ] exporter/diagnostics 不含 plaintext secret、prompt、tool output、Protected Blob
 - [ ] trace 可关联 tenant/session/agent/provider/account/client 而不暴露敏感值
+- [ ] WebScrape 内置 audit Vec 移除或降为测试夹具；生产只保留 scheduler/控制面外部 audit sink
+- [ ] quota refresh / 告警（含脱敏 kind/source）写入 canonical audit event，可跨 tenant 隔离查询与导出
 
 **相关文档**：[tenant-audit](../docs/features/tenant-audit.md) · [observability](../docs/features/observability.md) · [ADR-016](../docs/adr/ADR-016-core-event-persist-replay.md) · [ROADMAP](../ROADMAP.md)
-

@@ -237,52 +237,9 @@ pub enum AlertKind {
     PartialFailure,
 }
 
-/// Typed, executable remediation suggestion attached to an alert. Consumers
-/// can render the action directly (button / command) without parsing free
-/// text.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AlertSuggestion {
-    /// Lower concurrency / throttle requests until the bucket recovers.
-    ReduceConcurrency,
-    /// Route traffic to an alternate provider or model.
-    SwitchProvider,
-    /// Wait for the quota window to reset.
-    WaitForReset,
-    /// Re-authorize the credential (re-run OAuth / re-issue the API key).
-    Reauthorize,
-    /// Inspect the failing source adapter / endpoint and verify freshness.
-    InspectSource,
-    /// State recovered; resume normal operation.
-    Resume,
-}
-
-impl AlertKind {
-    /// Typed, executable remediation suggestions for this alert kind.
-    pub fn suggestions(self) -> Vec<AlertSuggestion> {
-        match self {
-            AlertKind::Threshold => vec![
-                AlertSuggestion::ReduceConcurrency,
-                AlertSuggestion::SwitchProvider,
-                AlertSuggestion::WaitForReset,
-            ],
-            AlertKind::Recovered => vec![AlertSuggestion::Resume],
-            AlertKind::Stale => vec![
-                AlertSuggestion::InspectSource,
-                AlertSuggestion::SwitchProvider,
-            ],
-            AlertKind::ReauthorizationRequired => vec![AlertSuggestion::Reauthorize],
-            AlertKind::PartialFailure => vec![
-                AlertSuggestion::InspectSource,
-                AlertSuggestion::SwitchProvider,
-            ],
-        }
-    }
-}
-
 /// Redacted alert. Carries provenance summary only — no endpoint query
 /// strings, no credentials, no raw bodies — plus the unit it refers to and
-/// typed remediation suggestions.
+/// the remaining percentage when computable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Alert {
     pub scope: QuotaScope,
@@ -297,8 +254,6 @@ pub struct Alert {
     /// True when this alert is advisory only (e.g. scraped threshold breach)
     /// and must NOT hard-stop a budget.
     pub advisory: bool,
-    /// Typed, executable remediation suggestions for this alert's kind.
-    pub suggestions: Vec<AlertSuggestion>,
     pub at_ms: u64,
 }
 
@@ -322,7 +277,9 @@ pub struct AuditEntry {
     pub unit: QuotaUnit,
     pub served_stale: bool,
     pub confidence: Confidence,
-    pub adapter_kind: AdapterKind,
+    /// `Some` only when a real adapter produced the snapshot/failure;
+    /// query-level failures carry `None` (no fabricated attribution).
+    pub adapter_kind: Option<AdapterKind>,
     pub source: String,
     pub failures: u32,
     pub at_ms: u64,
@@ -346,72 +303,13 @@ impl AuditSink for NopAuditSink {
 /// persisted events.
 const REDACTED_SOURCE_MAX_LEN: usize = 128;
 
-/// `key=value` markers whose value is treated as a credential and redacted.
-const SECRET_KEY_VALUE: [&str; 8] = [
-    "key=",
-    "token=",
-    "secret=",
-    "password=",
-    "api_key=",
-    "apikey=",
-    "sig=",
-    "signature=",
-];
-
-/// Redact credential-bearing parts of a provider source string: query
-/// strings / fragments are stripped entirely (signed URLs carry tokens
-/// there), and `key=value` credential pairs or `sk-` tokens are replaced
-/// with `[REDACTED]`.
-fn redact_source(source: &str) -> String {
-    let base = source.split(['?', '#']).next().unwrap_or("");
-    let mut out = String::with_capacity(base.len());
-    let mut rest = base;
-    loop {
-        // Locate the earliest credential marker: `key=value` pair or `sk-`
-        // token. Redaction is heuristic and over-redaction is safe.
-        let mut earliest: Option<(usize, usize)> = None; // (value_start, value_end)
-        for marker in SECRET_KEY_VALUE {
-            if let Some(pos) = rest.find(marker) {
-                let value_start = pos + marker.len();
-                let value_end = rest[value_start..]
-                    .find(['&', ' ', '\t', '\n'])
-                    .map_or(rest.len(), |d| value_start + d);
-                if earliest.is_none_or(|(s, _)| value_start < s) {
-                    earliest = Some((value_start, value_end));
-                }
-            }
-        }
-        if let Some(pos) = rest.find("sk-") {
-            let value_start = pos;
-            let value_end = rest[value_start..]
-                .find(['&', ' ', '\t', '\n'])
-                .map_or(rest.len(), |d| value_start + d);
-            if earliest.is_none_or(|(s, _)| value_start < s) {
-                earliest = Some((value_start, value_end));
-            }
-        }
-        match earliest {
-            Some((start, end)) => {
-                out.push_str(&rest[..start]);
-                out.push_str("[REDACTED]");
-                rest = &rest[end..];
-            }
-            None => {
-                out.push_str(rest);
-                break;
-            }
-        }
-    }
-    out
-}
-
 /// Redacted summary of a snapshot's provenance, safe to embed in alerts and
 /// audit entries: adapter kind + credential-free source, capped in length.
 fn redacted_source(snapshot: &QuotaSnapshot) -> String {
     let mut label = format!(
         "{:?}:{}",
         snapshot.provenance.adapter_kind,
-        redact_source(&snapshot.provenance.source)
+        crate::util::redact_source(&snapshot.provenance.source)
     );
     if label.len() > REDACTED_SOURCE_MAX_LEN {
         // `truncate` must land on a char boundary for non-ASCII sources.
@@ -606,7 +504,7 @@ impl RefreshScheduler {
                         unit: target.unit.clone(),
                         served_stale: stale,
                         confidence: snapshot.confidence,
-                        adapter_kind: snapshot.provenance.adapter_kind,
+                        adapter_kind: Some(snapshot.provenance.adapter_kind),
                         source: redacted_source(snapshot),
                         failures: read.failures.len() as u32,
                         at_ms,
@@ -628,7 +526,6 @@ impl RefreshScheduler {
                         ),
                         source: redacted_source(snapshot),
                         advisory: true,
-                        suggestions: AlertKind::Stale.suggestions(),
                         at_ms,
                     })
                     .await;
@@ -655,8 +552,15 @@ impl RefreshScheduler {
                 // this is not a stale-serving event.
                 let (adapter_kind, source) = failures
                     .first()
-                    .map(|f| (f.adapter_kind, format!("{:?}:failed", f.adapter_kind)))
-                    .unwrap_or((AdapterKind::ApiKeyApi, "unknown:failed".to_string()));
+                    .map(|f| {
+                        (
+                            f.adapter_kind,
+                            f.adapter_kind
+                                .map(|kind| format!("{kind:?}:failed"))
+                                .unwrap_or_else(|| "domain:failed".to_string()),
+                        )
+                    })
+                    .unwrap_or((None, "unknown:failed".to_string()));
                 self.audit
                     .record(AuditEntry {
                         scope: target.scope.clone(),
@@ -802,7 +706,6 @@ impl RefreshScheduler {
                 remaining_percent: pct,
                 source: redacted_source(snapshot),
                 advisory,
-                suggestions: AlertKind::Threshold.suggestions(),
                 at_ms,
             })
             .await;
@@ -822,7 +725,6 @@ impl RefreshScheduler {
                 remaining_percent: pct,
                 source: redacted_source(snapshot),
                 advisory: false,
-                suggestions: AlertKind::Recovered.suggestions(),
                 at_ms,
             })
             .await;
@@ -836,40 +738,45 @@ impl RefreshScheduler {
         at_ms: u64,
     ) {
         // Collect newly-failing adapters under the lock, then emit after
-        // releasing so the std Mutex is never held across `.await`.
-        let newly_failing: Vec<QuotaFailure> = {
+        // releasing so the std Mutex is never held across `.await`. Only
+        // failures with a real adapter attribution participate: query-level
+        // failures (adapter_kind = None) have no per-adapter dedup slot.
+        let newly_failing: Vec<(AdapterKind, QuotaFailure)> = {
             let mut state = self.state.lock().expect("state poisoned");
             let mut newly = Vec::new();
             for f in failures {
+                let Some(kind) = f.adapter_kind else {
+                    continue;
+                };
                 let k = (
                     target.scope.clone(),
                     target.window,
                     target.unit.clone(),
-                    f.adapter_kind,
+                    kind,
                 );
                 if state.partial_active.insert(k) {
-                    newly.push(f.clone());
+                    newly.push((kind, f.clone()));
                 }
             }
             newly
         };
-        for f in &newly_failing {
+        for (kind, _f) in &newly_failing {
             self.emit(Alert {
                 scope: target.scope.clone(),
                 window: target.window,
                 unit: target.unit.clone(),
                 kind: AlertKind::PartialFailure,
                 remaining_percent: None,
-                source: format!("{:?}:failed", f.adapter_kind),
+                source: format!("{kind:?}:failed"),
                 advisory: true,
-                suggestions: AlertKind::PartialFailure.suggestions(),
                 at_ms,
             })
             .await;
         }
         // Clear adapters that are no longer failing (recovered).
         let stuck: Vec<AdapterKind> = {
-            let current: HashSet<AdapterKind> = failures.iter().map(|f| f.adapter_kind).collect();
+            let current: HashSet<AdapterKind> =
+                failures.iter().filter_map(|f| f.adapter_kind).collect();
             let state = self.state.lock().expect("state poisoned");
             state
                 .partial_active
@@ -914,7 +821,6 @@ impl RefreshScheduler {
                 remaining_percent: None,
                 source: "credential:invalid".to_string(),
                 advisory: false,
-                suggestions: AlertKind::ReauthorizationRequired.suggestions(),
                 at_ms,
             })
             .await;
@@ -2382,10 +2288,10 @@ mod tests {
             currency: "USD".to_string(),
         }));
 
-        let targets = sched.targets.lock().expect("targets");
-        let token_target = targets[0].clone();
-        let cost_target = targets[1].clone();
-        drop(targets);
+        let (token_target, cost_target) = {
+            let targets = sched.targets.lock().expect("targets");
+            (targets[0].clone(), targets[1].clone())
+        };
 
         sched
             .refresh_once(&token_target, &CancellationToken::new())
@@ -2409,11 +2315,12 @@ mod tests {
             }));
 
         // Dedup slots, attempts, and next-eligible timestamps are per-unit.
-        let state = sched.state.lock().expect("state");
-        assert_eq!(state.reauth_active.len(), 2);
-        assert!(state.reauth_active.contains(&token_target.key()));
-        assert!(state.reauth_active.contains(&cost_target.key()));
-        drop(state);
+        {
+            let state = sched.state.lock().expect("state");
+            assert_eq!(state.reauth_active.len(), 2);
+            assert!(state.reauth_active.contains(&token_target.key()));
+            assert!(state.reauth_active.contains(&cost_target.key()));
+        }
 
         // Steps 3-4: retryable failures grow the exponential ladder per unit.
         sched.service.invalidate();
@@ -2494,10 +2401,10 @@ mod tests {
         sched.register(base(QuotaUnit::Cost {
             currency: "USD".to_string(),
         }));
-        let targets = sched.targets.lock().expect("targets");
-        let token_target = targets[0].clone();
-        let cost_target = targets[1].clone();
-        drop(targets);
+        let (token_target, cost_target) = {
+            let targets = sched.targets.lock().expect("targets");
+            (targets[0].clone(), targets[1].clone())
+        };
         let cancel = CancellationToken::new();
 
         // Step 1: Token breach.
@@ -2567,44 +2474,10 @@ mod tests {
 
     // ----- alert/audit contract -----
 
-    #[test]
-    fn alert_kind_suggestions_are_typed_and_complete() {
-        assert_eq!(
-            AlertKind::Threshold.suggestions(),
-            vec![
-                AlertSuggestion::ReduceConcurrency,
-                AlertSuggestion::SwitchProvider,
-                AlertSuggestion::WaitForReset,
-            ]
-        );
-        assert_eq!(
-            AlertKind::ReauthorizationRequired.suggestions(),
-            vec![AlertSuggestion::Reauthorize]
-        );
-        assert_eq!(
-            AlertKind::Stale.suggestions(),
-            vec![
-                AlertSuggestion::InspectSource,
-                AlertSuggestion::SwitchProvider
-            ]
-        );
-        assert_eq!(
-            AlertKind::PartialFailure.suggestions(),
-            vec![
-                AlertSuggestion::InspectSource,
-                AlertSuggestion::SwitchProvider
-            ]
-        );
-        assert_eq!(
-            AlertKind::Recovered.suggestions(),
-            vec![AlertSuggestion::Resume]
-        );
-    }
-
-    /// Alerts and audit entries carry the unit, and alerts carry typed,
-    /// serializable remediation suggestions.
+    /// Alerts and audit entries carry the unit; alerts round-trip through
+    /// their serialized contract without loss.
     #[tokio::test]
-    async fn alerts_and_audit_carry_unit_and_typed_suggestions() {
+    async fn alerts_and_audit_carry_unit_and_round_trip_serde() {
         let (adapter, _calls) = mock_adapter(
             Confidence::Exact,
             AdapterKind::ApiKeyApi,
@@ -2622,11 +2495,6 @@ mod tests {
             .find(|a| a.kind == AlertKind::Threshold)
             .expect("threshold alert");
         assert_eq!(alert.unit, QuotaUnit::Token);
-        assert_eq!(
-            alert.suggestions,
-            AlertKind::Threshold.suggestions(),
-            "alert embeds typed executable suggestions"
-        );
         // Contract is serializable: JSON round-trips without loss.
         let json = serde_json::to_string(&alert).expect("alert json");
         assert_eq!(
@@ -2645,24 +2513,27 @@ mod tests {
     fn redact_source_strips_query_strings_and_credentials() {
         // Plain source passes through untouched.
         assert_eq!(
-            redact_source("api.anthropic.com/v1/usage"),
+            crate::util::redact_source("api.anthropic.com/v1/usage"),
             "api.anthropic.com/v1/usage"
         );
         // Query strings / fragments are stripped wholesale (signed URLs carry
         // tokens there).
         assert_eq!(
-            redact_source("api.x.com/v1/quota?token=abc&sig=xyz"),
+            crate::util::redact_source("api.x.com/v1/quota?token=abc&sig=xyz"),
             "api.x.com/v1/quota"
         );
-        assert_eq!(redact_source("api.x.com/v1#frag"), "api.x.com/v1");
+        assert_eq!(
+            crate::util::redact_source("api.x.com/v1#frag"),
+            "api.x.com/v1"
+        );
         // `sk-` tokens anywhere in the remaining text are redacted.
         assert_eq!(
-            redact_source("https://api.x.com/sk-live-abc123/usage"),
+            crate::util::redact_source("https://api.x.com/sk-live-abc123/usage"),
             "https://api.x.com/[REDACTED]"
         );
         // `key=value` credential pairs outside query strings are redacted.
         assert_eq!(
-            redact_source("header key=abc123 rest"),
+            crate::util::redact_source("header key=abc123 rest"),
             "header key=[REDACTED] rest"
         );
     }
@@ -2691,11 +2562,12 @@ mod tests {
         assert!(!label.contains("key=sk"), "credential leaked: {label}");
         assert!(label.len() <= REDACTED_SOURCE_MAX_LEN + 3);
 
-        // Overlong sources are truncated with a marker and stay under the cap.
+        // Overlong low-entropy sources with separators are truncated with a
+        // marker and stay under the cap.
         let long_snapshot = QuotaSnapshot {
             provenance: QuotaProvenance::new(
                 AdapterKind::WebScrape,
-                "x".repeat(500),
+                "safe-source/segment ".repeat(100),
                 Timestamp::from_unix_millis(1_000),
             ),
             ..snapshot.clone()
@@ -2703,6 +2575,21 @@ mod tests {
         let long_label = redacted_source(&long_snapshot);
         assert!(long_label.len() <= REDACTED_SOURCE_MAX_LEN + 3);
         assert!(long_label.ends_with("..."));
+
+        // A long opaque chunk is treated as high-entropy and masked rather
+        // than entering the truncation path.
+        let high_entropy_snapshot = QuotaSnapshot {
+            provenance: QuotaProvenance::new(
+                AdapterKind::WebScrape,
+                "x".repeat(500),
+                Timestamp::from_unix_millis(1_000),
+            ),
+            ..snapshot
+        };
+        assert_eq!(
+            redacted_source(&high_entropy_snapshot),
+            "WebScrape:[REDACTED]"
+        );
     }
 
     // ----- concurrent due-target refresh -----

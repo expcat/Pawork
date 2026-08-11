@@ -22,6 +22,10 @@
 - sequence/revision 状态机
 - Mock fixtures、property/unit tests 与 projection diagnostics
 
+## P14 现状与登记（2026-08-11）
+
+P14-8 的 GUI 交付目前只是协议：core-api / gui-protocol 已携带 `QuotaOverview` / `QuotaChanged` / `QuotaAlert`（kind/source 为 Option，旧 JSON 缺省解码为 `None`），protocol-test-gui 有 QuotaAlert roundtrip（含旧 JSON 兼容），但仓库没有 quota projection / controller / page（见 [usage-quota](../docs/features/usage-quota.md)）。
+
 ## 验收标准
 
 - [ ] 从空 store 经 Snapshot + replay 可重建与 Mock Core 相同状态
@@ -30,6 +34,8 @@
 - [ ] reconnect/reauth 不泄漏上一 identity/instance 的 projection
 - [ ] GUI 进程不接触 credential、Protected Blob 明文或未校验 frame
 - [ ] L1：projection property + controller/client contract tests 通过
+- [ ] quota projection slice：从 gui-protocol 的 `QuotaOverview` / `QuotaChanged` / `QuotaAlert` 事件重建，重复/缺口/乱序语义与其余 slice 一致
+- [ ] protocol-test-gui 增加 quota 消费场景（投影重建 + kind/source 为 `None` 的旧 JSON 降级）
 
 **相关文档**：[GUI Connection Protocol](../docs/architecture/api-surface.md) · [GUI 连接](../docs/features/gui-connection.md) · [ADR-030](../docs/adr/ADR-030-core-sole-source-of-truth.md) · [ADR-035](../docs/adr/ADR-035-gpui-desktop.md)
 

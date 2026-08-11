@@ -242,23 +242,13 @@ impl QuotaProvenance {
         self
     }
 
-    /// 将原始 endpoint 清洗为 canonical 形式：
+    /// 将原始 endpoint 清洗为 canonical 形式（实现见 [`crate::util::canonical_endpoint`]）：
     ///
     /// - 去除首尾空白；
     /// - 截断首个 `?`（query）与 `#`（fragment）之前的部分；
     /// - 结果为空白则返回 `None`，异常输入不会把 query/fragment 带入结果。
     pub fn canonical_endpoint(raw: &str) -> Option<String> {
-        let trimmed = raw.trim();
-        let cut = trimmed
-            .char_indices()
-            .find(|(_, ch)| *ch == '?' || *ch == '#')
-            .map_or(trimmed.len(), |(index, _)| index);
-        let cleaned = trimmed[..cut].trim();
-        if cleaned.is_empty() {
-            None
-        } else {
-            Some(cleaned.to_owned())
-        }
+        crate::util::canonical_endpoint(raw)
     }
 }
 

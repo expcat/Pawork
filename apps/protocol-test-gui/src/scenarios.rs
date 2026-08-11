@@ -4,14 +4,18 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agent_domain::{ArtifactId, CommandId, EventId, ProviderId, RunId, SessionId, Timestamp};
+use agent_domain::{
+    ArtifactId, CommandId, EventId, ProviderId, RunId, SessionId, TenantId, Timestamp,
+};
 use artifact_store::ArtifactStore;
 use core_api::{
-    ApiVersion, AppCommand, AppEvent, AppEventEnvelope, AppResponse, CommandSource, EventSource,
-    EventStream, GlobalSequence, RunState, API_VERSION,
+    mask_credential_hint, ApiVersion, AppCommand, AppEvent, AppEventEnvelope, AppResponse,
+    CommandSource, EventSource, EventStream, GlobalSequence, QuotaAdapterKind, QuotaAlert,
+    QuotaAlertKind, QuotaAlertSeverity, QuotaFailureView, QuotaUnit, QuotaWindow, RunState,
+    API_VERSION,
 };
 use gui_client::{ClientConfig, ClientError, GuiClient, ResumeDisposition};
-use gui_protocol::ProtocolErrorCode;
+use gui_protocol::{decode_server_frame, encode_server_frame, ProtocolErrorCode, ServerFrame};
 use provider_api::ModelProvider;
 use serde_json::{json, Value};
 use subscription_hub::EventHub;
@@ -31,6 +35,7 @@ pub async fn run_all() -> i32 {
         "artifact-chunks",
         "version-reject",
         "disconnect-keeps-run",
+        "quota-alert-roundtrip",
     ];
     let mut failed = 0;
     for name in scenarios {
@@ -59,6 +64,7 @@ async fn run_scenario(name: &str) -> Result<(), String> {
         "artifact-chunks" => artifact_chunks().await,
         "version-reject" => version_reject().await,
         "disconnect-keeps-run" => disconnect_keeps_run().await,
+        "quota-alert-roundtrip" => quota_alert_roundtrip().await,
         other => Err(format!("unknown scenario {other}")),
     }
 }
@@ -137,10 +143,7 @@ async fn snapshot_reconnect() -> Result<(), String> {
     ));
     let session_id = harness.prepare_session()?;
     let client = harness.connect_gui("first").await?;
-    client
-        .subscribe_all()
-        .await
-        .map_err(|e| format!("subscribe: {e}"))?;
+    subscribe_all_landed(&harness, &client).await?;
     let run_id = harness.start_run_cli(&session_id, "long run")?;
     let (done, events) = recv_until(&client, |e| {
         run_state(e, &run_id) == Some(RunState::StreamingResponse)
@@ -271,18 +274,9 @@ async fn three_gui_sync() -> Result<(), String> {
             harness.connections.count()
         ));
     }
-    gui_a
-        .subscribe_all()
-        .await
-        .map_err(|e| format!("subscribe a: {e}"))?;
-    gui_b
-        .subscribe_all()
-        .await
-        .map_err(|e| format!("subscribe b: {e}"))?;
-    gui_c
-        .subscribe_all()
-        .await
-        .map_err(|e| format!("subscribe c: {e}"))?;
+    subscribe_all_landed(&harness, &gui_a).await?;
+    subscribe_all_landed(&harness, &gui_b).await?;
+    subscribe_all_landed(&harness, &gui_c).await?;
 
     let run_id = harness.start_run_cli(&session_id, "cli run")?;
     for (name, gui) in [("A", &gui_a), ("B", &gui_b), ("C", &gui_c)] {
@@ -493,10 +487,7 @@ async fn disconnect_keeps_run() -> Result<(), String> {
     ));
     let session_id = harness.prepare_session()?;
     let client = harness.connect_gui("disconnect").await?;
-    client
-        .subscribe_all()
-        .await
-        .map_err(|e| format!("subscribe: {e}"))?;
+    subscribe_all_landed(&harness, &client).await?;
     let run_id = harness.start_run_cli(&session_id, "survives disconnect")?;
     let (done, _) = recv_until(&client, |e| {
         run_state(e, &run_id) == Some(RunState::StreamingResponse)
@@ -516,8 +507,179 @@ async fn disconnect_keeps_run() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// h) QuotaAlert 协议 roundtrip：kind/source 保留 + 旧 JSON 缺字段兼容
+// ---------------------------------------------------------------------------
+
+async fn quota_alert_roundtrip() -> Result<(), String> {
+    // 新事件：kind/source 总是 Some，经真实 ServerFrame 线上编解码后原样保留。
+    let alert = QuotaAlert {
+        tenant_id: TenantId::new("local"),
+        account_id: "local/default".into(),
+        provider_id: ProviderId::from("openai"),
+        model_id: None,
+        window: QuotaWindow::Monthly,
+        unit: QuotaUnit::Token,
+        kind: Some(QuotaAlertKind::ReauthorizationRequired),
+        severity: QuotaAlertSeverity::Warning,
+        source: Some("ApiKeyApi:api.openai.com/v1/organization/usage".into()),
+        message: "low balance".into(),
+        snapshot: None,
+        credential_hint: mask_credential_hint("sk-leak"),
+    };
+    let envelope = AppEventEnvelope {
+        api_version: API_VERSION,
+        instance_id: agent_domain::CoreInstanceId::from("self-test-quota-alert"),
+        event_id: EventId::from("quota-alert-1"),
+        global_sequence: GlobalSequence(1),
+        stream: EventStream::Global,
+        stream_sequence: 1,
+        timestamp: Timestamp::from_unix_millis(1),
+        source: EventSource::Core,
+        payload: AppEvent::QuotaAlert {
+            alert: Box::new(alert),
+        },
+    };
+    let encoded = encode_server_frame(&ServerFrame::Event(envelope))
+        .map_err(|e| format!("encode ServerFrame: {e}"))?;
+    let wire = String::from_utf8(encoded.clone()).map_err(|e| e.to_string())?;
+    if !wire.contains("\"kind\":\"reauthorization_required\"")
+        || !wire.contains("\"source\":\"ApiKeyApi:api.openai.com/v1/organization/usage\"")
+    {
+        return Err(format!("新事件线上 JSON 必须携带 kind/source: {wire}"));
+    }
+    if wire.contains("sk-leak") {
+        return Err("线上 JSON 不得泄露 secret 原文".into());
+    }
+
+    let decoded = decode_server_frame(&encoded).map_err(|e| format!("decode ServerFrame: {e}"))?;
+    let ServerFrame::Event(decoded) = decoded else {
+        return Err("应解码回 Event 帧".into());
+    };
+    let AppEvent::QuotaAlert { alert } = &decoded.payload else {
+        return Err("payload 应为 QuotaAlert".into());
+    };
+    if alert.kind != Some(QuotaAlertKind::ReauthorizationRequired)
+        || alert.source.as_deref() != Some("ApiKeyApi:api.openai.com/v1/organization/usage")
+    {
+        return Err(format!("roundtrip 后 kind/source 丢失: {alert:?}"));
+    }
+    if alert.severity != QuotaAlertSeverity::Warning || alert.message != "low balance" {
+        return Err(format!("roundtrip 后其余字段漂移: {alert:?}"));
+    }
+
+    // 旧事件 JSON：缺 kind/source 时解码为 None（重放兼容），其余字段保留。
+    let mut legacy: Value = serde_json::from_slice(&encoded).map_err(|e| e.to_string())?;
+    let alert_json = legacy
+        .pointer_mut("/data/payload/data/alert")
+        .and_then(Value::as_object_mut)
+        .ok_or("legacy JSON 定位 alert 失败")?;
+    for key in ["kind", "source"] {
+        if alert_json.remove(key).is_none() {
+            return Err(format!("precondition: 新事件应序列化 {key}"));
+        }
+    }
+    let legacy_frame = serde_json::from_value::<ServerFrame>(legacy)
+        .map_err(|e| format!("旧 JSON 解码失败: {e}"))?;
+    let ServerFrame::Event(legacy) = legacy_frame else {
+        return Err("旧 JSON 应解码为 Event 帧".into());
+    };
+    let AppEvent::QuotaAlert { alert } = &legacy.payload else {
+        return Err("旧 JSON payload 应为 QuotaAlert".into());
+    };
+    if alert.kind.is_some() || alert.source.is_some() {
+        return Err(format!("缺字段旧 JSON 应解码为 None: {alert:?}"));
+    }
+    if alert.severity != QuotaAlertSeverity::Warning || alert.message != "low balance" {
+        return Err(format!("旧 JSON 其余字段应保留: {alert:?}"));
+    }
+
+    // adapter_kind 可选：Some 往返保留，None 不序列化；旧失败 JSON 缺字段解码为 None。
+    let failure_with_kind = QuotaFailureView {
+        adapter_kind: Some(QuotaAdapterKind::ApiKeyApi),
+        error_code: "forbidden".into(),
+        detail: "credential rejected".into(),
+        retry_after_ms: Some(30_000),
+    };
+    let failure_with_kind_json =
+        serde_json::to_string(&failure_with_kind).map_err(|e| e.to_string())?;
+    if !failure_with_kind_json.contains("\"adapter_kind\":\"api_key_api\"") {
+        return Err(format!(
+            "adapter_kind Some 应按冻结形态序列化: {failure_with_kind_json}"
+        ));
+    }
+    let decoded_failure_with_kind: QuotaFailureView =
+        serde_json::from_str(&failure_with_kind_json).map_err(|e| e.to_string())?;
+    if decoded_failure_with_kind != failure_with_kind {
+        return Err(format!(
+            "adapter_kind Some 往返失败: {decoded_failure_with_kind:?}"
+        ));
+    }
+    let failure = QuotaFailureView {
+        adapter_kind: None,
+        error_code: "timeout".into(),
+        detail: "adapter timed out".into(),
+        retry_after_ms: None,
+    };
+    let failure_json = serde_json::to_string(&failure).map_err(|e| e.to_string())?;
+    if failure_json.contains("adapter_kind") {
+        return Err(format!("adapter_kind None 不应序列化: {failure_json}"));
+    }
+    let decoded_failure: QuotaFailureView =
+        serde_json::from_str(&failure_json).map_err(|e| e.to_string())?;
+    if decoded_failure != failure {
+        return Err(format!("adapter_kind None 往返失败: {decoded_failure:?}"));
+    }
+    let legacy_failure: QuotaFailureView =
+        serde_json::from_str(r#"{"error_code":"forbidden","detail":"credential rejected"}"#)
+            .map_err(|e| e.to_string())?;
+    if legacy_failure.adapter_kind.is_some() {
+        return Err("旧失败 JSON 缺 adapter_kind 应解码为 None".into());
+    }
+    if legacy_failure.error_code != "forbidden" {
+        return Err("旧失败 JSON 其余字段应保留".into());
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // 辅助
 // ---------------------------------------------------------------------------
+
+/// subscribe_all 后等待服务端订阅落地（以 ConnectionManager 会话视图为事实源）。
+///
+/// `subscribe_all` 只保证 Subscribe 帧已发出；服务端 `connections.subscribe`
+/// 在连接读循环中异步落地。若另一 CLI 连接在落地前启动 Run，事件会先于订阅
+/// 注册发布而被 `should_forward` 过滤漏投递。此处有界轮询
+/// `connections.session(client_id)` 直到出现全量订阅（"all" + 空 streams），
+/// 限时未落地即报错，不无限阻塞、不依赖增大超时。
+async fn subscribe_all_landed(harness: &Harness, client: &GuiClient) -> Result<(), String> {
+    client
+        .subscribe_all()
+        .await
+        .map_err(|e| format!("subscribe: {e}"))?;
+    let client_id = client.client_id().clone();
+    let deadline = Instant::now() + TIMEOUT;
+    while Instant::now() < deadline {
+        let landed = harness
+            .connections
+            .session(&client_id)
+            .map(|session| {
+                session
+                    .subscriptions
+                    .iter()
+                    .any(|sub| sub.subscription_id == "all" && sub.streams.is_empty())
+            })
+            .unwrap_or(false);
+        if landed {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    Err(format!(
+        "客户端 {} 的 subscribe_all 未在限时内落地",
+        client.client_id()
+    ))
+}
 
 async fn prepare_session_via_client(client: &GuiClient) -> Result<SessionId, String> {
     let workspace_id = session_workspace_id_via(client).await?;

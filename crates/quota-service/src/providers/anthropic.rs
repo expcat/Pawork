@@ -29,14 +29,14 @@
 //! `QuotaReset::Absolute { at: 下月1号UTC, uncertain: false }`。
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use provider_api::{CredentialKind, ResolvedCredential};
 use provider_runtime::http::HttpClient;
 
-use crate::adapters::http_util::{api_get, now_millis, redact_endpoint};
+use crate::adapters::http_util::api_get;
 use crate::adapters::money::json_decimal_string;
+use crate::util::{next_month_start_timestamp, now_millis, redact_endpoint};
 use crate::{
     AdapterKind, Confidence, QuotaAdapter, QuotaError, QuotaMeasure, QuotaProvenance, QuotaRequest,
     QuotaReset, QuotaSnapshot, QuotaUnit, QuotaValues, QuotaWindow,
@@ -170,7 +170,7 @@ impl QuotaAdapter for AnthropicAdapter {
             values: QuotaValues::new(used, limit, remaining),
             // 自然月：月初（下月 1 号）00:00 UTC 重置。
             reset: QuotaReset::Absolute {
-                at: next_month_start_timestamp(),
+                at: next_month_start_timestamp(now),
                 uncertain: false,
             },
             confidence: Confidence::Exact,
@@ -369,46 +369,6 @@ fn x_api_key_headers(credential: &ResolvedCredential) -> Vec<(String, String)> {
             ANTHROPIC_VERSION.to_string(),
         ),
     ]
-}
-
-/// 下月 1 号 00:00 UTC 的 Timestamp（自然月 reset 时刻）。
-fn next_month_start_timestamp() -> agent_domain::Timestamp {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = (now / 86_400) as i64;
-    let (y, mo, _, _, _, _) = epoch_to_utc_from_days(days);
-    // 下月：mo in 1..=12；mo==12 → 次年 1 月。
-    let (ny, nmo) = if mo == 12 { (y + 1, 1) } else { (y, mo + 1) };
-    let secs = civil_to_days(ny, nmo, 1) * 86_400;
-    agent_domain::Timestamp::from_unix_millis(secs as u64 * 1_000)
-}
-
-/// Unix 天数 → UTC 民用日期（Howard Hinnant 算法）。
-fn epoch_to_utc_from_days(days: i64) -> (i32, u32, u32, u32, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = ((doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365) as i64;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe as u64 + yoe as u64 / 4 - yoe as u64 / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = (if mo <= 2 { y + 1 } else { y }) as i32;
-    (y, mo, d, 0, 0, 0)
-}
-
-/// 民用日期 → Unix 天数（UTC）。
-fn civil_to_days(y: i32, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { (y - 1) as i64 } else { y as i64 };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as u64;
-    let m_adj = if m > 2 { m as i64 - 3 } else { m as i64 + 9 };
-    let doy = (153 * m_adj as u64 + 2) / 5 + d as u64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe as i64 - 719_468
 }
 
 #[cfg(test)]
