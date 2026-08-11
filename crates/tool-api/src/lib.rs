@@ -8,7 +8,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-pub use agent_domain::CancellationToken;
+/// Canonical Tool v2（P15-1）兼容 re-export：领域类型统一在 `agent-domain`，
+/// 旧路径 `tool_api::ToolDescriptor` / `tool_api::ToolCapability` 等保持不变。
+pub use agent_domain::{
+    CancellationToken, ContinuationMode, ExecutionOwner, ToolCapability, ToolCapabilityTag,
+    ToolDescriptor, ToolHosting, ToolKind,
+};
 
 #[async_trait]
 pub trait AgentTool: Send + Sync {
@@ -29,39 +34,6 @@ pub trait ToolEventSink: Send + Sync {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ToolDescriptor {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
-    pub capability: ToolCapability,
-    pub read_only: bool,
-    pub supports_concurrency: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_timeout_ms: Option<u64>,
-    pub max_output_bytes: u64,
-    #[serde(default)]
-    pub allowed_in_untrusted_workspace: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolCapability {
-    ReadOnly,
-    WorkspaceWrite,
-    GitWrite,
-    Process,
-    Network,
-    UserInteraction,
-    ExternalPlugin,
-}
-
-impl ToolCapability {
-    pub const fn permits_concurrent_execution(&self) -> bool {
-        matches!(self, Self::ReadOnly)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolRequest {
     pub tool_call_id: ToolCallId,
     pub input: Value,
@@ -78,6 +50,8 @@ pub struct ToolExecutionContext {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolResult {
+    /// `ToolResult` 仅表示 Core 执行的 ClientFunction 结果。ProviderHosted /
+    /// ProviderExtension 只能经 Provider transcript 续接，不能构造此类型。
     #[serde(default)]
     pub content: Vec<ContentPart>,
     #[serde(default)]
@@ -150,6 +124,8 @@ pub enum ToolErrorKind {
     Cancelled,
     Timeout,
     InvalidInput,
+    /// 该工具位点不允许 Core 本地执行（ProviderHosted / ProviderExtension）。
+    NotLocallyExecutable,
     PermissionDenied,
     NotFound,
     Conflict,
@@ -178,11 +154,26 @@ impl ToolError {
         }
     }
 
+    /// 构造「不允许本地执行」错误：hosted / extension 工具不得由 Core 执行，
+    /// 结果经 Provider transcript / 中介通道回填（P15-5）。
+    pub fn not_locally_executable(name: &str, site: &str) -> Self {
+        Self {
+            kind: ToolErrorKind::NotLocallyExecutable,
+            message: format!(
+                "tool `{name}` is {site} and must not be executed locally by core; \
+                 its result is provided via the provider transcript"
+            ),
+            retryable: false,
+            retry_after_ms: None,
+        }
+    }
+
     pub fn category(&self) -> ErrorCategory {
         match self.kind {
             ToolErrorKind::Cancelled => ErrorCategory::Cancelled,
             ToolErrorKind::Timeout => ErrorCategory::Timeout,
             ToolErrorKind::InvalidInput => ErrorCategory::InvalidRequest,
+            ToolErrorKind::NotLocallyExecutable => ErrorCategory::Tool,
             ToolErrorKind::PermissionDenied => ErrorCategory::Authorization,
             ToolErrorKind::NotFound => ErrorCategory::NotFound,
             ToolErrorKind::Conflict => ErrorCategory::Conflict,
@@ -215,6 +206,10 @@ mod tests {
             description: "Read a workspace-relative file".into(),
             input_schema: serde_json::json!({"type": "object"}),
             capability: ToolCapability::ReadOnly,
+            kind: ToolKind::ClientFunction,
+            hosting: ToolHosting::Local,
+            capabilities: Vec::new(),
+            requires_approval: false,
             read_only: true,
             supports_concurrency: true,
             default_timeout_ms: Some(5_000),
@@ -223,11 +218,47 @@ mod tests {
         };
         let value = serde_json::to_value(&descriptor).expect("serialize descriptor");
 
+        assert_eq!(value["kind"], "client_function");
+        assert_eq!(value["hosting"]["type"], "local");
         assert_eq!(value["read_only"], true);
         assert_eq!(value["supports_concurrency"], true);
         assert_eq!(value["default_timeout_ms"], 5_000);
         assert_eq!(value["max_output_bytes"], 65_536);
         assert_eq!(value["capability"], "read_only");
+    }
+
+    #[test]
+    fn tool_result_wire_has_no_writable_continuation_mode() {
+        let result = ToolResult::success(Vec::new());
+        let value = serde_json::to_value(&result).expect("serialize result");
+        assert!(value.get("continuation").is_none());
+        assert_eq!(
+            ToolKind::ClientFunction.continuation_mode(),
+            ContinuationMode::CoreSuppliedResult
+        );
+    }
+
+    #[test]
+    fn canonical_v2_types_are_visible_through_tool_api_reexports() {
+        // 兼容 re-export：旧路径继续可用，且与 agent-domain 类型一致。
+        let kind: ToolKind = serde_json::from_str(r#""provider_hosted""#).unwrap();
+        assert_eq!(kind, ToolKind::ProviderHosted);
+        assert_eq!(kind.execution_owner(), ExecutionOwner::Provider);
+        let _: &ToolDescriptor = &ToolDescriptor {
+            name: String::new(),
+            description: String::new(),
+            input_schema: serde_json::Value::Null,
+            capability: ToolCapability::ReadOnly,
+            kind: ToolKind::ClientFunction,
+            hosting: ToolHosting::Local,
+            capabilities: Vec::new(),
+            requires_approval: false,
+            read_only: true,
+            supports_concurrency: true,
+            default_timeout_ms: None,
+            max_output_bytes: 0,
+            allowed_in_untrusted_workspace: false,
+        };
     }
 
     #[test]

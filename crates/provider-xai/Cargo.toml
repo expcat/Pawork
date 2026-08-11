@@ -13,9 +13,9 @@ provider-api = { path = "../provider-api" }
 provider-runtime = { path = "../provider-runtime" }
 provider-openai-compatible = { path = "../provider-openai-compatible" }
 async-trait.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 wiremock.workspace = true
 test-support = { path = "../test-support" }

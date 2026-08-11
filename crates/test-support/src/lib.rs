@@ -62,6 +62,15 @@ impl MockScript {
         self
     }
 
+    /// 发射一条仅含 Protected Blob 安全引用的 reasoning continuation。
+    pub fn reasoning_item(mut self, item: agent_domain::ReasoningItem) -> Self {
+        self.steps
+            .push(MockProviderStep::Event(ProviderStreamEvent::ReasoningItem(
+                item,
+            )));
+        self
+    }
+
     pub fn tool_call(mut self, name: impl Into<String>, arguments: Value) -> Self {
         let id = ToolCallId::from(format!("mock-tool-call-{}", self.next_tool_call));
         self.next_tool_call += 1;
@@ -109,6 +118,26 @@ impl MockScript {
     pub fn provider_metadata(mut self, metadata: Value) -> Self {
         self.steps.push(MockProviderStep::Event(
             ProviderStreamEvent::ProviderMetadata(metadata),
+        ));
+        self
+    }
+
+    /// 发射一条归一后的 server tool 事件（P15-5）。
+    pub fn server_tool(mut self, event: agent_domain::ServerToolEvent) -> Self {
+        self.steps
+            .push(MockProviderStep::Event(ProviderStreamEvent::ServerTool(
+                event,
+            )));
+        self
+    }
+
+    /// 发射一条 provider transcript 续传信封（provider-neutral）。
+    pub fn transcript_envelope(
+        mut self,
+        envelope: agent_domain::ProviderTranscriptEnvelope,
+    ) -> Self {
+        self.steps.push(MockProviderStep::Event(
+            ProviderStreamEvent::TranscriptEnvelope(envelope),
         ));
         self
     }
@@ -260,9 +289,12 @@ impl ModelProvider for MockProvider {
                         }
                         ProviderStreamEvent::TextDelta(_)
                         | ProviderStreamEvent::ThinkingDelta(_)
+                        | ProviderStreamEvent::ReasoningItem(_)
                         | ProviderStreamEvent::ToolCallStarted { .. }
                         | ProviderStreamEvent::ToolCallArgumentsDelta { .. }
                         | ProviderStreamEvent::ToolCallCompleted { .. }
+                        | ProviderStreamEvent::ServerTool(_)
+                        | ProviderStreamEvent::TranscriptEnvelope(_)
                         | ProviderStreamEvent::Error(_) => {}
                     }
                     sink.emit(event.clone()).await?;
@@ -465,6 +497,10 @@ impl MockTool {
                 name,
                 input_schema: serde_json::json!({"type": "object"}),
                 capability: ToolCapability::ReadOnly,
+                kind: tool_api::ToolKind::ClientFunction,
+                hosting: tool_api::ToolHosting::Local,
+                capabilities: Vec::new(),
+                requires_approval: false,
                 read_only: true,
                 supports_concurrency: true,
                 default_timeout_ms: Some(1_000),
@@ -603,6 +639,8 @@ mod tests {
                 metadata: MessageMetadata::default(),
             }],
             tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
             tool_choice: ToolChoice::Auto,
             thinking: None,
             temperature: None,
@@ -715,6 +753,78 @@ mod tests {
                 ("call-b", r#"{"line":1}"#)
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn mock_script_emits_server_tool_events_and_transcript_envelope() {
+        use agent_domain::{
+            ArtifactId, Citation, CitationSourceKind, ProgramStream, ProviderTranscriptEnvelope,
+            ServerToolEvent, TranscriptItem,
+        };
+
+        let script = MockScript::new()
+            .server_tool(ServerToolEvent::Started {
+                tool_call_id: ToolCallId::from("server-tool-1"),
+                name: "web_search".into(),
+                arguments: Some(serde_json::json!({"query": "pawork"})),
+            })
+            .server_tool(ServerToolEvent::CitationAdded {
+                tool_call_id: ToolCallId::from("server-tool-1"),
+                citation: Citation {
+                    url: Some("https://example.com".into()),
+                    source_kind: CitationSourceKind::WebSearch,
+                    ..Citation::empty()
+                },
+            })
+            .server_tool(ServerToolEvent::ProgramOutput {
+                tool_call_id: ToolCallId::from("server-tool-1"),
+                stream: ProgramStream::Stdout,
+                delta: None,
+                artifact: Some(ArtifactId::from("artifact-log-1")),
+            })
+            .server_tool(ServerToolEvent::Completed {
+                tool_call_id: ToolCallId::from("server-tool-1"),
+                summary: Some("3 results".into()),
+                artifacts: Vec::new(),
+            })
+            .transcript_envelope(ProviderTranscriptEnvelope {
+                items: vec![TranscriptItem::Text("final".into())],
+                cursor: Some("cursor-1".into()),
+                continuation_reference: None,
+            })
+            .complete();
+        let provider = MockProvider::new(script);
+        let sink = RecordingProviderSink::default();
+
+        let summary = provider
+            .stream(
+                request("request-server-tool"),
+                &sink,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("mock stream");
+
+        assert_eq!(summary.stop_reason, StopReason::Completed);
+        let events = sink.events();
+        assert_eq!(events.len(), 6);
+        assert!(matches!(
+            &events[0],
+            ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. })
+                if name == "web_search"
+        ));
+        assert!(matches!(
+            &events[3],
+            ProviderStreamEvent::ServerTool(ServerToolEvent::Completed { .. })
+        ));
+        assert!(matches!(
+            &events[4],
+            ProviderStreamEvent::TranscriptEnvelope(_)
+        ));
+        assert!(matches!(
+            &events[5],
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed)
+        ));
     }
 
     #[tokio::test]

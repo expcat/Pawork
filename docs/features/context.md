@@ -77,7 +77,7 @@ pub struct CompactionSnapshot {
 
 `context-engine` 已实现 Tool Result 分级裁剪（`trim_tool_result`）：文本、Image、Structured 与 Artifact 均计入权重，按体量分为小（完整保留）/ 中（头部 + 尾部 + 截断说明）/ 大（摘要 + ArtifactReference 占位）/ 超大（仅元数据 + ArtifactReference），大/超大输出原文经 `retained_full` 暂存以便回溯（ADR-018）。启发式 TokenEstimator 对 CJK / Kana / Hangul 使用保守的 1 字符/token 路径，压缩前后统计复用同一估算器。
 
-`compaction-engine` 已落地版本化 `CompactionSnapshot`（`SnapshotVersion` + `validate()`）、自动/手动压缩统一入口（压缩前用 `create_branch` Fork recovery branch）、保留策略 `RetentionPolicy`（最近 N 轮、未解决任务、用户约束、修改文件、待处理/失败 tool call）与 Golden Session 回归；压缩只读取目标 branch，`context-engine::CompactionReason` 到引擎原因有显式映射。引擎只产快照与决策，向事件流追加 `CompactionStarted/Completed` 与上下文重建由调用方完成。
+`compaction-engine` 已落地版本化 `CompactionSnapshot`（`SnapshotVersion` + `validate()`）、自动/手动压缩统一入口（压缩前用 `create_branch` Fork recovery branch）、保留策略 `RetentionPolicy`（最近 N 轮、最近 N 个 reasoning item、未解决任务、用户约束、修改文件、待处理/失败 tool call）与 Golden Session 回归；reasoning 默认保留最近 8 项，按 branch event id 过滤并保留承载它们的 `MessageCommitted` 事件。旧策略 JSON 缺 `retained_reasoning_items` 时采用该默认值。压缩只读取目标 branch，`context-engine::CompactionReason` 到引擎原因有显式映射。引擎只产快照与决策，向事件流追加 `CompactionStarted/Completed` 与上下文重建由调用方完成。
 
 ## Phase 8 Resource 基线
 
@@ -89,7 +89,7 @@ pub struct CompactionSnapshot {
 
 - 长期记忆由 `memory-service` 通过 canonical `EmbeddingProvider` 检索，按来源、置信度、过期状态与 token budget 注入；Context Engine 不直接调用具体 embedding API。
 - `PromptTransform` User Hook 只可修改明确标记为 transformable 的 Agent Profile / 用户 / 工作区 / 注入上下文层。Core System Prompt 与安全/权限策略先锁定，transform 后重新校验；输入、diff、作用域、决策与失败均记录 canonical audit event。
-- Compaction 保留当前 reasoning chain 的 `protected_blob_ref` 与引用计数，不复制明文、不把 Protected Blob 降级成普通 Artifact；被替换事件释放引用前必须证明无活动 continuation 使用。
+- Compaction 通过保留 reasoning 所在事件维持当前 chain；保留决策只处理 `EventId` / `ReasoningItemId`，不读取 blob、不复制明文、不改变引用计数，也不把 Protected Blob 降级成普通 Artifact。当前引擎不删除原事件；未来若物理删除被替换事件，释放引用前必须证明无活动 continuation 使用。
 - Provider hosted transcript、Plan/Goal 未完成约束、后台任务与审批状态属于 retention 约束，不能被摘要静默丢弃。
 
 ## 相关文档

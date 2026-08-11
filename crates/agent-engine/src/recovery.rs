@@ -129,6 +129,12 @@ pub fn replay_run(events: &RunEventLog) -> RecoveryPlan {
             AgentEvent::RunCompleted { .. } => vec![RunTransition::Complete],
             AgentEvent::RunCancelled { .. } => vec![RunTransition::Cancel],
             AgentEvent::RunFailed { .. } => vec![RunTransition::Fail],
+            // 全部为 Provider-owned 的轮次：单步 CollectingToolCalls → WaitingForProvider。
+            AgentEvent::ProviderTranscriptContinued { .. }
+                if matches!(sm.state(), RunState::CollectingToolCalls) =>
+            {
+                vec![RunTransition::ProviderTranscriptContinued]
+            }
             // 这些事件不产生独立状态转换，但用于审计。
             AgentEvent::AssistantTextDelta { .. }
             | AgentEvent::AssistantThinkingDelta { .. }
@@ -139,6 +145,9 @@ pub fn replay_run(events: &RunEventLog) -> RecoveryPlan {
             | AgentEvent::ToolApprovalRequested { .. }
             | AgentEvent::ToolExecutionStarted { .. }
             | AgentEvent::ToolExecutionCompleted { .. }
+            | AgentEvent::ProviderTranscriptContinued { .. }
+            | AgentEvent::ServerTool(_)
+            | AgentEvent::TranscriptEnvelope(_)
             | AgentEvent::CompactionStarted { .. }
             | AgentEvent::CompactionCompleted { .. }
             | AgentEvent::CheckpointCreated { .. }
@@ -350,6 +359,58 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_run_recovers_reasoning_continuation_reference() {
+        let reasoning = agent_domain::ReasoningItem {
+            id: agent_domain::ReasoningItemId::from("reasoning-1"),
+            summary: Some("safe summary".into()),
+            protected_blob_ref: agent_domain::ProtectedBlobRef::from("protected-1"),
+            opaque_metadata: BTreeMap::new(),
+            continuation_metadata: BTreeMap::new(),
+        };
+        let message = Message {
+            id: MessageId::from("assistant-reasoning"),
+            role: MessageRole::Assistant,
+            content: vec![ContentPart::Reasoning(reasoning.clone())],
+            metadata: MessageMetadata::default(),
+        };
+        let events = vec![
+            env(
+                1,
+                "run-reasoning",
+                AgentEvent::RunStarted {
+                    trigger_message_id: MessageId::from("user-1"),
+                },
+            ),
+            env(
+                2,
+                "run-reasoning",
+                AgentEvent::ContextPrepared {
+                    message_count: 1,
+                    estimated_input_tokens: 1,
+                },
+            ),
+            env(
+                3,
+                "run-reasoning",
+                AgentEvent::ProviderRequestStarted {
+                    request_id: RequestId::from("request-1"),
+                    provider_id: agent_domain::ProviderId::from("mock"),
+                    model: "mock".into(),
+                },
+            ),
+            env(4, "run-reasoning", AgentEvent::MessageCommitted { message }),
+        ];
+
+        let plan = replay_run(&events);
+        assert_eq!(plan.recovered_state, RunState::Interrupted);
+        assert!(plan.resumable);
+        assert_eq!(
+            plan.messages[0].content,
+            vec![ContentPart::Reasoning(reasoning)]
+        );
+    }
+
+    #[test]
     fn tool_round_replays_without_illegal_transition() {
         let events = vec![
             env(
@@ -446,6 +507,75 @@ mod tests {
             plan.issues
         );
         assert_eq!(plan.messages.len(), 2);
+    }
+
+    #[test]
+    fn all_hosted_round_replays_to_waiting_for_provider() {
+        let events = vec![
+            env(
+                1,
+                "run-hosted",
+                AgentEvent::RunStarted {
+                    trigger_message_id: MessageId::from("user-1"),
+                },
+            ),
+            env(
+                2,
+                "run-hosted",
+                AgentEvent::ContextPrepared {
+                    message_count: 1,
+                    estimated_input_tokens: 1,
+                },
+            ),
+            env(
+                3,
+                "run-hosted",
+                AgentEvent::ProviderRequestStarted {
+                    request_id: RequestId::from("request-1"),
+                    provider_id: agent_domain::ProviderId::from("mock"),
+                    model: "mock".into(),
+                },
+            ),
+            env(
+                4,
+                "run-hosted",
+                AgentEvent::MessageCommitted {
+                    message: assistant_tool_message("assistant-1"),
+                },
+            ),
+            env(
+                5,
+                "run-hosted",
+                AgentEvent::ProviderTranscriptContinued {
+                    calls: vec![agent_events::ProviderTranscriptContinuation {
+                        tool_call_id: agent_domain::ToolCallId::from("call-1"),
+                        name: "web_search".into(),
+                        kind: agent_domain::ToolKind::ProviderHosted,
+                    }],
+                },
+            ),
+            // 续接轮之后的下一个 Provider 轮次：仅当状态机确实落在
+            // WaitingForProvider 时才合法（CollectingToolCalls 会报 Illegal）。
+            env(
+                6,
+                "run-hosted",
+                AgentEvent::ProviderRequestStarted {
+                    request_id: RequestId::from("request-2"),
+                    provider_id: agent_domain::ProviderId::from("mock"),
+                    model: "mock".into(),
+                },
+            ),
+        ];
+        let plan = replay_run(&events);
+        // 事件流结束时仍为活跃态（WaitingForProvider → StreamingResponse），
+        // 按恢复语义归一为 Interrupted；无非法转换说明续接转换被合法重放。
+        assert_eq!(plan.recovered_state, RunState::Interrupted);
+        assert!(plan.resumable);
+        assert!(
+            plan.issues.is_empty(),
+            "unexpected issues: {:?}",
+            plan.issues
+        );
     }
 
     #[test]

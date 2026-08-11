@@ -51,11 +51,43 @@ pub trait LoopContext: Send + Sync {
         cancel: CancellationToken,
     ) -> Vec<ApprovalOutcome>;
 
+    /// Provider-owned 调用的 transcript continuation hook。
+    ///
+    /// 实现必须完成 Hosted/Extension 的授权与 dispatch 接管；返回值刻意不含
+    /// `ToolResult`。P15-5 将在此接口后接入 ServerToolEvent / transcript envelope。
+    async fn dispatch_provider_calls(
+        &self,
+        calls: Vec<ProviderTranscriptInvocation>,
+        _events: LoopEventEmitter,
+        _cancel: CancellationToken,
+    ) -> Result<(), tool_api::ToolError> {
+        let names = calls
+            .iter()
+            .map(|call| call.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(tool_api::ToolError {
+            kind: tool_api::ToolErrorKind::Internal,
+            message: format!("provider transcript hook is not configured for: {names}"),
+            retryable: false,
+            retry_after_ms: None,
+        })
+    }
+
     /// 生成新的 MessageId（保证唯一）。
     fn next_message_id(&self) -> MessageId;
 
     /// 生成新的 RequestId。
     fn next_request_id(&self) -> RequestId;
+
+    /// 查询工具的执行位点（canonical `ToolKind`，不涉及 Provider 名称）。
+    ///
+    /// P15-1 路由依据：Core 只本地执行 `ClientFunction`；`ProviderHosted` /
+    /// `ProviderExtension` 不本地执行、不生成本地 `ToolResult`。默认视为
+    /// `ClientFunction`（旧宿主 / 测试行为不变）；调度器宿主按注册表覆盖。
+    fn tool_kind(&self, _name: &str) -> agent_domain::ToolKind {
+        agent_domain::ToolKind::ClientFunction
+    }
 }
 
 /// 待执行的一次工具调用（解析自本轮 tool call）。
@@ -64,6 +96,22 @@ pub struct PendingToolInvocation {
     pub tool_call_id: agent_domain::ToolCallId,
     pub name: String,
     pub arguments: serde_json::Value,
+}
+
+/// 已按 canonical kind 分流、必须由 Provider transcript 续接的调用。
+#[derive(Clone, Debug)]
+pub struct ProviderTranscriptInvocation {
+    pub tool_call_id: agent_domain::ToolCallId,
+    pub name: String,
+    pub arguments: serde_json::Value,
+    pub kind: agent_domain::ToolKind,
+}
+
+impl ProviderTranscriptInvocation {
+    /// 续接方式不可写，只能由 kind 推导。
+    pub const fn continuation_mode(&self) -> agent_domain::ContinuationMode {
+        self.kind.continuation_mode()
+    }
 }
 
 /// 审批结果。
@@ -84,6 +132,8 @@ pub enum LoopError {
     BudgetExceeded(BudgetReport),
     #[error("illegal state transition: {0}")]
     State(#[from] TransitionError),
+    #[error("provider tool dispatch error: {0}")]
+    ProviderCall(tool_api::ToolError),
     #[error("run cancelled")]
     Cancelled,
     #[error("run failed: {0}")]
@@ -94,7 +144,10 @@ pub enum LoopError {
 #[derive(Clone, Debug)]
 pub struct TurnOutcome {
     pub assistant_message: Message,
+    /// 仅含 ClientFunction 的本地结果。
     pub tool_results: Vec<ToolCallResult>,
+    /// 已交给 Provider transcript hook 的 Hosted/Extension 调用。
+    pub provider_calls: Vec<ProviderTranscriptInvocation>,
     pub summary: ModelResponseSummary,
     /// 该轮结束后的 Run 状态。
     pub state: RunState,
@@ -105,7 +158,7 @@ pub struct TurnOutcome {
 impl TurnOutcome {
     /// 本轮是否请求了工具（循环据此决定是否继续）。
     pub fn requests_tools(&self) -> bool {
-        !self.tool_results.is_empty()
+        !self.tool_results.is_empty() || !self.provider_calls.is_empty()
     }
 }
 
@@ -132,6 +185,10 @@ pub struct ProviderLoopConfig {
     pub model: ModelId,
     /// 工具定义（随每次请求带给 Provider）。
     pub tools: Vec<provider_api::ToolDefinition>,
+    /// ProviderHosted 工具声明（随请求带给 Provider；P15-1）。
+    pub hosted_tools: Vec<provider_api::HostedToolRequest>,
+    /// ProviderExtension 工具声明（随请求带给 Provider；P15-1）。
+    pub extensions: Vec<provider_api::ExtensionToolRequest>,
     /// 初始对话历史（不含本轮触发消息）。
     pub initial_messages: Vec<Message>,
     /// 最大循环迭代次数（安全阀，防止模型无限请求工具）。
@@ -422,6 +479,7 @@ impl ProviderLoop {
             return Ok(TurnOutcome {
                 assistant_message,
                 tool_results: Vec::new(),
+                provider_calls: Vec::new(),
                 summary,
                 state: self.state.state(),
                 budget: self.budget.check(),
@@ -440,6 +498,69 @@ impl ProviderLoop {
             })
             .collect();
 
+        // P15-1：按 canonical 执行位点分流。Core 仅执行 ClientFunction；其余调用
+        // 进入明确 transcript hook，不生成 ToolResult。
+        let (invocations, provider_calls) = {
+            let mut client = Vec::with_capacity(invocations.len());
+            let mut provider = Vec::new();
+            for inv in invocations {
+                match self.declared_tool_kind(&inv.name) {
+                    agent_domain::ToolKind::ClientFunction => client.push(inv),
+                    kind => provider.push(ProviderTranscriptInvocation {
+                        tool_call_id: inv.tool_call_id,
+                        name: inv.name,
+                        arguments: inv.arguments,
+                        kind,
+                    }),
+                }
+            }
+            (client, provider)
+        };
+
+        if !provider_calls.is_empty() {
+            self.context
+                .dispatch_provider_calls(
+                    provider_calls.clone(),
+                    self.event_emitter(),
+                    cancel.token(),
+                )
+                .await
+                .map_err(|err| match err.kind {
+                    tool_api::ToolErrorKind::Cancelled => LoopError::Cancelled,
+                    _ => LoopError::ProviderCall(err),
+                })?;
+            // Provider-owned 调用同样计入工具预算（与本地执行一致）。
+            for _ in &provider_calls {
+                self.budget.record_tool_call();
+            }
+            self.check_budget()?;
+        }
+
+        // 全部为 Provider-owned：单步 CollectingToolCalls → WaitingForProvider，
+        // 发出可重放的 ProviderTranscriptContinued 事件；不追加空 Tool 消息，
+        // 等待 Provider 原生 transcript 续接（P15-5）。
+        if invocations.is_empty() {
+            self.transition(RunTransition::ProviderTranscriptContinued)?;
+            self.emit_payload(AgentEvent::ProviderTranscriptContinued {
+                calls: provider_calls
+                    .iter()
+                    .map(|call| agent_events::ProviderTranscriptContinuation {
+                        tool_call_id: call.tool_call_id.clone(),
+                        name: call.name.clone(),
+                        kind: call.kind,
+                    })
+                    .collect(),
+            });
+            return Ok(TurnOutcome {
+                assistant_message,
+                tool_results: Vec::new(),
+                provider_calls,
+                summary,
+                state: self.state.state(),
+                budget: self.budget.check(),
+            });
+        }
+
         // 审批：请求用户决策。
         self.transition(RunTransition::ApprovalRequested)?;
         for inv in &invocations {
@@ -453,8 +574,7 @@ impl ProviderLoop {
             .request_approval(&invocations, cancel.token())
             .await;
 
-        // 按原序收集结果：拒绝的直接回填，通过的先占位，执行后回填到原位置，
-        // 保证 results 与 invocations 同序（满足按序匹配 / 重放 / 审计一致性）。
+        // 仅对 ClientFunction 按原序收集本地结果。
         let mut results: Vec<ToolCallResult> = Vec::with_capacity(invocations.len());
         let mut approved_slots: Vec<usize> = Vec::new();
         for (inv, outcome) in invocations.iter().zip(approvals.iter()) {
@@ -535,6 +655,7 @@ impl ProviderLoop {
         Ok(TurnOutcome {
             assistant_message,
             tool_results: results,
+            provider_calls,
             summary,
             state: self.state.state(),
             budget: self.budget.check(),
@@ -547,6 +668,8 @@ impl ProviderLoop {
             model: self.config.model.clone(),
             messages: self.messages.clone(),
             tools: self.config.tools.clone(),
+            hosted_tools: self.config.hosted_tools.clone(),
+            extensions: self.config.extensions.clone(),
             tool_choice: provider_api::ToolChoice::Auto,
             thinking: self.config.thinking.clone(),
             temperature: None,
@@ -557,6 +680,24 @@ impl ProviderLoop {
             budget: provider_api::RequestBudget::default(),
             provider_options: std::collections::BTreeMap::new(),
             trace_id: None,
+        }
+    }
+
+    /// 请求中的 canonical 声明是执行位点的权威来源；registry 仅补充宿主侧
+    /// descriptor。若同名声明意外重叠，优先采用约束更严格的 Extension，避免
+    /// 把 Provider-owned 调用降成 Core 本地执行。
+    fn declared_tool_kind(&self, name: &str) -> agent_domain::ToolKind {
+        if self.config.extensions.iter().any(|tool| tool.name == name) {
+            agent_domain::ToolKind::ProviderExtension
+        } else if self
+            .config
+            .hosted_tools
+            .iter()
+            .any(|tool| tool.name == name)
+        {
+            agent_domain::ToolKind::ProviderHosted
+        } else {
+            self.context.tool_kind(name)
         }
     }
 
@@ -699,6 +840,7 @@ impl ProviderErrorExt for ProviderError {
                 retry_after_ms: None,
                 diagnostics: Default::default(),
             },
+            LoopError::ProviderCall(error) => agent_domain::ErrorContext::from(error.clone()),
             LoopError::Cancelled => agent_domain::ErrorContext {
                 category: agent_domain::ErrorCategory::Cancelled,
                 message: "run cancelled".into(),
@@ -867,6 +1009,12 @@ impl ProviderEventSink for LoopSink {
             ProviderStreamEvent::UsageUpdated(usage) => Some(AgentEvent::UsageUpdated {
                 usage: usage.clone(),
             }),
+            // P15-5：Provider 归一后的 server tool 事件与 transcript 信封直接进入
+            // canonical 事件流（不参与本地消息组装、不生成 ToolResult）。
+            ProviderStreamEvent::ServerTool(event) => Some(AgentEvent::ServerTool(event.clone())),
+            ProviderStreamEvent::TranscriptEnvelope(envelope) => {
+                Some(AgentEvent::TranscriptEnvelope(envelope.clone()))
+            }
             _ => None,
         };
         if let Some(payload) = payload {
@@ -922,6 +1070,13 @@ impl tool_api::ToolEventSink for SchedulerToolSink {
 
 #[async_trait::async_trait]
 impl LoopContext for SchedulerLoopContext {
+    fn tool_kind(&self, name: &str) -> agent_domain::ToolKind {
+        // 未注册工具视为 ClientFunction：交给调度器走既有 NotFound 路径。
+        self.scheduler
+            .kind_of(name)
+            .unwrap_or(agent_domain::ToolKind::ClientFunction)
+    }
+
     async fn execute_tools(
         &self,
         calls: Vec<PendingToolInvocation>,
@@ -965,6 +1120,46 @@ impl LoopContext for SchedulerLoopContext {
             }
         });
         futures::future::join_all(futures).await
+    }
+
+    async fn dispatch_provider_calls(
+        &self,
+        calls: Vec<ProviderTranscriptInvocation>,
+        _events: LoopEventEmitter,
+        cancel: CancellationToken,
+    ) -> Result<(), tool_api::ToolError> {
+        for call in calls {
+            let ProviderTranscriptInvocation {
+                tool_call_id,
+                name,
+                arguments,
+                kind,
+            } = call;
+            let dispatch = self
+                .scheduler
+                .authorize_provider_call(
+                    &name,
+                    tool_api::ToolRequest {
+                        tool_call_id,
+                        input: arguments,
+                    },
+                    cancel.clone(),
+                    self.approval.as_ref(),
+                )
+                .await?;
+            if dispatch.descriptor().kind != kind {
+                return Err(tool_api::ToolError {
+                    kind: tool_api::ToolErrorKind::Internal,
+                    message: format!(
+                        "tool `{}` changed execution kind while dispatching",
+                        dispatch.descriptor().name
+                    ),
+                    retryable: false,
+                    retry_after_ms: None,
+                });
+            }
+        }
+        Ok(())
     }
 
     async fn request_approval(
@@ -1151,6 +1346,8 @@ mod tests {
             provider_id: agent_domain::ProviderId::from("mock"),
             model: ModelId::from("mock-model"),
             tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
             initial_messages: messages,
             max_iterations: 10,
             budget: crate::budget::BudgetLimits {
@@ -1165,6 +1362,49 @@ mod tests {
             },
             thinking: None,
         }
+    }
+
+    #[test]
+    fn canonical_request_declarations_are_authoritative_for_tool_kind() {
+        let mut cfg = config(vec![user_message("classify")]);
+        cfg.hosted_tools.push(provider_api::HostedToolRequest {
+            name: "shared".into(),
+            kind: tool_api::ToolCapabilityTag::WebSearch,
+            description: String::new(),
+            capabilities: Vec::new(),
+            config: None,
+        });
+        cfg.hosted_tools.push(provider_api::HostedToolRequest {
+            name: "hosted_only".into(),
+            kind: tool_api::ToolCapabilityTag::WebSearch,
+            description: String::new(),
+            capabilities: Vec::new(),
+            config: None,
+        });
+        cfg.extensions.push(provider_api::ExtensionToolRequest {
+            name: "shared".into(),
+            reference: "connector:test".into(),
+            description: String::new(),
+            capabilities: Vec::new(),
+            requires_approval: true,
+        });
+        let provider = Arc::new(MockProvider::new(MockScript::new().text("done").complete()));
+        let context = Arc::new(TestContext::new(Vec::new()));
+        let engine = ProviderLoop::new(provider, context, cfg, 1, EventBroadcaster::new());
+
+        assert_eq!(
+            engine.declared_tool_kind("shared"),
+            agent_domain::ToolKind::ProviderExtension,
+            "overlap must fail closed to the stricter provider-owned site"
+        );
+        assert_eq!(
+            engine.declared_tool_kind("hosted_only"),
+            agent_domain::ToolKind::ProviderHosted
+        );
+        assert_eq!(
+            engine.declared_tool_kind("ordinary_client"),
+            agent_domain::ToolKind::ClientFunction
+        );
     }
 
     fn run_cancel() -> CancelHandle {
@@ -1184,6 +1424,79 @@ mod tests {
             role: agent_domain::MessageRole::User,
             content: vec![ContentPart::Text(TextContent { text: text.into() })],
             metadata: MessageMetadata::default(),
+        }
+    }
+
+    fn provider_owned_descriptor(
+        name: &str,
+        kind: agent_domain::ToolKind,
+    ) -> tool_api::ToolDescriptor {
+        let hosting = match kind {
+            agent_domain::ToolKind::ProviderHosted => tool_api::ToolHosting::ProviderHosted {
+                hosted_name: name.into(),
+                kind: tool_api::ToolCapabilityTag::WebSearch,
+            },
+            agent_domain::ToolKind::ProviderExtension => tool_api::ToolHosting::ProviderExtension {
+                reference: "connector:test".into(),
+            },
+            agent_domain::ToolKind::ClientFunction => panic!("provider-owned descriptor required"),
+        };
+        tool_api::ToolDescriptor {
+            name: name.into(),
+            description: "provider-owned test tool".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            capability: tool_api::ToolCapability::Network,
+            kind,
+            hosting,
+            capabilities: Vec::new(),
+            requires_approval: kind == agent_domain::ToolKind::ProviderExtension,
+            read_only: true,
+            supports_concurrency: true,
+            default_timeout_ms: None,
+            max_output_bytes: 1024,
+            allowed_in_untrusted_workspace: kind == agent_domain::ToolKind::ProviderHosted,
+        }
+    }
+
+    fn scheduler_context(
+        registry: tool_runtime::ToolRegistry,
+        workspace_trusted: bool,
+        approval: Arc<dyn tool_runtime::ApprovalResolver>,
+    ) -> Arc<dyn LoopContext> {
+        Arc::new(SchedulerLoopContext::new(
+            Arc::new(tool_runtime::ToolScheduler::new(
+                registry,
+                tool_runtime::ToolSchedulerConfig {
+                    max_concurrent: 4,
+                    approval_mode: tool_runtime::ApprovalMode::NeverAsk,
+                    workspace_trusted,
+                },
+            )),
+            tool_api::ToolExecutionContext {
+                workspace_id: agent_domain::WorkspaceId::from("workspace-routing"),
+                run_id: RunId::from("run-1"),
+                working_directory: None,
+            },
+            approval,
+        ))
+    }
+
+    struct CountingExplicitResolver {
+        calls: Arc<AtomicU64>,
+    }
+
+    #[async_trait::async_trait]
+    impl tool_runtime::ApprovalResolver for CountingExplicitResolver {
+        async fn resolve(
+            &self,
+            requests: &[tool_api::ToolRequest],
+        ) -> Vec<tool_runtime::ApprovalOutcome> {
+            self.calls
+                .fetch_add(requests.len() as u64, Ordering::SeqCst);
+            requests
+                .iter()
+                .map(|_| tool_runtime::ApprovalOutcome::Approved)
+                .collect()
         }
     }
 
@@ -1216,6 +1529,329 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn all_hosted_calls_continue_via_transcript_without_tool_result() {
+        let provider = SequenceProvider::new(vec![
+            MockScript::new()
+                .tool_call("web_search", serde_json::json!({"query": "pawork"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]);
+        let provider_view = provider.clone();
+        let mut registry = tool_runtime::ToolRegistry::new();
+        registry
+            .register_descriptor(provider_owned_descriptor(
+                "web_search",
+                agent_domain::ToolKind::ProviderHosted,
+            ))
+            .unwrap();
+        assert!(registry.get("web_search").is_none());
+        let context =
+            scheduler_context(registry, true, Arc::new(tool_runtime::AutoApproveResolver));
+        let mut cfg = config(vec![user_message("search")]);
+        cfg.hosted_tools.push(provider_api::HostedToolRequest {
+            name: "web_search".into(),
+            kind: tool_api::ToolCapabilityTag::WebSearch,
+            description: String::new(),
+            capabilities: vec![tool_api::ToolCapabilityTag::WebSearch],
+            config: None,
+        });
+        let mut engine =
+            ProviderLoop::new(Arc::new(provider), context, cfg, 1, EventBroadcaster::new());
+
+        let (state, _) = engine.run(message_queue(), run_cancel()).await.unwrap();
+        assert_eq!(state, RunState::Completed);
+        assert_eq!(
+            provider_view.requests().len(),
+            2,
+            "hosted call must continue"
+        );
+        assert!(engine
+            .messages()
+            .iter()
+            .all(|message| message.role != agent_domain::MessageRole::Tool));
+        assert_eq!(provider_view.requests()[0].hosted_tools.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn mixed_client_and_hosted_calls_only_append_client_tool_result() {
+        let provider = SequenceProvider::new(vec![
+            MockScript::new()
+                .tool_call("echo", serde_json::json!({"text": "hi"}))
+                .tool_call("web_search", serde_json::json!({"query": "pawork"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]);
+        let provider_view = provider.clone();
+        let client = MockTool::new(
+            "echo",
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "hi".into() })]),
+        );
+        let mut registry = tool_runtime::ToolRegistry::new();
+        registry
+            .register(Arc::new(client.clone()))
+            .expect("client tool registers");
+        registry
+            .register_descriptor(provider_owned_descriptor(
+                "web_search",
+                agent_domain::ToolKind::ProviderHosted,
+            ))
+            .unwrap();
+        let context =
+            scheduler_context(registry, true, Arc::new(tool_runtime::AutoApproveResolver));
+        let mut cfg = config(vec![user_message("mixed")]);
+        cfg.tools.push(provider_api::ToolDefinition {
+            name: "echo".into(),
+            description: String::new(),
+            input_schema: serde_json::json!({"type": "object"}),
+        });
+        cfg.hosted_tools.push(provider_api::HostedToolRequest {
+            name: "web_search".into(),
+            kind: tool_api::ToolCapabilityTag::WebSearch,
+            description: String::new(),
+            capabilities: vec![tool_api::ToolCapabilityTag::WebSearch],
+            config: None,
+        });
+        let mut engine =
+            ProviderLoop::new(Arc::new(provider), context, cfg, 1, EventBroadcaster::new());
+
+        engine.run(message_queue(), run_cancel()).await.unwrap();
+        assert_eq!(client.calls().len(), 1);
+        assert_eq!(provider_view.requests().len(), 2);
+        let result_names: Vec<&str> = engine
+            .messages()
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                ContentPart::ToolResult(result) => result.tool_name.as_deref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(result_names, vec!["echo"]);
+    }
+
+    #[tokio::test]
+    async fn reasoning_reference_is_carried_into_the_next_canonical_request() {
+        let reasoning = agent_domain::ReasoningItem {
+            id: agent_domain::ReasoningItemId::from("reasoning-1"),
+            summary: Some("safe summary".into()),
+            protected_blob_ref: agent_domain::ProtectedBlobRef::from("protected-1"),
+            opaque_metadata: Default::default(),
+            continuation_metadata: Default::default(),
+        };
+        let provider = SequenceProvider::new(vec![
+            MockScript::new()
+                .reasoning_item(reasoning.clone())
+                .tool_call("echo", serde_json::json!({"text": "continue"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]);
+        let provider_view = provider.clone();
+        let client = MockTool::new(
+            "echo",
+            ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "continue".into(),
+            })]),
+        );
+        let mut registry = tool_runtime::ToolRegistry::new();
+        registry.register(Arc::new(client)).expect("register echo");
+        let context =
+            scheduler_context(registry, true, Arc::new(tool_runtime::AutoApproveResolver));
+        let mut cfg = config(vec![user_message("reason across turns")]);
+        cfg.tools.push(provider_api::ToolDefinition {
+            name: "echo".into(),
+            description: String::new(),
+            input_schema: serde_json::json!({"type": "object"}),
+        });
+        let mut engine =
+            ProviderLoop::new(Arc::new(provider), context, cfg, 1, EventBroadcaster::new());
+
+        engine.run(message_queue(), run_cancel()).await.unwrap();
+
+        let requests = provider_view.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].messages.iter().any(|message| {
+            message
+                .content
+                .iter()
+                .any(|part| part == &ContentPart::Reasoning(reasoning.clone()))
+        }));
+    }
+
+    #[tokio::test]
+    async fn extension_call_requires_approval_and_never_appends_tool_result() {
+        let provider = SequenceProvider::new(vec![
+            MockScript::new()
+                .tool_call("remote_mcp", serde_json::json!({"action": "read"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]);
+        let provider_view = provider.clone();
+        let mut registry = tool_runtime::ToolRegistry::new();
+        registry
+            .register_descriptor(provider_owned_descriptor(
+                "remote_mcp",
+                agent_domain::ToolKind::ProviderExtension,
+            ))
+            .unwrap();
+        assert!(registry.get("remote_mcp").is_none());
+        let approval_calls = Arc::new(AtomicU64::new(0));
+        let context = scheduler_context(
+            registry,
+            true,
+            Arc::new(CountingExplicitResolver {
+                calls: approval_calls.clone(),
+            }),
+        );
+        let mut cfg = config(vec![user_message("extension")]);
+        cfg.extensions.push(provider_api::ExtensionToolRequest {
+            name: "remote_mcp".into(),
+            reference: "connector:test".into(),
+            description: String::new(),
+            capabilities: vec![tool_api::ToolCapabilityTag::ServerSideMcp],
+            requires_approval: true,
+        });
+        let mut engine =
+            ProviderLoop::new(Arc::new(provider), context, cfg, 1, EventBroadcaster::new());
+
+        engine.run(message_queue(), run_cancel()).await.unwrap();
+        assert_eq!(approval_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider_view.requests().len(), 2);
+        assert!(engine
+            .messages()
+            .iter()
+            .all(|message| message.role != agent_domain::MessageRole::Tool));
+        assert_eq!(provider_view.requests()[0].extensions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn extension_deny_fails_closed_without_tool_result() {
+        let provider = SequenceProvider::new(vec![MockScript::new()
+            .tool_call("remote_mcp", serde_json::json!({"action": "read"}))
+            .complete_with(StopReason::ToolUse)]);
+        let provider_view = provider.clone();
+        let mut registry = tool_runtime::ToolRegistry::new();
+        registry
+            .register_descriptor(provider_owned_descriptor(
+                "remote_mcp",
+                agent_domain::ToolKind::ProviderExtension,
+            ))
+            .unwrap();
+        // 未信任 workspace：Extension 无条件拒绝。
+        let context =
+            scheduler_context(registry, false, Arc::new(tool_runtime::AutoApproveResolver));
+        let mut cfg = config(vec![user_message("extension")]);
+        cfg.extensions.push(provider_api::ExtensionToolRequest {
+            name: "remote_mcp".into(),
+            reference: "connector:test".into(),
+            description: String::new(),
+            capabilities: vec![tool_api::ToolCapabilityTag::ServerSideMcp],
+            requires_approval: true,
+        });
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut engine = ProviderLoop::new(Arc::new(provider), context, cfg, 1, broadcaster);
+
+        let result = engine.run(message_queue(), run_cancel()).await;
+        assert!(
+            matches!(result, Err(LoopError::ProviderCall(_))),
+            "denied extension must fail the run, got {result:?}"
+        );
+        assert_eq!(engine.state(), RunState::Failed);
+        assert_eq!(
+            provider_view.requests().len(),
+            1,
+            "denied extension must not continue to another provider round"
+        );
+        assert!(engine
+            .messages()
+            .iter()
+            .all(|message| message.role != agent_domain::MessageRole::Tool));
+        let mut failed = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            failed |= matches!(event.payload, AgentEvent::RunFailed { .. });
+        }
+        assert!(failed, "fail-closed extension must broadcast RunFailed");
+    }
+
+    struct CancelDuringDispatch;
+
+    #[async_trait::async_trait]
+    impl LoopContext for CancelDuringDispatch {
+        async fn execute_tools(
+            &self,
+            _calls: Vec<PendingToolInvocation>,
+            _events: LoopEventEmitter,
+            _cancel: CancellationToken,
+        ) -> Vec<ToolCallResult> {
+            Vec::new()
+        }
+
+        async fn request_approval(
+            &self,
+            _calls: &[PendingToolInvocation],
+            _cancel: CancellationToken,
+        ) -> Vec<ApprovalOutcome> {
+            Vec::new()
+        }
+
+        async fn dispatch_provider_calls(
+            &self,
+            _calls: Vec<ProviderTranscriptInvocation>,
+            _events: LoopEventEmitter,
+            cancel: CancellationToken,
+        ) -> Result<(), tool_api::ToolError> {
+            // 模拟 dispatch 接管期间取消：hook 必须把取消映射为 Cancelled 错误。
+            cancel.cancel();
+            Err(tool_api::ToolError::cancelled(
+                "cancelled during provider dispatch",
+            ))
+        }
+
+        fn next_message_id(&self) -> MessageId {
+            MessageId::from("m-1")
+        }
+
+        fn next_request_id(&self) -> RequestId {
+            RequestId::from("r-1")
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_during_provider_dispatch_maps_to_run_cancelled() {
+        let provider = Arc::new(MockProvider::new(
+            MockScript::new()
+                .tool_call("web_search", serde_json::json!({"query": "pawork"}))
+                .complete_with(StopReason::ToolUse),
+        ));
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut cfg = config(vec![user_message("search")]);
+        cfg.hosted_tools.push(provider_api::HostedToolRequest {
+            name: "web_search".into(),
+            kind: tool_api::ToolCapabilityTag::WebSearch,
+            description: String::new(),
+            capabilities: Vec::new(),
+            config: None,
+        });
+        let mut engine = ProviderLoop::new(
+            provider,
+            Arc::new(CancelDuringDispatch),
+            cfg,
+            1,
+            broadcaster,
+        );
+
+        let result = engine.run(message_queue(), run_cancel()).await;
+        assert!(matches!(result, Err(LoopError::Cancelled)));
+        assert_eq!(engine.state(), RunState::Cancelled);
+        let mut saw_cancelled = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            saw_cancelled |= matches!(event.payload, AgentEvent::RunCancelled { .. });
+        }
+        assert!(saw_cancelled, "dispatch 取消必须映射为 RunCancelled");
+    }
+
+    #[tokio::test]
     async fn mock_provider_completes_multi_turn_tool_loop() {
         // 第一轮请求工具，第二轮无工具直接完成。
         // MockProvider 每次 stream 调用重放同一脚本；用两阶段 provider 区分两轮。
@@ -1226,7 +1862,6 @@ mod tests {
                 output_tokens: 2,
                 cache_read_tokens: 100,
                 cache_write_tokens: 4,
-                ..Default::default()
             })
             .complete_with(StopReason::ToolUse);
         let tool = MockTool::new(
@@ -1277,7 +1912,6 @@ mod tests {
                         output_tokens: 1,
                         cache_read_tokens: 5,
                         cache_write_tokens: 8,
-                        ..Default::default()
                     })
                     .complete(),
             )),
@@ -1652,6 +2286,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn server_tool_events_and_transcript_envelope_are_broadcast_in_sequence() {
+        use agent_domain::{
+            Citation, CitationSourceKind, ProgramStream, ProviderTranscriptEnvelope,
+            ServerToolEvent, ToolCallId, TranscriptItem,
+        };
+
+        let provider = Arc::new(MockProvider::new(
+            MockScript::new()
+                .response_started("response-1")
+                .server_tool(ServerToolEvent::Started {
+                    tool_call_id: ToolCallId::from("server-tool-1"),
+                    name: "web_search".into(),
+                    arguments: Some(serde_json::json!({"query": "pawork"})),
+                })
+                .server_tool(ServerToolEvent::CitationAdded {
+                    tool_call_id: ToolCallId::from("server-tool-1"),
+                    citation: Citation {
+                        url: Some("https://example.com".into()),
+                        title: Some("Example".into()),
+                        source_kind: CitationSourceKind::WebSearch,
+                        ..Citation::empty()
+                    },
+                })
+                .server_tool(ServerToolEvent::ProgramOutput {
+                    tool_call_id: ToolCallId::from("server-tool-1"),
+                    stream: ProgramStream::Stdout,
+                    delta: None,
+                    artifact: Some(agent_domain::ArtifactId::from("artifact-log-1")),
+                })
+                .server_tool(ServerToolEvent::Completed {
+                    tool_call_id: ToolCallId::from("server-tool-1"),
+                    summary: Some("3 results".into()),
+                    artifacts: Vec::new(),
+                })
+                .transcript_envelope(ProviderTranscriptEnvelope {
+                    items: vec![TranscriptItem::Text("final".into())],
+                    cursor: Some("cursor-1".into()),
+                    continuation_reference: None,
+                })
+                .text("done")
+                .complete(),
+        ));
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut cfg = config(vec![user_message("search")]);
+        cfg.hosted_tools.push(provider_api::HostedToolRequest {
+            name: "web_search".into(),
+            kind: tool_api::ToolCapabilityTag::WebSearch,
+            description: String::new(),
+            capabilities: vec![tool_api::ToolCapabilityTag::WebSearch],
+            config: None,
+        });
+        let mut engine = ProviderLoop::new(
+            provider,
+            Arc::new(TestContext::new(Vec::new())),
+            cfg,
+            1,
+            broadcaster,
+        );
+
+        engine.run(message_queue(), run_cancel()).await.unwrap();
+        let mut server_tool_events = Vec::new();
+        let mut saw_envelope = false;
+        let mut sequences = Vec::new();
+        while let Ok(Some(event)) = sub.try_recv() {
+            sequences.push(event.sequence.value());
+            match event.payload {
+                AgentEvent::ServerTool(event) => server_tool_events.push(event),
+                AgentEvent::TranscriptEnvelope(_) => saw_envelope = true,
+                _ => {}
+            }
+        }
+        assert_eq!(server_tool_events.len(), 4);
+        assert!(
+            matches!(&server_tool_events[0], ServerToolEvent::Started { name, .. } if name == "web_search"),
+            "server tool 生命周期必须以 Started 开头"
+        );
+        assert!(matches!(
+            &server_tool_events[3],
+            ServerToolEvent::Completed { summary, .. }
+                if summary.as_deref() == Some("3 results")
+        ));
+        assert!(saw_envelope, "transcript envelope 必须广播");
+        assert!(
+            sequences
+                .windows(2)
+                .all(|window| window[1] == window[0] + 1),
+            "server tool 事件必须按严格连续的 sequence 广播: {sequences:?}"
+        );
+        assert!(engine
+            .messages()
+            .iter()
+            .all(|message| message.role != agent_domain::MessageRole::Tool));
+    }
+
+    #[tokio::test]
     async fn loop_scheduler_bridge_serializes_capability_and_streams_tool_output() {
         struct SchedulerProbeTool {
             name: &'static str,
@@ -1668,6 +2398,10 @@ mod tests {
                     description: "scheduler bridge probe".into(),
                     input_schema: serde_json::json!({"type": "object"}),
                     capability: tool_api::ToolCapability::WorkspaceWrite,
+                    kind: tool_api::ToolKind::ClientFunction,
+                    hosting: tool_api::ToolHosting::Local,
+                    capabilities: Vec::new(),
+                    requires_approval: false,
                     read_only: false,
                     supports_concurrency: false,
                     default_timeout_ms: Some(1_000),
@@ -1712,7 +2446,7 @@ mod tests {
             })
             .collect();
         let mut registry = tool_runtime::ToolRegistry::new();
-        registry.extend(tools);
+        registry.extend(tools).expect("probe tools register");
         let scheduler = Arc::new(tool_runtime::ToolScheduler::new(
             registry,
             tool_runtime::ToolSchedulerConfig {
@@ -1785,6 +2519,10 @@ mod tests {
                     description: "policy bridge probe".into(),
                     input_schema: serde_json::json!({"type": "object"}),
                     capability: self.capability.clone(),
+                    kind: tool_api::ToolKind::ClientFunction,
+                    hosting: tool_api::ToolHosting::Local,
+                    capabilities: Vec::new(),
+                    requires_approval: false,
                     read_only: false,
                     supports_concurrency: false,
                     default_timeout_ms: None,
@@ -1831,10 +2569,12 @@ mod tests {
             let tool_calls = Arc::new(AtomicU64::new(0));
             let approval_calls = Arc::new(AtomicU64::new(0));
             let mut registry = tool_runtime::ToolRegistry::new();
-            registry.register(Arc::new(PolicyProbe {
-                capability,
-                calls: tool_calls.clone(),
-            }));
+            registry
+                .register(Arc::new(PolicyProbe {
+                    capability,
+                    calls: tool_calls.clone(),
+                }))
+                .expect("policy probe registers");
             let scheduler = Arc::new(tool_runtime::ToolScheduler::new(
                 registry,
                 tool_runtime::ToolSchedulerConfig {

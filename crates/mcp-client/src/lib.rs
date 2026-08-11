@@ -40,6 +40,8 @@ pub enum McpError {
     Secret(String),
     #[error("MCP OAuth failed: {0}")]
     OAuth(String),
+    #[error("MCP tool registration rejected by registry: {0}")]
+    Registry(#[from] tool_runtime::ToolRegistryError),
 }
 
 impl McpError {

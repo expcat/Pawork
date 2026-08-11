@@ -119,6 +119,9 @@ fn content_part_byte_len(part: &ContentPart) -> u64 {
     match part {
         ContentPart::Text(text) => u64::try_from(text.text.len()).unwrap_or(u64::MAX),
         ContentPart::Thinking(thinking) => u64::try_from(thinking.text.len()).unwrap_or(u64::MAX),
+        ContentPart::Reasoning(reasoning) => serde_json::to_vec(reasoning)
+            .map(|encoded| u64::try_from(encoded.len()).unwrap_or(u64::MAX))
+            .unwrap_or(0),
         ContentPart::Image(image) => {
             let encoded_payload = match &image.source {
                 ImageSource::Base64(value) => u64::try_from(value.len())

@@ -106,6 +106,9 @@ pub enum RunTransition {
     ToolsCompleted,
     /// AppendingToolResults → WaitingForProvider：结果已回填，进入下一轮。
     ResultsAppended,
+    /// CollectingToolCalls → WaitingForProvider：本轮全部为 Provider-owned 调用，
+    /// 已 dispatch 到 Provider transcript 续接（不生成本地 ToolResult）。
+    ProviderTranscriptContinued,
     /// 任意非终态 → Completed：循环正常结束。
     Complete,
     /// 任意非终态 → Cancelled：取消（用户或系统）。
@@ -159,6 +162,7 @@ pub fn transition(from: RunState, t: RunTransition) -> Result<RunState, Transiti
         (S::WaitingForApproval, T::ApprovalDenied) => S::AppendingToolResults,
         (S::ExecutingTools, T::ToolsCompleted) => S::AppendingToolResults,
         (S::AppendingToolResults, T::ResultsAppended) => S::WaitingForProvider,
+        (S::CollectingToolCalls, T::ProviderTranscriptContinued) => S::WaitingForProvider,
         // 终态入口（任意活跃态）
         (_, T::Complete) => S::Completed,
         (_, T::Cancel) => S::Cancelled,
@@ -214,7 +218,7 @@ pub fn event_hint(t: RunTransition) -> EventHint {
         T::ApprovalGranted | T::ApprovalDenied | T::ToolsAutoStarted | T::ToolsCompleted => {
             EventHint::None
         }
-        T::MarkInterrupted => EventHint::None,
+        T::MarkInterrupted | T::ProviderTranscriptContinued => EventHint::None,
     }
 }
 

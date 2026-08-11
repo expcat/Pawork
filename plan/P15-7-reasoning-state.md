@@ -1,6 +1,6 @@
 # P15-7：Reasoning State（跨轮推理状态持久化）
 
-> Phase 15 · Provider Native Capabilities · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P0-3、P0-4、P1-4、P1-5、P1-6、P5-5、P5-7、P6-5
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P0-3、P0-4、P1-4、P1-5、P1-6、P5-5、P5-7、P6-5
 
 **最终目的**：让 reasoning / thinking 跨轮保持连续——把各家的加密或不透明回灌凭证（OpenAI `reasoning.encrypted_content`、Anthropic thinking `signature`、xAI reasoning 回灌标识）归一为统一 `ReasoningItem`，**敏感凭证原文存入专用 Protected Blob Store（加密落盘），Event Store 只保存安全引用**（ADR-032），多轮 Compaction 后仍能正确回灌，崩溃后可恢复 continuation。这是 P15-2/3/4 reasoning 往返的共享前置，且与 P5-5/P5-7 Compaction 协同保证压缩不丢推理连续性。
 
@@ -29,14 +29,22 @@
 
 ## 验收标准
 
-- [ ] `ReasoningItem` 覆盖三家加密/不透明凭证，缺省为空不猜值；Event Store 只存安全引用，不内联原文
-- [ ] 凭证原文不解码、不入日志、不入普通 Event payload、不入 OS Keychain、不回显 GUI 明文（红线断言，P15-7 §7 + ADR-032）
-- [ ] Protected Blob Store 加密落盘、Provider/Session 作用域、retention 与引用计数 GC 生效
-- [ ] 崩溃后经 blob ref 可重建推理链并恢复 continuation，跨轮回灌连续（重放测试）
-- [ ] Compaction 后保留最近推理链所需凭证，不中断 extended thinking、不破坏 blob 引用计数
-- [ ] 回灌翻译在 provider crate，Core 不走 Provider 名称分支（`no_provider_branch` 断言）
-- [ ] 仅定向/Mock smoke 验收，不要求 workspace 全量门禁
+- [x] `ReasoningItem` 覆盖三家加密/不透明凭证，缺省为空不猜值；Event Store 只存安全引用，不内联原文
+- [x] 凭证原文不解码、不入日志、不入普通 Event payload、不入 OS Keychain、不回显 GUI 明文（红线断言，P15-7 §7 + ADR-032）
+- [x] Protected Blob Store 加密落盘、Provider/Session 作用域、retention 与引用计数 GC 生效
+- [x] 崩溃后经 blob ref 可重建推理链并恢复 continuation，跨轮回灌连续（重放测试）
+- [x] Compaction 后保留最近推理链所需凭证，不中断 extended thinking、不破坏 blob 引用计数
+- [x] 回灌翻译在 provider crate，Core 不走 Provider 名称分支（`no_provider_branch` 断言）
+- [x] 仅定向/Mock smoke 验收，不要求 workspace 全量门禁
+
+## 验证记录（2026-08-12）
+
+- `ReasoningItem`、流式组装、Event/Projection 重放、跨轮 canonical request、Compaction 默认保留与 crash recovery 均有定向回归；OpenAI、Anthropic、xAI 的凭证提取/重建保持在各自 provider crate，未知 wire 形态返回 `Unsupported`。
+- Protected Blob Store 覆盖 XChaCha20-Poly1305、Provider/Session scope、完整性校验、密钥轮换、磁盘预算、引用计数/retention GC，以及 `pending → ready` / `deleting` crash 恢复；Event Store 对 reasoning metadata 使用精确 allowlist，未知及嵌套载荷保持结构脱敏。
+- 安全评审发现的 metadata allowlist、文件/元数据 crash 窗口和引用生命周期三项问题已修复；`ReasoningStateBridge` 明确首个事件所有权、append 失败回滚、额外所有者 retain/release 与 GC 契约。
+- `cargo test` 与 `cargo clippy --all-targets -- -D warnings` 对 `agent-domain`、`agent-events`、`provider-api`、`protected-blob-store`、`provider-runtime`、`agent-engine`、`test-support`、`session-store`、`compaction-engine`、`context-engine`、`provider-openai`、`provider-anthropic`、`provider-xai`、`provider-openai-compatible`、`provider-google` 全部通过；`cargo fmt --all -- --check`、`cargo run -p schema-typegen -- --check`、`git diff --check` 通过。
+- Validation Level：L1。真实 Provider 的 stream producer、请求回灌接线与生产 key resolver 组合由 P15-2 / P15-3 / P15-4 消费本基线；P15-7 以 provider 纯映射 + Mock smoke 完成独立验收。Full workspace gate：NOT RUN（未命中 P15-9 功能簇集中门禁条件）。
 
 **相关文档**：[providers](../docs/features/providers.md) · [sessions](../docs/features/sessions.md) · [context](../docs/features/context.md) · [ADR-014 Secret OS Keychain（凭证范围）](../docs/adr/ADR-014-secret-os-keychain.md) · [ADR-016 事件持久化重放](../docs/adr/ADR-016-core-event-persist-replay.md) · [ADR-032 Protected Blob Store](../docs/adr/ADR-032-protected-blob-store.md) · [安全验收](../docs/quality/security-acceptance.md) · [P15-1](P15-1-canonical-tool-v2.md) · [P15-5](P15-5-server-tool-events.md) · [ROADMAP](../ROADMAP.md)
 
-**依赖建议（2026-08 规划）**：加密落盘优先用基线加密栈（已含或可最小子集自实现，如 AEAD over BLAKE3 寻址）；不引入 OS Keychain 存储 reasoning blob。`protected-blob-store` 依赖方向：`agent-domain → protected-blob-store → session-store / provider-runtime`；与 `artifact-store`（非加密）平级、共享底层存储抽象但不混用安全语义。
+**依赖建议（2026-08 规划）**：加密落盘使用纯 Rust XChaCha20-Poly1305 AEAD，BLAKE3 只承担密文物理寻址，不自行构造加密算法；不引入 OS Keychain 存储 reasoning blob。依赖方向为 `protected-blob-store → agent-domain`，`session-store` / `provider-runtime → protected-blob-store`；与 `artifact-store`（非加密）平级、复用运行时原语但不混用命名空间或安全语义。

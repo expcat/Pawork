@@ -202,6 +202,10 @@ impl AgentTool for McpToolAdapter {
             },
             input_schema: self.input_schema.clone(),
             capability: self.capability.clone(),
+            kind: tool_api::ToolKind::ClientFunction,
+            hosting: tool_api::ToolHosting::Local,
+            capabilities: Vec::new(),
+            requires_approval: false,
             read_only: self.read_only,
             supports_concurrency: self.capability.permits_concurrent_execution(),
             default_timeout_ms: None,
@@ -322,7 +326,7 @@ pub async fn register_server_tools(
     approval: Arc<dyn McpApproval>,
 ) -> Result<Vec<ToolDescriptor>, McpError> {
     let capabilities = McpCapabilities::discover(peer.as_ref()).await?;
-    Ok(register_discovered_tools(
+    register_discovered_tools(
         registry,
         server,
         &capabilities,
@@ -330,7 +334,7 @@ pub async fn register_server_tools(
         permissions,
         trusted,
         approval,
-    ))
+    )
 }
 
 /// Register discovered tools (synchronous variant). Filters by the tool
@@ -344,7 +348,7 @@ pub fn register_discovered_tools(
     permissions: McpPermissions,
     trusted: bool,
     approval: Arc<dyn McpApproval>,
-) -> Vec<ToolDescriptor> {
+) -> Result<Vec<ToolDescriptor>, McpError> {
     let mut descriptors = Vec::new();
     for tool in &capabilities.tools {
         if !permissions.allowed_tools.is_empty()
@@ -361,9 +365,9 @@ pub fn register_discovered_tools(
             approval.clone(),
         ));
         descriptors.push(adapter.descriptor());
-        registry.register(adapter);
+        registry.register(adapter)?;
     }
-    descriptors
+    Ok(descriptors)
 }
 
 fn arguments_from_input(input: &Value) -> Result<serde_json::Map<String, Value>, ToolError> {
@@ -989,7 +993,8 @@ mod tests {
             permissions.clone(),
             false,
             Arc::new(RecordingApproval::approve()),
-        );
+        )
+        .expect("registration");
         assert!(descriptors.is_empty());
         assert!(registry.is_empty());
 

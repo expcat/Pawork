@@ -105,10 +105,10 @@ impl NamespacedToolRegistry {
     }
 
     /// 克隆当前工具快照为 canonical `ToolRegistry`，供调度器重建时使用。
-    pub fn to_tool_registry(&self) -> ToolRegistry {
+    pub fn to_tool_registry(&self) -> Result<ToolRegistry, tool_runtime::ToolRegistryError> {
         let mut registry = ToolRegistry::new();
-        registry.extend(self.tools.values().cloned());
-        registry
+        registry.extend(self.tools.values().cloned())?;
+        Ok(registry)
     }
 }
 
@@ -156,6 +156,10 @@ impl ExternalPluginToolAdapter {
             // 插件工具统一为 ExternalPlugin：调度器据此串行 + 审批门控，
             // 且不允许插件自行声明该 capability（manifest 已禁止）。
             capability: ToolCapability::ExternalPlugin,
+            kind: tool_api::ToolKind::ClientFunction,
+            hosting: tool_api::ToolHosting::Local,
+            capabilities: Vec::new(),
+            requires_approval: false,
             // 插件工具的副作用边界未知，保守视为可写。
             read_only: false,
             supports_concurrency: false,

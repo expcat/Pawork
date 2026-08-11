@@ -209,6 +209,12 @@ fn filter_retention_inputs(
             .filter(|entry| branch_event_ids.contains(&entry.event_id))
             .cloned()
             .collect(),
+        reasoning_items: inputs
+            .reasoning_items
+            .iter()
+            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .cloned()
+            .collect(),
     }
 }
 
@@ -432,6 +438,7 @@ mod tests {
                 event_id: EventId::from("event-6"),
                 path: "src/lib.rs".into(),
             }],
+            reasoning_items: Vec::new(),
         };
 
         let result = engine

@@ -6,8 +6,9 @@
 use std::{error::Error, fmt};
 
 use agent_domain::{
-    ArtifactId, CheckpointId, ErrorContext, EventId, Message, MessageId, ProviderId, RequestId,
-    RunId, SessionId, StopReason, Timestamp, TokenUsage, ToolCallId, ToolResultContent,
+    ArtifactId, CheckpointId, ErrorContext, EventId, Message, MessageId, ProviderId,
+    ProviderTranscriptEnvelope, RequestId, RunId, ServerToolEvent, SessionId, StopReason,
+    Timestamp, TokenUsage, ToolCallId, ToolKind, ToolResultContent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -147,6 +148,25 @@ pub enum AgentEvent {
     MessageCommitted {
         message: Message,
     },
+    /// Provider-owned 调用（Hosted / Extension）已成功 dispatch，经 Provider
+    /// transcript 续接；Core 不本地执行、不生成 `ToolResult`。
+    ///
+    /// 仅在「本轮全部为 Provider-owned 调用」时发出，携带单步
+    /// `CollectingToolCalls → WaitingForProvider` 转换，可被崩溃重放无损重建。
+    ProviderTranscriptContinued {
+        calls: Vec<ProviderTranscriptContinuation>,
+    },
+    /// Provider 归一后的 server tool 生命周期事件（P15-5）。
+    ///
+    /// 与本地 `ToolCall*` 事件并列但语义分离：hosted / extension 工具由
+    /// Provider 服务端执行，Core 只归一与持久化，不生成本地 `ToolResult`、
+    /// 不触发 scheduler。
+    ServerTool(ServerToolEvent),
+    /// Provider transcript 续传信封（provider-neutral，持久化前脱敏）。
+    ///
+    /// 携带归一化 output item / cursor / continuation reference；不携带 Provider
+    /// 名称，具体协议翻译封装在 provider adapter。
+    TranscriptEnvelope(ProviderTranscriptEnvelope),
     CompactionStarted {
         source_event_count: u64,
     },
@@ -178,6 +198,14 @@ pub enum AgentEvent {
         code: String,
         details: Value,
     },
+}
+
+/// 一条已交给 Provider transcript 续接的调用（provider-neutral）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderTranscriptContinuation {
+    pub tool_call_id: ToolCallId,
+    pub name: String,
+    pub kind: ToolKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -305,5 +333,42 @@ mod tests {
         let value = serde_json::to_value(&event).expect("serialize event");
 
         assert_eq!(value["parent_event_id"], "event-1");
+    }
+
+    #[test]
+    fn server_tool_and_transcript_envelope_are_persistable_agent_events() {
+        use agent_domain::{
+            ArtifactId, Citation, CitationSourceKind, ProgramStream, TranscriptItem,
+        };
+
+        let server_tool = AgentEvent::ServerTool(agent_domain::ServerToolEvent::CitationAdded {
+            tool_call_id: ToolCallId::from("server-tool-1"),
+            citation: Citation {
+                url: Some("https://example.com".into()),
+                source_kind: CitationSourceKind::Url,
+                ..Citation::empty()
+            },
+        });
+        let transcript = AgentEvent::TranscriptEnvelope(ProviderTranscriptEnvelope {
+            items: vec![
+                TranscriptItem::ServerTool(agent_domain::ServerToolEvent::ProgramOutput {
+                    tool_call_id: ToolCallId::from("server-tool-1"),
+                    stream: ProgramStream::Stderr,
+                    delta: None,
+                    artifact: Some(ArtifactId::from("artifact-log-1")),
+                }),
+                TranscriptItem::Text("done".into()),
+            ],
+            cursor: None,
+            continuation_reference: Some("ref-1".into()),
+        });
+
+        for payload in [server_tool, transcript] {
+            let event = envelope(7, payload);
+            let json = serde_json::to_string(&event).expect("serialize event");
+            let decoded: AgentEventEnvelope =
+                serde_json::from_str(&json).expect("deserialize event");
+            assert_eq!(decoded, event);
+        }
     }
 }

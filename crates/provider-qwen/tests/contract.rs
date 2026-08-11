@@ -33,6 +33,8 @@ fn request() -> CanonicalModelRequest {
         model: ModelId::from("qwen3-max"),
         messages: vec![user("hi")],
         tools: Vec::new(),
+        hosted_tools: Vec::new(),
+        extensions: Vec::new(),
         tool_choice: ToolChoice::Auto,
         thinking: None,
         temperature: Some(0.0),

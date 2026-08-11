@@ -50,6 +50,10 @@ ProviderExtension → Provider 中介外部通道（MCP / Connector / Remote）�
 
 `ToolResult` 是 `CoreSuppliedResult` 的本地结果类型，不承载 hosted/extension 调用状态。后两者的 citations / sources / progress / output 只走 `ServerToolEvent` 与 `ProviderTranscript`；Provider adapter 不得把它们翻译成客户端 function-result 字段。
 
+三类工具共享同一个 registry，但只有 `ClientFunction` 条目持有本地 `AgentTool` executor；`ProviderHosted` 与 `ProviderExtension` 仅登记 descriptor。请求中的 `hosted_tools` / `extensions` 声明是本轮执行位点的权威来源，registry 只补充宿主侧 descriptor，避免把 Provider-owned 调用误降级为本地执行。
+
+Provider-owned 调用仍受 Core policy 约束：Hosted 工具按 descriptor 的 `requires_approval` 与未信任工作区许可执行闸门；Extension 首次调用始终要求真实、可审计的显式审批，并在未信任工作区 fail closed。授权后的调用只记录 provider-neutral transcript continuation，不追加空 `Tool` 消息，也不产生本地 `ToolResult`。
+
 ## P0 工具
 
 - `read_file`：异步、有界文本读取；offset/limit；行号；编码检测；二进制检测；文件大小限制；图片作为 Attachment；Workspace 路径检查。

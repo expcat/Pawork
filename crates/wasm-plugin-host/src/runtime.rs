@@ -155,7 +155,7 @@ impl PluginRuntime {
 
     /// 当前插件工具的 canonical registry 快照。组合层在插件集合变更后据此重建
     /// ToolScheduler；旧快照中的 adapter 会在卸载后由 host active gate 拒绝。
-    pub async fn tool_registry(&self) -> ToolRegistry {
+    pub async fn tool_registry(&self) -> Result<ToolRegistry, tool_runtime::ToolRegistryError> {
         self.tools.read().await.to_tool_registry()
     }
 

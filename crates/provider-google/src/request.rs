@@ -201,8 +201,10 @@ fn message_to_parts(content: &[agent_domain::ContentPart]) -> Vec<Value> {
                 parts.push(json!({ "functionCall": { "name": call.name, "args": args } }));
             }
             // 推理内容不回传给 provider。
-            ContentPart::Thinking(_) | ContentPart::ToolResult(_) | ContentPart::ArtifactRef(_) => {
-            }
+            ContentPart::Thinking(_)
+            | ContentPart::Reasoning(_)
+            | ContentPart::ToolResult(_)
+            | ContentPart::ArtifactRef(_) => {}
         }
     }
     parts
@@ -363,6 +365,8 @@ mod tests {
                 ),
             ],
             tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
             tool_choice: ToolChoice::Auto,
             thinking: None,
             temperature: None,
@@ -400,6 +404,8 @@ mod tests {
                 vec![ContentPart::Text(TextContent { text: "hi".into() })],
             )],
             tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
             tool_choice: ToolChoice::Auto,
             thinking: None,
             temperature: None,

@@ -16,13 +16,20 @@ pub use policy_engine::ApprovalMode;
 use policy_engine::{ExecutionConstraints, PolicyDecision, PolicyEngine, PolicyInput};
 use tokio::sync::{Mutex, OwnedMutexGuard, Semaphore};
 use tool_api::{
-    AgentTool, ToolCapability, ToolDescriptor, ToolError, ToolErrorKind, ToolRequest, ToolResult,
+    AgentTool, ContinuationMode, ToolCapability, ToolDescriptor, ToolError, ToolErrorKind,
+    ToolKind, ToolRequest, ToolResult,
 };
 
-/// 全局工具注册表：按工具名索引已注册的 [`AgentTool`]。
+#[derive(Clone)]
+struct RegistryEntry {
+    descriptor: ToolDescriptor,
+    local_executor: Option<Arc<dyn AgentTool>>,
+}
+
+/// 全局工具注册表：三类 descriptor 共表，本地 executor 仅属于 ClientFunction。
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
-    tools: Arc<HashMap<String, Arc<dyn AgentTool>>>,
+    tools: Arc<HashMap<String, RegistryEntry>>,
 }
 
 impl ToolRegistry {
@@ -30,32 +37,86 @@ impl ToolRegistry {
         Self::default()
     }
 
-    /// 注册一个工具（覆盖同名）。
-    pub fn register(&mut self, tool: Arc<dyn AgentTool>) {
+    /// 注册一个 ClientFunction executor（合法同名覆盖；非法 descriptor 返回错误）。
+    pub fn register(&mut self, tool: Arc<dyn AgentTool>) -> Result<(), ToolRegistryError> {
+        let descriptor = tool.descriptor();
+        validate_descriptor(&descriptor)?;
+        if descriptor.kind != ToolKind::ClientFunction {
+            return Err(ToolRegistryError::ExecutorForNonClientFunction {
+                name: descriptor.name,
+                kind: descriptor.kind,
+            });
+        }
         let mut map = (*self.tools).clone();
-        map.insert(tool.descriptor().name, tool);
+        map.insert(
+            descriptor.name.clone(),
+            RegistryEntry {
+                descriptor,
+                local_executor: Some(tool),
+            },
+        );
         self.tools = Arc::new(map);
+        Ok(())
     }
 
-    /// 批量注册。
-    pub fn extend<I>(&mut self, tools: I)
+    /// 注册 descriptor-only 的 ProviderHosted / ProviderExtension（覆盖同名）。
+    pub fn register_descriptor(
+        &mut self,
+        descriptor: ToolDescriptor,
+    ) -> Result<(), ToolRegistryError> {
+        validate_descriptor(&descriptor)?;
+        if descriptor.kind == ToolKind::ClientFunction {
+            return Err(ToolRegistryError::MissingClientFunctionExecutor {
+                name: descriptor.name,
+            });
+        }
+        let mut map = (*self.tools).clone();
+        map.insert(
+            descriptor.name.clone(),
+            RegistryEntry {
+                descriptor,
+                local_executor: None,
+            },
+        );
+        self.tools = Arc::new(map);
+        Ok(())
+    }
+
+    /// 批量注册；任一非法 descriptor 立即返回错误（已注册项保持生效）。
+    pub fn extend<I>(&mut self, tools: I) -> Result<(), ToolRegistryError>
     where
         I: IntoIterator<Item = Arc<dyn AgentTool>>,
     {
-        let mut map = (*self.tools).clone();
         for tool in tools {
-            map.insert(tool.descriptor().name, tool);
+            self.register(tool)?;
         }
-        self.tools = Arc::new(map);
+        Ok(())
     }
 
+    /// 取得本地 executor；Hosted/Extension 永远返回 `None`。
     pub fn get(&self, name: &str) -> Option<Arc<dyn AgentTool>> {
-        self.tools.get(name).cloned()
+        self.tools
+            .get(name)
+            .and_then(|entry| entry.local_executor.clone())
+    }
+
+    /// 查询 canonical descriptor（包括 descriptor-only 外部工具）。
+    pub fn descriptor(&self, name: &str) -> Option<ToolDescriptor> {
+        self.tools.get(name).map(|entry| entry.descriptor.clone())
+    }
+
+    /// 按执行位点查询已注册工具（P15-1 路由依据）；未注册返回 `None`。
+    pub fn kind_of(&self, name: &str) -> Option<ToolKind> {
+        self.tools.get(name).map(|entry| entry.descriptor.kind)
     }
 
     /// 返回所有已注册工具的 descriptor（供 Provider 请求携带 tool 定义）。
     pub fn descriptors(&self) -> Vec<ToolDescriptor> {
-        let mut desc: Vec<_> = self.tools.values().map(|t| t.descriptor()).collect();
+        let mut desc: Vec<_> = self
+            .tools
+            .values()
+            .map(|entry| entry.descriptor.clone())
+            .collect();
         desc.sort_by(|a, b| a.name.cmp(&b.name));
         desc
     }
@@ -67,6 +128,33 @@ impl ToolRegistry {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
+}
+
+fn validate_descriptor(descriptor: &ToolDescriptor) -> Result<(), ToolRegistryError> {
+    if descriptor.has_consistent_hosting() {
+        Ok(())
+    } else {
+        Err(ToolRegistryError::KindHostingMismatch {
+            name: descriptor.name.clone(),
+            kind: descriptor.kind,
+            hosting_kind: descriptor.hosting.tool_kind(),
+        })
+    }
+}
+
+/// Registry 边界错误。
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ToolRegistryError {
+    #[error("tool `{name}` has kind {kind:?}, but its hosting describes {hosting_kind:?}")]
+    KindHostingMismatch {
+        name: String,
+        kind: ToolKind,
+        hosting_kind: ToolKind,
+    },
+    #[error("tool `{name}` has a local executor but kind is {kind:?}")]
+    ExecutorForNonClientFunction { name: String, kind: ToolKind },
+    #[error("ClientFunction `{name}` requires a local executor")]
+    MissingClientFunctionExecutor { name: String },
 }
 
 impl std::fmt::Debug for ToolRegistry {
@@ -142,6 +230,41 @@ pub enum ToolSchedulerError {
     UnknownTool(String),
 }
 
+/// 本地执行闸门结果（P4-9 策略 + 审批）。
+enum GateOutcome {
+    /// 放行。
+    Approved,
+    /// 拒绝；调用方决定返回本地失败结果或 provider-dispatch 错误。
+    Denied { reason: String },
+}
+
+/// 已授权、等待 Provider transcript 通道接管的调用。
+///
+/// 此类型不携带 `ToolResult`；续接方式由 descriptor kind 唯一推导。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProviderCallDispatch {
+    descriptor: ToolDescriptor,
+    request: ToolRequest,
+}
+
+impl ProviderCallDispatch {
+    pub fn descriptor(&self) -> &ToolDescriptor {
+        &self.descriptor
+    }
+
+    pub fn request(&self) -> &ToolRequest {
+        &self.request
+    }
+
+    pub fn into_request(self) -> ToolRequest {
+        self.request
+    }
+
+    pub const fn continuation_mode(&self) -> ContinuationMode {
+        self.descriptor.continuation_mode()
+    }
+}
+
 /// 一次调度的句柄：持有信号量许可与（可选的）串行锁 owned guard。
 /// drop 时按字段声明序释放（permit → capability → file）；各锁相互独立、
 /// 无层级嵌套，故顺序不影响正确性，也不会死锁。
@@ -208,6 +331,9 @@ impl ToolScheduler {
     ///
     /// 工具名不从 `request.input` 推断，避免与工具自身名为 `name` 的输入字段冲突。
     /// 调用方必须同时提供当前 workspace/run 上下文与流式事件 sink。
+    ///
+    /// P15-1 位点路由：只允许 `ClientFunction` 进入本地执行。Hosted/Extension
+    /// 均返回明确错误，且绝不构造 `ToolResult`。
     pub async fn execute_named(
         &self,
         name: &str,
@@ -217,58 +343,136 @@ impl ToolScheduler {
         approval: &(dyn ApprovalResolver + Send + Sync),
         sink: &dyn tool_api::ToolEventSink,
     ) -> Result<ToolResult, ToolError> {
-        let tool = self.registry.get(name).ok_or_else(|| ToolError {
+        let descriptor = self.registry.descriptor(name).ok_or_else(|| ToolError {
             kind: ToolErrorKind::NotFound,
             message: format!("unknown tool: {name}"),
             retryable: false,
             retry_after_ms: None,
         })?;
-        self.execute_with_tool(tool, request, context, cancel, approval, sink)
-            .await
+        match descriptor.kind {
+            ToolKind::ClientFunction => {
+                self.execute_with_tool(descriptor, request, context, cancel, approval, sink)
+                    .await
+            }
+            ToolKind::ProviderHosted => {
+                Err(ToolError::not_locally_executable(name, "provider-hosted"))
+            }
+            ToolKind::ProviderExtension => Err(ToolError::not_locally_executable(
+                name,
+                "provider-extension",
+            )),
+        }
+    }
+
+    /// 授权一次 Provider-owned 调用并交给 transcript/dispatch hook。
+    ///
+    /// 返回值不含 `ToolResult`。Hosted 与本地工具一致过 [`Self::check_gate`]：
+    /// 尊重 descriptor 的 `requires_approval` 与 `allowed_in_untrusted_workspace`；
+    /// Extension 强制显式审批，且未信任 workspace 无条件拒绝（不允许 descriptor
+    /// 自降级）。ClientFunction 必须走 [`Self::execute_named`]。
+    pub async fn authorize_provider_call(
+        &self,
+        name: &str,
+        mut request: ToolRequest,
+        cancel: CancellationToken,
+        approval: &(dyn ApprovalResolver + Send + Sync),
+    ) -> Result<ProviderCallDispatch, ToolError> {
+        let descriptor = self.registry.descriptor(name).ok_or_else(|| ToolError {
+            kind: ToolErrorKind::NotFound,
+            message: format!("unknown tool: {name}"),
+            retryable: false,
+            retry_after_ms: None,
+        })?;
+        if cancel.is_cancelled() {
+            return Err(ToolError::cancelled(
+                "provider-owned tool cancelled before authorization",
+            ));
+        }
+
+        match descriptor.kind {
+            ToolKind::ClientFunction => Err(ToolError {
+                kind: ToolErrorKind::InvalidInput,
+                message: format!(
+                    "ClientFunction `{name}` must be executed by core, not provider dispatch"
+                ),
+                retryable: false,
+                retry_after_ms: None,
+            }),
+            ToolKind::ProviderHosted | ToolKind::ProviderExtension => {
+                let (requires_explicit_approval, allowed_in_untrusted_workspace) =
+                    match descriptor.kind {
+                        ToolKind::ProviderHosted => (
+                            descriptor.requires_approval,
+                            descriptor.allowed_in_untrusted_workspace,
+                        ),
+                        // Extension 永远强制显式审批 + 未信任拒绝。
+                        _ => (true, false),
+                    };
+                if let GateOutcome::Denied { reason } = self
+                    .check_gate(
+                        &descriptor,
+                        &mut request,
+                        approval,
+                        requires_explicit_approval,
+                        allowed_in_untrusted_workspace,
+                    )
+                    .await
+                {
+                    return Err(ToolError {
+                        kind: ToolErrorKind::PermissionDenied,
+                        message: reason,
+                        retryable: false,
+                        retry_after_ms: None,
+                    });
+                }
+                if cancel.is_cancelled() {
+                    return Err(ToolError::cancelled(
+                        "provider-owned tool cancelled after authorization",
+                    ));
+                }
+                Ok(ProviderCallDispatch {
+                    descriptor,
+                    request,
+                })
+            }
+        }
+    }
+
+    /// 按执行位点查询已注册工具（P15-1 路由依据）；未注册返回 `None`。
+    pub fn kind_of(&self, name: &str) -> Option<ToolKind> {
+        self.registry.kind_of(name)
     }
 
     async fn execute_with_tool(
         &self,
-        tool: Arc<dyn AgentTool>,
+        descriptor: ToolDescriptor,
         mut request: ToolRequest,
         context: tool_api::ToolExecutionContext,
         cancel: CancellationToken,
         approval: &(dyn ApprovalResolver + Send + Sync),
         sink: &dyn tool_api::ToolEventSink,
     ) -> Result<ToolResult, ToolError> {
-        let descriptor = tool.descriptor();
+        let tool = self
+            .registry
+            .get(&descriptor.name)
+            .ok_or_else(|| ToolError {
+                kind: ToolErrorKind::Internal,
+                message: format!("ClientFunction `{}` has no local executor", descriptor.name),
+                retryable: false,
+                retry_after_ms: None,
+            })?;
         let capability = descriptor.capability.clone();
-        let decision = self.policy.decide(&PolicyInput {
-            capability: capability.clone(),
-            input: request.input.clone(),
-            trusted: self.config.workspace_trusted,
-            allowed_in_untrusted_workspace: descriptor.allowed_in_untrusted_workspace,
-            approval_mode: self.config.approval_mode,
-        });
-
-        match decision {
-            PolicyDecision::Deny { reason } => {
-                return Ok(denied_result(&request.tool_call_id, reason));
-            }
-            PolicyDecision::AskUser { .. } => {
-                if !approval.can_resolve_policy_prompt() {
-                    return Ok(denied_result(
-                        &request.tool_call_id,
-                        "policy requires explicit user approval; automatic approval is forbidden",
-                    ));
-                }
-                let outcomes = approval.resolve(std::slice::from_ref(&request)).await;
-                if !matches!(outcomes.first(), Some(ApprovalOutcome::Approved)) {
-                    return Ok(denied_result(
-                        &request.tool_call_id,
-                        "tool call denied or approval was not provided",
-                    ));
-                }
-            }
-            PolicyDecision::AllowWithConstraints { constraints } => {
-                apply_execution_constraints(&mut request, &constraints);
-            }
-            PolicyDecision::Allow => {}
+        if let GateOutcome::Denied { reason } = self
+            .check_gate(
+                &descriptor,
+                &mut request,
+                approval,
+                descriptor.requires_approval,
+                descriptor.allowed_in_untrusted_workspace,
+            )
+            .await
+        {
+            return Ok(denied_result(&request.tool_call_id, reason));
         }
 
         if cancel.is_cancelled() {
@@ -284,6 +488,61 @@ impl ToolScheduler {
 
         drop(handle);
         result
+    }
+
+    /// 策略 + 审批闸门（P4-9 PolicyEngine）。
+    ///
+    /// - 策略 `Deny`（未信任工作区 / 危险命令地板）优先，直接拒绝；
+    /// - 描述符 `requires_approval` 把策略放行升级为显式用户审批（与 PolicyEngine
+    ///   对齐，自动放行器不能满足）；
+    /// - `AskUser` 必须由真实审批通道放行，否则 fail closed。
+    async fn check_gate(
+        &self,
+        descriptor: &ToolDescriptor,
+        request: &mut ToolRequest,
+        approval: &(dyn ApprovalResolver + Send + Sync),
+        requires_explicit_approval: bool,
+        allowed_in_untrusted_workspace: bool,
+    ) -> GateOutcome {
+        let mut decision = self.policy.decide(&PolicyInput {
+            capability: descriptor.capability.clone(),
+            input: request.input.clone(),
+            trusted: self.config.workspace_trusted,
+            allowed_in_untrusted_workspace,
+            approval_mode: self.config.approval_mode,
+        });
+        if requires_explicit_approval && !matches!(decision, PolicyDecision::Deny { .. }) {
+            decision = PolicyDecision::AskUser {
+                prompt: policy_engine::ApprovalPrompt {
+                    message: format!("tool `{}` requires explicit approval", descriptor.name),
+                    risk: policy_engine::RiskLevel::Moderate,
+                },
+            };
+        }
+
+        match decision {
+            PolicyDecision::Deny { reason } => GateOutcome::Denied { reason },
+            PolicyDecision::AskUser { .. } => {
+                if !approval.can_resolve_policy_prompt() {
+                    return GateOutcome::Denied {
+                        reason: "policy requires explicit user approval; automatic approval is forbidden"
+                            .into(),
+                    };
+                }
+                let outcomes = approval.resolve(std::slice::from_ref(request)).await;
+                if !matches!(outcomes.first(), Some(ApprovalOutcome::Approved)) {
+                    return GateOutcome::Denied {
+                        reason: "tool call denied or approval was not provided".into(),
+                    };
+                }
+                GateOutcome::Approved
+            }
+            PolicyDecision::AllowWithConstraints { constraints } => {
+                apply_execution_constraints(request, &constraints);
+                GateOutcome::Approved
+            }
+            PolicyDecision::Allow => GateOutcome::Approved,
+        }
     }
 
     /// 获取调度锁。按 capability 决定并发/串行，命中文件 key 时加文件锁。
@@ -425,7 +684,7 @@ mod tests {
         config: ToolSchedulerConfig,
     ) -> ToolScheduler {
         let mut registry = ToolRegistry::new();
-        registry.extend(tools);
+        registry.extend(tools).expect("test tools must register");
         ToolScheduler::new(registry, config)
     }
 
@@ -539,6 +798,10 @@ mod tests {
                 description: "policy probe".into(),
                 input_schema: json!({"type": "object"}),
                 capability: self.capability.clone(),
+                kind: tool_api::ToolKind::ClientFunction,
+                hosting: tool_api::ToolHosting::Local,
+                capabilities: Vec::new(),
+                requires_approval: false,
                 read_only: matches!(self.capability, ToolCapability::ReadOnly),
                 supports_concurrency: matches!(self.capability, ToolCapability::ReadOnly),
                 default_timeout_ms: None,
@@ -592,6 +855,10 @@ mod tests {
                 description: "probe".into(),
                 input_schema: json!({"type": "object"}),
                 capability: self.capability.clone(),
+                kind: tool_api::ToolKind::ClientFunction,
+                hosting: tool_api::ToolHosting::Local,
+                capabilities: Vec::new(),
+                requires_approval: false,
                 read_only,
                 supports_concurrency: read_only,
                 default_timeout_ms: Some(5_000),
@@ -803,6 +1070,292 @@ mod tests {
         assert_eq!(err.kind, ToolErrorKind::NotFound);
     }
 
+    fn site_descriptor(name: &str, kind: ToolKind) -> ToolDescriptor {
+        let hosting = match kind {
+            ToolKind::ClientFunction => tool_api::ToolHosting::Local,
+            ToolKind::ProviderHosted => tool_api::ToolHosting::ProviderHosted {
+                hosted_name: name.into(),
+                kind: tool_api::ToolCapabilityTag::WebSearch,
+            },
+            ToolKind::ProviderExtension => tool_api::ToolHosting::ProviderExtension {
+                reference: "connector:probe".into(),
+            },
+        };
+        ToolDescriptor {
+            name: name.into(),
+            description: "site probe".into(),
+            input_schema: json!({"type": "object"}),
+            capability: ToolCapability::Network,
+            kind,
+            hosting,
+            capabilities: Vec::new(),
+            requires_approval: kind == ToolKind::ProviderExtension,
+            read_only: true,
+            supports_concurrency: true,
+            default_timeout_ms: None,
+            max_output_bytes: 1024,
+            allowed_in_untrusted_workspace: kind == ToolKind::ProviderHosted,
+        }
+    }
+
+    #[test]
+    fn registry_reports_execution_kind_for_all_three_sites() {
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(probe("client", ToolCapability::ReadOnly, probe_shared()))
+            .expect("client tool registers");
+        registry
+            .register_descriptor(site_descriptor("hosted", ToolKind::ProviderHosted))
+            .unwrap();
+        registry
+            .register_descriptor(site_descriptor("extension", ToolKind::ProviderExtension))
+            .unwrap();
+        assert_eq!(registry.kind_of("client"), Some(ToolKind::ClientFunction));
+        assert_eq!(registry.kind_of("hosted"), Some(ToolKind::ProviderHosted));
+        assert_eq!(
+            registry.kind_of("extension"),
+            Some(ToolKind::ProviderExtension)
+        );
+        assert!(registry.get("client").is_some());
+        assert!(registry.get("hosted").is_none());
+        assert!(registry.get("extension").is_none());
+        assert_eq!(registry.descriptors().len(), 3);
+        assert_eq!(registry.kind_of("ghost"), None);
+    }
+
+    #[test]
+    fn registry_validates_kind_hosting_and_executor_ownership() {
+        let mut registry = ToolRegistry::new();
+        let mut mismatched = site_descriptor("bad", ToolKind::ProviderHosted);
+        mismatched.hosting = tool_api::ToolHosting::Local;
+        assert!(matches!(
+            registry.register_descriptor(mismatched),
+            Err(ToolRegistryError::KindHostingMismatch { .. })
+        ));
+        assert!(matches!(
+            registry.register_descriptor(site_descriptor(
+                "client_without_executor",
+                ToolKind::ClientFunction
+            )),
+            Err(ToolRegistryError::MissingClientFunctionExecutor { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn provider_hosted_tool_call_is_never_executed_locally() {
+        let mut registry = ToolRegistry::new();
+        registry
+            .register_descriptor(site_descriptor("web_search", ToolKind::ProviderHosted))
+            .unwrap();
+        let scheduler = ToolScheduler::new(
+            registry,
+            ToolSchedulerConfig {
+                max_concurrent: 4,
+                approval_mode: ApprovalMode::NeverAsk,
+                workspace_trusted: true,
+            },
+        );
+        let error = scheduler
+            .execute_named(
+                "web_search",
+                req("web_search", json!({"query": "pawork"})),
+                execution_context(),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+                &NoopToolEventSink,
+            )
+            .await
+            .expect_err("hosted tool must not be executed locally");
+        assert_eq!(error.kind, ToolErrorKind::NotLocallyExecutable);
+
+        let dispatch = scheduler
+            .authorize_provider_call(
+                "web_search",
+                req("web_search", json!({"query": "pawork"})),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+            )
+            .await
+            .expect("hosted call is dispatched without a local result");
+        assert_eq!(dispatch.descriptor().kind, ToolKind::ProviderHosted);
+        assert_eq!(
+            dispatch.continuation_mode(),
+            ContinuationMode::ProviderTranscript
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_hosted_respects_descriptor_gate_flags() {
+        // hosted 默认（requires_approval=false, allowed_in_untrusted=true）。
+        let mut gated = site_descriptor("hosted_gated", ToolKind::ProviderHosted);
+        gated.requires_approval = true;
+        gated.allowed_in_untrusted_workspace = false;
+        let mut registry = ToolRegistry::new();
+        registry.register_descriptor(gated).unwrap();
+
+        // 未信任 workspace + allowed=false：策略直接拒绝。
+        let untrusted = ToolScheduler::new(
+            registry.clone(),
+            ToolSchedulerConfig {
+                max_concurrent: 4,
+                approval_mode: ApprovalMode::NeverAsk,
+                workspace_trusted: false,
+            },
+        );
+        let denied = untrusted
+            .authorize_provider_call(
+                "hosted_gated",
+                req("hosted_gated", json!({})),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+            )
+            .await
+            .expect_err("untrusted workspace must deny hosted tool not allowed there");
+        assert_eq!(denied.kind, ToolErrorKind::PermissionDenied);
+
+        // 信任 workspace + requires_approval=true + 自动放行器：升级 AskUser 后被拒。
+        let trusted = ToolScheduler::new(
+            registry.clone(),
+            ToolSchedulerConfig {
+                max_concurrent: 4,
+                approval_mode: ApprovalMode::NeverAsk,
+                workspace_trusted: true,
+            },
+        );
+        let auto_denied = trusted
+            .authorize_provider_call(
+                "hosted_gated",
+                req("hosted_gated", json!({})),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+            )
+            .await
+            .expect_err("auto approval must not satisfy requires_approval");
+        assert_eq!(auto_denied.kind, ToolErrorKind::PermissionDenied);
+
+        // 显式审批通过后只产生 dispatch，不产生 ToolResult。
+        let dispatch = trusted
+            .authorize_provider_call(
+                "hosted_gated",
+                req("hosted_gated", json!({})),
+                CancellationToken::new(),
+                &ExplicitApprove,
+            )
+            .await
+            .expect("explicit approval dispatches hosted call");
+        assert_eq!(dispatch.descriptor().kind, ToolKind::ProviderHosted);
+        assert_eq!(
+            dispatch.continuation_mode(),
+            ContinuationMode::ProviderTranscript
+        );
+
+        // 未信任 workspace + allowed=true 仍可 dispatch（descriptor 显式授权）。
+        let permissive = site_descriptor("hosted_untrusted_ok", ToolKind::ProviderHosted);
+        let mut registry2 = ToolRegistry::new();
+        registry2.register_descriptor(permissive).unwrap();
+        let untrusted_ok = ToolScheduler::new(
+            registry2,
+            ToolSchedulerConfig {
+                max_concurrent: 4,
+                approval_mode: ApprovalMode::NeverAsk,
+                workspace_trusted: false,
+            },
+        );
+        let dispatch = untrusted_ok
+            .authorize_provider_call(
+                "hosted_untrusted_ok",
+                req("hosted_untrusted_ok", json!({})),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+            )
+            .await
+            .expect("allowed_in_untrusted_workspace hosted tool dispatches");
+        assert_eq!(dispatch.descriptor().kind, ToolKind::ProviderHosted);
+    }
+
+    #[tokio::test]
+    async fn provider_extension_keeps_approval_gate_and_is_never_executed_locally() {
+        let mut registry = ToolRegistry::new();
+        registry
+            .register_descriptor(site_descriptor("remote_mcp", ToolKind::ProviderExtension))
+            .unwrap();
+        let untrusted = ToolScheduler::new(
+            registry.clone(),
+            ToolSchedulerConfig {
+                max_concurrent: 4,
+                approval_mode: ApprovalMode::NeverAsk,
+                workspace_trusted: false,
+            },
+        );
+        let denied = untrusted
+            .authorize_provider_call(
+                "remote_mcp",
+                req("remote_mcp", json!({})),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+            )
+            .await
+            .expect_err("untrusted workspace must deny extension");
+        assert_eq!(denied.kind, ToolErrorKind::PermissionDenied);
+
+        // 信任工作区 + 自动放行器：requires_approval 升级为 AskUser，自动放行被拒。
+        let trusted = ToolScheduler::new(
+            registry.clone(),
+            ToolSchedulerConfig {
+                max_concurrent: 4,
+                approval_mode: ApprovalMode::NeverAsk,
+                workspace_trusted: true,
+            },
+        );
+        let auto_denied = trusted
+            .authorize_provider_call(
+                "remote_mcp",
+                req("remote_mcp", json!({})),
+                CancellationToken::new(),
+                &AutoApproveResolver,
+            )
+            .await
+            .expect_err("auto approval must not satisfy explicit extension approval");
+        assert_eq!(auto_denied.kind, ToolErrorKind::PermissionDenied);
+
+        // 显式审批通过后只产生 dispatch，不产生 ToolResult。
+        let approved_scheduler = ToolScheduler::new(
+            registry,
+            ToolSchedulerConfig {
+                max_concurrent: 4,
+                approval_mode: ApprovalMode::NeverAsk,
+                workspace_trusted: true,
+            },
+        );
+        let dispatch = approved_scheduler
+            .authorize_provider_call(
+                "remote_mcp",
+                req("remote_mcp", json!({})),
+                CancellationToken::new(),
+                &ExplicitApprove,
+            )
+            .await
+            .expect("explicitly approved extension is handed to provider dispatch");
+        assert_eq!(dispatch.descriptor().kind, ToolKind::ProviderExtension);
+        assert_eq!(
+            dispatch.continuation_mode(),
+            ContinuationMode::ProviderTranscript
+        );
+
+        let error = approved_scheduler
+            .execute_named(
+                "remote_mcp",
+                req("remote_mcp", json!({})),
+                execution_context(),
+                CancellationToken::new(),
+                &ExplicitApprove,
+                &NoopToolEventSink,
+            )
+            .await
+            .expect_err("extension must never enter the local execution API");
+        assert_eq!(error.kind, ToolErrorKind::NotLocallyExecutable);
+    }
+
     #[test]
     fn extract_file_key_supports_common_keys() {
         assert_eq!(
@@ -853,6 +1406,10 @@ mod tests {
                     description: "records context".into(),
                     input_schema: json!({"type": "object"}),
                     capability: ToolCapability::ReadOnly,
+                    kind: tool_api::ToolKind::ClientFunction,
+                    hosting: tool_api::ToolHosting::Local,
+                    capabilities: Vec::new(),
+                    requires_approval: false,
                     read_only: true,
                     supports_concurrency: true,
                     default_timeout_ms: None,

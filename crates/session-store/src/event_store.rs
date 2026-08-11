@@ -8,6 +8,18 @@ use crate::{projection::apply_projection, SessionStore, SessionStoreError};
 pub const DEFAULT_BRANCH_ID: &str = "main";
 const REDACTED_SECRET: &str = "[REDACTED]";
 
+/// P15-7 安全边界：ReasoningItem 的 metadata 地图在 Event Store 边界采用精确
+/// allowlist，只允许 producer 已确认的非敏感 hint 键：
+///
+///   - `opaque_metadata`：`openai.responses.summary_entries`（结构化 summary 条目）
+///   - `continuation_metadata`：`anthropic_block_kind`（重建一致性校验的 block kind）
+///
+/// 未知键（含嵌套 `data` 等任意载荷）按原形状脱敏；普通 `data` 键（如
+/// TranscriptItem 的 serde content 键）不做全局脱敏。allowlist 是结构化精确
+/// 匹配，不按 Provider 名称分支；新增 hint 必须同步扩展对应常量。
+const OPAQUE_METADATA_ALLOWLIST: &[&str] = &["openai.responses.summary_entries"];
+const CONTINUATION_METADATA_ALLOWLIST: &[&str] = &["anthropic_block_kind"];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppendReceipt {
     pub event_id: String,
@@ -306,7 +318,14 @@ fn redact_sensitive_json(value: &mut Value) {
     match value {
         Value::Object(fields) => {
             for (key, child) in fields {
-                if is_sensitive_key(key) || is_sensitive_container(key) {
+                // ReasoningItem 的两个 metadata 地图是持久化安全边界：整体走
+                // 精确 allowlist，不再递归通用脱敏。这两个 JSON 键全 workspace
+                // 仅出现在 ReasoningItem 序列化中。
+                if key == "opaque_metadata" {
+                    sanitize_reasoning_metadata(child, OPAQUE_METADATA_ALLOWLIST);
+                } else if key == "continuation_metadata" {
+                    sanitize_reasoning_metadata(child, CONTINUATION_METADATA_ALLOWLIST);
+                } else if is_sensitive_key(key) || is_sensitive_container(key) {
                     redact_value_preserving_shape(child);
                 } else {
                     redact_sensitive_json(child);
@@ -339,6 +358,52 @@ fn redact_value_preserving_shape(value: &mut Value) {
         Value::Object(fields) => {
             for child in fields.values_mut() {
                 redact_value_preserving_shape(child);
+            }
+        }
+    }
+}
+
+/// 对 `opaque_metadata` / `continuation_metadata` 应用精确 allowlist：
+/// 非 allowlist 键（含嵌套 `data` 等载荷）整值按原形状脱敏；allowlist 键按已知
+/// 形状逐层校验，合法 hint 原样保留。非对象形态 fail-closed 整体脱敏。
+fn sanitize_reasoning_metadata(value: &mut Value, allowlist: &[&str]) {
+    let Value::Object(fields) = value else {
+        redact_value_preserving_shape(value);
+        return;
+    };
+    for (key, child) in fields {
+        let key = key.as_str();
+        if !allowlist.contains(&key) {
+            redact_value_preserving_shape(child);
+            continue;
+        }
+        match key {
+            "openai.responses.summary_entries" => sanitize_summary_entries(child),
+            "anthropic_block_kind" if !child.is_string() => {
+                redact_value_preserving_shape(child);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// summary 条目 hint 只允许 `{"type": "summary_text", "text": <string>}` 形状；
+/// 条目内嵌套未知字段（如 `data`）按原形状脱敏，`type` / `text` 字符串保留。
+fn sanitize_summary_entries(value: &mut Value) {
+    let Value::Array(entries) = value else {
+        redact_value_preserving_shape(value);
+        return;
+    };
+    for entry in entries {
+        let Value::Object(fields) = entry else {
+            redact_value_preserving_shape(entry);
+            continue;
+        };
+        for (entry_key, entry_value) in fields {
+            let is_hint_field =
+                matches!(entry_key.as_str(), "type" | "text") && entry_value.is_string();
+            if !is_hint_field {
+                redact_value_preserving_shape(entry_value);
             }
         }
     }
@@ -395,6 +460,21 @@ fn is_sensitive_key(key: &str) -> bool {
         }
     }
 
+    // P15-7 安全红线：推理凭证原文（OpenAI encrypted_content、Anthropic
+    // signature、OpenAI-compatible reasoning_content、xAI continuation bytes）
+    // 不得进入持久化事件或投影；Event Store 只允许出现 ProtectedBlobRef 安全引用。
+    if [
+        "encryptedcontent",
+        "signature",
+        "reasoningcontent",
+        "continuationbytes",
+    ]
+    .iter()
+    .any(|fragment| normalized.contains(fragment))
+    {
+        return true;
+    }
+
     matches!(
         normalized.as_str(),
         "credential" | "credentials" | "credentialvalue"
@@ -430,6 +510,9 @@ fn event_type(event: &AgentEvent) -> &'static str {
         AgentEvent::ToolOutputDelta { .. } => "tool_output_delta",
         AgentEvent::ToolExecutionCompleted { .. } => "tool_execution_completed",
         AgentEvent::MessageCommitted { .. } => "message_committed",
+        AgentEvent::ProviderTranscriptContinued { .. } => "provider_transcript_continued",
+        AgentEvent::ServerTool(event) => event.type_name(),
+        AgentEvent::TranscriptEnvelope { .. } => "transcript_envelope",
         AgentEvent::CompactionStarted { .. } => "compaction_started",
         AgentEvent::CompactionCompleted { .. } => "compaction_completed",
         AgentEvent::CheckpointCreated { .. } => "checkpoint_created",
@@ -445,14 +528,17 @@ fn event_type(event: &AgentEvent) -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         fs,
         path::PathBuf,
         sync::atomic::{AtomicU64, Ordering},
     };
 
     use agent_domain::{
-        EventId, Message, MessageId, MessageMetadata, MessageRole, RunId, SessionId, Timestamp,
-        TokenUsage,
+        ArtifactId, Citation, CitationSourceKind, ContentPart, EventId, Message, MessageId,
+        MessageMetadata, MessageRole, ProgramStream, ProtectedBlobRef, ProviderTranscriptEnvelope,
+        ReasoningItem, ReasoningItemId, RunId, ServerToolEvent, SessionId, Source, Timestamp,
+        TokenUsage, ToolCallId, TranscriptItem,
     };
     use agent_events::{AgentEvent, AgentEventEnvelope, EventSequence};
 
@@ -600,6 +686,676 @@ mod tests {
         assert_eq!(
             message.metadata.usage.as_ref().expect("usage").input_tokens,
             12
+        );
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn server_tool_events_persist_redacted_and_rebuild_exactly() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-server-tool");
+        store
+            .create_session(&session, "server-tool", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+
+        let secret = "server-tool-secret-that-must-not-reach-sqlite";
+        let started = event(
+            &session,
+            1,
+            AgentEvent::ServerTool(ServerToolEvent::Started {
+                tool_call_id: ToolCallId::from("server-tool-1"),
+                name: "web_search".into(),
+                arguments: Some(serde_json::json!({"query": "pawork"})),
+            }),
+        );
+        let citation = event(
+            &session,
+            2,
+            AgentEvent::ServerTool(ServerToolEvent::CitationAdded {
+                tool_call_id: ToolCallId::from("server-tool-1"),
+                citation: Citation {
+                    url: Some("https://example.com".into()),
+                    title: Some("Example".into()),
+                    source_kind: CitationSourceKind::WebSearch,
+                    ..Citation::empty()
+                },
+            }),
+        );
+        let source = event(
+            &session,
+            3,
+            AgentEvent::ServerTool(ServerToolEvent::SourceAdded {
+                tool_call_id: ToolCallId::from("server-tool-1"),
+                source: Source {
+                    url: Some("https://example.com".into()),
+                    raw_metadata: Some(serde_json::json!({"api_key": secret})),
+                    ..Source::default()
+                },
+            }),
+        );
+        let output = event(
+            &session,
+            4,
+            AgentEvent::ServerTool(ServerToolEvent::ProgramOutput {
+                tool_call_id: ToolCallId::from("server-tool-1"),
+                stream: ProgramStream::Stdout,
+                delta: None,
+                artifact: Some(ArtifactId::from("artifact-log-1")),
+            }),
+        );
+        let completed = event(
+            &session,
+            5,
+            AgentEvent::ServerTool(ServerToolEvent::Completed {
+                tool_call_id: ToolCallId::from("server-tool-1"),
+                summary: Some("3 results".into()),
+                artifacts: vec![ArtifactId::from("artifact-1")],
+            }),
+        );
+        let envelope = event(
+            &session,
+            6,
+            AgentEvent::TranscriptEnvelope(ProviderTranscriptEnvelope {
+                items: vec![
+                    TranscriptItem::ServerTool(ServerToolEvent::Completed {
+                        tool_call_id: ToolCallId::from("server-tool-1"),
+                        summary: Some("done".into()),
+                        artifacts: Vec::new(),
+                    }),
+                    TranscriptItem::Text("final".into()),
+                ],
+                cursor: Some("cursor-1".into()),
+                continuation_reference: Some("ref-1".into()),
+            }),
+        );
+        for payload in [started, citation, source, output, completed, envelope] {
+            store
+                .append_event(DEFAULT_BRANCH_ID, payload)
+                .await
+                .expect("append server tool event");
+        }
+
+        let (event_json, sources_json, event_types): (String, String, Vec<String>) = store
+            .database()
+            .call(
+                |connection| -> rusqlite::Result<(String, String, Vec<String>)> {
+                    let event_json: String = connection.query_row(
+                        "SELECT payload_json FROM session_events WHERE event_id='event-3'",
+                        [],
+                        |row| row.get(0),
+                    )?;
+                    let sources_json: String = connection.query_row(
+                        "SELECT sources_json FROM server_tool_events \
+                     WHERE tool_call_id='server-tool-1'",
+                        [],
+                        |row| row.get(0),
+                    )?;
+                    let mut statement = connection.prepare(
+                        "SELECT event_type FROM session_events \
+                     WHERE session_id='session-server-tool' ORDER BY sequence",
+                    )?;
+                    let event_types = statement
+                        .query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok((event_json, sources_json, event_types))
+                },
+            )
+            .await
+            .expect("database actor")
+            .expect("persistence query");
+        assert!(!event_json.contains(secret), "event leaked secret");
+        assert!(!sources_json.contains(secret), "projection leaked secret");
+        assert!(event_json.contains(REDACTED_SECRET));
+        assert_eq!(
+            event_types,
+            vec![
+                "server_tool_started",
+                "citation_added",
+                "source_added",
+                "program_output",
+                "server_tool_completed",
+                "transcript_envelope"
+            ]
+        );
+
+        // 重放与原始一致（raw_metadata 已脱敏）。
+        let replayed = store.replay_events(&session, 1, 10).await.expect("replay");
+        assert_eq!(replayed.len(), 6);
+        let AgentEvent::ServerTool(ServerToolEvent::SourceAdded { source, .. }) =
+            &replayed[2].payload
+        else {
+            panic!("replayed source event must keep its schema");
+        };
+        assert_eq!(
+            source
+                .raw_metadata
+                .as_ref()
+                .expect("raw metadata")
+                .get("api_key"),
+            Some(&serde_json::json!(REDACTED_SECRET))
+        );
+
+        // Projection 可删除并精确重建。
+        let before = store.projection_snapshot(&session).await.expect("snapshot");
+        assert_eq!(before.server_tool_events.len(), 1);
+        assert_eq!(before.server_tool_events[0].state, "completed");
+        assert_eq!(before.server_tool_events[0].citations.len(), 1);
+        assert_eq!(before.server_tool_events[0].sources.len(), 1);
+        assert_eq!(before.server_tool_events[0].outputs.len(), 1);
+        assert_eq!(before.transcript_envelopes.len(), 1);
+        store
+            .database()
+            .call(|connection| {
+                connection.execute(
+                    "DELETE FROM server_tool_events WHERE session_id='session-server-tool'",
+                    [],
+                )?;
+                connection.execute(
+                    "DELETE FROM transcript_envelopes WHERE session_id='session-server-tool'",
+                    [],
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("delete projection");
+        let rebuilt = store.rebuild_projection(&session).await.expect("rebuild");
+        assert_eq!(rebuilt, before);
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    /// Transcript envelope 内嵌的 secret（deeply nested raw_metadata.api_key）
+    /// 必须在持久化事实表与投影中被脱敏，且 rebuild 保持脱敏形态。
+    #[tokio::test]
+    async fn transcript_envelope_embedded_secret_is_redacted_and_rebuilds() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-envelope-secret");
+        store
+            .create_session(&session, "envelope-secret", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+
+        let secret = "envelope-raw-metadata-secret-must-not-leak";
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::TranscriptEnvelope(ProviderTranscriptEnvelope {
+                        items: vec![
+                            TranscriptItem::ServerTool(ServerToolEvent::SourceAdded {
+                                tool_call_id: ToolCallId::from("st-env"),
+                                source: Source {
+                                    url: Some("https://example.com".into()),
+                                    raw_metadata: Some(serde_json::json!({
+                                        "api_key": secret,
+                                        "kept": "value",
+                                    })),
+                                    ..Source::default()
+                                },
+                            }),
+                            TranscriptItem::Text("final".into()),
+                        ],
+                        cursor: Some("cursor-1".into()),
+                        continuation_reference: Some("ref-1".into()),
+                    }),
+                ),
+            )
+            .await
+            .expect("append envelope");
+
+        let (event_json, projection_json): (String, String) = store
+            .database()
+            .call(|connection| -> rusqlite::Result<(String, String)> {
+                let event_json: String = connection.query_row(
+                    "SELECT payload_json FROM session_events WHERE event_id='event-1'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let projection_json: String = connection.query_row(
+                    "SELECT envelope_json FROM transcript_envelopes \
+                     WHERE session_id='session-envelope-secret'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((event_json, projection_json))
+            })
+            .await
+            .expect("actor")
+            .expect("persistence query");
+        assert!(
+            !event_json.contains(secret),
+            "event leaked envelope-embedded secret"
+        );
+        assert!(
+            !projection_json.contains(secret),
+            "projection leaked envelope-embedded secret"
+        );
+        assert!(event_json.contains(REDACTED_SECRET));
+        assert!(projection_json.contains(REDACTED_SECRET));
+
+        // 重放后结构保持，secret 已脱敏，非敏感字段保留。
+        let replayed = store.replay_events(&session, 1, 10).await.expect("replay");
+        assert_eq!(replayed.len(), 1);
+        let AgentEvent::TranscriptEnvelope(envelope) = &replayed[0].payload else {
+            panic!("replayed event must keep its schema");
+        };
+        let TranscriptItem::ServerTool(ServerToolEvent::SourceAdded { source, .. }) =
+            &envelope.items[0]
+        else {
+            panic!("replayed envelope must contain the source item");
+        };
+        let raw = source.raw_metadata.as_ref().expect("raw metadata");
+        assert_eq!(
+            raw.get("api_key"),
+            Some(&serde_json::json!(REDACTED_SECRET))
+        );
+        assert_eq!(raw.get("kept"), Some(&serde_json::json!("value")));
+
+        // envelope 投影可删除并精确重建。
+        let before = store.projection_snapshot(&session).await.expect("snapshot");
+        assert_eq!(before.transcript_envelopes.len(), 1);
+        store
+            .database()
+            .call(|connection| {
+                connection.execute(
+                    "DELETE FROM transcript_envelopes \
+                     WHERE session_id='session-envelope-secret'",
+                    [],
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("delete projection");
+        let rebuilt = store.rebuild_projection(&session).await.expect("rebuild");
+        assert_eq!(rebuilt, before);
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    /// P15-7 安全红线：ReasoningItem 只持久化 ProtectedBlobRef + summary；
+    /// 伪造的推理凭证原文（encrypted_content / signature / continuation bytes）
+    /// 不得进入事实表与投影，且 append → projection → replay → rebuild 后
+    /// 安全引用与 summary 可完整重建。
+    #[tokio::test]
+    async fn message_committed_reasoning_persists_safe_reference_only() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-reasoning");
+        store
+            .create_session(&session, "reasoning", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+
+        let encrypted_content = "fake-openai-encrypted-content-must-not-reach-sqlite";
+        let signature = "fake-anthropic-signature-must-not-reach-sqlite";
+        let continuation_bytes = "fake-xai-continuation-bytes-must-not-reach-sqlite";
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::MessageCommitted {
+                        message: Message {
+                            id: MessageId::from("message-reasoning"),
+                            role: MessageRole::Assistant,
+                            content: vec![ContentPart::Reasoning(ReasoningItem {
+                                id: ReasoningItemId::from("reasoning-1"),
+                                summary: Some("checked constraints".into()),
+                                protected_blob_ref: ProtectedBlobRef::from(
+                                    "protected-blob-reasoning-1",
+                                ),
+                                opaque_metadata: BTreeMap::from([
+                                    ("provider_kind".into(), serde_json::json!("openai")),
+                                    (
+                                        "encrypted_content".into(),
+                                        serde_json::json!(encrypted_content),
+                                    ),
+                                    (
+                                        "openai.responses.summary_entries".into(),
+                                        serde_json::json!([
+                                            {
+                                                "type": "summary_text",
+                                                "text": "hint entry one",
+                                            },
+                                            {
+                                                "type": "summary_text",
+                                                "text": "hint entry two",
+                                            },
+                                        ]),
+                                    ),
+                                ]),
+                                continuation_metadata: BTreeMap::from([
+                                    ("signature".into(), serde_json::json!(signature)),
+                                    (
+                                        "continuation_bytes".into(),
+                                        serde_json::json!(continuation_bytes),
+                                    ),
+                                    ("anthropic_block_kind".into(), serde_json::json!("thinking")),
+                                ]),
+                            })],
+                            metadata: MessageMetadata::default(),
+                        },
+                    },
+                ),
+            )
+            .await
+            .expect("append reasoning message");
+
+        let (event_json, projection_json): (String, String) = store
+            .database()
+            .call(|connection| {
+                connection.query_row(
+                    "SELECT e.payload_json, m.message_json FROM session_events e \
+                     JOIN messages m ON m.message_id='message-reasoning' \
+                     WHERE e.event_id='event-1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+            })
+            .await
+            .expect("database actor")
+            .expect("persistence query");
+        for forbidden in [encrypted_content, signature, continuation_bytes] {
+            assert!(!event_json.contains(forbidden), "event leaked: {forbidden}");
+            assert!(
+                !projection_json.contains(forbidden),
+                "projection leaked: {forbidden}"
+            );
+        }
+        for json in [&event_json, &projection_json] {
+            assert!(
+                json.contains("protected-blob-reasoning-1"),
+                "safe blob ref must persist"
+            );
+            assert!(json.contains("checked constraints"), "summary must persist");
+            assert!(
+                json.contains(REDACTED_SECRET),
+                "raw reasoning credentials must be redacted"
+            );
+            // P15-7 allowlist：合法 hint 必须保留。
+            assert!(
+                json.contains("openai.responses.summary_entries")
+                    && json.contains("hint entry two"),
+                "summary entries hint must persist"
+            );
+            assert!(
+                json.contains("anthropic_block_kind") && json.contains("thinking"),
+                "anthropic block kind hint must persist"
+            );
+        }
+
+        // 重放：结构保持，ref/summary 可重建，伪造原文已脱敏，非敏感 hint 保留。
+        let replayed = store.replay_events(&session, 1, 10).await.expect("replay");
+        assert_eq!(replayed.len(), 1);
+        let AgentEvent::MessageCommitted { message } = &replayed[0].payload else {
+            panic!("replayed event must keep its schema");
+        };
+        let ContentPart::Reasoning(item) = &message.content[0] else {
+            panic!("message must carry the reasoning part");
+        };
+        assert_eq!(item.id.as_str(), "reasoning-1");
+        assert_eq!(item.summary.as_deref(), Some("checked constraints"));
+        assert_eq!(
+            item.protected_blob_ref.as_str(),
+            "protected-blob-reasoning-1"
+        );
+        // P15-7 allowlist：未知键整值脱敏，合法 hint 保留。
+        assert_eq!(item.opaque_metadata["provider_kind"], REDACTED_SECRET);
+        assert_eq!(item.opaque_metadata["encrypted_content"], REDACTED_SECRET);
+        assert_eq!(
+            item.opaque_metadata["openai.responses.summary_entries"][1]["text"],
+            "hint entry two"
+        );
+        assert_eq!(item.continuation_metadata["signature"], REDACTED_SECRET);
+        assert_eq!(
+            item.continuation_metadata["continuation_bytes"],
+            REDACTED_SECRET
+        );
+        assert_eq!(
+            item.continuation_metadata["anthropic_block_kind"],
+            "thinking"
+        );
+
+        // Projection 可删除并精确重建，ReasoningItem 安全引用随消息恢复。
+        let before = store.projection_snapshot(&session).await.expect("snapshot");
+        assert_eq!(before.messages.len(), 1);
+        let ContentPart::Reasoning(before_item) = &before.messages[0].content[0] else {
+            panic!("projection must carry the reasoning part");
+        };
+        assert_eq!(
+            before_item.protected_blob_ref.as_str(),
+            "protected-blob-reasoning-1"
+        );
+        store
+            .database()
+            .call(|connection| {
+                connection.execute(
+                    "DELETE FROM messages WHERE session_id='session-reasoning'",
+                    [],
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("delete projection");
+        let rebuilt = store.rebuild_projection(&session).await.expect("rebuild");
+        assert_eq!(rebuilt, before);
+        let ContentPart::Reasoning(rebuilt_item) = &rebuilt.messages[0].content[0] else {
+            panic!("rebuilt projection must carry the reasoning part");
+        };
+        assert_eq!(rebuilt_item.id.as_str(), "reasoning-1");
+        assert_eq!(rebuilt_item.summary.as_deref(), Some("checked constraints"));
+        assert_eq!(
+            rebuilt_item.protected_blob_ref.as_str(),
+            "protected-blob-reasoning-1"
+        );
+        assert_eq!(
+            rebuilt_item.continuation_metadata["signature"],
+            REDACTED_SECRET
+        );
+        assert_eq!(
+            rebuilt_item.continuation_metadata["anthropic_block_kind"],
+            "thinking"
+        );
+        assert_eq!(
+            rebuilt_item.opaque_metadata["openai.responses.summary_entries"][0]["text"],
+            "hint entry one"
+        );
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    /// P15-7 安全红线回归：ReasoningItem metadata 边界精确 allowlist。
+    /// 嵌套 Anthropic `data` / 未知键不得进入事实表与投影；合法 hint
+    /// （summary_entries、anthropic_block_kind）与 metadata 边界外的普通
+    /// `data`（如 provider_metadata）原样保留；append → projection → replay
+    /// → rebuild 全链路一致。
+    #[tokio::test]
+    async fn reasoning_metadata_allowlist_redacts_nested_data_and_keeps_hints() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-reasoning-allowlist");
+        store
+            .create_session(
+                &session,
+                "reasoning-allowlist",
+                Timestamp::from_unix_millis(1),
+            )
+            .await
+            .expect("session");
+
+        let signature = "fake-anthropic-signature-allowlist";
+        let nested_data = "fake-anthropic-nested-data-must-not-reach-sqlite";
+        let nested_entry_data = "fake-entry-nested-data-must-not-reach-sqlite";
+        let ordinary_data = "ordinary-data-outside-reasoning-kept";
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::MessageCommitted {
+                        message: Message {
+                            id: MessageId::from("message-reasoning-allowlist"),
+                            role: MessageRole::Assistant,
+                            content: vec![ContentPart::Reasoning(ReasoningItem {
+                                id: ReasoningItemId::from("reasoning-allowlist-1"),
+                                summary: Some("checked constraints".into()),
+                                protected_blob_ref: ProtectedBlobRef::from(
+                                    "protected-blob-reasoning-allowlist",
+                                ),
+                                opaque_metadata: BTreeMap::from([
+                                    (
+                                        "openai.responses.summary_entries".into(),
+                                        serde_json::json!([
+                                            {
+                                                "type": "summary_text",
+                                                "text": "legal hint A",
+                                            },
+                                            {
+                                                "type": "summary_text",
+                                                "text": "legal hint B",
+                                                "data": { "payload": nested_entry_data },
+                                            },
+                                        ]),
+                                    ),
+                                    (
+                                        "encrypted_content".into(),
+                                        serde_json::json!("fake-encrypted-content-allowlist"),
+                                    ),
+                                ]),
+                                continuation_metadata: BTreeMap::from([
+                                    ("anthropic_block_kind".into(), serde_json::json!("thinking")),
+                                    ("signature".into(), serde_json::json!(signature)),
+                                    ("data".into(), serde_json::json!({ "payload": nested_data })),
+                                ]),
+                            })],
+                            metadata: MessageMetadata {
+                                provider_metadata: BTreeMap::from([(
+                                    "data".into(),
+                                    serde_json::json!({ "note": ordinary_data }),
+                                )]),
+                                ..MessageMetadata::default()
+                            },
+                        },
+                    },
+                ),
+            )
+            .await
+            .expect("append reasoning message");
+
+        let (event_json, projection_json): (String, String) = store
+            .database()
+            .call(|connection| {
+                connection.query_row(
+                    "SELECT e.payload_json, m.message_json FROM session_events e \
+                     JOIN messages m ON m.message_id='message-reasoning-allowlist' \
+                     WHERE e.event_id='event-1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+            })
+            .await
+            .expect("database actor")
+            .expect("persistence query");
+        for forbidden in [signature, nested_data, nested_entry_data] {
+            assert!(!event_json.contains(forbidden), "event leaked: {forbidden}");
+            assert!(
+                !projection_json.contains(forbidden),
+                "projection leaked: {forbidden}"
+            );
+        }
+        for json in [&event_json, &projection_json] {
+            assert!(
+                json.contains("anthropic_block_kind") && json.contains("thinking"),
+                "anthropic block kind hint must persist"
+            );
+            assert!(
+                json.contains("legal hint A") && json.contains("legal hint B"),
+                "summary entry text hints must persist"
+            );
+            assert!(
+                json.contains(ordinary_data),
+                "ordinary data outside reasoning metadata must not be globally redacted"
+            );
+            assert!(
+                json.contains(REDACTED_SECRET),
+                "nested reasoning data must be redacted"
+            );
+        }
+
+        // 重放：hint 保留，嵌套 data 脱敏，metadata 边界外的普通 data 不动。
+        let replayed = store.replay_events(&session, 1, 10).await.expect("replay");
+        assert_eq!(replayed.len(), 1);
+        let AgentEvent::MessageCommitted { message } = &replayed[0].payload else {
+            panic!("replayed event must keep its schema");
+        };
+        let ContentPart::Reasoning(item) = &message.content[0] else {
+            panic!("message must carry the reasoning part");
+        };
+        let entries = &item.opaque_metadata["openai.responses.summary_entries"];
+        assert_eq!(entries[0]["type"], "summary_text");
+        assert_eq!(entries[0]["text"], "legal hint A");
+        assert_eq!(entries[1]["text"], "legal hint B");
+        assert_eq!(entries[1]["data"]["payload"], REDACTED_SECRET);
+        assert_eq!(item.opaque_metadata["encrypted_content"], REDACTED_SECRET);
+        assert_eq!(
+            item.continuation_metadata["anthropic_block_kind"],
+            "thinking"
+        );
+        assert_eq!(item.continuation_metadata["signature"], REDACTED_SECRET);
+        assert_eq!(
+            item.continuation_metadata["data"]["payload"],
+            REDACTED_SECRET
+        );
+        assert_eq!(
+            message.metadata.provider_metadata["data"]["note"],
+            ordinary_data
+        );
+
+        // Projection 可删除并精确重建，hint 与脱敏形态保持一致。
+        let before = store.projection_snapshot(&session).await.expect("snapshot");
+        assert_eq!(before.messages.len(), 1);
+        let ContentPart::Reasoning(before_item) = &before.messages[0].content[0] else {
+            panic!("projection must carry the reasoning part");
+        };
+        assert_eq!(
+            before_item.continuation_metadata["anthropic_block_kind"],
+            "thinking"
+        );
+        store
+            .database()
+            .call(|connection| {
+                connection.execute(
+                    "DELETE FROM messages WHERE session_id='session-reasoning-allowlist'",
+                    [],
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("delete projection");
+        let rebuilt = store.rebuild_projection(&session).await.expect("rebuild");
+        assert_eq!(rebuilt, before);
+        let ContentPart::Reasoning(rebuilt_item) = &rebuilt.messages[0].content[0] else {
+            panic!("rebuilt projection must carry the reasoning part");
+        };
+        assert_eq!(
+            rebuilt_item.continuation_metadata["anthropic_block_kind"],
+            "thinking"
+        );
+        assert_eq!(
+            rebuilt_item.opaque_metadata["openai.responses.summary_entries"][1]["text"],
+            "legal hint B"
         );
 
         store.shutdown().await.expect("shutdown");

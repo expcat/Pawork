@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use agent_domain::{
-    ContentPart, Message, MessageId, MessageMetadata, MessageRole, StopReason, TextContent,
-    ThinkingContent, TokenUsage, ToolCallContent, ToolCallId,
+    ContentPart, Message, MessageId, MessageMetadata, MessageRole, ReasoningItem, StopReason,
+    TextContent, ThinkingContent, TokenUsage, ToolCallContent, ToolCallId,
 };
 use provider_api::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
 
@@ -27,6 +27,8 @@ pub struct ToolAssembly {
 pub struct PartialMessage {
     pub text: String,
     pub thinking: String,
+    /// 已到达的 reasoning 安全引用（保持到达顺序）。
+    pub reasoning_items: Vec<ReasoningItem>,
     pub tool_calls: Vec<ToolAssembly>,
     pub usage: TokenUsage,
     pub stop_reason: Option<StopReason>,
@@ -38,6 +40,9 @@ pub struct PartialMessage {
 pub struct StreamAssembler {
     text: String,
     thinking: String,
+    /// reasoning item 按到达顺序收集；只含安全引用与摘要，凭证原文
+    /// 已在 Provider 侧替换为 Protected Blob Store 引用（ADR-032）。
+    reasoning_items: Vec<ReasoningItem>,
     tools: BTreeMap<ToolCallId, ToolAssembly>,
     /// 保持 tool call 的到达顺序（BTreeMap 按 id 排序，顺序单独记录）。
     tool_order: Vec<ToolCallId>,
@@ -63,6 +68,9 @@ impl StreamAssembler {
             }
             ProviderStreamEvent::ThinkingDelta(delta) => {
                 self.thinking.push_str(delta);
+            }
+            ProviderStreamEvent::ReasoningItem(item) => {
+                self.reasoning_items.push(item.clone());
             }
             ProviderStreamEvent::ToolCallStarted { id, name } => {
                 if !self.tools.contains_key(id) {
@@ -95,7 +103,12 @@ impl StreamAssembler {
                 self.stop_reason = Some(stop.clone());
                 self.complete = true;
             }
-            ProviderStreamEvent::ProviderMetadata(_) | ProviderStreamEvent::Error(_) => {}
+            // P15-5：server tool 事件与 transcript 信封由归一通道消费，
+            // 不参与本地消息组装。
+            ProviderStreamEvent::ProviderMetadata(_)
+            | ProviderStreamEvent::Error(_)
+            | ProviderStreamEvent::ServerTool(_)
+            | ProviderStreamEvent::TranscriptEnvelope(_) => {}
         }
     }
 
@@ -104,6 +117,7 @@ impl StreamAssembler {
         PartialMessage {
             text: self.text.clone(),
             thinking: self.thinking.clone(),
+            reasoning_items: self.reasoning_items.clone(),
             tool_calls: self
                 .tool_order
                 .iter()
@@ -125,9 +139,14 @@ impl StreamAssembler {
         if !self.thinking.is_empty() {
             content.push(ContentPart::Thinking(ThinkingContent {
                 text: self.thinking,
-                signature: None,
+                // 关联最近到达的 reasoning item（其凭证 blob 对应本段思考）。
+                reasoning_item_id: self.reasoning_items.last().map(|item| item.id.clone()),
                 redacted: false,
             }));
+        }
+        // reasoning 安全引用按到达顺序落为独立内容块。
+        for item in self.reasoning_items {
+            content.push(ContentPart::Reasoning(item));
         }
         if !self.text.is_empty() {
             content.push(ContentPart::Text(TextContent { text: self.text }));
@@ -188,6 +207,7 @@ fn parse_tool_arguments(raw: &str) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_domain::{ProtectedBlobRef, ReasoningItemId};
     use provider_api::ProviderStreamEvent;
 
     fn apply_all(events: &[ProviderStreamEvent]) -> StreamAssembler {
@@ -291,6 +311,113 @@ mod tests {
         assert_eq!(message.content.len(), 2);
         assert!(matches!(message.content[0], ContentPart::Thinking(_)));
         assert!(matches!(message.content[1], ContentPart::Text(_)));
+    }
+
+    #[test]
+    fn reasoning_items_preserve_arrival_order() {
+        let item_a = ReasoningItem {
+            id: ReasoningItemId::from("reasoning-a"),
+            summary: Some("first check".into()),
+            protected_blob_ref: ProtectedBlobRef::from("blob-a"),
+            opaque_metadata: Default::default(),
+            continuation_metadata: Default::default(),
+        };
+        let item_b = ReasoningItem {
+            id: ReasoningItemId::from("reasoning-b"),
+            summary: None,
+            protected_blob_ref: ProtectedBlobRef::from("blob-b"),
+            opaque_metadata: Default::default(),
+            continuation_metadata: Default::default(),
+        };
+        let events = [
+            ProviderStreamEvent::ThinkingDelta("step one".into()),
+            ProviderStreamEvent::ReasoningItem(item_a.clone()),
+            ProviderStreamEvent::ThinkingDelta("step two".into()),
+            ProviderStreamEvent::ReasoningItem(item_b.clone()),
+            ProviderStreamEvent::TextDelta("answer".into()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ];
+        let assembler = apply_all(&events);
+
+        // partial 暴露安全引用且保持到达顺序
+        let partial = assembler.partial();
+        assert_eq!(partial.reasoning_items.len(), 2);
+        assert_eq!(partial.reasoning_items[0].id, item_a.id);
+        assert_eq!(partial.reasoning_items[1].id, item_b.id);
+
+        let message = assembler.finalize().expect("finalize");
+        let reasoning: Vec<_> = message
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Reasoning(item) => Some(item.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, vec![item_a, item_b]);
+    }
+
+    #[test]
+    fn thinking_links_to_most_recent_reasoning_item() {
+        let item = ReasoningItem {
+            id: ReasoningItemId::from("reasoning-1"),
+            summary: Some("checked constraints".into()),
+            protected_blob_ref: ProtectedBlobRef::from("blob-1"),
+            opaque_metadata: Default::default(),
+            continuation_metadata: Default::default(),
+        };
+        let events = [
+            ProviderStreamEvent::ThinkingDelta("hmm".into()),
+            ProviderStreamEvent::ReasoningItem(item.clone()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ];
+        let message = apply_all(&events).finalize().expect("finalize");
+
+        assert!(matches!(
+            &message.content[0],
+            ContentPart::Thinking(ThinkingContent {
+                reasoning_item_id: Some(id),
+                ..
+            }) if *id == item.id
+        ));
+        assert!(matches!(&message.content[1], ContentPart::Reasoning(_)));
+    }
+
+    #[test]
+    fn thinking_without_reasoning_item_has_no_link() {
+        let events = [
+            ProviderStreamEvent::ThinkingDelta("plain thought".into()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ];
+        let message = apply_all(&events).finalize().expect("finalize");
+        assert!(matches!(
+            &message.content[0],
+            ContentPart::Thinking(ThinkingContent {
+                reasoning_item_id: None,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn reasoning_item_alone_finalizes_without_text() {
+        let item = ReasoningItem {
+            id: ReasoningItemId::from("reasoning-only"),
+            summary: None,
+            protected_blob_ref: ProtectedBlobRef::from("blob-only"),
+            opaque_metadata: Default::default(),
+            continuation_metadata: Default::default(),
+        };
+        let events = [
+            ProviderStreamEvent::ReasoningItem(item.clone()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ];
+        let message = apply_all(&events).finalize().expect("finalize");
+        assert_eq!(message.content.len(), 1);
+        assert!(matches!(
+            &message.content[0],
+            ContentPart::Reasoning(reasoning) if reasoning.id == item.id
+        ));
     }
 
     #[test]

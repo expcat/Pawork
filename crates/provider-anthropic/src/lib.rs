@@ -9,10 +9,16 @@
 //! - [`AnthropicProvider`] 实现了 [`ModelProvider`](provider_api::ModelProvider)。
 
 pub mod provider;
+pub mod reasoning;
 pub mod request;
+pub mod server_tool;
 pub mod stream;
 
 pub use provider::{builtin_models, AnthropicConfig, AnthropicProvider};
+pub use reasoning::{
+    build_reasoning_item, extract_thinking_payload, reconstruct_block, AnthropicThinkingPayload,
+    ANTHROPIC_BLOCK_KIND_KEY,
+};
 pub use request::to_messages_body;
 pub use stream::{event_to_events, AnthropicStreamState};
 

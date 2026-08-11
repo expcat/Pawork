@@ -432,6 +432,8 @@ impl RunSupervisor {
             provider_id: request.provider_id.clone(),
             model: request.model.clone(),
             tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
             initial_messages: vec![message],
             max_iterations: 16,
             budget: agent_engine::BudgetLimits::default(),
@@ -1083,11 +1085,14 @@ fn event_state(payload: &AgentEvent) -> Option<RunState> {
         AgentEvent::MessageCommitted { .. }
         | AgentEvent::ToolOutputDelta { .. }
         | AgentEvent::ToolCallArgumentsDelta { .. }
+        | AgentEvent::ServerTool(_)
+        | AgentEvent::TranscriptEnvelope(_)
         | AgentEvent::CompactionStarted { .. }
         | AgentEvent::CompactionCompleted { .. }
         | AgentEvent::CheckpointCreated { .. }
         | AgentEvent::CheckpointRolledBack { .. }
         | AgentEvent::UsageUpdated { .. }
+        | AgentEvent::ProviderTranscriptContinued { .. }
         | AgentEvent::Diagnostic { .. } => None,
     }
 }
@@ -1155,6 +1160,9 @@ fn translate_payload(run_id: &RunId, payload: &AgentEvent) -> Option<AppEvent> {
         | AgentEvent::ToolApprovalResponded { .. }
         | AgentEvent::ToolExecutionStarted { .. }
         | AgentEvent::MessageCommitted { .. }
+        | AgentEvent::ProviderTranscriptContinued { .. }
+        | AgentEvent::ServerTool(_)
+        | AgentEvent::TranscriptEnvelope(_)
         | AgentEvent::RunCompleted { .. }
         | AgentEvent::RunCancelled { .. }
         | AgentEvent::RunFailed { .. }

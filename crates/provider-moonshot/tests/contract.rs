@@ -28,6 +28,8 @@ fn request() -> CanonicalModelRequest {
             metadata: MessageMetadata::default(),
         }],
         tools: Vec::new(),
+        hosted_tools: Vec::new(),
+        extensions: Vec::new(),
         tool_choice: ToolChoice::Auto,
         thinking: None,
         temperature: Some(0.0),

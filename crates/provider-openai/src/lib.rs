@@ -13,8 +13,14 @@
 //! - prompt cache 自动命中（P6-7，OpenAI 为自动命中，usage 中体现）。
 
 pub mod provider;
+pub mod reasoning;
+pub mod server_tool;
 
 pub use provider::{builtin_models, OpenAiConfig, OpenAiProvider};
+pub use reasoning::{
+    canonical_reasoning_to_responses_input, extract_encrypted_content,
+    responses_reasoning_to_canonical, EncryptedContent,
+};
 
 /// OpenAI 官方 API 默认基础 URL。
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";

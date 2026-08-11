@@ -151,6 +151,10 @@ fn is_reserved_provider_option(key: &str) -> bool {
             | "tools"
             | "tool_choice"
             | "thinking"
+            | "output_config"
+            | "reasoning_effort"
+            | "reasoning"
+            | "effort"
             | "temperature"
             | "stop_sequences"
             | "authorization"
@@ -176,6 +180,9 @@ fn message_to_anthropic(message: &Message) -> Vec<Value> {
                 blocks.push(json!({"type":"text","text": t.text}));
             }
             ContentPart::Thinking(_) => { /* 推理内容不回传 */ }
+            // Baseline Messages transport cannot resolve protected continuation
+            // refs. The modern P15-3 path rehydrates these explicitly.
+            ContentPart::Reasoning(_) => {}
             ContentPart::ToolCall(call) => {
                 let input = if call.arguments.is_null() {
                     call.raw_arguments
@@ -306,6 +313,8 @@ mod tests {
                 metadata: MessageMetadata::default(),
             }],
             tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
             tool_choice: ToolChoice::Auto,
             thinking: None,
             temperature: Some(0.5),
@@ -561,5 +570,36 @@ mod tests {
         assert_eq!(body["thinking"]["budget_tokens"], 64);
         assert_eq!(body["temperature"], 0.5);
         assert_eq!(body["stop_sequences"], serde_json::json!(["END"]));
+    }
+
+    #[test]
+    fn provider_options_cannot_inject_reasoning_or_output_config() {
+        let mut req = base_request();
+        req.thinking = Some(ThinkingConfig {
+            level: ThinkingLevel::High,
+            budget_tokens: Some(64),
+        });
+        req.provider_options
+            .insert("reasoning_effort".into(), serde_json::json!("low"));
+        req.provider_options
+            .insert("REASONING".into(), serde_json::json!({"effort": "low"}));
+        req.provider_options
+            .insert("Effort".into(), serde_json::json!("minimal"));
+        req.provider_options
+            .insert("output_config".into(), serde_json::json!({"effort": "low"}));
+        req.provider_options
+            .insert("top_p".into(), serde_json::json!(0.9));
+
+        let body = to_messages_body(&req);
+
+        // canonical thinking 不受注入影响，注入键完全不进入 wire body
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["budget_tokens"], 64);
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("effort").is_none());
+        assert!(body.get("output_config").is_none());
+        // 普通自定义 option 仍透传
+        assert_eq!(body["top_p"], 0.9);
     }
 }

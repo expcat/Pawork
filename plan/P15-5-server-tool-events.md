@@ -1,6 +1,6 @@
 # P15-5：Server Tool Events（hosted tool 事件与 Citation/Source 统一）
 
-> Phase 15 · Provider Native Capabilities · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P0-3、P0-4、P1-4、P1-5、P15-1
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P0-3、P0-4、P1-4、P1-5、P15-1
 
 **最终目的**：为 `ProviderHosted` / `ProviderExtension` 两种非本地执行位点定义统一的 canonical 事件与引用类型——`ServerToolEvent`、`Citation`、`Source`——让 OpenAI / Anthropic / xAI 三家 server tools（web_search / live_search / file_search / code_execution）的调用与结果用同一口径表达，并可持久化、可重放（ADR-016）。这是 P15-2/3/4 落地三家现代 API 的共享前置，确保 Core 侧无 Provider 特例。
 
@@ -25,15 +25,31 @@
 
 ## 验收标准
 
-- [ ] `Citation`/`Source` 覆盖三家字段，缺省为空不猜值
-- [ ] `ServerToolEvent` 落入可持久化事件流，崩溃后 Projection 可重建（重放测试）
-- [ ] Search/citation、program output 与 computer action/screenshot 的增量顺序可重放；大型 screenshot/output 只存 Artifact 引用
-- [ ] hosted tool 结果属 `ContinuationMode::ProviderTranscript`（P15-1），Core 只归一为 ServerToolEvent / transcript envelope，不伪装成本地 `ToolResult`、不触发本地执行
-- [ ] 只有 `ClientFunction/CoreSuppliedResult` 可映射 `function_call_output` / `tool_result`；hosted/extension 续传不得经过该路径（负向断言）
-- [ ] transcript envelope 不携带 Provider 名称；具体协议翻译封装在 provider adapter（`no_provider_branch` 断言）
-- [ ] raw_metadata 经脱敏，不含 Secret
-- [ ] 三家字段映射夹具各通过；对不上口径的字段返回 `Unsupported`
-- [ ] 仅定向/Mock smoke 验收，不要求 workspace 全量门禁
+- [x] `Citation`/`Source` 覆盖三家字段，缺省为空不猜值
+- [x] `ServerToolEvent` 落入可持久化事件流，崩溃后 Projection 可重建（重放测试）
+- [x] Search/citation、program output 与 computer action/screenshot 的增量顺序可重放；大型 screenshot/output 只存 Artifact 引用
+- [x] hosted tool 结果属 `ContinuationMode::ProviderTranscript`（P15-1），Core 只归一为 ServerToolEvent / transcript envelope，不伪装成本地 `ToolResult`、不触发本地执行
+- [x] 只有 `ClientFunction/CoreSuppliedResult` 可映射 `function_call_output` / `tool_result`；hosted/extension 续传不得经过该路径（负向断言）
+- [x] transcript envelope 不携带 Provider 名称；具体协议翻译封装在 provider adapter（`no_provider_branch` 断言）
+- [x] raw_metadata 经脱敏，不含 Secret
+- [x] 三家字段映射夹具各通过；对不上口径的字段返回 `Unsupported`
+- [x] 仅定向/Mock smoke 验收，不要求 workspace 全量门禁
+
+## 验证记录（2026-08-11）
+
+- canonical：`Citation` / `Source` / 11 类 `ServerToolEvent` / provider-neutral transcript envelope 已落地；`ProviderStreamEvent` 与 `AgentEvent` 顺序桥接，不参与本地消息组装。
+- 续传边界：Hosted / Extension 只走 `ProviderTranscript`，Mock 覆盖 all-hosted、mixed 与 Extension approve/deny/cancel；不存在 hosted `ToolResult` 或本地执行。
+- 持久化：全部事件变体按 sequence append、snapshot、删除投影、rebuild 后完全一致；未知 call 返回 `ProjectionInvariant`；screenshot 保留 `media_type`；嵌套 `raw_metadata.api_key` 在事实表、投影与重放均脱敏。
+- 协议夹具：OpenAI `web_search_call.status/action/sources` 与扁平 `url_citation`；Anthropic `server_tool_use`、search result/error 与 citation；xAI server-side output item、顶层 citations URL 与 annotation。不可映射口径均返回 `Unsupported`，未提前接入 P15-2/3/4 transport。
+- reviewer：PASS；两个 P2 观察中，全局 call id 主键沿用既有 projection 身份模型，Anthropic 官方 error object 形态已追加 fixture 锁定。
+
+```text
+Validation Level: L1
+Affected crates: agent-domain、agent-events、provider-api、provider-runtime、agent-engine、session-store、tool-runtime、test-support、provider-openai、provider-anthropic、provider-xai
+Validated: 11 个 changed crates cargo test（含 contract/doc tests）/ cargo clippy --all-targets -D warnings / cargo fmt --all --check / git diff --check
+Targeted regressions: 11 类事件顺序与 Projection rebuild、深层 secret 脱敏、未知 call 不变量、ProviderTranscript 与 ToolResult 分离、三家 wire fixture 与 Unsupported 负向路径
+Full workspace gate: NOT RUN（P15-5 明确要求定向/Mock smoke，未命中升级条件）
+```
 
 **相关文档**：[providers](../docs/features/providers.md) · [sessions](../docs/features/sessions.md) · [ADR-002 解耦](../docs/adr/ADR-002-agent-engine-provider-decoupled.md) · [ADR-016 事件持久化重放](../docs/adr/ADR-016-core-event-persist-replay.md) · [ADR-018 大 payload Artifact](../docs/adr/ADR-018-large-payload-artifact-id.md) · [P15-1](P15-1-canonical-tool-v2.md) · [ROADMAP](../ROADMAP.md)
 

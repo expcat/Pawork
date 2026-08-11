@@ -71,6 +71,10 @@ impl AgentTool for EditFileTool {
                 "required": ["path"]
             }),
             capability: ToolCapability::WorkspaceWrite,
+            kind: tool_api::ToolKind::ClientFunction,
+            hosting: tool_api::ToolHosting::Local,
+            capabilities: Vec::new(),
+            requires_approval: false,
             read_only: false,
             supports_concurrency: false,
             default_timeout_ms: Some(10_000),

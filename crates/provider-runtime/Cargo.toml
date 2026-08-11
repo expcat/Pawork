@@ -9,6 +9,7 @@ description = "Pawork Provider 共用的 HTTP 运行时、流式解析、组装�
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+protected-blob-store = { path = "../protected-blob-store" }
 provider-api = { path = "../provider-api" }
 async-trait.workspace = true
 bytes.workspace = true
@@ -24,3 +25,4 @@ tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time
 proptest.workspace = true
 wiremock.workspace = true
 test-support = { path = "../test-support" }
+tempfile.workspace = true

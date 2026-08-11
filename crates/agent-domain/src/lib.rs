@@ -7,8 +7,14 @@ mod cancel;
 mod error;
 mod ids;
 mod message;
+mod reasoning;
+mod server_tool;
+mod tool;
 
 pub use cancel::{CancellationFuture, CancellationToken};
 pub use error::{ErrorCategory, ErrorContext};
 pub use ids::*;
 pub use message::*;
+pub use reasoning::*;
+pub use server_tool::*;
+pub use tool::*;

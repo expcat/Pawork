@@ -5,7 +5,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::SessionStoreError;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub const CURRENT_SCHEMA_VERSION: u32 = 5;
 
 struct Migration {
     version: u32,
@@ -121,6 +121,37 @@ const MIGRATIONS: &[Migration] = &[
                 PRIMARY KEY(session_id, tag)
             );
             CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag);
+        "#,
+    },
+    Migration {
+        version: 5,
+        name: "server_tool_events_and_transcript_envelopes",
+        sql: r#"
+            CREATE TABLE server_tool_events (
+                tool_call_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                run_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                state TEXT NOT NULL,
+                arguments_json TEXT NOT NULL DEFAULT '',
+                command TEXT,
+                citations_json TEXT NOT NULL DEFAULT '[]',
+                sources_json TEXT NOT NULL DEFAULT '[]',
+                screenshots_json TEXT NOT NULL DEFAULT '[]',
+                outputs_json TEXT NOT NULL DEFAULT '[]',
+                result_json TEXT,
+                error_json TEXT
+            );
+            CREATE INDEX idx_server_tool_events_session
+                ON server_tool_events(session_id);
+            CREATE TABLE transcript_envelopes (
+                session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                run_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                envelope_json TEXT NOT NULL,
+                PRIMARY KEY(session_id, sequence)
+            );
         "#,
     },
 ];
@@ -265,7 +296,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("open store");
         assert_eq!(report.from_version, 0);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![1, 2, 3, 4]);
+        assert_eq!(report.applied_versions, vec![1, 2, 3, 4, 5]);
         assert!(report.backup_path.is_none());
         let tables: Vec<String> = store
             .database()
@@ -284,9 +315,11 @@ mod tests {
         for expected in [
             "messages",
             "runs",
+            "server_tool_events",
             "session_events",
             "sessions",
             "tool_calls",
+            "transcript_envelopes",
         ] {
             assert!(
                 tables.iter().any(|table| table == expected),

@@ -63,6 +63,10 @@ impl AgentTool for SearchTextTool {
                 "required": ["pattern"]
             }),
             capability: ToolCapability::ReadOnly,
+            kind: tool_api::ToolKind::ClientFunction,
+            hosting: tool_api::ToolHosting::Local,
+            capabilities: Vec::new(),
+            requires_approval: false,
             read_only: true,
             supports_concurrency: true,
             default_timeout_ms: Some(15_000),

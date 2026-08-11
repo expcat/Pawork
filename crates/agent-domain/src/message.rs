@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{ArtifactId, MessageId, ModelId, ProviderId, Timestamp, ToolCallId};
+use crate::{
+    ArtifactId, MessageId, ModelId, ProviderId, ReasoningItem, ReasoningItemId, Timestamp,
+    ToolCallId,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -29,6 +32,7 @@ pub enum ContentPart {
     Text(TextContent),
     Image(ImageContent),
     Thinking(ThinkingContent),
+    Reasoning(ReasoningItem),
     ToolCall(ToolCallContent),
     ToolResult(ToolResultContent),
     ArtifactRef(ArtifactReference),
@@ -59,7 +63,7 @@ pub enum ImageSource {
 pub struct ThinkingContent {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub signature: Option<String>,
+    pub reasoning_item_id: Option<ReasoningItemId>,
     #[serde(default)]
     pub redacted: bool,
 }
@@ -181,8 +185,15 @@ mod tests {
             }),
             ContentPart::Thinking(ThinkingContent {
                 text: "reasoning".into(),
-                signature: Some("sig".into()),
+                reasoning_item_id: Some(ReasoningItemId::from("reasoning-1")),
                 redacted: false,
+            }),
+            ContentPart::Reasoning(ReasoningItem {
+                id: ReasoningItemId::from("reasoning-1"),
+                summary: Some("safe summary".into()),
+                protected_blob_ref: crate::ProtectedBlobRef::from("protected-1"),
+                opaque_metadata: BTreeMap::new(),
+                continuation_metadata: BTreeMap::new(),
             }),
             ContentPart::ToolCall(ToolCallContent {
                 id: ToolCallId::from("call-1"),
@@ -229,5 +240,21 @@ mod tests {
         let json = serde_json::to_string(&message).expect("serialize message");
         let decoded: Message = serde_json::from_str(&json).expect("deserialize message");
         assert_eq!(decoded, message);
+    }
+
+    #[test]
+    fn legacy_thinking_signature_is_discarded_on_deserialize() {
+        let legacy = serde_json::json!({
+            "text": "visible thinking",
+            "signature": "legacy-secret-signature",
+            "redacted": false
+        });
+
+        let thinking: ThinkingContent =
+            serde_json::from_value(legacy).expect("deserialize legacy thinking");
+        assert_eq!(thinking.reasoning_item_id, None);
+        let encoded = serde_json::to_string(&thinking).expect("serialize safe thinking");
+        assert!(!encoded.contains("legacy-secret-signature"));
+        assert!(!encoded.contains("signature"));
     }
 }

@@ -11,6 +11,7 @@ use agent_domain::ContentPart;
 use agent_domain::Message;
 use agent_domain::MessageId;
 use agent_domain::MessageMetadata;
+use agent_domain::ReasoningItem;
 use agent_domain::StopReason;
 use agent_domain::TextContent;
 use agent_domain::ThinkingContent;
@@ -64,6 +65,8 @@ pub struct AssembledTurn {
     pub text: String,
     /// 助手思考（thinking）文本。
     pub thinking: String,
+    /// Provider 返回的 reasoning continuation（仅含安全引用）。
+    pub reasoning_items: Vec<ReasoningItem>,
     /// 本轮出现的 tool call（按 started 顺序）。
     pub tool_calls: BTreeMap<ToolCallId, PendingToolCall>,
     /// tool call 的到达顺序（便于保持稳定排序）。
@@ -92,6 +95,9 @@ impl AssembledTurn {
             }
             ProviderStreamEvent::ThinkingDelta(delta) => {
                 self.thinking.push_str(delta);
+            }
+            ProviderStreamEvent::ReasoningItem(item) => {
+                self.reasoning_items.push(item.clone());
             }
             ProviderStreamEvent::ToolCallStarted { id, name } => {
                 if !self.tool_calls.contains_key(id) {
@@ -167,6 +173,9 @@ impl AssembledTurn {
                 });
                 summary.provider_metadata = metadata.clone();
             }
+            // P15-5：server tool 事件与 transcript 信封是归一通道，不参与本地
+            // 消息组装（tool call 路由仍由 ToolCall* 事件驱动）。
+            ProviderStreamEvent::ServerTool(_) | ProviderStreamEvent::TranscriptEnvelope(_) => {}
             ProviderStreamEvent::Error(_) => {}
         }
     }
@@ -177,10 +186,11 @@ impl AssembledTurn {
         if !self.thinking.is_empty() {
             content.push(ContentPart::Thinking(ThinkingContent {
                 text: self.thinking,
-                signature: None,
+                reasoning_item_id: self.reasoning_items.last().map(|item| item.id.clone()),
                 redacted: false,
             }));
         }
+        content.extend(self.reasoning_items.into_iter().map(ContentPart::Reasoning));
         if !self.text.is_empty() {
             content.push(ContentPart::Text(TextContent { text: self.text }));
         }
@@ -298,6 +308,32 @@ mod tests {
             completed: true,
         };
         assert_eq!(call.arguments(), Value::Null);
+    }
+
+    #[test]
+    fn assembles_reasoning_items_as_safe_message_content() {
+        let item = ReasoningItem {
+            id: agent_domain::ReasoningItemId::from("reasoning-1"),
+            summary: Some("safe summary".into()),
+            protected_blob_ref: agent_domain::ProtectedBlobRef::from("protected-1"),
+            opaque_metadata: BTreeMap::new(),
+            continuation_metadata: BTreeMap::new(),
+        };
+        let mut turn = AssembledTurn::new(MessageId::from("assistant-reasoning"));
+        turn.apply(&ProviderStreamEvent::ThinkingDelta(
+            "visible thinking".into(),
+        ));
+        turn.apply(&ProviderStreamEvent::ReasoningItem(item.clone()));
+
+        let message = turn.into_message(MessageMetadata::default());
+        assert!(matches!(
+            &message.content[0],
+            ContentPart::Thinking(ThinkingContent {
+                reasoning_item_id: Some(id),
+                ..
+            }) if id == &item.id
+        ));
+        assert_eq!(message.content[1], ContentPart::Reasoning(item));
     }
 
     #[test]

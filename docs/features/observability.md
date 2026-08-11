@@ -24,6 +24,12 @@ API Key；Bearer Token；Cookie；OAuth Code；Authorization Header；用户配�
 
 Core 初始化时间；数据库时间；Provider 首 Token；Provider 总时长；Tool 执行时长；Context Token；Compaction 次数；Session 打开时间；Diff 生成时间；文件索引时间；内存；活跃 Task；Channel backlog；Blob Store 大小。
 
+## Provider 能力协商诊断（P15-8）
+
+Provider 请求开始前，Agent Engine 发出可持久化、可重放的 `Diagnostic` 事件，稳定 code 为 `provider_capability_negotiated`。details 只包含 canonical requested / supported / unsupported 能力、选定 transport 与显式 fallback，不包含 Provider wire payload、凭据、Protected Blob、prompt 或 tool output。重试复用同一协商记录，避免一次 Run 内 transport 或 fallback 静默漂移。
+
+该事件用于解释“为何选择现代 transport、为何降为 Client Tool、为何拒绝请求”，不是能力探测原始响应的转储。Provider 探测失败只记录归一化错误类别与安全摘要；诊断包沿用 allowlist 与递归脱敏规则。
+
 ## Diagnostics Bundle
 
 用户可导出：核心版本；OS；Provider 状态；模型目录；数据库 schema；插件列表；MCP 状态；最近脱敏日志；性能指标；崩溃报告。

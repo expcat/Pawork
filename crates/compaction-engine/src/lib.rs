@@ -21,8 +21,8 @@ use thiserror::Error;
 pub use engine::{CompactionEngine, CompactionReason, CompactionResult};
 pub use retention::{
     apply, ModifiedFile, RetentionConstraint, RetentionDecision, RetentionInputs, RetentionMessage,
-    RetentionPolicy, RetentionTask, RetentionToolCall, ToolCallRetentionState,
-    DEFAULT_RETAINED_TURNS,
+    RetentionPolicy, RetentionReasoning, RetentionTask, RetentionToolCall, ToolCallRetentionState,
+    DEFAULT_RETAINED_REASONING_ITEMS, DEFAULT_RETAINED_TURNS,
 };
 pub use snapshot::{CompactionSnapshot, SnapshotVersion, CURRENT_SNAPSHOT_VERSION};
 

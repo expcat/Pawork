@@ -113,6 +113,9 @@ fn is_reserved_provider_option(key: &str) -> bool {
             | "stream_options"
             | "tools"
             | "tool_choice"
+            | "reasoning_effort"
+            | "reasoning"
+            | "effort"
             | "authorization"
             | "proxy-authorization"
             | "api_key"
@@ -146,6 +149,9 @@ fn message_to_openai(message: &agent_domain::Message) -> Vec<Value> {
                 ordered_parts.push(json!({"type":"text","text": t.text.clone()}))
             }
             ContentPart::Thinking(_) => { /* 推理内容不回传给 provider */ }
+            // Chat Completions has no canonical encrypted reasoning item input;
+            // Responses adapters resolve this protected ref on the modern path.
+            ContentPart::Reasoning(_) => {}
             ContentPart::ToolCall(call) => {
                 let args = if call.arguments.is_null() {
                     call.raw_arguments.clone().unwrap_or_default()
@@ -284,6 +290,8 @@ mod tests {
             model: agent_domain::ModelId::from("gpt-4o"),
             messages: vec![user("hi")],
             tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
             tool_choice: ToolChoice::Auto,
             thinking: None,
             temperature: Some(0.5),
@@ -326,6 +334,31 @@ mod tests {
         assert_eq!(body["model"], "gpt-4o");
         assert_eq!(body["stream_options"]["include_usage"], true);
         assert!(body.get("authorization").is_none());
+        assert_eq!(body["top_p"], 0.9);
+    }
+
+    #[test]
+    fn provider_options_cannot_override_reasoning_effort() {
+        let mut req = base_request();
+        req.thinking = Some(ThinkingConfig {
+            level: ThinkingLevel::High,
+            budget_tokens: None,
+        });
+        req.provider_options
+            .insert("reasoning_effort".into(), json!("low"));
+        req.provider_options
+            .insert("REASONING".into(), json!({"effort": "low"}));
+        req.provider_options
+            .insert("Effort".into(), json!("minimal"));
+        req.provider_options.insert("top_p".into(), json!(0.9));
+
+        let body = to_chat_completions_body(&req);
+
+        // canonical thinking 仍然生效，注入值既不覆盖也不进入 wire body
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("effort").is_none());
+        // 普通自定义 option 仍透传
         assert_eq!(body["top_p"], 0.9);
     }
 

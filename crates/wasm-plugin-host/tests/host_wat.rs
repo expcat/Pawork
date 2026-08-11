@@ -953,7 +953,7 @@ async fn tool_registry_namespaces_external_plugins() {
     assert_eq!(desc.name, "tool.plugin::ping");
     assert_eq!(desc.capability, tool_api::ToolCapability::ExternalPlugin);
 
-    let tr = registry.to_tool_registry();
+    let tr = registry.to_tool_registry().expect("registry snapshot");
     assert_eq!(tr.len(), 1);
 }
 
@@ -1333,7 +1333,7 @@ async fn tool_call_routes_through_real_host_invoke() {
     assert_eq!(result.content.len(), 1);
 
     let scheduler = tool_runtime::ToolScheduler::new(
-        registry.to_tool_registry(),
+        registry.to_tool_registry().expect("registry snapshot"),
         tool_runtime::ToolSchedulerConfig {
             max_concurrent: 2,
             approval_mode: tool_runtime::ApprovalMode::NeverAsk,
@@ -1476,7 +1476,7 @@ async fn plugin_runtime_coordinates_load_register_dispatch_and_unload() {
         runtime.command_names().await,
         ["runtime.plugin::refresh".to_string()]
     );
-    let tool_snapshot = runtime.tool_registry().await;
+    let tool_snapshot = runtime.tool_registry().await.expect("registry snapshot");
     let retained_tool = tool_snapshot
         .get("runtime.plugin::lookup")
         .expect("registered tool");
@@ -1542,7 +1542,11 @@ async fn plugin_runtime_coordinates_load_register_dispatch_and_unload() {
     runtime.unload(&mf.id).await.expect("runtime unload");
     assert!(runtime.loaded_plugins().is_empty());
     assert!(runtime.command_names().await.is_empty());
-    assert!(runtime.tool_registry().await.is_empty());
+    assert!(runtime
+        .tool_registry()
+        .await
+        .expect("registry snapshot")
+        .is_empty());
 
     let stale_result = retained_tool
         .execute(

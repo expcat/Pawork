@@ -39,6 +39,7 @@ members = [
     "crates/app-database",
     "crates/session-store",
     "crates/artifact-store",
+    "crates/protected-blob-store",
     "crates/compaction-engine",
     "crates/workspace-service",
     "crates/file-index",
@@ -126,6 +127,10 @@ sha2 = "0.10"
 hmac = "0.13"
 sha1 = "0.11"
 url = "2"
+
+# 受保护 Blob 加密（XChaCha20-Poly1305 AEAD + 密钥 zeroize）
+chacha20poly1305 = "0.11.0"
+zeroize = "1"
 
 # 低可信度额度兜底的版本化 HTML 解析（仅 quota-service 使用）。
 scraper = "0.27"

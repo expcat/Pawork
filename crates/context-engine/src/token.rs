@@ -45,6 +45,13 @@ pub trait TokenEstimator: Send + Sync {
         match part {
             ContentPart::Text(text) => self.count_text(&text.text),
             ContentPart::Thinking(thinking) => self.count_text(&thinking.text),
+            // Protected continuation bytes are intentionally unavailable to the
+            // estimator; only the safe summary contributes a local estimate.
+            ContentPart::Reasoning(reasoning) => reasoning
+                .summary
+                .as_deref()
+                .map(|summary| self.count_text(summary))
+                .unwrap_or(0),
             ContentPart::Image(image) => {
                 IMAGE_PLACEHOLDER_TOKENS
                     + image
@@ -332,5 +339,21 @@ mod tests {
         });
         // tool_name(3) + nested text(2) + metadata "null"(1)
         assert_eq!(est.count_content_part(&part), 3 + 2 + 1);
+    }
+
+    #[test]
+    fn reasoning_counts_only_safe_summary_not_protected_reference() {
+        let est = HeuristicEstimator::new(4);
+        let part = ContentPart::Reasoning(agent_domain::ReasoningItem {
+            id: agent_domain::ReasoningItemId::from("reasoning-1"),
+            summary: Some("abcdefgh".into()),
+            protected_blob_ref: agent_domain::ProtectedBlobRef::from(
+                "a-very-long-protected-reference-that-must-not-affect-token-count",
+            ),
+            opaque_metadata: Default::default(),
+            continuation_metadata: Default::default(),
+        });
+
+        assert_eq!(est.count_content_part(&part), 2);
     }
 }

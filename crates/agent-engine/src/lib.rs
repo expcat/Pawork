@@ -24,7 +24,7 @@ pub use cancel::{
 };
 pub use provider_loop::{
     ApprovalOutcome, LoopContext, LoopError, LoopEventEmitter, PendingToolInvocation, ProviderLoop,
-    ProviderLoopConfig, SchedulerLoopContext, TurnOutcome,
+    ProviderLoopConfig, ProviderTranscriptInvocation, SchedulerLoopContext, TurnOutcome,
 };
 pub use queue::{MessageQueue, MessageQueueSnapshot, QueuedMessage};
 pub use recovery::{
