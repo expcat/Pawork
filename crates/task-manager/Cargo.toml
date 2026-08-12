@@ -9,3 +9,15 @@ description = "Pawork P16-4 Background Task Manager：process/agent/monitor/auto
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+agent-events = { path = "../agent-events" }
+process-runtime = { path = "../process-runtime" }
+sandbox-runtime = { path = "../sandbox-runtime" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

@@ -2614,6 +2614,11 @@ name = "memory-service"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
+ "agent-events",
+ "async-trait",
+ "provider-api",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -3017,6 +3022,11 @@ name = "plan-service"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
+ "agent-events",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3920,6 +3930,13 @@ name = "review-engine"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
+ "agent-events",
+ "blake3",
+ "diff-service",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -4711,6 +4728,15 @@ name = "task-manager"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
+ "agent-events",
+ "async-trait",
+ "process-runtime",
+ "sandbox-runtime",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
