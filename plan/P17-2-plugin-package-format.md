@@ -27,6 +27,7 @@
 - [ ] 归档带内容 hash 校验，损坏 / 篡改可检测
 - [ ] 跨类型 / 跨包冲突可检测并报错
 - [ ] 子资源正确分发到各 loader，作用域与 `resource-loader` 一致
+- [ ] **（P16-10 延期接线）Monitor 包驱动落地**：`monitors` 子段定义稳定 Monitor driver/evaluator 入口契约（trigger config / observation / lifecycle / required capability），package 声明的 Monitor 有真实 driver 且以 `task-manager` 为唯一运行 lifecycle。P16-10 已删 `monitor-service` 内置 driver、执行状态统一引用 `task-manager`（library 层见 [P16-10](P16-10-review-remediation.md)）；本任务补 package 可声明的驱动入口与归属生命周期，执行统一进 `monitor-service`/`task-manager`，不重定义运行时语义。见 [p16-review §2.3/§5](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
 
 **相关文档**：[plugins](../docs/features/plugins.md) · [skills](../docs/features/skills.md) · [P17-1 User Hooks](P17-1-user-hooks.md) · [mcp](../docs/features/mcp.md) · [P17-4 LSP Runtime](P17-4-lsp-runtime.md) · [P16-6 Monitor](P16-6-persistent-process-monitor.md) · [ROADMAP](../ROADMAP.md)
 

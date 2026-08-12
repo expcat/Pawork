@@ -29,6 +29,7 @@
 - [ ] denied 工具不可被任何方式绕过
 - [ ] 引用解析失败 / 越权时安全降级或报错
 - [ ] v1 profile 可迁移到 v2；profile 不含明文 secret
+- [ ] **（P16-10 延期接线）生产长期记忆**：`profile.memory` 接入真实 `EmbeddingProvider`（非测试 FixedEmbedder）+ SQLite 持久化（非进程内 BTreeMap）+ `context-engine` 消费检索结果注入下一轮 context，且 embedding/confidence 进 canonical event 可重放；或在保留 provider-neutral contract 前提下保持 default-off 并在 profile 显式标注 unavailable，不虚假可用——修复 P16-7 零生产 provider、BTreeMap 存储、重放后 embedding 为空、无 context/compaction/checkpoint 消费者。见 [p16-review §1/§3.5](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
 
 **相关文档**：[P8-5 Profiles v1](P8-5-profiles.md) · [skills](../docs/features/skills.md) · [mcp](../docs/features/mcp.md) · [policy](../docs/features/policy.md) · [sandbox](../docs/features/sandbox.md) · [P16-7 Long-term Memory](P16-7-long-term-memory.md) · [ROADMAP](../ROADMAP.md)
 

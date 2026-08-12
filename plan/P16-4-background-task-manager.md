@@ -1,6 +1,6 @@
 # P16-4：Background Task Manager（后台任务与断连续存）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P1-4、P3-1、P4-12、P11-6、P11-7、P13-2；Agent kind 与 P12-1 协调
+> Phase 16 · Modern Agent Workflow · 状态：🟢已完成 · TargetVerified（有界：library/core verified，host composition deferred） · 依赖：P1-4、P3-1、P4-12、P11-6、P11-7、P13-2；Agent kind 与 P12-1 协调
 
 **最终目的**：提供统一的后台任务管理器，把 `process` / `agent` / `monitor` / `automation` 四类长生命周期任务纳入同一注册、状态与事件模型，并在 CLI/GUI 断连后任务继续运行、重连可恢复查看，使「关掉终端任务就没了」不再是 Pawork 的体验缺陷。
 
@@ -34,11 +34,25 @@
 
 ## 验收标准
 
-- [ ] process / agent / monitor / automation 四类任务统一注册、状态可查
-- [ ] CLI/GUI 断连后任务继续运行，重连可恢复任务视图与增量输出
-- [ ] 取消 parent 传播到子任务/子进程，无孤儿残留
-- [ ] 后台任务不因「后台」绕过 sandbox / policy / 预算约束
+- [ ] 部分达成：四 kind 统一注册/状态机/事件化已验（测试支撑：`four_kinds_register_and_query` / `legal_lifecycle_emits_events` / `snapshot_and_replay_rebuild_view`）；agent/monitor/automation kind 的 `start` 仅状态转移，无真实 executor → 未达成，登记 **P16-10 #T3**
+- [ ] 部分达成：同进程 lagged subscriber 的 snapshot+增量恢复已验（`lagged_subscriber_recovers_via_snapshot` / `disconnect_and_reconnect_semantics` / `output_cursor_resume_incremental`）；跨连接断连续存未接 EventHub/宿主，Queued 与输出不进 canonical event/artifact，Core 重启无法恢复 → 未达成，登记 **P16-10 #T3**
+- [x] process 路径取消传播到子任务/子进程树，无孤儿残留（测试支撑：`process_parent_cancel_cascades` / `process_cancel_terminates_tree` / `cancel_propagates_to_descendants_without_orphans`；经注入 SandboxBackend → ProcessRuntime，无直接 spawn）
+- [ ] 部分达成：process 路径 policy 原样透传不升级（`backend_receives_exact_policy_no_escalation` / `no_direct_process_spawn_or_self_made_cleanup`）；预算约束与其余 kind 的 sandbox/policy 接线未实现 → 未达成，登记 **P16-10 #T3**
 
 **相关文档**：[persistent-process-monitor (P16-6)](P16-6-persistent-process-monitor.md) · [scheduled-automation (P16-5)](P16-5-scheduled-automation.md) · [multi-agent](../docs/features/multi-agent.md) · [gui-connection](../docs/features/gui-connection.md) · [process](../docs/features/process.md) · [ROADMAP](../ROADMAP.md)
 
 **依赖建议（2026-08）**：不新增第三方依赖；复用 `process-runtime` / `sandbox-runtime` / `agent-engine`（Multi-Agent）与 P13-5 Event Hub。新 crate `task-manager` 依赖方向：`agent-domain → task-manager → app-service`。
+
+## 校准记录（2026-08-12）
+
+依据 [p16-review](../docs/review/p16-review.md) 评审结论与当前工作区 remediation 状态校准：统一任务抽象、生命周期状态机、取消树传播与真实 Process 执行路径（SandboxBackend → ProcessRuntime、取消令牌、输出驱动）属库级实现且有测试支撑，保留 **TargetVerified（library/core）**；「Agent/Monitor/Automation kind 真实 executor、跨连接断连续存（EventHub snapshot/replay）、Queued/output 事件化与 artifact、policy/预算接线」未达成，登记 **P16-10** 并映射后续任务 #T3。
+
+验证记录：`scripts/p16-gate.sh` 四类全 PASS（独立 `target/gates` 跑完已清理）；task-manager 测试 19 passed（lib 0 + `process_and_policy` 11 + `state_and_replay` 8）。
+
+```text
+Validation Level: L2（P16 簇门禁脚本，文档校准任务附带复跑）
+Affected crates: none（本任务仅改 plan/P16-4 文档）
+Validated: scripts/p16-gate.sh；task-manager 定向测试（process/policy/replay）
+Targeted regressions: process 取消树与 sandbox policy 透传
+Full workspace gate: NOT RUN（未命中升级条件）
+```

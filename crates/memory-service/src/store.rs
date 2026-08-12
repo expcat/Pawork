@@ -1,8 +1,9 @@
 //! 纯内存记忆存储：canonical 事件折叠（apply / replay）+ 隐私过滤检索。
 //!
 //! 存储选择为纯内存 `BTreeMap`（不引入向量数据库）；embedding 作为 `Vec<f32>`
-//! 直接存于 [`Memory`]。`apply` 是 replay 入口——它不重新嵌入（事件不携带向量），
-//! 故 replay 出的记忆 `embedding` 为空，但记录 / 失效状态与实时路径一致。
+//! 直接存于 [`Memory`]。`apply` 是 replay 入口：新 `Recorded` 事件携带 embedding /
+//! confidence，可完整重建实时状态；旧流缺字段时 serde default 为空 / 0.0，仍可
+//! 重放，但空 embedding 会被检索过滤，需重新嵌入后才可检索。
 
 use std::collections::BTreeMap;
 
@@ -39,7 +40,7 @@ impl MemoryStore {
 
     /// 折叠 canonical [`MemoryEvent`]（replay 入口）。
     ///
-    /// - `Recorded`：插入记忆（`embedding` 为空，因为事件不携带向量）。
+    /// - `Recorded`：插入记忆（`embedding` / `confidence` 取自事件，旧流默认空 / 0.0）。
     /// - `Invalidated`：标记 `valid=false`（不删除）。
     ///
     /// 幂等：重复 apply 同一事件结果一致。
@@ -51,6 +52,8 @@ impl MemoryStore {
                 source_event_id,
                 privacy,
                 workspace_id,
+                embedding,
+                confidence,
             } => {
                 self.memories.insert(
                     memory_id.clone(),
@@ -58,10 +61,10 @@ impl MemoryStore {
                         memory_id: memory_id.clone(),
                         summary: summary.clone(),
                         source_event_id: source_event_id.clone(),
-                        confidence: 0.0,
+                        confidence: *confidence,
                         privacy: *privacy,
                         workspace_id: workspace_id.clone(),
-                        embedding: Vec::new(),
+                        embedding: embedding.clone(),
                         valid: true,
                     },
                 );
@@ -255,7 +258,7 @@ mod tests {
             vec![1.0],
         ));
 
-        // Replay 路径：仅事件，无 embedding。
+        // Replay 路径：事件携带 embedding / confidence，与实时路径完整一致。
         let mut replayed = MemoryStore::new();
         replayed.apply(&MemoryEvent::Recorded {
             memory_id: MemoryId::new("m1"),
@@ -263,6 +266,8 @@ mod tests {
             source_event_id: None,
             privacy: MemoryPrivacy::WorkspaceLocal,
             workspace_id: Some(WorkspaceId::new("ws1")),
+            embedding: vec![1.0],
+            confidence: 0.0,
         });
         replayed.apply(&MemoryEvent::Invalidated {
             memory_id: MemoryId::new("m1"),
@@ -273,11 +278,17 @@ mod tests {
 
         let direct_mem = direct.get(&MemoryId::new("m1")).unwrap();
         let replayed_mem = replayed.get(&MemoryId::new("m1")).unwrap();
-        assert_eq!(direct_mem.memory_id, replayed_mem.memory_id);
-        assert_eq!(direct_mem.summary, replayed_mem.summary);
-        assert_eq!(direct_mem.valid, replayed_mem.valid);
+        // live→fresh 完整 snapshot 相等（含 embedding / confidence / valid）。
+        assert_eq!(replayed_mem.memory_id, direct_mem.memory_id);
+        assert_eq!(replayed_mem.summary, direct_mem.summary);
+        assert_eq!(replayed_mem.source_event_id, direct_mem.source_event_id);
+        assert_eq!(replayed_mem.confidence, direct_mem.confidence);
+        assert_eq!(replayed_mem.privacy, direct_mem.privacy);
+        assert_eq!(replayed_mem.workspace_id, direct_mem.workspace_id);
+        assert_eq!(replayed_mem.embedding, direct_mem.embedding);
+        assert_eq!(replayed_mem.valid, direct_mem.valid);
         assert!(!replayed_mem.valid);
-        // replay 不携带 embedding（事件不存向量）。
-        assert!(replayed_mem.embedding.is_empty());
+        // replay 后 embedding 不再丢失（ADR-016）。
+        assert_eq!(replayed_mem.embedding, vec![1.0]);
     }
 }

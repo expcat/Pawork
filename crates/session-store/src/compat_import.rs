@@ -13,25 +13,22 @@
 //!    **不新增非规范事件类型**。
 //! 3. **不可破坏 canonical event**：导入只生成新 Session + 新 event id，绝不修改/
 //!    覆盖/删除既有 event；`session_events` 表的 append-only 触发器是底层硬保证。
-//! 4. **patch / 产物锚点**：外部文件改动中的 unified diff 由内置
-//!    [`parse_diff_anchors_owned`] 解析为行锚点，挂到对应 `ToolExecutionCompleted`
-//!    的 `metadata`；评审类意见经 canonical `Review(ReviewEvent::FindingOpened)`
-//!    锚点化（行锚点为 `agent_domain::ReviewAnchor`）。
-//! 5. **重放与校验**：持久化前对内存中的 canonical event 序列做 replay 校验
-//!    （sequence 连续、parent 无悬空、tool result 有前置 tool call）；外加对原始输入
-//!    做 Secret 扫描。任一失败则**整批不入库**——因为 `session_events` append-only，
-//!    回滚等价于「校验门控」：校验不通过时不写入任何事件。
-//! 6. **查询面与去重**：导入按 `(source, original_id, content)` 计算 blake3 指纹，
-//!    派生确定性 [`SessionId`]；同一外部会话重复导入命中已有 Session，不产生重复 event。
+//! 4. **patch / 产物 raw 保留**：外部 unified diff 原样保留在 tool result content；
+//!    存储层不生成无消费者的 pseudo anchor。仅显式携带 file/line 的评审意见映射为
+//!    canonical `Review(ReviewEvent::FindingOpened)`。
+//! 5. **结构与 Secret 校验**：持久化前检查 sequence 连续、parent 无悬空、tool result
+//!    有前置 tool call，并扫描原始输入中的 Secret；这不是状态机 replay。校验或持久化
+//!    任一步失败时，单一 SQLite transaction 保证 Session、identity、event、projection
+//!    整批回滚。
+//! 6. **identity 与去重**：`(source, original_id)` 是稳定 identity；无 original_id 时用
+//!    content fingerprint。identity 与 content fingerprint 同事务持久化：同 identity 同
+//!    fingerprint 幂等，不同 fingerprint 明确冲突。
 //!
 //! # 架构决策（与 plan 的偏离说明）
 //!
-//! plan 建议「patch 锚点复用 diff-service」。但 diff-service 传递依赖 git-service →
-//! process-runtime / policy-engine / workspace-service 等服务层 crate；`session-store`
-//! 是底层存储 crate，反向依赖服务层会破坏分层（storage → services）。为守住分层红线，
-//! unified-diff 行锚点在本模块内以一个标准文本解析器实现（无 git 依赖），评审锚点使用
-//! `session-store` 已依赖的 `agent_domain::ReviewAnchor`。两者均满足 plan 的「带行锚点」
-//! 语义，且不引入新的分层依赖。
+//! plan 建议「patch 锚点复用 diff-service」。但 `session-store` 是底层存储 crate，反向
+//! 依赖服务层会破坏分层（storage → services）。因此导入期只保留原始 diff；真正的
+//! Review consumer 出现后，由上层复用 Review core 生成可校验、可 re-anchor 的锚点。
 //!
 //! Secret 处理：untrusted 外部导入采用**拒绝**策略（检测到高置信凭证前缀即整批拒绝），
 //! 比基线 Event Store 的「redact 后入库」更严格——对外部数据更安全。
@@ -45,9 +42,11 @@ use agent_domain::{
     TextContent, Timestamp, TokenUsage, ToolCallId, ToolResultContent,
 };
 use agent_events::{AgentEvent, AgentEventEnvelope, EventSequence};
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, BufReader};
 
+use crate::event_store::persist_event_in_transaction;
 use crate::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 
 // =========================================================================
@@ -107,8 +106,6 @@ pub enum ExternalRecord {
         tool_call_id: String,
         content: String,
         is_error: bool,
-        /// 若该 result 携带 unified diff，保留原文以供行锚点解析。
-        file_diff: Option<String>,
     },
     Usage {
         input_tokens: u64,
@@ -138,56 +135,6 @@ pub struct ParsedExternalSession {
     pub records: Vec<ExternalRecord>,
     /// 顶层未被识别的字段（key -> JSON 值字符串），保证向前兼容。
     pub unknown_fields: BTreeMap<String, String>,
-}
-
-// =========================================================================
-// Unified diff 行锚点解析（标准格式，无 git 依赖）
-// =========================================================================
-
-/// 从 unified diff 文本解析出每个 hunk 的文件与行范围。
-///
-/// 识别 `+++ b/<path>`（或 `+++ <path>`）文件头与 `@@ -a,b +c,d @@` hunk 头；
-/// `c` 为新文件起始行，`d` 为行数，范围 = `[c, c+d-1]`。无法识别的行被忽略，
-/// 不抛错（解析是 best-effort 锚点提取，不是 diff 校验）。
-pub fn parse_diff_anchors_owned(diff: &str) -> Vec<(String, u32, u32)> {
-    let mut out = Vec::new();
-    let mut current_file: Option<String> = None;
-    for raw in diff.lines() {
-        let line = raw.trim_start();
-        if let Some(rest) = line.strip_prefix("+++ ") {
-            // 形如 `+++ b/path` 或 `+++ path`
-            let path = rest.split_whitespace().next().unwrap_or(rest);
-            let stripped = path
-                .strip_prefix("b/")
-                .or_else(|| path.strip_prefix("a/"))
-                .unwrap_or(path);
-            if stripped != "/dev/null" {
-                current_file = Some(stripped.to_string());
-            }
-            continue;
-        }
-        if line.starts_with("@@") {
-            if let Some(file) = current_file.clone() {
-                if let Some((start, len)) = parse_hunk_new_range(line) {
-                    let end = start.saturating_add(len).saturating_sub(1).max(start);
-                    out.push((file.clone(), start, end));
-                }
-            }
-        }
-    }
-    out
-}
-
-/// 从 `@@ -a,b +c,d @@` 提取新文件侧 `(start_line=c, line_count=d)`。
-fn parse_hunk_new_range(header: &str) -> Option<(u32, u32)> {
-    let plus = header.find(" +")?;
-    let after = &header[plus + 2..];
-    let body = after.split_whitespace().next()?;
-    // body 形如 c,d 或 c
-    let mut parts = body.split(',');
-    let start: u32 = parts.next()?.parse().ok()?;
-    let count: u32 = parts.next().unwrap_or("1").parse().ok().unwrap_or(1);
-    Some((start, count))
 }
 
 // =========================================================================
@@ -462,18 +409,10 @@ pub fn parse_codex(content: &str) -> Result<ParsedExternalSession, SessionStoreE
                     .get("is_error")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
-                let file_diff = output.as_ref().and_then(|o| {
-                    if o.contains("@@ ") && (o.contains("+++ ") || o.contains("--- ")) {
-                        Some(o.clone())
-                    } else {
-                        None
-                    }
-                });
                 parsed.records.push(ExternalRecord::ToolResult {
                     tool_call_id: call_id,
                     content: output.unwrap_or_default(),
                     is_error,
-                    file_diff,
                 });
             }
             "usage" => {
@@ -583,16 +522,10 @@ fn record_from_message(msg: &Value, role_key: &str) -> ExternalRecord {
             .get("is_error")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let file_diff = if content.contains("@@ ") && content.contains("+++ ") {
-            Some(content.clone())
-        } else {
-            None
-        };
         return ExternalRecord::ToolResult {
             tool_call_id: call_id,
             content,
             is_error,
-            file_diff,
         };
     }
     // 普通文本消息。
@@ -710,27 +643,44 @@ fn unparseable_msg(source: &'static str, detail: &str) -> SessionStoreError {
 // 指纹与去重
 // =========================================================================
 
-/// 按 `(source, original_id, content)` 计算 blake3 指纹，派生确定性 SessionId。
+/// Import identity 与 content fingerprint 分离：
+/// - **identity** = `(source, effective_identity)`，其中 `effective_identity` 为
+///   外部 `original_id`；无 `original_id` 时退化为 content fingerprint。identity 决定
+///   目标 SessionId，是去重 / 冲突判定的唯一权威（持久化于 `compat_import_identity`）。
+/// - **content fingerprint** = blake3(content)，记录该 identity 当前已导入的内容指纹；
+///   同 identity 同指纹 → 幂等；同 identity 不同指纹 → 明确冲突，绝不静默创建第二 Session。
 ///
-/// 同一外部会话（同来源 + 同原始 id + 同内容）总是映射到同一个 SessionId，
-/// 因此重复导入可在持久化前命中已有 Session 而不产生重复 event。
-pub fn fingerprint_session(
+/// 这样 identity 不随内容变化漂移（修正了把 content 纳入 SessionId 导致去重失效的问题），
+/// 同时仍能识别「无 original_id 的相同内容」为同一会话。
+pub fn derive_compat_session_id(
     source: ExternalSource,
     original_id: Option<&str>,
     content: &str,
 ) -> SessionId {
+    let effective = effective_identity(original_id, content);
     let mut hasher = blake3::Hasher::new();
     hasher.update(source.as_str().as_bytes());
     hasher.update(&[0]);
-    hasher.update(original_id.unwrap_or("").as_bytes());
-    hasher.update(&[0]);
-    hasher.update(content.as_bytes());
+    hasher.update(effective.as_bytes());
     let hash = hasher.finalize();
     SessionId::from(format!(
         "compat-{}-{}",
         source.as_str(),
         hex(&hash.as_bytes()[..16])
     ))
+}
+
+/// 导入 identity 的 effective key：有 `original_id` 用之，否则用 content fingerprint。
+pub fn effective_identity(original_id: Option<&str>, content: &str) -> String {
+    match original_id {
+        Some(id) => id.to_string(),
+        None => content_fingerprint(content),
+    }
+}
+
+/// content 的 blake3 指纹（64 hex 字符）。
+pub fn content_fingerprint(content: &str) -> String {
+    blake3::hash(content.as_bytes()).to_hex().to_string()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -792,7 +742,7 @@ fn map_to_events(
                     session,
                     run_id,
                     next_seq,
-                    message_event(MessageRole::User, text, next_seq),
+                    message_event(session, MessageRole::User, text, next_seq),
                 ));
                 next_seq += 1;
             }
@@ -801,63 +751,64 @@ fn map_to_events(
                     session,
                     run_id,
                     next_seq,
-                    message_event(MessageRole::Assistant, text, next_seq),
+                    message_event(session, MessageRole::Assistant, text, next_seq),
                 ));
                 next_seq += 1;
             }
             ExternalRecord::ToolCall {
                 tool_call_id,
                 name,
-                arguments: _,
+                arguments,
             } => {
+                // tool call id 以目标 session 为 scope，避免跨会话/跨来源撞
+                // tool_calls 全局主键；同一外部 id 在 Started / ArgumentsDelta /
+                // Completed 间用相同 scope，保证 result 仍能配对。
+                let scoped = scope_tool_id(session, &tool_call_id);
                 events.push(envelope(
                     session,
                     run_id,
                     next_seq,
                     AgentEvent::ToolCallStarted {
-                        tool_call_id: ToolCallId::from(tool_call_id),
+                        tool_call_id: ToolCallId::from(scoped.clone()),
                         name,
                     },
                 ));
                 next_seq += 1;
+                // 保留外部 tool arguments：映射既有 ToolCallArgumentsDelta（projection
+                // 累积到 tool_calls.arguments_json）。无/空 arguments 不发空 delta。
+                if let Some(arguments) = arguments.filter(|args| !args.is_empty()) {
+                    events.push(envelope(
+                        session,
+                        run_id,
+                        next_seq,
+                        AgentEvent::ToolCallArgumentsDelta {
+                            tool_call_id: ToolCallId::from(scoped),
+                            json_delta: arguments,
+                        },
+                    ));
+                    next_seq += 1;
+                }
             }
             ExternalRecord::ToolResult {
                 tool_call_id,
                 content,
                 is_error,
-                file_diff,
             } => {
-                let metadata = file_diff
-                    .as_deref()
-                    .map(parse_diff_anchors_owned)
-                    .filter(|v| !v.is_empty())
-                    .map(|v| {
-                        serde_json::Value::Array(
-                            v.into_iter()
-                                .map(|(file, start, end)| {
-                                    serde_json::json!({
-                                        "file": file,
-                                        "start_line": start,
-                                        "end_line": end,
-                                    })
-                                })
-                                .collect(),
-                        )
-                    })
-                    .map(|a| serde_json::json!({ "compat": { "patch_anchors": a } }))
-                    .unwrap_or_else(|| serde_json::json!({}));
+                // raw 工具输出（含 unified diff）原样保留在 content；锚点化交给将来
+                // 真正的 Review consumer，存储层不再实现无消费者的弱化 diff domain。
+                let scoped = scope_tool_id(session, &tool_call_id);
                 events.push(envelope(
                     session,
                     run_id,
                     next_seq,
                     AgentEvent::ToolExecutionCompleted {
-                        tool_call_id: ToolCallId::from(tool_call_id.clone()),
+                        tool_call_id: ToolCallId::from(scoped.clone()),
                         result: ToolResultContent {
-                            tool_call_id: ToolCallId::from(tool_call_id),
+                            tool_call_id: ToolCallId::from(scoped),
                             tool_name: None,
                             content: vec![ContentPart::Text(TextContent { text: content })],
                             is_error,
-                            metadata,
+                            metadata: serde_json::Value::Null,
                         },
                     },
                 ));
@@ -918,6 +869,10 @@ fn map_to_events(
                         },
                         severity,
                         body,
+                        evidence: Vec::new(),
+                        assignee: None,
+                        suggested_patch: None,
+                        fingerprint: None,
                     }),
                 ));
                 next_seq += 1;
@@ -955,15 +910,20 @@ fn map_to_events(
     events
 }
 
-fn message_event(role: MessageRole, text: String, seq: u64) -> AgentEvent {
+fn message_event(session: &SessionId, role: MessageRole, text: String, seq: u64) -> AgentEvent {
     AgentEvent::MessageCommitted {
         message: Message {
-            id: MessageId::from(format!("compat-msg-{seq}")),
+            id: MessageId::from(format!("compat-msg-{}-{seq}", session.as_str())),
             role,
             content: vec![ContentPart::Text(TextContent { text })],
             metadata: MessageMetadata::default(),
         },
     }
+}
+
+/// 把外部 tool call id 映射为目标 session scope 的全局唯一 id。
+fn scope_tool_id(session: &SessionId, external: &str) -> String {
+    format!("compat-tool-{}-{external}", session.as_str())
 }
 
 fn envelope(
@@ -986,12 +946,14 @@ fn envelope(
 // Replay 校验（持久化前；失败则整批不入库）
 // =========================================================================
 
-/// 校验内存中的 canonical event 序列。
+/// 对内存中的 canonical event 序列做**结构校验**（structural validation）。
 ///
-/// 检查：非空；sequence 从 1 连续；`RunStarted` 在首、`RunCompleted` 在尾；每个
-/// `ToolExecutionCompleted` 的 `tool_call_id` 在其之前出现过 `ToolCallStarted`；
-/// 若存在 `parent_event_id`，须在本批次内可解析。
-pub fn validate_batch(events: &[AgentEventEnvelope]) -> Result<(), SessionStoreError> {
+/// 这只是结构门控，不是状态机 replay：检查非空、sequence 从 1 连续、
+/// `RunStarted` 在首 / `RunCompleted` 在尾、每个 `ToolCallArgumentsDelta` 与
+/// `ToolExecutionCompleted` 引用的 `tool_call_id` 在其之前出现过
+/// `ToolCallStarted`，以及 `parent_event_id` 在本批次内可解析。它不调用 Run 状态机
+/// 或任何 Phase 16 reducer——「状态机可推进」由持久化后 projection 重建承担。
+pub fn validate_structure(events: &[AgentEventEnvelope]) -> Result<(), SessionStoreError> {
     if events.is_empty() {
         return Err(SessionStoreError::CompatValidationFailed(
             "empty batch".into(),
@@ -1039,6 +1001,14 @@ pub fn validate_batch(events: &[AgentEventEnvelope]) -> Result<(), SessionStoreE
         match &ev.payload {
             AgentEvent::ToolCallStarted { tool_call_id, .. } => {
                 seen_calls.insert(tool_call_id.to_string());
+            }
+            AgentEvent::ToolCallArgumentsDelta { tool_call_id, .. } => {
+                let referenced = tool_call_id.to_string();
+                if !referenced.is_empty() && !seen_calls.contains(&referenced) {
+                    return Err(SessionStoreError::CompatValidationFailed(format!(
+                        "ToolCallArgumentsDelta references unknown tool_call_id '{referenced}'"
+                    )));
+                }
             }
             AgentEvent::ToolExecutionCompleted {
                 tool_call_id,
@@ -1097,6 +1067,15 @@ impl SessionStore {
     }
 }
 
+/// compat 导入 session 的固定 created_at（ms），与事件时间戳（`1_000 + seq`）解耦。
+const COMPAT_CREATED_AT_MS: i64 = 1;
+
+/// 单事务导入的结果：新建导入或命中既有 identity 的幂等去重。
+enum ImportOutcome {
+    Imported { session_id: String },
+    Deduplicated { session_id: String },
+}
+
 async fn import_compat_inner(
     store: &SessionStore,
     source: ExternalSource,
@@ -1110,15 +1089,95 @@ async fn import_compat_inner(
     }
     // 2. 解析。
     let parsed = parse_external(source, content)?;
-    // 3. 指纹 + 去重。
-    let session_id = fingerprint_session(source, parsed.original_id.as_deref(), content);
-    let existing = store.replay_events(&session_id, 1, 1).await?;
+    // 3. identity / content fingerprint（与事件同事务持久化，作为去重/冲突唯一权威）。
+    //    identity 不随内容漂移：同 (source, original_id) 始终映射同一 SessionId；
+    //    无 original_id 时退化为 content fingerprint，使「相同无 id 内容」仍可幂等。
+    let fingerprint = content_fingerprint(content);
+    let identity = effective_identity(parsed.original_id.as_deref(), content);
+    let session_id = derive_compat_session_id(source, parsed.original_id.as_deref(), content);
     let counts = count_records(&parsed.records);
-    if !existing.is_empty() {
-        return Ok(CompatImportReport {
-            source: parsed.source,
-            session_id: session_id.to_string(),
-            original_id: parsed.original_id.clone(),
+    // 4. 映射为 canonical event 序列（run / message / tool id 全部 session-scoped）。
+    let run_id = RunId::from(format!("compat-run-{}", session_id.as_str()));
+    let events = map_to_events(&session_id, &run_id, &parsed);
+    // 5. 结构校验（失败则整批不入库）。
+    validate_structure(&events)?;
+    // 6. 单事务原子持久化：Session + branch + import identity + 全部脱敏 event + projection。
+    //    任一失败由同一事务回滚（零残留、可重试）；绝不触碰既有事件。
+    let title = parsed
+        .title
+        .clone()
+        .unwrap_or_else(|| format!("imported from {source}"));
+    let imported_event_count = events.len();
+    let source_for_report = parsed.source;
+    let original_id_for_report = parsed.original_id.clone();
+    let unknown_for_report = parsed.unknown_fields.clone();
+    let source_label = source.as_str().to_string();
+    let outcome = store
+        .database()
+        .call(
+            move |connection| -> Result<ImportOutcome, SessionStoreError> {
+                // 先取得 SQLite writer reservation，再读取 identity。这样不同
+                // SessionStore/连接上的并发导入会串行到同一 identity 判定：第二个事务
+                // 在首个提交后读取结果，稳定映射为幂等或 CompatImportConflict，而不会
+                // 在 deferred transaction 升级写锁时泄漏 SQLITE_BUSY/PK race。
+                let transaction =
+                    connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                // identity 权威：同 (source, identity) 的既有导入决定幂等 / 冲突。
+                let existing: Option<(String, String)> = transaction
+                    .query_row(
+                        "SELECT content_fingerprint, session_id FROM compat_import_identity \
+                     WHERE source=?1 AND original_id=?2",
+                        params![source_label, identity],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
+                if let Some((stored_fingerprint, stored_session_id)) = existing {
+                    if stored_fingerprint == fingerprint {
+                        // 同 identity + 同指纹：幂等，不产生任何新事件。
+                        return Ok(ImportOutcome::Deduplicated {
+                            session_id: stored_session_id,
+                        });
+                    }
+                    // 同 identity + 不同指纹：明确冲突，绝不静默创建第二 Session。
+                    return Err(SessionStoreError::CompatImportConflict {
+                        source_label,
+                        original_id: identity,
+                    });
+                }
+                // 新建 Session + default branch + import identity row（同一事务）。
+                let session_id_str = session_id.to_string();
+                transaction.execute(
+                    "INSERT INTO sessions(session_id, title, created_at_ms, updated_at_ms) \
+                 VALUES (?1, ?2, ?3, ?3)",
+                    params![session_id_str, title, COMPAT_CREATED_AT_MS],
+                )?;
+                transaction.execute(
+                    "INSERT INTO session_branches(branch_id, session_id, head_sequence) \
+                 VALUES (?1, ?2, 0)",
+                    params![DEFAULT_BRANCH_ID, session_id_str],
+                )?;
+                transaction.execute(
+                    "INSERT INTO compat_import_identity(source, original_id, \
+                 content_fingerprint, session_id) VALUES (?1, ?2, ?3, ?4)",
+                    params![source_label, identity, fingerprint, session_id_str],
+                )?;
+                // 全部事件 + projection（绝不触碰既有事件）。
+                for envelope in &events {
+                    persist_event_in_transaction(&transaction, DEFAULT_BRANCH_ID, envelope)?;
+                }
+                transaction.commit()?;
+                Ok(ImportOutcome::Imported {
+                    session_id: session_id_str,
+                })
+            },
+        )
+        .await??;
+
+    Ok(match outcome {
+        ImportOutcome::Deduplicated { session_id } => CompatImportReport {
+            source: source_for_report,
+            session_id,
+            original_id: original_id_for_report,
             imported_events: 0,
             imported_messages: 0,
             imported_tool_calls: 0,
@@ -1127,38 +1186,22 @@ async fn import_compat_inner(
             imported_reviews: 0,
             raw_records: 0,
             deduplicated: true,
-            unknown_fields: parsed.unknown_fields.clone(),
-        });
-    }
-    // 4. 映射为 canonical event 序列。
-    let run_id = RunId::from(format!("compat-{}-import", source.as_str()));
-    let events = map_to_events(&session_id, &run_id, &parsed);
-    // 5. 校验（失败则整批不入库）。
-    validate_batch(&events)?;
-    // 6. 持久化：新建 Session + 追加事件（绝不触碰既有事件）。
-    let title = parsed
-        .title
-        .clone()
-        .unwrap_or_else(|| format!("imported from {source}"));
-    store
-        .create_session(&session_id, title, Timestamp::from_unix_millis(1))
-        .await?;
-    for env in &events {
-        store.append_event(DEFAULT_BRANCH_ID, env.clone()).await?;
-    }
-    Ok(CompatImportReport {
-        source: parsed.source,
-        session_id: session_id.to_string(),
-        original_id: parsed.original_id.clone(),
-        imported_events: events.len(),
-        imported_messages: counts.messages,
-        imported_tool_calls: counts.tool_calls,
-        imported_tool_results: counts.tool_results,
-        imported_usages: counts.usages,
-        imported_reviews: counts.reviews,
-        raw_records: counts.raw,
-        deduplicated: false,
-        unknown_fields: parsed.unknown_fields.clone(),
+            unknown_fields: unknown_for_report,
+        },
+        ImportOutcome::Imported { session_id } => CompatImportReport {
+            source: source_for_report,
+            session_id,
+            original_id: original_id_for_report,
+            imported_events: imported_event_count,
+            imported_messages: counts.messages,
+            imported_tool_calls: counts.tool_calls,
+            imported_tool_results: counts.tool_results,
+            imported_usages: counts.usages,
+            imported_reviews: counts.reviews,
+            raw_records: counts.raw,
+            deduplicated: false,
+            unknown_fields: unknown_for_report,
+        },
     })
 }
 
@@ -1287,17 +1330,6 @@ mod tests {
     }
 
     #[test]
-    fn diff_anchors_parsed_from_unified_diff() {
-        let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -10,3 +10,4 @@\n old\n+new\n@@ -20,2 +20,2 @@\n";
-        let anchors = parse_diff_anchors_owned(diff);
-        assert_eq!(anchors.len(), 2);
-        assert_eq!(anchors[0].0, "src/lib.rs");
-        assert_eq!(anchors[0].1, 10);
-        assert_eq!(anchors[0].2, 13);
-        assert_eq!(anchors[1].1, 20);
-    }
-
-    #[test]
     fn secret_scan_rejects_known_credentials() {
         assert_eq!(find_secret("hello world"), None);
         assert_eq!(
@@ -1313,7 +1345,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_batch_catches_bad_envelope_and_accepts_good() {
+    fn validate_structure_catches_bad_envelope_and_accepts_good() {
         // 缺少 RunStarted 边界。
         let bad = vec![envelope(
             &SessionId::from("s"),
@@ -1324,7 +1356,7 @@ mod tests {
                 usage: TokenUsage::default(),
             },
         )];
-        assert!(validate_batch(&bad).is_err());
+        assert!(validate_structure(&bad).is_err());
 
         // 正常序列通过。
         let good = map_to_events(
@@ -1336,7 +1368,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(validate_batch(&good).is_ok());
+        assert!(validate_structure(&good).is_ok());
     }
 
     #[tokio::test]
@@ -1390,7 +1422,7 @@ mod tests {
             SessionStoreError::CompatSecretDetected { .. }
         ));
         // 无任何 session 被创建（nothing imported）。
-        let sid = fingerprint_session(ExternalSource::Grok, Some("x"), malicious);
+        let sid = derive_compat_session_id(ExternalSource::Grok, Some("x"), malicious);
         let events = store.replay_events(&sid, 1, 1).await.expect("replay");
         assert!(events.is_empty());
     }
@@ -1413,6 +1445,86 @@ mod tests {
         let sid = SessionId::from(first.session_id.clone());
         let events = store.replay_events(&sid, 1, 1000).await.expect("replay");
         assert_eq!(events.len(), first.imported_events);
+    }
+
+    #[tokio::test]
+    async fn concurrent_import_same_identity_and_fingerprint_is_idempotent() {
+        let path = temp_path();
+        let (first_store, _) = SessionStore::open(&path).await.expect("open first store");
+        let (second_store, _) = SessionStore::open(&path).await.expect("open second store");
+
+        let (first, second) = tokio::join!(
+            first_store.import_compat(ExternalSource::Claude, CLAUDE_JSON),
+            second_store.import_compat(ExternalSource::Claude, CLAUDE_JSON),
+        );
+        let first = first.expect("first concurrent import");
+        let second = second.expect("second concurrent import");
+
+        assert_eq!(first.session_id, second.session_id);
+        assert_ne!(
+            first.deduplicated, second.deduplicated,
+            "exactly one connection must perform the import"
+        );
+        let imported_events = if first.deduplicated {
+            second.imported_events
+        } else {
+            first.imported_events
+        };
+        assert!(imported_events > 0);
+        let events = first_store
+            .replay_events(&SessionId::from(first.session_id), 1, 1_000)
+            .await
+            .expect("replay");
+        assert_eq!(events.len(), imported_events);
+        assert!(identity_row(&first_store, "claude", "claude-abc")
+            .await
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn concurrent_import_same_identity_different_fingerprint_conflicts() {
+        let path = temp_path();
+        let (first_store, _) = SessionStore::open(&path).await.expect("open first store");
+        let (second_store, _) = SessionStore::open(&path).await.expect("open second store");
+        let first_content = r#"{
+            "conversation_id": "concurrent-conflict",
+            "chat_messages": [{"sender": "human", "text": "first body"}]
+        }"#;
+        let second_content = r#"{
+            "conversation_id": "concurrent-conflict",
+            "chat_messages": [{"sender": "human", "text": "second body"}]
+        }"#;
+
+        let (first, second) = tokio::join!(
+            first_store.import_compat(ExternalSource::Claude, first_content),
+            second_store.import_compat(ExternalSource::Claude, second_content),
+        );
+
+        let (report, conflict) = match (first, second) {
+            (Ok(report), Err(conflict)) | (Err(conflict), Ok(report)) => (report, conflict),
+            (left, right) => {
+                panic!("expected one import and one conflict, got {left:?} / {right:?}")
+            }
+        };
+        assert!(matches!(
+            conflict,
+            SessionStoreError::CompatImportConflict {
+                ref source_label,
+                ref original_id,
+            } if source_label == "claude" && original_id == "concurrent-conflict"
+        ));
+        let events = first_store
+            .replay_events(&SessionId::from(report.session_id.clone()), 1, 1_000)
+            .await
+            .expect("replay");
+        assert_eq!(events.len(), report.imported_events);
+        assert_eq!(
+            identity_row(&first_store, "claude", "concurrent-conflict")
+                .await
+                .expect("identity row")
+                .1,
+            report.session_id
+        );
     }
 
     #[tokio::test]
@@ -1442,5 +1554,224 @@ mod tests {
             .await
             .expect("import");
         assert_eq!(report.imported_reviews, 1);
+    }
+
+    /// 读取 `(source, original_id)` 的 import identity 行（content_fingerprint, session_id）。
+    async fn identity_row(
+        store: &SessionStore,
+        source: &str,
+        original_id: &str,
+    ) -> Option<(String, String)> {
+        let source = source.to_string();
+        let original_id = original_id.to_string();
+        store
+            .database()
+            .call(move |conn| -> rusqlite::Result<Option<(String, String)>> {
+                let mut stmt = conn.prepare(
+                    "SELECT content_fingerprint, session_id FROM compat_import_identity \
+                     WHERE source=?1 AND original_id=?2",
+                )?;
+                let mut rows = stmt.query_map(rusqlite::params![source, original_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                rows.next().transpose()
+            })
+            .await
+            .expect("actor")
+            .expect("query")
+    }
+
+    #[tokio::test]
+    async fn import_two_distinct_sessions_same_source_do_not_collide() {
+        let store = open_store().await;
+        let first = store
+            .import_compat(ExternalSource::Claude, CLAUDE_JSON)
+            .await
+            .expect("first");
+        let second_json = r#"{
+            "conversation_id": "claude-second",
+            "name": "second chat",
+            "chat_messages": [
+                {"sender": "human", "text": "another"},
+                {"sender": "assistant", "text": "reply"}
+            ]
+        }"#;
+        let second = store
+            .import_compat(ExternalSource::Claude, second_json)
+            .await
+            .expect("second");
+        // 不同 original_id → 不同 SessionId，run/message/tool id 都 session-scoped，
+        // 不撞 runs / messages / tool_calls 全局主键。
+        assert_ne!(first.session_id, second.session_id);
+        assert!(!first.deduplicated && !second.deduplicated);
+        for sid in [&first.session_id, &second.session_id] {
+            let events = store
+                .replay_events(&SessionId::from(sid.clone()), 1, 100)
+                .await
+                .expect("replay");
+            assert!(events.len() > 1, "session must be replayable");
+        }
+    }
+
+    #[tokio::test]
+    async fn import_cross_source_same_tool_id_do_not_collide() {
+        let store = open_store().await;
+        // 两个不同来源都使用外部 tool_call_id "shared-1"。
+        let codex = concat!(
+            r#"{"type":"function_call","call_id":"shared-1","name":"shell","arguments":"{\"cmd\":\"ls\"}","session_id":"codex-shared"}"#,
+            "\n",
+            r#"{"type":"function_call_output","call_id":"shared-1","output":"listed"}"#,
+        );
+        let claude = r#"{
+            "conversation_id": "claude-shared",
+            "chat_messages": [
+                {"sender":"assistant","tool_use":{"id":"shared-1","name":"shell","input":{"cmd":"ls"}}}
+            ]
+        }"#;
+        let a = store
+            .import_compat(ExternalSource::Codex, codex)
+            .await
+            .expect("codex import");
+        let b = store
+            .import_compat(ExternalSource::Claude, claude)
+            .await
+            .expect("claude import");
+        assert_ne!(a.session_id, b.session_id);
+        // 两个 session 的 tool_calls 都能落盘（scoped id 全局唯一，无主键冲突）。
+        assert_eq!(a.imported_tool_calls, 1);
+        assert_eq!(b.imported_tool_calls, 1);
+    }
+
+    #[tokio::test]
+    async fn import_failure_leaves_no_residue_and_is_retryable() {
+        let store = open_store().await;
+        // 两个 function_call 共享同一 call_id → 通过结构校验，但在持久化第二条
+        // ToolCallStarted 时撞 tool_calls 全局主键，事务中途失败。
+        let dup = concat!(
+            r#"{"type":"function_call","call_id":"dup1","name":"shell","session_id":"dup-session"}"#,
+            "\n",
+            r#"{"type":"function_call","call_id":"dup1","name":"shell"}"#,
+            "\n",
+            r#"{"type":"function_call_output","call_id":"dup1","output":"ok"}"#,
+        );
+        let err = store
+            .import_compat(ExternalSource::Codex, dup)
+            .await
+            .expect_err("duplicate tool id must abort the import transaction");
+        assert!(matches!(err, SessionStoreError::Sqlite(..)));
+
+        let sid = derive_compat_session_id(ExternalSource::Codex, Some("dup-session"), dup);
+        // 零残留：无事件、无 identity 行、session 不存在。
+        let events = store.replay_events(&sid, 1, 100).await.expect("replay");
+        assert!(events.is_empty(), "no events may persist after rollback");
+        assert!(identity_row(&store, "codex", "dup-session").await.is_none());
+
+        // 重试：相同 original_id 但内容已修正（不同 call_id）。因为失败没有留下 identity
+        // 行，这次按全新导入成功——若残留了旧 identity，则会因指纹不同返回冲突。
+        let fixed = concat!(
+            r#"{"type":"function_call","call_id":"dup1","name":"shell","session_id":"dup-session"}"#,
+            "\n",
+            r#"{"type":"function_call","call_id":"dup2","name":"shell"}"#,
+            "\n",
+            r#"{"type":"function_call_output","call_id":"dup2","output":"ok"}"#,
+        );
+        let report = store
+            .import_compat(ExternalSource::Codex, fixed)
+            .await
+            .expect("retry succeeds after zero-residue rollback");
+        assert!(!report.deduplicated);
+        assert!(report.imported_events > 0);
+        assert_eq!(report.session_id, sid.to_string());
+    }
+
+    #[tokio::test]
+    async fn import_conflict_on_same_identity_different_content() {
+        let store = open_store().await;
+        let first = r#"{
+            "conversation_id": "conflict-1",
+            "chat_messages": [{"sender": "human", "text": "version one"}]
+        }"#;
+        let report = store
+            .import_compat(ExternalSource::Claude, first)
+            .await
+            .expect("first import");
+        assert!(!report.deduplicated);
+
+        // 同 original_id、不同内容 → 必须返回明确冲突，绝不静默创建第二 Session。
+        let second = r#"{
+            "conversation_id": "conflict-1",
+            "chat_messages": [{"sender": "human", "text": "version two changed"}]
+        }"#;
+        let err = store
+            .import_compat(ExternalSource::Claude, second)
+            .await
+            .expect_err("different content with same identity must conflict");
+        assert!(matches!(
+            err,
+            SessionStoreError::CompatImportConflict { .. }
+        ));
+        // 原会话保持完整（冲突导入未改写任何既有状态）。
+        let events = store
+            .replay_events(&SessionId::from(report.session_id.clone()), 1, 100)
+            .await
+            .expect("replay");
+        assert_eq!(events.len(), report.imported_events);
+        assert_eq!(
+            identity_row(&store, "claude", "conflict-1")
+                .await
+                .unwrap()
+                .1,
+            report.session_id
+        );
+    }
+
+    #[tokio::test]
+    async fn import_without_original_id_uses_content_fingerprint_identity() {
+        let store = open_store().await;
+        // 无 id 字段：identity 退化为 content fingerprint。
+        let content = r#"{"messages":[{"role":"user","content":"hello no id"}]}"#;
+        let first = store
+            .import_compat(ExternalSource::Grok, content)
+            .await
+            .expect("first");
+        assert!(!first.deduplicated);
+        // 相同内容再次导入 → 幂等（同一 content fingerprint identity）。
+        let second = store
+            .import_compat(ExternalSource::Grok, content)
+            .await
+            .expect("second");
+        assert_eq!(first.session_id, second.session_id);
+        assert!(second.deduplicated);
+
+        // 不同内容、同样无 id → 不同 content fingerprint → 不同 identity，新建而非冲突。
+        let other = r#"{"messages":[{"role":"user","content":"totally different body"}]}"#;
+        let third = store
+            .import_compat(ExternalSource::Grok, other)
+            .await
+            .expect("third");
+        assert_ne!(third.session_id, first.session_id);
+        assert!(!third.deduplicated);
+    }
+
+    #[tokio::test]
+    async fn import_preserves_tool_arguments_as_arguments_delta() {
+        let store = open_store().await;
+        let report = store
+            .import_compat(ExternalSource::Codex, CODEX_JSONL)
+            .await
+            .expect("import codex");
+        let events = store
+            .replay_events(&SessionId::from(report.session_id.clone()), 1, 100)
+            .await
+            .expect("replay");
+        // tool arguments 映射为既有 ToolCallArgumentsDelta，原样保留。
+        let delta = events.iter().find_map(|env| {
+            if let AgentEvent::ToolCallArgumentsDelta { json_delta, .. } = &env.payload {
+                Some(json_delta.clone())
+            } else {
+                None
+            }
+        });
+        assert_eq!(delta.as_deref(), Some(r#"{"cmd":"cargo test"}"#));
     }
 }

@@ -104,15 +104,17 @@ impl MonitorService {
             .validate()
             .map_err(MonitorServiceError::InvalidConfig)?;
         let id = monitor.monitor_id.clone();
-        self.inner
-            .configs
-            .lock()
-            .unwrap()
-            .insert(id.clone(), monitor);
+        // 持有配置锁完成「查重 → task 注册 → 配置插入」，确保并发重复注册在
+        // 创建第二个 task 前被拒绝。task 注册失败时配置仍不落地。
+        let mut configs = self.inner.configs.lock().unwrap();
+        if configs.contains_key(&id) {
+            return Err(MonitorServiceError::AlreadyRegistered(id));
+        }
         if let Some(task_manager) = &self.inner.task_manager {
             let task_id = task_manager.register(TaskKind::Monitor, parent_task_id)?;
             self.inner.tasks.lock().unwrap().insert(id.clone(), task_id);
         }
+        configs.insert(id.clone(), monitor);
         Ok(id)
     }
 
@@ -122,17 +124,19 @@ impl MonitorService {
         let monitor = self
             .config(monitor_id)
             .ok_or_else(|| MonitorServiceError::UnknownMonitor(monitor_id.clone()))?;
+        // 先推进 task-manager 镜像再发 Started：task start 失败时不广播权威事件、
+        // 不推进 monitor 状态（避免「先广播 Started 再 task start 失败」的分叉）。
+        if let Some(task_manager) = &self.inner.task_manager {
+            if let Some(task_id) = self.task_id_of(monitor_id) {
+                task_manager.start(&task_id)?;
+            }
+        }
         let event = MonitorEvent::Started {
             monitor_id: monitor_id.clone(),
             source: monitor.source,
             workspace_id: monitor.workspace_id.clone(),
         };
         self.apply_and_broadcast(event.clone());
-        if let Some(task_manager) = &self.inner.task_manager {
-            if let Some(task_id) = self.task_id_of(monitor_id) {
-                task_manager.start(&task_id)?;
-            }
-        }
         Ok(event)
     }
 

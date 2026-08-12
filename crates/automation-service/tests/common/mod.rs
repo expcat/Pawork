@@ -1,14 +1,8 @@
-//! 测试公共辅助：记录派发的 mock dispatcher 与带 stub 后端的 TaskManager。
+//! 测试公共辅助：记录派发的 mock dispatcher。
 
 use std::sync::Mutex;
 
-use agent_domain::{AutomationId, BackgroundTaskId, CancellationToken};
-use async_trait::async_trait;
-use process_runtime::ProcessRuntime;
-use sandbox_runtime::{
-    SandboxBackend, SandboxError, SandboxPolicy, SandboxProcess, SandboxProcessSpec,
-};
-use task_manager::TaskManager;
+use agent_domain::{AutomationId, BackgroundTaskId};
 
 use automation_service::{AutomationAction, AutomationDispatcher, AutomationError};
 
@@ -47,30 +41,4 @@ impl AutomationDispatcher for RecordingDispatcher {
         calls.push((automation_id.clone(), action.clone()));
         Ok(BackgroundTaskId::new(format!("rec_task_{n}")))
     }
-}
-
-/// 永远拒绝 spawn 的 stub 后端；automation 派发只走 register + start，不会 spawn。
-struct StubBackend;
-
-#[async_trait]
-impl SandboxBackend for StubBackend {
-    fn id(&self) -> &'static str {
-        "stub"
-    }
-    fn available(&self) -> bool {
-        true
-    }
-    async fn spawn(
-        &self,
-        _spec: SandboxProcessSpec,
-        _policy: SandboxPolicy,
-        _cancel: CancellationToken,
-    ) -> Result<SandboxProcess, SandboxError> {
-        Err(SandboxError::Denied("stub denies spawn".into()))
-    }
-}
-
-/// 带 stub 后端的 TaskManager（automation → task-manager 集成测试用）。
-pub fn manager_with_recording_backend() -> TaskManager {
-    TaskManager::with_capacity(Box::new(StubBackend), ProcessRuntime::new(), 64)
 }

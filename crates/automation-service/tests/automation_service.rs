@@ -1,15 +1,15 @@
 //! P16-5 Scheduled Automation 定向测试：四种触发器判定、cron 解析覆盖、派发、
-//! result inbox 检索、事件可重放、失败退避、外部 trigger 平台无关断言。
+//! result inbox 检索、事件可重放、失败退避、无幽灵 Running 断言。
 
 mod common;
 
 use agent_domain::{
-    ArtifactId, AutomationEvent, AutomationId, AutomationTriggerKind, TaskKind, TaskStatus,
+    ArtifactId, AutomationEvent, AutomationId, AutomationTriggerKind, BackgroundTaskId,
 };
 use agent_events::AgentEvent;
 use automation_service::{
-    canonical_event_from_external, replay, Automation, AutomationAction, AutomationEngine,
-    AutomationError, AutomationTrigger, EngineConfig, ExternalTrigger, InboxQuery, InboxStatus,
+    replay, Automation, AutomationAction, AutomationEngine, AutomationError, AutomationTrigger,
+    EngineConfig, InboxQuery, InboxStatus,
 };
 
 /// 四种触发器按声明时机判定 check_due。
@@ -172,43 +172,6 @@ fn event_trigger_matches_and_dispatches() {
     assert_eq!(outcome.automation_id, AutomationId::from("deploy"));
 }
 
-/// 派发经 TaskManagerDispatcher 接入 task-manager：产出真实 background task（Agent kind）。
-/// service 不自带特权——派发与手动启动等价，受注入 TaskManager 的 policy/预算约束。
-#[test]
-fn task_manager_dispatcher_creates_background_task() {
-    let manager = common::manager_with_recording_backend();
-    let dispatcher = automation_service::TaskManagerDispatcher::new(manager.clone());
-    let engine = AutomationEngine::new(Box::new(dispatcher), EngineConfig::default());
-    engine
-        .register(
-            Automation {
-                automation_id: AutomationId::from("cron_tm"),
-                trigger: AutomationTrigger::Interval { secs: 1 },
-                action: AutomationAction::StartBackgroundTask {
-                    task_kind: TaskKind::Agent,
-                },
-            },
-            0,
-        )
-        .unwrap();
-
-    let outcome = engine.fire(&AutomationId::from("cron_tm"), 1).unwrap();
-    let task = manager
-        .task(&outcome.task_id)
-        .expect("task registered in task-manager");
-    assert_eq!(task.task_kind, TaskKind::Agent);
-    assert_eq!(task.status, TaskStatus::Running);
-
-    // Started 事件经任务事件流广播（automation 派发不绕过 task-manager）。
-    assert!(manager.event_log().iter().any(|e| {
-        matches!(e, agent_domain::TaskEvent::Started { task_id, .. } if task_id == &outcome.task_id)
-    }));
-    // automation 侧也发出了 canonical Triggered 事件。
-    assert!(engine.events().iter().any(|e| {
-        matches!(e, AutomationEvent::Triggered { task_id, .. } if task_id == &outcome.task_id)
-    }));
-}
-
 /// result inbox：按 automation / 状态 / 时间检索。
 #[test]
 fn result_inbox_searchable_by_automation_status_time() {
@@ -298,6 +261,91 @@ fn result_inbox_searchable_by_automation_status_time() {
         all.iter().map(|i| i.recorded_at).collect::<Vec<_>>(),
         vec![11, 21, 31]
     );
+}
+
+#[test]
+fn record_result_rejects_task_not_triggered_by_automation() {
+    let engine = AutomationEngine::new(
+        Box::new(common::RecordingDispatcher::new()),
+        EngineConfig::default(),
+    );
+    for id in ["a", "b"] {
+        engine
+            .register(
+                Automation {
+                    automation_id: AutomationId::from(id),
+                    trigger: AutomationTrigger::Interval { secs: 10 },
+                    action: AutomationAction::Prompt { prompt: "p".into() },
+                },
+                0,
+            )
+            .unwrap();
+    }
+
+    let a = AutomationId::from("a");
+    let b = AutomationId::from("b");
+    let a_task = engine.fire(&a, 10).unwrap().task_id;
+    let b_task = engine.fire(&b, 10).unwrap().task_id;
+    let event_count = engine.events().len();
+
+    let wrong_owner = engine
+        .record_result(
+            &a,
+            &b_task,
+            ArtifactId::from("wrong-owner"),
+            None,
+            InboxStatus::Failed,
+            11,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        wrong_owner,
+        AutomationError::TaskNotTriggeredByAutomation {
+            automation_id,
+            task_id,
+        } if automation_id == a && task_id == b_task
+    ));
+
+    let unknown_task = BackgroundTaskId::from("not-triggered");
+    let unknown = engine
+        .record_result(
+            &a,
+            &unknown_task,
+            ArtifactId::from("unknown-task"),
+            None,
+            InboxStatus::Succeeded,
+            12,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        unknown,
+        AutomationError::TaskNotTriggeredByAutomation {
+            automation_id,
+            task_id,
+        } if automation_id == a && task_id == unknown_task
+    ));
+
+    assert!(
+        engine.inbox_items().is_empty(),
+        "rejected results are not archived"
+    );
+    assert_eq!(
+        engine.events().len(),
+        event_count,
+        "rejection emits no event"
+    );
+
+    engine
+        .record_result(
+            &a,
+            &a_task,
+            ArtifactId::from("valid"),
+            None,
+            InboxStatus::Succeeded,
+            13,
+        )
+        .unwrap();
+    assert_eq!(engine.inbox_items().len(), 1);
 }
 
 /// 连续失败达阈值发 Suspended 暂停并告警（不静默吞错）。
@@ -416,10 +464,10 @@ fn events_round_trip_via_agent_event_and_replay() {
     assert_eq!(live.event_log().len(), replayed.event_log().len());
 }
 
-/// 外部 trigger 只经认证 adapter 转 canonical 载荷；engine core 无平台分支：
-/// 不同平台信封产生相同 canonical 字符串时，匹配行为完全一致。
+/// event 触发器只消费 canonical 载荷字符串：外部来源（adapter 认证后）与本地
+/// 构造的载荷匹配行为一致，engine core 无平台分支。
 #[test]
-fn external_trigger_is_platform_agnostic() {
+fn event_trigger_matches_canonical_payload_only() {
     let engine = AutomationEngine::new(
         Box::new(common::RecordingDispatcher::new()),
         EngineConfig::default(),
@@ -439,40 +487,49 @@ fn external_trigger_is_platform_agnostic() {
         )
         .unwrap();
 
+    // 相同 canonical 载荷（无论来源）匹配一致；不同载荷不匹配。
     let payload = "push to main branch".to_string();
-    let github = ExternalTrigger::GitHubEvent {
-        id: "gh-1".into(),
-        payload: payload.clone(),
-    };
-    let gitlab = ExternalTrigger::GitLabEvent {
-        id: "gl-1".into(),
-        payload: payload.clone(),
-    };
-    let webhook = ExternalTrigger::Webhook {
-        id: "wh-1".into(),
-        payload: payload.clone(),
-    };
-
-    let from_github = canonical_event_from_external(&github);
-    let from_gitlab = canonical_event_from_external(&gitlab);
-    let from_webhook = canonical_event_from_external(&webhook);
-
-    assert_eq!(from_github, from_gitlab);
-    assert_eq!(from_github, from_webhook);
-
-    // core 对相同 canonical 载荷匹配一致，不感知来源平台。
     assert_eq!(
-        engine.match_event(from_github),
+        engine.match_event(&payload),
         vec![AutomationId::from("ext")]
     );
-    assert_eq!(
-        engine.match_event(from_gitlab),
-        vec![AutomationId::from("ext")]
+    assert!(engine.match_event("push to staging").is_empty());
+}
+
+/// 触发计数唯一来自 canonical 状态：snapshot 与事件折叠保持一致，重放不漂移。
+#[test]
+fn fired_count_is_sourced_from_canonical_state() {
+    let engine = AutomationEngine::new(
+        Box::new(common::RecordingDispatcher::new()),
+        EngineConfig::default(),
     );
-    assert_eq!(
-        engine.match_event(from_webhook),
-        vec![AutomationId::from("ext")]
-    );
+    let id = AutomationId::from("cnt");
+    engine
+        .register(
+            Automation {
+                automation_id: id.clone(),
+                trigger: AutomationTrigger::Interval { secs: 10 },
+                action: AutomationAction::Prompt { prompt: "p".into() },
+            },
+            0,
+        )
+        .unwrap();
+
+    engine.fire(&id, 10).unwrap();
+    engine.fire(&id, 20).unwrap();
+
+    let snap = engine.automation_snapshot(&id).unwrap();
+    assert_eq!(snap.fired_count, 2);
+    assert_eq!(engine.state().fired_count(&id), 2);
+
+    // 重放重建的 canonical 计数与实时一致（不存在第二份计数源）。
+    let replayed = replay(engine.events().iter());
+    assert_eq!(replayed.fired_count(&id), snap.fired_count);
+
+    // resume（重新 Registered）只清挂起，不清触发计数。
+    engine.resume(&id, 30).unwrap();
+    assert_eq!(engine.state().fired_count(&id), 2);
+    assert_eq!(engine.automation_snapshot(&id).unwrap().fired_count, 2);
 }
 
 /// 非法 cron 表达式与非法 event 正则在注册时被拒绝。

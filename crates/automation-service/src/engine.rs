@@ -45,10 +45,12 @@ struct RegisteredAutomation {
     event_regex: Option<Regex>,
 }
 
-/// 调度状态（命令侧）：下次触发时刻、触发计数、连续失败计数。
+/// 调度状态（命令侧）：下次触发时刻、连续失败计数。
+///
+/// 触发计数不在此重复：唯一权威是 [`AutomationState::fired_count`]（canonical
+/// `Triggered` 事件折叠），避免命令侧与事件侧双份计数漂移。
 struct ScheduleState {
     next_at: Option<u64>,
-    fired_count: u64,
     failure_streak: u32,
 }
 
@@ -127,7 +129,6 @@ impl AutomationEngine {
             id.clone(),
             ScheduleState {
                 next_at,
-                fired_count: 0,
                 failure_streak: 0,
             },
         );
@@ -175,11 +176,7 @@ impl AutomationEngine {
             .get(automation_id)
             .ok_or_else(|| AutomationError::NotRegistered(automation_id.clone()))?;
 
-        let fired_count = inner
-            .schedules
-            .get(automation_id)
-            .map(|s| s.fired_count)
-            .unwrap_or(0);
+        let fired_count = inner.state.fired_count(automation_id);
         if matches!(
             registered.automation.trigger,
             AutomationTrigger::Once { .. }
@@ -201,11 +198,11 @@ impl AutomationEngine {
         };
 
         if let Some(sched) = inner.schedules.get_mut(automation_id) {
-            sched.fired_count = sched.fired_count.saturating_add(1);
             let once_already = matches!(trigger, AutomationTrigger::Once { .. });
             sched.next_at = compute_next_at(&trigger, now, once_already, cron.as_ref());
         }
 
+        // canonical 状态折叠 Triggered，触发计数以事件溯源为准。
         inner.state.apply(&event);
         Ok(DispatchOutcome {
             automation_id: automation_id.clone(),
@@ -238,6 +235,12 @@ impl AutomationEngine {
         }
         if inner.state.fired_count(automation_id) == 0 {
             return Err(AutomationError::NoFiredTask(automation_id.clone()));
+        }
+        if !inner.state.was_triggered_task(automation_id, task_id) {
+            return Err(AutomationError::TaskNotTriggeredByAutomation {
+                automation_id: automation_id.clone(),
+                task_id: task_id.clone(),
+            });
         }
 
         let mut emitted = Vec::new();
@@ -357,11 +360,7 @@ impl AutomationEngine {
             .ok_or_else(|| AutomationError::NotRegistered(automation_id.clone()))?;
         let trigger = registered.automation.trigger.clone();
         let cron = registered.cron_schedule.clone();
-        let fired_count = inner
-            .schedules
-            .get(automation_id)
-            .map(|s| s.fired_count)
-            .unwrap_or(0);
+        let fired_count = inner.state.fired_count(automation_id);
 
         let event = AutomationEvent::Registered {
             automation_id: automation_id.clone(),
@@ -385,13 +384,14 @@ impl AutomationEngine {
         let inner = &*guard;
         let registered = inner.configs.get(id)?;
         let sched = inner.schedules.get(id);
+        let fired_count = inner.state.fired_count(id);
         Some(AutomationSnapshot {
             automation_id: id.clone(),
             trigger: registered.automation.trigger.clone(),
             action: registered.automation.action.clone(),
             trigger_kind: registered.automation.trigger.kind(),
             next_at: sched.and_then(|s| s.next_at),
-            fired_count: sched.map(|s| s.fired_count).unwrap_or(0),
+            fired_count,
             failure_streak: sched.map(|s| s.failure_streak).unwrap_or(0),
             suspended: inner.state.is_suspended(id),
         })
@@ -406,13 +406,14 @@ impl AutomationEngine {
             .iter()
             .map(|(id, registered)| {
                 let sched = inner.schedules.get(id);
+                let fired_count = inner.state.fired_count(id);
                 AutomationSnapshot {
                     automation_id: id.clone(),
                     trigger: registered.automation.trigger.clone(),
                     action: registered.automation.action.clone(),
                     trigger_kind: registered.automation.trigger.kind(),
                     next_at: sched.and_then(|s| s.next_at),
-                    fired_count: sched.map(|s| s.fired_count).unwrap_or(0),
+                    fired_count,
                     failure_streak: sched.map(|s| s.failure_streak).unwrap_or(0),
                     suspended: inner.state.is_suspended(id),
                 }

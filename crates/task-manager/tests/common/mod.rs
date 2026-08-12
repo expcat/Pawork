@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 
 use agent_domain::CancellationToken;
 use async_trait::async_trait;
-use process_runtime::ProcessRuntime;
 use sandbox_runtime::{
     SandboxBackend, SandboxError, SandboxPolicy, SandboxProcess, SandboxProcessSpec,
 };
@@ -57,7 +56,6 @@ pub fn manager_with_recording_backend() -> (TaskManager, RecordingBackend) {
 /// 带 RecordingBackend 与自定义广播容量的 TaskManager。
 pub fn manager_with_recording_backend_capacity(capacity: usize) -> (TaskManager, RecordingBackend) {
     let backend = RecordingBackend::new();
-    let manager =
-        TaskManager::with_capacity(Box::new(backend.clone()), ProcessRuntime::new(), capacity);
+    let manager = TaskManager::with_capacity(Box::new(backend.clone()), capacity);
     (manager, backend)
 }

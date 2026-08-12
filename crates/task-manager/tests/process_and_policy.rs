@@ -13,10 +13,9 @@ use sandbox_runtime::{
 use task_manager::{is_terminal_status, TaskManager, TaskManagerError};
 
 fn native_manager() -> TaskManager {
-    TaskManager::new(
-        Box::new(NativeRestricted::with_runtime(ProcessRuntime::new())),
+    TaskManager::new(Box::new(NativeRestricted::with_runtime(
         ProcessRuntime::new(),
-    )
+    )))
 }
 
 /// 测试用最小放行 policy：允许 spawn + env 白名单 + 网络仅 Hint。

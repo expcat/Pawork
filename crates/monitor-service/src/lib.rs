@@ -6,8 +6,8 @@
 //!   [`MonitorEvent::Triggered`]，可作为 P16-5 automation 的 `event` 触发器来源；
 //!   也是 P17-2 Plugin Package Monitors 声明的唯一运行时执行点。
 //! - 确定性判定核心：[`evaluate`] 是纯函数，对注入的 [`Observation`] 做命中
-//!   判定，不依赖 tokio 长循环，可独立单测；真实文件监听经可选
-//!   [`FileWatchDriver`] 归一为 Observation。
+//!   判定，不依赖 tokio 长循环，可独立单测；观测样本由调用方（宿主 / 未来
+//!   driver）注入，本 crate 不内置 watcher。
 //! - 输出节流：[`Throttle`] 有界缓冲，高吞吐输出经裁剪不堆积。
 //! - 断连续存与重放：monitor 注册到注入的 task-manager 为 `TaskKind::Monitor`，
 //!   复用其 snapshot+replay；本服务亦提供独立的事件折叠重放入口。
@@ -27,7 +27,6 @@
 //! [`state::MonitorServiceState`]：纯聚合状态，`apply` 为事件折叠 / 重放入口。
 
 mod config;
-mod driver;
 mod error;
 mod evaluate;
 mod service;
@@ -35,7 +34,6 @@ mod state;
 mod throttle;
 
 pub use config::{Monitor, MonitorConfig, Observation};
-pub use driver::FileWatchDriver;
 pub use error::MonitorServiceError;
 pub use evaluate::evaluate;
 pub use service::MonitorService;

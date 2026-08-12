@@ -8,10 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use agent_domain::{BackgroundTaskId, CancellationToken, TaskEvent, TaskKind, TaskStatus};
 use agent_events::AgentEvent;
-use process_runtime::ProcessRuntime;
-use sandbox_runtime::{
-    SandboxBackend, SandboxPolicy, SandboxProcess, SandboxProcessSpec, SandboxSelector,
-};
+use sandbox_runtime::{SandboxBackend, SandboxPolicy, SandboxProcess, SandboxProcessSpec};
 use tokio::sync::broadcast;
 
 use crate::error::TaskManagerError;
@@ -26,7 +23,6 @@ const DEFAULT_BROADCAST_CAPACITY: usize = 256;
 struct TaskManagerInner {
     state: Mutex<TaskManagerState>,
     backend: Arc<dyn SandboxBackend>,
-    runtime: ProcessRuntime,
     live: broadcast::Sender<AgentEvent>,
 }
 
@@ -41,37 +37,21 @@ pub struct TaskManager {
 }
 
 impl TaskManager {
-    /// 注入沙箱后端与进程运行时；进程执行只经 `backend` 委托。
-    pub fn new(backend: Box<dyn SandboxBackend>, runtime: ProcessRuntime) -> Self {
-        Self::with_capacity(backend, runtime, DEFAULT_BROADCAST_CAPACITY)
+    /// 注入沙箱后端；进程执行只经 `backend` 委托。
+    pub fn new(backend: Box<dyn SandboxBackend>) -> Self {
+        Self::with_capacity(backend, DEFAULT_BROADCAST_CAPACITY)
     }
 
     /// 同 [`TaskManager::new`]，可自定义实时事件广播容量（测试用）。
-    pub fn with_capacity(
-        backend: Box<dyn SandboxBackend>,
-        runtime: ProcessRuntime,
-        capacity: usize,
-    ) -> Self {
+    pub fn with_capacity(backend: Box<dyn SandboxBackend>, capacity: usize) -> Self {
         let (live, _) = broadcast::channel(capacity);
         Self {
             inner: Arc::new(TaskManagerInner {
                 state: Mutex::new(TaskManagerState::new()),
                 backend: Arc::from(backend),
-                runtime,
                 live,
             }),
         }
-    }
-
-    /// 用平台探测的最强沙箱后端构造（不可用时回退 NativeRestricted）。
-    pub fn with_platform_default(runtime: ProcessRuntime) -> Self {
-        let (backend, _selection) = SandboxSelector::with_runtime(runtime).pick();
-        Self::new(backend, runtime)
-    }
-
-    /// 注入的进程运行时（供 adapter 构造自己的后端 / 探测平台能力）。
-    pub fn runtime(&self) -> ProcessRuntime {
-        self.inner.runtime
     }
 
     /// 订阅实时事件流（`AgentEvent::Task(...)`）。

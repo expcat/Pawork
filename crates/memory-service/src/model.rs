@@ -35,7 +35,8 @@ pub struct Memory {
     pub confidence: f32,
     pub privacy: MemoryPrivacy,
     pub workspace_id: Option<WorkspaceId>,
-    /// Provider-neutral embedding；replay 路径（apply）下为空（事件不携带向量）。
+    /// Provider-neutral embedding；新 `Recorded` 事件携带向量，可经 replay 恢复。
+    /// 旧流缺字段时默认空向量，并会被检索层过滤，需重新嵌入后才可检索。
     pub embedding: Vec<f32>,
     /// 是否有效；`invalidate` 置 `false`（不删除，保留可追溯）。
     pub valid: bool,

@@ -1,6 +1,6 @@
 # P16-6：Persistent Process / Monitor（常驻进程与监视循环）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P16-4、P11-6、P11-7、P1-4、P13-2
+> Phase 16 · Modern Agent Workflow · 状态：🟢已完成 · TargetVerified（有界：library/core verified，host composition deferred） · 依赖：P16-4、P11-6、P11-7、P1-4、P13-2
 
 **最终目的**：让一个进程或监视循环能脱离单次 Run 独立常驻——例如长跑的 dev server、watch 构建、日志监视——在 CLI/GUI 断连后继续运行、重连可接管，输出被捕获为可检索的事件流，使「后台 watch / 常驻服务」成为 Agent 可观测、可控的一等公民，而非游离于管理之外的孤儿进程。
 
@@ -36,12 +36,26 @@
 
 ## 验收标准
 
-- [ ] 常驻进程断连后继续运行，重连可恢复视图并续接增量输出
-- [ ] Monitor 循环命中产出 canonical event，可作为 `event` 触发器来源
-- [ ] `monitor-service` / `task-manager` 是 Plugin Package Monitors（P17-2）声明的唯一执行宿主，package 不自带运行时
-- [ ] 高吞吐输出经 artifact + 裁剪，不回压 Core
-- [ ] 进程异常退出经进程树清理无孤儿；常驻进程受 sandbox/policy 约束
+- [ ] 未达成：`PersistentProcess`（attach/detach/reconnect/restart、Core 重启重新发现接管）未实现 → 登记 **P16-10 #T5**
+- [ ] 部分达成：四类 Observation 的纯 `evaluate` 与 `MonitorEvent::Triggered` 事件已验（测试支撑：`file_change_matches_watched_path` / `process_exit_matches_by_pid_or_task` / `regex_match_returns_matched_substring` / `port_state_reports_open_closed` / `lifecycle_emits_started_triggered_stopped`）；无真实 driver/watcher（driver 已删除，观测样本由调用方注入，本 crate 不内置 watcher）→ 未达成，登记 **P16-10 #T5**
+- [ ] 未达成：P17-2 Plugin Package Monitors 未落地，宿主接线未实现 → 登记 **P16-10 #T5**
+- [ ] 部分达成：`Throttle` 有界裁剪已验（`never_grows_unbounded_under_high_throughput` 等）；输出不进 artifact，无回压/慢客户端隔离接线 → 未达成，登记 **P16-10 #T5**
+- [ ] 部分达成：经注入 task-manager 的 process 路径复用 SandboxBackend → ProcessRuntime 且无直接 spawn（`no_direct_process_spawn_in_source` / `monitor_registers_as_task_kind_monitor`）；常驻进程宿主、异常退出清理与 guarantee 跨生命周期一致性未实现 → 未达成，登记 **P16-10 #T5**
 
 **相关文档**：[background-task-manager (P16-4)](P16-4-background-task-manager.md) · [scheduled-automation (P16-5)](P16-5-scheduled-automation.md) · [process](../docs/features/process.md) · [sandbox](../docs/features/sandbox.md) · [ROADMAP](../ROADMAP.md)
 
 **依赖建议（2026-08）**：不新增第三方依赖；复用 PTY Service（P11-6，基线 `portable-pty`）与文件监听（基线 `notify` / `notify-debouncer-full`）。新 crate `monitor-service` 依赖方向：`agent-domain → monitor-service → app-service`。
+
+## 校准记录（2026-08-12）
+
+依据 [p16-review](../docs/review/p16-review.md) 评审结论与当前工作区 remediation 状态校准：四类 Observation 的纯 evaluate、命中事件化、输出节流与「经注入 task-manager 统一执行」约束属库级实现且有测试支撑，保留 **TargetVerified（library/core）**；「PersistentProcess、四类 source 真实 driver、artifact 输出、sandbox/policy/guarantee 一致性、P17-2 唯一执行宿主」未达成，登记 **P16-10** 并映射后续任务 #T5。
+
+验证记录：`scripts/p16-gate.sh` 四类全 PASS（独立 `target/gates` 跑完已清理）；monitor-service 测试 24 passed（lib 18 + 集成 6）。
+
+```text
+Validation Level: L2（P16 簇门禁脚本，文档校准任务附带复跑）
+Affected crates: none（本任务仅改 plan/P16-6 文档）
+Validated: scripts/p16-gate.sh；monitor-service 定向测试
+Targeted regressions: evaluate 纯函数与事件化
+Full workspace gate: NOT RUN（未命中升级条件）
+```

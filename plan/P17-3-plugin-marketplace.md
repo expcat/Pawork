@@ -28,6 +28,7 @@
 - [ ] 支持 version pin 与版本范围解析
 - [ ] trust 等级与 team policy 生效，越权安装被拦截
 - [ ] 六类 package 资源随安装/更新/卸载完整注册、回滚、注销；Monitors 只由 P16-6 runtime 执行
+- [ ] **（P16-10 延期接线）Monitor 包生命周期**：package-owned Monitor 随 install/update 事务化注册其配置，uninstall 先经 `task-manager` 停止 package-owned Monitor 再从 `monitor-service` 注销，失败整体回滚——修复 P16-6 当前无 package 归属/停止语义、跨 TaskManager/Monitor 更新不原子。见 [p16-review §2.3](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
 
 **相关文档**：[plugins](../docs/features/plugins.md) · [policy](../docs/features/policy.md) · [skills](../docs/features/skills.md) · [ROADMAP](../ROADMAP.md)
 

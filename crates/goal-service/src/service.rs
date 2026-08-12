@@ -152,9 +152,16 @@ impl GoalService {
             if criterion.satisfied {
                 return Ok(vec![]);
             }
-            criterion.satisfied = true;
         }
-        Ok(progress_events(goal_id, state))
+        // 单项满足位事件化（可重放，ADR-016），再刷新命中率进度。
+        let criterion_satisfied = GoalEvent::CriterionSatisfied {
+            goal_id: goal_id.clone(),
+            criterion_id,
+        };
+        apply(state, &criterion_satisfied);
+        let mut events = vec![criterion_satisfied];
+        events.extend(progress_events(goal_id, state));
+        Ok(events)
     }
 
     /// 显式人审入口：人确认后满足任意 kind 的成功标准（`Human` 项只能经此
@@ -178,9 +185,16 @@ impl GoalService {
             if criterion.satisfied {
                 return Ok(vec![]);
             }
-            criterion.satisfied = true;
         }
-        Ok(progress_events(goal_id, state))
+        // 单项满足位事件化（可重放，ADR-016），再刷新命中率进度。
+        let criterion_satisfied = GoalEvent::CriterionSatisfied {
+            goal_id: goal_id.clone(),
+            criterion_id,
+        };
+        apply(state, &criterion_satisfied);
+        let mut events = vec![criterion_satisfied];
+        events.extend(progress_events(goal_id, state));
+        Ok(events)
     }
 
     /// 暂停 Goal（`Active → Paused`）。
@@ -342,6 +356,7 @@ fn goal_id_of(event: &GoalEvent) -> &GoalId {
     match event {
         GoalEvent::Created { goal_id, .. }
         | GoalEvent::ProgressUpdated { goal_id, .. }
+        | GoalEvent::CriterionSatisfied { goal_id, .. }
         | GoalEvent::Paused { goal_id }
         | GoalEvent::Resumed { goal_id, .. }
         | GoalEvent::Steered { goal_id, .. }
@@ -422,10 +437,16 @@ mod tests {
         let events = service.satisfy_criterion(&goal_id, &ids[0]).unwrap();
         assert_eq!(
             events,
-            vec![GoalEvent::ProgressUpdated {
-                goal_id: goal_id.clone(),
-                progress: 1.0 / 3.0,
-            }]
+            vec![
+                GoalEvent::CriterionSatisfied {
+                    goal_id: goal_id.clone(),
+                    criterion_id: ids[0].clone(),
+                },
+                GoalEvent::ProgressUpdated {
+                    goal_id: goal_id.clone(),
+                    progress: 1.0 / 3.0,
+                },
+            ]
         );
         let snapshot = service.goal_snapshot(&goal_id).unwrap();
         assert!(snapshot.criteria[0].satisfied);
@@ -456,8 +477,12 @@ mod tests {
     fn human_criterion_satisfied_via_explicit_human_entry() {
         let (service, goal_id, ids) = sample_service();
         let events = service.mark_human_satisfied(&goal_id, &ids[2]).unwrap();
-        assert_eq!(events.len(), 1);
-        let GoalEvent::ProgressUpdated { progress, .. } = &events[0] else {
+        assert_eq!(events.len(), 2);
+        let GoalEvent::CriterionSatisfied { criterion_id, .. } = &events[0] else {
+            panic!("expected CriterionSatisfied");
+        };
+        assert_eq!(criterion_id, &ids[2]);
+        let GoalEvent::ProgressUpdated { progress, .. } = &events[1] else {
             panic!("expected ProgressUpdated");
         };
         assert!((*progress - 1.0 / 3.0).abs() < f64::EPSILON);
@@ -731,27 +756,12 @@ mod tests {
         let rebuilt = replay(events.iter());
         assert_eq!(stepwise, rebuilt);
 
-        // service 级重放：状态机 / 进度 / 转向 / 预算均从事件流恢复。
+        // service 级重放：criteria 满足位 / 状态机 / 进度 / 转向 / 预算全部从事件流
+        // 完整恢复（ADR-016：live→fresh snapshot 必须完整相等）。
         let replayed = GoalService::from_events(events.iter());
         let live = service.goal_snapshot(&g).unwrap();
         let restored = replayed.goal_snapshot(&g).unwrap();
-        assert_eq!(restored.status, live.status);
-        assert_eq!(restored.title, live.title);
-        assert_eq!(restored.progress, live.progress);
-        assert_eq!(restored.steering_history, live.steering_history);
-        assert_eq!(
-            restored.remaining_budget_tokens,
-            live.remaining_budget_tokens
-        );
-        // criteria 描述 / kind 可恢复；satisfied 满足位是运行内存事实
-        // （canonical 事件集无逐项满足事件），不承诺经重放恢复。
-        assert_eq!(restored.criteria.len(), live.criteria.len());
-        for (r, l) in restored.criteria.iter().zip(&live.criteria) {
-            assert_eq!(r.criterion_id, l.criterion_id);
-            assert_eq!(r.description, l.description);
-            assert_eq!(r.kind, l.kind);
-        }
-        assert!(restored.criteria.iter().all(|c| !c.satisfied));
+        assert_eq!(restored, live, "live→fresh replay 必须完整 snapshot 相等");
 
         // 重放后新事件 id 不与历史碰撞。
         let new_event = replayed.create_goal("新目标", vec![auto("n")]).unwrap();
@@ -793,12 +803,52 @@ mod tests {
         let decoded: AgentEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, envelope);
         // snake_case 序列化契约。
-        assert!(json.contains("\"kind\":\"progress_updated\""));
+        assert!(json.contains("\"kind\":\"criterion_satisfied\""));
 
         let snapshot = service.goal_snapshot(&goal_id).unwrap();
         let json = serde_json::to_string(&snapshot).unwrap();
         let decoded: GoalSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, snapshot);
         assert!(json.contains("\"status\":\"active\""));
+    }
+}
+
+/// 旧流 serde 兼容：历史持久化的 GoalEvent 不含 `criterion_satisfied` 变体，
+/// 新增变体不破坏反序列化；SuccessCriterionSnapshot.satisfied 已有 serde default。
+#[cfg(test)]
+mod serde_compat_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_created_event_round_trips_without_new_variant() {
+        // 历史 Created 事件（无 criterion 满足事件语义）仍可反序列化。
+        let legacy = r#"{"kind":"created","goal_id":"goal_1","title":"t","criteria":[{"criterion_id":"c","description":"d","kind":"auto","satisfied":false}]}"#;
+        let event: GoalEvent = serde_json::from_str(legacy).unwrap();
+        let GoalEvent::Created {
+            goal_id, criteria, ..
+        } = event
+        else {
+            panic!("expected Created");
+        };
+        assert_eq!(goal_id, GoalId::new("goal_1"));
+        assert_eq!(criteria.len(), 1);
+        // 旧事件缺 satisfied 字段时默认 false（serde 兼容）。
+        let legacy_no_sat = r#"{"kind":"created","goal_id":"goal_1","title":"t","criteria":[{"criterion_id":"c","description":"d","kind":"auto"}]}"#;
+        let event: GoalEvent = serde_json::from_str(legacy_no_sat).unwrap();
+        let GoalEvent::Created { criteria, .. } = event else {
+            panic!("expected Created");
+        };
+        assert!(!criteria[0].satisfied);
+    }
+
+    #[test]
+    fn criterion_satisfied_serializes_snake_case_and_round_trips() {
+        let sat = GoalEvent::CriterionSatisfied {
+            goal_id: GoalId::new("goal_7"),
+            criterion_id: "criterion_2".to_string(),
+        };
+        let json = serde_json::to_string(&sat).unwrap();
+        assert!(json.contains("\"kind\":\"criterion_satisfied\""));
+        assert_eq!(serde_json::from_str::<GoalEvent>(&json).unwrap(), sat);
     }
 }

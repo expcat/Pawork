@@ -72,51 +72,6 @@ fn open_input(
     }
 }
 
-/// 把快照投影为「canonical 事件可恢复的部分」，用于重放一致性断言。
-#[derive(Debug, PartialEq)]
-struct SessionProjection {
-    workspace: Option<String>,
-    findings: Vec<FindingProjection>,
-    published: Vec<(String, String)>,
-}
-
-#[derive(Debug, PartialEq)]
-struct FindingProjection {
-    id: String,
-    file: String,
-    line: u32,
-    end_line: Option<u32>,
-    severity: String,
-    body: String,
-    resolution: String,
-    fix_ref: Option<String>,
-}
-
-fn project(snapshot: &ReviewSessionSnapshot) -> SessionProjection {
-    SessionProjection {
-        workspace: snapshot.workspace_id.as_ref().map(|w| w.to_string()),
-        findings: snapshot
-            .findings
-            .iter()
-            .map(|f| FindingProjection {
-                id: f.finding_id.to_string(),
-                file: f.anchor.file.clone(),
-                line: f.anchor.line,
-                end_line: f.anchor.end_line,
-                severity: format!("{:?}", f.severity),
-                body: f.body.clone(),
-                resolution: format!("{:?}", f.resolution),
-                fix_ref: f.fix_ref.clone(),
-            })
-            .collect(),
-        published: snapshot
-            .published_comments
-            .iter()
-            .map(|p| (p.finding_id.to_string(), p.forge.clone()))
-            .collect(),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 生命周期与 resolution 状态机
 // ---------------------------------------------------------------------------
@@ -1017,11 +972,16 @@ fn replay_rebuilds_identical_lifecycle_state() {
         step_engine.apply(event).unwrap();
     }
 
-    let original = project(&engine.snapshot(session_id).unwrap());
-    let replayed = project(&replay_engine.snapshot(session_id).unwrap());
-    let stepped = project(&step_engine.snapshot(session_id).unwrap());
-    assert_eq!(original, replayed);
-    assert_eq!(original, stepped);
+    // live→fresh replay 必须完整 snapshot 相等：含 evidence / assignee /
+    // suggested_patch / fingerprint / resolution / fix_ref（ADR-016）。
+    let original = engine.snapshot(session_id).unwrap();
+    let replayed = replay_engine.snapshot(session_id).unwrap();
+    let stepped = step_engine.snapshot(session_id).unwrap();
+    assert_eq!(
+        original, replayed,
+        "live→fresh replay 必须完整 snapshot 相等"
+    );
+    assert_eq!(original, stepped, "逐步 apply 与整体 replay 必须相等");
 
     // 重放后继续发命令：确定性 id 不冲突。
     let e = replay_engine.create_session(None).unwrap();
@@ -1054,6 +1014,10 @@ fn replay_rejects_invalid_event_sequences() {
         },
         severity: ReviewSeverity::Info,
         body: "x".to_string(),
+        evidence: Vec::new(),
+        assignee: None,
+        suggested_patch: None,
+        fingerprint: None,
     };
     assert!(matches!(
         engine.replay(vec![orphan]).unwrap_err(),
@@ -1075,6 +1039,10 @@ fn replay_rejects_invalid_event_sequences() {
         },
         severity: ReviewSeverity::Info,
         body: "x".to_string(),
+        evidence: Vec::new(),
+        assignee: None,
+        suggested_patch: None,
+        fingerprint: None,
     };
     let bad = ReviewEvent::FindingResolved {
         finding_id: agent_domain::ReviewFindingId::new("f1"),
@@ -1112,6 +1080,10 @@ fn review_event_round_trips_through_agent_event_wrapper() {
         },
         severity: ReviewSeverity::Critical,
         body: "越界".to_string(),
+        evidence: vec!["e1".to_string()],
+        assignee: Some("alice".to_string()),
+        suggested_patch: None,
+        fingerprint: Some("fp-1".to_string()),
     };
     let wrapped = agent_events::AgentEvent::Review(event.clone());
     let json = serde_json::to_string(&wrapped).unwrap();
@@ -1154,4 +1126,30 @@ fn review_core_has_no_platform_name_branch() {
     // adapter 层（forge.rs）允许且必须承载平台枚举——扫描有效性自检。
     let forge_source = include_str!("../src/forge.rs");
     assert!(forge_source.contains("GitHub") && forge_source.contains("GitLab"));
+}
+
+// ---------------------------------------------------------------------------
+// 旧流 serde 兼容（FindingOpened 新增字段）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn legacy_finding_opened_json_without_rich_fields_defaults() {
+    // 旧流 FindingOpened 事件缺 evidence / assignee / suggested_patch / fingerprint
+    // → serde default（空 / None），不破坏历史持久化事件反序列化。
+    let legacy = r#"{"kind":"finding_opened","session_id":"s1","finding_id":"f1","anchor":{"file":"a.rs","line":1},"severity":"info","body":"x"}"#;
+    let event: ReviewEvent = serde_json::from_str(legacy).unwrap();
+    let ReviewEvent::FindingOpened {
+        evidence,
+        assignee,
+        suggested_patch,
+        fingerprint,
+        ..
+    } = event
+    else {
+        panic!("expected FindingOpened");
+    };
+    assert!(evidence.is_empty());
+    assert!(assignee.is_none());
+    assert!(suggested_patch.is_none());
+    assert!(fingerprint.is_none());
 }

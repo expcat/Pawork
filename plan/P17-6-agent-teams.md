@@ -27,6 +27,7 @@
 - [ ] shared task board 可认领流转，mailbox 可异步投递且持久化
 - [ ] presence 基于 run / worker 状态正确派生
 - [ ] worker 互联与 plan approval 经策略约束，未批准计划不执行
+- [ ] **（P16-10 延期接线）workflow 经统一 EventHub 暴露**：shared task board / mailbox / presence 经 `app-service` 唯一 Event Hub 派发与持久化、可重放，不另建 `tokio::broadcast`；automation 执行权威统一归 `task-manager`，`teams` 只拥有协作语义——修复 P16-5 无 timer/loop、`AutomationAction` 不执行、自持 broadcast 未接 ADR-024 统一 Event Hub。见 [p16-review §2.1/§2.3](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
 
 **相关文档**：[multi-agent](../docs/features/multi-agent.md) · [agent-engine](../docs/features/agent-engine.md) · [P16-1 Plan Mode](P16-1-plan-mode.md) · [P16-2 Plan Approval](P16-2-plan-review-approval.md) · [ROADMAP](../ROADMAP.md)
 

@@ -9,7 +9,6 @@ description = "Pawork P16-5 Scheduled Automation：cron/interval/once/event 触�
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
-task-manager = { path = "../task-manager" }
 parking_lot.workspace = true
 regex.workspace = true
 serde.workspace = true
@@ -17,7 +16,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 agent-events = { path = "../agent-events" }
-async-trait.workspace = true
-process-runtime = { path = "../process-runtime" }
-sandbox-runtime = { path = "../sandbox-runtime" }
 serde_json.workspace = true

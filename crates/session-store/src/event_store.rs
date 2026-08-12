@@ -145,19 +145,12 @@ impl SessionStore {
         event: AgentEventEnvelope,
     ) -> Result<AppendReceipt, SessionStoreError> {
         let branch_id = branch_id.into();
-        // Event Store 是持久化安全边界：写入事实表和 Projection 的必须是同一份脱敏事件。
-        let event = redact_event_for_persistence(&event)?;
+        // Event Store 是持久化安全边界：脱敏、事件序列化与 Projection 写入统一在
+        // [`persist_event_in_transaction`] 内完成，保证事实表与 Projection 落盘同一份脱敏事件。
         let event_id = event.event_id.to_string();
         let session_id = event.session_id.to_string();
         let sequence = event.sequence.value();
-        let run_id = event.run_id.to_string();
         let parent_event_id = event.parent_event_id.as_ref().map(ToString::to_string);
-        let schema_version = i64::from(event.schema_version);
-        let timestamp = i64::try_from(event.timestamp.as_unix_millis()).map_err(|_| {
-            SessionStoreError::ProjectionInvariant("timestamp exceeds SQLite INTEGER".into())
-        })?;
-        let event_type = event_type(&event.payload);
-        let payload_json = serde_json::to_string(&event)?;
         let receipt_branch = branch_id.clone();
         let receipt_event = event_id.clone();
 
@@ -215,21 +208,7 @@ impl SessionStore {
                         return Err(SessionStoreError::ParentEventNotFound(parent.into()));
                     }
                 }
-                let sequence_i64 = i64::try_from(sequence)
-                    .map_err(|_| SessionStoreError::SequenceOverflow)?;
-                transaction.execute(
-                    "INSERT INTO session_events(event_id, session_id, branch_id, run_id, parent_event_id, sequence, event_type, schema_version, timestamp_ms, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![event_id, session_id, branch_id, run_id, parent_event_id, sequence_i64, event_type, schema_version, timestamp, payload_json],
-                )?;
-                apply_projection(&transaction, &event)?;
-                transaction.execute(
-                    "UPDATE session_branches SET head_sequence=?1 WHERE session_id=?2 AND branch_id=?3",
-                    params![sequence_i64, session_id, branch_id],
-                )?;
-                transaction.execute(
-                    "UPDATE sessions SET updated_at_ms=?1 WHERE session_id=?2",
-                    params![timestamp, session_id],
-                )?;
+                persist_event_in_transaction(&transaction, &branch_id, &event)?;
                 transaction.commit()?;
                 Ok(())
             })
@@ -304,6 +283,47 @@ impl SessionStore {
             .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
             .collect()
     }
+}
+
+/// 在已开启的事务内写入单条事件：脱敏 → 事实表 `session_events` → Projection
+/// → branch head_sequence → session updated_at_ms。
+///
+/// 调用方负责事务边界（`transaction.commit()`）与所有结构性前置校验（branch 存在、
+/// active branch、sequence 连续、parent 存在）。`compat_import` 的原子导入在同一
+/// 事务内对 Session + branch + identity + 全部事件循环调用本函数，任一失败由该事务
+/// 统一回滚。脱敏在事务内进行，保证事实表与 Projection 落盘同一份脱敏事件。
+pub(crate) fn persist_event_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    branch_id: &str,
+    event: &AgentEventEnvelope,
+) -> Result<(), SessionStoreError> {
+    let event = redact_event_for_persistence(event)?;
+    let event_id = event.event_id.to_string();
+    let session_id = event.session_id.to_string();
+    let run_id = event.run_id.to_string();
+    let parent_event_id = event.parent_event_id.as_ref().map(ToString::to_string);
+    let sequence = event.sequence.value();
+    let sequence_i64 = i64::try_from(sequence).map_err(|_| SessionStoreError::SequenceOverflow)?;
+    let schema_version = i64::from(event.schema_version);
+    let timestamp = i64::try_from(event.timestamp.as_unix_millis()).map_err(|_| {
+        SessionStoreError::ProjectionInvariant("timestamp exceeds SQLite INTEGER".into())
+    })?;
+    let event_type = event_type(&event.payload);
+    let payload_json = serde_json::to_string(&event)?;
+    transaction.execute(
+        "INSERT INTO session_events(event_id, session_id, branch_id, run_id, parent_event_id, sequence, event_type, schema_version, timestamp_ms, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![event_id, session_id, branch_id, run_id, parent_event_id, sequence_i64, event_type, schema_version, timestamp, payload_json],
+    )?;
+    apply_projection(transaction, &event)?;
+    transaction.execute(
+        "UPDATE session_branches SET head_sequence=?1 WHERE session_id=?2 AND branch_id=?3",
+        params![sequence_i64, session_id, branch_id],
+    )?;
+    transaction.execute(
+        "UPDATE sessions SET updated_at_ms=?1 WHERE session_id=?2",
+        params![timestamp, session_id],
+    )?;
+    Ok(())
 }
 
 fn redact_event_for_persistence(

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use agent_domain::{MonitorEvent, MonitorId, TaskKind, TaskStatus};
 use monitor_service::{Monitor, MonitorConfig, MonitorService, Observation};
 use process_runtime::ProcessRuntime;
+use sandbox_runtime::NativeRestricted;
 use task_manager::TaskManager;
 
 fn port_monitor(id: &str) -> Monitor {
@@ -19,7 +20,9 @@ fn port_monitor(id: &str) -> Monitor {
 }
 
 fn service_with_task_manager() -> (MonitorService, TaskManager) {
-    let tm = TaskManager::with_platform_default(ProcessRuntime::new());
+    let tm = TaskManager::new(Box::new(NativeRestricted::with_runtime(
+        ProcessRuntime::new(),
+    )));
     let svc = MonitorService::with_task_manager(tm.clone());
     (svc, tm)
 }
@@ -42,6 +45,35 @@ fn monitor_registers_as_task_kind_monitor() {
     // stop 后任务 Completed（best-effort finish）。
     svc.stop(&id, Some("done".into())).unwrap();
     assert_eq!(tm.task(&task_id).unwrap().status, TaskStatus::Completed);
+}
+
+#[test]
+fn duplicate_monitor_id_is_rejected_without_orphan_task() {
+    let (svc, tm) = service_with_task_manager();
+    let id = svc.register(port_monitor("same"), None).unwrap();
+    let first_task_id = svc.monitor_task_id(&id).expect("task registered");
+
+    let duplicate = Monitor::new(
+        "same",
+        MonitorConfig::PortState {
+            host: "127.0.0.1".into(),
+            port: 9090,
+        },
+    );
+    let err = svc.register(duplicate, None).unwrap_err();
+    assert!(matches!(
+        err,
+        monitor_service::MonitorServiceError::AlreadyRegistered(ref duplicate_id)
+            if duplicate_id == &id
+    ));
+
+    assert_eq!(tm.tasks().len(), 1, "duplicate must not create orphan task");
+    assert_eq!(svc.monitor_task_id(&id), Some(first_task_id));
+    assert_eq!(
+        svc.config(&id).unwrap().config,
+        port_monitor("same").config,
+        "duplicate must not overwrite the original config"
+    );
 }
 
 #[test]
@@ -79,6 +111,30 @@ fn triggered_event_consumable_via_broadcast() {
 
     let rec = svc.record(&id).unwrap();
     assert_eq!(rec.trigger_count, 1);
+}
+
+/// task start 失败时不得先广播 Started：monitor 状态与事件流保持未启动，
+/// 不出现「已发 Started 但任务仍 Queued/Running 分叉」。
+#[test]
+fn start_failure_does_not_broadcast_started() {
+    let (svc, tm) = service_with_task_manager();
+    let id = svc.register(port_monitor("m1"), None).unwrap();
+    let task_id = svc.monitor_task_id(&id).unwrap();
+
+    // 预先手动把任务推到 Running（模拟外部已 start），使 svc.start 的镜像 start
+    // 触发 InvalidTransition 失败。
+    tm.start(&task_id).unwrap();
+    let err = svc.start(&id).unwrap_err();
+    assert!(
+        matches!(err, monitor_service::MonitorServiceError::TaskManager(_)),
+        "expected task-manager error, got {err:?}"
+    );
+
+    // 未广播 Started、未推进 monitor 状态。
+    let mut rx = svc.subscribe();
+    assert!(rx.try_recv().is_err(), "no Started may be broadcast");
+    assert!(svc.event_log().is_empty(), "no monitor events emitted");
+    assert!(svc.record(&id).is_none(), "no state change may be recorded");
 }
 
 #[test]

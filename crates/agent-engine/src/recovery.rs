@@ -153,7 +153,16 @@ pub fn replay_run(events: &RunEventLog) -> RecoveryPlan {
             | AgentEvent::CheckpointCreated { .. }
             | AgentEvent::CheckpointRolledBack { .. }
             | AgentEvent::UsageUpdated { .. }
-            | AgentEvent::Diagnostic { .. } => Vec::new(),
+            | AgentEvent::Diagnostic { .. }
+            // P16 workflow 事件（Plan/Goal/Task/Automation/Monitor/Memory/Review）
+            // 属于 Run 状态机之外的独立域：不产生任何转换，仅作审计保留。
+            | AgentEvent::Plan(_)
+            | AgentEvent::Goal(_)
+            | AgentEvent::Task(_)
+            | AgentEvent::Automation(_)
+            | AgentEvent::Monitor(_)
+            | AgentEvent::Memory(_)
+            | AgentEvent::Review(_) => Vec::new(),
         };
 
         for t in transitions {
@@ -229,8 +238,10 @@ mod tests {
     use std::time::Instant;
 
     use agent_domain::{
-        ContentPart, EventId, MessageId, MessageMetadata, MessageRole, RequestId, SessionId,
-        StopReason, TextContent, Timestamp, TokenUsage,
+        AutomationEvent, AutomationId, BackgroundTaskId, ContentPart, EventId, GoalEvent, GoalId,
+        MemoryEvent, MemoryId, MessageId, MessageMetadata, MessageRole, MonitorEvent, MonitorId,
+        PlanEvent, PlanId, PlanVersionId, RequestId, ReviewEvent, ReviewSessionId, SessionId,
+        StopReason, TaskEvent, TextContent, Timestamp, TokenUsage,
     };
 
     fn env(seq: u64, run: &str, payload: AgentEvent) -> AgentEventEnvelope {
@@ -694,5 +705,70 @@ mod tests {
             .issues
             .iter()
             .any(|i| matches!(i, RecoveryIssue::MissingStartEvent)));
+    }
+
+    #[test]
+    fn workflow_events_do_not_affect_replay() {
+        // 基线：RunStarted + ContextPrepared 的正常活跃 run。
+        let base = vec![
+            env(
+                1,
+                "run-wf",
+                AgentEvent::RunStarted {
+                    trigger_message_id: MessageId::from("m-1"),
+                },
+            ),
+            env(
+                2,
+                "run-wf",
+                AgentEvent::ContextPrepared {
+                    message_count: 1,
+                    estimated_input_tokens: 5,
+                },
+            ),
+        ];
+        let baseline = replay_run(&base);
+        assert!(baseline.issues.is_empty());
+
+        // 七类 P16 workflow 事件：任一插入事件流都必须与基线完全一致
+        // （无状态转换、无消息、无 issues）。
+        let workflow_events = [
+            AgentEvent::Plan(PlanEvent::ReviewRequested {
+                plan_id: PlanId::from("p-1"),
+                version: PlanVersionId::from("v-1"),
+            }),
+            AgentEvent::Goal(GoalEvent::Paused {
+                goal_id: GoalId::from("g-1"),
+            }),
+            AgentEvent::Task(TaskEvent::Suspended {
+                task_id: BackgroundTaskId::from("t-1"),
+            }),
+            AgentEvent::Automation(AutomationEvent::Triggered {
+                automation_id: AutomationId::from("a-1"),
+                task_id: BackgroundTaskId::from("t-1"),
+            }),
+            AgentEvent::Monitor(MonitorEvent::Stopped {
+                monitor_id: MonitorId::from("m-1"),
+                reason: None,
+            }),
+            AgentEvent::Memory(MemoryEvent::Invalidated {
+                memory_id: MemoryId::from("mem-1"),
+                reason: "stale".into(),
+            }),
+            AgentEvent::Review(ReviewEvent::SessionCreated {
+                session_id: ReviewSessionId::from("r-1"),
+                workspace_id: None,
+            }),
+        ];
+
+        for (index, payload) in workflow_events.into_iter().enumerate() {
+            let mut events = base.clone();
+            events.insert(2, env(100 + index as u64, "run-wf", payload));
+            let plan = replay_run(&events);
+            assert_eq!(
+                plan, baseline,
+                "workflow event {index} 不得改变重放结果（状态/消息/issues）"
+            );
+        }
     }
 }

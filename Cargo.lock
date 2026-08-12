@@ -311,14 +311,10 @@ version = "0.0.0"
 dependencies = [
  "agent-domain",
  "agent-events",
- "async-trait",
  "parking_lot",
- "process-runtime",
  "regex",
- "sandbox-runtime",
  "serde",
  "serde_json",
- "task-manager",
  "thiserror 2.0.20",
 ]
 
@@ -2677,14 +2673,12 @@ version = "0.0.0"
 dependencies = [
  "agent-domain",
  "agent-events",
- "notify 7.0.0",
- "notify-debouncer-full",
  "process-runtime",
  "regex",
+ "sandbox-runtime",
  "serde",
  "serde_json",
  "task-manager",
- "tempfile",
  "thiserror 2.0.20",
  "tokio",
 ]

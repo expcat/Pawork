@@ -2,9 +2,9 @@
 //!
 //! 配置由调用方声明，进入 [`crate::MonitorService`] 后由确定性
 //! [`crate::evaluate::evaluate`] 判定是否命中。配置不携带执行能力：
-//! 真实文件监听经可选 [`crate::FileWatchDriver`] 归一为 [`Observation`] 后喂入
-//! 判定核心；需要启动子进程的来源一律经注入的 task-manager（其内部走
-//! SandboxBackend -> ProcessRuntime），本 crate 不直连 spawn。
+//! 观测样本由调用方（宿主 / 未来 driver）归一为 [`Observation`] 后喂入判定核心；
+//! 需要启动子进程的来源一律经注入的 task-manager（其内部走 SandboxBackend ->
+//! ProcessRuntime），本 crate 不直连 spawn。
 
 use agent_domain::{MonitorId, MonitorSourceKind, WorkspaceId};
 use serde::{Deserialize, Serialize};

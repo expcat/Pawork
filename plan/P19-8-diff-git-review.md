@@ -29,6 +29,7 @@
 - [ ] binary/rename/submodule/no-newline/CRLF/Unicode 有明确安全显示
 - [ ] Review anchor 漂移显示 stale，不静默指向错误行
 - [ ] 破坏性动作有最新预览、确认与可恢复结果
+- [ ] **（P16-10 延期接线）Review UI + 真实 Forge host**：finding / line anchor / stale re-anchor / severity / suggested patch 经 `core-api` 查询并在 UI 呈现；Review 富字段（evidence/assignee/patch/fingerprint）进 canonical event 可重放（修复 P16-8 事件外内存补写、fingerprint=None 致 stale）；Forge 副作用移到 host 显式命令/connector 并持久化远端 comment ID（修复 Generic Forge 假副作用、本地合成 ID 冒充 `published`）；SuggestedPatch 在 checkpoint/policy 真接入前仅显示为 dry-run。见 [p16-review §1/§3.5/§4.3](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
 
 **相关文档**：[git-diff](../docs/features/git-diff.md) · [checkpoint](../docs/features/checkpoint.md) · [Desktop GUI](../docs/features/desktop-gui.md) · [性能目标](../docs/quality/performance-targets.md)
 

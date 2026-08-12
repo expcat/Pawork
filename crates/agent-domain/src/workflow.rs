@@ -179,6 +179,15 @@ pub enum GoalEvent {
         goal_id: GoalId,
         progress: f64,
     },
+    /// 单项成功标准被满足（`Auto` 由 Agent、`Human` 由人审入口）。
+    ///
+    /// 与 `ProgressUpdated` 配合：本变体持久化并恢复单项 criterion 的满足位，
+    /// 后者刷新命中率进度。二者同时产出，保证 replay 后 criteria 与 progress
+    /// 不再自相矛盾（修复 ADR-016：满足位必须可重放）。
+    CriterionSatisfied {
+        goal_id: GoalId,
+        criterion_id: String,
+    },
     Paused {
         goal_id: GoalId,
     },
@@ -362,7 +371,8 @@ pub enum MemoryPrivacy {
 ///
 /// 记忆从历史 canonical event 只读提炼，不修改 / 删除任何事件；含 Secret /
 /// 敏感内容的 event 不进入记忆。失效为 `invalidated` 而非删除，保留可追溯。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// `embedding` / `confidence` 为浮点，故只 impl `PartialEq`（不要求 `Eq`）。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MemoryEvent {
     Recorded {
@@ -374,6 +384,14 @@ pub enum MemoryEvent {
         privacy: MemoryPrivacy,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace_id: Option<WorkspaceId>,
+        /// Provider-neutral embedding。新流事件持久化向量以支持完整 replay；
+        /// 旧流缺字段时为 serde 兼容默认空向量，仍可反序列化，但检索层会过滤
+        /// 空 embedding，需重新嵌入后才可检索。
+        #[serde(default)]
+        embedding: Vec<f32>,
+        /// 记录置信度。旧流事件未携带时默认 `0.0`。
+        #[serde(default)]
+        confidence: f32,
     },
     Invalidated {
         memory_id: MemoryId,
@@ -416,6 +434,16 @@ pub struct ReviewAnchor {
     pub end_line: Option<u32>,
 }
 
+/// 建议补丁（canonical）：评审引擎只做 dry-run（校验 / 解析 / 内存试应用），
+/// 实际应用交既有工具 + policy（checkpoint / sandbox），引擎本身不写文件。
+///
+/// 放在 canonical domain 以便 `ReviewEvent::FindingOpened` 携带并完整重放。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuggestedPatch {
+    pub file: String,
+    pub payload: String,
+}
+
 /// Review Engine 的 canonical 事件载荷。
 ///
 /// 评审引擎对工作区只读；写动作交既有工具并受 policy 约束；PR comment 仅在
@@ -434,6 +462,17 @@ pub enum ReviewEvent {
         anchor: ReviewAnchor,
         severity: ReviewSeverity,
         body: String,
+        /// 佐证（diff 行 / 日志片段）。旧流事件未携带时默认空（serde 兼容）。
+        #[serde(default)]
+        evidence: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assignee: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        suggested_patch: Option<SuggestedPatch>,
+        /// 打开时锚点上下文指纹（re-anchor 用）；文件不可读时为 `None`。
+        /// 旧流事件未携带时默认 `None`（serde 兼容）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fingerprint: Option<String>,
     },
     /// resolution 转移，可关联修复 commit / patch / Run。
     FindingResolved {
@@ -457,3 +496,26 @@ const _: fn() = || {
         std::marker::PhantomData::<RunId>,
     );
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_memory_recorded_defaults_embedding_and_confidence() {
+        let legacy = r#"{"kind":"recorded","memory_id":"memory_1","summary":"legacy","privacy":"workspace_local"}"#;
+
+        let event: MemoryEvent = serde_json::from_str(legacy).expect("deserialize legacy event");
+        let MemoryEvent::Recorded {
+            embedding,
+            confidence,
+            ..
+        } = event
+        else {
+            panic!("expected recorded event");
+        };
+
+        assert!(embedding.is_empty());
+        assert_eq!(confidence, 0.0);
+    }
+}

@@ -7,6 +7,10 @@ use agent_domain::{
 };
 use serde::{Deserialize, Serialize};
 
+/// `SuggestedPatch` 已移至 canonical domain（`agent_domain`），以便
+/// `ReviewEvent::FindingOpened` 携带并完整重放；此处仅做透传再导出。
+pub use agent_domain::SuggestedPatch;
+
 /// 评审会话：持有 findings、已发布评论记录。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewSession {
@@ -19,10 +23,9 @@ pub struct ReviewSession {
 
 /// 一条评审意见（finding）。
 ///
-/// canonical 事件流（`ReviewEvent`）承载生命周期事实：session / finding / anchor /
-/// severity / body / resolution / fix_ref / forge。`evidence` / `assignee` /
-/// `suggested_patch` / `anchor_fingerprint` 属命令时富快照字段，由命令写入内存态
-/// （快照持久化由 session-store 负责），事件流保证生命周期转移的一致性。
+/// canonical 事件流（`ReviewEvent`）承载完整可重放状态：`FindingOpened` 携带
+/// evidence / assignee / suggested_patch / fingerprint，`FindingResolved` 携带
+/// resolution / fix_ref。replay 后 finding 与实时路径完整一致（ADR-016）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewFinding {
     pub finding_id: ReviewFindingId,
@@ -51,14 +54,6 @@ impl ReviewFinding {
     pub fn end_line(&self) -> Option<u32> {
         self.anchor.end_line
     }
-}
-
-/// 建议补丁：本 service 只做 dry-run（校验 / 解析 / 内存试应用），
-/// 实际应用交既有工具 + policy，引擎本身不写文件。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SuggestedPatch {
-    pub file: String,
-    pub payload: String,
 }
 
 /// resolution 结果：状态 + 修复引用，形成「finding → suggestion → fix → resolution」链。

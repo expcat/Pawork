@@ -33,6 +33,10 @@ model_profiles / plugin_state / mcp_servers / settings / audit_events
 
 扫描 Pi JSONL；解析 Header；导入消息；导入 Tool Calls；导入模型切换；导入 Compaction；导入 Branch；导入自定义 Entry；保存未知字段；产生迁移报告；**不修改原始 Pi 文件**。导入后使用新数据库。
 
+## 外部会话兼容导入（P16-9）
+
+`session-store` 内实现 Claude / Codex / Grok / Cursor 四来源只读解析 → canonical event（不新增非规范类型；逐条无法映射的 Raw 记录进 `Diagnostic` raw metadata，**顶层 `unknown_fields` 仅写入 `CompatImportReport` 报告、不持久化进事件**，raw metadata 全量入事件为延期项）、`(source, original_id)` + content fingerprint 去重、批内结构校验门控（sequence 连续 / 无悬空 parent / Secret 拒绝）与 append-only 不破坏既有事件。导入为单 SQLite transaction 原子写入 Session + identity + event + projection（失败整批回滚、零残留）；派生 run/message/tool ID 以目标 session 为 scope（消除同来源第二会话与跨来源 tool ID 冲突）；外部 tool arguments 映射 `ToolCallArgumentsDelta`（参数保真）；`compat_import_identity` 表持久化稳定 identity。当前仅 `SessionStore::import_compat` 库 API 可达（crate 内测试覆盖），无 core-api / CLI 入口；校验为批内结构校验而非状态机 replay。接线状态与已知正确性边界见 [workflow](workflow.md)。
+
 ## Blob Store
 
 大型内容（Tool Output、图片、文件快照、Provider 原始响应、Diff、日志、导出文件）以 BLAKE3 内容寻址存储，支持去重、引用计数、完整性校验、可配置保留期限、GC、最大磁盘预算。
@@ -52,7 +56,7 @@ Protected Blob 按 Provider + Session 作用域校验。当前实现对每次写
 
 写入遵循 create-before-reference：先提交 `pending` 元数据，原子发布并同步加密文件，再标记 `ready`，只有 `ready` 条目可解析；启动恢复会回滚残留 `pending`、完成 `deleting` 并清理无元数据密文。GC 先把到期零引用条目标记为 `deleting`，再删文件和元数据，任一 crash 窗口都可在下次打开或 GC 时继续。首次 `put` 的 `ref_count = 1` 就是首个持久化事件的所有权，成功 append 不重复 `retain`；正常 append 失败由上层调用 `release` 回滚未提交首引用，新增真实所有者才 `retain`，事件物理删除时 `release`。进程在 blob 已 `ready`、事件尚未提交之间异常退出，仍可能留下带元数据且保守持有初始引用的未挂接加密条目；它不会产生悬空事件引用，取舍是暂占空间而不是丢失 continuation，需由后续宿主维护核对后释放。引用降到零后进入 retention（默认 7 天），到期才允许 GC。当前 Fork / Branch 共享不可变历史事件，Compaction 也只保留或隐藏事件而不物理删除，因此不复制、不递减 reasoning blob 引用；未来若物理删除事件，删除事务必须显式释放对应引用。
 
-Plan、Goal、BackgroundTask、Automation、Monitor、Memory、Review 与 Hook 状态都以 canonical event 为事实源；Projection 可删除重建，后台与无人值守流程在宿主重启后按事件恢复，不依赖 GUI 在线。
+Plan、Goal、BackgroundTask、Automation、Monitor、Memory、Review 的状态类型与事件已以 canonical event 定义（`agent-events` 的 7 个 P16 wrapping 变体），各 service 有 crate 内的事件折叠/重放入口；但 P16 事件目前没有生产持久化与发布链路（未接本 Event Store / EventHub / core-api），「宿主重启后按事件恢复 P16 状态」尚未成立。接线边界与延期项见 [workflow](workflow.md)。
 
 ## 数据库设置
 
@@ -88,4 +92,4 @@ Export / Import schema v2 为每条事件显式保存 `branch_id`，多分支往
 
 - [领域模型](../architecture/domain-model.md) · [artifacts](artifacts.md) · [checkpoint](checkpoint.md)
 - [ADR-003 Event Store](../adr/ADR-003-sqlite-event-store.md) · [ADR-004 Blob Store](../adr/ADR-004-blob-store.md) · [ADR-005 Pi JSONL 导入](../adr/ADR-005-pi-jsonl-import-only.md) · [ADR-016 事件可重放](../adr/ADR-016-core-event-persist-replay.md)
-- [ROADMAP Phase 1 / Phase 5](../../ROADMAP.md)
+- [workflow（P16 接线边界）](workflow.md) · [ROADMAP Phase 1 / Phase 5 / Phase 16](../../ROADMAP.md)

@@ -35,6 +35,7 @@ Rust Application / IDE / CI
 - [ ] SDK 与 Headless 都建立在 `core-api` 之上，不取代 GUI Connection Protocol
 - [ ] SDK 有明确稳定/实验面划分与语义化版本策略
 - [ ] 定向 / Mock smoke 覆盖 Rust 生命周期与 Headless JSON 往返
+- [ ] **（P16-10 延期接线）compat 命令入口**：headless/SDK 经 `core-api`/CLI 暴露 `import_compat` 入口与导入历史查询（替代 `cli-host` 的 `placeholder_for_command`），导入产物经 `app-service` 持久化。P16-10 已在 library 层收敛 compat 内部正确性（单事务原子写、session-scoped ID、参数保真、import identity，见 [P16-10](P16-10-review-remediation.md)）；本任务只接命令入口，不重做存储语义。见 [p16-review §2.4/§3](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
 
 **相关文档**：[CLI Host](../docs/features/cli-host.md) · [GUI 连接与多客户端](../docs/features/gui-connection.md) · [P17-9 IDE Host Adapter](P17-9-ide-host-adapter.md) · [ADR-021 CLI 与 Core 同进程](../docs/adr/ADR-021-cli-core-same-process.md) · [ADR-030 Core 单一事实源](../docs/adr/ADR-030-core-sole-source-of-truth.md) · [workspace-layout](../docs/architecture/workspace-layout.md) · [ROADMAP](../ROADMAP.md)
 

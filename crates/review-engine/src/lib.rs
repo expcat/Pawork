@@ -19,10 +19,10 @@
 //!   唯一入口；命令方法校验状态机后「先 apply 再返回事件」给调用方持久化；
 //! - 评审引擎对工作区只读：锚点解析仅 `fs::read_to_string`，补丁仅内存 dry-run。
 //!
-//! 富快照字段说明：canonical 事件只承载生命周期事实（session / finding / anchor /
-//! severity / body / resolution / fix_ref / forge）。`evidence` / `assignee` /
-//! `suggested_patch` / `anchor_fingerprint` 属命令时富快照字段，由命令写入内存态
-//! （快照持久化由 session-store 负责）；事件流保证生命周期转移的一致性。
+//! 富字段重放说明：canonical 事件承载完整可重放状态——`FindingOpened` 携带
+//! evidence / assignee / suggested_patch / fingerprint（`SuggestedPatch` 已移至
+//! canonical domain），`FindingResolved` 携带 resolution / fix_ref。replay 后 finding
+//! 与实时路径完整一致（ADR-016：live→fresh snapshot 完整相等）。
 
 pub mod aggregate;
 pub mod anchor;

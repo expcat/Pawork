@@ -36,6 +36,8 @@ P14-8 的 GUI 交付目前只是协议：core-api / gui-protocol 已携带 `Quot
 - [ ] L1：projection property + controller/client contract tests 通过
 - [ ] quota projection slice：从 gui-protocol 的 `QuotaOverview` / `QuotaChanged` / `QuotaAlert` 事件重建，重复/缺口/乱序语义与其余 slice 一致
 - [ ] protocol-test-gui 增加 quota 消费场景（投影重建 + kind/source 为 `None` 的旧 JSON 降级）
+- [ ] **（P16-10 延期接线）memory context projection slice**：从 gui-protocol 事件重建 memory 注入解释视图（source/citation/retention/forget），重复/缺口/乱序语义与其余 slice 一致；P16-7 当前无 core-api/gui-protocol 事件发布，故该 slice 在 [P17-5](P17-5-agent-profile-v2.md) 接线前为 unavailable，不用本地 mock 冒充。
+- [ ] **（P16-10 延期接线）compat 会话 projection slice**：兼容导入的外部会话经 projection 重建并可检索；P16-9 当前无 core-api 事件发布，该 slice 在 [P17-8](P17-8-agent-sdk.md) 命令入口接线前为 unavailable。
 
 **相关文档**：[GUI Connection Protocol](../docs/architecture/api-surface.md) · [GUI 连接](../docs/features/gui-connection.md) · [ADR-030](../docs/adr/ADR-030-core-sole-source-of-truth.md) · [ADR-035](../docs/adr/ADR-035-gpui-desktop.md)
 

@@ -61,6 +61,17 @@
 
 **Phase 15 显式延后的接线项登记**（[P15-10](P15-10-review-remediation.md) 收口，验收项已落入 Phase 18 计划，不只在 P15-10 链接）：① 生产 `ProtectedKeyResolver` + 持久 `ProtectedBlobStoreProtector` 注入宿主（ADR-032 兑现），并按真实 Session/run `BlobScope` 构造或选择、禁止跨 Session 复用 scoped protector → [P18-3](P18-3-provider-account.md) / [P18-4](P18-4-credential-lease.md) / [P18-14](P18-14-pool-reconciliation.md) 验收标准；② 宿主经 Provider factory / `register_provider` 装配真实 Provider 并消费 `builtin_models()` → P18-3 验收标准；③ provider v2 能力 catalog 统一进入共享 model-registry `caps()` / 协商证据 → P18-14 验收标准。
 
+**Phase 16 延期落点登记**（[P16-10](P16-10-review-remediation.md) 收口，验收项已落入 Phase 17/19 既有计划）：Phase 16 的 10/10 是**有界**计数——library/core 领域 reducer、纯算法、Process 后台执行与 canonical event 包装已交付；[P16-10](P16-10-review-remediation.md) 在 library 层进一步修复正式链编译闭包、Goal/Memory/Review 重放字段与 compat 单事务原子导入（详见 [p16-review](../docs/review/p16-review.md)）。**生产宿主接线闭环延期**，以下六项不声称生产已装配，避免虚假完成：
+
+- **① monitor 包驱动** → [P17-2](P17-2-plugin-package-format.md)（`monitors` 子段定义稳定 Monitor driver/evaluator 入口契约）+ [P17-3](P17-3-plugin-marketplace.md)（package-owned Monitor 的 install/uninstall/停止）。P16-10 已删 `monitor-service` 内置 driver、执行状态统一引用 `task-manager`；但 package 可声明的 Monitor 驱动入口与归属生命周期仍缺，由本组任务落地。
+- **② Plan/Goal host** → [P19-12](P19-12-workflow-control.md)（host 经 core-api/EventHub 暴露 Plan/Goal 并被控制面消费；Plan 审批 gate、Goal 人审可证由 core 侧满足）。P16-10 已让 Goal criterion 满足位事件化；但 Plan/Goal 未经 host/core-api/EventHub 暴露、Plan 审批不进 Agent Loop gate、steer 不入 context，仍缺。
+- **③ workflow core-api/EventHub** → [P17-6](P17-6-agent-teams.md)（team task board/mailbox/presence 经 `app-service` 唯一 Event Hub 派发可重放，automation 执行权威统一归 `task-manager`，不另建 broadcast）。P16-10 已删 automation 内置 dispatcher 与 `external.rs`、收敛为只调度；但无生产 executor/timer loop、事件不经统一 EventHub 发布到 CLI/GUI，仍缺。
+- **④ Memory provider/SQLite/context** → [P17-5](P17-5-agent-profile-v2.md)（`profile.memory` 接真实 `EmbeddingProvider` + SQLite + `context-engine` 消费，或保留 contract 下 default-off）+ [P19-2](P19-2-client-state-projection.md)（memory context projection slice）。P16-10 已让 embedding/confidence 进事件可重放；但无生产 EmbeddingProvider、SQLite 持久化与 context 消费者，仍缺。
+- **⑤ Review Forge/UI** → [P19-8](P19-8-diff-git-review.md)（finding/anchor/suggested-patch UI + 真实 Forge host 接线、SuggestedPatch 待 checkpoint/policy 后脱离 dry-run）。P16-10 已让 finding 富字段与 fingerprint 进事件可重放；但无 core-api/UI 消费、Generic Forge 为假副作用且丢弃远端 comment ID，仍缺。
+- **⑥ compat 命令入口** → [P17-8](P17-8-agent-sdk.md)（headless/SDK 经 core-api/CLI 暴露 `import_compat` 入口与历史查询）+ [P19-2](P19-2-client-state-projection.md)（compat 会话 projection slice）。P16-10 已修 compat 单事务原子导入、session-scoped ID、参数保真与 import identity；但无 core-api/CLI 命令入口（CLI 仍走 placeholder），仍缺。
+
+> 与 Phase 15 登记同样：以上验收项已写入对应 plan 文件的「验收标准」，不在 P16-10 单独重复实现。P16-10 是 Phase 16 的 review-remediation（library 层修复正式链编译 / 重放字段 / 兼容导入 + 生产宿主接线显式延后），见 [plan/P16-10-review-remediation](P16-10-review-remediation.md)；library 层修复面不计入下列生产延期项。
+
 ---
 
 ## MVP 范围

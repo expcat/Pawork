@@ -36,22 +36,23 @@
 | 13 | CLI Host 与多 GUI 协议 | 11 | 11 | 🟢已完成（P13-1～P13-10 TargetVerified；P13-11 review-remediation 已完成） |
 | 14 | 模型用量与额度监控 | 10 | 10 | 🟢已完成（P14-1/2/4～P14-10 TargetVerified；P14-3 已归档） |
  | 15 | Provider Native Capabilities | 10 | 10 | 🟢已完成（P15-1/5/9 plain TargetVerified；P15-2/3/4/7/8 TargetVerified 有界 host composition deferred；P15-6 TargetVerified 有界 default-off/no consumer；P15-10 review-remediation 已完成；P15-9 集中门禁 contract/golden/fuzz/兼容性在独立 target 下全绿） |
-| 16 | Modern Agent Workflow | 9 | 9 | 🟢已完成（P16-1～P16-9 已实现并各自 TargetVerified；P16-9 簇兼容/重放门禁在独立 `target/gates` 下全绿：fmt / test / clippy(-D warnings) / schema-typegen） |
+| 16 | Modern Agent Workflow | 10 | 10 | 🟢已完成（**有界**：library/core 领域 reducer、纯算法、Process 后台执行与 canonical event 包装已交付并各自定向验证；**生产闭环延期**——host/core-api/EventHub 接线、Plan/Goal 控制闭环、真实 EmbeddingProvider/SQLite、Forge UI、compat 命令入口与 Monitor 包驱动均未接主流程，按 [P16-10](plan/P16-10-review-remediation.md) 登记到 P17/P19 既有任务验收，不声称生产已装配） |
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
- | **合计** | — | **218** | **174** | — |
+ | **合计** | — | **219** | **175** | — |
 
-> 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
-> 逐 Phase 行机械求和为 218 项任务、165 项完成；P15-10 新增前表内旧合计写作 217/167，而旧 Phase 行实际为 217/164，完成数已有 +3 累计漂移。P15-10 使任务数与完成行各增加 1，Phase 15 现为 10/10。
+> 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务；**机械求和只反映任务条目数，不代表生产闭环完成度**。
+>
+> 逐 Phase 行机械求和现为 **219 项任务、175 项完成**。P16-10 新增使任务数与完成数各 +1，Phase 16 现为 10/10；该 10/10 是**有界**计数（library/core 领域与算法已交付、各自定向验证；正式链编译闭包已随 [P16-10](plan/P16-10-review-remediation.md) 修复并纳入 `scripts/p16-gate.sh`），**生产闭环（host/core-api/EventHub 接线与 GUI 消费）明确延期**，落地任务见 [Phase 16 延期落点登记](plan/README.md)。完成数不等于 Production Ready：历史 🟢 只代表既有完成/验证记录，是否已接主流程以源码、运行证据与该登记为准。
 >
 > Phase 0 与 Phase 1 已有历史本地构建、测试和 Clippy 记录；自本次规划起不再把「每个 Phase 重跑 workspace 全量门禁」作为任务完成前提。三平台 GitHub Actions 仍按 `workflow_dispatch` 手动触发，其远程结果不计入本地完成状态。
 
 ## 下一个推荐任务
 
-> ✅ **Phase 16 Modern Agent Workflow 已完成（P16-1～P16-9，TargetVerified）**：交付 7 个新 crate + `provider-api` canonical `EmbeddingProvider` + `session-store` 兼容导入扩展。集中式 canonical 契约先行（`agent-domain::workflow` 10 个新 ID + 7 类事件载荷 + 状态/快照结构、`agent-events::AgentEvent` 7 个 wrapping 变体）。`plan-service`（只读 Plan + Review/Approval，无写权）、`goal-service`（durable objective + 人工判定成功标准）、`task-manager`（统一四 kind 后台任务，注入 SandboxBackend→ProcessRuntime，取消沿 parent 链传播）、`automation-service`（cron/interval/once/event + inbox，外部 trigger 经 adapter，dispatch 经 task-manager 不自授权）、`monitor-service`（声明式监视循环，无直接 spawn）、`memory-service`（只读提炼 + canonical EmbeddingProvider 检索，`no_provider_branch` 自扫描 + Secret 过滤）、`review-engine`（行锚点 + 上下文指纹 re-anchor，平台无关 ForgeAdapter）。`P16-9` 在 `session-store` 内实现 Claude/Codex/Grok/Cursor 四来源只读解析器 → canonical event（不可映射字段进 raw metadata、不新增非规范类型）、blake3 指纹去重、replay 校验门控（sequence 连续/无悬空 parent/Secret 拒绝）、append-only 不破坏既有事件；diff/review 行锚点在 crate 内自洽实现，避免 storage→services 反向依赖。**P16 簇兼容/重放门禁**在独立 `target/gates` 下全绿（fmt / test 9 crates / clippy -D warnings / schema-typegen），跑完即清理。架构红线（canonical event 化/可重放、Plan 无写权、进程统一 Sandbox 所有权、Embedding 走 canonical trait、GUI 不直连）全部守住；未跑 workspace 全量门禁（未命中升级条件）。详见各 [plan/P16-*](plan/) 文档。
+> ✅ **Phase 16 Modern Agent Workflow 有界完成（P16-1～P16-10）——library/core 完成、生产闭环延期**：交付 7 个新 crate 的领域 reducer / 纯算法 / Process 后台执行（经 Sandbox backend）/ canonical `AgentEvent` 7 变体包装，以及 `session-store` 兼容导入解析与 append-only。[P16-10](plan/P16-10-review-remediation.md) 在 library 层进一步收敛：补齐 `agent-engine::recovery` / `app-service::supervisor` 对 7 个新事件变体的穷举处理（恢复 `cargo check -p app-service`）、让 Goal criterion 满足位 / Memory embedding·confidence / Review finding 富字段与 fingerprint 进 canonical event 可重放、compat 改单事务原子导入 + session-scoped ID，并提供可复跑的 `scripts/p16-gate.sh`（覆盖正式链）。**但 [p16-review](docs/review/p16-review.md) 判定这不构成「可审阅 Plan / 持久 Goal / 后台任务 / 自动化与长期记忆的最小闭环」——以下生产宿主接线项明确延期、不声称已装配**：① monitor 包驱动 → [P17-2](plan/P17-2-plugin-package-format.md)/[P17-3](plan/P17-3-plugin-marketplace.md)；② Plan/Goal host → [P19-12](plan/P19-12-workflow-control.md)；③ workflow core-api/EventHub → [P17-6](plan/P17-6-agent-teams.md)；④ Memory provider/SQLite/context → [P17-5](plan/P17-5-agent-profile-v2.md)/[P19-2](plan/P19-2-client-state-projection.md)；⑤ Review Forge/UI → [P19-8](plan/P19-8-diff-git-review.md)；⑥ compat 命令入口 → [P17-8](plan/P17-8-agent-sdk.md)/[P19-2](plan/P19-2-client-state-projection.md)。落点明细见 [Phase 16 延期落点登记](plan/README.md)。架构红线（canonical 依赖方向、Plan 无写权、Process 统一 Sandbox 所有权、Embedding 走 canonical trait、GUI 不直连、append-only 不改写既有事件）在 library 层守住；未跑 workspace 全量门禁（未命中升级条件）。详见各 [plan/P16-*](plan/) 文档与 [P16-10](plan/P16-10-review-remediation.md)。
  
-> 🎯 **下一推荐 Phase 17 Ecosystem & Host Compatibility**（或并行推进 P18 账号控制面基础 P18-1～P18-9）：Phase 16 已交付可审阅 Plan、持久 Goal、后台任务、自动化与长期记忆的最小闭环；下一步补齐用户 Hook、Plugin Marketplace、LSP Client Runtime、Agent Profile/Teams 与公共 Host/SDK（P17-1～P17-9），并把浏览器 / 真实 Remote Transport / 远程控制作为可替换 Adapter 接入（P17-10～P17-12）。账号控制面（P18）作为并行基础轨，先建立 Tenant/Principal、ProviderAccount/Credential、Lease、路由与多维 Usage Ledger，供 quota 与 orchestration 生产接线。
+> 🎯 **下一推荐 Phase 17 Ecosystem & Host Compatibility**（或并行推进 P18 账号控制面基础 P18-1～P18-9）：Phase 16 已完成 library/core 有界交付（领域 reducer、纯算法、Process 后台执行与 canonical 事件包装），生产宿主接线（host/core-api/EventHub 与 GUI 消费）明确延期，落点见 [Phase 16 延期落点登记](plan/README.md)；下一步补齐用户 Hook、Plugin Marketplace、LSP Client Runtime、Agent Profile/Teams 与公共 Host/SDK（P17-1～P17-9），并把浏览器 / 真实 Remote Transport / 远程控制作为可替换 Adapter 接入（P17-10～P17-12）。账号控制面（P18）作为并行基础轨，先建立 Tenant/Principal、ProviderAccount/Credential、Lease、路由与多维 Usage Ledger，供 quota 与 orchestration 生产接线。
 
 > ✅ **Phase 14 模型用量与额度监控完成库级收口（P14-1/2/4～P14-10 TargetVerified）**：交付 `quota-service` canonical 领域模型、API Key / WebScrape / Local Ledger 三类 adapter（通用 OAuth 层无生产消费者已删除，见 [P14-3](plan/P14-3-quota-oauth-adapter.md)）、六初始供应商 contract fixtures、多窗口聚合与 cache-only 查询、Usage/Cost Ledger 进程内写入与预算信号、`pawork usage` 文本/JSON 输出、GUI Protocol 的 `QuotaChanged` / `QuotaAlert` 事件、可取消刷新调度与退避。**有界范围**：远端 refresh target 注册、持久化 Ledger、真实 tenant/account/credential 归属与生产审计 sink 延 Phase 18 接线；GUI 目前仅协议就绪（无实际投影页面）；告警动作由消费端按 `AlertKind` 派生，不跨边界携带 typed suggestions。开发期完成受影响 crate 的定向测试、Clippy、格式与 schema 漂移检查；workspace 全量门禁留待集中 review。未配置远端 target 时查询保持 cache-only，只读本地 Ledger 投影。详见 [P14-10](plan/P14-10-review-remediation.md)。
 
@@ -518,7 +519,7 @@ Parent/Worker 编排，写入隔离，取消传播。
 
 ### Phase 16：Modern Agent Workflow
 
-把 Agent 从单次前台 run 扩展为可审阅计划、持久目标、后台任务与自动化工作流；状态必须事件化、可恢复，GUI 断连不得取消任务。Long-term Memory 保持 P2，不阻塞 Plan / Background / Automation 的首轮交付。
+把 Agent 从单次前台 run 扩展为可审阅计划、持久目标、后台任务与自动化工作流；状态必须事件化、可恢复，GUI 断连不得取消任务。Long-term Memory 保持 P2，不阻塞 Plan / Background / Automation 的首轮交付。**当前为有界交付**：library/core 领域与算法已落地，生产闭环（host/core-api/EventHub 接线与 GUI 消费）延期，落点见 [P16-10](plan/P16-10-review-remediation.md) 与 [plan/README Phase 16 延期落点登记](plan/README.md)。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
@@ -530,7 +531,8 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P16-6 | 🟢 | Persistent Process / Monitor | attach/detach/restart/notification | [详情](plan/P16-6-persistent-process-monitor.md) |
 | P16-7 | 🟢 | Long-term Memory（优先级 P2） | canonical EmbeddingProvider + 检索注入 | [详情](plan/P16-7-long-term-memory.md) |
 | P16-8 | 🟢 | Review Engine | finding/line anchor/suggested patch/resolution | [详情](plan/P16-8-review-engine.md) |
-| P16-9 | 🟢 | Session Compatibility Import | Claude/Codex/Grok/Cursor 无损导入 | [详情](plan/P16-9-session-compat-import.md) |
+| P16-9 | 🟢 | Session Compatibility Import | Claude/Codex/Grok/Cursor 解析/映射/append-only 已交付；单事务原子导入与 session-scoped ID 已修；真实 reducer replay、core-api/CLI 入口、历史查询与自动探测延期（见 P16-10） | [详情](plan/P16-9-session-compat-import.md) |
+| P16-10 | 🟢 | 评审修复与延期落点（review-remediation） | library 层修复正式链编译 / Goal·Memory·Review 重放字段 / compat 原子导入（[plan](plan/P16-10-review-remediation.md)）；6 项生产宿主接线登记到 P17/P19 既有任务验收，避免虚假完成 | [详情](plan/P16-10-review-remediation.md) |
 
 ### Phase 17：Ecosystem & Host Compatibility
 

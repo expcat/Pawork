@@ -1,6 +1,6 @@
 //! automation-service 的错误类型。
 
-use agent_domain::AutomationId;
+use agent_domain::{AutomationId, BackgroundTaskId};
 
 /// automation-service 命令面与重放路径的错误。
 #[derive(Debug, thiserror::Error)]
@@ -39,4 +39,11 @@ pub enum AutomationError {
     /// 记录结果时找不到对应的触发记录。
     #[error("no fired task recorded for automation {0}")]
     NoFiredTask(AutomationId),
+
+    /// 记录结果的 task 并非该 automation 的 canonical `Triggered` 事实。
+    #[error("task {task_id} was not triggered by automation {automation_id}")]
+    TaskNotTriggeredByAutomation {
+        automation_id: AutomationId,
+        task_id: BackgroundTaskId,
+    },
 }

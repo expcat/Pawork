@@ -1094,6 +1094,14 @@ fn event_state(payload: &AgentEvent) -> Option<RunState> {
         | AgentEvent::CheckpointRolledBack { .. }
         | AgentEvent::UsageUpdated { .. }
         | AgentEvent::ProviderTranscriptContinued { .. }
+        // P16 workflow 事件不改变 Run 状态（独立域，仅审计）。
+        | AgentEvent::Plan(_)
+        | AgentEvent::Goal(_)
+        | AgentEvent::Task(_)
+        | AgentEvent::Automation(_)
+        | AgentEvent::Monitor(_)
+        | AgentEvent::Memory(_)
+        | AgentEvent::Review(_)
         | AgentEvent::Diagnostic { .. } => None,
     }
 }
@@ -1171,7 +1179,15 @@ fn translate_payload(run_id: &RunId, payload: &AgentEvent) -> Option<AppEvent> {
         | AgentEvent::CompactionCompleted { .. }
         | AgentEvent::CheckpointCreated { .. }
         | AgentEvent::UsageUpdated { .. }
-        | AgentEvent::CheckpointRolledBack { .. } => None,
+        | AgentEvent::CheckpointRolledBack { .. }
+        // P16 workflow 事件不翻译为 AppEvent。
+        | AgentEvent::Plan(_)
+        | AgentEvent::Goal(_)
+        | AgentEvent::Task(_)
+        | AgentEvent::Automation(_)
+        | AgentEvent::Monitor(_)
+        | AgentEvent::Memory(_)
+        | AgentEvent::Review(_) => None,
     }
 }
 
@@ -2675,5 +2691,110 @@ mod tests {
         assert_eq!(record.session_id, session);
         assert_eq!(record.input_tokens, 100);
         assert!(record.occurred_at_ms > 0);
+    }
+
+    #[test]
+    fn workflow_events_do_not_change_run_state_or_emit_app_events() {
+        use agent_domain::{
+            AutomationEvent, AutomationId, BackgroundTaskId, GoalEvent, GoalId, MemoryEvent,
+            MemoryId, MonitorEvent, MonitorId, PlanEvent, PlanId, PlanVersionId, ReviewEvent,
+            ReviewSessionId, TaskEvent,
+        };
+
+        let aggregate = AggregateState::new();
+        let limiter = RateLimiter::new(std::time::Duration::from_secs(60), 1024);
+        let global = AtomicU64::new(0);
+        let stream = AtomicU64::new(0);
+        let source = CommandSource::Automation;
+        let command_id = CommandId::from("cmd-wf");
+        let instance_id = CoreInstanceId::from("test");
+        let run_id = RunId::from("run-wf");
+        let session_id = SessionId::from("s-1");
+        let envelope = |seq: u64, payload: AgentEvent| {
+            AgentEventEnvelope::new(
+                EventId::from(format!("e-{seq}")),
+                session_id.clone(),
+                run_id.clone(),
+                agent_events::EventSequence::new(seq),
+                Timestamp::from_unix_millis(seq),
+                payload,
+            )
+        };
+
+        // 基线：RunStarted 把状态迁移到 PreparingContext，并产生一条 RunChanged。
+        let mut state = apply_agent_event(
+            &aggregate,
+            &limiter,
+            &instance_id,
+            &global,
+            &stream,
+            &source,
+            &command_id,
+            envelope(
+                1,
+                AgentEvent::RunStarted {
+                    trigger_message_id: MessageId::from("m-1"),
+                },
+            ),
+            RunState::Created,
+        );
+        assert_eq!(state, RunState::PreparingContext);
+        assert_eq!(global.load(Ordering::SeqCst), 1);
+        assert_eq!(stream.load(Ordering::SeqCst), 1);
+
+        let workflow_events = [
+            AgentEvent::Plan(PlanEvent::ReviewRequested {
+                plan_id: PlanId::from("p-1"),
+                version: PlanVersionId::from("v-1"),
+            }),
+            AgentEvent::Goal(GoalEvent::Paused {
+                goal_id: GoalId::from("g-1"),
+            }),
+            AgentEvent::Task(TaskEvent::Suspended {
+                task_id: BackgroundTaskId::from("t-1"),
+            }),
+            AgentEvent::Automation(AutomationEvent::Triggered {
+                automation_id: AutomationId::from("a-1"),
+                task_id: BackgroundTaskId::from("t-1"),
+            }),
+            AgentEvent::Monitor(MonitorEvent::Stopped {
+                monitor_id: MonitorId::from("m-1"),
+                reason: None,
+            }),
+            AgentEvent::Memory(MemoryEvent::Invalidated {
+                memory_id: MemoryId::from("mem-1"),
+                reason: "stale".into(),
+            }),
+            AgentEvent::Review(ReviewEvent::SessionCreated {
+                session_id: ReviewSessionId::from("r-1"),
+                workspace_id: None,
+            }),
+        ];
+
+        for (index, payload) in workflow_events.into_iter().enumerate() {
+            state = apply_agent_event(
+                &aggregate,
+                &limiter,
+                &instance_id,
+                &global,
+                &stream,
+                &source,
+                &command_id,
+                envelope(100 + index as u64, payload),
+                state,
+            );
+            assert_eq!(
+                state,
+                RunState::PreparingContext,
+                "workflow event {index} 不得改变 Run 状态"
+            );
+        }
+
+        // 序号停在基线值；限流器中只有基线的 RunChanged，无任何 workflow 应用事件。
+        assert_eq!(global.load(Ordering::SeqCst), 1);
+        assert_eq!(stream.load(Ordering::SeqCst), 1);
+        let flushed = limiter.flush();
+        assert_eq!(flushed.len(), 1, "workflow 事件不得产生应用事件");
+        assert!(matches!(&flushed[0].payload, AppEvent::RunChanged { .. }));
     }
 }

@@ -1,12 +1,8 @@
-//! 执行派发：抽象 [`AutomationDispatcher`] trait，让 task-manager 作为实现接入，
-//! 避免 automation-service 与具体执行后端硬耦合。
-//!
-//! 触发后调用 `dispatch` 把动作派发为 background task（默认 `TaskKind::Automation`）。
-//! service 不自带特权：派发经注入的 TaskManager 注册并 start，受既有 policy / 预算约束，
-//! 与任何手动启动的后台任务等价。
+//! 执行派发抽象。automation-service 只负责调度；真实 action executor 由调用方
+//! 注入。当前 crate 不提供 TaskManager adapter，避免无执行器的实现创建或终结
+//! 不属于自己的后台任务。
 
-use agent_domain::{AutomationId, BackgroundTaskId, TaskKind};
-use task_manager::TaskManager;
+use agent_domain::{AutomationId, BackgroundTaskId};
 
 use crate::automation::AutomationAction;
 use crate::error::AutomationError;
@@ -31,59 +27,4 @@ pub trait AutomationDispatcher: Send + Sync {
         automation_id: &AutomationId,
         action: &AutomationAction,
     ) -> Result<BackgroundTaskId, AutomationError>;
-}
-
-/// 把动作映射为 TaskManager 注册的 task kind。
-///
-/// 默认 `TaskKind::Automation`；`StartBackgroundTask` 显式指定 kind 时尊重之。
-fn kind_for(action: &AutomationAction) -> TaskKind {
-    match action {
-        AutomationAction::StartBackgroundTask { task_kind } => *task_kind,
-        _ => TaskKind::Automation,
-    }
-}
-
-/// task-manager 适配实现：经注入的 [`TaskManager`] 注册（Queued）并 start。
-///
-/// 不直接 spawn 子进程：prompt / tool call / automation 类任务的执行语义由后台
-/// 任务系统与 agent engine 落地；这里只产出可追踪的 background task 句柄。
-#[derive(Clone)]
-pub struct TaskManagerDispatcher {
-    task_manager: TaskManager,
-}
-
-impl TaskManagerDispatcher {
-    pub fn new(task_manager: TaskManager) -> Self {
-        Self { task_manager }
-    }
-
-    /// 注入的 TaskManager 句柄。
-    pub fn task_manager(&self) -> &TaskManager {
-        &self.task_manager
-    }
-}
-
-impl AutomationDispatcher for TaskManagerDispatcher {
-    fn dispatch(
-        &self,
-        automation_id: &AutomationId,
-        action: &AutomationAction,
-    ) -> Result<BackgroundTaskId, AutomationError> {
-        let kind = kind_for(action);
-        let task_id = self.task_manager.register(kind, None).map_err(|err| {
-            AutomationError::DispatchFailed {
-                automation_id: automation_id.clone(),
-                detail: err.to_string(),
-            }
-        })?;
-        // start 把 Queued → Running 并发出 TaskEvent::Started；失败时清理 queued
-        // 记录以避免幽灵任务（register 的 queued 为持久化前瞬态，安全丢弃）。
-        if let Err(err) = self.task_manager.start(&task_id) {
-            return Err(AutomationError::DispatchFailed {
-                automation_id: automation_id.clone(),
-                detail: format!("start failed: {err}"),
-            });
-        }
-        Ok(task_id)
-    }
 }

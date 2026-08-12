@@ -73,6 +73,10 @@ impl ReviewState {
                 anchor,
                 severity,
                 body,
+                evidence,
+                assignee,
+                suggested_patch,
+                fingerprint,
             } => {
                 let session = self
                     .sessions
@@ -91,12 +95,12 @@ impl ReviewState {
                         anchor: anchor.clone(),
                         severity: *severity,
                         body: body.clone(),
-                        evidence: Vec::new(),
-                        assignee: None,
+                        evidence: evidence.clone(),
+                        assignee: assignee.clone(),
                         resolution: ReviewResolution::Open,
                         fix_ref: None,
-                        suggested_patch: None,
-                        anchor_fingerprint: None,
+                        suggested_patch: suggested_patch.clone(),
+                        anchor_fingerprint: fingerprint.clone(),
                     },
                 );
             }
@@ -301,15 +305,12 @@ impl ReviewEngine {
             anchor: input.anchor.clone(),
             severity: input.severity,
             body: input.body.clone(),
+            evidence: input.evidence,
+            assignee: input.assignee,
+            suggested_patch: input.suggested_patch,
+            fingerprint: resolved.fingerprint,
         };
         state.apply(&event)?;
-        // 富快照字段（evidence / assignee / suggested_patch / anchor_fingerprint）
-        // 不属于 canonical 事件流，由命令写入内存态；快照由 session-store 持久化。
-        let finding = state.finding_mut(&input.session_id, &finding_id)?;
-        finding.evidence = input.evidence;
-        finding.assignee = input.assignee;
-        finding.suggested_patch = input.suggested_patch;
-        finding.anchor_fingerprint = resolved.fingerprint;
         Ok(event)
     }
 
@@ -353,11 +354,12 @@ impl ReviewEngine {
                 anchor: draft.anchor,
                 severity: draft.severity,
                 body: draft.body,
+                evidence: draft.evidence,
+                assignee: None,
+                suggested_patch: None,
+                fingerprint: resolved.fingerprint,
             };
             state.apply(&event)?;
-            let finding = state.finding_mut(session_id, &finding_id)?;
-            finding.evidence = draft.evidence;
-            finding.anchor_fingerprint = resolved.fingerprint;
             events.push(event);
         }
         Ok(events)

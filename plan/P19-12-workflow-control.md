@@ -30,5 +30,6 @@
 - [ ] 时区/DST/错过触发/重复事件有明确展示与测试
 - [ ] cancel/resume/restart/forget 等动作带 revision/Policy 并由 Event 确认
 - [ ] capability 未交付时页面明确 unavailable，不用本地 mock 冒充
+- [ ] **（P16-10 延期接线）Plan/Goal host 接线**：Plan create/review/approve 与 Goal objective/criteria/progress 经 `app-service`/`core-api`/`EventHub` 暴露并由本控制面消费；Plan 审批 gate、Goal criterion satisfied 位事件化与人审可证由 core 侧满足（修复 P16-1/2/3 无 reverse dependent、审批不入 Agent Loop gate、criterion 不事件化、steer 不入 context、resume 预算由调用方直传）；GUI 只消费已交付 core 契约，capability 未交付时页面 unavailable。见 [p16-review §2.1/§2.2](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
 
 **相关文档**：[agent-engine](../docs/features/agent-engine.md) · [Desktop GUI](../docs/features/desktop-gui.md) · [P16-1](P16-1-plan-mode.md) · [P16-4](P16-4-background-task-manager.md) · [P16-5](P16-5-scheduled-automation.md)

@@ -119,6 +119,23 @@ impl AutomationState {
         self.views.get(id).map(|v| v.fired).unwrap_or(0)
     }
 
+    /// 只读：`task_id` 是否由该 automation 的 canonical `Triggered` 事件产生。
+    pub fn was_triggered_task(
+        &self,
+        automation_id: &AutomationId,
+        task_id: &BackgroundTaskId,
+    ) -> bool {
+        self.log.iter().any(|event| {
+            matches!(
+                event,
+                AutomationEvent::Triggered {
+                    automation_id: owner,
+                    task_id: triggered,
+                } if owner == automation_id && triggered == task_id
+            )
+        })
+    }
+
     /// 只读：归档结果列表。
     pub fn archived(&self) -> &[ArchivedResult] {
         &self.archived

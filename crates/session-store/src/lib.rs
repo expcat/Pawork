@@ -16,8 +16,7 @@ use std::path::{Path, PathBuf};
 
 use app_database::{DatabaseActor, DatabaseError};
 pub use compat_import::{
-    parse_diff_anchors_owned, CompatImportReport, ExternalRecord, ExternalSource,
-    ParsedExternalSession,
+    CompatImportReport, ExternalRecord, ExternalSource, ParsedExternalSession,
 };
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
 pub use export_import::{
@@ -157,4 +156,12 @@ pub enum SessionStoreError {
     CompatSecretDetected { pattern: String },
     #[error("compat import replay validation failed: {0}")]
     CompatValidationFailed(String),
+    #[error(
+        "compat import identity conflict for source {source_label} / original_id {original_id}: \
+         same identity already imported with different content; refusing to create a second session"
+    )]
+    CompatImportConflict {
+        source_label: String,
+        original_id: String,
+    },
 }

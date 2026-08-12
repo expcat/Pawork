@@ -5,9 +5,9 @@
 //! （校验由命令面 [`crate::GoalService`] 完成）；崩溃后重放事件序列即可重建
 //! Goal、生命周期状态、进度、转向历史与剩余预算。
 //!
-//! 重放边界：canonical 事件集不包含逐项 criterion 满足事件，`satisfied`
-//! 满足位是命令面维护的运行内存事实；进度经 `ProgressUpdated` 以命中率快照
-//! 形式持久化，可追溯。
+//! 重放完整性（ADR-016）：单项 criterion 满足位由 `CriterionSatisfied` 持久化，
+//! 命中率进度由 `ProgressUpdated` 快照；二者同时产出，replay 后 criteria 与
+//! progress 不再自相矛盾（满足位可恢复，live→fresh snapshot 完整相等）。
 
 use agent_domain::{GoalEvent, GoalId, GoalStatus, SuccessCriterionSnapshot};
 
@@ -110,6 +110,13 @@ pub fn apply(state: &mut GoalState, event: &GoalEvent) {
         GoalEvent::ProgressUpdated { progress, .. } => {
             // progress 是已校验事实；防御性收敛到 [0,1] 保持不变量。
             state.progress = progress.clamp(0.0, 1.0);
+        }
+        GoalEvent::CriterionSatisfied { criterion_id, .. } => {
+            // 单项满足位是已校验事实（命令面负责 Auto/Human 校验）；
+            // 未知 criterion_id 防御性忽略，保持 apply 的「事件即事实」语义。
+            if let Some(criterion) = state.criterion_mut(criterion_id) {
+                criterion.satisfied = true;
+            }
         }
         GoalEvent::Paused { .. } => {
             state.status = GoalStatus::Paused;

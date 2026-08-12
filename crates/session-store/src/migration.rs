@@ -5,7 +5,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::SessionStoreError;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 5;
+pub const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 struct Migration {
     version: u32,
@@ -154,6 +154,21 @@ const MIGRATIONS: &[Migration] = &[
             );
         "#,
     },
+    Migration {
+        version: 6,
+        name: "compat_import_identity",
+        sql: r#"
+            CREATE TABLE compat_import_identity (
+                source TEXT NOT NULL,
+                original_id TEXT NOT NULL,
+                content_fingerprint TEXT NOT NULL,
+                session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                PRIMARY KEY (source, original_id)
+            );
+            CREATE INDEX idx_compat_import_identity_session
+                ON compat_import_identity(session_id);
+        "#,
+    },
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -296,7 +311,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("open store");
         assert_eq!(report.from_version, 0);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![1, 2, 3, 4, 5]);
+        assert_eq!(report.applied_versions, vec![1, 2, 3, 4, 5, 6]);
         assert!(report.backup_path.is_none());
         let tables: Vec<String> = store
             .database()

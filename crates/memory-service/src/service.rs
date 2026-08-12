@@ -101,7 +101,7 @@ impl MemoryService {
             confidence,
             privacy,
             workspace_id: resolved_ws.clone(),
-            embedding,
+            embedding: embedding.clone(),
             valid: true,
         };
         self.store.ingest(memory);
@@ -112,6 +112,8 @@ impl MemoryService {
             source_event_id,
             privacy,
             workspace_id: resolved_ws,
+            embedding,
+            confidence,
         })
     }
 
@@ -315,7 +317,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replay_via_apply_matches_live_path_validity() {
+    async fn replay_via_apply_matches_live_path_completely() {
         let mut service = svc();
         let recorded = service
             .record(
@@ -325,20 +327,26 @@ mod tests {
             )
             .await
             .unwrap();
-        let MemoryEvent::Recorded {
-            memory_id, summary, ..
-        } = recorded.clone()
-        else {
+        let MemoryEvent::Recorded { memory_id, .. } = &recorded else {
             panic!("recorded");
         };
+        let memory_id = memory_id.clone();
 
-        // 用 apply 重放到全新 service：validity / summary 一致，embedding 为空。
+        // 用 apply 重放到全新 service：embedding / confidence / 全字段完整一致。
         let mut replay = svc();
         replay.apply(&recorded);
+        let live = service.get(&memory_id).unwrap();
         let replayed = replay.get(&memory_id).unwrap();
-        assert_eq!(replayed.summary, summary);
-        assert!(replayed.valid);
-        assert!(replayed.embedding.is_empty());
+        assert_eq!(replayed.memory_id, live.memory_id);
+        assert_eq!(replayed.summary, live.summary);
+        assert_eq!(replayed.source_event_id, live.source_event_id);
+        assert_eq!(replayed.confidence, live.confidence);
+        assert_eq!(replayed.privacy, live.privacy);
+        assert_eq!(replayed.workspace_id, live.workspace_id);
+        assert_eq!(replayed.embedding, live.embedding);
+        assert_eq!(replayed.valid, live.valid);
+        // replay 后 embedding 不再为空（ADR-016）。
+        assert!(!replayed.embedding.is_empty());
     }
 
     #[tokio::test]
