@@ -9,3 +9,9 @@ description = "Pawork P16-7 Long-term Memory：只读提炼、canonical Embeddin
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+agent-events = { path = "../agent-events" }
+provider-api = { path = "../provider-api" }
+thiserror.workspace = true
+[dev-dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
