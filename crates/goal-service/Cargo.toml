@@ -9,3 +9,10 @@ description = "Pawork P16-3 Goal Mode：可验证成功标准、进度度量、p
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+parking_lot.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+agent-events = { path = "../agent-events" }
+serde_json.workspace = true
