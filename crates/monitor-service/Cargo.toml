@@ -9,3 +9,16 @@ description = "Pawork P16-6 Persistent Process / Monitor：声明式监视循环
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+agent-events = { path = "../agent-events" }
+task-manager = { path = "../task-manager" }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+process-runtime = { path = "../process-runtime" }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
