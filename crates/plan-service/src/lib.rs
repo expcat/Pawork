@@ -3,13 +3,15 @@
 //! # 职责
 //! Plan 是 Agent 在动手前产出的「只读建议」——有序、可勾选的步骤序列。本
 //! crate 提供进程内内存的 Plan 聚合：步骤状态机（`pending → in_progress →
-//! completed | blocked`，`blocked → in_progress`）、版本替换与修订链，以及
-//! event-sourcing 的 [`apply`] / [`replay`] 恢复入口。
+//! completed | blocked`，`blocked → in_progress`）、版本替换与修订链、评审
+//! 状态机（`draft → in_review → changes_requested → approved | rejected`）、
+//! 行锚点评审意见与审批 gate，以及 event-sourcing 的 [`apply`] / [`replay`]
+//! 恢复入口。
 //!
 //! # 关键约束（只读）
 //! Plan **不携带任何写入 / 工具执行能力**：[`PlanService`] 不暴露 spawn /
 //! exec / write API，步骤文本仅作为惰性数据保存，绝不作为命令通道。审批
-//! （P16-2）仅作为执行 gate 放行，不扩权。
+//! 仅作为执行 gate 放行（[`PlanService::is_approved_for_execution`]），不扩权。
 //!
 //! # 设计要点
 //! - canonical 领域类型与事件载荷复用 `agent_domain::workflow`（`PlanEvent`

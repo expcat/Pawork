@@ -6,17 +6,18 @@
 //! 当前 Plan 与进度。
 //!
 //! 评审 / 审批变体（`ReviewRequested` / `Revised` / `Approved` / `Rejected` /
-//! `CommentAdded`）在此仅做最小折叠以保持重放一致性，完整命令面语义由 P16-2 补齐。
+//! `CommentAdded`）在此折叠为评审状态机、评审意见列表与审批 checkpoint；
+//! 命令面语义由 [`crate::PlanService`] 校验。
 
 use agent_domain::{
-    PlanCommentAnchor, PlanEvent, PlanId, PlanReviewStatus, PlanStepId, PlanStepSnapshot,
-    PlanStepStatus, PlanVersionId,
+    CheckpointId, PlanCommentAnchor, PlanEvent, PlanId, PlanReviewStatus, PlanStepId,
+    PlanStepSnapshot, PlanStepStatus, PlanVersionId,
 };
 
 use crate::snapshot::{PlanSnapshot, PlanVersionInfo};
 
-/// 一条评审意见（P16-2 在命令面正式启用；P16-1 仅在 `apply` 中保留以支持重放）。
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// 一条评审意见（行锚点 + 正文；serde 可序列化，随快照对外查询）。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlanComment {
     pub anchor: PlanCommentAnchor,
     pub body: String,
@@ -26,7 +27,8 @@ pub struct PlanComment {
 ///
 /// 持有当前版本的 title / steps / version / parent 指针、全部版本历史
 /// （修订链）、评审状态（P16-1 默认 [`PlanReviewStatus::Draft`]）与当前版本下
-/// 的评审意见。本结构不执行任何 IO，可被自由克隆 / 比较。
+/// 的评审意见、审批 checkpoint（批准点，可回滚）。本结构不执行任何 IO，可被
+/// 自由克隆 / 比较。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlanState {
     plan_id: Option<PlanId>,
@@ -37,6 +39,7 @@ pub struct PlanState {
     history: Vec<PlanVersionInfo>,
     review_status: PlanReviewStatus,
     comments: Vec<PlanComment>,
+    approved_checkpoint_id: Option<CheckpointId>,
 }
 
 impl PlanState {
@@ -68,6 +71,11 @@ impl PlanState {
         &self.history
     }
 
+    /// 当前版本审批时关联的 checkpoint（批准点，可回滚）；未审批时 `None`。
+    pub fn approved_checkpoint_id(&self) -> Option<&CheckpointId> {
+        self.approved_checkpoint_id.as_ref()
+    }
+
     /// 构造查询面快照；尚未 `Created` 时返回 `None`。
     pub fn snapshot(&self) -> Option<PlanSnapshot> {
         let plan_id = self.plan_id.clone()?;
@@ -79,6 +87,8 @@ impl PlanState {
             title,
             steps: self.steps.clone(),
             review_status: self.review_status,
+            comments: self.comments.clone(),
+            approved_checkpoint_id: self.approved_checkpoint_id.clone(),
         })
     }
 
@@ -124,6 +134,7 @@ pub fn apply(state: &mut PlanState, event: &PlanEvent) {
             });
             state.review_status = PlanReviewStatus::Draft;
             state.comments.clear();
+            state.approved_checkpoint_id = None;
         }
         PlanEvent::StepUpdated {
             step_id, status, ..
@@ -153,11 +164,19 @@ pub fn apply(state: &mut PlanState, event: &PlanEvent) {
             });
             state.review_status = PlanReviewStatus::Draft;
             state.comments.clear();
+            state.approved_checkpoint_id = None;
         }
-        // —— P16-2 评审/审批变体的最小折叠（保持重放一致性；命令面语义待 P16-2）——
+        // —— P16-2 评审/审批变体的折叠 ——
+        // `ReviewRequested` 推进「评审回合」：Draft → InReview（首次提交评审），
+        // InReview → ChangesRequested（评审方请求修改后再提交）。事件是已校验
+        // 事实，此处按当前状态推进；重放序列一致即可确定性重建状态。
         PlanEvent::ReviewRequested { version, .. } => {
             if state.current_version.as_ref() == Some(version) {
-                state.review_status = PlanReviewStatus::InReview;
+                state.review_status = match state.review_status {
+                    PlanReviewStatus::Draft => PlanReviewStatus::InReview,
+                    PlanReviewStatus::InReview => PlanReviewStatus::ChangesRequested,
+                    other => other,
+                };
             }
         }
         PlanEvent::Revised {
@@ -168,6 +187,7 @@ pub fn apply(state: &mut PlanState, event: &PlanEvent) {
             state.current_version = Some(version.clone());
             state.parent_version = Some(parent_version.clone());
             state.review_status = PlanReviewStatus::Draft;
+            state.approved_checkpoint_id = None;
             if !state.history.iter().any(|h| &h.version == version) {
                 let title = state.title.clone().unwrap_or_default();
                 let steps = state.steps.clone();
@@ -179,14 +199,20 @@ pub fn apply(state: &mut PlanState, event: &PlanEvent) {
                 });
             }
         }
-        PlanEvent::Approved { version, .. } => {
+        PlanEvent::Approved {
+            version,
+            checkpoint_id,
+            ..
+        } => {
             if state.current_version.as_ref() == Some(version) {
                 state.review_status = PlanReviewStatus::Approved;
+                state.approved_checkpoint_id = checkpoint_id.clone();
             }
         }
         PlanEvent::Rejected { version, .. } => {
             if state.current_version.as_ref() == Some(version) {
                 state.review_status = PlanReviewStatus::Rejected;
+                state.approved_checkpoint_id = None;
             }
         }
         PlanEvent::CommentAdded { anchor, body, .. } => {

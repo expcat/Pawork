@@ -7,7 +7,8 @@
 use parking_lot::Mutex;
 
 use agent_domain::{
-    PlanEvent, PlanId, PlanStepId, PlanStepSnapshot, PlanStepStatus, PlanVersionId,
+    CheckpointId, PlanCommentAnchor, PlanEvent, PlanId, PlanReviewStatus, PlanStepId,
+    PlanStepSnapshot, PlanStepStatus, PlanVersionId,
 };
 
 use crate::error::PlanError;
@@ -172,6 +173,210 @@ impl PlanService {
     pub fn version_history(&self) -> Vec<PlanVersionInfo> {
         self.inner.lock().state.history().to_vec()
     }
+
+    /// 提交评审：`Draft → InReview`；返回 [`PlanEvent::ReviewRequested`]。
+    pub fn request_review(&self, version: &PlanVersionId) -> Result<PlanEvent, PlanError> {
+        let mut inner = self.inner.lock();
+        let state = &mut inner.state;
+        let plan_id = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
+        check_current_version(state, version)?;
+        let from = state.review_status();
+        if from != PlanReviewStatus::Draft {
+            return Err(PlanError::IllegalReviewTransition {
+                from,
+                to: PlanReviewStatus::InReview,
+            });
+        }
+        let event = PlanEvent::ReviewRequested {
+            plan_id,
+            version: version.clone(),
+        };
+        apply(state, &event);
+        Ok(event)
+    }
+
+    /// 评审方请求修改：`InReview → ChangesRequested`；同样发出
+    /// [`PlanEvent::ReviewRequested`]（推进「评审回合」，apply 按当前状态折叠）。
+    pub fn request_changes(&self, version: &PlanVersionId) -> Result<PlanEvent, PlanError> {
+        let mut inner = self.inner.lock();
+        let state = &mut inner.state;
+        let plan_id = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
+        check_current_version(state, version)?;
+        let from = state.review_status();
+        if from != PlanReviewStatus::InReview {
+            return Err(PlanError::IllegalReviewTransition {
+                from,
+                to: PlanReviewStatus::ChangesRequested,
+            });
+        }
+        let event = PlanEvent::ReviewRequested {
+            plan_id,
+            version: version.clone(),
+        };
+        apply(state, &event);
+        Ok(event)
+    }
+
+    /// 修订：`ChangesRequested → Draft`（新版本，`parent_version` 指向被修订版本）。
+    /// 校验 `parent_version` 必须等于当前版本且新版本不同于 parent（保留修订链）。
+    pub fn revise(
+        &self,
+        version: &PlanVersionId,
+        parent_version: &PlanVersionId,
+    ) -> Result<PlanEvent, PlanError> {
+        let mut inner = self.inner.lock();
+        let state = &mut inner.state;
+        let plan_id = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
+        let current = state.current_version().cloned().ok_or(PlanError::NotCreated)?;
+        if &current != parent_version {
+            return Err(PlanError::VersionMismatch {
+                expected: current,
+                actual: parent_version.clone(),
+            });
+        }
+        if version == parent_version {
+            return Err(PlanError::SameVersion(version.clone()));
+        }
+        let from = state.review_status();
+        if from != PlanReviewStatus::ChangesRequested {
+            return Err(PlanError::NotChangesRequested { current: from });
+        }
+        let event = PlanEvent::Revised {
+            plan_id,
+            version: version.clone(),
+            parent_version: parent_version.clone(),
+        };
+        apply(state, &event);
+        Ok(event)
+    }
+
+    /// 审批通过：`InReview | ChangesRequested → Approved`；`checkpoint_id` 标记
+    /// 批准点（可回滚）。审批仅作为执行 gate 放行，不赋予任何写 / 执行能力。
+    pub fn approve(
+        &self,
+        plan_id: &PlanId,
+        version: &PlanVersionId,
+        checkpoint_id: Option<CheckpointId>,
+    ) -> Result<PlanEvent, PlanError> {
+        let mut inner = self.inner.lock();
+        let state = &mut inner.state;
+        check_plan_version(state, plan_id, version)?;
+        let from = state.review_status();
+        if !matches!(
+            from,
+            PlanReviewStatus::InReview | PlanReviewStatus::ChangesRequested
+        ) {
+            return Err(PlanError::IllegalReviewTransition {
+                from,
+                to: PlanReviewStatus::Approved,
+            });
+        }
+        let event = PlanEvent::Approved {
+            plan_id: plan_id.clone(),
+            version: version.clone(),
+            checkpoint_id,
+        };
+        apply(state, &event);
+        Ok(event)
+    }
+
+    /// 审批拒绝：`InReview | ChangesRequested → Rejected`；`reason` 必填。
+    pub fn reject(
+        &self,
+        plan_id: &PlanId,
+        version: &PlanVersionId,
+        reason: &str,
+    ) -> Result<PlanEvent, PlanError> {
+        if reason.trim().is_empty() {
+            return Err(PlanError::EmptyReason);
+        }
+        let mut inner = self.inner.lock();
+        let state = &mut inner.state;
+        check_plan_version(state, plan_id, version)?;
+        let from = state.review_status();
+        if !matches!(
+            from,
+            PlanReviewStatus::InReview | PlanReviewStatus::ChangesRequested
+        ) {
+            return Err(PlanError::IllegalReviewTransition {
+                from,
+                to: PlanReviewStatus::Rejected,
+            });
+        }
+        let event = PlanEvent::Rejected {
+            plan_id: plan_id.clone(),
+            version: version.clone(),
+            reason: reason.to_owned(),
+        };
+        apply(state, &event);
+        Ok(event)
+    }
+
+    /// 追加行锚点评审意见（锚点 `step_id` 必须是当前版本的既有步骤）；返回
+    /// [`PlanEvent::CommentAdded`]。
+    pub fn add_comment(
+        &self,
+        plan_id: &PlanId,
+        version: &PlanVersionId,
+        anchor: PlanCommentAnchor,
+        body: &str,
+    ) -> Result<PlanEvent, PlanError> {
+        if body.trim().is_empty() {
+            return Err(PlanError::EmptyComment);
+        }
+        let mut inner = self.inner.lock();
+        let state = &mut inner.state;
+        check_plan_version(state, plan_id, version)?;
+        if !state.steps().iter().any(|s| s.step_id == anchor.step_id) {
+            return Err(PlanError::StepNotFound(anchor.step_id.clone()));
+        }
+        let event = PlanEvent::CommentAdded {
+            plan_id: plan_id.clone(),
+            version: version.clone(),
+            anchor,
+            body: body.to_owned(),
+        };
+        apply(state, &event);
+        Ok(event)
+    }
+
+    /// 执行 gate：仅当该 Plan 版本已 [`PlanReviewStatus::Approved`] 才放行；
+    /// 未创建 / plan_id 或 version 不匹配 / 任何未批准状态一律返回 `false`。
+    /// 本 gate 只做只读判定，不授予任何写 / 执行能力。
+    pub fn is_approved_for_execution(&self, plan_id: &PlanId, version: &PlanVersionId) -> bool {
+        let inner = self.inner.lock();
+        inner.state.plan_id().is_some_and(|p| p == plan_id)
+            && inner.state.current_version().is_some_and(|v| v == version)
+            && inner.state.review_status() == PlanReviewStatus::Approved
+    }
+}
+
+/// 校验 `plan_id` / `version` 与当前聚合一致（版本化命令共用前置）。
+fn check_plan_version(
+    state: &PlanState,
+    plan_id: &PlanId,
+    version: &PlanVersionId,
+) -> Result<(), PlanError> {
+    let expected = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
+    if &expected != plan_id {
+        return Err(PlanError::PlanIdMismatch {
+            expected,
+            actual: plan_id.clone(),
+        });
+    }
+    check_current_version(state, version)
+}
+
+/// 校验 `version` 等于当前版本。
+fn check_current_version(state: &PlanState, version: &PlanVersionId) -> Result<(), PlanError> {
+    let current = state.current_version().cloned().ok_or(PlanError::NotCreated)?;
+    if &current != version {
+        return Err(PlanError::VersionMismatch {
+            expected: current,
+            actual: version.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn build_steps(inner: &mut Inner, step_texts: Vec<String>) -> Vec<PlanStepSnapshot> {
