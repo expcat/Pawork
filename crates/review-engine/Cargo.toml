@@ -9,3 +9,12 @@ description = "Pawork P16-8 Review Engine：行锚点评审、re-anchor 与 reso
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+agent-events = { path = "../agent-events" }
+diff-service = { path = "../diff-service" }
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
