@@ -10,6 +10,7 @@ mod message;
 mod reasoning;
 mod server_tool;
 mod tool;
+mod workflow;
 
 pub use cancel::{CancellationFuture, CancellationToken};
 pub use error::{ErrorCategory, ErrorContext};
@@ -18,3 +19,4 @@ pub use message::*;
 pub use reasoning::*;
 pub use server_tool::*;
 pub use tool::*;
+pub use workflow::*;

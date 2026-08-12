@@ -68,6 +68,14 @@ members = [
     "crates/usage-ledger",
     "crates/quota-service",
     "crates/orchestration",
+    # Phase 16 Modern Agent Workflow
+    "crates/plan-service",
+    "crates/goal-service",
+    "crates/task-manager",
+    "crates/automation-service",
+    "crates/monitor-service",
+    "crates/memory-service",
+    "crates/review-engine",
 ]
 # crates/ 下的核心 crate 随对应任务陆续创建并登记到 members。
 

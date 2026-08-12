@@ -6,12 +6,16 @@
 use std::{error::Error, fmt};
 
 use agent_domain::{
-    ArtifactId, CheckpointId, ErrorContext, EventId, Message, MessageId, ProviderId,
+   ArtifactId, CheckpointId, ErrorContext, EventId, Message, MessageId, ProviderId,
     ProviderTranscriptEnvelope, RequestId, RunId, ServerToolEvent, SessionId, StopReason,
     Timestamp, TokenUsage, ToolCallId, ToolKind, ToolResultContent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+// Phase 16 Modern Agent Workflow canonical 事件载荷（agent-domain 定义，wrapping 入口）。
+use agent_domain::{
+    AutomationEvent, GoalEvent, MemoryEvent, MonitorEvent, PlanEvent, ReviewEvent, TaskEvent,
+};
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -190,9 +194,23 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
-    RunFailed {
-        error: ErrorContext,
-    },
+   RunFailed {
+       error: ErrorContext,
+   },
+    /// Phase 16 P16-1/P16-2 Plan Mode 事件（只读计划与评审/审批 gate）。
+    Plan(PlanEvent),
+    /// Phase 16 P16-3 Goal Mode 事件（目标、成功标准、进度与转向）。
+    Goal(GoalEvent),
+    /// Phase 16 P16-4 Background Task Manager 事件（统一四 kind 任务）。
+    Task(TaskEvent),
+    /// Phase 16 P16-5 Scheduled Automation 事件（cron/interval/once/event + inbox）。
+    Automation(AutomationEvent),
+    /// Phase 16 P16-6 Persistent Process / Monitor 事件（常驻进程与监视循环）。
+    Monitor(MonitorEvent),
+    /// Phase 16 P16-7 Long-term Memory 事件（只读提炼、嵌入检索、失效）。
+    Memory(MemoryEvent),
+    /// Phase 16 P16-8 Review Engine 事件（行锚点评审与 resolution）。
+    Review(ReviewEvent),
     /// 向前兼容的诊断事件；未知 Provider 元数据不得污染 canonical 分支。
     Diagnostic {
         code: String,

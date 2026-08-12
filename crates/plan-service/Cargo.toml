@@ -1,0 +1,11 @@
+[package]
+name = "plan-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork P16-1/P16-2 Plan Mode：只读计划状态机、版本替换、评审与审批 gate"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }

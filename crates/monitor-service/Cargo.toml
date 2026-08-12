@@ -1,0 +1,11 @@
+[package]
+name = "monitor-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork P16-6 Persistent Process / Monitor：声明式监视循环与常驻进程"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }

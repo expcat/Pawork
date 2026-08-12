@@ -78,6 +78,19 @@ string_id!(
     ToolExecutionId,
     WorkspaceId,
 );
+// Phase 16 Modern Agent Workflow 领域 ID（P16-1～P16-8）。
+string_id!(
+    PlanId,
+    PlanStepId,
+    PlanVersionId,
+    GoalId,
+    BackgroundTaskId,
+    AutomationId,
+    MonitorId,
+    MemoryId,
+    ReviewSessionId,
+    ReviewFindingId,
+);
 
 /// Unix epoch 起的毫秒数。使用整数可保证跨语言无损序列化。
 #[derive(

@@ -1,0 +1,11 @@
+[package]
+name = "memory-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork P16-7 Long-term Memory：只读提炼、canonical EmbeddingProvider 检索注入"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
