@@ -503,6 +503,84 @@ impl fmt::Debug for ResolvedCredential {
     }
 }
 
+// =========================================================================
+// Canonical Embedding 契约（P16-7）—— Provider 的另一项 canonical 能力
+// =========================================================================
+
+/// Embedding 模型能力声明。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbeddingCapabilities {
+    /// 输出向量维度（`None` 表示使用模型默认维度）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<u32>,
+    /// 单条输入 token 上限。
+    pub max_input_tokens: u64,
+    /// 单次请求最大输入条数（batch size）。
+    #[serde(default)]
+    pub batch_size: u32,
+}
+
+/// Embedding 模型目录条目。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbeddingModelDefinition {
+    pub id: ModelId,
+    pub display_name: String,
+    pub capabilities: EmbeddingCapabilities,
+}
+
+/// Embedding 用量。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbeddingUsage {
+    #[serde(default)]
+    pub prompt_tokens: u64,
+}
+
+/// Canonical embedding 请求（provider-neutral）。
+///
+/// 不携带 Provider 名称；维度等选项走 canonical 字段，**禁止用 provider_options
+/// 绕过**。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbeddingRequest {
+    pub model: ModelId,
+    pub inputs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<u32>,
+}
+
+/// Canonical embedding 响应（向量与 usage）。
+///
+/// `vectors` 与 [`EmbeddingRequest::inputs`] 顺序对齐。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EmbeddingResponse {
+    pub model: ModelId,
+    pub vectors: Vec<Vec<f32>>,
+    #[serde(default)]
+    pub usage: EmbeddingUsage,
+}
+
+/// Canonical embedding provider 能力。
+///
+/// embedding 是 Provider 的另一项 canonical 能力，与 [`ModelProvider`] 平级。
+/// `memory-service` 只消费本 trait：**禁止按 Provider 名称调用不同 API、禁止
+/// 用 `provider_options` 绕过 canonical、禁止私自实现 Provider-specific 请求**。
+/// 各 `provider-*` 实现本 trait；Core 不感知 Provider 名。
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    fn id(&self) -> ProviderId;
+
+    async fn list_embedding_models(
+        &self,
+        credential: Option<&ResolvedCredential>,
+    ) -> Result<Vec<EmbeddingModelDefinition>, ProviderError>;
+
+    async fn embed(
+        &self,
+        request: EmbeddingRequest,
+        credential: Option<&ResolvedCredential>,
+        cancel: CancellationToken,
+    ) -> Result<EmbeddingResponse, ProviderError>;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CredentialKind {
     ApiKey,
