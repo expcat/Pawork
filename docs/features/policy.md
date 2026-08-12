@@ -57,7 +57,7 @@ Phase 4 remediation 已把 `PolicyEngine::decide()` 接入 Tool Scheduler。`Too
 
 ## Phase 15–17 执行与 Hook 边界
 
-- Policy 输入包含 `ToolKind` / `ExecutionOwner` / `ContinuationMode` 与后端 trust boundary。`ClientFunction` 可授权 Core 本地执行；`ProviderHosted` / `ProviderExtension` 只能授权声明、外部执行与 transcript continuation，授权不会把它们变成本地工具。
+- Policy 输入包含 `ToolKind`（三执行位点，`ExecutionOwner` 冗余枚举已按 [P15-10](../../plan/P15-10-review-remediation.md) 删除）/ `ContinuationMode` 与后端 trust boundary。`ClientFunction` 可授权 Core 本地执行；`ProviderHosted` / `ProviderExtension` 只能授权声明、外部执行与 transcript continuation，授权不会把它们变成本地工具。
 - 跨 Local / MCP / ProviderHosted 的 Browser/Computer fallback 必须重新评估 Policy、显式告知并写审计事件，不继承另一 trust boundary 的审批。
 - User Hook 与 WASM lifecycle hook 是独立主体。`PromptTransform` 只能改写允许层，变换后必须重新验证不可变 system/security policy；Command/Http/McpTool/PromptEval/AgentEval 不因 hook 身份获得额外权限。
 - Automation 外部 Trigger、Marketplace、Forge publish 与远程 Client Channel 都必须带已认证 `CommandSource`、幂等键和作用域；接收事件不等于授权外部副作用。

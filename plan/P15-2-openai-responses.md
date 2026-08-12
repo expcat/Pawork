@@ -1,8 +1,8 @@
 # P15-2：OpenAI Responses 适配
 
-> Phase 15 · Provider Native Capabilities · 状态：🟢已实现（待 P15-9 集中能力矩阵验收与持久化 protector 接入） · 交付成熟度：Built · 依赖：P15-1、P15-5、P15-7、P15-8、P6-1
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：domain + adapter verified、host composition deferred） · 依赖：P15-1、P15-5、P15-7、P15-8、P6-1
 >
-> 2026-08-12 进展：`provider-openai` Responses 子适配器已落地（`responses.rs`），与 P6-1 Chat Completions 并存，transport 由 P15-8 `CapabilityNegotiator` 选择（内置目录中 `o3` / `gpt-4.1` 声明 `transport = Responses`，基线模型降级到 Chat Completions 并记录 `LegacyTransport`）。reasoning `encrypted_content` 只经 `ReasoningProtector` 边界往返（默认 `InMemoryReasoningProtector`，host 经 `with_reasoning_protector` 注入 P15-7 `ReasoningStateBridge`）。hosted tools（web_search / file_search / code_interpreter / image_generation / local_shell / apply_patch / computer_use / mcp）按协商结果放行，未通过项不发送（`Reject`）。错误归一覆盖 vector store 未就绪 / code_interpreter 与 hosted shell 超时 / computer_use 需确认 / MCP 与 skill 不可用。Mock smoke 覆盖 item→event、citations、reasoning 往返、降级与 no_provider_branch 断言。
+> 2026-08-12 进展：`provider-openai` Responses 子适配器已落地（`responses.rs`），与 P6-1 Chat Completions 并存，transport 由 P15-8 `CapabilityNegotiator` 选择（内置目录中 `o3` / `gpt-4.1` 声明 `transport = Responses`，基线模型降级到 Chat Completions 并记录 `LegacyTransport`）。reasoning `encrypted_content` 只经统一 `provider-runtime::reasoning::ReasoningProtector` 边界往返（默认 `InMemoryReasoningProtector`，host 经 `with_reasoning_protector(Arc<dyn ReasoningProtector>)` 注入；持久化 `ProtectedBlobStoreProtector` 接线延 P18-3/4/14，见 [P15-10](P15-10-review-remediation.md)）。hosted tools（web_search / file_search / code_interpreter / image_generation / local_shell / apply_patch / computer_use / mcp）按协商结果放行，未通过项不发送（`Reject`）。错误归一覆盖 vector store 未就绪 / code_interpreter 与 hosted shell 超时 / computer_use 需确认 / MCP 与 skill 不可用。Mock smoke 覆盖 item→event、citations、reasoning 往返、降级与 no_provider_branch 断言。
 
 **最终目的**：为 `provider-openai` 增加 OpenAI Responses API（`/v1/responses`）传输路径，作为 Chat Completions 之外的现代入口，原生承载 reasoning items，以及 Web Search、File Search、Image Generation、Code Interpreter、Hosted Shell、Provider Apply Patch、Skills、Computer Use、server-side MCP、Tool Search 与 Function Calling；同时为 Programmatic Tool Calling 和 API Multi-Agent 保留 canonical 路径。所有 citations、output items 与 encrypted reasoning content 统一经 canonical 域，不在 Core 走 Provider 特例。
 
@@ -36,7 +36,7 @@
 - [x] 不在 Core 走 OpenAI 名称分支（`no_provider_branch` 断言）—— transport 选择纯函数读 `ModelCapabilities.transport`，不读 Provider 名；`responses_path_has_no_provider_name_branch_in_events` 断言事件序列不含 `openai` 字面。
 - [x] 仅定向/Mock smoke 验收，不要求 workspace 全量门禁 —— 仅 `cargo check/test/clippy -p provider-openai`（+ provider-runtime / test-support / model-registry 依赖）。
 
-> 完整能力矩阵（真实 Responses API 与 Programmatic Tool Calling / API Multi-Agent 端到端）在 P15-9 集中验收；持久化 reasoning protector 由 host 经 `OpenAiProvider::with_reasoning_protector` 注入 P15-7 `ReasoningStateBridge`。
+> 完整能力矩阵（真实 Responses API 与 Programmatic Tool Calling / API Multi-Agent 端到端）在 P15-9 集中验收；持久化 reasoning protector（`ProtectedBlobStoreProtector` + 生产 `ProtectedKeyResolver`）由 host 经 `OpenAiProvider::with_reasoning_protector` 注入，接线延 P18-3/4/14（见 [P15-10](P15-10-review-remediation.md)）。正式宿主装配真实 Provider 亦延 P18-3/4，本任务为有界 TargetVerified（adapter verified，host composition deferred）。
 
 **相关文档**：[providers](../docs/features/providers.md) · [ADR-002 解耦](../docs/adr/ADR-002-agent-engine-provider-decoupled.md) · [ADR-015 Contract Tests](../docs/adr/ADR-015-provider-contract-tests.md) · [P15-1](P15-1-canonical-tool-v2.md) · [P15-5](P15-5-server-tool-events.md) · [P15-7](P15-7-reasoning-state.md) · [P15-8](P15-8-capability-discovery.md) · [ROADMAP](../ROADMAP.md)
 

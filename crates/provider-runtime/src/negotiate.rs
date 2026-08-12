@@ -19,12 +19,10 @@
 //! —— 进 `Reject`；`XHigh / Max` 但模型不支持细粒度 effort 时 clamp 为 `High`
 //! 并记录 `ClampedEffort`。clamp helper 供 adapter 复用（不形成双轨）。
 
-
-use agent_domain::ToolCapabilityTag;
 use model_registry::CapabilityEvidence;
 use provider_api::{
-    CapabilityFallback, CapabilityRequirements, ModelCapabilities, ModelTransport,
-    ReasoningConfig, ReasoningEffort, ResolvedCapabilities, ThinkingConfig, ThinkingLevel,
+    CapabilityFallback, CapabilityRequirements, ModelCapabilities, ModelTransport, ReasoningConfig,
+    ReasoningEffort, ResolvedCapabilities, ThinkingConfig, ThinkingLevel,
 };
 
 /// 能力协商器（无状态，纯函数入口）。
@@ -49,7 +47,7 @@ impl CapabilityNegotiator {
 
         // hosted tools：逐项判定。
         for tag in &requirements.required_tools {
-            let key = capability_key("tool", tag);
+            let key = String::from(tag.capability_key());
             resolved.requested.insert(key.clone());
             if supported_caps.hosted_tool_tags.contains(tag) {
                 resolved.supported.insert(key);
@@ -105,10 +103,9 @@ impl CapabilityNegotiator {
         }
         // 模型只声明了基线 ChatCompletions，但请求偏好现代 transport → 降级。
         if pref.iter().any(|transport| transport.is_modern()) {
-            resolved.fallback.insert(
-                "transport".into(),
-                CapabilityFallback::LegacyTransport,
-            );
+            resolved
+                .fallback
+                .insert("transport".into(), CapabilityFallback::LegacyTransport);
         }
         ModelTransport::ChatCompletions
     }
@@ -146,10 +143,9 @@ impl CapabilityNegotiator {
             ReasoningEffort::XHigh | ReasoningEffort::Max
         ) && !caps.reasoning.supports_granular_effort;
         if needs_clamp {
-            resolved.fallback.insert(
-                format!("{key}.effort"),
-                CapabilityFallback::ClampedEffort,
-            );
+            resolved
+                .fallback
+                .insert(format!("{key}.effort"), CapabilityFallback::ClampedEffort);
         }
 
         // state 维度：签名 / 加密 continuation 由模型声明的 reasoning 维度
@@ -202,14 +198,10 @@ pub fn clamp_reasoning_to_thinking(
     })
 }
 
-
-fn capability_key(prefix: &str, tag: &ToolCapabilityTag) -> String {
-    format!("{prefix}:{tag:?}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_domain::ToolCapabilityTag;
     use model_registry::merge_capabilities;
     use provider_api::ModelCapabilities;
     use std::collections::BTreeSet;
@@ -416,5 +408,55 @@ mod tests {
         };
         let resolved = CapabilityNegotiator::negotiate(&evidence, &requirements);
         assert!(resolved.supported.contains("reasoning"));
+    }
+
+    #[test]
+    fn all_tool_tags_negotiate_via_stable_capability_key() {
+        // 变体守护：穷举所有 ToolCapabilityTag，协商路径必须使用稳定
+        // `tool:PascalCase` key（禁止 Debug 反解），且各 key 唯一。
+        const ALL_TAGS: [ToolCapabilityTag; 14] = [
+            ToolCapabilityTag::WebSearch,
+            ToolCapabilityTag::WebFetch,
+            ToolCapabilityTag::FileOrCollectionSearch,
+            ToolCapabilityTag::XSearch,
+            ToolCapabilityTag::CodeExecution,
+            ToolCapabilityTag::HostedShell,
+            ToolCapabilityTag::ProviderApplyPatch,
+            ToolCapabilityTag::ComputerUse,
+            ToolCapabilityTag::ImageGeneration,
+            ToolCapabilityTag::ServerSideMcp,
+            ToolCapabilityTag::ToolSearch,
+            ToolCapabilityTag::Memory,
+            ToolCapabilityTag::ProgrammaticToolCalling,
+            ToolCapabilityTag::ServerSideMultiAgent,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for tag in ALL_TAGS {
+            let key = tag.capability_key();
+            assert!(key.starts_with("tool:"), "{key} 必须以 tool: 开头");
+            let suffix = key.strip_prefix("tool:").expect("tool: 前缀");
+            assert!(
+                !suffix.contains('_') && suffix.chars().next().is_some_and(char::is_uppercase),
+                "{key} 必须是 PascalCase"
+            );
+            assert!(seen.insert(key), "{key} 重复");
+        }
+
+        // 全能力模型 + 全部 tag 请求 → 每个 tag 都以 capability_key 进入
+        // requested/supported，证明协商层不再经 Debug 反解构造 key。
+        let mut caps = full_caps();
+        caps.hosted_tool_tags = ALL_TAGS.into_iter().collect();
+        let requirements = CapabilityRequirements {
+            required_tools: ALL_TAGS.into_iter().collect(),
+            ..Default::default()
+        };
+        let resolved = CapabilityNegotiator::negotiate(&evidence_from(caps), &requirements);
+        assert_eq!(resolved.requested.len(), ALL_TAGS.len());
+        assert_eq!(resolved.supported.len(), ALL_TAGS.len());
+        for tag in ALL_TAGS {
+            let key = String::from(tag.capability_key());
+            assert!(resolved.requested.contains(&key), "{key} 未进入 requested");
+            assert!(resolved.supported.contains(&key), "{key} 未进入 supported");
+        }
     }
 }

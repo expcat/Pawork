@@ -38,7 +38,7 @@ pub struct ToolResult {
 
 ## ToolKind 三执行位点（Phase 15 起）
 
-自 Phase 15（[P15-1](../../plan/P15-1-canonical-tool-v2.md)）起，工具按 `ToolKind` / `ExecutionOwner` 分流，三类位点互不串味：
+自 Phase 15（[P15-1](../../plan/P15-1-canonical-tool-v2.md)）起，工具按 `ToolKind` 三执行位点分流，三类位点互不串味（早期规划的 `ExecutionOwner` 冗余枚举已按 [P15-10](../../plan/P15-10-review-remediation.md) 删除，位点语义由 `ToolKind` 直接承载）：
 
 ```text
 ClientFunction    → Core 本地执行（read_file / write_file / run_command …）→ ToolResult(CoreSuppliedResult)
@@ -92,7 +92,9 @@ Provider-owned 调用仍受 Core policy 约束：Hosted 工具按 descriptor 的
 
 面对大量可用工具（内置 + MCP + GUI + Provider extension），不必把全部 schema 一次性塞进上下文：
 `tool-runtime` 维护「延迟加载工具索引」，按需搜索并激活匹配工具。核心类型见
-[`tool_search.rs`](../../crates/tool-runtime/src/tool_search.rs)。
+[`tool_search.rs`](../../crates/tool-runtime/src/tool_search.rs)。当前实现收口在**默认关闭**的
+`tool-search` feature 后（[P15-10](../../plan/P15-10-review-remediation.md)）：零生产消费者期间
+不编译不导出，接入主循环前不启用；显式开启 feature 时索引 / 搜索 / 激活 / 审批 / 预算联动完整可用。
 
 ### 设计要点
 

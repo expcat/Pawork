@@ -32,5 +32,7 @@ P14-8 的 `QuotaOverview` 查询必须显式 provider_id（缺省即拒绝）；
 - [ ] account/credential 查询强制 tenant scope
 - [ ] ProviderAccount/Credential binding 枚举（按 provider 列出绑定 account/credential）成为 `QuotaOverview` 批量聚合的事实源；无绑定时不做默认 provider 推测
 - [ ] quota refresh target 的 account/credential 绑定来自 ProviderAccount/CredentialMetadata，不再从零散 credential 数组选择
+- [ ] 宿主经 Provider factory / `app-service::register_provider` 装配真实 Provider 并消费 provider `builtin_models()`（Phase 15 host composition deferred 项，见 [P15-10](P15-10-review-remediation.md)）
+- [ ] 生产 `ProtectedKeyResolver` 与持久 `ProtectedBlobStoreProtector` 注入正式宿主，兑现 ADR-032「encrypted-at-rest / crash 恢复」；protector 必须按实际 `(provider_id, session_id)` / run scope 构造或选择，禁止把捕获单一 `BlobScope` 的实例注册为跨 Session 共享 Provider 全局状态，并覆盖同 Session 跨轮可回灌、跨 Session fail-closed（Phase 15 持久化 protector 接线延后项，见 [P15-10](P15-10-review-remediation.md)）
 
 **相关文档**：[auth](../docs/features/auth.md) · [provider-control-plane](../docs/features/provider-control-plane.md) · [ADR-014](../docs/adr/ADR-014-secret-os-keychain.md) · [ROADMAP](../ROADMAP.md)

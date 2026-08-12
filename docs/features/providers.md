@@ -152,9 +152,10 @@ Provider-owned 工具只经 `ServerTool(ServerToolEvent)` 与 `TranscriptEnvelop
   `ProviderTranscript` 信封续接；只有客户端 `tool_use` 的 Core 结果映射
   `tool_result`，server tool 永不经该路径。
 - **thinking signature 往返**：`content_block_stop` 捕获 thinking /
-  redacted_thinking 块，经 `ReasoningContinuationStore`（接线方以
-  `ReasoningStateBridge` + `BlobScope` 实现）保护为不透明 blob，事件只携带
-  `protected_blob_ref`；回灌时取回载荷重建原块。未配置 store 时 fail-closed。
+  redacted_thinking 块，经统一 `provider-runtime::reasoning::ReasoningProtector`
+  边界保护为不透明 blob，事件只携带 `protected_blob_ref`；回灌时取回载荷重建原块。
+  默认 `InMemoryReasoningProtector`（与 OpenAI / xAI 共享同一实现，进程内可回放）；
+  持久实现为 `ProtectedBlobStoreProtector`（构造时捕获 store + `BlobScope`），生产接线延 P18-3/4/14。
 - **能力协商**：协商在 P15-8 `CapabilityNegotiator`（engine 层）；adapter
   contract 只负责声明能力，双方均不按 Provider 名分支。
 
@@ -199,7 +200,7 @@ Provider-owned 工具只经 `ServerTool(ServerToolEvent)` 与 `TranscriptEnvelop
 - **请求转换**：canonical messages → Responses `input[]`（`message` / `function_call` / `function_call_output`）；system 消息抽到顶层 `instructions`；hosted capability → `web_search_preview` / `file_search` / `code_interpreter` / `image_generation` / `local_shell` / `apply_patch` / `computer_use_preview` / `mcp`（仅放行协商通过的类别）；客户端 function 工具声明为 Responses `function`。`reasoning.effort` 来自现代 `ReasoningConfig`（`XHigh/Max` clamp 为 `high`），`previous_response_id` 经 `provider_options` 续接。
 - **output item → ProviderStreamEvent**：`response.output_text.delta` → `TextDelta`；`reasoning_summary_text.delta` → `ThinkingDelta`；`function_call` 流式 → `ToolCallStarted/ArgumentsDelta/Completed`；`reasoning` / `web_search_call` / `file_search_call` / `code_interpreter_call` / `computer_call` / `image_generation_call` / `mcp_call` / `local_shell_call` / `custom_tool_call` → `ServerTool` 生命周期事件，大输出走 `ArtifactId`（ProgramOutput / ComputerScreenshot）。
 - **citations**：`web_search_call.action.sources[]` → `SourceAdded`；message `output_text.annotations[].url_citation` → `CitationAdded`，归属到产生它的 web_search call（可重放）。
-- **reasoning 往返（ADR-032）**：wire `reasoning.encrypted_content` 只经 `ReasoningProtector` 边界（默认 `InMemoryReasoningProtector`，host 经 `OpenAiProvider::with_reasoning_protector` 注入 P15-7 `ReasoningStateBridge`）；canonical 事件只携带 `protected_blob_ref`，明文不入 Event / 日志 / GUI / Keychain。回灌时 `resolve_reasoning_inputs` 取回明文重建 input reasoning item。
+- **reasoning 往返（ADR-032）**：wire `reasoning.encrypted_content` 只经统一 `provider-runtime::reasoning::ReasoningProtector` 边界（默认 `InMemoryReasoningProtector`，host 经 `OpenAiProvider::with_reasoning_protector(Arc<dyn ReasoningProtector>)` 注入；持久实现 `ProtectedBlobStoreProtector` 生产接线延 P18-3/4/14）；canonical 事件只携带 `protected_blob_ref`，明文不入 Event / 日志 / GUI / Keychain。回灌时 `resolve_reasoning_inputs` 取回明文重建 input reasoning item。
 - **续接**：只有客户端 `ContentPart::ToolResult`（CoreSuppliedResult）映射 `function_call_output`；server tool 永不经该路径，下一轮以 `response.id` 作为 `previous_response_id` 续接。
 - **错误归一**：`normalize_responses_error` 把 vector store 未就绪 / code_interpreter 与 hosted shell 超时 / computer_use 需确认 / MCP 与 skill 不可用归一为统一 `ProviderError`（重试建议与 P2-10 一致）。
 - **降级可观察**：基线模型（如 `gpt-4o`）命中 `/chat/completions`；未声明 hosted tool 不进入任何请求体。Mock smoke 在 `provider-openai/tests/responses.rs` 覆盖 item→event、citations、reasoning 往返、降级与 `no_provider_branch` 断言。
@@ -213,7 +214,7 @@ Provider-owned 工具只经 `ServerTool(ServerToolEvent)` 与 `TranscriptEnvelop
 - **请求转换**：canonical messages → Responses `input[]`（`message` / `function_call` / `function_call_output`）；system 消息抽到顶层 `instructions`；hosted capability → `web_search` / `x_search` / `file_search`（Collection Search，`collection_ids`/`vector_store_ids` 透传）/ `code_interpreter`（Code Execution）/ `mcp`（server-side MCP，仅放行协商通过的类别）；客户端 function 工具声明为 Responses `function`。`reasoning.effort` 来自现代 `ReasoningConfig`（`XHigh/Max` clamp 为 `high`），`previous_response_id` 经 `provider_options` 续接。
 - **output item → ProviderStreamEvent**：`response.output_text.delta` → `TextDelta`；`reasoning_summary_text.delta` → `ThinkingDelta`；`function_call` 流式 → `ToolCallStarted/ArgumentsDelta/Completed`；`reasoning` / `web_search_call` / `x_search_call` / `file_search_call` / `code_interpreter_call` / `mcp_call` → `ServerTool` 生命周期事件，大输出走 `ArtifactId`（ProgramOutput / MCP output_file）。
 - **Live Search / Collection 结果归一**：Web/X Search 的 `sources[]`（`type: url`/`x`/`post`）与 Collection 的 `results[]`（`type: document`）经 `live_search_source_to_source` 归一为 `SourceAdded`，保留 url/title/snippet/text/document_index 与原始 `raw_metadata`；message `output_text.annotations[].url_citation` → `CitationAdded`。后续轮次以 `response.id` 作为 `previous_response_id` 续接（`ProviderTranscript` 通道），不经过客户端 `function_call_output`。
-- **reasoning 往返（ADR-032）**：wire `reasoning.encrypted_content` 只经 `ReasoningProtector` 边界（默认 `InMemoryReasoningProtector`，host 经 `XaiProvider::with_reasoning_protector` 注入 P15-7 `ReasoningStateBridge`）；canonical 事件只携带 `protected_blob_ref`，明文不入 Event / 日志 / GUI / Keychain。回灌时 `resolve_reasoning_inputs` 取回明文重建 input reasoning item（复用 P15-7 `parse_responses_reasoning` / `to_reasoning_item` / `to_responses_input_reasoning`）。
+- **reasoning 往返（ADR-032）**：wire `reasoning.encrypted_content` 只经统一 `provider-runtime::reasoning::ReasoningProtector` 边界（默认 `InMemoryReasoningProtector`，host 经 `XaiProvider::with_reasoning_protector(Arc<dyn ReasoningProtector>)` 注入；持久实现 `ProtectedBlobStoreProtector` 生产接线延 P18-3/4/14）；canonical 事件只携带 `protected_blob_ref`，明文不入 Event / 日志 / GUI / Keychain。回灌时 `resolve_reasoning_inputs` 取回明文重建 input reasoning item（复用 P15-7 `parse_responses_reasoning` / `to_reasoning_item` / `to_responses_input_reasoning`）。
 - **错误归一**：`normalize_responses_error` 把 Live Search / Web / X Search 配额、Collection 未就绪/未找到、code_interpreter 超时、MCP 不可用/未授权、billing/insufficient_quota 归一为统一 `ProviderError`（重试建议与 P2-10 一致）。
 - **降级可观察**：基线模型（`grok-2`/`grok-3`）命中 `/chat/completions`；未声明 hosted tool 不进入任何请求体（fail-closed）。Mock smoke 在 `provider-xai/tests/responses.rs` 覆盖 Responses+reasoning item→event、Live Search sources、Web/X/Collection/Code/MCP 事件、reasoning 往返、双鉴权、降级与 `no_provider_branch` 断言。
 

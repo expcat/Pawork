@@ -122,7 +122,7 @@ pub enum AgentEvent {
 
 **Provider Native（Phase 15）**
 
-- `ToolKind { ClientFunction, ProviderHosted, ProviderExtension }` + `ExecutionOwner { Core, Provider, Extension }`（一一对应）+ `ContinuationMode { CoreSuppliedResult, ProviderTranscript }`
+- `ToolKind { ClientFunction, ProviderHosted, ProviderExtension }`（三执行位点；早期规划的 `ExecutionOwner` 冗余枚举已按 [P15-10](../../plan/P15-10-review-remediation.md) 删除）+ `ContinuationMode { CoreSuppliedResult, ProviderTranscript }`（`CoreSuppliedResult` 由适配器翻译 function-result，`ProviderTranscript` 续接原生 output item，有真实消费者）
 - `HostedToolRequest`（声明启用 server tools，不含 Provider 名）
 - `ServerToolEvent`（生命周期：Started/Progress/Completed、CitationAdded/SourceAdded、ComputerActionRequested/Screenshot、ProgramStarted/Output）
 - `Citation` / `Source`（三家引用归一）

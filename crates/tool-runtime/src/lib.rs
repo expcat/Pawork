@@ -4,6 +4,7 @@
 //! Git index 串行与审批暂停，所有调用可取消。调度策略见 `docs/architecture/control-flow.md` §5。
 
 mod scheduler;
+#[cfg(feature = "tool-search")]
 mod tool_search;
 
 pub use scheduler::{
@@ -11,6 +12,7 @@ pub use scheduler::{
     AutoApproveResolver, NoopToolEventSink, ProviderCallDispatch, SchedulingKey, ToolRegistry,
     ToolRegistryError, ToolScheduler, ToolSchedulerConfig, ToolSchedulerError,
 };
+#[cfg(feature = "tool-search")]
 pub use tool_search::{
     ActivationApprovalResolver, ActivationDenied, AutoActivationApproval, LazyToolIndex,
     PolicyActivationGate, ToolActivation, ToolActivationGate, ToolIndexConfig, ToolIndexError,

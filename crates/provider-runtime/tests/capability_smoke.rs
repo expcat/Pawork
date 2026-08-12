@@ -7,9 +7,8 @@ use std::collections::BTreeSet;
 use agent_domain::{ModelId, ToolCapabilityTag};
 use model_registry::{CapabilityEvidence, ModelRegistry};
 use provider_api::{
-    CapabilityFallback, CapabilityRequirements, ModelCapabilities,
-    ModelTransport, ReasoningConfig, ReasoningEffort, ReasoningStateCapability,
-    ReasoningStateDescriptor,
+    CapabilityFallback, CapabilityRequirements, ModelCapabilities, ModelTransport, ReasoningConfig,
+    ReasoningEffort, ReasoningStateCapability, ReasoningStateDescriptor,
 };
 use provider_runtime::negotiate::{clamp_reasoning_to_thinking, CapabilityNegotiator};
 
@@ -25,9 +24,12 @@ fn model_a_caps() -> ModelCapabilities {
         structured_output: true,
         prompt_cache: true,
         transport: ModelTransport::Responses,
-        hosted_tool_tags: [ToolCapabilityTag::WebSearch, ToolCapabilityTag::CodeExecution]
-            .into_iter()
-            .collect(),
+        hosted_tool_tags: [
+            ToolCapabilityTag::WebSearch,
+            ToolCapabilityTag::CodeExecution,
+        ]
+        .into_iter()
+        .collect(),
         citations: true,
         reasoning: ReasoningStateCapability {
             state: ReasoningStateDescriptor {
@@ -85,9 +87,12 @@ fn evidence(model: &str, caps: ModelCapabilities) -> CapabilityEvidence {
 fn full_requirements() -> CapabilityRequirements {
     CapabilityRequirements {
         transport_pref: vec![ModelTransport::Responses, ModelTransport::Messages],
-        required_tools: [ToolCapabilityTag::WebSearch, ToolCapabilityTag::CodeExecution]
-            .into_iter()
-            .collect(),
+        required_tools: [
+            ToolCapabilityTag::WebSearch,
+            ToolCapabilityTag::CodeExecution,
+        ]
+        .into_iter()
+        .collect(),
         reasoning: Some(ReasoningConfig::new(ReasoningEffort::High)),
         citations: true,
     }
@@ -95,20 +100,26 @@ fn full_requirements() -> CapabilityRequirements {
 
 #[test]
 fn model_a_full_capabilities_all_supported() {
-    let resolved = CapabilityNegotiator::negotiate(&evidence("a", model_a_caps()), &full_requirements());
+    let resolved =
+        CapabilityNegotiator::negotiate(&evidence("a", model_a_caps()), &full_requirements());
     assert_eq!(resolved.chosen_transport, ModelTransport::Responses);
     assert!(resolved.supported.contains("tool:WebSearch"));
     assert!(resolved.supported.contains("tool:CodeExecution"));
     assert!(resolved.supported.contains("citations"));
     assert!(resolved.supported.contains("reasoning"));
-    assert!(resolved.unsupported.is_empty(), "A 全能力：无 unsupported，got {:?}", resolved.unsupported);
+    assert!(
+        resolved.unsupported.is_empty(),
+        "A 全能力：无 unsupported，got {:?}",
+        resolved.unsupported
+    );
     // requested == supported ∪ unsupported（A 全 supported）。
     assert_eq!(resolved.requested, resolved.supported);
 }
 
 #[test]
 fn model_b_partial_intersection_and_degradation_observable() {
-    let resolved = CapabilityNegotiator::negotiate(&evidence("b", model_b_caps()), &full_requirements());
+    let resolved =
+        CapabilityNegotiator::negotiate(&evidence("b", model_b_caps()), &full_requirements());
     // B 声明 Messages：偏好 Responses 不命中，退回模型声明的 Messages。
     assert_eq!(resolved.chosen_transport, ModelTransport::Messages);
     // WebSearch 支持，CodeExecution 未声明 → unsupported + Reject。
@@ -125,14 +136,18 @@ fn model_b_partial_intersection_and_degradation_observable() {
     // requested == supported ∪ unsupported。
     let mut union: BTreeSet<String> = resolved.supported.clone();
     union.extend(resolved.unsupported.iter().cloned());
-    assert_eq!(resolved.requested, union, "requested 必须等于 supported ∪ unsupported");
+    assert_eq!(
+        resolved.requested, union,
+        "requested 必须等于 supported ∪ unsupported"
+    );
     // 降级路径明确可观察（fallback 非空）。
     assert!(!resolved.fallback.is_empty());
 }
 
 #[test]
 fn model_c_baseline_degrades_transport_and_rejects_reasoning() {
-    let resolved = CapabilityNegotiator::negotiate(&evidence("c", model_c_caps()), &full_requirements());
+    let resolved =
+        CapabilityNegotiator::negotiate(&evidence("c", model_c_caps()), &full_requirements());
     // C 仅基线 ChatCompletions；请求偏好现代 transport → 降级可观察。
     assert_eq!(resolved.chosen_transport, ModelTransport::ChatCompletions);
     assert!(matches!(
@@ -181,8 +196,12 @@ fn override_only_narrows_never_amplifies() {
     let merged = evidence.merged();
     // override 收窄：CodeExecution 被静态支持也被 override 声明 → 保留；
     // WebSearch 静态支持但 override 未声明 → override 只能收窄，合并应不含 WebSearch。
-    assert!(!merged.hosted_tool_tags.contains(&ToolCapabilityTag::WebSearch));
-    assert!(merged.hosted_tool_tags.contains(&ToolCapabilityTag::CodeExecution));
+    assert!(!merged
+        .hosted_tool_tags
+        .contains(&ToolCapabilityTag::WebSearch));
+    assert!(merged
+        .hosted_tool_tags
+        .contains(&ToolCapabilityTag::CodeExecution));
 
     let resolved = CapabilityNegotiator::negotiate(&evidence, &full_requirements());
     // override 不能放大：transport 仍由静态 Responses 决定（交集后保留）。
@@ -210,7 +229,8 @@ fn no_provider_branch_negotiator_ignores_provider_id() {
 fn clamp_helper_xhigh_and_max_to_high_for_legacy_adapter() {
     // XHigh / Max 在旧 P6 adapter 路径 clamp 为 High，不形成双轨。
     assert_eq!(
-        clamp_reasoning_to_thinking(Some(&ReasoningConfig::new(ReasoningEffort::XHigh)), None).level,
+        clamp_reasoning_to_thinking(Some(&ReasoningConfig::new(ReasoningEffort::XHigh)), None)
+            .level,
         provider_api::ThinkingLevel::High
     );
     assert_eq!(
@@ -221,4 +241,42 @@ fn clamp_helper_xhigh_and_max_to_high_for_legacy_adapter() {
         clamp_reasoning_to_thinking(Some(&ReasoningConfig::new(ReasoningEffort::None)), None).level,
         provider_api::ThinkingLevel::Off
     );
+}
+
+#[test]
+fn every_tool_tag_negotiates_to_stable_pascal_case_wire_key() {
+    // 变体守护（端到端）：穷举全部 ToolCapabilityTag，模型 A 全能力声明时，
+    // 协商 requested/supported 的 wire key 必须等于 tag.capability_key()
+    // 的稳定 `tool:PascalCase`，禁止 Debug 反解漂移。
+    const ALL_TAGS: [ToolCapabilityTag; 14] = [
+        ToolCapabilityTag::WebSearch,
+        ToolCapabilityTag::WebFetch,
+        ToolCapabilityTag::FileOrCollectionSearch,
+        ToolCapabilityTag::XSearch,
+        ToolCapabilityTag::CodeExecution,
+        ToolCapabilityTag::HostedShell,
+        ToolCapabilityTag::ProviderApplyPatch,
+        ToolCapabilityTag::ComputerUse,
+        ToolCapabilityTag::ImageGeneration,
+        ToolCapabilityTag::ServerSideMcp,
+        ToolCapabilityTag::ToolSearch,
+        ToolCapabilityTag::Memory,
+        ToolCapabilityTag::ProgrammaticToolCalling,
+        ToolCapabilityTag::ServerSideMultiAgent,
+    ];
+    let mut caps = model_a_caps();
+    caps.hosted_tool_tags = ALL_TAGS.into_iter().collect();
+    let requirements = CapabilityRequirements {
+        required_tools: ALL_TAGS.into_iter().collect(),
+        ..Default::default()
+    };
+    let resolved = CapabilityNegotiator::negotiate(&evidence("a", caps), &requirements);
+    assert_eq!(resolved.requested.len(), ALL_TAGS.len());
+    assert_eq!(resolved.supported.len(), ALL_TAGS.len());
+    for tag in ALL_TAGS {
+        let key = tag.capability_key();
+        assert!(key.starts_with("tool:"), "{key} 必须以 tool: 开头");
+        assert!(resolved.requested.contains(key), "{key} 未进入 requested");
+        assert!(resolved.supported.contains(key), "{key} 未进入 supported");
+    }
 }

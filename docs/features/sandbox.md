@@ -119,7 +119,7 @@ Sandbox Runtime 与 `builtin-tools::run_command` 已在代码层面接线（经 
 
 ## Phase 15–17 执行所有权
 
-Sandbox 只对 `ExecutionOwner::Core` 的本地 ClientFunction、Command Hook、LSP、本地 MCP、Local Browser/Computer 与 Agent Worker 子进程给出隔离等级。ProviderHosted / ProviderExtension 只做 Policy、审批、审计与 transcript 归一；跨 trust-boundary fallback 必须重新审批并记录实际 owner/backend/isolation。
+Sandbox 只对 `ToolKind::ClientFunction` 的本地执行（Command Hook、LSP、本地 MCP、Local Browser/Computer 与 Agent Worker 子进程）给出隔离等级；`ProviderHosted` / `ProviderExtension` 只做 Policy、审批、审计与 transcript 归一。跨 trust-boundary fallback 必须重新审批并记录实际 owner/backend/isolation。
 
 ## 相关文档
 

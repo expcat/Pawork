@@ -1,6 +1,6 @@
 # P15-7：Reasoning State（跨轮推理状态持久化）
 
-> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P0-3、P0-4、P1-4、P1-5、P1-6、P5-5、P5-7、P6-5
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：domain + adapter verified、host composition deferred——持久化 protector 生产接线延 P18-3/4/14） · 依赖：P0-3、P0-4、P1-4、P1-5、P1-6、P5-5、P5-7、P6-5
 
 **最终目的**：让 reasoning / thinking 跨轮保持连续——把各家的加密或不透明回灌凭证（OpenAI `reasoning.encrypted_content`、Anthropic thinking `signature`、xAI reasoning 回灌标识）归一为统一 `ReasoningItem`，**敏感凭证原文存入专用 Protected Blob Store（加密落盘），Event Store 只保存安全引用**（ADR-032），多轮 Compaction 后仍能正确回灌，崩溃后可恢复 continuation。这是 P15-2/3/4 reasoning 往返的共享前置，且与 P5-5/P5-7 Compaction 协同保证压缩不丢推理连续性。
 
@@ -40,8 +40,8 @@
 ## 验证记录（2026-08-12）
 
 - `ReasoningItem`、流式组装、Event/Projection 重放、跨轮 canonical request、Compaction 默认保留与 crash recovery 均有定向回归；OpenAI、Anthropic、xAI 的凭证提取/重建保持在各自 provider crate，未知 wire 形态返回 `Unsupported`。
-- Protected Blob Store 覆盖 XChaCha20-Poly1305、Provider/Session scope、完整性校验、密钥轮换、磁盘预算、引用计数/retention GC，以及 `pending → ready` / `deleting` crash 恢复；Event Store 对 reasoning metadata 使用精确 allowlist，未知及嵌套载荷保持结构脱敏。
-- 安全评审发现的 metadata allowlist、文件/元数据 crash 窗口和引用生命周期三项问题已修复；`ReasoningStateBridge` 明确首个事件所有权、append 失败回滚、额外所有者 retain/release 与 GC 契约。
+- Protected Blob Store 覆盖 XChaCha20-Poly1305、Provider/Session scope、key version（公开在线轮换 API 按 P15-10 删除，机制保留）、磁盘预算内部约束、引用计数/retention GC，以及 `pending → ready` / `deleting` crash reconcile（公开 `integrity_check` / `disk_usage` 按 P15-10 删除）；Event Store 对 reasoning metadata 使用精确 allowlist，未知及嵌套载荷保持结构脱敏。
+- 安全评审发现的 metadata allowlist、文件/元数据 crash 窗口和引用生命周期三项问题已修复；[P15-10](P15-10-review-remediation.md) 把三家保护抽象统一为 `provider-runtime::reasoning::ReasoningProtector`（`InMemoryReasoningProtector` 默认 / `ProtectedBlobStoreProtector` 标准实现），protected-blob-store 保留 `retain` / `release` / `gc` / `shutdown`，上层 append 失败以 `release` 回滚未提交首引用；首个事件所有权、额外所有者 retain/release 与 GC 契约保持。
 - `cargo test` 与 `cargo clippy --all-targets -- -D warnings` 对 `agent-domain`、`agent-events`、`provider-api`、`protected-blob-store`、`provider-runtime`、`agent-engine`、`test-support`、`session-store`、`compaction-engine`、`context-engine`、`provider-openai`、`provider-anthropic`、`provider-xai`、`provider-openai-compatible`、`provider-google` 全部通过；`cargo fmt --all -- --check`、`cargo run -p schema-typegen -- --check`、`git diff --check` 通过。
 - Validation Level：L1。真实 Provider 的 stream producer、请求回灌接线与生产 key resolver 组合由 P15-2 / P15-3 / P15-4 消费本基线；P15-7 以 provider 纯映射 + Mock smoke 完成独立验收。Full workspace gate：NOT RUN（未命中 P15-9 功能簇集中门禁条件）。
 

@@ -19,19 +19,19 @@ use async_trait::async_trait;
 use model_registry::CapabilityEvidence;
 use provider_api::{
     CanonicalModelRequest, CredentialKind, ModelCapabilities, ModelDefinition, ModelProvider,
-    ModelResponseSummary, ProviderError, ProviderErrorKind, ProviderEventSink,
-    ProviderStreamEvent, ResolvedCapabilities, ResolvedCredential,
+    ModelResponseSummary, ProviderError, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent,
+    ResolvedCapabilities, ResolvedCredential,
 };
 use provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
 use provider_runtime::http::{HttpClient, HttpClientConfig};
 use provider_runtime::negotiate::CapabilityNegotiator;
+use provider_runtime::reasoning::{InMemoryReasoningProtector, ReasoningProtector};
 use provider_runtime::sse::SseParser;
 
 use crate::reasoning::{parse_responses_reasoning, to_reasoning_item};
 use crate::responses::{
     normalize_responses_error, requirements_from_request, resolve_reasoning_inputs,
-    to_responses_body, AcceptedResponsesTools, InMemoryReasoningProtector, ReasoningProtector,
-    ResponsesAssemblyEvent, ResponsesStreamAssembler,
+    to_responses_body, AcceptedResponsesTools, ResponsesAssemblyEvent, ResponsesStreamAssembler,
 };
 use crate::DEFAULT_BASE_URL;
 
@@ -73,7 +73,7 @@ pub struct XaiProvider {
     base_url: String,
     provider_id: ProviderId,
     credential: Option<ResolvedCredential>,
-    reasoning_protector: Option<Arc<dyn ReasoningProtector>>,
+    reasoning_protector: Arc<dyn ReasoningProtector>,
 }
 
 impl XaiProvider {
@@ -107,14 +107,14 @@ impl XaiProvider {
             base_url: config.base_url,
             provider_id: ProviderId::new("xai"),
             credential,
-            reasoning_protector: None,
+            reasoning_protector: Arc::new(InMemoryReasoningProtector::default()),
         })
     }
 
     /// 注入 reasoning continuation 的 Protected Blob Store 边界实现（P15-7 host
     /// 接入点）。未注入时使用进程内 in-memory 默认 protector（仅保证进程内回放）。
     pub fn with_reasoning_protector(mut self, protector: Arc<dyn ReasoningProtector>) -> Self {
-        self.reasoning_protector = Some(protector);
+        self.reasoning_protector = protector;
         self
     }
 
@@ -170,15 +170,8 @@ impl XaiProvider {
         let resolved = self.resolve_capabilities(&request);
         let accepted = AcceptedResponsesTools::from_supported(&resolved.supported);
 
-        // reasoning protector：未注入则用进程内默认实现（保证事件只携带引用）。
-        let default_protector: Arc<dyn ReasoningProtector>;
-        let protector: &dyn ReasoningProtector = match &self.reasoning_protector {
-            Some(arc) => arc.as_ref(),
-            None => {
-                default_protector = Arc::new(InMemoryReasoningProtector::default());
-                default_protector.as_ref()
-            }
-        };
+        // 同一 provider 实例在多次 stream 间复用同一 protector。
+        let protector = self.reasoning_protector.as_ref();
 
         // 解析历史 reasoning items → Responses input（经 protector 解密）。
         let (reasoning_inputs, _warnings) = resolve_reasoning_inputs(&request, protector).await;
@@ -315,10 +308,7 @@ impl XaiProvider {
                                     format!("reasoning protect failed: {error}"),
                                 )
                             })?;
-                            match to_reasoning_item(
-                                parsed,
-                                agent_domain::ProtectedBlobRef::from(blob_ref),
-                            ) {
+                            match to_reasoning_item(parsed, blob_ref) {
                                 Ok(item) => {
                                     sink.emit(ProviderStreamEvent::ReasoningItem(item)).await?;
                                 }

@@ -194,6 +194,10 @@ impl ProtectedKeyResolver for InMemoryKeyResolver {
 pub struct ProtectedBlob(Zeroizing<Vec<u8>>);
 
 impl ProtectedBlob {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(Zeroizing::new(bytes))
+    }
+
     pub fn expose(&self) -> &[u8] {
         self.0.as_slice()
     }
@@ -294,30 +298,6 @@ pub struct ProtectedBlobMetadata {
 pub struct GcReport {
     pub deleted: u64,
     pub reclaimed_bytes: u64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct RotateReport {
-    pub rotated: u64,
-    pub already_current: u64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct IntegrityReport {
-    pub checked: u64,
-    pub missing: Vec<ProtectedBlobRef>,
-    pub corrupted: Vec<ProtectedBlobRef>,
-    pub unavailable: Vec<ProtectedBlobRef>,
-    pub orphans: Vec<PathBuf>,
-}
-
-impl IntegrityReport {
-    pub fn is_ok(&self) -> bool {
-        self.missing.is_empty()
-            && self.corrupted.is_empty()
-            && self.unavailable.is_empty()
-            && self.orphans.is_empty()
-    }
 }
 
 #[derive(Clone)]
@@ -645,144 +625,6 @@ impl ProtectedBlobStore {
             .await?
     }
 
-    pub async fn rotate(&self, scope: &BlobScope) -> Result<RotateReport, ProtectedBlobError> {
-        let current = self
-            .resolver
-            .current_version(scope)
-            .map_err(|_| unavailable(ProtectedBlobRef::from("rotation")))?;
-        let current_key = self
-            .resolver
-            .resolve(scope, current)
-            .map_err(|_| unavailable(ProtectedBlobRef::from("rotation")))?;
-        let scope_for_query = scope.clone();
-        let rows = self
-            .database
-            .call(
-                move |connection| -> rusqlite::Result<Vec<(String, String, i64)>> {
-                    let mut statement = connection.prepare(
-                        "SELECT logical_ref, physical_digest, key_version FROM protected_blobs
-                     WHERE provider_id=?1 AND session_id=?2 AND state=?3 ORDER BY logical_ref",
-                    )?;
-                    let rows = statement
-                        .query_map(
-                            params![
-                                scope_for_query.provider_id.as_str(),
-                                scope_for_query.session_id.as_str(),
-                                STATE_READY,
-                            ],
-                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                        )?
-                        .collect();
-                    rows
-                },
-            )
-            .await??;
-        let mut report = RotateReport::default();
-        for (logical, old_digest, old_version) in rows {
-            let blob_ref = ProtectedBlobRef::from(logical);
-            if stored_u64(old_version, &blob_ref)? == u64::from(current) {
-                report.already_current += 1;
-                continue;
-            }
-            let plaintext = self.get(scope, &blob_ref).await?;
-            let envelope = seal(scope, &blob_ref, current, &current_key, plaintext.expose())
-                .map_err(|_| corrupted(blob_ref.clone()))?;
-            let new_digest = blake3::hash(&envelope).to_hex().to_string();
-            let new_path = ciphertext_path(&self.root, &new_digest)?;
-            atomic_write(&new_path, &envelope)?;
-            let scope_for_update = scope.clone();
-            let blob_for_update = blob_ref.clone();
-            let old_for_update = old_digest.clone();
-            let new_for_update = new_digest.clone();
-            let new_size = u64::try_from(envelope.len()).unwrap_or(u64::MAX);
-            let updated = self
-                .database
-                .call(move |connection| -> rusqlite::Result<usize> {
-                    connection.execute(
-                        "UPDATE protected_blobs
-                         SET physical_digest=?4, key_version=?5, ciphertext_size=?6,
-                             last_accessed_at_ms=?7
-                         WHERE logical_ref=?1 AND provider_id=?2 AND session_id=?3
-                           AND physical_digest=?8 AND state=?9",
-                        params![
-                            blob_for_update.as_str(),
-                            scope_for_update.provider_id.as_str(),
-                            scope_for_update.session_id.as_str(),
-                            new_for_update,
-                            i64::from(current),
-                            stored_i64(new_size),
-                            stored_i64(now_ms()),
-                            old_for_update,
-                            STATE_READY,
-                        ],
-                    )
-                })
-                .await??;
-            if updated == 0 {
-                let _ = fs::remove_file(&new_path);
-                return Err(unavailable(blob_ref));
-            }
-            let old_path = ciphertext_path(&self.root, &old_digest)?;
-            match fs::remove_file(&old_path) {
-                Ok(()) => {}
-                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
-                Err(source) => return Err(ProtectedBlobError::io(old_path, source)),
-            }
-            report.rotated += 1;
-        }
-        Ok(report)
-    }
-
-    pub async fn integrity_check(&self) -> Result<IntegrityReport, ProtectedBlobError> {
-        let rows = self.all_rows().await?;
-        let known: HashSet<String> = rows.iter().map(|row| row.physical_digest.clone()).collect();
-        let mut report = IntegrityReport::default();
-        for row in rows {
-            report.checked += 1;
-            let path = ciphertext_path(&self.root, &row.physical_digest)?;
-            let envelope = match fs::read(&path) {
-                Ok(value) => value,
-                Err(source) if source.kind() == io::ErrorKind::NotFound => {
-                    report.missing.push(row.blob_ref);
-                    continue;
-                }
-                Err(source) => return Err(ProtectedBlobError::io(path, source)),
-            };
-            if blake3::hash(&envelope).to_hex().as_str() != row.physical_digest {
-                report.corrupted.push(row.blob_ref);
-                continue;
-            }
-            match self.get(&row.scope, &row.blob_ref).await {
-                Ok(_) => {}
-                Err(error) if error.is_corrupted() => report.corrupted.push(row.blob_ref),
-                Err(error) if error.is_unavailable() => report.unavailable.push(row.blob_ref),
-                Err(error) => return Err(error),
-            }
-        }
-        for path in collect_ciphertext_files(&self.root.join(BLOBS_DIR))? {
-            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                if is_digest(name) && !known.contains(name) {
-                    report.orphans.push(path);
-                }
-            }
-        }
-        Ok(report)
-    }
-
-    pub async fn disk_usage(&self) -> Result<u64, ProtectedBlobError> {
-        let value = self
-            .database
-            .call(|connection| {
-                connection.query_row(
-                    "SELECT COALESCE(SUM(ciphertext_size), 0) FROM protected_blobs",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )
-            })
-            .await??;
-        stored_u64(value, &ProtectedBlobRef::from("usage"))
-    }
-
     pub async fn shutdown(self) -> Result<(), ProtectedBlobError> {
         self.database.shutdown().await?;
         Ok(())
@@ -901,66 +743,6 @@ impl ProtectedBlobStore {
                         )?;
                     }
                     metadata_from_row(blob_ref, scope, row)
-                },
-            )
-            .await?
-    }
-
-    async fn all_rows(&self) -> Result<Vec<ProtectedBlobMetadata>, ProtectedBlobError> {
-        self.database
-            .call(
-                |connection| -> Result<Vec<ProtectedBlobMetadata>, ProtectedBlobError> {
-                    let mut statement = connection.prepare(
-                        "SELECT logical_ref, provider_id, session_id, physical_digest, key_version,
-                            plaintext_size, ciphertext_size, ref_count, retain_until_ms
-                     FROM protected_blobs WHERE state=?1 ORDER BY logical_ref",
-                    )?;
-                    let raw = statement
-                        .query_map(params![STATE_READY], |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, String>(1)?,
-                                row.get::<_, String>(2)?,
-                                row.get::<_, String>(3)?,
-                                row.get::<_, i64>(4)?,
-                                row.get::<_, i64>(5)?,
-                                row.get::<_, i64>(6)?,
-                                row.get::<_, i64>(7)?,
-                                row.get::<_, Option<i64>>(8)?,
-                            ))
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    raw.into_iter()
-                        .map(
-                            |(
-                                logical,
-                                provider,
-                                session,
-                                digest,
-                                key_version,
-                                plaintext_size,
-                                ciphertext_size,
-                                ref_count,
-                                retain_until,
-                            )| {
-                                metadata_from_row(
-                                    ProtectedBlobRef::from(logical),
-                                    BlobScope::new(
-                                        ProviderId::from(provider),
-                                        SessionId::from(session),
-                                    ),
-                                    (
-                                        digest,
-                                        key_version,
-                                        plaintext_size,
-                                        ciphertext_size,
-                                        ref_count,
-                                        retain_until,
-                                    ),
-                                )
-                            },
-                        )
-                        .collect()
                 },
             )
             .await?
@@ -1358,34 +1140,6 @@ mod tests {
         bytes[last] ^= 0x80;
         fs::write(&path, bytes).unwrap();
         assert!(store.get(&scope, &first).await.unwrap_err().is_corrupted());
-        store.shutdown().await.unwrap();
-        cleanup(&root);
-    }
-
-    #[tokio::test]
-    async fn rotation_keeps_logical_ref_and_ref_count() {
-        let root = temp_root("rotation");
-        let scope = scope("provider", "session");
-        let resolver = resolver_with(&scope, 1, 4);
-        let store = ProtectedBlobStore::open_with_options(options(&root), resolver.clone())
-            .await
-            .unwrap();
-        let blob_ref = store.put(&scope, b"rotate-me").await.unwrap().blob_ref;
-        store.retain(&scope, &blob_ref).await.unwrap();
-        let before = store.metadata(&scope, &blob_ref).await.unwrap();
-        resolver.insert(scope.clone(), 2, AeadKey::new([5; 32]));
-        resolver.set_current(scope.clone(), 2);
-        let report = store.rotate(&scope).await.unwrap();
-        assert_eq!(report.rotated, 1);
-        let after = store.metadata(&scope, &blob_ref).await.unwrap();
-        assert_eq!(after.blob_ref, before.blob_ref);
-        assert_eq!(after.ref_count, before.ref_count);
-        assert_eq!(after.key_version, 2);
-        assert_ne!(after.physical_digest, before.physical_digest);
-        assert_eq!(
-            store.get(&scope, &blob_ref).await.unwrap().expose(),
-            b"rotate-me"
-        );
         store.shutdown().await.unwrap();
         cleanup(&root);
     }

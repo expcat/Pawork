@@ -12,10 +12,14 @@ pub mod server_tool;
 
 pub use provider::{builtin_models, XaiConfig, XaiProvider};
 pub use provider_openai_compatible::{chunk_to_events, to_chat_completions_body, ChunkState};
+pub use provider_runtime::reasoning::{
+    InMemoryReasoningProtector, ProtectedBlobStoreProtector, ReasoningProtectError,
+    ReasoningProtector,
+};
 pub use responses::{
     live_search_source_to_source, normalize_responses_error, requirements_from_request,
-    to_responses_body, AcceptedResponsesTools, InMemoryReasoningProtector, ReasoningProtectError,
-    ReasoningProtector, ResponsesAssemblyEvent, ResponsesFinalState, ResponsesStreamAssembler,
+    to_responses_body, AcceptedResponsesTools, ResponsesAssemblyEvent, ResponsesFinalState,
+    ResponsesStreamAssembler,
 };
 
 /// xAI API default base URL.

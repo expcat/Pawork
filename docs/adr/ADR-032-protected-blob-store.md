@@ -57,6 +57,14 @@ Protected Blob Store 要求：
 - 多 Provider 凭证共存时按作用域隔离，GC 不可误删当前推理链所需 blob。
 - 组合层必须提供可测试的 key resolver；存储层保持平台无关，不把 OS Keychain 依赖向领域层或存储底层扩散。
 
+## 实现状态（P15-10 收口，2026-08-12）
+
+本 ADR 保持 **Accepted**（三层存储分离与「reasoning 凭证加密落盘、不入 Keychain」方向不变），实现范围按 [P15-10](../../plan/P15-10-review-remediation.md) 收口为有界事实：
+
+- **已实现**：AEAD seal / open（XChaCha20-Poly1305）、`BlobScope`（Provider + Session）、`ProtectedBlobRef`、key version + `ProtectedKeyResolver`（`InMemoryKeyResolver`）、随机化密文寻址、原子两阶段写入、`pending → ready / deleting` crash reconcile（启动恢复 + 并发 open-time 复核）、refcount（`retain` / `release`；上层 append 失败以 `release` 回滚未提交首引用）、`gc()` + `GcReport`、retention（默认 7 天）、disk_budget 内部约束、`shutdown()`。
+- **已删除（无生产消费者，等真实需求出现再加）**：公开 `rotate()` / `RotateReport`、`integrity_check()` / `IntegrityReport`、`disk_usage()` 与专属 `all_rows()` / 测试。「在线轮换」的机制基础（key version + resolver 可切换）保留，轮换 API 延后；完整性校验由读取路径的 AEAD 认证与错误分类（`is_corrupted` / `is_unavailable`）覆盖，不单独提供巡检 API。
+- **延后（生产接线）**：`provider-runtime::reasoning::ProtectedBlobStoreProtector` 与生产 `ProtectedKeyResolver` 注入正式宿主，随 P18-3（Provider Account）/ P18-4（Credential Lease）/ P18-14（Provider Registry）凭证边界与装配成熟后兑现「encrypted-at-rest / crash 恢复」承诺；当前生产默认 `InMemoryReasoningProtector`（进程内可回放，重启即丢）。持久 protector 构造时捕获单一 `BlobScope`，组合层必须按实际 Session/run scope 构造或选择，禁止把 scoped 实例作为跨 Session 共享 Provider 全局状态；P18-3 / P18-14 已登记对应验收项。
+
 ## 相关
 
 - [ADR-004 大型内容 Blob Store](ADR-004-blob-store.md) · [ADR-014 Secret 存 OS Keychain](ADR-014-secret-os-keychain.md) · [ADR-016 事件持久化重放](ADR-016-core-event-persist-replay.md)

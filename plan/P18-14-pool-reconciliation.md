@@ -34,5 +34,7 @@ P14-5/9 的六家远端 quota adapter factory 与 `RefreshScheduler` / `AuditSin
 - [ ] account/capability 变化后 binding 安全迁移并有 audit event
 - [ ] 六家远端 quota adapter factory 注册为 `RefreshScheduler` 生产 targets；scheduler 在生产 composition root 启动、取消与关闭（复用 QuotaRuntime 为生命周期 owner，不新增 manager/daemon）
 - [ ] quota target registry 与 provider/account registry 对账：binding/account 变化时 reconcile target 不悬挂，热切换不误杀运行中 lease
+- [ ] provider factory 注册的真实 Provider 进入共享 model-registry：`builtin_models()` 的 v2 能力 catalog 统一并入 registry `caps()` / 协商证据（消除 Phase 15 两处分裂，见 [P15-10](P15-10-review-remediation.md) 与 [P15-8](P15-8-capability-discovery.md)）
+- [ ] Provider factory / pool 的实例生命周期与 reasoning scope 对齐：持久 `ProtectedBlobStoreProtector` 按真实 Session/run 的 `BlobScope` 构造或解析，热切换与复用不得把一个 Session 的 protector 共享给另一 Session
 
 **相关文档**：[provider-control-plane](../docs/features/provider-control-plane.md) · [client-adapters](../docs/features/client-adapters.md) · [P8-8](P8-8-hot-reload.md) · [ROADMAP](../ROADMAP.md)

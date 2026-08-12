@@ -171,7 +171,7 @@ pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<Prov
             }
             // P15-3：extended thinking 的 signature / redacted data 在
             // content_block_stop 的 content_block 中到达；捕获后由驱动方经
-            // ReasoningContinuationStore 保护并发射 ReasoningItem。
+            // ReasoningProtector 保护并发射 ReasoningItem。
             if state.capture_signatures {
                 if let Some(block) = value.get("content_block") {
                     let block_type = block

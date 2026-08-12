@@ -26,7 +26,7 @@ pub use stream::{event_to_events, AnthropicStreamState};
 
 pub use modern::{
     resolve, server_tool_result_block_to_events, to_modern_messages_body,
-    transcript_to_wire_blocks, ReasoningContinuationStore, TransportChoice,
+    transcript_to_wire_blocks, TransportChoice,
 };
 
 /// Anthropic API 默认基础 URL。

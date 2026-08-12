@@ -5,7 +5,7 @@
 //! - [`sse`] / [`jsonl`]：流式响应解析（跨 chunk、Unicode 边界、提前断开）；
 //! - [`partial_json`]：跨 chunk 的 tool arguments 增量 JSON 拼接；
 //! - [`retry`]：错误归一与可重试判定（生产退避由 `agent-engine` 单点负责）；
-//! - [`reasoning`]：受保护 reasoning continuation 的统一存取桥；
+//! - [`reasoning`]：统一 reasoning 保护共享 API（`ReasoningProtector`）；
 //! - [`usage`]：token / 费用 / stop reason 归一；
 //! - [`stream_assembly`]：`ProviderStreamEvent` → 领域消息组装；
 //! - [`negotiate`]：P15-8 能力协商（CapabilityNegotiator 纯函数）。
@@ -13,8 +13,8 @@
 pub mod capability;
 pub mod http;
 pub mod jsonl;
-pub mod partial_json;
 pub mod negotiate;
+pub mod partial_json;
 pub mod reasoning;
 pub mod retry;
 pub mod sse;

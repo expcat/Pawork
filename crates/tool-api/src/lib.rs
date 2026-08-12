@@ -11,8 +11,8 @@ use thiserror::Error;
 /// Canonical Tool v2（P15-1）兼容 re-export：领域类型统一在 `agent-domain`，
 /// 旧路径 `tool_api::ToolDescriptor` / `tool_api::ToolCapability` 等保持不变。
 pub use agent_domain::{
-    CancellationToken, ContinuationMode, ExecutionOwner, ToolCapability, ToolCapabilityTag,
-    ToolDescriptor, ToolHosting, ToolKind,
+    CancellationToken, ContinuationMode, ToolCapability, ToolCapabilityTag, ToolDescriptor,
+    ToolHosting, ToolKind,
 };
 
 #[async_trait]
@@ -243,7 +243,10 @@ mod tests {
         // 兼容 re-export：旧路径继续可用，且与 agent-domain 类型一致。
         let kind: ToolKind = serde_json::from_str(r#""provider_hosted""#).unwrap();
         assert_eq!(kind, ToolKind::ProviderHosted);
-        assert_eq!(kind.execution_owner(), ExecutionOwner::Provider);
+        assert_eq!(
+            ToolCapabilityTag::WebSearch.capability_key(),
+            "tool:WebSearch"
+        );
         let _: &ToolDescriptor = &ToolDescriptor {
             name: String::new(),
             description: String::new(),

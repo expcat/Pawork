@@ -1,6 +1,8 @@
 # P15-8：Capability Discovery（能力协商与传输选择）
 
-> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：Delivered · 依赖：P0-4、P2-7、P15-1、P15-5、P15-7
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：domain + adapter verified、host composition deferred） · 依赖：P0-4、P2-7、P15-1、P15-5、P15-7
+
+> 2026-08-12 收口（[P15-10](P15-10-review-remediation.md)）：协商与 `AcceptedResponsesTools` 放行改经稳定 `ToolCapabilityTag::capability_key()` 类型化匹配（删除 `Debug` 格式字符串反解，`all_tool_tags_negotiate_via_stable_capability_key` 断言覆盖全 tag）；`provider_capability_negotiated` Diagnostic 经通用观测通道落入 provider_loop 并有断言消费（评审「只 emit 无消费者」按源码证据纠正）；builtin 能力声明两处分裂（provider `builtin_models()` vs model-registry `caps()`）显式延后 [P18-14](../plan/P18-14-pool-reconciliation.md)。
 
 **最终目的**：在请求发出前，基于「模型 × 工具能力标签」做能力协商——检测当前模型/Provider 支持哪些现代能力（Responses 传输、server tools、thinking signature、code execution、computer use 等），据此选择传输路径与降级策略，使 P15-2/3/4 不必各自硬编码「能不能用」。协商结果可持久化、可观测，Core 仍不感知 Provider 名称。
 

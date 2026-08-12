@@ -1,10 +1,12 @@
 # P15-3：Anthropic Modern Messages 适配
 
-> Phase 15 · Provider Native Capabilities · 状态：🟢已交付 · 交付成熟度：TargetVerified · 依赖：P15-1、P15-5、P15-7、P15-8、P6-2
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：domain + adapter verified、host composition deferred） · 依赖：P15-1、P15-5、P15-7、P15-8、P6-2
 
 **最终目的**：把 `provider-anthropic` 升级到现代 Messages：`output_config.format` Structured Outputs、request-level effort、adaptive/interleaved thinking、modern prompt cache，以及 Web Search、Web Fetch、Code Execution、Advisor、Tool Search、MCP Connector、Memory、Bash、Text Editor、Computer Use 等 server/client tool 形态。工具结果与 citations 经 P15-5 归一，reasoning/signature 经 P15-7 持久化，Core 不感知 Anthropic 名称。
 
 **涉及范围**：`provider-anthropic`（现代 server tools 与 thinking signature）、`provider-runtime`（复用 ServerToolEvent / ReasoningItem 通道）；与 P6-2 既有 Messages 路径同 crate 共存。
+
+> 2026-08-12 事实纠正（[P15-10](P15-10-review-remediation.md)）：评审 §3.3「modern.rs 与 request.rs/stream.rs 边界偏散、更接近重写一遍」不成立——`modern.rs` 复用 `request.rs` 的 message / tool-choice / thinking-budget / cache-breakpoint helpers；现代与基线路径共同进入 `provider.rs::pump_messages`，共享 auth、`SseParser` 与 `stream.rs::event_to_events`（含 usage 归一）。modern 只承载现代字段与 server-tool 差异，不要求额外下沉。
 
 ## 细分步骤
 
@@ -47,10 +49,11 @@
   `<name>_tool_result` / 错误对象 → ServerToolEvent 生命周期，citations →
   CitationAdded，轮末发 `ProviderTranscript` 信封；transcript → 原生块重建
   永不出客户端 `tool_result`（负向断言）。
-- thinking signature：`content_block_stop` 捕获 → `ReasoningContinuationStore`
-  不透明保护（接线方注入 `ReasoningStateBridge` + `BlobScope`）→ 事件只携带
-  `protected_blob_ref` → 第二轮回灌重建原 thinking 块（fixture 精确断言）；
-  未配置 store 时 fail-closed。
+- thinking signature：`content_block_stop` 捕获 → 统一 `provider-runtime::reasoning::ReasoningProtector`
+  不透明保护（默认 `InMemoryReasoningProtector`，host 经 `with_reasoning_protector(Arc<dyn ReasoningProtector>)`
+  注入；持久化 `ProtectedBlobStoreProtector` 接线延 P18-3/4/14，见 [P15-10](P15-10-review-remediation.md)）
+  → 事件只携带 `protected_blob_ref` → 第二轮回灌重建原 thinking 块（fixture 精确断言）；
+  默认与 OpenAI / xAI 共享同一 `InMemoryReasoningProtector`（进程内可回放），不再有独立 fail-closed 路径。
 - 降级：基线模型（claude-3-5-sonnet）现代字段 → P6-2（effort clamp 为 budget、
   XHigh→High、system 指令、hosted 降级为 function calling）可观察且不报错；
   不可表达 kind 逐项 note 降级。

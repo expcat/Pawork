@@ -19,10 +19,10 @@
 
 ## 细分步骤
 
-1. **统一能力 facade 与 capability** —— 目的：在 `browser-computer-runtime` 定义统一的 Browser/Computer 能力（导航/点击/输入/截图/读 DOM/桌面坐标操作等），以 `BrowserComputerCapability` facade 暴露；后端差异封装在 trait 之后，Agent 只见 canonical 描述与结果。每个后端实现必须声明其 `ExecutionOwner`（Local→ClientFunction、MCP→ClientFunction/ProviderExtension、ProviderHosted→ProviderHosted），facade 据此把调用路由到正确位点，而非统一塞进本地 `AgentTool::execute()`。
+1. **统一能力 facade 与 capability** —— 目的：在 `browser-computer-runtime` 定义统一的 Browser/Computer 能力（导航/点击/输入/截图/读 DOM/桌面坐标操作等），以 `BrowserComputerCapability` facade 暴露；后端差异封装在 trait 之后，Agent 只见 canonical 描述与结果。每个后端实现必须声明其 `ToolKind` 执行位点（Local→`ClientFunction`、MCP→`ClientFunction`/`ProviderExtension`、ProviderHosted→`ProviderHosted`；执行位点由 `ToolKind` 直接承载，`ExecutionOwner` 冗余枚举已按 [P15-10](../plan/P15-10-review-remediation.md) 删除），facade 据此把调用路由到正确位点，而非统一塞进本地 `AgentTool::execute()`。
 2. **可替换后端 trait** —— 目的：定义 `BrowserComputerBackend` trait（local / Playwright / MCP / provider 四档实现），统一 `spawn`/`act`/`snapshot`/`teardown`，按 ADR-031 的「分层 + 探测回退」思路选择可用后端，回退可观测。
 3. **Policy 与执行边界约束** —— 目的：所有后端选择与网络/文件/坐标能力经 `policy-engine`（P4-9）审批和审计；Core-owned 浏览器/驱动/本地 MCP 子进程经 `sandbox-runtime`（P11-1）的 `SandboxBackend::spawn` 执行。ProviderHosted / ProviderExtension 由外部执行所有者负责隔离，Core 只记录声明的 trust boundary，不能把它们标记为本地 sandboxed。
-4. **Provider Hosted 后端（canonical，ServerToolEvent 生命周期）** —— 目的：provider-hosted computer use 经 `provider-api` canonical 域接入（`ExecutionOwner::Provider`，协调 P15-1 hosted tool v2），**不进入本地 `AgentTool::execute()`**；其生命周期（ComputerActionRequested / ComputerScreenshot 等）走 P15-5 `ServerToolEvent`，Core 只记录/归一/重放。本地后端失败时可降级到 provider 后端并显式记录，但降级跨 trust boundary 必须可观察、需符合 Policy，不允许隐式切换。
+4. **Provider Hosted 后端（canonical，ServerToolEvent 生命周期）** —— 目的：provider-hosted computer use 经 `provider-api` canonical 域接入（`ToolKind::ProviderHosted`，协调 P15-1 hosted tool v2），**不进入本地 `AgentTool::execute()`**；其生命周期（ComputerActionRequested / ComputerScreenshot 等）走 P15-5 `ServerToolEvent`，Core 只记录/归一/重放。本地后端失败时可降级到 provider 后端并显式记录，但降级跨 trust boundary 必须可观察、需符合 Policy，不允许隐式切换。
 5. **结果归一与 artifact 引用** —— 目的：截图/DOM/大输出经 artifact-store 引用（避免大 payload 进上下文，[ADR-018](../docs/adr/ADR-018-large-payload-artifact-id.md)），结果归一为统一结构；操作可取消、可审计。
 6. **定向 / Mock 测试** —— 目的：用 Mock 后端覆盖「工具调度 → policy 审批 → sandbox 执行 → 结果归一」全链路、后端探测与降级、provider 后端不分支断言、大输出走 artifact。仅定向 + Mock smoke，不要求 workspace 全量门禁。
 

@@ -16,6 +16,7 @@ use agent_domain::{
     ThinkingContent, ToolCapabilityTag,
 };
 use model_registry::CapabilityEvidence;
+use proptest::prelude::*;
 use provider_anthropic::reasoning::{
     build_reasoning_item, extract_thinking_payload, reconstruct_block,
 };
@@ -28,7 +29,6 @@ use provider_api::{
     ReasoningEffort,
 };
 use provider_runtime::negotiate::CapabilityNegotiator;
-use proptest::prelude::*;
 use serde_json::{json, Value};
 use test_support::contract::{
     assert_capability_resolution_invariant, assert_citation_not_fabricated,
@@ -99,7 +99,10 @@ mod contract {
             assert_server_tool_event_round_trip(event);
         }
         assert!(matches!(events[0], ServerToolEvent::SourceAdded { .. }));
-        assert!(matches!(*events.last().unwrap(), ServerToolEvent::Completed { .. }));
+        assert!(matches!(
+            *events.last().unwrap(),
+            ServerToolEvent::Completed { .. }
+        ));
     }
 
     /// `server_tool_use` 仅在声明白名单内才归一为 Started。
@@ -144,7 +147,10 @@ mod contract {
         };
         let reconstructed = reconstruct_block(&canonical, Some(&thinking), &payload).unwrap();
         let wire = reconstructed.to_string();
-        assert!(wire.contains("SIG-PAYLOAD"), "重建 wire 应含 signature 原文");
+        assert!(
+            wire.contains("SIG-PAYLOAD"),
+            "重建 wire 应含 signature 原文"
+        );
         assert!(wire.contains("\"thinking\":\"visible reasoning text\""));
     }
 
@@ -343,14 +349,18 @@ mod compat {
     fn anthropic_modern_request_degrades_consistently_on_legacy_only_model() {
         let requirements = requirements();
 
-        let modern = CapabilityNegotiator::negotiate(&evidence(ModelTransport::Messages), &requirements);
+        let modern =
+            CapabilityNegotiator::negotiate(&evidence(ModelTransport::Messages), &requirements);
         assert_eq!(modern.chosen_transport, ModelTransport::Messages);
         assert_capability_resolution_invariant(&modern);
         assert!(modern.supported.contains("citations"));
         assert!(modern.supported.contains("reasoning"));
         assert!(modern.unsupported.is_empty());
 
-        let legacy = CapabilityNegotiator::negotiate(&evidence(ModelTransport::ChatCompletions), &requirements);
+        let legacy = CapabilityNegotiator::negotiate(
+            &evidence(ModelTransport::ChatCompletions),
+            &requirements,
+        );
         assert_eq!(legacy.chosen_transport, ModelTransport::ChatCompletions);
         assert_capability_resolution_invariant(&legacy);
         assert_eq!(

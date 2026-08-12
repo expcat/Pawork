@@ -1,6 +1,8 @@
 # P15-9：Phase 15 功能簇门禁（Contract / Golden / Fuzz / 兼容性）
 
-> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：Built · 依赖：P15-1 ~ P15-8、P2-11、P2-12
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P15-1 ~ P15-8、P2-11、P2-12
+
+> 2026-08-12 复核（[P15-10](P15-10-review-remediation.md)）：`scripts/p15-gate.sh` 四类（contract / golden / fuzz / 兼容性）全部 PASS，`trap` 清理生效——门禁结束后 `target/gates` 不残留（`P15_GATE_KEEP_TARGET` 未设置）。
 
 **最终目的**：为 Phase 15 整簇（Canonical Tool v2、三家现代 Provider API、server tool 事件、tool search、reasoning state、capability discovery）建立集中门禁——扩展统一 Contract Tests、引入 golden 三家字段映射快照、对 citation/reasoning 回灌做 fuzz、验证旧 Chat Completions / P6 基线的兼容性。与 P15-1~8 不同，本任务要求**集中功能簇门禁**并使用**独立 `CARGO_TARGET_DIR` 隔离构建产物，门禁后清理**，不污染日常 target 目录。
 

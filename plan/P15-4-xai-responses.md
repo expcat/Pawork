@@ -1,6 +1,6 @@
 # P15-4：xAI Responses 适配
 
-> Phase 15 · Provider Native Capabilities · 状态：🟢已完成（定向 / Mock smoke） · 交付成熟度：Implemented · 依赖：P15-1、P15-5、P15-7、P15-8、P6-10
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：domain + adapter verified、host composition deferred） · 依赖：P15-1、P15-5、P15-7、P15-8、P6-10
 
 **最终目的**：为 `provider-xai` 增加 xAI Responses 入口，原生覆盖 Web Search、X Search、Code Execution、Collection Search 与 server-side MCP，作为 P6-10 Chat Completions 之外的现代传输。Grok reasoning、tool lifecycle 与 `sources`/`citations` 经 P15-5/P15-7 归一，传输经 P15-8 协商，Core 不感知 xAI 名称。
 
@@ -38,7 +38,7 @@
 
 ## 实现摘要（2026-08-12）
 
-- `provider-xai` 新增 `responses` 模块：请求转换（`to_responses_body`，hosted tools 仅放行协商通过的类别）、SSE 组装器（`ResponsesStreamAssembler`：reasoning/message/function_call/web_search_call/x_search_call/file_search_call/code_interpreter_call/mcp_call → canonical 事件）、Live Search source 归一（`live_search_source_to_source`）、reasoning Protected Blob 往返（`ReasoningProtector` trait + `InMemoryReasoningProtector`，复用 P15-7 `parse_responses_reasoning`/`to_reasoning_item`/`to_responses_input_reasoning`）、错误归一（`normalize_responses_error`）与协商要求折叠（`requirements_from_request`）。
+- `provider-xai` 新增 `responses` 模块：请求转换（`to_responses_body`，hosted tools 仅放行协商通过的类别）、SSE 组装器（`ResponsesStreamAssembler`：reasoning/message/function_call/web_search_call/x_search_call/file_search_call/code_interpreter_call/mcp_call → canonical 事件；[P15-10](P15-10-review-remediation.md) 判定保留 adapter-local，不强制下沉）、Live Search source 归一（`live_search_source_to_source`）、reasoning Protected Blob 往返（统一 `provider-runtime::reasoning::ReasoningProtector` + `InMemoryReasoningProtector`，复用 P15-7 `parse_responses_reasoning`/`to_reasoning_item`/`to_responses_input_reasoning`；持久化接线延 P18-3/4/14）、错误归一（`normalize_responses_error`）与协商要求折叠（`requirements_from_request`）。
 - `provider.rs` 双传输接线：`resolve_capabilities` 经 `CapabilityNegotiator`（不读 Provider 名）选择 transport，Responses 走 `/responses` + SSE 组装，其余降级到 P6-10 `OpenAiCompatibleProvider`；`builtin_models()` 中 `grok-4`/`grok-4-fast` 声明 `transport = Responses`（Live Search / Collection / Code / MCP 标签 + citations + encrypted reasoning），`grok-3`/`grok-2` 保留 Chat Completions 基线；`with_reasoning_protector` host 注入点；双鉴权复用 P6-10。
 - Mock smoke（`tests/responses.rs`，wiremock）：Responses+reasoning item→event、Live Search sources、Web/X/Collection/Code/MCP 事件、reasoning 往返、双鉴权（API Key / OAuth bearer）、降级到 Chat Completions、hosted tool 仅在协商通过时入 body、错误归一与 `no_provider_branch` 断言。
 - 附带修复：`tests/contract.rs` 补 `reasoning: None` 字段（phase-15 漏改），并将 P6-10 Chat Completions 契约用例模型由 `grok-4` 改为 `grok-2`（`grok-4` 现声明 Responses transport，契约用例需用 Chat Completions 基线模型）。

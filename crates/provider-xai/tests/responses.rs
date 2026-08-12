@@ -11,14 +11,13 @@ use agent_domain::{
     ServerToolEvent, StopReason, TextContent, ToolCapabilityTag,
 };
 use provider_api::{
-    CanonicalModelRequest, CredentialKind, HostedToolRequest, ModelProvider,
-    PromptCachePreference, ProviderErrorKind, ProviderStreamEvent, ReasoningConfig,
-    ReasoningEffort, RequestBudget, ResolvedCredential, ResponseFormat, ToolChoice,
+    CanonicalModelRequest, CredentialKind, HostedToolRequest, ModelProvider, PromptCachePreference,
+    ProviderErrorKind, ProviderStreamEvent, ReasoningConfig, ReasoningEffort, RequestBudget,
+    ResolvedCredential, ResponseFormat, ToolChoice,
 };
 use provider_xai::responses::{
-    AcceptedResponsesTools, InMemoryReasoningProtector, ResponsesAssemblyEvent,
-    ResponsesStreamAssembler, live_search_source_to_source, normalize_responses_error,
-    requirements_from_request, to_responses_body,
+    live_search_source_to_source, normalize_responses_error, requirements_from_request,
+    to_responses_body, AcceptedResponsesTools, ResponsesAssemblyEvent, ResponsesStreamAssembler,
 };
 use provider_xai::{XaiConfig, XaiProvider};
 use test_support::RecordingProviderSink;
@@ -188,17 +187,39 @@ async fn responses_reasoning_protected_blob_round_trip() {
     // 事件只携带 Protected Blob 引用，绝不携带明文凭证。
     let encoded = serde_json::to_string(&reasoning).expect("serialize reasoning item");
     assert!(!encoded.contains("SECRET-OPAQUE-BYTES"));
-    assert!(reasoning.protected_blob_ref.as_str().starts_with("xai-reasoning-"));
+    assert!(reasoning.protected_blob_ref.as_str().starts_with("mem_"));
 
-    // 第二轮：把上一轮的 reasoning item 放进消息，验证经 protector 解密回灌的结构。
-    // （进程内默认 protector 跨实例不可解密，只验证回灌函数可被调用。）
-    let protector = InMemoryReasoningProtector::default();
+    // 第二轮：同一 provider 实例应复用默认 protector，把上轮引用解密回灌。
     let mut round2 = responses_request("grok-4");
-    round2.messages[0].content.push(ContentPart::Reasoning(reasoning));
-    let (inputs, _warnings) =
-        provider_xai::responses::resolve_reasoning_inputs(&round2, &protector).await;
-    // 上一轮引用不属于本 protector，inputs 为空（fail-closed），属预期。
-    assert!(inputs.is_empty());
+    round2.messages[0]
+        .content
+        .push(ContentPart::Reasoning(reasoning));
+    adapter
+        .stream(
+            round2,
+            &RecordingProviderSink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("second reasoning stream succeeds");
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    let responses_requests: Vec<_> = requests
+        .iter()
+        .filter(|request| request.url.path() == "/responses")
+        .collect();
+    assert_eq!(responses_requests.len(), 2);
+    let second_body: serde_json::Value =
+        serde_json::from_slice(&responses_requests[1].body).expect("second request body is JSON");
+    assert_eq!(
+        second_body["input"][0],
+        serde_json::json!({
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [{"type": "summary_text", "text": "step"}],
+            "encrypted_content": "SECRET-OPAQUE-BYTES"
+        })
+    );
     assert_eq!(summary.stop_reason, StopReason::Completed);
 }
 
@@ -411,9 +432,10 @@ fn responses_request_body_and_requirements_shape() {
         config: None,
     });
     request.reasoning = Some(ReasoningConfig::new(ReasoningEffort::XHigh));
-    request
-        .provider_options
-        .insert("previous_response_id".into(), serde_json::json!("resp_prev"));
+    request.provider_options.insert(
+        "previous_response_id".into(),
+        serde_json::json!("resp_prev"),
+    );
 
     let body = to_responses_body(
         &request,

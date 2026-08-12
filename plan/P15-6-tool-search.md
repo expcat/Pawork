@@ -1,6 +1,8 @@
 # P15-6：Tool Search（按需工具发现与激活）
 
-> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P0-5、P3-4、P4-9、P9-3、P15-1
+> Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：default-off feature、当前 no consumer） · 依赖：P0-5、P3-4、P4-9、P9-3、P15-1
+
+> 2026-08-12 收口（[P15-10](P15-10-review-remediation.md)）：tool_search 为完整实现但当前零生产消费者（`ToolScheduler`、agent-engine、app-service、各 provider 均未引用），已收口到 `tool-runtime` **默认关闭**的 `tool-search` feature（`#[cfg(feature = "tool-search")]` 编译门 + `pub use` 门），接入主循环前不启用；feature 开启时索引 / 搜索 / 激活 / 审批 / 预算联动测试全保留（27 passed）。
 
 **最终目的**：让 Agent 在面对大量可用工具（内置 + MCP + GUI 工具 + Provider extension）时，不必把全部工具 schema 一次性塞入上下文，而是按需搜索一个「延迟加载工具索引」并激活匹配项。降低上下文占用、提升工具选择精度，并为 P15-1 的 `ProviderExtension` 提供统一发现入口。Core 不因工具来源不同走特例。
 

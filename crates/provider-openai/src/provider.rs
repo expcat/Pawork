@@ -13,7 +13,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_domain::{CancellationToken, ModelId, ProtectedBlobRef, ProviderId, StopReason, TokenUsage};
+use agent_domain::{CancellationToken, ModelId, ProviderId, StopReason, TokenUsage};
 use async_trait::async_trait;
 use model_registry::CapabilityEvidence;
 use provider_api::{
@@ -26,12 +26,12 @@ use provider_runtime::http::{HttpClient, HttpClientConfig};
 use provider_runtime::negotiate::CapabilityNegotiator;
 use provider_runtime::sse::SseParser;
 
+use crate::reasoning::{extract_encrypted_content, responses_reasoning_to_canonical};
 use crate::responses::{
     normalize_responses_error, requirements_from_request, resolve_reasoning_inputs,
-    AcceptedResponsesTools, InMemoryReasoningProtector, ReasoningProtector, ResponsesAssemblyEvent,
-    ResponsesStreamAssembler, to_responses_body,
+    to_responses_body, AcceptedResponsesTools, InMemoryReasoningProtector, ReasoningProtector,
+    ResponsesAssemblyEvent, ResponsesStreamAssembler,
 };
-use crate::reasoning::{extract_encrypted_content, responses_reasoning_to_canonical};
 use crate::DEFAULT_BASE_URL;
 
 /// OpenAI 适配器配置。
@@ -81,7 +81,7 @@ pub struct OpenAiProvider {
     base_url: String,
     provider_id: ProviderId,
     credential: Option<ResolvedCredential>,
-    reasoning_protector: Option<Arc<dyn ReasoningProtector>>,
+    reasoning_protector: Arc<dyn ReasoningProtector>,
 }
 
 impl OpenAiProvider {
@@ -105,14 +105,14 @@ impl OpenAiProvider {
             base_url: config.base_url,
             provider_id: config.provider_id,
             credential,
-            reasoning_protector: None,
+            reasoning_protector: Arc::new(InMemoryReasoningProtector::default()),
         })
     }
 
     /// 注入 reasoning continuation 的 Protected Blob Store 边界实现（P15-7 host
-    /// 接入点）。未注入时使用进程内 in-memory 默认 protector（仅保证进程内回放）。
+    /// 接入点）。未注入时共享实例级 in-memory 默认 protector（仅保证进程内回放）。
     pub fn with_reasoning_protector(mut self, protector: Arc<dyn ReasoningProtector>) -> Self {
-        self.reasoning_protector = Some(protector);
+        self.reasoning_protector = protector;
         self
     }
 
@@ -168,15 +168,8 @@ impl OpenAiProvider {
         let resolved = self.resolve_capabilities(&request);
         let accepted = AcceptedResponsesTools::from_supported(&resolved.supported);
 
-        // reasoning protector：未注入则用进程内默认实现（保证事件只携带引用）。
-        let default_protector: Arc<dyn ReasoningProtector>;
-        let protector: &dyn ReasoningProtector = match &self.reasoning_protector {
-            Some(arc) => arc.as_ref(),
-            None => {
-                default_protector = Arc::new(InMemoryReasoningProtector::default());
-                default_protector.as_ref()
-            }
-        };
+        // reasoning protector 与 Provider 实例共享，保证同进程跨轮可解析引用。
+        let protector = self.reasoning_protector.as_ref();
 
         // 解析历史 reasoning items → Responses input（经 protector 解密）。
         let (reasoning_inputs, _warnings) = resolve_reasoning_inputs(&request, protector).await;
@@ -306,19 +299,13 @@ impl OpenAiProvider {
                 match extract_encrypted_content(&wire) {
                     Ok(Some(secret)) => {
                         let payload = secret.into_inner().into_bytes();
-                        let blob_ref = protector
-                            .protect(&payload)
-                            .await
-                            .map_err(|error| {
-                                ProviderError::new(
-                                    ProviderErrorKind::Unknown,
-                                    format!("reasoning protect failed: {error}"),
-                                )
-                            })?;
-                        match responses_reasoning_to_canonical(
-                            &wire,
-                            ProtectedBlobRef::from(blob_ref),
-                        ) {
+                        let blob_ref = protector.protect(&payload).await.map_err(|error| {
+                            ProviderError::new(
+                                ProviderErrorKind::Unknown,
+                                format!("reasoning protect failed: {error}"),
+                            )
+                        })?;
+                        match responses_reasoning_to_canonical(&wire, blob_ref) {
                             Ok(item) => {
                                 sink.emit(ProviderStreamEvent::ReasoningItem(item)).await?;
                             }
@@ -377,9 +364,9 @@ impl ModelProvider for OpenAiProvider {
 /// OpenAI 内置模型目录（含 reasoning / image / tool 能力）。
 /// 数据快照：2026-08-09；目录更新作为显式跟踪项手动执行。
 pub fn builtin_models() -> Vec<ModelDefinition> {
+    use agent_domain::ToolCapabilityTag as T;
     use provider_api::{ModelTransport, ReasoningStateCapability, ReasoningStateDescriptor};
     use std::collections::BTreeSet;
-    use agent_domain::ToolCapabilityTag as T;
 
     fn caps(
         text: bool,
@@ -445,9 +432,14 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
     let mut gpt41 = vision_tools.clone();
     gpt41.transport = ModelTransport::Responses;
     gpt41.citations = true;
-    gpt41.hosted_tool_tags = [T::WebSearch, T::CodeExecution, T::ImageGeneration, T::ComputerUse]
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    gpt41.hosted_tool_tags = [
+        T::WebSearch,
+        T::CodeExecution,
+        T::ImageGeneration,
+        T::ComputerUse,
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
     gpt41.reasoning = ReasoningStateCapability {
         state: ReasoningStateDescriptor {
             requires_encrypted: true,
@@ -502,7 +494,10 @@ mod tests {
             .iter()
             .find(|m| m.id == ModelId::new("o3"))
             .expect("o3 present");
-        assert_eq!(o3.capabilities.transport, provider_api::ModelTransport::Responses);
+        assert_eq!(
+            o3.capabilities.transport,
+            provider_api::ModelTransport::Responses
+        );
         assert!(o3.capabilities.citations);
         assert!(o3.capabilities.reasoning.state.requires_encrypted);
 
@@ -510,7 +505,10 @@ mod tests {
             .iter()
             .find(|m| m.id == ModelId::new("gpt-4.1"))
             .expect("gpt-4.1 present");
-        assert_eq!(gpt41.capabilities.transport, provider_api::ModelTransport::Responses);
+        assert_eq!(
+            gpt41.capabilities.transport,
+            provider_api::ModelTransport::Responses
+        );
 
         // 基线模型仍走 Chat Completions（降级路径覆盖）。
         let gpt4o = models

@@ -15,7 +15,6 @@ use agent_domain::{
     ArtifactId, ContentPart, ImageContent, ImageSource, Message, MessageRole, ProgramStream,
     ServerToolEvent, StopReason, TokenUsage, ToolCallId,
 };
-use async_trait::async_trait;
 use provider_api::{
     CanonicalModelRequest, HostedToolRequest, ProviderError, ProviderErrorKind,
     ProviderStreamEvent, ReasoningConfig, ReasoningEffort, ResponseFormat, ToolChoice,
@@ -32,67 +31,27 @@ use crate::server_tool::{
 };
 
 // ===========================================================================
-// Reasoning protector（Protected Blob Store 边界抽象）
+// Reasoning protector（统一边界：provider_runtime::reasoning）
 // ===========================================================================
 
-/// Reasoning continuation 加密凭证的 Protected Blob Store 边界。
+/// 统一 reasoning 保护边界（共享 API，见 [`provider_runtime::reasoning`]）。
 ///
-/// Provider 受信运行时在拿到 wire `encrypted_content` 后立刻 [`Self::protect`]
-/// 存入受保护存储，只把返回的引用放进 canonical 事件；回灌下一轮请求时
-/// [`Self::resolve`] 取回明文重建 Responses input item。明文绝不进入事件 / 日志 /
+/// Provider 受信运行时在拿到 wire `encrypted_content` 后立刻 [`ReasoningProtector::protect`]
+/// 存入受保护存储，只把返回的 [`agent_domain::ProtectedBlobRef`] 放进 canonical
+/// 事件；回灌下一轮请求时 [`ReasoningProtector::resolve`] 取回
+/// `ProtectedBlob` 明文重建 Responses input item。明文绝不进入事件 / 日志 /
 /// GUI / OS Keychain（ADR-032）。
 ///
-/// 默认实现 [`InMemoryReasoningProtector`] 仅保证进程内可回放，持久化 / 跨进程
-/// 保护由 host 在 P15-7 接入 `ReasoningStateBridge` 实现并注入
+/// 默认实现 [`InMemoryReasoningProtector`] 仅保证进程内可回放，持久化 /
+/// 跨进程保护由 [`provider_runtime::reasoning::ProtectedBlobStoreProtector`]
+/// 提供（构造时捕获 store 与 `BlobScope`），host 注入
 /// [`crate::OpenAiProvider`]。
-#[async_trait]
-pub trait ReasoningProtector: Send + Sync {
-    /// 加密保护一段 opaque continuation payload，返回稳定逻辑引用。
-    async fn protect(&self, payload: &[u8]) -> Result<String, ReasoningProtectError>;
-
-    /// 按 [`Self::protect`] 返回的引用解析回明文（仅在构造下一轮请求时调用）。
-    async fn resolve(&self, blob_ref: &str) -> Result<Vec<u8>, ReasoningProtectError>;
-}
-
-/// Reasoning protector 失败：只描述边界错误，绝不携带明文 / 签名。
-#[derive(Debug, thiserror::Error)]
-pub enum ReasoningProtectError {
-    #[error("reasoning blob not found for reference `{0}`")]
-    NotFound(String),
-    #[error("reasoning protector backend failure: {0}")]
-    Backend(String),
-}
-
-/// 进程内 in-memory 默认 protector：保证 canonical 事件只携带引用，明文只
-/// 存在于受信运行时内存。仅供 adapter 默认行为与测试；生产持久化由 host 注入。
-#[derive(Default)]
-pub struct InMemoryReasoningProtector {
-    inner: tokio::sync::Mutex<BTreeMap<String, Vec<u8>>>,
-    seq: tokio::sync::Mutex<u64>,
-}
-
-#[async_trait]
-impl ReasoningProtector for InMemoryReasoningProtector {
-    async fn protect(&self, payload: &[u8]) -> Result<String, ReasoningProtectError> {
-        let mut seq = self.seq.lock().await;
-        *seq += 1;
-        let reference = format!("mem-reasoning-{}", *seq);
-        self.inner
-            .lock()
-            .await
-            .insert(reference.clone(), payload.to_vec());
-        Ok(reference)
-    }
-
-    async fn resolve(&self, blob_ref: &str) -> Result<Vec<u8>, ReasoningProtectError> {
-        self.inner
-            .lock()
-            .await
-            .get(blob_ref)
-            .cloned()
-            .ok_or_else(|| ReasoningProtectError::NotFound(blob_ref.to_owned()))
-    }
-}
+///
+/// 兼容 re-export：历史路径 `crate::responses::*` /
+/// `provider_openai::*` 继续可用，实现由 `provider-runtime` 统一提供。
+pub use provider_runtime::reasoning::{
+    InMemoryReasoningProtector, ReasoningProtectError, ReasoningProtector,
+};
 
 // ===========================================================================
 // 请求转换：canonical → Responses 请求体
@@ -116,10 +75,11 @@ pub struct AcceptedResponsesTools {
 }
 
 impl AcceptedResponsesTools {
-    /// 从协商 `supported` 标签集构造（`tool:<Tag>` 形式，见 negotiate 模块）。
+    /// 从协商 `supported` 标签集构造（稳定 `tool:PascalCase` key，见
+    /// `ToolCapabilityTag::capability_key` 与 negotiate 模块）。
     pub fn from_supported(supported: &std::collections::BTreeSet<String>) -> Self {
         use agent_domain::ToolCapabilityTag as T;
-        let has = |tag: T| supported.contains(&format!("tool:{tag:?}"));
+        let has = |tag: T| supported.contains(tag.capability_key());
         Self {
             web_search: has(T::WebSearch) || has(T::XSearch),
             file_search: has(T::FileOrCollectionSearch),
@@ -200,7 +160,10 @@ pub fn to_responses_body(
     }
     if !tools.is_empty() {
         body.insert("tools".into(), Value::Array(tools));
-        body.insert("tool_choice".into(), tool_choice_to_responses(&request.tool_choice));
+        body.insert(
+            "tool_choice".into(),
+            tool_choice_to_responses(&request.tool_choice),
+        );
     }
     if !include.is_empty() {
         body.insert(
@@ -237,7 +200,10 @@ pub fn to_responses_body(
     }
 
     if let Some(Value::String(previous)) = request.provider_options.get("previous_response_id") {
-        body.insert("previous_response_id".into(), Value::String(previous.clone()));
+        body.insert(
+            "previous_response_id".into(),
+            Value::String(previous.clone()),
+        );
     }
 
     for (key, value) in &request.provider_options {
@@ -275,7 +241,9 @@ fn hosted_tool_to_responses_tool(
             Some(json!({"type": "file_search", "vector_store_ids": vector_store_ids}))
         }
         T::CodeExecution if accepted.code_interpreter => Some(json!({"type": "code_interpreter"})),
-        T::ImageGeneration if accepted.image_generation => Some(json!({"type": "image_generation"})),
+        T::ImageGeneration if accepted.image_generation => {
+            Some(json!({"type": "image_generation"}))
+        }
         T::HostedShell if accepted.hosted_shell => Some(json!({"type": "local_shell"})),
         T::ProviderApplyPatch if accepted.apply_patch => Some(json!({
             "type": "code_interpreter",
@@ -312,7 +280,7 @@ fn extension_to_responses_tool(
     let mut tool = Map::new();
     tool.insert("type".into(), Value::String("mcp".into()));
     tool.insert("server_label".into(), Value::String(extension.name.clone()));
-   tool.insert("server_url".into(), Value::String(server_url.to_owned()));
+    tool.insert("server_url".into(), Value::String(server_url.to_owned()));
     if extension.requires_approval {
         tool.insert("require_approval".into(), Value::String("always".into()));
     }
@@ -452,7 +420,8 @@ fn effective_reasoning_effort(request: &CanonicalModelRequest) -> Option<Reasoni
     if let Some(reasoning) = &request.reasoning {
         return Some(reasoning.effort);
     }
-    let clamped = clamp_reasoning_to_thinking(request.reasoning.as_ref(), request.thinking.as_ref());
+    let clamped =
+        clamp_reasoning_to_thinking(request.reasoning.as_ref(), request.thinking.as_ref());
     use provider_api::ThinkingLevel;
     Some(match clamped.level {
         ThinkingLevel::Off => ReasoningEffort::None,
@@ -505,15 +474,17 @@ pub async fn resolve_reasoning_inputs(
     for message in &request.messages {
         for part in &message.content {
             if let ContentPart::Reasoning(item) = part {
-                match protector.resolve(item.protected_blob_ref.as_str()).await {
-                    Ok(payload) => match String::from_utf8(payload) {
-                        Ok(decrypted) => match canonical_reasoning_to_responses_input(item, &decrypted) {
-                            Ok(input) => inputs.push(input),
-                            Err(error) => warnings.push(format!(
-                                "reasoning item {} rebuild failed: {error}",
-                                item.id.as_str()
-                            )),
-                        },
+                match protector.resolve(&item.protected_blob_ref).await {
+                    Ok(payload) => match String::from_utf8(payload.expose().to_vec()) {
+                        Ok(decrypted) => {
+                            match canonical_reasoning_to_responses_input(item, &decrypted) {
+                                Ok(input) => inputs.push(input),
+                                Err(error) => warnings.push(format!(
+                                    "reasoning item {} rebuild failed: {error}",
+                                    item.id.as_str()
+                                )),
+                            }
+                        }
                         Err(_) => warnings.push(format!(
                             "reasoning item {} decrypted payload is not utf-8",
                             item.id.as_str()
@@ -602,7 +573,9 @@ impl ResponsesStreamAssembler {
                 }
             }
             "response.output_item.added" => self.handle_item_added(value.get("item")),
-            "response.function_call_arguments.delta" => self.handle_function_arguments_delta(&value),
+            "response.function_call_arguments.delta" => {
+                self.handle_function_arguments_delta(&value)
+            }
             "response.output_item.done" => self.handle_item_done(value.get("item")),
             "response.completed" => self.handle_completed(&value),
             "response.failed" | "response.incomplete" => self.handle_failed(&value),
@@ -647,13 +620,21 @@ impl ResponsesStreamAssembler {
         };
         let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
         if item_type == "function_call" {
-            let item_id = item.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
+            let item_id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
             let call_id = item
                 .get("call_id")
                 .and_then(Value::as_str)
                 .unwrap_or(&item_id)
                 .to_owned();
-            let name = item.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
             self.function_calls.insert(item_id.clone(), call_id.clone());
             self.function_started.insert(item_id);
             return vec![ResponsesAssemblyEvent::Canonical(
@@ -706,14 +687,26 @@ impl ResponsesStreamAssembler {
     }
 
     fn handle_function_call_done(&mut self, item: &Value) -> Vec<ResponsesAssemblyEvent> {
-        let item_id = item.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
+        let item_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
         let call_id = item
             .get("call_id")
             .and_then(Value::as_str)
             .unwrap_or(&item_id)
             .to_owned();
-        let name = item.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
-        let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("").to_owned();
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let arguments = item
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
         let mut events = Vec::new();
         if !self.function_started.contains(&item_id) {
             self.function_calls.insert(item_id.clone(), call_id.clone());
@@ -742,7 +735,11 @@ impl ResponsesStreamAssembler {
 
     fn handle_search_call_done(&mut self, item: &Value) -> Vec<ResponsesAssemblyEvent> {
         let mut events = Vec::new();
-        let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
         match response_item_to_server_tool_event(item) {
             Ok(event) => {
                 events.push(ResponsesAssemblyEvent::Canonical(
@@ -786,8 +783,10 @@ impl ResponsesStreamAssembler {
         )];
         if let Some(outputs) = item.get("outputs").and_then(Value::as_array) {
             for output in outputs {
-                if let Some(artifact) =
-                    output.get("file_id").and_then(Value::as_str).map(ArtifactId::from)
+                if let Some(artifact) = output
+                    .get("file_id")
+                    .and_then(Value::as_str)
+                    .map(ArtifactId::from)
                 {
                     events.push(ResponsesAssemblyEvent::Canonical(
                         ProviderStreamEvent::ServerTool(ServerToolEvent::ProgramOutput {
@@ -810,7 +809,11 @@ impl ResponsesStreamAssembler {
             }
         }
         let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-        events.push(server_tool_completion(&tool_call_id, status, item.get("error")));
+        events.push(server_tool_completion(
+            &tool_call_id,
+            status,
+            item.get("error"),
+        ));
         events
     }
 
@@ -826,8 +829,10 @@ impl ResponsesStreamAssembler {
                 }),
             ));
         }
-        if let Some(screenshot) =
-            item.get("output").and_then(|o| o.get("image_url")).and_then(Value::as_str)
+        if let Some(screenshot) = item
+            .get("output")
+            .and_then(|o| o.get("image_url"))
+            .and_then(Value::as_str)
         {
             events.push(ResponsesAssemblyEvent::Canonical(
                 ProviderStreamEvent::ServerTool(ServerToolEvent::ComputerScreenshot {
@@ -838,7 +843,11 @@ impl ResponsesStreamAssembler {
             ));
         }
         let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-        events.push(server_tool_completion(&tool_call_id, status, item.get("error")));
+        events.push(server_tool_completion(
+            &tool_call_id,
+            status,
+            item.get("error"),
+        ));
         events
     }
 
@@ -866,7 +875,11 @@ impl ResponsesStreamAssembler {
             ));
         } else {
             let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-            events.push(server_tool_completion(&tool_call_id, status, item.get("error")));
+            events.push(server_tool_completion(
+                &tool_call_id,
+                status,
+                item.get("error"),
+            ));
         }
         events
     }
@@ -874,7 +887,11 @@ impl ResponsesStreamAssembler {
     fn handle_mcp_call_done(&mut self, item: &Value) -> Vec<ResponsesAssemblyEvent> {
         let id = required_id(item);
         let tool_call_id = ToolCallId::from(id);
-        let name = item.get("name").and_then(Value::as_str).unwrap_or("mcp").to_owned();
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("mcp")
+            .to_owned();
         let mut events = vec![ResponsesAssemblyEvent::Canonical(
             ProviderStreamEvent::ServerTool(ServerToolEvent::Started {
                 tool_call_id: tool_call_id.clone(),
@@ -892,7 +909,11 @@ impl ResponsesStreamAssembler {
             ));
         } else {
             let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-            events.push(server_tool_completion(&tool_call_id, status, item.get("error")));
+            events.push(server_tool_completion(
+                &tool_call_id,
+                status,
+                item.get("error"),
+            ));
         }
         events
     }
@@ -939,7 +960,11 @@ impl ResponsesStreamAssembler {
             }
         }
         let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-        events.push(server_tool_completion(&tool_call_id, status, item.get("error")));
+        events.push(server_tool_completion(
+            &tool_call_id,
+            status,
+            item.get("error"),
+        ));
         events
     }
 
@@ -949,7 +974,11 @@ impl ResponsesStreamAssembler {
     fn handle_custom_tool_done(&mut self, item: &Value) -> Vec<ResponsesAssemblyEvent> {
         let id = required_id(item);
         let tool_call_id = ToolCallId::from(id);
-        let name = item.get("name").and_then(Value::as_str).unwrap_or("custom").to_owned();
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("custom")
+            .to_owned();
         let mut events = vec![ResponsesAssemblyEvent::Canonical(
             ProviderStreamEvent::ServerTool(ServerToolEvent::Started {
                 tool_call_id: tool_call_id.clone(),
@@ -958,13 +987,21 @@ impl ResponsesStreamAssembler {
             }),
         )];
         let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-        events.push(server_tool_completion(&tool_call_id, status, item.get("error")));
+        events.push(server_tool_completion(
+            &tool_call_id,
+            status,
+            item.get("error"),
+        ));
         events
     }
 
     fn handle_completed(&mut self, value: &Value) -> Vec<ResponsesAssemblyEvent> {
         let response = value.get("response").unwrap_or(value);
-        if let Some(id) = response.get("id").and_then(Value::as_str).map(str::to_owned) {
+        if let Some(id) = response
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        {
             self.response_id = Some(id);
         }
         let mut events = Vec::new();
@@ -975,7 +1012,7 @@ impl ResponsesStreamAssembler {
                 ProviderStreamEvent::UsageUpdated(usage),
             ));
         }
-       let status = response.get("status").and_then(Value::as_str);
+        let status = response.get("status").and_then(Value::as_str);
         // Responses status 词汇与 Chat Completions finish_reason 不同：先归一到
         // map_stop_reason 能理解的 finish 串（completed → stop；incomplete → length）。
         let mapped_status = match status {
@@ -996,7 +1033,9 @@ impl ResponsesStreamAssembler {
     fn handle_failed(&mut self, value: &Value) -> Vec<ResponsesAssemblyEvent> {
         let response = value.get("response").unwrap_or(value);
         let status = response.get("status").and_then(Value::as_str);
-        let error = response.get("error").or_else(|| response.get("status_details"));
+        let error = response
+            .get("error")
+            .or_else(|| response.get("status_details"));
         let message = error
             .and_then(|e| e.get("message"))
             .and_then(Value::as_str)
@@ -1078,7 +1117,11 @@ fn response_id_of(value: &Value) -> Option<String> {
 pub fn normalize_responses_error(mut error: ProviderError) -> ProviderError {
     let message = error.message.to_ascii_lowercase();
     let refined = if message.contains("vector_store") && message.contains("not_ready") {
-        Some((ProviderErrorKind::ProviderUnavailable, true, "vector store not ready"))
+        Some((
+            ProviderErrorKind::ProviderUnavailable,
+            true,
+            "vector store not ready",
+        ))
     } else if message.contains("code_interpreter") && message.contains("timeout") {
         Some((ProviderErrorKind::Timeout, true, "code interpreter timeout"))
     } else if message.contains("local_shell") && message.contains("timeout") {
@@ -1090,16 +1133,26 @@ pub fn normalize_responses_error(mut error: ProviderError) -> ProviderError {
             "computer use requires explicit confirmation",
         ))
     } else if message.contains("mcp") && message.contains("unavailable") {
-        Some((ProviderErrorKind::ProviderUnavailable, true, "server-side mcp unavailable"))
+        Some((
+            ProviderErrorKind::ProviderUnavailable,
+            true,
+            "server-side mcp unavailable",
+        ))
     } else if message.contains("skill") && message.contains("unavailable") {
-        Some((ProviderErrorKind::ProviderUnavailable, true, "provider skill unavailable"))
+        Some((
+            ProviderErrorKind::ProviderUnavailable,
+            true,
+            "provider skill unavailable",
+        ))
     } else {
         None
     };
     if let Some((kind, retryable, detail)) = refined {
         error.kind = kind;
         error.retryable = retryable;
-        error.diagnostics.insert("responses_error".into(), detail.into());
+        error
+            .diagnostics
+            .insert("responses_error".into(), detail.into());
     }
     error
 }
@@ -1125,10 +1178,12 @@ pub fn requirements_from_request(
         required_tools.insert(T::ServerSideMcp);
         required_tools.extend(extension.capabilities.iter().copied());
     }
-    let needs_citations = request
-        .hosted_tools
-        .iter()
-        .any(|tool| matches!(tool.kind, T::WebSearch | T::XSearch | T::FileOrCollectionSearch));
+    let needs_citations = request.hosted_tools.iter().any(|tool| {
+        matches!(
+            tool.kind,
+            T::WebSearch | T::XSearch | T::FileOrCollectionSearch
+        )
+    });
     let reasoning = request.reasoning.clone().or_else(|| {
         request.thinking.as_ref().map(|thinking| {
             let clamped = clamp_reasoning_to_thinking(None, Some(thinking));
@@ -1157,7 +1212,7 @@ fn effort_from_thinking_level(level: provider_api::ThinkingLevel) -> ReasoningEf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_domain::{ProtectedBlobRef, ReasoningItemId};
+    use agent_domain::ReasoningItemId;
     use std::collections::BTreeMap;
 
     fn user_request(text: &str) -> CanonicalModelRequest {
@@ -1220,7 +1275,9 @@ mod tests {
             Message {
                 id: MessageId::new("sys"),
                 role: MessageRole::System,
-                content: vec![ContentPart::Text(TextContent { text: "be brief".into() })],
+                content: vec![ContentPart::Text(TextContent {
+                    text: "be brief".into(),
+                })],
                 metadata: agent_domain::MessageMetadata::default(),
             },
         );
@@ -1243,7 +1300,10 @@ mod tests {
         });
         let body = to_responses_body(&request, Vec::new(), &AcceptedResponsesTools::default());
         assert!(body.get("tools").is_none());
-        let accepted = AcceptedResponsesTools { web_search: true, ..AcceptedResponsesTools::default() };
+        let accepted = AcceptedResponsesTools {
+            web_search: true,
+            ..AcceptedResponsesTools::default()
+        };
         let body = to_responses_body(&request, Vec::new(), &accepted);
         assert_eq!(body["tools"][0]["type"], "web_search_preview");
         assert_eq!(body["include"][0], "web_search_preview.action.sources");
@@ -1270,7 +1330,9 @@ mod tests {
     #[test]
     fn reserved_provider_options_cannot_override_canonical() {
         let mut request = user_request("hi");
-        request.provider_options.insert("model".into(), json!("attacker"));
+        request
+            .provider_options
+            .insert("model".into(), json!("attacker"));
         request.provider_options.insert("input".into(), json!([]));
         request.provider_options.insert("top_p".into(), json!(0.9));
         let body = to_responses_body(&request, Vec::new(), &AcceptedResponsesTools::default());
@@ -1311,14 +1373,17 @@ mod tests {
             Some(ProviderStreamEvent::ToolCallArgumentsDelta { json, .. }) if json == "{\"p\":1}"
         ));
         let done = canonical_only(assembler.feed(fc_done));
-        assert!(done.iter().any(|e| matches!(e, ProviderStreamEvent::ToolCallCompleted { .. })));
+        assert!(done
+            .iter()
+            .any(|e| matches!(e, ProviderStreamEvent::ToolCallCompleted { .. })));
         let final_events = canonical_only(assembler.feed(completed));
         assert!(final_events
             .iter()
             .any(|e| matches!(e, ProviderStreamEvent::UsageUpdated(u) if u.input_tokens == 3)));
-        assert!(final_events
-            .iter()
-            .any(|e| matches!(e, ProviderStreamEvent::ResponseCompleted(StopReason::Completed))));
+        assert!(final_events.iter().any(|e| matches!(
+            e,
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed)
+        )));
         let state = assembler.finish();
         assert_eq!(state.response_id.as_deref(), Some("resp_1"));
         assert!(state.completed);
@@ -1333,11 +1398,16 @@ mod tests {
             "summary": [{"type": "summary_text", "text": "step"}],
             "encrypted_content": "opaque-bytes"
         });
-        let event = format!("{{\"type\":\"response.output_item.done\",\"item\":{}}}", item);
+        let event = format!(
+            "{{\"type\":\"response.output_item.done\",\"item\":{}}}",
+            item
+        );
         let produced = assembler.feed(&event);
         assert_eq!(produced.len(), 1);
         match &produced[0] {
-            ResponsesAssemblyEvent::ReasoningOutputItem { wire } => assert_eq!(wire["id"], "rs_abc"),
+            ResponsesAssemblyEvent::ReasoningOutputItem { wire } => {
+                assert_eq!(wire["id"], "rs_abc")
+            }
             other => panic!("expected reasoning candidate, got {other:?}"),
         }
     }
@@ -1386,7 +1456,7 @@ mod tests {
         let item = ReasoningItem {
             id: ReasoningItemId::from("rs_1"),
             summary: None,
-            protected_blob_ref: ProtectedBlobRef::from(reference),
+            protected_blob_ref: reference,
             opaque_metadata: BTreeMap::from([(
                 "openai.responses.summary_entries".into(),
                 Value::Array(vec![json!({"type":"summary_text","text":"step"})]),
@@ -1394,7 +1464,9 @@ mod tests {
             continuation_metadata: BTreeMap::new(),
         };
         let mut request = user_request("continue");
-        request.messages[0].content.push(ContentPart::Reasoning(item));
+        request.messages[0]
+            .content
+            .push(ContentPart::Reasoning(item));
         let (inputs, warnings) = resolve_reasoning_inputs(&request, &protector).await;
         assert!(warnings.is_empty());
         assert_eq!(inputs.len(), 1);
@@ -1417,6 +1489,9 @@ mod tests {
         let requirements = requirements_from_request(&request);
         assert!(requirements.required_tools.contains(&T::WebSearch));
         assert!(requirements.citations);
-        assert_eq!(requirements.transport_pref, vec![provider_api::ModelTransport::Responses]);
+        assert_eq!(
+            requirements.transport_pref,
+            vec![provider_api::ModelTransport::Responses]
+        );
     }
 }

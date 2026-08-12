@@ -2,6 +2,8 @@
 
 > Phase 15 · Provider Native Capabilities · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P0-3、P0-4、P1-4、P1-5、P15-1
 
+> 2026-08-12 事实纠正（[P15-10](P15-10-review-remediation.md)）：评审「`ServerToolEvent` 部分变体仅 fixture 触发」不成立——三家 adapter 均有真实 wire producer（`ProviderStreamEvent::ServerTool` 发射点）：OpenAI `responses.rs` → `CitationAdded` / `SourceAdded` / `ProgramStarted` / `ProgramOutput` / `ComputerActionRequested` / `ComputerScreenshot` / `Started` / `Completed`；Anthropic `stream.rs` → `CitationAdded` / `SourceAdded` / `Started` / `Completed`；xAI `responses.rs` → `CitationAdded` / `SourceAdded` / `ProgramStarted` / `ProgramOutput` / `Started` / `Completed` / `Failed`。`ProgramStarted` / `Computer*` 属「真实 wire producer + 部分变体待真实服务端工具消费」。
+
 **最终目的**：为 `ProviderHosted` / `ProviderExtension` 两种非本地执行位点定义统一的 canonical 事件与引用类型——`ServerToolEvent`、`Citation`、`Source`——让 OpenAI / Anthropic / xAI 三家 server tools（web_search / live_search / file_search / code_execution）的调用与结果用同一口径表达，并可持久化、可重放（ADR-016）。这是 P15-2/3/4 落地三家现代 API 的共享前置，确保 Core 侧无 Provider 特例。
 
 **涉及范围**：`agent-domain`（Citation / Source / ServerToolEvent 领域类型）、`provider-runtime`（`ProviderStreamEvent` 扩展 server tool 变体）、`session-store` / Projection（事件持久化重放）；只定义与归一通道，不实现任何具体 server tool。

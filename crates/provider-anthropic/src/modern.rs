@@ -14,20 +14,18 @@
 //! - [`transcript_to_wire_blocks`]：`ProviderTranscriptEnvelope` → 原生
 //!   续接块（P15-5 续传通道）。
 //!
-//! reasoning 续传经 [`ReasoningContinuationStore`] 不透明存取：adapter 只接触
-//! 待加密字节与 [`ProtectedBlobRef`]；真实加密存储与 Provider/Session scope 由
-//! 接线方（`provider-runtime::reasoning::ReasoningStateBridge` + `BlobScope`）
-//! 注入，本 crate 不依赖 protected-blob-store。
+//! reasoning 续传经 [`ReasoningProtector`](provider_runtime::reasoning::ReasoningProtector)
+//! 统一存取：adapter 只接触待加密字节与 [`ProtectedBlobRef`]；真实加密存储与
+//! Provider/Session scope 由接线方（`ProtectedBlobStoreProtector` + `BlobScope`）
+//! 注入，缺省进程内实现 `InMemoryReasoningProtector`；本 crate 不依赖
+//! protected-blob-store。
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use agent_domain::{
-    ArtifactId, ContentPart, Message, MessageRole, ProtectedBlobRef, ProviderTranscriptEnvelope,
-    ReasoningItemId, ServerToolEvent, ThinkingContent, ToolCallId, ToolCapabilityTag,
-    TranscriptItem,
+    ArtifactId, ContentPart, Message, MessageRole, ProviderTranscriptEnvelope, ReasoningItemId,
+    ServerToolEvent, ThinkingContent, ToolCallId, ToolCapabilityTag, TranscriptItem,
 };
-use futures::future::BoxFuture;
 use provider_api::{
     CanonicalModelRequest, ExtensionToolRequest, HostedToolRequest, ModelCapabilities,
     ModelTransport, PromptCachePreference, ReasoningEffort, ResponseFormat, ServerToolMappingError,
@@ -83,80 +81,6 @@ const TOOL_STEMS: &[&str] = &[
 
 /// 大输出阈值：超过后 ProgramOutput 只留 Artifact 引用（ADR-018）。
 const LARGE_OUTPUT_CHARS: usize = 64 * 1024;
-
-// ---------- reasoning 续传不透明存取 handle ----------
-
-/// reasoning 续传存取错误（只携带可读原因，不含 protected 明文）。
-#[derive(Clone, Debug, thiserror::Error)]
-#[error("reasoning continuation store: {0}")]
-pub struct ContinuationStoreError(pub String);
-
-impl ContinuationStoreError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
-}
-
-/// Provider 侧 reasoning 续传的不透明存取 handle（P15-7 / ADR-032）。
-///
-/// adapter 只经此接口保护 / 取回不透明字节与 [`ProtectedBlobRef`]；加密、scope、
-/// 引用计数与 GC 由接线方（`ReasoningStateBridge` + `BlobScope`）实现。
-pub struct ReasoningContinuationStore {
-    protect: Arc<ProtectFn>,
-    resolve: Arc<ResolveFn>,
-}
-
-type ProtectFn = dyn Fn(Vec<u8>) -> BoxFuture<'static, Result<ProtectedBlobRef, ContinuationStoreError>>
-    + Send
-    + Sync;
-
-type ResolveFn = dyn Fn(ProtectedBlobRef) -> BoxFuture<'static, Result<Vec<u8>, ContinuationStoreError>>
-    + Send
-    + Sync;
-
-impl std::fmt::Debug for ReasoningContinuationStore {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ReasoningContinuationStore")
-            .field("kind", &"opaque")
-            .finish()
-    }
-}
-
-impl ReasoningContinuationStore {
-    /// 用两个不透明异步闭包构造 handle（protect: 字节 → 引用；resolve: 引用 → 字节）。
-    pub fn new(
-        protect: impl Fn(Vec<u8>) -> BoxFuture<'static, Result<ProtectedBlobRef, ContinuationStoreError>>
-            + Send
-            + Sync
-            + 'static,
-        resolve: impl Fn(ProtectedBlobRef) -> BoxFuture<'static, Result<Vec<u8>, ContinuationStoreError>>
-            + Send
-            + Sync
-            + 'static,
-    ) -> Self {
-        Self {
-            protect: Arc::new(protect),
-            resolve: Arc::new(resolve),
-        }
-    }
-
-    /// 保护一段不透明续传字节，返回稳定逻辑引用。
-    pub async fn protect(
-        &self,
-        payload: Vec<u8>,
-    ) -> Result<ProtectedBlobRef, ContinuationStoreError> {
-        (self.protect)(payload).await
-    }
-
-    /// 取回被保护的字节（缺失 / 解密失败以 Err 显式失败）。
-    pub async fn resolve(
-        &self,
-        blob_ref: &ProtectedBlobRef,
-    ) -> Result<Vec<u8>, ContinuationStoreError> {
-        (self.resolve)(blob_ref.clone()).await
-    }
-}
 
 // ---------- transport 选择与降级（纯函数） ----------
 
@@ -520,10 +444,11 @@ pub enum ModernMappingError {
 
 /// canonical 请求 → Anthropic Modern Messages 请求体。
 ///
-/// `resolution` 来自 [`resolve`]；`continuations` 是已从
-/// [`ReasoningContinuationStore`] 取回的（解密后）Anthropic thinking 载荷，
-/// 按 ReasoningItemId 索引，用于重建带 signature 的 thinking / redacted_thinking
-/// 块。缺载荷返回 [`ModernMappingError::MissingContinuation`]。
+/// `resolution` 来自 [`resolve`]；`continuations` 是已经
+/// [`ReasoningProtector`](provider_runtime::reasoning::ReasoningProtector)
+/// 解析出的（解密后）Anthropic thinking 载荷，按 ReasoningItemId 索引，用于
+/// 重建带 signature 的 thinking / redacted_thinking 块。缺载荷返回
+/// [`ModernMappingError::MissingContinuation`]。
 pub fn to_modern_messages_body(
     request: &CanonicalModelRequest,
     resolution: &ModernResolution,
@@ -1139,8 +1064,8 @@ fn required_str<'a>(
 mod tests {
     use super::*;
     use agent_domain::{
-        ImageContent, Message, MessageId, MessageMetadata, TextContent, ThinkingContent,
-        ToolCallContent, ToolCallId, ToolResultContent,
+        ImageContent, Message, MessageId, MessageMetadata, ProtectedBlobRef, TextContent,
+        ThinkingContent, ToolCallContent, ToolCallId, ToolResultContent,
     };
     use provider_api::{
         PromptCachePreference, ReasoningConfig, ReasoningStateCapability, ReasoningStateDescriptor,

@@ -11,15 +11,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agent_domain::{
-   ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId, ProtectedBlobRef,
-   ReasoningItem, ReasoningItemId, ServerToolEvent, StopReason, TextContent, ToolCallId,
-   ToolCapabilityTag,
-};
-use provider_api::{
-   CanonicalModelRequest, CredentialKind, HostedToolRequest, ProviderErrorKind, ProviderStreamEvent,
-   PromptCachePreference, RequestBudget, ResolvedCredential, ResponseFormat, ToolChoice,
+    ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId, ReasoningItem,
+    ReasoningItemId, ServerToolEvent, StopReason, TextContent, ToolCallId, ToolCapabilityTag,
 };
 use provider_api::ModelProvider;
+use provider_api::{
+    CanonicalModelRequest, CredentialKind, HostedToolRequest, PromptCachePreference,
+    ProviderErrorKind, ProviderStreamEvent, RequestBudget, ResolvedCredential, ResponseFormat,
+    ToolChoice,
+};
 use provider_openai::{
     AcceptedResponsesTools, InMemoryReasoningProtector, OpenAiConfig, OpenAiProvider,
     ReasoningProtector,
@@ -145,13 +145,34 @@ async fn last_request_body(server: &MockServer) -> serde_json::Value {
 async fn responses_text_reasoning_and_function_call_stream() {
     let server = MockServer::start().await;
     let body = responses_sse_body(&[
-        ("response.created", r#"{"type":"response.created","response":{"id":"resp_42"}}"#),
-        ("response.reasoning_summary_text.delta", r#"{"type":"response.reasoning_summary_text.delta","delta":"thinking"}"#),
-        ("response.output_text.delta", r#"{"type":"response.output_text.delta","delta":"answer"}"#),
-        ("response.output_item.added", r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read","arguments":""}}"#),
-        ("response.function_call_arguments.delta", r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\"p\":1}"}"#),
-        ("response.output_item.done", r#"{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read","arguments":"{\"p\":1}"}}"#),
-        ("response.completed", r#"{"type":"response.completed","response":{"id":"resp_42","status":"completed","usage":{"input_tokens":4,"output_tokens":3}}}"#),
+        (
+            "response.created",
+            r#"{"type":"response.created","response":{"id":"resp_42"}}"#,
+        ),
+        (
+            "response.reasoning_summary_text.delta",
+            r#"{"type":"response.reasoning_summary_text.delta","delta":"thinking"}"#,
+        ),
+        (
+            "response.output_text.delta",
+            r#"{"type":"response.output_text.delta","delta":"answer"}"#,
+        ),
+        (
+            "response.output_item.added",
+            r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read","arguments":""}}"#,
+        ),
+        (
+            "response.function_call_arguments.delta",
+            r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\"p\":1}"}"#,
+        ),
+        (
+            "response.output_item.done",
+            r#"{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read","arguments":"{\"p\":1}"}}"#,
+        ),
+        (
+            "response.completed",
+            r#"{"type":"response.completed","response":{"id":"resp_42","status":"completed","usage":{"input_tokens":4,"output_tokens":3}}}"#,
+        ),
     ]);
     mount_responses(&server, body).await;
 
@@ -180,12 +201,13 @@ async fn responses_text_reasoning_and_function_call_stream() {
     assert!(events
         .iter()
         .any(|e| matches!(e, ProviderStreamEvent::ToolCallArgumentsDelta { id, json } if id.as_str()=="call_1" && json == "{\"p\":1}")));
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id } if id.as_str() == "call_1")));
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, ProviderStreamEvent::ResponseCompleted(StopReason::Completed))));
+    assert!(events.iter().any(
+        |e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id } if id.as_str() == "call_1")
+    ));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        ProviderStreamEvent::ResponseCompleted(StopReason::Completed)
+    )));
     assert!(events
         .iter()
         .any(|e| matches!(e, ProviderStreamEvent::UsageUpdated(u) if u.input_tokens == 4 && u.output_tokens == 3)));
@@ -197,10 +219,16 @@ async fn responses_web_search_emits_server_tool_and_citations() {
     let web_search_done = r#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"pawork","sources":[{"type":"url","url":"https://pawork.dev","title":"Pawork"}]}}}"#;
     let text_done = r#"{"type":"response.output_text.done","item_id":"msg_1","text":"see pawork","annotations":[{"type":"url_citation","url":"https://pawork.dev","title":"Pawork","start_index":0}]}"#;
     let body = responses_sse_body(&[
-        ("response.created", r#"{"type":"response.created","response":{"id":"resp_ws"}}"#),
+        (
+            "response.created",
+            r#"{"type":"response.created","response":{"id":"resp_ws"}}"#,
+        ),
         ("response.output_item.done", web_search_done),
         ("response.output_text.done", text_done),
-        ("response.completed", r#"{"type":"response.completed","response":{"id":"resp_ws","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#),
+        (
+            "response.completed",
+            r#"{"type":"response.completed","response":{"id":"resp_ws","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+        ),
     ]);
     mount_responses(&server, body).await;
 
@@ -255,9 +283,15 @@ async fn responses_reasoning_encrypted_content_only_reaches_blob_store() {
     // 响应里携带 encrypted_content（受保护明文，仅出现在本 fixture）。
     let reasoning_done = r#"{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_7","summary":[{"type":"summary_text","text":"checked constraints"}],"encrypted_content":"SECRET-CONTINUATION-BYTES"}}"#;
     let body = responses_sse_body(&[
-        ("response.created", r#"{"type":"response.created","response":{"id":"resp_r"}}"#),
+        (
+            "response.created",
+            r#"{"type":"response.created","response":{"id":"resp_r"}}"#,
+        ),
         ("response.output_item.done", reasoning_done),
-        ("response.completed", r#"{"type":"response.completed","response":{"id":"resp_r","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#),
+        (
+            "response.completed",
+            r#"{"type":"response.completed","response":{"id":"resp_r","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+        ),
     ]);
     mount_responses(&server, body).await;
 
@@ -295,21 +329,90 @@ async fn responses_reasoning_encrypted_content_only_reaches_blob_store() {
 }
 
 #[tokio::test]
+async fn default_reasoning_protector_rehydrates_across_streams_on_same_provider() {
+    let server = MockServer::start().await;
+    let reasoning_done = r#"{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_cross_round","summary":[{"type":"summary_text","text":"retained"}],"encrypted_content":"cross-round-bytes"}}"#;
+    let body = responses_sse_body(&[
+        (
+            "response.created",
+            r#"{"type":"response.created","response":{"id":"resp_cross_round"}}"#,
+        ),
+        ("response.output_item.done", reasoning_done),
+        (
+            "response.completed",
+            r#"{"type":"response.completed","response":{"id":"resp_cross_round","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+        ),
+    ]);
+    mount_responses(&server, body).await;
+
+    let provider = provider(&server);
+    let first_sink = RecordingProviderSink::default();
+    provider
+        .stream(
+            request("o3"),
+            &first_sink,
+            agent_domain::CancellationToken::new(),
+        )
+        .await
+        .expect("first stream ok");
+    let reasoning = first_sink
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            ProviderStreamEvent::ReasoningItem(item) => Some(item),
+            _ => None,
+        })
+        .expect("first stream emits reasoning item");
+
+    let mut second_request = request("o3");
+    second_request.messages[0]
+        .content
+        .push(ContentPart::Reasoning(reasoning));
+    provider
+        .stream(
+            second_request,
+            &RecordingProviderSink::default(),
+            agent_domain::CancellationToken::new(),
+        )
+        .await
+        .expect("second stream ok");
+
+    let request_body = last_request_body(&server).await;
+    let reasoning_input = request_body["input"]
+        .as_array()
+        .expect("input array")
+        .iter()
+        .find(|item| item["type"] == "reasoning")
+        .expect("reasoning input rehydrated");
+    assert_eq!(reasoning_input["id"], "rs_cross_round");
+    assert_eq!(reasoning_input["encrypted_content"], "cross-round-bytes");
+}
+
+#[tokio::test]
 async fn responses_reasoning_round_trip_injects_decrypted_input() {
     let server = MockServer::start().await;
     let body = responses_sse_body(&[
-        ("response.created", r#"{"type":"response.created","response":{"id":"resp_rt"}}"#),
-        ("response.completed", r#"{"type":"response.completed","response":{"id":"resp_rt","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#),
+        (
+            "response.created",
+            r#"{"type":"response.created","response":{"id":"resp_rt"}}"#,
+        ),
+        (
+            "response.completed",
+            r#"{"type":"response.completed","response":{"id":"resp_rt","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+        ),
     ]);
     mount_responses(&server, body).await;
 
     // 用共享 protector 预先 protect 一段 continuation，构造历史 reasoning item。
     let protector = Arc::new(InMemoryReasoningProtector::default());
-    let reference = protector.protect(b"round-trip-bytes").await.expect("protect");
+    let reference = protector
+        .protect(b"round-trip-bytes")
+        .await
+        .expect("protect");
     let item = ReasoningItem {
         id: ReasoningItemId::from("rs_hist"),
         summary: None,
-        protected_blob_ref: ProtectedBlobRef::from(reference),
+        protected_blob_ref: reference,
         opaque_metadata: BTreeMap::from([(
             "openai.responses.summary_entries".into(),
             serde_json::json!([{"type":"summary_text","text":"prior step"}]),
@@ -363,16 +466,15 @@ async fn responses_degrades_to_chat_completions_for_baseline_model() {
     assert_eq!(summary.stop_reason, StopReason::Completed);
     // 确认没有命中 /responses。
     let requests = server.received_requests().await.expect("recorded");
-    assert!(requests
-        .iter()
-        .all(|req| req.url.path() != "/responses"));
+    assert!(requests.iter().all(|req| req.url.path() != "/responses"));
 }
 
 #[tokio::test]
 async fn responses_unsupported_hosted_tool_is_rejected_not_silently_dropped() {
     let server = MockServer::start().await;
     // 即便声明了 hosted tool，未协商通过也不进入请求体（gpt-4o 不支持 hosted tools）。
-    let body = chat_sse_body(&[r#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#]);
+    let body =
+        chat_sse_body(&[r#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#]);
     mount_chat(&server, body).await;
 
     let mut req = request("gpt-4o");
@@ -434,9 +536,18 @@ async fn responses_path_has_no_provider_name_branch_in_events() {
     // （Core 只消费 canonical 词汇，不按 Provider 名分支）。
     let server = MockServer::start().await;
     let body = responses_sse_body(&[
-        ("response.created", r#"{"type":"response.created","response":{"id":"resp_np"}}"#),
-        ("response.output_text.delta", r#"{"type":"response.output_text.delta","delta":"hi"}"#),
-        ("response.completed", r#"{"type":"response.completed","response":{"id":"resp_np","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#),
+        (
+            "response.created",
+            r#"{"type":"response.created","response":{"id":"resp_np"}}"#,
+        ),
+        (
+            "response.output_text.delta",
+            r#"{"type":"response.output_text.delta","delta":"hi"}"#,
+        ),
+        (
+            "response.completed",
+            r#"{"type":"response.completed","response":{"id":"resp_np","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+        ),
     ]);
     mount_responses(&server, body).await;
 

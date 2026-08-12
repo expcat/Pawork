@@ -4,11 +4,11 @@
 
 **最终目的**：把现有「只有客户端函数工具」的 canonical tool 模型升级为 v2，统一表达三种执行位点——`ClientFunction`（Core 本地执行，如 read_file）、`ProviderHosted`（Provider 服务端内置工具，如 web_search）、`ProviderExtension`（Provider 中介的外部工具/连接器/远程 MCP）。让 Tool Scheduler 与 CanonicalModelRequest 按位点分流，并把本地 `ToolResult` 与 Provider transcript 严格分道，为 P15-2/3/4 的现代 Provider API 与 P15-5 的 server tool 事件打下唯一数据底座，Agent Core 仍不感知 Provider 名称。
 
-**涉及范围**：`agent-domain`（ToolKind / ExecutionOwner / ContinuationMode / ToolDescriptor v2 / CanonicalModelRequest hosted tools 字段）、`tool-runtime`（scheduler 路由分流）、`provider-runtime`（请求侧声明 hosted tools 与 transcript continuation）、`builtin-tools`（ClientFunction 行为不变，仅标注）；新增/扩展类型须在 [workspace 结构](../docs/architecture/workspace-layout.md) §2 登记，不新增 crate。
+**涉及范围**：`agent-domain`（ToolKind / ContinuationMode / ToolDescriptor v2 / CanonicalModelRequest hosted tools 字段）、`tool-runtime`（scheduler 路由分流）、`provider-runtime`（请求侧声明 hosted tools 与 transcript continuation）、`builtin-tools`（ClientFunction 行为不变，仅标注）；新增/扩展类型须在 [workspace 结构](../docs/architecture/workspace-layout.md) §2 登记，不新增 crate。
 
 ## 细分步骤
 
-1. **ToolKind 三态枚举与执行所有权** —— 目的：在 `agent-domain` 新增 `ToolKind { ClientFunction, ProviderHosted, ProviderExtension }`，并补一等字段 `ExecutionOwner { Core, Provider, Extension }` 与「谁执行」一一对应——`ClientFunction→Core`、`ProviderHosted→Provider`、`ProviderExtension→Extension`。三种执行位点与回填语义必须严格区分：
+1. **ToolKind 三态枚举与执行位点** —— 目的：在 `agent-domain` 新增 `ToolKind { ClientFunction, ProviderHosted, ProviderExtension }` 表达三种执行位点（「谁执行」直接由 `ToolKind` 承载，早期计划的 `ExecutionOwner` 冗余枚举已按 [P15-10](P15-10-review-remediation.md) 删除）。三种执行位点与回填语义必须严格区分：
    - **Core 执行（ClientFunction）**：Provider 发出 tool_call → Core Tool Scheduler 执行 → `ToolResult` → Provider；这是唯一由 Pawork 本地执行的位点。
    - **Provider Hosted Tool（ProviderHosted）**：Provider 自己执行 → Provider 返回结果 → Pawork 只记录 / 归一 / 重放，**绝不尝试本地 `AgentTool::execute`**。
    - **Provider Extension（ProviderExtension）**：由 Provider 中介的 MCP / Connector / Remote extension 执行，拥有明确的 approval / audit / execution ownership，Core 参与审批与审计但不持有执行体。
@@ -22,13 +22,13 @@
 
 ## 主要产出物
 
-- `agent-domain`：`ToolKind`、`ExecutionOwner`、`ContinuationMode`、`ToolDescriptor v2`、`CanonicalModelRequest.hosted_tools`；本地 `ToolResult` 边界冻结
+- `agent-domain`：`ToolKind`、`ContinuationMode`、`ToolDescriptor v2`、`CanonicalModelRequest.hosted_tools`；本地 `ToolResult` 边界冻结
 - `tool-runtime`：三位点路由分流 + ProviderExtension 审批接线
 - Mock smoke 三位点用例
 
 ## 验收标准
 
-- [x] `ToolKind` 三态枚举与 `ExecutionOwner { Core, Provider, Extension }` 一一对应落地，三类工具可在同一 registry 共存
+- [x] `ToolKind` 三态枚举落地（P15-10 删除冗余的 `ExecutionOwner`），三类工具可在同一 registry 共存
 - [x] ClientFunction 行为与 P4-* 既有语义完全一致（回归不退化）
 - [x] ProviderHosted tool_call 不触发本地 `AgentTool::execute`，Core 只记录/归一/重放（断言 + Mock smoke）
 - [x] ProviderHosted / ProviderExtension 结果走 `ProviderTranscript` 语义（归一为 ServerToolEvent），不被伪装成本地 `ToolResult`

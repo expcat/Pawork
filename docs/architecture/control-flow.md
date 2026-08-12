@@ -28,7 +28,7 @@ Remote GUI ──┘                                   │
 5. 构建 `RouteContext` 与 Provider Request
 6. 经 TenantPolicy、RoutingPolicy 与 CredentialPool 获取 `CredentialLease`，再调用 Provider
 7. 流式提交 Assistant 内容
-8. 解析 Tool Call，并按 `ToolKind` / `ExecutionOwner` 分类
+8. 解析 Tool Call，并按 `ToolKind` 分类执行位点
 9. 执行 Policy；需要时请求用户审批
 10. 仅对 `ClientFunction` 调用 Tool Scheduler 本地执行
 11. `ClientFunction` 提交 `ToolResult(CoreSuppliedResult)`；`ProviderHosted` / `ProviderExtension` 只记录 `ServerToolEvent(ProviderTranscript)`
@@ -119,7 +119,7 @@ ExternalPlugin
 
 ### 5.1 ToolKind 三执行位点路由（Phase 15 起）
 
-自 Phase 15（P15-1）起，Tool Scheduler 还按 `ToolKind` / `ExecutionOwner` 决定「谁执行、结果如何回填」，三类位点互不串味：
+自 Phase 15（P15-1）起，Tool Scheduler 按 `ToolKind` 三执行位点决定「谁执行、结果如何回填」，三类位点互不串味（早期规划的 `ExecutionOwner` 冗余枚举已按 P15-10 删除，位点语义由 `ToolKind` 直接承载）：
 
 ```text
 ClientFunction   → Core 本地执行 → ToolResult(CoreSuppliedResult) → 回灌 Provider

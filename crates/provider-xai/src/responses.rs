@@ -36,67 +36,15 @@ use crate::reasoning::to_responses_input_reasoning;
 use crate::server_tool::{response_item_to_server_tool_event, url_citation_annotation_to_citation};
 
 // ===========================================================================
-// Reasoning protector（Protected Blob Store 边界抽象）
+// Reasoning protector（统一 API，provider_runtime::reasoning，ADR-032）
 // ===========================================================================
 
-/// Reasoning continuation 加密凭证的 Protected Blob Store 边界（ADR-032）。
-///
-/// Provider 受信运行时在拿到 wire `encrypted_content` 后立刻 [`Self::protect`]
-/// 存入受保护存储，只把返回的引用放进 canonical 事件；回灌下一轮请求时
-/// [`Self::resolve`] 取回明文重建 Responses input item。明文绝不进入事件 / 日志 /
-/// GUI / OS Keychain。
-///
-/// 默认实现 [`InMemoryReasoningProtector`] 仅保证进程内可回放，持久化 / 跨进程
-/// 保护由 host 在 P15-7 接入 `ReasoningStateBridge` 实现并注入
-/// [`crate::XaiProvider`]。
-#[async_trait::async_trait]
-pub trait ReasoningProtector: Send + Sync {
-    /// 加密保护一段 opaque continuation payload，返回稳定逻辑引用。
-    async fn protect(&self, payload: &[u8]) -> Result<String, ReasoningProtectError>;
-
-    /// 按 [`Self::protect`] 返回的引用解析回明文（仅在构造下一轮请求时调用）。
-    async fn resolve(&self, blob_ref: &str) -> Result<Vec<u8>, ReasoningProtectError>;
-}
-
-/// Reasoning protector 失败：只描述边界错误，绝不携带明文 / 签名。
-#[derive(Debug, thiserror::Error)]
-pub enum ReasoningProtectError {
-    #[error("reasoning blob not found for reference `{0}`")]
-    NotFound(String),
-    #[error("reasoning protector backend failure: {0}")]
-    Backend(String),
-}
-
-/// 进程内 in-memory 默认 protector：保证 canonical 事件只携带引用，明文只
-/// 存在于受信运行时内存。仅供 adapter 默认行为与测试；生产持久化由 host 注入。
-#[derive(Default)]
-pub struct InMemoryReasoningProtector {
-    inner: tokio::sync::Mutex<BTreeMap<String, Vec<u8>>>,
-    seq: tokio::sync::Mutex<u64>,
-}
-
-#[async_trait::async_trait]
-impl ReasoningProtector for InMemoryReasoningProtector {
-    async fn protect(&self, payload: &[u8]) -> Result<String, ReasoningProtectError> {
-        let mut seq = self.seq.lock().await;
-        *seq += 1;
-        let reference = format!("xai-reasoning-{}", *seq);
-        self.inner
-            .lock()
-            .await
-            .insert(reference.clone(), payload.to_vec());
-        Ok(reference)
-    }
-
-    async fn resolve(&self, blob_ref: &str) -> Result<Vec<u8>, ReasoningProtectError> {
-        self.inner
-            .lock()
-            .await
-            .get(blob_ref)
-            .cloned()
-            .ok_or_else(|| ReasoningProtectError::NotFound(blob_ref.to_owned()))
-    }
-}
+/// 兼容重导出：reasoning 保护统一走 `provider_runtime::reasoning`（protect /
+/// resolve 均以 `ProtectedBlobRef` 为引用，resolve 返回 `ProtectedBlob`）。
+pub use provider_runtime::reasoning::{
+    InMemoryReasoningProtector, ProtectedBlobStoreProtector, ReasoningProtectError,
+    ReasoningProtector,
+};
 
 // ===========================================================================
 // 请求转换：canonical → xAI Responses 请求体
@@ -119,7 +67,7 @@ impl AcceptedResponsesTools {
     /// 从协商 `supported` 标签集构造（`tool:<Tag>` 形式，见 negotiate 模块）。
     pub fn from_supported(supported: &std::collections::BTreeSet<String>) -> Self {
         use agent_domain::ToolCapabilityTag as T;
-        let has = |tag: T| supported.contains(&format!("tool:{tag:?}"));
+        let has = |tag: T| supported.contains(tag.capability_key());
         Self {
             web_search: has(T::WebSearch),
             x_search: has(T::XSearch),
@@ -231,7 +179,10 @@ pub fn to_responses_body(
     }
 
     if let Some(Value::String(previous)) = request.provider_options.get("previous_response_id") {
-        body.insert("previous_response_id".into(), Value::String(previous.clone()));
+        body.insert(
+            "previous_response_id".into(),
+            Value::String(previous.clone()),
+        );
     }
 
     for (key, value) in &request.provider_options {
@@ -464,7 +415,8 @@ fn effective_reasoning_effort(request: &CanonicalModelRequest) -> Option<Reasoni
     if let Some(reasoning) = &request.reasoning {
         return Some(reasoning.effort);
     }
-    let clamped = clamp_reasoning_to_thinking(request.reasoning.as_ref(), request.thinking.as_ref());
+    let clamped =
+        clamp_reasoning_to_thinking(request.reasoning.as_ref(), request.thinking.as_ref());
     use provider_api::ThinkingLevel;
     Some(match clamped.level {
         ThinkingLevel::Off => ReasoningEffort::None,
@@ -517,8 +469,8 @@ pub async fn resolve_reasoning_inputs(
     for message in &request.messages {
         for part in &message.content {
             if let ContentPart::Reasoning(item) = part {
-                match protector.resolve(item.protected_blob_ref.as_str()).await {
-                    Ok(payload) => match String::from_utf8(payload) {
+                match protector.resolve(&item.protected_blob_ref).await {
+                    Ok(blob) => match String::from_utf8(blob.expose().to_vec()) {
                         Ok(decrypted) => {
                             inputs.push(to_responses_input_reasoning(item, &decrypted));
                         }
@@ -560,7 +512,10 @@ pub fn live_search_source_to_source(value: &Value) -> Option<agent_domain::Sourc
     }
     let source_type = value.get("type").and_then(Value::as_str).unwrap_or("");
     let url = value.get("url").and_then(Value::as_str).map(str::to_owned);
-    let title = value.get("title").and_then(Value::as_str).map(str::to_owned);
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let snippet = value
         .get("snippet")
         .or_else(|| value.get("text"))
@@ -603,13 +558,16 @@ pub fn live_search_source_to_source(value: &Value) -> Option<agent_domain::Sourc
             })
         }
         // 未知来源类型：保留原始 metadata，不猜种类（fail-closed）。
-        _ => value.get("url").and_then(Value::as_str).map(|url| agent_domain::Source {
-            url: Some(url.to_owned()),
-            title,
-            snippet,
-            raw_metadata: Some(value.clone()),
-            ..Default::default()
-        }),
+        _ => value
+            .get("url")
+            .and_then(Value::as_str)
+            .map(|url| agent_domain::Source {
+                url: Some(url.to_owned()),
+                title,
+                snippet,
+                raw_metadata: Some(value.clone()),
+                ..Default::default()
+            }),
     }
 }
 
@@ -974,7 +932,11 @@ impl ResponsesStreamAssembler {
             }
         }
         let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-        events.push(server_tool_completion(&tool_call_id, status, item.get("error")));
+        events.push(server_tool_completion(
+            &tool_call_id,
+            status,
+            item.get("error"),
+        ));
         events
     }
 
@@ -1017,14 +979,22 @@ impl ResponsesStreamAssembler {
             ));
         } else {
             let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-            events.push(server_tool_completion(&tool_call_id, status, item.get("error")));
+            events.push(server_tool_completion(
+                &tool_call_id,
+                status,
+                item.get("error"),
+            ));
         }
         events
     }
 
     fn handle_completed(&mut self, value: &Value) -> Vec<ResponsesAssemblyEvent> {
         let response = value.get("response").unwrap_or(value);
-        if let Some(id) = response.get("id").and_then(Value::as_str).map(str::to_owned) {
+        if let Some(id) = response
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        {
             self.response_id = Some(id);
         }
         let mut events = Vec::new();
@@ -1056,7 +1026,9 @@ impl ResponsesStreamAssembler {
     fn handle_failed(&mut self, value: &Value) -> Vec<ResponsesAssemblyEvent> {
         let response = value.get("response").unwrap_or(value);
         let status = response.get("status").and_then(Value::as_str);
-        let error = response.get("error").or_else(|| response.get("status_details"));
+        let error = response
+            .get("error")
+            .or_else(|| response.get("status_details"));
         let message = error
             .and_then(|e| e.get("message"))
             .and_then(Value::as_str)
@@ -1168,7 +1140,11 @@ pub fn normalize_responses_error(mut error: ProviderError) -> ProviderError {
             "xai collection not found",
         ))
     } else if message.contains("code_interpreter") && message.contains("timeout") {
-        Some((ProviderErrorKind::Timeout, true, "xai code interpreter timeout"))
+        Some((
+            ProviderErrorKind::Timeout,
+            true,
+            "xai code interpreter timeout",
+        ))
     } else if message.contains("mcp") && message.contains("unavailable") {
         Some((
             ProviderErrorKind::ProviderUnavailable,
@@ -1215,11 +1191,8 @@ pub fn requirements_from_request(
     use agent_domain::ToolCapabilityTag as T;
     use std::collections::BTreeSet;
 
-    let mut required_tools: BTreeSet<T> = request
-        .hosted_tools
-        .iter()
-        .map(|tool| tool.kind)
-        .collect();
+    let mut required_tools: BTreeSet<T> =
+        request.hosted_tools.iter().map(|tool| tool.kind).collect();
     for extension in &request.extensions {
         required_tools.insert(T::ServerSideMcp);
         required_tools.extend(extension.capabilities.iter().copied());

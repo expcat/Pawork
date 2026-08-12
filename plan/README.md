@@ -59,6 +59,8 @@
 
 > CLI Host 与多 GUI 协议（Phase 13）是 Core 的正式运行入口与 GUI 接入边界；协议冻结部分（GUI Connection Protocol / Transport 抽象类型）随 [P0-8](P0-8-core-api.md) 提前完成，Remote Transport 真实内网穿透库可推迟。
 
+**Phase 15 显式延后的接线项登记**（[P15-10](P15-10-review-remediation.md) 收口，验收项已落入 Phase 18 计划，不只在 P15-10 链接）：① 生产 `ProtectedKeyResolver` + 持久 `ProtectedBlobStoreProtector` 注入宿主（ADR-032 兑现），并按真实 Session/run `BlobScope` 构造或选择、禁止跨 Session 复用 scoped protector → [P18-3](P18-3-provider-account.md) / [P18-4](P18-4-credential-lease.md) / [P18-14](P18-14-pool-reconciliation.md) 验收标准；② 宿主经 Provider factory / `register_provider` 装配真实 Provider 并消费 `builtin_models()` → P18-3 验收标准；③ provider v2 能力 catalog 统一进入共享 model-registry `caps()` / 协商证据 → P18-14 验收标准。
+
 ---
 
 ## MVP 范围

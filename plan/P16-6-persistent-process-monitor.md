@@ -25,7 +25,7 @@
 - 不自定另一套 filesystem / network policy：统一复用 `sandbox-runtime` 的 `SandboxPolicy`，常驻进程不因 persistent 而放宽。
 - 不因 persistent/background 绕过 guarantee reporting：进程实际获得的 `SandboxGuarantees`（含各维度降级）照常上报、可持久化、可观测。
 - **policy/guarantee 跨生命周期一致**：同一 persistent process 的 sandbox policy 与 guarantee 在 spawn / restart / reattach / recovery 全流程保持一致；restart 必须走同一受沙箱路径，不得降级为 unsandboxed 重启；重连接管与崩溃恢复后重新核对 guarantee 状态并上报，禁止「先 unsandboxed 拉起再补沙箱」。
-- 已有 ExecutionOwner 设计（见 [P17-10](P17-10-browser-computer-runtime.md) 与 [sandbox](../docs/features/sandbox.md)）则直接复用，不另起一套进程所有权 / 执行模型。
+- 已有 ToolKind 三执行位点设计（见 [P17-10](P17-10-browser-computer-runtime.md) 与 [sandbox](../docs/features/sandbox.md)；`ExecutionOwner` 冗余枚举已按 [P15-10](P15-10-review-remediation.md) 删除，位点由 `ToolKind` 直接承载）则直接复用，不另起一套进程所有权 / 执行模型。
 
 ## 主要产出物
 

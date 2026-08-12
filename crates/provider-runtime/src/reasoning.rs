@@ -1,161 +1,209 @@
-//! Provider-neutral bridge between reasoning mappers and the Protected Blob Store.
+//! Provider-neutral 的统一 reasoning 保护共享 API。
 //!
-//! Provider crates parse and reconstruct their own wire formats. This module only
-//! encrypts opaque continuation bytes and resolves the safe reference carried by
-//! [`ReasoningItem`]; it never branches on a Provider name or interprets payloads.
-//!
-//! Reference-count lifecycle: [`ReasoningStateBridge::protect`] stores the blob with
-//! `ref_count = 1` owned by the first persisted event, so committing that event needs
-//! no extra retain. Only genuinely new owners retain; owners release when their event
-//! is physically removed, and a failed commit rolls the reserved reference back.
+//! Provider crates 只负责解析与重组各自的 wire 格式；加密 opaque continuation
+//! 字节与解析稳定逻辑引用统一走 [`ReasoningProtector`]，不按 Provider 名分支、
+//! 不解释明文。持久实现 [`ProtectedBlobStoreProtector`] 构造时捕获
+//! `store + BlobScope`，调用方无需逐次传 scope；内存实现
+//! [`InMemoryReasoningProtector`] 供测试与组合层开发使用。
 
-use agent_domain::{ProtectedBlobRef, ReasoningItem};
-use protected_blob_store::{
-    BlobScope, GcReport, ProtectedBlob, ProtectedBlobError, ProtectedBlobStore,
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        RwLock,
+    },
 };
 
-/// Shared storage boundary for opaque reasoning continuations.
-#[derive(Clone)]
-pub struct ReasoningStateBridge {
-    store: ProtectedBlobStore,
+use agent_domain::ProtectedBlobRef;
+use protected_blob_store::{BlobScope, ProtectedBlob, ProtectedBlobError, ProtectedBlobStore};
+use thiserror::Error;
+
+/// 统一的 reasoning 保护错误，屏蔽底层存储的失败形状。
+#[derive(Debug, Error)]
+pub enum ReasoningProtectError {
+    /// 引用不存在、跨 scope 访问、密钥不可用等一律失败关闭。
+    #[error("reasoning continuation unavailable")]
+    Unavailable,
+    /// 密文摘要、信封或 AEAD 认证失败。
+    #[error("reasoning continuation corrupted")]
+    Corrupted,
+    #[error(transparent)]
+    Storage(#[from] ProtectedBlobError),
 }
 
-impl ReasoningStateBridge {
-    pub fn new(store: ProtectedBlobStore) -> Self {
-        Self { store }
+impl ReasoningProtectError {
+    pub fn is_unavailable(&self) -> bool {
+        match self {
+            Self::Unavailable => true,
+            Self::Storage(error) => error.is_unavailable(),
+            Self::Corrupted => false,
+        }
     }
 
-    pub fn store(&self) -> &ProtectedBlobStore {
-        &self.store
+    pub fn is_corrupted(&self) -> bool {
+        match self {
+            Self::Corrupted => true,
+            Self::Storage(error) => error.is_corrupted(),
+            Self::Unavailable => false,
+        }
     }
+}
 
-    pub async fn shutdown(self) -> Result<(), ProtectedBlobError> {
-        self.store.shutdown().await
-    }
+/// 受保护 reasoning continuation 的统一存取边界。
+#[async_trait::async_trait]
+pub trait ReasoningProtector: Send + Sync {
+    /// 加密 opaque payload，返回稳定逻辑引用。
+    async fn protect(&self, payload: &[u8]) -> Result<ProtectedBlobRef, ReasoningProtectError>;
 
-    /// Encrypt an opaque Provider payload and return the stable logical reference.
-    ///
-    /// The store assigns the new blob `ref_count = 1`, which belongs to the first
-    /// persisted event carrying the returned reference. Committing that event
-    /// therefore must not retain again; if the append fails, the reserved ownership
-    /// must be handed back via [`Self::rollback_uncommitted`].
-    pub async fn protect(
+    /// 解析稳定逻辑引用指向的明文，不解释其内容。
+    async fn resolve(
         &self,
-        scope: &BlobScope,
-        payload: &[u8],
-    ) -> Result<ProtectedBlobRef, ProtectedBlobError> {
-        Ok(self.store.put(scope, payload).await?.blob_ref)
-    }
-
-    /// Resolve the continuation referenced by a canonical reasoning item.
-    pub async fn resolve(
-        &self,
-        scope: &BlobScope,
-        item: &ReasoningItem,
-    ) -> Result<ProtectedBlob, ProtectedBlobError> {
-        self.resolve_ref(scope, &item.protected_blob_ref).await
-    }
-
-    /// Resolve a stable logical reference without interpreting the plaintext.
-    pub async fn resolve_ref(
-        &self,
-        scope: &BlobScope,
         blob_ref: &ProtectedBlobRef,
-    ) -> Result<ProtectedBlob, ProtectedBlobError> {
-        self.store.get(scope, blob_ref).await
+    ) -> Result<ProtectedBlob, ReasoningProtectError>;
+}
+
+/// 内存 reasoning protector：测试与组合层开发用，无持久化与密钥管理。
+#[derive(Default)]
+pub struct InMemoryReasoningProtector {
+    blobs: RwLock<HashMap<ProtectedBlobRef, Vec<u8>>>,
+    next_ref: AtomicU64,
+}
+
+impl InMemoryReasoningProtector {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait::async_trait]
+impl ReasoningProtector for InMemoryReasoningProtector {
+    async fn protect(&self, payload: &[u8]) -> Result<ProtectedBlobRef, ReasoningProtectError> {
+        let blob_ref = ProtectedBlobRef::from(format!(
+            "mem_{}",
+            self.next_ref.fetch_add(1, Ordering::Relaxed)
+        ));
+        self.blobs
+            .write()
+            .expect("in-memory protector poisoned")
+            .insert(blob_ref.clone(), payload.to_vec());
+        Ok(blob_ref)
     }
 
-    /// Record a new owner of an already-protected blob, returning the new count.
-    ///
-    /// The initial reference from [`Self::protect`] belongs to the first persisted
-    /// event, so replaying or re-persisting that same event must not retain again.
-    /// Only a genuinely new owner (for example a compaction re-emission referencing
-    /// the same continuation) calls this.
-    pub async fn retain(
+    async fn resolve(
         &self,
-        scope: &BlobScope,
         blob_ref: &ProtectedBlobRef,
-    ) -> Result<u64, ProtectedBlobError> {
-        self.store.retain(scope, blob_ref).await
+    ) -> Result<ProtectedBlob, ReasoningProtectError> {
+        let payload = self
+            .blobs
+            .read()
+            .expect("in-memory protector poisoned")
+            .get(blob_ref)
+            .cloned()
+            .ok_or(ReasoningProtectError::Unavailable)?;
+        Ok(ProtectedBlob::new(payload))
+    }
+}
+
+/// 持久 reasoning protector：构造时捕获 store 与 `BlobScope`。
+#[derive(Clone)]
+pub struct ProtectedBlobStoreProtector {
+    store: ProtectedBlobStore,
+    scope: BlobScope,
+}
+
+impl ProtectedBlobStoreProtector {
+    pub fn new(store: ProtectedBlobStore, scope: BlobScope) -> Self {
+        Self { store, scope }
+    }
+}
+
+#[async_trait::async_trait]
+impl ReasoningProtector for ProtectedBlobStoreProtector {
+    async fn protect(&self, payload: &[u8]) -> Result<ProtectedBlobRef, ReasoningProtectError> {
+        Ok(self.store.put(&self.scope, payload).await?.blob_ref)
     }
 
-    /// Drop one owner's reference, returning the remaining count.
-    ///
-    /// Called when an event owning the reference is physically removed (compaction
-    /// or session deletion). When the last reference is released the blob enters the
-    /// store's retention window and stays resolvable until [`Self::gc`] reclaims it.
-    pub async fn release(
+    async fn resolve(
         &self,
-        scope: &BlobScope,
         blob_ref: &ProtectedBlobRef,
-    ) -> Result<u64, ProtectedBlobError> {
-        self.store.release(scope, blob_ref).await
-    }
-
-    /// Hand back the initial ownership reserved by [`Self::protect`] after the event
-    /// commit failed, returning the remaining count.
-    ///
-    /// A failed append means the first persisted event never materialized, so its
-    /// reserved reference must be released or the blob leaks forever. The blob is
-    /// not deleted here; [`Self::gc`] reclaims it once the retention window passes.
-    pub async fn rollback_uncommitted(
-        &self,
-        scope: &BlobScope,
-        blob_ref: &ProtectedBlobRef,
-    ) -> Result<u64, ProtectedBlobError> {
-        self.store.release(scope, blob_ref).await
-    }
-
-    /// Physically delete blobs whose last reference was released before the
-    /// retention window, returning what was reclaimed.
-    pub async fn gc(&self) -> Result<GcReport, ProtectedBlobError> {
-        self.store.gc().await
+    ) -> Result<ProtectedBlob, ReasoningProtectError> {
+        self.store
+            .get(&self.scope, blob_ref)
+            .await
+            .map_err(ReasoningProtectError::from)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs, sync::Arc, time::Duration};
+    use std::{fs, path::Path, sync::Arc};
 
-    use agent_domain::{ProviderId, ReasoningItemId, SessionId};
-    use protected_blob_store::{
-        AeadKey, InMemoryKeyResolver, ProtectedBlobStoreOptions, ProtectedKeyResolver,
-    };
+    use agent_domain::{ProviderId, SessionId};
+    use protected_blob_store::{AeadKey, InMemoryKeyResolver, ProtectedKeyResolver};
     use tempfile::TempDir;
 
     use super::*;
 
-    #[tokio::test]
-    async fn opaque_payload_round_trips_without_entering_canonical_or_plaintext_storage() {
-        let root = TempDir::new().expect("temporary store");
-        let scope = BlobScope::new(ProviderId::from("openai"), SessionId::from("session-1"));
+    fn scope(provider: &str, session: &str) -> BlobScope {
+        BlobScope::new(ProviderId::from(provider), SessionId::from(session))
+    }
+
+    async fn open_store(root: &Path, scope: &BlobScope) -> ProtectedBlobStore {
         let resolver = Arc::new(InMemoryKeyResolver::new());
         resolver.insert(scope.clone(), 1, AeadKey::new([0x5a; 32]));
         resolver.set_current(scope.clone(), 1);
         let resolver: Arc<dyn ProtectedKeyResolver> = resolver;
-        let store = ProtectedBlobStore::open(root.path(), resolver.clone())
+        ProtectedBlobStore::open(root, resolver)
             .await
-            .expect("open protected store");
-        let bridge = ReasoningStateBridge::new(store);
-        let secret = b"encrypted-reasoning-continuation-do-not-persist";
+            .expect("open protected store")
+    }
 
-        let blob_ref = bridge
-            .protect(&scope, secret)
+    #[tokio::test]
+    async fn in_memory_protector_round_trips_and_misses_fail_closed() {
+        let protector = InMemoryReasoningProtector::new();
+        let secret = b"in-memory-reasoning-continuation";
+
+        let blob_ref = protector.protect(secret).await.expect("protect payload");
+        assert_eq!(
+            protector
+                .resolve(&blob_ref)
+                .await
+                .expect("resolve payload")
+                .expose(),
+            secret
+        );
+        assert_eq!(
+            protector
+                .resolve(&blob_ref)
+                .await
+                .expect("resolve payload again")
+                .expose(),
+            secret
+        );
+
+        let missing = ProtectedBlobRef::from("mem_999");
+        let error = protector
+            .resolve(&missing)
             .await
-            .expect("protect payload");
-        let item = ReasoningItem {
-            id: ReasoningItemId::from("reasoning-1"),
-            summary: Some("safe summary".into()),
-            protected_blob_ref: blob_ref.clone(),
-            opaque_metadata: BTreeMap::new(),
-            continuation_metadata: BTreeMap::new(),
-        };
+            .expect_err("unknown ref must fail closed");
+        assert!(error.is_unavailable());
+        assert!(!error.is_corrupted());
+    }
 
-        let canonical = serde_json::to_vec(&item).expect("serialize canonical item");
-        assert!(!contains(&canonical, secret));
-        let metadata = bridge
-            .store()
-            .metadata(&scope, &blob_ref)
+    #[tokio::test]
+    async fn persistent_protector_round_trips_across_restart_and_enforces_scope() {
+        let root = TempDir::new().expect("temporary store");
+        let scope_a = scope("openai", "session-a");
+        let scope_b = scope("openai", "session-b");
+        let secret = b"persistent-reasoning-continuation";
+
+        let store = open_store(root.path(), &scope_a).await;
+        let protector = ProtectedBlobStoreProtector::new(store.clone(), scope_a.clone());
+        let blob_ref = protector.protect(secret).await.expect("protect payload");
+
+        // 明文绝不落盘：物理文件只有随机化密文。
+        let metadata = store
+            .metadata(&scope_a, &blob_ref)
             .await
             .expect("blob metadata");
         let digest = metadata.physical_digest;
@@ -169,181 +217,31 @@ mod tests {
         .expect("ciphertext file");
         assert!(!contains(&ciphertext, secret));
 
-        bridge.shutdown().await.expect("close protected store");
-        let store = ProtectedBlobStore::open(root.path(), resolver)
+        // 同一 store 捕获另一 scope 时解析必须失败关闭。
+        let other = ProtectedBlobStoreProtector::new(store.clone(), scope_b);
+        let error = other
+            .resolve(&blob_ref)
             .await
-            .expect("reopen protected store");
-        let bridge = ReasoningStateBridge::new(store);
-        let replayed: ReasoningItem =
-            serde_json::from_slice(&canonical).expect("replay canonical item");
-        let recovered = bridge
-            .resolve(&scope, &replayed)
-            .await
-            .expect("resolve payload after restart");
-        assert_eq!(recovered.expose(), secret);
-        let wrong_scope =
-            BlobScope::new(ProviderId::from("openai"), SessionId::from("other-session"));
-        let error = bridge
-            .resolve(&wrong_scope, &replayed)
-            .await
-            .expect_err("scope isolation must fail closed");
+            .expect_err("cross-scope resolve must fail closed");
         assert!(error.is_unavailable());
+
+        store.shutdown().await.expect("close protected store");
+        let store = open_store(root.path(), &scope_a).await;
+        let protector = ProtectedBlobStoreProtector::new(store.clone(), scope_a);
+        assert_eq!(
+            protector
+                .resolve(&blob_ref)
+                .await
+                .expect("resolve payload after restart")
+                .expose(),
+            secret
+        );
+        store.shutdown().await.expect("close protected store");
     }
 
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         haystack
             .windows(needle.len())
             .any(|window| window == needle)
-    }
-
-    #[tokio::test]
-    async fn failed_commit_rollback_feeds_zero_retention_gc() {
-        let root = TempDir::new().expect("temporary store");
-        let scope = BlobScope::new(ProviderId::from("openai"), SessionId::from("session-gc"));
-        let mut options = ProtectedBlobStoreOptions::new(root.path());
-        options.retention = Duration::ZERO;
-        let bridge = open_bridge(&scope, options).await;
-        let payload = b"uncommitted-continuation";
-
-        let blob_ref = bridge
-            .protect(&scope, payload)
-            .await
-            .expect("protect payload");
-        let metadata = bridge
-            .store()
-            .metadata(&scope, &blob_ref)
-            .await
-            .expect("blob metadata");
-        assert_eq!(metadata.ref_count, 1);
-
-        // First-event ownership keeps the blob alive even with zero retention.
-        assert_eq!(bridge.gc().await.expect("gc with owner").deleted, 0);
-
-        // Event append failed: hand back the reserved first-owner reference.
-        let remaining = bridge
-            .rollback_uncommitted(&scope, &blob_ref)
-            .await
-            .expect("rollback uncommitted blob");
-        assert_eq!(remaining, 0);
-        let metadata = bridge
-            .store()
-            .metadata(&scope, &blob_ref)
-            .await
-            .expect("blob metadata after rollback");
-        assert_eq!(metadata.ref_count, 0);
-        assert!(metadata.retain_until_ms.is_some());
-
-        let report = bridge.gc().await.expect("gc after rollback");
-        assert_eq!(report.deleted, 1);
-        assert!(report.reclaimed_bytes > 0);
-
-        let digest = metadata.physical_digest;
-        let ciphertext = root
-            .path()
-            .join("protected")
-            .join(&digest[..2])
-            .join(&digest[2..4])
-            .join(&digest);
-        assert!(!ciphertext.exists());
-        let error = bridge
-            .resolve_ref(&scope, &blob_ref)
-            .await
-            .expect_err("rolled-back blob must be gone");
-        assert!(error.is_unavailable());
-    }
-
-    #[tokio::test]
-    async fn additional_owners_retain_and_release_before_gc_collects() {
-        let root = TempDir::new().expect("temporary store");
-        let scope = BlobScope::new(
-            ProviderId::from("anthropic"),
-            SessionId::from("session-refcount"),
-        );
-        let bridge = open_bridge(&scope, ProtectedBlobStoreOptions::new(root.path())).await;
-        let payload = b"shared-continuation";
-
-        // protect reserves ref_count = 1 for the first persisted event; committing
-        // that event must not retain again.
-        let blob_ref = bridge
-            .protect(&scope, payload)
-            .await
-            .expect("protect payload");
-        let metadata = bridge
-            .store()
-            .metadata(&scope, &blob_ref)
-            .await
-            .expect("blob metadata");
-        assert_eq!(metadata.ref_count, 1);
-
-        // A genuinely new owner (e.g. compaction re-emission) takes its own reference.
-        assert_eq!(bridge.retain(&scope, &blob_ref).await.expect("retain"), 2);
-
-        // First event physically removed: one reference drops, blob stays live and
-        // outside the retention window.
-        assert_eq!(bridge.release(&scope, &blob_ref).await.expect("release"), 1);
-        let metadata = bridge
-            .store()
-            .metadata(&scope, &blob_ref)
-            .await
-            .expect("blob metadata after first release");
-        assert!(metadata.retain_until_ms.is_none());
-        assert_eq!(
-            bridge
-                .resolve_ref(&scope, &blob_ref)
-                .await
-                .expect("resolve while owned")
-                .expose(),
-            payload
-        );
-        assert_eq!(bridge.gc().await.expect("gc while owned").deleted, 0);
-
-        // Last owner removed: the blob enters the retention window, stays
-        // resolvable, and gc must not collect it before the window passes.
-        assert_eq!(bridge.release(&scope, &blob_ref).await.expect("release"), 0);
-        let metadata = bridge
-            .store()
-            .metadata(&scope, &blob_ref)
-            .await
-            .expect("blob metadata after final release");
-        assert!(metadata.retain_until_ms.is_some());
-        assert_eq!(
-            bridge
-                .resolve_ref(&scope, &blob_ref)
-                .await
-                .expect("resolve during retention window")
-                .expose(),
-            payload
-        );
-        assert_eq!(
-            bridge
-                .gc()
-                .await
-                .expect("gc inside retention window")
-                .deleted,
-            0
-        );
-
-        let error = bridge
-            .release(&scope, &blob_ref)
-            .await
-            .expect_err("release past zero must fail closed");
-        assert!(matches!(
-            error,
-            ProtectedBlobError::RefCountUnderflow { .. }
-        ));
-    }
-
-    async fn open_bridge(
-        scope: &BlobScope,
-        options: ProtectedBlobStoreOptions,
-    ) -> ReasoningStateBridge {
-        let resolver = Arc::new(InMemoryKeyResolver::new());
-        resolver.insert(scope.clone(), 1, AeadKey::new([0x5a; 32]));
-        resolver.set_current(scope.clone(), 1);
-        let resolver: Arc<dyn ProtectedKeyResolver> = resolver;
-        let store = ProtectedBlobStore::open_with_options(options, resolver)
-            .await
-            .expect("open protected store");
-        ReasoningStateBridge::new(store)
     }
 }

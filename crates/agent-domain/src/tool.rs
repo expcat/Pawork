@@ -25,15 +25,6 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    /// 「谁执行」与 [`ExecutionOwner`] 一一对应。
-    pub const fn execution_owner(self) -> ExecutionOwner {
-        match self {
-            Self::ClientFunction => ExecutionOwner::Core,
-            Self::ProviderHosted => ExecutionOwner::Provider,
-            Self::ProviderExtension => ExecutionOwner::Extension,
-        }
-    }
-
     /// 按执行位点推导唯一合法的续接方式。
     ///
     /// `ToolResult` 只属于 `ClientFunction`；Provider-owned 工具只能经
@@ -44,18 +35,6 @@ impl ToolKind {
             Self::ProviderHosted | Self::ProviderExtension => ContinuationMode::ProviderTranscript,
         }
     }
-}
-
-/// 工具执行所有权（与 [`ToolKind`] 一一对应）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionOwner {
-    /// Pawork Core 本地执行。
-    Core,
-    /// Provider 服务端执行。
-    Provider,
-    /// Provider 中介的外部扩展执行。
-    Extension,
 }
 
 /// 工具结果的续接方式。
@@ -93,6 +72,31 @@ pub enum ToolCapabilityTag {
     Memory,
     ProgrammaticToolCalling,
     ServerSideMultiAgent,
+}
+
+impl ToolCapabilityTag {
+    /// P15-8 协商 wire key：稳定 `tool:PascalCase`，不依赖 `Debug` 格式。
+    ///
+    /// 穷举守卫：新增变体必须在此补 key（编译期强制），防止协商层
+    /// 静默产生未定义 wire 字符串。
+    pub const fn capability_key(self) -> &'static str {
+        match self {
+            Self::WebSearch => "tool:WebSearch",
+            Self::WebFetch => "tool:WebFetch",
+            Self::FileOrCollectionSearch => "tool:FileOrCollectionSearch",
+            Self::XSearch => "tool:XSearch",
+            Self::CodeExecution => "tool:CodeExecution",
+            Self::HostedShell => "tool:HostedShell",
+            Self::ProviderApplyPatch => "tool:ProviderApplyPatch",
+            Self::ComputerUse => "tool:ComputerUse",
+            Self::ImageGeneration => "tool:ImageGeneration",
+            Self::ServerSideMcp => "tool:ServerSideMcp",
+            Self::ToolSearch => "tool:ToolSearch",
+            Self::Memory => "tool:Memory",
+            Self::ProgrammaticToolCalling => "tool:ProgrammaticToolCalling",
+            Self::ServerSideMultiAgent => "tool:ServerSideMultiAgent",
+        }
+    }
 }
 
 /// 执行位点细节（`ToolDescriptor.hosting`）。
@@ -195,22 +199,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tool_kind_owner_mapping_is_one_to_one() {
-        assert_eq!(
-            ToolKind::ClientFunction.execution_owner(),
-            ExecutionOwner::Core
-        );
-        assert_eq!(
-            ToolKind::ProviderHosted.execution_owner(),
-            ExecutionOwner::Provider
-        );
-        assert_eq!(
-            ToolKind::ProviderExtension.execution_owner(),
-            ExecutionOwner::Extension
-        );
-    }
-
-    #[test]
     fn tool_kind_serde_round_trip_uses_snake_case() {
         for (kind, wire) in [
             (ToolKind::ClientFunction, "client_function"),
@@ -225,16 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn execution_owner_and_continuation_mode_serde_round_trip() {
-        for owner in [
-            ExecutionOwner::Core,
-            ExecutionOwner::Provider,
-            ExecutionOwner::Extension,
-        ] {
-            let value = serde_json::to_value(owner).expect("serialize owner");
-            let decoded: ExecutionOwner = serde_json::from_value(value).expect("deserialize owner");
-            assert_eq!(decoded, owner);
-        }
+    fn continuation_mode_serde_round_trip() {
         for mode in [
             ContinuationMode::CoreSuppliedResult,
             ContinuationMode::ProviderTranscript,
@@ -257,6 +236,50 @@ mod tests {
             ToolKind::ProviderExtension.continuation_mode(),
             ContinuationMode::ProviderTranscript
         );
+    }
+
+    #[test]
+    fn tool_capability_tag_capability_key_is_exhaustive_stable_pascal_case() {
+        // 穷举守卫：每个变体都必须有稳定 `tool:PascalCase` wire key，
+        // 且互不相同（不依赖 Debug 格式）。
+        let expected = [
+            (ToolCapabilityTag::WebSearch, "tool:WebSearch"),
+            (ToolCapabilityTag::WebFetch, "tool:WebFetch"),
+            (
+                ToolCapabilityTag::FileOrCollectionSearch,
+                "tool:FileOrCollectionSearch",
+            ),
+            (ToolCapabilityTag::XSearch, "tool:XSearch"),
+            (ToolCapabilityTag::CodeExecution, "tool:CodeExecution"),
+            (ToolCapabilityTag::HostedShell, "tool:HostedShell"),
+            (
+                ToolCapabilityTag::ProviderApplyPatch,
+                "tool:ProviderApplyPatch",
+            ),
+            (ToolCapabilityTag::ComputerUse, "tool:ComputerUse"),
+            (ToolCapabilityTag::ImageGeneration, "tool:ImageGeneration"),
+            (ToolCapabilityTag::ServerSideMcp, "tool:ServerSideMcp"),
+            (ToolCapabilityTag::ToolSearch, "tool:ToolSearch"),
+            (ToolCapabilityTag::Memory, "tool:Memory"),
+            (
+                ToolCapabilityTag::ProgrammaticToolCalling,
+                "tool:ProgrammaticToolCalling",
+            ),
+            (
+                ToolCapabilityTag::ServerSideMultiAgent,
+                "tool:ServerSideMultiAgent",
+            ),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for (tag, wire) in expected {
+            assert_eq!(tag.capability_key(), wire);
+            assert!(seen.insert(wire), "wire key `{wire}` 重复，必须唯一");
+            let suffix = wire.strip_prefix("tool:").expect("tool: 前缀");
+            assert!(
+                !suffix.contains('_') && suffix.chars().next().is_some_and(char::is_uppercase),
+                "wire key `{wire}` 必须是 PascalCase"
+            );
+        }
     }
 
     #[test]

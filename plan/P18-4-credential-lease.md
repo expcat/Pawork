@@ -32,5 +32,6 @@ P14-9 的 `RefreshScheduler` target 需要 credential resolver，当前生产无
 - [ ] Agent/Client 只能获得 lease，不能读取持久 Secret
 - [ ] quota-service refresh target 的 credential resolver 经 CredentialLease acquire → resolve → release 注入，release 不影响 account health
 - [ ] run usage 的 `credential_id` 来自实际 lease；QuotaRuntime 组合层接线后移除 `credential_id=None` 的 synthetic 路径
+- [ ] reasoning 持久 protector 的 key 解析经 CredentialLease acquire → resolve → release 链路注入（Phase 15 持久化 protector 接线延后项，见 [P15-10](P15-10-review-remediation.md)），credential 只持有 `secret_ref`，不向 protector 扩散明文
 
 **相关文档**：[provider-control-plane](../docs/features/provider-control-plane.md) · [multi-agent](../docs/features/multi-agent.md) · [ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [ROADMAP](../ROADMAP.md)

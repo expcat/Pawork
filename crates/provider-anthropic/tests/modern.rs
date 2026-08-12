@@ -10,18 +10,17 @@ use std::sync::Arc;
 
 use agent_domain::ToolCapabilityTag;
 use agent_domain::{
-    ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId, ProtectedBlobRef,
-    StopReason, TextContent, ThinkingContent,
+    ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId, StopReason,
+    TextContent, ThinkingContent,
 };
-use provider_anthropic::{
-    modern::ContinuationStoreError, AnthropicConfig, AnthropicProvider, ReasoningContinuationStore,
-};
+use provider_anthropic::{AnthropicConfig, AnthropicProvider};
 use provider_api::{
     CanonicalModelRequest, CredentialKind, HostedToolRequest, ModelProvider, PromptCachePreference,
     ProviderStreamEvent, ReasoningConfig, ReasoningEffort, RequestBudget, ResolvedCredential,
     ResponseFormat, ToolChoice, ToolDefinition,
 };
 use provider_runtime::http::HttpClientConfig;
+use provider_runtime::reasoning::{InMemoryReasoningProtector, ReasoningProtector};
 use test_support::RecordingProviderSink;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -73,58 +72,9 @@ fn provider(server: &MockServer) -> AnthropicProvider {
     .expect("构造 adapter")
 }
 
-/// 内存不透明续传 store（Mock 替代 ReasoningStateBridge；加密属 P15-7 已测域）。
-#[derive(Clone, Default)]
-struct MemoryStore(Arc<StoreState>);
-
-#[derive(Default)]
-struct StoreState {
-    inner: std::sync::Mutex<(BTreeMap<String, Vec<u8>>, usize)>,
-}
-
-impl MemoryStore {
-    fn new() -> Self {
-        Self(Arc::new(StoreState {
-            inner: std::sync::Mutex::new((BTreeMap::new(), 0)),
-        }))
-    }
-
-    fn handle(&self) -> ReasoningContinuationStore {
-        let protect_store = self.clone();
-        let protect = move |payload: Vec<u8>| -> futures::future::BoxFuture<
-            'static,
-            Result<ProtectedBlobRef, ContinuationStoreError>,
-        > {
-            let store = protect_store.clone();
-            Box::pin(async move {
-                let mut guard = store.0.inner.lock().expect("store lock");
-                guard.1 += 1;
-                let key = format!("blob-{}", guard.1);
-                guard.0.insert(key.clone(), payload);
-                Ok(ProtectedBlobRef::from(key))
-            })
-        };
-        let resolve_store = self.clone();
-        let resolve = move |blob_ref: ProtectedBlobRef| -> futures::future::BoxFuture<
-            'static,
-            Result<Vec<u8>, ContinuationStoreError>,
-        > {
-            let store = resolve_store.clone();
-            Box::pin(async move {
-                let guard = store.0.inner.lock().expect("store lock");
-                guard
-                    .0
-                    .get(blob_ref.as_str())
-                    .cloned()
-                    .ok_or_else(|| ContinuationStoreError::new("blob missing"))
-            })
-        };
-        ReasoningContinuationStore::new(protect, resolve)
-    }
-
-    fn blobs(&self) -> BTreeMap<String, Vec<u8>> {
-        self.0.inner.lock().expect("store lock").0.clone()
-    }
+/// 注入测试用的内存 reasoning protector（与 Provider 默认实现一致）。
+fn protector() -> Arc<dyn ReasoningProtector> {
+    Arc::new(InMemoryReasoningProtector::default())
 }
 
 fn sse(events: &[&str]) -> String {
@@ -182,8 +132,7 @@ async fn structured_output_effort_and_adaptive_thinking_map_natively() {
     };
     req.reasoning = Some(ReasoningConfig::new(ReasoningEffort::High));
 
-    let store = MemoryStore::new();
-    let provider = provider(&server).with_reasoning_continuation(store.handle());
+    let provider = provider(&server).with_reasoning_protector(protector());
     let sink = RecordingProviderSink::default();
     let summary = provider
         .stream(req, &sink, agent_domain::CancellationToken::new())
@@ -327,8 +276,7 @@ async fn thinking_signature_round_trips_through_opaque_store() {
 
     let mut req = request("claude-sonnet-4-5");
     req.reasoning = Some(ReasoningConfig::new(ReasoningEffort::Medium));
-    let store = MemoryStore::new();
-    let provider = provider(&server).with_reasoning_continuation(store.handle());
+    let provider = provider(&server).with_reasoning_protector(protector());
     let sink = RecordingProviderSink::default();
     provider
         .stream(req.clone(), &sink, agent_domain::CancellationToken::new())
@@ -348,11 +296,6 @@ async fn thinking_signature_round_trips_through_opaque_store() {
     let item = items[0].clone();
     let encoded_event = serde_json::to_string(&sink.events()).expect("serialize events");
     assert!(!encoded_event.contains("SIG-FIXTURE-1"));
-    // 原文只在不透明 store 中（此处为内存 Mock；真实路径为加密 blob store）。
-    let blobs = store.blobs();
-    assert!(blobs
-        .values()
-        .any(|bytes| { String::from_utf8_lossy(bytes).contains("SIG-FIXTURE-1") }));
 
     // 第二轮：会话回灌 → 重建带 signature 的 thinking 块。
     req.messages.push(Message {
@@ -381,6 +324,45 @@ async fn thinking_signature_round_trips_through_opaque_store() {
     assert_eq!(assistant["content"][0]["thinking"], "let me think");
     assert_eq!(assistant["content"][0]["signature"], "SIG-FIXTURE-1");
     assert_eq!(assistant["content"][1]["type"], "text");
+}
+
+#[tokio::test]
+async fn thinking_signature_works_with_default_protector_without_injection() {
+    let server = MockServer::start().await;
+    mount_ok(
+        &server,
+        sse(&[
+            r#"{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"think"}}"#,
+            r#"{"type":"content_block_stop","index":0,"content_block":{"type":"thinking","thinking":"think","signature":"SIG-DEFAULT"}}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}"#,
+            r#"{"type":"message_stop"}"#,
+        ]),
+    )
+    .await;
+
+    let mut req = request("claude-sonnet-4-5");
+    req.reasoning = Some(ReasoningConfig::new(ReasoningEffort::Medium));
+    // 不注入 protector：默认 InMemoryReasoningProtector 承担保护，不再硬错。
+    let provider = provider(&server);
+    let sink = RecordingProviderSink::default();
+    provider
+        .stream(req, &sink, agent_domain::CancellationToken::new())
+        .await
+        .expect("thinking stream without injection succeeds");
+
+    let items: Vec<_> = sink
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            ProviderStreamEvent::ReasoningItem(item) => Some(item.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(items.len(), 1);
+    let encoded_event = serde_json::to_string(&sink.events()).expect("serialize events");
+    assert!(!encoded_event.contains("SIG-DEFAULT"));
 }
 
 #[tokio::test]
@@ -421,8 +403,7 @@ async fn interleaved_thinking_and_tools_keep_wire_order() {
         input_schema: serde_json::json!({"type":"object"}),
     });
 
-    let store = MemoryStore::new();
-    let provider = provider(&server).with_reasoning_continuation(store.handle());
+    let provider = provider(&server).with_reasoning_protector(protector());
     let sink = RecordingProviderSink::default();
     provider
         .stream(req, &sink, agent_domain::CancellationToken::new())

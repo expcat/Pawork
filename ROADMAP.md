@@ -35,20 +35,21 @@
 | 12 | Multi-Agent | 7 | 7 | 🟢已完成（P12-1～P12-6 TargetVerified；P12-7 review-remediation 已完成） |
 | 13 | CLI Host 与多 GUI 协议 | 11 | 11 | 🟢已完成（P13-1～P13-10 TargetVerified；P13-11 review-remediation 已完成） |
 | 14 | 模型用量与额度监控 | 10 | 10 | 🟢已完成（P14-1/2/4～P14-10 TargetVerified；P14-3 已归档） |
- | 15 | Provider Native Capabilities | 9 | 9 | 🟢已完成（P15-1～P15-9 TargetVerified；P15-9 集中门禁 contract/golden/fuzz/兼容性在独立 target 下全绿） |
+ | 15 | Provider Native Capabilities | 10 | 10 | 🟢已完成（P15-1/5/9 plain TargetVerified；P15-2/3/4/7/8 TargetVerified 有界 host composition deferred；P15-6 TargetVerified 有界 default-off/no consumer；P15-10 review-remediation 已完成；P15-9 集中门禁 contract/golden/fuzz/兼容性在独立 target 下全绿） |
 | 16 | Modern Agent Workflow | 9 | 0 | 🟡未开始 |
 | 17 | Ecosystem & Host Compatibility | 13 | 0 | 🟡未开始 |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
- | **合计** | — | **217** | **167** | — |
+ | **合计** | — | **218** | **165** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务。
+> 逐 Phase 行机械求和为 218 项任务、165 项完成；P15-10 新增前表内旧合计写作 217/167，而旧 Phase 行实际为 217/164，完成数已有 +3 累计漂移。P15-10 使任务数与完成行各增加 1，Phase 15 现为 10/10。
 >
 > Phase 0 与 Phase 1 已有历史本地构建、测试和 Clippy 记录；自本次规划起不再把「每个 Phase 重跑 workspace 全量门禁」作为任务完成前提。三平台 GitHub Actions 仍按 `workflow_dispatch` 手动触发，其远程结果不计入本地完成状态。
 
 ## 下一个推荐任务
 
- > 🎯 **Phase 16 Modern Agent Workflow** —— Phase 15 Provider Native Capabilities 已全部完成（P15-1～P15-9 TargetVerified）。canonical Tool v2（三类执行位点）、ServerToolEvent/Citation/ProviderTranscript、ReasoningItem/Protected Blob Store、ModelCapabilities v2 与 CapabilityNegotiator（纯函数 fail-closed 协商）、Tool Search（延迟激活）、OpenAI Responses / Anthropic Modern Messages / xAI Responses 三家现代传输路径（与 P6 基线并存、经协商降级）、Phase 15 集中门禁（contract/golden/fuzz/兼容性，独立 target dir）均已落地。下一推荐 Phase 16（Modern Agent Workflow）。详见各 [plan/P15-*](plan/) 文档。
+ > 🎯 **Phase 16 Modern Agent Workflow** —— Phase 15 Provider Native Capabilities 已全部完成（P15-1/5/9 plain TargetVerified；P15-2/3/4/7/8 有界 TargetVerified——domain + adapter verified、host composition deferred 延 P18-3/4/14；P15-6 有界 TargetVerified——`tool-search` feature 默认关闭、当前 no consumer）。canonical Tool v2（三类执行位点由 ToolKind 直接承载 + 真实消费者 ContinuationMode）、ServerToolEvent/Citation/ProviderTranscript（三家 adapter 均有真实 wire producer）、ReasoningItem 与统一 ReasoningProtector（protect/resolve + typed ProtectedBlobRef，三家迁移共享 InMemory 默认、持久实现均为 ProtectedBlobStoreProtector；生产接线延 P18）、ModelCapabilities v2 与 CapabilityNegotiator（纯函数 fail-closed 协商，稳定 capability_key）、OpenAI Responses / Anthropic Modern Messages / xAI Responses 三家现代传输路径（与 P6 基线并存、经协商降级）、Phase 15 集中门禁（contract/golden/fuzz/兼容性，独立 target dir）与 P15-10 评审修复均已落地。下一推荐 Phase 16（Modern Agent Workflow）。详见各 [plan/P15-*](plan/) 文档。
 
 > ✅ **Phase 14 模型用量与额度监控完成库级收口（P14-1/2/4～P14-10 TargetVerified）**：交付 `quota-service` canonical 领域模型、API Key / WebScrape / Local Ledger 三类 adapter（通用 OAuth 层无生产消费者已删除，见 [P14-3](plan/P14-3-quota-oauth-adapter.md)）、六初始供应商 contract fixtures、多窗口聚合与 cache-only 查询、Usage/Cost Ledger 进程内写入与预算信号、`pawork usage` 文本/JSON 输出、GUI Protocol 的 `QuotaChanged` / `QuotaAlert` 事件、可取消刷新调度与退避。**有界范围**：远端 refresh target 注册、持久化 Ledger、真实 tenant/account/credential 归属与生产审计 sink 延 Phase 18 接线；GUI 目前仅协议就绪（无实际投影页面）；告警动作由消费端按 `AlertKind` 派生，不跨边界携带 typed suggestions。开发期完成受影响 crate 的定向测试、Clippy、格式与 schema 漂移检查；workspace 全量门禁留待集中 review。未配置远端 target 时查询保持 cache-only，只读本地 Ledger 投影。详见 [P14-10](plan/P14-10-review-remediation.md)。
 
@@ -508,8 +509,9 @@ Parent/Worker 编排，写入隔离，取消传播。
  | P15-5 | 🟢 | Server Tool Events | citation/source/search/execution/computer events | [详情](plan/P15-5-server-tool-events.md) |
  | P15-6 | 🟢 | Tool Search | 动态发现与 lazy schema loading | [详情](plan/P15-6-tool-search.md) |
  | P15-7 | 🟢 | Reasoning State | effort levels/encrypted continuation | [详情](plan/P15-7-reasoning-state.md) |
- | P15-8 | 🟢 | Capability Discovery | ModelCapabilities v2 + negotiation | [详情](plan/P15-8-capability-discovery.md) |
+| P15-8 | 🟢 | Capability Discovery | ModelCapabilities v2 + negotiation | [详情](plan/P15-8-capability-discovery.md) |
  | P15-9 | 🟢 | Provider Contract v2 | 三家集中 contract/golden/兼容门禁 | [详情](plan/P15-9-provider-contract-v2.md) |
+ | P15-10 | 🟢 | 评审修复（review-remediation） | 统一 reasoning trait+typed ref、删 ExecutionOwner/死 blob API、tool-search feature 门、稳定 capability_key、事实纠正 | [详情](plan/P15-10-review-remediation.md) |
 
 ### Phase 16：Modern Agent Workflow
 

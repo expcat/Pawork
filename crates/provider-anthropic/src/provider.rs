@@ -5,6 +5,7 @@
 //! 经 [`event_to_events`](crate::stream::event_to_events) 映射为 canonical 事件。
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use agent_domain::{
@@ -19,13 +20,11 @@ use provider_api::{
 };
 use provider_runtime::http::{HttpClient, HttpClientConfig};
 use provider_runtime::negotiate::clamp_reasoning_to_thinking;
+use provider_runtime::reasoning::{InMemoryReasoningProtector, ReasoningProtector};
 use provider_runtime::sse::SseParser;
 use serde_json::Value;
 
-use crate::modern::{
-    resolve, server_tool_whitelist, to_modern_messages_body, ReasoningContinuationStore,
-    ThinkingPlan, TransportChoice,
-};
+use crate::modern::{resolve, server_tool_whitelist, to_modern_messages_body, TransportChoice};
 use crate::reasoning::{build_reasoning_item, extract_thinking_payload, AnthropicThinkingPayload};
 use crate::stream::{event_to_events, AnthropicStreamState};
 use crate::{ANTHROPIC_VERSION, DEFAULT_BASE_URL};
@@ -82,9 +81,9 @@ pub struct AnthropicProvider {
     config: AnthropicConfig,
     client: HttpClient,
     credential: Option<ResolvedCredential>,
-    /// P15-3 现代路径的 reasoning 续传不透明存取（缺省 None = 无法保护
-    /// thinking signature，现代路径捕获到 signature 时 fail-closed）。
-    continuation_store: Option<ReasoningContinuationStore>,
+    /// P15-3 现代路径的 reasoning 续传保护器（缺省共享进程内
+    /// `InMemoryReasoningProtector`，保证事件只携带安全引用，与 OpenAI/xAI 一致）。
+    reasoning_protector: Arc<dyn ReasoningProtector>,
 }
 
 impl AnthropicProvider {
@@ -106,17 +105,17 @@ impl AnthropicProvider {
             config,
             client,
             credential,
-            continuation_store: None,
+            reasoning_protector: Arc::new(InMemoryReasoningProtector::default()),
         })
     }
 
-    /// 注入 reasoning 续传不透明 handle（P15-7 / ADR-032）。
+    /// 注入 reasoning 续传保护器（P15-7 / ADR-032）。
     ///
-    /// 接线方（engine / app-service）用 `provider-runtime::reasoning::
-    /// ReasoningStateBridge` + `BlobScope` 构造两个闭包；adapter 不接触
-    /// 加密存储实现。
-    pub fn with_reasoning_continuation(mut self, store: ReasoningContinuationStore) -> Self {
-        self.continuation_store = Some(store);
+    /// 接线方（engine / app-service）注入持久实现
+    /// `provider-runtime::reasoning::ProtectedBlobStoreProtector`；未注入时使用
+    /// 共享 `InMemoryReasoningProtector`（进程内可回放，与 OpenAI/xAI 一致）。
+    pub fn with_reasoning_protector(mut self, protector: Arc<dyn ReasoningProtector>) -> Self {
+        self.reasoning_protector = protector;
         self
     }
 
@@ -174,28 +173,14 @@ impl AnthropicProvider {
             ))
             .await?;
         }
-        if matches!(resolution.thinking, ThinkingPlan::Adaptive { .. })
-            && self.continuation_store.is_none()
-        {
-            return Err(ProviderError::new(
-                ProviderErrorKind::InvalidRequest,
-                "adaptive thinking requires a reasoning continuation store",
-            ));
-        }
-
         // 取回会话中的 reasoning 续传载荷（不透明字节 → AnthropicThinkingPayload）。
         let mut continuations: BTreeMap<ReasoningItemId, AnthropicThinkingPayload> =
             BTreeMap::new();
         for message in &request.messages {
             for part in &message.content {
                 if let ContentPart::Reasoning(item) = part {
-                    let Some(store) = &self.continuation_store else {
-                        return Err(ProviderError::new(
-                            ProviderErrorKind::InvalidRequest,
-                            "modern Messages reasoning continuation requires a continuation store",
-                        ));
-                    };
-                    let bytes = store
+                    let blob = self
+                        .reasoning_protector
                         .resolve(&item.protected_blob_ref)
                         .await
                         .map_err(|error| {
@@ -204,13 +189,13 @@ impl AnthropicProvider {
                                 format!("cannot resolve reasoning continuation: {error}"),
                             )
                         })?;
-                    let payload: AnthropicThinkingPayload = serde_json::from_slice(&bytes)
+                    let payload: AnthropicThinkingPayload = serde_json::from_slice(blob.expose())
                         .map_err(|error| {
-                            ProviderError::new(
-                                ProviderErrorKind::InvalidRequest,
-                                format!("corrupt continuation payload: {error}"),
-                            )
-                        })?;
+                        ProviderError::new(
+                            ProviderErrorKind::InvalidRequest,
+                            format!("corrupt continuation payload: {error}"),
+                        )
+                    })?;
                     continuations.insert(item.id.clone(), payload);
                 }
             }
@@ -359,12 +344,6 @@ impl AnthropicProvider {
         // 捕获到的 thinking signature → 保护为不透明 blob → ReasoningItem。
         let pending = state.drain_pending_thinking();
         if !pending.is_empty() {
-            let Some(store) = &self.continuation_store else {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::InvalidRequest,
-                    "anthropic thinking signature captured but no continuation store configured",
-                ));
-            };
             for block in pending {
                 let payload = extract_thinking_payload(&block).map_err(|error| {
                     ProviderError::new(ProviderErrorKind::MalformedResponse, error.to_string())
@@ -378,12 +357,16 @@ impl AnthropicProvider {
                         format!("serialize continuation payload: {error}"),
                     )
                 })?;
-                let blob_ref = store.protect(encoded).await.map_err(|error| {
-                    ProviderError::new(
-                        ProviderErrorKind::Unknown,
-                        format!("protect reasoning continuation: {error}"),
-                    )
-                })?;
+                let blob_ref =
+                    self.reasoning_protector
+                        .protect(&encoded)
+                        .await
+                        .map_err(|error| {
+                            ProviderError::new(
+                                ProviderErrorKind::Unknown,
+                                format!("protect reasoning continuation: {error}"),
+                            )
+                        })?;
                 let item = build_reasoning_item(item_id, blob_ref, &payload);
                 sink.emit(ProviderStreamEvent::ReasoningItem(item)).await?;
             }
