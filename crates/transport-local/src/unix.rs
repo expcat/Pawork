@@ -1,5 +1,7 @@
 //! Unix Domain Socket 端点（macOS/Linux）。
 
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
