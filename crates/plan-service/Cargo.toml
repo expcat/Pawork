@@ -9,3 +9,10 @@ description = "Pawork P16-1/P16-2 Plan Mode：只读计划状态机、版本替�
 
 [dependencies]
 agent-domain = { path = "../agent-domain" }
+parking_lot.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+agent-events = { path = "../agent-events" }
+serde_json.workspace = true
