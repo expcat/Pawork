@@ -1,6 +1,6 @@
 # P16-6：Persistent Process / Monitor（常驻进程与监视循环）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P16-4、P11-6、P11-7、P1-4、P13-2
+> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P16-4、P11-6、P11-7、P1-4、P13-2
 
 **最终目的**：让一个进程或监视循环能脱离单次 Run 独立常驻——例如长跑的 dev server、watch 构建、日志监视——在 CLI/GUI 断连后继续运行、重连可接管，输出被捕获为可检索的事件流，使「后台 watch / 常驻服务」成为 Agent 可观测、可控的一等公民，而非游离于管理之外的孤儿进程。
 

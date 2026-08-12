@@ -25,14 +25,20 @@ fn legal_transitions_succeed() {
         .unwrap();
 
     let s0 = step_id_at(&created, 0);
-    svc.update_step(&s0, PlanStepStatus::InProgress, None).unwrap();
-    svc.update_step(&s0, PlanStepStatus::Completed, None).unwrap();
+    svc.update_step(&s0, PlanStepStatus::InProgress, None)
+        .unwrap();
+    svc.update_step(&s0, PlanStepStatus::Completed, None)
+        .unwrap();
 
     let s1 = step_id_at(&created, 1);
-    svc.update_step(&s1, PlanStepStatus::InProgress, None).unwrap();
-    svc.update_step(&s1, PlanStepStatus::Blocked, Some("卡住".into())).unwrap();
-    svc.update_step(&s1, PlanStepStatus::InProgress, None).unwrap();
-    svc.update_step(&s1, PlanStepStatus::Completed, None).unwrap();
+    svc.update_step(&s1, PlanStepStatus::InProgress, None)
+        .unwrap();
+    svc.update_step(&s1, PlanStepStatus::Blocked, Some("卡住".into()))
+        .unwrap();
+    svc.update_step(&s1, PlanStepStatus::InProgress, None)
+        .unwrap();
+    svc.update_step(&s1, PlanStepStatus::Completed, None)
+        .unwrap();
 }
 
 #[test]
@@ -56,14 +62,16 @@ fn illegal_transitions_rejected() {
     ));
 
     // Pending -> InProgress 合法；其后回退到 Pending 非法。
-    svc.update_step(&s, PlanStepStatus::InProgress, None).unwrap();
+    svc.update_step(&s, PlanStepStatus::InProgress, None)
+        .unwrap();
     assert!(matches!(
         svc.update_step(&s, PlanStepStatus::Pending, None),
         Err(PlanError::IllegalStepTransition { .. })
     ));
 
     // 完成后为终态，任何转移非法。
-    svc.update_step(&s, PlanStepStatus::Completed, None).unwrap();
+    svc.update_step(&s, PlanStepStatus::Completed, None)
+        .unwrap();
     assert!(matches!(
         svc.update_step(&s, PlanStepStatus::InProgress, None),
         Err(PlanError::IllegalStepTransition { .. })
@@ -80,11 +88,23 @@ fn replay_matches_live_service_and_manual_apply() {
         .unwrap();
     events.push(created.clone());
     let s1 = step_id_at(&created, 0);
-    events.push(svc.update_step(&s1, PlanStepStatus::InProgress, None).unwrap());
-    events.push(svc.update_step(&s1, PlanStepStatus::Completed, Some("done".into())).unwrap());
-    events.push(svc.replace_plan("v2", vec!["n1".into(), "n2".into(), "n3".into()]).unwrap());
+    events.push(
+        svc.update_step(&s1, PlanStepStatus::InProgress, None)
+            .unwrap(),
+    );
+    events.push(
+        svc.update_step(&s1, PlanStepStatus::Completed, Some("done".into()))
+            .unwrap(),
+    );
+    events.push(
+        svc.replace_plan("v2", vec!["n1".into(), "n2".into(), "n3".into()])
+            .unwrap(),
+    );
     let n1 = svc.plan_snapshot().unwrap().steps[0].step_id.clone();
-    events.push(svc.update_step(&n1, PlanStepStatus::InProgress, None).unwrap());
+    events.push(
+        svc.update_step(&n1, PlanStepStatus::InProgress, None)
+            .unwrap(),
+    );
 
     let refs: Vec<&PlanEvent> = events.iter().collect();
 
@@ -109,13 +129,20 @@ fn version_history_forms_chain() {
     let svc = PlanService::new();
     svc.create_plan("v1", vec!["a".into()]).unwrap();
     svc.replace_plan("v2", vec!["b".into()]).unwrap();
-    svc.replace_plan("v3", vec!["c".into(), "d".into()]).unwrap();
+    svc.replace_plan("v3", vec!["c".into(), "d".into()])
+        .unwrap();
 
     let history = svc.version_history();
     assert_eq!(history.len(), 3);
     assert!(history[0].parent_version.is_none());
-    assert_eq!(history[1].parent_version.as_ref(), Some(&history[0].version));
-    assert_eq!(history[2].parent_version.as_ref(), Some(&history[1].version));
+    assert_eq!(
+        history[1].parent_version.as_ref(),
+        Some(&history[0].version)
+    );
+    assert_eq!(
+        history[2].parent_version.as_ref(),
+        Some(&history[1].version)
+    );
 
     let snapshot = svc.plan_snapshot().unwrap();
     assert_eq!(snapshot.version, history[2].version);
@@ -158,7 +185,10 @@ fn command_errors() {
 
     // empty plan / empty step text.
     let svc5 = PlanService::new();
-    assert!(matches!(svc5.create_plan("p", vec![]), Err(PlanError::EmptyPlan)));
+    assert!(matches!(
+        svc5.create_plan("p", vec![]),
+        Err(PlanError::EmptyPlan)
+    ));
     let svc6 = PlanService::new();
     assert!(matches!(
         svc6.create_plan("p", vec!["   ".into()]),
@@ -175,14 +205,18 @@ fn plan_with_write_action_descriptions_is_inert() {
         "spawn child process and exec payload".into(),
     ];
     let svc = PlanService::new();
-    let created = svc.create_plan("危险（仅文本）", dangerous.clone()).unwrap();
+    let created = svc
+        .create_plan("危险（仅文本）", dangerous.clone())
+        .unwrap();
     let steps = match &created {
         PlanEvent::Created { steps, .. } => steps.clone(),
         _ => unreachable!(),
     };
     for s in &steps {
-        svc.update_step(&s.step_id, PlanStepStatus::InProgress, None).unwrap();
-        svc.update_step(&s.step_id, PlanStepStatus::Completed, None).unwrap();
+        svc.update_step(&s.step_id, PlanStepStatus::InProgress, None)
+            .unwrap();
+        svc.update_step(&s.step_id, PlanStepStatus::Completed, None)
+            .unwrap();
     }
 
     let snapshot = svc.plan_snapshot().unwrap();
@@ -190,7 +224,10 @@ fn plan_with_write_action_descriptions_is_inert() {
     let texts: Vec<String> = snapshot.steps.iter().map(|s| s.text.clone()).collect();
     assert_eq!(texts, dangerous);
     // 状态机走到 completed，评审仍为 Draft。
-    assert!(snapshot.steps.iter().all(|s| s.status == PlanStepStatus::Completed));
+    assert!(snapshot
+        .steps
+        .iter()
+        .all(|s| s.status == PlanStepStatus::Completed));
     assert_eq!(snapshot.review_status, PlanReviewStatus::Draft);
     // PlanService 无 spawn/exec/write API：仅命令面 + 查询面被调用，
     // 故「带写动作描述的 Plan」不可能产生任何副作用。
@@ -232,7 +269,9 @@ fn source_has_no_io_or_spawn_api() {
 #[test]
 fn plan_event_round_trips_through_agent_event() {
     let svc = PlanService::new();
-    let event = svc.create_plan("canonical", vec!["a".into(), "b".into()]).unwrap();
+    let event = svc
+        .create_plan("canonical", vec!["a".into(), "b".into()])
+        .unwrap();
 
     // PlanEvent 经 AgentEvent::Plan 包装后 JSON 往返（canonical 持久化兼容）。
     let wrapped = AgentEvent::Plan(event.clone());
@@ -249,7 +288,8 @@ fn plan_event_round_trips_through_agent_event() {
 #[test]
 fn review_revise_approve_flow_with_checkpoint() {
     let svc = PlanService::new();
-    svc.create_plan("迁移", vec!["分析".into(), "执行".into()]).unwrap();
+    svc.create_plan("迁移", vec!["分析".into(), "执行".into()])
+        .unwrap();
     let plan_id = svc.plan_snapshot().unwrap().plan_id.clone();
     let v1 = svc.plan_snapshot().unwrap().version.clone();
 
@@ -300,10 +340,9 @@ fn review_revise_approve_flow_with_checkpoint() {
 fn approval_gate_closed_until_approved() {
     // 未创建 Plan：gate 关闭。
     let svc = PlanService::new();
-    assert!(!svc.is_approved_for_execution(
-        &PlanId::new("plan_1"),
-        &PlanVersionId::new("planver_1")
-    ));
+    assert!(
+        !svc.is_approved_for_execution(&PlanId::new("plan_1"), &PlanVersionId::new("planver_1"))
+    );
 
     let svc = PlanService::new();
     svc.create_plan("p", vec!["a".into()]).unwrap();
@@ -431,7 +470,8 @@ fn comments_carry_line_anchors() {
         file: Some("src/main.rs".into()),
         file_line: Some(42),
     };
-    svc.add_comment(&plan_id, &v1, anchor.clone(), "这步需要补测试").unwrap();
+    svc.add_comment(&plan_id, &v1, anchor.clone(), "这步需要补测试")
+        .unwrap();
     let snap = svc.plan_snapshot().unwrap();
     assert_eq!(snap.comments.len(), 1);
     assert_eq!(snap.comments[0].anchor, anchor);
@@ -449,7 +489,12 @@ fn comments_carry_line_anchors() {
         Err(PlanError::StepNotFound(_))
     ));
     assert!(matches!(
-        svc.add_comment(&plan_id, &PlanVersionId::new("planver_9"), anchor.clone(), "x"),
+        svc.add_comment(
+            &plan_id,
+            &PlanVersionId::new("planver_9"),
+            anchor.clone(),
+            "x"
+        ),
         Err(PlanError::VersionMismatch { .. })
     ));
     assert!(matches!(
@@ -510,7 +555,10 @@ fn review_command_errors() {
     let svc = PlanService::new();
     let pid = PlanId::new("plan_1");
     let vid = PlanVersionId::new("planver_1");
-    assert!(matches!(svc.request_review(&vid), Err(PlanError::NotCreated)));
+    assert!(matches!(
+        svc.request_review(&vid),
+        Err(PlanError::NotCreated)
+    ));
     assert!(matches!(
         svc.request_changes(&vid),
         Err(PlanError::NotCreated)
@@ -563,7 +611,10 @@ fn review_command_errors() {
 fn review_flow_replays_identically() {
     let svc = PlanService::new();
     let mut events: Vec<PlanEvent> = Vec::new();
-    events.push(svc.create_plan("v1", vec!["s1".into(), "s2".into()]).unwrap());
+    events.push(
+        svc.create_plan("v1", vec!["s1".into(), "s2".into()])
+            .unwrap(),
+    );
     let plan_id = svc.plan_snapshot().unwrap().plan_id.clone();
     let v1 = svc.plan_snapshot().unwrap().version.clone();
     events.push(svc.request_review(&v1).unwrap());
@@ -577,7 +628,10 @@ fn review_flow_replays_identically() {
         file: None,
         file_line: None,
     };
-    events.push(svc.add_comment(&plan_id, &v2, anchor, "补充边界用例").unwrap());
+    events.push(
+        svc.add_comment(&plan_id, &v2, anchor, "补充边界用例")
+            .unwrap(),
+    );
     let cp = CheckpointId::new("ckpt_42");
     events.push(svc.approve(&plan_id, &v2, Some(cp.clone())).unwrap());
 
@@ -616,7 +670,8 @@ fn review_events_round_trip_through_agent_event() {
     svc.request_review(&v1).unwrap();
     svc.request_changes(&v1).unwrap();
     let revised = svc.revise(&PlanVersionId::new("planver_99"), &v1).unwrap();
-    svc.request_review(&PlanVersionId::new("planver_99")).unwrap();
+    svc.request_review(&PlanVersionId::new("planver_99"))
+        .unwrap();
     let approved = svc
         .approve(
             &plan_id,

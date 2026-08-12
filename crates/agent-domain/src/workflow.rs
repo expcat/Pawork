@@ -16,9 +16,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{
-    ArtifactId, AutomationId, BackgroundTaskId, CheckpointId, EventId, GoalId, MemoryId,
-    MonitorId, PlanId, PlanStepId, PlanVersionId, ReviewFindingId, ReviewSessionId, RunId,
-    SessionId, WorkspaceId,
+    ArtifactId, AutomationId, BackgroundTaskId, CheckpointId, EventId, GoalId, MemoryId, MonitorId,
+    PlanId, PlanStepId, PlanVersionId, ReviewFindingId, ReviewSessionId, RunId, SessionId,
+    WorkspaceId,
 };
 
 // =========================================================================

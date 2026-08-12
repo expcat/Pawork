@@ -522,6 +522,14 @@ fn event_type(event: &AgentEvent) -> &'static str {
         AgentEvent::RunCancelled { .. } => "run_cancelled",
         AgentEvent::RunFailed { .. } => "run_failed",
         AgentEvent::Diagnostic { .. } => "diagnostic",
+        // Phase 16 Modern Agent Workflow 事件载荷（P16-1～P16-8）。
+        AgentEvent::Plan(_) => "plan",
+        AgentEvent::Goal(_) => "goal",
+        AgentEvent::Task(_) => "task",
+        AgentEvent::Automation(_) => "automation",
+        AgentEvent::Monitor(_) => "monitor",
+        AgentEvent::Memory(_) => "memory",
+        AgentEvent::Review(_) => "review",
     }
 }
 

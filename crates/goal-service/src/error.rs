@@ -35,8 +35,5 @@ pub enum GoalError {
     EmptySteerInput,
 
     #[error("illegal goal status transition: {from:?} -> {to:?}")]
-    IllegalStatusTransition {
-        from: GoalStatus,
-        to: GoalStatus,
-    },
+    IllegalStatusTransition { from: GoalStatus, to: GoalStatus },
 }

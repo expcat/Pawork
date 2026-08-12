@@ -67,10 +67,8 @@ fn triggered_event_consumable_via_broadcast() {
     // 触发器来源）。
     let mut saw_triggered = false;
     while let Ok(event) = rx.try_recv() {
-        if let agent_events::AgentEvent::Monitor(MonitorEvent::Triggered {
-            monitor_id,
-            detail,
-        }) = event
+        if let agent_events::AgentEvent::Monitor(MonitorEvent::Triggered { monitor_id, detail }) =
+            event
         {
             assert_eq!(monitor_id, MonitorId::new("m1"));
             assert_eq!(detail, "port 8080 open");

@@ -269,11 +269,7 @@ mod tests {
     async fn empty_summary_rejected() {
         let mut service = svc();
         let err = service
-            .record(
-                CandidateMemory::new("   "),
-                None,
-                CancellationToken::new(),
-            )
+            .record(CandidateMemory::new("   "), None, CancellationToken::new())
             .await
             .expect_err("empty rejected");
         assert!(matches!(err, MemoryError::EmptySummary));
@@ -294,7 +290,9 @@ mod tests {
             panic!("recorded");
         };
 
-        let invalidated = service.invalidate(memory_id, "superseded").expect("invalidate ok");
+        let invalidated = service
+            .invalidate(memory_id, "superseded")
+            .expect("invalidate ok");
         assert!(matches!(invalidated, MemoryEvent::Invalidated { .. }));
         assert!(!service.get(memory_id).unwrap().valid);
 
@@ -349,7 +347,11 @@ mod tests {
         let mut candidate = CandidateMemory::new("global convention note");
         candidate.privacy = agent_domain::MemoryPrivacy::Shareable;
         service
-            .record(candidate, Some(WorkspaceId::new("ws1")), CancellationToken::new())
+            .record(
+                candidate,
+                Some(WorkspaceId::new("ws1")),
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
 

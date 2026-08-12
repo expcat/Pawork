@@ -6,7 +6,7 @@
 use std::{error::Error, fmt};
 
 use agent_domain::{
-   ArtifactId, CheckpointId, ErrorContext, EventId, Message, MessageId, ProviderId,
+    ArtifactId, CheckpointId, ErrorContext, EventId, Message, MessageId, ProviderId,
     ProviderTranscriptEnvelope, RequestId, RunId, ServerToolEvent, SessionId, StopReason,
     Timestamp, TokenUsage, ToolCallId, ToolKind, ToolResultContent,
 };
@@ -194,9 +194,9 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
-   RunFailed {
-       error: ErrorContext,
-   },
+    RunFailed {
+        error: ErrorContext,
+    },
     /// Phase 16 P16-1/P16-2 Plan Mode 事件（只读计划与评审/审批 gate）。
     Plan(PlanEvent),
     /// Phase 16 P16-3 Goal Mode 事件（目标、成功标准、进度与转向）。

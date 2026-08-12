@@ -50,25 +50,29 @@ impl FileWatchDriver {
     {
         let pending: Arc<Mutex<VecDeque<Observation>>> = Arc::new(Mutex::new(VecDeque::new()));
         let pending_for_cb = Arc::clone(&pending);
-        let mut debouncer = new_debouncer(debounce, None, move |result: notify_debouncer_full::DebounceEventResult| {
-            if let Ok(events) = result {
-                let paths: Vec<String> = events
-                    .into_iter()
-                    .flat_map(|event| {
-                        event
-                            .event
-                            .paths
-                            .into_iter()
-                            .map(|p| p.to_string_lossy().into_owned())
-                    })
-                    .collect();
-                if let Some(observation) = paths_to_observation(paths) {
-                    if let Ok(mut buf) = pending_for_cb.lock() {
-                        buf.push_back(observation);
+        let mut debouncer = new_debouncer(
+            debounce,
+            None,
+            move |result: notify_debouncer_full::DebounceEventResult| {
+                if let Ok(events) = result {
+                    let paths: Vec<String> = events
+                        .into_iter()
+                        .flat_map(|event| {
+                            event
+                                .event
+                                .paths
+                                .into_iter()
+                                .map(|p| p.to_string_lossy().into_owned())
+                        })
+                        .collect();
+                    if let Some(observation) = paths_to_observation(paths) {
+                        if let Ok(mut buf) = pending_for_cb.lock() {
+                            buf.push_back(observation);
+                        }
                     }
                 }
-            }
-        })
+            },
+        )
         .map_err(|err| err.to_string())?;
 
         for path in paths {
@@ -109,7 +113,9 @@ mod tests {
         assert_eq!(paths_to_observation(vec![]), None);
         let obs = paths_to_observation(vec!["/a".into(), "/b".into()]).unwrap();
         match obs {
-            Observation::FileChange { paths } => assert_eq!(paths, vec!["/a".to_string(), "/b".to_string()]),
+            Observation::FileChange { paths } => {
+                assert_eq!(paths, vec!["/a".to_string(), "/b".to_string()])
+            }
             other => panic!("expected FileChange, got {other:?}"),
         }
     }

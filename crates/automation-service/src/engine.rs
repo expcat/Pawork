@@ -180,7 +180,10 @@ impl AutomationEngine {
             .get(automation_id)
             .map(|s| s.fired_count)
             .unwrap_or(0);
-        if matches!(registered.automation.trigger, AutomationTrigger::Once { .. }) && fired_count > 0
+        if matches!(
+            registered.automation.trigger,
+            AutomationTrigger::Once { .. }
+        ) && fired_count > 0
         {
             return Err(AutomationError::OnceAlreadyFired(automation_id.clone()));
         }
@@ -214,9 +217,7 @@ impl AutomationEngine {
     /// 触发全部到期 automation，按 ID 排序返回每条结果（失败不中断后续）。
     pub fn dispatch_due(&self, now: u64) -> Vec<Result<DispatchOutcome, AutomationError>> {
         let due = self.check_due(now);
-        due.into_iter()
-            .map(|id| self.fire(&id, now))
-            .collect()
+        due.into_iter().map(|id| self.fire(&id, now)).collect()
     }
 
     /// 记录一次执行结果：归档进 inbox，发出 `ResultArchived`；连续失败达阈值则
@@ -270,8 +271,7 @@ impl AutomationEngine {
             InboxStatus::Succeeded => 0,
             InboxStatus::Running => prev_streak,
         };
-        let should_suspend =
-            matches!(status, InboxStatus::Failed) && new_streak >= threshold;
+        let should_suspend = matches!(status, InboxStatus::Failed) && new_streak >= threshold;
 
         if should_suspend {
             let suspended = AutomationEvent::Suspended {
@@ -317,10 +317,7 @@ impl AutomationEngine {
         now: u64,
     ) -> Vec<Result<DispatchOutcome, AutomationError>> {
         let matched = self.match_event(payload);
-        matched
-            .into_iter()
-            .map(|id| self.fire(&id, now))
-            .collect()
+        matched.into_iter().map(|id| self.fire(&id, now)).collect()
     }
 
     /// 手动挂起 automation（发 `Suspended`，停止后续触发）。

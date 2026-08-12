@@ -162,11 +162,11 @@ impl CronSchedule {
         let limit = from.saturating_add(SCAN_HORIZON_SECONDS);
         while candidate <= limit {
             let fields = breakdown(candidate);
-           if !self.month.matches(fields.month) {
-               // 整月不匹配：按天推进，快速跳过不可能的月份。
+            if !self.month.matches(fields.month) {
+                // 整月不匹配：按天推进，快速跳过不可能的月份。
                 candidate = next_day_start(candidate);
-               continue;
-           }
+                continue;
+            }
             let dom_match = self.dom.matches(fields.dom);
             let dow_match = self.dow.matches(fields.dow);
             let day_ok = if self.dom.restricted && self.dow.restricted {
@@ -174,10 +174,10 @@ impl CronSchedule {
             } else {
                 dom_match && dow_match
             };
-           if !day_ok {
+            if !day_ok {
                 candidate = next_day_start(candidate);
-               continue;
-           }
+                continue;
+            }
             if !self.hour.matches(fields.hour) {
                 // 跳到下一个小时起点。
                 candidate = (candidate / SECONDS_PER_HOUR + 1) * SECONDS_PER_HOUR;
@@ -254,9 +254,7 @@ mod tests {
     fn at(year: i64, month: u32, day: u32, hour: u32, minute: u32) -> u64 {
         // 构造指定 UTC 时刻的 Unix 秒，用于断言 next_fire 落点。
         let days = days_from_civil(year, month, day);
-        (days as u64) * SECONDS_PER_DAY
-            + (hour as u64) * SECONDS_PER_HOUR
-            + (minute as u64) * 60
+        (days as u64) * SECONDS_PER_DAY + (hour as u64) * SECONDS_PER_HOUR + (minute as u64) * 60
     }
 
     fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
@@ -295,10 +293,7 @@ mod tests {
         // 每 15 分钟：0/15/30/45。
         let schedule = CronSchedule::parse("*/15 * * * *").unwrap();
         assert_eq!(schedule.next_fire(BASE), Some(BASE + 15 * 60));
-        assert_eq!(
-            schedule.next_fire(BASE + 15 * 60),
-            Some(BASE + 30 * 60)
-        );
+        assert_eq!(schedule.next_fire(BASE + 15 * 60), Some(BASE + 30 * 60));
     }
 
     #[test]
@@ -317,10 +312,7 @@ mod tests {
         // 每小时的第 0、15、30、45 分钟之外的第 5 和第 20 分钟。
         let schedule = CronSchedule::parse("5,20 * * * *").unwrap();
         assert_eq!(schedule.next_fire(BASE), Some(BASE + 5 * 60));
-        assert_eq!(
-            schedule.next_fire(BASE + 5 * 60),
-            Some(BASE + 20 * 60)
-        );
+        assert_eq!(schedule.next_fire(BASE + 5 * 60), Some(BASE + 20 * 60));
     }
 
     #[test]
@@ -341,10 +333,10 @@ mod tests {
     fn dom_and_dow_or_semantics_when_both_restricted() {
         // dom=15 且 dow=0（周日）：两者都受限 → 任一命中即触发。
         // 2024-01-15 是周一（dom 命中），应为 2024-01-15 00:00。
-       let schedule = CronSchedule::parse("0 0 15 * 0").unwrap();
+        let schedule = CronSchedule::parse("0 0 15 * 0").unwrap();
         // BASE(2024-01-01 Mon) 起：dom=15 与 dow=0(周日) 均受限 → OR 语义取较早命中。
-       // 首个周日 2024-01-07(dow 命中) 早于 dom=15(01-15 周一)，故首触发为 01-07。
-       assert_eq!(schedule.next_fire(BASE), Some(at(2024, 1, 7, 0, 0)));
+        // 首个周日 2024-01-07(dow 命中) 早于 dom=15(01-15 周一)，故首触发为 01-07。
+        assert_eq!(schedule.next_fire(BASE), Some(at(2024, 1, 7, 0, 0)));
         // 01-07 之后：OR 语义下下一个命中是 01-14（周日 dow 命中），再下个 01-15（dom 命中）。
         assert_eq!(
             schedule.next_fire(at(2024, 1, 7, 0, 0)),

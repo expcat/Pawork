@@ -99,7 +99,10 @@ impl MonitorService {
         monitor: Monitor,
         parent_task_id: Option<BackgroundTaskId>,
     ) -> Result<MonitorId, MonitorServiceError> {
-        monitor.config.validate().map_err(MonitorServiceError::InvalidConfig)?;
+        monitor
+            .config
+            .validate()
+            .map_err(MonitorServiceError::InvalidConfig)?;
         let id = monitor.monitor_id.clone();
         self.inner
             .configs
@@ -108,11 +111,7 @@ impl MonitorService {
             .insert(id.clone(), monitor);
         if let Some(task_manager) = &self.inner.task_manager {
             let task_id = task_manager.register(TaskKind::Monitor, parent_task_id)?;
-            self.inner
-                .tasks
-                .lock()
-                .unwrap()
-                .insert(id.clone(), task_id);
+            self.inner.tasks.lock().unwrap().insert(id.clone(), task_id);
         }
         Ok(id)
     }
@@ -196,12 +195,7 @@ impl MonitorService {
 
     /// 只读：单个 monitor 快照。
     pub fn record(&self, monitor_id: &MonitorId) -> Option<MonitorRecord> {
-        self.inner
-            .state
-            .lock()
-            .unwrap()
-            .record(monitor_id)
-            .cloned()
+        self.inner.state.lock().unwrap().record(monitor_id).cloned()
     }
 
     /// 只读：全部 monitor 快照。
@@ -216,12 +210,7 @@ impl MonitorService {
 
     /// 只读：monitor 的声明式配置（in-memory）。
     pub fn config(&self, monitor_id: &MonitorId) -> Option<Monitor> {
-        self.inner
-            .configs
-            .lock()
-            .unwrap()
-            .get(monitor_id)
-            .cloned()
+        self.inner.configs.lock().unwrap().get(monitor_id).cloned()
     }
 
     /// 只读：monitor 对应的 task-manager 后台任务 ID（若注册过）。
@@ -235,12 +224,7 @@ impl MonitorService {
     }
 
     fn task_id_of(&self, monitor_id: &MonitorId) -> Option<BackgroundTaskId> {
-        self.inner
-            .tasks
-            .lock()
-            .unwrap()
-            .get(monitor_id)
-            .cloned()
+        self.inner.tasks.lock().unwrap().get(monitor_id).cloned()
     }
 
     fn apply_and_broadcast(&self, event: MonitorEvent) {

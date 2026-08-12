@@ -1,6 +1,6 @@
 # P16-3：Goal Mode（目标、成功标准与转向）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P0-8、P1-4、P3-1、P3-6；建议 P16-1
+> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P0-8、P1-4、P3-1、P3-6；建议 P16-1
 
 **最终目的**：引入「Goal」作为一次 Agent 工作的长期锚点：一个 Goal 携带可验证的 success criteria、可度量的 progress，支持 pause/resume 与运行中 steering（转向/纠偏），使 Agent 在长任务中始终对齐用户目标，而非被中途漂移带偏。
 

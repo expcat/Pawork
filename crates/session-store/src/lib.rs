@@ -2,6 +2,7 @@
 //!
 //! `session_events` 是事实来源；其他表均为可删除、可从事件重建的 Projection。
 
+mod compat_import;
 mod event_store;
 mod export_import;
 mod lifecycle;
@@ -14,6 +15,10 @@ mod session_tree;
 use std::path::{Path, PathBuf};
 
 use app_database::{DatabaseActor, DatabaseError};
+pub use compat_import::{
+    parse_diff_anchors_owned, CompatImportReport, ExternalRecord, ExternalSource,
+    ParsedExternalSession,
+};
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
 pub use export_import::{
     ExportedBranch, ExportedEvent, ImportReport, SessionExport, EXPORT_SCHEMA_VERSION,
@@ -143,4 +148,13 @@ pub enum SessionStoreError {
     ParentEventNotFound(String),
     #[error("projection invariant failed: {0}")]
     ProjectionInvariant(String),
+    #[error("compat import source could not be parsed ({source_label}): {detail}")]
+    CompatUnparseable {
+        source_label: String,
+        detail: String,
+    },
+    #[error("compat import source contains a likely secret ({pattern}); nothing imported")]
+    CompatSecretDetected { pattern: String },
+    #[error("compat import replay validation failed: {0}")]
+    CompatValidationFailed(String),
 }

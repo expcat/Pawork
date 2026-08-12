@@ -159,6 +159,9 @@ mod tests {
         assert_eq!(t.len(), 8);
         assert_eq!(t.pushed(), 1_000_000);
         assert_eq!(t.dropped(), 1_000_000 - 8);
-        assert_eq!(t.iter().copied().collect::<Vec<_>>(), (1_000_000 - 8..1_000_000).collect::<Vec<_>>());
+        assert_eq!(
+            t.iter().copied().collect::<Vec<_>>(),
+            (1_000_000 - 8..1_000_000).collect::<Vec<_>>()
+        );
     }
 }

@@ -4453,6 +4453,7 @@ dependencies = [
  "agent-domain",
  "agent-events",
  "app-database",
+ "blake3",
  "rusqlite",
  "serde",
  "serde_json",

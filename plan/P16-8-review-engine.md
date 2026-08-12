@@ -1,6 +1,6 @@
 # P16-8：Review Engine（行锚点评审与解决）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P0-3、P7-3、P1-8
+> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P0-3、P7-3、P1-8
 
 **最终目的**：提供一套通用的、以行锚点为核心的评审引擎，让 Reviewer（人或 Agent）对工作区、commit 或 PR 留下结构化 `ReviewFinding`、`SuggestedPatch` 与可发布的 `PRComment`，并跟踪 resolution 生命周期（`open → addressed → resolved / wontfix`），使评审意见可定位、可指派、可修复、可闭环。
 

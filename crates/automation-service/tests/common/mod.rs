@@ -5,7 +5,9 @@ use std::sync::Mutex;
 use agent_domain::{AutomationId, BackgroundTaskId, CancellationToken};
 use async_trait::async_trait;
 use process_runtime::ProcessRuntime;
-use sandbox_runtime::{SandboxBackend, SandboxError, SandboxPolicy, SandboxProcess, SandboxProcessSpec};
+use sandbox_runtime::{
+    SandboxBackend, SandboxError, SandboxPolicy, SandboxProcess, SandboxProcessSpec,
+};
 use task_manager::TaskManager;
 
 use automation_service::{AutomationAction, AutomationDispatcher, AutomationError};

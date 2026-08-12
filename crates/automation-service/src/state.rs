@@ -206,7 +206,10 @@ mod tests {
 
         assert_eq!(live.fired_count(&id), 2);
         assert_eq!(replayed.fired_count(&id), 2);
-        assert_eq!(live.view(&id).unwrap().last_task, replayed.view(&id).unwrap().last_task);
+        assert_eq!(
+            live.view(&id).unwrap().last_task,
+            replayed.view(&id).unwrap().last_task
+        );
         assert_eq!(live.archived().len(), replayed.archived().len());
         assert_eq!(live.event_log().len(), replayed.event_log().len());
     }

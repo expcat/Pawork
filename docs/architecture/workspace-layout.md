@@ -47,6 +47,7 @@ Pawork/
 | `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain / resource-loader；只消费中性 DTO，不参与文件 IO |
 | `compaction-engine` | 自动 / 手动压缩、摘要 | 依赖 agent-events / session-store |
 | `session-store` | SQLite Event Store、Projection、迁移 | 依赖 agent-events |
+> 注：Phase 16（P16-9）在 session-store 内新增外部会话兼容导入（Claude / Codex / Grok / Cursor → canonical event），含四来源只读解析器、blake3 指纹去重、replay 校验门控与 Secret 拒绝策略；不新建 crate、不依赖服务层（diff/review 锚点在 crate 内自洽实现）。
 | `artifact-store` | Blob Store、内容寻址、GC | 独立，被 session-store / tools 引用 |
 | `app-database` | SQLite Actor、连接、备份、只读恢复 | 独立连接层，不依赖具体 schema；session-store 依赖它 |
 | `tool-api` | AgentTool Trait、Descriptor、Result | 依赖 agent-domain |
@@ -64,6 +65,13 @@ Pawork/
 | `diff-service` | 结构化 Diff 解析、分页 Hunk | 依赖 git-service |
 | `checkpoint-service` | Run 写操作快照、回滚 | 依赖 git-service / artifact-store |
 > 注：Phase 4 交付的 checkpoint-service 基于 artifact-store 实现 Blob 快照与回滚；git-service 接入（导出 patch / 固化为 commit）随 Phase 7 完成。
+| `plan-service` | Plan 模式、PlanArtifact 与 Plan Review/Approval（只读、无写权） | 依赖 agent-domain；P16-1/P16-2 |
+| `goal-service` | durable objective + success criteria（成功标准需人工判定，不自动满足） | 依赖 agent-domain；P16-3 |
+| `task-manager` | process/agent/monitor/automation 统一后台任务管理（注入 SandboxBackend→ProcessRuntime，取消沿 parent 链传播） | 依赖 agent-domain / process-runtime / sandbox-runtime；P16-4 |
+| `automation-service` | cron/interval/once/event trigger + inbox；外部 trigger 经 adapter；dispatch 经 task-manager，不自授写权 | 依赖 agent-domain；P16-5 |
+| `monitor-service` | 声明式监视循环 + 常驻进程托管；经 task-manager 调度，无直接 spawn/cleanup | 依赖 agent-domain / process-runtime；P16-6 |
+| `memory-service` | 跨会话长期记忆；只读历史事件提炼 / canonical `EmbeddingProvider` 检索 / 失效 | 依赖 agent-domain / provider-api（canonical EmbeddingProvider）；P16-7 |
+| `review-engine` | 行锚点评审 + 上下文指纹 re-anchor + resolution 生命周期；平台无关 ForgeAdapter | 依赖 agent-domain / diff-service；P16-8 |
 | `plugin-api` | 插件 Trait、Manifest、生命周期事件 | 依赖 agent-domain / tool-api |
 | `wasm-plugin-host` | WASM Component 宿主、签名、状态、capability / fuel / memory / timeout、工具/命令/hook 原子协调 | 依赖 plugin-api / tool-api / tool-runtime / hook-runtime；不链接 WASI |
 | `mcp-client` | MCP Transport、Tools / Resources / Prompts、Server 生命周期与安全边界 | 依赖 agent-domain / tool-api / tool-runtime / policy-engine / config-service / auth-service；MCP 协议与 transport 由 crate 内部封装的 `rmcp` 提供，不向 Core 泄漏 SDK 类型之外的运行时职责 |
@@ -90,21 +98,14 @@ Pawork/
 | `test-support` | Mock Provider / Mock Tool、测试工具 | 仅测试依赖 |
 | `schema-typegen` | 从 core-api / gui-protocol 生成并校验 `.d.ts` | 仅构建工具依赖 core-api / gui-protocol，不进入运行时 |
 
-### 2.1 Phase 15–19 与跨阶段规划新增 crate（登记在册，尚未实现）
+### 2.1 Phase 17–19 与跨阶段规划新增 crate（登记在册，尚未实现）
 
-> 登记即冻结 crate 名、职责与依赖方向；落地计划见 [ROADMAP](../../ROADMAP.md) Phase 15–19。新增 crate 遵循 §6/§7 规则，`agent-domain` 保持零外部 IO 依赖。embedding 经评估**不新增独立 crate**，扩展 `provider-api`（见下表脚注）。Phase 19 不新增 Core crate，复用 `gui-client` 并在 `apps/desktop` 内实现 GPUI `ui/projection/controller/platform` 四层。
+> 登记即冻结 crate 名、职责与依赖方向；落地计划见 [ROADMAP](../../ROADMAP.md) Phase 17–19（Phase 15/16 已落地，见 §2）。新增 crate 遵循 §6/§7 规则，`agent-domain` 保持零外部 IO 依赖。embedding 经评估**不新增独立 crate**，扩展 `provider-api`（见下表脚注）。Phase 19 不新增 Core crate，复用 `gui-client` 并在 `apps/desktop` 内实现 GPUI `ui/projection/controller/platform` 四层。
 
 | crate | 职责 | 依赖方向备注 |
 | --- | --- | --- |
 | `http-runtime` | 通用 HTTP client、超时、代理、header、trace、取消、重试；供 Provider、Hooks、Marketplace、Forge 等复用 | 从 `provider-runtime::http` 抽离；不得依赖具体 Provider；P2-1 后续收敛 |
 | `protected-blob-store` | 受保护敏感制品（reasoning 凭证等）加密落盘：encrypted-at-rest、Provider/Session 作用域、retention、引用计数 GC、完整性校验 | 依赖 `agent-domain`；与 `artifact-store`（非加密）平级、共享存储底层但不混用安全语义；ADR-032 |
-| `monitor-service` | 声明式监视循环 + 常驻进程托管；Plugin Package Monitors 的唯一运行时执行宿主 | 依赖 `agent-domain` / `process-runtime`；P16-6 |
-| `memory-service` | 跨会话长期记忆；提炼 / 嵌入检索 / 失效 | 依赖 `agent-domain` / `provider-api`（canonical `EmbeddingProvider`）；P16-7 |
-| `plan-service` | Plan 模式与 PlanArtifact | 依赖 `agent-domain` / `context-engine`；P16-1/P16-2 |
-| `goal-service` | durable objective + success criteria | 依赖 `agent-domain`；P16-3 |
-| `task-manager` | process/agent/monitor/automation 统一后台任务管理 | 依赖 `agent-domain` / `process-runtime`；P16-4 |
-| `automation-service` | cron/interval/once/event trigger + inbox；外部 trigger 经 adapter | 依赖 `agent-domain`；P16-5 |
-| `review-engine` | 行锚点评审 + re-anchor + resolution 生命周期 | 依赖 `agent-domain` / `diff-service`；P16-8 |
 | `user-hooks` | 用户声明式事件钩子（Command/Http/PromptTransform/PromptEval/AgentEval/McpTool） | 依赖 `agent-domain` / `provider-api` / `mcp-client`；与 `hook-runtime` 并列；P17-1 |
 | `plugin-package` | Plugin Package 聚合格式（Skills/Agents/Hooks/MCP/LSP/Monitors） | 依赖 `agent-domain` / `resource-loader`；P17-2 |
 | `marketplace` | 扩展市场：发现/安装/更新/卸载/签名/trust/team-policy | 依赖 `plugin-package` / `http-runtime`；P17-3 |

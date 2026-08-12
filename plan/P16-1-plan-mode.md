@@ -1,6 +1,6 @@
 # P16-1：Plan Mode（只读计划与状态）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P0-8、P1-4、P3-1、P4-9
+> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P0-8、P1-4、P3-1、P4-9
 
 **最终目的**：为 Agent 引入只读的 Plan 表示与状态机，使 Agent 在动手前产出一个有序、可勾选的计划，并在执行过程中只更新计划状态（`pending → in_progress → completed/blocked`），而不被当作写入指令通道。计划演进作为 canonical event 持久化、可重放，让 CLI/GUI 与用户可在执行前审阅意图并跟踪进度。
 

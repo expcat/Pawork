@@ -38,7 +38,11 @@ pub fn contains_secret(text: &str) -> bool {
 /// 把同一 `message_id` 下的 `AssistantTextDelta` 折叠为一条完整助手发言，
 /// 去空白 / 过滤 Secret 后产出候选。输入仅借用，绝不修改。
 pub fn extract(envelopes: &[AgentEventEnvelope]) -> Vec<CandidateMemory> {
-    extract_from_iter(envelopes.iter().map(|env| (Some(env.event_id.clone()), &env.payload)))
+    extract_from_iter(
+        envelopes
+            .iter()
+            .map(|env| (Some(env.event_id.clone()), &env.payload)),
+    )
 }
 
 /// 从 canonical 事件负载切片（只读）提炼候选记忆。
@@ -119,7 +123,10 @@ mod tests {
         // m1 折叠为一条；m2 命中 Secret 被丢弃。
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].summary, "Hello world");
-        assert_eq!(candidates[0].source_event_id.as_ref().unwrap().as_str(), "e1");
+        assert_eq!(
+            candidates[0].source_event_id.as_ref().unwrap().as_str(),
+            "e1"
+        );
     }
 
     #[test]

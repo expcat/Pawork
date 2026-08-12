@@ -110,7 +110,11 @@ impl PlanService {
         }
 
         let mut inner = self.inner.lock();
-        let plan_id = inner.state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
+        let plan_id = inner
+            .state
+            .plan_id()
+            .cloned()
+            .ok_or(PlanError::NotCreated)?;
         let parent_version = inner
             .state
             .current_version()
@@ -140,7 +144,11 @@ impl PlanService {
         note: Option<String>,
     ) -> Result<PlanEvent, PlanError> {
         let mut inner = self.inner.lock();
-        let plan_id = inner.state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
+        let plan_id = inner
+            .state
+            .plan_id()
+            .cloned()
+            .ok_or(PlanError::NotCreated)?;
         let from = inner
             .state
             .steps()
@@ -227,7 +235,10 @@ impl PlanService {
         let mut inner = self.inner.lock();
         let state = &mut inner.state;
         let plan_id = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
-        let current = state.current_version().cloned().ok_or(PlanError::NotCreated)?;
+        let current = state
+            .current_version()
+            .cloned()
+            .ok_or(PlanError::NotCreated)?;
         if &current != parent_version {
             return Err(PlanError::VersionMismatch {
                 expected: current,
@@ -369,7 +380,10 @@ fn check_plan_version(
 
 /// 校验 `version` 等于当前版本。
 fn check_current_version(state: &PlanState, version: &PlanVersionId) -> Result<(), PlanError> {
-    let current = state.current_version().cloned().ok_or(PlanError::NotCreated)?;
+    let current = state
+        .current_version()
+        .cloned()
+        .ok_or(PlanError::NotCreated)?;
     if &current != version {
         return Err(PlanError::VersionMismatch {
             expected: current,
@@ -411,9 +425,7 @@ fn seed_counters(events: &[&PlanEvent]) -> (u64, u64, u64) {
                 }
             }
             PlanEvent::Replaced {
-                version: v,
-                steps,
-                ..
+                version: v, steps, ..
             } => {
                 version = version.max(suffix(v.as_str()));
                 for s in steps {

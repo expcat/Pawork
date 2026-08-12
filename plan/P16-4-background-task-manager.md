@@ -1,6 +1,6 @@
 # P16-4：Background Task Manager（后台任务与断连续存）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P1-4、P3-1、P4-12、P11-6、P11-7、P13-2；Agent kind 与 P12-1 协调
+> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P1-4、P3-1、P4-12、P11-6、P11-7、P13-2；Agent kind 与 P12-1 协调
 
 **最终目的**：提供统一的后台任务管理器，把 `process` / `agent` / `monitor` / `automation` 四类长生命周期任务纳入同一注册、状态与事件模型，并在 CLI/GUI 断连后任务继续运行、重连可恢复查看，使「关掉终端任务就没了」不再是 Pawork 的体验缺陷。
 

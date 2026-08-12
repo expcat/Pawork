@@ -25,10 +25,19 @@ pub fn evaluate(config: &MonitorConfig, observation: &Observation) -> Option<Str
                 task_id: obs_task,
                 code,
             },
-        ) => evaluate_process_exit(*pid, task_id.as_deref(), *obs_pid, obs_task.as_deref(), *code),
+        ) => evaluate_process_exit(
+            *pid,
+            task_id.as_deref(),
+            *obs_pid,
+            obs_task.as_deref(),
+            *code,
+        ),
         (
             MonitorConfig::RegexMatch { stream, pattern },
-            Observation::RegexMatch { stream: obs_stream, text },
+            Observation::RegexMatch {
+                stream: obs_stream,
+                text,
+            },
         ) => evaluate_regex_match(stream, pattern, obs_stream, text),
         (
             MonitorConfig::PortState { host, port },
@@ -177,11 +186,12 @@ mod tests {
             pid: None,
             task_id: Some("t-1".into()),
         };
-        let obs = |pid: Option<u32>, task: Option<&str>, code: Option<i32>| Observation::ProcessExit {
-            pid,
-            task_id: task.map(str::to_string),
-            code,
-        };
+        let obs =
+            |pid: Option<u32>, task: Option<&str>, code: Option<i32>| Observation::ProcessExit {
+                pid,
+                task_id: task.map(str::to_string),
+                code,
+            };
         assert!(evaluate(&by_pid, &obs(Some(42), None, Some(0))).is_some());
         assert!(evaluate(&by_pid, &obs(Some(7), None, Some(0))).is_none());
         assert!(evaluate(&by_task, &obs(None, Some("t-1"), None)).is_some());

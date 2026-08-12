@@ -70,13 +70,12 @@ impl AutomationDispatcher for TaskManagerDispatcher {
         action: &AutomationAction,
     ) -> Result<BackgroundTaskId, AutomationError> {
         let kind = kind_for(action);
-        let task_id = self
-            .task_manager
-            .register(kind, None)
-            .map_err(|err| AutomationError::DispatchFailed {
+        let task_id = self.task_manager.register(kind, None).map_err(|err| {
+            AutomationError::DispatchFailed {
                 automation_id: automation_id.clone(),
                 detail: err.to_string(),
-            })?;
+            }
+        })?;
         // start 把 Queued → Running 并发出 TaskEvent::Started；失败时清理 queued
         // 记录以避免幽灵任务（register 的 queued 为持久化前瞬态，安全丢弃）。
         if let Err(err) = self.task_manager.start(&task_id) {

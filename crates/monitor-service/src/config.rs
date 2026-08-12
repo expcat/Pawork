@@ -48,7 +48,8 @@ impl MonitorConfig {
         match self {
             Self::FileChange { pattern, .. } => {
                 if let Some(pattern) = pattern {
-                    regex::Regex::new(pattern).map_err(|err| format!("invalid file pattern: {err}"))?;
+                    regex::Regex::new(pattern)
+                        .map_err(|err| format!("invalid file pattern: {err}"))?;
                 }
                 Ok(())
             }

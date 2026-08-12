@@ -67,7 +67,10 @@ impl ResultInbox {
             self.items[i] = item;
             return;
         }
-        *self.by_automation.entry(item.automation_id.clone()).or_insert(0) += 1;
+        *self
+            .by_automation
+            .entry(item.automation_id.clone())
+            .or_insert(0) += 1;
         self.items.push(item);
     }
 

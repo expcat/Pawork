@@ -1,6 +1,6 @@
 # P16-2：Plan Review / Revision / Approval（计划评审与审批）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P16-1、P0-8、P1-4、P4-9
+> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P16-1、P0-8、P1-4、P4-9
 
 **最终目的**：在 Plan Mode 之上建立「评审—修订—批准」闭环：用户或 Reviewer 可对 Plan 提出行级评审意见、要求修订，并在批准前作为 gate 阻断 Agent 进入执行，使「先规划后执行」成为可控、可审计的流程，而非 Agent 自行启动写入。
 

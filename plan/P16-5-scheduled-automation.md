@@ -1,6 +1,6 @@
 # P16-5：Scheduled Automation（定时与事件触发自动化 + 结果收件箱）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P16-4、P0-8、P3-4
+> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P16-4、P0-8、P3-4
 
 **最终目的**：让用户可声明式地安排自动化：按 `cron` / `interval` / `once` / `event` 四种触发器在指定时机派发一次 Agent/Prompt/工具执行，结果落入可检索的 result inbox，使 Pawork 能承担「每日报告」「事件触发的修复」「一次性定时任务」等无人值守场景，且全程受既有 policy/预算约束。
 

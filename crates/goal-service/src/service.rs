@@ -10,9 +10,7 @@ use std::collections::HashMap;
 
 use parking_lot::Mutex;
 
-use agent_domain::{
-    CriterionKind, GoalEvent, GoalId, GoalStatus, SuccessCriterionSnapshot,
-};
+use agent_domain::{CriterionKind, GoalEvent, GoalId, GoalStatus, SuccessCriterionSnapshot};
 
 use crate::error::GoalError;
 use crate::snapshot::GoalSnapshot;
@@ -141,12 +139,13 @@ impl GoalService {
         let state = require_active(inner.goals.get_mut(goal_id), goal_id)?;
         let criterion_id = criterion_id.to_owned();
         {
-            let criterion = state.criterion_mut(&criterion_id).ok_or_else(|| {
-                GoalError::CriterionNotFound {
-                    goal_id: goal_id.clone(),
-                    criterion_id: criterion_id.clone(),
-                }
-            })?;
+            let criterion =
+                state
+                    .criterion_mut(&criterion_id)
+                    .ok_or_else(|| GoalError::CriterionNotFound {
+                        goal_id: goal_id.clone(),
+                        criterion_id: criterion_id.clone(),
+                    })?;
             if criterion.kind == CriterionKind::Human {
                 return Err(GoalError::HumanCriterionNotAutoSatisfiable(criterion_id));
             }
@@ -169,12 +168,13 @@ impl GoalService {
         let state = require_active(inner.goals.get_mut(goal_id), goal_id)?;
         let criterion_id = criterion_id.to_owned();
         {
-            let criterion = state.criterion_mut(&criterion_id).ok_or_else(|| {
-                GoalError::CriterionNotFound {
-                    goal_id: goal_id.clone(),
-                    criterion_id: criterion_id.clone(),
-                }
-            })?;
+            let criterion =
+                state
+                    .criterion_mut(&criterion_id)
+                    .ok_or_else(|| GoalError::CriterionNotFound {
+                        goal_id: goal_id.clone(),
+                        criterion_id: criterion_id.clone(),
+                    })?;
             if criterion.satisfied {
                 return Ok(vec![]);
             }
@@ -259,11 +259,7 @@ impl GoalService {
     }
 
     /// 放弃 Goal（`Active | Paused → Abandoned`）。
-    pub fn abandon(
-        &self,
-        goal_id: &GoalId,
-        reason: &str,
-    ) -> Result<GoalEvent, GoalError> {
+    pub fn abandon(&self, goal_id: &GoalId, reason: &str) -> Result<GoalEvent, GoalError> {
         let mut inner = self.inner.lock();
         let state = require_exists(inner.goals.get_mut(goal_id), goal_id)?;
         let from = state.status();
@@ -283,7 +279,11 @@ impl GoalService {
 
     /// 查询面：Goal 只读快照；不存在时返回 `None`。
     pub fn goal_snapshot(&self, goal_id: &GoalId) -> Option<GoalSnapshot> {
-        self.inner.lock().goals.get(goal_id).and_then(GoalState::snapshot)
+        self.inner
+            .lock()
+            .goals
+            .get(goal_id)
+            .and_then(GoalState::snapshot)
     }
 
     /// 查询面：全部 Goal 快照（按 goal_id 排序，保证确定性）。
@@ -389,17 +389,12 @@ mod tests {
             )
             .unwrap();
         let GoalEvent::Created {
-            goal_id,
-            criteria,
-            ..
+            goal_id, criteria, ..
         } = created
         else {
             panic!("expected Created");
         };
-        let ids: Vec<String> = criteria
-            .into_iter()
-            .map(|c| c.criterion_id)
-            .collect();
+        let ids: Vec<String> = criteria.into_iter().map(|c| c.criterion_id).collect();
         (service, goal_id, ids)
     }
 
@@ -437,7 +432,10 @@ mod tests {
         assert!((snapshot.progress - 1.0 / 3.0).abs() < f64::EPSILON);
 
         // 已满足的幂等调用不再产生事件。
-        assert!(service.satisfy_criterion(&goal_id, &ids[0]).unwrap().is_empty());
+        assert!(service
+            .satisfy_criterion(&goal_id, &ids[0])
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -466,7 +464,10 @@ mod tests {
         let snapshot = service.goal_snapshot(&goal_id).unwrap();
         assert!(snapshot.criteria[2].satisfied);
         // 人审入口幂等。
-        assert!(service.mark_human_satisfied(&goal_id, &ids[2]).unwrap().is_empty());
+        assert!(service
+            .mark_human_satisfied(&goal_id, &ids[2])
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -487,7 +488,12 @@ mod tests {
         service.satisfy_criterion(&goal_id, &ids[0]).unwrap();
 
         let paused = service.pause(&goal_id).unwrap();
-        assert_eq!(paused, GoalEvent::Paused { goal_id: goal_id.clone() });
+        assert_eq!(
+            paused,
+            GoalEvent::Paused {
+                goal_id: goal_id.clone()
+            }
+        );
         let snapshot = service.goal_snapshot(&goal_id).unwrap();
         assert_eq!(snapshot.status, GoalStatus::Paused);
         // 暂停保留进度等状态。
@@ -656,11 +662,15 @@ mod tests {
             GoalError::GoalNotFound(_)
         ));
         assert!(matches!(
-            service.satisfy_criterion(&goal_id, "criterion_999").unwrap_err(),
+            service
+                .satisfy_criterion(&goal_id, "criterion_999")
+                .unwrap_err(),
             GoalError::CriterionNotFound { .. }
         ));
         assert!(matches!(
-            service.mark_human_satisfied(&goal_id, "criterion_999").unwrap_err(),
+            service
+                .mark_human_satisfied(&goal_id, "criterion_999")
+                .unwrap_err(),
             GoalError::CriterionNotFound { .. }
         ));
         assert_eq!(ids.len(), 3);
@@ -669,9 +679,7 @@ mod tests {
     #[test]
     fn multiple_goals_are_isolated() {
         let service = GoalService::new();
-        let created_a = service
-            .create_goal("目标 A", vec![auto("a")])
-            .unwrap();
+        let created_a = service.create_goal("目标 A", vec![auto("a")]).unwrap();
         let created_b = service
             .create_goal("目标 B", vec![auto("b"), human("b 审")])
             .unwrap();
@@ -695,11 +703,9 @@ mod tests {
     #[test]
     fn replay_rebuilds_reconstructible_state_identical_to_stepwise_apply() {
         let (service, _goal_id, _ids) = sample_service();
-        let mut events = vec![
-            service
-                .create_goal("重放目标", vec![auto("x"), human("h")])
-                .unwrap(),
-        ];
+        let mut events = vec![service
+            .create_goal("重放目标", vec![auto("x"), human("h")])
+            .unwrap()];
         let GoalEvent::Created {
             goal_id: g,
             criteria,
@@ -733,7 +739,10 @@ mod tests {
         assert_eq!(restored.title, live.title);
         assert_eq!(restored.progress, live.progress);
         assert_eq!(restored.steering_history, live.steering_history);
-        assert_eq!(restored.remaining_budget_tokens, live.remaining_budget_tokens);
+        assert_eq!(
+            restored.remaining_budget_tokens,
+            live.remaining_budget_tokens
+        );
         // criteria 描述 / kind 可恢复；satisfied 满足位是运行内存事实
         // （canonical 事件集无逐项满足事件），不承诺经重放恢复。
         assert_eq!(restored.criteria.len(), live.criteria.len());
@@ -745,9 +754,7 @@ mod tests {
         assert!(restored.criteria.iter().all(|c| !c.satisfied));
 
         // 重放后新事件 id 不与历史碰撞。
-        let new_event = replayed
-            .create_goal("新目标", vec![auto("n")])
-            .unwrap();
+        let new_event = replayed.create_goal("新目标", vec![auto("n")]).unwrap();
         let GoalEvent::Created { goal_id: new_g, .. } = new_event else {
             panic!()
         };

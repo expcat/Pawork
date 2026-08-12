@@ -70,35 +70,30 @@ impl MonitorServiceState {
                 source,
                 workspace_id,
             } => {
-                let record = self.monitors.entry(monitor_id.clone()).or_insert_with(|| {
-                    MonitorRecord {
-                        monitor_id: monitor_id.clone(),
-                        source: *source,
-                        workspace_id: workspace_id.clone(),
-                        status: MonitorStatus::Registered,
-                        trigger_count: 0,
-                        last_detail: None,
-                        stop_reason: None,
-                    }
-                });
+                let record =
+                    self.monitors
+                        .entry(monitor_id.clone())
+                        .or_insert_with(|| MonitorRecord {
+                            monitor_id: monitor_id.clone(),
+                            source: *source,
+                            workspace_id: workspace_id.clone(),
+                            status: MonitorStatus::Registered,
+                            trigger_count: 0,
+                            last_detail: None,
+                            stop_reason: None,
+                        });
                 record.source = *source;
                 record.workspace_id = workspace_id.clone();
                 record.status = MonitorStatus::Running;
                 record.stop_reason = None;
             }
-            MonitorEvent::Triggered {
-                monitor_id,
-                detail,
-            } => {
+            MonitorEvent::Triggered { monitor_id, detail } => {
                 if let Some(record) = self.monitors.get_mut(monitor_id) {
                     record.trigger_count = record.trigger_count.saturating_add(1);
                     record.last_detail = Some(detail.clone());
                 }
             }
-            MonitorEvent::Stopped {
-                monitor_id,
-                reason,
-            } => {
+            MonitorEvent::Stopped { monitor_id, reason } => {
                 if let Some(record) = self.monitors.get_mut(monitor_id) {
                     record.status = MonitorStatus::Stopped;
                     record.stop_reason = reason.clone();

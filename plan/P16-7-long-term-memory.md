@@ -1,6 +1,6 @@
 # P16-7：Long-term Memory（跨会话长期记忆）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P1-4、P3-2、P5-5、P0-4；建议 P5-8
+> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P1-4、P3-2、P5-5、P0-4；建议 P5-8
 
 **最终目的**：让 Agent 拥有跨 Session 的长期记忆——从历史 canonical event 中提炼可复用的事实/偏好/决策，按需检索注入当前上下文，使 Agent「记得」项目约定与过往结论，而非每次从零开始；记忆对 canonical event 只读、永不改写历史，且受隐私边界约束。
 

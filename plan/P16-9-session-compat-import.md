@@ -1,6 +1,6 @@
 # P16-9：Session 兼容导入（Claude / Codex / Grok / Cursor）
 
-> Phase 16 · Modern Agent Workflow · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P16-1～P16-8、P5-8、P5-9、P0-3、P7-3
+> Phase 16 · Modern Agent Workflow · 状态：🟢已实现 · 交付成熟度：TargetVerified · 依赖：P16-1～P16-8、P5-8、P5-9、P0-3、P7-3
 
 **最终目的**：把来自其他智能体工具（Claude / Codex / Grok / Cursor）的外部会话导入为 Pawork 的 canonical event，使既有对话与产物可被重放、检索与续接，而**绝不破坏 canonical event 模型**——外部格式始终是输入侧的适配/投影，导入产物是规范事件，不污染、不覆写既有事件。本任务同时承担 P16 功能簇的兼容/重放收尾门禁。
 

@@ -25,8 +25,12 @@ fn four_triggers_check_due_timing() {
         .register(
             Automation {
                 automation_id: AutomationId::from("cron_a"),
-                trigger: AutomationTrigger::Cron { expr: "* * * * *".into() },
-                action: AutomationAction::Prompt { prompt: "hi".into() },
+                trigger: AutomationTrigger::Cron {
+                    expr: "* * * * *".into(),
+                },
+                action: AutomationAction::Prompt {
+                    prompt: "hi".into(),
+                },
             },
             now,
         )
@@ -36,7 +40,9 @@ fn four_triggers_check_due_timing() {
             Automation {
                 automation_id: AutomationId::from("int_a"),
                 trigger: AutomationTrigger::Interval { secs: 120 },
-                action: AutomationAction::Prompt { prompt: "hi".into() },
+                action: AutomationAction::Prompt {
+                    prompt: "hi".into(),
+                },
             },
             now,
         )
@@ -46,7 +52,9 @@ fn four_triggers_check_due_timing() {
             Automation {
                 automation_id: AutomationId::from("once_a"),
                 trigger: AutomationTrigger::Once { delay_secs: 60 },
-                action: AutomationAction::Prompt { prompt: "hi".into() },
+                action: AutomationAction::Prompt {
+                    prompt: "hi".into(),
+                },
             },
             now,
         )
@@ -55,8 +63,12 @@ fn four_triggers_check_due_timing() {
         .register(
             Automation {
                 automation_id: AutomationId::from("evt_a"),
-                trigger: AutomationTrigger::Event { pattern: "deploy.*prod".into() },
-                action: AutomationAction::Prompt { prompt: "hi".into() },
+                trigger: AutomationTrigger::Event {
+                    pattern: "deploy.*prod".into(),
+                },
+                action: AutomationAction::Prompt {
+                    prompt: "hi".into(),
+                },
             },
             now,
         )
@@ -107,12 +119,16 @@ fn interval_advances_and_once_fires_once() {
 
     let outcome = engine.fire(&AutomationId::from("int"), 100).unwrap();
     assert_eq!(outcome.fired_at, 100);
-    let snap = engine.automation_snapshot(&AutomationId::from("int")).unwrap();
+    let snap = engine
+        .automation_snapshot(&AutomationId::from("int"))
+        .unwrap();
     assert_eq!(snap.next_at, Some(200));
     assert_eq!(snap.fired_count, 1);
 
     engine.fire(&AutomationId::from("once"), 50).unwrap();
-    let once_snap = engine.automation_snapshot(&AutomationId::from("once")).unwrap();
+    let once_snap = engine
+        .automation_snapshot(&AutomationId::from("once"))
+        .unwrap();
     assert_eq!(once_snap.next_at, None);
     assert_eq!(once_snap.fired_count, 1);
     assert!(matches!(
@@ -132,8 +148,13 @@ fn event_trigger_matches_and_dispatches() {
         .register(
             Automation {
                 automation_id: AutomationId::from("deploy"),
-                trigger: AutomationTrigger::Event { pattern: "deploy.*prod".into() },
-                action: AutomationAction::ToolCall { name: "kubectl".into(), input: "{}".into() },
+                trigger: AutomationTrigger::Event {
+                    pattern: "deploy.*prod".into(),
+                },
+                action: AutomationAction::ToolCall {
+                    name: "kubectl".into(),
+                    input: "{}".into(),
+                },
             },
             0,
         )
@@ -163,7 +184,9 @@ fn task_manager_dispatcher_creates_background_task() {
             Automation {
                 automation_id: AutomationId::from("cron_tm"),
                 trigger: AutomationTrigger::Interval { secs: 1 },
-                action: AutomationAction::StartBackgroundTask { task_kind: TaskKind::Agent },
+                action: AutomationAction::StartBackgroundTask {
+                    task_kind: TaskKind::Agent,
+                },
             },
             0,
         )
@@ -314,11 +337,15 @@ fn consecutive_failures_suspend_and_alert() {
     let e2 = fail(&engine, 20);
     let e3 = fail(&engine, 30);
 
-    assert!(e1.iter().all(|e| matches!(e, AutomationEvent::ResultArchived { .. })));
-    assert!(e2.iter().all(|e| matches!(e, AutomationEvent::ResultArchived { .. })));
-    assert!(e3
+    assert!(e1
         .iter()
-        .any(|e| matches!(e, AutomationEvent::Suspended { automation_id, .. } if automation_id == &id)));
+        .all(|e| matches!(e, AutomationEvent::ResultArchived { .. })));
+    assert!(e2
+        .iter()
+        .all(|e| matches!(e, AutomationEvent::ResultArchived { .. })));
+    assert!(e3.iter().any(
+        |e| matches!(e, AutomationEvent::Suspended { automation_id, .. } if automation_id == &id)
+    ));
 
     // 挂起后 fire 报 Suspended；check_due 也不会返回它。
     assert!(matches!(
@@ -401,17 +428,30 @@ fn external_trigger_is_platform_agnostic() {
         .register(
             Automation {
                 automation_id: AutomationId::from("ext"),
-                trigger: AutomationTrigger::Event { pattern: "push.*main".into() },
-                action: AutomationAction::Prompt { prompt: "ci".into() },
+                trigger: AutomationTrigger::Event {
+                    pattern: "push.*main".into(),
+                },
+                action: AutomationAction::Prompt {
+                    prompt: "ci".into(),
+                },
             },
             0,
         )
         .unwrap();
 
     let payload = "push to main branch".to_string();
-    let github = ExternalTrigger::GitHubEvent { id: "gh-1".into(), payload: payload.clone() };
-    let gitlab = ExternalTrigger::GitLabEvent { id: "gl-1".into(), payload: payload.clone() };
-    let webhook = ExternalTrigger::Webhook { id: "wh-1".into(), payload: payload.clone() };
+    let github = ExternalTrigger::GitHubEvent {
+        id: "gh-1".into(),
+        payload: payload.clone(),
+    };
+    let gitlab = ExternalTrigger::GitLabEvent {
+        id: "gl-1".into(),
+        payload: payload.clone(),
+    };
+    let webhook = ExternalTrigger::Webhook {
+        id: "wh-1".into(),
+        payload: payload.clone(),
+    };
 
     let from_github = canonical_event_from_external(&github);
     let from_gitlab = canonical_event_from_external(&gitlab);
@@ -421,9 +461,18 @@ fn external_trigger_is_platform_agnostic() {
     assert_eq!(from_github, from_webhook);
 
     // core 对相同 canonical 载荷匹配一致，不感知来源平台。
-    assert_eq!(engine.match_event(from_github), vec![AutomationId::from("ext")]);
-    assert_eq!(engine.match_event(from_gitlab), vec![AutomationId::from("ext")]);
-    assert_eq!(engine.match_event(from_webhook), vec![AutomationId::from("ext")]);
+    assert_eq!(
+        engine.match_event(from_github),
+        vec![AutomationId::from("ext")]
+    );
+    assert_eq!(
+        engine.match_event(from_gitlab),
+        vec![AutomationId::from("ext")]
+    );
+    assert_eq!(
+        engine.match_event(from_webhook),
+        vec![AutomationId::from("ext")]
+    );
 }
 
 /// 非法 cron 表达式与非法 event 正则在注册时被拒绝。
@@ -436,7 +485,9 @@ fn invalid_trigger_config_rejected_at_register() {
     let bad_cron = engine.register(
         Automation {
             automation_id: AutomationId::from("bad_cron"),
-            trigger: AutomationTrigger::Cron { expr: "99 * * * *".into() },
+            trigger: AutomationTrigger::Cron {
+                expr: "99 * * * *".into(),
+            },
             action: AutomationAction::Prompt { prompt: "p".into() },
         },
         0,
@@ -446,12 +497,17 @@ fn invalid_trigger_config_rejected_at_register() {
     let bad_regex = engine.register(
         Automation {
             automation_id: AutomationId::from("bad_re"),
-            trigger: AutomationTrigger::Event { pattern: "[unclosed".into() },
+            trigger: AutomationTrigger::Event {
+                pattern: "[unclosed".into(),
+            },
             action: AutomationAction::Prompt { prompt: "p".into() },
         },
         0,
     );
-    assert!(matches!(bad_regex, Err(AutomationError::InvalidEventPattern(_))));
+    assert!(matches!(
+        bad_regex,
+        Err(AutomationError::InvalidEventPattern(_))
+    ));
 }
 
 /// 手动挂起停止触发；resume 后恢复（重算下次时刻）。
