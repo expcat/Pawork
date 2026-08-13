@@ -1,6 +1,6 @@
 # P17-11：Real Remote Transport（安全远程发布/连接/重连）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P13-6、P13-4、P6-4
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已验收 · 交付成熟度：Accepted · 依赖：P13-6、P13-4、P6-4
 
 **最终目的**：在 P13-6 占位接口之上落地真实远程 Transport——把「CLI 发布远程端点、GUI 远程连接」从 Mock 升级为带认证、加密、断线重连与撤销的生产实现。它只在 Transport 层工作，搬运与 P13 一致的 GUI Connection Protocol 帧，不含业务逻辑，也不修改 Agent Core（[ADR-027](../docs/adr/ADR-027-local-remote-same-protocol.md)/[028](../docs/adr/ADR-028-replaceable-remote-transport.md)）。
 
@@ -23,12 +23,18 @@
 
 ## 验收标准
 
-- [ ] 真实远程 Transport 实现 P13-6 占位 trait，不修改 `agent-engine` / `gui-protocol` / `app-service`
-- [ ] 远程连接经认证（P6-4）与传输加密，Secret 不落日志
-- [ ] 断线后按 `global_sequence` 重连续传，不丢事件顺序
-- [ ] 凭证可撤销且即时失效，端点生命周期可管
-- [ ] Transport 不含业务逻辑，本地与远程仍用同一 GUI Connection Protocol
-- [ ] 定向 / Mock 网络测试覆盖认证/加密/重连/撤销全链路
+- [x] 真实远程 Transport 实现 P13-6 占位 trait，不修改 `agent-engine` / `gui-protocol` / `app-service`
+- [x] 远程连接经认证（P6-4）与传输加密，Secret 不落日志
+- [x] 断线后按 `global_sequence` 重连续传，不丢事件顺序
+- [x] 凭证可撤销且即时失效，端点生命周期可管
+- [x] Transport 不含业务逻辑，本地与远程仍用同一 GUI Connection Protocol
+- [x] 定向 / Mock 网络测试覆盖认证/加密/重连/撤销全链路
+
+## 验证记录（2026-08-12）
+
+- `cargo test -p transport-remote`：26 个单元测试与 14 个真实 TLS e2e 通过，覆盖双客户端隔离、恶意/跨会话 ACK、不可伪造 resume identity、credential revoke、unpublish、重连和内存上限。
+- `cargo test -p gui-server -p cli-host`、`cargo test -p pawork --test gui_serve`、`cargo test -p cli-command -p transport-remote-placeholder`：生产 bind/accept、fail-closed 回滚、listener/session 回收、CLI publish/unpublish/revoke 与占位契约通过。
+- `cargo clippy -p transport-remote --all-targets -- -D warnings`、`cargo clippy -p pawork --bin pawork --no-deps -- -D warnings` 与 `cargo check -p pawork --all-targets` 通过；独立安全 Review PASS，六项既有 finding 均有定向回归覆盖。
 
 **相关文档**：[gui-connection](../docs/features/gui-connection.md) · [auth](../docs/features/auth.md) · [ADR-014 Secret OS Keychain](../docs/adr/ADR-014-secret-os-keychain.md) · [ADR-016 事件持久化重放](../docs/adr/ADR-016-core-event-persist-replay.md) · [ADR-027 本地远程同协议](../docs/adr/ADR-027-local-remote-same-protocol.md) · [ADR-028 可替换远程 Transport](../docs/adr/ADR-028-replaceable-remote-transport.md) · [ADR-030 Core 单一事实源](../docs/adr/ADR-030-core-sole-source-of-truth.md) · [ROADMAP](../ROADMAP.md)
 

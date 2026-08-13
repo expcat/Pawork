@@ -23,7 +23,10 @@ use agent_domain::{ConnectionId, GuiClientId, Timestamp};
 use app_service::AppServiceError;
 use async_trait::async_trait;
 use connection_manager::{ClientRegistration, ManagerError};
-use core_api::{ApiVersion, GlobalSequence};
+use core_api::{
+    ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppQueryEnvelope, CommandSource,
+    GlobalSequence,
+};
 use gui_protocol::{
     codec::decode_client_frame, compute_resume_disposition, decode_client_frame_checked,
     encode_server_frame, validate_server_frame_api_version, ArtifactChunk, ArtifactReadRequest,
@@ -32,10 +35,11 @@ use gui_protocol::{
     ResumeRequest, ResumeResponse, ServerFrame, MAX_ARTIFACT_CHUNK_BYTES,
 };
 use subscription_hub::HubError;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{interval, MissedTickBehavior};
 use transport_api::{
-    ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame,
+    ConnectionInfo, ConnectionLocality, GuiConnection, TransportError, TransportErrorKind,
+    TransportFrame,
 };
 
 use crate::Inner;
@@ -50,30 +54,38 @@ pub(super) fn spawn(
     let (host_tx, host_rx) = mpsc::unbounded_channel::<TransportFrame>();
     let (close_tx, close_rx) = oneshot::channel::<()>();
     let info = connection.info();
+    let (done_tx, done_rx) = watch::channel(false);
     let handle = SessionHandle {
         host_tx,
         close_tx: StdMutex::new(Some(close_tx)),
         info,
         closed: AtomicBool::new(false),
+        done_rx: StdMutex::new(done_rx),
     };
-    let task = run(
-        inner,
-        connection,
-        client_id,
-        connection_id,
-        host_rx,
-        close_rx,
-    );
+    let task = async move {
+        run(
+            inner,
+            connection,
+            client_id,
+            connection_id,
+            host_rx,
+            close_rx,
+        )
+        .await;
+        let _ = done_tx.send(true);
+    };
     (handle, task)
 }
 
 /// 宿主侧连接句柄：`send` 经任务写入传输层；入站帧由任务消费，
-/// `receive` 恒返回 ConnectionClosed（宿主不应接收）。
+/// `receive` 等待底层会话结束后返回 ConnectionClosed，供宿主有界持有并回收
+/// 活跃句柄（不暴露业务入站帧）。
 pub(super) struct SessionHandle {
     host_tx: mpsc::UnboundedSender<TransportFrame>,
     close_tx: StdMutex<Option<oneshot::Sender<()>>>,
     info: ConnectionInfo,
     closed: AtomicBool,
+    done_rx: StdMutex<watch::Receiver<bool>>,
 }
 
 #[async_trait]
@@ -89,9 +101,13 @@ impl GuiConnection for SessionHandle {
     }
 
     async fn receive(&self) -> Result<TransportFrame, TransportError> {
-        Err(connection_closed(
-            "inbound frames are consumed by the gui-server connection task",
-        ))
+        // 宿主不消费业务帧；此处作为会话完成通知，供 accept loop 只持有
+        // 活跃句柄并在连接结束时及时回收。
+        let mut done = self.done_rx.lock().expect("done rx lock").clone();
+        if !*done.borrow() {
+            let _ = done.changed().await;
+        }
+        Err(connection_closed("connection task has ended"))
     }
 
     async fn close(&self) -> Result<(), TransportError> {
@@ -129,6 +145,9 @@ async fn run(
         return;
     };
     let negotiated = negotiated_version(&outcome.response);
+    // P17-5 主审修复：连接层 locality 是本会话唯一的权威来源标签（服务端
+    // 事实，客户端无法伪造）；登记与命令/查询盖戳共用同一值。
+    let locality = connection.info().locality;
 
     // 登记连接（有界事件队列由管理器持有发送端，接收端归本任务）。
     let registration = ClientRegistration {
@@ -136,7 +155,7 @@ async fn run(
         connection_id: connection_id.clone(),
         name: outcome.request.client_name,
         version: outcome.request.client_version,
-        locality: connection.info().locality,
+        locality: locality.clone(),
         identity: None,
         capabilities: granted_capabilities(&outcome.response),
         connected_at: now_timestamp(),
@@ -243,7 +262,7 @@ async fn run(
                 };
                 // 任意入站帧都是活跃证据。
                 let _ = inner.connections.heartbeat(&client_id, now_timestamp());
-                match handle_frame(&inner, frame, &client_id).await {
+                match handle_frame(&inner, frame, &client_id, &connection_id, &locality).await {
                     FrameOutcome::None => {}
                     FrameOutcome::Reply(replies) => {
                         let mut sent = true;
@@ -358,15 +377,115 @@ enum FrameOutcome {
     Reply(Vec<ServerFrame>),
 }
 
-async fn handle_frame(inner: &Inner, frame: ClientFrame, client_id: &GuiClientId) -> FrameOutcome {
+/// P17-5 主审修复：GUI 连接的权威 source/identity 由服务端重写。
+///
+/// 线上信封的 source/identity 一律视为可伪造（wire 不可信），进入
+/// app-service 前按连接层事实盖戳：
+/// - `Local` / `InProcess` → `LocalGui { client_id }` + `LocalUser`
+///   （本机操作者；actor_id 取服务端分配的 client_id，非 wire 值）；
+/// - `Remote` → `RemoteGui { client_id, connection_id }` +
+///   `AuthenticatedClient`（actor_id / subject 取服务端分配的 client_id /
+///   connection_id；GUI 协议尚无 per-user 身份，远程动作归属到已验证连接，
+///   且任何授权策略都不把 RemoteGui 当本机来源，fail-closed 语义不受影响）。
+///   command 与 query 信封同理；wire 提供的来源 / 身份不会进入 app-service。
+fn host_stamp_command(
+    mut envelope: AppCommandEnvelope,
+    client_id: &GuiClientId,
+    connection_id: &ConnectionId,
+    locality: &ConnectionLocality,
+) -> AppCommandEnvelope {
+    let (source, identity) = host_stamp(client_id, connection_id, locality);
+    envelope.source = source;
+    envelope.identity = identity;
+    envelope
+}
+
+fn host_stamp_query(
+    mut envelope: AppQueryEnvelope,
+    client_id: &GuiClientId,
+    connection_id: &ConnectionId,
+    locality: &ConnectionLocality,
+) -> AppQueryEnvelope {
+    let (source, identity) = host_stamp(client_id, connection_id, locality);
+    envelope.source = source;
+    envelope.identity = identity;
+    envelope
+}
+
+fn host_stamp(
+    client_id: &GuiClientId,
+    connection_id: &ConnectionId,
+    locality: &ConnectionLocality,
+) -> (CommandSource, ActorIdentity) {
+    let actor_id = agent_domain::ActorId::from(client_id.as_str());
+    match locality {
+        ConnectionLocality::Local | ConnectionLocality::InProcess => (
+            CommandSource::LocalGui {
+                client_id: client_id.clone(),
+            },
+            ActorIdentity::LocalUser {
+                actor_id,
+                display_name: None,
+            },
+        ),
+        ConnectionLocality::Remote => (
+            CommandSource::RemoteGui {
+                client_id: client_id.clone(),
+                connection_id: connection_id.clone(),
+            },
+            ActorIdentity::AuthenticatedClient {
+                actor_id,
+                subject: connection_id.as_str().to_string(),
+            },
+        ),
+    }
+}
+
+async fn handle_frame(
+    inner: &Inner,
+    frame: ClientFrame,
+    client_id: &GuiClientId,
+    connection_id: &ConnectionId,
+    locality: &ConnectionLocality,
+) -> FrameOutcome {
     match frame {
         ClientFrame::Command(envelope) => {
             // 同步进程内派发；P13-5 异步接受时再引入 CommandAccepted。
-            let response = inner.app_service.dispatch_envelope(envelope);
+            // P17-5 主审修复：线上信封的 source/identity 一律视为可伪造，
+            // 服务端按连接层事实（locality + 服务端分配的 client_id /
+            // connection_id）权威重写后再派发，wire 值不进入 app-service。
+            // P17-9：IDE 上下文只能经 Headless/SDK 进入 Core。GUI 连接即使
+            // 盖戳为 LocalGui/RemoteGui，也不得转发 SessionClientContextReplace。
+            if matches!(
+                envelope.command,
+                AppCommand::SessionClientContextReplace { .. }
+            ) {
+                return FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
+                    request_id: Some(envelope.command_id.as_str().to_string()),
+                    error: ProtocolError {
+                        code: ProtocolErrorCode::PermissionDenied,
+                        message: "session_client_context_replace is not allowed on the GUI protocol; use Headless/SDK"
+                            .into(),
+                        retryable: false,
+                    },
+                })]);
+            }
+            let response = inner.app_service.dispatch_envelope(host_stamp_command(
+                envelope,
+                client_id,
+                connection_id,
+                locality,
+            ));
             FrameOutcome::Reply(vec![ServerFrame::Response(response)])
         }
         ClientFrame::Query(envelope) => {
-            let response = inner.app_service.dispatch_query(envelope);
+            // 与 command 同理：query 信封的 source/identity 同样服务端盖戳。
+            let response = inner.app_service.dispatch_query(host_stamp_query(
+                envelope,
+                client_id,
+                connection_id,
+                locality,
+            ));
             FrameOutcome::Reply(vec![ServerFrame::Response(response)])
         }
         ClientFrame::ArtifactRead(request) => match artifact_chunks(inner, &request).await {
@@ -660,8 +779,8 @@ fn now_unix_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_domain::{CommandId, QueryId};
-    use core_api::{AppResponse, AppResponseEnvelope, API_VERSION};
+    use agent_domain::{ActorId, CommandId, QueryId};
+    use core_api::{AppCommand, AppQuery, AppResponse, AppResponseEnvelope, API_VERSION};
     use std::sync::Mutex;
 
     use agent_domain::CoreInstanceId;
@@ -711,6 +830,7 @@ mod tests {
             responded_at: Timestamp::from_unix_millis(1),
             response: AppResponse::Accepted {
                 command_id: CommandId::from("cmd-1"),
+                run_id: None,
             },
         })
     }
@@ -777,5 +897,88 @@ mod tests {
         );
         let _ = stop_tx.send(());
         task.await.expect("forwarder task joins cleanly");
+    }
+
+    #[test]
+    fn host_stamp_local_rewrites_forged_wire_source_and_identity() {
+        // 本机连接：即使 wire 伪造 RemoteGui + System，服务端也必须盖戳为
+        // LocalGui + LocalUser（actor_id 取服务端分配的 client_id）。
+        let client_id = GuiClientId::from("server-assigned");
+        let connection_id = ConnectionId::from("server-conn");
+        let envelope = AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: CommandId::from("cmd-forged"),
+            source: CommandSource::RemoteGui {
+                client_id: GuiClientId::from("forged"),
+                connection_id: ConnectionId::from("forged"),
+            },
+            identity: ActorIdentity::System,
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: Timestamp::from_unix_millis(1),
+            command: AppCommand::WorkspaceAdd {
+                root_path: "/tmp".into(),
+            },
+        };
+        let stamped = host_stamp_command(
+            envelope,
+            &client_id,
+            &connection_id,
+            &transport_api::ConnectionLocality::InProcess,
+        );
+        assert_eq!(
+            stamped.source,
+            CommandSource::LocalGui {
+                client_id: client_id.clone(),
+            }
+        );
+        assert_eq!(
+            stamped.identity,
+            ActorIdentity::LocalUser {
+                actor_id: ActorId::from("server-assigned"),
+                display_name: None,
+            }
+        );
+    }
+
+    #[test]
+    fn host_stamp_remote_uses_server_connection_ids() {
+        // 远程连接：wire 伪造 LocalGui + LocalUser 也必须被重写为 RemoteGui +
+        // AuthenticatedClient（服务端分配的 client_id / connection_id）。
+        let client_id = GuiClientId::from("server-assigned");
+        let connection_id = ConnectionId::from("server-conn");
+        let envelope = AppQueryEnvelope {
+            api_version: API_VERSION,
+            request_id: QueryId::from("q-forged"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("forged"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: ActorId::from("forged-user"),
+                display_name: None,
+            },
+            issued_at: Timestamp::from_unix_millis(1),
+            query: AppQuery::WorkspaceList,
+        };
+        let stamped = host_stamp_query(
+            envelope,
+            &client_id,
+            &connection_id,
+            &transport_api::ConnectionLocality::Remote,
+        );
+        assert_eq!(
+            stamped.source,
+            CommandSource::RemoteGui {
+                client_id: client_id.clone(),
+                connection_id: connection_id.clone(),
+            }
+        );
+        assert_eq!(
+            stamped.identity,
+            ActorIdentity::AuthenticatedClient {
+                actor_id: ActorId::from("server-assigned"),
+                subject: "server-conn".into(),
+            }
+        );
     }
 }

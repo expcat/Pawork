@@ -1,6 +1,6 @@
 # P17-13：Cross-Agent Compatibility Loader（配置与资源兼容加载）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P8-1～P8-6、P9-6、P17-1、P17-5；与 P16-9 协调
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（Built + L1；只读探测 + fixture smoke，不执行外部 hook/MCP） · 交付成熟度：Built · 依赖：P8-1～P8-6、P9-6、P17-1、P17-5；与 P16-9 协调
 
 **最终目的**：以输入侧 Adapter 读取 Claude Code、Codex、Grok Build、Cursor 与 Pi 的项目配置和扩展资源，将可表达内容映射为 Pawork canonical Instructions、Skills、MCP、Agent Profile、Hooks 与 Permission rules，降低迁移成本；外部配置永远不是运行时事实源，加载过程不得直接执行脚本、连接 MCP 或放宽权限。
 
@@ -25,12 +25,19 @@
 
 ## 验收标准
 
-- [ ] 可读取 Claude/Codex/Grok/Cursor/Pi 的已知 Instructions、Skills、MCP、Agents、Hooks 与 Permission 配置，并映射可支持子集
-- [ ] `CLAUDE.md` / `.claude/rules` / `AGENTS.md` 层级与来源可追踪，冲突按 P8-6 确定性处理
-- [ ] 外部 hooks、MCP 与脚本在导入/预览阶段绝不执行；Secret 只保留 credential reference
-- [ ] 不可映射内容显式标为 `Unsupported` 或 `Disabled`，不静默放宽权限或写入非 canonical 类型
-- [ ] 原配置不被改写，重复导入幂等；Session 历史由 P16-9 单独处理
-- [ ] 仅运行定向 fixture smoke，不要求 workspace 全量门禁
+- [x] 可读取 Claude/Codex/Grok/Cursor/Pi 的已知 Instructions、Skills、MCP、Agents、Hooks 与 Permission 配置，并映射可支持子集
+- [x] `CLAUDE.md` / `.claude/rules` / `AGENTS.md` 层级与来源可追踪，冲突按 P8-6 确定性处理
+- [x] 外部 hooks、MCP 与脚本在导入/预览阶段绝不执行；Secret 只保留 credential reference
+- [x] 不可映射内容显式标为 `Unsupported` 或 `Disabled`，不静默放宽权限或写入非 canonical 类型
+- [x] 原配置不被改写，重复导入幂等；Session 历史由 P16-9 单独处理
+- [x] 仅运行定向 fixture smoke，不要求 workspace 全量门禁
+
+## 验证记录（2026-08-13）
+
+- 新增 `compat-loader`：五类来源只读探测 / 映射 / dry-run 应用；Unix 扫描走 `openat + O_NOFOLLOW` 句柄链，Windows 拒绝 reparse point。
+- 导入阶段不执行 hook / MCP / 脚本；Secret 只保留 credential reference。Session 历史仍由 P16-9 负责。
+- 定向 fixture smoke 覆盖 Claude/Codex/Grok/Cursor/Pi 最小映射与冲突诊断。
+- Validation Level：L1；Full workspace gate：NOT RUN。未宣称已验收。
 
 **相关文档**：[skills](../docs/features/skills.md) · [mcp](../docs/features/mcp.md) · [policy](../docs/features/policy.md) · [P8-1 Resource Loader](P8-1-resource-loader.md) · [P17-1 User Hooks](P17-1-user-hooks.md) · [P17-5 Agent Profile v2](P17-5-agent-profile-v2.md) · [P16-9 Session Import](P16-9-session-compat-import.md) · [ROADMAP](../ROADMAP.md)
 

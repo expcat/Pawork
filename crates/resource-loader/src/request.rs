@@ -141,6 +141,11 @@ pub struct ResourceLoaderOptions {
     pub global_resource_dir: Option<PathBuf>,
     pub workspace_resource_dir: String,
     pub limits: ResourceLimits,
+    /// 生产长期记忆（P16-7 / P16-10）是否可用。默认 false：profile 显式启用
+    /// memory 时会被显式标注 `Unavailable` 并产生 warning，绝不虚假可用；
+    /// 生产接线完成（真实 EmbeddingProvider + SQLite + context-engine 消费）
+    /// 后由宿主置 true。
+    pub memory_available: bool,
 }
 
 impl Default for ResourceLoaderOptions {
@@ -149,6 +154,7 @@ impl Default for ResourceLoaderOptions {
             global_resource_dir: None,
             workspace_resource_dir: ".pawork".into(),
             limits: ResourceLimits::default(),
+            memory_available: false,
         }
     }
 }

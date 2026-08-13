@@ -80,7 +80,7 @@ Pawork/
 | `core-api` | 应用层 Command / Event / Query 类型（CLI 与 GUI 共享的 schema source） | Phase 0 依赖 agent-domain / agent-events；后续由 app-service 使用 |
 | `core-runtime` | 完整 Core 生命周期与业务运行时装配：AppService/CommandRouter + EventHub + EventPump（10ms 轮询 drain_events 发布到 Hub）+ register_provider 透传 + shutdown | 依赖 app-service / subscription-hub；P13-2 已交付 |
 | `app-service` | CLI 与 GUI 共享的应用 API、状态聚合、监督 | P1 骨架依赖 core-api；Phase 13 由 core-runtime 装配 |
-| `cli-host` | 将 Core、CLI、GUI Server 装配到同一进程、生命周期管理；四种运行模式（run / serve / shell / service） | 依赖 app-service / subscription-hub / cli-command / cli-renderer / core-api；P13-2 已交付（GUI Server 装配位为 trait，P13-4 落地） |
+| `cli-host` | 将 Core、CLI、GUI Server 装配到同一进程、生命周期管理；运行模式（run / serve / shell / service / acp serve / headless） | 依赖 app-service / subscription-hub / cli-command / cli-renderer / core-api；P13-2 已交付（GUI Server 装配位为 trait，P13-4 落地） |
 | `cli-command` | 命令解析与稳定命令模型 | 独立；由 cli-host 映射到 app-service |
 | `cli-renderer` | CLI 文本 / JSON / 流式输出（`render_event` 消费 Event Hub 的 AppEventEnvelope） | 依赖 app-service / core-api；P13-2 已交付 |
 | `gui-protocol` | GUI Command / Query / Event / Snapshot 协议类型 | 依赖 core-api |
@@ -98,29 +98,37 @@ Pawork/
 | `test-support` | Mock Provider / Mock Tool、测试工具 | 仅测试依赖 |
 | `schema-typegen` | 从 core-api / gui-protocol 生成并校验 `.d.ts` | 仅构建工具依赖 core-api / gui-protocol，不进入运行时 |
 
-### 2.1 Phase 17–19 与跨阶段规划新增 crate（登记在册，尚未实现）
+### 2.1 Phase 15–19 新增 crate
 
 > 登记即冻结 crate 名、职责与依赖方向；落地计划见 [ROADMAP](../../ROADMAP.md) Phase 17–19（Phase 15/16 已落地，见 §2）。新增 crate 遵循 §6/§7 规则，`agent-domain` 保持零外部 IO 依赖。embedding 经评估**不新增独立 crate**，扩展 `provider-api`（见下表脚注）。Phase 19 不新增 Core crate，复用 `gui-client` 并在 `apps/desktop` 内实现 GPUI `ui/projection/controller/platform` 四层。
+
+#### 已落地（Phase 15–17）
+
+| crate | 职责 | 依赖方向备注 |
+| --- | --- | --- |
+| `protected-blob-store` | 受保护敏感制品（reasoning 凭证等）加密落盘：encrypted-at-rest、Provider/Session 作用域、retention、引用计数 GC、完整性校验 | 依赖 `agent-domain`；与 `artifact-store`（非加密）平级、共享存储底层但不混用安全语义；ADR-032 |
+| `user-hooks` | 用户声明式事件钩子（Command/Http/PromptTransform/PromptEval/AgentEval/McpTool） | 依赖 `agent-domain` / `provider-api` / `mcp-client`；与 `hook-runtime` 并列；P17-1 已落地 |
+| `plugin-package` | Plugin Package 聚合格式（Skills/Agents/Hooks/MCP/LSP/Monitors） | 依赖 `agent-domain` / `resource-loader`；P17-2 已落地 |
+| `marketplace` | 扩展市场：发现/安装/更新/卸载/签名/trust/team-policy | 依赖 `plugin-package` / `http-runtime`；P17-3 已落地（真实 monitor 宿主接线仍属 P16-10 ①） |
+| `lsp-runtime` | LSP **Client** Runtime：启动/管理/调用现有 Language Server | 依赖 `agent-domain` / `process-runtime` / `sandbox-runtime`；P17-4 已落地 |
+| `teams` | Agent Teams / peer messaging / shared task board | 依赖 `agent-domain` / `orchestration`；P17-6 已落地 |
+| `client-adapter-api` | 外部 Agent Client 的统一 adapter/factory、capability snapshot、Session Registry 契约 | 依赖 `agent-domain` / `core-api`；P18-10 已作为 P17-7 前置落地，不把 Phase 18 计为完成 |
+| `acp-host` | 公共 Agent Client Protocol adapter 与协议宿主 | 依赖 `client-adapter-api` / `core-api` / `app-service` / `agent-events` / `subscription-hub`（连接 pawork Host）；P17-7 已落地 |
+| `agent-sdk` | Rust client SDK + Headless JSON 协议接入 | 依赖公开 schema/framing（不依赖 `core-runtime`）；P17-8 已落地 |
+| `headless-json` | Headless NDJSON 协议编解码（`pawork headless --json-stdio`） | 依赖 `core-api`；与 `agent-sdk` 并列；P17-8 已落地 |
+| `ide-host-adapter` | IDE 生命周期/诊断/交互桥接 + 可选 LSP Server 输出 | 依赖 `agent-sdk` / `core-api`；与 `gui-server` 平级；P17-9 已落地 |
+| `browser-computer-runtime` | Browser/Computer 能力 facade（Local/MCP/ProviderHosted 三执行位点） | 依赖 `tool-api` / `provider-api` / `sandbox-runtime`；P17-10 已落地 |
+| `transport-remote` | 真实远程 Transport（替代 placeholder） | 依赖 `transport-api`；P17-11 已落地 |
+| `remote-control-adapter` | Mobile / 远程控制受限通道 | 依赖 `transport-api` / `core-api`；P17-12 已落地 |
+| `compat-loader` | Claude/Codex/Grok/Cursor/Pi 配置兼容导入（只读） | 依赖 `agent-domain` / `resource-loader`；P17-13 已落地 |
+
+#### 尚未实现（Phase 18–19 规划）
 
 | crate | 职责 | 依赖方向备注 |
 | --- | --- | --- |
 | `http-runtime` | 通用 HTTP client、超时、代理、header、trace、取消、重试；供 Provider、Hooks、Marketplace、Forge 等复用 | 从 `provider-runtime::http` 抽离；不得依赖具体 Provider；P2-1 后续收敛 |
-| `protected-blob-store` | 受保护敏感制品（reasoning 凭证等）加密落盘：encrypted-at-rest、Provider/Session 作用域、retention、引用计数 GC、完整性校验 | 依赖 `agent-domain`；与 `artifact-store`（非加密）平级、共享存储底层但不混用安全语义；ADR-032 |
-| `user-hooks` | 用户声明式事件钩子（Command/Http/PromptTransform/PromptEval/AgentEval/McpTool） | 依赖 `agent-domain` / `provider-api` / `mcp-client`；与 `hook-runtime` 并列；P17-1 |
-| `plugin-package` | Plugin Package 聚合格式（Skills/Agents/Hooks/MCP/LSP/Monitors） | 依赖 `agent-domain` / `resource-loader`；P17-2 |
-| `marketplace` | 扩展市场：发现/安装/更新/卸载/签名/trust/team-policy | 依赖 `plugin-package` / `http-runtime`；P17-3 |
-| `lsp-runtime` | LSP **Client** Runtime：启动/管理/调用现有 Language Server | 依赖 `agent-domain` / `process-runtime` / `sandbox-runtime`；P17-4 |
-| `teams` | Agent Teams / peer messaging / shared task board | 依赖 `agent-domain` / `orchestration`；P17-6 |
-| `client-adapter-api` | 外部 Agent Client 的统一 adapter/factory、capability snapshot、Session Registry 契约 | 依赖 `agent-domain` / `core-api`；P18-10 |
 | `client-codex-app-server` | Codex App Server Thread/Turn/Item/approval/subagent adapter | 依赖 `client-adapter-api` / `app-service`；P18-11 |
 | `client-claude-gateway` | Claude Gateway session/agent identity、Messages stream 与审计归属 adapter | 依赖 `client-adapter-api` / `app-service`；P18-12 |
-| `acp-host` | 公共 Agent Client Protocol adapter 与协议宿主 | 依赖 `client-adapter-api` / `core-api` / `app-service` / `agent-events` / `subscription-hub`（连接 pawork Host）；P17-7 |
-| `agent-sdk` | Rust client SDK + Headless JSON 协议接入 | 依赖公开 schema/framing（不依赖 `core-runtime`）；P17-8 |
-| `ide-host-adapter` | IDE 生命周期/诊断/交互桥接 + 可选 LSP Server 输出 | 依赖 `agent-sdk` / `core-api`；与 `gui-server` 平级；P17-9 |
-| `browser-computer-runtime` | Browser/Computer 能力 facade（Local/MCP/ProviderHosted 三执行位点） | 依赖 `tool-api` / `provider-api` / `sandbox-runtime`；P17-10 |
-| `transport-remote` | 真实远程 Transport（替代 placeholder） | 依赖 `transport-api`；P17-11 |
-| `remote-control-adapter` | Mobile / 远程控制受限通道 | 依赖 `transport-api` / `core-api`；P17-12 |
-| `compat-loader` | Claude/Codex/Grok/Cursor/Pi 配置兼容导入（只读） | 依赖 `agent-domain` / `resource-loader`；P17-13 |
 
 > embedding 决策（2026-08 冻结）：**不新增独立 `embedding-api` / `embedding-runtime` crate**。canonical embedding 抽象（`EmbeddingProvider` trait + `EmbeddingRequest` / `EmbeddingResponse` / `EmbeddingModelDefinition` / `EmbeddingCapabilities`）扩展进 `provider-api`——embedding 是 Provider 的另一项 canonical 能力，与 `ModelProvider` 平级放在同一层最契合现有依赖方向，复用同一套凭证与 model-registry，并使 `memory-service` 只依赖 `provider-api`（Provider 无关）。各 `provider-*` 实现 `EmbeddingProvider`。
 

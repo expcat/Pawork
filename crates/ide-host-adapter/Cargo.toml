@@ -1,0 +1,23 @@
+[package]
+name = "ide-host-adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "P17-9 IDE Host Adapter：IDE 生命周期/诊断/交互桥接（经 Agent SDK / Headless 连接 pawork Host，不嵌入第二 Core）"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+agent-sdk = { path = "../agent-sdk" }
+async-trait.workspace = true
+client-adapter-api = { path = "../client-adapter-api" }
+core-api = { path = "../core-api" }
+headless-json = { path = "../headless-json" }
+lsp-runtime = { path = "../lsp-runtime" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

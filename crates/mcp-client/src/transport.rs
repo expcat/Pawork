@@ -13,18 +13,17 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use rmcp::service::RunningService;
-use rmcp::transport::child_process::TokioChildProcess;
+use rmcp::transport::async_rw::AsyncRwTransport;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, ServiceExt};
-use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 
 use crate::config::is_loopback_url;
+use crate::sandbox::StdioSpawner;
 use crate::McpError;
 
 /// Placeholder written in place of every secret-bearing field when formatting a config
@@ -182,73 +181,92 @@ impl fmt::Debug for TransportConfig {
     }
 }
 
-/// Production connector backed by a [`TransportConfig`].
+/// Production connector backed by a fully authorized transport.
+///
+/// The representation has no unsandboxed stdio state: HTTP needs no process
+/// runtime, while stdio always carries the sandboxed spawner that every initial
+/// connection and reconnect must reuse.
 #[derive(Clone)]
 pub struct DefaultConnector {
-    config: TransportConfig,
+    transport: ConnectorTransport,
+}
+
+#[derive(Clone)]
+enum ConnectorTransport {
+    Stdio {
+        config: StdioTransportConfig,
+        spawner: Arc<dyn StdioSpawner>,
+    },
+    Http(HttpTransportConfig),
 }
 
 impl DefaultConnector {
-    pub fn new(config: TransportConfig) -> Self {
-        Self { config }
+    /// Construct an HTTP connector. HTTP does not require a process sandbox.
+    pub fn http(config: HttpTransportConfig) -> Self {
+        Self {
+            transport: ConnectorTransport::Http(config),
+        }
     }
 
-    pub fn config(&self) -> &TransportConfig {
-        &self.config
+    /// Construct a stdio connector from its mandatory sandboxed spawner.
+    ///
+    /// Kept crate-private so production callers must inject a concrete
+    /// `SandboxBackend + SandboxPolicy + workspace roots` through
+    /// [`crate::config::StdioSandboxRuntime`].
+    pub(crate) fn sandboxed_stdio(
+        config: StdioTransportConfig,
+        spawner: Arc<dyn StdioSpawner>,
+    ) -> Self {
+        Self {
+            transport: ConnectorTransport::Stdio { config, spawner },
+        }
+    }
+
+    pub fn config(&self) -> TransportConfig {
+        match &self.transport {
+            ConnectorTransport::Stdio { config, .. } => TransportConfig::Stdio(config.clone()),
+            ConnectorTransport::Http(config) => TransportConfig::Http(config.clone()),
+        }
     }
 }
 
 #[async_trait]
 impl McpConnector for DefaultConnector {
     fn transport_name(&self) -> &'static str {
-        match self.config {
-            TransportConfig::Stdio(_) => "stdio",
-            TransportConfig::Http(_) => "streamable-http",
+        match self.transport {
+            ConnectorTransport::Stdio { .. } => "stdio",
+            ConnectorTransport::Http(_) => "streamable-http",
         }
     }
 
     async fn connect(&self) -> Result<RunningClient, McpError> {
-        match &self.config {
-            TransportConfig::Stdio(cfg) => connect_stdio(cfg).await,
-            TransportConfig::Http(cfg) => connect_http(cfg).await,
+        match &self.transport {
+            ConnectorTransport::Stdio { config, spawner } => {
+                connect_stdio_sandboxed(spawner, config).await
+            }
+            ConnectorTransport::Http(config) => connect_http(config).await,
         }
     }
 }
 
-async fn connect_stdio(cfg: &StdioTransportConfig) -> Result<RunningClient, McpError> {
-    if cfg.command.trim().is_empty() {
-        return Err(McpError::Config("stdio command must not be empty".into()));
-    }
-
-    let mut command = Command::new(&cfg.command);
-    command.args(&cfg.args);
-    if !cfg.env.is_empty() {
-        command.envs(&cfg.env);
-    }
-    if let Some(cwd) = &cfg.working_dir {
-        command.current_dir(cwd);
-    }
-
+/// 经注入的 sandboxed spawner 托管 stdio（Sandbox → Process Runtime），再用 rmcp
+/// async_rw transport 完成 initialize/initialized 握手。restart 复用同一 spawner，
+/// 因此 sandbox guarantee 在 reconnect 阶段不降级。
+async fn connect_stdio_sandboxed(
+    spawner: &Arc<dyn StdioSpawner>,
+    cfg: &StdioTransportConfig,
+) -> Result<RunningClient, McpError> {
     tracing::info!(
         target: "pawork::mcp::transport",
         transport = "stdio",
         command = %cfg.command,
         arg_count = cfg.args.len(),
-        "spawning mcp server process"
+        sandboxed = true,
+        "spawning mcp server process through sandbox runtime"
     );
-
-    // stdin/stdout default to piped; stderr is piped so it can be folded into the
-    // unified log instead of leaking raw onto the host stderr.
-    let (transport, stderr) = TokioChildProcess::builder(command)
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| McpError::Transport(format!("failed to spawn stdio server {cfg:?}: {e}")))?;
-
-    if let Some(stderr) = stderr {
-        spawn_stderr_forwarder(stderr, cfg.env.values().cloned().collect());
-    }
-
-    // rmcp completes the initialize/initialized handshake inside `serve`.
+    let spawned = spawner.spawn(cfg).await?;
+    // read 内部持有 ProcessHandle 守卫，随 transport 同生命周期 drop 终止进程树。
+    let transport = AsyncRwTransport::new_client(spawned.read, spawned.write);
     ().serve(transport)
         .await
         .map_err(|_| McpError::Transport("stdio handshake failed".into()))
@@ -328,49 +346,6 @@ pub(crate) fn build_http_transport_config(
         rmcp_config = rmcp_config.custom_headers(headers);
     }
     Ok(rmcp_config)
-}
-
-/// Forward a child process's stderr to the tracing subscriber under a stable target so
-/// server output is unified with Pawork's own logs.
-fn spawn_stderr_forwarder(stderr: tokio::process::ChildStderr, secrets: Vec<String>) {
-    tokio::spawn(async move {
-        const MAX_CHUNK_BYTES: usize = 8 * 1024;
-        let mut stderr = stderr;
-        let mut chunk = vec![0_u8; MAX_CHUNK_BYTES];
-        loop {
-            match stderr.read(&mut chunk).await {
-                Ok(0) => break,
-                Ok(read) => {
-                    let rendered = render_stderr_chunk(&chunk[..read], &secrets);
-                    tracing::info!(
-                        target: "pawork::mcp::server::stderr",
-                        bytes = read,
-                        chunk = %rendered,
-                        "mcp server stderr"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        target: "pawork::mcp::server::stderr",
-                        %error,
-                        "failed reading mcp server stderr"
-                    );
-                    break;
-                }
-            }
-        }
-    });
-}
-
-fn render_stderr_chunk(value: &[u8], secrets: &[String]) -> String {
-    // A secret can straddle arbitrary read boundaries, so substring replacement
-    // alone is insufficient. When the child received any non-empty secret, redact
-    // the whole chunk while retaining the event and bounded byte count in tracing.
-    if secrets.iter().any(|secret| !secret.is_empty()) {
-        REDACTED.into()
-    } else {
-        String::from_utf8_lossy(value).into_owned()
-    }
 }
 
 fn safe_url_for_debug(value: &str) -> String {
@@ -476,16 +451,6 @@ mod tests {
     }
 
     #[test]
-    fn stderr_chunks_are_fully_redacted_when_secrets_are_injected() {
-        let rendered = render_stderr_chunk(
-            b"server failed with sk-super-secret-value",
-            &["sk-super-secret-value".into()],
-        );
-        assert_eq!(rendered, REDACTED);
-        assert_eq!(render_stderr_chunk(b"safe log", &[]), "safe log");
-    }
-
-    #[test]
     fn transport_config_enum_debug_is_redacted() {
         let stdio =
             TransportConfig::Stdio(StdioTransportConfig::new("cmd").with_env(env_with_secret()));
@@ -556,11 +521,7 @@ mod tests {
 
     #[test]
     fn connector_names_match_variant() {
-        let stdio = DefaultConnector::new(TransportConfig::Stdio(StdioTransportConfig::new("cmd")));
-        let http = DefaultConnector::new(TransportConfig::Http(HttpTransportConfig::new(
-            "https://host/mcp",
-        )));
-        assert_eq!(stdio.transport_name(), "stdio");
+        let http = DefaultConnector::http(HttpTransportConfig::new("https://host/mcp"));
         assert_eq!(http.transport_name(), "streamable-http");
     }
 }

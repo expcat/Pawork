@@ -12,6 +12,8 @@ agent-domain = { path = "../agent-domain" }
 auth-service = { path = "../auth-service" }
 config-service = { path = "../config-service" }
 policy-engine = { path = "../policy-engine" }
+process-runtime = { path = "../process-runtime" }
+sandbox-runtime = { path = "../sandbox-runtime" }
 tool-api = { path = "../tool-api" }
 tool-runtime = { path = "../tool-runtime" }
 async-trait.workspace = true
@@ -19,7 +21,7 @@ reqwest.workspace = true
 rmcp = { workspace = true, features = [
     "client",
     "reqwest",
-    "transport-child-process",
+    "transport-async-rw",
     "transport-streamable-http-client-reqwest",
 ] }
 serde.workspace = true
@@ -28,7 +30,6 @@ thiserror.workspace = true
 tokio = { workspace = true, features = [
     "io-util",
     "macros",
-    "process",
     "rt",
     "sync",
     "time",
@@ -41,7 +42,6 @@ rmcp = { workspace = true, features = ["macros", "server", "transport-async-rw"]
 tokio = { workspace = true, features = [
     "io-util",
     "macros",
-    "process",
     "rt-multi-thread",
     "sync",
     "test-util",

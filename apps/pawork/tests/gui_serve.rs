@@ -18,6 +18,18 @@ use tempfile::TempDir;
 use transport_api::{ConnectOptions, GuiTransportClient, TransportEndpoint};
 use transport_local::LocalTransport;
 
+async fn wait_for_session_count(host: &ServeGuiHost, expected: usize) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    while host.active_session_count() != expected {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "active session count did not reach {expected}; got {}",
+            host.active_session_count()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 /// 与 `build_gui_server`（main.rs）相同的宿主装配，token 指向测试临时目录。
 fn host_with_token(temp: &TempDir, instance: &str) -> (ServeGuiHost, Token, TransportEndpoint) {
     let token_path = temp.path().join("gui.token");
@@ -143,4 +155,26 @@ async fn stop_without_start_is_a_noop() {
     let instance = unique_instance();
     let (host, _token, _endpoint) = host_with_token(&temp, &instance);
     host.stop().expect("stop on never-started host");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn accept_loop_reclaims_closed_sessions_across_bounded_reconnects() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let instance = unique_instance();
+    let (host, token, endpoint) = host_with_token(&temp, &instance);
+    host.start(&instance).expect("start");
+
+    // 重复重连远多于一个会话；accept loop 必须只持有当前活跃句柄，关闭后
+    // 及时回收，不能用无界 Vec 累积历史 SessionHandle。
+    for _ in 0..32 {
+        let client = connect_client(&endpoint, &token)
+            .await
+            .expect("connect and handshake");
+        wait_for_session_count(&host, 1).await;
+        client.close().await.expect("client close");
+        wait_for_session_count(&host, 0).await;
+    }
+
+    assert_eq!(host.active_session_count(), 0);
+    host.stop().expect("stop");
 }

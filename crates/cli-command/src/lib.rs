@@ -23,6 +23,11 @@ pub enum Command {
     Serve(ServeArgs),
     Shell,
     Run(RunArgs),
+    /// ACP（Agent Client Protocol v1）宿主：外部 ACP 客户端经 stdin/stdout
+    /// JSON-RPC 接入同一 Core（P17-7）。
+    Acp(Nested<AcpCommand>),
+    /// 无头 JSON 模式（P17-8）：stdin/stdout JSONL，`--json-stdio` 开启。
+    Headless(HeadlessArgs),
     Watch,
     Status,
     Shutdown,
@@ -40,7 +45,9 @@ pub enum Command {
     Tools(Nested<ListCommand>),
     Service(Nested<ServiceCommand>),
     Doctor,
-    ImportPi { path: String },
+    ImportPi {
+        path: String,
+    },
     Benchmark,
 }
 
@@ -174,6 +181,23 @@ pub struct RunArgs {
     pub serve: bool,
 }
 
+/// `pawork acp` 子命令（P17-7）。
+#[derive(Clone, Debug, Subcommand, PartialEq, Eq)]
+pub enum AcpCommand {
+    /// 启动 ACP Host：stdin/stdout JSON-RPC（wire protocolVersion = 1），
+    /// stdout 只写协议帧；Session Registry 复用实例 SQLite。
+    Serve,
+}
+
+/// `pawork headless` 参数（P17-8）。
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub struct HeadlessArgs {
+    /// 以 stdin/stdout JSONL 运行（脚本/CI/SDK 的协议入口）；缺省不开启时
+    /// 该模式返回显式错误，不产生任何 TUI/CLI 文本。
+    #[arg(long)]
+    pub json_stdio: bool,
+}
+
 #[derive(Clone, Debug, Subcommand, PartialEq, Eq)]
 pub enum RunCommand {
     Cancel { run_id: String },
@@ -216,6 +240,13 @@ pub enum RemoteCommand {
     },
     /// 撤销一个已发布的远程 GUI 端点（handle 来自 publish 输出）。
     Unpublish {
+        /// publish 返回的 handle id。
+        #[arg(long)]
+        handle: String,
+    },
+    /// 撤销一个已发布的远程 GUI 端点并使其凭证立即失效、已建立连接断开
+    /// （handle 来自 publish 输出）。
+    Revoke {
         /// publish 返回的 handle id。
         #[arg(long)]
         handle: String,
@@ -281,10 +312,13 @@ mod tests {
             &["pawork", "session", "open", "session-1"],
             &["pawork", "run", "cancel", "run-1"],
             &["pawork", "run", "retry", "run-1"],
+            &["pawork", "acp", "serve"],
+            &["pawork", "headless", "--json-stdio"],
             &["pawork", "approval", "approve", "tool-1"],
             &["pawork", "remote", "publish"],
             &["pawork", "remote", "publish", "--name", "edge"],
             &["pawork", "remote", "unpublish", "--handle", "edge-0"],
+            &["pawork", "remote", "revoke", "--handle", "edge-0"],
             &["pawork", "provider", "list"],
             &["pawork", "auth", "login", "openai"],
             &["pawork", "plugin", "list"],
@@ -297,6 +331,35 @@ mod tests {
         for command in commands {
             Cli::try_parse_from(*command).expect("nested command parses");
         }
+    }
+
+    #[test]
+    fn acp_serve_parses() {
+        let parsed = Cli::try_parse_from(["pawork", "acp", "serve"]).expect("acp serve parses");
+        let Command::Acp(acp) = parsed.command else {
+            panic!("expected acp command");
+        };
+        assert_eq!(acp.command, AcpCommand::Serve);
+
+        // 缺省子命令必须显式失败（serve 是唯一模式，不静默降级）。
+        let err = Cli::try_parse_from(["pawork", "acp"]).expect_err("acp requires subcommand");
+        assert!(err.to_string().contains("serve"), "{}", err);
+    }
+
+    #[test]
+    fn headless_json_stdio_flag_is_opt_in() {
+        let off = Cli::try_parse_from(["pawork", "headless"]).expect("headless parses");
+        let Command::Headless(args) = &off.command else {
+            panic!("expected headless command");
+        };
+        assert!(!args.json_stdio, "json-stdio must be opt-in");
+
+        let on =
+            Cli::try_parse_from(["pawork", "headless", "--json-stdio"]).expect("headless parses");
+        let Command::Headless(args) = &on.command else {
+            panic!("expected headless command");
+        };
+        assert!(args.json_stdio);
     }
 
     #[test]

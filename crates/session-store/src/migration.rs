@@ -5,7 +5,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::SessionStoreError;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 7;
 
 struct Migration {
     version: u32,
@@ -169,6 +169,26 @@ const MIGRATIONS: &[Migration] = &[
                 ON compat_import_identity(session_id);
         "#,
     },
+    Migration {
+        version: 7,
+        name: "client_adapter_session_registry",
+        sql: r#"
+            CREATE TABLE client_adapter_sessions (
+                client_session_id TEXT PRIMARY KEY,
+                schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+                protocol TEXT NOT NULL,
+                core_session_id TEXT NOT NULL,
+                connection_id TEXT NOT NULL,
+                ownership_epoch INTEGER NOT NULL CHECK (ownership_epoch >= 0),
+                revision INTEGER NOT NULL CHECK (revision >= 0),
+                state TEXT NOT NULL,
+                capability_json TEXT NOT NULL,
+                updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+            );
+            CREATE INDEX idx_client_adapter_core_session
+                ON client_adapter_sessions(core_session_id);
+        "#,
+    },
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -311,7 +331,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("open store");
         assert_eq!(report.from_version, 0);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(report.applied_versions, vec![1, 2, 3, 4, 5, 6, 7]);
         assert!(report.backup_path.is_none());
         let tables: Vec<String> = store
             .database()

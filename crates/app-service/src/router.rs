@@ -7,7 +7,7 @@
 //! 重放首次响应），执行成功后缓存响应；错误响应不缓存。
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -30,9 +30,10 @@ use workspace_service::{TrustState, WorkspaceService};
 use crate::aggregate::AggregateState;
 use crate::approval::ApprovalRegistry;
 use crate::error::{
-    accepted_response, data_response, error_response, now_timestamp, AppServiceError,
+    accepted_response_with_run, data_response, error_response, now_timestamp, AppServiceError,
 };
 use crate::idempotency::{should_cache, IdempotencyCheck, IdempotencyStore};
+use crate::profile_resolver::{ModelLanding, ModelOverrideDecision, ModelOverrideRequest};
 use crate::rate_limit::{RateLimiter, DEFAULT_RATE_LIMIT_BUFFER, DEFAULT_RATE_LIMIT_WINDOW};
 use crate::supervisor::{RunRequest, RunSupervisor, DEFAULT_MAX_CONCURRENT_RUNS};
 use crate::QuotaRuntime;
@@ -77,8 +78,16 @@ pub struct CommandRouter {
     sources: Mutex<BTreeMap<String, u64>>,
     identities: Mutex<BTreeMap<String, u64>>,
     commands_handled: AtomicU64,
-    last_started_run: Mutex<Option<RunId>>,
     quota_runtime: Mutex<Option<Arc<QuotaRuntime>>>,
+    /// P17-5 主 run profile 解析（生产 ResourceLoader 装配注入）；未注入时
+    /// RunStart 携带 profile 名一律 fail-closed。
+    profile_resolver: Mutex<Option<Arc<dyn crate::profile_resolver::RunProfileResolver>>>,
+    /// P17-5 隔离能力探测（默认生产 SandboxIsolationCapability；测试可覆盖）。
+    isolation: Mutex<Option<Arc<dyn crate::profile_resolver::IsolationCapability>>>,
+    /// P17-5 模型覆盖授权策略（缺省 DenyAll，fail-closed；宿主可注入生产
+    /// 策略）。显式模型与 profile canonical 落点不同时由它裁决，绝不直接
+    /// 信任 caller。
+    model_override_policy: Mutex<Arc<dyn crate::profile_resolver::ModelOverridePolicy>>,
 }
 
 impl CommandRouter {
@@ -113,8 +122,12 @@ impl CommandRouter {
             sources: Mutex::new(BTreeMap::new()),
             identities: Mutex::new(BTreeMap::new()),
             commands_handled: AtomicU64::new(0),
-            last_started_run: Mutex::new(None),
             quota_runtime: Mutex::new(None),
+            profile_resolver: Mutex::new(None),
+            isolation: Mutex::new(None),
+            model_override_policy: Mutex::new(Arc::new(
+                crate::profile_resolver::DenyAllModelOverridePolicy,
+            )),
         }
     }
 
@@ -128,6 +141,21 @@ impl CommandRouter {
 
     pub fn aggregate(&self) -> &AggregateState {
         &self.aggregate
+    }
+
+    /// 幂等 materialize（P17-7 跨 host/进程 resume）：以 registry 权威
+    /// `core_session_id` 在本地聚合重建会话记录；已存在时 no-op。不生成
+    /// 新 id、不重绑 registry 映射——重试/并发安全，不留 ghost session。
+    pub fn materialize_session(
+        &self,
+        session_id: &SessionId,
+        workspace_id: &WorkspaceId,
+        title: String,
+        created_at: agent_domain::Timestamp,
+    ) -> Result<crate::aggregate::SessionRecord, AppServiceError> {
+        self.aggregate
+            .materialize_session(session_id.clone(), workspace_id.clone(), title, created_at)
+            .map_err(Into::into)
     }
 
     pub fn supervisor(&self) -> &RunSupervisor {
@@ -146,6 +174,17 @@ impl CommandRouter {
         id
     }
 
+    /// 按 ProviderId 取共享 Provider（User Hook 判定执行器 / 宿主装配用）。
+    pub(crate) fn provider(&self, id: &ProviderId) -> Option<Arc<dyn ModelProvider>> {
+        lock(&self.providers).get(id).cloned()
+    }
+
+    /// 按 ProviderId 升序取第一个已注册 Provider（User Hook 默认判定
+    /// profile 的兜底落点；无注册时为 `None`，判定 fail-closed）。
+    pub(crate) fn first_provider(&self) -> Option<Arc<dyn ModelProvider>> {
+        lock(&self.providers).values().next().cloned()
+    }
+
     pub fn provider_count(&self) -> usize {
         lock(&self.providers).len()
     }
@@ -153,6 +192,29 @@ impl CommandRouter {
     /// 事件广播订阅（供 GUI 协议 / 测试消费 Agent 事件流）。
     pub fn subscribe_agent_events(&self) -> agent_engine::Subscriber {
         self.broadcaster.subscribe()
+    }
+
+    /// 返回共享 Team 事件桥（P17-6）：TeamService 的 typed EventHub 出口。
+    pub fn team_sink(&self) -> Arc<dyn teams::TeamEventSink> {
+        self.supervisor.team_sink()
+    }
+
+    /// 注入共享 User Hooks 宿主（P17-1）：run 的 pre-prompt / pre-tool 权威
+    /// 位点回灌 hooks 结果。幂等：同一实例重复注入为 no-op。
+    pub fn set_user_hooks(&self, host: Arc<crate::user_hook::UserHookHost>) {
+        self.supervisor.set_user_hooks(host);
+    }
+
+    /// 注入 run 的 workspace roots（P17-1）：run loop 的 pre-prompt / pre-tool
+    /// 权威位点把它传给 UserHookHost（workspace 作用域匹配与 Command handler
+    /// 的 cwd 解析）。与 [`Self::set_user_hooks`] 同生命周期，宿主装配时注入。
+    pub fn set_workspace_roots(&self, roots: Vec<PathBuf>) {
+        self.supervisor.set_workspace_roots(roots);
+    }
+
+    /// 是否已注入共享 User Hooks 宿主（宿主装配 / 诊断用）。
+    pub fn user_hooks_active(&self) -> bool {
+        self.supervisor.user_hooks_active()
     }
 
     /// 冲刷并取回已限流合并的应用事件。
@@ -172,11 +234,6 @@ impl CommandRouter {
         self.commands_handled.load(Ordering::SeqCst)
     }
 
-    /// 最近一次成功启动的 run id（legacy `pawork run` 回显用）。
-    pub fn last_started_run(&self) -> Option<RunId> {
-        lock(&self.last_started_run).clone()
-    }
-
     /// 注入进程内共享的 Quota 运行时（P14-8）。同时把同一 ledger 透传给
     /// supervisor，供成功 run 完成后幂等记账。幂等：重复注入同一实例为 no-op。
     pub fn set_quota_runtime(&self, runtime: Arc<QuotaRuntime>) {
@@ -194,6 +251,66 @@ impl CommandRouter {
     /// 当前注入的 Quota 运行时（测试 / 宿主诊断）。
     pub fn quota_runtime(&self) -> Option<Arc<QuotaRuntime>> {
         lock(&self.quota_runtime).clone()
+    }
+
+    /// 注入 P17-5 主 run profile 解析器（生产 ResourceLoader 装配）。幂等：
+    /// 同一实例重复注入为 no-op。未注入时 RunStart 携带 profile 名一律
+    /// fail-closed（无可用 profile 源）。
+    pub fn set_profile_resolver(
+        &self,
+        resolver: Arc<dyn crate::profile_resolver::RunProfileResolver>,
+    ) {
+        let mut guard = lock(&self.profile_resolver);
+        let already = guard
+            .as_ref()
+            .is_some_and(|existing| Arc::ptr_eq(existing, &resolver));
+        if !already {
+            *guard = Some(resolver);
+        }
+    }
+
+    fn profile_resolver(&self) -> Option<Arc<dyn crate::profile_resolver::RunProfileResolver>> {
+        lock(&self.profile_resolver).clone()
+    }
+
+    /// 注入 P17-5 隔离能力探测（默认生产 SandboxIsolationCapability；测试可
+    /// 覆盖以断言 fail-closed 分支）。幂等：同一实例重复注入为 no-op。
+    pub fn set_isolation_capability(
+        &self,
+        capability: Arc<dyn crate::profile_resolver::IsolationCapability>,
+    ) {
+        let mut guard = lock(&self.isolation);
+        let already = guard
+            .as_ref()
+            .is_some_and(|existing| Arc::ptr_eq(existing, &capability));
+        if !already {
+            *guard = Some(capability);
+        }
+    }
+
+    fn isolation_capability(&self) -> Arc<dyn crate::profile_resolver::IsolationCapability> {
+        lock(&self.isolation)
+            .clone()
+            .unwrap_or_else(|| Arc::new(crate::profile_resolver::SandboxIsolationCapability))
+    }
+
+    /// 注入 P17-5 模型覆盖授权策略（生产装配
+    /// [`crate::profile_resolver::ProductionModelOverridePolicy`]；缺省
+    /// DenyAll fail-closed）。幂等：同一实例重复注入为 no-op。
+    pub fn set_model_override_policy(
+        &self,
+        policy: Arc<dyn crate::profile_resolver::ModelOverridePolicy>,
+    ) {
+        let mut guard = lock(&self.model_override_policy);
+        if !Arc::ptr_eq(&*guard, &policy) {
+            *guard = policy;
+        }
+    }
+
+    /// 注入 P17-5 后台任务管理器：background=true 的 run 经它注册 / 启动 /
+    /// 完成 / 取消一个 TaskKind::Agent，复用既有状态机，不自建。幂等。
+    pub fn set_task_manager(&self, manager: Arc<task_manager::TaskManager>) {
+        self.supervisor.set_task_manager(manager);
     }
 
     /// 统一命令入口。
@@ -319,17 +436,49 @@ impl CommandRouter {
                     Err(error) => Err(error.into()),
                 }
             }
-            AppCommand::RunStart {
+            AppCommand::SessionClientContextReplace {
                 session_id,
-                user_message,
-                model,
-            } => self.handle_run_start(
-                envelope,
-                session_id.clone(),
-                user_message.clone(),
-                model.clone(),
-            ),
-            AppCommand::RunCancel { run_id } => {
+                snapshot,
+            } => {
+                // P17-9：Host 权威盖戳后，仅 Automation / LocalCli 可替换 IDE
+                // 上下文。GUI 盖戳为 LocalGui/RemoteGui；插件与 MCP 也不得注入。
+                match &envelope.source {
+                    CommandSource::Automation | CommandSource::LocalCli { .. } => {}
+                    other => {
+                        return Err(AppServiceError::Authorization(format!(
+                            "session_client_context_replace is not permitted for {:?}",
+                            source_name(other)
+                        )));
+                    }
+                }
+                match self
+                    .aggregate
+                    .replace_client_context(session_id, snapshot.clone())
+                {
+                    Ok(snapshot) => Ok(data_response(
+                        &request_id,
+                        json!({
+                            "session_id": session_id,
+                            "revision": snapshot.revision,
+                            "replaced": true,
+                        }),
+                    )),
+                    Err(error) => Err(error.into()),
+                }
+            },
+          AppCommand::RunStart {
+              session_id,
+              user_message,
+              model,
+              profile,
+          } => self.handle_run_start(
+              envelope,
+              session_id.clone(),
+              user_message.clone(),
+              model.clone(),
+              profile.clone(),
+          ),
+           AppCommand::RunCancel { run_id } => {
                 match self.supervisor.cancel(run_id) {
                     Ok(outcome) => Ok(data_response(
                         &request_id,
@@ -717,6 +866,7 @@ impl CommandRouter {
         session_id: SessionId,
         user_message: String,
         model: Option<ModelId>,
+        profile: Option<String>,
     ) -> Result<AppResponseEnvelope, AppServiceError> {
         if user_message.trim().is_empty() {
             return Err(AppServiceError::InvalidRequest(
@@ -729,7 +879,50 @@ impl CommandRouter {
         if tokio::runtime::Handle::try_current().is_err() {
             return Err(AppServiceError::NoRuntime);
         }
-        let (model, provider_id) = self.resolve_model(model.as_ref())?;
+        // run 归属 workspace 从 session 聚合取（hooks 的 workspace 作用域匹配
+        // 与 P17-5 profile 解析都依赖它）。
+        let workspace_id = self
+            .aggregate
+            .get_session(&session_id)
+            .map(|session| session.workspace_id);
+        // P17-5：可选 profile 名解析为 loader 已校验的不可变 AgentProfileV2。
+        // 未知 / 跨 workspace / 引用不可用 / 未注入解析器一律 fail-closed。
+        let resolved_profile =
+            self.resolve_run_profile(profile.as_deref(), workspace_id.as_ref())?;
+        let (model, provider_id) = match (model.as_ref(), resolved_profile.as_ref()) {
+            // 显式命令模型优先（caller 权威）：但与 profile canonical 落点
+            // 不同时属于模型覆盖，必须经 ModelOverridePolicy 授权（缺省
+            // fail-closed 全拒，绝不直接信任 caller）。profile 未声明模型 /
+            // 同模型落点（别名归一后相同）不构成 override，不误拒。
+            (Some(command_model), Some(resolved)) => {
+                let from = self.profile_canonical_landing(&resolved.profile)?;
+                let (model, provider) = self.resolve_model(Some(command_model))?;
+                if let Some(from) = from {
+                    let to = ModelLanding {
+                        provider_id: provider.clone(),
+                        model_id: model.clone(),
+                    };
+                    if from != to {
+                        self.authorize_model_override(
+                            &envelope.source,
+                            &envelope.identity,
+                            &resolved.workspace_id,
+                            &resolved.profile.name,
+                            &from,
+                            &to,
+                        )?;
+                    }
+                }
+                (model, provider)
+            }
+            // 无 profile：显式命令模型直接解析（不存在可被覆盖的 canonical
+            // 落点，无授权需求）。
+            (Some(command_model), None) => self.resolve_model(Some(command_model))?,
+            // 否则 profile 模型 canonical 解析（provider 必须已注册，fail-closed）。
+            (None, Some(resolved)) => self.resolve_profile_model(&resolved.profile)?,
+            // 既无命令模型也无 profile：默认解析。
+            (None, None) => self.resolve_model(None)?,
+        };
         let provider = {
             let providers = lock(&self.providers);
             providers.get(&provider_id).cloned().ok_or_else(|| {
@@ -756,13 +949,17 @@ impl CommandRouter {
         let result = self.supervisor.start(
             RunRequest {
                 run_id: run_id.clone(),
-                session_id,
+                session_id: session_id.clone(),
+                // run 归属 workspace 从 session 聚合取（hooks 的 workspace
+                // 作用域匹配与 P17-5 profile 解析都依赖它）。
+                workspace_id,
                 provider_id,
                 model,
                 source: envelope.source.clone(),
                 command_id: envelope.command_id.clone(),
                 user_message,
                 external_quota,
+                profile: resolved_profile,
             },
             provider,
         );
@@ -770,8 +967,9 @@ impl CommandRouter {
             self.aggregate.remove_run(&rollback_run_id);
             return Err(error.into());
         }
-        *lock(&self.last_started_run) = Some(run_id.clone());
-        Ok(accepted_response(envelope))
+        // RunStart 响应必须携带本命令确定启动的 run id：并发来源各自从
+        // 自己的响应绑定 run，不依赖全局状态（P17-7 评审 #3）。
+        Ok(accepted_response_with_run(envelope, Some(run_id)))
     }
 
     fn handle_tool_approve(
@@ -837,6 +1035,151 @@ impl CommandRouter {
                     .unwrap_or_else(|| ModelId::from("default-model"));
                 Ok((model, provider_id))
             }
+        }
+    }
+
+    /// P17-5：把可选 profile 名解析为 loader 已校验的不可变 AgentProfileV2。
+    ///
+    /// fail-closed 语义：未知 / 跨 workspace / 引用不可用 / 未注入解析器 / 缺
+    /// workspace 绑定均返回结构化错误，绝不静默回退默认模型或默认 profile。
+    /// memory enabled + 显式 Unavailable 与 isolation 当前宿主无法真实满足
+    /// （Container 无真实容器后端）也在此拒绝，绝不虚假可用 / 静默降级。
+    fn resolve_run_profile(
+        &self,
+        profile: Option<&str>,
+        workspace_id: Option<&WorkspaceId>,
+    ) -> Result<Option<crate::profile_resolver::ResolvedRunProfile>, AppServiceError> {
+        let Some(name) = profile else {
+            return Ok(None);
+        };
+        let Some(workspace_id) = workspace_id else {
+            return Err(AppServiceError::InvalidRequest(format!(
+                "profile `{name}` requires a session bound to a workspace"
+            )));
+        };
+        let Some(resolver) = self.profile_resolver() else {
+            return Err(AppServiceError::Unavailable(format!(
+                "profile `{name}` cannot be resolved: no profile resolver is configured"
+            )));
+        };
+        let resolved = resolver
+            .resolve(workspace_id, name)
+            .map_err(|error| AppServiceError::InvalidRequest(error.to_string()))?;
+        // memory：enabled + 显式 Unavailable 拒绝 run（绝不虚假可用）。
+        if resolved.profile.memory.enabled
+            && matches!(
+                resolved.profile.memory.availability(),
+                agent_domain::ProfileMemoryAvailability::Unavailable
+            )
+        {
+            return Err(AppServiceError::Unavailable(format!(
+                "profile `{name}` requests memory that is unavailable: {}",
+                resolved
+                    .profile
+                    .memory
+                    .unavailable
+                    .as_deref()
+                    .unwrap_or("unspecified")
+            )));
+        }
+        // isolation：当前宿主无法真实满足时 fail-closed（Container 无真实
+        // 容器后端必失败，绝不静默降级）。
+        let isolation = self.isolation_capability();
+        if !isolation.satisfiable(resolved.profile.isolation) {
+            return Err(AppServiceError::Unavailable(format!(
+                "profile `{name}` requires isolation `{:?}` that is unavailable on this host",
+                resolved.profile.isolation
+            )));
+        }
+        Ok(Some(resolved))
+    }
+
+    /// P17-5：profile.model canonical 解析。provider 必须已注册（fail-closed）；
+    /// model 名优先取 registry canonical 条目，否则直接用作 ModelId。profile
+    /// 既未声明 provider 也未声明 model 时返回错误（caller 应显式传模型）。
+    fn resolve_profile_model(
+        &self,
+        profile: &agent_domain::AgentProfileV2,
+    ) -> Result<(ModelId, ProviderId), AppServiceError> {
+        let providers = lock(&self.providers);
+        let Some(provider_name) = profile.model.provider.as_deref() else {
+            return Err(AppServiceError::InvalidRequest(format!(
+                "profile `{}` declares no model provider; pass an explicit model",
+                profile.name
+            )));
+        };
+        let provider_id = ProviderId::from(provider_name);
+        if !providers.contains_key(&provider_id) {
+            return Err(AppServiceError::Authentication(format!(
+                "provider {provider_id} from profile `{}` is not available",
+                profile.name
+            )));
+        }
+        let Some(model_name) = profile.model.name.as_deref() else {
+            return Err(AppServiceError::InvalidRequest(format!(
+                "profile `{}` declares a provider but no model name",
+                profile.name
+            )));
+        };
+        // 优先 registry canonical 条目（同 provider）；否则直接用 profile 声明名。
+        let model = self
+            .model_registry
+            .resolve(model_name)
+            .filter(|entry| entry.provider == provider_id)
+            .map(|entry| entry.id.clone())
+            .unwrap_or_else(|| ModelId::from(model_name));
+        Ok((model, provider_id))
+    }
+
+    /// P17-5：profile 的 canonical 模型落点。
+    ///
+    /// 仅当 profile 同时声明 provider 与 model 名时才存在（`Ok(Some)`）；
+    /// 未声明时返回 `Ok(None)`——显式命令模型只是补全 profile 缺失的模型，
+    /// 不构成 override。provider 声明但未注册时 fail-closed（与
+    /// [`Self::resolve_profile_model`] 一致）。
+    fn profile_canonical_landing(
+        &self,
+        profile: &agent_domain::AgentProfileV2,
+    ) -> Result<Option<ModelLanding>, AppServiceError> {
+        if profile.model.provider.is_none() || profile.model.name.is_none() {
+            return Ok(None);
+        }
+        let (model_id, provider_id) = self.resolve_profile_model(profile)?;
+        Ok(Some(ModelLanding {
+            provider_id,
+            model_id,
+        }))
+    }
+
+    /// P17-5：模型覆盖授权（resolve 后 / record_run 前）。
+    ///
+    /// 显式模型与 profile canonical 落点不同时，以 source + identity +
+    /// workspace + profile/from/to 提交给注入策略；Deny 返回结构化
+    /// Authorization 错误，绝不静默放行。
+    fn authorize_model_override(
+        &self,
+        source: &CommandSource,
+        identity: &ActorIdentity,
+        workspace_id: &WorkspaceId,
+        profile_name: &str,
+        from: &ModelLanding,
+        to: &ModelLanding,
+    ) -> Result<(), AppServiceError> {
+        let request = ModelOverrideRequest {
+            source: source.clone(),
+            identity: identity.clone(),
+            workspace_id: workspace_id.clone(),
+            profile_name: profile_name.to_string(),
+            from: from.clone(),
+            to: to.clone(),
+        };
+        match lock(&self.model_override_policy).allow(&request) {
+            ModelOverrideDecision::Allow => Ok(()),
+            ModelOverrideDecision::Deny => Err(AppServiceError::Authorization(format!(
+                "model override denied by policy: profile `{profile_name}` pins \
+                 {}/{} but explicit model lands on {}/{}",
+                from.provider_id, from.model_id, to.provider_id, to.model_id
+            ))),
         }
     }
 

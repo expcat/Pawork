@@ -22,7 +22,7 @@
 //!
 //! # 接口
 //!
-//! [`MonitorService`]：命令面（register / start / evaluate / stop / replay）与
+//! [`MonitorService`]：命令面（register / start / evaluate / stop / unregister / replay）与
 //! 查询面（snapshot / record / records / event_log）+ 实时事件订阅 `subscribe`。
 //! [`state::MonitorServiceState`]：纯聚合状态，`apply` 为事件折叠 / 重放入口。
 

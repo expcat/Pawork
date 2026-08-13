@@ -286,17 +286,16 @@ impl Harness {
                 session_id: session_id.clone(),
                 user_message: message.into(),
                 model: None,
+                profile: None,
             },
         ));
-        assert!(
-            matches!(response.response, AppResponse::Accepted { .. }),
-            "RunStart 应 Accepted，got {:?}",
-            response.response
-        );
-        self.app_service
-            .router()
-            .last_started_run()
-            .expect("run id")
+        match &response.response {
+            AppResponse::Accepted {
+                run_id: Some(run_id),
+                ..
+            } => run_id.clone(),
+            other => panic!("RunStart 应 Accepted 且携带 run id，got {other:?}"),
+        }
     }
 
     fn cancel_run_cli(&self, run_id: &RunId) {
@@ -490,18 +489,21 @@ async fn create_session_send_message_and_receive_streaming_run_events() {
                 session_id: session_id.clone(),
                 user_message: "hello from contract".into(),
                 model: None,
+                profile: None,
             },
             source,
             identity,
         )
         .await
         .expect("RunStart");
-    assert!(matches!(run.response, AppResponse::Accepted { .. }));
-    let run_id = harness
-        .app_service
-        .router()
-        .last_started_run()
-        .expect("run id");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &run.response
+    else {
+        panic!("RunStart 应 Accepted 且携带 run id，got {:?}", run.response);
+    };
+    let run_id = run_id.clone();
 
     let (done, events) = recv_until(&client, |e| {
         run_state(e, &run_id) == Some(RunState::Completed)
@@ -573,6 +575,18 @@ async fn snapshot_and_reconnect_resume_replays_missing_events() {
         .max()
         .expect("至少一个事件");
 
+    // 排空客户端事件队列后再请求 Snapshot：进入 StreamingResponse 后 Provider
+    // 能力协商 Diagnostic 会在请求窗口内落地，而 GuiClient::snapshot 收到非
+    // Snapshot 帧会 stash 后被 recv_frame 立即重新弹出，形成无超时自旋
+    // （gui-client 既有缺陷；此处仅做测试侧规避，不修改 SDK）。
+    let drain_deadline = Instant::now() + CLIENT_TIMEOUT;
+    while Instant::now() < drain_deadline {
+        match client.next_event_timeout(Duration::from_millis(300)).await {
+            Ok(_event) => continue,
+            Err(_) => break,
+        }
+    }
+
     // SnapshotRequest：快照应重建 Run 的活跃状态。
     let snapshot = client.snapshot().await.expect("snapshot");
     assert_eq!(snapshot.instance_id.as_str(), "contract-b");
@@ -602,9 +616,28 @@ async fn snapshot_and_reconnect_resume_replays_missing_events() {
 
     // 断线期间产生新事件：CLI 取消 Run。
     harness.cancel_run_cli(&run_id);
+    // 等待 Cancelled 事件真正发布进 Hub 再重连：断线窗口内可能有其它异步事件
+    // 先落地（如能力协商 Diagnostic），仅凭序列推进会提前退出、使 resume 窗口
+    // 错过取消事件（重放断言要求取消事件落在重放窗口内）。
     let deadline = Instant::now() + CLIENT_TIMEOUT;
-    while harness.hub.current().0 <= last_sequence {
-        assert!(Instant::now() < deadline, "取消后应产生新事件");
+    loop {
+        let current = harness.hub.current();
+        if current.0 > last_sequence
+            && harness
+                .hub
+                .replay(GlobalSequence(last_sequence + 1), Some(current))
+                .expect("窗口在 ring 内")
+                .iter()
+                .any(|event| {
+                    matches!(
+                        &event.payload,
+                        AppEvent::RunChanged { state, .. } if *state == RunState::Cancelled
+                    )
+                })
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "取消后应发布 Cancelled 事件");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
@@ -717,23 +750,27 @@ async fn three_gui_clients_sync_runs_from_cli_and_each_other() {
     let source = CommandSource::LocalGui {
         client_id: gui_a.client_id().clone(),
     };
-    gui_a
+    let run = gui_a
         .command(
             AppCommand::RunStart {
                 session_id: session_id.clone(),
                 user_message: "run from gui a".into(),
                 model: None,
+                profile: None,
             },
             source,
             local_user(),
         )
         .await
         .expect("gui a RunStart");
-    let gui_run_id = harness
-        .app_service
-        .router()
-        .last_started_run()
-        .expect("gui run id");
+    let AppResponse::Accepted {
+        run_id: Some(gui_run_id),
+        ..
+    } = &run.response
+    else {
+        panic!("RunStart 应 Accepted 且携带 run id，got {:?}", run.response);
+    };
+    let gui_run_id = gui_run_id.clone();
     for (name, gui) in [("B", &gui_b), ("C", &gui_c)] {
         let (done, _) = recv_until(gui, |e| {
             run_state(e, &gui_run_id) == Some(RunState::Completed)

@@ -92,6 +92,7 @@ async fn session_events() -> Result<(), String> {
                 session_id,
                 user_message: "hello from self-test".into(),
                 model: None,
+                profile: None,
             },
             CommandSource::LocalGui {
                 client_id: client.client_id().clone(),
@@ -100,14 +101,14 @@ async fn session_events() -> Result<(), String> {
         )
         .await
         .map_err(|e| format!("RunStart: {e}"))?;
-    if !matches!(run.response, AppResponse::Accepted { .. }) {
-        return Err(format!("RunStart 应 Accepted，got {:?}", run.response));
-    }
-    let run_id = harness
-        .app_service
-        .router()
-        .last_started_run()
-        .ok_or("last_started_run 缺失")?;
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &run.response
+    else {
+        return Err(format!("RunStart 响应缺少 run id，got {:?}", run.response));
+    };
+    let run_id = run_id.clone();
 
     let (done, events) = recv_until(&client, |e| {
         run_state(e, &run_id) == Some(RunState::Completed)
@@ -289,12 +290,13 @@ async fn three_gui_sync() -> Result<(), String> {
 
     // GUI A 发起的 Run 同步到 GUI B / C 与 CLI 观察者。
     let mut cli_observer = harness.hub.subscribe();
-    gui_a
+    let run = gui_a
         .command(
             AppCommand::RunStart {
                 session_id: session_id.clone(),
                 user_message: "run from gui a".into(),
                 model: None,
+                profile: None,
             },
             CommandSource::LocalGui {
                 client_id: gui_a.client_id().clone(),
@@ -303,11 +305,14 @@ async fn three_gui_sync() -> Result<(), String> {
         )
         .await
         .map_err(|e| format!("gui a RunStart: {e}"))?;
-    let gui_run_id = harness
-        .app_service
-        .router()
-        .last_started_run()
-        .ok_or("gui run id 缺失")?;
+    let AppResponse::Accepted {
+        run_id: Some(gui_run_id),
+        ..
+    } = &run.response
+    else {
+        return Err(format!("RunStart 响应缺少 run id，got {:?}", run.response));
+    };
+    let gui_run_id = gui_run_id.clone();
     for (name, gui) in [("B", &gui_b), ("C", &gui_c)] {
         let (done, _) = recv_until(gui, |e| {
             run_state(e, &gui_run_id) == Some(RunState::Completed)

@@ -13,11 +13,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_domain::CancellationToken;
-use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
-use tokio::process::Child;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::sync::{mpsc, watch};
+use tokio::process::{Child, ChildStdin};
+use tokio::sync::{mpsc, watch, Mutex};
 
 const PROCESS_TREE_KILL_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -106,6 +106,46 @@ pub enum ProcessEvent {
     Exit { code: Option<i32>, truncated: bool },
 }
 
+/// 受控子进程的 stdin 写入端。
+///
+/// 写入仍属于 [`ProcessRuntime`] 创建并监督的同一进程；clone 仅共享串行化写入端，
+/// 不会创建额外进程或绕过进程树生命周期。
+#[derive(Clone)]
+pub struct ProcessInput {
+    inner: Arc<Mutex<Option<ChildStdin>>>,
+}
+
+impl ProcessInput {
+    fn new(stdin: ChildStdin) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Some(stdin))),
+        }
+    }
+
+    /// 完整写入一段字节并 flush，避免协议帧在用户态缓冲区中滞留。
+    pub async fn write_all(&self, bytes: &[u8]) -> Result<(), ProcessError> {
+        let mut guard = self.inner.lock().await;
+        let stdin = guard.as_mut().ok_or_else(|| {
+            ProcessError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "process stdin is closed",
+            ))
+        })?;
+        stdin.write_all(bytes).await?;
+        stdin.flush().await?;
+        Ok(())
+    }
+
+    /// 关闭 stdin；幂等。进程生命周期仍由 [`ProcessHandle`] 负责。
+    pub async fn close(&self) -> Result<(), ProcessError> {
+        let mut guard = self.inner.lock().await;
+        if let Some(mut stdin) = guard.take() {
+            stdin.shutdown().await?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProcessError {
     #[error("failed to spawn process `{program}`: {source}")]
@@ -186,7 +226,7 @@ impl ProcessRuntime {
         spec: CommandSpec,
         cancel: CancellationToken,
     ) -> Result<ProcessOutput, ProcessError> {
-        let (mut child, tree) = spawn_child(&spec)?;
+        let (mut child, tree) = spawn_child(&spec, false)?;
         let max = spec.max_output_bytes;
 
         // 并发读 stdout/stderr，避免管道死锁。
@@ -282,7 +322,45 @@ impl ProcessRuntime {
         spec: CommandSpec,
         cancel: CancellationToken,
     ) -> Result<(mpsc::Receiver<ProcessEvent>, ProcessHandle), ProcessError> {
-        let (mut child, tree) = spawn_child(&spec)?;
+        let (events, input, handle) = self.spawn_stream_inner(spec, cancel, false).await?;
+        debug_assert!(input.is_none());
+        Ok((events, handle))
+    }
+
+    /// 双向流式执行：除 stdout/stderr 事件外返回受控 stdin 写入端。
+    ///
+    /// LSP、MCP 等 Core-owned 长驻协议进程必须使用本入口，再由 Sandbox Runtime
+    /// 包装；它与 [`Self::spawn_stream`] 共用 timeout/cancel/进程树监督状态机。
+    pub async fn spawn_interactive(
+        &self,
+        spec: CommandSpec,
+        cancel: CancellationToken,
+    ) -> Result<(mpsc::Receiver<ProcessEvent>, ProcessInput, ProcessHandle), ProcessError> {
+        let (events, input, handle) = self.spawn_stream_inner(spec, cancel, true).await?;
+        let input = input.ok_or_else(|| {
+            ProcessError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "interactive process did not expose stdin",
+            ))
+        })?;
+        Ok((events, input, handle))
+    }
+
+    async fn spawn_stream_inner(
+        &self,
+        spec: CommandSpec,
+        cancel: CancellationToken,
+        pipe_stdin: bool,
+    ) -> Result<
+        (
+            mpsc::Receiver<ProcessEvent>,
+            Option<ProcessInput>,
+            ProcessHandle,
+        ),
+        ProcessError,
+    > {
+        let (mut child, tree) = spawn_child(&spec, pipe_stdin)?;
+        let input = child.stdin.take().map(ProcessInput::new);
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let (tx, rx) = mpsc::channel(64);
@@ -380,15 +458,22 @@ impl ProcessRuntime {
             kill,
             done,
         };
-        Ok((rx, handle))
+        Ok((rx, input, handle))
     }
 }
 
 /// spawn 子进程并立即绑定平台进程树守卫。
-fn spawn_child(spec: &CommandSpec) -> Result<(Child, ProcessTreeGuard), ProcessError> {
+fn spawn_child(
+    spec: &CommandSpec,
+    pipe_stdin: bool,
+) -> Result<(Child, ProcessTreeGuard), ProcessError> {
     let mut command = Command::new(&spec.program);
     command.args(&spec.args);
-    command.stdin(Stdio::null());
+    command.stdin(if pipe_stdin {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
     command.kill_on_drop(true);

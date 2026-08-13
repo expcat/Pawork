@@ -713,6 +713,25 @@ pub struct CompatImportReport {
     pub unknown_fields: BTreeMap<String, String>,
 }
 
+/// 导入历史条目（一条 `(source, original_id)` identity 对应一次导入；
+/// 重复导入命中 identity 时幂等去重，不新增条目）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompatImportHistoryEntry {
+    pub session_id: String,
+    pub source: ExternalSource,
+    pub original_id: Option<String>,
+    pub imported_events: usize,
+    /// 导入时间（unix ms；旧数据无真实时间戳时为 0，排序靠后）。
+    pub imported_at_unix_ms: u64,
+}
+
+/// 导入历史分页结果。`cursor` 为不透明续页令牌（无更多页时为 `None`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CompatImportHistoryPage {
+    pub entries: Vec<CompatImportHistoryEntry>,
+    pub cursor: Option<String>,
+}
+
 /// 把归一记录映射为 canonical event 序列（含 `RunStarted` / `RunCompleted` 边界）。
 fn map_to_events(
     session: &SessionId,
@@ -1065,10 +1084,151 @@ impl SessionStore {
             };
         import_compat_inner(self, source, &content).await
     }
+
+    /// 只校验与解析，**不落库**（dry run）：与 [`Self::import_compat`] 相同的
+    /// Secret 扫描、解析、结构校验与计数，返回完整报告但零持久化。
+    pub async fn import_compat_dry_run(
+        &self,
+        source: ExternalSource,
+        content: &str,
+    ) -> Result<CompatImportReport, SessionStoreError> {
+        // 1. Secret 扫描（与真实导入同一拒绝策略）。
+        if let Some(pattern) = find_secret(content) {
+            return Err(SessionStoreError::CompatSecretDetected {
+                pattern: pattern.into(),
+            });
+        }
+        // 2. 解析 + 3. identity / 会话 id 推导（不持久化）。
+        let parsed = parse_external(source, content)?;
+        let session_id = derive_compat_session_id(source, parsed.original_id.as_deref(), content);
+        let run_id = RunId::from(format!("compat-run-{}", session_id.as_str()));
+        let events = map_to_events(&session_id, &run_id, &parsed);
+        // 4. 结构校验（失败同样报错，与真实导入一致）。
+        validate_structure(&events)?;
+        let counts = count_records(&parsed.records);
+        Ok(CompatImportReport {
+            source: parsed.source,
+            session_id: session_id.to_string(),
+            original_id: parsed.original_id.clone(),
+            imported_events: events.len(),
+            imported_messages: counts.messages,
+            imported_tool_calls: counts.tool_calls,
+            imported_tool_results: counts.tool_results,
+            imported_usages: counts.usages,
+            imported_reviews: counts.reviews,
+            raw_records: counts.raw,
+            deduplicated: false,
+            unknown_fields: parsed.unknown_fields.clone(),
+        })
+    }
+
+    /// 导入历史（分页，按导入时间倒序）。`limit` 缺省 50，上限 500；
+    /// `cursor` 来自上一页返回的不透明令牌。
+    pub async fn compat_import_history(
+        &self,
+        limit: Option<u32>,
+        cursor: Option<&str>,
+    ) -> Result<CompatImportHistoryPage, SessionStoreError> {
+        const DEFAULT_LIMIT: u32 = 50;
+        const MAX_LIMIT: u32 = 500;
+        let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
+        // 键集分页：(updated_at_ms DESC, session_id DESC)；游标为
+        // `"{updated_at_ms}:{session_id}"`（不透明）。
+        let (cursor_ms, cursor_session): (i64, String) = match cursor {
+            Some(raw) => {
+                let (ms, session) = raw
+                    .split_once(':')
+                    .ok_or_else(|| SessionStoreError::InvalidHistoryCursor(raw.to_string()))?;
+                let ms = ms
+                    .parse::<i64>()
+                    .map_err(|_| SessionStoreError::InvalidHistoryCursor(raw.to_string()))?;
+                (ms, session.to_string())
+            }
+            None => (i64::MAX, String::new()),
+        };
+        let entries = self
+            .database()
+            .call(
+                move |connection| -> Result<Vec<CompatImportHistoryEntry>, SessionStoreError> {
+                    let mut statement = connection.prepare(
+                        "SELECT i.session_id, i.source, i.original_id, s.updated_at_ms, \
+                     (SELECT COUNT(*) FROM session_events e \
+                      WHERE e.session_id = i.session_id) AS event_count \
+                     FROM compat_import_identity i \
+                     JOIN sessions s ON s.session_id = i.session_id \
+                     WHERE (s.updated_at_ms < ?1) \
+                        OR (s.updated_at_ms = ?1 AND i.session_id < ?2) \
+                     ORDER BY s.updated_at_ms DESC, i.session_id DESC \
+                     LIMIT ?3",
+                    )?;
+                    let rows = statement.query_map(
+                        params![cursor_ms, cursor_session, limit as i64 + 1],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                                row.get::<_, i64>(3)?,
+                                row.get::<_, i64>(4)?,
+                            ))
+                        },
+                    )?;
+                    let raw = rows.collect::<Result<Vec<_>, _>>()?;
+                    raw.into_iter()
+                        .map(
+                            |(
+                                session_id,
+                                source_label,
+                                original_id,
+                                imported_at_ms,
+                                event_count,
+                            )| {
+                                let source = match source_label.as_str() {
+                                    "claude" => ExternalSource::Claude,
+                                    "codex" => ExternalSource::Codex,
+                                    "grok" => ExternalSource::Grok,
+                                    "cursor" => ExternalSource::Cursor,
+                                    other => {
+                                        return Err(SessionStoreError::InvalidHistorySource(
+                                            other.to_string(),
+                                        ));
+                                    }
+                                };
+                                Ok(CompatImportHistoryEntry {
+                                    session_id,
+                                    source,
+                                    original_id: original_id.filter(|id| !id.is_empty()),
+                                    imported_events: event_count.max(0) as usize,
+                                    imported_at_unix_ms: imported_at_ms.max(0) as u64,
+                                })
+                            },
+                        )
+                        .collect()
+                },
+            )
+            .await??;
+        // 多取 1 条探测是否还有下一页；`limit` 为 0 时没有（clamp 保证 ≥1）。
+        let has_more = entries.len() > limit;
+        let mut entries = entries;
+        entries.truncate(limit);
+        let cursor = has_more.then(|| {
+            let last = entries.last().expect("entries non-empty when has_more");
+            format!("{}:{}", last.imported_at_unix_ms, last.session_id)
+        });
+        Ok(CompatImportHistoryPage { entries, cursor })
+    }
 }
 
 /// compat 导入 session 的固定 created_at（ms），与事件时间戳（`1_000 + seq`）解耦。
 const COMPAT_CREATED_AT_MS: i64 = 1;
+
+/// 当前 unix 毫秒（compat 导入时间戳 / 历史排序使用）。
+fn now_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
 
 /// 单事务导入的结果：新建导入或命中既有 identity 的幂等去重。
 enum ImportOutcome {
@@ -1096,6 +1256,7 @@ async fn import_compat_inner(
     let identity = effective_identity(parsed.original_id.as_deref(), content);
     let session_id = derive_compat_session_id(source, parsed.original_id.as_deref(), content);
     let counts = count_records(&parsed.records);
+    let imported_at_ms = now_unix_ms();
     // 4. 映射为 canonical event 序列（run / message / tool id 全部 session-scoped）。
     let run_id = RunId::from(format!("compat-run-{}", session_id.as_str()));
     let events = map_to_events(&session_id, &run_id, &parsed);
@@ -1165,6 +1326,12 @@ async fn import_compat_inner(
                 for envelope in &events {
                     persist_event_in_transaction(&transaction, DEFAULT_BRANCH_ID, envelope)?;
                 }
+                // 事件持久化会用（合成的）事件时间戳刷新 updated_at_ms；这里在
+                // 同一事务内把它恢复为真实导入时间，作为导入历史的排序依据。
+                transaction.execute(
+                    "UPDATE sessions SET updated_at_ms=?1 WHERE session_id=?2",
+                    params![imported_at_ms, session_id_str],
+                )?;
                 transaction.commit()?;
                 Ok(ImportOutcome::Imported {
                     session_id: session_id_str,
@@ -1773,5 +1940,133 @@ mod tests {
             }
         });
         assert_eq!(delta.as_deref(), Some(r#"{"cmd":"cargo test"}"#));
+    }
+
+    #[tokio::test]
+    async fn dry_run_validates_without_persisting_anything() {
+        let store = open_store().await;
+        let report = store
+            .import_compat_dry_run(ExternalSource::Claude, CLAUDE_JSON)
+            .await
+            .expect("dry run");
+        assert!(!report.deduplicated);
+        assert!(report.imported_events > 0);
+        assert!(report.imported_messages >= 2, "claude messages counted");
+        assert_eq!(
+            report.session_id,
+            derive_compat_session_id(ExternalSource::Claude, Some("claude-abc"), CLAUDE_JSON,)
+                .to_string()
+        );
+        // 零持久化：无 identity 行、无事件。
+        assert!(identity_row(&store, "claude", "claude-abc").await.is_none());
+        let events = store
+            .replay_events(&SessionId::from(report.session_id.clone()), 1, 1_000)
+            .await
+            .expect("replay");
+        assert!(events.is_empty(), "dry run must not persist events");
+
+        // Secret 拒绝策略与真实导入一致。
+        let secret = r#"{
+            "conversation_id": "leaky",
+            "chat_messages": [{"sender": "human", "text": "key sk-ant-abcdefghijklmnopqrstuvwxyz0123456789"}]
+        }"#;
+        let error = store
+            .import_compat_dry_run(ExternalSource::Claude, secret)
+            .await
+            .expect_err("secret must be rejected in dry run too");
+        assert!(matches!(
+            error,
+            SessionStoreError::CompatSecretDetected { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn history_lists_imports_in_reverse_chronological_order_with_paging() {
+        let store = open_store().await;
+        // 三个不同 identity；导入顺序决定 updated_at_ms 倒序。
+        let first = store
+            .import_compat(ExternalSource::Claude, CLAUDE_JSON)
+            .await
+            .expect("first import");
+        let second_json = r#"{
+            "conversation_id": "claude-history-2",
+            "chat_messages": [{"sender": "human", "text": "two"}]
+        }"#;
+        let second = store
+            .import_compat(ExternalSource::Claude, second_json)
+            .await
+            .expect("second import");
+        let codex = concat!(
+            r#"{"type":"message","role":"user","content":[{"type":"input_text","text":"codex"}]}"#,
+            "\n",
+            r#"{"type":"function_call","call_id":"h1","name":"shell","session_id":"codex-h"}"#,
+            "\n",
+            r#"{"type":"function_call_output","call_id":"h1","output":"ok"}"#,
+        );
+        let third = store
+            .import_compat(ExternalSource::Codex, codex)
+            .await
+            .expect("third import");
+        assert_ne!(first.session_id, second.session_id);
+        assert_ne!(second.session_id, third.session_id);
+
+        // 同一 identity 重复导入 → 幂等去重，不产生新条目。
+        let dedup = store
+            .import_compat(ExternalSource::Claude, CLAUDE_JSON)
+            .await
+            .expect("dedup import");
+        assert!(dedup.deduplicated);
+        assert_eq!(dedup.session_id, first.session_id);
+
+        // 全量（limit 足够大）：最新导入在前。
+        let page = store
+            .compat_import_history(Some(100), None)
+            .await
+            .expect("history");
+        assert_eq!(page.entries.len(), 3, "three identities, dedup adds none");
+        assert_eq!(page.entries[0].session_id, third.session_id);
+        assert_eq!(page.entries[1].session_id, second.session_id);
+        assert_eq!(page.entries[2].session_id, first.session_id);
+        assert_eq!(page.entries[0].source, ExternalSource::Codex);
+        assert_eq!(page.entries[2].original_id.as_deref(), Some("claude-abc"));
+        assert!(
+            page.entries[2].imported_events > 0,
+            "event count derived from persisted session events"
+        );
+        assert!(
+            page.entries[2].imported_at_unix_ms > 0,
+            "import time persisted on the session row"
+        );
+        assert!(page.cursor.is_none(), "no more pages");
+
+        // 分页：limit=1 逐页走完，游标稳定续页。
+        let first_page = store
+            .compat_import_history(Some(1), None)
+            .await
+            .expect("first page");
+        assert_eq!(first_page.entries.len(), 1);
+        assert_eq!(first_page.entries[0].session_id, third.session_id);
+        let cursor = first_page.cursor.expect("more pages");
+        let second_page = store
+            .compat_import_history(Some(1), Some(&cursor))
+            .await
+            .expect("second page");
+        assert_eq!(second_page.entries.len(), 1);
+        assert_eq!(second_page.entries[0].session_id, second.session_id);
+        let cursor = second_page.cursor.expect("more pages");
+        let third_page = store
+            .compat_import_history(Some(1), Some(&cursor))
+            .await
+            .expect("third page");
+        assert_eq!(third_page.entries.len(), 1);
+        assert_eq!(third_page.entries[0].session_id, first.session_id);
+        assert!(third_page.cursor.is_none(), "last page has no cursor");
+
+        // 非法游标显式报错。
+        let error = store
+            .compat_import_history(Some(10), Some("not-a-cursor"))
+            .await
+            .expect_err("malformed cursor");
+        assert!(matches!(error, SessionStoreError::InvalidHistoryCursor(_)));
     }
 }

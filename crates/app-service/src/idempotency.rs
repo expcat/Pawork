@@ -194,6 +194,7 @@ mod tests {
             responded_at: Timestamp::from_unix_millis(1),
             response: AppResponse::Accepted {
                 command_id: CommandId::from(command_id),
+                run_id: None,
             },
         }
     }

@@ -147,13 +147,14 @@ impl GuiListener for GuiServerListener {
 mod tests {
     use super::*;
     use agent_domain::{
-        ActorId, ArtifactId, CommandId, CoreInstanceId, GuiClientId, QueryId, Timestamp,
+        ActorId, ArtifactId, CommandId, CoreInstanceId, GuiClientId, QueryId, SessionId, Timestamp,
+        WorkspaceId,
     };
     use artifact_store::ArtifactStore;
     use client_auth::{Token, TokenAuthenticator, TokenStore};
     use core_api::{
         ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope,
-        AppResponse, CommandSource, API_VERSION, SUPPORTED_API_VERSIONS,
+        AppResponse, ClientContextSnapshot, CommandSource, API_VERSION, SUPPORTED_API_VERSIONS,
     };
     use gui_protocol::{
         decode_server_frame, encode_client_frame, ArtifactReadRequest, ClientAuthentication,
@@ -382,6 +383,202 @@ mod tests {
             panic!("expected query response");
         };
         assert!(matches!(query_response.response, AppResponse::Data(_)));
+
+        client.conn.close().await.expect("client close");
+        session.close().await.expect("session close");
+    }
+
+    #[tokio::test]
+    async fn server_stamps_host_source_and_identity_over_wire() {
+        // P17-5 主审修复：线上伪造的 source/identity 不进入 app-service；
+        // 服务端按连接事实（locality + 服务端分配的 client/connection）盖戳。
+        let harness = harness("gui-stamp").await;
+        let (client, session) = open_session(&harness, "gui-stamp").await;
+        let response = handshake(&client, Some(authentication(&harness.token))).await;
+        let HandshakeResponse::Accepted { client_id, .. } = response else {
+            panic!("expected accepted handshake: {response:?}");
+        };
+        assert_eq!(client_id.as_str(), "client-0");
+
+        // 命令：wire 伪造 RemoteGui + System，服务端必须重写为 LocalGui +
+        // LocalUser（本机 MemoryTransport = InProcess locality）。
+        client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("cmd-forged"),
+                source: CommandSource::RemoteGui {
+                    client_id: GuiClientId::from("forged"),
+                    connection_id: agent_domain::ConnectionId::from("forged"),
+                },
+                identity: ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(1),
+                command: AppCommand::WorkspaceAdd {
+                    root_path: std::env::temp_dir().to_string_lossy().into_owned(),
+                },
+            }))
+            .await;
+        let ServerFrame::Response(command_response) = client.recv().await else {
+            panic!("expected command response");
+        };
+        assert!(matches!(command_response.response, AppResponse::Data(_)));
+
+        // 查询：wire 伪造 Automation 身份，同样必须重写（query 同理）。
+        client
+            .send(&ClientFrame::Query(AppQueryEnvelope {
+                api_version: API_VERSION,
+                request_id: QueryId::from("q-forged"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::Automation {
+                    name: "forged".into(),
+                },
+                issued_at: Timestamp::from_unix_millis(2),
+                query: AppQuery::WorkspaceList,
+            }))
+            .await;
+        let ServerFrame::Response(query_response) = client.recv().await else {
+            panic!("expected query response");
+        };
+        assert!(matches!(query_response.response, AppResponse::Data(_)));
+
+        let sources = harness.app_service.router().source_stats();
+        assert_eq!(
+            sources.get("local_gui"),
+            Some(&2),
+            "command+query 都必须盖戳为 LocalGui: {sources:?}"
+        );
+        assert!(
+            !sources.contains_key("remote_gui"),
+            "forged RemoteGui 不得透传"
+        );
+        assert!(
+            !sources.contains_key("automation"),
+            "forged Automation 不得透传"
+        );
+        let identities = harness.app_service.router().identity_stats();
+        assert_eq!(
+            identities.get("local_user:client-0"),
+            Some(&2),
+            "identity 必须为服务端派生的 LocalUser: {identities:?}"
+        );
+        assert!(!identities.contains_key("system"), "forged System 不得透传");
+        assert!(
+            !identities.contains_key("automation:forged"),
+            "forged Automation 身份不得透传"
+        );
+
+        client.conn.close().await.expect("client close");
+        session.close().await.expect("session close");
+    }
+
+    #[tokio::test]
+    async fn gui_wire_cannot_inject_client_context() {
+        let harness = harness("gui-context-deny").await;
+        let (client, session) = open_session(&harness, "gui-context-deny").await;
+        let response = handshake(&client, Some(authentication(&harness.token))).await;
+        let HandshakeResponse::Accepted { client_id, .. } = response else {
+            panic!("expected accepted handshake: {response:?}");
+        };
+
+        client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("cmd-ws"),
+                source: CommandSource::LocalGui {
+                    client_id: client_id.clone(),
+                },
+                identity: local_user(),
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(1),
+                command: AppCommand::WorkspaceAdd {
+                    root_path: std::env::temp_dir().to_string_lossy().into_owned(),
+                },
+            }))
+            .await;
+        let ServerFrame::Response(ws_response) = client.recv().await else {
+            panic!("expected workspace response");
+        };
+        let workspace_id = match &ws_response.response {
+            AppResponse::Data(value) => WorkspaceId::from(
+                value
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("workspace id"),
+            ),
+            other => panic!("expected workspace data, got {other:?}"),
+        };
+
+        client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("cmd-session"),
+                source: CommandSource::LocalGui {
+                    client_id: client_id.clone(),
+                },
+                identity: local_user(),
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(2),
+                command: AppCommand::SessionCreate {
+                    workspace_id,
+                    title: Some("gui-context".into()),
+                },
+            }))
+            .await;
+        let ServerFrame::Response(session_response) = client.recv().await else {
+            panic!("expected session response");
+        };
+        let session_id = match &session_response.response {
+            AppResponse::Data(value) => SessionId::from(
+                value
+                    .get("session_id")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("session id"),
+            ),
+            other => panic!("expected session data, got {other:?}"),
+        };
+
+        client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("cmd-context"),
+                source: CommandSource::LocalGui {
+                    client_id: client_id.clone(),
+                },
+                identity: local_user(),
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(3),
+                command: AppCommand::SessionClientContextReplace {
+                    session_id: session_id.clone(),
+                    snapshot: ClientContextSnapshot {
+                        revision: 1,
+                        active_document: None,
+                        open_documents: vec![],
+                        diagnostics: vec![],
+                    },
+                },
+            }))
+            .await;
+        match client.recv().await {
+            ServerFrame::Error(envelope) => {
+                assert_eq!(envelope.request_id.as_deref(), Some("cmd-context"));
+                assert_eq!(envelope.error.code, ProtocolErrorCode::PermissionDenied);
+                assert!(!envelope.error.retryable);
+            }
+            other => panic!("expected permission denied error, got {other:?}"),
+        }
+        assert!(
+            harness
+                .app_service
+                .router()
+                .aggregate()
+                .client_context(&session_id)
+                .is_none(),
+            "GUI must not persist client context"
+        );
 
         client.conn.close().await.expect("client close");
         session.close().await.expect("session close");

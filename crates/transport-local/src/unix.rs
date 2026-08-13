@@ -105,7 +105,7 @@ impl GuiListener for UnixSocketListener {
         if self.closed.load(Ordering::Acquire) {
             return Err(connection_closed("listener is closed"));
         }
-        let mut guard = self.listener.lock().await;
+        let guard = self.listener.lock().await;
         let listener = guard
             .as_ref()
             .ok_or_else(|| connection_closed("listener is closed"))?;

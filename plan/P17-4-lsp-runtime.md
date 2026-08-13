@@ -1,6 +1,6 @@
 # P17-4：LSP Client Runtime（语言服务客户端运行时）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P4-12、P1-9、P8-1、P11-7（协调 P17-9）
+> Phase 17 · Ecosystem & Host Compatibility · 状态：🟢已验收 · 交付成熟度：Target-Verified · 依赖：P4-12、P1-9、P8-1、P11-7（协调 P17-9）
 
 **最终目的**：实现 LSP（Language Server Protocol）客户端运行时——Pawork **作为 LSP Client**，负责启动、管理、调用现有 Language Server（rust-analyzer、pyright、typescript-language-server、gopls、clangd 等），把它们的代码智能（diagnostics / hover / definition / references / document_symbols / workspace_symbols / call_hierarchy / rename / code_actions）收敛为 Agent 可经统一接口消费的 canonical 能力。本任务交付**进程托管 + 协议骨架 + 统一消费接口**及契约测试，不在本任务实现完整语言语义，也不自行实现语言分析器。
 
@@ -27,14 +27,29 @@
 
 ## 验收标准
 
-- [ ] Pawork 作为 LSP Client 启动并托管语言服务子进程，崩溃按策略重启，子进程经 sandbox 执行
-- [ ] LSP `Content-Length` framing 可跨任意 chunk 边界解析，并对非法 / 超大 / EOF 半帧给出有界错误
-- [ ] 九项能力（diagnostics / hover / definition / references / document/workspace symbols / call_hierarchy / rename / code_actions）经统一接口可消费
-- [ ] 文档增量同步正确；rename / code_action 等写操作经 policy + checkpoint 约束，不直接写盘
-- [ ] 支持内置预设与用户配置接入其他 LSP Server；配置作用域与 resource-loader 一致
-- [ ] 本任务不实现「Pawork 对 IDE 暴露 LSP Server」（属 P17-9 可选输出）
-- [ ] 定向 / Mock smoke 通过，不要求 workspace 全量门禁
+- [x] Pawork 作为 LSP Client 启动并托管语言服务子进程，崩溃按策略重启，子进程经 sandbox 执行
+- [x] LSP `Content-Length` framing 可跨任意 chunk 边界解析，并对非法 / 超大 / EOF 半帧给出有界错误
+- [x] 九项能力（diagnostics / hover / definition / references / document/workspace symbols / call_hierarchy / rename / code_actions）经统一接口可消费
+- [x] 文档增量同步正确；rename / code_action 等写操作经 policy + checkpoint 约束，不直接写盘
+- [x] 支持内置预设与用户配置接入其他 LSP Server；配置作用域与 resource-loader 一致
+- [x] 本任务不实现「Pawork 对 IDE 暴露 LSP Server」（属 P17-9 可选输出）
+- [x] 定向 / Mock smoke 通过，不要求 workspace 全量门禁
 
 **相关文档**：[P17-9 IDE Host Adapter](P17-9-ide-host-adapter.md) · [workspace-index](../docs/features/workspace-index.md) · [tools](../docs/features/tools.md) · [process](../docs/features/process.md) · [policy](../docs/features/policy.md) · [sandbox](../docs/features/sandbox.md) · [ROADMAP](../ROADMAP.md)
 
 **依赖建议（2026-08）**：LSP framing 按协议的 `Content-Length` header/body 状态机自实现，不复用 [P2-2](P2-2-sse-parser.md) SSE、[P2-3](P2-3-jsonl-parser.md) JSONL 或 partial-json；不新增第三方依赖，仅在用户明确确认后才评估 `tower-lsp` 之类。复用 `logging` / `resource-loader` / `process-runtime` / `sandbox-runtime`。新 crate `lsp-runtime` 依赖方向：`agent-domain → lsp-runtime → app-service`（作为可选服务暴露）。
+
+## 独立审查修复（2026-08）
+
+针对独立审查 5 点，已在 `crates/lsp-runtime/**` 完成修复并补定向回归（未提交、未推送）：
+
+- **restart 握手 / 写失败关闭新 lifecycle**：`restart_once` 在握手（initialize→initialized→configuration→didOpen resync）全部成功前不安装 writer/lifecycle，任何失败先 `close_lifecycle`；`start()` 握手失败同样摘除并关闭、取消、有界等待 reader。
+- **崩溃代际隔离**：`PendingRequest` 记录注册时代际；restart settle 后 `fail_pending_older_than` 只失败旧代际，进入 Failed 才全清；restart 窗口内 writer 摘除，新请求快速失败不滞留。
+- **diagnostics / notifications**：diagnostics 按 URI 覆盖保留最新值（`diagnostics_snapshot`）；通知队列有界（`MAX_BUFFERED_NOTIFICATIONS=1024`），超限丢最旧并计数，新增 `drain_notifications` / `dropped_notifications`。
+- **九项大结果 fail-closed**：九项统一接口 + `pull_diagnostics` 全经 `offload_typed` / `maybe_offload`，未注入 artifact sink 时大结果显式失败（`requires an artifact sink`），配置 sink 后返回 `Artifact` 引用。
+- **连续重启预算语义**：restart 尝试失败在预算内按同一 `restart_count` 继续重试，预算耗尽才进入 `Failed`；每次尝试计入预算。
+- **注入式 spawn**：全部经 `ServerSpawner` trait（测试用 in-memory `MockSpawner`），无直连 spawn。
+
+新增回归：`tests/restart.rs`（初始握手崩溃关 lifecycle、预算内重试、预算耗尽、restart 窗口快速失败与代际恢复）、`tests/doc_sync.rs`（每 URI 最新诊断 + 有界通知 drain）、`tests/interfaces.rs`（九项无 sink fail-closed + 有 sink 走 artifact）。
+
+验证：`cargo test -p lsp-runtime`（92 passed）；`cargo clippy -p lsp-runtime --all-targets --no-deps -- -D warnings`（干净）；全量 `cargo clippy -p lsp-runtime --all-targets -- -D warnings` 被依赖 crate `resource-loader` 的既有 lint（他人未完成改动）阻塞，不在本任务写集合内。

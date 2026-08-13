@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "acp-golden-session",
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "messageId": "msg-golden-1",
+      "content": {
+        "type": "text",
+        "text": "hello golden"
+      }
+    }
+  }
+}

@@ -143,8 +143,8 @@ pub fn generate_bwrap_argv(policy: &SandboxPolicy, workspace_roots: &[PathBuf]) 
 mod bwrap {
     use super::generate_bwrap_argv;
     use crate::{
-        apply_soft_restrictions, SandboxBackend, SandboxError, SandboxPolicy, SandboxProcess,
-        SandboxProcessSpec,
+        apply_soft_restrictions, SandboxBackend, SandboxError, SandboxInteractiveProcess,
+        SandboxPolicy, SandboxProcess, SandboxProcessSpec,
     };
     use agent_domain::CancellationToken;
     use async_trait::async_trait;
@@ -230,6 +230,37 @@ mod bwrap {
                 _handle: handle,
             })
         }
+
+        async fn spawn_interactive(
+            &self,
+            mut spec: SandboxProcessSpec,
+            policy: SandboxPolicy,
+            cancel: CancellationToken,
+        ) -> Result<SandboxInteractiveProcess, SandboxError> {
+            if !self.available {
+                return Err(SandboxError::BackendUnavailable("bwrap"));
+            }
+            apply_soft_restrictions(&mut spec, &policy)?;
+            let bwrap_args = generate_bwrap_argv(&policy, &spec.workspace_roots);
+            let inner_program = spec.command.program.clone();
+            let inner_args = std::mem::take(&mut spec.command.args);
+            let mut argv = bwrap_args;
+            argv.push("--".into());
+            argv.push(inner_program);
+            argv.extend(inner_args);
+            spec.command.program = "bwrap".into();
+            spec.command.args = argv;
+            let (events, input, handle) = self
+                .runtime
+                .spawn_interactive(spec.command, cancel)
+                .await
+                .map_err(SandboxError::Process)?;
+            Ok(SandboxInteractiveProcess {
+                events,
+                input,
+                handle,
+            })
+        }
     }
 }
 
@@ -246,8 +277,8 @@ mod landlock_backend {
 
     use super::{probe_landlock_support, SYSTEM_READ_PATHS};
     use crate::{
-        apply_soft_restrictions, NetworkMode, SandboxBackend, SandboxError, SandboxPolicy,
-        SandboxProcess, SandboxProcessSpec,
+        apply_soft_restrictions, NetworkMode, SandboxBackend, SandboxError,
+        SandboxInteractiveProcess, SandboxPolicy, SandboxProcess, SandboxProcessSpec,
     };
 
     const SYSTEM_WRITE_PATHS: &[&str] = &["/dev/null", "/dev/zero"];
@@ -409,6 +440,36 @@ mod landlock_backend {
             Ok(SandboxProcess {
                 events,
                 _handle: handle,
+            })
+        }
+
+        async fn spawn_interactive(
+            &self,
+            mut spec: SandboxProcessSpec,
+            policy: SandboxPolicy,
+            cancel: CancellationToken,
+        ) -> Result<SandboxInteractiveProcess, SandboxError> {
+            if !self.available {
+                return Err(SandboxError::BackendUnavailable("landlock"));
+            }
+            apply_soft_restrictions(&mut spec, &policy)?;
+            if policy.network_mode == NetworkMode::Enforce {
+                tracing::warn!(
+                    target: "pawork.sandbox",
+                    backend = "landlock",
+                    "Landlock enforces filesystem access only; network policy is not hard-enforced"
+                );
+            }
+            spec.command.landlock = Some(compile_policy(&spec, &policy)?);
+            let (events, input, handle) = self
+                .runtime
+                .spawn_interactive(spec.command, cancel)
+                .await
+                .map_err(SandboxError::Process)?;
+            Ok(SandboxInteractiveProcess {
+                events,
+                input,
+                handle,
             })
         }
     }

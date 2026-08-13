@@ -1,0 +1,13 @@
+{
+  "agents": {
+    "builder": {
+      "description": "implements bounded tasks",
+      "instructions": "Implement the assigned slice and verify it.",
+      "model": "gpt-5.2-codex",
+      "tools": ["Read", "Bash", "!WebFetch"],
+      "hooks": { "PostToolUse": [] }
+    }
+  },
+  "recommended": "builder"
+}
+

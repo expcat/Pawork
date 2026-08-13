@@ -186,6 +186,32 @@ impl MonitorService {
         Ok(event)
     }
 
+    /// 注销 monitor：从配置表与 task 映射中移除，发出
+    /// `MonitorEvent::Unregistered` 从视图抹掉记录，并 best-effort 经
+    /// task-manager `cancel` 终止后台任务（Queued 静默移除；Running/Suspended
+    /// 发 Canceled；已 Completed 的 cancel 是 no-op）。未知 id 一律 fail-closed
+    /// 为 [`MonitorServiceError::UnknownMonitor`]。成功后同一 id 可再次
+    /// [`register`]，重新 `start` 时累计字段从零开始。
+    pub fn unregister(
+        &self,
+        monitor_id: &MonitorId,
+    ) -> Result<MonitorEvent, MonitorServiceError> {
+        let mut configs = self.inner.configs.lock().unwrap();
+        if configs.remove(monitor_id).is_none() {
+            return Err(MonitorServiceError::UnknownMonitor(monitor_id.clone()));
+        }
+        let task_id = self.inner.tasks.lock().unwrap().remove(monitor_id);
+        drop(configs);
+        let event = MonitorEvent::Unregistered {
+            monitor_id: monitor_id.clone(),
+        };
+        self.apply_and_broadcast(event.clone());
+        if let (Some(task_manager), Some(task_id)) = (&self.inner.task_manager, task_id) {
+            let _ = task_manager.cancel(&task_id);
+        }
+        Ok(event)
+    }
+
     /// 重放 canonical 事件序列，重建 monitor 视图（断连 / 重启恢复入口）。
     /// 不重复广播；事件本身应由调用方持久化（经 `AgentEvent::Monitor`）。
     pub fn replay(&self, events: impl IntoIterator<Item = MonitorEvent>) -> usize {

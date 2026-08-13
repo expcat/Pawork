@@ -111,6 +111,11 @@ fn render_event_text(envelope: &AppEventEnvelope) -> String {
             alert.message,
             alert.window
         ),
+        AppEvent::TeamEvent { event } => format!(
+            "{prefix} team {}: {}",
+            event.team_id().as_str(),
+            event.kind().replace('_', " ")
+        ),
     }
 }
 

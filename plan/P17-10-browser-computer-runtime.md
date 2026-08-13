@@ -1,6 +1,6 @@
 # P17-10：Browser / Computer Runtime（可替换后端）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P0-5、P3-4、P4-9、P11-1（协调 P15-1）
+> Phase 17 · Ecosystem & Host Compatibility · 状态：🟢已验收 · 交付成熟度：Target-Verified · 依赖：P0-5、P3-4、P4-9、P11-1（协调 P15-1）
 
 **最终目的**：为 Agent 提供统一的 Browser / Computer 使用运行时，以 `BrowserComputerCapability` facade 收敛——背后是可替换的执行后端（local 浏览器 / Playwright / MCP browser server / provider-hosted computer use），但**每个后端必须映射到 P15-1 的三执行位点之一**，不允许把不同 trust boundary 的后端混入同一个本地 `AgentTool::execute()` 路径。所有操作选择都经 `policy-engine` 审批与审计；只有 Core-owned 的 local / Playwright / 本地 MCP 进程由 `sandbox-runtime` 隔离执行，ProviderHosted / ProviderExtension 从不伪称经过本地沙箱。Agent Engine 不因后端不同走 Provider 名分支（[ADR-002](../docs/adr/ADR-002-agent-engine-provider-decoupled.md)/[031](../docs/adr/ADR-031-sandbox-backend-architecture.md)）。
 
@@ -34,13 +34,20 @@
 
 ## 验收标准
 
-- [ ] Browser/Computer 以 `BrowserComputerCapability` facade 统一，后端按执行位点分流：Local/Playwright→ClientFunction（Core Tool Scheduler）、ProviderHosted→ProviderHosted（ServerToolEvent）、MCP→ClientFunction 或 ProviderExtension
-- [ ] Provider Hosted Computer Use **不进入**本地 `AgentTool::execute()`，生命周期走 P15-5 `ServerToolEvent`（断言 + Mock smoke）
-- [ ] 所有操作选择经 `policy-engine` 审批与审计；Core-owned 后端经 `sandbox-runtime`，ProviderHosted/Extension 不进入本地 sandbox 且边界可见
-- [ ] provider-hosted computer use 走 canonical 域，Agent Engine 不按 Provider 名分支（`no_provider_branch`）
-- [ ] 后端选择有探测与可观测回退；跨 trust boundary 的降级显式记录并符合 Policy，不允许隐式切换
-- [ ] 截图/DOM/大输出经 artifact 引用，操作可取消可审计
-- [ ] 定向 / Mock smoke 覆盖全链路与 provider 不分支断言
+- [x] Browser/Computer 以 `BrowserComputerCapability` facade 统一，后端按执行位点分流：Local/Playwright→ClientFunction（Core Tool Scheduler）、ProviderHosted→ProviderHosted（ServerToolEvent）、MCP→ClientFunction 或 ProviderExtension
+- [x] Provider Hosted Computer Use **不进入**本地 `AgentTool::execute()`，生命周期走 P15-5 `ServerToolEvent`（断言 + Mock smoke）
+- [x] 所有操作选择经 `policy-engine` 审批与审计；Core-owned 后端经 `sandbox-runtime`，ProviderHosted/Extension 不进入本地 sandbox 且边界可见
+- [x] provider-hosted computer use 走 canonical 域，Agent Engine 不按 Provider 名分支（`no_provider_branch`）
+- [x] 后端选择有探测与可观测回退；跨 trust boundary 的降级显式记录并符合 Policy，不允许隐式切换
+- [x] 截图/DOM/大输出经 artifact 引用，操作可取消可审计
+- [x] 定向 / Mock smoke 覆盖全链路与 provider 不分支断言
+
+## 验证记录（2026-08-12）
+
+- `cargo test -p browser-computer-runtime --all-targets`：通过（7 个 unit + 50 个 smoke/contract 测试）。
+- `cargo clippy -p browser-computer-runtime --all-targets -- -D warnings`：通过。
+- 回归覆盖：八类 canonical action、后端探测/显式跨边界回退、ProviderHosted 非本地执行、artifact fail-closed 与敏感 DOM 截断。
+- Validation Level：L1；Full workspace gate：NOT RUN（未命中升级条件）。
 
 **相关文档**：[policy](../docs/features/policy.md) · [sandbox](../docs/features/sandbox.md) · [tools](../docs/features/tools.md) · [providers](../docs/features/providers.md) · [ADR-002 Agent Engine 与 Provider 解耦](../docs/adr/ADR-002-agent-engine-provider-decoupled.md) · [ADR-018 大 payload 走 artifact](../docs/adr/ADR-018-large-payload-artifact-id.md) · [ADR-031 沙箱分层](../docs/adr/ADR-031-sandbox-backend-architecture.md) · [ROADMAP](../ROADMAP.md)
 

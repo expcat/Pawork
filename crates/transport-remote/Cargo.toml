@@ -1,0 +1,35 @@
+[package]
+name = "transport-remote"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 真实远程 GUI Transport：TCP + TLS 1.3 加密、Token 认证、按序号有界续传与端点撤销（P17-11）"
+
+[dependencies]
+async-trait.workspace = true
+client-auth = { path = "../client-auth" }
+rcgen = "0.14"
+rand.workspace = true
+rustls = "0.23"
+rustls-pki-types = "1"
+sha2.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "macros", "rt", "sync", "time"] }
+tokio-rustls = "0.26"
+tracing.workspace = true
+transport-api = { path = "../transport-api" }
+transport-remote-placeholder = { path = "../transport-remote-placeholder" }
+
+[dev-dependencies]
+agent-domain = { path = "../agent-domain" }
+app-service = { path = "../app-service" }
+core-api = { path = "../core-api" }
+gui-protocol = { path = "../gui-protocol" }
+gui-server = { path = "../gui-server" }
+rustls = "0.23"
+sha2.workspace = true
+subscription-hub = { path = "../subscription-hub" }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio-rustls = "0.26"

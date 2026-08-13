@@ -31,10 +31,11 @@ use agent_domain::{
 };
 use app_service::{AppService, ServiceOperation, ServiceRequest, ServiceResponse};
 use cli_command::{
-    Cli, Command, RemoteCommand, RunArgs, RunCommand, ServiceCommand, UsageArgs, UsageUnit,
-    UsageWindow,
+    AcpCommand, Cli, Command, HeadlessArgs, RemoteCommand, RunArgs, RunCommand, ServiceCommand,
+    UsageArgs, UsageUnit, UsageWindow,
 };
 use cli_renderer::{render, render_event, OutputFormat};
+use client_adapter_api::SessionRegistry;
 use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, ApprovalDecision, CommandSource, RunState, API_VERSION,
@@ -44,10 +45,14 @@ use core_api::{
     QuotaWindow, WindowReadView,
 };
 use serde_json::Value;
+use session_store::{SessionStore, SqliteClientSessionRegistryStore};
 use subscription_hub::{EventHub, HubError};
 use transport_remote_placeholder::{
     RemoteGuiTransportProvider, RemotePublishRequest, TransportEndpoint,
 };
+
+mod acp;
+mod headless;
 
 /// run 模式等待终态的超时。
 const RUN_TERMINAL_TIMEOUT: Duration = Duration::from_secs(300);
@@ -65,6 +70,21 @@ pub trait GuiServerHost: Send + Sync {
     fn start(&self, instance: &str) -> Result<(), String>;
     /// 停止 GUI 协议服务器。
     fn stop(&self) -> Result<(), String>;
+
+    /// 绑定一个已发布的远程端点（P17-11：publish 后由同一 Core 实际监听）。
+    /// 实现应把监听器与 accept 循环按 `handle_id` 登记，供 [`Self::close_remote`]
+    /// 关闭；不支持远程端点的宿主返回错误。
+    fn bind_remote(&self, handle_id: &str, endpoint: &TransportEndpoint) -> Result<(), String> {
+        let _ = (handle_id, endpoint);
+        Err("this gui server host does not support remote endpoints".into())
+    }
+
+    /// 关闭一个已绑定远程端点的监听器（unpublish / revoke 前调用）。
+    /// 未知 handle 返回错误；不支持远程端点的宿主无操作。
+    fn close_remote(&self, handle_id: &str) -> Result<(), String> {
+        let _ = handle_id;
+        Ok(())
+    }
 }
 
 /// CLI 宿主：持有同一进程内的 AppService 与 EventHub，按命令路由到
@@ -75,6 +95,8 @@ pub struct CliHost {
     instance: String,
     gui_server: Option<Arc<dyn GuiServerHost>>,
     remote_provider: Option<Arc<dyn RemoteGuiTransportProvider>>,
+    session_store: Option<Arc<SessionStore>>,
+    acp_registry: Option<Arc<SessionRegistry>>,
     next_command_id: AtomicU64,
 }
 
@@ -94,6 +116,8 @@ impl CliHost {
             instance,
             gui_server: None,
             remote_provider: None,
+            session_store: None,
+            acp_registry: None,
             next_command_id: AtomicU64::new(0),
         }
     }
@@ -107,6 +131,18 @@ impl CliHost {
     /// `remote` 命令返回结构化错误。
     pub fn attach_remote_provider(&mut self, provider: Arc<dyn RemoteGuiTransportProvider>) {
         self.remote_provider = Some(provider);
+    }
+
+    /// 注入 SessionStore（headless 模式的 compat 持久化入口；未注入时
+    /// `compat_import` / `compat_history` 返回显式 `UnsupportedCapability`）。
+    pub fn attach_session_store(&mut self, store: Arc<SessionStore>) {
+        self.session_store = Some(store);
+    }
+
+    /// 注入 ACP Session Registry（`pawork acp serve` 库调用方；真实二进制
+    /// 由 main 构造 SQLite-backed registry 后直接走 [`CliHost::run_acp_stdio`]）。
+    pub fn attach_acp_registry(&mut self, registry: Arc<SessionRegistry>) {
+        self.acp_registry = Some(registry);
     }
 
     pub fn service(&self) -> &Arc<AppService> {
@@ -131,6 +167,8 @@ impl CliHost {
                 Some(command) => self.run_control(command, format),
                 None => self.run(args, format).await,
             },
+            Command::Acp(acp) => self.acp_mode(acp.command, format).await,
+            Command::Headless(args) => self.headless_mode(args, format).await,
             Command::Watch => self.watch(format).await,
             Command::Status => self.legacy(ServiceOperation::Status, format),
             Command::Shutdown => self.legacy(ServiceOperation::Shutdown, format),
@@ -147,7 +185,9 @@ impl CliHost {
     /// 远程 GUI 端点生命周期：publish / unpublish。
     ///
     /// 无 Provider 时返回结构化错误；发布成功输出 endpoint 与状态，JSON 模式
-    /// 携带 handle_id / endpoint 供 unpublish 使用。
+    /// 携带 handle_id / endpoint 供 unpublish / revoke 使用。publish 成功后由
+    /// 已装配的 GUI Server 宿主实际 bind 并接受连接；unpublish / revoke 先
+    /// 关闭宿主侧监听器，再撤销端点（凭证失效、连接断开）。
     async fn remote_mode(&self, command: RemoteCommand, format: OutputFormat) -> HostOutcome {
         let Some(provider) = &self.remote_provider else {
             let response = ServiceResponse {
@@ -169,6 +209,33 @@ impl CliHost {
                 };
                 match provider.publish(request).await {
                     Ok(handle) => {
+                        let bound = match &self.gui_server {
+                            Some(host) => match host.bind_remote(&handle.id, &handle.endpoint) {
+                                Ok(()) => true,
+                                Err(error) => {
+                                    // 回滚发布，避免留下未被监听的悬挂端点。
+                                    let _ = provider.unpublish(&handle.id).await;
+                                    return self.remote_failure(
+                                        "publish",
+                                        &format!("bind failed: {error}"),
+                                        format,
+                                    );
+                                }
+                            },
+                            None => {
+                                // 远程端点没有同一 Core 的 GuiServer bind/accept
+                                // 就不可发布：立即回滚 listener 与 endpoint credential。
+                                let rollback = provider.unpublish(&handle.id).await;
+                                let message = match rollback {
+                                    Ok(()) => "no gui server host is attached; publish rolled back"
+                                        .to_string(),
+                                    Err(error) => format!(
+                                        "no gui server host is attached; publish rollback failed: {error}"
+                                    ),
+                                };
+                                return self.remote_failure("publish", &message, format);
+                            }
+                        };
                         let address = match &handle.endpoint {
                             TransportEndpoint::Remote { address, .. } => address.clone(),
                             other => format!("{other:?}"),
@@ -177,14 +244,18 @@ impl CliHost {
                             ok: true,
                             kind: "remote".into(),
                             message: format!(
-                                "remote endpoint published via adapter '{}' (handle {}): {}",
-                                description.adapter, handle.id, address
+                                "remote endpoint published via adapter '{}' (handle {}): {}{}",
+                                description.adapter,
+                                handle.id,
+                                address,
+                                if bound { " (bound)" } else { " (not bound)" },
                             ),
                             data: serde_json::json!({
                                 "action": "publish",
                                 "adapter": description.adapter,
                                 "handle_id": handle.id,
                                 "endpoint": handle.endpoint,
+                                "bound": bound,
                                 "status": "published",
                             }),
                         };
@@ -196,25 +267,54 @@ impl CliHost {
                     Err(error) => self.remote_failure("publish", &error.to_string(), format),
                 }
             }
-            RemoteCommand::Unpublish { handle } => match provider.unpublish(&handle).await {
-                Ok(()) => {
-                    let response = ServiceResponse {
-                        ok: true,
-                        kind: "remote".into(),
-                        message: format!("remote endpoint unpublished (handle {handle})"),
-                        data: serde_json::json!({
-                            "action": "unpublish",
-                            "handle_id": handle,
-                            "status": "unpublished",
-                        }),
-                    };
-                    HostOutcome {
-                        output: render(&response, format),
-                        exit_code: 0,
-                    }
+            RemoteCommand::Unpublish { handle } => {
+                if let Some(host) = &self.gui_server {
+                    let _ = host.close_remote(&handle);
                 }
-                Err(error) => self.remote_failure("unpublish", &error.to_string(), format),
-            },
+                match provider.unpublish(&handle).await {
+                    Ok(()) => {
+                        let response = ServiceResponse {
+                            ok: true,
+                            kind: "remote".into(),
+                            message: format!("remote endpoint unpublished (handle {handle})"),
+                            data: serde_json::json!({
+                                "action": "unpublish",
+                                "handle_id": handle,
+                                "status": "unpublished",
+                            }),
+                        };
+                        HostOutcome {
+                            output: render(&response, format),
+                            exit_code: 0,
+                        }
+                    }
+                    Err(error) => self.remote_failure("unpublish", &error.to_string(), format),
+                }
+            }
+            RemoteCommand::Revoke { handle } => {
+                if let Some(host) = &self.gui_server {
+                    let _ = host.close_remote(&handle);
+                }
+                match provider.revoke(&handle).await {
+                    Ok(()) => {
+                        let response = ServiceResponse {
+                            ok: true,
+                            kind: "remote".into(),
+                            message: format!("remote endpoint revoked (handle {handle})"),
+                            data: serde_json::json!({
+                                "action": "revoke",
+                                "handle_id": handle,
+                                "status": "revoked",
+                            }),
+                        };
+                        HostOutcome {
+                            output: render(&response, format),
+                            exit_code: 0,
+                        }
+                    }
+                    Err(error) => self.remote_failure("revoke", &error.to_string(), format),
+                }
+            }
         }
     }
 
@@ -340,15 +440,18 @@ impl CliHost {
             session_id: session_id.clone(),
             user_message: prompt,
             model: None,
+            profile: None,
         });
-        if !matches!(response.response, AppResponse::Accepted { .. }) {
+        let AppResponseEnvelope {
+            response: AppResponse::Accepted { run_id, .. },
+            ..
+        } = &response
+        else {
             return self.envelope_outcome("run", response, format);
-        }
-        let run_id = self
-            .service
-            .router()
-            .last_started_run()
-            .unwrap_or_else(|| RunId::from(""));
+        };
+        // RunStart 响应携带该命令确定启动的 run id（并发来源各自绑定，
+        // 不依赖全局状态）。
+        let run_id = run_id.clone().unwrap_or_else(|| RunId::from(""));
 
         // 5) 流式输出直到终态。
         let mut outputs = vec![];
@@ -660,6 +763,151 @@ impl CliHost {
         self.envelope_outcome(kind, response, format)
     }
 
+    // ---------- Headless（P17-8） ----------
+
+    /// `headless` 模式：`--json-stdio` 开启 NDJSON 循环；未开启返回显式错误
+    /// （不产生任何 TUI/CLI 文本输出）。
+    async fn headless_mode(&self, args: HeadlessArgs, format: OutputFormat) -> HostOutcome {
+        if args.json_stdio {
+            // 真实二进制入口在 main 中直接调用 [`CliHost::run_headless_stdio`]
+            // 以保持 stdout 纯净；库调用方走这里获得等价行为。
+            let exit_code = self.run_headless_stdio().await;
+            HostOutcome {
+                output: String::new(),
+                exit_code,
+            }
+        } else {
+            self.error_outcome(
+                "headless",
+                "headless mode requires --json-stdio (the NDJSON protocol entry)",
+                format,
+            )
+        }
+    }
+
+    /// 以 tokio stdin/stdout 运行 headless NDJSON 循环（`pawork headless
+    /// --json-stdio` 的真实进程入口；stdout 只写 JSONL 帧）。
+    pub async fn run_headless_stdio(&self) -> i32 {
+        let stdin = tokio::io::BufReader::new(tokio::io::stdin());
+        let stdout = tokio::io::stdout();
+        match self.headless_loop(stdin, stdout).await {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("headless: {error}");
+                1
+            }
+        }
+    }
+
+    /// 以任意异步 reader/writer 运行 headless NDJSON 循环（进程入口与测试
+    /// 共用同一实现）。
+    pub async fn headless_loop<R, W>(&self, reader: R, writer: W) -> std::io::Result<()>
+    where
+        R: tokio::io::AsyncBufRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use headless_json::stdio::{run_loop, LoopConfig};
+
+        let mut handler = headless::HeadlessHandler::new(
+            Arc::clone(&self.service),
+            Arc::clone(&self.hub),
+            self.instance.clone(),
+            self.session_store.clone(),
+        );
+        run_loop(reader, writer, LoopConfig::default(), &mut handler).await
+    }
+
+    // ---------- ACP Host（P17-7） ----------
+
+    /// `acp` 模式：`serve` 启动 ACP stdio JSON-RPC 循环；未注入 registry 时
+    /// 返回显式错误（真实二进制在 main 中直接走 [`CliHost::run_acp_stdio`]
+    /// 以保持 stdout 纯净）。
+    async fn acp_mode(&self, command: AcpCommand, format: OutputFormat) -> HostOutcome {
+        match command {
+            AcpCommand::Serve => {
+                let Some(registry) = self.acp_registry.clone() else {
+                    return self.error_outcome(
+                        "acp",
+                        "acp serve requires a session registry (attach via attach_acp_registry)",
+                        format,
+                    );
+                };
+                let exit_code = self.run_acp_loop_stdio(registry).await;
+                HostOutcome {
+                    output: String::new(),
+                    exit_code,
+                }
+            }
+        }
+    }
+
+    /// `pawork acp serve` 真实进程入口：用同一实例 SQLite SessionStore 构造
+    /// SessionRegistry（复用 `SqliteClientSessionRegistryStore`，不私建
+    /// ownership/credential 状态），然后运行 stdin/stdout JSON-RPC 循环；
+    /// stdout 只写协议帧，诊断进 stderr。
+    pub async fn run_acp_stdio(&self, store: SessionStore) -> i32 {
+        let registry = match Self::acp_registry_from_store(store).await {
+            Ok(registry) => registry,
+            Err(error) => {
+                eprintln!("acp serve: session registry unavailable: {error}");
+                return 1;
+            }
+        };
+        self.run_acp_loop_stdio(registry).await
+    }
+
+    /// 以 SQLite SessionStore 构造 SessionRegistry（P17-7 复用同一 Core 的
+    /// instance SessionStore 作为 authoritative 记录源）。
+    pub async fn acp_registry_from_store(
+        store: SessionStore,
+    ) -> Result<Arc<SessionRegistry>, String> {
+        let registry_store = Arc::new(SqliteClientSessionRegistryStore::new(store));
+        SessionRegistry::new(registry_store)
+            .await
+            .map(Arc::new)
+            .map_err(|error| error.to_string())
+    }
+
+    async fn run_acp_loop_stdio(&self, registry: Arc<SessionRegistry>) -> i32 {
+        // ACP 没有 workspace 登记方法：与 shell/run 模式一致，先把进程 cwd
+        // 登记为 workspace，否则 `session/new` 的 cwd 解析必然失败。
+        if let Err(error) = self.ensure_workspace(None) {
+            eprintln!("acp serve: cannot resolve workspace: {error}");
+            return 1;
+        }
+        let stdin = tokio::io::BufReader::new(tokio::io::stdin());
+        let stdout = tokio::io::stdout();
+        match self.acp_loop(stdin, stdout, registry).await {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("acp serve: {error}");
+                1
+            }
+        }
+    }
+
+    /// 以任意异步 reader/writer 运行 ACP stdio JSON-RPC 循环（进程入口与
+    /// 测试共用同一实现；事件经共享 Event Hub 订阅，由调用方运行 EventPump）。
+    pub async fn acp_loop<R, W>(
+        &self,
+        reader: R,
+        writer: W,
+        registry: Arc<SessionRegistry>,
+    ) -> std::io::Result<()>
+    where
+        R: tokio::io::AsyncBufRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        acp::run_loop(
+            Arc::clone(&self.service),
+            Arc::clone(&self.hub),
+            registry,
+            reader,
+            writer,
+        )
+        .await
+    }
+
     // ---------- Usage（P14-8） ----------
 
     /// `pawork usage`：查询 typed QuotaOverview 并渲染（Text / JSON）。
@@ -753,14 +1001,11 @@ impl CliHost {
             session_id,
             user_message: prompt.to_string(),
             model: None,
+            profile: None,
         });
         match response.response {
-            AppResponse::Accepted { .. } => {
-                let run_id = self
-                    .service
-                    .router()
-                    .last_started_run()
-                    .unwrap_or_else(|| RunId::from(""));
+            AppResponse::Accepted { run_id, .. } => {
+                let run_id = run_id.unwrap_or_else(|| RunId::from(""));
                 Ok(format!("run started: {run_id} (use /watch or /status)"))
             }
             AppResponse::Error(context) => Err(context.message),
@@ -934,6 +1179,8 @@ impl CliHost {
             Command::Serve(_)
             | Command::Shell
             | Command::Run(_)
+            | Command::Acp(_)
+            | Command::Headless(_)
             | Command::Watch
             | Command::Status
             | Command::Shutdown
@@ -1331,8 +1578,52 @@ mod tests {
     use super::*;
     use clap::Parser;
     use core_runtime::CoreRuntime;
+    use std::sync::Mutex;
     use test_support::{MockProvider, MockScript};
-    use transport_remote_placeholder::MockRemoteTransportProvider;
+    use transport_remote_placeholder::{
+        ConnectOptions, MockRemoteConnector, MockRemoteTransportProvider, RemoteGuiConnector,
+    };
+
+    /// 记录远程端点生命周期调用的假 GUI Server 宿主（P17-11 接线测试）。
+    struct RecordingGuiHost {
+        binds: Mutex<Vec<String>>,
+        closes: Mutex<Vec<String>>,
+        bind_result: Result<(), String>,
+    }
+
+    impl RecordingGuiHost {
+        fn new(bind_result: Result<(), String>) -> Self {
+            Self {
+                binds: Mutex::new(Vec::new()),
+                closes: Mutex::new(Vec::new()),
+                bind_result,
+            }
+        }
+    }
+
+    impl GuiServerHost for RecordingGuiHost {
+        fn start(&self, _instance: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn bind_remote(
+            &self,
+            handle_id: &str,
+            _endpoint: &TransportEndpoint,
+        ) -> Result<(), String> {
+            self.binds.lock().unwrap().push(handle_id.into());
+            self.bind_result.clone()
+        }
+
+        fn close_remote(&self, handle_id: &str) -> Result<(), String> {
+            self.closes.lock().unwrap().push(handle_id.into());
+            Ok(())
+        }
+    }
 
     #[tokio::test]
     async fn doctor_uses_direct_app_service_route() {
@@ -1438,9 +1729,9 @@ mod tests {
     async fn remote_publish_and_unpublish_with_mock_provider() {
         let service = Arc::new(AppService::new("remote-test"));
         let mut host = CliHost::new(Arc::clone(&service));
-        let provider: Arc<dyn RemoteGuiTransportProvider> =
-            Arc::new(MockRemoteTransportProvider::default());
-        host.attach_remote_provider(provider);
+        let provider = Arc::new(MockRemoteTransportProvider::default());
+        host.attach_gui_server(Arc::new(RecordingGuiHost::new(Ok(()))));
+        host.attach_remote_provider(provider as Arc<dyn RemoteGuiTransportProvider>);
 
         let cli = Cli::try_parse_from(["pawork", "--json", "remote", "publish", "--name", "edge"])
             .expect("parse publish");
@@ -1479,6 +1770,7 @@ mod tests {
     async fn remote_publish_text_mode_prints_endpoint_and_status() {
         let service = Arc::new(AppService::new("remote-text"));
         let mut host = CliHost::new(service);
+        host.attach_gui_server(Arc::new(RecordingGuiHost::new(Ok(()))));
         host.attach_remote_provider(Arc::new(MockRemoteTransportProvider::default()));
         let cli =
             Cli::try_parse_from(["pawork", "remote", "publish", "--name", "edge"]).expect("parse");
@@ -1533,6 +1825,185 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("JSON");
         assert_eq!(value["ok"], false);
         assert_eq!(value["data"]["action"], "unpublish");
+        assert!(
+            value["message"]
+                .as_str()
+                .expect("message")
+                .contains("unknown remote publish handle"),
+            "output: {}",
+            outcome.output
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_publish_binds_via_gui_host_and_revoke_closes_and_invalidates() {
+        let service = Arc::new(AppService::new("remote-test"));
+        let mut host = CliHost::new(service);
+        let mock = Arc::new(MockRemoteTransportProvider::default());
+        host.attach_remote_provider(Arc::clone(&mock) as Arc<dyn RemoteGuiTransportProvider>);
+        let gui_host = Arc::new(RecordingGuiHost::new(Ok(())));
+        host.attach_gui_server(gui_host.clone());
+
+        let cli = Cli::try_parse_from(["pawork", "--json", "remote", "publish", "--name", "edge"])
+            .expect("parse publish");
+        let outcome = host.execute(cli).await;
+        assert_eq!(outcome.exit_code, 0, "output: {}", outcome.output);
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("JSON");
+        assert_eq!(value["data"]["bound"], true);
+        assert_eq!(value["data"]["handle_id"], "edge-0");
+        assert_eq!(
+            gui_host.binds.lock().unwrap().as_slice(),
+            &["edge-0".to_string()],
+            "publish must bind the endpoint via the gui server host"
+        );
+
+        // revoke：先关闭宿主侧监听器，再撤销端点（凭证失效、不可再连接）。
+        let cli =
+            Cli::try_parse_from(["pawork", "--json", "remote", "revoke", "--handle", "edge-0"])
+                .expect("parse revoke");
+        let outcome = host.execute(cli).await;
+        assert_eq!(outcome.exit_code, 0, "output: {}", outcome.output);
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("JSON");
+        assert_eq!(value["data"]["action"], "revoke");
+        assert_eq!(value["data"]["handle_id"], "edge-0");
+        assert_eq!(value["data"]["status"], "revoked");
+        assert_eq!(
+            gui_host.closes.lock().unwrap().as_slice(),
+            &["edge-0".to_string()],
+            "revoke must close the bound listener via the gui server host"
+        );
+
+        // 撤销后该端点不可再连接（Mock 槽位已移除）。
+        let connector = MockRemoteConnector::new(Arc::clone(mock.transport()));
+        let error = match connector
+            .connect(
+                &TransportEndpoint::Remote {
+                    address: "mock://edge-0".into(),
+                    adapter: "mock".into(),
+                },
+                ConnectOptions {
+                    timeout_ms: 1_000,
+                    client_label: Some("cli-host-test".into()),
+                    max_frame_bytes: 1024 * 1024,
+                },
+            )
+            .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("connect after revoke must fail"),
+        };
+        assert!(
+            error.to_string().contains("no remote listener"),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_publish_bind_failure_rolls_back_publish() {
+        let service = Arc::new(AppService::new("remote-test"));
+        let mut host = CliHost::new(service);
+        let mock = Arc::new(MockRemoteTransportProvider::default());
+        host.attach_remote_provider(Arc::clone(&mock) as Arc<dyn RemoteGuiTransportProvider>);
+        host.attach_gui_server(Arc::new(RecordingGuiHost::new(Err("bind boom".into()))));
+
+        let cli = Cli::try_parse_from(["pawork", "--json", "remote", "publish", "--name", "edge"])
+            .expect("parse publish");
+        let outcome = host.execute(cli).await;
+        assert_ne!(outcome.exit_code, 0, "output: {}", outcome.output);
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("JSON");
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["data"]["action"], "publish");
+        assert!(
+            value["message"]
+                .as_str()
+                .expect("message")
+                .contains("bind failed: bind boom"),
+            "output: {}",
+            outcome.output
+        );
+
+        // 发布已回滚：该端点未被预占，不可连接。
+        let connector = MockRemoteConnector::new(Arc::clone(mock.transport()));
+        let error = match connector
+            .connect(
+                &TransportEndpoint::Remote {
+                    address: "mock://edge-0".into(),
+                    adapter: "mock".into(),
+                },
+                ConnectOptions {
+                    timeout_ms: 1_000,
+                    client_label: Some("cli-host-test".into()),
+                    max_frame_bytes: 1024 * 1024,
+                },
+            )
+            .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("connect after rolled-back publish must fail"),
+        };
+        assert!(
+            error.to_string().contains("no remote listener"),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_publish_without_gui_host_fails_closed_and_rolls_back() {
+        let service = Arc::new(AppService::new("remote-test"));
+        let mut host = CliHost::new(service);
+        let mock = Arc::new(MockRemoteTransportProvider::default());
+        host.attach_remote_provider(Arc::clone(&mock) as Arc<dyn RemoteGuiTransportProvider>);
+
+        let cli = Cli::try_parse_from(["pawork", "--json", "remote", "publish", "--name", "edge"])
+            .expect("parse publish");
+        let outcome = host.execute(cli).await;
+        assert_ne!(outcome.exit_code, 0, "output: {}", outcome.output);
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("JSON");
+        assert_eq!(value["ok"], false);
+        assert!(value["message"]
+            .as_str()
+            .expect("message")
+            .contains("publish rolled back"));
+
+        let connector = MockRemoteConnector::new(Arc::clone(mock.transport()));
+        let result = connector
+            .connect(
+                &TransportEndpoint::Remote {
+                    address: "mock://edge-0".into(),
+                    adapter: "mock".into(),
+                },
+                ConnectOptions {
+                    timeout_ms: 1_000,
+                    client_label: Some("fail-closed".into()),
+                    max_frame_bytes: 1024,
+                },
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "rolled-back endpoint must not be connectable"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_revoke_unknown_handle_returns_structured_error() {
+        let service = Arc::new(AppService::new("remote-test"));
+        let mut host = CliHost::new(service);
+        host.attach_remote_provider(Arc::new(MockRemoteTransportProvider::default()));
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "--json",
+            "remote",
+            "revoke",
+            "--handle",
+            "never-published",
+        ])
+        .expect("parse");
+        let outcome = host.execute(cli).await;
+        assert_ne!(outcome.exit_code, 0);
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("JSON");
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["data"]["action"], "revoke");
         assert!(
             value["message"]
                 .as_str()

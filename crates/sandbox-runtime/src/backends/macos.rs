@@ -121,8 +121,8 @@ pub fn generate_seatbelt_profile(policy: &SandboxPolicy, workspace_roots: &[Path
 mod seatbelt {
     use super::{generate_seatbelt_profile, SANDBOX_EXEC_PATH};
     use crate::{
-        apply_soft_restrictions, SandboxBackend, SandboxError, SandboxPolicy, SandboxProcess,
-        SandboxProcessSpec,
+        apply_soft_restrictions, SandboxBackend, SandboxError, SandboxInteractiveProcess,
+        SandboxPolicy, SandboxProcess, SandboxProcessSpec,
     };
     use agent_domain::CancellationToken;
     use async_trait::async_trait;
@@ -209,6 +209,38 @@ mod seatbelt {
             Ok(SandboxProcess {
                 events,
                 _handle: handle,
+            })
+        }
+
+        async fn spawn_interactive(
+            &self,
+            mut spec: SandboxProcessSpec,
+            policy: SandboxPolicy,
+            cancel: CancellationToken,
+        ) -> Result<SandboxInteractiveProcess, SandboxError> {
+            if !self.available {
+                return Err(SandboxError::BackendUnavailable("sandbox_exec"));
+            }
+            apply_soft_restrictions(&mut spec, &policy)?;
+            let profile = generate_seatbelt_profile(&policy, &spec.workspace_roots);
+            let inner_program = spec.command.program.clone();
+            let inner_args = std::mem::take(&mut spec.command.args);
+            let mut argv: Vec<String> = Vec::with_capacity(inner_args.len() + 3);
+            argv.push("-p".into());
+            argv.push(profile);
+            argv.push(inner_program);
+            argv.extend(inner_args);
+            spec.command.program = SANDBOX_EXEC_PATH.to_string();
+            spec.command.args = argv;
+            let (events, input, handle) = self
+                .runtime
+                .spawn_interactive(spec.command, cancel)
+                .await
+                .map_err(SandboxError::Process)?;
+            Ok(SandboxInteractiveProcess {
+                events,
+                input,
+                handle,
             })
         }
     }

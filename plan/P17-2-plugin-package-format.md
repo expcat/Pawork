@@ -1,6 +1,6 @@
 # P17-2：Plugin Package Format（扩展包格式）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P10-1、P8-3、P9-6、P17-1、P17-4、P8-5
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（L1 定向测试 + clippy 通过，待人工验收） · 交付成熟度：Built · 依赖：P10-1、P8-3、P9-6、P17-1、P17-4、P8-5
 
 **最终目的**：定义统一的 Plugin Package 格式——一个可安装包（manifest + 归档）可聚合多种扩展类型：Skills、Agents（profile）、Hooks（用户钩子）、MCP server 声明、LSP server 声明、Monitors（监视器声明）。让一次安装即可交付一个完整能力组合，避免用户手动逐项配置。Package 仅做**聚合、校验、作用域绑定**，复用各类型既有的子 manifest，不重定义其语义；Monitor 复用 [P16-6](P16-6-persistent-process-monitor.md) 运行时语义，Package manifest 只声明其配置/trigger/permissions/lifecycle/required capability，实际执行统一进入 `monitor-service` / `task-manager`。
 
@@ -22,12 +22,15 @@
 
 ## 验收标准
 
-- [ ] 一个 Package 可包含 Skills / Agents / Hooks / MCP / LSP / Monitors 六类并一次安装
-- [ ] Monitors 子段只声明配置/trigger/permissions/lifecycle/required capability，执行统一进入 `monitor-service` / `task-manager`（P16-6），不重定义运行时语义
-- [ ] 归档带内容 hash 校验，损坏 / 篡改可检测
-- [ ] 跨类型 / 跨包冲突可检测并报错
-- [ ] 子资源正确分发到各 loader，作用域与 `resource-loader` 一致
-- [ ] **（P16-10 延期接线）Monitor 包驱动落地**：`monitors` 子段定义稳定 Monitor driver/evaluator 入口契约（trigger config / observation / lifecycle / required capability），package 声明的 Monitor 有真实 driver 且以 `task-manager` 为唯一运行 lifecycle。P16-10 已删 `monitor-service` 内置 driver、执行状态统一引用 `task-manager`（library 层见 [P16-10](P16-10-review-remediation.md)）；本任务补 package 可声明的驱动入口与归属生命周期，执行统一进 `monitor-service`/`task-manager`，不重定义运行时语义。见 [p16-review §2.3/§5](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
+- [x] 一个 Package 可包含 Skills / Agents / Hooks / MCP / LSP / Monitors 六类并一次安装
+- [x] Monitors 子段只声明配置/trigger/permissions/lifecycle/required capability，执行统一进入 `monitor-service` / `task-manager`（P16-6），不重定义运行时语义
+- [x] 归档带内容 hash 校验，损坏 / 篡改可检测
+- [x] 跨类型 / 跨包冲突可检测并报错
+- [x] 子资源正确分发到各 loader，作用域与 `resource-loader` 一致
+
+- [x] **（P16-10 延期接线）Monitor 包驱动落地**：`monitors` 子段定义稳定 Monitor driver/evaluator 入口契约（trigger config / observation / lifecycle / required capability），package 声明的 Monitor 有真实 driver 且以 `task-manager` 为唯一运行 lifecycle。P16-10 已删 `monitor-service` 内置 driver、执行状态统一引用 `task-manager`（library 层见 [P16-10](P16-10-review-remediation.md)）；本任务补 package 可声明的驱动入口与归属生命周期，执行统一进 `monitor-service`/`task-manager`，不重定义运行时语义。见 [p16-review §2.3/§5](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
+
+> 实现落点：`crates/plugin-package`（manifest / archive / conflict / dispatch / monitor / scope）与 `crates/mcp-client/src/sandbox.rs`（Sandbox Runtime→Process Runtime 托管 stdio，restart 不降级）。验证：`cargo test -p plugin-package`（32 项）+ `cargo test -p mcp-client`（53 项含 3 项 sandbox）全绿；`cargo clippy -p plugin-package -p mcp-client --all-targets -- -D warnings` 干净（resource-loader 既有 `too_many_arguments` 属他人未提交文件，非本任务范围）。
 
 **相关文档**：[plugins](../docs/features/plugins.md) · [skills](../docs/features/skills.md) · [P17-1 User Hooks](P17-1-user-hooks.md) · [mcp](../docs/features/mcp.md) · [P17-4 LSP Runtime](P17-4-lsp-runtime.md) · [P16-6 Monitor](P16-6-persistent-process-monitor.md) · [ROADMAP](../ROADMAP.md)
 

@@ -61,8 +61,9 @@ impl MonitorServiceState {
 
     /// 纯函数折叠：把 canonical 事件应用到当前状态并追加日志。
     ///
-    /// `Started` 幂等（已存在则刷新为 Running）；`Triggered` / `Stopped`
-    /// 对未知 monitor 防御性记日志不报错（保证重放健壮）。
+    /// `Started` 幂等（已存在则刷新为 Running，不重置累计字段）；`Triggered` /
+    /// `Stopped` / `Unregistered` 对未知 monitor 防御性记日志不报错（保证重放
+    /// 健壮）。`Unregistered` 从视图移除记录，后续 `Started` 会新建累计。
     pub fn apply(&mut self, event: &MonitorEvent) {
         match event {
             MonitorEvent::Started {
@@ -98,6 +99,9 @@ impl MonitorServiceState {
                     record.status = MonitorStatus::Stopped;
                     record.stop_reason = reason.clone();
                 }
+            }
+            MonitorEvent::Unregistered { monitor_id } => {
+                self.monitors.remove(monitor_id);
             }
         }
         self.log.push(event.clone());
@@ -215,5 +219,33 @@ mod tests {
         });
         assert!(state.record(&MonitorId::new("ghost")).is_none());
         assert_eq!(state.event_log().len(), 2);
+    }
+
+    #[test]
+    fn apply_unregistered_removes_record_and_keeps_log() {
+        let mut state = MonitorServiceState::new();
+        state.apply(&started("m1", MonitorSourceKind::FileChange));
+        state.apply(&MonitorEvent::Triggered {
+            monitor_id: MonitorId::new("m1"),
+            detail: "hit".into(),
+        });
+        state.apply(&MonitorEvent::Unregistered {
+            monitor_id: MonitorId::new("m1"),
+        });
+
+        assert!(state.record(&MonitorId::new("m1")).is_none());
+        assert!(state.snapshot().monitors.is_empty());
+        assert_eq!(state.event_log().len(), 3);
+        assert!(matches!(
+            state.event_log().last(),
+            Some(MonitorEvent::Unregistered { monitor_id }) if *monitor_id == MonitorId::new("m1")
+        ));
+
+        // 注销后再 Started 必须是全新记录，不能继承旧 trigger_count。
+        state.apply(&started("m1", MonitorSourceKind::PortState));
+        let rec = state.record(&MonitorId::new("m1")).unwrap();
+        assert_eq!(rec.status, MonitorStatus::Running);
+        assert_eq!(rec.trigger_count, 0);
+        assert!(rec.last_detail.is_none());
     }
 }

@@ -1,0 +1,7 @@
+---
+description: coding rules
+globs: "**/*.rs"
+alwaysApply: true
+---
+Use safe Rust patterns.
+

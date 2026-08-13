@@ -17,9 +17,7 @@ use auth_service::oauth::{
 use auth_service::{SecretBackend, StoredCredential};
 use tokio::sync::Mutex;
 
-use crate::transport::{
-    DefaultConnector, HttpTransportConfig, McpConnector, RunningClient, TransportConfig,
-};
+use crate::transport::{DefaultConnector, HttpTransportConfig, McpConnector, RunningClient};
 use crate::McpError;
 
 /// Begin a PKCE Authorization Code login for an MCP http server.
@@ -176,9 +174,7 @@ impl McpConnector for OAuthHttpConnector {
 
     async fn connect(&self) -> Result<RunningClient, McpError> {
         let config = self.authorized_config().await?;
-        DefaultConnector::new(TransportConfig::Http(config))
-            .connect()
-            .await
+        DefaultConnector::http(config).connect().await
     }
 }
 

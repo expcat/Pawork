@@ -1,0 +1,22 @@
+{
+  "type": "response",
+  "envelope": {
+    "api_version": { "major": 1, "minor": 0 },
+    "request_id": "cmd-1",
+    "responded_at": 1700000000000,
+    "response": {
+      "type": "data",
+      "data": {
+        "session_id": "s-1",
+        "workspace_id": "ws-1",
+        "title": "demo",
+        "revision": 1,
+        "open": true,
+        "created_at": 1700000000000,
+        "run_count": 0,
+        "message_count": 0,
+        "compacted": false
+      }
+    }
+  }
+}

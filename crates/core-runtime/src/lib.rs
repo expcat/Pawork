@@ -6,10 +6,12 @@
 //! 输出），发布到 Event Hub——CLI 渲染器与未来 GUI 订阅到同一份全局连续序列
 //! 的事件流（连续性由 Hub 的强制重写保证）。
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use app_service::AppService;
+use app_service::UserHookHost;
 use provider_api::ModelProvider;
 use subscription_hub::{EventHub, DEFAULT_HUB_CAPACITY};
 use tokio::sync::watch;
@@ -24,6 +26,11 @@ pub struct CoreRuntimeConfig {
     pub pump_interval: Duration,
     /// Event Hub ring buffer / 广播容量（默认 4096）。
     pub hub_capacity: usize,
+    /// Team canonical event store。`None` 仅用于测试/嵌入；正式 `pawork`
+    /// 必须传入实例目录中的持久路径。
+    pub team_db_path: Option<PathBuf>,
+    /// P17-1 User Hooks 宿主（正式宿主装配后注入；`None` 时 run 不回调 hooks）。
+    pub user_hooks: Option<Arc<UserHookHost>>,
 }
 
 impl Default for CoreRuntimeConfig {
@@ -32,6 +39,8 @@ impl Default for CoreRuntimeConfig {
             instance: "default".into(),
             pump_interval: Duration::from_millis(10),
             hub_capacity: DEFAULT_HUB_CAPACITY,
+            team_db_path: None,
+            user_hooks: None,
         }
     }
 }
@@ -64,12 +73,48 @@ impl CoreRuntime {
     /// 适配器，构造与空查询不触发网络）；`from_parts` 注入的既有
     /// `AppService` 原样保留，不覆盖其 Quota 注入状态。
     pub fn with_config(config: CoreRuntimeConfig) -> Self {
-        let service = Arc::new(AppService::with_quota_runtime(
-            config.instance.clone(),
-            None,
-            app_service::QuotaRuntime::production(),
-        ));
+        let service = match config.team_db_path.as_ref() {
+            Some(path) => AppService::with_runtime_components(
+                config.instance.clone(),
+                None,
+                app_service::QuotaRuntime::production(),
+                path,
+            )
+            .expect("configured durable Team store must open and replay"),
+            None => AppService::with_quota_runtime(
+                config.instance.clone(),
+                None,
+                app_service::QuotaRuntime::production(),
+            ),
+        };
+        let service = Arc::new(service);
+        if let Some(user_hooks) = config.user_hooks.as_ref() {
+            service.set_user_hooks(Arc::clone(user_hooks));
+        }
         Self::from_parts(service, config)
+    }
+
+    /// 正式宿主使用的可失败装配。持久 Team store 无法打开或重放时返回错误，
+    /// 调用方不得降级到内存空状态。
+    pub fn try_with_config(config: CoreRuntimeConfig) -> Result<Self, app_service::TeamError> {
+        let service = match config.team_db_path.as_ref() {
+            Some(path) => AppService::with_runtime_components(
+                config.instance.clone(),
+                None,
+                app_service::QuotaRuntime::production(),
+                path,
+            )?,
+            None => AppService::with_quota_runtime(
+                config.instance.clone(),
+                None,
+                app_service::QuotaRuntime::production(),
+            ),
+        };
+        let service = Arc::new(service);
+        if let Some(user_hooks) = config.user_hooks.as_ref() {
+            service.set_user_hooks(Arc::clone(user_hooks));
+        }
+        Ok(Self::from_parts(service, config))
     }
 
     /// 注入 builder：以既有 AppService 装配（测试 / 嵌入场景复用，保持
@@ -249,6 +294,7 @@ mod tests {
                 session_id: session_id.clone(),
                 user_message: "run a mock task".into(),
                 model: None,
+                profile: None,
             },
         ));
         assert!(
@@ -346,6 +392,106 @@ mod tests {
         assert!(
             runtime.service().quota_runtime().is_some(),
             "default CoreRuntime must carry a production QuotaRuntime"
+        );
+        runtime.shutdown();
+    }
+
+    // —— P17-1 回归：CoreRuntimeConfig.user_hooks 注入可达 ——
+
+    struct NoProviders;
+    impl app_service::ProviderResolver for NoProviders {
+        fn resolve(
+            &self,
+            _id: &agent_domain::ProviderId,
+        ) -> Option<Arc<dyn provider_api::ModelProvider>> {
+            None
+        }
+    }
+
+    #[derive(Clone)]
+    struct DefaultProfiles(app_service::EvalProfile);
+    impl app_service::EvalProfileResolver for DefaultProfiles {
+        fn resolve(
+            &self,
+            _workspace_id: Option<&agent_domain::WorkspaceId>,
+            profile: &str,
+        ) -> Option<app_service::EvalProfile> {
+            if profile.is_empty() || profile == "default" {
+                Some(self.0.clone())
+            } else {
+                None
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct MemSecret(std::sync::Mutex<std::collections::HashMap<String, String>>);
+    impl auth_service::SecretBackend for MemSecret {
+        fn store(
+            &self,
+            service: &str,
+            account: &str,
+            secret: &str,
+        ) -> Result<(), auth_service::AuthError> {
+            self.0
+                .lock()
+                .expect("mem secret")
+                .insert(format!("{service}/{account}"), secret.to_string());
+            Ok(())
+        }
+        fn get(&self, service: &str, account: &str) -> Result<String, auth_service::AuthError> {
+            self.0
+                .lock()
+                .expect("mem secret")
+                .get(&format!("{service}/{account}"))
+                .cloned()
+                .ok_or(auth_service::AuthError::NotFound)
+        }
+        fn delete(&self, service: &str, account: &str) -> Result<(), auth_service::AuthError> {
+            let mut map = self.0.lock().expect("mem secret");
+            if map.remove(&format!("{service}/{account}")).is_some() {
+                Ok(())
+            } else {
+                Err(auth_service::AuthError::NotFound)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn user_hooks_config_injection_reaches_service() {
+        // 默认配置不注入 hooks。
+        let plain = CoreRuntime::new("hooks-none-test");
+        assert!(
+            !plain.service().user_hooks_active(),
+            "default config must not install user hooks"
+        );
+        plain.shutdown();
+
+        // with_config 注入的宿主必须到达 AppService（run loop 权威位点可调用）。
+        let default_eval = app_service::EvalProfile {
+            provider_id: agent_domain::ProviderId::from("default"),
+            model: agent_domain::ModelId::from("default"),
+            system_prompt: None,
+            reasoning_effort: None,
+            budget: None,
+            tool_rules: agent_domain::ProfileToolRules::default(),
+            isolation: agent_domain::ProfileIsolation::None,
+        };
+        let host = app_service::UserHookHost::new(app_service::UserHookHostOptions::new(
+            Vec::new(),
+            Arc::new(NoProviders),
+            default_eval.clone(),
+            Arc::new(DefaultProfiles(default_eval)),
+            Arc::new(MemSecret::default()),
+        ))
+        .expect("host must construct");
+        let runtime = CoreRuntime::with_config(CoreRuntimeConfig {
+            user_hooks: Some(Arc::new(host)),
+            ..CoreRuntimeConfig::default()
+        });
+        assert!(
+            runtime.service().user_hooks_active(),
+            "CoreRuntimeConfig.user_hooks must reach the AppService"
         );
         runtime.shutdown();
     }

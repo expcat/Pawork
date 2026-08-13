@@ -1,6 +1,6 @@
 # P17-6：Agent Teams（智能体团队协作）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P12-1~P12-6、P16-1、P16-2、P3-1、P1-4
+> Phase 17 · Ecosystem & Host Compatibility · 状态：🟢已验收 · 交付成熟度：Target-Verified · 依赖：P12-1~P12-6、P16-1、P16-2、P3-1、P1-4
 
 **最终目的**：在 [P12](P12-1-supervisor-worker.md) supervisor / worker 基础上实现 Agent Teams——多 Agent 组队的协作层：shared task board（共享任务板）、mailbox（异步消息投递）、presence（在线 / 忙 / 空闲状态）、worker 互联（worker 间直接通信）、plan approval（parent 审批子计划）。让一组 Agent 像团队一样协作完成复杂任务，**复用 P12 编排与 P16 plan**，不重写底层 run loop。
 
@@ -23,11 +23,18 @@
 
 ## 验收标准
 
-- [ ] 支持 team 创建 / 成员管理 / 解散，全程 canonical event 可重放
-- [ ] shared task board 可认领流转，mailbox 可异步投递且持久化
-- [ ] presence 基于 run / worker 状态正确派生
-- [ ] worker 互联与 plan approval 经策略约束，未批准计划不执行
-- [ ] **（P16-10 延期接线）workflow 经统一 EventHub 暴露**：shared task board / mailbox / presence 经 `app-service` 唯一 Event Hub 派发与持久化、可重放，不另建 `tokio::broadcast`；automation 执行权威统一归 `task-manager`，`teams` 只拥有协作语义——修复 P16-5 无 timer/loop、`AutomationAction` 不执行、自持 broadcast 未接 ADR-024 统一 Event Hub。见 [p16-review §2.1/§2.3](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
+- [x] 支持 team 创建 / 成员管理 / 解散，全程 canonical event 可重放
+- [x] shared task board 可认领流转，mailbox 可异步投递且持久化
+- [x] presence 基于 run / worker 状态正确派生
+- [x] worker 互联与 plan approval 经策略约束，未批准计划不执行
+- [x] **（P16-10 延期接线）workflow 经统一 EventHub 暴露**：shared task board / mailbox / presence 经 `app-service` 唯一 Event Hub 派发与持久化、可重放，不另建 `tokio::broadcast`；automation 执行权威统一归 `task-manager`，`teams` 只拥有协作语义——修复 P16-5 无 timer/loop、`AutomationAction` 不执行、自持 broadcast 未接 ADR-024 统一 Event Hub。见 [p16-review §2.1/§2.3](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
+
+## 验证记录（2026-08-12）
+
+- `cargo test -p teams -p app-service --all-targets`：通过（`teams` 41 项；`app-service` 及集成回归 106 项）。
+- `cargo clippy -p teams -p app-service --all-targets -- -D warnings`：通过。
+- 回归覆盖：fan-out 恰好一次结算、mailbox/auto-retry/presence 批量事务原子性、严格 owner + supervisor override、最后 supervisor 保护、SQLite 重放、P12 worker projection 与唯一 EventHub typed 镜像。
+- Validation Level：L1；Full workspace gate：NOT RUN（未命中升级条件）。
 
 **相关文档**：[multi-agent](../docs/features/multi-agent.md) · [agent-engine](../docs/features/agent-engine.md) · [P16-1 Plan Mode](P16-1-plan-mode.md) · [P16-2 Plan Approval](P16-2-plan-review-approval.md) · [ROADMAP](../ROADMAP.md)
 

@@ -2,6 +2,12 @@
 import type { ArtifactId } from "./ArtifactId";
 import type { CommandId } from "./CommandId";
 import type { ErrorContext } from "./ErrorContext";
+import type { RunId } from "./RunId";
 import type { JsonValue } from "./serde_json/JsonValue";
 
-export type AppResponse = { "type": "accepted", "data": { command_id: CommandId, } } | { "type": "data", "data": JsonValue } | { "type": "artifact", "data": { artifact_id: ArtifactId, byte_length: bigint, media_type: string, } } | { "type": "error", "data": ErrorContext };
+export type AppResponse = { "type": "accepted", "data": { command_id: CommandId,
+/**
+ * RunStart 专有：该命令确定启动的 run id（并发来源各自携带自己的
+ * run id，不依赖宿主侧全局状态；其余命令为 None）。
+ */
+run_id?: RunId | null, } } | { "type": "data", "data": JsonValue } | { "type": "artifact", "data": { artifact_id: ArtifactId, byte_length: bigint, media_type: string, } } | { "type": "error", "data": ErrorContext };

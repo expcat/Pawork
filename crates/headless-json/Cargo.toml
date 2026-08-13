@@ -1,0 +1,16 @@
+[package]
+name = "headless-json"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Pawork Headless JSON（NDJSON）协议：stdin/stdout 请求-事件翻译与 compat 导入/历史入口"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+async-trait.workspace = true
+core-api = { path = "../core-api" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "sync", "macros", "rt", "time"] }

@@ -12,6 +12,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,11 +20,13 @@ use async_trait::async_trait;
 use auth_service::SecretBackend;
 use config_service::ResolvedConfig;
 use policy_engine::ApprovalMode;
+use sandbox_runtime::{SandboxBackend, SandboxPolicy};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
 use crate::manager::{ManagedMcpClient, ManagedMcpClientOptions};
+use crate::sandbox::{SandboxedStdioSpawner, StdioSpawner};
 use crate::security::SecretRef;
 use crate::transport::{
     DefaultConnector, HttpTransportConfig, McpConnector, RunningClient, StdioTransportConfig,
@@ -144,13 +147,15 @@ impl McpServerConfig {
         &self,
         name: impl Into<Arc<str>>,
         backend: Arc<dyn SecretBackend>,
+        stdio_runtime: Option<StdioSandboxRuntime>,
     ) -> Result<ManagedMcpClient, McpError> {
         let name = name.into();
         self.validate(&name)?;
         let connector: Arc<dyn McpConnector> = Arc::new(SecretResolvingConnector::new(
             self.transport.clone(),
             backend,
-        ));
+            stdio_runtime,
+        )?);
         Ok(ManagedMcpClient::new(connector, self.runtime_options(name)))
     }
 
@@ -163,6 +168,57 @@ impl McpServerConfig {
             ),
             restart: self.restart.clone(),
         }
+    }
+}
+
+/// Explicit production dependencies for a local MCP stdio process.
+///
+/// HTTP clients pass `None` to [`McpServerConfig::build_client`]. A stdio client
+/// must provide all three values; an empty root set is rejected before a
+/// managed client can be constructed. The resulting spawner is retained by the
+/// connector and reused for every reconnect.
+#[derive(Clone)]
+pub struct StdioSandboxRuntime {
+    backend: Arc<dyn SandboxBackend>,
+    policy: SandboxPolicy,
+    workspace_roots: Vec<PathBuf>,
+}
+
+impl StdioSandboxRuntime {
+    pub fn new(
+        backend: Arc<dyn SandboxBackend>,
+        policy: SandboxPolicy,
+        workspace_roots: Vec<PathBuf>,
+    ) -> Result<Self, McpError> {
+        if workspace_roots.is_empty() {
+            return Err(McpError::Config(
+                "sandboxed stdio transport requires at least one trusted workspace root".into(),
+            ));
+        }
+        Ok(Self {
+            backend,
+            policy,
+            workspace_roots,
+        })
+    }
+
+    fn into_spawner(self) -> Arc<dyn StdioSpawner> {
+        Arc::new(SandboxedStdioSpawner::new(
+            self.backend,
+            self.policy,
+            self.workspace_roots,
+        ))
+    }
+}
+
+impl fmt::Debug for StdioSandboxRuntime {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StdioSandboxRuntime")
+            .field("backend", &self.backend.id())
+            .field("policy", &self.policy)
+            .field("workspace_roots", &self.workspace_roots)
+            .finish()
     }
 }
 
@@ -268,11 +324,46 @@ impl TransportSpec {
 pub struct SecretResolvingConnector {
     spec: TransportSpec,
     backend: Arc<dyn SecretBackend>,
+    runtime: ConnectorRuntime,
+}
+
+#[derive(Clone)]
+enum ConnectorRuntime {
+    SandboxedStdio(Arc<dyn StdioSpawner>),
+    Http,
 }
 
 impl SecretResolvingConnector {
-    pub fn new(spec: TransportSpec, backend: Arc<dyn SecretBackend>) -> Self {
-        Self { spec, backend }
+    pub fn new(
+        spec: TransportSpec,
+        backend: Arc<dyn SecretBackend>,
+        stdio_runtime: Option<StdioSandboxRuntime>,
+    ) -> Result<Self, McpError> {
+        let runtime = match (&spec, stdio_runtime) {
+            (TransportSpec::Stdio { .. }, Some(runtime)) => {
+                ConnectorRuntime::SandboxedStdio(runtime.into_spawner())
+            }
+            (TransportSpec::Stdio { .. }, None) => {
+                return Err(McpError::Config(
+                    "stdio transport requires an explicit SandboxBackend, SandboxPolicy, and trusted workspace roots"
+                        .into(),
+                ));
+            }
+            (TransportSpec::Http { .. }, _) => ConnectorRuntime::Http,
+        };
+        Ok(Self {
+            spec,
+            backend,
+            runtime,
+        })
+    }
+
+    #[cfg(test)]
+    fn stdio_spawner(&self) -> Option<&Arc<dyn StdioSpawner>> {
+        match &self.runtime {
+            ConnectorRuntime::SandboxedStdio(spawner) => Some(spawner),
+            ConnectorRuntime::Http => None,
+        }
     }
 }
 
@@ -282,6 +373,13 @@ impl fmt::Debug for SecretResolvingConnector {
             .debug_struct("SecretResolvingConnector")
             .field("spec", &self.spec)
             .field("backend", &"[SECRET_BACKEND]")
+            .field(
+                "runtime",
+                &match self.runtime {
+                    ConnectorRuntime::SandboxedStdio(_) => "[SANDBOXED_STDIO]",
+                    ConnectorRuntime::Http => "http",
+                },
+            )
             .finish()
     }
 }
@@ -294,7 +392,19 @@ impl McpConnector for SecretResolvingConnector {
 
     async fn connect(&self) -> Result<RunningClient, McpError> {
         let runtime = self.spec.resolve_transport(self.backend.as_ref())?;
-        DefaultConnector::new(runtime).connect().await
+        match (&self.runtime, runtime) {
+            (ConnectorRuntime::SandboxedStdio(spawner), TransportConfig::Stdio(config)) => {
+                DefaultConnector::sandboxed_stdio(config, spawner.clone())
+                    .connect()
+                    .await
+            }
+            (ConnectorRuntime::Http, TransportConfig::Http(config)) => {
+                DefaultConnector::http(config).connect().await
+            }
+            _ => Err(McpError::Config(
+                "MCP connector runtime does not match its transport configuration".into(),
+            )),
+        }
     }
 }
 
@@ -449,6 +559,7 @@ mod tests {
     use auth_service::MemoryBackend;
     use auth_service::SecretBackend;
     use config_service::{ConfigTier, Loader};
+    use sandbox_runtime::{NativeRestricted, SandboxPolicy};
     use serde_json::json;
 
     fn stdio_server(command: &str) -> Value {
@@ -459,6 +570,16 @@ mod tests {
             "restart": { "max_attempts": 4 },
             "permissions": { "approval_mode": "ask_for_writes", "max_output_bytes": 2048 }
         })
+    }
+
+    fn stdio_config() -> McpServerConfig {
+        McpConfig::from_value(&json!({
+            "servers": { "fs": stdio_server("server") }
+        }))
+        .unwrap()
+        .servers
+        .remove("fs")
+        .unwrap()
     }
 
     #[test]
@@ -491,6 +612,54 @@ mod tests {
             remote.permissions.max_output_bytes,
             DEFAULT_MAX_OUTPUT_BYTES
         );
+    }
+
+    #[test]
+    fn stdio_client_build_fails_closed_without_explicit_sandbox_runtime() {
+        // 不依赖 `ManagedMcpClient: Debug`：显式 match 失败分支即可完成 fail-closed 断言。
+        let error = match stdio_config().build_client("fs", Arc::new(MemoryBackend::new()), None) {
+            Ok(_) => panic!("stdio without sandbox runtime must fail closed"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("explicit SandboxBackend"));
+    }
+
+    #[test]
+    fn http_client_build_does_not_require_sandbox_runtime() {
+        let config = McpConfig::from_value(&json!({
+            "servers": {
+                "remote": {
+                    "transport": { "kind": "http", "url": "https://example.com/mcp" }
+                }
+            }
+        }))
+        .unwrap();
+        config
+            .server("remote")
+            .unwrap()
+            .build_client("remote", Arc::new(MemoryBackend::new()), None)
+            .expect("HTTP client needs no process sandbox");
+    }
+
+    #[test]
+    fn stdio_connector_reuses_one_spawner_for_initial_connect_and_reconnect() {
+        let root = std::env::temp_dir();
+        let runtime = StdioSandboxRuntime::new(
+            Arc::new(NativeRestricted::new()),
+            SandboxPolicy::default(),
+            vec![root],
+        )
+        .unwrap();
+        let connector = SecretResolvingConnector::new(
+            stdio_config().transport,
+            Arc::new(MemoryBackend::new()),
+            Some(runtime),
+        )
+        .unwrap();
+
+        let first = connector.stdio_spawner().unwrap().clone();
+        let reconnect = connector.stdio_spawner().unwrap().clone();
+        assert!(Arc::ptr_eq(&first, &reconnect));
     }
 
     #[test]

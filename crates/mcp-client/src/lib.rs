@@ -17,7 +17,10 @@ pub mod config;
 pub mod manager;
 pub mod oauth;
 pub mod security;
+pub mod sandbox;
 pub mod transport;
+
+pub use sandbox::{SandboxedStdioSpawner, SpawnedStdio, StdioSpawner};
 
 /// Errors exposed by the Pawork MCP boundary. Error text must remain safe for logs and persistence.
 #[derive(Debug, thiserror::Error)]

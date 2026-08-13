@@ -302,33 +302,22 @@ impl ModelTransport {
 
 /// Canonical reasoning effort（P15-8）。
 ///
-/// 显式 `ReasoningConfig` 优先；旧 `ThinkingConfig.level` 仅在缺省时派生；
-/// `XHigh / Max` 进入旧 P6 adapter 时显式 clamp 为 `High`，不形成双轨。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReasoningEffort {
-    None,
-    Low,
-    #[default]
-    Medium,
-    High,
-    XHigh,
-    Max,
-}
+/// P17-5 起由 `agent-domain` 定义并在此重导出，`AgentProfileV2.effort` 与
+/// `ReasoningConfig.effort` 共用同一枚举，杜绝双轨。显式 `ReasoningConfig`
+/// 优先；旧 `ThinkingConfig.level` 仅在缺省时派生。
+pub use agent_domain::ReasoningEffort;
 
-impl ReasoningEffort {
-    /// 是否要求模型声明 reasoning 能力（任何非 None effort）。
-    pub fn requires_reasoning_support(self) -> bool {
-        !matches!(self, Self::None)
-    }
-
-    /// clamp 到旧 `ThinkingLevel`（XHigh / Max → High），供 P6 adapter 复用。
-    pub fn clamp_to_thinking_level(self) -> ThinkingLevel {
-        match self {
-            Self::None => ThinkingLevel::Off,
-            Self::Low => ThinkingLevel::Low,
-            Self::Medium => ThinkingLevel::Medium,
-            Self::High | Self::XHigh | Self::Max => ThinkingLevel::High,
+/// clamp 到旧 `ThinkingLevel`（XHigh / Max → High），供 P6 adapter 复用。
+///
+/// `ReasoningEffort` 是 canonical 底层枚举，`ThinkingLevel` 是本 crate 的旧
+/// 兼容层，故 clamp 作为本 crate 的自由函数提供（不按 Provider 名分支）。
+pub fn clamp_effort_to_thinking_level(effort: ReasoningEffort) -> ThinkingLevel {
+    match effort {
+        ReasoningEffort::None => ThinkingLevel::Off,
+        ReasoningEffort::Low => ThinkingLevel::Low,
+        ReasoningEffort::Medium => ThinkingLevel::Medium,
+        ReasoningEffort::High | ReasoningEffort::XHigh | ReasoningEffort::Max => {
+            ThinkingLevel::High
         }
     }
 }

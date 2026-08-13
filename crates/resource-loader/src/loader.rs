@@ -12,14 +12,17 @@ use workspace_service::WorkspaceService;
 
 use crate::{
     agents::load_agents_hierarchy,
+    hooks::load_hooks,
     io::read_utf8_bounded_within,
-    profiles::{load_profiles, ProfileResolution},
+    lsp::load_language_servers,
+    profiles::{load_profiles, resolve_profile_references, ProfileResolution},
     skills::load_skills,
     templates::load_templates,
-    AgentProfile, AgentsHierarchy, ResolvedInstructions, ResourceDiagnosticEntry,
-    ResourceDiagnosticStatus, ResourceDiagnostics, ResourceHotReload, ResourceIssue, ResourceKind,
-    ResourceLimits, ResourceLoadError, ResourceLoaderOptions, ResourceOrigin, ResourceProvenance,
-    ResourceRequest, ResourceWatcher, SkillResolution, TemplateResolution,
+    AgentProfile, AgentsHierarchy, LoadedAgentProfileV2, ResolvedInstructions,
+    ResourceDiagnosticEntry, ResourceDiagnosticStatus, ResourceDiagnostics, ResourceHotReload,
+    ResourceIssue, ResourceKind, ResourceLimits, ResourceLoadError, ResourceLoaderOptions,
+    ResourceOrigin, ResourceProvenance, ResourceRequest, ResourceWatcher, SkillResolution,
+    TemplateResolution, UserHookConfig,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -68,7 +71,13 @@ pub struct ResourceBundle {
     pub agents: AgentsHierarchy,
     pub skills: SkillResolution,
     pub templates: TemplateResolution,
+    /// P8-5 v1 兼容视图（name/instructions/default provider-model）。
     pub profiles: Vec<AgentProfile>,
+    /// P17-5 Profile v2：全维度档案（加载校验后）。
+    pub profiles_v2: Vec<LoadedAgentProfileV2>,
+    /// P17-1 User Hooks（Global + workspace 作用域，确定性排序）。
+    pub hooks: Vec<UserHookConfig>,
+    pub language_servers: Vec<crate::LanguageServerResource>,
     pub resolved_instructions: ResolvedInstructions,
     pub instructions: Vec<ResourceInstruction>,
     pub diagnostics: ResourceDiagnostics,
@@ -173,13 +182,24 @@ impl ResourceLoader {
             &request.selection,
             limits,
         );
-        let profiles = load_profiles(
+        let mut profiles = load_profiles(
             global,
             &roots,
             &self.options.workspace_resource_dir,
             &request.selection,
             limits,
+            self.options.memory_available,
         );
+        let (language_servers, lsp_diagnostics) =
+            load_language_servers(&roots, &self.options.workspace_resource_dir, limits);
+        let hooks = load_hooks(
+            global,
+            &roots,
+            &self.options.workspace_resource_dir,
+            request.workspace_id.as_str(),
+            limits,
+        );
+        resolve_profile_references(&mut profiles, &skills, &hooks.hooks);
 
         let mut diagnostics = ResourceDiagnostics::default();
         let mut instructions = load_plain_instructions(
@@ -198,6 +218,8 @@ impl ResourceLoader {
         merge_diagnostics(&mut diagnostics, &skills.diagnostics);
         merge_diagnostics(&mut diagnostics, &templates.diagnostics);
         merge_diagnostics(&mut diagnostics, &profiles.diagnostics);
+        merge_diagnostics(&mut diagnostics, &lsp_diagnostics);
+        merge_diagnostics(&mut diagnostics, &hooks.diagnostics);
         instructions.sort_by(|left, right| {
             left.kind
                 .priority()
@@ -215,6 +237,9 @@ impl ResourceLoader {
             skills,
             templates,
             profiles: profiles.profiles,
+            profiles_v2: profiles.profiles_v2,
+            hooks: hooks.hooks,
+            language_servers,
             resolved_instructions: profiles.instructions,
             instructions,
             diagnostics,
@@ -444,6 +469,63 @@ mod tests {
             .issues
             .iter()
             .any(|issue| issue.code == "prompt_frontmatter_invalid"));
+    }
+
+    #[test]
+    fn workspace_language_server_resource_is_loaded_with_provenance() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let lsp_dir = temp.path().join(".pawork/lsp");
+        fs::create_dir_all(&lsp_dir).expect("lsp dir");
+        fs::write(
+            lsp_dir.join("custom.toml"),
+            r#"
+id = "custom-ls"
+command = "custom-language-server"
+args = ["--stdio"]
+language = "custom"
+extensions = ["custom"]
+max_restarts = 2
+"#,
+        )
+        .expect("resource");
+        let bundle = loader_for(temp.path())
+            .load(&ResourceRequest::new(
+                WorkspaceId::from("w"),
+                0,
+                WorkspaceRelativePath::new("src/main.custom").expect("path"),
+            ))
+            .expect("bundle");
+        assert_eq!(bundle.language_servers.len(), 1);
+        let server = &bundle.language_servers[0];
+        assert_eq!(server.id, "custom-ls");
+        assert_eq!(server.max_restarts, Some(2));
+        assert!(server.provenance.is_some());
+        assert!(bundle.diagnostics.entries.iter().any(|entry| {
+            entry.kind == ResourceKind::LanguageServer && entry.resource_id == "custom-ls"
+        }));
+    }
+
+    #[test]
+    fn malformed_language_server_is_isolated_without_echoing_body() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let lsp_dir = temp.path().join(".pawork/lsp");
+        fs::create_dir_all(&lsp_dir).expect("lsp dir");
+        fs::write(lsp_dir.join("bad.toml"), "secret-token = [not toml").expect("resource");
+        let bundle = loader_for(temp.path())
+            .load(&ResourceRequest::new(
+                WorkspaceId::from("w"),
+                0,
+                WorkspaceRelativePath::new("src/lib.rs").expect("path"),
+            ))
+            .expect("bundle");
+        assert!(bundle.language_servers.is_empty());
+        let issue = bundle
+            .diagnostics
+            .issues
+            .iter()
+            .find(|issue| issue.code == "language_server_invalid")
+            .expect("diagnostic");
+        assert!(!issue.message.contains("secret-token"));
     }
 
     #[test]

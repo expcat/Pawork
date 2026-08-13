@@ -48,6 +48,78 @@ fn monitor_registers_as_task_kind_monitor() {
 }
 
 #[test]
+fn stop_then_unregister_allows_reregister_same_id() {
+    let (svc, tm) = service_with_task_manager();
+    let id = svc.register(port_monitor("same"), None).unwrap();
+    let first_task_id = svc.monitor_task_id(&id).expect("task registered");
+    svc.start(&id).unwrap();
+    svc.stop(&id, Some("done".into())).unwrap();
+    assert_eq!(tm.task(&first_task_id).unwrap().status, TaskStatus::Completed);
+
+    let unregistered = svc.unregister(&id).unwrap();
+    assert!(matches!(
+        unregistered,
+        MonitorEvent::Unregistered { ref monitor_id } if monitor_id == &id
+    ));
+    assert!(svc.config(&id).is_none(), "config must be removed");
+    assert!(svc.monitor_task_id(&id).is_none(), "task map must be removed");
+    assert!(svc.record(&id).is_none(), "view record must be removed");
+    assert!(
+        matches!(
+            svc.event_log().last(),
+            Some(MonitorEvent::Unregistered { monitor_id }) if monitor_id == &id
+        ),
+        "unregister must be persistable/replayable"
+    );
+    assert!(
+        matches!(
+            svc.unregister(&id).unwrap_err(),
+            monitor_service::MonitorServiceError::UnknownMonitor(_)
+        ),
+        "unknown unregister must fail closed"
+    );
+
+    let again = svc.register(port_monitor("same"), None).unwrap();
+    assert_eq!(again, id);
+    let second_task_id = svc.monitor_task_id(&again).expect("reregistered task");
+    assert_ne!(second_task_id, first_task_id);
+    assert_eq!(tm.task(&second_task_id).unwrap().status, TaskStatus::Queued);
+
+    svc.start(&again).unwrap();
+    let rec = svc.record(&again).expect("fresh record after reregister+start");
+    assert_eq!(rec.trigger_count, 0);
+    assert!(rec.last_detail.is_none());
+}
+
+#[test]
+fn unregister_while_running_drops_view_and_cancels_task() {
+    let (svc, tm) = service_with_task_manager();
+    let id = svc.register(port_monitor("live"), None).unwrap();
+    let task_id = svc.monitor_task_id(&id).expect("task registered");
+    svc.start(&id).unwrap();
+    svc.evaluate(
+        &id,
+        &Observation::PortState {
+            host: "127.0.0.1".into(),
+            port: 8080,
+            open: true,
+        },
+    )
+    .unwrap();
+    assert_eq!(svc.record(&id).unwrap().trigger_count, 1);
+    assert_eq!(tm.task(&task_id).unwrap().status, TaskStatus::Running);
+
+    svc.unregister(&id).unwrap();
+    assert!(svc.record(&id).is_none());
+    assert!(svc.snapshot().monitors.iter().all(|rec| rec.monitor_id != id));
+    assert_eq!(tm.task(&task_id).unwrap().status, TaskStatus::Canceled);
+
+    let again = svc.register(port_monitor("live"), None).unwrap();
+    svc.start(&again).unwrap();
+    assert_eq!(svc.record(&again).unwrap().trigger_count, 0);
+}
+
+#[test]
 fn duplicate_monitor_id_is_rejected_without_orphan_task() {
     let (svc, tm) = service_with_task_manager();
     let id = svc.register(port_monitor("same"), None).unwrap();

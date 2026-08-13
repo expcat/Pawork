@@ -352,6 +352,10 @@ pub enum MonitorEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    /// 注销：从运行时视图移除该 monitor；同一 id 可重新注册为全新记录。
+    Unregistered {
+        monitor_id: MonitorId,
+    },
 }
 
 // =========================================================================

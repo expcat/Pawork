@@ -2,6 +2,7 @@
 //!
 //! `session_events` 是事实来源；其他表均为可删除、可从事件重建的 Projection。
 
+mod client_adapter;
 mod compat_import;
 mod event_store;
 mod export_import;
@@ -15,8 +16,10 @@ mod session_tree;
 use std::path::{Path, PathBuf};
 
 use app_database::{DatabaseActor, DatabaseError};
+pub use client_adapter::SqliteClientSessionRegistryStore;
 pub use compat_import::{
-    CompatImportReport, ExternalRecord, ExternalSource, ParsedExternalSession,
+    CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport, ExternalRecord,
+    ExternalSource, ParsedExternalSession,
 };
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
 pub use export_import::{
@@ -164,4 +167,8 @@ pub enum SessionStoreError {
         source_label: String,
         original_id: String,
     },
+    #[error("compat import history cursor is malformed: {0}")]
+    InvalidHistoryCursor(String),
+    #[error("compat import history contains unknown source label `{0}`")]
+    InvalidHistorySource(String),
 }

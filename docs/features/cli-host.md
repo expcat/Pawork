@@ -50,6 +50,19 @@ pawork headless --json-stdio
 
 无头 JSON 模式与 `serve` / `shell` / `run` 并列：进程读 NDJSON 请求（`AppCommand`）、写 NDJSON 事件（`AppEvent`），复用同一 `app-service` 装配，不渲染 TUI/CLI 文本。它是脚本 / CI 与 Agent SDK（P17-8）/ IDE Host Adapter（P17-9）/ ACP（P17-7）的统一程序化入口；`pawork` 仍是唯一正式宿主，SDK/IDE/ACP 都连接该模式而非构造第二 Core。
 
+### ACP Host（Phase 17 / P17-7）
+
+```bash
+pawork acp serve
+```
+
+ACP（Agent Client Protocol v1）宿主：外部 ACP 客户端经 stdin/stdout JSON-RPC
+接入同一 Core。stdout 只写协议帧（握手 / 响应 / `session/update` 通知 /
+`session/request_permission` 请求），诊断一律进 stderr；Session Registry 复用
+本实例 SQLite `session.db`，不私建 ownership / credential 状态。`acp serve`
+是独立可选项，不装配 GUI Server、不影响 `serve` / `shell` / GUI 既有模式
+（协议隔离，GUI 仍只经 GUI Connection Protocol 接入）。
+
 ## 命令总览
 
 ```bash
@@ -67,6 +80,7 @@ pawork approval list / approve
 
 pawork gui clients / disconnect / endpoint
 pawork remote publish / unpublish
+pawork acp serve
 
 pawork provider list
 pawork auth login

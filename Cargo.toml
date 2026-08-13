@@ -76,6 +76,26 @@ members = [
     "crates/monitor-service",
     "crates/memory-service",
     "crates/review-engine",
+    # Phase 17 Ecosystem & Host Compatibility
+    "crates/user-hooks",
+    "crates/lsp-runtime",
+    "crates/plugin-package",
+    "crates/marketplace",
+    "crates/teams",
+    "crates/agent-sdk",
+    "crates/headless-json",
+    "crates/browser-computer-runtime",
+    "crates/transport-remote",
+    # P18-10 is an actual prerequisite of P17-7 ACP Host.
+    "crates/client-adapter-api",
+    # P17-7 ACP Host（Agent Client Protocol 适配宿主，`pawork acp serve`）。
+    "crates/acp-host",
+    # P17-9 IDE Host Adapter（IDE 生命周期/诊断/交互桥接，经 Agent SDK / Headless 连 pawork Host）。
+    "crates/ide-host-adapter",
+    # P17-13 Compatibility Loader（Claude/Codex/Grok/Cursor/Pi 只读探测与幂等导入）。
+    "crates/compat-loader",
+    # P17-12 Mobile / Remote Control（受限协议、配对与通知推送）。
+    "crates/remote-control-adapter",
 ]
 # crates/ 下的核心 crate 随对应任务陆续创建并登记到 members。
 

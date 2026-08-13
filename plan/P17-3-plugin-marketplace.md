@@ -1,6 +1,6 @@
 # P17-3：Plugin Marketplace（扩展市场）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P17-2、P2-1、P9-5、P4-9、P8-1
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（Built + L1；真实 monitor-service 宿主接线仍属 P16-10 ① 延期） · 交付成熟度：Built · 依赖：P17-2、P2-1、P9-5、P4-9、P8-1
 
 **最终目的**：实现 Plugin Marketplace——从可信源（source）发现、安装、更新、卸载 Plugin Package，并提供版本管理、签名校验、版本 pin、trust 等级与 team policy 控制，让组织可控地引入第三方扩展。所有越权 / 越级安装须可被组织策略拦截。
 
@@ -23,12 +23,22 @@
 
 ## 验收标准
 
-- [ ] 支持多 source 发现与安装 / 更新 / 卸载
-- [ ] 签名与内容 hash 校验失败时拒绝安装
-- [ ] 支持 version pin 与版本范围解析
-- [ ] trust 等级与 team policy 生效，越权安装被拦截
-- [ ] 六类 package 资源随安装/更新/卸载完整注册、回滚、注销；Monitors 只由 P16-6 runtime 执行
-- [ ] **（P16-10 延期接线）Monitor 包生命周期**：package-owned Monitor 随 install/update 事务化注册其配置，uninstall 先经 `task-manager` 停止 package-owned Monitor 再从 `monitor-service` 注销，失败整体回滚——修复 P16-6 当前无 package 归属/停止语义、跨 TaskManager/Monitor 更新不原子。见 [p16-review §2.3](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
+- [x] 支持多 source 发现与安装 / 更新 / 卸载
+- [x] 签名与内容 hash 校验失败时拒绝安装
+- [x] 支持 version pin 与版本范围解析
+- [x] trust 等级与 team policy 生效，越权安装被拦截
+- [x] 六类 package 资源随安装/更新/卸载完整注册、回滚、注销；Monitors 只由 P16-6 runtime 执行
+- [x] **（P16-10 延期接线）Monitor 包生命周期**：package-owned Monitor 随 install/update 事务化注册其配置，uninstall 先经 `task-manager` 停止 package-owned Monitor 再从 `monitor-service` 注销，失败整体回滚——修复 P16-6 当前无 package 归属/停止语义、跨 TaskManager/Monitor 更新不原子。见 [p16-review §2.3](../docs/review/p16-review.md) 与 [plan/README Phase 16 登记](README.md)。
+
+## 验证记录（2026-08-13）
+
+- 新增 `marketplace` crate：多 source 发现、semver / hash pin、Ed25519 签名与内容 hash、trust / team policy 闸门、事务化 install/update/uninstall。
+- 路径键冲突之外增加身份冲突层 `check_identity_conflicts`：skill/agent/hook/mcp/lsp/monitor 即使路径不同，身份相同也 fail-closed。
+- 卸载顺序由 `RecordingHost` 锁定为 **先 `stop_monitor` 再 `unregister_monitor`**；`monitor-service` 新增 `MonitorEvent::Unregistered`，从视图抹掉记录（`Started` 不重置累计，注销才丢弃）。
+- 真实 `monitor-service` / `task-manager` 宿主接线仍属 P16-10 ① 延期；本任务只交付 Marketplace 侧契约与 Mock host 事务语义。
+- `cargo test -p marketplace --test marketplace`：20 项通过（含身份冲突、签名失败、policy/trust、依赖闭包、uninstall stop-then-unregister）。
+- `cargo test -p monitor-service --test service --lib`：19 + 8 通过。
+- Validation Level：L1；Full workspace gate：NOT RUN。未宣称已验收。
 
 **相关文档**：[plugins](../docs/features/plugins.md) · [policy](../docs/features/policy.md) · [skills](../docs/features/skills.md) · [ROADMAP](../ROADMAP.md)
 

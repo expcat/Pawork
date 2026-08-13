@@ -7,13 +7,18 @@
 
 mod aggregate;
 mod approval;
+mod client_adapter;
 mod error;
 mod idempotency;
+mod profile_resolver;
 mod rate_limit;
 mod router;
 mod supervisor;
+mod team;
+mod user_hook;
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
@@ -33,12 +38,27 @@ pub use aggregate::{
     RunRecord, SessionRecord, Snapshot, TerminalRecord,
 };
 pub use approval::{ApprovalError, ApprovalRegistry, PendingApproval, Registration};
+pub use client_adapter::ClientAdapterHost;
 pub use error::AppServiceError;
 pub use idempotency::{IdempotencyCheck, IdempotencyError, IdempotencyStats, IdempotencyStore};
+pub use profile_resolver::{
+    DenyAllModelOverridePolicy, IsolationCapability, ModelLanding, ModelOverrideDecision,
+    ModelOverridePolicy, ModelOverrideRequest, ProductionModelOverridePolicy, ProfileResolveError,
+    ResolvedRunProfile, RunProfileResolver, SandboxIsolationCapability,
+};
 pub use rate_limit::{DeltaKind, RateLimiter, RateLimiterStats};
 pub use router::{source_name, CommandRouter, RouterConfig};
 pub use supervisor::{
     CancelOutcome, RunRequest, RunSupervisor, RunSupervisorStats, SuperviseError,
+};
+pub use team::{SqliteTeamStore, TeamHost};
+pub use teams::TeamError;
+pub use user_hook::{
+    hook_config_from_resource, BackendSecretResolver, CanonicalJudge, EvalProfile,
+    EvalProfileResolver, HookMcpApproval, HookPolicyGate, HookRunContext,
+    HookWorkspaceTrustResolver, HttpHookExecutor, McpToolInvokerHost, ProviderResolver,
+    SandboxCommandExecutor, SqliteHookAuditSink, StaticHookRunContext, TokioAsyncRunner,
+    UserHookHost, UserHookHostOptions,
 };
 
 use crate::error::now_timestamp;
@@ -326,17 +346,21 @@ pub struct AppService {
     router: CommandRouter,
     artifact_store: Option<Arc<ArtifactStore>>,
     quota_runtime: Option<Arc<QuotaRuntime>>,
+    /// P17-6 Team 协作宿主：durable store + 重启重放 + typed EventHub 桥。
+    team_host: TeamHost,
 }
 
 impl AppService {
     pub fn new(instance: impl Into<String>) -> Self {
-        Self::build(instance, None, None)
+        Self::build(instance, None, None, None)
+            .expect("in-memory Team store construction must succeed")
     }
 
     /// 携带内容寻址 Blob Store 构造（P13-8 接线）；`AppService::new` 等价于
     /// store 为 `None`（此时 `artifact_read` 返回 `Unavailable`）。
     pub fn with_artifact_store(instance: impl Into<String>, store: Arc<ArtifactStore>) -> Self {
-        Self::build(instance, Some(store), None)
+        Self::build(instance, Some(store), None, None)
+            .expect("in-memory Team store construction must succeed")
     }
 
     /// 携带共享 Quota 运行时构造（P14-8）：注入唯一 ledger + QuotaService。
@@ -347,14 +371,42 @@ impl AppService {
         store: Option<Arc<ArtifactStore>>,
         quota_runtime: Arc<QuotaRuntime>,
     ) -> Self {
-        Self::build(instance, store, Some(quota_runtime))
+        Self::build(instance, store, Some(quota_runtime), None)
+            .expect("in-memory Team store construction must succeed")
+    }
+
+    /// 携带 durable Team 事件存储构造（P17-6）：Team 命令先落盘 SQLite，
+    /// 重启时从同一路径全量重放重建状态。未指定路径的构造（[`Self::new`] 等）
+    /// 使用内存 SQLite（完整 SQL 语义，无跨进程持久性）。
+    pub fn with_team_db(
+        instance: impl Into<String>,
+        team_db_path: impl Into<PathBuf>,
+    ) -> Result<Self, teams::TeamError> {
+        Self::build(instance, None, None, Some(team_db_path.into()))
+    }
+
+    /// 生产组合入口：同时注入 artifact/quota 运行时与 durable Team DB。
+    /// 显式路径打开或重放失败时返回错误，正式宿主必须终止启动，绝不降级为空状态。
+    pub fn with_runtime_components(
+        instance: impl Into<String>,
+        store: Option<Arc<ArtifactStore>>,
+        quota_runtime: Arc<QuotaRuntime>,
+        team_db_path: impl Into<PathBuf>,
+    ) -> Result<Self, teams::TeamError> {
+        Self::build(
+            instance,
+            store,
+            Some(quota_runtime),
+            Some(team_db_path.into()),
+        )
     }
 
     fn build(
         instance: impl Into<String>,
         artifact_store: Option<Arc<ArtifactStore>>,
         quota_runtime: Option<Arc<QuotaRuntime>>,
-    ) -> Self {
+        team_db_path: Option<PathBuf>,
+    ) -> Result<Self, teams::TeamError> {
         let instance = instance.into();
         let router = CommandRouter::new(RouterConfig {
             instance: instance.clone(),
@@ -363,7 +415,8 @@ impl AppService {
         if let Some(runtime) = quota_runtime.as_ref() {
             router.set_quota_runtime(Arc::clone(runtime));
         }
-        Self {
+        let team_host = team::open_durable(router.team_sink(), team_db_path)?;
+        Ok(Self {
             instance: instance.clone(),
             started_at: Instant::now(),
             state: Mutex::new(State {
@@ -374,7 +427,61 @@ impl AppService {
             router,
             artifact_store,
             quota_runtime,
-        }
+            team_host,
+        })
+    }
+
+    /// Team 协作命令面 / 查询面（P17-6）。
+    pub fn teams(&self) -> &teams::TeamService {
+        self.team_host.service()
+    }
+
+    /// Team 宿主（durable store + 重放状态；测试 / 自省）。
+    pub fn team_host(&self) -> &TeamHost {
+        &self.team_host
+    }
+
+    /// 注入共享 User Hooks 宿主（P17-1）：run 的 pre-prompt / pre-tool 权威
+    /// 位点回灌 hooks 结果。幂等：同一实例重复注入为 no-op；未注入时行为
+    /// 与既往完全一致。
+    pub fn set_user_hooks(&self, host: Arc<UserHookHost>) {
+        self.router.set_user_hooks(host);
+    }
+
+    /// 注入 run 的 workspace roots（P17-1）：run loop 的 pre-prompt / pre-tool
+    /// 权威位点把它传给 UserHookHost。与 [`Self::set_user_hooks`] 同生命周期。
+    pub fn set_workspace_roots(&self, roots: Vec<PathBuf>) {
+        self.router.set_workspace_roots(roots);
+    }
+
+    /// 是否已注入共享 User Hooks 宿主（宿主装配 / 诊断用）。
+    pub fn user_hooks_active(&self) -> bool {
+        self.router.user_hooks_active()
+    }
+
+    /// 注入 P17-5 主 run profile 解析器（生产 ResourceLoader 装配）。未注入时
+    /// RunStart 携带 profile 名一律 fail-closed。幂等。
+    pub fn set_profile_resolver(
+        &self,
+        resolver: Arc<dyn crate::profile_resolver::RunProfileResolver>,
+    ) {
+        self.router.set_profile_resolver(resolver);
+    }
+
+    /// 注入 P17-5 模型覆盖授权策略（生产装配
+    /// [`ProductionModelOverridePolicy`]：本机交互 + LocalUser 放行；未注入
+    /// 时缺省 DenyAll fail-closed）。幂等。
+    pub fn set_model_override_policy(
+        &self,
+        policy: Arc<dyn crate::profile_resolver::ModelOverridePolicy>,
+    ) {
+        self.router.set_model_override_policy(policy);
+    }
+
+    /// 注入 P17-5 后台任务管理器：background=true 的 run 经它注册 / 启动 /
+    /// 完成 / 取消一个 TaskKind::Agent。幂等。
+    pub fn set_task_manager(&self, manager: Arc<task_manager::TaskManager>) {
+        self.router.set_task_manager(manager);
     }
 
     /// legacy 入口：`ServiceOperation` → `ServiceResponse`。
@@ -449,6 +556,24 @@ impl AppService {
         &self.router
     }
 
+    /// 幂等 materialize（P17-7 跨 host/进程 resume）：以 registry 权威
+    /// `core_session_id` 在本地 Core aggregate 重建会话记录（已存在即
+    /// no-op，不生成新 id、不重绑映射）。Core 是会话事实的唯一来源，
+    /// 同 id 多次调用可重放、不堆积。
+    pub fn materialize_session(
+        &self,
+        session_id: &agent_domain::SessionId,
+        workspace_id: &agent_domain::WorkspaceId,
+        title: impl Into<String>,
+    ) -> Result<crate::aggregate::SessionRecord, AppServiceError> {
+        self.router.materialize_session(
+            session_id,
+            workspace_id,
+            title.into(),
+            crate::error::now_timestamp(),
+        )
+    }
+
     /// 进程内共享的 Quota 运行时（P14-8）；未注入时为 `None`。
     pub fn quota_runtime(&self) -> Option<&Arc<QuotaRuntime>> {
         self.quota_runtime.as_ref()
@@ -457,6 +582,17 @@ impl AppService {
     /// 注册 Provider 实现（测试注入 / 正式宿主后续由 provider-runtime 注入）。
     pub fn register_provider(&self, provider: Arc<dyn ModelProvider>) -> agent_domain::ProviderId {
         self.router.register_provider(provider)
+    }
+
+    /// 按 ProviderId 取共享 Provider（User Hook 判定执行器 / 宿主装配用）。
+    pub fn provider(&self, id: &agent_domain::ProviderId) -> Option<Arc<dyn ModelProvider>> {
+        self.router.provider(id)
+    }
+
+    /// 按 ProviderId 升序取第一个已注册 Provider（User Hook 默认判定 profile
+    /// 的兜底落点；无注册时为 `None`，判定 fail-closed）。
+    pub fn first_provider(&self) -> Option<Arc<dyn ModelProvider>> {
+        self.router.first_provider()
     }
 
     /// 冲刷并取回已限流合并的应用事件。
@@ -671,10 +807,11 @@ impl AppService {
                 session_id: session_id.clone(),
                 user_message: prompt,
                 model: None,
+                profile: None,
             },
         )) {
             AppResponseEnvelope {
-                response: AppResponse::Accepted { .. },
+                response: AppResponse::Accepted { run_id, .. },
                 ..
             } => ServiceResponse {
                 ok: true,
@@ -683,7 +820,7 @@ impl AppService {
                 data: json!({
                     "workspace_id": workspace_id,
                     "session_id": session_id,
-                    "run_id": self.router.last_started_run(),
+                    "run_id": run_id,
                     "prompt_present": true,
                     "keep_serving": keep_serving,
                     "implementation_phase": "P13-1"
@@ -804,6 +941,7 @@ mod tests {
     use super::*;
     use agent_domain::{CancellationToken, Timestamp};
     use core_api::AppQuery;
+    use core_api::{AppCommand, AppCommandEnvelope, AppResponse};
 
     #[test]
     fn routes_cli_requests_in_process_and_tracks_source() {
@@ -945,6 +1083,70 @@ mod tests {
             quota_service::QuotaMeasure::Exact(0),
             "runtime B must stay isolated from runtime A"
         );
+    }
+
+    #[test]
+    fn materialize_session_is_idempotent_and_does_not_create_ghosts() {
+        let service = AppService::new("materialize-idempotent");
+        let workspace = service.dispatch_envelope(AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: agent_domain::CommandId::from("ws-add"),
+            source: CommandSource::Automation,
+            identity: ActorIdentity::Automation {
+                name: "test".into(),
+            },
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: Timestamp::from_unix_millis(1),
+            command: AppCommand::WorkspaceAdd {
+                root_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            },
+        });
+        let AppResponse::Data(value) = workspace.response else {
+            panic!("WorkspaceAdd 应成功");
+        };
+        let workspace_id = agent_domain::WorkspaceId::from(
+            value
+                .get("id")
+                .and_then(|v| v.as_str())
+                .expect("workspace id"),
+        );
+        let session_id = agent_domain::SessionId::from("session-7");
+        let first = service
+            .materialize_session(&session_id, &workspace_id, "resume")
+            .expect("first materialize");
+        let second = service
+            .materialize_session(&session_id, &workspace_id, "other-title")
+            .expect("second materialize");
+        assert_eq!(first.session_id, session_id);
+        assert_eq!(second.session_id, session_id);
+        assert_eq!(first.title, "resume");
+        assert_eq!(second.title, first.title, "已存在时不得改写字段");
+        assert_eq!(service.router().aggregate().snapshot().sessions.len(), 1);
+        let created = service.dispatch_envelope(AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: agent_domain::CommandId::from("session-create"),
+            source: CommandSource::Automation,
+            identity: ActorIdentity::Automation {
+                name: "test".into(),
+            },
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: Timestamp::from_unix_millis(2),
+            command: AppCommand::SessionCreate {
+                workspace_id,
+                title: Some("fresh".into()),
+            },
+        });
+        let AppResponse::Data(created) = created.response else {
+            panic!("SessionCreate 应成功");
+        };
+        assert_ne!(
+            created.get("session_id").and_then(|v| v.as_str()),
+            Some("session-7"),
+            "materialize 后 create_session 不得复用同一 id"
+        );
+        assert_eq!(service.router().aggregate().snapshot().sessions.len(), 2);
     }
 
     #[tokio::test]

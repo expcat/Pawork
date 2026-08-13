@@ -7,8 +7,10 @@
 mod agents;
 mod diagnostics;
 mod error;
+mod hooks;
 mod io;
 mod loader;
+mod lsp;
 mod profiles;
 mod request;
 mod skills;
@@ -21,8 +23,10 @@ pub use config_service::ConfigTier;
 pub use agents::{AgentsDocument, AgentsHierarchy};
 pub use diagnostics::ResourceDiagnosticView;
 pub use error::ResourceLoadError;
+pub use hooks::{load_hooks, UserHookConfig, UserHookScope};
 pub use loader::{ResourceBundle, ResourceInstruction, ResourceInstructionKind, ResourceLoader};
-pub use profiles::{AgentProfile, ResolvedInstructions};
+pub use lsp::LanguageServerResource;
+pub use profiles::{AgentProfile, LoadedAgentProfileV2, ResolvedInstructions};
 pub use request::{
     CurrentPathKind, ResourceLimits, ResourceLoaderOptions, ResourceRequest, ResourceSelection,
     WorkspaceRelativePath,

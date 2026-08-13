@@ -5,6 +5,32 @@ use serde_json::Value;
 
 use crate::{ProtectedBlobRef, ReasoningItemId};
 
+/// Canonical reasoning effort（P15-8，P17-5 起由 agent-domain 定义）。
+///
+/// `AgentProfileV2.effort` 以本枚举为一等字段，经 provider-api
+/// `ReasoningConfig` → `CapabilityNegotiator` → Provider Adapter 翻译；禁止
+/// Profile 或 Agent Core 按 Provider 名分支。显式 `ReasoningConfig` 优先；
+/// 旧 `ThinkingConfig.level` 仅在缺省时派生；`XHigh / Max` 进入旧 P6 adapter
+/// 时显式 clamp 为 `High`，不形成双轨。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    None,
+    Low,
+    #[default]
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl ReasoningEffort {
+    /// 是否要求模型声明 reasoning 能力（任何非 None effort）。
+    pub fn requires_reasoning_support(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// Provider-neutral reasoning continuation state.
 ///
 /// The provider credential itself is never stored here. It lives encrypted in
@@ -48,5 +74,17 @@ mod tests {
         for forbidden in ["encrypted_content", "signature", "reasoning_content"] {
             assert!(!encoded.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn reasoning_effort_is_canonical_and_serde_stable() {
+        // Canonical 枚举序列化名稳定：Profile v2 / provider-api 共用同一词汇。
+        assert_eq!(
+            serde_json::to_string(&ReasoningEffort::XHigh).expect("serialize"),
+            r#""x_high""#
+        );
+        assert_eq!(ReasoningEffort::default(), ReasoningEffort::Medium);
+        assert!(!ReasoningEffort::None.requires_reasoning_support());
+        assert!(ReasoningEffort::Max.requires_reasoning_support());
     }
 }

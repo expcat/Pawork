@@ -78,6 +78,11 @@ pub trait RemoteGuiTransportProvider: Send + Sync {
 
     /// 撤销已发布端点（按 `publish` 返回的 handle id）。
     async fn unpublish(&self, handle_id: &str) -> Result<(), TransportError>;
+
+    /// 撤销已发布端点（按 `publish` 返回的 handle id）：关闭已绑定的监听器、
+    /// 销毁端点凭证并使凭证立即失效；实现按各自策略断开已建立连接。撤销后
+    /// 对该端点的 `connect` 必须失败。
+    async fn revoke(&self, handle_id: &str) -> Result<(), TransportError>;
 }
 
 /// GUI 侧的远程连接 Adapter（可替换，[ADR-028]）。
@@ -430,6 +435,14 @@ impl RemoteGuiTransportProvider for MockRemoteTransportProvider {
             ));
         }
         Ok(())
+    }
+
+    async fn revoke(&self, handle_id: &str) -> Result<(), TransportError> {
+        // Mock 的 revoke 与 unpublish 同语义：移除槽位并关闭已绑定监听器
+        // （listener 通道断开后 accept 循环退出），端点不可再连接。
+        // 已建立的 Mock 连接按连接自身生命周期结束；真实实现
+        // （transport-remote 的 revoke）会额外即时断开已建立连接。
+        self.unpublish(handle_id).await
     }
 }
 

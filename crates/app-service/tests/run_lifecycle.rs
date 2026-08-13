@@ -203,14 +203,20 @@ fn start_run(router: &CommandRouter, session_id: &SessionId, message: &str) -> R
             session_id: session_id.clone(),
             user_message: message.into(),
             model: None,
+            profile: None,
         },
     ));
-    assert!(
-        matches!(response.response, AppResponse::Accepted { .. }),
-        "RunStart 应 Accepted，got {:?}",
-        response.response
-    );
-    router.last_started_run().expect("run id")
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = response.response
+    else {
+        panic!(
+            "RunStart 应 Accepted 且携带 run id，got {:?}",
+            response.response
+        );
+    };
+    run_id
 }
 
 async fn wait_until<F: Fn() -> bool>(condition: F, timeout: Duration) -> bool {

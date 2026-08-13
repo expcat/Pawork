@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use agent_domain::{ErrorCategory, ErrorContext, QueryId, Timestamp};
+use agent_domain::{ErrorCategory, ErrorContext, QueryId, RunId, Timestamp};
 use core_api::{ApiVersion, AppCommandEnvelope, AppResponse, AppResponseEnvelope, API_VERSION};
 use thiserror::Error;
 
@@ -145,7 +145,10 @@ fn aggregate_error_context(error: &AggregateError) -> ErrorContext {
         | AggregateError::SessionNotFound(_)
         | AggregateError::RunNotFound(_)
         | AggregateError::ProviderNotFound(_) => ErrorCategory::NotFound,
-        AggregateError::ArtifactExists(_) => ErrorCategory::Conflict,
+        AggregateError::ArtifactExists(_)
+        | AggregateError::StaleClientContext { .. }
+        | AggregateError::ClientContextConflict { .. } => ErrorCategory::Conflict,
+        AggregateError::InvalidClientContext(_) => ErrorCategory::InvalidRequest,
         AggregateError::Poisoned => ErrorCategory::Internal,
     };
     ErrorContext {
@@ -164,6 +167,8 @@ fn supervise_error_context(error: &SuperviseError) -> ErrorContext {
         | SuperviseError::StillActive(_)
         | SuperviseError::Completed(_) => (ErrorCategory::Conflict, false),
         SuperviseError::Capacity(_) => (ErrorCategory::ResourceExhausted, true),
+        // P17-5：background run 缺 TaskManager 属配置缺失，不可重试。
+        SuperviseError::BackgroundUnavailable(_) => (ErrorCategory::Unavailable, false),
     };
     ErrorContext {
         category,
@@ -217,14 +222,19 @@ fn artifact_store_error_context(error: &artifact_store::ArtifactStoreError) -> E
     }
 }
 
-/// 构造命令的 Accepted 响应（request_id 由 command_id 派生，便于追溯）。
-pub fn accepted_response(envelope: &AppCommandEnvelope) -> AppResponseEnvelope {
+/// 构造 Accepted 响应并携带该命令确定启动的 run id（RunStart 专用：
+/// 并发来源各自从自己的响应取 run id，不依赖全局 `last_started_run`）。
+pub fn accepted_response_with_run(
+    envelope: &AppCommandEnvelope,
+    run_id: Option<RunId>,
+) -> AppResponseEnvelope {
     AppResponseEnvelope {
         api_version: API_VERSION,
         request_id: QueryId::from(envelope.command_id.as_str()),
         responded_at: now_timestamp(),
         response: AppResponse::Accepted {
             command_id: envelope.command_id.clone(),
+            run_id,
         },
     }
 }

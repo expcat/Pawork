@@ -11,6 +11,8 @@ description = "Pawork Session schema、向前迁移、Event Store 与可重建 P
 agent-domain = { path = "../agent-domain" }
 agent-events = { path = "../agent-events" }
 app-database = { path = "../app-database" }
+async-trait.workspace = true
+client-adapter-api = { path = "../client-adapter-api" }
 serde.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
@@ -19,4 +21,5 @@ blake3.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
 
 [dev-dependencies]
+tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

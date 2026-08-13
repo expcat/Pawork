@@ -611,10 +611,17 @@ async fn fresh_exact_zero_limit_cache_signal_hard_stops_without_fetch() {
             session_id,
             user_message: "must not reach provider".into(),
             model: None,
+            profile: None,
         },
     ));
-    assert!(matches!(response.response, AppResponse::Accepted { .. }));
-    let run_id = router.last_started_run().expect("run id");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &response.response
+    else {
+        panic!("RunStart 应 Accepted 且携带 run id");
+    };
+    let run_id = run_id.clone();
     wait_for_run_state(&router, &run_id, RunState::Failed).await;
 
     assert_eq!(
@@ -667,10 +674,17 @@ async fn stale_exact_zero_limit_cache_signal_does_not_hard_stop_or_refetch() {
             session_id,
             user_message: "stale signal is warning-only".into(),
             model: None,
+            profile: None,
         },
     ));
-    assert!(matches!(response.response, AppResponse::Accepted { .. }));
-    let run_id = router.last_started_run().expect("run id");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &response.response
+    else {
+        panic!("RunStart 应 Accepted 且携带 run id");
+    };
+    let run_id = run_id.clone();
     wait_for_run_state(&router, &run_id, RunState::Completed).await;
 
     assert_eq!(
@@ -692,15 +706,17 @@ async fn successful_run_records_usage_once() {
             session_id: session_id.clone(),
             user_message: "do work".into(),
             model: None,
+            profile: None,
         },
     );
     let accepted = router.dispatch(start);
-    assert!(
-        matches!(accepted.response, AppResponse::Accepted { .. }),
-        "run should start: {:?}",
-        accepted.response
-    );
-    let run_id = router.last_started_run().expect("run id");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = accepted.response
+    else {
+        panic!("run should start with a run id: {:?}", accepted.response);
+    };
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if router
@@ -757,14 +773,17 @@ async fn successful_run_publishes_cache_for_default_scope_token_and_cost_overvie
             session_id,
             user_message: "cross-layer quota run".into(),
             model: None,
+            profile: None,
         },
     ));
-    assert!(
-        matches!(response.response, AppResponse::Accepted { .. }),
-        "run should start: {:?}",
-        response.response
-    );
-    let run_id = router.last_started_run().expect("run id");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &response.response
+    else {
+        panic!("run should start with a run id: {:?}", response.response);
+    };
+    let run_id = run_id.clone();
     wait_for_run_state(&router, &run_id, RunState::Completed).await;
 
     // 终态可见后记账与本地缓存发布仍在同一任务中：轮询账户级 scope 的

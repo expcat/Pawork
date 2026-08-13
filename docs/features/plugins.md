@@ -30,6 +30,26 @@
 
 Marketplace 安装 / 更新 / 卸载必须把六类资源作为一个事务化 package 生命周期处理：校验完成后再分别注册到 Skills / Agents / User Hooks / MCP / LSP / Monitor loader，失败则整体回滚；卸载逐类注销并停止该 package 拥有的 Monitor。Marketplace 只管理包与注册，不执行 Hook、MCP、LSP 或 Monitor。
 
+### Marketplace 身份冲突与 Monitor 卸载（P17-3）
+
+Marketplace 在路径键冲突（`check_conflicts`）之外另做身份冲突层 `check_identity_conflicts`：skill / agent / hook / mcp / lsp / monitor 即使路径不同，身份相同也 fail-closed。
+
+卸载顺序锁定为先 `stop monitor …` 再 `unregister monitor …`。`monitor-service` 发出 `MonitorEvent::Unregistered` 后才从视图抹掉记录（`Started` 不重置累计，注销才丢弃）。真实 `monitor-service` / `task-manager` 宿主接线仍属 P16-10 ① 延期；当前 Marketplace 以 Mock `RecordingHost` 锁定该契约。
+
+### Package 格式（plugin-package crate）
+
+**Manifest（`package.toml`）**：`manifest_version` 固定为 `1`；顶层字段 `id`（校验过的 package id）、`name`、`version`（semver）、`license`、`description`、`entrypoint`、`scope`（`global` 默认 / `workspace`，与 resource-loader 作用域一致）、`dependencies`（其他 package / provider / runtime 的 semver 约束）。六个子段各自引用相对路径或内联清单：`skills`（必须为相对路径引用）、`agents`（profile）、`hooks`、`mcp`（`McpServerDeclaration` + `Stdio` / `Http` transport）、`lsp`、`monitors`。
+
+**归档布局与完整性**：归档目录树根置 `package.toml`，配内容寻址清单 `contents.b3`，每行 `<blake3 hex>  <posix 相对路径>`。`write_archive` / `read_archive` / `verify_archive` 用 blake3 校验所有文件；篡改、缺失、畸形行均报错（为 P17-3 marketplace 签名 / 校验提供基础）。归档内路径拒绝 `..` 与绝对路径。
+
+**类型聚合与冲突检测**：`detect_conflicts` 合并多 package / 多类型到统一资源表，检测同作用域下的重名 skill 路径、重复 hook trigger、MCP server 名冲突、monitor id / lsp id / profile 名冲突，以及重复 package id 跨版本冲突；冲突按 `ConflictKind` 排序并产出可解析或报错的 `ConflictReport`。
+
+**分发与 loader 集成**：`DispatchPlan::from_archive` + `PackageDispatchSink`（install_skill / agent_profile / hook / mcp_server / language_server / monitor）按固定顺序 skills→agents→hooks→mcp→lsp→monitors 分发，首个 sink 错误即停止。Package 只复用各 loader 既有路径，不复制运行时；真实 sink 由宿主接线到 resource-loader / mcp-client / monitor-service。
+
+**Monitor 驱动入口契约（P16-10 延期接线）**：`monitors` 子段定义稳定 driver/evaluator 入口——`MonitorDriverEntry`（默认 `kind = "monitor_service.evaluate"`）+ trigger config / observation / permissions / required capability。`MonitorLifecycle` 为单变体 `TaskManager`，类型层强制 package 无法声明自托管 lifecycle，执行统一进 `monitor-service` → `task-manager`，不重定义运行时语义。
+
+**MCP 本地 stdio 强制 sandbox 托管**：package 触达的本地 MCP stdio server 一律经 Sandbox Runtime → Process Runtime 托管。`SandboxedStdioSpawner` 走 `SandboxBackend::spawn_interactive`（内部委托 Process Runtime），stdin/stdout 经 async_rw 适配器桥接到 rmcp。`StdioSandboxRuntime`（SandboxBackend + SandboxPolicy + 受信 workspace roots）经 `McpServerConfig::build_client` 注入，stdio 无 sandbox runtime 时构建即 fail-closed；`DefaultConnector::sandboxed_stdio` 是 crate-private 注入口，生产无 unsandboxed 直接 spawn 路径。崩溃 restart 复用同一 connector → 同一 spawner，因此 restart 阶段不会降级为 unsandboxed spawn。
+
 > 边界：WASM lifecycle hook（进程内、沙箱化、capability 门控，P10-3）与 User Hook（用户配置驱动外部桥接，P17-1）是不同 trust boundary，二者共享 trigger point 词汇但走独立 dispatcher，不重复执行。
 
 ## Plugin Manifest

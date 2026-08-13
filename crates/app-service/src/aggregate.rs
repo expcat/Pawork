@@ -11,7 +11,7 @@ use agent_domain::{
     ArtifactId, EventId, ProviderId, RunId, SessionId, TerminalSessionId, Timestamp, ToolCallId,
     WorkspaceId,
 };
-use core_api::CommandSource;
+use core_api::{ClientContextSnapshot, CommandSource};
 use diff_service::DiffFile;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -31,6 +31,18 @@ pub enum AggregateError {
     ProviderNotFound(String),
     #[error("artifact already exists: {0}")]
     ArtifactExists(String),
+    #[error("invalid client context: {0}")]
+    InvalidClientContext(String),
+    #[error(
+        "stale client context for session {session_id}: received revision {received}, current revision {current}"
+    )]
+    StaleClientContext {
+        session_id: String,
+        received: u64,
+        current: u64,
+    },
+    #[error("client context revision {revision} conflicts for session {session_id}")]
+    ClientContextConflict { session_id: String, revision: u64 },
     #[error("aggregate state poisoned")]
     Poisoned,
 }
@@ -134,6 +146,7 @@ struct Inner {
     next_id: u64,
     workspaces: BTreeMap<WorkspaceId, Workspace>,
     sessions: BTreeMap<SessionId, SessionRecord>,
+    client_contexts: BTreeMap<SessionId, ClientContextSnapshot>,
     runs: BTreeMap<RunId, RunRecord>,
     approvals: BTreeMap<ToolCallId, ApprovalRecord>,
     providers: BTreeMap<ProviderId, ProviderRecord>,
@@ -157,6 +170,7 @@ impl AggregateState {
                 next_id: 0,
                 workspaces: BTreeMap::new(),
                 sessions: BTreeMap::new(),
+                client_contexts: BTreeMap::new(),
                 runs: BTreeMap::new(),
                 approvals: BTreeMap::new(),
                 providers: BTreeMap::new(),
@@ -237,6 +251,99 @@ impl AggregateState {
 
     pub fn session_exists(&self, session_id: &SessionId) -> bool {
         read(&self.inner).sessions.contains_key(session_id)
+    }
+
+    /// 以单调 revision 全量替换 Host 观察到的 session 上下文。相同 revision
+    /// + 相同内容为幂等重放；旧 revision 或同 revision 不同内容 fail-closed。
+    pub fn replace_client_context(
+        &self,
+        session_id: &SessionId,
+        snapshot: ClientContextSnapshot,
+    ) -> Result<ClientContextSnapshot, AggregateError> {
+        snapshot
+            .validate()
+            .map_err(AggregateError::InvalidClientContext)?;
+        let mut inner = write(&self.inner);
+        if !inner.sessions.contains_key(session_id) {
+            return Err(AggregateError::SessionNotFound(session_id.to_string()));
+        }
+        if let Some(current) = inner.client_contexts.get(session_id) {
+            if snapshot.revision < current.revision {
+                return Err(AggregateError::StaleClientContext {
+                    session_id: session_id.to_string(),
+                    received: snapshot.revision,
+                    current: current.revision,
+                });
+            }
+            if snapshot.revision == current.revision {
+                if snapshot == *current {
+                    return Ok(current.clone());
+                }
+                return Err(AggregateError::ClientContextConflict {
+                    session_id: session_id.to_string(),
+                    revision: snapshot.revision,
+                });
+            }
+        }
+        inner
+            .client_contexts
+            .insert(session_id.clone(), snapshot.clone());
+        inner.revision += 1;
+        Ok(snapshot)
+    }
+
+    /// 读取最新 Host 上下文快照；每个 provider turn 在 pre-prompt 时动态读取，
+    /// 因此活动 run 无需重启即可消费 IDE 新诊断/选区。
+    pub fn client_context(&self, session_id: &SessionId) -> Option<ClientContextSnapshot> {
+        read(&self.inner).client_contexts.get(session_id).cloned()
+    }
+
+    /// 幂等 materialize：以权威 `session_id` 在聚合中重建会话记录
+    /// （跨 host/进程 resume 用，P17-7）。
+    ///
+    /// 不生成新 id、不改写既有记录的字段：已存在时原样返回现有记录
+    /// （并发/重试安全，同 id 多次调用只产生一条记录，不堆积、不留
+    /// ghost）。id 形如 `<prefix>-<n>` 时同步推进 next_id 计数，避免后续
+    /// `create_session` 生成同号 id 覆盖本记录（进程内唯一性）。
+    pub fn materialize_session(
+        &self,
+        session_id: SessionId,
+        workspace_id: WorkspaceId,
+        title: String,
+        created_at: Timestamp,
+    ) -> Result<SessionRecord, AggregateError> {
+        let mut inner = write(&self.inner);
+        if let Some(existing) = inner.sessions.get(&session_id) {
+            return Ok(existing.clone());
+        }
+        if !inner.workspaces.contains_key(&workspace_id) {
+            return Err(AggregateError::WorkspaceNotFound(workspace_id.to_string()));
+        }
+        let record = SessionRecord {
+            session_id: session_id.clone(),
+            workspace_id,
+            title: if title.trim().is_empty() {
+                "Untitled".into()
+            } else {
+                title
+            },
+            created_at,
+            revision: 1,
+            open: true,
+            compacted: false,
+            run_count: 0,
+            message_count: 0,
+            forked_from: None,
+            parent_event_id: None,
+        };
+        if let Some((_, suffix)) = session_id.as_str().rsplit_once('-') {
+            if let Ok(n) = suffix.parse::<u64>() {
+                inner.next_id = inner.next_id.max(n);
+            }
+        }
+        inner.sessions.insert(session_id, record.clone());
+        inner.revision += 1;
+        Ok(record)
     }
 
     pub fn open_session(&self, session_id: &SessionId) -> Result<SessionRecord, AggregateError> {
@@ -672,4 +779,132 @@ fn write(inner: &RwLock<Inner>) -> std::sync::RwLockWriteGuard<'_, Inner> {
     inner
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_api::ClientContextSnapshot;
+    use workspace_service::{TrustState, WorkspaceRoot};
+
+    fn aggregate_with_session() -> (AggregateState, SessionId) {
+        let aggregate = AggregateState::new();
+        let workspace_id = WorkspaceId::from("workspace-1");
+        aggregate.record_workspace(Workspace {
+            id: workspace_id.clone(),
+            name: "workspace".into(),
+            roots: vec![WorkspaceRoot {
+                path: std::path::PathBuf::from("/workspace"),
+                git: None,
+            }],
+            trust: TrustState::Trusted,
+            last_accessed_at: Timestamp::from_unix_millis(1),
+            revision: 1,
+        });
+        let session = aggregate
+            .create_session(
+                workspace_id,
+                "session".into(),
+                Timestamp::from_unix_millis(1),
+            )
+            .expect("create session");
+        (aggregate, session.session_id)
+    }
+
+    fn snapshot(revision: u64) -> ClientContextSnapshot {
+        ClientContextSnapshot {
+            revision,
+            active_document: None,
+            open_documents: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn client_context_replace_is_monotonic_and_idempotent() {
+        let (aggregate, session_id) = aggregate_with_session();
+        aggregate
+            .replace_client_context(&session_id, snapshot(1))
+            .expect("first snapshot");
+        aggregate
+            .replace_client_context(&session_id, snapshot(1))
+            .expect("identical replay");
+        aggregate
+            .replace_client_context(&session_id, snapshot(3))
+            .expect("newer snapshot");
+        assert_eq!(aggregate.client_context(&session_id), Some(snapshot(3)));
+        assert!(matches!(
+            aggregate.replace_client_context(&session_id, snapshot(2)),
+            Err(AggregateError::StaleClientContext { .. })
+        ));
+    }
+
+    #[test]
+    fn client_context_requires_existing_session() {
+        let aggregate = AggregateState::new();
+        assert!(matches!(
+            aggregate.replace_client_context(&SessionId::from("missing"), snapshot(1)),
+            Err(AggregateError::SessionNotFound(_))
+        ));
+    }
+
+    fn diagnostic(uri: &str, message: &str) -> core_api::ClientDiagnostic {
+        core_api::ClientDiagnostic {
+            document_uri: uri.into(),
+            version: None,
+            range: core_api::ClientTextRange {
+                start: core_api::ClientTextPosition {
+                    line: 0,
+                    character: 0,
+                },
+                end: core_api::ClientTextPosition {
+                    line: 0,
+                    character: 1,
+                },
+            },
+            severity: Some(core_api::ClientDiagnosticSeverity::Error),
+            code: None,
+            source: None,
+            message: message.into(),
+        }
+    }
+
+    #[test]
+    fn client_context_over_limit_and_unsafe_uri_roll_back_without_pollution() {
+        // P17-9 审查阻塞：超限 / 不安全 URI 在写入前 validate 失败，
+        // 已存快照不被部分写入污染（失败回滚）。
+        let (aggregate, session_id) = aggregate_with_session();
+        aggregate
+            .replace_client_context(&session_id, snapshot(1))
+            .expect("seed snapshot");
+
+        // 超限 message：validate 先于写入失败。
+        let mut overflow = snapshot(2);
+        overflow.diagnostics.push(diagnostic(
+            "file:///x.rs",
+            &"x".repeat(core_api::MAX_CLIENT_CONTEXT_MESSAGE_BYTES + 1),
+        ));
+        assert!(matches!(
+            aggregate.replace_client_context(&session_id, overflow),
+            Err(AggregateError::InvalidClientContext(_))
+        ));
+        assert_eq!(
+            aggregate.client_context(&session_id),
+            Some(snapshot(1)),
+            "over-limit failure must not pollute the stored snapshot"
+        );
+
+        // 不安全 URI scheme：同样在写入前拒绝、不污染。
+        let mut unsafe_uri = snapshot(2);
+        unsafe_uri.diagnostics.push(diagnostic("javascript:alert(1)", "safe"));
+        assert!(matches!(
+            aggregate.replace_client_context(&session_id, unsafe_uri),
+            Err(AggregateError::InvalidClientContext(_))
+        ));
+        assert_eq!(
+            aggregate.client_context(&session_id),
+            Some(snapshot(1)),
+            "unsafe-uri failure must not pollute the stored snapshot"
+        );
+    }
 }

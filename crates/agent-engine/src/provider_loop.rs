@@ -88,6 +88,37 @@ pub trait LoopContext: Send + Sync {
     fn tool_kind(&self, _name: &str) -> agent_domain::ToolKind {
         agent_domain::ToolKind::ClientFunction
     }
+
+    /// Pre-prompt hook point（P17-1）：每轮请求组装完成后、发送给 Provider 之前
+    /// 调用，是 `PromptAssembled` 触发点的**权威回灌位点**。
+    ///
+    /// 实现可以改写 `request.messages`（PromptTransform 回灌）、注入判定
+    /// （PromptEval / AgentEval / McpTool）或拒绝整轮（返回 `Err`）。默认
+    /// no-op；不实现该方法的宿主行为不变。
+    async fn pre_prompt(
+        &self,
+        request: &mut CanonicalModelRequest,
+        events: LoopEventEmitter,
+        cancel: CancellationToken,
+    ) -> Result<(), LoopError> {
+        let _ = (request, events, cancel);
+        Ok(())
+    }
+
+    /// Pre-tool hook point（P17-1）：审批通过后、本地工具执行之前调用，是
+    /// `PreToolUse` 触发点的**权威回灌位点**。
+    ///
+    /// 实现可以从 `invocations` 中移除被拒绝的调用（移除项按审批拒绝语义回填
+    /// denied 结果）或返回 `Err` 中止整轮。默认 no-op。
+    async fn pre_tool(
+        &self,
+        invocations: &mut Vec<PendingToolInvocation>,
+        events: LoopEventEmitter,
+        cancel: CancellationToken,
+    ) -> Result<(), LoopError> {
+        let _ = (invocations, events, cancel);
+        Ok(())
+    }
 }
 
 /// 待执行的一次工具调用（解析自本轮 tool call）。
@@ -394,7 +425,7 @@ impl ProviderLoop {
         // WaitingForProvider → StreamingResponse
         self.transition(RunTransition::ProviderStarted)?;
 
-        let request = self.build_request();
+        let mut request = self.build_request();
         let assistant_message_id = self.context.next_message_id();
         self.emit_payload(AgentEvent::ProviderRequestStarted {
             request_id: request.request_id.clone(),
@@ -406,6 +437,12 @@ impl ProviderLoop {
         // Diagnostic（可观测「为何降级」）。协商不触网、不读 Provider 名；缺证据
         // 时仅记录 chosen_transport=ChatCompletions，不放大任何能力。
         self.emit_capability_negotiated(&request);
+
+        // P17-1 权威 pre-prompt 位点：改写/判定结果在请求发出前回灌进 request。
+        // 拒绝返回 Err → 本轮终止（run 走既有的 Failed 收敛路径）。
+        self.context
+            .pre_prompt(&mut request, self.event_emitter(), cancel.token())
+            .await?;
 
         let mut retry = RetryController::new(self.config.retry.clone());
         let (summary, sink) = loop {
@@ -611,9 +648,19 @@ impl ProviderLoop {
             self.budget.set_concurrency(approved_slots.len() as u64);
             self.check_budget()?;
             self.transition(RunTransition::ApprovalGranted)?;
-            let approved: Vec<PendingToolInvocation> = approved_slots
+            let mut approved: Vec<PendingToolInvocation> = approved_slots
                 .iter()
                 .map(|&i| invocations[i].clone())
+                .collect();
+            // P17-1 权威 pre-tool 位点：hook 拒绝的调用从执行列表移除，按
+            // 审批拒绝语义回填 denied 结果（不执行、不获得结果）。
+            let approved_before_hooks = approved.clone();
+            self.context
+                .pre_tool(&mut approved, self.event_emitter(), cancel.token())
+                .await?;
+            let denied_by_hooks: Vec<PendingToolInvocation> = approved_before_hooks
+                .into_iter()
+                .filter(|inv| !approved.iter().any(|kept| kept.tool_call_id == inv.tool_call_id))
                 .collect();
             for inv in &approved {
                 self.emit_payload(AgentEvent::ToolExecutionStarted {
@@ -628,21 +675,37 @@ impl ProviderLoop {
             if cancel.is_cancelled() {
                 return Err(LoopError::Cancelled);
             }
-            for (slot, r) in approved_slots.iter().zip(executed) {
+            // hook 拒绝的调用：不执行，按审批拒绝语义回填 denied 结果。
+            for denied in &denied_by_hooks {
                 self.emit_payload(AgentEvent::ToolExecutionCompleted {
-                    tool_call_id: r.tool_call_id.clone(),
-                    result: tool_result_content_view(&r),
+                    tool_call_id: denied.tool_call_id.clone(),
+                    result: tool_result_content_view(&denied_tool_result(denied)),
                 });
-                self.budget
-                    .record_output(estimate_output_bytes(&r.result.content));
-                self.budget.record_artifact(
-                    r.result
-                        .artifacts
-                        .iter()
-                        .map(|artifact| artifact.byte_length)
-                        .sum(),
-                );
-                results[*slot] = r;
+            }
+            // 结果按 tool_call_id 回填到原调用槽位（pre_tool 过滤后 executed
+            // 与 approved_slots 不再按位置对齐）。
+            let mut executed_by_id: std::collections::BTreeMap<
+                agent_domain::ToolCallId,
+                ToolCallResult,
+            > = executed.into_iter().map(|r| (r.tool_call_id.clone(), r)).collect();
+            for slot in approved_slots.iter() {
+                let inv = &invocations[*slot];
+                if let Some(r) = executed_by_id.remove(&inv.tool_call_id) {
+                    self.emit_payload(AgentEvent::ToolExecutionCompleted {
+                        tool_call_id: r.tool_call_id.clone(),
+                        result: tool_result_content_view(&r),
+                    });
+                    self.budget
+                        .record_output(estimate_output_bytes(&r.result.content));
+                    self.budget.record_artifact(
+                        r.result
+                            .artifacts
+                            .iter()
+                            .map(|artifact| artifact.byte_length)
+                            .sum(),
+                    );
+                    results[*slot] = r;
+                }
             }
             self.check_budget()?;
             self.transition(RunTransition::ToolsCompleted)?;
@@ -3189,5 +3252,178 @@ mod tests {
             failed |= matches!(event.payload, AgentEvent::RunFailed { .. });
         }
         assert!(failed);
+    }
+
+    // —— P17-1：pre-prompt / pre-tool 权威回灌位点 ——
+
+    /// 记录 pre_prompt 改写与工具执行的测试上下文。
+    struct HookTestContext {
+        inner: TestContext,
+        executed: Mutex<Vec<String>>,
+        pre_prompt_prefix: Option<String>,
+        pre_tool_deny: Vec<String>,
+    }
+
+    impl HookTestContext {
+        fn new(tools: Vec<MockTool>) -> Self {
+            Self {
+                inner: TestContext::new(tools),
+                executed: Mutex::new(Vec::new()),
+                pre_prompt_prefix: None,
+                pre_tool_deny: Vec::new(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LoopContext for HookTestContext {
+        async fn execute_tools(
+            &self,
+            calls: Vec<PendingToolInvocation>,
+            events: LoopEventEmitter,
+            cancel: CancellationToken,
+        ) -> Vec<ToolCallResult> {
+            self.executed
+                .lock()
+                .expect("executed")
+                .extend(calls.iter().map(|call| call.name.clone()));
+            self.inner.execute_tools(calls, events, cancel).await
+        }
+
+        async fn request_approval(
+            &self,
+            calls: &[PendingToolInvocation],
+            cancel: CancellationToken,
+        ) -> Vec<ApprovalOutcome> {
+            self.inner.request_approval(calls, cancel).await
+        }
+
+        async fn pre_prompt(
+            &self,
+            request: &mut CanonicalModelRequest,
+            events: LoopEventEmitter,
+            cancel: CancellationToken,
+        ) -> Result<(), LoopError> {
+            if let Some(prefix) = &self.pre_prompt_prefix {
+                if let Some(last_user) = request
+                    .messages
+                    .iter_mut()
+                    .rev()
+                    .find(|message| message.role == agent_domain::MessageRole::User)
+                {
+                    let mut text = String::new();
+                    for part in &last_user.content {
+                        if let ContentPart::Text(t) = part {
+                            text.push_str(&t.text);
+                        }
+                    }
+                    last_user.content = vec![ContentPart::Text(TextContent {
+                        text: format!("{prefix}{text}"),
+                    })];
+                }
+            }
+            let _ = (events, cancel);
+            Ok(())
+        }
+
+        async fn pre_tool(
+            &self,
+            invocations: &mut Vec<PendingToolInvocation>,
+            events: LoopEventEmitter,
+            cancel: CancellationToken,
+        ) -> Result<(), LoopError> {
+            invocations.retain(|inv| !self.pre_tool_deny.contains(&inv.name));
+            let _ = (events, cancel);
+            Ok(())
+        }
+
+        fn next_message_id(&self) -> MessageId {
+            self.inner.next_message_id()
+        }
+
+        fn next_request_id(&self) -> RequestId {
+            self.inner.next_request_id()
+        }
+    }
+
+    #[tokio::test]
+    async fn pre_prompt_hook_rewrites_prompt_before_provider_stream() {
+        let provider = Arc::new(SequenceProvider::new(vec![MockScript::new()
+            .text("hello")
+            .complete()]));
+        let mut hook_context = HookTestContext::new(Vec::new());
+        hook_context.pre_prompt_prefix = Some("[HOOK] ".to_string());
+        let context = Arc::new(hook_context);
+        let mut engine = ProviderLoop::new(
+            provider.clone(),
+            context,
+            config(vec![user_message("original prompt")]),
+            1,
+            EventBroadcaster::new(),
+        );
+        engine
+            .run(message_queue(), run_cancel())
+            .await
+            .expect("run completes");
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 1, "single-turn run sends one request");
+        let last_user = requests[0]
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == agent_domain::MessageRole::User)
+            .expect("user message");
+        let mut text = String::new();
+        for part in &last_user.content {
+            if let ContentPart::Text(t) = part {
+                text.push_str(&t.text);
+            }
+        }
+        assert_eq!(
+            text, "[HOOK] original prompt",
+            "pre-prompt 改写必须在 Provider 收到请求前回灌"
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_tool_hook_denied_tool_is_not_executed_and_gets_denied_result() {
+        let provider = Arc::new(SequenceProvider::new(vec![
+            MockScript::new()
+                .tool_call("blocked-tool", serde_json::json!({}))
+                .complete(),
+            MockScript::new().text("done").complete(),
+        ]));
+        let mut hook_context = HookTestContext::new(Vec::new());
+        hook_context.pre_tool_deny = vec!["blocked-tool".to_string()];
+        let context = Arc::new(hook_context);
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut engine = ProviderLoop::new(
+            provider,
+            context.clone(),
+            config(vec![user_message("use the tool")]),
+            1,
+            broadcaster,
+        );
+        engine
+            .run(message_queue(), run_cancel())
+            .await
+            .expect("run completes");
+
+        assert!(
+            context.executed.lock().expect("executed").is_empty(),
+            "被 hook 拒绝的工具不得执行"
+        );
+        let mut saw_denied_completion = false;
+        while let Ok(Some(event)) = sub.try_recv() {
+            if let AgentEvent::ToolExecutionCompleted { result, .. } = event.payload {
+                saw_denied_completion |= result.is_error;
+            }
+        }
+        assert!(
+            saw_denied_completion,
+            "被拒绝的工具必须以失败结果回填 ToolExecutionCompleted"
+        );
     }
 }

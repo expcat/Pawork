@@ -186,7 +186,7 @@ pub fn clamp_reasoning_to_thinking(
     thinking: Option<&ThinkingConfig>,
 ) -> ThinkingConfig {
     if let Some(reasoning) = reasoning {
-        let level = reasoning.effort.clamp_to_thinking_level();
+        let level = provider_api::clamp_effort_to_thinking_level(reasoning.effort);
         return ThinkingConfig {
             level,
             budget_tokens: thinking.and_then(|config| config.budget_tokens),

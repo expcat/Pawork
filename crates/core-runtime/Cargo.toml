@@ -17,6 +17,7 @@ tokio = { workspace = true, features = ["sync", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
+auth-service = { path = "../auth-service" }
 serde_json.workspace = true
 test-support = { path = "../test-support" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

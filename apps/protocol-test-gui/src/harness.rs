@@ -216,15 +216,16 @@ impl Harness {
                 session_id: session_id.clone(),
                 user_message: message.into(),
                 model: None,
+                profile: None,
             },
         ));
-        if !matches!(response.response, AppResponse::Accepted { .. }) {
-            return Err(format!("RunStart 应 Accepted，got {:?}", response.response));
+        match &response.response {
+            AppResponse::Accepted {
+                run_id: Some(run_id),
+                ..
+            } => Ok(run_id.clone()),
+            other => Err(format!("RunStart 响应缺少 run id，got {other:?}")),
         }
-        self.app_service
-            .router()
-            .last_started_run()
-            .ok_or_else(|| "last_started_run 缺失".to_string())
     }
 
     pub fn cancel_run_cli(&self, run_id: &agent_domain::RunId) {

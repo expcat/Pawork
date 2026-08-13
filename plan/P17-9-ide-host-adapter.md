@@ -1,6 +1,6 @@
 # P17-9：IDE Host Adapter（IDE 生命周期、诊断与交互桥接）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P0-8、P17-8（协调 P17-4、P17-11）
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（Built + L1；经 Agent SDK / Headless 连接 pawork，不嵌入第二 Core） · 交付成熟度：Built · 依赖：P0-8、P17-8（协调 P17-4、P17-11）
 
 **最终目的**：提供 IDE Host Adapter，把 IDE（VS Code / JetBrains 等）的编辑器生命周期、诊断与交互桥接到 Pawork。接入链路统一为：
 
@@ -31,12 +31,19 @@ IDE Extension → IDE Host Adapter → Agent SDK / Headless Protocol → pawork 
 
 ## 验收标准
 
-- [ ] IDE 经 Agent SDK / Headless 协议连接 `pawork` Host，IDE Host Adapter 不构造第二 Core、不取代 GUI Connection Protocol
-- [ ] 语言服务诊断（P17-4 LSP Client 聚合）可双向回灌，编辑→诊断→Agent 闭环不绕过 Policy
-- [ ] 文件变更/Diff/Approval 经 IDE 原生交互展示，操作落回 `AppCommand`，IDE 不持可写权威状态
-- [ ] IDE 与独立 GUI 可并存，二者通道互不触达
-- [ ] 可选 LSP Server 输出复用 P17-4 聚合结果，且不改变 P17-4 作为 LSP Client 的主定位
-- [ ] 定向 / Mock smoke 覆盖生命周期、诊断回灌、审批回路、可选 LSP 输出与边界隔离
+- [x] IDE 经 Agent SDK / Headless 协议连接 `pawork` Host，IDE Host Adapter 不构造第二 Core、不取代 GUI Connection Protocol
+- [x] 语言服务诊断（P17-4 LSP Client 聚合）可双向回灌，编辑→诊断→Agent 闭环不绕过 Policy
+- [x] 文件变更/Diff/Approval 经 IDE 原生交互展示，操作落回 `AppCommand`，IDE 不持可写权威状态
+- [x] IDE 与独立 GUI 可并存，二者通道互不触达
+- [x] 可选 LSP Server 输出复用 P17-4 聚合结果，且不改变 P17-4 作为 LSP Client 的主定位
+- [x] 定向 / Mock smoke 覆盖生命周期、诊断回灌、审批回路、可选 LSP 输出与边界隔离
+
+## 验证记录（2026-08-13）
+
+- 新增 `ide-host-adapter`：只依赖 `agent-sdk` / `headless-json` / `core-api` / `lsp-runtime`，不依赖 `gui-protocol` / `gui-server` / `core-runtime` / `app-service`。
+- 接入链路为 IDE Extension → Adapter → `pawork headless --json-stdio` → Core；可选 LSP Server 面复用 P17-4 聚合结果。
+- 定向 unit / contract / Host Mock 已绿；独立审查结论为 Built + L1。未跑 Host 簇 L2 前不标已验收。
+- Validation Level：L1；Full workspace gate：NOT RUN。
 
 **相关文档**：[P17-4 LSP Client Runtime](P17-4-lsp-runtime.md) · [P17-8 Agent SDK](P17-8-agent-sdk.md) · [CLI Host](../docs/features/cli-host.md) · [GUI 连接与多客户端](../docs/features/gui-connection.md) · [ADR-017 GUI 不直连 Core](../docs/adr/ADR-017-gui-no-direct-access.md) · [ADR-021 CLI/Core 同进程](../docs/adr/ADR-021-cli-core-same-process.md) · [ADR-025 CLI 唯一宿主](../docs/adr/ADR-025-cli-is-sole-host.md) · [ADR-030 Core 单一事实源](../docs/adr/ADR-030-core-sole-source-of-truth.md) · [workspace-layout](../docs/architecture/workspace-layout.md) · [ROADMAP](../ROADMAP.md)
 

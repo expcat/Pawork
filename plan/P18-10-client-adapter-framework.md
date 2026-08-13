@@ -1,6 +1,6 @@
 # P18-10：ClientAdapter Framework / Session Registry
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-1、P18-2、P18-9、P0-8、P13-1、P13-2
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已验收 · 交付成熟度：Target-Verified · 依赖：P18-1、P18-2、P18-9、P0-8、P13-1、P13-2
 
 **最终目的**：为 Codex、Claude、ACP 等外部 Agent Client 提供统一协议适配契约、能力协商和 authoritative Session Registry，同时保持 GUI Connection Protocol 独立。
 
@@ -22,9 +22,16 @@
 
 ## 验收标准
 
-- [ ] adapter 只做协议翻译/身份提取/能力协商，不做业务或账号决策
-- [ ] 不支持能力显式失败或声明降级，不静默丢字段
-- [ ] ownership epoch/revision 冲突拒绝陈旧写入并可重同步
-- [ ] GUI、Codex、Claude、ACP channel 不互用协议 frame，且共享同一 Core
+- [x] adapter 只做协议翻译/身份提取/能力协商，不做业务或账号决策
+- [x] 不支持能力显式失败或声明降级，不静默丢字段
+- [x] ownership epoch/revision 冲突拒绝陈旧写入并可重同步
+- [x] GUI、Codex、Claude、ACP channel 不互用协议 frame，且共享同一 Core
+
+## 验证记录（2026-08-12）
+
+- `cargo test -p client-adapter-api -p session-store -p app-service --all-targets` 的相关 adapter/registry 定向集通过：`client-adapter-api` 10、`session-store` 65、`app-service` adapter contract 6。
+- `cargo clippy -p client-adapter-api -p session-store -p app-service --all-targets -- -D warnings`：通过。
+- 验证覆盖 capability snapshot、真实 Core session 绑定、ownership epoch/revision CAS、disconnect/reattach 与 stale owner 拒绝。
+- Validation Level：L1；Full workspace gate：NOT RUN（未命中升级条件）。
 
 **相关文档**：[client-adapters](../docs/features/client-adapters.md) · [gui-connection](../docs/features/gui-connection.md) · [ADR-030](../docs/adr/ADR-030-core-sole-source-of-truth.md) · [ROADMAP](../ROADMAP.md)

@@ -8,13 +8,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent_domain::{
-    ActorId, ArtifactId, CommandId, GuiClientId, ProviderId, QueryId, RunId, SessionId, Timestamp,
+    ActorId, ArtifactId, CommandId, ConnectionId, GuiClientId, ProviderId, QueryId, RunId, SessionId,
+    Timestamp,
     ToolCallId, WorkspaceId,
 };
 use app_service::{CommandRouter, RouterConfig, RunSupervisorStats};
 use core_api::{
     ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope,
-    AppResponse, AppResponseEnvelope, CommandSource, WorkspaceRelativePath, API_VERSION,
+    AppResponse, AppResponseEnvelope, ClientContextSnapshot, CommandSource, RunState,
+    WorkspaceRelativePath, API_VERSION,
 };
 use diff_service::{DiffFile, FileStatus};
 use provider_api::ModelProvider;
@@ -171,6 +173,7 @@ async fn idempotent_run_start_replays_without_duplicate_run() {
             session_id: session_id.clone(),
             user_message: "hello".into(),
             model: None,
+            profile: None,
         },
     };
 
@@ -193,6 +196,92 @@ async fn idempotent_run_start_replays_without_duplicate_run() {
     assert_eq!(router.aggregate().runs().len(), 1);
     let stats: RunSupervisorStats = router.supervisor().stats();
     assert_eq!(stats.started, 1);
+}
+
+/// P17-7 评审 #3 回归：并发来源各自从自己的 Accepted 响应取 run id 绑定，
+/// 不依赖全局 `last_started_run`。两个并发 RunStart 的 run id 必须互不相同，
+/// 且各自绑定到自己的会话；取消其中一个不得影响另一个。
+#[tokio::test]
+async fn concurrent_run_starts_carry_distinct_run_ids_bound_to_their_own_runs() {
+    let router = router_with_mock_provider(test_support::MockScript::new().wait_for_cancellation());
+    let workspace_id = add_workspace(&router, &temp_workspace_dir());
+    let session_a = create_session(&router, &workspace_id);
+    let session_b = create_session(&router, &workspace_id);
+
+    let response_a = router.dispatch(command(
+        cli_source(),
+        cli_identity(),
+        AppCommand::RunStart {
+            session_id: session_a.clone(),
+            user_message: "run a".into(),
+            model: None,
+            profile: None,
+        },
+    ));
+    let response_b = router.dispatch(command(
+        gui_source(),
+        gui_identity(),
+        AppCommand::RunStart {
+            session_id: session_b.clone(),
+            user_message: "run b".into(),
+            model: None,
+            profile: None,
+        },
+    ));
+    let AppResponse::Accepted {
+        run_id: Some(run_id_a),
+        ..
+    } = response_a.response
+    else {
+        panic!(
+            "RunStart A 应 Accepted 且携带 run id，got {:?}",
+            response_a.response
+        );
+    };
+    let AppResponse::Accepted {
+        run_id: Some(run_id_b),
+        ..
+    } = response_b.response
+    else {
+        panic!(
+            "RunStart B 应 Accepted 且携带 run id，got {:?}",
+            response_b.response
+        );
+    };
+    assert_ne!(
+        run_id_a, run_id_b,
+        "并发 RunStart 必须返回各自确定的 run id"
+    );
+    assert_eq!(router.aggregate().runs().len(), 2, "两个 run 都应被创建");
+
+    // 响应中的 run id 必须绑定到发起它的会话，而不是"最近一次启动的 run"。
+    let record_a = router.aggregate().get_run(&run_id_a).expect("run a 存在");
+    let record_b = router.aggregate().get_run(&run_id_b).expect("run b 存在");
+    assert_eq!(record_a.session_id, session_a);
+    assert_eq!(record_b.session_id, session_b);
+
+    // 取消 A 只作用于 A：B 保持活跃。
+    let outcome = router.supervisor().cancel(&run_id_a).expect("cancel a");
+    assert!(!outcome.already_cancelled);
+    assert!(
+        wait_until(
+            || {
+                router
+                    .aggregate()
+                    .get_run(&run_id_a)
+                    .map(|run| run.state == RunState::Cancelled)
+                    .unwrap_or(false)
+            },
+            Duration::from_secs(5),
+        )
+        .await,
+        "run A 应进入 Cancelled"
+    );
+    assert!(!router.supervisor().is_active(&run_id_a), "run A 已取消");
+    assert!(
+        router.supervisor().is_active(&run_id_b),
+        "并发 run B 不应受 A 取消影响"
+    );
 }
 
 #[tokio::test]
@@ -224,16 +313,23 @@ async fn sources_and_identities_are_recorded_per_command() {
     // Run 记录来源：GUI 发起的 run 落 LocalGui。
     let workspace_id = add_workspace(&router, &temp_workspace_dir());
     let session_id = create_session(&router, &workspace_id);
-    router.dispatch(command(
+    let run_response = router.dispatch(command(
         gui_source(),
         gui_identity(),
         AppCommand::RunStart {
             session_id: session_id.clone(),
             user_message: "from gui".into(),
             model: None,
+            profile: None,
         },
     ));
-    let run_id = router.last_started_run().expect("run started");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = run_response.response
+    else {
+        panic!("RunStart 应 Accepted 且携带 run id");
+    };
     let run = router.aggregate().get_run(&run_id).expect("run recorded");
     assert_eq!(
         run.source,
@@ -262,6 +358,7 @@ async fn run_start_without_provider_returns_structured_authentication_error() {
             session_id: session_id.clone(),
             user_message: "hello".into(),
             model: None,
+            profile: None,
         },
     ));
     match &response.response {
@@ -291,13 +388,17 @@ async fn snapshot_and_queries_reflect_aggregate() {
             session_id: session_id.clone(),
             user_message: "snapshot me".into(),
             model: None,
+            profile: None,
         },
     ));
-    assert!(matches!(
-        run_response.response,
-        AppResponse::Accepted { .. }
-    ));
-    let run_id = router.last_started_run().expect("run started");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &run_response.response
+    else {
+        panic!("RunStart 应 Accepted 且携带 run id");
+    };
+    let run_id = run_id.clone();
     let completed = wait_until(
         || {
             router
@@ -491,6 +592,7 @@ fn run_start_without_runtime_returns_structured_error() {
             session_id,
             user_message: "hello".into(),
             model: None,
+            profile: None,
         },
     ));
     match &response.response {
@@ -625,4 +727,82 @@ fn terminal_and_git_stage_commands_round_trip() {
         },
     ));
     assert!(matches!(stage_response.response, AppResponse::Data(_)));
+}
+
+fn empty_client_context() -> ClientContextSnapshot {
+    ClientContextSnapshot {
+        revision: 1,
+        active_document: None,
+        open_documents: vec![],
+        diagnostics: vec![],
+    }
+}
+
+fn assert_context_denied(response: &AppResponseEnvelope) {
+    match &response.response {
+        AppResponse::Error(context) => {
+            assert_eq!(context.category, agent_domain::ErrorCategory::Authorization);
+            assert!(
+                context.message.contains("session_client_context_replace"),
+                "unexpected authorization message: {}",
+                context.message
+            );
+        }
+        other => panic!("expected authorization error, got {other:?}"),
+    }
+}
+
+#[test]
+fn session_client_context_replace_is_source_gated() {
+    let router = CommandRouter::new(RouterConfig::default());
+    let workspace_id = add_workspace(&router, &temp_workspace_dir());
+    let session_id = create_session(&router, &workspace_id);
+    let snapshot = empty_client_context();
+
+    for source in [
+        gui_source(),
+        CommandSource::RemoteGui {
+            client_id: GuiClientId::from("remote-gui"),
+            connection_id: ConnectionId::from("conn-1"),
+        },
+        CommandSource::Plugin,
+        CommandSource::Mcp,
+    ] {
+        let response = router.dispatch(command(
+            source,
+            cli_identity(),
+            AppCommand::SessionClientContextReplace {
+                session_id: session_id.clone(),
+                snapshot: snapshot.clone(),
+            },
+        ));
+        assert_context_denied(&response);
+        assert!(
+            router.aggregate().client_context(&session_id).is_none(),
+            "denied sources must not persist client context"
+        );
+    }
+
+    for source in [cli_source(), CommandSource::Automation] {
+        let allowed_session = create_session(&router, &workspace_id);
+        let response = router.dispatch(command(
+            source,
+            cli_identity(),
+            AppCommand::SessionClientContextReplace {
+                session_id: allowed_session.clone(),
+                snapshot: snapshot.clone(),
+            },
+        ));
+        match &response.response {
+            AppResponse::Data(value) => {
+                assert_eq!(value["replaced"], true);
+                assert_eq!(value["revision"], 1);
+            }
+            other => panic!("expected allowed replace, got {other:?}"),
+        }
+        assert_eq!(
+            router.aggregate().client_context(&allowed_session),
+            Some(snapshot.clone())
+        );
+    }
 }

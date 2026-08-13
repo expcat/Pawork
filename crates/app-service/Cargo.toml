@@ -13,22 +13,38 @@ agent-engine = { path = "../agent-engine" }
 agent-events = { path = "../agent-events" }
 artifact-store = { path = "../artifact-store" }
 async-trait.workspace = true
+auth-service = { path = "../auth-service" }
+client-adapter-api = { path = "../client-adapter-api" }
 core-api = { path = "../core-api" }
 diff-service = { path = "../diff-service" }
 directories.workspace = true
+mcp-client = { path = "../mcp-client" }
 model-registry = { path = "../model-registry" }
+orchestration = { path = "../orchestration" }
+policy-engine = { path = "../policy-engine" }
+process-runtime = { path = "../process-runtime" }
 provider-api = { path = "../provider-api" }
+provider-runtime = { path = "../provider-runtime" }
 quota-service = { path = "../quota-service" }
+reqwest.workspace = true
+rusqlite.workspace = true
+sandbox-runtime = { path = "../sandbox-runtime" }
 serde.workspace = true
 serde_json.workspace = true
+teams = { path = "../teams" }
 thiserror.workspace = true
 tracing.workspace = true
+subscription-hub = { path = "../subscription-hub" }
 tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+task-manager = { path = "../task-manager" }
 tool-api = { path = "../tool-api" }
+tool-runtime = { path = "../tool-runtime" }
 usage-ledger = { path = "../usage-ledger" }
+user-hooks = { path = "../user-hooks" }
 workspace-service = { path = "../workspace-service" }
 
 [dev-dependencies]
+rmcp = { workspace = true, features = ["client"] }
 tempfile.workspace = true
 test-support = { path = "../test-support" }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }

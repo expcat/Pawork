@@ -12,7 +12,8 @@ use std::path::PathBuf;
 use agent_domain::CancellationToken;
 use async_trait::async_trait;
 use process_runtime::{
-    CommandSpec, ProcessError, ProcessEvent, ProcessHandle, ProcessLimits, ProcessRuntime,
+    CommandSpec, ProcessError, ProcessEvent, ProcessHandle, ProcessInput, ProcessLimits,
+    ProcessRuntime,
 };
 
 mod backends;
@@ -121,6 +122,22 @@ pub struct SandboxProcess {
     _handle: ProcessHandle,
 }
 
+/// 可双向通信的受控进程；用于 LSP/MCP 等 stdio 协议。
+///
+/// stdin、输出事件与生命周期来自同一次 Sandbox → Process Runtime spawn。
+pub struct SandboxInteractiveProcess {
+    pub events: mpsc::Receiver<ProcessEvent>,
+    pub input: ProcessInput,
+    handle: ProcessHandle,
+}
+
+impl SandboxInteractiveProcess {
+    /// 拆分读、写、生命周期三部分，供协议适配器独立持有。
+    pub fn into_parts(self) -> (mpsc::Receiver<ProcessEvent>, ProcessInput, ProcessHandle) {
+        (self.events, self.input, self.handle)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxError {
     #[error("sandbox policy denied: {0}")]
@@ -147,6 +164,20 @@ pub trait SandboxBackend: Send + Sync {
         policy: SandboxPolicy,
         cancel: CancellationToken,
     ) -> Result<SandboxProcess, SandboxError>;
+
+    /// 按相同沙箱策略启动带 stdin 的双向受控进程。
+    ///
+    /// 默认显式拒绝，避免第三方后端静默降级为裸进程。
+    async fn spawn_interactive(
+        &self,
+        _spec: SandboxProcessSpec,
+        _policy: SandboxPolicy,
+        _cancel: CancellationToken,
+    ) -> Result<SandboxInteractiveProcess, SandboxError> {
+        Err(SandboxError::BackendUnavailable(
+            "interactive process I/O is not implemented by this sandbox backend",
+        ))
+    }
 }
 
 /// NativeRestricted：纯 Rust 软沙箱，永远可用。
@@ -208,6 +239,33 @@ impl SandboxBackend for NativeRestricted {
         Ok(SandboxProcess {
             events,
             _handle: handle,
+        })
+    }
+
+    async fn spawn_interactive(
+        &self,
+        mut spec: SandboxProcessSpec,
+        policy: SandboxPolicy,
+        cancel: CancellationToken,
+    ) -> Result<SandboxInteractiveProcess, SandboxError> {
+        apply_soft_restrictions(&mut spec, &policy)?;
+        if policy.network_mode == NetworkMode::Enforce {
+            tracing::warn!(
+                target: "pawork.sandbox",
+                backend = "native_restricted",
+                network_mode = ?policy.network_mode,
+                "network_mode=Enforce not enforceable by NativeRestricted; degraded to Hint (audit only, no hard isolation)"
+            );
+        }
+        let (events, input, handle) = self
+            .runtime
+            .spawn_interactive(spec.command, cancel)
+            .await
+            .map_err(SandboxError::Process)?;
+        Ok(SandboxInteractiveProcess {
+            events,
+            input,
+            handle,
         })
     }
 }

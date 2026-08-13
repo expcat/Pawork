@@ -104,8 +104,8 @@ pub fn probe_appcontainer_job() -> ProbeOutcome {
 #[cfg(windows)]
 mod job {
     use crate::{
-        apply_soft_restrictions, NetworkMode, SandboxBackend, SandboxError, SandboxPolicy,
-        SandboxProcess, SandboxProcessSpec,
+        apply_soft_restrictions, NetworkMode, SandboxBackend, SandboxError,
+        SandboxInteractiveProcess, SandboxPolicy, SandboxProcess, SandboxProcessSpec,
     };
     use agent_domain::CancellationToken;
     use async_trait::async_trait;
@@ -166,6 +166,32 @@ mod job {
             Ok(SandboxProcess {
                 events,
                 _handle: handle,
+            })
+        }
+
+        async fn spawn_interactive(
+            &self,
+            mut spec: SandboxProcessSpec,
+            policy: SandboxPolicy,
+            cancel: CancellationToken,
+        ) -> Result<SandboxInteractiveProcess, SandboxError> {
+            apply_soft_restrictions(&mut spec, &policy)?;
+            if policy.network_mode == NetworkMode::Enforce {
+                tracing::warn!(
+                    target: "pawork.sandbox",
+                    backend = "windows_job",
+                    "AppContainer unavailable; Job Object enforces process/resource limits but not filesystem/network isolation"
+                );
+            }
+            let (events, input, handle) = self
+                .runtime
+                .spawn_interactive(spec.command, cancel)
+                .await
+                .map_err(SandboxError::Process)?;
+            Ok(SandboxInteractiveProcess {
+                events,
+                input,
+                handle,
             })
         }
     }

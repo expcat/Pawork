@@ -3,9 +3,9 @@
 use std::{fmt, path::Component, str::FromStr};
 
 use agent_domain::{
-    ActorId, ArtifactId, CommandId, ConnectionId, CoreInstanceId, ErrorContext, EventId,
-    GuiClientId, MessageId, ModelId, PluginId, ProviderId, QueryId, RunId, SessionId, TenantId,
-    Timestamp, ToolCallId, WorkspaceId,
+    ActorId, AgentId, ArtifactId, CheckpointId, CommandId, ConnectionId, CoreInstanceId,
+    ErrorContext, EventId, GuiClientId, MessageId, ModelId, PlanId, PlanVersionId, PluginId,
+    ProviderId, QueryId, RunId, SessionId, TenantId, Timestamp, ToolCallId, WorkspaceId,
 };
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -28,6 +28,14 @@ pub const DEFAULT_QUOTA_ACCOUNT: &str = "local/default";
 /// 同 major 内 minor 只增、已发布 minor 必须继续支持；删除或新增 major 走
 /// [ADR-036](../../docs/adr/ADR-036-gui-protocol-versioning.md) 定义的废弃与删除流程。
 pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[API_VERSION];
+
+/// IDE/Host 上下文快照的资源上限。该数据来自外部客户端，Core 必须在存储和
+/// 注入模型请求前 fail-closed，避免诊断风暴或超长 URI/消息放大内存与 prompt。
+pub const MAX_CLIENT_CONTEXT_BYTES: usize = 1024 * 1024;
+pub const MAX_CLIENT_CONTEXT_DOCUMENTS: usize = 128;
+pub const MAX_CLIENT_CONTEXT_DIAGNOSTICS: usize = 1024;
+pub const MAX_CLIENT_CONTEXT_URI_BYTES: usize = 4096;
+pub const MAX_CLIENT_CONTEXT_MESSAGE_BYTES: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 pub struct ApiVersion {
@@ -126,6 +134,177 @@ pub enum ActorIdentity {
     System,
 }
 
+/// Host 观察到的文本位置；采用 LSP 的 zero-based line/character 语义，但不
+/// 依赖任何 IDE/LSP crate，保持 Core canonical domain 中立。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ClientTextPosition {
+    pub line: u32,
+    pub character: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ClientTextRange {
+    pub start: ClientTextPosition,
+    pub end: ClientTextPosition,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientDiagnosticSeverity {
+    Error,
+    Warning,
+    Information,
+    Hint,
+}
+
+/// 单个打开文档的有限元数据。刻意不携带正文，只保留上下文定位和字节数提示，
+/// 避免 IDE 通道变成绕过 Workspace/Policy 的文件读取入口。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ClientDocumentContext {
+    pub uri: String,
+    pub language_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<ClientTextRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_range: Option<ClientTextRange>,
+    pub saved_version: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_bytes: Option<u64>,
+}
+
+/// IDE/LSP 展示的诊断快照。`message` 是不可信观察数据，不具备指令权限。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ClientDiagnostic {
+    pub document_uri: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<i64>,
+    pub range: ClientTextRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<ClientDiagnosticSeverity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    pub message: String,
+}
+
+/// 外部 Host 对一个 Core session 的全量、单调版本化上下文快照。
+///
+/// 替换语义使断线重连可直接重放最新状态，不需要累积不可恢复的增量日志。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ClientContextSnapshot {
+    pub revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_document: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open_documents: Vec<ClientDocumentContext>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<ClientDiagnostic>,
+}
+
+impl ClientContextSnapshot {
+    /// 在 canonical 边界执行有界校验。错误文本只描述字段与预算，不回显外部
+    /// 内容，避免诊断消息或 URI 泄漏到日志/协议错误。
+    pub fn validate(&self) -> Result<(), String> {
+        if self.revision == 0 {
+            return Err("revision must be greater than zero".into());
+        }
+        if self.open_documents.len() > MAX_CLIENT_CONTEXT_DOCUMENTS {
+            return Err(format!(
+                "open document count exceeds {MAX_CLIENT_CONTEXT_DOCUMENTS}"
+            ));
+        }
+        if self.diagnostics.len() > MAX_CLIENT_CONTEXT_DIAGNOSTICS {
+            return Err(format!(
+                "diagnostic count exceeds {MAX_CLIENT_CONTEXT_DIAGNOSTICS}"
+            ));
+        }
+        for document in &self.open_documents {
+            validate_client_uri(&document.uri)?;
+            if document.language_id.is_empty() || document.language_id.len() > 128 {
+                return Err("language_id must contain 1..=128 bytes".into());
+            }
+            validate_client_range(document.selection)?;
+            validate_client_range(document.visible_range)?;
+        }
+        if let Some(active) = self.active_document.as_deref() {
+            validate_client_uri(active)?;
+            if !self
+                .open_documents
+                .iter()
+                .any(|document| document.uri == active)
+            {
+                return Err("active_document must name an open document".into());
+            }
+        }
+        for diagnostic in &self.diagnostics {
+            validate_client_uri(&diagnostic.document_uri)?;
+            validate_client_range(Some(diagnostic.range))?;
+            if diagnostic.message.len() > MAX_CLIENT_CONTEXT_MESSAGE_BYTES {
+                return Err(format!(
+                    "diagnostic message exceeds {MAX_CLIENT_CONTEXT_MESSAGE_BYTES} bytes"
+                ));
+            }
+            for (name, value) in [
+                ("diagnostic code", diagnostic.code.as_deref()),
+                ("diagnostic source", diagnostic.source.as_deref()),
+            ] {
+                if value.is_some_and(|value| value.len() > 256) {
+                    return Err(format!("{name} exceeds 256 bytes"));
+                }
+            }
+        }
+        let encoded = serde_json::to_vec(self)
+            .map_err(|_| "client context could not be encoded".to_string())?;
+        if encoded.len() > MAX_CLIENT_CONTEXT_BYTES {
+            return Err(format!(
+                "client context exceeds {MAX_CLIENT_CONTEXT_BYTES} bytes"
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn validate_client_uri(uri: &str) -> Result<(), String> {
+    if uri.is_empty() || uri.len() > MAX_CLIENT_CONTEXT_URI_BYTES {
+        return Err(format!(
+            "document URI must contain 1..={MAX_CLIENT_CONTEXT_URI_BYTES} bytes"
+        ));
+    }
+    // P17-9 审查阻塞：低信任 URI 必须携带安全 scheme——禁止无 scheme、
+    // 畸形 scheme 或可执行脚本 scheme（javascript/data/vbscript），避免
+    // observation 通道里的 URI 被误解为可执行/可加载内容。
+    let scheme = uri.split(':').next().unwrap_or("");
+    let valid_scheme = scheme
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !valid_scheme {
+        return Err("document URI must begin with a valid scheme".into());
+    }
+    if matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "javascript" | "data" | "vbscript"
+    ) {
+        return Err("document URI scheme is not allowed".into());
+    }
+    Ok(())
+}
+
+fn validate_client_range(range: Option<ClientTextRange>) -> Result<(), String> {
+    if let Some(range) = range {
+        let start = (range.start.line, range.start.character);
+        let end = (range.end.line, range.end.character);
+        if start > end {
+            return Err("text range start must not follow end".into());
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum AppCommand {
@@ -152,11 +331,23 @@ pub enum AppCommand {
     SessionCompact {
         session_id: SessionId,
     },
+    /// Host（IDE/ACP 等）观察到的 session 上下文全量替换。内容是有界的
+    /// 不可信数据；Core 仅将它作为 Agent observation，不授予工具或写权限。
+    SessionClientContextReplace {
+        session_id: SessionId,
+        snapshot: ClientContextSnapshot,
+    },
     RunStart {
         session_id: SessionId,
         user_message: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<ModelId>,
+        /// P17-5：可选 Agent Profile v2 名称。命中生产 `ResourceBundle.profiles_v2`
+        /// 时其不可变配置（prompt / canonical effort / tools / max_turns /
+        /// background / isolation / memory）成为该 run 的权威来源；未知 /
+        /// 跨 workspace / 引用不可用为结构化 fail-closed RunStart 错误。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
     },
     RunCancel {
         run_id: RunId,
@@ -259,6 +450,10 @@ pub struct AppResponseEnvelope {
 pub enum AppResponse {
     Accepted {
         command_id: CommandId,
+        /// RunStart 专有：该命令确定启动的 run id（并发来源各自携带自己的
+        /// run id，不依赖宿主侧全局状态；其余命令为 None）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<RunId>,
     },
     Data(Value),
     Artifact {
@@ -432,6 +627,12 @@ pub enum AppEvent {
     },
     QuotaAlert {
         alert: Box<QuotaAlert>,
+    },
+    /// Team 协作 canonical 事件（P17-6）：typed 镜像，与 `teams::TeamEvent`
+    /// serde 形态 1:1；`app-service` 在边界做 1:1 转换后经唯一 EventHub 派发，
+    /// 可崩溃重放（重放源为 team 事件流，本事件仅为对外镜像）。
+    TeamEvent {
+        event: Box<TeamEvent>,
     },
 }
 
@@ -750,6 +951,268 @@ pub struct QuotaAlert {
     pub credential_hint: Option<String>,
 }
 
+// =========================================================================
+// Team（P17-6）：canonical 镜像 + typed 事件，全部 TS 导出。
+// =========================================================================
+//
+// 这些类型是 `teams` crate canonical 领域类型的协议镜像：core-api 不依赖
+// teams / orchestration（协议 crate 保持轻依赖），但 serde 形态与 teams 保持
+// 一致（tag `kind` + snake_case），app-service 在边界做 1:1 转换后经唯一
+// EventHub 以 `AppEvent::TeamEvent` 派发；GUI / CLI watch 消费同一份 typed
+// 事件流，崩溃恢复的重放源仍为 team 事件流。
+
+/// 成员角色镜像（与 `teams::MemberRole` 1:1）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamMemberRole {
+    /// 团队根（P12 parent）：可审批 plan、增删成员、解散 team。
+    Supervisor,
+    /// 普通成员（P12 worker）：可认领 task、收发 mailbox、发起受控 peer 消息。
+    Worker,
+}
+
+/// 任务状态镜像（与 `orchestration::TaskState` 1:1，复用 P12 状态机）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamTaskState {
+    Created,
+    Ready,
+    Assigned,
+    Running,
+    Blocked,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+/// Plan 步骤状态镜像（与 `agent_domain::PlanStepStatus` 1:1）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamPlanStepStatus {
+    #[default]
+    Pending,
+    InProgress,
+    Completed,
+    Blocked,
+}
+
+/// Plan 步骤快照镜像（与 `agent_domain::PlanStepSnapshot` 1:1）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TeamPlanStepSnapshot {
+    pub step_id: String,
+    pub text: String,
+    pub status: TeamPlanStepStatus,
+}
+
+/// Plan 行锚点镜像（与 `agent_domain::PlanCommentAnchor` 1:1）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TeamPlanCommentAnchor {
+    pub step_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_offset: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_line: Option<u32>,
+}
+
+/// 成员 presence 镜像（与 `teams::Presence` 1:1）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamPresence {
+    #[default]
+    Online,
+    Busy,
+    Idle,
+    Offline,
+}
+
+/// mailbox 投递范围镜像（与 `teams::Recipients` 1:1）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TeamRecipients {
+    /// 点对点：精确的成员列表。
+    Direct { members: Vec<AgentId> },
+    /// 广播：除发送者外的全部成员。
+    Broadcast,
+}
+
+/// 共享任务板条目镜像（与 `teams::BoardTask` 1:1）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TeamBoardTask {
+    pub task_id: String,
+    /// 张贴者。
+    pub poster: AgentId,
+    /// 当前认领者；`None` 表示未认领。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<AgentId>,
+    pub description: String,
+    /// 依赖的任务 id。
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    pub state: TeamTaskState,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub max_retries: u32,
+}
+
+/// Team 协作 canonical 事件镜像（与 `teams::TeamEvent` 1:1，18 变体）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TeamEvent {
+    TeamCreated {
+        team_id: SessionId,
+        tenant_id: TenantId,
+        supervisor: AgentId,
+        name: String,
+    },
+    MemberAdded {
+        team_id: SessionId,
+        agent_id: AgentId,
+        role: TeamMemberRole,
+    },
+    MemberRemoved {
+        team_id: SessionId,
+        agent_id: AgentId,
+    },
+    TeamDissolved {
+        team_id: SessionId,
+    },
+    TaskPosted {
+        team_id: SessionId,
+        task: TeamBoardTask,
+    },
+    TaskClaimed {
+        team_id: SessionId,
+        task_id: String,
+        claimer: AgentId,
+    },
+    TaskReleased {
+        team_id: SessionId,
+        task_id: String,
+        by: AgentId,
+    },
+    TaskAdvanced {
+        team_id: SessionId,
+        task_id: String,
+        state: TeamTaskState,
+    },
+    MailboxPosted {
+        team_id: SessionId,
+        message_id: MessageId,
+        sender: AgentId,
+        recipients: TeamRecipients,
+        body: String,
+    },
+    MailboxDelivered {
+        team_id: SessionId,
+        message_id: MessageId,
+        recipient: AgentId,
+    },
+    MailboxRead {
+        team_id: SessionId,
+        message_id: MessageId,
+        by: AgentId,
+    },
+    PresenceChanged {
+        team_id: SessionId,
+        agent_id: AgentId,
+        presence: TeamPresence,
+    },
+    PeerMessageRouted {
+        team_id: SessionId,
+        message_id: MessageId,
+        fan_out_id: CommandId,
+        sender: AgentId,
+        recipients: TeamRecipients,
+        body: String,
+    },
+    FanOutDenied {
+        team_id: SessionId,
+        sender: AgentId,
+        recipients: TeamRecipients,
+        reason: String,
+    },
+    PlanSubmitted {
+        team_id: SessionId,
+        plan_id: PlanId,
+        version: PlanVersionId,
+        title: String,
+        steps: Vec<TeamPlanStepSnapshot>,
+    },
+    PlanApproved {
+        team_id: SessionId,
+        plan_id: PlanId,
+        version: PlanVersionId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint_id: Option<CheckpointId>,
+    },
+    PlanRejected {
+        team_id: SessionId,
+        plan_id: PlanId,
+        version: PlanVersionId,
+        reason: String,
+    },
+    PlanCommented {
+        team_id: SessionId,
+        plan_id: PlanId,
+        version: PlanVersionId,
+        anchor: TeamPlanCommentAnchor,
+        body: String,
+    },
+}
+
+impl TeamEvent {
+    /// 事件归属的 team（复用 SessionId 作为 opaque team id）。
+    pub fn team_id(&self) -> &SessionId {
+        match self {
+            Self::TeamCreated { team_id, .. }
+            | Self::MemberAdded { team_id, .. }
+            | Self::MemberRemoved { team_id, .. }
+            | Self::TeamDissolved { team_id }
+            | Self::TaskPosted { team_id, .. }
+            | Self::TaskClaimed { team_id, .. }
+            | Self::TaskReleased { team_id, .. }
+            | Self::TaskAdvanced { team_id, .. }
+            | Self::MailboxPosted { team_id, .. }
+            | Self::MailboxDelivered { team_id, .. }
+            | Self::MailboxRead { team_id, .. }
+            | Self::PresenceChanged { team_id, .. }
+            | Self::PeerMessageRouted { team_id, .. }
+            | Self::FanOutDenied { team_id, .. }
+            | Self::PlanSubmitted { team_id, .. }
+            | Self::PlanApproved { team_id, .. }
+            | Self::PlanRejected { team_id, .. }
+            | Self::PlanCommented { team_id, .. } => team_id,
+        }
+    }
+
+    /// 稳定的事件种类标签（snake_case，与 serde tag 一致；供渲染 / 过滤）。
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::TeamCreated { .. } => "team_created",
+            Self::MemberAdded { .. } => "member_added",
+            Self::MemberRemoved { .. } => "member_removed",
+            Self::TeamDissolved { .. } => "team_dissolved",
+            Self::TaskPosted { .. } => "task_posted",
+            Self::TaskClaimed { .. } => "task_claimed",
+            Self::TaskReleased { .. } => "task_released",
+            Self::TaskAdvanced { .. } => "task_advanced",
+            Self::MailboxPosted { .. } => "mailbox_posted",
+            Self::MailboxDelivered { .. } => "mailbox_delivered",
+            Self::MailboxRead { .. } => "mailbox_read",
+            Self::PresenceChanged { .. } => "presence_changed",
+            Self::PeerMessageRouted { .. } => "peer_message_routed",
+            Self::FanOutDenied { .. } => "fan_out_denied",
+            Self::PlanSubmitted { .. } => "plan_submitted",
+            Self::PlanApproved { .. } => "plan_approved",
+            Self::PlanRejected { .. } => "plan_rejected",
+            Self::PlanCommented { .. } => "plan_commented",
+        }
+    }
+}
+
 /// 把凭证元数据 ID 脱敏为安全提示：保留首尾各 2 字符，中间以 `*` 替代；
 /// 过短或空值返回 `None`。永不包含 secret/token/cookie 原文。
 pub fn mask_credential_hint(id: &str) -> Option<String> {
@@ -873,6 +1336,100 @@ mod tests {
         let json = serde_json::to_string(&envelope).expect("serialize command");
         let decoded: AppCommandEnvelope = serde_json::from_str(&json).expect("deserialize command");
         assert_eq!(decoded, envelope);
+    }
+
+    fn client_snapshot(revision: u64) -> ClientContextSnapshot {
+        ClientContextSnapshot {
+            revision,
+            active_document: Some("file:///workspace/src/lib.rs".into()),
+            open_documents: vec![ClientDocumentContext {
+                uri: "file:///workspace/src/lib.rs".into(),
+                language_id: "rust".into(),
+                selection: Some(ClientTextRange {
+                    start: ClientTextPosition {
+                        line: 1,
+                        character: 2,
+                    },
+                    end: ClientTextPosition {
+                        line: 1,
+                        character: 4,
+                    },
+                }),
+                visible_range: None,
+                saved_version: 3,
+                text_bytes: Some(128),
+            }],
+            diagnostics: vec![ClientDiagnostic {
+                document_uri: "file:///workspace/src/lib.rs".into(),
+                version: Some(3),
+                range: ClientTextRange {
+                    start: ClientTextPosition {
+                        line: 1,
+                        character: 2,
+                    },
+                    end: ClientTextPosition {
+                        line: 1,
+                        character: 4,
+                    },
+                },
+                severity: Some(ClientDiagnosticSeverity::Warning),
+                code: Some("unused".into()),
+                source: Some("rust-analyzer".into()),
+                message: "unused variable".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn client_context_round_trips_and_excludes_document_text() {
+        let snapshot = client_snapshot(1);
+        snapshot.validate().expect("valid bounded snapshot");
+        let json = serde_json::to_string(&snapshot).expect("serialize");
+        assert!(!json.contains("fn main"));
+        assert_eq!(
+            serde_json::from_str::<ClientContextSnapshot>(&json).expect("deserialize"),
+            snapshot
+        );
+    }
+
+    #[test]
+    fn client_context_rejects_invalid_ranges_and_resource_overflow() {
+        let mut snapshot = client_snapshot(1);
+        snapshot.diagnostics[0].range.start.line = 2;
+        assert!(snapshot.validate().unwrap_err().contains("range start"));
+
+        let mut snapshot = client_snapshot(1);
+        snapshot.diagnostics[0].message = "x".repeat(MAX_CLIENT_CONTEXT_MESSAGE_BYTES + 1);
+        assert!(snapshot
+            .validate()
+            .unwrap_err()
+            .contains("diagnostic message"));
+    }
+
+    #[test]
+    fn client_context_rejects_unsafe_uri_schemes() {
+        // P17-9：低信任 URI 必须携带安全 scheme；可执行脚本 scheme 与无 scheme 一律拒绝。
+        let mut snapshot = client_snapshot(1);
+        snapshot.diagnostics[0].document_uri = "javascript:alert(1)".into();
+        assert!(snapshot.validate().unwrap_err().contains("scheme is not allowed"));
+
+        let mut snapshot = client_snapshot(1);
+        snapshot.diagnostics[0].document_uri = "data:text/html,<script>".into();
+        assert!(snapshot.validate().unwrap_err().contains("scheme is not allowed"));
+
+        let mut snapshot = client_snapshot(1);
+        snapshot.open_documents[0].uri = "1noscheme".into();
+        assert!(snapshot
+            .validate()
+            .unwrap_err()
+            .contains("valid scheme"));
+
+        // 安全 scheme（file/http/untitled/vscode-userdata）放行。
+        let mut snapshot = client_snapshot(1);
+        snapshot.open_documents[0].uri = "untitled:Untitled-1".into();
+        snapshot.active_document = Some("untitled:Untitled-1".into());
+        snapshot.diagnostics[0].document_uri = "untitled:Untitled-1".into();
+        snapshot.validate().expect("untitled scheme is allowed");
     }
 
     #[test]

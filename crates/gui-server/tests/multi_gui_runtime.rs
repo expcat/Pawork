@@ -198,17 +198,16 @@ impl Runtime {
                 session_id: session_id.clone(),
                 user_message: message.into(),
                 model: None,
+                profile: None,
             },
         ));
-        assert!(
-            matches!(response.response, AppResponse::Accepted { .. }),
-            "RunStart 应 Accepted，got {:?}",
-            response.response
-        );
-        self.app_service
-            .router()
-            .last_started_run()
-            .expect("run id")
+        match &response.response {
+            AppResponse::Accepted {
+                run_id: Some(run_id),
+                ..
+            } => run_id.clone(),
+            other => panic!("RunStart 应 Accepted 且携带 run id，got {other:?}"),
+        }
     }
 
     /// GUI 发起的审批。
@@ -945,9 +944,28 @@ async fn reconnect_replays_missing_events_after_snapshot_rebuild() {
             run_id: run_id.clone(),
         },
     ));
+    // 等待 Cancelled 事件真正发布进 Hub 再 Resume：断线窗口内可能有其它
+    // 异步事件先落地（如能力协商 Diagnostic），仅凭序列推进会提前退出、
+    // 使 resume 窗口错过取消事件（重放断言要求取消事件落在重放窗口内）。
     let deadline = Instant::now() + Duration::from_secs(10);
-    while runtime.hub.current().0 <= last_sequence {
-        assert!(Instant::now() < deadline, "取消后应产生新事件");
+    loop {
+        let current = runtime.hub.current();
+        if current.0 > last_sequence
+            && runtime
+                .hub
+                .replay(GlobalSequence(last_sequence + 1), Some(current))
+                .expect("窗口在 ring 内")
+                .iter()
+                .any(|event| {
+                    matches!(
+                        &event.payload,
+                        AppEvent::RunChanged { state, .. } if *state == RunState::Cancelled
+                    )
+                })
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "取消后应发布 Cancelled 事件");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 

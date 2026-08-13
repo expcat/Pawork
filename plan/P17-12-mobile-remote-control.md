@@ -1,6 +1,6 @@
 # P17-12：Mobile / Remote Control Protocol（受限控制、审批与通知）+ Host 簇收尾门禁
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P0-8、P13-1、P17-7～P17-11
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（Built + L1；Host 簇 L2 隔离门禁已通过，未标整阶段已验收） · 交付成熟度：Built · 依赖：P0-8、P13-1、P17-7～P17-11
 
 **最终目的**：定义一个面向移动端/远程的受限控制协议——只暴露审批、通知与受限控制（查看状态、启动/取消任务），不授予完整操作权限，Core 始终是单一事实源（[ADR-030](../docs/adr/ADR-030-core-sole-source-of-truth.md)）。同时作为 Phase 17「公共 Host/SDK」功能簇（ACP / SDK / IDE / Browser-Computer / Real Remote / Mobile）的收尾任务——在独立 `CARGO_TARGET_DIR` 下跑集中契约门禁并清理，不污染日常 target。
 
@@ -23,12 +23,20 @@
 
 ## 验收标准
 
-- [ ] 受限控制协议只暴露只读 + 受限写，完整权限操作被显式拒绝并审计
-- [ ] 移动端经配对/认证绑定，凭证可撤销；Core 始终是单一事实源，移动端不缓存权威状态
-- [ ] 审批/通知可推送、可去重、断线可补，决策落回 Core
-- [ ] Remote Control Adapter 经 P17-11 Transport 承载，建立在 `core-api` 之上，不取代 GUI Connection Protocol
-- [ ] Host 簇收尾门禁在独立 `CARGO_TARGET_DIR` 下通过：各 Adapter 均 core-api 之上、均不取代 GUI 协议、Browser/Computer 经 Policy/Sandbox、Remote 不改 Agent Core
-- [ ] 门禁脚本在 `finally` 执行 `cargo clean --target-dir target/gates`，失败路径也不残留隔离构建缓存
+- [x] 受限控制协议只暴露只读 + 受限写，完整权限操作被显式拒绝并审计
+- [x] 移动端经配对/认证绑定，凭证可撤销；Core 始终是单一事实源，移动端不缓存权威状态
+- [x] 审批/通知可推送、可去重、断线可补，决策落回 Core
+- [x] Remote Control Adapter 经 P17-11 Transport 承载，建立在 `core-api` 之上，不取代 GUI Connection Protocol
+- [x] Host 簇收尾门禁在独立 `CARGO_TARGET_DIR` 下通过：各 Adapter 均 core-api 之上、均不取代 GUI 协议、Browser/Computer 经 Policy/Sandbox、Remote 不改 Agent Core
+- [x] 门禁脚本在 `finally` 执行 `cargo clean --target-dir target/gates`，失败路径也不残留隔离构建缓存
+
+## 验证记录（2026-08-13）
+
+- 新增 `remote-control-adapter`：fail-closed allowlist（只允许 RunStart / RunCancel / ToolApprove 与只读 SessionGet / RunStatus），通知通道认证门控，配对只存 hash、不落明文。
+- `transport-remote` 仅 dev-dependency，生产代码不直连 GUI / Provider / session-store。
+- Host 簇门禁脚本 [`scripts/phase17-host-gate.sh`](../scripts/phase17-host-gate.sh) 覆盖 7 crate：`acp-host agent-sdk headless-json ide-host-adapter browser-computer-runtime transport-remote remote-control-adapter`；默认 `CARGO_TARGET_DIR=target/gates`，EXIT/INT/TERM 清理隔离缓存。完整 L2 执行结果补记于下方（脚本已具备失败清理自检）。
+- 2026-08-13 隔离 L2 复跑：`PHASE17_GATE_TARGET_DIR=/Volumes/SSD/Code/Lib/Pawork/target/gates bash scripts/phase17-host-gate.sh` → cluster-test PASS、cluster-clippy PASS、boundary-check PASS、cleanup-selftest PASS；脚本最终 `ALL CATEGORIES PASS`，隔离 `target/gates` 已清理。首次失败仅为 `remote-control-adapter` `clippy::single_match`，已改为 `if let` 后复跑通过。
+- Validation Level：L1（adapter 定向）+ L2 host-gate PASS。未宣称整阶段已验收。
 
 **相关文档**：[gui-connection](../docs/features/gui-connection.md) · [policy](../docs/features/policy.md) · [auth](../docs/features/auth.md) · [ADR-014 Secret OS Keychain](../docs/adr/ADR-014-secret-os-keychain.md) · [ADR-017 GUI 不直连 Core](../docs/adr/ADR-017-gui-no-direct-access.md) · [ADR-027 本地远程同协议](../docs/adr/ADR-027-local-remote-same-protocol.md) · [ADR-030 Core 单一事实源](../docs/adr/ADR-030-core-sole-source-of-truth.md) · [测试体系](../docs/quality/testing.md) · [ROADMAP](../ROADMAP.md)
 

@@ -14,22 +14,32 @@ path = "src/lib.rs"
 [dependencies]
 agent-domain = { path = "../../crates/agent-domain" }
 app-service = { path = "../../crates/app-service" }
+auth-service = { path = "../../crates/auth-service" }
 clap.workspace = true
 client-auth = { path = "../../crates/client-auth" }
 cli-command = { path = "../../crates/cli-command" }
 cli-host = { path = "../../crates/cli-host" }
+config-service = { path = "../../crates/config-service" }
 core-api = { path = "../../crates/core-api" }
 core-runtime = { path = "../../crates/core-runtime" }
 gui-protocol = { path = "../../crates/gui-protocol" }
 gui-server = { path = "../../crates/gui-server" }
+provider-api = { path = "../../crates/provider-api" }
+resource-loader = { path = "../../crates/resource-loader" }
+sandbox-runtime = { path = "../../crates/sandbox-runtime" }
+serde_json.workspace = true
+session-store = { path = "../../crates/session-store" }
+task-manager = { path = "../../crates/task-manager" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+async-trait.workspace = true
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 transport-api = { path = "../../crates/transport-api" }
 transport-local = { path = "../../crates/transport-local" }
+transport-remote = { path = "../../crates/transport-remote" }
+workspace-service = { path = "../../crates/workspace-service" }
 
 [dev-dependencies]
 assert_cmd.workspace = true
 gui-client = { path = "../../crates/gui-client" }
-serde_json.workspace = true
 tempfile.workspace = true
