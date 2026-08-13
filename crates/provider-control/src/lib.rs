@@ -83,6 +83,8 @@ pub mod factory;
 #[cfg(feature = "account-control-v1")]
 pub mod health;
 #[cfg(feature = "account-control-v1")]
+pub mod reconciler;
+#[cfg(feature = "account-control-v1")]
 pub mod registry;
 #[cfg(feature = "account-control-v1")]
 pub mod repository;
@@ -111,7 +113,13 @@ pub use factory::{
 #[cfg(feature = "account-control-v1")]
 pub use health::{
     BackoffPolicy, CircuitBreaker, CircuitConfig, CircuitState, CooldownKey, CooldownTracker,
-    FailureContext, HealthRecord, HealthRuntime, HealthState,
+    FailureContext, HealthProbe, HealthRecord, HealthRuntime, HealthState, ProbeBudget,
+    ProbeFailure, ProbeKind, ProbeReport, ProbeRuntime, ProbeTargetKey,
+};
+#[cfg(feature = "account-control-v1")]
+pub use reconciler::{
+    AccountUsability, BindingDesiredView, DesiredBinding, PoolReconciler, ReconcileError,
+    ReconcileReport,
 };
 #[cfg(feature = "account-control-v1")]
 pub use registry::{

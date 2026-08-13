@@ -20,8 +20,8 @@ pub mod pricing;
 pub mod registry;
 
 pub use error::RegistryError;
-pub use pricing::{estimate_cost, BUILTIN_RATE_CARD, BUILTIN_RATE_VERSION, ModelPricing};
+pub use pricing::{estimate_cost, ModelPricing, BUILTIN_RATE_CARD, BUILTIN_RATE_VERSION};
 pub use registry::{
     caps, merge_capabilities, CapabilityEvidence, CapabilitySource, CatalogEntry, ModelRegistry,
-    ProbeError, ProviderProbe,
+    ProbeError, ProviderCapabilitySource, ProviderProbe,
 };

@@ -28,6 +28,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use agent_domain::{ConnectionId, QueryId, RunId, SessionId, TenantId, ToolCallId, WorkspaceId};
+use app_service::IdentityContext;
+use audit_log::{AuditAction, AuditDecision, AuditDimensions, AuditTargetKind};
 use client_adapter_api::{
     AdapterError, AdapterSessionContext, CanonicalClientRequest, CanonicalCoreFrame,
     CapabilitySnapshot, ClientAdapter, ClientCapability, ClientFrame, ClientProtocol,
@@ -329,6 +331,26 @@ impl AcpHost {
             }
         }
         frames
+    }
+
+    fn record_acp_audit(
+        &self,
+        action: AuditAction,
+        target_kind: AuditTargetKind,
+        decision: AuditDecision,
+        reason_code: &'static str,
+        dimensions: AuditDimensions,
+        decision_version: u64,
+    ) {
+        self.service.tenant_policy().record_control_event(
+            &IdentityContext::local(),
+            action,
+            target_kind,
+            decision,
+            reason_code,
+            dimensions,
+            decision_version,
+        );
     }
 
     /// 传输层失败收尾：丢弃无法写出的帧，但仍释放队列中全部 prompt 屏障，
@@ -678,6 +700,17 @@ impl AcpHost {
             .create_concrete(snapshot)
             .map_err(|error| jsonrpc_error(&error))?;
         *self.negotiated.lock().expect("acp-host negotiated mutex") = Some(negotiated.clone());
+        self.record_acp_audit(
+            AuditAction::ClientLifecycle,
+            AuditTargetKind::Client,
+            AuditDecision::Observe,
+            "acp_capability_negotiated",
+            AuditDimensions {
+                client_id: Some(self.connection_id.as_str().to_string()),
+                ..AuditDimensions::default()
+            },
+            1,
+        );
         Ok(serde_json::to_value(InitializeResult {
             protocol_version: PROTOCOL_VERSION,
             agent_capabilities: crate::wire::AgentCapabilities {
@@ -767,6 +800,19 @@ impl AcpHost {
                 (record.ownership_epoch, record.revision),
             );
         tracing::debug!(session_id, "acp session/new attached");
+        self.record_acp_audit(
+            AuditAction::ClientLifecycle,
+            AuditTargetKind::Client,
+            AuditDecision::Allow,
+            "acp_session_created",
+            AuditDimensions {
+                session_id: Some(SessionId::from(session_id.clone())),
+                client_id: Some(client_session_id.0.clone()),
+                trace_id: Some(format!("connection:{}", self.connection_id.as_str())),
+                ..AuditDimensions::default()
+            },
+            record.revision,
+        );
         Ok(serde_json::to_value(SessionNewResult { session_id })
             .expect("SessionNewResult always serializes"))
     }
@@ -1051,6 +1097,19 @@ impl AcpHost {
                 )
                 .await;
         }
+        self.record_acp_audit(
+            AuditAction::ClientLifecycle,
+            AuditTargetKind::Client,
+            AuditDecision::Observe,
+            "acp_session_cancelled",
+            AuditDimensions {
+                session_id: Some(SessionId::from(client_session_id.0.clone())),
+                client_id: Some(client_session_id.0.clone()),
+                trace_id: Some(format!("connection:{}", self.connection_id.as_str())),
+                ..AuditDimensions::default()
+            },
+            0,
+        );
         // 级联：agent 发出的未决权限请求按 ACP cancellation 流程用
         // $/cancel_request 通知客户端取消，客户端以 -32800 响应确认。
         let cascaded: Vec<JsonRpcId> = self

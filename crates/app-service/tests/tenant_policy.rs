@@ -15,9 +15,11 @@ use agent_domain::{
 };
 use app_service::{
     AppService, AppServiceError, CommandRouter, LocalIdentityResolver, QuotaRuntime, RouterConfig,
-    RoutingTenantPolicyAdapter,
+    RoutingTenantPolicyAdapter, TenantPolicyGate,
 };
-use audit_log::{AuditAction, AuditDecision, AuditTargetKind};
+use audit_log::{
+    AuditAction, AuditDecision, AuditDimensions, AuditTargetKind, InMemoryOtelExporter,
+};
 use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, CommandSource, PolicyDecisionKind as ApiDecisionKind,
@@ -29,8 +31,8 @@ use provider_control::routing::{
 use provider_control::{CredentialPool, InMemoryCredentialPool};
 use quota_service::service::MutableQuotaClock;
 use tenant_service::{
-    IdentityContext, InMemoryTenantPolicyEngine, PermissionProfile, PolicyDecisionKind, PolicyGate,
-    PrincipalRole, TenantPolicy, TenantPolicyEngine,
+    AuditExportPolicy, IdentityContext, InMemoryTenantPolicyEngine, PermissionProfile,
+    PolicyDecisionKind, PolicyGate, PrincipalRole, TenantPolicy, TenantPolicyEngine,
 };
 use usage_ledger::{InMemoryUsageLedger, UsageLedger};
 
@@ -251,6 +253,22 @@ async fn audit_read_requires_permission_and_is_tenant_scoped() {
             .all(|event| event.tenant_id == TenantId::new("acme")),
         "tenant acme must not observe local/default decisions: {acme_events:?}"
     );
+
+    let local_canonical = service
+        .canonical_audit_events(&auditor)
+        .expect("admin may read canonical audit");
+    let acme_canonical = service
+        .canonical_audit_events(&acme_auditor)
+        .expect("acme user may read canonical audit");
+    assert!(local_canonical
+        .iter()
+        .all(|event| event.tenant_id == TenantId::new("local/default")));
+    assert!(acme_canonical
+        .iter()
+        .all(|event| event.tenant_id == TenantId::new("acme")));
+    assert!(local_canonical
+        .iter()
+        .any(|event| event.action == AuditAction::PolicyEvaluated));
 }
 
 #[tokio::test]
@@ -304,6 +322,17 @@ async fn policy_manage_gates_view_and_update() {
         .expect("Admin may view");
     assert_eq!(view.version, 2);
     assert_eq!(view.max_concurrent_agents, Some(2));
+    let canonical = service
+        .canonical_audit_events(&admin)
+        .expect("admin may read canonical audit");
+    assert!(
+        canonical.iter().any(|event| {
+            event.action == AuditAction::ConfigurationChanged
+                && event.target_kind == AuditTargetKind::Configuration
+                && event.reason_code == "tenant_policy_updated"
+        }),
+        "policy update must emit ConfigurationChanged: {canonical:?}"
+    );
 }
 
 fn route_context() -> RouteContext {
@@ -339,7 +368,8 @@ fn routing_adapter_deny_first_records_route_decisions_and_cannot_be_overridden()
         allowed_providers: Some(vec![ProviderId::new("openai")]),
         ..TenantPolicy::default()
     }));
-    let adapter = RoutingTenantPolicyAdapter::from_engine(engine.clone());
+    let gate = Arc::new(TenantPolicyGate::new(engine.clone()));
+    let adapter = RoutingTenantPolicyAdapter::new(Arc::clone(&gate));
     let context = route_context();
 
     let err = adapter
@@ -349,6 +379,11 @@ fn routing_adapter_deny_first_records_route_decisions_and_cannot_be_overridden()
     adapter
         .allows(&context, &route_candidate("openai"))
         .expect("whitelisted provider must pass");
+    let mut fallback = route_candidate("openai");
+    fallback.priority = 1;
+    adapter
+        .allows(&context, &fallback)
+        .expect("lower-priority whitelisted candidate is fallback");
 
     let decisions = engine.decisions(&TenantId::new("local/default"));
     assert!(decisions.iter().any(|event| {
@@ -356,6 +391,23 @@ fn routing_adapter_deny_first_records_route_decisions_and_cannot_be_overridden()
     }));
     assert!(decisions.iter().any(|event| {
         event.gate == PolicyGate::RouteCandidate && event.decision == PolicyDecisionKind::Allow
+    }));
+    assert!(decisions.iter().any(|event| {
+        event.gate == PolicyGate::RouteCandidate && event.decision == PolicyDecisionKind::Fallback
+    }));
+    let canonical = gate
+        .canonical_audit_events(&TenantId::new("local/default"))
+        .unwrap();
+    assert!(canonical.iter().any(|event| {
+        event.action == AuditAction::RouteEvaluated && event.decision == AuditDecision::Deny
+    }));
+    assert!(canonical.iter().any(|event| {
+        event.action == AuditAction::RouteEvaluated && event.decision == AuditDecision::Allow
+    }));
+    assert!(canonical.iter().any(|event| {
+        event.action == AuditAction::RouteEvaluated
+            && event.decision == AuditDecision::Fallback
+            && event.reason_code == "route_candidate_fallback"
     }));
 
     // deny-first：Viewer 无 RouteCandidate 权限，即使 provider 命中白名单也拒绝；
@@ -377,6 +429,102 @@ fn routing_adapter_deny_first_records_route_decisions_and_cannot_be_overridden()
         .decisions(&TenantId::new("local/default"))
         .iter()
         .any(|event| event.decision == PolicyDecisionKind::Deny));
+}
+
+#[test]
+fn canonical_audit_export_is_tenant_scoped_redacted_and_records_export() {
+    let engine = Arc::new(InMemoryTenantPolicyEngine::new(TenantPolicy {
+        audit_export: Some(AuditExportPolicy {
+            enabled: true,
+            allowed_destinations: vec!["siem".into()],
+        }),
+        ..TenantPolicy::default()
+    }));
+    engine.set_policy(
+        TenantId::new("tenant-b"),
+        TenantPolicy {
+            permission_profile: Some(PermissionProfile {
+                default_role: Some(PrincipalRole::Admin),
+                ..PermissionProfile::default()
+            }),
+            audit_export: Some(AuditExportPolicy {
+                enabled: true,
+                allowed_destinations: vec!["siem".into()],
+            }),
+            ..TenantPolicy::default()
+        },
+    );
+    let service = AppService::with_tenant_policy("tenant-audit-export", engine);
+    let tenant_a = IdentityContext::local();
+    let tenant_b = IdentityContext::new(TenantId::new("tenant-b"), PrincipalId::new("ops:admin"));
+    service.tenant_policy().record_control_event(
+        &tenant_a,
+        AuditAction::LeaseRebound,
+        AuditTargetKind::Lease,
+        AuditDecision::Observe,
+        "lease_rebound",
+        AuditDimensions::default(),
+        3,
+    );
+    service.tenant_policy().record_control_event(
+        &tenant_b,
+        AuditAction::LeaseRebound,
+        AuditTargetKind::Lease,
+        AuditDecision::Observe,
+        "lease_rebound",
+        AuditDimensions::default(),
+        3,
+    );
+
+    let a_events = service
+        .canonical_audit_events(&tenant_a)
+        .expect("tenant a admin may read");
+    let b_events = service
+        .canonical_audit_events(&tenant_b)
+        .expect("tenant b admin may read");
+    assert!(a_events
+        .iter()
+        .all(|event| event.tenant_id == tenant_a.tenant_id));
+    assert!(b_events
+        .iter()
+        .all(|event| event.tenant_id == tenant_b.tenant_id));
+    assert!(a_events
+        .iter()
+        .any(|event| event.action == AuditAction::LeaseRebound));
+    assert!(b_events
+        .iter()
+        .any(|event| event.action == AuditAction::LeaseRebound));
+    assert!(!a_events
+        .iter()
+        .any(|event| event.tenant_id == tenant_b.tenant_id));
+
+    let exporter = InMemoryOtelExporter::default();
+    let exported = service
+        .export_canonical_audit(&tenant_a, "siem", &exporter)
+        .expect("admin may export");
+    // check_audit_export records one PolicyEvaluated event before the allowlist dump.
+    assert_eq!(exported, a_events.len() + 1);
+    let json = serde_json::to_string(&exporter.snapshot()).unwrap();
+    for forbidden in [
+        "prompt",
+        "tool_output",
+        "secret_ref",
+        "protected_blob",
+        "api_key",
+    ] {
+        assert!(!json.contains(forbidden), "export leaked {forbidden}");
+    }
+    assert!(exporter
+        .snapshot()
+        .iter()
+        .all(|record| record.attributes.get("tenant_id").unwrap() == "local/default"));
+
+    let after = service
+        .canonical_audit_events(&tenant_a)
+        .expect("admin may read after export");
+    assert!(after.iter().any(|event| {
+        event.action == AuditAction::AuditExported && event.reason_code == "audit_export_completed"
+    }));
 }
 
 // ---------- P18-9 主审回归：闸口边界 / 生产 RunStart / lease / 预算 ----------
@@ -736,6 +884,114 @@ async fn concurrent_run_start_has_exactly_one_winner_at_request_limit_one() {
     );
 
     if let Some(run_id) = router.last_started_run() {
+        let _ = router.dispatch(command(
+            cli_source(),
+            cli_identity(),
+            AppCommand::RunCancel { run_id },
+        ));
+    }
+}
+
+/// Agent spawn 并发在 dispatch 边界强制，`used == limit` 即拒绝；原因必须
+/// 可与请求并发区分，并记到 `PolicyGate::AgentSpawn`。
+#[tokio::test]
+async fn run_start_enforces_agent_concurrency_limit_at_boundary() {
+    let engine = Arc::new(InMemoryTenantPolicyEngine::new(TenantPolicy {
+        max_concurrent_agents: Some(0),
+        ..user_role()
+    }));
+    let router = CommandRouter::with_tenant_policy(
+        RouterConfig::default(),
+        Arc::new(LocalIdentityResolver),
+        engine.clone(),
+    );
+    let provider = mock_provider();
+    router.register_provider(provider.clone());
+    let session_id = prepare_session(&router);
+
+    let denied = router.dispatch(run_start(&session_id, "hello"));
+    assert_authorization(&denied, Some("agent 并发"));
+    if let AppResponse::Error(context) = &denied.response {
+        assert!(
+            !context.message.contains("请求并发"),
+            "agent 并发拒绝不得被记成请求并发: {:?}",
+            context.message
+        );
+    }
+    assert_eq!(router.supervisor().total(), 0);
+    assert_eq!(router.aggregate().runs().len(), 0);
+    assert!(provider.calls().is_empty());
+    assert!(deny_count(&engine, &local_tenant(), PolicyGate::AgentSpawn) >= 1);
+}
+
+/// 并发准入与任务登记必须是一个原子步骤：agent limit=2 时 8 个同时到达的
+/// RunStart 恰好两个成功，其余在 provider 调用前拒绝。
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn concurrent_run_start_has_exactly_two_winners_at_agent_limit_two() {
+    let engine = Arc::new(InMemoryTenantPolicyEngine::new(TenantPolicy {
+        max_concurrent_agents: Some(2),
+        ..user_role()
+    }));
+    let router = Arc::new(CommandRouter::with_tenant_policy(
+        RouterConfig::default(),
+        Arc::new(LocalIdentityResolver),
+        engine,
+    ));
+    let provider = blocking_mock_provider();
+    router.register_provider(provider.clone());
+    let session_id = prepare_session(&router);
+    let barrier = Arc::new(tokio::sync::Barrier::new(9));
+
+    let mut tasks = Vec::new();
+    for index in 0..8 {
+        let router = Arc::clone(&router);
+        let session_id = session_id.clone();
+        let barrier = Arc::clone(&barrier);
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            router.dispatch(run_start(&session_id, &format!("run-{index}")))
+        }));
+    }
+    barrier.wait().await;
+    let mut accepted = 0;
+    let mut denied = 0;
+    let mut accepted_runs = Vec::new();
+    for task in tasks {
+        match task.await.expect("dispatch task").response {
+            AppResponse::Accepted {
+                run_id: Some(run_id),
+                ..
+            } => {
+                accepted += 1;
+                accepted_runs.push(run_id);
+            }
+            AppResponse::Error(context) if context.category == ErrorCategory::Authorization => {
+                assert!(context.message.contains("agent 并发"), "{context:?}");
+                denied += 1;
+            }
+            other => panic!("unexpected concurrent RunStart response: {other:?}"),
+        }
+    }
+    assert_eq!((accepted, denied), (2, 6));
+    assert!(
+        router.supervisor().total() <= 2,
+        "supervisor total must never exceed agent limit"
+    );
+    assert!(
+        router.supervisor().stats().active <= 2,
+        "supervisor active must never exceed agent limit"
+    );
+    assert!(
+        router.supervisor().active_for_tenant(&local_tenant()) <= 2,
+        "tenant occupancy must never exceed agent limit"
+    );
+    assert!(
+        wait_until(|| provider.calls().len() == 2, Duration::from_secs(5)).await,
+        "the admitted runs must reach the provider exactly twice"
+    );
+    assert_eq!(provider.calls().len(), 2);
+
+    for run_id in accepted_runs {
         let _ = router.dispatch(command(
             cli_source(),
             cli_identity(),

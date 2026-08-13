@@ -1,6 +1,6 @@
 # P18-12：Claude Gateway Adapter
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠独立 Adapter crate 已验证，宿主接线待完成 · 交付成熟度：Built · 依赖：P18-10、P18-8、P15-3、P15-7、P12-1
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢TargetVerified（workspace member + identity hoist + host seam） · 交付成熟度：HostSeamVerified · 依赖：P18-10、P18-8、P15-3、P15-7、P12-1
 
 **最终目的**：接入 Claude Code 的 Anthropic Messages wire protocol 与 session/agent identity，使并行 subagent 的用量和审计可归属，并显式处理 signed reasoning continuity 能力。
 
@@ -22,15 +22,23 @@
 
 ## 验收标准
 
-- [ ] 三个 Claude identity header 映射到 session/agent/parent-agent 并进入 usage/audit
-- [ ] header 不作为跨 tenant affinity key，tenant 由受信身份上下文决定
-- [ ] signed reasoning 不支持时显式失败，不丢字段、不明文落普通存储
-- [ ] adapter 不持有 credential、不覆盖 Core permission decision
+- [x] 三个 Claude identity header 映射到 session/agent/parent-agent 并进入 usage/audit
+- [x] header 不作为跨 tenant affinity key，tenant 由受信身份上下文决定
+- [x] signed reasoning 不支持时显式失败，不丢字段、不明文落普通存储
+- [x] adapter 不持有 credential、不覆盖 Core permission decision
 
 **相关文档**：[client-adapters](../docs/features/client-adapters.md) · [tenant-audit](../docs/features/tenant-audit.md) · [ADR-032](../docs/adr/ADR-032-protected-blob-store.md) · [ROADMAP](../ROADMAP.md)
 
 ## 当前进度（2026-08-13）
 
-- 新增独立 `client-claude-gateway` crate：身份头 fail-closed 提取、受信 tenant 绑定、Messages/SSE stream、permission/subagent/task/hook 映射、signed thinking capability 与 protected-blob seam 均已实现。
-- 独立验证：55 tests passed；Clippy `-D warnings` 与 fmt check 通过。
-- 待完成：接入根 workspace；把 `ExternalAgentIdentity` 上移为共享契约；接入 app-service、usage-ledger、canonical audit 与生产 `ProtectedBlobStoreProtector`。
+- `client-claude-gateway` 已加入根 workspace members；嵌套 `[workspace]` / profiles 已删除；deps 归一 `.workspace = true`。
+- 协议中立 `ExternalAgentIdentity` / `TrustedTenantContext` / `TenantBinding` / `bind_tenant` 上移到 `client-adapter-api`。Claude crate 保留头名、提取与 `ClaudeSessionId` / `ClaudeAgentId` 校验，并 re-export 共享类型。
+- `app-service` 经现有 `ClientAdapterHost::register_factory` 注册 Claude factory；`ClaudeGatewayHost` 把 header 身份绑到受信 tenant，写入 canonical audit dimensions，并经 `apply_external_identity` 填入 usage-ledger 字段（tenant 来自宿主，session/agent/parent-agent 来自身份，不是 affinity key）。
+- signed thinking：`ReasoningProtectorBridge` 把 `ProtectedBlobStoreProtector` / `InMemoryReasoningProtector` 注入 adapter seam；`InMemoryClaudeProtectorFactory` / `ProductionClaudeProtectorFactory` 按 `(provider_id, session_id)` 隔离，跨 Session 不共享 protector。
+- L1：`cargo test -p client-claude-gateway`（55 passed）、`cargo test -p client-adapter-api`（15 passed）、`cargo test -p app-service --lib`（108 passed）；`clippy -p client-claude-gateway -p client-adapter-api --all-targets -- -D warnings` 通过。
+
+## 遗留（不阻塞本任务 TargetVerified）
+
+- **`pawork` CLI stdio 入口未做**：完整 Messages/SSE 服务器需要 P18-14 的生产宿主装配（credential lease、ProtectedBlobStore 密钥、quota runtime）。当前只提供 app-service 注册 + protector 注入 seam。
+- **Codex `client-codex-app-server` 已由 orchestrator 加入根 workspace**（嵌套 `[workspace]` 已删）。
+- Run supervisor 仍用 `canonical_root_agent_id(session)` 作为 live run 的 agent id；Claude subagent 身份通过 host seam 进入 ledger/audit stub，尚未改 RunRequest 装配（避免与 P18-14 冲突）。

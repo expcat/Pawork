@@ -80,9 +80,32 @@ pub struct RefreshTarget {
 }
 
 impl RefreshTarget {
+    /// Public identity (scope, window, unit) used to reconcile dangling targets.
+    pub fn id(&self) -> RefreshTargetId {
+        RefreshTargetId {
+            scope: self.scope.clone(),
+            window: self.window,
+            unit: self.unit.clone(),
+        }
+    }
+
     /// Full identity used for scheduling, backoff, and dedup. The unit is
     /// part of the key so Token and Cost refreshes for the same
     /// (scope, window) never share or pollute each other's state.
+    fn key(&self) -> TargetKey {
+        (self.scope.clone(), self.window, self.unit.clone())
+    }
+}
+
+/// Public target identity for scheduler reconcile / unregister.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct RefreshTargetId {
+    pub scope: QuotaScope,
+    pub window: QuotaWindow,
+    pub unit: QuotaUnit,
+}
+
+impl RefreshTargetId {
     fn key(&self) -> TargetKey {
         (self.scope.clone(), self.window, self.unit.clone())
     }
@@ -366,6 +389,53 @@ struct DedupState {
     next_eligible_at: HashMap<TargetKey, u64>,
 }
 
+fn forget_target(state: &mut DedupState, key: &TargetKey) {
+    state.attempts.remove(key);
+    state.next_eligible_at.remove(key);
+    state.reauth_active.remove(key);
+    state.threshold_active.retain(|(scope, window, unit, _)| {
+        !(scope == &key.0 && *window == key.1 && unit == &key.2)
+    });
+    state.partial_active.retain(|(scope, window, unit, _)| {
+        !(scope == &key.0 && *window == key.1 && unit == &key.2)
+    });
+}
+
+/// Result of [`RefreshScheduler::reconcile`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TargetReconcileReport {
+    /// Newly registered targets.
+    pub added: usize,
+    /// Existing targets whose policy/credential were replaced.
+    pub updated: usize,
+    /// Dangling targets removed.
+    pub removed: usize,
+}
+
+/// Library lifecycle handle for [`RefreshScheduler::start`].
+pub struct SchedulerHandle {
+    cancel: CancellationToken,
+    join: tokio::task::JoinHandle<()>,
+}
+
+impl SchedulerHandle {
+    /// Signal the loop to stop. In-flight batch aborts via the token.
+    pub fn cancel(&self) {
+        self.cancel.cancel();
+    }
+
+    /// Shared cancellation token (tests / composition).
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.cancel.clone()
+    }
+
+    /// Cancel and wait for the background task to exit.
+    pub async fn shutdown(self) {
+        self.cancel.cancel();
+        let _ = self.join.await;
+    }
+}
+
 // =========================================================================
 // Scheduler
 // =========================================================================
@@ -421,6 +491,79 @@ impl RefreshScheduler {
             return;
         }
         targets.push(target);
+    }
+
+    /// Unregister a target by identity. Idempotent; also forgets backoff/dedup
+    /// state so a later re-register starts clean. Returns whether a target was
+    /// removed.
+    pub fn unregister(&self, id: &RefreshTargetId) -> bool {
+        let mut targets = self.targets.lock().expect("targets poisoned");
+        let before = targets.len();
+        targets.retain(|target| target.id() != *id);
+        let removed = targets.len() != before;
+        drop(targets);
+        if removed {
+            forget_target(&mut self.state.lock().expect("state poisoned"), &id.key());
+        }
+        removed
+    }
+
+    /// Currently registered target identities (no credentials).
+    pub fn registered_ids(&self) -> Vec<RefreshTargetId> {
+        self.targets
+            .lock()
+            .expect("targets poisoned")
+            .iter()
+            .map(RefreshTarget::id)
+            .collect()
+    }
+
+    /// Reconcile the registered set with `desired`.
+    ///
+    /// - Identities in `desired` but not registered are added.
+    /// - Identities registered but not in `desired` are removed (no dangling).
+    /// - Identities in both have policy/credential updated in place.
+    ///
+    /// Does not touch in-flight refreshes beyond the next tick's due set.
+    pub fn reconcile(&self, desired: Vec<RefreshTarget>) -> TargetReconcileReport {
+        let mut report = TargetReconcileReport::default();
+        let desired_ids: HashSet<RefreshTargetId> = desired.iter().map(RefreshTarget::id).collect();
+        let mut targets = self.targets.lock().expect("targets poisoned");
+        let mut state = self.state.lock().expect("state poisoned");
+
+        let mut keep: Vec<RefreshTarget> = Vec::new();
+        for existing in targets.drain(..) {
+            if desired_ids.contains(&existing.id()) {
+                keep.push(existing);
+            } else {
+                forget_target(&mut state, &existing.key());
+                report.removed += 1;
+            }
+        }
+
+        for incoming in desired {
+            if let Some(slot) = keep.iter_mut().find(|target| target.id() == incoming.id()) {
+                slot.policy = incoming.policy;
+                slot.credential = incoming.credential;
+                report.updated += 1;
+            } else {
+                keep.push(incoming);
+                report.added += 1;
+            }
+        }
+        *targets = keep;
+        report
+    }
+
+    /// Spawn [`Self::run`] on the current tokio runtime. Cancel / await via the
+    /// returned handle. Production composition root (app-service / pawork) is
+    /// orchestrator-owned after P18-13; this is the library lifecycle API.
+    pub fn start(self: Arc<Self>) -> SchedulerHandle {
+        let cancel = CancellationToken::new();
+        let running = cancel.clone();
+        let sched = self;
+        let join = tokio::spawn(async move { sched.run(running).await });
+        SchedulerHandle { cancel, join }
     }
 
     /// Draw a bounded jitter amount (ms) for a computed delay.

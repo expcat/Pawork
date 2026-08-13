@@ -1,0 +1,12 @@
+{
+  "method": "item/completed",
+  "params": {
+    "threadId": "thr_1",
+    "turnId": "turn_1",
+    "item": {
+      "id": "item_cmd",
+      "type": "commandExecution",
+      "status": "completed"
+    }
+  }
+}

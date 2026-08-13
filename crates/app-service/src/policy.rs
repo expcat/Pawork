@@ -234,9 +234,31 @@ impl TenantPolicyGate {
         let role = self.role(&identity.tenant_id, &identity.principal_id);
         let policy = self.engine.policy(&identity.tenant_id);
         match decide_audit_export(role, policy.audit_export.as_ref(), destination) {
-            PolicyDecision::Allow => Ok(()),
-            PolicyDecision::Deny { reason } => Err(TenantPolicyError::AuditExportDenied { reason }),
+            PolicyDecision::Allow => {
+                self.record_decision(
+                    identity,
+                    PolicyGate::AuditExport,
+                    PolicyDecisionKind::Allow,
+                    "audit 导出放行",
+                );
+                Ok(())
+            }
+            PolicyDecision::Deny { reason } => {
+                self.record_decision(
+                    identity,
+                    PolicyGate::AuditExport,
+                    PolicyDecisionKind::Deny,
+                    reason.clone(),
+                );
+                Err(TenantPolicyError::AuditExportDenied { reason })
+            }
             PolicyDecision::Limit { reason } | PolicyDecision::Fallback { reason } => {
+                self.record_decision(
+                    identity,
+                    PolicyGate::AuditExport,
+                    PolicyDecisionKind::Deny,
+                    reason.clone(),
+                );
                 Err(TenantPolicyError::AuditExportDenied { reason })
             }
         }
@@ -427,14 +449,23 @@ impl provider_control::routing::TenantPolicy for RoutingTenantPolicyAdapter {
         {
             return Err(deny(error.to_string()));
         }
+        // Lower-priority (higher numeric) candidates that still pass policy are
+        // the observable fallback path: the preferred bucket was empty or skipped.
+        let (decision, reason) = if candidate.priority > 0 {
+            (PolicyDecisionKind::Fallback, "route candidate fallback")
+        } else {
+            (PolicyDecisionKind::Allow, "route candidate 放行")
+        };
         self.gate.record_decision_scoped(
             &identity,
             PolicyGate::RouteCandidate,
-            PolicyDecisionKind::Allow,
-            "route candidate 放行",
+            decision,
+            reason,
             AuditDimensions {
                 provider_id: Some(candidate.provider_id.clone()),
                 account_id: Some(candidate.account_id.clone()),
+                session_id: Some(context.session_id.clone()),
+                agent_id: Some(context.agent_id.clone()),
                 ..AuditDimensions::default()
             },
         );

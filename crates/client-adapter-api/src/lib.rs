@@ -2,6 +2,12 @@
 //!
 //! 本 crate 只定义协议翻译、能力协商和 authoritative ownership registry。
 //! Adapter 不持有 Provider credential，也不消费 GUI Connection Protocol frame。
+//!
+//! [`ExternalAgentIdentity`] 是协议中立的 session/agent/parent-agent 归属契约
+//! （P18-12）：tenant 只来自宿主注入的 [`TrustedTenantContext`]，身份字段不得
+//! 作为跨 tenant affinity key。
+
+mod identity;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -13,6 +19,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::Mutex;
+
+pub use identity::{
+    bind_tenant, ExternalAgentIdentity, IdentityError, TenantBinding, TrustedTenantContext,
+};
 
 pub const CLIENT_ADAPTER_SCHEMA_VERSION: u32 = 1;
 

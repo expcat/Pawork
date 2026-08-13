@@ -3,12 +3,14 @@
 //! 所有 adapter 经过同一个 [`AppService`] 和 [`EventHub`]；本层只路由
 //! canonical command/query/event，不解释客户端专有 JSON。
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use agent_domain::{ConnectionId, Timestamp};
 use client_adapter_api::{
     AdapterError, AdapterSessionContext, CanonicalClientRequest, CanonicalCoreFrame,
-    ClientSessionId, ClientSessionRecord, ClientSessionState, SessionRegistry,
+    ClientAdapterFactory, ClientProtocol, ClientSessionId, ClientSessionRecord, ClientSessionState,
+    SessionRegistry,
 };
 use core_api::{AppCommand, GlobalSequence};
 use subscription_hub::{EventHub, HubError, HubSubscription};
@@ -35,6 +37,7 @@ pub struct ClientAdapterHost {
     service: Arc<AppService>,
     hub: Arc<EventHub>,
     registry: Arc<SessionRegistry>,
+    factories: Arc<Mutex<BTreeMap<ClientProtocol, Arc<dyn ClientAdapterFactory>>>>,
 }
 
 impl ClientAdapterHost {
@@ -47,11 +50,31 @@ impl ClientAdapterHost {
             service,
             hub,
             registry,
+            factories: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
     pub fn registry(&self) -> &Arc<SessionRegistry> {
         &self.registry
+    }
+
+    /// Register a protocol factory. Existing ACP / Claude / mock factories share
+    /// this host; the adapter still does not choose credentials, route, or
+    /// override policy.
+    pub fn register_factory(&self, factory: Arc<dyn ClientAdapterFactory>) {
+        let protocol = factory.protocol().clone();
+        self.factories
+            .lock()
+            .expect("adapter factory map poisoned")
+            .insert(protocol, factory);
+    }
+
+    pub fn factory(&self, protocol: &ClientProtocol) -> Option<Arc<dyn ClientAdapterFactory>> {
+        self.factories
+            .lock()
+            .expect("adapter factory map poisoned")
+            .get(protocol)
+            .cloned()
     }
 
     pub async fn dispatch(

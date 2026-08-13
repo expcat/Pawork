@@ -10,6 +10,7 @@ description = "ACP (Agent Client Protocol) host adapter: protocol translation to
 agent-domain = { path = "../agent-domain" }
 app-service = { path = "../app-service" }
 async-trait.workspace = true
+audit-log = { path = "../audit-log" }
 client-adapter-api = { path = "../client-adapter-api" }
 core-api = { path = "../core-api" }
 serde.workspace = true

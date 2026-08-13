@@ -1,0 +1,7 @@
+{
+  "id": 12,
+  "method": "thread/fork",
+  "params": {
+    "threadId": "thr_1"
+  }
+}

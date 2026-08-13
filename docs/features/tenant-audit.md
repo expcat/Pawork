@@ -50,9 +50,11 @@ pub struct AuditEventV1 {
 }
 ```
 
-审计覆盖身份解析、policy decision、route decision、lease acquire/release/rebind、Agent lifecycle、permission/tool、配置变更和数据导出。OTel/SIEM exporter 只能输出 allowlist 字段；凭据、prompt、tool output 与 Protected Blob 明文默认不导出。
+审计覆盖身份解析、policy decision、route/fallback、lease acquire/release、Agent lifecycle、permission/tool、配置变更、数据导出与 QuotaAlert。OTel/SIEM exporter（`TracingAuditExporter` / `OtelAuditExporter`）只能输出 allowlist 字段；凭据、prompt、tool output 与 Protected Blob 明文默认不导出。生产 collector 进程不在 Phase 18 范围。
 
-Quota 刷新、WebScrape、部分失败、重新授权、阈值触发与恢复同样进入审计。允许记录 provider、account 的脱敏提示、window、adapter kind、confidence、HTTP 错误类别与 selector version；禁止记录 API Key/token/cookie、URL query、认证 header、原始响应正文或 HTML。
+`LeaseRebound` 的 canonical 动作已存在，隔离测试可经 `record_control_event` 注入；生产发射等待 app-service 消费 `SessionBindingService` / `BindingAcquisition.old_lease_release`，不得从 `lease.version` 启发式推断。
+
+Quota 刷新、WebScrape、部分失败、重新授权、阈值触发与恢复同样进入审计。WebScrape 生产路径只经可选 `refresh::AuditSink`（`with_audit_sink`）；进程内 Vec 仅测试夹具。允许记录 provider、account 的脱敏提示、window、adapter kind、confidence、HTTP 错误类别与 selector version；禁止记录 API Key/token/cookie、URL query、认证 header、原始响应正文或 HTML。
 
 ## 优先级
 

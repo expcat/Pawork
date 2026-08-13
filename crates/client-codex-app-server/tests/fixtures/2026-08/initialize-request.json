@@ -1,0 +1,11 @@
+{
+  "id": 0,
+  "method": "initialize",
+  "params": {
+    "clientInfo": {
+      "name": "pawork-test",
+      "title": "Pawork Codex Test",
+      "version": "0.0.0"
+    }
+  }
+}

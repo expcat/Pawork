@@ -47,11 +47,13 @@ pub trait ErrorClassifier: Send + Sync {
 
 P18-1 已冻结 `account-control-v1`：关闭 feature 时保留 `tenant_id=local/default`、`account_id=local/default`、`principal_id=local/user` 与 `SingleCandidate` synthetic account 回退；开启时控制面记录使用 versioned、unknown-field fail-closed 的 serde 契约。控制面 SQLite migration 使用独立版本账本、整批事务和迁移前备份，不复用其它 schema 的 `user_version`。
 
-P18-3 将控制面 schema 提升到 v2：`ProviderAccountRecord` 独立持有 priority、weight、max concurrency 与 lifecycle state；`CredentialMetadata` 只保存 `secret_ref`、credential kind、expiry 与 refresh state。所有 take 路径先执行统一的 state/refresh/expiry fail-closed gate，之后才允许宿主 resolver 短时解析 `ResolvedCredential`；repository 的管理摘要不暴露 `secret_ref`，SQLite、Event、日志和诊断均不得出现 plaintext。Provider factory 通过 provider-id registry 查找 descriptor/builder，不允许 Core 按 Provider 名称分支。真实 Provider、builtin model 与 persistent protector 的生产宿主组合在 P18-14 统一完成。
+P18-3 将控制面 schema 提升到 v2：`ProviderAccountRecord` 独立持有 priority、weight、max concurrency 与 lifecycle state；`CredentialMetadata` 只保存 `secret_ref`、credential kind、expiry 与 refresh state。所有 take 路径先执行统一的 state/refresh/expiry fail-closed gate，之后才允许宿主 resolver 短时解析 `ResolvedCredential`；repository 的管理摘要不暴露 `secret_ref`，SQLite、Event、日志和诊断均不得出现 plaintext。Provider factory 通过 provider-id registry 查找 descriptor/builder，不允许 Core 按 Provider 名称分支。真实 Provider、builtin model 与 persistent protector 的生产宿主组合仍待 composition root，不在 P18-14 库层伪称已装配。
 
 P18-5 的错误与健康运行时按 credential/account/model/provider 四类 scope 分离 cooldown 与 circuit；401 只允许 refresh-once，billing blocked 需显式恢复，Retry-After deadline 只能延长不能被旧成功覆盖。half-open probe 是受限在途名额，成功、取消和客户端错误都会归还；只有匹配 scope 的上游故障才重新打开 circuit。默认未知/未识别 4xx fail-closed，不触发无依据的账号轮换或健康惩罚。
 
 P18-6 把 capability → tenant policy → health → priority bucket 固定为不可绕过的候选链，并提供 `SingleCandidate`、严格 `Priority`、普通 Round-Robin、Smooth Weighted Round-Robin 与 Fill-First。Fill-First 只在高 priority 容量耗尽后下沉；其余策略不会穿透最高优先级桶。每次选择、淘汰与 fallback 开关都进入不含 Secret 的 `RouteDecision`。健康预览使用不预留名额的 `can_admit`；只有最终 Route winner 在进入 Lease 前才能通过 `is_admissible` 预留 HalfOpen probe，避免未选候选耗尽探针并发。Session Affinity 仍由 P18-7 的独立 binding 状态机完成，不在路由器内复制粘性状态。
+
+P18-14 在库层补齐 `PoolReconciler::tick`（过期 lease / stale binding / disabled account，运行中 `Acquired` lease 不被热切换误杀）、`ProbeRuntime`（昂贵 probe 默认 OFF，经 `ProviderFactory::health_probe()` 扩展点，Core 无 Provider 名分支）以及 `QuotaTargetRegistry::reconcile`。生产 `QuotaRuntime::production()` 注册六家远端 factory、scheduler 启停，以及把 `builtin_models()` 喂进 `ModelRegistry::merge_provider_models`，仍由宿主 composition 完成。
 
 ## 状态机
 

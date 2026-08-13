@@ -1,0 +1,10 @@
+{
+  "method": "turn/completed",
+  "params": {
+    "turn": {
+      "id": "turn_1",
+      "status": "completed",
+      "items": []
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "method": "turn/started",
+  "params": {
+    "turn": {
+      "id": "turn_1",
+      "status": "inProgress",
+      "items": []
+    }
+  }
+}

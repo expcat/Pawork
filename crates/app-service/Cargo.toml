@@ -16,6 +16,7 @@ async-trait.workspace = true
 auth-service = { path = "../auth-service" }
 audit-log = { path = "../audit-log" }
 client-adapter-api = { path = "../client-adapter-api" }
+client-claude-gateway = { path = "../client-claude-gateway" }
 core-api = { path = "../core-api" }
 diff-service = { path = "../diff-service" }
 directories.workspace = true
@@ -26,6 +27,7 @@ policy-engine = { path = "../policy-engine" }
 process-runtime = { path = "../process-runtime" }
 provider-api = { path = "../provider-api" }
 provider-runtime = { path = "../provider-runtime" }
+protected-blob-store = { path = "../protected-blob-store" }
 provider-control = { path = "../provider-control" }
 quota-service = { path = "../quota-service" }
 reqwest.workspace = true
@@ -47,6 +49,7 @@ user-hooks = { path = "../user-hooks" }
 workspace-service = { path = "../workspace-service" }
 
 [dev-dependencies]
+app-database = { path = "../app-database" }
 rmcp = { workspace = true, features = ["client"] }
 tempfile.workspace = true
 test-support = { path = "../test-support" }

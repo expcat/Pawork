@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use acp_host::wire::{ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ERROR_METHOD_NOT_FOUND};
 use acp_host::{AcpClientAdapterFactory, CwdResolver, JsonRpcMessage, SessionResolver};
-use agent_domain::{CoreInstanceId, EventId, MessageId, RunId, WorkspaceId};
+use agent_domain::{CoreInstanceId, EventId, MessageId, RunId, ToolCallId, WorkspaceId};
 use async_trait::async_trait;
 use client_adapter_api::{
     AdapterError, CanonicalCoreFrame, CapabilitySnapshot, ClientAdapter, ClientCapability,
@@ -179,6 +179,113 @@ async fn golden_session_update_text_matches_fixture() {
         notification,
         fixture("fixtures/v1/session-update-text.json")
     );
+}
+
+/// golden：`session/new` 请求与 v1 fixture 解析一致（mcpServers 必填，可为空）。
+#[tokio::test]
+async fn golden_session_new_request_matches_fixture() {
+    let request = fixture("fixtures/v1/session-new-request.json");
+    let JsonRpcMessage::Request(message) = parse(request).expect("fixture 可解析") else {
+        panic!("expected request");
+    };
+    assert_eq!(message.method, "session/new");
+    let params = serde_json::from_value::<acp_host::wire::SessionNewParams>(
+        message.params.clone().unwrap_or(Value::Null),
+    )
+    .expect("session/new params 可解析");
+    assert_eq!(params.cwd, "/tmp");
+    assert!(params.mcp_servers.is_empty());
+    assert!(params.additional_directories.is_empty());
+
+    let harness = TestHarness::new(test_support::MockScript::new().complete()).await;
+    let dir = tempfile::TempDir::with_prefix("acp-host-session-new-golden-").expect("temp dir");
+    harness.prepare_workspace(dir.path()).await;
+    let session_id = harness
+        .new_session(dir.path().to_str().expect("path"))
+        .await;
+    assert!(
+        !session_id.is_empty(),
+        "session/new must return a sessionId"
+    );
+}
+
+/// golden：`session/prompt` 请求与 v1 fixture 解析一致（首轮仅 text 块）。
+#[test]
+fn golden_session_prompt_request_matches_fixture() {
+    let request = fixture("fixtures/v1/session-prompt-request.json");
+    let JsonRpcMessage::Request(message) = parse(request).expect("fixture 可解析") else {
+        panic!("expected request");
+    };
+    assert_eq!(message.method, "session/prompt");
+    let params = serde_json::from_value::<acp_host::wire::SessionPromptParams>(
+        message.params.clone().unwrap_or(Value::Null),
+    )
+    .expect("session/prompt params 可解析");
+    assert_eq!(params.session_id, "acp-golden-session");
+    assert_eq!(params.prompt.len(), 1);
+    assert_eq!(params.prompt[0]["type"], json!("text"));
+    assert_eq!(params.prompt[0]["text"], json!("hello"));
+}
+
+/// golden：`session/cancel` 通知与 v1 fixture 解析一致。
+#[tokio::test]
+async fn golden_session_cancel_notification_matches_fixture() {
+    let request = fixture("fixtures/v1/session-cancel-notification.json");
+    let JsonRpcMessage::Notification(message) = parse(request).expect("fixture 可解析") else {
+        panic!("expected notification");
+    };
+    assert_eq!(message.method, "session/cancel");
+    let adapter = negotiated_adapter().await;
+    let target = adapter
+        .decode_cancel(message.params.clone().unwrap_or(Value::Null))
+        .await
+        .expect("session/cancel 可解析");
+    assert_eq!(target.client_session_id.0, "acp-golden-session");
+}
+
+/// golden：ToolStarted 回译为 session/update tool_call，负载与 fixture 一致。
+#[tokio::test]
+async fn golden_session_update_tool_call_matches_fixture() {
+    let adapter = negotiated_adapter().await;
+    let envelope = event_envelope(
+        EventStream::Run(RunId::from("run-golden")),
+        AppEvent::ToolStarted {
+            run_id: RunId::from("run-golden"),
+            tool_call_id: ToolCallId::from("tool-golden-1"),
+            name: "echo".into(),
+        },
+    );
+    let frame = adapter
+        .encode(CanonicalCoreFrame::Event(envelope))
+        .await
+        .expect("事件可编码");
+    assert_eq!(frame.method, "acp.notification");
+    let notification = acp_notification("session/update", frame.payload);
+    assert_eq!(
+        notification,
+        fixture("fixtures/v1/session-update-tool-call.json")
+    );
+}
+
+/// golden：自定义模型方法 `session/set_model` 未进入 ACP v1 首轮映射，fail-closed。
+#[tokio::test]
+async fn golden_custom_model_method_is_rejected() {
+    let harness = TestHarness::new(test_support::MockScript::new().complete()).await;
+    harness.initialize().await.expect("initialize");
+    let request = fixture("fixtures/v1/session-set-model-request.json");
+    let JsonRpcMessage::Request(message) = parse(request).expect("fixture 可解析") else {
+        panic!("expected request");
+    };
+    assert_eq!(message.method, "session/set_model");
+    let result = harness
+        .host
+        .handle_request(message.id, &message.method, message.params)
+        .await;
+    let error = result.expect_err("session/set_model 必须失败");
+    let expected = fixture("fixtures/v1/error-unknown-set-model.json");
+    assert_eq!(error.code, ERROR_METHOD_NOT_FOUND);
+    assert_eq!(error.code, expected["error"]["code"]);
+    assert_eq!(error.message, expected["error"]["message"]);
 }
 
 /// golden：`session/request_permission` 响应按官方嵌套形状解析为 Selected，

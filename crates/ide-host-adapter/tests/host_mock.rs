@@ -830,7 +830,9 @@ async fn multiple_sessions_reattach_on_reconnect() {
         &last_sent_request_id(&mock2.clone()),
         session_view("s-2", 1),
     ));
-    task.await.expect("reattach task").expect("reattach succeeds");
+    task.await
+        .expect("reattach task")
+        .expect("reattach succeeds");
 
     // 两个 session 的 ownership_epoch 都 bump 到 2：旧 owner 的 stale 写被拒。
     let record_s1_after = adapter
@@ -933,7 +935,8 @@ async fn over_limit_context_sync_does_not_send_frame_or_consume_revision() {
             .await
     });
     wait_for_next_frame(&mock, baseline).await;
-    mock.clone().push_response(data_line(&last_sent_request_id(&mock.clone()), json!({})));
+    mock.clone()
+        .push_response(data_line(&last_sent_request_id(&mock.clone()), json!({})));
     let recovered = recover_task
         .await
         .expect("recover task")

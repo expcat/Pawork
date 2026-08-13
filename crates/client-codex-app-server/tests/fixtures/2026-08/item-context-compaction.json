@@ -1,0 +1,11 @@
+{
+  "method": "item/started",
+  "params": {
+    "threadId": "thr_b",
+    "turnId": "turn_compact",
+    "item": {
+      "id": "item_compact",
+      "type": "contextCompaction"
+    }
+  }
+}

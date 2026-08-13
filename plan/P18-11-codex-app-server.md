@@ -1,6 +1,6 @@
 # P18-11：Codex App-Server Adapter
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠协议基线骨架已落地，Adapter 本体待实现 · 交付成熟度：Scaffolded · 依赖：P18-10、P15-2、P15-5、P15-8、P12-1
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢Adapter + versioned goldens 已落地 · 交付成熟度：WorkspaceMember（根 workspace member；生产 CLI 入口仍待宿主装配） · 依赖：P18-10、P15-2、P15-5、P15-8、P12-1
 
 **最终目的**：通过官方 Codex App Server 协议把 Thread/Turn/Item、approval、subagent 与 interrupt 映射到 Pawork canonical session/agent/event，而不是模拟 UI 或依赖 DOM/CDP 注入。
 
@@ -22,15 +22,18 @@
 
 ## 验收标准
 
-- [ ] thread/turn/item/parentThreadId/approval/interrupt 无静默语义丢失
-- [ ] tool namespace 与 compaction capability 不支持时显式返回 `ProtocolUnsupported`
-- [ ] adapter 不读取 Provider credential、不绕过 app-service/policy
-- [ ] app-server 版本升级可通过 golden diff 定位 breaking change
+- [x] thread/turn/item/parentThreadId/approval/interrupt 无静默语义丢失
+- [x] tool namespace 与 compaction capability 不支持时显式返回 `ProtocolUnsupported`
+- [x] adapter 不读取 Provider credential、不绕过 app-service/policy
+- [x] app-server 版本升级可通过 golden diff 定位 breaking change
 
 **相关文档**：[client-adapters](../docs/features/client-adapters.md) · [multi-agent](../docs/features/multi-agent.md) · [ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [ROADMAP](../ROADMAP.md)
 
 ## 当前进度（2026-08-13）
 
-- 新增独立 `client-codex-app-server` crate，固化 initialize/initialized、无 `jsonrpc` 字段、stdio JSONL、Thread/Turn/Item、parent/fork、审批与 `-32001` 过载等官方协议基线；烟雾测试 1 passed。
-- crate 暂以嵌套 `[workspace]` 独立存在，尚未接入根 workspace。
-- 待实现：wire/contract/adapter/map/host、完整 capability negotiation、canonical bridge，以及 fork/resume/subagent/approval/interrupt/disconnect/revision golden fixtures。
+- 独立 `client-codex-app-server` crate：`wire` / `map` / `adapter` / `host` 已实现；协议版本钉死 `PROTOCOL_VERSION = "2026-08"`。
+- 线协议：JSON-RPC 风格且**省略 `jsonrpc` 字段**；stdio JSONL 会话环；握手 `initialize` → `initialized`；审批为 server→client **请求** `item/commandExecution/requestApproval`；过载 `-32001`。
+- 能力矩阵：`compaction`（默认可协商）/ `experimentalApi`（opt-in）/ `tool.namespace`（不在白名单，使用点 fail-closed）。legacy `thread/compacted` 显式 `ProtocolUnsupported`，不得顶替 `contextCompaction`。
+- 已加入根 workspace members；嵌套 `[workspace]` 已删除；deps 归一 `.workspace = true`。**未**依赖 `app-service`；生产 AppService 经 `CoreDispatcher` 注入，CLI 入口仍待宿主装配。
+- Review 修复：`turn/steer` 不再伪装成新 `RunStart`（会丢掉「向飞行中 turn 注入」语义）；Core 无对应命令时显式 `ProtocolUnsupported`。`thread/fork` 在缺 `lastTurnId` 时仍用 sentinel `parent_event_id`，属有界限制。
+- L1：`cargo test -p client-codex-app-server --test capabilities --test lifecycle --test handshake --test golden`（29 passed，含 steer fail-closed）。

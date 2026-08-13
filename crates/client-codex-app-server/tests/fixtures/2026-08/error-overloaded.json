@@ -1,0 +1,7 @@
+{
+  "id": 7,
+  "error": {
+    "code": -32001,
+    "message": "Server overloaded; retry later."
+  }
+}

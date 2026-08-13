@@ -82,6 +82,16 @@
 
 > 与 Phase 15 / 16 登记同样：以上延后项的验收责任写入对应落点 plan；P17-14 是 Phase 17 的 review-remediation（成功语义 / 生命周期 / 状态失真 / 冗余收缩 + 纵向闭环显式延后），见 [plan/P17-14-review-remediation](P17-14-review-remediation.md)。代码门禁数字已回填，任务 🟢已完成 · TargetVerified。
 
+**Phase 18 延期落点登记**（[P18-15](P18-15-control-plane-gate.md) 收口 · 状态：**🟢有界完成 · MaintenanceGated**）：库层控制面、ClientAdapter、canonical audit 与隔离 L2 已落地。**生产宿主接线闭环延期**，以下不声称已装配：
+
+- **① Codex / Claude `pawork` stdio CLI** → 后续宿主 composition（adapter crate 与 app-service factory/host seam 已在；完整 Messages/SSE 与 app-server stdio 入口未接 `apps/pawork`）。
+- **② Quota 生产 refresh** → `QuotaRuntime::production()` 注册六家远端 factory、scheduler start/cancel/shutdown；WebScrape `with_audit_sink` 由 composition 注入（zhipu factory 默认不注入）。
+- **③ model-registry catalog 喂入** → composition root 把 `ProviderFactory::descriptors().builtin_models()` 交给 `ModelRegistry::merge_provider_models`。
+- **④ LeaseRebound 生产发射** → app-service 消费 `SessionBindingService` / `BindingAcquisition.old_lease_release` 后写入 canonical audit；禁止 `lease.version > 2` 启发式。
+- **⑤ 生产 OTel collector 进程** → `audit-log` 只提供 allowlist `OtelAuditExporter` / `TracingAuditExporter` 抽象。
+
+> 以上验收项不回写为 Phase 18 未完成；P18-15 是功能簇定向 L2（`scripts/p18-gate.sh`，`target/gates-p18`），不是 Workspace Full Gate。
+
 ---
 
 ## MVP 范围

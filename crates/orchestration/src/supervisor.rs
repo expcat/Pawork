@@ -592,7 +592,7 @@ impl AgentSupervisor {
                                 .insert(agent_id.clone(), entry);
                             let reason_msg = format!("lease scope validation failed: {reason}");
                             self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &reason_msg);
-                            return Err(SupervisorError::LeaseError(reason_msg));
+                            return Err(SupervisorError::PolicyDenied(reason_msg));
                         }
                         Some(guard)
                     }
@@ -1625,7 +1625,10 @@ mod tests {
     use super::*;
     use agent_domain::{ModelId, PrincipalId, SessionId, TenantId};
     use async_trait::async_trait;
-    use provider_control::{AccountId, AcquireRequest, InMemoryCredentialPool};
+    use provider_control::{
+        AccountId, AcquireRequest, CredentialLease, CredentialPool, InMemoryCredentialPool,
+        LeaseGuard, LeaseId, LeaseOutcome, PoolError, ReleaseReceipt,
+    };
     use std::collections::BTreeMap;
     use std::path::Path;
     use std::sync::Mutex;
@@ -1651,7 +1654,7 @@ mod tests {
     }
 
     fn harness(
-        pool: Arc<InMemoryCredentialPool>,
+        pool: Arc<dyn CredentialPool>,
         policy: Arc<InMemoryTenantPolicyEngine>,
     ) -> AgentSupervisor {
         // P18-9 deny-first：未知非 local/default 租户回落 Viewer，历史测试
@@ -2509,6 +2512,133 @@ mod tests {
         engine
     }
 
+    /// 并行 `spawn` 压力：`n` 路 `tokio::spawn` 同时冲并发闸门。
+    async fn join_spawns(
+        supervisor: &Arc<AgentSupervisor>,
+        n: usize,
+        with_acquire: bool,
+    ) -> (Vec<AgentId>, Vec<SupervisorError>) {
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..n {
+            let supervisor = Arc::clone(supervisor);
+            set.spawn(async move {
+                let acquire = with_acquire.then(|| acquire_request(&AgentId::new("placeholder")));
+                supervisor.spawn(spawn_request(acquire)).await
+            });
+        }
+        let mut admitted = Vec::new();
+        let mut errors = Vec::new();
+        while let Some(joined) = set.join_next().await {
+            match joined.expect("parallel spawn task") {
+                Ok(id) => admitted.push(id),
+                Err(err) => errors.push(err),
+            }
+        }
+        (admitted, errors)
+    }
+
+    /// 恶意 / 故障 pool：acquire 成功，但返回的 lease 作用域与 canonical 请求错配。
+    #[derive(Clone, Copy, Debug)]
+    enum LeaseScopeMismatch {
+        Tenant,
+        Principal,
+        Session,
+        Agent,
+        Provider,
+        Account,
+    }
+
+    impl LeaseScopeMismatch {
+        fn reason(self) -> &'static str {
+            match self {
+                Self::Tenant => "tenant mismatch",
+                Self::Principal => "principal mismatch",
+                Self::Session => "session mismatch",
+                Self::Agent => "agent mismatch",
+                Self::Provider => "provider mismatch",
+                Self::Account => "account mismatch",
+            }
+        }
+    }
+
+    struct MismatchingPool {
+        inner: InMemoryCredentialPool,
+        kind: LeaseScopeMismatch,
+        releases: Mutex<Vec<(LeaseId, LeaseOutcome)>>,
+    }
+
+    impl MismatchingPool {
+        fn new(kind: LeaseScopeMismatch) -> Self {
+            Self {
+                inner: InMemoryCredentialPool::new(4),
+                kind,
+                releases: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn forge(&self, mut req: AcquireRequest) -> AcquireRequest {
+            match self.kind {
+                LeaseScopeMismatch::Tenant => {
+                    req.tenant_id = TenantId::new("tenant-evil");
+                }
+                LeaseScopeMismatch::Principal => {
+                    req.principal_id = PrincipalId::new("principal-evil");
+                }
+                LeaseScopeMismatch::Session => {
+                    req.session_id = SessionId::new("session-evil");
+                }
+                LeaseScopeMismatch::Agent => {
+                    req.agent_id = AgentId::new("agent-evil");
+                }
+                LeaseScopeMismatch::Provider => {
+                    req.provider_id = Some(ProviderId::new("evil-provider"));
+                }
+                LeaseScopeMismatch::Account => {
+                    req.account_id = Some(AccountId::new("evil-account"));
+                }
+            }
+            req
+        }
+
+        fn released(&self) -> Vec<(LeaseId, LeaseOutcome)> {
+            self.releases
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl CredentialPool for MismatchingPool {
+        async fn acquire(&self, req: AcquireRequest) -> Result<CredentialLease, PoolError> {
+            self.inner.acquire(self.forge(req)).await
+        }
+
+        async fn acquire_guard(&self, req: AcquireRequest) -> Result<LeaseGuard, PoolError> {
+            self.inner.acquire_guard(self.forge(req)).await
+        }
+
+        async fn release(
+            &self,
+            lease_id: LeaseId,
+            outcome: LeaseOutcome,
+        ) -> Result<ReleaseReceipt, PoolError> {
+            self.releases
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .push((lease_id.clone(), outcome));
+            self.inner.release(lease_id, outcome).await
+        }
+
+        fn active_count(&self, account: &AccountId) -> u64 {
+            self.inner.active_count(account)
+        }
+
+        fn account_health(&self, account: &AccountId) -> provider_control::AccountHealth {
+            self.inner.account_health(account)
+        }
+    }
+
     #[tokio::test]
     async fn tenant_policy_provider_whitelist_denies_and_scopes_per_tenant() {
         let engine = engine_for(
@@ -2689,6 +2819,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_spawn_never_exceeds_max_concurrent_agents() {
+        const CAP: u64 = 2;
+        const PRESSURE: usize = 16;
+        let engine = engine_for(
+            "tenant-a",
+            TenantPolicy {
+                max_concurrent_agents: Some(CAP),
+                ..TenantPolicy::default()
+            },
+        );
+        let supervisor = Arc::new(harness(Arc::new(InMemoryCredentialPool::new(8)), engine));
+
+        let (admitted, errors) = join_spawns(&supervisor, PRESSURE, false).await;
+        assert_eq!(
+            admitted.len() as u64,
+            CAP,
+            "admitted {} workers under cap {CAP}: {admitted:?}",
+            admitted.len()
+        );
+        assert_eq!(errors.len(), PRESSURE - CAP as usize);
+        assert!(
+            errors
+                .iter()
+                .all(|err| matches!(err, SupervisorError::PolicyDenied(_))),
+            "extras must be PolicyDenied, got {errors:?}"
+        );
+        assert_eq!(
+            supervisor.active_worker_count(Some(&TenantId::new("tenant-a"))),
+            CAP
+        );
+
+        // 预约必须归还：完成一名 agent 后应能再准入一名。
+        let first = admitted[0].clone();
+        supervisor.start_worker(&first).await.unwrap();
+        supervisor.complete(&first).await.unwrap();
+        let replacement = supervisor.spawn(spawn_request(None)).await.unwrap();
+        assert_eq!(
+            supervisor.active_worker_count(Some(&TenantId::new("tenant-a"))),
+            CAP
+        );
+        assert!(supervisor.state(&replacement).is_some());
+    }
+
+    #[tokio::test]
+    async fn concurrent_spawn_never_exceeds_pool_concurrency() {
+        const CAP: u64 = 2;
+        const PRESSURE: usize = 12;
+        let pool = Arc::new(InMemoryCredentialPool::new(CAP));
+        let supervisor = Arc::new(harness(
+            pool.clone(),
+            engine_for("tenant-a", TenantPolicy::default()),
+        ));
+
+        let (admitted, errors) = join_spawns(&supervisor, PRESSURE, true).await;
+        assert_eq!(
+            admitted.len() as u64,
+            CAP,
+            "pool over-admitted {} leases under cap {CAP}",
+            admitted.len()
+        );
+        assert_eq!(errors.len(), PRESSURE - CAP as usize);
+        assert!(
+            errors
+                .iter()
+                .all(|err| matches!(err, SupervisorError::PoolAcquire(_))),
+            "pool extras must be PoolAcquire, got {errors:?}"
+        );
+        let account = AccountId::new("local/default");
+        assert_eq!(pool.active_count(&account), CAP);
+
+        let first = admitted[0].clone();
+        supervisor.start_worker(&first).await.unwrap();
+        supervisor.complete(&first).await.unwrap();
+        assert_eq!(pool.active_count(&account), CAP - 1);
+
+        let mut req = spawn_request(None);
+        req.acquire = Some(acquire_request(&AgentId::new("placeholder")));
+        let replacement = supervisor.spawn(req).await.unwrap();
+        assert_eq!(pool.active_count(&account), CAP);
+        assert!(supervisor.state(&replacement).is_some());
+    }
+
+    #[tokio::test]
     async fn tenant_policy_daily_token_budget_denies_spawn_before_admission() {
         let ledger = Arc::new(InMemoryUsageLedger::new());
         let now = std::time::SystemTime::now()
@@ -2780,6 +2993,89 @@ mod tests {
         }));
         assert_eq!(supervisor.active_worker_count(None), 0);
         assert!(supervisor.events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn malicious_pool_lease_scope_mismatch_is_rejected_and_released() {
+        let kinds = [
+            LeaseScopeMismatch::Tenant,
+            LeaseScopeMismatch::Principal,
+            LeaseScopeMismatch::Session,
+            LeaseScopeMismatch::Agent,
+            LeaseScopeMismatch::Provider,
+            LeaseScopeMismatch::Account,
+        ];
+        for kind in kinds {
+            let pool = Arc::new(MismatchingPool::new(kind));
+            let engine = engine_for(
+                "tenant-a",
+                TenantPolicy {
+                    max_concurrent_agents: Some(1),
+                    ..TenantPolicy::default()
+                },
+            );
+            let supervisor = harness(pool.clone(), engine);
+
+            let mut acquire = acquire_request(&AgentId::new("placeholder"));
+            match kind {
+                LeaseScopeMismatch::Provider => {
+                    acquire.provider_id = Some(ProviderId::new("requested-provider"));
+                }
+                LeaseScopeMismatch::Account => {
+                    acquire.account_id = Some(AccountId::new("requested-account"));
+                }
+                _ => {}
+            }
+            let mut req = spawn_request(None);
+            req.acquire = Some(acquire);
+            let err = supervisor.spawn(req).await.unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    SupervisorError::PolicyDenied(ref reason)
+                        if reason.contains("lease scope validation")
+                            && reason.contains(kind.reason())
+                ),
+                "{kind:?}: expected PolicyDenied with lease scope validation, got {err:?}"
+            );
+
+            let released = pool.released();
+            assert_eq!(released.len(), 1, "{kind:?}: {released:?}");
+            assert_eq!(
+                released[0].1,
+                LeaseOutcome::Released,
+                "{kind:?}: must release with Released, not Failed"
+            );
+
+            let health_accounts = [
+                AccountId::new("local/default"),
+                AccountId::new("requested-account"),
+                AccountId::new("evil-account"),
+            ];
+            for account in health_accounts {
+                assert_eq!(
+                    pool.active_count(&account),
+                    0,
+                    "{kind:?}: dangling lease on {account}"
+                );
+                assert_eq!(
+                    pool.account_health(&account).consecutive_failures,
+                    0,
+                    "{kind:?}: Released must not punish account health"
+                );
+            }
+            assert_eq!(
+                supervisor.active_worker_count(None),
+                0,
+                "{kind:?}: must not leave an active worker or reservation"
+            );
+
+            // cap=1：若预约泄漏，下一次 spawn 会被并发闸门拒绝。
+            let recovered = supervisor.spawn(spawn_request(None)).await.unwrap();
+            assert!(supervisor.state(&recovered).is_some(), "{kind:?}");
+            supervisor.start_worker(&recovered).await.unwrap();
+            supervisor.complete(&recovered).await.unwrap();
+        }
     }
 
     #[tokio::test]

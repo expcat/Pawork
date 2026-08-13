@@ -46,8 +46,8 @@ pub use control::{ControlEvent, GatewayPermissionDecision};
 pub use error::ClaudeGatewayError;
 pub use identity::{
     bind_tenant, extract_identity, ClaudeAgentId, ClaudeSessionId, ExternalAgentIdentity,
-    HeaderPair, TenantBinding, TrustedTenantContext, HEADER_AGENT_ID, HEADER_PARENT_AGENT_ID,
-    HEADER_SESSION_ID, MAX_ID_LENGTH,
+    HeaderPair, IdentityError, TenantBinding, TrustedTenantContext, HEADER_AGENT_ID,
+    HEADER_PARENT_AGENT_ID, HEADER_SESSION_ID, MAX_ID_LENGTH,
 };
 pub use reasoning::{
     build_reasoning_item, protect_signed_thinking, InMemorySignedThinkingProtector,

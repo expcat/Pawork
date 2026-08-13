@@ -28,9 +28,14 @@ pub mod ledger;
 pub mod providers;
 pub mod refresh;
 pub mod service;
+pub mod targets;
 mod util;
 
 pub use adapter::{AdapterKind, QuotaAdapter};
 pub use domain::*;
 pub use error::QuotaError;
 pub use service::{CacheOverview, CacheRead};
+pub use targets::{
+    QuotaAdapterFactory, QuotaTargetIdentity, QuotaTargetRegistry, RemoteAdapterConfig,
+    TargetRegistryError,
+};

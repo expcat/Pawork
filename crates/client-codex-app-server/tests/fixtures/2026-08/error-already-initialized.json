@@ -1,0 +1,7 @@
+{
+  "id": 2,
+  "error": {
+    "code": -32600,
+    "message": "Already initialized"
+  }
+}

@@ -9,6 +9,7 @@ dependencies = [
  "agent-domain",
  "app-service",
  "async-trait",
+ "audit-log",
  "client-adapter-api",
  "core-api",
  "provider-api",
@@ -201,11 +202,13 @@ dependencies = [
  "agent-domain",
  "agent-engine",
  "agent-events",
+ "app-database",
  "artifact-store",
  "async-trait",
  "audit-log",
  "auth-service",
  "client-adapter-api",
+ "client-claude-gateway",
  "core-api",
  "diff-service",
  "directories",
@@ -214,6 +217,7 @@ dependencies = [
  "orchestration",
  "policy-engine",
  "process-runtime",
+ "protected-blob-store",
  "provider-api",
  "provider-control",
  "provider-runtime",
@@ -369,6 +373,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tracing",
 ]
 
 [[package]]
@@ -848,6 +853,35 @@ dependencies = [
  "rand 0.8.7",
  "tempfile",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "client-claude-gateway"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "agent-events",
+ "async-trait",
+ "client-adapter-api",
+ "provider-api",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
+name = "client-codex-app-server"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "async-trait",
+ "client-adapter-api",
+ "core-api",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -1,25 +1,41 @@
 //! Codex App Server client adapter（P18-11）。
 //!
-//! 本文件为任务收尾时的**可编译骨架**：crate 已落地 `Cargo.toml`（独立 workspace
-//! 根，临时 `[workspace]` 表，待主代理接线至根 workspace）与协议基线常量，但
-//! adapter / wire / map / host / contract 的实现尚未开始（见任务报告「明确未完成」）。
+//! 官方 Codex App Server 线协议（stdio JSONL，JSON-RPC *风格*但省略 `jsonrpc`
+//! 字段）↔ Pawork canonical [`client_adapter_api`] / [`core_api`]。
 //!
-//! 协议基线（2026-08 官方稳定 schema，已核对 developers.openai.com/codex/app-server）：
+//! 协议基线（2026-08，已核对 developers.openai.com/codex/app-server 与
+//! openai/codex `codex-rs/app-server/README.md`）：
 //!
-//! - 传输为 JSON-RPC *风格*，但线上**省略 `jsonrpc` 字段**；默认 stdio JSONL，亦可本地 socket。
-//! - 握手顺序固定：`initialize`（request）→ `initialized`（notification）；未完成握手前禁止其它方法，
+//! - 握手：`initialize` 请求 → `initialized` 通知；握手前拒绝 *Not initialized*；
 //!   重复 `initialize` 返回 *Already initialized*。
-//! - 生命周期：`thread/start` `thread/resume` `thread/fork`（`parentThreadId` / `forkedFromId` 保留
-//!   subagent 血缘）；`turn/start` `turn/steer` `turn/interrupt`；item 通知与 `turn/completed`；
-//!   显式压缩 `thread/compact/start` + `contextCompaction` 通知。
-//! - 审批为 server→client JSON-RPC **请求** `item/commandExecution/requestApproval`，携带
-//!   `threadId` / `turnId` / `itemId`；客户端以 `{decision}` 响应。
-//! - 有界 ingress：饱和时返回 `-32001 Server overloaded; retry later.`。
-//! - 未协商能力（tool namespace / compaction / experimental api）在使用点显式 fail-closed，
-//!   绝不「收到 200 + JSON 即视为兼容」。
+//! - 生命周期：`thread/start` `thread/resume` `thread/fork`（`parentThreadId` /
+//!   `forkedFromId` 保留 subagent 血缘）；`turn/start` `turn/steer` `turn/interrupt`；
+//!   item 通知与 `turn/completed`；压缩为 `thread/compact/start` + `contextCompaction`
+//!   item（legacy `thread/compacted` 已废弃，不得视为等价）。
+//! - 审批为 server→client JSON-RPC **请求** `item/commandExecution/requestApproval`。
+//! - 有界 ingress：饱和时 `-32001 Server overloaded; retry later.`。
+//! - 未协商能力（tool namespace / compaction / experimental api）在使用点显式
+//!   fail-closed，绝不「收到 200 + JSON 即视为兼容」。
 //!
-//! 边界红线（与 ACP/IDE adapter 一致）：本 crate 只做协议翻译，不读取 Provider 凭证、
-//! 不构造第二个 Core、不绕过 app-service / policy。
+//! 边界红线：本 crate 只做协议翻译，不读取 Provider 凭证、不构造第二个 Core、
+//! 不绕过 app-service / policy、不混入 GUI Connection Protocol frame。
+
+pub mod adapter;
+pub mod host;
+pub mod map;
+pub mod wire;
+
+pub use adapter::{
+    CodexAppServerAdapter, CodexAppServerAdapterFactory, CwdResolver, NegotiatedCodexAdapter,
+    SessionResolver, CAP_COMPACTION, CAP_EXPERIMENTAL_API, CAP_TOOL_NAMESPACE,
+    DEFAULT_SUPPORTED_CAPABILITIES,
+};
+pub use host::{CodexAppServerHost, CoreDispatcher, HandshakeState, RuntimeIdentity};
+pub use map::ThreadLineage;
+pub use wire::{
+    JsonRpcError, JsonRpcMessage, ERROR_ALREADY_INITIALIZED, ERROR_NOT_INITIALIZED,
+    ERROR_OVERLOADED, ERROR_OVERLOADED_MESSAGE,
+};
 
 /// 线协议名（线上不出现在 message，仅用于 capability negotiation 与 registry）。
 pub const PROTOCOL_NAME: &str = "codex-app-server";
@@ -34,9 +50,6 @@ pub const HOST_AGENT_NAME: &str = "pawork-codex-app-server";
 pub const HOST_AGENT_VERSION: &str = "0.0.0";
 
 /// 生成当前 Unix 毫秒时间戳（agent-domain 的 `Timestamp` 无 `now()` 构造器）。
-///
-/// 当前骨架未引用；预留给未实现的 adapter/wire/map/host 模块复用。
-#[allow(dead_code)]
 pub(crate) fn now_timestamp() -> agent_domain::Timestamp {
     use std::time::{SystemTime, UNIX_EPOCH};
     let millis = SystemTime::now()
@@ -50,13 +63,11 @@ pub(crate) fn now_timestamp() -> agent_domain::Timestamp {
 mod tests {
     use super::*;
 
-    /// 骨架烟雾测试：常量与时间戳构造不依赖未实现的模块。
     #[test]
     fn protocol_baseline_constants_are_non_empty() {
         assert!(!PROTOCOL_NAME.is_empty());
-        assert!(!PROTOCOL_VERSION.is_empty());
+        assert_eq!(PROTOCOL_VERSION, "2026-08");
         assert!(!HOST_AGENT_NAME.is_empty());
-        // 仅证明时间戳构造器在未引入模块依赖时可用（Unix epoch 至今恒正）。
         assert!(now_timestamp().as_unix_millis() > 0);
     }
 }

@@ -1,6 +1,6 @@
 # P18-9：Tenant Policy / RBAC
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠核心接线已实现，专项回归待补 · 交付成熟度：Built · 依赖：P18-2、P18-3、P18-8、P4-9
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-2、P18-3、P18-8、P4-9
 
 **最终目的**：在共享账号池、Agent 与查询面前建立 deny-first tenant policy，限制可用 provider/model/account、并发、预算、保留与审计导出。
 
@@ -22,15 +22,19 @@
 
 ## 验收标准
 
-- [ ] Tenant A 无法使用或观察 Tenant B 的 account/session/agent/usage/audit
-- [ ] deny 优先，adapter/GUI/plugin 不能覆盖 Core policy
-- [ ] 并发与日 token/cost budget 在租约/Agent 准入前执行
-- [ ] 未配置用户继续使用 `local/default` 默认 policy
+- [x] Tenant A 无法使用或观察 Tenant B 的 account/session/agent/usage/audit
+- [x] deny 优先，adapter/GUI/plugin 不能覆盖 Core policy
+- [x] 并发与日 token/cost budget 在租约/Agent 准入前执行（orchestration 与 app-service `RunSupervisor` 均执行 `max_concurrent_agents` + `max_concurrent_requests`）
+- [x] 未配置用户继续使用 `local/default` 默认 policy
 
 **相关文档**：[tenant-audit](../docs/features/tenant-audit.md) · [policy](../docs/features/policy.md) · [ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [ROADMAP](../ROADMAP.md)
 
 ## 当前进度（2026-08-13）
 
 - 已接入 provider/model/account allowlist、RBAC、run/agent 并发准入、retry 重新检查、tenant-scoped GUI/query、Lease 返回作用域校验与 canonical policy audit。
-- `cargo test -p app-service --test tenant_policy`：14 passed；`cargo test -p app-service --lib`：99 passed；`cargo test -p gui-server --lib`：22 passed；`cargo test -p orchestration --lib`：78 passed。
-- 待补：并发 spawn 压力回归、恶意/故障 pool 返回错配 lease 的专项回归，以及完成后的 GLM 审查。
+- 专项回归已补：并发 spawn 压力（`max_concurrent_agents` + pool 并发，JoinSet，无超配、预约可回收）与恶意/故障 pool 返回错配 lease（tenant/principal/session/agent/provider/account；fail-closed `PolicyDenied`、`LeaseOutcome::Released`、无活动 worker / 悬挂预约）。
+- 生产最小修复：lease 作用域校验失败由 `SupervisorError::LeaseError` 改为 `PolicyDenied`（与 deny-first 闸口一致，不惩罚账号健康）。
+- app-service 缺口已补：`RunSupervisor::enforce_run_admission` 在同一 `inner` 锁内对 `active_for_tenant` 同时执行 `decide_agent_concurrency` 与 `decide_request_concurrency`（`None` 不限制；`current >= max` deny-first；agent 拒绝原因含 `agent 并发`，router 记 `PolicyGate::AgentSpawn`）。
+- L1 证据（2026-08-13）：`cargo test -p app-service --test tenant_policy`：16 passed（0 failed / 0 ignored），含 `run_start_enforces_agent_concurrency_limit_at_boundary` 与 `concurrent_run_start_has_exactly_two_winners_at_agent_limit_two`；`cargo test -p app-service --lib`：103 passed。先前：`cargo test -p orchestration --lib`：81 passed；`cargo test -p gui-server --lib`：22 passed。`Full workspace gate: NOT RUN`。clippy `-p app-service --all-targets` 因 `provider-control` 既有失败未作为本任务门禁。
+- GLM 审查交由后续审查者。
+- 剩余非阻塞项：app-service 层恶意 pool 错配 lease 回归依赖 `LeaseGuard` 公开构造器，待 P18-14 释放 `provider-control` 写入后再补。

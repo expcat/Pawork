@@ -27,7 +27,7 @@ Pawork/
 | `agent-api` | 对外领域 API 聚合 | 依赖 agent-engine |
 | `provider-api` | Provider Trait、canonical 请求 / 事件 / 错误 | 依赖 agent-domain |
 | `provider-runtime` | Provider 协议运行时、SSE/JSONL 解析、重试；Phase 2 现有 HTTP 基线后续抽到通用 `http-runtime` | 依赖 provider-api；抽离后依赖 http-runtime |
-| `provider-control` | ProviderAccount、CredentialPool/Lease、RoutingPolicy、ErrorClassifier、Health 与 Session Affinity | 依赖 provider-api / model-registry / agent-domain；Secret 解析由组合层注入，不持久化明文；P18-3～P18-7/P18-14。Phase 12 已交付最小契约（`CredentialLease` / `LeaseOutcome` / `AcquireRequest` / `CredentialPool` + `InMemoryCredentialPool`，并发准入与幂等释放，cancel 不惩罚健康）；完整账号池/路由/健康待 P18 |
+| `provider-control` | ProviderAccount、CredentialPool/Lease、RoutingPolicy、ErrorClassifier、Health、Session Affinity、Pool Reconciler / ProbeRuntime | 依赖 provider-api / model-registry / agent-domain；Secret 解析由组合层注入，不持久化明文；P18-1～P18-7/P18-14 库层已落地。生产 composition（factory catalog → model-registry、宿主 reconciler tick）延期 |
 | `provider-openai` | OpenAI 适配 | 依赖 provider-runtime |
 | `provider-anthropic` | Anthropic 适配 | 依赖 provider-runtime |
 | `provider-google` | Google Gemini 适配 | 依赖 provider-runtime |
@@ -40,9 +40,9 @@ Pawork/
 | `provider-mistral` | Mistral（优先级 P1） | 依赖 provider-runtime |
 | `auth-service` | 认证方式、Secret 后端、OAuth（PKCE/Device Flow/refresh/callback） | 依赖 provider-api |
 | `model-registry` | 模型目录、别名、能力、定价 | 依赖 provider-api |
-| `tenant-service` | Tenant/Principal、RBAC、provider/model/account policy、legacy `local/default` 映射 | 依赖 agent-domain；通过 API 与 policy-engine 组合，不反向依赖 Provider adapter；P18-2/P18-9。Phase 12 已交付最小契约（`TenantPolicy` / `TenantPolicyEngine` + `InMemoryTenantPolicyEngine`，agent 与 request 并发独立计数、daily 预算、model allowlist）；完整 RBAC/迁移待 P18 |
-| `usage-ledger` | tenant/account/session/agent 多维 Usage/Cost 持久账本 | 依赖 agent-domain / agent-events / model-registry；P18-8。Phase 12 已交付最小契约（`UsageRecord` / `UsageLedger` + `InMemoryUsageLedger`，多维过滤、聚合、跨 tenant 隔离）。Phase 14 生产路径仅使用进程内 `InMemoryUsageLedger`（每次 CLI 进程新建），本地 Quota 投影（`LedgerQuotaAdapter`）消费同一账本；SQLite 持久化、启动 replay 与 retention 待 P18-8 |
-| `quota-service` | account-scoped 用量与额度监控、多适配器、窗口聚合与缓存 | 依赖 agent-domain / provider-api / provider-runtime（HTTP 客户端与错误分类）/ usage-ledger；不依赖 auth-service / tenant-service。Phase 14 现状：无 OAuth 通用层（`AdapterKind::OAuthApi` 仅契约）、API Key 通用层仅 Moonshot 消费、生产仅注册 `LocalLedger` 适配器；远端 refresh target 与 scheduler 生命周期待 P18-14 |
+| `tenant-service` | Tenant/Principal、RBAC、provider/model/account policy、legacy `local/default` 映射 | 依赖 agent-domain；通过 API 与 policy-engine 组合，不反向依赖 Provider adapter；P18-2/P18-9 TargetVerified |
+| `usage-ledger` | tenant/account/session/agent 多维 Usage/Cost 持久账本 | 依赖 agent-domain / agent-events / model-registry；P18-8 TargetVerified。Phase 14 生产路径仍可使用进程内 `InMemoryUsageLedger`；SQLite 持久化由控制面 schema 承接 |
+| `quota-service` | account-scoped 用量与额度监控、多适配器、窗口聚合与缓存 | 依赖 agent-domain / provider-api / provider-runtime / usage-ledger；不依赖 auth-service / tenant-service。P18-14 库层 `QuotaTargetRegistry` + scheduler cancel/shutdown 已落地；`QuotaRuntime::production()` 注册六家远端 factory 仍待 composition |
 | `config-service` | 确定性配置 schema、来源发现与层级合并 | 独立；供 context-engine / policy / resource-loader 等消费 |
 | `context-engine` | 上下文构建、Token 预算、Resource 优先级 | 依赖 agent-domain / resource-loader；只消费中性 DTO，不参与文件 IO |
 | `compaction-engine` | 自动 / 手动压缩、摘要 | 依赖 agent-events / session-store |
@@ -112,11 +112,13 @@ Pawork/
 | `marketplace` | 扩展市场：发现/安装/更新/卸载/签名/trust/team-policy | 依赖 `plugin-package`（不依赖 http-runtime）；P17-3 已落地为 scaffold/library（`InMemorySourceIo` / `RecordingHost`，无 pawork 生产装配）；纵向 local source + 一种资源延 P19-11 |
 | `lsp-runtime` | LSP **Client** Runtime：启动/管理/调用现有 Language Server | 依赖 `agent-domain` / `process-runtime` / `sandbox-runtime`；P17-4 已落地（无 pawork 生产装配，当前唯一工作区消费者为 P17-9 IDE adapter） |
 | `teams` | Agent Teams / peer messaging / shared task board | 依赖 `agent-domain` / `orchestration`；P17-6 已落地 |
-| `client-adapter-api` | 外部 Agent Client 的统一 adapter/factory、capability snapshot、Session Registry 契约 | 依赖 `agent-domain` / `core-api`；P18-10 已作为 P17-7 前置落地，不把 Phase 18 计为完成 |
+| `client-adapter-api` | 外部 Agent Client 的统一 adapter/factory、capability snapshot、Session Registry；协议中立 `ExternalAgentIdentity` / `TrustedTenantContext` | 依赖 `agent-domain` / `core-api`；P18-10/P18-12 |
+| `client-claude-gateway` | Claude Gateway：`X-Claude-Code-*` 身份提取、Messages/SSE 映射、signed thinking Protected Blob seam | 依赖 `client-adapter-api`（不依赖 `app-service`）；由 `app-service` 注册 factory 并注入 per-session protector；`pawork` stdio 入口延期 |
 | `acp-host` | 公共 Agent Client Protocol adapter 与协议宿主 | 依赖 `client-adapter-api` / `core-api` / `app-service` / `agent-events` / `subscription-hub`（连接 pawork Host）；P17-7 已落地 |
 | `agent-sdk` | Rust client SDK + Headless JSON 协议接入 | 依赖公开 schema/framing（不依赖 `core-runtime`）；P17-8 已落地 |
 | `headless-json` | Headless NDJSON 协议编解码（`pawork headless --json-stdio`） | 依赖 `core-api`；与 `agent-sdk` 并列；P17-8 已落地 |
-| `ide-host-adapter` | IDE 生命周期/诊断/交互桥接 + 可选 LSP Server 输出 | 依赖 `agent-sdk` / `core-api`；与 `gui-server` 平级；P17-9 已落地 |
+| `ide-host-adapter` | IDE 生命周期/诊断/交互桥接 + 可选 LSP Server 输出 | 依赖 `agent-sdk` / `core-api`；与 `gui-server` 平级；P17-9 已落地；P18-15 纳入 control-plane golden/contract 门禁 |
+| `client-codex-app-server` | Codex App Server Thread/Turn/Item/approval/subagent adapter | 依赖 `client-adapter-api` / `core-api`（`CoreDispatcher`，不依赖 `app-service`）；P18-11 根 workspace member；`pawork` stdio 入口延期 |
 | `browser-computer-runtime` | Browser/Computer 能力 facade（Local/MCP/ProviderHosted 三执行位点；Local/Playwright 默认 Stub，安全不变量保留） | 依赖 `tool-api` / `provider-api` / `sandbox-runtime`；P17-10 已落地（无 pawork 生产装配） |
 | `transport-remote` | 真实远程 Transport：TCP + TLS 1.3、端点 token 认证、有界续传与 revoke | 依赖 `transport-api`；P17-11 已落地；当前仅绑定 127.0.0.1 loopback，publish 长驻至 SIGINT；外部可达 / relay 延 P19-14 |
 | `remote-control-adapter` | Mobile / 远程控制受限通道 | 依赖 `transport-api` / `core-api`；P17-12 已落地 |
@@ -127,8 +129,6 @@ Pawork/
 | crate | 职责 | 依赖方向备注 |
 | --- | --- | --- |
 | `http-runtime` | 通用 HTTP client、超时、代理、header、trace、取消、重试；供 Provider、Hooks、Forge 等复用（Marketplace 当前不依赖 http-runtime） | 从 `provider-runtime::http` 抽离；不得依赖具体 Provider；P2-1 后续收敛 |
-| `client-codex-app-server` | Codex App Server Thread/Turn/Item/approval/subagent adapter | 依赖 `client-adapter-api` / `app-service`；P18-11 |
-| `client-claude-gateway` | Claude Gateway session/agent identity、Messages stream 与审计归属 adapter | 依赖 `client-adapter-api` / `app-service`；P18-12 |
 
 > embedding 决策（2026-08 冻结）：**不新增独立 `embedding-api` / `embedding-runtime` crate**。canonical embedding 抽象（`EmbeddingProvider` trait + `EmbeddingRequest` / `EmbeddingResponse` / `EmbeddingModelDefinition` / `EmbeddingCapabilities`）扩展进 `provider-api`——embedding 是 Provider 的另一项 canonical 能力，与 `ModelProvider` 平级放在同一层最契合现有依赖方向，复用同一套凭证与 model-registry，并使 `memory-service` 只依赖 `provider-api`（Provider 无关）。各 `provider-*` 实现 `EmbeddingProvider`。
 

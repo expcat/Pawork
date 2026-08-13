@@ -73,6 +73,8 @@ Phase 15 功能簇（Canonical Tool v2、三家现代 Provider API、server tool
 
 P15-9 不变更任何 `src/` 功能代码，仅补门禁测试、golden 快照与门禁脚本；`CARGO_TARGET_DIR=target/gates` 的隔离与清理是 plan 显式指定的集中门禁要求，不是日常 workspace 全量测试。
 
+Phase 17 Host Cluster 集中门禁入口：`scripts/phase17-host-gate.sh`（默认 `target/gates`）。P18-15 Control Plane 集中门禁使用 `scripts/p18-gate.sh`，隔离目录为 `target/gates-p18`（不复用 `target/gates`）。
+
 ## Plugin Contract Tests
 
 Phase 10 使用统一的 Plugin API v1 contract：manifest canonical signing payload 必须同时绑定 metadata 与

@@ -157,6 +157,19 @@ pub trait ProviderFactory: Send + Sync {
         lease: &CredentialLease,
         metadata: &CredentialMetadata,
     ) -> Result<ComposedProvider, FactoryError>;
+
+    /// Optional synthetic health probe for `(provider_id, account_id)`.
+    ///
+    /// Default: none. Expensive probes stay off unless a factory opts in via
+    /// this extension point. Core never branches on Provider name to decide
+    /// whether or how to probe.
+    fn health_probe(
+        &self,
+        _provider_id: &ProviderId,
+        _account_id: &AccountId,
+    ) -> Option<Arc<dyn crate::health::HealthProbe>> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -89,6 +89,10 @@ members = [
     "crates/transport-remote",
     # P18-10 is an actual prerequisite of P17-7 ACP Host.
     "crates/client-adapter-api",
+    # P18-12 Claude Code Gateway adapter（Messages + identity headers）。
+    "crates/client-claude-gateway",
+    # P18-11 Codex App Server adapter（Thread/Turn/Item；stdio JSONL）。
+    "crates/client-codex-app-server",
     # P17-7 ACP Host（Agent Client Protocol 适配宿主，`pawork acp serve`）。
     "crates/acp-host",
     # P17-9 IDE Host Adapter（IDE 生命周期/诊断/交互桥接，经 Agent SDK / Headless 连 pawork Host）。

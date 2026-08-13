@@ -1,0 +1,8 @@
+{
+  "id": 31,
+  "method": "turn/interrupt",
+  "params": {
+    "threadId": "thr_1",
+    "turnId": "turn_1"
+  }
+}

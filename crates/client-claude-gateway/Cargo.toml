@@ -1,38 +1,21 @@
 [package]
 name = "client-claude-gateway"
-version = "0.0.0"
-edition = "2021"
-rust-version = "1.85"
-publish = false
-authors = ["Pawork Contributors"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
 description = "P18-12 Claude Code Gateway 适配器：Anthropic Messages 线协议与 X-Claude-Code-* 身份头 → Pawork canonical 事件与归属"
 
-# 独立 workspace 标记：主代理接线时移除本表并把 crate 登记进根 Cargo.toml members。
-[workspace]
-resolver = "2"
-
 [dependencies]
-agent-domain = { path = "../agent-domain", version = "0.0.0" }
-agent-events = { path = "../agent-events", version = "0.0.0" }
-client-adapter-api = { path = "../client-adapter-api", version = "0.0.0" }
-provider-api = { path = "../provider-api", version = "0.0.0" }
-async-trait = "=0.1.92"
-serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
-thiserror = "=2.0.20"
+agent-domain = { path = "../agent-domain" }
+agent-events = { path = "../agent-events" }
+client-adapter-api = { path = "../client-adapter-api" }
+provider-api = { path = "../provider-api" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
-tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }
-
-# 与根 workspace 一致的编译设置：复用共享 target/ 增量缓存（接线后由根配置接管）。
-[profile.dev]
-debug = "line-tables-only"
-
-[profile.dev.package."*"]
-debug = false
-
-[profile.test]
-debug = "line-tables-only"
-
-[profile.test.package."*"]
-debug = false
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

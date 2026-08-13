@@ -3,7 +3,7 @@
 //! 红线：错误消息只允许脱敏上下文（静态标签 / 结构名），禁止携带 signed
 //! thinking 材料（`signature` / `data`）、身份头原文或上游敏感载荷。
 
-use client_adapter_api::AdapterError;
+use client_adapter_api::{AdapterError, IdentityError};
 use provider_api::ProviderError;
 use thiserror::Error;
 
@@ -59,6 +59,20 @@ pub enum ClaudeGatewayError {
     /// 上游流错误（脱敏转发）。
     #[error("upstream stream error: {0}")]
     UpstreamStream(#[from] ProviderError),
+}
+
+impl From<IdentityError> for ClaudeGatewayError {
+    fn from(error: IdentityError) -> Self {
+        match error {
+            IdentityError::MissingSession => {
+                ClaudeGatewayError::MissingIdentityHeader("x-claude-code-session-id")
+            }
+            IdentityError::InvalidAgentTree(reason) => ClaudeGatewayError::InvalidAgentTree(reason),
+            IdentityError::MissingTenantContext(reason) => {
+                ClaudeGatewayError::MissingTenantContext(reason)
+            }
+        }
+    }
 }
 
 impl From<ClaudeGatewayError> for AdapterError {

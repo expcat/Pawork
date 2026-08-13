@@ -1,0 +1,13 @@
+{
+  "method": "item/started",
+  "params": {
+    "threadId": "thr_1",
+    "turnId": "turn_1",
+    "item": {
+      "id": "item_cmd",
+      "type": "commandExecution",
+      "command": "ls",
+      "status": "inProgress"
+    }
+  }
+}

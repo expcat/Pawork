@@ -13,11 +13,17 @@
 //!    （[`TrustedTenantContext`]），bind 时 tenant 无从 header 推导的路径。
 //! 2. 缺失 / 重复 / 畸形（空白、控制字符、超长）/ 伪造（parent 无 agent、
 //!    agent 自引用）一律 fail-closed，不静默落入默认身份。
+//!
+//! 通用身份类型已上移到 `client-adapter-api`；本模块只保留 Claude 头名、
+//! 提取与 `ClaudeSessionId` / `ClaudeAgentId` 校验。
 
-use agent_domain::{AgentId, PrincipalId, SessionId, TenantId};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ClaudeGatewayError;
+
+pub use client_adapter_api::{
+    ExternalAgentIdentity, IdentityError, TenantBinding, TrustedTenantContext,
+};
 
 /// Claude Code session 身份头。
 pub const HEADER_SESSION_ID: &str = "x-claude-code-session-id";
@@ -74,48 +80,6 @@ impl ClaudeAgentId {
 
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-/// 外部 agent 身份（P18 领域模型 `ExternalAgentIdentity`）。
-///
-/// `session_id` 必需（归属锚点）；`agent_id` / `parent_agent_id` 仅 subagent
-/// 请求携带。类型在 crate 内定义（`client-adapter-api` 尚未承载共享形态），
-/// 主代理接线共享 API 时按本形状上移。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExternalAgentIdentity {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<ClaudeSessionId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<ClaudeAgentId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_agent_id: Option<ClaudeAgentId>,
-}
-
-impl ExternalAgentIdentity {
-    /// 结构校验：session 必需；parent 无 agent、agent 自引用 fail-closed。
-    pub fn validate(&self) -> Result<(), ClaudeGatewayError> {
-        if self.session_id.is_none() {
-            return Err(ClaudeGatewayError::MissingIdentityHeader(HEADER_SESSION_ID));
-        }
-        if self.agent_id.is_none() && self.parent_agent_id.is_some() {
-            return Err(ClaudeGatewayError::InvalidAgentTree(
-                "parent_agent_id requires agent_id",
-            ));
-        }
-        if let (Some(agent), Some(parent)) = (&self.agent_id, &self.parent_agent_id) {
-            if agent == parent {
-                return Err(ClaudeGatewayError::InvalidAgentTree(
-                    "agent_id must not equal parent_agent_id",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// 是否 subagent 请求（agent 与 parent 同时存在）。
-    pub fn is_subagent(&self) -> bool {
-        self.agent_id.is_some() && self.parent_agent_id.is_some()
     }
 }
 
@@ -181,62 +145,12 @@ pub fn extract_identity<'a>(
         }
     }
     let identity = ExternalAgentIdentity {
-        session_id,
-        agent_id,
-        parent_agent_id,
+        session_id: session_id.map(|id| id.as_str().to_string()),
+        agent_id: agent_id.map(|id| id.as_str().to_string()),
+        parent_agent_id: parent_agent_id.map(|id| id.as_str().to_string()),
     };
     identity.validate()?;
     Ok(identity)
-}
-
-/// 受信身份上下文：由宿主从认证层解析注入。
-///
-/// 客户端身份头永不参与 tenant 推导——本结构只有显式构造路径，且
-/// [`bind_tenant`] 只消费本结构与已验证身份。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrustedTenantContext {
-    pub tenant_id: TenantId,
-    pub principal_id: PrincipalId,
-}
-
-impl TrustedTenantContext {
-    /// 显式构造并校验（空白 tenant / principal fail-closed）。
-    pub fn try_new(
-        tenant_id: TenantId,
-        principal_id: PrincipalId,
-    ) -> Result<Self, ClaudeGatewayError> {
-        if tenant_id.as_str().trim().is_empty() {
-            return Err(ClaudeGatewayError::MissingTenantContext(
-                "tenant_id is blank",
-            ));
-        }
-        if principal_id.as_str().trim().is_empty() {
-            return Err(ClaudeGatewayError::MissingTenantContext(
-                "principal_id is blank",
-            ));
-        }
-        Ok(Self {
-            tenant_id,
-            principal_id,
-        })
-    }
-}
-
-/// 归属绑定：已验证客户端身份 × 受信租户 → canonical 归属键。
-///
-/// 供宿主进入 usage / audit 归属：`session_id` 是客户端会话身份（宿主经
-/// `SessionRegistry` 解析 core session），`agent_id` / `parent_agent_id` 仅
-/// subagent 存在；root 请求的 canonical root agent 由宿主按 run 上下文解析。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TenantBinding {
-    pub identity: ExternalAgentIdentity,
-    pub tenant: TrustedTenantContext,
-    /// 客户端会话身份（与 `client_session_id` 同源；宿主映射到 core session）。
-    pub session_id: SessionId,
-    /// subagent 身份；root 请求为 `None`。
-    pub agent_id: Option<AgentId>,
-    /// 父 agent 身份；root 请求为 `None`。
-    pub parent_agent_id: Option<AgentId>,
 }
 
 /// 把已验证身份绑定到受信租户（fail-closed）。
@@ -247,33 +161,13 @@ pub fn bind_tenant(
     identity: &ExternalAgentIdentity,
     trusted: &TrustedTenantContext,
 ) -> Result<TenantBinding, ClaudeGatewayError> {
-    identity.validate()?;
-    let session_id = SessionId::from(
-        identity
-            .session_id
-            .as_ref()
-            .expect("identity validated: session present")
-            .as_str(),
-    );
-    let agent_id = identity
-        .agent_id
-        .as_ref()
-        .map(|agent| AgentId::from(agent.as_str()));
-    let parent_agent_id = identity
-        .parent_agent_id
-        .as_ref()
-        .map(|parent| AgentId::from(parent.as_str()));
-    Ok(TenantBinding {
-        identity: identity.clone(),
-        tenant: trusted.clone(),
-        session_id,
-        agent_id,
-        parent_agent_id,
-    })
+    Ok(client_adapter_api::bind_tenant(identity, trusted)?)
 }
 
 #[cfg(test)]
 mod tests {
+    use agent_domain::{AgentId, PrincipalId, TenantId};
+
     use super::*;
 
     fn headers<'a>(
@@ -299,18 +193,9 @@ mod tests {
         let identity =
             extract_identity(headers(Some("sess-abc"), Some("agent-1"), Some("agent-0")))
                 .expect("valid headers");
-        assert_eq!(
-            identity.session_id.as_ref().map(ClaudeSessionId::as_str),
-            Some("sess-abc")
-        );
-        assert_eq!(
-            identity.agent_id.as_ref().map(ClaudeAgentId::as_str),
-            Some("agent-1")
-        );
-        assert_eq!(
-            identity.parent_agent_id.as_ref().map(ClaudeAgentId::as_str),
-            Some("agent-0")
-        );
+        assert_eq!(identity.session_id.as_deref(), Some("sess-abc"));
+        assert_eq!(identity.agent_id.as_deref(), Some("agent-1"));
+        assert_eq!(identity.parent_agent_id.as_deref(), Some("agent-0"));
         assert!(identity.is_subagent());
         identity.validate().expect("valid");
     }
@@ -328,14 +213,8 @@ mod tests {
             HeaderPair::new("X-CLAUDE-CODE-AGENT-ID", " agent-1 "),
         ])
         .expect("case-insensitive");
-        assert_eq!(
-            identity.session_id.as_ref().map(ClaudeSessionId::as_str),
-            Some("sess-1")
-        );
-        assert_eq!(
-            identity.agent_id.as_ref().map(ClaudeAgentId::as_str),
-            Some("agent-1")
-        );
+        assert_eq!(identity.session_id.as_deref(), Some("sess-1"));
+        assert_eq!(identity.agent_id.as_deref(), Some("agent-1"));
     }
 
     #[test]
@@ -346,10 +225,7 @@ mod tests {
             HeaderPair::new("x-forwarded-for", "10.0.0.1"),
         ])
         .expect("unknown headers ignored");
-        assert_eq!(
-            identity.session_id.as_ref().map(ClaudeSessionId::as_str),
-            Some("sess-1")
-        );
+        assert_eq!(identity.session_id.as_deref(), Some("sess-1"));
     }
 
     #[test]
@@ -392,14 +268,12 @@ mod tests {
 
     #[test]
     fn forged_agent_tree_fails_closed() {
-        // parent 无 agent。
         assert_eq!(
             extract_identity(headers(Some("sess-1"), None, Some("agent-0"))),
             Err(ClaudeGatewayError::InvalidAgentTree(
                 "parent_agent_id requires agent_id"
             ))
         );
-        // agent 自引用。
         assert_eq!(
             extract_identity(headers(Some("sess-1"), Some("agent-1"), Some("agent-1"))),
             Err(ClaudeGatewayError::InvalidAgentTree(
@@ -425,13 +299,11 @@ mod tests {
         let first =
             extract_identity(headers(Some("sess-1"), Some("a-1"), Some("p-1"))).expect("first");
         let second = extract_identity(headers(Some("sess-2"), None, None)).expect("second");
-        // 同一受信租户 × 不同 header 集：tenant 不变（header 不是 affinity key）。
         let binding_a = bind_tenant(&first, &trusted).expect("bind a");
         let binding_b = bind_tenant(&second, &trusted).expect("bind b");
         assert_eq!(binding_a.tenant, binding_b.tenant);
         assert_eq!(binding_a.session_id.as_str(), "sess-1");
         assert_eq!(binding_b.session_id.as_str(), "sess-2");
-        // subagent 键只随 header 变化，与 tenant 正交。
         assert_eq!(
             binding_a.agent_id.as_ref().map(AgentId::as_str),
             Some("a-1")
@@ -453,10 +325,9 @@ mod tests {
         ] {
             assert!(matches!(
                 TrustedTenantContext::try_new(tenant, principal),
-                Err(ClaudeGatewayError::MissingTenantContext(_))
+                Err(IdentityError::MissingTenantContext(_))
             ));
         }
-        // 未受信身份无法进入归属路径：bind 前必须通过显式受信上下文。
         let trusted =
             TrustedTenantContext::try_new(TenantId::from("tenant-a"), PrincipalId::from("user-1"))
                 .expect("trusted");

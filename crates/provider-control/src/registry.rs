@@ -406,4 +406,66 @@ mod tests {
         let mut again = ProviderRegistryStage::from_snapshot(&snapshot);
         assert!(!again.unregister(&ProviderId::new("openai")));
     }
+
+    #[tokio::test]
+    async fn unknown_factory_is_explicit_error() {
+        let registry = ProviderRegistry::empty();
+        assert!(matches!(
+            registry.require_factory(&ProviderId::new("nope")),
+            Err(RegistryError::Unknown(id)) if id.as_str() == "nope"
+        ));
+    }
+
+    #[tokio::test]
+    async fn duplicate_register_leaves_live_snapshot_unchanged() {
+        let mut stage = ProviderRegistryStage::new();
+        stage.register(factory(&["keep"])).unwrap();
+        let registry = ProviderRegistry::from_stage(stage);
+        let err = match registry.register_factory(factory(&["keep"])).await {
+            Err(err) => err,
+            Ok(_) => panic!("expected duplicate"),
+        };
+        assert!(matches!(err, RegistryError::Duplicate(_)));
+        assert_eq!(registry.snapshot().len(), 1);
+        assert!(registry.contains(&ProviderId::new("keep")));
+    }
+
+    #[tokio::test]
+    async fn failed_reload_keeps_old_snapshot_atomically() {
+        let mut stage = ProviderRegistryStage::new();
+        stage.register(factory(&["live"])).unwrap();
+        let registry = ProviderRegistry::from_stage(stage);
+        let err = match registry
+            .reload(|previous| async move {
+                let mut next = ProviderRegistryStage::from_snapshot(&previous);
+                next.register(factory(&[]))?;
+                Ok::<_, RegistryError>(next)
+            })
+            .await
+        {
+            Err(err) => err,
+            Ok(_) => panic!("expected no-descriptors"),
+        };
+        assert!(matches!(err, RegistryError::NoDescriptors));
+        assert!(registry.contains(&ProviderId::new("live")));
+        assert!(!registry.contains(&ProviderId::new("ghost")));
+    }
+
+    #[tokio::test]
+    async fn concurrent_reloads_are_serialized() {
+        let mut stage = ProviderRegistryStage::new();
+        stage.register(factory(&["a"])).unwrap();
+        let registry = Arc::new(ProviderRegistry::from_stage(stage));
+        let r1 = registry.clone();
+        let r2 = registry.clone();
+        let first = tokio::spawn(async move { r1.register_factory(factory(&["b"])).await });
+        let second = tokio::spawn(async move { r2.register_factory(factory(&["c"])).await });
+        let a = first.await.unwrap();
+        let b = second.await.unwrap();
+        assert!(a.is_ok());
+        assert!(b.is_ok());
+        assert!(registry.contains(&ProviderId::new("a")));
+        assert!(registry.contains(&ProviderId::new("b")));
+        assert!(registry.contains(&ProviderId::new("c")));
+    }
 }

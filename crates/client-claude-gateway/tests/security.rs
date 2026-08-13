@@ -11,8 +11,8 @@ use client_adapter_api::{
 use client_claude_gateway::{
     bind_tenant, decode_frame, extract_identity, map_sse_event, protect_pending_signed,
     ClaudeGatewayAdapterFactory, ClaudeGatewayError, ClaudeStreamState, GatewayEvent, HeaderPair,
-    InMemorySignedThinkingProtector, SseFrame, SseParser, TrustedTenantContext, HEADER_AGENT_ID,
-    HEADER_PARENT_AGENT_ID, HEADER_SESSION_ID,
+    IdentityError, InMemorySignedThinkingProtector, SseFrame, SseParser, TrustedTenantContext,
+    HEADER_AGENT_ID, HEADER_PARENT_AGENT_ID, HEADER_SESSION_ID,
 };
 use provider_api::ProviderStreamEvent;
 
@@ -113,7 +113,7 @@ fn tenant_binding_fails_closed_without_trusted_context() {
     for (tenant, principal) in [("", "user-1"), ("tenant-a", "   "), (" \t ", "")] {
         assert!(matches!(
             TrustedTenantContext::try_new(TenantId::from(tenant), PrincipalId::from(principal)),
-            Err(ClaudeGatewayError::MissingTenantContext(_))
+            Err(IdentityError::MissingTenantContext(_))
         ));
     }
     // 没有任何 API 路径能从 identity / header 推导 tenant。

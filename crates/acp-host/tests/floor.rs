@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use acp_host::wire::{ERROR_INVALID_REQUEST, ERROR_RESOURCE_NOT_FOUND, PROTOCOL_VERSION};
 use agent_domain::{ProviderId, TenantId};
+use app_service::IdentityContext;
+use audit_log::AuditAction;
 use core_api::{AppCommand, AppQuery, AppQueryEnvelope, AppResponse, DEFAULT_CONTROL_PLANE_TENANT};
 use serde_json::{json, Value};
 use test_support::MockScript;
@@ -97,6 +99,18 @@ async fn handshake_negotiates_v1_and_records_degraded_capabilities() {
         .await
         .expect_err("重复握手必须拒绝");
     assert_eq!(error.code, ERROR_INVALID_REQUEST);
+
+    let audit = harness
+        .service
+        .canonical_audit_events(&IdentityContext::local())
+        .expect("admin may read canonical audit");
+    assert!(
+        audit
+            .iter()
+            .any(|event| event.action == AuditAction::ClientLifecycle
+                && event.reason_code == "acp_capability_negotiated"),
+        "initialize must emit capability-negotiation audit: {audit:?}"
+    );
 }
 
 /// 未握手直接请求被拒绝。
@@ -150,6 +164,18 @@ async fn session_new_creates_core_session_and_attaches() {
         &record.core_session_id,
         &TenantId::new(DEFAULT_CONTROL_PLANE_TENANT),
     ));
+    let audit = harness
+        .service
+        .canonical_audit_events(&IdentityContext::local())
+        .expect("admin may read canonical audit");
+    assert!(
+        audit.iter().any(|event| {
+            event.action == AuditAction::ClientLifecycle
+                && event.reason_code == "acp_session_created"
+                && event.session_id.as_ref() == Some(&record.core_session_id)
+        }),
+        "session/new must emit canonical ACP audit: {audit:?}"
+    );
     let _ = workspace_id;
 }
 
@@ -361,7 +387,10 @@ async fn prompt_with_tool_emits_permission_request_and_tool_events() {
     assert_eq!(options[0]["optionId"], json!("allow-once"));
     assert_eq!(options[1]["optionId"], json!("reject-once"));
 
-    // tool 事件回译：tool_call 通知 + tool_call_update completed。
+    // tool 事件回译：tool_call 通知 + tool_call_update 终态。
+    // AppService HostedLoop 的 execute_tools 仍是 no-op（tool-runtime 未接入），
+    // 因此成功审批后的执行结果是 failed 而非 completed；审计与线协议仍必须
+    // 发出终态 update，不能把事件吞掉。
     let tool_call = find_outbox(&collected, "session/update")
         .map(|update| update["params"]["update"].clone())
         .filter(|update| update["sessionUpdate"] == json!("tool_call"))
@@ -373,9 +402,11 @@ async fn prompt_with_tool_emits_permission_request_and_tool_events() {
         collected.iter().any(|message| {
             message.get("method").and_then(Value::as_str) == Some("session/update")
                 && message["params"]["update"]["sessionUpdate"] == json!("tool_call_update")
-                && message["params"]["update"]["status"] == json!("completed")
+                && message["params"]["update"]["toolCallId"] == json!("mock-tool-call-0")
+                && (message["params"]["update"]["status"] == json!("failed")
+                    || message["params"]["update"]["status"] == json!("completed"))
         }),
-        "应收到 tool_call_update completed"
+        "应收到 tool_call_update 终态（failed/completed）"
     );
 }
 

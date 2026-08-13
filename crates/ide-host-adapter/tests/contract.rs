@@ -8,8 +8,8 @@ use client_adapter_api::{
 };
 use core_api::{ActorIdentity, AppCommand, AppCommandEnvelope, CommandSource, API_VERSION};
 use ide_host_adapter::{
-    IdeCapability, IdeClientAdapter, IdeClientAdapterFactory, IDE_CONTRACT_SCHEMA_VERSION,
-    IDE_PROTOCOL, IDE_PROTOCOL_VERSION,
+    IdeCapability, IdeClientAdapter, IdeClientAdapterFactory, IdeRequest,
+    IDE_CONTRACT_SCHEMA_VERSION, IDE_PROTOCOL, IDE_PROTOCOL_VERSION,
 };
 use serde_json::json;
 
@@ -161,4 +161,50 @@ async fn schema_version_mismatch_is_rejected() {
         Err(AdapterError::UnsupportedSchema { .. })
     ));
     assert_eq!(IDE_CONTRACT_SCHEMA_VERSION, 1);
+}
+
+/// P18-15 / P17-9：IDE 契约走 `ide-host` + `ide.*` 帧，不经 GUI Connection Protocol，
+/// 也不把 Adapter 当作第二 Core（只翻译 ClientAdapter 帧）。
+#[test]
+fn ide_channel_is_not_gui_and_not_a_second_core() {
+    assert_eq!(IDE_PROTOCOL, "ide-host");
+    assert_ne!(IDE_PROTOCOL, "gui");
+    assert_ne!(IDE_PROTOCOL, "acp");
+    let frame = command_frame();
+    assert!(
+        frame.method.starts_with("ide."),
+        "IDE ClientAdapter frames must use ide.* methods, got {}",
+        frame.method
+    );
+    assert!(
+        !frame.method.starts_with("gui."),
+        "IDE must not speak GUI Connection Protocol frames"
+    );
+
+    // 契约消息子集覆盖生命周期 / 诊断 / apply-diff / approval；Adapter 只翻译。
+    let _lifecycle = IdeRequest::EditorDidOpen {
+        document_uri: "file:///a.rs".into(),
+        language_id: "rust".into(),
+        text: None,
+    };
+    let _diagnostics = IdeRequest::DiagnosticsPublish {
+        document_uri: "file:///a.rs".into(),
+        version: None,
+        diagnostics: Vec::new(),
+    };
+    let _diff = IdeRequest::DiffGet {
+        workspace_id: agent_domain::WorkspaceId::from("ws-1"),
+        path: "a.rs".into(),
+        cursor: None,
+    };
+    let _approval = IdeRequest::ToolApprove {
+        run_id: agent_domain::RunId::from("run-1"),
+        tool_call_id: agent_domain::ToolCallId::from("tool-1"),
+        decision: core_api::ApprovalDecision::ApproveOnce,
+    };
+    let adapter = IdeClientAdapter::new(snapshot()).expect("valid adapter");
+    assert_eq!(adapter.protocol().0, IDE_PROTOCOL);
+    let _ = IdeCapability::Lifecycle;
+    let _ = IdeCapability::Diagnostics;
+    let _ = IdeCapability::Interaction;
 }

@@ -153,6 +153,20 @@ impl std::fmt::Display for ProbeError {
 
 impl std::error::Error for ProbeError {}
 
+/// Narrow hook: Provider factory `builtin_models()` catalogs feed `caps()` /
+/// negotiation evidence without Provider-name match in Core.
+pub trait ProviderCapabilitySource: Send + Sync {
+    /// `(provider_id, builtin_models)` pairs. Caller supplies ids; this crate
+    /// never branches on Provider name strings.
+    fn provider_catalogs(&self) -> Vec<(ProviderId, Vec<ModelDefinition>)>;
+}
+
+impl ProviderCapabilitySource for Vec<(ProviderId, Vec<ModelDefinition>)> {
+    fn provider_catalogs(&self) -> Vec<(ProviderId, Vec<ModelDefinition>)> {
+        self.clone()
+    }
+}
+
 /// 三来源保守合并：present 来源逐字段取交集，来源缺失不约束。
 ///
 /// 在 serde Value 层面做字段级合并，自动覆盖 provider-api 同期新增的 v2
@@ -303,6 +317,47 @@ impl ModelRegistry {
                     .insert(alias.to_ascii_lowercase(), normalized_id.clone());
             }
             self.entries.insert(normalized_id, entry);
+        }
+    }
+
+    /// Merge factory `builtin_models()` catalogs into the static directory and
+    /// therefore into [`CapabilityEvidence::static_declared`] / `caps()` evidence.
+    ///
+    /// Lookup is by [`ProviderId`] equality only — no Provider-name match/case
+    /// in Core. Cross-provider id collisions are skipped (fail-closed). New
+    /// models are appended without pricing/aliases (those stay catalog-owned).
+    pub fn merge_provider_source(&mut self, source: &dyn ProviderCapabilitySource) {
+        for (provider, models) in source.provider_catalogs() {
+            self.merge_provider_models(&provider, &models);
+        }
+    }
+
+    /// Merge one provider's `builtin_models()` into the static catalog.
+    pub fn merge_provider_models(&mut self, provider: &ProviderId, models: &[ModelDefinition]) {
+        for definition in models {
+            let id = normalized_model_id(&definition.id);
+            if let Some(existing) = self.entries.get(&id) {
+                if &existing.provider != provider {
+                    continue;
+                }
+                let mut entry = existing.clone();
+                entry.display_name = definition.display_name.clone();
+                entry.context_window_tokens = definition.context_window_tokens;
+                entry.max_output_tokens = definition.max_output_tokens;
+                entry.capabilities = definition.capabilities.clone();
+                self.entries.insert(id, entry);
+            } else {
+                self.extend_with(vec![CatalogEntry {
+                    id: definition.id.clone(),
+                    provider: provider.clone(),
+                    display_name: definition.display_name.clone(),
+                    context_window_tokens: definition.context_window_tokens,
+                    max_output_tokens: definition.max_output_tokens,
+                    capabilities: definition.capabilities.clone(),
+                    pricing: None,
+                    aliases: Vec::new(),
+                }]);
+            }
         }
     }
 
@@ -702,6 +757,10 @@ fn caps_satisfied(have: &ModelCapabilities, required: &ModelCapabilities) -> boo
 /// 构造能力集合的便捷函数。
 // `..Default::default()` 目前无实际效果（v1 字段已全部显式给出），但 provider-api
 // 同期新增 v2 字段后它就是构造点的兼容性保障，因此保留并允许该 lint。
+//
+// v2 capability catalogs from Provider factory `builtin_models()` are merged
+// via [`ModelRegistry::merge_provider_models`] / [`ProviderCapabilitySource`],
+// not by expanding this helper's argument list.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_update)]
 pub fn caps(
@@ -1620,7 +1679,10 @@ mod tests {
         release.store(true, Ordering::SeqCst);
 
         let owner_probe = owner.await.expect("owner 任务未 panic").expect("探测成功");
-        let waiter_probe = waiter.await.expect("waiter 任务未 panic").expect("探测成功");
+        let waiter_probe = waiter
+            .await
+            .expect("waiter 任务未 panic")
+            .expect("探测成功");
         assert!(
             Arc::ptr_eq(&pinned, &owner_probe),
             "in-flight record_probe 胜出：owner 与调用者共享同一固定缓存"
@@ -1659,5 +1721,74 @@ mod tests {
             _ => panic!("槽位应处于 InFlight"),
         };
         assert_eq!(registered, 1, "同一 waker 重复 poll 不得累积登记");
+    }
+
+    #[test]
+    fn merge_provider_catalog_feeds_v2_caps_into_evidence_without_name_match() {
+        let mut registry = ModelRegistry::builtin();
+        let v2 = ModelCapabilities {
+            text: true,
+            image_input: true,
+            tool_calls: true,
+            parallel_tool_calls: true,
+            thinking: true,
+            structured_output: true,
+            prompt_cache: true,
+            transport: provider_api::ModelTransport::Responses,
+            citations: true,
+            ..ModelCapabilities::default()
+        };
+        let source: Vec<(ProviderId, Vec<ModelDefinition>)> = vec![(
+            ProviderId::new("openai"),
+            vec![mock_definition("gpt-4o", v2.clone())],
+        )];
+        registry.merge_provider_source(&source);
+        let evidence = registry.capability_evidence("gpt-4o").unwrap();
+        let static_caps = evidence.static_declared.expect("static after merge");
+        assert_eq!(
+            static_caps.transport,
+            provider_api::ModelTransport::Responses
+        );
+        assert!(static_caps.citations);
+        assert_eq!(
+            evidence.provider.as_ref().map(ProviderId::as_str),
+            Some("openai")
+        );
+
+        // Cross-provider id collision is skipped (no steal, no name match).
+        let other: Vec<(ProviderId, Vec<ModelDefinition>)> = vec![(
+            ProviderId::new("other"),
+            vec![mock_definition(
+                "gpt-4o",
+                ModelCapabilities {
+                    text: true,
+                    citations: false,
+                    ..ModelCapabilities::default()
+                },
+            )],
+        )];
+        registry.merge_provider_source(&other);
+        let after = registry
+            .capability_evidence("gpt-4o")
+            .unwrap()
+            .static_declared
+            .unwrap();
+        assert!(after.citations, "foreign provider must not overwrite");
+
+        // Unknown model from a factory is appended.
+        let extra: Vec<(ProviderId, Vec<ModelDefinition>)> = vec![(
+            ProviderId::new("factory-a"),
+            vec![mock_definition("factory-only-model", v2)],
+        )];
+        registry.merge_provider_source(&extra);
+        let added = registry.capability_evidence("factory-only-model").unwrap();
+        assert_eq!(
+            added.provider.as_ref().map(ProviderId::as_str),
+            Some("factory-a")
+        );
+        assert_eq!(
+            added.static_declared.unwrap().transport,
+            provider_api::ModelTransport::Responses
+        );
     }
 }

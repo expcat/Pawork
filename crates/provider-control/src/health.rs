@@ -18,10 +18,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use agent_domain::{AccountId, CredentialId, ModelId, ProviderId};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::account::Clock;
-use crate::classifier::{FailureClass, FailureClassification, FailureScope};
+use crate::classifier::{
+    FailureClass, FailureClassification, FailureScope, HealthImpact, Retryability,
+};
 
 /// 健康状态机（P18-5）。
 ///
@@ -865,6 +869,23 @@ impl HealthRuntime {
         self.cooldowns.len()
     }
 
+    /// 扫描并刷新过期 cooldown / CoolingDown 记录（reconciler stale-health 步）。
+    ///
+    /// 不改变 `BillingBlocked` / `Disabled`；到期冷却惰性复原为 `Healthy`。
+    pub fn refresh_stale(&mut self) -> usize {
+        let now_ms = self.clock.now().as_unix_millis();
+        self.cooldowns.expire(now_ms);
+        let mut refreshed = 0usize;
+        for record in self.records.values_mut() {
+            let before = record.state;
+            record.refresh(now_ms);
+            if before != record.state {
+                refreshed += 1;
+            }
+        }
+        refreshed
+    }
+
     /// 由分类 scope 与失败上下文定位惩罚键。
     fn penalty_key(&self, ctx: &FailureContext, scope: FailureScope) -> Option<CooldownKey> {
         match scope {
@@ -902,6 +923,339 @@ impl HealthRuntime {
                 circuit.release_probe();
             }
         }
+    }
+}
+
+/// Synthetic health probe cost class. Expensive probes default **off**.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeKind {
+    /// Cheap / local liveness (default-eligible).
+    #[default]
+    Cheap,
+    /// Expensive (network / billed). Default off; factories must opt in.
+    Expensive,
+}
+
+/// Independent probe concurrency / frequency / budget. Failure must not avalanche.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProbeBudget {
+    /// Whether this class of probe is enabled. Expensive defaults to `false`.
+    pub enabled: bool,
+    /// Max concurrent in-flight probes of this class in one tick.
+    pub max_in_flight: u32,
+    /// Max probes launched per tick (frequency cap).
+    pub max_per_tick: u32,
+    /// Stop launching further probes this tick after this many failures.
+    pub max_failures_per_tick: u32,
+    /// Minimum interval between probes of the same target (milliseconds).
+    pub min_interval_ms: u64,
+}
+
+impl ProbeBudget {
+    /// Cheap-probe default: enabled, modest concurrency, 30s interval.
+    pub const fn cheap_default() -> Self {
+        Self {
+            enabled: true,
+            max_in_flight: 4,
+            max_per_tick: 8,
+            max_failures_per_tick: 2,
+            min_interval_ms: 30_000,
+        }
+    }
+
+    /// Expensive-probe default: **off**, single-flight, 5min interval.
+    pub const fn expensive_default() -> Self {
+        Self {
+            enabled: false,
+            max_in_flight: 1,
+            max_per_tick: 1,
+            max_failures_per_tick: 1,
+            min_interval_ms: 300_000,
+        }
+    }
+}
+
+impl Default for ProbeBudget {
+    fn default() -> Self {
+        Self::cheap_default()
+    }
+}
+
+/// Opaque probe target (provider + account). Never contains a secret.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ProbeTargetKey {
+    pub provider_id: ProviderId,
+    pub account_id: AccountId,
+}
+
+impl ProbeTargetKey {
+    /// Construct from opaque ids.
+    pub fn new(provider_id: ProviderId, account_id: AccountId) -> Self {
+        Self {
+            provider_id,
+            account_id,
+        }
+    }
+}
+
+/// Probe failure (no secret / no provider-name payload).
+#[derive(Clone, Debug, Error)]
+#[error("health probe failed: {class:?}")]
+pub struct ProbeFailure {
+    /// Normalized failure class (typically `Network` / `UpstreamError`).
+    pub class: FailureClass,
+    /// Optional Retry-After (milliseconds).
+    pub retry_after_ms: Option<u64>,
+}
+
+impl ProbeFailure {
+    /// Construct a classified probe failure.
+    pub fn new(class: FailureClass) -> Self {
+        Self {
+            class,
+            retry_after_ms: None,
+        }
+    }
+
+    /// Attach Retry-After.
+    pub fn with_retry_after(mut self, retry_after_ms: u64) -> Self {
+        self.retry_after_ms = Some(retry_after_ms);
+        self
+    }
+}
+
+/// One tick of the probe runtime.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProbeReport {
+    /// Probes launched this tick.
+    pub launched: usize,
+    /// Successful probes.
+    pub succeeded: usize,
+    /// Failed probes (counted against the failure budget).
+    pub failed: usize,
+    /// Skipped: disabled class, interval, circuit open, or avalanche budget.
+    pub skipped: usize,
+}
+
+/// Factory / capability extension point for synthetic probes.
+///
+/// Core never branches on Provider name; a [`crate::factory::ProviderFactory`]
+/// opts in via [`crate::factory::ProviderFactory::health_probe`].
+#[async_trait]
+pub trait HealthProbe: Send + Sync {
+    /// Cheap vs expensive (budget class).
+    fn kind(&self) -> ProbeKind;
+
+    /// Failure / success context (opaque ids only).
+    fn context(&self) -> FailureContext;
+
+    /// Target key used for interval tracking.
+    fn target_key(&self) -> ProbeTargetKey {
+        let ctx = self.context();
+        ProbeTargetKey::new(
+            ctx.provider_id
+                .unwrap_or_else(|| ProviderId::new("unknown")),
+            ctx.account_id.unwrap_or_else(|| AccountId::new("unknown")),
+        )
+    }
+
+    /// Run the synthetic probe. Must not hold secrets after return.
+    async fn probe(&self) -> Result<(), ProbeFailure>;
+}
+
+/// Configurable probe scheduler: independent concurrency / frequency / budget.
+///
+/// Probe failures feed [`HealthRuntime`] (cooldown + circuit) but **do not**
+/// set `safe_to_failover`, so they cannot avalanche into account rotation.
+pub struct ProbeRuntime {
+    cheap: ProbeBudget,
+    expensive: ProbeBudget,
+    last_probe_ms: HashMap<ProbeTargetKey, u64>,
+}
+
+impl ProbeRuntime {
+    /// Default budgets (cheap on, expensive off).
+    pub fn new() -> Self {
+        Self {
+            cheap: ProbeBudget::cheap_default(),
+            expensive: ProbeBudget::expensive_default(),
+            last_probe_ms: HashMap::new(),
+        }
+    }
+
+    /// Override budgets.
+    pub fn with_budgets(cheap: ProbeBudget, expensive: ProbeBudget) -> Self {
+        Self {
+            cheap,
+            expensive,
+            last_probe_ms: HashMap::new(),
+        }
+    }
+
+    /// Cheap-probe budget (mutable for tests / config reload).
+    pub fn cheap_budget(&self) -> ProbeBudget {
+        self.cheap
+    }
+
+    /// Expensive-probe budget.
+    pub fn expensive_budget(&self) -> ProbeBudget {
+        self.expensive
+    }
+
+    /// Replace the cheap-probe budget.
+    pub fn set_cheap_budget(&mut self, budget: ProbeBudget) {
+        self.cheap = budget;
+    }
+
+    /// Replace the expensive-probe budget.
+    pub fn set_expensive_budget(&mut self, budget: ProbeBudget) {
+        self.expensive = budget;
+    }
+
+    fn budget(&self, kind: ProbeKind) -> ProbeBudget {
+        match kind {
+            ProbeKind::Cheap => self.cheap,
+            ProbeKind::Expensive => self.expensive,
+        }
+    }
+
+    /// Run eligible probes under budget. Uses [`HealthRuntime`] for circuit /
+    /// cooldown; does not invent a second health machine.
+    pub async fn tick(
+        &mut self,
+        health: &mut HealthRuntime,
+        probes: &[Arc<dyn HealthProbe>],
+        now_ms: u64,
+    ) -> ProbeReport {
+        let mut report = ProbeReport::default();
+        // Partition by kind so each class has an independent budget.
+        for kind in [ProbeKind::Cheap, ProbeKind::Expensive] {
+            let class_report = self.tick_class(health, probes, kind, now_ms).await;
+            report.launched += class_report.launched;
+            report.succeeded += class_report.succeeded;
+            report.failed += class_report.failed;
+            report.skipped += class_report.skipped;
+        }
+        report
+    }
+
+    async fn tick_class(
+        &mut self,
+        health: &mut HealthRuntime,
+        probes: &[Arc<dyn HealthProbe>],
+        kind: ProbeKind,
+        now_ms: u64,
+    ) -> ProbeReport {
+        let budget = self.budget(kind);
+        let mut report = ProbeReport::default();
+        if !budget.enabled {
+            report.skipped = probes.iter().filter(|probe| probe.kind() == kind).count();
+            return report;
+        }
+
+        let mut eligible: Vec<Arc<dyn HealthProbe>> = Vec::new();
+        for probe in probes.iter().filter(|probe| probe.kind() == kind) {
+            let key = probe.target_key();
+            if let Some(last) = self.last_probe_ms.get(&key) {
+                if now_ms.saturating_sub(*last) < budget.min_interval_ms {
+                    report.skipped += 1;
+                    continue;
+                }
+            }
+            let ctx = probe.context();
+            if !health.can_admit(&ctx) {
+                report.skipped += 1;
+                continue;
+            }
+            eligible.push(Arc::clone(probe));
+        }
+
+        let cap = budget.max_per_tick as usize;
+        if eligible.len() > cap {
+            report.skipped += eligible.len() - cap;
+            eligible.truncate(cap);
+        }
+
+        let mut joinset = tokio::task::JoinSet::new();
+        let mut launched = 0usize;
+        let max_in_flight = budget.max_in_flight.max(1) as usize;
+        let max_failures = budget.max_failures_per_tick as usize;
+
+        for probe in eligible {
+            if report.failed >= max_failures {
+                report.skipped += 1;
+                continue;
+            }
+            while joinset.len() >= max_in_flight {
+                self.collect_one(&mut joinset, health, &mut report).await;
+                if report.failed >= max_failures {
+                    break;
+                }
+            }
+            if report.failed >= max_failures {
+                report.skipped += 1;
+                continue;
+            }
+            let key = probe.target_key();
+            self.last_probe_ms.insert(key, now_ms);
+            joinset.spawn(async move {
+                let ctx = probe.context();
+                let result = probe.probe().await;
+                (ctx, result)
+            });
+            launched += 1;
+        }
+        report.launched += launched;
+        while !joinset.is_empty() {
+            self.collect_one(&mut joinset, health, &mut report).await;
+        }
+        report
+    }
+
+    async fn collect_one(
+        &self,
+        joinset: &mut tokio::task::JoinSet<(FailureContext, Result<(), ProbeFailure>)>,
+        health: &mut HealthRuntime,
+        report: &mut ProbeReport,
+    ) {
+        let Some(joined) = joinset.join_next().await else {
+            return;
+        };
+        match joined {
+            Ok((ctx, Ok(()))) => {
+                health.record_success(&ctx);
+                report.succeeded += 1;
+            }
+            Ok((ctx, Err(failure))) => {
+                health.record_failure(
+                    &ctx,
+                    probe_classification(failure.class),
+                    failure.retry_after_ms,
+                );
+                report.failed += 1;
+            }
+            Err(_) => {
+                report.failed += 1;
+            }
+        }
+    }
+}
+
+impl Default for ProbeRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn probe_classification(class: FailureClass) -> FailureClassification {
+    FailureClassification {
+        class,
+        scope: FailureScope::Account,
+        retryability: Retryability::Delayed,
+        health_impact: HealthImpact::Degraded,
+        // Probe failure must not avalanche into credential/account rotation.
+        safe_to_failover: false,
     }
 }
 
@@ -1400,5 +1754,123 @@ mod tests {
         runtime.set_account_disabled(&account, false);
         assert_eq!(runtime.account_state(&account), HealthState::Healthy);
         assert!(runtime.is_admissible(&context));
+    }
+
+    struct CountingProbe {
+        kind: ProbeKind,
+        ctx: FailureContext,
+        calls: Arc<AtomicU64>,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl HealthProbe for CountingProbe {
+        fn kind(&self) -> ProbeKind {
+            self.kind
+        }
+
+        fn context(&self) -> FailureContext {
+            self.ctx.clone()
+        }
+
+        async fn probe(&self) -> Result<(), ProbeFailure> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail {
+                Err(ProbeFailure::new(FailureClass::Network))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn probe(
+        kind: ProbeKind,
+        account: &str,
+        fail: bool,
+        calls: &Arc<AtomicU64>,
+    ) -> Arc<dyn HealthProbe> {
+        Arc::new(CountingProbe {
+            kind,
+            ctx: FailureContext::new(
+                Some(AccountId::new(account)),
+                None,
+                None,
+                Some(ProviderId::new("stub")),
+            ),
+            calls: Arc::clone(calls),
+            fail,
+        })
+    }
+
+    #[tokio::test]
+    async fn expensive_probes_default_off() {
+        let clock = Arc::new(MutableClock::new(1_000));
+        let mut health = HealthRuntime::new(clock);
+        let mut runtime = ProbeRuntime::new();
+        let calls = Arc::new(AtomicU64::new(0));
+        let probes = vec![probe(ProbeKind::Expensive, "a1", false, &calls)];
+        let report = runtime.tick(&mut health, &probes, 1_000).await;
+        assert_eq!(report.launched, 0);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn probe_storm_respects_per_tick_and_failure_budget() {
+        let clock = Arc::new(MutableClock::new(1_000));
+        let mut health = HealthRuntime::new(clock);
+        let mut runtime = ProbeRuntime::with_budgets(
+            ProbeBudget {
+                enabled: true,
+                max_in_flight: 2,
+                max_per_tick: 3,
+                max_failures_per_tick: 1,
+                min_interval_ms: 0,
+            },
+            ProbeBudget::expensive_default(),
+        );
+        let calls = Arc::new(AtomicU64::new(0));
+        let probes: Vec<Arc<dyn HealthProbe>> = (0..10)
+            .map(|i| probe(ProbeKind::Cheap, &format!("acct-{i}"), true, &calls))
+            .collect();
+        let report = runtime.tick(&mut health, &probes, 1_000).await;
+        assert!(
+            report.launched <= 3,
+            "max_per_tick=3, launched={}",
+            report.launched
+        );
+        assert!(
+            report.failed <= 3,
+            "failure budget plus in-flight overshoot, failed={}",
+            report.failed
+        );
+        assert!(calls.load(Ordering::SeqCst) <= 3);
+        assert!(report.skipped >= 7);
+    }
+
+    #[tokio::test]
+    async fn probe_interval_skips_until_min_interval() {
+        let clock = Arc::new(MutableClock::new(1_000));
+        let mut health = HealthRuntime::new(clock);
+        let mut runtime = ProbeRuntime::with_budgets(
+            ProbeBudget {
+                enabled: true,
+                max_in_flight: 1,
+                max_per_tick: 8,
+                max_failures_per_tick: 8,
+                min_interval_ms: 5_000,
+            },
+            ProbeBudget::expensive_default(),
+        );
+        let calls = Arc::new(AtomicU64::new(0));
+        let probes = vec![probe(ProbeKind::Cheap, "a1", false, &calls)];
+        let first = runtime.tick(&mut health, &probes, 1_000).await;
+        assert_eq!(first.launched, 1);
+        let second = runtime.tick(&mut health, &probes, 2_000).await;
+        assert_eq!(second.launched, 0);
+        assert_eq!(second.skipped, 1);
+        let third = runtime.tick(&mut health, &probes, 6_000).await;
+        assert_eq!(third.launched, 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }

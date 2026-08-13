@@ -38,8 +38,8 @@ use model_registry::ModelRegistry;
 use provider_api::ModelProvider;
 use provider_control::{AcquireRequest, CredentialLease, CredentialPool, LeaseGuard, LeaseOutcome};
 use tenant_service::{
-    decide_budget, decide_request_concurrency, IdentityContext, Permission, PolicyDecision,
-    PolicyDecisionKind, PolicyGate,
+    decide_agent_concurrency, decide_budget, decide_request_concurrency, IdentityContext,
+    Permission, PolicyDecision, PolicyDecisionKind, PolicyGate,
 };
 use thiserror::Error;
 use tool_api::ToolResult;
@@ -236,13 +236,14 @@ impl RunSupervisor {
         // Global stream 是 quota 告警与 team 事件的唯一共享流：两者必须共享
         // 同一 stream_sequence 计数器，保证交错发布时流内序号连续。
         let stream_sequence = Arc::new(AtomicU64::new(0));
+        let policy_slot = Arc::new(Mutex::new(None));
         let alert_sink: Arc<dyn quota_service::refresh::AlertSink> = Arc::new(AppQuotaAlertSink {
             limiter: Arc::clone(&limiter),
             global_sequence: Arc::clone(&global_sequence),
             stream_sequence: Arc::clone(&stream_sequence),
             instance_id: instance_id.clone(),
+            tenant_policy: Arc::clone(&policy_slot),
         });
-        let policy_slot = Arc::new(Mutex::new(None));
         let quota_audit_sink: Arc<dyn quota_service::refresh::AuditSink> =
             Arc::new(AppQuotaAuditSink {
                 tenant_policy: Arc::clone(&policy_slot),
@@ -335,7 +336,7 @@ impl RunSupervisor {
             .clone()
     }
 
-    /// 指定租户当前活跃（非终态）run 数（P18-9 请求并发准入）。
+    /// 指定租户当前活跃（非终态）run 数（P18-9 agent / 请求并发准入共用）。
     pub fn active_for_tenant(&self, tenant: &agent_domain::TenantId) -> u64 {
         let inner = lock(&self.inner);
         active_for_tenant(&inner, tenant)
@@ -578,11 +579,17 @@ impl RunSupervisor {
             .map_err(|error| SuperviseError::PolicyDenied(error.to_string()))?;
 
         let current = active_for_tenant(inner, &identity.tenant_id);
-        let max = gate
-            .engine()
-            .policy(&identity.tenant_id)
-            .max_concurrent_requests;
-        match decide_request_concurrency(current, max) {
+        let policy = gate.engine().policy(&identity.tenant_id);
+        match decide_agent_concurrency(current, policy.max_concurrent_agents) {
+            PolicyDecision::Allow => {}
+            PolicyDecision::Deny { reason } => return Err(SuperviseError::PolicyDenied(reason)),
+            other => {
+                return Err(SuperviseError::PolicyDenied(format!(
+                    "agent admission returned {other:?}; denied by default"
+                )))
+            }
+        }
+        match decide_request_concurrency(current, policy.max_concurrent_requests) {
             PolicyDecision::Allow => Ok(()),
             PolicyDecision::Deny { reason } => Err(SuperviseError::PolicyDenied(reason)),
             other => Err(SuperviseError::PolicyDenied(format!(
@@ -959,6 +966,7 @@ struct AppQuotaAlertSink {
     /// Global stream 独立消费序号（桥是 Global 流唯一事件源）。
     stream_sequence: Arc<AtomicU64>,
     instance_id: CoreInstanceId,
+    tenant_policy: Arc<Mutex<Option<Arc<TenantPolicyGate>>>>,
 }
 
 struct AppQuotaAuditSink {
@@ -990,13 +998,7 @@ impl quota_service::refresh::AuditSink for AppQuotaAuditSink {
             } else {
                 AuditDecision::Error
             },
-            if entry.served_stale {
-                "quota_refresh_stale"
-            } else if entry.failures == 0 {
-                "quota_refresh_succeeded"
-            } else {
-                "quota_refresh_partial_failure"
-            },
+            quota_refresh_reason(&entry),
             AuditDimensions {
                 provider_id: Some(entry.scope.provider_id.clone()),
                 account_id: Some(agent_domain::AccountId::from(
@@ -1027,6 +1029,32 @@ impl quota_service::refresh::AlertSink for AppQuotaAlertSink {
             },
         };
         self.limiter.enqueue(envelope);
+        if let Some(gate) = self
+            .tenant_policy
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+        {
+            let identity = IdentityContext::new(
+                alert.scope.tenant_id.clone(),
+                agent_domain::PrincipalId::new("local/system"),
+            );
+            gate.record_control_event(
+                &identity,
+                AuditAction::QuotaAlerted,
+                AuditTargetKind::Quota,
+                quota_alert_decision(alert.kind),
+                quota_alert_reason(alert.kind),
+                AuditDimensions {
+                    provider_id: Some(alert.scope.provider_id.clone()),
+                    account_id: Some(agent_domain::AccountId::from(
+                        alert.scope.account_id.as_str(),
+                    )),
+                    ..AuditDimensions::default()
+                },
+                alert.at_ms,
+            );
+        }
     }
 }
 
@@ -1067,6 +1095,41 @@ impl teams::TeamEventSink for AppTeamEventSink {
             },
         };
         self.limiter.enqueue(app_envelope);
+    }
+}
+
+fn quota_refresh_reason(entry: &quota_service::refresh::AuditEntry) -> &'static str {
+    match entry.adapter_kind {
+        Some(quota_service::AdapterKind::WebScrape) if entry.served_stale => "quota_scrape_cached",
+        Some(quota_service::AdapterKind::WebScrape) if entry.failures == 0 => {
+            "quota_scrape_succeeded"
+        }
+        Some(quota_service::AdapterKind::WebScrape) => "quota_scrape_failed",
+        _ if entry.served_stale => "quota_refresh_stale",
+        _ if entry.failures == 0 => "quota_refresh_succeeded",
+        _ => "quota_refresh_partial_failure",
+    }
+}
+
+fn quota_alert_reason(kind: quota_service::refresh::AlertKind) -> &'static str {
+    match kind {
+        quota_service::refresh::AlertKind::Threshold => "quota_alert_threshold",
+        quota_service::refresh::AlertKind::Recovered => "quota_alert_recovered",
+        quota_service::refresh::AlertKind::Stale => "quota_alert_stale",
+        quota_service::refresh::AlertKind::ReauthorizationRequired => {
+            "quota_alert_reauthorization_required"
+        }
+        quota_service::refresh::AlertKind::PartialFailure => "quota_alert_partial_failure",
+    }
+}
+
+fn quota_alert_decision(kind: quota_service::refresh::AlertKind) -> AuditDecision {
+    match kind {
+        quota_service::refresh::AlertKind::Recovered => AuditDecision::Observe,
+        quota_service::refresh::AlertKind::ReauthorizationRequired => AuditDecision::Error,
+        quota_service::refresh::AlertKind::Threshold => AuditDecision::Limit,
+        quota_service::refresh::AlertKind::Stale
+        | quota_service::refresh::AlertKind::PartialFailure => AuditDecision::Observe,
     }
 }
 
@@ -1694,6 +1757,11 @@ fn spawn_run_task(
                                     ..AuditDimensions::default()
                                 },
                             );
+                            // LeaseRebound is not inferred from lease.version:
+                            // LeaseRecord::open always materializes version=2 (Requested=1,
+                            // Acquired=2). Production emit belongs on BindingAcquisition
+                            // (old_lease_release is Some) once app-service consumes
+                            // SessionBindingService — not on first acquire.
                         }
                         // UsageAttribution 从真实 CredentialLease 得到：account/
                         // credential 一律取 lease 值，客户端（RunRequest）不可
@@ -2842,7 +2910,9 @@ mod tests {
     use super::*;
     use agent_domain::{ModelId, ProviderId};
     use core_api::{ClientContextSnapshot, ClientDocumentContext};
-    use tenant_service::IdentityContext;
+    use tenant_service::{IdentityContext, InMemoryTenantPolicyEngine};
+
+    use crate::policy::TenantPolicyGate;
     use usage_ledger::InMemoryUsageLedger;
 
     fn local_identity() -> IdentityContext {
@@ -3201,6 +3271,10 @@ mod tests {
     #[tokio::test]
     async fn quota_alert_sink_bridges_redacted_global_events() {
         let (supervisor, _aggregate) = supervisor();
+        let gate = Arc::new(TenantPolicyGate::new(Arc::new(
+            InMemoryTenantPolicyEngine::default(),
+        )));
+        supervisor.set_tenant_policy(Arc::clone(&gate));
         let sink = supervisor.alert_sink();
         let scope = quota_service::QuotaScope {
             tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
@@ -3318,6 +3392,65 @@ mod tests {
             }
             other => panic!("unexpected payload: {other:?}"),
         }
+
+        let tenant = agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT);
+        let audit = gate.canonical_audit_events(&tenant).unwrap();
+        assert!(
+            audit.iter().any(|event| {
+                event.action == AuditAction::QuotaAlerted
+                    && event.reason_code == "quota_alert_threshold"
+                    && event.target_kind == AuditTargetKind::Quota
+            }),
+            "quota alerts must project canonical QuotaAlerted: {audit:?}"
+        );
+        for event in &audit {
+            let json = serde_json::to_string(event).unwrap();
+            assert!(
+                !json.contains("sk-raw-secret")
+                    && !json.contains("prompt")
+                    && !json.contains("protected_blob"),
+                "quota alert audit leaked sensitive payload: {json}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn quota_audit_sink_maps_webscrape_without_secrets() {
+        let (supervisor, _aggregate) = supervisor();
+        let gate = Arc::new(TenantPolicyGate::new(Arc::new(
+            InMemoryTenantPolicyEngine::default(),
+        )));
+        supervisor.set_tenant_policy(Arc::clone(&gate));
+        let tenant = agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT);
+        supervisor
+            .quota_audit_sink()
+            .record(quota_service::refresh::AuditEntry {
+                scope: quota_service::QuotaScope {
+                    tenant_id: tenant.clone(),
+                    account_id: quota_service::AccountId::new("account-1".to_string()),
+                    credential_id: Some("sk-secret-credential-123456".to_string()),
+                    provider_id: ProviderId::from("zhipu"),
+                    model_id: None,
+                },
+                window: quota_service::QuotaWindow::Weekly,
+                unit: quota_service::QuotaUnit::Count,
+                served_stale: false,
+                confidence: quota_service::Confidence::Scraped,
+                adapter_kind: Some(quota_service::AdapterKind::WebScrape),
+                source: "web_scrape:zhipu.console".into(),
+                failures: 0,
+                at_ms: 1_700_000_000_000,
+            })
+            .await;
+        let audit = gate.canonical_audit_events(&tenant).unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].action, AuditAction::QuotaRefreshed);
+        assert_eq!(audit[0].reason_code, "quota_scrape_succeeded");
+        let json = serde_json::to_string(&audit[0]).unwrap();
+        assert!(
+            !json.contains("sk-secret") && !json.contains("prompt") && !json.contains("cookie"),
+            "webscrape canonical audit leaked secret: {json}"
+        );
     }
 
     #[test]

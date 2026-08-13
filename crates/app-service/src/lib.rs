@@ -7,6 +7,7 @@
 
 mod aggregate;
 mod approval;
+mod claude_gateway;
 mod client_adapter;
 mod error;
 mod idempotency;
@@ -39,6 +40,11 @@ pub use aggregate::{
     RunRecord, SessionRecord, Snapshot, TerminalRecord,
 };
 pub use approval::{ApprovalError, ApprovalRegistry, PendingApproval, Registration};
+pub use claude_gateway::{
+    apply_external_identity, audit_dimensions_for_binding, register_claude_gateway,
+    ClaudeGatewayHost, ClaudeProtectorFactory, InMemoryClaudeProtectorFactory,
+    ProductionClaudeProtectorFactory, ReasoningProtectorBridge,
+};
 pub use client_adapter::ClientAdapterHost;
 pub use error::AppServiceError;
 pub use idempotency::{IdempotencyCheck, IdempotencyError, IdempotencyStats, IdempotencyStore};
@@ -853,9 +859,26 @@ impl AppService {
         self.tenant_policy
             .check_audit_export(identity, destination)
             .map_err(|error| AppServiceError::Authorization(error.to_string()))?;
-        self.tenant_policy
+        let count = self
+            .tenant_policy
             .export_canonical_audit(&identity.tenant_id, exporter)
-            .map_err(|error| AppServiceError::Unavailable(error.to_string()))
+            .map_err(|error| AppServiceError::Unavailable(error.to_string()))?;
+        let trace_id = format!("export:{destination}");
+        self.tenant_policy.record_control_event(
+            identity,
+            audit_log::AuditAction::AuditExported,
+            audit_log::AuditTargetKind::Audit,
+            audit_log::AuditDecision::Allow,
+            "audit_export_completed",
+            audit_log::AuditDimensions {
+                trace_id: audit_log::is_safe_audit_label(&trace_id).then_some(trace_id),
+                ..audit_log::AuditDimensions::default()
+            },
+            self.tenant_policy
+                .engine()
+                .policy_version(&identity.tenant_id),
+        );
+        Ok(count)
     }
 
     /// Attaches a durable canonical audit sink while preserving the built-in tenant
@@ -894,7 +917,19 @@ impl AppService {
         self.tenant_policy
             .authorize_scope(requester, &tenant)
             .map_err(|error| AppServiceError::Authorization(error.to_string()))?;
-        self.tenant_policy.engine().set_policy(tenant, policy);
+        self.tenant_policy
+            .engine()
+            .set_policy(tenant.clone(), policy);
+        let version = self.tenant_policy.engine().policy_version(&tenant);
+        self.tenant_policy.record_control_event(
+            requester,
+            audit_log::AuditAction::ConfigurationChanged,
+            audit_log::AuditTargetKind::Configuration,
+            audit_log::AuditDecision::Allow,
+            "tenant_policy_updated",
+            audit_log::AuditDimensions::default(),
+            version,
+        );
         Ok(())
     }
 

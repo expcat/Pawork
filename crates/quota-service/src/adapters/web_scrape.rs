@@ -15,7 +15,8 @@
 //!   在任何网络调用之前以 `Unauthorized` 拒绝。
 //! - 脱敏审计：成功与失败都记账，条目只含端点（去 query）、selector 版本、
 //!   是否命中、字段计数与安全失败类别；绝不保留原始 HTML、cookie、URL query
-//!   或错误原文；审计有界（最多 [`MAX_AUDIT_ENTRIES`] 条）。
+//!   或错误原文。生产路径只通过可选的 scheduler/控制面 [`crate::refresh::AuditSink`]
+//!   记账；进程内 Vec 仅在测试中作为夹具保留。
 //! - 取消：抓取与等待均与 CancellationToken 竞争；互斥锁只在无 await 的临界区
 //!   持有，取消 / 丢弃 future 不会泄漏锁。
 //!
@@ -33,6 +34,7 @@ use provider_runtime::http::HttpClient;
 use sha1::Sha1;
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::refresh::{AuditEntry, AuditSink};
 use crate::{
     AdapterKind, Confidence, QuotaAdapter, QuotaError, QuotaProvenance, QuotaRequest, QuotaReset,
     QuotaScope, QuotaSnapshot, QuotaUnit, QuotaValues, QuotaWindow,
@@ -135,13 +137,18 @@ pub struct WebScrapeQuotaAdapter {
     cache: AsyncMutex<HashMap<CacheKey, CachedEntry>>,
     /// 每个限频键（脱敏端点）的下一个可用时隙。
     next_slot: AsyncMutex<HashMap<String, Instant>>,
+    /// 控制面 / scheduler 审计 sink。生产事实源；缺省为不记账。
+    scrape_audit: Option<Arc<dyn AuditSink>>,
+    /// 测试夹具：有界内存审计。生产路径不持有该 Vec。
+    #[cfg(test)]
     audit: AsyncMutex<Vec<ScrapeAuditEntry>>,
     /// 进程内随机 HMAC-SHA1 密钥：凭证指纹仅在本进程可计算；不持久化、不进
     /// 日志 / 审计，杜绝跨进程还原。
     credential_key: [u8; 32],
 }
 
-/// 审计记录上限。成功与失败共用同一有界队列，超过后丢弃最旧条目。
+/// 审计记录上限。仅测试夹具使用。
+#[cfg(test)]
 const MAX_AUDIT_ENTRIES: usize = 256;
 
 impl WebScrapeQuotaAdapter {
@@ -151,9 +158,18 @@ impl WebScrapeQuotaAdapter {
             profile,
             cache: AsyncMutex::new(HashMap::new()),
             next_slot: AsyncMutex::new(HashMap::new()),
+            scrape_audit: None,
+            #[cfg(test)]
             audit: AsyncMutex::new(Vec::new()),
             credential_key: rand::random(),
         }
+    }
+
+    /// Attach a control-plane / scheduler audit sink. Production scrape records
+    /// are emitted here; the in-memory vec is test-only.
+    pub fn with_audit_sink(mut self, sink: Arc<dyn AuditSink>) -> Self {
+        self.scrape_audit = Some(sink);
+        self
     }
 
     /// 凭证身份的进程内指纹：HMAC-SHA1（随机密钥）摘要 kind + secret，不可逆，
@@ -173,7 +189,8 @@ impl WebScrapeQuotaAdapter {
         })
     }
 
-    /// 取最近 `limit` 条审计记录的快照（仅供测试 / 诊断）。
+    /// 取最近 `limit` 条审计记录的快照（仅供测试夹具）。
+    #[cfg(test)]
     pub async fn audit_entries(&self, limit: usize) -> Vec<ScrapeAuditEntry> {
         let audit = self.audit.lock().await;
         let start = audit.len().saturating_sub(limit);
@@ -185,13 +202,30 @@ impl WebScrapeQuotaAdapter {
         self.cache.lock().await.len()
     }
 
-    /// 追加一条审计记录，丢弃最旧条目保持有界。
-    async fn record_audit(&self, entry: ScrapeAuditEntry) {
-        let mut audit = self.audit.lock().await;
-        audit.push(entry);
-        if audit.len() > MAX_AUDIT_ENTRIES {
-            let drop_n = audit.len() - MAX_AUDIT_ENTRIES;
-            audit.drain(0..drop_n);
+    /// 追加一条审计记录。生产只写外部 sink；测试夹具额外保留有界 Vec。
+    async fn record_audit(&self, request: &QuotaRequest, entry: ScrapeAuditEntry) {
+        #[cfg(test)]
+        {
+            let mut audit = self.audit.lock().await;
+            audit.push(entry.clone());
+            if audit.len() > MAX_AUDIT_ENTRIES {
+                let drop_n = audit.len() - MAX_AUDIT_ENTRIES;
+                audit.drain(0..drop_n);
+            }
+        }
+        if let Some(sink) = &self.scrape_audit {
+            sink.record(AuditEntry {
+                scope: request.scope.clone(),
+                window: request.window,
+                unit: request.unit.clone(),
+                served_stale: entry.cached,
+                confidence: Confidence::Scraped,
+                adapter_kind: Some(AdapterKind::WebScrape),
+                source: format!("web_scrape:{}", self.profile.source()),
+                failures: u32::from(entry.failure.is_some()),
+                at_ms: entry.fetched_at.as_unix_millis(),
+            })
+            .await;
         }
     }
 
@@ -296,15 +330,18 @@ impl QuotaAdapter for WebScrapeQuotaAdapter {
         let headers = match self.profile.auth_headers(credential) {
             Ok(headers) => headers,
             Err(error) => {
-                self.record_audit(ScrapeAuditEntry {
-                    fetched_at: now_millis(),
-                    endpoint,
-                    selector_version,
-                    matched: false,
-                    extracted_fields: 0,
-                    failure: Some(ScrapeFailureKind::from_quota_error(&error)),
-                    cached: false,
-                })
+                self.record_audit(
+                    request,
+                    ScrapeAuditEntry {
+                        fetched_at: now_millis(),
+                        endpoint,
+                        selector_version,
+                        matched: false,
+                        extracted_fields: 0,
+                        failure: Some(ScrapeFailureKind::from_quota_error(&error)),
+                        cached: false,
+                    },
+                )
                 .await;
                 return Err(error);
             }
@@ -321,15 +358,18 @@ impl QuotaAdapter for WebScrapeQuotaAdapter {
                     let snapshot = entry.snapshot.clone();
                     let extracted = extracted_field_count(&snapshot.values);
                     drop(cache);
-                    self.record_audit(ScrapeAuditEntry {
-                        fetched_at: snapshot.provenance.fetched_at,
-                        endpoint,
-                        selector_version,
-                        matched: extracted > 0,
-                        extracted_fields: extracted,
-                        failure: None,
-                        cached: true,
-                    })
+                    self.record_audit(
+                        request,
+                        ScrapeAuditEntry {
+                            fetched_at: snapshot.provenance.fetched_at,
+                            endpoint,
+                            selector_version,
+                            matched: extracted > 0,
+                            extracted_fields: extracted,
+                            failure: None,
+                            cached: true,
+                        },
+                    )
                     .await;
                     return Ok(snapshot);
                 }
@@ -338,15 +378,18 @@ impl QuotaAdapter for WebScrapeQuotaAdapter {
 
         // 仅缓存未命中：下一保留时隙，并发请求之间也有真实的最小间隔。
         if let Err(error) = self.reserve_and_wait(&url, cancel).await {
-            self.record_audit(ScrapeAuditEntry {
-                fetched_at: now_millis(),
-                endpoint,
-                selector_version,
-                matched: false,
-                extracted_fields: 0,
-                failure: Some(ScrapeFailureKind::from_quota_error(&error)),
-                cached: false,
-            })
+            self.record_audit(
+                request,
+                ScrapeAuditEntry {
+                    fetched_at: now_millis(),
+                    endpoint,
+                    selector_version,
+                    matched: false,
+                    extracted_fields: 0,
+                    failure: Some(ScrapeFailureKind::from_quota_error(&error)),
+                    cached: false,
+                },
+            )
             .await;
             return Err(error);
         }
@@ -375,15 +418,18 @@ impl QuotaAdapter for WebScrapeQuotaAdapter {
 
         // 成功与失败都写脱敏审计：仅类别 / selector 版本 / 字段数 / 脱敏端点，
         // 不含原始 HTML、cookie、URL query 或错误原文；队列有界。
-        self.record_audit(ScrapeAuditEntry {
-            fetched_at,
-            endpoint,
-            selector_version,
-            matched: extracted > 0,
-            extracted_fields: extracted,
-            failure,
-            cached: false,
-        })
+        self.record_audit(
+            request,
+            ScrapeAuditEntry {
+                fetched_at,
+                endpoint,
+                selector_version,
+                matched: extracted > 0,
+                extracted_fields: extracted,
+                failure,
+                cached: false,
+            },
+        )
         .await;
         result
     }
@@ -965,5 +1011,50 @@ mod tests {
             .await
             .expect_err("cancel");
         assert!(matches!(err, QuotaError::Cancelled));
+    }
+
+    #[derive(Default)]
+    struct CaptureAudit {
+        entries: std::sync::Mutex<Vec<AuditEntry>>,
+    }
+
+    #[async_trait]
+    impl AuditSink for CaptureAudit {
+        async fn record(&self, entry: AuditEntry) {
+            self.entries.lock().expect("audit").push(entry);
+        }
+    }
+
+    #[tokio::test]
+    async fn scrape_emits_to_control_plane_sink_without_secrets() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/console"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(QUOTA_HTML))
+            .mount(&server)
+            .await;
+        let sink = Arc::new(CaptureAudit::default());
+        let adapter = WebScrapeQuotaAdapter::new(
+            http(),
+            Box::new(ConsoleProfile::new(
+                format!("{}/console?session=SECRET", server.uri()),
+                "zhipu-console@2026-08",
+            )),
+        )
+        .with_audit_sink(sink.clone());
+        adapter
+            .fetch(&request(), None, &CancellationToken::new())
+            .await
+            .expect("ok");
+        let entries = sink.entries.lock().expect("audit").clone();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].adapter_kind, Some(AdapterKind::WebScrape));
+        assert_eq!(entries[0].source, "web_scrape:zhipu.console");
+        assert_eq!(entries[0].failures, 0);
+        let dump = format!("{:?}", entries[0]);
+        assert!(!dump.contains("SECRET"));
+        assert!(!dump.contains("session="));
+        assert!(!dump.contains("data-quota-remaining"));
+        assert!(!dump.contains("cookie"));
     }
 }

@@ -1425,20 +1425,30 @@ where
                 self.initial_bind(&request, continuation).await
             }
             Some(current) => match current.resolve(&request.fingerprint, request.now_ms) {
-                AffinityDecision::Reuse => match self.pool.lease_state(&current.lease_id) {
-                    Some(LeaseState::Acquired) => Ok(BindingAcquisition {
-                        binding: current,
-                        old_lease_release: None,
-                    }),
-                    None => Err(BindingServiceError::LeaseStateUnobservable {
-                        key: request.key.clone(),
-                        lease: current.lease_id.clone(),
-                    }),
-                    Some(_) => {
-                        self.safe_rebind(&request, current, RebindReason::LeaseLost)
+                AffinityDecision::Reuse => {
+                    // Route winner moved (account / credential / model) while
+                    // capability/policy hashes happen to match: still rebind.
+                    // In-flight keep the old lease until safe_rebind commits.
+                    if !same_target(&current, &request.target) {
+                        self.safe_rebind(&request, current, RebindReason::PolicyChanged)
                             .await
+                    } else {
+                        match self.pool.lease_state(&current.lease_id) {
+                            Some(LeaseState::Acquired) => Ok(BindingAcquisition {
+                                binding: current,
+                                old_lease_release: None,
+                            }),
+                            None => Err(BindingServiceError::LeaseStateUnobservable {
+                                key: request.key.clone(),
+                                lease: current.lease_id.clone(),
+                            }),
+                            Some(_) => {
+                                self.safe_rebind(&request, current, RebindReason::LeaseLost)
+                                    .await
+                            }
+                        }
                     }
-                },
+                }
                 AffinityDecision::Rebind(RebindReason::Released) => {
                     self.rebind_after_release(&request, current).await
                 }
@@ -1863,6 +1873,14 @@ where
             .release(current.lease_id.clone(), LeaseOutcome::Released)
             .await
             .map_err(BindingServiceError::Pool)
+    }
+
+    /// Durable scan of non-Released bindings (reconciler / crash recovery).
+    ///
+    /// Delegates to [`BindingProjection::load_outstanding`]; does not copy the
+    /// binding state machine.
+    pub async fn load_outstanding(&self) -> Result<Vec<SessionBinding>, BindingServiceError> {
+        Ok(self.projection.load_outstanding().await?)
     }
 
     /// acquire 失败后的回滚：CAS 把 `Rebinding` abort 回 `Bound`。

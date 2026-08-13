@@ -7,6 +7,7 @@
 ## 设计要点
 
 - Adapter 只负责 decoding/encoding、version negotiation、capability mapping、client identity extraction 与 event translation。
+- 协议中立的 `ExternalAgentIdentity`（session / agent / parent-agent）落在 `client-adapter-api`；tenant 只来自宿主 `TrustedTenantContext`，身份字段不得作为跨 tenant affinity key。Claude 头名与校验仍在 `client-claude-gateway`。
 - 客户端专有 JSON 类型不得泄漏进 `agent-engine`；不支持的功能返回 `ProtocolUnsupported`，禁止静默丢字段。
 - Adapter 不持有 Provider credential，不做 credential failover、模型路由、权限最终决策或 Agent lifecycle ownership。
 - `SessionRegistry` 保存 `client_session_id ↔ core_session_id`、`client_connection_id`、`ownership_epoch`、`last_seen_revision`、loaded/subscribed/executing 状态和 capability snapshot。
@@ -57,7 +58,7 @@ Discovered → Negotiated → Loaded → Subscribed → Executing
 ## 优先级
 
 - P0：ClientAdapter contract、capability snapshot、SessionRegistry、Codex/Claude/ACP golden fixtures。
-- P1：协议版本矩阵、热升级、session ownership recovery、兼容诊断。
+- P1：协议版本矩阵、热升级、session ownership recovery、兼容诊断；`pawork` Codex/Claude stdio 宿主入口。
 - P2：更多客户端 adapter；DOM/CDP 注入不得成为核心兼容层。
 
 ## 验收标准

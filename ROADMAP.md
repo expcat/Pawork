@@ -38,13 +38,13 @@
  | 15 | Provider Native Capabilities | 10 | 10 | 🟢已完成（P15-1/5/9 plain TargetVerified；P15-2/3/4/7/8 TargetVerified 有界 host composition deferred；P15-6 TargetVerified 有界 default-off/no consumer；P15-10 review-remediation 已完成；P15-9 集中门禁 contract/golden/fuzz/兼容性在独立 target 下全绿） |
 | 16 | Modern Agent Workflow | 10 | 10 | 🟢已完成（**有界**：library/core 领域 reducer、纯算法、Process 后台执行与 canonical event 包装已交付并各自定向验证；**生产闭环延期**——host/core-api/EventHub 接线、Plan/Goal 控制闭环、真实 EmbeddingProvider/SQLite、Forge UI、compat 命令入口与 Monitor 包驱动均未接主流程，按 [P16-10](plan/P16-10-review-remediation.md) 登记到 P17/P19 既有任务验收，不声称生产已装配） |
 | 17 | Ecosystem & Host Compatibility | 14 | 14 | 🟢已完成（成熟度矩阵：HostWired P17-1/7/8；PartialWired P17-5/11；LibraryBuilt P17-2/3/4/6/10/13；AdapterBuilt P17-9/12；P17-14 TargetVerified） |
-| 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
+| 18 | Account Control Plane & Client Adapters | 15 | 15 | 🟢已完成（**有界**：库层/宿主 seam 与 L2 定向门禁已交付；**生产 CLI/composition 延期**——Codex/Claude stdio、`QuotaRuntime::production()` 六家 factory、WebScrape sink 注入、`LeaseRebound` 生产发射与 OTel collector 进程未接主流程，不声称生产已装配） |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
- | **合计** | — | **220** | **189** | — |
+ | **合计** | — | **220** | **204** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务；**机械求和只反映任务条目数，不代表生产闭环完成度**。
 >
-> 逐 Phase 行机械求和现为 **220 项任务、189 项完成**。Phase 17 现为 14/14：P17-1～13 在表内以成熟度文本（HostWired / PartialWired / LibraryBuilt / AdapterBuilt）替代统一绿，仍按历史代码交付计完成，P17-14 为 🟢 TargetVerified。成熟度文本 ≠ 产品验收，成熟度矩阵见 Phase 17 行。完成数不等于 Production Ready：历史 🟢 只代表既有完成/验证记录，是否已接主流程以源码、运行证据与 [p17-review](docs/review/p17-review.md) 修复记录为准。
+> 逐 Phase 行机械求和现为 **220 项任务、204 项完成**。Phase 17 现为 14/14：P17-1～13 在表内以成熟度文本（HostWired / PartialWired / LibraryBuilt / AdapterBuilt）替代统一绿，仍按历史代码交付计完成，P17-14 为 🟢 TargetVerified。Phase 18 现为 15/15 有界完成：库层控制面、ClientAdapter、canonical audit 与 `scripts/p18-gate.sh` L2 已落地；生产 CLI/composition 延期项见 Phase 18 行与 [plan/README](plan/README.md)。成熟度文本 ≠ 产品验收。完成数不等于 Production Ready：历史 🟢 只代表既有完成/验证记录，是否已接主流程以源码、运行证据与 [p17-review](docs/review/p17-review.md) 修复记录为准。
 >
 > Phase 0 与 Phase 1 已有历史本地构建、测试和 Clippy 记录；自本次规划起不再把「每个 Phase 重跑 workspace 全量门禁」作为任务完成前提。三平台 GitHub Actions 仍按 `workflow_dispatch` 手动触发，其远程结果不计入本地完成状态。
 
@@ -54,7 +54,9 @@
  
 > ✅ **Phase 17 Ecosystem & Host Compatibility 完成（仅 P17-14 TargetVerified）——成熟度矩阵（2026-08-13 review 校准）**：HostWired P17-1/7/8（Hooks/ACP/Headless-SDK 协议链路真实，但仍受正式 Provider 未装配限制）；PartialWired P17-5/11（Profile 仅消费部分字段；[P17-11](plan/P17-11-real-remote-transport.md) Remote 为 loopback publish 进程长驻 + 跨进程 connect/reconnect + SIGINT/token 清理，独立 unpublish/revoke 无共享控制面时 fail-closed，外部可达与控制面配对延期 [P19-14](plan/P19-14-multi-window-remote.md)）；LibraryBuilt P17-2/3/4/6/10/13（纯库/解析器，无 pawork 生产装配）；AdapterBuilt P17-9/12（adapter kit，仅 mock/contract 消费，mock/fixture 不等同产品能力）。P17-14 评审修复与成熟度校准已完成，另落地两项门禁衍生可靠性修复（RateLimiter `enqueue` 自动冲刷不丢、remote 认证同步 subscribe + carrier 顺序无关/压力 0 失败），修复与门禁证据见 [P17-14](plan/P17-14-review-remediation.md)。详见 [p17-review](docs/review/p17-review.md) 与各 [plan/P17-*](plan/) 文档。
 
-> 🎯 **下一推荐 Phase 18 Account Control Plane & Client Adapters**（P18-1～P18-9 基础轨，P18-11/12/15 仍待）：补齐 Tenant/Principal、ProviderAccount/Credential、Lease、路由与多维 Usage Ledger，供 quota 与 orchestration 生产接线。P18-10 Client Adapter 契约已作为 P17-7 前置落地，不把 Phase 18 计为完成。
+> ✅ **Phase 18 Account Control Plane & Client Adapters 有界完成（P18-1～P18-15）**：交付 Tenant/Principal、Account/Credential（仅 `secret_ref`）、Lease、ErrorClassifier/Health、RoutingPolicy、Session Affinity、Usage Ledger、deny-first Tenant Policy、ClientAdapter 契约、Codex App Server / Claude Gateway 适配器（根 workspace member）、canonical `AuditEventV1` + allowlist OTel 抽象、库层 Pool Reconciler / Probe / Quota target registry，以及 [P18-15](plan/P18-15-control-plane-gate.md) 隔离 L2（`scripts/p18-gate.sh`，`target/gates-p18`，全类 PASS 后清理）。**不声称生产已装配**：① Codex/Claude `pawork` stdio CLI；② `QuotaRuntime::production()` 注册六家远端 factory 并启动 scheduler；③ composition 把 `builtin_models()` 喂进 model-registry；④ WebScrape `with_audit_sink` 生产注入；⑤ `LeaseRebound` 挂在 `SessionBindingService` / `BindingAcquisition.old_lease_release`；⑥ 生产 OTel collector 进程。Agent 仍只经 Route → Lease 取资源；`ModelProvider` 未扩展 tenant/account。未跑 Workspace Full Gate。详见各 [plan/P18-*](plan/) 与 [P18-15](plan/P18-15-control-plane-gate.md)。
+
+> 🎯 **下一推荐 Phase 19 Desktop GUI（GPUI）**（P19-1 硬准入 Gate）：独立 GPUI 进程经 GUI Connection Protocol 连接 `pawork`，不链接 Core、不引入 Node/V8。Windows/macOS/Linux 上 standalone、IME、10k Timeline、100k Diff、Terminal、读屏与签名更新任一不可接受 blocker 则停 P19-2～P19-15 并重评。详见 [P19-1](plan/P19-1-desktop-shell.md) 与 [ADR-035](docs/adr/ADR-035-gpui-desktop.md)。
 
 > ✅ **Phase 14 模型用量与额度监控完成库级收口（P14-1/2/4～P14-10 TargetVerified）**：交付 `quota-service` canonical 领域模型、API Key / WebScrape / Local Ledger 三类 adapter（通用 OAuth 层无生产消费者已删除，见 [P14-3](plan/P14-3-quota-oauth-adapter.md)）、六初始供应商 contract fixtures、多窗口聚合与 cache-only 查询、Usage/Cost Ledger 进程内写入与预算信号、`pawork usage` 文本/JSON 输出、GUI Protocol 的 `QuotaChanged` / `QuotaAlert` 事件、可取消刷新调度与退避。**有界范围**：远端 refresh target 注册、持久化 Ledger、真实 tenant/account/credential 归属与生产审计 sink 延 Phase 18 接线；GUI 目前仅协议就绪（无实际投影页面）；告警动作由消费端按 `AlertKind` 派生，不跨边界携带 typed suggestions。开发期完成受影响 crate 的定向测试、Clippy、格式与 schema 漂移检查；workspace 全量门禁留待集中 review。未配置远端 target 时查询保持 cache-only，只读本地 Ledger 投影。详见 [P14-10](plan/P14-10-review-remediation.md)。
 
@@ -72,11 +74,11 @@ Phase 编号保留架构与文档索引意义，实际开发按结构性依赖�
    - **评审修复补线**：P8-9 已完成（resource-loader 死 API 收缩、Skills 依赖引擎简化、校验合并、双优先级表守护测试）；P8 的零端到端消费者、ResourceBundle 双状态、session/run 重映射、watch/诊断视图接线统一延后到 P13 CLI Host 装配。
    - P9-8 已完成（mcp-client 冗余/过度设计收口：删 `McpConfig::merge` 与单变体 `SecretValue`、合并双 `RestartPolicy`、收敛 `is_loopback_url`/URL 校验、删 `McpInvocationPolicy` 保留 adapter 五道门禁、`error.rs`+`session.rs` 并入 `lib.rs`、Resources/Prompts deferred-consumer 标记）；§4.1 adapter 门禁 vs 调度器门禁（P0，与 P15-1+ADR 协同）等接入期项显式延后。
 2. **Provider v2 前置**：完成 P15-1～P15-8，再由 P15-9 一次性执行 GPT / Claude / Grok 的完整 Provider Contract v2 门禁。P6-1 / P6-2 / P6-10 保留基础协议路径，Responses / modern server tools 在 Phase 15 扩展。
-3. **账号控制面基础**：完成 P18-1～P18-9。先建立 `Tenant/Principal`、`ProviderAccount/Credential`、Lease、错误/健康状态机、确定性路由、Session Affinity 与多维 Usage Ledger；`ModelProvider` 保持不变，旧配置映射到 `local/default + SingleCandidate`。Phase 12、Phase 14 与外部 Client Adapter 不得各自复制账号选择逻辑。
+3. **账号控制面基础**：P18-1～P18-15 有界完成。已建立 `Tenant/Principal`、`ProviderAccount/Credential`、Lease、错误/健康状态机、确定性路由、Session Affinity、多维 Usage Ledger、ClientAdapter 与隔离 L2。`ModelProvider` 保持不变。生产 CLI/composition 延期项见 [plan/README](plan/README.md#关键路径)。
 4. **资源与 Host 基础**：Phase 8～9 与 Phase 13（P13-1～P13-10）已完成：CLI/Core 正式宿主（`pawork` 四种运行模式）、统一 app-service 入口、GUI Connection Protocol 与多 GUI 运行时已闭环；P16-1 / P16-2（可审批 Plan）已完成，继续推进 P18-10 形成统一 Client Adapter 契约的最小闭环。
 5. **Process 与扩展生态**：Phase 10、Phase 11、P16-4 / P16-6 与 P17-1～P17-4 已完成（Built + L1）；可安装插件、用户 Hook、LSP 与后台进程闭环后的 Host 簇 L2 已通过（P17-12），不跑无关功能簇。
-6. **Workflow、额度与编排**：Phase 14、Phase 12、Phase 16（P16-3 / P16-5 / P16-7～P16-9）与 P17-5 / P17-6 已完成；推进 P18-13 / P18-14。Quota 视图消费 P18-8 账本，Agent 只经 Lease 获取 Provider 资源，稳定后执行 workflow/orchestration L2。
-7. **公共 Client 与远程能力**：P17-7～P17-13 已落地（Built + L1；Host 簇 L2 PASS）；继续 P18-11 / P18-12，最后由 P18-15 集中执行账号池属性/并发、迁移、跨租户隔离、Codex/Claude/ACP golden 与故障注入门禁；发布候选再执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
+6. **Workflow、额度与编排**：Phase 14、Phase 12、Phase 16（P16-3 / P16-5 / P16-7～P16-9）、P17-5 / P17-6 与 P18-13 / P18-14 库层已完成；Quota 视图消费 P18-8 账本，Agent 只经 Lease 获取 Provider 资源。生产 refresh scheduler 装配见 Phase 18 延期登记。
+7. **公共 Client 与远程能力**：P17-7～P17-13 与 P18-10～P18-15 已落地（Built + L1；Host 簇 L2 与 control-plane L2 PASS）；发布候选再执行 workspace 全量、三平台、安全、性能、fuzz/chaos 与协议兼容 L3。
 8. **Desktop GUI**：P13-2～P13-10 稳定后先完成 P19-1～P19-9，用 Mock/Protocol Client 打通独立 Desktop Shell、状态投影与 Coding Agent 主交互；P19-10～P19-14 随 Phase 8～18 对应能力接线，P19-15 负责签名分发，最后由 P19-16 集中执行 Desktop contract、三平台 E2E、visual、accessibility、性能与安全门禁。GUI 不反向成为 Core 前置。
 
 开发期不得为追求“全绿”阻塞快速迭代；“保险”“最终确认”“确保没有回归”不构成 Workspace Full Gate 升级理由。安全红线、事件可重放、Secret 不落库、路径越界和破坏性进程清理必须随改动立即定向验证，但也不自动扩大到无关 crate。普通任务应明确报告 `Validation Level`、实际 `Validated` 范围与 `Full workspace gate: NOT RUN`。完整策略与清理命令见 [plan/README](plan/README.md#测试节奏与缓存清理)。
@@ -562,21 +564,21 @@ Parent/Worker 编排，写入隔离，取消传播。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P18-1 | 🟡 | Control Plane 契约与迁移基线 | 分层、状态机、版本、feature flag、回滚 | [详情](plan/P18-1-control-plane-contract.md) |
-| P18-2 | 🟡 | Tenant / Principal 身份基线 | `local/default`、身份传播、versioned migration | [详情](plan/P18-2-tenant-principal.md) |
-| P18-3 | 🟡 | ProviderAccount / Credential 模型 | account 与 secret metadata 分离、legacy synthetic account | [详情](plan/P18-3-provider-account.md) |
-| P18-4 | 🟡 | CredentialPool / Lease | acquire/release、并发准入、幂等回收 | [详情](plan/P18-4-credential-lease.md) |
-| P18-5 | 🟡 | ErrorClassifier / Health | scope-aware 分类、cooldown、circuit breaker | [详情](plan/P18-5-error-health.md) |
-| P18-6 | 🟡 | RoutingPolicy Chain | capability/tenant/health 过滤、priority/weight/fill-first | [详情](plan/P18-6-routing-policy.md) |
+| P18-1 | 🟢 | Control Plane 契约与迁移基线 | 分层、状态机、版本、feature flag、回滚 | [详情](plan/P18-1-control-plane-contract.md) |
+| P18-2 | 🟢 | Tenant / Principal 身份基线 | `local/default`、身份传播、versioned migration | [详情](plan/P18-2-tenant-principal.md) |
+| P18-3 | 🟢 | ProviderAccount / Credential 模型 | account 与 secret metadata 分离；宿主 factory/`builtin_models()` 延 composition | [详情](plan/P18-3-provider-account.md) |
+| P18-4 | 🟢 | CredentialPool / Lease | acquire/release、并发准入、幂等回收 | [详情](plan/P18-4-credential-lease.md) |
+| P18-5 | 🟢 | ErrorClassifier / Health | scope-aware 分类、cooldown、circuit breaker | [详情](plan/P18-5-error-health.md) |
+| P18-6 | 🟢 | RoutingPolicy Chain | capability/tenant/health 过滤、priority/weight/fill-first | [详情](plan/P18-6-routing-policy.md) |
 | P18-7 | 🟢 | Session Affinity / Binding | 粘性、rebind、revision/ownership epoch | [详情](plan/P18-7-session-affinity.md) |
-| P18-8 | 🟡 | Usage / Cost Ledger | tenant/account/session/agent 多维账本 | [详情](plan/P18-8-usage-cost-ledger.md) |
-| P18-9 | 🟠 | Tenant Policy / RBAC | 核心 enforcement 已接入；专项并发/恶意 pool 回归待补 | [详情](plan/P18-9-tenant-policy.md) |
+| P18-8 | 🟢 | Usage / Cost Ledger | tenant/account/session/agent 多维账本 | [详情](plan/P18-8-usage-cost-ledger.md) |
+| P18-9 | 🟢 | Tenant Policy / RBAC | deny-first 五类入口 + 并发压力回归；app-service 恶意 pool 待 `LeaseGuard::acquired` | [详情](plan/P18-9-tenant-policy.md) |
 | P18-10 | 🟢 | ClientAdapter Framework | adapter/factory、capability snapshot、Session Registry | [详情](plan/P18-10-client-adapter-framework.md) |
-| P18-11 | 🟠 | Codex App-Server Adapter | 官方协议基线骨架已落地；Adapter 本体待实现 | [详情](plan/P18-11-codex-app-server.md) |
-| P18-12 | 🟠 | Claude Gateway Adapter | 独立 crate 已验证；workspace/宿主接线待完成 | [详情](plan/P18-12-claude-gateway.md) |
-| P18-13 | 🟠 | Canonical Audit / OTel | canonical store/export 与部分控制面桥接已实现 | [详情](plan/P18-13-audit-otel.md) |
-| P18-14 | 🟠 | Provider Registry / Pool Reconciliation | registry/原子热切换已实现；reconciler/生产装配待完成 | [详情](plan/P18-14-pool-reconciliation.md) |
-| P18-15 | 🟡 | Control Plane Contract Gate | property/concurrency/golden/migration/isolation/chaos | [详情](plan/P18-15-control-plane-gate.md) |
+| P18-11 | 🟢 | Codex App-Server Adapter | Thread/Turn/Item + versioned goldens；根 workspace member；无 `pawork` stdio | [详情](plan/P18-11-codex-app-server.md) |
+| P18-12 | 🟢 | Claude Gateway Adapter | 共享 identity 契约 + app-service 宿主 seam；`pawork` CLI stdio 入口延期 | [详情](plan/P18-12-claude-gateway.md) |
+| P18-13 | 🟢 | Canonical Audit / OTel | `AuditEventV1` + allowlist exporter；`LeaseRebound` 生产发射待 binding 消费 | [详情](plan/P18-13-audit-otel.md) |
+| P18-14 | 🟢 | Provider Registry / Pool Reconciliation | 库层 reconciler/probe/quota targets；生产 composition 延期 | [详情](plan/P18-14-pool-reconciliation.md) |
+| P18-15 | 🟢 | Control Plane Contract Gate | `scripts/p18-gate.sh` 隔离 L2（property/concurrency/golden/migration/isolation） | [详情](plan/P18-15-control-plane-gate.md) |
 
 ### Phase 19：Desktop GUI（GPUI）
 

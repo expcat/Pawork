@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "session/set_model",
+  "params": {
+    "sessionId": "acp-golden-session",
+    "modelId": "custom-model"
+  }
+}
