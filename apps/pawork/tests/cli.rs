@@ -15,7 +15,10 @@ use usage_ledger::UsageLedger as _;
 
 #[test]
 fn doctor_returns_stable_json() {
+    let dir = tempfile::tempdir().expect("tempdir");
     let output = cargo_bin_cmd!("pawork")
+        .env("PAWORK_DATA_DIR", dir.path())
+        .args(["--instance", "p17-14-doctor"])
         .args(["--json", "doctor"])
         .assert()
         .success()
@@ -30,7 +33,10 @@ fn doctor_returns_stable_json() {
 
 #[test]
 fn serve_once_starts_the_same_process_core_host() {
+    let dir = tempfile::tempdir().expect("tempdir");
     let output = cargo_bin_cmd!("pawork")
+        .env("PAWORK_DATA_DIR", dir.path())
+        .args(["--instance", "p17-14-serve-once"])
         .args(["serve", "--once"])
         .assert()
         .success()
@@ -38,7 +44,7 @@ fn serve_once_starts_the_same_process_core_host() {
         .stdout
         .clone();
     let output = String::from_utf8(output).expect("UTF-8 output");
-    assert!(output.contains("Pawork Core instance 'default' is ready"));
+    assert!(output.contains("Pawork Core instance 'p17-14-serve-once' is ready"));
 }
 
 /// P18-8 跨进程 CLI 定向测试：另一个进程写入同一 SQLite 账本后，新启动的
@@ -276,4 +282,37 @@ async fn two_independent_processes_run_same_ledger_cumulative_without_loss() {
     let used = &read["snapshot"]["values"]["used"];
     assert_eq!(used["kind"], "exact", "跨进程聚合必须来自账本：{value}");
     assert_eq!(used["value"], 300, "两进程 run 后累计用量：{value}");
+}
+
+/// P17-14 进程级回归：占位命令（plugin / mcp / import-pi）必须 fail-closed，
+/// 不得“假成功”——退出码非 0，且 --json 输出 ok=false、
+/// data.error == "not_implemented"。表驱动逐用例断言真实进程行为。
+#[test]
+fn placeholder_commands_fail_closed_with_json_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cases: &[(&[&str], &str)] = &[
+        (&["--json", "plugin", "list"], "plugin"),
+        (&["--json", "mcp", "doctor"], "mcp"),
+        (
+            &["--json", "import-pi", "/tmp/pawork-p17-14-placeholder.json"],
+            "import-pi",
+        ),
+    ];
+    for (args, kind) in cases {
+        let assert = cargo_bin_cmd!("pawork")
+            .env("PAWORK_DATA_DIR", dir.path())
+            .args(["--instance", "p17-14-placeholder"])
+            .args(*args)
+            .assert()
+            .failure();
+        let output = assert.get_output();
+        assert_eq!(output.status.code(), Some(1), "{kind} must exit non-zero");
+        let stdout = String::from_utf8(output.stdout.clone()).expect("UTF-8 stdout");
+        // tracing 已固定写 stderr，--json 的 stdout 只承载协议帧：把完整
+        // stdout 当作单个 JSON 文档直接解析，锁定 stdout 纯 JSON 契约。
+        let value: serde_json::Value = serde_json::from_str(&stdout).expect("parse {kind} JSON");
+        assert_eq!(value["ok"], false, "{kind} must not report success");
+        assert_eq!(value["kind"], *kind);
+        assert_eq!(value["data"]["error"], "not_implemented");
+    }
 }

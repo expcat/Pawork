@@ -1,6 +1,7 @@
 # P17-10：Browser / Computer Runtime（可替换后端）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟢已验收 · 交付成熟度：Target-Verified · 依赖：P0-5、P3-4、P4-9、P11-1（协调 P15-1）
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（LibraryBuilt） · 交付成熟度：LibraryBuilt（历史代码交付≠产品验收） · 依赖：P0-5、P3-4、P4-9、P11-1（协调 P15-1）
+> Remediation：Browser library（library 层 + mock 后端已建）；真实浏览器后端与宿主导入未接线。
 
 **最终目的**：为 Agent 提供统一的 Browser / Computer 使用运行时，以 `BrowserComputerCapability` facade 收敛——背后是可替换的执行后端（local 浏览器 / Playwright / MCP browser server / provider-hosted computer use），但**每个后端必须映射到 P15-1 的三执行位点之一**，不允许把不同 trust boundary 的后端混入同一个本地 `AgentTool::execute()` 路径。所有操作选择都经 `policy-engine` 审批与审计；只有 Core-owned 的 local / Playwright / 本地 MCP 进程由 `sandbox-runtime` 隔离执行，ProviderHosted / ProviderExtension 从不伪称经过本地沙箱。Agent Engine 不因后端不同走 Provider 名分支（[ADR-002](../docs/adr/ADR-002-agent-engine-provider-decoupled.md)/[031](../docs/adr/ADR-031-sandbox-backend-architecture.md)）。
 

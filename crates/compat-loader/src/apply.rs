@@ -1,6 +1,6 @@
-//! 加载编排：scan（只读探测 + 解析 + 映射）→ dry-run 预览 → 显式幂等 apply。
+//! 加载编排：scan（只读探测 + 解析 + 映射）→ dry-run 预览 → 显式幂等 export_plan。
 //!
-//! apply 只把 canonical 计划写入调用方指定的输出目录，绝不执行 hook / MCP /
+//! export_plan 只把 canonical 计划写入调用方指定的输出目录，绝不执行 hook / MCP /
 //! script，绝不改写外部源文件。凭据只以 reference 形式出现在计划中。
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,25 +18,25 @@ use crate::model::{CompatIssue, CompatPlan, CredentialReference, ImportStatus};
 use crate::parse::{parse_content, ParseOutcome};
 use crate::source::GlobalSource;
 
-/// apply 写入的计划文件名。
+/// export_plan 写入的计划文件名。
 pub const PLAN_FILE_NAME: &str = "compat-import.json";
-/// apply 写入的幂等指纹文件名。
+/// export_plan 写入的幂等指纹文件名。
 pub const FINGERPRINT_FILE_NAME: &str = ".compat-import-fingerprint";
 
 /// 指纹格式版本：纳入指纹后，映射格式演进或序列化方式变化都能使旧指纹失效，
 /// 避免误命中 noop。
 const FINGERPRINT_FORMAT_VERSION: u64 = 1;
 
-/// apply 结果：首次写入或指纹命中后的 noop。
+/// export_plan 结果：首次写入或指纹命中后的 noop。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApplyOutcome {
-    Applied,
+pub enum ExportOutcome {
+    Exported,
     Noop,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ApplyReport {
-    pub outcome: ApplyOutcome,
+pub struct ExportReport {
+    pub outcome: ExportOutcome,
     pub items: usize,
     pub bytes_written: u64,
     pub plan_path: PathBuf,
@@ -136,11 +136,15 @@ impl CompatLoader {
         plan.preview()
     }
 
-    /// 显式幂等 apply：把计划写入 output_dir；相同输入指纹重复调用直接 noop。
+    /// 显式幂等 export_plan：把计划写入 output_dir；相同输入指纹重复调用直接 noop。
     /// 拒绝输出目录 / 目标文件为 symlink（防 symlink 逃逸），通过 tmp + rename
     /// 原子写入，noop 时同时校验计划文件的内容身份。不执行 hook / MCP / script，
     /// 不改写任何外部源文件。
-    pub fn apply(&self, plan: &CompatPlan, output_dir: &Path) -> Result<ApplyReport, CompatError> {
+    pub fn export_plan(
+        &self,
+        plan: &CompatPlan,
+        output_dir: &Path,
+    ) -> Result<ExportReport, CompatError> {
         std::fs::create_dir_all(output_dir).map_err(|error| CompatError::io(output_dir, error))?;
         if is_symlink(output_dir) {
             return Err(CompatError::UnsafeTarget(
@@ -151,19 +155,19 @@ impl CompatLoader {
         let fingerprint_path = output_dir.join(FINGERPRINT_FILE_NAME);
         if is_symlink(&plan_path) || is_symlink(&fingerprint_path) {
             return Err(CompatError::UnsafeTarget(
-                "apply target must not be a symlink".to_string(),
+                "export target must not be a symlink".to_string(),
             ));
         }
         let payload = serde_json::to_vec_pretty(plan)
             .map_err(|error| CompatError::Invalid(format!("serialize plan: {error}")))?;
         // noop：指纹命中，且计划文件内容身份与当前序列化一致才跳过写入；
-        // 指纹一致但内容被篡改 / 陈旧时仍重写（Applied）。
+        // 指纹一致但内容被篡改 / 陈旧时仍重写（Exported）。
         let existing_fp = std::fs::read_to_string(&fingerprint_path).ok();
         if existing_fp.as_deref() == Some(plan.fingerprint.as_str()) && plan_path.is_file() {
             let on_disk = std::fs::read(&plan_path).unwrap_or_default();
             if on_disk.as_slice() == payload.as_slice() {
-                return Ok(ApplyReport {
-                    outcome: ApplyOutcome::Noop,
+                return Ok(ExportReport {
+                    outcome: ExportOutcome::Noop,
                     items: plan.items.len(),
                     bytes_written: 0,
                     plan_path,
@@ -172,8 +176,8 @@ impl CompatLoader {
         }
         atomic_write(&plan_path, &payload)?;
         atomic_write(&fingerprint_path, plan.fingerprint.as_bytes())?;
-        Ok(ApplyReport {
-            outcome: ApplyOutcome::Applied,
+        Ok(ExportReport {
+            outcome: ExportOutcome::Exported,
             items: plan.items.len(),
             bytes_written: payload.len() as u64,
             plan_path,
@@ -268,7 +272,7 @@ impl CompatPlan {
             })
         });
 
-        // 选择集属于 apply 身份的一部分；不同选择不能共享同一个幂等指纹。
+        // 选择集属于 export_plan 身份的一部分；不同选择不能共享同一个幂等指纹。
         // 使用长度前缀避免 `["ab", "c"]` 与 `["a", "bc"]` 之类的拼接歧义。
         let mut selected = self.fingerprint.as_bytes().to_vec();
         for item_id in item_ids {

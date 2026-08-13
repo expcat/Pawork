@@ -31,6 +31,8 @@
 - [ ] 通知不含 prompt/token/path 等敏感正文，deep link 拒绝伪造 scope/ID
 - [ ] 多窗口审批竞争与 presence 最终以 Core Event 为准
 - [ ] notification/deep-link/single-instance 只经 `DesktopPlatform`，三平台真实壳均有集成证据
+- [ ] remote 外部接入（P17-11 延期落点）：非 loopback 真实外部网络的 publish/unpublish/revoke、endpoint/certificate/device identity、reauth、network handoff 与 offline banner 可用
+- [ ] remote control 与 pairing（P17-12 延期落点）：移动受限控制（审批/通知/启动/取消）与配对绑定可管理可撤销，完整权限操作显式拒绝并审计，凭证撤销即时生效
 
 **相关文档**：[GUI 连接](../docs/features/gui-connection.md) · [ADR-023](../docs/adr/ADR-023-one-core-many-guis.md) · [ADR-027](../docs/adr/ADR-027-local-remote-same-protocol.md) · [Desktop GUI](../docs/features/desktop-gui.md)
 

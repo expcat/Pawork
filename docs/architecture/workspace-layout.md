@@ -90,10 +90,10 @@ Pawork/
 | `subscription-hub` | Event Hub：全局序列（AtomicU64）+ ring buffer（默认 4096）+ 有界广播订阅 + earliest_available / current / replay | 依赖 core-api / agent-domain；P13-2 已交付 |
 | `snapshot-service` | 为 GUI 提供当前状态快照与重连恢复：从 app-service AggregateState 生成六类 section，snapshot_sequence 取 EventHub current() | 依赖 app-service / subscription-hub；P13-5 已交付 |
 | `client-auth` | GUI 客户端身份验证：token 文件生成/加载、constant-time 比较，实现 gui-protocol 的 ClientAuthenticator | 依赖 gui-protocol；auth-service 接入待后续；P13-4 已交付 |
-| `transport-api` | GuiTransportServer / Client / 帧抽象 | 独立 |
+| `transport-api` | GuiTransportServer / Client / 帧抽象 + 可替换远程 Adapter 契约（`RemoteGuiTransportProvider` / `RemoteGuiConnector` / `RemotePublishHandle` 等，单一来源） | 独立 |
 | `transport-local` | 本地 Transport（Unix Socket / Named Pipe），u32 LE 长度前缀分帧（与 gui-protocol 一致，有界帧校验） | 依赖 transport-api；P13-4 已交付 |
 | `transport-memory` | 进程内 Transport（测试用）：内存 channel 对，locality InProcess | 依赖 transport-api；P13-4 已交付 |
-| `transport-remote-placeholder` | 远程 Transport 可替换 Adapter 占位：`RemoteGuiTransportProvider`（publish/unpublish/描述）与 `RemoteGuiConnector`（connect）+ `MockRemoteTransport`（loopback，locality Remote，端点 `TransportEndpoint::Remote`）；不含真实内网穿透（P17-11 承接） | 依赖 transport-api；P13-6 已交付 |
+| `transport-remote-placeholder` | 远程 Transport Mock / 测试支持：re-export transport-api 契约 + `MockRemoteTransport`（loopback，locality Remote，端点 `TransportEndpoint::Remote`）；契约定义归 transport-api，不进入生产依赖 | 依赖 transport-api；P13-6 / P17-14 |
 | `diagnostics` | 诊断包、脱敏日志、metrics | 横切 |
 | `test-support` | Mock Provider / Mock Tool、测试工具 | 仅测试依赖 |
 | `schema-typegen` | 从 core-api / gui-protocol 生成并校验 `.d.ts` | 仅构建工具依赖 core-api / gui-protocol，不进入运行时 |
@@ -109,24 +109,24 @@ Pawork/
 | `protected-blob-store` | 受保护敏感制品（reasoning 凭证等）加密落盘：encrypted-at-rest、Provider/Session 作用域、retention、引用计数 GC、完整性校验 | 依赖 `agent-domain`；与 `artifact-store`（非加密）平级、共享存储底层但不混用安全语义；ADR-032 |
 | `user-hooks` | 用户声明式事件钩子（Command/Http/PromptTransform/PromptEval/AgentEval/McpTool） | 依赖 `agent-domain` / `provider-api` / `mcp-client`；与 `hook-runtime` 并列；P17-1 已落地 |
 | `plugin-package` | Plugin Package 聚合格式（Skills/Agents/Hooks/MCP/LSP/Monitors） | 依赖 `agent-domain` / `resource-loader`；P17-2 已落地 |
-| `marketplace` | 扩展市场：发现/安装/更新/卸载/签名/trust/team-policy | 依赖 `plugin-package` / `http-runtime`；P17-3 已落地（真实 monitor 宿主接线仍属 P16-10 ①） |
-| `lsp-runtime` | LSP **Client** Runtime：启动/管理/调用现有 Language Server | 依赖 `agent-domain` / `process-runtime` / `sandbox-runtime`；P17-4 已落地 |
+| `marketplace` | 扩展市场：发现/安装/更新/卸载/签名/trust/team-policy | 依赖 `plugin-package`（不依赖 http-runtime）；P17-3 已落地为 scaffold/library（`InMemorySourceIo` / `RecordingHost`，无 pawork 生产装配）；纵向 local source + 一种资源延 P19-11 |
+| `lsp-runtime` | LSP **Client** Runtime：启动/管理/调用现有 Language Server | 依赖 `agent-domain` / `process-runtime` / `sandbox-runtime`；P17-4 已落地（无 pawork 生产装配，当前唯一工作区消费者为 P17-9 IDE adapter） |
 | `teams` | Agent Teams / peer messaging / shared task board | 依赖 `agent-domain` / `orchestration`；P17-6 已落地 |
 | `client-adapter-api` | 外部 Agent Client 的统一 adapter/factory、capability snapshot、Session Registry 契约 | 依赖 `agent-domain` / `core-api`；P18-10 已作为 P17-7 前置落地，不把 Phase 18 计为完成 |
 | `acp-host` | 公共 Agent Client Protocol adapter 与协议宿主 | 依赖 `client-adapter-api` / `core-api` / `app-service` / `agent-events` / `subscription-hub`（连接 pawork Host）；P17-7 已落地 |
 | `agent-sdk` | Rust client SDK + Headless JSON 协议接入 | 依赖公开 schema/framing（不依赖 `core-runtime`）；P17-8 已落地 |
 | `headless-json` | Headless NDJSON 协议编解码（`pawork headless --json-stdio`） | 依赖 `core-api`；与 `agent-sdk` 并列；P17-8 已落地 |
 | `ide-host-adapter` | IDE 生命周期/诊断/交互桥接 + 可选 LSP Server 输出 | 依赖 `agent-sdk` / `core-api`；与 `gui-server` 平级；P17-9 已落地 |
-| `browser-computer-runtime` | Browser/Computer 能力 facade（Local/MCP/ProviderHosted 三执行位点） | 依赖 `tool-api` / `provider-api` / `sandbox-runtime`；P17-10 已落地 |
-| `transport-remote` | 真实远程 Transport（替代 placeholder） | 依赖 `transport-api`；P17-11 已落地 |
+| `browser-computer-runtime` | Browser/Computer 能力 facade（Local/MCP/ProviderHosted 三执行位点；Local/Playwright 默认 Stub，安全不变量保留） | 依赖 `tool-api` / `provider-api` / `sandbox-runtime`；P17-10 已落地（无 pawork 生产装配） |
+| `transport-remote` | 真实远程 Transport：TCP + TLS 1.3、端点 token 认证、有界续传与 revoke | 依赖 `transport-api`；P17-11 已落地；当前仅绑定 127.0.0.1 loopback，publish 长驻至 SIGINT；外部可达 / relay 延 P19-14 |
 | `remote-control-adapter` | Mobile / 远程控制受限通道 | 依赖 `transport-api` / `core-api`；P17-12 已落地 |
-| `compat-loader` | Claude/Codex/Grok/Cursor/Pi 配置兼容导入（只读） | 依赖 `agent-domain` / `resource-loader`；P17-13 已落地 |
+| `compat-loader` | Claude/Codex/Grok/Cursor/Pi 配置兼容导入（只读；`export_plan` 只写 canonical 计划，不应用资源） | 依赖 `agent-domain` / `resource-loader`；P17-13 已落地（无 pawork 生产装配；真实应用延 P19-11） |
 
 #### 尚未实现（Phase 18–19 规划）
 
 | crate | 职责 | 依赖方向备注 |
 | --- | --- | --- |
-| `http-runtime` | 通用 HTTP client、超时、代理、header、trace、取消、重试；供 Provider、Hooks、Marketplace、Forge 等复用 | 从 `provider-runtime::http` 抽离；不得依赖具体 Provider；P2-1 后续收敛 |
+| `http-runtime` | 通用 HTTP client、超时、代理、header、trace、取消、重试；供 Provider、Hooks、Forge 等复用（Marketplace 当前不依赖 http-runtime） | 从 `provider-runtime::http` 抽离；不得依赖具体 Provider；P2-1 后续收敛 |
 | `client-codex-app-server` | Codex App Server Thread/Turn/Item/approval/subagent adapter | 依赖 `client-adapter-api` / `app-service`；P18-11 |
 | `client-claude-gateway` | Claude Gateway session/agent identity、Messages stream 与审计归属 adapter | 依赖 `client-adapter-api` / `app-service`；P18-12 |
 
@@ -180,9 +180,11 @@ cli-host
   ├── cli-command / cli-renderer
   └── gui-server
          ↑
-      transport-api
+      transport-api（含可替换远程 Adapter 契约）
         ├── transport-local
-        └── transport-remote-placeholder
+        └── transport-remote（P17-11，TLS loopback）
+
+   （transport-remote-placeholder：仅 re-export + Mock 测试支持，不进入生产依赖）
 
 gui-client ↑ GPUI Desktop（独立进程）
 ```

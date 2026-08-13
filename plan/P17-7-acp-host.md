@@ -1,6 +1,6 @@
 # P17-7：ACP Host（Agent Client Protocol 适配宿主）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（Built + L1；occupancy 释放回归已补，独立 occupancy 审查卡住未给出裁决，故未标已验收） · 交付成熟度：Built · 依赖：P0-8、P13-1、P18-10
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（HostWired） · 交付成熟度：HostWired（历史代码交付≠产品验收） · 依赖：P0-8、P13-1、P18-10
 
 **最终目的**：在 `core-api` 之上新增一个可替换的 Host Adapter——ACP（Agent Client Protocol）Host，使外部 ACP 客户端能通过标准 Agent 客户端协议接入 Pawork Core。ACP Host 只做协议翻译：把 ACP 的 session/task/message/tool/event 映射到 `core-api` 的 `AppCommand`/`AppQuery`/`AppEvent`，不承载业务逻辑，也不取代 GUI Connection Protocol——GUI 仍只经 GUI Connection Protocol 接入，ACP 是另一条面向生态互操作的可选接入通道（[ADR-030](../docs/adr/ADR-030-core-sole-source-of-truth.md)）。
 

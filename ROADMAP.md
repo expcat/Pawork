@@ -37,14 +37,14 @@
 | 14 | 模型用量与额度监控 | 10 | 10 | 🟢已完成（P14-1/2/4～P14-10 TargetVerified；P14-3 已归档） |
  | 15 | Provider Native Capabilities | 10 | 10 | 🟢已完成（P15-1/5/9 plain TargetVerified；P15-2/3/4/7/8 TargetVerified 有界 host composition deferred；P15-6 TargetVerified 有界 default-off/no consumer；P15-10 review-remediation 已完成；P15-9 集中门禁 contract/golden/fuzz/兼容性在独立 target 下全绿） |
 | 16 | Modern Agent Workflow | 10 | 10 | 🟢已完成（**有界**：library/core 领域 reducer、纯算法、Process 后台执行与 canonical event 包装已交付并各自定向验证；**生产闭环延期**——host/core-api/EventHub 接线、Plan/Goal 控制闭环、真实 EmbeddingProvider/SQLite、Forge UI、compat 命令入口与 Monitor 包驱动均未接主流程，按 [P16-10](plan/P16-10-review-remediation.md) 登记到 P17/P19 既有任务验收，不声称生产已装配） |
-| 17 | Ecosystem & Host Compatibility | 13 | 13 | 🟢已完成（Built + L1；Host 簇 L2 已通过，部分任务未标已验收） |
+| 17 | Ecosystem & Host Compatibility | 14 | 14 | 🟢已完成（成熟度矩阵：HostWired P17-1/7/8；PartialWired P17-5/11；LibraryBuilt P17-2/3/4/6/10/13；AdapterBuilt P17-9/12；P17-14 TargetVerified） |
 | 18 | Account Control Plane & Client Adapters | 15 | 0 | 🟡未开始 |
 | 19 | Desktop GUI | 16 | 0 | 🟡未开始 |
- | **合计** | — | **219** | **188** | — |
+ | **合计** | — | **220** | **189** | — |
 
 > 计数口径：任务数与已完成数均包含 ⚪（归档/推迟）任务；**机械求和只反映任务条目数，不代表生产闭环完成度**。
 >
-> 逐 Phase 行机械求和现为 **219 项任务、175 项完成**。P16-10 新增使任务数与完成数各 +1，Phase 16 现为 10/10；该 10/10 是**有界**计数（library/core 领域与算法已交付、各自定向验证；正式链编译闭包已随 [P16-10](plan/P16-10-review-remediation.md) 修复并纳入 `scripts/p16-gate.sh`），**生产闭环（host/core-api/EventHub 接线与 GUI 消费）明确延期**，落地任务见 [Phase 16 延期落点登记](plan/README.md)。完成数不等于 Production Ready：历史 🟢 只代表既有完成/验证记录，是否已接主流程以源码、运行证据与该登记为准。
+> 逐 Phase 行机械求和现为 **220 项任务、189 项完成**。Phase 17 现为 14/14：P17-1～13 在表内以成熟度文本（HostWired / PartialWired / LibraryBuilt / AdapterBuilt）替代统一绿，仍按历史代码交付计完成，P17-14 为 🟢 TargetVerified。成熟度文本 ≠ 产品验收，成熟度矩阵见 Phase 17 行。完成数不等于 Production Ready：历史 🟢 只代表既有完成/验证记录，是否已接主流程以源码、运行证据与 [p17-review](docs/review/p17-review.md) 修复记录为准。
 >
 > Phase 0 与 Phase 1 已有历史本地构建、测试和 Clippy 记录；自本次规划起不再把「每个 Phase 重跑 workspace 全量门禁」作为任务完成前提。三平台 GitHub Actions 仍按 `workflow_dispatch` 手动触发，其远程结果不计入本地完成状态。
 
@@ -52,7 +52,7 @@
 
 > ✅ **Phase 16 Modern Agent Workflow 有界完成（P16-1～P16-10）——library/core 完成、生产闭环延期**：交付 7 个新 crate 的领域 reducer / 纯算法 / Process 后台执行（经 Sandbox backend）/ canonical `AgentEvent` 7 变体包装，以及 `session-store` 兼容导入解析与 append-only。[P16-10](plan/P16-10-review-remediation.md) 在 library 层进一步收敛：补齐 `agent-engine::recovery` / `app-service::supervisor` 对 7 个新事件变体的穷举处理（恢复 `cargo check -p app-service`）、让 Goal criterion 满足位 / Memory embedding·confidence / Review finding 富字段与 fingerprint 进 canonical event 可重放、compat 改单事务原子导入 + session-scoped ID，并提供可复跑的 `scripts/p16-gate.sh`（覆盖正式链）。**但 [p16-review](docs/review/p16-review.md) 判定这不构成「可审阅 Plan / 持久 Goal / 后台任务 / 自动化与长期记忆的最小闭环」——以下生产宿主接线项明确延期、不声称已装配**：① monitor 包驱动 → [P17-2](plan/P17-2-plugin-package-format.md)/[P17-3](plan/P17-3-plugin-marketplace.md)；② Plan/Goal host → [P19-12](plan/P19-12-workflow-control.md)；③ workflow core-api/EventHub → [P17-6](plan/P17-6-agent-teams.md)；④ Memory provider/SQLite/context → [P17-5](plan/P17-5-agent-profile-v2.md)/[P19-2](plan/P19-2-client-state-projection.md)；⑤ Review Forge/UI → [P19-8](plan/P19-8-diff-git-review.md)；⑥ compat 命令入口 → [P17-8](plan/P17-8-agent-sdk.md)/[P19-2](plan/P19-2-client-state-projection.md)。落点明细见 [Phase 16 延期落点登记](plan/README.md)。架构红线（canonical 依赖方向、Plan 无写权、Process 统一 Sandbox 所有权、Embedding 走 canonical trait、GUI 不直连、append-only 不改写既有事件）在 library 层守住；未跑 workspace 全量门禁（未命中升级条件）。详见各 [plan/P16-*](plan/) 文档与 [P16-10](plan/P16-10-review-remediation.md)。
  
-> ✅ **Phase 17 Ecosystem & Host Compatibility 有界完成（P17-1～P17-13，Built + L1；Host 簇 L2 PASS）**：13 项 crate/适配层已落地——User Hooks、Plugin Package/Marketplace、LSP Client Runtime、Agent Profile v2、Teams、ACP Host、Agent SDK/Headless、IDE Host Adapter、Browser/Computer Runtime、Real Remote Transport、Remote Control、Compatibility Loader。其中 P17-1/4/5/6/8/10/11 已验收或 TargetVerified；P17-2/3/7/9/12/13 保持 Built + L1（Marketplace 真实 monitor-service 宿主接线仍属 P16-10 ①；ACP occupancy 独立审查卡住未标已验收；[P17-12](plan/P17-12-mobile-remote-control.md) Host 簇隔离 L2 已通过）。不声称生产已全部验收。未跑 workspace 全量门禁。详见各 [plan/P17-*](plan/) 文档。
+> ✅ **Phase 17 Ecosystem & Host Compatibility 完成（仅 P17-14 TargetVerified）——成熟度矩阵（2026-08-13 review 校准）**：HostWired P17-1/7/8（Hooks/ACP/Headless-SDK 协议链路真实，但仍受正式 Provider 未装配限制）；PartialWired P17-5/11（Profile 仅消费部分字段；[P17-11](plan/P17-11-real-remote-transport.md) Remote 为 loopback publish 进程长驻 + 跨进程 connect/reconnect + SIGINT/token 清理，独立 unpublish/revoke 无共享控制面时 fail-closed，外部可达与控制面配对延期 [P19-14](plan/P19-14-multi-window-remote.md)）；LibraryBuilt P17-2/3/4/6/10/13（纯库/解析器，无 pawork 生产装配）；AdapterBuilt P17-9/12（adapter kit，仅 mock/contract 消费，mock/fixture 不等同产品能力）。P17-14 评审修复与成熟度校准已完成，另落地两项门禁衍生可靠性修复（RateLimiter `enqueue` 自动冲刷不丢、remote 认证同步 subscribe + carrier 顺序无关/压力 0 失败），修复与门禁证据见 [P17-14](plan/P17-14-review-remediation.md)。详见 [p17-review](docs/review/p17-review.md) 与各 [plan/P17-*](plan/) 文档。
 
 > 🎯 **下一推荐 Phase 18 Account Control Plane & Client Adapters**（P18-1～P18-9 基础轨，P18-11/12/15 仍待）：补齐 Tenant/Principal、ProviderAccount/Credential、Lease、路由与多维 Usage Ledger，供 quota 与 orchestration 生产接线。P18-10 Client Adapter 契约已作为 P17-7 前置落地，不把 Phase 18 计为完成。
 
@@ -537,23 +537,24 @@ Parent/Worker 编排，写入隔离，取消传播。
 
 ### Phase 17：Ecosystem & Host Compatibility
 
-补齐用户 Hook、Marketplace、LSP、Agent Profile/Teams 与公共 Host/SDK，并把浏览器、真实 Remote Transport 和远程控制作为可替换 Adapter 接入；不得绕过 Core 单一事实源或让 GUI 直连 Provider/Tool。**当前为有界交付**：13/13 已实现（Built + L1），部分任务已验收；Marketplace 真实 monitor 宿主接线、ACP 独立 occupancy 审查与 Host 簇 L2 完整结论见各 plan，不把整阶段标为已验收。
+补齐用户 Hook、Marketplace、LSP、Agent Profile/Teams 与公共 Host/SDK，并把浏览器、真实 Remote Transport 和远程控制作为可替换 Adapter 接入；不得绕过 Core 单一事实源或让 GUI 直连 Provider/Tool。**成熟度矩阵（2026-08-13 review 校准）**：HostWired P17-1/7/8；PartialWired P17-5/11；LibraryBuilt P17-2/3/4/6/10/13；AdapterBuilt P17-9/12。表内 P17-1～13 以成熟度文本替代统一绿，仍按历史代码交付计完成；成熟度文本 ≠ 产品验收，不把整阶段标为已验收；缺口与收敛顺序见 [p17-review](docs/review/p17-review.md) §3/§4/§7。P17-14（评审修复与成熟度校准）已完成（TargetVerified，详见 [plan](plan/P17-14-review-remediation.md)）。
 
 | ID | 状态 | 任务 | 简介 | 详情 |
 | --- | --- | --- | --- | --- |
-| P17-1 | 🟢 | User Hooks | Command/Http/PromptTransform/PromptEval/AgentEval/McpTool + 扩展 trigger | [详情](plan/P17-1-user-hooks.md) |
-| P17-2 | 🟢 | Plugin Package Format | Skills/Agents/Hooks/MCP/LSP/Monitors 统一包 | [详情](plan/P17-2-plugin-package-format.md) |
-| P17-3 | 🟢 | Plugin Marketplace / Registry | install/update/remove/trust/policy | [详情](plan/P17-3-plugin-marketplace.md) |
-| P17-4 | 🟢 | LSP Client Runtime | 启动/管理/调用现有 Language Server（Client，非 Server） | [详情](plan/P17-4-lsp-runtime.md) |
-| P17-5 | 🟢 | Agent Profile v2 | prompt/model/canonical-effort/tools/skills/MCP/permission/memory | [详情](plan/P17-5-agent-profile-v2.md) |
-| P17-6 | 🟢 | Agent Teams / Peer Messaging | shared task board/mailbox/presence | [详情](plan/P17-6-agent-teams.md) |
-| P17-7 | 🟢 | ACP Host | 公共 Agent Client Protocol adapter | [详情](plan/P17-7-acp-host.md) |
-| P17-8 | 🟢 | Rust / JSON Agent SDK | client/headless stable API；只连接 pawork Host | [详情](plan/P17-8-agent-sdk.md) |
-| P17-9 | 🟢 | IDE Host Adapter | 经 SDK/Headless 连 pawork Host；可选 LSP Server 输出 | [详情](plan/P17-9-ide-host-adapter.md) |
-| P17-10 | 🟢 | Browser / Computer Runtime | capability facade，服从三执行位点 | [详情](plan/P17-10-browser-computer-runtime.md) |
-| P17-11 | 🟢 | Real Remote Transport | 安全远程发布/连接/重连 | [详情](plan/P17-11-real-remote-transport.md) |
-| P17-12 | 🟢 | Mobile / Remote Control Protocol | 受限控制、审批与通知 | [详情](plan/P17-12-mobile-remote-control.md) |
-| P17-13 | 🟢 | Cross-Agent Compatibility Loader | Claude/Codex/Grok/Cursor/Pi 配置兼容 | [详情](plan/P17-13-compatibility-loader.md) |
+| P17-1 | HostWired | User Hooks | Command/Http/PromptTransform/PromptEval/AgentEval/McpTool + 扩展 trigger | [详情](plan/P17-1-user-hooks.md) |
+| P17-2 | LibraryBuilt | Plugin Package Format | Skills/Agents/Hooks/MCP/LSP/Monitors 统一包 | [详情](plan/P17-2-plugin-package-format.md) |
+| P17-3 | LibraryBuilt | Plugin Marketplace / Registry | install/update/remove/trust/policy | [详情](plan/P17-3-plugin-marketplace.md) |
+| P17-4 | LibraryBuilt | LSP Client Runtime | 启动/管理/调用现有 Language Server（Client，非 Server） | [详情](plan/P17-4-lsp-runtime.md) |
+| P17-5 | PartialWired | Agent Profile v2 | prompt/model/canonical-effort/tools/skills/MCP/permission/memory | [详情](plan/P17-5-agent-profile-v2.md) |
+| P17-6 | LibraryBuilt | Agent Teams / Peer Messaging | shared task board/mailbox/presence | [详情](plan/P17-6-agent-teams.md) |
+| P17-7 | HostWired | ACP Host | 公共 Agent Client Protocol adapter | [详情](plan/P17-7-acp-host.md) |
+| P17-8 | HostWired | Rust / JSON Agent SDK | client/headless stable API；只连接 pawork Host | [详情](plan/P17-8-agent-sdk.md) |
+| P17-9 | AdapterBuilt | IDE Host Adapter | 经 SDK/Headless 连 pawork Host；可选 LSP Server 输出 | [详情](plan/P17-9-ide-host-adapter.md) |
+| P17-10 | LibraryBuilt | Browser / Computer Runtime | capability facade，服从三执行位点 | [详情](plan/P17-10-browser-computer-runtime.md) |
+| P17-11 | PartialWired | Real Remote Transport | loopback publish 进程长驻 + 跨进程 connect/reconnect + SIGINT/token 清理；独立 unpublish/revoke 无共享控制面时 fail-closed；外部可达/控制面延期 P19-14 | [详情](plan/P17-11-real-remote-transport.md) |
+| P17-12 | AdapterBuilt | Mobile / Remote Control Protocol | 受限控制、审批与通知 | [详情](plan/P17-12-mobile-remote-control.md) |
+| P17-13 | LibraryBuilt | Cross-Agent Compatibility Loader | Claude/Codex/Grok/Cursor/Pi 配置兼容 | [详情](plan/P17-13-compatibility-loader.md) |
+| P17-14 | 🟢 | 评审修复与成熟度校准（review-remediation） | 成熟度矩阵校准、P0/P1 修复（remote 生命周期 / fail-closed / token 清理）与定向门禁 TargetVerified | [详情](plan/P17-14-review-remediation.md) |
 
 ### Phase 18：Account Control Plane & Client Adapters
 

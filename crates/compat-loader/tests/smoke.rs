@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use compat_loader::{
-    ApplyOutcome, CompatLimits, CompatLoader, ExternalSource, GlobalSource, ImportCategory,
+    CompatLimits, CompatLoader, ExportOutcome, ExternalSource, GlobalSource, ImportCategory,
     ImportStatus,
 };
 
@@ -178,20 +178,22 @@ fn conflict_prefers_higher_tier_and_diagnoses_loser() {
 }
 
 #[test]
-fn apply_is_explicit_idempotent_and_never_rewrites_sources() {
+fn export_plan_is_explicit_idempotent_and_never_rewrites_sources() {
     let plan = scan_fixtures();
     let marker = fixture_root().join("CLAUDE.md");
     let before = std::fs::read_to_string(&marker).expect("read marker before");
     let temp = tempfile::tempdir().expect("tempdir");
     let output_dir = temp.path().join("out");
     let loader = CompatLoader::default();
-    let first = loader.apply(&plan, &output_dir).expect("apply");
-    assert_eq!(first.outcome, ApplyOutcome::Applied);
+    let first = loader.export_plan(&plan, &output_dir).expect("export_plan");
+    assert_eq!(first.outcome, ExportOutcome::Exported);
     assert!(first.bytes_written > 0);
     assert!(output_dir.join("compat-import.json").is_file());
     assert!(output_dir.join(".compat-import-fingerprint").is_file());
-    let second = loader.apply(&plan, &output_dir).expect("apply again");
-    assert_eq!(second.outcome, ApplyOutcome::Noop);
+    let second = loader
+        .export_plan(&plan, &output_dir)
+        .expect("export_plan again");
+    assert_eq!(second.outcome, ExportOutcome::Noop);
     assert_eq!(second.bytes_written, 0);
     let after = std::fs::read_to_string(&marker).expect("read marker after");
     assert_eq!(before, after);
@@ -387,7 +389,7 @@ fn total_budget_hard_truncates_detection() {
 }
 
 #[test]
-fn different_selects_apply_separately_and_noop_checks_identity() {
+fn different_selects_export_separately_and_noop_checks_identity() {
     let plan = scan_fixtures();
     let temp = tempfile::tempdir().expect("tempdir");
     let output_dir = temp.path().join("out");
@@ -399,31 +401,41 @@ fn different_selects_apply_separately_and_noop_checks_identity() {
     let plan_b = plan.select(&select_b);
     assert_ne!(plan_a.fingerprint, plan_b.fingerprint);
 
-    // 不同选择互不为 noop：先写 a，再写 b 必须是 Applied（身份不同）。
-    let applied_a = loader.apply(&plan_a, &output_dir).expect("apply a");
-    assert_eq!(applied_a.outcome, ApplyOutcome::Applied);
-    let applied_b = loader.apply(&plan_b, &output_dir).expect("apply b");
+    // 不同选择互不为 noop：先写 a，再写 b 必须是 Exported（身份不同）。
+    let exported_a = loader
+        .export_plan(&plan_a, &output_dir)
+        .expect("export_plan a");
+    assert_eq!(exported_a.outcome, ExportOutcome::Exported);
+    let exported_b = loader
+        .export_plan(&plan_b, &output_dir)
+        .expect("export_plan b");
     assert_eq!(
-        applied_b.outcome,
-        ApplyOutcome::Applied,
+        exported_b.outcome,
+        ExportOutcome::Exported,
         "different select must not be treated as noop"
     );
     // 相同计划 + 内容身份一致才 noop。
-    let noop_b = loader.apply(&plan_b, &output_dir).expect("apply b again");
-    assert_eq!(noop_b.outcome, ApplyOutcome::Noop);
-    // 指纹仍为 a，但磁盘上是 b：再 apply a 必须重写（noop 仅在内容身份一致时成立）。
-    let reapplied_a = loader.apply(&plan_a, &output_dir).expect("apply a again");
-    assert_eq!(reapplied_a.outcome, ApplyOutcome::Applied);
+    let noop_b = loader
+        .export_plan(&plan_b, &output_dir)
+        .expect("export_plan b again");
+    assert_eq!(noop_b.outcome, ExportOutcome::Noop);
+    // 指纹仍为 a，但磁盘上是 b：再 export_plan a 必须重写（noop 仅在内容身份一致时成立）。
+    let reexported_a = loader
+        .export_plan(&plan_a, &output_dir)
+        .expect("export_plan a again");
+    assert_eq!(reexported_a.outcome, ExportOutcome::Exported);
 
     // 篡改计划文件但保留指纹：noop 必须因内容身份不符而重写。
     let plan_path = output_dir.join("compat-import.json");
     let before = std::fs::read(&plan_path).expect("read plan");
     let last = before.last().copied().unwrap_or(b'}');
     std::fs::write(&plan_path, b"tampered-by-test").expect("tamper plan");
-    let repaired = loader.apply(&plan_a, &output_dir).expect("repair apply");
+    let repaired = loader
+        .export_plan(&plan_a, &output_dir)
+        .expect("repair export_plan");
     assert_eq!(
         repaired.outcome,
-        ApplyOutcome::Applied,
+        ExportOutcome::Exported,
         "content identity mismatch must trigger rewrite, not noop"
     );
     let after = std::fs::read(&plan_path).expect("read repaired plan");

@@ -47,9 +47,7 @@ use core_api::{
 use serde_json::Value;
 use session_store::{SessionStore, SqliteClientSessionRegistryStore};
 use subscription_hub::{EventHub, HubError};
-use transport_remote_placeholder::{
-    RemoteGuiTransportProvider, RemotePublishRequest, TransportEndpoint,
-};
+use transport_api::{RemoteGuiTransportProvider, RemotePublishRequest, TransportEndpoint};
 
 mod acp;
 mod headless;
@@ -98,6 +96,15 @@ pub struct CliHost {
     session_store: Option<Arc<SessionStore>>,
     acp_registry: Option<Arc<SessionRegistry>>,
     next_command_id: AtomicU64,
+}
+
+/// SIGINT 收尾的 stdout / exit 契约（P17-14）：stdout 不再追加任何输出；
+/// 退出码仅由信号监听失败或清理失败决定（0 = 干净关闭）。
+fn remote_signal_outcome(signal_ok: bool, cleanup: &Result<(), String>) -> HostOutcome {
+    HostOutcome {
+        output: String::new(),
+        exit_code: i32::from(!signal_ok || cleanup.is_err()),
+    }
 }
 
 impl CliHost {
@@ -259,10 +266,8 @@ impl CliHost {
                                 "status": "published",
                             }),
                         };
-                        HostOutcome {
-                            output: render(&response, format),
-                            exit_code: 0,
-                        }
+                        self.hold_published_remote(&handle.id, response, format)
+                            .await
                     }
                     Err(error) => self.remote_failure("publish", &error.to_string(), format),
                 }
@@ -331,6 +336,56 @@ impl CliHost {
         HostOutcome {
             output: render(&response, format),
             exit_code: 1,
+        }
+    }
+
+    /// publish 成功后长驻到 Ctrl-C：listener / registry 由本进程持有。
+    /// 信号到达后先 close 宿主监听器，再 unpublish（删本进程创建的 endpoint token）。
+    /// `cfg(test)` 下立即返回，避免库级测试阻塞在信号上。
+    ///
+    /// stdout 契约（P17-14）：启动时 stdout 只输出一条 publish 响应；SIGINT
+    /// 之后不再向 stdout 追加任何非协议文本或第二个响应。清理失败信息只写
+    /// stderr 并以 1 退出；清理成功静默退出 0。
+    async fn hold_published_remote(
+        &self,
+        handle_id: &str,
+        published: ServiceResponse,
+        format: OutputFormat,
+    ) -> HostOutcome {
+        // cli-host 单测编译本 crate 时跳过长驻；pawork 二进制走真实 Ctrl-C 路径。
+        if cfg!(test) {
+            return HostOutcome {
+                output: render(&published, format),
+                exit_code: 0,
+            };
+        }
+        let published_text = render(&published, format);
+        println!("{published_text}");
+        let signal = tokio::signal::ctrl_c().await;
+        let cleanup = self.cleanup_remote_publish(handle_id).await;
+        let outcome = remote_signal_outcome(signal.is_ok(), &cleanup);
+        if let Err(error) = signal {
+            eprintln!("failed to listen for Ctrl-C: {error}");
+        }
+        if let Err(error) = cleanup {
+            eprintln!("{error}");
+        }
+        outcome
+    }
+
+    /// SIGINT 后清理本进程发布的远程端点：先 close 宿主监听器，再 unpublish
+    /// 端点（凭证失效、连接断开）。失败返回可读错误信息供 stderr 输出；
+    /// 不向 stdout 写任何内容。
+    async fn cleanup_remote_publish(&self, handle_id: &str) -> Result<(), String> {
+        if let Some(host) = &self.gui_server {
+            let _ = host.close_remote(handle_id);
+        }
+        match &self.remote_provider {
+            Some(provider) => provider
+                .unpublish(handle_id)
+                .await
+                .map_err(|error| format!("remote unpublish after signal failed: {error}")),
+            None => Err("remote unpublish after signal failed: provider detached".into()),
         }
     }
 
@@ -1580,9 +1635,8 @@ mod tests {
     use core_runtime::CoreRuntime;
     use std::sync::Mutex;
     use test_support::{MockProvider, MockScript};
-    use transport_remote_placeholder::{
-        ConnectOptions, MockRemoteConnector, MockRemoteTransportProvider, RemoteGuiConnector,
-    };
+    use transport_api::{ConnectOptions, RemoteGuiConnector};
+    use transport_remote_placeholder::{MockRemoteConnector, MockRemoteTransportProvider};
 
     /// 记录远程端点生命周期调用的假 GUI Server 宿主（P17-11 接线测试）。
     struct RecordingGuiHost {
@@ -1832,6 +1886,45 @@ mod tests {
                 .contains("unknown remote publish handle"),
             "output: {}",
             outcome.output
+        );
+    }
+
+    #[test]
+    fn remote_signal_outcome_never_emits_stdout_and_flags_failures() {
+        // 干净关闭：stdout 空、退出 0。
+        let clean = remote_signal_outcome(true, &Ok(()));
+        assert_eq!(clean.exit_code, 0);
+        assert!(clean.output.is_empty(), "output: {:?}", clean.output);
+        // 清理失败：stdout 仍为空（错误走 stderr）、退出 1。
+        let cleanup_failed = remote_signal_outcome(true, &Err("boom".into()));
+        assert_eq!(cleanup_failed.exit_code, 1);
+        assert!(
+            cleanup_failed.output.is_empty(),
+            "output: {:?}",
+            cleanup_failed.output
+        );
+        // 信号监听失败：stdout 空、退出 1。
+        let signal_failed = remote_signal_outcome(false, &Ok(()));
+        assert_eq!(signal_failed.exit_code, 1);
+        assert!(signal_failed.output.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cleanup_remote_publish_reports_unpublish_failure_for_stderr() {
+        let service = Arc::new(AppService::new("remote-cleanup-test"));
+        let mut host = CliHost::new(service);
+        host.attach_remote_provider(Arc::new(MockRemoteTransportProvider::default()));
+        let error = host
+            .cleanup_remote_publish("never-published")
+            .await
+            .expect_err("cleanup must fail for unknown handle");
+        assert!(
+            error.contains("remote unpublish after signal failed"),
+            "cleanup error: {error}"
+        );
+        assert!(
+            error.contains("unknown remote publish handle"),
+            "cleanup error: {error}"
         );
     }
 

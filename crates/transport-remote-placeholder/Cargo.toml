@@ -5,11 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Remote Transport 可替换 Adapter 占位 trait + Mock 实现（P13-6）"
+description = "Remote Transport 可替换 Adapter 的 Mock / 测试支持（契约见 transport-api；P13-6 / P17-14）"
 
 [dependencies]
 async-trait.workspace = true
-serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["sync"] }
 transport-api = { path = "../transport-api" }
 

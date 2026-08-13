@@ -1,6 +1,7 @@
 # P17-6：Agent Teams（智能体团队协作）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟢已验收 · 交付成熟度：Target-Verified · 依赖：P12-1~P12-6、P16-1、P16-2、P3-1、P1-4
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（LibraryBuilt） · 交付成熟度：LibraryBuilt（历史代码交付≠产品验收） · 依赖：P12-1~P12-6、P16-1、P16-2、P3-1、P1-4
+> Remediation：Teams 不挂持久库（协作状态内存态）；持久化/重放与 GUI ingress 落点见 P19-13。
 
 **最终目的**：在 [P12](P12-1-supervisor-worker.md) supervisor / worker 基础上实现 Agent Teams——多 Agent 组队的协作层：shared task board（共享任务板）、mailbox（异步消息投递）、presence（在线 / 忙 / 空闲状态）、worker 互联（worker 间直接通信）、plan approval（parent 审批子计划）。让一组 Agent 像团队一样协作完成复杂任务，**复用 P12 编排与 P16 plan**，不重写底层 run loop。
 

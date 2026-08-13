@@ -22,7 +22,7 @@
 | `snapshot-service` | 为 GUI 生成当前状态快照与重连恢复（Snapshot 重建或 Event Replay） |
 | `client-auth` | GUI 客户端身份验证 |
 | `gui-client` | 协议测试客户端与未来 GPUI Desktop 复用的 Rust 连接 SDK（握手/订阅/Snapshot/Resume/Artifact 分片读取/心跳），无 GUI 框架依赖 |
-| `transport-*` | 传输实现：`transport-local`（Unix Socket / Named Pipe）、`transport-memory`（测试）、`transport-remote-placeholder`（可替换远程 Adapter） |
+| `transport-*` | 传输实现：`transport-local`（Unix Socket / Named Pipe）、`transport-memory`（测试）、`transport-remote`（真实远程 Transport：TCP + TLS 1.3，当前仅 127.0.0.1 loopback）、`transport-remote-placeholder`（re-export + Mock 测试支持，生产不依赖）；远程契约归 `transport-api` |
 
 ## 数据模型
 
@@ -81,7 +81,7 @@ pub trait GuiTransportClient: Send + Sync {
 
 `TransportFrame` 只拥有一段有界字节；`ClientFrame` / `ServerFrame` 的 JSON 编解码、1 MiB 帧上限与 64 KiB Artifact chunk 上限由 `gui-protocol` 负责。由此 Transport 无需依赖业务协议类型，本地与远程实现只处理连接和字节搬运。
 
-Local Transport：macOS/Linux 使用 Unix Domain Socket，Windows 使用 Named Pipe。Remote Transport 通过 `RemoteGuiTransportProvider`（CLI 端发布）与 `RemoteGuiConnector`（GUI 端连接）暴露占位接口；后续内网穿透库负责节点发现、NAT 穿透、中继、P2P、连接加密、网络切换与底层重连，CLI/Core 与 GUI Protocol 不感知其内部实现。
+Local Transport：macOS/Linux 使用 Unix Domain Socket，Windows 使用 Named Pipe。Remote Transport 的可替换 Adapter 契约（`RemoteGuiTransportProvider` CLI 端发布 / `RemoteGuiConnector` GUI 端连接）定义在 `transport-api`（单一来源）；`transport-remote` 已实现 TCP + TLS 1.3、端点独立 token 认证与有界续传，但当前仅绑定 127.0.0.1 loopback 临时端口，`remote publish` 长驻至 SIGINT。外部可达地址（NAT 穿透 / relay）、网络切换与底层重连延 P19-14，CLI/Core 与 GUI Protocol 不感知其内部实现；`transport-remote-placeholder` 仅提供 re-export 与 `MockRemoteTransport` 测试支持，不进入生产依赖。
 
 ## CLI 必须支持
 

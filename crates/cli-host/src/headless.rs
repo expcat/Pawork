@@ -18,20 +18,20 @@
 
 use std::sync::Arc;
 
+use agent_domain::SessionId;
 use app_service::AppService;
 use async_trait::async_trait;
 use core_api::{
     ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope,
     AppResponse, CommandSource, API_VERSION,
 };
-use agent_domain::SessionId;
-use std::collections::BTreeSet;
 use headless_json::stdio::Handler;
 use headless_json::wire::{
     CompatHistoryEntry, CompatHistoryQuery, CompatImportReport, CompatImportRequest, CompatSource,
     HeadlessResponse, HelloRequest, ProtocolErrorKind, SdkCapability, TranslatedRequest,
 };
 use session_store::{ExternalSource, SessionStore};
+use std::collections::BTreeSet;
 use subscription_hub::{EventHub, HubError, HubSubscription};
 
 /// Host 支持的全部 SDK 能力（与 GUI Connection Protocol 的 capabilities 正交）。
@@ -238,13 +238,13 @@ impl Handler for HeadlessHandler {
 
     async fn handle(&mut self, request: TranslatedRequest) -> Vec<HeadlessResponse> {
         match request {
-           TranslatedRequest::Command(envelope) => {
-               if let Some(error) = self.gate_capability(
-                   command_capability(&envelope.command),
-                   Some(envelope.command_id.as_str().to_string()),
-               ) {
-                   return vec![error];
-               }
+            TranslatedRequest::Command(envelope) => {
+                if let Some(error) = self.gate_capability(
+                    command_capability(&envelope.command),
+                    Some(envelope.command_id.as_str().to_string()),
+                ) {
+                    return vec![error];
+                }
                 // P17-9 审查阻塞：SessionClientContextReplace 必须落在该连接已
                 // create/open 的 core session 上，阻止 SDK/headless 通道跨 session
                 // 写入他人上下文。GUI 不发送该命令；canonical adapter 路径由
@@ -1289,14 +1289,18 @@ mod tests {
         assert!(saw_backpressure, "explicit backpressure error observed");
         assert!(saw_event, "events resume after the lag error");
 
-       drop(input_tx); // EOF：运行循环正常结束。
-       task.await.expect("headless loop task").expect("loop ok");
-   }
+        drop(input_tx); // EOF：运行循环正常结束。
+        task.await.expect("headless loop task").expect("loop ok");
+    }
 
     #[tokio::test]
     async fn session_client_context_replace_rejects_cross_session_writes() {
         // P17-9 审查阻塞：SDK/headless 通道按连接标识 client，
         // SessionClientContextReplace 只能落在该连接已 create/open 的 session。
+        // 分两段：第一段创建 workspace/session，从真实 SessionCreate Data
+        // 响应提取 session_id（全局 ID 计数器同时服务 workspace/session，
+        // 不能硬编码）；第二段 open 该 session 重建连接级 ownership，
+        // 再断言 own write 放行、cross write 被拒绝。
         let host = plain_host("headless-ctx-ownership");
         let root = tempfile::tempdir().expect("tempdir");
         let root_path = root.path().display().to_string();
@@ -1306,9 +1310,9 @@ mod tests {
             open_documents: Vec::new(),
             diagnostics: Vec::new(),
         };
-        // 同一连接：hello → workspace add → session create → own context replace → cross context replace。
+        // 第一段：hello → workspace add → session create。
         let input = format!(
-            "{}\n{}\n{}\n{}\n{}\n",
+            "{}\n{}\n{}\n",
             hello_line(),
             command_line(AppCommand::WorkspaceAdd { root_path }, "cmd-ws"),
             command_line(
@@ -1318,17 +1322,49 @@ mod tests {
                 },
                 "cmd-sess",
             ),
+        );
+        let mut output = Vec::new();
+        host.headless_loop(BufReader::new(input.as_bytes()), &mut output)
+            .await
+            .expect("headless loop");
+        let frames = parse_frames(&output);
+        // hello_ack + workspace + session_create = 3。
+        assert_eq!(frames.len(), 3, "frames: {frames:?}");
+        // 从真实 SessionCreate Data 响应提取 session_id，不做任何 ID 假设。
+        let session_id = match &frames[2] {
+            HeadlessResponse::Response { envelope } => match &envelope.response {
+                AppResponse::Data(data) => data
+                    .get("session_id")
+                    .and_then(|value| value.as_str())
+                    .map(SessionId::from)
+                    .expect("session create Data must carry session_id"),
+                other => panic!("session create must return Data, got {other:?}"),
+            },
+            other => panic!("session create must return a Response frame, got {other:?}"),
+        };
+        // cross 目标使用明确不同于真实 session 的 ID。
+        let cross_id = SessionId::from(format!("{session_id}-other"));
+        // 第二段：hello → open 真实 session → own context replace → cross context replace。
+        let input = format!(
+            "{}\n{}\n{}\n{}\n",
+            hello_line(),
+            command_line(
+                AppCommand::SessionOpen {
+                    session_id: session_id.clone(),
+                },
+                "cmd-open",
+            ),
             command_line(
                 AppCommand::SessionClientContextReplace {
-                    session_id: SessionId::from("session-1"),
+                    session_id: session_id.clone(),
                     snapshot: snapshot.clone(),
                 },
                 "cmd-ctx-own",
             ),
             command_line(
                 AppCommand::SessionClientContextReplace {
-                    session_id: SessionId::from("session-9"),
-                    snapshot: snapshot.clone(),
+                    session_id: cross_id,
+                    snapshot,
                 },
                 "cmd-ctx-cross",
             ),
@@ -1338,16 +1374,22 @@ mod tests {
             .await
             .expect("headless loop");
         let frames = parse_frames(&output);
-        // hello_ack + workspace + session_create + own_ok + cross_rejected = 5。
-        assert_eq!(frames.len(), 5, "frames: {frames:?}");
+        // hello_ack + session_open + own_ok + cross_rejected = 4。
+        assert_eq!(frames.len(), 4, "frames: {frames:?}");
+        // open 建立连接级 ownership（Data 响应）。
+        assert!(
+            matches!(&frames[1], HeadlessResponse::Response { envelope } if matches!(envelope.response, AppResponse::Data(_))),
+            "session open must be allowed: {:?}",
+            frames[1]
+        );
         // own-session 写放行（Data 响应）。
         assert!(
-            matches!(&frames[3], HeadlessResponse::Response { envelope } if matches!(envelope.response, AppResponse::Data(_))),
+            matches!(&frames[2], HeadlessResponse::Response { envelope } if matches!(envelope.response, AppResponse::Data(_))),
             "own-session context replace must be allowed: {:?}",
-            frames[3]
+            frames[2]
         );
         // cross-session 写被连接级 ownership 拒绝，aggregate 不被触达。
-        match &frames[4] {
+        match &frames[3] {
             HeadlessResponse::Error {
                 kind: ProtocolErrorKind::CompatRejected,
                 ..

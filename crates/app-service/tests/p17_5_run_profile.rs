@@ -11,9 +11,10 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use agent_domain::{
-    ActorId, AgentProfileV2, CommandId, CoreInstanceId, ModelId, ProfileIsolation, ProfileMemory,
-    ProfileModel, ProfilePrompt, ProfileToolRules, ProviderId, ReasoningEffort, RunId, SessionId,
-    StopReason, TaskKind, TaskStatus, TokenUsage, ToolCallId, WorkspaceId,
+    ActorId, AgentProfileV2, CommandId, CoreInstanceId, ErrorCategory, ModelId, ProfileIsolation,
+    ProfileMemory, ProfileModel, ProfilePrompt, ProfileRef, ProfileToolRules, ProviderId,
+    ReasoningEffort, RunId, SessionId, StopReason, TaskKind, TaskStatus, TokenUsage, ToolCallId,
+    WorkspaceId,
 };
 use app_service::{
     CommandRouter, IsolationCapability, ProfileResolveError, ResolvedRunProfile, RouterConfig,
@@ -407,6 +408,108 @@ async fn memory_enabled_unavailable_rejects_run_start() {
 }
 
 #[tokio::test]
+async fn unsupported_profile_refs_fail_closed_at_run_start() {
+    // P17 §4.2：skills / mcp / permissions / hooks 任一非空即 fail-closed，
+    // 消息按固定顺序列出全部非空维度（四个单项 + 组合）。
+    struct Case {
+        label: &'static str,
+        skills: Vec<ProfileRef>,
+        mcp: Vec<ProfileRef>,
+        permissions: Vec<ProfileRef>,
+        hooks: Vec<ProfileRef>,
+        expected: &'static [&'static str],
+    }
+    let cases = [
+        Case {
+            label: "skills",
+            skills: vec![ProfileRef::new("rust")],
+            mcp: Vec::new(),
+            permissions: Vec::new(),
+            hooks: Vec::new(),
+            expected: &["skills"],
+        },
+        Case {
+            label: "mcp",
+            skills: Vec::new(),
+            mcp: vec![ProfileRef::new("filesystem")],
+            permissions: Vec::new(),
+            hooks: Vec::new(),
+            expected: &["mcp"],
+        },
+        Case {
+            label: "permissions",
+            skills: Vec::new(),
+            mcp: Vec::new(),
+            permissions: vec![ProfileRef::new("read-only")],
+            hooks: Vec::new(),
+            expected: &["permissions"],
+        },
+        Case {
+            label: "hooks",
+            skills: Vec::new(),
+            mcp: Vec::new(),
+            permissions: Vec::new(),
+            hooks: vec![ProfileRef::new("on-completion")],
+            expected: &["hooks"],
+        },
+        Case {
+            label: "combination",
+            skills: vec![ProfileRef::new("rust")],
+            mcp: vec![ProfileRef::new("filesystem")],
+            permissions: vec![ProfileRef::new("read-only")],
+            hooks: vec![ProfileRef::new("on-completion")],
+            expected: &["skills", "mcp", "permissions", "hooks"],
+        },
+    ];
+    for case in cases {
+        let resolver = Arc::new(MapRunProfileResolver::default());
+        let router = router_with(resolver.clone());
+        let workspace_id = add_workspace(&router);
+        let name = format!("{}-agent", case.label);
+        let mut profile = make_profile(&name, ProfileIsolation::None, false);
+        profile.skills = case.skills;
+        profile.mcp = case.mcp;
+        profile.permissions = case.permissions;
+        profile.hooks = case.hooks;
+        resolver.insert(workspace_id.clone(), name.clone(), profile);
+        let session_id = create_session(&router, &workspace_id);
+        let response = run_start(&router, &session_id, Some(name));
+        let context = match response {
+            core_api::AppResponse::Error(context) => context,
+            other => panic!("case {}: expected Error, got {other:?}", case.label),
+        };
+        assert_eq!(
+            context.category,
+            ErrorCategory::Unavailable,
+            "case {}: expected Unavailable category: {context:?}",
+            case.label
+        );
+        // 消息必须列出全部非空维度，且按固定顺序 skills / mcp /
+        // permissions / hooks 排列。
+        for (position, dimension) in case.expected.iter().enumerate() {
+            let found = context.message.find(dimension).unwrap_or_else(|| {
+                panic!(
+                    "case {}: message must list dimension `{dimension}`: {}",
+                    case.label, context.message
+                )
+            });
+            if position > 0 {
+                let previous = context
+                    .message
+                    .find(case.expected[position - 1])
+                    .expect("previous dimension listed");
+                assert!(
+                    found > previous,
+                    "case {}: dimensions must be listed in fixed order: {}",
+                    case.label,
+                    context.message
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn unknown_profile_name_fails_closed() {
     let resolver = Arc::new(MapRunProfileResolver::default());
     let router = router_with(resolver);
@@ -490,7 +593,8 @@ async fn deny_first_tool_rules_filter_at_authoritative_pre_tool_in_main_chain() 
     // （read_file）+ denied（shell）两个工具调用，权威 pre_tool 位点必须：
     // - denied 不执行（无 ToolExecutionStarted），以拒绝结果回填
     //   （ToolExecutionCompleted + is_error）；
-    // - allowed 正常执行（ToolExecutionStarted + 成功结果）；
+    // - allowed 进入执行位点（ToolExecutionStarted），但当前无真实
+    //   tool runtime，必须 fail-closed（不得报成功）；
     // - run 进入终态。审批全部预投递 ApproveOnce（否则 run 停在审批等待）。
     use agent_engine::EventBroadcaster;
     use agent_events::AgentEvent;
@@ -628,9 +732,122 @@ async fn deny_first_tool_rules_filter_at_authoritative_pre_tool_in_main_chain() 
         "denied shell 的结果必须是错误/拒绝视图: error_results={error_results:?}"
     );
     assert!(
-        !error_results.iter().any(|id| id == "mock-tool-call-0"),
-        "allowed read_file 的结果不得是错误视图: error_results={error_results:?}"
+        error_results.iter().any(|id| id == "mock-tool-call-0"),
+        "allowed read_file 在 no-op runtime 下也不得报成功: error_results={error_results:?}"
     );
+}
+
+#[tokio::test]
+async fn no_op_tool_runtime_fails_closed_instead_of_reporting_success() {
+    use agent_engine::EventBroadcaster;
+    use agent_events::AgentEvent;
+    use async_trait::async_trait;
+    use serde_json::json;
+
+    let aggregate = Arc::new(app_service::AggregateState::new());
+    let approvals = Arc::new(app_service::ApprovalRegistry::new());
+    let broadcaster = EventBroadcaster::new();
+    let mut subscriber = broadcaster.subscribe();
+    let supervisor = RunSupervisor::new(
+        4,
+        aggregate,
+        approvals.clone(),
+        Arc::new(app_service::RateLimiter::default()),
+        broadcaster,
+        CoreInstanceId::from("p17-32-noop"),
+    );
+
+    let first = test_support::MockScript::new()
+        .tool_call("echo", json!({}))
+        .complete_with(StopReason::ToolUse);
+    #[derive(Clone)]
+    struct TwoPhase {
+        first: Arc<test_support::MockProvider>,
+        second: Arc<test_support::MockProvider>,
+        calls: Arc<std::sync::atomic::AtomicU64>,
+    }
+    #[async_trait]
+    impl ModelProvider for TwoPhase {
+        fn id(&self) -> agent_domain::ProviderId {
+            self.first.id()
+        }
+        async fn list_models(
+            &self,
+            cred: Option<&ResolvedCredential>,
+        ) -> Result<Vec<ModelDefinition>, ProviderError> {
+            self.first.list_models(cred).await
+        }
+        async fn stream(
+            &self,
+            request: CanonicalModelRequest,
+            sink: &dyn ProviderEventSink,
+            cancel: agent_domain::CancellationToken,
+        ) -> Result<ModelResponseSummary, ProviderError> {
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if n == 0 {
+                self.first.stream(request, sink, cancel).await
+            } else {
+                self.second.stream(request, sink, cancel).await
+            }
+        }
+    }
+    let provider: Arc<dyn ModelProvider> = Arc::new(TwoPhase {
+        first: Arc::new(test_support::MockProvider::new(first)),
+        second: Arc::new(
+            test_support::MockProvider::new(
+                test_support::MockScript::new()
+                    .text("done")
+                    .usage(TokenUsage {
+                        input_tokens: 5,
+                        output_tokens: 1,
+                        cache_read_tokens: 0,
+                        cache_write_tokens: 0,
+                    })
+                    .complete(),
+            )
+            .with_id(ProviderId::from("mock")),
+        ),
+        calls: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+    });
+
+    let run_id = RunId::from("run-noop");
+    let request = request_with_profile(
+        make_profile("noop", ProfileIsolation::None, false),
+        "run-noop",
+    );
+    approvals
+        .decide(
+            &run_id,
+            &ToolCallId::from("mock-tool-call-0"),
+            ApprovalDecision::ApproveOnce,
+        )
+        .expect("queue approval for echo");
+    supervisor.start(request, provider).expect("start");
+    drain_until_terminal(&supervisor, &run_id).await;
+    assert!(!supervisor.is_active(&run_id), "run 必须进入终态");
+
+    let mut started = false;
+    let mut completed_error = false;
+    while let Ok(Some(envelope)) = subscriber.try_recv() {
+        match envelope.payload {
+            AgentEvent::ToolExecutionStarted { tool_call_id } => {
+                started |= tool_call_id.as_str() == "mock-tool-call-0";
+            }
+            AgentEvent::ToolExecutionCompleted {
+                tool_call_id,
+                result,
+            } if tool_call_id.as_str() == "mock-tool-call-0" => {
+                assert!(
+                    result.is_error,
+                    "no-op tool must not emit a successful ToolExecutionCompleted"
+                );
+                completed_error = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(started, "approved tool must reach the execution site");
+    assert!(completed_error, "no-op tool must complete as an error");
 }
 
 // ===== P17-5 模型覆盖授权（ModelOverridePolicy） =====

@@ -1,6 +1,6 @@
 # P17-3：Plugin Marketplace（扩展市场）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（Built + L1；真实 monitor-service 宿主接线仍属 P16-10 ① 延期） · 交付成熟度：Built · 依赖：P17-2、P2-1、P9-5、P4-9、P8-1
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（LibraryBuilt） · 交付成熟度：LibraryBuilt（历史代码交付≠产品验收） · 依赖：P17-2、P2-1、P9-5、P4-9、P8-1
 
 **最终目的**：实现 Plugin Marketplace——从可信源（source）发现、安装、更新、卸载 Plugin Package，并提供版本管理、签名校验、版本 pin、trust 等级与 team policy 控制，让组织可控地引入第三方扩展。所有越权 / 越级安装须可被组织策略拦截。
 

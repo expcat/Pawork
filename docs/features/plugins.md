@@ -36,6 +36,8 @@ Marketplace 在路径键冲突（`check_conflicts`）之外另做身份冲突层
 
 卸载顺序锁定为先 `stop monitor …` 再 `unregister monitor …`。`monitor-service` 发出 `MonitorEvent::Unregistered` 后才从视图抹掉记录（`Started` 不重置累计，注销才丢弃）。真实 `monitor-service` / `task-manager` 宿主接线仍属 P16-10 ① 延期；当前 Marketplace 以 Mock `RecordingHost` 锁定该契约。
 
+Marketplace / Plugin 当前无 `pawork` 生产装配：`AppQuery::PluginList` / `McpList` 未接线时 fail-closed（返回 `Unavailable`，不再返回固定空数组），plugin / mcp 等未接线 CLI 命令同样返回失败语义而非占位成功。真实纵向（local source + 一种资源的最小闭环、Plugin/MCP 列表真实接线）延 P19-11。
+
 ### Package 格式（plugin-package crate）
 
 **Manifest（`package.toml`）**：`manifest_version` 固定为 `1`；顶层字段 `id`（校验过的 package id）、`name`、`version`（semver）、`license`、`description`、`entrypoint`、`scope`（`global` 默认 / `workspace`，与 resource-loader 作用域一致）、`dependencies`（其他 package / provider / runtime 的 semver 约束）。六个子段各自引用相对路径或内联清单：`skills`（必须为相对路径引用）、`agents`（profile）、`hooks`、`mcp`（`McpServerDeclaration` + `Stdio` / `Http` transport）、`lsp`、`monitors`。

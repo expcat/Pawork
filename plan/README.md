@@ -72,6 +72,16 @@
 
 > 与 Phase 15 登记同样：以上验收项已写入对应 plan 文件的「验收标准」，不在 P16-10 单独重复实现。P16-10 是 Phase 16 的 review-remediation（library 层修复正式链编译 / 重放字段 / 兼容导入 + 生产宿主接线显式延后），见 [plan/P16-10-review-remediation](P16-10-review-remediation.md)；library 层修复面不计入下列生产延期项。
 
+**Phase 17 延期落点登记**（[P17-14](P17-14-review-remediation.md) 已收口 · 状态：**🟢已完成 · TargetVerified**）：按 [p17-review](../docs/review/p17-review.md) §3/§4/§5/§7，代码层修复已落地八项——① **remote 长驻生命周期 + token 清理**：loopback publish 进程长驻 + 跨进程 connect/reconnect，SIGINT 触发 token 清理、同名再发布不冲突；独立 unpublish/revoke 无共享控制面时 fail-closed（跨进程 e2e 固化），外部可达/共享控制面延 P19-14；② **fail-closed**：placeholder 命令 / PluginList / McpList / 隔离 no-op 工具一律失败语义，CLI 非零退出码 + `--json` `ok=false`；③ **Profile refs fail-closed**：skills / mcp / permissions / hooks 任一非空即 run 解析拒绝；④ **Teams 不持久装配**：正式宿主启动不再无条件打开 teams.sqlite（team_db_path 默认 None）；⑤ **contract 归 transport-api**：remote 契约收回 transport-api，placeholder 收缩为 re-export + Mock；⑥ **Browser 别名删除**：`reject_hosted_for_local` 等纯别名 helper 移除；⑦ **Compat export**：`apply` 更名收缩为 `export_plan`（只写计划、不应用资源）；⑧ **JSON 日志契约**：日志一律 stderr，`--json` / ACP / Headless stdout 只承载协议帧；另**门禁衍生可靠性修复两项**——⑨ **RateLimiter 自动冲刷不丢**：新增 `enqueue`，窗口到期 / 容量触发的自动冲刷结果重排入就绪队列、由下一次 `flush` 发出（不丢不重、队列与合并缓冲同界，过载丢最旧计入 dropped_events）；⑩ **remote 认证同步 subscribe + carrier 顺序无关**：remote-control-adapter 首次认证成功后同步 `subscribe()` 再 spawn 通知泵（消除认证与订阅间的 spawn 调度窗口，认证后 Core 发布的事件不再错过），transport-remote carrier e2e 以响应/通知联合捕获允许任意到达顺序（压力复跑 0 失败）。**不声称生产闭环**，以下五项纵向能力显式延期：
+
+- **① ACP 降级能力审计** → [P18-13](P18-13-audit-otel.md)（handshake 降级结果写入 canonical audit event / structured trace，不新增协商服务）。
+- **② host-wired 成熟度再认定与功能簇门禁** → [P18-15](P18-15-control-plane-gate.md)（模型 Run 前置条件经 P18-3 Provider 注册闭合后，P17-1/7/8 Product usable 再认定与跨 crate 不变量集中验证；P18-15 依赖含 P17-7）。
+- **③ Marketplace / Plugin 真实纵向 + Profile 引用维度消费** → [P19-11](P19-11-resources-extensions.md)（一个真实 source + 一种资源最小闭环、Plugin/MCP 真实列表接线、profile.skills/mcp/permissions/hooks 经 ResourceLoader 映射到既有入口；Compat export_plan 的真实应用一并落此）。
+- **④ Teams canonical ingress** → [P19-13](P19-13-multi-agent-teams.md)（最薄 TeamCommand / TeamQuery + worker presence 桥，有真实 ingress 后再收敛 18 变体 public event 镜像）。
+- **⑤ Remote 外部可达 + Remote Control pairing** → [P19-14](P19-14-multi-window-remote.md)（外部可达地址 / relay 作为 transport 配置，loopback 保留测试/开发模式；pairing 复用 client-auth / auth-service 与长驻 transport owner，adapter 只做 capability gate）。
+
+> 与 Phase 15 / 16 登记同样：以上延后项的验收责任写入对应落点 plan；P17-14 是 Phase 17 的 review-remediation（成功语义 / 生命周期 / 状态失真 / 冗余收缩 + 纵向闭环显式延后），见 [plan/P17-14-review-remediation](P17-14-review-remediation.md)。代码门禁数字已回填，任务 🟢已完成 · TargetVerified。
+
 ---
 
 ## MVP 范围

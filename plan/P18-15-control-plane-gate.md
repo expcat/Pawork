@@ -31,5 +31,7 @@
 - [ ] Codex/Claude/ACP 关键协议 golden 与 unsupported-field 行为通过
 - [ ] feature-off/schema rollback/runtime fallback 演练成功
 - [ ] 相关 crates 的 fmt/test/clippy/schema L2 在独立目录通过并完成清理
+- [ ] ACP golden gate（P17-7 延期落点）：initialize / session create/resume / prompt/update / permission / tool event / cancel 与 custom model 每条关键协议消息一个 versioned fixture，unsupported-field 行为可回归
+- [ ] IDE Host Adapter gate（P17-9 延期落点）：IDE 生命周期映射、诊断双向回灌、apply/diff/approval 回路与可选 LSP 输出的 mock/contract 矩阵通过，断言不经 GUI 协议帧、不构造第二 Core
 
 **相关文档**：[testing](../docs/quality/testing.md) · [security-acceptance](../docs/quality/security-acceptance.md) · [ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [ROADMAP](../ROADMAP.md)

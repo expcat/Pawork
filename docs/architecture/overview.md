@@ -30,7 +30,7 @@ Pawork 是一个纯 Rust 编码智能体核心平台。**CLI 与 Rust Core 是�
           │ Local GUI A    │             │ Local GUI B    │
           │ GPUI / Rust    │             │ GPUI / Rust    │
           └────────────────┘             └────────────────┘
-                  Remote Transport Adapter ── 内网穿透 ── Remote GUI C/D
+          Remote Transport Adapter ── 127.0.0.1 loopback TLS ── Remote GUI C/D（外部可达延 P19-14）
 ```
 
 不存在独立的 Core Daemon 与 CLI Client；`pawork` 是 Core 的唯一正式宿主。CLI 自身发起的操作和任一 GUI 发起的操作都进入同一个 Core；所有 GUI 通过 CLI 接收统一的 Snapshot 与 Event。
@@ -106,9 +106,11 @@ cli-host
   ├── cli-command / cli-renderer
   └── gui-server
          ↑
-      transport-api
+      transport-api（含可替换远程 Adapter 契约）
         ├── transport-local
-        └── transport-remote-placeholder
+        └── transport-remote（P17-11，TLS loopback）
+
+   （transport-remote-placeholder：仅 re-export + Mock 测试支持，不进入生产依赖）
 
 gui-client ↑ GPUI Desktop（独立进程）
 ```
@@ -120,16 +122,18 @@ provider-api ← provider-* / memory-service
       ↑
 agent-engine ← plan-service / goal-service / task-manager / automation-service
       ↑
-core-runtime ← protected-blob-store / user-hooks / plugin-package / lsp-runtime
+core-runtime ← protected-blob-store / user-hooks
       ↑
-app-service ← gui-server / client-adapter-api / headless-json / ide-host-adapter / remote-control-adapter
+app-service ← gui-server / client-adapter-api / headless-json / acp-host
                    ↑
              GUI / SDK / IDE / Codex / Claude / ACP / Mobile clients
 
 apps/desktop → gui-client → transport-api → gui-server → app-service
 ```
 
-`http-runtime` 是 Provider、User Hooks、Marketplace 与 Forge Adapter 共享的无 Provider 通用网络底层；`agent-sdk` 只依赖公开 schema/framing 并连接 `pawork`，不依赖 `core-runtime`。完整规划 crate 清单与依赖方向见 [workspace 结构 §2.1](workspace-layout.md)。
+上图为规划方向；当前 `pawork` 宿主树的实际装配为 user-hooks / protected-blob-store / gui-server / client-adapter-api / headless-json / acp-host。`plugin-package` / `marketplace` / `lsp-runtime` / `browser-computer-runtime` / `compat-loader` / `ide-host-adapter` / `remote-control-adapter` 无 `pawork` 生产装配（library / adapter built）；Marketplace / Plugin 真实纵向延 P19-11，远程外部可达与 Remote Control pairing 延 P19-14。
+
+`http-runtime` 规划为 Provider、User Hooks 与 Forge Adapter 共享的无 Provider 通用网络底层（Marketplace 当前不依赖 http-runtime）；`agent-sdk` 只依赖公开 schema/framing 并连接 `pawork`，不依赖 `core-runtime`。完整规划 crate 清单与依赖方向见 [workspace 结构 §2.1](workspace-layout.md)。
 
 必须禁止循环依赖。`agent-domain` 不得依赖任何 GUI framework（包括 GPUI/Tauri）、SQLite、HTTP Client、OS Keychain、Git、具体 Provider。
 

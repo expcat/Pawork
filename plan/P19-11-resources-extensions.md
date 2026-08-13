@@ -29,5 +29,8 @@
 - [ ] 签名、capability、trust 与执行 owner/isolation level 可见
 - [ ] Diagnostics/Bundle 不含 Secret，导出不直接授予 renderer 文件系统 scope
 - [ ] 故障扩展不阻塞其他页面或 Agent stream
+- [ ] Marketplace 真实 consumer（P17-3 延期落点）：source/install/update/uninstall、签名/trust/team policy 状态与审批经 AppCommand 呈现，卸载先停 package-owned Monitor，不绕过 Policy
+- [ ] Profile v2 真实 consumer（P17-5 延期落点）：prompt/model/effort/tools(denied)/skills/MCP/permissions/hooks/memory/isolation 可见可校验，refs 解析失败与 isolation fail-closed 状态可解释
+- [ ] Compat 真实 consumer（P17-13 延期落点）：五类来源只读探测、dry-run 预览与 Imported/Disabled/Unsupported/Conflict 诊断可见，显式应用与 export_plan 不执行外部 hook/MCP
 
 **相关文档**：[skills](../docs/features/skills.md) · [workspace-index](../docs/features/workspace-index.md) · [mcp](../docs/features/mcp.md) · [plugins](../docs/features/plugins.md) · [observability](../docs/features/observability.md) · [Desktop GUI](../docs/features/desktop-gui.md)

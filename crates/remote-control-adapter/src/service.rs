@@ -15,7 +15,7 @@ use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
     CommandSource, API_VERSION,
 };
-use subscription_hub::{EventHub, HubError};
+use subscription_hub::{EventHub, HubError, HubSubscription};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::warn;
@@ -258,9 +258,12 @@ impl RemoteControlService {
             }
             // 首次认证成功（PreAuth → Authenticated）才启动通知推送；
             // PreAuth 连接永不推送 Notification（fail-closed，P17-12）。
+            // 订阅在本任务内同步创建后传入泵：认证成功与订阅之间不再隔
+            // tokio::spawn 调度窗口，Core 在认证后发布的事件不会被错过。
             if !was_authenticated && state.device_id().is_some() && pump_task.is_none() {
+                let subscription = self.hub.subscribe();
                 pump_task = Some(tokio::spawn(pump_notifications(
-                    Arc::clone(&self.hub),
+                    subscription,
                     self.notifications.clone(),
                     self.audit.clone(),
                     out_tx.clone(),
@@ -813,17 +816,19 @@ async fn send_loop(conn: Arc<dyn GuiConnection>, mut receiver: mpsc::Receiver<Se
 
 /// 事件泵：EventHub → 通知映射 → 通知日志 → 每连接有界出站队列。
 ///
+/// 订阅句柄由调用方（serve_connection）在首次认证成功时同步创建并传入，
+/// 泵内部不再订阅：避免 spawn 调度延迟造成认证后事件丢失。
+///
 /// 背压策略（有界 + 显式）：出站队列满时丢弃当条推送并累积缺口区间，
 /// 下一次成功发送前以 PushGap 帧显式告知客户端（通知本体仍在日志中，
 /// 可用 Replay 补齐）。Hub 订阅滞后（Lagged）时审计并告警：被错过的事件
 /// 无法映射，通知序列空间保持连续，客户端以查询重建状态。
 async fn pump_notifications(
-    hub: Arc<EventHub>,
+    mut subscription: HubSubscription,
     notifications: NotificationLog,
     audit: AuditLog,
     out: mpsc::Sender<ServerFrame>,
 ) {
-    let mut subscription = hub.subscribe();
     let mut pending_gap: Option<(u64, u64)> = None;
     loop {
         let envelope = match subscription.recv().await {
@@ -987,8 +992,7 @@ mod tests {
         hub.publish(approval_event("preauth-approval", 2));
         // 给（不存在的）通知泵一个窗口：仍不应有任何帧到达 PreAuth 对端。
         sleep(Duration::from_millis(150)).await;
-        if let Ok(Ok(frame)) =
-            timeout(Duration::from_millis(300), preauth.as_ref().receive()).await
+        if let Ok(Ok(frame)) = timeout(Duration::from_millis(300), preauth.as_ref().receive()).await
         {
             let frame: ServerFrame =
                 serde_json::from_slice(frame.as_bytes()).expect("decode server frame");
@@ -1007,7 +1011,9 @@ mod tests {
         )
         .await;
         match replay_response {
-            ServerFrame::Error { request_id, code, .. } => {
+            ServerFrame::Error {
+                request_id, code, ..
+            } => {
                 assert_eq!(request_id.as_deref(), Some("preauth-replay"));
                 assert_eq!(code, "authentication_required");
             }
@@ -1063,8 +1069,24 @@ mod tests {
             other => panic!("expected activated, got {other:?}"),
         }
 
-        // 等待认证后启动的通知泵订阅 EventHub，再发布终态事件。
-        sleep(Duration::from_millis(150)).await;
+        // 确定性锁定订阅时点：Replay 帧在 serve_connection 中严格晚于同步
+        // subscribe() 处理，收到 Replayed 响应即保证订阅已建立——无需 sleep，
+        // 并锁死「认证成功到订阅之间丢失事件」的竞态回归。
+        let replayed = rpc(
+            authed.as_ref(),
+            "authed-replay-barrier",
+            ClientFrame::Replay {
+                request_id: "authed-replay-barrier".into(),
+                from_seq: 1,
+            },
+        )
+        .await;
+        match replayed {
+            ServerFrame::Replayed { request_id, .. } => {
+                assert_eq!(request_id, "authed-replay-barrier");
+            }
+            other => panic!("expected replayed barrier, got {other:?}"),
+        }
         hub.publish(run_finished_event("authed-run", 3));
         let notification = recv_matching(authed.as_ref(), |frame| match frame {
             ServerFrame::Notification {
@@ -1092,11 +1114,7 @@ mod tests {
         let _ = authed.close().await;
     }
 
-    async fn rpc(
-        conn: &dyn GuiConnection,
-        request_id: &str,
-        frame: ClientFrame,
-    ) -> ServerFrame {
+    async fn rpc(conn: &dyn GuiConnection, request_id: &str, frame: ClientFrame) -> ServerFrame {
         let bytes = serde_json::to_vec(&frame).expect("encode client frame");
         conn.send(transport_api::TransportFrame::new(bytes))
             .await

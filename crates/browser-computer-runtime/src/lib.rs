@@ -43,8 +43,8 @@ pub use artifact::{
 };
 pub use audit::{AuditRecord, AuditSink, AuditSinkError, FileAuditSink, AUDIT_FORMAT_VERSION};
 pub use backend::{
-    reject_hosted_for_local, reject_non_client_function_for_local, BackendKind, BackendProbe,
-    BackendRoute, BrowserComputerBackend, ExecutionSite, TrustBoundary,
+    reject_non_client_function_for_local, BackendKind, BackendProbe, BackendRoute,
+    BrowserComputerBackend, ExecutionSite, TrustBoundary,
 };
 pub use backends::{screenshot_event, CanonicalHostedEmitter, HostedComputerEventEmitter};
 pub use backends::{

@@ -938,8 +938,12 @@ impl CommandRouter {
                 identity,
                 query,
             ),
-            AppQuery::PluginList => Ok(data_response(&request_id, json!([]))),
-            AppQuery::McpList => Ok(data_response(&request_id, json!([]))),
+            AppQuery::PluginList => Err(AppServiceError::Unavailable(
+                "PluginList is not implemented until marketplace host wiring".into(),
+            )),
+            AppQuery::McpList => Err(AppServiceError::Unavailable(
+                "McpList is not implemented until MCP host wiring".into(),
+            )),
         }
     }
 
@@ -1425,6 +1429,16 @@ impl CommandRouter {
                 resolved.profile.isolation
             )));
         }
+        // P17 §4.2：引用维度（skills / mcp / permissions / hooks）当前宿主
+        // 尚无解析与装配消费方，属于不支持资源：任一非空一律 fail-closed，
+        // 绝不静默忽略 profile 声明的能力。按固定顺序汇总全部非空维度。
+        let unsupported = unsupported_profile_refs(&resolved.profile);
+        if !unsupported.is_empty() {
+            return Err(AppServiceError::Unavailable(format!(
+                "profile `{name}` references unsupported resources: {}",
+                unsupported.join(", ")
+            )));
+        }
         Ok(Some(resolved))
     }
 
@@ -1529,6 +1543,24 @@ impl CommandRouter {
             .and_modify(|count| *count += 1)
             .or_insert(1);
     }
+}
+
+/// P17 §4.2：返回 profile 中声明的非空引用维度名（固定顺序 skills / mcp /
+/// permissions / hooks）。任一非空即代表当前宿主尚不支持的能力引用，由调用
+/// 方 fail-closed；本函数只负责汇总，不决策。
+fn unsupported_profile_refs(profile: &agent_domain::AgentProfileV2) -> Vec<&'static str> {
+    let mut unsupported = Vec::new();
+    for (dimension, present) in [
+        ("skills", !profile.skills.is_empty()),
+        ("mcp", !profile.mcp.is_empty()),
+        ("permissions", !profile.permissions.is_empty()),
+        ("hooks", !profile.hooks.is_empty()),
+    ] {
+        if present {
+            unsupported.push(dimension);
+        }
+    }
+    unsupported
 }
 
 impl std::fmt::Debug for CommandRouter {

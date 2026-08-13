@@ -31,15 +31,18 @@ async fn main() {
     init_tracing();
     let cli = Cli::parse();
 
-    // 装配完整 Core：P17 durable Team + P18 durable usage/control plane +
-    // EventHub/EventPump。任一持久事实源无法打开都 fail loud，不降级为内存状态。
+    // 装配完整 Core：P18 durable usage/control plane + EventHub/EventPump。
+    // 任一持久事实源无法打开都 fail loud，不降级为内存状态。
+    // P17-6 状态收敛：尚无 canonical Team ingress，正式宿主不无条件打开
+    // teams.sqlite——team_db_path 保持 None（Team store 走内存实现）；
+    // canonical ingress 落地后由独立任务恢复持久化装配。
     let instance_dir = gui_host::instance_dir(&cli.instance);
     let ledger_path = instance_dir.join("usage-ledger.sqlite3");
     let control_plane_path = instance_dir.join("control-plane.sqlite3");
     let runtime = match CoreRuntime::with_persistent_control_plane_config(
         CoreRuntimeConfig {
             instance: cli.instance.clone(),
-            team_db_path: Some(instance_dir.join("teams.sqlite")),
+            team_db_path: None,
             ..CoreRuntimeConfig::default()
         },
         &ledger_path,
@@ -53,7 +56,7 @@ async fn main() {
                 ledger_path = %ledger_path.display(),
                 control_plane_path = %control_plane_path.display(),
                 error = %error,
-                "persistent Team/usage/control-plane state unavailable; refusing to start",
+                "persistent usage/control-plane state unavailable; refusing to start",
             );
             std::process::exit(1);
         }
@@ -176,7 +179,11 @@ async fn main() {
     }
 
     let outcome = host.execute(cli).await;
-    println!("{}", outcome.output);
+    // P17-14 stdout 契约：空 output（如 SIGINT 后干净收尾的 remote publish）
+    // 不向 stdout 打印任何内容——stdout 只承载协议响应，不出现空行或文本。
+    if !outcome.output.is_empty() {
+        println!("{}", outcome.output);
+    }
     if outcome.exit_code != 0 {
         std::process::exit(outcome.exit_code);
     }
@@ -227,6 +234,9 @@ fn build_gui_server(
     Ok(ServeGuiHost::new(server))
 }
 
+// P17-14 JSON stdout 契约：日志一律写 stderr。--json / ACP / Headless
+// 模式的 stdout 只承载协议帧（NDJSON / JSON-RPC），tracing 默认写 stdout
+// 会污染协议输出；显式绑定 stderr 后 stdout 保持协议纯净。
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()

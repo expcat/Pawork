@@ -70,6 +70,7 @@ struct Inner {
     window_start: Instant,
     deltas: BTreeMap<DeltaKey, PendingDelta>,
     pass_through: VecDeque<AppEventEnvelope>,
+    ready: VecDeque<AppEventEnvelope>,
     /// 缓冲中增量 push 总数（同 key 合并也计数）。
     delta_pushes: usize,
     flushed_events: u64,
@@ -92,6 +93,7 @@ impl RateLimiter {
                 window_start: Instant::now(),
                 deltas: BTreeMap::new(),
                 pass_through: VecDeque::new(),
+                ready: VecDeque::new(),
                 delta_pushes: 0,
                 flushed_events: 0,
                 dropped_events: 0,
@@ -100,69 +102,29 @@ impl RateLimiter {
     }
 
     /// 推入一条事件，返回此刻应发出的合并结果（窗口到期或缓冲超限时触发）。
+    ///
+    /// 调用方必须自行处理返回值，否则这些事件会丢失。生产路径请使用
+    /// [Self::enqueue]：它把自动冲刷结果重新排队，由下一次 [Self::flush]
+    /// 发出。
     pub fn push(&self, envelope: AppEventEnvelope) -> Vec<AppEventEnvelope> {
         let mut inner = lock(&self.inner);
-        let mut out = Vec::new();
-        if inner.window_start.elapsed() >= self.window {
-            out.extend(flush_locked(&mut inner));
-        }
+        push_locked(&mut inner, self.window, self.max_buffered, envelope)
+    }
 
-        match delta_of(&envelope) {
-            Some((run_id, kind, id, delta, truncated, artifact_id)) => {
-                let key = DeltaKey {
-                    run_id: run_id.as_str().to_string(),
-                    kind,
-                    id,
-                };
-                match inner.deltas.get_mut(&key) {
-                    Some(pending) => {
-                        pending.delta.push_str(&delta);
-                        pending.truncated |= truncated;
-                        if artifact_id.is_some() {
-                            pending.artifact_id = artifact_id;
-                        }
-                        pending.envelope = envelope;
-                        pending.pushes += 1;
-                        inner.delta_pushes += 1;
-                    }
-                    None => {
-                        // 新 key 且增量 push 数已达缓冲上限：先淘汰最旧 key 并发出
-                        // 其合并结果，保证缓冲有界（确定性：按 key 序淘汰）。
-                        if inner.delta_pushes >= self.max_buffered {
-                            let oldest_key = inner.deltas.keys().next().cloned();
-                            if let Some(oldest_key) = oldest_key {
-                                if let Some(pending) = inner.deltas.remove(&oldest_key) {
-                                    inner.delta_pushes =
-                                        inner.delta_pushes.saturating_sub(pending.pushes);
-                                    out.push(merged_envelope(oldest_key, pending));
-                                    inner.flushed_events += 1;
-                                }
-                            }
-                        }
-                        inner.deltas.insert(
-                            key,
-                            PendingDelta {
-                                run_id,
-                                envelope,
-                                delta,
-                                truncated,
-                                artifact_id,
-                                pushes: 1,
-                            },
-                        );
-                        inner.delta_pushes += 1;
-                    }
-                }
+    /// 生产入队：与 [Self::push] 相同的有界合并语义，但本次入队触发的自动
+    /// 冲刷结果会重新排入内部就绪队列，由下一次 [Self::flush] 发出——不因
+    /// 窗口到期 / 容量冲刷丢失事件，也不重复。就绪队列与合并缓冲同界，极端
+    /// 过载时丢弃最旧并计入 dropped_events（与直通队列同一策略）。
+    pub fn enqueue(&self, envelope: AppEventEnvelope) {
+        let mut inner = lock(&self.inner);
+        let flushed = push_locked(&mut inner, self.window, self.max_buffered, envelope);
+        for event in flushed {
+            if inner.ready.len() >= self.max_buffered {
+                inner.ready.pop_front();
+                inner.dropped_events += 1;
             }
-            None => {
-                if inner.pass_through.len() >= self.max_buffered {
-                    inner.pass_through.pop_front();
-                    inner.dropped_events += 1;
-                }
-                inner.pass_through.push_back(envelope);
-            }
+            inner.ready.push_back(event);
         }
-        out
     }
 
     /// 立即发出全部缓冲事件（窗口未到期也可强制冲刷）。
@@ -186,6 +148,77 @@ impl Default for RateLimiter {
     fn default() -> Self {
         Self::new(DEFAULT_RATE_LIMIT_WINDOW, DEFAULT_RATE_LIMIT_BUFFER)
     }
+}
+
+/// [`RateLimiter::push`] / [`RateLimiter::enqueue`] 共享的锁定态入队核心：窗口到期先冲刷，再按
+/// 可合并 / 直通分派。返回本次入队触发的自动冲刷结果（可能为空）。
+fn push_locked(
+    inner: &mut Inner,
+    window: Duration,
+    max_buffered: usize,
+    envelope: AppEventEnvelope,
+) -> Vec<AppEventEnvelope> {
+    let mut out = Vec::new();
+    if inner.window_start.elapsed() >= window {
+        out.extend(flush_locked(inner));
+    }
+
+    match delta_of(&envelope) {
+        Some((run_id, kind, id, delta, truncated, artifact_id)) => {
+            let key = DeltaKey {
+                run_id: run_id.as_str().to_string(),
+                kind,
+                id,
+            };
+            match inner.deltas.get_mut(&key) {
+                Some(pending) => {
+                    pending.delta.push_str(&delta);
+                    pending.truncated |= truncated;
+                    if artifact_id.is_some() {
+                        pending.artifact_id = artifact_id;
+                    }
+                    pending.envelope = envelope;
+                    pending.pushes += 1;
+                    inner.delta_pushes += 1;
+                }
+                None => {
+                    // 新 key 且增量 push 数已达缓冲上限：先淘汰最旧 key 并发出
+                    // 其合并结果，保证缓冲有界（确定性：按 key 序淘汰）。
+                    if inner.delta_pushes >= max_buffered {
+                        let oldest_key = inner.deltas.keys().next().cloned();
+                        if let Some(oldest_key) = oldest_key {
+                            if let Some(pending) = inner.deltas.remove(&oldest_key) {
+                                inner.delta_pushes =
+                                    inner.delta_pushes.saturating_sub(pending.pushes);
+                                out.push(merged_envelope(oldest_key, pending));
+                                inner.flushed_events += 1;
+                            }
+                        }
+                    }
+                    inner.deltas.insert(
+                        key,
+                        PendingDelta {
+                            run_id,
+                            envelope,
+                            delta,
+                            truncated,
+                            artifact_id,
+                            pushes: 1,
+                        },
+                    );
+                    inner.delta_pushes += 1;
+                }
+            }
+        }
+        None => {
+            if inner.pass_through.len() >= max_buffered {
+                inner.pass_through.pop_front();
+                inner.dropped_events += 1;
+            }
+            inner.pass_through.push_back(envelope);
+        }
+    }
+    out
 }
 
 /// 提取可合并增量；其余事件返回 `None` 走直通队列。
@@ -236,12 +269,18 @@ fn delta_of(
 }
 
 fn flush_locked(inner: &mut Inner) -> Vec<AppEventEnvelope> {
-    let mut out: Vec<AppEventEnvelope> = std::mem::take(&mut inner.deltas)
-        .into_iter()
-        .map(|(key, pending)| merged_envelope(key, pending))
-        .collect();
+    // 就绪事件在 push 自动冲刷时已计入 flushed_events，此处只发运，不重复计数。
+    let mut out: Vec<AppEventEnvelope> = std::mem::take(&mut inner.ready).into();
+    let delta_count = inner.deltas.len();
+    let pass_through_count = inner.pass_through.len();
+    out.extend(
+        std::mem::take(&mut inner.deltas)
+            .into_iter()
+            .map(|(key, pending)| merged_envelope(key, pending))
+            .collect::<Vec<AppEventEnvelope>>(),
+    );
     out.extend(inner.pass_through.drain(..));
-    inner.flushed_events += out.len() as u64;
+    inner.flushed_events += (delta_count + pass_through_count) as u64;
     inner.delta_pushes = 0;
     inner.window_start = Instant::now();
     out
@@ -424,5 +463,68 @@ mod tests {
             AppEvent::RunChanged { .. } => {}
             other => panic!("unexpected payload: {other:?}"),
         }
+    }
+
+    #[test]
+    fn enqueue_requeues_window_expiry_flush_without_loss_or_duplication() {
+        let limiter = RateLimiter::new(Duration::from_millis(30), 16);
+        limiter.enqueue(delta_event("run-1", "msg-1", "a", 1));
+        // 确定性跨过 30ms 窗口：下一次入队必然触发窗口到期自动冲刷。
+        std::thread::sleep(Duration::from_millis(60));
+        limiter.enqueue(delta_event("run-1", "msg-1", "b", 2));
+
+        let flushed = limiter.flush();
+        assert_eq!(flushed.len(), 2, "自动冲刷结果不得丢失，也不得重复");
+        match &flushed[0].payload {
+            AppEvent::AssistantDelta { delta, .. } => assert_eq!(delta, "a"),
+            other => panic!("unexpected payload: {other:?}"),
+        }
+        match &flushed[1].payload {
+            AppEvent::AssistantDelta { delta, .. } => assert_eq!(delta, "b"),
+            other => panic!("unexpected payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enqueue_zero_window_flushes_previous_before_accepting_new_delta() {
+        let limiter = RateLimiter::new(Duration::ZERO, 16);
+        limiter.enqueue(delta_event("run-1", "msg-1", "a", 1));
+        limiter.enqueue(delta_event("run-1", "msg-1", "b", 2));
+
+        let flushed = limiter.flush();
+        assert_eq!(flushed.len(), 2, "ZERO 窗口每次入队都先冲刷已缓冲事件");
+        match &flushed[0].payload {
+            AppEvent::AssistantDelta { delta, .. } => assert_eq!(delta, "a"),
+            other => panic!("unexpected payload: {other:?}"),
+        }
+        match &flushed[1].payload {
+            AppEvent::AssistantDelta { delta, .. } => assert_eq!(delta, "b"),
+            other => panic!("unexpected payload: {other:?}"),
+        }
+        assert_eq!(limiter.stats().dropped_events, 0);
+    }
+
+    #[test]
+    fn enqueue_ready_queue_is_bounded_and_drops_oldest() {
+        let limiter = RateLimiter::new(Duration::from_millis(30), 2);
+        let event = |n: u64| delta_event("run-1", &format!("msg-{n}"), &format!("d{n}"), n);
+        limiter.enqueue(event(1));
+        std::thread::sleep(Duration::from_millis(60));
+        limiter.enqueue(event(2)); // 冲刷 #1 → ready
+        std::thread::sleep(Duration::from_millis(60));
+        limiter.enqueue(event(3)); // 冲刷 #2 → ready
+        std::thread::sleep(Duration::from_millis(60));
+        limiter.enqueue(event(4)); // 冲刷 #3 → ready 超限丢最旧
+
+        let flushed = limiter.flush();
+        let deltas: Vec<&str> = flushed
+            .iter()
+            .filter_map(|envelope| match &envelope.payload {
+                AppEvent::AssistantDelta { delta, .. } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(deltas, vec!["d2", "d3", "d4"], "就绪队列有界：最旧被丢弃");
+        assert_eq!(limiter.stats().dropped_events, 1);
     }
 }

@@ -464,6 +464,21 @@ impl EndpointState {
     }
 }
 
+impl Drop for EndpointState {
+    fn drop(&mut self) {
+        // 进程退出 / transport Drop 时幂等清凭证，避免同名重启撞上
+        // TokenStore::generate 的 create_new。显式 unpublish/revoke 已删过
+        // 文件时 NotFound 被忽略。
+        self.published.store(false, Ordering::Release);
+        match self.listener_slot.lock() {
+            Ok(mut slot) => drop(slot.take()),
+            Err(poisoned) => drop(poisoned.into_inner().take()),
+        }
+        self.listener_closed.notify_waiters();
+        let _ = self.credential_file.delete();
+    }
+}
+
 // ---------- 服务端 ----------
 
 /// 接受一条已建立的 TCP 连接：TLS → 认证（端点独立凭证）→ 续传，返回就绪

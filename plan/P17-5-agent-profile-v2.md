@@ -1,6 +1,7 @@
 # P17-5：Agent Profile v2（智能体配置档案 v2）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P8-5、P8-3、P9-6、P4-9、P17-1、P3-6、P15-7、P15-8、P16-4、P16-7、P11-1
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅有界实现（PartialWired） · 交付成熟度：PartialWired（历史代码交付≠产品验收） · 依赖：P8-5、P8-3、P9-6、P4-9、P17-1、P3-6、P15-7、P15-8、P16-4、P16-7、P11-1
+> Remediation：refs fail-closed（引用/memory 解析失败拒绝 run，不虚假可用）；真实工具注册表/执行与长期记忆未接线。
 
 **最终目的**：升级 Agent Profile 为 v2，统一描述一个可复用 Agent 的完整配置：prompt（system / instructions）、model、effort / reasoning 强度、tools（含显式 denied 清单）、skills、MCP、permissions、hooks、memory、max turns、background、isolation。让 Agent 可被一键实例化、复用、共享，且所有维度可被 policy 与运行时校验。v1 profile 可平滑迁移。
 

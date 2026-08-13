@@ -813,6 +813,7 @@ dependencies = [
  "tempfile",
  "test-support",
  "tokio",
+ "transport-api",
  "transport-remote-placeholder",
 ]
 
@@ -5660,7 +5661,6 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "transport-api",
- "transport-remote-placeholder",
 ]
 
 [[package]]
@@ -5674,7 +5674,6 @@ dependencies = [
  "core-api",
  "gui-protocol",
  "gui-server",
- "serde",
  "subscription-hub",
  "tempfile",
  "tokio",

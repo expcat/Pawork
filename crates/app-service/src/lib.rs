@@ -766,12 +766,14 @@ impl AppService {
                     data: serde_json::to_value(report).expect("doctor report is serializable"),
                 }
             }
-            ServiceOperation::Placeholder { command, arguments } => ServiceResponse {
-                ok: true,
-                kind: command.clone(),
-                message: format!("'{command}' command route is available"),
-                data: json!({ "arguments": arguments, "implementation_phase": "later" }),
-            },
+            ServiceOperation::Placeholder { command, arguments } => failed_response(
+                &command,
+                &format!("'{command}' is not implemented"),
+                json!({
+                    "arguments": arguments,
+                    "error": "not_implemented",
+                }),
+            ),
         }
     }
 
@@ -1291,6 +1293,31 @@ mod tests {
         assert!(report.ok);
         assert_eq!(report.checks.len(), 5);
         assert!(report.checks.iter().all(|check| check.ok));
+    }
+
+    #[test]
+    fn placeholder_commands_fail_closed_instead_of_reporting_success() {
+        let service = AppService::new("p17-32-placeholder");
+        for command in ["plugin", "mcp", "import-pi"] {
+            let response = service.dispatch(ServiceRequest {
+                source: CommandSource::LocalCli {
+                    terminal_session_id: Some("terminal-1".into()),
+                },
+                operation: ServiceOperation::Placeholder {
+                    command: command.into(),
+                    arguments: vec!["list".into()],
+                },
+            });
+            assert!(!response.ok, "{command} must not report success");
+            assert_eq!(response.kind, command);
+            assert!(
+                response.message.contains("not implemented"),
+                "unexpected placeholder message for {command}: {}",
+                response.message
+            );
+            assert_eq!(response.data["error"], "not_implemented");
+            assert_eq!(response.data["arguments"], json!(["list"]));
+        }
     }
 
     #[test]

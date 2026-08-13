@@ -115,6 +115,79 @@ pub struct TransportError {
     pub retryable: bool,
 }
 
+// ---------- 可替换远程 Adapter 契约（单一来源，P17-14） ----------
+//
+// 远程连接（内网穿透 / NAT / 中继 / 加密）由可替换 Adapter 实现：CLI 侧经
+// RemoteGuiTransportProvider 发布 / 撤销远程端点，GUI 侧经
+// RemoteGuiConnector 连接已发布端点。契约集中在本 crate，生产实现
+//（transport-remote）与 Mock / 测试支持（transport-remote-placeholder）
+// 共用同一 trait / DTO，避免生产 crate 依赖 mock（[ADR-028]）。
+//
+// [ADR-028]: ../../docs/adr/ADR-028-replaceable-remote-transport.md
+
+/// Provider 的描述信息（CLI 输出与日志用）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteTransportDescription {
+    /// Adapter 名（如 mock / remote）。
+    pub adapter: String,
+    /// 人类可读名称。
+    pub display_name: String,
+}
+
+/// publish 的输入：端点描述。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemotePublishRequest {
+    /// 端点名称（用户可读）。
+    pub name: String,
+}
+
+/// 已发布远程端点的句柄：id 供 unpublish 使用，endpoint 供 GUI Server
+/// 绑定与 GUI Connector 连接。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemotePublishHandle {
+    pub id: String,
+    pub endpoint: TransportEndpoint,
+}
+
+/// CLI 侧的远程端点生命周期 Adapter（可替换，[ADR-028]）。
+///
+/// 实现只负责端点发布/撤销与描述，不含 Agent 业务逻辑；发布后的实际监听由
+/// CLI 把 RemotePublishHandle.endpoint 交给 GUI Server 绑定。
+#[async_trait]
+pub trait RemoteGuiTransportProvider: Send + Sync {
+    /// Adapter 描述信息。
+    fn describe(&self) -> RemoteTransportDescription;
+
+    /// 发布远程端点，返回句柄（含端点描述）。
+    async fn publish(
+        &self,
+        request: RemotePublishRequest,
+    ) -> Result<RemotePublishHandle, TransportError>;
+
+    /// 撤销已发布端点（按 publish 返回的 handle id）。
+    async fn unpublish(&self, handle_id: &str) -> Result<(), TransportError>;
+
+    /// 撤销已发布端点（按 publish 返回的 handle id）：关闭已绑定的监听器、
+    /// 销毁端点凭证并使凭证立即失效；实现按各自策略断开已建立连接。撤销后
+    /// 对该端点的 connect 必须失败。
+    async fn revoke(&self, handle_id: &str) -> Result<(), TransportError>;
+}
+
+/// GUI 侧的远程连接 Adapter（可替换，[ADR-028]）。
+///
+/// connect 返回的 GuiConnection 与本地 Transport 返回的是同一抽象，
+/// GUI 侧协议流程与本地完全一致（[ADR-027]）。
+///
+/// [ADR-027]: ../../docs/adr/ADR-027-local-remote-same-protocol.md
+#[async_trait]
+pub trait RemoteGuiConnector: Send + Sync {
+    async fn connect(
+        &self,
+        endpoint: &TransportEndpoint,
+        options: ConnectOptions,
+    ) -> Result<Box<dyn GuiConnection>, TransportError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

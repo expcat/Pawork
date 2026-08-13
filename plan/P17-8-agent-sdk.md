@@ -1,6 +1,6 @@
 # P17-8：Rust / JSON Agent SDK（Client 与 Headless）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟢已验收 · 交付成熟度：Target-Verified · 依赖：P0-8、P13-1
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（HostWired） · 交付成熟度：HostWired（历史代码交付≠产品验收） · 依赖：P0-8、P13-1
 
 **最终目的**：在 `core-api` 之上提供 Rust Client SDK 与 Headless JSON 两条程序化接入。唯一运行 Core 的正式宿主仍是 `pawork` 二进制：脚本/CI 通过 `pawork headless --json-stdio` 收发 NDJSON，Rust 应用通过 SDK 启动或连接该模式，不把 Core 链接进第二个宿主。两者都复用稳定 Command/Query/Event 类型，也不取代 GUI Connection Protocol。
 

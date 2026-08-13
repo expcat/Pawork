@@ -164,11 +164,3 @@ pub fn reject_non_client_function_for_local(
     }
     Ok(())
 }
-
-/// 兼容别名：只拒绝 ProviderHosted 的旧语义由
-/// [`reject_non_client_function_for_local`] 统一覆盖。
-pub fn reject_hosted_for_local(
-    backend: &dyn BrowserComputerBackend,
-) -> Result<(), BrowserComputerError> {
-    reject_non_client_function_for_local(backend)
-}

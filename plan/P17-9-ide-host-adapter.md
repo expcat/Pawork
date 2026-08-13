@@ -1,6 +1,6 @@
 # P17-9：IDE Host Adapter（IDE 生命周期、诊断与交互桥接）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（Built + L1；经 Agent SDK / Headless 连接 pawork，不嵌入第二 Core） · 交付成熟度：Built · 依赖：P0-8、P17-8（协调 P17-4、P17-11）
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（AdapterBuilt） · 交付成熟度：AdapterBuilt（历史代码交付≠产品验收） · 依赖：P0-8、P17-8（协调 P17-4、P17-11）
 
 **最终目的**：提供 IDE Host Adapter，把 IDE（VS Code / JetBrains 等）的编辑器生命周期、诊断与交互桥接到 Pawork。接入链路统一为：
 

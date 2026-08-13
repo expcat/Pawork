@@ -1,6 +1,6 @@
 # P17-12：Mobile / Remote Control Protocol（受限控制、审批与通知）+ Host 簇收尾门禁
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（Built + L1；Host 簇 L2 隔离门禁已通过，未标整阶段已验收） · 交付成熟度：Built · 依赖：P0-8、P13-1、P17-7～P17-11
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（AdapterBuilt） · 交付成熟度：AdapterBuilt（历史代码交付≠产品验收） · 依赖：P0-8、P13-1、P17-7～P17-11
 
 **最终目的**：定义一个面向移动端/远程的受限控制协议——只暴露审批、通知与受限控制（查看状态、启动/取消任务），不授予完整操作权限，Core 始终是单一事实源（[ADR-030](../docs/adr/ADR-030-core-sole-source-of-truth.md)）。同时作为 Phase 17「公共 Host/SDK」功能簇（ACP / SDK / IDE / Browser-Computer / Real Remote / Mobile）的收尾任务——在独立 `CARGO_TARGET_DIR` 下跑集中契约门禁并清理，不污染日常 target。
 

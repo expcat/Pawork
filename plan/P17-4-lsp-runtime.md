@@ -1,6 +1,6 @@
 # P17-4：LSP Client Runtime（语言服务客户端运行时）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：🟢已验收 · 交付成熟度：Target-Verified · 依赖：P4-12、P1-9、P8-1、P11-7（协调 P17-9）
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（LibraryBuilt） · 交付成熟度：LibraryBuilt（历史代码交付≠产品验收） · 依赖：P4-12、P1-9、P8-1、P11-7（协调 P17-9）
 
 **最终目的**：实现 LSP（Language Server Protocol）客户端运行时——Pawork **作为 LSP Client**，负责启动、管理、调用现有 Language Server（rust-analyzer、pyright、typescript-language-server、gopls、clangd 等），把它们的代码智能（diagnostics / hover / definition / references / document_symbols / workspace_symbols / call_hierarchy / rename / code_actions）收敛为 Agent 可经统一接口消费的 canonical 能力。本任务交付**进程托管 + 协议骨架 + 统一消费接口**及契约测试，不在本任务实现完整语言语义，也不自行实现语言分析器。
 

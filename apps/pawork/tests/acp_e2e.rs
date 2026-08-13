@@ -23,10 +23,7 @@ struct AcpProc {
 
 impl AcpProc {
     fn spawn(name: &str) -> Self {
-        let data = std::env::temp_dir().join(format!(
-            "pawork-acp-{}-{name}",
-            std::process::id()
-        ));
+        let data = std::env::temp_dir().join(format!("pawork-acp-{}-{name}", std::process::id()));
         Self::spawn_in(data, name, true)
     }
 
@@ -36,7 +33,7 @@ impl AcpProc {
         Self::spawn_in(data, name, false)
     }
 
-    fn spawn_in(data: PathBuf, name: &str, remove_on_drop: bool) -> Self {
+    fn spawn_in(data: PathBuf, _name: &str, remove_on_drop: bool) -> Self {
         std::fs::create_dir_all(&data).expect("create data dir");
         let mut child = Command::new(env!("CARGO_BIN_EXE_pawork"))
             .args(["acp", "serve"])
@@ -220,10 +217,7 @@ fn acp_serve_stdio_roundtrip() {
 /// 内已 attach、可执行。
 #[test]
 fn acp_serve_resume_across_processes_uses_sqlite_session_db() {
-    let data = std::env::temp_dir().join(format!(
-        "pawork-acp-resume-{}",
-        std::process::id()
-    ));
+    let data = std::env::temp_dir().join(format!("pawork-acp-resume-{}", std::process::id()));
     let cwd = data.to_string_lossy().into_owned();
     let initialize = request(
         1,
@@ -256,13 +250,14 @@ fn acp_serve_resume_across_processes_uses_sqlite_session_db() {
         .as_str()
         .expect("sessionId")
         .to_string();
-    proc_a.send(&request(3, "session/close", json!({ "sessionId": session_id })));
+    proc_a.send(&request(
+        3,
+        "session/close",
+        json!({ "sessionId": session_id }),
+    ));
     let frame = proc_a.next_frame();
     assert_eq!(frame["id"], json!(3));
-    assert!(
-        frame.get("result").is_some(),
-        "close 应成功，got: {frame}"
-    );
+    assert!(frame.get("result").is_some(), "close 应成功，got: {frame}");
     proc_a.finish(0);
 
     // 进程 B（同一 data dir / SQLite session.db）：握手 → resume（省略

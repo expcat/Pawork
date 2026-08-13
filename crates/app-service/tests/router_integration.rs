@@ -1190,3 +1190,22 @@ fn dispatch_rejects_blank_identity_from_custom_resolver() {
 
     assert!(!router.aggregate().snapshot().core_ready);
 }
+
+#[test]
+fn plugin_and_mcp_lists_fail_closed_instead_of_empty_success() {
+    let router = CommandRouter::new(RouterConfig::default());
+    for query_kind in [AppQuery::PluginList, AppQuery::McpList] {
+        let response = router.dispatch_query(query(cli_source(), cli_identity(), query_kind));
+        match &response.response {
+            AppResponse::Error(context) => {
+                assert_eq!(context.category, agent_domain::ErrorCategory::Unavailable);
+                assert!(
+                    context.message.contains("not implemented"),
+                    "unexpected list error: {}",
+                    context.message
+                );
+            }
+            other => panic!("unimplemented list query must fail-closed, got {other:?}"),
+        }
+    }
+}

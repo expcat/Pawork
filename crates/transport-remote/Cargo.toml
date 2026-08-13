@@ -19,7 +19,6 @@ tokio = { workspace = true, features = ["net", "io-util", "macros", "rt", "sync"
 tokio-rustls = "0.26"
 tracing.workspace = true
 transport-api = { path = "../transport-api" }
-transport-remote-placeholder = { path = "../transport-remote-placeholder" }
 
 [dev-dependencies]
 agent-domain = { path = "../agent-domain" }

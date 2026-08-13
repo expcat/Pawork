@@ -485,7 +485,11 @@ pub fn assemble_run_profiles(
         for loaded in bundle.profiles_v2 {
             // 主 run 不施加 hook 那种 isolation!=None 过滤：None 隔离合法；Container
             // 等不满足的隔离在 RunStart 由 app-service fail-closed 拦截。
-            resolver.insert(workspace_id.clone(), loaded.profile.name.clone(), loaded.profile);
+            resolver.insert(
+                workspace_id.clone(),
+                loaded.profile.name.clone(),
+                loaded.profile,
+            );
         }
     }
     Ok(resolver)
@@ -673,7 +677,7 @@ denied = ["shell"]
         let service = Arc::new(AppService::new("hook-assembly-test"));
         let assembly = assemble_user_hooks(
             Arc::clone(&service),
-            &[workspace.clone()],
+            std::slice::from_ref(&workspace),
             Some(global),
             temp.path().join("audit.sqlite"),
             Arc::new(MemoryBackend::default()),

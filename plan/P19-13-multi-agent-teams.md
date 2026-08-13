@@ -29,5 +29,6 @@
 - [ ] parent cancel、worker crash、budget/lease 回收状态最终与 Event 一致
 - [ ] merge/reject 基于最新 revision，冲突不能 optimistic 覆盖
 - [ ] 大 DAG 有虚拟化列表和读屏摘要，不要求视觉图才能操作
+- [ ] Teams ingress（P17-6 延期落点）：shared task board / mailbox / presence 经 app-service 唯一 Event Hub 进入 GUI，消息版本化可回放；Teams 未挂持久库前 UI 明示协作状态不持久、不可跨重启重放
 
 **相关文档**：[multi-agent](../docs/features/multi-agent.md) · [provider-control-plane](../docs/features/provider-control-plane.md) · [Desktop GUI](../docs/features/desktop-gui.md) · [Phase 12](../ROADMAP.md)

@@ -21,7 +21,7 @@ serde_json.workspace = true
 session-store = { path = "../session-store" }
 subscription-hub = { path = "../subscription-hub" }
 tokio = { workspace = true, features = ["io-std", "io-util", "macros", "signal", "sync", "time"] }
-transport-remote-placeholder = { path = "../transport-remote-placeholder" }
+transport-api = { path = "../transport-api" }
 
 [dev-dependencies]
 clap.workspace = true
@@ -30,5 +30,5 @@ provider-api = { path = "../provider-api" }
 serde_json.workspace = true
 tempfile.workspace = true
 test-support = { path = "../test-support" }
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
 transport-remote-placeholder = { path = "../transport-remote-placeholder" }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }

@@ -1,6 +1,6 @@
 # P17-1：User Hooks（用户声明式事件钩子）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已验收 · 交付成熟度：Accepted + L2 定向门禁 · 依赖：P10-3、P8-1、P4-9、P2-1、P9-3、P11-6、P15-8、P17-5
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（HostWired） · 交付成熟度：HostWired（历史代码交付≠产品验收） · 依赖：P10-3、P8-1、P4-9、P2-1、P9-3、P11-6、P15-8、P17-5
 
 **最终目的**：为用户提供声明式（配置驱动）的事件钩子系统，按 trigger point 把 Agent / Run 生命周期事件桥接到多种 handler——`Command`（外部命令）、`Http`（webhook）、`PromptTransform`（改写 prompt）、`PromptEval`（模型判定）、`AgentEval`（受限 Agent 判定）、`McpTool`（MCP tool 作为 handler），并区分同步阻断与 async fire-and-forget。与 [P10-3](P10-3-plugin-registration.md) 的 WASM 插件内部 lifecycle hook 划清边界：P10-3 是**进程内、沙箱化、capability 门控**的插件 API 派发（`hook-runtime`）；本任务是**用户配置驱动、经 Policy/Sandbox 约束**的外部/进程外桥接。二者共享同一组 trigger point 词汇但走不同 dispatcher、不同运行时与不同信任边界，互不重复执行。
 

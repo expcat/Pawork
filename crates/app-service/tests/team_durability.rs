@@ -149,3 +149,48 @@ fn persist_failure_leaves_service_state_unchanged() {
         "失败不得产生任何持久化事实"
     );
 }
+
+/// 回归：Team 镜像入队经 RateLimiter 的 30ms 合并窗。修复前 push 在窗口
+/// 到期自动冲刷时把结果返回给调用方，而生产桥丢弃返回值，导致跨窗的镜像
+/// 偶发丢失（1/5 抖动）。这里确定性跨窗：第一条镜像落队后 sleep 超过窗口，
+/// 第二条镜像入队必然触发自动冲刷；生产 enqueue 会把冲刷结果重新排队，
+/// drain 必须完整、按序收到两条镜像。
+#[test]
+fn team_mirrors_survive_rate_limit_window_auto_flush() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("teams.sqlite");
+    let service = AppService::with_team_db("inst-1", &db).expect("open team DB");
+    let team = TeamId::from("team-win");
+    let sup = AgentId::from("sup");
+
+    service
+        .teams()
+        .create_team(team.clone(), TenantId::from("ten"), &sup, "W".into())
+        .unwrap();
+
+    // 确定性跨越默认 30ms 合并窗：下一次入队必然触发窗口到期自动冲刷。
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    service
+        .teams()
+        .add_member(&team, &sup, &AgentId::from("w1"), MemberRole::Worker)
+        .unwrap();
+
+    let drained = service.drain_events();
+    let mirrors: Vec<_> = drained
+        .iter()
+        .filter(|e| matches!(e.payload, AppEvent::TeamEvent { .. }))
+        .collect();
+    assert_eq!(mirrors.len(), 2, "跨窗口自动冲刷不得丢失镜像");
+    let kinds: Vec<&str> = mirrors
+        .iter()
+        .filter_map(|e| match &e.payload {
+            AppEvent::TeamEvent { event } => Some(event.kind()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, vec!["team_created", "member_added"], "镜像保序");
+    for window in mirrors.windows(2) {
+        assert_eq!(window[1].stream_sequence, window[0].stream_sequence + 1);
+    }
+}

@@ -1,6 +1,6 @@
 # P17-2：Plugin Package Format（扩展包格式）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（L1 定向测试 + clippy 通过，待人工验收） · 交付成熟度：Built · 依赖：P10-1、P8-3、P9-6、P17-1、P17-4、P8-5
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（LibraryBuilt） · 交付成熟度：LibraryBuilt（历史代码交付≠产品验收） · 依赖：P10-1、P8-3、P9-6、P17-1、P17-4、P8-5
 
 **最终目的**：定义统一的 Plugin Package 格式——一个可安装包（manifest + 归档）可聚合多种扩展类型：Skills、Agents（profile）、Hooks（用户钩子）、MCP server 声明、LSP server 声明、Monitors（监视器声明）。让一次安装即可交付一个完整能力组合，避免用户手动逐项配置。Package 仅做**聚合、校验、作用域绑定**，复用各类型既有的子 manifest，不重定义其语义；Monitor 复用 [P16-6](P16-6-persistent-process-monitor.md) 运行时语义，Package manifest 只声明其配置/trigger/permissions/lifecycle/required capability，实际执行统一进入 `monitor-service` / `task-manager`。
 

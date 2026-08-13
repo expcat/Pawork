@@ -17,10 +17,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_domain::{
-    AgentId, BackgroundTaskId, CancellationToken, CommandId, ContentPart, CoreInstanceId, EventId,
-    Message, MessageId, MessageMetadata, MessageRole, ModelId, ProfileIsolation, ProfileToolRules,
-    ProviderId, RequestId, RunId, SessionId, TaskKind, TaskStatus, TextContent, Timestamp,
-    WorkspaceId,
+    AgentId, BackgroundTaskId, CancellationToken, CommandId, ContentPart, CoreInstanceId,
+    ErrorCategory, ErrorContext, EventId, Message, MessageId, MessageMetadata, MessageRole,
+    ModelId, ProfileIsolation, ProfileToolRules, ProviderId, RequestId, RunId, SessionId, TaskKind,
+    TaskStatus, TextContent, Timestamp, WorkspaceId,
 };
 use agent_engine::{
     ApprovalOutcome, CancelHandle, CancelReason, EventBroadcaster, LoopContext, LoopError,
@@ -1026,7 +1026,7 @@ impl quota_service::refresh::AlertSink for AppQuotaAlertSink {
                 alert: Box::new(quota_alert_from(&alert)),
             },
         };
-        self.limiter.push(envelope);
+        self.limiter.enqueue(envelope);
     }
 }
 
@@ -1066,7 +1066,7 @@ impl teams::TeamEventSink for AppTeamEventSink {
                 event: Box::new(crate::team::to_app_event(&envelope.payload)),
             },
         };
-        self.limiter.push(app_envelope);
+        self.limiter.enqueue(app_envelope);
     }
 }
 
@@ -2522,7 +2522,7 @@ fn push_event(
         },
         payload,
     };
-    limiter.push(envelope);
+    limiter.enqueue(envelope);
 }
 
 fn terminal(state: &RunState) -> bool {
@@ -2769,11 +2769,18 @@ impl LoopContext for AppLoopContext {
             .into_iter()
             .map(|call| ToolCallResult {
                 tool_call_id: call.tool_call_id,
-                tool_name: call.name,
+                tool_name: call.name.clone(),
                 arguments: call.arguments,
-                result: ToolResult::success(vec![ContentPart::Text(TextContent {
-                    text: "tool executed (P13-1 no-op runtime)".into(),
-                })]),
+                result: ToolResult::failure(ErrorContext {
+                    category: ErrorCategory::Unavailable,
+                    message: format!(
+                        "tool `{}` is unavailable until tool-runtime integration",
+                        call.name
+                    ),
+                    retryable: false,
+                    retry_after_ms: None,
+                    diagnostics: Default::default(),
+                }),
             })
             .collect()
     }

@@ -9,10 +9,10 @@
 //! - 明文 Secret 一律丢弃，只保留 credential reference（名称 / 位置）；
 //! - 外部配置永远不是运行时事实源：导入的 hook 默认 disabled，MCP 与权限
 //!   条目带 requires_review，无法安全映射的内容标为 Unsupported / Disabled；
-//! - 原文件只读、不改写；重复 apply 幂等。
+//! - 原文件只读、不改写；重复 export_plan 幂等。
 //!
 //! 典型流程：`CompatLoader::scan`（只读）→ `CompatPlan::preview`（dry-run
-//! 预览）→ 用户确认后 `CompatLoader::apply` 把计划写入指定输出目录。
+//! 预览）→ 用户确认后 `CompatLoader::export_plan` 把计划写入指定输出目录。
 
 mod apply;
 mod detect;
@@ -25,7 +25,7 @@ pub mod model;
 mod parse;
 pub mod source;
 
-pub use apply::{ApplyOutcome, ApplyReport, CompatLoader};
+pub use apply::{CompatLoader, ExportOutcome, ExportReport};
 pub use limits::CompatLimits;
 pub use model::{
     CompatIssue, CompatItem, CompatPayload, CompatPlan, CredentialReference, DetectedSourceSummary,

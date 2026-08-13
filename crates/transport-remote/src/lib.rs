@@ -41,7 +41,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use client_auth::{Token, TokenStore};
+use client_auth::{ClientAuthError, Token, TokenStore};
 use tokio::net::{TcpListener, TcpStream};
 
 pub use connection::{ClientConnection, ResumeOutcome};
@@ -50,7 +50,7 @@ pub use transport_api::{
     GuiTransportClient, GuiTransportServer, TransportEndpoint, TransportError, TransportErrorKind,
     TransportFrame,
 };
-pub use transport_remote_placeholder::{
+pub use transport_api::{
     RemoteGuiConnector, RemoteGuiTransportProvider, RemotePublishHandle, RemotePublishRequest,
     RemoteTransportDescription,
 };
@@ -202,8 +202,6 @@ impl RealRemoteTransport {
         &self,
         name: &str,
     ) -> Result<RemotePublishHandle, TransportError> {
-        let seq = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let id = format!("{}-{seq}", sanitize(name));
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(|error| {
             transport_error(
                 TransportErrorKind::BindFailed,
@@ -216,55 +214,76 @@ impl RealRemoteTransport {
                 format!("failed to read listener address: {error}"),
             )
         })?;
-        let identity = crate::tls::generate_identity(&id)?;
-        let address = format!(
-            "real://{id}?fp={}#tcp={}:{}",
-            identity.fingerprint_hex,
-            bound_addr.ip(),
-            bound_addr.port()
-        );
-        // 端点独立凭证：每个端点生成互不相同的 token（文件 + 内存态），
-        // 凭证文件供客户端侧按端点读取；revoke 时删除文件，凭证真正失效。
-        let credential_file =
-            TokenStore::new(endpoint_credential_path(self.token_store.path(), &id));
-        let credential = credential_file.generate().map_err(|error| {
-            transport_error(
-                TransportErrorKind::BindFailed,
-                format!("failed to provision endpoint credential: {error}"),
-            )
-        })?;
-        let state = Arc::new(session::EndpointState::new(
-            id.clone(),
-            address.clone(),
-            identity,
-            credential.clone(),
-            credential_file,
-            self.max_frame_bytes,
-            self.max_buffered_bytes,
-            self.resend_window_frames,
-        ));
-        *state.listener_slot.lock().expect("slot lock") = Some(listener);
-        let mut registry = lock(&self.registry);
-        if registry.contains_key(&address) {
-            drop(state.listener_slot.lock().expect("slot lock").take());
-            let _ = state.credential_file.delete();
-            return Err(transport_error(
-                TransportErrorKind::BindFailed,
-                format!("remote endpoint {address:?} is already published"),
+        // 端点独立凭证：每个端点生成互不相同的 token（文件 + 内存态）。
+        // 不删除未知所有权的既有 token 文件；create_new 撞车时换新 id 重试。
+        const MAX_ID_RETRIES: u32 = 64;
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let seq = self.next_id.fetch_add(1, Ordering::Relaxed);
+            let id = format!("{}-{seq}", sanitize(name));
+            let identity = crate::tls::generate_identity(&id)?;
+            let address = format!(
+                "real://{id}?fp={}#tcp={}:{}",
+                identity.fingerprint_hex,
+                bound_addr.ip(),
+                bound_addr.port()
+            );
+            let credential_file =
+                TokenStore::new(endpoint_credential_path(self.token_store.path(), &id));
+            let credential = match credential_file.generate() {
+                Ok(credential) => credential,
+                Err(ClientAuthError::AlreadyExists { .. }) => {
+                    if attempts >= MAX_ID_RETRIES {
+                        return Err(transport_error(
+                            TransportErrorKind::BindFailed,
+                            format!(
+                                "failed to provision endpoint credential: too many existing token files for {name:?}"
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+                Err(error) => {
+                    return Err(transport_error(
+                        TransportErrorKind::BindFailed,
+                        format!("failed to provision endpoint credential: {error}"),
+                    ));
+                }
+            };
+            let state = Arc::new(session::EndpointState::new(
+                id.clone(),
+                address.clone(),
+                identity,
+                credential.clone(),
+                credential_file,
+                self.max_frame_bytes,
+                self.max_buffered_bytes,
+                self.resend_window_frames,
             ));
+            *state.listener_slot.lock().expect("slot lock") = Some(listener);
+            let mut registry = lock(&self.registry);
+            if registry.contains_key(&address) {
+                drop(state.listener_slot.lock().expect("slot lock").take());
+                let _ = state.credential_file.delete();
+                return Err(transport_error(
+                    TransportErrorKind::BindFailed,
+                    format!("remote endpoint {address:?} is already published"),
+                ));
+            }
+            registry.insert(address.clone(), state);
+            self.endpoint_tokens
+                .lock()
+                .expect("endpoint tokens lock")
+                .insert(address.clone(), credential);
+            return Ok(RemotePublishHandle {
+                id,
+                endpoint: TransportEndpoint::Remote {
+                    address,
+                    adapter: ADAPTER_NAME.into(),
+                },
+            });
         }
-        registry.insert(address.clone(), state);
-        self.endpoint_tokens
-            .lock()
-            .expect("endpoint tokens lock")
-            .insert(address.clone(), credential);
-        Ok(RemotePublishHandle {
-            id,
-            endpoint: TransportEndpoint::Remote {
-                address,
-                adapter: ADAPTER_NAME.into(),
-            },
-        })
     }
 
     /// 取消发布端点：从注册表移除（新连接失败）、关闭 listener 与已建立连接，
@@ -623,6 +642,17 @@ impl RealRemoteTransportProvider {
     }
 }
 
+impl Drop for RealRemoteTransport {
+    fn drop(&mut self) {
+        // 只清本实例登记过的端点。EndpointState::drop 幂等删除其自建 token。
+        lock(&self.registry).clear();
+        self.endpoint_tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+}
+
 #[async_trait]
 impl RemoteGuiTransportProvider for RealRemoteTransportProvider {
     fn describe(&self) -> RemoteTransportDescription {
@@ -960,6 +990,56 @@ mod tests {
         assert_eq!(transport.acked_sequence(addr_a, "any"), None);
         // 端点 b 不受影响。
         assert!(transport.endpoint_token(addr_b).is_some());
+    }
+
+    #[test]
+    fn transport_drop_deletes_owned_endpoint_token() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let base = TokenStore::new(temp.path().join("server.token"));
+        let credential_file = endpoint_credential_path(base.path(), "drop-0");
+        {
+            let transport =
+                RealRemoteTransport::new(RealRemoteTransportConfig::new(base.clone(), None));
+            let handle = poll_once(transport.publish_endpoint("drop")).expect("publish");
+            assert_eq!(handle.id, "drop-0");
+            assert!(
+                credential_file.exists(),
+                "owned token must exist while published"
+            );
+        }
+        assert!(
+            !credential_file.exists(),
+            "transport Drop must delete the endpoint token it created"
+        );
+    }
+
+    #[test]
+    fn publish_skips_existing_token_file_without_deleting_it() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let base = TokenStore::new(temp.path().join("server.token"));
+        let leftover = endpoint_credential_path(base.path(), "skip-0");
+        std::fs::create_dir_all(leftover.parent().expect("parent")).expect("mkdir leftover");
+        std::fs::write(
+            &leftover,
+            b"foreign-token
+",
+        )
+        .expect("plant leftover token");
+        let transport =
+            RealRemoteTransport::new(RealRemoteTransportConfig::new(base.clone(), None));
+        let handle = poll_once(transport.publish_endpoint("skip")).expect("publish");
+        assert_eq!(
+            handle.id, "skip-1",
+            "existing token file must not be reused or deleted"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&leftover).expect("read leftover"),
+            "foreign-token
+",
+            "foreign token file must remain untouched"
+        );
+        let owned = endpoint_credential_path(base.path(), "skip-1");
+        assert!(owned.exists(), "new endpoint must create its own token");
     }
 
     /// 同步轮询一次 async 结果（测试辅助）。

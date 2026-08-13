@@ -1,6 +1,7 @@
 # P17-13：Cross-Agent Compatibility Loader（配置与资源兼容加载）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（Built + L1；只读探测 + fixture smoke，不执行外部 hook/MCP） · 交付成熟度：Built · 依赖：P8-1～P8-6、P9-6、P17-1、P17-5；与 P16-9 协调
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已实现（LibraryBuilt） · 交付成熟度：LibraryBuilt（历史代码交付≠产品验收） · 依赖：P8-1～P8-6、P9-6、P17-1、P17-5；与 P16-9 协调
+> Remediation：Compat export_plan 未接线（只读探测 + fixture smoke）；真实 consumer 落点见 P19-11。
 
 **最终目的**：以输入侧 Adapter 读取 Claude Code、Codex、Grok Build、Cursor 与 Pi 的项目配置和扩展资源，将可表达内容映射为 Pawork canonical Instructions、Skills、MCP、Agent Profile、Hooks 与 Permission rules，降低迁移成本；外部配置永远不是运行时事实源，加载过程不得直接执行脚本、连接 MCP 或放宽权限。
 

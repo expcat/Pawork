@@ -198,15 +198,9 @@ async fn recv_matching(
     }
 }
 
-/// 请求/响应 RPC：发送帧后等待同 request_id 的响应（跳过通知类帧）。
-async fn rpc(
-    conn: &(impl GuiConnection + ?Sized),
-    request_id: &str,
-    frame: ClientFrame,
-) -> ServerFrame {
-    send_frame(conn, frame).await;
-    let wanted = request_id.to_string();
-    recv_matching(conn, move |frame| match frame {
+/// RPC 响应判定：同 request_id 的响应类帧。
+fn is_rpc_response(frame: &ServerFrame, wanted: &str) -> bool {
+    match frame {
         ServerFrame::PairChallenge { request_id, .. }
         | ServerFrame::Activated { request_id, .. }
         | ServerFrame::Authenticated { request_id, .. }
@@ -218,8 +212,52 @@ async fn rpc(
             ..
         } => *request_id == wanted,
         _ => false,
-    })
-    .await
+    }
+}
+
+/// 请求/响应 RPC：发送帧后等待同 request_id 的响应（跳过通知类帧）。
+async fn rpc(
+    conn: &(impl GuiConnection + ?Sized),
+    request_id: &str,
+    frame: ClientFrame,
+) -> ServerFrame {
+    send_frame(conn, frame).await;
+    let wanted = request_id.to_string();
+    recv_matching(conn, move |frame| is_rpc_response(frame, &wanted)).await
+}
+
+/// 联合等待 RPC：发送帧后在一个接收循环中同时捕获同 request_id 的响应与
+/// capture 谓词命中的通知（如 RunFinished），RPC 响应与命中通知的到达顺序
+/// 任意；capture 谓词命中的 RunFinished 帧会缓存，不被等待 RPC 响应的循环
+/// 丢弃。
+async fn rpc_capture(
+    conn: &(impl GuiConnection + ?Sized),
+    request_id: &str,
+    frame: ClientFrame,
+    mut capture: impl FnMut(&ServerFrame) -> bool,
+) -> (ServerFrame, Vec<ServerFrame>) {
+    send_frame(conn, frame).await;
+    let wanted = request_id.to_string();
+    let mut captured = Vec::new();
+    let deadline = Instant::now() + MATCH_TIMEOUT;
+    let response = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(remaining > Duration::ZERO, "rpc_capture timeout");
+        let frame = timeout(remaining, conn.receive())
+            .await
+            .expect("recv timeout")
+            .expect("receive frame");
+        let frame: ServerFrame =
+            serde_json::from_slice(frame.as_bytes()).expect("decode server frame");
+        if capture(&frame) {
+            captured.push(frame);
+            continue;
+        }
+        if is_rpc_response(&frame, &wanted) {
+            break frame;
+        }
+    };
+    (response, captured)
 }
 
 async fn pair_and_activate(
@@ -367,8 +405,23 @@ async fn restricted_protocol_end_to_end_over_transport_remote_carrier() {
         other => panic!("expected plan status data, got {other:?}"),
     }
 
-    // ---- 4. 受限命令：RunStart -> Accepted{run_id: Some}。----
-    let run_start = rpc(
+    // ---- 4. 受限命令：RunStart -> Accepted{run_id: Some}；RunFinished 通知
+    // 可合法先于 Accepted / RunStatus 响应到达，须在同一接收循环联合捕获；
+    // 任意顺序仅指 RPC 响应与命中通知：通知先到则取其 run_id 与响应校验，
+    // capture 谓词命中的 RunFinished 帧会缓存，不被等待 RPC 响应的循环丢弃。----
+    let capture_finished = |frame: &ServerFrame| {
+        matches!(
+            frame,
+            ServerFrame::Notification {
+                payload: NotificationPayload::RunFinished {
+                    state: RunState::Completed,
+                    ..
+                },
+                ..
+            }
+        )
+    };
+    let (run_start, mut finished_frames) = rpc_capture(
         conn.as_ref(),
         "run",
         ClientFrame::Command {
@@ -380,6 +433,7 @@ async fn restricted_protocol_end_to_end_over_transport_remote_carrier() {
                 profile: None,
             },
         },
+        capture_finished,
     )
     .await;
     let run_id: RunId = match run_start {
@@ -393,7 +447,8 @@ async fn restricted_protocol_end_to_end_over_transport_remote_carrier() {
         } => run_id,
         other => panic!("expected accepted with run_id, got {other:?}"),
     };
-    let run_status = rpc(
+    // RunStatus RPC 同样可能吞通知：继续联合捕获缓存，不靠 sleep / 放宽 timeout。
+    let (run_status, status_frames) = rpc_capture(
         conn.as_ref(),
         "status",
         ClientFrame::Query {
@@ -402,8 +457,10 @@ async fn restricted_protocol_end_to_end_over_transport_remote_carrier() {
                 run_id: run_id.clone(),
             },
         },
+        capture_finished,
     )
     .await;
+    finished_frames.extend(status_frames);
     assert!(
         matches!(
             run_status,
@@ -415,20 +472,38 @@ async fn restricted_protocol_end_to_end_over_transport_remote_carrier() {
         "RunStatus 应返回 Data: {run_status:?}"
     );
 
-    // ---- 5. 通知推送：Run 终态映射为 RunFinished(Completed)。----
+    // ---- 5. 通知推送：Run 终态映射为 RunFinished(Completed)。优先从联合
+    // 捕获缓存取（命中帧已缓存，未被等待 RPC 响应的循环丢弃），未命中再继续等待。----
     let expected_run = run_id.clone();
-    let finished = recv_matching(conn.as_ref(), |frame| match frame {
-        ServerFrame::Notification {
-            payload:
-                NotificationPayload::RunFinished {
-                    run_id,
-                    state: RunState::Completed,
-                },
-            ..
-        } => *run_id == expected_run,
-        _ => false,
-    })
-    .await;
+    let finished = match finished_frames.into_iter().find(|frame| {
+        matches!(
+            frame,
+            ServerFrame::Notification {
+                payload:
+                    NotificationPayload::RunFinished {
+                        run_id,
+                        state: RunState::Completed,
+                    },
+                ..
+            } if *run_id == expected_run
+        )
+    }) {
+        Some(frame) => frame,
+        None => {
+            recv_matching(conn.as_ref(), move |frame| match frame {
+                ServerFrame::Notification {
+                    payload:
+                        NotificationPayload::RunFinished {
+                            run_id,
+                            state: RunState::Completed,
+                        },
+                    ..
+                } => *run_id == expected_run,
+                _ => false,
+            })
+            .await
+        }
+    };
     match finished {
         ServerFrame::Notification { seq, payload, .. } => {
             assert!(seq >= 1);

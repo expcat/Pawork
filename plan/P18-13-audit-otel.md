@@ -32,6 +32,7 @@ P14-4/9 存在两处审计职责重叠：WebScrape adapter 内置有界内存 au
 - [ ] trace 可关联 tenant/session/agent/provider/account/client 而不暴露敏感值
 - [ ] WebScrape 内置 audit Vec 移除或降为测试夹具；生产只保留 scheduler/控制面外部 audit sink
 - [ ] quota refresh / 告警（含脱敏 kind/source）写入 canonical audit event，可跨 tenant 隔离查询与导出
+- [ ] ACP 接入审计（P17-7 延期落点）：session create/resume、prompt/update、permission/tool event、cancel 与能力协商等关键决策写入 canonical audit event，可跨 tenant 隔离查询与导出
 
 **相关文档**：[tenant-audit](../docs/features/tenant-audit.md) · [observability](../docs/features/observability.md) · [ADR-016](../docs/adr/ADR-016-core-event-persist-replay.md) · [ROADMAP](../ROADMAP.md)
 

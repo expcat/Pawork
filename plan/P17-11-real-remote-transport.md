@@ -1,6 +1,7 @@
 # P17-11：Real Remote Transport（安全远程发布/连接/重连）
 
-> Phase 17 · Ecosystem & Host Compatibility · 状态：✅已验收 · 交付成熟度：Accepted · 依赖：P13-6、P13-4、P6-4
+> Phase 17 · Ecosystem & Host Compatibility · 状态：✅有界实现（PartialWired，仅 remote loopback） · 交付成熟度：PartialWired（历史代码交付≠产品验收） · 依赖：P13-6、P13-4、P6-4
+> Remediation：remote loopback 长驻——端点由执行 `remote publish` 的长驻 pawork 进程持有，跨进程仅 connect/reconnect，SIGINT 关闭端点并清理 token；独立 unpublish/revoke 无共享控制面一律 fail-closed；外部网络与控制面接入延期，落点见 P19-14。
 
 **最终目的**：在 P13-6 占位接口之上落地真实远程 Transport——把「CLI 发布远程端点、GUI 远程连接」从 Mock 升级为带认证、加密、断线重连与撤销的生产实现。它只在 Transport 层工作，搬运与 P13 一致的 GUI Connection Protocol 帧，不含业务逻辑，也不修改 Agent Core（[ADR-027](../docs/adr/ADR-027-local-remote-same-protocol.md)/[028](../docs/adr/ADR-028-replaceable-remote-transport.md)）。
 
