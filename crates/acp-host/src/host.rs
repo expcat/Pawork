@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use agent_domain::{ConnectionId, QueryId, RunId, SessionId, ToolCallId, WorkspaceId};
+use agent_domain::{ConnectionId, QueryId, RunId, SessionId, TenantId, ToolCallId, WorkspaceId};
 use client_adapter_api::{
     AdapterError, AdapterSessionContext, CanonicalClientRequest, CanonicalCoreFrame,
     CapabilitySnapshot, ClientAdapter, ClientCapability, ClientFrame, ClientProtocol,
@@ -37,7 +37,7 @@ use client_adapter_api::{
 use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery,
     AppQueryEnvelope, AppResponse, CommandSource, EventStream, GlobalSequence, RunState,
-    API_VERSION,
+    API_VERSION, DEFAULT_CONTROL_PLANE_TENANT,
 };
 use serde_json::{json, Value};
 use subscription_hub::{EventHub, HubError, HubSubscription};
@@ -362,13 +362,14 @@ impl AcpHost {
     /// Hub Lagged 且无法可靠 replay 时 fail-closed：解除全部未决 prompt /
     /// 权限请求，避免静默丢终态或审批。
     pub fn fail_closed_all_prompts(&self, reason: &str) {
-        tracing::warn!(reason, "acp host fail-closed: releasing all in-flight prompts");
-        let _occupancy = std::mem::take(
-            &mut *self.occupancy.lock().expect("acp-host occupancy mutex"),
+        tracing::warn!(
+            reason,
+            "acp host fail-closed: releasing all in-flight prompts"
         );
-        let prompts = std::mem::take(
-            &mut *self.pending_prompts.lock().expect("acp-host prompts mutex"),
-        );
+        let _occupancy =
+            std::mem::take(&mut *self.occupancy.lock().expect("acp-host occupancy mutex"));
+        let prompts =
+            std::mem::take(&mut *self.pending_prompts.lock().expect("acp-host prompts mutex"));
         let _permissions = std::mem::take(
             &mut *self
                 .pending_permissions
@@ -486,24 +487,24 @@ impl AcpHost {
             }
         };
         match &request {
-            CanonicalClientRequest::Command(envelope) => match &envelope.command {
-                AppCommand::SessionCreate { .. } => {
-                    self.release_reservation(reserved_session);
-                    self.session_new(request).await
-                }
-                // session_prompt 接管预占 occupancy 的完整生命周期（activate/
-                // replay/释放）；此处不再触碰 occupancy。
-                AppCommand::RunStart { .. } => {
-                    self.session_prompt(&id, &params, request).await
-                }
-                other => {
-                    self.release_reservation(reserved_session);
-                    Err(JsonRpcError::new(
+            CanonicalClientRequest::Command(envelope) => {
+                match &envelope.command {
+                    AppCommand::SessionCreate { .. } => {
+                        self.release_reservation(reserved_session);
+                        self.session_new(request).await
+                    }
+                    // session_prompt 接管预占 occupancy 的完整生命周期（activate/
+                    // replay/释放）；此处不再触碰 occupancy。
+                    AppCommand::RunStart { .. } => self.session_prompt(&id, &params, request).await,
+                    other => {
+                        self.release_reservation(reserved_session);
+                        Err(JsonRpcError::new(
                         ERROR_METHOD_NOT_FOUND,
                         format!("method `{method}` decodes to unsupported canonical command {other:?}"),
                     ))
+                    }
                 }
-            },
+            }
             CanonicalClientRequest::Reattach { .. } => {
                 self.release_reservation(reserved_session);
                 self.session_resume(&params, request).await
@@ -516,7 +517,9 @@ impl AcpHost {
                 self.release_reservation(reserved_session);
                 Err(JsonRpcError::new(
                     ERROR_METHOD_NOT_FOUND,
-                    format!("method `{method}` has no host handler for canonical request {other:?}"),
+                    format!(
+                        "method `{method}` has no host handler for canonical request {other:?}"
+                    ),
                 ))
             }
         }
@@ -788,10 +791,7 @@ impl AcpHost {
         // early cancel）。并发双 prompt 已在 reserve_prompt_occupancy 拒绝；这里只
         // 保证占位存在（健壮兜底），随后 activate 时由现有 per-slot replay 兑现。
         {
-            let mut occupancy = self
-                .occupancy
-                .lock()
-                .expect("acp-host occupancy mutex");
+            let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
             occupancy
                 .entry(client_session_id.clone())
                 .or_insert_with(|| PromptOccupancy {
@@ -830,10 +830,7 @@ impl AcpHost {
             }
         };
         {
-            let mut occupancy = self
-                .occupancy
-                .lock()
-                .expect("acp-host occupancy mutex");
+            let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
             if let Some(slot) = occupancy.get_mut(&client_session_id) {
                 slot.run_id = Some(run_id.clone());
             }
@@ -854,10 +851,7 @@ impl AcpHost {
                 },
             );
         let (replay_session_cancel, replay_request_cancel) = {
-            let mut occupancy = self
-                .occupancy
-                .lock()
-                .expect("acp-host occupancy mutex");
+            let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
             occupancy
                 .get_mut(&client_session_id)
                 .map(|slot| {
@@ -923,12 +917,10 @@ impl AcpHost {
                 format!("unknown client session `{}`", client_session_id.0),
             )
         })?;
-        if !self
-            .service
-            .router()
-            .aggregate()
-            .session_exists(&record.core_session_id)
-        {
+        if !self.service.router().aggregate().session_exists(
+            &record.core_session_id,
+            &TenantId::new(DEFAULT_CONTROL_PLANE_TENANT),
+        ) {
             // workspace 由 resume params 的 cwd 解析（与 session/new 同一
             // 解析路径）；title 与 session/new 一致（cwd 作为标题）。
             let cwd = params.get("cwd").and_then(Value::as_str).ok_or_else(|| {
@@ -1030,10 +1022,7 @@ impl AcpHost {
     /// `session/cancel`：取消该 session 的活跃 run，并级联取消挂起的权限请求。
     async fn cancel_session(&self, client_session_id: &ClientSessionId) {
         let run_id: RunId = {
-            let mut occupancy = self
-                .occupancy
-                .lock()
-                .expect("acp-host occupancy mutex");
+            let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
             match occupancy.get_mut(client_session_id) {
                 Some(slot) => {
                     if let Some(run_id) = slot.run_id.clone() {
@@ -1136,11 +1125,11 @@ impl AcpHost {
             return;
         }
         // 仅当该 request 正处于注册窗口时记账；未知 / idle / 终态后一律忽略。
-        let mut occupancy = self
-            .occupancy
-            .lock()
-            .expect("acp-host occupancy mutex");
-        if let Some(slot) = occupancy.values_mut().find(|slot| &slot.request_id == request_id) {
+        let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
+        if let Some(slot) = occupancy
+            .values_mut()
+            .find(|slot| &slot.request_id == request_id)
+        {
             slot.early_request_cancel = true;
         }
     }
@@ -1325,10 +1314,7 @@ impl AcpHost {
                 )
             })?;
         let client_session_id = ClientSessionId::new(session_id);
-        let mut occupancy = self
-            .occupancy
-            .lock()
-            .expect("acp-host occupancy mutex");
+        let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
         if occupancy.contains_key(&client_session_id) {
             return Err(JsonRpcError::new(
                 ERROR_INVALID_REQUEST,

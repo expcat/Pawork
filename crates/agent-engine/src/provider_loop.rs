@@ -427,11 +427,6 @@ impl ProviderLoop {
 
         let mut request = self.build_request();
         let assistant_message_id = self.context.next_message_id();
-        self.emit_payload(AgentEvent::ProviderRequestStarted {
-            request_id: request.request_id.clone(),
-            provider_id: self.config.provider_id.clone(),
-            model: self.config.model.as_str().to_string(),
-        });
 
         // P15-8：以证据 × 请求能力协商，发出稳定 `provider_capability_negotiated`
         // Diagnostic（可观测「为何降级」）。协商不触网、不读 Provider 名；缺证据
@@ -446,14 +441,27 @@ impl ProviderLoop {
 
         let mut retry = RetryController::new(self.config.retry.clone());
         let (summary, sink) = loop {
+            // P18-8 review：canonical request/attempt 事件必须绑定每次实际
+            // `ModelProvider::stream` 调用——transport retry/failover 每次
+            // 调用生成新 request_id 并单独发射 ProviderRequestStarted，下游
+            // 据此逐调用收口独立不可变用量记录（失败前已观测的 UsageUpdated
+            // 也单独收口）；消息内容/能力协商仍保留 logical turn 语义
+            // （build_request 每轮一次，见 emit_capability_negotiated）。
+            let mut attempt_request = request.clone();
+            attempt_request.request_id = self.context.next_request_id();
+            self.emit_payload(AgentEvent::ProviderRequestStarted {
+                request_id: attempt_request.request_id.clone(),
+                provider_id: self.config.provider_id.clone(),
+                model: self.config.model.as_str().to_string(),
+            });
             let sink = LoopSink::new(
                 self.event_emitter(),
                 assistant_message_id.clone(),
-                request.request_id.clone(),
+                attempt_request.request_id.clone(),
             );
             match self
                 .provider
-                .stream(request.clone(), &sink, cancel.token())
+                .stream(attempt_request.clone(), &sink, cancel.token())
                 .await
             {
                 Ok(summary) => break (summary, sink),
@@ -469,7 +477,7 @@ impl ProviderLoop {
                                 "attempt": attempt,
                                 "reason": format!("{reason:?}"),
                                 "backoff_ms": backoff.as_millis() as u64,
-                                "request_id": request.request_id.as_str(),
+                                "request_id": attempt_request.request_id.as_str(),
                             }),
                         });
                         tokio::select! {
@@ -2925,7 +2933,12 @@ mod tests {
         let requests = provider_view.requests();
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].messages, requests[1].messages);
-        assert_eq!(requests[0].request_id, requests[1].request_id);
+        // P18-8：transport retry 每次 stream 调用都是新的上游请求——
+        // request_id 必须不同（同一 logical turn 语义，见 run_turn）。
+        assert_ne!(
+            requests[0].request_id, requests[1].request_id,
+            "retry 必须生成新 request_id"
+        );
         assert!(engine.messages()[1]
             .content
             .iter()
@@ -2938,6 +2951,102 @@ mod tests {
             );
         }
         assert!(retry_diagnostic, "每次重试必须产生 Diagnostic");
+    }
+
+    #[tokio::test]
+    async fn transport_retry_emits_distinct_request_started_per_stream_invocation() {
+        let mut flaky =
+            ProviderError::new(provider_api::ProviderErrorKind::Network, "flaky transport");
+        flaky.retryable = true;
+        flaky.retry_after_ms = Some(0);
+        let usage = |input: u64, output: u64| agent_domain::TokenUsage {
+            input_tokens: input,
+            output_tokens: output,
+            ..Default::default()
+        };
+        // 三次实际 stream 调用：前两次失败（第二次失败前已观测用量），
+        // 第三次成功。SequenceProvider 每次调用消费一个脚本。
+        let provider = SequenceProvider::new(vec![
+            MockScript::new().usage(usage(11, 1)).fail(flaky.clone()),
+            MockScript::new().usage(usage(22, 2)).fail(flaky),
+            MockScript::new().usage(usage(33, 3)).complete(),
+        ]);
+        let provider_view = provider.clone();
+        let broadcaster = EventBroadcaster::new();
+        let mut sub = broadcaster.subscribe();
+        let mut engine = ProviderLoop::new(
+            Arc::new(provider),
+            Arc::new(TestContext::new(Vec::new())),
+            config(vec![user_message("retry")]),
+            1,
+            broadcaster,
+        );
+
+        engine.run(message_queue(), run_cancel()).await.unwrap();
+
+        // 每次 stream 调用一个独立 request_id。
+        let requests = provider_view.requests();
+        assert_eq!(requests.len(), 3, "三次实际 stream 调用");
+        let mut request_ids: Vec<_> = requests
+            .iter()
+            .map(|request| request.request_id.clone())
+            .collect();
+        request_ids.sort_unstable();
+        request_ids.dedup();
+        assert_eq!(
+            request_ids.len(),
+            3,
+            "transport retry 每次调用必须生成新 request_id"
+        );
+        assert_eq!(requests[0].messages, requests[2].messages);
+
+        // 事件流：3 次 ProviderRequestStarted（绑定各自调用）+ 2 次重试
+        // Diagnostic（引用失败那次调用的 request_id）。
+        let mut events: Vec<AgentEventEnvelope> = Vec::new();
+        while let Ok(Some(envelope)) = sub.try_recv() {
+            events.push(envelope);
+        }
+        let started: Vec<_> = events
+            .iter()
+            .filter_map(|envelope| match &envelope.payload {
+                AgentEvent::ProviderRequestStarted { request_id, .. } => Some(request_id.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            started.len(),
+            3,
+            "每次 stream 调用一次 ProviderRequestStarted"
+        );
+        let mut started_ids: Vec<_> = started.clone();
+        started_ids.sort_unstable();
+        started_ids.dedup();
+        assert_eq!(started_ids.len(), 3, "事件 request_id 两两不同");
+        assert_eq!(
+            started_ids, request_ids,
+            "ProviderRequestStarted 与 stream 调用 request_id 一一对应"
+        );
+        let retries: Vec<_> = events
+            .iter()
+            .filter_map(|envelope| match &envelope.payload {
+                AgentEvent::Diagnostic { code, details } if code == "provider_retry_attempt" => {
+                    Some(
+                        details
+                            .get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(retries.len(), 2, "两次重试诊断");
+        assert_eq!(
+            retries,
+            vec![started[0].as_str(), started[1].as_str()],
+            "重试诊断必须引用失败那次调用的 request_id"
+        );
     }
 
     #[tokio::test]

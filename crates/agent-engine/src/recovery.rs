@@ -166,6 +166,15 @@ pub fn replay_run(events: &RunEventLog) -> RecoveryPlan {
         };
 
         for t in transitions {
+            // P18-8：`ProviderRequestStarted` 现在按每次实际上游调用
+            // （transport retry/failover）发射；同一 logical turn 内已处于
+            // StreamingResponse 时再次进入是重试语义，重放时幂等跳过，
+            // 不再记为 IllegalTransition。
+            if matches!(t, RunTransition::ProviderStarted)
+                && matches!(sm.state(), RunState::StreamingResponse)
+            {
+                continue;
+            }
             match sm.apply(t) {
                 Ok(_) => {}
                 Err(TransitionError::Illegal { state, transition }) => {

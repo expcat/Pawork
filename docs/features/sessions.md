@@ -74,7 +74,11 @@ Migration 只向前；每次升级前备份；Migration 可恢复；Projection �
 
 `session-store`（schema v4）已实现 Session Tree / Fork（从任意事件分叉、按 branch 分页读取事件）、Branch 切换（active_branch + 并发写保护）、完整生命周期（rename / archive / unarchive / delete / resume）、Session Lease（过期可抢占）、损坏检测（只读 parent 缺失 / sequence 间隙检测）以及搜索与标签。内容搜索只反序列化并匹配 `Text` part，snippet 不暴露原始 JSON；`replay_events` / `tail_events` 明确定义为整 session 语义，分支消费者使用 `events_by_branch`。
 
-Export / Import schema v2 为每条事件显式保存 `branch_id`，多分支往返不改变归属；读取器仍兼容 v1，并把历史上无法判定归属的事件迁移到 main。`compaction-engine` 按目标 branch 折叠事件并保留 recovery fork 语义。Pi JSONL Importer（`import_pi_jsonl`）使用 Tokio 逐行读取，按真实行号保存多条未知记录，将 ModelSwitch 持久化为诊断事件，生成迁移报告且不修改原文件（ADR-005）。
+Export / Import 当前 schema v3 在 v2 的逐事件 `branch_id` 基础上新增 `tenant_id` / `principal_id`。多分支往返不改变归属；v1/v2 只按 legacy `local/default` / `local/user` 安全回填，不能从旧 payload 注入身份，v3 缺失 identity 或调用方 identity 不匹配时 fail-closed。历史上无法判定分支归属的 v1 事件迁移到 main。`compaction-engine` 按目标 branch 折叠事件并保留 recovery fork 语义。Pi JSONL Importer（`import_pi_jsonl`）使用 Tokio 逐行读取，按真实行号保存多条未知记录，将 ModelSwitch 持久化为诊断事件，生成迁移报告且不修改原文件（ADR-005）。
+
+## Phase 18 Tenant Identity 基线
+
+Session Store schema v7 在 session 记录持久化 `tenant_id` / `principal_id`，legacy 数据迁移到 `local/default` / `local/user`。创建、打开、压缩、fork、搜索、导出/导入，以及 Core 的 Session/Run 查询与状态变更均显式携带并校验 `IdentityContext`；跨 tenant 访问统一表现为 NotFound，避免泄露记录是否存在。Session/Run 相关 idempotency replay 也以 tenant 分区。
 
 ## Phase 15 Reasoning 存储基线
 

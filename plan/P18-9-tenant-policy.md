@@ -1,6 +1,6 @@
 # P18-9：Tenant Policy / RBAC
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-2、P18-3、P18-8、P4-9
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠核心接线已实现，专项回归待补 · 交付成熟度：Built · 依赖：P18-2、P18-3、P18-8、P4-9
 
 **最终目的**：在共享账号池、Agent 与查询面前建立 deny-first tenant policy，限制可用 provider/model/account、并发、预算、保留与审计导出。
 
@@ -29,3 +29,8 @@
 
 **相关文档**：[tenant-audit](../docs/features/tenant-audit.md) · [policy](../docs/features/policy.md) · [ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [ROADMAP](../ROADMAP.md)
 
+## 当前进度（2026-08-13）
+
+- 已接入 provider/model/account allowlist、RBAC、run/agent 并发准入、retry 重新检查、tenant-scoped GUI/query、Lease 返回作用域校验与 canonical policy audit。
+- `cargo test -p app-service --test tenant_policy`：14 passed；`cargo test -p app-service --lib`：99 passed；`cargo test -p gui-server --lib`：22 passed；`cargo test -p orchestration --lib`：78 passed。
+- 待补：并发 spawn 压力回归、恶意/故障 pool 返回错配 lease 的专项回归，以及完成后的 GLM 审查。

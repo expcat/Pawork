@@ -30,6 +30,7 @@ sandbox-runtime = { path = "../../crates/sandbox-runtime" }
 serde_json.workspace = true
 session-store = { path = "../../crates/session-store" }
 task-manager = { path = "../../crates/task-manager" }
+provider-control = { path = "../../crates/provider-control" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 async-trait.workspace = true
 tracing = { workspace = true }
@@ -43,3 +44,4 @@ workspace-service = { path = "../../crates/workspace-service" }
 assert_cmd.workspace = true
 gui-client = { path = "../../crates/gui-client" }
 tempfile.workspace = true
+usage-ledger = { path = "../../crates/usage-ledger" }

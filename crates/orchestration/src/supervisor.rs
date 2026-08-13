@@ -16,10 +16,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_domain::{AgentId, CancellationToken, ModelId, ProviderId};
 use provider_control::{CredentialPool, LeaseGuard, LeaseOutcome};
-use tenant_service::TenantPolicyEngine;
-use usage_ledger::UsageLedger;
+use tenant_service::{
+    IdentityContext, Permission, PolicyDecisionEvent, PolicyDecisionKind, PolicyGate,
+    TenantPolicyEngine,
+};
 #[cfg(test)]
-use usage_ledger::{InMemoryUsageLedger, UsageLedgerError, UsageQuery, UsageRecord, UsageTotals};
+use usage_ledger::{InMemoryUsageLedger, UsageLedgerError, UsageRecord, UsageTotals};
+use usage_ledger::{UsageLedger, UsageQuery};
 
 use crate::budget::{
     LedgerContext, WorkerBudgetController, WorkerBudgetLimits, DIM_COST_MICROS, DIM_INPUT_TOKENS,
@@ -189,11 +192,39 @@ impl Drop for FlushTicket {
     }
 }
 
+/// 并发预约失败原因（区分全局本地闸门与租户策略闸门，便于审计）。
+enum ConcurrencyReservationError {
+    /// 全局 agent 并发上限（本地闸门）。
+    Global { current: u64, limit: u64 },
+    /// 租户 agent 并发上限（策略闸门）。
+    Tenant { current: u64, max: u64 },
+}
+
+/// spawn 的在途并发槽位预约（RAII）。drop 时从 [`AgentSupervisor::reservations`]
+/// 移除预约的 agent_id（幂等：成功兑现路径已移除，drop 再移除为 no-op）。
+struct ConcurrencyReservation {
+    reservations: Arc<Mutex<BTreeMap<AgentId, agent_domain::TenantId>>>,
+    agent_id: AgentId,
+}
+
+impl Drop for ConcurrencyReservation {
+    fn drop(&mut self) {
+        self.reservations
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(&self.agent_id);
+    }
+}
+
 /// 编排 Supervisor：集中拥有 spawn / assign / cancel_tree / 恢复。
 pub struct AgentSupervisor {
     workers: Arc<Mutex<BTreeMap<AgentId, WorkerEntry>>>,
     cancel_tokens: Arc<Mutex<BTreeMap<AgentId, CancellationToken>>>,
     children: Arc<Mutex<BTreeMap<AgentId, Vec<AgentId>>>>,
+    /// 并发 spawn 的在途槽位预约（agent_id → tenant_id）。与活动 worker 计数
+    /// 在单一临界区内合并判定全局 / 租户并发，杜绝 spawn 的 check-then-act
+    /// 超配；RAII [`ConcurrencyReservation`] 在 spawn 任一后续步骤失败时归还。
+    reservations: Arc<Mutex<BTreeMap<AgentId, agent_domain::TenantId>>>,
     pool: Arc<dyn CredentialPool>,
     policy: Arc<dyn TenantPolicyEngine>,
     ledger: Arc<dyn UsageLedger>,
@@ -226,6 +257,7 @@ impl AgentSupervisor {
             workers: Arc::new(Mutex::new(BTreeMap::new())),
             cancel_tokens: Arc::new(Mutex::new(BTreeMap::new())),
             children: Arc::new(Mutex::new(BTreeMap::new())),
+            reservations: Arc::new(Mutex::new(BTreeMap::new())),
             pool,
             policy,
             ledger,
@@ -278,37 +310,130 @@ impl AgentSupervisor {
     /// lease / worktree 分配失败时把该 worker 标记 `Failed` 后返回错误，
     /// 保证事件流一致、恢复时不留悬挂 worker。
     pub async fn spawn(&self, req: SpawnRequest) -> Result<AgentId, SupervisorError> {
-        // 1. 策略闸门：租户 agent 并发 + 模型白名单。
-        let active_for_tenant = self.active_worker_count(Some(&req.tenant_id));
-        self.policy
-            .check_agent_concurrency(&req.tenant_id, active_for_tenant)
-            .await
-            .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
-        if let Some(model) = &req.model {
-            self.policy
-                .check_model(&req.tenant_id, model)
-                .await
-                .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
-        }
-        // 2. 本地并发闸门（与租户策略相互独立）。
-        let active_total = self.active_worker_count(None);
-        if active_total >= self.config.max_agent_concurrency {
-            self.emit(OrchestrationEvent::ConcurrencyDenied {
-                kind: "agents".to_string(),
-                current: active_total,
-                limit: self.config.max_agent_concurrency,
-            });
-            return Err(SupervisorError::PolicyDenied(format!(
-                "agent concurrency limit reached: active {active_total} of max {}",
-                self.config.max_agent_concurrency
-            )));
-        }
-
-        // 3. 创建实例（worktree_path 初始来自请求，分配后可能被覆盖）。
+        // 1. 并发预约（race-free）：与活动 worker 计数在单一临界区内合并判定
+        //    全局 / 租户并发，杜绝 check-then-act 超配。预约以 RAII 归还——
+        //    spawn 任一后续步骤失败（闸门拒绝 / worktree / lease / 注册）都自动
+        //    归还槽位，绝不永久占用额度。agent_id 先于预约生成，使预约、worktree、
+        //    lease、注册全程共享同一 canonical 身份。
         let agent_id = AgentId::new(format!(
             "agent-{}",
             self.next_agent_id.fetch_add(1, Ordering::Relaxed)
         ));
+        let _reservation = match self.reserve_concurrency(agent_id.clone(), &req.tenant_id) {
+            Ok(reservation) => reservation,
+            Err(ConcurrencyReservationError::Global { current, limit }) => {
+                self.emit(OrchestrationEvent::ConcurrencyDenied {
+                    kind: "agents".to_string(),
+                    current,
+                    limit,
+                });
+                return Err(SupervisorError::PolicyDenied(format!(
+                    "agent concurrency limit reached: active {current} of max {limit}",
+                )));
+            }
+            Err(ConcurrencyReservationError::Tenant { current, max }) => {
+                let reason = format!("并发限制被超出：kind=Agents current={current} max={max}");
+                self.record_policy_denial(&req, PolicyGate::AgentSpawn, &reason);
+                return Err(SupervisorError::PolicyDenied(reason));
+            }
+        };
+        // 2. 策略闸门（P18-9，deny-first，任何一层拒绝都不可被上层覆盖）：
+        //    主体角色 AgentSpawn → 模型白名单 → lease 权限与 provider/account
+        //    白名单 → 日 token/cost 预算（准入前）。租户 / 全局并发已由 reservation
+        //    原子裁决（无 check-then-act 窗口），此处不再重复 concurrency 闸门。
+        self.policy
+            .check_permission(&req.tenant_id, &req.principal_id, Permission::AgentSpawn)
+            .await
+            .map_err(|error| {
+                self.record_policy_denial(&req, PolicyGate::AgentSpawn, &error);
+                SupervisorError::PolicyDenied(error.to_string())
+            })?;
+        if let Some(model) = &req.model {
+            self.policy
+                .check_model(&req.tenant_id, model)
+                .await
+                .map_err(|error| {
+                    self.record_policy_denial(&req, PolicyGate::AgentSpawn, &error);
+                    SupervisorError::PolicyDenied(error.to_string())
+                })?;
+        }
+        if let Some(acquire) = &req.acquire {
+            // P18-9：AcquireRequest 的 tenant / principal / session 必须与
+            // SpawnRequest 外层一致，错配一律拒绝（不信任调用方拼接），
+            // agent_id 由 supervisor 生成后覆写（见 lease 申请步骤）。
+            let mismatched = acquire.tenant_id != req.tenant_id
+                || acquire.principal_id != req.principal_id
+                || acquire.session_id != req.session_id;
+            if mismatched {
+                let reason =
+                    "AcquireRequest 与 SpawnRequest 的 tenant/principal/session 不一致".to_string();
+                self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &reason);
+                return Err(SupervisorError::PolicyDenied(reason));
+            }
+            self.policy
+                .check_permission(&req.tenant_id, &req.principal_id, Permission::LeaseAcquire)
+                .await
+                .map_err(|error| {
+                    self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &error);
+                    SupervisorError::PolicyDenied(error.to_string())
+                })?;
+            if let Some(provider) = &acquire.provider_id {
+                self.policy
+                    .check_provider(&req.tenant_id, provider)
+                    .await
+                    .map_err(|error| {
+                        self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &error);
+                        SupervisorError::PolicyDenied(error.to_string())
+                    })?;
+            }
+            if let Some(account) = &acquire.account_id {
+                self.policy
+                    .check_account(&req.tenant_id, account)
+                    .await
+                    .map_err(|error| {
+                        self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &error);
+                        SupervisorError::PolicyDenied(error.to_string())
+                    })?;
+            }
+        }
+        // 日 token/cost 预算在准入前执行：仅当租户策略配置了任一预算维度时
+        // 才查询账本（fail-closed：账本不可用时拒绝准入，绝不静默放行）。
+        let tenant_policy = self.policy.policy(&req.tenant_id);
+        let budget_configured = tenant_policy.daily_input_token_budget.is_some()
+            || tenant_policy.daily_output_token_budget.is_some()
+            || tenant_policy.daily_cost_micros_budget.is_some();
+        if budget_configured {
+            let day_start = now_ms() - (now_ms() % MS_PER_DAY);
+            let daily = UsageQuery {
+                tenant_id: Some(req.tenant_id.clone()),
+                occurred_at_start_ms: Some(day_start),
+                ..UsageQuery::default()
+            };
+            match self.ledger.aggregate(&daily).await {
+                Ok(totals) => {
+                    self.policy
+                        .check_budget(
+                            &req.tenant_id,
+                            totals.input_tokens,
+                            totals.output_tokens,
+                            totals.cost_micros,
+                        )
+                        .await
+                        .map_err(|error| {
+                            self.record_policy_denial(&req, PolicyGate::AgentSpawn, &error);
+                            SupervisorError::PolicyDenied(error.to_string())
+                        })?;
+                }
+                Err(error) => {
+                    let reason = format!("日预算准入前查询账本失败（fail-closed）：{error}");
+                    self.record_policy_denial(&req, PolicyGate::AgentSpawn, &reason);
+                    return Err(SupervisorError::PolicyDenied(reason));
+                }
+            }
+        }
+        // 准入成功：记录 versioned 决策事件（审计事实源）。
+        self.record_policy_allow(&req, PolicyGate::AgentSpawn, "agent spawn 准入");
+        // 3. 创建实例（worktree_path 初始来自请求，分配后可能被覆盖）。
         let now = now_ms();
         let (role, mut instance) = match &req.parent_id {
             Some(parent) => (
@@ -399,40 +524,111 @@ impl AgentSupervisor {
 
         // 7. 申请 lease（可选）。
         let lease = match &req.acquire {
-            Some(acquire) => match self.pool.acquire_guard(acquire.clone()).await {
-                Ok(guard) => Some(guard),
-                Err(error) => {
-                    // 已分配的 worktree 显式释放，避免泄漏。
-                    if let Some(guard) = worktree_guard.take() {
-                        if let Err(release_error) = guard.release().await {
-                            tracing::warn!(
-                                %agent_id,
-                                %release_error,
-                                "failed to release worktree after lease acquire failure"
-                            );
+            Some(acquire) => {
+                // canonical AcquireRequest：agent_id 由 supervisor 用生成的
+                // canonical id 覆写（P18-9），tenant/principal/session 同步
+                // 取外层请求值（错配已在闸口拒绝），调用方提供的 agent_id
+                // 不被信任。
+                let mut canonical = acquire.clone();
+                canonical.agent_id = agent_id.clone();
+                canonical.tenant_id = req.tenant_id.clone();
+                canonical.principal_id = req.principal_id.clone();
+                canonical.session_id = req.session_id.clone();
+                match self.pool.acquire_guard(canonical).await {
+                    Ok(guard) => {
+                        // P18-9 安全：不信任 pool 返回的 lease 内容。acquire 成功后
+                        // 必须校验 lease 的 tenant/principal/session/agent 与本次
+                        // spawn 的 canonical 请求一致，以及请求显式指定的
+                        // provider/account 一致；任何错配（恶意 / 故障 pool）一律
+                        // fail-closed：显式释放该 lease（Released，不惩罚账号健康）、
+                        // 释放 worktree、标记 Failed 注册、归还并发预约后返回错误。
+                        let lease_view = guard
+                            .lease()
+                            .expect("acquire_guard 刚返回的 lease 必须存在")
+                            .clone();
+                        if let Err(reason) =
+                            validate_lease_scope(&lease_view, &req, &agent_id, acquire)
+                        {
+                            // 取走 lease，使 guard 的 Drop 不再触发释放副作用；
+                            // 改由显式 release 以 Released 归还额度（恶意 lease 不得
+                            // 继续占用账号并发，也不应记为 Failed 影响账号健康）。
+                            let lease_id = lease_view.lease_id.clone();
+                            let _ = guard.into_lease();
+                            if let Err(release_error) =
+                                self.pool.release(lease_id, LeaseOutcome::Released).await
+                            {
+                                tracing::warn!(
+                                    %agent_id,
+                                    %release_error,
+                                    "failed to release lease after scope validation failure"
+                                );
+                            }
+                            if let Some(wt_guard) = worktree_guard.take() {
+                                if let Err(release_error) = wt_guard.release().await {
+                                    tracing::warn!(
+                                        %agent_id,
+                                        %release_error,
+                                        "failed to release worktree after lease scope failure"
+                                    );
+                                }
+                            }
+                            // 保持事件流一致：标记 Failed 并注册，再返回错误。
+                            let _ = machine.apply(WorkerTransition::Fail);
+                            self.emit(OrchestrationEvent::WorkerFailed {
+                                agent_id: agent_id.clone(),
+                                at_ms: now_ms(),
+                                reason: reason.to_string(),
+                            });
+                            let entry = WorkerEntry {
+                                instance,
+                                state: machine,
+                                lease: None,
+                                worktree: None,
+                                model: req.model.clone(),
+                            };
+                            self.workers
+                                .lock()
+                                .unwrap_or_else(|poison| poison.into_inner())
+                                .insert(agent_id.clone(), entry);
+                            let reason_msg = format!("lease scope validation failed: {reason}");
+                            self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &reason_msg);
+                            return Err(SupervisorError::LeaseError(reason_msg));
                         }
+                        Some(guard)
                     }
-                    // 保持事件流一致：标记 Failed 并注册，再返回错误。
-                    let _ = machine.apply(WorkerTransition::Fail);
-                    self.emit(OrchestrationEvent::WorkerFailed {
-                        agent_id: agent_id.clone(),
-                        at_ms: now_ms(),
-                        reason: error.to_string(),
-                    });
-                    let entry = WorkerEntry {
-                        instance,
-                        state: machine,
-                        lease: None,
-                        worktree: None,
-                        model: req.model.clone(),
-                    };
-                    self.workers
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner())
-                        .insert(agent_id.clone(), entry);
-                    return Err(SupervisorError::PoolAcquire(error.to_string()));
+                    Err(error) => {
+                        // 已分配的 worktree 显式释放，避免泄漏。
+                        if let Some(guard) = worktree_guard.take() {
+                            if let Err(release_error) = guard.release().await {
+                                tracing::warn!(
+                                    %agent_id,
+                                    %release_error,
+                                    "failed to release worktree after lease acquire failure"
+                                );
+                            }
+                        }
+                        // 保持事件流一致：标记 Failed 并注册，再返回错误。
+                        let _ = machine.apply(WorkerTransition::Fail);
+                        self.emit(OrchestrationEvent::WorkerFailed {
+                            agent_id: agent_id.clone(),
+                            at_ms: now_ms(),
+                            reason: error.to_string(),
+                        });
+                        let entry = WorkerEntry {
+                            instance,
+                            state: machine,
+                            lease: None,
+                            worktree: None,
+                            model: req.model.clone(),
+                        };
+                        self.workers
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner())
+                            .insert(agent_id.clone(), entry);
+                        return Err(SupervisorError::PoolAcquire(error.to_string()));
+                    }
                 }
-            },
+            }
             None => None,
         };
 
@@ -504,10 +700,20 @@ impl AgentSupervisor {
         }
 
         // 11. 注册 worker 条目与预算控制器。
-        self.workers
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .insert(
+        // 原子兑现并发预约：在同一临界区（先 reservations 后 workers，与
+        // reserve_concurrency 一致）从 reservations 移除预约并插入活动 worker，
+        // 杜绝并发 spawn 观察到「预约已撤但 worker 未注册」的中间态。
+        {
+            let mut reservations = self
+                .reservations
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let mut workers = self
+                .workers
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            reservations.remove(&agent_id);
+            workers.insert(
                 agent_id.clone(),
                 WorkerEntry {
                     instance,
@@ -517,6 +723,8 @@ impl AgentSupervisor {
                     model: req.model.clone(),
                 },
             );
+        }
+        // reservation 的 RAII drop 在函数返回时再 remove 一次（幂等，no-op）。
         let limits = req.budget.unwrap_or_else(|| self.config.budget.clone());
         self.budget
             .lock()
@@ -553,7 +761,7 @@ impl AgentSupervisor {
     /// lease（account / provider）与 spawn 请求（model）取真实值，不再
     /// 硬编码 `"unknown"`；worktree 显式释放；TaskGraph 推进为 Completed。
     pub async fn complete(&self, agent_id: &AgentId) -> Result<(), SupervisorError> {
-        let (lease, parent, instance, controller, worktree, model, ticket) = {
+        let (mut lease, parent, instance, controller, worktree, model, ticket) = {
             let mut workers = self
                 .workers
                 .lock()
@@ -607,7 +815,12 @@ impl AgentSupervisor {
             .map(|l| (l.account_id.as_str().to_string(), l.provider_id.clone()))
             .unwrap_or_else(|| ("local/default".to_string(), ProviderId::new("local")));
         let model_id = model.unwrap_or_else(|| ModelId::new("unknown"));
-        // 读完归属后释放 lease（默认 outcome 即 Completed；Drop 触发同步幂等释放）。
+        // 读完归属后释放 lease。LeaseGuard 默认 outcome 为 Failed（fail-safe：
+        // 未显式标记不得计作成功），因此正常完成必须显式标记 Completed 后再
+        // Drop（Drop 触发同步幂等释放）。
+        if let Some(guard) = lease.as_mut() {
+            *guard.outcome_mut() = LeaseOutcome::Completed;
+        }
         drop(lease);
         let flush_outcome = self
             .flush_terminal_usage(
@@ -1232,6 +1445,37 @@ impl AgentSupervisor {
             .push(event);
     }
 
+    /// 记录一次策略拒绝决策（versioned，reason 统一脱敏）。
+    fn record_policy_denial(
+        &self,
+        req: &SpawnRequest,
+        gate: PolicyGate,
+        reason: impl std::fmt::Display,
+    ) {
+        let identity = IdentityContext::new(req.tenant_id.clone(), req.principal_id.clone());
+        self.policy.record_decision(PolicyDecisionEvent::new(
+            self.policy.policy_version(&req.tenant_id),
+            &identity,
+            gate,
+            PolicyDecisionKind::Deny,
+            reason.to_string(),
+            now_ms(),
+        ));
+    }
+
+    /// 记录一次策略放行决策（versioned）。
+    fn record_policy_allow(&self, req: &SpawnRequest, gate: PolicyGate, reason: &str) {
+        let identity = IdentityContext::new(req.tenant_id.clone(), req.principal_id.clone());
+        self.policy.record_decision(PolicyDecisionEvent::new(
+            self.policy.policy_version(&req.tenant_id),
+            &identity,
+            gate,
+            PolicyDecisionKind::Allow,
+            reason,
+            now_ms(),
+        ));
+    }
+
     /// 从父的 children 列表中移除（幂等）。
     fn remove_child(&self, parent: Option<&AgentId>, child: &AgentId) {
         let Some(parent) = parent else {
@@ -1247,18 +1491,123 @@ impl AgentSupervisor {
         }
     }
 
-    /// 活动 worker 计数（`tenant = None` 时全局）。
+    /// 测试辅助：活动 worker 与在途并发预约计数（`tenant = None` 时全局）。
+    #[cfg(test)]
     fn active_worker_count(&self, tenant: Option<&agent_domain::TenantId>) -> u64 {
-        self.workers
+        let reservations = self
+            .reservations
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+            .unwrap_or_else(|poison| poison.into_inner());
+        let workers = self
+            .workers
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let reserved = reservations
+            .values()
+            .filter(|tenant_id| tenant.is_none_or(|wanted| *tenant_id == wanted))
+            .count() as u64;
+        let active = workers
             .values()
             .filter(|entry| {
                 entry.state.state().is_active()
                     && tenant.is_none_or(|tenant| entry.instance.tenant_id == *tenant)
             })
-            .count() as u64
+            .count() as u64;
+        reserved + active
     }
+
+    /// 原子并发预约：在单一临界区内把「活动 worker + 在途 reservations」合并
+    /// 计数，校验全局本地上限与租户策略 `max_concurrent_agents`，通过后插入
+    /// 一条 reservation 并返回 RAII 守卫。租户上限取自同步 `policy()`，全程
+    /// 不跨 await，杜绝 spawn 的 check-then-act 超配（并发调用串行化在锁内）。
+    fn reserve_concurrency(
+        &self,
+        agent_id: AgentId,
+        tenant_id: &agent_domain::TenantId,
+    ) -> Result<ConcurrencyReservation, ConcurrencyReservationError> {
+        let mut reservations = self
+            .reservations
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let workers = self
+            .workers
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let count = |tid: Option<&agent_domain::TenantId>| -> u64 {
+            let reserved = reservations
+                .values()
+                .filter(|stored| tid.is_none_or(|wanted| *stored == wanted))
+                .count() as u64;
+            let active = workers
+                .values()
+                .filter(|entry| {
+                    entry.state.state().is_active()
+                        && tid.is_none_or(|wanted| &entry.instance.tenant_id == wanted)
+                })
+                .count() as u64;
+            reserved + active
+        };
+        // 全局本地闸门。
+        let global_active = count(None);
+        if global_active >= self.config.max_agent_concurrency {
+            return Err(ConcurrencyReservationError::Global {
+                current: global_active,
+                limit: self.config.max_agent_concurrency,
+            });
+        }
+        // 租户策略闸门（max_concurrent_agents 取自同步 policy，无需 await）。
+        if let Some(max_t) = self.policy.policy(tenant_id).max_concurrent_agents {
+            let tenant_active = count(Some(tenant_id));
+            if tenant_active >= max_t {
+                return Err(ConcurrencyReservationError::Tenant {
+                    current: tenant_active,
+                    max: max_t,
+                });
+            }
+        }
+        reservations.insert(agent_id.clone(), tenant_id.clone());
+        Ok(ConcurrencyReservation {
+            reservations: Arc::clone(&self.reservations),
+            agent_id,
+        })
+    }
+}
+
+/// 校验 pool 返回的 lease 作用域与本次 spawn 的 canonical 请求一致。
+///
+/// 不信任调用方拼接的 [`provider_control::AcquireRequest`]（已在闸口拒绝错配），
+/// 也不信任 pool 返回的 lease 内容：tenant / principal / session / agent 必须与
+/// [`SpawnRequest`] 一致，请求显式指定的 provider / account 必须与 lease 一致。
+/// 任何错配（恶意 / 故障 pool）返回原因串，调用方据此 fail-closed 释放 lease。
+fn validate_lease_scope(
+    lease: &provider_control::CredentialLease,
+    req: &SpawnRequest,
+    agent_id: &AgentId,
+    acquire: &provider_control::AcquireRequest,
+) -> Result<(), &'static str> {
+    if lease.tenant_id != req.tenant_id {
+        return Err("tenant mismatch");
+    }
+    if lease.principal_id != req.principal_id {
+        return Err("principal mismatch");
+    }
+    if lease.session_id != req.session_id {
+        return Err("session mismatch");
+    }
+    if &lease.agent_id != agent_id {
+        return Err("agent mismatch");
+    }
+    if let Some(provider) = &acquire.provider_id {
+        if &lease.provider_id != provider {
+            return Err("provider mismatch");
+        }
+    }
+    if let Some(account) = &acquire.account_id {
+        if lease.account_id != *account {
+            return Err("account mismatch");
+        }
+    }
+    Ok(())
 }
 
 fn now_ms() -> u64 {
@@ -1267,6 +1616,9 @@ fn now_ms() -> u64 {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
 }
+
+/// 一天的毫秒数（日预算窗口按 UTC 日对齐）。
+const MS_PER_DAY: u64 = 86_400_000;
 
 #[cfg(test)]
 mod tests {
@@ -1277,7 +1629,10 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::Path;
     use std::sync::Mutex;
-    use tenant_service::{InMemoryTenantPolicyEngine, TenantPolicy};
+    use tenant_service::{
+        InMemoryTenantPolicyEngine, PermissionProfile, PolicyDecisionKind, PolicyGate,
+        PrincipalRole, TenantPolicy,
+    };
     use usage_ledger::{InMemoryUsageLedger, UsageQuery};
 
     use crate::merge::{DiffProvider, MergeError};
@@ -1299,6 +1654,25 @@ mod tests {
         pool: Arc<InMemoryCredentialPool>,
         policy: Arc<InMemoryTenantPolicyEngine>,
     ) -> AgentSupervisor {
+        // P18-9 deny-first：未知非 local/default 租户回落 Viewer，历史测试
+        // 的 tenant-a / tenant-b 均视为「已配置租户」，缺 profile 时播种
+        // 显式 Admin（仅在未配置时播种，避免覆盖测试自带 profile 或递增版本）。
+        for tenant in ["tenant-a", "tenant-b"] {
+            let tenant = TenantId::new(tenant);
+            let current = policy.policy(&tenant);
+            if current.permission_profile.is_none() {
+                policy.set_policy(
+                    tenant,
+                    TenantPolicy {
+                        permission_profile: Some(PermissionProfile {
+                            default_role: Some(PrincipalRole::Admin),
+                            ..PermissionProfile::default()
+                        }),
+                        ..current
+                    },
+                );
+            }
+        }
         AgentSupervisor::new(
             pool,
             policy,
@@ -1960,7 +2334,7 @@ mod tests {
     async fn record_usage_emits_budget_exceeded() {
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            engine_for("tenant-a", TenantPolicy::default()),
             Arc::new(InMemoryUsageLedger::new()),
             SupervisorConfig {
                 budget: WorkerBudgetLimits {
@@ -1989,7 +2363,7 @@ mod tests {
         let ledger = Arc::new(InMemoryUsageLedger::new());
         let supervisor = AgentSupervisor::new(
             pool.clone(),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            engine_for("tenant-a", TenantPolicy::default()),
             ledger.clone(),
             SupervisorConfig::default(),
         );
@@ -2001,7 +2375,7 @@ mod tests {
         supervisor.start_worker(&agent).await.unwrap();
         supervisor.complete(&agent).await.unwrap();
 
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0].account_id, "local/default",
@@ -2023,7 +2397,7 @@ mod tests {
     async fn concurrency_denied_event_on_local_limit() {
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            engine_for("tenant-a", TenantPolicy::default()),
             Arc::new(InMemoryUsageLedger::new()),
             SupervisorConfig {
                 max_agent_concurrency: 1,
@@ -2100,6 +2474,344 @@ mod tests {
                 if *agent_id == agent && files == &vec!["a.txt".to_string()]
         )));
     }
+
+    // ── P18-9 租户策略强制入口测试 ────────────────────────────────────────
+
+    fn whitelisted_acquire(provider: Option<&str>, account: Option<&str>) -> AcquireRequest {
+        AcquireRequest {
+            tenant_id: TenantId::new("tenant-a"),
+            principal_id: PrincipalId::new("principal-1"),
+            session_id: SessionId::new("session-1"),
+            agent_id: AgentId::new("placeholder"),
+            provider_id: provider.map(ProviderId::new),
+            account_id: account.map(AccountId::new),
+            trace_id: None,
+        }
+    }
+
+    fn engine_for(tenant: &str, policy: TenantPolicy) -> Arc<InMemoryTenantPolicyEngine> {
+        let engine = Arc::new(InMemoryTenantPolicyEngine::default());
+        // deny-first：测试聚焦白名单 / 预算 / 并发闸口时，缺 profile 会先被
+        // Viewer 兜底拒绝；此处只在未显式配置 profile 时补 Admin，显式
+        // Viewer / Service 场景保持原样。
+        let policy = if policy.permission_profile.is_some() {
+            policy
+        } else {
+            TenantPolicy {
+                permission_profile: Some(PermissionProfile {
+                    default_role: Some(PrincipalRole::Admin),
+                    ..PermissionProfile::default()
+                }),
+                ..policy
+            }
+        };
+        engine.set_policy(TenantId::new(tenant), policy);
+        engine
+    }
+
+    #[tokio::test]
+    async fn tenant_policy_provider_whitelist_denies_and_scopes_per_tenant() {
+        let engine = engine_for(
+            "tenant-a",
+            TenantPolicy {
+                allowed_providers: Some(vec![ProviderId::new("openai")]),
+                ..TenantPolicy::default()
+            },
+        );
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+        let mut req = spawn_request(None);
+        req.acquire = Some(whitelisted_acquire(Some("anthropic"), None));
+        let err = supervisor.spawn(req).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
+        // 拒绝记为 versioned 决策事件（LeaseAcquire 闸口），deny 不被后续
+        // 任何阶段覆盖（deny-first 短路：仅此一条事件）。
+        let decisions = engine.decisions(&TenantId::new("tenant-a"));
+        assert_eq!(decisions.len(), 1, "{decisions:?}");
+        assert_eq!(decisions[0].gate, PolicyGate::LeaseAcquire);
+        assert_eq!(decisions[0].decision, PolicyDecisionKind::Deny);
+        assert_eq!(decisions[0].policy_version, 1);
+        assert_eq!(decisions[0].tenant_id, TenantId::new("tenant-a"));
+        assert_eq!(decisions[0].principal_id, PrincipalId::new("principal-1"));
+        // 跨租户隔离：未配置租户 tenant-b 不继承 tenant-a 的 deny。
+        let mut other = spawn_request(None);
+        other.tenant_id = TenantId::new("tenant-b");
+        // P18-9：AcquireRequest 的 tenant 必须与外层一致（错配拒绝）；
+        // 测试夹具显式对齐 tenant-b 后放行。
+        let mut other_acquire = whitelisted_acquire(Some("anthropic"), None);
+        other_acquire.tenant_id = TenantId::new("tenant-b");
+        other.acquire = Some(other_acquire);
+        assert!(
+            supervisor.spawn(other).await.is_ok(),
+            "tenant-b must not inherit tenant-a deny policy"
+        );
+        let tenant_b_decisions = engine.decisions(&TenantId::new("tenant-b"));
+        assert!(
+            tenant_b_decisions
+                .iter()
+                .all(|event| event.decision == PolicyDecisionKind::Allow),
+            "tenant-b spawn must be allowed (no inherited deny): {tenant_b_decisions:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tenant_policy_account_whitelist_gates_lease_acquire() {
+        let engine = engine_for(
+            "tenant-a",
+            TenantPolicy {
+                allowed_accounts: Some(vec![AccountId::new("acct-a")]),
+                ..TenantPolicy::default()
+            },
+        );
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+
+        let mut deny_req = spawn_request(None);
+        deny_req.acquire = Some(whitelisted_acquire(None, Some("acct-b")));
+        let err = supervisor.spawn(deny_req).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
+
+        let mut allow_req = spawn_request(None);
+        allow_req.acquire = Some(whitelisted_acquire(None, Some("acct-a")));
+        let agent = supervisor.spawn(allow_req).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+        supervisor.complete(&agent).await.unwrap();
+
+        let decisions = engine.decisions(&TenantId::new("tenant-a"));
+        assert!(decisions
+            .iter()
+            .any(|event| event.gate == PolicyGate::LeaseAcquire
+                && event.decision == PolicyDecisionKind::Deny));
+        assert!(decisions
+            .iter()
+            .any(|event| event.gate == PolicyGate::AgentSpawn
+                && event.decision == PolicyDecisionKind::Allow));
+    }
+
+    #[tokio::test]
+    async fn tenant_policy_model_whitelist_denies_spawn() {
+        let engine = engine_for(
+            "tenant-a",
+            TenantPolicy {
+                allowed_models: Some(vec![ModelId::new("gpt-4o")]),
+                ..TenantPolicy::default()
+            },
+        );
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+        let mut req = spawn_request(None);
+        req.model = Some(ModelId::new("claude-3-5-sonnet"));
+        let err = supervisor.spawn(req).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
+        assert_eq!(
+            engine.decisions(&TenantId::new("tenant-a"))[0].gate,
+            PolicyGate::AgentSpawn
+        );
+
+        // 命中白名单放行。
+        let mut ok = spawn_request(None);
+        ok.model = Some(ModelId::new("gpt-4o"));
+        assert!(supervisor.spawn(ok).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn tenant_policy_role_deny_first_only_core_policy_can_release() {
+        let engine = engine_for(
+            "tenant-a",
+            TenantPolicy {
+                permission_profile: Some(PermissionProfile {
+                    default_role: Some(PrincipalRole::Viewer),
+                    ..PermissionProfile::default()
+                }),
+                ..TenantPolicy::default()
+            },
+        );
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+        let err = supervisor.spawn(spawn_request(None)).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
+        assert_eq!(
+            engine.decisions(&TenantId::new("tenant-a"))[0].decision,
+            PolicyDecisionKind::Deny
+        );
+
+        // adapter / GUI / plugin 无法覆盖：只有 Core 策略更新（版本递增）后放行。
+        engine.set_policy(
+            TenantId::new("tenant-a"),
+            TenantPolicy {
+                permission_profile: Some(PermissionProfile {
+                    default_role: Some(PrincipalRole::Admin),
+                    ..PermissionProfile::default()
+                }),
+                ..TenantPolicy::default()
+            },
+        );
+        let agent = supervisor.spawn(spawn_request(None)).await.unwrap();
+        supervisor.start_worker(&agent).await.unwrap();
+        supervisor.complete(&agent).await.unwrap();
+        let decisions = engine.decisions(&TenantId::new("tenant-a"));
+        assert_eq!(decisions[0].decision, PolicyDecisionKind::Deny);
+        assert_eq!(decisions[1].policy_version, 2, "set_policy 递增版本");
+        assert_eq!(decisions[1].decision, PolicyDecisionKind::Allow);
+    }
+
+    #[tokio::test]
+    async fn tenant_policy_agent_concurrency_limits_per_tenant() {
+        let engine = engine_for(
+            "tenant-a",
+            TenantPolicy {
+                max_concurrent_agents: Some(1),
+                ..TenantPolicy::default()
+            },
+        );
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+        let first = supervisor.spawn(spawn_request(None)).await.unwrap();
+        let err = supervisor.spawn(spawn_request(None)).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
+        assert_eq!(
+            engine
+                .decisions(&TenantId::new("tenant-a"))
+                .iter()
+                .filter(|event| event.decision == PolicyDecisionKind::Deny)
+                .count(),
+            1
+        );
+
+        // 终态后并发恢复；同租户限制不泄漏到其它租户。
+        supervisor.start_worker(&first).await.unwrap();
+        supervisor.complete(&first).await.unwrap();
+        assert!(
+            supervisor.spawn(spawn_request(None)).await.is_ok(),
+            "tenant concurrency must recover after terminal"
+        );
+        let mut other = spawn_request(None);
+        other.tenant_id = TenantId::new("tenant-b");
+        assert!(
+            supervisor.spawn(other).await.is_ok(),
+            "tenant-a concurrency limit must not leak to tenant-b"
+        );
+    }
+
+    #[tokio::test]
+    async fn tenant_policy_daily_token_budget_denies_spawn_before_admission() {
+        let ledger = Arc::new(InMemoryUsageLedger::new());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_millis() as u64;
+        ledger
+            .record(UsageRecord {
+                record_id: "budget-seed-1".into(),
+                tenant_id: TenantId::new("tenant-a"),
+                principal_id: PrincipalId::new("principal-1"),
+                account_id: "local/default".into(),
+                credential_id: None,
+                session_id: SessionId::new("session-1"),
+                agent_id: AgentId::new("seed-agent"),
+                run_id: None,
+                provider_id: ProviderId::new("local"),
+                model_id: ModelId::new("unknown"),
+                input_tokens: 101,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                cost_micros: 0,
+                currency: "USD".into(),
+                occurred_at_ms: now,
+                ..UsageRecord::default()
+            })
+            .await
+            .expect("seed ledger");
+        let engine = engine_for(
+            "tenant-a",
+            TenantPolicy {
+                daily_input_token_budget: Some(100),
+                ..TenantPolicy::default()
+            },
+        );
+        let supervisor = AgentSupervisor::new(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            engine.clone(),
+            ledger,
+            SupervisorConfig::default(),
+        );
+        let err = supervisor.spawn(spawn_request(None)).await.unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("预算")),
+            "{err:?}"
+        );
+        let decisions = engine.decisions(&TenantId::new("tenant-a"));
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].gate, PolicyGate::AgentSpawn);
+        assert_eq!(decisions[0].decision, PolicyDecisionKind::Deny);
+    }
+
+    #[tokio::test]
+    async fn acquire_tenant_principal_session_mismatch_is_rejected() {
+        let engine = engine_for("tenant-a", TenantPolicy::default());
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+
+        // 外层 tenant-a / principal-1 / session-1；acquire 逐个字段错配。
+        let mismatched: Vec<AcquireRequest> = vec![
+            AcquireRequest {
+                tenant_id: TenantId::new("tenant-b"),
+                ..acquire_request(&AgentId::new("placeholder"))
+            },
+            AcquireRequest {
+                principal_id: PrincipalId::new("principal-other"),
+                ..acquire_request(&AgentId::new("placeholder"))
+            },
+            AcquireRequest {
+                session_id: SessionId::new("session-other"),
+                ..acquire_request(&AgentId::new("placeholder"))
+            },
+        ];
+        for acquire in mismatched {
+            let mut req = spawn_request(None);
+            req.acquire = Some(acquire);
+            let err = supervisor.spawn(req).await.unwrap_err();
+            assert!(
+                matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("不一致")),
+                "{err:?}"
+            );
+        }
+
+        // 拒绝记录在 LeaseAcquire 闸口，且不产生任何 worker / 事件流。
+        let decisions = engine.decisions(&TenantId::new("tenant-a"));
+        assert_eq!(decisions.len(), 3, "{decisions:?}");
+        assert!(decisions.iter().all(|event| {
+            event.gate == PolicyGate::LeaseAcquire && event.decision == PolicyDecisionKind::Deny
+        }));
+        assert_eq!(supervisor.active_worker_count(None), 0);
+        assert!(supervisor.events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn acquire_uses_supervisor_generated_canonical_agent_id() {
+        let engine = engine_for("tenant-a", TenantPolicy::default());
+        let pool = Arc::new(InMemoryCredentialPool::new(4));
+        let supervisor = harness(pool.clone(), engine);
+
+        let mut req = spawn_request(None);
+        // 调用方试图自选 agent_id：supervisor 必须用生成的 canonical id 覆写。
+        req.acquire = Some(acquire_request(&AgentId::new("attacker-chosen")));
+        let agent = supervisor.spawn(req).await.unwrap();
+        assert!(agent.as_str().starts_with("agent-"));
+        assert_ne!(agent.as_str(), "attacker-chosen");
+
+        let lease_agent = {
+            let workers = supervisor
+                .workers
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let entry = workers.get(&agent).expect("worker registered");
+            let guard = entry.lease.as_ref().expect("lease held");
+            guard.lease().expect("lease present").agent_id.clone()
+        };
+        assert_eq!(
+            lease_agent, agent,
+            "lease 必须绑定 supervisor 生成的 canonical agent_id"
+        );
+
+        supervisor.complete(&agent).await.unwrap();
+        assert_eq!(pool.active_count(&AccountId::new("local/default")), 0);
+    }
 }
 
 /// 失败计数测试专用：包装 [`InMemoryUsageLedger`]，前 `fail_until` 次 `record`
@@ -2153,8 +2865,8 @@ impl usage_ledger::UsageLedger for FailingLedger {
         self.inner.record(record).await
     }
 
-    async fn query(&self, query: &UsageQuery) -> Vec<UsageRecord> {
-        self.inner.query(query).await
+    async fn query(&self, query: &UsageQuery) -> Result<Vec<UsageRecord>, UsageLedgerError> {
+        Ok(self.inner.query(query).await?)
     }
 
     async fn aggregate(&self, query: &UsageQuery) -> Result<UsageTotals, UsageLedgerError> {
@@ -2235,8 +2947,8 @@ impl usage_ledger::UsageLedger for BlockingLedger {
         self.inner.record(record).await
     }
 
-    async fn query(&self, query: &UsageQuery) -> Vec<UsageRecord> {
-        self.inner.query(query).await
+    async fn query(&self, query: &UsageQuery) -> Result<Vec<UsageRecord>, UsageLedgerError> {
+        Ok(self.inner.query(query).await?)
     }
 
     async fn aggregate(&self, query: &UsageQuery) -> Result<UsageTotals, UsageLedgerError> {
@@ -2250,9 +2962,28 @@ mod terminal_flush_tests {
     use agent_domain::{PrincipalId, SessionId, TenantId};
     use provider_control::{AcquireRequest, InMemoryCredentialPool};
     use std::collections::BTreeSet;
-    use tenant_service::InMemoryTenantPolicyEngine;
+    use tenant_service::{
+        InMemoryTenantPolicyEngine, PermissionProfile, PrincipalRole, TenantPolicy,
+    };
     // usage_ledger 类型（InMemoryUsageLedger / UsageQuery / UsageRecord 等）经
     // 文件级 cfg(test) `use` + `super::*` 可见。
+
+    /// P18-9 deny-first：未知 tenant-a 回落 Viewer，本模块的租户按「已配置」
+    /// 处理（显式 Admin），聚焦 terminal flush 行为本身。
+    fn test_engine() -> Arc<InMemoryTenantPolicyEngine> {
+        let engine = Arc::new(InMemoryTenantPolicyEngine::default());
+        engine.set_policy(
+            TenantId::new("tenant-a"),
+            TenantPolicy {
+                permission_profile: Some(PermissionProfile {
+                    default_role: Some(PrincipalRole::Admin),
+                    ..PermissionProfile::default()
+                }),
+                ..TenantPolicy::default()
+            },
+        );
+        engine
+    }
 
     fn spawn_req(input_limit: Option<u64>, model: Option<ModelId>) -> SpawnRequest {
         SpawnRequest {
@@ -2321,7 +3052,7 @@ mod terminal_flush_tests {
             let ledger = Arc::new(InMemoryUsageLedger::new());
             let supervisor = AgentSupervisor::new(
                 Arc::new(InMemoryCredentialPool::new(4)),
-                Arc::new(InMemoryTenantPolicyEngine::default()),
+                test_engine(),
                 ledger.clone(),
                 SupervisorConfig::default(),
             );
@@ -2333,7 +3064,7 @@ mod terminal_flush_tests {
 
             let _ = terminal.finalize(&supervisor, &agent).await;
 
-            let records = ledger.query(&UsageQuery::default()).await;
+            let records = ledger.query(&UsageQuery::default()).await.unwrap();
             assert_eq!(
                 records.len(),
                 1,
@@ -2353,7 +3084,7 @@ mod terminal_flush_tests {
         let ledger = FailingLedger::fail_first(1);
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            test_engine(),
             ledger.clone() as Arc<dyn UsageLedger>,
             SupervisorConfig::default(),
         );
@@ -2370,14 +3101,14 @@ mod terminal_flush_tests {
         );
         assert_eq!(ledger.record_calls(), 1);
         assert_eq!(
-            ledger.query(&UsageQuery::default()).await.len(),
+            ledger.query(&UsageQuery::default()).await.unwrap().len(),
             0,
             "flush 失败时账本不得写入"
         );
 
         supervisor.flush_usage(&agent).await.unwrap();
         assert_eq!(ledger.record_calls(), 2);
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].input_tokens, 5);
 
@@ -2393,7 +3124,7 @@ mod terminal_flush_tests {
     async fn record_usage_rejected_after_terminal() {
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            test_engine(),
             Arc::new(InMemoryUsageLedger::new()),
             SupervisorConfig::default(),
         );
@@ -2416,7 +3147,7 @@ mod terminal_flush_tests {
     async fn budget_exceeded_deduped_across_record_usage() {
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            test_engine(),
             Arc::new(InMemoryUsageLedger::new()),
             SupervisorConfig::default(),
         );
@@ -2462,7 +3193,7 @@ mod terminal_flush_tests {
     async fn hard_limit_is_ge_boundary() {
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            test_engine(),
             Arc::new(InMemoryUsageLedger::new()),
             SupervisorConfig::default(),
         );
@@ -2482,7 +3213,7 @@ mod terminal_flush_tests {
         let ledger = FailingLedger::fail_first(2);
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(8)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            test_engine(),
             ledger.clone() as Arc<dyn UsageLedger>,
             SupervisorConfig::default(),
         );
@@ -2511,14 +3242,14 @@ mod terminal_flush_tests {
         assert_eq!(pending.len(), 2);
         assert!(pending.contains(&parent));
         assert!(pending.contains(&child));
-        assert_eq!(ledger.query(&UsageQuery::default()).await.len(), 0);
+        assert_eq!(ledger.query(&UsageQuery::default()).await.unwrap().len(), 0);
 
         // 逐节点重试：全部落账，不重复。
         supervisor.flush_usage(&parent).await.unwrap();
         supervisor.flush_usage(&child).await.unwrap();
         supervisor.flush_usage(&parent).await.unwrap();
         supervisor.flush_usage(&child).await.unwrap();
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 2);
         let inputs: BTreeSet<u64> = records.iter().map(|r| r.input_tokens).collect();
         assert_eq!(inputs, BTreeSet::from([3, 4]));
@@ -2530,7 +3261,7 @@ mod terminal_flush_tests {
         let ledger = Arc::new(InMemoryUsageLedger::new());
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            test_engine(),
             ledger.clone(),
             SupervisorConfig::default(),
         );
@@ -2547,7 +3278,7 @@ mod terminal_flush_tests {
 
         // controller 未被移除：complete 仍能完整 flush（用量不丢）。
         supervisor.complete(&agent).await.unwrap();
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].input_tokens, 9);
         assert_eq!(records[0].output_tokens, 1);
@@ -2558,7 +3289,7 @@ mod terminal_flush_tests {
         let ledger = FailingLedger::fail_first(1);
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            test_engine(),
             ledger.clone() as Arc<dyn UsageLedger>,
             SupervisorConfig::default(),
         );
@@ -2606,7 +3337,7 @@ mod terminal_flush_tests {
                 },
             );
         supervisor.flush_usage(&agent).await.unwrap();
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].input_tokens, 5);
     }
@@ -2616,7 +3347,7 @@ mod terminal_flush_tests {
         let ledger = BlockingLedger::new(1);
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            test_engine(),
             ledger.clone() as Arc<dyn UsageLedger>,
             SupervisorConfig::default(),
         );
@@ -2651,7 +3382,7 @@ mod terminal_flush_tests {
 
         // 收尾 flush 为空操作；账本仅一条、不重复计账。
         supervisor.flush_usage(&agent).await.unwrap();
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].input_tokens, 5);
         assert_eq!(
@@ -2666,7 +3397,7 @@ mod terminal_flush_tests {
         let ledger = BlockingLedger::new(0);
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            Arc::new(InMemoryTenantPolicyEngine::default()),
+            test_engine(),
             ledger.clone() as Arc<dyn UsageLedger>,
             SupervisorConfig::default(),
         );
@@ -2698,7 +3429,7 @@ mod terminal_flush_tests {
 
         // 已提交：后续 flush_usage 为空操作，账本仅一条。
         supervisor.flush_usage(&agent).await.unwrap();
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].input_tokens, 5);
     }

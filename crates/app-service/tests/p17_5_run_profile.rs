@@ -139,6 +139,7 @@ fn request_with_profile(profile: AgentProfileV2, run_id: &str) -> app_service::R
         run_id: RunId::from(run_id),
         session_id: SessionId::from("sess"),
         workspace_id: Some(workspace_id.clone()),
+        identity: tenant_service::IdentityContext::local(),
         provider_id: ProviderId::from("mock"),
         model: ModelId::from("mock-model"),
         source: CommandSource::Automation,

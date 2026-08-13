@@ -1,6 +1,6 @@
 # P18-3：ProviderAccount / Credential 模型与兼容迁移
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-1、P18-2、P2-6、P6-4、P1-13
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠核心实现已验收，宿主接线待 P18-14 收口 · 交付成熟度：TargetVerified · 依赖：P18-1、P18-2、P2-6、P6-4、P1-13
 
 **最终目的**：把“账号资源”和“认证 secret”拆成独立实体，为一个 Provider 下的多账号、多 credential、健康与 lease 奠定安全数据模型。
 
@@ -20,18 +20,26 @@
 - Secret resolver 边界 + synthetic default migration
 - 脱敏管理 API 与 migration/security tests
 
+## 实施与验证记录（2026-08-12）
+
+- `provider-control` 已落地独立的 versioned `ProviderAccountRecord` / `CredentialMetadata`、稳定 DB/serde 状态值、`secret_ref`、expiry/refresh fail-closed gate、tenant-scoped repository 与脱敏管理摘要。
+- Provider factory 以 registry 扩展点装配 `ModelProvider`，先校验 tenant/account/provider、descriptor、builder 与 credential 可用性，再在宿主边界短时解析 secret；Core 不按 Provider 名称分支，`provider-api` 契约未被扩张。
+- `app-database` control-plane schema 已升级至 v2，覆盖 v1→v2、幂等、事务回滚、备份恢复、跨 tenant 隔离与无 plaintext 列；legacy synthetic default 保留 `local/default` 与原 schema version。
+- 定向门禁通过：`cargo test -p provider-control -p auth-service -p app-database -p pawork`、`cargo test -p provider-control --no-default-features`、相关 Clippy、`core-api/orchestration/core-runtime` check、schema typegen 与 diff check。独立 GLM reviewer 结论为 `PASS`。
+- P18-3 的领域模型与安全边界已验收，可作为 P18-4 后续依赖；真实 Provider/builtin models、生产 persistent protector 与 `app-service::register_provider` 的宿主闭环属于 P18-14 的 registry/reconciliation/hot-reload 组合职责，并保留为 Phase 18 最终收口项，不视为跨 Phase 延后。
+
 ## P14 现状与登记（2026-08-11）
 
 P14-8 的 `QuotaOverview` 查询必须显式 provider_id（缺省即拒绝）；多 provider/多模型聚合语义待 binding enumeration 成为事实源后由 app-service 批量查询（见 [usage-quota](../docs/features/usage-quota.md)）。Quota refresh target 的账号/凭据绑定来源同样是本任务的 ProviderAccount/CredentialMetadata。
 
 ## 验收标准
 
-- [ ] account 与 credential 生命周期、状态和 ID 独立
-- [ ] SQLite/Event/log/diagnostics 不出现 plaintext token/API key
-- [ ] 旧配置迁移后仍调用同一 Provider/model/credential
-- [ ] account/credential 查询强制 tenant scope
-- [ ] ProviderAccount/Credential binding 枚举（按 provider 列出绑定 account/credential）成为 `QuotaOverview` 批量聚合的事实源；无绑定时不做默认 provider 推测
-- [ ] quota refresh target 的 account/credential 绑定来自 ProviderAccount/CredentialMetadata，不再从零散 credential 数组选择
+- [x] account 与 credential 生命周期、状态和 ID 独立
+- [x] SQLite/Event/log/diagnostics 不出现 plaintext token/API key
+- [x] 旧配置迁移后保留同一 Provider/model/credential 的 synthetic binding；真实 Provider 调用闭环随 P18-14 宿主接线复核
+- [x] account/credential 查询强制 tenant scope
+- [x] ProviderAccount/Credential binding 枚举（按 provider 列出绑定 account/credential）成为 `QuotaOverview` 批量聚合的事实源；无绑定时不做默认 provider 推测
+- [x] quota refresh target 的 account/credential 绑定来自 ProviderAccount/CredentialMetadata，不再从零散 credential 数组选择
 - [ ] 宿主经 Provider factory / `app-service::register_provider` 装配真实 Provider 并消费 provider `builtin_models()`（Phase 15 host composition deferred 项，见 [P15-10](P15-10-review-remediation.md)）
 - [ ] 生产 `ProtectedKeyResolver` 与持久 `ProtectedBlobStoreProtector` 注入正式宿主，兑现 ADR-032「encrypted-at-rest / crash 恢复」；protector 必须按实际 `(provider_id, session_id)` / run scope 构造或选择，禁止把捕获单一 `BlobScope` 的实例注册为跨 Session 共享 Provider 全局状态，并覆盖同 Session 跨轮可回灌、跨 Session fail-closed（Phase 15 持久化 protector 接线延后项，见 [P15-10](P15-10-review-remediation.md)）
 

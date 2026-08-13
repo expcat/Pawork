@@ -1,6 +1,6 @@
 # P18-14：Provider Registry / Pool Reconciliation / Hot Reload
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-4～P18-7、P18-10、P8-8
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠Registry 已实现，Reconciler/生产装配待完成 · 交付成熟度：Built · 依赖：P18-4～P18-7、P18-10、P8-8
 
 **最终目的**：以 Provider factory registry 消除组合层硬编码，并在被动 cooldown 之外补齐过期 lease 回收、主动健康探测和事务式配置热切换，使 Provider/账号/capability 变化不会留下悬挂 binding 或半应用配置。
 
@@ -38,3 +38,9 @@ P14-5/9 的六家远端 quota adapter factory 与 `RefreshScheduler` / `AuditSin
 - [ ] Provider factory / pool 的实例生命周期与 reasoning scope 对齐：持久 `ProtectedBlobStoreProtector` 按真实 Session/run 的 `BlobScope` 构造或解析，热切换与复用不得把一个 Session 的 protector 共享给另一 Session
 
 **相关文档**：[provider-control-plane](../docs/features/provider-control-plane.md) · [client-adapters](../docs/features/client-adapters.md) · [P8-8](P8-8-hot-reload.md) · [ROADMAP](../ROADMAP.md)
+
+## 当前进度（2026-08-13）
+
+- 已交付动态 `ProviderRegistry` / immutable snapshot / staged registry，以及串行化 parse→validate→stage→commit 热切换；失败保持旧 snapshot 原子有效。
+- `cargo check -p provider-control` 通过；registry 定向测试 2 passed。
+- 待完成：pool reconciler、health probe 预算/并发/退避、binding migration、六家 quota target 与生产 scheduler 生命周期、model-registry/protector scope 接线、故障注入矩阵。

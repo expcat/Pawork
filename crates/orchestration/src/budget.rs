@@ -380,6 +380,8 @@ impl WorkerBudgetController {
             cost_micros: delta.cost_micros,
             currency: "USD".to_string(),
             occurred_at_ms: now_ms(),
+            // P18-8 v2：其余字段（version=2、trace/pricing 快照）保持默认。
+            ..UsageRecord::default()
         }
     }
 }
@@ -504,8 +506,8 @@ mod tests {
             Ok(())
         }
 
-        async fn query(&self, query: &UsageQuery) -> Vec<UsageRecord> {
-            self.inner.query(query).await
+        async fn query(&self, query: &UsageQuery) -> Result<Vec<UsageRecord>, UsageLedgerError> {
+            Ok(self.inner.query(query).await?)
         }
 
         async fn aggregate(&self, query: &UsageQuery) -> Result<UsageTotals, UsageLedgerError> {
@@ -561,8 +563,8 @@ mod tests {
             Ok(())
         }
 
-        async fn query(&self, query: &UsageQuery) -> Vec<UsageRecord> {
-            self.inner.query(query).await
+        async fn query(&self, query: &UsageQuery) -> Result<Vec<UsageRecord>, UsageLedgerError> {
+            Ok(self.inner.query(query).await?)
         }
 
         async fn aggregate(&self, query: &UsageQuery) -> Result<UsageTotals, UsageLedgerError> {
@@ -629,7 +631,7 @@ mod tests {
             .await
             .unwrap();
 
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].agent_id, AgentId::new("agent-1"));
         assert_eq!(records[0].tenant_id, TenantId::new("tenant-a"));
@@ -662,7 +664,7 @@ mod tests {
             .await
             .unwrap();
 
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 1, "cost-only 增量必须单独成条提交");
         assert_eq!(records[0].input_tokens, 0);
         assert_eq!(records[0].output_tokens, 0);
@@ -675,7 +677,7 @@ mod tests {
             .flush_to_ledger(ledger.as_ref(), &ctx())
             .await
             .unwrap();
-        assert_eq!(ledger.query(&UsageQuery::default()).await.len(), 1);
+        assert_eq!(ledger.query(&UsageQuery::default()).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -689,7 +691,7 @@ mod tests {
             .flush_to_ledger(ledger.as_ref(), &ctx())
             .await
             .unwrap();
-        let first = ledger.query(&UsageQuery::default()).await;
+        let first = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(first.len(), 1);
 
         // 同一控制器、同一快照重放：稳定 record_id/occurred_at，不重复记账。
@@ -697,7 +699,7 @@ mod tests {
             .flush_to_ledger(ledger.as_ref(), &ctx())
             .await
             .unwrap();
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 1, "同一快照重放不得重复写入");
         assert_eq!(
             records[0].record_id, first[0].record_id,
@@ -728,7 +730,7 @@ mod tests {
             .await
             .unwrap();
 
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 2, "快照变化应落新记录");
         assert_ne!(
             records[0].record_id, records[1].record_id,
@@ -744,7 +746,7 @@ mod tests {
             .flush_to_ledger(ledger.as_ref(), &ctx())
             .await
             .unwrap();
-        assert_eq!(ledger.query(&UsageQuery::default()).await.len(), 2);
+        assert_eq!(ledger.query(&UsageQuery::default()).await.unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -756,7 +758,7 @@ mod tests {
         // 模拟账本已持久化，但确认丢失：控制器收到 Err，不得推进提交游标。
         let first = controller.flush_to_ledger(ledger.as_ref(), &ctx()).await;
         assert!(first.is_err());
-        assert_eq!(ledger.query(&UsageQuery::default()).await.len(), 1);
+        assert_eq!(ledger.query(&UsageQuery::default()).await.unwrap().len(), 1);
 
         // 重试必须重放完全相同的 ID、delta 和 occurred_at；账本幂等返回成功后推进。
         controller
@@ -766,7 +768,7 @@ mod tests {
         let attempted = ledger.attempted_records();
         assert_eq!(attempted.len(), 2);
         assert_eq!(attempted[0], attempted[1], "错误重试必须重放同一 record");
-        assert_eq!(ledger.query(&UsageQuery::default()).await.len(), 1);
+        assert_eq!(ledger.query(&UsageQuery::default()).await.unwrap().len(), 1);
 
         // 已成功推进到目标 10，再次 flush 是本地 no-op，不再调用账本。
         controller
@@ -788,7 +790,7 @@ mod tests {
         // 第一次 flush 模拟确认丢失：账本已写入第一条 delta，控制器保留 pending。
         let first = controller.flush_to_ledger(ledger.as_ref(), &ctx()).await;
         assert!(first.is_err());
-        assert_eq!(ledger.query(&UsageQuery::default()).await.len(), 1);
+        assert_eq!(ledger.query(&UsageQuery::default()).await.unwrap().len(), 1);
 
         // pending 未提交期间用量继续增长。
         controller.record_tokens(10, 0);
@@ -815,7 +817,7 @@ mod tests {
         );
 
         // 两条 delta 聚合到新总量，且不重复记账。
-        let records = ledger.query(&UsageQuery::default()).await;
+        let records = ledger.query(&UsageQuery::default()).await.unwrap();
         assert_eq!(records.len(), 2, "幂等重放不得重复写入");
         let totals = ledger.aggregate(&UsageQuery::default()).await.unwrap();
         assert_eq!(totals.input_tokens, 20);
@@ -838,7 +840,7 @@ mod tests {
         });
         ledger.started.notified().await;
         assert_eq!(ledger.attempts(), 1);
-        assert_eq!(ledger.query(&UsageQuery::default()).await.len(), 1);
+        assert_eq!(ledger.query(&UsageQuery::default()).await.unwrap().len(), 1);
 
         // mid-await 中止：pending 保留原 record_id/occurred_at，游标不推进。
         handle.abort();
@@ -865,7 +867,7 @@ mod tests {
             "occurred_at 必须与 abort 前一致"
         );
         assert_eq!(
-            ledger.query(&UsageQuery::default()).await.len(),
+            ledger.query(&UsageQuery::default()).await.unwrap().len(),
             1,
             "abort 后重放不得重复记账"
         );
@@ -890,7 +892,7 @@ mod tests {
         second.unwrap();
 
         assert_eq!(ledger.attempts(), 1, "并发 flush 只能发起一次 ledger 写入");
-        assert_eq!(ledger.query(&UsageQuery::default()).await.len(), 1);
+        assert_eq!(ledger.query(&UsageQuery::default()).await.unwrap().len(), 1);
         let totals = ledger.aggregate(&UsageQuery::default()).await.unwrap();
         assert_eq!(totals.input_tokens, 10);
     }

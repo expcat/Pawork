@@ -8,12 +8,13 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 use agent_domain::{
-    ArtifactId, EventId, ProviderId, RunId, SessionId, TerminalSessionId, Timestamp, ToolCallId,
-    WorkspaceId,
+    ArtifactId, EventId, PrincipalId, ProviderId, RunId, SessionId, TenantId, TerminalSessionId,
+    Timestamp, ToolCallId, WorkspaceId,
 };
 use core_api::{ClientContextSnapshot, CommandSource};
 use diff_service::DiffFile;
 use serde::{Deserialize, Serialize};
+use tenant_service::IdentityContext;
 use thiserror::Error;
 use workspace_service::Workspace;
 
@@ -50,6 +51,10 @@ pub enum AggregateError {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub session_id: SessionId,
+    /// 归属租户（P18-2：Session 创建与查询必须携带身份上下文）。
+    pub tenant_id: TenantId,
+    /// 创建主体。
+    pub principal_id: PrincipalId,
     pub workspace_id: WorkspaceId,
     pub title: String,
     pub created_at: Timestamp,
@@ -68,6 +73,10 @@ pub struct SessionRecord {
 pub struct RunRecord {
     pub run_id: RunId,
     pub session_id: SessionId,
+    /// 归属租户（P18-2：usage 记账与查询按此隔离）。
+    pub tenant_id: TenantId,
+    /// 发起主体。
+    pub principal_id: PrincipalId,
     pub model: agent_domain::ModelId,
     pub provider_id: ProviderId,
     pub source: CommandSource,
@@ -212,11 +221,24 @@ impl AggregateState {
 
     // ---------- session ----------
 
+    /// 向后兼容包装（P18-2 前调用方，如 snapshot-service 测试）：
+    /// 未显式携带身份时以 local/default + local/user 创建。
     pub fn create_session(
         &self,
         workspace_id: WorkspaceId,
         title: String,
         now: Timestamp,
+    ) -> Result<SessionRecord, AggregateError> {
+        self.create_session_with_identity(workspace_id, title, now, &IdentityContext::local())
+    }
+
+    /// tenant/principal 显式版本（P18-2）：生产路径必须使用本方法携带真实身份。
+    pub fn create_session_with_identity(
+        &self,
+        workspace_id: WorkspaceId,
+        title: String,
+        now: Timestamp,
+        identity: &IdentityContext,
     ) -> Result<SessionRecord, AggregateError> {
         let mut inner = write(&self.inner);
         if !inner.workspaces.contains_key(&workspace_id) {
@@ -225,6 +247,8 @@ impl AggregateState {
         let session_id = SessionId::from(next_id_locked(&mut inner, "session"));
         let record = SessionRecord {
             session_id: session_id.clone(),
+            tenant_id: identity.tenant_id.clone(),
+            principal_id: identity.principal_id.clone(),
             workspace_id,
             title: if title.trim().is_empty() {
                 "Untitled".into()
@@ -245,12 +269,25 @@ impl AggregateState {
         Ok(record)
     }
 
-    pub fn get_session(&self, session_id: &SessionId) -> Option<SessionRecord> {
-        read(&self.inner).sessions.get(session_id).cloned()
+    /// tenant-scoped 读取（P18-2）：跨租户 session 视同不存在，不泄漏存在性。
+    pub fn get_session(
+        &self,
+        session_id: &SessionId,
+        tenant_id: &TenantId,
+    ) -> Option<SessionRecord> {
+        read(&self.inner)
+            .sessions
+            .get(session_id)
+            .filter(|record| record.tenant_id == *tenant_id)
+            .cloned()
     }
 
-    pub fn session_exists(&self, session_id: &SessionId) -> bool {
-        read(&self.inner).sessions.contains_key(session_id)
+    /// tenant-scoped 存在性（P18-2）。
+    pub fn session_exists(&self, session_id: &SessionId, tenant_id: &TenantId) -> bool {
+        read(&self.inner)
+            .sessions
+            .get(session_id)
+            .is_some_and(|record| record.tenant_id == *tenant_id)
     }
 
     /// 以单调 revision 全量替换 Host 观察到的 session 上下文。相同 revision
@@ -319,8 +356,11 @@ impl AggregateState {
         if !inner.workspaces.contains_key(&workspace_id) {
             return Err(AggregateError::WorkspaceNotFound(workspace_id.to_string()));
         }
+        let identity = IdentityContext::local();
         let record = SessionRecord {
             session_id: session_id.clone(),
+            tenant_id: identity.tenant_id.clone(),
+            principal_id: identity.principal_id.clone(),
             workspace_id,
             title: if title.trim().is_empty() {
                 "Untitled".into()
@@ -346,12 +386,19 @@ impl AggregateState {
         Ok(record)
     }
 
-    pub fn open_session(&self, session_id: &SessionId) -> Result<SessionRecord, AggregateError> {
+    pub fn open_session(
+        &self,
+        session_id: &SessionId,
+        tenant_id: &TenantId,
+    ) -> Result<SessionRecord, AggregateError> {
         let mut inner = write(&self.inner);
         let record = inner
             .sessions
             .get_mut(session_id)
             .ok_or_else(|| AggregateError::SessionNotFound(session_id.to_string()))?;
+        if record.tenant_id != *tenant_id {
+            return Err(AggregateError::SessionNotFound(session_id.to_string()));
+        }
         record.open = true;
         record.revision += 1;
         let record = record.clone();
@@ -359,12 +406,19 @@ impl AggregateState {
         Ok(record)
     }
 
-    pub fn compact_session(&self, session_id: &SessionId) -> Result<SessionRecord, AggregateError> {
+    pub fn compact_session(
+        &self,
+        session_id: &SessionId,
+        tenant_id: &TenantId,
+    ) -> Result<SessionRecord, AggregateError> {
         let mut inner = write(&self.inner);
         let record = inner
             .sessions
             .get_mut(session_id)
             .ok_or_else(|| AggregateError::SessionNotFound(session_id.to_string()))?;
+        if record.tenant_id != *tenant_id {
+            return Err(AggregateError::SessionNotFound(session_id.to_string()));
+        }
         record.compacted = true;
         record.revision += 1;
         let record = record.clone();
@@ -372,10 +426,20 @@ impl AggregateState {
         Ok(record)
     }
 
+    /// 向后兼容包装（P18-2 前调用方）：以 local/default 身份 fork。
     pub fn fork_session(
         &self,
         session_id: &SessionId,
         parent_event_id: EventId,
+    ) -> Result<SessionRecord, AggregateError> {
+        self.fork_session_with_identity(session_id, parent_event_id, &IdentityContext::local())
+    }
+
+    pub fn fork_session_with_identity(
+        &self,
+        session_id: &SessionId,
+        parent_event_id: EventId,
+        identity: &IdentityContext,
     ) -> Result<SessionRecord, AggregateError> {
         let mut inner = write(&self.inner);
         let parent = inner
@@ -383,9 +447,15 @@ impl AggregateState {
             .get(session_id)
             .cloned()
             .ok_or_else(|| AggregateError::SessionNotFound(session_id.to_string()))?;
+        // 跨租户 fork 拒绝（fail-closed，不泄漏父 session 存在性）。
+        if parent.tenant_id != identity.tenant_id {
+            return Err(AggregateError::SessionNotFound(session_id.to_string()));
+        }
         let child_id = SessionId::from(next_id_locked(&mut inner, "session"));
         let record = SessionRecord {
             session_id: child_id.clone(),
+            tenant_id: parent.tenant_id.clone(),
+            principal_id: identity.principal_id.clone(),
             workspace_id: parent.workspace_id.clone(),
             title: format!("{} (fork)", parent.title),
             created_at: now_timestamp(),
@@ -404,6 +474,7 @@ impl AggregateState {
 
     // ---------- run ----------
 
+    /// 向后兼容包装（P18-2 前调用方）：以 local/default + local/user 记录 run。
     pub fn record_run(
         &self,
         run_id: RunId,
@@ -413,16 +484,44 @@ impl AggregateState {
         source: CommandSource,
         now: Timestamp,
     ) -> Result<RunRecord, AggregateError> {
+        self.record_run_with_identity(
+            run_id,
+            session_id,
+            model,
+            provider_id,
+            source,
+            now,
+            &IdentityContext::local(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_run_with_identity(
+        &self,
+        run_id: RunId,
+        session_id: SessionId,
+        model: agent_domain::ModelId,
+        provider_id: ProviderId,
+        source: CommandSource,
+        now: Timestamp,
+        identity: &IdentityContext,
+    ) -> Result<RunRecord, AggregateError> {
         let mut inner = write(&self.inner);
         let session = inner
             .sessions
             .get_mut(&session_id)
             .ok_or_else(|| AggregateError::SessionNotFound(session_id.to_string()))?;
+        // 跨租户 run 拒绝（fail-closed）。
+        if session.tenant_id != identity.tenant_id {
+            return Err(AggregateError::SessionNotFound(session_id.to_string()));
+        }
         session.run_count += 1;
         session.revision += 1;
         let record = RunRecord {
             run_id: run_id.clone(),
             session_id,
+            tenant_id: identity.tenant_id.clone(),
+            principal_id: identity.principal_id.clone(),
             model,
             provider_id,
             source,
@@ -468,8 +567,13 @@ impl AggregateState {
         Ok(())
     }
 
-    pub fn get_run(&self, run_id: &RunId) -> Option<RunRecord> {
-        read(&self.inner).runs.get(run_id).cloned()
+    /// tenant-scoped 读取（P18-2）：跨租户 run 视同不存在。
+    pub fn get_run(&self, run_id: &RunId, tenant_id: &TenantId) -> Option<RunRecord> {
+        read(&self.inner)
+            .runs
+            .get(run_id)
+            .filter(|record| record.tenant_id == *tenant_id)
+            .cloned()
     }
 
     /// 移除 run 记录（启动失败回滚用），并同步回退 session 的 run 计数。
@@ -753,6 +857,43 @@ impl AggregateState {
         }
     }
 
+    /// P18-2 tenant-scoped snapshot：只返回当前租户拥有的 Session、Run 与 Approval。
+    /// workspace/provider 等尚未 tenant-bound 的全局目录维持原有视图。
+    pub fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> Snapshot {
+        let inner = read(&self.inner);
+        Snapshot {
+            revision: inner.revision,
+            core_ready: inner.core_ready,
+            workspaces: inner.workspaces.values().cloned().collect(),
+            sessions: inner
+                .sessions
+                .values()
+                .filter(|session| session.tenant_id == *tenant_id)
+                .cloned()
+                .collect(),
+            runs: inner
+                .runs
+                .values()
+                .filter(|run| run.tenant_id == *tenant_id)
+                .cloned()
+                .collect(),
+            approvals: inner
+                .approvals
+                .values()
+                .filter(|approval| {
+                    inner
+                        .runs
+                        .get(&approval.run_id)
+                        .is_some_and(|run| run.tenant_id == *tenant_id)
+                })
+                .cloned()
+                .collect(),
+            providers: inner.providers.values().cloned().collect(),
+            artifacts: inner.artifacts.values().cloned().collect(),
+            terminals: inner.terminals.values().cloned().collect(),
+        }
+    }
+
     pub fn revision(&self) -> u64 {
         read(&self.inner).revision
     }
@@ -896,7 +1037,9 @@ mod tests {
 
         // 不安全 URI scheme：同样在写入前拒绝、不污染。
         let mut unsafe_uri = snapshot(2);
-        unsafe_uri.diagnostics.push(diagnostic("javascript:alert(1)", "safe"));
+        unsafe_uri
+            .diagnostics
+            .push(diagnostic("javascript:alert(1)", "safe"));
         assert!(matches!(
             aggregate.replace_client_context(&session_id, unsafe_uri),
             Err(AggregateError::InvalidClientContext(_))

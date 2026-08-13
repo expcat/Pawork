@@ -2899,19 +2899,33 @@ mod tests {
 
         // 输出 redaction：子进程 stdout 回显 env 注入的明文 → 替换为占位符。
         let secret = "sk-output-secret-777";
+        #[cfg(not(windows))]
+        let echo_request = CommandRequest {
+            program: "sh".into(),
+            args: vec!["-c".into(), "echo MARKER=$PAWORK_TEST_SECRET".into()],
+            env: vec![(
+                "PAWORK_TEST_SECRET".into(),
+                user_hooks::SecretString::new(secret),
+            )],
+            working_directory: None,
+        };
+        #[cfg(windows)]
+        let echo_request = CommandRequest {
+            program: "cmd".into(),
+            args: vec![
+                "/d".into(),
+                "/s".into(),
+                "/c".into(),
+                "echo MARKER=%PAWORK_TEST_SECRET%".into(),
+            ],
+            env: vec![(
+                "PAWORK_TEST_SECRET".into(),
+                user_hooks::SecretString::new(secret),
+            )],
+            working_directory: None,
+        };
         let result = executor
-            .run(
-                CommandRequest {
-                    program: "sh".into(),
-                    args: vec!["-c".into(), "echo MARKER=$PAWORK_TEST_SECRET".into()],
-                    env: vec![(
-                        "PAWORK_TEST_SECRET".into(),
-                        user_hooks::SecretString::new(secret),
-                    )],
-                    working_directory: None,
-                },
-                Some(std::time::Duration::from_secs(10)),
-            )
+            .run(echo_request, Some(std::time::Duration::from_secs(10)))
             .await
             .expect("sandboxed command runs");
         assert_eq!(result.exit_code, 0);
@@ -2927,16 +2941,22 @@ mod tests {
         );
 
         // 真实超时：sleep 被取消并收敛为 timed_out。
+        #[cfg(not(windows))]
+        let sleep_request = CommandRequest {
+            program: "/bin/sleep".into(),
+            args: vec!["30".into()],
+            env: Vec::new(),
+            working_directory: None,
+        };
+        #[cfg(windows)]
+        let sleep_request = CommandRequest {
+            program: "ping".into(),
+            args: vec!["-n".into(), "31".into(), "127.0.0.1".into()],
+            env: Vec::new(),
+            working_directory: None,
+        };
         let result = executor
-            .run(
-                CommandRequest {
-                    program: "/bin/sleep".into(),
-                    args: vec!["30".into()],
-                    env: Vec::new(),
-                    working_directory: None,
-                },
-                Some(std::time::Duration::from_millis(150)),
-            )
+            .run(sleep_request, Some(std::time::Duration::from_millis(150)))
             .await
             .expect("timeout path returns result");
         assert!(result.timed_out, "sleep must be cancelled by timeout");

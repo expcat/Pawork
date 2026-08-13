@@ -1,6 +1,6 @@
 # P18-12：Claude Gateway Adapter
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-10、P18-8、P15-3、P15-7、P12-1
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠独立 Adapter crate 已验证，宿主接线待完成 · 交付成熟度：Built · 依赖：P18-10、P18-8、P15-3、P15-7、P12-1
 
 **最终目的**：接入 Claude Code 的 Anthropic Messages wire protocol 与 session/agent identity，使并行 subagent 的用量和审计可归属，并显式处理 signed reasoning continuity 能力。
 
@@ -29,3 +29,8 @@
 
 **相关文档**：[client-adapters](../docs/features/client-adapters.md) · [tenant-audit](../docs/features/tenant-audit.md) · [ADR-032](../docs/adr/ADR-032-protected-blob-store.md) · [ROADMAP](../ROADMAP.md)
 
+## 当前进度（2026-08-13）
+
+- 新增独立 `client-claude-gateway` crate：身份头 fail-closed 提取、受信 tenant 绑定、Messages/SSE stream、permission/subagent/task/hook 映射、signed thinking capability 与 protected-blob seam 均已实现。
+- 独立验证：55 tests passed；Clippy `-D warnings` 与 fmt check 通过。
+- 待完成：接入根 workspace；把 `ExternalAgentIdentity` 上移为共享契约；接入 app-service、usage-ledger、canonical audit 与生产 `ProtectedBlobStoreProtector`。

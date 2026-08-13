@@ -13,14 +13,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use agent_domain::{SessionId, Timestamp};
+use agent_domain::{PrincipalId, SessionId, TenantId, Timestamp};
 use agent_events::AgentEventEnvelope;
 use serde::{Deserialize, Serialize};
 
 use crate::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 
 /// 当前导出 schema 版本。
-pub const EXPORT_SCHEMA_VERSION: u32 = 2;
+pub const EXPORT_SCHEMA_VERSION: u32 = 3;
+
+const LEGACY_TENANT: &str = "local/default";
+const LEGACY_PRINCIPAL: &str = "local/user";
 
 /// 一个分支的导出表示。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,11 +71,14 @@ impl<'de> Deserialize<'de> for ExportedEvent {
 }
 
 /// 一个 session 的完整导出（稳定 schema）。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SessionExport {
-    /// 导出 schema 版本；当前写 v2，读取兼容 v1～[`EXPORT_SCHEMA_VERSION`]。
+    /// 导出 schema 版本；当前写 v3，读取兼容 v1～[`EXPORT_SCHEMA_VERSION`]。
     pub schema_version: u32,
     pub session_id: String,
+    /// v3 起显式携带身份；v1/v2 经 [`Self::from_json`] 安全回填 legacy 默认。
+    pub tenant_id: TenantId,
+    pub principal_id: PrincipalId,
     pub title: String,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
@@ -85,6 +91,68 @@ pub struct SessionExport {
     /// 标签（小写归一）。
     #[serde(default)]
     pub tags: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for SessionExport {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireSessionExport {
+            schema_version: u32,
+            session_id: String,
+            #[serde(default)]
+            tenant_id: Option<TenantId>,
+            #[serde(default)]
+            principal_id: Option<PrincipalId>,
+            title: String,
+            created_at_ms: u64,
+            updated_at_ms: u64,
+            archived: bool,
+            active_branch: String,
+            branches: Vec<ExportedBranch>,
+            events: Vec<ExportedEvent>,
+            #[serde(default)]
+            tags: Vec<String>,
+        }
+
+        let wire = WireSessionExport::deserialize(deserializer)?;
+        let (tenant_id, principal_id) = if (1..=2).contains(&wire.schema_version) {
+            // 历史版本没有可信 identity：忽略可能夹带的未知同名字段，固定回填。
+            (
+                TenantId::new(LEGACY_TENANT),
+                PrincipalId::new(LEGACY_PRINCIPAL),
+            )
+        } else {
+            let tenant_id = wire
+                .tenant_id
+                .filter(|value| !value.as_str().trim().is_empty())
+                .ok_or_else(|| serde::de::Error::custom("session export tenant_id is missing"))?;
+            let principal_id = wire
+                .principal_id
+                .filter(|value| !value.as_str().trim().is_empty())
+                .ok_or_else(|| {
+                    serde::de::Error::custom("session export principal_id is missing")
+                })?;
+            (tenant_id, principal_id)
+        };
+
+        Ok(Self {
+            schema_version: wire.schema_version,
+            session_id: wire.session_id,
+            tenant_id,
+            principal_id,
+            title: wire.title,
+            created_at_ms: wire.created_at_ms,
+            updated_at_ms: wire.updated_at_ms,
+            archived: wire.archived,
+            active_branch: wire.active_branch,
+            branches: wire.branches,
+            events: wire.events,
+            tags: wire.tags,
+        })
+    }
 }
 
 impl SessionExport {
@@ -100,16 +168,19 @@ impl SessionExport {
         Ok(export)
     }
 
-    /// 校验 schema 版本。v1 可读并按 main 分支迁移，所有新导出均写 v2。
+    /// 校验 schema 版本与非空身份。v1 可读并按 main 分支迁移，新导出写 v3。
     pub fn validate(&self) -> Result<(), SessionStoreError> {
-        if (1..=EXPORT_SCHEMA_VERSION).contains(&self.schema_version) {
-            Ok(())
-        } else {
-            Err(SessionStoreError::ExportSchemaVersion {
+        if !(1..=EXPORT_SCHEMA_VERSION).contains(&self.schema_version) {
+            return Err(SessionStoreError::ExportSchemaVersion {
                 found: self.schema_version,
                 supported: EXPORT_SCHEMA_VERSION,
-            })
+            });
         }
+        if self.tenant_id.as_str().trim().is_empty() || self.principal_id.as_str().trim().is_empty()
+        {
+            return Err(SessionStoreError::ExportIdentityMissing);
+        }
+        Ok(())
     }
 }
 
@@ -124,7 +195,7 @@ impl SessionStore {
             .call(move |connection| -> Result<SessionExport, SessionStoreError> {
                 let session = connection
                     .query_row(
-                        "SELECT session_id, title, created_at_ms, updated_at_ms, archived, active_branch \
+                        "SELECT session_id, title, created_at_ms, updated_at_ms, archived, active_branch, tenant_id, principal_id \
                          FROM sessions WHERE session_id=?1",
                         [&session_id],
                         |row| {
@@ -135,11 +206,14 @@ impl SessionStore {
                                 row.get::<_, i64>(3)?,
                                 row.get::<_, i64>(4)?,
                                 row.get::<_, String>(5)?,
+                                row.get::<_, String>(6)?,
+                                row.get::<_, String>(7)?,
                             ))
                         },
                     )
                     .map_err(|_| SessionStoreError::SessionNotFound(session_id.clone()))?;
-                let (_, title, created, updated, archived, active_branch) = session;
+                let (_, title, created, updated, archived, active_branch, tenant_id, principal_id) =
+                    session;
 
                 let branches = {
                     let mut statement = connection.prepare(
@@ -193,6 +267,8 @@ impl SessionStore {
                 Ok(SessionExport {
                     schema_version: EXPORT_SCHEMA_VERSION,
                     session_id,
+                    tenant_id: TenantId::new(tenant_id),
+                    principal_id: PrincipalId::new(principal_id),
                     title,
                     created_at_ms: created as u64,
                     updated_at_ms: updated as u64,
@@ -211,8 +287,21 @@ impl SessionStore {
     /// 导入会：创建 session 与分支树、追加全部事件、回填标签。事件经
     /// `append_event` 的连续性 / parent 校验，保持 append-only 红线。若 session 已存在
     /// 则返回错误。
-    pub async fn import_session(&self, export: &SessionExport) -> Result<(), SessionStoreError> {
+    pub async fn import_session(
+        &self,
+        export: &SessionExport,
+        tenant_id: &TenantId,
+        principal_id: &PrincipalId,
+    ) -> Result<(), SessionStoreError> {
         export.validate()?;
+        if export.tenant_id != *tenant_id || export.principal_id != *principal_id {
+            return Err(SessionStoreError::ExportIdentityMismatch {
+                export_tenant: export.tenant_id.to_string(),
+                export_principal: export.principal_id.to_string(),
+                import_tenant: tenant_id.to_string(),
+                import_principal: principal_id.to_string(),
+            });
+        }
 
         // 在创建任何数据库状态前先校验 envelope 与导出 session 一致，避免部分导入。
         if let Some(mismatched) = export
@@ -227,10 +316,12 @@ impl SessionStore {
         }
 
         let session_id = SessionId::from(export.session_id.clone());
-        self.create_session(
+        self.create_session_with_identity(
             &session_id,
             export.title.clone(),
             Timestamp::from_unix_millis(export.created_at_ms),
+            tenant_id,
+            principal_id,
         )
         .await?;
 
@@ -412,6 +503,8 @@ mod tests {
         assert_eq!(export.schema_version, EXPORT_SCHEMA_VERSION);
         assert_eq!(export.session_id, "session-export");
         assert_eq!(export.events.len(), 2);
+        assert_eq!(export.tenant_id.as_str(), LEGACY_TENANT);
+        assert_eq!(export.principal_id.as_str(), LEGACY_PRINCIPAL);
         assert_eq!(export.tags, vec!["demo", "rust"]);
         assert_eq!(export.active_branch, DEFAULT_BRANCH_ID);
 
@@ -422,7 +515,10 @@ mod tests {
         // 导入到新数据库。
         let path2 = temp_path();
         let (store2, _) = SessionStore::open(&path2).await.expect("store2");
-        store2.import_session(&export).await.expect("import");
+        store2
+            .import_session(&export, &export.tenant_id, &export.principal_id)
+            .await
+            .expect("import");
 
         let re_exported = store2.export_session(&session).await.expect("re-export");
         // 事件与分支结构等价（created/updated ms 可能因导入顺序不同，故只比对核心事实）。
@@ -519,7 +615,10 @@ mod tests {
 
         let path2 = temp_path();
         let (store2, _) = SessionStore::open(&path2).await.expect("store2");
-        store2.import_session(&export).await.expect("import");
+        store2
+            .import_session(&export, &export.tenant_id, &export.principal_id)
+            .await
+            .expect("import");
         let re_exported = store2.export_session(&session).await.expect("re-export");
         assert_eq!(re_exported.events, export.events);
         assert_eq!(re_exported.branches, export.branches);
@@ -546,6 +645,8 @@ mod tests {
         let mut export = SessionExport {
             schema_version: 999,
             session_id: "x".into(),
+            tenant_id: TenantId::new(LEGACY_TENANT),
+            principal_id: PrincipalId::new(LEGACY_PRINCIPAL),
             title: "t".into(),
             created_at_ms: 1,
             updated_at_ms: 1,
@@ -588,6 +689,8 @@ mod tests {
         });
         let decoded = SessionExport::from_json(&legacy.to_string()).expect("read v1");
         assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.tenant_id.as_str(), LEGACY_TENANT);
+        assert_eq!(decoded.principal_id.as_str(), LEGACY_PRINCIPAL);
         assert_eq!(decoded.events[0].branch_id, DEFAULT_BRANCH_ID);
     }
 
@@ -600,6 +703,8 @@ mod tests {
         let export = SessionExport {
             schema_version: EXPORT_SCHEMA_VERSION,
             session_id: expected.to_string(),
+            tenant_id: TenantId::new(LEGACY_TENANT),
+            principal_id: PrincipalId::new(LEGACY_PRINCIPAL),
             title: "mismatch".into(),
             created_at_ms: 1,
             updated_at_ms: 1,
@@ -618,7 +723,10 @@ mod tests {
             tags: vec![],
         };
 
-        let error = store.import_session(&export).await.expect_err("mismatch");
+        let error = store
+            .import_session(&export, &export.tenant_id, &export.principal_id)
+            .await
+            .expect_err("mismatch");
         assert!(matches!(
             error,
             SessionStoreError::EventSessionMismatch {
@@ -642,6 +750,86 @@ mod tests {
         let missing = SessionId::from("does-not-exist");
         let err = store.export_session(&missing).await;
         assert!(matches!(err, Err(SessionStoreError::SessionNotFound(_))));
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn schema_v2_json_backfills_frozen_legacy_identity() {
+        let legacy = serde_json::json!({
+            "schema_version": 2,
+            "session_id": "legacy-v2",
+            "title": "legacy",
+            "created_at_ms": 1,
+            "updated_at_ms": 1,
+            "archived": false,
+            "active_branch": DEFAULT_BRANCH_ID,
+            "branches": [],
+            "events": [],
+            "tags": [],
+            // v2 未定义这些字段；即便夹带也不得把旧包归到任意租户。
+            "tenant_id": "tenant-attacker",
+            "principal_id": "principal-attacker"
+        });
+        let decoded = SessionExport::from_json(&legacy.to_string()).expect("read v2");
+        assert_eq!(decoded.tenant_id.as_str(), LEGACY_TENANT);
+        assert_eq!(decoded.principal_id.as_str(), LEGACY_PRINCIPAL);
+    }
+
+    #[test]
+    fn schema_v3_missing_identity_is_rejected() {
+        let missing = serde_json::json!({
+            "schema_version": EXPORT_SCHEMA_VERSION,
+            "session_id": "missing-identity",
+            "title": "missing",
+            "created_at_ms": 1,
+            "updated_at_ms": 1,
+            "archived": false,
+            "active_branch": DEFAULT_BRANCH_ID,
+            "branches": [],
+            "events": [],
+            "tags": []
+        });
+        assert!(SessionExport::from_json(&missing.to_string()).is_err());
+    }
+
+    #[tokio::test]
+    async fn import_rejects_identity_mismatch_before_creating_session() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let export = SessionExport {
+            schema_version: EXPORT_SCHEMA_VERSION,
+            session_id: "tenant-a-session".into(),
+            tenant_id: TenantId::new("tenant-a"),
+            principal_id: PrincipalId::new("principal-a"),
+            title: "tenant a".into(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            archived: false,
+            active_branch: DEFAULT_BRANCH_ID.into(),
+            branches: vec![],
+            events: vec![],
+            tags: vec![],
+        };
+        let error = store
+            .import_session(
+                &export,
+                &TenantId::new("tenant-b"),
+                &PrincipalId::new("principal-b"),
+            )
+            .await
+            .expect_err("cross-identity import must fail");
+        assert!(matches!(
+            error,
+            SessionStoreError::ExportIdentityMismatch { .. }
+        ));
+        assert_eq!(
+            store
+                .get_session_identity(&SessionId::from("tenant-a-session"))
+                .await
+                .expect("identity lookup"),
+            None
+        );
         store.shutdown().await.expect("shutdown");
         let _ = fs::remove_file(path);
     }

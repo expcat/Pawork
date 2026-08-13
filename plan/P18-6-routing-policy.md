@@ -1,6 +1,6 @@
 # P18-6：RoutingPolicy Chain
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-2、P18-4、P18-5、P2-7、P15-8
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-2、P18-4、P18-5、P2-7、P15-8
 
 **最终目的**：建立可组合、可解释、可确定性测试的路由策略链，支持 priority、weighted round robin、fill-first 与 fallback，而不把账号选择塞进 `ModelProvider` 或 Agent Engine。
 
@@ -22,9 +22,17 @@
 
 ## 验收标准
 
-- [ ] 旧配置默认 `SingleCandidate`，行为与升级前一致
-- [ ] 高 priority 候选未耗尽时低 priority 不会被选中
-- [ ] weighted routing 分布在容差内且可用固定 seed 重放
-- [ ] route decision 不含明文 Secret，并可解释每个过滤/回退动作
+- [x] 旧配置默认 `SingleCandidate`，行为与升级前一致
+- [x] 高 priority 候选未耗尽时低 priority 不会被选中
+- [x] weighted routing 分布在容差内且可用固定 seed 重放
+- [x] route decision 不含明文 Secret，并可解释每个过滤/回退动作
+
+## 验证记录（2026-08-13）
+
+- Validation Level: L1
+- Affected crates: `provider-control`
+- Validated: `cargo test -p provider-control`（126 unit/property + 10 error-matrix）；`cargo clippy -p provider-control --all-targets -- -D warnings`；`cargo check -p provider-control --no-default-features`；`cargo fmt -p provider-control -- --check`；独立 DeepSeek reviewer PASS
+- Targeted regressions: capability/policy/health/priority 固定链、Round-Robin/SWRR 确定性与权重周期、Fill-First 高优先级耗尽下沉、fallback fail-closed、HalfOpen 只读 plan 不耗探针、circuit 拒绝不误记 Healthy、每个淘汰动作可解释、无 Secret/provider-name 特例
+- Full workspace gate: NOT RUN（未命中升级条件）
 
 **相关文档**：[provider-control-plane](../docs/features/provider-control-plane.md) · [models](../docs/features/models.md) · [tenant-audit](../docs/features/tenant-audit.md) · [ROADMAP](../ROADMAP.md)

@@ -26,7 +26,7 @@ use serde_json::Value;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 use crate::backend::SecretBackend;
-use crate::credential::{CredentialId, StoredCredential};
+use crate::credential::{generate_credential_id, StoredCredential};
 use crate::error::AuthError;
 use crate::masked::MaskedCredential;
 
@@ -471,7 +471,7 @@ pub fn store_oauth_token(
     if tokens.access_token.is_empty() {
         return Err(AuthError::InvalidSecret("access_token is empty".into()));
     }
-    let id = CredentialId::generate();
+    let id = generate_credential_id();
     let service = oauth_service(&provider);
     let access_account = format!("{}.access", id.as_str());
     let refresh_account = format!("{}.refresh", id.as_str());
@@ -979,6 +979,7 @@ fn extract_error(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::backend::MemoryBackend;
+    use crate::credential::CredentialId;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

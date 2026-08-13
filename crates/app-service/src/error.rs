@@ -33,6 +33,8 @@ pub enum AppServiceError {
     Authentication(String),
     #[error("authorization denied: {0}")]
     Authorization(String),
+    #[error("identity resolution failed: {0}")]
+    Identity(String),
     #[error("rate limited")]
     RateLimited { retry_after_ms: Option<u64> },
     #[error("resource exhausted: {0}")]
@@ -80,6 +82,7 @@ impl AppServiceError {
             Self::Authorization(message) => {
                 (ErrorCategory::Authorization, false, None, message.clone())
             }
+            Self::Identity(message) => (ErrorCategory::Authorization, false, None, message.clone()),
             Self::RateLimited { retry_after_ms } => (
                 ErrorCategory::RateLimit,
                 true,
@@ -167,6 +170,7 @@ fn supervise_error_context(error: &SuperviseError) -> ErrorContext {
         | SuperviseError::StillActive(_)
         | SuperviseError::Completed(_) => (ErrorCategory::Conflict, false),
         SuperviseError::Capacity(_) => (ErrorCategory::ResourceExhausted, true),
+        SuperviseError::PolicyDenied(_) => (ErrorCategory::Authorization, false),
         // P17-5：background run 缺 TaskManager 属配置缺失，不可重试。
         SuperviseError::BackgroundUnavailable(_) => (ErrorCategory::Unavailable, false),
     };

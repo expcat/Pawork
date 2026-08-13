@@ -14,10 +14,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_domain::{
-    BackgroundTaskId, CancellationToken, CommandId, ContentPart, CoreInstanceId, EventId, Message,
-    MessageId, MessageMetadata, MessageRole, ModelId, ProfileIsolation, ProfileToolRules,
+    AgentId, BackgroundTaskId, CancellationToken, CommandId, ContentPart, CoreInstanceId, EventId,
+    Message, MessageId, MessageMetadata, MessageRole, ModelId, ProfileIsolation, ProfileToolRules,
     ProviderId, RequestId, RunId, SessionId, TaskKind, TaskStatus, TextContent, Timestamp,
     WorkspaceId,
 };
@@ -27,6 +28,7 @@ use agent_engine::{
 };
 use agent_events::{AgentEvent, AgentEventEnvelope};
 use async_trait::async_trait;
+use audit_log::{AuditAction, AuditDecision, AuditDimensions, AuditTargetKind};
 use core_api::{
     AppEvent, AppEventEnvelope, ClientContextSnapshot, ClientDiagnosticSeverity, CommandSource,
     EventSource, EventStream, GlobalSequence, QuotaAlertKind, QuotaOverviewQuery, QuotaUnit,
@@ -34,17 +36,36 @@ use core_api::{
 };
 use model_registry::ModelRegistry;
 use provider_api::ModelProvider;
+use provider_control::{AcquireRequest, CredentialLease, CredentialPool, LeaseGuard, LeaseOutcome};
+use tenant_service::{
+    decide_budget, decide_request_concurrency, IdentityContext, Permission, PolicyDecision,
+    PolicyDecisionKind, PolicyGate,
+};
 use thiserror::Error;
 use tool_api::ToolResult;
+use usage_ledger::UsageQuery;
 
 use crate::aggregate::AggregateState;
 use crate::approval::{ApprovalRegistry, Registration};
 use crate::error::now_timestamp;
+use crate::policy::TenantPolicyGate;
 use crate::rate_limit::RateLimiter;
 use crate::user_hook::UserHookHost;
 
 /// 默认最大并发 run 数（有界性：超限的 RunStart 返回结构化错误）。
 pub const DEFAULT_MAX_CONCURRENT_RUNS: usize = 8;
+
+/// 会话作用域的 canonical root AgentId（P18-4 审查补救）。
+///
+/// 由 `session_id` 确定性派生：同一 session 的所有 run 与每次 retry attempt
+/// 共享同一 root agent 身份，跨进程重放 / 重启稳定；任何 session（含默认值）
+/// 都产生非空 id。**客户端不可选择 agent 或 credential**：命令入口不暴露
+/// agent/credential 输入，credential 只能来自 acquire 得到的真实
+/// [`CredentialLease`]。派生格式 `root-<session_id>` 是契约
+/// （`app-service/tests/credential_lease.rs` 断言）。
+pub fn canonical_root_agent_id(session_id: &SessionId) -> AgentId {
+    AgentId::new(format!("root-{}", session_id.as_str()))
+}
 
 #[derive(Debug, Error)]
 pub enum SuperviseError {
@@ -58,6 +79,8 @@ pub enum SuperviseError {
     Completed(String),
     #[error("max concurrent runs reached ({0})")]
     Capacity(usize),
+    #[error("tenant policy denied run admission: {0}")]
+    PolicyDenied(String),
     #[error("background run requires a TaskManager: {0}")]
     BackgroundUnavailable(String),
 }
@@ -89,6 +112,9 @@ pub struct RunRequest {
     /// run 所属 workspace（session 记录聚合而来）；user hooks 按 workspace
     /// 作用域匹配触发。旧构造点未提供时为 `None`（仅 global hooks 生效）。
     pub workspace_id: Option<WorkspaceId>,
+    /// P18-2 身份上下文：usage 记账与 run 归属的真实 tenant/principal。
+    /// 由 router 在命令入口 fail-closed 解析，缺失身份的 run 不会到达这里。
+    pub identity: tenant_service::IdentityContext,
     pub provider_id: ProviderId,
     pub model: ModelId,
     pub source: CommandSource,
@@ -102,9 +128,24 @@ pub struct RunRequest {
     pub profile: Option<crate::profile_resolver::ResolvedRunProfile>,
 }
 
+impl RunRequest {
+    /// 本 run 的 canonical root AgentId（session 作用域，P18-4 审查补救）。
+    ///
+    /// 由 [`canonical_root_agent_id`] 从 `session_id` 确定性派生：同一 session
+    /// 的首跑与每次 retry attempt 身份一致；客户端不可选择（命令入口不暴露
+    /// agent/credential 输入，credential 只能来自 acquire 的真实 lease）。
+    pub fn agent_id(&self) -> AgentId {
+        canonical_root_agent_id(&self.session_id)
+    }
+}
+
 struct RunTask {
     run_id: RunId,
     session_id: SessionId,
+    /// session 作用域的 canonical root AgentId（P18-4 审查补救）：首跑与 retry
+    /// 各 attempt 共享同一身份，经 [`RunRequest::agent_id`] 派生，客户端不可选。
+    agent_id: AgentId,
+    identity: tenant_service::IdentityContext,
     provider_id: ProviderId,
     model: ModelId,
     source: CommandSource,
@@ -155,6 +196,9 @@ pub struct RunSupervisor {
     /// stream 的 `QuotaAlert` 事件；与 run 事件共享 limiter/global_sequence，
     /// 独立维护 Global 流序号。供 RefreshScheduler 经 [`Self::alert_sink`] 注入。
     alert_sink: Arc<dyn quota_service::refresh::AlertSink>,
+    /// Canonical quota audit bridge. It resolves the current shared TenantPolicyGate at emit
+    /// time, so composition can wire policy after constructing the supervisor.
+    quota_audit_sink: Arc<dyn quota_service::refresh::AuditSink>,
     /// P17-6 Team 桥（长期持有）：把 canonical `teams::TeamEvent` 映射为
     /// `AppEvent::TeamEvent` typed 镜像，与 quota 告警共享 limiter /
     /// global_sequence / Global 流序号（跨流连续由 EventHub 收口），推入共享
@@ -167,6 +211,15 @@ pub struct RunSupervisor {
     /// run 的 workspace roots（P17-1）：传给 UserHookHost 的 pre-prompt /
     /// pre-tool 位点；宿主装配时注入，未注入为空（仅 global hooks 生效）。
     workspace_roots: Mutex<Vec<PathBuf>>,
+    /// P18-4 共享 CredentialPool（注入后每个 run attempt 在 provider 调用前
+    /// 异步 acquire 并持有 LeaseGuard 至终态；未注入时为 `None`，走 legacy
+    /// 过渡路径——不 acquire、attribution 无 credential）。
+    credential_pool: Mutex<Option<Arc<dyn CredentialPool>>>,
+    /// P18-9 租户策略闸口（与 router / AppService 共享同一实例）：lease
+    /// 取得后强制 LeaseAcquire + account 白名单，并用唯一 UsageLedger 做
+    /// 预算 admission；拒绝时释放 lease、run fail-closed。由
+    /// [`crate::router::CommandRouter`] 构造时注入。
+    tenant_policy: Arc<Mutex<Option<Arc<TenantPolicyGate>>>>,
 }
 
 impl RunSupervisor {
@@ -189,6 +242,11 @@ impl RunSupervisor {
             stream_sequence: Arc::clone(&stream_sequence),
             instance_id: instance_id.clone(),
         });
+        let policy_slot = Arc::new(Mutex::new(None));
+        let quota_audit_sink: Arc<dyn quota_service::refresh::AuditSink> =
+            Arc::new(AppQuotaAuditSink {
+                tenant_policy: Arc::clone(&policy_slot),
+            });
         let team_sink: Arc<dyn teams::TeamEventSink> = Arc::new(AppTeamEventSink {
             limiter: Arc::clone(&limiter),
             global_sequence: Arc::clone(&global_sequence),
@@ -212,9 +270,12 @@ impl RunSupervisor {
             quota_runtime: Mutex::new(None),
             task_manager: Mutex::new(None),
             alert_sink,
+            quota_audit_sink,
             team_sink,
             user_hooks: Mutex::new(None),
             workspace_roots: Mutex::new(Vec::new()),
+            credential_pool: Mutex::new(None),
+            tenant_policy: policy_slot,
         }
     }
 
@@ -253,6 +314,51 @@ impl RunSupervisor {
     /// 是否已注入共享 User Hooks 宿主（宿主装配 / 诊断用）。
     pub fn user_hooks_active(&self) -> bool {
         self.user_hooks.lock().expect("user_hooks mutex").is_some()
+    }
+
+    /// 注入共享租户策略闸口（P18-9）：与 router / AppService 同一实例，
+    /// 裁决只记录一次（不可双记）。幂等：同一实例重复注入为 no-op。
+    pub fn set_tenant_policy(&self, gate: Arc<TenantPolicyGate>) {
+        let mut guard = self.tenant_policy.lock().expect("tenant_policy mutex");
+        let already = guard
+            .as_ref()
+            .is_some_and(|existing| Arc::ptr_eq(existing, &gate));
+        if !already {
+            *guard = Some(gate);
+        }
+    }
+
+    fn tenant_policy(&self) -> Option<Arc<TenantPolicyGate>> {
+        self.tenant_policy
+            .lock()
+            .expect("tenant_policy mutex")
+            .clone()
+    }
+
+    /// 指定租户当前活跃（非终态）run 数（P18-9 请求并发准入）。
+    pub fn active_for_tenant(&self, tenant: &agent_domain::TenantId) -> u64 {
+        let inner = lock(&self.inner);
+        active_for_tenant(&inner, tenant)
+    }
+
+    /// 注入共享 CredentialPool（P18-4）：每个 run attempt 在 provider 调用前
+    /// 异步 acquire，持有 LeaseGuard 至终态；acquire 失败 fail-closed（run
+    /// 进入 Failed，不调用 provider）。幂等：同一实例重复注入为 no-op。
+    pub fn set_credential_pool(&self, pool: Arc<dyn CredentialPool>) {
+        let mut guard = self.credential_pool.lock().expect("credential_pool mutex");
+        let already = guard
+            .as_ref()
+            .is_some_and(|existing| Arc::ptr_eq(existing, &pool));
+        if !already {
+            *guard = Some(pool);
+        }
+    }
+
+    fn credential_pool(&self) -> Option<Arc<dyn CredentialPool>> {
+        self.credential_pool
+            .lock()
+            .expect("credential_pool mutex")
+            .clone()
     }
 
     /// 注入共享 Quota 运行时（P14-8）：成功 run 完成后向同一 ledger 幂等记账。
@@ -299,9 +405,37 @@ impl RunSupervisor {
         request: RunRequest,
         provider: Arc<dyn ModelProvider>,
     ) -> Result<(), SuperviseError> {
+        self.start_inner(request, provider, false)
+    }
+
+    /// 经 P18-9 tenant policy 原子准入后登记并启动 run。策略检查与任务插入
+    /// 共用 `inner` 临界区，避免并发 RunStart 在 check-then-act 窗口同时越过
+    /// `max_concurrent_requests`。
+    pub fn start_with_policy(
+        &self,
+        request: RunRequest,
+        provider: Arc<dyn ModelProvider>,
+    ) -> Result<(), SuperviseError> {
+        self.start_inner(request, provider, true)
+    }
+
+    fn start_inner(
+        &self,
+        request: RunRequest,
+        provider: Arc<dyn ModelProvider>,
+        enforce_policy: bool,
+    ) -> Result<(), SuperviseError> {
         let mut inner = lock(&self.inner);
         if inner.tasks.contains_key(&request.run_id) {
             return Err(SuperviseError::AlreadyExists(request.run_id.to_string()));
+        }
+        if enforce_policy {
+            self.enforce_run_admission(
+                &inner,
+                &request.identity,
+                &request.provider_id,
+                &request.model,
+            )?;
         }
         let active = inner
             .tasks
@@ -353,17 +487,25 @@ impl RunSupervisor {
         } else {
             None
         };
-        let created_at = match self.aggregate.get_run(&request.run_id) {
+        let created_at = match self
+            .aggregate
+            .get_run(&request.run_id, &request.identity.tenant_id)
+        {
             Some(record) => record.created_at,
             None => now_timestamp(),
         };
         let quota_runtime = self.quota_runtime();
+        let credential_pool = self.credential_pool();
+        let tenant_policy = self.tenant_policy();
         let user_hooks = self.user_hooks();
         let workspace_roots = self.workspace_roots();
+        let agent_id = request.agent_id();
         let task = spawn_run_task(
             request.run_id.clone(),
             request.session_id.clone(),
             request.workspace_id.clone(),
+            request.identity.clone(),
+            agent_id.clone(),
             request.source.clone(),
             request.command_id.clone(),
             Arc::clone(&self.aggregate),
@@ -390,6 +532,8 @@ impl RunSupervisor {
             isolation,
             background_task_id.clone(),
             task_manager,
+            credential_pool,
+            tenant_policy,
         );
         inner.started += 1;
         inner.tasks.insert(
@@ -397,6 +541,8 @@ impl RunSupervisor {
             RunTask {
                 run_id: request.run_id,
                 session_id: request.session_id,
+                agent_id,
+                identity: request.identity,
                 provider_id: request.provider_id,
                 model: request.model,
                 source: request.source,
@@ -414,13 +560,59 @@ impl RunSupervisor {
         Ok(())
     }
 
+    fn enforce_run_admission(
+        &self,
+        inner: &Inner,
+        identity: &IdentityContext,
+        provider_id: &ProviderId,
+        model: &ModelId,
+    ) -> Result<(), SuperviseError> {
+        let gate = self.tenant_policy().ok_or_else(|| {
+            SuperviseError::PolicyDenied("tenant policy gate is not configured".into())
+        })?;
+        gate.check_permission(identity, Permission::AgentSpawn)
+            .map_err(|error| SuperviseError::PolicyDenied(error.to_string()))?;
+        gate.check_model(&identity.tenant_id, model)
+            .map_err(|error| SuperviseError::PolicyDenied(error.to_string()))?;
+        gate.check_provider(&identity.tenant_id, provider_id)
+            .map_err(|error| SuperviseError::PolicyDenied(error.to_string()))?;
+
+        let current = active_for_tenant(inner, &identity.tenant_id);
+        let max = gate
+            .engine()
+            .policy(&identity.tenant_id)
+            .max_concurrent_requests;
+        match decide_request_concurrency(current, max) {
+            PolicyDecision::Allow => Ok(()),
+            PolicyDecision::Deny { reason } => Err(SuperviseError::PolicyDenied(reason)),
+            other => Err(SuperviseError::PolicyDenied(format!(
+                "request admission returned {other:?}; denied by default"
+            ))),
+        }
+    }
+
     /// 取消 run（幂等）：未登记返回 NotFound；已取消或已终态为 no-op。
     pub fn cancel(&self, run_id: &RunId) -> Result<CancelOutcome, SuperviseError> {
+        self.cancel_for_tenant(
+            run_id,
+            &agent_domain::TenantId::new(core_api::DEFAULT_CONTROL_PLANE_TENANT),
+        )
+    }
+
+    /// tenant-scoped 取消：跨租户 run 视同不存在，不泄漏状态。
+    pub fn cancel_for_tenant(
+        &self,
+        run_id: &RunId,
+        tenant_id: &agent_domain::TenantId,
+    ) -> Result<CancelOutcome, SuperviseError> {
         let inner = lock(&self.inner);
         let task = inner
             .tasks
             .get(run_id)
             .ok_or_else(|| SuperviseError::NotFound(run_id.to_string()))?;
+        if task.identity.tenant_id != *tenant_id {
+            return Err(SuperviseError::NotFound(run_id.to_string()));
+        }
         let state = task.state.lock().expect("run task state").clone();
         if task.cancel.is_cancelled() || terminal(&state) {
             return Ok(CancelOutcome {
@@ -438,18 +630,76 @@ impl RunSupervisor {
     /// 重试 run（幂等）：仅 Failed / Cancelled / Interrupted 可重开；Completed 与
     /// 活跃 run 返回结构化错误。
     pub fn retry(&self, run_id: &RunId) -> Result<(), SuperviseError> {
+        self.retry_for_tenant(
+            run_id,
+            &agent_domain::TenantId::new(core_api::DEFAULT_CONTROL_PLANE_TENANT),
+        )
+    }
+
+    /// tenant-scoped 重试：跨租户 run 视同不存在，不泄漏状态。
+    pub fn retry_for_tenant(
+        &self,
+        run_id: &RunId,
+        tenant_id: &agent_domain::TenantId,
+    ) -> Result<(), SuperviseError> {
+        self.retry_inner(run_id, tenant_id, None)
+    }
+
+    /// tenant-scoped policy-aware retry。每次 attempt 都重新执行 AgentSpawn、
+    /// model/provider 白名单与请求并发准入，避免策略更新后以 Retry 绕过。
+    pub fn retry_for_identity(
+        &self,
+        run_id: &RunId,
+        identity: &IdentityContext,
+    ) -> Result<(), SuperviseError> {
+        self.retry_inner(run_id, &identity.tenant_id, Some(identity))
+    }
+
+    fn retry_inner(
+        &self,
+        run_id: &RunId,
+        tenant_id: &agent_domain::TenantId,
+        policy_identity: Option<&IdentityContext>,
+    ) -> Result<(), SuperviseError> {
         let mut inner = lock(&self.inner);
-        let task = inner
-            .tasks
-            .get(run_id)
-            .ok_or_else(|| SuperviseError::NotFound(run_id.to_string()))?;
-        let current = task.state.lock().expect("run task state").clone();
+        let (current, provider_id, model) = {
+            let task = inner
+                .tasks
+                .get(run_id)
+                .ok_or_else(|| SuperviseError::NotFound(run_id.to_string()))?;
+            if task.identity.tenant_id != *tenant_id {
+                return Err(SuperviseError::NotFound(run_id.to_string()));
+            }
+            (
+                task.state.lock().expect("run task state").clone(),
+                task.provider_id.clone(),
+                task.model.clone(),
+            )
+        };
         if current == RunState::Completed {
             return Err(SuperviseError::Completed(run_id.to_string()));
         }
         if !terminal(&current) {
             return Err(SuperviseError::StillActive(run_id.to_string()));
         }
+        if let Some(identity) = policy_identity {
+            self.enforce_run_admission(&inner, identity, &provider_id, &model)?;
+        }
+        let active = inner
+            .tasks
+            .values()
+            .filter(|task| {
+                let state = task.state.lock().expect("run task state");
+                !terminal(&state)
+            })
+            .count();
+        if active >= self.max_concurrent {
+            return Err(SuperviseError::Capacity(self.max_concurrent));
+        }
+        let task = inner
+            .tasks
+            .get(run_id)
+            .expect("run task remains registered while inner is locked");
         let attempt = task
             .attempt
             .checked_add(1)
@@ -462,8 +712,9 @@ impl RunSupervisor {
             // workspace 作用域在重试后依然正确。
             workspace_id: self
                 .aggregate
-                .get_session(&task.session_id)
+                .get_session(&task.session_id, &task.identity.tenant_id)
                 .map(|session| session.workspace_id),
+            identity: task.identity.clone(),
             provider_id: task.provider_id.clone(),
             model: task.model.clone(),
             source: task.source.clone(),
@@ -509,17 +760,21 @@ impl RunSupervisor {
         } else {
             None
         };
-        let created_at = match self.aggregate.get_run(run_id) {
+        let created_at = match self.aggregate.get_run(run_id, &task.identity.tenant_id) {
             Some(record) => record.created_at,
             None => now_timestamp(),
         };
         let quota_runtime = self.quota_runtime();
+        let credential_pool = self.credential_pool();
+        let tenant_policy = self.tenant_policy();
         let user_hooks = self.user_hooks();
         let workspace_roots = self.workspace_roots();
         let join = spawn_run_task(
             task.run_id.clone(),
             task.session_id.clone(),
             request.workspace_id.clone(),
+            task.identity.clone(),
+            task.agent_id.clone(),
             task.source.clone(),
             request.command_id,
             Arc::clone(&self.aggregate),
@@ -546,6 +801,8 @@ impl RunSupervisor {
             isolation,
             background_task_id.clone(),
             task_manager,
+            credential_pool,
+            tenant_policy,
         );
         let _ = self.aggregate.set_run_state(run_id, RunState::Created);
         if let Some(task) = inner.tasks.get_mut(run_id) {
@@ -604,6 +861,11 @@ impl RunSupervisor {
     /// 于 [`Self::new`]，Global 流序号持续递增，多次调用不会重置序列。
     pub fn alert_sink(&self) -> Arc<dyn quota_service::refresh::AlertSink> {
         Arc::clone(&self.alert_sink)
+    }
+
+    /// Returns the canonical quota refresh audit bridge for `RefreshScheduler`.
+    pub fn quota_audit_sink(&self) -> Arc<dyn quota_service::refresh::AuditSink> {
+        Arc::clone(&self.quota_audit_sink)
     }
 
     /// 返回共享 Team 事件桥（`teams::TeamEventSink` trait 对象），供
@@ -697,6 +959,54 @@ struct AppQuotaAlertSink {
     /// Global stream 独立消费序号（桥是 Global 流唯一事件源）。
     stream_sequence: Arc<AtomicU64>,
     instance_id: CoreInstanceId,
+}
+
+struct AppQuotaAuditSink {
+    tenant_policy: Arc<Mutex<Option<Arc<TenantPolicyGate>>>>,
+}
+
+#[async_trait]
+impl quota_service::refresh::AuditSink for AppQuotaAuditSink {
+    async fn record(&self, entry: quota_service::refresh::AuditEntry) {
+        let gate = self
+            .tenant_policy
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let Some(gate) = gate else {
+            tracing::warn!("quota audit dropped because tenant policy gate is not configured");
+            return;
+        };
+        let identity = IdentityContext::new(
+            entry.scope.tenant_id.clone(),
+            agent_domain::PrincipalId::new("local/system"),
+        );
+        gate.record_control_event(
+            &identity,
+            AuditAction::QuotaRefreshed,
+            AuditTargetKind::Quota,
+            if entry.failures == 0 {
+                AuditDecision::Observe
+            } else {
+                AuditDecision::Error
+            },
+            if entry.served_stale {
+                "quota_refresh_stale"
+            } else if entry.failures == 0 {
+                "quota_refresh_succeeded"
+            } else {
+                "quota_refresh_partial_failure"
+            },
+            AuditDimensions {
+                provider_id: Some(entry.scope.provider_id.clone()),
+                account_id: Some(agent_domain::AccountId::from(
+                    entry.scope.account_id.as_str(),
+                )),
+                ..AuditDimensions::default()
+            },
+            entry.at_ms,
+        );
+    }
 }
 
 #[async_trait]
@@ -955,28 +1265,37 @@ fn envelope_matches_run(
     envelope.run_id == *run_id && envelope.session_id == *session_id
 }
 
-/// 终态幂等记账：`record_id` 由 (run, session, provider) 确定性派生（session 防
-/// 跨 session 冲突），相同内容重复写入为重放成功（usage-ledger 幂等语义），不会
-/// 重复计数。
+/// 幂等记账：`record_id` 由 (run, session, provider) 确定性派生（session 防
+/// 跨 session 冲突），相同内容重复写入为重放成功（usage-ledger 幂等语义），
+/// 不会重复计数。
 ///
-/// 归属字段取真实值：`session_id` 来自 run 请求（非默认），`occurred_at_ms` 取
-/// 用量观测/终态事件的真实时间戳（非 run 创建时间）。`principal_id` / `agent_id`
-/// 在当前 run 上下文不可得，留默认（账本不校验其非空）。费用按 builtin 定价
-/// 估算（`cost_micros`/`currency`）；未知模型/无定价回退 0/USD，不影响记账。
+/// 归属字段取调用方注入的 [`usage_ledger::UsageAttribution`]
+/// （P18-8 review：`record_run_usage` 不再内部派生 synthetic 身份/账号）：
+/// tenant/principal 来自 run 请求的 [`tenant_service::IdentityContext`]
+/// （router 入口 fail-closed 解析）。P18-4 生产接线后：account/credential
+/// 由 [`spawn_run_task`] 在 acquire 成功后从真实 [`CredentialLease`] 构造
+/// （[`attribution_from_lease`]），trace 取 acquire 请求的 trace_id；未注入
+/// 池的测试 / 嵌入式路径保留 legacy 过渡派生（account 默认哨兵、credential
+/// 为 `None`）。P18-4 审查补救：`agent_id` 为 session 作用域 canonical root
+/// AgentId（[`RunRequest::agent_id`]），UsageRecord 不再写默认空值。本函数
+/// 契约不变。
+/// `session_id` 来自 run 请求（非默认），`occurred_at_ms` 取用量观测/终态
+/// 事件的真实时间戳（非 run 创建时间）。费用按 builtin 定价估算
+/// （`cost_micros`/`currency`）；未知模型/无定价回退 0/USD，不影响记账。
+#[allow(clippy::too_many_arguments)]
 fn record_run_usage(
     run_id: &RunId,
     session_id: &SessionId,
+    agent_id: &AgentId,
     provider_id: &ProviderId,
     model: &ModelId,
     attempt: u64,
     occurred_at_ms: u64,
     usage: &agent_domain::TokenUsage,
+    attribution: &usage_ledger::UsageAttribution,
 ) -> usage_ledger::UsageRecord {
-    let estimated = ModelRegistry::builtin().estimate_cost(model.as_str(), usage);
-    let (cost_micros, currency) = match &estimated {
-        Some(cost) => (cost.amount_micros, cost.currency.clone()),
-        None => (0, "USD".to_string()),
-    };
+    let (cost_micros, currency, cost_confidence, cost_provenance) =
+        estimate_cost_fields(model, usage);
     usage_ledger::UsageRecord {
         record_id: format!(
             "auto-rec-run-{}-session-{}-{}-attempt-{attempt}",
@@ -984,12 +1303,13 @@ fn record_run_usage(
             session_id,
             provider_id.as_str(),
         ),
-        tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
-        principal_id: agent_domain::PrincipalId::default(),
-        account_id: core_api::DEFAULT_QUOTA_ACCOUNT.to_string(),
-        credential_id: None,
+        version: usage_ledger::RECORD_VERSION,
+        tenant_id: attribution.tenant_id.clone(),
+        principal_id: attribution.principal_id.clone(),
+        account_id: attribution.account_id.clone(),
+        credential_id: attribution.credential_id.clone(),
         session_id: session_id.clone(),
-        agent_id: agent_domain::AgentId::default(),
+        agent_id: agent_id.clone(),
         run_id: Some(run_id.clone()),
         provider_id: provider_id.clone(),
         model_id: model.clone(),
@@ -1001,7 +1321,248 @@ fn record_run_usage(
         // currency 是必填校验字段（3 位大写）；未知模型/无定价回退中性 USD。
         currency,
         occurred_at_ms,
+        // P18-8 v2：trace 归属每次实际上游 attempt；定价快照来自 builtin
+        // rate card（历史费用不随价格更新漂移）。终态兜底记录无单次上游
+        // request/event 来源，置 None（逐上游调用记账见 spawn_run_task
+        // 的 per-call 路径，带 request_id/event_id/attempt）。
+        request_id: None,
+        event_id: None,
+        upstream_attempt: Some(attempt),
+        trace_id: attribution.trace_id.clone(),
+        rate_card: Some(model_registry::BUILTIN_RATE_CARD.to_string()),
+        rate_version: Some(model_registry::BUILTIN_RATE_VERSION.to_string()),
+        cost_confidence,
+        cost_provenance,
     }
+}
+
+/// 单次实际上游调用（provider turn）的用量观测，供逐调用独立记账。
+#[derive(Clone, Debug, Default)]
+struct TurnObservation {
+    request_id: RequestId,
+    usage: agent_domain::TokenUsage,
+    event_id: EventId,
+    occurred_at_ms: u64,
+    /// 该 run 内第几次上游调用（1 基）。retry/failover 每次新
+    /// `ProviderRequestStarted` 递增。
+    turn_index: u64,
+}
+
+/// 事件循环内逐 turn 收口：`ProviderRequestStarted` 开启新 turn，同一 turn
+/// 内最后一次 `UsageUpdated` 快照为该调用归属（`ProviderStreamEvent` 的
+/// usage 是单次请求累计值，见 AttemptUsage 语义）；无用量观测的调用不产生
+/// 零成本噪声记录。
+#[derive(Debug, Default)]
+struct TurnObserver {
+    current_request: Option<RequestId>,
+    current_usage: Option<agent_domain::TokenUsage>,
+    current_event: Option<EventId>,
+    current_occurred: Option<u64>,
+    turn_index: u64,
+    turns: Vec<TurnObservation>,
+}
+
+impl TurnObserver {
+    fn observe(&mut self, event: &AgentEvent, envelope: &AgentEventEnvelope) {
+        match event {
+            AgentEvent::ProviderRequestStarted { request_id, .. } => {
+                self.close_turn();
+                self.current_request = Some(request_id.clone());
+                self.turn_index = self.turn_index.saturating_add(1);
+            }
+            AgentEvent::UsageUpdated { usage } => {
+                self.current_usage = Some(usage.clone());
+                self.current_event = Some(envelope.event_id.clone());
+                self.current_occurred = Some(envelope.timestamp.as_unix_millis());
+            }
+            _ => {}
+        }
+    }
+
+    fn close_turn(&mut self) {
+        if let (Some(request_id), Some(usage), Some(event_id), Some(occurred_at_ms)) = (
+            self.current_request.as_ref(),
+            self.current_usage.as_ref(),
+            self.current_event.as_ref(),
+            self.current_occurred,
+        ) {
+            self.turns.push(TurnObservation {
+                request_id: request_id.clone(),
+                usage: usage.clone(),
+                event_id: event_id.clone(),
+                occurred_at_ms,
+                turn_index: self.turn_index,
+            });
+        }
+        self.current_request = None;
+        self.current_usage = None;
+        self.current_event = None;
+        self.current_occurred = None;
+    }
+}
+
+/// 逐上游调用记账记录：`record_id` 由 (run, request, turn) 确定性派生，
+/// request_id/event_id/attempt 随记录持久化，账本层按
+/// (tenant, account, request, attempt) 去重。
+fn record_run_usage_per_call(
+    run_id: &RunId,
+    session_id: &SessionId,
+    agent_id: &AgentId,
+    provider_id: &ProviderId,
+    model: &ModelId,
+    turn: &TurnObservation,
+    attribution: &usage_ledger::UsageAttribution,
+) -> usage_ledger::UsageRecord {
+    let (cost_micros, currency, cost_confidence, cost_provenance) =
+        estimate_cost_fields(model, &turn.usage);
+    usage_ledger::UsageRecord {
+        record_id: format!(
+            "auto-rec-run-{}-request-{}-attempt-{}",
+            run_id, turn.request_id, turn.turn_index,
+        ),
+        version: usage_ledger::RECORD_VERSION,
+        tenant_id: attribution.tenant_id.clone(),
+        principal_id: attribution.principal_id.clone(),
+        account_id: attribution.account_id.clone(),
+        credential_id: attribution.credential_id.clone(),
+        session_id: session_id.clone(),
+        agent_id: agent_id.clone(),
+        run_id: Some(run_id.clone()),
+        provider_id: provider_id.clone(),
+        model_id: model.clone(),
+        input_tokens: turn.usage.input_tokens,
+        output_tokens: turn.usage.output_tokens,
+        cache_read_tokens: turn.usage.cache_read_tokens,
+        cache_write_tokens: turn.usage.cache_write_tokens,
+        cost_micros,
+        currency,
+        occurred_at_ms: turn.occurred_at_ms,
+        request_id: Some(turn.request_id.clone()),
+        event_id: Some(turn.event_id.clone()),
+        upstream_attempt: Some(turn.turn_index),
+        trace_id: attribution.trace_id.clone(),
+        rate_card: Some(model_registry::BUILTIN_RATE_CARD.to_string()),
+        rate_version: Some(model_registry::BUILTIN_RATE_VERSION.to_string()),
+        cost_confidence,
+        cost_provenance,
+    }
+}
+
+/// 按 builtin rate card 估算费用与 provenance（终态兜底与逐调用记账共用，
+/// 保证同模型同用量同价）。未知模型/无定价回退 0/USD，不影响记账。
+fn estimate_cost_fields(
+    model: &ModelId,
+    usage: &agent_domain::TokenUsage,
+) -> (
+    u64,
+    String,
+    Option<usage_ledger::CostConfidence>,
+    Option<String>,
+) {
+    let estimated = ModelRegistry::builtin().estimate_cost(model.as_str(), usage);
+    let (cost_micros, currency) = match &estimated {
+        Some(cost) => (cost.amount_micros, cost.currency.clone()),
+        None => (0, "USD".to_string()),
+    };
+    let (cost_confidence, cost_provenance) = match &estimated {
+        Some(_) => (
+            Some(usage_ledger::CostConfidence::Estimated),
+            Some(format!(
+                "{}:{}:estimate",
+                model_registry::BUILTIN_RATE_CARD,
+                model_registry::BUILTIN_RATE_VERSION
+            )),
+        ),
+        None => (
+            Some(usage_ledger::CostConfidence::Unknown),
+            Some("no-pricing:unknown-model".to_string()),
+        ),
+    };
+    (cost_micros, currency, cost_confidence, cost_provenance)
+}
+
+/// 记账 + 本地缓存刷新（P18-8 逐调用与终态兜底共用）：记账成功后才刷新
+/// 缓存，账本失败不发布缓存，保证缓存与账本一致。失败只上报结构化摘要
+/// （不含密钥/凭据），不改变 run 终态语义。返回是否全部成功。
+async fn record_usage_and_refresh(
+    runtime: &Arc<crate::QuotaRuntime>,
+    record: &usage_ledger::UsageRecord,
+    run_id: &RunId,
+    session_id: &SessionId,
+    provider_id: &ProviderId,
+    model: &ModelId,
+    attempt: u64,
+) -> bool {
+    if let Err(error) = runtime.ledger.record(record.clone()).await {
+        tracing::warn!(
+            run_id = %run_id,
+            session_id = %session_id,
+            provider_id = %provider_id.as_str(),
+            model = %model.as_str(),
+            attempt,
+            error = %error,
+            "usage ledger record failed; run usage not persisted",
+        );
+        return false;
+    }
+    if let Err(failures) = runtime.refresh_local_cache(record).await {
+        tracing::warn!(
+            run_id = %run_id,
+            session_id = %session_id,
+            provider_id = %provider_id.as_str(),
+            model = %model.as_str(),
+            attempt,
+            failed_keys = failures.len(),
+            scope = "local-ledger",
+            "local usage cache refresh failed; cache may be stale",
+        );
+        return false;
+    }
+    true
+}
+
+/// 按该 record 的完整 model/credential scope 构建 Token overview，经共享
+/// push_event 发布一次 QuotaChanged（run 流）。仅记账 + 缓存刷新都成功的
+/// record 走这里（调用方保证），失败路径不发布。
+#[allow(clippy::too_many_arguments)]
+fn push_quota_changed(
+    limiter: &RateLimiter,
+    instance_id: &CoreInstanceId,
+    global_sequence: &AtomicU64,
+    stream_sequence: &AtomicU64,
+    source: &CommandSource,
+    command_id: &CommandId,
+    run_id: &RunId,
+    runtime: &Arc<crate::QuotaRuntime>,
+    record: &usage_ledger::UsageRecord,
+) {
+    let query = QuotaOverviewQuery {
+        tenant_id: record.tenant_id.clone(),
+        account_id: record.account_id.clone(),
+        provider_id: Some(record.provider_id.clone()),
+        credential_id: record.credential_id.clone(),
+        model_id: Some(record.model_id.clone()),
+        windows: Vec::new(),
+        unit: Some(QuotaUnit::Token),
+    };
+    let view = crate::router::CommandRouter::cached_quota_overview(
+        runtime,
+        &query,
+        record.provider_id.clone(),
+    );
+    push_event(
+        limiter,
+        instance_id,
+        global_sequence,
+        stream_sequence,
+        source,
+        command_id,
+        run_id,
+        AppEvent::QuotaChanged {
+            view: Box::new(view),
+        },
+        now_timestamp(),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1009,6 +1570,8 @@ fn spawn_run_task(
     run_id: RunId,
     session_id: SessionId,
     workspace_id: Option<WorkspaceId>,
+    identity: tenant_service::IdentityContext,
+    agent_id: AgentId,
     source: CommandSource,
     command_id: CommandId,
     aggregate: Arc<AggregateState>,
@@ -1035,8 +1598,296 @@ fn spawn_run_task(
     isolation: ProfileIsolation,
     background_task_id: Option<BackgroundTaskId>,
     task_manager: Option<Arc<task_manager::TaskManager>>,
+    credential_pool: Option<Arc<dyn CredentialPool>>,
+    tenant_policy: Option<Arc<TenantPolicyGate>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        // P18-4：每个 run attempt 在 provider 调用前异步 acquire 一次 lease，
+        // 持有 LeaseGuard 至终态（Drop 时以 outcome 释放）。retry 生成新
+        // attempt → 重新 acquire。acquire 失败 fail-closed：run 直接进入
+        // Failed，绝不调用 provider（并发额度是账号侧硬闸门，不降级为无租约运行）。
+        let stream_sequence = AtomicU64::new(0);
+        let mut lease_guard: Option<LeaseGuard> = None;
+        // P18-9 fail-closed 收尾：策略拒绝（lease 权限 / account / 预算）→
+        // run Failed、释放 lease、绝不调用 provider。
+        let fail_policy = |reason: String| {
+            tracing::error!(
+                run_id = %run_id,
+                session_id = %session_id,
+                provider_id = %provider_id.as_str(),
+                attempt,
+                reason,
+                "tenant policy denied; run fails closed without provider call"
+            );
+            let _ = aggregate.set_run_state(&run_id, RunState::Failed);
+            push_run_changed(
+                &limiter,
+                &instance_id,
+                &global_sequence,
+                &stream_sequence,
+                &source,
+                &command_id,
+                &run_id,
+                RunState::Failed,
+            );
+            *task_state.lock().expect("run task state") = RunState::Failed;
+            lock(&terminal_counters).failed += 1;
+        };
+        let attribution = match credential_pool.as_ref() {
+            Some(pool) => {
+                let trace_id = format!("run:{run_id}:attempt:{attempt}");
+                let request = AcquireRequest {
+                    tenant_id: identity.tenant_id.clone(),
+                    principal_id: identity.principal_id.clone(),
+                    session_id: session_id.clone(),
+                    agent_id: agent_id.clone(),
+                    provider_id: Some(provider_id.clone()),
+                    account_id: None,
+                    trace_id: Some(trace_id.clone()),
+                };
+                match pool.acquire_guard(request).await {
+                    Ok(mut guard) => {
+                        // P18-9：lease 取得后强制 LeaseAcquire 权限 + account
+                        // 白名单（真实 lease account），拒绝时释放 lease、
+                        // run fail-closed。
+                        let lease = guard
+                            .lease()
+                            .expect("freshly acquired guard must hold a lease");
+                        if let Some(gate) = tenant_policy.as_ref() {
+                            if let Err(error) =
+                                gate.check_permission(&identity, Permission::LeaseAcquire)
+                            {
+                                gate.record_decision(
+                                    &identity,
+                                    PolicyGate::LeaseAcquire,
+                                    PolicyDecisionKind::Deny,
+                                    error.to_string(),
+                                );
+                                *guard.outcome_mut() = LeaseOutcome::Released;
+                                fail_policy(error.to_string());
+                                return;
+                            }
+                            if let Err(error) =
+                                gate.check_account(&identity.tenant_id, &lease.account_id)
+                            {
+                                gate.record_decision(
+                                    &identity,
+                                    PolicyGate::LeaseAcquire,
+                                    PolicyDecisionKind::Deny,
+                                    error.to_string(),
+                                );
+                                *guard.outcome_mut() = LeaseOutcome::Released;
+                                fail_policy(error.to_string());
+                                return;
+                            }
+                            gate.record_decision_scoped(
+                                &identity,
+                                PolicyGate::LeaseAcquire,
+                                PolicyDecisionKind::Allow,
+                                "lease 准入放行",
+                                AuditDimensions {
+                                    session_id: Some(session_id.clone()),
+                                    agent_id: Some(agent_id.clone()),
+                                    provider_id: Some(provider_id.clone()),
+                                    account_id: Some(lease.account_id.clone()),
+                                    trace_id: Some(trace_id.clone()),
+                                    ..AuditDimensions::default()
+                                },
+                            );
+                        }
+                        // UsageAttribution 从真实 CredentialLease 得到：account/
+                        // credential 一律取 lease 值，客户端（RunRequest）不可
+                        // 传入 credential；trace 取 acquire 请求的 trace_id。
+                        let attribution = match attribution_from_lease(
+                            lease,
+                            &identity,
+                            &session_id,
+                            &agent_id,
+                            &provider_id,
+                            trace_id,
+                        ) {
+                            Ok(attribution) => attribution,
+                            Err(reason) => {
+                                tracing::error!(
+                                    run_id = %run_id,
+                                    session_id = %session_id,
+                                    provider_id = %provider_id.as_str(),
+                                    attempt,
+                                    reason,
+                                    "credential lease scope mismatch; run fails closed without provider call"
+                                );
+                                *guard.outcome_mut() = LeaseOutcome::Released;
+                                let _ = aggregate.set_run_state(&run_id, RunState::Failed);
+                                push_run_changed(
+                                    &limiter,
+                                    &instance_id,
+                                    &global_sequence,
+                                    &stream_sequence,
+                                    &source,
+                                    &command_id,
+                                    &run_id,
+                                    RunState::Failed,
+                                );
+                                *task_state.lock().expect("run task state") = RunState::Failed;
+                                lock(&terminal_counters).failed += 1;
+                                return;
+                            }
+                        };
+                        lease_guard = Some(guard);
+                        if let Some(gate) = tenant_policy.as_ref() {
+                            gate.record_control_event(
+                                &identity,
+                                AuditAction::AgentLifecycle,
+                                AuditTargetKind::Agent,
+                                AuditDecision::Allow,
+                                "agent_run_started",
+                                AuditDimensions {
+                                    session_id: Some(session_id.clone()),
+                                    agent_id: Some(agent_id.clone()),
+                                    provider_id: Some(provider_id.clone()),
+                                    account_id: Some(attribution.account_id.clone().into()),
+                                    trace_id: attribution.trace_id.clone(),
+                                    ..AuditDimensions::default()
+                                },
+                                attempt,
+                            );
+                        }
+                        attribution
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            run_id = %run_id,
+                            session_id = %session_id,
+                            provider_id = %provider_id.as_str(),
+                            attempt,
+                            error = %error,
+                            "credential lease acquire failed; run fails closed without \
+                             provider call"
+                        );
+                        let _ = aggregate.set_run_state(&run_id, RunState::Failed);
+                        push_run_changed(
+                            &limiter,
+                            &instance_id,
+                            &global_sequence,
+                            &stream_sequence,
+                            &source,
+                            &command_id,
+                            &run_id,
+                            RunState::Failed,
+                        );
+                        {
+                            let mut guard = task_state.lock().expect("run task state");
+                            *guard = RunState::Failed;
+                        }
+                        {
+                            let mut guard = lock(&terminal_counters);
+                            guard.failed += 1;
+                        }
+                        return;
+                    }
+                }
+            }
+            // 未注入池（测试 / 嵌入式）：保留 legacy 过渡归属（无 credential）。
+            None => usage_ledger::UsageAttribution {
+                tenant_id: identity.tenant_id.clone(),
+                principal_id: identity.principal_id.clone(),
+                account_id: core_api::DEFAULT_QUOTA_ACCOUNT.to_string(),
+                credential_id: None,
+                trace_id: None,
+            },
+        };
+        // P18-9：预算 admission 在 provider 调用前执行，数据源是唯一共享
+        // UsageLedger（quota_runtime.ledger）。仅当租户策略配置了任一预算
+        // 维度时检查；账本缺失或查询失败 fail-closed（拒绝时释放 lease）。
+        if let Some(gate) = tenant_policy.as_ref() {
+            let policy = gate.engine().policy(&identity.tenant_id);
+            let budget_configured = policy.daily_input_token_budget.is_some()
+                || policy.daily_output_token_budget.is_some()
+                || policy.daily_cost_micros_budget.is_some();
+            if budget_configured {
+                let ledger = match quota_runtime.as_ref() {
+                    Some(runtime) => Arc::clone(&runtime.ledger),
+                    None => {
+                        let reason =
+                            "预算已配置但无共享 UsageLedger，预算 admission 无法执行（fail-closed）"
+                                .to_string();
+                        gate.record_decision(
+                            &identity,
+                            PolicyGate::RequestAdmission,
+                            PolicyDecisionKind::Deny,
+                            reason.clone(),
+                        );
+                        release_lease(&mut lease_guard);
+                        fail_policy(reason);
+                        return;
+                    }
+                };
+                let day_start = epoch_millis() - (epoch_millis() % MS_PER_DAY);
+                let query = UsageQuery {
+                    tenant_id: Some(identity.tenant_id.clone()),
+                    occurred_at_start_ms: Some(day_start),
+                    ..UsageQuery::default()
+                };
+                match ledger.aggregate(&query).await {
+                    Ok(totals) => {
+                        let decision = decide_budget(
+                            totals.input_tokens,
+                            totals.output_tokens,
+                            totals.cost_micros,
+                            policy.daily_input_token_budget,
+                            policy.daily_output_token_budget,
+                            policy.daily_cost_micros_budget,
+                        );
+                        match decision {
+                            PolicyDecision::Allow => {
+                                gate.record_decision(
+                                    &identity,
+                                    PolicyGate::RequestAdmission,
+                                    PolicyDecisionKind::Allow,
+                                    "预算 admission 放行",
+                                );
+                            }
+                            PolicyDecision::Deny { reason } => {
+                                gate.record_decision(
+                                    &identity,
+                                    PolicyGate::RequestAdmission,
+                                    PolicyDecisionKind::Deny,
+                                    reason.clone(),
+                                );
+                                release_lease(&mut lease_guard);
+                                fail_policy(reason);
+                                return;
+                            }
+                            other => {
+                                let reason =
+                                    format!("预算 admission 裁决异常：{other:?}（deny-first）");
+                                gate.record_decision(
+                                    &identity,
+                                    PolicyGate::RequestAdmission,
+                                    PolicyDecisionKind::Deny,
+                                    reason.clone(),
+                                );
+                                release_lease(&mut lease_guard);
+                                fail_policy(reason);
+                                return;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let reason = format!("预算 admission 查询账本失败（fail-closed）：{error}");
+                        gate.record_decision(
+                            &identity,
+                            PolicyGate::RequestAdmission,
+                            PolicyDecisionKind::Deny,
+                            reason.clone(),
+                        );
+                        release_lease(&mut lease_guard);
+                        fail_policy(reason);
+                        return;
+                    }
+                }
+            }
+        }
         let context = Arc::new(AppLoopContext::new(
             run_id.clone(),
             session_id.clone(),
@@ -1048,6 +1899,7 @@ fn spawn_run_task(
             user_hooks,
             tool_rules,
             isolation,
+            attempt,
         ));
         let mut engine = ProviderLoop::new_with_external_quota(
             provider,
@@ -1060,7 +1912,14 @@ fn spawn_run_task(
         let mut subscriber = broadcaster.subscribe();
         let mut last_state = RunState::Created;
         let mut attempt_usage = AttemptUsage::default();
-        let stream_sequence = AtomicU64::new(0);
+        // P18-8：归属在 run 生命周期派生。P18-4 稳定后：注入池时 account/
+        // credential 来自真实 CredentialLease（见上方 acquire 分支），本处不再
+        // 派生默认账号；账本契约本身只接受调用方注入的归属，绝不回退到账本
+        // 内部猜默认账号。未注入池的 legacy 分支仅为测试 / 嵌入式保留。
+        // 逐上游调用记账观测：`ProviderRequestStarted` 开启新 turn（retry/
+        // failover 同 turn 内以最后一次 `UsageUpdated` 快照归属），每次
+        // turn 收口为一条独立不可变记录（request_id + event_id + attempt）。
+        let mut turn_observer = TurnObserver::default();
 
         let engine_future = engine.run(queue, cancel.clone());
         tokio::pin!(engine_future);
@@ -1074,6 +1933,7 @@ fn spawn_run_task(
                             if !envelope_matches_run(&envelope, &run_id, &session_id) {
                                 continue;
                             }
+                            turn_observer.observe(&envelope.payload, &envelope);
                             attempt_usage.observe(&envelope.payload, envelope.timestamp);
                             last_state = apply_agent_event(
                                 &aggregate,
@@ -1103,6 +1963,7 @@ fn spawn_run_task(
                     if !envelope_matches_run(&envelope, &run_id, &session_id) {
                         continue;
                     }
+                    turn_observer.observe(&envelope.payload, &envelope);
                     attempt_usage.observe(&envelope.payload, envelope.timestamp);
                     last_state = apply_agent_event(
                         &aggregate,
@@ -1123,6 +1984,7 @@ fn spawn_run_task(
                 | Err(agent_engine::BroadcastError::NoSubscribers) => break,
             }
         }
+        turn_observer.close_turn();
 
         // 成功时保留 engine Ok 的 summary：其 usage 是 run 级累计值（ProviderLoop
         // 在发出 RunCompleted 前已饱和累加），用作终态权威记账，即使广播丢失
@@ -1153,80 +2015,126 @@ fn spawn_run_task(
             }
         }
         approvals.clear_run(&run_id);
-        // P14-8：终态幂等记账——Completed/Failed/Cancelled（含 Interrupted）只写一次。
-        // 成功以 engine Ok summary 的 run 级累计 usage 权威记账，时间取终态观测
-        // 时间、缺失时回退当前时间；失败/取消仍用已观测快照，不丢已发生用量。
-        // record_id 由 (run, session, provider) 确定性派生，重放内容稳定，ledger
-        // 幂等语义保证不重复计数。记账成功后才刷新本地额度缓存（四窗口
-        // Token/Cost）；账本失败不发布缓存，保证缓存与账本一致。
+        if let Some(gate) = tenant_policy.as_ref() {
+            let (decision, reason_code) = match final_state {
+                RunState::Completed => (AuditDecision::Allow, "agent_run_completed"),
+                RunState::Cancelled => (AuditDecision::Observe, "agent_run_cancelled"),
+                RunState::Failed | RunState::Interrupted => {
+                    (AuditDecision::Error, "agent_run_failed")
+                }
+                _ => (AuditDecision::Error, "agent_run_invalid_terminal"),
+            };
+            gate.record_control_event(
+                &identity,
+                AuditAction::AgentLifecycle,
+                AuditTargetKind::Agent,
+                decision,
+                reason_code,
+                AuditDimensions {
+                    session_id: Some(session_id.clone()),
+                    agent_id: Some(agent_id.clone()),
+                    provider_id: Some(provider_id.clone()),
+                    account_id: Some(attribution.account_id.clone().into()),
+                    trace_id: attribution.trace_id.clone(),
+                    ..AuditDimensions::default()
+                },
+                attempt,
+            );
+        }
+        // P18-8：终态记账——每次实际上游 call/retry/failover 以 provider
+        // request/event id + attempt 独立不可变记录（`TurnObserver` 在事件
+        // 循环中逐 turn 收口），记录按 request/attempt 在账本层去重；全部
+        // 写完后以最后一条成功记录的 scope 发布一次终态 QuotaChanged。
+        // 仅在没有任何 per-call 记录（如事件被 Lagged 全部丢弃）时才以
+        // run 终态汇总单条兜底，二者互斥防双计。记账成功后才刷新本地额度
+        // 缓存（四窗口 Token/Cost）；账本失败不发布缓存，缓存与账本一致。
         if terminal(&final_state) {
             if let Some(runtime) = quota_runtime.as_ref() {
-                let finalized = match &engine_summary {
-                    Some(summary) => Some((
-                        summary.usage.clone(),
-                        attempt_usage
-                            .occurred_at_ms
-                            .unwrap_or_else(|| now_timestamp().as_unix_millis()),
-                    )),
-                    None => attempt_usage.snapshot(),
-                };
-                if let Some((usage, occurred_at_ms)) = finalized {
-                    let record = record_run_usage(
-                        &run_id,
-                        &session_id,
-                        &provider_id,
-                        &model,
-                        attempt,
-                        occurred_at_ms,
-                        &usage,
-                    );
-                    // 不静默：错误体（InvalidRecord/Conflict/MixedCurrencies）不含密钥或凭据，
-                    // 结构化上报便于诊断；不影响 run 终态语义。
-                    if let Err(error) = runtime.ledger.record(record.clone()).await {
-                        tracing::warn!(
-                            run_id = %run_id,
-                            session_id = %session_id,
-                            provider_id = %provider_id.as_str(),
-                            model = %model.as_str(),
+                let per_call_records: Vec<usage_ledger::UsageRecord> = turn_observer
+                    .turns
+                    .iter()
+                    .map(|turn| {
+                        record_run_usage_per_call(
+                            &run_id,
+                            &session_id,
+                            &agent_id,
+                            &provider_id,
+                            &model,
+                            turn,
+                            &attribution,
+                        )
+                    })
+                    .collect();
+                if !per_call_records.is_empty() {
+                    let mut last_ok: Option<usage_ledger::UsageRecord> = None;
+                    for record in &per_call_records {
+                        if record_usage_and_refresh(
+                            runtime,
+                            record,
+                            &run_id,
+                            &session_id,
+                            &provider_id,
+                            &model,
                             attempt,
-                            error = %error,
-                            "usage ledger record failed; run usage not persisted",
+                        )
+                        .await
+                        {
+                            last_ok = Some(record.clone());
+                        }
+                    }
+                    if let Some(record) = last_ok {
+                        push_quota_changed(
+                            &limiter,
+                            &instance_id,
+                            &global_sequence,
+                            &stream_sequence,
+                            &source,
+                            &command_id,
+                            &run_id,
+                            runtime,
+                            &record,
                         );
-                    } else {
-                        // 记账成功后才刷新本地缓存，保证缓存与账本同源；失败只
-                        // 上报失败键数量与本地 scope 标记（可诊断，不输出 scope
-                        // 明细或凭据等潜在 secret），不改变 run 终态语义。
-                        if let Err(failures) = runtime.refresh_local_cache(&record).await {
-                            tracing::warn!(
-                                run_id = %run_id,
-                                session_id = %session_id,
-                                provider_id = %provider_id.as_str(),
-                                model = %model.as_str(),
-                                attempt,
-                                failed_keys = failures.len(),
-                                scope = "local-ledger",
-                                "local usage cache refresh failed; cache may be stale",
-                            );
-                        } else {
-                            // 记账 + 缓存刷新都成功：按该 record 的完整
-                            // model/credential scope 构建 Token overview，经共享
-                            // push_event 发布 QuotaChanged（run 流）。任一前置
-                            // 步骤失败都不会走到这里，也就不发事件。
-                            let query = QuotaOverviewQuery {
-                                tenant_id: record.tenant_id.clone(),
-                                account_id: record.account_id.clone(),
-                                provider_id: Some(record.provider_id.clone()),
-                                credential_id: record.credential_id.clone(),
-                                model_id: Some(record.model_id.clone()),
-                                windows: Vec::new(),
-                                unit: Some(QuotaUnit::Token),
-                            };
-                            let view = crate::router::CommandRouter::cached_quota_overview(
-                                runtime,
-                                &query,
-                                record.provider_id.clone(),
-                            );
-                            push_event(
+                    }
+                } else {
+                    // 兜底：无任何 per-call 记录时以 run 终态汇总单条记账。
+                    // 成功以 engine Ok summary 的 run 级累计 usage 权威记账，
+                    // 时间取终态观测时间、缺失时回退当前时间；失败/取消仍用
+                    // 已观测快照，不丢已发生用量。record_id 由 (run, session,
+                    // provider) 确定性派生，重放内容稳定，ledger 幂等语义
+                    // 保证不重复计数。
+                    let finalized = match &engine_summary {
+                        Some(summary) => Some((
+                            summary.usage.clone(),
+                            attempt_usage
+                                .occurred_at_ms
+                                .unwrap_or_else(|| now_timestamp().as_unix_millis()),
+                        )),
+                        None => attempt_usage.snapshot(),
+                    };
+                    if let Some((usage, occurred_at_ms)) = finalized {
+                        let record = record_run_usage(
+                            &run_id,
+                            &session_id,
+                            &agent_id,
+                            &provider_id,
+                            &model,
+                            attempt,
+                            occurred_at_ms,
+                            &usage,
+                            &attribution,
+                        );
+                        if record_usage_and_refresh(
+                            runtime,
+                            &record,
+                            &run_id,
+                            &session_id,
+                            &provider_id,
+                            &model,
+                            attempt,
+                        )
+                        .await
+                        {
+                            push_quota_changed(
                                 &limiter,
                                 &instance_id,
                                 &global_sequence,
@@ -1234,10 +2142,8 @@ fn spawn_run_task(
                                 &source,
                                 &command_id,
                                 &run_id,
-                                AppEvent::QuotaChanged {
-                                    view: Box::new(view),
-                                },
-                                now_timestamp(),
+                                runtime,
+                                &record,
                             );
                         }
                     }
@@ -1280,7 +2186,77 @@ fn spawn_run_task(
                     );
                 }
             }
+        } // P18-4：终态结果写入 LeaseGuard，`Drop` 时以该 outcome 释放 lease。
+          // `Cancelled` 不惩罚账号健康，`Failed` 才累加连续失败（provider-control
+          // 契约）。guard 在闭包末尾 Drop：释放经 detached task 完成，不阻塞收尾。
+        if let Some(guard) = lease_guard.as_mut() {
+            *guard.outcome_mut() = match final_state {
+                RunState::Completed => LeaseOutcome::Completed,
+                RunState::Cancelled => LeaseOutcome::Cancelled,
+                RunState::Failed | RunState::Interrupted => LeaseOutcome::Failed,
+                _ => LeaseOutcome::Failed,
+            };
+            if let (Some(gate), Some(lease)) = (tenant_policy.as_ref(), guard.lease()) {
+                gate.record_control_event(
+                    &identity,
+                    AuditAction::LeaseReleased,
+                    AuditTargetKind::Lease,
+                    AuditDecision::Observe,
+                    "lease_release_scheduled",
+                    AuditDimensions {
+                        session_id: Some(session_id.clone()),
+                        agent_id: Some(agent_id.clone()),
+                        provider_id: Some(provider_id.clone()),
+                        account_id: Some(lease.account_id.clone()),
+                        trace_id: attribution.trace_id.clone(),
+                        ..AuditDimensions::default()
+                    },
+                    attempt,
+                );
+            }
         }
+    })
+}
+
+/// P18-4：从真实 [`CredentialLease`] 构造 usage 归属。
+///
+/// account / credential 一律取 lease 值（客户端不可传 credential），tenant /
+/// principal 取 router 入口 fail-closed 解析的 canonical identity（与 acquire
+/// 请求同源），agent 取 run 的 session 作用域 canonical root AgentId
+/// （[`RunRequest::agent_id`]，与 acquire 请求同源），trace 取 acquire 请求的
+/// trace_id。无 lease 的 legacy 路径（未注入池）不经过本函数。
+fn attribution_from_lease(
+    lease: &CredentialLease,
+    identity: &tenant_service::IdentityContext,
+    session_id: &SessionId,
+    expected_agent_id: &AgentId,
+    provider_id: &ProviderId,
+    trace_id: String,
+) -> Result<usage_ledger::UsageAttribution, &'static str> {
+    if lease.schema_version != provider_control::CONTROL_PLANE_SCHEMA_VERSION {
+        return Err("unsupported lease schema version");
+    }
+    if lease.tenant_id != identity.tenant_id {
+        return Err("tenant mismatch");
+    }
+    if lease.principal_id != identity.principal_id {
+        return Err("principal mismatch");
+    }
+    if &lease.session_id != session_id {
+        return Err("session mismatch");
+    }
+    if &lease.agent_id != expected_agent_id {
+        return Err("agent mismatch");
+    }
+    if &lease.provider_id != provider_id {
+        return Err("provider mismatch");
+    }
+    Ok(usage_ledger::UsageAttribution {
+        tenant_id: lease.tenant_id.clone(),
+        principal_id: lease.principal_id.clone(),
+        account_id: lease.account_id.as_str().to_string(),
+        credential_id: Some(lease.credential_id.as_str().to_string()),
+        trace_id: Some(trace_id),
     })
 }
 
@@ -1573,10 +2549,42 @@ fn to_core_state(state: agent_engine::RunState) -> RunState {
     }
 }
 
+/// 当前 Unix 毫秒（P18-9 日预算窗口按 UTC 日对齐）。
+fn epoch_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 一天的毫秒数（日预算窗口按 UTC 日对齐）。
+const MS_PER_DAY: u64 = 86_400_000;
+
+/// 以 `Released` 释放 lease 守卫（P18-9 策略拒绝路径：run fail-closed 前
+/// 显式释放，避免默认 Failed 之外仍占用账号并发）。
+fn release_lease(lease_guard: &mut Option<LeaseGuard>) {
+    if let Some(guard) = lease_guard.as_mut() {
+        *guard.outcome_mut() = LeaseOutcome::Released;
+    }
+}
+
 fn lock<T>(inner: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     inner
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn active_for_tenant(inner: &Inner, tenant: &agent_domain::TenantId) -> u64 {
+    inner
+        .tasks
+        .values()
+        .filter(|task| {
+            task.identity.tenant_id == *tenant && {
+                let state = task.state.lock().expect("run task state");
+                !terminal(&state)
+            }
+        })
+        .count() as u64
 }
 
 /// Provider Loop 回调适配：审批经 [`ApprovalRegistry`] 等待通道，工具执行在
@@ -1596,6 +2604,10 @@ pub struct AppLoopContext {
     isolation: ProfileIsolation,
     next_message: AtomicU64,
     next_request: AtomicU64,
+    /// run 级重试计数：上游请求 id 必须按 attempt 区分，否则 retry 复用
+    /// 同一 canonical request_id 会与首跑在账本去重键 (request, attempt)
+    /// 上冲突（也避免 provider 端按 request_id 幂等去重吞掉重试）。
+    attempt: u64,
 }
 
 impl AppLoopContext {
@@ -1613,6 +2625,7 @@ impl AppLoopContext {
         user_hooks: Option<Arc<UserHookHost>>,
         tool_rules: ProfileToolRules,
         isolation: ProfileIsolation,
+        attempt: u64,
     ) -> Self {
         Self {
             run_id,
@@ -1627,6 +2640,7 @@ impl AppLoopContext {
             isolation,
             next_message: AtomicU64::new(0),
             next_request: AtomicU64::new(0),
+            attempt,
         }
     }
 }
@@ -1657,9 +2671,7 @@ fn inject_client_observation(
             run_id, snapshot.revision
         )),
         role: MessageRole::System,
-        content: vec![ContentPart::Text(TextContent {
-            text: summary,
-        })],
+        content: vec![ContentPart::Text(TextContent { text: summary })],
         metadata: MessageMetadata::default(),
     };
     // System 观察置于请求头部；真实用户目标仍是消息尾部（不被低信任文本覆盖）。
@@ -1814,7 +2826,7 @@ impl LoopContext for AppLoopContext {
 
     fn next_request_id(&self) -> RequestId {
         let sequence = self.next_request.fetch_add(1, Ordering::SeqCst);
-        RequestId::from(format!("req-{}-{}", self.run_id, sequence))
+        RequestId::from(format!("req-{}-{}-{}", self.run_id, self.attempt, sequence))
     }
 }
 
@@ -1823,12 +2835,129 @@ mod tests {
     use super::*;
     use agent_domain::{ModelId, ProviderId};
     use core_api::{ClientContextSnapshot, ClientDocumentContext};
+    use tenant_service::IdentityContext;
     use usage_ledger::InMemoryUsageLedger;
+
+    fn local_identity() -> IdentityContext {
+        IdentityContext::local()
+    }
+
+    /// 本地默认归属（与生产 [`spawn_run_task`] 的当前过渡派生同源：
+    /// tenant/principal 来自 IdentityContext，account 取 legacy 默认、
+    /// credential/trace 暂无 lease 事实源，**不是**宿主显式注入）。
+    /// P18-4 审查补救后：agent 走 canonical root AgentId（RunRequest 派生），
+    /// account/credential 仍只在注入池时来自真实 `CredentialLease`（本函数仅
+    /// 覆盖未注入池的测试 / 嵌入式路径）。
+    fn local_attribution() -> usage_ledger::UsageAttribution {
+        usage_ledger::UsageAttribution {
+            tenant_id: local_identity().tenant_id,
+            principal_id: local_identity().principal_id,
+            account_id: core_api::DEFAULT_QUOTA_ACCOUNT.to_string(),
+            credential_id: None,
+            trace_id: None,
+        }
+    }
+
+    #[test]
+    fn lease_attribution_uses_canonical_lease_scope_and_rejects_mismatch() {
+        let identity = local_identity();
+        let session_id = SessionId::new("session-a");
+        let agent_id = canonical_root_agent_id(&session_id);
+        let lease = CredentialLease {
+            lease_id: provider_control::LeaseId::new("lease-attribution"),
+            schema_version: provider_control::CONTROL_PLANE_SCHEMA_VERSION,
+            credential_id: agent_domain::CredentialId::new("cred-a"),
+            account_id: agent_domain::AccountId::new("acct-a"),
+            provider_id: ProviderId::new("provider-a"),
+            agent_id: agent_id.clone(),
+            session_id: session_id.clone(),
+            principal_id: identity.principal_id.clone(),
+            tenant_id: identity.tenant_id.clone(),
+            acquired_at_ms: 1,
+            expires_at_ms: 2,
+            version: 2,
+        };
+        let attribution = attribution_from_lease(
+            &lease,
+            &identity,
+            &session_id,
+            &agent_id,
+            &ProviderId::new("provider-a"),
+            "trace-a".into(),
+        )
+        .expect("matching lease scope");
+        assert_eq!(attribution.tenant_id, lease.tenant_id);
+        assert_eq!(attribution.principal_id, lease.principal_id);
+        assert_eq!(attribution.account_id, "acct-a");
+        assert_eq!(attribution.credential_id.as_deref(), Some("cred-a"));
+
+        let mut wrong_tenant = lease.clone();
+        wrong_tenant.tenant_id = agent_domain::TenantId::new("tenant-b");
+        assert_eq!(
+            attribution_from_lease(
+                &wrong_tenant,
+                &identity,
+                &session_id,
+                &agent_id,
+                &ProviderId::new("provider-a"),
+                "trace-b".into()
+            ),
+            Err("tenant mismatch")
+        );
+        let mut wrong_agent = lease.clone();
+        wrong_agent.agent_id = agent_domain::AgentId::new("agent-intruder");
+        assert_eq!(
+            attribution_from_lease(
+                &wrong_agent,
+                &identity,
+                &session_id,
+                &agent_id,
+                &ProviderId::new("provider-a"),
+                "trace-d".into()
+            ),
+            Err("agent mismatch")
+        );
+        let mut wrong_principal = lease;
+        wrong_principal.principal_id = agent_domain::PrincipalId::new("principal-b");
+        assert_eq!(
+            attribution_from_lease(
+                &wrong_principal,
+                &identity,
+                &session_id,
+                &agent_id,
+                &ProviderId::new("provider-a"),
+                "trace-c".into()
+            ),
+            Err("principal mismatch")
+        );
+    }
+
+    #[test]
+    fn canonical_root_agent_id_is_stable_non_empty_and_session_scoped() {
+        let session = SessionId::from("session-root-1");
+        let first = canonical_root_agent_id(&session);
+        let again = canonical_root_agent_id(&session);
+        assert_eq!(first, again, "同一 session 的 run/retry 身份必须稳定");
+        assert!(
+            !first.as_str().is_empty(),
+            "canonical root AgentId 必须非空"
+        );
+        assert_ne!(first, agent_domain::AgentId::default());
+        assert_eq!(first.as_str(), "root-session-root-1", "派生格式是契约");
+        let other = canonical_root_agent_id(&SessionId::from("session-root-2"));
+        assert_ne!(first, other, "不同 session 不得共享 root agent 身份");
+        // 默认 session 也产生非空 id：客户端不可选身份，不存在「无 agent」路径。
+        assert!(!canonical_root_agent_id(&SessionId::default())
+            .as_str()
+            .is_empty());
+    }
 
     #[derive(Clone)]
     struct SequenceProvider {
         phases: Arc<Vec<Arc<test_support::MockProvider>>>,
         calls: Arc<AtomicU64>,
+        /// 每次实际上游 `stream` 调用的 canonical request_id（按调用顺序）。
+        requests: Arc<Mutex<Vec<RequestId>>>,
     }
 
     impl SequenceProvider {
@@ -1841,7 +2970,15 @@ mod tests {
                         .collect(),
                 ),
                 calls: Arc::new(AtomicU64::new(0)),
+                requests: Arc::new(Mutex::new(Vec::new())),
             }
+        }
+
+        fn request_ids(&self) -> Vec<RequestId> {
+            self.requests
+                .lock()
+                .expect("sequence provider requests")
+                .clone()
         }
     }
 
@@ -1864,6 +3001,10 @@ mod tests {
             sink: &dyn provider_api::ProviderEventSink,
             cancel: CancellationToken,
         ) -> Result<provider_api::ModelResponseSummary, provider_api::ProviderError> {
+            self.requests
+                .lock()
+                .expect("sequence provider requests")
+                .push(request.request_id.clone());
             let index = self.calls.fetch_add(1, Ordering::SeqCst) as usize;
             let phase = self
                 .phases
@@ -1942,7 +3083,10 @@ mod tests {
             })
         }
 
-        async fn query(&self, query: &usage_ledger::UsageQuery) -> Vec<usage_ledger::UsageRecord> {
+        async fn query(
+            &self,
+            query: &usage_ledger::UsageQuery,
+        ) -> Result<Vec<usage_ledger::UsageRecord>, usage_ledger::UsageLedgerError> {
             self.inner.query(query).await
         }
 
@@ -2012,8 +3156,14 @@ mod tests {
                 document_uri: "file:///workspace/src/lib.rs".into(),
                 version: None,
                 range: core_api::ClientTextRange {
-                    start: core_api::ClientTextPosition { line: 0, character: 0 },
-                    end: core_api::ClientTextPosition { line: 0, character: 2 },
+                    start: core_api::ClientTextPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: core_api::ClientTextPosition {
+                        line: 0,
+                        character: 2,
+                    },
                 },
                 severity: Some(core_api::ClientDiagnosticSeverity::Error),
                 code: None,
@@ -2364,7 +3514,12 @@ mod tests {
             last_accessed_at: now_timestamp(),
             revision: 1,
         });
-        let _ = aggregate.create_session(workspace_id, "s".into(), now_timestamp());
+        let _ = aggregate.create_session_with_identity(
+            workspace_id,
+            "s".into(),
+            now_timestamp(),
+            &local_identity(),
+        );
 
         let provider: Arc<dyn ModelProvider> = Arc::new(
             test_support::MockProvider::new(
@@ -2378,6 +3533,7 @@ mod tests {
                     run_id: run_id.clone(),
                     session_id,
                     workspace_id: None,
+                    identity: local_identity(),
                     provider_id: ProviderId::from("mock"),
                     model: ModelId::from("mock-model"),
                     source: CommandSource::Automation,
@@ -2423,7 +3579,12 @@ mod tests {
             last_accessed_at: now_timestamp(),
             revision: 1,
         });
-        let _ = aggregate.create_session(workspace_id, "s".into(), now_timestamp());
+        let _ = aggregate.create_session_with_identity(
+            workspace_id,
+            "s".into(),
+            now_timestamp(),
+            &local_identity(),
+        );
         let provider: Arc<dyn ModelProvider> = Arc::new(
             test_support::MockProvider::new(test_support::MockScript::new().complete())
                 .with_id(ProviderId::from("mock")),
@@ -2434,6 +3595,7 @@ mod tests {
                     run_id: run_id.clone(),
                     session_id,
                     workspace_id: None,
+                    identity: local_identity(),
                     provider_id: ProviderId::from("mock"),
                     model: ModelId::from("mock-model"),
                     source: CommandSource::Automation,
@@ -2482,6 +3644,7 @@ mod tests {
             run_id: RunId::from(run),
             session_id: SessionId::from(session),
             workspace_id: None,
+            identity: local_identity(),
             provider_id: ProviderId::from("mock"),
             model: ModelId::from("mock-model"),
             source: CommandSource::Automation,
@@ -2502,7 +3665,12 @@ mod tests {
             last_accessed_at: now_timestamp(),
             revision: 1,
         });
-        let _ = aggregate.create_session(workspace_id, "s".into(), now_timestamp());
+        let _ = aggregate.create_session_with_identity(
+            workspace_id,
+            "s".into(),
+            now_timestamp(),
+            &local_identity(),
+        );
     }
 
     fn supervisor_with_ledger_on(
@@ -2578,7 +3746,7 @@ mod tests {
     ) -> Option<usage_ledger::UsageRecord> {
         for _ in 0..300 {
             let query = usage_ledger::UsageQuery::by_session(session.clone());
-            if let Some(record) = ledger.query(&query).await.into_iter().next() {
+            if let Some(record) = ledger.query(&query).await.unwrap().into_iter().next() {
                 return Some(record);
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -2594,7 +3762,8 @@ mod tests {
         for _ in 0..300 {
             let records = ledger
                 .query(&usage_ledger::UsageQuery::by_session(session.clone()))
-                .await;
+                .await
+                .unwrap();
             if records.len() >= expected {
                 return records;
             }
@@ -2603,6 +3772,7 @@ mod tests {
         ledger
             .query(&usage_ledger::UsageQuery::by_session(session.clone()))
             .await
+            .unwrap()
     }
 
     async fn retry_when_terminal(supervisor: &RunSupervisor, run_id: &RunId) {
@@ -2681,29 +3851,154 @@ mod tests {
         let record = record_run_usage(
             &run_id,
             &session,
+            &canonical_root_agent_id(&session),
             &provider,
             &model,
             0,
             occurred_at_ms,
             &usage,
+            &local_attribution(),
         );
         // 真实 session_id，非默认。
         assert_eq!(record.session_id, session);
         assert_ne!(record.session_id, SessionId::default());
+        // P18-4 审查补救：agent 为 session 作用域 canonical root AgentId（非默认）。
+        assert_eq!(record.agent_id, canonical_root_agent_id(&session));
+        assert_ne!(record.agent_id, agent_domain::AgentId::default());
+        // 真实身份：local/default + local/user，不再硬编码 quota 默认。
+        assert_eq!(
+            record.tenant_id,
+            tenant_service::IdentityContext::local().tenant_id
+        );
+        assert_eq!(
+            record.principal_id,
+            tenant_service::IdentityContext::local().principal_id
+        );
+        // P18-8：归属来自显式注入的 UsageAttribution（含 account/credential/
+        // trace），record_run_usage 不再内部硬编码 synthetic 账号。
+        assert_eq!(record.account_id, core_api::DEFAULT_QUOTA_ACCOUNT);
+        assert_eq!(record.credential_id, None);
+        assert_eq!(record.trace_id, None);
         // 真实 usage/终态时间，非 0。
         assert_eq!(record.occurred_at_ms, occurred_at_ms);
         // record_id 确定性派生：重试同 record 内容稳定。
         let again = record_run_usage(
             &run_id,
             &session,
+            &canonical_root_agent_id(&session),
             &provider,
             &model,
             0,
             occurred_at_ms,
             &usage,
+            &local_attribution(),
         );
         assert_eq!(record.record_id, again.record_id);
         assert!(record.record_id.ends_with("attempt-0"));
+        // P18-8 v2：trace 与定价快照随记录持久化。
+        assert_eq!(record.version, usage_ledger::RECORD_VERSION);
+        assert_eq!(record.upstream_attempt, Some(0));
+        assert_eq!(
+            record.rate_card.as_deref(),
+            Some(model_registry::BUILTIN_RATE_CARD)
+        );
+        assert_eq!(
+            record.rate_version.as_deref(),
+            Some(model_registry::BUILTIN_RATE_VERSION)
+        );
+        // mock-model 不在内置目录：回退 Unknown + no-pricing provenance，
+        // 记账不受影响。
+        assert_eq!(
+            record.cost_confidence,
+            Some(usage_ledger::CostConfidence::Unknown)
+        );
+        assert_eq!(
+            record.cost_provenance.as_deref(),
+            Some("no-pricing:unknown-model")
+        );
+
+        // 内置模型（gpt-4o）走 estimate 分支：快照完整可追溯。
+        let estimated = record_run_usage(
+            &run_id,
+            &session,
+            &canonical_root_agent_id(&session),
+            &provider,
+            &ModelId::from("gpt-4o"),
+            0,
+            occurred_at_ms,
+            &usage,
+            &local_attribution(),
+        );
+        assert_eq!(
+            estimated.cost_confidence,
+            Some(usage_ledger::CostConfidence::Estimated)
+        );
+        assert_eq!(
+            estimated.cost_provenance.as_deref(),
+            Some("builtin:2026-08-01:estimate")
+        );
+        assert_eq!(estimated.rate_card.as_deref(), Some("builtin"));
+    }
+
+    #[tokio::test]
+    async fn record_run_usage_per_call_carries_request_event_attempt_and_trace() {
+        let mut attribution = local_attribution();
+        attribution.trace_id = Some("trace-run-42".to_string());
+        attribution.credential_id = Some("cred-leased-7".to_string());
+        let turn = TurnObservation {
+            request_id: RequestId::from("req-upstream-9"),
+            usage: tokens(),
+            event_id: EventId::from("evt-usage-3"),
+            occurred_at_ms: 1_700_000_000_001,
+            turn_index: 2,
+        };
+        let record = record_run_usage_per_call(
+            &RunId::from("run-per-call"),
+            &SessionId::from("session-per-call"),
+            &canonical_root_agent_id(&SessionId::from("session-per-call")),
+            &ProviderId::from("mock"),
+            &ModelId::from("gpt-4o"),
+            &turn,
+            &attribution,
+        );
+        assert_eq!(
+            record.record_id,
+            "auto-rec-run-run-per-call-request-req-upstream-9-attempt-2"
+        );
+        assert_eq!(
+            record.request_id.as_ref().map(|id| id.as_str()),
+            Some("req-upstream-9")
+        );
+        assert_eq!(
+            record.event_id.as_ref().map(|id| id.as_str()),
+            Some("evt-usage-3")
+        );
+        assert_eq!(record.upstream_attempt, Some(2));
+        assert_eq!(record.trace_id.as_deref(), Some("trace-run-42"));
+        assert_eq!(record.credential_id.as_deref(), Some("cred-leased-7"));
+        assert_eq!(record.account_id, core_api::DEFAULT_QUOTA_ACCOUNT);
+        assert_eq!(
+            record.agent_id,
+            canonical_root_agent_id(&SessionId::from("session-per-call"))
+        );
+        // 定价快照与终态记账同源（gpt-4o estimate）。
+        assert_eq!(record.cost_micros, 750);
+        assert_eq!(
+            record.cost_confidence,
+            Some(usage_ledger::CostConfidence::Estimated)
+        );
+
+        // 幂等重放：同记录重复写入不重复计数。
+        let ledger: Arc<dyn usage_ledger::UsageLedger> = Arc::new(InMemoryUsageLedger::new());
+        ledger.record(record.clone()).await.expect("first record");
+        ledger.record(record.clone()).await.expect("replay record");
+        let stored = ledger
+            .query(&usage_ledger::UsageQuery::by_session(SessionId::from(
+                "session-per-call",
+            )))
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 1);
     }
 
     #[tokio::test]
@@ -2716,18 +4011,21 @@ mod tests {
         let record = record_run_usage(
             &run_id,
             &session,
+            &canonical_root_agent_id(&session),
             &provider,
             &model,
             0,
             1_700_000_000_000,
             &tokens(),
+            &local_attribution(),
         );
         // 同一 record 重复写入：重放成功，不重复计数。
         ledger.record(record.clone()).await.expect("first record");
         ledger.record(record.clone()).await.expect("replay record");
         let stored = ledger
             .query(&usage_ledger::UsageQuery::by_session(session.clone()))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(stored.len(), 1, "重放不得产生第二条记录");
         let totals = ledger
             .aggregate(&usage_ledger::UsageQuery::by_session(session.clone()))
@@ -2743,11 +4041,13 @@ mod tests {
         let record = record_run_usage(
             &RunId::from("run-cost"),
             &SessionId::from("session-cost"),
+            &canonical_root_agent_id(&SessionId::from("session-cost")),
             &ProviderId::from("mock"),
             &ModelId::from("gpt-4o"),
             0,
             1_700_000_000_000,
             &tokens(),
+            &local_attribution(),
         );
         assert_eq!(record.cost_micros, 750, "已知模型成本非零且数值精确");
         assert_eq!(record.currency, "USD");
@@ -2760,11 +4060,13 @@ mod tests {
         let record = record_run_usage(
             &RunId::from("run-unknown"),
             &SessionId::from("session-unknown"),
+            &canonical_root_agent_id(&SessionId::from("session-unknown")),
             &ProviderId::from("mock"),
             &ModelId::from("no-such-model"),
             0,
             1_700_000_000_000,
             &tokens(),
+            &local_attribution(),
         );
         // 未知模型：费用回退 0/USD，记账不受影响（tokens 仍真实写入）。
         assert_eq!(record.cost_micros, 0);
@@ -2777,7 +4079,8 @@ mod tests {
             .query(&usage_ledger::UsageQuery::by_session(SessionId::from(
                 "session-unknown",
             )))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!((stored[0].input_tokens, stored[0].output_tokens), (100, 50));
     }
@@ -2862,23 +4165,45 @@ mod tests {
             )
             .expect("start multi-turn run");
 
-        let record = await_usage_record(&ledger, &SessionId::from("session-multi-turn"))
-            .await
-            .expect("multi-turn usage");
-        // 第一轮只取 12/2，第二轮只取 25/4；同轮旧快照不重复累计。
-        assert_eq!((record.input_tokens, record.output_tokens), (37, 6));
-        // RunCompleted 的 usage 是 run 级累计值：覆盖总量、不与已提交 turn 相加
-        // （否则双计为 49/8）；成功可记账且只写一条，record_id 含 session 防冲突。
         let session = SessionId::from("session-multi-turn");
+        let all = await_usage_records(&ledger, &session, 2).await;
+        // P18-8 逐上游调用记账：每轮 provider request 一条独立不可变记录，
+        // 同轮旧快照不重复累计（第一轮 12/2、第二轮 25/4），request/event
+        // id + attempt 随记录持久化。
+        assert_eq!(all.len(), 2, "每次实际上游调用独立记账");
+        assert!(
+            all.iter().all(|r| r.request_id.is_some()),
+            "per-call 记录必须携带 request_id"
+        );
+        assert!(
+            all.iter().all(|r| r.event_id.is_some()),
+            "per-call 记录必须携带 event_id"
+        );
+        assert!(
+            all.iter().all(|r| r.upstream_attempt.is_some()),
+            "per-call 记录必须携带 attempt"
+        );
+        let mut usage: Vec<_> = all
+            .iter()
+            .map(|r| (r.input_tokens, r.output_tokens))
+            .collect();
+        usage.sort_unstable();
+        assert_eq!(usage, vec![(12, 2), (25, 4)], "每轮只取最后一次快照");
+        let totals = ledger
+            .aggregate(&usage_ledger::UsageQuery::by_session(session.clone()))
+            .await
+            .expect("aggregate multi-turn");
+        assert_eq!(
+            (totals.input_tokens, totals.output_tokens),
+            (37, 6),
+            "逐调用记账后聚合不双计"
+        );
+        // 终态兜底与 per-call 互斥：不得再写 run 汇总单条。
         let all = ledger
             .query(&usage_ledger::UsageQuery::by_session(session.clone()))
-            .await;
-        assert_eq!(all.len(), 1, "成功终态只记账一次，不双计");
-        assert!(
-            all.iter()
-                .all(|r| r.record_id.contains("session-multi-turn")),
-            "record_id 必须含 session_id，避免跨 session 冲突"
-        );
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2, "per-call 记账后不得叠加终态汇总");
     }
 
     #[tokio::test]
@@ -2906,7 +4231,8 @@ mod tests {
         let session = SessionId::from("session-lagged");
         let all = ledger
             .query(&usage_ledger::UsageQuery::by_session(session.clone()))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(all.len(), 1, "Lagged 兜底也不得重复记账");
         let totals = ledger
             .aggregate(&usage_ledger::UsageQuery::by_session(session))
@@ -2951,14 +4277,240 @@ mod tests {
             .map(|record| record.record_id.as_str())
             .collect();
         record_ids.sort_unstable();
-        assert!(record_ids.iter().any(|id| id.ends_with("attempt-0")));
-        assert!(record_ids.iter().any(|id| id.ends_with("attempt-1")));
-        assert!(record_ids.iter().any(|id| id.ends_with("attempt-2")));
+        // P18-8 逐上游调用记账：每次 run 消费（首次 + 2 次 retry）各一次
+        // 上游调用，记录以 request_id + turn attempt 独立去重；每次 retry
+        // 是新请求（新 request_id），因此 3 条记录两两不同。
+        assert_eq!(record_ids.len(), 3);
+        assert!(
+            record_ids.iter().all(|id| id.contains("-request-")),
+            "per-call 记录 ID 必须含 request_id：{record_ids:?}"
+        );
+        assert!(
+            record_ids.iter().all(|id| id.ends_with("-attempt-1")),
+            "单次调用 turn index 为 1：{record_ids:?}"
+        );
+        assert!(
+            records
+                .iter()
+                .all(|record| record.upstream_attempt == Some(1)),
+            "每次上游调用 attempt 独立持久化"
+        );
+        // 三次消费的 request_id 互不相同（retry 是新的上游调用）。
+        let request_ids: std::collections::BTreeSet<_> = records
+            .iter()
+            .filter_map(|record| record.request_id.as_ref().map(|id| id.as_str()))
+            .collect();
+        assert_eq!(request_ids.len(), 3, "retry 必须产生新的 request_id");
         let totals = ledger
             .aggregate(&usage_ledger::UsageQuery::by_session(session_id))
             .await
             .expect("aggregate attempts");
         assert_eq!((totals.input_tokens, totals.output_tokens), (300, 150));
+    }
+
+    /// P18-8 review：transport retry（同一 run 内 engine `RetryController`
+    /// 驱动的断流重试）的每次实际上游 `stream` 调用都必须以独立不可变
+    /// ledger 记录收口——request_id / event_id / upstream_attempt 逐调用
+    /// 持久化，失败前已观测的 UsageUpdated 单独收口，聚合只累计一次。
+    #[tokio::test]
+    async fn transport_retry_records_each_stream_attempt_in_ledger() {
+        let (supervisor, aggregate, ledger, _broadcaster) = supervisor_with_ledger();
+        seed_session(&aggregate, "ws-transport-retry");
+        let session_id = SessionId::from("session-transport-retry");
+        let flaky = |kind: provider_api::ProviderErrorKind| {
+            let mut error = provider_api::ProviderError::new(kind, "flaky transport");
+            error.retryable = true;
+            error.retry_after_ms = Some(0);
+            error
+        };
+        let usage = |input: u64, output: u64| agent_domain::TokenUsage {
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        };
+        // 三次实际 stream 调用：前两次 transport 失败（失败前均已观测
+        // UsageUpdated），第三次成功；engine 在同一 run 内自动重试。
+        let sequence = SequenceProvider::new(vec![
+            test_support::MockScript::new()
+                .usage(usage(11, 1))
+                .fail(flaky(provider_api::ProviderErrorKind::Network)),
+            test_support::MockScript::new()
+                .usage(usage(22, 2))
+                .fail(flaky(provider_api::ProviderErrorKind::Timeout)),
+            test_support::MockScript::new()
+                .usage(usage(33, 3))
+                .complete(),
+        ]);
+        let provider: Arc<dyn ModelProvider> = Arc::new(sequence.clone());
+        supervisor
+            .start(
+                run_request("run-transport-retry", "session-transport-retry"),
+                provider,
+            )
+            .expect("start transport-retry run");
+
+        // 第三次调用成功 → run Completed；逐调用记账在终态计数之前完成。
+        await_completed(&supervisor).await;
+        let records = await_usage_records(&ledger, &session_id, 3).await;
+        // 再等一拍确认没有兜底记录混入（per-call 与 run 终态兜底互斥）。
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let all = ledger
+            .query(&usage_ledger::UsageQuery::by_session(session_id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            all.len(),
+            3,
+            "每次实际上游调用恰好一条记录，不得双计：{all:?}"
+        );
+        assert_eq!(records.len(), 3);
+
+        // 与 provider 实际观察到的三次调用 request_id 一一对应（按顺序）。
+        let observed = sequence
+            .request_ids()
+            .into_iter()
+            .map(|id| id.as_str().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(observed.len(), 3, "三次实际上游 stream 调用");
+        let mut sorted_observed = observed.clone();
+        sorted_observed.sort_unstable();
+        sorted_observed.dedup();
+        assert_eq!(
+            sorted_observed.len(),
+            3,
+            "transport retry 每次调用必须生成新 request_id"
+        );
+
+        let mut sorted_records = records.clone();
+        sorted_records.sort_by_key(|record| record.upstream_attempt);
+        let attempts: Vec<u64> = sorted_records
+            .iter()
+            .map(|record| record.upstream_attempt.expect("attempt"))
+            .collect();
+        assert_eq!(attempts, vec![1, 2, 3], "attempt 逐调用独立 1 基编号");
+        let record_request_ids: Vec<String> = sorted_records
+            .iter()
+            .map(|record| {
+                record
+                    .request_id
+                    .as_ref()
+                    .expect("request_id")
+                    .as_str()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            record_request_ids, observed,
+            "ledger request_id 必须与 provider 观察到的每次调用一一对应"
+        );
+        // 每条记录都带独立的 UsageUpdated 事件 id（失败前观测也单独收口）。
+        let event_ids: std::collections::BTreeSet<_> = sorted_records
+            .iter()
+            .map(|record| record.event_id.as_ref().expect("event_id").as_str())
+            .collect();
+        assert_eq!(event_ids.len(), 3, "每次调用的 UsageUpdated 事件 id 独立");
+        assert!(
+            sorted_records
+                .iter()
+                .all(|record| record.record_id.contains("-request-")
+                    && record.record_id.contains("-attempt-")),
+            "记录 ID 由 (run, request, attempt) 确定性派生"
+        );
+        // 失败前观测的用量完整计入聚合，只累计一次。
+        let totals = ledger
+            .aggregate(&usage_ledger::UsageQuery::by_session(session_id))
+            .await
+            .expect("aggregate transport retry");
+        assert_eq!(
+            (totals.input_tokens, totals.output_tokens),
+            (66, 6),
+            "三次调用用量 (11+22+33, 1+2+3) 各累计一次"
+        );
+
+        // 幂等重放：逐条重放不重复记账（账本按 request/attempt 去重）。
+        for record in &records {
+            ledger.record(record.clone()).await.expect("replay record");
+        }
+        let after_replay = ledger
+            .query(&usage_ledger::UsageQuery::by_session(SessionId::from(
+                "session-transport-retry",
+            )))
+            .await
+            .unwrap();
+        assert_eq!(after_replay.len(), 3, "重放不重复累计");
+    }
+
+    /// P18-8 review：最后一次上游调用也失败（retry 全部耗尽 → run Failed）
+    /// 时，失败前已观测的 UsageUpdated 仍单独收口，不因 run 失败丢失。
+    #[tokio::test]
+    async fn transport_retry_failed_run_closes_out_observed_usage_per_attempt() {
+        let (supervisor, aggregate, ledger, _broadcaster) = supervisor_with_ledger();
+        seed_session(&aggregate, "ws-transport-fail");
+        let session_id = SessionId::from("session-transport-fail");
+        let flaky = || {
+            let mut error =
+                provider_api::ProviderError::new(provider_api::ProviderErrorKind::Network, "down");
+            error.retryable = true;
+            error.retry_after_ms = Some(0);
+            error
+        };
+        let usage = |input: u64| agent_domain::TokenUsage {
+            input_tokens: input,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        };
+        // 默认 RetryPolicy(max_attempts=3)：1 次首调 + 3 次重试 = 4 次
+        // 实际上游调用，全部失败，每次失败前都观测到用量。
+        let provider: Arc<dyn ModelProvider> = Arc::new(SequenceProvider::new(vec![
+            test_support::MockScript::new()
+                .usage(usage(7))
+                .fail(flaky()),
+            test_support::MockScript::new()
+                .usage(usage(8))
+                .fail(flaky()),
+            test_support::MockScript::new()
+                .usage(usage(9))
+                .fail(flaky()),
+            test_support::MockScript::new()
+                .usage(usage(10))
+                .fail(flaky()),
+        ]));
+        supervisor
+            .start(
+                run_request("run-transport-fail", "session-transport-fail"),
+                provider,
+            )
+            .expect("start failing run");
+
+        // 等 run 到达 Failed 终态（终态计数在记账之后递增）。
+        let mut failed = false;
+        for _ in 0..300 {
+            if supervisor.stats().failed >= 1 {
+                failed = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(failed, "run 必须失败");
+        let records = await_usage_records(&ledger, &session_id, 4).await;
+        let mut attempts: Vec<u64> = records
+            .iter()
+            .map(|record| record.upstream_attempt.expect("attempt"))
+            .collect();
+        attempts.sort_unstable();
+        assert_eq!(attempts, vec![1, 2, 3, 4], "每次失败调用独立收口");
+        let request_ids: std::collections::BTreeSet<_> = records
+            .iter()
+            .filter_map(|record| record.request_id.as_ref().map(|id| id.as_str()))
+            .collect();
+        assert_eq!(request_ids.len(), 4, "每次失败调用独立 request_id");
+        let totals = ledger
+            .aggregate(&usage_ledger::UsageQuery::by_session(session_id))
+            .await
+            .expect("aggregate failed attempts");
+        assert_eq!(totals.input_tokens, 34, "7+8+9+10 各累计一次，不丢不重");
     }
 
     #[tokio::test]
@@ -2992,13 +4544,14 @@ mod tests {
         // 单一 ledger 条目（终态只写一次）。
         let all = ledger
             .query(&usage_ledger::UsageQuery::by_session(session.clone()))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(all.len(), 1);
 
         // 记账成功后才刷新本地缓存：等待四窗口 × (Token + Cost<USD>) 全部
         // cache-only 命中，且缓存值等于账本实际值（不触发任何 adapter/网络）。
         let scope = quota_service::QuotaScope {
-            tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+            tenant_id: tenant_service::IdentityContext::local().tenant_id,
             account_id: quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT.to_string()),
             credential_id: None,
             provider_id: ProviderId::from("mock"),
@@ -3121,7 +4674,7 @@ mod tests {
             .quota
             .read_cache_only(&quota_service::QuotaRequest {
                 scope: quota_service::QuotaScope {
-                    tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+                    tenant_id: tenant_service::IdentityContext::local().tenant_id,
                     account_id: quota_service::AccountId::new(
                         core_api::DEFAULT_QUOTA_ACCOUNT.to_string(),
                     ),

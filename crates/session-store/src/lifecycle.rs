@@ -2,7 +2,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agent_domain::SessionId;
+use agent_domain::{PrincipalId, SessionId, TenantId};
 use rusqlite::{params, OptionalExtension};
 
 use crate::{SessionStore, SessionStoreError};
@@ -50,6 +50,35 @@ fn now_unix_millis() -> i64 {
 }
 
 impl SessionStore {
+    /// 读取 session 的身份归属（P18-2）；不存在返回 `None`。
+    ///
+    /// 供上层在查询 / 操作前做 tenant 校验（Tenant A 不得访问 Tenant B 记录）。
+    pub async fn get_session_identity(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<(TenantId, PrincipalId)>, SessionStoreError> {
+        let session_id = session_id.to_string();
+        self.database()
+            .call(
+                move |connection| -> Result<Option<(TenantId, PrincipalId)>, SessionStoreError> {
+                    let row = connection
+                        .query_row(
+                            "SELECT tenant_id, principal_id FROM sessions WHERE session_id=?1",
+                            [&session_id],
+                            |row| {
+                                Ok((
+                                    TenantId::new(row.get::<_, String>(0)?),
+                                    PrincipalId::new(row.get::<_, String>(1)?),
+                                ))
+                            },
+                        )
+                        .optional()?;
+                    Ok(row)
+                },
+            )
+            .await?
+    }
+
     /// 重命名 session。
     pub async fn rename_session(
         &self,

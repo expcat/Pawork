@@ -3,6 +3,29 @@
 //! 每个 [`DatabaseActor`] 在专用线程持有唯一的 `rusqlite::Connection`。异步调用方
 //! 只能通过有界命令通道提交闭包，不能取得或共享连接，因此数据库写入天然串行化。
 
+pub mod control_plane;
+pub mod identity;
+pub mod lease;
+pub mod migration;
+
+pub use control_plane::{
+    migrate as migrate_control_plane, schema_version as control_plane_schema_version,
+    CONTROL_PLANE_MIGRATIONS_TABLE, CURRENT_CONTROL_PLANE_SCHEMA_VERSION,
+};
+pub use identity::{
+    backfill_legacy_default_identity, identity_tenant, migrate as migrate_identity,
+    schema_version as identity_schema_version, IdentityTenant, CURRENT_IDENTITY_SCHEMA_VERSION,
+    IDENTITY_MIGRATIONS_TABLE, LEGACY_PRINCIPAL, LEGACY_TENANT,
+};
+pub use lease::{
+    columns as lease_columns, migrate as migrate_lease,
+    outstanding_count as outstanding_lease_count, schema_version as lease_schema_version,
+    LeaseEventRow, LeaseProjectionError, LeaseRowRepository, LeaseSnapshotRow,
+    CREDENTIAL_LEASES_TABLE, CREDENTIAL_LEASE_EVENTS_TABLE, CURRENT_LEASE_SCHEMA_VERSION,
+    EXPECTED_COLUMNS as EXPECTED_LEASE_COLUMNS, LEASE_MIGRATIONS_TABLE,
+};
+pub use migration::{migrate, Migration, MigrationError, MigrationReport};
+
 use std::{
     any::Any,
     fs,

@@ -12,7 +12,17 @@
     principal_id = local/user
 ```
 
+`account_id` 的兼容默认值同样是 `local/default`。历史 Quota 查询仍保留其既有 `tenant=local` wire 兼容常量；Control Plane 身份不得复用该旧常量，迁移与新持久记录统一使用上述 `local/default` tenant。
+
 旧 session、credential 与 usage 通过 versioned migration 补 tenant side table 或 nullable/versioned column；迁移失败整批回滚。Secret 仍只由 SecretBackend 解析，tenant 数据库只保存 `secret_ref` 与脱敏 metadata。
+
+P18-2 已将 `IdentityContext { tenant_id, principal_id }` 固定为 Core 命令边界：`LocalUser` 映射 `local/user`，认证客户端、Automation、Plugin 与 MCP 分别使用带类型前缀的稳定 principal，`System` 映射 `local/system`；缺失或空白 identity 一律 fail-closed。外部 resolver 的返回值也必须再次校验，不能以自定义 resolver 绕过该边界。
+
+Session Store schema v7 在 session 行持久化 tenant/principal，并把 legacy 行回填为 `local/default` / `local/user`。Session export schema v3 显式携带两者；v1/v2 导入只能采用安全 legacy 默认值，v3 缺字段或 import 调用方 identity 不匹配时拒绝。Session/Run 的读取、取消、重试、审批与 snapshot 投影均按 tenant 过滤；命令 ID 和 idempotency key 同样以 tenant 为命名空间，跨 tenant 相同 key 不会互相 replay。
+
+GUI 连接在认证握手后解析并固定连接级 `IdentityContext`；初始 Snapshot、显式 SnapshotRequest 与 Resume 降级快照都复用该身份并调用 tenant-scoped projection。身份解析失败直接关闭连接，不允许退回全局 snapshot。本地 GUI 默认映射 `local/default`，未来远程 adapter 通过连接身份 resolver 注入真实 tenant。
+
+当前 P18-2 只闭合 tenant/principal 基线。account/credential 来自 P18-3/4，唯一持久 Usage Ledger 来自 P18-8，canonical Audit Event 来自 P18-13；这些任务必须复用同一 `IdentityContext`，不得另建平行身份状态。
 
 ## Tenant Policy
 

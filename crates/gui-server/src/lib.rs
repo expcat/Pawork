@@ -20,10 +20,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use agent_domain::{ConnectionId, GuiClientId};
-use app_service::AppService;
+use app_service::{
+    AppService, IdentityContext, IdentityError, IdentityResolver, LocalIdentityResolver,
+};
 use async_trait::async_trait;
 use connection_manager::ConnectionManager;
-use gui_protocol::HandshakeService;
+use gui_protocol::{HandshakeRequest, HandshakeService};
 use snapshot_service::SnapshotService;
 use subscription_hub::EventHub;
 use thiserror::Error;
@@ -42,6 +44,32 @@ pub struct GuiServerConfig {
     pub connections: Option<Arc<ConnectionManager>>,
 }
 
+/// 把已认证握手与连接元数据解析为 canonical GUI 连接身份。
+pub trait GuiConnectionIdentityResolver: Send + Sync {
+    fn resolve(
+        &self,
+        request: &HandshakeRequest,
+        connection: &transport_api::ConnectionInfo,
+    ) -> Result<IdentityContext, IdentityError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LocalGuiConnectionIdentityResolver;
+
+impl GuiConnectionIdentityResolver for LocalGuiConnectionIdentityResolver {
+    fn resolve(
+        &self,
+        _request: &HandshakeRequest,
+        _connection: &transport_api::ConnectionInfo,
+    ) -> Result<IdentityContext, IdentityError> {
+        let actor = core_api::ActorIdentity::LocalUser {
+            actor_id: agent_domain::ActorId::from("gui-connection"),
+            display_name: None,
+        };
+        LocalIdentityResolver.resolve(actor.canonical_principal().as_deref())
+    }
+}
+
 /// GUI 服务器错误。
 #[derive(Debug, Error)]
 pub enum GuiServerError {
@@ -57,6 +85,7 @@ pub(crate) struct Inner {
     pub hub: Arc<EventHub>,
     pub connections: Arc<ConnectionManager>,
     pub snapshots: SnapshotService,
+    pub identity_resolver: Arc<dyn GuiConnectionIdentityResolver>,
 }
 
 /// CLI 进程内的 GUI 协议服务器（可廉价克隆，共享同一配置）。
@@ -68,6 +97,17 @@ pub struct GuiServer {
 
 impl GuiServer {
     pub fn new(config: GuiServerConfig) -> Self {
+        Self::with_connection_identity_resolver(
+            config,
+            Arc::new(LocalGuiConnectionIdentityResolver),
+        )
+    }
+
+    /// 以连接级身份解析器构造；默认 [`Self::new`] 使用本地用户身份。
+    pub fn with_connection_identity_resolver(
+        config: GuiServerConfig,
+        identity_resolver: Arc<dyn GuiConnectionIdentityResolver>,
+    ) -> Self {
         let connections = config
             .connections
             .unwrap_or_else(|| Arc::new(ConnectionManager::default()));
@@ -79,6 +119,7 @@ impl GuiServer {
                 hub: config.hub,
                 connections,
                 snapshots,
+                identity_resolver,
             }),
             transport: config.transport,
         }
@@ -168,6 +209,19 @@ mod tests {
     };
     use transport_memory::MemoryTransport;
 
+    #[derive(Clone)]
+    struct FixedConnectionIdentityResolver(IdentityContext);
+
+    impl GuiConnectionIdentityResolver for FixedConnectionIdentityResolver {
+        fn resolve(
+            &self,
+            _request: &HandshakeRequest,
+            _connection: &transport_api::ConnectionInfo,
+        ) -> Result<IdentityContext, IdentityError> {
+            Ok(self.0.clone())
+        }
+    }
+
     struct Harness {
         app_service: Arc<AppService>,
         listener: Arc<dyn GuiListener>,
@@ -221,6 +275,60 @@ mod tests {
             hub: Arc::new(EventHub::new()),
             connections,
         });
+        let listener = server
+            .bind(TransportEndpoint::Memory {
+                channel: channel.into(),
+            })
+            .await
+            .expect("bind");
+        Harness {
+            app_service,
+            listener: Arc::from(listener),
+            transport,
+            token,
+            _temp: temp,
+        }
+    }
+
+    async fn tenant_harness(
+        channel: &str,
+        app_service: Arc<AppService>,
+        identity: IdentityContext,
+    ) -> Harness {
+        tenant_harness_with_hub(channel, app_service, identity, Arc::new(EventHub::new())).await
+    }
+
+    /// 多租户测试：两个 GuiServer 共享同一 Hub（事件实时广播与重放共源）。
+    async fn tenant_harness_with_hub(
+        channel: &str,
+        app_service: Arc<AppService>,
+        identity: IdentityContext,
+        hub: Arc<EventHub>,
+    ) -> Harness {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let token_path = temp.path().join("gui.token");
+        let token = TokenStore::new(&token_path)
+            .generate()
+            .expect("generate token");
+        let handshake = HandshakeService::new(
+            CoreInstanceId::from("test-instance"),
+            SUPPORTED_API_VERSIONS.to_vec(),
+            vec![GuiCapability::Snapshots, GuiCapability::Events],
+        )
+        .with_authenticator(Box::new(TokenAuthenticator::new(TokenStore::new(
+            &token_path,
+        ))));
+        let transport = Arc::new(MemoryTransport::new());
+        let server = GuiServer::with_connection_identity_resolver(
+            GuiServerConfig {
+                app_service: app_service.clone(),
+                handshake,
+                transport: transport.clone(),
+                hub,
+                connections: None,
+            },
+            Arc::new(FixedConnectionIdentityResolver(identity)),
+        );
         let listener = server
             .bind(TransportEndpoint::Memory {
                 channel: channel.into(),
@@ -582,6 +690,601 @@ mod tests {
 
         client.conn.close().await.expect("client close");
         session.close().await.expect("session close");
+    }
+
+    #[tokio::test]
+    async fn handshake_and_snapshot_request_are_scoped_to_connection_tenant() {
+        use agent_domain::{PrincipalId, TenantId, WorkspaceId};
+
+        let app_service = Arc::new(AppService::new("gui-tenant-test"));
+        let aggregate = app_service.router().aggregate();
+        let workspace_response = app_service.dispatch_envelope(AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: CommandId::from("tenant-workspace"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("tenant-seed"),
+            },
+            identity: local_user(),
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: Timestamp::from_unix_millis(1),
+            command: AppCommand::WorkspaceAdd {
+                root_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            },
+        });
+        let AppResponse::Data(workspace) = workspace_response.response else {
+            panic!("workspace seed failed");
+        };
+        let workspace_id = WorkspaceId::from(workspace["id"].as_str().expect("workspace id"));
+        let tenant_a =
+            IdentityContext::new(TenantId::new("tenant-a"), PrincipalId::new("tenant-a:user"));
+        let tenant_b =
+            IdentityContext::new(TenantId::new("tenant-b"), PrincipalId::new("tenant-b:user"));
+        aggregate
+            .create_session_with_identity(
+                workspace_id.clone(),
+                "tenant-a-secret".into(),
+                Timestamp::from_unix_millis(2),
+                &tenant_a,
+            )
+            .expect("tenant-a session");
+        aggregate
+            .create_session_with_identity(
+                workspace_id,
+                "tenant-b-secret".into(),
+                Timestamp::from_unix_millis(3),
+                &tenant_b,
+            )
+            .expect("tenant-b session");
+
+        let harness = tenant_harness("gui-tenant", app_service, tenant_a).await;
+        let (client, session) = open_session(&harness, "gui-tenant").await;
+        client
+            .send(&ClientFrame::Handshake(HandshakeRequest {
+                request_id: "tenant-handshake".into(),
+                client_name: "tenant-gui".into(),
+                client_version: "0.0.1".into(),
+                supported_api_versions: vec![API_VERSION],
+                capabilities: vec![GuiCapability::Snapshots],
+                authentication: Some(authentication(&harness.token)),
+            }))
+            .await;
+        assert!(matches!(
+            client.recv().await,
+            ServerFrame::Handshake(HandshakeResponse::Accepted { .. })
+        ));
+        let ServerFrame::Snapshot(initial) = client.recv().await else {
+            panic!("expected initial tenant snapshot");
+        };
+        let initial = serde_json::to_string(&initial).expect("serialize initial");
+        assert!(initial.contains("tenant-a-secret"));
+        assert!(!initial.contains("tenant-b-secret"));
+
+        client
+            .send(&ClientFrame::SnapshotRequest {
+                request_id: "tenant-snapshot".into(),
+            })
+            .await;
+        let ServerFrame::Snapshot(requested) = client.recv().await else {
+            panic!("expected requested tenant snapshot");
+        };
+        let requested = serde_json::to_string(&requested).expect("serialize requested");
+        assert!(requested.contains("tenant-a-secret"));
+        assert!(!requested.contains("tenant-b-secret"));
+
+        client.conn.close().await.expect("client close");
+        session.close().await.expect("session close");
+    }
+
+    /// 双租户共享 aggregate 播种：workspace + tenant-a / tenant-b 各一个
+    /// session 与 run，返回 (workspace, session_a, session_b, run_a, run_b,
+    /// tenant_a, tenant_b)。
+    fn seed_dual_tenant(
+        app_service: &AppService,
+    ) -> (
+        WorkspaceId,
+        SessionId,
+        SessionId,
+        agent_domain::RunId,
+        agent_domain::RunId,
+        IdentityContext,
+        IdentityContext,
+    ) {
+        use agent_domain::{PrincipalId, ProviderId, RunId, TenantId};
+
+        let aggregate = app_service.router().aggregate();
+        let workspace_response = app_service.dispatch_envelope(AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: CommandId::from("dual-tenant-workspace"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("tenant-seed"),
+            },
+            identity: local_user(),
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: Timestamp::from_unix_millis(1),
+            command: AppCommand::WorkspaceAdd {
+                root_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            },
+        });
+        let AppResponse::Data(workspace) = workspace_response.response else {
+            panic!("workspace seed failed");
+        };
+        let workspace_id = WorkspaceId::from(workspace["id"].as_str().expect("workspace id"));
+        let tenant_a =
+            IdentityContext::new(TenantId::new("tenant-a"), PrincipalId::new("tenant-a:user"));
+        let tenant_b =
+            IdentityContext::new(TenantId::new("tenant-b"), PrincipalId::new("tenant-b:user"));
+        let session_a = aggregate
+            .create_session_with_identity(
+                workspace_id.clone(),
+                "tenant-a session".into(),
+                Timestamp::from_unix_millis(2),
+                &tenant_a,
+            )
+            .expect("tenant-a session");
+        let session_b = aggregate
+            .create_session_with_identity(
+                workspace_id.clone(),
+                "tenant-b session".into(),
+                Timestamp::from_unix_millis(3),
+                &tenant_b,
+            )
+            .expect("tenant-b session");
+        let run_a = RunId::from("run-a");
+        let run_b = RunId::from("run-b");
+        aggregate
+            .record_run_with_identity(
+                run_a.clone(),
+                session_a.session_id.clone(),
+                agent_domain::ModelId::from("model"),
+                ProviderId::from("provider"),
+                CommandSource::Automation,
+                Timestamp::from_unix_millis(4),
+                &tenant_a,
+            )
+            .expect("tenant-a run");
+        aggregate
+            .record_run_with_identity(
+                run_b.clone(),
+                session_b.session_id.clone(),
+                agent_domain::ModelId::from("model"),
+                ProviderId::from("provider"),
+                CommandSource::Automation,
+                Timestamp::from_unix_millis(5),
+                &tenant_b,
+            )
+            .expect("tenant-b run");
+        (
+            workspace_id,
+            session_a.session_id,
+            session_b.session_id.clone(),
+            run_a,
+            run_b,
+            tenant_a,
+            tenant_b,
+        )
+    }
+
+    /// 租户测试连接握手：Accepted + 消费首帧 Snapshot。
+    async fn tenant_handshake(client: &TestClient, token: &Token) {
+        client
+            .send(&ClientFrame::Handshake(HandshakeRequest {
+                request_id: "tenant-hs".into(),
+                client_name: "tenant-gui".into(),
+                client_version: "0.0.1".into(),
+                supported_api_versions: vec![API_VERSION],
+                capabilities: vec![GuiCapability::Events, GuiCapability::Snapshots],
+                authentication: Some(authentication(token)),
+            }))
+            .await;
+        assert!(matches!(
+            client.recv().await,
+            ServerFrame::Handshake(HandshakeResponse::Accepted { .. })
+        ));
+        assert!(
+            matches!(client.recv().await, ServerFrame::Snapshot(_)),
+            "首帧快照"
+        );
+    }
+
+    /// 全量订阅（streams 为空）+ Heartbeat/Pong 往返，证明订阅已登记。
+    async fn subscribe_all(client: &TestClient) {
+        client
+            .send(&ClientFrame::Subscribe(SubscribeRequest {
+                request_id: "sub-all".into(),
+                subscription_id: "sub-1".into(),
+                streams: vec![],
+            }))
+            .await;
+        client.send(&ClientFrame::Heartbeat { nonce: 1 }).await;
+        assert_eq!(client.recv().await, ServerFrame::Pong { nonce: 1 });
+    }
+
+    /// 构造一条 Hub 事件（global_sequence 由 hub.publish 重写）。
+    fn tenant_event(instance: &str, payload: core_api::AppEvent) -> core_api::AppEventEnvelope {
+        core_api::AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: CoreInstanceId::from(instance),
+            event_id: agent_domain::EventId::from("tenant-event"),
+            global_sequence: core_api::GlobalSequence(0),
+            stream: core_api::EventStream::Global,
+            stream_sequence: 1,
+            timestamp: Timestamp::from_unix_millis(10),
+            source: core_api::EventSource::Core,
+            payload,
+        }
+    }
+
+    /// 读一帧（带超时，避免断言失败时挂死测试）。
+    async fn recv_event(client: &TestClient) -> core_api::AppEventEnvelope {
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), client.recv())
+            .await
+            .expect("event frame within timeout");
+        match frame {
+            ServerFrame::Event(envelope) => envelope,
+            other => panic!("expected event frame, got {other:?}"),
+        }
+    }
+
+    async fn assert_no_event(client: &TestClient, context: &str) {
+        let missed =
+            tokio::time::timeout(std::time::Duration::from_millis(300), client.recv()).await;
+        assert!(
+            missed.is_err(),
+            "{context}: 不应收到事件，实际收到 {missed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn command_and_query_stamping_carry_resolved_tenant_principal() {
+        // P18-2 审查修复：custom tenant resolver 的 principal 必须经服务端
+        // 盖戳到达 app-service（wire 伪造的 System / Automation 一律覆盖），
+        // 并由宿主一致注入的 app-service resolver 还原 tenant 完成租户隔离。
+        use agent_domain::{PrincipalId, TenantId};
+
+        #[derive(Clone)]
+        struct TenantAResolver;
+
+        impl app_service::IdentityResolver for TenantAResolver {
+            fn resolve(
+                &self,
+                principal: Option<&str>,
+            ) -> Result<IdentityContext, app_service::IdentityError> {
+                match principal {
+                    Some("authenticated_client:tenant-a:user") => Ok(IdentityContext::new(
+                        TenantId::new("tenant-a"),
+                        PrincipalId::new("tenant-a:user"),
+                    )),
+                    Some(value) if !value.trim().is_empty() => Ok(IdentityContext::local()),
+                    _ => Err(app_service::IdentityError::MissingIdentity(
+                        "no principal".into(),
+                    )),
+                }
+            }
+        }
+
+        let app_service = Arc::new(AppService::with_identity_resolver_and_tenant_policy(
+            "gui-tenant-stamp",
+            Arc::new(TenantAResolver),
+            Arc::new(app_service::InMemoryTenantPolicyEngine::default()),
+        ));
+        let workspace_response = app_service.dispatch_envelope(AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: CommandId::from("stamp-workspace"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("stamp-seed"),
+            },
+            identity: local_user(),
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: Timestamp::from_unix_millis(1),
+            command: AppCommand::WorkspaceAdd {
+                root_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            },
+        });
+        let AppResponse::Data(workspace) = workspace_response.response else {
+            panic!("workspace seed failed");
+        };
+        let workspace_id = WorkspaceId::from(workspace["id"].as_str().expect("workspace id"));
+        let tenant_a =
+            IdentityContext::new(TenantId::new("tenant-a"), PrincipalId::new("tenant-a:user"));
+
+        let harness = tenant_harness("gui-stamp-tenant", Arc::clone(&app_service), tenant_a).await;
+        let (client, session) = open_session(&harness, "gui-stamp-tenant").await;
+        tenant_handshake(&client, &harness.token).await;
+
+        // wire 伪造 System：服务端必须覆盖为 resolved principal 后派发。
+        client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("stamp-session"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(2),
+                command: AppCommand::SessionCreate {
+                    workspace_id,
+                    title: Some("stamped".into()),
+                },
+            }))
+            .await;
+        let ServerFrame::Response(command_response) = client.recv().await else {
+            panic!("expected command response");
+        };
+        let AppResponse::Data(value) = command_response.response else {
+            panic!("expected session data: {:?}", command_response.response);
+        };
+        let session_id = SessionId::from(value["session_id"].as_str().expect("session id"));
+
+        // wire 伪造 Automation：query 同样服务端盖戳。
+        client
+            .send(&ClientFrame::Query(AppQueryEnvelope {
+                api_version: API_VERSION,
+                request_id: QueryId::from("stamp-query"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::Automation {
+                    name: "forged".into(),
+                },
+                issued_at: Timestamp::from_unix_millis(3),
+                query: AppQuery::WorkspaceList,
+            }))
+            .await;
+        let ServerFrame::Response(query_response) = client.recv().await else {
+            panic!("expected query response");
+        };
+        assert!(matches!(query_response.response, AppResponse::Data(_)));
+
+        let identities = app_service.router().identity_stats();
+        assert_eq!(
+            identities.get("authenticated_client:tenant-a:user"),
+            Some(&2),
+            "command+query 必须盖戳为 resolved principal: {identities:?}"
+        );
+        assert!(!identities.contains_key("system"), "wire System 不得透传");
+        assert!(
+            !identities.contains_key("automation:forged"),
+            "wire Automation 不得透传"
+        );
+        let sources = app_service.router().source_stats();
+        assert!(
+            sources.get("local_gui").is_some_and(|count| *count >= 2),
+            "source 仍按 locality 盖戳为 LocalGui: {sources:?}"
+        );
+        assert!(!sources.contains_key("automation"), "wire source 不得透传");
+
+        // 关键：principal 到达 app-service 后还原为 tenant-a，session 落在
+        // tenant-a，而非 local/default。
+        assert!(
+            app_service
+                .router()
+                .aggregate()
+                .get_session(&session_id, &TenantId::new("tenant-a"))
+                .is_some(),
+            "session 必须归属 resolved tenant-a"
+        );
+        assert!(
+            app_service
+                .router()
+                .aggregate()
+                .get_session(&session_id, &TenantId::new("local/default"))
+                .is_none(),
+            "session 不得落入默认本地租户"
+        );
+
+        client.conn.close().await.expect("client close");
+        session.close().await.expect("session close");
+    }
+
+    #[tokio::test]
+    async fn dual_tenant_hub_realtime_events_are_tenant_filtered() {
+        // P18-2 审查修复：共享 Hub 的实时事件必须按连接 tenant 过滤；
+        // 无法从可信 aggregate 判定租户的事件 fail-closed 丢弃。
+        use core_api::{AppEvent, RunState};
+
+        let app_service = Arc::new(AppService::new("gui-tenant-realtime"));
+        let (workspace_id, _session_a, session_b, run_a, run_b, tenant_a, tenant_b) =
+            seed_dual_tenant(&app_service);
+        let hub = Arc::new(EventHub::new());
+        let publish_hub = Arc::clone(&hub);
+        let harness_a = tenant_harness_with_hub(
+            "gui-tenant-rt-a",
+            Arc::clone(&app_service),
+            tenant_a,
+            Arc::clone(&hub),
+        )
+        .await;
+        let harness_b =
+            tenant_harness_with_hub("gui-tenant-rt-b", Arc::clone(&app_service), tenant_b, hub)
+                .await;
+        let (client_a, conn_a) = open_session(&harness_a, "gui-tenant-rt-a").await;
+        let (client_b, conn_b) = open_session(&harness_b, "gui-tenant-rt-b").await;
+        tenant_handshake(&client_a, &harness_a.token).await;
+        tenant_handshake(&client_b, &harness_b.token).await;
+        subscribe_all(&client_a).await;
+        subscribe_all(&client_b).await;
+
+        // tenant-a 的 Run 事件：A 收到，B 不得收到。
+        publish_hub.publish(tenant_event(
+            "gui-tenant-realtime",
+            AppEvent::RunChanged {
+                run_id: run_a.clone(),
+                state: RunState::StreamingResponse,
+            },
+        ));
+        let envelope = recv_event(&client_a).await;
+        assert!(
+            matches!(&envelope.payload, AppEvent::RunChanged { run_id, .. } if *run_id == run_a),
+            "tenant-a 应收到自己的 Run 事件"
+        );
+        assert_no_event(&client_b, "tenant-b 不得收到 tenant-a 的 Run 事件").await;
+
+        // tenant-b 的 Session 事件：B 收到，A 不得收到。
+        publish_hub.publish(tenant_event(
+            "gui-tenant-realtime",
+            AppEvent::SessionChanged {
+                session_id: session_b.clone(),
+                revision: 1,
+            },
+        ));
+        let envelope = recv_event(&client_b).await;
+        assert!(
+            matches!(&envelope.payload, AppEvent::SessionChanged { session_id, .. } if *session_id == session_b),
+            "tenant-b 应收到自己的 Session 事件"
+        );
+        assert_no_event(&client_a, "tenant-a 不得收到 tenant-b 的 Session 事件").await;
+
+        // 无法从 aggregate 判定租户的 Workspace 事件：双租户都 fail-closed 丢弃。
+        publish_hub.publish(tenant_event(
+            "gui-tenant-realtime",
+            AppEvent::WorkspaceChanged {
+                workspace_id: workspace_id.clone(),
+                revision: 1,
+            },
+        ));
+        assert_no_event(&client_a, "workspace 事件对 tenant-a fail-closed").await;
+        assert_no_event(&client_b, "workspace 事件对 tenant-b fail-closed").await;
+
+        // 收尾：再验证 tenant-b 自己的 Run 事件可见（B 收到、A 不收）。
+        publish_hub.publish(tenant_event(
+            "gui-tenant-realtime",
+            AppEvent::RunChanged {
+                run_id: run_b.clone(),
+                state: RunState::StreamingResponse,
+            },
+        ));
+        let envelope = recv_event(&client_b).await;
+        assert!(
+            matches!(&envelope.payload, AppEvent::RunChanged { run_id, .. } if *run_id == run_b),
+            "tenant-b 应收到自己的 Run 事件"
+        );
+        assert_no_event(&client_a, "tenant-a 不得收到 tenant-b 的 Run 事件").await;
+
+        client_a.conn.close().await.expect("close a");
+        client_b.conn.close().await.expect("close b");
+        conn_a.close().await.expect("session a close");
+        conn_b.close().await.expect("session b close");
+    }
+
+    #[tokio::test]
+    async fn dual_tenant_resume_replays_only_own_tenant_events() {
+        // P18-2 审查修复：Resume 重放与实时同源过滤，禁止跨租户泄漏；
+        // 无法判定的 Workspace 事件对非默认租户 fail-closed 丢弃。
+        use core_api::{AppEvent, RunState};
+
+        let app_service = Arc::new(AppService::new("gui-tenant-replay"));
+        let (workspace_id, _session_a, session_b, run_a, run_b, tenant_a, tenant_b) =
+            seed_dual_tenant(&app_service);
+        let hub = Arc::new(EventHub::new());
+        let publish_hub = Arc::clone(&hub);
+        let harness_a = tenant_harness_with_hub(
+            "gui-tenant-rp-a",
+            Arc::clone(&app_service),
+            tenant_a,
+            Arc::clone(&hub),
+        )
+        .await;
+        let harness_b =
+            tenant_harness_with_hub("gui-tenant-rp-b", Arc::clone(&app_service), tenant_b, hub)
+                .await;
+        let (client_a, conn_a) = open_session(&harness_a, "gui-tenant-rp-a").await;
+        let (client_b, conn_b) = open_session(&harness_b, "gui-tenant-rp-b").await;
+        tenant_handshake(&client_a, &harness_a.token).await;
+        tenant_handshake(&client_b, &harness_b.token).await;
+
+        // 两个客户端都不订阅：重放独立于实时投递。
+        publish_hub.publish(tenant_event(
+            "gui-tenant-replay",
+            AppEvent::RunChanged {
+                run_id: run_a.clone(),
+                state: RunState::Completed,
+            },
+        ));
+        publish_hub.publish(tenant_event(
+            "gui-tenant-replay",
+            AppEvent::RunChanged {
+                run_id: run_b.clone(),
+                state: RunState::Completed,
+            },
+        ));
+        publish_hub.publish(tenant_event(
+            "gui-tenant-replay",
+            AppEvent::WorkspaceChanged {
+                workspace_id: workspace_id.clone(),
+                revision: 1,
+            },
+        ));
+        publish_hub.publish(tenant_event(
+            "gui-tenant-replay",
+            AppEvent::SessionChanged {
+                session_id: session_b.clone(),
+                revision: 1,
+            },
+        ));
+
+        // tenant-a：Replay 1..4 → 仅 run-a 一条 Run 事件。
+        client_a
+            .send(&ClientFrame::Resume(ResumeRequest {
+                request_id: "resume-a".into(),
+                last_global_sequence: core_api::GlobalSequence(0),
+            }))
+            .await;
+        let ServerFrame::Resume(resume) = client_a.recv().await else {
+            panic!("expected resume response for tenant-a");
+        };
+        assert_eq!(resume.request_id, "resume-a");
+        let gui_protocol::ResumeDisposition::Replay {
+            from_sequence,
+            through_sequence,
+        } = resume.disposition
+        else {
+            panic!("expected replay disposition for tenant-a");
+        };
+        assert_eq!(from_sequence, core_api::GlobalSequence(1));
+        assert_eq!(through_sequence, core_api::GlobalSequence(4));
+        let envelope = recv_event(&client_a).await;
+        assert!(
+            matches!(&envelope.payload, AppEvent::RunChanged { run_id, .. } if *run_id == run_a),
+            "tenant-a 重放只应包含自己的 Run 事件"
+        );
+        assert_no_event(&client_a, "tenant-a 重放不得包含 workspace/他租户事件").await;
+
+        // tenant-b：Replay 1..4 → run-b 与 session-b 两条（workspace 被丢弃）。
+        client_b
+            .send(&ClientFrame::Resume(ResumeRequest {
+                request_id: "resume-b".into(),
+                last_global_sequence: core_api::GlobalSequence(0),
+            }))
+            .await;
+        let ServerFrame::Resume(resume) = client_b.recv().await else {
+            panic!("expected resume response for tenant-b");
+        };
+        let gui_protocol::ResumeDisposition::Replay {
+            from_sequence,
+            through_sequence,
+        } = resume.disposition
+        else {
+            panic!("expected replay disposition for tenant-b");
+        };
+        assert_eq!(from_sequence, core_api::GlobalSequence(1));
+        assert_eq!(through_sequence, core_api::GlobalSequence(4));
+        let envelope = recv_event(&client_b).await;
+        assert!(
+            matches!(&envelope.payload, AppEvent::RunChanged { run_id, .. } if *run_id == run_b),
+            "tenant-b 重放的第一条必须是自己的 Run 事件"
+        );
+        let envelope = recv_event(&client_b).await;
+        assert!(
+            matches!(&envelope.payload, AppEvent::SessionChanged { session_id, .. } if *session_id == session_b),
+            "tenant-b 重放的第二条必须是自己的 Session 事件"
+        );
+        assert_no_event(&client_b, "tenant-b 重放不得包含 workspace 事件").await;
+
+        client_a.conn.close().await.expect("close a");
+        client_b.conn.close().await.expect("close b");
+        conn_a.close().await.expect("session a close");
+        conn_b.close().await.expect("session b close");
     }
 
     #[tokio::test]

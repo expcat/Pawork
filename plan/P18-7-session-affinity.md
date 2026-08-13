@@ -1,6 +1,6 @@
 # P18-7：Session Affinity / Binding
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-4、P18-6、P5-3、P18-2
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-4、P18-6、P5-3、P18-2
 
 **最终目的**：让健康 session 在请求间稳定复用 account/model，同时在 cooldown、禁用或能力变化后安全 rebind，且不跨 tenant 复用粘性。
 
@@ -22,10 +22,16 @@
 
 ## 验收标准
 
-- [ ] healthy affinity 在重复请求间稳定
-- [ ] account unavailable 后只发生一次安全 rebind，不重复占用 lease
-- [ ] capability/policy hash 改变会使旧 binding 失效
-- [ ] Tenant A 永不复用 Tenant B 的 affinity binding
+- [x] healthy affinity 在重复请求间稳定
+- [x] account unavailable 后只发生一次安全 rebind，不重复占用 lease
+- [x] capability/policy hash 改变会使旧 binding 失效
+- [x] Tenant A 永不复用 Tenant B 的 affinity binding
+
+## 验证记录（2026-08-13）
+
+- `provider-control::binding` 已交付 tenant-scoped affinity、CAS revision / ownership epoch、TTL/capability/policy 失效、rebind/release/GC 与恢复语义。
+- `session-store::binding` 已交付 schema v9 持久化与严格事件 replay；重复同版本同内容幂等跳过，同版本冲突、版本跳跃与缺失版本 fail-closed。
+- `cargo test -p provider-control binding`：34 passed；`cargo test -p session-store binding`：9 passed。
+- DeepSeek 审查发现的 repair replay 重复事件问题已修复并回归通过。
 
 **相关文档**：[sessions](../docs/features/sessions.md) · [provider-control-plane](../docs/features/provider-control-plane.md) · [client-adapters](../docs/features/client-adapters.md) · [ROADMAP](../ROADMAP.md)
-

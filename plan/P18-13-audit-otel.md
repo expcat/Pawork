@@ -1,6 +1,6 @@
 # P18-13：Canonical Audit Event / OTel Export
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-2、P18-4～P18-10、P1-9、P1-10、P1-11
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠Canonical store/export 与部分桥接已实现 · 交付成熟度：Built · 依赖：P18-2、P18-4～P18-10、P1-9、P1-10、P1-11
 
 **最终目的**：把身份、policy、route、lease、Agent、permission/tool 与 Client 行为写成 tenant-scoped canonical audit event，并以脱敏 allowlist 导出 OTel/SIEM。
 
@@ -34,3 +34,9 @@ P14-4/9 存在两处审计职责重叠：WebScrape adapter 内置有界内存 au
 - [ ] quota refresh / 告警（含脱敏 kind/source）写入 canonical audit event，可跨 tenant 隔离查询与导出
 
 **相关文档**：[tenant-audit](../docs/features/tenant-audit.md) · [observability](../docs/features/observability.md) · [ADR-016](../docs/adr/ADR-016-core-event-persist-replay.md) · [ROADMAP](../ROADMAP.md)
+
+## 当前进度（2026-08-13）
+
+- 新增 workspace crate `audit-log`：`AuditEventV1`、内存/JSONL durable store、tenant query、allowlist exporter、schema/duplicate/corruption fail-closed 与 5 个回归测试。
+- app-service 已桥接 policy、lease、agent、approval、client lifecycle 与 quota refresh 的 canonical audit；`cargo check -p app-service --tests` 通过。
+- 待完成：route/fallback/rebind/config/export/QuotaAlert 的完整接线、生产 OTel/SIEM exporter、WebScrape 内置 audit 收口，以及 P18-13 reviewer。

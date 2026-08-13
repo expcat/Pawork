@@ -1,6 +1,6 @@
 # P18-5：ErrorClassifier、Health、Cooldown 与 Circuit Breaker
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-3、P2-10、P2-11、P15-9
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-3、P2-10、P2-11、P15-9
 
 **最终目的**：把 transport retry、credential/account failover 与 protocol fallback 分开，使失败只影响正确 scope，不把请求错误或客户端取消误判为账号故障。
 
@@ -22,9 +22,17 @@
 
 ## 验收标准
 
-- [ ] `ClientCancelled`、`InvalidRequest`、`ContextTooLarge` 不触发账号轮换或健康惩罚
-- [ ] `ProtocolIncompatible` 不盲目轮询所有 credential
-- [ ] 401 只 refresh-once，402/account blocked 可 failover，429 尊重 scope/Retry-After
-- [ ] core 不出现按 Provider 名分支
+- [x] `ClientCancelled`、`InvalidRequest`、`ContextTooLarge` 不触发账号轮换或健康惩罚
+- [x] `ProtocolIncompatible` 不盲目轮询所有 credential
+- [x] 401 只 refresh-once，402/account blocked 可 failover，429 尊重 scope/Retry-After
+- [x] core 不出现按 Provider 名分支
+
+## 验证记录（2026-08-13）
+
+- Validation Level: L1
+- Affected crates: `provider-control`
+- Validated: `cargo fmt -p provider-control -- --check`；`cargo test -p provider-control`（100 unit + 10 error-matrix）；`cargo clippy -p provider-control --all-targets -- -D warnings`；`cargo check -p provider-control --no-default-features`；独立 DeepSeek reviewer 复审通过
+- Targeted regressions: 401 refresh-once、billing blocked 显式恢复、429 scope/Retry-After、默认 4xx fail-closed、5xx provider scope、cancel/client error 的 half-open probe 归还、并发 probe 上限、stale success 不清 cooldown、Provider 扩展 classifier 与无 Provider 名称分支
+- Full workspace gate: NOT RUN（未命中升级条件）
 
 **相关文档**：[providers](../docs/features/providers.md) · [provider-control-plane](../docs/features/provider-control-plane.md) · [P2-10](P2-10-retry-error.md) · [ROADMAP](../ROADMAP.md)

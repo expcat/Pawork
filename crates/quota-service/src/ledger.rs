@@ -208,7 +208,10 @@ impl LedgerQuotaAdapter {
             occurred_at_end_ms: Some(now_ms),
             ..UsageQuery::default()
         };
-        let records = self.ledger.query(&query).await;
+        let records =
+            self.ledger.query(&query).await.map_err(|error| {
+                QuotaError::other(format!("ledger delta query failed: {error}"))
+            })?;
 
         match &remote.unit {
             QuotaUnit::Count => Ok(records.len() as u64),
@@ -293,7 +296,10 @@ impl QuotaAdapter for LedgerQuotaAdapter {
         // currency-agnostic; cost totals are restricted to the requested
         // currency by post-filtering, keeping every projection
         // currency-homogeneous and robust to any future `aggregate` change.
-        let records = self.ledger.query(&query).await;
+        let records =
+            self.ledger.query(&query).await.map_err(|error| {
+                QuotaError::other(format!("ledger fetch query failed: {error}"))
+            })?;
 
         if cancel.is_cancelled() {
             return Err(QuotaError::Cancelled);

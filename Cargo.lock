@@ -203,6 +203,7 @@ dependencies = [
  "agent-events",
  "artifact-store",
  "async-trait",
+ "audit-log",
  "auth-service",
  "client-adapter-api",
  "core-api",
@@ -214,6 +215,7 @@ dependencies = [
  "policy-engine",
  "process-runtime",
  "provider-api",
+ "provider-control",
  "provider-runtime",
  "quota-service",
  "reqwest 0.12.28",
@@ -226,6 +228,7 @@ dependencies = [
  "task-manager",
  "teams",
  "tempfile",
+ "tenant-service",
  "test-support",
  "thiserror 2.0.20",
  "tokio",
@@ -357,6 +360,16 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "audit-log"
+version = "0.0.0"
+dependencies = [
+ "agent-domain",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "auditable-serde"
@@ -1009,15 +1022,22 @@ name = "core-runtime"
 version = "0.0.0"
 dependencies = [
  "agent-domain",
+ "app-database",
  "app-service",
+ "async-trait",
  "auth-service",
  "core-api",
  "provider-api",
+ "provider-control",
+ "quota-service",
  "serde_json",
  "subscription-hub",
+ "tempfile",
  "test-support",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "usage-ledger",
 ]
 
 [[package]]
@@ -3226,6 +3246,7 @@ dependencies = [
  "gui-protocol",
  "gui-server",
  "provider-api",
+ "provider-control",
  "resource-loader",
  "sandbox-runtime",
  "serde_json",
@@ -3238,6 +3259,7 @@ dependencies = [
  "transport-api",
  "transport-local",
  "transport-remote",
+ "usage-ledger",
  "workspace-service",
 ]
 
@@ -3664,6 +3686,10 @@ version = "0.0.0"
 dependencies = [
  "agent-domain",
  "async-trait",
+ "proptest",
+ "protected-blob-store",
+ "provider-api",
+ "provider-runtime",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -5748,8 +5774,10 @@ version = "0.0.0"
 dependencies = [
  "agent-domain",
  "async-trait",
+ "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tracing",

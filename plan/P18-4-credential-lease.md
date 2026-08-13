@@ -1,6 +1,6 @@
 # P18-4：CredentialPool / Lease 与并发准入
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-3、P2-10、P1-4
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-3、P2-10、P1-4
 
 **最终目的**：用可释放、可过期、可幂等回收的 `CredentialLease` 代替“每次从 credential 数组挑一个”，确保 per-account concurrency 和取消语义正确。
 
@@ -26,12 +26,21 @@ P14-9 的 `RefreshScheduler` target 需要 credential resolver，当前生产无
 
 ## 验收标准
 
-- [ ] active lease 永不超过 configured account concurrency
-- [ ] release/reclaim 幂等，cancel/drop/restart 后无永久泄漏
-- [ ] `LeaseOutcome::Cancelled` 不降低 account health
-- [ ] Agent/Client 只能获得 lease，不能读取持久 Secret
-- [ ] quota-service refresh target 的 credential resolver 经 CredentialLease acquire → resolve → release 注入，release 不影响 account health
-- [ ] run usage 的 `credential_id` 来自实际 lease；QuotaRuntime 组合层接线后移除 `credential_id=None` 的 synthetic 路径
-- [ ] reasoning 持久 protector 的 key 解析经 CredentialLease acquire → resolve → release 链路注入（Phase 15 持久化 protector 接线延后项，见 [P15-10](P15-10-review-remediation.md)），credential 只持有 `secret_ref`，不向 protector 扩散明文
+- [x] active lease 永不超过 configured account concurrency
+- [x] release/reclaim 幂等，cancel/drop/restart 后无永久泄漏
+- [x] `LeaseOutcome::Cancelled` 不降低 account health
+- [x] Agent/Client 只能获得 lease，不能读取持久 Secret
+- [ ] quota-service refresh target 的 credential resolver 经 CredentialLease acquire → resolve → release 注入，release 不影响 account health（P18-14 生产 target 统一接线）
+- [x] run usage 的 `credential_id` 来自实际 lease；QuotaRuntime 组合层接线后移除 `credential_id=None` 的 synthetic 路径
+- [ ] reasoning 持久 protector 的 key 解析经 CredentialLease acquire → resolve → release 链路注入（P18-14 生产 factory 统一接线，见 [P15-10](P15-10-review-remediation.md)），credential 只持有 `secret_ref`，不向 protector 扩散明文
+
+## 验证记录（2026-08-13）
+
+- Validation Level: L1
+- Affected crates: `provider-control`、`app-database`、`app-service`、`core-runtime`，以及 `pawork`/`cli-host`/`gui-server` 关键消费者编译
+- Validated: `cargo test -p provider-control`（126 unit/property + 10 error-matrix）；`cargo test -p app-service`（54 unit + 46 integration）；`cargo test -p core-runtime`（13）；相关 Clippy、fmt 与关键消费者 check；独立 DeepSeek reviewer PASS
+- Targeted regressions: account/tenant 并发、lease 状态机与幂等 release/reclaim、cancel/drop、session-scoped canonical Agent 归属、真实 SQLite 四阶段重启恢复/过期回收、生产周期 reclaim 错误恢复与 shutdown
+- Full workspace gate: NOT RUN（未命中升级条件）
+- P18-14 closure: quota refresh target 的 Route→Lease→Resolve→Release、persistent protector 的 session/run scope、终态 lease retention/GC。
 
 **相关文档**：[provider-control-plane](../docs/features/provider-control-plane.md) · [multi-agent](../docs/features/multi-agent.md) · [ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [ROADMAP](../ROADMAP.md)

@@ -1,6 +1,6 @@
 # P18-1：Control Plane 契约与迁移基线
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P1-13、P0-4、P0-8、ADR-033
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P1-13、P0-4、P0-8、ADR-033
 
 **最终目的**：冻结 Provider、Account、Session、Agent 与 Client Protocol 的职责边界、versioned schema 和回滚策略，使后续账号池与客户端适配任务可以独立合并而不修改现有 `ModelProvider` contract。
 
@@ -23,10 +23,19 @@
 
 ## 验收标准
 
-- [ ] `ModelProvider` / `EmbeddingProvider` contract 未扩张账号、租户或客户端职责
-- [ ] 五类状态机和所有权边界均有明确输入、输出与失败域
-- [ ] `agent-domain` 不依赖 `provider-api` / Client / IO crate，依赖方向测试无新增环
-- [ ] legacy migration 与 feature-off runtime fallback 可独立执行
-- [ ] 所有新增持久化实体和 canonical event 明确 version 字段
+- [x] `ModelProvider` / `EmbeddingProvider` contract 未扩张账号、租户或客户端职责
+- [x] 五类状态机和所有权边界均有明确输入、输出与失败域
+- [x] `agent-domain` 不依赖 `provider-api` / Client / IO crate，依赖方向测试无新增环
+- [x] legacy migration 与 feature-off runtime fallback 可独立执行
+- [x] 所有新增持久化实体和 canonical event 明确 version 字段
+
+## 验证记录（2026-08-12）
+
+- Validation Level: L1
+- Affected crates: `agent-domain`、`provider-control`、`core-api`、`app-database`；关键直接消费者 `orchestration`
+- Validated: `cargo fmt -p agent-domain -p provider-control -p core-api -p app-database -- --check`；`cargo test -p provider-control`；`cargo test -p provider-control --no-default-features`；`cargo test -p app-database -p core-api -p agent-domain`；`cargo check -p orchestration`；`cargo run -p schema-typegen -- --check`；`git diff --check`
+- Targeted regressions: `account-control-v1` feature-off fallback、`local/default` synthetic account、versioned serde fail-closed、migration 幂等/备份回滚/整批原子性、credential 表无 secret 列、关键消费者编译
+- Full workspace gate: NOT RUN（未命中升级条件）
+- P18-15 follow-up: 对 `core-api` / `provider-control` / `app-database` 的 control-plane schema version 常量增加跨 crate 一致性断言。
 
 **相关文档**：[ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [Provider Control Plane](../docs/features/provider-control-plane.md) · [ROADMAP](../ROADMAP.md)

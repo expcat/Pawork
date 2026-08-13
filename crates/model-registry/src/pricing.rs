@@ -2,6 +2,13 @@
 
 use agent_domain::{Cost, TokenUsage};
 
+/// 内置 rate card 标识（写入 usage ledger 的定价快照）。
+pub const BUILTIN_RATE_CARD: &str = "builtin";
+
+/// 内置 rate card 版本（写入 usage ledger 的定价快照；价格更新时递增，
+/// 历史费用不随价格漂移）。
+pub const BUILTIN_RATE_VERSION: &str = "2026-08-01";
+
 /// 百万 token 维度的线性定价，金额使用微单位（micros）避免浮点误差。
 ///
 /// `*_per_mtoken_micros` 表示「每 1_000_000 个该类 token 的费用（最小货币单位的百万分之一）」。

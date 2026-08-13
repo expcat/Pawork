@@ -14,6 +14,12 @@ use core_api::{AppCommand, GlobalSequence};
 use subscription_hub::{EventHub, HubError, HubSubscription};
 
 use crate::AppService;
+use audit_log::{AuditAction, AuditDecision, AuditDimensions, AuditTargetKind};
+use tenant_service::IdentityContext;
+
+fn legacy_client_tenant() -> agent_domain::TenantId {
+    agent_domain::TenantId::new(core_api::DEFAULT_CONTROL_PLANE_TENANT)
+}
 
 struct ReattachRequest {
     client_session_id: ClientSessionId,
@@ -198,13 +204,14 @@ impl ClientAdapterHost {
             .service
             .router()
             .aggregate()
-            .session_exists(&record.core_session_id)
+            .session_exists(&record.core_session_id, &legacy_client_tenant())
         {
             return Err(AdapterError::CoreSessionNotFound(
                 record.core_session_id.clone(),
             ));
         }
         self.registry.register(record.clone()).await?;
+        self.record_client_lifecycle(&context, &record, "client_attached");
         Ok(CanonicalCoreFrame::SessionState(record))
     }
 
@@ -229,7 +236,7 @@ impl ClientAdapterHost {
             .service
             .router()
             .aggregate()
-            .session_exists(&record.core_session_id)
+            .session_exists(&record.core_session_id, &legacy_client_tenant())
         {
             return Err(AdapterError::CoreSessionNotFound(
                 record.core_session_id.clone(),
@@ -246,6 +253,7 @@ impl ClientAdapterHost {
                 request.updated_at,
             )
             .await?;
+        self.record_client_lifecycle(&context, &record, "client_reattached");
         Ok(CanonicalCoreFrame::SessionState(record))
     }
 
@@ -275,7 +283,30 @@ impl ClientAdapterHost {
                 updated_at,
             )
             .await?;
+        self.record_client_lifecycle(&context, &record, "client_disconnected");
         Ok(CanonicalCoreFrame::SessionState(record))
+    }
+
+    fn record_client_lifecycle(
+        &self,
+        context: &AdapterSessionContext,
+        record: &ClientSessionRecord,
+        reason_code: &'static str,
+    ) {
+        self.service.tenant_policy().record_control_event(
+            &IdentityContext::local(),
+            AuditAction::ClientLifecycle,
+            AuditTargetKind::Client,
+            AuditDecision::Observe,
+            reason_code,
+            AuditDimensions {
+                session_id: Some(record.core_session_id.clone()),
+                client_id: Some(context.client_session_id.0.clone()),
+                trace_id: Some(format!("connection:{}", context.connection_id.as_str())),
+                ..AuditDimensions::default()
+            },
+            record.revision,
+        );
     }
 
     pub fn subscribe(&self) -> HubSubscription {
@@ -353,11 +384,11 @@ mod tests {
         ClientSessionRecord, InMemorySessionRegistryStore, MockClientAdapterFactory,
         CLIENT_ADAPTER_SCHEMA_VERSION,
     };
+    use core_api::ClientContextSnapshot;
     use core_api::{
         ActorIdentity, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
         CommandSource, API_VERSION,
     };
-    use core_api::ClientContextSnapshot;
 
     fn snapshot() -> CapabilitySnapshot {
         CapabilitySnapshot {
@@ -849,7 +880,10 @@ mod tests {
             .await
             .expect("attached record");
         let ok = host
-            .dispatch(context.clone(), context_replace(bound.core_session_id.clone()))
+            .dispatch(
+                context.clone(),
+                context_replace(bound.core_session_id.clone()),
+            )
             .await
             .expect("own-session context replace allowed");
         assert!(matches!(ok, CanonicalCoreFrame::Response(_)));

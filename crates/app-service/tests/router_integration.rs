@@ -8,9 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent_domain::{
-    ActorId, ArtifactId, CommandId, ConnectionId, GuiClientId, ProviderId, QueryId, RunId, SessionId,
-    Timestamp,
-    ToolCallId, WorkspaceId,
+    ActorId, ArtifactId, CommandId, ConnectionId, GuiClientId, ProviderId, QueryId, RunId,
+    SessionId, Timestamp, ToolCallId, WorkspaceId,
 };
 use app_service::{CommandRouter, RouterConfig, RunSupervisorStats};
 use core_api::{
@@ -39,6 +38,11 @@ fn cli_identity() -> ActorIdentity {
         actor_id: ActorId::from("tester"),
         display_name: Some("Tester".into()),
     }
+}
+
+/// P18-2：本地 CLI 身份解析出的真实租户（local/default）。
+fn local_tenant() -> agent_domain::TenantId {
+    tenant_service::IdentityContext::local().tenant_id
 }
 
 fn gui_source() -> CommandSource {
@@ -255,8 +259,14 @@ async fn concurrent_run_starts_carry_distinct_run_ids_bound_to_their_own_runs() 
     assert_eq!(router.aggregate().runs().len(), 2, "两个 run 都应被创建");
 
     // 响应中的 run id 必须绑定到发起它的会话，而不是"最近一次启动的 run"。
-    let record_a = router.aggregate().get_run(&run_id_a).expect("run a 存在");
-    let record_b = router.aggregate().get_run(&run_id_b).expect("run b 存在");
+    let record_a = router
+        .aggregate()
+        .get_run(&run_id_a, &local_tenant())
+        .expect("run a 存在");
+    let record_b = router
+        .aggregate()
+        .get_run(&run_id_b, &local_tenant())
+        .expect("run b 存在");
     assert_eq!(record_a.session_id, session_a);
     assert_eq!(record_b.session_id, session_b);
 
@@ -268,7 +278,7 @@ async fn concurrent_run_starts_carry_distinct_run_ids_bound_to_their_own_runs() 
             || {
                 router
                     .aggregate()
-                    .get_run(&run_id_a)
+                    .get_run(&run_id_a, &local_tenant())
                     .map(|run| run.state == RunState::Cancelled)
                     .unwrap_or(false)
             },
@@ -282,6 +292,91 @@ async fn concurrent_run_starts_carry_distinct_run_ids_bound_to_their_own_runs() 
         router.supervisor().is_active(&run_id_b),
         "并发 run B 不应受 A 取消影响"
     );
+}
+
+#[tokio::test]
+async fn idempotency_replay_is_tenant_scoped() {
+    use tenant_service::IdentityContext;
+
+    #[derive(Clone)]
+    struct TenantResolver;
+
+    impl tenant_service::IdentityResolver for TenantResolver {
+        fn resolve(
+            &self,
+            principal: Option<&str>,
+        ) -> Result<IdentityContext, tenant_service::IdentityError> {
+            match principal {
+                Some("authenticated_client:tenant-a") => Ok(IdentityContext::new(
+                    agent_domain::TenantId::new("tenant-a"),
+                    agent_domain::PrincipalId::new("principal-a"),
+                )),
+                Some("authenticated_client:tenant-b") => Ok(IdentityContext::new(
+                    agent_domain::TenantId::new("tenant-b"),
+                    agent_domain::PrincipalId::new("principal-b"),
+                )),
+                Some(value) if !value.trim().is_empty() => Ok(IdentityContext::local()),
+                Some(_) => Err(tenant_service::IdentityError::EmptyPrincipal),
+                None => Err(tenant_service::IdentityError::MissingIdentity(
+                    "no principal".into(),
+                )),
+            }
+        }
+    }
+
+    let router =
+        CommandRouter::with_identity_resolver(RouterConfig::default(), Arc::new(TenantResolver));
+    let workspace_id = add_workspace(&router, &temp_workspace_dir());
+    let tenant_a = ActorIdentity::AuthenticatedClient {
+        actor_id: ActorId::from("actor-a"),
+        subject: "tenant-a".into(),
+    };
+    let tenant_b = ActorIdentity::AuthenticatedClient {
+        actor_id: ActorId::from("actor-b"),
+        subject: "tenant-b".into(),
+    };
+    let shared = AppCommandEnvelope {
+        api_version: API_VERSION,
+        command_id: CommandId::from("shared-command"),
+        source: gui_source(),
+        identity: tenant_a.clone(),
+        expected_revision: None,
+        idempotency_key: Some("shared-key".into()),
+        issued_at: Timestamp::from_unix_millis(1),
+        command: AppCommand::SessionCreate {
+            workspace_id,
+            title: Some("tenant-owned".into()),
+        },
+    };
+
+    let first_a = router.dispatch(shared.clone());
+    let session_a = session_id_from(&first_a);
+    let first_b = router.dispatch(AppCommandEnvelope {
+        identity: tenant_b.clone(),
+        ..shared.clone()
+    });
+    let session_b = session_id_from(&first_b);
+    assert_ne!(session_a, session_b, "Tenant B must execute, not replay A");
+    assert!(router
+        .aggregate()
+        .get_session(&session_a, &agent_domain::TenantId::new("tenant-a"))
+        .is_some());
+    assert!(router
+        .aggregate()
+        .get_session(&session_b, &agent_domain::TenantId::new("tenant-b"))
+        .is_some());
+
+    let replay_a = router.dispatch(AppCommandEnvelope {
+        command_id: CommandId::from("tenant-a-key-retry"),
+        ..shared.clone()
+    });
+    let replay_b = router.dispatch(AppCommandEnvelope {
+        command_id: CommandId::from("tenant-b-key-retry"),
+        identity: tenant_b,
+        ..shared
+    });
+    assert_eq!(replay_a, first_a, "Tenant A replays only Tenant A response");
+    assert_eq!(replay_b, first_b, "Tenant B replays only Tenant B response");
 }
 
 #[tokio::test]
@@ -330,7 +425,10 @@ async fn sources_and_identities_are_recorded_per_command() {
     else {
         panic!("RunStart 应 Accepted 且携带 run id");
     };
-    let run = router.aggregate().get_run(&run_id).expect("run recorded");
+    let run = router
+        .aggregate()
+        .get_run(&run_id, &local_tenant())
+        .expect("run recorded");
     assert_eq!(
         run.source,
         gui_source(),
@@ -339,7 +437,7 @@ async fn sources_and_identities_are_recorded_per_command() {
     assert_eq!(run.session_id, session_id);
     let session = router
         .aggregate()
-        .get_session(&run.session_id)
+        .get_session(&run.session_id, &local_tenant())
         .expect("session");
     assert_eq!(session.workspace_id, workspace_id);
 }
@@ -403,7 +501,7 @@ async fn snapshot_and_queries_reflect_aggregate() {
         || {
             router
                 .aggregate()
-                .get_run(&run_id)
+                .get_run(&run_id, &local_tenant())
                 .is_some_and(|run| run.state == core_api::RunState::Completed)
         },
         Duration::from_secs(5),
@@ -805,4 +903,290 @@ fn session_client_context_replace_is_source_gated() {
             Some(snapshot.clone())
         );
     }
+}
+
+/// P18-2：System 显式映射为 local/system，不能与 local/user 混同。
+#[tokio::test]
+async fn system_identity_uses_explicit_local_system_principal() {
+    let router = CommandRouter::new(RouterConfig::default());
+    let workspace_id = add_workspace(&router, &temp_workspace_dir());
+    let response = router.dispatch(command(
+        cli_source(),
+        ActorIdentity::System,
+        AppCommand::SessionCreate {
+            workspace_id,
+            title: Some("system session".into()),
+        },
+    ));
+    let session_id = session_id_from(&response);
+    let session = router
+        .aggregate()
+        .get_session(&session_id, &local_tenant())
+        .expect("system session");
+    assert_eq!(session.principal_id.as_str(), "local/system");
+}
+
+/// P18-2 身份传播：Session 记录携带解析出的真实 tenant/principal，且
+/// SessionGet / RunStatus 查询按调用者租户隔离，跨租户视同不存在。
+#[tokio::test]
+async fn sessions_and_runs_are_created_and_queried_under_resolved_tenant() {
+    use tenant_service::IdentityContext;
+
+    #[derive(Clone)]
+    struct MappingResolver;
+
+    impl tenant_service::IdentityResolver for MappingResolver {
+        fn resolve(
+            &self,
+            principal: Option<&str>,
+        ) -> Result<IdentityContext, tenant_service::IdentityError> {
+            match principal {
+                // 空 subject（principal 以 `:` 结尾、无实际主体）：fail-closed。
+                Some(p) if p.ends_with(':') => Err(tenant_service::IdentityError::EmptyPrincipal),
+                Some(p) if p.ends_with("tenant-a:user") => Ok(IdentityContext::new(
+                    agent_domain::TenantId::new("tenant-a"),
+                    agent_domain::PrincipalId::new("tenant-a:user"),
+                )),
+                Some(p) if p.ends_with("tenant-b:user") => Ok(IdentityContext::new(
+                    agent_domain::TenantId::new("tenant-b"),
+                    agent_domain::PrincipalId::new("tenant-b:user"),
+                )),
+                Some(_) => Ok(IdentityContext::local()),
+                None => Err(tenant_service::IdentityError::MissingIdentity(
+                    "no principal".into(),
+                )),
+            }
+        }
+    }
+
+    // P18-9 deny-first：未知非 local/default 租户回落 Viewer，本测试的
+    // tenant-a / tenant-b 按「已配置租户」播种显式 User profile（身份传播
+    // 测试本身不覆盖策略矩阵）。
+    use tenant_service::TenantPolicyEngine;
+    let engine = Arc::new(tenant_service::InMemoryTenantPolicyEngine::default());
+    for tenant in ["tenant-a", "tenant-b"] {
+        engine.set_policy(
+            agent_domain::TenantId::new(tenant),
+            tenant_service::TenantPolicy {
+                permission_profile: Some(tenant_service::PermissionProfile {
+                    default_role: Some(tenant_service::PrincipalRole::User),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+    }
+    let router = CommandRouter::with_tenant_policy(
+        RouterConfig::default(),
+        Arc::new(MappingResolver),
+        engine,
+    );
+    let workspace_id = add_workspace(&router, &temp_workspace_dir());
+
+    let tenant_a = ActorIdentity::AuthenticatedClient {
+        actor_id: ActorId::from("a"),
+        subject: "tenant-a:user".into(),
+    };
+    let tenant_b = ActorIdentity::AuthenticatedClient {
+        actor_id: ActorId::from("b"),
+        subject: "tenant-b:user".into(),
+    };
+
+    // Tenant A 创建 session：记录必须携带真实 tenant/principal。
+    let created = router.dispatch(command(
+        gui_source(),
+        tenant_a.clone(),
+        AppCommand::SessionCreate {
+            workspace_id: workspace_id.clone(),
+            title: Some("tenant-a session".into()),
+        },
+    ));
+    let session_id = session_id_from(&created);
+    let stored = router
+        .aggregate()
+        .get_session(&session_id, &agent_domain::TenantId::new("tenant-a"))
+        .expect("session visible to tenant-a");
+    assert_eq!(stored.tenant_id.as_str(), "tenant-a");
+    assert_eq!(stored.principal_id.as_str(), "tenant-a:user");
+
+    // Tenant B 查询同一 session：跨租户视同不存在（不泄漏存在性）。
+    let cross = router.dispatch_query(query(
+        gui_source(),
+        tenant_b.clone(),
+        AppQuery::SessionGet {
+            session_id: session_id.clone(),
+        },
+    ));
+    match cross.response {
+        AppResponse::Error(context) => {
+            assert_eq!(context.category, agent_domain::ErrorCategory::NotFound);
+        }
+        other => panic!("expected not-found for cross-tenant session, got {other:?}"),
+    }
+
+    // Tenant A 查询同一 session：命中且返回真实租户。
+    let own = router.dispatch_query(query(
+        gui_source(),
+        tenant_a.clone(),
+        AppQuery::SessionGet {
+            session_id: session_id.clone(),
+        },
+    ));
+    let AppResponse::Data(value) = own.response else {
+        panic!("expected own-tenant session data, got {:?}", own.response);
+    };
+    assert_eq!(value["tenant_id"], json!("tenant-a"));
+    assert_eq!(value["principal_id"], json!("tenant-a:user"));
+
+    // 缺省主体（空 principal）fail-closed：查询被拒绝，不落到默认租户。
+    let empty = ActorIdentity::AuthenticatedClient {
+        actor_id: ActorId::from("empty"),
+        subject: "".into(),
+    };
+    let denied = router.dispatch_query(query(
+        gui_source(),
+        empty,
+        AppQuery::SessionGet {
+            session_id: session_id.clone(),
+        },
+    ));
+    match denied.response {
+        AppResponse::Error(context) => {
+            assert_eq!(context.category, agent_domain::ErrorCategory::Authorization);
+        }
+        other => panic!("expected authorization error, got {other:?}"),
+    }
+
+    // 为 Tenant A 建立一个活跃 run；Tenant B 对其所有 mutating command 都必须
+    // 得到 NotFound，且 SnapshotFetch 不得泄漏 session/run/approval。
+    let provider: Arc<dyn ModelProvider> = Arc::new(
+        test_support::MockProvider::new(test_support::MockScript::new().wait_for_cancellation())
+            .with_id(ProviderId::from("mock")),
+    );
+    router.register_provider(provider);
+    let started = router.dispatch(command(
+        gui_source(),
+        tenant_a.clone(),
+        AppCommand::RunStart {
+            session_id: session_id.clone(),
+            user_message: "tenant scoped run".into(),
+            model: None,
+            profile: None,
+        },
+    ));
+    let run_id = match started.response {
+        AppResponse::Accepted {
+            run_id: Some(id), ..
+        } => id,
+        other => panic!("Tenant A RunStart should be Accepted with run id, got {other:?}"),
+    };
+
+    for command_value in [
+        AppCommand::RunCancel {
+            run_id: run_id.clone(),
+        },
+        AppCommand::RunRetry {
+            run_id: run_id.clone(),
+        },
+        AppCommand::ToolApprove {
+            run_id: run_id.clone(),
+            tool_call_id: ToolCallId::from("cross-tenant-tool"),
+            decision: core_api::ApprovalDecision::ApproveOnce,
+        },
+    ] {
+        let response = router.dispatch(command(gui_source(), tenant_b.clone(), command_value));
+        match response.response {
+            AppResponse::Error(context) => {
+                assert_eq!(context.category, agent_domain::ErrorCategory::NotFound);
+            }
+            other => panic!("expected cross-tenant not-found, got {other:?}"),
+        }
+    }
+
+    let tenant_b_snapshot =
+        router.dispatch_query(query(gui_source(), tenant_b, AppQuery::SnapshotFetch));
+    let AppResponse::Data(snapshot) = tenant_b_snapshot.response else {
+        panic!("expected tenant-b snapshot data");
+    };
+    assert_eq!(snapshot["sessions"].as_array().map(Vec::len), Some(0));
+    assert_eq!(snapshot["runs"].as_array().map(Vec::len), Some(0));
+    assert_eq!(snapshot["approvals"].as_array().map(Vec::len), Some(0));
+
+    let tenant_a_snapshot = router.dispatch_query(query(
+        gui_source(),
+        tenant_a.clone(),
+        AppQuery::SnapshotFetch,
+    ));
+    let AppResponse::Data(snapshot) = tenant_a_snapshot.response else {
+        panic!("expected tenant-a snapshot data");
+    };
+    assert_eq!(snapshot["sessions"].as_array().map(Vec::len), Some(1));
+    assert_eq!(snapshot["runs"].as_array().map(Vec::len), Some(1));
+
+    // 清理活跃任务，避免测试退出时遗留后台 run。
+    let cancelled = router.dispatch(command(
+        gui_source(),
+        tenant_a,
+        AppCommand::RunCancel { run_id },
+    ));
+    assert!(matches!(cancelled.response, AppResponse::Data(_)));
+}
+
+#[test]
+fn dispatch_rejects_blank_identity_from_custom_resolver() {
+    #[derive(Clone)]
+    struct BlankIdentityResolver;
+
+    impl tenant_service::IdentityResolver for BlankIdentityResolver {
+        fn resolve(
+            &self,
+            principal: Option<&str>,
+        ) -> Result<tenant_service::IdentityContext, tenant_service::IdentityError> {
+            match principal {
+                Some("authenticated_client:blank-tenant") => {
+                    Ok(tenant_service::IdentityContext::new(
+                        agent_domain::TenantId::new(" \t"),
+                        agent_domain::PrincipalId::new("client/blank-tenant"),
+                    ))
+                }
+                Some("authenticated_client:blank-principal") => {
+                    Ok(tenant_service::IdentityContext::new(
+                        agent_domain::TenantId::new("tenant-a"),
+                        agent_domain::PrincipalId::new("\n"),
+                    ))
+                }
+                _ => Err(tenant_service::IdentityError::MissingIdentity(
+                    "test resolver requires a recognized principal".into(),
+                )),
+            }
+        }
+    }
+
+    let router = CommandRouter::with_identity_resolver(
+        RouterConfig::default(),
+        Arc::new(BlankIdentityResolver),
+    );
+
+    for (subject, expected_fragment) in
+        [("blank-tenant", "tenant"), ("blank-principal", "principal")]
+    {
+        let response = router.dispatch(command(
+            gui_source(),
+            ActorIdentity::AuthenticatedClient {
+                actor_id: ActorId::from(subject),
+                subject: subject.into(),
+            },
+            AppCommand::CoreInitialize,
+        ));
+
+        match response.response {
+            AppResponse::Error(context) => {
+                assert_eq!(context.category, agent_domain::ErrorCategory::Authorization);
+                assert!(context.message.contains(expected_fragment));
+            }
+            other => panic!("blank custom identity must fail closed, got {other:?}"),
+        }
+    }
+
+    assert!(!router.aggregate().snapshot().core_ready);
 }

@@ -116,6 +116,11 @@ fn cli_identity() -> ActorIdentity {
     }
 }
 
+/// P18-2：本地 CLI 身份解析出的真实租户（local/default）。
+fn local_tenant() -> agent_domain::TenantId {
+    tenant_service::IdentityContext::local().tenant_id
+}
+
 fn command(
     source: CommandSource,
     identity: ActorIdentity,
@@ -247,7 +252,7 @@ async fn run_streams_merge_delta_events_and_reach_terminal_state() {
         || {
             router
                 .aggregate()
-                .get_run(&run_id)
+                .get_run(&run_id, &local_tenant())
                 .is_some_and(|run| run.state == RunState::Completed)
         },
         Duration::from_secs(5),
@@ -308,7 +313,7 @@ async fn retry_cancelled_run_restarts_and_active_retry_is_rejected() {
         || {
             router
                 .aggregate()
-                .get_run(&run_id)
+                .get_run(&run_id, &local_tenant())
                 .is_some_and(|run| run.state == RunState::StreamingResponse)
         },
         Duration::from_secs(5),
@@ -363,7 +368,7 @@ async fn retry_cancelled_run_restarts_and_active_retry_is_rejected() {
         || {
             router
                 .aggregate()
-                .get_run(&run_id)
+                .get_run(&run_id, &local_tenant())
                 .is_some_and(|run| run.state == RunState::StreamingResponse)
         },
         Duration::from_secs(5),
@@ -419,7 +424,11 @@ async fn approval_pending_resolves_and_run_completes() {
     assert_eq!(tool_call_id.as_str(), "mock-tool-call-0");
     assert_eq!(router.approvals().pending_count(), 1);
     assert_eq!(
-        router.aggregate().get_run(&run_id).expect("run").state,
+        router
+            .aggregate()
+            .get_run(&run_id, &local_tenant())
+            .expect("run")
+            .state,
         RunState::WaitingForApproval
     );
 
@@ -476,7 +485,7 @@ async fn approval_pending_resolves_and_run_completes() {
         || {
             router
                 .aggregate()
-                .get_run(&run_id)
+                .get_run(&run_id, &local_tenant())
                 .is_some_and(|run| run.state == RunState::Completed)
         },
         Duration::from_secs(5),
@@ -610,7 +619,7 @@ async fn concurrent_runs_are_independent() {
             [&first, &second].into_iter().all(|run_id| {
                 router
                     .aggregate()
-                    .get_run(run_id)
+                    .get_run(run_id, &local_tenant())
                     .is_some_and(|run| run.state == RunState::Completed)
             })
         },
@@ -633,14 +642,17 @@ async fn run_record_carries_source_state_and_revision() {
         || {
             router
                 .aggregate()
-                .get_run(&run_id)
+                .get_run(&run_id, &local_tenant())
                 .is_some_and(|run| run.state == RunState::Completed)
         },
         Duration::from_secs(5),
     )
     .await;
     assert!(done);
-    let run = router.aggregate().get_run(&run_id).expect("run");
+    let run = router
+        .aggregate()
+        .get_run(&run_id, &local_tenant())
+        .expect("run");
     assert_eq!(run.source, cli_source());
     assert_eq!(run.state, RunState::Completed);
     assert!(run.revision > 0);

@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
 
-use agent_domain::CommandId;
+use agent_domain::{CommandId, TenantId};
 use core_api::AppResponse;
 use core_api::AppResponseEnvelope;
 use thiserror::Error;
@@ -52,9 +52,9 @@ struct Entry {
 }
 
 struct Inner {
-    by_command: BTreeMap<CommandId, Entry>,
-    by_key: BTreeMap<String, CommandId>,
-    order: VecDeque<CommandId>,
+    by_command: BTreeMap<(TenantId, CommandId), Entry>,
+    by_key: BTreeMap<(TenantId, String), CommandId>,
+    order: VecDeque<(TenantId, CommandId)>,
     replays: u64,
     new_commands: u64,
     evicted: u64,
@@ -81,22 +81,30 @@ impl IdempotencyStore {
         }
     }
 
-    /// 检查是否已处理过该命令（按 command_id，其次按 idempotency_key）。
-    pub fn check(&self, command_id: &CommandId, idempotency_key: Option<&str>) -> IdempotencyCheck {
+    /// 在指定 tenant 内检查是否已处理过该命令（按 command_id，其次按
+    /// idempotency_key）。相同标识可被不同 tenant 独立复用。
+    pub fn check(
+        &self,
+        tenant_id: &TenantId,
+        command_id: &CommandId,
+        idempotency_key: Option<&str>,
+    ) -> IdempotencyCheck {
         let mut inner = lock(&self.inner);
+        let command_scope = (tenant_id.clone(), command_id.clone());
         if let Some(response) = inner
             .by_command
-            .get(command_id)
+            .get(&command_scope)
             .map(|entry| entry.response.clone())
         {
             inner.replays += 1;
             return IdempotencyCheck::Replay(response);
         }
         if let Some(key) = idempotency_key {
-            if let Some(original) = inner.by_key.get(key) {
+            let key_scope = (tenant_id.clone(), key.to_string());
+            if let Some(original) = inner.by_key.get(&key_scope) {
                 if let Some(response) = inner
                     .by_command
-                    .get(original)
+                    .get(&(tenant_id.clone(), original.clone()))
                     .map(|entry| entry.response.clone())
                 {
                     inner.replays += 1;
@@ -110,16 +118,19 @@ impl IdempotencyStore {
     /// 记录首次响应。仅在 `check` 返回 `New` 后调用。
     pub fn record(
         &self,
+        tenant_id: &TenantId,
         command_id: &CommandId,
         idempotency_key: Option<&str>,
         response: AppResponseEnvelope,
     ) -> Result<(), IdempotencyError> {
         let mut inner = lock(&self.inner);
-        if inner.by_command.contains_key(command_id) {
+        let command_scope = (tenant_id.clone(), command_id.clone());
+        if inner.by_command.contains_key(&command_scope) {
             return Err(IdempotencyError::DuplicateCommand(command_id.to_string()));
         }
         if let Some(key) = idempotency_key {
-            if let Some(existing) = inner.by_key.get(key) {
+            let key_scope = (tenant_id.clone(), key.to_string());
+            if let Some(existing) = inner.by_key.get(&key_scope) {
                 if existing != command_id {
                     return Err(IdempotencyError::KeyConflict {
                         key: key.to_string(),
@@ -127,16 +138,16 @@ impl IdempotencyStore {
                     });
                 }
             }
-            inner.by_key.insert(key.to_string(), command_id.clone());
+            inner.by_key.insert(key_scope, command_id.clone());
         }
         inner.by_command.insert(
-            command_id.clone(),
+            command_scope.clone(),
             Entry {
                 response,
                 idempotency_key: idempotency_key.map(str::to_string),
             },
         );
-        inner.order.push_back(command_id.clone());
+        inner.order.push_back(command_scope);
         inner.new_commands += 1;
         while inner.by_command.len() > self.capacity {
             let oldest = inner
@@ -145,7 +156,7 @@ impl IdempotencyStore {
                 .expect("order length matches by_command length");
             if let Some(entry) = inner.by_command.remove(&oldest) {
                 if let Some(key) = entry.idempotency_key {
-                    inner.by_key.remove(&key);
+                    inner.by_key.remove(&(oldest.0, key));
                 }
                 inner.evicted += 1;
             }
@@ -199,18 +210,22 @@ mod tests {
         }
     }
 
+    fn tenant(value: &str) -> TenantId {
+        TenantId::new(value)
+    }
+
     #[test]
     fn same_command_id_replays_first_response() {
         let store = IdempotencyStore::new(16);
         let command_id = CommandId::from("cmd-1");
         assert!(matches!(
-            store.check(&command_id, None),
+            store.check(&tenant("tenant-a"), &command_id, None),
             IdempotencyCheck::New
         ));
         store
-            .record(&command_id, None, response("cmd-1"))
+            .record(&tenant("tenant-a"), &command_id, None, response("cmd-1"))
             .expect("record");
-        match store.check(&command_id, None) {
+        match store.check(&tenant("tenant-a"), &command_id, None) {
             IdempotencyCheck::Replay(replay) => {
                 assert_eq!(replay, response("cmd-1"));
             }
@@ -224,13 +239,18 @@ mod tests {
         let first = CommandId::from("cmd-1");
         let retry = CommandId::from("cmd-2");
         assert!(matches!(
-            store.check(&first, Some("key-1")),
+            store.check(&tenant("tenant-a"), &first, Some("key-1")),
             IdempotencyCheck::New
         ));
         store
-            .record(&first, Some("key-1"), response("cmd-1"))
+            .record(
+                &tenant("tenant-a"),
+                &first,
+                Some("key-1"),
+                response("cmd-1"),
+            )
             .expect("record");
-        match store.check(&retry, Some("key-1")) {
+        match store.check(&tenant("tenant-a"), &retry, Some("key-1")) {
             IdempotencyCheck::Replay(replay) => {
                 assert_eq!(replay, response("cmd-1"), "重放首次响应");
             }
@@ -244,17 +264,22 @@ mod tests {
         for index in 0..3 {
             let id = CommandId::from(format!("cmd-{index}"));
             store
-                .record(&id, None, response(&format!("cmd-{index}")))
+                .record(
+                    &tenant("tenant-a"),
+                    &id,
+                    None,
+                    response(&format!("cmd-{index}")),
+                )
                 .expect("record");
         }
         assert_eq!(store.stats().entries, 2);
         assert_eq!(store.stats().evicted, 1);
         assert!(matches!(
-            store.check(&CommandId::from("cmd-0"), None),
+            store.check(&tenant("tenant-a"), &CommandId::from("cmd-0"), None),
             IdempotencyCheck::New
         ));
         assert!(matches!(
-            store.check(&CommandId::from("cmd-2"), None),
+            store.check(&tenant("tenant-a"), &CommandId::from("cmd-2"), None),
             IdempotencyCheck::Replay(_)
         ));
     }
@@ -264,14 +289,24 @@ mod tests {
         let store = IdempotencyStore::new(16);
         let first = CommandId::from("cmd-1");
         store
-            .record(&first, Some("key-1"), response("cmd-1"))
+            .record(
+                &tenant("tenant-a"),
+                &first,
+                Some("key-1"),
+                response("cmd-1"),
+            )
             .expect("record");
         assert!(matches!(
-            store.record(&first, None, response("cmd-1")),
+            store.record(&tenant("tenant-a"), &first, None, response("cmd-1")),
             Err(IdempotencyError::DuplicateCommand(_))
         ));
         assert!(matches!(
-            store.record(&CommandId::from("cmd-2"), Some("key-1"), response("cmd-2")),
+            store.record(
+                &tenant("tenant-a"),
+                &CommandId::from("cmd-2"),
+                Some("key-1"),
+                response("cmd-2")
+            ),
             Err(IdempotencyError::KeyConflict { .. })
         ));
     }
@@ -294,9 +329,99 @@ mod tests {
         };
         assert!(!should_cache(&error));
         store
-            .record(&command_id, Some("key-1"), error)
+            .record(&tenant("tenant-a"), &command_id, Some("key-1"), error)
             .expect("record");
         // 由调用方负责：error 响应不调用 record；此处验证 record 本身不拒绝。
         assert_eq!(store.stats().entries, 1);
+    }
+
+    #[test]
+    fn tenants_can_reuse_command_and_idempotency_key_without_replay() {
+        let store = IdempotencyStore::new(16);
+        let command_id = CommandId::from("shared-command");
+        store
+            .record(
+                &tenant("tenant-a"),
+                &command_id,
+                Some("shared-key"),
+                response("tenant-a-response"),
+            )
+            .expect("tenant-a record");
+
+        assert!(matches!(
+            store.check(&tenant("tenant-b"), &command_id, Some("shared-key")),
+            IdempotencyCheck::New
+        ));
+        store
+            .record(
+                &tenant("tenant-b"),
+                &command_id,
+                Some("shared-key"),
+                response("tenant-b-response"),
+            )
+            .expect("tenant-b record");
+
+        match store.check(
+            &tenant("tenant-a"),
+            &CommandId::from("tenant-a-retry"),
+            Some("shared-key"),
+        ) {
+            IdempotencyCheck::Replay(value) => {
+                assert_eq!(value, response("tenant-a-response"));
+            }
+            IdempotencyCheck::New => panic!("tenant-a key should replay"),
+        }
+        match store.check(
+            &tenant("tenant-b"),
+            &CommandId::from("tenant-b-retry"),
+            Some("shared-key"),
+        ) {
+            IdempotencyCheck::Replay(value) => {
+                assert_eq!(value, response("tenant-b-response"));
+            }
+            IdempotencyCheck::New => panic!("tenant-b key should replay"),
+        }
+    }
+
+    #[test]
+    fn eviction_removes_only_the_evicted_tenant_key() {
+        let store = IdempotencyStore::new(2);
+        for tenant_id in ["tenant-a", "tenant-b"] {
+            store
+                .record(
+                    &tenant(tenant_id),
+                    &CommandId::from("shared-command"),
+                    Some("shared-key"),
+                    response(tenant_id),
+                )
+                .expect("record shared key");
+        }
+        store
+            .record(
+                &tenant("tenant-c"),
+                &CommandId::from("command-c"),
+                None,
+                response("tenant-c"),
+            )
+            .expect("trigger eviction");
+
+        assert_eq!(store.stats().entries, 2);
+        assert_eq!(store.stats().evicted, 1);
+        assert!(matches!(
+            store.check(
+                &tenant("tenant-a"),
+                &CommandId::from("retry-a"),
+                Some("shared-key")
+            ),
+            IdempotencyCheck::New
+        ));
+        assert!(matches!(
+            store.check(
+                &tenant("tenant-b"),
+                &CommandId::from("retry-b"),
+                Some("shared-key")
+            ),
+            IdempotencyCheck::Replay(_)
+        ));
     }
 }

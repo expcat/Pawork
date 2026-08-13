@@ -4,7 +4,6 @@
 //! 只存在于 `SecretBackend`（Keychain / 内存）中。这两个结构只持有可安全序列化、
 //! 可记录到数据库与日志的元数据 + 脱敏状态。
 
-use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,62 +18,22 @@ use crate::masked::MaskedCredential;
 /// Secret 后端中按 Provider 分组的命名空间前缀。
 const KEYCHAIN_SERVICE_PREFIX: &str = "pawork";
 
-/// 类型安全的凭证标识，等价于 Keychain 中的 `account`。
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct CredentialId(String);
+/// 统一使用 [`agent_domain::CredentialId`]（与控制面 CredentialMetadata 对齐）。
+pub use agent_domain::CredentialId;
 
-impl CredentialId {
-    /// 以已有字符串构造。
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// 以给定前缀生成一个全局唯一的 `CredentialId`。
-    ///
-    /// 唯一性来自「纳秒时间戳 + 进程内单调序号」，不依赖外部 UUID 依赖。
-    pub fn generate() -> Self {
-        Self::new(generate_id())
-    }
-
-    /// 返回标识字符串。
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// 消费并返回内部字符串。
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-}
-
-impl fmt::Display for CredentialId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl From<String> for CredentialId {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<&str> for CredentialId {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-/// 进程内单调序号，配合纳秒时间戳保证 `CredentialId` 唯一。
+/// 进程内单调序号，配合纳秒时间戳保证 [`CredentialId`] 唯一。
 static CREDENTIAL_SEQ: AtomicU64 = AtomicU64::new(0);
 
-fn generate_id() -> String {
+/// 生成全局唯一的 `CredentialId`（`cred_{nanos:x}_{seq:x}` 格式，与历史值兼容）。
+///
+/// 唯一性来自「纳秒时间戳 + 进程内单调序号」，不依赖外部 UUID 依赖。
+pub fn generate_credential_id() -> CredentialId {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     let seq = CREDENTIAL_SEQ.fetch_add(1, Ordering::Relaxed);
-    format!("cred_{nanos:x}_{seq:x}")
+    CredentialId::new(format!("cred_{nanos:x}_{seq:x}"))
 }
 
 /// 当前 Unix 毫秒时间戳（缺失时退化为 0）。
@@ -190,7 +149,7 @@ impl ApiKeyCredential {
         if secret.is_empty() {
             return Err(AuthError::InvalidSecret("secret is empty".into()));
         }
-        let id = CredentialId::generate();
+        let id = generate_credential_id();
         let keychain_service = keychain_service_for(&provider);
         let keychain_account = id.as_str().to_string();
 

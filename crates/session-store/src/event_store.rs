@@ -1,4 +1,4 @@
-use agent_domain::{SessionId, Timestamp};
+use agent_domain::{PrincipalId, SessionId, TenantId, Timestamp};
 use agent_events::{AgentEvent, AgentEventEnvelope};
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
@@ -34,8 +34,38 @@ impl SessionStore {
         title: impl Into<String>,
         created_at: Timestamp,
     ) -> Result<(), SessionStoreError> {
+        // legacy 便捷入口（P18-2 前调用方 / 测试）：固定归属默认本地身份。
+        // 生产路径必须使用 [`Self::create_session_with_identity`] 显式携带
+        // 身份上下文，禁止无 tenant 归属地创建 session。
+        self.create_session_with_identity(
+            session_id,
+            title,
+            created_at,
+            &TenantId::new("local/default"),
+            &PrincipalId::new("local/user"),
+        )
+        .await
+    }
+
+    /// 以显式身份上下文创建 session（P18-2）：tenant/principal 必须非空，
+    /// 缺失身份由调用方（身份解析层）fail-closed 保证，存储层不默认补全。
+    pub async fn create_session_with_identity(
+        &self,
+        session_id: &SessionId,
+        title: impl Into<String>,
+        created_at: Timestamp,
+        tenant_id: &TenantId,
+        principal_id: &PrincipalId,
+    ) -> Result<(), SessionStoreError> {
         let session_id = session_id.to_string();
         let title = title.into();
+        let tenant_id = tenant_id.to_string();
+        let principal_id = principal_id.to_string();
+        if tenant_id.trim().is_empty() || principal_id.trim().is_empty() {
+            return Err(SessionStoreError::ProjectionInvariant(
+                "session identity tenant/principal must be non-blank".into(),
+            ));
+        }
         let timestamp = i64::try_from(created_at.as_unix_millis()).map_err(|_| {
             SessionStoreError::ProjectionInvariant("timestamp exceeds SQLite INTEGER".into())
         })?;
@@ -43,8 +73,9 @@ impl SessionStore {
             .call(move |connection| -> Result<(), SessionStoreError> {
                 let transaction = connection.transaction()?;
                 transaction.execute(
-                    "INSERT INTO sessions(session_id, title, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, ?3)",
-                    params![session_id, title, timestamp],
+                    "INSERT INTO sessions(session_id, title, created_at_ms, updated_at_ms, tenant_id, principal_id) \
+                     VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
+                    params![session_id, title, timestamp, tenant_id, principal_id],
                 )?;
                 transaction.execute(
                     "INSERT INTO session_branches(branch_id, session_id, head_sequence) VALUES (?1, ?2, 0)",

@@ -66,6 +66,7 @@ members = [
     "crates/tenant-service",
     "crates/provider-control",
     "crates/usage-ledger",
+    "crates/audit-log",
     "crates/quota-service",
     "crates/orchestration",
     # Phase 16 Modern Agent Workflow

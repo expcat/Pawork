@@ -2039,10 +2039,10 @@ mod tests {
             "no-data windows: {windows}"
         );
         assert_eq!(value["data"]["response"]["data"]["from_cache"], false);
-        // scope 反映默认 local/local/default。
+        // scope 反映 canonical 默认 local/default/local/default。
         assert_eq!(
             value["data"]["response"]["data"]["scope"]["tenant_id"],
-            "local"
+            "local/default"
         );
         assert_eq!(
             value["data"]["response"]["data"]["scope"]["account_id"],
@@ -2066,7 +2066,7 @@ mod tests {
         assert!(
             outcome
                 .output
-                .contains("usage for local/local/default (provider=mock, cache=miss)"),
+                .contains("usage for local/default/local/default (provider=mock, cache=miss)"),
             "output: {}",
             outcome.output
         );

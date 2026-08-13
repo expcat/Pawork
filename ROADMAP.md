@@ -567,14 +567,14 @@ Parent/Worker 编排，写入隔离，取消传播。
 | P18-4 | 🟡 | CredentialPool / Lease | acquire/release、并发准入、幂等回收 | [详情](plan/P18-4-credential-lease.md) |
 | P18-5 | 🟡 | ErrorClassifier / Health | scope-aware 分类、cooldown、circuit breaker | [详情](plan/P18-5-error-health.md) |
 | P18-6 | 🟡 | RoutingPolicy Chain | capability/tenant/health 过滤、priority/weight/fill-first | [详情](plan/P18-6-routing-policy.md) |
-| P18-7 | 🟡 | Session Affinity / Binding | 粘性、rebind、revision/ownership epoch | [详情](plan/P18-7-session-affinity.md) |
+| P18-7 | 🟢 | Session Affinity / Binding | 粘性、rebind、revision/ownership epoch | [详情](plan/P18-7-session-affinity.md) |
 | P18-8 | 🟡 | Usage / Cost Ledger | tenant/account/session/agent 多维账本 | [详情](plan/P18-8-usage-cost-ledger.md) |
-| P18-9 | 🟡 | Tenant Policy / RBAC | provider/model/account ACL、并发/预算/保留策略 | [详情](plan/P18-9-tenant-policy.md) |
-| P18-10 | 🟡 | ClientAdapter Framework | adapter/factory、capability snapshot、Session Registry | [详情](plan/P18-10-client-adapter-framework.md) |
-| P18-11 | 🟡 | Codex App-Server Adapter | Thread/Turn/Item、approval、subagent、interrupt | [详情](plan/P18-11-codex-app-server.md) |
-| P18-12 | 🟡 | Claude Gateway Adapter | session/agent headers、Messages stream、usage attribution | [详情](plan/P18-12-claude-gateway.md) |
-| P18-13 | 🟡 | Canonical Audit / OTel | 控制面审计、脱敏导出、trace 维度 | [详情](plan/P18-13-audit-otel.md) |
-| P18-14 | 🟡 | Provider Registry / Pool Reconciliation | factory 注册、主动健康、lease 回收、事务式热切换 | [详情](plan/P18-14-pool-reconciliation.md) |
+| P18-9 | 🟠 | Tenant Policy / RBAC | 核心 enforcement 已接入；专项并发/恶意 pool 回归待补 | [详情](plan/P18-9-tenant-policy.md) |
+| P18-10 | 🟢 | ClientAdapter Framework | adapter/factory、capability snapshot、Session Registry | [详情](plan/P18-10-client-adapter-framework.md) |
+| P18-11 | 🟠 | Codex App-Server Adapter | 官方协议基线骨架已落地；Adapter 本体待实现 | [详情](plan/P18-11-codex-app-server.md) |
+| P18-12 | 🟠 | Claude Gateway Adapter | 独立 crate 已验证；workspace/宿主接线待完成 | [详情](plan/P18-12-claude-gateway.md) |
+| P18-13 | 🟠 | Canonical Audit / OTel | canonical store/export 与部分控制面桥接已实现 | [详情](plan/P18-13-audit-otel.md) |
+| P18-14 | 🟠 | Provider Registry / Pool Reconciliation | registry/原子热切换已实现；reconciler/生产装配待完成 | [详情](plan/P18-14-pool-reconciliation.md) |
 | P18-15 | 🟡 | Control Plane Contract Gate | property/concurrency/golden/migration/isolation/chaos | [详情](plan/P18-15-control-plane-gate.md) |
 
 ### Phase 19：Desktop GUI（GPUI）

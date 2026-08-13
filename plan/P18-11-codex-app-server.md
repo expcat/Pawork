@@ -1,6 +1,6 @@
 # P18-11：Codex App-Server Adapter
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P18-10、P15-2、P15-5、P15-8、P12-1
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠协议基线骨架已落地，Adapter 本体待实现 · 交付成熟度：Scaffolded · 依赖：P18-10、P15-2、P15-5、P15-8、P12-1
 
 **最终目的**：通过官方 Codex App Server 协议把 Thread/Turn/Item、approval、subagent 与 interrupt 映射到 Pawork canonical session/agent/event，而不是模拟 UI 或依赖 DOM/CDP 注入。
 
@@ -29,3 +29,8 @@
 
 **相关文档**：[client-adapters](../docs/features/client-adapters.md) · [multi-agent](../docs/features/multi-agent.md) · [ADR-033](../docs/adr/ADR-033-control-plane-separation.md) · [ROADMAP](../ROADMAP.md)
 
+## 当前进度（2026-08-13）
+
+- 新增独立 `client-codex-app-server` crate，固化 initialize/initialized、无 `jsonrpc` 字段、stdio JSONL、Thread/Turn/Item、parent/fork、审批与 `-32001` 过载等官方协议基线；烟雾测试 1 passed。
+- crate 暂以嵌套 `[workspace]` 独立存在，尚未接入根 workspace。
+- 待实现：wire/contract/adapter/map/host、完整 capability negotiation、canonical bridge，以及 fork/resume/subagent/approval/interrupt/disconnect/revision golden fixtures。

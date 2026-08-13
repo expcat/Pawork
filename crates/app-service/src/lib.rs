@@ -10,6 +10,7 @@ mod approval;
 mod client_adapter;
 mod error;
 mod idempotency;
+mod policy;
 mod profile_resolver;
 mod rate_limit;
 mod router;
@@ -41,6 +42,7 @@ pub use approval::{ApprovalError, ApprovalRegistry, PendingApproval, Registratio
 pub use client_adapter::ClientAdapterHost;
 pub use error::AppServiceError;
 pub use idempotency::{IdempotencyCheck, IdempotencyError, IdempotencyStats, IdempotencyStore};
+pub use policy::{PolicyGateError, RoutingTenantPolicyAdapter, TenantPolicyGate};
 pub use profile_resolver::{
     DenyAllModelOverridePolicy, IsolationCapability, ModelLanding, ModelOverrideDecision,
     ModelOverridePolicy, ModelOverrideRequest, ProductionModelOverridePolicy, ProfileResolveError,
@@ -53,6 +55,10 @@ pub use supervisor::{
 };
 pub use team::{SqliteTeamStore, TeamHost};
 pub use teams::TeamError;
+pub use tenant_service::{
+    IdentityContext, IdentityError, IdentityResolver, InMemoryTenantPolicyEngine,
+    LocalIdentityResolver, Permission, TenantPolicy,
+};
 pub use user_hook::{
     hook_config_from_resource, BackendSecretResolver, CanonicalJudge, EvalProfile,
     EvalProfileResolver, HookMcpApproval, HookPolicyGate, HookRunContext,
@@ -155,19 +161,104 @@ impl QuotaRuntime {
         })
     }
 
-    /// 生产构造（P14-8 正式接线）：进程内新建共享
+    /// 进程内构造（P14-8）：新建共享
     /// [`usage_ledger::InMemoryUsageLedger`] 与
     /// [`quota_service::service::SystemQuotaClock`]，同一 ledger 同时服务
-    /// 记账（成功 run 追加）与额度查询（适配器派生）。
+    /// 记账（成功 run 追加）与额度查询（适配器派生）。进程内存活期间唯一
+    /// 累计源；跨进程持久化使用 [`Self::production_persistent`]。
+    ///
+    /// **仅供测试 / 嵌入式便捷使用，不是生产构造**：内存账本不跨进程，
+    /// 生产 CLI 必须走 [`Self::production_persistent`]，禁止把本构造用作
+    /// 生产累计源（P18-8 review：生产 run→ledger→usage/quota 单一事实源，
+    /// 不得回退到进程内第二套累计）。
     ///
     /// 唯一注册的适配器是本地 ledger 派生（[`quota_service::AdapterKind::LocalLedger`]），
     /// 构造与空查询均不触发任何网络。
-    pub fn production() -> Arc<Self> {
+    pub fn production_in_memory() -> Arc<Self> {
+        Self::production_with_ledger(Arc::new(usage_ledger::InMemoryUsageLedger::new()))
+    }
+
+    /// 生产持久化构造（P18-8）：打开（必要时创建）指定路径的 SQLite 账本，
+    /// 同一 ledger 同时服务记账（成功 run 追加）与额度查询（适配器派生），
+    /// run 进程写入后，新进程打开同一文件即可读取并正确聚合——run→ledger→
+    /// usage/quota 单一事实源，禁止第二套累计计数器。
+    ///
+    /// 打开时校验 schema 版本，不兼容（如更高版本）返回
+    /// [`usage_ledger::UsageLedgerError::Storage`]，不静默迁移、不丢历史。
+    /// 启动时调用 [`Self::replay_local_cache`] 把历史记录回放进本地 Quota
+    /// 缓存；异步 canonical quota 读取仍由注册的 Ledger adapter 直读同一
+    /// 账本，同步 overview 则只读该缓存。回放遇存储 / 解码错误整体失败返回
+    ///（fail-closed），不吞错启动。
+    pub async fn production_persistent(
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<Arc<Self>, usage_ledger::UsageLedgerError> {
         let ledger: Arc<dyn usage_ledger::UsageLedger> =
-            Arc::new(usage_ledger::InMemoryUsageLedger::new());
+            Arc::new(usage_ledger::SqliteUsageLedger::open(path)?);
+        let runtime = Self::production_with_ledger(ledger);
+        runtime.replay_local_cache().await?;
+        Ok(runtime)
+    }
+
+    /// 生产装配公共部分：[`Self::production`] 与
+    /// [`Self::production_persistent`] 共用同一系统时钟与注册接线，保证
+    /// 两种构造行为一致（同一账本实例同时服务记账与查询）。
+    fn production_with_ledger(ledger: Arc<dyn usage_ledger::UsageLedger>) -> Arc<Self> {
         let clock: Arc<dyn quota_service::service::QuotaClock> =
             Arc::new(quota_service::service::SystemQuotaClock);
         Self::new(ledger, clock)
+    }
+
+    /// 启动回放（P18-8）：读取持久账本全部历史记录，按
+    /// (tenant, account, credential, provider, model, currency) 去重，
+    /// 逐条 [`Self::refresh_local_cache`] 补本地 Quota 缓存（同一账本聚合，
+    /// 不引入第二套计数）。单条缓存刷新失败仅告警不中断；**账本查询 / 行
+    /// 解码错误整体失败返回**（fail-closed，绝不吞错为空集）。currency 是
+    /// Cost 缓存键的一部分；同 scope 多币种必须分别回放，不能互相覆盖。
+    pub async fn replay_local_cache(&self) -> Result<(), usage_ledger::UsageLedgerError> {
+        let records = self
+            .ledger
+            .query(&usage_ledger::UsageQuery::default())
+            .await?;
+        let mut seen: std::collections::BTreeSet<(
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+        )> = std::collections::BTreeSet::new();
+        let mut failures = 0usize;
+        for record in records {
+            let key = (
+                record.tenant_id.as_str().to_string(),
+                record.account_id.clone(),
+                record.credential_id.clone(),
+                record.provider_id.as_str().to_string(),
+                record.model_id.as_str().to_string(),
+                record.currency.clone(),
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+            if let Err(fails) = self.refresh_local_cache(&record).await {
+                failures += fails.len();
+                for failure in fails {
+                    tracing::warn!(
+                        tenant = %failure.scope.tenant_id,
+                        account = %failure.scope.account_id,
+                        error = %failure.error,
+                        "ledger replay cache refresh failed",
+                    );
+                }
+            }
+        }
+        if failures > 0 {
+            tracing::warn!(
+                failures,
+                "ledger replay completed with cache refresh failures"
+            );
+        }
+        Ok(())
     }
 
     /// 本地 Ledger 对账/缓存（P14-8）：给定一条已成功写入账本的
@@ -348,19 +439,34 @@ pub struct AppService {
     quota_runtime: Option<Arc<QuotaRuntime>>,
     /// P17-6 Team 协作宿主：durable store + 重启重放 + typed EventHub 桥。
     team_host: TeamHost,
+    tenant_policy: Arc<TenantPolicyGate>,
 }
 
 impl AppService {
     pub fn new(instance: impl Into<String>) -> Self {
-        Self::build(instance, None, None, None)
-            .expect("in-memory Team store construction must succeed")
+        Self::build(
+            instance,
+            None,
+            None,
+            None,
+            Arc::new(LocalIdentityResolver),
+            None,
+        )
+        .expect("in-memory Team store construction must succeed")
     }
 
     /// 携带内容寻址 Blob Store 构造（P13-8 接线）；`AppService::new` 等价于
     /// store 为 `None`（此时 `artifact_read` 返回 `Unavailable`）。
     pub fn with_artifact_store(instance: impl Into<String>, store: Arc<ArtifactStore>) -> Self {
-        Self::build(instance, Some(store), None, None)
-            .expect("in-memory Team store construction must succeed")
+        Self::build(
+            instance,
+            Some(store),
+            None,
+            None,
+            Arc::new(LocalIdentityResolver),
+            None,
+        )
+        .expect("in-memory Team store construction must succeed")
     }
 
     /// 携带共享 Quota 运行时构造（P14-8）：注入唯一 ledger + QuotaService。
@@ -371,8 +477,15 @@ impl AppService {
         store: Option<Arc<ArtifactStore>>,
         quota_runtime: Arc<QuotaRuntime>,
     ) -> Self {
-        Self::build(instance, store, Some(quota_runtime), None)
-            .expect("in-memory Team store construction must succeed")
+        Self::build(
+            instance,
+            store,
+            Some(quota_runtime),
+            None,
+            Arc::new(LocalIdentityResolver),
+            None,
+        )
+        .expect("in-memory Team store construction must succeed")
     }
 
     /// 携带 durable Team 事件存储构造（P17-6）：Team 命令先落盘 SQLite，
@@ -382,7 +495,14 @@ impl AppService {
         instance: impl Into<String>,
         team_db_path: impl Into<PathBuf>,
     ) -> Result<Self, teams::TeamError> {
-        Self::build(instance, None, None, Some(team_db_path.into()))
+        Self::build(
+            instance,
+            None,
+            None,
+            Some(team_db_path.into()),
+            Arc::new(LocalIdentityResolver),
+            None,
+        )
     }
 
     /// 生产组合入口：同时注入 artifact/quota 运行时与 durable Team DB。
@@ -398,7 +518,94 @@ impl AppService {
             store,
             Some(quota_runtime),
             Some(team_db_path.into()),
+            Arc::new(LocalIdentityResolver),
+            None,
         )
+    }
+
+    /// 携带共享 CredentialPool 构造（P18-4）：注入后每个 run attempt 在
+    /// provider 调用前异步 acquire 并持有 LeaseGuard 至终态，usage 归属的
+    /// account/credential 来自真实 lease。既有 [`AppService::new`] /
+    /// [`AppService::with_quota_runtime`] 保持兼容（pool 为 `None`，走 legacy
+    /// 过渡路径）。
+    pub fn with_credential_pool(
+        instance: impl Into<String>,
+        store: Option<Arc<ArtifactStore>>,
+        quota_runtime: Arc<QuotaRuntime>,
+        pool: Arc<dyn provider_control::CredentialPool>,
+    ) -> Self {
+        let service = Self::build(
+            instance,
+            store,
+            Some(quota_runtime),
+            None,
+            Arc::new(LocalIdentityResolver),
+            None,
+        )
+        .expect("in-memory Team store construction must succeed");
+        service.router.set_credential_pool(pool);
+        service
+    }
+
+    /// 携带自定义租户策略引擎构造（P18-9）：引擎注入 CommandRouter 唯一
+    /// dispatch / dispatch_query 边界，AppService 与 router 共享同一 policy
+    /// gate（不双记）。既有构造保持默认 `local/default` 兼容策略。
+    pub fn with_tenant_policy(
+        instance: impl Into<String>,
+        engine: Arc<dyn tenant_service::TenantPolicyEngine>,
+    ) -> Self {
+        Self::build_with_policy_and_resolver(
+            instance,
+            None,
+            None,
+            None,
+            Arc::new(LocalIdentityResolver),
+            Some(engine),
+        )
+        .expect("in-memory Team store construction must succeed")
+    }
+
+    /// 生产接线（P18-9）：同一 identity resolver 与同一 tenant policy engine
+    /// 注入 router 唯一公开边界；facade 的查询 / 管理接口复用 router 的同一
+    /// policy gate，裁决只记录一次。
+    pub fn with_identity_resolver_and_tenant_policy(
+        instance: impl Into<String>,
+        identity_resolver: Arc<dyn IdentityResolver>,
+        engine: Arc<dyn tenant_service::TenantPolicyEngine>,
+    ) -> Self {
+        Self::build_with_policy_and_resolver(
+            instance,
+            None,
+            None,
+            None,
+            identity_resolver,
+            Some(engine),
+        )
+        .expect("in-memory Team store construction must succeed")
+    }
+
+    /// 最小生产组合（P17+P18）：同时注入 quota 运行时、durable Team DB 与
+    /// CredentialPool——core-runtime 在同一入口同时装配 P17 Team 宿主与 P18
+    /// credential lease/usage 链。内部复用 [`Self::build`] 装配 team_host /
+    /// tenant_policy，再 `set_credential_pool` 注入 pool。显式 Team DB 路径
+    /// 打开或重放失败时返回错误，正式宿主必须终止启动，绝不降级。
+    pub fn with_runtime_components_and_credential_pool(
+        instance: impl Into<String>,
+        store: Option<Arc<ArtifactStore>>,
+        quota_runtime: Arc<QuotaRuntime>,
+        team_db_path: impl Into<PathBuf>,
+        pool: Arc<dyn provider_control::CredentialPool>,
+    ) -> Result<Self, teams::TeamError> {
+        let service = Self::build(
+            instance,
+            store,
+            Some(quota_runtime),
+            Some(team_db_path.into()),
+            Arc::new(LocalIdentityResolver),
+            None,
+        )?;
+        service.router.set_credential_pool(pool);
+        Ok(service)
     }
 
     fn build(
@@ -406,16 +613,41 @@ impl AppService {
         artifact_store: Option<Arc<ArtifactStore>>,
         quota_runtime: Option<Arc<QuotaRuntime>>,
         team_db_path: Option<PathBuf>,
+        identity_resolver: Arc<dyn IdentityResolver>,
+        tenant_policy_engine: Option<Arc<dyn tenant_service::TenantPolicyEngine>>,
+    ) -> Result<Self, teams::TeamError> {
+        Self::build_with_policy_and_resolver(
+            instance,
+            artifact_store,
+            quota_runtime,
+            team_db_path,
+            identity_resolver,
+            tenant_policy_engine,
+        )
+    }
+
+    fn build_with_policy_and_resolver(
+        instance: impl Into<String>,
+        artifact_store: Option<Arc<ArtifactStore>>,
+        quota_runtime: Option<Arc<QuotaRuntime>>,
+        team_db_path: Option<PathBuf>,
+        identity_resolver: Arc<dyn IdentityResolver>,
+        tenant_policy_engine: Option<Arc<dyn tenant_service::TenantPolicyEngine>>,
     ) -> Result<Self, teams::TeamError> {
         let instance = instance.into();
-        let router = CommandRouter::new(RouterConfig {
-            instance: instance.clone(),
-            ..RouterConfig::default()
-        });
+        let router = CommandRouter::with_tenant_policy(
+            RouterConfig {
+                instance: instance.clone(),
+                ..RouterConfig::default()
+            },
+            identity_resolver,
+            tenant_policy_engine.unwrap_or_else(|| Arc::new(InMemoryTenantPolicyEngine::default())),
+        );
         if let Some(runtime) = quota_runtime.as_ref() {
             router.set_quota_runtime(Arc::clone(runtime));
         }
         let team_host = team::open_durable(router.team_sink(), team_db_path)?;
+        let tenant_policy = Arc::clone(router.tenant_policy());
         Ok(Self {
             instance: instance.clone(),
             started_at: Instant::now(),
@@ -428,6 +660,7 @@ impl AppService {
             artifact_store,
             quota_runtime,
             team_host,
+            tenant_policy,
         })
     }
 
@@ -549,6 +782,8 @@ impl AppService {
 
     /// 统一查询入口。
     pub fn dispatch_query(&self, envelope: AppQueryEnvelope) -> AppResponseEnvelope {
+        // P18-9：策略闸口位于 CommandRouter 唯一 dispatch_query 边界，
+        // 门面直接委托（同一闸口、同一 resolver，不预检、不双记）。
         self.router.dispatch_query(envelope)
     }
 
@@ -574,9 +809,101 @@ impl AppService {
         )
     }
 
+    /// 租户策略闸口（P18-9）：查询 / 审计 / 管理接口共享的裁决入口。
+    pub fn tenant_policy(&self) -> &Arc<TenantPolicyGate> {
+        &self.tenant_policy
+    }
+
+    /// Audit 查询（P18-9）：要求请求者 `AuditRead` 权限，且只返回其租户
+    /// 自己的 versioned、脱敏决策事件；跨租户观察一律拒绝。
+    pub fn audit_decisions(
+        &self,
+        identity: &IdentityContext,
+    ) -> Result<Vec<core_api::PolicyDecisionEventView>, AppServiceError> {
+        self.tenant_policy
+            .query_decision_events(identity)
+            .map_err(|error| AppServiceError::Authorization(error.to_string()))
+    }
+
+    /// Canonical audit query (P18-13): RBAC-protected and tenant-scoped. Unlike the legacy
+    /// policy-decision view this includes route, lease, Agent, approval and client lifecycle
+    /// records, while the schema cannot represent prompts, tool output or plaintext secrets.
+    pub fn canonical_audit_events(
+        &self,
+        identity: &IdentityContext,
+    ) -> Result<Vec<audit_log::AuditEventV1>, AppServiceError> {
+        self.tenant_policy
+            .check_permission(identity, Permission::AuditRead)
+            .map_err(|error| AppServiceError::Authorization(error.to_string()))?;
+        self.tenant_policy
+            .canonical_audit_events(&identity.tenant_id)
+            .map_err(|error| AppServiceError::Unavailable(error.to_string()))
+    }
+
+    /// Canonical allowlist-only export. Both RBAC and the tenant destination policy are
+    /// enforced before the exporter sees any records.
+    pub fn export_canonical_audit(
+        &self,
+        identity: &IdentityContext,
+        destination: &str,
+        exporter: &dyn audit_log::AuditExporter,
+    ) -> Result<usize, AppServiceError> {
+        self.tenant_policy
+            .check_audit_export(identity, destination)
+            .map_err(|error| AppServiceError::Authorization(error.to_string()))?;
+        self.tenant_policy
+            .export_canonical_audit(&identity.tenant_id, exporter)
+            .map_err(|error| AppServiceError::Unavailable(error.to_string()))
+    }
+
+    /// Attaches a durable canonical audit sink while preserving the built-in tenant
+    /// projection. Intended for the production composition root.
+    pub fn add_audit_sink(&self, sink: Arc<dyn audit_log::AuditSink>) {
+        self.tenant_policy.add_audit_sink(sink);
+    }
+
+    /// 读取租户策略视图（P18-9 管理接口）：要求请求者 `PolicyManage` 权限
+    /// 且目标为请求者自己的租户。
+    pub fn tenant_policy_view(
+        &self,
+        requester: &IdentityContext,
+        tenant: &agent_domain::TenantId,
+    ) -> Result<core_api::TenantPolicyView, AppServiceError> {
+        self.tenant_policy
+            .check_permission(requester, Permission::PolicyManage)
+            .map_err(|error| AppServiceError::Authorization(error.to_string()))?;
+        self.tenant_policy
+            .authorize_scope(requester, tenant)
+            .map_err(|error| AppServiceError::Authorization(error.to_string()))?;
+        Ok(self.tenant_policy.policy_view(tenant))
+    }
+
+    /// 更新租户策略（P18-9 管理接口）：要求请求者 `PolicyManage` 权限且
+    /// 目标为请求者自己的租户；引擎每次更新递增策略版本。
+    pub fn set_tenant_policy(
+        &self,
+        requester: &IdentityContext,
+        tenant: agent_domain::TenantId,
+        policy: TenantPolicy,
+    ) -> Result<(), AppServiceError> {
+        self.tenant_policy
+            .check_permission(requester, Permission::PolicyManage)
+            .map_err(|error| AppServiceError::Authorization(error.to_string()))?;
+        self.tenant_policy
+            .authorize_scope(requester, &tenant)
+            .map_err(|error| AppServiceError::Authorization(error.to_string()))?;
+        self.tenant_policy.engine().set_policy(tenant, policy);
+        Ok(())
+    }
+
     /// 进程内共享的 Quota 运行时（P14-8）；未注入时为 `None`。
     pub fn quota_runtime(&self) -> Option<&Arc<QuotaRuntime>> {
         self.quota_runtime.as_ref()
+    }
+
+    /// 注入的共享 CredentialPool（P18-4；未注入时为 `None`）。
+    pub fn credential_pool(&self) -> Option<Arc<dyn provider_control::CredentialPool>> {
+        self.router.credential_pool()
     }
 
     /// 注册 Provider 实现（测试注入 / 正式宿主后续由 provider-runtime 注入）。
@@ -987,7 +1314,7 @@ mod tests {
 
     #[tokio::test]
     async fn production_runtime_reads_local_ledger_without_network() {
-        let runtime = QuotaRuntime::production();
+        let runtime = QuotaRuntime::production_in_memory();
         let cancel = CancellationToken::new();
         let scope = quota_service::QuotaScope::new(
             agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
@@ -1023,8 +1350,8 @@ mod tests {
 
     #[tokio::test]
     async fn production_quota_runtimes_are_isolated() {
-        let runtime_a = QuotaRuntime::production();
-        let runtime_b = QuotaRuntime::production();
+        let runtime_a = QuotaRuntime::production_in_memory();
+        let runtime_b = QuotaRuntime::production_in_memory();
         let cancel = CancellationToken::new();
         let scope = quota_service::QuotaScope::new(
             agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
@@ -1059,6 +1386,7 @@ mod tests {
                 cost_micros: 0,
                 currency: "USD".into(),
                 occurred_at_ms: 1,
+                ..usage_ledger::UsageRecord::default()
             })
             .await
             .expect("record into runtime A");
@@ -1150,6 +1478,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn production_persistent_reopen_reads_same_ledger() {
+        // P18-8：同一 SQLite 账本文件跨“进程”重开（open→record→drop→
+        // reopen），新进程 usage 可读且 quota 聚合正确；重放不重复累计。
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage-ledger.sqlite3");
+        let cancel = CancellationToken::new();
+        let scope = quota_service::QuotaScope::new(
+            agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+            quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
+            agent_domain::ProviderId::from("mock"),
+            None,
+        );
+        let request = quota_service::QuotaRequest {
+            scope,
+            window: quota_service::QuotaWindow::Overall,
+            unit: quota_service::QuotaUnit::Token,
+        };
+
+        // 第一个“进程”：持久装配 + 记账。
+        {
+            let runtime_a = QuotaRuntime::production_persistent(&path).await.unwrap();
+            runtime_a
+                .ledger
+                .record(usage_ledger::UsageRecord {
+                    record_id: "persistent-reopen-1".into(),
+                    tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+                    principal_id: agent_domain::PrincipalId::default(),
+                    account_id: core_api::DEFAULT_QUOTA_ACCOUNT.to_string(),
+                    credential_id: None,
+                    session_id: agent_domain::SessionId::default(),
+                    agent_id: agent_domain::AgentId::default(),
+                    run_id: Some(agent_domain::RunId::from("run-persist")),
+                    provider_id: agent_domain::ProviderId::from("mock"),
+                    model_id: agent_domain::ModelId::from("mock-model"),
+                    input_tokens: 100,
+                    output_tokens: 50,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    cost_micros: 0,
+                    currency: "USD".into(),
+                    occurred_at_ms: 1,
+                    ..usage_ledger::UsageRecord::default()
+                })
+                .await
+                .expect("record into persistent ledger");
+        }
+
+        // 第二个“进程”：重开同一文件，usage 可读、quota 聚合正确。
+        let runtime_b = QuotaRuntime::production_persistent(&path).await.unwrap();
+        let records = runtime_b
+            .ledger
+            .query(&usage_ledger::UsageQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1, "run 进程写入的用量必须跨进程可见");
+
+        let read = runtime_b.quota.read(&request, &cancel).await.unwrap();
+        assert_eq!(
+            read.snapshot.values.used,
+            quota_service::QuotaMeasure::Exact(150),
+            "同一账本驱动 quota 聚合，禁止第二套累计源"
+        );
+    }
+
+    #[tokio::test]
+    async fn persistent_replay_populates_each_currency_cache_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage-ledger-multi-currency.sqlite3");
+        {
+            let runtime = QuotaRuntime::production_persistent(&path).await.unwrap();
+            for (index, currency, cost_micros) in [(1, "USD", 120), (2, "EUR", 340)] {
+                runtime
+                    .ledger
+                    .record(usage_ledger::UsageRecord {
+                        record_id: format!("currency-replay-{index}"),
+                        tenant_id: agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+                        principal_id: agent_domain::PrincipalId::default(),
+                        account_id: core_api::DEFAULT_QUOTA_ACCOUNT.to_string(),
+                        session_id: agent_domain::SessionId::default(),
+                        agent_id: agent_domain::AgentId::default(),
+                        provider_id: agent_domain::ProviderId::from("mock"),
+                        model_id: agent_domain::ModelId::from("mock-model"),
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        cost_micros,
+                        currency: currency.into(),
+                        occurred_at_ms: index,
+                        ..usage_ledger::UsageRecord::default()
+                    })
+                    .await
+                    .expect("seed currency record");
+            }
+        }
+
+        let runtime = QuotaRuntime::production_persistent(&path).await.unwrap();
+        let scope = quota_service::QuotaScope::new(
+            agent_domain::TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+            quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
+            agent_domain::ProviderId::from("mock"),
+            Some(agent_domain::ModelId::from("mock-model")),
+        );
+        for (currency, expected) in [("USD", 120), ("EUR", 340)] {
+            let read = runtime
+                .quota
+                .read_cache_only(&quota_service::QuotaRequest {
+                    scope: scope.clone(),
+                    window: quota_service::QuotaWindow::Overall,
+                    unit: quota_service::QuotaUnit::Cost {
+                        currency: currency.into(),
+                    },
+                })
+                .expect("each persisted currency must have a replayed cache key");
+            let snapshot = match read {
+                quota_service::CacheRead::Hit { snapshot, .. } => snapshot,
+                other => panic!("expected cache hit for {currency}, got {other:?}"),
+            };
+            assert_eq!(
+                snapshot.values.used,
+                quota_service::QuotaMeasure::Exact(expected)
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn refresh_local_cache_publishes_full_and_account_scopes() {
         let clock = Arc::new(quota_service::service::MutableQuotaClock::at(1_000_000));
         let ledger: Arc<dyn usage_ledger::UsageLedger> =
@@ -1173,6 +1625,7 @@ mod tests {
             cost_micros: 12_345,
             currency: "USD".into(),
             occurred_at_ms: 900_000,
+            ..usage_ledger::UsageRecord::default()
         };
         runtime
             .ledger
@@ -1199,6 +1652,7 @@ mod tests {
                 cost_micros: 655,
                 currency: "USD".into(),
                 occurred_at_ms: 900_000,
+                ..usage_ledger::UsageRecord::default()
             })
             .await
             .expect("record sibling usage into shared ledger");

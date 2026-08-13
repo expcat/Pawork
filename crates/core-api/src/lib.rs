@@ -3,7 +3,7 @@
 use std::{fmt, path::Component, str::FromStr};
 
 use agent_domain::{
-    ActorId, AgentId, ArtifactId, CheckpointId, CommandId, ConnectionId, CoreInstanceId,
+    AccountId, ActorId, AgentId, ArtifactId, CheckpointId, CommandId, ConnectionId, CoreInstanceId,
     ErrorContext, EventId, GuiClientId, MessageId, ModelId, PlanId, PlanVersionId, PluginId,
     ProviderId, QueryId, RunId, SessionId, TenantId, Timestamp, ToolCallId, WorkspaceId,
 };
@@ -14,14 +14,22 @@ use ts_rs::TS;
 
 pub const API_VERSION: ApiVersion = ApiVersion { major: 1, minor: 0 };
 
-/// 默认 legacy 身份作用域：tenant `local`、account `local/default`（ADR-033/P18）。
+/// 默认 legacy Quota 身份作用域：tenant `local`、account `local/default`。
 ///
 /// 未显式指定作用域的 CLI 查询与 run 归属都落在此默认作用域；非默认作用域
 /// 的查询需要显式授权 grant。P14-8 引入 typed Quota 查询/视图/告警事件
 /// （`AppQuery::QuotaOverview`、`AppEvent::QuotaChanged`、`AppEvent::QuotaAlert`），
 /// 均为 TS 导出的 canonical 镜像，且只暴露脱敏的凭证提示。
+/// Control Plane 的 legacy tenant 由 [`DEFAULT_CONTROL_PLANE_TENANT`] 独立冻结为
+/// `local/default`，不复用此 Quota 常量。
 pub const DEFAULT_QUOTA_TENANT: &str = "local";
 pub const DEFAULT_QUOTA_ACCOUNT: &str = "local/default";
+
+/// Canonical 身份 tenant（P18-2）：IdentityContext 归一后的本地用户租户为
+/// `local/default`，与 legacy Quota 哨兵 [`DEFAULT_QUOTA_TENANT`]（`local`）
+/// 显式映射为同一默认作用域。查询/授权判定同时接受两种写法，避免
+/// `pawork usage --tenant local/default` 被误判为非默认作用域而拒绝。
+pub const DEFAULT_QUOTA_TENANT_CANONICAL: &str = "local/default";
 
 /// 宿主支持的完整 API 版本表（P13-10 schema 版本化）。
 ///
@@ -303,6 +311,36 @@ fn validate_client_range(range: Option<ClientTextRange>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+impl ActorIdentity {
+    /// 映射为 canonical 主体键（P18-2 身份传播）。
+    ///
+    /// 供 `app-service` 的身份解析器（`tenant-service::IdentityResolver`）消费：
+    /// 本地用户 / 已认证客户端 / 自动化 / 插件 / MCP 服务器均能映射出非空主体键；
+    /// `System` 显式映射为 `local/system`。任何携带空白 payload 的身份返回
+    /// `None`，解析层据此 fail-closed 拒绝，而不是静默落入默认身份。
+    pub fn canonical_principal(&self) -> Option<String> {
+        match self {
+            ActorIdentity::LocalUser { actor_id, .. } if !actor_id.as_str().trim().is_empty() => {
+                Some(DEFAULT_CONTROL_PLANE_PRINCIPAL.to_string())
+            }
+            ActorIdentity::AuthenticatedClient { subject, .. } if !subject.trim().is_empty() => {
+                Some(format!("authenticated_client:{}", subject.trim()))
+            }
+            ActorIdentity::Automation { name } if !name.trim().is_empty() => {
+                Some(format!("automation:{}", name.trim()))
+            }
+            ActorIdentity::Plugin { plugin_id } if !plugin_id.as_str().trim().is_empty() => {
+                Some(format!("plugin:{}", plugin_id.as_str().trim()))
+            }
+            ActorIdentity::McpServer { server_id } if !server_id.trim().is_empty() => {
+                Some(format!("mcp_server:{}", server_id.trim()))
+            }
+            ActorIdentity::System => Some("local/system".to_string()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -814,9 +852,13 @@ impl QuotaOverviewQuery {
         }
     }
 
-    /// 是否落在默认 legacy 作用域（local / local/default）。
+    /// 是否落在默认 legacy 作用域：tenant 接受 legacy 哨兵 `local` 或
+    /// canonical 身份租户 `local/default`（[`DEFAULT_QUOTA_TENANT_CANONICAL`]，
+    /// 显式映射，不静默改写），account 必须为 `local/default`。
     pub fn is_default_scope(&self) -> bool {
-        self.tenant_id.as_str() == DEFAULT_QUOTA_TENANT && self.account_id == DEFAULT_QUOTA_ACCOUNT
+        let tenant_is_default = self.tenant_id.as_str() == DEFAULT_QUOTA_TENANT
+            || self.tenant_id.as_str() == DEFAULT_QUOTA_TENANT_CANONICAL;
+        tenant_is_default && self.account_id == DEFAULT_QUOTA_ACCOUNT
     }
 }
 
@@ -1303,6 +1345,140 @@ impl<'de> Deserialize<'de> for WorkspaceRelativePath {
 #[error("path must be non-empty, workspace-relative, and contain no parent traversal")]
 pub struct RelativePathError;
 
+// =========================================================================
+// Tenant Policy / RBAC（P18-9）：protocol 镜像 + 脱敏决策事件视图。
+// =========================================================================
+//
+// 这些类型是 tenant-service PolicySet / PrincipalRole / PolicyDecisionEvent
+// 的协议镜像：core-api 不依赖 tenant-service，但 serde 形态保持一致，
+// app-service 在边界做 1:1 转换。视图永不包含 Secret；决策 reason 在
+// tenant-service 构造时已完成脱敏，此处只透传。
+
+/// 主体最小角色（与 tenant-service `PrincipalRole` 对齐）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PrincipalRole {
+    /// 租户管理员：全部权限，含 audit 导出与策略管理。
+    Admin,
+    /// 普通用户：操作与读自己的 session / usage / audit。
+    #[default]
+    User,
+    /// 服务账号：执行与 usage 对账，不读内容与 audit。
+    Service,
+    /// 只读观察者：只读自己的 session / usage。
+    Viewer,
+}
+
+/// 策略闸口（与 tenant-service `PolicyGate` 对齐）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyGate {
+    /// route candidate 过滤。
+    RouteCandidate,
+    /// credential lease 申请。
+    LeaseAcquire,
+    /// Agent spawn 准入。
+    AgentSpawn,
+    /// 请求并发准入。
+    RequestAdmission,
+    /// Session 查询。
+    SessionQuery,
+    /// Usage 查询。
+    UsageQuery,
+    /// Audit 查询。
+    AuditQuery,
+    /// Audit 导出。
+    AuditExport,
+    /// Retention（保留期）判定。
+    Retention,
+}
+
+/// 决策种类：allow / deny / limit / fallback。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyDecisionKind {
+    #[default]
+    Allow,
+    Deny,
+    Limit,
+    Fallback,
+}
+
+/// Audit 导出策略视图（deny-first：未启用一律拒绝）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AuditExportPolicyView {
+    /// 是否启用导出（默认关闭）。
+    #[serde(default)]
+    pub enabled: bool,
+    /// 允许的导出目标（空列表 = 无任何目标可导出）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_destinations: Vec<String>,
+}
+
+/// 单条 principal → role 绑定（TS 友好的 Vec 形态，替代 map）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PrincipalRoleBinding {
+    pub principal_id: String,
+    pub role: PrincipalRole,
+}
+
+/// 权限配置视图：默认角色 + 按 principal 覆盖。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PermissionProfileView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_role: Option<PrincipalRole>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub principal_roles: Vec<PrincipalRoleBinding>,
+}
+
+/// 租户策略视图（deny-first PolicySet 镜像）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TenantPolicyView {
+    pub tenant_id: TenantId,
+    /// 策略版本（每次更新递增；未知租户为 0）。
+    pub version: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_agents: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_requests: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_input_token_budget: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_output_token_budget: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_cost_micros_budget: Option<u64>,
+    /// Provider 白名单；`None` 表示不限制，`Some([])` 表示拒绝全部。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_providers: Option<Vec<ProviderId>>,
+    /// 模型白名单；`None` 表示不限制，`Some([])` 表示拒绝全部。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_models: Option<Vec<ModelId>>,
+    /// 账号白名单；`None` 表示不限制，`Some([])` 表示拒绝全部。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_accounts: Option<Vec<AccountId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_profile: Option<PermissionProfileView>,
+    /// 保留天数；`None` 永久保留。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_days: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit_export: Option<AuditExportPolicyView>,
+}
+
+/// 版本化、脱敏的决策事件视图（审计读取输出）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PolicyDecisionEventView {
+    /// 决策发生时生效的策略版本。
+    pub policy_version: u64,
+    pub tenant_id: TenantId,
+    pub principal_id: String,
+    pub gate: PolicyGate,
+    pub decision: PolicyDecisionKind,
+    /// 已脱敏的原因（永不含 Secret / 控制字符）。
+    pub reason: String,
+    pub at_ms: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1411,18 +1587,21 @@ mod tests {
         // P17-9：低信任 URI 必须携带安全 scheme；可执行脚本 scheme 与无 scheme 一律拒绝。
         let mut snapshot = client_snapshot(1);
         snapshot.diagnostics[0].document_uri = "javascript:alert(1)".into();
-        assert!(snapshot.validate().unwrap_err().contains("scheme is not allowed"));
-
-        let mut snapshot = client_snapshot(1);
-        snapshot.diagnostics[0].document_uri = "data:text/html,<script>".into();
-        assert!(snapshot.validate().unwrap_err().contains("scheme is not allowed"));
-
-        let mut snapshot = client_snapshot(1);
-        snapshot.open_documents[0].uri = "1noscheme".into();
         assert!(snapshot
             .validate()
             .unwrap_err()
-            .contains("valid scheme"));
+            .contains("scheme is not allowed"));
+
+        let mut snapshot = client_snapshot(1);
+        snapshot.diagnostics[0].document_uri = "data:text/html,<script>".into();
+        assert!(snapshot
+            .validate()
+            .unwrap_err()
+            .contains("scheme is not allowed"));
+
+        let mut snapshot = client_snapshot(1);
+        snapshot.open_documents[0].uri = "1noscheme".into();
+        assert!(snapshot.validate().unwrap_err().contains("valid scheme"));
 
         // 安全 scheme（file/http/untitled/vscode-userdata）放行。
         let mut snapshot = client_snapshot(1);
@@ -1525,6 +1704,28 @@ fn quota_overview_query_default_local_matches_legacy_scope() {
     assert!(query.is_default_scope());
     assert_eq!(query.tenant_id.as_str(), DEFAULT_QUOTA_TENANT);
     assert_eq!(query.account_id, DEFAULT_QUOTA_ACCOUNT);
+
+    // P18-8 租户分歧：canonical 身份租户 `local/default` 必须与 legacy
+    // 哨兵 `local` 映射为同一默认作用域（显式映射，不静默改写、不丢历史）。
+    let canonical = QuotaOverviewQuery {
+        tenant_id: TenantId::new(DEFAULT_QUOTA_TENANT_CANONICAL),
+        ..query.clone()
+    };
+    assert!(canonical.is_default_scope());
+    assert_eq!(
+        canonical.tenant_id.as_str(),
+        DEFAULT_QUOTA_TENANT_CANONICAL,
+        "显式查询的 canonical tenant 原样保留，不做静默改写"
+    );
+
+    // canonical tenant + 非默认 account：仍不是默认作用域。
+    let canonical_wrong_account = QuotaOverviewQuery {
+        tenant_id: TenantId::new(DEFAULT_QUOTA_TENANT_CANONICAL),
+        account_id: "other/account".into(),
+        ..query.clone()
+    };
+    assert!(!canonical_wrong_account.is_default_scope());
+
     let other = QuotaOverviewQuery {
         tenant_id: TenantId::new("remote"),
         account_id: "remote/acc".into(),
@@ -1678,4 +1879,127 @@ fn quota_alert_kind_serde_is_stable_and_exhaustive() {
         let decoded: QuotaAlertKind = serde_json::from_str(&json).expect("deserialize kind");
         assert_eq!(decoded, kind);
     }
+}
+
+// =========================================================================
+// Control Plane 作用域（P18-1，ADR-033）：冻结 legacy 作用域与控制面 schema 版本。
+// =========================================================================
+//
+// ADR-033 单独冻结控制面 tenant `local/default`；它与旧 Quota tenant
+// `local` 不同，不得复用 `DEFAULT_QUOTA_TENANT`。account 仍与 legacy Quota
+// account `local/default` 一致。所有控制面持久化实体与 canonical event 带
+// schema_version（ADR-033）。
+
+/// 控制面 schema 版本（与 `provider-control::CONTROL_PLANE_SCHEMA_VERSION` /
+/// `app-database::CURRENT_CONTROL_PLANE_SCHEMA_VERSION` 对齐）。
+pub const CONTROL_PLANE_SCHEMA_VERSION: u32 = 2;
+
+/// Legacy 控制面租户（ADR-033：`local/default`）。
+pub const DEFAULT_CONTROL_PLANE_TENANT: &str = "local/default";
+/// Legacy 控制面账号（与 quota 默认账号一致）。
+pub const DEFAULT_CONTROL_PLANE_ACCOUNT: &str = DEFAULT_QUOTA_ACCOUNT;
+/// Legacy 控制面主体（ADR-033：principal `local/user`）。
+pub const DEFAULT_CONTROL_PLANE_PRINCIPAL: &str = "local/user";
+
+/// 控制面作用域：tenant / account / principal 三元组（脱敏，**无 secret 字段**）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ControlPlaneScope {
+    pub tenant_id: TenantId,
+    pub account_id: String,
+    pub principal_id: String,
+}
+
+impl ControlPlaneScope {
+    /// 默认 legacy 作用域（local/default / local/default / local/user）。
+    pub fn legacy_default() -> Self {
+        Self {
+            tenant_id: TenantId::new(DEFAULT_CONTROL_PLANE_TENANT),
+            account_id: DEFAULT_CONTROL_PLANE_ACCOUNT.to_string(),
+            principal_id: DEFAULT_CONTROL_PLANE_PRINCIPAL.to_string(),
+        }
+    }
+
+    /// 是否落在默认 legacy 作用域。
+    pub fn is_legacy_default(&self) -> bool {
+        self.tenant_id.as_str() == DEFAULT_CONTROL_PLANE_TENANT
+            && self.account_id == DEFAULT_CONTROL_PLANE_ACCOUNT
+            && self.principal_id == DEFAULT_CONTROL_PLANE_PRINCIPAL
+    }
+}
+
+#[test]
+fn control_plane_legacy_scope_is_default_and_round_trips() {
+    let scope = ControlPlaneScope::legacy_default();
+    assert!(scope.is_legacy_default());
+    assert_eq!(scope.tenant_id.as_str(), "local/default");
+    assert_eq!(scope.account_id, "local/default");
+    assert_eq!(scope.principal_id, "local/user");
+    assert_eq!(CONTROL_PLANE_SCHEMA_VERSION, 2);
+
+    let json = serde_json::to_string(&scope).expect("serialize");
+    let decoded: ControlPlaneScope = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decoded, scope);
+
+    let other = ControlPlaneScope {
+        tenant_id: TenantId::new("remote"),
+        ..scope.clone()
+    };
+    assert!(!other.is_legacy_default());
+}
+
+#[test]
+fn actor_identity_canonical_principal_maps_stable_principals() {
+    let cases = [
+        (
+            ActorIdentity::LocalUser {
+                actor_id: ActorId::from("actor-1"),
+                display_name: None,
+            },
+            Some("local/user"),
+        ),
+        (
+            ActorIdentity::AuthenticatedClient {
+                actor_id: ActorId::from("actor-2"),
+                subject: "subject-1".into(),
+            },
+            Some("authenticated_client:subject-1"),
+        ),
+        (
+            ActorIdentity::Automation {
+                name: "scheduler".into(),
+            },
+            Some("automation:scheduler"),
+        ),
+        (
+            ActorIdentity::Plugin {
+                plugin_id: PluginId::from("plugin-1"),
+            },
+            Some("plugin:plugin-1"),
+        ),
+        (
+            ActorIdentity::McpServer {
+                server_id: "server-1".into(),
+            },
+            Some("mcp_server:server-1"),
+        ),
+    ];
+    for (identity, expected) in cases {
+        assert_eq!(identity.canonical_principal().as_deref(), expected);
+    }
+    assert_eq!(
+        ActorIdentity::System.canonical_principal().as_deref(),
+        Some("local/system")
+    );
+    assert_eq!(
+        ActorIdentity::AuthenticatedClient {
+            actor_id: ActorId::from("actor"),
+            subject: "   ".into(),
+        }
+        .canonical_principal(),
+        None
+    );
+    assert_eq!(
+        ActorIdentity::Automation { name: "\t".into() }.canonical_principal(),
+        None
+    );
 }

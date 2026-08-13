@@ -19,7 +19,7 @@ Phase 14 交付的是**库级完整、生产链路未闭合**的 quota library �
 
 - **quota-service 不依赖 auth-service，无 OAuth 通用层**。`Cargo.toml` 只依赖 agent-domain / provider-api / provider-runtime（HTTP 客户端与错误分类）/ usage-ledger；`adapters/oauth.rs` 已删除。`AdapterKind::OAuthApi` 仅保留为契约枚举，没有实现；首个真实 OAuth 供应商接入时再恢复通用层（见下文 OAuth API）。
 - **API Key 通用层只有 Moonshot 一个生产消费者**。`ApiKeyQuotaAdapter` / `ApiKeyQuotaEndpoint` 目前仅 Moonshot 使用；其余 provider 因多端点或签名差异直接实现 `QuotaAdapter`。P18 接线后若仍只有单消费者，应内联到 Moonshot。
-- **本地 Ledger 是进程内的，归属是 synthetic 的**。`QuotaRuntime::production` 每次 CLI 进程新建 `InMemoryUsageLedger`；`record_run_usage` 固定 `tenant=local`、`account=local/default`、`credential_id=None`，principal/agent 为默认身份，费用按 builtin 定价估算。一次 `pawork run` 写入的用量不能被下一次 `pawork usage` 读取；跨进程持久化与真实归属待 P18-2/3/4/8。
+- **本地累计事实源是 P18-8 持久 Ledger**。生产 `pawork` 启动时 fail-loud 打开 `SqliteUsageLedger` 并 replay；run 与后续新进程 `usage` 读取同一账本。每次实际上游 request/attempt 单独归属到真实 tenant/principal/account/credential/session/agent/provider/model/trace，RunId 使用跨进程唯一构造。`InMemoryUsageLedger` 只用于测试与嵌入式装配，不是生产累计源。
 - **查询必须显式 provider**。`QuotaOverview` 缺省或空 `provider_id` 直接返回 validation error，不再静默选择“第一个已注册 provider”或默认 ID；多 provider/多模型聚合待 P18 binding enumeration 成为事实源后由 app-service 批量查询。
 - **scheduler/sink 存在但无生产 targets**。`RefreshScheduler`、`AuditSink`、`AlertSink` 与退避/去重/恢复状态机测试充分，但生产 composition root 不构造 scheduler、不注册远端 target；`RunSupervisor::alert_sink()` 的告警桥已就绪，等待 P18-14 把六家远端 adapter 注册为 target 并启动生命周期。
 - **WebScrape 内置审计待 canonical**。WebScrape 仍持有有界内存 audit Vec（`audit_entries`），与 scheduler `AuditSink` 职责重叠；生产路径只应保留外部 sink，第二份审计记录待 P18-13 合并。
@@ -92,9 +92,9 @@ WebScrape 默认关闭，只能作为低可信度兜底。每个 profile 必须�
 
 ## Ledger 派生、预测与预算
 
-`LedgerQuotaAdapter` 直接查询同一个 P18-8 `UsageLedger`（当前生产为 `InMemoryUsageLedger`，P18-8 持久化实现注入后行为不变），按 tenant/account/credential/provider/model、币种和半开时间范围过滤。重复 replay 使用稳定 record ID 幂等；相同 ID 不同内容报冲突。Rolling5h 与 Weekly 按滚动时间范围派生，当前 `Monthly` 派生采用 30 天近似并把 reset 标为 uncertain；远端 exact 月度仍遵从供应商日历月。
+`LedgerQuotaAdapter` 直接查询同一个 P18-8 `UsageLedger`（生产为 `SqliteUsageLedger`），按 tenant/account/credential/provider/model、币种和半开时间范围过滤。重复 replay 使用稳定 record ID 幂等；相同 ID 不同内容报冲突。Rolling5h 与 Weekly 按滚动时间范围派生，当前 `Monthly` 派生采用 30 天近似并把 reset 标为 uncertain；远端 exact 月度仍遵从供应商日历月。
 
-RunSupervisor 在终态汇总 Provider usage，并先以稳定 record ID 写入 Ledger；成功写入后再刷新本地额度缓存。每条 record 同时投影完整 credential/model scope 与 account 级聚合 scope，分别生成 Overall / Rolling5h / Weekly / Monthly 的 Token 与 Cost 快照。这样显式过滤查询能看到完整 scope，account 级聚合查询能看到账号总量；Ledger 或缓存刷新失败只记录脱敏告警，不改变 run 终态。归属维度（tenant/principal/account/credential）目前是 synthetic 默认值，真实归属由 P18-2/3/4 注入。
+RunSupervisor 逐个实际上游 request/attempt 以稳定 dedup key 写入 Ledger；成功写入后再刷新本地额度缓存。每条 record 同时投影完整 credential/model scope 与 account 级聚合 scope，分别生成 Overall / Rolling5h / Weekly / Monthly 的 Token 与 Cost 快照。这样显式过滤查询能看到完整 scope，account 级聚合查询能看到账号总量；Ledger 或缓存刷新失败只记录脱敏告警，不改变 run 终态。归属来自 P18-2 IdentityContext 与 P18-4 真实 CredentialLease，客户端不能自行指定 credential。
 
 用量增长率可生成耗尽时间预测及置信度。只有 fresh `Exact` 且明确耗尽的信号可触发 Agent Engine 硬停止；Derived、Scraped 或 stale 信号只产生软告警，避免低可信度数据误杀运行。
 
@@ -125,7 +125,7 @@ RunSupervisor 在终态汇总 Provider usage，并先以稳定 record ID 写入 
 
 ## 优先级（P0–P2）
 
-- **P0**：P18-8 持久化 Ledger 注入与启动 replay；P18-2/3/4 真实归属；P18-14 生产 scheduler/target 生命周期。
+- **P0**：P18-8 持久化 Ledger 与 P18-2/3/4 真实归属已完成；P18-14 生产 scheduler/target 生命周期。
 - **P1**：P18 binding enumeration 后 `QuotaOverview` 全绑定聚合；P19-2/10 Desktop 投影与页面；P18-13 统一审计（WebScrape 内置 Vec 并入外部 sink）。
 - **P2**：API Key 通用层在真实接线后决定内联或保留（当前仅 Moonshot 单消费者）。
 

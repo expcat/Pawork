@@ -688,7 +688,10 @@ async fn three_guis_receive_cli_run_events() {
         .app_service
         .router()
         .aggregate()
-        .get_run(&run_id)
+        .get_run(
+            &run_id,
+            &agent_domain::TenantId::new(core_api::DEFAULT_CONTROL_PLANE_TENANT),
+        )
         .expect("run");
     assert_eq!(run.state, RunState::Completed);
 }
@@ -948,28 +951,50 @@ async fn reconnect_replays_missing_events_after_snapshot_rebuild() {
     // 异步事件先落地（如能力协商 Diagnostic），仅凭序列推进会提前退出、
     // 使 resume 窗口错过取消事件（重放断言要求取消事件落在重放窗口内）。
     let deadline = Instant::now() + Duration::from_secs(10);
+    while runtime
+        .app_service
+        .router()
+        .aggregate()
+        .get_run(
+            &run_id,
+            &agent_domain::TenantId::new(core_api::DEFAULT_CONTROL_PLANE_TENANT),
+        )
+        .is_none_or(|run| run.state != RunState::Cancelled)
+    {
+        assert!(Instant::now() < deadline, "取消后 Run 应进入 Cancelled");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let publish_deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let current = runtime.hub.current();
-        if current.0 > last_sequence
-            && runtime
-                .hub
-                .replay(GlobalSequence(last_sequence + 1), Some(current))
-                .expect("窗口在 ring 内")
-                .iter()
-                .any(|event| {
-                    matches!(
-                        &event.payload,
-                        AppEvent::RunChanged { state, .. } if *state == RunState::Cancelled
-                    )
-                })
-        {
+        let cancellation_published = runtime
+            .hub
+            .replay(GlobalSequence(last_sequence + 1), None)
+            .expect("cancellation replay window")
+            .iter()
+            .any(|event| {
+                matches!(
+                    event.payload,
+                    AppEvent::RunChanged {
+                        run_id: ref event_run_id,
+                        ref state,
+                    } if event_run_id == &run_id && *state == RunState::Cancelled
+                )
+            });
+        if cancellation_published {
             break;
         }
-        assert!(Instant::now() < deadline, "取消后应发布 Cancelled 事件");
+        assert!(
+            Instant::now() < publish_deadline,
+            "取消状态应发布到 EventHub 后再发起 Resume"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
     // Resume：按客户端 last_global_sequence 补发断线期间缺失事件。
+    // `ResumeDisposition::through_sequence` 是服务端处理请求时捕获的 Hub 序列；
+    // 响应送达客户端前后台 Run 仍可能发布后续事件，因此不能与读取响应时的
+    // `hub.current()` 做瞬时相等断言，只能断言它落在发送前后的序列区间内。
+    let current_before_resume = runtime.hub.current().0;
     gui_new
         .send(&ClientFrame::Resume(ResumeRequest {
             request_id: "resume-1".into(),
@@ -1004,7 +1029,8 @@ async fn reconnect_replays_missing_events_after_snapshot_rebuild() {
                 } = response.disposition
                 {
                     assert_eq!(from_sequence.0, last_sequence + 1);
-                    assert_eq!(through_sequence.0, runtime.hub.current().0);
+                    assert!(through_sequence.0 >= current_before_resume);
+                    assert!(through_sequence.0 <= runtime.hub.current().0);
                 }
             }
             Ok(ServerFrame::Event(envelope)) => {
@@ -1136,7 +1162,10 @@ async fn slow_client_does_not_block_agent_or_other_guis() {
             .app_service
             .router()
             .aggregate()
-            .get_run(&run_id)
+            .get_run(
+                &run_id,
+                &agent_domain::TenantId::new(core_api::DEFAULT_CONTROL_PLANE_TENANT),
+            )
             .is_some_and(|run| run.state == RunState::Completed),
         "Run 应正常完成"
     );

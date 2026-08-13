@@ -367,7 +367,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("sessions.sqlite3");
         let (store, report) = SessionStore::open(&path).await.expect("open");
-        assert_eq!(report.to_version, 7);
+        assert_eq!(report.to_version, crate::migration::CURRENT_SCHEMA_VERSION);
         assert!(report.applied_versions.contains(&7));
         let exists: Option<i64> = store
             .database()
@@ -534,5 +534,4 @@ mod tests {
         let outcome = backend.remove_if_owner(&id, 1, 3).await.expect("store op");
         assert_eq!(outcome, RegistryWriteOutcome::Conflict(Box::new(None)));
     }
-
 }

@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use agent_domain::{SessionId, Timestamp};
-use app_service::{ApprovalStatus, SessionRecord, Snapshot as AggregateSnapshot};
+use app_service::{ApprovalStatus, IdentityContext, SessionRecord, Snapshot as AggregateSnapshot};
 use core_api::{GlobalSequence, RunState};
 use gui_protocol::{
     Snapshot, SnapshotSection, SnapshotSectionKind, MAX_SNAPSHOT_SECTION_DATA_BYTES,
@@ -45,16 +45,21 @@ impl SnapshotService {
     }
 
     /// 生成完整 Snapshot；`snapshot_sequence` 取 [`EventHub::current`]。
-    pub fn build(&self) -> Result<Snapshot, SnapshotError> {
-        self.build_with_sequence(self.hub.current())
+    pub fn build(&self, identity: &IdentityContext) -> Result<Snapshot, SnapshotError> {
+        self.build_with_sequence(identity, self.hub.current())
     }
 
     /// 以指定 `snapshot_sequence` 生成 Snapshot（测试 / Resume 降级用）。
     pub fn build_with_sequence(
         &self,
+        identity: &IdentityContext,
         snapshot_sequence: GlobalSequence,
     ) -> Result<Snapshot, SnapshotError> {
-        let state = self.app_service.router().aggregate().snapshot();
+        let state = self
+            .app_service
+            .router()
+            .aggregate()
+            .snapshot_for_tenant(&identity.tenant_id);
         let sections = self.build_sections(&state)?;
         Ok(Snapshot {
             instance_id: self.app_service.router().instance_id().clone(),
@@ -180,7 +185,10 @@ fn now_timestamp() -> Timestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_domain::{EventId, ProviderId, RunId, TerminalSessionId, ToolCallId, WorkspaceId};
+    use agent_domain::{
+        EventId, PrincipalId, ProviderId, RunId, TenantId, TerminalSessionId, ToolCallId,
+        WorkspaceId,
+    };
     use app_service::AggregateState;
     use core_api::{ApprovalDecision, CommandSource};
     use gui_protocol::{SnapshotSectionKind, MAX_SNAPSHOT_SECTION_DATA_BYTES};
@@ -273,7 +281,7 @@ mod tests {
             Arc::new(app_service::AppService::new("snapshot-test")),
             Arc::new(hub),
         );
-        let snapshot = service.build().expect("build");
+        let snapshot = service.build(&IdentityContext::local()).expect("build");
         assert_eq!(snapshot.snapshot_sequence, GlobalSequence(0));
         assert_eq!(snapshot.instance_id.as_str(), "snapshot-test");
         let kinds: Vec<SnapshotSectionKind> = snapshot
@@ -321,7 +329,7 @@ mod tests {
         let app_service = Arc::new(app_service::AppService::new("snapshot-test"));
         seed(app_service.router().aggregate());
         let service = SnapshotService::new(Arc::clone(&app_service), Arc::new(hub));
-        let snapshot = service.build().expect("build");
+        let snapshot = service.build(&IdentityContext::local()).expect("build");
         assert_eq!(snapshot.snapshot_sequence, GlobalSequence(1));
         snapshot.validate().expect("sections validate");
 
@@ -389,7 +397,7 @@ mod tests {
 
         // build_with_sequence 使用给定序列。
         let snapshot = service
-            .build_with_sequence(GlobalSequence(42))
+            .build_with_sequence(&IdentityContext::local(), GlobalSequence(42))
             .expect("build with sequence");
         assert_eq!(snapshot.snapshot_sequence, GlobalSequence(42));
     }
@@ -399,7 +407,7 @@ mod tests {
         let app_service = Arc::new(app_service::AppService::new("snapshot-test"));
         seed(app_service.router().aggregate());
         let service = SnapshotService::new(Arc::clone(&app_service), Arc::new(EventHub::new()));
-        let snapshot = service.build().expect("build");
+        let snapshot = service.build(&IdentityContext::local()).expect("build");
         for section in &snapshot.sections {
             let encoded =
                 serde_json::to_vec(section.data.as_ref().expect("data")).expect("serialize");
@@ -409,5 +417,63 @@ mod tests {
                 section.kind
             );
         }
+    }
+
+    #[test]
+    fn snapshot_is_scoped_to_the_requested_identity_tenant() {
+        let app_service = Arc::new(app_service::AppService::new("snapshot-tenant-test"));
+        let aggregate = app_service.router().aggregate();
+        let workspace_id = WorkspaceId::from("workspace-shared");
+        aggregate.record_workspace(Workspace {
+            id: workspace_id.clone(),
+            name: "shared".into(),
+            roots: vec![WorkspaceRoot {
+                path: PathBuf::from("."),
+                git: None,
+            }],
+            trust: TrustState::Trusted,
+            last_accessed_at: now(1),
+            revision: 1,
+        });
+        let tenant_a =
+            IdentityContext::new(TenantId::new("tenant-a"), PrincipalId::new("tenant-a:user"));
+        let tenant_b =
+            IdentityContext::new(TenantId::new("tenant-b"), PrincipalId::new("tenant-b:user"));
+        let session_a = aggregate
+            .create_session_with_identity(workspace_id.clone(), "a".into(), now(2), &tenant_a)
+            .expect("tenant-a session");
+        let session_b = aggregate
+            .create_session_with_identity(workspace_id, "b".into(), now(3), &tenant_b)
+            .expect("tenant-b session");
+        aggregate
+            .record_run_with_identity(
+                RunId::from("run-a"),
+                session_a.session_id,
+                agent_domain::ModelId::from("model"),
+                ProviderId::from("provider"),
+                CommandSource::Automation,
+                now(4),
+                &tenant_a,
+            )
+            .expect("tenant-a run");
+        aggregate
+            .record_run_with_identity(
+                RunId::from("run-b"),
+                session_b.session_id,
+                agent_domain::ModelId::from("model"),
+                ProviderId::from("provider"),
+                CommandSource::Automation,
+                now(5),
+                &tenant_b,
+            )
+            .expect("tenant-b run");
+
+        let service = SnapshotService::new(app_service, Arc::new(EventHub::new()));
+        let snapshot = service.build(&tenant_a).expect("tenant-a snapshot");
+        let encoded = serde_json::to_string(&snapshot).expect("serialize snapshot");
+        assert!(encoded.contains("tenant-a"));
+        assert!(encoded.contains("run-a"));
+        assert!(!encoded.contains("tenant-b"));
+        assert!(!encoded.contains("run-b"));
     }
 }

@@ -20,12 +20,12 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use agent_domain::{ConnectionId, GuiClientId, Timestamp};
-use app_service::AppServiceError;
+use app_service::{AppService, AppServiceError, IdentityContext};
 use async_trait::async_trait;
 use connection_manager::{ClientRegistration, ManagerError};
 use core_api::{
-    ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppQueryEnvelope, CommandSource,
-    GlobalSequence,
+    ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope,
+    AppQueryEnvelope, CommandSource, GlobalSequence,
 };
 use gui_protocol::{
     codec::decode_client_frame, compute_resume_disposition, decode_client_frame_checked,
@@ -148,15 +148,33 @@ async fn run(
     // P17-5 主审修复：连接层 locality 是本会话唯一的权威来源标签（服务端
     // 事实，客户端无法伪造）；登记与命令/查询盖戳共用同一值。
     let locality = connection.info().locality;
+    // P18-2：连接身份由服务端解析器决定（canonical tenant/principal），
+    // 与 wire 内容无关，用于快照 / Resume 的租户隔离。
+    let identity = match resolve_connection_identity(&inner, &outcome.request, connection.as_ref())
+    {
+        Ok(identity) => identity,
+        Err(error) => {
+            tracing::warn!(%client_id, %error, "gui connection identity resolution failed");
+            let _ = connection.close().await;
+            return;
+        }
+    };
 
     // 登记连接（有界事件队列由管理器持有发送端，接收端归本任务）。
+    // P18-2 审查修复：注册审计身份必须来自服务端 resolved IdentityContext，
+    // 不得取握手 wire 值，也不能留空（否则连接归属审计无法落到 tenant/principal）。
     let registration = ClientRegistration {
         client_id: client_id.clone(),
         connection_id: connection_id.clone(),
         name: outcome.request.client_name,
         version: outcome.request.client_version,
         locality: locality.clone(),
-        identity: None,
+        identity: Some(connection_actor_identity(
+            &identity,
+            &client_id,
+            &connection_id,
+            &locality,
+        )),
         capabilities: granted_capabilities(&outcome.response),
         connected_at: now_timestamp(),
     };
@@ -172,7 +190,7 @@ async fn run(
     // 首连握手后发 Snapshot（snapshot_sequence = hub.current()）；
     // Handshake 响应已由 handshake_phase 发出。
     let mut initial = Vec::new();
-    match inner.snapshots.build() {
+    match inner.snapshots.build(&identity) {
         Ok(snapshot) => initial.push(ServerFrame::Snapshot(snapshot)),
         Err(error) => tracing::warn!(%client_id, %error, "initial snapshot build failed"),
     }
@@ -189,7 +207,12 @@ async fn run(
 
     // 事件转发任务：Hub → 本连接有界队列（未订阅不投递；满则标记 Lagged）。
     let (stop_tx, stop_rx) = oneshot::channel();
-    let _forwarder = spawn_forwarder(Arc::clone(&inner), client_id.clone(), stop_rx);
+    let _forwarder = spawn_forwarder(
+        Arc::clone(&inner),
+        client_id.clone(),
+        identity.clone(),
+        stop_rx,
+    );
 
     // 心跳看门狗：超时断线清理（绝不取消 Run）。
     let mut watchdog = interval(watchdog_interval(
@@ -262,7 +285,16 @@ async fn run(
                 };
                 // 任意入站帧都是活跃证据。
                 let _ = inner.connections.heartbeat(&client_id, now_timestamp());
-                match handle_frame(&inner, frame, &client_id, &connection_id, &locality).await {
+                match handle_frame(
+                    &inner,
+                    frame,
+                    &client_id,
+                    &connection_id,
+                    &locality,
+                    &identity,
+                )
+                .await
+                {
                     FrameOutcome::None => {}
                     FrameOutcome::Reply(replies) => {
                         let mut sent = true;
@@ -377,24 +409,26 @@ enum FrameOutcome {
     Reply(Vec<ServerFrame>),
 }
 
-/// P17-5 主审修复：GUI 连接的权威 source/identity 由服务端重写。
+/// P17-5 / P18-2 审查修复：GUI 连接的权威 source/identity 由服务端重写。
 ///
 /// 线上信封的 source/identity 一律视为可伪造（wire 不可信），进入
 /// app-service 前按连接层事实盖戳：
-/// - `Local` / `InProcess` → `LocalGui { client_id }` + `LocalUser`
-///   （本机操作者；actor_id 取服务端分配的 client_id，非 wire 值）；
-/// - `Remote` → `RemoteGui { client_id, connection_id }` +
-///   `AuthenticatedClient`（actor_id / subject 取服务端分配的 client_id /
-///   connection_id；GUI 协议尚无 per-user 身份，远程动作归属到已验证连接，
-///   且任何授权策略都不把 RemoteGui 当本机来源，fail-closed 语义不受影响）。
-///   command 与 query 信封同理；wire 提供的来源 / 身份不会进入 app-service。
+/// - source 仍由 locality 决定：`Local` / `InProcess` → `LocalGui`，
+///   `Remote` → `RemoteGui { client_id, connection_id }`；
+/// - identity 由服务端 resolved [`IdentityContext`] 派生，wire 身份不进入
+///   app-service。默认 local 单租户保持历史形态（`LocalUser` /
+///   `AuthenticatedClient` 按 locality 取 client/connection id）；custom
+///   tenant resolver 解析出的 principal 以 `AuthenticatedClient { subject:
+///   principal }` 透传（canonical principal `authenticated_client:{principal}`），
+///   由宿主一致注入的 app-service IdentityResolver 还原 tenant/principal。
 fn host_stamp_command(
     mut envelope: AppCommandEnvelope,
     client_id: &GuiClientId,
     connection_id: &ConnectionId,
     locality: &ConnectionLocality,
+    identity: &IdentityContext,
 ) -> AppCommandEnvelope {
-    let (source, identity) = host_stamp(client_id, connection_id, locality);
+    let (source, identity) = host_stamp(client_id, connection_id, locality, identity);
     envelope.source = source;
     envelope.identity = identity;
     envelope
@@ -405,8 +439,9 @@ fn host_stamp_query(
     client_id: &GuiClientId,
     connection_id: &ConnectionId,
     locality: &ConnectionLocality,
+    identity: &IdentityContext,
 ) -> AppQueryEnvelope {
-    let (source, identity) = host_stamp(client_id, connection_id, locality);
+    let (source, identity) = host_stamp(client_id, connection_id, locality, identity);
     envelope.source = source;
     envelope.identity = identity;
     envelope
@@ -416,28 +451,54 @@ fn host_stamp(
     client_id: &GuiClientId,
     connection_id: &ConnectionId,
     locality: &ConnectionLocality,
+    identity: &IdentityContext,
 ) -> (CommandSource, ActorIdentity) {
-    let actor_id = agent_domain::ActorId::from(client_id.as_str());
-    match locality {
-        ConnectionLocality::Local | ConnectionLocality::InProcess => (
-            CommandSource::LocalGui {
-                client_id: client_id.clone(),
-            },
-            ActorIdentity::LocalUser {
+    let source = match locality {
+        ConnectionLocality::Local | ConnectionLocality::InProcess => CommandSource::LocalGui {
+            client_id: client_id.clone(),
+        },
+        ConnectionLocality::Remote => CommandSource::RemoteGui {
+            client_id: client_id.clone(),
+            connection_id: connection_id.clone(),
+        },
+    };
+    (
+        source,
+        connection_actor_identity(identity, client_id, connection_id, locality),
+    )
+}
+
+/// resolved [`IdentityContext`] → 盖戳用 [`ActorIdentity`]（注册审计与
+/// command/query 共用同一映射，保证审计身份与请求身份一致）。
+///
+/// 默认 local 单租户保持 P17-5 历史形态；custom tenant resolver 的非默认
+/// 身份以 `AuthenticatedClient { subject: principal }` 编码，canonical
+/// principal 为 `authenticated_client:{principal}`，由 app-service 的
+/// IdentityResolver 还原。tenant 无法进入 ActorIdentity 字段，只能经
+/// principal 键由宿主 resolver 映射——这是不改协议字段下的最小传递通道。
+fn connection_actor_identity(
+    identity: &IdentityContext,
+    client_id: &GuiClientId,
+    connection_id: &ConnectionId,
+    locality: &ConnectionLocality,
+) -> ActorIdentity {
+    if identity.is_local_default() {
+        let actor_id = agent_domain::ActorId::from(client_id.as_str());
+        match locality {
+            ConnectionLocality::Local | ConnectionLocality::InProcess => ActorIdentity::LocalUser {
                 actor_id,
                 display_name: None,
             },
-        ),
-        ConnectionLocality::Remote => (
-            CommandSource::RemoteGui {
-                client_id: client_id.clone(),
-                connection_id: connection_id.clone(),
-            },
-            ActorIdentity::AuthenticatedClient {
+            ConnectionLocality::Remote => ActorIdentity::AuthenticatedClient {
                 actor_id,
                 subject: connection_id.as_str().to_string(),
             },
-        ),
+        }
+    } else {
+        ActorIdentity::AuthenticatedClient {
+            actor_id: agent_domain::ActorId::from(identity.principal_id.as_str()),
+            subject: identity.principal_id.as_str().to_string(),
+        }
     }
 }
 
@@ -447,6 +508,7 @@ async fn handle_frame(
     client_id: &GuiClientId,
     connection_id: &ConnectionId,
     locality: &ConnectionLocality,
+    identity: &IdentityContext,
 ) -> FrameOutcome {
     match frame {
         ClientFrame::Command(envelope) => {
@@ -475,6 +537,7 @@ async fn handle_frame(
                 client_id,
                 connection_id,
                 locality,
+                identity,
             ));
             FrameOutcome::Reply(vec![ServerFrame::Response(response)])
         }
@@ -485,6 +548,7 @@ async fn handle_frame(
                 client_id,
                 connection_id,
                 locality,
+                identity,
             ));
             FrameOutcome::Reply(vec![ServerFrame::Response(response)])
         }
@@ -518,8 +582,8 @@ async fn handle_frame(
             Ok(()) => FrameOutcome::None,
             Err(error) => FrameOutcome::Reply(vec![manager_error_frame(Some(request_id), &error)]),
         },
-        ClientFrame::Resume(request) => handle_resume(inner, request),
-        ClientFrame::SnapshotRequest { request_id } => match inner.snapshots.build() {
+        ClientFrame::Resume(request) => handle_resume(inner, request, identity),
+        ClientFrame::SnapshotRequest { request_id } => match inner.snapshots.build(identity) {
             Ok(snapshot) => FrameOutcome::Reply(vec![ServerFrame::Snapshot(snapshot)]),
             Err(error) => FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
                 request_id: Some(request_id),
@@ -542,7 +606,11 @@ async fn handle_frame(
 }
 
 /// Resume：按 [`compute_resume_disposition`] 判定后补发 Replay 事件或降级 Snapshot。
-fn handle_resume(inner: &Inner, request: ResumeRequest) -> FrameOutcome {
+fn handle_resume(
+    inner: &Inner,
+    request: ResumeRequest,
+    identity: &IdentityContext,
+) -> FrameOutcome {
     let current = inner.hub.current();
     let earliest = inner.hub.earliest_available().unwrap_or(current);
     let disposition = compute_resume_disposition(earliest, current, request.last_global_sequence);
@@ -555,7 +623,14 @@ fn handle_resume(inner: &Inner, request: ResumeRequest) -> FrameOutcome {
             from_sequence,
             through_sequence,
         } => match inner.hub.replay(from_sequence, Some(through_sequence)) {
-            Ok(events) => replies.extend(events.into_iter().map(ServerFrame::Event)),
+            // P18-2 审查修复：重放同样按租户过滤。无法从可信 aggregate 判定
+            // 租户的事件对非默认租户连接 fail-closed 丢弃，禁止跨租户泄漏。
+            Ok(events) => replies.extend(
+                events
+                    .into_iter()
+                    .filter(|event| event_visible_to(&inner.app_service, event, identity))
+                    .map(ServerFrame::Event),
+            ),
             Err(error) => {
                 // 理论不可达（disposition 已保证窗口在 ring 内），防御性降级。
                 tracing::warn!(%error, "resume replay unavailable; falling back to snapshot");
@@ -569,13 +644,13 @@ fn handle_resume(inner: &Inner, request: ResumeRequest) -> FrameOutcome {
                             .unwrap_or(current),
                     },
                 }));
-                if let Ok(snapshot) = inner.snapshots.build() {
+                if let Ok(snapshot) = inner.snapshots.build(identity) {
                     replies.push(ServerFrame::Snapshot(snapshot));
                 }
             }
         },
         ResumeDisposition::SnapshotRequired { .. } => {
-            if let Ok(snapshot) = inner.snapshots.build() {
+            if let Ok(snapshot) = inner.snapshots.build(identity) {
                 replies.push(ServerFrame::Snapshot(snapshot));
             }
         }
@@ -584,10 +659,60 @@ fn handle_resume(inner: &Inner, request: ResumeRequest) -> FrameOutcome {
     FrameOutcome::Reply(replies)
 }
 
+fn resolve_connection_identity(
+    inner: &Inner,
+    request: &HandshakeRequest,
+    connection: &dyn GuiConnection,
+) -> Result<IdentityContext, String> {
+    let identity = inner
+        .identity_resolver
+        .resolve(request, &connection.info())
+        .map_err(|error| error.to_string())?;
+    identity.validate().map_err(|error| error.to_string())?;
+    Ok(identity)
+}
+
+/// P18-2 事件租户可见性（实时与重放共用同一判定）。
+///
+/// 默认 local 单租户连接保持全量可见（历史行为不回归）；非默认 tenant 连接
+/// 只接收能从可信 aggregate 判定为本租户的事件：
+/// - Run 族事件经 `aggregate.get_run(run_id, tenant)` 校验归属；
+/// - `SessionChanged` 经 `aggregate.session_exists(session_id, tenant)` 校验；
+/// - Workspace / Diff / Terminal / Provider / Quota / Team / GuiClient /
+///   Core / Diagnostic / PluginError 等当前没有 tenant-bound aggregate
+///   归属的事件无法判定 → fail-closed 丢弃（宁少勿泄）。
+/// aggregate 中不存在的 id 同样丢弃（启动回放窗口跨重启等边界）。
+fn event_visible_to(
+    app_service: &AppService,
+    event: &AppEventEnvelope,
+    identity: &IdentityContext,
+) -> bool {
+    if identity.is_local_default() {
+        return true;
+    }
+    let aggregate = app_service.router().aggregate();
+    match &event.payload {
+        AppEvent::RunChanged { run_id, .. }
+        | AppEvent::AssistantDelta { run_id, .. }
+        | AppEvent::ThinkingDelta { run_id, .. }
+        | AppEvent::ToolStarted { run_id, .. }
+        | AppEvent::ToolOutput { run_id, .. }
+        | AppEvent::ToolApprovalRequired { run_id, .. }
+        | AppEvent::ToolCompleted { run_id, .. } => {
+            aggregate.get_run(run_id, &identity.tenant_id).is_some()
+        }
+        AppEvent::SessionChanged { session_id, .. } => {
+            aggregate.session_exists(session_id, &identity.tenant_id)
+        }
+        _ => false,
+    }
+}
+
 /// 事件转发任务：Hub 广播 → 本连接的有界队列（`enqueue` 非阻塞）。
 ///
 /// 未订阅不投递；队列满时管理器标记 `Lagged` 并丢弃事件，不阻塞 Hub
 /// 发布者与其他连接。连接注销（发送端释放）后本任务退出。
+/// 租户隔离：非默认 tenant 连接仅收到 [`event_visible_to`] 判定可见的事件。
 ///
 /// Hub receiver 在 **spawn 前的同步阶段**创建并移入任务：broadcast 订阅
 /// 不补历史，若推迟到任务内部创建，则任务首次被调度前发布的事件会因尚
@@ -595,6 +720,7 @@ fn handle_resume(inner: &Inner, request: ResumeRequest) -> FrameOutcome {
 fn spawn_forwarder(
     inner: Arc<Inner>,
     client_id: GuiClientId,
+    identity: IdentityContext,
     stop: oneshot::Receiver<()>,
 ) -> tokio::task::JoinHandle<()> {
     let mut subscription = inner.hub.subscribe();
@@ -607,6 +733,9 @@ fn spawn_forwarder(
                     match received {
                         Ok(event) => {
                             if !inner.connections.should_forward(&client_id, &event.stream) {
+                                continue;
+                            }
+                            if !event_visible_to(&inner.app_service, &event, &identity) {
                                 continue;
                             }
                             if let Err(error) = inner.connections.enqueue(&client_id, event) {
@@ -779,7 +908,7 @@ fn now_unix_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_domain::{ActorId, CommandId, QueryId};
+    use agent_domain::{ActorId, CommandId, PrincipalId, QueryId, TenantId};
     use core_api::{AppCommand, AppQuery, AppResponse, AppResponseEnvelope, API_VERSION};
     use std::sync::Mutex;
 
@@ -887,9 +1016,15 @@ mod tests {
             hub: Arc::clone(&hub),
             connections: Arc::new(ConnectionManager::default()),
             snapshots: SnapshotService::new(app_service, Arc::clone(&hub)),
+            identity_resolver: Arc::new(crate::LocalGuiConnectionIdentityResolver),
         });
         let (stop_tx, stop_rx) = oneshot::channel();
-        let task = spawn_forwarder(Arc::clone(&inner), GuiClientId::from("fwd-test"), stop_rx);
+        let task = spawn_forwarder(
+            Arc::clone(&inner),
+            GuiClientId::from("fwd-test"),
+            IdentityContext::local(),
+            stop_rx,
+        );
         assert_eq!(
             hub.subscriber_count(),
             1,
@@ -925,6 +1060,7 @@ mod tests {
             &client_id,
             &connection_id,
             &transport_api::ConnectionLocality::InProcess,
+            &IdentityContext::local(),
         );
         assert_eq!(
             stamped.source,
@@ -965,6 +1101,7 @@ mod tests {
             &client_id,
             &connection_id,
             &transport_api::ConnectionLocality::Remote,
+            &IdentityContext::local(),
         );
         assert_eq!(
             stamped.source,
@@ -980,5 +1117,192 @@ mod tests {
                 subject: "server-conn".into(),
             }
         );
+    }
+
+    #[test]
+    fn host_stamp_custom_resolved_identity_carries_principal() {
+        // P18-2 审查修复：custom tenant resolver 的 principal 必须到达
+        // app-service；wire 提供的身份（哪怕是 System）一律被覆盖。
+        let client_id = GuiClientId::from("server-assigned");
+        let connection_id = ConnectionId::from("server-conn");
+        let identity =
+            IdentityContext::new(TenantId::new("tenant-a"), PrincipalId::new("tenant-a:user"));
+        let envelope = AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: CommandId::from("cmd-forged"),
+            source: CommandSource::Automation,
+            identity: ActorIdentity::System,
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: Timestamp::from_unix_millis(1),
+            command: AppCommand::WorkspaceAdd {
+                root_path: "/tmp".into(),
+            },
+        };
+        let stamped = host_stamp_command(
+            envelope,
+            &client_id,
+            &connection_id,
+            &transport_api::ConnectionLocality::InProcess,
+            &identity,
+        );
+        assert_eq!(
+            stamped.source,
+            CommandSource::LocalGui {
+                client_id: client_id.clone(),
+            },
+            "source 仍由 locality 决定，wire Automation 不得透传"
+        );
+        assert_eq!(
+            stamped.identity,
+            ActorIdentity::AuthenticatedClient {
+                actor_id: ActorId::from("tenant-a:user"),
+                subject: "tenant-a:user".into(),
+            },
+            "identity 必须来自 resolved IdentityContext，wire System 不得透传"
+        );
+        assert_eq!(
+            stamped.identity.canonical_principal().as_deref(),
+            Some("authenticated_client:tenant-a:user"),
+            "canonical principal 由宿主 app-service resolver 还原 tenant/principal"
+        );
+    }
+
+    #[test]
+    fn event_visibility_fails_closed_for_non_default_tenants() {
+        use agent_domain::{EventId, ProviderId, RunId, WorkspaceId};
+        use core_api::{AppEvent, EventSource, EventStream, ProviderStatus, RunState};
+
+        let app_service = AppService::new("event-visibility-test");
+        let aggregate = app_service.router().aggregate();
+        // workspace-service 不是 gui-server 依赖，种子经协议命令进入
+        // aggregate（与 lib.rs 测试同一路径）。
+        let workspace_response = app_service.dispatch_envelope(AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: CommandId::from("seed-workspace"),
+            source: core_api::CommandSource::LocalGui {
+                client_id: GuiClientId::from("visibility-seed"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: ActorId::from("visibility-seed"),
+                display_name: None,
+            },
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: Timestamp::from_unix_millis(1),
+            command: AppCommand::WorkspaceAdd {
+                root_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            },
+        });
+        let AppResponse::Data(workspace) = workspace_response.response else {
+            panic!("workspace seed failed");
+        };
+        let workspace_id = WorkspaceId::from(workspace["id"].as_str().expect("workspace id"));
+        let tenant_a =
+            IdentityContext::new(TenantId::new("tenant-a"), PrincipalId::new("tenant-a:user"));
+        let tenant_b =
+            IdentityContext::new(TenantId::new("tenant-b"), PrincipalId::new("tenant-b:user"));
+        let session_a = aggregate
+            .create_session_with_identity(
+                workspace_id.clone(),
+                "a".into(),
+                Timestamp::from_unix_millis(2),
+                &tenant_a,
+            )
+            .expect("tenant-a session");
+        let run_a = RunId::from("run-a");
+        aggregate
+            .record_run_with_identity(
+                run_a.clone(),
+                session_a.session_id.clone(),
+                agent_domain::ModelId::from("model"),
+                ProviderId::from("provider"),
+                core_api::CommandSource::Automation,
+                Timestamp::from_unix_millis(3),
+                &tenant_a,
+            )
+            .expect("tenant-a run");
+
+        let event = |payload: AppEvent| AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: agent_domain::CoreInstanceId::from("event-visibility-test"),
+            event_id: EventId::from("event-x"),
+            global_sequence: GlobalSequence(1),
+            stream: EventStream::Global,
+            stream_sequence: 1,
+            timestamp: Timestamp::from_unix_millis(4),
+            source: EventSource::Core,
+            payload,
+        };
+
+        // 本租户 Run 事件可见；他租户 Run 事件不可见（fail-closed）。
+        assert!(event_visible_to(
+            &app_service,
+            &event(AppEvent::RunChanged {
+                run_id: run_a.clone(),
+                state: RunState::Completed,
+            }),
+            &tenant_a,
+        ));
+        assert!(!event_visible_to(
+            &app_service,
+            &event(AppEvent::RunChanged {
+                run_id: run_a,
+                state: RunState::Completed,
+            }),
+            &tenant_b,
+        ));
+        // 本租户 SessionChanged 可见；他租户不可见。
+        assert!(event_visible_to(
+            &app_service,
+            &event(AppEvent::SessionChanged {
+                session_id: session_a.session_id.clone(),
+                revision: 1,
+            }),
+            &tenant_a,
+        ));
+        assert!(!event_visible_to(
+            &app_service,
+            &event(AppEvent::SessionChanged {
+                session_id: session_a.session_id,
+                revision: 1,
+            }),
+            &tenant_b,
+        ));
+        // aggregate 无 tenant-bound 归属的事件：非默认租户一律丢弃。
+        assert!(!event_visible_to(
+            &app_service,
+            &event(AppEvent::WorkspaceChanged {
+                workspace_id: workspace_id.clone(),
+                revision: 1,
+            }),
+            &tenant_a,
+        ));
+        assert!(!event_visible_to(
+            &app_service,
+            &event(AppEvent::ProviderStatus {
+                provider_id: ProviderId::from("provider"),
+                status: ProviderStatus::Ready,
+            }),
+            &tenant_a,
+        ));
+        // aggregate 中不存在的 run id 同样丢弃（跨重启回放等边界）。
+        assert!(!event_visible_to(
+            &app_service,
+            &event(AppEvent::RunChanged {
+                run_id: RunId::from("run-missing"),
+                state: RunState::Completed,
+            }),
+            &tenant_a,
+        ));
+        // 默认 local 单租户连接保持全量可见（不回归）。
+        assert!(event_visible_to(
+            &app_service,
+            &event(AppEvent::WorkspaceChanged {
+                workspace_id,
+                revision: 1,
+            }),
+            &IdentityContext::local(),
+        ));
     }
 }

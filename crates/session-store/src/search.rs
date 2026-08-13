@@ -10,7 +10,7 @@
 //!   （`content_rowid`）难以正确映射且易产生同步错误，故标题/标签采用确定性 `LIKE`，
 //!   内容反序列化后只匹配 `Text` part；迁移到整数 rowid 后可再引入 FTS5。
 
-use agent_domain::{ContentPart, Message, SessionId};
+use agent_domain::{ContentPart, Message, SessionId, TenantId};
 use rusqlite::{params, Connection};
 
 use crate::{SessionStore, SessionStoreError};
@@ -136,16 +136,30 @@ impl SessionStore {
         &self,
         query: &str,
     ) -> Result<Vec<SessionSearchHit>, SessionStoreError> {
+        // legacy 便捷入口（P18-2 前调用方 / 测试）：固定搜索默认本地租户。
+        // 生产查询必须使用 [`Self::search_sessions_for_tenant`] 显式携带
+        // 身份上下文，阻断隐式全局查询（Tenant A 不得看到 Tenant B 记录）。
+        self.search_sessions_for_tenant(&TenantId::new("local/default"), query)
+            .await
+    }
+
+    /// 按租户隔离搜索 session（P18-2）：只返回 `tenant_id` 匹配的记录。
+    pub async fn search_sessions_for_tenant(
+        &self,
+        tenant_id: &TenantId,
+        query: &str,
+    ) -> Result<Vec<SessionSearchHit>, SessionStoreError> {
         let query = query.trim().to_string();
         if query.is_empty() {
             return Ok(Vec::new());
         }
         let query_for_call = query.clone();
+        let tenant_for_call = tenant_id.to_string();
         let hits = self
             .database()
             .call(
                 move |connection| -> Result<Vec<SessionSearchHit>, SessionStoreError> {
-                    search_with_like(connection, &query_for_call)
+                    search_with_like(connection, &tenant_for_call, &query_for_call)
                 },
             )
             .await??;
@@ -156,6 +170,7 @@ impl SessionStore {
 /// 确定性 LIKE 搜索。优先级：标题 > 标签 > 内容；同 session 去重保留最高优先级命中。
 fn search_with_like(
     connection: &Connection,
+    tenant_id: &str,
     query: &str,
 ) -> Result<Vec<SessionSearchHit>, SessionStoreError> {
     let like = format!("%{query}%");
@@ -164,10 +179,11 @@ fn search_with_like(
     {
         let mut statement = connection.prepare(
             "SELECT session_id, title FROM sessions \
-             WHERE title LIKE ?1 ORDER BY updated_at_ms DESC, session_id",
+             WHERE tenant_id = ?1 AND title LIKE ?2 \
+             ORDER BY updated_at_ms DESC, session_id",
         )?;
         let rows = statement
-            .query_map([&like], |row| {
+            .query_map(params![tenant_id, &like], |row| {
                 Ok(SessionSearchHit {
                     session_id: row.get(0)?,
                     title: row.get(1)?,
@@ -183,10 +199,11 @@ fn search_with_like(
         let mut statement = connection.prepare(
             "SELECT DISTINCT s.session_id, s.title \
              FROM session_tags t JOIN sessions s ON s.session_id = t.session_id \
-             WHERE t.tag LIKE ?1 ORDER BY s.updated_at_ms DESC, s.session_id",
+             WHERE s.tenant_id = ?1 AND t.tag LIKE ?2 \
+             ORDER BY s.updated_at_ms DESC, s.session_id",
         )?;
         let rows = statement
-            .query_map([&like], |row| {
+            .query_map(params![tenant_id, &like], |row| {
                 Ok(SessionSearchHit {
                     session_id: row.get(0)?,
                     title: row.get(1)?,
@@ -202,10 +219,11 @@ fn search_with_like(
         let mut statement = connection.prepare(
             "SELECT m.session_id, s.title, m.message_json \
              FROM messages m JOIN sessions s ON s.session_id = m.session_id \
+             WHERE s.tenant_id = ?1 \
              ORDER BY s.updated_at_ms DESC, s.session_id, m.sequence",
         )?;
         let rows = statement
-            .query_map([], |row| {
+            .query_map(params![tenant_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -289,8 +307,8 @@ mod tests {
     };
 
     use agent_domain::{
-        ContentPart, EventId, Message, MessageId, MessageMetadata, MessageRole, RunId, SessionId,
-        TextContent, Timestamp,
+        ContentPart, EventId, Message, MessageId, MessageMetadata, MessageRole, PrincipalId, RunId,
+        SessionId, TenantId, TextContent, Timestamp,
     };
     use agent_events::{AgentEvent, AgentEventEnvelope, EventSequence};
 
@@ -475,6 +493,90 @@ mod tests {
             .await
             .expect("search")
             .is_empty());
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn tenant_scoped_search_does_not_leak_other_tenants() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let tenant_a = TenantId::new("tenant-a");
+        let tenant_b = TenantId::new("tenant-b");
+        store
+            .create_session_with_identity(
+                &SessionId::from("session-a"),
+                "alpha secret title",
+                Timestamp::from_unix_millis(1),
+                &tenant_a,
+                &PrincipalId::new("principal-a"),
+            )
+            .await
+            .expect("session a");
+        store
+            .create_session_with_identity(
+                &SessionId::from("session-b"),
+                "beta secret title",
+                Timestamp::from_unix_millis(2),
+                &tenant_b,
+                &PrincipalId::new("principal-b"),
+            )
+            .await
+            .expect("session b");
+
+        let hits_a = store
+            .search_sessions_for_tenant(&tenant_a, "secret")
+            .await
+            .expect("search tenant a");
+        let ids_a: Vec<&str> = hits_a.iter().map(|h| h.session_id.as_str()).collect();
+        assert_eq!(ids_a, vec!["session-a"]);
+
+        let hits_b = store
+            .search_sessions_for_tenant(&tenant_b, "secret")
+            .await
+            .expect("search tenant b");
+        let ids_b: Vec<&str> = hits_b.iter().map(|h| h.session_id.as_str()).collect();
+        assert_eq!(ids_b, vec!["session-b"]);
+
+        // 身份读取：归属可查、跨租户隔离。
+        let (tenant, principal) = store
+            .get_session_identity(&SessionId::from("session-a"))
+            .await
+            .expect("read")
+            .expect("identity");
+        assert_eq!(tenant, tenant_a);
+        assert_eq!(principal, PrincipalId::new("principal-a"));
+        assert!(store
+            .get_session_identity(&SessionId::from("no-such"))
+            .await
+            .expect("read")
+            .is_none());
+
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn create_session_rejects_empty_or_blank_identity() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        for (session_id, tenant_id, principal_id) in [
+            ("session-empty-tenant", "", "local/user"),
+            ("session-blank-tenant", " \t", "local/user"),
+            ("session-blank-principal", "local/default", "\n"),
+        ] {
+            let error = store
+                .create_session_with_identity(
+                    &SessionId::from(session_id),
+                    "title",
+                    Timestamp::from_unix_millis(1),
+                    &TenantId::new(tenant_id),
+                    &PrincipalId::new(principal_id),
+                )
+                .await
+                .expect_err("空白 tenant/principal 必须拒绝");
+            assert!(error.to_string().contains("non-blank"));
+        }
         store.shutdown().await.expect("shutdown");
         let _ = fs::remove_file(path);
     }

@@ -10,14 +10,15 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agent_domain::{
     ModelId, ProviderId, QueryId, RunId, SessionId, TenantId, TerminalSessionId, WorkspaceId,
 };
+use audit_log::{AuditAction, AuditDecision, AuditDimensions, AuditTargetKind};
 use core_api::{
     mask_credential_hint, QuotaOverviewQuery, QuotaOverviewView, QuotaScopeView, QuotaWindow,
-    WindowReadEntry, WindowReadView,
+    WindowReadEntry, WindowReadView, DEFAULT_QUOTA_TENANT_CANONICAL,
 };
 use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
@@ -25,6 +26,10 @@ use core_api::{
 };
 use provider_api::ModelProvider;
 use serde_json::json;
+use tenant_service::{
+    IdentityContext, IdentityResolver, InMemoryTenantPolicyEngine, LocalIdentityResolver,
+    Permission, PolicyDecisionKind, PolicyGate,
+};
 use workspace_service::{TrustState, WorkspaceService};
 
 use crate::aggregate::AggregateState;
@@ -33,6 +38,7 @@ use crate::error::{
     accepted_response_with_run, data_response, error_response, now_timestamp, AppServiceError,
 };
 use crate::idempotency::{should_cache, IdempotencyCheck, IdempotencyStore};
+use crate::policy::TenantPolicyGate;
 use crate::profile_resolver::{ModelLanding, ModelOverrideDecision, ModelOverrideRequest};
 use crate::rate_limit::{RateLimiter, DEFAULT_RATE_LIMIT_BUFFER, DEFAULT_RATE_LIMIT_WINDOW};
 use crate::supervisor::{RunRequest, RunSupervisor, DEFAULT_MAX_CONCURRENT_RUNS};
@@ -63,6 +69,30 @@ impl Default for RouterConfig {
     }
 }
 
+/// P18-8 补救：跨进程唯一 RunId 生成。
+///
+/// 每次新 run 生成 `run-<unix_ms>-<pid>-<seq>`：
+/// - `<unix_ms>`：当前墙钟毫秒（13 位定宽，字典序≈时间序）；
+/// - `<pid>`：进程号，隔离并发进程（旧实现 `aggregate.next_id` 每进程从 0
+///   计数，两个进程会同时产出 `run-1`，导致账本按 (request_id, attempt)
+///   去重时误伤另一进程的用量记录，累计丢失）；
+/// - `<seq>`：进程内全局原子序列（同进程所有 router 实例 / 线程共享），
+///   保证同进程内有序唯一。
+///
+/// 幂等 / 重放语义不变：去重仍按 `command_id` / `idempotency_key`（重放
+/// 返回首次响应及其原始 run_id）；同 run 的 retry / attempt 复用同一
+/// run_id，只有新 run 的生成跨进程唯一。
+static RUN_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn next_run_id() -> RunId {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let sequence = RUN_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    RunId::from(format!("run-{millis}-{}-{sequence}", std::process::id()))
+}
+
 /// 统一命令路由器：聚合状态 + 幂等存储 + 限流器 + Run 监督器 + 审批注册表。
 pub struct CommandRouter {
     config: RouterConfig,
@@ -78,6 +108,7 @@ pub struct CommandRouter {
     sources: Mutex<BTreeMap<String, u64>>,
     identities: Mutex<BTreeMap<String, u64>>,
     commands_handled: AtomicU64,
+    last_started_run: Mutex<Option<RunId>>,
     quota_runtime: Mutex<Option<Arc<QuotaRuntime>>>,
     /// P17-5 主 run profile 解析（生产 ResourceLoader 装配注入）；未注入时
     /// RunStart 携带 profile 名一律 fail-closed。
@@ -88,10 +119,49 @@ pub struct CommandRouter {
     /// 策略）。显式模型与 profile canonical 落点不同时由它裁决，绝不直接
     /// 信任 caller。
     model_override_policy: Mutex<Arc<dyn crate::profile_resolver::ModelOverridePolicy>>,
+    /// P18-4 共享 CredentialPool（注入后每个 run attempt acquire/持有/释放）。
+    credential_pool: Mutex<Option<Arc<dyn provider_control::CredentialPool>>>,
+    /// P18-2 身份解析器：请求身份 → canonical `IdentityContext`；解析失败
+    /// fail-closed（请求被拒绝，不静默落入默认身份）。
+    identity_resolver: Arc<dyn IdentityResolver>,
+    /// P18-9 租户策略闸口：dispatch / dispatch_query 唯一公开边界执行
+    /// deny-first 裁决，与 AppService 门面共享同一实例（不双记）。
+    tenant_policy: Arc<TenantPolicyGate>,
 }
 
 impl CommandRouter {
     pub fn new(config: RouterConfig) -> Self {
+        Self::with_identity_resolver(config, Arc::new(LocalIdentityResolver))
+    }
+
+    /// 以自定义身份解析器构造（多租户宿主注入真实解析器）。
+    pub fn with_identity_resolver(
+        config: RouterConfig,
+        identity_resolver: Arc<dyn IdentityResolver>,
+    ) -> Self {
+        Self::with_identity_resolver_and_policy(
+            config,
+            identity_resolver,
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        )
+    }
+
+    /// 以自定义身份解析器与租户策略引擎构造（P18-9 生产接线）：同一
+    /// resolver 与同一 policy gate 服务 dispatch / dispatch_query 全部路径，
+    /// facade 无法以独立闸口绕过或双记。
+    pub fn with_tenant_policy(
+        config: RouterConfig,
+        identity_resolver: Arc<dyn IdentityResolver>,
+        engine: Arc<dyn tenant_service::TenantPolicyEngine>,
+    ) -> Self {
+        Self::with_identity_resolver_and_policy(config, identity_resolver, engine)
+    }
+
+    fn with_identity_resolver_and_policy(
+        config: RouterConfig,
+        identity_resolver: Arc<dyn IdentityResolver>,
+        engine: Arc<dyn tenant_service::TenantPolicyEngine>,
+    ) -> Self {
         let aggregate = Arc::new(AggregateState::new());
         let approvals = Arc::new(ApprovalRegistry::new());
         let limiter = Arc::new(RateLimiter::new(
@@ -108,11 +178,14 @@ impl CommandRouter {
             broadcaster.clone(),
             instance_id.clone(),
         );
+        let tenant_policy = Arc::new(TenantPolicyGate::new(engine));
+        supervisor.set_tenant_policy(Arc::clone(&tenant_policy));
+        let idempotency_capacity = config.idempotency_capacity;
         Self {
             config,
             instance_id,
             aggregate,
-            idempotency: IdempotencyStore::new(DEFAULT_IDEMPOTENCY_CAPACITY),
+            idempotency: IdempotencyStore::new(idempotency_capacity),
             approvals,
             supervisor,
             workspace_service: WorkspaceService::new(),
@@ -122,12 +195,16 @@ impl CommandRouter {
             sources: Mutex::new(BTreeMap::new()),
             identities: Mutex::new(BTreeMap::new()),
             commands_handled: AtomicU64::new(0),
+            last_started_run: Mutex::new(None),
             quota_runtime: Mutex::new(None),
             profile_resolver: Mutex::new(None),
             isolation: Mutex::new(None),
             model_override_policy: Mutex::new(Arc::new(
                 crate::profile_resolver::DenyAllModelOverridePolicy,
             )),
+            credential_pool: Mutex::new(None),
+            identity_resolver,
+            tenant_policy,
         }
     }
 
@@ -160,6 +237,12 @@ impl CommandRouter {
 
     pub fn supervisor(&self) -> &RunSupervisor {
         &self.supervisor
+    }
+
+    /// 租户策略闸口（P18-9）：dispatch / dispatch_query 边界与 AppService
+    /// 门面共享的同一裁决入口（不可双记）。
+    pub fn tenant_policy(&self) -> &Arc<TenantPolicyGate> {
+        &self.tenant_policy
     }
 
     pub fn approvals(&self) -> &ApprovalRegistry {
@@ -232,6 +315,11 @@ impl CommandRouter {
 
     pub fn commands_handled(&self) -> u64 {
         self.commands_handled.load(Ordering::SeqCst)
+    }
+
+    /// 最近一次成功启动的 run id（legacy `pawork run` 回显用）。
+    pub fn last_started_run(&self) -> Option<RunId> {
+        lock(&self.last_started_run).clone()
     }
 
     /// 注入进程内共享的 Quota 运行时（P14-8）。同时把同一 ledger 透传给
@@ -313,6 +401,26 @@ impl CommandRouter {
         self.supervisor.set_task_manager(manager);
     }
 
+    /// 注入共享 CredentialPool（P18-4）：透传给 supervisor，每个 run attempt
+    /// 在 provider 调用前异步 acquire 并持有 LeaseGuard 至终态。幂等：重复
+    /// 注入同一实例为 no-op。
+    pub fn set_credential_pool(&self, pool: Arc<dyn provider_control::CredentialPool>) {
+        let mut guard = lock(&self.credential_pool);
+        let already = guard
+            .as_ref()
+            .is_some_and(|existing| Arc::ptr_eq(existing, &pool));
+        if already {
+            return;
+        }
+        self.supervisor.set_credential_pool(Arc::clone(&pool));
+        *guard = Some(pool);
+    }
+
+    /// 当前注入的 CredentialPool（测试 / 宿主诊断）。
+    pub fn credential_pool(&self) -> Option<Arc<dyn provider_control::CredentialPool>> {
+        lock(&self.credential_pool).clone()
+    }
+
     /// 统一命令入口。
     pub fn dispatch(&self, envelope: AppCommandEnvelope) -> AppResponseEnvelope {
         self.record_envelope(&envelope.source, &envelope.identity);
@@ -329,20 +437,28 @@ impl CommandRouter {
             );
         }
 
-        match self
-            .idempotency
-            .check(&envelope.command_id, envelope.idempotency_key.as_deref())
-        {
+        // P18-2 fail-closed：请求必须能解析出身份上下文，否则整条命令拒绝。
+        let identity = match self.resolve_identity(&envelope.identity) {
+            Ok(identity) => identity,
+            Err(error) => return error_response(&request_id, &error),
+        };
+
+        match self.idempotency.check(
+            &identity.tenant_id,
+            &envelope.command_id,
+            envelope.idempotency_key.as_deref(),
+        ) {
             IdempotencyCheck::Replay(response) => return response,
             IdempotencyCheck::New => {}
         }
 
-        let response = match self.execute_command(&envelope) {
+        let response = match self.execute_command(&envelope, &identity) {
             Ok(response) => response,
             Err(error) => error_response(&request_id, &error),
         };
         if should_cache(&response) {
             if let Err(error) = self.idempotency.record(
+                &identity.tenant_id,
                 &envelope.command_id,
                 envelope.idempotency_key.as_deref(),
                 response.clone(),
@@ -366,15 +482,101 @@ impl CommandRouter {
                 },
             );
         }
-        match self.execute_query(&envelope) {
+        // P18-2 fail-closed：查询同样必须携带可解析身份。
+        let identity = match self.resolve_identity(&envelope.identity) {
+            Ok(identity) => identity,
+            Err(error) => return error_response(&request_id, &error),
+        };
+        // P18-9：租户作用域查询（Session / Usage）在 router 唯一入口过策略
+        // 闸口（deny-first）。AppService 门面直接委托本方法，adapter / GUI /
+        // plugin 无法绕过；每次裁决只记录一次 versioned 决策事件。
+        if let Some(response) = self.query_policy_gate(&envelope, &identity) {
+            return response;
+        }
+        match self.execute_query(&envelope, &identity) {
             Ok(response) => response,
             Err(error) => error_response(&request_id, &error),
         }
     }
 
+    /// 查询策略闸口（P18-9）：SessionGet / SnapshotFetch → SessionRead，
+    /// QuotaOverview → UsageRead + 同租户作用域；其余查询透传。
+    /// System 身份保留既有跨租户监控读取授权（由 [`Self::handle_quota_overview`]
+    /// 判定）。放行 / 拒绝各记录一条 versioned、脱敏决策事件。
+    fn query_policy_gate(
+        &self,
+        envelope: &AppQueryEnvelope,
+        identity: &IdentityContext,
+    ) -> Option<AppResponseEnvelope> {
+        let (permission, gate, target_tenant): (Permission, PolicyGate, Option<TenantId>) =
+            match &envelope.query {
+                AppQuery::SessionGet { .. } => {
+                    (Permission::SessionRead, PolicyGate::SessionQuery, None)
+                }
+                AppQuery::SnapshotFetch => {
+                    (Permission::SessionRead, PolicyGate::SessionQuery, None)
+                }
+                AppQuery::QuotaOverview { query } => {
+                    if matches!(envelope.identity, ActorIdentity::System) {
+                        return None;
+                    }
+                    let target = if query.is_default_scope() {
+                        Some(TenantId::new(DEFAULT_QUOTA_TENANT_CANONICAL))
+                    } else {
+                        Some(query.tenant_id.clone())
+                    };
+                    (Permission::UsageRead, PolicyGate::UsageQuery, target)
+                }
+                _ => return None,
+            };
+        let denied = |reason: String| {
+            self.tenant_policy.record_decision(
+                identity,
+                gate,
+                PolicyDecisionKind::Deny,
+                reason.clone(),
+            );
+            Some(error_response(
+                &envelope.request_id,
+                &AppServiceError::Authorization(reason),
+            ))
+        };
+        if let Err(error) = self.tenant_policy.check_permission(identity, permission) {
+            return denied(error.to_string());
+        }
+        if let Some(target) = target_tenant {
+            if let Err(error) = self.tenant_policy.authorize_scope(identity, &target) {
+                return denied(error.to_string());
+            }
+        }
+        self.tenant_policy.record_decision(
+            identity,
+            gate,
+            PolicyDecisionKind::Allow,
+            "查询准入放行",
+        );
+        None
+    }
+
+    /// 把协议身份解析为 canonical [`IdentityContext`]（P18-2）。
+    fn resolve_identity(
+        &self,
+        identity: &ActorIdentity,
+    ) -> Result<IdentityContext, AppServiceError> {
+        let identity = self
+            .identity_resolver
+            .resolve(identity.canonical_principal().as_deref())
+            .map_err(|error| AppServiceError::Identity(error.to_string()))?;
+        identity
+            .validate()
+            .map_err(|error| AppServiceError::Identity(error.to_string()))?;
+        Ok(identity)
+    }
+
     fn execute_command(
         &self,
         envelope: &AppCommandEnvelope,
+        identity: &IdentityContext,
     ) -> Result<AppResponseEnvelope, AppServiceError> {
         let request_id = QueryId::from(envelope.command_id.as_str());
         match &envelope.command {
@@ -399,10 +601,11 @@ impl CommandRouter {
             AppCommand::SessionCreate {
                 workspace_id,
                 title,
-            } => match self.aggregate.create_session(
+            } => match self.aggregate.create_session_with_identity(
                 workspace_id.clone(),
                 title.clone().unwrap_or_default(),
                 now_timestamp(),
+                identity,
             ) {
                 Ok(session) => Ok(data_response(
                     &request_id,
@@ -410,17 +613,22 @@ impl CommandRouter {
                 )),
                 Err(error) => Err(error.into()),
             },
-            AppCommand::SessionOpen { session_id } => match self.aggregate.open_session(session_id) {
+            AppCommand::SessionOpen { session_id } => {
+                match self.aggregate.open_session(session_id, &identity.tenant_id) {
                 Ok(session) => Ok(data_response(
                     &request_id,
                     serde_json::to_value(session).map_err(AppServiceError::Json)?,
                 )),
                 Err(error) => Err(error.into()),
-            },
+                }
+            }
             AppCommand::SessionFork {
                 session_id,
                 parent_event_id,
-            } => match self.aggregate.fork_session(session_id, parent_event_id.clone()) {
+            } => match self
+                .aggregate
+                .fork_session_with_identity(session_id, parent_event_id.clone(), identity)
+            {
                 Ok(session) => Ok(data_response(
                     &request_id,
                     serde_json::to_value(session).map_err(AppServiceError::Json)?,
@@ -428,7 +636,7 @@ impl CommandRouter {
                 Err(error) => Err(error.into()),
             },
             AppCommand::SessionCompact { session_id } => {
-                match self.aggregate.compact_session(session_id) {
+                match self.aggregate.compact_session(session_id, &identity.tenant_id) {
                     Ok(session) => Ok(data_response(
                         &request_id,
                         serde_json::to_value(session).map_err(AppServiceError::Json)?,
@@ -466,21 +674,24 @@ impl CommandRouter {
                     Err(error) => Err(error.into()),
                 }
             },
-          AppCommand::RunStart {
-              session_id,
-              user_message,
-              model,
-              profile,
-          } => self.handle_run_start(
-              envelope,
-              session_id.clone(),
-              user_message.clone(),
-              model.clone(),
-              profile.clone(),
-          ),
-           AppCommand::RunCancel { run_id } => {
-                match self.supervisor.cancel(run_id) {
-                    Ok(outcome) => Ok(data_response(
+            AppCommand::RunStart {
+                session_id,
+                user_message,
+                model,
+                profile,
+            } => self.handle_run_start(
+                &envelope,
+                &identity,
+                session_id.clone(),
+                user_message.clone(),
+                model.clone(),
+                profile.clone(),
+            ),
+            AppCommand::RunCancel { run_id } => {
+                match self
+                    .supervisor
+                    .cancel_for_tenant(run_id, &identity.tenant_id)
+                {                    Ok(outcome) => Ok(data_response(
                         &request_id,
                         json!({
                             "run_id": run_id,
@@ -491,13 +702,39 @@ impl CommandRouter {
                     Err(error) => Err(error.into()),
                 }
             }
-            AppCommand::RunRetry { run_id } => match self.supervisor.retry(run_id) {
-                Ok(()) => Ok(data_response(
-                    &request_id,
-                    json!({ "run_id": run_id, "retried": true }),
-                )),
-                Err(error) => Err(error.into()),
-            },
+            AppCommand::RunRetry { run_id } => {
+                match self.supervisor.retry_for_identity(run_id, &identity) {
+                    Ok(()) => {
+                        self.tenant_policy.record_decision(
+                            &identity,
+                            PolicyGate::AgentSpawn,
+                            PolicyDecisionKind::Allow,
+                            "RunRetry 准入放行",
+                        );
+                        Ok(data_response(
+                            &request_id,
+                            json!({ "run_id": run_id, "retried": true }),
+                        ))
+                    }
+                    Err(crate::supervisor::SuperviseError::PolicyDenied(reason)) => {
+                        let gate = if reason.contains("请求并发")
+                            || reason.contains("request admission")
+                        {
+                            PolicyGate::RequestAdmission
+                        } else {
+                            PolicyGate::AgentSpawn
+                        };
+                        self.tenant_policy.record_decision(
+                            &identity,
+                            gate,
+                            PolicyDecisionKind::Deny,
+                            reason.clone(),
+                        );
+                        Err(AppServiceError::Authorization(reason))
+                    }
+                    Err(error) => Err(error.into()),
+                }
+            }
             AppCommand::RunTool {
                 run_id,
                 tool_name,
@@ -528,7 +765,13 @@ impl CommandRouter {
                 run_id,
                 tool_call_id,
                 decision,
-            } => self.handle_tool_approve(&request_id, run_id, tool_call_id, decision),
+            } => self.handle_tool_approve(
+                &request_id,
+                identity,
+                run_id,
+                tool_call_id,
+                decision,
+            ),
             AppCommand::GitStage {
                 workspace_id,
                 paths,
@@ -602,6 +845,7 @@ impl CommandRouter {
     fn execute_query(
         &self,
         envelope: &AppQueryEnvelope,
+        identity: &IdentityContext,
     ) -> Result<AppResponseEnvelope, AppServiceError> {
         let request_id = envelope.request_id.clone();
         match &envelope.query {
@@ -614,20 +858,24 @@ impl CommandRouter {
                 )
                 .map_err(AppServiceError::Json)?,
             )),
-            AppQuery::SessionGet { session_id } => match self.aggregate.get_session(session_id) {
-                Some(session) => Ok(data_response(
-                    &request_id,
-                    serde_json::to_value(session).map_err(AppServiceError::Json)?,
-                )),
-                None => Err(AppServiceError::NotFound(format!("session {session_id}"))),
-            },
-            AppQuery::RunStatus { run_id } => match self.aggregate.get_run(run_id) {
-                Some(run) => Ok(data_response(
-                    &request_id,
-                    serde_json::to_value(run).map_err(AppServiceError::Json)?,
-                )),
-                None => Err(AppServiceError::NotFound(format!("run {run_id}"))),
-            },
+            AppQuery::SessionGet { session_id } => {
+                match self.aggregate.get_session(session_id, &identity.tenant_id) {
+                    Some(session) => Ok(data_response(
+                        &request_id,
+                        serde_json::to_value(session).map_err(AppServiceError::Json)?,
+                    )),
+                    None => Err(AppServiceError::NotFound(format!("session {session_id}"))),
+                }
+            }
+            AppQuery::RunStatus { run_id } => {
+                match self.aggregate.get_run(run_id, &identity.tenant_id) {
+                    Some(run) => Ok(data_response(
+                        &request_id,
+                        serde_json::to_value(run).map_err(AppServiceError::Json)?,
+                    )),
+                    None => Err(AppServiceError::NotFound(format!("run {run_id}"))),
+                }
+            }
             AppQuery::ModelList { provider_id } => {
                 let entries: Vec<_> = self
                     .model_registry
@@ -680,11 +928,16 @@ impl CommandRouter {
             },
             AppQuery::SnapshotFetch => Ok(data_response(
                 &request_id,
-                serde_json::to_value(self.aggregate.snapshot()).map_err(AppServiceError::Json)?,
+                serde_json::to_value(self.aggregate.snapshot_for_tenant(&identity.tenant_id))
+                    .map_err(AppServiceError::Json)?,
             )),
-            AppQuery::QuotaOverview { query } => {
-                self.handle_quota_overview(&request_id, &envelope.source, &envelope.identity, query)
-            }
+            AppQuery::QuotaOverview { query } => self.handle_quota_overview(
+                &request_id,
+                &envelope.source,
+                &envelope.identity,
+                identity,
+                query,
+            ),
             AppQuery::PluginList => Ok(data_response(&request_id, json!([]))),
             AppQuery::McpList => Ok(data_response(&request_id, json!([]))),
         }
@@ -695,6 +948,8 @@ impl CommandRouter {
     /// 授权：默认作用域（local/local/default）允许 LocalCli / LocalGui + LocalUser，或任意
     /// System 身份读取任意 tenant/account；其余远程/插件/MCP 身份与非默认作用域
     /// 必须有显式 grant（当前无 grant 存储 → 一律拒绝，返回 Authorization 错误）。
+    /// P18-2：授权通过后，legacy 默认 scope（`local` / `local/default`）归一化到
+    /// 调用者解析出的真实租户，缓存读与 usage 记账同 scope，阻断隐式全局查询。
     /// 契约：`provider_id` 必须显式提供（P14 review §2.4）；缺省或空字符串不再
     /// 选择“首个已注册 provider”或默认 ID，而是返回明确的 validation error。
     /// 多 provider 聚合语义待 P18 binding enumeration 成为事实源后再批量查询。
@@ -706,6 +961,7 @@ impl CommandRouter {
         request_id: &QueryId,
         source: &CommandSource,
         identity: &ActorIdentity,
+        resolved: &IdentityContext,
         query: &QuotaOverviewQuery,
     ) -> Result<AppResponseEnvelope, AppServiceError> {
         if !Self::authorize_quota_query(source, identity, query) {
@@ -715,6 +971,16 @@ impl CommandRouter {
                 query.account_id,
             )));
         }
+        // P18-2：legacy 默认 scope 归一化到真实身份租户；非默认 scope 保持原样
+        // （无 grant 时已被拒绝，此处仅为已授权路径提供一致 scope）。
+        let query = if query.is_default_scope() {
+            QuotaOverviewQuery {
+                tenant_id: resolved.tenant_id.clone(),
+                ..query.clone()
+            }
+        } else {
+            query.clone()
+        };
         let runtime = self.quota_runtime();
         // P14 review §2.4：不再静默选择首个已注册 provider 或空默认 ID；
         // 显式 provider 是查询的必要维度，缺失即拒绝。
@@ -729,8 +995,8 @@ impl CommandRouter {
             }
         };
         let view = match runtime {
-            Some(runtime) => Self::cached_quota_overview(&runtime, query, provider_id),
-            None => Self::empty_quota_overview(query, provider_id),
+            Some(runtime) => Self::cached_quota_overview(&runtime, &query, provider_id),
+            None => Self::empty_quota_overview(&query, provider_id),
         };
         let data = serde_json::to_value(&view).map_err(AppServiceError::Json)?;
         Ok(data_response(request_id, data))
@@ -863,6 +1129,7 @@ impl CommandRouter {
     fn handle_run_start(
         &self,
         envelope: &AppCommandEnvelope,
+        identity: &IdentityContext,
         session_id: SessionId,
         user_message: String,
         model: Option<ModelId>,
@@ -873,7 +1140,10 @@ impl CommandRouter {
                 "RunStart requires a non-empty user_message".into(),
             ));
         }
-        if !self.aggregate.session_exists(&session_id) {
+        if !self
+            .aggregate
+            .session_exists(&session_id, &identity.tenant_id)
+        {
             return Err(AppServiceError::NotFound(format!("session {session_id}")));
         }
         if tokio::runtime::Handle::try_current().is_err() {
@@ -883,7 +1153,7 @@ impl CommandRouter {
         // 与 P17-5 profile 解析都依赖它）。
         let workspace_id = self
             .aggregate
-            .get_session(&session_id)
+            .get_session(&session_id, &identity.tenant_id)
             .map(|session| session.workspace_id);
         // P17-5：可选 profile 名解析为 loader 已校验的不可变 AgentProfileV2。
         // 未知 / 跨 workspace / 引用不可用 / 未注入解析器一律 fail-closed。
@@ -931,22 +1201,40 @@ impl CommandRouter {
                 ))
             })?
         };
-        let run_id = RunId::from(self.aggregate.next_id("run"));
+        // P18-9（deny-first，provider 调用前 fail-closed）：权限、白名单与 tenant
+        // 请求并发由 supervisor 在登记任务的同一临界区原子裁决，任一拒绝即
+        // 回滚 aggregate、不启动。router 仅在最终结果处记录一次决策事件。
+        let deny = |reason: String| {
+            let gate = if reason.contains("请求并发") || reason.contains("request admission") {
+                PolicyGate::RequestAdmission
+            } else {
+                PolicyGate::AgentSpawn
+            };
+            self.tenant_policy.record_decision(
+                identity,
+                gate,
+                PolicyDecisionKind::Deny,
+                reason.clone(),
+            );
+            AppServiceError::Authorization(reason)
+        };
+        let run_id = next_run_id();
         let rollback_run_id = run_id.clone();
-        self.aggregate.record_run(
+        self.aggregate.record_run_with_identity(
             run_id.clone(),
             session_id.clone(),
             model.clone(),
             provider_id.clone(),
             envelope.source.clone(),
             now_timestamp(),
+            identity,
         )?;
         // Run 前查询当前 scope 的缓存额度信号，注入 ProviderLoop（仅新鲜 Exact
         // exhaustion 才硬停）。无 quota 运行时 / 无缓存 → None（不影响运行）。
         let external_quota = self
             .quota_runtime()
-            .and_then(|runtime| cached_quota_signal(&runtime, &provider_id, &model));
-        let result = self.supervisor.start(
+            .and_then(|runtime| cached_quota_signal(&runtime, identity, &provider_id, &model));
+        let result = self.supervisor.start_with_policy(
             RunRequest {
                 run_id: run_id.clone(),
                 session_id: session_id.clone(),
@@ -958,6 +1246,7 @@ impl CommandRouter {
                 source: envelope.source.clone(),
                 command_id: envelope.command_id.clone(),
                 user_message,
+                identity: identity.clone(),
                 external_quota,
                 profile: resolved_profile,
             },
@@ -965,8 +1254,18 @@ impl CommandRouter {
         );
         if let Err(error) = result {
             self.aggregate.remove_run(&rollback_run_id);
-            return Err(error.into());
+            return match error {
+                crate::supervisor::SuperviseError::PolicyDenied(reason) => Err(deny(reason)),
+                other => Err(other.into()),
+            };
         }
+        self.tenant_policy.record_decision(
+            identity,
+            PolicyGate::AgentSpawn,
+            PolicyDecisionKind::Allow,
+            "RunStart 准入放行",
+        );
+        *lock(&self.last_started_run) = Some(run_id.clone());
         // RunStart 响应必须携带本命令确定启动的 run id：并发来源各自从
         // 自己的响应绑定 run，不依赖全局状态（P17-7 评审 #3）。
         Ok(accepted_response_with_run(envelope, Some(run_id)))
@@ -975,14 +1274,49 @@ impl CommandRouter {
     fn handle_tool_approve(
         &self,
         request_id: &QueryId,
+        identity: &IdentityContext,
         run_id: &agent_domain::RunId,
         tool_call_id: &agent_domain::ToolCallId,
         decision: &core_api::ApprovalDecision,
     ) -> Result<AppResponseEnvelope, AppServiceError> {
+        if self
+            .aggregate
+            .get_run(run_id, &identity.tenant_id)
+            .is_none()
+        {
+            return Err(AppServiceError::NotFound(format!("run {run_id}")));
+        }
         self.approvals
             .decide(run_id, tool_call_id, decision.clone())?;
         self.aggregate
             .decide_approval(run_id, tool_call_id, decision.clone())?;
+        let audit_decision = match decision {
+            core_api::ApprovalDecision::ApproveOnce | core_api::ApprovalDecision::ApproveForRun => {
+                AuditDecision::Allow
+            }
+            core_api::ApprovalDecision::Deny | core_api::ApprovalDecision::Cancel => {
+                AuditDecision::Deny
+            }
+        };
+        self.tenant_policy.record_control_event(
+            identity,
+            AuditAction::ApprovalEvaluated,
+            AuditTargetKind::Approval,
+            audit_decision,
+            "tool_approval_decided",
+            AuditDimensions {
+                session_id: self
+                    .aggregate
+                    .get_run(run_id, &identity.tenant_id)
+                    .map(|run| run.session_id),
+                agent_id: self
+                    .aggregate
+                    .get_run(run_id, &identity.tenant_id)
+                    .map(|run| crate::supervisor::canonical_root_agent_id(&run.session_id)),
+                ..AuditDimensions::default()
+            },
+            0,
+        );
         Ok(data_response(
             request_id,
             json!({
@@ -1284,11 +1618,12 @@ fn quota_scope_for_query(
 /// 择优，仅形成软信号。
 fn cached_quota_signal(
     runtime: &Arc<QuotaRuntime>,
+    identity: &IdentityContext,
     provider_id: &ProviderId,
     model: &ModelId,
 ) -> Option<agent_engine::ExternalQuotaSignal> {
     let scope = quota_service::QuotaScope::new(
-        TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+        identity.tenant_id.clone(),
         quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
         provider_id.clone(),
         Some(model.clone()),

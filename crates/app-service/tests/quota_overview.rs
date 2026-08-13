@@ -38,8 +38,9 @@ fn cli_identity() -> ActorIdentity {
     }
 }
 
-fn system_identity() -> ActorIdentity {
-    ActorIdentity::System
+/// P18-2：本地 CLI 身份解析出的真实租户（local/default）。
+fn local_tenant() -> TenantId {
+    tenant_service::IdentityContext::local().tenant_id
 }
 
 fn remote_identity() -> ActorIdentity {
@@ -213,7 +214,7 @@ fn router_with_quota_and_provider_at(clock_start_ms: u64) -> (CommandRouter, Arc
 
 async fn seed_cache(runtime: &QuotaRuntime) {
     let scope = quota_service::QuotaScope::new(
-        TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+        local_tenant(),
         quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
         ProviderId::from("mock"),
         None,
@@ -269,7 +270,7 @@ async fn wait_for_run_state(router: &CommandRouter, run_id: &RunId, expected: Ru
     loop {
         if router
             .aggregate()
-            .get_run(run_id)
+            .get_run(run_id, &local_tenant())
             .is_some_and(|run| run.state == expected)
         {
             return;
@@ -346,20 +347,17 @@ async fn remote_gui_is_denied_without_grant() {
 }
 
 #[tokio::test]
-async fn system_reads_any_tenant() {
+async fn system_identity_uses_explicit_local_system_principal() {
     let (router, runtime) = router_with_quota_and_provider();
     seed_cache(&runtime).await;
     let query = core_api::QuotaOverviewQuery {
-        tenant_id: TenantId::new("local"),
+        tenant_id: local_tenant(),
         account_id: core_api::DEFAULT_QUOTA_ACCOUNT.into(),
         ..default_query()
     };
-    let response = router.dispatch_query(quota_query(cli_source(), system_identity(), query));
-    assert!(
-        matches!(response.response, AppResponse::Data(_)),
-        "system should read any tenant: {:?}",
-        response.response
-    );
+    // P18-2：System 有显式 local/system principal；查询仍走 tenant scope。
+    let response = router.dispatch_query(quota_query(cli_source(), ActorIdentity::System, query));
+    assert!(matches!(response.response, AppResponse::Data(_)));
 }
 
 #[tokio::test]
@@ -377,6 +375,115 @@ async fn local_cli_denied_for_non_default_scope() {
         }
         other => panic!("expected authorization error, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn canonical_tenant_default_scope_is_authorized_and_reads_same_ledger() {
+    // P18-8 租户分歧回归：canonical 身份租户 `local/default`（P18-2 归一后
+    // `record_run_usage` 写入账本所用的 tenant）与 legacy 哨兵 `local`
+    // 必须映射为同一默认作用域。`pawork usage --tenant local/default` 不得
+    // 被授权误拒，也不得查错租户。
+    let (router, runtime) = router_with_quota_and_provider();
+    let record = usage_ledger::UsageRecord {
+        record_id: "canonical-tenant-1".into(),
+        // 与 run 记账路径一致：identity.tenant_id = local/default。
+        tenant_id: local_tenant(),
+        principal_id: agent_domain::PrincipalId::default(),
+        account_id: core_api::DEFAULT_QUOTA_ACCOUNT.to_string(),
+        credential_id: None,
+        session_id: SessionId::default(),
+        agent_id: agent_domain::AgentId::default(),
+        run_id: Some(RunId::from("run-canonical")),
+        provider_id: ProviderId::from("mock"),
+        model_id: ModelId::from("mock-model"),
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        cost_micros: 0,
+        currency: "USD".into(),
+        occurred_at_ms: 1,
+        ..usage_ledger::UsageRecord::default()
+    };
+    runtime
+        .ledger
+        .record(record.clone())
+        .await
+        .expect("record into ledger");
+    runtime
+        .refresh_local_cache(&record)
+        .await
+        .expect("cache refresh");
+
+    // canonical tenant 形式：此前被误判为非默认作用域而拒绝。
+    let canonical = core_api::QuotaOverviewQuery {
+        tenant_id: TenantId::new(core_api::DEFAULT_QUOTA_TENANT_CANONICAL),
+        ..default_query()
+    };
+    let response = router.dispatch_query(quota_query(cli_source(), cli_identity(), canonical));
+    let AppResponse::Data(value) = response.response else {
+        panic!(
+            "canonical default scope must be authorized: {:?}",
+            response.response
+        );
+    };
+    assert_eq!(
+        value
+            .get("scope")
+            .and_then(|s| s.get("tenant_id"))
+            .and_then(serde_json::Value::as_str),
+        Some(core_api::DEFAULT_QUOTA_TENANT_CANONICAL),
+        "canonical 查询按同一默认作用域读账本，不再查错租户"
+    );
+    assert_eq!(
+        value
+            .get("windows")
+            .and_then(serde_json::Value::as_array)
+            .map(|windows| windows.len()),
+        Some(4),
+        "windows present: {value}"
+    );
+
+    // legacy 哨兵形式：同一账本、同一聚合结果。
+    let legacy = core_api::QuotaOverviewQuery {
+        tenant_id: TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+        ..default_query()
+    };
+    let response = router.dispatch_query(quota_query(cli_source(), cli_identity(), legacy));
+    let AppResponse::Data(legacy_value) = response.response else {
+        panic!(
+            "legacy default scope must be authorized: {:?}",
+            response.response
+        );
+    };
+    assert_eq!(
+        legacy_value
+            .get("windows")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|windows| windows.first())
+            .and_then(|w| w.get("read"))
+            .and_then(|r| r.get("snapshot"))
+            .and_then(|s| s.get("values"))
+            .and_then(|r| r.get("used"))
+            .and_then(|u| u.get("kind"))
+            .and_then(serde_json::Value::as_str),
+        Some("exact"),
+        "legacy 与 canonical 必须读到同一账本聚合（150 tokens）"
+    );
+    assert_eq!(
+        legacy_value
+            .get("windows")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|windows| windows.first())
+            .and_then(|w| w.get("read"))
+            .and_then(|r| r.get("snapshot"))
+            .and_then(|s| s.get("values"))
+            .and_then(|r| r.get("used"))
+            .and_then(|u| u.get("value"))
+            .and_then(serde_json::Value::as_u64),
+        Some(150),
+        "legacy 与 canonical 必须读到同一账本聚合（150 tokens）"
+    );
 }
 
 #[tokio::test]
@@ -509,7 +616,7 @@ async fn cache_only_query_respects_cost_unit_and_explicit_window_subset() {
     );
     let router = router_with_runtime_and_provider(Arc::clone(&runtime), provider);
     let scope = quota_service::QuotaScope::new(
-        TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+        local_tenant(),
         quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
         ProviderId::from("mock"),
         None,
@@ -576,24 +683,95 @@ async fn credential_is_masked_in_output() {
 #[tokio::test]
 async fn fresh_exact_zero_limit_cache_signal_hard_stops_without_fetch() {
     let calls = Arc::new(AtomicUsize::new(0));
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as u64;
+    let clock = Arc::new(quota_service::service::MutableQuotaClock::at(
+        now_ms + 3_600_000,
+    ));
     let runtime = runtime_with_counting_adapter(
         Arc::clone(&calls),
         exact_values(0, 0, 0),
         quota_service::Confidence::Exact,
-        Arc::new(quota_service::service::MutableQuotaClock::at(1_000_000)),
+        Arc::clone(&clock),
         Duration::from_secs(30),
     );
     let provider = Arc::new(
-        test_support::MockProvider::new(test_support::MockScript::new().complete())
-            .with_id(ProviderId::from("mock")),
+        test_support::MockProvider::new(
+            test_support::MockScript::new()
+                .usage(TokenUsage {
+                    input_tokens: 1,
+                    ..Default::default()
+                })
+                .complete(),
+        )
+        .with_id(ProviderId::from("mock")),
     );
     let router = router_with_runtime_and_provider(Arc::clone(&runtime), Arc::clone(&provider));
+
+    // 先跑一次真实 LocalUser run，验证 usage 记账与缓存发布使用解析后的
+    // local/default tenant，而不是 legacy quota tenant `local`。
+    let first_session = prepare_session(&router);
+    let first = router.dispatch(command(
+        cli_source(),
+        cli_identity(),
+        AppCommand::RunStart {
+            session_id: first_session,
+            user_message: "prime real accounting cache".into(),
+            model: None,
+            profile: None,
+        },
+    ));
+    assert!(matches!(first.response, AppResponse::Accepted { .. }));
+    let first_run = router.last_started_run().expect("first run id");
+    wait_for_run_state(&router, &first_run, RunState::Completed).await;
+
     let scope = quota_service::QuotaScope::new(
-        TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+        local_tenant(),
         quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
         ProviderId::from("mock"),
         Some(ModelId::from("default-model")),
     );
+    assert_eq!(
+        scope.tenant_id.as_str(),
+        "local/default",
+        "hard-stop cache must use the resolved LocalUser tenant"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let cache_ready = runtime
+            .quota
+            .overview_cache_only(
+                &scope,
+                &[quota_service::QuotaWindow::Monthly],
+                &quota_service::QuotaUnit::Token,
+            )
+            .is_ok_and(|overview| overview.hit_count() == 1);
+        if cache_ready {
+            break;
+        }
+        if Instant::now() >= deadline {
+            panic!("real accounting chain did not publish local/default cache");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let records = runtime
+        .ledger
+        .query(&usage_ledger::UsageQuery {
+            tenant_id: Some(local_tenant()),
+            run_id: Some(first_run),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1, "first run must create one usage record");
+    assert_eq!(records[0].principal_id.as_str(), "local/user");
+    assert_eq!(provider.calls().len(), 1, "first run reaches provider once");
+
+    // 用同一真实 scope 注入 fresh Exact=0。第二次 run 只能读取该 tenant 的
+    // 缓存并在 provider 前硬停。
+    runtime.quota.invalidate();
     seed_cache_for(
         &runtime,
         &scope,
@@ -601,7 +779,11 @@ async fn fresh_exact_zero_limit_cache_signal_hard_stops_without_fetch() {
         &quota_service::QuotaUnit::Token,
     )
     .await;
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "seed should fetch once");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "exact cap should fetch once"
+    );
 
     let session_id = prepare_session(&router);
     let response = router.dispatch(command(
@@ -629,9 +811,10 @@ async fn fresh_exact_zero_limit_cache_signal_hard_stops_without_fetch() {
         1,
         "run-start cache scan called quota adapter"
     );
-    assert!(
-        provider.calls().is_empty(),
-        "fresh Exact limit=0 must hard-stop before provider"
+    assert_eq!(
+        provider.calls().len(),
+        1,
+        "fresh Exact limit=0 must hard-stop before a second provider call"
     );
 }
 
@@ -652,7 +835,7 @@ async fn stale_exact_zero_limit_cache_signal_does_not_hard_stop_or_refetch() {
     );
     let router = router_with_runtime_and_provider(Arc::clone(&runtime), Arc::clone(&provider));
     let scope = quota_service::QuotaScope::new(
-        TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+        local_tenant(),
         quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
         ProviderId::from("mock"),
         Some(ModelId::from("default-model")),
@@ -721,7 +904,7 @@ async fn successful_run_records_usage_once() {
     loop {
         if router
             .aggregate()
-            .get_run(&run_id)
+            .get_run(&run_id, &local_tenant())
             .is_some_and(|run| run.state == RunState::Completed)
         {
             break;
@@ -733,12 +916,12 @@ async fn successful_run_records_usage_once() {
     }
     tokio::time::sleep(Duration::from_millis(100)).await;
     let query = usage_ledger::UsageQuery {
-        tenant_id: Some(TenantId::new(core_api::DEFAULT_QUOTA_TENANT)),
+        tenant_id: Some(local_tenant()),
         account_id: Some(core_api::DEFAULT_QUOTA_ACCOUNT.into()),
         run_id: Some(run_id.clone()),
         ..Default::default()
     };
-    let records = runtime.ledger.query(&query).await;
+    let records = runtime.ledger.query(&query).await.unwrap();
     assert_eq!(
         records.len(),
         1,
@@ -748,7 +931,7 @@ async fn successful_run_records_usage_once() {
     assert_eq!(records[0].output_tokens, 50);
     let replay = records[0].clone();
     let _ = runtime.ledger.record(replay).await;
-    let records2 = runtime.ledger.query(&query).await;
+    let records2 = runtime.ledger.query(&query).await.unwrap();
     assert_eq!(
         records2.len(),
         1,
@@ -789,7 +972,7 @@ async fn successful_run_publishes_cache_for_default_scope_token_and_cost_overvie
     // 终态可见后记账与本地缓存发布仍在同一任务中：轮询账户级 scope 的
     // Token 缓存，直到四个默认窗口全部命中（发布完成）。
     let scope = quota_service::QuotaScope::new(
-        TenantId::new(core_api::DEFAULT_QUOTA_TENANT),
+        local_tenant(),
         quota_service::AccountId::new(core_api::DEFAULT_QUOTA_ACCOUNT),
         ProviderId::from("mock"),
         None,

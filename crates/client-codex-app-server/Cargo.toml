@@ -1,0 +1,38 @@
+[package]
+name = "client-codex-app-server"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+description = "P18-11 Codex App Server client adapter: official thread/turn/item/approval/subagent wire contract mapped to Pawork canonical core-api"
+
+[dependencies]
+agent-domain = { path = "../agent-domain" }
+async-trait = "0.1"
+client-adapter-api = { path = "../client-adapter-api" }
+core-api = { path = "../core-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+# ---------------------------------------------------------------------------
+# WORKSPACE WIRING NOTE (main agent / orchestrator):
+#
+# This manifest intentionally does NOT use `.workspace = true` and carries a
+# temporary empty `[workspace]` table so the crate is independently buildable
+# and testable via `cargo test --manifest-path crates/client-codex-app-server/Cargo.toml`
+# BEFORE it is registered as a root-workspace member (root `Cargo.toml` is owned
+# by the main agent and was intentionally not modified per the task contract).
+#
+# When the main agent wires this crate into the root workspace:
+#   1. add `"crates/client-codex-app-server",` to `[workspace].members`;
+#   2. DELETE the `[workspace]` table below (a nested workspace root conflicts);
+#   3. normalize the dependency stanzas to `.workspace = true`
+#      (agent-domain/client-adapter-api/core-api already match sibling path deps;
+#      async-trait/serde/serde_json/tokio/tracing map to the workspace pins).
+# ---------------------------------------------------------------------------
+[workspace]

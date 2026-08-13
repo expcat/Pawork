@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp_host::wire::{ERROR_INVALID_REQUEST, ERROR_RESOURCE_NOT_FOUND, PROTOCOL_VERSION};
-use agent_domain::ProviderId;
-use core_api::{AppCommand, AppQuery, AppQueryEnvelope, AppResponse};
+use agent_domain::{ProviderId, TenantId};
+use core_api::{AppCommand, AppQuery, AppQueryEnvelope, AppResponse, DEFAULT_CONTROL_PLANE_TENANT};
 use serde_json::{json, Value};
 use test_support::MockScript;
 
@@ -146,11 +146,10 @@ async fn session_new_creates_core_session_and_attaches() {
     assert_eq!(record.ownership_epoch, 1);
     assert_eq!(record.revision, 1);
     // Core session 真实存在。
-    assert!(harness
-        .service
-        .router()
-        .aggregate()
-        .session_exists(&record.core_session_id));
+    assert!(harness.service.router().aggregate().session_exists(
+        &record.core_session_id,
+        &TenantId::new(DEFAULT_CONTROL_PLANE_TENANT),
+    ));
     let _ = workspace_id;
 }
 
@@ -987,7 +986,10 @@ async fn resume_across_restart_materializes_bound_core_session_idempotently() {
     // 进程 B 的 Core aggregate 是全新内存态：旧 core session 必须不存在，
     // 否则 resume 不会走 materialize 路径。
     assert!(
-        !service_b.router().aggregate().session_exists(&before),
+        !service_b
+            .router()
+            .aggregate()
+            .session_exists(&before, &TenantId::new(DEFAULT_CONTROL_PLANE_TENANT),),
         "旧 core session 不在进程 B 的 aggregate 中（跨进程恢复前提）"
     );
     let host_b = Arc::new(AcpHost::new(
@@ -1026,10 +1028,10 @@ async fn resume_across_restart_materializes_bound_core_session_idempotently() {
         "resume 必须把记录 claim 到新连接"
     );
     assert!(
-        service_b
-            .router()
-            .aggregate()
-            .session_exists(&record.core_session_id),
+        service_b.router().aggregate().session_exists(
+            &record.core_session_id,
+            &TenantId::new(DEFAULT_CONTROL_PLANE_TENANT),
+        ),
         "materialize 后同一 core_session_id 必须在 Core aggregate 中存在"
     );
     assert_eq!(
@@ -1241,7 +1243,9 @@ async fn same_session_second_prompt_is_rejected_while_first_occupies() {
         .await
         .expect("cancel first prompt");
     let mut collected = Vec::new();
-    let result = await_prompt(&harness, first, &mut collected).await.expect("first prompt");
+    let result = await_prompt(&harness, first, &mut collected)
+        .await
+        .expect("first prompt");
     assert_eq!(result["stopReason"], json!("cancelled"));
 }
 
@@ -1363,9 +1367,7 @@ async fn fail_closed_releases_inflight_prompt() {
         wait_until(|| harness.host.has_active_runs(), Duration::from_secs(10)).await,
         "prompt must be in flight",
     );
-    harness
-        .host
-        .fail_closed_all_prompts("test fail-closed");
+    harness.host.fail_closed_all_prompts("test fail-closed");
     let result = tokio::time::timeout(Duration::from_secs(5), prompt)
         .await
         .expect("fail-closed prompt must not hang")
@@ -1388,7 +1390,14 @@ async fn replay_missed_events_pumps_terminal_state() {
         .await;
     let prompt = spawn_prompt(&harness, 26, &session_id, "replay terminal");
     assert!(
-        wait_until(|| harness.host.pending_run(&client_adapter_api::ClientSessionId::new(&session_id)).is_some(), Duration::from_secs(10)).await,
+        wait_until(
+            || harness
+                .host
+                .pending_run(&client_adapter_api::ClientSessionId::new(&session_id))
+                .is_some(),
+            Duration::from_secs(10)
+        )
+        .await,
         "run must register before replay",
     );
     let run_id = harness
@@ -1459,10 +1468,7 @@ async fn replay_unavailable_is_fail_closed_signal() {
         .replay_missed_events(GlobalSequence(0))
         .await
         .expect_err("stale last_seen must fail closed");
-    assert!(
-        error.contains("replay unavailable"),
-        "got {error}"
-    );
+    assert!(error.contains("replay unavailable"), "got {error}");
 }
 
 /// outbox 半写：已 drain 的剩余屏障必须释放，prompt 不得悬挂。

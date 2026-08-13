@@ -2,6 +2,7 @@
 //!
 //! `session_events` 是事实来源；其他表均为可删除、可从事件重建的 Projection。
 
+mod binding;
 mod client_adapter;
 mod compat_import;
 mod event_store;
@@ -16,6 +17,10 @@ mod session_tree;
 use std::path::{Path, PathBuf};
 
 use app_database::{DatabaseActor, DatabaseError};
+pub use binding::{
+    BindingEventRow, BindingRepoError, BindingRowKey, BindingRowRepository, SessionBindingRow,
+    SESSION_BINDINGS_TABLE, SESSION_BINDING_EVENTS_TABLE,
+};
 pub use client_adapter::SqliteClientSessionRegistryStore;
 pub use compat_import::{
     CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport, ExternalRecord,
@@ -107,6 +112,17 @@ pub enum SessionStoreError {
     Io(#[from] std::io::Error),
     #[error("export schema version {found} is not supported (expected {supported})")]
     ExportSchemaVersion { found: u32, supported: u32 },
+    #[error("session export v3 identity is missing or blank")]
+    ExportIdentityMissing,
+    #[error(
+        "session export identity {export_tenant}/{export_principal} does not match import identity {import_tenant}/{import_principal}"
+    )]
+    ExportIdentityMismatch {
+        export_tenant: String,
+        export_principal: String,
+        import_tenant: String,
+        import_principal: String,
+    },
     #[error("session not found: {0}")]
     SessionNotFound(String),
     #[error("branch not found for session {session_id}: {branch_id}")]
