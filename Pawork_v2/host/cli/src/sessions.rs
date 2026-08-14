@@ -1,0 +1,146 @@
+//! `pawork sessions list/show`。
+
+use pawork_app::AppCore;
+use pawork_domain::{ContentPart, Message, MessageRole};
+
+use crate::{CliError, SessionsCommand};
+
+pub async fn run_sessions(
+    core: &AppCore,
+    command: SessionsCommand,
+    json: bool,
+) -> Result<(), CliError> {
+    match command {
+        SessionsCommand::List => list(core, json).await,
+        SessionsCommand::Show { session } => show(core, &session, json).await,
+    }
+}
+
+async fn list(core: &AppCore, json: bool) -> Result<(), CliError> {
+    let rows = core.list_sessions().await?;
+    if json {
+        let payload: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "session_id": row.session_id,
+                    "title": row.title,
+                    "created_at_ms": row.created_at_ms,
+                    "updated_at_ms": row.updated_at_ms,
+                    "active_branch": row.active_branch,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string(&payload).map_err(json_err)?);
+        return Ok(());
+    }
+    if rows.is_empty() {
+        eprintln!("(no sessions)");
+        return Ok(());
+    }
+    for row in rows {
+        println!(
+            "{}\t{}\t{}",
+            row.session_id,
+            format_millis(row.updated_at_ms),
+            row.title
+        );
+    }
+    Ok(())
+}
+
+async fn show(core: &AppCore, spec: &str, json: bool) -> Result<(), CliError> {
+    let session = core.resolve_session(spec).await?;
+    let record = core.get_session(&session).await?;
+    let messages = core.resume_messages(&session).await?;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "session_id": record.session_id,
+                "title": record.title,
+                "created_at_ms": record.created_at_ms,
+                "updated_at_ms": record.updated_at_ms,
+                "active_branch": record.active_branch,
+                "messages": messages,
+            })
+        );
+        return Ok(());
+    }
+    println!("session: {}", record.session_id);
+    println!("title: {}", record.title);
+    println!("created: {}", format_millis(record.created_at_ms));
+    println!("updated: {}", format_millis(record.updated_at_ms));
+    println!("messages: {}", messages.len());
+    println!();
+    for message in messages {
+        println!("[{}] {}", role_label(&message), message_text(&message));
+    }
+    Ok(())
+}
+
+fn role_label(message: &Message) -> &'static str {
+    match message.role {
+        MessageRole::User => "user",
+        MessageRole::Assistant => "assistant",
+        MessageRole::System => "system",
+        MessageRole::Tool => "tool",
+    }
+}
+
+fn message_text(message: &Message) -> String {
+    let mut parts = Vec::new();
+    for part in &message.content {
+        match part {
+            ContentPart::Text(text) => parts.push(text.text.clone()),
+            ContentPart::Thinking(thinking) => parts.push(format!("(thinking) {}", thinking.text)),
+            ContentPart::ToolCall(call) => parts.push(format!("(tool {})", call.name)),
+            _ => {}
+        }
+    }
+    parts.join(" ")
+}
+
+fn format_millis(ms: i64) -> String {
+    if ms < 0 {
+        return ms.to_string();
+    }
+    let total_secs = (ms / 1000) as u64;
+    let days = total_secs / 86_400;
+    let secs_of_day = total_secs % 86_400;
+    let hour = secs_of_day / 3600;
+    let min = (secs_of_day % 3600) / 60;
+    let sec = secs_of_day % 60;
+    let (year, month, day) = civil_from_days(days as i64);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{min:02}:{sec:02}Z")
+}
+
+/// Howard Hinnant civil_from_days（Unix epoch 日序 → 公历）。
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    (year as i32, m as u32, d as u32)
+}
+
+fn json_err(error: serde_json::Error) -> CliError {
+    CliError::Turn(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_millis_unix_epoch() {
+        assert_eq!(format_millis(0), "1970-01-01 00:00:00Z");
+        assert_eq!(format_millis(1_704_067_200_000), "2024-01-01 00:00:00Z");
+    }
+}

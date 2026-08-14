@@ -32,7 +32,7 @@
 按 v2_plan.md 开始。
 子代理模型：〈必填：Cursor model slug 或 ocx-* 类型，见 §7〉
 范围覆盖：〈可选。例：S0 波 B。不写则按 §4 自动选下一波〉
-凭证：〈可选。PAWORK_API_KEY_* 已设 / 本波无需真实 key〉
+凭证：〈可选。PAWORK_API_KEY_* 已设 / 本波无需真实 key；本地冒烟默认 source Pawork_v2/.env〉
 临时约束：〈可选。例：跳过真实冒烟、只设计不实现——默认不要用〉
 ```
 
@@ -44,11 +44,11 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 当前阶段 | S1（[plan/S1-sessions.md](Pawork_v2/plan/S1-sessions.md)） |
-| 阶段状态 | 🔵 进行中 |
-| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A（domain events 32 变体 + 补建 serde golden）；S1 波 B（`pawork-sqlite` 纯化 Actor + `pawork-session` event store / v1→v9 / 最小 projection） |
-| **下一波次** | **S1 波 C**（串行收口：engine 事件化 + app/cli 接线 + 冒烟） |
-| 阻塞 | 无 |
+| 当前阶段 | S2（[plan/S2-tool-loop.md](Pawork_v2/plan/S2-tool-loop.md)） |
+| 阶段状态 | ⚪ 未开始 |
+| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A–C（含 2026-08-14 两通道真实冒烟：`sessions` / `--resume` / `run --json` / `kill -9` 恢复） |
+| **下一波次** | **S2 波 A**（契约 owner 串行：`pawork-api` tool feature） |
+| 阻塞 | 无。本地冒烟凭证在 `Pawork_v2/.env`（gitignored；`set -a && source Pawork_v2/.env && set +a`） |
 
 自动选择以本表为准，再用 ROADMAP / 任务书 / 工作区实态交叉校验（§4）。三者冲突时：**工作区实态 > 本表 > ROADMAP 状态列**；更新本表使三者一致后再开工。
 

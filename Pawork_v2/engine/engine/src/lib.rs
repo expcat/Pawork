@@ -1,7 +1,12 @@
-//! 最小单轮 Agent Engine：组装 [`CanonicalModelRequest`] 并调用 `ModelProvider::stream`。
+//! 单轮 Agent Engine：组装 [`CanonicalModelRequest`]、调用 `ModelProvider::stream`，
+//! 并经 [`AgentEventSink`] 发射 `AgentEventEnvelope`。
 //!
-//! 本 crate 不重试、不落库、不跑工具循环、不按 Provider 名称分支，
-//! 也不把 `ProviderStreamEvent` 改写成 AgentEvent。
+//! 本 crate 不重试、不落库、不跑工具循环、不按 Provider 名称分支。
+//! 落库由调用方在 sink 里 persist-first。
+
+mod appender;
+mod event;
+mod session_turn;
 
 use std::collections::BTreeMap;
 
@@ -10,6 +15,10 @@ use pawork_api::{
     ProviderError, ProviderEventSink, RequestBudget, ResponseFormat, ToolChoice,
 };
 use pawork_domain::{CancellationToken, Message, ModelId, RequestId};
+
+pub use appender::{AssembledTurn, PendingToolCall};
+pub use event::{map_provider_event, AgentEventSink, EngineError};
+pub use session_turn::{now_timestamp, run_session_turn, SessionTurn};
 
 /// 用冻结契约的默认值填满 CanonicalModelRequest（tools/hosted/extensions 空，
 /// thinking/reasoning None，temperature/max_output_tokens None，

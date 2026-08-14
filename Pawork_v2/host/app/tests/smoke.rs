@@ -11,23 +11,23 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use pawork_api::{
-    CredentialKind, ProviderError, ProviderEventSink, ProviderStreamEvent, ResolvedCredential,
-};
+use pawork_api::{CredentialKind, ResolvedCredential};
 use pawork_app::AppCore;
 use pawork_domain::{
-    CancellationToken, ContentPart, Message, MessageId, MessageRole, ModelId, ProviderId,
-    TextContent,
+    AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, Message, MessageId,
+    MessageRole, ModelId, ProviderId, TextContent,
 };
+use pawork_engine::{AgentEventSink, EngineError};
 use pawork_providers::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
+use pawork_session::SessionStore;
 
 #[derive(Default)]
-struct RecordingSink(Mutex<Vec<ProviderStreamEvent>>);
+struct RecordingEvents(Mutex<Vec<AgentEventEnvelope>>);
 
 #[async_trait]
-impl ProviderEventSink for RecordingSink {
-    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
-        self.0.lock().expect("sink mutex").push(event);
+impl AgentEventSink for RecordingEvents {
+    async fn emit(&self, envelope: AgentEventEnvelope) -> Result<(), EngineError> {
+        self.0.lock().expect("sink mutex").push(envelope);
         Ok(())
     }
 }
@@ -48,14 +48,20 @@ async fn smoke_stream_receives_text_delta_and_completed() {
         Some(credential.clone()),
     )
     .expect("construct smoke provider");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
     let core = AppCore::from_parts(
         std::sync::Arc::new(provider),
         Some(credential),
         ModelId::from(model.as_str()),
         ProviderId::from("smoke"),
+        Some(store),
     );
+    let session = core.create_session("smoke").await.expect("session");
 
-    let sink = RecordingSink::default();
+    let sink = RecordingEvents::default();
     let messages = vec![Message {
         id: MessageId::from("smoke-1"),
         role: MessageRole::User,
@@ -66,22 +72,24 @@ async fn smoke_stream_receives_text_delta_and_completed() {
     }];
 
     let summary = core
-        .chat_turn(messages, &sink, CancellationToken::new())
+        .chat_turn(&session, messages, &sink, CancellationToken::new())
         .await
         .expect("smoke turn");
 
     let events = sink.0.lock().expect("sink mutex").clone();
     assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, ProviderStreamEvent::TextDelta(text) if !text.is_empty())),
-        "expected TextDelta"
+        events.iter().any(|event| matches!(
+            event.payload,
+            AgentEvent::AssistantTextDelta { ref delta, .. } if !delta.is_empty()
+        )),
+        "expected AssistantTextDelta"
     );
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, ProviderStreamEvent::ResponseCompleted(_))),
-        "expected ResponseCompleted"
+            .any(|event| matches!(event.payload, AgentEvent::RunCompleted { .. })),
+        "expected RunCompleted"
     );
     let _ = summary;
+    core.shutdown().await.expect("shutdown");
 }

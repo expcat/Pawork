@@ -915,6 +915,9 @@ dependencies = [
  "pawork-domain",
  "pawork-engine",
  "pawork-providers",
+ "pawork-session",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -928,6 +931,8 @@ dependencies = [
  "pawork-api",
  "pawork-app",
  "pawork-domain",
+ "pawork-engine",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -961,6 +966,8 @@ dependencies = [
  "async-trait",
  "pawork-api",
  "pawork-domain",
+ "serde_json",
+ "thiserror 2.0.20",
  "tokio",
 ]
 

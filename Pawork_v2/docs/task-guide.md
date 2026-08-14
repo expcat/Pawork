@@ -101,6 +101,7 @@
 - API key 只经环境变量注入：`PAWORK_API_KEY_<PROVIDER_ID 大写、`-`→`_`>`（如 `PAWORK_API_KEY_GLM_CODING`）。这是 S0–S5 的**过渡机制**；S6 起以 OS Keychain（`pawork-auth`）为正式存储，环境变量降级为 headless/CI fallback。
 - key 不写入配置文件、不落数据库、不进日志与事件流（V1 `ResolvedCredential` 的 Debug 脱敏语义自 S0 采用）。
 - 执行期凭证由用户在任务开始时临场提供（env 或 `pawork auth` 入 Keychain）；不写入任何可能提交到远程仓库的文件；缺失即终止（fail-closed）——完整约定见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.1。
+- **V2 开发期本地冒烟**：两通道 key 放在 `Pawork_v2/.env`（已列入 `.gitignore`，禁止提交）。冒烟进程用 `set -a && source Pawork_v2/.env && set +a` 注入环境变量；产品路径仍只读 env，不把 `.env` 当配置层。
 - 配置样例随 S0 产出：`fixtures/config/config.example.toml`（含上表三个 provider 条目）。
 
 **真实测试的两种形态**（每个阶段计划文档都含这两节）：

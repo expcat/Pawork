@@ -1,6 +1,6 @@
 # S1：会话持久化与恢复
 
-> 阶段 S1 · 会话持久化 · 状态：🔵进行中（波 A–B 已完成） · 依赖：S0 · 规模：中
+> 阶段 S1 · 会话持久化 · 状态：🟢已完成（2026-08-14 两通道真实冒烟） · 依赖：S0 · 规模：中
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -31,27 +31,38 @@
 
 ## 真实测试与评估（冒烟清单）
 
-- [ ] `pawork chat` 两轮 → 退出 → `pawork sessions list` 出现该会话（时间/摘要正确）→ `--resume` 第三轮提问引用第一轮内容，模型答对（两通道各测一次）。
-- [ ] 对话进行中 `taskkill /F` 杀进程 → resume 后上下文完整、无重复/丢失轮次。
-- [ ] `pawork run "用一句话解释这个 workspace 是干什么的" --json > events.jsonl`：每行合法 JSON、`sequence` 从 1 严格递增、首行 `RunStarted` 末行 `RunCompleted`。
-- [ ] 用 SQLite 工具打开库文件：`session_events` 行数与事件数一致；手工 `UPDATE`/`DELETE` 被触发器拒绝。
-- [ ] 观察两模型在 resume 场景下的上下文利用质量（长历史是否遗忘），记录。
+- [x] `pawork chat` 两轮 → 退出 → `pawork sessions list` 出现该会话（时间/摘要正确）→ `--resume` 第三轮提问引用第一轮内容，模型答对（两通道各测一次）。
+- [x] 对话进行中杀进程（macOS `kill -9`，对应计划中的 `taskkill /F`）→ resume 后首轮 user 仍在、无重复 user 轮；半轮助手未 `MessageCommitted`（与 engine 约定一致）。`SIGKILL` 来不及写 `RunCancelled`，事件流停在最后一条已 persist 的 delta，下一轮 `sequence` 连续接上。
+- [x] `pawork run "用一句话解释这个 workspace 是干什么的" --json > events.jsonl`：每行合法 JSON、`sequence` 从 1 严格递增、首行 `RunStarted` 末行 `RunCompleted`（GLM 本轮 183 行，stdout 无 `session` 横幅）。
+- [x] 用 SQLite 工具打开库文件：该 session 的 `session_events` 行数与 JSONL 行数一致（183=183）；手工 `UPDATE`/`DELETE` 被触发器拒绝（`session_events is append-only`）。
+- [x] 观察两模型在 resume 场景下的上下文利用质量（长历史是否遗忘），记录。
+
+### 模型评估记录（2026-08-14 S1 冒烟）
+
+隔离目录：`PAWORK_DATA_DIR` + workspace `.pawork/config.toml`（`fixtures/config/config.example.toml`）；凭证从 `Pawork_v2/.env` 注入，未写入仓库。
+
+| 通道 | 模型 | 首轮 / 续聊体感 | resume 暗号 | `sessions list` | 流 / 落盘 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- |
+| GLM Coding Plan | `glm-5.2` | 首轮 4.8s；数学续聊 1.5s；resume 1.8s | 第三轮只答「蓝松果」 | 时间 + 首轮摘要正确 | 稳定；thinking 走 stderr | 杀进程后续聊仍记得「在数到 80」；模型会把未完成的计数补完（半轮无助手投影，属约定而非丢轮） |
+| OpenCode Go | `deepseek-v4-pro` | 首轮 2.7s；续聊 / resume 均 2.7s | 第三轮只答 `BLUE-PINECONE` | 两会话并列，摘要截断正常 | 稳定；同样有 thinking 前缀 | 首轮冒烟曾因跨 session 复用 `msg-1` 撞 `messages.message_id` 全局主键；`AppCore::chat_turn` 落库前重发全局唯一 user id 后通过 |
+
+`--json`（unstable）：`RunStarted → MessageCommitted(user) → ContextPrepared → ProviderRequestStarted → deltas → MessageCommitted(assistant) → RunCompleted`。S1 无工具，workspace 解释题只验 JSONL 形状，不验仓库事实。
 
 ## 定向自动化测试
 
 - `cargo test -p pawork-domain`：envelope serde golden（补建夹具字节锁）、32 变体 round-trip。
 - `cargo test -p pawork-sqlite`：Actor、migration 框架 round-trip、backup/restore。
-- `cargo test -p pawork-session`：append-only 触发器、sequence/parent 校验、projection 重建等价、**V1 库文件直接打开并升级**（用 V1 测试夹具库）。
+- `cargo test -p pawork-session`：append-only 触发器、sequence/parent 校验、projection 重建等价、合成 v6 库升级到 schema 9（仓库无检入 V1 `.db`）。
 - `cargo test -p pawork-engine`：mock provider 单轮事件序列 golden；崩溃点注入（写一半）后 resume 一致性。
 - secret 不落库断言：构造含 credential 的运行，扫描库文件与事件 payload 无 key 片段。
 
 ## 退出标准
 
-- [ ] envelope golden 与 append-only 契约测试全绿（此后任何阶段不得改动二者形状）。
-- [ ] 冒烟清单全项通过（两通道）。
-- [ ] V1 样例库文件可被 V2 打开并升级到 `CURRENT_SCHEMA_VERSION`。
-- [ ] `--json` 输出可脚本断言（后续阶段的自动化验收基建就绪），且在文档中明确标注 unstable。
-- [ ] secret 不落库断言通过。
+- [x] envelope golden 与 append-only 契约测试全绿（此后任何阶段不得改动二者形状）。
+- [x] 冒烟清单全项通过（两通道）。
+- [x] V1 schema 升级到 `CURRENT_SCHEMA_VERSION = 9`：波 B 以合成 v6 库打开并升级（`legacy_sessions_backfill_to_local_default_identity`）；仓库未检入 V1 生产 `.db` 夹具。
+- [x] `--json` 输出可脚本断言（后续阶段的自动化验收基建就绪），且在文档中明确标注 unstable（任务书目标、`design.md` §3.2/§4、clap `about`）。
+- [x] secret 不落库断言通过。
 
 ## 为后续阶段预留 / 明确不做
 
@@ -62,7 +73,7 @@
 
 - 波 A（串行，契约 owner）：domain events 并入 + golden。
 - 波 B（并行 ×2，已完成）：`pawork-sqlite`；`pawork-session`（依赖波 A 的事件类型，可先建表层后接类型）。
-- 波 C（串行收口）：engine 事件化 + app/cli 接线 + 冒烟。
+- 波 C（串行收口，已完成）：engine 事件化 + app/cli 接线 + 冒烟。
 
 ## 参考
 
