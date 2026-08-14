@@ -1,6 +1,6 @@
 # S2：Agent Loop 与只读工具
 
-> 阶段 S2 · 工具循环 · 状态：⚪未开始 · 依赖：S1 · 规模：大
+> 阶段 S2 · 工具循环 · 状态：🔵进行中 · 依赖：S1 · 规模：大
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -10,7 +10,7 @@
 
 | V2 包（目录） | 本阶段动作 | V1 来源与方式 |
 | --- | --- | --- |
-| `pawork-api` | 增强：`tool` feature。V1 `tool-api` 整组迁移：`AgentTool`（`descriptor`/`execute`）、`ToolEventSink`、`ToolDescriptor`（含 `requires_approval`/`read_only`/`allowed_in_untrusted_workspace`/`max_output_bytes` 等全部字段）、`ToolRequest`/`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）、`ToolResult`/`ToolError` | 直接迁移（descriptor 审批语义为 S3 铺路，本阶段只消费 `read_only = true` 工具） |
+| `pawork-api` | 增强：`tool` feature（波 A 已落地）。V1 `tool-api` 执行契约迁入：`AgentTool`（`descriptor`/`execute`）、`ToolEventSink`、`ToolRequest`/`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）、`ToolResult`/`ToolError`/`ToolStreamEvent`。`ToolDescriptor`（含 `requires_approval`/`read_only`/`allowed_in_untrusted_workspace`/`max_output_bytes` 等全部字段）已在 `pawork-domain`，不复制、不做 re-export 薄壳 | 直接迁移（descriptor 审批语义为 S3 铺路，本阶段只消费 `read_only = true` 工具） |
 | `pawork-tools`（execution/tools） | 激活：V1 `builtin-tools` 的 `common` + `read_file`/`list_directory`/`search_text`/`find_files` 四模块迁移；V1 `tool-runtime` 的 scheduler 最小迁移（注册、并发上限、超时、输出截断） | 直接迁移（[archive/M1](archive/M1-execution-security.md) pawork-tools 节；写工具 S3、run_command S4、`tool_search` 冻结不迁） |
 | `pawork-workspace`（workspace/core） | 激活（最小）：`WorkspaceId`、roots 管理、相对路径解析与校验入口（**文件工具输入一律 `workspace_id + relative_path`**，拒绝绝对路径与越 root 的 `..`；完整安全校验 S3 接 policy） | V1 `workspace-service` 最小子集迁移 |
 | `pawork-engine` | 增强：多轮工具循环——收集 `ToolCallStarted/ArgumentsDelta/Completed` 组装 `PendingToolInvocation`，经 `LoopContext.execute_tools` 派发，`ToolCallResult` 回填下一轮 `CanonicalModelRequest`，直至非工具 `StopReason`；工具链路事件（`ToolExecutionStarted`/`ToolOutputDelta`/`ToolExecutionCompleted`）入事件流；防失控上限（每 run 最大工具轮数，超限事件化终止） | 语义对齐 V1 `provider_loop` 工具派发子集 + `SchedulerLoopContext` |
@@ -61,7 +61,7 @@
 
 ## 并行拆分建议
 
-- 波 A（契约 owner 串行）：`pawork-api` tool feature。
+- 波 A（契约 owner 串行）：`pawork-api` tool feature。✅
 - 波 B（并行 ×3）：`pawork-tools`（四工具 + scheduler）、`pawork-workspace`、`pawork-providers`（anthropic）。
 - 波 C（并行 ×2）：`pawork-engine` 工具循环（依赖波 A/B 接口）、`pawork-testkit`。
 - 波 D（串行收口）：cli 渲染 + 装配 + 三通道冒烟。

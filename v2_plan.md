@@ -45,9 +45,9 @@
 | 字段 | 值 |
 | --- | --- |
 | 当前阶段 | S2（[plan/S2-tool-loop.md](Pawork_v2/plan/S2-tool-loop.md)） |
-| 阶段状态 | ⚪ 未开始 |
-| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A–C（含 2026-08-14 两通道真实冒烟：`sessions` / `--resume` / `run --json` / `kill -9` 恢复） |
-| **下一波次** | **S2 波 A**（契约 owner 串行：`pawork-api` tool feature） |
+| 阶段状态 | 🔵 进行中 |
+| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A–C（含 2026-08-14 两通道真实冒烟：`sessions` / `--resume` / `run --json` / `kill -9` 恢复）；S2 波 A（`pawork-api` `tool` feature：执行契约迁入，`ToolDescriptor` 留 domain） |
+| **下一波次** | **S2 波 B**（并行 ×3：`pawork-tools` / `pawork-workspace` / `pawork-providers` anthropic） |
 | 阻塞 | 无。本地冒烟凭证在 `Pawork_v2/.env`（gitignored；`set -a && source Pawork_v2/.env && set +a`） |
 
 自动选择以本表为准，再用 ROADMAP / 任务书 / 工作区实态交叉校验（§4）。三者冲突时：**工作区实态 > 本表 > ROADMAP 状态列**；更新本表使三者一致后再开工。

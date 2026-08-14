@@ -1,7 +1,17 @@
-//! Provider 无关的 canonical 请求、流式事件与错误协议。
+//! Provider 无关的 canonical 请求、流式事件、错误协议与工具执行契约。
 //!
 //! 具体 Provider 负责在本协议和远端 API 之间转换；Agent Engine 不得按
 //! Provider 名称分支，也不得依赖 HTTP 实现细节。
+//!
+//! 工具描述符（`ToolDescriptor` 等）定义在 `pawork-domain`；本 crate 的
+//! `tool` feature 只提供 `AgentTool` 执行面，不再做一层兼容 re-export。
+
+mod tool;
+
+pub use tool::{
+    AgentTool, ToolError, ToolErrorKind, ToolEventSink, ToolExecutionContext, ToolOutputChannel,
+    ToolRequest, ToolResult, ToolStreamEvent,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
