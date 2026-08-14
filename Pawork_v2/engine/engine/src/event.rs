@@ -1,13 +1,17 @@
-//! 单轮事件发射：分配 `sequence`，经 [`AgentEventSink`] 双写给调用方。
+//! 事件发射：分配 `sequence`，经 [`AgentEventSink`] 双写给调用方。
 //!
 //! Engine 不依赖 SQLite。落库由 app 的 sink 在 `emit` 里 `append_event`。
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use async_trait::async_trait;
-use pawork_api::{ProviderError, ProviderStreamEvent};
+use pawork_api::{
+    ProviderError, ProviderEventSink, ProviderStreamEvent, ToolOutputChannel, ToolStreamEvent,
+};
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, EventId, EventSequence, MessageId, RunId, SessionId, Timestamp,
+    ToolCallId, ToolOutputStream,
 };
 use thiserror::Error;
 
@@ -17,6 +21,8 @@ pub enum EngineError {
     Provider(#[from] ProviderError),
     #[error("{0}")]
     Sink(String),
+    #[error("maximum tool rounds exceeded ({0})")]
+    MaxToolRounds(u64),
 }
 
 impl EngineError {
@@ -38,6 +44,7 @@ pub trait AgentEventSink: Send + Sync {
     async fn emit(&self, envelope: AgentEventEnvelope) -> Result<(), EngineError>;
 }
 
+#[derive(Clone)]
 pub(crate) struct EventEmitter<'a> {
     session_id: SessionId,
     run_id: RunId,
@@ -75,6 +82,90 @@ impl<'a> EventEmitter<'a> {
         );
         self.sink.emit(envelope).await?;
         Ok(sequence)
+    }
+}
+
+/// 可 Clone 的 Loop 事件发射器；复制的是 sequence 与 sink 的引用。
+#[derive(Clone)]
+pub struct LoopEventEmitter<'a> {
+    inner: EventEmitter<'a>,
+}
+
+impl<'a> LoopEventEmitter<'a> {
+    pub(crate) fn new(inner: EventEmitter<'a>) -> Self {
+        Self { inner }
+    }
+
+    pub async fn emit(&self, payload: AgentEvent) -> Result<EventSequence, EngineError> {
+        self.inner.emit(payload).await
+    }
+
+    pub async fn emit_tool_event(
+        &self,
+        tool_call_id: ToolCallId,
+        event: ToolStreamEvent,
+    ) -> Result<(), EngineError> {
+        match event {
+            ToolStreamEvent::OutputDelta { channel, delta } => {
+                let stream = match channel {
+                    ToolOutputChannel::Stdout => ToolOutputStream::Stdout,
+                    ToolOutputChannel::Stderr => ToolOutputStream::Stderr,
+                    ToolOutputChannel::Structured => ToolOutputStream::Structured,
+                };
+                self.inner
+                    .emit(AgentEvent::ToolOutputDelta {
+                        tool_call_id,
+                        stream,
+                        delta,
+                    })
+                    .await?;
+                Ok(())
+            }
+            ToolStreamEvent::Progress { .. } | ToolStreamEvent::ArtifactAvailable(_) => Ok(()),
+        }
+    }
+}
+
+pub(crate) struct LoopSink<'a> {
+    events: Mutex<Vec<ProviderStreamEvent>>,
+    persist_error: Mutex<Option<EngineError>>,
+    emitter: EventEmitter<'a>,
+    message_id: MessageId,
+}
+
+impl<'a> LoopSink<'a> {
+    pub(crate) fn new(emitter: EventEmitter<'a>, message_id: MessageId) -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+            persist_error: Mutex::new(None),
+            emitter,
+            message_id,
+        }
+    }
+
+    pub(crate) fn drain_events(&self) -> Vec<ProviderStreamEvent> {
+        std::mem::take(&mut *self.events.lock().expect("loop sink mutex"))
+    }
+
+    pub(crate) fn take_persist_error(&self) -> Option<EngineError> {
+        self.persist_error.lock().expect("persist error mutex").take()
+    }
+}
+
+#[async_trait]
+impl ProviderEventSink for LoopSink<'_> {
+    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
+        if let Some(payload) = map_provider_event(&event, &self.message_id) {
+            if let Err(error) = self.emitter.emit(payload).await {
+                *self.persist_error.lock().expect("persist error mutex") = Some(error);
+                return Err(ProviderError::new(
+                    pawork_api::ProviderErrorKind::Unknown,
+                    "event sink failed",
+                ));
+            }
+        }
+        self.events.lock().expect("loop sink mutex").push(event);
+        Ok(())
     }
 }
 

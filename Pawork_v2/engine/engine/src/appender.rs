@@ -1,14 +1,13 @@
 //! 流式增量组装：把 [`ProviderStreamEvent`] 累积成一条助手消息。
 //!
 //! 本模块只做组装，不分配 sequence、不落库、不执行工具。
-//! `tool_results_message` 依赖 tool-api，留 S2。
 
 use std::collections::BTreeMap;
 
-use pawork_api::{ModelResponseSummary, ProviderStreamEvent};
+use pawork_api::{ModelResponseSummary, ProviderStreamEvent, ToolResult};
 use pawork_domain::{
     ContentPart, Message, MessageId, MessageMetadata, MessageRole, ReasoningItem, StopReason,
-    TextContent, ThinkingContent, TokenUsage, ToolCallContent, ToolCallId,
+    TextContent, ThinkingContent, TokenUsage, ToolCallContent, ToolCallId, ToolResultContent,
 };
 use serde_json::Value;
 
@@ -182,6 +181,38 @@ impl AssembledTurn {
     }
 }
 
+/// 一条 tool call 的最终结果（回填到消息流）。
+#[derive(Clone, Debug)]
+pub struct ToolCallResult {
+    pub tool_call_id: ToolCallId,
+    pub tool_name: String,
+    pub arguments: Value,
+    pub result: ToolResult,
+}
+
+/// 把一组 tool call 结果构建为一条 `Tool` 角色消息。
+pub fn tool_results_message(message_id: MessageId, results: Vec<ToolCallResult>) -> Message {
+    let content = results
+        .into_iter()
+        .map(|result| {
+            let is_error = result.result.is_error();
+            ContentPart::ToolResult(ToolResultContent {
+                tool_call_id: result.tool_call_id,
+                tool_name: Some(result.tool_name),
+                content: result.result.content,
+                is_error,
+                metadata: result.result.metadata,
+            })
+        })
+        .collect();
+    Message {
+        id: message_id,
+        role: MessageRole::Tool,
+        content,
+        metadata: MessageMetadata::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use pawork_domain::{ProtectedBlobRef, ReasoningItemId};
@@ -277,5 +308,20 @@ mod tests {
             }) if id == &item.id
         ));
         assert_eq!(message.content[1], ContentPart::Reasoning(item));
+    }
+
+    #[test]
+    fn tool_results_message_builds_tool_role_parts() {
+        let results = vec![ToolCallResult {
+            tool_call_id: ToolCallId::from("call-1"),
+            tool_name: "read_file".into(),
+            arguments: Value::Null,
+            result: ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "body".into(),
+            })]),
+        }];
+        let message = tool_results_message(MessageId::from("tool-msg"), results);
+        assert_eq!(message.role, MessageRole::Tool);
+        assert_eq!(message.content.len(), 1);
     }
 }

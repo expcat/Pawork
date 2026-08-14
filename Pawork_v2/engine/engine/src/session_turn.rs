@@ -1,20 +1,15 @@
 //! 单轮会话：发 AgentEvent、调用 [`crate::run_turn`]、组装助手消息。
 
 use std::sync::atomic::AtomicU64;
-use std::sync::Mutex;
 
-use async_trait::async_trait;
-use pawork_api::{
-    CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ProviderEventSink,
-    ProviderStreamEvent,
-};
+use pawork_api::{CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError};
 use pawork_domain::{
     AgentEvent, CancellationToken, ErrorContext, Message, MessageId, MessageMetadata, ModelId,
     ProviderId, RunId, SessionId, Timestamp,
 };
 
 use crate::appender::AssembledTurn;
-use crate::event::{map_provider_event, AgentEventSink, EngineError, EventEmitter};
+use crate::event::{AgentEventSink, EngineError, EventEmitter, LoopSink};
 use crate::run_turn;
 
 /// 一次会话轮次的标识与起始 sequence。
@@ -121,18 +116,7 @@ pub async fn run_session_turn(
         })
         .await?;
 
-    let sink = LoopSink {
-        events: Mutex::new(Vec::new()),
-        persist_error: Mutex::new(None),
-        emitter: EventEmitter::new(
-            turn.session_id.clone(),
-            turn.run_id.clone(),
-            &next_sequence,
-            turn.timestamp,
-            events,
-        ),
-        message_id: assistant_id.clone(),
-    };
+    let sink = LoopSink::new(emitter.clone(), assistant_id.clone());
 
     let result = run_turn(provider, request, &sink, cancel).await;
     if let Some(error) = sink.take_persist_error() {
@@ -182,47 +166,14 @@ pub async fn run_session_turn(
     }
 }
 
-struct LoopSink<'a> {
-    events: Mutex<Vec<ProviderStreamEvent>>,
-    persist_error: Mutex<Option<EngineError>>,
-    emitter: EventEmitter<'a>,
-    message_id: MessageId,
-}
-
-impl LoopSink<'_> {
-    fn drain_events(&self) -> Vec<ProviderStreamEvent> {
-        std::mem::take(&mut *self.events.lock().expect("loop sink mutex"))
-    }
-
-    fn take_persist_error(&self) -> Option<EngineError> {
-        self.persist_error.lock().expect("persist error mutex").take()
-    }
-}
-
-#[async_trait]
-impl ProviderEventSink for LoopSink<'_> {
-    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
-        if let Some(payload) = map_provider_event(&event, &self.message_id) {
-            if let Err(error) = self.emitter.emit(payload).await {
-                *self.persist_error.lock().expect("persist error mutex") = Some(error);
-                return Err(ProviderError::new(
-                    pawork_api::ProviderErrorKind::Unknown,
-                    "event sink failed",
-                ));
-            }
-        }
-        self.events.lock().expect("loop sink mutex").push(event);
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
     use pawork_api::{
-        ModelDefinition, ProviderErrorKind, ProviderStreamEvent, ResolvedCredential,
+        ModelDefinition, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent,
+        ResolvedCredential,
     };
     use pawork_domain::{
         AgentEvent, AgentEventEnvelope, ContentPart, EventSequence, MessageId, MessageRole,

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork 单轮 Agent Engine（assemble_request + run_turn + 事件化）"
+description = "Pawork Agent Engine（assemble_request + run_turn + 工具循环）"
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
@@ -16,3 +16,5 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+futures.workspace = true
+pawork-testkit = { path = "../../foundation/testkit" }

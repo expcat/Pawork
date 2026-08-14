@@ -1,24 +1,28 @@
-//! 单轮 Agent Engine：组装 [`CanonicalModelRequest`]、调用 `ModelProvider::stream`，
-//! 并经 [`AgentEventSink`] 发射 `AgentEventEnvelope`。
+//! Agent Engine：组装 [`CanonicalModelRequest`]、调用 `ModelProvider::stream`，
+//! 经 [`AgentEventSink`] 发射 `AgentEventEnvelope`，并经 [`LoopContext`] 跑工具循环。
 //!
-//! 本 crate 不重试、不落库、不跑工具循环、不按 Provider 名称分支。
+//! 本 crate 不重试、不落库、不按 Provider 名称分支。
 //! 落库由调用方在 sink 里 persist-first。
 
 mod appender;
 mod event;
 mod session_turn;
+mod tool_loop;
 
 use std::collections::BTreeMap;
 
 use pawork_api::{
     CanonicalModelRequest, ModelProvider, ModelResponseSummary, PromptCachePreference,
-    ProviderError, ProviderEventSink, RequestBudget, ResponseFormat, ToolChoice,
+    ProviderError, ProviderEventSink, RequestBudget, ResponseFormat, ToolChoice, ToolDefinition,
 };
 use pawork_domain::{CancellationToken, Message, ModelId, RequestId};
 
-pub use appender::{AssembledTurn, PendingToolCall};
-pub use event::{map_provider_event, AgentEventSink, EngineError};
+pub use appender::{tool_results_message, AssembledTurn, PendingToolCall, ToolCallResult};
+pub use event::{map_provider_event, AgentEventSink, EngineError, LoopEventEmitter};
 pub use session_turn::{now_timestamp, run_session_turn, SessionTurn};
+pub use tool_loop::{
+    run_session, LoopContext, PendingToolInvocation, DEFAULT_MAX_TOOL_ROUNDS,
+};
 
 /// 用冻结契约的默认值填满 CanonicalModelRequest（tools/hosted/extensions 空，
 /// thinking/reasoning None，temperature/max_output_tokens None，
@@ -50,6 +54,18 @@ pub fn assemble_request(
     }
 }
 
+/// 与 [`assemble_request`] 相同默认值，但 `tools` 使用入参。
+pub fn assemble_request_with_tools(
+    request_id: RequestId,
+    model: ModelId,
+    messages: Vec<Message>,
+    tools: Vec<ToolDefinition>,
+) -> CanonicalModelRequest {
+    let mut request = assemble_request(request_id, model, messages);
+    request.tools = tools;
+    request
+}
+
 /// 单轮：若 cancel 已取消则不调用 provider，返回 ProviderError::cancelled。
 /// 否则把 request / sink / cancel 交给 provider.stream。
 /// 不重试、不落库、不跑工具循环、不按 provider 名分支、不把事件改写成 AgentEvent。
@@ -72,7 +88,7 @@ mod tests {
 
     use async_trait::async_trait;
     use pawork_api::{
-        ModelDefinition, ProviderErrorKind, ProviderStreamEvent, ResolvedCredential,
+        ModelDefinition, ProviderErrorKind, ProviderStreamEvent, ResolvedCredential, ToolDefinition,
     };
     use pawork_domain::{
         ContentPart, MessageId, MessageRole, ProviderId, StopReason, TextContent, TokenUsage,
@@ -262,6 +278,28 @@ mod tests {
                 trace_id: None,
             }
         );
+    }
+
+    #[test]
+    fn assemble_request_with_tools_keeps_defaults_and_sets_tools() {
+        let tools = vec![ToolDefinition {
+            name: "echo".into(),
+            description: "echo".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let request = assemble_request_with_tools(
+            RequestId::from("request-1"),
+            ModelId::from("model-1"),
+            sample_messages(),
+            tools.clone(),
+        );
+        let mut expected = assemble_request(
+            RequestId::from("request-1"),
+            ModelId::from("model-1"),
+            sample_messages(),
+        );
+        expected.tools = tools;
+        assert_eq!(request, expected);
     }
 
     #[tokio::test]

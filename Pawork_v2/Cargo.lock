@@ -1048,8 +1048,10 @@ name = "pawork-engine"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures",
  "pawork-api",
  "pawork-domain",
+ "pawork-testkit",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
@@ -1106,6 +1108,17 @@ version = "0.1.0"
 dependencies = [
  "rusqlite",
  "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
+name = "pawork-testkit"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pawork-api",
+ "pawork-domain",
+ "serde_json",
  "tokio",
 ]
 
