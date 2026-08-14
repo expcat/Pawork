@@ -1,6 +1,7 @@
-//! 最小工具调度器（S2）：注册、并发上限、超时、审批挂点。
+//! 最小工具调度器：注册、并发上限、超时、PolicyEngine 闸门、审批挂点。
 //!
-//! 不接 PolicyEngine / 写锁 / git 锁 / 文件锁；只读并发即可。
+//! 已接 PolicyEngine（capability + trusted + descriptor → decide）。
+//! 仍不接写锁 / git 锁 / 文件锁。
 //! 输出截断留在各工具的 `MAX_OUTPUT_BYTES`，本模块不二次截断。
 
 use std::collections::HashMap;
@@ -12,6 +13,10 @@ use pawork_api::{
     ToolResult, ToolStreamEvent,
 };
 use pawork_domain::{CancellationToken, ErrorCategory, ErrorContext, ToolDescriptor, ToolKind};
+use pawork_policy::{
+    ApprovalMode, ApprovalPrompt, ExecutionConstraints, PolicyDecision, PolicyEngine, PolicyInput,
+    RiskLevel,
+};
 use tokio::sync::Semaphore;
 
 #[derive(Clone)]
@@ -134,11 +139,19 @@ impl std::fmt::Debug for ToolRegistry {
 pub struct ToolSchedulerConfig {
     /// 全局最大并发执行数。
     pub max_concurrent: usize,
+    /// 每次工具调用使用的审批模式。
+    pub approval_mode: ApprovalMode,
+    /// 当前 workspace 是否已被用户信任。
+    pub workspace_trusted: bool,
 }
 
 impl Default for ToolSchedulerConfig {
     fn default() -> Self {
-        Self { max_concurrent: 8 }
+        Self {
+            max_concurrent: 8,
+            approval_mode: ApprovalMode::ReadOnly,
+            workspace_trusted: false,
+        }
     }
 }
 
@@ -188,14 +201,19 @@ struct ToolHandle {
 pub struct ToolScheduler {
     registry: ToolRegistry,
     global: Arc<Semaphore>,
+    policy: PolicyEngine,
+    config: ToolSchedulerConfig,
 }
 
 impl ToolScheduler {
     pub fn new(registry: ToolRegistry, config: ToolSchedulerConfig) -> Self {
         let max = config.max_concurrent.max(1);
+        let policy = PolicyEngine::new(config.approval_mode);
         Self {
             registry,
             global: Arc::new(Semaphore::new(max)),
+            policy,
+            config,
         }
     }
 
@@ -206,8 +224,8 @@ impl ToolScheduler {
 
     /// 按显式工具名调度并执行。
     ///
-    /// `approval` 为 `None` 或 [`AutoApproveResolver`] 时全部 Approved。
-    /// Denied 不执行，返回 failure [`ToolResult`]。
+    /// `approval` 为 `None` 与 [`AutoApproveResolver`] 同等：策略 Allow 时放行，
+    /// 但不能满足 AskUser。Denied 不执行，返回 failure [`ToolResult`]。
     pub async fn execute_named(
         &self,
         name: &str,
@@ -241,7 +259,7 @@ impl ToolScheduler {
     async fn execute_with_tool(
         &self,
         descriptor: ToolDescriptor,
-        request: ToolRequest,
+        mut request: ToolRequest,
         context: ToolExecutionContext,
         cancel: CancellationToken,
         approval: Option<&dyn ApprovalResolver>,
@@ -257,12 +275,23 @@ impl ToolScheduler {
                 retry_after_ms: None,
             })?;
 
-        if let Some(resolver) = approval {
-            let outcomes = resolver.resolve(std::slice::from_ref(&request)).await;
-            if !matches!(outcomes.first(), Some(ApprovalOutcome::Approved)) {
-                return Ok(denied_result(
-                    "tool call denied or approval was not provided",
-                ));
+        let asked_user = match self.check_gate(&descriptor, &mut request, approval).await {
+            GateOutcome::Denied { reason } => {
+                return Ok(denied_result(reason));
+            }
+            GateOutcome::Approved { asked_user } => asked_user,
+        };
+
+        // S2 审批钩子仅在 check_gate 为 Allow / AllowWithConstraints 之后；
+        // AskUser 已问过则跳过，避免双问。
+        if !asked_user {
+            if let Some(resolver) = approval {
+                let outcomes = resolver.resolve(std::slice::from_ref(&request)).await;
+                if !matches!(outcomes.first(), Some(ApprovalOutcome::Approved)) {
+                    return Ok(denied_result(
+                        "tool call denied or approval was not provided",
+                    ));
+                }
             }
         }
 
@@ -311,6 +340,84 @@ impl ToolScheduler {
         }
 
         Ok(ToolHandle { _permit: permit })
+    }
+
+    /// 策略 + 审批闸门。
+    ///
+    /// - 策略 `Deny`（未信任工作区 / ReadOnly 写能力）优先，直接拒绝；
+    /// - 描述符 `requires_approval` 把策略放行升级为显式用户审批；
+    /// - `AskUser` 必须由真实审批通道放行，否则 fail closed。
+    async fn check_gate(
+        &self,
+        descriptor: &ToolDescriptor,
+        request: &mut ToolRequest,
+        approval: Option<&dyn ApprovalResolver>,
+    ) -> GateOutcome {
+        let mut decision = self.policy.decide(&PolicyInput {
+            capability: descriptor.capability.clone(),
+            input: request.input.clone(),
+            trusted: self.config.workspace_trusted,
+            allowed_in_untrusted_workspace: descriptor.allowed_in_untrusted_workspace,
+            approval_mode: self.config.approval_mode,
+        });
+        if descriptor.requires_approval && !matches!(decision, PolicyDecision::Deny { .. }) {
+            decision = PolicyDecision::AskUser {
+                prompt: ApprovalPrompt {
+                    message: format!("tool `{}` requires explicit approval", descriptor.name),
+                    risk: RiskLevel::Moderate,
+                },
+            };
+        }
+
+        match decision {
+            PolicyDecision::Deny { reason } => GateOutcome::Denied { reason },
+            PolicyDecision::AskUser { .. } => {
+                let fallback = AutoApproveResolver;
+                let resolver = approval.unwrap_or(&fallback);
+                if !resolver.can_resolve_policy_prompt() {
+                    return GateOutcome::Denied {
+                        reason: "policy requires explicit user approval; automatic approval is forbidden"
+                            .into(),
+                    };
+                }
+                let outcomes = resolver.resolve(std::slice::from_ref(request)).await;
+                if !matches!(outcomes.first(), Some(ApprovalOutcome::Approved)) {
+                    return GateOutcome::Denied {
+                        reason: "tool call denied or approval was not provided".into(),
+                    };
+                }
+                GateOutcome::Approved { asked_user: true }
+            }
+            PolicyDecision::AllowWithConstraints { constraints } => {
+                apply_execution_constraints(request, &constraints);
+                GateOutcome::Approved { asked_user: false }
+            }
+            PolicyDecision::Allow => GateOutcome::Approved { asked_user: false },
+        }
+    }
+}
+
+enum GateOutcome {
+    Denied { reason: String },
+    Approved { asked_user: bool },
+}
+
+fn apply_execution_constraints(request: &mut ToolRequest, constraints: &ExecutionConstraints) {
+    let Some(input) = request.input.as_object_mut() else {
+        return;
+    };
+    for (key, limit) in [
+        ("timeout_ms", constraints.timeout_ms),
+        ("max_output_bytes", constraints.max_output_bytes),
+    ] {
+        let Some(limit) = limit else { continue };
+        let current = input.get(key).and_then(serde_json::Value::as_u64);
+        if match current {
+            Some(value) => value > limit,
+            None => true,
+        } {
+            input.insert(key.into(), serde_json::Value::from(limit));
+        }
     }
 }
 
@@ -545,7 +652,10 @@ mod tests {
         let b = probe("read_b", shared.clone());
         let scheduler = make_scheduler(
             vec![a, b],
-            ToolSchedulerConfig { max_concurrent: 2 },
+            ToolSchedulerConfig {
+                max_concurrent: 2,
+                ..Default::default()
+            },
         );
         let (r1, r2) = tokio::join!(
             execute_named(&scheduler, "read_a", json!({})),
@@ -565,7 +675,10 @@ mod tests {
         let b = probe("r2", shared.clone());
         let scheduler = make_scheduler(
             vec![a, b],
-            ToolSchedulerConfig { max_concurrent: 1 },
+            ToolSchedulerConfig {
+                max_concurrent: 1,
+                ..Default::default()
+            },
         );
         let (r1, r2) = tokio::join!(
             execute_named(&scheduler, "r1", json!({})),
@@ -646,7 +759,10 @@ mod tests {
         let tool = probe("read_x", probe_shared());
         let scheduler = make_scheduler(
             vec![tool],
-            ToolSchedulerConfig { max_concurrent: 2 },
+            ToolSchedulerConfig {
+                max_concurrent: 2,
+                ..Default::default()
+            },
         );
         let cancel = CancellationToken::new();
         cancel.cancel();
@@ -807,5 +923,123 @@ mod tests {
         assert_eq!(registry.len(), 1);
         assert!(registry.get("ok").is_some());
         assert_eq!(registry.descriptors()[0].name, "ok");
+    }
+
+    struct WriteProbe {
+        name: &'static str,
+        allowed_in_untrusted_workspace: bool,
+        calls: Arc<AtomicU64>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentTool for WriteProbe {
+        fn descriptor(&self) -> ToolDescriptor {
+            ToolDescriptor {
+                name: self.name.into(),
+                description: "write probe".into(),
+                input_schema: json!({"type": "object"}),
+                capability: ToolCapability::WorkspaceWrite,
+                kind: ToolKind::ClientFunction,
+                hosting: ToolHosting::Local,
+                capabilities: Vec::new(),
+                requires_approval: false,
+                read_only: false,
+                supports_concurrency: false,
+                default_timeout_ms: None,
+                max_output_bytes: 1024,
+                allowed_in_untrusted_workspace: self.allowed_in_untrusted_workspace,
+            }
+        }
+
+        async fn execute(
+            &self,
+            _request: ToolRequest,
+            _context: ToolExecutionContext,
+            _sink: &dyn ToolEventSink,
+            _cancel: CancellationToken,
+        ) -> Result<ToolResult, ToolError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ToolResult::success(Vec::new()))
+        }
+    }
+
+    fn write_probe(
+        name: &'static str,
+        allowed_in_untrusted_workspace: bool,
+    ) -> (Arc<dyn AgentTool>, Arc<AtomicU64>) {
+        let calls = Arc::new(AtomicU64::new(0));
+        (
+            Arc::new(WriteProbe {
+                name,
+                allowed_in_untrusted_workspace,
+                calls: calls.clone(),
+            }),
+            calls,
+        )
+    }
+
+    fn policy_config(approval_mode: ApprovalMode, workspace_trusted: bool) -> ToolSchedulerConfig {
+        ToolSchedulerConfig {
+            max_concurrent: 4,
+            approval_mode,
+            workspace_trusted,
+        }
+    }
+
+    #[tokio::test]
+    async fn untrusted_write_tool_denied_even_in_never_ask() {
+        let (tool, calls) = write_probe("blocked_write", false);
+        let scheduler = make_scheduler(vec![tool], policy_config(ApprovalMode::NeverAsk, false));
+        let result = scheduler
+            .execute_named(
+                "blocked_write",
+                req("blocked_write", json!({"path": "a.txt"})),
+                execution_context(),
+                CancellationToken::new(),
+                Some(&AutoApproveResolver),
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(result.is_error());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn ask_for_writes_cannot_bypass_with_auto_approve() {
+        let (tool, calls) = write_probe("ask_write", false);
+        let scheduler = make_scheduler(vec![tool], policy_config(ApprovalMode::AskForWrites, true));
+        let result = scheduler
+            .execute_named(
+                "ask_write",
+                req("ask_write", json!({"path": "a.txt"})),
+                execution_context(),
+                CancellationToken::new(),
+                Some(&AutoApproveResolver),
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(result.is_error());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn read_only_mode_denies_write_even_when_trusted() {
+        let (tool, calls) = write_probe("ro_write", false);
+        let scheduler = make_scheduler(vec![tool], policy_config(ApprovalMode::ReadOnly, true));
+        let result = scheduler
+            .execute_named(
+                "ro_write",
+                req("ro_write", json!({"path": "a.txt"})),
+                execution_context(),
+                CancellationToken::new(),
+                Some(&AutoApproveResolver),
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+        assert!(result.is_error());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }
