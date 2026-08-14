@@ -994,12 +994,16 @@ name = "pawork-app"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures",
  "pawork-api",
  "pawork-config",
  "pawork-domain",
  "pawork-engine",
  "pawork-providers",
  "pawork-session",
+ "pawork-testkit",
+ "pawork-tools",
+ "pawork-workspace",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",

@@ -4,21 +4,24 @@
 //!   PAWORK_SMOKE_BASE_URL
 //!   PAWORK_SMOKE_API_KEY
 //!   PAWORK_SMOKE_MODEL
+//!   PAWORK_SMOKE_PROTOCOL（可选：`chat_completions` 默认 / `messages`）
 //!
 //! 运行：`cargo test -p pawork-app --test smoke -- --ignored --nocapture`
 //! 禁止把 key 打印到日志。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use pawork_api::{CredentialKind, ResolvedCredential};
+use pawork_api::{CredentialKind, ModelProvider, ResolvedCredential};
 use pawork_app::AppCore;
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, Message, MessageId,
     MessageRole, ModelId, ProviderId, TextContent,
 };
 use pawork_engine::{AgentEventSink, EngineError};
-use pawork_providers::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
+use pawork_providers::{
+    AnthropicConfig, AnthropicProvider, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
+};
 use pawork_session::SessionStore;
 
 #[derive(Default)]
@@ -42,18 +45,32 @@ async fn smoke_stream_receives_text_delta_and_completed() {
     let model = std::env::var("PAWORK_SMOKE_MODEL")
         .expect("PAWORK_SMOKE_MODEL is required for ignored smoke");
 
+    let protocol = std::env::var("PAWORK_SMOKE_PROTOCOL")
+        .unwrap_or_else(|_| "chat_completions".into());
     let credential = ResolvedCredential::new(CredentialKind::ApiKey, api_key);
-    let provider = OpenAiCompatibleProvider::new(
-        OpenAiCompatibleConfig::new(base_url).with_provider_id("smoke"),
-        Some(credential.clone()),
-    )
-    .expect("construct smoke provider");
+    let provider: Arc<dyn ModelProvider> = match protocol.as_str() {
+        "messages" | "anthropic-messages" => Arc::new(
+            AnthropicProvider::new(
+                AnthropicConfig::new(base_url).with_provider_id("smoke"),
+                Some(credential.clone()),
+            )
+            .expect("construct anthropic smoke provider"),
+        ),
+        "chat_completions" | "openai-compatible" => Arc::new(
+            OpenAiCompatibleProvider::new(
+                OpenAiCompatibleConfig::new(base_url).with_provider_id("smoke"),
+                Some(credential.clone()),
+            )
+            .expect("construct openai-compatible smoke provider"),
+        ),
+        other => panic!("unsupported PAWORK_SMOKE_PROTOCOL: {other}"),
+    };
     let dir = tempfile::tempdir().expect("tempdir");
     let (store, _) = SessionStore::open(dir.path().join("session.db"))
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        std::sync::Arc::new(provider),
+        provider,
         Some(credential),
         ModelId::from(model.as_str()),
         ProviderId::from("smoke"),

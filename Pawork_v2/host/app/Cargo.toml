@@ -5,16 +5,19 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork 应用门面（配置装配 + session store + chat_turn / list_models）"
+description = "Pawork 应用门面（配置装配 + session store + run_session / list_models）"
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
 pawork-api = { path = "../../foundation/api" }
 pawork-config = { path = "../../foundation/config" }
 pawork-engine = { path = "../../engine/engine" }
-pawork-providers = { path = "../../providers/adapters" }
+pawork-providers = { path = "../../providers/adapters", features = ["anthropic"] }
 pawork-session = { path = "../../storage/session" }
+pawork-tools = { path = "../../execution/tools" }
+pawork-workspace = { path = "../../workspace/core" }
 async-trait.workspace = true
+futures.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
@@ -25,5 +28,6 @@ serde_json.workspace = true
 pawork-api = { path = "../../foundation/api" }
 pawork-domain = { path = "../../foundation/domain" }
 pawork-engine = { path = "../../engine/engine" }
-pawork-providers = { path = "../../providers/adapters" }
+pawork-providers = { path = "../../providers/adapters", features = ["anthropic"] }
 pawork-session = { path = "../../storage/session" }
+pawork-testkit = { path = "../../foundation/testkit" }

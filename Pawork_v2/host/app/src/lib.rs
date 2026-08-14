@@ -1,9 +1,12 @@
-//! 应用门面：读配置 → env key → provider → session store → 事件化 `chat_turn`。
+//! 应用门面：读配置 → env key → provider → 只读工具 → 事件化 `run_session`。
 //!
-//! 不跑工具循环、不按 Provider 名称分支。落库 persist-first，再推渲染 sink。
+//! 不按 Provider 名称分支；协议来自 `extra.provider_protocols` 与默认表。
+//! 落库 persist-first，再推渲染 sink。
 
 mod data_dir;
+mod loop_ctx;
 mod persist;
+mod protocol;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,22 +14,36 @@ use std::sync::Arc;
 
 use pawork_api::{
     CredentialKind, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
-    ResolvedCredential,
+    ResolvedCredential, ToolDefinition,
 };
 use pawork_config::{
     api_key_env_name, read_api_key_from_env, ConfigError, Loader, PaworkConfig, ProviderConfig,
 };
 use pawork_domain::{
     CancellationToken, Message, MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId,
-    SessionId,
+    SessionId, WorkspaceId,
 };
-use pawork_engine::{assemble_request, run_session_turn, AgentEventSink, EngineError, SessionTurn};
-use pawork_providers::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
+use pawork_engine::{
+    assemble_request_with_tools, run_session, AgentEventSink, EngineError, SessionTurn,
+    DEFAULT_MAX_TOOL_ROUNDS,
+};
+use pawork_providers::{
+    AnthropicConfig, AnthropicProvider, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
+};
 use pawork_session::{SessionStore, SessionStoreError};
+use pawork_tools::{
+    FindFilesTool, ListDirectoryTool, ReadFileTool, SearchTextTool, ToolRegistry, ToolRegistryError,
+    ToolScheduler, ToolSchedulerConfig,
+};
+use pawork_workspace::{WorkspaceError, WorkspaceService};
 use thiserror::Error;
+
+use crate::loop_ctx::SessionLoopCtx;
+use crate::protocol::resolve_adapter_protocol;
 
 pub use data_dir::{default_data_dir, session_db_path};
 pub use persist::PersistThenRender;
+pub use protocol::{AdapterProtocol, ProtocolError};
 pub use pawork_session::SessionRecord;
 
 /// 从配置文件与 CLI 覆盖构造 [`AppCore`] 的选项。
@@ -80,18 +97,31 @@ pub enum AppError {
     AmbiguousSession { prefix: String, matches: String },
     #[error("chat turn requires at least one message")]
     EmptyTurn,
+    #[error(transparent)]
+    Workspace(#[from] WorkspaceError),
+    #[error(transparent)]
+    Tools(#[from] ToolRegistryError),
+    #[error(transparent)]
+    Protocol(#[from] ProtocolError),
+    #[error("S2 只注册只读工具，但 `{name}` 的 read_only 为 false")]
+    NonReadOnlyTool { name: String },
 }
 
-/// 已装配的 Core：openai-compatible provider、默认 model、可选 session store。
+/// 已装配的 Core：协议中立 provider、只读工具、默认 model、可选 session store。
 pub struct AppCore {
     provider: Arc<dyn ModelProvider>,
     credential: Option<ResolvedCredential>,
     model: ModelId,
     provider_id: ProviderId,
+    adapter_protocol: AdapterProtocol,
     store: Option<SessionStore>,
+    scheduler: Arc<ToolScheduler>,
+    workspace_id: WorkspaceId,
+    tool_defs: Vec<ToolDefinition>,
     next_request: AtomicU64,
     next_run: AtomicU64,
     next_session: AtomicU64,
+    next_message: AtomicU64,
 }
 
 impl std::fmt::Debug for AppCore {
@@ -100,8 +130,10 @@ impl std::fmt::Debug for AppCore {
             .debug_struct("AppCore")
             .field("provider_id", &self.provider_id)
             .field("model", &self.model)
+            .field("adapter_protocol", &self.adapter_protocol)
             .field("credential", &self.credential)
             .field("has_store", &self.store.is_some())
+            .field("tool_count", &self.tool_defs.len())
             .finish()
     }
 }
@@ -110,11 +142,18 @@ impl AppCore {
     /// 发现 Builtin + Global + Workspace，再套用 CLI 覆盖，并打开 session.db。
     pub async fn load(options: AppLoadOptions) -> Result<Self, AppError> {
         let resolved = Loader::discover(options.workspace_root.as_deref()).resolve()?;
+        let workspace_root = options
+            .workspace_root
+            .clone()
+            .or_else(|| std::env::current_dir().ok());
         let mut core = Self::from_resolved(
             resolved.config,
             options.provider.as_deref(),
             options.model.as_deref(),
         )?;
+        if let Some(root) = workspace_root.as_deref() {
+            core.attach_workspace(root)?;
+        }
         let data_dir = options.data_dir.unwrap_or_else(default_data_dir);
         core.open_store(session_db_path(data_dir)).await?;
         Ok(core)
@@ -129,6 +168,11 @@ impl AppCore {
     ) -> Result<Self, AppError> {
         let resolved = Loader::discover_from(global_file, workspace_file).resolve()?;
         let mut core = Self::from_resolved(resolved.config, provider, model)?;
+        if let Some(root) = workspace_root_from_config_file(workspace_file) {
+            core.attach_workspace(&root)?;
+        } else if let Ok(cwd) = std::env::current_dir() {
+            core.attach_workspace(&cwd)?;
+        }
         core.open_store(store_path).await?;
         Ok(core)
     }
@@ -167,16 +211,24 @@ impl AppCore {
         })?;
         let credential = ResolvedCredential::new(CredentialKind::ApiKey, secret);
 
-        let adapter = OpenAiCompatibleProvider::new(
-            OpenAiCompatibleConfig::new(base_url).with_provider_id(provider_id.clone()),
-            Some(credential.clone()),
-        )?;
+        let protocol = resolve_adapter_protocol(&config, &provider_id)?;
+        let adapter: Arc<dyn ModelProvider> = match protocol {
+            AdapterProtocol::ChatCompletions => Arc::new(OpenAiCompatibleProvider::new(
+                OpenAiCompatibleConfig::new(base_url).with_provider_id(provider_id.clone()),
+                Some(credential.clone()),
+            )?),
+            AdapterProtocol::Messages => Arc::new(AnthropicProvider::new(
+                AnthropicConfig::new(base_url).with_provider_id(provider_id.clone()),
+                Some(credential.clone()),
+            )?),
+        };
 
-        Ok(Self::from_parts(
-            Arc::new(adapter),
+        Ok(Self::from_parts_with_protocol(
+            adapter,
             Some(credential),
             ModelId::from(model_id.as_str()),
             ProviderId::from(provider_id.as_str()),
+            protocol,
             None,
         ))
     }
@@ -188,16 +240,76 @@ impl AppCore {
         provider_id: ProviderId,
         store: Option<SessionStore>,
     ) -> Self {
+        Self::from_parts_with_protocol(
+            provider,
+            credential,
+            model,
+            provider_id,
+            AdapterProtocol::ChatCompletions,
+            store,
+        )
+    }
+
+    fn from_parts_with_protocol(
+        provider: Arc<dyn ModelProvider>,
+        credential: Option<ResolvedCredential>,
+        model: ModelId,
+        provider_id: ProviderId,
+        adapter_protocol: AdapterProtocol,
+        store: Option<SessionStore>,
+    ) -> Self {
         Self {
             provider,
             credential,
             model,
             provider_id,
+            adapter_protocol,
             store,
+            scheduler: Arc::new(ToolScheduler::new(
+                ToolRegistry::new(),
+                ToolSchedulerConfig::default(),
+            )),
+            workspace_id: WorkspaceId::from("ws-unbound"),
+            tool_defs: Vec::new(),
             next_request: AtomicU64::new(1),
             next_run: AtomicU64::new(1),
             next_session: AtomicU64::new(1),
+            next_message: AtomicU64::new(1),
         }
+    }
+
+    /// 把启动目录登记为默认 workspace root，并注册四个只读工具。
+    pub fn attach_workspace(&mut self, root: &Path) -> Result<(), AppError> {
+        let workspaces = WorkspaceService::new();
+        let workspace_id = WorkspaceId::from("ws-default");
+        workspaces.add(workspace_id.clone(), "default", [root.to_path_buf()])?;
+
+        let mut registry = ToolRegistry::new();
+        registry.extend([
+            Arc::new(ReadFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
+            Arc::new(ListDirectoryTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
+            Arc::new(SearchTextTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
+            Arc::new(FindFilesTool::new(workspaces)) as Arc<dyn pawork_api::AgentTool>,
+        ])?;
+        for descriptor in registry.descriptors() {
+            if !descriptor.read_only {
+                return Err(AppError::NonReadOnlyTool {
+                    name: descriptor.name,
+                });
+            }
+        }
+        self.tool_defs = registry
+            .descriptors()
+            .into_iter()
+            .map(|descriptor| ToolDefinition {
+                name: descriptor.name,
+                description: descriptor.description,
+                input_schema: descriptor.input_schema,
+            })
+            .collect();
+        self.scheduler = Arc::new(ToolScheduler::new(registry, ToolSchedulerConfig::default()));
+        self.workspace_id = workspace_id;
+        Ok(())
     }
 
     pub async fn open_store(&mut self, path: impl AsRef<Path>) -> Result<(), AppError> {
@@ -219,6 +331,17 @@ impl AppCore {
 
     pub fn model(&self) -> &ModelId {
         &self.model
+    }
+
+    pub fn adapter_protocol(&self) -> AdapterProtocol {
+        self.adapter_protocol
+    }
+
+    pub fn tool_names(&self) -> Vec<&str> {
+        self.tool_defs
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect()
     }
 
     pub async fn create_session(&self, title: impl Into<String>) -> Result<SessionId, AppError> {
@@ -313,16 +436,21 @@ impl AppCore {
             pawork_engine::now_timestamp().as_unix_millis()
         ));
         let trigger = trigger.clone();
-        let request = assemble_request(
+        let request = assemble_request_with_tools(
             RequestId::from(format!("req-{n}")),
             self.model.clone(),
             messages,
+            self.tool_defs.clone(),
         );
         let run_n = self.next_run.fetch_add(1, Ordering::Relaxed);
         let start_sequence = self.next_sequence(session_id).await?;
+        let run_id = RunId::from(format!(
+            "run-{}-{run_n}",
+            pawork_engine::now_timestamp().as_unix_millis()
+        ));
         let turn = SessionTurn::new(
             session_id.clone(),
-            RunId::from(format!("run-{}-{run_n}", pawork_engine::now_timestamp().as_unix_millis())),
+            run_id.clone(),
             self.provider_id.clone(),
             self.model.clone(),
             start_sequence,
@@ -332,7 +460,23 @@ impl AppCore {
             store: self.store()?,
             render,
         };
-        Ok(run_session_turn(self.provider.as_ref(), request, turn, &sink, cancel).await?)
+        let loop_ctx = SessionLoopCtx {
+            scheduler: self.scheduler.clone(),
+            workspace_id: self.workspace_id.clone(),
+            run_id,
+            next_message: &self.next_message,
+            next_request: &self.next_request,
+        };
+        Ok(run_session(
+            self.provider.as_ref(),
+            request,
+            turn,
+            &sink,
+            cancel,
+            &loop_ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+        )
+        .await?)
     }
 
     pub async fn list_models(&self) -> Result<Vec<ModelDefinition>, ProviderError> {
@@ -373,6 +517,16 @@ fn find_provider<'a>(
         .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })
 }
 
+fn workspace_root_from_config_file(workspace_file: Option<&Path>) -> Option<PathBuf> {
+    let path = workspace_file?;
+    let parent = path.parent()?;
+    if parent.file_name().and_then(|name| name.to_str()) == Some(".pawork") {
+        parent.parent().map(Path::to_path_buf)
+    } else {
+        Some(parent.to_path_buf())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -383,7 +537,7 @@ mod tests {
     };
     use pawork_domain::{
         AgentEvent, AgentEventEnvelope, ContentPart, MessageId, MessageRole, StopReason,
-        TextContent, TokenUsage, ToolCallId,
+        TextContent, TokenUsage,
     };
     use pawork_engine::EngineError;
 
@@ -408,6 +562,10 @@ mod tests {
                     AgentEvent::RunStarted { .. } => "RunStarted",
                     AgentEvent::RunCompleted { .. } => "RunCompleted",
                     AgentEvent::AssistantTextDelta { .. } => "delta",
+                    AgentEvent::ToolCallStarted { .. } => "ToolCallStarted",
+                    AgentEvent::ToolExecutionStarted { .. } => "ToolExecutionStarted",
+                    AgentEvent::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
+                    AgentEvent::ToolOutputDelta { .. } => "ToolOutputDelta",
                     _ => "other",
                 })
                 .collect()
@@ -568,6 +726,7 @@ mod tests {
 
         assert_eq!(core.provider_id().as_str(), id);
         assert_eq!(core.model().as_str(), "deepseek-v4-pro");
+        assert_eq!(core.adapter_protocol(), AdapterProtocol::ChatCompletions);
         let debug = format!("{core:?}");
         assert!(
             !debug.contains(secret),
@@ -581,10 +740,6 @@ mod tests {
         let (core, _dir) = mock_core(vec![
             ProviderStreamEvent::TextDelta("hi".into()),
             ProviderStreamEvent::ThinkingDelta("think".into()),
-            ProviderStreamEvent::ToolCallStarted {
-                id: ToolCallId::from("call-1"),
-                name: "read_file".into(),
-            },
             ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
         ])
         .await;
@@ -601,6 +756,7 @@ mod tests {
         assert!(sink.types().contains(&"user"));
         assert!(sink.types().contains(&"assistant"));
         assert!(sink.types().contains(&"RunCompleted"));
+        assert!(!sink.types().contains(&"RunFailed"));
 
         let messages = core.resume_messages(&session).await.expect("resume");
         assert_eq!(messages.len(), 2);
@@ -704,6 +860,112 @@ mod tests {
         assert!(json.contains("[REDACTED]"));
         core.shutdown().await.expect("shutdown");
         drop(dir);
+    }
+
+    #[test]
+    fn from_resolved_selects_messages_adapter_from_default_table() {
+        let id = "glm-coding-anthropic";
+        let env_name = api_key_env_name(id);
+        set_env(&env_name, "not-a-real-key");
+        let core = AppCore::from_resolved(sample_config(id), None, None).expect("load");
+        remove_env(&env_name);
+        assert_eq!(core.adapter_protocol(), AdapterProtocol::Messages);
+        assert_eq!(core.provider_id().as_str(), id);
+    }
+
+    #[test]
+    fn extra_protocol_overrides_default_and_rejects_unknown() {
+        let id = "app-core-protocol-extra";
+        let env_name = api_key_env_name(id);
+        set_env(&env_name, "not-a-real-key");
+        let mut config = sample_config(id);
+        config.extra.insert(
+            "provider_protocols".into(),
+            serde_json::json!({ id: "messages" }),
+        );
+        let core = AppCore::from_resolved(config.clone(), None, None).expect("override");
+        assert_eq!(core.adapter_protocol(), AdapterProtocol::Messages);
+
+        config.extra.insert(
+            "provider_protocols".into(),
+            serde_json::json!({ id: "not-a-protocol" }),
+        );
+        let err = AppCore::from_resolved(config, None, None).expect_err("bad protocol");
+        remove_env(&env_name);
+        assert!(matches!(err, AppError::Protocol(_)));
+    }
+
+    #[tokio::test]
+    async fn attach_workspace_registers_four_readonly_tools() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut core, _store_dir) = mock_core(Vec::new()).await;
+        core.attach_workspace(dir.path()).expect("attach");
+        let mut names = core.tool_names();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["find_files", "list_directory", "read_file", "search_text"]
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_turn_executes_read_file_via_scheduler() {
+        use pawork_testkit::{MockProvider, MockScript};
+
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::fs::write(workspace.path().join("hello.txt"), "hello-from-workspace")
+            .expect("write fixture");
+        let dir = tempfile::tempdir().expect("store");
+        let path = dir.path().join("session.db");
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let provider = MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("read_file", serde_json::json!({"path": "hello.txt"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new()
+                .text("the file says hello-from-workspace")
+                .complete(),
+        ]);
+        let mut core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            ModelId::from("model-1"),
+            ProviderId::from("mock"),
+            Some(store),
+        );
+        core.attach_workspace(workspace.path()).expect("attach");
+        let session = core.create_session("tools").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("tool loop");
+
+        let types = sink.types();
+        assert!(types.contains(&"ToolCallStarted"));
+        assert!(types.contains(&"ToolExecutionStarted"));
+        assert!(types.contains(&"ToolExecutionCompleted"));
+        assert!(types.contains(&"RunCompleted"));
+        let messages = core.resume_messages(&session).await.expect("resume");
+        assert!(messages.iter().any(|message| message.role == MessageRole::Tool));
+        let joined: String = messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                ContentPart::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("hello-from-workspace"),
+            "expected tool output or assistant recap, got {joined}"
+        );
+        core.shutdown().await.expect("shutdown");
     }
 
     #[test]

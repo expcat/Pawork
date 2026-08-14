@@ -225,6 +225,9 @@ fn map_turn_error(error: pawork_app::AppError) -> Result<(), CliError> {
             eprintln!("已取消");
             Err(CliError::Cancelled)
         }
+        pawork_app::AppError::Engine(EngineError::MaxToolRounds(n)) => Err(CliError::Turn(format!(
+            "工具轮数已达上限 ({n})，已停止。"
+        ))),
         pawork_app::AppError::Provider(err) => Err(CliError::Turn(format_provider_error(&err))),
         pawork_app::AppError::Engine(EngineError::Provider(err)) => {
             Err(CliError::Turn(format_provider_error(&err)))

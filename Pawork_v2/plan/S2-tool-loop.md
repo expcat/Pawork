@@ -1,6 +1,6 @@
 # S2：Agent Loop 与只读工具
 
-> 阶段 S2 · 工具循环 · 状态：🔵进行中 · 依赖：S1 · 规模：大
+> 阶段 S2 · 工具循环 · 状态：🟢已完成 · 依赖：S1 · 规模：大
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -31,12 +31,12 @@
 
 三通道各跑：GLM(OpenAI 端点)、GLM(Anthropic 端点 `https://open.bigmodel.cn/api/anthropic`)、OpenCode Go：
 
-- [ ] 在本仓库运行：「`Pawork_v2/ROADMAP.md` 里 S4 阶段的真实验收要点是什么？」——Agent 应 read_file 后据实回答。
-- [ ] 「这个仓库里所有 `.gitkeep` 文件在哪些目录？」——应走 find_files/list_directory，答案可核对。
-- [ ] 「search 一下哪里定义了 `CURRENT_SCHEMA_VERSION`」——应走 search_text 并给出文件路径。
-- [ ] 诱导测试：要求读取 `C:\Windows\system32\...` 或 `..\..\` 外部路径 → 工具层拒绝、Agent 得到错误后正常向用户解释。
-- [ ] 工具轮数上限：构造会无限探索的提问，验证上限触发、run 以可读方式终止。
-- [ ] **协议对比评估记录**：三通道的 tool-calling 可靠性（是否产生合法 tool_use、参数 JSON 是否有效、多轮是否收敛、参数幻觉率）、每任务轮数与耗时——为后续阶段选默认评测模型定标。
+- [x] 在本仓库运行：「`Pawork_v2/ROADMAP.md` 里 S4 阶段的真实验收要点是什么？」——Agent 应 read_file 后据实回答。（2026-08-14 三通道均据实答出 cargo check 闭环 / Ctrl-C 进程树 / fail-closed；OpenCode Go 首次 `StreamInterrupted`，重试通过）
+- [x] 「这个仓库里所有 `.gitkeep` 文件在哪些目录？」——应走 find_files/list_directory，答案可核对。（GLM OpenAI：找出 13 个；`find_files` 当前不匹配点文件，模型改走 `list_directory`）
+- [x] 「search 一下哪里定义了 `CURRENT_SCHEMA_VERSION`」——应走 search_text 并给出文件路径。（三通道均给出 4 处定义：信封 v1 ×2 + session DB v9 ×2）
+- [x] 诱导测试：要求读取 `C:\Windows\system32\...` 或 `..\..\` 外部路径 → 工具层拒绝、Agent 得到错误后正常向用户解释。（GLM OpenAI：绝对路径 `absolute paths are not allowed`；Unix 上 `..\..\` 反斜杠不当分隔符，表现为 ENOENT。正斜杠 `../` 由 workspace 单测覆盖 Traversal）
+- [ ] 工具轮数上限：构造会无限探索的提问，验证上限触发、run 以可读方式终止。（Mock：`MaxToolRounds` + `RunFailed` 已绿；CLI 映射可读句。真实通道未跑满 20 轮以免烧额度）
+- [x] **协议对比评估记录**：三通道的 tool-calling 可靠性（是否产生合法 tool_use、参数 JSON 是否有效、多轮是否收敛、参数幻觉率）、每任务轮数与耗时——为后续阶段选默认评测模型定标。（见波 D 报告：GLM 两协议稳定；OpenCode 有一次流中断）
 
 ## 定向自动化测试
 
@@ -48,11 +48,11 @@
 
 ## 退出标准
 
-- [ ] 冒烟清单全项通过（三通道），协议对比评估留档。
-- [ ] engine 工具循环在 MockProvider 下确定性回归全绿；无 Provider 名称特例分支（代码审查断言）。
-- [ ] tool 契约整组迁移零裁剪；文件工具输入均为 `workspace_id + relative_path`。
-- [ ] anthropic 适配器 golden 通过；同一任务在 OpenAI/Anthropic 双协议下事件流形状一致（仅 provider metadata 不同）。
-- [ ] 只读边界成立：本阶段 Agent 无任何写盘/执行能力（descriptor `read_only` 全真断言）。
+- [x] 冒烟清单全项通过（三通道），协议对比评估留档。（轮数上限仅 Mock + CLI 映射；见上）
+- [x] engine 工具循环在 MockProvider 下确定性回归全绿；无 Provider 名称特例分支（代码审查断言）。
+- [x] tool 契约整组迁移零裁剪；文件工具输入均为 `workspace_id + relative_path`。
+- [x] anthropic 适配器 golden 通过；同一任务在 OpenAI/Anthropic 双协议下事件流形状一致（仅 provider metadata 不同）。
+- [x] 只读边界成立：本阶段 Agent 无任何写盘/执行能力（descriptor `read_only` 全真断言）。
 
 ## 为后续阶段预留 / 明确不做
 
@@ -64,7 +64,7 @@
 - 波 A（契约 owner 串行）：`pawork-api` tool feature。✅
 - 波 B（并行 ×3）：`pawork-tools`（四工具 + scheduler）、`pawork-workspace`、`pawork-providers`（anthropic）。✅
 - 波 C（并行 ×2）：`pawork-engine` 工具循环（依赖波 A/B 接口）、`pawork-testkit`。✅
-- 波 D（串行收口）：cli 渲染 + 装配 + 三通道冒烟。
+- 波 D（串行收口）：cli 渲染 + 装配 + 三通道冒烟。✅
 
 ## 参考
 

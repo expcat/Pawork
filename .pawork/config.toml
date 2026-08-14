@@ -1,0 +1,20 @@
+# 本仓库工作区配置（无凭证）。协议表落入 extra，不是 ProviderConfig 字段。
+default_provider = "glm-coding"
+default_model = "glm-5.2"
+
+[[providers]]
+id = "glm-coding"
+base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+
+[[providers]]
+id = "glm-coding-anthropic"
+base_url = "https://open.bigmodel.cn/api/anthropic"
+
+[[providers]]
+id = "opencode-go"
+base_url = "https://opencode.ai/zen/go/v1"
+
+[provider_protocols]
+glm-coding = "chat_completions"
+glm-coding-anthropic = "messages"
+opencode-go = "chat_completions"

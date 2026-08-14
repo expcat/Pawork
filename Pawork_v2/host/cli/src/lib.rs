@@ -1,4 +1,4 @@
-//! Pawork CLI：`chat` / `sessions` / `run` / `models`。
+//! Pawork CLI：`chat` / `sessions` / `run` / `models`（含只读工具活动行）。
 //!
 //! `--json`（unstable）：stdout 只承载 JSON；文本与日志走 stderr。
 
