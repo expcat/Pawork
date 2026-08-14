@@ -1,0 +1,21 @@
+[package]
+name = "pawork-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork Session Event Store、schema 迁移与可重建 Projection"
+
+[dependencies]
+pawork-domain = { path = "../../foundation/domain" }
+pawork-sqlite = { path = "../../foundation/sqlite" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

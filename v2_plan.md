@@ -46,8 +46,8 @@
 | --- | --- |
 | 当前阶段 | S1（[plan/S1-sessions.md](Pawork_v2/plan/S1-sessions.md)） |
 | 阶段状态 | 🔵 进行中 |
-| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A（domain events 32 变体 + 补建 serde golden） |
-| **下一波次** | **S1 波 B**（并行 ×2：`pawork-sqlite`；`pawork-session`） |
+| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A（domain events 32 变体 + 补建 serde golden）；S1 波 B（`pawork-sqlite` 纯化 Actor + `pawork-session` event store / v1→v9 / 最小 projection） |
+| **下一波次** | **S1 波 C**（串行收口：engine 事件化 + app/cli 接线 + 冒烟） |
 | 阻塞 | 无 |
 
 自动选择以本表为准，再用 ROADMAP / 任务书 / 工作区实态交叉校验（§4）。三者冲突时：**工作区实态 > 本表 > ROADMAP 状态列**；更新本表使三者一致后再开工。
