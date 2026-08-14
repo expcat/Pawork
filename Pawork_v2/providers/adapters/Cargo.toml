@@ -7,6 +7,10 @@ publish.workspace = true
 authors.workspace = true
 description = "Pawork OpenAI-compatible 适配器（覆盖云端与本地兼容服务）"
 
+[features]
+default = []
+anthropic = []
+
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
 pawork-api = { path = "../../foundation/api" }
@@ -21,3 +25,8 @@ tracing = "0.1"
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 wiremock = "0.6"
+
+[[test]]
+name = "anthropic"
+path = "tests/anthropic.rs"
+required-features = ["anthropic"]

@@ -9,6 +9,8 @@ members = [
     "net/*",
     "providers/*",
     "storage/*",
+    "workspace/*",
+    "execution/*",
     "engine/*",
     "host/*",
     "apps/*",

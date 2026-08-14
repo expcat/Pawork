@@ -13,6 +13,15 @@ pub mod request;
 pub mod stream;
 mod usage;
 
+#[cfg(feature = "anthropic")]
+pub mod anthropic;
+
 pub use provider::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
 pub use request::to_chat_completions_body;
 pub use stream::{chunk_to_events, is_done, ChunkState};
+
+#[cfg(feature = "anthropic")]
+pub use anthropic::{
+    event_to_events, to_messages_body, AnthropicConfig, AnthropicProvider, AnthropicStreamState,
+    ANTHROPIC_VERSION,
+};

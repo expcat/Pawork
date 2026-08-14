@@ -62,7 +62,7 @@
 ## 并行拆分建议
 
 - 波 A（契约 owner 串行）：`pawork-api` tool feature。✅
-- 波 B（并行 ×3）：`pawork-tools`（四工具 + scheduler）、`pawork-workspace`、`pawork-providers`（anthropic）。
+- 波 B（并行 ×3）：`pawork-tools`（四工具 + scheduler）、`pawork-workspace`、`pawork-providers`（anthropic）。✅
 - 波 C（并行 ×2）：`pawork-engine` 工具循环（依赖波 A/B 接口）、`pawork-testkit`。
 - 波 D（串行收口）：cli 渲染 + 装配 + 三通道冒烟。
 
