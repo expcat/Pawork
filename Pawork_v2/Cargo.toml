@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+# Cargo 要求 glob 的父目录已存在；未激活域的 glob 随对应波次建目录后追加。
+# 终局：foundation/* net/* providers/* storage/* workspace/* execution/*
+#        vcs/* engine/* extensions/* workflow/* agents/* control-plane/*
+#        host/* clients/* apps/*
+members = [
+    "foundation/*",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+authors = ["Pawork Contributors"]
+# license 待定（crates.io 发布硬前置，见 ROADMAP §4）。
+
+[workspace.dependencies]
+tokio = "1"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+ts-rs = { version = "11", features = ["serde-json-impl"] }

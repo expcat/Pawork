@@ -79,7 +79,7 @@
 
 ### 3.1 终局包布局先行
 
-- 目录结构就是 [v1-migration-reference.md](v1-migration-reference.md) §3 的终局布局（40 包 + 2 应用，目录骨架已建好）；每个阶段只是**激活**若干目录（建 crate、迁入/新写最小模块），不新造层级、不临时安置代码。
+- 目录结构就是 [v1-migration-reference.md](v1-migration-reference.md) §3 的终局布局（40 包 + 2 应用）；每个阶段按该路径**激活**若干目录（建 crate、迁入/新写最小模块），不新造层级、不临时安置代码。未激活域不预建空 crate；workspace `members` glob 随父目录落地追加（Cargo 要求 glob 父目录已存在）。
 - 新能力 = 新包或已有包内新模块；**禁止**「先写在 bin 里、以后再抽包」——host/cli、host/app、engine/engine 这些终局包从 S0 起就以最小形态存在，后续阶段只往里加模块。
 - 包间依赖方向自激活之日起遵守 [v1-migration-reference.md](v1-migration-reference.md) §4.1 映射表；canonical 纯净红线（domain/api 不依赖 GUI/SQLite/HTTP/Keychain/Git/具体 Provider）不变。
 

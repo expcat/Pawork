@@ -33,7 +33,7 @@
 
 | 阶段 | 主题 | 新增用户可见能力 | 激活 / 增强的包 | 真实验收要点 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| [S0](plan/S0-minimal-chat.md) | 最小可对话 CLI | `pawork chat` 流式多轮对话、Ctrl-C 取消、`pawork models`、TOML 配置 + env key | workspace 根、domain（最小）、api（provider）、net、providers/adapters（openai-compatible）、config（最小）、engine（最小）、app（最小）、cli（最小）、apps/pawork | 两把真实 key 各完成流式多轮对话；401/429/超时可读呈现 | ⚪ |
+| [S0](plan/S0-minimal-chat.md) | 最小可对话 CLI | `pawork chat` 流式多轮对话、Ctrl-C 取消、`pawork models`、TOML 配置 + env key | workspace 根、domain（最小）、api（provider）、net、providers/adapters（openai-compatible）、config（最小）、engine（最小）、app（最小）、cli（最小）、apps/pawork | 两把真实 key 各完成流式多轮对话；401/429/超时可读呈现 | 🔵 |
 | [S1](plan/S1-sessions.md) | 会话持久化与恢复 | 会话落盘、`pawork sessions list/show`、`--resume` 续聊、`--json` 事件流输出 | sqlite、session（核心）、domain（events 全量）、engine（事件化 + appender） | 中断/杀进程后 resume 续聊上下文连续；envelope golden 与 append-only 契约生效 | ⚪ |
 | [S2](plan/S2-tool-loop.md) | Agent Loop 与只读工具 | Agent 自主调用 read/list/search/find 回答仓库问题；`@`引用前身（相对路径语义） | api（tool）、tools（只读四件）、workspace（roots）、engine（工具循环）、providers/adapters（anthropic-messages）、testkit（MockProvider） | 真实仓库问答任务；OpenAI/Anthropic 双协议 tool-calling 对比评估 | ⚪ |
 | [S3](plan/S3-safe-edits.md) | 写入工具与审批 | write/edit/apply_patch + 终端审批交互（`--approval-mode`） | policy（整包）、tools（写三件）、engine/cli（审批位点） | 真实小编码任务经审批落盘；越界/symlink 拒绝；deny 后会话可续 | ⚪ |
@@ -87,6 +87,7 @@
 | V1 目录处置 | 归档分支 / tag | S12 |
 | GPUI Desktop（apps/desktop） | 消费 `pawork-client`，建议 S12 后独立启动 | 不阻塞 |
 | OpenCode Go 仅走 `/messages` 的模型 | 是否在 S2 anthropic 适配器中一并覆盖 | S2 计划内决定 |
+| `plan/archive/` M0–M8 正文缺失 | README 与各 `plan/S*.md` 仍链向包级细则，磁盘上仅有 `archive/README.md`；执行时改引迁移词典 + V1 源码 | 不阻塞；补档或改链可随时做 |
 | 对外账户池网关模式（F6-B） | 近期不内建（F6-A 已确认）；以 `pawork-channels` 扩展 feature 长期评估，见 [docs/design.md](docs/design.md) §5 | S12 后按需 |
 
 ---
