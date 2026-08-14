@@ -46,8 +46,8 @@
 | --- | --- |
 | 当前阶段 | S0（[plan/S0-minimal-chat.md](Pawork_v2/plan/S0-minimal-chat.md)） |
 | 阶段状态 | 🔵 进行中 |
-| 已完成波次 | S0 波 A（workspace 根 → `pawork-domain` → `pawork-api`）；S0 波 B（`pawork-net`、`pawork-config`） |
-| **下一波次** | **S0 波 C**（并行 ×2：`pawork-providers`、`pawork-engine`） |
+| 已完成波次 | S0 波 A（workspace 根 → `pawork-domain` → `pawork-api`）；S0 波 B（`pawork-net`、`pawork-config`）；S0 波 C（`pawork-providers`、`pawork-engine`） |
+| **下一波次** | **S0 波 D**（串行收口：`pawork-app` + `pawork-cli` + `apps/pawork` + fixtures + 真实冒烟） |
 | 阻塞 | 无 |
 
 自动选择以本表为准，再用 ROADMAP / 任务书 / 工作区实态交叉校验（§4）。三者冲突时：**工作区实态 > 本表 > ROADMAP 状态列**；更新本表使三者一致后再开工。
