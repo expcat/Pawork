@@ -1,6 +1,6 @@
 # S1：会话持久化与恢复
 
-> 阶段 S1 · 会话持久化 · 状态：⚪未开始 · 依赖：S0 · 规模：中
+> 阶段 S1 · 会话持久化 · 状态：🔵进行中（波 A 已完成） · 依赖：S0 · 规模：中
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -12,7 +12,7 @@
 
 | V2 包（目录） | 本阶段动作 | V1 来源与方式 |
 | --- | --- | --- |
-| `pawork-domain` | 增强：V1 `agent-events` 整包并入为 `events` 模块——`AgentEventEnvelope` 全字段 + `AgentEvent` **31 个变体一次迁入**（含暂未消费的 Plan/Goal/Task/Compaction/Checkpoint 等，为 S5/S7/S11 预留位）；`ApprovalDecision`/`ToolOutputStream`/`EventSequence` 辅助类型同迁。serde golden **先于任何消费实现**迁移并通过 | 直接迁移 |
+| `pawork-domain` | 增强：V1 `agent-events` 整包并入为 `events` 模块——`AgentEventEnvelope` 全字段 + `AgentEvent` **32 个变体一次迁入**（含 `Diagnostic` 与暂未消费的 Plan/Goal/Task/Compaction/Checkpoint 等，为 S5/S7/S11 预留位）；`ApprovalDecision`/`ToolOutputStream`/`EventSequence` 辅助类型同迁。serde golden **先于任何消费实现**落地并通过。V1 无独立 golden 夹具，本波按迁移词典 §6.1「缺失则补」新建 JSONL/JSON 字节锁 | 直接迁移 |
 | `pawork-sqlite`（foundation/sqlite) | 激活：V1 `app-database` 纯化版——SQLite Actor 模式 + backup/restore + 通用 migration 框架；不持任何业务 schema | 直接迁移（[archive/M0](archive/M0-skeleton-foundation.md) pawork-sqlite 节） |
 | `pawork-session`（storage/session） | 激活（核心）：`event_store`（append + `sequence` 严格连续校验 + parent 校验 + `AppendReceipt`）、**V1 migration 序列全量复用**（v1→v9，`CURRENT_SCHEMA_VERSION = 9`；含 `sessions/session_branches/session_events/messages/runs/tool_calls` 等全部表与 append-only 双触发器）、`projection` 最小子集（从事件重建对话消息，供 resume）。branch 概念随 DDL 存在，UX 只用默认分支 | 直接迁移（[archive/M3](archive/M3-storage-session.md) 细则；compaction/导入器/lifecycle 高级能力分别留 S5/S8） |
 | `pawork-engine` | 增强：turn 全程事件化——`RunStarted → AssistantTextDelta/ThinkingDelta → UsageUpdated → MessageCommitted → RunCompleted/RunCancelled/RunFailed`，经 appender 分配 `sequence` 落库，同时推给渲染端（双写）；resume 时从 projection 重建 `initial_messages` | appender 参考 V1 `agent-engine::appender` |
@@ -21,8 +21,8 @@
 
 ## 关键任务
 
-1. **golden 先行**：从 V1 测试夹具原样迁移 `AgentEventEnvelope` serde golden（字节级比对），先绿再动其他。
-2. **events 并入 domain**：31 变体 + 信封；`schema_version = 1` 不变；注意信封版本（1）与 DB migration 版本（9）是两个独立版本号，不得混用。
+1. **golden 先行**：锁定 `AgentEventEnvelope` serde golden（字节级比对），先绿再动其他。V1 `agent-events` 只有 4 个 in-crate unit test、无检入 JSON 夹具；本波补建 `tests/fixtures/agent_event_envelope_*.json(l)`。
+2. **events 并入 domain**：32 变体 + 信封（文档曾写 31，漏计生产路径上的 `Diagnostic`）；`schema_version = 1` 不变；注意信封版本（1）与 DB migration 版本（9）是两个独立版本号，不得混用。
 3. **sqlite 迁移**：Actor + migration 框架独立编译、round-trip 测试。
 4. **session 核心迁移**：migration 全序列建库；append-only 触发器（`session_events_no_update`/`no_delete`）回归；`append_event` 连续性（`UNIQUE(session_id, sequence)`、`is_immediately_after`）与 parent 悬空校验。
 5. **engine 事件化**：单轮对话的完整事件序列定义 + 落库/渲染双写；崩溃恢复 = 重启后 projection 重建上下文续聊。
@@ -39,7 +39,7 @@
 
 ## 定向自动化测试
 
-- `cargo test -p pawork-domain`：envelope serde golden（V1 夹具字节等价）、31 变体 round-trip。
+- `cargo test -p pawork-domain`：envelope serde golden（补建夹具字节锁）、32 变体 round-trip。
 - `cargo test -p pawork-sqlite`：Actor、migration 框架 round-trip、backup/restore。
 - `cargo test -p pawork-session`：append-only 触发器、sequence/parent 校验、projection 重建等价、**V1 库文件直接打开并升级**（用 V1 测试夹具库）。
 - `cargo test -p pawork-engine`：mock provider 单轮事件序列 golden；崩溃点注入（写一半）后 resume 一致性。
@@ -55,7 +55,7 @@
 
 ## 为后续阶段预留 / 明确不做
 
-- 预留：全部 31 事件变体在位；`session_branches`/`tool_calls` 等表随 migration 就绪但未消费；projection 只实现 resume 所需最小面。
+- 预留：全部 32 事件变体在位；`session_branches`/`tool_calls` 等表随 migration 就绪但未消费；projection 只实现 resume 所需最小面。
 - 不做：compaction（S5）、会话导入导出（S8）、lifecycle lease/integrity（S9 多客户端时激活）、分支/Fork UX（落点 S9，数据层本阶段已就绪）。
 
 ## 并行拆分建议

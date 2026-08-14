@@ -44,11 +44,11 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 当前阶段 | S0（[plan/S0-minimal-chat.md](Pawork_v2/plan/S0-minimal-chat.md)） |
+| 当前阶段 | S1（[plan/S1-sessions.md](Pawork_v2/plan/S1-sessions.md)） |
 | 阶段状态 | 🔵 进行中 |
-| 已完成波次 | S0 波 A（workspace 根 → `pawork-domain` → `pawork-api`）；S0 波 B（`pawork-net`、`pawork-config`）；S0 波 C（`pawork-providers`、`pawork-engine`）；S0 波 D 代码已落地（`pawork-app` + `pawork-cli` + `apps/pawork` + fixtures），冒烟未跑 |
-| **下一波次** | **S0 波 D 冒烟收口**（两把真实 key：`PAWORK_API_KEY_GLM_CODING` / `PAWORK_API_KEY_OPENCODE_GO`） |
-| 阻塞 | 环境未设置 `PAWORK_API_KEY_*`；按 task-guide §5 fail-closed，不改用 mock 顶替冒烟 |
+| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A（domain events 32 变体 + 补建 serde golden） |
+| **下一波次** | **S1 波 B**（并行 ×2：`pawork-sqlite`；`pawork-session`） |
+| 阻塞 | 无 |
 
 自动选择以本表为准，再用 ROADMAP / 任务书 / 工作区实态交叉校验（§4）。三者冲突时：**工作区实态 > 本表 > ROADMAP 状态列**；更新本表使三者一致后再开工。
 

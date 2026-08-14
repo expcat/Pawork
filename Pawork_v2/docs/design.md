@@ -90,7 +90,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 契约 | V1 事实源 | 激活阶段 | 形状要点 |
 | --- | --- | --- | --- |
 | Provider 契约 | `provider-api`：`ModelProvider`（`id`/`list_models`/`stream`）、`CanonicalModelRequest`、`ProviderStreamEvent`（13 变体，tag=`type`/content=`data`）、`ModelResponseSummary`、`ResolvedCredential`（Debug 脱敏）、`ProviderError` | S0 | 整包迁移，不裁剪字段；S0 只消费其中一部分 |
-| 事件信封 | `agent-events`：`AgentEventEnvelope`（`schema_version = 1`、`event_id/session_id/run_id/sequence/timestamp/parent_event_id/payload`）、`AgentEvent` 31 变体 | S1 | 整枚举一次迁入 `domain::events`，serde golden 先行；后期各域事件（Plan/Goal/Task/…）变体已在位 |
+| 事件信封 | `agent-events`：`AgentEventEnvelope`（`schema_version = 1`、`event_id/session_id/run_id/sequence/timestamp/parent_event_id/payload`）、`AgentEvent` 32 变体（含 `Diagnostic`） | S1 | 整枚举一次迁入 `domain::events`，serde golden 先行（V1 无独立夹具，S1 波 A 补建）；后期各域事件（Plan/Goal/Task/…）变体已在位 |
 | 会话存储 | `session-store`：`session_events` DDL（`UNIQUE(session_id, sequence)`、`CHECK(sequence > 0)`）、append-only 双触发器、`AppendReceipt`、migration 序列（DB `CURRENT_SCHEMA_VERSION = 9`，与信封版本 1 相互独立） | S1 | 直接复用 V1 migration 序列全量建库，保证 V1 库文件可打开升级 |
 | 工具契约 | `tool-api`：`AgentTool`（`descriptor`/`execute`）、`ToolDescriptor`（含 `requires_approval`/`read_only`/`allowed_in_untrusted_workspace`）、`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`，路径红线的类型化体现）、`ToolResult`/`ToolError` | S2 | 整组迁移；descriptor 的审批/只读语义为 S3 审批直接铺路 |
 | Policy 契约 | `policy-engine`：`PolicyDecision`（`Allow/Deny/AskUser/AllowWithConstraints`）、`ApprovalPrompt`+`RiskLevel`、`ApprovalMode`（默认 `ReadOnly`） | S3 | 整包迁移（V1 实现成熟，安全红线回归随迁） |

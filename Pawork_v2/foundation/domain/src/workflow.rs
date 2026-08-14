@@ -3,7 +3,7 @@
 //! 本模块只承载纯领域类型：状态枚举、快照结构与各 service 的 canonical 事件
 //! 载荷（`PlanEvent` / `GoalEvent` / `TaskEvent` / `AutomationEvent` /
 //! `MonitorEvent` / `MemoryEvent` / `ReviewEvent`）。它们是 [`crate::ids`]
-//! 中 ID 的值载体，也是 `agent-events::AgentEvent` 各 wrapping 变量的载荷，
+//! 中 ID 的值载体，也是 [`crate::AgentEvent`] 各 wrapping 变量的载荷，
 //! 保证「状态变化必须 canonical event 化、可重放」。
 //!
 //! 设计遵循 event-sourcing：事件本身是轻量「事实」（ID + 关键转移），富快照由

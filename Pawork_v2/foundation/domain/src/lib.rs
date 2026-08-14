@@ -5,6 +5,7 @@
 
 mod cancel;
 mod error;
+mod events;
 mod ids;
 mod message;
 mod profile;
@@ -15,6 +16,7 @@ mod workflow;
 
 pub use cancel::{CancellationFuture, CancellationToken};
 pub use error::{ErrorCategory, ErrorContext};
+pub use events::*;
 pub use ids::*;
 pub use message::*;
 pub use profile::*;

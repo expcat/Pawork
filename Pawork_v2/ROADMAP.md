@@ -33,8 +33,8 @@
 
 | 阶段 | 主题 | 新增用户可见能力 | 激活 / 增强的包 | 真实验收要点 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| [S0](plan/S0-minimal-chat.md) | 最小可对话 CLI | `pawork chat` 流式多轮对话、Ctrl-C 取消、`pawork models`、TOML 配置 + env key | workspace 根、domain（最小）、api（provider）、net、providers/adapters（openai-compatible）、config（最小）、engine（最小）、app（最小）、cli（最小）、apps/pawork | 两把真实 key 各完成流式多轮对话；401/429/超时可读呈现 | 🔵 |
-| [S1](plan/S1-sessions.md) | 会话持久化与恢复 | 会话落盘、`pawork sessions list/show`、`--resume` 续聊、`--json` 事件流输出 | sqlite、session（核心）、domain（events 全量）、engine（事件化 + appender） | 中断/杀进程后 resume 续聊上下文连续；envelope golden 与 append-only 契约生效 | ⚪ |
+| [S0](plan/S0-minimal-chat.md) | 最小可对话 CLI | `pawork chat` 流式多轮对话、Ctrl-C 取消、`pawork models`、TOML 配置 + env key | workspace 根、domain（最小）、api（provider）、net、providers/adapters（openai-compatible）、config（最小）、engine（最小）、app（最小）、cli（最小）、apps/pawork | 两把真实 key 各完成流式多轮对话；401/429/超时可读呈现 | 🟢 |
+| [S1](plan/S1-sessions.md) | 会话持久化与恢复 | 会话落盘、`pawork sessions list/show`、`--resume` 续聊、`--json` 事件流输出 | sqlite、session（核心）、domain（events 全量）、engine（事件化 + appender） | 中断/杀进程后 resume 续聊上下文连续；envelope golden 与 append-only 契约生效 | 🔵 |
 | [S2](plan/S2-tool-loop.md) | Agent Loop 与只读工具 | Agent 自主调用 read/list/search/find 回答仓库问题；`@`引用前身（相对路径语义） | api（tool）、tools（只读四件）、workspace（roots）、engine（工具循环）、providers/adapters（anthropic-messages）、testkit（MockProvider） | 真实仓库问答任务；OpenAI/Anthropic 双协议 tool-calling 对比评估 | ⚪ |
 | [S3](plan/S3-safe-edits.md) | 写入工具与审批 | write/edit/apply_patch + 终端审批交互（`--approval-mode`） | policy（整包）、tools（写三件）、engine/cli（审批位点） | 真实小编码任务经审批落盘；越界/symlink 拒绝；deny 后会话可续 | ⚪ |
 | [S4](plan/S4-exec-sandbox.md) | 命令执行与沙箱 | run_command（进程树清理 + 沙箱 + 输出截断）——首个完整「读-改-跑」编码闭环 | exec（process/sandbox）、tools（run_command）、policy（shell 分类接线） | 「跑 cargo check 并修复报错」端到端；Ctrl-C 杀整棵进程树；fail-closed | ⚪ |
