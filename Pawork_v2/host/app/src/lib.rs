@@ -1,8 +1,9 @@
-//! 应用门面：读配置 → env key → provider → 只读工具 → 事件化 `run_session`。
+//! 应用门面：读配置 → env key → provider → 读写工具 → 事件化 `run_session`。
 //!
 //! 不按 Provider 名称分支；协议来自 `extra.provider_protocols` 与默认表。
 //! 落库 persist-first，再推渲染 sink。
 
+mod approval;
 mod data_dir;
 mod loop_ctx;
 mod persist;
@@ -20,8 +21,9 @@ use pawork_config::{
     api_key_env_name, read_api_key_from_env, ConfigError, Loader, PaworkConfig, ProviderConfig,
 };
 use pawork_domain::{
-    CancellationToken, Message, MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId,
-    SessionId, WorkspaceId,
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, ContentPart, EventId,
+    EventSequence, Message, MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId,
+    SessionId, TextContent, ToolDescriptor, ToolResultContent, WorkspaceId,
 };
 use pawork_engine::{
     assemble_request_with_tools, run_session, AgentEventSink, EngineError, SessionTurn,
@@ -30,10 +32,11 @@ use pawork_engine::{
 use pawork_providers::{
     AnthropicConfig, AnthropicProvider, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
-use pawork_session::{SessionStore, SessionStoreError};
+use pawork_policy::PolicyEngine;
+use pawork_session::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 use pawork_tools::{
-    FindFilesTool, ListDirectoryTool, ReadFileTool, SearchTextTool, ToolRegistry, ToolRegistryError,
-    ToolScheduler, ToolSchedulerConfig,
+    ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, SearchTextTool,
+    ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig, WriteFileTool,
 };
 use pawork_workspace::{WorkspaceError, WorkspaceService};
 use thiserror::Error;
@@ -41,18 +44,38 @@ use thiserror::Error;
 use crate::loop_ctx::SessionLoopCtx;
 use crate::protocol::resolve_adapter_protocol;
 
+pub use approval::{
+    parse_approval_mode, ApprovalAsk, ApprovalPromptHost, DenyAllApprovals,
+};
 pub use data_dir::{default_data_dir, session_db_path};
 pub use persist::PersistThenRender;
 pub use protocol::{AdapterProtocol, ProtocolError};
+pub use pawork_policy::{ApprovalMode, RiskLevel};
 pub use pawork_session::SessionRecord;
 
 /// 从配置文件与 CLI 覆盖构造 [`AppCore`] 的选项。
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct AppLoadOptions {
     pub workspace_root: Option<PathBuf>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub data_dir: Option<PathBuf>,
+    pub approval_mode: Option<ApprovalMode>,
+    pub approval_host: Option<Arc<dyn ApprovalPromptHost>>,
+}
+
+impl std::fmt::Debug for AppLoadOptions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AppLoadOptions")
+            .field("workspace_root", &self.workspace_root)
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("data_dir", &self.data_dir)
+            .field("approval_mode", &self.approval_mode)
+            .field("has_approval_host", &self.approval_host.is_some())
+            .finish()
+    }
 }
 
 impl AppLoadOptions {
@@ -62,6 +85,8 @@ impl AppLoadOptions {
             provider,
             model,
             data_dir: None,
+            approval_mode: None,
+            approval_host: None,
         }
     }
 }
@@ -103,11 +128,11 @@ pub enum AppError {
     Tools(#[from] ToolRegistryError),
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
-    #[error("S2 只注册只读工具，但 `{name}` 的 read_only 为 false")]
-    NonReadOnlyTool { name: String },
+    #[error("{0}")]
+    ApprovalMode(String),
 }
 
-/// 已装配的 Core：协议中立 provider、只读工具、默认 model、可选 session store。
+/// 已装配的 Core：协议中立 provider、读写工具、默认 model、可选 session store。
 pub struct AppCore {
     provider: Arc<dyn ModelProvider>,
     credential: Option<ResolvedCredential>,
@@ -118,6 +143,10 @@ pub struct AppCore {
     scheduler: Arc<ToolScheduler>,
     workspace_id: WorkspaceId,
     tool_defs: Vec<ToolDefinition>,
+    descriptors: Vec<ToolDescriptor>,
+    approval_mode: ApprovalMode,
+    workspace_trusted: bool,
+    approval_host: Arc<dyn ApprovalPromptHost>,
     next_request: AtomicU64,
     next_run: AtomicU64,
     next_session: AtomicU64,
@@ -134,6 +163,8 @@ impl std::fmt::Debug for AppCore {
             .field("credential", &self.credential)
             .field("has_store", &self.store.is_some())
             .field("tool_count", &self.tool_defs.len())
+            .field("approval_mode", &self.approval_mode)
+            .field("workspace_trusted", &self.workspace_trusted)
             .finish()
     }
 }
@@ -146,11 +177,19 @@ impl AppCore {
             .workspace_root
             .clone()
             .or_else(|| std::env::current_dir().ok());
+        let trusted = resolved.config.trust_workspaces.unwrap_or(false);
         let mut core = Self::from_resolved(
             resolved.config,
             options.provider.as_deref(),
             options.model.as_deref(),
         )?;
+        core.configure_approval(
+            options.approval_mode.unwrap_or_default(),
+            trusted,
+            options
+                .approval_host
+                .unwrap_or_else(|| Arc::new(DenyAllApprovals)),
+        );
         if let Some(root) = workspace_root.as_deref() {
             core.attach_workspace(root)?;
         }
@@ -167,7 +206,9 @@ impl AppCore {
         store_path: impl AsRef<Path>,
     ) -> Result<Self, AppError> {
         let resolved = Loader::discover_from(global_file, workspace_file).resolve()?;
+        let trusted = resolved.config.trust_workspaces.unwrap_or(false);
         let mut core = Self::from_resolved(resolved.config, provider, model)?;
+        core.configure_approval(ApprovalMode::ReadOnly, trusted, Arc::new(DenyAllApprovals));
         if let Some(root) = workspace_root_from_config_file(workspace_file) {
             core.attach_workspace(&root)?;
         } else if let Ok(cwd) = std::env::current_dir() {
@@ -271,6 +312,10 @@ impl AppCore {
             )),
             workspace_id: WorkspaceId::from("ws-unbound"),
             tool_defs: Vec::new(),
+            descriptors: Vec::new(),
+            approval_mode: ApprovalMode::ReadOnly,
+            workspace_trusted: false,
+            approval_host: Arc::new(DenyAllApprovals),
             next_request: AtomicU64::new(1),
             next_run: AtomicU64::new(1),
             next_session: AtomicU64::new(1),
@@ -278,7 +323,19 @@ impl AppCore {
         }
     }
 
-    /// 把启动目录登记为默认 workspace root，并注册四个只读工具。
+    /// 设置审批模式、workspace 信任与决策宿主。须在 [`Self::attach_workspace`] 之前调用。
+    pub fn configure_approval(
+        &mut self,
+        mode: ApprovalMode,
+        workspace_trusted: bool,
+        host: Arc<dyn ApprovalPromptHost>,
+    ) {
+        self.approval_mode = mode;
+        self.workspace_trusted = workspace_trusted;
+        self.approval_host = host;
+    }
+
+    /// 把启动目录登记为默认 workspace root，并注册只读四件 + 写三件。
     pub fn attach_workspace(&mut self, root: &Path) -> Result<(), AppError> {
         let workspaces = WorkspaceService::new();
         let workspace_id = WorkspaceId::from("ws-default");
@@ -289,25 +346,29 @@ impl AppCore {
             Arc::new(ReadFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
             Arc::new(ListDirectoryTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
             Arc::new(SearchTextTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-            Arc::new(FindFilesTool::new(workspaces)) as Arc<dyn pawork_api::AgentTool>,
+            Arc::new(FindFilesTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
+            Arc::new(WriteFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
+            Arc::new(EditFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
+            Arc::new(ApplyPatchTool::new(workspaces)) as Arc<dyn pawork_api::AgentTool>,
         ])?;
-        for descriptor in registry.descriptors() {
-            if !descriptor.read_only {
-                return Err(AppError::NonReadOnlyTool {
-                    name: descriptor.name,
-                });
-            }
-        }
-        self.tool_defs = registry
-            .descriptors()
-            .into_iter()
+        self.descriptors = registry.descriptors();
+        self.tool_defs = self
+            .descriptors
+            .iter()
             .map(|descriptor| ToolDefinition {
-                name: descriptor.name,
-                description: descriptor.description,
-                input_schema: descriptor.input_schema,
+                name: descriptor.name.clone(),
+                description: descriptor.description.clone(),
+                input_schema: descriptor.input_schema.clone(),
             })
             .collect();
-        self.scheduler = Arc::new(ToolScheduler::new(registry, ToolSchedulerConfig::default()));
+        self.scheduler = Arc::new(ToolScheduler::new(
+            registry,
+            ToolSchedulerConfig {
+                max_concurrent: 8,
+                approval_mode: self.approval_mode,
+                workspace_trusted: self.workspace_trusted,
+            },
+        ));
         self.workspace_id = workspace_id;
         Ok(())
     }
@@ -364,7 +425,102 @@ impl AppCore {
 
     pub async fn resume_messages(&self, session_id: &SessionId) -> Result<Vec<Message>, AppError> {
         let _ = self.get_session(session_id).await?;
+        self.seal_orphaned_approvals(session_id).await?;
         Ok(self.store()?.projection_snapshot(session_id).await?.messages)
+    }
+
+    /// 把中途被杀、仍停在 `waiting_for_approval` 的调用以 Denied 收口，避免 resume 后重跑。
+    async fn seal_orphaned_approvals(&self, session_id: &SessionId) -> Result<(), AppError> {
+        let pending: Vec<_> = self
+            .store()?
+            .projection_snapshot(session_id)
+            .await?
+            .tool_calls
+            .into_iter()
+            .filter(|call| call.state == "waiting_for_approval")
+            .collect();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let mut sequence = self.next_sequence(session_id).await?;
+        for call in pending {
+            self.append_payload(
+                session_id,
+                &call.run_id,
+                &mut sequence,
+                AgentEvent::ToolApprovalResponded {
+                    tool_call_id: call.tool_call_id.clone(),
+                    decision: ApprovalDecision::Denied,
+                    comment: Some("pending approval closed on resume".into()),
+                },
+            )
+            .await?;
+            if call.result.is_some() {
+                continue;
+            }
+            let result = ToolResultContent {
+                tool_call_id: call.tool_call_id.clone(),
+                tool_name: Some(call.name.clone()),
+                content: vec![ContentPart::Text(TextContent {
+                    text: "pending approval closed on resume".into(),
+                })],
+                is_error: true,
+                metadata: serde_json::Value::Null,
+            };
+            self.append_payload(
+                session_id,
+                &call.run_id,
+                &mut sequence,
+                AgentEvent::ToolExecutionCompleted {
+                    tool_call_id: call.tool_call_id.clone(),
+                    result: result.clone(),
+                },
+            )
+            .await?;
+            let n = self.next_message.fetch_add(1, Ordering::Relaxed);
+            let message = Message {
+                id: MessageId::from(format!(
+                    "msg-{}-{n}",
+                    pawork_engine::now_timestamp().as_unix_millis()
+                )),
+                role: MessageRole::Tool,
+                content: vec![ContentPart::ToolResult(result)],
+                metadata: Default::default(),
+            };
+            self.append_payload(
+                session_id,
+                &call.run_id,
+                &mut sequence,
+                AgentEvent::MessageCommitted { message },
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn append_payload(
+        &self,
+        session_id: &SessionId,
+        run_id: &RunId,
+        sequence: &mut u64,
+        payload: AgentEvent,
+    ) -> Result<(), AppError> {
+        let value = *sequence;
+        *sequence = sequence
+            .checked_add(1)
+            .ok_or_else(|| AppError::Engine(EngineError::sink("sequence overflow")))?;
+        let envelope = AgentEventEnvelope::new(
+            EventId::from(format!("evt-resume-{}-{value}", run_id.as_str())),
+            session_id.clone(),
+            run_id.clone(),
+            EventSequence::new(value),
+            pawork_engine::now_timestamp(),
+            payload,
+        );
+        self.store()?
+            .append_event(DEFAULT_BRANCH_ID, envelope)
+            .await?;
+        Ok(())
     }
 
     pub async fn next_sequence(&self, session_id: &SessionId) -> Result<u64, AppError> {
@@ -466,6 +622,11 @@ impl AppCore {
             run_id,
             next_message: &self.next_message,
             next_request: &self.next_request,
+            policy: PolicyEngine::new(self.approval_mode),
+            approval_mode: self.approval_mode,
+            workspace_trusted: self.workspace_trusted,
+            descriptors: self.descriptors.clone(),
+            approval_host: self.approval_host.clone(),
         };
         Ok(run_session(
             self.provider.as_ref(),
@@ -563,6 +724,8 @@ mod tests {
                     AgentEvent::RunCompleted { .. } => "RunCompleted",
                     AgentEvent::AssistantTextDelta { .. } => "delta",
                     AgentEvent::ToolCallStarted { .. } => "ToolCallStarted",
+                    AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested",
+                    AgentEvent::ToolApprovalResponded { .. } => "ToolApprovalResponded",
                     AgentEvent::ToolExecutionStarted { .. } => "ToolExecutionStarted",
                     AgentEvent::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
                     AgentEvent::ToolOutputDelta { .. } => "ToolOutputDelta",
@@ -896,7 +1059,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn attach_workspace_registers_four_readonly_tools() {
+    async fn attach_workspace_registers_seven_tools() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (mut core, _store_dir) = mock_core(Vec::new()).await;
         core.attach_workspace(dir.path()).expect("attach");
@@ -904,7 +1067,15 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            vec!["find_files", "list_directory", "read_file", "search_text"]
+            vec![
+                "apply_patch",
+                "edit_file",
+                "find_files",
+                "list_directory",
+                "read_file",
+                "search_text",
+                "write_file",
+            ]
         );
     }
 
@@ -965,6 +1136,278 @@ mod tests {
             joined.contains("hello-from-workspace"),
             "expected tool output or assistant recap, got {joined}"
         );
+        core.shutdown().await.expect("shutdown");
+    }
+
+    struct ScriptedHost {
+        queue: Mutex<Vec<ApprovalDecision>>,
+        asked: AtomicU64,
+    }
+
+    impl ScriptedHost {
+        fn new(queue: Vec<ApprovalDecision>) -> Arc<Self> {
+            Arc::new(Self {
+                queue: Mutex::new(queue),
+                asked: AtomicU64::new(0),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ApprovalPromptHost for ScriptedHost {
+        async fn decide(&self, _ask: &ApprovalAsk, _cancel: CancellationToken) -> ApprovalDecision {
+            self.asked.fetch_add(1, Ordering::SeqCst);
+            self.queue.lock().expect("queue").remove(0)
+        }
+    }
+
+    struct PanicHost;
+
+    #[async_trait]
+    impl ApprovalPromptHost for PanicHost {
+        async fn decide(&self, ask: &ApprovalAsk, _cancel: CancellationToken) -> ApprovalDecision {
+            panic!("approval host should not be asked for {}", ask.tool_name);
+        }
+    }
+
+    async fn write_ready_core(
+        mode: ApprovalMode,
+        trusted: bool,
+        host: Arc<dyn ApprovalPromptHost>,
+        workspace: &Path,
+    ) -> (AppCore, tempfile::TempDir) {
+        use pawork_testkit::{MockProvider, MockScript};
+
+        let dir = tempfile::tempdir().expect("store");
+        let path = dir.path().join("session.db");
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let provider = MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call(
+                    "write_file",
+                    serde_json::json!({"path": "notes.txt", "content": "hello-write"}),
+                )
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("wrote notes").complete(),
+        ]);
+        let mut core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            ModelId::from("model-1"),
+            ProviderId::from("mock"),
+            Some(store),
+        );
+        core.configure_approval(mode, trusted, host);
+        core.attach_workspace(workspace).expect("attach");
+        (core, dir)
+    }
+
+    #[tokio::test]
+    async fn ask_for_writes_approved_once_persists_file_and_event_pair() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let host = ScriptedHost::new(vec![ApprovalDecision::ApprovedOnce]);
+        let (core, _dir) =
+            write_ready_core(ApprovalMode::AskForWrites, true, host.clone(), workspace.path())
+                .await;
+        let session = core.create_session("write").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+
+        let types = sink.types();
+        let requested = types
+            .iter()
+            .position(|name| *name == "ToolApprovalRequested")
+            .expect("requested");
+        let responded = types
+            .iter()
+            .position(|name| *name == "ToolApprovalResponded")
+            .expect("responded");
+        let started = types
+            .iter()
+            .position(|name| *name == "ToolExecutionStarted")
+            .expect("started");
+        assert!(requested < responded);
+        assert!(responded < started);
+        assert_eq!(host.asked.load(Ordering::SeqCst), 1);
+        let written = std::fs::read_to_string(workspace.path().join("notes.txt")).expect("file");
+        assert_eq!(written, "hello-write");
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn deny_all_emits_approval_pair_and_does_not_write() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let (core, _dir) = write_ready_core(
+            ApprovalMode::AskForWrites,
+            true,
+            Arc::new(DenyAllApprovals),
+            workspace.path(),
+        )
+        .await;
+        let session = core.create_session("deny").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+
+        let types = sink.types();
+        assert!(types.contains(&"ToolApprovalRequested"));
+        assert!(types.contains(&"ToolApprovalResponded"));
+        assert!(!types.contains(&"ToolExecutionStarted"));
+        assert!(!workspace.path().join("notes.txt").exists());
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn read_only_trusted_write_is_denied_without_asking() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let (core, _dir) = write_ready_core(
+            ApprovalMode::ReadOnly,
+            true,
+            Arc::new(PanicHost),
+            workspace.path(),
+        )
+        .await;
+        let session = core.create_session("readonly").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+
+        assert!(!sink.types().contains(&"ToolApprovalRequested"));
+        assert!(!workspace.path().join("notes.txt").exists());
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn untrusted_never_ask_denies_write_without_asking() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let (core, _dir) = write_ready_core(
+            ApprovalMode::NeverAsk,
+            false,
+            Arc::new(PanicHost),
+            workspace.path(),
+        )
+        .await;
+        let session = core.create_session("untrusted").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+
+        assert!(!sink.types().contains(&"ToolApprovalRequested"));
+        assert!(!workspace.path().join("notes.txt").exists());
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn resume_seals_orphaned_approval_as_denied() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let session = core.create_session("orphan").await.expect("create");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-orphan");
+        let run_id = RunId::from("run-orphan");
+        let ts = pawork_engine::now_timestamp();
+        core.store()
+            .expect("store")
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    EventId::from("evt-1"),
+                    session.clone(),
+                    run_id.clone(),
+                    EventSequence::new(1),
+                    ts,
+                    AgentEvent::ToolCallStarted {
+                        tool_call_id: tool_call_id.clone(),
+                        name: "write_file".into(),
+                    },
+                ),
+            )
+            .await
+            .expect("started");
+        core.store()
+            .expect("store")
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    EventId::from("evt-2"),
+                    session.clone(),
+                    run_id,
+                    EventSequence::new(2),
+                    ts,
+                    AgentEvent::ToolApprovalRequested {
+                        tool_call_id: tool_call_id.clone(),
+                        reason: "needs approval".into(),
+                    },
+                ),
+            )
+            .await
+            .expect("requested");
+
+        let waiting = core
+            .store()
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("snap");
+        assert_eq!(waiting.tool_calls[0].state, "waiting_for_approval");
+
+        let messages = core.resume_messages(&session).await.expect("resume");
+        assert!(messages.iter().any(|message| message.role == MessageRole::Tool));
+
+        let sealed = core
+            .store()
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("sealed");
+        assert_eq!(sealed.tool_calls[0].state, "completed");
+        assert!(sealed.tool_calls[0].result.is_some());
+
+        let replayed = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, 64)
+            .await
+            .expect("replay");
+        let responded = replayed.iter().find_map(|envelope| match &envelope.payload {
+            AgentEvent::ToolApprovalResponded {
+                decision, comment, ..
+            } => Some((decision.clone(), comment.clone())),
+            _ => None,
+        });
+        assert_eq!(
+            responded,
+            Some((
+                ApprovalDecision::Denied,
+                Some("pending approval closed on resume".into())
+            ))
+        );
+
+        let again = core.resume_messages(&session).await.expect("idempotent");
+        assert_eq!(again.len(), messages.len());
         core.shutdown().await.expect("shutdown");
     }
 

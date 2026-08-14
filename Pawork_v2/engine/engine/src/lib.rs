@@ -21,7 +21,7 @@ pub use appender::{tool_results_message, AssembledTurn, PendingToolCall, ToolCal
 pub use event::{map_provider_event, AgentEventSink, EngineError, LoopEventEmitter};
 pub use session_turn::{now_timestamp, run_session_turn, SessionTurn};
 pub use tool_loop::{
-    run_session, LoopContext, PendingToolInvocation, DEFAULT_MAX_TOOL_ROUNDS,
+    run_session, ApprovalGate, LoopContext, PendingToolInvocation, DEFAULT_MAX_TOOL_ROUNDS,
 };
 
 /// 用冻结契约的默认值填满 CanonicalModelRequest（tools/hosted/extensions 空，

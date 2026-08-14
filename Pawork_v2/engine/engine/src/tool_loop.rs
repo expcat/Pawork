@@ -9,8 +9,8 @@ use pawork_api::{
     CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ToolResult,
 };
 use pawork_domain::{
-    AgentEvent, CancellationToken, ErrorCategory, ErrorContext, MessageId, MessageMetadata,
-    RequestId, TokenUsage, ToolCallId, ToolResultContent,
+    AgentEvent, ApprovalDecision, CancellationToken, ContentPart, ErrorCategory, ErrorContext,
+    MessageId, MessageMetadata, RequestId, TextContent, TokenUsage, ToolCallId, ToolResultContent,
 };
 
 use crate::appender::{tool_results_message, AssembledTurn, ToolCallResult};
@@ -29,9 +29,19 @@ pub struct PendingToolInvocation {
     pub arguments: serde_json::Value,
 }
 
+/// 宿主对一次工具调用的审批闸门。
+///
+/// `NotRequired`：策略已放行，不发审批事件。`Asked`：用户可见审批，engine
+/// 发 `ToolApprovalRequested/Responded` 事件对。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApprovalGate {
+    NotRequired,
+    Asked(ApprovalDecision),
+}
+
 /// Agent Loop 执行中需要的回调（由调用方注入）。
 ///
-/// 本波次只含工具执行与 ID 生成；审批 / hook / scheduler 不在此 trait。
+/// 审批经 [`LoopContext::request_approval`] 注入；engine 不依赖 policy/tools。
 #[async_trait]
 pub trait LoopContext: Send + Sync {
     async fn execute_tools(
@@ -40,6 +50,14 @@ pub trait LoopContext: Send + Sync {
         events: LoopEventEmitter<'_>,
         cancel: CancellationToken,
     ) -> Vec<ToolCallResult>;
+
+    /// 对一批待执行调用给出闸门。`already_approved_for_run` 为 true 时不应再询问。
+    async fn request_approval(
+        &self,
+        calls: &[PendingToolInvocation],
+        already_approved_for_run: bool,
+        cancel: CancellationToken,
+    ) -> Vec<ApprovalGate>;
 
     fn next_message_id(&self) -> MessageId;
 
@@ -50,7 +68,7 @@ pub trait LoopContext: Send + Sync {
 /// provider → 组装助手 →（可选）执行工具并回填，直到无 tool call 或超限。
 ///
 /// 是否继续以 [`AssembledTurn::has_tool_calls`] 为准，不看 `StopReason`。
-/// persist 失败时不再补终态。不发审批事件，不按 Provider 名称分支。
+/// persist 失败时不再补终态。AskUser 才发审批事件对。不按 Provider 名称分支。
 pub async fn run_session(
     provider: &dyn ModelProvider,
     request: CanonicalModelRequest,
@@ -102,6 +120,7 @@ pub async fn run_session(
     let mut current = request;
     let mut tool_rounds = 0_u64;
     let mut run_usage = TokenUsage::default();
+    let mut run_approved = false;
 
     loop {
         if cancel.is_cancelled() {
@@ -160,7 +179,30 @@ pub async fn run_session(
                     return Ok(completed);
                 }
 
+                let gates = loop_ctx
+                    .request_approval(&invocations, run_approved, cancel.clone())
+                    .await;
+                let (to_run, mut decided) =
+                    apply_approval_gates(&invocations, &gates, &mut run_approved);
                 for invocation in &invocations {
+                    if let Some(decision) = decided.get(&invocation.tool_call_id) {
+                        emitter
+                            .emit(AgentEvent::ToolApprovalRequested {
+                                tool_call_id: invocation.tool_call_id.clone(),
+                                reason: format!("tool `{}` requires approval", invocation.name),
+                            })
+                            .await?;
+                        emitter
+                            .emit(AgentEvent::ToolApprovalResponded {
+                                tool_call_id: invocation.tool_call_id.clone(),
+                                decision: decision.clone(),
+                                comment: None,
+                            })
+                            .await?;
+                    }
+                }
+
+                for invocation in &to_run {
                     emitter
                         .emit(AgentEvent::ToolExecutionStarted {
                             tool_call_id: invocation.tool_call_id.clone(),
@@ -168,10 +210,31 @@ pub async fn run_session(
                         .await?;
                 }
 
-                let raw = loop_ctx
-                    .execute_tools(invocations.clone(), loop_events.clone(), cancel.clone())
-                    .await;
-                let results = align_tool_results(&invocations, raw);
+                let raw = if to_run.is_empty() {
+                    Vec::new()
+                } else {
+                    loop_ctx
+                        .execute_tools(to_run, loop_events.clone(), cancel.clone())
+                        .await
+                };
+                for result in &raw {
+                    decided.remove(&result.tool_call_id);
+                }
+                let mut merged = raw;
+                merged.extend(decided.into_iter().filter_map(|(id, decision)| {
+                    if matches!(
+                        decision,
+                        ApprovalDecision::Denied | ApprovalDecision::Cancelled
+                    ) {
+                        invocations
+                            .iter()
+                            .find(|call| call.tool_call_id == id)
+                            .map(denied_tool_result)
+                    } else {
+                        None
+                    }
+                }));
+                let results = align_tool_results(&invocations, merged);
 
                 for result in &results {
                     emitter
@@ -253,6 +316,68 @@ fn pending_invocations(assembled: &AssembledTurn) -> Vec<PendingToolInvocation> 
         .collect()
 }
 
+fn apply_approval_gates(
+    invocations: &[PendingToolInvocation],
+    gates: &[ApprovalGate],
+    run_approved: &mut bool,
+) -> (
+    Vec<PendingToolInvocation>,
+    BTreeMap<ToolCallId, ApprovalDecision>,
+) {
+    let mut to_run = Vec::new();
+    let mut decided = BTreeMap::new();
+    for (index, invocation) in invocations.iter().enumerate() {
+        let gate = gates
+            .get(index)
+            .cloned()
+            .unwrap_or(ApprovalGate::NotRequired);
+        match gate {
+            ApprovalGate::NotRequired => to_run.push(invocation.clone()),
+            ApprovalGate::Asked(decision) => {
+                let decision = if *run_approved
+                    && !matches!(
+                        decision,
+                        ApprovalDecision::Denied | ApprovalDecision::Cancelled
+                    ) {
+                    ApprovalDecision::ApprovedForRun
+                } else {
+                    decision.clone()
+                };
+                if matches!(decision, ApprovalDecision::ApprovedForRun) {
+                    *run_approved = true;
+                }
+                decided.insert(invocation.tool_call_id.clone(), decision.clone());
+                if matches!(
+                    decision,
+                    ApprovalDecision::ApprovedOnce | ApprovalDecision::ApprovedForRun
+                ) {
+                    to_run.push(invocation.clone());
+                }
+            }
+        }
+    }
+    (to_run, decided)
+}
+
+fn denied_tool_result(invocation: &PendingToolInvocation) -> ToolCallResult {
+    let mut result = ToolResult::failure(ErrorContext {
+        category: ErrorCategory::Authorization,
+        message: "tool call denied by user".into(),
+        retryable: false,
+        retry_after_ms: None,
+        diagnostics: Default::default(),
+    });
+    result.content = vec![ContentPart::Text(TextContent {
+        text: "tool call denied by user".into(),
+    })];
+    ToolCallResult {
+        tool_call_id: invocation.tool_call_id.clone(),
+        tool_name: invocation.name.clone(),
+        arguments: invocation.arguments.clone(),
+        result,
+    }
+}
+
 fn align_tool_results(
     invocations: &[PendingToolInvocation],
     results: Vec<ToolCallResult>,
@@ -317,9 +442,9 @@ mod tests {
         ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
     };
     use pawork_domain::{
-        AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, ErrorCategory, Message,
-        MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId, SessionId, StopReason,
-        TextContent, Timestamp, TokenUsage, ToolCallId, WorkspaceId,
+        AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, ContentPart,
+        ErrorCategory, Message, MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId,
+        SessionId, StopReason, TextContent, Timestamp, TokenUsage, ToolCallId, WorkspaceId,
     };
     use pawork_testkit::{MockProvider, MockScript, MockTool};
 
@@ -497,6 +622,15 @@ mod tests {
             futures::future::join_all(jobs).await
         }
 
+        async fn request_approval(
+            &self,
+            calls: &[PendingToolInvocation],
+            _already_approved_for_run: bool,
+            _cancel: CancellationToken,
+        ) -> Vec<ApprovalGate> {
+            calls.iter().map(|_| ApprovalGate::NotRequired).collect()
+        }
+
         fn next_message_id(&self) -> MessageId {
             let n = self.msg_counter.fetch_add(1, Ordering::Relaxed);
             MessageId::from(format!("msg-{n}"))
@@ -562,6 +696,8 @@ mod tests {
             AgentEvent::AssistantTextDelta { .. } => "AssistantTextDelta",
             AgentEvent::ToolCallStarted { .. } => "ToolCallStarted",
             AgentEvent::ToolCallArgumentsDelta { .. } => "ToolCallArgumentsDelta",
+            AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested",
+            AgentEvent::ToolApprovalResponded { .. } => "ToolApprovalResponded",
             AgentEvent::ToolExecutionStarted { .. } => "ToolExecutionStarted",
             AgentEvent::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
             AgentEvent::ToolOutputDelta { .. } => "ToolOutputDelta",
@@ -660,6 +796,7 @@ mod tests {
         assert!(types.contains(&"MessageCommitted.tool"));
         assert!(types.contains(&"RunCompleted"));
         assert!(!types.contains(&"RunFailed"));
+        assert!(!types.contains(&"ToolApprovalRequested"));
 
         let requests = provider.requests();
         assert_eq!(requests.len(), 2);
@@ -833,5 +970,234 @@ mod tests {
         assert_eq!(failed.category, ErrorCategory::ResourceExhausted);
         assert!(failed.message.contains("maximum tool rounds exceeded"));
         assert!(failed.message.contains('2'));
+    }
+
+    struct ScriptedApprovalCtx {
+        inner: TestContext,
+        queue: Mutex<Vec<ApprovalDecision>>,
+        calls: AtomicU64,
+    }
+
+    impl ScriptedApprovalCtx {
+        fn new(tools: Vec<MockTool>, queue: Vec<ApprovalDecision>) -> Self {
+            Self {
+                inner: TestContext::new(tools),
+                queue: Mutex::new(queue),
+                calls: AtomicU64::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LoopContext for ScriptedApprovalCtx {
+        async fn execute_tools(
+            &self,
+            calls: Vec<PendingToolInvocation>,
+            events: LoopEventEmitter<'_>,
+            cancel: CancellationToken,
+        ) -> Vec<ToolCallResult> {
+            self.inner.execute_tools(calls, events, cancel).await
+        }
+
+        async fn request_approval(
+            &self,
+            calls: &[PendingToolInvocation],
+            already_approved_for_run: bool,
+            _cancel: CancellationToken,
+        ) -> Vec<ApprovalGate> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if already_approved_for_run {
+                return calls
+                    .iter()
+                    .map(|_| ApprovalGate::Asked(ApprovalDecision::ApprovedForRun))
+                    .collect();
+            }
+            let mut queue = self.queue.lock().expect("approval queue");
+            calls
+                .iter()
+                .map(|_| {
+                    let decision = if queue.is_empty() {
+                        ApprovalDecision::Denied
+                    } else {
+                        queue.remove(0)
+                    };
+                    ApprovalGate::Asked(decision)
+                })
+                .collect()
+        }
+
+        fn next_message_id(&self) -> MessageId {
+            self.inner.next_message_id()
+        }
+
+        fn next_request_id(&self) -> RequestId {
+            self.inner.next_request_id()
+        }
+    }
+
+    fn write_tool_def() -> ToolDefinition {
+        ToolDefinition {
+            name: "write_file".into(),
+            description: "write".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_event_pair_then_execute_on_approved_once() {
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("write_file", serde_json::json!({"path": "a.rs"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]));
+        let write = MockTool::new(
+            "write_file",
+            ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "ok".into(),
+            })]),
+        );
+        let ctx = ScriptedApprovalCtx::new(vec![write.clone()], vec![ApprovalDecision::ApprovedOnce]);
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            sample_request(vec![write_tool_def()]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+        )
+        .await
+        .expect("approved once");
+
+        let types = sink.types();
+        let requested = types
+            .iter()
+            .position(|name| *name == "ToolApprovalRequested")
+            .expect("requested");
+        let responded = types
+            .iter()
+            .position(|name| *name == "ToolApprovalResponded")
+            .expect("responded");
+        let started = types
+            .iter()
+            .position(|name| *name == "ToolExecutionStarted")
+            .expect("started");
+        assert!(requested < responded);
+        assert!(responded < started);
+        assert_eq!(write.calls().len(), 1);
+        let decision = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::ToolApprovalResponded { decision, .. } => Some(decision),
+                _ => None,
+            }
+        });
+        assert_eq!(decision, Some(ApprovalDecision::ApprovedOnce));
+    }
+
+    #[tokio::test]
+    async fn denied_fills_tool_result_and_continues_without_executing() {
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("write_file", serde_json::json!({"path": "a.rs"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("explained").complete(),
+        ]));
+        let write = MockTool::new(
+            "write_file",
+            ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "should-not-run".into(),
+            })]),
+        );
+        let ctx = ScriptedApprovalCtx::new(vec![write.clone()], vec![ApprovalDecision::Denied]);
+        let sink = RecordingEvents::default();
+
+        let summary = run_session(
+            &provider,
+            sample_request(vec![write_tool_def()]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+        )
+        .await
+        .expect("denied continues");
+
+        assert_eq!(summary.stop_reason, StopReason::Completed);
+        assert_eq!(write.calls().len(), 0);
+        assert!(!sink.types().contains(&"ToolExecutionStarted"));
+        assert!(sink.types().contains(&"ToolApprovalRequested"));
+        assert!(sink.types().contains(&"ToolApprovalResponded"));
+        assert_eq!(provider.requests().len(), 2);
+        let tool = &tool_messages(&sink)[0];
+        match &tool.content[0] {
+            ContentPart::ToolResult(result) => {
+                assert!(result.is_error);
+                assert!(
+                    result
+                        .content
+                        .iter()
+                        .any(|part| matches!(part, ContentPart::Text(text) if text.text.contains("denied")))
+                );
+            }
+            other => panic!("expected tool result, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn approved_for_run_remembers_across_tool_rounds() {
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("write_file", serde_json::json!({"path": "a.rs"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new()
+                .tool_call("write_file", serde_json::json!({"path": "b.rs"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]));
+        let write = MockTool::new(
+            "write_file",
+            ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "ok".into(),
+            })]),
+        );
+        let ctx = ScriptedApprovalCtx::new(
+            vec![write.clone()],
+            vec![ApprovalDecision::ApprovedForRun, ApprovalDecision::Denied],
+        );
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            sample_request(vec![write_tool_def()]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+        )
+        .await
+        .expect("approved for run");
+
+        assert_eq!(write.calls().len(), 2);
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 2);
+        let decisions: Vec<_> = sink
+            .snapshot()
+            .into_iter()
+            .filter_map(|envelope| match envelope.payload {
+                AgentEvent::ToolApprovalResponded { decision, .. } => Some(decision),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            decisions,
+            vec![
+                ApprovalDecision::ApprovedForRun,
+                ApprovalDecision::ApprovedForRun
+            ]
+        );
     }
 }

@@ -1,17 +1,25 @@
-//! Pawork CLI：`chat` / `sessions` / `run` / `models`（含只读工具活动行）。
+//! Pawork CLI：`chat` / `sessions` / `run` / `models`（含工具活动行与审批）。
 //!
 //! `--json`（unstable）：stdout 只承载 JSON；文本与日志走 stderr。
+//! `--json` 或非 TTY 下审批 fail-closed（一律拒绝）。
 
+mod approval;
 mod chat;
 mod error;
 mod render;
 mod sessions;
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use pawork_app::{AppCore, AppError, AppLoadOptions};
+use pawork_app::{
+    parse_approval_mode, AppCore, AppError, AppLoadOptions, ApprovalPromptHost, DenyAllApprovals,
+};
 use thiserror::Error;
+
+use crate::approval::InteractiveApprovals;
 
 pub use error::format_provider_error;
 
@@ -41,6 +49,14 @@ pub struct Cli {
     /// 机器可读输出（unstable）。chat/run：stdout 为 AgentEventEnvelope JSONL。
     #[arg(long, global = true)]
     pub json: bool,
+    /// 审批强度。默认 `read-only`（沿用 V1：不改模式就不会写入）。
+    #[arg(
+        long,
+        global = true,
+        value_name = "MODE",
+        help = "always-ask|ask-for-writes|ask-for-dangerous|on-failure|never-ask|read-only"
+    )]
+    pub approval_mode: Option<String>,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -90,7 +106,13 @@ pub async fn run() -> ExitCode {
 
 async fn run_inner() -> Result<(), CliError> {
     let cli = Cli::parse();
-    let core = AppCore::load(AppLoadOptions::from_cli(cli.provider, cli.model)).await?;
+    let mut options = AppLoadOptions::from_cli(cli.provider, cli.model);
+    options.approval_mode = match cli.approval_mode.as_deref() {
+        Some(value) => Some(parse_approval_mode(value).map_err(CliError::Usage)?),
+        None => None,
+    };
+    options.approval_host = Some(approval_host(cli.json));
+    let core = AppCore::load(options).await?;
     let result = match cli.command {
         Command::Chat { prompt, resume } => {
             chat::run_chat(&core, prompt, resume, cli.json).await
@@ -129,6 +151,14 @@ async fn run_models(core: &AppCore, json: bool) -> Result<(), CliError> {
     }
 }
 
+fn approval_host(json: bool) -> Arc<dyn ApprovalPromptHost> {
+    if json || !std::io::stdin().is_terminal() {
+        Arc::new(DenyAllApprovals)
+    } else {
+        Arc::new(InteractiveApprovals)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -151,6 +181,7 @@ mod tests {
         assert_eq!(cli.provider.as_deref(), Some("opencode-go"));
         assert_eq!(cli.model.as_deref(), Some("deepseek-v4-pro"));
         assert!(!cli.json);
+        assert!(cli.approval_mode.is_none());
         match cli.command {
             Command::Chat { prompt, resume } => {
                 assert_eq!(prompt.as_deref(), Some("hi"));
@@ -204,5 +235,29 @@ mod tests {
         let cli = Cli::try_parse_from(["pawork", "-p", "glm-coding", "models"]).expect("parse");
         assert_eq!(cli.provider.as_deref(), Some("glm-coding"));
         assert!(matches!(cli.command, Command::Models));
+    }
+
+    #[test]
+    fn parses_approval_mode_kebab() {
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "--approval-mode",
+            "ask-for-writes",
+            "run",
+            "hi",
+        ])
+        .expect("parse");
+        assert_eq!(cli.approval_mode.as_deref(), Some("ask-for-writes"));
+        assert_eq!(
+            parse_approval_mode(cli.approval_mode.as_deref().expect("mode"))
+                .expect("known"),
+            pawork_app::ApprovalMode::AskForWrites
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_approval_mode_string() {
+        let err = parse_approval_mode("yolo").expect_err("unknown");
+        assert!(err.contains("unknown approval mode"));
     }
 }

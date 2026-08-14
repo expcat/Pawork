@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use pawork_domain::{AgentEvent, AgentEventEnvelope, ContentPart, ToolCallId};
+use pawork_domain::{
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, ToolCallId,
+};
 use pawork_engine::{AgentEventSink, EngineError};
 use serde_json::Value;
 
@@ -82,6 +84,47 @@ impl AgentEventSink for TextSink {
                 {
                     activity.args.push_str(&json_delta);
                 }
+            }
+            AgentEvent::ToolApprovalRequested {
+                tool_call_id,
+                reason,
+            } => {
+                close_thinking(self)?;
+                let name = self
+                    .tools
+                    .lock()
+                    .expect("sink tools mutex")
+                    .get(&tool_call_id)
+                    .map(|item| item.name.clone())
+                    .unwrap_or_else(|| tool_call_id.as_str().to_string());
+                eprintln!("? approve {name}: {reason}");
+                io::stderr()
+                    .flush()
+                    .map_err(|error| EngineError::sink(error.to_string()))?;
+            }
+            AgentEvent::ToolApprovalResponded {
+                tool_call_id,
+                decision,
+                comment,
+            } => {
+                close_thinking(self)?;
+                let name = self
+                    .tools
+                    .lock()
+                    .expect("sink tools mutex")
+                    .get(&tool_call_id)
+                    .map(|item| item.name.clone())
+                    .unwrap_or_else(|| tool_call_id.as_str().to_string());
+                let mut line = format!("  → {name} {}", decision_label(decision));
+                if let Some(comment) = comment {
+                    if !comment.is_empty() {
+                        line.push_str(&format!(" ({comment})"));
+                    }
+                }
+                eprintln!("{line}");
+                io::stderr()
+                    .flush()
+                    .map_err(|error| EngineError::sink(error.to_string()))?;
             }
             AgentEvent::ToolOutputDelta {
                 tool_call_id,
@@ -185,6 +228,15 @@ pub(crate) fn format_tool_activity_line(
     line
 }
 
+fn decision_label(decision: ApprovalDecision) -> &'static str {
+    match decision {
+        ApprovalDecision::ApprovedOnce => "approved once",
+        ApprovalDecision::ApprovedForRun => "approved for run",
+        ApprovalDecision::Denied => "denied",
+        ApprovalDecision::Cancelled => "cancelled",
+    }
+}
+
 fn format_size(bytes: u64) -> String {
     if bytes < 1024 {
         format!("{bytes}B")
@@ -256,6 +308,15 @@ mod tests {
             ),
             "✗ read_file ../.. (absolute path not allowed)"
         );
+    }
+
+    #[test]
+    fn decision_labels_are_stable() {
+        assert_eq!(
+            decision_label(ApprovalDecision::ApprovedOnce),
+            "approved once"
+        );
+        assert_eq!(decision_label(ApprovalDecision::Denied), "denied");
     }
 
     #[test]

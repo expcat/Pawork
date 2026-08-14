@@ -1,7 +1,7 @@
-//! 生产 `LoopContext`：把 engine 的待执行调用交给 `ToolScheduler`。
+//! 生产 `LoopContext`：策略预判 + 审批宿主 + `ToolScheduler`。
 //!
-//! 审批传 `None`（S2）；`working_directory` 为 `None`。失败结果把错误文案
-//! 写入 `content`，方便模型解释、CLI 渲染。
+//! AskUser 由 [`crate::approval::ApprovalPromptHost`] 决策；Allow 传 `None`
+//! 给 scheduler，避免 S2「Allow 后再 resolve」钩子把只读工具也弹出来。
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -11,13 +11,20 @@ use pawork_api::{
     ToolError, ToolEventSink, ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
 };
 use pawork_domain::{
-    CancellationToken, ContentPart, ErrorContext, MessageId, RequestId, RunId, TextContent,
-    ToolCallId, WorkspaceId,
+    ApprovalDecision, CancellationToken, ContentPart, ErrorContext, MessageId, RequestId, RunId,
+    TextContent, ToolCallId, ToolDescriptor, WorkspaceId,
 };
 use pawork_engine::{
-    now_timestamp, LoopContext, LoopEventEmitter, PendingToolInvocation, ToolCallResult,
+    now_timestamp, ApprovalGate, LoopContext, LoopEventEmitter, PendingToolInvocation,
+    ToolCallResult,
 };
+use pawork_policy::{ApprovalMode, ApprovalPrompt, PolicyDecision, PolicyEngine, PolicyInput, RiskLevel};
 use pawork_tools::ToolScheduler;
+
+use crate::approval::{
+    preview_from_input, relative_path_from_input, ApprovalAsk, ApprovalPromptHost,
+    PreApprovedResolver,
+};
 
 pub(crate) struct SessionLoopCtx<'a> {
     pub scheduler: Arc<ToolScheduler>,
@@ -25,6 +32,11 @@ pub(crate) struct SessionLoopCtx<'a> {
     pub run_id: RunId,
     pub next_message: &'a AtomicU64,
     pub next_request: &'a AtomicU64,
+    pub policy: PolicyEngine,
+    pub approval_mode: ApprovalMode,
+    pub workspace_trusted: bool,
+    pub descriptors: Vec<ToolDescriptor>,
+    pub approval_host: Arc<dyn ApprovalPromptHost>,
 }
 
 struct ForwardingSink<'a> {
@@ -61,9 +73,80 @@ impl LoopContext for SessionLoopCtx<'_> {
             let run_id = self.run_id.clone();
             let events = events.clone();
             let cancel = cancel.clone();
-            async move { execute_one(&scheduler, workspace_id, run_id, call, events, cancel).await }
+            let policy = self.policy.clone();
+            let approval_mode = self.approval_mode;
+            let workspace_trusted = self.workspace_trusted;
+            let descriptors = self.descriptors.clone();
+            async move {
+                execute_one(
+                    &scheduler,
+                    workspace_id,
+                    run_id,
+                    call,
+                    events,
+                    cancel,
+                    &policy,
+                    approval_mode,
+                    workspace_trusted,
+                    &descriptors,
+                )
+                .await
+            }
         });
         futures::future::join_all(jobs).await
+    }
+
+    async fn request_approval(
+        &self,
+        calls: &[PendingToolInvocation],
+        already_approved_for_run: bool,
+        cancel: CancellationToken,
+    ) -> Vec<ApprovalGate> {
+        let mut batch_approved = already_approved_for_run;
+        let mut gates = Vec::with_capacity(calls.len());
+        for call in calls {
+            let Some(descriptor) = self
+                .descriptors
+                .iter()
+                .find(|item| item.name == call.name)
+                .cloned()
+            else {
+                gates.push(ApprovalGate::NotRequired);
+                continue;
+            };
+            let decision = decide_policy(
+                &self.policy,
+                &descriptor,
+                &call.arguments,
+                self.workspace_trusted,
+                self.approval_mode,
+            );
+            match decision {
+                PolicyDecision::AskUser { prompt } => {
+                    if batch_approved {
+                        gates.push(ApprovalGate::Asked(ApprovalDecision::ApprovedForRun));
+                        continue;
+                    }
+                    let ask = ApprovalAsk {
+                        tool_name: call.name.clone(),
+                        tool_call_id: call.tool_call_id.clone(),
+                        relative_path: relative_path_from_input(&call.arguments),
+                        message: prompt.message,
+                        risk: prompt.risk,
+                        preview: preview_from_input(&call.arguments),
+                    };
+                    let answered = self.approval_host.decide(&ask, cancel.clone()).await;
+                    if matches!(answered, ApprovalDecision::ApprovedForRun) {
+                        batch_approved = true;
+                    }
+                    gates.push(ApprovalGate::Asked(answered));
+                }
+                PolicyDecision::Allow
+                | PolicyDecision::AllowWithConstraints { .. }
+                | PolicyDecision::Deny { .. } => gates.push(ApprovalGate::NotRequired),
+            }
+        }
+        gates
     }
 
     fn next_message_id(&self) -> MessageId {
@@ -77,6 +160,31 @@ impl LoopContext for SessionLoopCtx<'_> {
     }
 }
 
+fn decide_policy(
+    policy: &PolicyEngine,
+    descriptor: &ToolDescriptor,
+    input: &serde_json::Value,
+    trusted: bool,
+    approval_mode: ApprovalMode,
+) -> PolicyDecision {
+    let mut decision = policy.decide(&PolicyInput {
+        capability: descriptor.capability.clone(),
+        input: input.clone(),
+        trusted,
+        allowed_in_untrusted_workspace: descriptor.allowed_in_untrusted_workspace,
+        approval_mode,
+    });
+    if descriptor.requires_approval && !matches!(decision, PolicyDecision::Deny { .. }) {
+        decision = PolicyDecision::AskUser {
+            prompt: ApprovalPrompt {
+                message: format!("tool `{}` requires explicit approval", descriptor.name),
+                risk: RiskLevel::Moderate,
+            },
+        };
+    }
+    decision
+}
+
 async fn execute_one(
     scheduler: &ToolScheduler,
     workspace_id: WorkspaceId,
@@ -84,6 +192,10 @@ async fn execute_one(
     call: PendingToolInvocation,
     events: LoopEventEmitter<'_>,
     cancel: CancellationToken,
+    policy: &PolicyEngine,
+    approval_mode: ApprovalMode,
+    workspace_trusted: bool,
+    descriptors: &[ToolDescriptor],
 ) -> ToolCallResult {
     let request = ToolRequest {
         tool_call_id: call.tool_call_id.clone(),
@@ -98,15 +210,29 @@ async fn execute_one(
         tool_call_id: call.tool_call_id.clone(),
         events,
     };
+    let preapproved = descriptors
+        .iter()
+        .find(|item| item.name == call.name)
+        .is_some_and(|descriptor| {
+            matches!(
+                decide_policy(
+                    policy,
+                    descriptor,
+                    &call.arguments,
+                    workspace_trusted,
+                    approval_mode,
+                ),
+                PolicyDecision::AskUser { .. }
+            )
+        });
+    let resolver = PreApprovedResolver;
+    let approval = if preapproved {
+        Some(&resolver as &dyn pawork_tools::ApprovalResolver)
+    } else {
+        None
+    };
     let mut result = match scheduler
-        .execute_named(
-            &call.name,
-            request,
-            context,
-            cancel,
-            None,
-            &sink,
-        )
+        .execute_named(&call.name, request, context, cancel, approval, &sink)
         .await
     {
         Ok(result) => result,
