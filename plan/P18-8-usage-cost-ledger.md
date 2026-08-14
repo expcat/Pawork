@@ -1,6 +1,6 @@
 # P18-8：Usage / Cost Ledger
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-2、P18-3、P2-9、P2-7、P1-4
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢有界完成 · 交付成熟度：HostWired（持久 Ledger 与真实 lease attribution 已进入正式宿主） · 依赖：P18-2、P18-3、P2-9、P2-7、P1-4
 
 **最终目的**：把每次 canonical usage 按 tenant/principal/account/credential/session/agent/provider/model 持久归属，为预算、Quota 对账、审计和后续 chargeback 提供不可变事实源。
 

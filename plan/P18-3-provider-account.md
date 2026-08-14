@@ -1,6 +1,6 @@
 # P18-3：ProviderAccount / Credential 模型与兼容迁移
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟠核心实现已验收，宿主接线待 P18-14 收口 · 交付成熟度：TargetVerified · 依赖：P18-1、P18-2、P2-6、P6-4、P1-13
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢有界完成 · 交付成熟度：PartialWired（正式宿主启动加载持久 account / credential metadata；管理写回、resolver / Provider factory 仍未装配） · 依赖：P18-1、P18-2、P2-6、P6-4、P1-13
 
 **最终目的**：把“账号资源”和“认证 secret”拆成独立实体，为一个 Provider 下的多账号、多 credential、健康与 lease 奠定安全数据模型。
 

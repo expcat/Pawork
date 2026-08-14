@@ -11,6 +11,7 @@ mod gui_host;
 
 use std::sync::Arc;
 
+use audit_log::FileAuditStore;
 use clap::Parser;
 use cli_command::{AcpCommand, Cli, Command};
 use cli_host::CliHost;
@@ -37,6 +38,18 @@ async fn main() {
     // teams.sqlite——team_db_path 保持 None（Team store 走内存实现）；
     // canonical ingress 落地后由独立任务恢复持久化装配。
     let instance_dir = gui_host::instance_dir(&cli.instance);
+    let audit_path = instance_dir.join("control-plane-audit.jsonl");
+    let audit_store = match FileAuditStore::open(&audit_path) {
+        Ok(store) => store,
+        Err(error) => {
+            tracing::error!(
+                audit_path = %audit_path.display(),
+                error = %error,
+                "control-plane audit store unavailable; refusing to start",
+            );
+            std::process::exit(1);
+        }
+    };
     let ledger_path = instance_dir.join("usage-ledger.sqlite3");
     let control_plane_path = instance_dir.join("control-plane.sqlite3");
     let runtime = match CoreRuntime::with_persistent_control_plane_config(
@@ -61,6 +74,7 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    runtime.service().add_audit_sink(Arc::new(audit_store));
 
     // P17-1 生产装配：global + workspace 两级 user hook 配置 → UserHookHost
     // （pre-prompt / pre-tool 权威位点回灌 + 事件桥 + 审计落库）。装配失败

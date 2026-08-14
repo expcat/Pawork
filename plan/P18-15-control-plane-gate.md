@@ -4,9 +4,9 @@
 
 **最终目的**：集中验证账号控制面、Tenant、ClientAdapter 与 AgentSupervisor 的跨 crate 不变量，作为 Phase 18 的 `MaintenanceGated` 收尾；不在每个前置任务重复 workspace 全量门禁。
 
-**涉及范围**：`provider-control` / `tenant-service` / `usage-ledger` / `audit-log` / `client-*` / `acp-host` / `orchestration` / `app-database` / `app-service` / `ide-host-adapter` / `quota-service`；隔离目录 `target/gates-p18`（**不**复用其他阶段的 `target/gates`）。
+**涉及范围**：`provider-control` / `tenant-service` / `usage-ledger` / `audit-log` / `client-*` / `acp-host` / `orchestration` / `app-database` / `app-service` / `core-runtime` / `pawork` / `ide-host-adapter` / `quota-service`；隔离目录 `target/gates-p18`（**不**复用其他阶段的 `target/gates`）。
 
-**入口**：[`scripts/p18-gate.sh`](../scripts/p18-gate.sh)。`CARGO_TARGET_DIR` 默认 `target/gates-p18`，可用 `P18_GATE_TARGET_DIR` 覆盖；`P18_GATE_KEEP_TARGET=1` 时保留隔离缓存。`trap EXIT INT TERM` 在成败后均 `cargo clean --target-dir` + `rm -rf`。全程不跑 `cargo test --workspace` / `clippy --workspace`。
+**入口**：[`scripts/p18-gate.sh`](../scripts/p18-gate.sh)。`CARGO_TARGET_DIR` 默认 `target/gates-p18`；`P18_GATE_TARGET_DIR` 只接受 `$ROOT/target/` 下一个绝对、一级子目录，其他值在创建目录与安装清理 trap 前拒绝。`P18_GATE_KEEP_TARGET=1` 时保留隔离缓存；否则 `EXIT` trap 在成功、失败、INT、TERM 后仅清理校验过的目标与临时日志。全程不跑 `cargo test --workspace` / `clippy --workspace`。
 
 ## 细分步骤
 
@@ -16,7 +16,8 @@
 4. **Protocol golden gate** —— Codex Thread/Turn/Item/approval/subagent（并区分 remote compaction 与 local compaction 两类 fixture）、Claude Messages/identity/reasoning、ACP initialize/session create/resume/prompt/update/permission/tool event/cancel 与 custom model；目的：客户端版本回归可见，每条重要协议消息一个 fixture。
 5. **错误/故障注入 gate** —— 401/402/provider-specific 400/429/QuotaExceeded（hard/soft）/5xx/cancel/context/protocol/stream interruption；目的：失败域不串味。
 6. **回滚演练与 L2** —— 关闭 feature flags、回退 synthetic account/SingleCandidate、schema forward/rollback/restore，在独立构建目录跑相关 test/clippy；目的：可发布、可撤回。
-7. **Schema 版本一致性** —— 跨 crate 断言 `core-api` / `provider-control` / `app-database` 的 control-plane schema version 完全一致；目的：防止单点 bump 导致 wire、domain 与 migration 漂移。
+7. **Host Route → Lease gate** —— repository picker、双 migration/hydration、run route-before-lease、tenant route audit 与缺 Provider fail-closed；目的：门禁覆盖正式宿主的第一条账号竖切，而不只覆盖库层算法。
+8. **Gate 可信度与 Schema 一致性** —— 任一测试命令 0 passed 即失败；只清理受限隔离路径；changed crates 纳入 Clippy；跨 crate 断言 control-plane schema version 完全一致。目的：防止空过滤、越界清理与单点 schema bump 造成假绿。
 
 ## 本次实跑结果（`./scripts/p18-gate.sh`）
 
@@ -30,14 +31,10 @@
 | protocol-golden | Codex `--test golden/handshake/lifecycle/capabilities` + `client-claude-gateway` + `acp-host` + `ide-host-adapter --test contract --test host_mock` | PASS |
 | error-fault | `provider-control --test error_matrix` + `quota-service --lib both_endpoints_401` / `both_endpoints_429` | PASS |
 | rollback | `app-database rollback` + `provider-control --no-default-features --lib legacy` | PASS |
+| host-route-lease | repository picker + Core migration/hydration + `credential_lease` + route audit + `pawork` 缺 Provider | PASS |
 | clippy-related | 见下方 clippy 集合（`--all-targets --no-deps -- -D warnings`） | PASS |
 
-**Clippy 集合**：`tenant-service` `usage-ledger` `audit-log` `client-adapter-api` `client-codex-app-server` `client-claude-gateway` `acp-host` `orchestration` `ide-host-adapter`。`--no-deps` 避免 path 依赖被 `-D warnings` 误伤。
-
-**Clippy 剔除（既有告警，本任务未改对应 `src/`）**：
-
-- `provider-control`：`binding.rs` `clippy::too_many_arguments`（`commit_rebind` / `rebind_after_release`，8/7）。未给既有代码加 `allow`，未改 binding。
-- `app-service`：`claude_gateway.rs` unused imports（`PrincipalId` / `TenantId`）。未 drive-by 修复。
+**Clippy 集合**：第一组覆盖本轮 changed crates：`provider-control` `app-service` `core-runtime` `pawork`，使用 `-D warnings -A clippy::too_many_arguments`，唯一豁免是 `provider-control/binding.rs` 的既有 8/7 参数 API；第二组严格覆盖 `tenant-service` `usage-ledger` `audit-log` `client-adapter-api` `client-codex-app-server` `client-claude-gateway` `acp-host` `orchestration` `ide-host-adapter`。两组均为 `--all-targets --no-deps`，无整 crate 静默剔除。
 
 未跑 `cargo fmt --all`（本任务只 fmt 了新增/编辑的测试文件）。
 
@@ -69,12 +66,9 @@
 
 ## 已知 leftovers（本 gate 不假装完成）
 
-- `pawork` Claude stdio CLI / 完整 Messages server（需要 host composition）
-- Codex CLI 入口（CoreDispatcher 已在；无 pawork stdio）
-- `QuotaRuntime::production()` 尚未注册六家 remote factory、未启动 scheduler
-- WebScrape `with_audit_sink` 未被 zhipu factory 注入
-- **LeaseRebound 生产发射**：`LeaseRecord::open` 始终设公开 `version=2`，`lease.version > 2` 启发式已从 app-service acquire 删除。隔离测试仍经 `record_control_event` 注入。真实发射等待 app-service 消费 `SessionBindingService` / `BindingAcquisition.old_lease_release`。**不**重新引入 version 启发式。
-- 无生产 OTel collector 进程
+- 持久 account/credential 管理写回、resolver/factory、真实 Provider 注册与共享 model catalog → [P18-17](P18-17-production-provider-composition.md)。
+- 真实 capability/Health、route winner credential 单次透传、Session Binding/`LeaseRebound`、Reconciler/Probe/Quota scheduler → [P18-18](P18-18-runtime-control-loop.md)。**不**重新引入 lease version 启发式。
+- Codex/Claude `pawork` 入口、完整 durable audit、WebScrape audit sink 与生产 OTel 生命周期 → [P18-19](P18-19-client-observability-host.md)。
 - 既有 `wait_for_probe_dedups_repeated_poll_of_same_waker` 失败点在 **`model-registry`**（Waker::noop），不在 `provider-control`。本门禁未跑该 crate，故未 filter-skip。
 
 ## 主要产出物
@@ -91,7 +85,7 @@
 - [x] lease/Agent 并发、affinity、cancel、error/fallback 不变量全部通过（orchestration --lib + routing/binding + error_matrix）
 - [x] Codex/Claude/ACP 关键协议 golden 与 unsupported-field 行为通过
 - [x] feature-off/schema rollback/runtime fallback 演练成功（legacy `--no-default-features` + backup restore；非完整生产 restore runbook）
-- [x] 相关 crates 的 test/clippy/schema L2 在独立目录通过并完成清理（clippy 剔除见上；未跑 workspace fmt）
+- [x] 相关 crates 的 test/clippy/schema 与 Host Route → Lease 回归在独立目录通过并完成清理（未跑 workspace fmt）
 - [x] ACP golden gate（P17-7 延期落点）：initialize / session create/resume / prompt/update / permission / tool event / cancel 与 custom model 每条关键协议消息一个 versioned fixture，unsupported-field 行为可回归
 - [x] IDE Host Adapter gate（P17-9 延期落点）：IDE 生命周期映射、诊断双向回灌、apply/diff/approval 回路与可选 LSP 输出的 mock/contract 矩阵通过，断言不经 GUI 协议帧、不构造第二 Core
 

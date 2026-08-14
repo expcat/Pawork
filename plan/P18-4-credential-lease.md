@@ -1,6 +1,6 @@
 # P18-4：CredentialPool / Lease 与并发准入
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-3、P2-10、P1-4
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢有界完成 · 交付成熟度：HostWired（Route 后 acquire/release、持久 restore/reclaim 已进入 run 主链） · 依赖：P18-3、P2-10、P1-4
 
 **最终目的**：用可释放、可过期、可幂等回收的 `CredentialLease` 代替“每次从 credential 数组挑一个”，确保 per-account concurrency 和取消语义正确。
 

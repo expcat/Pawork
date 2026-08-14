@@ -28,7 +28,7 @@ use core_api::{
 use provider_control::routing::{
     RouteCandidate, RouteContext, TenantPolicy as RoutingTenantPolicy,
 };
-use provider_control::{CredentialPool, InMemoryCredentialPool};
+use provider_control::{CredentialPool, InMemoryCredentialPool, ProviderAccountRepository};
 use quota_service::service::MutableQuotaClock;
 use tenant_service::{
     AuditExportPolicy, IdentityContext, InMemoryTenantPolicyEngine, PermissionProfile,
@@ -1212,4 +1212,95 @@ async fn budget_admission_uses_shared_ledger_rejects_at_limit_and_releases_lease
     assert!(admission_denies
         .iter()
         .any(|event| event.reason.contains("预算")));
+}
+
+/// 注入账号仓库后，run 路径会走 RoutingTenantPolicyAdapter，记录 RouteCandidate。
+#[tokio::test]
+async fn run_records_route_candidate_when_repository_injected() {
+    let engine = std::sync::Arc::new(InMemoryTenantPolicyEngine::new(user_role()));
+    let router = CommandRouter::with_tenant_policy(
+        RouterConfig::default(),
+        std::sync::Arc::new(LocalIdentityResolver),
+        engine.clone(),
+    );
+    let repo = std::sync::Arc::new(provider_control::InMemoryProviderAccountRepository::new());
+    let tenant = local_tenant();
+    repo.create_account(
+        &tenant,
+        provider_control::ProviderAccountRecord {
+            schema_version: provider_control::CONTROL_PLANE_SCHEMA_VERSION,
+            tenant_id: tenant.clone(),
+            account_id: AccountId::new("acct-routed"),
+            provider_id: ProviderId::new("mock"),
+            principal_id: PrincipalId::new("local/user"),
+            display_name: "routed".into(),
+            routing_strategy: provider_control::RoutingStrategy::SingleCandidate,
+            priority: 0,
+            weight: 1,
+            max_concurrency: 1,
+            state: provider_control::AccountState::Active,
+        },
+    )
+    .await
+    .expect("create account");
+    repo.create_credential(
+        &tenant,
+        provider_control::CredentialMetadata {
+            schema_version: provider_control::CONTROL_PLANE_SCHEMA_VERSION,
+            tenant_id: tenant.clone(),
+            credential_id: CredentialId::new("cred-routed"),
+            account_id: AccountId::new("acct-routed"),
+            provider_id: ProviderId::new("mock"),
+            kind: provider_control::CredentialKind::ApiKey,
+            synthetic: false,
+            secret_ref: provider_control::SecretRef::new("pawork.mock", "cred-routed"),
+            state: provider_control::CredentialState::Active,
+            expires_at: None,
+            refresh_state: provider_control::RefreshState::NotRefreshable,
+        },
+    )
+    .await
+    .expect("create credential");
+    let picker = std::sync::Arc::new(provider_control::RepositoryCredentialPicker::new(
+        repo.clone(),
+    ));
+    let pool = std::sync::Arc::new(provider_control::InMemoryCredentialPool::build(
+        provider_control::PoolConfig::new(1),
+        std::sync::Arc::new(provider_control::SystemLeaseClock),
+        std::sync::Arc::new(provider_control::NullLeaseProjection),
+        picker,
+    ));
+    router.set_credential_pool(pool);
+    router.set_account_repository(repo);
+    router.register_provider(mock_provider());
+    let session_id = prepare_session(&router);
+    let accepted = router.dispatch(run_start(&session_id, "hello"));
+    assert!(
+        matches!(accepted.response, AppResponse::Accepted { .. }),
+        "{:?}",
+        accepted.response
+    );
+    let run_id = router.last_started_run().expect("run id");
+    let completed = wait_until(
+        || {
+            router
+                .aggregate()
+                .get_run(&run_id, &local_tenant())
+                .is_some_and(|run| run.state == RunState::Completed)
+        },
+        Duration::from_secs(5),
+    )
+    .await;
+    assert!(completed, "routed run should complete");
+    let route_allows: Vec<_> = engine
+        .decisions(&local_tenant())
+        .into_iter()
+        .filter(|event| {
+            event.gate == PolicyGate::RouteCandidate && event.decision == PolicyDecisionKind::Allow
+        })
+        .collect();
+    assert!(
+        !route_allows.is_empty(),
+        "注入仓库后必须记录 RouteCandidate allow"
+    );
 }

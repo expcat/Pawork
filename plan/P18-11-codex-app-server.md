@@ -1,6 +1,6 @@
 # P18-11：Codex App-Server Adapter
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢Adapter + versioned goldens 已落地 · 交付成熟度：WorkspaceMember（根 workspace member；生产 CLI 入口仍待宿主装配） · 依赖：P18-10、P15-2、P15-5、P15-8、P12-1
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢适配器有界完成 · 交付成熟度：AdapterBuilt（根 workspace member + versioned goldens；生产 CLI 入口未装配） · 依赖：P18-10、P15-2、P15-5、P15-8、P12-1
 
 **最终目的**：通过官方 Codex App Server 协议把 Thread/Turn/Item、approval、subagent 与 interrupt 映射到 Pawork canonical session/agent/event，而不是模拟 UI 或依赖 DOM/CDP 注入。
 

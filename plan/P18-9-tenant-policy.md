@@ -1,6 +1,6 @@
 # P18-9：Tenant Policy / RBAC
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-2、P18-3、P18-8、P4-9
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢有界完成 · 交付成熟度：HostWired（deny-first command/query/route/lease 准入已进入 app-service 主链） · 依赖：P18-2、P18-3、P18-8、P4-9
 
 **最终目的**：在共享账号池、Agent 与查询面前建立 deny-first tenant policy，限制可用 provider/model/account、并发、预算、保留与审计导出。
 

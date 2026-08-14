@@ -229,6 +229,9 @@ pub struct FileAuditStore {
 impl FileAuditStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, AuditError> {
         let path = path.into();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| AuditError::Io(error.to_string()))?;
+        }
         let content = match fs::read_to_string(&path) {
             Ok(content) => content,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -253,6 +256,16 @@ impl FileAuditStore {
             }
             events.push(event);
         }
+        // `open` is a startup gate, not a lazy descriptor constructor: create and
+        // open the file for append now so an unwritable audit path fails before
+        // CoreRuntime starts accepting work.
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|error| AuditError::Io(error.to_string()))?;
+        file.sync_data()
+            .map_err(|error| AuditError::Io(error.to_string()))?;
         Ok(Self {
             path,
             events: Mutex::new(events),
@@ -636,6 +649,7 @@ mod tests {
         ));
         {
             let store = FileAuditStore::open(&path).unwrap();
+            assert!(path.exists(), "open must create the durable audit file");
             store.append(event("event-1", "tenant-a")).unwrap();
             store.append(event("event-2", "tenant-b")).unwrap();
         }

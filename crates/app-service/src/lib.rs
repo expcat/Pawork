@@ -943,6 +943,21 @@ impl AppService {
         self.router.credential_pool()
     }
 
+    /// 注入共享账号仓库（P18-16）：透传给 router / supervisor。
+    pub fn set_account_repository(
+        &self,
+        repository: Arc<dyn provider_control::ProviderAccountRepository>,
+    ) {
+        self.router.set_account_repository(repository);
+    }
+
+    /// 当前注入的账号仓库（测试 / 宿主诊断）。
+    pub fn account_repository(
+        &self,
+    ) -> Option<Arc<dyn provider_control::ProviderAccountRepository>> {
+        self.router.account_repository()
+    }
+
     /// 注册 Provider 实现（测试注入 / 正式宿主后续由 provider-runtime 注入）。
     pub fn register_provider(&self, provider: Arc<dyn ModelProvider>) -> agent_domain::ProviderId {
         self.router.register_provider(provider)

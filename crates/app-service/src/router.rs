@@ -121,6 +121,8 @@ pub struct CommandRouter {
     model_override_policy: Mutex<Arc<dyn crate::profile_resolver::ModelOverridePolicy>>,
     /// P18-4 共享 CredentialPool（注入后每个 run attempt acquire/持有/释放）。
     credential_pool: Mutex<Option<Arc<dyn provider_control::CredentialPool>>>,
+    /// P18-16 共享账号仓库（注入后 run attempt 经 RoutingPolicy 选出真实 account）。
+    account_repository: Mutex<Option<Arc<dyn provider_control::ProviderAccountRepository>>>,
     /// P18-2 身份解析器：请求身份 → canonical `IdentityContext`；解析失败
     /// fail-closed（请求被拒绝，不静默落入默认身份）。
     identity_resolver: Arc<dyn IdentityResolver>,
@@ -203,6 +205,7 @@ impl CommandRouter {
                 crate::profile_resolver::DenyAllModelOverridePolicy,
             )),
             credential_pool: Mutex::new(None),
+            account_repository: Mutex::new(None),
             identity_resolver,
             tenant_policy,
         }
@@ -419,6 +422,32 @@ impl CommandRouter {
     /// 当前注入的 CredentialPool（测试 / 宿主诊断）。
     pub fn credential_pool(&self) -> Option<Arc<dyn provider_control::CredentialPool>> {
         lock(&self.credential_pool).clone()
+    }
+
+    /// 注入共享账号仓库（P18-16）：透传给 supervisor，run attempt 在
+    /// acquire 前经 RoutingPolicy 选出真实 account。幂等：重复注入同一
+    /// 实例为 no-op。
+    pub fn set_account_repository(
+        &self,
+        repository: Arc<dyn provider_control::ProviderAccountRepository>,
+    ) {
+        let mut guard = lock(&self.account_repository);
+        let already = guard
+            .as_ref()
+            .is_some_and(|existing| Arc::ptr_eq(existing, &repository));
+        if already {
+            return;
+        }
+        self.supervisor
+            .set_account_repository(Arc::clone(&repository));
+        *guard = Some(repository);
+    }
+
+    /// 当前注入的账号仓库（测试 / 宿主诊断）。
+    pub fn account_repository(
+        &self,
+    ) -> Option<Arc<dyn provider_control::ProviderAccountRepository>> {
+        lock(&self.account_repository).clone()
     }
 
     /// 统一命令入口。
@@ -680,8 +709,8 @@ impl CommandRouter {
                 model,
                 profile,
             } => self.handle_run_start(
-                &envelope,
-                &identity,
+                envelope,
+                identity,
                 session_id.clone(),
                 user_message.clone(),
                 model.clone(),
@@ -691,7 +720,8 @@ impl CommandRouter {
                 match self
                     .supervisor
                     .cancel_for_tenant(run_id, &identity.tenant_id)
-                {                    Ok(outcome) => Ok(data_response(
+                {
+                    Ok(outcome) => Ok(data_response(
                         &request_id,
                         json!({
                             "run_id": run_id,
@@ -703,10 +733,10 @@ impl CommandRouter {
                 }
             }
             AppCommand::RunRetry { run_id } => {
-                match self.supervisor.retry_for_identity(run_id, &identity) {
+                match self.supervisor.retry_for_identity(run_id, identity) {
                     Ok(()) => {
                         self.tenant_policy.record_decision(
-                            &identity,
+                            identity,
                             PolicyGate::AgentSpawn,
                             PolicyDecisionKind::Allow,
                             "RunRetry 准入放行",
@@ -725,7 +755,7 @@ impl CommandRouter {
                             PolicyGate::AgentSpawn
                         };
                         self.tenant_policy.record_decision(
-                            &identity,
+                            identity,
                             gate,
                             PolicyDecisionKind::Deny,
                             reason.clone(),

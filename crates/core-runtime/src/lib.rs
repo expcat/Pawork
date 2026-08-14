@@ -20,12 +20,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_domain::{AccountId, CredentialId, PrincipalId, ProviderId, TenantId, Timestamp};
 use app_database::{DatabaseActor, DatabaseError};
 use app_service::AppService;
 use app_service::UserHookHost;
 use provider_api::ModelProvider;
 use provider_control::{
-    CredentialPool, InMemoryCredentialPool, PoolConfig, PoolError, ReclaimReport, SystemLeaseClock,
+    AccountState, CredentialKind, CredentialMetadata, CredentialPool, CredentialState,
+    InMemoryCredentialPool, InMemoryProviderAccountRepository, PoolConfig, PoolError,
+    ProviderAccountRecord, ProviderAccountRepository, ReclaimReport, RefreshState,
+    RepositoryCredentialPicker, RoutingStrategy, SecretRef, SystemLeaseClock,
 };
 use subscription_hub::{EventHub, DEFAULT_HUB_CAPACITY};
 use thiserror::Error;
@@ -51,6 +55,10 @@ pub enum ControlPlaneError {
     /// durable Team store 打开或重放失败。
     #[error(transparent)]
     Team(#[from] app_service::TeamError),
+    /// 从 SQLite 控制面表加载账号 / 凭据失败（严格解析：未知枚举 / 坏行 / 类型
+    /// 不匹配）。fail loud：坏数据阻止启动，绝不静默丢弃或回退 legacy 种子。
+    #[error("control plane repository load failed: {0}")]
+    RepositoryLoad(String),
 }
 
 /// 持久控制面运行产物（P18-4）：数据库 Actor 由池（投影 → 仓库）持有，与
@@ -58,12 +66,19 @@ pub enum ControlPlaneError {
 pub struct ControlPlaneRuntime {
     /// 打开的 SQLite Actor（`credential_leases` 等投影所在库）。
     pub database: DatabaseActor,
-    /// 迁移报告（启动诊断用）。
+    /// 控制面 schema 迁移报告（`provider_accounts` / `credentials` 表）。
+    /// 字段名保留为 `migration_report` 以兼容既有调用方；lease 投影迁移见
+    /// [`ControlPlaneRuntime::lease_migration_report`]。
     pub migration_report: app_database::MigrationReport,
+    /// Lease 投影迁移报告（`credential_leases` 表）。
+    pub lease_migration_report: app_database::MigrationReport,
     /// 启动恢复报告（回收孤儿 lease 计数）。
     pub restore_report: ReclaimReport,
     /// 持久化凭据池（已 restore）。
     pub pool: Arc<dyn CredentialPool>,
+    /// 与池 picker 同源的账号仓库：从控制面表严格解析加载，不再 hardcode
+    /// legacy 种子。
+    pub account_repository: Arc<InMemoryProviderAccountRepository>,
 }
 
 /// CoreRuntime 配置。
@@ -268,6 +283,7 @@ impl CoreRuntime {
                 control_plane.pool.clone(),
             ),
         };
+        service.set_account_repository(control_plane.account_repository.clone());
         let service = Arc::new(service);
         if let Some(user_hooks) = config.user_hooks.as_ref() {
             service.set_user_hooks(Arc::clone(user_hooks));
@@ -275,6 +291,7 @@ impl CoreRuntime {
         tracing::info!(
             instance = %instance,
             migrations = ?control_plane.migration_report.applied_versions,
+            lease_migrations = ?control_plane.lease_migration_report.applied_versions,
             expired = control_plane.restore_report.expired,
             reclaimed = control_plane.restore_report.reclaimed,
             "credential pool restored from persistent projection"
@@ -354,24 +371,277 @@ async fn open_control_plane_runtime(
 ) -> Result<ControlPlaneRuntime, ControlPlaneError> {
     let existed = path.exists();
     let database = DatabaseActor::open(path).await?;
-    let migration_report = app_database::migrate_lease(&database, path, existed).await?;
+    let migration_report = app_database::migrate_control_plane(&database, path, existed).await?;
+    // 两套迁移命名空间（control_plane / lease）共享同一物理 SQLite 文件。两个迁移
+    // 的备份路径只按 from_version 命名（不区分命名空间），若都备份且 from_version
+    // 相同，后者的备份会覆盖前者，留下「control_plane 已迁、lease 未迁」的中间态
+    // 备份——作为回滚基线是危险的。
+    //
+    // 备份职责规则：control_plane 先迁，若它真的迁移了（backup_path 非空），那份备份
+    // 已是完整的迁移前状态（含 lease 旧表），足以回滚两者，lease 不再备份。只有当
+    // control_plane 无需迁移（库已最新，backup_path 为 None）而 lease 仍待迁移时，才
+    // 由 lease 负责生成迁移前备份——保证 lease 待迁时一定有一份回滚基线。
+    let lease_needs_backup = existed && migration_report.backup_path.is_none();
+    let lease_migration_report =
+        app_database::migrate_lease(&database, path, lease_needs_backup).await?;
+
+    // 从控制面表严格解析账号 / 凭据并加载到共享仓库（fail loud：未知枚举 / 坏行
+    // 阻止启动）。生产 picker 基于该仓库选 Active 凭据，不再 hardcode legacy 种子。
+    let repository = Arc::new(InMemoryProviderAccountRepository::new());
+    load_provider_accounts_from_control_plane(&database, repository.as_ref()).await?;
+
     let projection = Arc::new(SqliteLeaseProjection::new(
         app_database::LeaseRowRepository::new(database.clone()),
     ));
-    // 生产默认：每账号并发 1（与 P18-3 `provider_accounts.max_concurrency`
-    // legacy 种子一致），TTL 1h；per-account 覆盖随 P18-6 路由策略接线。
-    let pool: Arc<dyn CredentialPool> = Arc::new(InMemoryCredentialPool::with_projection(
+    let picker = Arc::new(RepositoryCredentialPicker::new(repository.clone()));
+    let pool: Arc<dyn CredentialPool> = Arc::new(InMemoryCredentialPool::build(
         PoolConfig::default(),
         Arc::new(SystemLeaseClock),
         projection,
+        picker,
     ));
     let restore_report = pool.restore().await?;
     Ok(ControlPlaneRuntime {
         database,
         migration_report,
+        lease_migration_report,
         restore_report,
         pool,
+        account_repository: repository,
     })
+}
+
+/// 从 SQLite 控制面表（provider_accounts / credentials）严格解析账号与凭据，
+/// 加载到共享 [InMemoryProviderAccountRepository]。
+///
+/// - 未知枚举值、负整数、类型不匹配、外键缺失 -> 立即返回错误（fail loud），
+///   阻止启动；绝不静默丢弃坏行或回退 legacy 种子。
+/// - credentials 表本就无明文列（ADR-014）：此处仅加载脱敏 secret_ref 定位
+///   符（service, account），绝不读取或加载明文 secret。
+/// - 凭据外键要求同 tenant 账号已存在，故先建账号、后建凭据。
+async fn load_provider_accounts_from_control_plane(
+    database: &DatabaseActor,
+    repository: &InMemoryProviderAccountRepository,
+) -> Result<(), ControlPlaneError> {
+    let accounts: Vec<ProviderAccountRecord> = database
+        .call(|connection| -> Result<Vec<ProviderAccountRecord>, String> {
+            let mut statement = connection
+                .prepare(
+                    "SELECT account_id, tenant_id, provider_id, principal_id, display_name, routing_strategy, schema_version, priority, weight, max_concurrency, state FROM provider_accounts",
+                )
+                .map_err(|error| format!("prepare provider_accounts: {error}"))?;
+            let mut rows = statement
+                .query(())
+                .map_err(|error| format!("query provider_accounts: {error}"))?;
+            let mut records = Vec::new();
+            while let Some(row) = rows
+                .next()
+                .map_err(|error| format!("iterate provider_accounts: {error}"))?
+            {
+                let account_id: String =
+                    row.get(0).map_err(|e| format!("provider_accounts account_id: {e}"))?;
+                let tenant_id: String =
+                    row.get(1).map_err(|e| format!("provider_accounts tenant_id: {e}"))?;
+                let provider_id: String =
+                    row.get(2).map_err(|e| format!("provider_accounts provider_id: {e}"))?;
+                let principal_id: String =
+                    row.get(3).map_err(|e| format!("provider_accounts principal_id: {e}"))?;
+                let display_name: String =
+                    row.get(4).map_err(|e| format!("provider_accounts display_name: {e}"))?;
+                let routing_strategy_str: String = row
+                    .get(5)
+                    .map_err(|e| format!("provider_accounts routing_strategy: {e}"))?;
+                let schema_version: i64 =
+                    row.get(6).map_err(|e| format!("provider_accounts schema_version: {e}"))?;
+                let priority: i64 =
+                    row.get(7).map_err(|e| format!("provider_accounts priority: {e}"))?;
+                let weight: i64 =
+                    row.get(8).map_err(|e| format!("provider_accounts weight: {e}"))?;
+                let max_concurrency: i64 = row
+                    .get(9)
+                    .map_err(|e| format!("provider_accounts max_concurrency: {e}"))?;
+                let state_str: String =
+                    row.get(10).map_err(|e| format!("provider_accounts state: {e}"))?;
+
+                let routing_strategy = RoutingStrategy::from_db_str(&routing_strategy_str)
+                    .ok_or_else(|| {
+                        format!(
+                            "provider_accounts {tenant_id}/{account_id}: unknown routing_strategy `{routing_strategy_str}`"
+                        )
+                    })?;
+                let state = AccountState::from_db_str(&state_str).ok_or_else(|| {
+                    format!("provider_accounts {tenant_id}/{account_id}: unknown state `{state_str}`")
+                })?;
+                let schema_version = u32::try_from(schema_version).map_err(|_| {
+                    format!(
+                        "provider_accounts {tenant_id}/{account_id}: schema_version {schema_version} out of u32 range"
+                    )
+                })?;
+                let priority = u32::try_from(priority).map_err(|_| {
+                    format!(
+                        "provider_accounts {tenant_id}/{account_id}: priority {priority} out of u32 range"
+                    )
+                })?;
+                let weight = u32::try_from(weight).map_err(|_| {
+                    format!(
+                        "provider_accounts {tenant_id}/{account_id}: weight {weight} out of u32 range"
+                    )
+                })?;
+                let max_concurrency = u64::try_from(max_concurrency).map_err(|_| {
+                    format!(
+                        "provider_accounts {tenant_id}/{account_id}: max_concurrency {max_concurrency} out of u64 range"
+                    )
+                })?;
+
+                records.push(ProviderAccountRecord {
+                    schema_version,
+                    tenant_id: TenantId::new(tenant_id),
+                    account_id: AccountId::new(account_id),
+                    provider_id: ProviderId::new(provider_id),
+                    principal_id: PrincipalId::new(principal_id),
+                    display_name,
+                    routing_strategy,
+                    priority,
+                    weight,
+                    max_concurrency,
+                    state,
+                });
+            }
+            Ok(records)
+        })
+        .await
+        .map_err(|error| ControlPlaneError::RepositoryLoad(format!("provider_accounts: {error}")))?
+        .map_err(ControlPlaneError::RepositoryLoad)?;
+
+    let credentials: Vec<CredentialMetadata> = database
+        .call(|connection| -> Result<Vec<CredentialMetadata>, String> {
+            let mut statement = connection
+                .prepare(
+                    "SELECT credential_id, tenant_id, account_id, provider_id, credential_kind, synthetic, schema_version, secret_ref_service, secret_ref_account, state, refresh_state, expires_at_ms FROM credentials",
+                )
+                .map_err(|error| format!("prepare credentials: {error}"))?;
+            let mut rows = statement
+                .query(())
+                .map_err(|error| format!("query credentials: {error}"))?;
+            let mut records = Vec::new();
+            while let Some(row) = rows
+                .next()
+                .map_err(|error| format!("iterate credentials: {error}"))?
+            {
+                let credential_id: String =
+                    row.get(0).map_err(|e| format!("credentials credential_id: {e}"))?;
+                let tenant_id: String =
+                    row.get(1).map_err(|e| format!("credentials tenant_id: {e}"))?;
+                let account_id: String =
+                    row.get(2).map_err(|e| format!("credentials account_id: {e}"))?;
+                let provider_id: String =
+                    row.get(3).map_err(|e| format!("credentials provider_id: {e}"))?;
+                let credential_kind_str: String = row
+                    .get(4)
+                    .map_err(|e| format!("credentials credential_kind: {e}"))?;
+                let synthetic: i64 =
+                    row.get(5).map_err(|e| format!("credentials synthetic: {e}"))?;
+                let schema_version: i64 =
+                    row.get(6).map_err(|e| format!("credentials schema_version: {e}"))?;
+                let secret_ref_service: String = row
+                    .get(7)
+                    .map_err(|e| format!("credentials secret_ref_service: {e}"))?;
+                let secret_ref_account: String = row
+                    .get(8)
+                    .map_err(|e| format!("credentials secret_ref_account: {e}"))?;
+                let state_str: String =
+                    row.get(9).map_err(|e| format!("credentials state: {e}"))?;
+                let refresh_state_str: String = row
+                    .get(10)
+                    .map_err(|e| format!("credentials refresh_state: {e}"))?;
+                let expires_at_ms: Option<i64> = row
+                    .get(11)
+                    .map_err(|e| format!("credentials expires_at_ms: {e}"))?;
+
+                let kind = match credential_kind_str.as_str() {
+                    "api_key" => CredentialKind::ApiKey,
+                    "oauth" => CredentialKind::OAuth,
+                    "other" => CredentialKind::Other,
+                    unknown => {
+                        return Err(format!(
+                            "credentials {tenant_id}/{credential_id}: unknown credential_kind `{unknown}`"
+                        ))
+                    }
+                };
+                let state = CredentialState::from_db_str(&state_str).ok_or_else(|| {
+                    format!("credentials {tenant_id}/{credential_id}: unknown state `{state_str}`")
+                })?;
+                let refresh_state = RefreshState::from_db_str(&refresh_state_str).ok_or_else(|| {
+                    format!(
+                        "credentials {tenant_id}/{credential_id}: unknown refresh_state `{refresh_state_str}`"
+                    )
+                })?;
+                let schema_version = u32::try_from(schema_version).map_err(|_| {
+                    format!(
+                        "credentials {tenant_id}/{credential_id}: schema_version {schema_version} out of u32 range"
+                    )
+                })?;
+                let synthetic = match synthetic {
+                    0 => false,
+                    1 => true,
+                    value => {
+                        return Err(format!(
+                            "credentials {tenant_id}/{credential_id}: synthetic {value} must be 0 or 1"
+                        ))
+                    }
+                };
+                let expires_at = match expires_at_ms {
+                    None => None,
+                    Some(millis) => Some(Timestamp::from_unix_millis(u64::try_from(millis).map_err(
+                        |_| {
+                            format!(
+                                "credentials {tenant_id}/{credential_id}: expires_at_ms {millis} out of u64 range"
+                            )
+                        },
+                    )?)),
+                };
+
+                records.push(CredentialMetadata {
+                    schema_version,
+                    tenant_id: TenantId::new(tenant_id),
+                    credential_id: CredentialId::new(credential_id),
+                    account_id: AccountId::new(account_id),
+                    provider_id: ProviderId::new(provider_id),
+                    kind,
+                    synthetic,
+                    secret_ref: SecretRef::new(secret_ref_service, secret_ref_account),
+                    state,
+                    expires_at,
+                    refresh_state,
+                });
+            }
+            Ok(records)
+        })
+        .await
+        .map_err(|error| ControlPlaneError::RepositoryLoad(format!("credentials: {error}")))?
+        .map_err(ControlPlaneError::RepositoryLoad)?;
+
+    // 先建账号、后建凭据（凭据外键要求同 tenant 账号已存在）；仓库内 ID 冲突
+    // 视为数据损坏 fail loud。
+    for account in accounts {
+        let tenant = account.tenant_id.clone();
+        repository
+            .create_account(&tenant, account)
+            .await
+            .map_err(|error| {
+                ControlPlaneError::RepositoryLoad(format!("insert account: {error}"))
+            })?;
+    }
+    for credential in credentials {
+        let tenant = credential.tenant_id.clone();
+        repository
+            .create_credential(&tenant, credential)
+            .await
+            .map_err(|error| {
+                ControlPlaneError::RepositoryLoad(format!("insert credential: {error}"))
+            })?;
+    }
+    Ok(())
 }
 
 /// EventPump 任务：固定间隔轮询 app-service 的事件队列并发布到 Hub。
@@ -1045,5 +1315,191 @@ mod tests {
             agent_domain::ProviderId::from(provider),
             None,
         )
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn persistent_pool_acquire_missing_account_is_no_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("usage-ledger.sqlite3");
+        let control_plane = dir.path().join("control-plane.sqlite3");
+        let runtime = CoreRuntime::with_persistent_control_plane(
+            "picker-non-legacy",
+            &ledger,
+            &control_plane,
+        )
+        .await
+        .expect("open persistent control plane");
+        let pool = runtime.credential_pool().expect("persistent pool");
+        let error = pool
+            .acquire(provider_control::AcquireRequest {
+                tenant_id: agent_domain::TenantId::new("local/default"),
+                principal_id: agent_domain::PrincipalId::new("local/user"),
+                session_id: agent_domain::SessionId::new("session-picker"),
+                agent_id: agent_domain::AgentId::new("agent-picker"),
+                provider_id: Some(agent_domain::ProviderId::new("default")),
+                account_id: Some(provider_control::AccountId::new("missing")),
+                trace_id: Some("trace-picker".into()),
+            })
+            .await
+            .expect_err("unknown account must not fall back to LegacyCredentialPicker");
+        assert!(
+            matches!(error, PoolError::NoCandidate),
+            "expected NoCandidate from repository picker, got {error:?}"
+        );
+        runtime.shutdown();
+    }
+
+    /// 控制面账号 / 凭据从 SQLite 严格解析加载：自定义（非 legacy）账号与凭据
+    /// 写入控制面库后，重启运行时仍能被 repository picker + 池 acquire 读到，
+    /// 且与 legacy 默认账号共存（验证不再 hardcode legacy 种子、按表加载）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn control_plane_repository_loads_custom_account_credential_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("usage-ledger.sqlite3");
+        let control_plane = dir.path().join("control-plane.sqlite3");
+
+        // 第一个「进程」：建表 + 写入自定义账号 / 凭据（tenant local/default 之外
+        // 的独立 account / credential，证明加载器按表读取而非依赖 legacy 种子）。
+        {
+            let database = app_database::DatabaseActor::open(&control_plane)
+                .await
+                .expect("open control plane for seeding");
+            app_database::migrate_control_plane(&database, &control_plane, false)
+                .await
+                .expect("migrate control plane for seeding");
+            database
+                .call(|connection| -> Result<(), String> {
+                    connection
+                        .execute_batch(
+                            "INSERT INTO provider_accounts
+                                (account_id, tenant_id, provider_id, principal_id, display_name,
+                                 routing_strategy, schema_version, created_at_ms, priority,
+                                 weight, max_concurrency, state)
+                             VALUES
+                                ('local/custom-acct', 'local/default', 'custom-prov', 'local/user',
+                                 'Custom account', 'single_candidate', 2, 0, 0, 1, 1, 'active');
+                             INSERT INTO credentials
+                                (credential_id, tenant_id, account_id, provider_id, credential_kind,
+                                 synthetic, schema_version, created_at_ms, secret_ref_service,
+                                 secret_ref_account, state, refresh_state, expires_at_ms)
+                             VALUES
+                                ('custom-cred', 'local/default', 'local/custom-acct', 'custom-prov',
+                                 'api_key', 0, 2, 0, 'custom-service', 'custom-account', 'active',
+                                 'not_refreshable', NULL);",
+                        )
+                        .map_err(|error| format!("seed custom rows: {error}"))?;
+                    Ok(())
+                })
+                .await
+                .map_err(|error| ControlPlaneError::RepositoryLoad(format!("seed: {error}")))
+                .expect("seed custom account/credential")
+                .expect("seed custom account/credential result");
+            drop(database);
+        }
+
+        // 第二个「进程」：重开同一控制面库；加载器从表解析出自定义凭据。
+        let runtime = CoreRuntime::with_persistent_control_plane(
+            "control-plane-reopen",
+            &ledger,
+            &control_plane,
+        )
+        .await
+        .expect("reopen persistent control plane");
+        let pool = runtime.credential_pool().expect("persistent pool");
+
+        // 自定义账号：picker 必须选中 custom-cred（Active），lease 携带该凭据。
+        let custom_lease = pool
+            .acquire(provider_control::AcquireRequest {
+                tenant_id: agent_domain::TenantId::new("local/default"),
+                principal_id: agent_domain::PrincipalId::new("local/user"),
+                session_id: agent_domain::SessionId::new("session-custom"),
+                agent_id: agent_domain::AgentId::new("agent-custom"),
+                provider_id: Some(agent_domain::ProviderId::new("custom-prov")),
+                account_id: Some(provider_control::AccountId::new("local/custom-acct")),
+                trace_id: Some("trace-custom".into()),
+            })
+            .await
+            .expect("custom active credential must be picked");
+        assert_eq!(
+            custom_lease.credential_id.as_str(),
+            "custom-cred",
+            "picker must read the custom credential from the loaded repository"
+        );
+
+        // legacy 默认账号仍由迁移种子写入并加载（共存，非互斥）。
+        let legacy_lease = pool
+            .acquire(provider_control::AcquireRequest {
+                tenant_id: agent_domain::TenantId::new("local/default"),
+                principal_id: agent_domain::PrincipalId::new("local/user"),
+                session_id: agent_domain::SessionId::new("session-legacy"),
+                agent_id: agent_domain::AgentId::new("agent-legacy"),
+                provider_id: Some(agent_domain::ProviderId::new("default")),
+                account_id: Some(provider_control::AccountId::new("local/default")),
+                trace_id: Some("trace-legacy".into()),
+            })
+            .await
+            .expect("legacy default credential must still be loaded");
+        assert_eq!(
+            legacy_lease.credential_id.as_str(),
+            "default",
+            "legacy default seed remains loadable alongside custom rows"
+        );
+        runtime.shutdown();
+    }
+
+    /// 严格解析 fail loud：provider_accounts 出现未知 state 枚举时，启动必须失败，
+    /// 不得静默丢弃坏行或回退 legacy 种子。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn control_plane_repository_load_rejects_unknown_account_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("usage-ledger.sqlite3");
+        let control_plane = dir.path().join("control-plane.sqlite3");
+
+        {
+            let database = app_database::DatabaseActor::open(&control_plane)
+                .await
+                .expect("open control plane for bad seed");
+            app_database::migrate_control_plane(&database, &control_plane, false)
+                .await
+                .expect("migrate control plane for bad seed");
+            database
+                .call(|connection| -> Result<(), String> {
+                    // CHECK 约束允许任意 TEXT；写入一个加载器无法反解的未知 state。
+                    connection
+                        .execute_batch(
+                            "INSERT INTO provider_accounts
+                                (account_id, tenant_id, provider_id, principal_id, display_name,
+                                 routing_strategy, schema_version, created_at_ms, priority,
+                                 weight, max_concurrency, state)
+                             VALUES
+                                ('local/bad-acct', 'local/default', 'bad-prov', 'local/user',
+                                 'Bad account', 'single_candidate', 2, 0, 0, 1, 1, 'frozen');",
+                        )
+                        .map_err(|error| format!("seed bad row: {error}"))?;
+                    Ok(())
+                })
+                .await
+                .map_err(|error| ControlPlaneError::RepositoryLoad(format!("seed: {error}")))
+                .expect("seed bad account row")
+                .expect("seed bad account row result");
+            drop(database);
+        }
+
+        let error = CoreRuntime::with_persistent_control_plane(
+            "control-plane-bad-state",
+            &ledger,
+            &control_plane,
+        )
+        .await;
+        // 不用 expect_err：它要求 Ok 变体 CoreRuntime: Debug（未实现）。改用 match
+        // 直接取 Err，保持 fail-loud 断言。
+        let error = match error {
+            Ok(_) => panic!("unknown account state must block startup"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, ControlPlaneError::RepositoryLoad(_)),
+            "expected RepositoryLoad on unknown enum, got {error:?}"
+        );
     }
 }

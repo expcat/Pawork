@@ -14,6 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 agent-domain = { path = "../../crates/agent-domain" }
 app-service = { path = "../../crates/app-service" }
+audit-log = { path = "../../crates/audit-log" }
 auth-service = { path = "../../crates/auth-service" }
 clap.workspace = true
 client-auth = { path = "../../crates/client-auth" }

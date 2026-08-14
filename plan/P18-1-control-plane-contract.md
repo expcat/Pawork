@@ -1,6 +1,6 @@
 # P18-1：Control Plane 契约与迁移基线
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P1-13、P0-4、P0-8、ADR-033
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢有界完成 · 交付成熟度：PartialWired（schema / migration 已进正式库，Lease 与 Route 进入主链；Health / Binding 仍未装配） · 依赖：P1-13、P0-4、P0-8、ADR-033
 
 **最终目的**：冻结 Provider、Account、Session、Agent 与 Client Protocol 的职责边界、versioned schema 和回滚策略，使后续账号池与客户端适配任务可以独立合并而不修改现有 `ModelProvider` contract。
 

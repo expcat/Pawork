@@ -1,6 +1,6 @@
 # P19-10：Provider / Account / Auth / Quota
 
-> Phase 19 · Desktop GUI · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P19-2、P19-3、P6-4、P14-1～P14-9、P15-8、P18-1～P18-9、P18-14
+> Phase 19 · Desktop GUI · 状态：🟡未开始 · 交付成熟度：Designed · 依赖：P19-2、P19-3、P6-4、P14-1～P14-9、P15-8、P18-1～P18-9、P18-14、P18-17、P18-18
 
 **最终目的**：提供脱敏的模型与账号控制面，让用户配置认证、查看能力/健康/路由/Usage/Quota 与 tenant policy，同时保证 Desktop 永远拿不到 credential 明文或 Lease secret。
 
@@ -28,6 +28,7 @@ P14-8 的 Usage/Quota 展示待本任务页面化：当前只有协议类型、C
 
 ## 验收标准
 
+- [ ] Core 前置已满足：正式 Provider composition 与 Route/Health/Binding control loop 通过 P18-17/P18-18 验收；GUI 不以本地 mock/state 补齐缺失能力
 - [ ] Desktop API/状态中无 plaintext credential/Lease secret/Protected Blob
 - [ ] API Key/OAuth 成功或取消后敏感输入从 GUI 内存/state/log 清除
 - [ ] Account health/routing 只展示 Core explanation，GUI 不做账号轮询

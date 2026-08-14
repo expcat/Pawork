@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use agent_domain::{PrincipalId, ProtectedBlobRef, ProviderId, SessionId, TenantId};
+use agent_domain::{ProtectedBlobRef, ProviderId, SessionId};
 use audit_log::{AuditAction, AuditDecision, AuditDimensions, AuditTargetKind};
 use client_adapter_api::{
     AdapterError, CapabilitySnapshot, ClientProtocol, TenantBinding, TrustedTenantContext,
@@ -266,6 +266,7 @@ impl ClaudeGatewayHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_domain::{PrincipalId, TenantId};
     use client_adapter_api::{
         ClientCapability, ClientProtocol, InMemorySessionRegistryStore, SessionRegistry,
         CLIENT_ADAPTER_SCHEMA_VERSION,

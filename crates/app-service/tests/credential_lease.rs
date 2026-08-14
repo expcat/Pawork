@@ -14,7 +14,9 @@ use core_api::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppResponse, CommandSource, RunState,
     API_VERSION,
 };
-use provider_control::{AccountId, CredentialPool, InMemoryCredentialPool};
+use provider_control::{
+    AccountId, CredentialPool, InMemoryCredentialPool, ProviderAccountRepository,
+};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -303,4 +305,365 @@ async fn retry_reacquires_lease_for_new_attempt() {
     }));
     wait_for_run_state(&router, &run_id, RunState::Cancelled).await;
     wait_until(|| pool.active_count_for(&local_tenant(), &pool_default_account()) == 0).await;
+}
+
+/// 注入账号仓库后，Route 选出真实 account，lease / usage 不再回退 local/default。
+#[tokio::test]
+async fn run_routes_injected_account_before_lease() {
+    let repo = std::sync::Arc::new(provider_control::InMemoryProviderAccountRepository::new());
+    let tenant = local_tenant();
+    repo.create_account(
+        &tenant,
+        provider_control::ProviderAccountRecord {
+            schema_version: provider_control::CONTROL_PLANE_SCHEMA_VERSION,
+            tenant_id: tenant.clone(),
+            account_id: AccountId::new("acct-routed"),
+            provider_id: agent_domain::ProviderId::new("mock"),
+            principal_id: agent_domain::PrincipalId::new("local/user"),
+            display_name: "routed".into(),
+            routing_strategy: provider_control::RoutingStrategy::SingleCandidate,
+            priority: 0,
+            weight: 1,
+            max_concurrency: 1,
+            state: provider_control::AccountState::Active,
+        },
+    )
+    .await
+    .expect("create account");
+    repo.create_credential(
+        &tenant,
+        provider_control::CredentialMetadata {
+            schema_version: provider_control::CONTROL_PLANE_SCHEMA_VERSION,
+            tenant_id: tenant.clone(),
+            credential_id: provider_control::CredentialId::new("cred-routed"),
+            account_id: AccountId::new("acct-routed"),
+            provider_id: agent_domain::ProviderId::new("mock"),
+            kind: provider_control::CredentialKind::ApiKey,
+            synthetic: false,
+            secret_ref: provider_control::SecretRef::new("pawork.mock", "cred-routed"),
+            state: provider_control::CredentialState::Active,
+            expires_at: None,
+            refresh_state: provider_control::RefreshState::NotRefreshable,
+        },
+    )
+    .await
+    .expect("create credential");
+
+    let picker = std::sync::Arc::new(provider_control::RepositoryCredentialPicker::new(
+        repo.clone(),
+    ));
+    let pool = std::sync::Arc::new(provider_control::InMemoryCredentialPool::build(
+        provider_control::PoolConfig::new(1),
+        std::sync::Arc::new(provider_control::SystemLeaseClock),
+        std::sync::Arc::new(provider_control::NullLeaseProjection),
+        picker,
+    ));
+    let (router, ledger) = router_with_pool_and_ledger(pool.clone());
+    router.set_account_repository(repo);
+    let session_id = prepare_session(&router);
+    let run_id = start_run(&router, &session_id);
+    wait_for_run_state(&router, &run_id, RunState::Completed).await;
+    wait_until(|| pool.active_count_for(&local_tenant(), &AccountId::new("acct-routed")) == 0)
+        .await;
+
+    let records = ledger
+        .query(&usage_ledger::UsageQuery {
+            tenant_id: Some(local_tenant()),
+            run_id: Some(run_id.clone()),
+            ..Default::default()
+        })
+        .await
+        .expect("query ledger");
+    assert!(!records.is_empty(), "run 应产生 usage 记录");
+    for record in &records {
+        assert_eq!(record.account_id, "acct-routed");
+        assert_eq!(record.credential_id.as_deref(), Some("cred-routed"));
+    }
+}
+
+/// 注入仓库但 provider 无绑定时，Route 无候选，run fail-closed，不回退 default。
+#[tokio::test]
+async fn missing_route_candidate_fails_closed_without_legacy_account() {
+    let repo = std::sync::Arc::new(provider_control::InMemoryProviderAccountRepository::new());
+    let pool = std::sync::Arc::new(InMemoryCredentialPool::new(1));
+    let provider = std::sync::Arc::new(
+        test_support::MockProvider::new(test_support::MockScript::new().complete())
+            .with_id(ProviderId::from("mock")),
+    );
+    let runtime = QuotaRuntime::production_in_memory();
+    let router = CommandRouter::new(RouterConfig::default());
+    router.set_credential_pool(pool.clone());
+    router.set_account_repository(repo);
+    router.set_quota_runtime(runtime);
+    router.register_provider(provider.clone());
+    let session_id = prepare_session(&router);
+    let run_id = start_run(&router, &session_id);
+    wait_for_run_state(&router, &run_id, RunState::Failed).await;
+    assert!(provider.calls().is_empty(), "无候选时不得调用 provider");
+    assert_eq!(
+        pool.active_count_for(&local_tenant(), &pool_default_account()),
+        0,
+        "不得回退到 local/default lease"
+    );
+}
+
+/// P18-16：双 FillFirst 账号，首账号被手工持有 lease 至 max_concurrency 时，
+/// route 依据池的 active_leases（active_count_for）下沉选择第二账号；usage
+/// 归属第二账号，手工 lease 不受影响。
+#[tokio::test]
+async fn fill_first_routes_around_saturated_account() {
+    let repo = std::sync::Arc::new(provider_control::InMemoryProviderAccountRepository::new());
+    let tenant = local_tenant();
+    create_bound_account(
+        &repo,
+        &tenant,
+        "acct-fill-1",
+        "cred-fill-1",
+        provider_control::RoutingStrategy::FillFirst,
+        0,
+    )
+    .await;
+    create_bound_account(
+        &repo,
+        &tenant,
+        "acct-fill-2",
+        "cred-fill-2",
+        provider_control::RoutingStrategy::FillFirst,
+        1,
+    )
+    .await;
+
+    let picker = std::sync::Arc::new(provider_control::RepositoryCredentialPicker::new(
+        repo.clone(),
+    ));
+    let pool = std::sync::Arc::new(provider_control::InMemoryCredentialPool::build(
+        provider_control::PoolConfig::new(2),
+        std::sync::Arc::new(provider_control::SystemLeaseClock),
+        std::sync::Arc::new(provider_control::NullLeaseProjection),
+        picker,
+    ));
+
+    // 手工持有首账号 lease 至 max_concurrency=1，迫使路由下沉到第二账号。
+    let manual_lease = pool
+        .acquire_guard(provider_control::AcquireRequest {
+            tenant_id: tenant.clone(),
+            principal_id: agent_domain::PrincipalId::new("local/user"),
+            session_id: SessionId::from("manual-saturate"),
+            agent_id: AgentId::new("manual-saturate"),
+            provider_id: Some(ProviderId::new("mock")),
+            account_id: Some(AccountId::new("acct-fill-1")),
+            trace_id: Some("manual:saturate".to_string()),
+        })
+        .await
+        .expect("manual lease on acct-fill-1");
+    assert_eq!(
+        pool.active_count_for(&local_tenant(), &AccountId::new("acct-fill-1")),
+        1
+    );
+
+    let (router, ledger) = router_with_pool_and_ledger(pool.clone());
+    router.set_account_repository(repo);
+    let session_id = prepare_session(&router);
+    let run_id = start_run(&router, &session_id);
+    wait_for_run_state(&router, &run_id, RunState::Completed).await;
+    wait_until(|| pool.active_count_for(&local_tenant(), &AccountId::new("acct-fill-2")) == 0)
+        .await;
+
+    let records = ledger
+        .query(&usage_ledger::UsageQuery {
+            tenant_id: Some(local_tenant()),
+            run_id: Some(run_id.clone()),
+            ..Default::default()
+        })
+        .await
+        .expect("query ledger");
+    assert!(!records.is_empty(), "run 应产生 usage 记录");
+    for record in &records {
+        assert_eq!(
+            record.account_id, "acct-fill-2",
+            "FillFirst 应下沉选择未饱和的第二账号"
+        );
+        assert_eq!(record.credential_id.as_deref(), Some("cred-fill-2"));
+    }
+    assert_eq!(
+        pool.active_count_for(&local_tenant(), &AccountId::new("acct-fill-1")),
+        1,
+        "手工 lease 不受 run 影响"
+    );
+
+    drop(manual_lease);
+    wait_until(|| pool.active_count_for(&local_tenant(), &AccountId::new("acct-fill-1")) == 0)
+        .await;
+}
+
+/// P18-16 辅助：创建绑定 Active 凭据的 provider 账号。
+async fn create_bound_account(
+    repo: &provider_control::InMemoryProviderAccountRepository,
+    tenant: &agent_domain::TenantId,
+    account: &str,
+    credential: &str,
+    strategy: provider_control::RoutingStrategy,
+    priority: u32,
+) {
+    repo.create_account(
+        tenant,
+        provider_control::ProviderAccountRecord {
+            schema_version: provider_control::CONTROL_PLANE_SCHEMA_VERSION,
+            tenant_id: tenant.clone(),
+            account_id: AccountId::new(account),
+            provider_id: agent_domain::ProviderId::new("mock"),
+            principal_id: agent_domain::PrincipalId::new("local/user"),
+            display_name: account.to_string(),
+            routing_strategy: strategy,
+            priority,
+            weight: 1,
+            max_concurrency: 1,
+            state: provider_control::AccountState::Active,
+        },
+    )
+    .await
+    .expect("create account");
+    repo.create_credential(
+        tenant,
+        provider_control::CredentialMetadata {
+            schema_version: provider_control::CONTROL_PLANE_SCHEMA_VERSION,
+            tenant_id: tenant.clone(),
+            credential_id: provider_control::CredentialId::new(credential),
+            account_id: AccountId::new(account),
+            provider_id: agent_domain::ProviderId::new("mock"),
+            kind: provider_control::CredentialKind::ApiKey,
+            synthetic: false,
+            secret_ref: provider_control::SecretRef::new("pawork.mock", credential),
+            state: provider_control::CredentialState::Active,
+            expires_at: None,
+            refresh_state: provider_control::RefreshState::NotRefreshable,
+        },
+    )
+    .await
+    .expect("create credential");
+}
+
+/// P18-16：双账号同为 Priority 策略时，选取 priority 数字更小的账号，
+/// lease / usage 归属真实路由账号而非 local/default。
+#[tokio::test]
+async fn priority_route_selects_highest_priority_account() {
+    let repo = std::sync::Arc::new(provider_control::InMemoryProviderAccountRepository::new());
+    let tenant = local_tenant();
+    // 先创建低优先级账号：验证选择依据 priority 数字而非注册顺序。
+    create_bound_account(
+        &repo,
+        &tenant,
+        "acct-low",
+        "cred-low",
+        provider_control::RoutingStrategy::Priority,
+        1,
+    )
+    .await;
+    create_bound_account(
+        &repo,
+        &tenant,
+        "acct-high",
+        "cred-high",
+        provider_control::RoutingStrategy::Priority,
+        0,
+    )
+    .await;
+
+    let picker = std::sync::Arc::new(provider_control::RepositoryCredentialPicker::new(
+        repo.clone(),
+    ));
+    let pool = std::sync::Arc::new(provider_control::InMemoryCredentialPool::build(
+        provider_control::PoolConfig::new(1),
+        std::sync::Arc::new(provider_control::SystemLeaseClock),
+        std::sync::Arc::new(provider_control::NullLeaseProjection),
+        picker,
+    ));
+    let (router, ledger) = router_with_pool_and_ledger(pool.clone());
+    router.set_account_repository(repo);
+    let session_id = prepare_session(&router);
+    let run_id = start_run(&router, &session_id);
+    wait_for_run_state(&router, &run_id, RunState::Completed).await;
+    wait_until(|| pool.active_count_for(&local_tenant(), &AccountId::new("acct-high")) == 0).await;
+
+    let records = ledger
+        .query(&usage_ledger::UsageQuery {
+            tenant_id: Some(local_tenant()),
+            run_id: Some(run_id.clone()),
+            ..Default::default()
+        })
+        .await
+        .expect("query ledger");
+    assert!(!records.is_empty(), "run 应产生 usage 记录");
+    for record in &records {
+        assert_eq!(
+            record.account_id, "acct-high",
+            "Priority 应选取 priority 数字更小的账号"
+        );
+        assert_eq!(record.credential_id.as_deref(), Some("cred-high"));
+    }
+}
+
+/// P18-16：候选账号路由策略不一致时 fail-closed——run Failed、不调用
+/// provider、不产生 lease，也不回退 legacy 账号。
+#[tokio::test]
+async fn conflicting_route_strategies_fail_closed() {
+    let repo = std::sync::Arc::new(provider_control::InMemoryProviderAccountRepository::new());
+    let tenant = local_tenant();
+    create_bound_account(
+        &repo,
+        &tenant,
+        "acct-a",
+        "cred-a",
+        provider_control::RoutingStrategy::Priority,
+        0,
+    )
+    .await;
+    create_bound_account(
+        &repo,
+        &tenant,
+        "acct-b",
+        "cred-b",
+        provider_control::RoutingStrategy::RoundRobin,
+        1,
+    )
+    .await;
+
+    let picker = std::sync::Arc::new(provider_control::RepositoryCredentialPicker::new(
+        repo.clone(),
+    ));
+    let pool = std::sync::Arc::new(provider_control::InMemoryCredentialPool::build(
+        provider_control::PoolConfig::new(1),
+        std::sync::Arc::new(provider_control::SystemLeaseClock),
+        std::sync::Arc::new(provider_control::NullLeaseProjection),
+        picker,
+    ));
+    let provider = std::sync::Arc::new(
+        test_support::MockProvider::new(test_support::MockScript::new().complete())
+            .with_id(ProviderId::from("mock")),
+    );
+    let runtime = QuotaRuntime::production_in_memory();
+    let router = CommandRouter::new(RouterConfig::default());
+    router.set_credential_pool(pool.clone());
+    router.set_account_repository(repo);
+    router.set_quota_runtime(runtime);
+    router.register_provider(provider.clone());
+    let session_id = prepare_session(&router);
+    let run_id = start_run(&router, &session_id);
+    wait_for_run_state(&router, &run_id, RunState::Failed).await;
+    assert!(provider.calls().is_empty(), "策略不一致时不得调用 provider");
+    assert_eq!(
+        pool.active_count_for(&local_tenant(), &AccountId::new("acct-a")),
+        0,
+        "策略不一致不得产生 lease"
+    );
+    assert_eq!(
+        pool.active_count_for(&local_tenant(), &AccountId::new("acct-b")),
+        0,
+        "策略不一致不得产生 lease"
+    );
+    assert_eq!(
+        pool.active_count_for(&local_tenant(), &pool_default_account()),
+        0,
+        "不得回退到 local/default lease"
+    );
 }

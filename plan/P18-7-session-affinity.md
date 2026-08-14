@@ -1,6 +1,6 @@
 # P18-7：Session Affinity / Binding
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-4、P18-6、P5-3、P18-2
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢库层有界完成 · 交付成熟度：LibraryBuilt（binding / affinity 状态机已验证，正式宿主尚未构造 SessionBindingService） · 依赖：P18-4、P18-6、P5-3、P18-2
 
 **最终目的**：让健康 session 在请求间稳定复用 account/model，同时在 cooldown、禁用或能力变化后安全 rebind，且不跨 tenant 复用粘性。
 

@@ -1,6 +1,6 @@
 # P18-14：Provider Registry / Pool Reconciliation / Hot Reload
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢库层 Reconciler/Probe/Quota target 已交付 · 交付成熟度：Built（生产 composition 延期） · 依赖：P18-4～P18-7、P18-10、P8-8
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢库层有界完成 · 交付成熟度：LibraryBuilt（Reconciler / Probe / Quota target 已验证，生产 composition 未装配） · 依赖：P18-4～P18-7、P18-10、P8-8
 
 **最终目的**：以 Provider factory registry 消除组合层硬编码，并在被动 cooldown 之外补齐过期 lease 回收、主动健康探测和事务式配置热切换，使 Provider/账号/capability 变化不会留下悬挂 binding 或半应用配置。
 

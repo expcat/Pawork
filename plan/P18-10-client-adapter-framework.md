@@ -1,6 +1,6 @@
 # P18-10：ClientAdapter Framework / Session Registry
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已验收 · 交付成熟度：Target-Verified · 依赖：P18-1、P18-2、P18-9、P0-8、P13-1、P13-2
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢有界完成 · 交付成熟度：HostWired（ACP 经 ClientAdapterHost；Codex / Claude 生产入口未装配） · 依赖：P18-1、P18-2、P18-9、P0-8、P13-1、P13-2
 
 **最终目的**：为 Codex、Claude、ACP 等外部 Agent Client 提供统一协议适配契约、能力协商和 authoritative Session Registry，同时保持 GUI Connection Protocol 独立。
 

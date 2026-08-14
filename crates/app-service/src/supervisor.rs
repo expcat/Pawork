@@ -36,7 +36,11 @@ use core_api::{
 };
 use model_registry::ModelRegistry;
 use provider_api::ModelProvider;
-use provider_control::{AcquireRequest, CredentialLease, CredentialPool, LeaseGuard, LeaseOutcome};
+use provider_control::{
+    AccountState, AcquireRequest, AdmitAllHealth, CredentialLease, CredentialPool, CredentialState,
+    LeaseGuard, LeaseOutcome, LocalDefaultPolicy, ProviderAccountRepository, RouteCandidate,
+    RouteContext, RoutingPolicy, RoutingStrategy,
+};
 use tenant_service::{
     decide_agent_concurrency, decide_budget, decide_request_concurrency, IdentityContext,
     Permission, PolicyDecision, PolicyDecisionKind, PolicyGate,
@@ -215,6 +219,10 @@ pub struct RunSupervisor {
     /// 异步 acquire 并持有 LeaseGuard 至终态；未注入时为 `None`，走 legacy
     /// 过渡路径——不 acquire、attribution 无 credential）。
     credential_pool: Mutex<Option<Arc<dyn CredentialPool>>>,
+    /// P18-16：可选账号仓库。注入后每个 run attempt 先经 RoutingPolicy
+    /// 选出真实 account，再 acquire；未注入时保持 account_id=None
+    /// 的 legacy 过渡路径，既有测试不改行为。
+    account_repository: Mutex<Option<Arc<dyn ProviderAccountRepository>>>,
     /// P18-9 租户策略闸口（与 router / AppService 共享同一实例）：lease
     /// 取得后强制 LeaseAcquire + account 白名单，并用唯一 UsageLedger 做
     /// 预算 admission；拒绝时释放 lease、run fail-closed。由
@@ -276,6 +284,7 @@ impl RunSupervisor {
             user_hooks: Mutex::new(None),
             workspace_roots: Mutex::new(Vec::new()),
             credential_pool: Mutex::new(None),
+            account_repository: Mutex::new(None),
             tenant_policy: policy_slot,
         }
     }
@@ -359,6 +368,29 @@ impl RunSupervisor {
         self.credential_pool
             .lock()
             .expect("credential_pool mutex")
+            .clone()
+    }
+
+    /// 注入共享账号仓库（P18-16）：run attempt 在 acquire 前用
+    /// RoutingPolicy::plan 选出真实 account。幂等：同一实例重复注入为
+    /// no-op。未注入时保持 account_id=None。
+    pub fn set_account_repository(&self, repository: Arc<dyn ProviderAccountRepository>) {
+        let mut guard = self
+            .account_repository
+            .lock()
+            .expect("account_repository mutex");
+        let already = guard
+            .as_ref()
+            .is_some_and(|existing| Arc::ptr_eq(existing, &repository));
+        if !already {
+            *guard = Some(repository);
+        }
+    }
+
+    fn account_repository(&self) -> Option<Arc<dyn ProviderAccountRepository>> {
+        self.account_repository
+            .lock()
+            .expect("account_repository mutex")
             .clone()
     }
 
@@ -498,6 +530,7 @@ impl RunSupervisor {
         let quota_runtime = self.quota_runtime();
         let credential_pool = self.credential_pool();
         let tenant_policy = self.tenant_policy();
+        let account_repository = self.account_repository();
         let user_hooks = self.user_hooks();
         let workspace_roots = self.workspace_roots();
         let agent_id = request.agent_id();
@@ -535,6 +568,7 @@ impl RunSupervisor {
             task_manager,
             credential_pool,
             tenant_policy,
+            account_repository,
         );
         inner.started += 1;
         inner.tasks.insert(
@@ -774,6 +808,7 @@ impl RunSupervisor {
         let quota_runtime = self.quota_runtime();
         let credential_pool = self.credential_pool();
         let tenant_policy = self.tenant_policy();
+        let account_repository = self.account_repository();
         let user_hooks = self.user_hooks();
         let workspace_roots = self.workspace_roots();
         let join = spawn_run_task(
@@ -810,6 +845,7 @@ impl RunSupervisor {
             task_manager,
             credential_pool,
             tenant_policy,
+            account_repository,
         );
         let _ = self.aggregate.set_run_state(run_id, RunState::Created);
         if let Some(task) = inner.tasks.get_mut(run_id) {
@@ -1544,6 +1580,101 @@ fn estimate_cost_fields(
     (cost_micros, currency, cost_confidence, cost_provenance)
 }
 
+/// P18-16：注入账号仓库时先经 RoutingPolicy 选出真实 account；未注入则
+/// 保持 account_id=None，由池走 legacy 回退。路由策略取自 Active 账号的
+/// `routing_strategy`（候选间不一致时 fail-closed，原因仅含策略名，不含
+/// 账号/凭据标识）；无候选时 fail-closed。`active_leases` 由当前
+/// CredentialPool 的 tenant-scoped 活跃计数填充。
+async fn resolve_route_account(
+    repository: Option<&dyn ProviderAccountRepository>,
+    pool: &dyn CredentialPool,
+    tenant_policy: Option<&Arc<TenantPolicyGate>>,
+    identity: &IdentityContext,
+    session_id: &SessionId,
+    agent_id: &AgentId,
+    provider_id: &ProviderId,
+    model: &ModelId,
+) -> Result<Option<provider_control::AccountId>, String> {
+    let Some(repository) = repository else {
+        return Ok(None);
+    };
+    let bindings = repository
+        .list_bindings(&identity.tenant_id, provider_id)
+        .await;
+    let mut candidates: Vec<RouteCandidate> = Vec::new();
+    let mut strategies: Vec<RoutingStrategy> = Vec::new();
+    for binding in bindings {
+        if binding.account.state != AccountState::Active {
+            continue;
+        }
+        let Some(credential) = binding
+            .credentials
+            .iter()
+            .find(|credential| credential.state == CredentialState::Active)
+        else {
+            continue;
+        };
+        let strategy = binding.account.routing_strategy;
+        if !strategies.contains(&strategy) {
+            strategies.push(strategy);
+        }
+        candidates.push(RouteCandidate {
+            account_id: binding.account.account_id.clone(),
+            credential_id: credential.credential_id.clone(),
+            provider_id: binding.account.provider_id.clone(),
+            model_id: model.clone(),
+            priority: binding.account.priority,
+            weight: binding.account.weight,
+            capabilities: Default::default(),
+            context_window_tokens: u64::MAX,
+            max_output_tokens: u64::MAX,
+            active_leases: pool.active_count_for(&identity.tenant_id, &binding.account.account_id),
+            max_concurrency: binding.account.max_concurrency,
+        });
+    }
+    if strategies.len() > 1 {
+        let mut names: Vec<&'static str> = strategies
+            .iter()
+            .map(|strategy| strategy.as_db_str())
+            .collect();
+        names.sort_unstable();
+        return Err(format!(
+            "conflicting routing strategies across candidates: {}",
+            names.join(",")
+        ));
+    }
+    let context = RouteContext {
+        tenant_id: identity.tenant_id.clone(),
+        principal_id: identity.principal_id.clone(),
+        session_id: session_id.clone(),
+        agent_id: agent_id.clone(),
+        model_id: model.clone(),
+        ..RouteContext::default()
+    };
+    let adapter;
+    let fallback = LocalDefaultPolicy;
+    let tenant: &dyn provider_control::TenantPolicy = if let Some(gate) = tenant_policy {
+        adapter = crate::RoutingTenantPolicyAdapter::new(Arc::clone(gate));
+        &adapter
+    } else {
+        &fallback
+    };
+    let policy = RoutingPolicy {
+        strategy: strategies.first().copied().unwrap_or_default(),
+        ..RoutingPolicy::default()
+    };
+    let decision = policy.plan(&context, &candidates, tenant, &mut AdmitAllHealth);
+    match decision.selected {
+        Some(selected) => Ok(Some(selected.candidate.account_id)),
+        None => Err(decision
+            .error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| {
+                format!("no route candidate for provider {}", provider_id.as_str())
+            })),
+    }
+}
+
 /// 记账 + 本地缓存刷新（P18-8 逐调用与终态兜底共用）：记账成功后才刷新
 /// 缓存，账本失败不发布缓存，保证缓存与账本一致。失败只上报结构化摘要
 /// （不含密钥/凭据），不改变 run 终态语义。返回是否全部成功。
@@ -1663,6 +1794,7 @@ fn spawn_run_task(
     task_manager: Option<Arc<task_manager::TaskManager>>,
     credential_pool: Option<Arc<dyn CredentialPool>>,
     tenant_policy: Option<Arc<TenantPolicyGate>>,
+    account_repository: Option<Arc<dyn ProviderAccountRepository>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // P18-4：每个 run attempt 在 provider 调用前异步 acquire 一次 lease，
@@ -1699,13 +1831,31 @@ fn spawn_run_task(
         let attribution = match credential_pool.as_ref() {
             Some(pool) => {
                 let trace_id = format!("run:{run_id}:attempt:{attempt}");
+                let account_id = match resolve_route_account(
+                    account_repository.as_deref(),
+                    pool.as_ref(),
+                    tenant_policy.as_ref(),
+                    &identity,
+                    &session_id,
+                    &agent_id,
+                    &provider_id,
+                    &model,
+                )
+                .await
+                {
+                    Ok(account_id) => account_id,
+                    Err(reason) => {
+                        fail_policy(reason);
+                        return;
+                    }
+                };
                 let request = AcquireRequest {
                     tenant_id: identity.tenant_id.clone(),
                     principal_id: identity.principal_id.clone(),
                     session_id: session_id.clone(),
                     agent_id: agent_id.clone(),
                     provider_id: Some(provider_id.clone()),
-                    account_id: None,
+                    account_id,
                     trace_id: Some(trace_id.clone()),
                 };
                 match pool.acquire_guard(request).await {

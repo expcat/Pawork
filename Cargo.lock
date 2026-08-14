@@ -3269,6 +3269,7 @@ dependencies = [
  "app-service",
  "assert_cmd",
  "async-trait",
+ "audit-log",
  "auth-service",
  "clap",
  "cli-command",

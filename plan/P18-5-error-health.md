@@ -1,6 +1,6 @@
 # P18-5：ErrorClassifier、Health、Cooldown 与 Circuit Breaker
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-3、P2-10、P2-11、P15-9
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢库层有界完成 · 交付成熟度：LibraryBuilt（classifier / health / cooldown / circuit 已验证，正式 Route 尚未注入 HealthRuntime） · 依赖：P18-3、P2-10、P2-11、P15-9
 
 **最终目的**：把 transport retry、credential/account failover 与 protocol fallback 分开，使失败只影响正确 scope，不把请求错误或客户端取消误判为账号故障。
 

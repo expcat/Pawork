@@ -1,6 +1,6 @@
 # P18-2：Tenant / Principal 身份基线
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified（有界：tenant/principal identity 与 Session/Run 隔离已闭合；Account/Lease/Ledger/Audit 的跨任务验收由 P18-3/4/8/13 收口） · 依赖：P18-1、P1-3、P1-4、P0-2
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢有界完成 · 交付成熟度：HostWired（tenant/principal identity 与 Session/Run/Lease/Usage 隔离已进入正式宿主） · 依赖：P18-1、P1-3、P1-4、P0-2
 
 **最终目的**：让 Session、Agent、Provider Account、Usage 与 Audit 都有稳定 tenant boundary，同时保持本地单用户零配置体验。
 

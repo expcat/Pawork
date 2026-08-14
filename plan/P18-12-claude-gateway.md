@@ -1,6 +1,6 @@
 # P18-12：Claude Gateway Adapter
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢TargetVerified（workspace member + identity hoist + host seam） · 交付成熟度：HostSeamVerified · 依赖：P18-10、P18-8、P15-3、P15-7、P12-1
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢宿主接缝有界完成 · 交付成熟度：HostSeam（workspace member + identity hoist；生产调用方未装配） · 依赖：P18-10、P18-8、P15-3、P15-7、P12-1
 
 **最终目的**：接入 Claude Code 的 Anthropic Messages wire protocol 与 session/agent identity，使并行 subagent 的用量和审计可归属，并显式处理 signed reasoning continuity 能力。
 

@@ -1,6 +1,6 @@
 # P18-6：RoutingPolicy Chain
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢已完成 · 交付成熟度：TargetVerified · 依赖：P18-2、P18-4、P18-5、P2-7、P15-8
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢有界完成 · 交付成熟度：PartialWired（account route → lease 与 tenant policy 已进入 run；Health / model capability / credential 直传仍待后续） · 依赖：P18-2、P18-4、P18-5、P2-7、P15-8
 
 **最终目的**：建立可组合、可解释、可确定性测试的路由策略链，支持 priority、weighted round robin、fill-first 与 fallback，而不把账号选择塞进 `ModelProvider` 或 Agent Engine。
 

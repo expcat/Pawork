@@ -1,6 +1,6 @@
 # P18-13：Canonical Audit Event / OTel Export
 
-> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢TargetVerified · 交付成熟度：Built · 依赖：P18-2、P18-4～P18-10、P1-9、P1-10、P1-11
+> Phase 18 · Account Control Plane & Client Adapters · 状态：🟢有界完成 · 交付成熟度：PartialWired（正式宿主持久化 policy / route audit；完整事件覆盖与 OTel collector 未装配） · 依赖：P18-2、P18-4～P18-10、P1-9、P1-10、P1-11
 
 **最终目的**：把身份、policy、route、lease、Agent、permission/tool 与 Client 行为写成 tenant-scoped canonical audit event，并以脱敏 allowlist 导出 OTel/SIEM。
 

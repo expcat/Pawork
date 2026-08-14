@@ -494,9 +494,10 @@ pub const DEFAULT_LEASE_TTL_MS: u64 = 3_600_000;
 /// 池本身不接触凭据明文与 repository；宿主组合层注入基于账号仓库的真实选择器。
 /// 默认 [`LegacyCredentialPicker`] 返回合成 `default` 凭据（legacy 单凭据回退），
 /// 满足 P18-4 在未接入 repository 时的独立可用性。
+#[async_trait]
 pub trait CredentialPicker: Send + Sync {
     /// 按 `(tenant, account, provider)` 选出一个 credential_id（opaque，无明文）。
-    fn pick(
+    async fn pick(
         &self,
         tenant: &TenantId,
         account: &AccountId,
@@ -508,14 +509,57 @@ pub trait CredentialPicker: Send + Sync {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LegacyCredentialPicker;
 
+#[async_trait]
 impl CredentialPicker for LegacyCredentialPicker {
-    fn pick(
+    async fn pick(
         &self,
         _tenant: &TenantId,
         _account: &AccountId,
         _provider: &ProviderId,
     ) -> Result<CredentialId, PoolError> {
         Ok(CredentialId::new("default"))
+    }
+}
+
+/// 基于账号仓库的选择器：按 `(tenant, account, provider)` 取第一条 Active 凭据。
+///
+/// `list_bindings` 是 async，本选择器实现 `async fn pick`，在 acquire 热路径
+/// （异步任务内）直接 `.await`，不再额外 block_on。
+#[cfg(feature = "account-control-v1")]
+#[derive(Clone)]
+pub struct RepositoryCredentialPicker {
+    repository: Arc<dyn crate::ProviderAccountRepository>,
+}
+
+#[cfg(feature = "account-control-v1")]
+impl RepositoryCredentialPicker {
+    /// 以共享账号仓库构造。
+    pub fn new(repository: Arc<dyn crate::ProviderAccountRepository>) -> Self {
+        Self { repository }
+    }
+}
+
+#[cfg(feature = "account-control-v1")]
+#[async_trait]
+impl CredentialPicker for RepositoryCredentialPicker {
+    async fn pick(
+        &self,
+        tenant: &TenantId,
+        account: &AccountId,
+        provider: &ProviderId,
+    ) -> Result<CredentialId, PoolError> {
+        let bindings = self.repository.list_bindings(tenant, provider).await;
+        bindings
+            .into_iter()
+            .find(|binding| binding.account.account_id == *account)
+            .and_then(|binding| {
+                binding
+                    .credentials
+                    .into_iter()
+                    .find(|credential| credential.state == crate::CredentialState::Active)
+            })
+            .map(|credential| credential.credential_id)
+            .ok_or(PoolError::NoCandidate)
     }
 }
 
@@ -770,7 +814,10 @@ impl CredentialPool for InMemoryCredentialPool {
             .clone()
             .unwrap_or_else(|| ProviderId::new("default"));
         // credential 在锁外选择（picker 不依赖池状态；与 self.inner 的 disjoint borrow）。
-        let credential = self.picker.pick(&req.tenant_id, &account, &provider)?;
+        let credential = self
+            .picker
+            .pick(&req.tenant_id, &account, &provider)
+            .await?;
 
         // 临界区内只做准入判定与计数；事件持久化在锁外（projection.apply 可 await）。
         // 注意：**不在 acquire 热路径做懒过期**（P18-4 主审修复）。懒过期会先归还内存额度
@@ -2344,5 +2391,60 @@ mod tests {
             );
             assert_eq!(projection.len(), 0, "终态 lease 已移出 outstanding");
         }
+    }
+}
+
+#[cfg(all(test, feature = "account-control-v1"))]
+mod repository_picker_tests {
+    use super::*;
+    use crate::repository::InMemoryProviderAccountRepository;
+
+    #[tokio::test]
+    async fn repository_credential_picker_selects_legacy_default() {
+        let repo = Arc::new(InMemoryProviderAccountRepository::with_legacy_default());
+        let picker = RepositoryCredentialPicker::new(repo);
+        let credential = picker
+            .pick(
+                &TenantId::new("local/default"),
+                &AccountId::new("local/default"),
+                &ProviderId::new("default"),
+            )
+            .await
+            .expect("legacy default credential");
+        assert_eq!(credential.as_str(), "default");
+    }
+
+    #[tokio::test]
+    async fn repository_credential_picker_unknown_account_is_no_candidate() {
+        let repo = Arc::new(InMemoryProviderAccountRepository::with_legacy_default());
+        let picker = RepositoryCredentialPicker::new(repo);
+        let error = picker
+            .pick(
+                &TenantId::new("local/default"),
+                &AccountId::new("missing"),
+                &ProviderId::new("default"),
+            )
+            .await
+            .expect_err("unknown account must fail closed");
+        assert!(matches!(error, PoolError::NoCandidate));
+    }
+
+    #[tokio::test]
+    async fn repository_credential_picker_without_active_credential_is_no_candidate() {
+        let repo = Arc::new(InMemoryProviderAccountRepository::with_legacy_default());
+        let tenant = TenantId::new("local/default");
+        repo.disable_credential(&tenant, &CredentialId::new("default"))
+            .await
+            .expect("disable legacy credential");
+        let picker = RepositoryCredentialPicker::new(repo);
+        let error = picker
+            .pick(
+                &tenant,
+                &AccountId::new("local/default"),
+                &ProviderId::new("default"),
+            )
+            .await
+            .expect_err("account without an active credential must fail closed");
+        assert!(matches!(error, PoolError::NoCandidate));
     }
 }
