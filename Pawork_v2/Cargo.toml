@@ -41,3 +41,7 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 proptest = "1"
 tempfile = "3"
 clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+tracing = "0.1"
+landlock = "0.4"
+windows = "0.58"

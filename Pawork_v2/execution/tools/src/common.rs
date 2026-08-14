@@ -29,6 +29,8 @@ pub enum BuiltinToolError {
     Io(#[from] std::io::Error),
     #[error("workspace error: {0}")]
     Workspace(WorkspaceError),
+    #[error("process error: {0}")]
+    Process(String),
     #[error("{0}")]
     Other(String),
 }
@@ -81,6 +83,7 @@ impl From<BuiltinToolError> for ToolError {
                 WorkspaceError::NotFound(_) => (ToolErrorKind::NotFound, ws.to_string()),
                 _ => (ToolErrorKind::ExecutionFailed, ws.to_string()),
             },
+            BuiltinToolError::Process(msg) => (ToolErrorKind::ExecutionFailed, msg.clone()),
             BuiltinToolError::Other(msg) => (ToolErrorKind::ExecutionFailed, msg.clone()),
         };
         ToolError {

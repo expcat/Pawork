@@ -37,7 +37,7 @@
 | [S1](plan/S1-sessions.md) | 会话持久化与恢复 | 会话落盘、`pawork sessions list/show`、`--resume` 续聊、`--json` 事件流输出 | sqlite、session（核心）、domain（events 全量）、engine（事件化 + appender） | 中断/杀进程后 resume 续聊上下文连续；envelope golden 与 append-only 契约生效 | 🟢 |
 | [S2](plan/S2-tool-loop.md) | Agent Loop 与只读工具 | Agent 自主调用 read/list/search/find 回答仓库问题；`@`引用前身（相对路径语义） | api（tool）、tools（只读四件）、workspace（roots）、engine（工具循环）、providers/adapters（anthropic-messages）、testkit（MockProvider） | 真实仓库问答任务；OpenAI/Anthropic 双协议 tool-calling 对比评估 | 🟢 |
 | [S3](plan/S3-safe-edits.md) | 写入工具与审批 | write/edit/apply_patch + 终端审批交互（`--approval-mode`） | policy（整包）、tools（写三件）、engine/cli（审批位点） | 真实小编码任务经审批落盘；越界/symlink 拒绝；deny 后会话可续 | 🟢 |
-| [S4](plan/S4-exec-sandbox.md) | 命令执行与沙箱 | run_command（进程树清理 + 沙箱 + 输出截断）——首个完整「读-改-跑」编码闭环 | exec（process/sandbox）、tools（run_command）、policy（shell 分类接线） | 「跑 cargo check 并修复报错」端到端；Ctrl-C 杀整棵进程树；fail-closed | ⚪ |
+| [S4](plan/S4-exec-sandbox.md) | 命令执行与沙箱 | run_command（进程树清理 + 沙箱 + 输出截断）——首个完整「读-改-跑」编码闭环 | exec（process/sandbox）、tools（run_command）、policy（shell 分类接线） | 「跑 cargo check 并修复报错」端到端；Ctrl-C 杀整棵进程树；fail-closed | 🔵 |
 | [S5](plan/S5-context-usage.md) | 上下文预算与用量 | 长任务不炸上下文（预算/截断/压缩）、token 与费用统计显示 | engine（context 接线）、session（compaction feature）、provider-core（usage/registry/pricing） | 超长多轮任务连贯完成；token 计量与厂商侧抽查一致 | ⚪ |
 | [S6](plan/S6-providers-auth.md) | 多 Provider 与认证 | 全厂商适配、`pawork models` 聚合、OS Keychain 存 key、OAuth | providers/adapters（8 厂商正式化）、auth、diagnostics（脱敏 layer）、config（凭证解析） | key 入 Keychain 后正常使用；运行中切换 provider/model；secret 不入日志回归 | ⚪ |
 | [S7](plan/S7-git-checkpoint.md) | Git、Diff 与 Checkpoint | 会话改动 diff 呈现、编辑前快照、`pawork rollback` 一键回滚 | git（git+diff）、blob-store（artifact/protected/checkpoint） | 真实任务后 diff 审阅 + 回滚还原；git 注入防护回归 | ⚪ |

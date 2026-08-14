@@ -12,6 +12,7 @@ pawork-domain = { path = "../../foundation/domain" }
 pawork-api = { path = "../../foundation/api" }
 pawork-workspace = { path = "../../workspace/core" }
 pawork-policy = { path = "../policy" }
+pawork-exec = { path = "../exec" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -26,4 +27,5 @@ encoding_rs = "0.8"
 [dev-dependencies]
 tempfile.workspace = true
 proptest.workspace = true
+pawork-testkit = { path = "../../foundation/testkit" }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt", "rt-multi-thread", "sync", "time"] }

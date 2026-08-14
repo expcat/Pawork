@@ -1042,4 +1042,65 @@ mod tests {
         assert!(result.is_error());
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
+
+    #[tokio::test]
+    async fn process_never_ask_trusted_injects_execution_constraints() {
+        struct InputProbe {
+            seen: Arc<StdMutex<Option<serde_json::Value>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentTool for InputProbe {
+            fn descriptor(&self) -> ToolDescriptor {
+                ToolDescriptor {
+                    name: "process_probe".into(),
+                    description: "process probe".into(),
+                    input_schema: json!({"type": "object"}),
+                    capability: ToolCapability::Process,
+                    kind: ToolKind::ClientFunction,
+                    hosting: ToolHosting::Local,
+                    capabilities: Vec::new(),
+                    requires_approval: false,
+                    read_only: false,
+                    supports_concurrency: false,
+                    default_timeout_ms: None,
+                    max_output_bytes: 8 * 1024 * 1024,
+                    allowed_in_untrusted_workspace: false,
+                }
+            }
+
+            async fn execute(
+                &self,
+                request: ToolRequest,
+                _context: ToolExecutionContext,
+                _sink: &dyn ToolEventSink,
+                _cancel: CancellationToken,
+            ) -> Result<ToolResult, ToolError> {
+                *self.seen.lock().expect("input") = Some(request.input);
+                Ok(ToolResult::success(Vec::new()))
+            }
+        }
+
+        let seen = Arc::new(StdMutex::new(None));
+        let scheduler = make_scheduler(
+            vec![Arc::new(InputProbe { seen: seen.clone() })],
+            policy_config(ApprovalMode::NeverAsk, true),
+        );
+        scheduler
+            .execute_named(
+                "process_probe",
+                req("process_probe", json!({"command": "echo hi"})),
+                execution_context(),
+                CancellationToken::new(),
+                Some(&AutoApproveResolver),
+                &NoopToolEventSink,
+            )
+            .await
+            .unwrap();
+
+        let input = seen.lock().expect("input").clone().expect("input seen");
+        assert_eq!(input["timeout_ms"], 60_000);
+        assert_eq!(input["max_output_bytes"], 1_048_576);
+        assert_eq!(input["command"], "echo hi");
+    }
 }

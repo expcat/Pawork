@@ -166,8 +166,18 @@ fn command_hits_danger_floor(input: &Value) -> bool {
     extract_command(input).is_some_and(|(program, args)| hits_danger_floor(&program, &args))
 }
 
-/// 从工具入参中提取命令（支持 `program`/`command`/`cmd` + `args` 多种形状）。
+/// 从工具入参中提取命令。
+///
+/// 优先认非空 `argv`（`argv[0]` 为 program、其余为 args），与 `run_command`
+/// 实际执行形状一致；否则保留 `program` / `command` / `cmd` + `args`。
 fn extract_command(input: &Value) -> Option<(String, Vec<String>)> {
+    if let Some(argv) = input.get("argv").and_then(|v| v.as_array()) {
+        if !argv.is_empty() {
+            if let Some(program) = argv[0].as_str() {
+                return Some((program.to_string(), read_args(input)));
+            }
+        }
+    }
     if let Some(prog) = input.get("program").and_then(|v| v.as_str()) {
         return Some((prog.to_string(), read_args(input)));
     }
@@ -182,6 +192,15 @@ fn extract_command(input: &Value) -> Option<(String, Vec<String>)> {
 }
 
 fn read_args(input: &Value) -> Vec<String> {
+    if let Some(argv) = input.get("argv").and_then(|v| v.as_array()) {
+        if !argv.is_empty() {
+            return argv
+                .iter()
+                .skip(1)
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect();
+        }
+    }
     input
         .get("args")
         .and_then(|v| v.as_array())
@@ -413,6 +432,53 @@ mod tests {
     }
 
     #[test]
+    fn argv_catastrophic_is_denied_in_never_ask_trusted_process() {
+        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let dec = eng.decide(&input(
+            ToolCapability::Process,
+            true,
+            ApprovalMode::NeverAsk,
+            json!({"argv": ["rm", "-rf", "/"]}),
+        ));
+        assert!(
+            matches!(dec, PolicyDecision::Deny { .. }),
+            "unexpected decision: {dec:?}"
+        );
+    }
+
+    #[test]
+    fn argv_force_push_asks_user_as_dangerous() {
+        let eng = PolicyEngine::new(ApprovalMode::AskForDangerous);
+        let dec = eng.decide(&input(
+            ToolCapability::Process,
+            true,
+            ApprovalMode::AskForDangerous,
+            json!({"argv": ["git", "push", "--force"]}),
+        ));
+        match dec {
+            PolicyDecision::AskUser { prompt } => assert_eq!(prompt.risk, RiskLevel::Dangerous),
+            other => panic!("expected AskUser, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn argv_safe_process_allows_with_constraints() {
+        let eng = PolicyEngine::new(ApprovalMode::AskForDangerous);
+        let dec = eng.decide(&input(
+            ToolCapability::Process,
+            true,
+            ApprovalMode::AskForDangerous,
+            json!({"argv": ["ls"]}),
+        ));
+        match dec {
+            PolicyDecision::AllowWithConstraints { constraints } => {
+                assert!(constraints.timeout_ms.is_some());
+            }
+            other => panic!("expected AllowWithConstraints, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn always_ask_prompts() {
         let eng = PolicyEngine::new(ApprovalMode::AlwaysAsk);
         let dec = eng.decide(&input(
@@ -450,6 +516,30 @@ mod tests {
         assert_eq!(
             super::command_risk(&json!({"command": "ls"})),
             CommandRisk::Safe
+        );
+        assert_eq!(
+            super::command_risk(&json!({"argv": ["git", "push", "--force"]})),
+            CommandRisk::Dangerous
+        );
+    }
+
+    #[test]
+    fn extract_command_prefers_argv_over_command_and_args() {
+        assert_eq!(
+            super::extract_command(&json!({
+                "command": "echo",
+                "args": ["hi"],
+                "argv": ["rm", "-rf", "/"]
+            })),
+            Some(("rm".into(), vec!["-rf".into(), "/".into()]))
+        );
+        assert_eq!(
+            super::extract_command(&json!({"command": "rm", "args": ["-rf", "/"]})),
+            Some(("rm".into(), vec!["-rf".into(), "/".into()]))
+        );
+        assert_eq!(
+            super::extract_command(&json!({"program": "ls", "args": ["-l"]})),
+            Some(("ls".into(), vec!["-l".into()]))
         );
     }
 
