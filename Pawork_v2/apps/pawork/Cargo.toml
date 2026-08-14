@@ -1,0 +1,12 @@
+[package]
+name = "pawork"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork CLI 唯一正式宿主"
+
+[dependencies]
+pawork-cli = { path = "../../host/cli" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

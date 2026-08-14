@@ -1,0 +1,20 @@
+[package]
+name = "pawork-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 最小应用门面（配置装配 + chat_turn / list_models）"
+
+[dependencies]
+pawork-domain = { path = "../../foundation/domain" }
+pawork-api = { path = "../../foundation/api" }
+pawork-config = { path = "../../foundation/config" }
+pawork-engine = { path = "../../engine/engine" }
+pawork-providers = { path = "../../providers/adapters" }
+thiserror.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

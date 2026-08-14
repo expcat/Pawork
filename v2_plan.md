@@ -46,9 +46,9 @@
 | --- | --- |
 | 当前阶段 | S0（[plan/S0-minimal-chat.md](Pawork_v2/plan/S0-minimal-chat.md)） |
 | 阶段状态 | 🔵 进行中 |
-| 已完成波次 | S0 波 A（workspace 根 → `pawork-domain` → `pawork-api`）；S0 波 B（`pawork-net`、`pawork-config`）；S0 波 C（`pawork-providers`、`pawork-engine`） |
-| **下一波次** | **S0 波 D**（串行收口：`pawork-app` + `pawork-cli` + `apps/pawork` + fixtures + 真实冒烟） |
-| 阻塞 | 无 |
+| 已完成波次 | S0 波 A（workspace 根 → `pawork-domain` → `pawork-api`）；S0 波 B（`pawork-net`、`pawork-config`）；S0 波 C（`pawork-providers`、`pawork-engine`）；S0 波 D 代码已落地（`pawork-app` + `pawork-cli` + `apps/pawork` + fixtures），冒烟未跑 |
+| **下一波次** | **S0 波 D 冒烟收口**（两把真实 key：`PAWORK_API_KEY_GLM_CODING` / `PAWORK_API_KEY_OPENCODE_GO`） |
+| 阻塞 | 环境未设置 `PAWORK_API_KEY_*`；按 task-guide §5 fail-closed，不改用 mock 顶替冒烟 |
 
 自动选择以本表为准，再用 ROADMAP / 任务书 / 工作区实态交叉校验（§4）。三者冲突时：**工作区实态 > 本表 > ROADMAP 状态列**；更新本表使三者一致后再开工。
 

@@ -1,0 +1,26 @@
+# Pawork 配置样例。复制到全局配置目录或工作区 `.pawork/config.toml`：
+#   Windows: %APPDATA%\dev\pawork\pawork\config.toml
+#   macOS:   ~/Library/Application Support/dev.pawork.pawork/config.toml
+#   Linux:   ~/.config/pawork/config.toml
+#
+# 不要把 API key 写进本文件（写了也会被忽略）。
+# 凭证只走环境变量：PAWORK_API_KEY_<PROVIDER_ID 大写，- 变 _>
+#   PowerShell: $env:PAWORK_API_KEY_GLM_CODING = "<key>"
+#   PowerShell: $env:PAWORK_API_KEY_OPENCODE_GO = "<key>"
+#   bash:       export PAWORK_API_KEY_GLM_CODING="<key>"
+
+default_provider = "glm-coding"
+default_model = "glm-5.2"
+
+[[providers]]
+id = "glm-coding"
+base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+
+# S2 起作为第二协议通道（Anthropic Messages）；S0 的 openai-compatible 适配器不会使用本条目。
+[[providers]]
+id = "glm-coding-anthropic"
+base_url = "https://open.bigmodel.cn/api/anthropic"
+
+[[providers]]
+id = "opencode-go"
+base_url = "https://opencode.ai/zen/go/v1"

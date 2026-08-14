@@ -1,0 +1,20 @@
+[package]
+name = "pawork-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork CLI（chat REPL + models）"
+
+[dependencies]
+pawork-app = { path = "../app" }
+pawork-api = { path = "../../foundation/api" }
+pawork-domain = { path = "../../foundation/domain" }
+async-trait.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "io-std", "io-util"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
