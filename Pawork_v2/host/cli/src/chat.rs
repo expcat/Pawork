@@ -131,10 +131,10 @@ async fn run_one_turn(
         }
         Err(err) => {
             let formatted = format_provider_error(&err);
-            eprintln!("{formatted}");
             if one_shot {
                 Err(CliError::Turn(formatted))
             } else {
+                eprintln!("{formatted}");
                 Ok(())
             }
         }

@@ -1,6 +1,6 @@
 # S0：最小可对话 CLI
 
-> 阶段 S0 · 最小可对话 · 状态：🔵进行中（波 A/B/C 已完成）· 依赖：无（起点）· 规模：中
+> 阶段 S0 · 最小可对话 · 状态：🟢已完成（2026-08-14）· 依赖：无（起点）· 规模：中
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -55,13 +55,22 @@ $env:PAWORK_API_KEY_GLM_CODING = "<coding plan key>"
 $env:PAWORK_API_KEY_OPENCODE_GO = "<opencode go key>"
 ```
 
-- [ ] `pawork models`：GLM 通道列出 glm 系模型；OpenCode Go 通道列出 `deepseek-v4-pro` 等目录。
-- [ ] `pawork chat` ≥3 轮连续对话：流式逐 token 输出、上下文连贯（第二轮引用第一轮内容）。
-- [ ] 中文与英文各一轮；一轮包含代码块输出，渲染不乱。
-- [ ] 长回答中 Ctrl-C：当轮终止、提示已取消、进程存活、可继续下一轮。
-- [ ] 错误路径：错误 key → 401 可读提示；错误 base_url → 连接错误可读提示；均不 panic、退出码非零（单次模式）。
-- [ ] `--provider opencode-go --model deepseek-v4-pro` 覆盖默认值生效。
-- [ ] **模型评估记录**：两通道各记录首 token 延迟体感、中文/代码回答质量、流稳定性（为后续阶段选默认测试模型提供依据）。
+- [x] `pawork models`：GLM 通道列出 glm 系模型；OpenCode Go 通道列出 `deepseek-v4-pro` 等目录。
+- [x] `pawork chat` ≥3 轮连续对话：流式逐 token 输出、上下文连贯（第二轮引用第一轮内容）。
+- [x] 中文与英文各一轮；一轮包含代码块输出，渲染不乱。
+- [x] 长回答中 Ctrl-C：当轮终止、提示已取消、进程存活、可继续下一轮。
+- [x] 错误路径：错误 key → 401 可读提示；错误 base_url → 连接错误可读提示；均不 panic、退出码非零（单次模式）。
+- [x] `--provider opencode-go --model deepseek-v4-pro` 覆盖默认值生效。
+- [x] **模型评估记录**：两通道各记录首 token 延迟体感、中文/代码回答质量、流稳定性（为后续阶段选默认测试模型提供依据）。
+
+### 模型评估记录（2026-08-14 冒烟）
+
+| 通道 | 模型 | 首 token / 整轮体感 | 中文 | 代码块 | 流稳定性 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- |
+| GLM Coding Plan | `glm-5.2` | 单次约 2.3–6.1s；多轮续聊 1.3–3.1s | 一句话所有权解释准确 | rust fence 整齐，5 行函数可读 | 稳定；ThinkingDelta 走 stderr，正文不糊 | 后续默认测试模型候选 |
+| OpenCode Go | `deepseek-v4-pro` | 单次约 3.0–5.0s；多轮续聊 1.9–2.7s | 一句话所有权解释准确、略更长 | rust fence 整齐 | 稳定；同样有 thinking 前缀 | `--provider/--model` 覆盖生效；目录含 `deepseek-v4-pro` |
+
+Ctrl-C：两通道均在长文生成中打出「已取消」、进程存活、下一轮可答。取消轮的 user 仍留在内存历史，下一轮模型会看到被打断的旧题（S0 可接受，S1 再考虑是否丢弃未完成轮）。错误路径：坏 key → `认证失败 (401)` 退出码 1；坏 host → `无法连接` + base_url 提示，退出码 1。
 
 ## 定向自动化测试
 
@@ -73,12 +82,12 @@ $env:PAWORK_API_KEY_OPENCODE_GO = "<opencode go key>"
 
 ## 退出标准
 
-- [ ] workspace 根 + 10 个激活目录编译通过（`cargo check` 逐包）。
-- [ ] 冒烟清单全项通过（两通道），评估记录留档。
-- [ ] `provider-api` 契约整包迁移、零裁剪；`pawork-domain`/`pawork-api` 依赖树 canonical 纯净。
-- [ ] net 解析 golden + 种子全绿；`parsers` 默认 feature 零重依赖。
-- [ ] key 安全红线断言通过（不入配置文件、不入 Debug/日志输出）。
-- [ ] `fixtures/config/config.example.toml` 产出并与本文件冒烟节一致。
+- [x] workspace 根 + 10 个激活目录编译通过（`cargo check` 逐包）。
+- [x] 冒烟清单全项通过（两通道），评估记录留档。
+- [x] `provider-api` 契约整包迁移、零裁剪；`pawork-domain`/`pawork-api` 依赖树 canonical 纯净。
+- [x] net 解析 golden + 种子全绿；`parsers` 默认 feature 零重依赖。
+- [x] key 安全红线断言通过（不入配置文件、不入 Debug/日志输出）。
+- [x] `fixtures/config/config.example.toml` 产出并与本文件冒烟节一致。
 
 ## 为后续阶段预留 / 明确不做
 
