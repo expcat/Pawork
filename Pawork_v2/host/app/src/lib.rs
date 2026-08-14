@@ -1,4 +1,4 @@
-//! 应用门面：读配置 → env key → provider → 读写工具 → 事件化 `run_session`。
+//! 应用门面：读配置 → env key → provider → 读写工具 + run_command → 事件化 `run_session`。
 //!
 //! 不按 Provider 名称分支；协议来自 `extra.provider_protocols` 与默认表。
 //! 落库 persist-first，再推渲染 sink。
@@ -35,8 +35,9 @@ use pawork_providers::{
 use pawork_policy::PolicyEngine;
 use pawork_session::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 use pawork_tools::{
-    ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, SearchTextTool,
-    ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig, WriteFileTool,
+    ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, RunCommandTool,
+    SearchTextTool, ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig,
+    WriteFileTool,
 };
 use pawork_workspace::{WorkspaceError, WorkspaceService};
 use thiserror::Error;
@@ -335,7 +336,7 @@ impl AppCore {
         self.approval_host = host;
     }
 
-    /// 把启动目录登记为默认 workspace root，并注册只读四件 + 写三件。
+    /// 把启动目录登记为默认 workspace root，并注册只读四件 + 写三件 + run_command。
     pub fn attach_workspace(&mut self, root: &Path) -> Result<(), AppError> {
         let workspaces = WorkspaceService::new();
         let workspace_id = WorkspaceId::from("ws-default");
@@ -349,7 +350,8 @@ impl AppCore {
             Arc::new(FindFilesTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
             Arc::new(WriteFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
             Arc::new(EditFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-            Arc::new(ApplyPatchTool::new(workspaces)) as Arc<dyn pawork_api::AgentTool>,
+            Arc::new(ApplyPatchTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
+            Arc::new(RunCommandTool::new(workspaces)) as Arc<dyn pawork_api::AgentTool>,
         ])?;
         self.descriptors = registry.descriptors();
         self.tool_defs = self
@@ -1059,7 +1061,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn attach_workspace_registers_seven_tools() {
+    async fn attach_workspace_registers_eight_tools() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (mut core, _store_dir) = mock_core(Vec::new()).await;
         core.attach_workspace(dir.path()).expect("attach");
@@ -1073,6 +1075,7 @@ mod tests {
                 "find_files",
                 "list_directory",
                 "read_file",
+                "run_command",
                 "search_text",
                 "write_file",
             ]

@@ -5,6 +5,7 @@
 //! 落库由调用方在 sink 里 persist-first。
 
 mod appender;
+mod cancel;
 mod event;
 mod session_turn;
 mod tool_loop;
@@ -18,6 +19,9 @@ use pawork_api::{
 use pawork_domain::{CancellationToken, Message, ModelId, RequestId};
 
 pub use appender::{tool_results_message, AssembledTurn, PendingToolCall, ToolCallResult};
+pub use cancel::{
+    CancelHandle, CancelReason, CancelReceipt, NoopProcessTreeCleaner, ProcessTreeCleaner,
+};
 pub use event::{map_provider_event, AgentEventSink, EngineError, LoopEventEmitter};
 pub use session_turn::{now_timestamp, run_session_turn, SessionTurn};
 pub use tool_loop::{

@@ -5,9 +5,11 @@ use std::io::{self, IsTerminal, Write};
 use pawork_api::ProviderErrorKind;
 use pawork_app::{session_title_from_text, AppCore};
 use pawork_domain::{
-    CancellationToken, ContentPart, Message, MessageId, MessageRole, SessionId, TextContent,
+    ContentPart, Message, MessageId, MessageRole, RunId, SessionId, TextContent,
 };
-use pawork_engine::{AgentEventSink, EngineError};
+use pawork_engine::{
+    AgentEventSink, CancelHandle, CancelReason, EngineError, NoopProcessTreeCleaner,
+};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::error::format_provider_error;
@@ -171,12 +173,15 @@ async fn run_one_turn(
         MessageRole::User,
         text,
     ));
-    let cancel = CancellationToken::new();
+    let handle = CancelHandle::new(
+        RunId::from(format!("cli-{session}")),
+        std::sync::Arc::new(NoopProcessTreeCleaner),
+    );
     let outcome = if json {
-        drive_turn(core, session, history, &JsonlSink, cancel).await
+        drive_turn(core, session, history, &JsonlSink, handle).await
     } else {
         let sink = TextSink::default();
-        let outcome = drive_turn(core, session, history, &sink, cancel).await;
+        let outcome = drive_turn(core, session, history, &sink, handle).await;
         println!();
         outcome
     };
@@ -196,14 +201,14 @@ async fn drive_turn(
     session: &SessionId,
     history: &[Message],
     sink: &dyn AgentEventSink,
-    cancel: CancellationToken,
+    handle: CancelHandle,
 ) -> Result<(), CliError> {
-    let turn = core.chat_turn(session, history.to_vec(), sink, cancel.clone());
+    let turn = core.chat_turn(session, history.to_vec(), sink, handle.token());
     tokio::pin!(turn);
     let result = tokio::select! {
         result = &mut turn => result,
         _ = tokio::signal::ctrl_c() => {
-            cancel.cancel();
+            handle.cancel(CancelReason::User);
             turn.await
         }
     };

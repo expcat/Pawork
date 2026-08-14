@@ -4,13 +4,14 @@
 //! `--json`：每行一个信封 JSON，只写 stdout。
 
 use std::collections::HashMap;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, ToolCallId,
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, ToolCallId, ToolOutputStream,
+    ToolResultContent,
 };
 use pawork_engine::{AgentEventSink, EngineError};
 use serde_json::Value;
@@ -26,6 +27,8 @@ struct ToolActivity {
     name: String,
     args: String,
     bytes: u64,
+    started: bool,
+    stderr_opened: bool,
 }
 
 impl Default for TextSink {
@@ -126,19 +129,44 @@ impl AgentEventSink for TextSink {
                     .flush()
                     .map_err(|error| EngineError::sink(error.to_string()))?;
             }
+            AgentEvent::ToolExecutionStarted { tool_call_id } => {
+                close_thinking(self)?;
+                let mut tools = self.tools.lock().expect("sink tools mutex");
+                if let Some(activity) = tools.get_mut(&tool_call_id) {
+                    if activity.name == "run_command" && !activity.started {
+                        activity.started = true;
+                        let detail = tool_detail(&activity.args);
+                        eprintln!("{}", format_command_cancel_hint(&activity.name, &detail));
+                        io::stderr()
+                            .flush()
+                            .map_err(|error| EngineError::sink(error.to_string()))?;
+                    }
+                }
+            }
             AgentEvent::ToolOutputDelta {
                 tool_call_id,
+                stream,
                 delta,
-                ..
             } => {
-                if let Some(activity) = self
-                    .tools
-                    .lock()
-                    .expect("sink tools mutex")
-                    .get_mut(&tool_call_id)
+                close_thinking(self)?;
+                let color = io::stderr().is_terminal();
+                let mut prefix = String::new();
                 {
-                    activity.bytes = activity.bytes.saturating_add(delta.len() as u64);
+                    let mut tools = self.tools.lock().expect("sink tools mutex");
+                    if let Some(activity) = tools.get_mut(&tool_call_id) {
+                        activity.bytes = activity.bytes.saturating_add(delta.len() as u64);
+                        if stream == ToolOutputStream::Stderr && !activity.stderr_opened {
+                            activity.stderr_opened = true;
+                            prefix.push_str("[stderr]\n");
+                        }
+                    } else if stream == ToolOutputStream::Stderr {
+                        prefix.push_str("[stderr]\n");
+                    }
                 }
+                eprint!("{}{}", prefix, paint_stream(stream, &delta, color));
+                io::stderr()
+                    .flush()
+                    .map_err(|error| EngineError::sink(error.to_string()))?;
             }
             AgentEvent::ToolExecutionCompleted {
                 tool_call_id,
@@ -166,6 +194,9 @@ impl AgentEventSink for TextSink {
                 } else {
                     None
                 };
+                if result_truncated(&result) {
+                    eprintln!("{}", TRUNCATED_LINE);
+                }
                 let line = format_tool_activity_line(
                     name,
                     &detail,
@@ -228,6 +259,32 @@ pub(crate) fn format_tool_activity_line(
     line
 }
 
+const TRUNCATED_LINE: &str = "已截断";
+
+pub(crate) fn format_command_cancel_hint(name: &str, detail: &str) -> String {
+    let body = if detail.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} {detail}")
+    };
+    format!("⚙ {body}  （Ctrl-C 取消当轮）")
+}
+
+pub(crate) fn paint_stream(stream: ToolOutputStream, delta: &str, color: bool) -> String {
+    match stream {
+        ToolOutputStream::Stderr if color => format!("\x1b[31m{delta}\x1b[0m"),
+        _ => delta.to_string(),
+    }
+}
+
+fn result_truncated(result: &ToolResultContent) -> bool {
+    result
+        .metadata
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn decision_label(decision: ApprovalDecision) -> &'static str {
     match decision {
         ApprovalDecision::ApprovedOnce => "approved once",
@@ -254,11 +311,17 @@ fn format_size(bytes: u64) -> String {
 
 fn tool_detail(raw_args: &str) -> String {
     let parsed: Value = serde_json::from_str(raw_args).unwrap_or(Value::Null);
-    for key in ["path", "pattern"] {
+    for key in ["path", "pattern", "command"] {
         if let Some(value) = parsed.get(key).and_then(Value::as_str) {
             if !value.is_empty() {
                 return value.to_string();
             }
+        }
+    }
+    if let Some(argv) = parsed.get("argv").and_then(Value::as_array) {
+        let parts: Vec<&str> = argv.iter().filter_map(Value::as_str).collect();
+        if !parts.is_empty() {
+            return parts.join(" ");
         }
     }
     String::new()
@@ -330,5 +393,54 @@ mod tests {
             "CURRENT_SCHEMA_VERSION"
         );
         assert_eq!(tool_detail("{"), "");
+    }
+
+    #[test]
+    fn tool_detail_reads_command_and_argv() {
+        assert_eq!(
+            tool_detail(r#"{"command":"cargo test -p pawork-exec"}"#),
+            "cargo test -p pawork-exec"
+        );
+        assert_eq!(
+            tool_detail(r#"{"argv":["cargo","test","-p","pawork-exec"]}"#),
+            "cargo test -p pawork-exec"
+        );
+    }
+
+    #[test]
+    fn command_cancel_hint_includes_ctrl_c() {
+        assert_eq!(
+            format_command_cancel_hint("run_command", "cargo test"),
+            "⚙ run_command cargo test  （Ctrl-C 取消当轮）"
+        );
+    }
+
+    #[test]
+    fn paint_stderr_uses_red_only_when_color_enabled() {
+        assert_eq!(
+            paint_stream(ToolOutputStream::Stderr, "boom\n", true),
+            "\x1b[31mboom\n\x1b[0m"
+        );
+        assert_eq!(
+            paint_stream(ToolOutputStream::Stderr, "boom\n", false),
+            "boom\n"
+        );
+        assert_eq!(
+            paint_stream(ToolOutputStream::Stdout, "ok\n", true),
+            "ok\n"
+        );
+    }
+
+    #[test]
+    fn truncated_metadata_is_detected() {
+        let result = ToolResultContent {
+            tool_call_id: ToolCallId::from("t1"),
+            tool_name: Some("run_command".into()),
+            content: Vec::new(),
+            is_error: false,
+            metadata: serde_json::json!({"truncated": true}),
+        };
+        assert!(result_truncated(&result));
+        assert_eq!(TRUNCATED_LINE, "已截断");
     }
 }

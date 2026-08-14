@@ -182,6 +182,9 @@ pub async fn run_session(
                 let gates = loop_ctx
                     .request_approval(&invocations, run_approved, cancel.clone())
                     .await;
+                if cancel.is_cancelled() {
+                    return emit_cancelled(&emitter, "turn cancelled").await;
+                }
                 let (to_run, mut decided) =
                     apply_approval_gates(&invocations, &gates, &mut run_approved);
                 for invocation in &invocations {
@@ -217,6 +220,9 @@ pub async fn run_session(
                         .execute_tools(to_run, loop_events.clone(), cancel.clone())
                         .await
                 };
+                if cancel.is_cancelled() {
+                    return emit_cancelled(&emitter, "turn cancelled").await;
+                }
                 for result in &raw {
                     decided.remove(&result.tool_call_id);
                 }
@@ -1199,5 +1205,146 @@ mod tests {
                 ApprovalDecision::ApprovedForRun
             ]
         );
+    }
+
+    struct HangUntilCancelCtx {
+        started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        msg_counter: AtomicU64,
+        req_counter: AtomicU64,
+    }
+
+    impl HangUntilCancelCtx {
+        fn new(started: tokio::sync::oneshot::Sender<()>) -> Self {
+            Self {
+                started: Mutex::new(Some(started)),
+                msg_counter: AtomicU64::new(0),
+                req_counter: AtomicU64::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LoopContext for HangUntilCancelCtx {
+        async fn execute_tools(
+            &self,
+            calls: Vec<PendingToolInvocation>,
+            _events: LoopEventEmitter<'_>,
+            cancel: CancellationToken,
+        ) -> Vec<ToolCallResult> {
+            if let Some(tx) = self.started.lock().expect("started mutex").take() {
+                let _ = tx.send(());
+            }
+            cancel.cancelled().await;
+            calls
+                .into_iter()
+                .map(|call| ToolCallResult {
+                    tool_call_id: call.tool_call_id,
+                    tool_name: call.name,
+                    arguments: call.arguments,
+                    result: ToolResult::failure(ErrorContext {
+                        category: ErrorCategory::Cancelled,
+                        message: "hang cancelled".into(),
+                        retryable: false,
+                        retry_after_ms: None,
+                        diagnostics: Default::default(),
+                    }),
+                })
+                .collect()
+        }
+
+        async fn request_approval(
+            &self,
+            calls: &[PendingToolInvocation],
+            _already_approved_for_run: bool,
+            _cancel: CancellationToken,
+        ) -> Vec<ApprovalGate> {
+            calls.iter().map(|_| ApprovalGate::NotRequired).collect()
+        }
+
+        fn next_message_id(&self) -> MessageId {
+            let n = self.msg_counter.fetch_add(1, Ordering::Relaxed);
+            MessageId::from(format!("msg-{n}"))
+        }
+
+        fn next_request_id(&self) -> RequestId {
+            let n = self.req_counter.fetch_add(1, Ordering::Relaxed);
+            RequestId::from(format!("req-{n}"))
+        }
+    }
+
+    struct CountingCleaner {
+        run: RunId,
+        count: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl crate::ProcessTreeCleaner for CountingCleaner {
+        fn cleanup(&self, run_id: &RunId) -> usize {
+            assert_eq!(run_id, &self.run);
+            self.count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            1
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_during_long_tool_emits_run_cancelled_without_completing_tools() {
+        use crate::{CancelHandle, CancelReason};
+
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
+            .tool_call("hang", serde_json::json!({}))
+            .complete_with(StopReason::ToolUse)]));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let ctx = HangUntilCancelCtx::new(tx);
+        let sink = RecordingEvents::default();
+        let cleaned = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let handle = CancelHandle::new(
+            RunId::from("run-1"),
+            Arc::new(CountingCleaner {
+                run: RunId::from("run-1"),
+                count: cleaned.clone(),
+            }),
+        );
+
+        let session = run_session(
+            &provider,
+            sample_request(vec![ToolDefinition {
+                name: "hang".into(),
+                description: "hang until cancel".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }]),
+            sample_turn(),
+            &sink,
+            handle.token(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+        );
+        tokio::pin!(session);
+        tokio::select! {
+            result = &mut session => {
+                panic!("session ended before cancel: {result:?}");
+            }
+            started = rx => {
+                started.expect("tool started");
+            }
+        }
+        handle.cancel(CancelReason::User);
+        let error = session.await.expect_err("cancelled");
+        assert!(matches!(
+            error,
+            EngineError::Provider(ref err)
+                if err.kind == pawork_api::ProviderErrorKind::Cancelled
+        ));
+
+        let types = sink.types();
+        assert!(types.contains(&"ToolExecutionStarted"));
+        assert!(types.contains(&"RunCancelled"));
+        assert!(!types.contains(&"ToolExecutionCompleted"));
+        assert!(!types.contains(&"MessageCommitted.tool"));
+        assert!(!types.contains(&"RunCompleted"));
+        assert!(!types.contains(&"RunFailed"));
+        assert_eq!(provider.requests().len(), 1);
+        assert_eq!(cleaned.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let last = types.last().copied();
+        assert_eq!(last, Some("RunCancelled"));
     }
 }
