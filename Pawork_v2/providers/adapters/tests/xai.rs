@@ -9,11 +9,11 @@ use pawork_api::{
 };
 use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
-    TextContent,
+    StopReason, TextContent,
 };
 use pawork_net::http::HttpClientConfig;
 use pawork_providers::{XaiConfig, XaiProvider};
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[derive(Default)]
@@ -74,5 +74,60 @@ async fn model_capability_selects_responses_or_chat() {
     let provider = provider(&server);
     provider.stream(request("grok-4"), &Sink::default(), CancellationToken::new()).await.unwrap();
     provider.stream(request("grok-3"), &Sink::default(), CancellationToken::new()).await.unwrap();
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn grok4_responses_round_trip_streams_events_with_oauth_bearer() {
+    let server = MockServer::start().await;
+    let sse = [
+        "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_xai_1\"}}",
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"grok \"}",
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"works\"}",
+        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_xai_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7}}}",
+    ]
+    .join("\n\n")
+    + "\n\n";
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .and(header("authorization", "Bearer oauth-xai"))
+        .and(body_string_contains("grok-4"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = provider(&server);
+    let sink = Sink::default();
+    let summary = provider
+        .stream(request("grok-4"), &sink, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let events = sink.0.lock().unwrap().clone();
+    let deltas = events
+        .iter()
+        .filter_map(|event| match event {
+            ProviderStreamEvent::TextDelta(delta) => Some(delta.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(deltas, vec!["grok ", "works"]);
+    assert!(matches!(
+        &events[..],
+        [ProviderStreamEvent::ResponseStarted { response_id: Some(id) }, ..] if id == "resp_xai_1"
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ProviderStreamEvent::UsageUpdated(usage) if usage.input_tokens == 11 && usage.output_tokens == 7
+    )));
+    assert_eq!(summary.stop_reason, StopReason::Completed);
+    assert_eq!(summary.usage.input_tokens, 11);
+    assert_eq!(summary.usage.output_tokens, 7);
+    assert_eq!(summary.response_id.as_deref(), Some("resp_xai_1"));
     server.verify().await;
 }

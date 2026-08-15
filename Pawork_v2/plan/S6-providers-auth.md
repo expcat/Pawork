@@ -46,9 +46,9 @@ Google/Gemini、Moonshot/Kimi、OpenAI API key、xAI API key、Qwen 按量计费
 
 ## 真实测试与评估（阶段冒烟清单）
 
-- [x] ChatGPT：浏览器 OAuth 登录/回调 → auth 文件（`~/.pawork/auth.json`，0600，文件后端替代 Keychain）→ `pawork chat` 直通。（2026-08-15 完成：回调参数对齐上游（`/oauth/authorize`、`/auth/callback`、scope 含 connectors、`codex_cli_simplified_flow`）；根因为 `/models` 按 `minimal_client_version` 过滤——client_version 提至 0.147.0 后目录含 gpt-5.4/5.5/5.6-sol/terra/luna，隐藏模型（codex-auto-review）按 visibility 过滤；`gpt-5.4` 与 `gpt-5.6-luna` 各完成一次真实流式对话；token refresh 冒烟与 xAI 仍待后续）
-- [ ] xAI：device flow → auth 文件 → `pawork chat`；无 OAuth 凭证时 fail-closed。（fail-closed 已验；xAI 需 `[oauth.xai]` 端点配置，不伪完成）
-- [x] 四条 API-key 通道：`pawork auth set-key <provider>` 后清除对应 env，分别完成一次流式工具任务。（glm-coding、opencode-go 完整通过；qwen-token-plan、deepseek 无凭证，fail-closed 错误带 set-key/env 指引已验，真实任务留待有 key 时补）
+- [x] ChatGPT：浏览器 OAuth 登录/回调 → auth 文件（`~/.pawork/auth.json`，0600，文件后端替代 Keychain）→ `pawork chat` 直通。（2026-08-15 完成：回调参数对齐上游（`/oauth/authorize`、`/auth/callback`、scope 含 connectors、`codex_cli_simplified_flow`）；根因为 `/models` 按 `minimal_client_version` 过滤——client_version 提至 0.147.0 后目录含 gpt-5.4/5.5/5.6-sol/terra/luna，隐藏模型（codex-auto-review）按 visibility 过滤；`gpt-5.4` 与 `gpt-5.6-luna` 各完成一次真实流式对话；token refresh 冒烟仍待后续）
+- [x] xAI：device flow → auth 文件 → `pawork chat`；无 OAuth 凭证时 fail-closed。（2026-08-15 完成：参照上游 grok CLI / cc-switch 接入 auth.x.ai 公开 Device Flow 预设（`/oauth2/device/code` + `/oauth2/token` + grok-cli 公共 client + 官方 Agentic CLI scope 组），`pawork auth login xai` 走设备码引导，`[oauth.xai]` 可覆盖且优先；wiremock 契约覆盖 begin→pending→success 轮询→auth 文件→XaiProvider 构造链路与 grok-4 Responses 流式事件；fail-closed 已验。真实凭证冒烟：设备码浏览器授权 → auth 文件（`auth list` file 来源 + 掩码）→ `grok-4` Responses 流式对话（thinking + 用量 1256/141）与 `grok-3` Chat Completions 流式对话（cache read 192）双传输各通过一次，输出无 token 片段。附带修复：零配置下 `auth login` 不再因缺 default_model 拒绝启动（目录/凭证命令退化为 CatalogOnly 装配，chat/run 保持 fail-closed，回归测试锁定））
+- [x] 四条 API-key 通道：`pawork auth set-key <provider>` 后清除对应 env，分别完成一次流式工具任务。（2026-08-15 完成：glm-coding / opencode-go 此前已通过；qwen-token-plan / deepseek 从 `Pawork_v2/.env` 注入后 `set-key` → 清 env → `auth list` file 来源；`qwen3.8-max` 完成 `read_file` 工具任务（cache read 2048）与纯文本流式对话；`deepseek-chat` 完成 `read_file` 工具任务（cache read 2560）与纯文本流式对话。Token Plan 线上目录已换代，静态条目由过期的 `qwen3-coder-plus` 更新为 `qwen3.8-max`）
 - [x] `pawork auth list` 只显示掩码与来源，不显示 token/key/account secret。（keychain 命中显示掩码，env/none 不显示值）
 - [x] `pawork models` 聚合六条首发通道；混合协议模型按 registry transport 路由。（chatgpt 登录后运行期探测 6 模型；glm-coding 运行期探测合并 9 个模型）
 - [x] REPL `/provider` + `/model` 切换后续聊正常，`sessions show` 可见模型切换记录。（glm-anthropic↔glm-openai 双协议通道实测；模型全局归属校验拒绝跨 provider 复用 id 符合设计）
@@ -71,7 +71,7 @@ Google/Gemini、Moonshot/Kimi、OpenAI API key、xAI API key、Qwen 按量计费
 
 ## 退出标准
 
-- [ ] 六条首发通道完成正式装配与真实冒烟；延期厂商没有伪 feature、空 adapter 或预埋分支。（装配与三通道真实冒烟完成；xAI OAuth 与 Qwen/DeepSeek 按 fail-closed 登记，待真实凭证后收口）
+- [x] 六条首发通道完成正式装配与真实冒烟；延期厂商没有伪 feature、空 adapter 或预埋分支。（2026-08-15 完成：ChatGPT / xAI / glm-coding / opencode-go / qwen-token-plan / deepseek 均完成真实凭证冒烟；ChatGPT token refresh 仍待 token 临期自然触发）
 - [x] auth 文件为主、env 为显式 fallback；OAuth refresh 与 credential kind fail-closed 回归通过。（auth 50+ 测试 + app 目录兜底/优先级测试；文件后端按用户决策替代 Keychain）
 - [x] 共享 Responses 与四条 API-key 通道契约通过，transport 选择不进入 Engine。（`cargo test -p pawork-providers --all-features` 全绿；Engine 仅消费 trait）
 - [x] diagnostics layer 全局挂载，Secret 不入日志回归通过。（宿主 EnvFilter + RedactingFmtLayer；trace 级冒烟 0 泄漏）

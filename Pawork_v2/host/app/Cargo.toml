@@ -40,6 +40,7 @@ reqwest.workspace = true
 async-trait.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
+wiremock.workspace = true
 pawork-api = { path = "../../foundation/api" }
 pawork-domain = { path = "../../foundation/domain" }
 pawork-engine = { path = "../../engine/engine" }

@@ -423,44 +423,65 @@ impl AppCore {
         if let Some(model) = model {
             config.default_model = Some(model.to_string());
         }
+        // 目录/凭证命令允许 default provider/model 缺失：登录前用户可能尚未
+        // 写任何配置，此时退化为 CatalogOnly 装配而不是拒绝启动。
+        let provider_missing = config.default_provider.is_none();
+        if provider_missing {
+            if !allow_pending {
+                return Err(AppError::MissingDefaultProvider);
+            }
+        } else if config.default_model.is_none() && !allow_pending {
+            return Err(AppError::MissingDefaultModel);
+        }
         let provider_id = config
             .default_provider
             .clone()
-            .ok_or(AppError::MissingDefaultProvider)?;
-        let model_id = config
-            .default_model
-            .clone()
-            .ok_or(AppError::MissingDefaultModel)?;
+            .unwrap_or_else(|| "catalog".into());
+        let model_id = config.default_model.clone().unwrap_or_else(|| "unset".into());
         let provider_ref = ProviderId::from(provider_id.as_str());
         let channel = channels::first_party_channel(provider_id.as_str());
         let protocol = channel_protocol(channel, &config, provider_id.as_str())?;
         let registry = assemble_registry(&config, &provider_ref, protocol, channel);
         let mut pending = false;
-        let core = match assemble_provider(&config, &provider_ref, &backend, true).await {
-            Ok(assembled) => Self::from_parts_with_protocol(
-                assembled.adapter,
-                assembled.credential,
+        let core = if provider_missing {
+            Self::from_parts_with_protocol(
+                Arc::new(CatalogOnlyProvider {
+                    id: provider_ref.clone(),
+                }),
+                None,
                 ModelId::from(model_id.as_str()),
                 provider_ref,
-                assembled.protocol,
+                protocol,
                 None,
-                assembled.registry,
-            ),
-            Err(err) if allow_pending && is_credential_pending(&err) => {
-                pending = true;
-                Self::from_parts_with_protocol(
-                    Arc::new(CatalogOnlyProvider {
-                        id: provider_ref.clone(),
-                    }),
-                    None,
+                registry,
+            )
+        } else {
+            match assemble_provider(&config, &provider_ref, &backend, true).await {
+                Ok(assembled) => Self::from_parts_with_protocol(
+                    assembled.adapter,
+                    assembled.credential,
                     ModelId::from(model_id.as_str()),
                     provider_ref,
-                    protocol,
+                    assembled.protocol,
                     None,
-                    registry,
-                )
+                    assembled.registry,
+                ),
+                Err(err) if allow_pending && is_credential_pending(&err) => {
+                    pending = true;
+                    Self::from_parts_with_protocol(
+                        Arc::new(CatalogOnlyProvider {
+                            id: provider_ref.clone(),
+                        }),
+                        None,
+                        ModelId::from(model_id.as_str()),
+                        provider_ref,
+                        protocol,
+                        None,
+                        registry,
+                    )
+                }
+                Err(err) => return Err(err),
             }
-            Err(err) => return Err(err),
         };
         let mut core = core.with_state(config, backend);
         core.http = Self::http_from_config(&core.config)?;
@@ -1861,6 +1882,37 @@ mod tests {
         )
         .expect_err("unknown provider");
         assert!(matches!(err, AppError::UnknownProvider { id } if id == "missing"));
+    }
+
+    #[tokio::test]
+    async fn catalog_load_allows_zero_config_for_auth_and_models() {
+        let core = AppCore::from_config_inner(
+            PaworkConfig::default(),
+            None,
+            None,
+            Arc::new(pawork_auth::MemoryBackend::new()),
+            true,
+        )
+        .await
+        .expect("catalog load tolerates missing defaults");
+        assert_eq!(core.provider_id.as_str(), "catalog");
+        // auth list 在零配置下可列出六通道（全部 none 来源）。
+        let rows = core.auth_status();
+        assert!(rows.iter().any(|row| row.provider == "xai"));
+    }
+
+    #[tokio::test]
+    async fn chat_load_still_fails_closed_without_defaults() {
+        let err = AppCore::from_config_inner(
+            PaworkConfig::default(),
+            None,
+            None,
+            Arc::new(pawork_auth::MemoryBackend::new()),
+            false,
+        )
+        .await
+        .expect_err("chat load must fail");
+        assert!(matches!(err, AppError::MissingDefaultProvider));
     }
 
     #[test]

@@ -835,7 +835,7 @@ pub fn caps(
 ///   不伪造定价（pricing = None，费用显示为「无定价」）。
 /// - `deepseek-v4-pro`（OpenCode Go）：公开费率 input $0.435/M、
 ///   output $0.87/M、cache read $0.003625/M；cache write 未单列，按 0 计。
-/// - `qwen3-coder-plus`（Qwen Token Plan）与 `deepseek-chat` /
+/// - `qwen3.8-max`（Qwen Token Plan 当前目录）与 `deepseek-chat` /
 ///   `deepseek-reasoner`（DeepSeek API key 通道）：窗口/输出取公开文档
 ///   保守值；费率未核对到 micros 前不编造（pricing = None）。
 /// - ChatGPT / xAI 为 OAuth 通道：ChatGPT 目录登录后经 /models 探测，不
@@ -874,9 +874,9 @@ fn builtin_entries() -> Vec<CatalogEntry> {
             aliases: vec!["deepseek".into()],
         },
         CatalogEntry {
-            id: ModelId::new("qwen3-coder-plus"),
+            id: ModelId::new("qwen3.8-max"),
             provider: ProviderId::new("qwen-token-plan"),
-            display_name: "Qwen3 Coder Plus".into(),
+            display_name: "Qwen3.8 Max".into(),
             context_window_tokens: 0,
             max_output_tokens: 0,
             capabilities: text_tools.clone(),

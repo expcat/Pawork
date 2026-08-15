@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use pawork_app::AppCore;
+use pawork_app::OAuthLogin;
 
 use crate::{AuthCommand, CliError};
 
@@ -74,9 +75,21 @@ fn set_key(core: &AppCore, provider: &str, json: bool) -> Result<(), CliError> {
 }
 
 async fn login(core: &AppCore, provider: &str, json: bool) -> Result<(), CliError> {
-    let login = core.oauth_begin(provider)?;
-    eprintln!("在浏览器完成登录（最长等待 5 分钟）：");
-    eprintln!("{}", login.auth_url);
+    let login = core.oauth_begin(provider).await?;
+    match &login {
+        OAuthLogin::Pkce { auth_url, .. } => {
+            eprintln!("在浏览器完成登录（最长等待 5 分钟）：");
+            eprintln!("{auth_url}");
+        }
+        OAuthLogin::Device { prompt, .. } => {
+            eprintln!("打开验证页并输入代码完成登录（最长等待 5 分钟）：");
+            eprintln!("{}", prompt.verification_uri);
+            if let Some(uri) = &prompt.verification_uri_complete {
+                eprintln!("（或直接访问 {uri}）");
+            }
+            eprintln!("代码：{}", prompt.user_code);
+        }
+    }
     let stored = core.oauth_complete(login, LOGIN_TIMEOUT).await?;
     if json {
         println!(

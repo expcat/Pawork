@@ -17,17 +17,30 @@ pub enum ChannelKind {
     XaiOAuth,
 }
 
-/// OAuth 端点预设（PKCE）。ChatGPT 使用 Codex 公开 client 参数；xAI 无公开
-/// 稳定端点，必须由 config `[oauth.xai]` 提供后才能登录。
+/// OAuth 授权流形态（预设与 config `[oauth.<id>]` 覆盖共用）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OAuthFlow {
+    /// Authorization Code + PKCE（浏览器授权 + 本地回调；ChatGPT）。
+    Pkce {
+        auth_url: String,
+        redirect_uri: String,
+        /// 授权 URL 附加参数（如 ChatGPT 的 `codex_cli_simplified_flow`）。
+        extra_auth_params: Vec<(String, String)>,
+    },
+    /// Device Flow（RFC 8628；xAI）。
+    Device {
+        device_auth_url: String,
+    },
+}
+
+/// OAuth 端点预设。ChatGPT 使用 Codex 公开 client 参数；xAI 使用 auth.x.ai
+/// 公开 Device Flow 端点与 grok-cli 公共 client。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OAuthPreset {
     pub client_id: String,
-    pub auth_url: String,
     pub token_url: String,
-    pub redirect_uri: String,
     pub scopes: Vec<String>,
-    /// 授权 URL 附加参数（如 ChatGPT 的 `codex_cli_simplified_flow`）。
-    pub extra_auth_params: Vec<(String, String)>,
+    pub flow: OAuthFlow,
 }
 
 /// 一条首发通道的装配元数据。
@@ -43,11 +56,7 @@ impl FirstPartyChannel {
         match self.kind {
             ChannelKind::ChatGptOAuth => Some(OAuthPreset {
                 client_id: "app_EMoamEEZ73f0CkXaXp7hrann".into(),
-                auth_url: "https://auth.openai.com/oauth/authorize".into(),
                 token_url: "https://auth.openai.com/oauth/token".into(),
-                // redirect URI 必须与 Codex CLI 的 Hydra allow-list 精确匹配：
-                // host 固定 localhost、path 固定 /auth/callback（端口 1455）。
-                redirect_uri: "http://localhost:1455/auth/callback".into(),
                 scopes: vec![
                     "openid".into(),
                     "profile".into(),
@@ -58,13 +67,36 @@ impl FirstPartyChannel {
                     "api.connectors.read".into(),
                     "api.connectors.invoke".into(),
                 ],
-                extra_auth_params: vec![
-                    ("id_token_add_organizations".into(), "true".into()),
-                    ("codex_cli_simplified_flow".into(), "true".into()),
-                ],
+                flow: OAuthFlow::Pkce {
+                    auth_url: "https://auth.openai.com/oauth/authorize".into(),
+                    // redirect URI 必须与 Codex CLI 的 Hydra allow-list 精确匹配：
+                    // host 固定 localhost、path 固定 /auth/callback（端口 1455）。
+                    redirect_uri: "http://localhost:1455/auth/callback".into(),
+                    extra_auth_params: vec![
+                        ("id_token_add_organizations".into(), "true".into()),
+                        ("codex_cli_simplified_flow".into(), "true".into()),
+                    ],
+                },
             }),
-            // xAI 没有公开稳定 OAuth 端点：login 必须由 config 提供（fail-closed）。
-            ChannelKind::XaiOAuth => None,
+            // xAI Device Flow（RFC 8628）：端点与公共 client 与上游 grok CLI、
+            // cc-switch 等第三方实现一致；仍可用 config `[oauth.xai]` 覆盖。
+            ChannelKind::XaiOAuth => Some(OAuthPreset {
+                client_id: "b1a00492-073a-47ea-816f-4c329264a828".into(),
+                token_url: "https://auth.x.ai/oauth2/token".into(),
+                scopes: vec![
+                    "openid".into(),
+                    "profile".into(),
+                    "email".into(),
+                    "offline_access".into(),
+                    // grok-cli:access 是订阅级 CLI 推理访问；api:access 覆盖
+                    // api.x.ai REST 调用（xAI 官方文档的 Agentic CLI scope 组）。
+                    "grok-cli:access".into(),
+                    "api:access".into(),
+                ],
+                flow: OAuthFlow::Device {
+                    device_auth_url: "https://auth.x.ai/oauth2/device/code".into(),
+                },
+            }),
             ChannelKind::ApiKey => None,
         }
     }
@@ -124,15 +156,16 @@ pub fn api_key_channel(id: &str) -> Option<pawork_providers::ApiKeyChannel> {
 }
 
 /// config `[oauth.<id>]` 覆盖预设；返回 None 表示「必须配置但缺失」或 id 非OAuth。
+///
+/// Device Flow 只需 `device_auth_url`；PKCE 需要 `auth_url` + `redirect_uri`。
+/// 两者同时提供时 device 优先（Device Flow 无回调端口要求）。
 pub fn oauth_override(config: &pawork_config::PaworkConfig, id: &str) -> Option<OAuthPreset> {
     let table = config.extra.get("oauth")?.get(id)?;
     let string_field = |key: &str| -> Option<String> {
         table.get(key).and_then(|value| value.as_str()).map(String::from)
     };
     let client_id = string_field("client_id")?;
-    let auth_url = string_field("auth_url")?;
     let token_url = string_field("token_url")?;
-    let redirect_uri = string_field("redirect_uri")?;
     let scopes = table
         .get("scopes")
         .and_then(|value| value.as_array())
@@ -143,12 +176,114 @@ pub fn oauth_override(config: &pawork_config::PaworkConfig, id: &str) -> Option<
                 .collect()
         })
         .unwrap_or_default();
+    let flow = if let Some(device_auth_url) = string_field("device_auth_url") {
+        OAuthFlow::Device { device_auth_url }
+    } else {
+        OAuthFlow::Pkce {
+            auth_url: string_field("auth_url")?,
+            redirect_uri: string_field("redirect_uri")?,
+            extra_auth_params: Vec::new(),
+        }
+    };
     Some(OAuthPreset {
         client_id,
-        auth_url,
         token_url,
-        redirect_uri,
         scopes,
-        extra_auth_params: Vec::new(),
+        flow,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pawork_config::PaworkConfig;
+    use serde_json::json;
+
+    #[test]
+    fn xai_preset_is_device_flow_with_public_endpoints() {
+        let preset = first_party_channel("xai")
+            .and_then(|channel| channel.oauth_preset())
+            .expect("xai preset");
+        assert_eq!(preset.client_id, "b1a00492-073a-47ea-816f-4c329264a828");
+        assert_eq!(preset.token_url, "https://auth.x.ai/oauth2/token");
+        assert_eq!(
+            preset.flow,
+            OAuthFlow::Device {
+                device_auth_url: "https://auth.x.ai/oauth2/device/code".into()
+            }
+        );
+        assert_eq!(
+            preset.scopes,
+            vec![
+                "openid",
+                "profile",
+                "email",
+                "offline_access",
+                "grok-cli:access",
+                "api:access",
+            ]
+        );
+    }
+
+    #[test]
+    fn chatgpt_preset_stays_pkce() {
+        let preset = first_party_channel("chatgpt")
+            .and_then(|channel| channel.oauth_preset())
+            .expect("chatgpt preset");
+        assert!(matches!(preset.flow, OAuthFlow::Pkce { .. }));
+    }
+
+    #[test]
+    fn oauth_override_supports_device_flow_fields() {
+        let mut config = PaworkConfig::default();
+        config.extra.insert(
+            "oauth".into(),
+            json!({
+                "xai": {
+                    "client_id": "custom-client",
+                    "device_auth_url": "https://auth.example.test/device/code",
+                    "token_url": "https://auth.example.test/token",
+                    "scopes": ["openid", "api:access"],
+                }
+            }),
+        );
+        let preset = oauth_override(&config, "xai").expect("device override");
+        assert_eq!(preset.client_id, "custom-client");
+        assert_eq!(preset.scopes, vec!["openid", "api:access"]);
+        assert_eq!(
+            preset.flow,
+            OAuthFlow::Device {
+                device_auth_url: "https://auth.example.test/device/code".into()
+            }
+        );
+    }
+
+    #[test]
+    fn oauth_override_pkce_still_requires_auth_url_and_redirect() {
+        let mut config = PaworkConfig::default();
+        config.extra.insert(
+            "oauth".into(),
+            json!({
+                "chatgpt": {
+                    "client_id": "c",
+                    "token_url": "https://example.test/token",
+                }
+            }),
+        );
+        assert!(oauth_override(&config, "chatgpt").is_none());
+
+        config.extra.insert(
+            "oauth".into(),
+            json!({
+                "chatgpt": {
+                    "client_id": "c",
+                    "auth_url": "https://example.test/authorize",
+                    "token_url": "https://example.test/token",
+                    "redirect_uri": "http://localhost:1455/auth/callback",
+                }
+            }),
+        );
+        let preset = oauth_override(&config, "chatgpt").expect("pkce override");
+        assert!(matches!(preset.flow, OAuthFlow::Pkce { .. }));
+    }
 }
