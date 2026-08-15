@@ -6,6 +6,7 @@
 //! 明文 secret 仅在这些后端中流转，永远不会通过错误、日志或返回的元数据泄漏。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::error::AuthError;
@@ -17,10 +18,27 @@ use crate::error::AuthError;
 pub trait SecretBackend: Send + Sync {
     /// 写入（或覆盖）一条 secret。
     fn store(&self, service: &str, account: &str, secret: &str) -> Result<(), AuthError>;
+    /// 批量写入（或覆盖）多条 secret。正式后端应把整批作为一次原子提交；默认
+    /// 实现保留第三方/测试后端兼容性，但只能提供逐条写入语义。
+    fn store_batch(&self, entries: &[(&str, &str, &str)]) -> Result<(), AuthError> {
+        for &(service, account, secret) in entries {
+            self.store(service, account, secret)?;
+        }
+        Ok(())
+    }
     /// 读取一条 secret；不存在时返回 [`AuthError::NotFound`]。
     fn get(&self, service: &str, account: &str) -> Result<String, AuthError>;
     /// 删除一条 secret；不存在时返回 [`AuthError::NotFound`]。
     fn delete(&self, service: &str, account: &str) -> Result<(), AuthError>;
+
+    /// 跨进程 OAuth refresh 锁的稳定路径。文件后端返回与 auth 文件同目录的
+    /// 非机密路径；不需要跨进程协调的后端保留默认 `None`。
+    ///
+    /// 该扩展点仅供 refresh 编排使用，第三方后端无需为兼容性实现它。
+    #[doc(hidden)]
+    fn refresh_lock_path(&self) -> Option<PathBuf> {
+        None
+    }
 }
 
 // OS Keychain 后端已按用户决策移除：secret 统一走文件后端
@@ -86,6 +104,20 @@ impl SecretBackend for MemoryBackend {
         Ok(())
     }
 
+    fn store_batch(&self, entries: &[(&str, &str, &str)]) -> Result<(), AuthError> {
+        let mut stored = self
+            .entries
+            .lock()
+            .expect("MemoryBackend mutex poisoned");
+        for &(service, account, secret) in entries {
+            stored.insert(
+                (service.to_string(), account.to_string()),
+                secret.to_string(),
+            );
+        }
+        Ok(())
+    }
+
     fn get(&self, service: &str, account: &str) -> Result<String, AuthError> {
         self.entries
             .lock()
@@ -144,6 +176,16 @@ mod tests {
             .expect("store second");
         assert_eq!(backend.get("svc", "acct").expect("get"), "second");
         assert_eq!(backend.len(), 1);
+    }
+
+    #[test]
+    fn memory_backend_batch_stores_all_entries() {
+        let backend = MemoryBackend::new();
+        backend
+            .store_batch(&[("svc", "a", "one"), ("svc", "b", "two")])
+            .expect("store batch");
+        assert_eq!(backend.get("svc", "a").expect("a"), "one");
+        assert_eq!(backend.get("svc", "b").expect("b"), "two");
     }
 
     #[test]

@@ -43,7 +43,7 @@
 | `pawork-policy` | S3（整包） | — | 安全内核，红线回归随迁 |
 | `pawork-exec` | S4（process + sandbox） | S10（pty，消费者=交互式终端/GUI Terminal） | Windows 先实测，Linux/macOS 代码随迁、S12 实跑 |
 | `pawork-provider-core` | S5（usage/negotiate/registry/pricing） | — | 依赖 `pawork-domain` / `pawork-api`，由 `pawork-providers` 消费；不依赖 net/SQLite/blob store。若 S0 的 openai-compatible 迁移需要 `stream_assembly`，则该模块提前至 S0 最小激活 |
-| `pawork-auth` | S6 | — | Keychain + OAuth + masked |
+| `pawork-auth` | S6 | — | `auth.json` 文件后端 + OAuth + masked；0600、跨进程 write/refresh 锁、独立临时文件+rename 原子写，OAuth access/refresh/meta 批量单次提交，损坏 fail-closed |
 | `pawork-diagnostics` | S6（脱敏 tracing layer 接线） | — | 早期阶段以纪律 + 断言测试兜底 |
 | `pawork-git` | S8 | — | roots 参数化 |
 | `pawork-blob-store` | S8（artifact/protected/checkpoint） | — | `PWB1` golden 先行 |
@@ -173,7 +173,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | --- | --- |
 | 六条首发通道：ChatGPT OAuth、xAI Grok OAuth、Z.AI GLM Coding Plan、OpenCode Go、Qwen Token Plan、DeepSeek；其它厂商延期 | 各厂商官方 API；范围与 credential/transport 冻结见任务书 |
 | ChatGPT/xAI 共用 Responses transport；xAI 与 API-key 混合通道按模型 capability 选 Chat/Responses | canonical 保持 provider-neutral，Engine 不按厂商名分支 |
-| OS Keychain 凭证 + `pawork auth` 子命令 | **差异化点**：opencodex/CLIProxyAPI/cc-switch 均为本地明文文件（research §3.4）；OpenCode/Pi 为 `auth.json` 单凭证（research §2.1/§2.2） |
+| `auth.json` 文件凭证 + `pawork auth` 子命令 | 形态对齐 Codex CLI；Pawork 额外锁定 0600、跨进程 write/refresh 锁、独立临时文件 + rename 原子写、损坏 fail-closed、掩码展示与全链日志脱敏。env 仅作 headless/CI fallback |
 | ChatGPT/xAI OAuth（PKCE/Device/refresh/callback） | Codex Sign in with ChatGPT；xAI 登录兼容性需真实账号验收；OAuth client secret 不进入 adapter/仓库 |
 | REPL `/model` `/provider` 切换（事件流记录变更） | OpenCode `/models` 切换 + transform 归一化历史（research §2.1）；Pi 跨厂商 handoff 一等能力（research §2.2） |
 | Z.AI GLM Coding Plan 端点预设 | 国际站 Coding Plan 专属端点 `https://api.z.ai/api/coding/paas/v4`；中国区旧测试通道继续显式配置，不作为首发默认值 |
@@ -235,7 +235,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| 全量门禁 / 三平台矩阵 / fuzz / schema drift / 依赖卫生 / W1–W4 发布 / V1 归档 | 工程收口，无外部功能对标；执行清单沿用 [../plan/archive/M8-release-hardening.md](../plan/archive/M8-release-hardening.md) 与 [v1-migration-reference.md](v1-migration-reference.md) §6.3；发布波次见 §7 |
+| 全量门禁 / 三平台矩阵 / fuzz / schema drift / 依赖卫生 / W1–W4 发布 / V1 归档 | 工程收口，无外部功能对标；现行清单见 [S12 任务书](../plan/S12-release-hardening.md)，V1 门禁事实源回退到 [v1-migration-reference.md](v1-migration-reference.md) §6.3；发布波次见 §7 |
 | **已确认待并入**：缓存命中 ≥99% 纳入 Release Gate（§5；[research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.3） | — |
 
 ---
@@ -248,12 +248,12 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | ID | 功能 | 来源参照 | 说明 | 优先级 | 落点 |
 | --- | --- | --- | --- | --- | --- |
-| G1 | 同 Provider 多账户池与订阅 plan 凭证 | opencodex 账户池、CLIProxyAPI auth-dir；OpenCode/Pi 多账户缺位（差异化机会） | 激活 V1 provider-control 账户层（ProviderAccount/CredentialLease）+ 新增订阅 plan OAuth 凭证 kind + Keychain 存储（区别于同类工具明文 JSON）+ `pawork accounts` CLI | P1 | S6 铺垫 / S11 主体（方案 F1-B） |
+| G1 | 同 Provider 多账户池与订阅 plan 凭证 | opencodex 账户池、CLIProxyAPI auth-dir；OpenCode/Pi 多账户缺位（差异化机会） | 激活 V1 provider-control 账户层（ProviderAccount/CredentialLease）+ 新增订阅 plan OAuth 凭证 kind + 扩展 `auth.json` 多账户命名（0600、原子写、损坏 fail-closed）+ `pawork accounts` CLI | P1 | S6 铺垫 / S11 主体（方案 F1-B） |
 | G2 | 额度窗口跟踪与预算 gate 增强 | opencodex 5h/周/30d 窗口探测、CLIProxyAPI-Plus 阈值停用、litellm 层级预算 | LocalLedger 派生（已规划）+ 响应头/错误体被动配额信号捕获归一为 QuotaSnapshot；远端适配器与 WebScrape 保持冻结候审 | P1 | S11（方案 F2-A+B） |
 | G3 | 缓存感知的会话-账户亲和路由 | claude-relay-service sticky session、CLIProxyAPI session-affinity、opencodex thread affinity | SessionBinding 亲和默认开 + 新会话再平衡 + 新增「配额余量优先」路由策略 + 分类错误 rebind；请求级轮换不作默认 | P1 | S11（方案 F3-B） |
 | G4 | 子 Agent 声明式 provider/model/账户绑定 | opencode agent.model + 权限派生；CCR 子代理标签（反例，不采纳）；opencodex 模型即子代理 | Agent Profile/spawn 参数声明绑定 → RouteContext → provider-control 选账户；默认继承父绑定、显式覆盖；预算经 budget-gate 分配 | P1 | S9 profile 铺垫 / S11（方案 F4-A+B） |
 | G5 | canonical 输入缓存策略控制 | Anthropic cache_control、OpenAI prompt_cache_key、pi/opencode/Claude Code 断点收敛实践 | cache 注解（canonical，无厂商字段）+ registry 缓存能力表 + adapter 断点/亲和键映射 + 缓存用量入账与命中率观测 + compaction 联动 | P1 | S2 占位 / S5 分段 / S6 全量（方案 F5-B） |
-| G6 | 账户/端点配置导入 | cc-switch SQLite SSOT、CLIProxyAPI auth-dir、opencodex config、Claude/Codex 官方布局 | pawork-compat 增加账户与端点只读导入源，secret 直接转存 Keychain 不落中间文件 | P2 | S9（方案 F1 附属） |
+| G6 | 账户/端点配置导入 | cc-switch SQLite SSOT、CLIProxyAPI auth-dir、opencodex config、Claude/Codex 官方布局 | pawork-compat 增加账户与端点只读导入源，secret 直接转存 Pawork auth 文件，不落仓库或中间文件 | P2 | S9（方案 F1 附属） |
 | G7 | 对外账户池网关模式 | opencodex / CLIProxyAPI 网关形态 | 近期不内建：以 openai-compatible 上游接外部网关 + 对内账户池；长期按需评估 channels 扩展 feature | P3 | 暂不排期（方案 F6，决策项；登记于 [../ROADMAP.md](../ROADMAP.md) §4） |
 
 **状态**：G1–G6 已确认、待由独立任务并入对应 `plan/S*.md`（任务书见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §4，已登记于 [../ROADMAP.md](../ROADMAP.md) §3.2；按 ROADMAP §6 状态回写约定执行）；G7 维持不做。其中 G5 涉及冻结契约的附加式字段扩展（CanonicalModelRequest/ModelResponseSummary），须遵守 §3.2 golden 先行原则。配套工作约定（执行期凭证 fail-closed / 少测试无门禁 / 缓存命中 95-97-99 目标）见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1 与 [task-guide.md](task-guide.md)。

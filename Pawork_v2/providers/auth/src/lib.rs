@@ -2,7 +2,7 @@
 //!
 //! 自 V1 `auth-service` 整包迁移：Secret 后端（文件 / 内存）、API Key
 //! credential、全局脱敏与 OAuth（PKCE / Device Flow / auto refresh / 本地回调）
-//! 原样保留；新增 [`resolve_provider_credential`] 凭证解析链（Keychain →
+//! 原样保留；新增 [`resolve_provider_credential`] 凭证解析链（auth 文件 →
 //! env fallback → 无凭证）。
 //!
 //! 正式接线（`pawork auth`、config 凭证引用、六通道装配与 `auth list` 来源
@@ -11,9 +11,10 @@
 //! ## 核心红线
 //!
 //! - 明文 token **绝不**进入 [`StoredCredential`] / [`ApiKeyCredential`]，只存
-//!   于 [`SecretBackend`]（Keychain / 内存）中。
+//!   于 [`SecretBackend`]（auth 文件 / 内存）中。
 //! - [`MaskedCredential`] 的 `Debug` / `Display` / `Serialize` 输出永不含明文。
-//! - 自动测试只用 [`MemoryBackend`]，不依赖真实 OS Keychain。
+//! - 自动测试只用 [`MemoryBackend`] 或显式临时路径的 [`FileBackend`]，不读取真实
+//!   auth 文件。
 
 mod backend;
 mod file_backend;
@@ -29,7 +30,8 @@ pub use file_backend::FileBackend;
 pub use credential::{ApiKeyCredential, CredentialId, StoredCredential};
 pub use default_credential::{
     default_oauth_needs_refresh, delete_default_oauth_token, load_default_oauth_credential,
-    load_default_oauth_meta, oauth_service, store_default_oauth_token,
+    load_default_oauth_meta, oauth_service, refresh_default_oauth_credential_if_needed,
+    store_default_oauth_token,
     update_default_oauth_token, DefaultOAuthMeta, OAUTH_DEFAULT_ACCOUNT,
 };
 pub use error::AuthError;

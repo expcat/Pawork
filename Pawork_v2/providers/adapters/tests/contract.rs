@@ -2,7 +2,7 @@
 //!
 //! 覆盖 ADR-015 用例集：text、tool call、multiple tool calls、usage+stop、
 //! cancel、timeout、rate limit、malformed stream、partial JSON、reconnect、context overflow。
-//! 全程不接触真实网络与真实 Keychain。
+//! 全程不接触真实网络与真实 auth 文件。
 //!
 //! 断言与 `RecordingProviderSink` 就地复制自 V1 `test-support`，不依赖 V1 crate。
 

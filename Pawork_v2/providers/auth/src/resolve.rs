@@ -1,4 +1,4 @@
-//! 凭证解析链（S6）：Keychain → env fallback → 无凭证。
+//! 凭证解析链（S6）：auth 文件 → env fallback → 无凭证。
 //!
 //! [`resolve_provider_credential`] 是 Provider 装配期的统一凭证入口：先查
 //! SecretBackend 的 Provider 主条目（service 沿用 [`StoredCredential] 约定
@@ -56,16 +56,17 @@ pub fn delete_default_api_key(
 
 /// [`resolve_provider_credential`] 的解析结果（来源标记，不含明文 secret）。
 ///
-/// - [`CredentialSource::Keychain`]：主条目命中，返回可持久化元数据；明文仍在
-///   SecretBackend 中，需要时经 [`crate::ApiKeyCredential::resolve`] 解析。
+/// - [`CredentialSource::Keychain`]：主条目命中，返回可持久化元数据；该变体名
+///   为 V1 兼容名，当前正式后端是 auth 文件。明文仍在 SecretBackend 中，需要时
+///   经 [`crate::ApiKeyCredential::resolve`] 解析。
 /// - [`CredentialSource::EnvFallback`]：headless/CI fallback 命中的
 ///   [`ResolvedCredential`]（`Debug` 脱敏，仅供 adapter 构造认证请求）。
 /// - [`CredentialSource::None`]：两级都未命中，调用方必须 fail-closed。
 #[derive(Debug)]
 pub enum CredentialSource {
-    /// Keychain 主条目命中（元数据 + 定位信息，不含明文）。
+    /// 持久化 auth 条目命中（元数据 + 定位信息，不含明文；变体名沿用 V1）。
     Keychain(StoredCredential),
-    /// Keychain 未命中、env fallback 命中。
+    /// auth 文件未命中、env fallback 命中。
     EnvFallback(ResolvedCredential),
     /// 两级均未命中。
     None,
@@ -87,9 +88,9 @@ fn read_api_key_from_env(provider_id: &str) -> Option<String> {
     }
 }
 
-/// 解析 Provider 凭证：Keychain 主条目 → env fallback → 无凭证。
+/// 解析 Provider 凭证：auth 文件主条目 → env fallback → 无凭证。
 ///
-/// Keychain 侧的「条目不存在」与后端访问异常都视为未命中并继续 env；两级
+/// auth 文件侧的「条目不存在」与后端访问异常都视为未命中并继续 env；两级
 /// 都缺时返回 [`CredentialSource::None`]，绝不构造伪凭证。
 pub fn resolve_provider_credential(
     backend: &dyn SecretBackend,
@@ -151,16 +152,16 @@ mod tests {
     }
 
     #[test]
-    fn keychain_hit_beats_env_fallback() {
+    fn file_hit_beats_env_fallback() {
         let backend = MemoryBackend::new();
-        let provider = "resolve-keychain-hit";
+        let provider = "resolve-file-hit";
         let env_name = api_key_env_name(provider);
         set_env(&env_name, "sk-env-should-not-be-used");
         backend
             .store(
-                "pawork.resolve-keychain-hit",
+                "pawork.resolve-file-hit",
                 PROVIDER_DEFAULT_ACCOUNT,
-                "sk-keychain-primary-000000",
+                "sk-file-primary-000000",
             )
             .expect("store");
 
@@ -168,24 +169,24 @@ mod tests {
         remove_env(&env_name);
 
         let CredentialSource::Keychain(stored) = source else {
-            panic!("expected keychain hit");
+            panic!("expected file hit");
         };
         assert_eq!(stored.provider.as_str(), provider);
         assert_eq!(stored.id.as_str(), PROVIDER_DEFAULT_ACCOUNT);
-        assert_eq!(stored.keychain_service, "pawork.resolve-keychain-hit");
+        assert_eq!(stored.keychain_service, "pawork.resolve-file-hit");
         assert_eq!(stored.keychain_account, PROVIDER_DEFAULT_ACCOUNT);
         // 元数据与 Debug 输出不含明文。
-        assert!(!format!("{stored:?}").contains("sk-keychain-primary"));
+        assert!(!format!("{stored:?}").contains("sk-file-primary"));
         // 沿用 StoredCredential 惯例可解析回明文。
         let resolved = ApiKeyCredential::from_stored(stored)
             .expect("from_stored")
             .resolve(&backend)
             .expect("resolve");
-        assert_eq!(resolved.expose_secret(), "sk-keychain-primary-000000");
+        assert_eq!(resolved.expose_secret(), "sk-file-primary-000000");
     }
 
     #[test]
-    fn keychain_miss_falls_back_to_env() {
+    fn file_miss_falls_back_to_env() {
         let backend = MemoryBackend::new();
         let provider = "resolve-env-fallback";
         let env_name = api_key_env_name(provider);

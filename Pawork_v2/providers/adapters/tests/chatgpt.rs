@@ -86,7 +86,7 @@ async fn oauth_headers_models_and_responses_path_are_wired() {
         .and(path("/responses"))
         .and(header("authorization", "Bearer oauth-test"))
         .and(header("chatgpt-account-id", "acct-test"))
-        .and(header("originator", "pawork"))
+        .and(header("originator", "codex_cli_rs"))
         .and(body_partial_json(serde_json::json!({
             "model": "codex-test",
             "stream": true,

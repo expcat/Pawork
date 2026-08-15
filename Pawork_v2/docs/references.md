@@ -72,14 +72,14 @@ Pawork 的候选功能对照基于三家的公开功能面（功能对照见 [de
 
 - **定位与形态**：本地代理守护进程（Bun，默认端口 10100）+ Web dashboard + `ocx` CLI；把 Codex Responses API 翻译到 40+ provider，另向 Claude Code 提供 `/v1/messages` 网关。
 - **核心机制**：① ChatGPT 账户池：5h / 周 / 30d 三窗口配额**主动探测**，`quota`（默认）/ round-robin / fill-first 三种池策略；② thread affinity：既有会话钉在原账户保 prompt cache，仅 failover / 亲和过期等触发 rebind；③ 429 → cooldown failover，401/403 → fail-closed（不静默换凭据）；④ Design B 注入：只改 `~/.codex/config.toml` 的 `openai_base_url` 一个字段。
-- **与 Pawork 的关系**：F2-B 被动配额信号捕获与 F3-B「配额余量优先」策略、会话-账户亲和的直接参照；F6-A 下可作 openai-compatible 上游网关；config 布局是 G6 只读导入源候选；其本地明文凭证存储与 Pawork 的 Keychain 红线形成有意差异。
+- **与 Pawork 的关系**：F2-B 被动配额信号捕获与 F3-B「配额余量优先」策略、会话-账户亲和的直接参照；F6-A 下可作 openai-compatible 上游网关；config 布局是 G6 只读导入源候选；其本地凭证文件是导入参照，Pawork 额外要求 0600、原子写、损坏 fail-closed、掩码展示与日志脱敏。
 - **链接**：[lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) · [opencodex.me](https://opencodex.me) · [configuration](https://opencodex.me/reference/configuration/) · [How It Works](https://opencodex.me/getting-started/how-it-works/)。详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §3.1。
 
 ### 3.2 cc-switch
 
 - **定位与形态**：跨平台桌面 GUI（Tauri 2，另有 Web/CLI 形态），统一管理 8 个工具（Claude Code、Codex、Gemini CLI 等）的供应商配置，50+ provider 预设。
 - **核心机制**：① SSOT：provider 集中存 `~/.cc-switch/cc-switch.db`（SQLite），切换时原子写回各工具 live 配置文件（临时文件 + rename + 失败回滚 + backfill 回读）；② 切换粒度为全局配置级、手动为主（Claude Code 支持热切换），另有本地代理模式（auto-failover、circuit breaker）；③ 额度侧仅本地记账 dashboard 与可配置余额查询脚本，无配额驱动自动换号。
-- **与 Pawork 的关系**：G6（F1 附属）导入源候选（cc-switch SQLite 布局）；「配置级切换 + 无 sticky」是 F3-B 的反面对照（切换即缓存作废）；明文存储对照 Keychain 红线。
+- **与 Pawork 的关系**：G6（F1 附属）导入源候选（cc-switch SQLite 布局）；「配置级切换 + 无 sticky」是 F3-B 的反面对照（切换即缓存作废）；导入后的 secret 直接写入 Pawork auth 文件，不落仓库或中间文件。
 - **链接**：[farion1231/cc-switch](https://github.com/farion1231/cc-switch) · [cc-switch.cc](https://cc-switch.cc/) · [README_ZH](https://github.com/farion1231/cc-switch/blob/HEAD/README_ZH.md)。详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §3.2。
 
 ### 3.3 CLIProxyAPI

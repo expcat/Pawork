@@ -92,7 +92,7 @@ Ctrl-C：两通道均在长文生成中打出「已取消」、进程存活、�
 ## 为后续阶段预留 / 明确不做
 
 - 预留：`ProviderStreamEvent` 全部 13 变体的转发路径（未消费的变体原样透传/忽略，不删）；`ThinkingDelta` 渲染为后续 reasoning 展示铺路；config schema 中 `profiles`/`trust_workspaces` 字段解析但暂不消费。
-- 不做：会话持久化与 `--resume`（S1）、`--json`（S1）、工具调用（S2）、Anthropic 协议（S2）、审批（S3）、Keychain（S6）。
+- 不做：会话持久化与 `--resume`（S1）、`--json`（S1）、工具调用（S2）、Anthropic 协议（S2）、审批（S3）、Pawork auth 文件与 OAuth（S6）。
 
 ## 并行拆分建议（可派发子代理）
 

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork 认证方式与 Secret 后端（API Key / OS Keychain / OAuth）"
+description = "Pawork 认证方式与 Secret 后端（API Key / auth file / OAuth）"
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }

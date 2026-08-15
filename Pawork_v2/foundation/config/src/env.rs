@@ -1,6 +1,6 @@
 //! 环境变量凭证读取（S0–S5 过渡机制）。
 //!
-//! 不构造 `ResolvedCredential`，不读配置文件、`.env` 或 Keychain。
+//! 不构造 `ResolvedCredential`，不读配置文件、`.env` 或 auth 文件。
 
 /// 由 provider id 推导环境变量名：`PAWORK_API_KEY_` + 大写，且 `-` → `_`。
 pub fn api_key_env_name(provider_id: &str) -> String {

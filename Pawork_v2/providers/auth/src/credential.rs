@@ -1,7 +1,7 @@
 //! 凭证元数据与 API Key 认证方式。
 //!
 //! 关键红线：明文 secret **绝不**进入 [`StoredCredential`] 或 [`ApiKeyCredential`]，
-//! 只存在于 `SecretBackend`（Keychain / 内存）中。这两个结构只持有可安全序列化、
+//! 只存在于 `SecretBackend`（auth 文件 / 内存）中。这两个结构只持有可安全序列化、
 //! 可记录到数据库与日志的元数据 + 脱敏状态。
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -54,11 +54,12 @@ pub(crate) fn keychain_service_for(provider: &ProviderId) -> String {
 
 /// 仅含元数据与脱敏状态的凭证记录，可安全持久化到数据库与日志。
 ///
-/// 明文 secret **不**在此结构中——它只存在于 Keychain（由 `keychain_service` +
-/// `keychain_account` 定位）或内存后端。
+/// 明文 secret **不**在此结构中——它只存在于 SecretBackend。字段名
+/// `keychain_service` / `keychain_account` 为 V1 JSON 兼容名，实际用于定位
+/// auth 文件或内存后端中的 service/account。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredCredential {
-    /// 凭证唯一标识，同时作为 Keychain 的 `account`。
+    /// 凭证唯一标识，同时作为 SecretBackend 的 `account`。
     pub id: CredentialId,
     /// 凭证所属 Provider。
     pub provider: ProviderId,
@@ -66,9 +67,9 @@ pub struct StoredCredential {
     pub display_name: String,
     /// 脱敏后的展示状态。
     pub masked: MaskedCredential,
-    /// Keychain `service`，用于定位明文 secret。
+    /// SecretBackend `service`（V1 兼容字段名），用于定位明文 secret。
     pub keychain_service: String,
-    /// Keychain `account`，用于定位明文 secret。
+    /// SecretBackend `account`（V1 兼容字段名），用于定位明文 secret。
     pub keychain_account: String,
     /// 创建时间（Unix 毫秒）。
     pub created_at: Timestamp,
@@ -109,7 +110,7 @@ impl StoredCredential {
         self
     }
 
-    /// 返回 Keychain 定位所需的 `(service, account)`。
+    /// 返回 SecretBackend 定位所需的 `(service, account)`；方法名沿用 V1。
     pub fn keychain_ref(&self) -> (&str, &str) {
         (
             self.keychain_service.as_str(),
@@ -176,7 +177,7 @@ impl ApiKeyCredential {
     pub fn from_stored(stored: StoredCredential) -> Result<Self, AuthError> {
         if stored.keychain_service.is_empty() || stored.keychain_account.is_empty() {
             return Err(AuthError::MalformedMetadata(
-                "missing keychain service/account reference".into(),
+                "missing secret backend service/account reference".into(),
             ));
         }
         Ok(Self { stored })
@@ -339,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn from_stored_rejects_missing_keychain_ref() {
+    fn from_stored_rejects_missing_backend_ref() {
         let malformed = StoredCredential::new(
             CredentialId::new("cred_x"),
             ProviderId::new("openai"),

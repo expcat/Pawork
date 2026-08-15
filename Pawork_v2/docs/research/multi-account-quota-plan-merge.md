@@ -4,7 +4,7 @@
 >
 > 上游文档：[multi-account-quota-reference.md](multi-account-quota-reference.md)（调研参考说明）· [multi-account-quota-proposals.md](multi-account-quota-proposals.md)（方案细节 F1–F6）· [../design.md](../design.md) §5（候选表 G1–G7）。
 >
-> 建立日期：2026-08-14。
+> 建立日期：2026-08-14。凭证存储部分已按 2026-08-15 用户决策更新：OS Keychain 方案由仓库外 `auth.json` 文件后端取代。
 
 ---
 
@@ -16,7 +16,7 @@
 
 适用于本功能族全部后续任务（含并入 plan 后的开发任务），与架构红线「Secret 不落库、不入日志」同源：
 
-1. **供给方式**：执行任务所需 API key 由用户在任务开始时临场提供；写入**本地环境变量**（会话级或用户级），或经 `pawork auth` 存入 OS Keychain。二者均为本机存储。
+1. **供给方式**：执行任务所需 API key 由用户在任务开始时临场提供；写入**本地环境变量**（会话级或用户级），或经 `pawork auth` 存入 `$PAWORK_HOME/auth.json` / `~/.pawork/auth.json`（0600、原子写、损坏 fail-closed）。二者均为本机存储。
 2. **不落仓库**：凭证不写入任何可能被提交到远程仓库的文件——源码、配置、fixture、脚本、文档一律使用占位符或 env 引用；`.env` 类文件即使使用也必须在 `.gitignore` 内且不作为推荐通道；明文 key 不出现在日志与任务报告中。
 3. **缺失即终止（fail-closed）**：任务执行中发现凭证缺失或失效（更换环境、环境变量丢失、key 过期等）→ **立即终止当前任务并明确提示用户重新提供**；不静默跳过、不自行换用其他凭证、不降级为 mock 继续。（对应 opencodex 对 401/403 的 fail-closed 立场。）
 
@@ -44,7 +44,7 @@
 
 | # | 事项 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| D1 | 执行期凭证约定 | ✅ 已确认 | 见 §1。与 F1-B 不冲突：env 为开发期供给通道，Keychain 为产品存储层，共同底线是不落仓库文件 |
+| D1 | 执行期凭证约定 | ✅ 已确认（2026-08-15 更新） | 见 §1。env 为开发期/headless 供给通道，仓库外 auth 文件为产品存储层，共同底线是不落仓库、数据库、日志与事件流 |
 | D2 | F1-B 订阅 plan OAuth 凭证 kind | ✅ 已确认（2026-08-14 按推荐） | 纳入范围，S6 凭证契约定型时实施；「不做身份伪装」立场一并确认 |
 | D3 | F3-B 会话-账户亲和默认开 + 「配额余量优先」策略 | ✅ 已确认（2026-08-14 按推荐） | 作为多账户场景默认行为（直接服务「优先缓存命中」原则）；效果与前后差异见 §3.1 |
 | D4 | F5-B canonical 缓存契约扩展（附加式字段） | ✅ 已确认（2026-08-14 按推荐） | S2 契约激活时字段一次就位，§4.2 golden 先行；差异见 §3.2 |
@@ -90,7 +90,7 @@
 
 **结论：需要网关的能力，不需要网关的形态。**
 
-opencodex / CLIProxyAPI 做成独立代理进程，是因为它们改不了所服务的客户端（Codex CLI、Claude Code 为固定协议黑盒），只能在进程外截 base_url。Pawork 的引擎、编排、CLI 全部自持，账户池、路由、亲和、冷却做成**进程内库**（V1 `provider-control` 已有全套骨架），调度能力等同网关，且：少一个常驻进程/端口/运维面；凭证不出进程（Keychain → 内存租约）；没有本地 HTTP 明文一跳。多账号切换同理：切换 = 换一张内部 `CredentialLease`，Engine 无感知。
+opencodex / CLIProxyAPI 做成独立代理进程，是因为它们改不了所服务的客户端（Codex CLI、Claude Code 为固定协议黑盒），只能在进程外截 base_url。Pawork 的引擎、编排、CLI 全部自持，账户池、路由、亲和、冷却做成**进程内库**（V1 `provider-control` 已有全套骨架），调度能力等同网关，且：少一个常驻进程/端口/运维面；凭证只从仓库外 auth 文件解析为进程内租约；没有本地 HTTP 明文一跳。多账号切换同理：切换 = 换一张内部 `CredentialLease`，Engine 无感知。
 
 **不兼容供应商三层处理**：
 
@@ -108,8 +108,8 @@ opencodex / CLIProxyAPI 做成独立代理进程，是因为它们改不了所�
 | --- | --- |
 | `plan/S2-tool-loop.md` | F5 canonical 缓存注解占位字段 + golden 要求（仅当 D4 批准） |
 | `plan/S5-context-usage.md` | F5 前缀稳定性分段产出；缓存用量并入 token 统计路径；compaction 附缓存重置标注 |
-| `plan/S6-providers-auth.md` | F1 Keychain 多凭证命名规约；plan OAuth 凭证 kind（D2）；F5 adapter 缓存映射 + registry 能力表 + 缓存用量入账；F2-B 被动配额信号捕获的 per-adapter 登记；**首个真实缓存命中测试（多轮对话场景，≥95%，§1.3）** |
-| `plan/S9-mcp-resources.md` | G6 账户/端点只读导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI 布局，secret 直转 Keychain）；F4 Agent Profile 绑定字段随 profiles 契约定型 |
+| `plan/S6-providers-auth.md` | F1 auth 文件多凭证命名规约；plan OAuth 凭证 kind（D2）；F5 adapter 缓存映射 + registry 能力表 + 缓存用量入账；F2-B 被动配额信号捕获的 per-adapter 登记；**首个真实缓存命中测试（多轮对话场景，≥95%，§1.3）** |
+| `plan/S9-mcp-resources.md` | G6 账户/端点只读导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI 布局，secret 直转 Pawork auth 文件）；F4 Agent Profile 绑定字段随 profiles 契约定型 |
 | `plan/S11-workflow-control.md` | F1 账户层激活 + `pawork accounts` CLI；F2-A+B 额度感知；F3-B 亲和默认 +「配额余量优先」策略（D3）；F4-A+B 子 Agent 声明式绑定与预算分配；退出标准增补（缓存命中率指标、rebind 事件可重放）；**命中测试补全 agent/长任务/多 Agent 场景（下限 95%、均值 97%）** |
 | `plan/S12-release-hardening.md` | Release Gate 增缓存命中 ≥99% 目标（三场景均值，§1.3）；开发期核减的测试项在此统一收口 |
 | 全部 `plan/S*.md`（并入时顺带） | 按 §1.2 核减非关键测试项（只删不加，保留冒烟/关键路径/契约 golden），核对无门禁表述 |

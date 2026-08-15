@@ -85,7 +85,7 @@ pub enum Command {
     },
     /// 列出当前 provider 的模型目录
     Models,
-    /// 凭证管理（Keychain 为主，env 为显式 fallback）
+    /// 凭证管理（auth 文件为主，env 为显式 fallback）
     Auth {
         #[command(subcommand)]
         command: AuthCommand,
@@ -104,11 +104,11 @@ pub enum SessionsCommand {
 pub enum AuthCommand {
     /// 各通道凭证状态（只显示掩码与来源）
     List,
-    /// 从 stdin 读入 API key 并写入 Keychain default 条目
+    /// 从 stdin 读入 API key 并写入 auth 文件 default 条目
     SetKey { provider: String },
     /// OAuth 登录（PKCE 回调或 Device Flow，等待 5 分钟）
     Login { provider: String },
-    /// 删除 Keychain default 条目（不影响 env fallback）
+    /// 删除 auth 文件 default 条目（不影响 env fallback）
     Logout { provider: String },
 }
 

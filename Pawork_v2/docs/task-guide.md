@@ -31,9 +31,9 @@
 1. **读任务书**：对应 `plan/S<N>.md` 全文；确认本任务所属波次、前置波次是否完成。
 2. **核对状态与依赖**：[../ROADMAP.md](../ROADMAP.md) §2——依赖阶段须为 🟢；本阶段状态与实际一致。
 3. **契约核对**：[design.md](design.md) §3.2 冻结契约表中列出本任务涉及的契约；确认 golden 测试先于消费实现迁移（golden 先行）。
-4. **V1 资产定位**：[v1-migration-reference.md](v1-migration-reference.md) §4.1 映射总表（唯一迁移词典）+ [../plan/archive/](../plan/archive/README.md) 对应里程碑的包级细则。迁移方式一律「复制 + 合并 + 改名 + 测试随迁」，V1 目录只读、git 历史不跟随。
+4. **V1 资产定位**：[v1-migration-reference.md](v1-migration-reference.md) §4.1 映射总表（唯一迁移词典）+ [../plan/archive/](../plan/archive/README.md) 中实际存在的对应包级细则。M0–M8 正文当前未落仓，遇到缺失引用须报告并回退到 §4.1，不得臆造。迁移方式一律「复制 + 合并 + 改名 + 测试随迁」，V1 目录只读、git 历史不跟随。
 5. **查参照资料**：[design.md](design.md) §4 本阶段的功能 ↔ 参照项目映射；需要机制细节时进 [references.md](references.md) 与 [research/](research/)。
-6. **凭证检查**（需真实 API 的任务）：确认所需 key 已在环境变量或 Keychain（§5）；**缺失或失效即终止任务并向用户索取，不静默跳过、不换用其他凭证、不降级为 mock 继续**（fail-closed，[research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.1）。
+6. **凭证检查**（需真实 API 的任务）：确认所需 key 已在环境变量或 Pawork auth 文件（§5）；**缺失或失效即终止任务并向用户索取，不静默跳过、不换用其他凭证、不降级为 mock 继续**（fail-closed，[research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.1）。
 
 ---
 
@@ -111,10 +111,10 @@ S6 首发产品范围冻结如下；这里的“已预设”不等于“已完�
 
 **Key 管理约定（安全红线自 S0 生效）**：
 
-- S0–S5 的 API key 只经环境变量注入：`PAWORK_API_KEY_<PROVIDER_ID 大写、`-`→`_`>`（如 `PAWORK_API_KEY_GLM_CODING`）。S6 完成后以 OS Keychain（`pawork-auth`）为正式存储，环境变量降级为 headless/CI fallback；S6 尚未退出前不得把过渡路径误报为已替换。
+- S0–S5 的 API key 只经环境变量注入：`PAWORK_API_KEY_<PROVIDER_ID 大写、`-`→`_`>`（如 `PAWORK_API_KEY_GLM_CODING`）。S6 起以 `$PAWORK_HOME/auth.json` / `~/.pawork/auth.json`（JSON v1、0600、临时文件 + rename 原子写、损坏 fail-closed）为正式存储，环境变量降级为 headless/CI fallback。
 - ChatGPT/xAI adapter 只消费 auth 层解析后的 `OAuthBearer`；OAuth client secret、access token、refresh token 不得写入 adapter 默认值、配置、数据库、事件流或日志。
 - key 不写入配置文件、不落数据库、不进日志与事件流（V1 `ResolvedCredential` 的 Debug 脱敏语义自 S0 采用）。
-- 执行期凭证由用户在任务开始时临场提供（env 或 `pawork auth` 入 Keychain）；不写入任何可能提交到远程仓库的文件；缺失即终止（fail-closed）——完整约定见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.1。
+- 执行期凭证由用户在任务开始时临场提供（env 或 `pawork auth` 写入仓库外的 Pawork auth 文件）；不写入任何可能提交到远程仓库的文件；缺失即终止（fail-closed）——完整约定见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.1。
 - **V2 开发期本地冒烟**：两通道 key 放在 `Pawork_v2/.env`（已列入 `.gitignore`，禁止提交）。冒烟进程用 `set -a && source Pawork_v2/.env && set +a` 注入环境变量；产品路径仍只读 env，不把 `.env` 当配置层。
 - 配置样例随 S0 产出：`fixtures/config/config.example.toml`（含上表三个 provider 条目）。
 

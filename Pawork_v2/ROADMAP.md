@@ -7,7 +7,7 @@
 > | 文档 | 职责 |
 > | --- | --- |
 > | 本文 `ROADMAP.md` | 任务总索引：阶段状态、阶段外任务、未决事项、风险 |
-> | [plan/S0–S12](plan/) | 每阶段任务书：目标、涉及包与 V1 资产、关键任务、冒烟与自动化验收、退出标准、并行拆分（附件 [plan/archive/](plan/archive/README.md)：已归档的旧按域计划 M0–M8，保留包级迁移细则） |
+> | [plan/S0–S12](plan/) | 每阶段任务书：目标、涉及包与 V1 资产、关键任务、冒烟与自动化验收、退出标准、并行拆分（附件 [plan/archive/](plan/archive/README.md)：旧按域计划索引；M0–M8 正文未落仓，迁移细则回退到 `docs/v1-migration-reference.md` §4.1） |
 > | [docs/design.md](docs/design.md) | 设计文档：包布局与激活映射、冻结契约、各阶段功能设计与参照项目映射、候选功能 |
 > | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计：最小 Agent 壳、参照取舍、随阶段增量图 |
 > | [docs/references.md](docs/references.md) | 参照项目手册：对标项目的目标、功能与文档链接（附件 [docs/research/](docs/research/)：专题调研全文） |
@@ -20,7 +20,7 @@
 
 ## 1. 计划原则
 
-旧「按域整体迁移」计划（M0–M8，已归档至 [plan/archive/](plan/archive/README.md)）第一个可运行物要到第 5 个里程碑才出现，此前全部是「库先行、零消费者」——正是 V1「组件齐全、主干未通电」病灶（[docs/v1-migration-reference.md](docs/v1-migration-reference.md) §1.2）在计划层的重演。现行计划的三条组织原则：
+旧「按域整体迁移」计划（M0–M8；[plan/archive/](plan/archive/README.md) 仅保留索引，正文未落仓）第一个可运行物要到第 5 个里程碑才出现，此前全部是「库先行、零消费者」——正是 V1「组件齐全、主干未通电」病灶（[docs/v1-migration-reference.md](docs/v1-migration-reference.md) §1.2）在计划层的重演。现行计划的三条组织原则：
 
 1. **每阶段交付可运行增量**：从 S0 起 `pawork` 二进制始终可编译、可运行、可被真实使用；每个阶段以「新增哪些用户可见能力」定义，而不是以「迁移了哪些包」定义。
 2. **真实测试优先**：初期用两条真实通道（GLM Coding Plan、OpenCode Go，见 [docs/task-guide.md](docs/task-guide.md) §5）做每阶段冒烟与模型行为评估；自动化测试只做关键定向项（契约 golden、安全红线、解析器种子），开发期不设门禁（沿用 [docs/v1-migration-reference.md](docs/v1-migration-reference.md) §6.2，全量门禁集中在 S12）。
@@ -40,7 +40,7 @@
 | [S3](plan/S3-safe-edits.md) | 写入工具与审批 | write/edit/apply_patch + 终端审批交互（`--approval-mode`） | policy（整包）、tools（写三件）、engine/cli（审批位点） | 真实小编码任务经审批落盘；越界/symlink 拒绝；deny 后会话可续 | 🟢 |
 | [S4](plan/S4-exec-sandbox.md) | 命令执行与沙箱 | run_command（进程树清理 + 沙箱 + 输出截断）——首个完整「读-改-跑」编码闭环 | exec（process/sandbox）、tools（run_command）、policy（shell 分类接线） | 「跑 cargo check 并修复报错」端到端；Ctrl-C 杀整棵进程树；fail-closed | 🟢 |
 | [S5](plan/S5-context-usage.md) | 上下文预算与用量 | 长任务不炸上下文（预算/截断/压缩）、token 与费用统计显示 | engine（context 接线）、session（compaction feature）、provider-core（usage/registry/pricing） | 超长多轮任务连贯完成；token 计量与厂商侧抽查一致 | 🟢 |
-| [S6](plan/S6-providers-auth.md) | 首发 Provider 与认证 | 六通道适配、`pawork models` 聚合、OS Keychain、API key 与 ChatGPT/xAI OAuth | providers/adapters（六通道）、auth、diagnostics（脱敏 layer）、config（凭证解析） | 六通道真实使用；运行中切换 provider/model；secret 不入日志回归 | 🔵 |
+| [S6](plan/S6-providers-auth.md) | 首发 Provider 与认证 | 六通道适配、`pawork models` 聚合、auth 文件、API key 与 ChatGPT/xAI OAuth | providers/adapters（六通道）、auth、diagnostics（脱敏 layer）、config（凭证解析） | 六通道真实使用；运行中切换 provider/model；OAuth 临期刷新；secret 不入日志回归 | 🔵 |
 | [S7](plan/S7-gui-agent.md) | 最小 Agent GUI | 先锁定 GUI 设计，再交付本机单窗口：会话 / Timeline / Composer / 取消 / 模型 / 审批 | protocol（最小帧）、transport（local）、gui-server（单客户端）、client、apps/desktop、cli `gui serve` | 设计锁定；真实模型流式对话；关窗不杀 Run | ⚪ |
 | [S8](plan/S8-git-checkpoint.md) | Git、Diff 与 Checkpoint | 会话改动 diff 呈现、编辑前快照、`pawork rollback` 一键回滚；GUI Changes 面 | git（git+diff）、blob-store（artifact/protected/checkpoint） | 真实任务后 diff 审阅 + 回滚还原；git 注入防护回归 | ⚪ |
 | [S9](plan/S9-mcp-resources.md) | MCP、资源与兼容导入 | 外接 MCP server 工具、AGENTS.md/Skills 生效、`@file` 引用、导入 Claude/Codex 等配置；GUI `@` / Resources | mcp（rmcp 收口）、resources、compat、workspace（file-index）、config（完整层级） | 真实 MCP server 工具与内置共存；本机 Claude/Codex 配置导入可用 | ⚪ |
@@ -61,7 +61,7 @@
 | 任务 | 完成日期 | 产出 |
 | --- | --- | --- |
 | V1 全量 Review 与 V2 重构方案（原 ROADMAP_V2.md） | 2026-08-14 | [docs/v1-migration-reference.md](docs/v1-migration-reference.md)（Review 结论、目录结构、映射总表、发布与测试策略） |
-| 按域迁移计划 M0–M8 撰写（后被增量式取代） | 2026-08-14 | [plan/archive/](plan/archive/README.md)（保留包级迁移细则，供各阶段引用） |
+| 按域迁移计划 M0–M8 登记（后被增量式取代；正文未落仓） | 2026-08-14 | [plan/archive/](plan/archive/README.md)（索引）+ [迁移映射 §4.1](docs/v1-migration-reference.md) |
 | 重规划为增量式阶段计划 S0–S12 | 2026-08-14 | 本文 §2 + [plan/S0–S12](plan/) |
 | 调整后续顺序：插件移出排期、GUI 提前并先设计 | 2026-08-16 | 本文 §2/§4；[docs/gui-design.md](docs/gui-design.md)；[plan/S7-gui-agent.md](plan/S7-gui-agent.md)；旧扩展任务书归档为 [plan/archive/S10-extensions-deferred.md](plan/archive/S10-extensions-deferred.md) |
 | 多账户额度/切换/子 Agent 路由/输入缓存调研与方案确认（G1–G7 → F1–F6，决策 D1–D8 全部确认） | 2026-08-14 | [docs/research/](docs/research/) 三篇；候选登记 [docs/design.md](docs/design.md) §5 |
@@ -92,6 +92,7 @@
 | 审批等待前未落盘 `ToolApprovalRequested` | engine 在 `host.decide` 返回后才成对发出 Requested/Responded；`kill -9` 时 tool_call 停在 `collecting_arguments`，resume 走重新询问（S3 冒烟已确认不重复执行）。若要让 seal-as-denied 覆盖生产杀进程窗口，需在等待前先 persist Requested | 不阻塞 S4；S10 headless 远程审批前建议收口 |
 | `pawork-diagnostics` `experimental` 门控面 | metrics/bundle 两模块已随波 B 迁移但以 `experimental` feature 门控、默认不编译；激活条件：出现真实诊断导出/指标消费方（候选 S10 gui-server 指标 / diagnostic bundle 导出） | S10 |
 | 对外账户池网关模式（F6-B） | 近期不内建（F6-A 已确认）；以 `pawork-channels` 扩展 feature 长期评估，见 [docs/design.md](docs/design.md) §5 | S12 后按需 |
+| `plan/archive` M0–M8 正文缺失 | `plan/archive/README.md` 与历史登记引用九份 M0–M8 包级细则，但文件从未落仓；当前以 `docs/v1-migration-reference.md` §4.1 为唯一迁移词典，禁止臆造细则 | 后续文档维护任务；不阻塞 S6 代码收口 |
 
 ---
 
@@ -102,7 +103,7 @@
 | 最小实现偏离 V1 语义，后期迁移对不上 | [docs/design.md](docs/design.md) §3.2 契约表：激活即采用 V1 完整形状；engine 等「增量长出」的实现以 V1 测试为准绳逐步替换/并入 |
 | 「先简后改」侵蚀冻结契约 | golden 先于消费实现迁移；`--json` 等未定型输出显式标注 unstable |
 | 真实 API 波动导致验收不稳定 | 冒烟（人工）与自动化（Mock/golden）分离；真实 API 测试 env 门控、不进默认测试路径 |
-| env 注入 key 的过渡机制被长期留存 | S6 退出标准包含「Keychain 为主、env 降级为 fallback 且行为有回归测试」 |
+| env 注入 key 的过渡机制被长期留存 | S6 退出标准包含「仓库外 auth 文件为主、env 降级为 fallback 且行为有回归测试」 |
 | 早期包数量多、单包极薄带来的维护噪音 | 薄包只含终局布局中必然存在的包；不为增量新造任何临时包 |
 | 双线漂移（V1 继续演进） | V1 冻结为只收安全修复（沿用旧计划约定）；新功能一律在 V2 做 |
 

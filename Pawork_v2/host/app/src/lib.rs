@@ -1,4 +1,4 @@
-//! 应用门面：读配置 → 凭证链（Keychain → env）→ provider → 读写工具 +
+//! 应用门面：读配置 → 凭证链（auth 文件 → env）→ provider → 读写工具 +
 //! run_command → 事件化 `run_session`（S6 波 C 起六通道正式装配）。
 //!
 //! 不按 Provider 名称分支；协议来自 `extra.provider_protocols` 与默认表。
@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use pawork_api::{
     CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
@@ -39,10 +40,10 @@ use pawork_providers::{
     OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
 use pawork_auth::{
-    default_oauth_needs_refresh, load_default_oauth_credential, load_default_oauth_meta,
-    read_refresh_token, refresh_access_token, resolve_oauth_credential,
-    resolve_provider_credential, update_default_oauth_token, ApiKeyCredential, AuthError,
-    CredentialSource, FileBackend, SecretBackend,
+    load_default_oauth_credential, load_default_oauth_meta,
+    refresh_default_oauth_credential_if_needed, resolve_oauth_credential,
+    resolve_provider_credential, ApiKeyCredential, AuthError, CredentialSource, FileBackend,
+    OAuthRefreshConfig, SecretBackend,
 };
 use pawork_policy::PolicyEngine;
 use pawork_provider_core::{CatalogEntry, ModelRegistry};
@@ -80,7 +81,7 @@ pub struct AppLoadOptions {
     pub data_dir: Option<PathBuf>,
     pub approval_mode: Option<ApprovalMode>,
     pub approval_host: Option<Arc<dyn ApprovalPromptHost>>,
-    /// 凭证后端覆盖（自动测试注入 MemoryBackend；默认 OS Keychain）。
+    /// 凭证后端覆盖（自动测试注入 MemoryBackend；默认 auth 文件）。
     pub auth_backend: Option<Arc<dyn SecretBackend>>,
 }
 
@@ -126,7 +127,7 @@ pub enum AppError {
     UnknownProvider { id: String },
     #[error("provider `{id}` 未配置 base_url")]
     MissingBaseUrl { id: String },
-    #[error("provider {provider} 缺少凭证：pawork auth set-key {provider}（Keychain）或环境变量 {env_name}")]
+    #[error("provider {provider} 缺少凭证：pawork auth set-key {provider}（auth 文件）或环境变量 {env_name}")]
     MissingCredential {
         provider: String,
         env_name: String,
@@ -237,7 +238,7 @@ pub struct AppCore {
     provider_id: ProviderId,
     /// 装配后的完整配置（provider 切换 / OAuth 覆盖读取）。
     config: PaworkConfig,
-    /// 凭证后端（Keychain 或测试注入的内存后端）。
+    /// 凭证后端（auth 文件或测试注入的内存后端）。
     backend: Arc<dyn SecretBackend>,
     /// OAuth 刷新 / token 交换用的共享 HTTP 客户端。
     http: reqwest::Client,
@@ -1541,7 +1542,7 @@ async fn assemble_provider(
     })
 }
 
-/// API key 凭证链：Keychain → env fallback → fail-closed。
+/// API key 凭证链：auth 文件 → env fallback → fail-closed。
 fn resolve_api_key_credential(
     backend: &Arc<dyn SecretBackend>,
     id: &str,
@@ -1571,17 +1572,33 @@ async fn oauth_credential(
     let Some(mut stored) = load_default_oauth_credential(backend.as_ref(), &provider)? else {
         return Err(AppError::OAuthLoginRequired(id.to_string()));
     };
-    let account_id =
-        load_default_oauth_meta(backend.as_ref(), &provider)?.and_then(|meta| meta.account_id);
-    if refresh && default_oauth_needs_refresh(&stored) {
+    if refresh {
         let preset = oauth_refresh_endpoint(config, id)?;
         let http = AppCore::http_from_config(config)?;
-        let refresh_token = read_refresh_token(&stored, backend.as_ref())?;
-        let tokens =
-            refresh_access_token(&preset.token_url, &preset.client_id, &refresh_token, &http)
-                .await?;
-        update_default_oauth_token(backend.as_ref(), &mut stored, &tokens)?;
+        let refresh_config = OAuthRefreshConfig {
+            token_url: preset.token_url,
+            client_id: preset.client_id,
+            refresh_skew: Duration::from_secs(30),
+        };
+        match refresh_default_oauth_credential_if_needed(
+            &mut stored,
+            backend.as_ref(),
+            &refresh_config,
+            &http,
+        )
+        .await
+        {
+            Ok(_) => {}
+            Err(AuthError::TokenEndpoint { error, .. }) if error == "invalid_grant" => {
+                return Err(AppError::OAuthLogin(format!(
+                    "provider {id} 的 OAuth refresh token 已失效；请运行 pawork auth login {id} 重新登录"
+                )))
+            }
+            Err(error) => return Err(AppError::Auth(error)),
+        }
     }
+    let account_id =
+        load_default_oauth_meta(backend.as_ref(), &provider)?.and_then(|meta| meta.account_id);
     let credential = resolve_oauth_credential(&stored, backend.as_ref())?;
     Ok((credential, account_id))
 }
@@ -1693,6 +1710,8 @@ mod tests {
         TextContent, TokenUsage,
     };
     use pawork_engine::EngineError;
+    use wiremock::matchers::{body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
 
@@ -2015,7 +2034,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_status_masks_and_prefers_keychain_over_env() {
+    async fn auth_status_masks_and_prefers_file_over_env() {
         let env_name = "PAWORK_API_KEY_GLM_CODING";
         let secret = "sk-app-auth-mask-1234567890abcdef";
         set_env(env_name, secret);
@@ -2050,15 +2069,160 @@ mod tests {
         assert!(env_row.masked.is_none(), "env source must not display value");
 
         core.auth_set_key("glm-coding", secret).expect("set key");
-        let keychain_row = glm(&core);
-        assert_eq!(keychain_row.source.as_str(), "file");
-        let masked = keychain_row.masked.as_deref().expect("masked");
+        let file_row = glm(&core);
+        assert_eq!(file_row.source.as_str(), "file");
+        let masked = file_row.masked.as_deref().expect("masked");
         assert!(!masked.contains(secret), "masked leaks secret: {masked}");
 
         core.auth_logout("glm-coding").expect("logout");
         remove_env(env_name);
         let logged_out = glm(&core);
         assert_eq!(logged_out.source.as_str(), "none");
+    }
+
+    #[tokio::test]
+    async fn default_oauth_refresh_is_singleflight_and_persists_meta() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("refresh_token=old-refresh"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_millis(100))
+                    .set_body_json(serde_json::json!({
+                        "access_token": "singleflight-access",
+                        "refresh_token": "singleflight-refresh",
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                        "scope": "openid profile"
+                    })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let backend: Arc<dyn SecretBackend> = Arc::new(pawork_auth::MemoryBackend::new());
+        let provider = ProviderId::new("xai");
+        pawork_auth::store_default_oauth_token(
+            backend.as_ref(),
+            provider.clone(),
+            &pawork_auth::TokenSet {
+                access_token: "old-access".into(),
+                refresh_token: Some("old-refresh".into()),
+                id_token: None,
+                expires_in: Some(0),
+                token_type: "Bearer".into(),
+                scope: Some("openid".into()),
+            },
+        )
+        .expect("store default oauth");
+
+        let mut config = PaworkConfig::default();
+        config.extra.insert(
+            "oauth".into(),
+            serde_json::json!({
+                "xai": {
+                    "client_id": "client-id",
+                    "device_auth_url": "https://example.test/device/code",
+                    "token_url": format!("{}/token", server.uri()),
+                    "scopes": ["openid", "profile"]
+                }
+            }),
+        );
+
+        let (first, second) = tokio::join!(
+            oauth_credential(&config, "xai", &backend, true),
+            oauth_credential(&config, "xai", &backend, true)
+        );
+        for result in [first, second] {
+            let (credential, account_id) = result.expect("oauth credential");
+            assert_eq!(credential.expose_secret(), "singleflight-access");
+            assert!(account_id.is_none());
+        }
+
+        let stored = load_default_oauth_credential(backend.as_ref(), &provider)
+            .expect("load default oauth")
+            .expect("default oauth present");
+        assert_eq!(
+            pawork_auth::read_refresh_token(&stored, backend.as_ref()).expect("rotated refresh"),
+            "singleflight-refresh"
+        );
+        let meta = load_default_oauth_meta(backend.as_ref(), &provider)
+            .expect("load meta")
+            .expect("meta present");
+        assert_eq!(meta.masked, stored.masked);
+        assert_eq!(
+            meta.expires_at_ms,
+            stored.expires_at.map(|value| value.as_unix_millis())
+        );
+        assert_eq!(meta.scopes, vec!["openid", "profile"]);
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn permanent_oauth_refresh_failure_requires_relogin_without_secret_leak() {
+        let server = MockServer::start().await;
+        let endpoint_description = "rotated credential is permanently invalid: secret-sentinel";
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("refresh_token=invalid-old-refresh"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": endpoint_description
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let backend: Arc<dyn SecretBackend> = Arc::new(pawork_auth::MemoryBackend::new());
+        let provider = ProviderId::new("xai");
+        let stored = pawork_auth::store_default_oauth_token(
+            backend.as_ref(),
+            provider.clone(),
+            &pawork_auth::TokenSet {
+                access_token: "invalid-old-access".into(),
+                refresh_token: Some("invalid-old-refresh".into()),
+                id_token: None,
+                expires_in: Some(0),
+                token_type: "Bearer".into(),
+                scope: Some("openid".into()),
+            },
+        )
+        .expect("store default oauth");
+
+        let mut config = PaworkConfig::default();
+        config.extra.insert(
+            "oauth".into(),
+            serde_json::json!({
+                "xai": {
+                    "client_id": "client-id",
+                    "device_auth_url": "https://example.test/device/code",
+                    "token_url": format!("{}/token", server.uri()),
+                    "scopes": ["openid"]
+                }
+            }),
+        );
+
+        let error = oauth_credential(&config, "xai", &backend, true)
+            .await
+            .expect_err("invalid_grant must fail closed");
+        let message = error.to_string();
+        assert!(message.contains("pawork auth login xai"));
+        assert!(!message.contains(endpoint_description));
+        assert!(!message.contains("secret-sentinel"));
+        assert!(!message.contains("invalid-old-refresh"));
+        assert_eq!(
+            backend
+                .get(&stored.keychain_service, &stored.keychain_account)
+                .expect("access remains unchanged"),
+            "invalid-old-access"
+        );
+        assert_eq!(
+            pawork_auth::read_refresh_token(&stored, backend.as_ref())
+                .expect("refresh remains unchanged"),
+            "invalid-old-refresh"
+        );
+        server.verify().await;
     }
 
     #[tokio::test]

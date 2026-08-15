@@ -6,7 +6,7 @@
 //! ## 红线
 //!
 //! - 明文 access / refresh token **绝不**进入 [`StoredCredential`] 的可序列化字段，
-//!   只存在于 [`SecretBackend`]（Keychain / 内存）中。
+//!   只存在于 [`SecretBackend`]（auth 文件 / 内存）中。
 //! - 所有错误（[`AuthError`]）都不得携带明文 token。
 //! - `resolve` 返回的 [`ResolvedCredential`](pawork_api::ResolvedCredential) 仅供
 //!   Provider adapter 构造认证请求时短暂使用。
@@ -14,9 +14,8 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pawork_domain::{ProviderId, Timestamp};
 use base64::Engine;
@@ -28,6 +27,7 @@ use tokio::sync::{oneshot, Mutex as AsyncMutex};
 use crate::backend::SecretBackend;
 use crate::credential::{generate_credential_id, StoredCredential};
 use crate::error::AuthError;
+use crate::file_backend::{try_acquire_file_lock, FileLockGuard};
 use crate::masked::MaskedCredential;
 
 /// OAuth secret 在 SecretBackend 中的 service 命名空间。
@@ -479,15 +479,24 @@ pub fn store_oauth_token(
     if tokens.access_token.is_empty() {
         return Err(AuthError::InvalidSecret("access_token is empty".into()));
     }
+    if tokens.refresh_token.as_ref().is_some_and(String::is_empty) {
+        return Err(AuthError::InvalidSecret("refresh_token is empty".into()));
+    }
     let id = generate_credential_id();
     let service = oauth_service(&provider);
     let access_account = format!("{}.access", id.as_str());
     let refresh_account = format!("{}.refresh", id.as_str());
 
-    backend.store(&service, &access_account, &tokens.access_token)?;
+    let mut updates = Vec::with_capacity(2);
     if let Some(refresh) = &tokens.refresh_token {
-        backend.store(&service, &refresh_account, refresh)?;
+        updates.push((service.as_str(), refresh_account.as_str(), refresh.as_str()));
     }
+    updates.push((
+        service.as_str(),
+        access_account.as_str(),
+        tokens.access_token.as_str(),
+    ));
+    backend.store_batch(&updates)?;
 
     let stored = StoredCredential {
         masked: MaskedCredential::mask(&tokens.access_token),
@@ -529,17 +538,23 @@ pub fn update_oauth_token(
         return Err(AuthError::InvalidSecret("refresh_token is empty".into()));
     }
 
-    // 轮换型 Provider 可能在 token endpoint 响应时立即作废旧
-    // refresh token。先持久新 refresh，使后续 access 写入失败时仍可重试刷新。
+    // 轮换型 Provider 可能在 token endpoint 响应时立即作废旧 refresh token。
+    // 正式后端把 refresh/access 整批原子提交；兼容后端至少按此顺序先写 refresh。
+    let refresh_account = format!("{}.refresh", stored.id.as_str());
+    let mut updates = Vec::with_capacity(2);
     if let Some(refresh_token) = &tokens.refresh_token {
-        let refresh_account = format!("{}.refresh", stored.id.as_str());
-        backend.store(&stored.keychain_service, &refresh_account, refresh_token)?;
+        updates.push((
+            stored.keychain_service.as_str(),
+            refresh_account.as_str(),
+            refresh_token.as_str(),
+        ));
     }
-    backend.store(
-        &stored.keychain_service,
-        &stored.keychain_account,
-        &tokens.access_token,
-    )?;
+    updates.push((
+        stored.keychain_service.as_str(),
+        stored.keychain_account.as_str(),
+        tokens.access_token.as_str(),
+    ));
+    backend.store_batch(&updates)?;
 
     stored.masked = MaskedCredential::mask(&tokens.access_token);
     // 部分 Provider 的成功 refresh 响应不返回 expires_in。此时保留原到期时间，
@@ -590,21 +605,30 @@ struct RefreshedMetadata {
     masked: MaskedCredential,
     expires_at: Option<Timestamp>,
     scopes: Vec<String>,
+    /// 仅用于确认 SecretBackend 当前 access 仍是本 gate 已发布的版本；不持久化、
+    /// 不实现 Debug，避免把明文或可打印 token 带入状态。
+    access_fingerprint: [u8; 32],
 }
 
-impl From<&StoredCredential> for RefreshedMetadata {
-    fn from(stored: &StoredCredential) -> Self {
+impl RefreshedMetadata {
+    fn new(stored: &StoredCredential, access_token: &str) -> Self {
         Self {
             masked: stored.masked.clone(),
             expires_at: stored.expires_at,
             scopes: stored.scopes.clone(),
+            access_fingerprint: secret_fingerprint(access_token),
         }
+    }
+
+    fn metadata_matches(&self, stored: &StoredCredential) -> bool {
+        self.masked == stored.masked
+            && self.expires_at == stored.expires_at
+            && self.scopes == stored.scopes
     }
 }
 
 struct RefreshGate {
     lock: AsyncMutex<()>,
-    generation: AtomicU64,
     latest: StdMutex<Option<RefreshedMetadata>>,
 }
 
@@ -612,12 +636,15 @@ impl RefreshGate {
     fn new() -> Self {
         Self {
             lock: AsyncMutex::new(()),
-            generation: AtomicU64::new(0),
             latest: StdMutex::new(None),
         }
     }
 
-    fn apply_latest(&self, stored: &mut StoredCredential) -> bool {
+    fn apply_latest(
+        &self,
+        stored: &mut StoredCredential,
+        backend: &dyn SecretBackend,
+    ) -> bool {
         let latest = self
             .latest
             .lock()
@@ -626,20 +653,37 @@ impl RefreshGate {
         let Some(latest) = latest else {
             return false;
         };
+        if latest.metadata_matches(stored) {
+            return false;
+        }
+        let Ok(current_access) = backend.get(
+            &stored.keychain_service,
+            &stored.keychain_account,
+        ) else {
+            return false;
+        };
+        if secret_fingerprint(&current_access) != latest.access_fingerprint {
+            return false;
+        }
         stored.masked = latest.masked;
         stored.expires_at = latest.expires_at;
         stored.scopes = latest.scopes;
         true
     }
 
-    fn publish(&self, stored: &StoredCredential) {
+    fn publish(&self, stored: &StoredCredential, access_token: &str) {
         *self
             .latest
             .lock()
             .expect("OAuth refresh metadata mutex poisoned") =
-            Some(RefreshedMetadata::from(stored));
-        self.generation.fetch_add(1, Ordering::Release);
+            Some(RefreshedMetadata::new(stored, access_token));
     }
+}
+
+fn secret_fingerprint(secret: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+
+    Sha256::digest(secret.as_bytes()).into()
 }
 
 type RefreshGateKey = (String, String);
@@ -660,6 +704,122 @@ fn refresh_gate_for(stored: &StoredCredential) -> Arc<RefreshGate> {
         .clone()
 }
 
+type RefreshPredicate = fn(&StoredCredential, Duration) -> bool;
+type RefreshPersistence =
+    fn(&dyn SecretBackend, &mut StoredCredential, &TokenSet) -> Result<(), AuthError>;
+type RefreshReload =
+    fn(&dyn SecretBackend, &StoredCredential) -> Result<Option<StoredCredential>, AuthError>;
+
+const REFRESH_LOCK_TIMEOUT: Duration = Duration::from_secs(120);
+const REFRESH_LOCK_RETRY_DELAY: Duration = Duration::from_millis(10);
+
+#[derive(PartialEq, Eq)]
+struct BackendTokenSnapshot {
+    access_token: String,
+    refresh_token: String,
+}
+
+fn backend_token_snapshot(
+    stored: &StoredCredential,
+    backend: &dyn SecretBackend,
+) -> Result<BackendTokenSnapshot, AuthError> {
+    Ok(BackendTokenSnapshot {
+        access_token: backend.get(&stored.keychain_service, &stored.keychain_account)?,
+        refresh_token: read_refresh_token(stored, backend)?,
+    })
+}
+
+async fn acquire_backend_refresh_lock(
+    path: &std::path::Path,
+) -> Result<FileLockGuard, AuthError> {
+    let started = Instant::now();
+    loop {
+        if let Some(guard) = try_acquire_file_lock(path)? {
+            return Ok(guard);
+        }
+        if started.elapsed() >= REFRESH_LOCK_TIMEOUT {
+            return Err(AuthError::Storage(format!(
+                "timed out waiting for OAuth refresh lock {}",
+                path.display()
+            )));
+        }
+        tokio::time::sleep(REFRESH_LOCK_RETRY_DELAY).await;
+    }
+}
+
+/// OAuth refresh 的共享 singleflight 核心。不同条目形态只注入到期判断与持久化策略，
+/// gate、token exchange 与发布顺序保持唯一实现。
+pub(crate) async fn refresh_oauth_credential_with(
+    stored: &mut StoredCredential,
+    backend: &dyn SecretBackend,
+    config: &OAuthRefreshConfig,
+    http: &reqwest::Client,
+    should_refresh: RefreshPredicate,
+    persist: RefreshPersistence,
+    reload: Option<RefreshReload>,
+) -> Result<bool, AuthError> {
+    if !should_refresh(stored, config.refresh_skew) {
+        return Ok(false);
+    }
+
+    let gate = refresh_gate_for(stored);
+    let _guard = gate.lock.lock().await;
+
+    // 若等待期间或本调用进入 gate 前已有同 credential 的请求完成刷新，且后端
+    // access 指纹仍对应已发布版本，则复用其脱敏元数据，不再次消费 refresh token。
+    if gate.apply_latest(stored, backend) {
+        return Ok(false);
+    }
+    if !should_refresh(stored, config.refresh_skew) {
+        return Ok(false);
+    }
+
+    // FileBackend 在此提供跨进程 refresh 锁。先记录锁外快照，再在锁内重读；
+    // 若别的 Pawork 进程已完成轮换，直接采用其结果，绝不再次消费旧 refresh token。
+    let refresh_lock_path = backend.refresh_lock_path();
+    let observed_tokens = if refresh_lock_path.is_some() {
+        Some(backend_token_snapshot(stored, backend)?)
+    } else {
+        None
+    };
+    let _process_guard = match refresh_lock_path.as_deref() {
+        Some(path) => Some(acquire_backend_refresh_lock(path).await?),
+        None => None,
+    };
+
+    if let Some(observed_tokens) = observed_tokens {
+        let metadata_changed = if let Some(reload) = reload {
+            let latest = reload(backend, stored)?.ok_or(AuthError::NotFound)?;
+            let changed = latest != *stored;
+            *stored = latest;
+            changed
+        } else {
+            false
+        };
+        let current_tokens = backend_token_snapshot(stored, backend)?;
+        let access_metadata_changed =
+            MaskedCredential::mask(&current_tokens.access_token) != stored.masked;
+        if current_tokens != observed_tokens || metadata_changed || access_metadata_changed {
+            // 通用 OAuth 条目没有独立持久化 meta；至少同步 access 掩码，当前请求
+            // 随后会从后端解析出新 bearer。default 条目已由 reload 完整同步。
+            if reload.is_none() {
+                stored.masked = MaskedCredential::mask(&current_tokens.access_token);
+            }
+            return Ok(false);
+        }
+        if !should_refresh(stored, config.refresh_skew) {
+            return Ok(false);
+        }
+    }
+
+    let refresh_token = read_refresh_token(stored, backend)?;
+    let tokens =
+        refresh_access_token(&config.token_url, &config.client_id, &refresh_token, http).await?;
+    persist(backend, stored, &tokens)?;
+    gate.publish(stored, &tokens.access_token);
+    Ok(true)
+}
+
 /// 请求前置刷新编排：需要刷新时读取旧 refresh token、调用 token endpoint，
 /// 再把轮换后的 access/refresh token 与过期元数据原地回写。同一 credential 的
 /// 并发请求共用 singleflight gate，避免并行消费同一个一次性 refresh token。
@@ -669,29 +829,16 @@ pub async fn refresh_oauth_credential_if_needed(
     config: &OAuthRefreshConfig,
     http: &reqwest::Client,
 ) -> Result<bool, AuthError> {
-    if !needs_refresh(stored, config.refresh_skew) {
-        return Ok(false);
-    }
-
-    let gate = refresh_gate_for(stored);
-    let observed_generation = gate.generation.load(Ordering::Acquire);
-    let _guard = gate.lock.lock().await;
-
-    // 若等待期间已有同 credential 的请求完成刷新，复用其脱敏元数据与后端中
-    // 已写回的 token，不再次调用 token endpoint。
-    if gate.generation.load(Ordering::Acquire) != observed_generation && gate.apply_latest(stored) {
-        return Ok(false);
-    }
-    if !needs_refresh(stored, config.refresh_skew) {
-        return Ok(false);
-    }
-
-    let refresh_token = read_refresh_token(stored, backend)?;
-    let tokens =
-        refresh_access_token(&config.token_url, &config.client_id, &refresh_token, http).await?;
-    update_oauth_token(backend, stored, &tokens)?;
-    gate.publish(stored);
-    Ok(true)
+    refresh_oauth_credential_with(
+        stored,
+        backend,
+        config,
+        http,
+        needs_refresh,
+        update_oauth_token,
+        None,
+    )
+    .await
 }
 
 /// Provider 构造或每次请求前使用的 OAuth credential 解析入口。
@@ -1141,6 +1288,30 @@ mod tests {
             )
             .expect("get refresh");
         assert_eq!(refresh_secret, "1//refresh-secret-token-12345");
+    }
+
+    #[test]
+    fn store_oauth_token_rejects_empty_refresh_without_writes() {
+        let backend = MemoryBackend::new();
+        let tokens = TokenSet {
+            access_token: "valid-access".into(),
+            refresh_token: Some(String::new()),
+            id_token: None,
+            expires_in: Some(3600),
+            token_type: "Bearer".into(),
+            scope: None,
+        };
+        assert!(matches!(
+            store_oauth_token(
+                &backend,
+                ProviderId::new("xai"),
+                "xAI OAuth",
+                &tokens,
+                Vec::new(),
+            ),
+            Err(AuthError::InvalidSecret(message)) if message == "refresh_token is empty"
+        ));
+        assert!(backend.is_empty());
     }
 
     #[test]
