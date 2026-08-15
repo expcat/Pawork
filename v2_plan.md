@@ -44,10 +44,10 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 当前阶段 | S4（[plan/S4-exec-sandbox.md](Pawork_v2/plan/S4-exec-sandbox.md)） |
-| 阶段状态 | 🔵 进行中 |
-| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A–C（含 2026-08-14 两通道真实冒烟：`sessions` / `--resume` / `run --json` / `kill -9` 恢复）；S2 波 A–C；S2 波 D（2026-08-14：cli `⚙` 工具行 + `host/app` 装配 `run_session`/scheduler/四只读工具；三通道冒烟 GLM OpenAI / GLM Anthropic / OpenCode Go）；S3 波 A（2026-08-15：`pawork-policy` 整包 + `pawork-tools` 写三件 + scheduler `check_gate`）；S3 波 B（2026-08-15：engine `ApprovalGate` + app 写三件/审批宿主/resume 封口 + cli `--approval-mode`/`y`/`a`/`n`/`--json` fail-closed）；S3 波 C（2026-08-15：两通道真实冒烟 + 提示注入评估；S3 收口）；S4 波 A（2026-08-15：`pawork-exec` process+sandbox；`run_command` + policy 认 `argv`；fail-closed 守 ADR-031 可观测回退）；S4 波 B（2026-08-15：engine `CancelHandle` + 工具中取消不发 `ToolExecutionCompleted`；cli 命令流式渲染/stderr 着色/Ctrl-C 走 `cancel(User)`；app 注册第八件 `run_command`） |
-| **下一波次** | **S4 波 C**（真实闭环冒烟与评估，主代理） |
+| 当前阶段 | S5（[plan/S5-context-usage.md](Pawork_v2/plan/S5-context-usage.md)） |
+| 阶段状态 | ⚪ 未开始 |
+| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A–C（含 2026-08-14 两通道真实冒烟：`sessions` / `--resume` / `run --json` / `kill -9` 恢复）；S2 波 A–C；S2 波 D（2026-08-14：cli `⚙` 工具行 + `host/app` 装配 `run_session`/scheduler/四只读工具；三通道冒烟 GLM OpenAI / GLM Anthropic / OpenCode Go）；S3 波 A（2026-08-15：`pawork-policy` 整包 + `pawork-tools` 写三件 + scheduler `check_gate`）；S3 波 B（2026-08-15：engine `ApprovalGate` + app 写三件/审批宿主/resume 封口 + cli `--approval-mode`/`y`/`a`/`n`/`--json` fail-closed）；S3 波 C（2026-08-15：两通道真实冒烟 + 提示注入评估；S3 收口）；S4 波 A（2026-08-15：`pawork-exec` process+sandbox；`run_command` + policy 认 `argv`；fail-closed 守 ADR-031 可观测回退）；S4 波 B（2026-08-15：engine `CancelHandle` + 工具中取消不发 `ToolExecutionCompleted`；cli 命令流式渲染/stderr 着色/Ctrl-C 走 `cancel(User)`；app 注册第八件 `run_command`）；S4 波 C（2026-08-15：两通道「读-改-跑」闭环 + Ctrl-C `RunCancelled` + `git push --force` Dangerous 拒绝；S4 收口） |
+| **下一波次** | **S5 波 A**（并行 ×2：`pawork-provider-core` usage/registry；`pawork-session` compaction feature） |
 | 阻塞 | 无。本地冒烟凭证在 `Pawork_v2/.env`（gitignored；`set -a && source Pawork_v2/.env && set +a`） |
 
 自动选择以本表为准，再用 ROADMAP / 任务书 / 工作区实态交叉校验（§4）。三者冲突时：**工作区实态 > 本表 > ROADMAP 状态列**；更新本表使三者一致后再开工。
