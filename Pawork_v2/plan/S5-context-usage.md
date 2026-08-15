@@ -1,6 +1,6 @@
 # S5：上下文预算与用量
 
-> 阶段 S5 · 上下文与用量 · 状态：⚪未开始 · 依赖：S4 · 规模：中 ·（S5/S6/S7 相互无包级交叉，可并行）
+> 阶段 S5 · 上下文与用量 · 状态：🔵进行中（2026-08-15 波 A 完成） · 依赖：S4 · 规模：中 ·（S5/S6/S7 相互无包级交叉，可并行）
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -53,8 +53,8 @@
 
 ## 并行拆分建议
 
-- 波 A（并行 ×2）：`pawork-provider-core`（usage/registry）；`pawork-session` compaction feature。
-- 波 B（串行）：engine context 接线（依赖波 A trait）+ app/cli 收口。
+- 波 A（✅ 2026-08-15）：`pawork-provider-core`（usage/registry）；`pawork-session` compaction feature。
+- 波 B（下一波，串行）：engine context 接线（依赖波 A trait）+ app/cli 收口。
 - 与 S6、S7 无包级交叉，可整阶段并行推进。
 
 ## 参考

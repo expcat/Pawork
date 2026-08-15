@@ -89,6 +89,9 @@ impl SessionStore {
         Ok(())
     }
 
+    /// 创建 branch；同一 `(session, branch_id, parent, fork point)` 的重复调用
+    /// 视为幂等成功，便于 compaction 在事件追加前崩溃后安全重试。相同 id 但
+    /// parent / fork point 不同仍返回 [`SessionStoreError::BranchAlreadyExists`]。
     pub async fn create_branch(
         &self,
         session_id: &SessionId,
@@ -107,6 +110,25 @@ impl SessionStore {
                 )?;
                 if !session_exists {
                     return Err(SessionStoreError::SessionNotFound(session_id));
+                }
+                let existing: Option<(Option<String>, Option<String>)> = connection
+                    .query_row(
+                        "SELECT parent_branch_id, forked_from_event_id FROM session_branches \
+                         WHERE session_id=?1 AND branch_id=?2",
+                        params![session_id, branch_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                if let Some((existing_parent, existing_fork)) = existing {
+                    if existing_parent == parent_branch_id
+                        && existing_fork == forked_from_event_id
+                    {
+                        return Ok(());
+                    }
+                    return Err(SessionStoreError::BranchAlreadyExists {
+                        session_id,
+                        branch_id,
+                    });
                 }
                 let head_sequence = if let Some(event_id) = forked_from_event_id.as_deref() {
                     connection
@@ -308,6 +330,50 @@ impl SessionStore {
             rows
         }).await??;
         json_rows.reverse();
+        json_rows
+            .into_iter()
+            .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
+            .collect()
+    }
+
+    /// 按 branch 分页读取事件，避免大 session 全量加载。
+    ///
+    /// 返回 `branch_id` 上 `sequence >= from_sequence` 的事件，按 sequence 升序，
+    /// 至多 `limit` 条；`limit == 0` 返回空。与 `replay_events`（整个 session、
+    /// 不区分 branch）相对，本方法只返回目标 branch 追加的事件；不存在的
+    /// session / branch 同样返回空，需要严格校验时由调用方（如 compaction 的
+    /// `NothingToCompact`）判定。
+    pub async fn events_by_branch(
+        &self,
+        session_id: &SessionId,
+        branch_id: impl Into<String>,
+        from_sequence: u64,
+        limit: usize,
+    ) -> Result<Vec<AgentEventEnvelope>, SessionStoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let session_id = session_id.to_string();
+        let branch_id = branch_id.into();
+        let from_sequence =
+            i64::try_from(from_sequence).map_err(|_| SessionStoreError::SequenceOverflow)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let json_rows = self
+            .database()
+            .call(move |connection| -> rusqlite::Result<Vec<String>> {
+                let mut statement = connection.prepare(
+                    "SELECT payload_json FROM session_events \
+                     WHERE session_id=?1 AND branch_id=?2 AND sequence>=?3 \
+                     ORDER BY sequence ASC LIMIT ?4",
+                )?;
+                let rows = statement
+                    .query_map(params![session_id, branch_id, from_sequence, limit], |row| {
+                        row.get(0)
+                    })?
+                    .collect();
+                rows
+            })
+            .await??;
         json_rows
             .into_iter()
             .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
@@ -1413,6 +1479,150 @@ mod tests {
             rebuilt_item.opaque_metadata["openai.responses.summary_entries"][1]["text"],
             "legal hint B"
         );
+
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn events_by_branch_scopes_reads_to_a_single_branch() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-branch-scope");
+        store
+            .create_session(&session, "branch-scope", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::RunStarted {
+                        trigger_message_id: MessageId::from("t1"),
+                    },
+                ),
+            )
+            .await
+            .expect("main 1");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 2, AgentEvent::RunCancelled { reason: None }),
+            )
+            .await
+            .expect("main 2");
+        store
+            .create_branch(
+                &session,
+                "experiment",
+                Some(DEFAULT_BRANCH_ID.into()),
+                Some("event-1".into()),
+            )
+            .await
+            .expect("fork");
+        store
+            .create_branch(
+                &session,
+                "experiment",
+                Some(DEFAULT_BRANCH_ID.into()),
+                Some("event-1".into()),
+            )
+            .await
+            .expect("identical fork is idempotent");
+        assert!(matches!(
+            store
+                .create_branch(&session, "experiment", None, None)
+                .await,
+            Err(SessionStoreError::BranchAlreadyExists { .. })
+        ));
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch");
+        store
+            .append_event(
+                "experiment",
+                event(
+                    &session,
+                    3,
+                    AgentEvent::CompactionStarted { source_event_count: 3 },
+                ),
+            )
+            .await
+            .expect("experiment 3");
+
+        let sequences = |events: Vec<AgentEventEnvelope>| {
+            events
+                .into_iter()
+                .map(|envelope| envelope.sequence.value())
+                .collect::<Vec<_>>()
+        };
+        let main_events = store
+            .events_by_branch(&session, DEFAULT_BRANCH_ID, 1, 10)
+            .await
+            .expect("main events");
+        assert_eq!(sequences(main_events), vec![1, 2]);
+        let experiment_events = store
+            .events_by_branch(&session, "experiment", 1, 10)
+            .await
+            .expect("experiment events");
+        assert_eq!(sequences(experiment_events), vec![3]);
+        // 不存在的 branch 返回空（与 replay 的宽松语义一致）。
+        assert!(store
+            .events_by_branch(&session, "missing", 1, 10)
+            .await
+            .expect("missing branch")
+            .is_empty());
+
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn events_by_branch_paginates_within_a_branch() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-branch-page");
+        store
+            .create_session(&session, "branch-page", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        for sequence in 1..=3u64 {
+            store
+                .append_event(
+                    DEFAULT_BRANCH_ID,
+                    event(
+                        &session,
+                        sequence,
+                        AgentEvent::CompactionStarted {
+                            source_event_count: sequence,
+                        },
+                    ),
+                )
+                .await
+                .expect("append");
+        }
+        let sequences = |events: Vec<AgentEventEnvelope>| {
+            events
+                .into_iter()
+                .map(|envelope| envelope.sequence.value())
+                .collect::<Vec<_>>()
+        };
+        let first_page = store
+            .events_by_branch(&session, DEFAULT_BRANCH_ID, 1, 2)
+            .await
+            .expect("first page");
+        assert_eq!(sequences(first_page), vec![1, 2]);
+        let next_page = store
+            .events_by_branch(&session, DEFAULT_BRANCH_ID, 3, 2)
+            .await
+            .expect("next page");
+        assert_eq!(sequences(next_page), vec![3]);
+        assert!(store
+            .events_by_branch(&session, DEFAULT_BRANCH_ID, 1, 0)
+            .await
+            .expect("zero limit")
+            .is_empty());
 
         store.shutdown().await.expect("shutdown");
     }

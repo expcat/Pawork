@@ -7,6 +7,12 @@ publish.workspace = true
 authors.workspace = true
 description = "Pawork Session Event Store、schema 迁移与可重建 Projection"
 
+[features]
+# V1 compaction-engine（engine/retention/snapshot）迁入，默认关闭。
+# TokenEstimator 由调用方（engine 侧）实现并显式注入；本 crate 不依赖
+# pawork-engine / 任何 context-engine 链。
+compaction = []
+
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
 pawork-sqlite = { path = "../../foundation/sqlite" }

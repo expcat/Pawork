@@ -7,6 +7,9 @@ mod event_store;
 mod migration;
 mod projection;
 
+#[cfg(feature = "compaction")]
+pub mod compaction;
+
 use std::path::{Path, PathBuf};
 
 use pawork_sqlite::{DatabaseActor, DatabaseError, MigrationError};
@@ -20,6 +23,8 @@ pub use projection::{
     ProjectedProgramOutput, ProjectedRun, ProjectedScreenshot, ProjectedServerToolEvent,
     ProjectedToolCall, ProjectedTranscriptEnvelope, ProjectionSnapshot,
 };
+#[cfg(feature = "compaction")]
+pub use compaction::*;
 
 #[derive(Clone)]
 pub struct SessionStore {

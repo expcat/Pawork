@@ -42,7 +42,7 @@
 | `pawork-tools` | S2（只读四件） | S3（写三件）、S4（run_command） | `tool_search` 冻结候审不迁 |
 | `pawork-policy` | S3（整包） | — | 安全内核，红线回归随迁 |
 | `pawork-exec` | S4（process + sandbox） | S9（pty，消费者=交互式终端/GUI） | Windows 先实测，Linux/macOS 代码随迁、S12 实跑 |
-| `pawork-provider-core` | S5（usage/negotiate/registry/pricing） | — | 若 S0 的 openai-compatible 迁移需要 `stream_assembly`，则该模块提前至 S0 最小激活 |
+| `pawork-provider-core` | S5（usage/negotiate/registry/pricing） | — | 依赖 `pawork-domain` / `pawork-api`，由 `pawork-providers` 消费；不依赖 net/SQLite/blob store。若 S0 的 openai-compatible 迁移需要 `stream_assembly`，则该模块提前至 S0 最小激活 |
 | `pawork-auth` | S6 | — | Keychain + OAuth + masked |
 | `pawork-diagnostics` | S6（脱敏 tracing layer 接线） | — | 早期阶段以纪律 + 断言测试兜底 |
 | `pawork-git` | S7 | — | roots 参数化 |

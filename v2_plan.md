@@ -30,7 +30,7 @@
 
 ```text
 按 v2_plan.md 开始。
-子代理模型：〈必填：Cursor model slug 或 ocx-* 类型，见 §7〉
+子代理模型：〈必填：当前宿主可接受的模型标识，见 §7〉
 范围覆盖：〈可选。例：S0 波 B。不写则按 §4 自动选下一波〉
 凭证：〈可选。PAWORK_API_KEY_* 已设 / 本波无需真实 key；本地冒烟默认 source Pawork_v2/.env〉
 临时约束：〈可选。例：跳过真实冒烟、只设计不实现——默认不要用〉
@@ -45,9 +45,9 @@
 | 字段 | 值 |
 | --- | --- |
 | 当前阶段 | S5（[plan/S5-context-usage.md](Pawork_v2/plan/S5-context-usage.md)） |
-| 阶段状态 | ⚪ 未开始 |
-| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A–C（含 2026-08-14 两通道真实冒烟：`sessions` / `--resume` / `run --json` / `kill -9` 恢复）；S2 波 A–C；S2 波 D（2026-08-14：cli `⚙` 工具行 + `host/app` 装配 `run_session`/scheduler/四只读工具；三通道冒烟 GLM OpenAI / GLM Anthropic / OpenCode Go）；S3 波 A（2026-08-15：`pawork-policy` 整包 + `pawork-tools` 写三件 + scheduler `check_gate`）；S3 波 B（2026-08-15：engine `ApprovalGate` + app 写三件/审批宿主/resume 封口 + cli `--approval-mode`/`y`/`a`/`n`/`--json` fail-closed）；S3 波 C（2026-08-15：两通道真实冒烟 + 提示注入评估；S3 收口）；S4 波 A（2026-08-15：`pawork-exec` process+sandbox；`run_command` + policy 认 `argv`；fail-closed 守 ADR-031 可观测回退）；S4 波 B（2026-08-15：engine `CancelHandle` + 工具中取消不发 `ToolExecutionCompleted`；cli 命令流式渲染/stderr 着色/Ctrl-C 走 `cancel(User)`；app 注册第八件 `run_command`）；S4 波 C（2026-08-15：两通道「读-改-跑」闭环 + Ctrl-C `RunCancelled` + `git push --force` Dangerous 拒绝；S4 收口） |
-| **下一波次** | **S5 波 A**（并行 ×2：`pawork-provider-core` usage/registry；`pawork-session` compaction feature） |
+| 阶段状态 | 🔵 进行中 |
+| 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A–C（含 2026-08-14 两通道真实冒烟：`sessions` / `--resume` / `run --json` / `kill -9` 恢复）；S2 波 A–C；S2 波 D（2026-08-14：cli `⚙` 工具行 + `host/app` 装配 `run_session`/scheduler/四只读工具；三通道冒烟 GLM OpenAI / GLM Anthropic / OpenCode Go）；S3 波 A（2026-08-15：`pawork-policy` 整包 + `pawork-tools` 写三件 + scheduler `check_gate`）；S3 波 B（2026-08-15：engine `ApprovalGate` + app 写三件/审批宿主/resume 封口 + cli `--approval-mode`/`y`/`a`/`n`/`--json` fail-closed）；S3 波 C（2026-08-15：两通道真实冒烟 + 提示注入评估；S3 收口）；S4 波 A（2026-08-15：`pawork-exec` process+sandbox；`run_command` + policy 认 `argv`；fail-closed 守 ADR-031 可观测回退）；S4 波 B（2026-08-15：engine `CancelHandle` + 工具中取消不发 `ToolExecutionCompleted`；cli 命令流式渲染/stderr 着色/Ctrl-C 走 `cancel(User)`；app 注册第八件 `run_command`）；S4 波 C（2026-08-15：两通道「读-改-跑」闭环 + Ctrl-C `RunCancelled` + `git push --force` Dangerous 拒绝；S4 收口）；S5 波 A（2026-08-15：`pawork-provider-core` usage/registry/pricing/negotiate/reasoning；`pawork-session` compaction feature + `TokenEstimator` 注入） |
+| **下一波次** | **S5 波 B**（串行：engine context 接线 + app/cli 收口） |
 | 阻塞 | 无。本地冒烟凭证在 `Pawork_v2/.env`（gitignored；`set -a && source Pawork_v2/.env && set +a`） |
 
 自动选择以本表为准，再用 ROADMAP / 任务书 / 工作区实态交叉校验（§4）。三者冲突时：**工作区实态 > 本表 > ROADMAP 状态列**；更新本表使三者一致后再开工。
@@ -146,35 +146,19 @@
 
 开启提示词里的「子代理模型」作用于**所有** `Task` 子代理（研究 + 实现）。主代理用当前对话模型，不要擅自换成别的。
 
-两种写法（二选一）：
+本文**不映射具体模型**：不维护型号清单，也不做「用户写法 → `Task` 参数」的翻译表。用户写的模型标识由主代理**原样**落入 `Task`（落在哪个参数、取什么值以当前宿主为准），不猜测、不替换、不查表。
 
-**A. Cursor model slug**（`Task.model`；研究用 `explore`，实现用 `generalPurpose`）
+写法：
 
-| 用户可写 | 传入 `model` |
-| --- | --- |
-| `claude-opus-5-thinking-high` | 同左 |
-| `claude-sonnet-5-thinking-high` | 同左 |
-| `composer-2.5-fast` | 同左 |
-| `cursor-grok-4.6-xhigh` | 同左 |
-| `gpt-5.6-sol-medium` | 同左 |
-| `inherit` | 与主代理相同 |
-
-**B. ocx-\* 类型**（`Task.subagent_type`；研究与实现都用该类型。其真实模型由 opencodex 路由钉死，`model` 传入占位即可）
-
-| 用户可写 | 传入 `subagent_type` |
-| --- | --- |
-| `ocx-deepseek-v4-flash` | 同左 |
-| `ocx-deepseek-v4-pro` | 同左 |
-| `ocx-glm-5-3` | 同左 |
-| `ocx-grok-4-6` | 同左 |
-| `ocx-qwen3-8-max` | 同左 |
+- 直接写当前宿主 `Task` 可接受的模型标识（如宿主文档/可选列表中的 model slug、subagent 类型等），一行一个值；研究与实现共用同一值。
+- 想与主代理同模型：写 `inherit`（或宿主的等价写法）。
 
 规则：
 
-- 用户写的名字必须落在上表（或当前 Cursor `Task` 实际可选列表）。无法识别 → 提问，不猜测、不替换。
-- 指定了 B 就不能再混用 `explore`/`generalPurpose`（ocx 类型本身是通用 worker）。
+- 用户写的模型标识当前宿主无法识别 → 提问，不猜测、不替换。
 - 禁止对研究用快模型、对实现用另一个模型，除非用户在「临时约束」里写明。
-- 用户指定的模型不在当前工具列表时：告诉用户不可用项与可用项，等回复。
+- 用户指定的模型不在当前宿主能力范围内时：告诉用户不可用项与可用项，等回复。
+- 具体型号与 `Task` 参数映射随宿主（Cursor / opencodex 路由等）变化，以宿主当前可选值为准；本文件不维护、不钉死。
 
 ---
 
