@@ -34,7 +34,7 @@ Google/Gemini、Moonshot/Kimi、OpenAI API key、xAI API key、Qwen 按量计费
 ## 波次状态
 
 - [x] **波 A — adapter**：六通道 adapter、共享 Responses、错误归一、wiremock 契约已实现；未使用真实凭证。
-- [ ] **波 B — auth/diagnostics**：OAuth 获取与刷新、Keychain、masked、全局 tracing 脱敏。
+- [x] **波 B — auth/diagnostics**：OAuth 获取与刷新、Keychain、masked、全局 tracing 脱敏。
 - [ ] **波 C — config/cli/app/smoke**：正式装配、模型聚合、切换、日志扫描与真实冒烟。
 
 ## 关键任务

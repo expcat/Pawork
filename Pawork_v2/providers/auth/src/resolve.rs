@@ -1,0 +1,197 @@
+//! 凭证解析链（S6）：Keychain → env fallback → 无凭证。
+//!
+//! [`resolve_provider_credential`] 是 Provider 装配期的统一凭证入口：先查
+//! SecretBackend 的 Provider 主条目（service 沿用 [`StoredCredential] 约定
+//! `pawork.<provider>`，固定 account `default`），未命中再读
+//! `PAWORK_API_KEY_<ID 大写、`-`→`_`>`；两级都缺返回 [`CredentialSource::None`]，
+//! 由调用方 fail-closed。
+//!
+//! env 值只进入 [`ResolvedCredential`]（`Debug` 已脱敏），不落任何日志或 Debug
+//! 泄漏字段；env 名推导在本 crate 内实现，不依赖 `pawork-config`。
+
+use pawork_api::{CredentialKind, ResolvedCredential};
+use pawork_domain::{CredentialId, ProviderId};
+
+use crate::backend::SecretBackend;
+use crate::credential::{keychain_service_for, StoredCredential};
+use crate::masked::MaskedCredential;
+
+/// Provider 主条目在 SecretBackend 中的固定 `account`。
+pub const PROVIDER_DEFAULT_ACCOUNT: &str = "default";
+
+/// [`resolve_provider_credential`] 的解析结果（来源标记，不含明文 secret）。
+///
+/// - [`CredentialSource::Keychain`]：主条目命中，返回可持久化元数据；明文仍在
+///   SecretBackend 中，需要时经 [`crate::ApiKeyCredential::resolve`] 解析。
+/// - [`CredentialSource::EnvFallback`]：headless/CI fallback 命中的
+///   [`ResolvedCredential`]（`Debug` 脱敏，仅供 adapter 构造认证请求）。
+/// - [`CredentialSource::None`]：两级都未命中，调用方必须 fail-closed。
+#[derive(Debug)]
+pub enum CredentialSource {
+    /// Keychain 主条目命中（元数据 + 定位信息，不含明文）。
+    Keychain(StoredCredential),
+    /// Keychain 未命中、env fallback 命中。
+    EnvFallback(ResolvedCredential),
+    /// 两级均未命中。
+    None,
+}
+
+/// 由 provider id 推导环境变量名：`PAWORK_API_KEY_` + 大写、`-` → `_`。
+///
+/// 与 S0–S5 的 `pawork-config` 过渡约定保持同一形状，但在本 crate 内独立实现。
+fn api_key_env_name(provider_id: &str) -> String {
+    let suffix = provider_id.to_ascii_uppercase().replace('-', "_");
+    format!("PAWORK_API_KEY_{suffix}")
+}
+
+/// 读取 `PAWORK_API_KEY_<PROVIDER_ID>`；未设置或空字符串视为缺失。
+fn read_api_key_from_env(provider_id: &str) -> Option<String> {
+    match std::env::var(api_key_env_name(provider_id)) {
+        Ok(value) if !value.is_empty() => Some(value),
+        _ => None,
+    }
+}
+
+/// 解析 Provider 凭证：Keychain 主条目 → env fallback → 无凭证。
+///
+/// Keychain 侧的「条目不存在」与后端访问异常都视为未命中并继续 env；两级
+/// 都缺时返回 [`CredentialSource::None`]，绝不构造伪凭证。
+pub fn resolve_provider_credential(
+    backend: &dyn SecretBackend,
+    provider_id: &str,
+) -> CredentialSource {
+    let provider = ProviderId::new(provider_id);
+    let service = keychain_service_for(&provider);
+    match backend.get(&service, PROVIDER_DEFAULT_ACCOUNT) {
+        Ok(secret) => {
+            let stored = StoredCredential::new(
+                CredentialId::new(PROVIDER_DEFAULT_ACCOUNT),
+                provider,
+                format!("{provider_id} default"),
+                MaskedCredential::mask(&secret),
+                service,
+                PROVIDER_DEFAULT_ACCOUNT,
+                Vec::new(),
+            );
+            CredentialSource::Keychain(stored)
+        }
+        // NotFound = 主条目不存在；其它后端错误在本签名下同样只能降级到 env，
+        // 双缺时以 None 让调用方 fail-closed。
+        Err(_) => match read_api_key_from_env(provider_id) {
+            Some(value) => CredentialSource::EnvFallback(ResolvedCredential::new(
+                CredentialKind::ApiKey,
+                value,
+            )),
+            None => CredentialSource::None,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::MemoryBackend;
+    use crate::credential::ApiKeyCredential;
+
+    /// 各测试使用独立 provider id，避免并行测试共享同一环境变量。
+    fn set_env(key: &str, value: &str) {
+        // Rust 1.87+ 将 set_var 标为 unsafe；此处为测试专用 key。
+        #[allow(unused_unsafe)]
+        unsafe {
+            std::env::set_var(key, value);
+        }
+    }
+
+    fn remove_env(key: &str) {
+        #[allow(unused_unsafe)]
+        unsafe {
+            std::env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn env_name_uppercases_and_replaces_hyphens() {
+        assert_eq!(api_key_env_name("glm-coding"), "PAWORK_API_KEY_GLM_CODING");
+        assert_eq!(api_key_env_name("opencode-go"), "PAWORK_API_KEY_OPENCODE_GO");
+    }
+
+    #[test]
+    fn keychain_hit_beats_env_fallback() {
+        let backend = MemoryBackend::new();
+        let provider = "resolve-keychain-hit";
+        let env_name = api_key_env_name(provider);
+        set_env(&env_name, "sk-env-should-not-be-used");
+        backend
+            .store(
+                "pawork.resolve-keychain-hit",
+                PROVIDER_DEFAULT_ACCOUNT,
+                "sk-keychain-primary-000000",
+            )
+            .expect("store");
+
+        let source = resolve_provider_credential(&backend, provider);
+        remove_env(&env_name);
+
+        let CredentialSource::Keychain(stored) = source else {
+            panic!("expected keychain hit");
+        };
+        assert_eq!(stored.provider.as_str(), provider);
+        assert_eq!(stored.id.as_str(), PROVIDER_DEFAULT_ACCOUNT);
+        assert_eq!(stored.keychain_service, "pawork.resolve-keychain-hit");
+        assert_eq!(stored.keychain_account, PROVIDER_DEFAULT_ACCOUNT);
+        // 元数据与 Debug 输出不含明文。
+        assert!(!format!("{stored:?}").contains("sk-keychain-primary"));
+        // 沿用 StoredCredential 惯例可解析回明文。
+        let resolved = ApiKeyCredential::from_stored(stored)
+            .expect("from_stored")
+            .resolve(&backend)
+            .expect("resolve");
+        assert_eq!(resolved.expose_secret(), "sk-keychain-primary-000000");
+    }
+
+    #[test]
+    fn keychain_miss_falls_back_to_env() {
+        let backend = MemoryBackend::new();
+        let provider = "resolve-env-fallback";
+        let env_name = api_key_env_name(provider);
+        set_env(&env_name, "sk-env-fallback-abcdef");
+
+        let source = resolve_provider_credential(&backend, provider);
+        let source_debug = format!("{source:?}");
+        remove_env(&env_name);
+
+        let CredentialSource::EnvFallback(resolved) = source else {
+            panic!("expected env fallback");
+        };
+        assert_eq!(resolved.kind(), CredentialKind::ApiKey);
+        assert_eq!(resolved.expose_secret(), "sk-env-fallback-abcdef");
+        // env 值不落任何 Debug 泄漏字段。
+        assert!(!format!("{resolved:?}").contains("sk-env-fallback-abcdef"));
+        assert!(!source_debug.contains("sk-env-fallback-abcdef"));
+    }
+
+    #[test]
+    fn both_missing_returns_none() {
+        let backend = MemoryBackend::new();
+        let provider = "resolve-both-missing";
+        let env_name = api_key_env_name(provider);
+        remove_env(&env_name);
+        assert!(matches!(
+            resolve_provider_credential(&backend, provider),
+            CredentialSource::None
+        ));
+    }
+
+    #[test]
+    fn empty_env_value_counts_as_missing() {
+        let backend = MemoryBackend::new();
+        let provider = "resolve-env-empty";
+        let env_name = api_key_env_name(provider);
+        set_env(&env_name, "");
+        assert!(matches!(
+            resolve_provider_credential(&backend, provider),
+            CredentialSource::None
+        ));
+        remove_env(&env_name);
+    }
+}

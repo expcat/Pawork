@@ -1,0 +1,27 @@
+[package]
+name = "pawork-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 认证方式与 Secret 后端（API Key / OS Keychain / OAuth）"
+
+[dependencies]
+pawork-domain = { path = "../../foundation/domain" }
+pawork-api = { path = "../../foundation/api" }
+async-trait.workspace = true
+base64.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "sync", "io-util", "time"] }
+reqwest.workspace = true
+url.workspace = true
+keyring.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "test-util"] }
+wiremock.workspace = true
