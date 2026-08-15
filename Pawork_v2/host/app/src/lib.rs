@@ -795,7 +795,10 @@ impl AppCore {
                 .and_then(|inner| inner.get("usage"))
                 .and_then(|value| serde_json::from_value::<TokenUsage>(value.clone()).ok())
             {
-                last.get_or_insert(usage.clone());
+                // 按时间正序遍历，持续覆盖：最终拿到的是最新 completed run
+                // 的 usage（get_or_insert 会冻结在最早一轮，REPL 每轮用量行
+                // 因此显示过期数据，S5 波 C 冒烟实测发现）。
+                last = Some(usage.clone());
                 total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
                 total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
                 total.cache_read_tokens = total
@@ -1548,6 +1551,97 @@ mod tests {
             .expect("last")
             .expect("at least one completed run");
         assert_eq!(last, usage);
+        core.shutdown().await.expect("shutdown");
+    }
+
+    /// 回归（S5 波 C 冒烟发现）：每轮用量行必须取「最新 completed run」的
+    /// usage，而不是最早一轮——按次递变 usage 验证 last_run_usage 跟随第 2 轮。
+    #[tokio::test]
+    async fn last_run_usage_returns_latest_completed_run() {
+        struct SteppedUsageProvider {
+            usages: Vec<TokenUsage>,
+            calls: std::sync::atomic::AtomicUsize,
+        }
+
+        #[async_trait]
+        impl ModelProvider for SteppedUsageProvider {
+            fn id(&self) -> ProviderId {
+                ProviderId::from("mock")
+            }
+
+            async fn list_models(
+                &self,
+                _credential: Option<&ResolvedCredential>,
+            ) -> Result<Vec<ModelDefinition>, ProviderError> {
+                Ok(Vec::new())
+            }
+
+            async fn stream(
+                &self,
+                _request: CanonicalModelRequest,
+                sink: &dyn pawork_api::ProviderEventSink,
+                _cancel: CancellationToken,
+            ) -> Result<ModelResponseSummary, ProviderError> {
+                let index = self
+                    .calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let usage = self.usages[index.min(self.usages.len() - 1)].clone();
+                sink.emit(ProviderStreamEvent::TextDelta("ok".into()))
+                    .await?;
+                Ok(ModelResponseSummary {
+                    stop_reason: StopReason::Completed,
+                    usage,
+                    response_id: Some("resp-stepped".into()),
+                    provider_metadata: Default::default(),
+                })
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.db");
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let core = AppCore::from_parts(
+            Arc::new(SteppedUsageProvider {
+                usages: vec![
+                    TokenUsage {
+                        input_tokens: 100,
+                        output_tokens: 10,
+                        cache_read_tokens: 0,
+                        cache_write_tokens: 0,
+                    },
+                    TokenUsage {
+                        input_tokens: 222,
+                        output_tokens: 22,
+                        cache_read_tokens: 4,
+                        cache_write_tokens: 0,
+                    },
+                ],
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }),
+            None,
+            ModelId::from("glm-5.2"),
+            ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("stepped").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(&session, vec![user_hello()], &sink, CancellationToken::new())
+            .await
+            .expect("turn 1");
+        core.chat_turn(&session, vec![user_hello()], &sink, CancellationToken::new())
+            .await
+            .expect("turn 2");
+
+        let last = core
+            .last_run_usage(&session)
+            .await
+            .expect("last")
+            .expect("at least one completed run");
+        assert_eq!(last.input_tokens, 222);
+        assert_eq!(last.output_tokens, 22);
+        assert_eq!(last.cache_read_tokens, 4);
+        let total = core.session_usage(&session).await.expect("total");
+        assert_eq!(total.input_tokens, 322);
         core.shutdown().await.expect("shutdown");
     }
 

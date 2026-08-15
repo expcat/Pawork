@@ -1,6 +1,6 @@
 # S5：上下文预算与用量
 
-> 阶段 S5 · 上下文与用量 · 状态：🔵进行中（2026-08-15 波 A 完成） · 依赖：S4 · 规模：中 ·（S5/S6/S7 相互无包级交叉，可并行）
+> 阶段 S5 · 上下文与用量 · 状态：🟢已完成（2026-08-15 两通道真实冒烟） · 依赖：S4 · 规模：中 ·（S5/S6/S7 相互无包级交叉，可并行）
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -26,12 +26,21 @@
 
 ## 真实测试与评估（冒烟清单）
 
-- [ ] 构造超长任务（连续读多个大文件并总结，人为把模型 context window 配小如 32k 加速触发）：软限触发压缩 → 对话继续且早期关键信息仍被引用；硬限不溢出、无 4xx 上下文超限错误。
-- [ ] 压缩后 `--resume`：基于压缩态续聊连贯。
-- [ ] REPL `/compact` 手动压缩：立即触发、事件流可见、压缩后继续对话正常。
-- [ ] token 对账：一轮对话的 usage 与厂商控制台/响应 usage 字段抽查一致（GLM 与 OpenCode Go 各一次）。
-- [ ] `pawork models`：两通道模型的 context window / 定价显示正确；`glm-5.2` 大上下文条目正确。
-- [ ] **评估记录**：压缩对任务质量的影响（压缩前后回答对比）、两模型在接近满上下文时的行为差异。
+- [x] 构造超长任务（连续读多个大文件并总结，人为把模型 context window 配小如 32k 加速触发）：软限触发压缩 → 对话继续且早期关键信息仍被引用；硬限不溢出、无 4xx 上下文超限错误。（2026-08-15 两通道；`[[models]]` 覆盖 window=32768/max_output=4096 → 硬限 28,672/软限 22,937，隔离 fixture 连读 4×~27KB 文件。GLM 与 OpenCode Go 均在 T3/T4 两次触发 `compaction_started/completed`（估算 29,090 > 22,937 时压缩先于溢出）；T5 凭记忆答出精确标记与 b/c/d 三主题；全程无 4xx、无 `context_hard_truncated`）
+- [x] 压缩后 `--resume`：基于压缩态续聊连贯。（T5/T6 均为新进程 `--resume latest`：标记精确、主题正确，T6 推理显式引用摘要消息作答）
+- [x] REPL `/compact` 手动压缩：立即触发、事件流可见、压缩后继续对话正常。（PTY 驱动 REPL：3 轮后 `/compact` 立即输出 `compacted: 6 → 5 messages`，压缩后 codeword 回忆正确；事件走同一持久化链，`--json` 流中 `compaction_started → compaction_completed` 顺序实证于 glm-t3/t4）
+- [x] token 对账：一轮对话的 usage 与厂商控制台/响应 usage 字段抽查一致（GLM 与 OpenCode Go 各一次）。（本地 recording proxy 抓上游响应 `usage` 与 pawork `UsageUpdated` 1:1 精确一致：GLM 1158/54/cached 0；OpenCode Go 1379/37/cached 1280 = cache_read 1280）
+- [x] `pawork models`：两通道模型的 context window / 定价显示正确；`glm-5.2` 大上下文条目正确。（glm-5.2：1,000,000 window / 131,072 max output / pricing n/a（订阅制不编造）；deepseek-v4-pro $0.435/$0.87 per M USD；OpenCode Go 经 `/models` 探测合并 28 条目）
+- [x] **评估记录**：压缩对任务质量的影响（压缩前后回答对比）、两模型在接近满上下文时的行为差异。（见下方「模型评估记录」）
+
+### 模型评估记录（2026-08-15 S5 冒烟）
+
+| 通道 | 模型 | 压缩触发 | 压缩后回忆 | 近满上下文行为 |
+| --- | --- | --- | --- | --- |
+| GLM Coding Plan | glm-5.2 | T3/T4 两次（估算 29,090 > 软限 22,937） | 标记 + 三主题全对 | 软限压缩先于溢出，压缩后请求 7,664 tokens；cache_read 命中约 55%（7,680/14,042） |
+| OpenCode Go | deepseek-v4-pro | T3/T4 两次 | 标记 + 三主题全对 | 行为与 GLM 一致：先压缩后继续，无 4xx；cache_read 命中约 93%（12,880/13,779） |
+
+补充：T1（全上下文）与 T5（两次压缩后）对 a.txt 标记的回答一致——本用例压缩无损。压缩摘要请求自身消耗约 21k input tokens/次（压缩器读旧历史的固有成本，缓存与计量影响留 S6/S11 观察）。冒烟发现并修复 `last_run_usage` 冻结最早轮的缺陷（REPL 每轮用量行显示过期数据），回归测试 `last_run_usage_returns_latest_completed_run` 覆盖。
 
 ## 定向自动化测试
 
@@ -42,9 +51,9 @@
 
 ## 退出标准
 
-- [ ] 冒烟全项通过；V1 两个零消费者缺口（context-engine、compaction-engine）在装配链上有真实调用点。
-- [ ] `CompactionStarted/Completed` 事件重放一致；compaction 为 feature 门控且默认路径不拉引擎链。
-- [ ] token/费用显示与厂商侧抽查一致；无定价模型不编造费用。
+- [x] 冒烟全项通过；V1 两个零消费者缺口（context-engine、compaction-engine）在装配链上有真实调用点。（波 B 接入 `run_session`；波 C 两通道冒烟实证压缩链端到端）
+- [x] `CompactionStarted/Completed` 事件重放一致；compaction 为 feature 门控且默认路径不拉引擎链。（engine 57 测试含压缩/截断事件与重放一致性；session `--features compaction` 40 绿，crate 不依赖 engine（依赖倒置，估算器由 engine 侧注入））
+- [x] token/费用显示与厂商侧抽查一致；无定价模型不编造费用。（对账 1:1；glm-5.2 pricing n/a 不显示费用，deepseek-v4-pro 按 micros 定价显示）
 
 ## 为后续阶段预留 / 明确不做
 
@@ -55,6 +64,7 @@
 
 - 波 A（✅ 2026-08-15）：`pawork-provider-core`（usage/registry）；`pawork-session` compaction feature。
 - 波 B（✅ 2026-08-15，串行）：engine context 接线（依赖波 A trait）+ app/cli 收口。
+- 波 C（✅ 2026-08-15，串行）：两通道真实冒烟 + 评估记录 + S5 收口；修复 `last_run_usage` 取最早轮缺陷并补回归。
 - 与 S6、S7 无包级交叉，可整阶段并行推进。
 
 ## 参考
