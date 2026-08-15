@@ -54,6 +54,7 @@ async fn show(core: &AppCore, spec: &str, json: bool) -> Result<(), CliError> {
     let record = core.get_session(&session).await?;
     let messages = core.resume_messages(&session).await?;
     let usage = core.session_usage(&session).await?;
+    let switches = model_switches(core, &session).await?;
     if json {
         println!(
             "{}",
@@ -65,6 +66,7 @@ async fn show(core: &AppCore, spec: &str, json: bool) -> Result<(), CliError> {
                 "active_branch": record.active_branch,
                 "messages": messages,
                 "usage": usage,
+                "model_switches": switches,
             })
         );
         return Ok(());
@@ -82,6 +84,18 @@ async fn show(core: &AppCore, spec: &str, json: bool) -> Result<(), CliError> {
     for message in messages {
         println!("[{}] {}", role_label(&message), message_text(&message));
     }
+    if !switches.is_empty() {
+        println!();
+        println!("model switches:");
+        for switch in &switches {
+            let timestamp = switch["timestamp_ms"].as_i64().unwrap_or(0);
+            let from_provider = switch["from"]["provider"].as_str().unwrap_or("?");
+            let from_model = switch["from"]["model"].as_str().unwrap_or("?");
+            let to_provider = switch["to"]["provider"].as_str().unwrap_or("?");
+            let to_model = switch["to"]["model"].as_str().unwrap_or("?");
+            println!("  [{}] {from_provider} {from_model} -> {to_provider} {to_model}", format_millis(timestamp));
+        }
+    }
     Ok(())
 }
 
@@ -92,6 +106,33 @@ fn role_label(message: &Message) -> &'static str {
         MessageRole::System => "system",
         MessageRole::Tool => "tool",
     }
+}
+
+/// 读取 model.switched 诊断事件并投影为展示形状（from/to provider+model）。
+async fn model_switches(
+    core: &AppCore,
+    session: &pawork_domain::SessionId,
+) -> Result<Vec<serde_json::Value>, CliError> {
+    let events = core
+        .store()?
+        .replay_events(session, 0, 10_000)
+        .await
+        .map_err(pawork_app::AppError::from)?;
+    let mut switches = Vec::new();
+    for envelope in events {
+        if let pawork_domain::AgentEvent::Diagnostic { code, details } = envelope.payload {
+            if code != "model.switched" {
+                continue;
+            }
+            switches.push(serde_json::json!({
+                "sequence": envelope.sequence.value(),
+                "timestamp_ms": envelope.timestamp.as_unix_millis(),
+                "from": details.get("from").cloned().unwrap_or(serde_json::Value::Null),
+                "to": details.get("to").cloned().unwrap_or(serde_json::Value::Null),
+            }));
+        }
+    }
+    Ok(switches)
 }
 
 fn message_text(message: &Message) -> String {
@@ -107,7 +148,7 @@ fn message_text(message: &Message) -> String {
     parts.join(" ")
 }
 
-fn format_millis(ms: i64) -> String {
+pub(crate) fn format_millis(ms: i64) -> String {
     if ms < 0 {
         return ms.to_string();
     }

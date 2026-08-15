@@ -11,6 +11,8 @@ use pawork_config::PaworkConfig;
 pub enum AdapterProtocol {
     ChatCompletions,
     Messages,
+    /// Responses transport（ChatGPT/xAI 首发 OAuth 通道装配用标记）。
+    Responses,
 }
 
 /// 解析 provider 应使用的适配器协议。

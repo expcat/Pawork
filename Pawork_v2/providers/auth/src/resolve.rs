@@ -14,10 +14,45 @@ use pawork_domain::{CredentialId, ProviderId};
 
 use crate::backend::SecretBackend;
 use crate::credential::{keychain_service_for, StoredCredential};
+use crate::error::AuthError;
 use crate::masked::MaskedCredential;
 
 /// Provider 主条目在 SecretBackend 中的固定 `account`。
 pub const PROVIDER_DEFAULT_ACCOUNT: &str = "default";
+
+/// 写入 Provider 主条目（account 固定 default）：auth set-key 的落点，
+/// 与 resolve_provider_credential 的读取口径一致。
+pub fn store_default_api_key(
+    backend: &dyn SecretBackend,
+    provider: &ProviderId,
+    secret: &str,
+) -> Result<StoredCredential, AuthError> {
+    if secret.is_empty() {
+        return Err(AuthError::InvalidSecret("secret is empty".into()));
+    }
+    let service = keychain_service_for(provider);
+    backend.store(&service, PROVIDER_DEFAULT_ACCOUNT, secret)?;
+    Ok(StoredCredential::new(
+        CredentialId::new(PROVIDER_DEFAULT_ACCOUNT),
+        provider.clone(),
+        format!("{} default", provider.as_str()),
+        MaskedCredential::mask(secret),
+        service,
+        PROVIDER_DEFAULT_ACCOUNT,
+        Vec::new(),
+    ))
+}
+
+/// 删除 Provider 主条目（幂等：条目不存在视为成功）。env fallback 不受影响。
+pub fn delete_default_api_key(
+    backend: &dyn SecretBackend,
+    provider: &ProviderId,
+) -> Result<(), AuthError> {
+    match backend.delete(&keychain_service_for(provider), PROVIDER_DEFAULT_ACCOUNT) {
+        Ok(()) | Err(AuthError::NotFound) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
 
 /// [`resolve_provider_credential`] 的解析结果（来源标记，不含明文 secret）。
 ///

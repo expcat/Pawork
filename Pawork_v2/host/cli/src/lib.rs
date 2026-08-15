@@ -4,6 +4,7 @@
 //! `--json` 或非 TTY 下审批 fail-closed（一律拒绝）。
 
 mod approval;
+mod auth;
 mod chat;
 mod error;
 mod render;
@@ -84,6 +85,11 @@ pub enum Command {
     },
     /// 列出当前 provider 的模型目录
     Models,
+    /// 凭证管理（Keychain 为主，env 为显式 fallback）
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -92,6 +98,18 @@ pub enum SessionsCommand {
     List,
     /// 显示会话元数据与投影消息
     Show { session: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AuthCommand {
+    /// 各通道凭证状态（只显示掩码与来源）
+    List,
+    /// 从 stdin 读入 API key 并写入 Keychain default 条目
+    SetKey { provider: String },
+    /// OAuth 浏览器登录（PKCE + 本地回调，等待 5 分钟）
+    Login { provider: String },
+    /// 删除 Keychain default 条目（不影响 env fallback）
+    Logout { provider: String },
 }
 
 pub async fn run() -> ExitCode {
@@ -112,14 +130,24 @@ async fn run_inner() -> Result<(), CliError> {
         None => None,
     };
     options.approval_host = Some(approval_host(cli.json));
-    let core = AppCore::load(options).await?;
+    // 目录 / 凭证命令允许默认 provider 缺凭证（目录兜底装配）。
+    let tolerant = matches!(
+        &cli.command,
+        Command::Models | Command::Sessions { .. } | Command::Auth { .. }
+    );
+    let mut core = if tolerant {
+        AppCore::load_for_catalog(options).await?
+    } else {
+        AppCore::load(options).await?
+    };
     let result = match cli.command {
         Command::Chat { prompt, resume } => {
-            chat::run_chat(&core, prompt, resume, cli.json).await
+            chat::run_chat(&mut core, prompt, resume, cli.json).await
         }
         Command::Sessions { command } => sessions::run_sessions(&core, command, cli.json).await,
         Command::Run { prompt } => chat::run_once(&core, &prompt, cli.json).await,
         Command::Models => run_models(&core, cli.json).await,
+        Command::Auth { command } => auth::run_auth(&core, command, cli.json).await,
     };
     let shutdown = core.shutdown().await;
     result?;
@@ -128,7 +156,23 @@ async fn run_inner() -> Result<(), CliError> {
 }
 
 async fn run_models(core: &AppCore, json: bool) -> Result<(), CliError> {
-    let catalog = core.model_catalog().await;
+    let mut catalog = core.models_overview().await;
+    catalog.sort_by(|a, b| {
+        a.provider
+            .as_str()
+            .cmp(b.provider.as_str())
+            .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+    });
+    let current_provider = core.provider_id().as_str().to_string();
+    let providers: Vec<String> = catalog
+        .iter()
+        .map(|entry| entry.provider.as_str().to_string())
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|pair| pair[0] != pair[1])
+        .map(|pair| pair[0].clone())
+        .chain(catalog.last().map(|e| e.provider.as_str().to_string()))
+        .collect();
     if json {
         // unstable：沿 S1 约定，models 数组随 registry 目录演进为对象形状。
         let models: Vec<serde_json::Value> = catalog
@@ -147,33 +191,60 @@ async fn run_models(core: &AppCore, json: bool) -> Result<(), CliError> {
         println!(
             "{}",
             serde_json::json!({
-                "provider": core.provider_id().as_str(),
+                "current_provider": current_provider,
+                "providers": providers,
                 "models": models,
             })
         );
     } else {
-        println!("provider: {}", core.provider_id());
-        for entry in &catalog {
-            let pricing = entry.pricing.as_ref().map_or_else(
-                || "pricing n/a".to_string(),
-                |pricing| {
-                    format!(
-                        "${}/${} per M {}",
-                        micros_to_currency(pricing.input_per_mtoken_micros),
-                        micros_to_currency(pricing.output_per_mtoken_micros),
-                        pricing.currency
-                    )
-                },
-            );
-            println!(
-                "  {:<36} window {:>10}  max output {:>10}  {}",
-                entry.id.as_str(),
-                display_tokens(entry.context_window_tokens),
-                display_tokens(entry.max_output_tokens),
-                pricing,
-            );
+        // 六通道按通道表顺序展示（无静态条目的通道标注说明），config 自定义
+        // provider 追加在后面，保证聚合视图覆盖全部首发通道。
+        let mut ordered: Vec<String> = pawork_app::FIRST_PARTY_CHANNELS
+            .iter()
+            .map(|channel| channel.id.to_string())
+            .collect();
+        for provider in &providers {
+            if !ordered.contains(provider) {
+                ordered.push(provider.clone());
+            }
         }
-   }
+        for provider in &ordered {
+            let marker = if *provider == current_provider {
+                "  (current)"
+            } else {
+                ""
+            };
+            println!("provider: {provider}{marker}");
+            let entries: Vec<_> = catalog
+                .iter()
+                .filter(|e| e.provider.as_str() == provider)
+                .collect();
+            if entries.is_empty() {
+                println!("  (no static models; login/set-key 后运行期探测)");
+                continue;
+            }
+            for entry in entries {
+                let pricing = entry.pricing.as_ref().map_or_else(
+                    || "pricing n/a".to_string(),
+                    |pricing| {
+                        format!(
+                            "${}/${} per M {}",
+                            micros_to_currency(pricing.input_per_mtoken_micros),
+                            micros_to_currency(pricing.output_per_mtoken_micros),
+                            pricing.currency
+                        )
+                    },
+                );
+                println!(
+                    "  {:<36} window {:>10}  max output {:>10}  {}",
+                    entry.id.as_str(),
+                    display_tokens(entry.context_window_tokens),
+                    display_tokens(entry.max_output_tokens),
+                    pricing,
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -268,6 +339,41 @@ mod tests {
             Command::Run { prompt } => assert_eq!(prompt, "explain this"),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_auth_subcommands() {
+        let cli = Cli::try_parse_from(["pawork", "auth", "list"]).expect("parse");
+        assert!(matches!(
+            cli.command,
+            Command::Auth {
+                command: AuthCommand::List
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["pawork", "auth", "set-key", "glm-coding"]).expect("parse");
+        match cli.command {
+            Command::Auth {
+                command: AuthCommand::SetKey { provider },
+            } => assert_eq!(provider, "glm-coding"),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["pawork", "auth", "login", "chatgpt"]).expect("parse");
+        match cli.command {
+            Command::Auth {
+                command: AuthCommand::Login { provider },
+            } => assert_eq!(provider, "chatgpt"),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["pawork", "auth", "logout", "xai"]).expect("parse");
+        assert!(matches!(
+            cli.command,
+            Command::Auth {
+                command: AuthCommand::Logout { provider }
+            } if provider == "xai"
+        ));
     }
 
     #[test]

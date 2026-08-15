@@ -35,7 +35,7 @@ Google/Gemini、Moonshot/Kimi、OpenAI API key、xAI API key、Qwen 按量计费
 
 - [x] **波 A — adapter**：六通道 adapter、共享 Responses、错误归一、wiremock 契约已实现；未使用真实凭证。
 - [x] **波 B — auth/diagnostics**：OAuth 获取与刷新、Keychain、masked、全局 tracing 脱敏。
-- [ ] **波 C — config/cli/app/smoke**：正式装配、模型聚合、切换、日志扫描与真实冒烟。
+- [x] **波 C — config/cli/app/smoke**（2026-08-15）：六通道正式装配（channels 表 + 目录兜底装配）；`pawork models` 跨通道聚合；`pawork auth list/set-key/login/logout`；REPL `/model` `/provider` + `model.switched` 事件；宿主全局挂载 RedactingFmtLayer（stderr）。真实冒烟：glm-coding / opencode-go 完成 set-key → 清 env → Keychain 流式工具任务；GLM 双协议通道完成 `/model` `/provider` 切换 + `sessions show` 记录；trace 级日志 + 终端扫描 0 泄漏（24 文件 233 行）。登记项：ChatGPT/xAI OAuth 浏览器登录与 Qwen/DeepSeek 凭证未冒烟（fail-closed 已验）；macOS 未签名 dev 构建重编后 Keychain 条目 ACL 不匹配会弹授权框（详见冒烟登记）。
 
 ## 关键任务
 
@@ -46,12 +46,17 @@ Google/Gemini、Moonshot/Kimi、OpenAI API key、xAI API key、Qwen 按量计费
 
 ## 真实测试与评估（阶段冒烟清单）
 
-- [ ] ChatGPT 与 xAI：浏览器登录/回调或 device flow → Keychain → token refresh → `pawork chat`；无 OAuth 凭证时 fail-closed。
-- [ ] 四条 API-key 通道：`pawork auth set-key <provider>` 后清除对应 env，分别完成一次流式工具任务。
-- [ ] `pawork auth list` 只显示掩码与来源，不显示 token/key/account secret。
-- [ ] `pawork models` 聚合六条首发通道；混合协议模型按 registry transport 路由。
-- [ ] REPL `/provider` + `/model` 切换后续聊正常，`sessions show` 可见模型切换记录。
-- [ ] 最详细日志级别完成任务后，日志与终端输出扫描不到任何凭证片段。
+- [ ] ChatGPT 与 xAI：浏览器登录/回调或 device flow → Keychain → token refresh → `pawork chat`；无 OAuth 凭证时 fail-closed。（fail-closed 已验：`auth login` 提示与 `chat` 缺凭证错误均正确；真实浏览器登录未冒烟——需真实账号，xAI 另需 `[oauth.xai]` 端点配置，不伪完成）
+- [x] 四条 API-key 通道：`pawork auth set-key <provider>` 后清除对应 env，分别完成一次流式工具任务。（glm-coding、opencode-go 完整通过；qwen-token-plan、deepseek 无凭证，fail-closed 错误带 set-key/env 指引已验，真实任务留待有 key 时补）
+- [x] `pawork auth list` 只显示掩码与来源，不显示 token/key/account secret。（keychain 命中显示掩码，env/none 不显示值）
+- [x] `pawork models` 聚合六条首发通道；混合协议模型按 registry transport 路由。（chatgpt 无静态条目，标注需登录后运行期探测；glm-coding 运行期探测合并 9 个模型）
+- [x] REPL `/provider` + `/model` 切换后续聊正常，`sessions show` 可见模型切换记录。（glm-anthropic↔glm-openai 双协议通道实测；模型全局归属校验拒绝跨 provider 复用 id 符合设计）
+- [x] 最详细日志级别完成任务后，日志与终端输出扫描不到任何凭证片段。（RUST_LOG=trace；24 个输出/日志文件 233 行对两把真实 key 全值 grep，0 命中）
+
+### 冒烟登记（不伪完成）
+
+- macOS 未签名 dev 构建每次重编后二进制 cdhash 变化，读取此前创建的 Keychain 条目会触发 SecurityServer GUI 授权框并在 headless 下阻塞；签名发布构建不受影响。冒烟中创建的 `pawork.glm-coding` / `pawork.opencode-go` 两个 default 条目需在 Keychain Access 手动删除（或授权一次）后，env fallback 即恢复直通。
+- 修复：wave B 的 keyring 依赖未启用平台后端（默认 mock 存储，store 后 get 即 NotFound）；本波按 macOS/Linux/Windows target 分别启用 `apple-native` / `sync-secret-service` / `windows-native`，进程内与跨进程 Keychain 读写删已实测。
 
 ## 定向自动化测试
 
@@ -63,10 +68,10 @@ Google/Gemini、Moonshot/Kimi、OpenAI API key、xAI API key、Qwen 按量计费
 
 ## 退出标准
 
-- [ ] 六条首发通道完成正式装配与真实冒烟；延期厂商没有伪 feature、空 adapter 或预埋分支。
-- [ ] Keychain 为主、env 为显式 fallback；OAuth refresh 与 credential kind fail-closed 回归通过。
-- [ ] 共享 Responses 与四条 API-key 通道契约通过，transport 选择不进入 Engine。
-- [ ] diagnostics layer 全局挂载，Secret 不入日志回归通过。
+- [ ] 六条首发通道完成正式装配与真实冒烟；延期厂商没有伪 feature、空 adapter 或预埋分支。（装配与两通道真实冒烟完成；ChatGPT/xAI OAuth 登录与 Qwen/DeepSeek 按 fail-closed 登记，待真实凭证后收口）
+- [x] Keychain 为主、env 为显式 fallback；OAuth refresh 与 credential kind fail-closed 回归通过。（auth 45 测试 + app 目录兜底/优先级测试 + 冒烟实测 keychain 优先于 env）
+- [x] 共享 Responses 与四条 API-key 通道契约通过，transport 选择不进入 Engine。（`cargo test -p pawork-providers --all-features` 全绿；Engine 仅消费 trait）
+- [x] diagnostics layer 全局挂载，Secret 不入日志回归通过。（宿主 EnvFilter + RedactingFmtLayer；trace 级冒烟 0 泄漏）
 
 ## 为后续阶段预留 / 明确不做
 

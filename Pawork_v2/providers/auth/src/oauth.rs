@@ -58,6 +58,9 @@ fn expires_at_from_now(expires_in: u64) -> Timestamp {
 pub struct TokenSet {
     pub access_token: String,
     pub refresh_token: Option<String>,
+    /// OIDC id_token（ChatGPT 流从 JWT claim 提取 account id 用）。
+    /// 仅在内存短暂存在；Debug 已脱敏，绝不落盘。
+    pub id_token: Option<String>,
     pub expires_in: Option<u64>,
     pub token_type: String,
     pub scope: Option<String>,
@@ -72,6 +75,7 @@ impl fmt::Debug for TokenSet {
                 "refresh_token",
                 &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
             )
+            .field("id_token", &self.id_token.as_ref().map(|_| "[REDACTED]"))
             .field("expires_in", &self.expires_in)
             .field("token_type", &self.token_type)
             .field("scope", &self.scope)
@@ -441,6 +445,10 @@ async fn exchange_token(
         access_token,
         refresh_token: value
             .get("refresh_token")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        id_token: value
+            .get("id_token")
             .and_then(|v| v.as_str())
             .map(String::from),
         expires_in: value.get("expires_in").and_then(|v| v.as_u64()),
@@ -926,8 +934,19 @@ fn hex_val(b: u8) -> Option<u8> {
     }
 }
 
-fn oauth_service(provider: &ProviderId) -> String {
+pub(crate) fn oauth_service(provider: &ProviderId) -> String {
     format!("{OAUTH_SERVICE_PREFIX}.{provider}.oauth")
+}
+
+/// 解码 JWT payload 段（base64url，不验签）；仅供提取非机密 claim（如
+/// ChatGPT account id 路由头）使用，不作为信任边界。
+pub(crate) fn decode_jwt_payload(payload_b64: &str) -> Result<Value, AuthError> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .map_err(|error| AuthError::OAuth(format!("id_token payload is not base64url: {error}")))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| AuthError::OAuth(format!("id_token payload is not JSON: {error}")))
 }
 
 /// 构造授权 URL。
@@ -1033,6 +1052,7 @@ mod tests {
         let tokens = TokenSet {
             access_token: "access-secret".into(),
             refresh_token: Some("refresh-secret".into()),
+            id_token: None,
             expires_in: Some(3600),
             token_type: "Bearer".into(),
             scope: Some("read".into()),
@@ -1084,7 +1104,8 @@ mod tests {
         let tokens = TokenSet {
             access_token: "ya29.access-secret-token-abcdefgh".into(),
             refresh_token: Some("1//refresh-secret-token-12345".into()),
-            expires_in: Some(3600),
+            id_token: None,
+             expires_in: Some(3600),
             token_type: "Bearer".into(),
             scope: Some("read write".into()),
         };
@@ -1127,6 +1148,7 @@ mod tests {
         let tokens = TokenSet {
             access_token: "access-xyz".into(),
             refresh_token: None,
+            id_token: None,
             expires_in: Some(100),
             token_type: "Bearer".into(),
             scope: None,
@@ -1156,7 +1178,8 @@ mod tests {
             &TokenSet {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
-                expires_in: Some(1),
+                id_token: None,
+                 expires_in: Some(1),
                 token_type: "Bearer".into(),
                 scope: Some("read".into()),
             },
@@ -1170,7 +1193,8 @@ mod tests {
             &TokenSet {
                 access_token: "new-access".into(),
                 refresh_token: Some("new-refresh".into()),
-                expires_in: Some(3600),
+                id_token: None,
+                 expires_in: Some(3600),
                 token_type: "Bearer".into(),
                 scope: Some("read write".into()),
             },
@@ -1204,7 +1228,8 @@ mod tests {
             &TokenSet {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
-                expires_in: Some(60),
+                id_token: None,
+                 expires_in: Some(60),
                 token_type: "Bearer".into(),
                 scope: None,
             },
@@ -1219,6 +1244,7 @@ mod tests {
             &TokenSet {
                 access_token: "new-access".into(),
                 refresh_token: None,
+                id_token: None,
                 expires_in: None,
                 token_type: "Bearer".into(),
                 scope: None,
@@ -1441,7 +1467,8 @@ mod tests {
             &TokenSet {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
-                expires_in: Some(0),
+                id_token: None,
+                 expires_in: Some(0),
                 token_type: "Bearer".into(),
                 scope: Some("read".into()),
             },
@@ -1501,7 +1528,8 @@ mod tests {
             &TokenSet {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
-                expires_in: Some(0),
+                id_token: None,
+                 expires_in: Some(0),
                 token_type: "Bearer".into(),
                 scope: Some("read".into()),
             },

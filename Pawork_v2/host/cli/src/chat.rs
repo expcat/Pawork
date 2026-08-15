@@ -17,7 +17,7 @@ use crate::render::{JsonlSink, TextSink};
 use crate::CliError;
 
 pub async fn run_chat(
-    core: &AppCore,
+    core: &mut AppCore,
     prompt: Option<String>,
     resume: Option<String>,
     json: bool,
@@ -71,7 +71,7 @@ async fn run_prompt(
     .await
 }
 
-async fn run_repl(core: &AppCore, resume: Option<String>) -> Result<(), CliError> {
+async fn run_repl(core: &mut AppCore, resume: Option<String>) -> Result<(), CliError> {
     let mut session = if let Some(spec) = resume {
         Some(core.resolve_session(&spec).await?)
     } else {
@@ -123,7 +123,7 @@ async fn run_repl(core: &AppCore, resume: Option<String>) -> Result<(), CliError
                                 continue;
                             };
                             let before = history.len();
-                            match compact_now(core, id).await {
+                            match compact_now(&*core, id).await {
                                 Ok(after) => {
                                     history = core.resume_messages(id).await?;
                                     next_msg = next_message_counter(&history);
@@ -131,6 +131,14 @@ async fn run_repl(core: &AppCore, resume: Option<String>) -> Result<(), CliError
                                 }
                                 Err(err) => eprintln!("compact failed: {err}"),
                             }
+                            continue;
+                        }
+                        if text == "/model" || text.starts_with("/model ") {
+                            handle_model_command(core, session.as_ref(), &text["/model".len()..]).await;
+                            continue;
+                        }
+                        if text == "/provider" || text.starts_with("/provider ") {
+                            handle_provider_command(core, session.as_ref(), &text["/provider".len()..]).await;
                             continue;
                         }
                         if session.is_none() {
@@ -141,7 +149,7 @@ async fn run_repl(core: &AppCore, resume: Option<String>) -> Result<(), CliError
                             session = Some(id);
                         }
                         let id = session.as_ref().expect("session created");
-                        run_one_turn(core, id, &mut history, &mut next_msg, text, false, false).await?;
+                        run_one_turn(&*core, id, &mut history, &mut next_msg, text, false, false).await?;
                     }
                 }
             }
@@ -172,6 +180,46 @@ async fn open_or_create(
             .create_session(session_title_from_text(first_prompt))
             .await?;
         Ok((session, Vec::new(), 1))
+    }
+}
+
+/// /model：无参列当前 provider 的静态目录；有参切换并落 model.switched 事件。
+async fn handle_model_command(core: &mut AppCore, session: Option<&SessionId>, args: &str) {
+    let name = args.trim();
+    if name.is_empty() {
+        let entries: Vec<_> = core
+            .model_catalog()
+            .await
+            .into_iter()
+            .filter(|entry| entry.provider == *core.provider_id())
+            .collect();
+        if entries.is_empty() {
+            eprintln!("当前 provider 无静态目录条目。");
+            return;
+        }
+        eprintln!("model: {}（当前）", core.model());
+        for entry in entries {
+            eprintln!("  {}", entry.id.as_str());
+        }
+        return;
+    }
+    match core.switch_model(session, name).await {
+        Ok(()) => eprintln!("model -> {}", core.model()),
+        Err(err) => eprintln!("switch failed: {err}"),
+    }
+}
+
+/// /provider <id> [model]：切换 provider（可选同时切模型），事件流记录变更。
+async fn handle_provider_command(core: &mut AppCore, session: Option<&SessionId>, args: &str) {
+    let mut parts = args.trim().split_whitespace();
+    let Some(provider) = parts.next() else {
+        eprintln!("用法：/provider <id> [model]；当前 {}", core.provider_id());
+        return;
+    };
+    let model = parts.next();
+    match core.switch_provider(session, provider, model).await {
+        Ok(()) => eprintln!("provider -> {} / {}", core.provider_id(), core.model()),
+        Err(err) => eprintln!("switch failed: {err}"),
     }
 }
 

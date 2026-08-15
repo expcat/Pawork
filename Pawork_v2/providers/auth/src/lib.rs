@@ -17,6 +17,7 @@
 
 mod backend;
 mod credential;
+mod default_credential;
 mod error;
 mod masked;
 pub mod oauth;
@@ -24,6 +25,11 @@ mod resolve;
 
 pub use backend::{KeychainBackend, MemoryBackend, SecretBackend};
 pub use credential::{ApiKeyCredential, CredentialId, StoredCredential};
+pub use default_credential::{
+    default_oauth_needs_refresh, delete_default_oauth_token, load_default_oauth_credential,
+    load_default_oauth_meta, oauth_service, store_default_oauth_token,
+    update_default_oauth_token, DefaultOAuthMeta, OAUTH_DEFAULT_ACCOUNT,
+};
 pub use error::AuthError;
 pub use masked::MaskedCredential;
 pub use oauth::{
@@ -34,4 +40,6 @@ pub use oauth::{
     DeviceFlowConfig, DeviceUserPrompt, OAuthRefreshConfig, Pkce, PkceFlowConfig, PkceSession,
     TokenSet,
 };
-pub use resolve::{resolve_provider_credential, CredentialSource};
+pub use resolve::{
+    delete_default_api_key, resolve_provider_credential, store_default_api_key, CredentialSource,
+};

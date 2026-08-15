@@ -88,7 +88,6 @@
 | GPUI Desktop（apps/desktop） | 消费 `pawork-client`，建议 S12 后独立启动 | 不阻塞 |
 | OpenCode Go 仅走 `/messages` 的模型 | 是否在 S2 anthropic 适配器中一并覆盖 | S2 计划内决定 |
 | 审批等待前未落盘 `ToolApprovalRequested` | engine 在 `host.decide` 返回后才成对发出 Requested/Responded；`kill -9` 时 tool_call 停在 `collecting_arguments`，resume 走重新询问（S3 冒烟已确认不重复执行）。若要让 seal-as-denied 覆盖生产杀进程窗口，需在等待前先 persist Requested | 不阻塞 S4；S9 headless 远程审批前建议收口 |
-| `pawork-auth` / `pawork-diagnostics`（logging）待接线 | S6 波 B 已激活两包本体（auth 41 测试 / diagnostics 4+10 测试），生产装配链消费在波 C 落地（凭证解析链接入 config/app、Registry 挂 RedactingFmtLayer + StructuredLogLayer）；届时未接线面收回 | S6 波 C |
 | `pawork-diagnostics` `experimental` 门控面 | metrics/bundle 两模块已随波 B 迁移但以 `experimental` feature 门控、默认不编译；激活条件：出现真实诊断导出/指标消费方（候选 S7 diagnostic bundle 导出、S9 gui-server 指标） | S7/S9 |
 | 对外账户池网关模式（F6-B） | 近期不内建（F6-A 已确认）；以 `pawork-channels` 扩展 feature 长期评估，见 [docs/design.md](docs/design.md) §5 | S12 后按需 |
 

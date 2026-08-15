@@ -829,12 +829,17 @@ pub fn caps(
     }
 }
 
-/// 内置目录（S5 起为两条开发通道，见 docs/task-guide.md §5）：
+/// 内置目录（S5 起为两条开发通道；S6 波 C 增补 qwen/deepseek 聚合条目）：
 ///
 /// - `glm-5.2`（GLM Coding Plan）：订阅制通道，无公开 per-token 费率——
 ///   不伪造定价（pricing = None，费用显示为「无定价」）。
 /// - `deepseek-v4-pro`（OpenCode Go）：公开费率 input $0.435/M、
 ///   output $0.87/M、cache read $0.003625/M；cache write 未单列，按 0 计。
+/// - `qwen3-coder-plus`（Qwen Token Plan）与 `deepseek-chat` /
+///   `deepseek-reasoner`（DeepSeek API key 通道）：窗口/输出取公开文档
+///   保守值；费率未核对到 micros 前不编造（pricing = None）。
+/// - ChatGPT / xAI 为 OAuth 通道：ChatGPT 目录登录后经 /models 探测，不
+///   维护静态条目；xai 静态目录由 adapter 的 builtin_models 在装配期合并。
 ///
 /// 能力声明取保守基线（text + tool_calls）；其余维度由 Provider 探测与
 /// 配置覆盖收窄。本地兼容服务的模型在连接后经 `extend_with` 动态补充。
@@ -858,7 +863,7 @@ fn builtin_entries() -> Vec<CatalogEntry> {
             display_name: "DeepSeek V4 Pro".into(),
             context_window_tokens: 1_000_000,
             max_output_tokens: 393_216,
-            capabilities: text_tools,
+            capabilities: text_tools.clone(),
             pricing: Some(ModelPricing {
                 input_per_mtoken_micros: 435_000,
                 output_per_mtoken_micros: 870_000,
@@ -867,6 +872,36 @@ fn builtin_entries() -> Vec<CatalogEntry> {
                 currency: "USD".into(),
             }),
             aliases: vec!["deepseek".into()],
+        },
+        CatalogEntry {
+            id: ModelId::new("qwen3-coder-plus"),
+            provider: ProviderId::new("qwen-token-plan"),
+            display_name: "Qwen3 Coder Plus".into(),
+            context_window_tokens: 0,
+            max_output_tokens: 0,
+            capabilities: text_tools.clone(),
+            pricing: None,
+            aliases: Vec::new(),
+        },
+        CatalogEntry {
+            id: ModelId::new("deepseek-chat"),
+            provider: ProviderId::new("deepseek"),
+            display_name: "DeepSeek Chat".into(),
+            context_window_tokens: 128_000,
+            max_output_tokens: 8_192,
+            capabilities: text_tools.clone(),
+            pricing: None,
+            aliases: Vec::new(),
+        },
+        CatalogEntry {
+            id: ModelId::new("deepseek-reasoner"),
+            provider: ProviderId::new("deepseek"),
+            display_name: "DeepSeek Reasoner".into(),
+            context_window_tokens: 128_000,
+            max_output_tokens: 64_000,
+            capabilities: text_tools.clone(),
+            pricing: None,
+            aliases: Vec::new(),
         },
     ]
 }
@@ -992,7 +1027,11 @@ mod tests {
         assert_eq!(registry.resolve("GLM"), registry.resolve("glm"));
         assert!(registry.resolve("deepseek").is_some());
         assert!(registry.resolve("nonexistent").is_none());
-        assert_eq!(registry.list().len(), 2, "S5 内置目录为双通道条目");
+        assert_eq!(
+            registry.list().len(),
+            5,
+            "S6 内置目录覆盖五条 API-key 通道静态条目"
+        );
     }
 
     #[test]

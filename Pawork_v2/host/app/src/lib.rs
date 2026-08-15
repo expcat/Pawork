@@ -1,24 +1,28 @@
-//! 应用门面：读配置 → env key → provider → 读写工具 + run_command → 事件化 `run_session`。
+//! 应用门面：读配置 → 凭证链（Keychain → env）→ provider → 读写工具 +
+//! run_command → 事件化 `run_session`（S6 波 C 起六通道正式装配）。
 //!
 //! 不按 Provider 名称分支；协议来自 `extra.provider_protocols` 与默认表。
 //! 落库 persist-first，再推渲染 sink。
 
 mod approval;
+mod auth;
+mod channels;
 mod data_dir;
 mod loop_ctx;
 mod persist;
 mod protocol;
 
+use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use pawork_api::{
-    CredentialKind, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
-    ResolvedCredential, ToolDefinition,
+    CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
+    ProviderErrorKind, ProviderEventSink, ResolvedCredential, ToolDefinition,
 };
 use pawork_config::{
-    api_key_env_name, read_api_key_from_env, ConfigError, Loader, PaworkConfig, ProviderConfig,
+    api_key_env_name, ConfigError, Loader, PaworkConfig, ProviderConfig,
 };
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, ContentPart, EventId,
@@ -31,7 +35,14 @@ use pawork_engine::{
     TokenEstimator as EngineTokenEstimator, TurnContext, DEFAULT_MAX_TOOL_ROUNDS,
 };
 use pawork_providers::{
-    AnthropicConfig, AnthropicProvider, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
+    AnthropicConfig, AnthropicProvider, ApiKeyChannelConfig, ApiKeyChannelProvider,
+    OpenAiCompatibleConfig, OpenAiCompatibleProvider,
+};
+use pawork_auth::{
+    default_oauth_needs_refresh, load_default_oauth_credential, load_default_oauth_meta,
+    read_refresh_token, refresh_access_token, resolve_oauth_credential,
+    resolve_provider_credential, update_default_oauth_token, ApiKeyCredential, AuthError,
+    CredentialSource, KeychainBackend, SecretBackend,
 };
 use pawork_policy::PolicyEngine;
 use pawork_provider_core::{CatalogEntry, ModelRegistry};
@@ -53,6 +64,10 @@ pub use approval::{
 pub use data_dir::{default_data_dir, session_db_path};
 pub use persist::PersistThenRender;
 pub use protocol::{AdapterProtocol, ProtocolError};
+pub use auth::{AuthChannelStatus, AuthSource, OAuthLogin};
+pub use channels::{
+    first_party_channel, is_first_party, ChannelKind, FirstPartyChannel, FIRST_PARTY_CHANNELS,
+};
 pub use pawork_policy::{ApprovalMode, RiskLevel};
 pub use pawork_session::SessionRecord;
 
@@ -65,6 +80,8 @@ pub struct AppLoadOptions {
     pub data_dir: Option<PathBuf>,
     pub approval_mode: Option<ApprovalMode>,
     pub approval_host: Option<Arc<dyn ApprovalPromptHost>>,
+    /// 凭证后端覆盖（自动测试注入 MemoryBackend；默认 OS Keychain）。
+    pub auth_backend: Option<Arc<dyn SecretBackend>>,
 }
 
 impl std::fmt::Debug for AppLoadOptions {
@@ -77,6 +94,7 @@ impl std::fmt::Debug for AppLoadOptions {
             .field("data_dir", &self.data_dir)
             .field("approval_mode", &self.approval_mode)
             .field("has_approval_host", &self.approval_host.is_some())
+            .field("has_auth_backend", &self.auth_backend.is_some())
             .finish()
     }
 }
@@ -90,6 +108,7 @@ impl AppLoadOptions {
             data_dir: None,
             approval_mode: None,
             approval_host: None,
+            auth_backend: None,
         }
     }
 }
@@ -107,8 +126,25 @@ pub enum AppError {
     UnknownProvider { id: String },
     #[error("provider `{id}` 未配置 base_url")]
     MissingBaseUrl { id: String },
-    #[error("缺少 API key：请设置环境变量 {env_name}")]
-    MissingCredential { env_name: String },
+    #[error("provider {provider} 缺少凭证：pawork auth set-key {provider}（Keychain）或环境变量 {env_name}")]
+    MissingCredential {
+        provider: String,
+        env_name: String,
+    },
+    #[error("provider {0} 缺少 OAuth 凭证：pawork auth login {0}")]
+    OAuthLoginRequired(String),
+    #[error("{0}")]
+    OAuthLogin(String),
+    #[error(transparent)]
+    Auth(#[from] AuthError),
+    #[error("未知模型 {model}（provider {provider}）")]
+    UnknownModel { model: String, provider: String },
+    #[error("模型 {model} 属于 provider {owner}，当前是 {current}；先 /provider {owner}")]
+    ModelBelongsToProvider {
+        model: String,
+        owner: String,
+        current: String,
+    },
     #[error(transparent)]
     Provider(#[from] ProviderError),
     #[error(transparent)]
@@ -139,12 +175,70 @@ pub enum AppError {
 /// `RETAINED_MESSAGES / 2` 轮对齐同一折叠边界。
 pub(crate) const RETAINED_MESSAGES: usize = 4;
 
+/// 目录兜底 provider：默认 provider 缺凭证时的占位（list 空目录、stream
+/// fail-closed）。只在 host 装配层使用，Engine 无感知。
+struct CatalogOnlyProvider {
+    id: ProviderId,
+}
+
+#[async_trait]
+impl ModelProvider for CatalogOnlyProvider {
+    fn id(&self) -> ProviderId {
+        self.id.clone()
+    }
+
+    async fn list_models(
+        &self,
+        _credential: Option<&ResolvedCredential>,
+    ) -> Result<Vec<ModelDefinition>, ProviderError> {
+        Ok(Vec::new())
+    }
+
+    async fn stream(
+        &self,
+        _request: CanonicalModelRequest,
+        _sink: &dyn ProviderEventSink,
+        _cancel: CancellationToken,
+    ) -> Result<ModelResponseSummary, ProviderError> {
+        Err(ProviderError::new(
+            ProviderErrorKind::Authentication,
+            format!(
+                "provider {} 未装配凭证：先 pawork auth set-key {} 或 pawork auth login {}",
+                self.id.as_str(),
+                self.id.as_str(),
+                self.id.as_str()
+            ),
+        ))
+    }
+}
+
+/// 目录命令（models/auth/sessions）装配时容忍的「凭证缺失」错误族；
+/// 其余错误（配置、协议、provider 未知）仍然 fail-closed。
+fn is_credential_pending(err: &AppError) -> bool {
+    matches!(
+        err,
+        AppError::MissingCredential { .. }
+            | AppError::OAuthLoginRequired(_)
+            | AppError::OAuthLogin(_)
+            | AppError::Auth(_)
+    )
+}
+
 /// 已装配的 Core：协议中立 provider、读写工具、默认 model、可选 session store。
 pub struct AppCore {
     provider: Arc<dyn ModelProvider>,
+    /// true 表示默认 provider 因缺凭证未装配（目录/凭证命令仍可用；
+    /// chat 走 CatalogOnlyProvider 的 Authentication 错误 fail-closed）。
+    provider_pending: bool,
     credential: Option<ResolvedCredential>,
     model: ModelId,
     provider_id: ProviderId,
+    /// 装配后的完整配置（provider 切换 / OAuth 覆盖读取）。
+    config: PaworkConfig,
+    /// 凭证后端（Keychain 或测试注入的内存后端）。
+    backend: Arc<dyn SecretBackend>,
+    /// OAuth 刷新 / token 交换用的共享 HTTP 客户端。
+    http: reqwest::Client,
     /// 模型目录（builtin + provider 静态目录 + config 覆盖 + 运行期探测）。
     registry: Arc<ModelRegistry>,
     /// engine 侧启发式 token 估算器（预算 / 截断 / 压缩判定共用）。
@@ -198,17 +292,34 @@ impl std::fmt::Debug for AppCore {
 impl AppCore {
     /// 发现 Builtin + Global + Workspace，再套用 CLI 覆盖，并打开 session.db。
     pub async fn load(options: AppLoadOptions) -> Result<Self, AppError> {
+        Self::load_with(options, false).await
+    }
+
+    /// 目录 / 凭证命令用装配：默认 provider 缺凭证时不失败，退回
+    /// CatalogOnlyProvider（chat 在请求时 fail-closed 报缺凭证）。
+    pub async fn load_for_catalog(options: AppLoadOptions) -> Result<Self, AppError> {
+        Self::load_with(options, true).await
+    }
+
+    async fn load_with(options: AppLoadOptions, allow_pending: bool) -> Result<Self, AppError> {
         let resolved = Loader::discover(options.workspace_root.as_deref()).resolve()?;
+        let backend = options
+            .auth_backend
+            .clone()
+            .unwrap_or_else(|| Arc::new(KeychainBackend::new()));
         let workspace_root = options
             .workspace_root
             .clone()
             .or_else(|| std::env::current_dir().ok());
         let trusted = resolved.config.trust_workspaces.unwrap_or(false);
-        let mut core = Self::from_resolved(
+        let mut core = Self::from_config_inner(
             resolved.config,
             options.provider.as_deref(),
             options.model.as_deref(),
-        )?;
+            backend,
+            allow_pending,
+        )
+        .await?;
         core.configure_approval(
             options.approval_mode.unwrap_or_default(),
             trusted,
@@ -232,8 +343,9 @@ impl AppCore {
         store_path: impl AsRef<Path>,
     ) -> Result<Self, AppError> {
         let resolved = Loader::discover_from(global_file, workspace_file).resolve()?;
+        let backend: Arc<dyn SecretBackend> = Arc::new(KeychainBackend::new());
         let trusted = resolved.config.trust_workspaces.unwrap_or(false);
-        let mut core = Self::from_resolved(resolved.config, provider, model)?;
+        let mut core = Self::from_config(resolved.config, provider, model, backend).await?;
         core.configure_approval(ApprovalMode::ReadOnly, trusted, Arc::new(DenyAllApprovals));
         if let Some(root) = workspace_root_from_config_file(workspace_file) {
             core.attach_workspace(&root)?;
@@ -264,52 +376,91 @@ impl AppCore {
             .default_model
             .clone()
             .ok_or(AppError::MissingDefaultModel)?;
-        let provider_cfg = find_provider(&config.providers, &provider_id)?;
-        let base_url = provider_cfg
-            .base_url
-            .clone()
-            .ok_or_else(|| AppError::MissingBaseUrl {
-                id: provider_id.clone(),
-            })?;
-
-        let env_name = api_key_env_name(&provider_id);
-        let secret = read_api_key_from_env(&provider_id).ok_or(AppError::MissingCredential {
-            env_name,
-        })?;
-        let credential = ResolvedCredential::new(CredentialKind::ApiKey, secret);
-
-        let protocol = resolve_adapter_protocol(&config, &provider_id)?;
-        let adapter: Arc<dyn ModelProvider> = match protocol {
-            AdapterProtocol::ChatCompletions => Arc::new(OpenAiCompatibleProvider::new(
-                OpenAiCompatibleConfig::new(base_url).with_provider_id(provider_id.clone()),
-                Some(credential.clone()),
-            )?),
-            AdapterProtocol::Messages => Arc::new(AnthropicProvider::new(
-                AnthropicConfig::new(base_url).with_provider_id(provider_id.clone()),
-                Some(credential.clone()),
-            )?),
-        };
-        // registry 装配：builtin 目录 + adapter 静态目录（按协议选择，不做名称分支）
-        // + config models 覆盖。运行期探测合并在 model_catalog() 内按需进行。
-        let mut registry = ModelRegistry::builtin();
-        if protocol == AdapterProtocol::Messages {
-            let provider = ProviderId::from(provider_id.as_str());
-            registry.merge_provider_models(&provider, &pawork_providers::builtin_models());
-            apply_config_models(&mut registry, &config.models, &provider);
-        } else {
-            let provider = ProviderId::from(provider_id.as_str());
-            apply_config_models(&mut registry, &config.models, &provider);
-        }
-
+        let provider_ref = ProviderId::from(provider_id.as_str());
+        let backend: Arc<dyn SecretBackend> = Arc::new(KeychainBackend::new());
+        let assembled = futures::executor::block_on(assemble_provider(
+            &config,
+            &provider_ref,
+            &backend,
+            false,
+        ))?;
         Ok(Self::from_parts_with_protocol(
-            adapter,
-            Some(credential),
+            assembled.adapter,
+            assembled.credential,
             ModelId::from(model_id.as_str()),
-            ProviderId::from(provider_id.as_str()),
-            protocol,
+            provider_ref,
+            assembled.protocol,
             None,
-            registry,
-        ))
+            assembled.registry,
+        )
+        .with_state(config, backend))
+    }
+
+    /// 完整装配（async）：OAuth 通道在此执行请求前刷新。
+    pub async fn from_config(
+        config: PaworkConfig,
+        provider: Option<&str>,
+        model: Option<&str>,
+        backend: Arc<dyn SecretBackend>,
+    ) -> Result<Self, AppError> {
+        Self::from_config_inner(config, provider, model, backend, false).await
+    }
+
+    async fn from_config_inner(
+        mut config: PaworkConfig,
+        provider: Option<&str>,
+        model: Option<&str>,
+        backend: Arc<dyn SecretBackend>,
+        allow_pending: bool,
+    ) -> Result<Self, AppError> {
+        if let Some(provider) = provider {
+            config.default_provider = Some(provider.to_string());
+        }
+        if let Some(model) = model {
+            config.default_model = Some(model.to_string());
+        }
+        let provider_id = config
+            .default_provider
+            .clone()
+            .ok_or(AppError::MissingDefaultProvider)?;
+        let model_id = config
+            .default_model
+            .clone()
+            .ok_or(AppError::MissingDefaultModel)?;
+        let provider_ref = ProviderId::from(provider_id.as_str());
+        let channel = channels::first_party_channel(provider_id.as_str());
+        let protocol = channel_protocol(channel, &config, provider_id.as_str())?;
+        let registry = assemble_registry(&config, &provider_ref, protocol, channel);
+        let mut pending = false;
+        let core = match assemble_provider(&config, &provider_ref, &backend, true).await {
+            Ok(assembled) => Self::from_parts_with_protocol(
+                assembled.adapter,
+                assembled.credential,
+                ModelId::from(model_id.as_str()),
+                provider_ref,
+                assembled.protocol,
+                None,
+                assembled.registry,
+            ),
+            Err(err) if allow_pending && is_credential_pending(&err) => {
+                pending = true;
+                Self::from_parts_with_protocol(
+                    Arc::new(CatalogOnlyProvider {
+                        id: provider_ref.clone(),
+                    }),
+                    None,
+                    ModelId::from(model_id.as_str()),
+                    provider_ref,
+                    protocol,
+                    None,
+                    registry,
+                )
+            }
+            Err(err) => return Err(err),
+        };
+        let mut core = core.with_state(config, backend);
+        core.provider_pending = pending;
+        Ok(core)
     }
 
     pub fn from_parts(
@@ -344,9 +495,13 @@ impl AppCore {
             Arc::new(SessionTokenEstimatorBridge(heuristic.clone()));
         Self {
             provider,
+            provider_pending: false,
             credential,
             model,
             provider_id,
+            config: PaworkConfig::default(),
+            backend: Arc::new(KeychainBackend::new()),
+            http: reqwest::Client::new(),
             registry: Arc::new(registry),
             heuristic,
             session_estimator,
@@ -367,6 +522,17 @@ impl AppCore {
             next_session: AtomicU64::new(1),
             next_message: AtomicU64::new(1),
         }
+    }
+
+    /// 装配后补全 host 状态（config + 凭证后端）。
+    fn with_state(
+        mut self,
+        config: PaworkConfig,
+        backend: Arc<dyn SecretBackend>,
+    ) -> Self {
+        self.config = config;
+        self.backend = backend;
+        self
     }
 
     /// 设置审批模式、workspace 信任与决策宿主。须在 [`Self::attach_workspace`] 之前调用。
@@ -443,6 +609,185 @@ impl AppCore {
 
     pub fn adapter_protocol(&self) -> AdapterProtocol {
         self.adapter_protocol
+    }
+
+    pub fn config(&self) -> &PaworkConfig {
+        &self.config
+    }
+
+    pub fn auth_backend(&self) -> &Arc<dyn SecretBackend> {
+        &self.backend
+    }
+
+    /// 默认 provider 是否因缺凭证未装配（目录兜底模式）。
+    pub fn provider_pending(&self) -> bool {
+        self.provider_pending
+    }
+
+    /// 当前 provider 在 registry 的静态目录（REPL /model 列表用）。
+    pub fn provider_models(&self) -> Vec<CatalogEntry> {
+        self.registry
+            .list()
+            .into_iter()
+            .filter(|entry| entry.provider == self.provider_id)
+            .cloned()
+            .collect()
+    }
+
+    /// 会话中途切换模型：后续轮走新模型；有活动 session 时事件流记录变更。
+    pub async fn switch_model(
+        &mut self,
+        session: Option<&SessionId>,
+        model: &str,
+    ) -> Result<(), AppError> {
+        let entry = match self.registry.resolve(model).cloned() {
+            Some(entry) => entry,
+            // 静态目录未登记：向当前 provider 探测一次，命中则惰性合并
+            //（与 pawork models 展示一致），未命中仍 fail-closed。
+            None => {
+                let definitions = self
+                    .provider
+                    .list_models(self.credential.as_ref())
+                    .await
+                    .unwrap_or_default();
+                let entry = definitions
+                    .iter()
+                    .find(|definition| definition.id.as_str() == model)
+                    .map(|definition| CatalogEntry {
+                        id: definition.id.clone(),
+                        provider: self.provider_id.clone(),
+                        display_name: definition.display_name.clone(),
+                        context_window_tokens: definition.context_window_tokens,
+                        max_output_tokens: definition.max_output_tokens,
+                        capabilities: definition.capabilities.clone(),
+                        pricing: None,
+                        aliases: Vec::new(),
+                    })
+                    .ok_or_else(|| AppError::UnknownModel {
+                        model: model.to_string(),
+                        provider: self.provider_id.as_str().to_string(),
+                    })?;
+                let registry = std::sync::Arc::make_mut(&mut self.registry);
+                registry.extend_with(vec![entry.clone()]);
+                entry
+            }
+        };
+        if entry.provider != self.provider_id {
+            return Err(AppError::ModelBelongsToProvider {
+                model: model.to_string(),
+                owner: entry.provider.as_str().to_string(),
+                current: self.provider_id.as_str().to_string(),
+            });
+        }
+        let from = (self.provider_id.clone(), self.model.clone());
+        self.model = entry.id.clone();
+        let to = (self.provider_id.clone(), self.model.clone());
+        if let Some(session) = session {
+            self.record_model_switch(session, from, to).await?;
+        }
+        Ok(())
+    }
+
+    /// 会话中途切换 provider（可选同时切模型）：重建 adapter，后续轮生效。
+    pub async fn switch_provider(
+        &mut self,
+        session: Option<&SessionId>,
+        provider: &str,
+        model: Option<&str>,
+    ) -> Result<(), AppError> {
+        let known = channels::is_first_party(provider)
+            || self.config.providers.iter().any(|p| p.id == provider);
+        if !known {
+            return Err(AppError::UnknownProvider {
+                id: provider.to_string(),
+            });
+        }
+        let target = ProviderId::new(provider);
+        let assembled = assemble_provider(&self.config, &target, &self.backend, true).await?;
+
+        // 目标模型：显式参数 → 当前模型（若属于目标 provider）→ 目标 provider
+        // 的第一个 registry 条目；都无则要求显式 /model。
+        let target_model = if let Some(model) = model {
+            let entry = assembled
+                .registry
+                .resolve(model)
+                .cloned()
+                .ok_or_else(|| AppError::UnknownModel {
+                    model: model.to_string(),
+                    provider: provider.to_string(),
+                })?;
+            if entry.provider != target {
+                return Err(AppError::ModelBelongsToProvider {
+                    model: model.to_string(),
+                    owner: entry.provider.as_str().to_string(),
+                    current: provider.to_string(),
+                });
+            }
+            entry.id
+        } else if self
+            .registry
+            .resolve(self.model.as_str())
+            .is_some_and(|entry| entry.provider == target)
+        {
+            self.model.clone()
+        } else {
+            assembled
+                .registry
+                .list()
+                .into_iter()
+                .find(|entry| entry.provider == target)
+                .map(|entry| entry.id.clone())
+                .ok_or_else(|| AppError::UnknownModel {
+                    model: "<any>".to_string(),
+                    provider: provider.to_string(),
+                })?
+        };
+
+        let from = (self.provider_id.clone(), self.model.clone());
+        self.provider = assembled.adapter;
+        self.credential = assembled.credential;
+        self.adapter_protocol = assembled.protocol;
+        self.registry = Arc::new(assembled.registry);
+        self.provider_id = target;
+        self.model = target_model;
+        let to = (self.provider_id.clone(), self.model.clone());
+        if let Some(session) = session {
+            self.record_model_switch(session, from, to).await?;
+        }
+        Ok(())
+    }
+
+    /// 追加 model.switched 诊断事件（冻结的 Diagnostic 变体，不新增枚举形状）。
+    async fn record_model_switch(
+        &self,
+        session: &SessionId,
+        from: (ProviderId, ModelId),
+        to: (ProviderId, ModelId),
+    ) -> Result<(), AppError> {
+        let mut sequence = self.next_sequence(session).await?;
+        let run_id = RunId::from(format!(
+            "run-switch-{}",
+            pawork_engine::now_timestamp().as_unix_millis()
+        ));
+        self.append_payload(
+            session,
+            &run_id,
+            &mut sequence,
+            AgentEvent::Diagnostic {
+                code: "model.switched".into(),
+                details: serde_json::json!({
+                    "from": {
+                        "provider": from.0.as_str(),
+                        "model": from.1.as_str(),
+                    },
+                    "to": {
+                        "provider": to.0.as_str(),
+                        "model": to.1.as_str(),
+                    },
+                }),
+            },
+        )
+        .await
     }
 
     pub fn tool_names(&self) -> Vec<&str> {
@@ -755,6 +1100,59 @@ impl AppCore {
         catalog.list().into_iter().cloned().collect()
     }
 
+    /// pawork models 聚合目录：六通道静态条目 + config providers（Messages
+    /// 静态目录与 models 覆盖）+ 当前通道运行期探测（仅已装配时；探测失败
+    /// 静默退回静态，与单通道目录一致）。未登记协议的 config provider 跳过。
+    pub async fn models_overview(&self) -> Vec<CatalogEntry> {
+        let mut provider_ids: Vec<ProviderId> = channels::FIRST_PARTY_CHANNELS
+            .iter()
+            .map(|channel| ProviderId::new(channel.id))
+            .collect();
+        for provider in &self.config.providers {
+            let id = ProviderId::new(provider.id.as_str());
+            if !provider_ids.contains(&id) {
+                provider_ids.push(id);
+            }
+        }
+
+        let mut catalog = ModelRegistry::empty();
+        for id in provider_ids {
+            let channel = channels::first_party_channel(id.as_str());
+            let protocol = match channel_protocol(channel, &self.config, id.as_str()) {
+                Ok(protocol) => protocol,
+                Err(_) => continue,
+            };
+            let registry = assemble_registry(&self.config, &id, protocol, channel);
+            for entry in registry.list() {
+                if catalog.resolve(entry.id.as_str()).is_none() {
+                    catalog.extend_with(vec![entry.clone()]);
+                }
+            }
+        }
+        if !self.provider_pending {
+            if let Ok(probe) = catalog
+                .probe_provider(self.provider.as_ref(), self.credential.as_ref())
+                .await
+            {
+                for definition in &probe.definitions {
+                    if catalog.resolve(definition.id.as_str()).is_none() {
+                        catalog.extend_with(vec![CatalogEntry {
+                            id: definition.id.clone(),
+                            provider: self.provider_id.clone(),
+                            display_name: definition.display_name.clone(),
+                            context_window_tokens: definition.context_window_tokens,
+                            max_output_tokens: definition.max_output_tokens,
+                            capabilities: definition.capabilities.clone(),
+                            pricing: None,
+                            aliases: Vec::new(),
+                        }]);
+                    }
+                }
+            }
+        }
+        catalog.list().into_iter().cloned().collect()
+    }
+
     /// 会话累计用量：对已完成 run 的 RunCompleted.usage 求和（投影可重建）。
     pub async fn session_usage(&self, session_id: &SessionId) -> Result<TokenUsage, AppError> {
         Ok(self.session_usage_inner(session_id).await?.0)
@@ -915,6 +1313,257 @@ fn find_provider<'a>(
         .iter()
         .find(|provider| provider.id == id)
         .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })
+}
+
+/// 通道协议解析（无凭证依赖）：首发通道固定，其余走 config provider_protocols。
+fn channel_protocol(
+    channel: Option<&channels::FirstPartyChannel>,
+    config: &PaworkConfig,
+    id: &str,
+) -> Result<AdapterProtocol, AppError> {
+    match channel.map(|channel| channel.kind.clone()) {
+        Some(ChannelKind::ChatGptOAuth) | Some(ChannelKind::XaiOAuth) => {
+            Ok(AdapterProtocol::Responses)
+        }
+        Some(ChannelKind::ApiKey) => Ok(AdapterProtocol::ChatCompletions),
+        None => Ok(resolve_adapter_protocol(config, id)?),
+    }
+}
+
+/// 目录装配（无凭证依赖）：builtin + 协议静态目录 + config 覆盖 + transport。
+fn assemble_registry(
+    config: &PaworkConfig,
+    provider_id: &ProviderId,
+    protocol: AdapterProtocol,
+    channel: Option<&channels::FirstPartyChannel>,
+) -> ModelRegistry {
+    let mut registry = ModelRegistry::builtin();
+    if protocol == AdapterProtocol::Messages {
+        registry.merge_provider_models(provider_id, &pawork_providers::builtin_models());
+    }
+    if channel.is_some_and(|channel| channel.kind == ChannelKind::XaiOAuth) {
+        registry.merge_provider_models(provider_id, &pawork_providers::xai_builtin_models());
+    }
+    apply_config_models(&mut registry, &config.models, provider_id);
+    apply_transport_overrides(&mut registry, config);
+    registry
+}
+
+/// 装配产物：adapter + 凭证 + 协议标记 + 全量 registry。
+struct AssembledProvider {
+    adapter: Arc<dyn ModelProvider>,
+    credential: Option<ResolvedCredential>,
+    protocol: AdapterProtocol,
+    registry: ModelRegistry,
+}
+
+/// 统一装配入口（S6 波 C）：首发通道走通道表，其余走 config + 协议解析。
+///
+/// 这是 host 装配层唯一的 Provider 选择点；Engine 仍只看 trait 对象。
+/// `refresh_oauth = true` 时 OAuth 凭证先走请求前刷新（网络）。
+async fn assemble_provider(
+    config: &PaworkConfig,
+    provider_id: &ProviderId,
+    backend: &Arc<dyn SecretBackend>,
+    refresh_oauth: bool,
+) -> Result<AssembledProvider, AppError> {
+    let id = provider_id.as_str();
+    let channel = channels::first_party_channel(id);
+    let config_base = find_provider(&config.providers, id)
+        .ok()
+        .and_then(|provider| provider.base_url.clone());
+
+    let (adapter, credential, protocol) = match channel.map(|channel| channel.kind.clone()) {
+        Some(ChannelKind::ChatGptOAuth) => {
+            let (credential, account_id) =
+                oauth_credential(config, id, backend, refresh_oauth).await?;
+            let account_id = account_id.ok_or_else(|| {
+                AppError::OAuthLogin(
+                    "ChatGPT account id missing; re-run pawork auth login chatgpt".into(),
+                )
+            })?;
+            let base_url =
+                config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
+            let provider = pawork_providers::ChatGptProvider::new(
+                pawork_providers::ChatGptConfig::new(account_id).with_base_url(base_url),
+                Some(credential.clone()),
+            )?;
+            (
+                Arc::new(provider) as Arc<dyn ModelProvider>,
+                Some(credential),
+                AdapterProtocol::Responses,
+            )
+        }
+        Some(ChannelKind::XaiOAuth) => {
+            let (credential, _) = oauth_credential(config, id, backend, refresh_oauth).await?;
+            let base_url =
+                config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
+            let provider = pawork_providers::XaiProvider::new(
+                pawork_providers::XaiConfig::new(base_url),
+                Some(credential.clone()),
+            )?;
+            (
+                Arc::new(provider) as Arc<dyn ModelProvider>,
+                Some(credential),
+                AdapterProtocol::Responses,
+            )
+        }
+        Some(ChannelKind::ApiKey) => {
+            let channel_enum = channels::api_key_channel(id)
+                .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })?;
+            let (credential, _source) = resolve_api_key_credential(backend, id)?;
+            let mut channel_config = ApiKeyChannelConfig::new(channel_enum);
+            if let Some(base_url) = config_base {
+                channel_config = channel_config.with_base_url(base_url);
+            }
+            for (model, transport) in model_transport_overrides(config) {
+                channel_config = channel_config.with_model_transport(model, transport);
+            }
+            let provider =
+                ApiKeyChannelProvider::new(channel_config, Some(credential.clone()))?;
+            (
+                Arc::new(provider) as Arc<dyn ModelProvider>,
+                Some(credential),
+                AdapterProtocol::ChatCompletions,
+            )
+        }
+        // 非首发通道：config 必须提供 base_url，协议来自 provider_protocols。
+        None => {
+            // provider 必须已在 config 登记且提供 base_url（fail-closed）。
+            let _provider = find_provider(&config.providers, id)?;
+            let base_url = config_base.ok_or_else(|| AppError::MissingBaseUrl {
+                id: id.to_string(),
+            })?;
+            let (credential, _source) = resolve_api_key_credential(backend, id)?;
+            let protocol = resolve_adapter_protocol(config, id)?;
+            let adapter: Arc<dyn ModelProvider> = match protocol {
+                AdapterProtocol::ChatCompletions => Arc::new(OpenAiCompatibleProvider::new(
+                    OpenAiCompatibleConfig::new(base_url)
+                        .with_provider_id(provider_id.as_str().to_string()),
+                    Some(credential.clone()),
+                )?),
+                AdapterProtocol::Messages => Arc::new(AnthropicProvider::new(
+                    AnthropicConfig::new(base_url)
+                        .with_provider_id(provider_id.as_str().to_string()),
+                    Some(credential.clone()),
+                )?),
+                AdapterProtocol::Responses => {
+                    return Err(AppError::Protocol(ProtocolError::Unknown {
+                        provider: id.to_string(),
+                        value: "responses".to_string(),
+                    }))
+                }
+            };
+            (adapter, Some(credential), protocol)
+        }
+    };
+
+    // registry 装配与 CatalogOnly 路径共享（builtin + 静态目录 + config 覆盖）。
+    let registry = assemble_registry(config, provider_id, protocol, channel);
+
+    Ok(AssembledProvider {
+        adapter,
+        credential,
+        protocol,
+        registry,
+    })
+}
+
+/// API key 凭证链：Keychain → env fallback → fail-closed。
+fn resolve_api_key_credential(
+    backend: &Arc<dyn SecretBackend>,
+    id: &str,
+) -> Result<(ResolvedCredential, AuthSource), AppError> {
+    match resolve_provider_credential(backend.as_ref(), id) {
+        CredentialSource::Keychain(stored) => {
+            let credential = ApiKeyCredential::from_stored(stored)?
+                .resolve(backend.as_ref())?;
+            Ok((credential, AuthSource::Keychain))
+        }
+        CredentialSource::EnvFallback(credential) => Ok((credential, AuthSource::Env)),
+        CredentialSource::None => Err(AppError::MissingCredential {
+            provider: id.to_string(),
+            env_name: api_key_env_name(id),
+        }),
+    }
+}
+
+/// OAuth 凭证解析：default 条目（meta）→（可选）请求前刷新 → bearer。
+async fn oauth_credential(
+    config: &PaworkConfig,
+    id: &str,
+    backend: &Arc<dyn SecretBackend>,
+    refresh: bool,
+) -> Result<(ResolvedCredential, Option<String>), AppError> {
+    let provider = ProviderId::new(id);
+    let Some(mut stored) = load_default_oauth_credential(backend.as_ref(), &provider)? else {
+        return Err(AppError::OAuthLoginRequired(id.to_string()));
+    };
+    let account_id =
+        load_default_oauth_meta(backend.as_ref(), &provider)?.and_then(|meta| meta.account_id);
+    if refresh && default_oauth_needs_refresh(&stored) {
+        let preset = oauth_refresh_endpoint(config, id)?;
+        let http = reqwest::Client::new();
+        let refresh_token = read_refresh_token(&stored, backend.as_ref())?;
+        let tokens =
+            refresh_access_token(&preset.token_url, &preset.client_id, &refresh_token, &http)
+                .await?;
+        update_default_oauth_token(backend.as_ref(), &mut stored, &tokens)?;
+    }
+    let credential = resolve_oauth_credential(&stored, backend.as_ref())?;
+    Ok((credential, account_id))
+}
+
+/// OAuth 刷新端点：config [oauth.<id>] 覆盖 → 通道预设（xAI 无预设则报错）。
+fn oauth_refresh_endpoint(
+    config: &PaworkConfig,
+    id: &str,
+) -> Result<channels::OAuthPreset, AppError> {
+    if let Some(preset) = channels::oauth_override(config, id) {
+        return Ok(preset);
+    }
+    channels::first_party_channel(id)
+        .and_then(|channel| channel.oauth_preset())
+        .ok_or_else(|| {
+            AppError::OAuthLogin(format!(
+                "provider {id} has no OAuth endpoint preset; configure [oauth.{id}] first"
+            ))
+        })
+}
+
+/// extra["model_transports"]：{"model-id": "responses"|"chat_completions"|"messages"}。
+fn model_transport_overrides(
+    config: &PaworkConfig,
+) -> Vec<(String, pawork_api::ModelTransport)> {
+    let Some(table) = config.extra.get("model_transports") else {
+        return Vec::new();
+    };
+    let Some(map) = table.as_object() else {
+        return Vec::new();
+    };
+    map.iter()
+        .filter_map(|(model, value)| {
+            let transport = match value.as_str()? {
+                "responses" => pawork_api::ModelTransport::Responses,
+                "chat_completions" | "openai-compatible" => {
+                    pawork_api::ModelTransport::ChatCompletions
+                }
+                "messages" | "anthropic-messages" => pawork_api::ModelTransport::Messages,
+                _ => return None,
+            };
+            Some((model.clone(), transport))
+        })
+        .collect()
+}
+
+/// 把 transport 覆盖应用到 registry 条目（混合协议模型显式声明，不按渠道猜）。
+fn apply_transport_overrides(registry: &mut ModelRegistry, config: &PaworkConfig) {
+    for (model, transport) in model_transport_overrides(config) {
+        if let Some(mut entry) = registry.resolve(&model).cloned() {
+            entry.capabilities.transport = transport;
+            registry.extend_with(vec![entry]);
+        }
+    }
 }
 
 /// 把 config `[[models]]` 覆盖并入 registry：已有条目只改 window / max_output
@@ -1170,12 +1819,164 @@ mod tests {
         let err = AppCore::from_resolved(sample_config(id), None, None).expect_err("no key");
         let display = format!("{err}");
         match err {
-            AppError::MissingCredential { env_name } => {
+            AppError::MissingCredential { provider, env_name } => {
+                assert_eq!(provider, id);
                 assert_eq!(env_name, "PAWORK_API_KEY_APP_CORE_MISSING_KEY");
                 assert!(display.contains("PAWORK_API_KEY_APP_CORE_MISSING_KEY"));
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn models_overview_aggregates_six_channels() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let overview = core.models_overview().await;
+        let providers: std::collections::BTreeSet<String> = overview
+            .iter()
+            .map(|entry| entry.provider.as_str().to_string())
+            .collect();
+        // chatgpt 无静态目录（Codex backend 模型只能登录后运行期探测）。
+        for expected in ["xai", "glm-coding", "opencode-go", "qwen-token-plan", "deepseek"] {
+            assert!(
+                providers.contains(expected),
+                "missing provider {expected} in overview: {providers:?}"
+            );
+        }
+        assert!(overview.iter().any(|entry| entry.id.as_str() == "grok-4"),
+            "xai static models missing");
+    }
+
+    #[tokio::test]
+    async fn switch_model_records_diagnostic_event() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = SessionStore::open(&dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let mut registry = ModelRegistry::empty();
+        for id in ["m-a", "m-b"] {
+            registry.extend_with(vec![CatalogEntry {
+                id: ModelId::from(id),
+                provider: ProviderId::from("mock"),
+                display_name: id.into(),
+                context_window_tokens: 8_000,
+                max_output_tokens: 1_024,
+                capabilities: Default::default(),
+                pricing: None,
+                aliases: Vec::new(),
+            }]);
+        }
+        let mut core = AppCore::from_parts_with_protocol(
+            Arc::new(ScriptedProvider {
+                events: Vec::new(),
+                summary: ModelResponseSummary {
+                    stop_reason: StopReason::Completed,
+                    usage: TokenUsage::default(),
+                    response_id: None,
+                    provider_metadata: Default::default(),
+                },
+                models: Vec::new(),
+            }),
+            None,
+            ModelId::from("m-a"),
+            ProviderId::from("mock"),
+            AdapterProtocol::ChatCompletions,
+            Some(store),
+            registry,
+        );
+        let session = core.create_session("switch").await.expect("session");
+        core.switch_model(Some(&session), "m-b")
+            .await
+            .expect("switch");
+        let events = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 0, 100)
+            .await
+            .expect("replay");
+        let switches: Vec<_> = events
+            .iter()
+            .filter(|envelope| matches!(
+                &envelope.payload,
+                AgentEvent::Diagnostic { code, .. } if code == "model.switched"
+            ))
+            .collect();
+        assert_eq!(switches.len(), 1, "model.switched event missing");
+        match &switches[0].payload {
+            AgentEvent::Diagnostic { details, .. } => {
+                assert_eq!(details["from"]["model"], "m-a");
+                assert_eq!(details["to"]["model"], "m-b");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_status_masks_and_prefers_keychain_over_env() {
+        let env_name = "PAWORK_API_KEY_GLM_CODING";
+        let secret = "sk-app-auth-mask-1234567890abcdef";
+        set_env(env_name, secret);
+        let core = AppCore::from_parts(
+            Arc::new(ScriptedProvider {
+                events: Vec::new(),
+                summary: ModelResponseSummary {
+                    stop_reason: StopReason::Completed,
+                    usage: TokenUsage::default(),
+                    response_id: None,
+                    provider_metadata: Default::default(),
+                },
+                models: Vec::new(),
+            }),
+            None,
+            ModelId::from("glm-5.2"),
+            ProviderId::from("glm-coding"),
+            None,
+        )
+        .with_state(
+            PaworkConfig::default(),
+            Arc::new(pawork_auth::MemoryBackend::new()),
+        );
+        let glm = |core: &AppCore| {
+            core.auth_status()
+                .into_iter()
+                .find(|row| row.provider == "glm-coding")
+                .expect("glm-coding status")
+        };
+        let env_row = glm(&core);
+        assert_eq!(env_row.source.as_str(), "env");
+        assert!(env_row.masked.is_none(), "env source must not display value");
+
+        core.auth_set_key("glm-coding", secret).expect("set key");
+        let keychain_row = glm(&core);
+        assert_eq!(keychain_row.source.as_str(), "keychain");
+        let masked = keychain_row.masked.as_deref().expect("masked");
+        assert!(!masked.contains(secret), "masked leaks secret: {masked}");
+
+        core.auth_logout("glm-coding").expect("logout");
+        remove_env(env_name);
+        let logged_out = glm(&core);
+        assert_eq!(logged_out.source.as_str(), "none");
+    }
+
+    #[tokio::test]
+    async fn catalog_load_tolerates_missing_credential() {
+        // 独立 provider id：避免与并行 env 测试共享同一环境变量。
+        let id = "deepseek";
+        remove_env(&api_key_env_name(id));
+        let mut config = sample_config(id);
+        config.default_model = Some("glm-5.2".into());
+        let backend: Arc<dyn SecretBackend> = Arc::new(pawork_auth::MemoryBackend::new());
+        let strict = AppCore::from_config(config.clone(), None, None, backend.clone()).await;
+        assert!(matches!(
+            strict,
+            Err(AppError::MissingCredential { provider, .. }) if provider == id
+        ));
+        let core = AppCore::from_config_inner(config, None, None, backend, true)
+            .await
+            .expect("catalog load");
+        assert!(core.provider_pending(), "core should be pending");
+        let overview = core.models_overview().await;
+        assert!(overview.iter().any(|entry| entry.id.as_str() == "glm-5.2"));
     }
 
     #[test]
