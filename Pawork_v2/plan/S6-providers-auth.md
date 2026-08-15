@@ -1,66 +1,86 @@
-# S6：多 Provider 与认证
+# S6：首发 Provider 与认证
 
-> 阶段 S6 · Provider 扩容与认证 · 状态：⚪未开始 · 依赖：S2（anthropic 最小版在位）· 规模：大 ·（与 S5/S7 可并行）
+> 阶段 S6 · 首发 Provider 与认证 · 状态：🔵进行中 · 依赖：S2（Anthropic 最小版在位）· 规模：大 ·（与 S5/S7 可并行）
 
 ## 目标（本阶段结束时用户能做什么）
 
-从「两条测试通道」升级为完整多厂商支持：八厂商适配器（openai / anthropic / google / xai / zhipu / qwen / moonshot / openai-compatible base）按 feature 齐备，`pawork models` 聚合全部已配置 Provider；API key 存入 OS Keychain（`pawork auth` 子命令），环境变量降级为 headless/CI fallback；OAuth（PKCE/Device/refresh/callback）能力就绪；全局脱敏 tracing layer 上线，secret 不入日志有系统性保障。
+把 S0–S5 的两条开发测试通道扩展为六条首发产品通道：ChatGPT OAuth、xAI Grok OAuth、Z.AI GLM Coding Plan API key、OpenCode Go API key、Qwen Token Plan API key、DeepSeek API key。`pawork models` 聚合已配置通道；API key 与 OAuth 凭证进入 OS Keychain；环境变量只作 headless/CI fallback；全局脱敏确保 secret 不入日志。
+
+Google/Gemini、Moonshot/Kimi、OpenAI API key、xAI API key、Qwen 按量计费、智谱中国区标准计费端点，以及 Anthropic 的 S6 完整化均延期，只有后续需求明确纳入时再做。S0 的 generic OpenAI-compatible 与 S2 的 Anthropic 基线继续保留，不算本阶段新增厂商。
+
+## 首发范围冻结
+
+| 通道 | 凭证 kind | Wire transport | 默认 Base URL / 约束 |
+| --- | --- | --- | --- |
+| ChatGPT | `OAuthBearer` | Responses | 当前后端预设 `https://chatgpt.com/backend-api/codex`，可覆盖；必须提供 account id；登录/刷新由 `pawork-auth` 注入，不在 adapter 内硬编码 OAuth client secret |
+| xAI Grok | `OAuthBearer` | 模型 capability 声明 Responses 或 Chat Completions | `https://api.x.ai/v1`，未知模型保守走 Chat；本期不接受 xAI API key |
+| Z.AI GLM Coding Plan | `ApiKey` | 默认 Chat Completions，可逐模型声明 Responses | `https://api.z.ai/api/coding/paas/v4`；`provider_id` 沿用 `glm-coding` 兼容既有配置 |
+| OpenCode Go | `ApiKey` | 默认 Chat Completions，可逐模型声明 Responses | `https://opencode.ai/zen/go/v1` |
+| Qwen Token Plan | `ApiKey` | 默认 Chat Completions，可逐模型声明 Responses | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` |
+| DeepSeek | `ApiKey` | 默认 Chat Completions，可逐模型声明 Responses | `https://api.deepseek.com` |
+
+所有 transport 选择都来自 adapter 配置或 `ModelCapabilities`，Agent Engine 不按 Provider 名称分支。未声明的 hosted tools/extensions fail-closed；本波只承诺文本、图片输入、客户端 function tools、SSE、usage/stop 与 reasoning continuation 基线。
 
 ## 涉及包与 V1 资产
 
-| V2 包（目录） | 本阶段动作 | V1 来源与方式 |
+| V2 包（目录） | 本阶段动作 | 来源与方式 |
 | --- | --- | --- |
-| `pawork-providers` | 增强：迁移全部厂商 adapter 完整版——`provider-openai`（含 Responses 协议）、`provider-anthropic` 完整化（prompt cache、thinking 配置，补齐 S2 最小版）、`provider-google`、`provider-xai`、`provider-qwen`、`provider-moonshot`、`provider-zhipu`；**openai/xai 两份约 1.3k 行 Responses 流组装器下沉为共享模块，合并后 golden 无差异**；厂商错误码归一数据表；每厂商 `builtin_models()` 目录并入 registry；**zhipu adapter 增加 Coding Plan 端点预设**（`/api/coding/paas/v4` 与 `/api/anthropic`，V1 默认值 `/api/paas/v4` 是标准计费端点，保留但不再是 coding 场景默认） | 直接迁移（[archive/M2](archive/M2-providers.md) pawork-providers 节全文适用） |
-| `pawork-auth`（providers/auth） | 激活：V1 `auth-service` 整包——`backend`（OS Keychain）、`oauth`（PKCE/Device/refresh/callback）、`credential`、`masked`（脱敏）；凭证解析链：Keychain → env fallback（V2 新增语义，显式登记）→ 无凭证（openai-compatible 免认证场景） | 直接迁移（[archive/M2](archive/M2-providers.md) pawork-auth 节） |
-| `pawork-diagnostics`（foundation/diagnostics） | 激活：V1 `diagnostics` 迁移，脱敏 tracing layer 在 `pawork-app` 装配时全局挂载（修复 V1 仅 resource-loader 消费的缺口）；脱敏规则与 `pawork-auth::masked` 语义对齐 | 直接迁移（[archive/M0](archive/M0-skeleton-foundation.md) pawork-diagnostics 节） |
-| `pawork-config` | 增强：凭证引用解析接 `pawork-auth`（配置仍无 api_key 字段）；`default_provider`/`default_model` 与多 Provider 目录联动 | 接线 |
-| `pawork-cli` | 增强：`pawork auth set-key <provider>`（交互式读入、存 Keychain、回显掩码）、`auth list`（掩码显示来源：keychain/env）、`auth remove`；REPL 内 `/model` `/provider` 切换命令 | 新写 |
+| `pawork-providers` | 增强：六条首发 adapter；ChatGPT/xAI 共用 Responses transport；四条 API-key 通道复用 OpenAI-compatible Chat transport并可逐模型切 Responses；凭证 kind 构造期 fail-closed；首发范围错误码归一表 | 复用 V1 Responses/adapter 语义并按 V2 canonical 重组；不迁移延期厂商 |
+| `pawork-auth`（providers/auth） | 激活：OS Keychain、OAuth PKCE/Device/refresh/callback、credential、masked；凭证解析链为 Keychain → env fallback → 无凭证 | 波 B 迁移 V1 `auth-service`，并只接六条首发通道 |
+| `pawork-diagnostics`（foundation/diagnostics） | 激活：全局脱敏 tracing layer；与 `ResolvedCredential`、`pawork-auth::masked` 对齐 | 波 B 迁移并修复 V1 未全局挂载缺口 |
+| `pawork-config` | 凭证引用接 `pawork-auth`；六通道配置与模型目录联动 | 波 C 接线 |
+| `pawork-cli` / `pawork-app` | `pawork auth`、`/model`、`/provider`，以及六通道装配 | 波 C 接线 |
+
+## 波次状态
+
+- [x] **波 A — adapter**：六通道 adapter、共享 Responses、错误归一、wiremock 契约已实现；未使用真实凭证。
+- [ ] **波 B — auth/diagnostics**：OAuth 获取与刷新、Keychain、masked、全局 tracing 脱敏。
+- [ ] **波 C — config/cli/app/smoke**：正式装配、模型聚合、切换、日志扫描与真实冒烟。
 
 ## 关键任务
 
-1. **厂商迁移与 golden**：每厂商 1–2 条 contract golden（V1 随迁）；feature per vendor，默认 feature 只含 `openai-compatible` + `anthropic`（两条真实通道所需），全家桶经 `--all-features`。
-2. **Responses 组装器下沉**：合并前先迁 V1 双方 golden，合并后 diff 为零（旧 M2 退出硬指标，原样保留）。
-3. **auth 链路**：`set-key` → Keychain 存取 → 构造 `ResolvedCredential`；env fallback 只在 Keychain 无此条目时启用并在 `auth list` 标注来源；OAuth 全流程回归（V1 测试随迁），真实 OAuth 厂商接入待有账号时冒烟（不阻塞退出）。
-4. **脱敏三线对齐**：`ResolvedCredential` Debug 脱敏（S0 起）、`auth::masked`、diagnostics layer 规则一致；日志全链扫描断言。
-5. **切换体验**：会话中途 `/model` 切换后续轮走新模型，事件流记录模型变更（`ProviderRequestStarted` 携带）。
+1. **首发 adapter 契约**：每个渠道只接受冻结的 credential kind；默认 endpoint 可覆盖；Chat/Responses 由模型数据选择；共享 Responses 组装器覆盖文本、工具、reasoning、usage 与结束原因。
+2. **auth 链路**：API key 的 `set-key` 与 ChatGPT/xAI OAuth 登录/刷新都落 Keychain；env fallback 只在 Keychain 无条目时启用，并在 `auth list` 标注来源。
+3. **脱敏三线对齐**：`ResolvedCredential` Debug、`auth::masked`、diagnostics layer 一致；日志全链扫描断言。
+4. **切换体验**：会话中途 `/provider`、`/model` 切换后续轮走新模型，事件流记录变更。
 
-## 真实测试与评估（冒烟清单）
+## 真实测试与评估（阶段冒烟清单）
 
-- [ ] `pawork auth set-key glm-coding` + `set-key opencode-go` → 删除两个环境变量 → `pawork chat` 正常工作（Keychain 生效）。
-- [ ] `pawork auth list`：两条目掩码显示、来源=keychain；再设 env 变量后新增第三个 provider 未存 Keychain → 来源=env。
-- [ ] `pawork models`：聚合显示两通道全部模型（含 context window/定价）；`--all-features` 构建下八厂商 feature 编译通过。
-- [ ] REPL `/provider opencode-go` + `/model kimi-k2.x` 切换后续聊正常；`sessions show` 可见模型切换记录。
-- [ ] GLM Anthropic 端点在 anthropic adapter 完整版下复测 S2 工具任务（prompt cache 开启前后差异记录）。
-- [ ] 日志红线：开启最详细日志级别跑完整任务 → 日志文件与终端输出 grep 不到任何 key 片段（自动化 + 人工双查）。
+- [ ] ChatGPT 与 xAI：浏览器登录/回调或 device flow → Keychain → token refresh → `pawork chat`；无 OAuth 凭证时 fail-closed。
+- [ ] 四条 API-key 通道：`pawork auth set-key <provider>` 后清除对应 env，分别完成一次流式工具任务。
+- [ ] `pawork auth list` 只显示掩码与来源，不显示 token/key/account secret。
+- [ ] `pawork models` 聚合六条首发通道；混合协议模型按 registry transport 路由。
+- [ ] REPL `/provider` + `/model` 切换后续聊正常，`sessions show` 可见模型切换记录。
+- [ ] 最详细日志级别完成任务后，日志与终端输出扫描不到任何凭证片段。
 
 ## 定向自动化测试
 
-- `cargo test -p pawork-providers`（default 与 `--all-features` 两档）：每厂商 golden、Responses 合并零差异、错误码归一表。
-- `cargo test -p pawork-auth`：Keychain 后端（Windows Credential Manager 实测）、OAuth PKCE/Device/refresh/callback 回归、masked 脱敏。
-- `cargo test -p pawork-diagnostics`：脱敏 layer 规则覆盖已知 secret 字段模式；含 token 输入的 tracing 输出断言已脱敏。
-- 凭证解析优先级矩阵（keychain/env/none）单测。
+- `cargo test -p pawork-providers`。
+- `cargo test -p pawork-providers --all-features`：六通道 credential/path/header/body、Chat/Responses 路由、Responses SSE/reasoning、错误码归一。
+- `cargo test -p pawork-auth`：Keychain、OAuth PKCE/Device/refresh/callback、masked。
+- `cargo test -p pawork-diagnostics`：全局脱敏规则与 token tracing 断言。
+- config/app 的凭证优先级与六通道装配定向测试。
 
 ## 退出标准
 
-- [ ] 冒烟全项通过；Keychain 为主、env 为显式 fallback 且有回归测试（S0 过渡机制正式收编）。
-- [ ] 每厂商 golden 通过；Responses 组装器合并 golden 无差异；错误码归一数据表就位。
-- [ ] Secret 不入日志：diagnostics layer 全局挂载 + 三线脱敏对齐断言全绿。
-- [ ] zhipu Coding Plan 端点预设可用（配置一个 id 即得正确端点）。
+- [ ] 六条首发通道完成正式装配与真实冒烟；延期厂商没有伪 feature、空 adapter 或预埋分支。
+- [ ] Keychain 为主、env 为显式 fallback；OAuth refresh 与 credential kind fail-closed 回归通过。
+- [ ] 共享 Responses 与四条 API-key 通道契约通过，transport 选择不进入 Engine。
+- [ ] diagnostics layer 全局挂载，Secret 不入日志回归通过。
 
 ## 为后续阶段预留 / 明确不做
 
-- 预留：OAuth 能力就绪但真实厂商 OAuth 冒烟按 key 可得性推迟登记；`negotiate`/capability 协商为 S9 多客户端能力声明铺路。
-- 不做：Provider 账号池/租约/路由（S11 provider-control）、远端配额监控（冻结候审）。
+- 预留：Provider 账号池/租约/路由属于 S11；远端配额监控继续冻结候审。
+- 延期：除首发六通道外的厂商/认证方式；provider-hosted tools/extensions；没有公开稳定契约或真实账号的 OAuth 冒烟必须登记，不能用 mock 冒充完成。
 
 ## 并行拆分建议
 
-- 波 A（并行 ×3）：厂商 adapter 迁移按厂商分组（openai+xai 一组因 Responses 合并；anthropic 完整化一组；google+qwen+moonshot+zhipu 一组——注意 google 是 Gemini 专有协议、工作量最大，qwen/moonshot/zhipu 均为 openai-compatible 薄封装）。
+- 波 A：adapter（已完成自动化基线）。
 - 波 B（并行 ×2）：`pawork-auth`；`pawork-diagnostics`。
-- 波 C（串行）：config/cli/app 接线 + 全链日志扫描 + 冒烟。
+- 波 C（串行）：config/cli/app 接线 + 模型聚合 + 全链日志扫描 + 真实冒烟。
 
 ## 参考
 
-- [../docs/design.md](../docs/design.md) §4（本阶段功能设计与参照项目映射）· [../docs/references.md](../docs/references.md)（参照项目手册）
-- [../docs/task-guide.md](../docs/task-guide.md) §5（通道端点与 key 约定）
-- [archive/M2-providers.md](archive/M2-providers.md)（providers/auth 迁移细则——本阶段主文档）
-- [archive/M0-skeleton-foundation.md](archive/M0-skeleton-foundation.md)（diagnostics 细则）
+- [Z.AI GLM Coding Plan](https://docs.z.ai/devpack/quick-start) · [OpenCode Go](https://dev.opencode.ai/docs/go/) · [Qwen Token Plan](https://help.aliyun.com/zh/model-studio/token-plan-personal-quick-start) · [DeepSeek API](https://api-docs.deepseek.com/)
+- [OpenAI Codex authentication](https://learn.chatgpt.com/docs/auth) · [xAI REST API](https://docs.x.ai/developers/rest-api-reference/inference)
+- [../docs/design.md](../docs/design.md) §4 · [../docs/task-guide.md](../docs/task-guide.md) §5

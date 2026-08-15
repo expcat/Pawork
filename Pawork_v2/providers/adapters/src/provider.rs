@@ -68,6 +68,18 @@ impl OpenAiCompatibleProvider {
         config: OpenAiCompatibleConfig,
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
+        if credential.is_some()
+            && config
+                .http
+                .extra_headers
+                .iter()
+                .any(|(name, _)| crate::is_credential_header(name))
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                "authenticated Chat transport cannot override credential headers",
+            ));
+        }
         let http_config = match config.request_timeout {
             Some(timeout) => {
                 let mut c = config.http.clone();
@@ -293,5 +305,22 @@ mod tests {
         let config = OpenAiCompatibleConfig::new("https://api.example.com/v1").with_provider_id("test");
         let p = OpenAiCompatibleProvider::new(config, None).expect("构造 adapter");
         assert_eq!(p.id().as_str(), "test");
+    }
+
+    #[test]
+    fn authenticated_provider_rejects_fixed_credential_headers() {
+        let mut config = OpenAiCompatibleConfig::new("https://api.example.com/v1");
+        config
+            .http
+            .extra_headers
+            .push(("Authorization".into(), "Bearer attacker".into()));
+        let credential = ResolvedCredential::new(
+            pawork_api::CredentialKind::ApiKey,
+            "real-credential",
+        );
+        let error = OpenAiCompatibleProvider::new(config, Some(credential))
+            .err()
+            .expect("duplicate credential header must fail");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
     }
 }

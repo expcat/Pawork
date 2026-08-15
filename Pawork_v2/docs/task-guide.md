@@ -84,21 +84,35 @@
 
 ---
 
-## 5. 测试通道与凭证（真实 API key）
+## 5. 测试通道与凭证
 
-前期功能验证使用用户提供的两把 key。两条通道都以「可配置 `base_url` 的协议兼容适配器」接入，**代码中不硬编码任何端点**；后续更换或增加通道只改配置。
+S0–S5 的前期功能验证使用用户提供的两把 key；端点只来自配置。S6 起首发渠道 adapter 可以提供经过核对的默认 endpoint，但 `base_url` 始终可覆盖，不能把 endpoint、模型名或认证方式写进 Agent Engine 分支。
 
 | 通道 | 协议 | Base URL | 说明 |
 | --- | --- | --- | --- |
-| GLM Coding Plan | OpenAI Chat Completions | `https://open.bigmodel.cn/api/coding/paas/v4` | Coding Plan 专属端点（**不是**标准计费的 `/api/paas/v4`，V1 `provider-zhipu` 默认值即后者，S6 迁移时需加 coding 端点预设）；模型如 `glm-5.2`（约 1M 上下文） |
+| GLM Coding Plan（中国区开发测试） | OpenAI Chat Completions | `https://open.bigmodel.cn/api/coding/paas/v4` | Coding Plan 专属端点（**不是**标准计费的 `/api/paas/v4`）；继续由配置显式指定，不是 S6 的 Z.AI 国际站默认值 |
 | GLM Coding Plan | Anthropic Messages | `https://open.bigmodel.cn/api/anthropic` | S2 起作为第二协议通道，验证 provider 契约不过拟合 OpenAI 形状 |
 | OpenCode Go | OpenAI Chat Completions | `https://opencode.ai/zen/go/v1` | Bearer 认证；模型目录经 `GET /models` 可查（`deepseek-v4-pro`、`kimi-k2.x`、`glm-5.x` 等）；少数模型仅走 Anthropic `/messages` |
 
 > 若实际提供的 key 属于自建代理（如 opencodex 网关），仅 `base_url` 不同，接入方式完全一致。
 
+S6 首发产品范围冻结如下；这里的“已预设”不等于“已完成登录或真实冒烟”，阶段状态以 [S6 任务书](../plan/S6-providers-auth.md) 为准。
+
+| 通道 | 凭证 | 默认协议 / endpoint | 说明 |
+| --- | --- | --- | --- |
+| ChatGPT | OAuth bearer | Responses；`https://chatgpt.com/backend-api/codex` | 当前实现快照，可覆盖；需 account id；不是公开稳定的第三方 API 合约 |
+| xAI Grok | OAuth bearer | 按模型选 Responses/Chat；`https://api.x.ai/v1` | 本期不接受 xAI API key；登录/刷新由 auth 层负责 |
+| Z.AI GLM Coding Plan | API key | Chat；`https://api.z.ai/api/coding/paas/v4` | 国际站 Coding Plan 专属端点；`provider_id` 沿用 `glm-coding` |
+| OpenCode Go | API key | Chat；`https://opencode.ai/zen/go/v1` | 混合协议模型必须在 registry 显式声明 transport |
+| Qwen Token Plan | API key | Chat；`https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | Token Plan 专属 endpoint，不与按量计费通道混用 |
+| DeepSeek | API key | Chat；`https://api.deepseek.com` | OpenAI-compatible |
+
+除上表六条外的 Provider/认证方式均延期到后续需求。S0 generic OpenAI-compatible 与 S2 Anthropic 基线仍为既有能力，不因此删除或算作首发新增。
+
 **Key 管理约定（安全红线自 S0 生效）**：
 
-- API key 只经环境变量注入：`PAWORK_API_KEY_<PROVIDER_ID 大写、`-`→`_`>`（如 `PAWORK_API_KEY_GLM_CODING`）。这是 S0–S5 的**过渡机制**；S6 起以 OS Keychain（`pawork-auth`）为正式存储，环境变量降级为 headless/CI fallback。
+- S0–S5 的 API key 只经环境变量注入：`PAWORK_API_KEY_<PROVIDER_ID 大写、`-`→`_`>`（如 `PAWORK_API_KEY_GLM_CODING`）。S6 完成后以 OS Keychain（`pawork-auth`）为正式存储，环境变量降级为 headless/CI fallback；S6 尚未退出前不得把过渡路径误报为已替换。
+- ChatGPT/xAI adapter 只消费 auth 层解析后的 `OAuthBearer`；OAuth client secret、access token、refresh token 不得写入 adapter 默认值、配置、数据库、事件流或日志。
 - key 不写入配置文件、不落数据库、不进日志与事件流（V1 `ResolvedCredential` 的 Debug 脱敏语义自 S0 采用）。
 - 执行期凭证由用户在任务开始时临场提供（env 或 `pawork auth` 入 Keychain）；不写入任何可能提交到远程仓库的文件；缺失即终止（fail-closed）——完整约定见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.1。
 - **V2 开发期本地冒烟**：两通道 key 放在 `Pawork_v2/.env`（已列入 `.gitignore`，禁止提交）。冒烟进程用 `set -a && source Pawork_v2/.env && set +a` 注入环境变量；产品路径仍只读 env，不把 `.env` 当配置层。

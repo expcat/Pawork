@@ -5,11 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork OpenAI-compatible 适配器（覆盖云端与本地兼容服务）"
+description = "Pawork 首发模型渠道适配器（OAuth + OpenAI-compatible coding plans）"
 
 [features]
-default = []
+default = ["anthropic"]
 anthropic = []
+chatgpt-oauth = []
+xai-oauth = []
+glm-coding = []
+opencode-go = []
+qwen-token-plan = []
+deepseek = []
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
@@ -31,3 +37,23 @@ wiremock = "0.6"
 name = "anthropic"
 path = "tests/anthropic.rs"
 required-features = ["anthropic"]
+
+[[test]]
+name = "chatgpt"
+path = "tests/chatgpt.rs"
+required-features = ["chatgpt-oauth"]
+
+[[test]]
+name = "xai"
+path = "tests/xai.rs"
+required-features = ["xai-oauth"]
+
+[[test]]
+name = "responses"
+path = "tests/responses.rs"
+required-features = ["chatgpt-oauth"]
+
+[[test]]
+name = "api_key_channels"
+path = "tests/api_key_channels.rs"
+required-features = ["glm-coding", "opencode-go", "qwen-token-plan", "deepseek"]

@@ -30,7 +30,7 @@
 | `pawork-api` | S0（`provider` feature） | S2（`tool`）、S10（`plugin`） | 三 feature 与 V1 三 crate 对应 |
 | `pawork-net` | S0（parsers + http） | — | SSE/JSONL/partial-JSON 解析器 + proptest 种子随迁 |
 | `pawork-config` | S0（三层最小） | S6（凭证解析）、S8（完整六层 + Profile） | schema 照抄 V1，实现分步 |
-| `pawork-providers` | S0（openai-compatible） | S2（anthropic-messages）、S6（8 厂商 + Responses 组装器下沉） | 每厂商一个 feature |
+| `pawork-providers` | S0（openai-compatible） | S2（anthropic-messages）、S6（六条首发通道 + Responses 组装器下沉） | 首发通道按 feature 启用；其它厂商按后续需求增加 |
 | `pawork-engine` | S0（run_turn 最小） | S1 事件化、S2 工具循环、S3 审批、S4 取消清理、S5 context、S11 plan gate | 增量长出，语义对齐 V1（§3.2） |
 | `pawork-app` | S0（最小装配） | S3 审批位点、S9 Event Hub/正式化 | 从 S0 起就是独立包，杜绝后期抽包 |
 | `pawork-cli` | S0（chat/models） | 逐阶段加子命令；S9 六运行模式齐全 | 同上 |
@@ -69,7 +69,7 @@
 | `pawork-provider-control` | S11 | — | account-control feature 分层 |
 | `pawork-quota` | S11（核心） | — | 远端适配器冻结候审 |
 
-**能力级核对**（基于 V1 全量盘点：docs/features 26 篇 + V1 MVP 验收 22 条 + CLI 六运行模式/全部子命令 + 八工具/八厂商/扩展与控制面 crate 清单）：V1 全部用户可见能力在上表与 [../ROADMAP.md](../ROADMAP.md) §2 阶段表均有落点。易漏项显式登记——任意消息 Fork/会话分支 UX → S9（数据层 S1 就绪）；`pawork service` 系统服务模式与 status/watch/shutdown/doctor 运维子命令 → S9；手动 compaction 触发 → S5；大型 Tool Output 走 Artifact 引用 → S4 预留、S7 接管；10 万行 Diff 分页/分片 → S7（paginate）+ S9（Artifact 分片读取）；性能基准（V1 benches 为 no-op 不迁移）→ S12 按需重建；GPUI Desktop → S12 后 `apps/desktop`。
+**能力级核对**（基于 V1 全量盘点：docs/features 26 篇 + V1 MVP 验收 22 条 + CLI 六运行模式/全部子命令 + 八工具/八厂商/扩展与控制面 crate 清单）：除 2026-08-15 明确收窄的 Provider 厂商广度外，V1 用户可见能力在上表与 [../ROADMAP.md](../ROADMAP.md) §2 阶段表均有落点；非首发厂商改为收到后续需求时再排期。易漏项显式登记——任意消息 Fork/会话分支 UX → S9（数据层 S1 就绪）；`pawork service` 系统服务模式与 status/watch/shutdown/doctor 运维子命令 → S9；手动 compaction 触发 → S5；大型 Tool Output 走 Artifact 引用 → S4 预留、S7 接管；10 万行 Diff 分页/分片 → S7（paginate）+ S9（Artifact 分片读取）；性能基准（V1 benches 为 no-op 不迁移）→ S12 按需重建；GPUI Desktop → S12 后 `apps/desktop`。
 
 ---
 
@@ -173,11 +173,12 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| 八厂商 adapter（feature per vendor）+ 错误码归一数据表 | 各厂商官方 API；九家缓存机制对照 research §5.1（含各家文档链接） |
+| 六条首发通道：ChatGPT OAuth、xAI Grok OAuth、Z.AI GLM Coding Plan、OpenCode Go、Qwen Token Plan、DeepSeek；其它厂商延期 | 各厂商官方 API；范围与 credential/transport 冻结见任务书 |
+| ChatGPT/xAI 共用 Responses transport；xAI 与 API-key 混合通道按模型 capability 选 Chat/Responses | canonical 保持 provider-neutral，Engine 不按厂商名分支 |
 | OS Keychain 凭证 + `pawork auth` 子命令 | **差异化点**：opencodex/CLIProxyAPI/cc-switch 均为本地明文文件（research §3.4）；OpenCode/Pi 为 `auth.json` 单凭证（research §2.1/§2.2） |
-| OAuth（PKCE/Device/refresh/callback） | Pi 订阅 OAuth 全线可用（research §2.2）；CLIProxyAPI OAuth 池自动刷新（research §3.3）；OpenCode 的 Anthropic OAuth 封锁先例=合规风险参照（research §2.1） |
+| ChatGPT/xAI OAuth（PKCE/Device/refresh/callback） | Codex Sign in with ChatGPT；xAI 登录兼容性需真实账号验收；OAuth client secret 不进入 adapter/仓库 |
 | REPL `/model` `/provider` 切换（事件流记录变更） | OpenCode `/models` 切换 + transform 归一化历史（research §2.1）；Pi 跨厂商 handoff 一等能力（research §2.2） |
-| zhipu Coding Plan 端点预设 | GLM Coding Plan 专属端点（[task-guide.md](task-guide.md) §5） |
+| Z.AI GLM Coding Plan 端点预设 | 国际站 Coding Plan 专属端点 `https://api.z.ai/api/coding/paas/v4`；中国区旧测试通道继续显式配置，不作为首发默认值 |
 | **已确认待并入**：plan 凭证 kind（D2）、adapter 缓存映射 + registry 能力表、F2-B 被动配额信号 per-adapter 登记、首个缓存命中测试 ≥95%（§5） | — |
 
 ### S7 Git、Diff 与 Checkpoint（[任务书](../plan/S7-git-checkpoint.md)）
@@ -316,14 +317,14 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | D5 | 自更新与多渠道安装器 | OpenCode `opencode upgrade`、Codex installers | `pawork upgrade` 自更新命令 + 多渠道安装器（Homebrew / Scoop / Winget / curl / cargo install）。S12 有发布流程但无运行时自更新 | P2 |
 | D6 | Cloud 执行环境 | Codex Cloud | 隔离的远程执行环境，支持并行任务、结果本地应用（`pawork cloud`）。需 remote transport + 隔离沙箱 + 任务编排 | P3 |
 | D7 | Slack / Linear 等 chat 平台集成 | Codex `@Codex` in Slack/Linear | 作为 S9 channels 的扩展 feature（Slack / Linear adapter），将 chat 平台消息映射到 Pawork 会话 | P3 |
-| D8 | 订阅登录（plan credits 认证） | Pi `/login`、Codex SiwC | 用 ChatGPT Plus/Pro、Claude Pro/Max、GitHub Copilot 等 *订阅 plan* 登录认证（非 API key），消耗 plan 额度。S6 auth 有 OAuth 但不含 plan-credits 认证流。**注**：已被 §5 G1（F1-B 订阅 plan 凭证 kind，决策 D2）部分吸收 | P2 |
+| D8 | 订阅登录（plan credits 认证） | Pi `/login`、Codex SiwC | ChatGPT 与 xAI 的订阅 OAuth 已并入 S6 首发范围；Claude Pro/Max、GitHub Copilot 等其它 plan 登录仍为候选。§5 G1（F1-B）继续负责后续多账户/订阅凭证抽象 | P2 |
 
 ### 6.6 企业与安全
 
 | ID | 功能 | 来源 | 说明 | 优先级 |
 | --- | --- | --- | --- | --- |
 | E1 | Enterprise SSO + 组织级集中配置 | OpenCode Enterprise | 企业 SSO 登录 + 组织级集中配置下发（model allowlist、workspace roles、internal gateway）。S11 control-plane 是本地 tenant/usage/quota，不含 org SSO | P3 |
-| E2 | Bedrock / Vertex 作为显式模型源 | Codex Bedrock、Pi providers | AWS Bedrock / GCP Vertex AI 作为模型接入端点。V1 auth.md 已有 AWS Profile / GCP ADC 认证方式；V2 S6 有 8 厂商但未显式列出 Bedrock/Vertex adapter | P2 |
+| E2 | Bedrock / Vertex 作为显式模型源 | Codex Bedrock、Pi providers | AWS Bedrock / GCP Vertex AI 作为模型接入端点；不在 S6 六条首发通道内，按后续需求排期 | P2 |
 
 ### 6.7 运维与产品体验
 
