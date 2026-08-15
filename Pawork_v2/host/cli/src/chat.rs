@@ -117,6 +117,22 @@ async fn run_repl(core: &AppCore, resume: Option<String>) -> Result<(), CliError
                         if text == "/exit" || text == "/quit" {
                             return Ok(());
                         }
+                        if text == "/compact" {
+                            let Some(id) = session.as_ref() else {
+                                eprintln!("没有活动会话，先输入一条消息再压缩。");
+                                continue;
+                            };
+                            let before = history.len();
+                            match compact_now(core, id).await {
+                                Ok(after) => {
+                                    history = core.resume_messages(id).await?;
+                                    next_msg = next_message_counter(&history);
+                                    eprintln!("compacted: {before} → {after} messages");
+                                }
+                                Err(err) => eprintln!("compact failed: {err}"),
+                            }
+                            continue;
+                        }
                         if session.is_none() {
                             let id = core
                                 .create_session(session_title_from_text(text))
@@ -189,11 +205,52 @@ async fn run_one_turn(
     *history = core.resume_messages(session).await.unwrap_or_else(|_| history.clone());
     *next_msg = next_message_counter(history);
 
+    if !json && outcome.is_ok() {
+        print_usage_line(core, session).await;
+    }
+
     match outcome {
         Ok(()) => Ok(()),
         Err(CliError::Cancelled) if !one_shot => Ok(()),
         other => other,
     }
+}
+
+/// 每轮尾部用量行：本轮 + 会话累计 token；费用按 registry 定价估算，
+/// 无定价条目不显示（不编造）。
+async fn print_usage_line(core: &AppCore, session: &SessionId) {
+    let turn = core.last_run_usage(session).await.ok().flatten();
+    let total = core.session_usage(session).await.ok();
+    let (Some(turn), Some(total)) = (turn, total) else {
+        return;
+    };
+    let cost = core
+        .estimate_cost_for(core.model(), &total)
+        .map(|cost| format!(" | ~{} {:.4}", cost.currency, cost.amount_micros as f64 / 1_000_000.0))
+        .unwrap_or_default();
+    eprintln!(
+        "tokens: turn in {} out {} | session in {} out {} (cache read {} / write {}){cost}",
+        turn.input_tokens,
+        turn.output_tokens,
+        total.input_tokens,
+        total.output_tokens,
+        total.cache_read_tokens,
+        total.cache_write_tokens,
+    );
+}
+
+/// 手动压缩：与自动链同一 engine 函数与事件序；TextSink 静默承载事件，
+/// 结果行由调用方输出。
+async fn compact_now(core: &AppCore, session: &SessionId) -> Result<usize, CliError> {
+    let handle = CancelHandle::new(
+        RunId::from(format!("cli-compact-{session}")),
+        std::sync::Arc::new(NoopProcessTreeCleaner),
+    );
+    let sink = crate::render::TextSink::default();
+    let rebuilt = core
+        .compact_session(session, &sink, handle.token())
+        .await?;
+    Ok(rebuilt.len())
 }
 
 async fn drive_turn(

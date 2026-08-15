@@ -3,17 +3,24 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use pawork_api::{
-    CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ToolResult,
+    CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ProviderEventSink,
+    ProviderStreamEvent, ToolResult,
 };
 use pawork_domain::{
     AgentEvent, ApprovalDecision, CancellationToken, ContentPart, ErrorCategory, ErrorContext,
-    MessageId, MessageMetadata, RequestId, TextContent, TokenUsage, ToolCallId, ToolResultContent,
+    EventSequence, Message, MessageId, MessageMetadata, MessageRole, ModelId, RequestId,
+    TextContent, TokenUsage, ToolCallId, ToolResultContent,
 };
 
 use crate::appender::{tool_results_message, AssembledTurn, ToolCallResult};
+use crate::context::{
+    compute_compaction, reply_primer_tokens, AutoCompactionReason, ContextBudgetBreakdown,
+    ToolSchema, TokenEstimator, TurnContext,
+};
 use crate::event::{AgentEventSink, EngineError, EventEmitter, LoopEventEmitter, LoopSink};
 use crate::session_turn::SessionTurn;
 use crate::run_turn;
@@ -39,6 +46,15 @@ pub enum ApprovalGate {
     Asked(ApprovalDecision),
 }
 
+/// host 完成 session 侧 fork/snapshot 后回传的元数据。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompactionOutcome {
+    /// 被压缩区间覆盖的源事件条数。
+    pub source_event_count: u64,
+    /// 压缩落点（源分支被压缩到的 sequence）。
+    pub compacted_through: EventSequence,
+}
+
 /// Agent Loop 执行中需要的回调（由调用方注入）。
 ///
 /// 审批经 [`LoopContext::request_approval`] 注入；engine 不依赖 policy/tools。
@@ -62,6 +78,17 @@ pub trait LoopContext: Send + Sync {
     fn next_message_id(&self) -> MessageId;
 
     fn next_request_id(&self) -> RequestId;
+
+    /// 压缩回调：host（app）负责 session 侧 fork/snapshot，完成后回传元数据。
+    /// 默认实现返回 None（无持久化宿主时 engine 仍能完成消息层压缩）。
+    async fn compact_history(
+        &self,
+        _reason: AutoCompactionReason,
+        _summary_text: &str,
+        _cancel: CancellationToken,
+    ) -> Option<CompactionOutcome> {
+        None
+    }
 }
 
 /// 多轮事件化：先发 `RunStarted` 与用户 `MessageCommitted`，再循环
@@ -77,6 +104,7 @@ pub async fn run_session(
     cancel: CancellationToken,
     loop_ctx: &dyn LoopContext,
     max_tool_rounds: u64,
+    context: TurnContext,
 ) -> Result<ModelResponseSummary, EngineError> {
     if turn.start_sequence == 0 {
         return Err(EngineError::sink(
@@ -94,7 +122,6 @@ pub async fn run_session(
     );
     let loop_events = LoopEventEmitter::new(emitter.clone());
     let trigger_id = turn.trigger_message.id.clone();
-    let message_count = request.messages.len() as u64;
 
     emitter
         .emit(AgentEvent::RunStarted {
@@ -104,12 +131,6 @@ pub async fn run_session(
     emitter
         .emit(AgentEvent::MessageCommitted {
             message: turn.trigger_message.clone(),
-        })
-        .await?;
-    emitter
-        .emit(AgentEvent::ContextPrepared {
-            message_count,
-            estimated_input_tokens: 0,
         })
         .await?;
 
@@ -126,6 +147,27 @@ pub async fn run_session(
         if cancel.is_cancelled() {
             return emit_cancelled(&emitter, "turn cancelled").await;
         }
+
+        // S5：每轮请求前估算输入 token 并发 ContextPrepared（estimator 未配置时
+        // 保持 estimated=0 现状），随后按预算收敛消息集（软限压缩 / 硬限截断）。
+        let mut estimate = estimate_input(&context, &current);
+        emitter
+            .emit(AgentEvent::ContextPrepared {
+                message_count: current.messages.len() as u64,
+                estimated_input_tokens: estimate.estimated_input_tokens,
+            })
+            .await?;
+        apply_context_limits(
+            provider,
+            &emitter,
+            loop_ctx,
+            &turn.model,
+            &context,
+            &mut current,
+            &mut estimate,
+            cancel.clone(),
+        )
+        .await?;
 
         emitter
             .emit(AgentEvent::ProviderRequestStarted {
@@ -295,6 +337,136 @@ pub async fn run_session(
     }
 }
 
+/// 一轮请求的输入估算：工具 schema、历史与总量的 token 计数。
+struct InputEstimate {
+    tool_schema_tokens: u64,
+    history_tokens: u64,
+    estimated_input_tokens: u64,
+}
+
+/// canonical ToolDefinition 转 context 侧可计数的 ToolSchema。
+fn tool_schemas(request: &CanonicalModelRequest) -> Vec<ToolSchema> {
+    request
+        .tools
+        .iter()
+        .map(|tool| ToolSchema {
+            name: tool.name.clone(),
+            description: tool.description.clone(),
+            input_schema: tool.input_schema.clone(),
+        })
+        .collect()
+}
+
+fn estimate_input_at(
+    estimator: &dyn TokenEstimator,
+    request: &CanonicalModelRequest,
+) -> InputEstimate {
+    let tool_schema_tokens = estimator.count_tool_schemas(&tool_schemas(request));
+    let history_tokens = request
+        .messages
+        .iter()
+        .map(|message| estimator.count_message(message))
+        .sum();
+    InputEstimate {
+        tool_schema_tokens,
+        history_tokens,
+        estimated_input_tokens: tool_schema_tokens + history_tokens + reply_primer_tokens(),
+    }
+}
+
+/// estimator 未配置时返回全零（保持 S5 前现状：estimated_input_tokens = 0）。
+fn estimate_input(context: &TurnContext, request: &CanonicalModelRequest) -> InputEstimate {
+    match context.estimator.as_deref() {
+        Some(estimator) => estimate_input_at(estimator, request),
+        None => InputEstimate {
+            tool_schema_tokens: 0,
+            history_tokens: 0,
+            estimated_input_tokens: 0,
+        },
+    }
+}
+
+/// 触发判定与消息集收敛（compute_compaction 语义：硬限优先、软限次之）：
+///
+/// - 软限命中先走压缩链（摘要 + 事件三连 + 重建 summary 与 retained tail）；
+/// - 压缩后仍超硬限、或软限未配但超硬限时，从最旧截断（永不丢最后
+///   retained_messages 条），发 Diagnostic 并重发 ContextPrepared。
+async fn apply_context_limits(
+    provider: &dyn ModelProvider,
+    emitter: &EventEmitter<'_>,
+    loop_ctx: &dyn LoopContext,
+    model: &ModelId,
+    context: &TurnContext,
+    current: &mut CanonicalModelRequest,
+    estimate: &mut InputEstimate,
+    cancel: CancellationToken,
+) -> Result<(), EngineError> {
+    let (Some(limits), Some(estimator)) =
+        (context.limits.as_ref(), context.estimator.as_deref())
+    else {
+        return Ok(());
+    };
+    let breakdown = ContextBudgetBreakdown {
+        system_prompt_tokens: 0,
+        tool_schema_tokens: estimate.tool_schema_tokens,
+        attachment_tokens: 0,
+        history_tokens: estimate.history_tokens,
+        estimated_input_tokens: estimate.estimated_input_tokens,
+        output_reserve_tokens: limits.budget.output_reserve_tokens,
+        thinking_reserve_tokens: limits.budget.thinking_reserve_tokens,
+        max_input_tokens: limits.budget.max_input_tokens,
+    };
+    let soft_hit = matches!(
+        limits.history_soft_limit_tokens,
+        Some(soft) if estimate.history_tokens > soft
+    );
+    if let Some(trigger) = compute_compaction(&breakdown, limits.history_soft_limit_tokens) {
+        // 软限命中（含硬限同时超限）先压缩；纯硬限且软限未命中时压缩无收益，直接截断。
+        if soft_hit {
+            if let Some(rebuilt) = compact_messages(
+                provider,
+                emitter,
+                loop_ctx,
+                model,
+                AutoCompactionReason::from(trigger.reason),
+                &current.messages,
+                context.retained_messages,
+                cancel.clone(),
+            )
+            .await?
+            {
+                current.messages = rebuilt;
+                *estimate = estimate_input_at(estimator, current);
+            }
+        }
+    }
+    if estimate.estimated_input_tokens > limits.budget.max_input_tokens {
+        let (dropped, estimated_after) = truncate_for_budget(
+            estimator,
+            current,
+            limits.budget.max_input_tokens,
+            context.retained_messages,
+        );
+        *estimate = estimate_input_at(estimator, current);
+        emitter
+            .emit(AgentEvent::Diagnostic {
+                code: "context_hard_truncated".into(),
+                details: serde_json::json!({
+                    "dropped_messages": dropped,
+                    "estimated_input_tokens": estimated_after,
+                }),
+            })
+            .await?;
+        emitter
+            .emit(AgentEvent::ContextPrepared {
+                message_count: current.messages.len() as u64,
+                estimated_input_tokens: estimated_after,
+            })
+            .await?;
+    }
+    Ok(())
+}
+
 async fn emit_cancelled(
     emitter: &EventEmitter<'_>,
     reason: impl Into<String>,
@@ -306,6 +478,245 @@ async fn emit_cancelled(
         })
         .await?;
     Err(ProviderError::cancelled(reason).into())
+}
+
+/// 摘要请求的 User 指令：要求保留关键事实 / 约束 / 未完成工作。
+const COMPACTION_SUMMARY_INSTRUCTION: &str =
+    "请把以下对话历史压缩成一段摘要，保留关键事实、约束和未完成的工作，只输出摘要正文：";
+
+/// 只累计 TextDelta 的收集 sink：摘要请求不向 AgentEventSink 转发、
+/// 其 usage 也不计入 run_usage（内部请求，非本轮 provider 请求）。
+struct SummaryTextSink(Mutex<String>);
+
+#[async_trait]
+impl ProviderEventSink for SummaryTextSink {
+    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
+        if let ProviderStreamEvent::TextDelta(delta) = event {
+            self.0.lock().expect("summary sink mutex").push_str(&delta);
+        }
+        Ok(())
+    }
+}
+
+/// 生成被压缩区间的摘要：优先向 provider 发内部摘要请求（assemble_request，
+/// 无 tools）；失败或空摘要时降级为结构性摘要。
+async fn summarize_history(
+    provider: &dyn ModelProvider,
+    loop_ctx: &dyn LoopContext,
+    model: &ModelId,
+    compacted_range: &[Message],
+    cancel: CancellationToken,
+) -> String {
+    let mut transcript = String::new();
+    for message in compacted_range {
+        let text = message_text(message);
+        if text.is_empty() {
+            continue;
+        }
+        if !transcript.is_empty() {
+            transcript.push('\n');
+        }
+        transcript.push_str(&text);
+    }
+    let request = crate::assemble_request(
+        loop_ctx.next_request_id(),
+        model.clone(),
+        vec![Message {
+            id: MessageId::from("engine:compaction-prompt"),
+            role: MessageRole::User,
+            content: vec![ContentPart::Text(TextContent {
+                text: format!("{COMPACTION_SUMMARY_INSTRUCTION}\n\n{transcript}"),
+            })],
+            metadata: Default::default(),
+        }],
+    );
+
+    let sink = SummaryTextSink(Mutex::new(String::new()));
+    // 注意：摘要请求的 usage 不计入 run_usage，也不进 AgentEventSink。
+    if run_turn(provider, request, &sink, cancel).await.is_ok() {
+        let text = sink.0.lock().expect("summary sink mutex").clone();
+        if !text.trim().is_empty() {
+            return text;
+        }
+    }
+    structural_summary(compacted_range)
+}
+
+/// 降级摘要：被压缩区间首条用户消息截 2000 chars 加省略号，再接最近一条消息截 500 chars。
+fn structural_summary(compacted: &[Message]) -> String {
+    const FIRST_USER_MAX_CHARS: usize = 2000;
+    const LAST_MESSAGE_MAX_CHARS: usize = 500;
+
+    let mut summary = String::new();
+    if let Some(first_user) = compacted
+        .iter()
+        .find(|message| message.role == MessageRole::User)
+    {
+        summary.push_str(truncate_chars(
+            &message_text(first_user),
+            FIRST_USER_MAX_CHARS,
+        ));
+        summary.push('…');
+    }
+    if let Some(last) = compacted.last() {
+        summary.push_str(truncate_chars(&message_text(last), LAST_MESSAGE_MAX_CHARS));
+    }
+    summary
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> &str {
+    match text.char_indices().nth(max_chars) {
+        Some((index, _)) => &text[..index],
+        None => text,
+    }
+}
+
+fn message_text(message: &Message) -> String {
+    message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 共用压缩链（自动软限 / 手动入口）：摘要、host compact_history 回调、
+/// CompactionStarted / MessageCommitted(summary) / CompactionCompleted 事件三连，
+/// 返回重建后的消息列表（summary + retained tail）。
+///
+/// 被压缩区间为空（消息数不超过 retained）时返回 None；source_event_count 取
+/// host 回传值，无 outcome 时用被压缩消息数；compacted_through 无 outcome 时用
+/// emitter 当前已发最大 sequence。
+async fn compact_messages(
+    provider: &dyn ModelProvider,
+    emitter: &EventEmitter<'_>,
+    loop_ctx: &dyn LoopContext,
+    model: &ModelId,
+    reason: AutoCompactionReason,
+    messages: &[Message],
+    retained_messages: usize,
+    cancel: CancellationToken,
+) -> Result<Option<Vec<Message>>, EngineError> {
+    if messages.len() <= retained_messages {
+        return Ok(None);
+    }
+    let split = messages.len() - retained_messages;
+    let (compacted_range, retained) = messages.split_at(split);
+    let summary_text =
+        summarize_history(provider, loop_ctx, model, compacted_range, cancel.clone()).await;
+
+    let outcome = loop_ctx.compact_history(reason, &summary_text, cancel).await;
+    let source_event_count = outcome
+        .as_ref()
+        .map(|outcome| outcome.source_event_count)
+        .unwrap_or_else(|| compacted_range.len() as u64);
+
+    emitter
+        .emit(AgentEvent::CompactionStarted { source_event_count })
+        .await?;
+    let summary = Message {
+        id: loop_ctx.next_message_id(),
+        role: MessageRole::User,
+        content: vec![ContentPart::Text(TextContent {
+            text: summary_text,
+        })],
+        metadata: Default::default(),
+    };
+    emitter
+        .emit(AgentEvent::MessageCommitted {
+            message: summary.clone(),
+        })
+        .await?;
+    let compacted_through = outcome
+        .map(|outcome| outcome.compacted_through)
+        .unwrap_or_else(|| emitter.last_sequence());
+    emitter
+        .emit(AgentEvent::CompactionCompleted {
+            summary_message_id: summary.id.clone(),
+            compacted_through,
+        })
+        .await?;
+
+    let mut rebuilt = Vec::with_capacity(retained_messages + 1);
+    rebuilt.push(summary);
+    rebuilt.extend(retained.iter().cloned());
+    Ok(Some(rebuilt))
+}
+
+/// 硬限截断：从最旧开始丢弃消息，永不丢最后 retained_messages 条；
+/// 返回（丢弃条数, 截断后估算）。
+fn truncate_for_budget(
+    estimator: &dyn TokenEstimator,
+    request: &mut CanonicalModelRequest,
+    max_input_tokens: u64,
+    retained_messages: usize,
+) -> (u64, u64) {
+    let schema_tokens = estimator.count_tool_schemas(&tool_schemas(request));
+    let estimate = |messages: &[Message]| -> u64 {
+        schema_tokens
+            + messages
+                .iter()
+                .map(|message| estimator.count_message(message))
+                .sum::<u64>()
+            + reply_primer_tokens()
+    };
+    let floor = retained_messages.min(request.messages.len());
+    let mut dropped: u64 = 0;
+    while estimate(&request.messages) > max_input_tokens && request.messages.len() > floor {
+        request.messages.remove(0);
+        dropped += 1;
+    }
+    (dropped, estimate(&request.messages))
+}
+
+/// 手动压缩入口（REPL /compact 等）：不是 run，不发 RunStarted / RunCancelled；
+/// 事件序直接 CompactionStarted / MessageCommitted(summary) / CompactionCompleted
+/// （reason 映射 Manual 语义，复用自动链同一内部函数），返回重建后的消息列表
+/// （summary + retained tail）。
+pub async fn run_manual_compaction(
+    provider: &dyn ModelProvider,
+    request: CanonicalModelRequest,
+    turn: SessionTurn,
+    events: &dyn AgentEventSink,
+    cancel: CancellationToken,
+    loop_ctx: &dyn LoopContext,
+    context: TurnContext,
+) -> Result<Vec<Message>, EngineError> {
+    if turn.start_sequence == 0 {
+        return Err(EngineError::sink(
+            "start_sequence must be >= 1 (session_events CHECK)",
+        ));
+    }
+    if request.messages.len() <= context.retained_messages {
+        return Err(EngineError::sink(format!(
+            "nothing to compact: {} message(s) <= retained {}",
+            request.messages.len(),
+            context.retained_messages
+        )));
+    }
+    let next_sequence = AtomicU64::new(turn.start_sequence);
+    let emitter = EventEmitter::new(
+        turn.session_id.clone(),
+        turn.run_id.clone(),
+        &next_sequence,
+        turn.timestamp,
+        events,
+    );
+    compact_messages(
+        provider,
+        &emitter,
+        loop_ctx,
+        &turn.model,
+        AutoCompactionReason::Manual,
+        &request.messages,
+        context.retained_messages,
+        cancel,
+    )
+    .await
+    .map(|rebuilt| rebuilt.expect("compaction range checked non-empty above"))
 }
 
 fn pending_invocations(assembled: &AssembledTurn) -> Vec<PendingToolInvocation> {
@@ -449,12 +860,14 @@ mod tests {
     };
     use pawork_domain::{
         AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, ContentPart,
-        ErrorCategory, Message, MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId,
-        SessionId, StopReason, TextContent, Timestamp, TokenUsage, ToolCallId, WorkspaceId,
+        ErrorCategory, EventSequence, Message, MessageId, MessageRole, ModelId, ProviderId,
+        RequestId, RunId, SessionId, StopReason, TextContent, Timestamp, TokenUsage, ToolCallId,
+        WorkspaceId,
     };
     use pawork_testkit::{MockProvider, MockScript, MockTool};
 
     use crate::assemble_request_with_tools;
+    use crate::context::{ContextBudget, ContextLimits, HeuristicEstimator};
     use crate::event::{AgentEventSink, EngineError, LoopEventEmitter};
     use crate::session_turn::SessionTurn;
 
@@ -711,6 +1124,9 @@ mod tests {
             AgentEvent::RunCompleted { .. } => "RunCompleted",
             AgentEvent::RunCancelled { .. } => "RunCancelled",
             AgentEvent::RunFailed { .. } => "RunFailed",
+            AgentEvent::CompactionStarted { .. } => "CompactionStarted",
+            AgentEvent::CompactionCompleted { .. } => "CompactionCompleted",
+            AgentEvent::Diagnostic { .. } => "Diagnostic",
             _ => "other",
         }
     }
@@ -737,6 +1153,153 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn user_text(id: &str, text: &str) -> Message {
+        Message {
+            id: MessageId::from(id),
+            role: MessageRole::User,
+            content: vec![ContentPart::Text(TextContent { text: text.into() })],
+            metadata: Default::default(),
+        }
+    }
+
+    fn numbered_messages(count: usize, body: &str) -> Vec<Message> {
+        (0..count)
+            .map(|n| user_text(&format!("msg-history-{n}"), &format!("turn {n}: {body}")))
+            .collect()
+    }
+
+    fn request_with_messages(messages: Vec<Message>) -> CanonicalModelRequest {
+        assemble_request_with_tools(
+            RequestId::from("request-1"),
+            ModelId::from("model-1"),
+            messages,
+            Vec::new(),
+        )
+    }
+
+    fn turn_context(
+        budget: ContextBudget,
+        soft_limit: Option<u64>,
+        retained_messages: usize,
+    ) -> TurnContext {
+        TurnContext {
+            limits: Some(ContextLimits {
+                budget,
+                history_soft_limit_tokens: soft_limit,
+            }),
+            estimator: Some(Arc::new(HeuristicEstimator::default())),
+            retained_messages,
+        }
+    }
+
+    fn estimate_request_tokens(request: &CanonicalModelRequest) -> u64 {
+        let estimator = HeuristicEstimator::default();
+        let schemas: Vec<ToolSchema> = request
+            .tools
+            .iter()
+            .map(|tool| ToolSchema {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                input_schema: tool.input_schema.clone(),
+            })
+            .collect();
+        estimator.count_tool_schemas(&schemas)
+            + request
+                .messages
+                .iter()
+                .map(|message| estimator.count_message(message))
+                .sum::<u64>()
+            + crate::context::reply_primer_tokens()
+    }
+
+    fn context_prepared_events(sink: &RecordingEvents) -> Vec<(u64, u64)> {
+        sink.snapshot()
+            .into_iter()
+            .filter_map(|envelope| match &envelope.payload {
+                AgentEvent::ContextPrepared {
+                    message_count,
+                    estimated_input_tokens,
+                } => Some((*message_count, *estimated_input_tokens)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 摘要请求（无 tools）返回文本；主请求永远回 tool call，用于长对话仿真。
+    struct GrowingProvider {
+        requests: Arc<Mutex<Vec<CanonicalModelRequest>>>,
+        calls: AtomicU64,
+    }
+
+    impl GrowingProvider {
+        fn new() -> Self {
+            Self {
+                requests: Arc::new(Mutex::new(Vec::new())),
+                calls: AtomicU64::new(0),
+            }
+        }
+
+        fn requests(&self) -> Vec<CanonicalModelRequest> {
+            self.requests.lock().expect("requests mutex").clone()
+        }
+    }
+
+    #[async_trait]
+    impl ModelProvider for GrowingProvider {
+        fn id(&self) -> ProviderId {
+            ProviderId::from("mock")
+        }
+
+        async fn list_models(
+            &self,
+            _credential: Option<&pawork_api::ResolvedCredential>,
+        ) -> Result<Vec<pawork_api::ModelDefinition>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        async fn stream(
+            &self,
+            request: CanonicalModelRequest,
+            sink: &dyn ProviderEventSink,
+            _cancel: CancellationToken,
+        ) -> Result<ModelResponseSummary, ProviderError> {
+            self.requests
+                .lock()
+                .expect("requests mutex")
+                .push(request.clone());
+            let stop_reason = if request.tools.is_empty() {
+                sink.emit(ProviderStreamEvent::TextDelta(
+                    "earlier work: fixing the build, constraint: stay pure rust".into(),
+                ))
+                .await?;
+                StopReason::Completed
+            } else {
+                let n = self.calls.fetch_add(1, Ordering::Relaxed);
+                let id = ToolCallId::from(format!("grow-call-{n}"));
+                sink.emit(ProviderStreamEvent::ToolCallStarted {
+                    id: id.clone(),
+                    name: "grow".into(),
+                })
+                .await?;
+                sink.emit(ProviderStreamEvent::ToolCallArgumentsDelta {
+                    id: id.clone(),
+                    json: "{}".into(),
+                })
+                .await?;
+                sink.emit(ProviderStreamEvent::ToolCallCompleted { id }).await?;
+                StopReason::ToolUse
+            };
+            sink.emit(ProviderStreamEvent::ResponseCompleted(stop_reason.clone()))
+                .await?;
+            Ok(ModelResponseSummary {
+                stop_reason,
+                usage: TokenUsage::default(),
+                response_id: None,
+                provider_metadata: Default::default(),
+            })
+        }
     }
 
     #[tokio::test]
@@ -778,6 +1341,7 @@ mod tests {
             CancellationToken::new(),
             &ctx,
             DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
         )
         .await
         .expect("multi-turn loop");
@@ -859,6 +1423,7 @@ mod tests {
             CancellationToken::new(),
             &ctx,
             DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
         )
         .await
         .expect("parallel tools");
@@ -915,6 +1480,7 @@ mod tests {
             CancellationToken::new(),
             &ctx,
             DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
         )
         .await
         .expect("loop continues after tool failure");
@@ -954,6 +1520,7 @@ mod tests {
             CancellationToken::new(),
             &ctx,
             2,
+            TurnContext::default(),
         )
         .await
         .expect_err("max tool rounds");
@@ -1074,6 +1641,7 @@ mod tests {
             CancellationToken::new(),
             &ctx,
             DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
         )
         .await
         .expect("approved once");
@@ -1128,6 +1696,7 @@ mod tests {
             CancellationToken::new(),
             &ctx,
             DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
         )
         .await
         .expect("denied continues");
@@ -1184,6 +1753,7 @@ mod tests {
             CancellationToken::new(),
             &ctx,
             DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
         )
         .await
         .expect("approved for run");
@@ -1317,6 +1887,7 @@ mod tests {
             handle.token(),
             &ctx,
             DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
         );
         tokio::pin!(session);
         tokio::select! {
@@ -1346,5 +1917,407 @@ mod tests {
         assert_eq!(cleaned.load(std::sync::atomic::Ordering::SeqCst), 1);
         let last = types.last().copied();
         assert_eq!(last, Some("RunCancelled"));
+    }
+
+    #[tokio::test]
+    async fn default_turn_context_keeps_pre_s5_behavior() {
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("echo", serde_json::json!({"text": "hi"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]));
+        let echo = MockTool::new(
+            "echo",
+            ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "hi".into(),
+            })]),
+        );
+        let ctx = TestContext::new(vec![echo]);
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            sample_request(vec![echo_tool_def()]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
+        )
+        .await
+        .expect("default context run");
+
+        // 估算为 0（现状）、不压缩、不截断；ContextPrepared 每轮一次。
+        assert_eq!(
+            context_prepared_events(&sink),
+            vec![(1, 0), (3, 0)],
+            "per-round ContextPrepared with zero estimate"
+        );
+        let types = sink.types();
+        assert!(!types.contains(&"CompactionStarted"));
+        assert!(!types.contains(&"CompactionCompleted"));
+        assert!(!types.contains(&"Diagnostic"));
+        assert_eq!(provider.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn soft_limit_compaction_summarizes_and_rebuilds_history() {
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .text("summary of earlier work")
+                .usage(TokenUsage {
+                    input_tokens: 111,
+                    output_tokens: 222,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                })
+                .complete(),
+            MockScript::new().text("done").complete(),
+        ]));
+        let ctx = TestContext::new(Vec::new());
+        let sink = RecordingEvents::default();
+
+        let summary = run_session(
+            &provider,
+            request_with_messages(numbered_messages(6, "with some body")),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            turn_context(
+                ContextBudget::from_context_window(1_000_000, 4_096, 0),
+                Some(30),
+                2,
+            ),
+        )
+        .await
+        .expect("soft-limit run");
+
+        // 摘要请求的 usage 不计入 run_usage。
+        assert_eq!(summary.usage.input_tokens, 0);
+        assert_eq!(summary.usage.output_tokens, 0);
+
+        let types = sink.types();
+        let started = types
+            .iter()
+            .position(|name| *name == "CompactionStarted")
+            .expect("CompactionStarted");
+        let summary_commit = types
+            .iter()
+            .enumerate()
+            .find(|(index, name)| *index > started && **name == "MessageCommitted.user")
+            .expect("summary MessageCommitted after CompactionStarted");
+        let completed = types
+            .iter()
+            .position(|name| *name == "CompactionCompleted")
+            .expect("CompactionCompleted");
+        assert!(summary_commit.0 < completed);
+        assert!(!types.contains(&"Diagnostic"));
+
+        let completed = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::CompactionCompleted {
+                    summary_message_id,
+                    compacted_through,
+ } => Some((summary_message_id, compacted_through)),
+                _ => None,
+            }
+        }).expect("CompactionCompleted payload");
+        let started_payload = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::CompactionStarted { source_event_count } => Some(source_event_count),
+                _ => None,
+            }
+        }).expect("CompactionStarted payload");
+        // 默认 host 回调返回 None：source_event_count 用被压缩消息数（6 - retained 2）。
+        assert_eq!(started_payload, 4);
+        assert_eq!(completed.1, EventSequence::new(5));
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        // 摘要请求：无 tools，单条 User 指令 + 被压缩区间文本。
+        assert!(requests[0].tools.is_empty());
+        assert_eq!(requests[0].messages.len(), 1);
+        assert!(matches!(&requests[0].messages[0].content[0],
+            ContentPart::Text(text) if text.text.contains("turn 0: with some body")));
+        // 后续主请求以 summary 开头，保留最近 2 条。
+        assert_eq!(requests[1].messages.len(), 3);
+        assert_eq!(requests[1].messages[0].id, completed.0);
+        assert_eq!(requests[1].messages[0].role, MessageRole::User);
+        assert!(matches!(&requests[1].messages[0].content[0],
+            ContentPart::Text(text) if text.text == "summary of earlier work"));
+        assert!(requests[1].messages[1].id.as_str().contains("msg-history-4"));
+        assert!(requests[1].messages[2].id.as_str().contains("msg-history-5"));
+    }
+
+    #[tokio::test]
+    async fn hard_limit_truncates_oldest_with_diagnostic_and_refreshed_estimate() {
+        let messages: Vec<Message> = (0..10)
+            .map(|n| user_text(&format!("msg-history-{n}"), &"x".repeat(400)))
+            .collect();
+        let provider =
+            RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
+                .text("ok")
+                .complete()]));
+        let ctx = TestContext::new(Vec::new());
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            request_with_messages(messages.clone()),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            turn_context(ContextBudget::from_context_window(250, 0, 0), None, 2),
+        )
+        .await
+        .expect("hard-limit run");
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        // 永不丢最后 retained_messages 条：仅保留 msg-8 / msg-9。
+        assert_eq!(request.messages, vec![messages[8].clone(), messages[9].clone()]);
+        assert!(estimate_request_tokens(request) <= 250);
+
+        let diagnostic = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::Diagnostic { code, details } => Some((code, details)),
+                _ => None,
+            }
+        }).expect("Diagnostic");
+        assert_eq!(diagnostic.0, "context_hard_truncated");
+        assert_eq!(diagnostic.1["dropped_messages"], serde_json::json!(8));
+        // 2 * (framing 4 + role 1 + 100) + primer 3 = 213
+        assert_eq!(diagnostic.1["estimated_input_tokens"], serde_json::json!(213));
+
+        // ContextPrepared 重发反映截断后值；首条反映截断前。
+        assert_eq!(
+            context_prepared_events(&sink),
+            vec![(10, 1053), (2, 213)]
+        );
+        assert!(!sink.types().contains(&"CompactionStarted"));
+    }
+
+    #[tokio::test]
+    async fn compaction_outcome_metadata_flows_into_events() {
+        struct ScriptedCompactionCtx {
+            inner: TestContext,
+            calls: AtomicU64,
+        }
+
+        #[async_trait]
+        impl LoopContext for ScriptedCompactionCtx {
+            async fn execute_tools(
+                &self,
+                calls: Vec<PendingToolInvocation>,
+                events: LoopEventEmitter<'_>,
+                cancel: CancellationToken,
+            ) -> Vec<ToolCallResult> {
+                self.inner.execute_tools(calls, events, cancel).await
+            }
+
+            async fn request_approval(
+                &self,
+                calls: &[PendingToolInvocation],
+                already_approved_for_run: bool,
+                cancel: CancellationToken,
+            ) -> Vec<ApprovalGate> {
+                self.inner
+                    .request_approval(calls, already_approved_for_run, cancel)
+                    .await
+            }
+
+            fn next_message_id(&self) -> MessageId {
+                self.inner.next_message_id()
+            }
+
+            fn next_request_id(&self) -> RequestId {
+                self.inner.next_request_id()
+            }
+
+            async fn compact_history(
+                &self,
+                reason: AutoCompactionReason,
+                summary_text: &str,
+                _cancel: CancellationToken,
+            ) -> Option<CompactionOutcome> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(reason, AutoCompactionReason::HistorySoftLimit);
+                assert!(!summary_text.is_empty());
+                Some(CompactionOutcome {
+                    source_event_count: 99,
+                    compacted_through: EventSequence::new(42),
+                })
+            }
+        }
+
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new().text("host-backed summary").complete(),
+            MockScript::new().text("done").complete(),
+        ]));
+        let ctx = ScriptedCompactionCtx {
+            inner: TestContext::new(Vec::new()),
+            calls: AtomicU64::new(0),
+        };
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            request_with_messages(numbered_messages(6, "with some body")),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            turn_context(
+                ContextBudget::from_context_window(1_000_000, 4_096, 0),
+                Some(30),
+                2,
+            ),
+        )
+        .await
+        .expect("soft-limit with host outcome");
+
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 1);
+        let started = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::CompactionStarted { source_event_count } => Some(source_event_count),
+                _ => None,
+            }
+        }).expect("CompactionStarted");
+        assert_eq!(started, 99);
+        let completed = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::CompactionCompleted { compacted_through, .. } => Some(compacted_through),
+                _ => None,
+            }
+        }).expect("CompactionCompleted");
+        assert_eq!(completed, EventSequence::new(42));
+    }
+
+    #[tokio::test]
+    async fn manual_compaction_emits_events_and_returns_rebuilt_messages() {
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new().text("manual summary").complete(),
+        ]));
+        let messages = numbered_messages(5, "manual body");
+        let ctx = TestContext::new(Vec::new());
+        let sink = RecordingEvents::default();
+
+        let rebuilt = run_manual_compaction(
+            &provider,
+            request_with_messages(messages.clone()),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            turn_context(ContextBudget::default(), None, 2),
+        )
+        .await
+        .expect("manual compaction");
+
+        assert_eq!(rebuilt.len(), 3);
+        assert_eq!(rebuilt[0].role, MessageRole::User);
+        assert!(matches!(&rebuilt[0].content[0],
+            ContentPart::Text(text) if text.text == "manual summary"));
+        assert_eq!(rebuilt[1], messages[3]);
+        assert_eq!(rebuilt[2], messages[4]);
+
+        // 不是 run：没有 RunStarted / RunCancelled / ContextPrepared。
+        assert_eq!(
+            sink.types(),
+            vec!["CompactionStarted", "MessageCommitted.user", "CompactionCompleted"]
+        );
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].tools.is_empty());
+        let completed = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::CompactionCompleted { summary_message_id, .. } => Some(summary_message_id),
+                _ => None,
+            }
+        }).expect("CompactionCompleted");
+        assert_eq!(rebuilt[0].id, completed);
+    }
+
+    #[tokio::test]
+    async fn manual_compaction_rejects_when_nothing_to_compact() {
+        let provider = RecordingProvider::new(MockProvider::sequence(Vec::new()));
+        let ctx = TestContext::new(Vec::new());
+        let sink = RecordingEvents::default();
+
+        let error = run_manual_compaction(
+            &provider,
+            request_with_messages(vec![user_hello()]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            TurnContext::default(),
+        )
+        .await
+        .expect_err("nothing to compact");
+
+        assert!(matches!(error, EngineError::Sink(_)));
+        assert!(provider.requests().is_empty());
+        assert!(sink.snapshot().is_empty());
+    }
+
+    #[tokio::test]
+    async fn long_conversation_never_exceeds_hard_limit() {
+        let provider = GrowingProvider::new();
+        let grow = MockTool::new(
+            "grow",
+            ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "x".repeat(800),
+            })]),
+        );
+        let ctx = TestContext::new(vec![grow]);
+        let sink = RecordingEvents::default();
+        let hard_limit = 1_200;
+
+        let error = run_session(
+            &provider,
+            sample_request(vec![ToolDefinition {
+                name: "grow".into(),
+                description: "grow the context".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            15,
+            turn_context(
+                ContextBudget::from_context_window(hard_limit, 0, 0),
+                Some(500),
+                4,
+            ),
+        )
+        .await
+        .expect_err("max tool rounds expected");
+        assert!(matches!(error, EngineError::MaxToolRounds(15)));
+        assert!(sink.types().contains(&"CompactionStarted"));
+
+        let requests = provider.requests();
+        let main_requests: Vec<&CanonicalModelRequest> = requests
+            .iter()
+            .filter(|request| !request.tools.is_empty())
+            .collect();
+        assert_eq!(main_requests.len(), 15);
+        for request in &main_requests {
+            let estimate = estimate_request_tokens(request);
+            assert!(
+                estimate <= hard_limit,
+                "estimated {estimate} tokens for a main request with {} messages",
+                request.messages.len()
+            );
+        }
     }
 }

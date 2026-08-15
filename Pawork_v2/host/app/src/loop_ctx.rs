@@ -11,14 +11,18 @@ use pawork_api::{
     ToolError, ToolEventSink, ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
 };
 use pawork_domain::{
-    ApprovalDecision, CancellationToken, ContentPart, ErrorContext, MessageId, RequestId, RunId,
-    TextContent, ToolCallId, ToolDescriptor, WorkspaceId,
+    ApprovalDecision, CancellationToken, ContentPart, ErrorContext, EventId, EventSequence,
+    MessageId, RequestId, RunId, TextContent, ToolCallId, ToolDescriptor, WorkspaceId,
 };
 use pawork_engine::{
-    now_timestamp, ApprovalGate, LoopContext, LoopEventEmitter, PendingToolInvocation,
-    ToolCallResult,
+    now_timestamp, ApprovalGate, AutoCompactionReason, CompactionOutcome, LoopContext,
+    LoopEventEmitter, PendingToolInvocation, ToolCallResult,
 };
 use pawork_policy::{ApprovalMode, ApprovalPrompt, PolicyDecision, PolicyEngine, PolicyInput, RiskLevel};
+use pawork_session::{
+    CompactionEngine, CompactionReason as SessionCompactionReason, RetentionInputs,
+    RetentionMessage, RetentionToolCall, SessionStore, ToolCallRetentionState, DEFAULT_BRANCH_ID,
+};
 use pawork_tools::ToolScheduler;
 
 use crate::approval::{
@@ -37,6 +41,10 @@ pub(crate) struct SessionLoopCtx<'a> {
     pub workspace_trusted: bool,
     pub descriptors: Vec<ToolDescriptor>,
     pub approval_host: Arc<dyn ApprovalPromptHost>,
+    /// 压缩回调需要的持久化宿主；测试替身可为 None（engine 退回消息层压缩）。
+    pub store: Option<&'a SessionStore>,
+    pub session_id: Option<pawork_domain::SessionId>,
+    pub token_estimator: Option<Arc<dyn pawork_session::TokenEstimator>>,
 }
 
 struct ForwardingSink<'a> {
@@ -157,6 +165,107 @@ impl LoopContext for SessionLoopCtx<'_> {
     fn next_request_id(&self) -> RequestId {
         let n = self.next_request.fetch_add(1, Ordering::Relaxed);
         RequestId::from(format!("req-{n}"))
+    }
+
+    /// 压缩回调：session 侧 fork recovery branch + 产出压缩快照，回传元数据。
+    ///
+    /// 无持久化宿主（测试替身）时返回 None，engine 退回纯消息层压缩。
+    async fn compact_history(
+        &self,
+        reason: AutoCompactionReason,
+        summary_text: &str,
+        _cancel: CancellationToken,
+    ) -> Option<CompactionOutcome> {
+        let store = self.store?;
+        let session_id = self.session_id.clone()?;
+        let estimator = self.token_estimator.clone()?;
+        let session_reason = match reason {
+            AutoCompactionReason::Manual => SessionCompactionReason::Manual,
+            AutoCompactionReason::HistorySoftLimit => SessionCompactionReason::HistorySoftLimit,
+            AutoCompactionReason::InputBudgetExceeded => {
+                SessionCompactionReason::InputBudgetExceeded
+            }
+        };
+
+        // 从事件流构建保留策略输入：消息 + 工具调用状态（未完成的调用必须保留）。
+        let events = store
+            .replay_events(&session_id, 1, usize::MAX)
+            .await
+            .ok()?;
+        let mut inputs = RetentionInputs::default();
+        let mut started_tools: std::collections::BTreeMap<pawork_domain::ToolCallId, (EventId, bool)> =
+            Default::default();
+        for envelope in &events {
+            match &envelope.payload {
+                pawork_domain::AgentEvent::MessageCommitted { message } => {
+                    inputs.messages.push(RetentionMessage {
+                        event_id: envelope.event_id.clone(),
+                        message: message.clone(),
+                    });
+                }
+                pawork_domain::AgentEvent::ToolCallStarted { tool_call_id, .. } => {
+                    started_tools.insert(
+                        tool_call_id.clone(),
+                        (envelope.event_id.clone(), false),
+                    );
+                }
+                pawork_domain::AgentEvent::ToolExecutionCompleted { tool_call_id, .. } => {
+                    if let Some(entry) = started_tools.get_mut(tool_call_id) {
+                        entry.1 = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (event_id, completed) in started_tools.into_values() {
+            inputs.tool_calls.push(RetentionToolCall {
+                event_id,
+                state: if completed {
+                    ToolCallRetentionState::Completed
+                } else {
+                    ToolCallRetentionState::Pending
+                },
+            });
+        }
+
+        // 对齐 engine 的消息级保留（crate::RETAINED_MESSAGES 条消息 ≈ 2 轮对话），
+        // 让持久化投影与 engine 重建历史在同一边界折叠。
+        let engine = CompactionEngine::with_policy(
+            store,
+            pawork_session::RetentionPolicy {
+                retained_turns: (crate::RETAINED_MESSAGES / 2) as u32,
+                ..Default::default()
+            },
+            estimator,
+        );
+        let result = engine
+            .compact(
+                &session_id,
+                DEFAULT_BRANCH_ID,
+                session_reason,
+                summary_text,
+                &inputs,
+            )
+            .await
+            .ok()?;
+        let retained_event_ids: std::collections::HashSet<&pawork_domain::EventId> =
+            result.decision.retained_event_ids.iter().collect();
+        Some(CompactionOutcome {
+            source_event_count: result.total_events as u64,
+            // 折叠水位 = 被折叠（未保留）消息提交事件的最大 sequence；
+            // 保留尾部与摘要（新 sequence）不受影响。无折叠时为 0（projection 不删）。
+            compacted_through: events
+                .iter()
+                .filter(|envelope| {
+                    matches!(
+                        &envelope.payload,
+                        pawork_domain::AgentEvent::MessageCommitted { .. }
+                    ) && !retained_event_ids.contains(&envelope.event_id)
+                })
+                .map(|envelope| envelope.sequence)
+                .max()
+                .unwrap_or(EventSequence::new(0)),
+        })
     }
 }
 

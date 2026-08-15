@@ -53,6 +53,7 @@ async fn show(core: &AppCore, spec: &str, json: bool) -> Result<(), CliError> {
     let session = core.resolve_session(spec).await?;
     let record = core.get_session(&session).await?;
     let messages = core.resume_messages(&session).await?;
+    let usage = core.session_usage(&session).await?;
     if json {
         println!(
             "{}",
@@ -63,6 +64,7 @@ async fn show(core: &AppCore, spec: &str, json: bool) -> Result<(), CliError> {
                 "updated_at_ms": record.updated_at_ms,
                 "active_branch": record.active_branch,
                 "messages": messages,
+                "usage": usage,
             })
         );
         return Ok(());
@@ -72,6 +74,10 @@ async fn show(core: &AppCore, spec: &str, json: bool) -> Result<(), CliError> {
     println!("created: {}", format_millis(record.created_at_ms));
     println!("updated: {}", format_millis(record.updated_at_ms));
     println!("messages: {}", messages.len());
+    println!(
+        "usage: in {} out {} (cache read {} / write {})",
+        usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_write_tokens
+    );
     println!();
     for message in messages {
         println!("[{}] {}", role_label(&message), message_text(&message));

@@ -13,9 +13,10 @@ pawork-api = { path = "../../foundation/api" }
 pawork-config = { path = "../../foundation/config" }
 pawork-engine = { path = "../../engine/engine" }
 pawork-providers = { path = "../../providers/adapters", features = ["anthropic"] }
-pawork-session = { path = "../../storage/session" }
+pawork-session = { path = "../../storage/session", features = ["compaction"] }
 pawork-tools = { path = "../../execution/tools" }
 pawork-policy = { path = "../../execution/policy" }
+pawork-provider-core = { path = "../../providers/core" }
 pawork-workspace = { path = "../../workspace/core" }
 async-trait.workspace = true
 futures.workspace = true

@@ -6,6 +6,7 @@
 
 mod appender;
 mod cancel;
+pub mod context;
 mod event;
 mod session_turn;
 mod tool_loop;
@@ -22,10 +23,16 @@ pub use appender::{tool_results_message, AssembledTurn, PendingToolCall, ToolCal
 pub use cancel::{
     CancelHandle, CancelReason, CancelReceipt, NoopProcessTreeCleaner, ProcessTreeCleaner,
 };
+pub use context::{
+    compute_compaction, AutoCompactionReason, CompactionReason, CompactionTrigger, ContextBudget,
+    ContextBudgetBreakdown, ContextLimits, HeuristicEstimator, TokenEstimator, ToolSchema,
+    TrimThresholds, TrimmedToolResult, TurnContext,
+};
 pub use event::{map_provider_event, AgentEventSink, EngineError, LoopEventEmitter};
 pub use session_turn::{now_timestamp, run_session_turn, SessionTurn};
 pub use tool_loop::{
-    run_session, ApprovalGate, LoopContext, PendingToolInvocation, DEFAULT_MAX_TOOL_ROUNDS,
+    run_manual_compaction, run_session, ApprovalGate, CompactionOutcome, LoopContext,
+    PendingToolInvocation, DEFAULT_MAX_TOOL_ROUNDS,
 };
 
 /// 用冻结契约的默认值填满 CanonicalModelRequest（tools/hosted/extensions 空，

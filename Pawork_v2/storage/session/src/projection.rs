@@ -166,6 +166,16 @@ pub(crate) fn apply_projection(
                 ],
             )?;
         }
+        AgentEvent::CompactionCompleted { compacted_through, .. } => {
+            // 压缩语义：sequence <= compacted_through 的消息投影被摘要取代。
+            // 事件流保持 append-only；摘要消息自身的 sequence 大于该水位，不受影响。
+            let through = i64::try_from(compacted_through.value())
+                .map_err(|_| SessionStoreError::SequenceOverflow)?;
+            connection.execute(
+                "DELETE FROM messages WHERE session_id=?1 AND sequence<=?2",
+                params![session_id, through],
+            )?;
+        }
         AgentEvent::RunCompleted { .. } => {
             set_run_state(
                 connection,
@@ -722,6 +732,134 @@ mod tests {
             Timestamp::from_unix_millis(1_000 + sequence),
             payload,
         )
+    }
+
+    fn text_message(id: &str, text: &str) -> pawork_domain::Message {
+        pawork_domain::Message {
+            id: MessageId::from(id),
+            role: pawork_domain::MessageRole::User,
+            content: vec![pawork_domain::ContentPart::Text(
+                pawork_domain::TextContent { text: text.into() },
+            )],
+            metadata: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_completed_replaces_messages_projection_but_keeps_event_stream() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-compaction-projection");
+        store
+            .create_session(&session, "compaction", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::RunStarted {
+                        trigger_message_id: MessageId::from("trigger"),
+                    },
+                ),
+            )
+            .await
+            .expect("seq 1");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    2,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-old-1", "old-1"),
+                    },
+                ),
+            )
+            .await
+            .expect("seq 2");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    3,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-old-2", "old-2"),
+                    },
+                ),
+            )
+            .await
+            .expect("seq 3");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 4, AgentEvent::CompactionStarted { source_event_count: 2 }),
+            )
+            .await
+            .expect("seq 4");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    5,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-summary", "summary"),
+                    },
+                ),
+            )
+            .await
+            .expect("seq 5");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    6,
+                    AgentEvent::CompactionCompleted {
+                        summary_message_id: MessageId::from("m-summary"),
+                        compacted_through: EventSequence::new(3),
+                    },
+                ),
+            )
+            .await
+            .expect("seq 6");
+
+        let snapshot = store.projection_snapshot(&session).await.expect("snapshot");
+        let ids: Vec<&str> = snapshot
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["m-summary"],
+            "sequence <= compacted_through 的消息投影被摘要取代"
+        );
+
+        let replay = store
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("replay");
+        assert_eq!(replay.len(), 6, "事件流 append-only 不受压缩影响");
+
+        store.rebuild_projection(&session).await.expect("rebuild");
+        let rebuilt = store
+            .projection_snapshot(&session)
+            .await
+            .expect("rebuilt snapshot");
+        let ids: Vec<&str> = rebuilt
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["m-summary"], "重放重建与在线投影语义一致");
+
+        store.shutdown().await.expect("shutdown");
     }
 
     #[tokio::test]

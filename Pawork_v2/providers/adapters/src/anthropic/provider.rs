@@ -205,7 +205,11 @@ impl AnthropicProvider {
     }
 }
 
-fn builtin_models() -> Vec<ModelDefinition> {
+/// Anthropic Messages 协议的静态内置模型目录（S5 registry 合并源）。
+///
+/// 调用方（app 装配层）在选中 Messages 协议时把它并入 ModelRegistry；
+/// 本函数不做 Provider 名称分支，id 由调用方提供。
+pub fn builtin_models() -> Vec<ModelDefinition> {
     let capabilities = ModelCapabilities {
         text: true,
         image_input: true,

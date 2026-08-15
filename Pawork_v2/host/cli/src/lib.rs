@@ -128,27 +128,67 @@ async fn run_inner() -> Result<(), CliError> {
 }
 
 async fn run_models(core: &AppCore, json: bool) -> Result<(), CliError> {
-    match core.list_models().await {
-        Ok(models) => {
-            if json {
-                let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "provider": core.provider_id().as_str(),
-                        "models": ids,
-                    })
-                );
-            } else {
-                println!("provider: {}", core.provider_id());
-                for model in models {
-                    println!("{}", model.id);
-                }
-            }
-            Ok(())
+    let catalog = core.model_catalog().await;
+    if json {
+        // unstable：沿 S1 约定，models 数组随 registry 目录演进为对象形状。
+        let models: Vec<serde_json::Value> = catalog
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "id": entry.id.as_str(),
+                    "provider": entry.provider.as_str(),
+                    "display_name": entry.display_name.as_str(),
+                    "context_window_tokens": entry.context_window_tokens,
+                    "max_output_tokens": entry.max_output_tokens,
+                    "pricing": &entry.pricing,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({
+                "provider": core.provider_id().as_str(),
+                "models": models,
+            })
+        );
+    } else {
+        println!("provider: {}", core.provider_id());
+        for entry in &catalog {
+            let pricing = entry.pricing.as_ref().map_or_else(
+                || "pricing n/a".to_string(),
+                |pricing| {
+                    format!(
+                        "${}/${} per M {}",
+                        micros_to_currency(pricing.input_per_mtoken_micros),
+                        micros_to_currency(pricing.output_per_mtoken_micros),
+                        pricing.currency
+                    )
+                },
+            );
+            println!(
+                "  {:<36} window {:>10}  max output {:>10}  {}",
+                entry.id.as_str(),
+                display_tokens(entry.context_window_tokens),
+                display_tokens(entry.max_output_tokens),
+                pricing,
+            );
         }
-        Err(err) => Err(CliError::Turn(format_provider_error(&err))),
+   }
+    Ok(())
+}
+
+/// 0 表示目录未登记该字段，展示为 `-` 而非误导性的 0。
+fn display_tokens(tokens: u64) -> String {
+    if tokens == 0 {
+        "-".to_string()
+    } else {
+        tokens.to_string()
     }
+}
+
+/// micros/Mtok → 货币单位（仅展示层转换，运算仍用整数 micros）。
+fn micros_to_currency(micros: u64) -> String {
+    format!("{}", micros as f64 / 1_000_000.0)
 }
 
 fn approval_host(json: bool) -> Arc<dyn ApprovalPromptHost> {

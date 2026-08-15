@@ -23,16 +23,18 @@ use pawork_config::{
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, ContentPart, EventId,
     EventSequence, Message, MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId,
-    SessionId, TextContent, ToolDescriptor, ToolResultContent, WorkspaceId,
+    SessionId, TextContent, ToolDescriptor, ToolResultContent, WorkspaceId, TokenUsage, Cost,
 };
 use pawork_engine::{
-    assemble_request_with_tools, run_session, AgentEventSink, EngineError, SessionTurn,
-    DEFAULT_MAX_TOOL_ROUNDS,
+    assemble_request, assemble_request_with_tools, run_manual_compaction, run_session,
+    AgentEventSink, ContextBudget, ContextLimits, EngineError, HeuristicEstimator, SessionTurn,
+    TokenEstimator as EngineTokenEstimator, TurnContext, DEFAULT_MAX_TOOL_ROUNDS,
 };
 use pawork_providers::{
     AnthropicConfig, AnthropicProvider, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
 use pawork_policy::PolicyEngine;
+use pawork_provider_core::{CatalogEntry, ModelRegistry};
 use pawork_session::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 use pawork_tools::{
     ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, RunCommandTool,
@@ -133,12 +135,22 @@ pub enum AppError {
     ApprovalMode(String),
 }
 
+/// S5 压缩在 engine 侧保留的最近消息条数；session 侧保留策略按
+/// `RETAINED_MESSAGES / 2` 轮对齐同一折叠边界。
+pub(crate) const RETAINED_MESSAGES: usize = 4;
+
 /// 已装配的 Core：协议中立 provider、读写工具、默认 model、可选 session store。
 pub struct AppCore {
     provider: Arc<dyn ModelProvider>,
     credential: Option<ResolvedCredential>,
     model: ModelId,
     provider_id: ProviderId,
+    /// 模型目录（builtin + provider 静态目录 + config 覆盖 + 运行期探测）。
+    registry: Arc<ModelRegistry>,
+    /// engine 侧启发式 token 估算器（预算 / 截断 / 压缩判定共用）。
+    heuristic: Arc<HeuristicEstimator>,
+    /// session 侧窄口 TokenEstimator（压缩快照统计），由 heuristic 桥接。
+    session_estimator: Arc<dyn pawork_session::TokenEstimator>,
     adapter_protocol: AdapterProtocol,
     store: Option<SessionStore>,
     scheduler: Arc<ToolScheduler>,
@@ -152,6 +164,19 @@ pub struct AppCore {
     next_run: AtomicU64,
     next_session: AtomicU64,
     next_message: AtomicU64,
+}
+
+/// 把 engine 的完整估算器桥接到 session 侧窄口 trait（依赖倒置的宿主实现）。
+struct SessionTokenEstimatorBridge(Arc<HeuristicEstimator>);
+
+impl pawork_session::TokenEstimator for SessionTokenEstimatorBridge {
+    fn count_text(&self, text: &str) -> u64 {
+        self.0.count_text(text)
+    }
+
+    fn count_message(&self, message: &Message) -> u64 {
+        self.0.count_message(message)
+    }
 }
 
 impl std::fmt::Debug for AppCore {
@@ -264,6 +289,17 @@ impl AppCore {
                 Some(credential.clone()),
             )?),
         };
+        // registry 装配：builtin 目录 + adapter 静态目录（按协议选择，不做名称分支）
+        // + config models 覆盖。运行期探测合并在 model_catalog() 内按需进行。
+        let mut registry = ModelRegistry::builtin();
+        if protocol == AdapterProtocol::Messages {
+            let provider = ProviderId::from(provider_id.as_str());
+            registry.merge_provider_models(&provider, &pawork_providers::builtin_models());
+            apply_config_models(&mut registry, &config.models, &provider);
+        } else {
+            let provider = ProviderId::from(provider_id.as_str());
+            apply_config_models(&mut registry, &config.models, &provider);
+        }
 
         Ok(Self::from_parts_with_protocol(
             adapter,
@@ -272,6 +308,7 @@ impl AppCore {
             ProviderId::from(provider_id.as_str()),
             protocol,
             None,
+            registry,
         ))
     }
 
@@ -289,6 +326,7 @@ impl AppCore {
             provider_id,
             AdapterProtocol::ChatCompletions,
             store,
+            ModelRegistry::builtin(),
         )
     }
 
@@ -299,12 +337,19 @@ impl AppCore {
         provider_id: ProviderId,
         adapter_protocol: AdapterProtocol,
         store: Option<SessionStore>,
+        registry: ModelRegistry,
     ) -> Self {
+        let heuristic = Arc::new(HeuristicEstimator::default());
+        let session_estimator: Arc<dyn pawork_session::TokenEstimator> =
+            Arc::new(SessionTokenEstimatorBridge(heuristic.clone()));
         Self {
             provider,
             credential,
             model,
             provider_id,
+            registry: Arc::new(registry),
+            heuristic,
+            session_estimator,
             adapter_protocol,
             store,
             scheduler: Arc::new(ToolScheduler::new(
@@ -589,8 +634,12 @@ impl AppCore {
         if trigger.role != MessageRole::User {
             return Err(AppError::EmptyTurn);
         }
+        // trigger 与 assistant/tool 消息共用 next_message 命名空间；
+        // 若误用 next_request，两个计数器同从 1 起且同毫秒时会产生相同
+        // message_id（messages.message_id 全局主键 → UNIQUE 冲突）。
+        let message_n = self.next_message.fetch_add(1, Ordering::Relaxed);
         trigger.id = MessageId::from(format!(
-            "msg-{}-{n}",
+            "msg-{}-{message_n}",
             pawork_engine::now_timestamp().as_unix_millis()
         ));
         let trigger = trigger.clone();
@@ -629,6 +678,9 @@ impl AppCore {
             workspace_trusted: self.workspace_trusted,
             descriptors: self.descriptors.clone(),
             approval_host: self.approval_host.clone(),
+            store: Some(self.store()?),
+            session_id: Some(session_id.clone()),
+            token_estimator: Some(self.session_estimator.clone()),
         };
         Ok(run_session(
             self.provider.as_ref(),
@@ -638,12 +690,194 @@ impl AppCore {
             cancel,
             &loop_ctx,
             DEFAULT_MAX_TOOL_ROUNDS,
+            self.turn_context(),
         )
         .await?)
     }
 
     pub async fn list_models(&self) -> Result<Vec<ModelDefinition>, ProviderError> {
         self.provider.list_models(self.credential.as_ref()).await
+    }
+
+    /// 本会话模型的上下文配置：registry 解析 window / max_output 推导预算；
+    /// 目录无条目或 window 为 0 时退回禁用（与 S5 前行为一致，不编造窗口）。
+    pub fn turn_context(&self) -> TurnContext {
+        let Some(entry) = self.registry.resolve(self.model.as_str()) else {
+            return TurnContext::default();
+        };
+        if entry.context_window_tokens == 0 {
+            return TurnContext::default();
+        }
+        let output_reserve = if entry.max_output_tokens > 0 {
+            entry.max_output_tokens
+        } else {
+            4_096
+        };
+        let budget = ContextBudget::from_context_window(
+            entry.context_window_tokens,
+            output_reserve,
+            0,
+        );
+        // 软限 = 硬限的 80%：提前压缩，避免贴着上限触发 provider 4xx。
+        let soft_limit = budget.max_input_tokens / 5 * 4;
+        TurnContext {
+            limits: Some(ContextLimits {
+                budget,
+                history_soft_limit_tokens: Some(soft_limit),
+            }),
+            estimator: Some(self.heuristic.clone()),
+            retained_messages: RETAINED_MESSAGES,
+        }
+    }
+
+    /// 模型目录（builtin + config 覆盖 + 运行期 /models 探测合并，探测失败退回静态）。
+    pub async fn model_catalog(&self) -> Vec<CatalogEntry> {
+        let mut catalog = self.registry.as_ref().clone();
+        if let Ok(probe) = catalog
+            .probe_provider(self.provider.as_ref(), self.credential.as_ref())
+            .await
+        {
+            for definition in &probe.definitions {
+                if catalog.resolve(definition.id.as_str()).is_none() {
+                    catalog.extend_with(vec![CatalogEntry {
+                        id: definition.id.clone(),
+                        provider: self.provider_id.clone(),
+                        display_name: definition.display_name.clone(),
+                        context_window_tokens: definition.context_window_tokens,
+                        max_output_tokens: definition.max_output_tokens,
+                        capabilities: definition.capabilities.clone(),
+                        pricing: None,
+                        aliases: Vec::new(),
+                    }]);
+                }
+            }
+        }
+        catalog.list().into_iter().cloned().collect()
+    }
+
+    /// 会话累计用量：对已完成 run 的 RunCompleted.usage 求和（投影可重建）。
+    pub async fn session_usage(&self, session_id: &SessionId) -> Result<TokenUsage, AppError> {
+        Ok(self.session_usage_inner(session_id).await?.0)
+    }
+
+    /// 最近一次完成 run 的用量（CLI 每轮尾部行）。
+    pub async fn last_run_usage(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<TokenUsage>, AppError> {
+        Ok(self.session_usage_inner(session_id).await?.1)
+    }
+
+    async fn session_usage_inner(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(TokenUsage, Option<TokenUsage>), AppError> {
+        let runs = self
+            .store()?
+            .projection_snapshot(session_id)
+            .await?
+            .runs;
+        let mut total = TokenUsage::default();
+        let mut last = None;
+        for run in runs
+            .iter()
+            .filter(|run| run.state == "completed")
+            .rev()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            if let Some(usage) = run
+                .data
+                // run_json 存的是 Adjacently-tagged AgentEvent：
+                // {"type":"run_completed","data":{"stop_reason":...,"usage":...}}。
+                .get("data")
+                .and_then(|inner| inner.get("usage"))
+                .and_then(|value| serde_json::from_value::<TokenUsage>(value.clone()).ok())
+            {
+                last.get_or_insert(usage.clone());
+                total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
+                total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
+                total.cache_read_tokens = total
+                    .cache_read_tokens
+                    .saturating_add(usage.cache_read_tokens);
+                total.cache_write_tokens = total
+                    .cache_write_tokens
+                    .saturating_add(usage.cache_write_tokens);
+            }
+        }
+        Ok((total, last))
+    }
+
+    /// 按 registry 定价估算费用；无定价条目返回 None（不编造）。
+    pub fn estimate_cost_for(&self, model: &ModelId, usage: &TokenUsage) -> Option<Cost> {
+        let entry = self.registry.resolve(model.as_str())?;
+        let pricing = entry.pricing.as_ref()?;
+        Some(pawork_provider_core::estimate_cost(usage, pricing))
+    }
+
+    /// 手动压缩（REPL /compact）：与自动链同一 engine 函数与事件序，
+    /// persist-first 落 CompactionStarted / MessageCommitted(summary) /
+    /// CompactionCompleted；返回重建后的消息列表。
+    pub async fn compact_session(
+        &self,
+        session_id: &SessionId,
+        render: &dyn AgentEventSink,
+        cancel: CancellationToken,
+    ) -> Result<Vec<Message>, AppError> {
+        let messages = self.resume_messages(session_id).await?;
+        let trigger = messages
+            .last()
+            .cloned()
+            .ok_or(AppError::EmptyTurn)?;
+        let n = self.next_request.fetch_add(1, Ordering::Relaxed);
+        let request = assemble_request(
+            RequestId::from(format!("req-compact-{n}")),
+            self.model.clone(),
+            messages,
+        );
+        let run_n = self.next_run.fetch_add(1, Ordering::Relaxed);
+        let run_id = RunId::from(format!(
+            "compact-{}-{run_n}",
+            pawork_engine::now_timestamp().as_unix_millis()
+        ));
+        let turn = SessionTurn::new(
+            session_id.clone(),
+            run_id.clone(),
+            self.provider_id.clone(),
+            self.model.clone(),
+            self.next_sequence(session_id).await?,
+            trigger,
+        );
+        let sink = PersistThenRender {
+            store: self.store()?,
+            render,
+        };
+        let loop_ctx = SessionLoopCtx {
+            scheduler: self.scheduler.clone(),
+            workspace_id: self.workspace_id.clone(),
+            run_id,
+            next_message: &self.next_message,
+            next_request: &self.next_request,
+            policy: PolicyEngine::new(self.approval_mode),
+            approval_mode: self.approval_mode,
+            workspace_trusted: self.workspace_trusted,
+            descriptors: self.descriptors.clone(),
+            approval_host: self.approval_host.clone(),
+            store: Some(self.store()?),
+            session_id: Some(session_id.clone()),
+            token_estimator: Some(self.session_estimator.clone()),
+        };
+        Ok(run_manual_compaction(
+            self.provider.as_ref(),
+            request,
+            turn,
+            &sink,
+            cancel,
+            &loop_ctx,
+            self.turn_context(),
+        )
+        .await?)
     }
 
     pub async fn shutdown(self) -> Result<(), AppError> {
@@ -678,6 +912,38 @@ fn find_provider<'a>(
         .iter()
         .find(|provider| provider.id == id)
         .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })
+}
+
+/// 把 config `[[models]]` 覆盖并入 registry：已有条目只改 window / max_output
+/// （能力、定价、别名保持目录权威），未知条目追加（provider 归当前 provider，
+/// 能力 fail-closed 全 false，定价 None——不编造）。
+fn apply_config_models(
+    registry: &mut ModelRegistry,
+    models: &[pawork_config::ModelConfig],
+    provider_id: &ProviderId,
+) {
+    for config in models {
+        let mut entry = match registry.resolve(&config.id) {
+            Some(existing) => existing.clone(),
+            None => CatalogEntry {
+                id: pawork_domain::ModelId::new(&config.id),
+                provider: provider_id.clone(),
+                display_name: config.id.clone(),
+                context_window_tokens: 0,
+                max_output_tokens: 0,
+                capabilities: Default::default(),
+                pricing: None,
+                aliases: Vec::new(),
+            },
+        };
+        if let Some(window) = config.context_window {
+            entry.context_window_tokens = window;
+        }
+        if let Some(max_output) = config.max_output {
+            entry.max_output_tokens = max_output;
+        }
+        registry.extend_with(vec![entry]);
+    }
 }
 
 fn workspace_root_from_config_file(workspace_file: Option<&Path>) -> Option<PathBuf> {
@@ -731,6 +997,8 @@ mod tests {
                     AgentEvent::ToolExecutionStarted { .. } => "ToolExecutionStarted",
                     AgentEvent::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
                     AgentEvent::ToolOutputDelta { .. } => "ToolOutputDelta",
+                    AgentEvent::CompactionStarted { .. } => "CompactionStarted",
+                    AgentEvent::CompactionCompleted { .. } => "CompactionCompleted",
                     _ => "other",
                 })
                 .collect()
@@ -816,12 +1084,19 @@ mod tests {
     }
 
     async fn mock_core(events: Vec<ProviderStreamEvent>) -> (AppCore, tempfile::TempDir) {
+        mock_core_with_usage(events, TokenUsage::default()).await
+    }
+
+    async fn mock_core_with_usage(
+        events: Vec<ProviderStreamEvent>,
+        usage: TokenUsage,
+    ) -> (AppCore, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("session.db");
         let (store, _) = SessionStore::open(&path).await.expect("store");
         let summary = ModelResponseSummary {
             stop_reason: StopReason::Completed,
-            usage: TokenUsage::default(),
+            usage,
             response_id: Some("resp-1".into()),
             provider_metadata: Default::default(),
         };
@@ -843,6 +1118,27 @@ mod tests {
             Some(store),
         );
         (core, dir)
+    }
+
+    fn core_with_registry(registry: ModelRegistry, model: &str) -> AppCore {
+        AppCore::from_parts_with_protocol(
+            Arc::new(ScriptedProvider {
+                events: Vec::new(),
+                summary: ModelResponseSummary {
+                    stop_reason: StopReason::Completed,
+                    usage: TokenUsage::default(),
+                    response_id: Some("resp-1".into()),
+                    provider_metadata: Default::default(),
+                },
+                models: Vec::new(),
+            }),
+            None,
+            ModelId::from(model),
+            ProviderId::from("mock"),
+            AdapterProtocol::ChatCompletions,
+            None,
+            registry,
+        )
     }
 
     #[test]
@@ -1139,6 +1435,217 @@ mod tests {
             joined.contains("hello-from-workspace"),
             "expected tool output or assistant recap, got {joined}"
         );
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[test]
+    fn turn_context_derives_from_registry_with_config_override() {
+        let mut registry = ModelRegistry::builtin();
+        apply_config_models(
+            &mut registry,
+            &[pawork_config::ModelConfig {
+                id: "glm-5.2".into(),
+                context_window: Some(200_000),
+                max_output: Some(16_384),
+            }],
+            &ProviderId::from("mock"),
+        );
+        let core = core_with_registry(registry, "glm-5.2");
+        let context = core.turn_context();
+        let limits = context.limits.expect("registry entry enables limits");
+        assert_eq!(limits.budget.context_window_tokens, 200_000);
+        assert_eq!(limits.budget.max_input_tokens, 183_616);
+        // 软限 = 硬限 80%（整数运算：183_616 / 5 * 4）。
+        assert_eq!(limits.history_soft_limit_tokens, Some(146_892));
+        assert!(context.estimator.is_some());
+
+        // 目录无条目：禁用而非编造窗口，与 S5 前行为一致。
+        let core = core_with_registry(ModelRegistry::builtin(), "no-such-model");
+        let context = core.turn_context();
+        assert!(context.limits.is_none());
+        assert!(context.estimator.is_none());
+
+        // config 覆盖 window=0：显式未知同样禁用。
+        let mut zero_window = ModelRegistry::builtin();
+        apply_config_models(
+            &mut zero_window,
+            &[pawork_config::ModelConfig {
+                id: "glm-5.2".into(),
+                context_window: Some(0),
+                max_output: None,
+            }],
+            &ProviderId::from("mock"),
+        );
+        let core = core_with_registry(zero_window, "glm-5.2");
+        assert!(core.turn_context().limits.is_none());
+    }
+
+    #[test]
+    fn estimate_cost_uses_registry_pricing_and_hides_unpriced() {
+        let core = core_with_registry(ModelRegistry::builtin(), "glm-5.2");
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            ..TokenUsage::default()
+        };
+        let cost = core
+            .estimate_cost_for(&ModelId::from("deepseek-v4-pro"), &usage)
+            .expect("deepseek-v4-pro is priced");
+        assert_eq!(cost.currency, "USD");
+        assert_eq!(cost.amount_micros, 435_000 + 870_000);
+        // 订阅制无公开费率、未知条目：不编造费用。
+        assert!(core
+            .estimate_cost_for(&ModelId::from("glm-5.2"), &usage)
+            .is_none());
+        assert!(core
+            .estimate_cost_for(&ModelId::from("mystery"), &usage)
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn session_usage_accumulates_completed_runs() {
+        let usage = TokenUsage {
+            input_tokens: 120,
+            output_tokens: 45,
+            cache_read_tokens: 10,
+            cache_write_tokens: 5,
+        };
+        let (core, _dir) = mock_core_with_usage(
+            vec![
+                ProviderStreamEvent::TextDelta("ok".into()),
+                ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+            ],
+            usage.clone(),
+        )
+        .await;
+        let session = core.create_session("usage").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn 1");
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn 2");
+
+        let total = core.session_usage(&session).await.expect("total");
+        assert_eq!(total.input_tokens, 240);
+        assert_eq!(total.output_tokens, 90);
+        assert_eq!(total.cache_read_tokens, 20);
+        assert_eq!(total.cache_write_tokens, 10);
+        let last = core
+            .last_run_usage(&session)
+            .await
+            .expect("last")
+            .expect("at least one completed run");
+        assert_eq!(last, usage);
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn compact_session_commits_summary_and_replaces_projection() {
+        let (core, _dir) = mock_core(vec![
+            ProviderStreamEvent::TextDelta("folded-history".into()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ])
+        .await;
+        let session = core.create_session("compact").await.expect("create");
+        let sink = RecordingEvents::default();
+        for _ in 0..3 {
+            core.chat_turn(
+                &session,
+                vec![user_hello()],
+                &sink,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("turn");
+        }
+        let before = core.resume_messages(&session).await.expect("before");
+        assert_eq!(before.len(), 6);
+
+        let rebuilt = core
+            .compact_session(&session, &sink, CancellationToken::new())
+            .await
+            .expect("compact");
+        // 重建结果 = [summary] + retained tail(4)。
+        assert_eq!(rebuilt.len(), 5);
+        // V1 语义：摘要以 User 角色作为上下文消息提交。
+        assert_eq!(rebuilt[0].role, MessageRole::User);
+        let summary_text: String = rebuilt[0]
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(summary_text.contains("folded-history"), "{summary_text}");
+
+        let envelopes = sink.0.lock().expect("mutex").clone();
+        let started = envelopes
+            .iter()
+            .position(|envelope| {
+                matches!(&envelope.payload, AgentEvent::CompactionStarted { .. })
+            })
+            .expect("CompactionStarted");
+        let completed = envelopes
+            .iter()
+            .position(|envelope| {
+                matches!(&envelope.payload, AgentEvent::CompactionCompleted { .. })
+            })
+            .expect("CompactionCompleted");
+        assert!(started < completed);
+        assert!(envelopes[started..completed].iter().any(|envelope| {
+            matches!(
+                &envelope.payload,
+                AgentEvent::MessageCommitted { message } if message.role == MessageRole::User,
+            )
+        }));
+
+        // 投影替换：早期消息被折叠，事件流保留可重放。
+        let after = core.resume_messages(&session).await.expect("after");
+        assert_eq!(after.len(), 5);
+        // 投影按 sequence 排序：保留尾部（u2..a3）在前，摘要最后追加。
+        assert_eq!(after[0].role, MessageRole::User);
+        let summary = after.last().expect("summary");
+        assert_eq!(summary.role, MessageRole::User);
+        let summary_text: String = summary
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(summary_text.contains("folded-history"), "{summary_text}");
+        // 3 = retained 的 2 条用户消息 + summary(User)。
+        assert_eq!(
+            after
+                .iter()
+                .filter(|message| message.role == MessageRole::User)
+                .count(),
+            3
+        );
+        let replayed = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, 64)
+            .await
+            .expect("replay");
+        assert!(replayed.iter().any(|envelope| {
+            matches!(&envelope.payload, AgentEvent::CompactionCompleted { .. })
+        }));
+        assert!(replayed.len() > 6, "event stream keeps original messages");
         core.shutdown().await.expect("shutdown");
     }
 

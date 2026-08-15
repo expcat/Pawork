@@ -11,7 +11,7 @@ pub mod provider;
 pub mod request;
 pub mod stream;
 
-pub use provider::{AnthropicConfig, AnthropicProvider};
+pub use provider::{builtin_models, AnthropicConfig, AnthropicProvider};
 pub use request::to_messages_body;
 pub use stream::{event_to_events, AnthropicStreamState};
 

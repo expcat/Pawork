@@ -54,7 +54,7 @@
 ## 并行拆分建议
 
 - 波 A（✅ 2026-08-15）：`pawork-provider-core`（usage/registry）；`pawork-session` compaction feature。
-- 波 B（下一波，串行）：engine context 接线（依赖波 A trait）+ app/cli 收口。
+- 波 B（✅ 2026-08-15，串行）：engine context 接线（依赖波 A trait）+ app/cli 收口。
 - 与 S6、S7 无包级交叉，可整阶段并行推进。
 
 ## 参考

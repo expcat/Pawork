@@ -22,6 +22,6 @@ pub use stream::{chunk_to_events, is_done, ChunkState};
 
 #[cfg(feature = "anthropic")]
 pub use anthropic::{
-    event_to_events, to_messages_body, AnthropicConfig, AnthropicProvider, AnthropicStreamState,
-    ANTHROPIC_VERSION,
+    builtin_models, event_to_events, to_messages_body, AnthropicConfig, AnthropicProvider,
+    AnthropicStreamState, ANTHROPIC_VERSION,
 };
