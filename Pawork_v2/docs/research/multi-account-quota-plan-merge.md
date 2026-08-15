@@ -109,7 +109,7 @@ opencodex / CLIProxyAPI 做成独立代理进程，是因为它们改不了所�
 | `plan/S2-tool-loop.md` | F5 canonical 缓存注解占位字段 + golden 要求（仅当 D4 批准） |
 | `plan/S5-context-usage.md` | F5 前缀稳定性分段产出；缓存用量并入 token 统计路径；compaction 附缓存重置标注 |
 | `plan/S6-providers-auth.md` | F1 Keychain 多凭证命名规约；plan OAuth 凭证 kind（D2）；F5 adapter 缓存映射 + registry 能力表 + 缓存用量入账；F2-B 被动配额信号捕获的 per-adapter 登记；**首个真实缓存命中测试（多轮对话场景，≥95%，§1.3）** |
-| `plan/S8-mcp-resources.md` | G6 账户/端点只读导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI 布局，secret 直转 Keychain）；F4 Agent Profile 绑定字段随 profiles 契约定型 |
+| `plan/S9-mcp-resources.md` | G6 账户/端点只读导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI 布局，secret 直转 Keychain）；F4 Agent Profile 绑定字段随 profiles 契约定型 |
 | `plan/S11-workflow-control.md` | F1 账户层激活 + `pawork accounts` CLI；F2-A+B 额度感知；F3-B 亲和默认 +「配额余量优先」策略（D3）；F4-A+B 子 Agent 声明式绑定与预算分配；退出标准增补（缓存命中率指标、rebind 事件可重放）；**命中测试补全 agent/长任务/多 Agent 场景（下限 95%、均值 97%）** |
 | `plan/S12-release-hardening.md` | Release Gate 增缓存命中 ≥99% 目标（三场景均值，§1.3）；开发期核减的测试项在此统一收口 |
 | 全部 `plan/S*.md`（并入时顺带） | 按 §1.2 核减非关键测试项（只删不加，保留冒烟/关键路径/契约 golden），核对无门禁表述 |

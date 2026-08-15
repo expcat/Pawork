@@ -10,7 +10,7 @@ Agent 获得受控的命令执行能力：run_command 工具经 shell 风险分�
 
 | V2 包（目录） | 本阶段动作 | V1 来源与方式 |
 | --- | --- | --- |
-| `pawork-exec`（execution/exec） | 激活：V1 `process-runtime` + `sandbox-runtime` 迁移，平台代码按 `os/{windows,linux,macos}.rs` 重排；进程树管理（Windows Job Object / Unix 进程组）、沙箱后端（AppContainer / Landlock / Seatbelt）、fail-closed 降级；agent-domain 类型中性化（保持 W1 可独立发布）。**`pty-service` 本阶段不迁**（消费者是交互式终端/GUI，S9 登记） | 直接迁移（[archive/M1](archive/M1-execution-security.md) pawork-exec 节） |
+| `pawork-exec`（execution/exec） | 激活：V1 `process-runtime` + `sandbox-runtime` 迁移，平台代码按 `os/{windows,linux,macos}.rs` 重排；进程树管理（Windows Job Object / Unix 进程组）、沙箱后端（AppContainer / Landlock / Seatbelt）、fail-closed 降级；agent-domain 类型中性化（保持 W1 可独立发布）。**`pty-service` 本阶段不迁**（消费者是交互式终端/GUI，S10 登记；S7 最小 GUI 不需要 PTY） | 直接迁移（[archive/M1](archive/M1-execution-security.md) pawork-exec 节） |
 | `pawork-tools` | 增强：`run_command` 迁移——cwd 限定 workspace root、超时（`AllowWithConstraints`/descriptor 默认）、`max_output_bytes` 截断、stdout/stderr 经 `ToolOutputDelta(ToolOutputStream::Stdout/Stderr)` 流式入事件 | 直接迁移 |
 | `pawork-policy` | 接线：`shell` 风险分类（S3 已随包迁入）→ run_command 的 pre-tool 决策（`CommandRisk::Dangerous` → `AskUser` + `RiskLevel::Dangerous` 提示）；参数注入分类回归 | 接线 |
 | `pawork-engine` | 增强：`CancelHandle` + `ProcessTreeCleaner` 语义对齐 V1——run 取消（用户 Ctrl-C / 上限触发）时级联终止工具子进程树，`RunCancelled` 事件收尾 | 语义对齐 V1 `cancel.rs` |
@@ -22,7 +22,7 @@ Agent 获得受控的命令执行能力：run_command 工具经 shell 风险分�
 2. **run_command 工具**：审批提示呈现完整命令 + 风险等级；`ApprovedForRun` 对同 run 重复命令生效。
 3. **取消链路**：Ctrl-C → `CancelHandle.cancel(User)` → 工具 cancel token + 进程树清理 → 事件收尾，全链一次打通。
 4. **fail-closed**：沙箱后端探测失败 / 显式 `--sandbox off` 之外的任何异常 → 拒绝执行并事件化说明（绝不静默裸跑）。
-5. **输出纪律**：命令输出只经工具结果/事件进入模型上下文（截断后），完整输出落工件文件（临时目录），为 S5 上下文预算减负、为 S7 artifact 化铺路。
+5. **输出纪律**：命令输出只经工具结果/事件进入模型上下文（截断后），完整输出落工件文件（临时目录），为 S5 上下文预算减负、为 S8 artifact 化铺路。
 
 ## 真实测试与评估（冒烟清单）
 
@@ -44,7 +44,7 @@ Agent 获得受控的命令执行能力：run_command 工具经 shell 风险分�
 | GLM Coding Plan | `glm-5.2` | 一次成功（`LOOP_OK`；复跑 `cargo check --offline` 通过） | 6 轮 provider；`run_command` → `read_file` → `edit_file` → `run_command` ×2 | `let x: i32 = "boom"` → `let x: &str = "boom"` | Seatbelt `sandbox_exec`/`hard`；首次 `cargo check` exit 101 后修好。危险审批、Ctrl-C 也走本通道 |
 | OpenCode Go | `deepseek-v4-pro` | 一次成功（`LOOP_OK`；复跑通过） | 5 轮；`run_command` → `read_file` → `edit_file` → `run_command` | 同处改为 `let x: i32 = 42` | 同沙箱；超时冒烟也走本通道（30s 可见，无残留） |
 
-补充：`Remove-Item` 不会被标 Dangerous，波 C 改用 `git push --force`。沙箱项按落地与 ADR-031 验收，不改选择器去迎合任务书「拒跑」字面。任务书第 44 行 env 门控 `--ignored` 闭环未补（手工冒烟已覆盖）。完整输出 artifact 仍空，留给 S7。
+补充：`Remove-Item` 不会被标 Dangerous，波 C 改用 `git push --force`。沙箱项按落地与 ADR-031 验收，不改选择器去迎合任务书「拒跑」字面。任务书第 44 行 env 门控 `--ignored` 闭环未补（手工冒烟已覆盖）。完整输出 artifact 仍空，留给 S8。
 
 ## 定向自动化测试
 
@@ -63,8 +63,8 @@ Agent 获得受控的命令执行能力：run_command 工具经 shell 风险分�
 
 ## 为后续阶段预留 / 明确不做
 
-- 预留：完整命令输出落工件文件的落点（S7 blob-store artifact 接管）；`AllowWithConstraints` 已消费。
-- 不做：PTY / 交互式命令（S9）、后台长驻任务（S11 automation）、三平台沙箱实跑（S12）。
+- 预留：完整命令输出落工件文件的落点（S8 blob-store artifact 接管）；`AllowWithConstraints` 已消费。
+- 不做：PTY / 交互式命令（S10）、后台长驻任务（S11 automation）、三平台沙箱实跑（S12）。
 
 ## 并行拆分建议
 

@@ -39,7 +39,7 @@
 
 ## 2. 主要对标项目
 
-Pawork 的候选功能对照基于三家的公开功能面（功能对照见 [design.md](design.md) §6，转正登记见 [../ROADMAP.md](../ROADMAP.md) §3.3）。通用红线：纯 Rust 不引入 JS 运行时（排除 JS 插件生态路线）；无 TUI（CLI 交互模式 + 未来 GPUI Desktop）。
+Pawork 的候选功能对照基于三家的公开功能面（功能对照见 [design.md](design.md) §6，转正登记见 [../ROADMAP.md](../ROADMAP.md) §3.3）。通用红线：纯 Rust 不引入 JS 运行时（排除 JS 插件生态路线）；无 TUI（CLI 交互模式 + S7 起的 GPUI Desktop，设计见 [gui-design.md](gui-design.md)）。
 
 ### 2.1 OpenCode
 

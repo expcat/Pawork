@@ -1,6 +1,6 @@
 # S11：工作流、多 Agent 与控制面
 
-> 阶段 S11 · 编排与治理 · 状态：⚪未开始 · 依赖：S9（app/cli 正式化、Event Hub）· 规模：大
+> 阶段 S11 · 编排与治理 · 状态：⚪未开始 · 依赖：S10（app/cli 正式化、Event Hub）· 规模：大
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -17,7 +17,7 @@
 | `pawork-control-plane`（control-plane/core） | tenant/usage-ledger/audit-log 三合一；`dedup_key` 索引与 audit JSONL golden 先行；usage 投影 trait（quota 与 budget-gate 的消费源） | S5 的会话用量聚合接入 ledger；audit 记录审批/通道事件 |
 | `pawork-quota`（control-plane/quota) | 核心迁移（domain/service/ledger 投影 + LocalLedger）；**远端适配器约 8k 行冻结候审不迁** | `pawork usage` 子命令 |
 | `pawork-provider-control`（control-plane/provider-control） | `account-control` feature 分层迁移；控制面 schema 迁移收回本包（`pawork-sqlite` 纯化承诺兑现）；lease/binding 经 Provider factory 消费，account/routing/health 无消费者则 experimental 登记 | Provider 绑定/租约 |
-| `pawork-review`（workflow/review） | re-anchor + resolution 生命周期 + 平台无关 ForgeAdapter trait | 会话内评审最小流（对 S7 diff 的评论→re-anchor→resolve），Forge 实接可 experimental |
+| `pawork-review`（workflow/review） | re-anchor + resolution 生命周期 + 平台无关 ForgeAdapter trait | 会话内评审最小流（对 S8 diff 的评论→re-anchor→resolve），Forge 实接可 experimental |
 | `pawork-memory`（workflow/memory） | Provider 无关记忆抽象迁移；EmbeddingProvider（`provider-api` 已有 trait）若无真实实现则 **experimental 登记** | 待定（登记激活条件） |
 
 ## 关键任务
@@ -52,10 +52,14 @@
 - [ ] 七包「无消费者不合入」逐包核对：接线或 experimental 登记，无静默库存。
 - [ ] quota 远端适配器确未迁移（冻结清单核对）；supervisor 拆分行为等价回归通过。
 
+## GUI 增量
+
+按 [gui-design.md](../docs/gui-design.md) §5：Workflow / 用量条 / 子 Agent 时间线分组。无对应 Core 事件则不做按钮。
+
 ## 为后续阶段预留 / 明确不做
 
 - 预留：tenant 多租户词表在位（单机默认单租户）；ForgeAdapter 真实平台实现按需求激活。
-- 不做：quota 远端六厂商适配器 + WebScrape（冻结候审）；分布式编排。
+- 不做：quota 远端六厂商适配器 + WebScrape（冻结候审）；分布式编排；插件编排面。
 
 ## 并行拆分建议
 

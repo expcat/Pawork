@@ -57,7 +57,7 @@
 ## 为后续阶段预留 / 明确不做
 
 - 预留：`ToolDescriptor.requires_approval`/`allowed_in_untrusted_workspace` 字段已随契约在位（S3 消费）；scheduler 的审批挂点（`ApprovalResolver` 注入位）预留为 trait 参数但 S2 传 None。
-- 不做：写工具与审批（S3）、run_command（S4）、`@file` 引用与 file-index（S8）、工具输出进 context 预算（S5）。
+- 不做：写工具与审批（S3）、run_command（S4）、`@file` 引用与 file-index（S9）、工具输出进 context 预算（S5）。
 
 ## 并行拆分建议
 

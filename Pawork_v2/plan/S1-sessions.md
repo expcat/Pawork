@@ -4,7 +4,7 @@
 
 ## 目标（本阶段结束时用户能做什么）
 
-对话自动落盘为可重放的事件流：`pawork sessions list/show` 查看历史会话，`pawork chat --resume <session>` 续聊且模型记得上下文，进程被杀后恢复无损；新增 `pawork run "<prompt>"` 非交互单次模式与 `--json`（JSONL 事件流输出，**unstable**，S9 对齐正式 headless 协议），从本阶段起所有测试都可脚本化断言事件。
+对话自动落盘为可重放的事件流：`pawork sessions list/show` 查看历史会话，`pawork chat --resume <session>` 续聊且模型记得上下文，进程被杀后恢复无损；新增 `pawork run "<prompt>"` 非交互单次模式与 `--json`（JSONL 事件流输出，**unstable**，S10 对齐正式 headless 协议；S7 GUI 走独立协议帧），从本阶段起所有测试都可脚本化断言事件。
 
 **本阶段把 V2 最重要的冻结契约立起来**：`AgentEventEnvelope`（`schema_version = 1`）与 `session_events` append-only 存储。此后一切功能（GUI 投影、编排、重放、导入导出）都建立在这条事件流上——这是「后期追加不重写」的地基。
 
@@ -12,9 +12,9 @@
 
 | V2 包（目录） | 本阶段动作 | V1 来源与方式 |
 | --- | --- | --- |
-| `pawork-domain` | 增强：V1 `agent-events` 整包并入为 `events` 模块——`AgentEventEnvelope` 全字段 + `AgentEvent` **32 个变体一次迁入**（含 `Diagnostic` 与暂未消费的 Plan/Goal/Task/Compaction/Checkpoint 等，为 S5/S7/S11 预留位）；`ApprovalDecision`/`ToolOutputStream`/`EventSequence` 辅助类型同迁。serde golden **先于任何消费实现**落地并通过。V1 无独立 golden 夹具，本波按迁移词典 §6.1「缺失则补」新建 JSONL/JSON 字节锁 | 直接迁移 |
+| `pawork-domain` | 增强：V1 `agent-events` 整包并入为 `events` 模块——`AgentEventEnvelope` 全字段 + `AgentEvent` **32 个变体一次迁入**（含 `Diagnostic` 与暂未消费的 Plan/Goal/Task/Compaction/Checkpoint 等，为 S5/S8/S11 预留位）；`ApprovalDecision`/`ToolOutputStream`/`EventSequence` 辅助类型同迁。serde golden **先于任何消费实现**落地并通过。V1 无独立 golden 夹具，本波按迁移词典 §6.1「缺失则补」新建 JSONL/JSON 字节锁 | 直接迁移 |
 | `pawork-sqlite`（foundation/sqlite) | 激活：V1 `app-database` 纯化版——SQLite Actor 模式 + backup/restore + 通用 migration 框架；不持任何业务 schema | 直接迁移（[archive/M0](archive/M0-skeleton-foundation.md) pawork-sqlite 节） |
-| `pawork-session`（storage/session） | 激活（核心）：`event_store`（append + `sequence` 严格连续校验 + parent 校验 + `AppendReceipt`）、**V1 migration 序列全量复用**（v1→v9，`CURRENT_SCHEMA_VERSION = 9`；含 `sessions/session_branches/session_events/messages/runs/tool_calls` 等全部表与 append-only 双触发器）、`projection` 最小子集（从事件重建对话消息，供 resume）。branch 概念随 DDL 存在，UX 只用默认分支 | 直接迁移（[archive/M3](archive/M3-storage-session.md) 细则；compaction/导入器/lifecycle 高级能力分别留 S5/S8） |
+| `pawork-session`（storage/session） | 激活（核心）：`event_store`（append + `sequence` 严格连续校验 + parent 校验 + `AppendReceipt`）、**V1 migration 序列全量复用**（v1→v9，`CURRENT_SCHEMA_VERSION = 9`；含 `sessions/session_branches/session_events/messages/runs/tool_calls` 等全部表与 append-only 双触发器）、`projection` 最小子集（从事件重建对话消息，供 resume）。branch 概念随 DDL 存在，UX 只用默认分支 | 直接迁移（[archive/M3](archive/M3-storage-session.md) 细则；compaction/导入器/lifecycle 高级能力分别留 S5/S9/S10） |
 | `pawork-engine` | 增强：turn 全程事件化——`RunStarted → AssistantTextDelta/ThinkingDelta → UsageUpdated → MessageCommitted → RunCompleted/RunCancelled/RunFailed`，经 appender 分配 `sequence` 落库，同时推给渲染端（双写）；resume 时从 projection 重建 `initial_messages` | appender 参考 V1 `agent-engine::appender` |
 | `pawork-app` | 增强：装配 sqlite + session store；会话生命周期（新建/打开/续聊） | 新写（薄） |
 | `pawork-cli` | 增强：`sessions list/show`、`chat --resume <id>`、`run "<prompt>"`（非交互单轮任务模式）、`--json`（每行一个 envelope JSON；stdout 只承载 JSONL，文本与日志走 stderr——stdout 协议纪律自此生效） | 新写 |
@@ -67,7 +67,7 @@
 ## 为后续阶段预留 / 明确不做
 
 - 预留：全部 32 事件变体在位；`session_branches`/`tool_calls` 等表随 migration 就绪但未消费；projection 只实现 resume 所需最小面。
-- 不做：compaction（S5）、会话导入导出（S8）、lifecycle lease/integrity（S9 多客户端时激活）、分支/Fork UX（落点 S9，数据层本阶段已就绪）。
+- 不做：compaction（S5）、会话导入导出（S9）、lifecycle lease/integrity（S10 多客户端时激活）、分支/Fork UX（落点 S10，数据层本阶段已就绪）。
 
 ## 并行拆分建议
 

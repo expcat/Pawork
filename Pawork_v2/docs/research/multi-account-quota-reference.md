@@ -269,7 +269,7 @@ V1 已有大量同构资产（详见 [provider-control-plane](../../../docs/feat
 | 预算执行（litellm budget） | `usage-ledger`（dedup_key 幂等）+ orchestration budget-gate；「仅 fresh Exact 硬停止」规则 | S11 激活 |
 | 子代理绑定不同通道 | S11 多 Agent demo 即「GLM 与 OpenCode Go 各驱动一个子 Agent」；`TeamEvent` 双通道语义 | 已规划，缺声明式绑定契约 |
 | 缓存断点/亲和键 | `provider-anthropic` 完整版含 prompt cache（S6 迁移项）；context-engine 分级裁剪与 compaction | **缺 canonical 缓存策略层**（注解、能力表、用量入账、命中率观测） |
-| 账户/端点配置导入（cc-switch SSOT、CLIProxyAPI auth-dir） | `compat-loader`：Claude/Codex/Grok/Cursor/Pi 五来源只读导入（S8） | 已有框架，缺账户/端点维度 |
+| 账户/端点配置导入（cc-switch SSOT、CLIProxyAPI auth-dir） | `compat-loader`：Claude/Codex/Grok/Cursor/Pi 五来源只读导入（S9） | 已有框架，缺账户/端点维度 |
 
 主要缺口（即候选功能，登记于 [../design.md](../design.md) §5，方案见 [multi-account-quota-proposals.md](multi-account-quota-proposals.md)）：同 Provider 多账户的用户面（UX/凭证组织）、订阅 plan 凭证类型、被动配额信号捕获、缓存感知亲和默认化、子 Agent 声明式绑定契约、canonical 输入缓存策略控制。
 

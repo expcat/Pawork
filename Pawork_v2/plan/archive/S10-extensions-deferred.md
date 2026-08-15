@@ -1,6 +1,8 @@
-# S10：扩展生态
+# 归档：扩展生态（原 S10，已移出排期）
 
-> 阶段 S10 · 插件、Hooks 与 LSP · 状态：⚪未开始 · 依赖：S8（mcp/resources 在位）、S9（app 注册入口正式化）· 规模：大
+> **2026-08-16 起不再是执行阶段。** WASM 插件 / 市场 / 用户 Hooks / LSP 整族待设计与决策，登记于 [../../ROADMAP.md](../../ROADMAP.md) §4。本文保留原实现草案，供日后纳入排期时引用。必要预留接口（`PluginId`、`ExternalPlugin`、`pawork-api` `plugin` feature 门、GUI 未知 capability）仍按现行计划保留，但不在 S0–S12 激活实现包。
+>
+> 原依赖：S9（mcp/resources 在位）、S10（app 注册入口正式化）· 规模：大
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -23,7 +25,7 @@
 2. **插件闭环**：安装（验签→写盘→注册 ToolRegistry/Hook 链）→ 调用 → 撤销（注销→精确清理无残留）；不受信包拒装（fail-closed）。
 3. **hooks 执行位点**：接 S3 已通电的审批/事件位点；pre-tool 返回值短路语义；hook 事件可重放。
 4. **LSP 工具化**：与 rust-analyzer 握手、definition/references/diagnostics 三个查询工具；server 进程经 exec 沙箱启动。
-5. **重依赖隔离**：wasmtime（27）与 rmcp（S8 已锁）不进默认构建路径（编译时间与 `cargo tree` 断言）。
+5. **重依赖隔离**：wasmtime（27）与 rmcp（S9 已锁）不进默认构建路径（编译时间与 `cargo tree` 断言）。
 
 ## 真实测试与评估（冒烟清单）
 

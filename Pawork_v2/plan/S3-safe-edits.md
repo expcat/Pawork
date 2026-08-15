@@ -14,7 +14,7 @@ Agent 获得写能力并被审批体系约束：write_file / edit_file / apply_p
 | `pawork-tools` | 增强：`write_file`/`edit_file`/`apply_patch` 三模块迁移；scheduler 的 pre-tool 决策位点接 `PolicyEngine`（capability + trusted + descriptor → decide） | 直接迁移 |
 | `pawork-engine` | 增强：审批暂停/恢复语义对齐 V1——工具执行在 `ApprovalResolver` 上 await；`ToolApprovalRequested` →（等待）→ `ToolApprovalResponded(ApprovalDecision)` 事件对入流；`ApprovedForRun` 的运行内记忆；Denied 时向模型回填拒绝结果、run 继续 | 语义对齐 V1（`ApprovalResolver`/`ApprovalOutcome`） |
 | `pawork-app` | 增强：装配 `PolicyEngine`（`ApprovalMode` 来自 config/CLI 覆盖）；workspace 信任判定最小版（`trust_workspaces` 仅 Builtin/Global 层可配，沿用 V1 剥离语义） | 新写（薄） |
-| `pawork-cli` | 增强：终端审批交互（显示工具名、目标相对路径、`ApprovalPrompt.message` 与 `RiskLevel`，`y`=一次 / `a`=本运行 / `n`=拒绝）；`--approval-mode <always-ask|ask-for-writes|ask-for-dangerous|on-failure|never-ask|read-only>`；`--json` 模式下审批默认拒绝（无人值守 fail-closed，S9 headless 协议再引入远程审批） | 新写 |
+| `pawork-cli` | 增强：终端审批交互（显示工具名、目标相对路径、`ApprovalPrompt.message` 与 `RiskLevel`，`y`=一次 / `a`=本运行 / `n`=拒绝）；`--approval-mode <always-ask|ask-for-writes|ask-for-dangerous|on-failure|never-ask|read-only>`；`--json` 模式下审批默认拒绝（无人值守 fail-closed，S7 GUI 可本机点选；S10 headless 再引入远程审批） | 新写 |
 | `pawork-workspace` | 增强：路径校验入口改经 `pawork-policy::path`（S2 的临时校验替换为正式安全内核——**这是计划内替换，不是返工**：S2 入口签名不变，实现换成 policy 调用） | 接线 |
 
 ## 关键任务
@@ -23,7 +23,7 @@ Agent 获得写能力并被审批体系约束：write_file / edit_file / apply_p
 2. **三个写工具迁移**：V1 行为测试随迁（edit 的精确匹配/多处冲突、apply_patch 的 hunk 应用与失败原子性）。
 3. **审批链路**：engine 事件对 + CLI 交互 + `ApprovedForRun` 记忆 + Denied 回填；审批决策可重放（事件含 decision，resume 后不重新执行已决工具）。
 4. **未信任 workspace 默认限制**：写三件 `allowed_in_untrusted_workspace = false`，未信任目录下写工具一律 `Deny`（即使 `never-ask`，对齐 V1 描述符硬门）；信任列表只认 Builtin/Global 层配置。
-5. **CLI 审批 UX**：单屏呈现将写入的内容摘要（S7 才有正式 diff，本阶段以「目标路径 + 变更行数 + 前 N 行预览」呈现）。
+5. **CLI 审批 UX**：单屏呈现将写入的内容摘要（S8 才有正式 diff，本阶段以「目标路径 + 变更行数 + 前 N 行预览」呈现）。
 
 ## 真实测试与评估（冒烟清单，GLM 与 OpenCode Go 各一遍）
 
@@ -63,7 +63,7 @@ Agent 获得写能力并被审批体系约束：write_file / edit_file / apply_p
 ## 为后续阶段预留 / 明确不做
 
 - 预留：`PolicyDecision::AllowWithConstraints`（timeout/output 上限）为 S4 run_command 铺路；`shell` 风险分类模块已在包内、S4 接线。
-- 不做：run_command（S4）、diff 预览（S7 checkpoint/diff 后升级审批 UX）、远程审批（S9）。
+- 不做：run_command（S4）、diff 预览（S8 checkpoint/diff 后升级审批 UX）、远程审批（S10）。
 
 ## 并行拆分建议
 

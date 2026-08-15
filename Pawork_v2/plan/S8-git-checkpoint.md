@@ -1,6 +1,6 @@
-# S7：Git、Diff 与 Checkpoint
+# S8：Git、Diff 与 Checkpoint
 
-> 阶段 S7 · 版本控制与回滚 · 状态：⚪未开始 · 依赖：S3（写工具在位；run_command 非必需）· 规模：中 ·（与 S5/S6 可并行）
+> 阶段 S8 · 版本控制与回滚 · 状态：⚪未开始 · 依赖：S3（写工具在位；run_command 非必需）· 规模：中 ·（与 S5/S6 可并行；S7 GUI 非阻塞，但有 GUI 时应同步 Changes 面）
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -47,9 +47,13 @@ Agent 的改动变得可审阅、可撤销：`pawork diff` 以结构化 diff 呈
 - [ ] `pawork-git` 不依赖 `pawork-workspace`（roots 参数化，`cargo tree` 断言）。
 - [ ] 审批 diff 预览上线（S3 升级点兑现）。
 
+## GUI 增量
+
+按 [gui-design.md](../docs/gui-design.md) §5：在已有 Agent 壳上加 Changes（会话 diff、rollback、审批 hunk 预览）。无 Desktop 时本阶段 CLI 仍独立可验收。
+
 ## 为后续阶段预留 / 明确不做
 
-- 预留：hunk/line 级暂存（`HunkStageService`）已迁入，消费者（GUI 交互式暂存）S9 后登记；ForgeAdapter 类评审能力属 S11 review。
+- 预留：hunk/line 级暂存（`HunkStageService`）已迁入，消费者（GUI 交互式暂存）随本阶段 Changes 或 S10 补齐；ForgeAdapter 类评审能力属 S11 review。
 - 不做：自动 commit / branch 管理 UX（按需求另议）、checkpoint 的远端同步。
 
 ## 并行拆分建议

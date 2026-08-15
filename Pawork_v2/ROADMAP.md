@@ -9,6 +9,7 @@
 > | 本文 `ROADMAP.md` | 任务总索引：阶段状态、阶段外任务、未决事项、风险 |
 > | [plan/S0–S12](plan/) | 每阶段任务书：目标、涉及包与 V1 资产、关键任务、冒烟与自动化验收、退出标准、并行拆分（附件 [plan/archive/](plan/archive/README.md)：已归档的旧按域计划 M0–M8，保留包级迁移细则） |
 > | [docs/design.md](docs/design.md) | 设计文档：包布局与激活映射、冻结契约、各阶段功能设计与参照项目映射、候选功能 |
+> | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计：最小 Agent 壳、参照取舍、随阶段增量图 |
 > | [docs/references.md](docs/references.md) | 参照项目手册：对标项目的目标、功能与文档链接（附件 [docs/research/](docs/research/)：专题调研全文） |
 > | [docs/task-guide.md](docs/task-guide.md) | 任务实现规范：任务开启 / 进行 / 收尾的公共约定与最小启动提示词 |
 > | [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1 全量 Review 结论与 V1→V2 迁移词典（原 ROADMAP_V2.md，冻结参考） |
@@ -40,16 +41,16 @@
 | [S4](plan/S4-exec-sandbox.md) | 命令执行与沙箱 | run_command（进程树清理 + 沙箱 + 输出截断）——首个完整「读-改-跑」编码闭环 | exec（process/sandbox）、tools（run_command）、policy（shell 分类接线） | 「跑 cargo check 并修复报错」端到端；Ctrl-C 杀整棵进程树；fail-closed | 🟢 |
 | [S5](plan/S5-context-usage.md) | 上下文预算与用量 | 长任务不炸上下文（预算/截断/压缩）、token 与费用统计显示 | engine（context 接线）、session（compaction feature）、provider-core（usage/registry/pricing） | 超长多轮任务连贯完成；token 计量与厂商侧抽查一致 | 🟢 |
 | [S6](plan/S6-providers-auth.md) | 首发 Provider 与认证 | 六通道适配、`pawork models` 聚合、OS Keychain、API key 与 ChatGPT/xAI OAuth | providers/adapters（六通道）、auth、diagnostics（脱敏 layer）、config（凭证解析） | 六通道真实使用；运行中切换 provider/model；secret 不入日志回归 | 🔵 |
-| [S7](plan/S7-git-checkpoint.md) | Git、Diff 与 Checkpoint | 会话改动 diff 呈现、编辑前快照、`pawork rollback` 一键回滚 | git（git+diff）、blob-store（artifact/protected/checkpoint） | 真实任务后 diff 审阅 + 回滚还原；git 注入防护回归 | ⚪ |
-| [S8](plan/S8-mcp-resources.md) | MCP、资源与兼容导入 | 外接 MCP server 工具、AGENTS.md/Skills 生效、`@file` 引用、导入 Claude/Codex 等配置 | mcp（rmcp 收口）、resources、compat、workspace（file-index）、config（完整层级） | 真实 MCP server 工具与内置共存；本机 Claude/Codex 配置导入可用 | ⚪ |
-| [S9](plan/S9-serve-clients.md) | 服务化与客户端 | `pawork headless/gui serve/acp serve/service`、SDK 编程驱动、GUI 多客户端 + 断线 Replay、会话分支/Fork | protocol、transport、gui-server、sdk、client、channels、app/cli（正式化）、exec（pty）、session（lifecycle/Fork）、protocol-probe | protocol-probe 自检全过；SDK e2e；acp 接真实客户端 | ⚪ |
-| [S10](plan/S10-extensions.md) | 扩展生态 | WASM 插件安装→注册→撤销、市场、用户 Hooks、LSP 语义工具 | wasm-host、plugin（+market）、hooks、lsp | 示例插件闭环；pre-tool hook 短路生效；LSP 查询作为工具 | ⚪ |
-| [S11](plan/S11-workflow-control.md) | 工作流、多 Agent 与控制面 | Plan 审批 gate、后台任务、`pawork usage` 配额、多 Agent 编排、多账户池与路由 | workflow、memory、review、orchestration、control-plane、provider-control、quota | 多 Agent demo（两通道各驱动一个子 Agent）；plan gate 拦截；用量可查 | ⚪ |
+| [S7](plan/S7-gui-agent.md) | 最小 Agent GUI | 先锁定 GUI 设计，再交付本机单窗口：会话 / Timeline / Composer / 取消 / 模型 / 审批 | protocol（最小帧）、transport（local）、gui-server（单客户端）、client、apps/desktop、cli `gui serve` | 设计锁定；真实模型流式对话；关窗不杀 Run | ⚪ |
+| [S8](plan/S8-git-checkpoint.md) | Git、Diff 与 Checkpoint | 会话改动 diff 呈现、编辑前快照、`pawork rollback` 一键回滚；GUI Changes 面 | git（git+diff）、blob-store（artifact/protected/checkpoint） | 真实任务后 diff 审阅 + 回滚还原；git 注入防护回归 | ⚪ |
+| [S9](plan/S9-mcp-resources.md) | MCP、资源与兼容导入 | 外接 MCP server 工具、AGENTS.md/Skills 生效、`@file` 引用、导入 Claude/Codex 等配置；GUI `@` / Resources | mcp（rmcp 收口）、resources、compat、workspace（file-index）、config（完整层级） | 真实 MCP server 工具与内置共存；本机 Claude/Codex 配置导入可用 | ⚪ |
+| [S10](plan/S10-serve-clients.md) | 服务化与客户端补齐 | headless/SDK/ACP/service、多 GUI Replay、Fork、PTY；`--json` 对齐正式协议 | protocol 收口、transport 补齐、gui-server 多客户端、sdk、channels、app/cli 正式化、exec（pty）、session lifecycle、protocol-probe | protocol-probe 全过；SDK e2e；acp 接真实客户端 | ⚪ |
+| [S11](plan/S11-workflow-control.md) | 工作流、多 Agent 与控制面 | Plan 审批 gate、后台任务、`pawork usage` 配额、多 Agent 编排、多账户池与路由；GUI Workflow 面 | workflow、memory、review、orchestration、control-plane、provider-control、quota | 多 Agent demo（两通道各驱动一个子 Agent）；plan gate 拦截；用量可查 | ⚪ |
 | [S12](plan/S12-release-hardening.md) | Release Hardening 与发布 | —（验证 + 发布 + 归档） | 全部 | 全量门禁/三平台/fuzz/依赖卫生全绿；W1–W4 波次发布；V1 归档 | ⚪ |
 
-**关键节点**：S4 结束即达成旧计划 M4 的首要验收（真实仓库「读文件-改代码-跑命令」闭环），但路径上每一步（S0–S3）都已是可测可用的工具。S5–S8 把单机 CLI 补齐为完整 Coding Agent；S9–S11 横向扩展为多客户端、可编排系统；S12 收口发布。
+**关键节点**：S4 结束即达成旧计划 M4 的首要验收（真实仓库「读文件-改代码-跑命令」闭环）。S5–S6 补齐用量与首发通道后，**S7 先设计再长出最小 Agent GUI**；S8–S9 继续补 CLI 能力并按 [docs/gui-design.md](docs/gui-design.md) §5 给同一窗口加面；S10 把单窗口升级为多客户端服务；S11 编排与治理；S12 收口发布。WASM 插件 / Hooks / LSP / 市场**不在 S0–S12 排期**，见 §4。
 
-**依赖关系**：S0→S1→S2→S3→S4 严格串行（主干长成）；S5、S6、S7 之间无包级交叉，S4 后可并行推进；S8 依赖 S2（工具注册面）与 S6（config 完整化）；S9 依赖 S1–S5 稳定；S10 依赖 S8（mcp）与 S9（app 注册入口正式化）；S11 依赖 S9；S12 依赖全部。
+**依赖关系**：S0→S1→S2→S3→S4 严格串行（主干长成）；S5 与 S6 在 S4 后可并行；S7 依赖 S1–S5（会话/事件/工具/审批），S6 建议先行但不阻塞设计波；S8 依赖 S3（写工具），可与 S7 部分并行，有 Desktop 则同步 Changes；S9 依赖 S2 与 S6；S10 依赖 S7；S11 依赖 S10；S12 依赖全部已排期阶段。
 
 ---
 
@@ -62,6 +63,7 @@
 | V1 全量 Review 与 V2 重构方案（原 ROADMAP_V2.md） | 2026-08-14 | [docs/v1-migration-reference.md](docs/v1-migration-reference.md)（Review 结论、目录结构、映射总表、发布与测试策略） |
 | 按域迁移计划 M0–M8 撰写（后被增量式取代） | 2026-08-14 | [plan/archive/](plan/archive/README.md)（保留包级迁移细则，供各阶段引用） |
 | 重规划为增量式阶段计划 S0–S12 | 2026-08-14 | 本文 §2 + [plan/S0–S12](plan/) |
+| 调整后续顺序：插件移出排期、GUI 提前并先设计 | 2026-08-16 | 本文 §2/§4；[docs/gui-design.md](docs/gui-design.md)；[plan/S7-gui-agent.md](plan/S7-gui-agent.md)；旧扩展任务书归档为 [plan/archive/S10-extensions-deferred.md](plan/archive/S10-extensions-deferred.md) |
 | 多账户额度/切换/子 Agent 路由/输入缓存调研与方案确认（G1–G7 → F1–F6，决策 D1–D8 全部确认） | 2026-08-14 | [docs/research/](docs/research/) 三篇；候选登记 [docs/design.md](docs/design.md) §5 |
 | 文档体系整合（五文档结构：索引 / 任务书 / 设计 / 参照 / 规范） | 2026-08-14 | 本文 + [docs/design.md](docs/design.md) + [docs/references.md](docs/references.md) + [docs/task-guide.md](docs/task-guide.md) + [docs/v1-migration-reference.md](docs/v1-migration-reference.md) |
 
@@ -69,7 +71,7 @@
 
 | 任务 | 说明 | 任务书 / 依据 | 状态 |
 | --- | --- | --- | --- |
-| 多账户功能族并入 plan | 把已确认的 F1–F5 与 G6 增量写入 S2/S5/S6/S8/S11/S12 计划文档，并按「少测试」约定核减非关键测试项 | [docs/research/multi-account-quota-plan-merge.md](docs/research/multi-account-quota-plan-merge.md) §4（前置条件已满足，可随时开启） | ⚪ |
+| 多账户功能族并入 plan | 把已确认的 F1–F5 与 G6 增量写入 S2/S5/S6/S9/S11/S12 计划文档，并按「少测试」约定核减非关键测试项 | [docs/research/multi-account-quota-plan-merge.md](docs/research/multi-account-quota-plan-merge.md) §4（前置条件已满足，可随时开启） | ⚪ |
 
 ### 3.3 候选（未排期）
 
@@ -85,10 +87,10 @@
 | crates.io 占名 | 是否早期以 0.0.1 空包占位 | 不阻塞开发 |
 | 冻结候审资产砍留 | quota 远端 / browser-computer / tool_search（清单见 [docs/v1-migration-reference.md](docs/v1-migration-reference.md) §4.4） | S11 前 |
 | V1 目录处置 | 归档分支 / tag | S12 |
-| GPUI Desktop（apps/desktop） | 消费 `pawork-client`，建议 S12 后独立启动 | 不阻塞 |
+| **扩展生态整族（WASM 插件 / 市场 / 用户 Hooks / LSP）** | **移出 S0–S12 排期，待设计与决策。** 必要预留保留：`PluginId`、`ToolCapability::ExternalPlugin`、policy 对 ExternalPlugin 的审批文案、事件/工具注册面不按「无插件」裁剪、`pawork-api` 预留 `plugin` feature 但不激活、GUI 未知 capability 隐藏、resources loader 抽象可供日后 LSP 注入。实现资产见 [plan/archive/S10-extensions-deferred.md](plan/archive/S10-extensions-deferred.md)。需拍板：要不要做、WASM vs 仅 MCP、市场是否运营、Hooks 信任域。 | 不阻塞 S7–S12；纳入排期时走 §3.3 |
 | OpenCode Go 仅走 `/messages` 的模型 | 是否在 S2 anthropic 适配器中一并覆盖 | S2 计划内决定 |
-| 审批等待前未落盘 `ToolApprovalRequested` | engine 在 `host.decide` 返回后才成对发出 Requested/Responded；`kill -9` 时 tool_call 停在 `collecting_arguments`，resume 走重新询问（S3 冒烟已确认不重复执行）。若要让 seal-as-denied 覆盖生产杀进程窗口，需在等待前先 persist Requested | 不阻塞 S4；S9 headless 远程审批前建议收口 |
-| `pawork-diagnostics` `experimental` 门控面 | metrics/bundle 两模块已随波 B 迁移但以 `experimental` feature 门控、默认不编译；激活条件：出现真实诊断导出/指标消费方（候选 S7 diagnostic bundle 导出、S9 gui-server 指标） | S7/S9 |
+| 审批等待前未落盘 `ToolApprovalRequested` | engine 在 `host.decide` 返回后才成对发出 Requested/Responded；`kill -9` 时 tool_call 停在 `collecting_arguments`，resume 走重新询问（S3 冒烟已确认不重复执行）。若要让 seal-as-denied 覆盖生产杀进程窗口，需在等待前先 persist Requested | 不阻塞 S4；S10 headless 远程审批前建议收口 |
+| `pawork-diagnostics` `experimental` 门控面 | metrics/bundle 两模块已随波 B 迁移但以 `experimental` feature 门控、默认不编译；激活条件：出现真实诊断导出/指标消费方（候选 S10 gui-server 指标 / diagnostic bundle 导出） | S10 |
 | 对外账户池网关模式（F6-B） | 近期不内建（F6-A 已确认）；以 `pawork-channels` 扩展 feature 长期评估，见 [docs/design.md](docs/design.md) §5 | S12 后按需 |
 
 ---

@@ -13,6 +13,7 @@
 | 本文 `v2_plan.md` | 开启编排、当前指针、统一提示词、子代理模型约定 |
 | [Pawork_v2/ROADMAP.md](Pawork_v2/ROADMAP.md) | 阶段总索引、依赖、状态、阶段外任务 |
 | [Pawork_v2/docs/design.md](Pawork_v2/docs/design.md) | 包激活映射、冻结契约、本阶段功能与参照项目映射 |
+| [Pawork_v2/docs/gui-design.md](Pawork_v2/docs/gui-design.md) | Desktop GUI 设计：S7 先锁定再实现；后续阶段只按该文加面 |
 | [Pawork_v2/docs/task-guide.md](Pawork_v2/docs/task-guide.md) | 开启核对、红线、测试通道、并行纪律、收尾与报告 |
 | [Pawork_v2/plan/](Pawork_v2/plan/) | 本阶段任务书：目标、包与 V1 资产、冒烟、退出标准、**并行拆分（波次）** |
 | [Pawork_v2/docs/references.md](Pawork_v2/docs/references.md) | 参照项目手册（公开文档入口） |
@@ -60,7 +61,7 @@
 一次开启只做 **一个波次**（任务书「并行拆分建议」里的 A/B/C/…）。做完即收尾，不自动跨入下一波。
 
 1. 读 ROADMAP §2。依赖阶段必须为 🟢；若当前阶段为 ⚠️，停止并报告阻塞。
-2. 取第一个非 🟢 的主干阶段（S0→S12）。阶段外任务（ROADMAP §3.2）仅当用户在「范围覆盖」里点名时才做。
+2. 取第一个非 🟢 的主干阶段（S0→S12）。**S7 现为最小 Agent GUI（先锁定 [gui-design.md](Pawork_v2/docs/gui-design.md) 再实现）**；WASM 插件 / Hooks / LSP / 市场不占阶段号，见 ROADMAP §4。阶段外任务（ROADMAP §3.2）仅当用户在「范围覆盖」里点名时才做。
 3. 读该阶段任务书的「并行拆分建议」，结合 §3 指针与工作区（`Pawork_v2/**/Cargo.toml`、成员 crate 是否已激活、任务书勾选）选出**最早未落地的波次**。
 4. 用户覆盖（「做 S2 波 B」「先做阶段外：多账户并入 plan」）立即生效。
 5. 在聊天里用三行声明后立刻进入 §5（不必等确认）：
@@ -68,7 +69,7 @@
    - 子代理模型：用户指定值；
    - 写入集：该波允许触碰的包/目录。
 
-主干 S0–S4 按阶段串行。跨阶段并行（S5/S6/S7 等）只在 ROADMAP §2 依赖已满足、且用户明确要求时才开第二条线。
+主干 S0–S4 按阶段串行。跨阶段并行只在 ROADMAP §2 依赖已满足、且用户明确要求时才开第二条线：S5/S6 可并行，S8（git）可与它们并行；S7 GUI 设计波不依赖 S6，实现波建议 S1–S5 已绿。
 
 ---
 

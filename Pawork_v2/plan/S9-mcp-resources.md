@@ -1,6 +1,6 @@
-# S8：MCP、资源与兼容导入
+# S9：MCP、资源与兼容导入
 
-> 阶段 S8 · 扩展输入面 · 状态：⚪未开始 · 依赖：S2（工具注册面）、S6（config 凭证链）· 规模：大
+> 阶段 S9 · 扩展输入面 · 状态：⚪未开始 · 依赖：S2（工具注册面）、S6（config 凭证链）· 规模：大
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -55,10 +55,14 @@
 - [ ] 导入产物只读、canonical、可回滚；Secret 拒绝策略回归通过。
 - [ ] config 六层完整、S0 实现替换后外部 API 未变。
 
+## GUI 增量
+
+按 [gui-design.md](../docs/gui-design.md) §5：Composer `@file` 补全；Resources 只读展示 MCP 列表与已加载 AGENTS.md/Skills。不做插件市场。
+
 ## 为后续阶段预留 / 明确不做
 
-- 预留：MCP server 进程管理走 `pawork-exec`（沙箱内启动）；resources loader 抽象为 S10 lsp 的注入源。
-- 不做：MCP server 市场/发现（S10 plugin market 范畴）、hooks（S10）、远程 MCP 鉴权 UI（按需）。
+- 预留：MCP server 进程管理走 `pawork-exec`（沙箱内启动）；resources loader 抽象保留，供日后 LSP 注入（LSP 本身待设计，见 ROADMAP §4）。
+- 不做：MCP server 市场/发现、用户 Hooks、WASM 插件（整族移出计划，见 ROADMAP §4）；远程 MCP 鉴权 UI（按需）。
 
 ## 并行拆分建议
 

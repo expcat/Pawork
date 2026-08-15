@@ -17,7 +17,7 @@
 | F1 多账户模型与凭证 | F1-B：激活 V1 账户层 + 订阅 plan 凭证类型 + Keychain 多凭证 | S6 铺垫 / S11 主体 | 沿用 + 扩展 |
 | F2 额度感知与预算控制 | F2-A+B：LocalLedger 派生 + 被动信号捕获；远端适配器保持冻结 | S11 | 沿用 + 小新增 |
 | F3 切换与路由策略 | F3-B：会话-账户亲和默认开 + 新会话再平衡 + 分类错误 rebind | S11 | 沿用 + 策略新增 |
-| F4 子 Agent 跨供应商调用 | F4-A+B：声明式绑定（默认继承、显式覆盖）+ budget-gate 预算分配 | S8 铺垫 / S11 主体 | 沿用 + 新增契约 |
+| F4 子 Agent 跨供应商调用 | F4-A+B：声明式绑定（默认继承、显式覆盖）+ budget-gate 预算分配 | S9 铺垫 / S11 主体 | 沿用 + 新增契约 |
 | F5 输入缓存策略控制 | F5-B：canonical cache 注解 + registry 能力表 + adapter 映射 + 用量入账 | S2 占位 / S5 分段 / S6 全量 | 新增（附加式契约扩展） |
 | F6 对外账户池网关模式 | F6-A：近期不做；以 openai-compatible 上游接外部网关；长期按需评估 channels 扩展 | 暂不排期 | 决策登记 |
 
@@ -38,11 +38,11 @@
   1. **账户实体沿用 V1**：`ProviderAccount`（priority、weight、max concurrency、lifecycle：Active→CoolingDown→Active / BillingBlocked / Disabled）+ `CredentialMetadata`（仅 `secret_ref`、kind、expiry、refresh state）——契约已冻结（account-control schema v2），直接迁移。
   2. **新增凭证 kind：订阅 plan OAuth**（ChatGPT plan / Claude plan / Copilot 等，对应 [../design.md](../design.md) §6.5 候选 D8）：refresh token 入 Keychain（`pawork-auth` 已有 OAuth PKCE/Device/refresh 全流程），凭证解析链沿用 Keychain → env fallback。多账户的 secret_ref 命名规约：`<provider>/<account_id>`。
   3. **CLI 用户面**：`pawork accounts list/add/remove/enable/disable`（S11 与 `pawork usage` 同批），`auth set-key` 扩展 `--account` 维度。
-- **F1-C（完整 UX）**：对齐 opencodex dashboard 体验（账户池页面、一键配额刷新、selection order 拖拽）——属 GUI 范畴，推迟到 S9 后 GPUI Desktop 迭代，不进本批。
+- **F1-C（完整 UX）**：对齐 opencodex dashboard 体验（账户池页面、一键配额刷新、selection order 拖拽）——属 GUI 范畴，推迟到 S7 最小壳之后的 Settings 增量，不进本批。
 
 **推荐 F1-B**。理由：词表与状态机已是 V1 冻结资产（参考 §7 对照表），激活成本远低于新造；Keychain 存储是对同类工具明文短板的直接差异化；plan OAuth 是两条真实测试通道（GLM Coding Plan、OpenCode Go）之后最现实的账户形态。
 
-**契约影响与开放问题**：plan-credential kind 为 account-control schema 的**附加**变体（unknown-field fail-closed 契约下需登记 schema 迁移）；ToS/封号风险需在文档显著声明（参考 §6.7——Anthropic 已封锁第三方 OAuth 的先例）；**不做**身份伪装类手段（Claude Code UA 伪装、`identity-confuse`），宁可少接一家。附属候选 G6：`pawork-compat`（S8）增加账户/端点只读导入源（`~/.codex/auth.json`、cc-switch SQLite、CLIProxyAPI auth-dir、opencodex config），导入的 secret 直接转存 Keychain、不落中间文件。
+**契约影响与开放问题**：plan-credential kind 为 account-control schema 的**附加**变体（unknown-field fail-closed 契约下需登记 schema 迁移）；ToS/封号风险需在文档显著声明（参考 §6.7——Anthropic 已封锁第三方 OAuth 的先例）；**不做**身份伪装类手段（Claude Code UA 伪装、`identity-confuse`），宁可少接一家。附属候选 G6：`pawork-compat`（S9）增加账户/端点只读导入源（`~/.codex/auth.json`、cc-switch SQLite、CLIProxyAPI auth-dir、opencodex config），导入的 secret 直接转存 Keychain、不落中间文件。
 
 ---
 
@@ -97,13 +97,13 @@
 
 **方案选项**：
 
-- **F4-A（推荐主体）**：**声明式绑定**——Agent Profile（S8 `pawork-resources` 的 profiles 契约）与编排 spawn 参数中声明 `provider` / `model` /（可选）`account_hint` / `budget`；supervisor spawn 时写入 `RouteContext`，由 `provider-control` 完成账户选择（子 Agent 不直接接触凭证，符合「Agent 只提交 AcquireRequest」红线）；budget-gate 按声明为子 Agent 划预算（V1 budget trait 注入已在 [../v1-migration-reference.md](../v1-migration-reference.md) §4.1 映射总表第 29 行规划）。S11 多 Agent demo（GLM + OpenCode Go 双子 Agent）即最小验收场景，无需另立验收。
+- **F4-A（推荐主体）**：**声明式绑定**——Agent Profile（S9 `pawork-resources` 的 profiles 契约）与编排 spawn 参数中声明 `provider` / `model` /（可选）`account_hint` / `budget`；supervisor spawn 时写入 `RouteContext`，由 `provider-control` 完成账户选择（子 Agent 不直接接触凭证，符合「Agent 只提交 AcquireRequest」红线）；budget-gate 按声明为子 Agent 划预算（V1 budget trait 注入已在 [../v1-migration-reference.md](../v1-migration-reference.md) §4.1 映射总表第 29 行规划）。S11 多 Agent demo（GLM + OpenCode Go 双子 Agent）即最小验收场景，无需另立验收。
 - **F4-B（推荐叠加，默认行为）**：**默认继承、显式覆盖**——未声明绑定的子 Agent 继承父的 provider/model/账户绑定（同账户共享缓存前缀、行为可预期），声明了则覆盖。对应 opencode 的继承语义。
 - **F4-C（不采纳）**：CCR 式 prompt 内标签路由——引擎两侧皆可控时属多余间接层，且污染 prompt、不可类型化审计。
 
 **推荐 F4-A+B 组合**。
 
-**契约影响与开放问题**：Agent Profile schema 增加绑定字段（S8 契约激活时一并定型，避免后补破坏冻结契约）；`TeamEvent`/子 Agent 事件已含归属，需确认 `ProviderRequestStarted` 携带 account 维度（脱敏 hint，不含 secret）；开放问题——子 Agent 并发对单账户 max concurrency 的挤占策略（建议沿用 lease 并发上限 + fill-first 下沉，不为子 Agent 特设通道）。
+**契约影响与开放问题**：Agent Profile schema 增加绑定字段（S9 契约激活时一并定型，避免后补破坏冻结契约）；`TeamEvent`/子 Agent 事件已含归属，需确认 `ProviderRequestStarted` 携带 account 维度（脱敏 hint，不含 secret）；开放问题——子 Agent 并发对单账户 max concurrency 的挤占策略（建议沿用 lease 并发上限 + fill-first 下沉，不为子 Agent 特设通道）。
 
 ---
 
@@ -150,7 +150,7 @@
 | S2 | F5-B-1 canonical 缓存注解占位（契约激活即完整形状，字段暂闲置） | api/provider-core（契约） |
 | S5 | F5-B-1 context 前缀分段产出；缓存用量并入 token 统计路径 | engine、provider-core、session |
 | S6 | F1-B-2 plan 凭证 kind 铺垫 + Keychain 多凭证命名；F5-B-2/3 adapter 缓存映射、registry 能力表、用量入账 | providers、auth、provider-core、config |
-| S8 | G6 账户/端点导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI 布局）；F4 Agent Profile 绑定字段随 profiles 契约定型 | compat、resources |
+| S9 | G6 账户/端点导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI 布局）；F4 Agent Profile 绑定字段随 profiles 契约定型 | compat、resources |
 | S11 | F1-B 账户层激活与 CLI；F2-A+B 额度感知；F3-B 亲和 + 再平衡 + 配额余量策略；F4-A+B 子 Agent 绑定与预算 | provider-control、quota、control-plane、orchestration、cli |
 | 冻结不变 | quota 六厂商远端适配器 + WebScrape（F2-C/D）；激活条件沿用 [../v1-migration-reference.md](../v1-migration-reference.md) §4.4 | — |
 | 明确不做 | 请求级默认轮换（F3-C）、in-band 子代理标签（F4-C）、身份伪装/identity-confuse、响应缓存（F5-C）、独立网关 app（F6-C） | — |
