@@ -12,6 +12,10 @@
 default_provider = "glm-coding"
 default_model = "glm-5.2"
 
+# 全局出站代理（可选）。Provider/OAuth 请求走此代理；
+# 回环与 *.local 目标（本地网关）保持直连。等价 CLIProxyAPI 的 proxy-url。
+# proxy_url = "http://127.0.0.1:38081"
+
 [[providers]]
 id = "glm-coding"
 base_url = "https://open.bigmodel.cn/api/coding/paas/v4"

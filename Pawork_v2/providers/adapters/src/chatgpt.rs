@@ -38,7 +38,10 @@ impl Default for ChatGptConfig {
         Self {
             base_url: DEFAULT_BASE_URL.into(),
             account_id: None,
-            client_version: env!("CARGO_PKG_VERSION").into(),
+            // /models 按 minimal_client_version 过滤目录：过旧的版本号会拿到
+            // 空列表，且退役模型（如 gpt-5.1-codex）在 /responses 直接 400。
+            // 须对齐近期 codex_cli_rs 版本而非 pawork 自身版本号。
+            client_version: "0.147.0".into(),
             http: HttpClientConfig::default(),
             request_timeout: None,
         }
@@ -99,10 +102,14 @@ impl ChatGptProvider {
         );
         let mut transport = ResponsesTransportConfig::new(&config.base_url, PROVIDER_ID);
         transport.http = config.http;
+        transport.http.user_agent = Some(format!("codex_cli_rs/{}", config.client_version));
         transport.request_timeout = config.request_timeout;
         transport.request_headers = vec![
             ("ChatGPT-Account-Id".into(), account_id.to_string()),
-            ("originator".into(), "pawork".into()),
+            // Codex backend 按 first-party originator 校验客户端身份；使用
+            // Codex 公开 client（OAuth app_EMoamEEZ73f0CkXaXp7hrann）时对齐
+            // 上游标识，否则 /responses 报 plan/entitlement 400。
+            ("originator".into(), "codex_cli_rs".into()),
         ];
         transport.wire = ResponsesWireOptions {
             store: Some(false),
@@ -175,6 +182,15 @@ fn chatgpt_models(value: &Value) -> Vec<ModelDefinition> {
                 .get("slug")
                 .or_else(|| model.get("id"))
                 .and_then(Value::as_str)?;
+            // 上游只把 visibility=list 的模型暴露给选择器；hide 的是后端内部
+            // 模型（如 codex-auto-review），不应进入 pawork 模型目录。
+            if model
+                .get("visibility")
+                .and_then(Value::as_str)
+                .is_some_and(|visibility| visibility != "list")
+            {
+                return None;
+            }
             let input_modalities = model
                 .get("input_modalities")
                 .and_then(Value::as_array)
@@ -252,5 +268,15 @@ mod tests {
         assert_eq!(models[0].capabilities.transport, ModelTransport::Responses);
         assert!(models[0].capabilities.image_input);
         assert!(models[0].capabilities.thinking);
+    }
+
+    #[test]
+    fn hidden_models_are_excluded_from_catalog() {
+        let models = chatgpt_models(&serde_json::json!({"models": [
+            {"slug": "gpt-5.6-luna", "visibility": "list", "context_window": 272000},
+            {"slug": "codex-auto-review", "visibility": "hide", "context_window": 272000}
+        ]}));
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id.as_str(), "gpt-5.6-luna");
     }
 }

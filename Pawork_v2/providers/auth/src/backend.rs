@@ -1,7 +1,7 @@
-//! Secret 存储后端抽象：`SecretBackend` trait 与两个实现。
+//! Secret 存储后端抽象：`SecretBackend` trait 与实现。
 //!
-//! - [`KeychainBackend`]：基于 `keyring` 的真实 OS Keychain 访问（生产用）。
-//! - [`MemoryBackend`]：进程内 `HashMap`，仅用于单元测试，**不**依赖系统 Keychain。
+//! - [`FileBackend`](crate::FileBackend)：单 JSON 文件（0600 + 原子写，生产用）。
+//! - [`MemoryBackend`]：进程内 `HashMap`，仅用于单元测试。
 //!
 //! 明文 secret 仅在这些后端中流转，永远不会通过错误、日志或返回的元数据泄漏。
 
@@ -12,8 +12,8 @@ use crate::error::AuthError;
 
 /// 抽象的 Secret 存储后端。
 ///
-/// 所有方法以 `(service, account)` 二元组定位条目，语义上等价于 keyring 的
-/// `Entry`。实现必须是 `Send + Sync`，且不得在任何错误信息中回传明文 secret。
+/// 所有方法以 `(service, account)` 二元组定位条目。实现必须是 `Send + Sync`，
+/// 且不得在任何错误信息中回传明文 secret。
 pub trait SecretBackend: Send + Sync {
     /// 写入（或覆盖）一条 secret。
     fn store(&self, service: &str, account: &str, secret: &str) -> Result<(), AuthError>;
@@ -23,57 +23,8 @@ pub trait SecretBackend: Send + Sync {
     fn delete(&self, service: &str, account: &str) -> Result<(), AuthError>;
 }
 
-/// 基于 `keyring` crate 的 OS Keychain 后端。
-///
-/// 在没有可用 Keychain（如部分 CI）的环境下，`store`/`get`/`delete` 可能返回
-/// [`AuthError::Keychain`]。**自动测试不应依赖此后端**。
-#[derive(Clone, Copy, Debug, Default)]
-pub struct KeychainBackend;
-
-impl KeychainBackend {
-    /// 创建一个新的 Keychain 后端。
-    pub const fn new() -> Self {
-        Self
-    }
-
-    fn entry(&self, service: &str, account: &str) -> Result<keyring::Entry, AuthError> {
-        keyring::Entry::new(service, account).map_err(map_keyring_error)
-    }
-}
-
-impl SecretBackend for KeychainBackend {
-    fn store(&self, service: &str, account: &str, secret: &str) -> Result<(), AuthError> {
-        self.entry(service, account)?
-            .set_password(secret)
-            .map_err(map_keyring_error)
-    }
-
-    fn get(&self, service: &str, account: &str) -> Result<String, AuthError> {
-        match self.entry(service, account)?.get_password() {
-            Ok(value) => Ok(value),
-            Err(error) => {
-                if is_no_entry(&error) {
-                    Err(AuthError::NotFound)
-                } else {
-                    Err(map_keyring_error(error))
-                }
-            }
-        }
-    }
-
-    fn delete(&self, service: &str, account: &str) -> Result<(), AuthError> {
-        match self.entry(service, account)?.delete_credential() {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                if is_no_entry(&error) {
-                    Err(AuthError::NotFound)
-                } else {
-                    Err(map_keyring_error(error))
-                }
-            }
-        }
-    }
-}
+// OS Keychain 后端已按用户决策移除：secret 统一走文件后端
+// （`~/.pawork/auth.json`，0600，参照 Codex CLI auth.json 形态）。
 
 /// 仅用于测试的内存后端，按 `(service, account)` 存储 secret。
 ///
@@ -154,18 +105,6 @@ impl SecretBackend for MemoryBackend {
     }
 }
 
-/// 将 keyring 原始错误归一为 [`AuthError::Keychain`]，仅保留可读描述。
-///
-/// 注意：`keyring::Error` 的 `Display` 不会输出 secret，可安全字符串化。
-fn map_keyring_error(error: keyring::Error) -> AuthError {
-    AuthError::Keychain(error.to_string())
-}
-
-/// 判断 keyring 错误是否表示「条目不存在」。
-fn is_no_entry(error: &keyring::Error) -> bool {
-    matches!(error, keyring::Error::NoEntry)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +150,6 @@ mod tests {
     fn memory_backend_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<MemoryBackend>();
-        assert_send_sync::<KeychainBackend>();
+        assert_send_sync::<crate::FileBackend>();
     }
 }

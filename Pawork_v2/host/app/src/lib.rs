@@ -42,7 +42,7 @@ use pawork_auth::{
     default_oauth_needs_refresh, load_default_oauth_credential, load_default_oauth_meta,
     read_refresh_token, refresh_access_token, resolve_oauth_credential,
     resolve_provider_credential, update_default_oauth_token, ApiKeyCredential, AuthError,
-    CredentialSource, KeychainBackend, SecretBackend,
+    CredentialSource, FileBackend, SecretBackend,
 };
 use pawork_policy::PolicyEngine;
 use pawork_provider_core::{CatalogEntry, ModelRegistry};
@@ -169,6 +169,8 @@ pub enum AppError {
     Protocol(#[from] ProtocolError),
     #[error("{0}")]
     ApprovalMode(String),
+    #[error("invalid proxy_url: {0}")]
+    InvalidProxy(String),
 }
 
 /// S5 压缩在 engine 侧保留的最近消息条数；session 侧保留策略按
@@ -306,7 +308,7 @@ impl AppCore {
         let backend = options
             .auth_backend
             .clone()
-            .unwrap_or_else(|| Arc::new(KeychainBackend::new()));
+            .unwrap_or_else(|| Arc::new(FileBackend::new()));
         let workspace_root = options
             .workspace_root
             .clone()
@@ -343,7 +345,7 @@ impl AppCore {
         store_path: impl AsRef<Path>,
     ) -> Result<Self, AppError> {
         let resolved = Loader::discover_from(global_file, workspace_file).resolve()?;
-        let backend: Arc<dyn SecretBackend> = Arc::new(KeychainBackend::new());
+        let backend: Arc<dyn SecretBackend> = Arc::new(FileBackend::new());
         let trusted = resolved.config.trust_workspaces.unwrap_or(false);
         let mut core = Self::from_config(resolved.config, provider, model, backend).await?;
         core.configure_approval(ApprovalMode::ReadOnly, trusted, Arc::new(DenyAllApprovals));
@@ -377,14 +379,14 @@ impl AppCore {
             .clone()
             .ok_or(AppError::MissingDefaultModel)?;
         let provider_ref = ProviderId::from(provider_id.as_str());
-        let backend: Arc<dyn SecretBackend> = Arc::new(KeychainBackend::new());
+        let backend: Arc<dyn SecretBackend> = Arc::new(FileBackend::new());
         let assembled = futures::executor::block_on(assemble_provider(
             &config,
             &provider_ref,
             &backend,
             false,
         ))?;
-        Ok(Self::from_parts_with_protocol(
+        let mut core = Self::from_parts_with_protocol(
             assembled.adapter,
             assembled.credential,
             ModelId::from(model_id.as_str()),
@@ -393,7 +395,9 @@ impl AppCore {
             None,
             assembled.registry,
         )
-        .with_state(config, backend))
+        .with_state(config, backend);
+        core.http = Self::http_from_config(&core.config)?;
+        Ok(core)
     }
 
     /// 完整装配（async）：OAuth 通道在此执行请求前刷新。
@@ -459,6 +463,7 @@ impl AppCore {
             Err(err) => return Err(err),
         };
         let mut core = core.with_state(config, backend);
+        core.http = Self::http_from_config(&core.config)?;
         core.provider_pending = pending;
         Ok(core)
     }
@@ -500,7 +505,7 @@ impl AppCore {
             model,
             provider_id,
             config: PaworkConfig::default(),
-            backend: Arc::new(KeychainBackend::new()),
+            backend: Arc::new(FileBackend::new()),
             http: reqwest::Client::new(),
             registry: Arc::new(registry),
             heuristic,
@@ -533,6 +538,24 @@ impl AppCore {
         self.config = config;
         self.backend = backend;
         self
+    }
+
+    /// 按全局 `proxy_url` 构造 OAuth/模型探测用 HTTP 客户端。
+    ///
+    /// 未配置时保持 reqwest 默认（读 `HTTPS_PROXY` 等环境变量）；配置后
+    /// 显式代理优先生效，回环/`.local` 目标直连（`loopback_aware_proxy`）。
+    fn http_from_config(config: &PaworkConfig) -> Result<reqwest::Client, AppError> {
+        match &config.proxy_url {
+            Some(proxy) => {
+                let proxy = pawork_net::http::loopback_aware_proxy(proxy)
+                    .map_err(|err| AppError::InvalidProxy(err))?;
+                reqwest::Client::builder()
+                    .proxy(proxy)
+                    .build()
+                    .map_err(|err| AppError::InvalidProxy(err.to_string()))
+            }
+            None => Ok(reqwest::Client::new()),
+        }
     }
 
     /// 设置审批模式、workspace 信任与决策宿主。须在 [`Self::attach_workspace`] 之前调用。
@@ -1078,10 +1101,18 @@ impl AppCore {
     /// 模型目录（builtin + config 覆盖 + 运行期 /models 探测合并，探测失败退回静态）。
     pub async fn model_catalog(&self) -> Vec<CatalogEntry> {
         let mut catalog = self.registry.as_ref().clone();
-        if let Ok(probe) = catalog
+        match catalog
             .probe_provider(self.provider.as_ref(), self.credential.as_ref())
             .await
         {
+            Err(error) => {
+                tracing::warn!(
+                    provider = %self.provider_id,
+                    error = %error,
+                    "runtime model probe failed; falling back to static catalog"
+                );
+            }
+            Ok(probe) => {
             for definition in &probe.definitions {
                 if catalog.resolve(definition.id.as_str()).is_none() {
                     catalog.extend_with(vec![CatalogEntry {
@@ -1095,6 +1126,7 @@ impl AppCore {
                         aliases: Vec::new(),
                     }]);
                 }
+            }
             }
         }
         catalog.list().into_iter().cloned().collect()
@@ -1130,10 +1162,18 @@ impl AppCore {
             }
         }
         if !self.provider_pending {
-            if let Ok(probe) = catalog
+            match catalog
                 .probe_provider(self.provider.as_ref(), self.credential.as_ref())
                 .await
             {
+                Err(error) => {
+                    tracing::warn!(
+                        provider = %self.provider_id,
+                        error = %error,
+                        "runtime model probe failed; falling back to static catalog"
+                    );
+                }
+                Ok(probe) => {
                 for definition in &probe.definitions {
                     if catalog.resolve(definition.id.as_str()).is_none() {
                         catalog.extend_with(vec![CatalogEntry {
@@ -1147,6 +1187,7 @@ impl AppCore {
                             aliases: Vec::new(),
                         }]);
                     }
+                }
                 }
             }
         }
@@ -1384,10 +1425,11 @@ async fn assemble_provider(
             })?;
             let base_url =
                 config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
-            let provider = pawork_providers::ChatGptProvider::new(
-                pawork_providers::ChatGptConfig::new(account_id).with_base_url(base_url),
-                Some(credential.clone()),
-            )?;
+            let mut chatgpt_config =
+                pawork_providers::ChatGptConfig::new(account_id).with_base_url(base_url);
+            chatgpt_config.http.proxy = config.proxy_url.clone();
+            let provider =
+                pawork_providers::ChatGptProvider::new(chatgpt_config, Some(credential.clone()))?;
             (
                 Arc::new(provider) as Arc<dyn ModelProvider>,
                 Some(credential),
@@ -1398,10 +1440,10 @@ async fn assemble_provider(
             let (credential, _) = oauth_credential(config, id, backend, refresh_oauth).await?;
             let base_url =
                 config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
-            let provider = pawork_providers::XaiProvider::new(
-                pawork_providers::XaiConfig::new(base_url),
-                Some(credential.clone()),
-            )?;
+            let mut xai_config = pawork_providers::XaiConfig::new(base_url);
+            xai_config.http.proxy = config.proxy_url.clone();
+            let provider =
+                pawork_providers::XaiProvider::new(xai_config, Some(credential.clone()))?;
             (
                 Arc::new(provider) as Arc<dyn ModelProvider>,
                 Some(credential),
@@ -1413,6 +1455,7 @@ async fn assemble_provider(
                 .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })?;
             let (credential, _source) = resolve_api_key_credential(backend, id)?;
             let mut channel_config = ApiKeyChannelConfig::new(channel_enum);
+            channel_config.http.proxy = config.proxy_url.clone();
             if let Some(base_url) = config_base {
                 channel_config = channel_config.with_base_url(base_url);
             }
@@ -1438,13 +1481,21 @@ async fn assemble_provider(
             let protocol = resolve_adapter_protocol(config, id)?;
             let adapter: Arc<dyn ModelProvider> = match protocol {
                 AdapterProtocol::ChatCompletions => Arc::new(OpenAiCompatibleProvider::new(
-                    OpenAiCompatibleConfig::new(base_url)
-                        .with_provider_id(provider_id.as_str().to_string()),
+                    {
+                        let mut c = OpenAiCompatibleConfig::new(base_url)
+                            .with_provider_id(provider_id.as_str().to_string());
+                        c.http.proxy = config.proxy_url.clone();
+                        c
+                    },
                     Some(credential.clone()),
                 )?),
                 AdapterProtocol::Messages => Arc::new(AnthropicProvider::new(
-                    AnthropicConfig::new(base_url)
-                        .with_provider_id(provider_id.as_str().to_string()),
+                    {
+                        let mut c = AnthropicConfig::new(base_url)
+                            .with_provider_id(provider_id.as_str().to_string());
+                        c.http.proxy = config.proxy_url.clone();
+                        c
+                    },
                     Some(credential.clone()),
                 )?),
                 AdapterProtocol::Responses => {
@@ -1478,7 +1529,7 @@ fn resolve_api_key_credential(
         CredentialSource::Keychain(stored) => {
             let credential = ApiKeyCredential::from_stored(stored)?
                 .resolve(backend.as_ref())?;
-            Ok((credential, AuthSource::Keychain))
+            Ok((credential, AuthSource::File))
         }
         CredentialSource::EnvFallback(credential) => Ok((credential, AuthSource::Env)),
         CredentialSource::None => Err(AppError::MissingCredential {
@@ -1503,7 +1554,7 @@ async fn oauth_credential(
         load_default_oauth_meta(backend.as_ref(), &provider)?.and_then(|meta| meta.account_id);
     if refresh && default_oauth_needs_refresh(&stored) {
         let preset = oauth_refresh_endpoint(config, id)?;
-        let http = reqwest::Client::new();
+        let http = AppCore::http_from_config(config)?;
         let refresh_token = read_refresh_token(&stored, backend.as_ref())?;
         let tokens =
             refresh_access_token(&preset.token_url, &preset.client_id, &refresh_token, &http)
@@ -1948,7 +1999,7 @@ mod tests {
 
         core.auth_set_key("glm-coding", secret).expect("set key");
         let keychain_row = glm(&core);
-        assert_eq!(keychain_row.source.as_str(), "keychain");
+        assert_eq!(keychain_row.source.as_str(), "file");
         let masked = keychain_row.masked.as_deref().expect("masked");
         assert!(!masked.contains(secret), "masked leaks secret: {masked}");
 

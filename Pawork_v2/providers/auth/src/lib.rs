@@ -1,6 +1,6 @@
 //! 身份认证与 Secret 管理（S6 波 B 激活：`pawork-auth`）。
 //!
-//! 自 V1 `auth-service` 整包迁移：Secret 后端（OS Keychain / 内存）、API Key
+//! 自 V1 `auth-service` 整包迁移：Secret 后端（文件 / 内存）、API Key
 //! credential、全局脱敏与 OAuth（PKCE / Device Flow / auto refresh / 本地回调）
 //! 原样保留；新增 [`resolve_provider_credential`] 凭证解析链（Keychain →
 //! env fallback → 无凭证）。
@@ -16,6 +16,7 @@
 //! - 自动测试只用 [`MemoryBackend`]，不依赖真实 OS Keychain。
 
 mod backend;
+mod file_backend;
 mod credential;
 mod default_credential;
 mod error;
@@ -23,7 +24,8 @@ mod masked;
 pub mod oauth;
 mod resolve;
 
-pub use backend::{KeychainBackend, MemoryBackend, SecretBackend};
+pub use backend::{MemoryBackend, SecretBackend};
+pub use file_backend::FileBackend;
 pub use credential::{ApiKeyCredential, CredentialId, StoredCredential};
 pub use default_credential::{
     default_oauth_needs_refresh, delete_default_oauth_token, load_default_oauth_credential,

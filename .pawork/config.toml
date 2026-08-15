@@ -2,6 +2,9 @@
 default_provider = "glm-coding"
 default_model = "glm-5.2"
 
+proxy_url = "http://127.0.0.1:38081"
+
+
 [[providers]]
 id = "glm-coding"
 base_url = "https://open.bigmodel.cn/api/coding/paas/v4"

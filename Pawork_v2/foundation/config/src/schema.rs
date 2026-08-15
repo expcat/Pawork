@@ -42,6 +42,13 @@ pub struct PaworkConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_workspaces: Option<bool>,
 
+    /// 全局出站代理（如 `http://127.0.0.1:38081`）。
+    ///
+    /// 参照 CLIProxyAPI `proxy-url`：应用于 Provider/OAuth 出站请求；
+    /// 回环与 `.local` 目标直连（pawork-net `loopback_aware_proxy`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
+
     /// 任意扩展字段，按 key 递归合并。为未在 schema 显式声明的配置保留向后兼容入口。
     ///
     /// 顶层 `api_key` 不得经 extra 绕过「配置不含凭证」红线，反序列化时剥离。
@@ -165,6 +172,9 @@ impl PaworkConfig {
         if other.trust_workspaces.is_some() {
             self.trust_workspaces = other.trust_workspaces;
         }
+        if other.proxy_url.is_some() {
+            self.proxy_url = other.proxy_url.clone();
+        }
         if !other.providers.is_empty() {
             self.providers = other.providers.clone();
         }
@@ -204,6 +214,17 @@ mod tests {
     fn builtin_default_is_untrusted() {
         let cfg = PaworkConfig::builtin();
         assert_eq!(cfg.trust_workspaces, Some(false));
+    }
+
+    #[test]
+    fn proxy_url_parses_and_merges() {
+        let cfg: PaworkConfig =
+            serde_json::from_value(json!({ "proxy_url": "http://127.0.0.1:38081" })).unwrap();
+        assert_eq!(cfg.proxy_url.as_deref(), Some("http://127.0.0.1:38081"));
+
+        let mut merged = PaworkConfig::default();
+        merged.merge_with(&cfg);
+        assert_eq!(merged.proxy_url, cfg.proxy_url);
     }
 
     #[test]

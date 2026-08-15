@@ -7,15 +7,6 @@ publish.workspace = true
 authors.workspace = true
 description = "Pawork 认证方式与 Secret 后端（API Key / OS Keychain / OAuth）"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = { workspace = true, features = ["apple-native"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-keyring = { workspace = true, features = ["sync-secret-service"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-keyring = { workspace = true, features = ["windows-native"] }
-
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
 pawork-api = { path = "../../foundation/api" }
@@ -29,7 +20,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "sync", "io-util", "time"] }
 reqwest.workspace = true
 url.workspace = true
-keyring.workspace = true
+directories.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "test-util"] }

@@ -58,7 +58,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 landlock = "0.4"
 windows = "0.58"
-keyring = "3"
 base64 = "0.22"
 rand = "0.8"
 sha2 = "0.10"

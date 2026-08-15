@@ -104,12 +104,9 @@ impl HttpClient {
             builder = builder.connect_timeout(timeout).read_timeout(timeout);
         }
         if let Some(proxy) = &config.proxy {
-            builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|err| {
-                ProviderError::new(
-                    ProviderErrorKind::InvalidRequest,
-                    format!("invalid proxy: {err}"),
-                )
-            })?);
+            let proxy = loopback_aware_proxy(proxy)
+                .map_err(|err| ProviderError::new(ProviderErrorKind::InvalidRequest, err))?;
+            builder = builder.proxy(proxy);
         } else if !config.system_proxy {
             builder = builder.no_proxy();
         }
@@ -266,6 +263,30 @@ impl HttpClient {
     }
 }
 
+/// 判断目标 host 是否为本机/回环（显式代理不应劫持本地网关流量）。
+pub fn is_local_target(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]" | "0.0.0.0")
+        || host.ends_with(".local")
+        || host.ends_with(".localhost")
+}
+
+/// 构造回环感知代理：远端目标走 proxy，本机/回环目标直连。
+///
+/// 参照 CLIProxyAPI `proxy-url` 语义：代理只服务出站上游请求，
+/// `http://127.0.0.1:xxxx` 等本地端点保持直连，避免全局代理破坏本地网关。
+pub fn loopback_aware_proxy(proxy: &str) -> Result<reqwest::Proxy, String> {
+    let parsed: reqwest::Url = proxy
+        .parse()
+        .map_err(|err| format!("invalid proxy {proxy:?}: {err}"))?;
+    Ok(reqwest::Proxy::custom(move |url| {
+        if is_local_target(url.host_str().unwrap_or_default()) {
+            None
+        } else {
+            Some(parsed.clone())
+        }
+    }))
+}
+
 /// 截断字符串到指定字节长度（在 UTF-8 边界安全处）。
 fn truncate(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
@@ -288,6 +309,23 @@ mod tests {
         let out = truncate("你好世界", 4);
         assert!(out.ends_with('…'));
         assert!(out.chars().count() >= 1);
+    }
+
+    #[test]
+    fn local_targets_are_detected() {
+        for host in ["localhost", "127.0.0.1", "::1", "gateway.local"] {
+            assert!(is_local_target(host), "{host} should be local");
+        }
+        for host in ["auth.openai.com", "api.z.ai", "example.com"] {
+            assert!(!is_local_target(host), "{host} should be remote");
+        }
+    }
+
+    #[test]
+    fn loopback_aware_proxy_validates_url() {
+        assert!(loopback_aware_proxy("http://127.0.0.1:38081").is_ok());
+        assert!(loopback_aware_proxy("socks5://127.0.0.1:1080").is_ok());
+        assert!(loopback_aware_proxy("not a url").is_err());
     }
 
     #[test]

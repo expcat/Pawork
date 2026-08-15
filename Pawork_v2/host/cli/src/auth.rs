@@ -1,7 +1,7 @@
 //! pawork auth：list / set-key / login / logout。
 //!
 //! stdout 纪律：--json 时 stdout 只承载 JSON；URL、提示与结果说明走 stderr。
-//! 明文 key 只经 stdin 进入 Keychain，不回显、不落日志。
+//! 明文 key 只经 stdin 进入 auth 文件（0600），不回显、不落日志。
 
 use std::time::Duration;
 
@@ -68,7 +68,7 @@ fn set_key(core: &AppCore, provider: &str, json: bool) -> Result<(), CliError> {
             serde_json::json!({"provider": provider, "masked": masked.as_str()})
         );
     } else {
-        eprintln!("已写入 Keychain：{provider} {}", masked.as_str());
+        eprintln!("已写入 auth 文件：{provider} {}", masked.as_str());
     }
     Ok(())
 }
@@ -84,7 +84,7 @@ async fn login(core: &AppCore, provider: &str, json: bool) -> Result<(), CliErro
             serde_json::json!({"provider": provider, "masked": stored.masked.as_str()})
         );
     } else {
-        eprintln!("已写入 Keychain：{provider} {}", stored.masked.as_str());
+        eprintln!("已写入 auth 文件：{provider} {}", stored.masked.as_str());
     }
     Ok(())
 }
@@ -94,7 +94,7 @@ fn logout(core: &AppCore, provider: &str, json: bool) -> Result<(), CliError> {
     if json {
         println!("{}", serde_json::json!({"provider": provider, "status": "logged_out"}));
     } else {
-        eprintln!("已删除 Keychain default 条目：{provider}（env fallback 不受影响）");
+        eprintln!("已删除 auth 文件 default 条目：{provider}（env fallback 不受影响）");
     }
     Ok(())
 }

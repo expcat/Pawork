@@ -748,6 +748,9 @@ impl CallbackServer {
     }
 
     /// 用实际监听端口回填 redirect URI，并校验只使用本机 HTTP 回调地址。
+    ///
+    /// host 保持配置原样（OAuth redirect_uri 与授权服务器 allow-list 精确匹配，
+    /// localhost 与 127.0.0.1 不可互换），只回填实际端口。
     pub fn bind_redirect_uri(&self, configured: &str) -> Result<String, AuthError> {
         let mut url = url::Url::parse(configured)?;
         if url.scheme() != "http" {
@@ -769,8 +772,6 @@ impl CallbackServer {
                 )));
             }
         }
-        url.set_host(Some(&self.addr.ip().to_string()))
-            .map_err(|_| AuthError::Callback("invalid callback redirect_uri host".into()))?;
         url.set_port(Some(self.addr.port()))
             .map_err(|_| AuthError::Callback("invalid callback redirect_uri port".into()))?;
         Ok(url.to_string())

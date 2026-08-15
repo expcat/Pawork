@@ -17,7 +17,7 @@ use crate::{AppCore, AppError};
 /// 凭证来源标注（auth list 展示；不含任何明文）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthSource {
-    Keychain,
+    File,
     Env,
     None,
 }
@@ -25,7 +25,7 @@ pub enum AuthSource {
 impl AuthSource {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Keychain => "keychain",
+            Self::File => "file",
             Self::Env => "env",
             Self::None => "none",
         }
@@ -38,7 +38,7 @@ pub struct AuthChannelStatus {
     pub provider: String,
     pub kind: &'static str,
     pub source: AuthSource,
-    /// Keychain 命中时的掩码展示；env/none 不展示（绝不打印明文或部分明文）。
+    /// 存储命中时的掩码展示；env/none 不展示（绝不打印明文或部分明文）。
     pub masked: Option<String>,
     pub expires_at_ms: Option<u64>,
 }
@@ -69,7 +69,7 @@ impl AppCore {
                         pawork_auth::CredentialSource::Keychain(stored) => AuthChannelStatus {
                             provider: channel.id.into(),
                             kind,
-                            source: AuthSource::Keychain,
+                            source: AuthSource::File,
                             masked: Some(stored.masked.as_str().to_string()),
                             expires_at_ms: None,
                         },
@@ -102,7 +102,7 @@ impl AppCore {
                         provider: channel.id.into(),
                         kind,
                         source: if meta.is_some() {
-                            AuthSource::Keychain
+                            AuthSource::File
                         } else {
                             AuthSource::None
                         },
@@ -117,7 +117,7 @@ impl AppCore {
         rows
     }
 
-    /// pawork auth set-key：明文从 stdin 读入后立即写 Keychain，不落任何文件。
+    /// pawork auth set-key：明文从 stdin 读入后立即写 auth 文件（0600），不回显、不落日志。
     pub fn auth_set_key(
         &self,
         provider_id: &str,
@@ -172,7 +172,7 @@ impl AppCore {
             redirect_uri: preset.redirect_uri,
             scopes: preset.scopes,
             provider: ProviderId::new(provider_id),
-            extra_auth_params: Vec::new(),
+            extra_auth_params: preset.extra_auth_params,
         };
         let (session, server) = start_pkce_flow_with_callback(config)?;
         Ok(OAuthLogin {

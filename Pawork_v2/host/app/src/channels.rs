@@ -26,6 +26,8 @@ pub struct OAuthPreset {
     pub token_url: String,
     pub redirect_uri: String,
     pub scopes: Vec<String>,
+    /// 授权 URL 附加参数（如 ChatGPT 的 `codex_cli_simplified_flow`）。
+    pub extra_auth_params: Vec<(String, String)>,
 }
 
 /// 一条首发通道的装配元数据。
@@ -41,14 +43,24 @@ impl FirstPartyChannel {
         match self.kind {
             ChannelKind::ChatGptOAuth => Some(OAuthPreset {
                 client_id: "app_EMoamEEZ73f0CkXaXp7hrann".into(),
-                auth_url: "https://auth.openai.com/authorize".into(),
+                auth_url: "https://auth.openai.com/oauth/authorize".into(),
                 token_url: "https://auth.openai.com/oauth/token".into(),
-                redirect_uri: "http://localhost:1455/auth".into(),
+                // redirect URI 必须与 Codex CLI 的 Hydra allow-list 精确匹配：
+                // host 固定 localhost、path 固定 /auth/callback（端口 1455）。
+                redirect_uri: "http://localhost:1455/auth/callback".into(),
                 scopes: vec![
                     "openid".into(),
                     "profile".into(),
                     "email".into(),
                     "offline_access".into(),
+                    // 上游 Codex CLI 同款 scope：connectors 权限是后端把
+                    // 会话识别为 Codex 会话的一部分，缺失时 /models 返回空。
+                    "api.connectors.read".into(),
+                    "api.connectors.invoke".into(),
+                ],
+                extra_auth_params: vec![
+                    ("id_token_add_organizations".into(), "true".into()),
+                    ("codex_cli_simplified_flow".into(), "true".into()),
                 ],
             }),
             // xAI 没有公开稳定 OAuth 端点：login 必须由 config 提供（fail-closed）。
@@ -137,5 +149,6 @@ pub fn oauth_override(config: &pawork_config::PaworkConfig, id: &str) -> Option<
         token_url,
         redirect_uri,
         scopes,
+        extra_auth_params: Vec::new(),
     })
 }

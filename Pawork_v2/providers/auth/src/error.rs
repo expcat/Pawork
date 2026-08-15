@@ -1,7 +1,7 @@
 //! pawork-auth 的错误类型。
 //!
 //! 所有错误均为 `Send + Sync`，且**不携带任何明文 secret**：keyring 返回的
-//! 原始错误统一归一为 `Keychain(String)`，仅保留可读的归因描述。
+//! 原始错误统一归一为 `Storage(String)`，仅保留可读的归因描述。
 
 use thiserror::Error;
 
@@ -11,9 +11,9 @@ use thiserror::Error;
 /// 拼进 message。
 #[derive(Debug, Error)]
 pub enum AuthError {
-    /// OS Keychain（或其它 `SecretBackend`）操作失败。
-    #[error("keychain error: {0}")]
-    Keychain(String),
+    /// Secret 存储后端（如文件后端）操作失败。
+    #[error("secret storage error: {0}")]
+    Storage(String),
 
     /// 指定 `(service, account)` 对应的条目不存在。
     #[error("credential not found")]
