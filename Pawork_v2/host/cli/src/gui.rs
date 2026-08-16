@@ -1,0 +1,102 @@
+//! pawork gui serve：拉起本机 GUI 协议服务器（S7 波 A 最小切片）。
+//!
+//! 单实例语义：bind 前先向目标 socket 发起一次探测连接；能连上说明已有
+//! serve 进程在监听（Unix bind 会清理 stale socket 文件，探测是唯一的
+//! 在线判定）。Ctrl-C 关闭监听并退出；关闭不取消已进入 Core 的 Run
+//! （进程内 Run 随进程结束，跨进程存活语义归 S10 service）。
+
+use std::sync::Arc;
+
+use pawork_app::{AppCore, GuiHostAdapter};
+use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
+use pawork_protocol::{GuiCapability, HandshakeService, SUPPORTED_API_VERSIONS};
+use pawork_transport::{
+    ConnectOptions, GuiTransportClient, GuiTransportServer, LocalTransport, TransportEndpoint,
+};
+
+use crate::{CliError, GuiCommand};
+
+pub async fn run_gui(core: AppCore, command: GuiCommand) -> Result<(), CliError> {
+    let GuiCommand::Serve { socket } = command;
+    let core = Arc::new(core);
+    let adapter = GuiHostAdapter::new(Arc::clone(&core));
+    let socket_path = match socket.or_else(default_socket_dir) {
+        Some(dir) => dir.join("pawork-gui.sock"),
+        None => std::env::temp_dir().join("pawork-gui.sock"),
+    };
+    if let Some(parent) = socket_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let address = socket_path.to_string_lossy().to_string();
+
+    ensure_single_instance(&address).await?;
+
+    let transport = Arc::new(LocalTransport::default());
+    let handshake = HandshakeService::new(
+        adapter.instance_id(),
+        SUPPORTED_API_VERSIONS.to_vec(),
+        vec![
+            GuiCapability::Events,
+            GuiCapability::Snapshots,
+            GuiCapability::Approvals,
+        ],
+    );
+    let server = GuiServer::new(GuiServerConfig {
+        host: Arc::new(adapter),
+        handshake,
+        transport: Arc::clone(&transport) as Arc<dyn GuiTransportServer>,
+    });
+    let listener = server
+        .bind(TransportEndpoint::Local { address })
+        .await
+        .map_err(|error| CliError::Usage(error.to_string()))?;
+    eprintln!("pawork gui serving on {}", socket_path.display());
+
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                if let Err(error) = accepted {
+                    eprintln!("gui accept failed: {error}");
+                    break;
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("shutting down gui server");
+                let _ = listener.close().await;
+                break;
+            }
+        }
+    }
+    let shutdown = Arc::try_unwrap(core)
+        .map_err(|_| CliError::Usage("gui connections still active".to_string()))?
+        .shutdown()
+        .await?;
+    Ok(shutdown)
+}
+
+fn default_socket_dir() -> Option<std::path::PathBuf> {
+    Some(pawork_app::default_data_dir())
+}
+
+async fn ensure_single_instance(address: &str) -> Result<(), CliError> {
+    let client = LocalTransport::default();
+    let options = ConnectOptions {
+        timeout_ms: 300,
+        client_label: Some("pawork-gui-serve-probe".into()),
+        max_frame_bytes: 1024 * 1024,
+    };
+    match client
+        .connect(
+            TransportEndpoint::Local {
+                address: address.into(),
+            },
+            options,
+        )
+        .await
+    {
+        Ok(_) => Err(CliError::Usage(format!(
+            "another pawork gui serve is already listening on {address}"
+        ))),
+        Err(_) => Ok(()),
+    }
+}

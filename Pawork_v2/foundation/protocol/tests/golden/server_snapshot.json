@@ -1,0 +1,24 @@
+{
+  "data": {
+    "generated_at": 5,
+    "instance_id": "instance-1",
+    "sections": [
+      {
+        "data": {
+          "run_ids": [
+            "run-1"
+          ]
+        },
+        "kind": "active_runs",
+        "revision": 3
+      },
+      {
+        "artifact_id": "artifact-1",
+        "kind": "session_tree",
+        "revision": 1
+      }
+    ],
+    "snapshot_sequence": 42
+  },
+  "type": "snapshot"
+}

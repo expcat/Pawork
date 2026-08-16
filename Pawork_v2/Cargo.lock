@@ -1100,8 +1100,10 @@ dependencies = [
  "pawork-config",
  "pawork-domain",
  "pawork-engine",
+ "pawork-gui-server",
  "pawork-net",
  "pawork-policy",
+ "pawork-protocol",
  "pawork-provider-core",
  "pawork-providers",
  "pawork-session",
@@ -1147,6 +1149,9 @@ dependencies = [
  "pawork-app",
  "pawork-domain",
  "pawork-engine",
+ "pawork-gui-server",
+ "pawork-protocol",
+ "pawork-transport",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
@@ -1219,6 +1224,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pawork-gui-server"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pawork-domain",
+ "pawork-protocol",
+ "pawork-transport",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pawork-net"
 version = "0.1.0"
 dependencies = [
@@ -1244,6 +1265,18 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "pawork-protocol"
+version = "0.1.0"
+dependencies = [
+ "pawork-domain",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "ts-rs",
 ]
 
 [[package]]
@@ -1327,6 +1360,18 @@ dependencies = [
  "pawork-workspace",
  "proptest",
  "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
+name = "pawork-transport"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
  "serde",
  "serde_json",
  "tempfile",

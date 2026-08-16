@@ -12,6 +12,9 @@ pawork-app = { path = "../app" }
 pawork-api = { path = "../../foundation/api" }
 pawork-domain = { path = "../../foundation/domain" }
 pawork-engine = { path = "../../engine/engine" }
+pawork-gui-server = { path = "../gui-server" }
+pawork-protocol = { path = "../../foundation/protocol" }
+pawork-transport = { path = "../transport" }
 async-trait.workspace = true
 clap.workspace = true
 serde_json.workspace = true

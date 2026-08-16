@@ -19,12 +19,9 @@ members = [
 # 未激活域只保留空目录占位（src/.gitkeep，untracked scaffold）；Cargo glob
 # 命中无 manifest 的目录会报错，因此显式排除，激活对应 crate 时移除条目。
 exclude = [
-    "foundation/protocol",
     "storage/blob",
     "workspace/resources",
     "host/channels",
-    "host/gui-server",
-    "host/transport",
     "apps/protocol-probe",
 ]
 

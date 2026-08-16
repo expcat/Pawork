@@ -7,6 +7,7 @@ mod approval;
 mod auth;
 mod chat;
 mod error;
+mod gui;
 mod render;
 mod sessions;
 
@@ -90,6 +91,11 @@ pub enum Command {
         #[command(subcommand)]
         command: AuthCommand,
     },
+    /// GUI 服务（S7 最小切片：本机单客户端）
+    Gui {
+        #[command(subcommand)]
+        command: GuiCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -112,6 +118,16 @@ pub enum AuthCommand {
     Logout { provider: String },
 }
 
+#[derive(Subcommand, Debug)]
+pub enum GuiCommand {
+    /// 启动本机 GUI 服务（单客户端，Unix socket / Named pipe）。
+    Serve {
+        /// 覆盖默认 socket 路径（默认在 Pawork 数据目录下）。
+        #[arg(long)]
+        socket: Option<std::path::PathBuf>,
+    },
+}
+
 pub async fn run() -> ExitCode {
     match run_inner().await {
         Ok(()) => ExitCode::SUCCESS,
@@ -130,6 +146,11 @@ async fn run_inner() -> Result<(), CliError> {
         None => None,
     };
     options.approval_host = Some(approval_host(cli.json));
+    if matches!(&cli.command, Command::Gui { .. }) {
+        // GUI 宿主没有终端审批交互面：波 A 一律 fail-closed（写入类工具
+        // 按审批模式拒绝），波 C 再接时间线内审批。
+        options.approval_host = Some(Arc::new(DenyAllApprovals));
+    }
     // 目录 / 凭证命令允许默认 provider 缺凭证（目录兜底装配）。
     let tolerant = matches!(
         &cli.command,
@@ -140,6 +161,9 @@ async fn run_inner() -> Result<(), CliError> {
     } else {
         AppCore::load(options).await?
     };
+    if let Command::Gui { command } = cli.command {
+        return gui::run_gui(core, command).await;
+    }
     let result = match cli.command {
         Command::Chat { prompt, resume } => {
             chat::run_chat(&mut core, prompt, resume, cli.json).await
@@ -148,6 +172,7 @@ async fn run_inner() -> Result<(), CliError> {
         Command::Run { prompt } => chat::run_once(&core, &prompt, cli.json).await,
         Command::Models => run_models(&core, cli.json).await,
         Command::Auth { command } => auth::run_auth(&core, command, cli.json).await,
+        Command::Gui { .. } => unreachable!("gui command handled before core dispatch"),
     };
     let shutdown = core.shutdown().await;
     result?;

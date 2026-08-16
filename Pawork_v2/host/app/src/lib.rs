@@ -8,6 +8,7 @@ mod approval;
 mod auth;
 mod channels;
 mod data_dir;
+mod gui_host;
 mod loop_ctx;
 mod persist;
 mod protocol;
@@ -63,6 +64,9 @@ pub use approval::{
     parse_approval_mode, ApprovalAsk, ApprovalPromptHost, DenyAllApprovals,
 };
 pub use data_dir::{default_data_dir, session_db_path};
+pub use gui_host::{
+    project_timeline_item, GuiBroadcastSink, GuiEventBus, GuiHostAdapter, GuiRunRegistry,
+};
 pub use persist::PersistThenRender;
 pub use protocol::{AdapterProtocol, ProtocolError};
 pub use auth::{AuthChannelStatus, AuthSource, OAuthLogin};
@@ -669,6 +673,14 @@ impl AppCore {
         self.provider_pending
     }
 
+    pub fn workspace_id(&self) -> &WorkspaceId {
+        &self.workspace_id
+    }
+
+    pub fn workspace_trusted(&self) -> bool {
+        self.workspace_trusted
+    }
+
     /// 当前 provider 在 registry 的静态目录（REPL /model 列表用）。
     pub fn provider_models(&self) -> Vec<CatalogEntry> {
         self.registry
@@ -1015,6 +1027,25 @@ impl AppCore {
     pub async fn chat_turn(
         &self,
         session_id: &SessionId,
+        messages: Vec<Message>,
+        render: &dyn AgentEventSink,
+        cancel: CancellationToken,
+    ) -> Result<ModelResponseSummary, AppError> {
+        let run_n = self.next_run.fetch_add(1, Ordering::Relaxed);
+        let run_id = RunId::from(format!(
+            "run-{}-{run_n}",
+            pawork_engine::now_timestamp().as_unix_millis()
+        ));
+        self.chat_turn_with_run_id(run_id, session_id, messages, render, cancel)
+            .await
+    }
+
+    /// 以调用方提供的 run_id 执行一轮（GUI 需要在启动前登记取消令牌并
+    /// 向客户端回报 run_id，因此 run id 的分配权上移到宿主）。
+    pub async fn chat_turn_with_run_id(
+        &self,
+        run_id: RunId,
+        session_id: &SessionId,
         mut messages: Vec<Message>,
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
@@ -1039,12 +1070,7 @@ impl AppCore {
             messages,
             self.tool_defs.clone(),
         );
-        let run_n = self.next_run.fetch_add(1, Ordering::Relaxed);
         let start_sequence = self.next_sequence(session_id).await?;
-        let run_id = RunId::from(format!(
-            "run-{}-{run_n}",
-            pawork_engine::now_timestamp().as_unix_millis()
-        ));
         let turn = SessionTurn::new(
             session_id.clone(),
             run_id.clone(),

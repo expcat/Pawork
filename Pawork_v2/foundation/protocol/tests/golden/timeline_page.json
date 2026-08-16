@@ -1,0 +1,22 @@
+{
+  "complete": false,
+  "head_sequence": 20,
+  "items": [
+    {
+      "event_id": "event-11",
+      "kind": "user_message",
+      "sequence": 11,
+      "text": "hello",
+      "timestamp": "2026-01-01T00:00:00Z"
+    },
+    {
+      "event_id": "event-12",
+      "kind": "assistant_message",
+      "run_id": "run-1",
+      "sequence": 12,
+      "text": "hi",
+      "timestamp": "2026-01-01T00:00:01Z"
+    }
+  ],
+  "next_sequence": 13
+}

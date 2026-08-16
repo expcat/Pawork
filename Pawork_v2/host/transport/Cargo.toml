@@ -1,0 +1,19 @@
+[package]
+name = "pawork-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork GUI 本地与远程传输的业务无关抽象与本机实现"
+
+[dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "sync", "time"] }
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
