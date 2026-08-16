@@ -45,12 +45,13 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 当前阶段 | S6（[plan/S6-providers-auth.md](Pawork_v2/plan/S6-providers-auth.md)） |
+| 当前阶段 | S7（[plan/S7-gui-agent.md](Pawork_v2/plan/S7-gui-agent.md)） |
 | 阶段状态 | 🔵 进行中 |
 | 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A–C（含 2026-08-14 两通道真实冒烟：`sessions` / `--resume` / `run --json` / `kill -9` 恢复）；S2 波 A–C；S2 波 D（2026-08-14：cli `⚙` 工具行 + `host/app` 装配 `run_session`/scheduler/四只读工具；三通道冒烟 GLM OpenAI / GLM Anthropic / OpenCode Go）；S3 波 A（2026-08-15：`pawork-policy` 整包 + `pawork-tools` 写三件 + scheduler `check_gate`）；S3 波 B（2026-08-15：engine `ApprovalGate` + app 写三件/审批宿主/resume 封口 + cli `--approval-mode`/`y`/`a`/`n`/`--json` fail-closed）；S3 波 C（2026-08-15：两通道真实冒烟 + 提示注入评估；S3 收口）；S4 波 A（2026-08-15：`pawork-exec` process+sandbox；`run_command` + policy 认 `argv`；fail-closed 守 ADR-031 可观测回退）；S4 波 B（2026-08-15：engine `CancelHandle` + 工具中取消不发 `ToolExecutionCompleted`；cli 命令流式渲染/stderr 着色/Ctrl-C 走 `cancel(User)`；app 注册第八件 `run_command`）；S4 波 C（2026-08-15：两通道「读-改-跑」闭环 + Ctrl-C `RunCancelled` + `git push --force` Dangerous 拒绝；S4 收口）；S5 波 A（2026-08-15：`pawork-provider-core` usage/registry/pricing/negotiate/reasoning；`pawork-session` compaction feature + `TokenEstimator` 注入）；S5 波 B（2026-08-15：engine `context` 四模块迁入并接 `run_session`（ContextPrepared 估算/软限压缩/硬限截断）；app registry 装配 + session usage/cost + 手动压缩；cli `/compact` + 每轮用量行 + `models` 目录（window/定价）；修 trigger 消息 id 同毫秒撞主键与压缩折叠水位误删保留尾部）；S5 波 C（2026-08-15：两通道真实冒烟——长对话软限压缩/`--resume`/`/compact`/token 对账 1:1/`pawork models` + 评估记录；修复 `last_run_usage` 冻结最早轮；S5 收口） |
 | S6 波次进度 | 波 A（2026-08-15）：六条首发通道 adapter、共享 Responses、credential fail-closed、wiremock 契约完成；未做真实凭证冒烟。波 B（2026-08-15）：`pawork-auth` 整包迁移 + Keychain→env→无凭证解析链（41 测试）；`pawork-diagnostics` 全局脱敏 layer + `RedactingFmtLayer`（metrics/bundle 门控 `experimental`）；workspace manifest 修复 glob 命中占位目录的加载错误。波 C（2026-08-15）：六通道正式装配 + `pawork models` 聚合 + `pawork auth` 四子命令 + REPL `/model` `/provider` 切换事件 + 宿主全局脱敏挂载；glm-coding/opencode-go 完成 set-key→清 env→Keychain 流式工具任务，GLM 双协议通道切换实测，trace 日志 0 泄漏；修复 keyring 平台后端缺失（原默认 mock 存储）；ChatGPT/xAI OAuth 与 Qwen/DeepSeek 凭证按 fail-closed 登记。收口（本地实现，2026-08-16）：六通道首次真实冒烟已齐；生产 default OAuth 请求路径接入进程内 singleflight；正式 auth 文件后端新增跨进程 write/refresh 锁、锁内重读、独立临时文件与 access/轮换 refresh/meta 批量原子回写；双进程旧快照只触发一次 token exchange，空 refresh 拒写，`invalid_grant` 明确要求重登；活动文档统一 auth 文件术语并保留历史/冻结兼容名；S6 定向自动化全绿 |
-| **下一波次** | **S6 收口（人工验收）**：以 ChatGPT 与 xAI 临期真实凭证各完成一次请求前 refresh；不改写现有 `auth.json` 强制到期 |
-| 阻塞 | 等待人工凭据验收：需要自然临期凭据，或用户提供隔离 `PAWORK_HOME` / 测试账号；未经授权不触发可能轮换 refresh token 的真实 refresh |
+| S7 波次进度 | 波 0（2026-08-16）：锁定 `docs/gui-design.md` 的信息架构、交互状态、官方参照取舍、分页 Timeline 恢复、协议最小切片、四层依赖 deny list 与 S8–S12 增量图；修复任务书对缺失 M0/M5 正文的死链；未创建 Desktop crate、未进入 UI 实现 |
+| **下一波次** | **S7 波 A（串行）**：激活 `pawork-protocol` 最小帧与分页 Timeline、local transport、`pawork gui serve` 单客户端 |
+| 阻塞 | 当前波无阻塞。S6 的 ChatGPT/xAI 自然临期真实 refresh 人工验收继续挂账，S6 保持 🔵；它不阻塞 S7 波 A |
 
 自动选择以本表为准，再用 ROADMAP / 任务书 / 工作区实态交叉校验（§4）。三者冲突时：**工作区实态 > 本表 > ROADMAP 状态列**；更新本表使三者一致后再开工。
 

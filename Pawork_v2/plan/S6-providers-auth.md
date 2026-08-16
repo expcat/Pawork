@@ -36,7 +36,7 @@ Google/Gemini、Moonshot/Kimi、OpenAI API key、xAI API key、Qwen 按量计费
 - [x] **波 A — adapter**：六通道 adapter、共享 Responses、错误归一、wiremock 契约已实现；未使用真实凭证。
 - [x] **波 B — auth/diagnostics**：OAuth 获取与刷新、Keychain、masked、全局 tracing 脱敏（当时实现；后续收口按用户决策替换为 auth 文件后端）。
 - [x] **波 C — config/cli/app/smoke**（2026-08-15）：六通道正式装配（channels 表 + 目录兜底装配）；`pawork models` 跨通道聚合；`pawork auth list/set-key/login/logout`；REPL `/model` `/provider` + `model.switched` 事件；宿主全局挂载 RedactingFmtLayer（stderr）。决策前冒烟：glm-coding / opencode-go 完成 set-key → 清 env → Keychain 流式工具任务；GLM 双协议通道完成 `/model` `/provider` 切换 + `sessions show` 记录；trace 级日志 + 终端扫描 0 泄漏（24 文件 233 行）。当时登记项：ChatGPT/xAI OAuth 浏览器登录与 Qwen/DeepSeek 凭证未冒烟（后续均已补齐，见下方清单）；macOS 未签名 dev 构建重编后 Keychain 条目 ACL 不匹配会弹授权框（详见冒烟登记）。
-- [ ] **收口 — refresh 与文档一致性**（2026-08-16）：本地工程部分已完成——生产 default OAuth 请求路径复用进程内 singleflight；正式文件后端以平台文件锁串行跨进程 refresh，并在锁内重读后只允许一个进程消费轮换 token；access/refresh/meta 一次批量提交且每次使用独立临时文件；空 refresh 响应 fail-closed，`invalid_grant` 明确提示 `pawork auth login <provider>`。进程内双并发与双进程旧快照回归都锁定单次 token exchange；活动文档统一 auth 文件术语。仅剩 ChatGPT/xAI 临期真实 refresh 人工冒烟，完成前阶段保持 🔵。
+- [ ] **收口 — refresh 与文档一致性**（2026-08-16）：本地工程部分已完成——生产 default OAuth 请求路径复用进程内 singleflight；正式文件后端以平台文件锁串行跨进程 refresh，并在锁内重读后只允许一个进程消费轮换 token；access/refresh/meta 一次批量提交且每次使用独立临时文件；空 refresh 响应 fail-closed，`invalid_grant` 明确提示 `pawork auth login <provider>`。进程内双并发与双进程旧快照回归都锁定单次 token exchange；活动文档统一 auth 文件术语。仅剩 ChatGPT/xAI 临期真实 refresh 人工冒烟，完成前阶段保持 🔵。用户于 2026-08-16 要求将该人工验收继续挂账并先推进不依赖它的 S7 设计波；不得据此把本项或阶段伪标为完成。
 
 ## 关键任务
 
