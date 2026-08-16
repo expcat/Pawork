@@ -1,0 +1,29 @@
+[package]
+name = "pawork-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork GUI Connection Protocol typed 连接 SDK：握手、版本协商、Command/Query 往返、订阅、Snapshot/Resume 重连、Ack/Heartbeat"
+
+[features]
+default = []
+experimental = []
+
+[dependencies]
+pawork-domain = { path = "../../foundation/domain" }
+pawork-protocol = { path = "../../foundation/protocol" }
+pawork-transport = { path = "../../host/transport" }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+
+[dev-dependencies]
+pawork-app = { path = "../../host/app" }
+pawork-gui-server = { path = "../../host/gui-server" }
+pawork-session = { path = "../../storage/session" }
+pawork-testkit = { path = "../../foundation/testkit" }
+pawork-transport = { path = "../../host/transport" }
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros", "time"] }

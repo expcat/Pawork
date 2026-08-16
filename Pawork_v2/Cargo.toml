@@ -13,6 +13,7 @@ members = [
     "execution/*",
     "engine/*",
     "host/*",
+    "clients/*",
     "apps/*",
 ]
 

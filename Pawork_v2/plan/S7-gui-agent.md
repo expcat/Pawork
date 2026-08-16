@@ -66,7 +66,7 @@
 
 - [x] 波 0（串行，2026-08-16）：锁定 `docs/gui-design.md`（对照参照 GUI + 根仓 desktop-gui）。
 - [x] 波 A（串行，2026-08-16）：`pawork-protocol` 最小帧 + local transport + `gui serve` 单客户端；六包定向测试全绿（protocol 66 / transport 8 / gui-server 9 / app 48 / cli 8），真实对话冒烟留波 C。
-- 波 B（可与 A 末并行）：`pawork-client` + `apps/desktop` 壳（先连上，再填 Timeline/Composer）。
+- [x] 波 B（2026-08-16）：`pawork-client` 激活（V1 gui-client 整包平移 + 7 契约测试；artifact 读取 `experimental` 门控）+ `apps/desktop` 壳（gpui =0.2.2，四层结构，Sessions/Timeline/Composer + IME，`--probe` 验证模式）；修复 `gui serve` 丢弃 SessionHandle 的波 A 装配缺陷；真实 socket probe 正向冒烟通过。审批/取消/模型切换与真实对话冒烟留波 C。
 - 波 C（串行）：审批/取消/模型切换 + 真实冒烟。
 
 ## 参考

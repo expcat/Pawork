@@ -52,12 +52,21 @@ pub async fn run_gui(core: AppCore, command: GuiCommand) -> Result<(), CliError>
         .map_err(|error| CliError::Usage(error.to_string()))?;
     eprintln!("pawork gui serving on {}", socket_path.display());
 
+    // 保留连接句柄：SessionHandle 被丢弃会关闭 oneshot 并结束该连接任务，
+    // 导致客户端握手收到 Broken pipe。断线时由连接任务侧关闭并在此清理。
+    let mut connections: Vec<Box<dyn pawork_transport::GuiConnection>> = Vec::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => {
-                if let Err(error) = accepted {
-                    eprintln!("gui accept failed: {error}");
-                    break;
+                match accepted {
+                    Ok(handle) => {
+                        connections.retain(|connection| connection.info().connection_id != handle.info().connection_id);
+                        connections.push(handle);
+                    }
+                    Err(error) => {
+                        eprintln!("gui accept failed: {error}");
+                        break;
+                    }
                 }
             }
             _ = tokio::signal::ctrl_c() => {
