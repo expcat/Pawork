@@ -65,7 +65,7 @@
 ## 并行拆分建议
 
 - [x] 波 0（串行，2026-08-16）：锁定 `docs/gui-design.md`（对照参照 GUI + 根仓 desktop-gui）。
-- 波 A（串行）：`pawork-protocol` 最小帧 + local transport + `gui serve` 单客户端。
+- [x] 波 A（串行，2026-08-16）：`pawork-protocol` 最小帧 + local transport + `gui serve` 单客户端；六包定向测试全绿（protocol 66 / transport 8 / gui-server 9 / app 48 / cli 8），真实对话冒烟留波 C。
 - 波 B（可与 A 末并行）：`pawork-client` + `apps/desktop` 壳（先连上，再填 Timeline/Composer）。
 - 波 C（串行）：审批/取消/模型切换 + 真实冒烟。
 
