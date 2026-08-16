@@ -73,7 +73,7 @@
 ## 4. 任务收尾（结束前必做）
 
 1. **定向自动化测试全绿**：任务书「定向自动化测试」节列出的命令逐条执行。
-2. **冒烟清单执行**：任务书「真实测试与评估」节逐项跑（真实 key，按 §5 通道）；**模型评估记录留档**（勾选项旁注记或写入任务报告——这是 S12《双通道模型评估报告》的原始素材）。
+2. **冒烟清单执行**：任务书「真实测试与评估」节逐项跑（真实 key，按 §5 通道）；**模型评估记录留档**（勾选项旁注记或写入任务报告——这是 S12《真实通道模型评估报告》的原始素材）。
 3. **任务书回写**：冒烟清单与退出标准打勾；核对「为后续阶段预留 / 明确不做」未被越界实现。
 4. **ROADMAP 回写**：按 [../ROADMAP.md](../ROADMAP.md) §6 状态回写约定（阶段收尾更新 §2 状态列；experimental/延期项登记 §4；阶段外任务更新 §3）。
 5. **任务报告**（简式，开发期不使用 L0–L3 分级模板）：
@@ -109,13 +109,15 @@ S6 首发产品范围冻结如下；这里的“已预设”不等于“已完�
 
 除上表六条外的 Provider/认证方式均延期到后续需求。S0 generic OpenAI-compatible 与 S2 Anthropic 基线仍为既有能力，不因此删除或算作首发新增。
 
+**默认测试模型（低消耗约定，2026-08-17 起）**：常规冒烟、定向回归与模型评估默认只用 [../ROADMAP.md](../ROADMAP.md) §1.1 低消耗矩阵的四个组合（`deepseek`/`deepseek-v4-flash`、`glm-coding`/`glm-4.7`、`opencode-go`/`deepseek-v4-flash`、`xai`/`grok-4.3`）；ChatGPT、Qwen Token Plan 两通道与各通道高阶模型仅用于任务书要求的一次性接通验证，或用户明确指定的高级功能专项评估。政策事实源为 ROADMAP §1.1，规则全文不在此重复。
+
 **Key 管理约定（安全红线自 S0 生效）**：
 
 - S0–S5 的 API key 只经环境变量注入：`PAWORK_API_KEY_<PROVIDER_ID 大写、`-`→`_`>`（如 `PAWORK_API_KEY_GLM_CODING`）。S6 起以 `$PAWORK_HOME/auth.json` / `~/.pawork/auth.json`（JSON v1、0600、临时文件 + rename 原子写、损坏 fail-closed）为正式存储，环境变量降级为 headless/CI fallback。
 - ChatGPT/xAI adapter 只消费 auth 层解析后的 `OAuthBearer`；OAuth client secret、access token、refresh token 不得写入 adapter 默认值、配置、数据库、事件流或日志。
 - key 不写入配置文件、不落数据库、不进日志与事件流（V1 `ResolvedCredential` 的 Debug 脱敏语义自 S0 采用）。
 - 执行期凭证由用户在任务开始时临场提供（env 或 `pawork auth` 写入仓库外的 Pawork auth 文件）；不写入任何可能提交到远程仓库的文件；缺失即终止（fail-closed）——完整约定见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.1。
-- **V2 开发期本地冒烟**：两通道 key 放在 `Pawork_v2/.env`（已列入 `.gitignore`，禁止提交）。冒烟进程用 `set -a && source Pawork_v2/.env && set +a` 注入环境变量；产品路径仍只读 env，不把 `.env` 当配置层。
+- **V2 开发期本地冒烟**：两通道 key 放在 `Pawork_v2/.env`（已列入 `.gitignore`，禁止提交）。冒烟进程用 `set -a && source Pawork_v2/.env && set +a` 注入环境变量；产品路径仍只读 env，不把 `.env` 当配置层。S6 起 `~/.pawork/auth.json` 已为正式存储且四通道凭证已入库，冒烟默认直接走 auth 文件；`.env` 仅作 S0–S5 遗留 fallback。
 - 配置样例随 S0 产出：`fixtures/config/config.example.toml`（含上表三个 provider 条目）。
 
 **真实测试的两种形态**（每个阶段计划文档都含这两节）：
@@ -151,4 +153,4 @@ S6 首发产品范围冻结如下；这里的“已预设”不等于“已完�
 - **阶段任务收尾**：更新 [../ROADMAP.md](../ROADMAP.md) §2 总览表状态列 + 对应 `plan/S*.md` 冒烟清单与退出标准打勾 + 如有 experimental/延期项在 ROADMAP §4 登记。开发期不做逐任务文档同步（[v1-migration-reference.md](v1-migration-reference.md) §2.4）。
 - **阶段外任务**：开启/完成时更新 ROADMAP §3.2 状态；完成后移入 §3.1 并登记产出链接。
 - **文档一致性**：若任务改动了冻结契约、包布局或候选功能状态，同批更新 [design.md](design.md) 对应章节；新增参照项目调研放 [research/](research/) 并在 [references.md](references.md) 登记。
-- **任务报告**按 §4 第 5 条的简式模板；评估记录（模型行为、协议对比、闭环成功率、缓存命中率等）必须留档，S12 汇总为《双通道模型评估报告》。
+- **任务报告**按 §4 第 5 条的简式模板；评估记录（模型行为、协议对比、闭环成功率、缓存命中率等）必须留档，S12 汇总为《真实通道模型评估报告》。

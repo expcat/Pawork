@@ -9,10 +9,10 @@
 ## 收口补充
 
 1. **编号与引用**：完成范围按 [../ROADMAP.md](../ROADMAP.md) §2 的 S0–S11 阶段表核对；包集合、发布波次（W1–W4）与冻结候审清单以当前 workspace、本文和 design §7 为准。
-2. **真实通道回归**：三平台矩阵之外，增加一轮**双通道真实冒烟总回归**——用 GLM Coding Plan 与 OpenCode Go 把 S0–S11 各阶段冒烟清单的核心项（对话/resume/工具闭环/审批/回滚/MCP/SDK/多 Agent）串成一个发布前手工回归脚本并留档。
+2. **真实通道回归**：三平台矩阵之外，增加一轮**真实通道冒烟总回归**——按 [../ROADMAP.md](../ROADMAP.md) §1.1 低消耗矩阵四通道把 S0–S11 各阶段冒烟清单的核心项（对话/resume/工具闭环/审批/回滚/MCP/SDK/多 Agent）串成一个发布前手工回归脚本并留档。
 3. **`--json`/headless 协议**：S10 已对齐正式协议，schema drift 检查覆盖 headless 帧与 `.d.ts`/JSON Schema 产出。
 4. **env fallback 安全复核**：S6 引入的「仓库外 auth 文件为主、env fallback」在安全验收清单中追加一项：auth 文件保持 0600/原子写/损坏 fail-closed，fallback 路径不落 Pawork auth 文件、不入日志，文档明示适用场景（headless/CI）。
-5. **评估记录汇总**：S0–S11 沿途的模型评估记录（tool-calling 可靠性、闭环成功率、协议对比、多 Agent worker 对比）汇总为一份《双通道模型评估报告》，作为默认模型推荐与文档 FAQ 的依据（新增产出物，非门禁）。
+5. **评估记录汇总**：S0–S11 沿途的模型评估记录（tool-calling 可靠性、闭环成功率、协议对比、多 Agent worker 对比）汇总为一份《真实通道模型评估报告》（覆盖 §1.1 矩阵四通道及用户指定的高级模型专项评估），作为默认模型推荐与文档 FAQ 的依据（新增产出物，非门禁）。
 6. **experimental 清账**：S11 登记的 experimental 项（如 memory 待 EmbeddingProvider、provider-control 完整层）逐项决策：激活、保留登记、或移入冻结候审。
 7. **性能基准按需重建**：V1 `benches` 全为 no-op 占位、不迁移；如需性能验收（V1 MVP「性能达 Core 目标」项），在本阶段以 `pawork-benches` 重建针对性基准（事件追加吞吐、diff 解析、SSE 解析），非门禁项。
 
@@ -35,7 +35,7 @@
 
 - [ ] W1→W4 波次发布（波内并行、波间串行，五步流程照旧）；`apps/pawork` 经 `cargo install` 渠道冒烟。
 - [ ] V1 目录归档冻结（归档分支/tag + 冻结候审资产索引），处置结论回写 [../ROADMAP.md](../ROADMAP.md) §4。
-- [ ] 双通道真实冒烟总回归通过并留档；《双通道模型评估报告》产出。
+- [ ] 真实通道冒烟总回归通过并留档；《真实通道模型评估报告》产出。
 - [ ] experimental 清账完成。
 
 ## 参考
