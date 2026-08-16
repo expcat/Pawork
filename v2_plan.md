@@ -10,7 +10,7 @@
 
 | 文档 | 读它做什么 |
 | --- | --- |
-| 本文 `v2_plan.md` | 开启编排、当前指针、统一提示词、子代理模型约定 |
+| 本文 `v2_plan.md` | 开启编排、当前指针、统一提示词、子代理模型约定、S8+ 并行与前置注解（§11） |
 | [Pawork_v2/ROADMAP.md](Pawork_v2/ROADMAP.md) | 阶段总索引、依赖、状态、阶段外任务 |
 | [Pawork_v2/docs/design.md](Pawork_v2/docs/design.md) | 包激活映射、冻结契约、本阶段功能与参照项目映射 |
 | [Pawork_v2/docs/gui-design.md](Pawork_v2/docs/gui-design.md) | Desktop GUI 设计：S7 先锁定再实现；后续阶段只按该文加面 |
@@ -267,3 +267,63 @@
 - [ ] 设计未改冻结契约形状；冲突已升级而不是自行拍板
 - [ ] 实现并行度与任务书该波一致；契约/装配未被拆并行
 - [ ] 收尾会更新本文 §3，且不会顺手开下一波
+
+---
+
+## 11. S8+ 并行与前置注解（2026-08-17 分析）
+
+> 本节基于 `Pawork_v2/plan/` S8–S12 任务书、[ROADMAP.md](Pawork_v2/ROADMAP.md)、[design.md](Pawork_v2/docs/design.md) §3.2、[gui-design.md](Pawork_v2/docs/gui-design.md) §5 与 [multi-account-quota-plan-merge.md](Pawork_v2/docs/research/multi-account-quota-plan-merge.md) §4 的当前实态分析，只加注解，不改 §3 指针与 §4 自动选择。各任务书均无「可在前置阶段完成前开工」的授权句，「可前置」项为结构推断；启用时走 §2「范围覆盖」（§4 规则 4）并由用户逐项确认。
+
+### 11.1 硬前置与并行 / 前置总表
+
+| 阶段 | 硬前置（实态） | 阶段内并行 | 可前置项 |
+| --- | --- | --- | --- |
+| S8 git checkpoint | S3 🟢（写工具在位，diff 预览本就留给 S8）；S1 事件已在位；run_command/S4 非前置；S7 不阻塞 CLI 验收 | 波 A 并行 ×2（`pawork-git` / `pawork-blob-store`，golden 先行）；波 B 串行（engine/app/cli 接线 + 冒烟） | **波 A 两包现在即可开工**（只依赖 S3）；CLI 路径功能上不等 S7 |
+| S9 mcp/resources | S2 🟢 工具注册面；S6 config 凭证链（波 C 已接线；S6 挂账的 OAuth 临期 refresh 非前置） | 波 A 并行 ×3（mcp/resources/config 完整化）；波 B 并行 ×3（compat 依赖 mcp 薄类型；session 导入器、workspace file-index 不依赖）；波 C 串行（engine 注入 + cli + 冒烟） | **波 A 三包 + 波 B 的 session 导入器、workspace file-index** 可前置（不依赖 mcp 薄类型与 S7 壳） |
+| S10 serve/clients | S7（本机 `gui serve` 已通）；协议收口（10a 波 A 串行）是硬前置；未把 S8/S9 列为依赖 | 10a 波 B 并行 ×3（app/transport/sdk）；10b 并行 ×4（多客户端 / Desktop 增量 / ACP / PTY+lifecycle）；收口串行 | 任务书无前置授权；`channels` 的 codex/claude/remote-control 明确留给后续阶段 |
+| S11 workflow/control | S10 整阶段（app/cli 正式化 + Event Hub） | 波 A 控制面三包 ∥ 波 B 工作流三包；波 C orchestration 只依赖波 A trait；波 D host 接线单一 owner 串行 | 任务书无前置授权；结构耦合弱的是波 A/B 库迁移 + golden 先行（`dedup_key` / audit JSONL），仍挂在 S11 内 |
+| S12 release | S0–S11 全部完成；无新功能 | W1–W4 发布波内并行、波间串行 | 实现不可前置；**决策项可前置**（见 11.4） |
+| 阶段外：多账户并入 plan | 前置已满足（D1–D8 已于 2026-08-14 确认） | 纯文档 L0，与任意阶段不冲突 | **可随时开启**；写入集 plan/S2/S5/S6/S9/S11/S12 + design.md + ROADMAP，全部 plan 顺带只删不加核减测试 |
+
+### 11.2 S8 ∥ S9：唯一的跨阶段并行窗口
+
+- ROADMAP 只写 S8 依赖 S3、S9 依赖 S2 + S6；两份任务书互不列对方为前置，无阶段依赖边。
+- **可并行**：S8 波 A（git/blob）∥ S9 波 A（mcp/resources/config）∥ S9 波 B 的 session/workspace，写集不相交。
+- **不能整阶段并行**：两边收口都动 `pawork-cli`（S8 `diff`/`rollback` vs S9 `mcp`/`import`/`@`）；S8 波 B 与 S9 波 C 还都动 `pawork-engine`（不同位点）；GUI 同改 `apps/desktop` 不同面。
+- 若真开双线：库包并行没问题，收口波（engine/cli 接线 + 冒烟）必须串行或先定文件级切分——任务书未写冲突仲裁。
+
+### 11.3 GUI 跨阶段串行点（gui-design §5 同壳加面）
+
+| 组件 | 触碰阶段 | 处理 |
+| --- | --- | --- |
+| `InspectorToolTabs` 顶层 tab strip | S8 Changes、S10 Terminal | 串行 |
+| `ActivityPopover` 本体 | S8 Changes 分区、S11 Agent 分区 | 串行（分区语义可叠加） |
+| `Composer` | S9 `@file`、S10（README §6 归 S9/S10 任务书） | 串行 |
+| `RunStatusBar` | S7 已有权威字段、S11 补完整 quota | 串行 |
+| `TaskRail` | S8+ 均未点名（S10 Fork 最像落点但未登记） | 无冲突 |
+
+S8 Changes 的 CLI 路径可前置，但 **Changes GUI 应等 S7 波 C 壳收口**：gui-design 只保证 S7 留槽，加面以「该阶段 Core 投影 + Host capability」为准（前置投影依赖本阶段投影，见 `Pawork_v2/design/README.md` §5.1），壳未收口时文档未授权先加面。
+
+### 11.4 可前置的决策项（不写代码）
+
+1. **License 拍板**：S12 验证清单第 6 项、`cargo publish` 硬前置，可随时先定。
+2. **冻结候审砍留**：S12 清账项（清单以 workspace / S12 文 / design §7 为准，S11 退出标准核对冻结清单）；砍留结论可提前做。
+3. **三平台实跑计划**：S12 清单第 2 项兑现 S4/S10 留待的 Linux/macOS 实跑（含 S7 Desktop 开发机外补测）；机器与 runner 计划可先备，实跑仍在 S12。
+4. **非门禁项**：真实通道模型评估报告、`pawork-benches`、experimental 清账准备，可在 S10/S11 期间穿插，不占门禁波。
+
+### 11.5 冻结契约激活时点（design.md §3.2 中 S8+ 相关）
+
+| 契约 | 激活 | 是否提前激活 |
+| --- | --- | --- |
+| blob 格式（`PWB1` + protected AEAD，ADR-032） | S8 | 否 |
+| GUI 协议（帧 ADR-036、headless-json、core-api） | S7 最小激活 / S10 收口 | 是（S7 已激活完整形状，当前只消费对话子集） |
+| config schema | S0 最小 / S9 完整 | 部分（S0 已按 V1 字段读三层） |
+| 控制面契约（usage `dedup_key`、audit JSONL） | S11 | 否 |
+
+### 11.6 文档缺口（本次分析发现，未臆造，留待对应任务决策）
+
+- S8/S9 未规定 Changes / `@` / Resources 的 GUI 协议命令与投影字段。
+- 未写 S8 ∥ S9 整阶段并行许可与收口冲突仲裁。
+- 未写 S6 仍 🔵 时能否改 `pawork-config`（S9 波 A 含 config 完整化；S6 挂账项未点名 config）。
+- S9 包表未列 `pawork-app` / `apps/desktop` / `pawork-engine`（engine 只出现在波 C 一句）。
+- gui-design.md 未写 S8+ 各面的前置投影清单（实态：依赖该阶段 Core 投影）。
