@@ -1,14 +1,20 @@
 //! 审批宿主：CLI / `--json` / 测试注入决策；engine 只看到 [`ApprovalDecision`]。
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
 use pawork_api::ToolRequest;
-use pawork_domain::{ApprovalDecision, CancellationToken, ToolCallId};
+use pawork_domain::{ApprovalDecision, CancellationToken, RunId, ToolCallId};
 use pawork_policy::{ApprovalMode, RiskLevel};
 use pawork_tools::{ApprovalOutcome, ApprovalResolver};
+use tokio::sync::oneshot;
 
 /// 一次需要用户确认的写操作摘要。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalAsk {
+    pub run_id: RunId,
+    pub session_id: Option<pawork_domain::SessionId>,
     pub tool_name: String,
     pub tool_call_id: ToolCallId,
     pub relative_path: Option<String>,
@@ -31,6 +37,167 @@ pub struct DenyAllApprovals;
 impl ApprovalPromptHost for DenyAllApprovals {
     async fn decide(&self, _ask: &ApprovalAsk, _cancel: CancellationToken) -> ApprovalDecision {
         ApprovalDecision::Denied
+    }
+}
+
+/// Snapshot / Desktop 卡片用的待审批摘要。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingToolApproval {
+    pub run_id: RunId,
+    pub session_id: Option<pawork_domain::SessionId>,
+    pub tool_call_id: ToolCallId,
+    pub tool_name: String,
+    pub relative_path: Option<String>,
+    pub risk: RiskLevel,
+    pub message: String,
+    pub preview: Option<String>,
+}
+
+#[derive(Debug)]
+struct PendingAsk {
+    ask: ApprovalAsk,
+    sender: oneshot::Sender<ApprovalDecision>,
+}
+
+/// GUI 审批宿主：`decide` 挂起 oneshot，`ToolApprove` 唤醒。
+///
+/// 决策先到时入队，注册时立即解析；关窗不断开 oneshot，也不自动允许。
+#[derive(Default)]
+pub struct GuiApprovalHost {
+    pending: Mutex<HashMap<String, PendingAsk>>,
+    queued: Mutex<HashMap<String, ApprovalDecision>>,
+    on_pending: Mutex<Option<Arc<dyn Fn(&ApprovalAsk) + Send + Sync>>>,
+}
+
+impl GuiApprovalHost {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_on_pending(&self, callback: impl Fn(&ApprovalAsk) + Send + Sync + 'static) {
+        *self
+            .on_pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(callback));
+    }
+
+    fn key(tool_call_id: &ToolCallId) -> String {
+        tool_call_id.as_str().to_string()
+    }
+
+    /// `ToolApprove` 入口：映射后的 domain 决策唤醒等待项，或先入队。
+    pub fn resolve(
+        &self,
+        run_id: &RunId,
+        tool_call_id: &ToolCallId,
+        decision: ApprovalDecision,
+    ) -> Result<(), String> {
+        let key = Self::key(tool_call_id);
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if pending.contains_key(&key) {
+            if pending
+                .get(&key)
+                .is_some_and(|entry| entry.ask.run_id.as_str() != run_id.as_str())
+            {
+                return Err(format!(
+                    "approval {} belongs to a different run",
+                    tool_call_id.as_str()
+                ));
+            }
+            let entry = pending.remove(&key).expect("pending key exists");
+            drop(pending);
+            let _ = entry.sender.send(decision);
+            return Ok(());
+        }
+        drop(pending);
+        self.queued
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(key, decision);
+        Ok(())
+    }
+
+    pub fn pending(&self) -> Vec<PendingToolApproval> {
+        let pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut list: Vec<_> = pending
+            .values()
+            .map(|entry| PendingToolApproval {
+                run_id: entry.ask.run_id.clone(),
+                session_id: entry.ask.session_id.clone(),
+                tool_call_id: entry.ask.tool_call_id.clone(),
+                tool_name: entry.ask.tool_name.clone(),
+                relative_path: entry.ask.relative_path.clone(),
+                risk: entry.ask.risk,
+                message: entry.ask.message.clone(),
+                preview: entry.ask.preview.clone(),
+            })
+            .collect();
+        list.sort_by(|a, b| {
+            a.run_id
+                .as_str()
+                .cmp(b.run_id.as_str())
+                .then_with(|| a.tool_call_id.as_str().cmp(b.tool_call_id.as_str()))
+        });
+        list
+    }
+
+    /// run 终态清理，避免 snapshot 泄漏陈旧 pending。
+    pub fn clear_run(&self, run_id: &RunId) {
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|_, entry| entry.ask.run_id.as_str() != run_id.as_str());
+    }
+}
+
+#[async_trait]
+impl ApprovalPromptHost for GuiApprovalHost {
+    async fn decide(&self, ask: &ApprovalAsk, cancel: CancellationToken) -> ApprovalDecision {
+        let key = Self::key(&ask.tool_call_id);
+        if let Some(decision) = self
+            .queued
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&key)
+        {
+            return decision;
+        }
+        let (sender, receiver) = oneshot::channel();
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                key.clone(),
+                PendingAsk {
+                    ask: ask.clone(),
+                    sender,
+                },
+            );
+        let listener = self
+            .on_pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(listener) = listener {
+            listener(ask);
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                self.pending
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&key);
+                ApprovalDecision::Cancelled
+            }
+            result = receiver => result.unwrap_or(ApprovalDecision::Cancelled),
+        }
     }
 }
 
@@ -122,5 +289,31 @@ mod tests {
         let preview = preview_from_input(&input).expect("preview");
         assert!(preview.starts_with("3 lines"));
         assert!(preview.contains("one"));
+    }
+
+    #[tokio::test]
+    async fn queued_decision_resolves_immediately() {
+        let host = GuiApprovalHost::new();
+        let ask = ApprovalAsk {
+            run_id: RunId::from("run-1"),
+            session_id: Some(pawork_domain::SessionId::from("ses-1")),
+            tool_name: "write_file".into(),
+            tool_call_id: ToolCallId::from("call-1"),
+            relative_path: Some("notes.txt".into()),
+            message: "Approve workspace file write".into(),
+            risk: RiskLevel::Moderate,
+            preview: None,
+        };
+        host.resolve(
+            &ask.run_id,
+            &ask.tool_call_id,
+            ApprovalDecision::ApprovedOnce,
+        )
+        .expect("queue");
+        let decision = host
+            .decide(&ask, CancellationToken::new())
+            .await;
+        assert_eq!(decision, ApprovalDecision::ApprovedOnce);
+        assert!(host.pending().is_empty());
     }
 }

@@ -12,7 +12,9 @@ use gpui::{
 
 use crate::controller::{ControllerEvent, DesktopController};
 use crate::platform::Platform;
-use crate::projection::{ConnectionState, DesktopProjection, TimelineEntry, TimelineEntryKind};
+use crate::projection::{
+    ConnectionState, DesktopProjection, ModelEntry, TimelineEntry, TimelineEntryKind,
+};
 
 pub use text_input::{SendMessage, TextInput};
 
@@ -44,6 +46,7 @@ pub struct AppView {
     text_input: Entity<TextInput>,
     scroll_handle: ScrollHandle,
     status_hint: Option<String>,
+    model_menu_open: bool,
 }
 
 impl AppView {
@@ -58,6 +61,7 @@ impl AppView {
             text_input,
             scroll_handle: ScrollHandle::new(),
             status_hint: None,
+            model_menu_open: false,
         };
         view.start_connect(cx);
         view
@@ -65,6 +69,10 @@ impl AppView {
 
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
         self.text_input.read(cx).focus_handle(cx)
+    }
+
+    fn focus_composer(&self, window: &mut Window, cx: &App) {
+        window.focus(&self.composer_focus_handle(cx));
     }
 
     fn start_connect(&mut self, cx: &mut Context<Self>) {
@@ -105,6 +113,7 @@ impl AppView {
         self.projection.merge_snapshot(&snapshot);
         self.projection
             .set_connection(ConnectionState::Connected { instance_id });
+        self.controller.load_models();
         self.consume_events(events, cx);
         cx.notify();
     }
@@ -157,6 +166,9 @@ impl AppView {
                 }
                 self.text_input.update(cx, |input, cx| input.clear(cx));
             }
+            ControllerEvent::ModelsLoaded(models) => {
+                self.projection.set_models(models);
+            }
             ControllerEvent::OperationFailed { action, reason } => {
                 self.status_hint = Some(format!("{action} failed: {reason}"));
             }
@@ -175,16 +187,18 @@ impl AppView {
     fn on_session_clicked(
         &mut self,
         session_id: &str,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.projection.active_session_id.as_deref() == Some(session_id) {
+            self.focus_composer(window, cx);
             return;
         }
         self.open_session(session_id.to_string(), cx);
+        self.focus_composer(window, cx);
     }
 
-    fn on_new_session(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -199,6 +213,7 @@ impl AppView {
             .clone()
             .unwrap_or_else(|| "ws-default".into());
         self.controller.create_session(workspace);
+        self.focus_composer(window, cx);
         cx.notify();
     }
 
@@ -231,7 +246,49 @@ impl AppView {
         if text.trim().is_empty() {
             return;
         }
-        self.controller.send_message(session_id, text);
+        let model = self
+            .projection
+            .effective_model()
+            .map(|(_, id)| id.clone());
+        self.controller.send_message(session_id, text, model);
+    }
+
+    fn on_cancel_clicked(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(run_id) = self.projection.active_run_id.clone() else {
+            return;
+        };
+        self.controller.cancel_run(run_id);
+        cx.notify();
+    }
+
+    fn on_approve(&mut self, decision: &str, cx: &mut Context<Self>) {
+        let Some(pending) = self.projection.pending_approval.clone() else {
+            return;
+        };
+        self.controller
+            .approve(pending.run_id, pending.tool_call_id, decision);
+        cx.notify();
+    }
+
+    fn on_toggle_model_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_switch_model() {
+            return;
+        }
+        self.model_menu_open = !self.model_menu_open;
+        cx.notify();
+    }
+
+    fn on_select_model(&mut self, model: ModelEntry, cx: &mut Context<Self>) {
+        self.projection
+            .set_pending_model(model.provider_id, model.id);
+        self.model_menu_open = false;
+        cx.notify();
+    }
+
+    fn can_switch_model(&self) -> bool {
+        matches!(self.projection.connection, ConnectionState::Connected { .. })
+            && self.projection.active_run_id.is_none()
+            && !self.projection.models.is_empty()
     }
 
     fn can_send(&self) -> bool {
@@ -240,10 +297,34 @@ impl AppView {
             && self.projection.active_run_id.is_none()
     }
 
+    fn can_approve(&self) -> bool {
+        matches!(self.projection.connection, ConnectionState::Connected { .. })
+            && self.projection.pending_approval.is_some()
+    }
+
+    fn can_cancel(&self) -> bool {
+        matches!(self.projection.connection, ConnectionState::Connected { .. })
+            && self.projection.active_run_id.is_some()
+    }
+
+    fn model_label(&self) -> String {
+        match self.projection.effective_model() {
+            Some((provider, id)) => self
+                .projection
+                .models
+                .iter()
+                .find(|entry| entry.provider_id == *provider && entry.id == *id)
+                .map(|entry| format!("{} / {}", entry.provider_id, entry.display_name))
+                .unwrap_or_else(|| format!("{provider} / {id}")),
+            None if self.projection.models.is_empty() => "Model · loading".into(),
+            None => "Model · select".into(),
+        }
+    }
+
     /// Composer 禁用原因（文本说明，不只靠颜色，gui-design §6）。
     fn composer_hint(&self) -> String {
         if self.projection.active_run_id.is_some() {
-            return "Run in progress — sending is disabled.".into();
+            return "Run in progress — sending and model switch are disabled. Cancel remains available.".into();
         }
         match &self.projection.connection {
             ConnectionState::Connected { .. } => {
@@ -303,6 +384,11 @@ impl Render for AppView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let connected = matches!(self.projection.connection, ConnectionState::Connected { .. });
         let can_send = self.can_send();
+        let can_cancel = self.can_cancel();
+        let can_switch_model = self.can_switch_model();
+        let can_approve = self.can_approve();
+        let model_label = self.model_label();
+        let model_menu_open = self.model_menu_open && can_switch_model;
         let connection_label = self.projection.connection.label();
         let composer_hint = self.composer_hint();
 
@@ -346,10 +432,10 @@ impl Render for AppView {
                     .rounded_md()
                     .bg(rgb(0x333333))
                     .cursor_pointer()
-                    .child("New Session")
-                    .on_click(cx.listener(|view, _event, window, cx| {
-                        view.on_new_session(window, cx);
-                    })),
+                        .child("New Session")
+                        .on_click(cx.listener(|view, _event, window, cx| {
+                            view.on_new_session(window, cx);
+                        })),
             )
             .child(div().text_size(px(11.)).text_color(rgb(0xbbbbbb)).child("SESSIONS"))
             .children(self.projection.sessions.iter().map(|session| {
@@ -384,7 +470,116 @@ impl Render for AppView {
                     .timeline
                     .iter()
                     .map(Self::timeline_entry_element),
+            )
+            .when(self.projection.pending_approval.is_some(), |timeline| {
+                let pending = self
+                    .projection
+                    .pending_approval
+                    .as_ref()
+                    .expect("pending approval exists");
+                let mut card = div()
+                    .p_2()
+                    .rounded_md()
+                    .border_l_1()
+                    .border_color(rgb(0x8a6d3b))
+                    .bg(rgb(0x2a2418))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(0xf0d58c))
+                            .child(format!("Approval · {}", pending.tool_name)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(0xe8e8e8))
+                            .child(pending.reason.clone()),
+                    );
+                if let Some(detail) = pending.detail.clone() {
+                    if !detail.is_empty() {
+                        card = card.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(rgb(0xb8b8b8))
+                                .child(detail),
+                        );
+                    }
+                }
+                let buttons = [
+                    ("approve-once", "Allow once", "approve_once", 0x2f6fed_u32),
+                    ("approve-for-run", "Allow for run", "approve_for_run", 0x3d7a4a_u32),
+                    ("approve-deny", "Deny", "deny", 0x8a3b32_u32),
+                ];
+                let row = div().flex().flex_row().gap_2().children(buttons.into_iter().map(
+                    |(id, label, decision, color)| {
+                        let decision = decision.to_string();
+                        div()
+                            .id(SharedString::from(id))
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(if can_approve { rgb(color) } else { rgb(0x3a3a3a) })
+                            .text_color(rgb(0xffffff))
+                            .cursor_pointer()
+                            .child(label)
+                            .when(can_approve, |button| {
+                                button.on_click(cx.listener(move |view, _event, _window, cx| {
+                                    view.on_approve(&decision, cx);
+                                }))
+                            })
+                    },
+                ));
+                timeline.child(card.child(row))
+            });
+
+        let mut model_picker = div()
+            .id("model-picker")
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(if can_switch_model { rgb(0x2a2a2a) } else { rgb(0x242424) })
+            .text_color(if can_switch_model { rgb(0xe8e8e8) } else { rgb(0x8f8f8f) })
+            .cursor_pointer()
+            .child(model_label)
+            .when(can_switch_model, |button| {
+                button.on_click(cx.listener(|view, _event, window, cx| {
+                    view.on_toggle_model_menu(window, cx);
+                }))
+            });
+        if model_menu_open {
+            model_picker = model_picker.child(
+                div()
+                    .mt_1()
+                    .p_1()
+                    .rounded_md()
+                    .bg(rgb(0x1a1a1a))
+                    .border_1()
+                    .border_color(rgb(0x3a3a3a))
+                    .children(self.projection.models.iter().cloned().map(|model| {
+                        let selected = self
+                            .projection
+                            .effective_model()
+                            .is_some_and(|(provider, id)| {
+                                provider == &model.provider_id && id == &model.id
+                            });
+                        let label = format!("{} / {}", model.provider_id, model.display_name);
+                        div()
+                            .id(SharedString::from(format!(
+                                "model-{}-{}",
+                                model.provider_id, model.id
+                            )))
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(if selected { rgb(0x2f6fed) } else { rgb(0x1a1a1a) })
+                            .cursor_pointer()
+                            .child(label)
+                            .on_click(cx.listener(move |view, _event, _window, cx| {
+                                view.on_select_model(model.clone(), cx);
+                            }))
+                    })),
             );
+        }
 
         let composer = div()
             .flex()
@@ -393,12 +588,29 @@ impl Render for AppView {
             .p_2()
             .border_t_1()
             .border_color(rgb(0x2e2e2e))
+            .child(model_picker)
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .gap_2()
                     .child(div().flex_1().child(self.text_input.clone()))
+                    .when(can_cancel, |row| {
+                        row.child(
+                            div()
+                                .id("cancel")
+                                .px_3()
+                                .py_1()
+                                .rounded_md()
+                                .bg(rgb(0x8a3b32))
+                                .text_color(rgb(0xffffff))
+                                .cursor_pointer()
+                                .child("Cancel")
+                                .on_click(cx.listener(|view, _event, window, cx| {
+                                    view.on_cancel_clicked(window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         div()
                             .id("send")

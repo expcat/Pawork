@@ -1,9 +1,8 @@
 //! GUI Host 端口适配：把 AppCore 装配到 pawork-gui-server 的 GuiHost。
 //!
-//! S7 波 A 最小切片：snapshot 基线（Workspaces/SessionTree/ActiveRuns/
-//! PendingToolApprovals/ProviderStatus）、SessionGet 分页 Timeline 投影、
-//! SessionCreate/RunStart/RunCancel 命令与事件扇出。审批/模型切换的 GUI
-//! 语义在波 C 接线，未支持命令一律结构化 fail-closed。
+//! S7 波 C：snapshot 基线（含真实 PendingToolApprovals）、SessionGet 分页
+//! Timeline 投影、SessionCreate/RunStart/RunCancel/ToolApprove，以及
+//! RunStart.model 切换。未支持命令一律结构化 fail-closed。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,12 +17,23 @@ use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
 use pawork_gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope,
-    AppResponse, EventSource, EventStream, GlobalSequence, RunState, Snapshot, SnapshotSection,
-    SnapshotSectionKind, TimelineItem, TimelineItemKind, TimelinePage, API_VERSION,
+    AppResponse, DiagnosticLevel, EventSource, EventStream, GlobalSequence, RunState, Snapshot,
+    SnapshotSection, SnapshotSectionKind, TimelineItem, TimelineItemKind, TimelinePage, API_VERSION,
 };
 use serde_json::{json, Value};
 
-use crate::AppCore;
+use crate::{AppCore, GuiApprovalHost};
+
+fn protocol_to_domain_decision(
+    decision: &pawork_protocol::ApprovalDecision,
+) -> pawork_domain::ApprovalDecision {
+    match decision {
+        pawork_protocol::ApprovalDecision::ApproveOnce => ApprovalDecision::ApprovedOnce,
+        pawork_protocol::ApprovalDecision::ApproveForRun => ApprovalDecision::ApprovedForRun,
+        pawork_protocol::ApprovalDecision::Deny => ApprovalDecision::Denied,
+        pawork_protocol::ApprovalDecision::Cancel => ApprovalDecision::Cancelled,
+    }
+}
 
 /// 单实例事件总线：给 GUI 连接扇出 App 事件，全局序号单调连续。
 pub struct GuiEventBus {
@@ -79,6 +89,47 @@ impl GuiEventBus {
         // 无订阅者或队列满时丢弃：S7 单客户端重连可重新 Snapshot，
         // 不允许慢消费反压 Core。
         let _ = self.tx.send(app_envelope);
+    }
+
+    fn publish_raw(
+        &self,
+        instance: pawork_domain::CoreInstanceId,
+        session_id: &SessionId,
+        event: AppEvent,
+    ) {
+        let sequence = self.next_global_sequence();
+        let app_envelope = AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: instance,
+            event_id: EventId::from(format!("app-evt-{sequence}")),
+            global_sequence: GlobalSequence(sequence),
+            stream: EventStream::Session(session_id.clone()),
+            stream_sequence: 0,
+            timestamp: now_timestamp(),
+            source: EventSource::Core,
+            payload: event,
+        };
+        let _ = self.tx.send(app_envelope);
+    }
+}
+
+impl GuiEventBus {
+    pub fn publish_diagnostic(
+        &self,
+        instance: pawork_domain::CoreInstanceId,
+        session_id: &SessionId,
+        code: &str,
+        details: Value,
+    ) {
+        self.publish_raw(
+            instance,
+            session_id,
+            AppEvent::Diagnostic {
+                level: DiagnosticLevel::Info,
+                code: code.to_string(),
+                message: details.to_string(),
+            },
+        );
     }
 }
 
@@ -164,24 +215,69 @@ impl GuiRunRegistry {
 
 /// pawork-gui-server 的宿主实现。
 pub struct GuiHostAdapter {
-    core: Arc<AppCore>,
+    core: Arc<tokio::sync::RwLock<AppCore>>,
     bus: Arc<GuiEventBus>,
     runs: Arc<GuiRunRegistry>,
+    approvals: Arc<GuiApprovalHost>,
     instance: pawork_domain::CoreInstanceId,
     next_gui_run: AtomicU64,
 }
 
 impl GuiHostAdapter {
     pub fn new(core: Arc<AppCore>) -> Self {
+        let approvals = Arc::new(GuiApprovalHost::new());
+        Self::with_approvals(core, approvals)
+    }
+
+    pub fn with_approvals(core: Arc<AppCore>, approvals: Arc<GuiApprovalHost>) -> Self {
+        let mut owned = Arc::try_unwrap(core).unwrap_or_else(|_| {
+            panic!("GuiHostAdapter requires a uniquely owned AppCore Arc")
+        });
+        let mode = owned.approval_mode();
+        let trusted = owned.workspace_trusted();
+        owned.configure_approval(mode, trusted, approvals.clone());
+        Self::from_locked(Arc::new(tokio::sync::RwLock::new(owned)), approvals)
+    }
+
+    pub fn from_locked(
+        core: Arc<tokio::sync::RwLock<AppCore>>,
+        approvals: Arc<GuiApprovalHost>,
+    ) -> Self {
         let stamp = now_timestamp().as_unix_millis();
         let instance = pawork_domain::CoreInstanceId::from(format!(
             "pawork-{stamp}-{}",
             std::process::id()
         ));
+        let bus = Arc::new(GuiEventBus::new(1024));
+        {
+            let bus = Arc::clone(&bus);
+            let instance = instance.clone();
+            approvals.set_on_pending(move |ask| {
+                let Some(session_id) = ask.session_id.clone() else {
+                    return;
+                };
+                let reason = match ask.relative_path.as_deref() {
+                    Some(path) if !path.is_empty() => {
+                        format!("{} · {} · {}", ask.tool_name, path, ask.message)
+                    }
+                    _ => format!("{} · {}", ask.tool_name, ask.message),
+                };
+                bus.publish_raw(
+                    instance.clone(),
+                    &session_id,
+                    AppEvent::ToolApprovalRequired {
+                        run_id: ask.run_id.clone(),
+                        tool_call_id: ask.tool_call_id.clone(),
+                        reason,
+                    },
+                );
+            });
+        }
         Self {
             core,
-            bus: Arc::new(GuiEventBus::new(1024)),
+            bus,
             runs: Arc::new(GuiRunRegistry::new()),
+            approvals,
             instance,
             next_gui_run: AtomicU64::new(1),
         }
@@ -195,6 +291,10 @@ impl GuiHostAdapter {
         Arc::clone(&self.runs)
     }
 
+    pub fn approvals(&self) -> Arc<GuiApprovalHost> {
+        Arc::clone(&self.approvals)
+    }
+
     fn host_error(code: &str, message: impl Into<String>) -> GuiHostError {
         GuiHostError {
             code: code.to_string(),
@@ -204,7 +304,12 @@ impl GuiHostAdapter {
     }
 
     fn app_error(error: crate::AppError) -> GuiHostError {
-        Self::host_error("app_error", error.to_string())
+        let code = match error {
+            crate::AppError::UnknownModel { .. }
+            | crate::AppError::ModelBelongsToProvider { .. } => "unknown_model",
+            _ => "app_error",
+        };
+        Self::host_error(code, error.to_string())
     }
 }
 
@@ -215,20 +320,22 @@ impl GuiHost for GuiHostAdapter {
     }
 
     async fn snapshot(&self) -> Result<Snapshot, GuiHostError> {
-        let sessions = self.core.list_sessions().await.map_err(Self::app_error)?;
+        let core = self.core.read().await;
+        let sessions = core.list_sessions().await.map_err(Self::app_error)?;
         let runs = self.runs.active();
-        let provider_status = if self.core.provider_pending() {
+        let provider_status = if core.provider_pending() {
             "authentication_required"
         } else {
             "ready"
         };
+        let pending = self.approvals.pending();
         let sections = vec![
             SnapshotSection {
                 kind: SnapshotSectionKind::Workspaces,
                 revision: self.bus.next_revision(),
                 data: Some(json!([{
-                    "id": self.core.workspace_id().as_str(),
-                    "trusted": self.core.workspace_trusted(),
+                    "id": core.workspace_id().as_str(),
+                    "trusted": core.workspace_trusted(),
                 }])),
                 artifact_id: None,
             },
@@ -271,15 +378,31 @@ impl GuiHost for GuiHostAdapter {
             SnapshotSection {
                 kind: SnapshotSectionKind::PendingToolApprovals,
                 revision: self.bus.next_revision(),
-                data: Some(json!([])),
+                data: Some(Value::Array(
+                    pending
+                        .iter()
+                        .map(|ask| {
+                            json!({
+                                "run_id": ask.run_id.as_str(),
+                                "session_id": ask.session_id.as_ref().map(|id| id.as_str()),
+                                "tool_call_id": ask.tool_call_id.as_str(),
+                                "tool_name": ask.tool_name,
+                                "relative_path": ask.relative_path,
+                                "risk": format!("{:?}", ask.risk).to_ascii_lowercase(),
+                                "message": ask.message,
+                                "preview": ask.preview,
+                            })
+                        })
+                        .collect(),
+                )),
                 artifact_id: None,
             },
             SnapshotSection {
                 kind: SnapshotSectionKind::ProviderStatus,
                 revision: self.bus.next_revision(),
                 data: Some(json!([{
-                    "provider_id": self.core.provider_id().as_str(),
-                    "model": self.core.model().as_str(),
+                    "provider_id": core.provider_id().as_str(),
+                    "model": core.model().as_str(),
                     "status": provider_status,
                 }])),
                 artifact_id: None,
@@ -302,8 +425,8 @@ impl GuiHost for GuiHostAdapter {
         const DEFAULT_LIMIT: u32 = 200;
         const MAX_LIMIT: u32 = 500;
         let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
-        let head = self
-            .core
+        let core = self.core.read().await;
+        let head = core
             .next_sequence(session_id)
             .await
             .map_err(Self::app_error)?
@@ -317,7 +440,7 @@ impl GuiHost for GuiHostAdapter {
                 complete: true,
             });
         }
-        let store = self.core.store().map_err(Self::app_error)?;
+        let store = core.store().map_err(Self::app_error)?;
         let envelopes = store
             .replay_events(session_id, from, limit)
             .await
@@ -340,10 +463,13 @@ impl GuiHost for GuiHostAdapter {
 
     async fn query(&self, envelope: &AppQueryEnvelope) -> Result<AppResponse, GuiHostError> {
         match &envelope.query {
-            AppQuery::WorkspaceList => Ok(AppResponse::Data(json!([{
-                "id": self.core.workspace_id().as_str(),
-                "trusted": self.core.workspace_trusted(),
-            }]))),
+            AppQuery::WorkspaceList => {
+                let core = self.core.read().await;
+                Ok(AppResponse::Data(json!([{
+                    "id": core.workspace_id().as_str(),
+                    "trusted": core.workspace_trusted(),
+                }])))
+            }
             AppQuery::SessionGet {
                 session_id,
                 timeline_after_sequence,
@@ -351,6 +477,8 @@ impl GuiHost for GuiHostAdapter {
             } => {
                 let record = self
                     .core
+                    .read()
+                    .await
                     .get_session(session_id)
                     .await
                     .map_err(Self::app_error)?;
@@ -371,7 +499,7 @@ impl GuiHost for GuiHostAdapter {
                 Ok(AppResponse::Data(data))
             }
             AppQuery::ModelList { provider_id } => {
-                let catalog = self.core.model_catalog().await;
+                let catalog = self.core.read().await.model_catalog().await;
                 let entries: Vec<_> = catalog
                     .iter()
                     .filter(|entry| {
@@ -416,6 +544,8 @@ impl GuiHost for GuiHostAdapter {
         match &envelope.command {
             AppCommand::SessionCreate { title, .. } => {
                 self.core
+                    .read()
+                    .await
                     .create_session(title.clone().unwrap_or_else(|| "New session".into()))
                     .await
                     .map_err(Self::app_error)?;
@@ -426,6 +556,8 @@ impl GuiHost for GuiHostAdapter {
             }
             AppCommand::SessionOpen { session_id } => {
                 self.core
+                    .read()
+                    .await
                     .get_session(session_id)
                     .await
                     .map_err(Self::app_error)?;
@@ -440,18 +572,60 @@ impl GuiHost for GuiHostAdapter {
                 model,
                 ..
             } => {
+                {
+                    let core = self.core.read().await;
+                    core.get_session(session_id)
+                        .await
+                        .map_err(Self::app_error)?;
+                }
                 if let Some(model) = model {
-                    if model.as_str() != self.core.model().as_str() {
-                        return Err(Self::host_error(
-                            "unsupported",
-                            "GUI model switching arrives in wave C; this run would not use the requested model",
-                        ));
+                    let current = {
+                        let core = self.core.read().await;
+                        (
+                            core.provider_id().as_str().to_string(),
+                            core.model().as_str().to_string(),
+                        )
+                    };
+                    if model.as_str() != current.1 {
+                        let mut core = self.core.write().await;
+                        let switched = match core
+                            .switch_model(Some(session_id), model.as_str())
+                            .await
+                        {
+                            Ok(()) => Ok(()),
+                            Err(crate::AppError::ModelBelongsToProvider { owner, .. }) => {
+                                core.switch_provider(
+                                    Some(session_id),
+                                    &owner,
+                                    Some(model.as_str()),
+                                )
+                                .await
+                            }
+                            Err(error) => Err(error),
+                        };
+                        switched.map_err(Self::app_error)?;
+                        let confirmed = (
+                            core.provider_id().as_str().to_string(),
+                            core.model().as_str().to_string(),
+                        );
+                        drop(core);
+                        self.bus.publish_diagnostic(
+                            self.instance.clone(),
+                            session_id,
+                            "model.switched",
+                            json!({
+                                "from": {
+                                    "provider": current.0,
+                                    "model": current.1
+                                },
+                                "to": {
+                                    "provider": confirmed.0,
+                                    "model": confirmed.1,
+                                }
+                            }),
+                        );
                     }
                 }
-                self.core
-                    .get_session(session_id)
-                    .await
-                    .map_err(Self::app_error)?;
                 let n = self.next_gui_run.fetch_add(1, Ordering::Relaxed);
                 let run_id = RunId::from(format!(
                     "run-gui-{}-{n}",
@@ -469,6 +643,7 @@ impl GuiHost for GuiHostAdapter {
                 let core = Arc::clone(&self.core);
                 let bus = Arc::clone(&self.bus);
                 let runs = Arc::clone(&self.runs);
+                let approvals = Arc::clone(&self.approvals);
                 let instance = self.instance.clone();
                 let session = session_id.clone();
                 let run = run_id.clone();
@@ -482,9 +657,12 @@ impl GuiHost for GuiHostAdapter {
                 };
                 tokio::spawn(async move {
                     let sink = GuiBroadcastSink::new(bus, instance);
+                    let core = core.read().await;
                     let _ = core
                         .chat_turn_with_run_id(run.clone(), &session, vec![message], &sink, token)
                         .await;
+                    drop(core);
+                    approvals.clear_run(&run);
                     runs.remove(&run);
                 });
                 Ok(AppResponse::Accepted {
@@ -505,10 +683,23 @@ impl GuiHost for GuiHostAdapter {
                     ))
                 }
             }
+            AppCommand::ToolApprove {
+                run_id,
+                tool_call_id,
+                decision,
+            } => {
+                self.approvals
+                    .resolve(run_id, tool_call_id, protocol_to_domain_decision(decision))
+                    .map_err(|message| Self::host_error("conflict", message))?;
+                Ok(AppResponse::Accepted {
+                    command_id: envelope.command_id.clone(),
+                    run_id: None,
+                })
+            }
             other => Err(Self::host_error(
                 "unsupported",
                 format!(
-                    "command {} is not part of the S7 wave A slice",
+                    "command {} is not part of the S7 wave C slice",
                     command_name(other)
                 ),
             )),
@@ -674,14 +865,12 @@ fn broadcast_event(envelope: &AgentEventEnvelope) -> Option<AppEvent> {
             truncated: false,
             artifact_id: None,
         },
-        AgentEvent::ToolApprovalRequested {
-            tool_call_id,
-            reason,
-        } => AppEvent::ToolApprovalRequired {
-            run_id: run,
-            tool_call_id: tool_call_id.clone(),
-            reason: reason.clone(),
-        },
+        AgentEvent::ToolApprovalRequested { .. } => {
+            // Live 卡片由 GuiApprovalHost::decide 注册时广播；engine 在
+            // decide 返回后才发 Requested/Responded 对，再映射会把已决
+            // 策的卡片重新点亮。
+            return None;
+        }
         AgentEvent::ToolExecutionCompleted { result, .. } => AppEvent::ToolCompleted {
             run_id: run,
             tool_call_id: result.tool_call_id.clone(),
@@ -698,6 +887,11 @@ fn broadcast_event(envelope: &AgentEventEnvelope) -> Option<AppEvent> {
         AgentEvent::RunFailed { .. } => AppEvent::RunChanged {
             run_id: run,
             state: RunState::Failed,
+        },
+        AgentEvent::Diagnostic { code, details } => AppEvent::Diagnostic {
+            level: DiagnosticLevel::Info,
+            code: code.clone(),
+            message: details.to_string(),
         },
         _ => return None,
     })
@@ -746,6 +940,7 @@ fn command_name(command: &AppCommand) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::approval::ApprovalPromptHost;
     use pawork_domain::{CommandId, MessageMetadata, Timestamp, WorkspaceId};
     use pawork_protocol::{ActorIdentity, CommandSource};
     use pawork_testkit::{MockProvider, MockScript};
@@ -853,15 +1048,15 @@ mod tests {
         let provider = MockProvider::sequence(vec![
             MockScript::new().wait_for_cancellation(),
         ]);
-        let core = Arc::new(AppCore::from_parts(
+        let core = AppCore::from_parts(
             Arc::new(provider),
             None,
             pawork_domain::ModelId::from("model-1"),
             pawork_domain::ProviderId::from("mock"),
             Some(store),
-        ));
+        );
         let session = core.create_session("gui-cancel").await.expect("session");
-        let adapter = GuiHostAdapter::new(Arc::clone(&core));
+        let adapter = GuiHostAdapter::new(Arc::new(core));
         let runs = adapter.runs();
         let host: Arc<dyn GuiHost> = Arc::new(adapter);
         let response = host
@@ -896,19 +1091,114 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_start_with_foreign_model_fails_closed() {
-        let (core, _dir, session) = core_with_turn().await;
-        let host: Arc<dyn GuiHost> = Arc::new(GuiHostAdapter::new(core));
-        let error = host
+    async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![
+            MockScript::new().text("hello from other").complete(),
+        ])
+        .with_models(vec![pawork_api::ModelDefinition {
+            id: pawork_domain::ModelId::from("model-2"),
+            display_name: "Model 2".into(),
+            context_window_tokens: 8_000,
+            max_output_tokens: 1_024,
+            capabilities: Default::default(),
+        }]);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("switch").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let host: Arc<dyn GuiHost> = Arc::new(adapter);
+        let accepted = host
             .command(&command_envelope(AppCommand::RunStart {
-                session_id: session,
+                session_id: session.clone(),
                 user_message: "hi".into(),
-                model: Some(pawork_domain::ModelId::from("other-model")),
+                model: Some(pawork_domain::ModelId::from("model-2")),
                 profile: None,
             }))
             .await
-            .expect_err("foreign model must fail closed");
-        assert_eq!(error.code, "unsupported");
+            .expect("same-registry model switch");
+        assert!(matches!(accepted, AppResponse::Accepted { .. }));
+
+        let error = host
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session,
+                user_message: "nope".into(),
+                model: Some(pawork_domain::ModelId::from("missing-model")),
+                profile: None,
+            }))
+            .await
+            .expect_err("unknown model must fail closed");
+        assert_eq!(error.code, "unknown_model");
+    }
+
+    #[tokio::test]
+    async fn tool_approve_resolves_pending_snapshot() {
+        let host = Arc::new(GuiApprovalHost::new());
+        let ask = crate::ApprovalAsk {
+            run_id: RunId::from("run-wait"),
+            session_id: Some(SessionId::from("ses-wait")),
+            tool_name: "write_file".into(),
+            tool_call_id: pawork_domain::ToolCallId::from("call-wait"),
+            relative_path: Some("notes.txt".into()),
+            message: "Approve workspace file write".into(),
+            risk: pawork_policy::RiskLevel::Moderate,
+            preview: Some("1 lines\nhello".into()),
+        };
+        let waiter = {
+            let host = Arc::clone(&host);
+            let ask = ask.clone();
+            tokio::spawn(async move { host.decide(&ask, CancellationToken::new()).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![
+                MockScript::new().text("idle").complete(),
+            ])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let adapter = GuiHostAdapter::with_approvals(Arc::new(core), Arc::clone(&host));
+        let snapshot = adapter.snapshot().await.expect("snapshot");
+        let pending = snapshot
+            .sections
+            .iter()
+            .find(|section| section.kind == SnapshotSectionKind::PendingToolApprovals)
+            .and_then(|section| section.data.clone())
+            .expect("pending section");
+        assert_eq!(pending.as_array().map(|items| items.len()), Some(1));
+        let response = adapter
+            .command(&command_envelope(AppCommand::ToolApprove {
+                run_id: RunId::from("run-wait"),
+                tool_call_id: pawork_domain::ToolCallId::from("call-wait"),
+                decision: pawork_protocol::ApprovalDecision::ApproveOnce,
+            }))
+            .await
+            .expect("approve");
+        assert!(matches!(response, AppResponse::Accepted { .. }));
+        let decision = waiter.await.expect("join");
+        assert_eq!(decision, ApprovalDecision::ApprovedOnce);
+        let snapshot = adapter.snapshot().await.expect("snapshot after");
+        let pending = snapshot
+            .sections
+            .iter()
+            .find(|section| section.kind == SnapshotSectionKind::PendingToolApprovals)
+            .and_then(|section| section.data.clone())
+            .expect("pending section");
+        assert_eq!(pending.as_array().map(|items| items.len()), Some(0));
     }
 
     #[test]
@@ -941,5 +1231,19 @@ mod tests {
             .await
             .expect("accepted");
         assert!(matches!(response, AppResponse::Accepted { .. }));
+        let snapshot = host.snapshot().await.expect("snapshot after create");
+        let sessions = snapshot
+            .sections
+            .iter()
+            .find(|section| section.kind == SnapshotSectionKind::SessionTree)
+            .and_then(|section| section.data.clone())
+            .and_then(|data| data.as_array().cloned())
+            .unwrap_or_default();
+        assert!(
+            sessions.iter().any(|entry| {
+                entry.get("title").and_then(Value::as_str) == Some("from gui")
+            }),
+            "SessionCreate must appear in the next snapshot: {sessions:?}"
+        );
     }
 }

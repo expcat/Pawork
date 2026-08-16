@@ -78,4 +78,47 @@ mod tests {
             "unexpected socket path: {path:?}"
         );
     }
+
+    #[test]
+    fn desktop_direct_deps_stay_on_client_deny_list() {
+        let manifest = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
+        let Some((_, rest)) = manifest.split_once("[dependencies]") else {
+            panic!("desktop Cargo.toml is missing [dependencies]");
+        };
+        let deps = rest
+            .split("\n[")
+            .next()
+            .expect("dependency table")
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    return None;
+                }
+                line.split([' ', '=', '{'])
+                    .next()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            deps.iter().any(|name| *name == "pawork-client"),
+            "desktop must depend on pawork-client: {deps:?}"
+        );
+        for forbidden in [
+            "pawork-app",
+            "pawork-engine",
+            "pawork-provider-core",
+            "pawork-providers",
+            "pawork-session",
+            "pawork-sqlite",
+            "pawork-tools",
+            "pawork-git",
+        ] {
+            assert!(
+                !deps.iter().any(|name| *name == forbidden),
+                "desktop must not depend on {forbidden}: {deps:?}"
+            );
+        }
+    }
 }

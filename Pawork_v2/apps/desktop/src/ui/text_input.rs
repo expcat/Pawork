@@ -1,15 +1,16 @@
 //! 单行/多行 Composer 输入框。
 //!
 //! Adapted from gpui 0.2.2 examples/input.rs (Apache-2.0).
-//! 裁剪范围：保留内容/占位符/marked_range（IME）/UTF16Selection 与
-//! Backspace/Delete/Home/End/左右/Paste 键；鼠标选择、ShowCharacterPalette、
-//! Copy/Cut/SelectAll 按波 B 范围删除。
+//! 裁剪范围：保留内容/占位符/marked_range（IME）/UTF16Selection、
+//! Backspace/Delete/Home/End/左右/Paste，以及点击聚焦（波 C 多轮/IME 必需）。
+//! ShowCharacterPalette、Copy/Cut/SelectAll 与拖选仍按波 B 范围删除。
 
 use std::ops::Range;
 
 use gpui::{
     App, Context, CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler,
-    FocusHandle, Focusable, GlobalElementId, LayoutId, PaintQuad, Pixels, Point, ShapedLine,
+    FocusHandle, Focusable, GlobalElementId, LayoutId, MouseButton, MouseDownEvent, PaintQuad,
+    Pixels, Point, ShapedLine,
     SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill,
     hsla, point, prelude::*, px, relative, rgb, rgba, size,
 };
@@ -120,6 +121,18 @@ impl TextInput {
 
     fn new_line(&mut self, _: &NewLine, window: &mut Window, cx: &mut Context<Self>) {
         self.replace_text_in_range(None, "\n", window, cx);
+    }
+
+    /// 点击 Composer 必须把焦点拉回输入框。`track_focus` 会注册自动聚焦，
+    /// 但点过侧栏/时间线后仍需要显式 `window.focus`，否则键盘/IME/粘贴
+    /// 进不了第二轮。
+    fn on_mouse_down(
+        &mut self,
+        _event: &MouseDownEvent,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.focus_handle);
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -520,6 +533,8 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::new_line))
+            .id("composer-input")
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .w_full()
             .py_1()
             .px_2()

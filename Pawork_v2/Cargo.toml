@@ -23,6 +23,8 @@ exclude = [
     "storage/blob",
     "workspace/resources",
     "host/channels",
+    "clients/compat",
+    "clients/sdk",
     "apps/protocol-probe",
 ]
 

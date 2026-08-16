@@ -63,6 +63,23 @@ pub struct TimelineEntry {
     pub run_id: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingApproval {
+    pub session_id: Option<String>,
+    pub run_id: String,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub reason: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelEntry {
+    pub provider_id: String,
+    pub id: String,
+    pub display_name: String,
+}
+
 /// Assistant 流式合并锚点：同一 run + message 的 delta 追加到同一条目。
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct AssistantAnchor {
@@ -103,6 +120,10 @@ pub struct DesktopProjection {
     pub active_session_id: Option<String>,
     pub active_run_id: Option<String>,
     pub timeline: Vec<TimelineEntry>,
+    pub pending_approval: Option<PendingApproval>,
+    pub models: Vec<ModelEntry>,
+    pub selected_model: Option<(String, String)>,
+    pub pending_model: Option<(String, String)>,
     /// 已消费的 session sequence（live 与分页共用的去重集）。
     seen: BTreeSet<u64>,
     assistant_anchor: Option<AssistantAnchor>,
@@ -135,6 +156,23 @@ impl DesktopProjection {
                         .and_then(Value::as_str)
                         .map(str::to_string);
                 }
+                "provider_status" => {
+                    if let Some((provider, model)) = parse_provider_status(&data) {
+                        self.selected_model = Some((provider, model));
+                        self.pending_model = None;
+                    }
+                }
+                "pending_tool_approvals" => {
+                    if let Some(pending) = parse_pending_approval(&data) {
+                        if pending.session_id.as_deref() == self.active_session_id.as_deref()
+                            || pending.session_id.is_none()
+                        {
+                            self.pending_approval = Some(pending);
+                        }
+                    } else if self.pending_approval.is_some() {
+                        self.pending_approval = None;
+                    }
+                }
                 _ => {}
             }
         }
@@ -144,6 +182,7 @@ impl DesktopProjection {
     pub fn select_session(&mut self, session_id: &str) {
         self.active_session_id = Some(session_id.to_string());
         self.active_run_id = None;
+        self.pending_approval = None;
         self.timeline.clear();
         self.seen.clear();
         self.assistant_anchor = None;
@@ -197,6 +236,12 @@ impl DesktopProjection {
                 } else {
                     self.active_run_id = run_id.clone();
                 }
+                if matches!(
+                    state_name.as_str(),
+                    "completed" | "cancelled" | "failed" | "interrupted"
+                ) {
+                    self.clear_pending_for_run(run_id.as_deref());
+                }
                 if self.seen.insert(sequence) {
                     self.push_entry(TimelineEntry {
                         sequence,
@@ -248,6 +293,7 @@ impl DesktopProjection {
             AppEvent::ToolCompleted { run_id, tool_call_id, success } => {
                 let status = if *success { "succeeded" } else { "failed" };
                 let run = run_id.as_str();
+                self.clear_pending_for_tool(run, tool_call_id.as_str());
                 if self.update_tool_entry(
                     Some(run),
                     Some(tool_call_id.as_str()),
@@ -271,6 +317,30 @@ impl DesktopProjection {
                         run_id: Some(run.to_string()),
                     });
                     return true;
+                }
+            }
+            AppEvent::ToolApprovalRequired {
+                run_id,
+                tool_call_id,
+                reason,
+            } => {
+                self.pending_approval = Some(PendingApproval {
+                    session_id: self.active_session_id.clone(),
+                    run_id: run_id.as_str().to_string(),
+                    tool_call_id: tool_call_id.as_str().to_string(),
+                    tool_name: extract_tool_name(reason),
+                    reason: reason.clone(),
+                    detail: None,
+                });
+                return true;
+            }
+            AppEvent::Diagnostic { code, message, .. } => {
+                if code == "model.switched" {
+                    if let Some(confirmed) = parse_model_switch_message(message) {
+                        self.selected_model = Some(confirmed);
+                        self.pending_model = None;
+                        return true;
+                    }
                 }
             }
             _ => {}
@@ -427,6 +497,9 @@ impl DesktopProjection {
             }
             "tool_completed" => {
                 let status = item.status.unwrap_or("succeeded");
+                if matches!(status, "succeeded" | "failed" | "cancelled") {
+                    self.pending_approval = None;
+                }
                 if self.update_tool_entry(item.run_id, None, item.tool_name, Some(status), None) {
                     self.seen.insert(item.sequence);
                 } else if self.seen.insert(item.sequence) {
@@ -452,6 +525,9 @@ impl DesktopProjection {
                 }
             }
             "run_started" | "run_completed" | "run_cancelled" => {
+                if matches!(item.kind, "run_completed" | "run_cancelled") {
+                    self.clear_pending_for_run(item.run_id);
+                }
                 if self.seen.insert(item.sequence) {
                     let state = item.kind.trim_start_matches("run_");
                     self.push_entry(TimelineEntry {
@@ -464,6 +540,7 @@ impl DesktopProjection {
                 }
             }
             "run_failed" => {
+                self.clear_pending_for_run(item.run_id);
                 if self.seen.insert(item.sequence) {
                     let reason = item.detail.unwrap_or_default();
                     self.push_entry(TimelineEntry {
@@ -474,6 +551,9 @@ impl DesktopProjection {
                         run_id: item.run_id.map(str::to_string),
                     });
                 }
+            }
+            "approval_responded" => {
+                self.pending_approval = None;
             }
             "diagnostic" => {
                 if self.seen.insert(item.sequence) {
@@ -551,6 +631,36 @@ impl DesktopProjection {
         }
         false
     }
+
+    pub fn set_models(&mut self, models: Vec<ModelEntry>) {
+        self.models = models;
+    }
+
+    pub fn set_pending_model(&mut self, provider_id: String, id: String) {
+        self.pending_model = Some((provider_id, id));
+    }
+
+    pub fn effective_model(&self) -> Option<&(String, String)> {
+        self.pending_model.as_ref().or(self.selected_model.as_ref())
+    }
+
+    fn clear_pending_for_run(&mut self, run_id: Option<&str>) {
+        if self
+            .pending_approval
+            .as_ref()
+            .is_some_and(|pending| run_id == Some(pending.run_id.as_str()))
+        {
+            self.pending_approval = None;
+        }
+    }
+
+    fn clear_pending_for_tool(&mut self, run_id: &str, tool_call_id: &str) {
+        if self.pending_approval.as_ref().is_some_and(|pending| {
+            pending.run_id == run_id && pending.tool_call_id == tool_call_id
+        }) {
+            self.pending_approval = None;
+        }
+    }
 }
 
 /// unit enum（SnapshotSectionKind / TimelineItemKind / RunState）的 serde 名。
@@ -584,6 +694,58 @@ fn parse_sessions(data: &Value) -> Vec<SessionSummary> {
     }
     sessions.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
     sessions
+}
+
+fn parse_provider_status(data: &Value) -> Option<(String, String)> {
+    let entry = data.as_array().and_then(|entries| entries.first()).or(Some(data))?;
+    let provider = entry.get("provider_id").and_then(Value::as_str)?;
+    let model = entry.get("model").and_then(Value::as_str)?;
+    Some((provider.to_string(), model.to_string()))
+}
+
+fn parse_pending_approval(data: &Value) -> Option<PendingApproval> {
+    let entry = data.as_array().and_then(|entries| entries.first())?;
+    let run_id = entry.get("run_id").and_then(Value::as_str)?;
+    let tool_call_id = entry.get("tool_call_id").and_then(Value::as_str)?;
+    let tool_name = entry
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("tool");
+    let message = entry.get("message").and_then(Value::as_str).unwrap_or("");
+    let path = entry.get("relative_path").and_then(Value::as_str);
+    let preview = entry.get("preview").and_then(Value::as_str);
+    let reason = match path {
+        Some(path) if !path.is_empty() => format!("{tool_name} · {path} · {message}"),
+        _ => format!("{tool_name} · {message}"),
+    };
+    Some(PendingApproval {
+        session_id: entry
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        run_id: run_id.to_string(),
+        tool_call_id: tool_call_id.to_string(),
+        tool_name: tool_name.to_string(),
+        reason,
+        detail: preview.map(str::to_string),
+    })
+}
+
+fn extract_tool_name(reason: &str) -> String {
+    reason
+        .split(" · ")
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or("tool")
+        .to_string()
+}
+
+fn parse_model_switch_message(message: &str) -> Option<(String, String)> {
+    let value: Value = serde_json::from_str(message).ok()?;
+    let target = value.get("to").cloned().unwrap_or(value);
+    let provider = target.get("provider").and_then(Value::as_str)?;
+    let model = target.get("model").and_then(Value::as_str)?;
+    Some((provider.to_string(), model.to_string()))
 }
 
 /// 供 controller / probe 复用的 snapshot 解析。
@@ -798,5 +960,57 @@ mod tests {
 
         // 页数据之外先到的 live 事件重放（同 sequence）不再重复。
         assert!(!projection.apply_event(&assistant_delta(2, "m-1", "He")));
+    }
+
+    #[test]
+    fn approval_card_clears_on_terminal_run() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&event(
+            1,
+            json!({
+                "type": "tool_approval_required",
+                "data": {
+                    "run_id": "r-1",
+                    "tool_call_id": "call-1",
+                    "reason": "write_file · notes.txt · Approve workspace file write"
+                }
+            }),
+        )));
+        assert_eq!(
+            projection
+                .pending_approval
+                .as_ref()
+                .map(|item| item.tool_name.as_str()),
+            Some("write_file")
+        );
+        assert!(projection.apply_event(&run_changed(2, "cancelled")));
+        assert_eq!(projection.pending_approval, None);
+    }
+
+    #[test]
+    fn pending_model_is_overwritten_by_diagnostic() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        projection.set_pending_model("mock".into(), "model-2".into());
+        assert!(projection.apply_event(&event(
+            1,
+            json!({
+                "type": "diagnostic",
+                "data": {
+                    "level": "info",
+                    "code": "model.switched",
+                    "message": "{\"to\":{\"provider\":\"mock\",\"model\":\"model-2\"}}"
+                }
+            }),
+        )));
+        assert_eq!(
+            projection
+                .selected_model
+                .as_ref()
+                .map(|(provider, model)| (provider.as_str(), model.as_str())),
+            Some(("mock", "model-2"))
+        );
+        assert_eq!(projection.pending_model, None);
     }
 }

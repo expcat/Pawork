@@ -136,6 +136,8 @@ impl LoopContext for SessionLoopCtx<'_> {
                         continue;
                     }
                     let ask = ApprovalAsk {
+                        run_id: self.run_id.clone(),
+                        session_id: self.session_id.clone(),
                         tool_name: call.name.clone(),
                         tool_call_id: call.tool_call_id.clone(),
                         relative_path: relative_path_from_input(&call.arguments),

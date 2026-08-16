@@ -61,7 +61,8 @@ use crate::loop_ctx::SessionLoopCtx;
 use crate::protocol::resolve_adapter_protocol;
 
 pub use approval::{
-    parse_approval_mode, ApprovalAsk, ApprovalPromptHost, DenyAllApprovals,
+    parse_approval_mode, ApprovalAsk, ApprovalPromptHost, DenyAllApprovals, GuiApprovalHost,
+    PendingToolApproval,
 };
 pub use data_dir::{default_data_dir, session_db_path};
 pub use gui_host::{
@@ -679,6 +680,14 @@ impl AppCore {
 
     pub fn workspace_trusted(&self) -> bool {
         self.workspace_trusted
+    }
+
+    pub fn approval_mode(&self) -> ApprovalMode {
+        self.approval_mode
+    }
+
+    pub fn approval_host(&self) -> Arc<dyn ApprovalPromptHost> {
+        Arc::clone(&self.approval_host)
     }
 
     /// 当前 provider 在 registry 的静态目录（REPL /model 列表用）。

@@ -1,9 +1,8 @@
-//! pawork-desktop：GPUI 最小 Agent 壳（S7 波 B Slice B）。
+//! pawork-desktop：GPUI 最小 Agent 壳（S7 波 C）。
 //!
 //! 四层结构：ui（GPUI 渲染与交互）/ projection（纯状态机）/
 //! controller（只调 pawork-client）/ platform（socket 发现 + tokio 宿主）。
-//! 范围：Sessions 列表/新建/打开 + Timeline 流式 + Composer 发送；
-//! 审批 / 取消 / 模型切换属波 C，不做。
+//! 范围：Sessions + Timeline + Composer 发送/取消、时间线审批、模型切换。
 
 mod controller;
 mod platform;

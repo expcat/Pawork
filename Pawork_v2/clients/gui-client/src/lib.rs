@@ -76,6 +76,7 @@ impl Default for ClientConfig {
                 GuiCapability::Events,
                 GuiCapability::Snapshots,
                 GuiCapability::ArtifactStreaming,
+                GuiCapability::Approvals,
             ],
             supported_api_versions: SUPPORTED_API_VERSIONS.to_vec(),
         }
@@ -217,6 +218,9 @@ pub struct GuiClient {
     initial_snapshot: Arc<Mutex<Option<Snapshot>>>,
     /// 等待后续操作消费的帧（当前请求不匹配的帧先缓存，事件帧由此投递）。
     inbox: Arc<AsyncMutex<VecDeque<ServerFrame>>>,
+    /// 单连接只允许一个任务读传输层。事件泵与 command/snapshot 并发
+    /// `receive` 会把对端响应拆丢；锁内先按调用方类型查 inbox。
+    io: Arc<AsyncMutex<()>>,
     next_request: Arc<AtomicU64>,
     next_nonce: Arc<AtomicU64>,
     last_acked: Arc<AtomicU64>,
@@ -345,6 +349,7 @@ impl GuiClient {
             info,
             initial_snapshot: Arc::new(Mutex::new(Some(snapshot))),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
+            io: Arc::new(AsyncMutex::new(())),
             next_request: Arc::new(AtomicU64::new(0)),
             next_nonce: Arc::new(AtomicU64::new(0)),
             last_acked: Arc::new(AtomicU64::new(0)),
@@ -465,7 +470,7 @@ impl GuiClient {
 
     async fn await_response(&self, request_id: &str) -> Result<AppResponseEnvelope, ClientError> {
         loop {
-            match self.recv_frame(self.config.timeout).await? {
+            match self.recv_matching(self.config.timeout, FrameWant::Response).await? {
                 ServerFrame::Response(envelope) if envelope.request_id.as_str() == request_id => {
                     return Ok(envelope);
                 }
@@ -474,7 +479,7 @@ impl GuiClient {
                 {
                     return Err(ClientError::Protocol(envelope.error));
                 }
-                other => self.stash(other),
+                other => self.stash(other).await,
             }
         }
     }
@@ -525,9 +530,9 @@ impl GuiClient {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            match self.recv_frame(remaining).await? {
+            match self.recv_matching(remaining, FrameWant::Event).await? {
                 ServerFrame::Event(event) => return Ok(event),
-                other => self.stash(other),
+                other => self.stash(other).await,
             }
         }
     }
@@ -544,10 +549,10 @@ impl GuiClient {
         })
         .await?;
         loop {
-            match self.recv_frame(self.config.timeout).await? {
+            match self.recv_matching(self.config.timeout, FrameWant::Snapshot).await? {
                 ServerFrame::Snapshot(snapshot) => return Ok(snapshot),
                 ServerFrame::Error(envelope) => return Err(ClientError::Protocol(envelope.error)),
-                other => self.stash(other),
+                other => self.stash(other).await,
             }
         }
     }
@@ -571,7 +576,7 @@ impl GuiClient {
         let mut replayed = Vec::new();
         let mut snapshot = None;
         loop {
-            match self.recv_frame(self.config.timeout).await? {
+            match self.recv_matching(self.config.timeout, FrameWant::Resume).await? {
                 ServerFrame::Resume(ResumeResponse {
                     request_id: rid,
                     disposition: found,
@@ -610,11 +615,11 @@ impl GuiClient {
                             }
                         } else {
                             // 已进入实时事件流：留给 next_event。
-                            self.stash(ServerFrame::Event(event));
+                            self.stash(ServerFrame::Event(event)).await;
                             break;
                         }
                     }
-                    None => self.stash(ServerFrame::Event(event)),
+                    None => self.stash(ServerFrame::Event(event)).await,
                 },
                 ServerFrame::Snapshot(found) => {
                     snapshot = Some(found.clone());
@@ -624,12 +629,12 @@ impl GuiClient {
                     ) {
                         break;
                     }
-                    self.stash(ServerFrame::Snapshot(found));
+                    self.stash(ServerFrame::Snapshot(found)).await;
                 }
                 ServerFrame::Error(envelope) => {
                     return Err(ClientError::Protocol(envelope.error));
                 }
-                other => self.stash(other),
+                other => self.stash(other).await,
             }
         }
         let disposition = disposition.ok_or_else(|| {
@@ -686,7 +691,7 @@ impl GuiClient {
                 {
                     return Err(ClientError::Protocol(envelope.error));
                 }
-                other => self.stash(other),
+                other => self.stash(other).await,
             }
         }
     }
@@ -723,7 +728,7 @@ impl GuiClient {
                 {
                     return Err(ClientError::Protocol(envelope.error));
                 }
-                other => self.stash(other),
+                other => self.stash(other).await,
             }
         }
     }
@@ -750,9 +755,9 @@ impl GuiClient {
     pub async fn heartbeat_with_nonce(&self, nonce: u64) -> Result<u64, ClientError> {
         self.send_frame(&ClientFrame::Heartbeat { nonce }).await?;
         loop {
-            match self.recv_frame(self.config.timeout).await? {
+            match self.recv_matching(self.config.timeout, FrameWant::Any).await? {
                 ServerFrame::Pong { nonce: pong } if pong == nonce => return Ok(pong),
-                other => self.stash(other),
+                other => self.stash(other).await,
             }
         }
     }
@@ -789,41 +794,103 @@ impl GuiClient {
     /// 取下一帧：先查 inbox，再读传输层；服务端主动 Heartbeat 自动回 Pong。
     /// 单次等待不超过 `timeout`，超时返回 [`ClientError::Timeout`]。
     async fn recv_frame(&self, timeout: Duration) -> Result<ServerFrame, ClientError> {
+        self.recv_matching(timeout, FrameWant::Any).await
+    }
+
+    async fn recv_matching(
+        &self,
+        timeout: Duration,
+        want: FrameWant,
+    ) -> Result<ServerFrame, ClientError> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            if let Some(frame) = self.inbox.lock().await.pop_front() {
+            if let Some(frame) = self.pop_inbox(want).await {
                 return Ok(frame);
             }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            let received = tokio::time::timeout(remaining, self.conn.receive()).await;
-            let bytes = match received {
-                Ok(Ok(bytes)) => bytes,
-                Ok(Err(error)) => return Err(ClientError::Transport(error)),
-                Err(_) => {
+            if remaining.is_zero() {
+                return Err(ClientError::Timeout {
+                    operation: "receive frame",
+                    timeout,
+                });
+            }
+            let frame = {
+                let _guard = self.io.lock().await;
+                if let Some(frame) = self.pop_inbox(want).await {
+                    return Ok(frame);
+                }
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
                     return Err(ClientError::Timeout {
                         operation: "receive frame",
                         timeout,
                     });
                 }
+                let received = tokio::time::timeout(remaining, self.conn.receive()).await;
+                let bytes = match received {
+                    Ok(Ok(bytes)) => bytes,
+                    Ok(Err(error)) => return Err(ClientError::Transport(error)),
+                    Err(_) => {
+                        return Err(ClientError::Timeout {
+                            operation: "receive frame",
+                            timeout,
+                        });
+                    }
+                };
+                decode_server_frame_checked(bytes.as_bytes(), self.api_version())
+                    .map_err(decode_error)?
             };
-            let frame = decode_server_frame_checked(bytes.as_bytes(), self.api_version())
-                .map_err(decode_error)?;
             match frame {
                 ServerFrame::Heartbeat { nonce } => {
                     send_frame(self.conn.as_ref(), &ClientFrame::Pong { nonce }).await?;
                 }
-                other => return Ok(other),
+                other if want.matches(&other) => return Ok(other),
+                other => {
+                    self.stash(other).await;
+                    tokio::task::yield_now().await;
+                }
             }
         }
     }
 
     /// 把当前请求不匹配的帧放回 inbox 供后续操作消费。
-    fn stash(&self, frame: ServerFrame) {
-        let mut inbox = self
-            .inbox
-            .try_lock()
-            .expect("inbox lock is never held across await points");
-        inbox.push_back(frame);
+    async fn stash(&self, frame: ServerFrame) {
+        self.inbox.lock().await.push_back(frame);
+    }
+
+    async fn pop_inbox(&self, want: FrameWant) -> Option<ServerFrame> {
+        let mut inbox = self.inbox.lock().await;
+        if let Some(index) = inbox.iter().position(|frame| want.matches(frame)) {
+            return Some(inbox.remove(index).expect("inbox index exists"));
+        }
+        None
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FrameWant {
+    Any,
+    Event,
+    Response,
+    Snapshot,
+    Resume,
+}
+
+impl FrameWant {
+    fn matches(self, frame: &ServerFrame) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Event => matches!(frame, ServerFrame::Event(_)),
+            Self::Response => matches!(frame, ServerFrame::Response(_) | ServerFrame::Error(_)),
+            Self::Snapshot => matches!(frame, ServerFrame::Snapshot(_) | ServerFrame::Error(_)),
+            Self::Resume => matches!(
+                frame,
+                ServerFrame::Resume(_)
+                    | ServerFrame::Snapshot(_)
+                    | ServerFrame::Event(_)
+                    | ServerFrame::Error(_)
+            ),
+        }
     }
 }
 
@@ -1033,5 +1100,70 @@ mod tests {
             .await
             .expect("pre-negotiation recv decodes without version check");
         assert!(matches!(frame, ServerFrame::Response(_)));
+    }
+
+    #[tokio::test]
+    async fn recv_matching_stashes_mismatched_frames_for_other_waiters() {
+        use pawork_domain::{CoreInstanceId, EventId};
+        use pawork_protocol::{EventSource, EventStream};
+
+        let event = ServerFrame::Event(AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: CoreInstanceId::from("instance-1"),
+            event_id: EventId::from("event-1"),
+            global_sequence: GlobalSequence(1),
+            stream: EventStream::Global,
+            stream_sequence: 1,
+            timestamp: Timestamp::from_unix_millis(1),
+            source: EventSource::Core,
+            payload: AppEvent::RunChanged {
+                run_id: pawork_domain::RunId::from("run-1"),
+                state: pawork_protocol::RunState::StreamingResponse,
+            },
+        });
+        let client = GuiClient {
+            conn: Arc::new(mock(vec![
+                TransportFrame::new(encode_server_frame(&event).expect("encode event")),
+                TransportFrame::new(response_bytes(API_VERSION)),
+            ])),
+            config: ClientConfig::default(),
+            info: Arc::new(SessionInfo {
+                handle: ApiHandle {
+                    instance_id: CoreInstanceId::from("instance-1"),
+                    api_version: API_VERSION,
+                },
+                client_id: GuiClientId::from("client-1"),
+                connection_id: ConnectionId::from("conn-1"),
+                capabilities: Vec::new(),
+                resume: ResumeDisposition::SnapshotRequired {
+                    earliest_available_sequence: GlobalSequence(0),
+                },
+            }),
+            initial_snapshot: Arc::new(Mutex::new(None)),
+            inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
+            io: Arc::new(AsyncMutex::new(())),
+            next_request: Arc::new(AtomicU64::new(0)),
+            next_nonce: Arc::new(AtomicU64::new(0)),
+            last_acked: Arc::new(AtomicU64::new(0)),
+            closed: Arc::new(AtomicBool::new(false)),
+        };
+
+        let waiter = client.clone();
+        let response = tokio::spawn(async move {
+            waiter
+                .recv_matching(Duration::from_secs(1), FrameWant::Response)
+                .await
+        });
+        tokio::task::yield_now().await;
+        let event_frame = client
+            .recv_matching(Duration::from_secs(1), FrameWant::Event)
+            .await
+            .expect("event waiter receives stashed event");
+        assert!(matches!(event_frame, ServerFrame::Event(_)));
+        let response_frame = response
+            .await
+            .expect("response task")
+            .expect("response waiter is not starved by the event pump");
+        assert!(matches!(response_frame, ServerFrame::Response(_)));
     }
 }

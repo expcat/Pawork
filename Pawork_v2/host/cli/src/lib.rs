@@ -18,6 +18,7 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use pawork_app::{
     parse_approval_mode, AppCore, AppError, AppLoadOptions, ApprovalPromptHost, DenyAllApprovals,
+    GuiApprovalHost,
 };
 use thiserror::Error;
 
@@ -147,9 +148,7 @@ async fn run_inner() -> Result<(), CliError> {
     };
     options.approval_host = Some(approval_host(cli.json));
     if matches!(&cli.command, Command::Gui { .. }) {
-        // GUI 宿主没有终端审批交互面：波 A 一律 fail-closed（写入类工具
-        // 按审批模式拒绝），波 C 再接时间线内审批。
-        options.approval_host = Some(Arc::new(DenyAllApprovals));
+        options.approval_host = Some(Arc::new(GuiApprovalHost::new()));
     }
     // 目录 / 凭证命令允许默认 provider 缺凭证（目录兜底装配）。
     let tolerant = matches!(

@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use pawork_app::{AppCore, GuiHostAdapter};
+use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
 use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::{GuiCapability, HandshakeService, SUPPORTED_API_VERSIONS};
 use pawork_transport::{
@@ -18,8 +18,11 @@ use crate::{CliError, GuiCommand};
 
 pub async fn run_gui(core: AppCore, command: GuiCommand) -> Result<(), CliError> {
     let GuiCommand::Serve { socket } = command;
-    let core = Arc::new(core);
-    let adapter = GuiHostAdapter::new(Arc::clone(&core));
+    let approvals = Arc::new(GuiApprovalHost::new());
+    let mut core = core;
+    core.configure_approval(core.approval_mode(), core.workspace_trusted(), approvals.clone());
+    let core = Arc::new(tokio::sync::RwLock::new(core));
+    let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
     let socket_path = match socket.or_else(default_socket_dir) {
         Some(dir) => dir.join("pawork-gui.sock"),
         None => std::env::temp_dir().join("pawork-gui.sock"),
@@ -76,11 +79,11 @@ pub async fn run_gui(core: AppCore, command: GuiCommand) -> Result<(), CliError>
             }
         }
     }
-    let shutdown = Arc::try_unwrap(core)
-        .map_err(|_| CliError::Usage("gui connections still active".to_string()))?
-        .shutdown()
-        .await?;
-    Ok(shutdown)
+    drop(connections);
+    if let Ok(core) = Arc::try_unwrap(core) {
+        core.into_inner().shutdown().await?;
+    }
+    Ok(())
 }
 
 fn default_socket_dir() -> Option<std::path::PathBuf> {

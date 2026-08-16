@@ -74,6 +74,8 @@ mod tests {
     #[test]
     fn formats_tool_path_risk_and_preview() {
         let text = format_approval_prompt(&ApprovalAsk {
+            run_id: pawork_domain::RunId::from("run-1"),
+            session_id: Some(pawork_domain::SessionId::from("ses-1")),
             tool_name: "write_file".into(),
             tool_call_id: ToolCallId::from("call-1"),
             relative_path: Some("src/demo.rs".into()),
