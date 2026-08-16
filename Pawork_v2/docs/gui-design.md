@@ -2,6 +2,8 @@
 
 > 本文是 V2 Desktop GUI 的**设计事实源**。S7 波 0 已于 2026-08-16 锁定；在此之后才可写 `apps/desktop`。后续阶段只按 §5 增量图给已有壳加面，不另起一套信息架构。
 >
+> 视觉实施基准：[../design/README.md](../design/README.md)（定稿图、TaskRail 双分组与响应式约束）
+>
 > 关联：[../ROADMAP.md](../ROADMAP.md) · [S7 任务书](../plan/S7-gui-agent.md) · [references.md](references.md) · 根仓 [Desktop GUI](../../docs/features/desktop-gui.md) · [GUI 连接](../../docs/features/gui-connection.md) · [ADR-035](../../docs/adr/ADR-035-gpui-desktop.md)
 
 ---
@@ -23,13 +25,14 @@
 
 ## 2. 参照与取舍
 
-对照现有 Agent GUI，只吸收可验证的「主对话壳」行为，不复制完整 IDE，也不做像素级克隆。下表按 2026-08-16 的官方公开资料核对：
+对照现有 Agent GUI，只吸收可验证的「主对话壳」行为，不复制完整 IDE，也不做像素级克隆。下表按 2026-08-17 的官方公开资料核对：
 
 | 参照 | 吸收 | 不吸收 |
 | --- | --- | --- |
 | [Codex app](https://openai.com/index/introducing-the-codex-app/) | 项目内组织 thread、thread 内持续查看 Agent 进度与结果，桌面与 CLI 会话连续 | 多 Agent command center、Worktree 编排、Skills / Automations、Cloud / Remote 全家桶 |
 | [OpenCode](https://opencode.ai/)（[models](https://opencode.ai/v2/docs/models) / [tools](https://dev.opencode.ai/docs/tools/)） | 会话继续、当前会话模型切换、工具详情与 permission 状态可见 | TUI 键位、WebView/JS 插件面板、并行多会话工作站 |
 | [Cursor Agent / MCP](https://docs.cursor.com/context/model-context-protocol) | 工具请求、参数与结果在对话内可展开；需要时就地审批 | 编辑器分屏、代码导航、IDE Settings 与 MCP 管理面 |
+| [Zed Agent Panel](https://zed.dev/docs/ai/agent-panel) / [Parallel Agents](https://zed.dev/docs/ai/parallel-agents) | Thread 按项目分组、项目头定向新建、Changes 摘要、Agent 状态；模型选择与 token usage 靠近 Composer | 完整编辑器面板布局、worktree 与 Terminal Thread 管理 |
 | V1 [desktop-gui.md](../../docs/features/desktop-gui.md) | `ui / projection / controller / platform` 四层；Snapshot + `global_sequence` Replay | P19-1～P19-16 一次铺开 11 个 Surface |
 
 S7 的产品形状：**一个本地 Coding Agent 聊天窗**，不是工作站。Git / MCP / 多客户端 / Plan 等能力随后续阶段长到同一壳上。
@@ -39,22 +42,24 @@ S7 的产品形状：**一个本地 Coding Agent 聊天窗**，不是工作站�
 ## 3. 最小信息架构（S7 只做这些）
 
 ```text
-┌────────────┬──────────────────────────────────────┐
-│ Sessions   │  Timeline                            │
-│  · 当前    │   user / assistant / tool / error    │
-│  · 历史    │                                      │
-│  · 新建    │                                      │
-│            ├──────────────────────────────────────┤
-│ Workspace  │  Composer                            │
-│  · 路径    │   输入 · 发送 · 取消 · 模型          │
-│  · 连接    │                                      │
-└────────────┴──────────────────────────────────────┘
+┌──────────────────┬──────────────────────────────────────┐
+│ TaskRail         │  Timeline                            │
+│  · 分组角标      │   user / assistant / tool / error    │
+│  · 项目范围      │                                      │
+│  · 连接 / +      │                                      │
+│  · 日期 / 项目   │                                      │
+│  · Task / +      │                                      │
+│                  ├──────────────────────────────────────┤
+│ Workspace        │  Composer                            │
+│  · 路径          │   输入 · 发送 · 取消 · 模型          │
+│  · 连接          │                                      │
+└──────────────────┴──────────────────────────────────────┘
 ```
 
 | Surface | S7 范围 | 明确延后 |
 | --- | --- | --- |
 | Connection / Shell | 发现或拉起本机 `pawork gui serve`、连接状态、断线提示 | 多 instance、远程 Host、updater |
-| Sessions | 列表 / 新建 / 打开 / resume | Fork / 分支树 |
+| TaskRail / Sessions | 列表 / 新建 / 打开 / resume；同一 Session 集合可按时间或项目组织 | Fork / 分支树 |
 | Timeline | user、assistant 流式、tool 调用起止、错误 | citation、Artifact 分页、thinking 精细折叠（有事件就只读展示，不做专门产品页） |
 | Composer | 纯文本发送、取消当轮、下拉已配置 model/provider | `@file`、附件、profile（S9 再长） |
 | Approval | 时间线内嵌仅本次允许 / 本轮运行允许 / 拒绝（复用 S3 语义） | 完整 Policy 说明页、信任向导 |
@@ -77,6 +82,26 @@ S7 的唯一主路径是：启动 Desktop → 连接本机 Host → 恢复 Snaps
 | 协议不兼容 | 明确显示客户端与 Host 版本不兼容 | 只允许退出/重试；不得降级走 `--json` |
 
 模型选择器只列 Host 返回的已配置条目；切换只影响下一轮，并以 Core 的确认事件覆盖本地 pending。审批按钮严格映射 S3 的 `ApproveOnce / ApproveForRun / Deny`；关闭审批卡片不能等价于允许。
+
+### 3.2 TaskRail：按时间 / 按项目
+
+选定视觉基准为 [Timeline](../design/desktop-shell-timeline-v3.png)、[Timeline · Inspector 折叠](../design/desktop-shell-timeline-collapsed-v3.png) 与 [Projects](../design/desktop-shell-projects-v3.png) 三个状态；完整布局、token、响应式与验收规则见 [design/README.md](../design/README.md)。后续 GUI 实现默认参照这组设计。
+
+- 顶部 `All projects / <project>` 是范围筛选；`Timeline / Projects` 是分组方式。两者正交，不能把已选项目的下拉框同时当作分组开关。
+- 分组方式收进 Pawork 标题行右侧的 `GroupingMenuButton`：Timeline 使用 clock/list glyph，Projects 使用 folder/list glyph；点击菜单切换，不保留宽幅 segmented control。
+- `Local · Connected` 右侧的全局 `AddTaskButton` 不保留全宽样式；Timeline 与 Projects 的每个项目头另有 `ProjectAddTaskButton`，新 Task 默认绑定该项目的 canonical `workspace_id`。断线与 stale projection 时两类入口均禁用并解释原因。
+- Timeline 层级固定为日期 → 项目 → Task：日期按 Today / Yesterday / Previous 7 days / Earlier，日期内项目与项目内 Task 均按最近活动倒序；Task 行不再重复项目名。
+- Projects 按 canonical Workspace 项目分组，项目头同时显示 task count 与定向新建角标；缺失项目元数据的 Session 进入 `Unassigned`。
+- 切换分组不改变 active session、Composer 草稿、Run 或主 Timeline；当前 Session 在新组织方式下滚动到可见位置。
+- 分组方式、范围筛选和项目展开状态是本地 presentation preference，不新增 Agent domain 事件，也不改变 GUI Connection Protocol。
+
+### 3.3 Context、运行信息与 Inspector 工具位
+
+- Composer 常态高 88–94 px，同行控件高 28–30 px；模型 / reasoning 只在模型选择器显示。工作目录与 Send 之间显示 `ContextMeter`：当前请求上下文估算 / model catalog context window。容量未知时显示 unavailable，不用 Session 累计 token 冒充。
+- Workspace 与 Inspector 底部共享 24 px `RunStatusBar`，按优先级显示 Task 累计 token、Provider 剩余额度、output tokens/s 与 Run duration；不重复 Composer 的模型 / reasoning。字段没有权威来源时显示 unknown / `—`，不伪造数值。
+- Inspector 顶部预留 capability-driven `InspectorToolTabs`；Changes 是 S8 surface，Terminal 是 S10 surface，Files / Summary 仍是 Changes 内部二级 tab。折叠时 Inspector 宽度归零，Workspace 扩展，右上 `ActivityPopover` 摘要显示 Changes 行数与 Main / subagent 状态；点击摘要恢复对应 Inspector surface。
+- ActivityPopover 的 Changes 分区随 S8 启用，Agent 状态列表随 S11 启用；不可用阶段隐藏对应分区，不做可点击假入口或截图演示数据。
+- 上述展示只消费 projection / Host capability，经 controller → `pawork-client` 获取；GUI 不直连 Provider、quota store、Git、PTY 或数据库。
 
 ---
 
@@ -124,11 +149,11 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 
 | 阶段 | Core 新能力 | GUI 增量（只加面，不改四层） |
 | --- | --- | --- |
-| S7 | 最小 `gui serve` + 单客户端协议 | 本设计的 Agent 壳：会话 / Timeline / Composer / 取消 / 模型 / 审批按钮 |
-| S8 | diff / checkpoint / rollback | Changes：会话 diff、回滚、审批 hunk 预览 |
+| S7 | 最小 `gui serve` + 单客户端协议 | 本设计的 Agent 壳：日期内项目分组 TaskRail / 紧凑 Composer / Context / 取消 / 模型 / 审批按钮；状态栏只显示已有权威字段 |
+| S8 | diff / checkpoint / rollback | InspectorToolTabs 激活 Changes；折叠态 ActivityPopover 显示文件数与增删行摘要 |
 | S9 | MCP / AGENTS.md / `@file` | Composer `@` 补全；Resources 只读：MCP 列表、已加载规则 |
-| S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、Terminal、多窗口本地 |
-| S11 | Plan / 后台任务 / usage / 多 Agent | Workflow 与用量条；子 Agent 时间线分组 |
+| S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal、多窗口本地 |
+| S11 | Plan / 后台任务 / usage / 多 Agent | Workflow 与完整用量/quota 状态条；ActivityPopover 激活 Main / subagent 状态列表 |
 | S12 | 发布硬化 | 三平台窗口/输入/打包证据；不是新功能页 |
 | 待决策 | WASM 插件 / Hooks / LSP / 市场 | 预留 Resources 空位与协议扩展点，**不画假市场页** |
 
@@ -139,6 +164,9 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 ## 6. 视觉与交互原则
 
 - 原生桌面密度：侧栏窄、主栏宽、Composer 固定在底。不要仪表盘卡片墙。
+- 左栏必须通过标题行角标菜单提供 Timeline / Projects 两种组织方式；Timeline 使用日期 → 项目 → Task，连接行提供全局新建，项目头提供定向新建。实现前对照 [视觉实施基准](../design/README.md)，不得恢复占满整行的切换或新建按钮。
+- Composer 保持紧凑；ContextMeter 与 RunStatusBar 必须区分当前上下文、Session 累计 usage、quota、tokens/s 与 Run duration。模型 / reasoning 只在 Composer 选择器出现，缺值诚实显示 unavailable，不能用推断值填满界面。
+- Inspector 顶层工具 tab 与 Changes 内 Files / Summary 二级 tab 必须保持层次；折叠态只用 ActivityPopover 呈现可操作摘要，Surface 未接通时不画可点击假入口。
 - 工具调用是 Timeline 里的折叠块（名字、状态、短摘要），不是单独 IDE 面板。
 - 流式输出按 token/事件追加；取消只取消当轮，历史保留。
 - 审批 fail-closed：无用户动作不得当默认允许。
@@ -162,9 +190,10 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 
 ## 8. 验收（设计锁定）
 
-> 2026-08-16 · S7 波 0 已锁定。这里验收的是设计与可检查规则；真实依赖图、平台交互与视觉证据随波 B/C 执行。
+> 2026-08-16 · S7 波 0 已锁定。这里验收的是设计与可检查规则；真实依赖图已在波 B/C 用 `cargo metadata` 实测（desktop 直接业务依赖仅 `pawork-client`）。v3 TaskRail 视觉证据随波 D。
 
 - [x] 对照 §2 写明吸收/不吸收，并与本节信息架构一致。
 - [x] S7 实现范围不超过 §3；后续阶段只按 §5 加面。
 - [x] 四层边界与「不链 Core」已形成可执行 deny list；实测留波 B/C。
 - [x] 插件/市场/Hooks/LSP 无产品入口，仅有隐藏扩展点。
+- [x] 方案 2 v3 已形成日期内项目分组、项目定向新建、紧凑 Composer、去重 RunStatusBar，以及 Inspector 展开 / ActivityPopover 折叠状态的视觉实施基准。

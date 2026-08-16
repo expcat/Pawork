@@ -499,7 +499,9 @@ impl GuiHost for GuiHostAdapter {
                 Ok(AppResponse::Data(data))
             }
             AppQuery::ModelList { provider_id } => {
-                let catalog = self.core.read().await.model_catalog().await;
+                // 与 `pawork models` 同一聚合目录，供 Desktop 切换已配置
+                // provider/model；单通道 `model_catalog` 只含当前宿主。
+                let catalog = self.core.read().await.models_overview().await;
                 let entries: Vec<_> = catalog
                     .iter()
                     .filter(|entry| {
@@ -600,6 +602,49 @@ impl GuiHost for GuiHostAdapter {
                                     Some(model.as_str()),
                                 )
                                 .await
+                            }
+                            Err(error @ crate::AppError::UnknownModel { .. }) => {
+                                let owner = core
+                                    .models_overview()
+                                    .await
+                                    .into_iter()
+                                    .find(|entry| entry.id.as_str() == model.as_str())
+                                    .map(|entry| entry.provider.as_str().to_string());
+                                match owner {
+                                    Some(owner) if owner != current.0 => {
+                                        match core
+                                            .switch_provider(
+                                                Some(session_id),
+                                                &owner,
+                                                Some(model.as_str()),
+                                            )
+                                            .await
+                                        {
+                                            Ok(()) => Ok(()),
+                                            Err(crate::AppError::UnknownModel { .. }) => {
+                                                match core
+                                                    .switch_provider(
+                                                        Some(session_id),
+                                                        &owner,
+                                                        None,
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(()) => {
+                                                        core.switch_model(
+                                                            Some(session_id),
+                                                            model.as_str(),
+                                                        )
+                                                        .await
+                                                    }
+                                                    Err(other) => Err(other),
+                                                }
+                                            }
+                                            Err(other) => Err(other),
+                                        }
+                                    }
+                                    _ => Err(error),
+                                }
                             }
                             Err(error) => Err(error),
                         };
@@ -967,6 +1012,17 @@ mod tests {
         }
     }
 
+    fn query_envelope(query: AppQuery) -> AppQueryEnvelope {
+        AppQueryEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-test-1"),
+            source: CommandSource::Automation,
+            identity: ActorIdentity::System,
+            issued_at: Timestamp::from_unix_millis(1),
+            query,
+        }
+    }
+
     async fn core_with_turn() -> (Arc<AppCore>, tempfile::TempDir, SessionId) {
         let dir = tempfile::tempdir().expect("tempdir");
         let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
@@ -1019,6 +1075,35 @@ mod tests {
             .expect("second page");
         assert!(second.complete);
         assert!(second.items.iter().all(|item| item.sequence > first));
+    }
+
+    #[tokio::test]
+    async fn model_list_uses_aggregated_overview() {
+        let (core, _dir, _session) = core_with_turn().await;
+        let host: Arc<dyn GuiHost> = Arc::new(GuiHostAdapter::new(core));
+        let response = host
+            .query(&query_envelope(AppQuery::ModelList { provider_id: None }))
+            .await
+            .expect("model list");
+        let AppResponse::Data(data) = response else {
+            panic!("model list must return data");
+        };
+        let entries = data.as_array().expect("model list array");
+        let providers: std::collections::BTreeSet<String> = entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .get("provider_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect();
+        for expected in ["xai", "glm-coding", "opencode-go", "qwen-token-plan", "deepseek"] {
+            assert!(
+                providers.contains(expected),
+                "ModelList must include {expected}: {providers:?}"
+            );
+        }
     }
 
     #[tokio::test]

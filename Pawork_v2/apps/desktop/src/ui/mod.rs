@@ -18,6 +18,13 @@ use crate::projection::{
 
 pub use text_input::{SendMessage, TextInput};
 
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 pub fn install_keybindings(cx: &mut App) {
     use text_input::{Backspace, Delete, End, Home, Left, NewLine, Paste, Right};
 
@@ -110,11 +117,23 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let instance_id = snapshot.instance_id.as_str().to_string();
+        let previous_session = self.projection.active_session_id.clone();
         self.projection.merge_snapshot(&snapshot);
         self.projection
             .set_connection(ConnectionState::Connected { instance_id });
         self.controller.load_models();
         self.consume_events(events, cx);
+        if let Some(session_id) = previous_session {
+            if self
+                .projection
+                .sessions
+                .iter()
+                .any(|session| session.session_id == session_id)
+            {
+                self.open_session(session_id, cx);
+                return;
+            }
+        }
         cx.notify();
     }
 
@@ -391,6 +410,8 @@ impl Render for AppView {
         let model_menu_open = self.model_menu_open && can_switch_model;
         let connection_label = self.projection.connection.label();
         let composer_hint = self.composer_hint();
+        let context_meter = self.projection.context_meter_label();
+        let run_status = self.projection.run_status_label(now_unix_ms());
 
         let sidebar = div()
             .flex()
@@ -588,7 +609,21 @@ impl Render for AppView {
             .p_2()
             .border_t_1()
             .border_color(rgb(0x2e2e2e))
-            .child(model_picker)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(model_picker)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(11.))
+                            .text_color(rgb(0x9a9a9a))
+                            .child(context_meter),
+                    ),
+            )
             .child(
                 div()
                     .flex()
@@ -648,7 +683,20 @@ impl Render for AppView {
                     .flex_col()
                     .flex_1()
                     .child(timeline)
-                    .child(composer),
+                    .child(composer)
+                    .child(
+                        div()
+                            .h(px(24.))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .border_t_1()
+                            .border_color(rgb(0x2e2e2e))
+                            .bg(rgb(0x161616))
+                            .text_size(px(11.))
+                            .text_color(rgb(0x9a9a9a))
+                            .child(run_status),
+                    ),
             )
     }
 }

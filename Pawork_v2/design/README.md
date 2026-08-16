@@ -1,0 +1,143 @@
+# Pawork V2 Desktop GUI 视觉实施基准
+
+> 状态：已选定，v3 修订（2026-08-17）
+>
+> 设计方向：方案 2，三栏 Coding Agent 工作台
+>
+> 需求事实源：[GUI 设计](../docs/gui-design.md)
+>
+> 用途：后续 `apps/desktop` GUI 实现、审查与视觉验收的默认参照
+
+本目录冻结 Pawork V2 Desktop 的目标视觉与关键交互。后续实现应先对照这里的界面状态，再按 [GUI 设计](../docs/gui-design.md) 的阶段范围接入真实能力；截图中提前出现的后续阶段 Surface 不会因此提前进入当前阶段。
+
+若发生冲突，优先级为：架构红线与协议契约 → 当前阶段任务书 → `docs/gui-design.md` 行为规则 → 本目录的视觉细节。
+
+## 1. 定稿视图
+
+| 视图 | 用途 | 当前资产 |
+| --- | --- | --- |
+| Timeline（Inspector 展开） | 日期内再按项目组织 Task；项目头可定向新建 | [desktop-shell-timeline-v3.png](desktop-shell-timeline-v3.png) |
+| Timeline（Inspector 折叠） | Workspace 扩展，右上保留 Changes 与 Agent activity 浮窗 | [desktop-shell-timeline-collapsed-v3.png](desktop-shell-timeline-collapsed-v3.png) |
+| Projects（按项目） | 按项目展开、折叠并从项目头定向新建 Task | [desktop-shell-projects-v3.png](desktop-shell-projects-v3.png) |
+
+### Timeline
+
+![Pawork Desktop Timeline 视图](desktop-shell-timeline-v3.png)
+
+### Timeline · Inspector 折叠
+
+![Pawork Desktop Timeline Inspector 折叠视图](desktop-shell-timeline-collapsed-v3.png)
+
+### Projects
+
+![Pawork Desktop Projects 视图](desktop-shell-projects-v3.png)
+
+本目录仅保留本节列出的 v3 定稿资产；评审过程中的历史版本已删除，不作为实现目标。
+
+## 2. 壳层与布局
+
+- 定稿图画布：约 `1486 × 1058`（ImageGen 输出可能有 `1 px` 边差）；实现仍须在 `1440 × 1024` 对照验收，当前默认窗口 `1080 × 720` 必须可用。
+- 宽屏采用三栏：左侧 `TaskRail` 288 px、中央 `WorkspaceView` 弹性伸缩、右侧 `InspectorPanel` 约 440 px。
+- `1080–1279` 宽度下左栏收敛到 240 px，右侧 Inspector 默认折叠为抽屉；中央对话区不得小于 560 px。
+- `Composer` 默认高 88–94 px；底部控件高 28–30 px，Send 为 32 px。多行输入按需向上增长，不把常态输入框做成工具栏容器。
+- `RunStatusBar` 高 24 px，位于 Workspace 与 Inspector 底部，不覆盖左栏账户区；Composer 始终位于它上方。
+- Inspector 展开时约 440 px；折叠时宽度归零并让 Workspace 扩展，右上以约 320 px 的 `ActivityPopover` 保留轻量态势，不挤压 Composer、ContextMeter 或审批主操作。
+- 采用 8 px 间距基线；列表、工具活动与 diff 保持原生桌面密度，不使用仪表盘卡片墙。
+- 当前实现色板继续作为代码侧基线：背景 `#1e1e1e`、侧栏 `#161616`、分隔线 `#2e2e2e`、选中面 `#2a2a2a`、主色 `#2f6fed`、正文 `#e8e8e8`、次要文字 `#9a9a9a`。设计图中的细微抗锯齿或渐变不应被硬编码成新 token。
+
+## 3. 左侧 TaskRail 紧凑操作
+
+左栏从上到下固定为：Pawork 标题与 `GroupingMenuButton` → 项目范围筛选 → 连接状态与全局 `AddTaskButton` → 可滚动日期 / 项目 / Task 列表 → 账户与设置。分组与新建均使用带 tooltip 和可访问名称的角标按钮，不再占用整行。
+
+### 3.1 范围筛选与分组正交
+
+- 顶部范围筛选默认是 `All projects`，也可限定到一个项目。
+- 范围筛选决定“哪些任务可见”；`Timeline / Projects` 只决定“同一批任务如何组织”，二者不能复用成同一个控件。
+- 项目身份使用 Session 的 canonical `workspace_id` 与 Workspace 元数据；不得从任务标题或任意绝对路径猜测。
+- 选择具体项目后，Timeline 仍按时间分桶；Projects 只显示该项目组。回到 `All projects` 后恢复各项目展开状态。
+
+### 3.2 GroupingMenuButton
+
+- 位于 Pawork 标题行右侧，替代宽幅 segmented control；Timeline 使用 clock/list glyph，Projects 使用 folder/list glyph，并带小型下拉指示。
+- 点击打开只有 Timeline 与 Projects 的轻量菜单，当前项带 checkmark；关闭状态不显示文字标签或常驻 popover。
+- tooltip 与 accessible name 必须明确当前模式，例如 `Group tasks · Timeline`，不能只靠 glyph 区分。
+
+### 3.3 AddTaskButton 与 ProjectAddTaskButton
+
+- `Local · Connected` 右侧保留全局 `AddTaskButton`；`All projects` 下创建后必须在 Composer 中确认工作目录，单项目范围下默认继承该 Workspace。
+- Timeline 的每个日期桶内项目头、Projects 的每个项目头均显示 `ProjectAddTaskButton` 加号角标；新 Task 默认绑定该项目的 canonical `workspace_id`，不能从标题或路径字符串猜测。
+- 两类按钮均不使用全宽样式；断线或 projection stale 时禁用并提供原因，可用时保留 tooltip、键盘焦点与快捷键入口。
+
+### 3.4 Timeline（按时间）
+
+- 层级固定为日期 → 项目 → Task；分桶顺序为 Today → Yesterday → Previous 7 days → Earlier。
+- 每个日期桶只显示当日有 Task 的项目；项目按最近活动时间排序，Task 在项目内按最近活动时间倒序，项目头右侧提供定向新建角标。
+- Task 行显示运行状态、标题与最近活动时间；项目身份由上级项目头表达，不在每行重复项目名。
+- 同一 Session 只出现一次；时间变化只移动现有行，不复制任务。
+
+### 3.5 Projects（按项目）
+
+- 项目按最近活动时间排序；项目头显示名称、展开状态、当前范围内任务数量与定向新建角标。
+- 项目内任务按最近活动时间倒序；没有 Workspace 元数据的历史 Session 进入 `Unassigned`，不能静默丢失。
+- 展开/折叠只改变呈现，不影响任务运行与当前会话。
+
+### 3.6 切换不变量
+
+- 切换分组方式不改变 active session、Composer 草稿、滚动中的 Timeline 或正在运行的 Run。
+- 当前任务在新视图中自动滚动到可见位置；选中态必须同时具有背景、焦点与可访问名称，不能只靠状态点颜色。
+- 分组方式、项目展开状态和范围筛选属于本地 GUI presentation preference，可本地持久化；它们不是 Agent domain 事件，也不通过 Provider 特例实现。
+- 键盘焦点顺序为范围筛选 → GroupingMenuButton → 全局 AddTaskButton → 项目头 / ProjectAddTaskButton → Task；菜单内上下键移动、`Enter` 选择、`Escape` 关闭。
+
+## 4. ContextMeter 与 RunStatusBar
+
+### 4.1 ContextMeter
+
+- 位于 Composer 工作目录选择器与 Send 之间；宽屏显示 `Context 78K / 128K` 与细进度条，窄屏可收敛为 `61%`，但不能挤掉 Send。
+- 分子来自当前请求组装后的权威 token estimate，分母来自 model catalog 的 context window；不能用任务累计 token 代替上下文占用。
+- 未知 context window 显示 `Context unavailable`，不编造容量。超过 soft limit 变为警告色，接近硬上限时显示明确文本，不只换颜色。
+
+### 4.2 RunStatusBar
+
+宽屏按固定优先级展示，数据更新不得引起布局跳动：
+
+1. `Task <n> tokens`：当前 Session 累计 input + output；cache read/write 只在详情中展开，避免重复计数。
+2. `<provider> quota <remaining>`：只显示 quota-service 的权威剩余额度；`Unknown` 显示 `Quota unavailable`，不得伪造 0 或百分比。
+3. `<n> tok/s`：流式期间显示实时 output tokens/s；Run 终态显示并标注 `avg`，无可用时间戳时显示 `—`。
+4. `Run <duration>`：由权威 Run 起止时间计算；运行中实时更新，时间戳不完整时显示 `—`。
+
+模型与 reasoning 只在 Composer 的模型选择器显示，并由 Core 确认状态覆盖本地 pending；`RunStatusBar` 不重复。窄屏保留 Task tokens，余项收进可键盘访问的 status details popover；ContextMeter 仍留在 Composer，状态栏不承载主操作。
+
+## 5. InspectorToolTabs
+
+- Inspector 顶层使用可扩展 tab strip：Changes、Terminal、Add tool；Files / Summary 是 Changes 内部二级 tab，不能与顶层混用。
+- 顶层 tab 只由 Host capability 与当前阶段启用：Changes 随 S8，Terminal 随 S10；未接通时隐藏或明确 disabled，不做可点击假入口。
+- Add tool 只管理已注册的 Inspector surface，不直接访问 Provider、数据库、Git 或工具；所有数据仍经 controller → `pawork-client`。
+- 切换 tab 不改变 active session；每个工具保留独立滚动与展开状态，关闭 Inspector 后可恢复。
+
+### 5.1 折叠态 ActivityPopover
+
+- 折叠 Inspector 后移除整列与分隔线，Workspace 使用释放出的宽度；右上触发器下方显示约 320 px 的 `ActivityPopover`，用户可再收为单一角标。
+- 首行显示 Changes 的文件数与 `+added / −removed`；下方列出当前 Task 关联的 Main / subagent 状态，状态至少覆盖 running、waiting approval、completed、failed、cancelled。
+- 点击 Changes 摘要重新展开 Inspector 并定位 Changes；点击 Agent 行切换到对应 Task / Agent 详情。浮窗只承载摘要，不复制 diff、Terminal 或完整 Timeline。
+- Changes 摘要依赖 S8 diff projection，Agent 列表依赖 S11 多 Agent projection；能力未接通时隐藏对应分区，不能使用截图中的演示数值。
+
+## 6. 三栏职责
+
+| 区域 | 职责 | 阶段边界 |
+| --- | --- | --- |
+| TaskRail | 范围、紧凑双分组菜单、日期内项目分组、全局 / 项目定向新建、任务选择、连接状态 | S7 壳层；双分组依赖真实 Session/Workspace 投影 |
+| WorkspaceView | 会话标题、Run 状态、对话、工具活动、内嵌审批、Composer、ContextMeter | S7 主路径；未知上下文不得伪造 |
+| RunStatusBar | Task tokens、quota、tokens/s、Run duration | 有权威字段才显示；quota 完整面随 S11；不重复模型选择 |
+| InspectorToolTabs / ActivityPopover | Changes、Terminal、Agent activity 与后续 Inspector surface | Changes S8；Terminal S10；Agent 列表 S11；能力驱动启用 |
+| Composer 扩展 | 附件、`@file`、工作目录上下文 | 分别按 S9/S10 任务书接入，不因截图提前实现 |
+
+## 7. 实现验收
+
+- 两种组织方式消费同一份 Session projection，并有日期 → 项目 → Task 排序、空态、未归类与菜单切换定向测试。
+- GroupingMenuButton、AddTaskButton 与 ProjectAddTaskButton 有 tooltip、accessible name、键盘路径及禁用原因；项目定向创建绑定正确 workspace_id。
+- 切换方式后 active session 与 Composer 草稿保持不变。
+- ContextMeter 使用当前上下文估算而非 Session 累计 token；未知容量不显示伪进度。
+- RunStatusBar 不重复 Composer 的模型 / reasoning，并对 quota `Unknown`、无 tokens/s、Run 时间戳不完整与窄窗口溢出提供可观察回归。
+- Inspector 顶层与 Changes 二级 tab 层次不可混用；折叠态 ActivityPopover 的摘要跳转、Agent 状态与 capability 缺失均有定向测试。
+- 在 `1440 × 1024` 对照 v3 截图做视觉验收；在 `1080 × 720` 验证 Inspector / ActivityPopover 切换、日期内项目分组、状态栏收敛与紧凑 Composer 可用。
+- 后续视觉差异若属于有意改动，先更新本目录与 [GUI 设计](../docs/gui-design.md)，再实现代码。

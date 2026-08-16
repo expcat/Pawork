@@ -321,6 +321,29 @@ impl DesktopController {
         });
     }
 
+    /// 主动断开：关窗 / `--probe-smoke` 重连前调用。不发 RunCancel（ADR-026）。
+    pub async fn disconnect(&self) {
+        let client = self
+            .state
+            .client
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        if let Some(client) = client {
+            let _ = client.close().await;
+        }
+    }
+
+    /// 给 `--probe` 用的同步目录查询：不经 UI channel。
+    pub async fn fetch_models(&self) -> Result<Vec<ModelEntry>, String> {
+        let client = self.current_client().ok_or_else(|| "not connected".to_string())?;
+        let response = client
+            .query(model_list_query(), command_source(), actor_identity())
+            .await
+            .map_err(|error| error.to_string())?;
+        parse_models(&response)
+    }
+
     pub fn load_models(&self) {
         let Some(client) = self.current_client() else {
             return;
@@ -464,6 +487,9 @@ fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEntry>, Strin
                         provider_id: provider_id.to_string(),
                         id: id.to_string(),
                         display_name: display_name.to_string(),
+                        context_window_tokens: entry
+                            .get("context_window_tokens")
+                            .and_then(serde_json::Value::as_u64),
                     })
                 })
                 .collect())

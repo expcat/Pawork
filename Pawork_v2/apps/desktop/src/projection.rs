@@ -78,6 +78,14 @@ pub struct ModelEntry {
     pub provider_id: String,
     pub id: String,
     pub display_name: String,
+    pub context_window_tokens: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveRun {
+    pub run_id: String,
+    pub session_id: String,
+    pub started_at_ms: u64,
 }
 
 /// Assistant 流式合并锚点：同一 run + message 的 delta 追加到同一条目。
@@ -124,6 +132,9 @@ pub struct DesktopProjection {
     pub models: Vec<ModelEntry>,
     pub selected_model: Option<(String, String)>,
     pub pending_model: Option<(String, String)>,
+    pub active_runs: Vec<ActiveRun>,
+    pub active_run_started_at_ms: Option<u64>,
+    snapshot_pendings: Vec<PendingApproval>,
     /// 已消费的 session sequence（live 与分页共用的去重集）。
     seen: BTreeSet<u64>,
     assistant_anchor: Option<AssistantAnchor>,
@@ -163,15 +174,12 @@ impl DesktopProjection {
                     }
                 }
                 "pending_tool_approvals" => {
-                    if let Some(pending) = parse_pending_approval(&data) {
-                        if pending.session_id.as_deref() == self.active_session_id.as_deref()
-                            || pending.session_id.is_none()
-                        {
-                            self.pending_approval = Some(pending);
-                        }
-                    } else if self.pending_approval.is_some() {
-                        self.pending_approval = None;
-                    }
+                    self.snapshot_pendings = parse_pending_approvals(&data);
+                    self.pending_approval = self.pending_for_active_session();
+                }
+                "active_runs" => {
+                    self.active_runs = parse_active_runs(&data);
+                    self.restore_active_run_from_snapshot();
                 }
                 _ => {}
             }
@@ -182,11 +190,35 @@ impl DesktopProjection {
     pub fn select_session(&mut self, session_id: &str) {
         self.active_session_id = Some(session_id.to_string());
         self.active_run_id = None;
+        self.active_run_started_at_ms = None;
         self.pending_approval = None;
         self.timeline.clear();
         self.seen.clear();
         self.assistant_anchor = None;
         self.tool_anchors.clear();
+        self.restore_active_run_from_snapshot();
+        self.pending_approval = self.pending_for_active_session();
+    }
+
+    fn restore_active_run_from_snapshot(&mut self) {
+        let Some(session_id) = self.active_session_id.as_deref() else {
+            return;
+        };
+        if let Some(run) = self
+            .active_runs
+            .iter()
+            .find(|run| run.session_id == session_id)
+        {
+            self.active_run_id = Some(run.run_id.clone());
+            self.active_run_started_at_ms = Some(run.started_at_ms);
+        }
+    }
+
+    fn pending_for_active_session(&self) -> Option<PendingApproval> {
+        self.snapshot_pendings.iter().find(|pending| {
+            pending.session_id.as_deref() == self.active_session_id.as_deref()
+                || pending.session_id.is_none()
+        }).cloned()
     }
 
     pub fn set_connection(&mut self, state: ConnectionState) {
@@ -232,9 +264,13 @@ impl DesktopProjection {
                 ) {
                     if self.active_run_id.as_deref() == run_id.as_deref() {
                         self.active_run_id = None;
+                        self.active_run_started_at_ms = None;
                     }
                 } else {
                     self.active_run_id = run_id.clone();
+                    if self.active_run_started_at_ms.is_none() {
+                        self.active_run_started_at_ms = timestamp.parse().ok();
+                    }
                 }
                 if matches!(
                     state_name.as_str(),
@@ -324,14 +360,18 @@ impl DesktopProjection {
                 tool_call_id,
                 reason,
             } => {
-                self.pending_approval = Some(PendingApproval {
+                let pending = PendingApproval {
                     session_id: self.active_session_id.clone(),
                     run_id: run_id.as_str().to_string(),
                     tool_call_id: tool_call_id.as_str().to_string(),
                     tool_name: extract_tool_name(reason),
                     reason: reason.clone(),
                     detail: None,
-                });
+                };
+                self.snapshot_pendings
+                    .retain(|item| item.tool_call_id != pending.tool_call_id);
+                self.snapshot_pendings.push(pending.clone());
+                self.pending_approval = Some(pending);
                 return true;
             }
             AppEvent::Diagnostic { code, message, .. } => {
@@ -554,6 +594,7 @@ impl DesktopProjection {
             }
             "approval_responded" => {
                 self.pending_approval = None;
+                self.snapshot_pendings.clear();
             }
             "diagnostic" => {
                 if self.seen.insert(item.sequence) {
@@ -644,7 +685,38 @@ impl DesktopProjection {
         self.pending_model.as_ref().or(self.selected_model.as_ref())
     }
 
+    /// ContextMeter：当前请求估算未知时显示 unavailable / `—`，只用 catalog window。
+    pub fn context_meter_label(&self) -> String {
+        match self.selected_context_window() {
+            Some(window) => format!("Context · — / {window}"),
+            None => "Context · unavailable".into(),
+        }
+    }
+
+    /// RunStatusBar：缺权威来源的字段显示 `—`，不伪造 token / quota / tok/s。
+    /// `now_ms` 由 UI 注入，投影层不读系统时钟。
+    pub fn run_status_label(&self, now_ms: u64) -> String {
+        let duration = match (self.active_run_id.as_ref(), self.active_run_started_at_ms) {
+            (Some(_), Some(started_at_ms)) => format_run_duration(started_at_ms, now_ms),
+            (Some(_), None) => "—".into(),
+            (None, _) => "idle".into(),
+        };
+        format!("tokens —  ·  quota —  ·  — tok/s  ·  {duration}")
+    }
+
+    fn selected_context_window(&self) -> Option<u64> {
+        let (provider, id) = self.effective_model()?;
+        self.models.iter().find_map(|entry| {
+            if entry.provider_id == *provider && entry.id == *id {
+                entry.context_window_tokens
+            } else {
+                None
+            }
+        })
+    }
+
     fn clear_pending_for_run(&mut self, run_id: Option<&str>) {
+        self.snapshot_pendings.retain(|pending| run_id != Some(pending.run_id.as_str()));
         if self
             .pending_approval
             .as_ref()
@@ -655,6 +727,9 @@ impl DesktopProjection {
     }
 
     fn clear_pending_for_tool(&mut self, run_id: &str, tool_call_id: &str) {
+        self.snapshot_pendings.retain(|pending| {
+            !(pending.run_id == run_id && pending.tool_call_id == tool_call_id)
+        });
         if self.pending_approval.as_ref().is_some_and(|pending| {
             pending.run_id == run_id && pending.tool_call_id == tool_call_id
         }) {
@@ -703,8 +778,14 @@ fn parse_provider_status(data: &Value) -> Option<(String, String)> {
     Some((provider.to_string(), model.to_string()))
 }
 
-fn parse_pending_approval(data: &Value) -> Option<PendingApproval> {
-    let entry = data.as_array().and_then(|entries| entries.first())?;
+fn parse_pending_approvals(data: &Value) -> Vec<PendingApproval> {
+    let Some(entries) = data.as_array() else {
+        return Vec::new();
+    };
+    entries.iter().filter_map(parse_pending_approval_entry).collect()
+}
+
+fn parse_pending_approval_entry(entry: &Value) -> Option<PendingApproval> {
     let run_id = entry.get("run_id").and_then(Value::as_str)?;
     let tool_call_id = entry.get("tool_call_id").and_then(Value::as_str)?;
     let tool_name = entry
@@ -729,6 +810,29 @@ fn parse_pending_approval(data: &Value) -> Option<PendingApproval> {
         reason,
         detail: preview.map(str::to_string),
     })
+}
+
+fn parse_active_runs(data: &Value) -> Vec<ActiveRun> {
+    let Some(entries) = data.as_array() else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            Some(ActiveRun {
+                run_id: entry.get("run_id").and_then(Value::as_str)?.to_string(),
+                session_id: entry.get("session_id").and_then(Value::as_str)?.to_string(),
+                started_at_ms: entry.get("started_at_ms").and_then(Value::as_u64)?,
+            })
+        })
+        .collect()
+}
+
+fn format_run_duration(started_at_ms: u64, now_ms: u64) -> String {
+    let elapsed_s = now_ms.saturating_sub(started_at_ms) / 1000;
+    let minutes = elapsed_s / 60;
+    let seconds = elapsed_s % 60;
+    format!("{minutes:02}:{seconds:02}")
 }
 
 fn extract_tool_name(reason: &str) -> String {
@@ -1012,5 +1116,72 @@ mod tests {
             Some(("mock", "model-2"))
         );
         assert_eq!(projection.pending_model, None);
+    }
+
+    fn snapshot_with_runs_and_approvals(runs: Vec<Value>, approvals: Vec<Value>) -> Snapshot {
+        serde_json::from_value(json!({
+            "instance_id": "instance-1",
+            "snapshot_sequence": 0,
+            "generated_at": 1,
+            "sections": [
+                {
+                    "kind": "session_tree",
+                    "revision": 1,
+                    "data": [session_entry("s-1", "One", 20)]
+                },
+                { "kind": "active_runs", "revision": 2, "data": runs },
+                { "kind": "pending_tool_approvals", "revision": 3, "data": approvals }
+            ]
+        }))
+        .expect("decode Snapshot")
+    }
+
+    #[test]
+    fn snapshot_active_runs_restore_cancel_target_on_select() {
+        let snapshot = snapshot_with_runs_and_approvals(
+            vec![json!({
+                "run_id": "r-live",
+                "session_id": "s-1",
+                "started_at_ms": 1_700_000_000_000_u64
+            })],
+            vec![json!({
+                "run_id": "r-live",
+                "session_id": "s-1",
+                "tool_call_id": "call-9",
+                "tool_name": "write_file",
+                "message": "Approve workspace file write",
+                "relative_path": "notes.txt"
+            })],
+        );
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        assert_eq!(projection.active_run_id, None);
+        projection.select_session("s-1");
+        assert_eq!(projection.active_run_id.as_deref(), Some("r-live"));
+        assert_eq!(projection.active_run_started_at_ms, Some(1_700_000_000_000));
+        assert_eq!(
+            projection
+                .pending_approval
+                .as_ref()
+                .map(|item| item.tool_call_id.as_str()),
+            Some("call-9")
+        );
+        assert_eq!(
+            projection.run_status_label(1_700_000_045_000),
+            "tokens —  ·  quota —  ·  — tok/s  ·  00:45"
+        );
+    }
+
+    #[test]
+    fn context_meter_uses_catalog_window_and_stays_honest() {
+        let mut projection = DesktopProjection::default();
+        assert_eq!(projection.context_meter_label(), "Context · unavailable");
+        projection.set_models(vec![ModelEntry {
+            provider_id: "glm-coding".into(),
+            id: "glm-4.7".into(),
+            display_name: "GLM 4.7".into(),
+            context_window_tokens: Some(200_000),
+        }]);
+        projection.set_pending_model("glm-coding".into(), "glm-4.7".into());
+        assert_eq!(projection.context_meter_label(), "Context · — / 200000");
     }
 }
