@@ -3,12 +3,20 @@
 //! 本 crate 只定义帧、版本协商、Snapshot 与重连语义，不实现 Server、连接管理
 //! 或 Transport。所有帧都有有界 JSON codec，避免慢客户端或大型 payload 占满内存。
 //!
+//! [`headless`]、[`adapter`]、[`client_auth`] 提供协议类型与可选运行时辅助，
+//! 装配在 host（CLI / app-service），不在本 crate 内实现 Server 或 Transport。
+//!
 //! 模块划分：
+//! - [`app`]：应用层六模块（version / command / query / event / quota / limits）；
 //! - [`codec`]：有界 JSON 编解码与 u32 LE 长度前缀分帧读写；
 //! - [`handshake`]：版本协商、握手服务端逻辑与信封版本校验；
 //! - [`resume`]：重连 disposition 计算；
 //! - [`snapshot`]：Snapshot 结构校验；
-//! - [`error`]：线上结构化错误的构造与 IncompatibleVersion 产生路径。
+//! - [`error`]：线上结构化错误的构造与 IncompatibleVersion 产生路径；
+//! - [`headless`]：Headless JSON（NDJSON）帧、翻译与 stdio 循环；
+//! - [`adapter`]：外部 Agent Client 适配契约（feature `adapter`）；
+//! - [`client_auth`]：GUI token 认证辅助（feature `client-auth`）；
+//! - [`typegen`]：TypeScript declaration 生成与校验。
 //!
 //! 线上 serde 格式（tag/content/rename_all）是冻结契约，见
 //! [ADR-036](../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md)。
@@ -19,11 +27,17 @@ use serde_json::Value;
 use ts_rs::TS;
 
 pub mod app;
+#[cfg(feature = "adapter")]
+pub mod adapter;
+#[cfg(feature = "client-auth")]
+pub mod client_auth;
 pub mod codec;
 pub mod error;
 pub mod handshake;
+pub mod headless;
 pub mod resume;
 pub mod snapshot;
+pub mod typegen;
 
 pub use app::*;
 pub use app::{

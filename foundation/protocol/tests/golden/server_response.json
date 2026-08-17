@@ -1,0 +1,17 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 1
+    },
+    "request_id": "query-1",
+    "responded_at": 3,
+    "response": {
+      "data": {
+        "workspaces": []
+      },
+      "type": "data"
+    }
+  },
+  "type": "response"
+}

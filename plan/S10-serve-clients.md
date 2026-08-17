@@ -1,6 +1,6 @@
 # S10：服务化与客户端补齐
 
-> 阶段 S10 · 多客户端与正式协议 · 状态：⚪未开始 · 依赖：S7（最小 GUI 与本机 `gui serve` 已通）· 规模：大（内分 10a/10b 两波）
+> 阶段 S10 · 多客户端与正式协议 · 状态：🔵进行中（10a 波 A ✅）· 依赖：S7（最小 GUI 与本机 `gui serve` 已通）· 规模：大（内分 10a/10b 两波）
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -12,7 +12,7 @@
 
 | V2 包 | 动作 | V1 来源 |
 | --- | --- | --- |
-| `pawork-protocol`（foundation/protocol） | **增强/收口**：六合一（core-api 拆六模块 + 在 S7 最小帧上补齐 golden + client-adapter-api + client-auth + headless-json + schema-typegen）；「协议版本 × 包版本」映射表 | [archive/M0](archive/README.md) pawork-protocol 节全文 |
+| `pawork-protocol`（foundation/protocol） | **增强/收口**：六合一（core-api 拆六模块 + 在 S7 最小帧上补齐 golden + client-adapter-api + client-auth + headless-json + schema-typegen）；「协议版本 × 包版本」映射表 | [V1→V2 映射 §4.1](../docs/v1-migration-reference.md) 的 `pawork-protocol` 行（archive/M0 正文未落仓） |
 | `pawork-app`（正式化） | 增强：V1 `app-service` 语义对齐的门面整理（aggregate/router/approval/idempotency/rate_limit）+ `subscription-hub` 并入为 Event Hub；命令幂等、事件全局 sequence、不丢不重 | [archive/M4](archive/README.md) pawork-app 节 |
 | `pawork-cli`（正式化） | 增强：六运行模式齐全（对齐 V1：`run` 一次性 / `chat` 交互（V1 `shell`）/ `gui serve` 常驻（V1 `serve`，`--instance` 多实例）/ `headless --json-stdio` / `acp serve` / `service install|start|stop`）；运维子命令（`status`/`watch`/`shutdown`/`doctor`）随 serve 模式激活；`session fork` 子命令；stdout 协议纪律全面执行 | [archive/M4](archive/README.md) pawork-cli 节 |
 | `pawork-transport`（host/transport） | 激活：trait + local（默认）/memory/remote 三 feature；rustls 锁 remote；transport-remote-placeholder 不迁（Remote trait 上移） | [archive/M5](archive/README.md) pawork-transport 节 |
@@ -31,7 +31,7 @@
 
 ## 关键任务
 
-1. **协议收口**：在 S7 最小帧上补齐 golden 与 typegen `.d.ts`（10a 硬前置）；`--json` → headless 正式协议的映射表 + 迁移说明（unstable 兑现，登记 breaking）。
+1. **协议收口**（10a 波 A ✅）：在 S7 最小帧上补齐 golden 与 typegen `.d.ts`；`--json` → headless 映射表 + 迁移说明见 [docs/headless-json-migration.md](../docs/headless-json-migration.md)（unstable 仍在，CLI 切输出留给收口）。
 2. **Event Hub**：engine 事件流 → Hub → 多订阅者（CLI 渲染 / gui-server / channels）扇出，不丢不重、慢消费者隔离。
 3. **GUI 红线**：GUI 只经 GUI Connection Protocol 连接 CLI，不直接访问 Provider/数据库/工具（依赖面断言）。
 4. **acp 真实接入**：用一个支持 ACP 的真实编辑器完成一次 Agent 交互（真实兼容性评估，而非仅自测）。
@@ -83,6 +83,6 @@
 ## 参考
 
 - [../docs/design.md](../docs/design.md) §4（本阶段功能设计与参照项目映射）· [../docs/references.md](../docs/references.md)（参照项目手册）
-- [archive/M5-connectivity-clients.md](archive/README.md)（本阶段主文档）
-- [archive/M0-skeleton-foundation.md](archive/README.md)（protocol 六合一细则）
-- [archive/M4-engine-closed-loop.md](archive/README.md)（app/cli 正式化细则）
+- [../docs/v1-migration-reference.md](../docs/v1-migration-reference.md) §4.1（protocol / app / cli / transport / sdk 映射；M0–M8 正文未落仓）
+- [archive/README.md](archive/README.md)（缺失 M0/M4/M5 正文的回退规则）
+- [../docs/headless-json-migration.md](../docs/headless-json-migration.md)（`--json` → headless 映射表；CLI 切输出在收口）

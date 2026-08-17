@@ -7,10 +7,28 @@ publish.workspace = true
 authors.workspace = true
 description = "Pawork GUI 与 CLI/Core 宿主之间的连接协议帧"
 
+[features]
+default = ["adapter", "client-auth", "headless"]
+adapter = ["dep:async-trait"]
+client-auth = ["dep:rand"]
+# stdio Handler 使用 async-trait；tokio 特征写在主依赖上，避免测试再开 feature。
+headless = ["dep:async-trait"]
+typegen = []
+
+[[bin]]
+name = "pawork-protocol-typegen"
+path = "src/bin/typegen.rs"
+required-features = ["typegen"]
+
 [dependencies]
 pawork-domain = { path = "../domain", features = ["typegen"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 ts-rs.workspace = true
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "sync", "macros", "rt", "time"] }
+async-trait = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true

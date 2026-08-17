@@ -1,0 +1,16 @@
+{
+  "data": {
+    "request_id": "request-2",
+    "streams": [
+      {
+        "type": "global"
+      },
+      {
+        "id": "run-1",
+        "type": "run"
+      }
+    ],
+    "subscription_id": "subscription-1"
+  },
+  "type": "subscribe"
+}

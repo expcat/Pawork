@@ -1,0 +1,10 @@
+{
+  "data": {
+    "disposition": {
+      "earliest_available_sequence": 10,
+      "type": "snapshot_required"
+    },
+    "request_id": "request-4"
+  },
+  "type": "resume"
+}

@@ -95,7 +95,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 配置 schema | `config-service`：TOML、`ConfigTier`（Builtin<Global<Profile<Workspace<Session<Run）、`PaworkConfig`/`ProviderConfig{id, base_url}`（**无 api_key 字段**） | S0 最小 / S9 完整 | S0 只实现 Builtin+Global+Workspace 三层读取与合并，但 schema 字段与文件位置照抄 V1；Profile/Session/Run 层 S9 补齐 |
 | 引擎语义 | `agent-engine`：审批经 `ApprovalResolver` await（`ToolApprovalRequested/Responded` 事件对）、`CancelHandle`+`CancelReason`、`LoopContext` 工具执行注入点 | S2–S3 | engine 实现增量长出，但事件语义、审批/取消语义与 V1 对齐（对应模块迁移时以 V1 测试为准绳） |
 | blob 格式 | `PWB1` + protected AEAD 边界（ADR-032） | S8 | golden 先行 |
-| GUI 协议 | `gui-protocol` 帧（ADR-036）、headless-json、core-api | S7 最小激活 / S10 收口 | 激活即用 V1 完整形状；S7 只消费对话子集。S1 起 `--json` 标 **unstable**，S10 对齐正式 headless |
+| GUI 协议 | `gui-protocol` 帧（ADR-036）、headless-json、core-api | S7 最小激活 / S10 收口 | 激活即用 V1 完整形状；S7 只消费对话子集。S1 起 `--json` 标 **unstable**，S10 对齐正式 headless。10a 波 A 已补齐 golden/typegen/`schemas/`；映射表见 [headless-json-migration.md](headless-json-migration.md)；CLI 切输出在收口 |
 | 控制面契约 | usage `dedup_key`、audit JSONL | S11 | golden 先行 |
 | 缓存注解（新增，已确认 D4） | `CanonicalModelRequest` 缓存策略枚举（`Off/Auto/Explicit{retention}`）+ 前缀分段标注；`ModelResponseSummary`/usage 增 `cache_read`/`cache_write` | S2 占位 / S5 分段 / S6 全量 | **附加式**可选字段，serde 向后兼容；golden 先行；详见 §5（F5）与 [research/multi-account-quota-proposals.md](research/multi-account-quota-proposals.md) F5-B |
 
@@ -211,7 +211,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| `pawork headless --json-stdio` + SDK 编程驱动 | [Codex](https://developers.openai.com/codex) TS/Python SDK 与 app-server；OpenCode SDK/serve（[opencode.ai/docs](https://opencode.ai/docs/)）；Pi SDK `createAgentSession()`（research §2.2） |
+| `pawork headless --json-stdio` + SDK 编程驱动 | [Codex](https://developers.openai.com/codex) TS/Python SDK 与 app-server；OpenCode SDK/serve（[opencode.ai/docs](https://opencode.ai/docs/)）；Pi SDK `createAgentSession()`（research §2.2）。`--json` 对照见 [headless-json-migration.md](headless-json-migration.md) |
 | `gui serve` 从 S7 单客户端升级为多客户端 + 断线 Replay + 慢客户端隔离 | V1 gui-server 资产；Desktop 增量见 [gui-design.md](gui-design.md) §5 |
 | `pawork acp serve` 接入 ACP 编辑器 | [Agent Client Protocol](https://github.com/zed-industries/agent-client-protocol)（Zed 生态） |
 | 会话分支 / `pawork session fork`（任意消息处分叉） | Pi session tree/clone（JSONL 树形，research §2.2）；OpenCode 子 session（research §2.1 task 工具） |

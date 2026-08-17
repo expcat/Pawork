@@ -13,10 +13,12 @@ use pawork_protocol::{
     CommandSource, EventSource, EventStream, GlobalSequence, RunState, API_VERSION,
 };
 use pawork_protocol::{
-    encode_client_frame, encode_server_frame, ClientAuthentication, ClientFrame, GuiCapability,
-    HandshakeRequest, HandshakeResponse, ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope,
-    AppQuery, AppQueryEnvelope, ResumeDisposition, ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind,
-    TimelineItem, TimelineItemKind, TimelinePage,
+    encode_client_frame, encode_server_frame, ArtifactChunk, ArtifactReadRequest,
+    ClientAuthentication, ClientFrame, GuiCapability, HandshakeRequest, HandshakeResponse,
+    ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, AppQuery, AppQueryEnvelope,
+    AppResponse, AppResponseEnvelope, ResumeDisposition, ResumeRequest, ResumeResponse,
+    ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind, SubscribeRequest, TimelineItem,
+    TimelineItemKind, TimelinePage,
 };
 use serde_json::Value;
 
@@ -278,4 +280,152 @@ fn golden_timeline_types() {
 
     let page: Value = serde_json::to_value(&timeline_page()).expect("timeline page");
     assert_golden("timeline_page.json", page);
+}
+
+fn encode_client(frame: &ClientFrame) -> Value {
+    serde_json::from_slice(&encode_client_frame(frame).expect("encode client"))
+        .expect("parse client")
+}
+
+fn encode_server(frame: &ServerFrame) -> Value {
+    serde_json::from_slice(&encode_server_frame(frame).expect("encode server"))
+        .expect("parse server")
+}
+
+#[test]
+fn golden_additional_client_frames() {
+    assert_golden(
+        "client_subscribe.json",
+        encode_client(&ClientFrame::Subscribe(SubscribeRequest {
+            request_id: "request-2".into(),
+            subscription_id: "subscription-1".into(),
+            streams: vec![EventStream::Global, EventStream::Run(RunId::from("run-1"))],
+        })),
+    );
+    assert_golden(
+        "client_unsubscribe.json",
+        encode_client(&ClientFrame::Unsubscribe {
+            request_id: "request-3".into(),
+            subscription_id: "subscription-1".into(),
+        }),
+    );
+    assert_golden(
+        "client_resume.json",
+        encode_client(&ClientFrame::Resume(ResumeRequest {
+            request_id: "request-4".into(),
+            last_global_sequence: GlobalSequence(41),
+        })),
+    );
+    assert_golden(
+        "client_snapshot_request.json",
+        encode_client(&ClientFrame::SnapshotRequest {
+            request_id: "request-5".into(),
+        }),
+    );
+    assert_golden(
+        "client_ack.json",
+        encode_client(&ClientFrame::Ack {
+            global_sequence: GlobalSequence(42),
+        }),
+    );
+    assert_golden(
+        "client_artifact_read.json",
+        encode_client(&ClientFrame::ArtifactRead(ArtifactReadRequest {
+            request_id: "request-6".into(),
+            artifact_id: ArtifactId::from("artifact-1"),
+            offset: 0,
+            limit: 1024,
+        })),
+    );
+    assert_golden(
+        "client_heartbeat.json",
+        encode_client(&ClientFrame::Heartbeat { nonce: 7 }),
+    );
+    assert_golden(
+        "client_pong.json",
+        encode_client(&ClientFrame::Pong { nonce: 8 }),
+    );
+}
+
+#[test]
+fn golden_additional_server_frames() {
+    assert_golden(
+        "server_command_accepted.json",
+        encode_server(&ServerFrame::CommandAccepted {
+            request_id: "request-2".into(),
+            command_id: CommandId::from("command-1"),
+        }),
+    );
+    assert_golden(
+        "server_response.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-1"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({"workspaces": []})),
+        })),
+    );
+    assert_golden(
+        "server_resume_replay.json",
+        encode_server(&ServerFrame::Resume(ResumeResponse {
+            request_id: "request-4".into(),
+            disposition: ResumeDisposition::Replay {
+                from_sequence: GlobalSequence(41),
+                through_sequence: GlobalSequence(42),
+            },
+        })),
+    );
+    assert_golden(
+        "server_resume_snapshot_required.json",
+        encode_server(&ServerFrame::Resume(ResumeResponse {
+            request_id: "request-4".into(),
+            disposition: ResumeDisposition::SnapshotRequired {
+                earliest_available_sequence: GlobalSequence(10),
+            },
+        })),
+    );
+    assert_golden(
+        "server_resume_up_to_date.json",
+        encode_server(&ServerFrame::Resume(ResumeResponse {
+            request_id: "request-4".into(),
+            disposition: ResumeDisposition::UpToDate {
+                current_sequence: GlobalSequence(42),
+            },
+        })),
+    );
+    assert_golden(
+        "server_artifact_chunk.json",
+        encode_server(&ServerFrame::ArtifactChunk(ArtifactChunk {
+            request_id: "request-6".into(),
+            artifact_id: ArtifactId::from("artifact-1"),
+            offset: 0,
+            data: vec![1, 2, 3],
+            eof: true,
+        })),
+    );
+    assert_golden(
+        "server_heartbeat.json",
+        encode_server(&ServerFrame::Heartbeat { nonce: 9 }),
+    );
+    assert_golden(
+        "server_pong.json",
+        encode_server(&ServerFrame::Pong { nonce: 10 }),
+    );
+    assert_golden(
+        "server_handshake_accepted_up_to_date.json",
+        encode_server(&ServerFrame::Handshake(HandshakeResponse::Accepted {
+            request_id: "request-1".into(),
+            selected_api_version: API_VERSION,
+            handle: ApiHandle {
+                instance_id: CoreInstanceId::from("instance-1"),
+                api_version: API_VERSION,
+            },
+            client_id: GuiClientId::from("gui-1"),
+            connection_id: ConnectionId::from("connection-1"),
+            resume: ResumeDisposition::UpToDate {
+                current_sequence: GlobalSequence(42),
+            },
+            capabilities: vec![GuiCapability::Events, GuiCapability::Snapshots],
+        })),
+    );
 }

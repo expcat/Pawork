@@ -1,0 +1,28 @@
+{
+  "data": {
+    "capabilities": [
+      "events",
+      "snapshots"
+    ],
+    "client_id": "gui-1",
+    "connection_id": "connection-1",
+    "handle": {
+      "api_version": {
+        "major": 1,
+        "minor": 1
+      },
+      "instance_id": "instance-1"
+    },
+    "request_id": "request-1",
+    "resume": {
+      "current_sequence": 42,
+      "type": "up_to_date"
+    },
+    "selected_api_version": {
+      "major": 1,
+      "minor": 1
+    },
+    "status": "accepted"
+  },
+  "type": "handshake"
+}

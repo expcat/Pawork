@@ -1,0 +1,7 @@
+{
+  "data": {
+    "command_id": "command-1",
+    "request_id": "request-2"
+  },
+  "type": "command_accepted"
+}

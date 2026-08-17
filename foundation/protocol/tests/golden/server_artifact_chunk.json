@@ -1,0 +1,14 @@
+{
+  "data": {
+    "artifact_id": "artifact-1",
+    "data": [
+      1,
+      2,
+      3
+    ],
+    "eof": true,
+    "offset": 0,
+    "request_id": "request-6"
+  },
+  "type": "artifact_chunk"
+}

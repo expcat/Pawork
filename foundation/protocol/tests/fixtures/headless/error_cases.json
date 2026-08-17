@@ -1,0 +1,22 @@
+[
+  {
+    "name": "unknown_request_type",
+    "input_line": "{\"type\":\"teleport\",\"params\":{}}",
+    "expect_kind": "unknown_request_type"
+  },
+  {
+    "name": "malformed_json",
+    "input_line": "{not json at all",
+    "expect_kind": "malformed_frame"
+  },
+  {
+    "name": "command_wrong_structure",
+    "input_line": "{\"type\":\"command\",\"envelope\":{\"api_version\":{\"major\":2,\"minor\":0},\"command_id\":\"cmd-x\",\"source\":{\"type\":\"automation\"},\"identity\":{\"type\":\"automation\",\"name\":\"x\"},\"issued_at\":0,\"command\":{\"method\":\"session_create\",\"params\":{\"workspace_id\":\"w\"}}}}",
+    "expect_kind": "incompatible_api_version"
+  },
+  {
+    "name": "empty_object",
+    "input_line": "{}",
+    "expect_kind": "unknown_request_type"
+  }
+]

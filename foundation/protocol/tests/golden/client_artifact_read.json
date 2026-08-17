@@ -1,0 +1,9 @@
+{
+  "data": {
+    "artifact_id": "artifact-1",
+    "limit": 1024,
+    "offset": 0,
+    "request_id": "request-6"
+  },
+  "type": "artifact_read"
+}

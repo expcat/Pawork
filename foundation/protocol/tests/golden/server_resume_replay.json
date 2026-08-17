@@ -1,0 +1,11 @@
+{
+  "data": {
+    "disposition": {
+      "from_sequence": 41,
+      "through_sequence": 42,
+      "type": "replay"
+    },
+    "request_id": "request-4"
+  },
+  "type": "resume"
+}

@@ -1,0 +1,7 @@
+{
+  "data": {
+    "request_id": "request-3",
+    "subscription_id": "subscription-1"
+  },
+  "type": "unsubscribe"
+}
