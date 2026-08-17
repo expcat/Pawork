@@ -4547,10 +4547,13 @@ dependencies = [
  "clap",
  "pawork-api",
  "pawork-app",
+ "pawork-channels",
+ "pawork-client",
  "pawork-domain",
  "pawork-engine",
  "pawork-gui-server",
  "pawork-protocol",
+ "pawork-session",
  "pawork-transport",
  "serde_json",
  "thiserror 2.0.20",
@@ -5211,6 +5214,24 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "protocol-probe"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "pawork-app",
+ "pawork-client",
+ "pawork-domain",
+ "pawork-gui-server",
+ "pawork-protocol",
+ "pawork-session",
+ "pawork-testkit",
+ "pawork-transport",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

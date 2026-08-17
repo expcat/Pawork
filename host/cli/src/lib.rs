@@ -1,16 +1,22 @@
-//! Pawork CLI：`chat` / `sessions` / `run` / `models`（含工具活动行与审批）。
+//! Pawork CLI：六运行模式 + 运维子命令。
 //!
-//! `--json`（unstable）：stdout 只承载 JSON；文本与日志走 stderr。
+//! `--json`（`chat --prompt` / `run`）：stdout 只打 `HeadlessResponse` JSONL
+//!（`type=event|response|error`），无 hello。文本与日志走 stderr。
 //! `--json` 或非 TTY 下审批 fail-closed（一律拒绝）。
 
+mod acp;
+mod adapter;
 mod approval;
 mod auth;
 mod chat;
 mod error;
 mod gui;
+mod headless;
 mod import;
 mod mcp;
+mod ops;
 mod render;
+mod service;
 mod sessions;
 mod vcs;
 
@@ -20,8 +26,8 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use pawork_app::{
-    parse_approval_mode, AppCore, AppError, AppLoadOptions, ApprovalPromptHost, DenyAllApprovals,
-    GuiApprovalHost,
+    normalize_instance, parse_approval_mode, AppCore, AppError, AppLoadOptions, ApprovalPromptHost,
+    DenyAllApprovals, GuiApprovalHost,
 };
 use thiserror::Error;
 
@@ -52,7 +58,10 @@ pub struct Cli {
     /// 覆盖 config 中的 default_model（上游 model id）
     #[arg(long, short = 'm', global = true)]
     pub model: Option<String>,
-    /// 机器可读输出（unstable）。chat/run：stdout 为 AgentEventEnvelope JSONL。
+    /// 隔离实例名（数据目录子路径；默认 `default`）
+    #[arg(long, global = true, default_value = "default")]
+    pub instance: String,
+    /// 机器可读输出。chat/run：stdout 为 HeadlessResponse JSONL（无 hello）。
     #[arg(long, global = true)]
     pub json: bool,
     /// 审批强度。默认 `read-only`（沿用 V1：不改模式就不会写入）。
@@ -77,13 +86,16 @@ pub enum Command {
         /// 续聊：完整 session id、唯一前缀，或 `latest`
         #[arg(long)]
         resume: Option<String>,
+        /// 续聊时切换到指定 branch（需 `--resume`）
+        #[arg(long)]
+        branch: Option<String>,
     },
     /// 列出 / 查看已落盘会话
     Sessions {
         #[command(subcommand)]
         command: SessionsCommand,
     },
-    /// 非交互单次任务（unstable `--json` 输出 envelope JSONL）
+    /// 非交互单次任务（`--json` 输出 HeadlessResponse JSONL）
     Run {
         /// 用户提示（位置参数）
         prompt: String,
@@ -136,6 +148,30 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Headless JSONL（SDK / 编程驱动；必须 `--json-stdio`）
+    Headless {
+        /// stdout 只写 JSONL 协议帧（含 hello 握手）
+        #[arg(long)]
+        json_stdio: bool,
+    },
+    /// ACP 编辑器通道
+    Acp {
+        #[command(subcommand)]
+        command: AcpCommand,
+    },
+    /// 系统服务（默认 dry-run，`--apply` 才改系统）
+    Service {
+        #[command(subcommand)]
+        command: ServiceCommand,
+    },
+    /// 本机 gui serve 状态
+    Status,
+    /// 订阅本机 gui serve 事件直到 Ctrl-C
+    Watch,
+    /// 向本机 gui serve 发 SIGTERM
+    Shutdown,
+    /// 本机装配自检（含握手探测）
+    Doctor,
 }
 
 #[derive(Subcommand, Debug)]
@@ -162,6 +198,43 @@ pub enum SessionsCommand {
         /// compat 来源：claude|codex|grok|cursor
         #[arg(long)]
         source: Option<String>,
+    },
+    /// 从历史事件处分叉出新 branch
+    Fork {
+        /// 完整 session id、唯一前缀，或 `latest`
+        #[arg(long)]
+        session: Option<String>,
+        /// 父事件 id
+        event: String,
+        /// 不切换到新 branch（默认会 switch，与 Host SessionFork 一致）
+        #[arg(long)]
+        no_switch: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum AcpCommand {
+    /// ACP JSON-RPC stdio
+    Serve,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ServiceCommand {
+    /// 生成（或写入）开机常驻定义
+    Install {
+        /// 真正改系统；默认只打印 plan
+        #[arg(long)]
+        apply: bool,
+    },
+    /// 启动已安装的服务
+    Start {
+        #[arg(long)]
+        apply: bool,
+    },
+    /// 停止已安装的服务
+    Stop {
+        #[arg(long)]
+        apply: bool,
     },
 }
 
@@ -209,16 +282,34 @@ pub async fn run() -> ExitCode {
 
 async fn run_inner() -> Result<(), CliError> {
     let cli = Cli::parse();
+    let instance = normalize_instance(&cli.instance)
+        .map_err(CliError::Usage)?
+        .to_string();
+    match &cli.command {
+        Command::Service { command } => {
+            return service::run_service(command.clone(), &instance, cli.json);
+        }
+        Command::Status => return ops::run_status(&instance, cli.json).await,
+        Command::Doctor => return ops::run_doctor(&instance, cli.json).await,
+        Command::Watch => return ops::run_watch(&instance, cli.json).await,
+        Command::Shutdown => return ops::run_shutdown(&instance, cli.json).await,
+        _ => {}
+    }
+
     let mut options = AppLoadOptions::from_cli(cli.provider, cli.model);
+    options.instance = instance.clone();
     options.approval_mode = match cli.approval_mode.as_deref() {
         Some(value) => Some(parse_approval_mode(value).map_err(CliError::Usage)?),
         None => None,
     };
     options.approval_host = Some(approval_host(cli.json));
-    if matches!(&cli.command, Command::Gui { .. }) {
+    if matches!(
+        &cli.command,
+        Command::Gui { .. } | Command::Headless { .. } | Command::Acp { .. }
+    ) {
         options.approval_host = Some(Arc::new(GuiApprovalHost::new()));
     }
-    // 目录 / 凭证命令允许默认 provider 缺凭证（目录兜底装配）。
+    // 目录 / 凭证 / 协议入口允许默认 provider 缺凭证（目录兜底装配）。
     let tolerant = matches!(
         &cli.command,
         Command::Models
@@ -228,39 +319,69 @@ async fn run_inner() -> Result<(), CliError> {
             | Command::Rollback { .. }
             | Command::Mcp { .. }
             | Command::Import { .. }
+            | Command::Headless { .. }
+            | Command::Acp { .. }
+            | Command::Gui { .. }
     );
     let mut core = if tolerant {
         AppCore::load_for_catalog(options).await?
     } else {
         AppCore::load(options).await?
     };
-    if let Command::Gui { command } = cli.command {
-        return gui::run_gui(core, command).await;
+    match cli.command {
+        Command::Gui { command } => return gui::run_gui(core, command, &instance).await,
+        Command::Headless { json_stdio } => return headless::run_headless(core, json_stdio).await,
+        Command::Acp {
+            command: AcpCommand::Serve,
+        } => return acp::run_acp_serve(core).await,
+        Command::Chat {
+            prompt,
+            resume,
+            branch,
+        } if cli.json => return chat::run_json(core, prompt, resume, branch).await,
+        Command::Run { prompt } if cli.json => {
+            return chat::run_json(core, Some(prompt), None, None).await;
+        }
+        command => {
+            let result = match command {
+                Command::Chat {
+                    prompt,
+                    resume,
+                    branch,
+                } => chat::run_chat(&mut core, prompt, resume, branch).await,
+                Command::Sessions { command } => {
+                    sessions::run_sessions(&core, command, cli.json).await
+                }
+                Command::Run { prompt } => chat::run_once(&core, &prompt).await,
+                Command::Models => run_models(&core, cli.json).await,
+                Command::Auth { command } => auth::run_auth(&core, command, cli.json).await,
+                Command::Diff { session, page } => {
+                    vcs::run_diff(&core, session, page, cli.json).await
+                }
+                Command::Rollback {
+                    checkpoint,
+                    session,
+                    yes,
+                } => vcs::run_rollback(&core, checkpoint, session, yes, cli.json).await,
+                Command::Mcp { command } => mcp::run_mcp(&mut core, command, cli.json).await,
+                Command::Import { tool, yes, dry_run } => {
+                    import::run_import(&core, tool, yes, dry_run, cli.json).await
+                }
+                Command::Gui { .. }
+                | Command::Headless { .. }
+                | Command::Acp { .. }
+                | Command::Service { .. }
+                | Command::Status
+                | Command::Watch
+                | Command::Shutdown
+                | Command::Doctor => unreachable!("handled before core dispatch"),
+            };
+            let shutdown = core.shutdown().await;
+            result?;
+            shutdown?;
+            Ok(())
+        }
     }
-    let result = match cli.command {
-        Command::Chat { prompt, resume } => {
-            chat::run_chat(&mut core, prompt, resume, cli.json).await
-        }
-        Command::Sessions { command } => sessions::run_sessions(&core, command, cli.json).await,
-        Command::Run { prompt } => chat::run_once(&core, &prompt, cli.json).await,
-        Command::Models => run_models(&core, cli.json).await,
-        Command::Auth { command } => auth::run_auth(&core, command, cli.json).await,
-        Command::Diff { session, page } => vcs::run_diff(&core, session, page, cli.json).await,
-        Command::Rollback {
-            checkpoint,
-            session,
-            yes,
-        } => vcs::run_rollback(&core, checkpoint, session, yes, cli.json).await,
-        Command::Mcp { command } => mcp::run_mcp(&mut core, command, cli.json).await,
-        Command::Import { tool, yes, dry_run } => {
-            import::run_import(&core, tool, yes, dry_run, cli.json).await
-        }
-        Command::Gui { .. } => unreachable!("gui command handled before core dispatch"),
-    };
-    let shutdown = core.shutdown().await;
-    result?;
-    shutdown?;
-    Ok(())
 }
 
 async fn run_models(core: &AppCore, json: bool) -> Result<(), CliError> {
@@ -381,6 +502,7 @@ fn approval_host(json: bool) -> Arc<dyn ApprovalPromptHost> {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use pawork_app::DEFAULT_INSTANCE;
 
     use super::*;
 
@@ -401,10 +523,16 @@ mod tests {
         assert_eq!(cli.model.as_deref(), Some("deepseek-v4-pro"));
         assert!(!cli.json);
         assert!(cli.approval_mode.is_none());
+        assert_eq!(cli.instance, DEFAULT_INSTANCE);
         match cli.command {
-            Command::Chat { prompt, resume } => {
+            Command::Chat {
+                prompt,
+                resume,
+                branch,
+            } => {
                 assert_eq!(prompt.as_deref(), Some("hi"));
                 assert!(resume.is_none());
+                assert!(branch.is_none());
             }
             other => panic!("unexpected {other:?}"),
         }
@@ -622,5 +750,119 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_headless_acp_service_ops_fork_and_instance() {
+        let cli = Cli::try_parse_from(["pawork", "headless"]).expect("parse headless");
+        match cli.command {
+            Command::Headless { json_stdio } => assert!(!json_stdio),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["pawork", "headless", "--json-stdio"]).expect("parse");
+        assert!(matches!(
+            cli.command,
+            Command::Headless { json_stdio: true }
+        ));
+
+        assert!(Cli::try_parse_from(["pawork", "acp"]).is_err());
+        let cli = Cli::try_parse_from(["pawork", "acp", "serve"]).expect("parse acp");
+        assert!(matches!(
+            cli.command,
+            Command::Acp {
+                command: AcpCommand::Serve
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["pawork", "service", "install"]).expect("parse service");
+        match cli.command {
+            Command::Service {
+                command: ServiceCommand::Install { apply },
+            } => assert!(!apply),
+            other => panic!("unexpected {other:?}"),
+        }
+        let cli = Cli::try_parse_from(["pawork", "service", "start", "--apply"]).expect("apply");
+        assert!(matches!(
+            cli.command,
+            Command::Service {
+                command: ServiceCommand::Start { apply: true }
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["pawork", "--instance", "dev", "status"]).expect("status");
+        assert_eq!(cli.instance, "dev");
+        assert!(matches!(cli.command, Command::Status));
+        assert!(matches!(
+            Cli::try_parse_from(["pawork", "watch"]).expect("watch").command,
+            Command::Watch
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pawork", "shutdown"])
+                .expect("shutdown")
+                .command,
+            Command::Shutdown
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pawork", "doctor"]).expect("doctor").command,
+            Command::Doctor
+        ));
+
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "sessions",
+            "fork",
+            "--session",
+            "latest",
+            "evt-1",
+            "--no-switch",
+        ])
+        .expect("parse fork");
+        match cli.command {
+            Command::Sessions {
+                command:
+                    SessionsCommand::Fork {
+                        session,
+                        event,
+                        no_switch,
+                    },
+            } => {
+                assert_eq!(session.as_deref(), Some("latest"));
+                assert_eq!(event, "evt-1");
+                assert!(no_switch);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "chat",
+            "--resume",
+            "ses-1",
+            "--branch",
+            "fork-1",
+        ])
+        .expect("parse branch");
+        match cli.command {
+            Command::Chat { resume, branch, .. } => {
+                assert_eq!(resume.as_deref(), Some("ses-1"));
+                assert_eq!(branch.as_deref(), Some("fork-1"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_instance_keeps_stable_socket_name() {
+        let path = crate::ops::gui_socket_path("/tmp/pawork-data", DEFAULT_INSTANCE);
+        assert!(
+            path.ends_with("pawork-gui.sock") || path.ends_with("pawork-gui.sock"),
+            "{path:?}"
+        );
+        let named = crate::ops::gui_socket_path("/tmp/pawork-data", "dev");
+        assert!(
+            named.ends_with("pawork-gui-dev.sock") || named.ends_with("pawork-gui-dev.sock"),
+            "{named:?}"
+        );
     }
 }

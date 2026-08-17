@@ -3,30 +3,32 @@
 use std::io::{self, IsTerminal, Write};
 
 use pawork_api::ProviderErrorKind;
-use pawork_app::{session_title_from_text, AppCore};
-use pawork_domain::{Message, MessageId, MessageRole, RunId, SessionId};
+use pawork_app::{session_title_from_text, AppCore, AppError, GuiApprovalHost};
+use pawork_domain::{ContentPart, Message, MessageId, MessageRole, RunId, SessionId};
 use pawork_engine::{
     AgentEventSink, CancelHandle, CancelReason, EngineError, NoopProcessTreeCleaner,
 };
+use pawork_gui_server::GuiHost;
+use pawork_protocol::headless::translate::encode_protocol_response;
+use pawork_protocol::headless::{HeadlessResponse, ProtocolErrorKind};
+use pawork_protocol::{AppCommand, AppEvent, AppResponse, RunState};
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::broadcast::error::RecvError;
 
+use crate::adapter::{adapter_from_locked, command_envelope, wrap_response};
 use crate::error::format_provider_error;
-use crate::render::{JsonlSink, TextSink};
+use crate::render::TextSink;
 use crate::CliError;
 
 pub async fn run_chat(
     core: &mut AppCore,
     prompt: Option<String>,
     resume: Option<String>,
-    json: bool,
+    branch: Option<String>,
 ) -> Result<(), CliError> {
+    switch_branch_if_requested(core, resume.as_deref(), branch.as_deref()).await?;
     if let Some(prompt) = prompt {
-        return run_prompt(core, &prompt, resume, json, true).await;
-    }
-    if json {
-        return Err(CliError::Usage(
-            "--json 需要 --prompt 或使用 `pawork run`（REPL 不会把 envelope 打到 stdout）".into(),
-        ));
+        return run_prompt(core, &prompt, resume, true).await;
     }
     if !io::stdin().is_terminal() {
         let mut line = String::new();
@@ -37,33 +39,225 @@ pub async fn run_chat(
                 "非交互模式需要 --prompt 或从 stdin 提供一行问题".into(),
             ));
         }
-        return run_prompt(core, text, resume, false, true).await;
+        return run_prompt(core, text, resume, true).await;
     }
     run_repl(core, resume).await
 }
 
-pub async fn run_once(core: &AppCore, prompt: &str, json: bool) -> Result<(), CliError> {
-    run_prompt(core, prompt, None, json, true).await
+pub async fn run_once(core: &AppCore, prompt: &str) -> Result<(), CliError> {
+    run_prompt(core, prompt, None, true).await
+}
+
+pub async fn run_json(
+    core: AppCore,
+    prompt: Option<String>,
+    resume: Option<String>,
+    branch: Option<String>,
+) -> Result<(), CliError> {
+    let prompt = prompt.ok_or_else(|| {
+        CliError::Usage(
+            "--json 需要 --prompt 或使用 `pawork run`（REPL 不会把 envelope 打到 stdout）"
+                .into(),
+        )
+    })?;
+    switch_branch_if_requested(&core, resume.as_deref(), branch.as_deref()).await?;
+    let text = flatten_parts(&core.expand_at_refs(&prompt)?);
+    let workspace_id = core.workspace_id().clone();
+    let resume_id = if let Some(spec) = resume.as_deref() {
+        Some(core.resolve_session(spec).await?)
+    } else {
+        None
+    };
+    let adapter = adapter_from_locked(core, std::sync::Arc::new(GuiApprovalHost::new()));
+    let mut events = adapter.subscribe_events();
+
+    let session_id = if let Some(session_id) = resume_id {
+        let request_id = print_command(
+            &adapter,
+            AppCommand::SessionOpen {
+                session_id: session_id.clone(),
+            },
+        )
+        .await?;
+        let _ = request_id;
+        session_id
+    } else {
+        match dispatch_command(
+            &adapter,
+            AppCommand::SessionCreate {
+                workspace_id,
+                title: Some(session_title_from_text(&prompt)),
+            },
+        )
+        .await?
+        {
+            AppResponse::Data(data) => SessionId::from(
+                data.get("session_id")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| CliError::Turn("SessionCreate 未返回 session_id".into()))?,
+            ),
+            other => {
+                return Err(CliError::Turn(format!(
+                    "SessionCreate 应返回 Data，got {other:?}"
+                )))
+            }
+        }
+    };
+
+    let started = dispatch_command(
+        &adapter,
+        AppCommand::RunStart {
+            session_id: session_id.clone(),
+            user_message: text,
+            model: None,
+            profile: None,
+        },
+    )
+    .await?;
+    let run_id = match started {
+        AppResponse::Accepted {
+            run_id: Some(run_id),
+            ..
+        } => run_id,
+        AppResponse::Error(error) => {
+            return Err(CliError::Turn(error.message));
+        }
+        other => {
+            return Err(CliError::Turn(format!(
+                "RunStart 应 Accepted 且携带 run id，got {other:?}"
+            )))
+        }
+    };
+
+    loop {
+        tokio::select! {
+            event = events.recv() => {
+                match event {
+                    Ok(envelope) => {
+                        let terminal = matches!(
+                            &envelope.payload,
+                            AppEvent::RunChanged { run_id: id, state }
+                                if id == &run_id
+                                    && matches!(
+                                        state,
+                                        RunState::Completed
+                                            | RunState::Cancelled
+                                            | RunState::Failed
+                                            | RunState::Interrupted
+                                    )
+                        );
+                        print_headless(&HeadlessResponse::Event { envelope })?;
+                        if terminal {
+                            break;
+                        }
+                    }
+                    Err(RecvError::Lagged(missed)) => {
+                        print_headless(&HeadlessResponse::Error {
+                            request_id: None,
+                            kind: ProtocolErrorKind::Backpressure,
+                            message: format!("event subscriber lagged; missed {missed}"),
+                        })?;
+                        return Err(CliError::Turn("event subscriber lagged".into()));
+                    }
+                    Err(RecvError::Closed) => break,
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                let _ = adapter
+                    .command(&command_envelope(
+                        AppCommand::RunCancel {
+                            run_id: run_id.clone(),
+                        },
+                        "cli-json",
+                    ))
+                    .await;
+            }
+        }
+    }
+    adapter.shutdown().await?;
+    Ok(())
+}
+
+async fn switch_branch_if_requested(
+    core: &AppCore,
+    resume: Option<&str>,
+    branch: Option<&str>,
+) -> Result<(), CliError> {
+    let Some(branch) = branch else {
+        return Ok(());
+    };
+    let spec = resume.ok_or_else(|| CliError::Usage("--branch 需要 --resume".into()))?;
+    let session = core.resolve_session(spec).await?;
+    core.store()?
+        .switch_branch(&session, branch)
+        .await
+        .map_err(AppError::from)?;
+    Ok(())
+}
+
+async fn dispatch_command(
+    adapter: &pawork_app::GuiHostAdapter,
+    command: AppCommand,
+) -> Result<AppResponse, CliError> {
+    let envelope = command_envelope(command, "cli-json");
+    let request_id = envelope.command_id.as_str().to_string();
+    let response = adapter
+        .command(&envelope)
+        .await
+        .map_err(|error| CliError::Turn(error.to_string()))?;
+    print_headless(&HeadlessResponse::Response {
+        envelope: wrap_response(&request_id, response.clone()),
+    })?;
+    Ok(response)
+}
+
+async fn print_command(
+    adapter: &pawork_app::GuiHostAdapter,
+    command: AppCommand,
+) -> Result<String, CliError> {
+    let envelope = command_envelope(command, "cli-json");
+    let request_id = envelope.command_id.as_str().to_string();
+    let response = adapter
+        .command(&envelope)
+        .await
+        .map_err(|error| CliError::Turn(error.to_string()))?;
+    print_headless(&HeadlessResponse::Response {
+        envelope: wrap_response(&request_id, response),
+    })?;
+    Ok(request_id)
+}
+
+fn print_headless(response: &HeadlessResponse) -> Result<(), CliError> {
+    let line = encode_protocol_response(response).map_err(|error| CliError::Usage(error.to_string()))?;
+    println!("{line}");
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn flatten_parts(parts: &[ContentPart]) -> String {
+    parts
+        .iter()
+        .map(|part| match part {
+            ContentPart::Text(text) => text.text.as_str(),
+            _ => "",
+        })
+        .collect()
 }
 
 async fn run_prompt(
     core: &AppCore,
     prompt: &str,
     resume: Option<String>,
-    json: bool,
     one_shot: bool,
 ) -> Result<(), CliError> {
     let (session, mut history, mut next_msg) = open_or_create(core, resume.as_deref(), prompt).await?;
-    if !json {
-        eprintln!("session {session}");
-    }
+    eprintln!("session {session}");
     run_one_turn(
         core,
         &session,
         &mut history,
         &mut next_msg,
         prompt,
-        json,
         one_shot,
     )
     .await
@@ -147,7 +341,7 @@ async fn run_repl(core: &mut AppCore, resume: Option<String>) -> Result<(), CliE
                             session = Some(id);
                         }
                         let id = session.as_ref().expect("session created");
-                        run_one_turn(&*core, id, &mut history, &mut next_msg, text, false, false).await?;
+                        run_one_turn(&*core, id, &mut history, &mut next_msg, text, false).await?;
                     }
                 }
             }
@@ -227,7 +421,6 @@ async fn run_one_turn(
     history: &mut Vec<Message>,
     next_msg: &mut u64,
     text: &str,
-    json: bool,
     one_shot: bool,
 ) -> Result<(), CliError> {
     let content = core.expand_at_refs(text)?;
@@ -241,19 +434,14 @@ async fn run_one_turn(
         RunId::from(format!("cli-{session}")),
         std::sync::Arc::new(NoopProcessTreeCleaner),
     );
-    let outcome = if json {
-        drive_turn(core, session, history, &JsonlSink, handle).await
-    } else {
-        let sink = TextSink::default();
-        let outcome = drive_turn(core, session, history, &sink, handle).await;
-        println!();
-        outcome
-    };
+    let sink = TextSink::default();
+    let outcome = drive_turn(core, session, history, &sink, handle).await;
+    println!();
 
     *history = core.resume_messages(session).await.unwrap_or_else(|_| history.clone());
     *next_msg = next_message_counter(history);
 
-    if !json && outcome.is_ok() {
+    if outcome.is_ok() {
         print_usage_line(core, session).await;
     }
 

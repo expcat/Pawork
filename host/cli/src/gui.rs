@@ -14,25 +14,26 @@ use pawork_transport::{
     ConnectOptions, GuiTransportClient, GuiTransportServer, LocalTransport, TransportEndpoint,
 };
 
+use crate::ops::{gui_pid_path, gui_socket_path, remove_pid_file, write_pid_file};
 use crate::{CliError, GuiCommand};
 
-pub async fn run_gui(core: AppCore, command: GuiCommand) -> Result<(), CliError> {
+pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Result<(), CliError> {
     let GuiCommand::Serve { socket } = command;
     let approvals = Arc::new(GuiApprovalHost::new());
     let mut core = core;
     core.configure_approval(core.approval_mode(), core.workspace_trusted(), approvals.clone());
     let core = Arc::new(tokio::sync::RwLock::new(core));
     let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
-    let socket_path = match socket.or_else(default_socket_dir) {
-        Some(dir) => dir.join("pawork-gui.sock"),
-        None => std::env::temp_dir().join("pawork-gui.sock"),
-    };
+    let data_dir = pawork_app::default_data_dir();
+    let socket_path = socket.unwrap_or_else(|| gui_socket_path(&data_dir, instance));
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let pid_path = gui_pid_path(&data_dir, instance);
     let address = socket_path.to_string_lossy().to_string();
 
     ensure_single_instance(&address).await?;
+    write_pid_file(&pid_path)?;
 
     let transport = Arc::new(LocalTransport::default());
     let handshake = HandshakeService::new(
@@ -54,7 +55,10 @@ pub async fn run_gui(core: AppCore, command: GuiCommand) -> Result<(), CliError>
         .bind(TransportEndpoint::Local { address })
         .await
         .map_err(|error| CliError::Usage(error.to_string()))?;
-    eprintln!("pawork gui serving on {}", socket_path.display());
+    eprintln!(
+        "pawork gui serving on {} (instance {instance})",
+        socket_path.display()
+    );
 
     // 保留连接句柄：SessionHandle 被丢弃会关闭 oneshot 并结束该连接任务，
     // 导致客户端握手收到 Broken pipe。断线时由连接任务侧关闭并在此清理。
@@ -81,14 +85,11 @@ pub async fn run_gui(core: AppCore, command: GuiCommand) -> Result<(), CliError>
         }
     }
     drop(connections);
+    remove_pid_file(&pid_path);
     if let Ok(core) = Arc::try_unwrap(core) {
         core.into_inner().shutdown().await?;
     }
     Ok(())
-}
-
-fn default_socket_dir() -> Option<std::path::PathBuf> {
-    Some(pawork_app::default_data_dir())
 }
 
 async fn ensure_single_instance(address: &str) -> Result<(), CliError> {

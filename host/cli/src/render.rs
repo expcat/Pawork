@@ -214,6 +214,7 @@ impl AgentEventSink for TextSink {
     }
 }
 
+#[allow(dead_code)]
 pub struct JsonlSink;
 
 #[async_trait]

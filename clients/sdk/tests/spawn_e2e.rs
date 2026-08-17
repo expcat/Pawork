@@ -162,10 +162,18 @@ async fn run_start_without_provider_returns_error_response() {
     let options = PaworkOptions {
         binary,
         timeout: Duration::from_secs(30),
-        env: vec![(
-            "PAWORK_DATA_DIR".into(),
-            data_dir.path().display().to_string(),
-        )],
+        working_dir: Some(data_dir.path().to_path_buf()),
+        isolated: true,
+        env: vec![
+            (
+                "PAWORK_DATA_DIR".into(),
+                data_dir.path().display().to_string(),
+            ),
+            (
+                "PAWORK_HOME".into(),
+                data_dir.path().display().to_string(),
+            ),
+        ],
         ..PaworkOptions::default()
     };
 

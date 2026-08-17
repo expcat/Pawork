@@ -44,6 +44,8 @@ pub struct PaworkOptions {
     pub working_dir: Option<PathBuf>,
     /// 附加环境变量。
     pub env: Vec<(String, String)>,
+    /// 不继承父进程环境（只使用 `env`）。隔离 e2e 用，避免本机 auth/env key 污染。
+    pub isolated: bool,
     /// 单次协议操作（握手、往返）的等待上限。
     pub timeout: Duration,
     /// 握手声明的客户端名称。
@@ -64,6 +66,7 @@ impl Default for PaworkOptions {
             args: vec!["headless".into(), "--json-stdio".into()],
             working_dir: None,
             env: Vec::new(),
+            isolated: false,
             timeout: Duration::from_secs(10),
             client_name: "pawork-sdk".into(),
             client_version: crate::SDK_VERSION.into(),
@@ -97,6 +100,9 @@ impl StdioTransport {
             .stderr(std::process::Stdio::inherit());
         if let Some(dir) = &options.working_dir {
             command.current_dir(dir);
+        }
+        if options.isolated {
+            command.env_clear();
         }
         for (key, value) in &options.env {
             command.env(key, value);

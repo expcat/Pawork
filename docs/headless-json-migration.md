@@ -1,6 +1,6 @@
 # `--json` → Headless 正式协议：映射表与迁移说明
 
-> S10 10a 波 A（2026-08-17）留档。本波只冻结形状与对照表，**不改** `pawork run --json` / `chat --json` 的现行输出。实际切输出、去掉 `unstable` 标注在 S10 **收口**（cli 六模式）兑现——那是计划内唯一一次 `--json` breaking。
+> S10 10a 波 A（2026-08-17）留档对照表；S10 **收口**（2026-08-17）已兑现计划内唯一一次 `--json` breaking：`run` / `chat --prompt --json` 的 stdout 从裸 `AgentEventEnvelope` 升到 `HeadlessResponse`（`type=event|response|error`），去掉 `unstable`。单向 `--json` **没有** hello；`pawork headless --json-stdio` 必须先 hello。
 >
 > 可测对照表：`pawork_protocol::headless::json_mapping::JSON_TO_HEADLESS_EVENT_MAP`。
 > TypeScript 检入物：[`schemas/`](../schemas/)（`core-api` / `gui-protocol` / `headless-json`）。
@@ -135,7 +135,7 @@ V1 `run --json` 打的是**裸** `AppEventEnvelope`（无 `{type:event}` 包装�
 | typegen `.d.ts` 检入 | ✅ `schemas/` |
 | GUI 帧 golden 补齐 | ✅ |
 | `SUPPORTED_API_VERSIONS` 含 1.0 与 1.1 | ✅（ADR-036） |
-| CLI `--json` 切输出 / 去 unstable | 收口 |
-| `pawork headless --json-stdio` 子命令 | 收口 |
-| SDK 消费 | 10a 波 B |
-| Event Hub 扇出 | 10a 波 B |
+| CLI `--json` 切输出 / 去 unstable | ✅ 收口：`run` / `chat --prompt --json` 打 `HeadlessResponse`；其它子命令仍是 CLI 便利 JSON |
+| `pawork headless --json-stdio` 子命令 | ✅ 收口；握手强制；能力门 Sessions/Runs/Streaming/Compat* |
+| SDK 消费 | ✅ 10a 波 B + 收口 `spawn_e2e` 不再 skip |
+| Event Hub 扇出 | ✅ 10a 波 B；`--json` / `watch --json` 消费 Hub 事件 |

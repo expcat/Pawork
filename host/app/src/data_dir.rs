@@ -1,5 +1,8 @@
 use std::path::{Path, PathBuf};
 
+/// 缺省实例名（与 V1 `--instance` 默认值对齐）。
+pub const DEFAULT_INSTANCE: &str = "default";
+
 /// 会话库所在数据目录。覆盖：`PAWORK_DATA_DIR`。
 ///
 /// 默认与 V1 `instance_dir` 对齐：Windows `%LOCALAPPDATA%\pawork`，
@@ -22,14 +25,41 @@ pub fn default_data_dir() -> PathBuf {
     std::env::temp_dir().join("pawork")
 }
 
-/// `<data_dir>/default/session.db`（S1 不暴露 `--instance`）。
+/// 校验 `--instance`：非空、不能含路径分隔或 `..`。
+pub fn normalize_instance(name: &str) -> Result<&str, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("instance name must not be empty".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(format!("invalid instance name `{name}`"));
+    }
+    Ok(name)
+}
+
+/// `<data_dir>/<instance>`。
+pub fn instance_dir(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+    data_dir.as_ref().join(instance)
+}
+
+/// `<data_dir>/default/session.db`。
 pub fn session_db_path(data_dir: impl AsRef<Path>) -> PathBuf {
-    data_dir.as_ref().join("default").join("session.db")
+    session_db_path_for(data_dir, DEFAULT_INSTANCE)
+}
+
+/// `<data_dir>/<instance>/session.db`。
+pub fn session_db_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+    instance_dir(data_dir, instance).join("session.db")
 }
 
 /// `<data_dir>/default/artifacts`：写前快照与回滚 Blob。
 pub fn artifact_store_path(data_dir: impl AsRef<Path>) -> PathBuf {
-    data_dir.as_ref().join("default").join("artifacts")
+    artifact_store_path_for(data_dir, DEFAULT_INSTANCE)
+}
+
+/// `<data_dir>/<instance>/artifacts`。
+pub fn artifact_store_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+    instance_dir(data_dir, instance).join("artifacts")
 }
 
 #[cfg(test)]
@@ -48,5 +78,18 @@ mod tests {
             artifacts.ends_with("default/artifacts") || artifacts.ends_with("default\\artifacts"),
             "{artifacts:?}"
         );
+        let named = session_db_path_for("/tmp/pawork-data", "dev");
+        assert!(
+            named.ends_with("dev/session.db") || named.ends_with("dev\\session.db"),
+            "{named:?}"
+        );
+    }
+
+    #[test]
+    fn normalize_instance_rejects_path_escape() {
+        assert_eq!(normalize_instance("default").expect("ok"), "default");
+        assert!(normalize_instance("").is_err());
+        assert!(normalize_instance("../x").is_err());
+        assert!(normalize_instance("a/b").is_err());
     }
 }

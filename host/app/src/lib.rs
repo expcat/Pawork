@@ -69,7 +69,10 @@ pub use approval::{
     PendingToolApproval,
 };
 pub use checkpoint::{CheckpointSummary, RollbackOutcome};
-pub use data_dir::{artifact_store_path, default_data_dir, session_db_path};
+pub use data_dir::{
+    artifact_store_path, artifact_store_path_for, default_data_dir, instance_dir,
+    normalize_instance, session_db_path, session_db_path_for, DEFAULT_INSTANCE,
+};
 pub use diff::{paginate_diff, render_diff_file, render_session_diff, GitDiffHeader, SessionDiff};
 pub use pawork_git::{DiffFile, DiffPage};
 pub use gui_host::{
@@ -109,6 +112,8 @@ pub struct AppLoadOptions {
     pub approval_host: Option<Arc<dyn ApprovalPromptHost>>,
     /// 凭证后端覆盖（自动测试注入 MemoryBackend；默认 auth 文件）。
     pub auth_backend: Option<Arc<dyn SecretBackend>>,
+    /// 隔离实例名（数据目录子路径；默认 `default`）。
+    pub instance: String,
 }
 
 impl std::fmt::Debug for AppLoadOptions {
@@ -122,6 +127,7 @@ impl std::fmt::Debug for AppLoadOptions {
             .field("approval_mode", &self.approval_mode)
             .field("has_approval_host", &self.approval_host.is_some())
             .field("has_auth_backend", &self.auth_backend.is_some())
+            .field("instance", &self.instance)
             .finish()
     }
 }
@@ -136,6 +142,7 @@ impl AppLoadOptions {
             approval_mode: None,
             approval_host: None,
             auth_backend: None,
+            instance: crate::DEFAULT_INSTANCE.to_string(),
         }
     }
 }
@@ -198,6 +205,8 @@ pub enum AppError {
     ApprovalMode(String),
     #[error("invalid proxy_url: {0}")]
     InvalidProxy(String),
+    #[error("{0}")]
+    InvalidInstance(String),
     #[error(transparent)]
     Checkpoint(#[from] pawork_blob_store::CheckpointError),
     #[error(transparent)]
@@ -395,8 +404,15 @@ impl AppCore {
         }
         core.prime_extensions().await?;
         let data_dir = options.data_dir.unwrap_or_else(default_data_dir);
-        core.open_store(session_db_path(&data_dir)).await?;
-        core.open_checkpoints(artifact_store_path(&data_dir)).await?;
+        let instance = if options.instance.trim().is_empty() {
+            crate::DEFAULT_INSTANCE
+        } else {
+            crate::normalize_instance(&options.instance).map_err(AppError::InvalidInstance)?
+        };
+        core.open_store(session_db_path_for(&data_dir, instance))
+            .await?;
+        core.open_checkpoints(artifact_store_path_for(&data_dir, instance))
+            .await?;
         Ok(core)
     }
 

@@ -21,7 +21,62 @@ pub async fn run_sessions(
             format,
             source,
         } => import(core, path, format, source, json).await,
+        SessionsCommand::Fork {
+            session,
+            event,
+            no_switch,
+        } => fork(core, session, event, !no_switch, json).await,
     }
+}
+
+async fn fork(
+    core: &AppCore,
+    session: Option<String>,
+    event: String,
+    switch: bool,
+    json: bool,
+) -> Result<(), CliError> {
+    let spec = session.as_deref().unwrap_or("latest");
+    let session_id = core.resolve_session(spec).await?;
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let short = event.chars().take(8).collect::<String>();
+    let branch_id = format!("fork-{millis}-{short}");
+    let store = core.store()?;
+    store
+        .fork_from_event(
+            &session_id,
+            &branch_id,
+            &pawork_domain::EventId::from(event.as_str()),
+        )
+        .await
+        .map_err(pawork_app::AppError::from)?;
+    if switch {
+        store
+            .switch_branch(&session_id, &branch_id)
+            .await
+            .map_err(pawork_app::AppError::from)?;
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "session_id": session_id.as_str(),
+                "branch_id": branch_id,
+                "parent_event_id": event,
+                "switched": switch,
+            })
+        );
+    } else {
+        println!(
+            "forked {} branch {branch_id} from {event}{}",
+            session_id.as_str(),
+            if switch { " (switched)" } else { "" }
+        );
+    }
+    Ok(())
 }
 
 async fn list(core: &AppCore, json: bool) -> Result<(), CliError> {

@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, CommandId, ContentPart,
-    EventId, Message, MessageId, MessageRole, QueryId, RunId, SessionId, TenantId, TextContent,
-    WorkspaceId,
+    ErrorCategory, ErrorContext, EventId, Message, MessageId, MessageRole, QueryId, RunId,
+    SessionId, TenantId, TextContent, WorkspaceId,
 };
 use pawork_exec::{OwnerSessionId, PtyCreateSpec, PtyEvent, PtyService, PtyWindowSize, TerminalId};
 use pawork_session::{SessionRecord, SessionTree};
@@ -33,6 +33,25 @@ use crate::{
     should_cache, AppCore, EventHub, GuiApprovalHost, HubError, IdempotencyCheck, IdempotencyStore,
     DEFAULT_HUB_CAPACITY,
 };
+
+fn session_view_json(
+    session_id: &SessionId,
+    workspace_id: &WorkspaceId,
+    title: &str,
+    active_branch: Option<&str>,
+) -> Value {
+    let mut data = json!({
+        "session_id": session_id.as_str(),
+        "workspace_id": workspace_id.as_str(),
+        "title": title,
+        "revision": 0,
+        "open": true,
+    });
+    if let Some(branch) = active_branch {
+        data["active_branch"] = json!(branch);
+    }
+    data
+}
 
 fn session_tree_entry(record: &SessionRecord, workspace_id: Option<WorkspaceId>) -> Value {
     let mut data = json!({
@@ -376,6 +395,26 @@ impl GuiHostAdapter {
 
     pub fn approvals(&self) -> Arc<GuiApprovalHost> {
         Arc::clone(&self.approvals)
+    }
+
+    pub fn core_instance_id(&self) -> pawork_domain::CoreInstanceId {
+        self.instance.clone()
+    }
+
+    pub async fn session_store(&self) -> Result<pawork_session::SessionStore, GuiHostError> {
+        self.core
+            .read()
+            .await
+            .store()
+            .map(|store| store.clone())
+            .map_err(Self::app_error)
+    }
+
+    pub async fn shutdown(self) -> Result<(), crate::AppError> {
+        match Arc::try_unwrap(self.core) {
+            Ok(lock) => lock.into_inner().shutdown().await,
+            Err(_) => Ok(()),
+        }
     }
 
     fn host_error(code: &str, message: impl Into<String>) -> GuiHostError {
@@ -892,35 +931,46 @@ impl GuiHostAdapter {
         envelope: &AppCommandEnvelope,
     ) -> Result<AppResponse, GuiHostError> {
         match &envelope.command {
+            AppCommand::WorkspaceAdd { root_path } => {
+                let mut core = self.core.write().await;
+                core.attach_workspace(std::path::Path::new(root_path))
+                    .map_err(Self::app_error)?;
+                Ok(AppResponse::Data(json!({
+                    "id": core.workspace_id().as_str(),
+                    "name": core.workspace_name(),
+                })))
+            }
             AppCommand::SessionCreate {
                 title,
                 workspace_id,
             } => {
-                self.core
+                let title = title.clone().unwrap_or_else(|| "New session".into());
+                let session_id = self
+                    .core
                     .read()
                     .await
-                    .create_session_with_workspace(
-                        title.clone().unwrap_or_else(|| "New session".into()),
-                        workspace_id.clone(),
-                    )
+                    .create_session_with_workspace(title.clone(), workspace_id.clone())
                     .await
                     .map_err(Self::app_error)?;
-                Ok(AppResponse::Accepted {
-                    command_id: envelope.command_id.clone(),
-                    run_id: None,
-                })
+                Ok(AppResponse::Data(session_view_json(
+                    &session_id,
+                    workspace_id,
+                    &title,
+                    None,
+                )))
             }
             AppCommand::SessionOpen { session_id } => {
-                self.core
-                    .read()
-                    .await
-                    .get_session(session_id)
-                    .await
-                    .map_err(Self::app_error)?;
-                Ok(AppResponse::Accepted {
-                    command_id: envelope.command_id.clone(),
-                    run_id: None,
-                })
+                let core = self.core.read().await;
+                let record = core.get_session(session_id).await.map_err(Self::app_error)?;
+                let workspace_id = core
+                    .session_workspace(session_id)
+                    .unwrap_or_else(|| core.workspace_id().clone());
+                Ok(AppResponse::Data(session_view_json(
+                    session_id,
+                    &workspace_id,
+                    &record.title,
+                    Some(&record.active_branch),
+                )))
             }
             AppCommand::RunStart {
                 session_id,
@@ -933,6 +983,20 @@ impl GuiHostAdapter {
                     core.get_session(session_id)
                         .await
                         .map_err(Self::app_error)?;
+                    if core.provider_pending() {
+                        return Ok(AppResponse::Error(ErrorContext {
+                            category: ErrorCategory::Authentication,
+                            message: format!(
+                                "provider {} 未装配凭证：先 pawork auth set-key {} 或 pawork auth login {}",
+                                core.provider_id().as_str(),
+                                core.provider_id().as_str(),
+                                core.provider_id().as_str()
+                            ),
+                            retryable: false,
+                            retry_after_ms: None,
+                            diagnostics: Default::default(),
+                        }));
+                    }
                 }
                 if let Some(model) = model {
                     let current = {
@@ -1100,9 +1164,7 @@ impl GuiHostAdapter {
                 parent_event_id,
             } => {
                 let core = self.core.read().await;
-                core.get_session(session_id)
-                    .await
-                    .map_err(Self::app_error)?;
+                let record = core.get_session(session_id).await.map_err(Self::app_error)?;
                 let store = core.store().map_err(Self::app_error)?;
                 let n = self.next_fork.fetch_add(1, Ordering::Relaxed);
                 let branch_id = format!(
@@ -1117,11 +1179,18 @@ impl GuiHostAdapter {
                     .switch_branch(session_id, &branch_id)
                     .await
                     .map_err(Self::session_error)?;
-                Ok(AppResponse::Data(json!({
-                    "session_id": session_id.as_str(),
-                    "branch_id": branch_id,
-                    "parent_event_id": parent_event_id.as_str(),
-                })))
+                let workspace_id = core
+                    .session_workspace(session_id)
+                    .unwrap_or_else(|| core.workspace_id().clone());
+                let mut data = session_view_json(
+                    session_id,
+                    &workspace_id,
+                    &record.title,
+                    Some(&branch_id),
+                );
+                data["branch_id"] = json!(branch_id);
+                data["parent_event_id"] = json!(parent_event_id.as_str());
+                Ok(AppResponse::Data(data))
             }
             AppCommand::TerminalCreate {
                 workspace_id,
@@ -1812,7 +1881,7 @@ mod tests {
         assert!(registry.cancel(&RunId::from("run-x")));
         assert!(token.is_cancelled());
         assert!(!registry.cancel(&RunId::from("run-missing")));
-        assert_eq!(registry.active().len(), 1);
+        assert_eq!(registry.active().len(), 0);
     }
 
     #[test]
@@ -1857,7 +1926,7 @@ mod tests {
             },
         );
         let first_create = adapter.command(&create).await.expect("create");
-        assert!(matches!(first_create, AppResponse::Accepted { .. }));
+        assert!(matches!(first_create, AppResponse::Data(_)));
         let replay_create_id = adapter.command(&create).await.expect("replay command_id");
         assert_eq!(replay_create_id, first_create);
         let replay_create_key = adapter
@@ -2024,7 +2093,12 @@ mod tests {
             }))
             .await
             .expect("accepted");
-        assert!(matches!(response, AppResponse::Accepted { .. }));
+        let AppResponse::Data(data) = &response else {
+            panic!("SessionCreate must return Data: {response:?}");
+        };
+        assert_eq!(data["title"], json!("from gui"));
+        assert_eq!(data["workspace_id"], json!("ws-default"));
+        assert!(data["session_id"].as_str().is_some());
         let snapshot = host.snapshot().await.expect("snapshot after create");
         let sessions = snapshot
             .sections
