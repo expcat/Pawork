@@ -130,9 +130,13 @@ struct HostSessionResolver {
 #[async_trait::async_trait]
 impl SessionResolver for HostSessionResolver {
     async fn resolve_client_session(&self, event: &AppEventEnvelope) -> Option<ClientSessionId> {
-        let EventStream::Run(run_id) = &event.stream else {
-            return None;
-        };
+        // GuiEventBus 把 Core 事件标成 EventStream::Session；mock / 部分测试
+        // 用 EventStream::Run。两种都要能回到 pending prompt，否则
+        // session/prompt 会一直等不到 stopReason。
+        let run_id = match &event.stream {
+            EventStream::Run(run_id) => Some(run_id),
+            _ => run_id_of(&event.payload),
+        }?;
         self.run_sessions
             .lock()
             .expect("acp-host run map mutex")
@@ -1553,7 +1557,13 @@ fn accepted_run_id(frame: CanonicalCoreFrame, context: &str) -> Result<RunId, Js
 
 fn run_id_of(event: &AppEvent) -> Option<&RunId> {
     match event {
-        AppEvent::ToolApprovalRequired { run_id, .. } => Some(run_id),
+        AppEvent::RunChanged { run_id, .. }
+        | AppEvent::AssistantDelta { run_id, .. }
+        | AppEvent::ThinkingDelta { run_id, .. }
+        | AppEvent::ToolStarted { run_id, .. }
+        | AppEvent::ToolOutput { run_id, .. }
+        | AppEvent::ToolApprovalRequired { run_id, .. }
+        | AppEvent::ToolCompleted { run_id, .. } => Some(run_id),
         _ => None,
     }
 }

@@ -984,7 +984,7 @@ impl GuiHostAdapter {
                 model,
                 ..
             } => {
-                {
+                let history = {
                     let core = self.core.read().await;
                     core.get_session(session_id)
                         .await
@@ -1003,7 +1003,10 @@ impl GuiHostAdapter {
                             diagnostics: Default::default(),
                         }));
                     }
-                }
+                    core.resume_messages(session_id)
+                        .await
+                        .map_err(Self::app_error)?
+                };
                 if let Some(model) = model {
                     let current = {
                         let core = self.core.read().await;
@@ -1116,14 +1119,15 @@ impl GuiHostAdapter {
                 let instance = self.instance.clone();
                 let session = session_id.clone();
                 let run = run_id.clone();
-                let message = Message {
+                let mut messages = history;
+                messages.push(Message {
                     id: MessageId::from("pending"),
                     role: MessageRole::User,
                     content: vec![ContentPart::Text(TextContent {
                         text: user_message.clone(),
                     })],
                     metadata: Default::default(),
-                };
+                });
                 tokio::spawn(async move {
                     let sink = GuiBroadcastSink::new(Arc::clone(&bus), instance.clone());
                     let outcome = {
@@ -1131,7 +1135,7 @@ impl GuiHostAdapter {
                         core.chat_turn_with_run_id(
                             run.clone(),
                             &session,
-                            vec![message],
+                            messages,
                             &sink,
                             token,
                         )
@@ -2253,6 +2257,113 @@ mod tests {
                 .iter()
                 .any(|section| section.kind == SnapshotSectionKind::TerminalSessions),
             "snapshot must include TerminalSessions"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_start_second_turn_includes_session_history() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![
+            MockScript::new().text("pong").complete(),
+            MockScript::new().text("BLUE-PINE").complete(),
+        ]);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("history").await.expect("session");
+        let db = dir.path().join("session.db");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let mut events = adapter.subscribe_events();
+
+        async fn wait_completed(
+            events: &mut tokio::sync::broadcast::Receiver<AppEventEnvelope>,
+            run_id: &RunId,
+        ) {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                let envelope = tokio::time::timeout_at(deadline, events.recv())
+                    .await
+                    .expect("run should complete")
+                    .expect("event channel");
+                if let AppEvent::RunChanged {
+                    run_id: id,
+                    state:
+                        RunState::Completed | RunState::Failed | RunState::Cancelled | RunState::Interrupted,
+                } = &envelope.payload
+                {
+                    if id == run_id {
+                        return;
+                    }
+                }
+            }
+        }
+
+        let first = adapter
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session.clone(),
+                user_message: "Remember the codeword BLUE-PINE. Reply with exactly one word: pong"
+                    .into(),
+                model: None,
+                profile: None,
+            }))
+            .await
+            .expect("first run");
+        let AppResponse::Accepted {
+            run_id: Some(first_run),
+            ..
+        } = first
+        else {
+            panic!("first RunStart must report a run id: {first:?}");
+        };
+        wait_completed(&mut events, &first_run).await;
+
+        let second = adapter
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session.clone(),
+                user_message: "What is the codeword? Reply with only the codeword.".into(),
+                model: None,
+                profile: None,
+            }))
+            .await
+            .expect("second run");
+        let AppResponse::Accepted {
+            run_id: Some(second_run),
+            ..
+        } = second
+        else {
+            panic!("second RunStart must report a run id: {second:?}");
+        };
+        wait_completed(&mut events, &second_run).await;
+        drop(adapter);
+
+        let (store, _) = pawork_session::SessionStore::open(db)
+            .await
+            .expect("reopen store");
+        let prepared: Vec<u64> = store
+            .replay_events(&session, 1, 500)
+            .await
+            .expect("replay")
+            .into_iter()
+            .filter_map(|envelope| match envelope.payload {
+                AgentEvent::ContextPrepared { message_count, .. } => Some(message_count),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(prepared.len(), 2, "two turns should prepare context twice: {prepared:?}");
+        assert!(
+            prepared[0] >= 1,
+            "first turn must send at least the trigger: {prepared:?}"
+        );
+        assert!(
+            prepared[1] >= prepared[0] + 2,
+            "second turn must include prior user+assistant+new user, got {prepared:?}"
         );
     }
 }

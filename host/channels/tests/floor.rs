@@ -1019,6 +1019,56 @@ async fn pump_events_delivers_terminal_state() {
 }
 
 #[tokio::test]
+async fn pump_events_session_stream_run_changed_resolves_prompt() {
+    use pawork_protocol::{AppEvent, AppEventEnvelope, EventSource, EventStream, GlobalSequence};
+    let harness =
+        common::TestHarness::new(MockScript::new().text("started ").wait_for_cancellation()).await;
+    let dir = temp_dir("acp-host-session-stream-");
+    harness.prepare_workspace(dir.path()).await;
+    let session_id = harness
+        .new_session(dir.path().to_str().expect("path"))
+        .await;
+    let prompt = spawn_prompt(&harness, 27, &session_id, "gui session stream");
+    assert!(
+        wait_until(
+            || harness
+                .host
+                .pending_run(&ClientSessionId::new(&session_id))
+                .is_some(),
+            Duration::from_secs(10)
+        )
+        .await,
+        "run must register before pump",
+    );
+    let run_id = harness
+        .host
+        .pending_run(&ClientSessionId::new(&session_id))
+        .expect("run");
+    harness
+        .host
+        .pump_events(vec![AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: pawork_domain::CoreInstanceId::from("acp-session-stream"),
+            event_id: pawork_domain::EventId::from("acp-session-stream-terminal"),
+            global_sequence: GlobalSequence(99),
+            stream: EventStream::Session(pawork_domain::SessionId::from(session_id.as_str())),
+            stream_sequence: 1,
+            timestamp: Timestamp::from_unix_millis(1),
+            source: EventSource::Core,
+            payload: AppEvent::RunChanged {
+                run_id,
+                state: pawork_protocol::RunState::Completed,
+            },
+        }])
+        .await;
+    let mut collected = Vec::new();
+    let result = await_prompt(&harness, prompt, &mut collected)
+        .await
+        .expect("GuiEventBus Session-stream RunChanged must resolve prompt");
+    assert_eq!(result["stopReason"], json!("end_turn"));
+}
+
+#[tokio::test]
 async fn lagged_subscription_is_fail_closed() {
     use pawork_protocol::{AppEvent, EventStream};
     let mock = Arc::new(common::MockAcpCommandHost::with_capacity(

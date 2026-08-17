@@ -1370,13 +1370,24 @@ impl AppCore {
             }
         }
         let catalog_for_probe = catalog.clone();
+        // 单通道探测若挂起（临期 OAuth / 不可达厂商），不得拖死 Desktop
+        // ModelList：客户端默认 10s 超时，静态目录已含 §1.1 低消耗模型。
+        const OVERVIEW_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
         let probe_results = futures::future::join_all(probe_jobs.into_iter().map(
             |(id, adapter, credential)| {
                 let catalog = catalog_for_probe.clone();
                 async move {
-                    let result = catalog
-                        .probe_provider(adapter.as_ref(), credential.as_ref())
-                        .await;
+                    let result = match tokio::time::timeout(
+                        OVERVIEW_PROBE_TIMEOUT,
+                        catalog.probe_provider(adapter.as_ref(), credential.as_ref()),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(pawork_provider_core::ProbeError::new(
+                            "runtime model probe timed out",
+                        )),
+                    };
                     (id, result)
                 }
             },

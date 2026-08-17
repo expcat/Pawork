@@ -45,8 +45,8 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 当前阶段 | S10（[plan/S10-serve-clients.md](plan/S10-serve-clients.md)）10a 波 A–B、10b、收口实现与冒烟大部已完成；下一波为 S10 冒烟剩余（Zed 真实 ACP + S0–S9 回归） |
-| 阶段状态 | S10 🔵；S9 🟢；S8 🟢；S6 仍 🔵（OAuth 临期 refresh 挂账，不阻塞 S10） |
+| 当前阶段 | S10（[plan/S10-serve-clients.md](plan/S10-serve-clients.md)）已收口；下一波为 S11（不自动开启） |
+| 阶段状态 | S10 🟢；S9 🟢；S8 🟢；S6 仍 🔵（OAuth 临期 refresh 挂账，不阻塞 S10） |
 | 已完成波次 | S0 波 A–D（含 2026-08-14 两通道真实冒烟）；S1 波 A–C（含 2026-08-14 两通道真实冒烟：`sessions` / `--resume` / `run --json` / `kill -9` 恢复）；S2 波 A–C；S2 波 D（2026-08-14：cli `⚙` 工具行 + `host/app` 装配 `run_session`/scheduler/四只读工具；三通道冒烟 GLM OpenAI / GLM Anthropic / OpenCode Go）；S3 波 A（2026-08-15：`pawork-policy` 整包 + `pawork-tools` 写三件 + scheduler `check_gate`）；S3 波 B（2026-08-15：engine `ApprovalGate` + app 写三件/审批宿主/resume 封口 + cli `--approval-mode`/`y`/`a`/`n`/`--json` fail-closed）；S3 波 C（2026-08-15：两通道真实冒烟 + 提示注入评估；S3 收口）；S4 波 A（2026-08-15：`pawork-exec` process+sandbox；`run_command` + policy 认 `argv`；fail-closed 守 ADR-031 可观测回退）；S4 波 B（2026-08-15：engine `CancelHandle` + 工具中取消不发 `ToolExecutionCompleted`；cli 命令流式渲染/stderr 着色/Ctrl-C 走 `cancel(User)`；app 注册第八件 `run_command`）；S4 波 C（2026-08-15：两通道「读-改-跑」闭环 + Ctrl-C `RunCancelled` + `git push --force` Dangerous 拒绝；S4 收口）；S5 波 A（2026-08-15：`pawork-provider-core` usage/registry/pricing/negotiate/reasoning；`pawork-session` compaction feature + `TokenEstimator` 注入）；S5 波 B（2026-08-15：engine `context` 四模块迁入并接 `run_session`（ContextPrepared 估算/软限压缩/硬限截断）；app registry 装配 + session usage/cost + 手动压缩；cli `/compact` + 每轮用量行 + `models` 目录（window/定价）；修 trigger 消息 id 同毫秒撞主键与压缩折叠水位误删保留尾部）；S5 波 C（2026-08-15：两通道真实冒烟——长对话软限压缩/`--resume`/`/compact`/token 对账 1:1/`pawork models` + 评估记录；修复 `last_run_usage` 冻结最早轮；S5 收口） |
 | S6 波次进度 | 波 A（2026-08-15）：六条首发通道 adapter、共享 Responses、credential fail-closed、wiremock 契约完成；未做真实凭证冒烟。波 B（2026-08-15）：`pawork-auth` 整包迁移 + Keychain→env→无凭证解析链（41 测试）；`pawork-diagnostics` 全局脱敏 layer + `RedactingFmtLayer`（metrics/bundle 门控 `experimental`）；workspace manifest 修复 glob 命中占位目录的加载错误。波 C（2026-08-15）：六通道正式装配 + `pawork models` 聚合 + `pawork auth` 四子命令 + REPL `/model` `/provider` 切换事件 + 宿主全局脱敏挂载；glm-coding/opencode-go 完成 set-key→清 env→Keychain 流式工具任务，GLM 双协议通道切换实测，trace 日志 0 泄漏；修复 keyring 平台后端缺失（原默认 mock 存储）；ChatGPT/xAI OAuth 与 Qwen/DeepSeek 凭证按 fail-closed 登记。收口（本地实现，2026-08-16）：六通道首次真实冒烟已齐；生产 default OAuth 请求路径接入进程内 singleflight；正式 auth 文件后端新增跨进程 write/refresh 锁、锁内重读、独立临时文件与 access/轮换 refresh/meta 批量原子回写；双进程旧快照只触发一次 token exchange，空 refresh 拒写，`invalid_grant` 明确要求重登；活动文档统一 auth 文件术语并保留历史/冻结兼容名；S6 定向自动化全绿 |
 | S7 波次进度 | 波 0（2026-08-16）：锁定 `docs/gui-design.md` 的信息架构、交互状态、官方参照取舍、分页 Timeline 恢复、协议最小切片、四层依赖 deny list 与 S8–S12 增量图；修复任务书对缺失 M0/M5 正文的死链；未创建 Desktop crate、未进入 UI 实现。波 A（2026-08-16）：激活 `pawork-protocol`（V1 gui-protocol 帧 + core-api App 类型零裁剪、SessionGet 分页字段 + minor 1.1 + golden 先行）、`pawork-transport`（local UDS/Named pipe）、`pawork-gui-server`（单客户端握手→Snapshot→订阅→帧循环、Resume 三态、断线不取消 Run）；`pawork-app` 增 GuiHost 适配 + 事件扇出 + Run 注册表 + Timeline 投影，`pawork-cli` 增 `gui serve`（单实例探测）；六包定向测试全绿；`pawork-client`/`apps/desktop` 未建（波 B） |
@@ -60,8 +60,10 @@
 | S10 波次进度（10b） | 10b（2026-08-17，并行 ×4 + 主代理装配）：`pawork-gui-server` ConnectionManager，Resume 走 host 共源、队列满丢新；Desktop Replay 三态 / 时间线 Fork / Inspector Terminal 文本面，`connect_with_resume`；`pawork-channels` 仅 `acp`；`pawork-exec` PTY + `pawork-session` lifecycle/`fork_from_event`。Host 接 `SessionFork`/`Terminal*` 与 Hub replay；幂等按 GUI `client_id` 作用域（避免多客户端 `gui-cmd-N` 撞车把 RunCancel 重放成 SessionCreate）。未做 CLI 六模式、protocol-probe、`--json` 切输出、本机 GPUI 多窗、VT100。S10 保持 🔵 |
 | S10 波次进度（收口） | 收口（2026-08-17，串行）：`pawork-cli` 接六模式 + 运维。`--instance`（默认 `default`）解开数据路径；`headless --json-stdio` / `acp serve` / `service install\|start\|stop`（默认 dry-run，`--apply` 才改系统；注册命令是 `pawork --instance X gui serve`）/ `status`/`watch`/`shutdown`/`doctor`；`sessions fork`（新 CLI UX，V1 无此子命令）+ `chat --branch`；`run`/`chat --prompt --json` 升到 `HeadlessResponse`（去掉 unstable；不是恢复 V1 裸信封）。`GuiHostAdapter` 回 `WorkspaceAdd`/`SessionCreate`/`SessionOpen`/`SessionFork` `Data`，无凭证 `RunStart` 回 `Error`。激活 `apps/protocol-probe`（V1 9 场景名，V2 包名；无 golden）。定向测试 `pawork-app` 86 / `pawork-cli` 22 / `protocol-probe` 9 场景 / `pawork-sdk` spawn_e2e 3 全绿。未做：真实 ACP 编辑器、两 GUI 对真实 `gui serve` 的人工 Replay、凭证下 `--json`/fork resume、darwin launchd `--apply`；Windows Service 本机无法验收（降级登记）。S10 保持 🔵 |
 | S10 波次进度（冒烟） | 冒烟补齐（2026-08-17）：两 GUI 真实 serve Replay 过（`protocol-probe --live-two-gui` `replay 14-61 n=48`）；PTY `echo` + 断线后 Hub Replay；`--json` 人工对照（`type=event\|response`，无 hello）；`sessions fork --no-switch` 后 main / fork 两分支 `chat --resume` 均回到指定词（`glm-coding`/`glm-4.7`）；darwin `service --apply` 实例 `s10svc`：install→start→`doctor handshake=ok`→stop，已删 plist。ACP stdio `initialize`+`session/new` 回到 `sessionId`。本机无 Zed，真实编辑器 fail-closed 不打勾；S0–S9 历史冒烟未复跑；Windows Service 仍不打勾。最小修复：`WorkspaceList` 补 `roots`；`gui serve` 握手声明 `TerminalStreaming`/`ArtifactStreaming`；`PersistThenRender` 写入 active branch（fork 上不再写死 `main`）；`RunStart` 失败会广播 `RunChanged(Failed)`；`--json --apply` 真正执行。定向：`pawork-app` 88、`desktop_direct_deps_stay_on_client_deny_list`、`pawork-cli` parse。S10 保持 🔵 |
-| **下一波次** | **S10 冒烟剩余**：本机安装 Zed 后用 `agent_servers` 走一遍真实 ACP 编辑器交互；任务书退出标准中的 S0–S9 既有冒烟复跑（含 S7 Desktop 最小对话）。不自动开 S11 |
-| 阻塞 | 无阻塞下一波。S6 的 ChatGPT/xAI 自然临期真实 refresh 人工验收继续挂账，S6 保持 🔵；S10 不依赖该项挂账 |
+| S10 波次进度（冒烟剩余） | 2026-08-17：S0–S9 已勾核心项复跑（§1.1 `opencode-go`/`deepseek-v4-flash` + S7 `glm-4.7`）。修复 `RunStart` 续聊漏历史（定向 `run_start_second_turn_includes_session_history`；真实 `--json --resume` 第二轮 `message_count` 3、第三轮 5，口令 `BLUE-PINE`）。修复 `models_overview` 单通道 4s 探测超时（ChatGPT 探活不再拖死 Desktop 10s `ModelList`）。S7 `--probe-smoke`：`first=glm-4.7` / `second=deepseek-v4-flash` / `second_turn=switched` / `approval=approved` / `cancelled=1` / `persisted=11` / `disconnect_survive=running`。 |
+| S10 波次进度（Zed ACP） | 2026-08-17：Zed 1.15 Agent Panel 真实走完 `initialize` → `session/new` → `session/prompt`。`ses-1786972257220-1` 回 `session/update` 文本 `pong` + `stopReason=end_turn`。修复 `HostSessionResolver` 忽略 `EventStream::Session`（`GuiEventBus` 生产形态）导致 prompt 永不收口；定向 `pump_events_session_stream_run_changed_resolves_prompt`。S10 收口为 🟢。不自动开 S11。 |
+| **下一波次** | **S11**（[plan/S11-workflow-control.md](plan/S11-workflow-control.md)）。不自动开启。 |
+| 阻塞 | S6 的 ChatGPT/xAI 自然临期真实 refresh 人工验收继续挂账，S6 保持 🔵；不阻塞 S10/S11 开启。 |
 
 
 
@@ -74,7 +76,7 @@
 一次开启只做 **一个波次**（任务书「并行拆分建议」里的 A/B/C/…）。做完即收尾，不自动跨入下一波。
 
 1. 读 ROADMAP §2。依赖阶段必须为 🟢；若当前阶段为 ⚠️，停止并报告阻塞。
-2. 取第一个非 🟢 的主干阶段（S0→S12）。**S7 现为最小 Agent GUI（先锁定 [gui-design.md](docs/gui-design.md) 再实现）**；WASM 插件 / Hooks / LSP / 市场不占阶段号，见 ROADMAP §4。阶段外任务（ROADMAP §3.2）仅当用户在「范围覆盖」里点名时才做。
+2. 取第一个非 🟢 的主干阶段（S0→S12）。**S7 现为最小 Agent GUI（先锁定 [gui-design.md](docs/gui-design.md) 再实现）**；S12 是只读 Code Review，按其任务书审查和登记 finding，不进入实现/测试流程。WASM 插件 / Hooks / LSP / 市场不占阶段号，见 ROADMAP §4。阶段外任务（ROADMAP §3.2）仅当用户在「范围覆盖」里点名时才做。
 3. 读该阶段任务书的「并行拆分建议」，结合 §3 指针与工作区（`**/Cargo.toml`（workspace 根）、成员 crate 是否已激活、任务书勾选）选出**最早未落地的波次**。
 4. 用户覆盖（「做 S2 波 B」「先做阶段外：多账户并入 plan」）立即生效。
 5. 在聊天里用三行声明后立刻进入 §5（不必等确认）：
@@ -293,8 +295,8 @@
 | S9 mcp/resources | S2 🟢 工具注册面；S6 config 凭证链（波 C 已接线；S6 挂账的 OAuth 临期 refresh 非前置） | 波 A 并行 ×3（mcp/resources/config 完整化）；波 B 并行 ×3（compat 依赖 mcp 薄类型；session 导入器、workspace file-index 不依赖）；波 C 串行（engine 注入 + cli + 冒烟） | **波 A 三包 + 波 B 的 session 导入器、workspace file-index** 可前置（不依赖 mcp 薄类型与 S7 壳） |
 | S10 serve/clients | S7（本机 `gui serve` 已通）；协议收口（10a 波 A 串行）是硬前置；未把 S8/S9 列为依赖 | 10a 波 B 并行 ×3（app/transport/sdk）；10b 并行 ×4（多客户端 / Desktop 增量 / ACP / PTY+lifecycle）；收口串行 | 任务书无前置授权；`channels` 的 codex/claude/remote-control 明确留给后续阶段 |
 | S11 workflow/control | S10 整阶段（app/cli 正式化 + Event Hub） | 波 A 控制面三包 ∥ 波 B 工作流三包；波 C orchestration 只依赖波 A trait；波 D host 接线单一 owner 串行 | 任务书无前置授权；结构耦合弱的是波 A/B 库迁移 + golden 先行（`dedup_key` / audit JSONL），仍挂在 S11 内 |
-| S12 release | S0–S11 全部完成；无新功能 | W1–W4 发布波内并行、波间串行 | 实现不可前置；**决策项可前置**（见 11.4） |
-| 阶段外：多账户并入 plan | 前置已满足（D1–D8 已于 2026-08-14 确认） | 纯文档 L0，与任意阶段不冲突 | **可随时开启**；写入集 plan/S2/S5/S6/S9/S11/S12 + design.md + ROADMAP，全部 plan 顺带只删不加核减测试 |
+| S12 全项目 Code Review | S0–S11 状态、延期项与证据已回写；无新功能 | CR-01～CR-09 按主审路径并行，CR-09 最后做跨报告一致性收口 | **只读准备可前置**（见 11.4）；不实现、不测试、不发布 |
+| 阶段外：多账户并入 plan | 前置已满足（D1–D8 已于 2026-08-14 确认） | 纯文档，与任意阶段不冲突 | **可随时开启**；写入集 plan/S2/S5/S6/S9/S11 + design.md + ROADMAP，全部 plan 顺带只删不加核减测试 |
 
 ### 11.2 S8 ∥ S9：唯一的跨阶段并行窗口
 
@@ -315,12 +317,12 @@
 
 S8 Changes 的 CLI 路径可前置，但 **Changes GUI 应等 S7 波 C 壳收口**：gui-design 只保证 S7 留槽，加面以「该阶段 Core 投影 + Host capability」为准（前置投影依赖本阶段投影，见 `design/README.md` §5.1），壳未收口时文档未授权先加面。
 
-### 11.4 可前置的决策项（不写代码）
+### 11.4 S12 可前置的只读准备
 
-1. **License 拍板**：S12 验证清单第 6 项、`cargo publish` 硬前置，可随时先定。
-2. **冻结候审砍留**：S12 清账项（清单以 workspace / S12 文 / design §7 为准，S11 退出标准核对冻结清单）；砍留结论可提前做。
-3. **三平台实跑计划**：S12 清单第 2 项兑现 S4/S10 留待的 Linux/macOS 实跑（含 S7 Desktop 开发机外补测）；机器与 runner 计划可先备，实跑仍在 S12。
-4. **非门禁项**：真实通道模型评估报告、`pawork-benches`、experimental 清账准备，可在 S10/S11 期间穿插，不占门禁波。
+1. **审查清单冻结**：按 [S12 任务书](plan/S12-project-code-review.md) 固定 CR-01～CR-09 的主审路径，避免跨包重复 finding。
+2. **状态/证据索引**：整理 S0–S11 的计划条目、生产调用点与既有验收记录，只建索引，不重跑测试或冒烟。
+3. **已知缺口归一**：以 ROADMAP §3.2 K-01～K-10 为基线，合并重复描述但不提前判定严重度。
+4. **发布相关决策移出**：License、三平台矩阵、全量门禁、模型评估报告、benchmark 与发布波次不属于当前 S12；审查整改后若用户决定发布，再另立任务。
 
 ### 11.5 冻结契约激活时点（design.md §3.2 中 S8+ 相关）
 
