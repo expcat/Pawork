@@ -1,6 +1,6 @@
 # S10：服务化与客户端补齐
 
-> 阶段 S10 · 多客户端与正式协议 · 状态：🔵进行中（10a 波 A ✅）· 依赖：S7（最小 GUI 与本机 `gui serve` 已通）· 规模：大（内分 10a/10b 两波）
+> 阶段 S10 · 多客户端与正式协议 · 状态：🔵进行中（10a 波 A–B ✅）· 依赖：S7（最小 GUI 与本机 `gui serve` 已通）· 规模：大（内分 10a/10b 两波）
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -76,7 +76,7 @@
 
 ## 并行拆分建议
 
-- 10a 波 A（串行）：`pawork-protocol` 收口（关键路径）→ 10a 波 B（并行 ×3）：app 正式化、transport 补齐、sdk。
+- 10a 波 A（串行，✅）：`pawork-protocol` 收口（关键路径）→ 10a 波 B（并行 ×3，✅）：app 正式化、transport 补齐、sdk。
 - 10b（依赖 10a，可并行 ×4）：gui-server 多客户端、Desktop Replay/Fork/Terminal、channels(acp)、exec(pty) + session(lifecycle)。
 - 收口（串行）：cli 六模式 + protocol-probe + 全部冒烟。
 

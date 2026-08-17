@@ -11,19 +11,23 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, ContentPart, EventId,
-    Message, MessageId, MessageRole, RunId, SessionId, TextContent, WorkspaceId,
+    Message, MessageId, MessageRole, QueryId, RunId, SessionId, TenantId, TextContent, WorkspaceId,
 };
 use pawork_session::SessionRecord;
 use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
 use pawork_gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope,
-    AppResponse, DiagnosticLevel, EventSource, EventStream, GlobalSequence, RunState, Snapshot,
-    SnapshotSection, SnapshotSectionKind, TimelineItem, TimelineItemKind, TimelinePage, API_VERSION,
+    AppResponse, AppResponseEnvelope, DiagnosticLevel, EventSource, EventStream, GlobalSequence,
+    RunState, Snapshot, SnapshotSection, SnapshotSectionKind, TimelineItem, TimelineItemKind,
+    TimelinePage, API_VERSION, DEFAULT_CONTROL_PLANE_TENANT,
 };
 use serde_json::{json, Value};
 
-use crate::{AppCore, GuiApprovalHost};
+use crate::{
+    should_cache, AppCore, EventHub, GuiApprovalHost, HubError, IdempotencyCheck, IdempotencyStore,
+    DEFAULT_HUB_CAPACITY,
+};
 
 fn session_tree_entry(record: &SessionRecord, workspace_id: Option<WorkspaceId>) -> Value {
     let mut data = json!({
@@ -51,37 +55,49 @@ fn protocol_to_domain_decision(
     }
 }
 
-/// 单实例事件总线：给 GUI 连接扇出 App 事件，全局序号单调连续。
+/// 单实例事件总线：内部唯一 EventHub，组信封后 `publish`，容量默认 4096。
 pub struct GuiEventBus {
-    tx: tokio::sync::broadcast::Sender<AppEventEnvelope>,
-    global_sequence: AtomicU64,
+    hub: EventHub,
     revision: AtomicU64,
+    next_event: AtomicU64,
 }
 
 impl GuiEventBus {
     pub fn new(capacity: usize) -> Self {
-        let (tx, _) = tokio::sync::broadcast::channel(capacity);
         Self {
-            tx,
-            global_sequence: AtomicU64::new(0),
+            hub: EventHub::with_capacity(capacity),
             revision: AtomicU64::new(1),
+            next_event: AtomicU64::new(1),
         }
     }
 
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<AppEventEnvelope> {
-        self.tx.subscribe()
+        self.hub.subscribe_receiver()
     }
 
-    fn next_global_sequence(&self) -> u64 {
-        self.global_sequence.fetch_add(1, Ordering::Relaxed) + 1
+    pub fn hub(&self) -> &EventHub {
+        &self.hub
+    }
+
+    pub fn replay(
+        &self,
+        from: GlobalSequence,
+        to: Option<GlobalSequence>,
+    ) -> Result<Vec<AppEventEnvelope>, HubError> {
+        self.hub.replay(from, to)
     }
 
     pub fn current_sequence(&self) -> u64 {
-        self.global_sequence.load(Ordering::Relaxed)
+        self.hub.current().0
     }
 
     fn next_revision(&self) -> u64 {
         self.revision.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn next_event_id(&self) -> EventId {
+        let n = self.next_event.fetch_add(1, Ordering::Relaxed);
+        EventId::from(format!("app-evt-{n}"))
     }
 
     fn publish(
@@ -90,21 +106,18 @@ impl GuiEventBus {
         envelope: &AgentEventEnvelope,
         event: AppEvent,
     ) {
-        let sequence = self.next_global_sequence();
         let app_envelope = AppEventEnvelope {
             api_version: API_VERSION,
             instance_id: instance,
-            event_id: EventId::from(format!("app-evt-{sequence}")),
-            global_sequence: GlobalSequence(sequence),
+            event_id: self.next_event_id(),
+            global_sequence: GlobalSequence(0),
             stream: EventStream::Session(envelope.session_id.clone()),
             stream_sequence: envelope.sequence.0,
             timestamp: envelope.timestamp,
             source: EventSource::Core,
             payload: event,
         };
-        // 无订阅者或队列满时丢弃：S7 单客户端重连可重新 Snapshot，
-        // 不允许慢消费反压 Core。
-        let _ = self.tx.send(app_envelope);
+        self.hub.publish(app_envelope);
     }
 
     fn publish_raw(
@@ -113,19 +126,18 @@ impl GuiEventBus {
         session_id: &SessionId,
         event: AppEvent,
     ) {
-        let sequence = self.next_global_sequence();
         let app_envelope = AppEventEnvelope {
             api_version: API_VERSION,
             instance_id: instance,
-            event_id: EventId::from(format!("app-evt-{sequence}")),
-            global_sequence: GlobalSequence(sequence),
+            event_id: self.next_event_id(),
+            global_sequence: GlobalSequence(0),
             stream: EventStream::Session(session_id.clone()),
             stream_sequence: 0,
             timestamp: now_timestamp(),
             source: EventSource::Core,
             payload: event,
         };
-        let _ = self.tx.send(app_envelope);
+        self.hub.publish(app_envelope);
     }
 }
 
@@ -235,6 +247,7 @@ pub struct GuiHostAdapter {
     bus: Arc<GuiEventBus>,
     runs: Arc<GuiRunRegistry>,
     approvals: Arc<GuiApprovalHost>,
+    idempotency: IdempotencyStore,
     instance: pawork_domain::CoreInstanceId,
     next_gui_run: AtomicU64,
 }
@@ -264,7 +277,7 @@ impl GuiHostAdapter {
             "pawork-{stamp}-{}",
             std::process::id()
         ));
-        let bus = Arc::new(GuiEventBus::new(1024));
+        let bus = Arc::new(GuiEventBus::new(DEFAULT_HUB_CAPACITY));
         {
             let bus = Arc::clone(&bus);
             let instance = instance.clone();
@@ -294,6 +307,7 @@ impl GuiHostAdapter {
             bus,
             runs: Arc::new(GuiRunRegistry::new()),
             approvals,
+            idempotency: IdempotencyStore::default(),
             instance,
             next_gui_run: AtomicU64::new(1),
         }
@@ -618,6 +632,43 @@ impl GuiHost for GuiHostAdapter {
     }
 
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
+        let tenant = TenantId::new(DEFAULT_CONTROL_PLANE_TENANT);
+        match self.idempotency.check(
+            &tenant,
+            &envelope.command_id,
+            envelope.idempotency_key.as_deref(),
+        ) {
+            IdempotencyCheck::Replay(cached) => return Ok(cached.response),
+            IdempotencyCheck::New => {}
+        }
+        let response = self.dispatch_command(envelope).await?;
+        let cached = AppResponseEnvelope {
+            api_version: envelope.api_version,
+            request_id: QueryId::from(envelope.command_id.as_str()),
+            responded_at: now_timestamp(),
+            response: response.clone(),
+        };
+        if should_cache(&cached) {
+            let _ = self.idempotency.record(
+                &tenant,
+                &envelope.command_id,
+                envelope.idempotency_key.as_deref(),
+                cached,
+            );
+        }
+        Ok(response)
+    }
+
+    fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<AppEventEnvelope> {
+        self.bus.subscribe()
+    }
+}
+
+impl GuiHostAdapter {
+    async fn dispatch_command(
+        &self,
+        envelope: &AppCommandEnvelope,
+    ) -> Result<AppResponse, GuiHostError> {
         match &envelope.command {
             AppCommand::SessionCreate {
                 title,
@@ -830,10 +881,6 @@ impl GuiHost for GuiHostAdapter {
                 ),
             )),
         }
-    }
-
-    fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<AppEventEnvelope> {
-        self.bus.subscribe()
     }
 }
 
@@ -1083,6 +1130,7 @@ mod tests {
     use crate::approval::ApprovalPromptHost;
     use pawork_domain::{CommandId, MessageMetadata, Timestamp, WorkspaceId};
     use pawork_protocol::{ActorIdentity, CommandSource};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use pawork_testkit::{MockProvider, MockScript};
 
     struct NoopSink;
@@ -1094,17 +1142,46 @@ mod tests {
         }
     }
 
+    fn next_test_command_id() -> CommandId {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        CommandId::from(format!(
+            "cmd-test-{}",
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
     fn command_envelope(command: AppCommand) -> AppCommandEnvelope {
+        command_envelope_with(next_test_command_id(), None, command)
+    }
+
+    fn command_envelope_with(
+        command_id: CommandId,
+        idempotency_key: Option<&str>,
+        command: AppCommand,
+    ) -> AppCommandEnvelope {
         AppCommandEnvelope {
             api_version: API_VERSION,
-            command_id: CommandId::from("cmd-test-1"),
+            command_id,
             source: CommandSource::Automation,
             identity: ActorIdentity::System,
             expected_revision: None,
-            idempotency_key: None,
+            idempotency_key: idempotency_key.map(str::to_string),
             issued_at: Timestamp::from_unix_millis(1),
             command,
         }
+    }
+
+    fn session_titles(snapshot: &Snapshot, title: &str) -> usize {
+        snapshot
+            .sections
+            .iter()
+            .find(|section| section.kind == SnapshotSectionKind::SessionTree)
+            .and_then(|section| section.data.clone())
+            .and_then(|data| data.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter(|entry| entry.get("title").and_then(Value::as_str) == Some(title))
+            .count()
     }
 
     fn query_envelope(query: AppQuery) -> AppQueryEnvelope {
@@ -1397,6 +1474,116 @@ mod tests {
         assert!(token.is_cancelled());
         assert!(!registry.cancel(&RunId::from("run-missing")));
         assert_eq!(registry.active().len(), 1);
+    }
+
+    #[test]
+    fn gui_event_bus_publishes_through_event_hub() {
+        let bus = GuiEventBus::new(4);
+        let instance = pawork_domain::CoreInstanceId::from("instance-1");
+        let session = SessionId::from("sess-1");
+        bus.publish_diagnostic(instance.clone(), &session, "a", json!({}));
+        bus.publish_diagnostic(instance, &session, "b", json!({}));
+        assert_eq!(bus.current_sequence(), 2);
+        let events = bus.replay(GlobalSequence(1), None).expect("replay");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].global_sequence, GlobalSequence(1));
+        assert_eq!(events[1].global_sequence, GlobalSequence(2));
+        assert_eq!(bus.hub().earliest_available(), Some(GlobalSequence(1)));
+        assert_eq!(bus.hub().capacity(), 4);
+    }
+
+    #[tokio::test]
+    async fn command_idempotency_replays_first_response_without_repeating_side_effects() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![MockScript::new().wait_for_cancellation()]);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("idem").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+
+        let create = command_envelope_with(
+            CommandId::from("cmd-create-1"),
+            Some("create-once"),
+            AppCommand::SessionCreate {
+                workspace_id: WorkspaceId::from("ws-default"),
+                title: Some("once".into()),
+            },
+        );
+        let first_create = adapter.command(&create).await.expect("create");
+        assert!(matches!(first_create, AppResponse::Accepted { .. }));
+        let replay_create_id = adapter.command(&create).await.expect("replay command_id");
+        assert_eq!(replay_create_id, first_create);
+        let replay_create_key = adapter
+            .command(&command_envelope_with(
+                CommandId::from("cmd-create-2"),
+                Some("create-once"),
+                AppCommand::SessionCreate {
+                    workspace_id: WorkspaceId::from("ws-default"),
+                    title: Some("once-again".into()),
+                },
+            ))
+            .await
+            .expect("replay idempotency_key");
+        assert_eq!(replay_create_key, first_create);
+        let snapshot = adapter.snapshot().await.expect("snapshot after create");
+        assert_eq!(
+            session_titles(&snapshot, "once"),
+            1,
+            "SessionCreate must not repeat"
+        );
+        assert_eq!(session_titles(&snapshot, "once-again"), 0);
+
+        let start = command_envelope_with(
+            CommandId::from("cmd-run-1"),
+            Some("run-once"),
+            AppCommand::RunStart {
+                session_id: session.clone(),
+                user_message: "go".into(),
+                model: None,
+                profile: None,
+            },
+        );
+        let first_start = adapter.command(&start).await.expect("run start");
+        let AppResponse::Accepted {
+            run_id: Some(run), ..
+        } = &first_start
+        else {
+            panic!("run start must report the run id");
+        };
+        assert_eq!(adapter.runs().active().len(), 1);
+        assert!(adapter.runs().contains(run));
+
+        let replay_start_id = adapter.command(&start).await.expect("replay run command_id");
+        assert_eq!(replay_start_id, first_start);
+        assert_eq!(adapter.runs().active().len(), 1);
+
+        let replay_start_key = adapter
+            .command(&command_envelope_with(
+                CommandId::from("cmd-run-2"),
+                Some("run-once"),
+                AppCommand::RunStart {
+                    session_id: session,
+                    user_message: "go again".into(),
+                    model: None,
+                    profile: None,
+                },
+            ))
+            .await
+            .expect("replay run idempotency_key");
+        assert_eq!(replay_start_key, first_start);
+        assert_eq!(
+            adapter.runs().active().len(),
+            1,
+            "RunStart must not spawn a second run"
+        );
     }
 
     #[tokio::test]

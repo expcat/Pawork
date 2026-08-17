@@ -12,10 +12,13 @@ mod data_dir;
 mod diff;
 mod extensions;
 mod gui_host;
+mod hub;
+mod idempotency;
 mod import_host;
 mod loop_ctx;
 mod persist;
 mod protocol;
+mod rate_limit;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -72,7 +75,15 @@ pub use pawork_git::{DiffFile, DiffPage};
 pub use gui_host::{
     project_timeline_item, GuiBroadcastSink, GuiEventBus, GuiHostAdapter, GuiRunRegistry,
 };
+pub use hub::{EventHub, HubError, HubSubscription, DEFAULT_HUB_CAPACITY};
+pub use idempotency::{
+    should_cache, IdempotencyCheck, IdempotencyError, IdempotencyStats, IdempotencyStore,
+    DEFAULT_IDEMPOTENCY_CAPACITY,
+};
 pub use persist::PersistThenRender;
+pub use rate_limit::{
+    DeltaKind, RateLimiter, RateLimiterStats, DEFAULT_RATE_LIMIT_BUFFER, DEFAULT_RATE_LIMIT_WINDOW,
+};
 pub use protocol::{AdapterProtocol, ProtocolError};
 pub use auth::{AuthChannelStatus, AuthSource, OAuthLogin};
 pub use channels::{

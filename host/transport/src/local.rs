@@ -16,7 +16,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::{
     ConnectOptions, ConnectionInfo, ConnectionLocality, GuiConnection, GuiListener,
     GuiTransportClient, GuiTransportServer, TransportEndpoint, TransportError, TransportErrorKind,
-    TransportFrame,
+    TransportFrame, DEFAULT_MAX_FRAME_BYTES,
 };
 
 #[cfg(unix)]
@@ -25,10 +25,6 @@ mod local_unix;
 #[cfg(windows)]
 #[path = "local_windows.rs"]
 mod local_windows;
-
-/// 默认单帧上限，与 `pawork-protocol::MAX_PROTOCOL_FRAME_BYTES`（1 MiB）一致，
-/// 保证传输层不会截断协议层允许的帧。
-pub const DEFAULT_MAX_FRAME_BYTES: u64 = 1024 * 1024;
 
 /// 长度前缀字节数（u32 little-endian），与 `pawork-protocol::FRAME_LENGTH_PREFIX_BYTES` 一致。
 const LENGTH_PREFIX_BYTES: usize = 4;

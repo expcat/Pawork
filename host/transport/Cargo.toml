@@ -7,11 +7,32 @@ publish.workspace = true
 authors.workspace = true
 description = "Pawork GUI 本地与远程传输的业务无关抽象与本机实现"
 
+[features]
+default = ["local"]
+local = []
+memory = []
+remote = [
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:rcgen",
+    "dep:sha2",
+    "dep:rand",
+    "dep:tracing",
+    "dep:pawork-protocol",
+]
+
 [dependencies]
 async-trait.workspace = true
-tokio = { workspace = true, features = ["net", "io-util", "sync", "time"] }
+tokio = { workspace = true, features = ["net", "io-util", "sync", "time", "rt"] }
 serde.workspace = true
 thiserror.workspace = true
+pawork-protocol = { path = "../../foundation/protocol", default-features = false, features = ["client-auth"], optional = true }
+rustls = { version = "0.23", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+rcgen = { version = "0.14", optional = true }
+sha2 = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
