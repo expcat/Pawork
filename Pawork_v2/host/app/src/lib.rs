@@ -14,9 +14,10 @@ mod persist;
 mod protocol;
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pawork_api::{
@@ -44,7 +45,7 @@ use pawork_auth::{
     load_default_oauth_credential, load_default_oauth_meta,
     refresh_default_oauth_credential_if_needed, resolve_oauth_credential,
     resolve_provider_credential, ApiKeyCredential, AuthError, CredentialSource, FileBackend,
-    OAuthRefreshConfig, SecretBackend,
+    MemoryBackend, OAuthRefreshConfig, SecretBackend,
 };
 use pawork_policy::PolicyEngine;
 use pawork_provider_core::{CatalogEntry, ModelRegistry};
@@ -257,6 +258,11 @@ pub struct AppCore {
     store: Option<SessionStore>,
     scheduler: Arc<ToolScheduler>,
     workspace_id: WorkspaceId,
+    /// `attach_workspace` 登记的显示名；未挂载时为 `unbound`。
+    workspace_name: String,
+    /// 进程内 session → workspace 绑定。不改 S1 sessions DDL；
+    /// Host 重启后无绑定的历史 session 进 Unassigned。
+    session_workspaces: Mutex<HashMap<String, WorkspaceId>>,
     tool_defs: Vec<ToolDefinition>,
     descriptors: Vec<ToolDescriptor>,
     approval_mode: ApprovalMode,
@@ -532,7 +538,7 @@ impl AppCore {
             model,
             provider_id,
             config: PaworkConfig::default(),
-            backend: Arc::new(FileBackend::new()),
+            backend: Arc::new(MemoryBackend::new()),
             http: reqwest::Client::new(),
             registry: Arc::new(registry),
             heuristic,
@@ -544,6 +550,8 @@ impl AppCore {
                 ToolSchedulerConfig::default(),
             )),
             workspace_id: WorkspaceId::from("ws-unbound"),
+            workspace_name: "unbound".into(),
+            session_workspaces: Mutex::new(HashMap::new()),
             tool_defs: Vec::new(),
             descriptors: Vec::new(),
             approval_mode: ApprovalMode::ReadOnly,
@@ -633,6 +641,7 @@ impl AppCore {
             },
         ));
         self.workspace_id = workspace_id;
+        self.workspace_name = "default".into();
         Ok(())
     }
 
@@ -678,8 +687,32 @@ impl AppCore {
         &self.workspace_id
     }
 
+    pub fn workspace_name(&self) -> &str {
+        &self.workspace_name
+    }
+
     pub fn workspace_trusted(&self) -> bool {
         self.workspace_trusted
+    }
+
+    /// 记录 SessionCreate 带来的 canonical workspace（进程内）。
+    pub fn bind_session_workspace(&self, session_id: &SessionId, workspace_id: WorkspaceId) {
+        self.session_workspaces
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(session_id.as_str().to_string(), workspace_id);
+    }
+
+    pub fn session_workspace(&self, session_id: &SessionId) -> Option<WorkspaceId> {
+        self.session_workspaces
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(session_id.as_str())
+            .cloned()
+    }
+
+    pub fn session_workspace_for_record(&self, session_id: &str) -> Option<WorkspaceId> {
+        self.session_workspace(&SessionId::from(session_id))
     }
 
     pub fn approval_mode(&self) -> ApprovalMode {
@@ -870,6 +903,17 @@ impl AppCore {
         self.store()?
             .create_session(&id, title, ts)
             .await?;
+        Ok(id)
+    }
+
+    /// GUI SessionCreate：落盘会话并绑定 command 里的 workspace_id。
+    pub async fn create_session_with_workspace(
+        &self,
+        title: impl Into<String>,
+        workspace_id: WorkspaceId,
+    ) -> Result<SessionId, AppError> {
+        let id = self.create_session(title).await?;
+        self.bind_session_workspace(&id, workspace_id);
         Ok(id)
     }
 
@@ -1190,8 +1234,8 @@ impl AppCore {
     }
 
     /// pawork models 聚合目录：六通道静态条目 + config providers（Messages
-    /// 静态目录与 models 覆盖）+ 当前通道运行期探测（仅已装配时；探测失败
-    /// 静默退回静态，与单通道目录一致）。未登记协议的 config provider 跳过。
+    /// 静态目录与 models 覆盖）+ 所有能装配成功的通道的运行期探测（探测失败
+    /// 静默退回该通道静态，与单通道目录一致）。未登记协议或无凭证的通道跳过探测。
     pub async fn models_overview(&self) -> Vec<CatalogEntry> {
         let mut provider_ids: Vec<ProviderId> = channels::FIRST_PARTY_CHANNELS
             .iter()
@@ -1205,46 +1249,70 @@ impl AppCore {
         }
 
         let mut catalog = ModelRegistry::empty();
-        for id in provider_ids {
+        for id in &provider_ids {
             let channel = channels::first_party_channel(id.as_str());
             let protocol = match channel_protocol(channel, &self.config, id.as_str()) {
                 Ok(protocol) => protocol,
                 Err(_) => continue,
             };
-            let registry = assemble_registry(&self.config, &id, protocol, channel);
+            let registry = assemble_registry(&self.config, id, protocol, channel);
             for entry in registry.list() {
                 if catalog.resolve(entry.id.as_str()).is_none() {
                     catalog.extend_with(vec![entry.clone()]);
                 }
             }
         }
-        if !self.provider_pending {
-            match catalog
-                .probe_provider(self.provider.as_ref(), self.credential.as_ref())
-                .await
-            {
+        let mut probe_jobs = Vec::new();
+        for id in provider_ids {
+            let assembled = if id.as_str() == self.provider_id.as_str() && !self.provider_pending {
+                Some((Arc::clone(&self.provider), self.credential.clone()))
+            } else {
+                match assemble_provider(&self.config, &id, &self.backend, false).await {
+                    Ok(assembled) => Some((assembled.adapter, assembled.credential)),
+                    Err(_) => None,
+                }
+            };
+            if let Some((adapter, credential)) = assembled {
+                probe_jobs.push((id, adapter, credential));
+            }
+        }
+        let catalog_for_probe = catalog.clone();
+        let probe_results = futures::future::join_all(probe_jobs.into_iter().map(
+            |(id, adapter, credential)| {
+                let catalog = catalog_for_probe.clone();
+                async move {
+                    let result = catalog
+                        .probe_provider(adapter.as_ref(), credential.as_ref())
+                        .await;
+                    (id, result)
+                }
+            },
+        ))
+        .await;
+        for (id, result) in probe_results {
+            match result {
                 Err(error) => {
                     tracing::warn!(
-                        provider = %self.provider_id,
+                        provider = %id,
                         error = %error,
                         "runtime model probe failed; falling back to static catalog"
                     );
                 }
                 Ok(probe) => {
-                for definition in &probe.definitions {
-                    if catalog.resolve(definition.id.as_str()).is_none() {
-                        catalog.extend_with(vec![CatalogEntry {
-                            id: definition.id.clone(),
-                            provider: self.provider_id.clone(),
-                            display_name: definition.display_name.clone(),
-                            context_window_tokens: definition.context_window_tokens,
-                            max_output_tokens: definition.max_output_tokens,
-                            capabilities: definition.capabilities.clone(),
-                            pricing: None,
-                            aliases: Vec::new(),
-                        }]);
+                    for definition in &probe.definitions {
+                        if catalog.resolve(definition.id.as_str()).is_none() {
+                            catalog.extend_with(vec![CatalogEntry {
+                                id: definition.id.clone(),
+                                provider: id.clone(),
+                                display_name: definition.display_name.clone(),
+                                context_window_tokens: definition.context_window_tokens,
+                                max_output_tokens: definition.max_output_tokens,
+                                capabilities: definition.capabilities.clone(),
+                                pricing: None,
+                                aliases: Vec::new(),
+                            }]);
+                        }
                     }
-                }
                 }
             }
         }

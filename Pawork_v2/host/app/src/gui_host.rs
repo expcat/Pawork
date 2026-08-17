@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, ContentPart, EventId,
-    Message, MessageId, MessageRole, RunId, SessionId, TextContent,
+    Message, MessageId, MessageRole, RunId, SessionId, TextContent, WorkspaceId,
 };
+use pawork_session::SessionRecord;
 use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
 use pawork_gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{
@@ -23,6 +24,21 @@ use pawork_protocol::{
 use serde_json::{json, Value};
 
 use crate::{AppCore, GuiApprovalHost};
+
+fn session_tree_entry(record: &SessionRecord, workspace_id: Option<WorkspaceId>) -> Value {
+    let mut data = json!({
+        "session_id": record.session_id,
+        "title": record.title,
+        "created_at_ms": record.created_at_ms,
+        "updated_at_ms": record.updated_at_ms,
+        "active_branch": record.active_branch,
+        "archived": record.archived,
+    });
+    if let Some(workspace_id) = workspace_id {
+        data["workspace_id"] = json!(workspace_id.as_str());
+    }
+    data
+}
 
 fn protocol_to_domain_decision(
     decision: &pawork_protocol::ApprovalDecision,
@@ -335,6 +351,7 @@ impl GuiHost for GuiHostAdapter {
                 revision: self.bus.next_revision(),
                 data: Some(json!([{
                     "id": core.workspace_id().as_str(),
+                    "name": core.workspace_name(),
                     "trusted": core.workspace_trusted(),
                 }])),
                 artifact_id: None,
@@ -345,16 +362,7 @@ impl GuiHost for GuiHostAdapter {
                 data: Some(Value::Array(
                     sessions
                         .iter()
-                        .map(|record| {
-                            json!({
-                                "session_id": record.session_id,
-                                "title": record.title,
-                                "created_at_ms": record.created_at_ms,
-                                "updated_at_ms": record.updated_at_ms,
-                                "active_branch": record.active_branch,
-                                "archived": record.archived,
-                            })
-                        })
+                        .map(|record| session_tree_entry(record, core.session_workspace_for_record(&record.session_id)))
                         .collect(),
                 )),
                 artifact_id: None,
@@ -467,6 +475,7 @@ impl GuiHost for GuiHostAdapter {
                 let core = self.core.read().await;
                 Ok(AppResponse::Data(json!([{
                     "id": core.workspace_id().as_str(),
+                    "name": core.workspace_name(),
                     "trusted": core.workspace_trusted(),
                 }])))
             }
@@ -482,13 +491,12 @@ impl GuiHost for GuiHostAdapter {
                     .get_session(session_id)
                     .await
                     .map_err(Self::app_error)?;
-                let mut data = json!({
-                    "session_id": record.session_id,
-                    "title": record.title,
-                    "created_at_ms": record.created_at_ms,
-                    "updated_at_ms": record.updated_at_ms,
-                    "active_branch": record.active_branch,
-                });
+                let workspace_id = self
+                    .core
+                    .read()
+                    .await
+                    .session_workspace_for_record(record.session_id.as_str());
+                let mut data = session_tree_entry(&record, workspace_id);
                 if timeline_after_sequence.is_some() || timeline_limit.is_some() {
                     let page = self
                         .timeline(session_id, *timeline_after_sequence, *timeline_limit)
@@ -544,11 +552,17 @@ impl GuiHost for GuiHostAdapter {
 
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
         match &envelope.command {
-            AppCommand::SessionCreate { title, .. } => {
+            AppCommand::SessionCreate {
+                title,
+                workspace_id,
+            } => {
                 self.core
                     .read()
                     .await
-                    .create_session(title.clone().unwrap_or_else(|| "New session".into()))
+                    .create_session_with_workspace(
+                        title.clone().unwrap_or_else(|| "New session".into()),
+                        workspace_id.clone(),
+                    )
                     .await
                     .map_err(Self::app_error)?;
                 Ok(AppResponse::Accepted {
@@ -1327,8 +1341,9 @@ mod tests {
         assert!(
             sessions.iter().any(|entry| {
                 entry.get("title").and_then(Value::as_str) == Some("from gui")
+                    && entry.get("workspace_id").and_then(Value::as_str) == Some("ws-default")
             }),
-            "SessionCreate must appear in the next snapshot: {sessions:?}"
+            "SessionCreate must bind workspace_id in the next snapshot: {sessions:?}"
         );
     }
 }

@@ -2,7 +2,8 @@
 //!
 //! 四层结构：ui（GPUI 渲染与交互）/ projection（纯状态机）/
 //! controller（只调 pawork-client）/ platform（socket 发现 + tokio 宿主）。
-//! 范围：Sessions + Timeline + Composer 发送/取消、时间线审批、模型切换。
+//! 范围：TaskRail（日期→项目→Task）+ Timeline + Composer 发送/取消、
+//! 时间线审批、跨通道模型切换。
 
 mod controller;
 mod platform;
@@ -167,7 +168,7 @@ async fn probe_smoke(
 
     controller.send_message(
         session_id.clone(),
-        "Write target/s7-wave-c-smoke.txt containing exactly hello-s7c. Use the write tool."
+        "Write target/s7-wave-d-smoke.txt containing exactly hello-s7d. Use the write tool."
             .into(),
         Some(first.id.clone()),
     );

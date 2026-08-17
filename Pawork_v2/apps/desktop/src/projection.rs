@@ -43,6 +43,73 @@ pub struct SessionSummary {
     pub session_id: String,
     pub title: String,
     pub updated_at_ms: u64,
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceSummary {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskRailGrouping {
+    Timeline,
+    Projects,
+}
+
+impl TaskRailGrouping {
+    pub fn accessible_name(self) -> &'static str {
+        match self {
+            Self::Timeline => "Group tasks · Timeline",
+            Self::Projects => "Group tasks · Projects",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DateBucket {
+    Today,
+    Yesterday,
+    Previous7Days,
+    Earlier,
+}
+
+impl DateBucket {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Today => "Today",
+            Self::Yesterday => "Yesterday",
+            Self::Previous7Days => "Previous 7 days",
+            Self::Earlier => "Earlier",
+        }
+    }
+}
+
+pub const UNASSIGNED_PROJECT: &str = "Unassigned";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskRailProjectGroup {
+    pub workspace_id: Option<String>,
+    pub name: String,
+    pub latest_activity_ms: u64,
+    pub tasks: Vec<SessionSummary>,
+}
+
+impl TaskRailProjectGroup {
+    pub fn task_count(&self) -> usize {
+        self.tasks.len()
+    }
+
+    pub fn is_unassigned(&self) -> bool {
+        self.workspace_id.is_none()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskRailDateGroup {
+    pub bucket: DateBucket,
+    pub projects: Vec<TaskRailProjectGroup>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,6 +191,7 @@ struct HistoryItem<'a> {
 pub struct DesktopProjection {
     pub connection: ConnectionState,
     pub sessions: Vec<SessionSummary>,
+    pub workspaces: Vec<WorkspaceSummary>,
     pub workspace_id: Option<String>,
     pub active_session_id: Option<String>,
     pub active_run_id: Option<String>,
@@ -160,12 +228,8 @@ impl DesktopProjection {
                     self.sessions = parse_sessions(&data);
                 }
                 "workspaces" => {
-                    self.workspace_id = data
-                        .as_array()
-                        .and_then(|entries| entries.first())
-                        .and_then(|entry| entry.get("id"))
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
+                    self.workspaces = parse_workspaces(&data);
+                    self.workspace_id = self.workspaces.first().map(|workspace| workspace.id.clone());
                 }
                 "provider_status" => {
                     if let Some((provider, model)) = parse_provider_status(&data) {
@@ -677,6 +741,78 @@ impl DesktopProjection {
         self.models = models;
     }
 
+    pub fn workspace_name(&self, workspace_id: Option<&str>) -> String {
+        match workspace_id {
+            None => UNASSIGNED_PROJECT.into(),
+            Some(id) => self
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == id)
+                .map(|workspace| workspace.name.clone())
+                .unwrap_or_else(|| id.to_string()),
+        }
+    }
+
+    pub fn scoped_sessions(&self, scope: Option<&str>) -> Vec<&SessionSummary> {
+        self.sessions
+            .iter()
+            .filter(|session| match scope {
+                None => true,
+                Some(workspace_id) => session.workspace_id.as_deref() == Some(workspace_id),
+            })
+            .collect()
+    }
+
+    /// Timeline：日期 → 项目 → Task。同一 session 只出现一次。
+    pub fn timeline_groups(&self, scope: Option<&str>, now_ms: u64) -> Vec<TaskRailDateGroup> {
+        let mut by_bucket: Vec<(DateBucket, Vec<SessionSummary>)> = Vec::new();
+        for session in self.scoped_sessions(scope) {
+            let bucket = date_bucket(session.updated_at_ms, now_ms);
+            if let Some((_, sessions)) = by_bucket.iter_mut().find(|(item, _)| *item == bucket) {
+                sessions.push(session.clone());
+            } else {
+                by_bucket.push((bucket, vec![session.clone()]));
+            }
+        }
+        by_bucket.sort_by_key(|(bucket, _)| *bucket);
+        by_bucket
+            .into_iter()
+            .map(|(bucket, sessions)| TaskRailDateGroup {
+                bucket,
+                projects: group_sessions_by_project(self, sessions),
+            })
+            .collect()
+    }
+
+    /// Projects：按 canonical workspace 分组；缺字段进 Unassigned。
+    pub fn project_groups(&self, scope: Option<&str>) -> Vec<TaskRailProjectGroup> {
+        group_sessions_by_project(
+            self,
+            self.scoped_sessions(scope)
+                .into_iter()
+                .cloned()
+                .collect(),
+        )
+    }
+
+    pub fn project_scope_options(&self) -> Vec<(Option<String>, String)> {
+        let mut options = vec![(None, "All projects".into())];
+        let mut seen = BTreeSet::new();
+        for workspace in &self.workspaces {
+            if seen.insert(workspace.id.clone()) {
+                options.push((Some(workspace.id.clone()), workspace.name.clone()));
+            }
+        }
+        for session in &self.sessions {
+            if let Some(id) = &session.workspace_id {
+                if seen.insert(id.clone()) {
+                    options.push((Some(id.clone()), self.workspace_name(Some(id))));
+                }
+            }
+        }
+        options
+    }
+
     pub fn set_pending_model(&mut self, provider_id: String, id: String) {
         self.pending_model = Some((provider_id, id));
     }
@@ -764,11 +900,77 @@ fn parse_sessions(data: &Value) -> Vec<SessionSummary> {
                     .get("updated_at_ms")
                     .and_then(Value::as_u64)
                     .unwrap_or(0),
+                workspace_id: entry
+                    .get("workspace_id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string),
             });
         }
     }
     sessions.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
     sessions
+}
+
+fn parse_workspaces(data: &Value) -> Vec<WorkspaceSummary> {
+    let Some(entries) = data.as_array() else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.get("id").and_then(Value::as_str)?;
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(id);
+            Some(WorkspaceSummary {
+                id: id.to_string(),
+                name: name.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn date_bucket(updated_at_ms: u64, now_ms: u64) -> DateBucket {
+    const DAY_MS: u64 = 86_400_000;
+    let now_day = now_ms / DAY_MS;
+    let then_day = updated_at_ms / DAY_MS;
+    match now_day.saturating_sub(then_day) {
+        0 => DateBucket::Today,
+        1 => DateBucket::Yesterday,
+        2..=7 => DateBucket::Previous7Days,
+        _ => DateBucket::Earlier,
+    }
+}
+
+fn group_sessions_by_project(
+    projection: &DesktopProjection,
+    mut sessions: Vec<SessionSummary>,
+) -> Vec<TaskRailProjectGroup> {
+    sessions.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    let mut groups: Vec<TaskRailProjectGroup> = Vec::new();
+    for session in sessions {
+        let key = session.workspace_id.clone();
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group.workspace_id == key)
+        {
+            group.tasks.push(session);
+        } else {
+            let name = projection.workspace_name(key.as_deref());
+            let latest_activity_ms = session.updated_at_ms;
+            groups.push(TaskRailProjectGroup {
+                workspace_id: key,
+                name,
+                latest_activity_ms,
+                tasks: vec![session],
+            });
+        }
+    }
+    groups.sort_by(|a, b| b.latest_activity_ms.cmp(&a.latest_activity_ms));
+    groups
 }
 
 fn parse_provider_status(data: &Value) -> Option<(String, String)> {
@@ -873,7 +1075,7 @@ mod tests {
                 {
                     "kind": "workspaces",
                     "revision": 1,
-                    "data": [{ "id": "ws-default", "trusted": true }]
+                    "data": [{ "id": "ws-default", "name": "default", "trusted": true }]
                 },
                 { "kind": "session_tree", "revision": 2, "data": entries }
             ]
@@ -882,14 +1084,22 @@ mod tests {
     }
 
     fn session_entry(id: &str, title: &str, updated: u64) -> Value {
-        json!({
+        session_entry_in(id, title, updated, None)
+    }
+
+    fn session_entry_in(id: &str, title: &str, updated: u64, workspace_id: Option<&str>) -> Value {
+        let mut entry = json!({
             "session_id": id,
             "title": title,
             "created_at_ms": 1,
             "updated_at_ms": updated,
             "active_branch": "main",
             "archived": false
-        })
+        });
+        if let Some(workspace_id) = workspace_id {
+            entry["workspace_id"] = json!(workspace_id);
+        }
+        entry
     }
 
     fn event(sequence: u64, payload: Value) -> AppEventEnvelope {
@@ -1183,5 +1393,148 @@ mod tests {
         }]);
         projection.set_pending_model("glm-coding".into(), "glm-4.7".into());
         assert_eq!(projection.context_meter_label(), "Context · — / 200000");
+    }
+
+    fn day_ms(days: u64) -> u64 {
+        days * 86_400_000
+    }
+
+    fn snapshot_with_named_workspaces(workspaces: Vec<Value>, sessions: Vec<Value>) -> Snapshot {
+        serde_json::from_value(json!({
+            "instance_id": "instance-1",
+            "snapshot_sequence": 0,
+            "generated_at": 1,
+            "sections": [
+                { "kind": "workspaces", "revision": 1, "data": workspaces },
+                { "kind": "session_tree", "revision": 2, "data": sessions }
+            ]
+        }))
+        .expect("decode Snapshot")
+    }
+
+    #[test]
+    fn task_rail_groups_date_then_project_and_keeps_unassigned() {
+        let now = day_ms(20);
+        let snapshot = snapshot_with_named_workspaces(
+            vec![
+                json!({ "id": "ws-alpha", "name": "Alpha" }),
+                json!({ "id": "ws-beta", "name": "Beta" }),
+            ],
+            vec![
+                session_entry_in("s-today-beta", "Beta today", now + 2, Some("ws-beta")),
+                session_entry_in("s-today-alpha-new", "Alpha new", now + 1, Some("ws-alpha")),
+                session_entry_in("s-today-alpha-old", "Alpha old", now, Some("ws-alpha")),
+                session_entry_in("s-yesterday", "Y", now - day_ms(1), Some("ws-alpha")),
+                session_entry_in("s-week", "W", now - day_ms(3), Some("ws-beta")),
+                session_entry_in("s-old", "Old", now - day_ms(20), Some("ws-alpha")),
+                session_entry("s-orphan", "Orphan", now - 10),
+            ],
+        );
+        let projection = DesktopProjection::from_snapshot(&snapshot);
+        assert_eq!(projection.workspace_name(None), UNASSIGNED_PROJECT);
+        assert_eq!(projection.workspace_name(Some("ws-alpha")), "Alpha");
+
+        let timeline = projection.timeline_groups(None, now + 3);
+        assert_eq!(
+            timeline
+                .iter()
+                .map(|group| group.bucket)
+                .collect::<Vec<_>>(),
+            vec![
+                DateBucket::Today,
+                DateBucket::Yesterday,
+                DateBucket::Previous7Days,
+                DateBucket::Earlier
+            ]
+        );
+        let today = &timeline[0];
+        assert_eq!(
+            today
+                .projects
+                .iter()
+                .map(|project| project.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Beta", "Alpha"]
+        );
+        assert_eq!(
+            today.projects[1]
+                .tasks
+                .iter()
+                .map(|task| task.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["s-today-alpha-new", "s-today-alpha-old"]
+        );
+        assert!(today.projects.iter().all(|project| {
+            project
+                .tasks
+                .iter()
+                .all(|task| task.workspace_id.as_deref() != Some("title-guess"))
+        }));
+
+        let earlier = timeline.last().expect("earlier");
+        assert_eq!(earlier.projects[0].name, "Alpha");
+        assert_eq!(earlier.projects[0].tasks[0].session_id, "s-old");
+
+        let projects = projection.project_groups(None);
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| (project.name.as_str(), project.task_count()))
+                .collect::<Vec<_>>(),
+            vec![("Beta", 2), ("Alpha", 4), (UNASSIGNED_PROJECT, 1)]
+        );
+        assert!(projects.last().expect("unassigned").is_unassigned());
+        assert_eq!(projects.last().expect("unassigned").tasks[0].session_id, "s-orphan");
+
+        let scoped = projection.project_groups(Some("ws-beta"));
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].name, "Beta");
+        assert_eq!(scoped[0].task_count(), 2);
+    }
+
+    #[test]
+    fn task_rail_empty_state_and_scope_options() {
+        let empty = DesktopProjection::default();
+        assert!(empty.timeline_groups(None, 1).is_empty());
+        assert!(empty.project_groups(None).is_empty());
+        assert_eq!(
+            empty.project_scope_options(),
+            vec![(None, "All projects".into())]
+        );
+
+        let snapshot = snapshot_with_named_workspaces(
+            vec![json!({ "id": "ws-default", "name": "default" })],
+            vec![session_entry_in("s-1", "One", 10, Some("ws-default"))],
+        );
+        let projection = DesktopProjection::from_snapshot(&snapshot);
+        assert_eq!(
+            projection.project_scope_options(),
+            vec![
+                (None, "All projects".into()),
+                (Some("ws-default".into()), "default".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn grouping_switch_does_not_change_active_session() {
+        let snapshot = snapshot_with_named_workspaces(
+            vec![json!({ "id": "ws-default", "name": "default" })],
+            vec![
+                session_entry_in("s-1", "One", 20, Some("ws-default")),
+                session_entry_in("s-2", "Two", 10, Some("ws-default")),
+            ],
+        );
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        projection.select_session("s-2");
+        let before = projection.active_session_id.clone();
+        let _timeline = projection.timeline_groups(None, 20);
+        let _projects = projection.project_groups(None);
+        assert_eq!(projection.active_session_id, before);
+        assert!(projection
+            .project_groups(None)
+            .iter()
+            .flat_map(|project| &project.tasks)
+            .any(|task| task.session_id == "s-2"));
     }
 }

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork GPUI Desktop Agent 壳：Sessions + Timeline + Composer + 审批/取消/模型（S7 波 C）"
+description = "Pawork GPUI Desktop Agent 壳：TaskRail + Timeline + Composer + 审批/取消/模型（S7 波 D）"
 
 [[bin]]
 name = "pawork-desktop"

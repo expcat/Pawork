@@ -1,6 +1,6 @@
 # S7：最小 Agent GUI
 
-> 阶段 S7 · 先设计、再长出最小桌面 Agent · 状态：🔵进行中（波 0–C 完成，波 D 收口 v3 TaskRail） · 依赖：S1–S5 稳定（会话/事件/工具/审批/取消），S6 建议先行（模型切换有真实通道）· 规模：大 · 设计事实源：[../docs/gui-design.md](../docs/gui-design.md)
+> 阶段 S7 · 先设计、再长出最小桌面 Agent · 状态：🟢已完成（波 0–D，2026-08-17） · 依赖：S1–S5 稳定（会话/事件/工具/审批/取消），S6 建议先行（模型切换有真实通道）· 规模：大 · 设计事实源：[../docs/gui-design.md](../docs/gui-design.md)
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -29,11 +29,11 @@
 
 ## 真实测试与评估（冒烟清单）
 
-- [x] 设计文档 §8 已勾选，实现未超出 §3 Surface。（v3 TaskRail §3.2 仍欠，见波 D）
+- [x] 设计文档 §8 已勾选，实现未超出 §3 Surface。（2026-08-17 波 D：v3 TaskRail 已落地）
 - [x] 本机打开 Desktop：新建会话 → 真实模型流式多轮 → 侧栏可 resume。（2026-08-17 `--probe-smoke`：`glm-coding`/`glm-4.7` 流式多轮；重连后 session 仍在）
 - [x] 只读或写入工具调用在 Timeline 可见；写入审批可点同意/拒绝，语义与 CLI 一致。（隔离 HOME `trust_workspaces=true` + `--approval-mode ask-for-writes`：`approval=approved`，写入 `target/s7-wave-c-smoke.txt`=`hello-s7c`。未信任工作区写工具会直接 Deny，不弹卡）
 - [x] Composer 取消当轮；关窗后 CLI 侧 Run 若已开始则继续（或按 ADR-026 不因 GUI 退出而杀）。（`cancelled=1`；断线重连 `disconnect_survive=running`）
-- [ ] 切换已配置 provider/model 后下一轮走新通道。（Host 已能从 ModelList overview 解析跨通道；`deepseek-v4-flash` 不在 GUI 聚合目录——overview 不探测非当前通道运行期模型——本波 `second_turn=skipped`）
+- [x] 切换已配置 provider/model 后下一轮走新通道。（2026-08-17 `--probe-smoke`：`models_overview` 探测已装配通道后目录含 `deepseek-v4-flash`；`first=glm-4.7` → `second=deepseek-v4-flash` / `second_turn=switched`）
 - [x] 杀 Desktop 再开：同一 session 时间线连续，不丢已落盘事件。（`--probe-smoke` `persisted=12`；此前 `--probe` 亦见 `sessions=1`）
 - [ ] 中文 IME 与多行粘贴可用（开发机平台）。（波 B 已接线 `apps/desktop/src/ui/text_input.rs`；本波未做人工窗口验收）
 
@@ -47,7 +47,7 @@
 ## 退出标准
 
 - [x] [gui-design.md](../docs/gui-design.md) 已于 2026-08-16 锁定；后续 S8–S11 只按该文 §5 加面。
-- [x] 最小 Agent GUI 真实对话冒烟通过；协议走正式帧而非 `--json`。（2026-08-17 `--probe-smoke`：`first=glm-4.7` / `approval=approved` / `cancelled=1` / `persisted=12` / `disconnect_survive=running`。跨通道切换与 v3 TaskRail / 人工 IME 未齐，阶段保持 🔵）
+- [x] 最小 Agent GUI 真实对话冒烟通过；协议走正式帧而非 `--json`。（2026-08-17 波 D `--probe-smoke`：`first=glm-4.7` / `second=deepseek-v4-flash` / `second_turn=switched` / `approval=approved` / `cancelled=1` / `persisted=21` / `disconnect_survive=running`。人工 IME 窗口与 1440×1024 对照定稿图未做）
 - [x] Desktop 依赖面干净；插件/市场无产品入口。（`cargo metadata` 直接业务依赖仅 `pawork-client`）
 - [x] `--json` 仍标注 unstable（对齐工作在 S10）。
 
@@ -68,7 +68,7 @@
 - [x] 波 A（串行，2026-08-16）：`pawork-protocol` 最小帧 + local transport + `gui serve` 单客户端；六包定向测试全绿（protocol 66 / transport 8 / gui-server 9 / app 48 / cli 8），真实对话冒烟留波 C。
 - [x] 波 B（2026-08-16）：`pawork-client` 激活（V1 gui-client 整包平移 + 7 契约测试；artifact 读取 `experimental` 门控）+ `apps/desktop` 壳（gpui =0.2.2，四层结构，Sessions/Timeline/Composer + IME，`--probe` 验证模式）；修复 `gui serve` 丢弃 SessionHandle 的波 A 装配缺陷；真实 socket probe 正向冒烟通过。审批/取消/模型切换与真实对话冒烟留波 C。
 - [x] 波 C（串行，2026-08-17）：审批/取消/模型切换接线收口 + `--probe-smoke` 真实冒烟（`glm-4.7` 流式、写入审批、取消、重连时间线、断线不杀 Run）。ModelList 改走 `models_overview`；未信任工作区不弹写审批。跨通道 `deepseek-v4-flash` 与 v3 TaskRail 留波 D。
-- 波 D（串行）：按 [gui-design.md](../docs/gui-design.md) §3.2 / [design/README.md](../design/README.md) 落地 v3 TaskRail（日期→项目→Task、GroupingMenuButton、项目定向新建）；1440×1024 对照定稿图；补跨通道模型切换冒烟（目录含 `deepseek-v4-flash` 或 Host 探测非当前通道）。
+- [x] 波 D（串行，2026-08-17）：v3 TaskRail（日期→项目→Task、GroupingMenuButton、项目定向新建）+ `models_overview` 多通道探测；`--probe-smoke` 跨通道 `glm-4.7`→`deepseek-v4-flash`。人工对照定稿图未做。
 
 ## 参考
 

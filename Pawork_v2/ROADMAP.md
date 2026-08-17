@@ -58,14 +58,14 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 | [S4](plan/S4-exec-sandbox.md) | 命令执行与沙箱 | run_command（进程树清理 + 沙箱 + 输出截断）——首个完整「读-改-跑」编码闭环 | exec（process/sandbox）、tools（run_command）、policy（shell 分类接线） | — | 「跑 cargo check 并修复报错」端到端；Ctrl-C 杀整棵进程树；fail-closed | 🟢 |
 | [S5](plan/S5-context-usage.md) | 上下文预算与用量 | 长任务不炸上下文（预算/截断/压缩）、token 与费用统计显示 | engine（context 接线）、session（compaction feature）、provider-core（usage/registry/pricing） | — | 超长多轮任务连贯完成；token 计量与厂商侧抽查一致 | 🟢 |
 | [S6](plan/S6-providers-auth.md) | 首发 Provider 与认证 | 六通道适配、`pawork models` 聚合、auth 文件、API key 与 ChatGPT/xAI OAuth | providers/adapters（六通道）、auth、diagnostics（脱敏 layer）、config（凭证解析） | — | 六通道真实使用；运行中切换 provider/model；OAuth 临期刷新；secret 不入日志回归 | 🔵 |
-| [S7](plan/S7-gui-agent.md) | 最小 Agent GUI（波 0–C ✅，波 D 在途） | 已锁定 v3 三栏工作台设计；波 C 已交付本机单窗口：会话列表 / 流式对话 / 内嵌审批 / 取消 / ContextMeter 与 RunStatusBar；波 D 收口 TaskRail 双分组与跨通道模型切换 | protocol（最小帧）、transport（local）、gui-server（单客户端）、client、apps/desktop、cli `gui serve` | v3 三栏壳整体：TaskRail 双分组与定向新建、内嵌审批、Composer+ContextMeter、RunStatusBar、InspectorToolTabs 预留 | 设计锁定；真实模型流式对话；关窗不杀 Run；1440×1024 对照 v3 视觉验收 | 🔵 |
+| [S7](plan/S7-gui-agent.md) | 最小 Agent GUI（波 0–D ✅） | 已锁定并交付 v3 三栏工作台：TaskRail 双分组与定向新建、流式对话、内嵌审批、取消、ContextMeter / RunStatusBar；跨通道 `glm-4.7`→`deepseek-v4-flash` 冒烟通过 | protocol（最小帧）、transport（local）、gui-server（单客户端）、client、apps/desktop、cli `gui serve` | v3 三栏壳整体：TaskRail 双分组与定向新建、内嵌审批、Composer+ContextMeter、RunStatusBar、InspectorToolTabs 预留 | 设计锁定；真实模型流式对话；关窗不杀 Run；跨通道切换；1440×1024 人工对照定稿图未做 | 🟢 |
 | [S8](plan/S8-git-checkpoint.md) | Git、Diff 与 Checkpoint | 会话改动 diff 呈现、编辑前快照、`pawork rollback` 一键回滚；GUI：Inspector Changes + ActivityPopover 摘要 | git（git+diff）、blob-store（artifact/protected/checkpoint） | Inspector Changes（Files/Summary）+ ActivityPopover Changes 摘要 | 真实任务后 diff 审阅 + 回滚还原；git 注入防护回归 | ⚪ |
 | [S9](plan/S9-mcp-resources.md) | MCP、资源与兼容导入 | 外接 MCP server 工具、AGENTS.md/Skills 生效、`@file` 引用、导入 Claude/Codex 等配置；GUI `@` / Resources | mcp（rmcp 收口）、resources、compat、workspace（file-index）、config（完整层级） | Composer `@` 补全；Resources 只读（MCP/规则） | 真实 MCP server 工具与内置共存；本机 Claude/Codex 配置导入可用 | ⚪ |
 | [S10](plan/S10-serve-clients.md) | 服务化与客户端补齐 | headless/SDK/ACP/service、多 GUI Replay、Fork、PTY；`--json` 对齐正式协议 | protocol 收口、transport 补齐、gui-server 多客户端、sdk、channels、app/cli 正式化、exec（pty）、session lifecycle、protocol-probe | 正式 Replay、Fork、Terminal tab、本机多窗口 | protocol-probe 全过；SDK e2e；acp 接真实客户端 | ⚪ |
 | [S11](plan/S11-workflow-control.md) | 工作流、多 Agent 与控制面 | Plan 审批 gate、后台任务、`pawork usage` 配额、多 Agent 编排、多账户池与路由；GUI Workflow 面 | workflow、memory、review、orchestration、control-plane、provider-control、quota | Workflow 面、quota 完整面、ActivityPopover Agent 状态列表 | 多 Agent demo（§1.1 矩阵中两通道各驱动一个子 Agent）；plan gate 拦截；用量可查 | ⚪ |
 | [S12](plan/S12-release-hardening.md) | Release Hardening 与发布 | —（验证 + 发布 + 归档） | 全部 | 三平台窗口/输入/打包证据 | 全量门禁/三平台/fuzz/依赖卫生全绿；W1–W4 波次发布；V1 归档；真实通道冒烟总回归与《真实通道模型评估报告》（按 §1.1 矩阵） | ⚪ |
 
-**关键节点**：S4 结束即达成旧计划 M4 的首要验收（真实仓库「读文件-改代码-跑命令」闭环）。S5–S6 补齐用量与首发通道后，**S7 已按 v3 定稿设计推进最小 Agent GUI**（波 0–C 完成：正式帧真实对话/审批/取消/重连；波 D 收口 v3 TaskRail 与跨通道切换）；S8–S11 按 [docs/gui-design.md](docs/gui-design.md) §5 在同一壳上依次点亮 Changes → `@`/Resources → Replay/Fork/Terminal/多窗口 → Workflow/quota/Agent 列表，其中 S10 把单窗口升级为多客户端服务；S12 收口发布。WASM 插件 / Hooks / LSP / 市场**不在 S0–S12 排期**，见 §4。
+**关键节点**：S4 结束即达成旧计划 M4 的首要验收（真实仓库「读文件-改代码-跑命令」闭环）。S5–S6 补齐用量与首发通道后，**S7 已按 v3 定稿交付最小 Agent GUI**（正式帧真实对话/审批/取消/重连/TaskRail/跨通道切换）；S8–S11 按 [docs/gui-design.md](docs/gui-design.md) §5 在同一壳上依次点亮 Changes → `@`/Resources → Replay/Fork/Terminal/多窗口 → Workflow/quota/Agent 列表，其中 S10 把单窗口升级为多客户端服务；S12 收口发布。WASM 插件 / Hooks / LSP / 市场**不在 S0–S12 排期**，见 §4。
 
 **依赖关系**：S0→S1→S2→S3→S4 严格串行（主干长成）；S5 与 S6 在 S4 后可并行；S7 依赖 S1–S5（会话/事件/工具/审批），S6 建议先行但不阻塞设计波；S8 依赖 S3（写工具），可与 S7 部分并行，有 Desktop 则同步 Changes；S9 依赖 S2 与 S6；S10 依赖 S7；S11 依赖 S10；S12 依赖全部已排期阶段。GUI 各阶段加面的视觉与交互验收一律对照 [design/README.md](design/README.md) v3 基准。
 
@@ -111,8 +111,8 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 | 审批等待前未落盘 `ToolApprovalRequested` | engine 在 `host.decide` 返回后才成对发出 Requested/Responded；`kill -9` 时 tool_call 停在 `collecting_arguments`，resume 走重新询问（S3 冒烟已确认不重复执行）。若要让 seal-as-denied 覆盖生产杀进程窗口，需在等待前先 persist Requested | 不阻塞 S4；S10 headless 远程审批前建议收口 |
 | `pawork-diagnostics` `experimental` 门控面 | metrics/bundle 两模块已随波 B 迁移但以 `experimental` feature 门控、默认不编译；激活条件：出现真实诊断导出/指标消费方（候选 S10 gui-server 指标 / diagnostic bundle 导出） | S10 |
 | 对外账户池网关模式（F6-B） | 近期不内建（F6-A 已确认）；以 `pawork-channels` 扩展 feature 长期评估，见 [docs/design.md](docs/design.md) §5 | S12 后按需 |
-| `plan/archive` M0–M8 正文缺失 | `plan/archive/README.md` 与历史登记引用九份 M0–M8 包级细则，但文件从未落仓；当前以 `docs/v1-migration-reference.md` §4.1 为唯一迁移词典，禁止臆造细则 | 后续文档维护任务；不阻塞 S6 代码收口 |
-| GUI `ModelList` 聚合目录不含非当前通道运行期模型 | `models_overview` 只探测当前已装配通道；`deepseek-v4-flash` 等只出现在该通道 `pawork models` 探测结果里，Desktop 选择器因此看不到，跨通道 `RunStart.model` 冒烟会 skipped | S7 波 D 收口跨通道切换前 |
+| `plan/archive` M0–M8 正文缺失 | `plan/archive/README.md` 与历史登记引用九份 M0–M8 包级细则，但文件从未落仓；当前以 `docs/v1-migration-reference.md` §4.1 为唯一迁移词典，禁止臆造细则 | 后续文档维护任务；不阻塞 S8 代码收口 |
+| S7 Desktop 人工窗口验收 | 中文 IME / 多行粘贴与 1440×1024 对照 v3 定稿图未做人工窗口验收（波 B/D 已接线与自动化覆盖） | 不阻塞 S8；开发机打开窗口时补验 |
 
 ---
 

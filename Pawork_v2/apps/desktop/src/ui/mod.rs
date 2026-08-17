@@ -2,6 +2,7 @@
 
 pub mod text_input;
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,7 +14,8 @@ use gpui::{
 use crate::controller::{ControllerEvent, DesktopController};
 use crate::platform::Platform;
 use crate::projection::{
-    ConnectionState, DesktopProjection, ModelEntry, TimelineEntry, TimelineEntryKind,
+    ConnectionState, DesktopProjection, ModelEntry, TaskRailDateGroup, TaskRailGrouping,
+    TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, UNASSIGNED_PROJECT,
 };
 
 pub use text_input::{SendMessage, TextInput};
@@ -23,6 +25,24 @@ fn now_unix_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
+}
+
+enum RailView {
+    Timeline(Vec<TaskRailDateGroup>),
+    Projects(Vec<TaskRailProjectGroup>),
+}
+
+fn relative_activity(updated_at_ms: u64, now_ms: u64) -> String {
+    let elapsed = now_ms.saturating_sub(updated_at_ms);
+    if elapsed < 60_000 {
+        "now".into()
+    } else if elapsed < 3_600_000 {
+        format!("{}m", elapsed / 60_000)
+    } else if elapsed < 86_400_000 {
+        format!("{}h", elapsed / 3_600_000)
+    } else {
+        format!("{}d", elapsed / 86_400_000)
+    }
 }
 
 pub fn install_keybindings(cx: &mut App) {
@@ -54,6 +74,11 @@ pub struct AppView {
     scroll_handle: ScrollHandle,
     status_hint: Option<String>,
     model_menu_open: bool,
+    grouping: TaskRailGrouping,
+    scope_workspace_id: Option<String>,
+    grouping_menu_open: bool,
+    scope_menu_open: bool,
+    collapsed_projects: BTreeSet<String>,
 }
 
 impl AppView {
@@ -69,6 +94,11 @@ impl AppView {
             scroll_handle: ScrollHandle::new(),
             status_hint: None,
             model_menu_open: false,
+            grouping: TaskRailGrouping::Timeline,
+            scope_workspace_id: None,
+            grouping_menu_open: false,
+            scope_menu_open: false,
+            collapsed_projects: BTreeSet::new(),
         };
         view.start_connect(cx);
         view
@@ -218,22 +248,120 @@ impl AppView {
     }
 
     fn on_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !matches!(
-            self.projection.connection,
-            ConnectionState::Connected { .. }
-        ) {
-            self.status_hint = Some("New Session needs a live connection.".into());
+        let workspace = self
+            .scope_workspace_id
+            .clone()
+            .or_else(|| self.projection.workspace_id.clone());
+        self.create_task(workspace, window, cx);
+    }
+
+    fn on_project_add_task(
+        &mut self,
+        workspace_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.create_task(Some(workspace_id), window, cx);
+    }
+
+    fn create_task(
+        &mut self,
+        workspace_id: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.can_create_task() {
+            self.status_hint = Some(self.add_task_disabled_reason());
             cx.notify();
             return;
         }
-        let workspace = self
-            .projection
-            .workspace_id
-            .clone()
-            .unwrap_or_else(|| "ws-default".into());
+        let Some(workspace) = workspace_id else {
+            self.status_hint = Some("Choose a project before creating a task.".into());
+            cx.notify();
+            return;
+        };
         self.controller.create_session(workspace);
         self.focus_composer(window, cx);
         cx.notify();
+    }
+
+    fn can_create_task(&self) -> bool {
+        matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        )
+    }
+
+    fn add_task_disabled_reason(&self) -> String {
+        match &self.projection.connection {
+            ConnectionState::Connected { .. } => "Create task is available.".into(),
+            ConnectionState::Connecting => "New task needs a live connection.".into(),
+            ConnectionState::Disconnected { reason } => {
+                format!("New task disabled · disconnected · {reason}")
+            }
+            ConnectionState::Failed { reason } => {
+                format!("New task disabled · connect failed · {reason}")
+            }
+        }
+    }
+
+    fn on_toggle_grouping_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.grouping_menu_open = !self.grouping_menu_open;
+        self.scope_menu_open = false;
+        self.model_menu_open = false;
+        cx.notify();
+    }
+
+    fn on_select_grouping(
+        &mut self,
+        grouping: TaskRailGrouping,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.grouping = grouping;
+        self.grouping_menu_open = false;
+        cx.notify();
+    }
+
+    fn on_toggle_scope_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.scope_menu_open = !self.scope_menu_open;
+        self.grouping_menu_open = false;
+        self.model_menu_open = false;
+        cx.notify();
+    }
+
+    fn on_select_scope(
+        &mut self,
+        workspace_id: Option<String>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.scope_workspace_id = workspace_id;
+        self.scope_menu_open = false;
+        cx.notify();
+    }
+
+    fn on_toggle_project(
+        &mut self,
+        project_key: String,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.collapsed_projects.insert(project_key.clone()) {
+            self.collapsed_projects.remove(&project_key);
+        }
+        cx.notify();
+    }
+
+    fn project_key(workspace_id: Option<&str>) -> String {
+        workspace_id.unwrap_or(UNASSIGNED_PROJECT).to_string()
+    }
+
+    fn scope_label(&self) -> String {
+        match &self.scope_workspace_id {
+            None => "All projects".into(),
+            Some(id) => self.projection.workspace_name(Some(id)),
+        }
     }
 
     fn on_reconnect(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -361,6 +489,232 @@ impl AppView {
         }
     }
 
+    fn grouping_menu_element(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let current = self.grouping;
+        div()
+            .mt_1()
+            .p_1()
+            .rounded_md()
+            .bg(rgb(0x1a1a1a))
+            .border_1()
+            .border_color(rgb(0x3a3a3a))
+            .children(
+                [
+                    (TaskRailGrouping::Timeline, "Timeline"),
+                    (TaskRailGrouping::Projects, "Projects"),
+                ]
+                .into_iter()
+                .map(|(mode, label)| {
+                    let selected = current == mode;
+                    div()
+                        .id(SharedString::from(format!("group-{label}")))
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(if selected { rgb(0x2f6fed) } else { rgb(0x1a1a1a) })
+                        .cursor_pointer()
+                        .child(if selected {
+                            format!("✓ {label}")
+                        } else {
+                            format!("  {label}")
+                        })
+                        .on_click(cx.listener(move |view, _event, window, cx| {
+                            view.on_select_grouping(mode, window, cx);
+                        }))
+                }),
+            )
+    }
+
+    fn scope_menu_element(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let current = self.scope_workspace_id.clone();
+        div()
+            .mt_1()
+            .p_1()
+            .rounded_md()
+            .bg(rgb(0x1a1a1a))
+            .border_1()
+            .border_color(rgb(0x3a3a3a))
+            .children(self.projection.project_scope_options().into_iter().map(
+                |(workspace_id, label)| {
+                    let selected = current == workspace_id;
+                    let option_id = workspace_id.clone().unwrap_or_else(|| "all".into());
+                    div()
+                        .id(SharedString::from(format!("scope-{option_id}")))
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(if selected { rgb(0x2f6fed) } else { rgb(0x1a1a1a) })
+                        .cursor_pointer()
+                        .child(if selected {
+                            format!("✓ {label}")
+                        } else {
+                            label
+                        })
+                        .on_click(cx.listener(move |view, _event, window, cx| {
+                            view.on_select_scope(workspace_id.clone(), window, cx);
+                        }))
+                },
+            ))
+    }
+
+    fn task_rail_list(
+        &self,
+        rail: RailView,
+        now_ms: u64,
+        can_create: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let empty = match &rail {
+            RailView::Timeline(groups) => groups.is_empty(),
+            RailView::Projects(groups) => groups.is_empty(),
+        };
+        let mut list = div()
+            .id("task-rail")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .overflow_y_scroll()
+            .gap_1();
+        if empty {
+            return list.child(
+                div()
+                    .px_2()
+                    .py_2()
+                    .text_size(px(12.))
+                    .text_color(rgb(0x7f7f7f))
+                    .child("No tasks"),
+            );
+        }
+        match rail {
+            RailView::Timeline(groups) => {
+                for group in groups {
+                    list = list.child(
+                        div()
+                            .px_1()
+                            .pt_2()
+                            .text_size(px(11.))
+                            .text_color(rgb(0x9a9a9a))
+                            .child(group.bucket.label().to_string()),
+                    );
+                    for project in group.projects {
+                        list = list.child(self.project_block(&project, now_ms, can_create, cx));
+                    }
+                }
+            }
+            RailView::Projects(groups) => {
+                for project in groups {
+                    list = list.child(self.project_block(&project, now_ms, can_create, cx));
+                }
+            }
+        }
+        list
+    }
+
+    fn project_block(
+        &self,
+        project: &TaskRailProjectGroup,
+        now_ms: u64,
+        can_create: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let key = Self::project_key(project.workspace_id.as_deref());
+        let expanded = !self.collapsed_projects.contains(&key);
+        let workspace_id = project.workspace_id.clone();
+        let header_id = SharedString::from(format!("project-{key}"));
+        let add_id = SharedString::from(format!("project-add-{key}"));
+        let toggle_key = key.clone();
+        let mut header = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .px_1()
+            .child(
+                div()
+                    .id(header_id)
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .gap_1()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(0xc8c8c8))
+                            .child(format!(
+                                "{} {} · {}",
+                                if expanded { "▾" } else { "▸" },
+                                project.name,
+                                project.task_count()
+                            )),
+                    )
+                    .on_click(cx.listener(move |view, _event, window, cx| {
+                        view.on_toggle_project(toggle_key.clone(), window, cx);
+                    })),
+            );
+        if !project.is_unassigned() {
+            if let Some(workspace_id) = workspace_id {
+                header = header.child(
+                    div()
+                        .id(add_id)
+                        .w(px(18.))
+                        .h(px(18.))
+                        .rounded_md()
+                        .bg(if can_create { rgb(0x2a2a2a) } else { rgb(0x242424) })
+                        .text_color(if can_create { rgb(0xe8e8e8) } else { rgb(0x8f8f8f) })
+                        .cursor_pointer()
+                        .child("+")
+                        .on_click(cx.listener(move |view, _event, window, cx| {
+                            view.on_project_add_task(workspace_id.clone(), window, cx);
+                        })),
+                );
+            }
+        }
+        let mut block = div().flex().flex_col().gap_1().child(header);
+        if expanded {
+            for task in &project.tasks {
+                let session_id = task.session_id.clone();
+                let active = self.projection.active_session_id.as_deref()
+                    == Some(task.session_id.as_str());
+                let running = self
+                    .projection
+                    .active_runs
+                    .iter()
+                    .any(|run| run.session_id == task.session_id);
+                block = block.child(
+                    div()
+                        .id(SharedString::from(session_id.clone()))
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(if active { rgb(0x2a2a2a) } else { rgb(0x161616) })
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .justify_between()
+                                .child(format!(
+                                    "{}{}",
+                                    if running { "● " } else { "" },
+                                    task.title
+                                ))
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(0x7f7f7f))
+                                        .child(relative_activity(task.updated_at_ms, now_ms)),
+                                ),
+                        )
+                        .on_click(cx.listener(move |view, _event, window, cx| {
+                            view.on_session_clicked(&session_id, window, cx);
+                        })),
+                );
+            }
+        }
+        block
+    }
+
     fn timeline_entry_element(entry: &TimelineEntry) -> gpui::Div {
         match &entry.kind {
             TimelineEntryKind::UserMessage { text } => div()
@@ -408,26 +762,117 @@ impl Render for AppView {
         let can_approve = self.can_approve();
         let model_label = self.model_label();
         let model_menu_open = self.model_menu_open && can_switch_model;
-        let connection_label = self.projection.connection.label();
+        let connection_label = match &self.projection.connection {
+            ConnectionState::Connected { .. } => "Local · Connected".into(),
+            other => other.label(),
+        };
         let composer_hint = self.composer_hint();
         let context_meter = self.projection.context_meter_label();
-        let run_status = self.projection.run_status_label(now_unix_ms());
+        let now_ms = now_unix_ms();
+        let run_status = self.projection.run_status_label(now_ms);
+        let can_create = self.can_create_task();
+        let grouping_glyph = match self.grouping {
+            TaskRailGrouping::Timeline => "◷",
+            TaskRailGrouping::Projects => "▤",
+        };
+        let scope_label = self.scope_label();
+        let grouping_menu_open = self.grouping_menu_open;
+        let scope_menu_open = self.scope_menu_open;
+        let rail_groups = match self.grouping {
+            TaskRailGrouping::Timeline => RailView::Timeline(
+                self.projection
+                    .timeline_groups(self.scope_workspace_id.as_deref(), now_ms),
+            ),
+            TaskRailGrouping::Projects => RailView::Projects(
+                self.projection
+                    .project_groups(self.scope_workspace_id.as_deref()),
+            ),
+        };
+
+        let mut grouping_button = div()
+            .id(SharedString::from(self.grouping.accessible_name()))
+            .w(px(28.))
+            .h(px(22.))
+            .rounded_md()
+            .bg(rgb(0x2a2a2a))
+            .text_size(px(12.))
+            .text_color(rgb(0xe8e8e8))
+            .cursor_pointer()
+            .child(format!("{grouping_glyph} ▾"))
+            .on_click(cx.listener(|view, _event, window, cx| {
+                view.on_toggle_grouping_menu(window, cx);
+            }));
+        if grouping_menu_open {
+            grouping_button = grouping_button.child(self.grouping_menu_element(cx));
+        }
+
+        let mut scope_button = div()
+            .id("project-scope")
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(0x2a2a2a))
+            .text_size(px(12.))
+            .cursor_pointer()
+            .child(format!("{scope_label} ▾"))
+            .on_click(cx.listener(|view, _event, window, cx| {
+                view.on_toggle_scope_menu(window, cx);
+            }));
+        if scope_menu_open {
+            scope_button = scope_button.child(self.scope_menu_element(cx));
+        }
+
+        let add_task = div()
+            .id("add-task")
+            .w(px(22.))
+            .h(px(22.))
+            .rounded_md()
+            .bg(if can_create { rgb(0x2a2a2a) } else { rgb(0x242424) })
+            .text_color(if can_create { rgb(0xe8e8e8) } else { rgb(0x8f8f8f) })
+            .cursor_pointer()
+            .child("+")
+            .on_click(cx.listener(|view, _event, window, cx| {
+                view.on_new_session(window, cx);
+            }));
 
         let sidebar = div()
             .flex()
             .flex_col()
             .gap_2()
             .p_2()
-            .w(px(240.))
+            .w(px(288.))
             .h_full()
             .bg(rgb(0x161616))
             .border_r_1()
             .border_color(rgb(0x2e2e2e))
             .child(
                 div()
-                    .text_size(px(11.))
-                    .text_color(rgb(0x9a9a9a))
-                    .child(connection_label),
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(rgb(0xe8e8e8))
+                            .child("Pawork"),
+                    )
+                    .child(grouping_button),
+            )
+            .child(scope_button)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(0x9a9a9a))
+                            .child(connection_label),
+                    )
+                    .child(add_task),
             )
             .when(!connected, |sidebar| {
                 sidebar.child(
@@ -445,36 +890,15 @@ impl Render for AppView {
                         })),
                 )
             })
+            .child(self.task_rail_list(rail_groups, now_ms, can_create, cx))
             .child(
                 div()
-                    .id("new-session")
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(0x333333))
-                    .cursor_pointer()
-                        .child("New Session")
-                        .on_click(cx.listener(|view, _event, window, cx| {
-                            view.on_new_session(window, cx);
-                        })),
-            )
-            .child(div().text_size(px(11.)).text_color(rgb(0xbbbbbb)).child("SESSIONS"))
-            .children(self.projection.sessions.iter().map(|session| {
-                let session_id = session.session_id.clone();
-                let active = self.projection.active_session_id.as_deref()
-                    == Some(session.session_id.as_str());
-                div()
-                    .id(SharedString::from(session_id.clone()))
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .bg(if active { rgb(0x2a2a2a) } else { rgb(0x161616) })
-                    .cursor_pointer()
-                    .child(session.title.clone())
-                    .on_click(cx.listener(move |view, _event, window, cx| {
-                        view.on_session_clicked(&session_id, window, cx);
-                    }))
-            }));
+                    .mt_auto()
+                    .pt_2()
+                    .text_size(px(11.))
+                    .text_color(rgb(0x7f7f7f))
+                    .child("Local"),
+            );
 
         let timeline = div()
             .id("timeline")
