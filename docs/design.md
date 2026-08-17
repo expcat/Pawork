@@ -125,9 +125,9 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| 事件流落盘（`AgentEventEnvelope` + append-only 存储） | V1 冻结契约（§3.2），外部无同形对标；相邻实现：Pi JSONL 树形 session（`id/parentId` 原地分支，research §2.2）、OpenCode 消息级 SQLite 落库（research §2.1） |
-| `pawork sessions list/show`、`--resume` 续聊 | [Codex](https://developers.openai.com/codex) sessions/resume；OpenCode/Pi 会话恢复 |
-| `pawork run`（非交互单次）+ `--json` JSONL 事件流（unstable） | Codex exec / headless 输出形态；S10 对齐正式 headless 协议；S7 GUI 不走这条输出 |
+| 事件流落盘（`AgentEventEnvelope` + append-only 存储） | V1 冻结契约（§3.2）；最接近的外部同形：DeepSeek Harness 仅追加 `SessionEvent` 日志（模型可见输入必须可从日志重建，fork/resume/Trajectory 同源，[references.md](references.md) §2.4）；相邻实现：Pi JSONL 树形 session（`id/parentId` 原地分支，research §2.2）、OpenCode 消息级 SQLite 落库（research §2.1） |
+| `pawork sessions list/show`、`--resume` 续聊 | [Codex](https://developers.openai.com/codex) sessions/resume；OpenCode/Pi 会话恢复；DeepSeek Harness 从同一事件流 resume |
+| `pawork run`（非交互单次）+ `--json` JSONL 事件流（unstable） | Codex exec / headless 输出形态；DeepSeek Harness `dsh-headless` + JSONL session；S10 对齐正式 headless 协议；S7 GUI 不走这条输出 |
 
 ### S2 Agent Loop 与只读工具（[任务书](../plan/S2-tool-loop.md)）
 
@@ -145,7 +145,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 功能 | 参照 |
 | --- | --- |
 | write_file/edit_file/apply_patch 写三件 | OpenCode edit/write/patch 工具；Codex apply_patch |
-| 终端审批（一次/本运行/拒绝）+ `--approval-mode` 六档（默认 ReadOnly） | [Codex approval modes](https://developers.openai.com/codex)；OpenCode `permission`（read/edit/bash/task 每项 allow/ask/deny，research §2.1）；V1 policy-engine 契约（§3.2） |
+| 终端审批（一次/本运行/拒绝）+ `--approval-mode` 六档（默认 ReadOnly） | [Codex approval modes](https://developers.openai.com/codex)；OpenCode `permission`（read/edit/bash/task 每项 allow/ask/deny，research §2.1）；DeepSeek Harness 把 `sandbox/mode` 与 `approval/policy` 做成独立 knob，再经 permission preset 捆绑（[权限预设](https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/permission-presets)）；V1 policy-engine 契约（§3.2） |
 | 未信任 workspace 强制询问 | Pi Project Trust（[earendil-works/pi](https://github.com/earendil-works/pi)） |
 | 路径越界/symlink/TOCTOU 红线 + 提示注入回归 | V1 安全红线资产（policy 整包随迁） |
 
@@ -153,7 +153,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| run_command + 沙箱（AppContainer/Landlock/Seatbelt）+ fail-closed | [Codex](https://github.com/openai/codex) sandbox（Landlock/Seatbelt 路线）；V1 exec 链（Windows Job Object + AppContainer，Rust 生态稀缺资产，发布主打包） |
+| run_command + 沙箱（AppContainer/Landlock/Seatbelt）+ fail-closed | [Codex](https://github.com/openai/codex) sandbox（Landlock/Seatbelt 路线）；DeepSeek Harness `ctx.sandbox` 与审批分轨（`workspace-write` / `danger-full-access`）；V1 exec 链（Windows Job Object + AppContainer，Rust 生态稀缺资产，发布主打包） |
 | shell 风险分类 → 审批（Dangerous 必询） | V1 policy `shell` 分类；OpenCode `permission.bash` 语义 |
 | 取消 = 清理整棵进程树 | V1 `cancel.rs` + 进程树管理（Job Object/进程组） |
 | 输出截断 + 完整输出落工件 | 上下文预算纪律（S5 铺垫、S8 artifact 接管）；对照 research §5.3 前缀稳定技巧 |
@@ -183,7 +183,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| 先锁定最小 Agent 信息架构，再实现本机单窗口 | [gui-design.md](gui-design.md)；Codex Desktop 主对话壳；OpenCode Desktop/Web 的流式+工具行；根仓 [desktop-gui.md](../../Pawork_v1/docs/features/desktop-gui.md) 四层，**不**搬 P19 全量 Surface |
+| 先锁定最小 Agent 信息架构，再实现本机单窗口 | [gui-design.md](gui-design.md)；Codex Desktop 主对话壳；OpenCode Desktop/Web 的流式+工具行；DeepSeek Harness Web UI 的 Trajectory / 工具+审批同对话（默认壳不吸收）；根仓 [desktop-gui.md](../../Pawork_v1/docs/features/desktop-gui.md) 四层，**不**搬 P19 全量 Surface |
 | `pawork gui serve` + GPUI Desktop：会话 / Timeline / Composer / 取消 / 模型切换 / 时间线内审批 | 独立进程 + GUI Connection Protocol（ADR-022/023/035）；S7 只做单客户端本机 |
 | 协议帧完整形状、只消费对话子集 | V1 gui-protocol（ADR-036）；`--json` 仍 unstable，正式 headless 收口在 S10 |
 
@@ -200,8 +200,8 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| MCP client（rmcp 收口）+ 与内置工具共存注册 | [MCP 官方](https://modelcontextprotocol.io)；OpenCode/Codex/Claude Code 均支持 MCP；「Pawork 作为 MCP server」为候选反向形态（§6.3 B7） |
-| AGENTS.md / Skills / profiles 加载注入 | [AGENTS.md 开放约定](https://agents.md)；OpenCode rules、Codex AGENTS.md、Claude Code 同类机制；Skills 对标 Claude/Cursor 的 SKILL.md 机制 |
+| MCP client（rmcp 收口）+ 与内置工具共存注册 | [MCP 官方](https://modelcontextprotocol.io)；OpenCode/Codex/Claude Code/DeepSeek Harness 均支持 MCP；「Pawork 作为 MCP server」为候选反向形态（§6.3 B7） |
+| AGENTS.md / Skills / profiles 加载注入 | [AGENTS.md 开放约定](https://agents.md)；OpenCode rules、Codex AGENTS.md、Claude Code 同类机制；DeepSeek Harness `tool-skill` + agent preset；Skills 对标 Claude/Cursor 的 SKILL.md 机制 |
 | `@file` 引用 + file-index 模糊补全 | 各家 `@` 语义；OpenCode References（工作区外引用）为候选扩展（§6.3 B4） |
 | 一键导入本机 Claude/Codex/Grok/Cursor/Pi 配置（只读） | 各工具本机配置布局；账户/端点导入源（G6）：cc-switch SQLite SSOT（research §3.2）、CLIProxyAPI auth-dir（research §3.3）、opencodex config（research §3.1） |
 | config 完整六层 + Profile | V1 config-service 层级合并引擎 |
@@ -211,19 +211,19 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| `pawork headless --json-stdio` + SDK 编程驱动 | [Codex](https://developers.openai.com/codex) TS/Python SDK 与 app-server；OpenCode SDK/serve（[opencode.ai/docs](https://opencode.ai/docs/)）；Pi SDK `createAgentSession()`（research §2.2）。`--json` 对照见 [headless-json-migration.md](headless-json-migration.md) |
+| `pawork headless --json-stdio` + SDK 编程驱动 | [Codex](https://developers.openai.com/codex) TS/Python SDK 与 app-server；OpenCode SDK/serve（[opencode.ai/docs](https://opencode.ai/docs/)）；Pi SDK `createAgentSession()`（research §2.2）；DeepSeek Harness headless + [Python SDK](https://deepseek-harness.github.io/deepseek-harness/en/guide/python-sdk)。`--json` 对照见 [headless-json-migration.md](headless-json-migration.md) |
 | `gui serve` 从 S7 单客户端升级为多客户端 + 断线 Replay + 慢客户端隔离 | V1 gui-server 资产；Desktop 增量见 [gui-design.md](gui-design.md) §5 |
 | `pawork acp serve` 接入 ACP 编辑器 | [Agent Client Protocol](https://github.com/zed-industries/agent-client-protocol)（Zed 生态） |
-| 会话分支 / `pawork session fork`（任意消息处分叉） | Pi session tree/clone（JSONL 树形，research §2.2）；OpenCode 子 session（research §2.1 task 工具） |
+| 会话分支 / `pawork session fork`（任意消息处分叉） | Pi session tree/clone（JSONL 树形，research §2.2）；OpenCode 子 session（research §2.1 task 工具）；DeepSeek Harness `ctx.sessions.fork`（从同一 `SessionEvent` 流切边界） |
 | `pawork service install/start/stop` + 运维子命令（status/watch/shutdown/doctor） | V1 六运行模式（外部无直接对标） |
-| PTY 交互式命令 + GUI Terminal | V1 pty-service（PTY 重连语义） |
+| PTY 交互式命令 + GUI Terminal | V1 pty-service（PTY 重连语义）；DeepSeek Harness `tool-terminal` + 持久 bash |
 
 ### S11 工作流、多 Agent 与控制面（[任务书](../plan/S11-workflow-control.md)）
 
 | 功能 | 参照 |
 | --- | --- |
-| Plan 审批 gate（未批准步骤拦截 turn） | V1 plan-service；相邻机制：OpenCode question/todowrite 为模型侧轻量形态（候选 §6.3 B2/B3） |
-| 多 Agent 编排（spawn/registry/cancel-tree/recovery/budget-gate） | OpenCode `task` 子代理 + 权限派生 + `subagent_depth`（research §2.1）；Pi「核心不内置子代理」哲学与 extension 自建（research §2.2）；CCR in-band 标签为**明确不采纳**的反例（F4-C，research §4.1） |
+| Plan 审批 gate（未批准步骤拦截 turn） | V1 plan-service；相邻机制：OpenCode question/todowrite、DeepSeek Harness planning / `tool-todo` / `ctx.goals` 为模型侧轻量形态（候选 §6.3 B2/B3/B9） |
+| 多 Agent 编排（spawn/registry/cancel-tree/recovery/budget-gate） | OpenCode `task` 子代理 + 权限派生 + `subagent_depth`（research §2.1）；Pi「核心不内置子代理」哲学与 extension 自建（research §2.2）；DeepSeek Harness `tool-subagent` + workflows；CCR in-band 标签为**明确不采纳**的反例（F4-C，research §4.1） |
 | 子 Agent 声明式 provider/model/账户绑定 + 预算分配（F4） | opencode `agent.model` 声明式绑定（research §2.1）；方案 [research/multi-account-quota-proposals.md](research/multi-account-quota-proposals.md) F4-A+B |
 | 多账户池 / 租约 / 路由 / 会话-账户亲和（F1/F3） | opencodex 账户池 + 三窗口配额 + thread affinity（research §3.1）；CLIProxyAPI RR/加权/fill-first + 冷却 + session-affinity（research §3.3）；claude-relay-service 内容 hash sticky（research §4.4）；V1 provider-control 资产对照（research §7） |
 | 额度感知与预算 gate（F2）+ `pawork usage` | opencodex 主动配额窗口探测（research §3.1）；LiteLLM 层级预算（research §4.2）；V1 quota-service/usage-ledger |
@@ -260,9 +260,9 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 ---
 
-## 6. 候选功能对照（未排期；对照 OpenCode / Pi / Codex）
+## 6. 候选功能对照（未排期；对照 OpenCode / Pi / Codex / DeepSeek Harness）
 
-> 本节是 2026-08-14 对照三家主流开源 / 商业编码 Agent 工具的**公开功能面**与 Pawork V2 S0–S12 已规划范围后，识别出的**尚未规划**的功能缺口。每项标注来源、是否违反架构红线、建议优先级（P0 最高）。已在 S0–S12 覆盖或冻结候审的不在此列。三家项目的背景与功能全貌见 [references.md](references.md) §2。候选纳入排期的流程见 [../ROADMAP.md](../ROADMAP.md) §3.3。
+> 本节先于 2026-08-14 对照 OpenCode / Pi / Codex 的公开功能面，再于 2026-08-17 补入 DeepSeek Harness，与 Pawork V2 S0–S12 已规划范围对照后识别**尚未规划**的功能缺口。每项标注来源、是否违反架构红线、建议优先级（P0 最高）。已在 S0–S12 覆盖或冻结候审的不在此列。四家项目的背景与功能全貌见 [references.md](references.md) §2。候选纳入排期的流程见 [../ROADMAP.md](../ROADMAP.md) §3.3。
 
 ### 6.1 架构红线排除项（不实现）
 
@@ -271,8 +271,8 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 功能 | 来源 | 排除理由 |
 | --- | --- | --- |
 | 交互式全屏 TUI（themes/keybinds/sounds/Ctrl+G 编辑器） | OpenCode / Pi | ADR-019 明确不实现 TUI；Pawork 以 CLI 交互模式 + GPUI Desktop 为用户界面 |
-| JS/TS 插件运行时（Bun/Node 扩展、hot-reload、`tool.execute.before/after` JS hooks） | OpenCode / Pi | 纯 Rust 红线（ADR-001）；若未来做代码插件，只评估 WASM + in-process hooks（当前整族待决策，见 ROADMAP §4） |
-| npm 生态传输（`@opencode-ai/sdk`、npm 插件安装、Bun runtime） | OpenCode / Pi | 同上；即使未来做插件也不走 npm |
+| JS/TS 插件运行时（Bun/Node 扩展、hot-reload、`tool.execute.before/after` JS hooks） | OpenCode / Pi / DeepSeek Harness（Cordis「一切皆插件」） | 纯 Rust 红线（ADR-001）；若未来做代码插件，只评估 WASM + in-process hooks（当前整族待决策，见 ROADMAP §4） |
+| npm 生态传输（`@opencode-ai/sdk`、npm 插件安装、Bun/Node runtime） | OpenCode / Pi / DeepSeek Harness（`@deepseek-ai/dsh`、pnpm 插件） | 同上；即使未来做插件也不走 npm |
 
 ### 6.2 CLI 交互与命令体验
 
@@ -287,13 +287,15 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | ID | 功能 | 来源 | 说明 | 优先级 |
 | --- | --- | --- | --- | --- |
-| B1 | webfetch + websearch 内置工具 | OpenCode、Codex `--search` | 网页抓取（给定 URL → markdown）与网络搜索（关键词 → 结果摘要）；S2–S4 工具集只有 read/list/search/find/write/edit/apply_patch/run_command，无网络工具 | P1 |
-| B2 | question 工具（模型侧多选问答） | OpenCode | 模型在循环中主动调用结构化多选问题向用户提问，阻塞等待回答；区别于 policy 审批——这是模型侧信息获取，不是权限请求 | P2 |
-| B3 | todowrite 工具（模型侧任务清单） | OpenCode `todowrite` | 模型在循环中维护结构化任务清单（增删改状态），作为 tool 调用；区别于 S11 plan 域（plan 是审阅+审批工作流，todowrite 是模型自管理的轻量 checklist） | P2 |
+| B1 | webfetch + websearch 内置工具 | OpenCode、Codex `--search`、DeepSeek Harness `tool-web` | 网页抓取（给定 URL → markdown）与网络搜索（关键词 → 结果摘要）；S2–S4 工具集只有 read/list/search/find/write/edit/apply_patch/run_command，无网络工具 | P1 |
+| B2 | question 工具（模型侧多选问答） | OpenCode、DeepSeek Harness `tool-ask-user` | 模型在循环中主动调用结构化多选问题向用户提问，阻塞等待回答；区别于 policy 审批——这是模型侧信息获取，不是权限请求 | P2 |
+| B3 | todowrite 工具（模型侧任务清单） | OpenCode `todowrite`、DeepSeek Harness `tool-todo` | 模型在循环中维护结构化任务清单（增删改状态），作为 tool 调用；区别于 S11 plan 域（plan 是审阅+审批工作流，todowrite 是模型自管理的轻量 checklist） | P2 |
 | B4 | References（工作区外引用） | OpenCode | 将额外本地目录或克隆的 Git 仓库注册为 `@alias` 上下文源，模型可引用其文件。S9 `@file` 只在当前工作区 roots 内 | P2 |
 | B5 | 图片输入与多模态 | Codex `--image` / `-i` | CLI 接受图片文件路径或 stdin 粘贴，作为 image content part 发送给 Provider。V1 P6-6 已实现；V2 S0–S12 未显式列为用户可见能力 | P1 |
 | B6 | 图片生成工具 | Codex `$imagegen` | 作为内置工具或 skill，让模型在编码循环中生成图片（图标、mockup、diagram）。需接入 image generation Provider | P3 |
 | B7 | `pawork mcp-server`（作为 MCP Server） | Codex `codex mcp-server` | Pawork 自身作为 MCP Server 暴露 `pawork` / `pawork-reply` 工具，让其他 MCP Client（IDE、其他 Agent）驱动 Pawork 会话。S9 只做 MCP Client | P2 |
+| B8 | Code Mode / 单轮组合多步工具 | DeepSeek Harness PTC（Code Mode SDK） | 模型用一段程序在单轮内组合多步工具，减少往返。对标的是「少轮次组合」能力，**不得**引入 JS/TS runtime；若落地需另选 Rust/WASM 或结构化 DSL | P2 |
+| B9 | 会话级 Goals（目标对象） | DeepSeek Harness `ctx.goals` | 同一会话内维护可续跑的目标对象，经 `agent/*` 事件推进。区别于 B3 checklist 与 S11 plan gate——Goals 是会话级目标状态，不是审批工作流 | P2 |
 
 ### 6.4 扩展生态
 
@@ -311,7 +313,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | D1 | 第一方 IDE 扩展 | OpenCode、Codex | VS Code / Cursor / Windsurf / JetBrains 扩展，经 ACP 或 GUI Connection Protocol 连接 `pawork`（不嵌入 Core）；支持 open-file/selection context、in-place review。S10 有 ACP 协议但无第一方扩展产品 | P1 |
 | D2 | GitHub / GitLab CI bot | OpenCode `/opencode`、Codex `@codex review` | 在 issue/PR 评论中触发 Pawork（`/pawork`），自动 triage / implement / open PR，在 CI runner 上执行。S11 review 有 Forge trait 但无平台 bot | P2 |
 | D3 | 会话公开分享 | OpenCode `/share`、Pi session 分享 | 生成可分享的只读会话链接或导出（HTML/JSON/gist），支持 manual/auto/disabled 模式 | P2 |
-| D4 | Web UI 浏览器客户端 | OpenCode `opencode web` | 作为 GUI Connection Protocol 的 Web client（本地 web app、LAN bind、basic-auth），与 Desktop client 并列。S7 起有本机 GPUI，S10 补齐 gui-server，无 Web client | P2 |
+| D4 | Web UI 浏览器客户端 | OpenCode `opencode web`、DeepSeek Harness `dsh web` | 作为 GUI Connection Protocol 的 Web client（本地 web app、LAN bind、basic-auth），与 Desktop client 并列。S7 起有本机 GPUI，S10 补齐 gui-server，无 Web client | P2 |
 | D5 | 自更新与多渠道安装器 | OpenCode `opencode upgrade`、Codex installers | `pawork upgrade` 自更新命令 + 多渠道安装器（Homebrew / Scoop / Winget / curl / cargo install）。当前 S0–S12 无发布或运行时自更新流程 | P2 |
 | D6 | Cloud 执行环境 | Codex Cloud | 隔离的远程执行环境，支持并行任务、结果本地应用（`pawork cloud`）。需 remote transport + 隔离沙箱 + 任务编排 | P3 |
 | D7 | Slack / Linear 等 chat 平台集成 | Codex `@Codex` in Slack/Linear | 作为 S10 channels 的扩展 feature（Slack / Linear adapter），将 chat 平台消息映射到 Pawork 会话 | P3 |
@@ -322,7 +324,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | ID | 功能 | 来源 | 说明 | 优先级 |
 | --- | --- | --- | --- | --- |
 | E1 | Enterprise SSO + 组织级集中配置 | OpenCode Enterprise | 企业 SSO 登录 + 组织级集中配置下发（model allowlist、workspace roles、internal gateway）。S11 control-plane 是本地 tenant/usage/quota，不含 org SSO | P3 |
-| E2 | Bedrock / Vertex 作为显式模型源 | Codex Bedrock、Pi providers | AWS Bedrock / GCP Vertex AI 作为模型接入端点；不在 S6 六条首发通道内，按后续需求排期 | P2 |
+| E2 | Bedrock / Vertex 作为显式模型源 | Codex Bedrock、Pi providers、DeepSeek Harness LLM 适配 | AWS Bedrock / GCP Vertex AI 作为模型接入端点；不在 S6 六条首发通道内，按后续需求排期 | P2 |
 
 ### 6.7 运维与产品体验
 
@@ -332,15 +334,15 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 ### 6.8 落地建议
 
-上表共 **28 项**候选功能（排除 3 项架构红线排除项），按优先级分布：
+上表共 **30 项**候选功能（排除 3 项架构红线排除项），按优先级分布：
 
 - **P1（7 项）**：自定义命令、AGENTS.md 生成器、webfetch/websearch、图片输入、IDE 扩展——建议在 S2–S9 主干阶段择机并行追加（工具类在 S2/S4，CLI 体验类在 S0/S10，GUI 体验跟 S7 壳走）。
-- **P2（14 项）**：核心功能补全，建议在对应阶段（S9 resources/MCP、S10 serve/clients、S11 workflow）作为增强项纳入；原 S10 扩展生态类改走 ROADMAP §4 待决策，或在 S12 审查与整改后独立迭代。
+- **P2（16 项）**：核心功能补全，建议在对应阶段（S9 resources/MCP、S10 serve/clients、S11 workflow）作为增强项纳入；原 S10 扩展生态类改走 ROADMAP §4 待决策，或在 S12 审查与整改后独立迭代。DeepSeek Harness 补入的 B8/B9 属此类。
 - **P3（7 项）**：Cloud、企业、Slack/Linear、voice 等重型或长尾功能，建议在 S12 审查与高优先级整改完成后再按用户需求排期。
 
 **注意事项**：
 
- 1. 工具类缺口（B1–B7）大多数可在 S2（工具注册面）或 S4（run_command 后的工具扩展）以新增 `AgentTool` 实现的方式低风险追加，不触及契约或架构。
+ 1. 工具类缺口（B1–B9）大多数可在 S2（工具注册面）或 S4（run_command 后的工具扩展）以新增 `AgentTool` 实现的方式低风险追加，不触及契约或架构。B8 除外：单轮组合多步工具会改 loop 形态，落地前需单独设计。
  2. CLI 体验类（A1–A4）在 S0 CLI 最小实现或 S10 CLI 正式化阶段追加，写入集限定在 `pawork-cli`。
  3. D1（IDE 扩展）虽列为 P1，但实现路径是独立的 IDE 扩展项目经 ACP 连接，不影响 Core 包；可与 S10 并行。
  4. 部分功能（D5 安装器、F1 遥测）是纯运维/产品层，无架构依赖，可随时插入。

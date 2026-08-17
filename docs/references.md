@@ -1,6 +1,6 @@
 # 参照项目手册
 
-> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见 [research/](research/) 下各文档（深入处以「详见 research §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §4。文中 star 数与项目事实均为 **2026-08-14** 快照（复核口径见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8），实现前应复核最新实态。
+> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见 [research/](research/) 下各文档（深入处以「详见 research §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §4。文中既有项目的 star 数与项目事实均为 **2026-08-14** 快照（复核口径见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8）；DeepSeek Harness 为 **2026-08-17** 登记快照。实现前应复核最新实态。
 
 ---
 
@@ -13,6 +13,7 @@
 | OpenCode（197k） | A / TUI 编码 Agent（TS/Bun） | 多形态（TUI / Desktop beta / Web / IDE）编码 Agent，自营 Zen/Go 托管模型 | [anomalyco/opencode](https://github.com/anomalyco/opencode) |
 | Pi（90k） | A / TUI 编码 Agent（TS/Bun monorepo） | provider 无关 Context 与 Pi Packages 能力包生态 | [earendil-works/pi](https://github.com/earendil-works/pi) |
 | Codex | A / CLI + Desktop + Cloud | OpenAI 官方编码 Agent 产品线，SDK / MCP server 等集成面最广 | [developers.openai.com/codex](https://developers.openai.com/codex) |
+| DeepSeek Harness（147k） | A / Web + headless 编码 Agent（TS/Node） | DeepSeek 官方开源 harness：一切皆插件；append-only 会话事件为 SSOT | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) |
 | opencodex（9.9k） | B / 本地代理 + dashboard（Bun） | Codex 协议翻译（40+ provider）+ ChatGPT 账户池三窗口配额路由 | [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) |
 | cc-switch（127k） | B / Tauri 桌面应用 | 多工具供应商**配置级**切换（SSOT SQLite 原子写回） | [farion1231/cc-switch](https://github.com/farion1231/cc-switch) |
 | CLIProxyAPI（47k） | B / Go 守护进程 | 多 OAuth 订阅账户封装为兼容 API（轮询 + 冷却 + 亲和） | [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) |
@@ -39,7 +40,7 @@
 
 ## 2. 主要对标项目
 
-Pawork 的候选功能对照基于三家的公开功能面（功能对照见 [design.md](design.md) §6，转正登记见 [../ROADMAP.md](../ROADMAP.md) §3.3）。通用红线：纯 Rust 不引入 JS 运行时（排除 JS 插件生态路线）；无 TUI（CLI 交互模式 + S7 起的 GPUI Desktop，设计见 [gui-design.md](gui-design.md)）。
+Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [design.md](design.md) §6，转正登记见 [../ROADMAP.md](../ROADMAP.md) §3.3）。通用红线：纯 Rust 不引入 JS 运行时（排除 JS 插件生态路线）；无 TUI（CLI 交互模式 + S7 起的 GPUI Desktop，设计见 [gui-design.md](gui-design.md)）。
 
 ### 2.1 OpenCode
 
@@ -61,6 +62,13 @@ Pawork 的候选功能对照基于三家的公开功能面（功能对照见 [de
 - **核心功能**：图片输入 / web search / image generation / voice；Computer Use、Browser、Chrome 扩展；`/review` + GitHub PR 自动审查；GitHub Action；Slack / Linear 集成；Codex as MCP server；TS/Python SDK；本地 memories；scheduled tasks 产品；插件目录（连接器）；Bedrock 模型源。
 - **与 Pawork 的关系**：参照——approval/sandbox 体系（对照 Pawork 的 policy / sandbox）、SDK 与 MCP server 对外集成形态、`prompt_cache_key = conversation_id` 会话亲和（F5-B 隐式族亲和键实践；其子会话 fork 缓存命中率 62%→9.6% 是子代理缓存取舍的直接反例）。
 - **关键链接**：[developers.openai.com/codex](https://developers.openai.com/codex) · [client.rs（亲和键实现）](https://github.com/openai/codex/blob/d807d44a/codex-rs/core/src/client.rs) · [issue #21796](https://github.com/openai/codex/issues/21796)。机制详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §5.2、§5.5。
+
+### 2.4 DeepSeek Harness
+
+- **定位与目标**：DeepSeek AI 官方开源 agent harness（`dsh`，MIT，developer preview）。口号是 Agent = Model + Harness、**一切皆插件**：模型、工具、技能、会话、沙箱、存储、循环、调度与 UI 均由 [Cordis](https://github.com/cordiverse/cordis) 插件组合，配置层可替换。默认形态是本地 Web UI（`npx @deepseek-ai/dsh web`），另有 headless profile 与 Python SDK。本文所述均指 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，与同名非官方适配器项目无关。
+- **核心功能**：四套 preset——Standard（文件编辑 / Shell / 文件与网页检索 / Skills / 计划 / goals / 子代理 / 工作流）、PTC/Code Mode（经 Code Mode SDK 用一段 TypeScript 组合多步工具）、Minimal（持久 `bash` + `str_replace_editor`，用于基准）、Creator（在 Standard 上加运行时检查与 preset 创作）。仅追加 `SessionEvent` 日志是模型可见上下文的 SSOT（fork / resume / Trajectory 回放同源）；沙箱模式与审批策略是两个独立 knob，经 `workspace-write` / `danger-full-access` 等 permission preset 捆绑。工具面含 `tool-ask-user`、`tool-todo`、`tool-web`、`tool-skill`、`tool-subagent`、`tool-terminal`、MCP；LLM 适配覆盖 DeepSeek 与 Anthropic / OpenAI / Bedrock / Azure / Vertex。
+- **与 Pawork 的关系**：参照——仅追加会话事件作为模型可见输入的重建源（对照 Pawork `AgentEventEnvelope` + append-only，是目前最接近的外部同形）；沙箱与审批分 knob（对照 S3/S4）；`ctx.sessions.fork`、headless、Python SDK（对照 S10）；Skills / plan / 子代理 / 工作流（对照 S9/S11）。红线排除——Cordis/JS「一切皆插件」、以 Web UI 为默认壳、Code Mode 生成并执行 TypeScript（JS 运行时）。Developer preview，官方声明会有破坏性变更；实现前复核实态，不把其插件 API 当冻结契约。
+- **关键链接**：[deepseek.com/harness](https://deepseek.com/harness) · [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) · [架构](https://deepseek-harness.github.io/deepseek-harness/en/reference/) · [权限预设](https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/permission-presets) · [Python SDK](https://deepseek-harness.github.io/deepseek-harness/en/guide/python-sdk)。本仓暂无独立 research 专章（2026-08-17 按公开功能面登记）。
 
 ---
 
