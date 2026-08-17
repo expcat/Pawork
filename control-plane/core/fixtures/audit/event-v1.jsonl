@@ -1,0 +1,1 @@
+{"schema_version":1,"event_id":"event-1","occurred_at":42,"tenant_id":"tenant-a","principal_id":"tenant-a:user","action":"lease_acquired","target_kind":"lease","decision":"allow","reason_code":"lease_acquired","session_id":"session-1","agent_id":"agent-1","provider_id":"provider-1","account_id":"account-1","client_id":"client-1","trace_id":"trace-1","decision_version":7}

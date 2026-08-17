@@ -14,6 +14,7 @@ members = [
     "vcs/*",
     "engine/*",
     "extensions/*",
+    "control-plane/*",
     "host/*",
     "clients/*",
     "apps/*",

@@ -1,0 +1,38 @@
+[package]
+name = "pawork-provider-control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 账号控制面：CredentialPool/Lease/Binding 与 account-control-v1"
+
+[features]
+default = ["account-control-v1"]
+account-control-v1 = [
+    "dep:pawork-api",
+    "dep:pawork-provider-core",
+    "dep:pawork-blob-store",
+]
+
+[dependencies]
+pawork-domain = { path = "../../foundation/domain" }
+pawork-sqlite = { path = "../../foundation/sqlite" }
+pawork-api = { path = "../../foundation/api", optional = true }
+pawork-provider-core = { path = "../../providers/core", optional = true }
+pawork-blob-store = { path = "../../storage/blob", optional = true, features = ["protected"] }
+async-trait.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }
+pawork-api = { path = "../../foundation/api" }
+pawork-provider-core = { path = "../../providers/core" }
+pawork-blob-store = { path = "../../storage/blob", features = ["protected"] }
