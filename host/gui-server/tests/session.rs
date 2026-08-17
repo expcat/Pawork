@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,7 +11,8 @@ use pawork_protocol::{
     AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
     ClientContextSnapshot, ClientFrame, CommandSource, EventSource, EventStream, GlobalSequence,
     HandshakeRequest, HandshakeResponse, HandshakeService, ProtocolErrorCode, ResumeDisposition,
-    ResumeRequest, ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind, TimelineItem,
+    ResumeRequest, ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind, SubscribeRequest,
+    TimelineItem,
     TimelineItemKind, TimelinePage, API_VERSION, SUPPORTED_API_VERSIONS,
 };
 use pawork_transport::{
@@ -36,6 +38,8 @@ struct RecordedQuery {
 struct MockHost {
     instance_id: CoreInstanceId,
     events: broadcast::Sender<AppEventEnvelope>,
+    ring: Mutex<VecDeque<AppEventEnvelope>>,
+    ring_capacity: usize,
     commands: Mutex<Vec<RecordedCommand>>,
     queries: Mutex<Vec<RecordedQuery>>,
     timelines: Mutex<Vec<(SessionId, Option<u64>, Option<u32>)>>,
@@ -44,10 +48,16 @@ struct MockHost {
 
 impl MockHost {
     fn new() -> Arc<Self> {
+        Self::with_ring_capacity(1024)
+    }
+
+    fn with_ring_capacity(ring_capacity: usize) -> Arc<Self> {
         let (events, _) = broadcast::channel(256);
         Arc::new(Self {
             instance_id: CoreInstanceId::from("gui-server-test"),
             events,
+            ring: Mutex::new(VecDeque::new()),
+            ring_capacity: ring_capacity.max(1),
             commands: Mutex::new(Vec::new()),
             queries: Mutex::new(Vec::new()),
             timelines: Mutex::new(Vec::new()),
@@ -56,6 +66,13 @@ impl MockHost {
     }
 
     fn publish(&self, envelope: AppEventEnvelope) {
+        {
+            let mut ring = self.ring.lock().expect("ring");
+            if ring.len() == self.ring_capacity {
+                ring.pop_front();
+            }
+            ring.push_back(envelope.clone());
+        }
         let _ = self.events.send(envelope);
     }
 
@@ -142,6 +159,53 @@ impl GuiHost for MockHost {
     fn subscribe_events(&self) -> broadcast::Receiver<AppEventEnvelope> {
         self.events.subscribe()
     }
+
+    fn current_sequence(&self) -> GlobalSequence {
+        self.ring
+            .lock()
+            .expect("ring")
+            .back()
+            .map(|event| event.global_sequence)
+            .unwrap_or(GlobalSequence(0))
+    }
+
+    fn earliest_available(&self) -> Option<GlobalSequence> {
+        self.ring
+            .lock()
+            .expect("ring")
+            .front()
+            .map(|event| event.global_sequence)
+    }
+
+    fn replay(
+        &self,
+        from: GlobalSequence,
+        through: Option<GlobalSequence>,
+    ) -> Result<Vec<AppEventEnvelope>, GuiHostError> {
+        let ring = self.ring.lock().expect("ring");
+        let through = through.unwrap_or_else(|| {
+            ring.back()
+                .map(|event| event.global_sequence)
+                .unwrap_or(GlobalSequence(0))
+        });
+        if let Some(earliest) = ring.front() {
+            if from < earliest.global_sequence {
+                return Err(GuiHostError {
+                    code: "replay_unavailable".into(),
+                    message: format!(
+                        "replay from {} is before earliest {}",
+                        from.0, earliest.global_sequence.0
+                    ),
+                    retryable: false,
+                });
+            }
+        }
+        Ok(ring
+            .iter()
+            .filter(|event| event.global_sequence >= from && event.global_sequence <= through)
+            .cloned()
+            .collect())
+    }
 }
 
 struct Client {
@@ -182,6 +246,7 @@ async fn open_harness(label: &str) -> Harness {
         host: host.clone(),
         handshake,
         transport: transport.clone(),
+        connections: None,
     });
     let temp = tempfile::tempdir().expect("tempdir");
     let socket = temp.path().join(format!("{label}.sock"));
@@ -246,6 +311,14 @@ fn handshake_frame() -> ClientFrame {
     })
 }
 
+fn subscribe_all() -> ClientFrame {
+    ClientFrame::Subscribe(SubscribeRequest {
+        request_id: "sub".into(),
+        subscription_id: "all".into(),
+        streams: vec![],
+    })
+}
+
 async fn handshake_and_snapshot(client: &Client) -> (HandshakeResponse, Snapshot) {
     client.send(&handshake_frame()).await;
     let ServerFrame::Handshake(response) = client.recv().await else {
@@ -254,6 +327,18 @@ async fn handshake_and_snapshot(client: &Client) -> (HandshakeResponse, Snapshot
     let ServerFrame::Snapshot(snapshot) = client.recv().await else {
         panic!("expected snapshot after handshake");
     };
+    client.send(&subscribe_all()).await;
+    client.send(&ClientFrame::Heartbeat { nonce: 1 }).await;
+    loop {
+        match client.recv().await {
+            ServerFrame::Pong { nonce } => {
+                assert_eq!(nonce, 1);
+                break;
+            }
+            ServerFrame::Event(_) => continue,
+            other => panic!("unexpected frame while awaiting subscribe ack: {other:?}"),
+        }
+    }
     (response, snapshot)
 }
 

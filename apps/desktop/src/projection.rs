@@ -9,7 +9,10 @@
 
 use std::collections::BTreeSet;
 
-use pawork_client::{AppEvent, AppEventEnvelope, EventStream, Snapshot, TimelinePage};
+use pawork_client::{
+    AppEvent, AppEventEnvelope, EventStream, ResumeDisposition, ResumeOutcome, Snapshot,
+    TimelinePage,
+};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +47,113 @@ pub struct SessionSummary {
     pub title: String,
     pub updated_at_ms: u64,
     pub workspace_id: Option<String>,
+    /// 日后 SessionTree 分支节点；扁平 session 数组里为 None。
+    pub parent_branch_id: Option<String>,
+    pub forked_from_event_id: Option<String>,
+    pub active: bool,
+}
+
+/// 重连三态（gui-design §4.1 / §5）：必须在 UI 上可区分。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResumeState {
+    Fresh,
+    Replay {
+        from_sequence: u64,
+        through_sequence: u64,
+    },
+    SnapshotRequired {
+        earliest_available_sequence: u64,
+    },
+    UpToDate {
+        current_sequence: u64,
+    },
+}
+
+impl Default for ResumeState {
+    fn default() -> Self {
+        Self::Fresh
+    }
+}
+
+impl ResumeState {
+    pub fn from_disposition(disposition: &ResumeDisposition) -> Self {
+        match disposition {
+            ResumeDisposition::Replay {
+                from_sequence,
+                through_sequence,
+            } => Self::Replay {
+                from_sequence: from_sequence.0,
+                through_sequence: through_sequence.0,
+            },
+            ResumeDisposition::SnapshotRequired {
+                earliest_available_sequence,
+            } => Self::SnapshotRequired {
+                earliest_available_sequence: earliest_available_sequence.0,
+            },
+            ResumeDisposition::UpToDate { current_sequence } => Self::UpToDate {
+                current_sequence: current_sequence.0,
+            },
+        }
+    }
+
+    /// 侧栏 / 状态栏可见的三态文案（不只靠颜色）。
+    pub fn label(&self) -> Option<String> {
+        match self {
+            Self::Fresh => None,
+            Self::Replay {
+                from_sequence,
+                through_sequence,
+            } => Some(format!("Replay · {from_sequence}–{through_sequence}")),
+            Self::SnapshotRequired {
+                earliest_available_sequence,
+            } => Some(format!(
+                "Snapshot required · from {earliest_available_sequence}"
+            )),
+            Self::UpToDate { current_sequence } => {
+                Some(format!("Up to date · {current_sequence}"))
+            }
+        }
+    }
+
+    /// SnapshotRequired 才换基线并重分页；Replay / UpToDate 不闪全量重载。
+    pub fn replaces_baseline(&self) -> bool {
+        matches!(self, Self::SnapshotRequired { .. })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResumeApply {
+    /// 首连：用握手 Snapshot 建基线。
+    Fresh,
+    /// Replay：按 sequence 续接，不换 Timeline 基线。
+    Continued { timeline_changed: bool },
+    /// SnapshotRequired：丢 stale、换 Snapshot，调用方重分页。
+    ReplaceBaseline,
+    /// UpToDate：不重载 Timeline。
+    Unchanged,
+}
+
+/// Inspector Terminal 面：滚动文本，不是 VT100 / 本地 PTY。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalState {
+    pub session_id: Option<String>,
+    pub output: String,
+    pub columns: u16,
+    pub rows: u16,
+    /// 仅 workspace 相对路径。
+    pub cwd: String,
+}
+
+impl Default for TerminalState {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            output: String::new(),
+            columns: 80,
+            rows: 24,
+            cwd: ".".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -202,6 +312,8 @@ pub struct DesktopProjection {
     pub pending_model: Option<(String, String)>,
     pub active_runs: Vec<ActiveRun>,
     pub active_run_started_at_ms: Option<u64>,
+    pub resume: ResumeState,
+    pub terminal: TerminalState,
     snapshot_pendings: Vec<PendingApproval>,
     /// 已消费的 session sequence（live 与分页共用的去重集）。
     seen: BTreeSet<u64>,
@@ -245,9 +357,97 @@ impl DesktopProjection {
                     self.active_runs = parse_active_runs(&data);
                     self.restore_active_run_from_snapshot();
                 }
+                "terminal_sessions" => {
+                    if let Some(id) = parse_terminal_session_id(&data) {
+                        self.terminal.session_id = Some(id);
+                    }
+                }
                 _ => {}
             }
         }
+    }
+
+    /// 重连三态：Replay 续接事件；SnapshotRequired 丢 stale 换基线；
+    /// UpToDate 不碰 Timeline。`fallback_snapshot` 用于 SnapshotRequired 且
+    /// resume 未附带 Snapshot 的情况（V2 gui-server 常见）。
+    pub fn apply_resume_outcome(
+        &mut self,
+        outcome: &ResumeOutcome,
+        fallback_snapshot: &Snapshot,
+    ) -> ResumeApply {
+        self.resume = ResumeState::from_disposition(&outcome.disposition);
+        match &outcome.disposition {
+            ResumeDisposition::Replay { .. } => {
+                self.merge_snapshot(fallback_snapshot);
+                let timeline_changed = self.apply_replay(&outcome.replayed);
+                ResumeApply::Continued { timeline_changed }
+            }
+            ResumeDisposition::SnapshotRequired { .. } => {
+                let snapshot = outcome.snapshot.as_ref().unwrap_or(fallback_snapshot);
+                self.apply_snapshot_required(snapshot);
+                ResumeApply::ReplaceBaseline
+            }
+            ResumeDisposition::UpToDate { .. } => ResumeApply::Unchanged,
+        }
+    }
+
+    /// 首连：握手 Snapshot 建基线，resume 标 Fresh。
+    pub fn apply_fresh_snapshot(&mut self, snapshot: &Snapshot) {
+        self.resume = ResumeState::Fresh;
+        self.merge_snapshot(snapshot);
+    }
+
+    /// SnapshotRequired：丢弃 stale 权威标记，换 Snapshot，清空 Timeline。
+    /// 保留 active_session_id，由 UI 重分页。
+    pub fn apply_snapshot_required(&mut self, snapshot: &Snapshot) {
+        self.discard_stale_authority();
+        self.merge_snapshot(snapshot);
+        if let Some(session_id) = self.active_session_id.clone() {
+            if !self
+                .sessions
+                .iter()
+                .any(|session| session.session_id == session_id)
+            {
+                self.active_session_id = None;
+            }
+        }
+        self.restore_active_run_from_snapshot();
+        self.pending_approval = self.pending_for_active_session();
+    }
+
+    /// Replay：按 sequence 去重续接，不换 Timeline 基线。
+    pub fn apply_replay(&mut self, events: &[AppEventEnvelope]) -> bool {
+        let mut changed = false;
+        for event in events {
+            if self.apply_event(event) {
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn discard_stale_authority(&mut self) {
+        self.pending_approval = None;
+        self.snapshot_pendings.clear();
+        self.active_runs.clear();
+        self.active_run_id = None;
+        self.active_run_started_at_ms = None;
+        self.timeline.clear();
+        self.seen.clear();
+        self.assistant_anchor = None;
+        self.tool_anchors.clear();
+    }
+
+    pub fn apply_terminal_output(&mut self, terminal_session_id: &str, delta: &str) -> bool {
+        if let Some(current) = self.terminal.session_id.as_deref() {
+            if current != terminal_session_id {
+                return false;
+            }
+        } else {
+            self.terminal.session_id = Some(terminal_session_id.to_string());
+        }
+        self.terminal.output.push_str(delta);
+        true
     }
 
     /// 打开（切换）session：清空时间线与去重状态。
@@ -308,6 +508,13 @@ impl DesktopProjection {
 
     /// 应用一条 live 事件；返回时间线是否发生变化（用于 UI 自动滚底）。
     pub fn apply_event(&mut self, envelope: &AppEventEnvelope) -> bool {
+        if let AppEvent::TerminalOutput {
+            terminal_session_id,
+            delta,
+        } = &envelope.payload
+        {
+            return self.apply_terminal_output(terminal_session_id, delta);
+        }
         let Some(active) = self.active_session_id.as_deref() else {
             return false;
         };
@@ -882,34 +1089,78 @@ fn enum_name(json: Option<Value>) -> String {
         .unwrap_or_default()
 }
 
+fn session_tree_entries(data: &Value) -> Option<&Vec<Value>> {
+    if let Some(entries) = data.as_array() {
+        return Some(entries);
+    }
+    data.as_object().and_then(|object| {
+        object
+            .get("sessions")
+            .or_else(|| object.get("nodes"))
+            .or_else(|| object.get("branches"))
+            .and_then(Value::as_array)
+    })
+}
+
 fn parse_sessions(data: &Value) -> Vec<SessionSummary> {
     let mut sessions = Vec::new();
-    if let Some(entries) = data.as_array() {
-        for entry in entries {
-            let Some(session_id) = entry.get("session_id").and_then(Value::as_str) else {
-                continue;
-            };
-            sessions.push(SessionSummary {
-                session_id: session_id.to_string(),
-                title: entry
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Untitled")
-                    .to_string(),
-                updated_at_ms: entry
-                    .get("updated_at_ms")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                workspace_id: entry
-                    .get("workspace_id")
-                    .and_then(Value::as_str)
-                    .filter(|id| !id.is_empty())
-                    .map(str::to_string),
-            });
-        }
+    let Some(entries) = session_tree_entries(data) else {
+        return sessions;
+    };
+    for entry in entries {
+        // 现行扁平 session 数组用 session_id；日后分支节点用 branch_id。
+        let Some(session_id) = entry
+            .get("session_id")
+            .or_else(|| entry.get("branch_id"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let title = entry
+            .get("title")
+            .or_else(|| entry.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("Untitled");
+        sessions.push(SessionSummary {
+            session_id: session_id.to_string(),
+            title: title.to_string(),
+            updated_at_ms: entry
+                .get("updated_at_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            workspace_id: entry
+                .get("workspace_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string),
+            parent_branch_id: entry
+                .get("parent_branch_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            forked_from_event_id: entry
+                .get("forked_from_event_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            active: entry.get("active").and_then(Value::as_bool).unwrap_or(true),
+        });
     }
     sessions.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
     sessions
+}
+
+fn parse_terminal_session_id(data: &Value) -> Option<String> {
+    if let Some(id) = data.get("terminal_session_id").and_then(Value::as_str) {
+        return Some(id.to_string());
+    }
+    data.as_array().and_then(|entries| {
+        entries.iter().find_map(|entry| {
+            entry
+                .get("terminal_session_id")
+                .or_else(|| entry.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+    })
 }
 
 fn parse_workspaces(data: &Value) -> Vec<WorkspaceSummary> {
@@ -1536,5 +1787,206 @@ mod tests {
             .iter()
             .flat_map(|project| &project.tasks)
             .any(|task| task.session_id == "s-2"));
+    }
+
+    fn resume_outcome(
+        disposition: ResumeDisposition,
+        replayed: Vec<AppEventEnvelope>,
+        snapshot: Option<Snapshot>,
+    ) -> ResumeOutcome {
+        ResumeOutcome {
+            disposition,
+            replayed,
+            snapshot,
+        }
+    }
+
+    #[test]
+    fn session_tree_accepts_flat_sessions_and_branch_nodes() {
+        let flat = snapshot_with_sessions(vec![session_entry("s-1", "One", 20)]);
+        let projection = DesktopProjection::from_snapshot(&flat);
+        assert_eq!(projection.sessions[0].session_id, "s-1");
+        assert!(projection.sessions[0].active);
+        assert_eq!(projection.sessions[0].parent_branch_id, None);
+
+        let branched = snapshot_with_sessions(vec![json!({
+            "branch_id": "br-2",
+            "parent_branch_id": "br-1",
+            "forked_from_event_id": "evt-9",
+            "active": true,
+            "title": "Forked",
+            "updated_at_ms": 40,
+            "workspace_id": "ws-default"
+        })]);
+        let projection = DesktopProjection::from_snapshot(&branched);
+        assert_eq!(projection.sessions[0].session_id, "br-2");
+        assert_eq!(
+            projection.sessions[0].parent_branch_id.as_deref(),
+            Some("br-1")
+        );
+        assert_eq!(
+            projection.sessions[0].forked_from_event_id.as_deref(),
+            Some("evt-9")
+        );
+
+        let wrapped = snapshot_with_named_workspaces(
+            vec![json!({ "id": "ws-default", "name": "default" })],
+            vec![],
+        );
+        let mut wrapped_json = serde_json::to_value(&wrapped).expect("snapshot json");
+        wrapped_json["sections"][1]["data"] = json!({
+            "nodes": [{
+                "branch_id": "br-wrap",
+                "parent_branch_id": null,
+                "forked_from_event_id": null,
+                "active": false,
+                "name": "Wrapped",
+                "updated_at_ms": 5
+            }]
+        });
+        let wrapped: Snapshot = serde_json::from_value(wrapped_json).expect("decode wrapped");
+        let projection = DesktopProjection::from_snapshot(&wrapped);
+        assert_eq!(projection.sessions[0].session_id, "br-wrap");
+        assert!(!projection.sessions[0].active);
+        assert_eq!(projection.sessions[0].title, "Wrapped");
+    }
+
+    #[test]
+    fn replay_continues_timeline_without_replacing_baseline() {
+        let snapshot = snapshot_with_sessions(vec![session_entry("s-1", "One", 20)]);
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&assistant_delta(2, "m-1", "Hello")));
+        assert_eq!(projection.timeline.len(), 1);
+
+        let outcome = resume_outcome(
+            ResumeDisposition::Replay {
+                from_sequence: pawork_client::GlobalSequence(3),
+                through_sequence: pawork_client::GlobalSequence(4),
+            },
+            vec![
+                assistant_delta(3, "m-1", " "),
+                assistant_delta(4, "m-1", "world"),
+            ],
+            None,
+        );
+        let apply = projection.apply_resume_outcome(&outcome, &snapshot);
+        assert_eq!(apply, ResumeApply::Continued { timeline_changed: true });
+        assert!(!projection.resume.replaces_baseline());
+        assert_eq!(
+            projection.resume.label().as_deref(),
+            Some("Replay · 3–4")
+        );
+        assert_eq!(projection.timeline.len(), 1);
+        assert!(matches!(
+            &projection.timeline[0].kind,
+            TimelineEntryKind::AssistantMessage { text } if text == "Hello world"
+        ));
+        // 同 sequence 再来一遍不得双份。
+        assert!(!projection.apply_event(&assistant_delta(3, "m-1", " ")));
+    }
+
+    #[test]
+    fn snapshot_required_discards_stale_and_replaces_baseline() {
+        let first = snapshot_with_sessions(vec![session_entry("s-1", "One", 20)]);
+        let mut projection = DesktopProjection::from_snapshot(&first);
+        projection.select_session("s-1");
+        projection.apply_event(&assistant_delta(1, "m-1", "stale"));
+        projection.apply_event(&event(
+            2,
+            json!({
+                "type": "tool_approval_required",
+                "data": {
+                    "run_id": "r-old",
+                    "tool_call_id": "call-old",
+                    "reason": "write_file · old"
+                }
+            }),
+        ));
+        assert_eq!(projection.timeline.len(), 1);
+        assert!(projection.pending_approval.is_some());
+
+        let next = snapshot_with_runs_and_approvals(
+            vec![json!({
+                "run_id": "r-new",
+                "session_id": "s-1",
+                "started_at_ms": 9
+            })],
+            vec![],
+        );
+        let outcome = resume_outcome(
+            ResumeDisposition::SnapshotRequired {
+                earliest_available_sequence: pawork_client::GlobalSequence(8),
+            },
+            vec![],
+            None,
+        );
+        assert_eq!(
+            projection.apply_resume_outcome(&outcome, &next),
+            ResumeApply::ReplaceBaseline
+        );
+        assert!(projection.resume.replaces_baseline());
+        assert_eq!(projection.timeline.len(), 0);
+        assert_eq!(projection.pending_approval, None);
+        assert_eq!(projection.active_session_id.as_deref(), Some("s-1"));
+        assert_eq!(projection.active_run_id.as_deref(), Some("r-new"));
+        assert_eq!(
+            projection.resume.label().as_deref(),
+            Some("Snapshot required · from 8")
+        );
+    }
+
+    #[test]
+    fn up_to_date_does_not_flash_reload() {
+        let snapshot = snapshot_with_sessions(vec![session_entry("s-1", "One", 20)]);
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        projection.select_session("s-1");
+        projection.apply_event(&assistant_delta(1, "m-1", "keep"));
+        let outcome = resume_outcome(
+            ResumeDisposition::UpToDate {
+                current_sequence: pawork_client::GlobalSequence(1),
+            },
+            vec![],
+            Some(snapshot_with_sessions(vec![session_entry("s-other", "Other", 1)])),
+        );
+        assert_eq!(
+            projection.apply_resume_outcome(&outcome, &snapshot),
+            ResumeApply::Unchanged
+        );
+        assert_eq!(projection.timeline.len(), 1);
+        assert_eq!(projection.sessions[0].session_id, "s-1");
+        assert_eq!(
+            projection.resume.label().as_deref(),
+            Some("Up to date · 1")
+        );
+    }
+
+    fn terminal_output(sequence: u64, terminal: &str, delta: &str) -> AppEventEnvelope {
+        serde_json::from_value(json!({
+            "api_version": { "major": 1, "minor": 1 },
+            "instance_id": "instance-1",
+            "event_id": format!("term-{sequence}"),
+            "global_sequence": sequence,
+            "stream": { "type": "terminal", "id": terminal },
+            "stream_sequence": sequence,
+            "timestamp": 1_000 + sequence,
+            "source": { "type": "core" },
+            "payload": {
+                "type": "terminal_output",
+                "data": { "terminal_session_id": terminal, "delta": delta }
+            }
+        }))
+        .expect("decode TerminalOutput")
+    }
+
+    #[test]
+    fn terminal_output_appends_without_vt100() {
+        let mut projection = DesktopProjection::default();
+        assert!(projection.apply_event(&terminal_output(1, "term-1", "hello")));
+        assert!(projection.apply_event(&terminal_output(2, "term-1", "\nworld")));
+        assert_eq!(projection.terminal.session_id.as_deref(), Some("term-1"));
+        assert_eq!(projection.terminal.output, "hello\nworld");
+        assert!(!projection.apply_event(&terminal_output(3, "term-other", "nope")));
+        assert_eq!(projection.terminal.output, "hello\nworld");
     }
 }

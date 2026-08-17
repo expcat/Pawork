@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "error": {
+    "code": -32601,
+    "message": "protocol method is unsupported: session/load (loadSession capability is not advertised)"
+  }
+}

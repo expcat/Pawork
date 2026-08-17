@@ -44,10 +44,17 @@ pub struct TextInput {
 
 impl TextInput {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        Self::with_placeholder(
+            "Message Pawork… (Enter to send, Shift+Enter for newline)",
+            cx,
+        )
+    }
+
+    pub fn with_placeholder(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             content: "".into(),
-            placeholder: "Message Pawork… (Enter to send, Shift+Enter for newline)".into(),
+            placeholder: placeholder.into(),
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,

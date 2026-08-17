@@ -1,30 +1,28 @@
-//! 每连接的握手与帧循环（S7 单客户端路径）。
+//! 每连接的握手与帧循环（S10 多客户端路径）。
 
-use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use pawork_domain::{ActorId, ConnectionId, GuiClientId};
 use pawork_protocol::{
     compute_resume_disposition, decode_client_frame_checked, encode_server_frame,
     validate_server_frame_api_version, ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope,
-    AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponseEnvelope, ClientFrame,
-    CommandSource, GlobalSequence, HandshakeResponse, HandshakeSession,
-    ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext, ResumeDisposition,
-    ResumeRequest, ResumeResponse, ServerFrame,
+    AppQuery, AppQueryEnvelope, AppResponseEnvelope, ClientFrame,
+    CommandSource, GlobalSequence, GuiCapability, HandshakeRequest, HandshakeResponse,
+    HandshakeSession, ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext,
+    ResumeDisposition, ResumeRequest, ResumeResponse, ServerFrame,
 };
 use pawork_protocol::codec::decode_client_frame;
 use pawork_transport::{
-    ConnectionInfo, GuiConnection, TransportError, TransportErrorKind,
-    TransportFrame,
+    ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame,
 };
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use tokio::time::{interval, MissedTickBehavior};
 
+use crate::connection::{ClientRegistration, ManagerError};
 use crate::{GuiHostError, Inner};
-
-const EVENT_QUEUE_CAPACITY: usize = 64;
-const RESUME_LOG_CAPACITY: usize = 1024;
 
 pub(super) fn spawn(
     inner: Arc<Inner>,
@@ -94,6 +92,7 @@ impl GuiConnection for SessionHandle {
 }
 
 struct HandshakeOutcome {
+    request: HandshakeRequest,
     response: HandshakeResponse,
 }
 
@@ -111,8 +110,27 @@ async fn run(
         return;
     };
     let negotiated = negotiated_version(&outcome.response);
+    let locality = connection.info().locality;
 
-    let mut session = SessionState::new();
+    let registration = ClientRegistration {
+        client_id: client_id.clone(),
+        connection_id: connection_id.clone(),
+        name: outcome.request.client_name,
+        version: outcome.request.client_version,
+        locality,
+        identity: None,
+        capabilities: granted_capabilities(&outcome.response),
+        connected_at: now_timestamp(),
+    };
+    let mut event_rx = match inner.connections.register(registration) {
+        Ok(receiver) => receiver,
+        Err(error) => {
+            tracing::warn!(%client_id, %error, "gui client registration failed");
+            let _ = connection.close().await;
+            return;
+        }
+    };
+
     match inner.host.snapshot().await {
         Ok(snapshot) => {
             if send_frame(
@@ -123,6 +141,7 @@ async fn run(
             .await
             .is_err()
             {
+                inner.connections.unregister(&client_id);
                 let _ = connection.close().await;
                 return;
             }
@@ -141,14 +160,14 @@ async fn run(
         }
     }
 
-    let event_queue = BoundedEventQueue::new(EVENT_QUEUE_CAPACITY);
     let (stop_tx, stop_rx) = oneshot::channel();
-    let _forwarder = spawn_forwarder(
-        inner.host.subscribe_events(),
-        event_queue.clone(),
-        session.resume_log.clone(),
-        stop_rx,
-    );
+    let _forwarder = spawn_forwarder(Arc::clone(&inner), client_id.clone(), stop_rx);
+
+    let mut watchdog = interval(watchdog_interval(
+        inner.connections.config().heartbeat_timeout,
+    ));
+    watchdog.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    watchdog.tick().await;
 
     loop {
         tokio::select! {
@@ -159,16 +178,29 @@ async fn run(
                     break;
                 }
             }
-            event = event_queue.recv() => {
-                let Some(envelope) = event else { break };
-                if send_frame(
-                    connection.as_ref(),
-                    &ServerFrame::Event(envelope),
-                    Some(negotiated),
-                )
-                .await
-                .is_err()
-                {
+            event = event_rx.recv() => {
+                match event {
+                    Some(envelope) => {
+                        if send_frame(
+                            connection.as_ref(),
+                            &ServerFrame::Event(envelope),
+                            Some(negotiated),
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+            _ = watchdog.tick() => {
+                if inner.connections.is_timed_out(&client_id, now_timestamp()) {
+                    tracing::debug!(
+                        %client_id,
+                        "gui connection timed out; disconnecting (runs are not cancelled)"
+                    );
                     break;
                 }
             }
@@ -195,14 +227,8 @@ async fn run(
                         break;
                     }
                 };
-                match handle_frame(
-                    &inner,
-                    frame,
-                    &client_id,
-                    &mut session,
-                )
-                .await
-                {
+                let _ = inner.connections.heartbeat(&client_id, now_timestamp());
+                match handle_frame(&inner, frame, &client_id).await {
                     FrameOutcome::None => {}
                     FrameOutcome::Reply(replies) => {
                         let mut sent = true;
@@ -224,6 +250,7 @@ async fn run(
         }
     }
     let _ = stop_tx.send(());
+    inner.connections.unregister(&client_id);
     let _ = connection.close().await;
 }
 
@@ -270,12 +297,22 @@ async fn handshake_phase(
         let _ = connection.close().await;
         return None;
     };
+    let current = inner.host.current_sequence();
+    let earliest_available = inner
+        .host
+        .earliest_available()
+        .unwrap_or(GlobalSequence(0));
     let session = HandshakeSession::new(client_id.clone(), connection_id.clone())
         .with_resume_context(ResumeContext {
-            earliest_available: GlobalSequence(0),
-            current: GlobalSequence(0),
+            earliest_available,
+            current,
         })
-        .with_last_global_sequence(GlobalSequence(0));
+        .with_last_global_sequence(
+            inner
+                .connections
+                .last_ack(client_id)
+                .unwrap_or(GlobalSequence(0)),
+        );
     let response = inner.handshake.accept(&request, session);
     let negotiated = match &response {
         HandshakeResponse::Accepted {
@@ -299,105 +336,12 @@ async fn handshake_phase(
         let _ = connection.close().await;
         return None;
     }
-    Some(HandshakeOutcome { response })
+    Some(HandshakeOutcome { request, response })
 }
 
 enum FrameOutcome {
     None,
     Reply(Vec<ServerFrame>),
-}
-
-#[derive(Clone)]
-struct ResumeLog {
-    events: Arc<StdMutex<VecDeque<AppEventEnvelope>>>,
-    last_forwarded: Arc<StdMutex<Option<GlobalSequence>>>,
-    dropped: Arc<StdMutex<u64>>,
-}
-
-impl ResumeLog {
-    fn new() -> Self {
-        Self {
-            events: Arc::new(StdMutex::new(VecDeque::new())),
-            last_forwarded: Arc::new(StdMutex::new(None)),
-            dropped: Arc::new(StdMutex::new(0)),
-        }
-    }
-
-    fn record(&self, envelope: AppEventEnvelope) {
-        let mut last = self.last_forwarded.lock().expect("last forwarded");
-        if let Some(previous) = *last {
-            if !envelope.global_sequence.is_immediately_after(previous) {
-                tracing::warn!(
-                    previous = previous.0,
-                    current = envelope.global_sequence.0,
-                    "gui-server saw non-contiguous global_sequence; not reordering"
-                );
-            }
-        }
-        *last = Some(envelope.global_sequence);
-        drop(last);
-        let mut log = self.events.lock().expect("resume log");
-        if log.len() == RESUME_LOG_CAPACITY {
-            log.pop_front();
-        }
-        log.push_back(envelope);
-    }
-
-    fn earliest_available(&self) -> GlobalSequence {
-        self.events
-            .lock()
-            .expect("resume log")
-            .front()
-            .map(|event| event.global_sequence)
-            .unwrap_or(GlobalSequence(0))
-    }
-
-    fn current(&self) -> GlobalSequence {
-        self.events
-            .lock()
-            .expect("resume log")
-            .back()
-            .map(|event| event.global_sequence)
-            .unwrap_or(GlobalSequence(0))
-    }
-
-    fn replay(&self, from: GlobalSequence, through: GlobalSequence) -> Vec<AppEventEnvelope> {
-        self.events
-            .lock()
-            .expect("resume log")
-            .iter()
-            .filter(|event| event.global_sequence.0 >= from.0 && event.global_sequence.0 <= through.0)
-            .cloned()
-            .collect()
-    }
-}
-
-struct SessionState {
-    subscriptions: HashSet<String>,
-    last_ack: GlobalSequence,
-    resume_log: ResumeLog,
-}
-
-impl SessionState {
-    fn new() -> Self {
-        Self {
-            subscriptions: HashSet::new(),
-            last_ack: GlobalSequence(0),
-            resume_log: ResumeLog::new(),
-        }
-    }
-
-    fn earliest_available(&self) -> GlobalSequence {
-        self.resume_log.earliest_available()
-    }
-
-    fn current(&self) -> GlobalSequence {
-        self.resume_log.current()
-    }
-
-    fn replay(&self, from: GlobalSequence, through: GlobalSequence) -> Vec<AppEventEnvelope> {
-        self.resume_log.replay(from, through)
-    }
 }
 
 fn host_stamp_command(
@@ -432,7 +376,6 @@ async fn handle_frame(
     inner: &Inner,
     frame: ClientFrame,
     client_id: &GuiClientId,
-    session: &mut SessionState,
 ) -> FrameOutcome {
     match frame {
         ClientFrame::Command(envelope) => {
@@ -509,16 +452,25 @@ async fn handle_frame(
         ClientFrame::Heartbeat { nonce } => FrameOutcome::Reply(vec![ServerFrame::Pong { nonce }]),
         ClientFrame::Pong { .. } => FrameOutcome::None,
         ClientFrame::Subscribe(request) => {
-            session.subscriptions.insert(request.subscription_id);
-            FrameOutcome::None
+            match inner.connections.subscribe(
+                client_id,
+                &request.subscription_id,
+                request.streams,
+            ) {
+                Ok(()) => FrameOutcome::None,
+                Err(error) => {
+                    FrameOutcome::Reply(vec![manager_error_frame(Some(request.request_id), &error)])
+                }
+            }
         }
         ClientFrame::Unsubscribe {
-            subscription_id, ..
-        } => {
-            session.subscriptions.remove(&subscription_id);
-            FrameOutcome::None
-        }
-        ClientFrame::Resume(request) => handle_resume(session, request),
+            request_id,
+            subscription_id,
+        } => match inner.connections.unsubscribe(client_id, &subscription_id) {
+            Ok(()) => FrameOutcome::None,
+            Err(error) => FrameOutcome::Reply(vec![manager_error_frame(Some(request_id), &error)]),
+        },
+        ClientFrame::Resume(request) => handle_resume(inner, client_id, request).await,
         ClientFrame::SnapshotRequest { request_id } => match inner.host.snapshot().await {
             Ok(snapshot) => FrameOutcome::Reply(vec![ServerFrame::Snapshot(snapshot)]),
             Err(error) => FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
@@ -527,7 +479,9 @@ async fn handle_frame(
             })]),
         },
         ClientFrame::Ack { global_sequence } => {
-            session.last_ack = global_sequence;
+            if let Err(error) = inner.connections.ack(client_id, global_sequence) {
+                tracing::debug!(%client_id, %error, "gui ack failed");
+            }
             FrameOutcome::None
         }
         ClientFrame::Handshake(_) => {
@@ -539,13 +493,23 @@ async fn handle_frame(
     }
 }
 
-fn handle_resume(session: &SessionState, request: ResumeRequest) -> FrameOutcome {
-    let current = session.current();
-    let earliest = session.earliest_available();
+async fn handle_resume(
+    inner: &Inner,
+    client_id: &GuiClientId,
+    request: ResumeRequest,
+) -> FrameOutcome {
+    let current = inner.host.current_sequence();
+    let earliest = inner
+        .host
+        .earliest_available()
+        .unwrap_or(GlobalSequence(0));
     // Resume 用请求中的 last_global_sequence；为 0 时回落到 Ack 记录，
     // 使 Ack 能影响后续 Resume disposition。
-    let last = if request.last_global_sequence.0 == 0 && session.last_ack.0 != 0 {
-        session.last_ack
+    let last = if request.last_global_sequence.0 == 0 {
+        inner
+            .connections
+            .last_ack(client_id)
+            .unwrap_or(GlobalSequence(0))
     } else {
         request.last_global_sequence
     };
@@ -558,109 +522,77 @@ fn handle_resume(session: &SessionState, request: ResumeRequest) -> FrameOutcome
         ResumeDisposition::Replay {
             from_sequence,
             through_sequence,
-        } => {
-            replies.extend(
-                session
-                    .replay(from_sequence, through_sequence)
-                    .into_iter()
-                    .map(ServerFrame::Event),
-            );
+        } => match inner.host.replay(from_sequence, Some(through_sequence)) {
+            Ok(events) => replies.extend(events.into_iter().map(ServerFrame::Event)),
+            Err(error) => {
+                tracing::warn!(%error, "resume replay unavailable; falling back to snapshot");
+                replies.clear();
+                replies.push(ServerFrame::Resume(ResumeResponse {
+                    request_id: request.request_id,
+                    disposition: ResumeDisposition::SnapshotRequired {
+                        earliest_available_sequence: inner
+                            .host
+                            .earliest_available()
+                            .unwrap_or(GlobalSequence(0)),
+                    },
+                }));
+                if let Ok(snapshot) = inner.host.snapshot().await {
+                    replies.push(ServerFrame::Snapshot(snapshot));
+                }
+            }
+        },
+        ResumeDisposition::SnapshotRequired { .. } => {
+            if let Ok(snapshot) = inner.host.snapshot().await {
+                replies.push(ServerFrame::Snapshot(snapshot));
+            }
         }
-        ResumeDisposition::SnapshotRequired { .. } | ResumeDisposition::UpToDate { .. } => {}
+        ResumeDisposition::UpToDate { .. } => {}
     }
     FrameOutcome::Reply(replies)
 }
 
-#[derive(Clone)]
-struct BoundedEventQueue {
-    items: Arc<StdMutex<Option<VecDeque<AppEventEnvelope>>>>,
-    notify: Arc<tokio::sync::Notify>,
-    capacity: usize,
-    dropped: Arc<StdMutex<u64>>,
-}
-
-impl BoundedEventQueue {
-    fn new(capacity: usize) -> Self {
-        Self {
-            items: Arc::new(StdMutex::new(Some(VecDeque::new()))),
-            notify: Arc::new(tokio::sync::Notify::new()),
-            capacity,
-            dropped: Arc::new(StdMutex::new(0)),
-        }
-    }
-
-    fn push(&self, event: AppEventEnvelope) -> bool {
-        let mut guard = self.items.lock().expect("event queue");
-        let Some(items) = guard.as_mut() else {
-            return false;
-        };
-        if items.len() == self.capacity {
-            items.pop_front();
-            if let Ok(mut count) = self.dropped.lock() {
-                *count += 1;
-            }
-        }
-        items.push_back(event);
-        self.notify.notify_one();
-        true
-    }
-
-    fn close(&self) {
-        *self.items.lock().expect("event queue") = None;
-        self.notify.notify_waiters();
-    }
-
-    async fn recv(&self) -> Option<AppEventEnvelope> {
-        loop {
-            {
-                let mut guard = self.items.lock().expect("event queue");
-                match guard.as_mut() {
-                    Some(items) => {
-                        if let Some(event) = items.pop_front() {
-                            return Some(event);
-                        }
-                    }
-                    None => return None,
-                }
-            }
-            self.notify.notified().await;
-        }
-    }
-}
-
 fn spawn_forwarder(
-    mut subscription: broadcast::Receiver<AppEventEnvelope>,
-    event_queue: BoundedEventQueue,
-    resume_log: ResumeLog,
+    inner: Arc<Inner>,
+    client_id: GuiClientId,
     stop: oneshot::Receiver<()>,
 ) -> tokio::task::JoinHandle<()> {
+    let mut subscription = inner.host.subscribe_events();
     tokio::spawn(async move {
         let mut stop = stop;
         loop {
             tokio::select! {
-                _ = &mut stop => {
-                    event_queue.close();
-                    return;
-                }
+                _ = &mut stop => return,
                 received = subscription.recv() => {
                     match received {
                         Ok(event) => {
-                            // 双写：环形日志始终记录；有界队列满则丢最旧，不阻塞 host。
-                            resume_log.record(event.clone());
-                            if !event_queue.push(event) {
-                                return;
+                            if !inner.connections.should_forward(&client_id, &event.stream) {
+                                continue;
+                            }
+                            if let Err(error) = inner.connections.enqueue(&client_id, event) {
+                                match error {
+                                    ManagerError::Lagged { .. } => continue,
+                                    ManagerError::UnknownClient(_) | ManagerError::ChannelClosed(_) => {
+                                        return
+                                    }
+                                    ManagerError::AlreadyRegistered(_) => {
+                                        unreachable!("registration happens once at session start")
+                                    }
+                                }
                             }
                         }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            event_queue.close();
-                            return;
+                        Err(broadcast::error::RecvError::Closed) => return,
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            let _ = inner.connections.mark_lagged(&client_id);
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     }
                 }
             }
         }
     })
+}
+
+fn watchdog_interval(timeout: Duration) -> Duration {
+    Duration::from_millis((timeout.as_millis() / 2).max(1) as u64)
 }
 
 fn negotiated_version(response: &HandshakeResponse) -> ApiVersion {
@@ -673,6 +605,30 @@ fn negotiated_version(response: &HandshakeResponse) -> ApiVersion {
             unreachable!("handshake_phase only returns accepted outcomes")
         }
     }
+}
+
+fn granted_capabilities(response: &HandshakeResponse) -> Vec<GuiCapability> {
+    match response {
+        HandshakeResponse::Accepted { capabilities, .. } => capabilities.clone(),
+        HandshakeResponse::Rejected { .. } => Vec::new(),
+    }
+}
+
+fn manager_error_frame(request_id: Option<String>, error: &ManagerError) -> ServerFrame {
+    let (code, retryable) = match error {
+        ManagerError::UnknownClient(_) => (ProtocolErrorCode::RequestNotFound, false),
+        ManagerError::AlreadyRegistered(_) => (ProtocolErrorCode::Internal, false),
+        ManagerError::Lagged { .. } => (ProtocolErrorCode::ReplayUnavailable, true),
+        ManagerError::ChannelClosed(_) => (ProtocolErrorCode::Internal, false),
+    };
+    ServerFrame::Error(ProtocolErrorEnvelope {
+        request_id,
+        error: ProtocolError {
+            code,
+            message: error.to_string(),
+            retryable,
+        },
+    })
 }
 
 fn host_error_to_protocol(error: &GuiHostError) -> ProtocolError {

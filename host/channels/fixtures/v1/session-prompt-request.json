@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "session/prompt",
+  "params": {
+    "sessionId": "acp-golden-session",
+    "prompt": [
+      {
+        "type": "text",
+        "text": "hello"
+      }
+    ]
+  }
+}

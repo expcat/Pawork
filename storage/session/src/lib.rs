@@ -3,10 +3,13 @@
 //! `session_events` 是事实来源；其他表均为可删除、可从事件重建的 Projection。
 
 mod catalog;
+mod client_adapter;
 mod event_store;
 pub mod import;
+mod lifecycle;
 mod migration;
 mod projection;
+mod session_tree;
 
 #[cfg(feature = "compaction")]
 pub mod compaction;
@@ -17,7 +20,10 @@ use pawork_sqlite::{DatabaseActor, DatabaseError, MigrationError};
 use thiserror::Error;
 
 pub use catalog::SessionRecord;
+pub use client_adapter::SqliteClientSessionRegistryStore;
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
+pub use lifecycle::{IntegrityReport, LeaseReceipt, MissingParent, SequenceGap};
+pub use session_tree::{BranchNode, SessionTree};
 pub use import::{
     parse_pi_line, CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport,
     ExportedBranch, ExportedEvent, ExternalRecord, ExternalSource, ParsedExternalSession,
@@ -142,6 +148,16 @@ pub enum SessionStoreError {
         active_branch: String,
         requested_branch: String,
     },
+    #[error("session {session_id} still has persisted events; archive instead of deleting")]
+    SessionHasEvents { session_id: String },
+    #[error("lease for session {session_id} is held by {holder} until {expires_at_ms}ms")]
+    LeaseHeld {
+        session_id: String,
+        holder: String,
+        expires_at_ms: i64,
+    },
+    #[error("no lease is held for session {session_id} by the requested holder")]
+    LeaseNotHeld { session_id: String },
     #[error("event sequence is not contiguous: expected {expected}, got {actual}")]
     NonContiguousSequence { expected: u64, actual: u64 },
     #[error("event sequence overflow")]

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork Session Event Store、schema 迁移与可重建 Projection"
+description = "Pawork Session Event Store、lifecycle/lease、分支 Fork 与可重建 Projection"
 
 [features]
 # V1 compaction-engine（engine/retention/snapshot）迁入，默认关闭。
@@ -15,7 +15,9 @@ compaction = []
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
+pawork-protocol = { path = "../../foundation/protocol", default-features = false, features = ["adapter"] }
 pawork-sqlite = { path = "../../foundation/sqlite" }
+async-trait.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,12 +1,14 @@
-//! pawork-exec：进程树 + 沙箱。
+//! pawork-exec：进程树 + 沙箱 + PTY。
 //!
 //! 本 crate 不依赖 pawork-domain / pawork-policy（W1 自含）。
 //! 取消令牌用本 crate `cancel`；路径判断用本 crate `path`。
+//! PTY 输出留在本模块环形缓冲，不写入 Agent Event Store。
 
 pub mod cancel;
 mod os;
 mod path;
 mod process;
+mod pty;
 mod sandbox;
 mod tree;
 
@@ -23,6 +25,11 @@ pub use sandbox::{
     SandboxInteractiveProcess, SandboxPolicy, SandboxProcess, SandboxProcessSpec, SandboxSelector,
 };
 pub use tree::ProcessTreeGuard;
+pub use pty::{
+    OwnerSessionId, OutputCursor, PtyCreateSpec, PtyError, PtyEvent, PtyOutputChunk, PtyService,
+    PtySessionState, PtySnapshot, PtyWindowSize, RingBuffer, RingReadError, TerminalId,
+    DEFAULT_BUFFER_CAPACITY,
+};
 
 pub use os::linux::{
     bwrap_probe_reason, generate_bwrap_argv, probe_landlock_support, LandlockSupport,

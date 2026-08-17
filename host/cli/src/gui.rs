@@ -48,6 +48,7 @@ pub async fn run_gui(core: AppCore, command: GuiCommand) -> Result<(), CliError>
         host: Arc::new(adapter),
         handshake,
         transport: Arc::clone(&transport) as Arc<dyn GuiTransportServer>,
+        connections: None,
     });
     let listener = server
         .bind(TransportEndpoint::Local { address })

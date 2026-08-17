@@ -5,12 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork 进程树与沙箱（Job Object / 进程组 / Landlock / Seatbelt / AppContainer）"
+description = "Pawork 进程树、沙箱与 PTY（Job Object / 进程组 / Landlock / Seatbelt / AppContainer / 重连快照）"
 
 [dependencies]
 async-trait.workspace = true
 dunce.workspace = true
 libc.workspace = true
+parking_lot.workspace = true
+portable-pty = "0.8"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

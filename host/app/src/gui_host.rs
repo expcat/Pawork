@@ -662,6 +662,34 @@ impl GuiHost for GuiHostAdapter {
     fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<AppEventEnvelope> {
         self.bus.subscribe()
     }
+
+    fn current_sequence(&self) -> GlobalSequence {
+        GlobalSequence(self.bus.current_sequence())
+    }
+
+    fn earliest_available(&self) -> Option<GlobalSequence> {
+        self.bus.hub().earliest_available()
+    }
+
+    fn replay(
+        &self,
+        from: GlobalSequence,
+        through: Option<GlobalSequence>,
+    ) -> Result<Vec<AppEventEnvelope>, GuiHostError> {
+        self.bus.replay(from, through).map_err(|error| match error {
+            HubError::ReplayUnavailable {
+                requested_from,
+                earliest_available,
+            } => Self::host_error(
+                "replay_unavailable",
+                format!(
+                    "replay from {} unavailable; earliest is {}",
+                    requested_from.0, earliest_available.0
+                ),
+            ),
+            other => Self::host_error("internal", other.to_string()),
+        })
+    }
 }
 
 impl GuiHostAdapter {

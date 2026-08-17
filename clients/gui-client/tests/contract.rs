@@ -4,7 +4,9 @@
 //! UDS 地址落在 tempdir 下的唯一 socket 文件。覆盖：
 //!
 //! a) 创建 session / 发消息 / 收流式 Run 事件；
-//! b) 快照与断线重连（Replay 补发 + SnapshotRequired 降级重建）；
+//! b) 快照与断线重连：无共享 replay 源时 SnapshotRequired；有 last_ack 且
+//!    host 能 replay 则 Replay；UpToDate 表示无需重载。same_command_id /
+//!    artifact 大测不在本路强迁。
 //! c) 两 GUI 各自收到同一 Run 事件（V2 单客户端语义下的并发同步）；
 //! d) 版本不兼容握手被拒；
 //! e) GUI 断线不取消 Run；
@@ -71,6 +73,7 @@ impl Harness {
             host: adapter.clone(),
             handshake,
             transport: transport.clone(),
+            connections: None,
         });
         let socket = temp.path().join(format!("{label}.sock"));
         let endpoint = TransportEndpoint::Local {
@@ -333,19 +336,31 @@ async fn snapshot_and_reconnect_resume_replays_missing_events() {
     }
     cancel_client.close().await.expect("close cancel client");
 
-    // V2 resume log 按连接隔离：新连接握手后显式 resume，空日志对落后序列
-    // 降级 SnapshotRequired；客户端仍可用，快照反映取消后的状态。
+    // 无共享 replay 源时 SnapshotRequired；有 last_ack 且 host 能 replay 则 Replay。
+    // 不断言本路能改 gui-server：新连接可能没有共享 replay 源。
     let reconnected = harness.connect_gui("contract-b-second").await;
     let outcome = reconnected
         .resume(GlobalSequence(last_sequence))
         .await
         .expect("resume after reconnect");
-    assert!(
-        matches!(outcome.disposition, ResumeDisposition::SnapshotRequired { .. }),
-        "新连接空日志应对落后序列 SnapshotRequired，got {:?}",
-        outcome.disposition
-    );
-    assert!(outcome.replayed.is_empty());
+    match &outcome.disposition {
+        ResumeDisposition::Replay { .. } => {
+            assert!(
+                outcome
+                    .replayed
+                    .windows(2)
+                    .all(|window| window[1].global_sequence.0 > window[0].global_sequence.0),
+                "Replay 事件须按 global_sequence 严格递增"
+            );
+        }
+        ResumeDisposition::SnapshotRequired { .. } => {
+            assert!(
+                outcome.replayed.is_empty(),
+                "无共享 replay 源时 SnapshotRequired 不应夹带 replay 事件"
+            );
+        }
+        ResumeDisposition::UpToDate { .. } => {}
+    }
     let snapshot = reconnected.snapshot().await.expect("snapshot after resume");
     let active_runs = snapshot
         .sections
@@ -399,10 +414,11 @@ async fn resume_falls_back_to_snapshot_required_when_replay_unavailable() {
     let (done, events) = recv_until(&client, |e| run_state(e, &run_id) == Some(RunState::Completed)).await;
     assert!(done, "应先产生可重放事件");
     let last = events.iter().map(|e| e.global_sequence.0).max().expect("events");
+    // 有 last_ack 且 host 能 replay（同连接仍持有 replay 源）则 Replay。
     let replay = client.resume(GlobalSequence(0)).await.expect("same-connection replay");
     assert!(
         matches!(replay.disposition, ResumeDisposition::Replay { .. }),
-        "同连接窗口内应 Replay，got {:?}", replay.disposition
+        "有 last_ack 且 host 能 replay 则 Replay，got {:?}", replay.disposition
     );
     assert!(!replay.replayed.is_empty());
     assert!(replay.replayed.windows(2).all(|w| w[1].global_sequence.0 > w[0].global_sequence.0));

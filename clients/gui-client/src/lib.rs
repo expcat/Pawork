@@ -77,6 +77,7 @@ impl Default for ClientConfig {
                 GuiCapability::Snapshots,
                 GuiCapability::ArtifactStreaming,
                 GuiCapability::Approvals,
+                GuiCapability::TerminalStreaming,
             ],
             supported_api_versions: SUPPORTED_API_VERSIONS.to_vec(),
         }
@@ -1065,6 +1066,14 @@ mod tests {
         MockConnection {
             frames: Mutex::new(VecDeque::from(frames)),
         }
+    }
+
+    #[test]
+    fn default_capabilities_include_terminal_streaming() {
+        // Desktop S10 握手声明 TerminalStreaming；默认配置与之对齐，不另造类型。
+        assert!(ClientConfig::default()
+            .capabilities
+            .contains(&GuiCapability::TerminalStreaming));
     }
 
     #[tokio::test]

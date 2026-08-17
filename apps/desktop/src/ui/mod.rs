@@ -14,8 +14,8 @@ use gpui::{
 use crate::controller::{ControllerEvent, DesktopController};
 use crate::platform::Platform;
 use crate::projection::{
-    ConnectionState, DesktopProjection, ModelEntry, TaskRailDateGroup, TaskRailGrouping,
-    TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, UNASSIGNED_PROJECT,
+    ConnectionState, DesktopProjection, ModelEntry, ResumeApply, TaskRailDateGroup,
+    TaskRailGrouping, TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, UNASSIGNED_PROJECT,
 };
 
 pub use text_input::{SendMessage, TextInput};
@@ -71,7 +71,9 @@ pub struct AppView {
     socket: PathBuf,
     projection: DesktopProjection,
     text_input: Entity<TextInput>,
+    terminal_input: Entity<TextInput>,
     scroll_handle: ScrollHandle,
+    terminal_scroll: ScrollHandle,
     status_hint: Option<String>,
     model_menu_open: bool,
     grouping: TaskRailGrouping,
@@ -79,19 +81,25 @@ pub struct AppView {
     grouping_menu_open: bool,
     scope_menu_open: bool,
     collapsed_projects: BTreeSet<String>,
+    inspector_open: bool,
 }
 
 impl AppView {
     pub fn new(platform: Arc<Platform>, socket: PathBuf, cx: &mut Context<Self>) -> Self {
         let controller = Arc::new(DesktopController::new(platform.handle()));
         let text_input = cx.new(|cx| TextInput::new(cx));
+        let terminal_input = cx.new(|cx| {
+            TextInput::with_placeholder("Terminal input… (Enter to write)", cx)
+        });
         let mut view = Self {
             _platform: platform,
             controller,
             socket,
             projection: DesktopProjection::default(),
             text_input,
+            terminal_input,
             scroll_handle: ScrollHandle::new(),
+            terminal_scroll: ScrollHandle::new(),
             status_hint: None,
             model_menu_open: false,
             grouping: TaskRailGrouping::Timeline,
@@ -99,6 +107,7 @@ impl AppView {
             grouping_menu_open: false,
             scope_menu_open: false,
             collapsed_projects: BTreeSet::new(),
+            inspector_open: true,
         };
         view.start_connect(cx);
         view
@@ -119,9 +128,14 @@ impl AppView {
         let socket = self.socket.clone();
         cx.spawn(async move |this, cx| {
             match controller.connect(socket).await {
-                Ok((snapshot, events)) => {
+                Ok(connected) => {
                     this.update(cx, |view, cx| {
-                        view.on_connected(snapshot, events, cx);
+                        view.on_connected(
+                            connected.snapshot,
+                            connected.resume,
+                            connected.events,
+                            cx,
+                        );
                     })
                     .ok();
                 }
@@ -143,26 +157,45 @@ impl AppView {
     fn on_connected(
         &mut self,
         snapshot: pawork_client::Snapshot,
+        resume: Option<pawork_client::ResumeOutcome>,
         events: smol::channel::Receiver<ControllerEvent>,
         cx: &mut Context<Self>,
     ) {
         let instance_id = snapshot.instance_id.as_str().to_string();
         let previous_session = self.projection.active_session_id.clone();
-        self.projection.merge_snapshot(&snapshot);
         self.projection
             .set_connection(ConnectionState::Connected { instance_id });
+        let apply = match &resume {
+            None => {
+                self.projection.apply_fresh_snapshot(&snapshot);
+                ResumeApply::Fresh
+            }
+            Some(outcome) => self.projection.apply_resume_outcome(outcome, &snapshot),
+        };
+        self.status_hint = self.projection.resume.label();
         self.controller.load_models();
         self.consume_events(events, cx);
-        if let Some(session_id) = previous_session {
-            if self
-                .projection
-                .sessions
-                .iter()
-                .any(|session| session.session_id == session_id)
-            {
-                self.open_session(session_id, cx);
-                return;
+        match apply {
+            ResumeApply::ReplaceBaseline => {
+                if let Some(session_id) = self.projection.active_session_id.clone() {
+                    self.open_session(session_id, cx);
+                    return;
+                }
             }
+            ResumeApply::Fresh => {
+                if let Some(session_id) = previous_session {
+                    if self
+                        .projection
+                        .sessions
+                        .iter()
+                        .any(|session| session.session_id == session_id)
+                    {
+                        self.open_session(session_id, cx);
+                        return;
+                    }
+                }
+            }
+            ResumeApply::Continued { .. } | ResumeApply::Unchanged => {}
         }
         cx.notify();
     }
@@ -204,10 +237,24 @@ impl AppView {
             ControllerEvent::Event(envelope) => {
                 if self.projection.apply_event(&envelope) {
                     self.scroll_handle.scroll_to_bottom();
+                    self.terminal_scroll.scroll_to_bottom();
                 }
             }
             ControllerEvent::SessionCreated { session_id } => {
                 self.open_session(session_id, cx);
+            }
+            ControllerEvent::SessionForked { session_id } => {
+                self.status_hint = Some(format!("Forked · {session_id}"));
+                self.open_session(session_id, cx);
+            }
+            ControllerEvent::TerminalCreated { terminal_session_id } => {
+                self.projection.terminal.session_id = Some(terminal_session_id.clone());
+                self.controller.terminal_resize(
+                    terminal_session_id,
+                    self.projection.terminal.columns,
+                    self.projection.terminal.rows,
+                );
+                self.inspector_open = true;
             }
             ControllerEvent::MessageSent { session_id, run_id } => {
                 if self.projection.active_session_id.as_deref() == Some(&session_id) {
@@ -372,12 +419,111 @@ impl AppView {
         self.send_current_message(cx);
     }
 
-    fn on_send_message(&mut self, _: &SendMessage, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_send_message(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .terminal_input
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window)
+        {
+            if self.terminal_input.read(cx).is_composing() {
+                return;
+            }
+            self.send_terminal_input(cx);
+            return;
+        }
         // IME 组合中的 Enter 属于输入法确认（gui-design §6）。
         if self.text_input.read(cx).is_composing() {
             return;
         }
         self.send_current_message(cx);
+    }
+
+    fn on_fork(&mut self, event_id: &str, cx: &mut Context<Self>) {
+        let Some(session_id) = self.projection.active_session_id.clone() else {
+            self.status_hint = Some("Open a session before forking.".into());
+            cx.notify();
+            return;
+        };
+        if !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) {
+            self.status_hint = Some("Fork needs a live connection.".into());
+            cx.notify();
+            return;
+        }
+        self.controller
+            .fork_session(session_id, event_id.to_string());
+        cx.notify();
+    }
+
+    fn on_toggle_inspector(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.inspector_open = !self.inspector_open;
+        cx.notify();
+    }
+
+    fn on_start_terminal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.ensure_terminal(cx);
+        cx.notify();
+    }
+
+    fn on_apply_terminal_size(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.projection.terminal.session_id.clone() {
+            self.controller.terminal_resize(
+                id,
+                self.projection.terminal.columns,
+                self.projection.terminal.rows,
+            );
+        }
+        cx.notify();
+    }
+
+    fn ensure_terminal(&mut self, cx: &mut Context<Self>) {
+        if self.projection.terminal.session_id.is_some() {
+            return;
+        }
+        if !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) {
+            self.status_hint = Some("Terminal needs a live connection.".into());
+            return;
+        }
+        let Some(workspace) = self
+            .scope_workspace_id
+            .clone()
+            .or_else(|| self.projection.workspace_id.clone())
+        else {
+            self.status_hint = Some("Choose a project before opening Terminal.".into());
+            return;
+        };
+        self.controller
+            .terminal_create(workspace, Some(self.projection.terminal.cwd.clone()));
+    }
+
+    fn send_terminal_input(&mut self, cx: &mut Context<Self>) {
+        if self.projection.terminal.session_id.is_none() {
+            self.ensure_terminal(cx);
+            self.status_hint = Some("Starting terminal…".into());
+            cx.notify();
+            return;
+        }
+        let Some(id) = self.projection.terminal.session_id.clone() else {
+            return;
+        };
+        let text = self.terminal_input.read(cx).text().to_string();
+        if text.trim().is_empty() {
+            return;
+        }
+        let data = if text.ends_with('\n') {
+            text
+        } else {
+            format!("{text}\n")
+        };
+        self.controller.terminal_write(id, data);
+        self.terminal_input.update(cx, |input, cx| input.clear(cx));
+        cx.notify();
     }
 
     fn send_current_message(&mut self, cx: &mut Context<Self>) {
@@ -715,8 +861,8 @@ impl AppView {
         block
     }
 
-    fn timeline_entry_element(entry: &TimelineEntry) -> gpui::Div {
-        match &entry.kind {
+    fn timeline_entry_element(&self, entry: &TimelineEntry, cx: &mut Context<Self>) -> gpui::Div {
+        let body = match &entry.kind {
             TimelineEntryKind::UserMessage { text } => div()
                 .py_1()
                 .text_color(rgb(0xe8e8e8))
@@ -749,7 +895,150 @@ impl AppView {
                 .py_1()
                 .text_color(rgb(0xf48771))
                 .child(format!("Error: {message}")),
-        }
+        };
+        let event_id = entry.event_id.clone();
+        let can_fork = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && self.projection.active_session_id.is_some();
+        div()
+            .flex()
+            .flex_row()
+            .items_start()
+            .justify_between()
+            .gap_2()
+            .child(div().flex_1().child(body))
+            .child(
+                div()
+                    .id(SharedString::from(format!("fork-{}", entry.event_id)))
+                    .px_1()
+                    .text_size(px(11.))
+                    .text_color(if can_fork { rgb(0x9a9a9a) } else { rgb(0x5a5a5a) })
+                    .cursor_pointer()
+                    .child("Fork")
+                    .when(can_fork, |button| {
+                        button.on_click(cx.listener(move |view, _event, _window, cx| {
+                            view.on_fork(&event_id, cx);
+                        }))
+                    }),
+            )
+    }
+
+    fn inspector_element(&self, connected: bool, cx: &mut Context<Self>) -> gpui::Div {
+        let terminal = &self.projection.terminal;
+        let output = if terminal.output.is_empty() {
+            "Terminal output will appear here. No local PTY — host streams TerminalOutput."
+                .to_string()
+        } else {
+            terminal.output.clone()
+        };
+        let size_label = format!("{}×{}", terminal.columns, terminal.rows);
+        let cwd = terminal.cwd.clone();
+        let started = terminal.session_id.is_some();
+        div()
+            .flex()
+            .flex_col()
+            .w(px(320.))
+            .h_full()
+            .bg(rgb(0x161616))
+            .border_l_1()
+            .border_color(rgb(0x2e2e2e))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(rgb(0x2e2e2e))
+                    .child(
+                        div()
+                            .id("inspector-tab-terminal")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(0x2a2a2a))
+                            .text_size(px(12.))
+                            .child("Terminal"),
+                    )
+                    .child(
+                        div()
+                            .id("inspector-collapse")
+                            .px_2()
+                            .text_size(px(12.))
+                            .text_color(rgb(0x9a9a9a))
+                            .cursor_pointer()
+                            .child("⟩")
+                            .on_click(cx.listener(|view, _event, window, cx| {
+                                view.on_toggle_inspector(window, cx);
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .text_size(px(11.))
+                    .text_color(rgb(0x9a9a9a))
+                    .child(format!("cwd {cwd}"))
+                    .child(
+                        div()
+                            .id("terminal-resize")
+                            .cursor_pointer()
+                            .child(size_label)
+                            .on_click(cx.listener(|view, _event, window, cx| {
+                                view.on_apply_terminal_size(window, cx);
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .id("terminal-output")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .track_scroll(&self.terminal_scroll)
+                    .overflow_y_scroll()
+                    .px_2()
+                    .py_1()
+                    .text_size(px(12.))
+                    .text_color(rgb(0xc8c8c8))
+                    .child(output),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .p_2()
+                    .border_t_1()
+                    .border_color(rgb(0x2e2e2e))
+                    .child(div().flex_1().child(self.terminal_input.clone()))
+                    .child(
+                        div()
+                            .id("terminal-start")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(if connected { rgb(0x2a2a2a) } else { rgb(0x242424) })
+                            .text_size(px(11.))
+                            .cursor_pointer()
+                            .child(if started { "Size" } else { "Start" })
+                            .on_click(cx.listener(move |view, _event, window, cx| {
+                                if started {
+                                    view.on_apply_terminal_size(window, cx);
+                                } else {
+                                    view.on_start_terminal(window, cx);
+                                }
+                            })),
+                    ),
+            )
     }
 }
 
@@ -763,7 +1052,10 @@ impl Render for AppView {
         let model_label = self.model_label();
         let model_menu_open = self.model_menu_open && can_switch_model;
         let connection_label = match &self.projection.connection {
-            ConnectionState::Connected { .. } => "Local · Connected".into(),
+            ConnectionState::Connected { .. } => match self.projection.resume.label() {
+                Some(resume) => format!("Local · Connected · {resume}"),
+                None => "Local · Connected".into(),
+            },
             other => other.label(),
         };
         let composer_hint = self.composer_hint();
@@ -914,7 +1206,7 @@ impl Render for AppView {
                 self.projection
                     .timeline
                     .iter()
-                    .map(Self::timeline_entry_element),
+                    .map(|entry| self.timeline_entry_element(entry, cx)),
             )
             .when(self.projection.pending_approval.is_some(), |timeline| {
                 let pending = self
@@ -1094,6 +1386,38 @@ impl Render for AppView {
                     .child(self.status_hint.clone().unwrap_or(composer_hint)),
             );
 
+        let inspector_open = self.inspector_open;
+        let workspace = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .child(timeline)
+            .child(composer);
+
+        let mut main = div().flex().flex_row().flex_1().child(workspace);
+        if inspector_open {
+            main = main.child(self.inspector_element(connected, cx));
+        } else {
+            main = main.child(
+                div()
+                    .id("inspector-expand")
+                    .w(px(28.))
+                    .h_full()
+                    .bg(rgb(0x161616))
+                    .border_l_1()
+                    .border_color(rgb(0x2e2e2e))
+                    .px_1()
+                    .py_2()
+                    .text_size(px(11.))
+                    .text_color(rgb(0x9a9a9a))
+                    .cursor_pointer()
+                    .child("⟨")
+                    .on_click(cx.listener(|view, _event, window, cx| {
+                        view.on_toggle_inspector(window, cx);
+                    })),
+            );
+        }
+
         div()
             .flex()
             .size_full()
@@ -1106,8 +1430,7 @@ impl Render for AppView {
                     .flex()
                     .flex_col()
                     .flex_1()
-                    .child(timeline)
-                    .child(composer)
+                    .child(main)
                     .child(
                         div()
                             .h(px(24.))

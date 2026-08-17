@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork GUI 协议服务器（单客户端 S7 切片）"
+description = "Pawork GUI 协议服务器（多客户端、共源 Replay、慢客户端隔离）"
 
 [dependencies]
 pawork-protocol = { path = "../../foundation/protocol" }
@@ -20,5 +20,5 @@ futures.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-pawork-transport = { path = "../transport" }
+pawork-transport = { path = "../transport", features = ["local", "memory"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }

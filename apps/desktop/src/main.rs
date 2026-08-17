@@ -1,9 +1,7 @@
-//! pawork-desktop：GPUI 最小 Agent 壳（S7 波 C）。
+//! pawork-desktop：GPUI Agent 壳（S10 Replay / Fork / Terminal）。
 //!
 //! 四层结构：ui（GPUI 渲染与交互）/ projection（纯状态机）/
 //! controller（只调 pawork-client）/ platform（socket 发现 + tokio 宿主）。
-//! 范围：TaskRail（日期→项目→Task）+ Timeline + Composer 发送/取消、
-//! 时间线审批、跨通道模型切换。
 
 mod controller;
 mod platform;
@@ -17,7 +15,7 @@ use std::time::Duration;
 use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
 
 use crate::controller::ControllerEvent;
-use crate::projection::{DesktopProjection, TimelineEntryKind};
+use crate::projection::{DesktopProjection, ResumeApply, TimelineEntryKind};
 
 fn main() {
     let args = match parse_args() {
@@ -78,9 +76,9 @@ fn run_probe(socket: PathBuf) -> i32 {
     let platform = platform::Platform::new();
     let controller = controller::DesktopController::new(platform.handle());
     match platform.block_on(async {
-        let (snapshot, _events) = controller.connect(socket).await?;
+        let connected = controller.connect(socket).await?;
         let models = controller.fetch_models().await.unwrap_or_default();
-        Ok::<_, String>((snapshot, models))
+        Ok::<_, String>((connected.snapshot, models))
     }) {
         Ok((snapshot, models)) => {
             let projection = projection::DesktopProjection::from_snapshot(&snapshot);
@@ -125,7 +123,9 @@ async fn probe_smoke(
     controller: &controller::DesktopController,
     socket: PathBuf,
 ) -> Result<String, String> {
-    let (snapshot, mut events) = controller.connect(socket.clone()).await?;
+    let connected = controller.connect(socket.clone()).await?;
+    let snapshot = connected.snapshot;
+    let mut events = connected.events;
     let trusted = workspace_trusted(&snapshot);
     let mut projection = DesktopProjection::from_snapshot(&snapshot);
     let models = controller.fetch_models().await?;
@@ -202,20 +202,31 @@ async fn probe_smoke(
         .count();
 
     controller.disconnect().await;
-    let (snapshot, next_events) = controller.connect(socket.clone()).await?;
-    events = next_events;
-    projection = DesktopProjection::from_snapshot(&snapshot);
-    projection.set_models(models.clone());
+    let connected = controller.connect(socket.clone()).await?;
+    events = connected.events;
+    apply_probe_resume(&mut projection, &connected, &models, &session_id, &controller);
     if !projection
         .sessions
         .iter()
         .any(|session| session.session_id == session_id)
+        && connected.resume.as_ref().is_some_and(|outcome| {
+            matches!(
+                outcome.disposition,
+                pawork_client::ResumeDisposition::SnapshotRequired { .. }
+            )
+        })
     {
         return Err("reconnect snapshot missing the smoke session".into());
     }
-    projection.select_session(&session_id);
-    controller.open_session(session_id.clone());
-    let persisted = wait_for_timeline(&events, &mut projection, Duration::from_secs(15)).await?;
+    let persisted = if projection.timeline.is_empty() {
+        if projection.active_session_id.as_deref() != Some(session_id.as_str()) {
+            projection.select_session(&session_id);
+        }
+        controller.open_session(session_id.clone());
+        wait_for_timeline(&events, &mut projection, Duration::from_secs(15)).await?
+    } else {
+        projection.timeline.len()
+    };
     if persisted == 0 {
         return Err("reconnect timeline is empty".into());
     }
@@ -227,10 +238,12 @@ async fn probe_smoke(
     );
     let live_run = wait_for_run_id(&events, &mut projection, Duration::from_secs(30)).await?;
     controller.disconnect().await;
-    let (snapshot, next_events) = controller.connect(socket).await?;
-    events = next_events;
-    projection = DesktopProjection::from_snapshot(&snapshot);
-    projection.select_session(&session_id);
+    let connected = controller.connect(socket).await?;
+    events = connected.events;
+    apply_probe_resume(&mut projection, &connected, &models, &session_id, &controller);
+    if projection.active_session_id.as_deref() != Some(session_id.as_str()) {
+        projection.select_session(&session_id);
+    }
     let disconnect_survive = if projection.active_run_id.as_deref() == Some(live_run.as_str())
         || projection
             .active_runs
@@ -265,6 +278,36 @@ async fn probe_smoke(
         },
         if approval { "approved" } else { "not_requested" },
     ))
+}
+
+fn apply_probe_resume(
+    projection: &mut DesktopProjection,
+    connected: &controller::DesktopConnect,
+    models: &[projection::ModelEntry],
+    session_id: &str,
+    controller: &controller::DesktopController,
+) {
+    projection.set_models(models.to_vec());
+    match &connected.resume {
+        None => {
+            *projection = DesktopProjection::from_snapshot(&connected.snapshot);
+            projection.set_models(models.to_vec());
+            projection.select_session(session_id);
+        }
+        Some(outcome) => match projection.apply_resume_outcome(outcome, &connected.snapshot) {
+            ResumeApply::ReplaceBaseline | ResumeApply::Fresh => {
+                if projection
+                    .sessions
+                    .iter()
+                    .any(|session| session.session_id == session_id)
+                {
+                    projection.select_session(session_id);
+                    controller.open_session(session_id.to_string());
+                }
+            }
+            ResumeApply::Continued { .. } | ResumeApply::Unchanged => {}
+        },
+    }
 }
 
 fn workspace_trusted(snapshot: &pawork_client::Snapshot) -> Option<bool> {
