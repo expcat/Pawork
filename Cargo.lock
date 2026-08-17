@@ -4749,6 +4749,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pawork-memory"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pawork-api",
+ "pawork-domain",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "pawork-net"
 version = "0.1.0"
 dependencies = [
@@ -4874,6 +4885,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pawork-review"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "pawork-domain",
+ "pawork-git",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "pawork-sdk"
 version = "0.1.0"
 dependencies = [
@@ -4964,6 +4988,22 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
+name = "pawork-workflow"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "parking_lot",
+ "pawork-domain",
+ "pawork-exec",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
  "tracing",
 ]
 

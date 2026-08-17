@@ -1,6 +1,6 @@
 # S11：工作流、多 Agent 与控制面
 
-> 阶段 S11 · 编排与治理 · 状态：🔵进行中（波 A ✅）· 依赖：S10（app/cli 正式化、Event Hub）· 规模：大
+> 阶段 S11 · 编排与治理 · 状态：🔵进行中（波 A ✅ · 波 B ✅）· 依赖：S10（app/cli 正式化、Event Hub）· 规模：大
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -63,7 +63,7 @@
 
 ## 并行拆分建议
 
-沿用 [archive/M7](archive/README.md) 四波：波 A 控制面三包（trait 先行）∥ 波 B 工作流三包 → 波 C orchestration（依赖波 A trait）→ 波 D host 接线（Plan gate/usage/demo，单一 owner 串行）。
+沿用 [archive/M7](archive/README.md) 四波：波 A 控制面三包（trait 先行）∥ 波 B 工作流三包（✅）→ 波 C orchestration（依赖波 A trait）→ 波 D host 接线（Plan gate/usage/demo，单一 owner 串行）。
 
 ## 参考
 

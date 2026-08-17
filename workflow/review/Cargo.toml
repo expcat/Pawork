@@ -1,0 +1,19 @@
+[package]
+name = "pawork-review"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 行锚点评审、re-anchor 与 resolution 生命周期"
+
+[dependencies]
+pawork-domain = { path = "../../foundation/domain" }
+pawork-git = { path = "../../vcs/git" }
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
