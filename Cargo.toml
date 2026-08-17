@@ -15,6 +15,7 @@ members = [
     "engine/*",
     "extensions/*",
     "workflow/*",
+    "agents/*",
     "control-plane/*",
     "host/*",
     "clients/*",

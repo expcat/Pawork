@@ -4775,6 +4775,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pawork-orchestration"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "parking_lot",
+ "pawork-control-plane",
+ "pawork-domain",
+ "pawork-git",
+ "pawork-provider-control",
+ "pawork-workflow",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pawork-policy"
 version = "0.1.0"
 dependencies = [
