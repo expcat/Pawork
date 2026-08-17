@@ -25,8 +25,8 @@ pub use cancel::{
 };
 pub use context::{
     compute_compaction, AutoCompactionReason, CompactionReason, CompactionTrigger, ContextBudget,
-    ContextBudgetBreakdown, ContextLimits, HeuristicEstimator, TokenEstimator, ToolSchema,
-    TrimThresholds, TrimmedToolResult, TurnContext,
+    ContextBudgetBreakdown, ContextLimits, HeuristicEstimator, InjectedLayer, TokenEstimator,
+    ToolSchema, TrimThresholds, TrimmedToolResult, TurnContext,
 };
 pub use event::{map_provider_event, AgentEventSink, EngineError, LoopEventEmitter};
 pub use session_turn::{now_timestamp, run_session_turn, SessionTurn};

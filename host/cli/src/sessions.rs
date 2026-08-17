@@ -1,6 +1,8 @@
 //! `pawork sessions list/show`。
 
-use pawork_app::AppCore;
+use pawork_app::{
+    parse_session_source, AppCore, SessionImportFormat, SessionImportOutcome,
+};
 use pawork_domain::{ContentPart, Message, MessageRole};
 
 use crate::{CliError, SessionsCommand};
@@ -13,6 +15,12 @@ pub async fn run_sessions(
     match command {
         SessionsCommand::List => list(core, json).await,
         SessionsCommand::Show { session } => show(core, &session, json).await,
+        SessionsCommand::Export { session, out } => export(core, session, out, json).await,
+        SessionsCommand::Import {
+            path,
+            format,
+            source,
+        } => import(core, path, format, source, json).await,
     }
 }
 
@@ -146,6 +154,131 @@ fn message_text(message: &Message) -> String {
         }
     }
     parts.join(" ")
+}
+
+async fn export(
+    core: &AppCore,
+    session: Option<String>,
+    out: Option<std::path::PathBuf>,
+    json: bool,
+) -> Result<(), CliError> {
+    let (session_id, export) = core.export_session_doc(session.as_deref()).await?;
+    let payload = serde_json::to_string_pretty(&export).map_err(json_err)?;
+    if json && out.is_none() {
+        println!("{payload}");
+        return Ok(());
+    }
+    let path = out.unwrap_or_else(|| {
+        std::path::PathBuf::from(format!("{}.export.json", session_id.as_str()))
+    });
+    std::fs::write(&path, payload)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "session_id": session_id.as_str(),
+                "path": path,
+            })
+        );
+    } else {
+        println!("exported {} → {}", session_id.as_str(), path.display());
+    }
+    Ok(())
+}
+
+async fn import(
+    core: &AppCore,
+    path: std::path::PathBuf,
+    format: Option<String>,
+    source: Option<String>,
+    json: bool,
+) -> Result<(), CliError> {
+    let format = match format.as_deref() {
+        Some(name) => SessionImportFormat::parse(name)?,
+        None => detect_session_format(&path)?,
+    };
+    let source = match source.as_deref() {
+        Some(name) => Some(parse_session_source(name)?),
+        None => None,
+    };
+    let outcome = core.import_session_file(&path, format, source).await?;
+    match outcome {
+        SessionImportOutcome::Export { session_id } => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "format": "export",
+                        "session_id": session_id,
+                    })
+                );
+            } else {
+                println!("imported session {session_id}");
+            }
+        }
+        SessionImportOutcome::Compat(report) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "format": "compat",
+                        "session_id": report.session_id,
+                        "imported_events": report.imported_events,
+                        "deduplicated": report.deduplicated,
+                    })
+                );
+            } else {
+                println!(
+                    "imported compat session {} ({} events{})",
+                    report.session_id,
+                    report.imported_events,
+                    if report.deduplicated { ", deduplicated" } else { "" }
+                );
+            }
+        }
+        SessionImportOutcome::Pi(report) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "format": "pi",
+                        "imported_messages": report.imported_messages,
+                        "parsed_entries": report.parsed_entries,
+                    })
+                );
+            } else {
+                println!(
+                    "imported pi session ({} messages, {} entries)",
+                    report.imported_messages, report.parsed_entries
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn detect_session_format(path: &std::path::Path) -> Result<SessionImportFormat, CliError> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    if name.ends_with(".jsonl") {
+        return Ok(SessionImportFormat::Pi);
+    }
+    if name.ends_with(".export.json") {
+        return Ok(SessionImportFormat::Export);
+    }
+    let text = std::fs::read_to_string(path)?;
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('{') {
+        if trimmed.contains("\"schema_version\"") {
+            return Ok(SessionImportFormat::Export);
+        }
+        return Ok(SessionImportFormat::Compat);
+    }
+    Err(CliError::Usage(
+        "cannot detect session format; pass --format export|compat|pi".into(),
+    ))
 }
 
 pub(crate) fn format_millis(ms: i64) -> String {

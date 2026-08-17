@@ -19,7 +19,7 @@ use pawork_domain::{
 use crate::appender::{tool_results_message, AssembledTurn, ToolCallResult};
 use crate::context::{
     compute_compaction, reply_primer_tokens, AutoCompactionReason, ContextBudgetBreakdown,
-    ToolSchema, TokenEstimator, TurnContext,
+    InjectedLayer, ToolSchema, TokenEstimator, TurnContext,
 };
 use crate::event::{AgentEventSink, EngineError, EventEmitter, LoopEventEmitter, LoopSink};
 use crate::session_turn::SessionTurn;
@@ -154,7 +154,15 @@ pub async fn run_session(
         return emit_cancelled(&emitter, "turn cancelled").await;
     }
 
-    let mut current = request;
+    let mut current = apply_injected_layers(request, &context.injected_layers);
+    if !context.injected_layers.is_empty() {
+        emitter
+            .emit(AgentEvent::Diagnostic {
+                code: "resources.injected".into(),
+                details: injected_layers_details(&context.injected_layers),
+            })
+            .await?;
+    }
     let mut tool_rounds = 0_u64;
     let mut run_usage = TokenUsage::default();
     let mut run_approved = false;
@@ -365,11 +373,68 @@ pub async fn run_session(
     }
 }
 
-/// 一轮请求的输入估算：工具 schema、历史与总量的 token 计数。
+/// 一轮请求的输入估算：system / 工具 schema / 历史与总量的 token 计数。
 struct InputEstimate {
+    system_prompt_tokens: u64,
     tool_schema_tokens: u64,
     history_tokens: u64,
     estimated_input_tokens: u64,
+}
+
+const INJECTED_SYSTEM_ID: &str = "msg-resources";
+
+/// 把资源层拼成一条 System 消息，插到请求最前。不改冻结请求结构。
+fn apply_injected_layers(
+    mut request: CanonicalModelRequest,
+    layers: &[InjectedLayer],
+) -> CanonicalModelRequest {
+    ensure_injected_prefix(&mut request.messages, layers);
+    request
+}
+
+fn injected_system_message(layers: &[InjectedLayer]) -> Option<Message> {
+    if layers.is_empty() {
+        return None;
+    }
+    let text = layers
+        .iter()
+        .map(|layer| {
+            format!(
+                "[{kind}] {id}\n{content}",
+                kind = layer.kind,
+                id = layer.resource_id,
+                content = layer.content
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Some(Message {
+        id: MessageId::from(INJECTED_SYSTEM_ID),
+        role: MessageRole::System,
+        content: vec![ContentPart::Text(TextContent { text })],
+        metadata: Default::default(),
+    })
+}
+
+fn ensure_injected_prefix(messages: &mut Vec<Message>, layers: &[InjectedLayer]) {
+    let Some(system) = injected_system_message(layers) else {
+        return;
+    };
+    messages.retain(|message| message.id.as_str() != INJECTED_SYSTEM_ID);
+    messages.insert(0, system);
+}
+
+fn injected_layers_details(layers: &[InjectedLayer]) -> serde_json::Value {
+    serde_json::json!({
+        "layers": layers.iter().map(|layer| {
+            serde_json::json!({
+                "kind": layer.kind,
+                "resource_id": layer.resource_id,
+                "byte_len": layer.content.len(),
+            })
+        }).collect::<Vec<_>>(),
+        "byte_len": layers.iter().map(|layer| layer.content.len()).sum::<usize>(),
+    })
 }
 
 /// canonical ToolDefinition 转 context 侧可计数的 ToolSchema。
@@ -390,15 +455,24 @@ fn estimate_input_at(
     request: &CanonicalModelRequest,
 ) -> InputEstimate {
     let tool_schema_tokens = estimator.count_tool_schemas(&tool_schemas(request));
-    let history_tokens = request
-        .messages
-        .iter()
-        .map(|message| estimator.count_message(message))
-        .sum();
+    let mut system_prompt_tokens = 0;
+    let mut history_tokens = 0;
+    for message in &request.messages {
+        let tokens = estimator.count_message(message);
+        if message.role == MessageRole::System {
+            system_prompt_tokens += tokens;
+        } else {
+            history_tokens += tokens;
+        }
+    }
     InputEstimate {
+        system_prompt_tokens,
         tool_schema_tokens,
         history_tokens,
-        estimated_input_tokens: tool_schema_tokens + history_tokens + reply_primer_tokens(),
+        estimated_input_tokens: system_prompt_tokens
+            + tool_schema_tokens
+            + history_tokens
+            + reply_primer_tokens(),
     }
 }
 
@@ -407,6 +481,7 @@ fn estimate_input(context: &TurnContext, request: &CanonicalModelRequest) -> Inp
     match context.estimator.as_deref() {
         Some(estimator) => estimate_input_at(estimator, request),
         None => InputEstimate {
+            system_prompt_tokens: 0,
             tool_schema_tokens: 0,
             history_tokens: 0,
             estimated_input_tokens: 0,
@@ -435,7 +510,7 @@ async fn apply_context_limits(
         return Ok(());
     };
     let breakdown = ContextBudgetBreakdown {
-        system_prompt_tokens: 0,
+        system_prompt_tokens: estimate.system_prompt_tokens,
         tool_schema_tokens: estimate.tool_schema_tokens,
         attachment_tokens: 0,
         history_tokens: estimate.history_tokens,
@@ -464,6 +539,7 @@ async fn apply_context_limits(
             .await?
             {
                 current.messages = rebuilt;
+                ensure_injected_prefix(&mut current.messages, &context.injected_layers);
                 *estimate = estimate_input_at(estimator, current);
             }
         }
@@ -694,7 +770,17 @@ fn truncate_for_budget(
     let floor = retained_messages.min(request.messages.len());
     let mut dropped: u64 = 0;
     while estimate(&request.messages) > max_input_tokens && request.messages.len() > floor {
-        request.messages.remove(0);
+        let Some(idx) = request
+            .messages
+            .iter()
+            .position(|message| message.role != MessageRole::System)
+        else {
+            break;
+        };
+        if request.messages.len().saturating_sub(idx) <= floor {
+            break;
+        }
+        request.messages.remove(idx);
         dropped += 1;
     }
     (dropped, estimate(&request.messages))
@@ -1221,6 +1307,7 @@ mod tests {
             }),
             estimator: Some(Arc::new(HeuristicEstimator::default())),
             retained_messages,
+            injected_layers: Vec::new(),
         }
     }
 
@@ -2166,6 +2253,63 @@ mod tests {
         assert!(!types.contains(&"CompactionCompleted"));
         assert!(!types.contains(&"Diagnostic"));
         assert_eq!(provider.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn injected_layers_prepend_system_and_emit_diagnostic() {
+        let provider = RecordingProvider::new(MockProvider::new(
+            MockScript::new().text("ok").complete(),
+        ));
+        let sink = RecordingEvents::default();
+        let ctx = TestContext::new(Vec::new());
+        let mut context = TurnContext {
+            estimator: Some(Arc::new(HeuristicEstimator::default())),
+            ..TurnContext::default()
+        };
+        context.injected_layers = vec![InjectedLayer {
+            kind: "root_agents_file".into(),
+            resource_id: "AGENTS.md".into(),
+            content: "所有回答以『收到』开头".into(),
+        }];
+
+        run_session(
+            &provider,
+            sample_request(Vec::new()),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            context,
+        )
+        .await
+        .expect("injected run");
+
+        let types = sink.types();
+        assert!(types.contains(&"Diagnostic"));
+        let diagnostic = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
+                AgentEvent::Diagnostic { code, details } => Some((code, details)),
+                _ => None,
+            })
+            .expect("resources diagnostic");
+        assert_eq!(diagnostic.0, "resources.injected");
+        assert_eq!(diagnostic.1["layers"][0]["resource_id"], "AGENTS.md");
+
+        let request = &provider.requests()[0];
+        assert_eq!(request.messages[0].role, MessageRole::System);
+        let text = match &request.messages[0].content[0] {
+            ContentPart::Text(body) => body.text.as_str(),
+            _ => panic!("expected text"),
+        };
+        assert!(text.contains("收到"), "{text}");
+        let prepared = context_prepared_events(&sink);
+        assert!(
+            prepared[0].1 > 0,
+            "injected system must count toward ContextPrepared: {prepared:?}"
+        );
     }
 
     #[tokio::test]

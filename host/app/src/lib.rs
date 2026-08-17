@@ -10,7 +10,9 @@ mod channels;
 mod checkpoint;
 mod data_dir;
 mod diff;
+mod extensions;
 mod gui_host;
+mod import_host;
 mod loop_ctx;
 mod persist;
 mod protocol;
@@ -52,12 +54,8 @@ use pawork_auth::{
 use pawork_policy::PolicyEngine;
 use pawork_provider_core::{CatalogEntry, ModelRegistry};
 use pawork_session::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
-use pawork_tools::{
-    ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, RunCommandTool,
-    SearchTextTool, ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig,
-    WriteFileTool,
-};
-use pawork_workspace::{WorkspaceError, WorkspaceService};
+use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
+use pawork_workspace::{FileIndex, FileIndexError, WorkspaceError, WorkspaceService};
 use thiserror::Error;
 
 use crate::loop_ctx::SessionLoopCtx;
@@ -80,8 +78,14 @@ pub use auth::{AuthChannelStatus, AuthSource, OAuthLogin};
 pub use channels::{
     first_party_channel, is_first_party, ChannelKind, FirstPartyChannel, FIRST_PARTY_CHANNELS,
 };
+pub use extensions::{AtAttachment, McpServerStatus};
+pub use import_host::{
+    parse_session_source, CompatImportItemView, CompatImportPreview, CompatImportReport,
+    CompatTool, SessionImportFormat, SessionImportOutcome,
+};
+pub use pawork_compat::ExternalSource as CompatExternalSource;
 pub use pawork_policy::{ApprovalMode, RiskLevel};
-pub use pawork_session::SessionRecord;
+pub use pawork_session::{SessionExport, SessionRecord, EXPORT_SCHEMA_VERSION};
 
 /// 从配置文件与 CLI 覆盖构造 [`AppCore`] 的选项。
 #[derive(Clone, Default)]
@@ -195,6 +199,16 @@ pub enum AppError {
     CheckpointNotFound(String),
     #[error("ambiguous checkpoint `{prefix}` matches: {matches}")]
     AmbiguousCheckpoint { prefix: String, matches: String },
+    #[error(transparent)]
+    Mcp(#[from] pawork_mcp::McpError),
+    #[error(transparent)]
+    Resources(#[from] pawork_resources::ResourceLoadError),
+    #[error(transparent)]
+    Compat(#[from] pawork_compat::error::CompatError),
+    #[error(transparent)]
+    FileIndex(#[from] FileIndexError),
+    #[error("{0}")]
+    Import(String),
 }
 
 /// S5 压缩在 engine 侧保留的最近消息条数；session 侧保留策略按
@@ -286,6 +300,10 @@ pub struct AppCore {
     workspace_trusted: bool,
     approval_host: Arc<dyn ApprovalPromptHost>,
     pub(crate) workspace_roots: Vec<PathBuf>,
+    pub(crate) workspaces: WorkspaceService,
+    pub(crate) file_index: FileIndex,
+    pub(crate) resource_loader: Option<pawork_resources::ResourceLoader>,
+    pub(crate) mcp_servers: Vec<extensions::McpServerSlot>,
     pub(crate) checkpoints: Option<pawork_blob_store::CheckpointService>,
     pub(crate) artifacts: Option<pawork_blob_store::ArtifactStore>,
     next_request: AtomicU64,
@@ -364,6 +382,7 @@ impl AppCore {
         if let Some(root) = workspace_root.as_deref() {
             core.attach_workspace(root)?;
         }
+        core.prime_extensions().await?;
         let data_dir = options.data_dir.unwrap_or_else(default_data_dir);
         core.open_store(session_db_path(&data_dir)).await?;
         core.open_checkpoints(artifact_store_path(&data_dir)).await?;
@@ -387,6 +406,7 @@ impl AppCore {
         } else if let Ok(cwd) = std::env::current_dir() {
             core.attach_workspace(&cwd)?;
         }
+        core.prime_extensions().await?;
         let store_path = store_path.as_ref();
         core.open_store(store_path).await?;
         if let Some(parent) = store_path.parent() {
@@ -583,6 +603,10 @@ impl AppCore {
             workspace_trusted: false,
             approval_host: Arc::new(DenyAllApprovals),
             workspace_roots: Vec::new(),
+            workspaces: WorkspaceService::new(),
+            file_index: Self::new_file_index(),
+            resource_loader: None,
+            mcp_servers: Vec::new(),
             checkpoints: None,
             artifacts: None,
             next_request: AtomicU64::new(1),
@@ -638,36 +662,10 @@ impl AppCore {
         let workspaces = WorkspaceService::new();
         let workspace_id = WorkspaceId::from("ws-default");
         workspaces.add(workspace_id.clone(), "default", [root.to_path_buf()])?;
-
-        let mut registry = ToolRegistry::new();
-        registry.extend([
-            Arc::new(ReadFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-            Arc::new(ListDirectoryTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-            Arc::new(SearchTextTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-            Arc::new(FindFilesTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-            Arc::new(WriteFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-            Arc::new(EditFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-            Arc::new(ApplyPatchTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-            Arc::new(RunCommandTool::new(workspaces)) as Arc<dyn pawork_api::AgentTool>,
-        ])?;
-        self.descriptors = registry.descriptors();
-        self.tool_defs = self
-            .descriptors
-            .iter()
-            .map(|descriptor| ToolDefinition {
-                name: descriptor.name.clone(),
-                description: descriptor.description.clone(),
-                input_schema: descriptor.input_schema.clone(),
-            })
-            .collect();
-        self.scheduler = Arc::new(ToolScheduler::new(
-            registry,
-            ToolSchedulerConfig {
-                max_concurrent: 8,
-                approval_mode: self.approval_mode,
-                workspace_trusted: self.workspace_trusted,
-            },
-        ));
+        self.install_builtin_tools(&workspaces)?;
+        self.resource_loader = Some(Self::resource_loader_for(workspaces.clone()));
+        self.file_index = Self::new_file_index();
+        self.workspaces = workspaces;
         self.workspace_id = workspace_id;
         self.workspace_name = "default".into();
         self.workspace_roots = vec![root.to_path_buf()];
@@ -1190,6 +1188,8 @@ impl AppCore {
             store: self.store()?,
             render,
         };
+        let mut turn_context = self.turn_context();
+        turn_context.injected_layers = self.load_injected_layers();
         let loop_ctx = SessionLoopCtx {
             scheduler: self.scheduler.clone(),
             workspace_id: self.workspace_id.clone(),
@@ -1215,7 +1215,7 @@ impl AppCore {
             cancel,
             &loop_ctx,
             DEFAULT_MAX_TOOL_ROUNDS,
-            self.turn_context(),
+            turn_context,
         )
         .await?)
     }
@@ -1227,11 +1227,15 @@ impl AppCore {
     /// 本会话模型的上下文配置：registry 解析 window / max_output 推导预算；
     /// 目录无条目或 window 为 0 时退回禁用（与 S5 前行为一致，不编造窗口）。
     pub fn turn_context(&self) -> TurnContext {
+        let some_estimator = || TurnContext {
+            estimator: Some(self.heuristic.clone()),
+            ..TurnContext::default()
+        };
         let Some(entry) = self.registry.resolve(self.model.as_str()) else {
-            return TurnContext::default();
+            return some_estimator();
         };
         if entry.context_window_tokens == 0 {
-            return TurnContext::default();
+            return some_estimator();
         }
         let output_reserve = if entry.max_output_tokens > 0 {
             entry.max_output_tokens
@@ -1252,6 +1256,7 @@ impl AppCore {
             }),
             estimator: Some(self.heuristic.clone()),
             retained_messages: RETAINED_MESSAGES,
+            injected_layers: Vec::new(),
         }
     }
 
@@ -1544,6 +1549,7 @@ impl AppCore {
     }
 
     pub async fn shutdown(self) -> Result<(), AppError> {
+        self.shutdown_mcp().await;
         if let Some(store) = self.store {
             store.shutdown().await?;
         }
@@ -2734,13 +2740,13 @@ mod tests {
         assert_eq!(limits.history_soft_limit_tokens, Some(146_892));
         assert!(context.estimator.is_some());
 
-        // 目录无条目：禁用而非编造窗口，与 S5 前行为一致。
+        // 目录无条目：不编造窗口（limits 仍关），但保留估算器以便注入计入 ContextPrepared。
         let core = core_with_registry(ModelRegistry::builtin(), "no-such-model");
         let context = core.turn_context();
         assert!(context.limits.is_none());
-        assert!(context.estimator.is_none());
+        assert!(context.estimator.is_some());
 
-        // config 覆盖 window=0：显式未知同样禁用。
+        // config 覆盖 window=0：显式未知同样不启用压缩，但仍估算。
         let mut zero_window = ModelRegistry::builtin();
         apply_config_models(
             &mut zero_window,
@@ -2752,7 +2758,9 @@ mod tests {
             &ProviderId::from("mock"),
         );
         let core = core_with_registry(zero_window, "glm-5.2");
-        assert!(core.turn_context().limits.is_none());
+        let context = core.turn_context();
+        assert!(context.limits.is_none());
+        assert!(context.estimator.is_some());
     }
 
     #[test]
@@ -3363,5 +3371,96 @@ mod tests {
         let title = session_title_from_text(&long);
         assert!(title.ends_with('…'));
         assert_eq!(title.chars().count(), 72);
+    }
+
+    #[tokio::test]
+    async fn resource_loader_injects_root_agents_md() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::fs::write(
+            workspace.path().join("AGENTS.md"),
+            "所有回答以『收到』开头\n",
+        )
+        .expect("agents");
+        let (mut core, _store) = mock_core(Vec::new()).await;
+        core.attach_workspace(workspace.path()).expect("attach");
+        let layers = core.load_injected_layers();
+        assert!(
+            layers.iter().any(|layer| {
+                layer.kind == "root_agents_file" && layer.content.contains("收到")
+            }),
+            "{layers:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn expand_at_refs_adds_separate_content_part() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::fs::write(workspace.path().join("ROADMAP.md"), "phase S9 wiring\n")
+            .expect("roadmap");
+        let (mut core, _store) = mock_core(Vec::new()).await;
+        core.attach_workspace(workspace.path()).expect("attach");
+        core.prime_extensions().await.expect("prime");
+        let parts = core
+            .expand_at_refs("请根据附件：@ROADMAP 回答")
+            .expect("expand");
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        match &parts[0] {
+            ContentPart::Text(text) => assert_eq!(text.text, "请根据附件：@ROADMAP 回答"),
+            other => panic!("expected user text, got {other:?}"),
+        }
+        match &parts[1] {
+            ContentPart::Text(text) => {
+                assert!(text.text.contains("ROADMAP.md"), "{text:?}");
+                assert!(text.text.contains("phase S9 wiring"), "{text:?}");
+            }
+            other => panic!("expected attachment, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn compat_import_writes_pawork_files_and_keeps_source_mtime() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let home = tempfile::tempdir().expect("home");
+        std::fs::write(workspace.path().join("CLAUDE.md"), "keep diffs small\n")
+            .expect("claude md");
+        let (mut core, _store) = mock_core(Vec::new()).await;
+        core.attach_workspace(workspace.path()).expect("attach");
+        let source = workspace.path().join("CLAUDE.md");
+        let before = std::fs::metadata(&source).expect("meta").modified().ok();
+        let before_bytes = std::fs::read(&source).expect("bytes");
+        let report = core
+            .apply_compat_import(pawork_compat::ExternalSource::Claude, Some(home.path()))
+            .expect("import");
+        assert!(report.sources_unchanged);
+        assert_eq!(
+            std::fs::metadata(&source).expect("meta").modified().ok(),
+            before
+        );
+        assert_eq!(std::fs::read(&source).expect("bytes"), before_bytes);
+        let imported = std::fs::read_to_string(workspace.path().join(".pawork/instructions.md"))
+            .expect("instructions");
+        assert!(imported.contains("keep diffs small"), "{imported}");
+    }
+
+    #[tokio::test]
+    async fn session_export_v3_round_trip() {
+        let (core, _store) = mock_core(Vec::new()).await;
+        let session = core.create_session("export-me").await.expect("create");
+        let (_, export) = core
+            .export_session_doc(Some(session.as_str()))
+            .await
+            .expect("export");
+        assert_eq!(export.schema_version, pawork_session::EXPORT_SCHEMA_VERSION);
+        let dir = tempfile::tempdir().expect("import store");
+        let path = dir.path().join("session.db");
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        store
+            .import_session(&export, &export.tenant_id, &export.principal_id)
+            .await
+            .expect("import");
+        let imported = store.get_session(&session).await.expect("imported session");
+        assert_eq!(imported.title, "export-me");
+        store.shutdown().await.expect("shutdown import store");
+        core.shutdown().await.expect("shutdown");
     }
 }

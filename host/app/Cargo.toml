@@ -27,6 +27,10 @@ pawork-tools = { path = "../../execution/tools" }
 pawork-policy = { path = "../../execution/policy" }
 pawork-provider-core = { path = "../../providers/core" }
 pawork-workspace = { path = "../../workspace/core" }
+pawork-resources = { path = "../../workspace/resources" }
+pawork-mcp = { path = "../../extensions/mcp" }
+pawork-compat = { path = "../../clients/compat" }
+pawork-exec = { path = "../../execution/exec" }
 pawork-blob-store = { path = "../../storage/blob", features = ["checkpoint"] }
 pawork-git = { path = "../../vcs/git" }
 pawork-net = { path = "../../net/net", features = ["http"] }
@@ -40,6 +44,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
 reqwest.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

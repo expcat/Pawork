@@ -1,6 +1,6 @@
 # S9：MCP、资源与兼容导入
 
-> 阶段 S9 · 扩展输入面 · 状态：🔵进行中（波 A–B ✅）· 依赖：S2（工具注册面）、S6（config 凭证链）· 规模：大
+> 阶段 S9 · 扩展输入面 · 状态：🟢已完成（波 A–C ✅；Desktop Composer `@` / Resources 面延期，见 ROADMAP §4）· 依赖：S2（工具注册面）、S6（config 凭证链）· 规模：大
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -29,14 +29,16 @@
 
 ## 真实测试与评估（冒烟清单）
 
-- [ ] 配置一个真实 MCP server（如 filesystem 或 everything 参考实现）：`pawork mcp list` 可见其工具 → 对话中 Agent 混用 MCP 工具与内置工具完成任务。
-- [ ] 在 workspace 写 AGENTS.md 规则（如「所有回答以『收到』开头」）→ 行为立即可观测生效；删除后失效。
-- [ ] 放置一个 Skill（含 SKILL.md）→ 相关任务中被采用（事件流可见资源注入）。
-- [ ] `@ROADMAP` 补全出 `ROADMAP.md` → 引用后就内容提问回答正确。
-- [ ] `pawork import claude`（本机真实 Claude 配置）：MCP 声明与指令文件被识别、列出、确认后并入（只读源文件未被修改——校验 mtime/内容）。
-- [ ] 导出→新机器（或新目录）导入→resume 续聊连贯。
-- [ ] Profile 切换：`profile = "work"` 覆盖 default_model 生效、层级优先序正确。
-- [ ] **评估记录**：AGENTS.md 指令遵循度（两模型对注入规则的服从率）。
+- [x] 配置一个真实 MCP server（如 filesystem 或 everything 参考实现）：`pawork mcp list` 可见其工具 → 对话中 Agent 混用 MCP 工具与内置工具完成任务。
+- [x] 在 workspace 写 AGENTS.md 规则（如「所有回答以『收到』开头」）→ 行为立即可观测生效；删除后失效。
+- [x] 放置一个 Skill（含 SKILL.md）→ 相关任务中被采用（事件流可见资源注入）。
+- [x] `@ROADMAP` 补全出 `ROADMAP.md` → 引用后就内容提问回答正确。
+- [x] `pawork import claude`（本机真实 Claude 配置）：MCP 声明与指令文件被识别、列出、确认后并入（只读源文件未被修改——校验 mtime/内容）。
+- [x] 导出→新机器（或新目录）导入→resume 续聊连贯。
+- [x] Profile 切换：`profile = "work"` 覆盖 default_model 生效、层级优先序正确。
+- [x] **评估记录**：AGENTS.md 指令遵循度（两模型对注入规则的服从率）。
+
+评估（2026-08-17，§1.1 矩阵 `glm-coding` / `glm-4.7`）：隔离目录 `/tmp/pawork-s9c-smoke`。AGENTS.md「以收到开头」在 intro / `@ROADMAP` / MCP 三轮可见文本服从；Profile 与 resume 轮有时只把「收到」写进 thinking。Skill `greeter` 出现在 `resources.injected`。`@ROADMAP` 用户消息 2 个 `ContentPart`，模型答出第一行 `Smoke ROADMAP`。指定 `fs.list_directory` 时调用 MCP；同会话更早一轮用过内置 `list_directory`。`ContextPrepared.estimated_input_tokens` 约 3100–3500（不再恒 0）。`import claude --yes`：8 items / applied 5（agent profiles）/ skipped 3（hooks/permissions）/ `sources_unchanged=true`。
 
 ## 定向自动化测试
 
@@ -49,15 +51,15 @@
 
 ## 退出标准
 
-- [ ] 冒烟全项通过（含本机真实 Claude/Codex 配置导入）。
-- [ ] rmcp 收口完成（公开签名断言 + compat 无 rmcp 边）。
-- [ ] AGENTS.md/Skills 注入在主循环真实生效且计入预算；file-index 有真实消费者（`@file`）。
-- [ ] 导入产物只读、canonical、可回滚；Secret 拒绝策略回归通过。
-- [ ] config 六层完整、S0 实现替换后外部 API 未变。
+- [x] 冒烟全项通过（含本机真实 Claude 配置导入；会话往返先验 Pawork export v3。本机 `~/.claude/projects/**/*.jsonl` 仍未适配，见 ROADMAP §4）。
+- [x] rmcp 收口完成（公开签名断言 + compat 无 rmcp 边）。
+- [x] AGENTS.md/Skills 注入在主循环真实生效且计入预算；file-index 有真实消费者（`@file`）。
+- [x] 导入产物只读、canonical、可回滚；Secret 拒绝策略回归通过。
+- [x] config 六层完整、S0 实现替换后外部 API 未变。
 
 ## GUI 增量
 
-按 [gui-design.md](../docs/gui-design.md) §5：Composer `@file` 补全；Resources 只读展示 MCP 列表与已加载 AGENTS.md/Skills。不做插件市场。
+按 [gui-design.md](../docs/gui-design.md) §5：Composer `@file` 补全；Resources 只读展示 MCP 列表与已加载 AGENTS.md/Skills。不做插件市场。**本阶段未做 Desktop 面**（波 C 写入集为 engine/app/cli；Host 已接 `expand_at_refs` / `mcp_list` / 资源注入）。`AppQuery::McpList` 仍留给 Desktop。延期见 [ROADMAP.md](../ROADMAP.md) §4。
 
 ## 为后续阶段预留 / 明确不做
 
@@ -68,7 +70,7 @@
 
 - 波 A（并行 ×3）✅（2026-08-17）：`pawork-mcp`（含 rmcp 收口）；`pawork-resources`；`pawork-config` 完整化。
 - 波 B（并行 ×3）✅（2026-08-17）：`pawork-compat`（五来源只读；MCP/Hook 本地薄类型，无 rmcp 边）；`pawork-session` 导入器（`import::formats` + 单事务写入）；`pawork-workspace` file-index（构建/查询）。
-- 波 C（串行）：engine 注入点 + cli（mcp/import/@引用）+ 冒烟。
+- 波 C（串行）✅（2026-08-17）：engine `InjectedLayer` + `resources.injected` Diagnostic + System 计入预算；`host/app` 装配 MCP/resources/file-index/compat；CLI `mcp list/test`、`import <tool>`、`sessions import/export`、REPL `@file`。Desktop Composer `@` / Resources 未做（ROADMAP §4）。
 
 ## 参考
 

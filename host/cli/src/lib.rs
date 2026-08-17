@@ -8,6 +8,8 @@ mod auth;
 mod chat;
 mod error;
 mod gui;
+mod import;
+mod mcp;
 mod render;
 mod sessions;
 mod vcs;
@@ -118,6 +120,22 @@ pub enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// MCP server 列表 / 连通性
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
+    /// 从本机 Claude / Codex / Grok / Cursor / Pi 配置导入（只读源文件）
+    Import {
+        /// claude|codex|grok|cursor|pi
+        tool: String,
+        /// 跳过确认并写入 `.pawork/`
+        #[arg(long)]
+        yes: bool,
+        /// 只预览，不写入
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -126,6 +144,35 @@ pub enum SessionsCommand {
     List,
     /// 显示会话元数据与投影消息
     Show { session: String },
+    /// 导出 Pawork session（export v3 JSON）
+    Export {
+        /// 完整 session id、唯一前缀，或 `latest`
+        #[arg(long)]
+        session: Option<String>,
+        /// 输出路径；默认 `{session_id}.export.json`
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// 导入 session（export v3 / compat / pi）
+    Import {
+        path: std::path::PathBuf,
+        /// export|compat|pi
+        #[arg(long)]
+        format: Option<String>,
+        /// compat 来源：claude|codex|grok|cursor
+        #[arg(long)]
+        source: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum McpCommand {
+    /// 列出已配置 MCP server 与已发现工具
+    List,
+    /// ping / list_tools 探测一个或全部已配置 server
+    Test {
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -179,6 +226,8 @@ async fn run_inner() -> Result<(), CliError> {
             | Command::Auth { .. }
             | Command::Diff { .. }
             | Command::Rollback { .. }
+            | Command::Mcp { .. }
+            | Command::Import { .. }
     );
     let mut core = if tolerant {
         AppCore::load_for_catalog(options).await?
@@ -202,6 +251,10 @@ async fn run_inner() -> Result<(), CliError> {
             session,
             yes,
         } => vcs::run_rollback(&core, checkpoint, session, yes, cli.json).await,
+        Command::Mcp { command } => mcp::run_mcp(&mut core, command, cli.json).await,
+        Command::Import { tool, yes, dry_run } => {
+            import::run_import(&core, tool, yes, dry_run, cli.json).await
+        }
         Command::Gui { .. } => unreachable!("gui command handled before core dispatch"),
     };
     let shutdown = core.shutdown().await;
@@ -492,6 +545,80 @@ mod tests {
                 assert_eq!(checkpoint.as_deref(), Some("run-1/call-1"));
                 assert_eq!(session.as_deref(), Some("ses-1"));
                 assert!(yes);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mcp_import_and_session_transfer() {
+        let cli = Cli::try_parse_from(["pawork", "mcp", "list"]).expect("parse mcp list");
+        assert!(matches!(
+            cli.command,
+            Command::Mcp {
+                command: McpCommand::List
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["pawork", "mcp", "test", "fs"]).expect("parse mcp test");
+        match cli.command {
+            Command::Mcp {
+                command: McpCommand::Test { name },
+            } => assert_eq!(name.as_deref(), Some("fs")),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["pawork", "import", "claude", "--yes", "--dry-run"])
+            .expect("parse import");
+        match cli.command {
+            Command::Import { tool, yes, dry_run } => {
+                assert_eq!(tool, "claude");
+                assert!(yes);
+                assert!(dry_run);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "sessions",
+            "export",
+            "--session",
+            "latest",
+            "--out",
+            "out.json",
+        ])
+        .expect("parse sessions export");
+        match cli.command {
+            Command::Sessions {
+                command: SessionsCommand::Export { session, out },
+            } => {
+                assert_eq!(session.as_deref(), Some("latest"));
+                assert_eq!(out.as_deref(), Some(std::path::Path::new("out.json")));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "sessions",
+            "import",
+            "ses.export.json",
+            "--format",
+            "export",
+        ])
+        .expect("parse sessions import");
+        match cli.command {
+            Command::Sessions {
+                command: SessionsCommand::Import {
+                    path,
+                    format,
+                    source,
+                },
+            } => {
+                assert_eq!(path, std::path::PathBuf::from("ses.export.json"));
+                assert_eq!(format.as_deref(), Some("export"));
+                assert!(source.is_none());
             }
             other => panic!("unexpected {other:?}"),
         }

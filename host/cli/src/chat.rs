@@ -4,9 +4,7 @@ use std::io::{self, IsTerminal, Write};
 
 use pawork_api::ProviderErrorKind;
 use pawork_app::{session_title_from_text, AppCore};
-use pawork_domain::{
-    ContentPart, Message, MessageId, MessageRole, RunId, SessionId, TextContent,
-};
+use pawork_domain::{Message, MessageId, MessageRole, RunId, SessionId};
 use pawork_engine::{
     AgentEventSink, CancelHandle, CancelReason, EngineError, NoopProcessTreeCleaner,
 };
@@ -91,7 +89,7 @@ async fn run_repl(core: &mut AppCore, resume: Option<String>) -> Result<(), CliE
             core.model()
         ),
         None => eprintln!(
-            "pawork chat  {} / {}    Ctrl-C 取消当轮，/exit 退出",
+            "pawork chat  {} / {}    Ctrl-C 取消当轮，/exit 退出；@file 引用工作区文件",
             core.provider_id(),
             core.model()
         ),
@@ -232,11 +230,13 @@ async fn run_one_turn(
     json: bool,
     one_shot: bool,
 ) -> Result<(), CliError> {
-    history.push(text_message(
-        next_id(session, next_msg),
-        MessageRole::User,
-        text,
-    ));
+    let content = core.expand_at_refs(text)?;
+    history.push(Message {
+        id: next_id(session, next_msg),
+        role: MessageRole::User,
+        content,
+        metadata: Default::default(),
+    });
     let handle = CancelHandle::new(
         RunId::from(format!("cli-{session}")),
         std::sync::Arc::new(NoopProcessTreeCleaner),
@@ -356,11 +356,3 @@ fn next_id(session: &SessionId, next_msg: &mut u64) -> MessageId {
     MessageId::from(format!("msg-{session}-{id}"))
 }
 
-fn text_message(id: MessageId, role: MessageRole, text: impl Into<String>) -> Message {
-    Message {
-        id,
-        role,
-        content: vec![ContentPart::Text(TextContent { text: text.into() })],
-        metadata: Default::default(),
-    }
-}
