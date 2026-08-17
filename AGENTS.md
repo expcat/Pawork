@@ -36,9 +36,11 @@
 - 任何任务完成后，对应文档与 ROADMAP 状态须同步更新（状态回写约定见 [ROADMAP.md](ROADMAP.md) §6）。
 - 任务开启 / 进行 / 收尾的公共规范见 [docs/task-guide.md](docs/task-guide.md)；阶段任务书见 [plan/](plan/)；阶段外任务登记见 [ROADMAP.md](ROADMAP.md) §3。
 
-## 5. 验证决策（V2 开发期放宽）
+## 5. 验证决策（当前 S0–S12 路线）
 
-**S12 Release Hardening 之前**：验证以 [docs/task-guide.md](docs/task-guide.md) §6 为准——少测试、无门禁：只做能证明本任务核心行为的关键定向测试（`cargo check -p <crate>` / `cargo test -p <crate>`，多包重复 `-p`，不因包多改用 `--workspace`）；不跑 Workspace Full Gate、不做 L0–L3 分级、不做 clippy/fmt 门禁（全部集中在 S12）。三类关键测试不推迟：安全红线定向回归、持久化与重放契约 golden、协议与解析 golden/种子。
+S0–S11 的实现任务以 [docs/task-guide.md](docs/task-guide.md) §6 为准——少测试、无全量门禁：只做能证明本任务核心行为的关键定向测试（`cargo check -p <crate>` / `cargo test -p <crate>`，多包重复 `-p`，不因包多改用 `--workspace`）。三类关键测试不推迟：安全红线定向回归、持久化与重放契约 golden、协议与解析 golden/种子。
+
+S12 是只读全项目 Code Review：按 [plan/S12-project-code-review.md](plan/S12-project-code-review.md) 审查和登记 finding，不修改生产代码，不运行测试、构建、格式化、fuzz、三平台矩阵或真实冒烟。Workspace Full Gate 与发布不在当前 S0–S12 排期；未来若获明确授权，须在 S12 整改后另立任务和门禁。
 
 沿用的硬约束：
 
@@ -47,14 +49,12 @@
 - 前一层失败先收敛原因，不盲目扩大范围。
 - Secret、Policy、路径越界、持久化/重放、破坏性文件/进程操作等高风险改动必须带对应定向回归。
 
-**S12 起**恢复全量门禁：Workspace Full Gate、clippy/fmt、schema drift、三平台矩阵、fuzz 等（见 [plan/S12-release-hardening.md](plan/S12-release-hardening.md)）。
-
 任务结束报告至少包含：
 
 ```text
 Validated: <实际命令 / tests / checks，或 none 及理由>
 Targeted regressions: <实际覆盖，或 none>
-Full workspace gate: NOT RUN（开发期，S12 前不设门禁）
+Full workspace gate: NOT RUN（当前 S0–S12 未设置全量门禁）
 ```
 
 ## 6. 文档约定
@@ -85,18 +85,11 @@ Full workspace gate: NOT RUN（开发期，S12 前不设门禁）
 
 ## 10. 验证命令模板
 
-开发期（S12 前）普通任务从以下命令选择最小有效子集；多个相关包追加 `-p`：
+S0–S11 普通实现任务从以下命令选择最小有效子集；多个相关包追加 `-p`：
 
 ```bash
 cargo check -p <crate>
 cargo test -p <crate>
 ```
 
-S12 Release Hardening 起启用全量门禁：
-
-```bash
-cargo build --workspace --all-targets
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all -- --check
-```
+S12 不运行上述命令。未来发布任务的全量门禁必须在该任务书中重新定义，不沿用已移除的旧 S12 默认动作。

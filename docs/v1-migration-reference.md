@@ -4,7 +4,7 @@
 >
 > 子节对照（原 ROADMAP_V2.md → 本文）：原 §1（V1 Review 结论）→ §1、原 §2（目标与原则）→ §2、原 §3（目录结构）→ §3、原 §4（模块映射 / 迁移词典）→ §4、原 §5（发布策略）→ §5、原 §6（测试与验证）→ §6、原 §8（风险与缓解）→ §7、原 §10（Review 方法附录）→ §8。原 §7（里程碑）已被增量式路线图（[../ROADMAP.md](../ROADMAP.md)）取代；原 §9（未决事项）已并入 ROADMAP §4。归档计划（[../plan/archive/](../plan/archive/README.md)）中对「ROADMAP_V2 §N」或「ROADMAP §13.N」的引用按此对照定位。
 >
-> 文中 M0–M8 编号均指已归档的旧里程碑（新旧对照见 [../plan/archive/README.md](../plan/archive/README.md)）；其中 M8 的门禁与发布职责由 S12 承接（[../plan/S12-release-hardening.md](../plan/S12-release-hardening.md)）。
+> 文中 M0–M8 编号均指已归档的旧里程碑（新旧对照见 [../plan/archive/README.md](../plan/archive/README.md)）。M8 的门禁与发布清单曾映射到旧 S12；2026-08-17 起当前 [S12](../plan/S12-project-code-review.md) 已改为只读全项目 Code Review，M8 不再有活动阶段映射。
 >
 > **2026-08-17 状态更新**：V1 代码已归档至仓库外同级目录 `../Pawork_v1/`（移出 git 管理），`Pawork_v2/` 已摊平为仓库根；指向 V1 资产的链接改指归档目录，正文保持冻结原文。
 >
@@ -65,7 +65,7 @@ V1 代码质量整体过硬（每 Phase 均经评审修复、安全红线项有�
 1. 在仓库根创建 `Pawork_v2/`（独立 Cargo workspace），按功能域分子目录，把 88 crate 重组为 **约 40 个包 + 2 个应用**。
 2. 可独立发布：所有包满足发布卫生（无循环依赖、无内部类型泄漏、元数据齐全）；其中约 15 个高外部价值包按波次发布到 crates.io（`pawork-*` 前缀）。
 3. **纵向优先**：先交付一个内置工具真实接线、能在真实仓库完成编码任务的 CLI Coding Agent（V1 从未达成），再横向合入扩展生态与控制面。
-4. 开发期只做关键测试、不做门禁；全部门禁推迟到功能完备后的一次性 Release Hardening（M8，现由 S12 承接）。
+4. 开发期只做关键测试、不做门禁；原计划把全部门禁推迟到一次性 Release Hardening（M8）。这是 2026-08-14 的历史策略，当前路线不再由 S12 承接。
 
 ### 2.2 保留的架构红线（不变）
 
@@ -272,9 +272,9 @@ Pawork_v2/
 
 - 无 Workspace Full Gate；无 L0–L3 分级与升级审批；无 `clippy -D warnings` 强制；无 `rustfmt --check` 门禁；无 schema drift CI；无三平台矩阵（平台特定代码只在改动时于当前平台验证，交叉编译 check 可选）；无每簇 review + remediation 循环；无门禁脚本；无覆盖率要求；无 cargo-machete/udeps。
 
-### 6.3 Release Hardening 一次性清单（原 M8，由 S12 承接）
+### 6.3 Release Hardening 一次性清单（原 M8，历史参考）
 
-功能完备核对通过后集中执行：workspace 全量 build/test/clippy/fmt；三平台矩阵（Windows/macOS/Linux 真实 runner，含 sandbox/PTY/Named Pipe 定向）；解析器与安全路径 fuzz 扩展（cargo-fuzz：路径解析、unified diff、shell 分类、SSE/partial-JSON）；schema/typegen 校验接回 CI；依赖卫生（machete/udeps/audit）；license inventory；crates.io 发布 dry-run；安全验收清单（沿用 [../../Pawork_v1/docs/quality/security-acceptance.md](../../Pawork_v1/docs/quality/security-acceptance.md) 框架裁剪）。
+历史建议是在功能完备核对后集中执行：workspace 全量 build/test/clippy/fmt；三平台矩阵（Windows/macOS/Linux 真实 runner，含 sandbox/PTY/Named Pipe 定向）；解析器与安全路径 fuzz 扩展（cargo-fuzz：路径解析、unified diff、shell 分类、SSE/partial-JSON）；schema/typegen 校验接回 CI；依赖卫生（machete/udeps/audit）；license inventory；crates.io 发布 dry-run；安全验收清单（沿用 [../../Pawork_v1/docs/quality/security-acceptance.md](../../Pawork_v1/docs/quality/security-acceptance.md) 框架裁剪）。当前不自动执行；S12 审查整改完成且用户明确决定发布后，新的发布任务可重新核对并裁剪本清单。
 
 ## 7. 风险与缓解（重构总体）
 

@@ -56,31 +56,33 @@
 - **计划内替换不是返工**：任务书标注的替换点（如 S3 用 policy 替换 S2 的临时路径校验）保持外部签名不变。
 - 已知死代码不原样搬运：V1 评审标记的 deferred-consumer API 迁移时逐项决定「接线或删除」。
 
-### 3.3 测试纪律（开发期）
+### 3.3 测试纪律（S0–S11 实现期）
 
-- **少测试、无门禁**：只做能证明本任务核心行为的关键定向测试；不跑 Workspace Full Gate、不做 L0–L3 分级、不做 clippy/fmt 门禁（全部集中在 S12；[v1-migration-reference.md](v1-migration-reference.md) §6、[research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.2）。
+- **少测试、无全量门禁**：只做能证明本任务核心行为的关键定向测试；不跑 Workspace Full Gate、不做 L0–L3 分级、不做 clippy/fmt 门禁（[v1-migration-reference.md](v1-migration-reference.md) §6 是历史策略参考；当前 S12 已改为只读 Code Review）。
 - **三类关键测试例外——必须随资产迁移同步落地**：安全红线定向回归；持久化与重放契约 golden；协议与解析 golden/种子（清单见 [v1-migration-reference.md](v1-migration-reference.md) §6.1）。
 - S2 起 engine/工具循环逻辑回归全部走 MockProvider；真实 API 只承担冒烟与 env 门控 `--ignored` 测试（§5），不承载逻辑回归。
 - 验证命令：`cargo check -p <crate>` / `cargo test -p <crate>`（多包重复 `-p`，不因包多改用 `--workspace`）。
 
 ### 3.4 平台与输出纪律
 
-- 开发期在当前平台（Windows）实测；Unix 平台代码随迁移进入、交叉 `cargo check` 可选，三平台实跑在 S12。
+- S0–S11 在当前可用平台实测；其他平台代码随迁移进入、交叉 `cargo check` 可选。三平台实跑已移出当前 S12，未来如需发布或平台收口须另立验证任务。
 - stdout 协议纪律（S1 起）：`--json` 模式 stdout 只承载 JSONL，文本与日志走 stderr。
 
 ---
 
 ## 4. 任务收尾（结束前必做）
 
+以下 1–2 适用于 S0–S11 实现任务。S12 按其任务书只检查审查报告、finding 证据、ROADMAP 回写和文档 diff，不运行测试或冒烟。
+
 1. **定向自动化测试全绿**：任务书「定向自动化测试」节列出的命令逐条执行。
-2. **冒烟清单执行**：任务书「真实测试与评估」节逐项跑（真实 key，按 §5 通道）；**模型评估记录留档**（勾选项旁注记或写入任务报告——这是 S12《真实通道模型评估报告》的原始素材）。
+2. **冒烟清单执行**：任务书「真实测试与评估」节逐项跑（真实 key，按 §5 通道）；**模型评估记录留档**（勾选项旁注记或写入任务报告，供后续需求/模型评估任务使用）。
 3. **任务书回写**：冒烟清单与退出标准打勾；核对「为后续阶段预留 / 明确不做」未被越界实现。
 4. **ROADMAP 回写**：按 [../ROADMAP.md](../ROADMAP.md) §6 状态回写约定（阶段收尾更新 §2 状态列；experimental/延期项登记 §4；阶段外任务更新 §3）。
 5. **任务报告**（简式，开发期不使用 L0–L3 分级模板）：
    - 写入集：实际触碰的包/文件；
    - 验证：实际运行的命令与结果（含冒烟结论、评估记录要点）；
    - 登记项：experimental / 延期 / 新发现的未决事项；
-   - 明确说明未运行全量门禁属正常状态（S12 统一收口）。
+   - 明确说明未运行全量门禁属当前路线的正常状态；不得暗示 S12 会自动补跑。
 
 ---
 
@@ -132,9 +134,9 @@ S6 首发产品范围冻结如下；这里的“已预设”不等于“已完�
 - **每阶段双重验收**：冒烟清单（真实 key，人评估）+ 定向自动化（`cargo test -p <pkg>`，多包用多个 `-p`）。阶段计划文档中逐条列出。
 - **三类关键自动化测试**随契约/资产迁移同步落地（不推迟）：安全红线定向回归；持久化与重放契约 golden；协议与解析 golden/种子。清单见 [v1-migration-reference.md](v1-migration-reference.md) §6.1。
 - **MockProvider 兜底**：S2 起所有 engine/工具循环逻辑用 MockProvider 做确定性测试；真实 API 测试只验证「接得通、流解析正确、模型行为可用」，不承载逻辑回归。
-- **开发期不做**（沿用 [v1-migration-reference.md](v1-migration-reference.md) §6.2）：Workspace Full Gate、L0–L3 分级、clippy/fmt 门禁、schema drift CI、三平台矩阵、覆盖率。全部集中到 S12。
-- **平台策略**：开发期在当前平台（Windows）实测；Unix 平台代码随迁移进入但只做交叉 `cargo check`（可选），三平台实跑在 S12。
-- **与根 [../AGENTS.md](../AGENTS.md) 的关系**：根文件（2026-08-17 重建的 V2 版）§5 已明确开发期验证以本节为准（S12 前不做 L0–L3 分级门禁与 Workspace Full Gate，S12 Release Hardening 时恢复全量门禁）；其余章节（架构红线、命名、提交与分支、安全与权限、子代理使用）全量适用。
+- **当前 S0–S12 不做**：Workspace Full Gate、L0–L3 分级、clippy/fmt 门禁、schema drift CI、三平台矩阵、覆盖率。S12 按 [任务书](../plan/S12-project-code-review.md) 只做静态审查与 finding 登记，不执行这些门禁；未来若需要发布，另立任务重新定义。
+- **平台策略**：S0–S11 在当前可用平台实测；其他平台代码随迁移进入但只做交叉 `cargo check`（可选）。三平台实跑不再默认挂靠 S12。
+- **与根 [../AGENTS.md](../AGENTS.md) 的关系**：根文件 §5 已明确 S0–S11 的定向验证与 S12 的只读边界；其余章节（架构红线、命名、提交与分支、安全与权限、子代理使用）全量适用。
 
 ---
 
@@ -151,6 +153,7 @@ S6 首发产品范围冻结如下；这里的“已预设”不等于“已完�
 ## 8. 状态回写与任务报告
 
 - **阶段任务收尾**：更新 [../ROADMAP.md](../ROADMAP.md) §2 总览表状态列 + 对应 `plan/S*.md` 冒烟清单与退出标准打勾 + 如有 experimental/延期项在 ROADMAP §4 登记。开发期不做逐任务文档同步（[v1-migration-reference.md](v1-migration-reference.md) §2.4）。
+- **S12 收尾**：逐包更新 CR-01～CR-09 报告与任务书退出标准；Confirmed finding 按 ROADMAP §6 独立登记，不创建代码修复提交或测试记录。
 - **阶段外任务**：开启/完成时更新 ROADMAP §3.2 状态；完成后移入 §3.1 并登记产出链接。
 - **文档一致性**：若任务改动了冻结契约、包布局或候选功能状态，同批更新 [design.md](design.md) 对应章节；新增参照项目调研放 [research/](research/) 并在 [references.md](references.md) 登记。
-- **任务报告**按 §4 第 5 条的简式模板；评估记录（模型行为、协议对比、闭环成功率、缓存命中率等）必须留档，S12 汇总为《真实通道模型评估报告》。
+- **任务报告**按 §4 第 5 条的简式模板；评估记录（模型行为、协议对比、闭环成功率、缓存命中率等）必须留档。S12 只核对这些记录与完成声明是否一致，不负责运行或汇总新的评估。

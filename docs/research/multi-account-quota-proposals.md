@@ -136,7 +136,7 @@
 **方案选项**：
 
 - **F6-A（推荐）**：**不内建**。近期需求两条腿走：① Pawork 作为消费者——经 openai-compatible adapter 把外部网关（opencodex、CLIProxyAPI 等）当上游（S0 起仅需 base_url，已支持，[../task-guide.md](../task-guide.md) §5 已注明 opencodex 网关场景）；② Pawork 自身多账户能力对内服务（F1–F4）。
-- **F6-B（长期候选，P3）**：以 `pawork-channels` 扩展 feature 评估——V1 `client-claude-gateway` / `client-codex-app-server`（14.4k 行 channels 资产）已有「外部客户端协议 → Pawork」的翻译层，反向暴露「模型代理端点」在技术上是其邻接能力；若未来有真实需求（如团队共享 Pawork 账户池），在 S12 后按 [../../ROADMAP.md](../../ROADMAP.md) §3.3 候选流程评估。
+- **F6-B（长期候选，P3）**：以 `pawork-channels` 扩展 feature 评估——V1 `client-claude-gateway` / `client-codex-app-server`（14.4k 行 channels 资产）已有「外部客户端协议 → Pawork」的翻译层，反向暴露「模型代理端点」在技术上是其邻接能力；若未来有真实需求（如团队共享 Pawork 账户池），在 S12 审查与高优先级整改后按 [../../ROADMAP.md](../../ROADMAP.md) §3.3 候选流程评估。
 - **F6-C（不做）**：独立网关 app——偏离产品定位（Coding Agent 而非 API 网关），且订阅账户转售式代理的 ToS 风险最重（参考 §6.7）。
 
 **推荐 F6-A，登记 F6-B 为 P3 候选**。

@@ -18,7 +18,7 @@ Agent 获得受控的命令执行能力：run_command 工具经 shell 风险分�
 
 ## 关键任务
 
-1. **exec 迁移**：Windows 路径先行实测（Job Object 树清理、AppContainer 可用性探测与 fail-closed）；Linux/macOS 代码随迁、交叉 `cargo check` 可选，实跑留 S12。
+1. **exec 迁移**：Windows 路径先行实测（Job Object 树清理、AppContainer 可用性探测与 fail-closed）；Linux/macOS 代码随迁、交叉 `cargo check` 可选，三平台实跑改为 S12 审查后另立验证任务。
 2. **run_command 工具**：审批提示呈现完整命令 + 风险等级；`ApprovedForRun` 对同 run 重复命令生效。
 3. **取消链路**：Ctrl-C → `CancelHandle.cancel(User)` → 工具 cancel token + 进程树清理 → 事件收尾，全链一次打通。
 4. **fail-closed**：沙箱后端探测失败 / 显式 `--sandbox off` 之外的任何异常 → 拒绝执行并事件化说明（绝不静默裸跑）。
@@ -58,13 +58,13 @@ Agent 获得受控的命令执行能力：run_command 工具经 shell 风险分�
 
 - [x] 「读-改-跑」真实闭环在两通道各至少一次成功，评估记录留档（**V2 主干验收达成**）。
 - [x] 进程树清理 / fail-closed / 注入分类 / 超时截断回归全绿（当前平台）。（`cargo test -p pawork-exec -p pawork-tools -p pawork-policy -p pawork-engine` 全绿；fail-closed = ADR-031 可观测回退）
-- [x] Linux/macOS 平台代码齐全（结构就位，实跑 S12）。（波 A 已就位；本机 macOS Seatbelt 冒烟，非三平台矩阵）
+- [x] Linux/macOS 平台代码齐全（结构就位；三平台实跑尚未排期）。（波 A 已就位；本机 macOS Seatbelt 冒烟，非三平台矩阵）
 - [x] 取消链路端到端一次打通（人工 + 自动化双验证）。
 
 ## 为后续阶段预留 / 明确不做
 
 - 预留：完整命令输出落工件文件的落点（S8 blob-store artifact 接管）；`AllowWithConstraints` 已消费。
-- 不做：PTY / 交互式命令（S10）、后台长驻任务（S11 automation）、三平台沙箱实跑（S12）。
+- 不做：PTY / 交互式命令（S10）、后台长驻任务（S11 automation）、三平台沙箱实跑（S12 只审查，实跑需未来独立任务）。
 
 ## 并行拆分建议
 

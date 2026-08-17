@@ -13,7 +13,7 @@
 1. 把 V1 的 88 crate / 约 23.6 万行重组为 **40 包 + 3 应用**（`pawork`、`protocol-probe`、S7 起的 `apps/desktop`；独立 Cargo workspace `Pawork_v2/`，2026-08-17 已摊平为仓库根），可独立发布，约 15 个高外部价值包按 W1–W4 波次发布 crates.io（§7）。插件四包目录预留、本轮不激活。
 2. **纵向优先**：先交付内置工具真实接线、能在真实仓库完成编码任务的 CLI Coding Agent，再长出最小 Agent GUI，其后按同一窗口增量加面；WASM 插件等扩展生态移出本轮排期（[../ROADMAP.md](../ROADMAP.md) §4）——直接矫正 V1「组件齐全、主干未通电」病灶（[v1-migration-reference.md](v1-migration-reference.md) §1.2）。
 3. **架构红线不变**：纯 Rust、CLI 与 Core 同进程同二进制（`pawork` 唯一正式宿主）、GUI 独立进程走 GUI Connection Protocol；canonical domain 纯净；事件可持久化可重放；Secret 不落库不入日志；Engine 无 Provider 名称特例分支；禁止循环依赖（详见 [../AGENTS.md](../AGENTS.md) §2）。
-4. **针对 V1 病灶的新增规则**：无消费者不合入（否则 experimental feature + [../ROADMAP.md](../ROADMAP.md) §4 登记）；注册表自动化（依赖图由 `cargo metadata` 派生）；依赖方向执法放宽为「包内模块 + feature 门」，S12 补 workspace lint 兜底。
+4. **针对 V1 病灶的新增规则**：无消费者不合入（否则 experimental feature + [../ROADMAP.md](../ROADMAP.md) §4 登记）；注册表自动化（依赖图由 `cargo metadata` 派生）；依赖方向执法放宽为「包内模块 + feature 门」。S12 只审查依赖方向与 feature 实态，若需 workspace lint 则作为 finding 另立实现任务。
 5. **开发期放宽**：无 L0–L3 分级、无门禁、允许 feature 门控的残缺合入、文档同步降为里程碑级（见 [task-guide.md](task-guide.md) §6）。
 
 ---
@@ -41,7 +41,7 @@
 | `pawork-workspace` | S2（roots/相对路径） | S9（file-index + `@file`） | |
 | `pawork-tools` | S2（只读四件） | S3（写三件）、S4（run_command） | `tool_search` 冻结候审不迁 |
 | `pawork-policy` | S3（整包） | — | 安全内核，红线回归随迁 |
-| `pawork-exec` | S4（process + sandbox） | S10（pty，消费者=交互式终端/GUI Terminal） | Windows 先实测，Linux/macOS 代码随迁、S12 实跑 |
+| `pawork-exec` | S4（process + sandbox） | S10（pty，消费者=交互式终端/GUI Terminal） | Windows 先实测，Linux/macOS 代码随迁；三平台实跑移出当前 S12，待审查整改后另立验证任务 |
 | `pawork-provider-core` | S5（usage/negotiate/registry/pricing） | — | 依赖 `pawork-domain` / `pawork-api`，由 `pawork-providers` 消费；不依赖 net/SQLite/blob store。若 S0 的 openai-compatible 迁移需要 `stream_assembly`，则该模块提前至 S0 最小激活 |
 | `pawork-auth` | S6 | — | `auth.json` 文件后端 + OAuth + masked；0600、跨进程 write/refresh 锁、独立临时文件+rename 原子写，OAuth access/refresh/meta 批量单次提交，损坏 fail-closed |
 | `pawork-diagnostics` | S6（脱敏 tracing layer 接线） | — | 早期阶段以纪律 + 断言测试兜底 |
@@ -67,7 +67,7 @@
 | `pawork-provider-control` | S11 | — | account-control feature 分层 |
 | `pawork-quota` | S11（核心） | — | 远端适配器冻结候审 |
 
-**能力级核对**（基于 V1 全量盘点：docs/features 26 篇 + V1 MVP 验收 22 条 + CLI 六运行模式/全部子命令 + 八工具/八厂商/扩展与控制面 crate 清单）：除 2026-08-15 收窄的 Provider 厂商广度、以及 2026-08-16 移出排期的 WASM 插件/Hooks/LSP/市场外，V1 用户可见能力在上表与 [../ROADMAP.md](../ROADMAP.md) §2 均有落点。易漏项——任意消息 Fork/会话分支 UX → S10（数据层 S1 就绪）；`pawork service` 与 status/watch/shutdown/doctor → S10；手动 compaction → S5；大型 Tool Output 走 Artifact → S4 预留、S8 接管；10 万行 Diff 分页/分片 → S8（paginate）+ S10（Artifact 分片读取）；性能基准 → S12 按需重建；GPUI Desktop → **S7 最小壳**，其后按 [gui-design.md](gui-design.md) §5 增量；插件预留接口见 ROADMAP §4，不在本轮激活实现包。
+**能力级核对**（基于 V1 全量盘点：docs/features 26 篇 + V1 MVP 验收 22 条 + CLI 六运行模式/全部子命令 + 八工具/八厂商/扩展与控制面 crate 清单）：除 2026-08-15 收窄的 Provider 厂商广度、以及 2026-08-16 移出排期的 WASM 插件/Hooks/LSP/市场外，V1 用户可见能力在上表与 [../ROADMAP.md](../ROADMAP.md) §2 均有落点。易漏项——任意消息 Fork/会话分支 UX → S10（数据层 S1 就绪）；`pawork service` 与 status/watch/shutdown/doctor → S10；手动 compaction → S5；大型 Tool Output 走 Artifact → S4 预留、S8 接管；10 万行 Diff 分页/分片 → S8（paginate）+ S10（Artifact 分片读取）；性能基准是否需要重建由 S12 审查，实施与测量另立任务；GPUI Desktop → **S7 最小壳**，其后按 [gui-design.md](gui-design.md) §5 增量；插件预留接口见 ROADMAP §4，不在本轮激活实现包。
 
 ---
 
@@ -231,11 +231,11 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 评审（re-anchor/resolution）与记忆抽象 | V1 review-engine / memory-service（memory 无 EmbeddingProvider 则 experimental 登记） |
 | **已确认待并入**：F1–F4 全部 + 命中测试补全场景（§5） | — |
 
-### S12 Release Hardening 与发布（[任务书](../plan/S12-release-hardening.md)）
+### S12 全项目 Code Review 与整改拆分（[任务书](../plan/S12-project-code-review.md)）
 
 | 功能 | 参照 |
 | --- | --- |
-| 全量门禁 / 三平台矩阵 / fuzz / schema drift / 依赖卫生 / W1–W4 发布 / V1 归档 | 工程收口，无外部功能对标；现行清单见 [S12 任务书](../plan/S12-release-hardening.md)，V1 门禁事实源回退到 [v1-migration-reference.md](v1-migration-reference.md) §6.3；发布波次见 §7 |
+| 全包与跨包接口只读审查：安全、Bug、持久化/并发、性能、维护性、需求追踪与假完成 | 工程审查，无外部功能对标；按 [S12 任务书](../plan/S12-project-code-review.md) 的 CR-01～CR-09 独立产出 finding，Confirmed 项逐条进入 ROADMAP §3.2；本阶段不实现、不测试、不发布 |
 | **已确认待并入**：缓存命中 ≥99% 纳入 Release Gate（§5；[research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.3） | — |
 
 ---
@@ -312,7 +312,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | D2 | GitHub / GitLab CI bot | OpenCode `/opencode`、Codex `@codex review` | 在 issue/PR 评论中触发 Pawork（`/pawork`），自动 triage / implement / open PR，在 CI runner 上执行。S11 review 有 Forge trait 但无平台 bot | P2 |
 | D3 | 会话公开分享 | OpenCode `/share`、Pi session 分享 | 生成可分享的只读会话链接或导出（HTML/JSON/gist），支持 manual/auto/disabled 模式 | P2 |
 | D4 | Web UI 浏览器客户端 | OpenCode `opencode web` | 作为 GUI Connection Protocol 的 Web client（本地 web app、LAN bind、basic-auth），与 Desktop client 并列。S7 起有本机 GPUI，S10 补齐 gui-server，无 Web client | P2 |
-| D5 | 自更新与多渠道安装器 | OpenCode `opencode upgrade`、Codex installers | `pawork upgrade` 自更新命令 + 多渠道安装器（Homebrew / Scoop / Winget / curl / cargo install）。S12 有发布流程但无运行时自更新 | P2 |
+| D5 | 自更新与多渠道安装器 | OpenCode `opencode upgrade`、Codex installers | `pawork upgrade` 自更新命令 + 多渠道安装器（Homebrew / Scoop / Winget / curl / cargo install）。当前 S0–S12 无发布或运行时自更新流程 | P2 |
 | D6 | Cloud 执行环境 | Codex Cloud | 隔离的远程执行环境，支持并行任务、结果本地应用（`pawork cloud`）。需 remote transport + 隔离沙箱 + 任务编排 | P3 |
 | D7 | Slack / Linear 等 chat 平台集成 | Codex `@Codex` in Slack/Linear | 作为 S10 channels 的扩展 feature（Slack / Linear adapter），将 chat 平台消息映射到 Pawork 会话 | P3 |
 | D8 | 订阅登录（plan credits 认证） | Pi `/login`、Codex SiwC | ChatGPT 与 xAI 的订阅 OAuth 已并入 S6 首发范围；Claude Pro/Max、GitHub Copilot 等其它 plan 登录仍为候选。§5 G1（F1-B）继续负责后续多账户/订阅凭证抽象 | P2 |
@@ -328,15 +328,15 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | ID | 功能 | 来源 | 说明 | 优先级 |
 | --- | --- | --- | --- | --- |
-| F1 | 版本自检 + 遥测 + 离线模式 | Pi telemetry | 启动时检查最新版本（可选匿名遥测 ping，opt-out），`--offline` / 环境变量禁用所有启动时网络请求。S12 release hardening 未覆盖运行时产品运维 | P3 |
+| F1 | 版本自检 + 遥测 + 离线模式 | Pi telemetry | 启动时检查最新版本（可选匿名遥测 ping，opt-out），`--offline` / 环境变量禁用所有启动时网络请求。当前 S0–S12 不覆盖运行时产品运维 | P3 |
 
 ### 6.8 落地建议
 
 上表共 **28 项**候选功能（排除 3 项架构红线排除项），按优先级分布：
 
 - **P1（7 项）**：自定义命令、AGENTS.md 生成器、webfetch/websearch、图片输入、IDE 扩展——建议在 S2–S9 主干阶段择机并行追加（工具类在 S2/S4，CLI 体验类在 S0/S10，GUI 体验跟 S7 壳走）。
-- **P2（14 项）**：核心功能补全，建议在对应阶段（S9 resources/MCP、S10 serve/clients、S11 workflow）作为增强项纳入；原 S10 扩展生态类改走 ROADMAP §4 待决策，或 S12 后独立迭代。
-- **P3（7 项）**：Cloud、企业、Slack/Linear、voice 等重型或长尾功能，建议 S12 发布后再按用户需求排期。
+- **P2（14 项）**：核心功能补全，建议在对应阶段（S9 resources/MCP、S10 serve/clients、S11 workflow）作为增强项纳入；原 S10 扩展生态类改走 ROADMAP §4 待决策，或在 S12 审查与整改后独立迭代。
+- **P3（7 项）**：Cloud、企业、Slack/Linear、voice 等重型或长尾功能，建议在 S12 审查与高优先级整改完成后再按用户需求排期。
 
 **注意事项**：
 
@@ -350,4 +350,4 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 ## 7. 发布策略
 
-W1–W4 波次与包清单沿用 [v1-migration-reference.md](v1-migration-reference.md) §5.2；发布**动作**集中在 S12。各包在激活阶段即建立发布卫生（元数据、无类型泄漏、`publish = false` 默认），进入 S12 后按波次翻转。License 仍是 W1 硬前置（建议 MIT OR Apache-2.0，S12 前拍板，登记于 [../ROADMAP.md](../ROADMAP.md) §4）。
+W1–W4 波次与包清单保留为 [v1-migration-reference.md](v1-migration-reference.md) §5.2 的历史候选策略，不属于当前 S0–S12 执行范围。各包在激活阶段仍保持发布卫生（元数据、无类型泄漏、`publish = false` 默认）；S12 只审查其真实状态，不翻转 `publish`。只有在 S12 finding 整改完成且用户明确决定发布后，才另立发布任务并重新核对波次、License、全量门禁与三平台证据。

@@ -14,8 +14,10 @@ Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心�
 | [S6](plan/S6-providers-auth.md) | 首发 Provider 与认证（六通道、OAuth、auth 文件） | 🔵 |
 | [S7](plan/S7-gui-agent.md) | 最小 Agent GUI（v3 三栏工作台已交付） | 🟢 |
 | [S8](plan/S8-git-checkpoint.md) | Git、Diff 与 Checkpoint（rollback 一键回滚） | 🟢 |
-| [S9](plan/S9-mcp-resources.md) | MCP、资源与兼容导入（波 A ✅） | 🔵 |
-| S10–S12 | 服务化与客户端补齐 / 工作流与多 Agent / Release Hardening | ⚪ |
+| [S9](plan/S9-mcp-resources.md) | MCP、资源与兼容导入 | 🟢 |
+| [S10](plan/S10-serve-clients.md) | 服务化与客户端补齐 | 🔵 |
+| [S11](plan/S11-workflow-control.md) | 工作流、多 Agent 与控制面 | ⚪ |
+| [S12](plan/S12-project-code-review.md) | 全项目 Code Review 与整改拆分（只读） | ⚪ |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成。阶段明细与真实验收要点见 [ROADMAP.md](ROADMAP.md) §2。
 
@@ -72,7 +74,7 @@ V1 时期文档（架构、ADR-001~035、features、quality、REVIEW 等）随 V
 
 ## 贡献
 
-- 工作约定见 [AGENTS.md](AGENTS.md)；V2 开发期验证放宽以 [docs/task-guide.md](docs/task-guide.md) §6 为准（全量门禁集中在 S12）。
+- 工作约定见 [AGENTS.md](AGENTS.md)；V2 当前路线的定向验证约定见 [docs/task-guide.md](docs/task-guide.md) §6。S12 只做审查与任务登记，全量门禁和发布需在审查整改后另立任务。
 - 架构决策须以 ADR 记录，编号续接 V1。
 - 新增包须在 [docs/design.md](docs/design.md) §2 登记并明确依赖方向。
 

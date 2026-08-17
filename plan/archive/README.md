@@ -18,6 +18,6 @@ M0–M8 只作历史编号，不得把 README 中的概括扩写成不存在的�
 | `M5-connectivity-clients.md` | S7（最小 gui-server/client/local transport）、S10（transport/sdk/channels/protocol-probe 补齐） |
 | `M6-extensions.md` | S9（mcp/resources/compat）；wasm-host/plugin/hooks/lsp 待决策，现有材料见 [S10-extensions-deferred.md](S10-extensions-deferred.md) |
 | `M7-workflow-control.md` | S11（workflow/memory/review/orchestration/control-plane） |
-| `M8-release-hardening.md` | S12（门禁清单、发布波次、V1 归档） |
+| `M8-release-hardening.md` | 不再映射当前 S12；历史门禁/发布清单保留于 [V1 迁移参考 §6.3](../../docs/v1-migration-reference.md#63-release-hardening-一次性清单原-m8)，未来发布时另立任务 |
 
 > 注意：不要创建空壳 M0–M8 文件来“修复”引用；只有从可信历史或用户提供的原文恢复时才可补回正文。
