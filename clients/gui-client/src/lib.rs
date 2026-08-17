@@ -77,7 +77,6 @@ impl Default for ClientConfig {
                 GuiCapability::Snapshots,
                 GuiCapability::ArtifactStreaming,
                 GuiCapability::Approvals,
-                GuiCapability::TerminalStreaming,
             ],
             supported_api_versions: SUPPORTED_API_VERSIONS.to_vec(),
         }
@@ -419,7 +418,10 @@ impl GuiClient {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed);
         self.command_envelope(AppCommandEnvelope {
             api_version: self.api_version(),
-            command_id: CommandId::from(format!("gui-cmd-{id}")),
+            command_id: CommandId::from(format!(
+                "gui-cmd-{}-{id}",
+                self.info.client_id.as_str()
+            )),
             source,
             identity,
             expected_revision: None,
@@ -450,7 +452,10 @@ impl GuiClient {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed);
         self.query_envelope(AppQueryEnvelope {
             api_version: self.api_version(),
-            request_id: QueryId::from(format!("gui-query-{id}")),
+            request_id: QueryId::from(format!(
+                "gui-query-{}-{id}",
+                self.info.client_id.as_str()
+            )),
             source,
             identity,
             issued_at: now_timestamp(),
@@ -983,6 +988,7 @@ fn now_timestamp() -> Timestamp {
 mod tests {
     use super::*;
     use pawork_domain::{CommandId, QueryId};
+    use pawork_protocol::GuiCapability;
     use pawork_protocol::{encode_server_frame, AppResponse, AppResponseEnvelope, API_VERSION};
     use std::future::Future;
     use std::pin::Pin;
@@ -1069,11 +1075,11 @@ mod tests {
     }
 
     #[test]
-    fn default_capabilities_include_terminal_streaming() {
-        // Desktop S10 握手声明 TerminalStreaming；默认配置与之对齐，不另造类型。
-        assert!(ClientConfig::default()
-            .capabilities
-            .contains(&GuiCapability::TerminalStreaming));
+    fn client_config_can_request_terminal_streaming() {
+        // Desktop 握手自行声明 TerminalStreaming；默认配置不强制，避免影响既有契约装配。
+        let mut config = ClientConfig::default();
+        config.capabilities.push(GuiCapability::TerminalStreaming);
+        assert!(config.capabilities.contains(&GuiCapability::TerminalStreaming));
     }
 
     #[tokio::test]

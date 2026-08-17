@@ -13,8 +13,8 @@ use std::time::Duration;
 use pawork_client::{
     ActorIdentity, AppCommand, AppEventEnvelope, AppQuery, AppResponse, AppResponseEnvelope,
     ClientConfig, ClientError, CommandSource, ConnectOptions, GlobalSequence, GuiCapability,
-    GuiClient, GuiTransportClient, LocalTransport, ResumeOutcome, Snapshot, TimelinePage,
-    TransportEndpoint,
+    GuiClient, GuiTransportClient, LocalTransport, ResumeDisposition, ResumeOutcome, Snapshot,
+    TimelinePage, TransportEndpoint,
 };
 use serde_json::json;
 
@@ -112,14 +112,14 @@ impl DesktopController {
         }
         if let Some(outcome) = &resume {
             match &outcome.disposition {
-                pawork_client::ResumeDisposition::Replay { through_sequence, .. } => {
+                ResumeDisposition::Replay { through_sequence, .. } => {
                     self.record_last_acked(through_sequence.0);
                     let _ = handshake.ack(*through_sequence).await;
                 }
-                pawork_client::ResumeDisposition::UpToDate { current_sequence } => {
+                ResumeDisposition::UpToDate { current_sequence } => {
                     self.record_last_acked(current_sequence.0);
                 }
-                pawork_client::ResumeDisposition::SnapshotRequired { .. } => {
+                ResumeDisposition::SnapshotRequired { .. } => {
                     self.record_last_acked(snapshot.snapshot_sequence.0);
                     let _ = handshake.ack(snapshot.snapshot_sequence).await;
                 }

@@ -479,7 +479,7 @@ impl AppView {
         cx.notify();
     }
 
-    fn ensure_terminal(&mut self, cx: &mut Context<Self>) {
+    fn ensure_terminal(&mut self, _cx: &mut Context<Self>) {
         if self.projection.terminal.session_id.is_some() {
             return;
         }
@@ -1192,6 +1192,7 @@ impl Render for AppView {
                     .child("Local"),
             );
 
+        let timeline_entries = self.projection.timeline.clone();
         let timeline = div()
             .id("timeline")
             .flex()
@@ -1203,8 +1204,7 @@ impl Render for AppView {
             .py_2()
             .gap_1()
             .children(
-                self.projection
-                    .timeline
+                timeline_entries
                     .iter()
                     .map(|entry| self.timeline_entry_element(entry, cx)),
             )

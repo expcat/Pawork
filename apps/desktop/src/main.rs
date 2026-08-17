@@ -203,8 +203,15 @@ async fn probe_smoke(
 
     controller.disconnect().await;
     let connected = controller.connect(socket.clone()).await?;
+    apply_probe_resume(
+        &mut projection,
+        &connected.snapshot,
+        connected.resume.as_ref(),
+        &models,
+        &session_id,
+        controller,
+    );
     events = connected.events;
-    apply_probe_resume(&mut projection, &connected, &models, &session_id, &controller);
     if !projection
         .sessions
         .iter()
@@ -239,8 +246,15 @@ async fn probe_smoke(
     let live_run = wait_for_run_id(&events, &mut projection, Duration::from_secs(30)).await?;
     controller.disconnect().await;
     let connected = controller.connect(socket).await?;
+    apply_probe_resume(
+        &mut projection,
+        &connected.snapshot,
+        connected.resume.as_ref(),
+        &models,
+        &session_id,
+        controller,
+    );
     events = connected.events;
-    apply_probe_resume(&mut projection, &connected, &models, &session_id, &controller);
     if projection.active_session_id.as_deref() != Some(session_id.as_str()) {
         projection.select_session(&session_id);
     }
@@ -282,19 +296,20 @@ async fn probe_smoke(
 
 fn apply_probe_resume(
     projection: &mut DesktopProjection,
-    connected: &controller::DesktopConnect,
+    snapshot: &pawork_client::Snapshot,
+    resume: Option<&pawork_client::ResumeOutcome>,
     models: &[projection::ModelEntry],
     session_id: &str,
     controller: &controller::DesktopController,
 ) {
     projection.set_models(models.to_vec());
-    match &connected.resume {
+    match resume {
         None => {
-            *projection = DesktopProjection::from_snapshot(&connected.snapshot);
+            *projection = DesktopProjection::from_snapshot(snapshot);
             projection.set_models(models.to_vec());
             projection.select_session(session_id);
         }
-        Some(outcome) => match projection.apply_resume_outcome(outcome, &connected.snapshot) {
+        Some(outcome) => match projection.apply_resume_outcome(outcome, snapshot) {
             ResumeApply::ReplaceBaseline | ResumeApply::Fresh => {
                 if projection
                     .sessions

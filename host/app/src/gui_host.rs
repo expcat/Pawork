@@ -1,27 +1,32 @@
 //! GUI Host 端口适配：把 AppCore 装配到 pawork-gui-server 的 GuiHost。
 //!
-//! S7 波 C：snapshot 基线（含真实 PendingToolApprovals）、SessionGet 分页
-//! Timeline 投影、SessionCreate/RunStart/RunCancel/ToolApprove，以及
-//! RunStart.model 切换。未支持命令一律结构化 fail-closed。
+//! S10 10b：Snapshot 基线、SessionGet 分页 Timeline、SessionCreate/Fork、
+//! RunStart/RunCancel/ToolApprove、Terminal*、RunStart.model 切换。
+//! 未支持命令一律结构化 fail-closed。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, ContentPart, EventId,
-    Message, MessageId, MessageRole, QueryId, RunId, SessionId, TenantId, TextContent, WorkspaceId,
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, CommandId, ContentPart,
+    EventId, Message, MessageId, MessageRole, QueryId, RunId, SessionId, TenantId, TextContent,
+    WorkspaceId,
 };
-use pawork_session::SessionRecord;
+use pawork_exec::{OwnerSessionId, PtyCreateSpec, PtyEvent, PtyService, PtyWindowSize, TerminalId};
+use pawork_session::{SessionRecord, SessionTree};
 use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
 use pawork_gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope,
-    AppResponse, AppResponseEnvelope, DiagnosticLevel, EventSource, EventStream, GlobalSequence,
-    RunState, Snapshot, SnapshotSection, SnapshotSectionKind, TimelineItem, TimelineItemKind,
-    TimelinePage, API_VERSION, DEFAULT_CONTROL_PLANE_TENANT,
+    AppResponse, AppResponseEnvelope, CommandSource, DiagnosticLevel, EventSource, EventStream,
+    GlobalSequence, RunState, Snapshot, SnapshotSection, SnapshotSectionKind, TimelineItem,
+    TimelineItemKind, TimelinePage, WorkspaceRelativePath, API_VERSION,
+    DEFAULT_CONTROL_PLANE_TENANT,
 };
+use pawork_workspace::resolve_relative_path;
 use serde_json::{json, Value};
 
 use crate::{
@@ -42,6 +47,28 @@ fn session_tree_entry(record: &SessionRecord, workspace_id: Option<WorkspaceId>)
         data["workspace_id"] = json!(workspace_id.as_str());
     }
     data
+}
+
+fn attach_session_branches(entry: &mut Value, tree: &SessionTree) {
+    entry["branches"] = Value::Array(
+        tree.branches
+            .iter()
+            .map(|branch| {
+                json!({
+                    "branch_id": branch.branch_id,
+                    "parent_branch_id": branch.parent_branch_id,
+                    "forked_from_event_id": branch.forked_from_event_id,
+                    "head_sequence": branch.head_sequence,
+                    "active": branch.active,
+                })
+            })
+            .collect(),
+    );
+    if let Some(active) = tree.branches.iter().find(|branch| branch.active) {
+        entry["parent_branch_id"] = json!(active.parent_branch_id);
+        entry["forked_from_event_id"] = json!(active.forked_from_event_id);
+        entry["active"] = json!(true);
+    }
 }
 
 fn protocol_to_domain_decision(
@@ -139,6 +166,26 @@ impl GuiEventBus {
         };
         self.hub.publish(app_envelope);
     }
+
+    fn publish_terminal(
+        &self,
+        instance: pawork_domain::CoreInstanceId,
+        terminal_session_id: &str,
+        event: AppEvent,
+    ) {
+        let app_envelope = AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: instance,
+            event_id: self.next_event_id(),
+            global_sequence: GlobalSequence(0),
+            stream: EventStream::Terminal(terminal_session_id.to_string()),
+            stream_sequence: 0,
+            timestamp: now_timestamp(),
+            source: EventSource::Core,
+            payload: event,
+        };
+        self.hub.publish(app_envelope);
+    }
 }
 
 impl GuiEventBus {
@@ -216,8 +263,8 @@ impl GuiRunRegistry {
     }
 
     pub fn cancel(&self, run_id: &RunId) -> bool {
-        let runs = self.runs.lock().expect("gui run registry poisoned");
-        match runs.get(run_id.as_str()) {
+        let mut runs = self.runs.lock().expect("gui run registry poisoned");
+        match runs.remove(run_id.as_str()) {
             Some((_, token)) => {
                 token.cancel();
                 true
@@ -250,6 +297,9 @@ pub struct GuiHostAdapter {
     idempotency: IdempotencyStore,
     instance: pawork_domain::CoreInstanceId,
     next_gui_run: AtomicU64,
+    next_fork: AtomicU64,
+    pty: Arc<PtyService>,
+    terminals: Mutex<HashMap<String, String>>,
 }
 
 impl GuiHostAdapter {
@@ -310,6 +360,9 @@ impl GuiHostAdapter {
             idempotency: IdempotencyStore::default(),
             instance,
             next_gui_run: AtomicU64::new(1),
+            next_fork: AtomicU64::new(1),
+            pty: Arc::new(PtyService::new()),
+            terminals: Mutex::new(HashMap::new()),
         }
     }
 
@@ -341,6 +394,132 @@ impl GuiHostAdapter {
         };
         Self::host_error(code, error.to_string())
     }
+
+    fn session_error(error: pawork_session::SessionStoreError) -> GuiHostError {
+        let code = match error {
+            pawork_session::SessionStoreError::SessionNotFound(_)
+            | pawork_session::SessionStoreError::ParentEventNotFound(_)
+            | pawork_session::SessionStoreError::BranchNotFound { .. } => "not_found",
+            pawork_session::SessionStoreError::BranchAlreadyExists { .. } => "conflict",
+            _ => "app_error",
+        };
+        Self::host_error(code, error.to_string())
+    }
+
+    fn pty_error(error: pawork_exec::PtyError) -> GuiHostError {
+        let code = match error {
+            pawork_exec::PtyError::NotFound(_) => "not_found",
+            pawork_exec::PtyError::Ownership(_, _) => "forbidden",
+            pawork_exec::PtyError::Closed(_) => "conflict",
+            _ => "app_error",
+        };
+        Self::host_error(code, error.to_string())
+    }
+
+    fn terminal_owner(&self, terminal_session_id: &str) -> Result<OwnerSessionId, GuiHostError> {
+        self.terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(terminal_session_id)
+            .cloned()
+            .map(OwnerSessionId::new)
+            .ok_or_else(|| {
+                Self::host_error(
+                    "not_found",
+                    format!("terminal {terminal_session_id} is not registered"),
+                )
+            })
+    }
+
+    fn remember_terminal(&self, terminal_id: &TerminalId, owner: &OwnerSessionId) {
+        self.terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(terminal_id.as_str().to_string(), owner.as_str().to_string());
+    }
+
+    fn spawn_terminal_forwarder(&self, terminal_id: TerminalId, owner: OwnerSessionId) {
+        let Ok(mut receiver) = self.pty.subscribe(&terminal_id, &owner) else {
+            return;
+        };
+        let bus = Arc::clone(&self.bus);
+        let instance = self.instance.clone();
+        let terminal_session_id = terminal_id.as_str().to_string();
+        tokio::spawn(async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(PtyEvent::Output { data, .. }) => {
+                        bus.publish_terminal(
+                            instance.clone(),
+                            &terminal_session_id,
+                            AppEvent::TerminalOutput {
+                                terminal_session_id: terminal_session_id.clone(),
+                                delta: String::from_utf8_lossy(&data).into_owned(),
+                            },
+                        );
+                    }
+                    Ok(PtyEvent::Exit { .. }) => break,
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    fn resolve_terminal_cwd(
+        core: &crate::AppCore,
+        workspace_id: &WorkspaceId,
+        working_directory: Option<&WorkspaceRelativePath>,
+    ) -> Result<Option<PathBuf>, GuiHostError> {
+        let roots = if workspace_id.as_str() == core.workspace_id().as_str() {
+            core.workspace_roots.clone()
+        } else {
+            core.workspaces
+                .get(workspace_id)
+                .map_err(|error| Self::host_error("app_error", error.to_string()))?
+                .map(|workspace| workspace.roots)
+                .unwrap_or_default()
+        };
+        match working_directory {
+            None => Ok(roots.first().cloned()),
+            Some(relative) => {
+                if roots.is_empty() {
+                    return Err(Self::host_error(
+                        "not_found",
+                        format!("workspace {} has no roots", workspace_id.as_str()),
+                    ));
+                }
+                resolve_relative_path(&roots, relative.as_str())
+                    .map(|resolved| Some(resolved.absolute))
+                    .map_err(|error| Self::host_error("invalid_argument", error.to_string()))
+            }
+        }
+    }
+
+    fn terminal_snapshots(&self) -> Vec<Value> {
+        let registered: Vec<(String, String)> = self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .map(|(id, owner)| (id.clone(), owner.clone()))
+            .collect();
+        registered
+            .into_iter()
+            .filter_map(|(id, owner)| {
+                let terminal_id = TerminalId::new(id);
+                let owner = OwnerSessionId::new(owner);
+                let snapshot = self.pty.snapshot(&terminal_id, &owner).ok()?;
+                Some(json!({
+                    "terminal_session_id": snapshot.terminal_id.as_str(),
+                    "owner_session": snapshot.owner_session.as_str(),
+                    "state": format!("{:?}", snapshot.state).to_ascii_lowercase(),
+                    "columns": snapshot.size.cols,
+                    "rows": snapshot.size.rows,
+                    "dropped_events": snapshot.dropped_events,
+                }))
+            })
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -359,6 +538,20 @@ impl GuiHost for GuiHostAdapter {
             "ready"
         };
         let pending = self.approvals.pending();
+        let mut session_entries = Vec::new();
+        for record in &sessions {
+            let mut entry =
+                session_tree_entry(record, core.session_workspace_for_record(&record.session_id));
+            if let Ok(store) = core.store() {
+                if let Ok(tree) = store
+                    .session_tree(&SessionId::from(record.session_id.as_str()))
+                    .await
+                {
+                    attach_session_branches(&mut entry, &tree);
+                }
+            }
+            session_entries.push(entry);
+        }
         let sections = vec![
             SnapshotSection {
                 kind: SnapshotSectionKind::Workspaces,
@@ -373,12 +566,7 @@ impl GuiHost for GuiHostAdapter {
             SnapshotSection {
                 kind: SnapshotSectionKind::SessionTree,
                 revision: self.bus.next_revision(),
-                data: Some(Value::Array(
-                    sessions
-                        .iter()
-                        .map(|record| session_tree_entry(record, core.session_workspace_for_record(&record.session_id)))
-                        .collect(),
-                )),
+                data: Some(Value::Array(session_entries)),
                 artifact_id: None,
             },
             SnapshotSection {
@@ -417,6 +605,12 @@ impl GuiHost for GuiHostAdapter {
                         })
                         .collect(),
                 )),
+                artifact_id: None,
+            },
+            SnapshotSection {
+                kind: SnapshotSectionKind::TerminalSessions,
+                revision: self.bus.next_revision(),
+                data: Some(Value::Array(self.terminal_snapshots())),
                 artifact_id: None,
             },
             SnapshotSection {
@@ -633,11 +827,11 @@ impl GuiHost for GuiHostAdapter {
 
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
         let tenant = TenantId::new(DEFAULT_CONTROL_PLANE_TENANT);
-        match self.idempotency.check(
-            &tenant,
-            &envelope.command_id,
-            envelope.idempotency_key.as_deref(),
-        ) {
+        let (command_id, idempotency_key) = scoped_idempotency(envelope);
+        match self
+            .idempotency
+            .check(&tenant, &command_id, idempotency_key.as_deref())
+        {
             IdempotencyCheck::Replay(cached) => return Ok(cached.response),
             IdempotencyCheck::New => {}
         }
@@ -651,8 +845,8 @@ impl GuiHost for GuiHostAdapter {
         if should_cache(&cached) {
             let _ = self.idempotency.record(
                 &tenant,
-                &envelope.command_id,
-                envelope.idempotency_key.as_deref(),
+                &command_id,
+                idempotency_key.as_deref(),
                 cached,
             );
         }
@@ -901,12 +1095,104 @@ impl GuiHostAdapter {
                     run_id: None,
                 })
             }
+            AppCommand::SessionFork {
+                session_id,
+                parent_event_id,
+            } => {
+                let core = self.core.read().await;
+                core.get_session(session_id)
+                    .await
+                    .map_err(Self::app_error)?;
+                let store = core.store().map_err(Self::app_error)?;
+                let n = self.next_fork.fetch_add(1, Ordering::Relaxed);
+                let branch_id = format!(
+                    "fork-{}-{n}",
+                    now_timestamp().as_unix_millis()
+                );
+                store
+                    .fork_from_event(session_id, &branch_id, parent_event_id)
+                    .await
+                    .map_err(Self::session_error)?;
+                store
+                    .switch_branch(session_id, &branch_id)
+                    .await
+                    .map_err(Self::session_error)?;
+                Ok(AppResponse::Data(json!({
+                    "session_id": session_id.as_str(),
+                    "branch_id": branch_id,
+                    "parent_event_id": parent_event_id.as_str(),
+                })))
+            }
+            AppCommand::TerminalCreate {
+                workspace_id,
+                working_directory,
+            } => {
+                let core = self.core.read().await;
+                let cwd = Self::resolve_terminal_cwd(
+                    &core,
+                    workspace_id,
+                    working_directory.as_ref(),
+                )?;
+                drop(core);
+                let owner = OwnerSessionId::new(workspace_id.as_str());
+                let spec = PtyCreateSpec {
+                    owner_session: owner.clone(),
+                    cwd,
+                    size: PtyWindowSize::default(),
+                    ..PtyCreateSpec::default()
+                };
+                let terminal_id = self.pty.create(spec).await.map_err(Self::pty_error)?;
+                self.remember_terminal(&terminal_id, &owner);
+                self.spawn_terminal_forwarder(terminal_id.clone(), owner);
+                Ok(AppResponse::Data(json!({
+                    "terminal_session_id": terminal_id.as_str(),
+                })))
+            }
+            AppCommand::TerminalWrite {
+                terminal_session_id,
+                data,
+            } => {
+                let owner = self.terminal_owner(terminal_session_id)?;
+                self.pty
+                    .write(
+                        &TerminalId::new(terminal_session_id),
+                        &owner,
+                        data.as_bytes().to_vec(),
+                    )
+                    .await
+                    .map_err(Self::pty_error)?;
+                Ok(AppResponse::Accepted {
+                    command_id: envelope.command_id.clone(),
+                    run_id: None,
+                })
+            }
+            AppCommand::TerminalResize {
+                terminal_session_id,
+                columns,
+                rows,
+            } => {
+                let owner = self.terminal_owner(terminal_session_id)?;
+                self.pty
+                    .resize(
+                        &TerminalId::new(terminal_session_id),
+                        &owner,
+                        PtyWindowSize {
+                            rows: *rows,
+                            cols: *columns,
+                            pixel_width: 0,
+                            pixel_height: 0,
+                        },
+                    )
+                    .await
+                    .map_err(Self::pty_error)?;
+                Ok(AppResponse::Accepted {
+                    command_id: envelope.command_id.clone(),
+                    run_id: None,
+                })
+            }
             other => Err(Self::host_error(
                 "unsupported",
-                format!(
-                    "command {} is not part of the S7 wave C slice",
-                    command_name(other)
-                ),
+                format!("command {} is not supported", command_name(other)),
             )),
         }
     }
@@ -1128,6 +1414,30 @@ fn query_name(query: &AppQuery) -> &'static str {
     }
 }
 
+/// 幂等按 GUI 客户端隔离：各连接独立生成 `gui-cmd-N`，不得把 A 的
+/// SessionCreate 重放成 B 的 RunCancel。
+fn scoped_idempotency(envelope: &AppCommandEnvelope) -> (CommandId, Option<String>) {
+    let client_id = match &envelope.source {
+        CommandSource::LocalGui { client_id } | CommandSource::RemoteGui { client_id, .. } => {
+            Some(client_id.as_str())
+        }
+        _ => None,
+    };
+    match client_id {
+        Some(client_id) => (
+            CommandId::from(format!("{client_id}/{}", envelope.command_id.as_str())),
+            envelope
+                .idempotency_key
+                .as_ref()
+                .map(|key| format!("{client_id}/{key}")),
+        ),
+        None => (
+            envelope.command_id.clone(),
+            envelope.idempotency_key.clone(),
+        ),
+    }
+}
+
 fn command_name(command: &AppCommand) -> &'static str {
     match command {
         AppCommand::CoreInitialize => "core_initialize",
@@ -1317,6 +1627,7 @@ mod tests {
             SnapshotSectionKind::SessionTree,
             SnapshotSectionKind::ActiveRuns,
             SnapshotSectionKind::PendingToolApprovals,
+            SnapshotSectionKind::TerminalSessions,
             SnapshotSectionKind::ProviderStatus,
         ] {
             assert!(kinds.contains(&expected), "missing section {expected:?}");
@@ -1614,6 +1925,94 @@ mod tests {
         );
     }
 
+    fn gui_command_envelope(
+        client_id: &str,
+        command_id: &str,
+        command: AppCommand,
+    ) -> AppCommandEnvelope {
+        AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: CommandId::from(command_id),
+            source: CommandSource::LocalGui {
+                client_id: pawork_domain::GuiClientId::from(client_id),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from(client_id),
+                display_name: None,
+            },
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: Timestamp::from_unix_millis(1),
+            command,
+        }
+    }
+
+    #[tokio::test]
+    async fn distinct_gui_clients_do_not_collide_on_command_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![MockScript::new().wait_for_cancellation()]);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("collide").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+
+        adapter
+            .command(&gui_command_envelope(
+                "client-a",
+                "gui-cmd-0",
+                AppCommand::SessionCreate {
+                    workspace_id: WorkspaceId::from("ws-default"),
+                    title: Some("from-a".into()),
+                },
+            ))
+            .await
+            .expect("create");
+        let start = adapter
+            .command(&gui_command_envelope(
+                "client-a",
+                "gui-cmd-1",
+                AppCommand::RunStart {
+                    session_id: session,
+                    user_message: "go".into(),
+                    model: None,
+                    profile: None,
+                },
+            ))
+            .await
+            .expect("start");
+        let AppResponse::Accepted {
+            run_id: Some(run_id),
+            ..
+        } = start
+        else {
+            panic!("RunStart must report the run id");
+        };
+        assert!(adapter.runs().contains(&run_id));
+
+        adapter
+            .command(&gui_command_envelope(
+                "client-b",
+                "gui-cmd-0",
+                AppCommand::RunCancel {
+                    run_id: run_id.clone(),
+                },
+            ))
+            .await
+            .expect("cancel");
+        assert!(
+            !adapter.runs().contains(&run_id),
+            "second GUI must not replay the first client's SessionCreate"
+        );
+    }
+
     #[tokio::test]
     async fn session_create_command_creates_session() {
         let (core, _dir, _session) = core_with_turn().await;
@@ -1640,6 +2039,76 @@ mod tests {
                     && entry.get("workspace_id").and_then(Value::as_str) == Some("ws-default")
             }),
             "SessionCreate must bind workspace_id in the next snapshot: {sessions:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_fork_command_creates_branch_and_switches() {
+        let (core, _dir, session) = core_with_turn().await;
+        let parent = {
+            let events = core
+                .store()
+                .expect("store")
+                .replay_events(&session, 1, 32)
+                .await
+                .expect("replay");
+            events
+                .into_iter()
+                .next()
+                .expect("persisted event")
+                .event_id
+        };
+        let adapter = GuiHostAdapter::new(core);
+        let response = adapter
+            .command(&command_envelope(AppCommand::SessionFork {
+                session_id: session.clone(),
+                parent_event_id: parent.clone(),
+            }))
+            .await
+            .expect("fork");
+        let AppResponse::Data(data) = response else {
+            panic!("SessionFork must return Data: {response:?}");
+        };
+        assert_eq!(data.get("session_id").and_then(Value::as_str), Some(session.as_str()));
+        let branch_id = data
+            .get("branch_id")
+            .and_then(Value::as_str)
+            .expect("branch_id");
+        assert!(branch_id.starts_with("fork-"));
+        let snapshot = adapter.snapshot().await.expect("snapshot");
+        let sessions = snapshot
+            .sections
+            .iter()
+            .find(|section| section.kind == SnapshotSectionKind::SessionTree)
+            .and_then(|section| section.data.clone())
+            .and_then(|data| data.as_array().cloned())
+            .unwrap_or_default();
+        let entry = sessions
+            .iter()
+            .find(|entry| entry.get("session_id").and_then(Value::as_str) == Some(session.as_str()))
+            .expect("session in tree");
+        assert_eq!(
+            entry.get("forked_from_event_id").and_then(Value::as_str),
+            Some(parent.as_str())
+        );
+        let branches = entry
+            .get("branches")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            branches.iter().any(|branch| {
+                branch.get("branch_id").and_then(Value::as_str) == Some(branch_id)
+                    && branch.get("active").and_then(Value::as_bool) == Some(true)
+            }),
+            "forked branch must be active: {branches:?}"
+        );
+        assert!(
+            snapshot
+                .sections
+                .iter()
+                .any(|section| section.kind == SnapshotSectionKind::TerminalSessions),
+            "snapshot must include TerminalSessions"
         );
     }
 }
