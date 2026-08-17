@@ -540,6 +540,73 @@ impl GuiHost for GuiHostAdapter {
                     "state": state,
                 })))
             }
+            AppQuery::DiffListFiles { .. } => {
+                let core = self.core.read().await;
+                match core.resolve_session("latest").await {
+                    Ok(session) => {
+                        let diff = core.session_diff(&session).await.map_err(Self::app_error)?;
+                        Ok(AppResponse::Data(json!({
+                            "session_id": session.as_str(),
+                            "files": diff.files.iter().map(|file| json!({
+                                "path": file.path,
+                                "status": file.status,
+                                "additions": file.additions,
+                                "deletions": file.deletions,
+                                "binary": file.binary,
+                            })).collect::<Vec<_>>(),
+                            "git": diff.git.as_ref().map(|git| json!({
+                                "branch": git.branch,
+                                "work_dir": git.work_dir,
+                                "dirty_files": git.dirty_files,
+                            })),
+                        })))
+                    }
+                    Err(crate::AppError::SessionNotFound(_)) => {
+                        Ok(AppResponse::Data(json!({ "files": [] })))
+                    }
+                    Err(error) => Err(Self::app_error(error)),
+                }
+            }
+            AppQuery::DiffGet { path, cursor, .. } => {
+                let core = self.core.read().await;
+                let session = match core.resolve_session("latest").await {
+                    Ok(session) => session,
+                    Err(crate::AppError::SessionNotFound(_)) => {
+                        return Ok(AppResponse::Data(json!({
+                            "path": path.as_str(),
+                            "files": [],
+                            "complete": true,
+                        })));
+                    }
+                    Err(error) => return Err(Self::app_error(error)),
+                };
+                let diff = core.session_diff(&session).await.map_err(Self::app_error)?;
+                let Some(file) = diff
+                    .files
+                    .iter()
+                    .find(|file| file.path == path.as_str())
+                    .cloned()
+                else {
+                    return Ok(AppResponse::Data(json!({
+                        "path": path.as_str(),
+                        "files": [],
+                        "complete": true,
+                    })));
+                };
+                let page = cursor
+                    .as_deref()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(1);
+                let paged = crate::paginate_diff(vec![file], page, 1);
+                Ok(AppResponse::Data(json!({
+                    "session_id": session.as_str(),
+                    "path": path.as_str(),
+                    "page": paged.page,
+                    "total_files": paged.total_files,
+                    "files": paged.files,
+                    "complete": page >= paged.page && paged.files.is_empty() || paged.page * 1 >= paged.total_files,
+                })))
+            }
             other => Err(Self::host_error(
                 "unsupported",
                 format!(
@@ -854,6 +921,20 @@ pub fn project_timeline_item(envelope: &AgentEventEnvelope) -> Option<TimelineIt
             None,
             None,
             Some(format!("{code}: {details}")),
+        ),
+        AgentEvent::CheckpointCreated { checkpoint_id, .. } => (
+            TimelineItemKind::Other,
+            None,
+            None,
+            None,
+            Some(format!("checkpoint {}", checkpoint_id.as_str())),
+        ),
+        AgentEvent::CheckpointRolledBack { checkpoint_id } => (
+            TimelineItemKind::Other,
+            None,
+            None,
+            None,
+            Some(format!("rollback {}", checkpoint_id.as_str())),
         ),
         _ => return None,
     };

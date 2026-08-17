@@ -27,15 +27,18 @@ pawork-tools = { path = "../../execution/tools" }
 pawork-policy = { path = "../../execution/policy" }
 pawork-provider-core = { path = "../../providers/core" }
 pawork-workspace = { path = "../../workspace/core" }
+pawork-blob-store = { path = "../../storage/blob", features = ["checkpoint"] }
+pawork-git = { path = "../../vcs/git" }
 pawork-net = { path = "../../net/net", features = ["http"] }
 pawork-protocol = { path = "../../foundation/protocol" }
 pawork-gui-server = { path = "../gui-server" }
 tracing.workspace = true
 async-trait.workspace = true
 futures.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
 reqwest.workspace = true
 
 [dev-dependencies]

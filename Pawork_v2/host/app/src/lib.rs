@@ -7,7 +7,9 @@
 mod approval;
 mod auth;
 mod channels;
+mod checkpoint;
 mod data_dir;
+mod diff;
 mod gui_host;
 mod loop_ctx;
 mod persist;
@@ -65,7 +67,10 @@ pub use approval::{
     parse_approval_mode, ApprovalAsk, ApprovalPromptHost, DenyAllApprovals, GuiApprovalHost,
     PendingToolApproval,
 };
-pub use data_dir::{default_data_dir, session_db_path};
+pub use checkpoint::{CheckpointSummary, RollbackOutcome};
+pub use data_dir::{artifact_store_path, default_data_dir, session_db_path};
+pub use diff::{paginate_diff, render_diff_file, render_session_diff, GitDiffHeader, SessionDiff};
+pub use pawork_git::{DiffFile, DiffPage};
 pub use gui_host::{
     project_timeline_item, GuiBroadcastSink, GuiEventBus, GuiHostAdapter, GuiRunRegistry,
 };
@@ -178,6 +183,18 @@ pub enum AppError {
     ApprovalMode(String),
     #[error("invalid proxy_url: {0}")]
     InvalidProxy(String),
+    #[error(transparent)]
+    Checkpoint(#[from] pawork_blob_store::CheckpointError),
+    #[error(transparent)]
+    Artifact(#[from] pawork_blob_store::ArtifactStoreError),
+    #[error(transparent)]
+    Git(#[from] pawork_git::GitError),
+    #[error("checkpoint store is not open")]
+    CheckpointStoreNotOpen,
+    #[error("checkpoint not found: {0}")]
+    CheckpointNotFound(String),
+    #[error("ambiguous checkpoint `{prefix}` matches: {matches}")]
+    AmbiguousCheckpoint { prefix: String, matches: String },
 }
 
 /// S5 压缩在 engine 侧保留的最近消息条数；session 侧保留策略按
@@ -268,6 +285,9 @@ pub struct AppCore {
     approval_mode: ApprovalMode,
     workspace_trusted: bool,
     approval_host: Arc<dyn ApprovalPromptHost>,
+    pub(crate) workspace_roots: Vec<PathBuf>,
+    pub(crate) checkpoints: Option<pawork_blob_store::CheckpointService>,
+    pub(crate) artifacts: Option<pawork_blob_store::ArtifactStore>,
     next_request: AtomicU64,
     next_run: AtomicU64,
     next_session: AtomicU64,
@@ -345,7 +365,8 @@ impl AppCore {
             core.attach_workspace(root)?;
         }
         let data_dir = options.data_dir.unwrap_or_else(default_data_dir);
-        core.open_store(session_db_path(data_dir)).await?;
+        core.open_store(session_db_path(&data_dir)).await?;
+        core.open_checkpoints(artifact_store_path(&data_dir)).await?;
         Ok(core)
     }
 
@@ -366,7 +387,11 @@ impl AppCore {
         } else if let Ok(cwd) = std::env::current_dir() {
             core.attach_workspace(&cwd)?;
         }
+        let store_path = store_path.as_ref();
         core.open_store(store_path).await?;
+        if let Some(parent) = store_path.parent() {
+            core.open_checkpoints(parent.join("artifacts")).await?;
+        }
         Ok(core)
     }
 
@@ -557,6 +582,9 @@ impl AppCore {
             approval_mode: ApprovalMode::ReadOnly,
             workspace_trusted: false,
             approval_host: Arc::new(DenyAllApprovals),
+            workspace_roots: Vec::new(),
+            checkpoints: None,
+            artifacts: None,
             next_request: AtomicU64::new(1),
             next_run: AtomicU64::new(1),
             next_session: AtomicU64::new(1),
@@ -642,6 +670,17 @@ impl AppCore {
         ));
         self.workspace_id = workspace_id;
         self.workspace_name = "default".into();
+        self.workspace_roots = vec![root.to_path_buf()];
+        Ok(())
+    }
+
+    pub async fn open_checkpoints(&mut self, root: impl AsRef<Path>) -> Result<(), AppError> {
+        let root = root.as_ref();
+        std::fs::create_dir_all(root)?;
+        let store = pawork_blob_store::ArtifactStore::open(root).await?;
+        let checkpoints = pawork_blob_store::CheckpointService::open(store.clone()).await?;
+        self.artifacts = Some(store);
+        self.checkpoints = Some(checkpoints);
         Ok(())
     }
 
@@ -1000,7 +1039,7 @@ impl AppCore {
         Ok(())
     }
 
-    async fn append_payload(
+    pub(crate) async fn append_payload(
         &self,
         session_id: &SessionId,
         run_id: &RunId,
@@ -1117,10 +1156,25 @@ impl AppCore {
             pawork_engine::now_timestamp().as_unix_millis()
         ));
         let trigger = trigger.clone();
+        let mut request_messages = messages;
+        if let Some(note) = crate::diff::git_status_note(&self.workspace_roots).await {
+            request_messages.insert(
+                0,
+                Message {
+                    id: MessageId::from(format!(
+                        "msg-git-{}",
+                        pawork_engine::now_timestamp().as_unix_millis()
+                    )),
+                    role: MessageRole::System,
+                    content: vec![ContentPart::Text(TextContent { text: note })],
+                    metadata: Default::default(),
+                },
+            );
+        }
         let request = assemble_request_with_tools(
             RequestId::from(format!("req-{n}")),
             self.model.clone(),
-            messages,
+            request_messages,
             self.tool_defs.clone(),
         );
         let start_sequence = self.next_sequence(session_id).await?;
@@ -1150,6 +1204,8 @@ impl AppCore {
             store: Some(self.store()?),
             session_id: Some(session_id.clone()),
             token_estimator: Some(self.session_estimator.clone()),
+            checkpoints: self.checkpoints.clone(),
+            workspace_roots: self.workspace_roots.clone(),
         };
         Ok(run_session(
             self.provider.as_ref(),
@@ -1434,6 +1490,8 @@ impl AppCore {
             store: Some(self.store()?),
             session_id: Some(session_id.clone()),
             token_estimator: Some(self.session_estimator.clone()),
+            checkpoints: self.checkpoints.clone(),
+            workspace_roots: self.workspace_roots.clone(),
         };
         Ok(run_manual_compaction(
             self.provider.as_ref(),
@@ -1447,9 +1505,50 @@ impl AppCore {
         .await?)
     }
 
+    pub async fn session_diff(&self, session_id: &SessionId) -> Result<SessionDiff, AppError> {
+        crate::diff::session_diff(self, session_id).await
+    }
+
+    pub async fn list_checkpoints(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<CheckpointSummary>, AppError> {
+        let Some(service) = self.checkpoints.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let run_ids = crate::checkpoint::session_run_ids(self, session_id).await?;
+        let runs = crate::checkpoint::run_checkpoints(service, &run_ids);
+        Ok(crate::checkpoint::summaries_from_runs(&runs))
+    }
+
+    pub async fn rollback(
+        &self,
+        session_id: &SessionId,
+        spec: &str,
+    ) -> Result<RollbackOutcome, AppError> {
+        let service = self
+            .checkpoints
+            .as_ref()
+            .ok_or(AppError::CheckpointStoreNotOpen)?;
+        let listed = self.list_checkpoints(session_id).await?;
+        let resolved = crate::checkpoint::resolve_spec(&listed, spec)?;
+        let restored = crate::checkpoint::perform_rollback(service, &resolved).await?;
+        crate::checkpoint::persist_rolled_back(self, session_id, &resolved).await?;
+        Ok(RollbackOutcome {
+            checkpoint_id: resolved.checkpoint_id.as_str().to_string(),
+            restored: restored
+                .into_iter()
+                .map(|file| file.relative_path)
+                .collect(),
+        })
+    }
+
     pub async fn shutdown(self) -> Result<(), AppError> {
         if let Some(store) = self.store {
             store.shutdown().await?;
+        }
+        if let Some(artifacts) = self.artifacts {
+            artifacts.shutdown().await?;
         }
         Ok(())
     }
@@ -1845,6 +1944,8 @@ mod tests {
                     AgentEvent::ToolOutputDelta { .. } => "ToolOutputDelta",
                     AgentEvent::CompactionStarted { .. } => "CompactionStarted",
                     AgentEvent::CompactionCompleted { .. } => "CompactionCompleted",
+                    AgentEvent::CheckpointCreated { .. } => "CheckpointCreated",
+                    AgentEvent::CheckpointRolledBack { .. } => "CheckpointRolledBack",
                     _ => "other",
                 })
                 .collect()
@@ -2972,6 +3073,9 @@ mod tests {
             ProviderId::from("mock"),
             Some(store),
         );
+        core.open_checkpoints(dir.path().join("artifacts"))
+            .await
+            .expect("artifacts");
         core.configure_approval(mode, trusted, host);
         core.attach_workspace(workspace).expect("attach");
         (core, dir)
@@ -3013,6 +3117,71 @@ mod tests {
         assert_eq!(host.asked.load(Ordering::SeqCst), 1);
         let written = std::fs::read_to_string(workspace.path().join("notes.txt")).expect("file");
         assert_eq!(written, "hello-write");
+        assert!(types.contains(&"CheckpointCreated"));
+        let created = types
+            .iter()
+            .position(|name| *name == "CheckpointCreated")
+            .expect("created");
+        assert!(responded < created);
+        assert!(created < started);
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn write_checkpoint_rollback_restores_and_appends() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let host = ScriptedHost::new(vec![ApprovalDecision::ApprovedOnce]);
+        let (core, _dir) =
+            write_ready_core(ApprovalMode::AskForWrites, true, host, workspace.path()).await;
+        let session = core.create_session("rollback").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("notes.txt")).expect("file"),
+            "hello-write"
+        );
+
+        let listed = core.list_checkpoints(&session).await.expect("list");
+        assert!(!listed.is_empty());
+        let spec = listed
+            .iter()
+            .find(|item| item.tool_call_id.is_none())
+            .or_else(|| listed.first())
+            .expect("checkpoint")
+            .checkpoint_id
+            .clone();
+        let before_rollback = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("replay");
+        let last_seq = before_rollback.last().expect("tail").sequence.value();
+
+        let outcome = core.rollback(&session, &spec).await.expect("rollback");
+        assert!(!workspace.path().join("notes.txt").exists());
+        assert!(outcome.restored.iter().any(|path| path == "notes.txt"));
+
+        let after = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("replay after");
+        assert_eq!(after.last().expect("last").sequence.value(), last_seq + 1);
+        assert!(matches!(
+            after.last().expect("last").payload,
+            AgentEvent::CheckpointRolledBack { .. }
+        ));
+        let diff = core.session_diff(&session).await.expect("diff");
+        assert!(diff.files.is_empty());
         core.shutdown().await.expect("shutdown");
     }
 

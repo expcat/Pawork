@@ -3,6 +3,7 @@
 //! AskUser 由 [`crate::approval::ApprovalPromptHost`] 决策；Allow 传 `None`
 //! 给 scheduler，避免 S2「Allow 后再 resolve」钩子把只读工具也弹出来。
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -14,9 +15,10 @@ use pawork_domain::{
     ApprovalDecision, CancellationToken, ContentPart, ErrorContext, EventId, EventSequence,
     MessageId, RequestId, RunId, TextContent, ToolCallId, ToolDescriptor, WorkspaceId,
 };
+use pawork_blob_store::CheckpointService;
 use pawork_engine::{
     now_timestamp, ApprovalGate, AutoCompactionReason, CompactionOutcome, LoopContext,
-    LoopEventEmitter, PendingToolInvocation, ToolCallResult,
+    LoopEventEmitter, PendingToolInvocation, ToolCallResult, WriteCheckpoint,
 };
 use pawork_policy::{ApprovalMode, ApprovalPrompt, PolicyDecision, PolicyEngine, PolicyInput, RiskLevel};
 use pawork_session::{
@@ -26,9 +28,10 @@ use pawork_session::{
 use pawork_tools::ToolScheduler;
 
 use crate::approval::{
-    preview_from_input, relative_path_from_input, ApprovalAsk, ApprovalPromptHost,
+    preview_for_tool, relative_path_from_input, ApprovalAsk, ApprovalPromptHost,
     PreApprovedResolver,
 };
+use crate::checkpoint;
 
 pub(crate) struct SessionLoopCtx<'a> {
     pub scheduler: Arc<ToolScheduler>,
@@ -45,6 +48,8 @@ pub(crate) struct SessionLoopCtx<'a> {
     pub store: Option<&'a SessionStore>,
     pub session_id: Option<pawork_domain::SessionId>,
     pub token_estimator: Option<Arc<dyn pawork_session::TokenEstimator>>,
+    pub checkpoints: Option<CheckpointService>,
+    pub workspace_roots: Vec<PathBuf>,
 }
 
 struct ForwardingSink<'a> {
@@ -143,7 +148,11 @@ impl LoopContext for SessionLoopCtx<'_> {
                         relative_path: relative_path_from_input(&call.arguments),
                         message: prompt.message,
                         risk: prompt.risk,
-                        preview: preview_from_input(&call.arguments),
+                        preview: preview_for_tool(
+                            &call.name,
+                            &call.arguments,
+                            &self.workspace_roots,
+                        ),
                     };
                     let answered = self.approval_host.decide(&ask, cancel.clone()).await;
                     if matches!(answered, ApprovalDecision::ApprovedForRun) {
@@ -268,6 +277,27 @@ impl LoopContext for SessionLoopCtx<'_> {
                 .max()
                 .unwrap_or(EventSequence::new(0)),
         })
+    }
+
+    async fn snapshot_write_tools(
+        &self,
+        calls: &[PendingToolInvocation],
+        cancel: CancellationToken,
+    ) -> Vec<WriteCheckpoint> {
+        let Some(checkpoints) = self.checkpoints.as_ref() else {
+            return Vec::new();
+        };
+        if self.workspace_roots.is_empty() {
+            return Vec::new();
+        }
+        checkpoint::snapshot_write_tools(
+            checkpoints,
+            &self.run_id,
+            &self.workspace_roots,
+            calls,
+            cancel,
+        )
+        .await
     }
 }
 

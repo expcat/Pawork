@@ -230,6 +230,8 @@ pub fn parse_approval_mode(value: &str) -> Result<ApprovalMode, String> {
     }
 }
 
+const PREVIEW_LINE_CAP: usize = 40;
+
 pub(crate) fn relative_path_from_input(input: &serde_json::Value) -> Option<String> {
     for key in ["path", "file", "file_path"] {
         if let Some(path) = input.get(key).and_then(|value| value.as_str()) {
@@ -238,25 +240,164 @@ pub(crate) fn relative_path_from_input(input: &serde_json::Value) -> Option<Stri
             }
         }
     }
-    None
+    input
+        .get("ops")
+        .and_then(|value| value.as_array())
+        .and_then(|ops| ops.first())
+        .and_then(|op| op.get("path").and_then(|value| value.as_str()))
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
 }
 
-pub(crate) fn preview_from_input(input: &serde_json::Value) -> Option<String> {
+pub(crate) fn preview_for_tool(
+    tool_name: &str,
+    input: &serde_json::Value,
+    roots: &[std::path::PathBuf],
+) -> Option<String> {
+    let raw = match tool_name {
+        "write_file" => preview_write_file(input, roots)?,
+        "edit_file" => preview_edit_file(input)?,
+        "apply_patch" => preview_apply_patch(input)?,
+        _ => preview_generic_content(input)?,
+    };
+    Some(cap_preview(&raw, PREVIEW_LINE_CAP))
+}
+
+fn preview_write_file(input: &serde_json::Value, roots: &[std::path::PathBuf]) -> Option<String> {
+    let path = relative_path_from_input(input)?;
+    let new = input.get("content").and_then(|value| value.as_str())?;
+    let old = read_existing(roots, &path);
+    Some(match old {
+        Some(old) => unified_replacement(&path, &old, new),
+        None => all_additions(&path, new),
+    })
+}
+
+fn preview_edit_file(input: &serde_json::Value) -> Option<String> {
+    let path = relative_path_from_input(input).unwrap_or_else(|| "-".into());
+    let edits = collect_edits(input);
+    if edits.is_empty() {
+        return None;
+    }
+    let mut out = format!("--- {path}\n+++ {path}\n");
+    for (old, new) in edits {
+        for line in old.lines() {
+            out.push('-');
+            out.push_str(line);
+            out.push('\n');
+        }
+        for line in new.lines() {
+            out.push('+');
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    Some(out)
+}
+
+fn preview_apply_patch(input: &serde_json::Value) -> Option<String> {
+    let ops = input.get("ops").and_then(|value| value.as_array())?;
+    if ops.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    for op in ops {
+        let kind = op.get("op").and_then(|value| value.as_str()).unwrap_or("update");
+        let path = op.get("path").and_then(|value| value.as_str()).unwrap_or("-");
+        match kind {
+            "rename" => {
+                let to = op.get("to").and_then(|value| value.as_str()).unwrap_or("-");
+                out.push_str(&format!("--- {path}\n+++ {to}\n"));
+            }
+            "delete" => {
+                out.push_str(&format!("--- {path}\n+++ /dev/null\n"));
+            }
+            _ => {
+                out.push_str(&format!("--- {path}\n+++ {path}\n"));
+                if let Some(content) = op.get("content").and_then(|value| value.as_str()) {
+                    for line in content.lines() {
+                        out.push('+');
+                        out.push_str(line);
+                        out.push('\n');
+                    }
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+fn preview_generic_content(input: &serde_json::Value) -> Option<String> {
     let content = input.get("content").and_then(|value| value.as_str())?;
     if content.is_empty() {
         return None;
     }
-    let lines: Vec<&str> = content.lines().collect();
-    let shown: Vec<&str> = lines.iter().copied().take(8).collect();
-    let mut preview = format!("{} lines", lines.len());
-    if !shown.is_empty() {
-        preview.push('\n');
-        preview.push_str(&shown.join("\n"));
-        if lines.len() > 8 {
-            preview.push_str("\n…");
+    Some(all_additions("-", content))
+}
+
+fn collect_edits(input: &serde_json::Value) -> Vec<(String, String)> {
+    if let Some(arr) = input.get("edits").and_then(|value| value.as_array()) {
+        return arr
+            .iter()
+            .filter_map(|item| {
+                let old = item.get("old_string").and_then(|value| value.as_str())?;
+                let new = item.get("new_string").and_then(|value| value.as_str())?;
+                Some((old.to_string(), new.to_string()))
+            })
+            .collect();
+    }
+    match (
+        input.get("old_string").and_then(|value| value.as_str()),
+        input.get("new_string").and_then(|value| value.as_str()),
+    ) {
+        (Some(old), Some(new)) => vec![(old.to_string(), new.to_string())],
+        _ => Vec::new(),
+    }
+}
+
+fn read_existing(roots: &[std::path::PathBuf], relative: &str) -> Option<String> {
+    for root in roots {
+        let candidate = root.join(relative);
+        if candidate.is_file() {
+            return std::fs::read_to_string(&candidate).ok();
         }
     }
-    Some(preview)
+    None
+}
+
+fn unified_replacement(path: &str, old: &str, new: &str) -> String {
+    let mut out = format!("--- {path}\n+++ {path}\n");
+    for line in old.lines() {
+        out.push('-');
+        out.push_str(line);
+        out.push('\n');
+    }
+    for line in new.lines() {
+        out.push('+');
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+fn all_additions(path: &str, content: &str) -> String {
+    let mut out = format!("--- /dev/null\n+++ {path}\n");
+    for line in content.lines() {
+        out.push('+');
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+fn cap_preview(text: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= max_lines {
+        return text.trim_end_matches('\n').to_string();
+    }
+    let mut out = lines[..max_lines].join("\n");
+    out.push_str("\n…");
+    out
 }
 
 #[cfg(test)]
@@ -286,9 +427,48 @@ mod tests {
             relative_path_from_input(&input).as_deref(),
             Some("src/demo.rs")
         );
-        let preview = preview_from_input(&input).expect("preview");
-        assert!(preview.starts_with("3 lines"));
-        assert!(preview.contains("one"));
+        let preview = preview_for_tool("write_file", &input, &[]).expect("preview");
+        assert!(preview.contains("+++ src/demo.rs"));
+        assert!(preview.contains("+one"));
+        assert!(preview.contains("+two"));
+    }
+
+    #[test]
+    fn apply_patch_uses_first_op_path() {
+        let input = serde_json::json!({
+            "ops": [{ "op": "update", "path": "lib.rs", "content": "fn x() {}" }]
+        });
+        assert_eq!(relative_path_from_input(&input).as_deref(), Some("lib.rs"));
+        let preview = preview_for_tool("apply_patch", &input, &[]).expect("preview");
+        assert!(preview.contains("--- lib.rs"));
+        assert!(preview.contains("+fn x() {}"));
+    }
+
+    #[test]
+    fn edit_file_preview_is_hunk() {
+        let input = serde_json::json!({
+            "path": "a.txt",
+            "old_string": "hello",
+            "new_string": "world"
+        });
+        let preview = preview_for_tool("edit_file", &input, &[]).expect("preview");
+        assert!(preview.contains("--- a.txt"));
+        assert!(preview.contains("-hello"));
+        assert!(preview.contains("+world"));
+    }
+
+    #[test]
+    fn write_file_preview_uses_existing_file() {
+        let dir = tempfile::tempdir().expect("tmp");
+        std::fs::write(dir.path().join("notes.txt"), "old\nline").expect("write");
+        let input = serde_json::json!({
+            "path": "notes.txt",
+            "content": "new\nline"
+        });
+        let preview =
+            preview_for_tool("write_file", &input, &[dir.path().to_path_buf()]).expect("preview");
+        assert!(preview.contains("-old"));
+        assert!(preview.contains("+new"));
     }
 
     #[tokio::test]

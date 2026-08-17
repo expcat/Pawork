@@ -27,6 +27,11 @@ pub fn session_db_path(data_dir: impl AsRef<Path>) -> PathBuf {
     data_dir.as_ref().join("default").join("session.db")
 }
 
+/// `<data_dir>/default/artifacts`：写前快照与回滚 Blob。
+pub fn artifact_store_path(data_dir: impl AsRef<Path>) -> PathBuf {
+    data_dir.as_ref().join("default").join("artifacts")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,6 +42,11 @@ mod tests {
         assert!(
             path.ends_with("default/session.db") || path.ends_with("default\\session.db"),
             "{path:?}"
+        );
+        let artifacts = artifact_store_path("/tmp/pawork-data");
+        assert!(
+            artifacts.ends_with("default/artifacts") || artifacts.ends_with("default\\artifacts"),
+            "{artifacts:?}"
         );
     }
 }

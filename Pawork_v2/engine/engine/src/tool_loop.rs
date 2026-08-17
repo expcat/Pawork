@@ -11,9 +11,9 @@ use pawork_api::{
     ProviderStreamEvent, ToolResult,
 };
 use pawork_domain::{
-    AgentEvent, ApprovalDecision, CancellationToken, ContentPart, ErrorCategory, ErrorContext,
-    EventSequence, Message, MessageId, MessageMetadata, MessageRole, ModelId, RequestId,
-    TextContent, TokenUsage, ToolCallId, ToolResultContent,
+    AgentEvent, ApprovalDecision, ArtifactId, CancellationToken, CheckpointId, ContentPart,
+    ErrorCategory, ErrorContext, EventSequence, Message, MessageId, MessageMetadata, MessageRole,
+    ModelId, RequestId, TextContent, TokenUsage, ToolCallId, ToolResultContent,
 };
 
 use crate::appender::{tool_results_message, AssembledTurn, ToolCallResult};
@@ -44,6 +44,13 @@ pub struct PendingToolInvocation {
 pub enum ApprovalGate {
     NotRequired,
     Asked(ApprovalDecision),
+}
+
+/// 写工具执行前由宿主拍下的快照标识。engine 只负责发 [`AgentEvent::CheckpointCreated`]。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WriteCheckpoint {
+    pub checkpoint_id: CheckpointId,
+    pub artifacts: Vec<ArtifactId>,
 }
 
 /// host 完成 session 侧 fork/snapshot 后回传的元数据。
@@ -88,6 +95,15 @@ pub trait LoopContext: Send + Sync {
         _cancel: CancellationToken,
     ) -> Option<CompactionOutcome> {
         None
+    }
+
+    /// 写工具执行前由宿主拍快照。engine 不依赖 blob/git；默认空。
+    async fn snapshot_write_tools(
+        &self,
+        _calls: &[PendingToolInvocation],
+        _cancel: CancellationToken,
+    ) -> Vec<WriteCheckpoint> {
+        Vec::new()
     }
 }
 
@@ -245,6 +261,18 @@ pub async fn run_session(
                             })
                             .await?;
                     }
+                }
+
+                let checkpoints = loop_ctx
+                    .snapshot_write_tools(&to_run, cancel.clone())
+                    .await;
+                for checkpoint in checkpoints {
+                    emitter
+                        .emit(AgentEvent::CheckpointCreated {
+                            checkpoint_id: checkpoint.checkpoint_id,
+                            artifacts: checkpoint.artifacts,
+                        })
+                        .await?;
                 }
 
                 for invocation in &to_run {
@@ -859,10 +887,10 @@ mod tests {
         ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
     };
     use pawork_domain::{
-        AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, ContentPart,
-        ErrorCategory, EventSequence, Message, MessageId, MessageRole, ModelId, ProviderId,
-        RequestId, RunId, SessionId, StopReason, TextContent, Timestamp, TokenUsage, ToolCallId,
-        WorkspaceId,
+        AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, CheckpointId,
+        ContentPart, ErrorCategory, EventId, EventSequence, Message, MessageId, MessageRole,
+        ModelId, ProviderId, RequestId, RunId, SessionId, StopReason, TextContent, Timestamp,
+        TokenUsage, ToolCallId, WorkspaceId,
     };
     use pawork_testkit::{MockProvider, MockScript, MockTool};
 
@@ -1126,6 +1154,8 @@ mod tests {
             AgentEvent::RunFailed { .. } => "RunFailed",
             AgentEvent::CompactionStarted { .. } => "CompactionStarted",
             AgentEvent::CompactionCompleted { .. } => "CompactionCompleted",
+            AgentEvent::CheckpointCreated { .. } => "CheckpointCreated",
+            AgentEvent::CheckpointRolledBack { .. } => "CheckpointRolledBack",
             AgentEvent::Diagnostic { .. } => "Diagnostic",
             _ => "other",
         }
@@ -1669,6 +1699,182 @@ mod tests {
             }
         });
         assert_eq!(decision, Some(ApprovalDecision::ApprovedOnce));
+    }
+
+    struct CheckpointingCtx {
+        inner: TestContext,
+    }
+
+    impl CheckpointingCtx {
+        fn new(tools: Vec<MockTool>) -> Self {
+            Self {
+                inner: TestContext::new(tools),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LoopContext for CheckpointingCtx {
+        async fn execute_tools(
+            &self,
+            calls: Vec<PendingToolInvocation>,
+            events: LoopEventEmitter<'_>,
+            cancel: CancellationToken,
+        ) -> Vec<ToolCallResult> {
+            self.inner.execute_tools(calls, events, cancel).await
+        }
+
+        async fn request_approval(
+            &self,
+            calls: &[PendingToolInvocation],
+            already_approved_for_run: bool,
+            cancel: CancellationToken,
+        ) -> Vec<ApprovalGate> {
+            self.inner
+                .request_approval(calls, already_approved_for_run, cancel)
+                .await
+        }
+
+        fn next_message_id(&self) -> MessageId {
+            self.inner.next_message_id()
+        }
+
+        fn next_request_id(&self) -> RequestId {
+            self.inner.next_request_id()
+        }
+
+        async fn snapshot_write_tools(
+            &self,
+            calls: &[PendingToolInvocation],
+            _cancel: CancellationToken,
+        ) -> Vec<WriteCheckpoint> {
+            calls
+                .iter()
+                .filter(|call| call.name == "write_file")
+                .map(|call| WriteCheckpoint {
+                    checkpoint_id: CheckpointId::from(format!(
+                        "run-1/{}",
+                        call.tool_call_id.as_str()
+                    )),
+                    artifacts: Vec::new(),
+                })
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn write_snapshot_emits_checkpoint_created_before_execution() {
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("write_file", serde_json::json!({"path": "a.rs"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]));
+        let write = MockTool::new(
+            "write_file",
+            ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "ok".into(),
+            })]),
+        );
+        let ctx = CheckpointingCtx::new(vec![write]);
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            sample_request(vec![write_tool_def()]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
+        )
+        .await
+        .expect("write loop");
+
+        let types = sink.types();
+        let created = types
+            .iter()
+            .position(|name| *name == "CheckpointCreated")
+            .expect("CheckpointCreated");
+        let started = types
+            .iter()
+            .position(|name| *name == "ToolExecutionStarted")
+            .expect("started");
+        assert!(created < started);
+        let checkpoint = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::CheckpointCreated {
+                    checkpoint_id,
+                    artifacts,
+                } => Some((checkpoint_id, artifacts)),
+                _ => None,
+            }
+        });
+        assert_eq!(
+            checkpoint,
+            Some((
+                CheckpointId::from("run-1/mock-tool-call-0"),
+                Vec::new()
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_rollback_appends_to_event_stream() {
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("write_file", serde_json::json!({"path": "a.rs"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]));
+        let write = MockTool::new(
+            "write_file",
+            ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "ok".into(),
+            })]),
+        );
+        let ctx = CheckpointingCtx::new(vec![write]);
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            sample_request(vec![write_tool_def()]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
+        )
+        .await
+        .expect("write loop");
+
+        let last = sink.snapshot().last().cloned().expect("events");
+        let next = EventSequence::new(last.sequence.value() + 1);
+        sink.emit(AgentEventEnvelope::new(
+            EventId::from("evt-rollback"),
+            last.session_id.clone(),
+            last.run_id.clone(),
+            next,
+            Timestamp::from_unix_millis(2),
+            AgentEvent::CheckpointRolledBack {
+                checkpoint_id: CheckpointId::from("run-1/mock-tool-call-0"),
+            },
+        ))
+        .await
+        .expect("append rollback");
+
+        let snapshot = sink.snapshot();
+        let sequences: Vec<u64> = snapshot.iter().map(|e| e.sequence.value()).collect();
+        assert_eq!(
+            sequences,
+            (1..=snapshot.len() as u64).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            event_type(&snapshot.last().expect("last").payload),
+            "CheckpointRolledBack"
+        );
     }
 
     #[tokio::test]

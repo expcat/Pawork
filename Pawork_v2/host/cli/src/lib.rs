@@ -10,6 +10,7 @@ mod error;
 mod gui;
 mod render;
 mod sessions;
+mod vcs;
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
@@ -97,6 +98,26 @@ pub enum Command {
         #[command(subcommand)]
         command: GuiCommand,
     },
+    /// 会话累计改动（结构化 hunk；可分页）
+    Diff {
+        /// 完整 session id、唯一前缀，或 `latest`
+        #[arg(long)]
+        session: Option<String>,
+        /// 从 1 起的文件页（每页 10 个文件）
+        #[arg(long)]
+        page: Option<usize>,
+    },
+    /// 回滚到写前 checkpoint（Blob 还原，不用 `git reset --hard`）
+    Rollback {
+        /// `{run_id}` 或 `{run_id}/{tool_call_id}`；省略则列出并询问
+        checkpoint: Option<String>,
+        /// 完整 session id、唯一前缀，或 `latest`
+        #[arg(long)]
+        session: Option<String>,
+        /// 跳过确认；无 id 时回滚最近一个 run
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -153,7 +174,11 @@ async fn run_inner() -> Result<(), CliError> {
     // 目录 / 凭证命令允许默认 provider 缺凭证（目录兜底装配）。
     let tolerant = matches!(
         &cli.command,
-        Command::Models | Command::Sessions { .. } | Command::Auth { .. }
+        Command::Models
+            | Command::Sessions { .. }
+            | Command::Auth { .. }
+            | Command::Diff { .. }
+            | Command::Rollback { .. }
     );
     let mut core = if tolerant {
         AppCore::load_for_catalog(options).await?
@@ -171,6 +196,12 @@ async fn run_inner() -> Result<(), CliError> {
         Command::Run { prompt } => chat::run_once(&core, &prompt, cli.json).await,
         Command::Models => run_models(&core, cli.json).await,
         Command::Auth { command } => auth::run_auth(&core, command, cli.json).await,
+        Command::Diff { session, page } => vcs::run_diff(&core, session, page, cli.json).await,
+        Command::Rollback {
+            checkpoint,
+            session,
+            yes,
+        } => vcs::run_rollback(&core, checkpoint, session, yes, cli.json).await,
         Command::Gui { .. } => unreachable!("gui command handled before core dispatch"),
     };
     let shutdown = core.shutdown().await;
@@ -429,5 +460,40 @@ mod tests {
     fn rejects_unknown_approval_mode_string() {
         let err = parse_approval_mode("yolo").expect_err("unknown");
         assert!(err.contains("unknown approval mode"));
+    }
+
+    #[test]
+    fn parses_diff_and_rollback() {
+        let cli = Cli::try_parse_from(["pawork", "diff", "--session", "latest", "--page", "2"])
+            .expect("parse diff");
+        match cli.command {
+            Command::Diff { session, page } => {
+                assert_eq!(session.as_deref(), Some("latest"));
+                assert_eq!(page, Some(2));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "rollback",
+            "run-1/call-1",
+            "--session",
+            "ses-1",
+            "--yes",
+        ])
+        .expect("parse rollback");
+        match cli.command {
+            Command::Rollback {
+                checkpoint,
+                session,
+                yes,
+            } => {
+                assert_eq!(checkpoint.as_deref(), Some("run-1/call-1"));
+                assert_eq!(session.as_deref(), Some("ses-1"));
+                assert!(yes);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }

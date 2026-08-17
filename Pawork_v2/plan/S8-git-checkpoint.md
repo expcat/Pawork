@@ -1,6 +1,6 @@
 # S8：Git、Diff 与 Checkpoint
 
-> 阶段 S8 · 版本控制与回滚 · 状态：🔵进行中（波 A ✅）· 依赖：S3（写工具在位；run_command 非必需）· 规模：中 ·（与 S5/S6 可并行；S7 GUI 非阻塞，但有 GUI 时应同步 Changes 面）
+> 阶段 S8 · 版本控制与回滚 · 状态：🟢已完成（波 A–B ✅）· 依赖：S3（写工具在位；run_command 非必需）· 规模：中 ·（与 S5/S6 可并行；S7 GUI 非阻塞，但有 GUI 时应同步 Changes 面）
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -26,13 +26,13 @@ Agent 的改动变得可审阅、可撤销：`pawork diff` 以结构化 diff 呈
 
 ## 真实测试与评估（冒烟清单）
 
-- [ ] 真实任务改 2–3 个文件（经审批）→ `pawork diff` 呈现全部 hunk（与 `git diff` 人工核对一致）→ `pawork rollback` → 文件还原、`git status` 干净 → 再 `pawork diff` 为空。
-- [ ] 非 git 目录中同样的快照/回滚闭环可用。
-- [ ] 含中文文件名 + CRLF 文件的 diff 正确呈现。
-- [ ] 审批时的 diff 预览与最终落盘一致。
-- [ ] git worktree 下运行会话：roots 正确、状态不串主工作区。
-- [ ] 诱导注入：文件名形如 `--force`/`-o xx` 的路径经 git 操作不被解释为参数（防御实证）。
-- [ ] **评估记录**：模型对 diff 上下文的利用（回滚后能否理解「改动已撤销」并重新规划）。
+- [x] 真实任务改 2–3 个文件（经审批）→ `pawork diff` 呈现全部 hunk（与 `git diff` 人工核对一致）→ `pawork rollback` → 文件还原、`git status` 干净 → 再 `pawork diff` 为空。（2026-08-17：`glm-coding`/`glm-4.7` 在临时 git 仓库写 `alpha.rs` / `beta.txt` / `notes/中文.md`；`pawork diff --json` 列出三文件；`rollback --yes` 后三文件删除、`git status` 空、`pawork diff` 空。未跟踪新文件的 unified hunk 由会话快照补齐，因 `git diff` 本身不含 `??`。）
+- [x] 非 git 目录中同样的快照/回滚闭环可用。（2026-08-17：`opencode-go`/`deepseek-v4-flash`；快照 diff 含中文路径 hunk；rollback 后 diff 空。）
+- [x] 含中文文件名 + CRLF 文件的 diff 正确呈现。（路径 `notes/中文.md` 两通道均正确；OpenCode 用 `apply_patch` 保住 CRLF；GLM `write_file` 规范化为 LF，属工具层而非 diff 层。）
+- [x] 审批时的 diff 预览与最终落盘一致。（`ask-for-writes` PTY：`--- /dev/null` / `+++ preview.txt` / `+line-a` / `+line-b`，落盘内容一致。）
+- [x] git worktree 下运行会话：roots 正确、状态不串主工作区。（worktree 写出 `wt-only.txt`，主工作区无该文件。）
+- [x] 诱导注入：文件名形如 `--force`/`-o xx` 的路径经 git 操作不被解释为参数（防御实证）。（`git add -- --force '-o xx'` 退出 0，status 为 `A  --force` / `A  "-o xx"`。）
+- [x] **评估记录**：模型对 diff 上下文的利用（回滚后能否理解「改动已撤销」并重新规划）。（两通道 `--resume latest` 后均确认三文件不存在，并给出「若要再做就重写」的计划，未擅自恢复。）
 
 ## 定向自动化测试
 
@@ -42,10 +42,10 @@ Agent 的改动变得可审阅、可撤销：`pawork diff` 以结构化 diff 呈
 
 ## 退出标准
 
-- [ ] 冒烟全项通过；checkpoint 快照/回滚闭环（旧 M1 硬指标）达成且有真实消费者。
-- [ ] `PWB1`/diff golden 全绿；git 注入防御回归全绿。
-- [ ] `pawork-git` 不依赖 `pawork-workspace`（roots 参数化，`cargo tree` 断言）。
-- [ ] 审批 diff 预览上线（S3 升级点兑现）。
+- [x] 冒烟全项通过；checkpoint 快照/回滚闭环（旧 M1 硬指标）达成且有真实消费者。（`pawork-app` 写前快照 + `pawork diff` / `rollback`。）
+- [x] `PWB1`/diff golden 全绿；git 注入防御回归全绿。（波 A 定向测试；波 B 未改 parser/PWB1。）
+- [x] `pawork-git` 不依赖 `pawork-workspace`（roots 参数化，`cargo tree` 断言）。
+- [x] 审批 diff 预览上线（S3 升级点兑现）。
 
 ## GUI 增量
 

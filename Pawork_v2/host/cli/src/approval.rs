@@ -87,4 +87,34 @@ mod tests {
         assert!(text.contains("Approve workspace file write"));
         assert!(text.contains("one"));
     }
+
+    #[test]
+    fn formats_edit_and_apply_patch_hunk_preview() {
+        let edit = format_approval_prompt(&ApprovalAsk {
+            run_id: pawork_domain::RunId::from("run-1"),
+            session_id: Some(pawork_domain::SessionId::from("ses-1")),
+            tool_name: "edit_file".into(),
+            tool_call_id: ToolCallId::from("call-2"),
+            relative_path: Some("a.txt".into()),
+            message: "Approve workspace file edit".into(),
+            risk: RiskLevel::Moderate,
+            preview: Some("--- a.txt\n+++ a.txt\n-old\n+new".into()),
+        });
+        assert!(edit.contains("approve edit_file a.txt"));
+        assert!(edit.contains("-old"));
+        assert!(edit.contains("+new"));
+
+        let patch = format_approval_prompt(&ApprovalAsk {
+            run_id: pawork_domain::RunId::from("run-1"),
+            session_id: Some(pawork_domain::SessionId::from("ses-1")),
+            tool_name: "apply_patch".into(),
+            tool_call_id: ToolCallId::from("call-3"),
+            relative_path: Some("lib.rs".into()),
+            message: "Approve workspace file patch".into(),
+            risk: RiskLevel::Moderate,
+            preview: Some("--- lib.rs\n+++ lib.rs\n+fn x() {}".into()),
+        });
+        assert!(patch.contains("approve apply_patch lib.rs"));
+        assert!(patch.contains("+fn x() {}"));
+    }
 }

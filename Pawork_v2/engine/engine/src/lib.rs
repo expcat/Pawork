@@ -32,7 +32,7 @@ pub use event::{map_provider_event, AgentEventSink, EngineError, LoopEventEmitte
 pub use session_turn::{now_timestamp, run_session_turn, SessionTurn};
 pub use tool_loop::{
     run_manual_compaction, run_session, ApprovalGate, CompactionOutcome, LoopContext,
-    PendingToolInvocation, DEFAULT_MAX_TOOL_ROUNDS,
+    PendingToolInvocation, WriteCheckpoint, DEFAULT_MAX_TOOL_ROUNDS,
 };
 
 /// 用冻结契约的默认值填满 CanonicalModelRequest（tools/hosted/extensions 空，
