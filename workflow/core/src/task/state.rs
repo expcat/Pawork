@@ -131,6 +131,7 @@ impl TaskManagerState {
     /// `Started` 幂等（已存在则刷新状态为 Running）；`Suspended` / `Resumed`
     /// / `Finished` 校验前置状态，非法转移或未知任务返回错误。
     pub fn apply(&mut self, event: &TaskEvent) -> Result<(), TaskManagerError> {
+        self.note_allocated_id(event_task_id(event));
         match event {
             TaskEvent::Started {
                 task_id,
@@ -264,8 +265,7 @@ impl TaskManagerState {
                 return Err(TaskManagerError::UnknownParent(parent.clone()));
             }
         }
-        let task_id = BackgroundTaskId::new(format!("task_{}", self.next_task_seq));
-        self.next_task_seq += 1;
+        let task_id = self.allocate_task_id();
         self.tasks.insert(
             task_id.clone(),
             TaskRecord::new(
@@ -375,6 +375,34 @@ impl TaskManagerState {
             }
         }
         ids
+    }
+
+    fn allocate_task_id(&mut self) -> BackgroundTaskId {
+        loop {
+            let task_id = BackgroundTaskId::new(format!("task_{}", self.next_task_seq));
+            self.next_task_seq = self.next_task_seq.saturating_add(1);
+            if !self.tasks.contains_key(&task_id) {
+                return task_id;
+            }
+        }
+    }
+
+    fn note_allocated_id(&mut self, task_id: &BackgroundTaskId) {
+        let Some(suffix) = task_id.as_str().strip_prefix("task_") else {
+            return;
+        };
+        if let Ok(n) = suffix.parse::<u64>() {
+            self.next_task_seq = self.next_task_seq.max(n.saturating_add(1));
+        }
+    }
+}
+
+fn event_task_id(event: &TaskEvent) -> &BackgroundTaskId {
+    match event {
+        TaskEvent::Started { task_id, .. }
+        | TaskEvent::Suspended { task_id }
+        | TaskEvent::Resumed { task_id }
+        | TaskEvent::Finished { task_id, .. } => task_id,
     }
 }
 

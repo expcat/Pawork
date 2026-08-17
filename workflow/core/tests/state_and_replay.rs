@@ -319,3 +319,19 @@ fn events_since_returns_increment() {
     assert!(matches!(increment[1], TaskEvent::Resumed { .. }));
     assert!(mgr.events_since(100).is_empty());
 }
+
+#[test]
+fn replay_advances_id_allocator() {
+    let mgr = manager();
+    let first = mgr.register(TaskKind::Agent, None).unwrap();
+    mgr.start(&first).unwrap();
+    mgr.finish(&first, TaskStatus::Completed, None).unwrap();
+    let snapshot = mgr.snapshot();
+
+    let restored = manager();
+    restored.replay(snapshot.events).unwrap();
+    let second = restored.register(TaskKind::Automation, None).unwrap();
+    assert_ne!(second, first);
+    assert_eq!(restored.task(&first).unwrap().status, TaskStatus::Completed);
+    assert_eq!(restored.task(&second).unwrap().status, TaskStatus::Queued);
+}

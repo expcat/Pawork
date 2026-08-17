@@ -33,6 +33,11 @@ pawork-compat = { path = "../../clients/compat" }
 pawork-exec = { path = "../../execution/exec" }
 pawork-blob-store = { path = "../../storage/blob", features = ["checkpoint"] }
 pawork-git = { path = "../../vcs/git" }
+pawork-workflow = { path = "../../workflow/core" }
+pawork-orchestration = { path = "../../agents/orchestration", default-features = false }
+pawork-control-plane = { path = "../../control-plane/core" }
+pawork-quota = { path = "../../control-plane/quota" }
+pawork-provider-control = { path = "../../control-plane/provider-control", default-features = false }
 pawork-net = { path = "../../net/net", features = ["http"] }
 pawork-protocol = { path = "../../foundation/protocol" }
 pawork-gui-server = { path = "../gui-server" }

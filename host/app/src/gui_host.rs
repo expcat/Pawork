@@ -820,6 +820,25 @@ impl GuiHost for GuiHostAdapter {
                     Err(error) => Err(Self::app_error(error)),
                 }
             }
+            AppQuery::QuotaOverview { query } => {
+                let provider = query
+                    .provider_id
+                    .as_ref()
+                    .map(|id| id.as_str().to_string())
+                    .filter(|id| !id.is_empty());
+                let session = None;
+                let overview = self
+                    .core
+                    .read()
+                    .await
+                    .usage_overview(provider.as_deref(), session)
+                    .await
+                    .map_err(|error| Self::host_error("quota", error.to_string()))?;
+                Ok(AppResponse::Data(
+                    serde_json::to_value(overview)
+                        .map_err(|error| Self::host_error("internal", error.to_string()))?,
+                ))
+            }
             AppQuery::DiffGet { path, cursor, .. } => {
                 let core = self.core.read().await;
                 let session = match core.resolve_session("latest").await {

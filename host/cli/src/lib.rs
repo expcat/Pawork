@@ -6,6 +6,7 @@
 
 mod acp;
 mod adapter;
+mod agents;
 mod approval;
 mod auth;
 mod chat;
@@ -15,9 +16,12 @@ mod headless;
 mod import;
 mod mcp;
 mod ops;
+mod plan;
 mod render;
 mod service;
 mod sessions;
+mod tasks;
+mod usage;
 mod vcs;
 
 use std::io::IsTerminal;
@@ -172,6 +176,86 @@ pub enum Command {
     Shutdown,
     /// 本机装配自检（含握手探测）
     Doctor,
+    /// 用量与本地配额（LocalLedger）
+    Usage {
+        /// 完整 session id、唯一前缀，或 `latest`
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// 后台任务
+    Tasks {
+        #[command(subcommand)]
+        command: TasksCommand,
+    },
+    /// Plan 审批
+    Plan {
+        #[command(subcommand)]
+        command: PlanCommand,
+    },
+    /// 多 Agent 编排
+    Agents {
+        #[command(subcommand)]
+        command: AgentsCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TasksCommand {
+    List,
+    Status { task: String },
+    Cancel { task: String },
+    Register {
+        #[arg(long)]
+        kind: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PlanCommand {
+    Show {
+        #[arg(long)]
+        session: Option<String>,
+    },
+    Create {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        title: String,
+        #[arg(long = "step", required = true)]
+        step: Vec<String>,
+    },
+    Replace {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        title: String,
+        #[arg(long = "step", required = true)]
+        step: Vec<String>,
+    },
+    Submit {
+        #[arg(long)]
+        session: Option<String>,
+    },
+    Approve {
+        #[arg(long)]
+        session: Option<String>,
+    },
+    Reject {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        reason: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AgentsCommand {
+    Demo {
+        #[arg(long)]
+        cancel: bool,
+        #[arg(long)]
+        budget_tokens: Option<u64>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -322,6 +406,10 @@ async fn run_inner() -> Result<(), CliError> {
             | Command::Headless { .. }
             | Command::Acp { .. }
             | Command::Gui { .. }
+            | Command::Usage { .. }
+            | Command::Tasks { .. }
+            | Command::Plan { .. }
+            | Command::Agents { .. }
     );
     let mut core = if tolerant {
         AppCore::load_for_catalog(options).await?
@@ -367,6 +455,15 @@ async fn run_inner() -> Result<(), CliError> {
                 Command::Import { tool, yes, dry_run } => {
                     import::run_import(&core, tool, yes, dry_run, cli.json).await
                 }
+                Command::Usage { session } => usage::run_usage(&core, session, cli.json).await,
+                Command::Tasks { command } => tasks::run_tasks(&core, command, cli.json).await,
+                Command::Plan { command } => plan::run_plan(&core, command, cli.json).await,
+                Command::Agents { command } => match command {
+                    AgentsCommand::Demo {
+                        cancel,
+                        budget_tokens,
+                    } => agents::run_agents_demo(&core, cancel, budget_tokens, cli.json).await,
+                },
                 Command::Gui { .. }
                 | Command::Headless { .. }
                 | Command::Acp { .. }
@@ -822,6 +919,62 @@ mod tests {
             Cli::try_parse_from(["pawork", "doctor"]).expect("doctor").command,
             Command::Doctor
         ));
+        let cli = Cli::try_parse_from(["pawork", "usage", "--session", "latest"]).expect("usage");
+        match cli.command {
+            Command::Usage { session } => assert_eq!(session.as_deref(), Some("latest")),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(
+            Cli::try_parse_from(["pawork", "tasks", "list"])
+                .expect("tasks")
+                .command,
+            Command::Tasks {
+                command: TasksCommand::List
+            }
+        ));
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "plan",
+            "create",
+            "--title",
+            "t",
+            "--step",
+            "a",
+            "--step",
+            "b",
+        ])
+        .expect("plan");
+        match cli.command {
+            Command::Plan {
+                command: PlanCommand::Create { title, step, .. },
+            } => {
+                assert_eq!(title, "t");
+                assert_eq!(step, vec!["a", "b"]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "agents",
+            "demo",
+            "--cancel",
+            "--budget-tokens",
+            "1",
+        ])
+        .expect("agents");
+        match cli.command {
+            Command::Agents {
+                command:
+                    AgentsCommand::Demo {
+                        cancel,
+                        budget_tokens,
+                    },
+            } => {
+                assert!(cancel);
+                assert_eq!(budget_tokens, Some(1));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
 
         let cli = Cli::try_parse_from([
             "pawork",

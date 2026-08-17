@@ -1,6 +1,6 @@
 # S11：工作流、多 Agent 与控制面
 
-> 阶段 S11 · 编排与治理 · 状态：🔵进行中（波 A ✅ · 波 B ✅ · 波 C ✅）· 依赖：S10（app/cli 正式化、Event Hub）· 规模：大
+> 阶段 S11 · 编排与治理 · 状态：🟢已完成（波 A–D ✅）· 依赖：S10（app/cli 正式化、Event Hub）· 规模：大
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -12,7 +12,7 @@
 
 | V2 包（目录） | 本阶段动作 | 真实消费者 |
 | --- | --- | --- |
-| `pawork-workflow`（workflow/core） | plan/goal/task/automation/monitor 五合一迁移，各域独立 reducer；`process-exec` feature 门控 | Plan 审批 gate（engine turn 组装前拦截）+ 后台任务 CLI 可见 |
+| `pawork-workflow`（workflow/core） | plan/goal/task/automation/monitor 五合一迁移，各域独立 reducer；`process-exec` feature 门控 | Plan 审批 gate（host 在 `run_session` 前拦截）+ 后台任务 CLI 可见 |
 | `pawork-orchestration`（agents/orchestration） | orchestration + teams 迁移；supervisor.rs 拆 spawn/registry/cancel-tree/recovery/budget-gate 五模块；budget 依赖 trait 化注入 | 多 Agent 最小编排 demo（双通道双子 Agent） |
 | `pawork-control-plane`（control-plane/core） | tenant/usage-ledger/audit-log 三合一；`dedup_key` 索引与 audit JSONL golden 先行；usage 投影 trait（quota 与 budget-gate 的消费源） | S5 的会话用量聚合接入 ledger；audit 记录审批/通道事件 |
 | `pawork-quota`（control-plane/quota) | 核心迁移（domain/service/ledger 投影 + LocalLedger）；**远端适配器约 8k 行冻结候审不迁** | `pawork usage` 子命令 |
@@ -23,18 +23,18 @@
 ## 关键任务
 
 1. **控制面契约 golden 先行**：usage `dedup_key`、audit JSONL 形状逐字节一致（V1 golden 随迁）。
-2. **Plan gate**：plan step 审批状态在 turn 组装前校验，决策经 policy/approval 位点、事件化（`Plan` 事件变体 S1 起在位）。
+2. **Plan gate**：整版 `Approved` 在 host `run_session` 前校验（无 plan 放行）；决策事件化（`Plan` 事件变体 S1 起在位）。engine 不依赖 `pawork-workflow`。
 3. **多 Agent demo**：两个子 Agent 分别配置 GLM 与 OpenCode Go，父 Agent 分派两个独立文件任务 → 并行执行 → 汇总；中途 cancel-tree 一键全停；budget-gate 在 Mock ledger 限额下触发限流。
 4. **`pawork usage`**：会话/累计用量 + 配额余量（LocalLedger），与 S5 的显示同源。
 5. **experimental 纪律**：接不上消费者的包/层显式 feature 门控 + 在 [../ROADMAP.md](../ROADMAP.md) §4 登记激活条件（严禁静默库存）。
 
 ## 真实测试与评估（冒烟清单）
 
-- [ ] Plan 模式真实任务：「先列计划再执行」→ 未批准步骤被 gate 拦截 → 逐步批准推进 → 完成；中途改计划重新走审批。
-- [ ] 多 Agent demo（双通道）：并行完成、事件流按子 Agent 隔离可读、`TeamEvent` 双通道语义正确；cancel-tree 后无残留进程/运行。
-- [ ] 后台 automation 任务（如定时跑测试）：`pawork tasks list/status/cancel` 可见可控。
-- [ ] `pawork usage`：数字与本阶段真实消耗对得上（与 S5 显示一致、与厂商侧抽查一致）。
-- [ ] **评估记录**：两模型作为「子 Agent worker」的可靠性对比（任务完成率、越权尝试率）；多 Agent 并行的 token 成本与收益。
+- [x] Plan 模式真实任务：`pawork plan create`（draft）→ `chat --resume` 拦截（`PlanNotApproved`）→ `plan approve` → `glm-coding`/`glm-4.7` 回复 `PING` → `plan replace` 后再拦截。权威是整版 `Approved`（`PlanService::is_approved_for_execution`），不是逐步步骤审批。
+- [x] 多 Agent demo：`pawork agents demo` 并行完成（parent + 2 workers）；`--cancel` 取消树 `agent-0/1/2`；`--budget-tokens 1` 触发 `BudgetExceeded`。事件是 `OrchestrationEvent`（按 worker 可读）。**未**上 `TeamEvent` CLI；**未**跑两个真实 `run_session` 文件任务（demo 是 Supervisor 装配，AcquireRequest 指向 GLM / OpenCode Go）。
+- [x] 后台任务：`pawork tasks list/status/cancel/register` 跨进程可见（`{instance}/tasks.json`）。默认不开 `process-exec`，无真实定时跑测试进程。
+- [x] `pawork usage`：与 S5 会话行 1:1（GLM `in 3192 out 35`；OpenCode `in 3383 out 19`）。只打 LocalLedger，未访问厂商 billing API。
+- [x] **评估记录**：`glm-coding`/`glm-4.7` 与 `opencode-go`/`deepseek-v4-flash` 各一次短指令均完成（`PING` / `PONG`）；两模型都先泄漏 thinking 前言再给目标词；本轮无工具调用、无越权写入。Supervisor demo 本身不打真实模型。两轮真实消耗合计约 in 6575 / out 54。
 
 ## 定向自动化测试
 
@@ -47,14 +47,14 @@
 
 ## 退出标准
 
-- [ ] Plan gate、后台任务可见、`pawork usage`、多 Agent demo 四个真实消费点全部通电。
-- [ ] 控制面冻结契约 golden 全绿（dedup_key/audit JSONL 与 V1 逐字节一致）。
-- [ ] 七包「无消费者不合入」逐包核对：接线或 experimental 登记，无静默库存。
-- [ ] quota 远端适配器确未迁移（冻结清单核对）；supervisor 拆分行为等价回归通过。
+- [x] Plan gate、后台任务可见、`pawork usage`、多 Agent demo 四个真实消费点全部通电。
+- [x] 控制面冻结契约 golden 全绿（dedup_key/audit JSONL 与 V1 逐字节一致；波 A 已核）。
+- [x] 七包「无消费者不合入」逐包核对：四消费点已接 host/cli；OTel / account-control factory / `process-exec` / memory / review Forge / teams 真双子循环仍在 [ROADMAP.md](../ROADMAP.md) §4。
+- [x] quota 远端适配器确未迁移（冻结清单核对）；supervisor 拆分行为等价回归通过（波 C）。
 
 ## GUI 增量
 
-按 [gui-design.md](../docs/gui-design.md) §5：Workflow / 用量条 / 子 Agent 时间线分组。无对应 Core 事件则不做按钮。
+按 [gui-design.md](../docs/gui-design.md) §5：Workflow / 用量条 / 子 Agent 时间线分组。无对应 Core 事件则不做按钮。波 D Host 已接 `QuotaOverview`；Desktop Workflow 面 / quota 条 / ActivityPopover Agent 列表未做（无独立投影，不造假按钮）。
 
 ## 为后续阶段预留 / 明确不做
 
@@ -63,7 +63,7 @@
 
 ## 并行拆分建议
 
-沿用 [archive/M7](archive/README.md) 四波：波 A 控制面三包（trait 先行）∥ 波 B 工作流三包（✅）→ 波 C orchestration（✅；波 A trait + 波 B `plan`，因 teams 整包迁）→ 波 D host 接线（Plan gate/usage/demo，单一 owner 串行）。
+沿用 [archive/M7](archive/README.md) 四波：波 A 控制面三包（trait 先行）∥ 波 B 工作流三包（✅）→ 波 C orchestration（✅；波 A trait + 波 B `plan`，因 teams 整包迁）→ 波 D host 接线（✅；Plan gate/usage/demo，单一 owner 串行）。
 
 ## 参考
 

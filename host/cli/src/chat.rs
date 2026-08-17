@@ -333,6 +333,10 @@ async fn run_repl(core: &mut AppCore, resume: Option<String>) -> Result<(), CliE
                             handle_provider_command(core, session.as_ref(), &text["/provider".len()..]).await;
                             continue;
                         }
+                        if text == "/plan" || text.starts_with("/plan ") {
+                            handle_plan_command(core, &mut session, &text["/plan".len()..]).await;
+                            continue;
+                        }
                         if session.is_none() {
                             let id = core
                                 .create_session(session_title_from_text(text))
@@ -412,6 +416,107 @@ async fn handle_provider_command(core: &mut AppCore, session: Option<&SessionId>
     match core.switch_provider(session, provider, model).await {
         Ok(()) => eprintln!("provider -> {} / {}", core.provider_id(), core.model()),
         Err(err) => eprintln!("switch failed: {err}"),
+    }
+}
+
+async fn handle_plan_command(
+    core: &mut AppCore,
+    session: &mut Option<pawork_domain::SessionId>,
+    args: &str,
+) {
+    let text = args.trim();
+    let (verb, rest) = match text.split_once(' ') {
+        Some((verb, rest)) => (verb, rest.trim()),
+        None => (text, ""),
+    };
+    let ensure_session = async {
+        if let Some(id) = session.clone() {
+            return Ok(id);
+        }
+        let id = core.create_session("plan").await?;
+        *session = Some(id.clone());
+        Ok::<_, crate::CliError>(id)
+    };
+    let result = match verb {
+        "" | "show" => {
+            let Ok(id) = ensure_session.await else {
+                eprintln!("plan: 没有活动会话");
+                return;
+            };
+            core.plan_snapshot(&id).await.map(|snapshot| {
+                match snapshot {
+                    Some(plan) => format!(
+                        "{}@{} {} {}",
+                        plan.plan_id.as_str(),
+                        plan.version.as_str(),
+                        plan.title,
+                        pawork_app::review_status_label(plan.review_status)
+                    ),
+                    None => "no plan".into(),
+                }
+            })
+        }
+        "create" | "replace" => {
+            let Some((title, steps)) = rest.split_once('|') else {
+                eprintln!("用法：/plan {verb} Title | step1 | step2");
+                return;
+            };
+            let steps: Vec<String> = steps
+                .split('|')
+                .map(|step| step.trim().to_string())
+                .filter(|step| !step.is_empty())
+                .collect();
+            let Ok(id) = ensure_session.await else {
+                eprintln!("plan: 无法创建会话");
+                return;
+            };
+            let outcome = if verb == "create" {
+                core.plan_create(&id, title.trim(), steps).await
+            } else {
+                core.plan_replace(&id, title.trim(), steps).await
+            };
+            outcome.map(|plan| {
+                format!(
+                    "{}@{} {}",
+                    plan.plan_id.as_str(),
+                    plan.version.as_str(),
+                    pawork_app::review_status_label(plan.review_status)
+                )
+            })
+        }
+        "submit" | "approve" => {
+            let Ok(id) = ensure_session.await else {
+                eprintln!("plan: 没有活动会话");
+                return;
+            };
+            let outcome = if verb == "submit" {
+                core.plan_submit(&id).await
+            } else {
+                core.plan_approve(&id).await
+            };
+            outcome.map(|plan| pawork_app::review_status_label(plan.review_status).to_string())
+        }
+        "reject" => {
+            if rest.is_empty() {
+                eprintln!("用法：/plan reject <reason>");
+                return;
+            }
+            let Ok(id) = ensure_session.await else {
+                eprintln!("plan: 没有活动会话");
+                return;
+            };
+            core.plan_reject(&id, rest)
+                .await
+                .map(|plan| pawork_app::review_status_label(plan.review_status).to_string())
+        }
+        _ => {
+            eprintln!("用法：/plan show|create|replace|submit|approve|reject");
+            return;
+        }
+    };
+    match result {
+        Ok(line) => eprintln!("{line}"),
+        Err(err) => eprintln!("plan failed: {err}"),
     }
 }
 

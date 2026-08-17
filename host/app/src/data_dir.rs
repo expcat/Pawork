@@ -62,6 +62,21 @@ pub fn artifact_store_path_for(data_dir: impl AsRef<Path>, instance: &str) -> Pa
     instance_dir(data_dir, instance).join("artifacts")
 }
 
+/// `<data_dir>/<instance>/usage-ledger.sqlite3`。
+pub fn usage_ledger_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+    instance_dir(data_dir, instance).join("usage-ledger.sqlite3")
+}
+
+/// `<data_dir>/<instance>/audit.jsonl`。
+pub fn audit_log_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+    instance_dir(data_dir, instance).join("audit.jsonl")
+}
+
+/// `<data_dir>/<instance>/tasks.json`。
+pub fn tasks_snapshot_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+    instance_dir(data_dir, instance).join("tasks.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

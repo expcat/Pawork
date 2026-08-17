@@ -31,9 +31,9 @@
 | `pawork-net` | S0（parsers + http） | — | SSE/JSONL/partial-JSON 解析器 + proptest 种子随迁 |
 | `pawork-config` | S0（三层最小） | S6（凭证解析）、S9（完整六层 + Profile） | schema 照抄 V1，实现分步 |
 | `pawork-providers` | S0（openai-compatible） | S2（anthropic-messages）、S6（六条首发通道 + Responses 组装器下沉） | 首发通道按 feature 启用；其它厂商按后续需求增加 |
-| `pawork-engine` | S0（run_turn 最小） | S1 事件化、S2 工具循环、S3 审批、S4 取消清理、S5 context、S11 plan gate | 增量长出，语义对齐 V1（§3.2） |
-| `pawork-app` | S0（最小装配） | S3 审批位点、S7 最小 Event 扇出、S10 Event Hub/正式化 | 从 S0 起就是独立包，杜绝后期抽包 |
-| `pawork-cli` | S0（chat/models） | 逐阶段加子命令；S7 `gui serve` 最小；S10 六运行模式齐全 | 同上 |
+| `pawork-engine` | S0（run_turn 最小） | S1 事件化、S2 工具循环、S3 审批、S4 取消清理、S5 context | 增量长出，语义对齐 V1（§3.2）；S11 Plan gate 在 host，engine 不依赖 workflow |
+| `pawork-app` | S0（最小装配） | S3 审批位点、S7 最小 Event 扇出、S10 Event Hub/正式化、S11 Plan gate / usage ledger / tasks / agents demo | 从 S0 起就是独立包，杜绝后期抽包 |
+| `pawork-cli` | S0（chat/models） | 逐阶段加子命令；S7 `gui serve` 最小；S10 六运行模式齐全；S11 `usage`/`tasks`/`plan`/`agents` | 同上 |
 | `pawork`（bin） | S0（composition root） | 持续 | 唯一正式宿主 |
 | `pawork-sqlite` | S1 | — | Actor + backup/restore + 通用 migration 框架 |
 | `pawork-session` | S1（event store 核心） | S5（`compaction`）、S9（导入器 `import::formats`）、S10（lifecycle + 分支/Fork UX） | V1 migration 序列全量复用；分支数据层 S1 即就绪 |
@@ -222,7 +222,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| Plan 审批 gate（未批准步骤拦截 turn） | V1 plan-service；相邻机制：OpenCode question/todowrite、DeepSeek Harness planning / `tool-todo` / `ctx.goals` 为模型侧轻量形态（候选 §6.3 B2/B3/B9） |
+| Plan 审批 gate（未批准整版拦截 turn；host 在 `run_session` 前校验，无 plan 放行） | V1 plan-service；相邻机制：OpenCode question/todowrite、DeepSeek Harness planning / `tool-todo` / `ctx.goals` 为模型侧轻量形态（候选 §6.3 B2/B3/B9） |
 | 多 Agent 编排（spawn/registry/cancel-tree/recovery/budget-gate） | OpenCode `task` 子代理 + 权限派生 + `subagent_depth`（research §2.1）；Pi「核心不内置子代理」哲学与 extension 自建（research §2.2）；DeepSeek Harness `tool-subagent` + workflows；CCR in-band 标签为**明确不采纳**的反例（F4-C，research §4.1） |
 | 子 Agent 声明式 provider/model/账户绑定 + 预算分配（F4） | opencode `agent.model` 声明式绑定（research §2.1）；方案 [research/multi-account-quota-proposals.md](research/multi-account-quota-proposals.md) F4-A+B |
 | 多账户池 / 租约 / 路由 / 会话-账户亲和（F1/F3） | opencodex 账户池 + 三窗口配额 + thread affinity（research §3.1）；CLIProxyAPI RR/加权/fill-first + 冷却 + session-affinity（research §3.3）；claude-relay-service 内容 hash sticky（research §4.4）；V1 provider-control 资产对照（research §7） |

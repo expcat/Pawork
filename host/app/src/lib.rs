@@ -8,6 +8,7 @@ mod approval;
 mod auth;
 mod channels;
 mod checkpoint;
+mod control;
 mod data_dir;
 mod diff;
 mod extensions;
@@ -16,9 +17,12 @@ mod hub;
 mod idempotency;
 mod import_host;
 mod loop_ctx;
+mod orchestration_host;
 mod persist;
+mod plan_host;
 mod protocol;
 mod rate_limit;
+mod tasks_host;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -70,8 +74,9 @@ pub use approval::{
 };
 pub use checkpoint::{CheckpointSummary, RollbackOutcome};
 pub use data_dir::{
-    artifact_store_path, artifact_store_path_for, default_data_dir, instance_dir,
-    normalize_instance, session_db_path, session_db_path_for, DEFAULT_INSTANCE,
+    artifact_store_path, artifact_store_path_for, audit_log_path_for, default_data_dir,
+    instance_dir, normalize_instance, session_db_path, session_db_path_for,
+    tasks_snapshot_path_for, usage_ledger_path_for, DEFAULT_INSTANCE,
 };
 pub use diff::{paginate_diff, render_diff_file, render_session_diff, GitDiffHeader, SessionDiff};
 pub use pawork_git::{DiffFile, DiffPage};
@@ -93,10 +98,18 @@ pub use channels::{
     first_party_channel, is_first_party, ChannelKind, FirstPartyChannel, FIRST_PARTY_CHANNELS,
 };
 pub use extensions::{AtAttachment, McpServerStatus};
+pub use control::{
+    LedgerTotals, QuotaWindowLine, SessionUsageLine, UsageOverview,
+};
 pub use import_host::{
     parse_session_source, CompatImportItemView, CompatImportPreview, CompatImportReport,
     CompatTool, SessionImportFormat, SessionImportOutcome,
 };
+pub use orchestration_host::{MultiAgentDemoOptions, MultiAgentDemoReport};
+pub use pawork_workflow::plan::PlanSnapshot;
+pub use pawork_workflow::task::TaskSnapshot;
+pub use plan_host::review_status_label;
+pub use tasks_host::parse_task_kind;
 pub use pawork_compat::ExternalSource as CompatExternalSource;
 pub use pawork_policy::{ApprovalMode, RiskLevel};
 pub use pawork_session::{SessionExport, SessionRecord, EXPORT_SCHEMA_VERSION};
@@ -229,6 +242,20 @@ pub enum AppError {
     FileIndex(#[from] FileIndexError),
     #[error("{0}")]
     Import(String),
+    #[error("计划 {plan_id}@{version} 尚未批准（{status}），先 pawork plan approve")]
+    PlanNotApproved {
+        plan_id: String,
+        version: String,
+        status: String,
+    },
+    #[error("{0}")]
+    Plan(String),
+    #[error("{0}")]
+    ControlPlane(String),
+    #[error("{0}")]
+    Task(String),
+    #[error("{0}")]
+    Orchestration(String),
 }
 
 /// S5 压缩在 engine 侧保留的最近消息条数；session 侧保留策略按
@@ -326,6 +353,9 @@ pub struct AppCore {
     pub(crate) mcp_servers: Vec<extensions::McpServerSlot>,
     pub(crate) checkpoints: Option<pawork_blob_store::CheckpointService>,
     pub(crate) artifacts: Option<pawork_blob_store::ArtifactStore>,
+    pub(crate) control: control::ControlPlaneRuntime,
+    pub(crate) tasks: pawork_workflow::task::TaskManager,
+    pub(crate) tasks_path: Option<PathBuf>,
     next_request: AtomicU64,
     next_run: AtomicU64,
     next_session: AtomicU64,
@@ -413,6 +443,7 @@ impl AppCore {
             .await?;
         core.open_checkpoints(artifact_store_path_for(&data_dir, instance))
             .await?;
+        core.open_control_plane(crate::instance_dir(&data_dir, instance))?;
         Ok(core)
     }
 
@@ -438,6 +469,7 @@ impl AppCore {
         core.open_store(store_path).await?;
         if let Some(parent) = store_path.parent() {
             core.open_checkpoints(parent.join("artifacts")).await?;
+            core.open_control_plane(parent.to_path_buf())?;
         }
         Ok(core)
     }
@@ -636,6 +668,9 @@ impl AppCore {
             mcp_servers: Vec::new(),
             checkpoints: None,
             artifacts: None,
+            control: control::ControlPlaneRuntime::in_memory(),
+            tasks: pawork_workflow::task::TaskManager::new(),
+            tasks_path: None,
             next_request: AtomicU64::new(1),
             next_run: AtomicU64::new(1),
             next_session: AtomicU64::new(1),
@@ -715,6 +750,13 @@ impl AppCore {
         }
         let (store, _) = SessionStore::open(path.as_ref()).await?;
         self.store = Some(store);
+        Ok(())
+    }
+
+    pub fn open_control_plane(&mut self, dir: impl AsRef<Path>) -> Result<(), AppError> {
+        let dir = dir.as_ref();
+        self.control = control::ControlPlaneRuntime::persistent(dir)?;
+        self.open_tasks(dir.join("tasks.json"))?;
         Ok(())
     }
 
@@ -1185,6 +1227,7 @@ impl AppCore {
             pawork_engine::now_timestamp().as_unix_millis()
         ));
         let trigger = trigger.clone();
+        self.ensure_plan_allows_execution(session_id).await?;
         let mut request_messages = messages;
         if let Some(note) = crate::diff::git_status_note(&self.workspace_roots).await {
             request_messages.insert(
@@ -1200,8 +1243,9 @@ impl AppCore {
                 },
             );
         }
+        let request_id = RequestId::from(format!("req-{n}"));
         let request = assemble_request_with_tools(
-            RequestId::from(format!("req-{n}")),
+            request_id.clone(),
             self.model.clone(),
             request_messages,
             self.tool_defs.clone(),
@@ -1225,7 +1269,7 @@ impl AppCore {
         let loop_ctx = SessionLoopCtx {
             scheduler: self.scheduler.clone(),
             workspace_id: self.workspace_id.clone(),
-            run_id,
+            run_id: run_id.clone(),
             next_message: &self.next_message,
             next_request: &self.next_request,
             policy: PolicyEngine::new(self.approval_mode),
@@ -1239,7 +1283,8 @@ impl AppCore {
             checkpoints: self.checkpoints.clone(),
             workspace_roots: self.workspace_roots.clone(),
         };
-        Ok(run_session(
+        let task_id = self.tasks_start_agent(Some(session_id)).ok();
+        let result = run_session(
             self.provider.as_ref(),
             request,
             turn,
@@ -1249,7 +1294,91 @@ impl AppCore {
             DEFAULT_MAX_TOOL_ROUNDS,
             turn_context,
         )
-        .await?)
+        .await;
+        match &result {
+            Ok(summary) => {
+                if let Err(error) = self
+                    .record_completed_usage(session_id, &run_id, &request_id, &summary.usage)
+                    .await
+                {
+                    tracing::warn!(error = %error, "usage ledger record failed");
+                }
+                if let Some(task_id) = &task_id {
+                    let _ = self.tasks_finish(
+                        task_id,
+                        pawork_domain::TaskStatus::Completed,
+                        None,
+                    );
+                }
+            }
+            Err(_) => {
+                if let Some(task_id) = &task_id {
+                    let _ = self.tasks_finish(task_id, pawork_domain::TaskStatus::Failed, None);
+                }
+            }
+        }
+        Ok(result?)
+    }
+
+    async fn record_completed_usage(
+        &self,
+        session_id: &SessionId,
+        run_id: &RunId,
+        request_id: &RequestId,
+        usage: &TokenUsage,
+    ) -> Result<(), AppError> {
+        let cost = self.estimate_cost_for(&self.model, usage);
+        let record = control::usage_record(
+            session_id,
+            run_id,
+            request_id,
+            &self.provider_id,
+            &self.model,
+            usage,
+            cost.as_ref().map(|item| item.amount_micros).unwrap_or(0),
+            cost.as_ref().map(|item| item.currency.as_str()).unwrap_or(""),
+        );
+        self.control
+            .ledger
+            .record(record)
+            .await
+            .map_err(|error| AppError::ControlPlane(error.to_string()))
+    }
+
+    pub async fn usage_overview(
+        &self,
+        provider_id: Option<&str>,
+        session: Option<&SessionId>,
+    ) -> Result<UsageOverview, AppError> {
+        let provider = match provider_id {
+            Some(id) if !id.trim().is_empty() => ProviderId::from(id),
+            _ => self.provider_id.clone(),
+        };
+        if provider.as_str() == "catalog" || provider.as_str().is_empty() {
+            return Err(AppError::ControlPlane(
+                "pawork usage 需要 --provider（或已配置的 default_provider）".into(),
+            ));
+        }
+        let session_line = if let Some(session_id) = session {
+            let usage = self.session_usage(session_id).await?;
+            Some(control::SessionUsageLine {
+                session_id: session_id.as_str().to_string(),
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_read_tokens: usage.cache_read_tokens,
+                cache_write_tokens: usage.cache_write_tokens,
+            })
+        } else {
+            None
+        };
+        let totals = control::ledger_totals(self.control.ledger.as_ref(), &provider, session).await?;
+        let windows = control::quota_windows(&self.control.quota, &provider).await?;
+        Ok(UsageOverview {
+            provider_id: provider.as_str().to_string(),
+            session: session_line,
+            ledger: totals.into(),
+            windows,
+        })
     }
 
     pub async fn list_models(&self) -> Result<Vec<ModelDefinition>, ProviderError> {
@@ -3578,6 +3707,174 @@ mod tests {
         let imported = store.get_session(&session).await.expect("imported session");
         assert_eq!(imported.title, "export-me");
         store.shutdown().await.expect("shutdown import store");
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn plan_gate_blocks_unapproved_turn_and_resumes_after_approve() {
+        let (core, _dir) = mock_core(vec![
+            ProviderStreamEvent::TextDelta("ok".into()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ])
+        .await;
+        let session = core.create_session("plan-gate").await.expect("create");
+        core.plan_create(
+            &session,
+            "safe edit",
+            vec!["read file".into(), "write file".into()],
+        )
+        .await
+        .expect("create plan");
+        let blocked = core
+            .chat_turn(
+                &session,
+                vec![user_hello()],
+                &RecordingEvents::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("unapproved plan must block");
+        assert!(
+            matches!(blocked, AppError::PlanNotApproved { .. }),
+            "{blocked}"
+        );
+
+        core.plan_approve(&session).await.expect("approve");
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &RecordingEvents::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("approved plan allows turn");
+
+        core.plan_replace(
+            &session,
+            "changed",
+            vec!["new step".into()],
+        )
+        .await
+        .expect("replace");
+        let blocked_again = core
+            .chat_turn(
+                &session,
+                vec![user_hello()],
+                &RecordingEvents::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("replaced plan must block");
+        assert!(matches!(blocked_again, AppError::PlanNotApproved { .. }));
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn usage_ledger_matches_session_usage() {
+        let usage = TokenUsage {
+            input_tokens: 11,
+            output_tokens: 7,
+            cache_read_tokens: 2,
+            cache_write_tokens: 1,
+        };
+        let (core, _dir) = mock_core_with_usage(
+            vec![
+                ProviderStreamEvent::TextDelta("hi".into()),
+                ProviderStreamEvent::UsageUpdated(usage.clone()),
+                ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+            ],
+            usage.clone(),
+        )
+        .await;
+        let session = core.create_session("usage").await.expect("create");
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &RecordingEvents::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+        let session_usage = core.session_usage(&session).await.expect("session usage");
+        assert_eq!(session_usage.input_tokens, 11);
+        assert_eq!(session_usage.output_tokens, 7);
+        let overview = core
+            .usage_overview(Some("mock"), Some(&session))
+            .await
+            .expect("overview");
+        assert_eq!(overview.ledger.input_tokens, session_usage.input_tokens);
+        assert_eq!(overview.ledger.output_tokens, session_usage.output_tokens);
+        assert_eq!(
+            overview.session.map(|line| line.input_tokens),
+            Some(session_usage.input_tokens)
+        );
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn tasks_register_list_and_cancel() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let id = core
+            .tasks_register(pawork_domain::TaskKind::Automation)
+            .expect("register");
+        let listed = core.tasks_list();
+        assert!(listed.iter().any(|task| task.task_id == id));
+        let cancelled = core.tasks_cancel(id.as_str()).expect("cancel");
+        assert!(cancelled.contains(&id));
+        let status = core.tasks_status(id.as_str()).expect("status");
+        assert_eq!(status.status, pawork_domain::TaskStatus::Canceled);
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn tasks_persist_and_allocate_new_ids() {
+        let (mut core, dir) = mock_core(Vec::new()).await;
+        core.open_control_plane(dir.path()).expect("control");
+        let first = core
+            .tasks_register(pawork_domain::TaskKind::Agent)
+            .expect("first");
+        core.tasks_finish(&first, pawork_domain::TaskStatus::Completed, None)
+            .expect("finish");
+        core.shutdown().await.expect("shutdown first");
+
+        let (mut core, _dir) = mock_core(Vec::new()).await;
+        core.open_control_plane(dir.path()).expect("reload");
+        let second = core
+            .tasks_register(pawork_domain::TaskKind::Automation)
+            .expect("second");
+        assert_ne!(second, first);
+        let listed = core.tasks_list();
+        assert!(listed.iter().any(|task| task.task_id == first
+            && task.status == pawork_domain::TaskStatus::Completed));
+        assert!(listed.iter().any(|task| task.task_id == second));
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn multi_agent_demo_cancel_tree_and_budget_gate() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let cancelled = core
+            .run_multi_agent_demo(crate::MultiAgentDemoOptions {
+                cancel: true,
+                budget_input_tokens: None,
+            })
+            .await
+            .expect("cancel demo");
+        assert_eq!(cancelled.workers.len(), 2);
+        assert!(!cancelled.cancelled.is_empty());
+        assert!(cancelled
+            .event_kinds
+            .iter()
+            .any(|kind| kind == "WorkerCancelled"));
+
+        let budget = core
+            .run_multi_agent_demo(crate::MultiAgentDemoOptions {
+                cancel: false,
+                budget_input_tokens: Some(1),
+            })
+            .await
+            .expect("budget demo");
+        assert!(budget.budget_exceeded, "{budget:?}");
         core.shutdown().await.expect("shutdown");
     }
 }
