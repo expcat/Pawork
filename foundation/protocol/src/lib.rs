@@ -11,7 +11,7 @@
 //! - [`error`]：线上结构化错误的构造与 IncompatibleVersion 产生路径。
 //!
 //! 线上 serde 格式（tag/content/rename_all）是冻结契约，见
-//! [ADR-036](../../docs/adr/ADR-036-pawork-protocol-versioning.md)。
+//! [ADR-036](../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md)。
 
 use pawork_domain::{ArtifactId, CommandId, ConnectionId, CoreInstanceId, GuiClientId, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -50,7 +50,7 @@ pub use resume::{compute_resume_disposition, ResumeContext};
 pub const MAX_PROTOCOL_FRAME_BYTES: usize = 1024 * 1024;
 /// Artifact chunk 数据上限（大 payload 走 Artifact ID，[ADR-018]）。
 ///
-/// [ADR-018]: ../../docs/adr/ADR-018-large-payload-artifact-id.md
+/// [ADR-018]: ../../../../Pawork_v1/docs/adr/ADR-018-large-payload-artifact-id.md
 pub const MAX_ARTIFACT_CHUNK_BYTES: usize = 64 * 1024;
 /// Snapshot section 内联 data 的编码后上限；超过则必须改用 `artifact_id`。
 pub const MAX_SNAPSHOT_SECTION_DATA_BYTES: usize = 256 * 1024;

@@ -395,7 +395,7 @@ fn try_emit(
 }
 
 /// source / identity 占位：服务端 host_stamp_command / host_stamp_query 会统一
-/// 覆盖为 LocalGui + LocalUser（Pawork_v2/host/gui-server/src/session.rs），
+/// 覆盖为 LocalGui + LocalUser（host/gui-server/src/session.rs），
 /// 客户端只填必填信封字段，不伪造本地身份。
 fn command_source() -> CommandSource {
     CommandSource::Automation

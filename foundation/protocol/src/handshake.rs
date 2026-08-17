@@ -195,7 +195,7 @@ impl HandshakeService {
 ///
 /// 不兼容时产生 `IncompatibleVersion` 错误（[ADR-036]）。
 ///
-/// [ADR-036]: ../../docs/adr/ADR-036-pawork-protocol-versioning.md
+/// [ADR-036]: ../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md
 pub fn ensure_compatible_api_version(
     envelope_version: ApiVersion,
     negotiated: ApiVersion,

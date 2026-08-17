@@ -16,7 +16,7 @@ use pawork_domain::{
 /// 分级裁剪的字节阈值。
 ///
 /// 阈值为闭区间边界（`<= small` 为小结果，`<= medium` 为中等，`<= large` 为大，
-/// 否则为超大）。默认值参考 V1 `docs/features/context.md` 与常见 Coding Agent 体量：
+/// 否则为超大）。默认值参考已归档 V1 `../Pawork_v1/docs/features/context.md` 与常见 Coding Agent 体量：
 /// 小 < 2 KiB，中等 < 16 KiB，大 < 256 KiB，超大 >= 256 KiB。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TrimThresholds {

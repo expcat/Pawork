@@ -34,7 +34,7 @@ pub const DEFAULT_QUOTA_TENANT_CANONICAL: &str = "local/default";
 /// 宿主支持的完整 API 版本表（P13-10 schema 版本化）。
 ///
 /// 同 major 内 minor 只增、已发布 minor 必须继续支持；删除或新增 major 走
-/// [ADR-036](../../../docs/adr/ADR-036-gui-protocol-versioning.md) 定义的废弃与删除流程。
+/// [ADR-036](../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md) 定义的废弃与删除流程。
 pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[API_VERSION];
 
 /// IDE/Host 上下文快照的资源上限。该数据来自外部客户端，Core 必须在存储和
