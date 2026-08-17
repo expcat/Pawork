@@ -1,6 +1,6 @@
 # S8：Git、Diff 与 Checkpoint
 
-> 阶段 S8 · 版本控制与回滚 · 状态：⚪未开始 · 依赖：S3（写工具在位；run_command 非必需）· 规模：中 ·（与 S5/S6 可并行；S7 GUI 非阻塞，但有 GUI 时应同步 Changes 面）
+> 阶段 S8 · 版本控制与回滚 · 状态：🔵进行中（波 A ✅）· 依赖：S3（写工具在位；run_command 非必需）· 规模：中 ·（与 S5/S6 可并行；S7 GUI 非阻塞，但有 GUI 时应同步 Changes 面）
 
 ## 目标（本阶段结束时用户能做什么）
 
