@@ -56,7 +56,7 @@ use pawork_auth::{
 };
 use pawork_policy::PolicyEngine;
 use pawork_provider_core::{CatalogEntry, ModelRegistry};
-use pawork_session::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
+use pawork_session::{SessionStore, SessionStoreError};
 use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
 use pawork_workspace::{FileIndex, FileIndexError, WorkspaceError, WorkspaceService};
 use thiserror::Error;
@@ -1084,9 +1084,13 @@ impl AppCore {
             payload,
         );
         self.store()?
-            .append_event(DEFAULT_BRANCH_ID, envelope)
+            .append_event(self.session_active_branch(session_id).await?, envelope)
             .await?;
         Ok(())
+    }
+
+    async fn session_active_branch(&self, session_id: &SessionId) -> Result<String, AppError> {
+        Ok(self.store()?.get_session(session_id).await?.active_branch)
     }
 
     pub async fn next_sequence(&self, session_id: &SessionId) -> Result<u64, AppError> {
@@ -1214,6 +1218,7 @@ impl AppCore {
         let sink = PersistThenRender {
             store: self.store()?,
             render,
+            branch_id: self.session_active_branch(session_id).await?,
         };
         let mut turn_context = self.turn_context();
         turn_context.injected_layers = self.load_injected_layers();
@@ -1507,6 +1512,7 @@ impl AppCore {
         let sink = PersistThenRender {
             store: self.store()?,
             render,
+            branch_id: self.session_active_branch(session_id).await?,
         };
         let loop_ctx = SessionLoopCtx {
             scheduler: self.scheduler.clone(),
@@ -1945,6 +1951,7 @@ mod tests {
         TextContent, TokenUsage,
     };
     use pawork_engine::EngineError;
+    use pawork_session::DEFAULT_BRANCH_ID;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -2542,6 +2549,78 @@ mod tests {
 
         let models = core.list_models().await.expect("models");
         assert_eq!(models[0].id.as_str(), "glm-5.2");
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn chat_turn_on_forked_branch_appends_to_active_branch() {
+        let (core, _dir) = mock_core(vec![
+            ProviderStreamEvent::TextDelta("hi".into()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ])
+        .await;
+        let session = core.create_session("fork").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("main turn");
+
+        let parent = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, 100)
+            .await
+            .expect("replay")
+            .into_iter()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    AgentEvent::MessageCommitted { message } if message.role == MessageRole::User
+                )
+            })
+            .expect("user commit");
+        core.store()
+            .expect("store")
+            .fork_from_event(&session, "experiment", &parent.event_id)
+            .await
+            .expect("fork");
+        core.store()
+            .expect("store")
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch");
+
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("fork turn");
+
+        let store = core.store().expect("store");
+        let main_starts = store
+            .events_by_branch(&session, DEFAULT_BRANCH_ID, 1, 100)
+            .await
+            .expect("main events")
+            .iter()
+            .filter(|event| matches!(event.payload, AgentEvent::RunStarted { .. }))
+            .count();
+        let fork_starts = store
+            .events_by_branch(&session, "experiment", 1, 100)
+            .await
+            .expect("fork events")
+            .iter()
+            .filter(|event| matches!(event.payload, AgentEvent::RunStarted { .. }))
+            .count();
+        assert_eq!(main_starts, 1, "main should keep only the first run");
+        assert_eq!(fork_starts, 1, "forked branch should persist its own run");
         core.shutdown().await.expect("shutdown");
     }
 

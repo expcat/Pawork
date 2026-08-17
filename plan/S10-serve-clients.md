@@ -1,6 +1,6 @@
 # S10：服务化与客户端补齐
 
-> 阶段 S10 · 多客户端与正式协议 · 状态：🔵进行中（10a 波 A–B ✅ · 10b ✅ · 收口实现 ✅ · 冒烟未齐）· 依赖：S7（最小 GUI 与本机 `gui serve` 已通）· 规模：大（内分 10a/10b 两波 + 收口）
+> 阶段 S10 · 多客户端与正式协议 · 状态：🔵进行中（10a 波 A–B ✅ · 10b ✅ · 收口实现 ✅ · 冒烟大部已齐；剩余 Zed 真实编辑器 + S0–S9 回归）· 依赖：S7（最小 GUI 与本机 `gui serve` 已通）· 规模：大（内分 10a/10b 两波 + 收口）
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -40,13 +40,13 @@
 ## 真实测试与评估（冒烟清单）
 
 - [x] SDK 例程（Rust）：`pawork-sdk` `spawn_e2e` 对真实 `pawork headless --json-stdio` 握手 / Command / Query / compat；无凭证 `RunStart` 回 `AppResponse::Error`。完整「读-改-跑」+ 远程审批仍待凭证冒烟。
-- [ ] 两个 gui-client 实例并发连接真实 `gui serve`：事件不串台；kill 一个客户端重连 → Replay。进程内等价：`protocol-probe` `three-gui-sync` / `snapshot-reconnect`。
-- [ ] `pawork acp serve` + 真实 ACP 编辑器：V1 无编辑器资产；本机用 Zed `agent_servers` spawn。CLI 入口已接。
+- [x] 两个 gui-client 实例并发连接真实 `gui serve`：事件不串台；kill 一个客户端重连 → Replay。2026-08-17：`protocol-probe --live-two-gui` 对 `s10gui` socket，B 的 Snapshot 看见 A 新建会话，PTY `echo s10-two-gui` 扇出到 B，kill A 后 B 再写，A `connect_with_resume` → `replay 14-61 n=48`。进程内等价仍是 `three-gui-sync` / `snapshot-reconnect`。
+- [ ] `pawork acp serve` + 真实 ACP 编辑器：本机无 Zed（`/Applications` 无 Zed.app、无 `zed` CLI），fail-closed 不打勾。替代：stdio `initialize`（`protocolVersion=1`）+ `session/new`（`cwd`=仓库根、`mcpServers=[]`）回到 `sessionId`；依赖 `WorkspaceList.roots`（已补）。Zed `settings.json` 形状：`agent_servers.<id> = { type: "custom", command: "<pawork>", args: ["acp", "serve"] }`。`reject_unknown` 很严，编辑器多传未列入字段会 -32602。
 - [x] protocol-probe 自检报告全绿（9 场景：`session-events` / `snapshot-reconnect` / `resume-snapshot-fallback` / `three-gui-sync` / `command-idempotency` / `artifact-chunks` / `version-reject` / `disconnect-keeps-run` / `quota-alert-roundtrip`）。
-- [ ] 交互式命令（如需要 TTY 的 CLI 工具）经 PTY 执行正常；断线重连后输出续接。
-- [x] `pawork sessions fork` CLI 已接（V1 **没有**该子命令；调 `fork_from_event`，默认 switch；`--no-switch` 保留原 branch）。两分支真实 resume 待凭证冒烟：`chat --resume S --branch <id>`。
-- [ ] `pawork service install/start`：实现按 OS 分发（darwin → launchd，Linux → systemd-user，Windows → `sc`）；默认 dry-run，`--apply` 才改系统。本机 darwin **不得**把 Windows Service 打勾。
-- [x] `--json` 新旧格式迁移说明可用：流式 stdout 为 `HeadlessResponse`（`type=event|response|error`），无 hello；见 [docs/headless-json-migration.md](../docs/headless-json-migration.md)。
+- [x] 交互式命令经 PTY：`protocol-probe --live-pty` 对真实 serve，`echo s10-pty` 回显 14 字节，重连 `up_to_date`（无新事件故 0 replayed），Snapshot 仍有 terminal id。`--live-two-gui` 在断线后继续写 PTY，Resume Replay 48 条含后续输出。Snapshot **不含** PTY buffer；Inspector Terminal 是滚动文本，不是 VT100。
+- [x] `pawork sessions fork` CLI 已接（V1 **没有**该子命令；调 `fork_from_event`，默认 switch；`--no-switch` 保留原 branch）。2026-08-17 两分支真实 resume（`glm-coding`/`glm-4.7`）：`--no-switch` 后 `chat --resume S` 回 `main-branch`，`--resume S --branch <id>` 回 `fork-branch`；库内 `main` 27 条 / fork 20 条。修复：`PersistThenRender` 改为写入 session **active branch**（原先写死 `main`，fork 上 `append_event` 被拒、`--json` 空等）。首轮曾遇 GLM `timeout`（retryable），不阻塞后续两分支。
+- [x] `pawork service install/start`：本机 darwin launchd `--apply` 已过（实例 `s10svc`，**不是**默认 `pawork`）。`install` 写 `~/Library/LaunchAgents/pawork.s10svc.plist`（`RunAtLoad`/`KeepAlive`，`ProgramArguments`=`pawork --instance s10svc gui serve`）；`start` 后 `status` `listening=true`，`doctor` `handshake=ok`；`stop --apply` 后未监听、进程退出并删 plist。修复：`--json --apply` 先前只打印 `applied=true` 不执行。Windows Service 本机无法验收，**不打勾**。
+- [x] `--json` 新旧格式迁移说明可用：流式 stdout 为 `HeadlessResponse`（`type=event|response|error`），无 hello；见 [docs/headless-json-migration.md](../docs/headless-json-migration.md)。2026-08-17 人工对照：`run` / `chat --prompt` 顶层只有 `type=event|response`，event 带 `envelope.global_sequence`，无顶层 `schema_version`。
 
 ## 定向自动化测试
 
@@ -59,10 +59,10 @@
 
 ## 退出标准
 
-- [x] protocol-probe 自检全过；SDK spawn e2e 全绿。acp 真实编辑器、两 GUI 对真实 serve 的 Replay 仍待人工冒烟。
-- [x] `--json` 对齐正式协议、迁移说明留档、unstable 标注移除（只切 `run` / `chat --prompt`；`sessions`/`auth`/`models` 等仍是 CLI 便利输出）。
-- [ ] GUI/SDK 依赖面断言全绿（不含 host 实现包）；stdout 协议纪律断言。
-- [ ] app/cli 正式化完成且 S0–S9 行为回归无变化（既有冒烟脚本复跑，含 S7 Desktop 最小对话）。
+- [x] protocol-probe 自检全过；SDK spawn e2e 全绿。两 GUI 对真实 serve 的 Replay 已过。acp 真实编辑器仍待（本机无 Zed；stdio 握手 + `session/new` 已过）。
+- [x] `--json` 对齐正式协议、迁移说明留档、unstable 标注移除（只切 `run` / `chat --prompt`；`sessions`/`auth`/`models` 等仍是 CLI 便利输出）。2026-08-17 人工对照：`run`/`chat --prompt` stdout 顶层只有 `type=event|response`，event 带 `envelope.global_sequence`，无顶层 `schema_version` / hello。
+- [x] GUI/SDK 依赖面断言全绿（不含 host 实现包）：`pawork-desktop` `desktop_direct_deps_stay_on_client_deny_list`；`cargo tree -p pawork-sdk --edges normal` 无 app/engine/provider/session/sqlite/tools/git。stdout 协议纪律见上条 `--json` 对照。
+- [ ] app/cli 正式化完成且 S0–S9 行为回归无变化（既有冒烟脚本复跑，含 S7 Desktop 最小对话）。本波未复跑 S0–S9 历史冒烟。
 
 ## GUI 增量
 
@@ -78,7 +78,7 @@
 
 - 10a 波 A（串行，✅）：`pawork-protocol` 收口（关键路径）→ 10a 波 B（并行 ×3，✅）：app 正式化、transport 补齐、sdk。
 - 10b（依赖 10a，可并行 ×4，✅）：gui-server 多客户端、Desktop Replay/Fork/Terminal、channels(acp)、exec(pty) + session(lifecycle)。
-- 收口（串行，✅ 实现）：cli 六模式 + protocol-probe；冒烟补齐另开。
+- 收口（串行，✅ 实现）：cli 六模式 + protocol-probe。冒烟补齐（2026-08-17）大部已齐；剩余 Zed 真实编辑器 + S0–S9 回归。
 
 ## 参考
 

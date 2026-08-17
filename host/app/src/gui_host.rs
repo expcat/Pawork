@@ -720,10 +720,16 @@ impl GuiHost for GuiHostAdapter {
         match &envelope.query {
             AppQuery::WorkspaceList => {
                 let core = self.core.read().await;
+                let roots: Vec<Value> = core
+                    .workspace_roots
+                    .iter()
+                    .map(|path| json!({ "path": path.display().to_string() }))
+                    .collect();
                 Ok(AppResponse::Data(json!([{
                     "id": core.workspace_id().as_str(),
                     "name": core.workspace_name(),
                     "trusted": core.workspace_trusted(),
+                    "roots": roots,
                 }])))
             }
             AppQuery::SessionGet {
@@ -1119,12 +1125,34 @@ impl GuiHostAdapter {
                     metadata: Default::default(),
                 };
                 tokio::spawn(async move {
-                    let sink = GuiBroadcastSink::new(bus, instance);
-                    let core = core.read().await;
-                    let _ = core
-                        .chat_turn_with_run_id(run.clone(), &session, vec![message], &sink, token)
-                        .await;
-                    drop(core);
+                    let sink = GuiBroadcastSink::new(Arc::clone(&bus), instance.clone());
+                    let outcome = {
+                        let core = core.read().await;
+                        core.chat_turn_with_run_id(
+                            run.clone(),
+                            &session,
+                            vec![message],
+                            &sink,
+                            token,
+                        )
+                        .await
+                    };
+                    if let Err(error) = outcome {
+                        bus.publish_raw(
+                            instance.clone(),
+                            &session,
+                            AppEvent::RunChanged {
+                                run_id: run.clone(),
+                                state: RunState::Failed,
+                            },
+                        );
+                        bus.publish_diagnostic(
+                            instance,
+                            &session,
+                            "run.failed",
+                            json!({ "message": error.to_string() }),
+                        );
+                    }
                     approvals.clear_run(&run);
                     runs.remove(&run);
                 });
@@ -1683,6 +1711,48 @@ mod tests {
                 "ModelList must include {expected}: {providers:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn workspace_list_includes_registered_roots() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![MockScript::new().complete()]);
+        let mut core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        core.attach_workspace(dir.path()).expect("attach workspace");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let response = adapter
+            .query(&query_envelope(AppQuery::WorkspaceList))
+            .await
+            .expect("workspace list");
+        let AppResponse::Data(value) = response else {
+            panic!("WorkspaceList must return Data, got {response:?}");
+        };
+        let roots = value
+            .as_array()
+            .and_then(|entries| entries.first())
+            .and_then(|entry| entry.get("roots"))
+            .and_then(Value::as_array)
+            .expect("WorkspaceList roots array");
+        assert_eq!(roots.len(), 1, "one attached root: {roots:?}");
+        let listed = roots[0]
+            .get("path")
+            .and_then(Value::as_str)
+            .expect("root path");
+        let expected = dir.path().canonicalize().unwrap_or_else(|_| dir.path().to_path_buf());
+        let listed_path = std::path::PathBuf::from(listed);
+        let listed_canon = listed_path
+            .canonicalize()
+            .unwrap_or(listed_path);
+        assert_eq!(listed_canon, expected);
     }
 
     #[tokio::test]

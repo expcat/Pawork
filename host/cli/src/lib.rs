@@ -789,6 +789,21 @@ mod tests {
                 command: ServiceCommand::Start { apply: true }
             }
         ));
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "--json",
+            "service",
+            "install",
+            "--apply",
+        ])
+        .expect("json apply");
+        assert!(cli.json);
+        assert!(matches!(
+            cli.command,
+            Command::Service {
+                command: ServiceCommand::Install { apply: true }
+            }
+        ));
 
         let cli = Cli::try_parse_from(["pawork", "--instance", "dev", "status"]).expect("status");
         assert_eq!(cli.instance, "dev");

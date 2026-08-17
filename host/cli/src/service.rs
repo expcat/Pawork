@@ -26,6 +26,9 @@ pub fn run_service(command: ServiceCommand, instance: &str, json: bool) -> Resul
     let name = service_name(instance);
     let plan = install_definition(&exe, &name, instance);
     let activation = activation_hint(&name);
+    if apply {
+        execute_service_action(action, &exe, &name, instance)?;
+    }
     if json {
         println!(
             "{}",
@@ -39,7 +42,6 @@ pub fn run_service(command: ServiceCommand, instance: &str, json: bool) -> Resul
             })
         );
     } else if apply {
-        execute_service_action(action, &exe, &name, instance)?;
         eprintln!("applied {action} for service '{name}'");
     } else {
         eprintln!("install plan for service '{name}':\n{plan}\nthen activate:\n  {activation}");

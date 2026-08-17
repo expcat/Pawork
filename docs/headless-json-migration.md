@@ -11,9 +11,9 @@
 
 | 层 | 类型 | 谁用 | 是否本波改 |
 | --- | --- | --- | --- |
-| 磁盘 / 重放 | `AgentEventEnvelope`（`schema_version = 1`，session 内 `sequence`） | session-store、**现行** `--json` | 否。磁盘契约不动 |
-| 应用 / 多订阅者 | `AppEventEnvelope`（`api_version` + `global_sequence` + `stream`） | GUI 帧、正式 headless `event` | 否。S7 已零裁剪 |
-| 传输包装 | GUI：`ClientFrame`/`ServerFrame`（u32 LE 长度前缀）；Headless：`HeadlessRequest`/`HeadlessResponse`（JSONL） | Desktop vs SDK | 本波补齐类型 + golden + typegen；CLI 不切 |
+| 磁盘 / 重放 | `AgentEventEnvelope`（`schema_version = 1`，session 内 `sequence`） | session-store | 否。磁盘契约不动 |
+| 应用 / 多订阅者 | `AppEventEnvelope`（`api_version` + `global_sequence` + `stream`） | GUI 帧、`--json` / headless 的 `event` | 否。S7 已零裁剪 |
+| 传输包装 | GUI：`ClientFrame`/`ServerFrame`（u32 LE 长度前缀）；Headless：`HeadlessRequest`/`HeadlessResponse`（JSONL） | Desktop vs SDK / 单向 `--json` | 收口已切 CLI 流式 stdout；typegen / golden 在 10a |
 
 S10 收口的 breaking：**流式 `--json` stdout 从层 1 升到层 2+3**。解析器若 `JSON.parse` 后直接读 `payload` / `sequence`，会在收口后失败。
 
@@ -21,19 +21,19 @@ S10 收口的 breaking：**流式 `--json` stdout 从层 1 升到层 2+3**。解
 
 ## 2. 现行输出 vs 正式目标
 
-### 2.1 现行 V2 `--json`（unstable，本波仍有效）
+### 2.1 收口后的单向 `--json`（`run` / `chat --prompt`）
 
-`pawork run --json` / `pawork chat --prompt --json`：stdout 每行一个 **裸** `AgentEventEnvelope`，**没有** `{ "type": "event", ... }` 包装，也没有握手。
+`pawork run --json` / `pawork chat --prompt --json`：stdout 每行一个 `HeadlessResponse`，**没有** hello。顶层 `type` ∈ `event` | `response` | `error`。不要按收口前的裸 `AgentEventEnvelope` 解析（那种行带顶层 `schema_version` / `sequence`，没有 `type`）。
 
 ```json
-{"schema_version":1,"event_id":"…","session_id":"…","run_id":"…","sequence":1,"timestamp":…,"payload":{"type":"assistant_text_delta","data":{…}}}
+{"type":"event","envelope":{"api_version":{"major":1,"minor":1},"instance_id":"…","event_id":"…","global_sequence":1,"stream":{"type":"session","id":"…"},"stream_sequence":1,"timestamp":…,"source":{"type":"core"},"payload":{"type":"assistant_delta","data":{…}}}}
 ```
 
-纪律（已生效）：stdout 只承载 JSONL；文本、进度、日志走 stderr。`--json` 或非 TTY 下审批 fail-closed（DenyAll）。
+纪律：stdout 只承载 JSONL；文本、进度、日志走 stderr。`--json` 或非 TTY 下审批 fail-closed（DenyAll）。
 
-`sessions` / `auth` / `models` / `diff` / `mcp` / `import` 的 `--json` 是各自快照 JSON，**不是** envelope JSONL，也不是 headless `query` 响应。收口时它们要么映射到 `HeadlessResponse::Response`，要么在说明里继续标「CLI 便利输出，不是协议帧」——本波不假装它们已经是协议。
+`sessions` / `auth` / `models` / `diff` / `mcp` / `import` 的 `--json` 仍是各自快照 JSON，**不是** 协议帧，也不是 headless `query` 响应。
 
-### 2.2 正式 headless（`pawork headless --json-stdio`，子命令在收口才接）
+### 2.2 双向 headless（`pawork headless --json-stdio`）
 
 双向 stdin/stdout JSONL。帧定义在 `pawork_protocol::headless`（V1 `headless-json` 整组迁入）。
 
@@ -58,7 +58,7 @@ V1 `run --json` 打的是**裸** `AppEventEnvelope`（无 `{type:event}` 包装�
 
 ## 3. 信封字段对照（流式 `--json` → `event.envelope`）
 
-| 现行 `--json` | 正式 `HeadlessResponse::event.envelope` | 说明 |
+| 磁盘 / 收口前裸信封 | 收口后 `HeadlessResponse::event.envelope` | 说明 |
 | --- | --- | --- |
 | `schema_version` | **不要出现** | 磁盘契约，保持 1 |
 | `event_id` | `event_id` | 可对齐 |
@@ -97,7 +97,7 @@ V1 `run --json` 打的是**裸** `AppEventEnvelope`（无 `{type:event}` 包装�
 | `compaction_*` / `checkpoint_*` | — | |
 | `plan` / `goal` / `task` / `automation` / `monitor` / `memory` / `review` | — | S11 域事件；`AppEvent` 无 1:1 |
 
-只出现在 headless/GUI、不会从现行 `--json` 长出来的 `AppEvent`（`core_ready`、`workspace_changed`、`session_changed`、`quota_*`、`team`、`gui_client_*` 等）保持原样，不在本表。
+只出现在 headless/GUI、不会从磁盘细事件长出来的 `AppEvent`（`core_ready`、`workspace_changed`、`session_changed`、`quota_*`、`team`、`gui_client_*` 等）保持原样，不在本表。
 
 ---
 
