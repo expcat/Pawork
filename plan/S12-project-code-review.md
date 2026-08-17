@@ -1,6 +1,6 @@
 # S12：全项目 Code Review 与整改拆分
 
-> 阶段 S12 · 只读审查与任务化 · 状态：⚪未开始 · 依赖：S0–S11 的状态、延期项与验收证据已回写 · 规模：大（审查 + 记录，不实现、不测试、不发布）
+> 阶段 S12 · 只读审查与任务化 · 状态：🟢已完成（2026-08-18 收口） · 依赖：S0–S11 的状态、延期项与验收证据已回写 · 规模：大（审查 + 记录，不实现、不测试、不发布）
 
 ## 目标
 
@@ -23,6 +23,15 @@
 | CR-07 | `foundation/protocol`、`host/app`、`host/gui-server`、`host/transport`、`host/channels`、`clients/gui-client`、`clients/sdk`、`clients/compat`、`apps/protocol-probe` | 协议/schema 漂移、鉴权、幂等、Replay/Resume、背压、连接生命周期、能力声明与真实实现一致性 | Grok |
 | CR-08 | `apps/desktop`、`docs/gui-design.md`、`design/` | 四层边界、异步/线程生命周期、状态投影、可访问性、视觉与交互需求是否真实落地；只审源码与既有证据，不启动 GUI | GLM |
 | CR-09 | `ROADMAP.md`、`plan/`、`docs/`、`README.md`、`v2_plan.md` 与全仓 TODO/feature/call-site 索引 | S0–S11 需求追踪、假完成/零消费者、dead code、重复实现、可优化热点、延期项与状态/证据矛盾 | GLM |
+
+补充主审范围（2026-08-17 主代理登记，修复任务书未列 S9/S11 新增包的缺口；不改变各包既有范围与模型分工）：
+
+| 追加到 | 补充范围 | 理由 |
+| --- | --- | --- |
+| CR-02 | `workspace/resources` | AGENTS.md/Skills 加载的路径越界与注入面，与 CR-02 核心问题同源 |
+| CR-04 | `control-plane/provider-control` | CredentialPool/lease 属凭证边界；`account-control-v1` feature 下未接宿主的 account/routing/health/factory/reconciler 允许降采样，未深审部分列入「未覆盖路径」 |
+| CR-05 | `control-plane/core`、`control-plane/quota` | UsageLedger/audit JSONL/LocalLedger 的持久化与并发一致性 |
+| CR-06 | `workflow/core`、`workflow/memory`、`workflow/review`、`agents/orchestration`、`foundation/testkit` | 状态机/reducer/多 Agent 编排与 MockProvider 的逻辑审查；testkit 采样即可 |
 
 Grok 负责对抗性与高风险边界，GLM 负责契约、数据流与需求追踪。只有 Critical/High finding 才由另一模型做一次交叉复核；确定性证据检查先于模型复核，不为同一普通 finding 重复调用审查者。
 
@@ -51,11 +60,11 @@ Grok 负责对抗性与高风险边界，GLM 负责契约、数据流与需求�
 
 ## 退出标准
 
-- [ ] CR-01～CR-09 均有独立报告，列明实际审查路径、未覆盖路径与 finding。
-- [ ] 所有 finding 均有类别、严重度、置信度、源码证据和后续验证建议。
-- [ ] Confirmed finding 全部按规则回写 ROADMAP；Needs Verification 没有被冒充为确定结论。
-- [ ] S0–S11 的需求与状态逐项建立“计划 → 生产调用点/用户界面 → 既有证据”追踪，未落地项已登记。
-- [ ] 本阶段没有修改生产代码、运行测试/构建/冒烟、执行发布或远程操作。
+- [x] CR-01～CR-09 均有独立报告，列明实际审查路径、未覆盖路径与 finding。（[docs/reviews/s12/](../docs/reviews/s12/)，2026-08-17～18；另附补充主审范围登记，见上文 CR 表后注）
+- [x] 所有 finding 均有类别、严重度、置信度、源码证据和后续验证建议。（60 条，全部 Confirmed；18 条 High 均经另一模型交叉复核，3 条裁定降 Medium、4 处证据/表述修正已回写主报告）
+- [x] Confirmed finding 全部按规则回写 ROADMAP；Needs Verification 没有被冒充为确定结论。（57 项 S12-F01～F57 任务，见 [ROADMAP](../ROADMAP.md) §3.2；CR04-06 链接 K-10、CR09-05 随 F01 收口、CR02-01/02 同根因合并）
+- [x] S0–S11 的需求与状态逐项建立“计划 → 生产调用点/用户界面 → 既有证据”追踪，未落地项已登记。（[CR-09](../docs/reviews/s12/CR-09-traceability-consistency.md) §2 追踪表）
+- [x] 本阶段没有修改生产代码、运行测试/构建/冒烟、执行发布或远程操作。（工作区差异仅 docs/reviews/s12/、本任务书、ROADMAP、v2_plan.md）
 
 ## 明确不做
 
