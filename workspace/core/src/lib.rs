@@ -1,8 +1,9 @@
-//! pawork-workspace：roots 管理与相对路径解析入口（S2 最小核）。
+//! pawork-workspace：roots 管理、相对路径解析与文件索引。
 //!
 //! 完整安全校验（symlink / `.git` / TOCTOU）在 S3 接 `pawork-policy`，
 //! 本包对外签名保持不变。
 
+mod file_index;
 mod path;
 
 use std::{
@@ -16,6 +17,10 @@ use pawork_domain::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use file_index::{
+    ChangeKind, DebouncedUpdateHandle, FileIndex, FileIndexError, FileKey, IndexOptions,
+    IndexSnapshot, IndexedFile, PathChange, WorkspaceWatcher,
+};
 pub use path::{resolve_relative_path, ResolvedPath, WorkspacePathError};
 
 /// 已登记的工作区。`roots` 已经 canonicalize + `dunce::simplified`。

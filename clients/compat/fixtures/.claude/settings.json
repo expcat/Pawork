@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": ["Bash(npm run test:*)"],
+    "ask": ["WebFetch(domain:example.com)"],
+    "deny": ["Read(.env)"],
+    "defaultMode": "acceptEdits"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python /tmp/audit.py --tool"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "summarize the session"
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-ant-fixture-do-not-use"
+  }
+}
+

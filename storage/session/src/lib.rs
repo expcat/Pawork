@@ -4,6 +4,7 @@
 
 mod catalog;
 mod event_store;
+pub mod import;
 mod migration;
 mod projection;
 
@@ -17,6 +18,11 @@ use thiserror::Error;
 
 pub use catalog::SessionRecord;
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
+pub use import::{
+    parse_pi_line, CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport,
+    ExportedBranch, ExportedEvent, ExternalRecord, ExternalSource, ParsedExternalSession,
+    PiEntryKind, PiImportReport, PiParsedEntry, PiPayload, SessionExport, EXPORT_SCHEMA_VERSION,
+};
 pub use migration::CURRENT_SCHEMA_VERSION;
 pub use pawork_sqlite::MigrationReport;
 pub use projection::{
@@ -86,6 +92,24 @@ pub enum SessionStoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("database schema version {found} is newer than supported version {supported}")]
     UnsupportedSchema { found: u32, supported: u32 },
+    #[error("export schema version {found} is not supported (expected {supported})")]
+    ExportSchemaVersion { found: u32, supported: u32 },
+    #[error("session export v3 identity is missing or blank")]
+    ExportIdentityMissing,
+    #[error(
+        "session export identity {export_tenant}/{export_principal} does not match import identity {import_tenant}/{import_principal}"
+    )]
+    ExportIdentityMismatch {
+        export_tenant: String,
+        export_principal: String,
+        import_tenant: String,
+        import_principal: String,
+    },
+    #[error("event belongs to session {event_session_id}, not {expected_session_id}")]
+    EventSessionMismatch {
+        expected_session_id: String,
+        event_session_id: String,
+    },
     #[error("schema version does not fit into u32: {0}")]
     InvalidSchemaVersion(i64),
     #[error("migration {version} ({name}) failed: {message}")]
@@ -126,6 +150,27 @@ pub enum SessionStoreError {
     ParentEventNotFound(String),
     #[error("projection invariant failed: {0}")]
     ProjectionInvariant(String),
+    #[error("compat import source could not be parsed ({source_label}): {detail}")]
+    CompatUnparseable {
+        source_label: String,
+        detail: String,
+    },
+    #[error("compat import source contains a likely secret ({pattern}); nothing imported")]
+    CompatSecretDetected { pattern: String },
+    #[error("compat import replay validation failed: {0}")]
+    CompatValidationFailed(String),
+    #[error(
+        "compat import identity conflict for source {source_label} / original_id {original_id}: \
+         same identity already imported with different content; refusing to create a second session"
+    )]
+    CompatImportConflict {
+        source_label: String,
+        original_id: String,
+    },
+    #[error("compat import history cursor is malformed: {0}")]
+    InvalidHistoryCursor(String),
+    #[error("compat import history contains unknown source label `{0}`")]
+    InvalidHistorySource(String),
 }
 
 impl From<MigrationError> for SessionStoreError {

@@ -4434,6 +4434,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pawork-compat"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "pawork-config",
+ "pawork-domain",
+ "pawork-policy",
+ "pawork-resources",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "pawork-config"
 version = "0.1.0"
 dependencies = [
@@ -4659,6 +4676,7 @@ dependencies = [
 name = "pawork-session"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "pawork-domain",
  "pawork-sqlite",
  "rusqlite",
@@ -4730,10 +4748,13 @@ name = "pawork-workspace"
 version = "0.1.0"
 dependencies = [
  "dunce",
+ "ignore",
+ "notify 7.0.0",
  "pawork-domain",
  "serde",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]

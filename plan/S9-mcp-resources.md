@@ -1,6 +1,6 @@
 # S9：MCP、资源与兼容导入
 
-> 阶段 S9 · 扩展输入面 · 状态：🔵进行中（波 A ✅）· 依赖：S2（工具注册面）、S6（config 凭证链）· 规模：大
+> 阶段 S9 · 扩展输入面 · 状态：🔵进行中（波 A–B ✅）· 依赖：S2（工具注册面）、S6（config 凭证链）· 规模：大
 
 ## 目标（本阶段结束时用户能做什么）
 
@@ -67,7 +67,7 @@
 ## 并行拆分建议
 
 - 波 A（并行 ×3）✅（2026-08-17）：`pawork-mcp`（含 rmcp 收口）；`pawork-resources`；`pawork-config` 完整化。
-- 波 B（并行 ×3）：`pawork-compat`（依赖 mcp 薄类型）；`pawork-session` 导入器；`pawork-workspace` file-index。
+- 波 B（并行 ×3）✅（2026-08-17）：`pawork-compat`（五来源只读；MCP/Hook 本地薄类型，无 rmcp 边）；`pawork-session` 导入器（`import::formats` + 单事务写入）；`pawork-workspace` file-index（构建/查询）。
 - 波 C（串行）：engine 注入点 + cli（mcp/import/@引用）+ 冒烟。
 
 ## 参考

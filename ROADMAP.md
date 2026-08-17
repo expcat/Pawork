@@ -60,7 +60,7 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 | [S6](plan/S6-providers-auth.md) | 首发 Provider 与认证 | 六通道适配、`pawork models` 聚合、auth 文件、API key 与 ChatGPT/xAI OAuth | providers/adapters（六通道）、auth、diagnostics（脱敏 layer）、config（凭证解析） | — | 六通道真实使用；运行中切换 provider/model；OAuth 临期刷新；secret 不入日志回归 | 🔵 |
 | [S7](plan/S7-gui-agent.md) | 最小 Agent GUI（波 0–D ✅） | 已锁定并交付 v3 三栏工作台：TaskRail 双分组与定向新建、流式对话、内嵌审批、取消、ContextMeter / RunStatusBar；跨通道 `glm-4.7`→`deepseek-v4-flash` 冒烟通过 | protocol（最小帧）、transport（local）、gui-server（单客户端）、client、apps/desktop、cli `gui serve` | v3 三栏壳整体：TaskRail 双分组与定向新建、内嵌审批、Composer+ContextMeter、RunStatusBar、InspectorToolTabs 预留 | 设计锁定；真实模型流式对话；关窗不杀 Run；跨通道切换；1440×1024 人工对照定稿图未做 | 🟢 |
 | [S8](plan/S8-git-checkpoint.md) | Git、Diff 与 Checkpoint（波 A–B ✅） | 会话改动 diff 呈现、编辑前快照、`pawork rollback` 一键回滚；CLI 审批 hunk 预览 | git（git+diff）、blob-store（artifact/protected/checkpoint）、engine/app/cli 接线 | Inspector Changes（Files/Summary）+ ActivityPopover Changes 摘要（Desktop 面延期，见 §4） | 真实任务后 diff 审阅 + 回滚还原；git 注入防护回归 | 🟢 |
-| [S9](plan/S9-mcp-resources.md) | MCP、资源与兼容导入（波 A ✅） | 外接 MCP server 工具、AGENTS.md/Skills 生效、`@file` 引用、导入 Claude/Codex 等配置；GUI `@` / Resources | mcp（rmcp 收口）、resources、compat、workspace（file-index）、config（完整层级） | Composer `@` 补全；Resources 只读（MCP/规则） | 真实 MCP server 工具与内置共存；本机 Claude/Codex 配置导入可用 | 🔵 |
+| [S9](plan/S9-mcp-resources.md) | MCP、资源与兼容导入（波 A–B ✅） | 外接 MCP server 工具、AGENTS.md/Skills 生效、`@file` 引用、导入 Claude/Codex 等配置；GUI `@` / Resources | mcp（rmcp 收口）、resources、compat、workspace（file-index）、config（完整层级） | Composer `@` 补全；Resources 只读（MCP/规则） | 真实 MCP server 工具与内置共存；本机 Claude/Codex 配置导入可用 | 🔵 |
 | [S10](plan/S10-serve-clients.md) | 服务化与客户端补齐 | headless/SDK/ACP/service、多 GUI Replay、Fork、PTY；`--json` 对齐正式协议 | protocol 收口、transport 补齐、gui-server 多客户端、sdk、channels、app/cli 正式化、exec（pty）、session lifecycle、protocol-probe | 正式 Replay、Fork、Terminal tab、本机多窗口 | protocol-probe 全过；SDK e2e；acp 接真实客户端 | ⚪ |
 | [S11](plan/S11-workflow-control.md) | 工作流、多 Agent 与控制面 | Plan 审批 gate、后台任务、`pawork usage` 配额、多 Agent 编排、多账户池与路由；GUI Workflow 面 | workflow、memory、review、orchestration、control-plane、provider-control、quota | Workflow 面、quota 完整面、ActivityPopover Agent 状态列表 | 多 Agent demo（§1.1 矩阵中两通道各驱动一个子 Agent）；plan gate 拦截；用量可查 | ⚪ |
 | [S12](plan/S12-release-hardening.md) | Release Hardening 与发布 | —（验证 + 发布） | 全部 | 三平台窗口/输入/打包证据 | 全量门禁/三平台/fuzz/依赖卫生全绿；W1–W4 波次发布；真实通道冒烟总回归与《真实通道模型评估报告》（按 §1.1 矩阵）（V1 归档已于 2026-08-17 提前完成，见 §3.1） | ⚪ |
@@ -116,6 +116,7 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 | `plan/archive` M0–M8 正文缺失 | `plan/archive/README.md` 与历史登记引用九份 M0–M8 包级细则，但文件从未落仓；当前以 `docs/v1-migration-reference.md` §4.1 为唯一迁移词典，禁止臆造细则 | 后续文档维护任务；不阻塞 S8 代码收口 |
 | S7 Desktop 人工窗口验收 | 中文 IME / 多行粘贴与 1440×1024 对照 v3 定稿图未做人工窗口验收（波 B/D 已接线与自动化覆盖） | 不阻塞后续阶段；开发机打开窗口时补验 |
 | S8 Desktop Changes 面 | Inspector Changes（Files/Summary）与 ActivityPopover Changes 摘要未做；波 B 写入集仅为 engine/app/cli，Host 已接 `DiffListFiles`/`DiffGet` | 不阻塞 S9；随 S10 Inspector 加面或单独 GUI 增量补齐 |
+| S9 会话导入本机格式缺口 | 波 B 迁的是 V1 fixture 解析器（claude.ai 风格 JSON / 早期 Codex typed entry / 通用 messages）；本机 `~/.claude/projects/**/*.jsonl` 与现行 Codex rollout `{timestamp,type,payload}` 未适配。波 C 冒烟优先验 Pawork export v3 往返 + V1 fixture；本机真实会话文件须先确认格式 | 不阻塞波 C 装配；本机会话冒烟前确认 |
 
 ---
 

@@ -5,13 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork workspace roots 与相对路径解析入口"
+description = "Pawork workspace roots、相对路径解析与文件索引"
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
 dunce.workspace = true
+ignore.workspace = true
+notify.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

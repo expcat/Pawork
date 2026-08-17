@@ -23,7 +23,6 @@ members = [
 # 命中无 manifest 的目录会报错，因此显式排除，激活对应 crate 时移除条目。
 exclude = [
     "host/channels",
-    "clients/compat",
     "clients/sdk",
     "apps/protocol-probe",
 ]
