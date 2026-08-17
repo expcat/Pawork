@@ -1,9 +1,0 @@
----
-source: crates/provider-anthropic/tests/p15_gate.rs
-expression: citation
----
-{
-  "text": "the cited passage",
-  "document_index": 3,
-  "source_kind": "document"
-}

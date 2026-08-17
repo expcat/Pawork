@@ -2,108 +2,80 @@
 
 > 纯 Rust 编码智能体核心平台 —— CLI 与 Core 同进程同二进制，无 Node / Bun / JavaScript Runtime。
 
-Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心。它以 Pi 的功能、工作流与交互习惯为参考，但**不复用**其 TypeScript 实现：**CLI 与 Rust Core 是同一个程序和进程边界**（二进制 `pawork`），Phase 19 的 GPUI Rust Desktop GUI 作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
+Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心：以 Pi 的功能与工作流为参考，但**不复用**其 TypeScript 实现。二进制 `pawork` 是 Core 的唯一正式宿主；Desktop GUI（GPUI，`apps/desktop`）作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
 
-## 项目定位
+当前仓库为 V2 重构后的增量开发主线（S0–S12，见 [ROADMAP.md](ROADMAP.md)）。V1 全量实现（88 crate）已于 2026-08-17 归档至仓库外同级目录 `../Pawork_v1/`：移出 git 管理，仅作为迁移参照与历史快照保留。
 
-Pawork 不是「Pi 的桌面壳」，而是一个独立的 Rust Coding Agent 平台。Pi 仅作为功能参考、行为参考与迁移数据来源。
+## 项目状态（2026-08-17）
 
-## 设计目标
+| 阶段 | 主题 | 状态 |
+| --- | --- | --- |
+| S0–S5 | 最小对话 → 会话持久化 → 工具循环 → 写入审批 → 命令执行与沙箱 → 上下文预算与用量 | 🟢 |
+| [S6](plan/S6-providers-auth.md) | 首发 Provider 与认证（六通道、OAuth、auth 文件） | 🔵 |
+| [S7](plan/S7-gui-agent.md) | 最小 Agent GUI（v3 三栏工作台已交付） | 🟢 |
+| [S8](plan/S8-git-checkpoint.md) | Git、Diff 与 Checkpoint（rollback 一键回滚） | 🟢 |
+| [S9](plan/S9-mcp-resources.md) | MCP、资源与兼容导入（波 A ✅） | 🔵 |
+| S10–S12 | 服务化与客户端补齐 / 工作流与多 Agent / Release Hardening | ⚪ |
 
-- 多模型 Provider Runtime
-- 完整 Agent 循环（流式、工具调用、审批、重试、取消）
-- 会话、分支、恢复与压缩
-- 上下文构建与 Token 预算
-- 文件读写、编辑、搜索与命令执行
-- 权限、审批与 Sandbox
-- Git、Worktree、Diff 与回滚
-- Skills、Prompt 与项目指令
-- MCP 与 WASM 插件
-- 多 Agent 调度
-- Provider Account / Credential Lease、确定性路由、Tenant/Usage/Audit 控制面
-- Codex App Server、Claude Gateway、ACP 等外部 Agent Client Adapter
-- 为 GUI 提供稳定的 CLI/Core 宿主与接入协议
-- 独立 GPUI Rust Desktop GUI（Timeline、Composer、Diff、Terminal、Settings 与 Workflow）
-- `pawork` CLI 是 Core 的唯一正式宿主，可脱离 GUI 独立运行
-- 一个 CLI/Core 实例可同时服务多个本地与远程 GUI
+状态符号：⚪未开始 · 🔵进行中 · 🟢已完成。阶段明细与真实验收要点见 [ROADMAP.md](ROADMAP.md) §2。
 
-## 不追求的兼容性
+## 快速开始
 
-- Pi TypeScript API / Extension API 兼容
-- npm 插件兼容
-- Pi 内部类名、事件名兼容
-- Provider SDK 行为逐行复刻
-
-## 架构总览
-
-```text
-┌──────────────────────────────────────────────┐
-│ CLI + Rust Core（同一进程，二进制 pawork）     │
-│  CLI Commands / Renderers   GUI Server        │
-│  Agent Engine          Provider Runtime       │
-│  Agent Supervisor      Account Control Plane  │
-│  Context Engine        Tool Runtime           │
-│  Session Store         Policy Engine          │
-│  Workspace Service     Git / Diff             │
-│  Plugin / MCP Host     Artifact Store         │
-│  Auth / Models         Tenant / Usage / Audit │
-└────────────────────┬─────────────────────────┘
-            │ GUI Connection Protocol（Local / Remote Transport）
-┌───────────▼─────────┐  ┌─────────────────────┐
-│ Local GUI A         │  │ Remote GUI C/D      │
-│ GPUI / Rust         │  │ GPUI / Rust         │
-└─────────────────────┘  └─────────────────────┘
+```bash
+cargo build                      # workspace dev 构建
+./target/debug/pawork chat       # 流式多轮对话
+./target/debug/pawork models     # 各通道聚合的模型列表
+./target/debug/pawork sessions list
+./target/debug/pawork gui serve  # 启动 GUI 连接服务（S7）
 ```
 
-核心原则：
-
-- 不使用 Node / Bun，不嵌入任何 JavaScript Runtime
-- 不启动 Pi Sidecar，不依赖 `@earendil-works/pi-*`
-- 不实现 TUI
-- `pawork` CLI 是 Core 的唯一正式宿主；GUI 经协议连接 CLI，不嵌入 Core
-- 一个 CLI/Core 实例可同时服务多个本地与远程 GUI；GUI 断线不影响任务
-
-详见 [docs/architecture/overview.md](docs/architecture/overview.md)。
+凭证经 `pawork auth`（S6）写入 `~/.pawork/auth.json`；env 变量仅作遗留 fallback。Secret 红线：key/token 不入日志、事件与任何可提交文件。
 
 ## 仓库结构
 
 ```text
-Pawork/                       # 仓库根 = Cargo workspace 根
-├── crates/                   # 核心 crate
-├── apps/                     # 可执行入口（pawork、protocol-test-gui、desktop）
-├── schemas/                  # JSON Schema（core-api / gui-protocol / events / transport / authentication / plugin-api / mcp / import）
-├── fixtures/                 # 测试夹具
-├── benches/                  # 性能基准
-└── docs/                     # 架构、ADR、功能、质量文档
+Pawork/                  # 仓库根 = Cargo workspace 根
+├── apps/                # 可执行入口：pawork（CLI 宿主）、desktop（GPUI GUI）
+├── foundation/          # domain、api、protocol、config、sqlite、testkit、diagnostics
+├── engine/              # Agent Engine（工具循环、上下文、事件）
+├── execution/           # exec（进程/沙箱）、policy、tools
+├── providers/           # core、adapters（多通道）、auth
+├── storage/             # session（持久化/重放）、blob
+├── host/                # app、cli、gui-server、transport
+├── clients/             # gui-client
+├── net/                 # HTTP/传输基础
+├── vcs/                 # git（diff/checkpoint/rollback）
+├── extensions/          # mcp（S9）
+├── workspace/           # core（workspace 服务）、resources（AGENTS.md/Skills 加载）
+├── fixtures/            # 测试夹具
+├── design/              # GUI v3 定稿视觉基准
+├── docs/                # 设计、规范、参照、迁移词典
+└── plan/                # 阶段任务书 S0–S12
 ```
 
-> 以上为规划结构，目录在 [P0-1](plan/P0-1-workspace-skeleton.md) 创建。
-
-完整结构见 [docs/architecture/workspace-layout.md](docs/architecture/workspace-layout.md)。
+包布局与激活映射（40 包 + 3 应用）见 [docs/design.md](docs/design.md) §2；冻结契约与「追加不重写」三道保险见 §3。
 
 ## 文档导航
 
-| 类别 | 内容 |
+| 文档 | 职责 |
 | --- | --- |
-| 总体架构 | [overview](docs/architecture/overview.md) · [workspace 结构](docs/architecture/workspace-layout.md) · [领域模型](docs/architecture/domain-model.md) · [控制流](docs/architecture/control-flow.md) · [GUI Connection Protocol](docs/architecture/api-surface.md) |
-| Control Plane / Client | [Provider Account Control Plane](docs/features/provider-control-plane.md) · [Tenant、Usage 与 Audit](docs/features/tenant-audit.md) · [Agent Client Adapters](docs/features/client-adapters.md) |
-| CLI Host / GUI 接入 | [CLI Host](docs/features/cli-host.md) · [GUI 连接与多客户端](docs/features/gui-connection.md) · [Desktop GUI](docs/features/desktop-gui.md) |
-| 功能模块 | [docs/features/](docs/features/) |
-| 质量门槛 | [性能目标](docs/quality/performance-targets.md) · [安全验收](docs/quality/security-acceptance.md) · [测试体系](docs/quality/testing.md) |
-| 架构决策 | [docs/adr/](docs/adr/)（ADR-001 ~ ADR-035） |
-| 术语 | [glossary](docs/glossary.md) |
-| 路线图 | [ROADMAP.md](ROADMAP.md) |
+| [ROADMAP.md](ROADMAP.md) | 任务总索引：阶段状态、阶段外任务、未决事项、风险 |
+| [plan/](plan/) | 阶段任务书（附件 [plan/archive/](plan/archive/README.md)：旧按域计划索引） |
+| [docs/design.md](docs/design.md) | 设计与冻结契约 |
+| [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（v3 基准） |
+| [docs/references.md](docs/references.md) | 参照项目手册 |
+| [docs/task-guide.md](docs/task-guide.md) | 任务实现规范（公共提示词） |
+| [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1→V2 迁移词典（冻结参考） |
+| [AGENTS.md](AGENTS.md) | 工作约定（V2 版） |
 
-## 项目状态
-
-Phase 0～10 已完成，其中 Phase 10 WASM Plugin 已形成独立宿主、签名/资源边界、`PluginRuntime` 原子注册/撤销、状态与 WIT/JSON 兼容门禁闭环；Phase 11 已有 P11-1 沙箱骨架。CLI Host 主干、Provider Native、Modern Workflow、Ecosystem/Host、Account Control Plane & Client Adapters 与 Desktop GUI 仍按 [ROADMAP](ROADMAP.md) 的依赖波次推进。任务完成度和下一项工作以路线图实时进度表为准，不再用 README 固定阶段文字替代源码与运行证据。
+V1 时期文档（架构、ADR-001~035、features、quality、REVIEW 等）随 V1 归档于 `../Pawork_v1/docs/`，仓库内链接以 `../Pawork_v1/...` 标注。
 
 ## 贡献
 
-- 工作约定见 [AGENTS.md](AGENTS.md)
-- 新增 crate、命名与依赖规则见 [workspace 结构](docs/architecture/workspace-layout.md)
-- 架构决策须以 ADR 记录，见 [docs/adr/](docs/adr/)
+- 工作约定见 [AGENTS.md](AGENTS.md)；V2 开发期验证放宽以 [docs/task-guide.md](docs/task-guide.md) §6 为准（全量门禁集中在 S12）。
+- 架构决策须以 ADR 记录，编号续接 V1。
+- 新增包须在 [docs/design.md](docs/design.md) §2 登记并明确依赖方向。
 
 ## 许可证
 
-待定（将在首次实现提交前确定）。
+待定（见 [ROADMAP.md](ROADMAP.md) §4 未决事项）。

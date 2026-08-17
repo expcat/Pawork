@@ -1,7 +1,0 @@
-{
-  "_comment": "Synthetic contract fixture for xAI GET /v1/billing/teams/{team_id}/invoice-preview (management key, https://management-api.x.ai). Real shape: total.val is a signed decimal integer in USD cents representing the current billing-period consumption (used). Combined with the postpaid spending-limits ceiling (limit) to form the monthly used/limit picture.",
-  "_endpoint": "https://management-api.x.ai/v1/billing/teams/{team_id}/invoice-preview",
-  "_auth": "xAI management API key (Bearer)",
-  "_config": { "team_id": "team-synthetic" },
-  "total": { "val": "3000", "currency": "USD" }
-}

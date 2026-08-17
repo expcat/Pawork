@@ -1,9 +1,0 @@
----
-source: crates/provider-xai/tests/p15_gate.rs
-expression: canonical
----
-{
-  "id": "rs-xai-1",
-  "summary": "reasoned briefly",
-  "protected_blob_ref": "blob-xai-1"
-}

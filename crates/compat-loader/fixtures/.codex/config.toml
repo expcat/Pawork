@@ -1,8 +1,0 @@
-model = "gpt-5.2-codex"
-approval_policy = "on-request"
-
-[mcp_servers.github]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-github"]
-env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
-

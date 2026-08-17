@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "echo": {
-      "command": "echo",
-      "args": ["workspace-echo"]
-    }
-  }
-}
-

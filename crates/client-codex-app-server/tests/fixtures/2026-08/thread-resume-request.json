@@ -1,7 +1,0 @@
-{
-  "id": 11,
-  "method": "thread/resume",
-  "params": {
-    "threadId": "thr_1"
-  }
-}

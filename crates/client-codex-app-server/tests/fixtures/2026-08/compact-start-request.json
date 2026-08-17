@@ -1,7 +1,0 @@
-{
-  "id": 25,
-  "method": "thread/compact/start",
-  "params": {
-    "threadId": "thr_b"
-  }
-}

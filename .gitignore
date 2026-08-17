@@ -1,17 +1,6 @@
 # Rust 构建产物
 /target
 
-# CodeGraph 本地索引（不入库）
-/.codegraph/
-
-# 本地 SQLite / 数据库文件
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
-
 # Secret / 凭据（绝不入库）
 .env
 .env.*
@@ -24,15 +13,3 @@ secrets/
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# IDE / 编辑器
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# 诊断包 / 临时输出
-*.diagnostics.zip
-
-# Phase 12 delegation briefs (scratch, not committed)
-/.p12briefs/

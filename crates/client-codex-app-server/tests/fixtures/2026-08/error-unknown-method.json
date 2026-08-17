@@ -1,7 +1,0 @@
-{
-  "id": 9,
-  "error": {
-    "code": -32601,
-    "message": "protocol method is unsupported: session/load"
-  }
-}

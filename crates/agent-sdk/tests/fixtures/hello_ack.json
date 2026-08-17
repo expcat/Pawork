@@ -1,6 +1,0 @@
-{
-  "type": "hello_ack",
-  "instance_id": "core-fixture-1",
-  "negotiated": { "major": 1, "minor": 0 },
-  "granted": ["sessions", "runs", "streaming", "compat_import", "compat_history"]
-}
