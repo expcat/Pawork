@@ -3,7 +3,8 @@
 use std::fs;
 
 use pawork_config::{
-    config_dir_for_app, locate_workspace_config, ConfigTier, ConfigWarning, Loader,
+    config_dir_for_app, locate_workspace_config, ConfigTier, ConfigWarning, Loader, RunOverrides,
+    SessionOverrides,
 };
 
 fn tempdir(prefix: &str) -> tempfile::TempDir {
@@ -110,6 +111,134 @@ trust_workspaces = true
             ..
         }
     )));
+}
+
+#[test]
+fn discover_from_applies_profile_file_between_global_and_workspace() {
+    let root = tempdir("profile-file");
+    let global = root.path().join("global.toml");
+    let workspace = root.path().join(".pawork").join("config.toml");
+
+    write(
+        &global,
+        r#"
+profile = "work"
+default_provider = "global-p"
+
+[[profiles]]
+name = "work"
+default_model = "work-model"
+"#,
+    );
+    write(
+        &workspace,
+        r#"
+default_provider = "ws-p"
+"#,
+    );
+
+    let resolved = Loader::discover_from(Some(&global), Some(&workspace))
+        .resolve()
+        .expect("resolve profile file");
+
+    assert_eq!(resolved.config.default_model.as_deref(), Some("work-model"));
+    assert_eq!(resolved.config.default_provider.as_deref(), Some("ws-p"));
+    assert_eq!(resolved.active_profile.as_deref(), Some("work"));
+    assert!(resolved
+        .sources
+        .iter()
+        .any(|source| source.span.source_key == "profile:work"));
+
+    let tiers: Vec<ConfigTier> = resolved.sources.iter().map(|s| s.span.tier).collect();
+    assert_eq!(
+        tiers,
+        vec![
+            ConfigTier::Builtin,
+            ConfigTier::Global,
+            ConfigTier::Profile,
+            ConfigTier::Workspace,
+        ]
+    );
+}
+
+#[test]
+fn with_session_and_with_run_override_profile_after_discover_from() {
+    let root = tempdir("session-run");
+    let global = root.path().join("global.toml");
+    let workspace = root.path().join(".pawork").join("config.toml");
+
+    write(
+        &global,
+        r#"
+profile = "work"
+
+[[profiles]]
+name = "work"
+default_model = "work-model"
+"#,
+    );
+    write(
+        &workspace,
+        r#"
+default_provider = "ws-p"
+"#,
+    );
+
+    let session_only = Loader::discover_from(Some(&global), Some(&workspace))
+        .with_session(
+            "session",
+            SessionOverrides {
+                default_model: Some("session-model".into()),
+                ..SessionOverrides::default()
+            },
+        )
+        .resolve()
+        .expect("resolve session over profile");
+    assert_eq!(
+        session_only.config.default_model.as_deref(),
+        Some("session-model")
+    );
+    assert_eq!(session_only.active_profile.as_deref(), Some("work"));
+
+    let run_over_session = Loader::discover_from(Some(&global), Some(&workspace))
+        .with_session(
+            "session",
+            SessionOverrides {
+                default_model: Some("session-model".into()),
+                ..SessionOverrides::default()
+            },
+        )
+        .with_run(
+            "run",
+            RunOverrides {
+                default_model: Some("run-model".into()),
+                ..RunOverrides::default()
+            },
+        )
+        .resolve()
+        .expect("resolve run over session");
+    assert_eq!(
+        run_over_session.config.default_model.as_deref(),
+        Some("run-model")
+    );
+    assert_eq!(run_over_session.active_profile.as_deref(), Some("work"));
+
+    let tiers: Vec<ConfigTier> = run_over_session
+        .sources
+        .iter()
+        .map(|s| s.span.tier)
+        .collect();
+    assert_eq!(
+        tiers,
+        vec![
+            ConfigTier::Builtin,
+            ConfigTier::Global,
+            ConfigTier::Profile,
+            ConfigTier::Workspace,
+            ConfigTier::Session,
+            ConfigTier::Run,
+        ]
+    );
 }
 
 #[test]

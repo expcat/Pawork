@@ -6,8 +6,9 @@
 //! 3. Profile 层级是自动派生的：在所有原始来源合并后，根据选中的 profile 名称
 //!    取其 overrides 片段，插入到 Global 与 Workspace 之间。
 //!
-//! S0 默认发现只自动加入 Builtin + Global 文件 + Workspace 文件；六层类型与
-//! 完整 loader（含 Profile 派生）保留，供后续阶段与显式 `with_value`/`with_file` 使用。
+//! S9 起 Session / Run 有一等 API（[`Loader::with_session`] / [`Loader::with_run`]）；
+//! `discover` / `discover_from` 仍只自动加入 Builtin + Global 文件 + Workspace 文件。
+//! Profile 仍由 `profile =` 与 `profiles[]` 派生，插入 Global 与 Workspace 之间。
 
 use std::path::{Path, PathBuf};
 
@@ -16,7 +17,7 @@ use serde_json::Value;
 use crate::error::{ConfigError, ConfigParseError};
 use crate::merge::{ConfigValue, Merge};
 use crate::paths::{global_config_path, locate_workspace_config};
-use crate::schema::PaworkConfig;
+use crate::schema::{PaworkConfig, RunOverrides, SessionOverrides};
 use crate::ConfigTier;
 
 /// 来源种类：与 [`ConfigTier`] 对应，外加文件路径等元数据。
@@ -141,6 +142,24 @@ impl Loader {
             value: value.into(),
         });
         self
+    }
+
+    /// 加入 Session 层覆盖。`discover` / `discover_from` 不会自动加入本层。
+    pub fn with_session(self, source_key: impl Into<String>, overrides: SessionOverrides) -> Self {
+        self.with_value(
+            ConfigTier::Session,
+            source_key,
+            serde_json::to_value(overrides).expect("SessionOverrides is serializable"),
+        )
+    }
+
+    /// 加入 Run 层覆盖。`discover` / `discover_from` 不会自动加入本层。
+    pub fn with_run(self, source_key: impl Into<String>, overrides: RunOverrides) -> Self {
+        self.with_value(
+            ConfigTier::Run,
+            source_key,
+            serde_json::to_value(overrides).expect("RunOverrides is serializable"),
+        )
     }
 
     /// 添加一个文件来源，读取、解析并校验 schema。
@@ -362,6 +381,7 @@ fn extract_profile_overrides(merged: &Value, name: &str) -> Option<ConfigValue> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::{RunOverrides, SessionOverrides};
     use crate::ConfigTier;
     use serde_json::json;
 
@@ -652,6 +672,171 @@ mod tests {
         assert!(!resolved_debug.contains("api_key"), "{resolved_debug}");
         assert!(!resolved_debug.contains("fake-key-should-be-stripped"));
         assert!(!resolved_debug.contains("fake-provider-key-should-be-stripped"));
+    }
+
+    #[test]
+    fn six_layer_default_model_matrix_and_profile_provenance() {
+        let session = SessionOverrides {
+            default_model: Some("session-model".into()),
+            ..SessionOverrides::default()
+        };
+        let run = RunOverrides {
+            default_model: Some("run-model".into()),
+            ..RunOverrides::default()
+        };
+        let resolved = Loader::new()
+            .with_value(
+                ConfigTier::Builtin,
+                "builtin",
+                json!({ "default_model": "builtin-model" }),
+            )
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({
+                    "profile": "work",
+                    "default_model": "global-model",
+                    "profiles": [{ "name": "work", "default_model": "profile-model" }]
+                }),
+            )
+            .with_value(
+                ConfigTier::Workspace,
+                "workspace",
+                json!({ "default_model": "workspace-model" }),
+            )
+            .with_session("session", session)
+            .with_run("run", run)
+            .resolve()
+            .expect("resolve six-layer matrix");
+
+        assert_eq!(resolved.config.default_model.as_deref(), Some("run-model"));
+        assert_eq!(resolved.active_profile.as_deref(), Some("work"));
+        assert!(
+            resolved
+                .sources
+                .iter()
+                .any(|source| source.span.source_key == "profile:work"),
+            "provenance must include derived profile source: {:?}",
+            resolved
+                .sources
+                .iter()
+                .map(|source| source.span.source_key.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let tiers: Vec<ConfigTier> = resolved.sources.iter().map(|s| s.span.tier).collect();
+        assert_eq!(
+            tiers,
+            vec![
+                ConfigTier::Builtin,
+                ConfigTier::Global,
+                ConfigTier::Profile,
+                ConfigTier::Workspace,
+                ConfigTier::Session,
+                ConfigTier::Run,
+            ]
+        );
+
+        let without_run = Loader::new()
+            .with_value(
+                ConfigTier::Builtin,
+                "builtin",
+                json!({ "default_model": "builtin-model" }),
+            )
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({
+                    "profile": "work",
+                    "default_model": "global-model",
+                    "profiles": [{ "name": "work", "default_model": "profile-model" }]
+                }),
+            )
+            .with_value(
+                ConfigTier::Workspace,
+                "workspace",
+                json!({ "default_model": "workspace-model" }),
+            )
+            .with_session(
+                "session",
+                SessionOverrides {
+                    default_model: Some("session-model".into()),
+                    ..SessionOverrides::default()
+                },
+            )
+            .resolve()
+            .expect("resolve without run");
+        assert_eq!(
+            without_run.config.default_model.as_deref(),
+            Some("session-model")
+        );
+
+        let without_session = Loader::new()
+            .with_value(
+                ConfigTier::Builtin,
+                "builtin",
+                json!({ "default_model": "builtin-model" }),
+            )
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({
+                    "profile": "work",
+                    "default_model": "global-model",
+                    "profiles": [{ "name": "work", "default_model": "profile-model" }]
+                }),
+            )
+            .with_value(
+                ConfigTier::Workspace,
+                "workspace",
+                json!({ "default_model": "workspace-model" }),
+            )
+            .resolve()
+            .expect("resolve without session/run");
+        assert_eq!(
+            without_session.config.default_model.as_deref(),
+            Some("workspace-model")
+        );
+
+        let without_workspace = Loader::new()
+            .with_value(
+                ConfigTier::Builtin,
+                "builtin",
+                json!({ "default_model": "builtin-model" }),
+            )
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({
+                    "profile": "work",
+                    "default_model": "global-model",
+                    "profiles": [{ "name": "work", "default_model": "profile-model" }]
+                }),
+            )
+            .resolve()
+            .expect("resolve profile over global");
+        assert_eq!(
+            without_workspace.config.default_model.as_deref(),
+            Some("profile-model")
+        );
+
+        let global_only = Loader::new()
+            .with_value(
+                ConfigTier::Builtin,
+                "builtin",
+                json!({ "default_model": "builtin-model" }),
+            )
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({ "default_model": "global-model" }),
+            )
+            .resolve()
+            .expect("resolve global over builtin");
+        assert_eq!(
+            global_only.config.default_model.as_deref(),
+            Some("global-model")
+        );
     }
 
     #[test]

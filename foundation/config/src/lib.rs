@@ -4,9 +4,10 @@
 //! 合并不依赖文件扫描顺序，只按每层固定的内部 `source key` 排序；同层按 source key
 //! 升序合并，后合并者覆盖先合并者。递归 object 合并，标量/数组整体替换。
 //!
-//! S0 默认发现只自动加入 Builtin + Global 文件 + Workspace 文件；六层类型与
-//! loader（含 Profile 派生）完整保留。配置 schema 不含 `api_key`；凭证只经
-//! `PAWORK_API_KEY_<PROVIDER_ID>` 环境变量读取。
+//! S9 起 Session / Run 有一等 API（[`Loader::with_session`] / [`Loader::with_run`]）。
+//! `discover` / `discover_from` 仍只自动加入 Builtin + Global 文件 + Workspace 文件；
+//! Profile 仍由 `profile =` 与 `profiles[]` 派生（插在 Global 与 Workspace 之间）。
+//! 配置 schema 不含 `api_key`；凭证只经 `PAWORK_API_KEY_<PROVIDER_ID>` 环境变量读取。
 
 mod env;
 mod error;

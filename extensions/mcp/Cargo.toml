@@ -1,0 +1,52 @@
+[package]
+name = "pawork-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork MCP client transports, capability bridge, configuration, and OAuth"
+
+[dependencies]
+pawork-domain = { path = "../../foundation/domain" }
+pawork-api = { path = "../../foundation/api" }
+pawork-tools = { path = "../../execution/tools" }
+pawork-config = { path = "../../foundation/config" }
+pawork-auth = { path = "../../providers/auth" }
+pawork-exec = { path = "../../execution/exec" }
+async-trait.workspace = true
+reqwest.workspace = true
+rmcp = { version = "=2.2.0", default-features = false, features = [
+    "client",
+    "reqwest",
+    "transport-async-rw",
+    "transport-streamable-http-client-reqwest",
+] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = [
+    "io-util",
+    "macros",
+    "rt",
+    "sync",
+    "time",
+] }
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+rmcp = { version = "=2.2.0", default-features = false, features = [
+    "macros",
+    "server",
+    "transport-async-rw",
+] }
+tokio = { workspace = true, features = [
+    "io-util",
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "test-util",
+    "time",
+] }
+wiremock.workspace = true
