@@ -22,6 +22,8 @@ ignore.workspace = true
 globset = "0.4"
 regex.workspace = true
 chardetng = "0.1"
+# 非死依赖:chardetng `EncodingDetector::guess` 的返回类型是 `&\x27static encoding_rs::Encoding`,
+# read_file.rs 的 `encoding.decode(...)` 方法解析要求 encoding_rs 为直接依赖(2026-08-18 R0 波 B 实证 E0599)。
 encoding_rs = "0.8"
 
 [dev-dependencies]

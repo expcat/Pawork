@@ -2,9 +2,8 @@
 //!
 //! This crate deliberately stores identifiers and structured decisions only. Prompt text,
 //! tool input/output, plaintext credentials, secret references and protected blobs are not
-//! representable in [`AuditEventV1`] or [`ExportRecord`].
+//! representable in [`AuditEventV1`].
 
-use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -319,191 +318,6 @@ impl AuditStore for FileAuditStore {
     }
 }
 
-/// Allowlisted export attribute keys. Anything else is dropped before an exporter sees records.
-pub const ALLOWED_EXPORT_ATTRIBUTES: &[&str] = &[
-    "tenant_id",
-    "principal_id",
-    "session_id",
-    "agent_id",
-    "provider_id",
-    "account_id",
-    "client_id",
-    "trace_id",
-    "decision_version",
-];
-
-/// OTel/SIEM-neutral allowlist record. It cannot contain prompt/tool/secret/blob fields.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExportRecord {
-    pub schema_version: u32,
-    pub event_id: String,
-    pub occurred_at_ms: u64,
-    pub action: String,
-    pub target_kind: String,
-    pub decision: String,
-    pub reason_code: String,
-    pub attributes: BTreeMap<String, String>,
-}
-
-/// Destination abstraction implemented by an OTel/SIEM adapter outside this crate.
-pub trait AuditExporter: Send + Sync {
-    fn export(&self, records: &[ExportRecord]) -> Result<(), AuditError>;
-}
-
-/// OTel-shaped exporter. Implementations emit [`ExportRecord`] as-is and must not add
-/// prompt, tool output, secret, or Protected Blob fields. No third-party OTel SDK is required.
-pub trait OtelAuditExporter: Send + Sync {
-    fn emit(&self, record: &ExportRecord) -> Result<(), AuditError>;
-
-    fn emit_batch(&self, records: &[ExportRecord]) -> Result<(), AuditError> {
-        for record in records {
-            self.emit(record)?;
-        }
-        Ok(())
-    }
-}
-
-/// In-memory OTel exporter for tests and composition-root capture.
-#[derive(Default)]
-pub struct InMemoryOtelExporter {
-    records: Mutex<Vec<ExportRecord>>,
-}
-
-impl InMemoryOtelExporter {
-    pub fn snapshot(&self) -> Vec<ExportRecord> {
-        lock(&self.records).clone()
-    }
-}
-
-impl OtelAuditExporter for InMemoryOtelExporter {
-    fn emit(&self, record: &ExportRecord) -> Result<(), AuditError> {
-        lock(&self.records).push(record.clone());
-        Ok(())
-    }
-}
-
-impl AuditExporter for InMemoryOtelExporter {
-    fn export(&self, records: &[ExportRecord]) -> Result<(), AuditError> {
-        self.emit_batch(records)
-    }
-}
-
-/// tracing-backed OTel-shaped exporter. Emits allowlisted identifiers only as a
-/// `pawork.audit` event; a production collector process is not part of this crate.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct TracingAuditExporter;
-
-impl OtelAuditExporter for TracingAuditExporter {
-    fn emit(&self, record: &ExportRecord) -> Result<(), AuditError> {
-        tracing::info!(
-            target: "pawork.audit",
-            schema_version = record.schema_version,
-            event_id = %record.event_id,
-            occurred_at_ms = record.occurred_at_ms,
-            action = %record.action,
-            target_kind = %record.target_kind,
-            decision = %record.decision,
-            reason_code = %record.reason_code,
-            attributes = %format_allowlisted_attributes(&record.attributes),
-            "canonical audit"
-        );
-        Ok(())
-    }
-}
-
-impl AuditExporter for TracingAuditExporter {
-    fn export(&self, records: &[ExportRecord]) -> Result<(), AuditError> {
-        self.emit_batch(records)
-    }
-}
-
-/// Returns whether `value` is a structurally safe audit label (identifiers only).
-pub fn is_safe_audit_label(value: &str) -> bool {
-    safe_label(value)
-}
-
-/// Exports only events belonging to `tenant` and only identifier dimensions on the allowlist.
-pub fn export_tenant(
-    store: &dyn AuditStore,
-    tenant: &TenantId,
-    exporter: &dyn AuditExporter,
-) -> Result<usize, AuditError> {
-    let events = store.query_tenant(tenant)?;
-    let records: Vec<_> = events.iter().map(ExportRecord::from).collect();
-    exporter.export(&records)?;
-    Ok(records.len())
-}
-
-impl From<&AuditEventV1> for ExportRecord {
-    fn from(event: &AuditEventV1) -> Self {
-        let mut attributes = BTreeMap::new();
-        attributes.insert("tenant_id".into(), event.tenant_id.to_string());
-        attributes.insert("principal_id".into(), event.principal_id.to_string());
-        if let Some(value) = &event.session_id {
-            attributes.insert("session_id".into(), value.to_string());
-        }
-        if let Some(value) = &event.agent_id {
-            attributes.insert("agent_id".into(), value.to_string());
-        }
-        if let Some(value) = &event.provider_id {
-            attributes.insert("provider_id".into(), value.to_string());
-        }
-        if let Some(value) = &event.account_id {
-            attributes.insert("account_id".into(), value.to_string());
-        }
-        if let Some(value) = &event.client_id {
-            attributes.insert("client_id".into(), value.clone());
-        }
-        if let Some(value) = &event.trace_id {
-            attributes.insert("trace_id".into(), value.clone());
-        }
-        attributes.insert(
-            "decision_version".into(),
-            event.decision_version.to_string(),
-        );
-        retain_allowlisted_attributes(&mut attributes);
-        Self {
-            schema_version: event.schema_version,
-            event_id: event.event_id.to_string(),
-            occurred_at_ms: event.occurred_at.as_unix_millis(),
-            action: snake_debug(event.action),
-            target_kind: snake_debug(event.target_kind),
-            decision: snake_debug(event.decision),
-            reason_code: event.reason_code.clone(),
-            attributes,
-        }
-    }
-}
-
-fn retain_allowlisted_attributes(attributes: &mut BTreeMap<String, String>) {
-    attributes.retain(|key, _| ALLOWED_EXPORT_ATTRIBUTES.contains(&key.as_str()));
-}
-
-fn format_allowlisted_attributes(attributes: &BTreeMap<String, String>) -> String {
-    let mut formatted = String::new();
-    for (index, (key, value)) in attributes.iter().enumerate() {
-        if index > 0 {
-            formatted.push(',');
-        }
-        formatted.push_str(key);
-        formatted.push('=');
-        formatted.push_str(value);
-    }
-    formatted
-}
-
-fn snake_debug(value: impl std::fmt::Debug) -> String {
-    let input = format!("{value:?}");
-    let mut output = String::new();
-    for (index, character) in input.chars().enumerate() {
-        if character.is_ascii_uppercase() && index > 0 {
-            output.push('_');
-        }
-        output.push(character.to_ascii_lowercase());
-    }
-    output
-}
-
 fn safe_label(value: &str) -> bool {
     value.len() <= 256
         && value.bytes().all(|byte| {
@@ -525,8 +339,6 @@ pub enum AuditError {
     UnsafeLabel(&'static str),
     #[error("duplicate audit event {0}")]
     DuplicateEvent(String),
-    #[error("audit export failed: {0}")]
-    Export(String),
     #[error("audit store I/O failed: {0}")]
     Io(String),
     #[error("audit JSON failed: {0}")]
@@ -537,8 +349,6 @@ pub enum AuditError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use super::*;
 
     fn event(id: &str, tenant: &str) -> AuditEventV1 {
@@ -584,49 +394,6 @@ mod tests {
         assert_eq!(a[0].event_id, EventId::new("event-1"));
     }
 
-    #[derive(Default)]
-    struct Capture(Mutex<Vec<ExportRecord>>);
-    impl AuditExporter for Capture {
-        fn export(&self, records: &[ExportRecord]) -> Result<(), AuditError> {
-            lock(&self.0).extend_from_slice(records);
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn export_is_tenant_scoped_and_structurally_redacted() {
-        let store = InMemoryAuditStore::default();
-        store.append(event("event-1", "tenant-a")).unwrap();
-        store.append(event("event-2", "tenant-b")).unwrap();
-        let capture = Capture::default();
-        assert_eq!(
-            export_tenant(&store, &TenantId::new("tenant-a"), &capture).unwrap(),
-            1
-        );
-        let json = serde_json::to_string(&*lock(&capture.0)).unwrap();
-        for forbidden in ["prompt", "tool_output", "secret_ref", "protected_blob"] {
-            assert!(!json.contains(forbidden), "export leaked field {forbidden}");
-        }
-        let allowed: BTreeSet<_> = lock(&capture.0)[0].attributes.keys().cloned().collect();
-        assert_eq!(
-            allowed,
-            [
-                "account_id",
-                "agent_id",
-                "client_id",
-                "decision_version",
-                "principal_id",
-                "provider_id",
-                "session_id",
-                "tenant_id",
-                "trace_id",
-            ]
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-        );
-    }
-
     #[test]
     fn free_form_secret_bearing_reason_is_rejected() {
         let mut unsafe_event = event("event-1", "tenant-a");
@@ -667,63 +434,6 @@ mod tests {
             Err(AuditError::DuplicateEvent(_))
         ));
         let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn otel_exporter_is_tenant_scoped_and_drops_forbidden_fields() {
-        let store = InMemoryAuditStore::default();
-        store.append(event("event-1", "tenant-a")).unwrap();
-        store.append(event("event-2", "tenant-b")).unwrap();
-        let exporter = InMemoryOtelExporter::default();
-        assert_eq!(
-            export_tenant(&store, &TenantId::new("tenant-a"), &exporter).unwrap(),
-            1
-        );
-        let records = exporter.snapshot();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].action, "lease_acquired");
-        let json = serde_json::to_string(&records).unwrap();
-        for forbidden in [
-            "prompt",
-            "tool_output",
-            "secret_ref",
-            "secret",
-            "protected_blob",
-            "api_key",
-        ] {
-            assert!(
-                !json.contains(forbidden),
-                "otel export leaked field {forbidden}"
-            );
-        }
-        let allowed: BTreeSet<_> = records[0].attributes.keys().cloned().collect();
-        assert_eq!(
-            allowed,
-            ALLOWED_EXPORT_ATTRIBUTES
-                .iter()
-                .map(|key| (*key).to_string())
-                .collect()
-        );
-        let tenant_b = InMemoryOtelExporter::default();
-        assert_eq!(
-            export_tenant(&store, &TenantId::new("tenant-b"), &tenant_b).unwrap(),
-            1
-        );
-        assert_eq!(
-            tenant_b.snapshot()[0].attributes.get("tenant_id").unwrap(),
-            "tenant-b"
-        );
-    }
-
-    #[test]
-    fn export_record_strips_non_allowlisted_attributes() {
-        let mut attributes = BTreeMap::new();
-        attributes.insert("tenant_id".into(), "tenant-a".into());
-        attributes.insert("prompt".into(), "user secret text".into());
-        attributes.insert("secret_ref".into(), "vault:token".into());
-        retain_allowlisted_attributes(&mut attributes);
-        assert_eq!(attributes.len(), 1);
-        assert_eq!(attributes.get("tenant_id").unwrap(), "tenant-a");
     }
 
     #[test]

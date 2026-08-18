@@ -613,7 +613,6 @@ fn desktop_capabilities() -> Vec<GuiCapability> {
     vec![
         GuiCapability::Events,
         GuiCapability::Snapshots,
-        GuiCapability::ArtifactStreaming,
         GuiCapability::Approvals,
         GuiCapability::TerminalStreaming,
     ]

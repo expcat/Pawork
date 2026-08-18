@@ -9,7 +9,6 @@ description = "Pawork GUI Connection Protocol typed 连接 SDK：握手、版本
 
 [features]
 default = []
-experimental = []
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }

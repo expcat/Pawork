@@ -18,7 +18,9 @@ pub use process::{
     ProcessOutput, ProcessRuntime,
 };
 #[cfg(target_os = "linux")]
-pub use process::LinuxLandlockPolicy;
+// R0 D21:包外零消费,降为 crate 内保留;R7 沙箱演进将重新消费,届时恢复可见性。
+#[allow(unused_imports)]
+pub(crate) use process::LinuxLandlockPolicy;
 pub use sandbox::{
     default_env_allowlist, default_secret_paths, BackendSelection, FilesystemPolicy, IsolationLevel,
     NativeRestricted, NetworkMode, ProbeOutcome, ResourceLimits, SandboxBackend, SandboxError,
@@ -31,14 +33,17 @@ pub use pty::{
     DEFAULT_BUFFER_CAPACITY,
 };
 
-pub use os::linux::{
+#[allow(unused_imports)]
+pub(crate) use os::linux::{
     bwrap_probe_reason, generate_bwrap_argv, probe_landlock_support, LandlockSupport,
 };
-pub use os::macos::{
+#[allow(unused_imports)]
+pub(crate) use os::macos::{
     escape_seatbelt_string, generate_seatbelt_profile, probe_reason as sandbox_exec_probe_reason,
     SANDBOX_EXEC_PATH,
 };
-pub use os::windows::{
+#[allow(unused_imports)]
+pub(crate) use os::windows::{
     policy_to_appcontainer_config, probe_appcontainer_job, AppContainerCapability,
     AppContainerConfig,
 };

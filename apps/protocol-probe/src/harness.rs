@@ -50,7 +50,6 @@ impl Harness {
             vec![
                 GuiCapability::Events,
                 GuiCapability::Snapshots,
-                GuiCapability::ArtifactStreaming,
             ],
         );
         let transport = Arc::new(MemoryTransport::new());

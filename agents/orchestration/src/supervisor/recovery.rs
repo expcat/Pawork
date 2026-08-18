@@ -45,10 +45,4 @@ impl AgentSupervisor {
             recovered_states,
         }
     }
-
-    /// 已弃用：等价于 [`Self::recover_report`]。只生成报告，不重建可操作状态。
-    #[deprecated(note = "report-only; use recover_report — does not rebuild operable supervisor state")]
-    pub async fn recover(&self, events: &[OrchestrationEvent]) -> RecoveryReport {
-        self.recover_report(events).await
-    }
 }

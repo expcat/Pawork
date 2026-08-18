@@ -139,10 +139,11 @@ V2 收口时的 K-01~K-10 与其他挂账项(原委见 [docs/v2-summary.md](docs
 
 | 事项 | 说明 | 拍板时点 |
 | --- | --- | --- |
-| ADR-038 库存与产品形态 | [ADR-038](docs/adr/ADR-038-inventory-and-product-shape.md) **Accepted**(用户 2026-08-18 确认,22 项按推荐决议执行,无改判);波 0 tag `v2-final` 已打,波 A(D2–D7)已落地。后续波 B/C 按本决议执行,本行不再是闸门 | 已确认 / R0 波 0 |
+| ADR-038 库存与产品形态 | [ADR-038](docs/adr/ADR-038-inventory-and-product-shape.md) **Accepted**(用户 2026-08-18 确认,22 项按推荐决议执行);波 0 tag `v2-final` 已打,波 A(D2–D7)、波 B(D8–D15/D20–D22)已落地;波 B 实态核查改判 3 项(D12 降 `pub(crate)`、D14 encoding_rs 保留、D15 rbac 三类型保留,见 ADR 落实记录与任务书)。波 C 收口按本决议执行,本行不再是闸门 | 已确认 / R0 波 0 |
 | ADR-039 目录布局 | 推荐扁平 `crates/` + `apps/`(19 库规模下功能域目录成为噪音);备选保留域目录 | R1 波 A |
 | ADR-040 分支模型 | 推荐原生 lineage(Fork 是已交付能力,删除属产品倒退);备选冻结线性 + 删 Fork | R6 波 0 |
 | ADR-041 沙箱信任模型 | macOS 白名单 profile 的兼容性代价(Darwin 25 实测)与 PTY 语义 | R7 波 0 |
+| `pawork-sdk` `handshake_exposes_version_instance_and_capabilities` 既有失败 | R0 波 B 收口发现:`clients/sdk/tests/fixtures/hello_ack.json` 内嵌 api_version 1.1,断言对比 `API_VERSION` 常量(S13-F13 已升 1.2);夹具未随 S13 波 B 升级,波 B 写入集未触碰该测试与夹具(2026-08-18 裁决)。按 task-guide §1 窄任务修(夹具版本对齐) | 阶段外窄任务,不阻塞 R0 |
 | `plan_service::review_flow_replays_identically` 既有失败 | R0 波 A 收口发现:`revise(v2, v1, "revised", Vec::new())` 后 `steps[0]` 越界;基线 v2-final 复现,与 R0 改动无关(2026-08-18 裁决)。按 task-guide §1 窄任务修(测试或 revise 空 steps 语义) | 阶段外窄任务,不阻塞 R0 |
 | rmcp 3.x | wire 兼容性未评估;若破坏 MCP golden 则锁 2.2 并登记 | R2 波 C |
 | directories 5→6 | 目录语义兼容(`dev.pawork.pawork` 布局)评估后升级或显式锁定 | R2 波 B |

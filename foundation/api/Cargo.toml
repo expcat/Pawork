@@ -8,9 +8,8 @@ authors.workspace = true
 description = "Pawork Provider 与 Tool 无关的 canonical 请求、流式与执行协议"
 
 [features]
-default = ["provider", "tool"]
-provider = []
-tool = []
+# F41 预留语义：扩展生态整族（WASM 插件 / 市场 / Hooks / LSP）沿 V2 决议移出排期；
+# 见 ROADMAP.md §3.3。src 零门控，空数组仅作复活锚点。
 plugin = []
 
 [dependencies]

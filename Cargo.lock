@@ -4556,9 +4556,6 @@ name = "pawork-diagnostics"
 version = "0.1.0"
 dependencies = [
  "regex",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4632,7 +4629,6 @@ name = "pawork-gui-server"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "futures",
  "pawork-domain",
  "pawork-protocol",
  "pawork-transport",

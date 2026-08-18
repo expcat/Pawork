@@ -1,14 +1,12 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::BTreeMap,
     fmt,
     io::Write,
-    sync::{Arc, Mutex, MutexGuard},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex},
 };
 
 use regex::{Captures, Regex};
-use serde::{Deserialize, Serialize};
-use tracing::{field::Visit, Event, Level, Subscriber};
+use tracing::{field::Visit, Event, Subscriber};
 use tracing_subscriber::Layer;
 
 const REDACTED: &str = "[REDACTED]";
@@ -96,164 +94,6 @@ impl Redactor {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LogRecord {
-    pub timestamp_unix_ms: u64,
-    pub level: String,
-    pub component: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub fields: BTreeMap<String, String>,
-}
-
-#[derive(Clone)]
-pub struct LogBuffer {
-    capacity: usize,
-    records: Arc<Mutex<VecDeque<LogRecord>>>,
-}
-
-impl LogBuffer {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            records: Arc::new(Mutex::new(VecDeque::with_capacity(capacity))),
-        }
-    }
-
-    pub fn snapshot(&self) -> Vec<LogRecord> {
-        self.records().iter().cloned().collect()
-    }
-
-    fn push(&self, record: LogRecord) {
-        if self.capacity == 0 {
-            return;
-        }
-        let mut records = self.records();
-        while records.len() >= self.capacity {
-            records.pop_front();
-        }
-        records.push_back(record);
-    }
-
-    fn records(&self) -> MutexGuard<'_, VecDeque<LogRecord>> {
-        self.records
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Sampling {
-    pub trace_every: u64,
-    pub debug_every: u64,
-    pub info_every: u64,
-}
-
-impl Default for Sampling {
-    fn default() -> Self {
-        Self {
-            trace_every: 10,
-            debug_every: 5,
-            info_every: 1,
-        }
-    }
-}
-
-#[derive(Default)]
-struct SamplingCounts {
-    trace: u64,
-    debug: u64,
-    info: u64,
-}
-
-#[derive(Clone)]
-pub struct StructuredLogLayer {
-    buffer: LogBuffer,
-    redactor: Redactor,
-    sampling: Sampling,
-    counts: Arc<Mutex<SamplingCounts>>,
-}
-
-impl StructuredLogLayer {
-    pub fn new(buffer: LogBuffer, redactor: Redactor, sampling: Sampling) -> Self {
-        Self {
-            buffer,
-            redactor,
-            sampling,
-            counts: Arc::new(Mutex::new(SamplingCounts::default())),
-        }
-    }
-
-    fn should_record(&self, level: &Level) -> bool {
-        let mut counts = self
-            .counts
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match *level {
-            Level::TRACE => every(&mut counts.trace, self.sampling.trace_every),
-            Level::DEBUG => every(&mut counts.debug, self.sampling.debug_every),
-            Level::INFO => every(&mut counts.info, self.sampling.info_every),
-            Level::WARN | Level::ERROR => true,
-        }
-    }
-}
-
-impl<S> Layer<S> for StructuredLogLayer
-where
-    S: Subscriber,
-{
-    fn on_event(&self, event: &Event<'_>, _context: tracing_subscriber::layer::Context<'_, S>) {
-        let metadata = event.metadata();
-        if !self.should_record(metadata.level()) {
-            return;
-        }
-        let mut visitor = FieldVisitor::default();
-        event.record(&mut visitor);
-        let mut fields = BTreeMap::new();
-        for (name, value) in visitor.fields {
-            fields.insert(name.clone(), self.redactor.redact_field(&name, &value));
-        }
-        let take = |name: &str, fields: &mut BTreeMap<String, String>| fields.remove(name);
-        let component = take("component", &mut fields).unwrap_or_else(|| metadata.target().into());
-        let duration_ms = take("duration_ms", &mut fields).and_then(|value| value.parse().ok());
-        self.buffer.push(LogRecord {
-            timestamp_unix_ms: now_unix_ms(),
-            level: metadata.level().as_str().to_ascii_lowercase(),
-            component,
-            workspace_id: take("workspace_id", &mut fields),
-            session_id: take("session_id", &mut fields),
-            run_id: take("run_id", &mut fields),
-            provider: take("provider", &mut fields),
-            model: take("model", &mut fields),
-            tool_call_id: take("tool_call_id", &mut fields),
-            trace_id: take("trace_id", &mut fields),
-            duration_ms,
-            error_code: take("error_code", &mut fields),
-            message: take("message", &mut fields),
-            fields,
-        });
-    }
-}
-
 /// 全局脱敏 fmt 层：修复 V1 缺口（`StructuredLogLayer` 只进内存 buffer，
 /// fmt 输出无脱敏）。每个事件先经 `FieldVisitor` 收集全部字段，再按字段名
 /// 与字段值统一走 `Redactor::redact_field`，最后格式化为单行写入注入的
@@ -328,18 +168,6 @@ impl Visit for FieldVisitor {
     }
 }
 
-fn every(counter: &mut u64, interval: u64) -> bool {
-    *counter = counter.saturating_add(1);
-    interval != 0 && (*counter - 1) % interval == 0
-}
-
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,56 +228,6 @@ mod tests {
             "128",
             "non-secret token metrics must remain observable"
         );
-    }
-
-    #[test]
-    fn tracing_layer_redacts_every_field_and_keeps_bounded_tail() {
-        let buffer = LogBuffer::new(1);
-        let layer = StructuredLogLayer::new(
-            buffer.clone(),
-            Redactor::default(),
-            Sampling {
-                trace_every: 1,
-                debug_every: 1,
-                info_every: 1,
-            },
-        );
-        let subscriber = Registry::default().with(layer);
-        tracing::subscriber::with_default(subscriber, || {
-            tracing::info!(
-                component = "provider",
-                authorization = "Bearer top-secret",
-                message = "token=hidden-one"
-            );
-            tracing::warn!(component = "tool", cookie = "hidden-two", message = "safe");
-        });
-        let records = buffer.snapshot();
-        assert_eq!(records.len(), 1);
-        let json = serde_json::to_string(&records).expect("logs serialize");
-        assert!(!json.contains("top-secret"));
-        assert!(!json.contains("hidden-one"));
-        assert!(!json.contains("hidden-two"));
-    }
-
-    #[test]
-    fn sampling_never_drops_warnings_or_errors() {
-        let buffer = LogBuffer::new(16);
-        let layer = StructuredLogLayer::new(
-            buffer.clone(),
-            Redactor::default(),
-            Sampling {
-                trace_every: 0,
-                debug_every: 0,
-                info_every: 0,
-            },
-        );
-        let subscriber = Registry::default().with(layer);
-        tracing::subscriber::with_default(subscriber, || {
-            tracing::info!("drop");
-            tracing::warn!("keep warning");
-            tracing::error!("keep error");
-        });
-        assert_eq!(buffer.snapshot().len(), 2);
     }
 
     #[test]

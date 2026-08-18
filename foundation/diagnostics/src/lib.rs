@@ -5,24 +5,9 @@
 //! buffer，fmt 输出无脱敏。全局挂载由波 C 宿主装配
 //! （`Registry.with(RedactingFmtLayer)`）。
 //!
-//! metrics 与诊断包（bundle）以 `experimental` feature 门控随迁；default
-//! 不启用该 feature。
+//! 本包当前只保留全局脱敏 fmt 层（`RedactingFmtLayer` / `Redactor`）。
+//! 结构化日志缓冲与诊断包已在 R0 波 B 删除，待 R1 迁宿主。
 
 mod logging;
 
-#[cfg(feature = "experimental")]
-mod bundle;
-#[cfg(feature = "experimental")]
-mod metrics;
-
-pub use logging::{
-    LogBuffer, LogRecord, RedactingFmtLayer, Redactor, Sampling, StructuredLogLayer,
-};
-
-#[cfg(feature = "experimental")]
-pub use bundle::{
-    CrashDiagnostic, DiagnosticBundle, DiagnosticError, DiagnosticInput, DiagnosticLimits,
-    DiagnosticLog, McpDiagnostic, PluginDiagnostic, ProviderDiagnostic,
-};
-#[cfg(feature = "experimental")]
-pub use metrics::{HistogramSnapshot, MetricName, MetricSnapshot, Metrics, MetricsTimer};
+pub use logging::{RedactingFmtLayer, Redactor};

@@ -9,8 +9,6 @@ description = "Pawork Rust Agent SDK：连接 pawork Host 的 client（不嵌入
 
 [features]
 default = []
-# V1 ide-host-adapter 缠住 lsp-runtime；本 feature 仅门控空模块，不拉 LSP。
-ide = []
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }

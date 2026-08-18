@@ -68,7 +68,6 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
         vec![
             GuiCapability::Events,
             GuiCapability::Snapshots,
-            GuiCapability::ArtifactStreaming,
             GuiCapability::TerminalStreaming,
             GuiCapability::Approvals,
         ],

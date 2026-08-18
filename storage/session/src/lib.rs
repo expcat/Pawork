@@ -6,7 +6,6 @@ mod catalog;
 mod client_adapter;
 mod event_store;
 pub mod import;
-mod lifecycle;
 mod migration;
 mod projection;
 mod session_tree;
@@ -22,7 +21,6 @@ use thiserror::Error;
 pub use catalog::SessionRecord;
 pub use client_adapter::SqliteClientSessionRegistryStore;
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
-pub use lifecycle::{IntegrityReport, LeaseReceipt, MissingParent, SequenceGap};
 pub use session_tree::{BranchNode, SessionTree};
 pub use import::{
     parse_pi_line, CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport,

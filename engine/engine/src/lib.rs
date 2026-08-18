@@ -77,11 +77,12 @@ pub fn assemble_request_with_tools(
     request
 }
 
-/// 单轮：若 cancel 已取消则不调用 provider，返回 ProviderError::cancelled。
+/// 内部单轮原语：若 cancel 已取消则不调用 provider，返回 ProviderError::cancelled。
 /// 否则把 request / sink / cancel 交给 provider.stream。
 /// 不重试、不落库、不跑工具循环、不按 provider 名分支、不把事件改写成 AgentEvent。
 /// ProviderStreamEvent 13 变体全部由 provider 发射、sink 原样接收；engine 不滤不删。
-pub async fn run_turn(
+/// 公开面已收口；crate 内 `session_turn` / `tool_loop` 继续走此入口。
+pub(crate) async fn run_turn(
     provider: &dyn ModelProvider,
     request: CanonicalModelRequest,
     sink: &dyn ProviderEventSink,

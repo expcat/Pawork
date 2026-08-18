@@ -57,12 +57,9 @@
 //! - [`stream`]：事件订阅（有界、可取消）。
 //! - [`version`]：版本与稳定/实验面策略。
 //! - [`error`]：`SdkError` 与类别。
-//! - [`ide`]（feature `ide`）：门控占位；V1 adapter 缠住 LSP，本波不迁实现。
 
 pub mod client;
 pub mod error;
-#[cfg(feature = "ide")]
-pub mod ide;
 pub mod mock;
 pub mod stream;
 pub mod transport;

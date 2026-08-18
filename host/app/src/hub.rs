@@ -1,8 +1,7 @@
 //! Event Hub：Core Event 的统一扇出中心。
 //!
 //! - **全局序列**：`AtomicU64` 单调分配；[`EventHub::publish`] 强制重写
-//!   `global_sequence`，保证跨 run / 跨 stream 的事件全局连续（上游
-//!   RateLimiter 合并增量时会留下空洞，Hub 是连续性收口点）。
+//!   `global_sequence`，保证跨 run / 跨 stream 的事件全局连续。
 //! - **ring buffer**：保留最近 `capacity`（默认 4096）条事件，支持
 //!   [`EventHub::earliest_available`] / [`EventHub::current`] /
 //!   [`EventHub::replay`]，供 GUI 重连恢复与 CLI watch 使用。

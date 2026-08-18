@@ -14,7 +14,7 @@
 //!
 //! 不迁：same_command_id_replays_same_response（同客户端同 command_id 由
 //! host IdempotencyStore 按 client 作用域重放，见 pawork-app 单测）；
-//! large_artifact_chunked_read（V2 无 artifact-store，已 experimental 门控）。
+//! large_artifact_chunked_read（V2 无 artifact-store；ArtifactStreaming 已停止宣告）。
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -66,7 +66,6 @@ impl Harness {
             vec![
                 GuiCapability::Events,
                 GuiCapability::Snapshots,
-                GuiCapability::ArtifactStreaming,
             ],
         );
         let transport = Arc::new(LocalTransport::default());

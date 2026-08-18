@@ -9,7 +9,6 @@
 //!   由服务端幂等存储返回首次响应）；
 //! - Subscribe / Unsubscribe 与 `next_event` 事件读取；
 //! - Snapshot 请求与 Resume（Replay 补发 / SnapshotRequired 降级重建）；
-//! - ArtifactRead 分片读取与重组（循环接收 `ArtifactChunk` 直到 `eof`）；
 //! - Ack / Heartbeat（自动回 Pong，心跳往返校验）；
 //! - `close` 断开与 `connect_with_resume` 重连辅助（按 last_global_sequence
 //!   重建缺失事件）。
@@ -26,16 +25,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pawork_domain::{CommandId, ConnectionId, GuiClientId, QueryId, Timestamp};
-#[cfg(feature = "experimental")]
-use pawork_domain::ArtifactId;
 use pawork_protocol::{
     decode_server_frame, decode_server_frame_checked, encode_client_frame, ApiHandle,
     ClientFrame, HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError,
     ProtocolErrorCode, ResumeRequest, ResumeResponse, ServerFrame, SubscribeRequest,
     SUPPORTED_API_VERSIONS,
 };
-#[cfg(feature = "experimental")]
-use pawork_protocol::{ArtifactChunk, ArtifactReadRequest};
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 use pawork_transport::{ConnectionInfo, GuiConnection, TransportError, TransportFrame};
@@ -76,7 +71,6 @@ impl Default for ClientConfig {
             capabilities: vec![
                 GuiCapability::Events,
                 GuiCapability::Snapshots,
-                GuiCapability::ArtifactStreaming,
                 GuiCapability::Approvals,
             ],
             supported_api_versions: SUPPORTED_API_VERSIONS.to_vec(),
@@ -669,92 +663,6 @@ impl GuiClient {
             replayed,
             snapshot,
         })
-    }
-
-    // -----------------------------------------------------------------------
-    // Artifact 分片读取（experimental：V2 尚无 artifact-store）
-    // -----------------------------------------------------------------------
-
-    /// 分片读取 Artifact 并重组：循环接收 `ArtifactChunk`（offset 连续）直到
-    /// `eof`。`limit == 0` 表示读到文件尾。
-    #[cfg(feature = "experimental")]
-    pub async fn read_artifact(
-        &self,
-        artifact_id: &ArtifactId,
-        offset: u64,
-        limit: u64,
-    ) -> Result<Vec<u8>, ClientError> {
-        let id = self.next_request.fetch_add(1, Ordering::Relaxed);
-        let request_id = format!("artifact-{id}");
-        self.send_frame(&ClientFrame::ArtifactRead(ArtifactReadRequest {
-            request_id: request_id.clone(),
-            artifact_id: artifact_id.clone(),
-            offset,
-            limit,
-        }))
-        .await?;
-        let mut assembled = Vec::new();
-        let mut expected = offset;
-        loop {
-            match self.recv_frame(self.config.timeout).await? {
-                ServerFrame::ArtifactChunk(chunk) if chunk.request_id == request_id => {
-                    if chunk.offset != expected {
-                        return Err(ClientError::UnexpectedFrame {
-                            context: "artifact chunk",
-                            found: "non-contiguous chunk offset",
-                        });
-                    }
-                    assembled.extend_from_slice(&chunk.data);
-                    expected = chunk.offset + chunk.data.len() as u64;
-                    if chunk.eof {
-                        return Ok(assembled);
-                    }
-                }
-                ServerFrame::Error(envelope)
-                    if envelope.request_id.as_deref() == Some(&request_id) =>
-                {
-                    return Err(ClientError::Protocol(envelope.error));
-                }
-                other => self.stash(other).await,
-            }
-        }
-    }
-
-    /// 单次分片读取（不重组），返回原始分片；`eof` 在末片为 true。
-    #[cfg(feature = "experimental")]
-    pub async fn read_artifact_chunks(
-        &self,
-        artifact_id: &ArtifactId,
-        offset: u64,
-        limit: u64,
-    ) -> Result<Vec<ArtifactChunk>, ClientError> {
-        let id = self.next_request.fetch_add(1, Ordering::Relaxed);
-        let request_id = format!("artifact-chunks-{id}");
-        self.send_frame(&ClientFrame::ArtifactRead(ArtifactReadRequest {
-            request_id: request_id.clone(),
-            artifact_id: artifact_id.clone(),
-            offset,
-            limit,
-        }))
-        .await?;
-        let mut chunks = Vec::new();
-        loop {
-            match self.recv_frame(self.config.timeout).await? {
-                ServerFrame::ArtifactChunk(chunk) if chunk.request_id == request_id => {
-                    let eof = chunk.eof;
-                    chunks.push(chunk);
-                    if eof {
-                        return Ok(chunks);
-                    }
-                }
-                ServerFrame::Error(envelope)
-                    if envelope.request_id.as_deref() == Some(&request_id) =>
-                {
-                    return Err(ClientError::Protocol(envelope.error));
-                }
-                other => self.stash(other).await,
-            }
-        }
     }
 
     // -----------------------------------------------------------------------

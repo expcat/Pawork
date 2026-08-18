@@ -9,7 +9,7 @@ description = "Pawork 共用的 HTTP 运行时与流式解析器"
 
 [features]
 default = ["parsers"]
-# SSE / JSONL / partial-JSON；零重依赖（无 reqwest、无 pawork-api、无 pawork-domain）。
+# SSE；零重依赖（无 reqwest、无 pawork-api、无 pawork-domain）。JSONL / partial-JSON 已在 R0 波 B 删除。
 parsers = []
 # HTTP 客户端 + 错误归一；打开 reqwest / bytes / futures / tokio / pawork-domain / pawork-api。
 http = [

@@ -21,7 +21,6 @@ mod orchestration_host;
 mod persist;
 mod plan_host;
 mod protocol;
-mod rate_limit;
 mod tasks_host;
 
 use async_trait::async_trait;
@@ -89,9 +88,6 @@ pub use idempotency::{
     DEFAULT_IDEMPOTENCY_CAPACITY,
 };
 pub use persist::PersistThenRender;
-pub use rate_limit::{
-    DeltaKind, RateLimiter, RateLimiterStats, DEFAULT_RATE_LIMIT_BUFFER, DEFAULT_RATE_LIMIT_WINDOW,
-};
 pub use protocol::{AdapterProtocol, ProtocolError};
 pub use auth::{AuthChannelStatus, AuthSource, OAuthLogin};
 pub use channels::{
