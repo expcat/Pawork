@@ -39,7 +39,7 @@
 | D13 | K-08 `ArtifactStreaming` 宣告 | 双端停止宣告 + client `experimental` 门控删除;artifact 流式转候选,R3 registry 就位后接线 | 服务端 `host/gui-server/src/session.rs:462` `ArtifactRead` 固定 unsupported;握手宣告点实为**五处**(2026-08-18 重验):`host/cli/src/gui.rs:67`、`clients/gui-client/src/lib.rs:79` 默认能力、`apps/desktop/src/controller.rs:612`、`apps/protocol-probe/src/harness.rs:51`、`clients/gui-client/tests/contract.rs:67`;`GuiCapability` 枚举与 schemas/ typegen 属冻结面,**不动** |
 | D14 | 死声明与死 feature | 删除:`foundation/api` features `provider/tool`(`plugin = []` 保留为 F41 语义并显式注释)、`host/gui-server` futures;**`execution/tools` encoding_rs 改判保留(2026-08-18 波 B 实证)**:chardetng `guess()` 透出 `encoding_rs::Encoding`,`read_file.rs:205` 的方法解析要求直接依赖(删后 E0599) | api features / futures rg 零引用;encoding_rs 为类型级隐性依赖,rg `use` 不可见 |
 | D15 | `control-plane/core` OTel exporter(AuditExporter/OtelAuditExporter/InMemoryOtelExporter/TracingAuditExporter)、identity_schema(484 行) | OTel/identity_schema 归档;**rbac 三类型全部保留(2026-08-18 波 B 核查改判)**:`Permission`/`PrincipalRole`/`PermissionProfile` 均在生产 deny-first 热路径(`tenant.rs` `TenantPolicy.permission_profile`、`principal_role()`、`check_permission`,orchestration `supervisor/spawn.rs:11,137,166` 消费);orchestration 测试无需改动 | OTel/identity_schema 外部零生产调用;audit JSONL golden(`control-plane/core/fixtures/audit/event-v1.jsonl`)锁定 `AuditEventV1`,与 OTel `ExportRecord` 无涉,不受牵连 |
-| D16 | `vcs/git` 六休眠服务(1,992 行,2026-08-18 重验) | Branch/Stash/Conflict/History/CachedStatus+StatusCache+spawn_invalidator 归档;**保留** Diff/Status/GitService/GitRunner/Head/HunkId + HunkStageService(R8 K-04 消费)+ worktree/merge(orchestration `git` feature) | app 只用 Diff/Status/GitService/Head/HunkId;GitRunner 为包内基建;GUI git 面板转候选 |
+| D16 | `vcs/git` 六休眠服务(1,992 行,2026-08-18 重验) | Branch/Stash/Conflict/History/CachedStatus+StatusCache+spawn_invalidator 归档;**补判(2026-08-18 波 C 核查)**:`commit.rs`(CommitService/CommitOptions,270 行)crate 外零消费,一并归档,合计 2,262 行;**保留** Diff/Status/GitService/GitRunner/Head/HunkId + HunkStageService(R8 K-04 消费)+ worktree/merge(orchestration `git` feature)+ stage(HunkStageService 包内依赖) | app 只用 Diff/Status/GitService/Head/HunkId;GitRunner 为包内基建;GUI git 面板转候选 |
 | D17 | `providers/core` negotiate.rs CapabilityNegotiator(465 行)+ registry `caps()`/`ProviderProbe` | **保留**,R5 波 C 接线(K-10 能力收口的载体);包外可见性降 `pub(crate)` 待 R5 定 | P15-8 设计件,有明确消费计划 |
 | D18 | `storage/blob` protected.rs PWB1(1,456 行) | **保留**(冻结契约 + golden);R5 波 C 接 ReasoningProtector 成为首个生产消费者 | [ROADMAP](../ROADMAP.md) §4「PWB1 protected 消费者」行 |
 | D19 | `foundation/config` `Loader::with_session/with_run` | **保留**(六层合并冻结契约,S9 承诺) | [v2-summary](../docs/v2-summary.md) §4 config 行 |
@@ -56,7 +56,7 @@
 | 0 | 打 tag `v2-final`;起草 ADR-038(按 §3 清单逐项决议 + 证据);**用户确认后**才进波 A | docs/adr/ADR-038-*.md、ROADMAP §4 | 串行(主代理) |
 | A ✅(2026-08-18) | 大块归档:D2/D3/D4/D5/D6/D7(provider-control、workflow 三域、teams、memory、review、transport remote);workspace members 同步收缩;受影响包的 use/测试修复 | control-plane/provider-control、workflow/*、agents/orchestration、host/transport、workspace 根 Cargo.toml | 并行 ×3(控制面 / workflow+orchestration / transport) |
 | B ✅(2026-08-18) | 小块删除与降级:D8–D12、D14、D15、D20、D21、D22;K-08 停止宣告(D13,触 cli/client/desktop/probe 能力表) | foundation/diagnostics、net/net、engine、storage/session、host/app(rate_limit)、host/cli(D13 宣告)、host/gui-server、clients/{gui-client,sdk}、apps/{desktop,protocol-probe}(各删一行能力宣告)、execution/{tools,exec}、control-plane/core、foundation/api、agents/orchestration(D22) | 并行 ×3(foundation+net+engine / host+clients+apps / control-plane+exec+orchestration) |
-| C | 收口:D16 git 服务裁剪;`cargo check/test -p` 全部受影响包;`cargo tree -p pawork` 闭包对比(前后快照);ROADMAP §3.3 复活条件登记;§4 孤儿表登记 | vcs/git、ROADMAP、本任务书 | 串行(主代理) |
+| C ✅(2026-08-18) | 收口:D16 git 服务裁剪;`cargo check/test -p` 全部受影响包;`cargo tree -p pawork` 闭包对比(前后快照);ROADMAP §3.3 复活条件登记;§4 孤儿表登记 | vcs/git、ROADMAP、本任务书 | 串行(主代理) |
 
 ## 5. 验证
 
@@ -68,8 +68,8 @@
 
 ## 6. 退出标准
 
-- [ ] ADR-038 Accepted(用户确认),22 项决议逐项落地或显式改判
-- [ ] tag `v2-final` 已打;归档项在 ROADMAP §3.3 登记复活条件
-- [ ] workspace members 收缩完成;全部受影响包定向测试绿
-- [ ] `cargo tree -p pawork` 快照对比归档;lock 中 rcgen 消失(rustls/tokio-rustls 经 reqwest 保留)
-- [ ] 冒烟通过;v3_plan §3 指针更新
+- [x] ADR-038 Accepted(用户确认),22 项决议逐项落地或显式改判(波 B 改判 3 项、波 C 补判 1 项,见 ADR 落实改判记录)
+- [x] tag `v2-final` 已打;归档项在 ROADMAP §3.3 登记复活条件
+- [x] workspace members 收缩完成;全部受影响包定向测试绿
+- [x] `cargo tree -p pawork` 快照对比归档(833→817 行,只减不增);lock 中 rcgen 消失(rustls/tokio-rustls 经 reqwest 保留)
+- [x] 冒烟通过(deepseek/deepseek-v4-flash:chat 流式 + 工具调用 + sessions list,2026-08-18);v3_plan §3 指针更新

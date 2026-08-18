@@ -69,6 +69,11 @@ V2 收官(S0–S13,见 [v2-summary.md](../v2-summary.md))后,workspace 39 成员
 2. **D15 rbac**:`PermissionProfile`/`PrincipalRole` 非「仅测试引用」——`TenantPolicy.permission_profile` 是生产字段,`check_permission` deny-first 热路径(`tenant.rs` `principal_role()`,orchestration `supervisor/spawn.rs:137,166` 消费)在用。落实为:rbac 三类型(`Permission`/`PrincipalRole`/`PermissionProfile`)全部保留;OTel exporter 四件与其依赖缝(`export_tenant`/`ExportRecord`,外部零消费)及 `identity_schema` 照原判归档。orchestration 测试零改动。
 3. **D14 `encoding_rs`**:非死依赖——chardetng `EncodingDetector::guess()` 返回 `&'static encoding_rs::Encoding`,`execution/tools/src/read_file.rs:205` 的方法解析要求 encoding_rs 为直接依赖(删除后 E0599 实证)。落实为:保留并在 manifest 注释原因。
 
+## 落实改判记录(2026-08-18 波 C,实态核查驱动)
+
+4. **D16 `commit.rs` 补入归档集**:任务书 D16 点名归档 Branch/Stash/Conflict/History/CachedStatus+StatusCache+spawn_invalidator,未提及 `CommitService`/`CommitOptions`(270 行)。波 C 实态核查:crate 外零消费(仅自身测试),保留面不依赖它。按本 ADR「零消费者即归档」总原则一并归档删除;复活条件随 GUI git 面板一并登记 ROADMAP §3.3。
+5. **D16 收口验证**:删除 branch/stash/conflict/history/cache/commit 六文件(合计 2,262 行),`pawork-git` 定向测试 57+5 golden 全绿;`cargo tree -p pawork` 闭包 833→817 行,只减不增——notify-debouncer-full 与 notify 8 专属传递依赖(file-id/inotify 0.11/notify-types 2.1 等)随之退出闭包;`ignore`/`parking_lot` 仍被闭包内其它消费者使用,仅退出 `pawork-git` 直接依赖。前后快照存 `/tmp/pawork-r0c/`(易失),对比结论固化于本行。
+
 另:D13 握手宣告点实为五处(cli/gui-client 默认/desktop/probe/契约测试),写入集相应扩及 `host/cli`、`apps/desktop`、`apps/protocol-probe`;冻结面(`GuiCapability` 枚举、schemas/ typegen、`SUPPORTED_API_VERSIONS`)未触碰。
 
 ## 相关

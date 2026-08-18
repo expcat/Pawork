@@ -9,14 +9,14 @@
 | # | 动作 | 现用面 | 实施 | 风险 |
 | --- | --- | --- | --- | --- |
 | L1 | rand → `getrandom::fill()` | 6 个生产调用点,全部「填充 N 字节随机」:`foundation/protocol/src/client_auth.rs:97`(32B token)、`providers/auth/src/oauth.rs:131,145`(PKCE verifier/state)、`storage/blob/src/protected.rs:814,948,975`(nonce/盲化/抖动)(remote wire 已随 R0 归档) | ~10 行 diff;getrandom 已在传递树;顺带统一 thread_rng/OsRng 混用为 OS 熵 | 极低;生产树删 rand/rand_core/rand_chacha 三包 |
-| L2 | parking_lot → `std::sync` | 9 处短临界区、无 condvar/timeout:`execution/exec/src/pty/mod.rs:19`、`vcs/git/src/cache.rs:49,57,72`、workflow plan/goal 服务(R0 后按存留核查) | ~30 行;毒锁策略统一 `unwrap_or_else(PoisonError::into_inner)` 并注释 | 低;CLI 生产树真少一包(gpui 树仍带,仅影响 desktop) |
+| L2 | parking_lot → `std::sync` | 短临界区、无 condvar/timeout 的存留点:`execution/exec/src/pty/mod.rs:19` 等(`vcs/git/src/cache.rs` 三处与 workflow plan/goal 服务已随 R0 波 A/C 归档消失;执行时重验剩余清单与处数) | ~30 行;毒锁策略统一 `unwrap_or_else(PoisonError::into_inner)` 并注释 | 低;CLI 生产树真少一包(gpui 树仍带,仅影响 desktop) |
 | L3 | base64 → 本地 `base64url` 模块(无填充 encode/decode) | 仅 auth 一包 8 处,全部 `URL_SAFE_NO_PAD`:PKCE verifier/challenge(`oauth.rs:132,139,146`)、JWT payload 解码(`oauth.rs:1093`) | ~80 行 + golden 测试(与 base64 crate 输出逐字节对拍后再删依赖);PKCE 定向回归必跑 | 低;算法简单无平台差异 |
 
 ## 2. 版本升级与去重(以 2026-08-18 crates.io 快照为准,执行时重查)
 
 | # | 依赖 | 现状(声明 / lock) | 目标 | 动机与注意 |
 | --- | --- | --- | --- | --- |
-| U1 | notify + notify-debouncer-full | `7` / 7.0.0+8.2.0 双版本;debouncer `0.5` | notify `8` + debouncer `0.7` | 消除双份平台监视栈;notify 8 API 有变,file_index/git cache 两处消费点迁移 |
+| U1 | notify + notify-debouncer-full | `7` / 7.0.0 单版本(R0 波 C 归档 git cache 后,8.2.0、debouncer 0.5 及 file-id/inotify 等已退出 lock;根 workspace 的 `notify-debouncer-full` 声明已无使用方,一并移除) | notify `8`;debouncer 无消费者不再引入 | notify 8 API 有变,file_index 消费点迁移(git cache 已随 R0 波 C 归档删除) |
 | U2 | windows | `0.58`(exec 独用)/ lock 0.57+0.58+0.61.3 三版本 | `0.61` | 与 gpui 树 0.61.3 去重(0.57 随 sysinfo 无法消除;0.62 待 gpui 跟进);迁移面 ~10 处 Win32 调用 |
 | U3 | portable-pty | `0.8.1` | `0.9` | 甩 winapi/nix 0.25/lazy_static 老栈;~8 API 面迁移 |
 | U4 | ts-rs | `11` | `12` | typegen 专用不入生产树;`schemas/` 重新生成后 diff 审查(允许注释/格式变化,类型形状不得变) |

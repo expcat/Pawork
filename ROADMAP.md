@@ -55,7 +55,7 @@ V3 由四条目标定义(依据:2026-08-18 五路只读分析——两路包合�
 
 | 阶段 | 主题 | 关键动作 | 触及范围 | 硬前置 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决 | ADR-038(单机 vs 多租户、remote/teams/三域/account-control 去留);归档约 3.3–3.8 万行零消费者代码;K-07 删除、K-08 停止虚假宣告;死 feature/死声明清理 | 全仓休眠面(workflow/orchestration/control-plane/transport/diagnostics/net/session/engine/host) | 无 | 🔵 |
+| [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决 | ADR-038(单机 vs 多租户、remote/teams/三域/account-control 去留);归档约 3.3–3.8 万行零消费者代码;K-07 删除、K-08 停止虚假宣告;死 feature/死声明清理 | 全仓休眠面(workflow/orchestration/control-plane/transport/diagnostics/net/session/engine/host) | 无 | 🟢 |
 | [R1](plan/R1-package-consolidation.md) | 包合并 39→21 | ADR-039(目标布局 + 目录扁平化);api→domain、sqlite+session+blob→storage、net+core+adapters→providers、core+resources+config+compat→workspace、mcp→tools、quota+provider-control→control-plane、gui-server→app、channels→cli、sdk→client、diagnostics 解散、probe→client 测试;golden 随迁 | 全部 crate 的 Cargo.toml/目录/use 路径;design.md §2 重写 | R0 | ⚪ |
 | [R2](plan/R2-dependency-governance.md) | 依赖治理 | rand/parking_lot/base64 本地化;notify 8、windows 0.61、portable-pty 0.9、ts-rs 12、reqwest 0.13、toml 1.1、rusqlite 0.40、sha2 0.11 升级;lock 多版本去重断言;rmcp 3.x 专项 | 各 crate Cargo.toml + 少量调用点 | R1 | ⚪ |
 | [R3](plan/R3-protocol-unification.md) | 协议与投影同源化(T3+T5) | 单一 command/capability registry,GUI 帧/headless/ACP 三通道 mapping 同源派生(宣告=授权=实现);Timeline 投影 reducer 下沉 protocol 共享模块,host/desktop 同源 + 投影 golden;OnFailure 档位裁决 | protocol、app、cli(headless/acp)、client、desktop projection | R1(R2 可并行) | ⚪ |
@@ -126,7 +126,7 @@ V2 收口时的 K-01~K-10 与其他挂账项(原委见 [docs/v2-summary.md](docs
 - **多账户 factory 装配**(G1–G7/F1–F5 已确认,D1–D8 已拍板):R0 归档 account-control-v1 后,激活时按新装配面重写(归档代码经 git tag `v2-final` 可查,[docs/research/](docs/research/) 调研仍有效)。
 - **远程 GUI(transport remote)**:R0 归档 TLS 实现(3,721 行);复活须按当时协议版本重评。
 - **teams / goal / automation / monitor 复活**:domain 事件保留可重放;reducer 归档;对应产品面立项时另立任务。
-- **GUI git 面板**(Branch/Stash/Conflict/History 服务):R0 归档;产品定义后另立。
+- **GUI git 面板**(Branch/Stash/Conflict/History/Commit 服务 + StatusCache/CachedStatusService watcher):R0 波 C 归档(vcs/git 六模块 2,262 行,tag `v2-final` 可找回);产品定义后另立。
 - **扩展生态整族(WASM 插件 / 市场 / Hooks / LSP)**:沿 V2 决议移出排期;预留保留(`PluginId`、`ToolCapability::ExternalPlugin`、GUI 未知 capability 隐藏);资产见 [plan/archive/S10-extensions-deferred.md](plan/archive/S10-extensions-deferred.md)。
 - **对外账户池网关(F6-B)**:维持不内建。
 - **发布 / 全量门禁 / 三平台矩阵**:须用户明确授权后另立任务(License 为硬前置)。
@@ -139,7 +139,7 @@ V2 收口时的 K-01~K-10 与其他挂账项(原委见 [docs/v2-summary.md](docs
 
 | 事项 | 说明 | 拍板时点 |
 | --- | --- | --- |
-| ADR-038 库存与产品形态 | [ADR-038](docs/adr/ADR-038-inventory-and-product-shape.md) **Accepted**(用户 2026-08-18 确认,22 项按推荐决议执行);波 0 tag `v2-final` 已打,波 A(D2–D7)、波 B(D8–D15/D20–D22)已落地;波 B 实态核查改判 3 项(D12 降 `pub(crate)`、D14 encoding_rs 保留、D15 rbac 三类型保留,见 ADR 落实记录与任务书)。波 C 收口按本决议执行,本行不再是闸门 | 已确认 / R0 波 0 |
+| ADR-038 库存与产品形态 | [ADR-038](docs/adr/ADR-038-inventory-and-product-shape.md) **Accepted**(用户 2026-08-18 确认,22 项按推荐决议执行);波 0 tag `v2-final` 已打,波 A(D2–D7)、波 B(D8–D15/D20–D22)、波 C(D16 git 服务裁剪)已全部落地;波 B/C 实态核查共改判 4 项(D12、D14、D15、D16 commit.rs 补判,见 ADR 落实改判记录),本行不再是闸门 | 已确认 / R0 波 0 |
 | ADR-039 目录布局 | 推荐扁平 `crates/` + `apps/`(19 库规模下功能域目录成为噪音);备选保留域目录 | R1 波 A |
 | ADR-040 分支模型 | 推荐原生 lineage(Fork 是已交付能力,删除属产品倒退);备选冻结线性 + 删 Fork | R6 波 0 |
 | ADR-041 沙箱信任模型 | macOS 白名单 profile 的兼容性代价(Darwin 25 实测)与 PTY 语义 | R7 波 0 |
@@ -149,7 +149,8 @@ V2 收口时的 K-01~K-10 与其他挂账项(原委见 [docs/v2-summary.md](docs
 | directories 5→6 | 目录语义兼容(`dev.pawork.pawork` 布局)评估后升级或显式锁定 | R2 波 B |
 | gpui 升级跟踪 | `=0.2.2` 为当前最新(ADR-035);上游发新版后评估(影响 R8 组件 API) | 出现新版时 |
 | License 与 crates.io 占名 | 发布硬前置;不阻塞 R0–R9 | 发布任务前 |
-| `session_bindings` 孤儿表 | R0 归档 binding 后该表无读写方;迁移 append-only,留表 + 注释登记「预留」,不回滚 DDL | R0 执行时登记 |
+| `session_bindings` 孤儿表 | R0 归档 binding 后该表无读写方;迁移 append-only,留表 + 注释登记「预留」,不回滚 DDL | ✅ 已登记(`storage/session/src/migration.rs` v9 注释,2026-08-18) |
+| usage 幂等键冲突(冒烟发现) | R0 波 C 冒烟实证:`host/app/src/control.rs:140` 以 `rec-{run_id}` 为 record_id,含工具调用的多轮迭代在同一 run 下产生多条内容不同的 usage 记录,命中 ledger 幂等键 (tenant, account, record_id) 判 Conflict;失败记录入重试队列,后续运行反复重放同一 warn(如 `rec-run-1787064020223-1`)。既有缺陷,与 R0 改动无关;按 task-guide §1 窄任务修(record_id 加迭代序号或聚合为每 run 一条) | 阶段外窄任务,不阻塞 R0 |
 | PWB1 protected 消费者 | R5 将 ReasoningProtector 接到 ProtectedBlobStore(兑现 S6 注释承诺);若 R5 裁决删除则 PWB1 契约转冻结候审 | R5 波 C |
 
 ---
