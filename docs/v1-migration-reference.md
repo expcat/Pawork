@@ -4,7 +4,7 @@
 >
 > 子节对照（原 ROADMAP_V2.md → 本文）：原 §1（V1 Review 结论）→ §1、原 §2（目标与原则）→ §2、原 §3（目录结构）→ §3、原 §4（模块映射 / 迁移词典）→ §4、原 §5（发布策略）→ §5、原 §6（测试与验证）→ §6、原 §8（风险与缓解）→ §7、原 §10（Review 方法附录）→ §8。原 §7（里程碑）已被增量式路线图（[../ROADMAP.md](../ROADMAP.md)）取代；原 §9（未决事项）已并入 ROADMAP §4。归档计划（[../plan/archive/](../plan/archive/README.md)）中对「ROADMAP_V2 §N」或「ROADMAP §13.N」的引用按此对照定位。
 >
-> 文中 M0–M8 编号均指已归档的旧里程碑（新旧对照见 [../plan/archive/README.md](../plan/archive/README.md)）。M8 的门禁与发布清单曾映射到旧 S12；2026-08-17 起当前 [S12](../plan/S12-project-code-review.md) 已改为只读全项目 Code Review，M8 不再有活动阶段映射。
+> 文中 M0–M8 编号均指已归档的旧里程碑（新旧对照见 [../plan/archive/README.md](../plan/archive/README.md)）。M8 的门禁与发布清单曾映射到旧 S12；2026-08-17 起 S12 改为只读全项目 Code Review（已于 2026-08-18 随 V2 收官，见 [v2-summary.md](v2-summary.md)），M8 不再有活动阶段映射。文中提及的 S0–S13 阶段任务书已随 V3 规划删除，考古以 git 历史为准。
 >
 > **2026-08-17 状态更新**：V1 代码已归档至仓库外同级目录 `../Pawork_v1/`（移出 git 管理），`Pawork_v2/` 已摊平为仓库根；指向 V1 资产的链接改指归档目录，正文保持冻结原文。
 >

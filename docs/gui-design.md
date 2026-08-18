@@ -4,7 +4,7 @@
 >
 > 视觉实施基准：[../design/README.md](../design/README.md)（定稿图、TaskRail 双分组与响应式约束）
 >
-> 关联：[../ROADMAP.md](../ROADMAP.md) · [S7 任务书](../plan/S7-gui-agent.md) · [references.md](references.md) · 根仓 [Desktop GUI](../../Pawork_v1/docs/features/desktop-gui.md) · [GUI 连接](../../Pawork_v1/docs/features/gui-connection.md) · [ADR-035](../../Pawork_v1/docs/adr/ADR-035-gpui-desktop.md)
+> 关联：[../ROADMAP.md](../ROADMAP.md) · [v2-summary.md](v2-summary.md)（S7/S13 交付原委）· [../plan/R8-gui-components.md](../plan/R8-gui-components.md)（V3 组件化任务书）· [references.md](references.md) · 根仓 [Desktop GUI](../../Pawork_v1/docs/features/desktop-gui.md) · [GUI 连接](../../Pawork_v1/docs/features/gui-connection.md) · [ADR-035](../../Pawork_v1/docs/adr/ADR-035-gpui-desktop.md)
 
 ---
 

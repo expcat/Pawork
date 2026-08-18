@@ -1,74 +1,91 @@
-# Pawork V2 开发路线图（增量式 · S0–S13）
+# Pawork V3 开发路线图(重构式 · R0–R9)
 
-> 本文档是 Pawork V2 的**任务总索引**：登记全部任务（已完成 / 未完成）的状态与粗略介绍，并链接到 [plan/](plan/) 内的详细任务文档。V2 采用「最小可用 → 逐级追加」的增量开发方式：S0 先交付一个能真实对话的 `pawork` CLI，S0–S11 在可运行的二进制上逐层追加能力并以真实冒烟 + 定向自动化验收；S12 改为只读的全项目 Code Review，把发现拆成独立后续任务，不在审查阶段直接修复或发布；S13 已按波次统一整改这些发现，仍不含发布。
+> 本文档是 Pawork V3 的**任务总索引**:登记全部任务(未开始 / 进行中 / 已完成)的状态与介绍,并链接到 [plan/](plan/) 内的详细任务书。V3 不是新功能扩张,而是在 V2 增量交付完成(S0–S13,总结见 [docs/v2-summary.md](docs/v2-summary.md))后的一次**全仓结构重构**:目标是把 V2「先通电、后收敛」策略遗留的结构债一次清偿。允许破坏式重设计,但磁盘/线上冻结契约的演进必须经 ADR 版本化,不允许静默破坏。
 >
-> **文档体系**（五份常设文档 + 三类附件）：
+> **文档体系**(常设文档不变,V2 编排文档已由 V3 版取代):
 >
 > | 文档 | 职责 |
 > | --- | --- |
-> | 本文 `ROADMAP.md` | 任务总索引：阶段状态、阶段外任务、未决事项、风险 |
-> | [plan/S0–S13](plan/) | 每阶段任务书：目标、范围、退出标准与并行拆分；S0–S11 含冒烟/定向自动化，S12 含独立审查包与 finding 回写规则，S13 含整改波次与决策点（附件 [plan/archive/](plan/archive/README.md)：旧按域计划索引；M0–M8 正文未落仓，迁移细则回退到 `docs/v1-migration-reference.md` §4.1） |
-> | [docs/design.md](docs/design.md) | 设计文档：包布局与激活映射、冻结契约、各阶段功能设计与参照项目映射、候选功能 |
-> | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计：最小 Agent 壳、参照取舍、随阶段增量图（附件 [design/README.md](design/README.md)：v3 定稿视觉实施基准与三张定稿图） |
-> | [docs/references.md](docs/references.md) | 参照项目手册：对标项目的目标、功能与文档链接（附件 [docs/research/](docs/research/)：专题调研全文） |
-> | [docs/task-guide.md](docs/task-guide.md) | 任务实现规范：任务开启 / 进行 / 收尾的公共约定与最小启动提示词 |
-> | [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1 全量 Review 结论与 V1→V2 迁移词典（原 ROADMAP_V2.md，冻结参考） |
+> | 本文 `ROADMAP.md` | 任务总索引:阶段状态、阶段外任务、未决事项、风险 |
+> | [v3_plan.md](v3_plan.md) | 任务开启编排:当前指针、选波规则、子代理派发 |
+> | [plan/R0–R9](plan/) | 每阶段任务书:目标、证据、决策点、波次拆分、退出标准 |
+> | [docs/design.md](docs/design.md) | 设计文档:包布局(R1 收口后重写 §2)、冻结契约、功能设计 |
+> | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计(附件 [design/README.md](design/README.md):GUI v3 视觉基准) |
+> | [docs/references.md](docs/references.md) | 参照项目手册 |
+> | [docs/task-guide.md](docs/task-guide.md) | 任务实现规范(开启 / 进行 / 收尾公共约定) |
+> | [docs/v2-summary.md](docs/v2-summary.md) | V2 归档总结(S0–S13 交付、冻结契约、遗留债务) |
+> | [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1 迁移词典(冻结参考) |
 >
-> 工作约定见仓库根 [AGENTS.md](AGENTS.md)（V2 版，2026-08-17 重建；V1 版随 V1 归档于仓库外同级目录 [../Pawork_v1/AGENTS.md](../Pawork_v1/AGENTS.md)）。V2 开发期放宽项见 [docs/task-guide.md](docs/task-guide.md) §6。
+> 工作约定见仓库根 [AGENTS.md](AGENTS.md)。V2 版 `v2_plan.md`、V2 ROADMAP 与 `plan/S0–S13` 已删除,保留内容压缩于 [docs/v2-summary.md](docs/v2-summary.md);考古以 git 历史为准。
 
 ---
 
-## 1. 计划原则
+## 1. V3 目标与计划原则
 
-旧「按域整体迁移」计划（M0–M8；[plan/archive/](plan/archive/README.md) 仅保留索引，正文未落仓）第一个可运行物要到第 5 个里程碑才出现，此前全部是「库先行、零消费者」——正是 V1「组件齐全、主干未通电」病灶（[docs/v1-migration-reference.md](docs/v1-migration-reference.md) §1.2）在计划层的重演。现行计划的四条组织原则：
+V3 由四条目标定义(依据:2026-08-18 五路只读分析——两路包合并、依赖用面审计、GUI 组件分析、补丁式实现全仓扫描;证据落在各 plan/R\*.md):
 
-1. **每阶段交付可运行增量**：从 S0 起 `pawork` 二进制始终可编译、可运行、可被真实使用；每个阶段以「新增哪些用户可见能力」定义，而不是以「迁移了哪些包」定义。
-2. **真实测试优先、低消耗默认**：S0–S11 的冒烟与模型行为评估用真实通道执行；S0–S5 期为 GLM Coding Plan + OpenCode Go 两通道，S6 接通首发通道后默认切换为 §1.1 低消耗模型矩阵，高级模型仅在用户明确指定时使用。自动化测试只做关键定向项（契约 golden、安全红线、解析器种子），当前 S0–S13 不设 Workspace Full Gate；S12 只审查和登记，S13 整改仍只做定向验证。全量门禁、三平台验证与发布不再挂在 S12，只有在审查整改完成且用户明确决定发布后才另立任务。
-3. **追加而非重写**：用三道保险（终局包布局先行、冻结契约先行、迁移词典与「无消费者不合入」，见 [docs/design.md](docs/design.md) §3）保证后期把 V1 全部功能追加进来时，不需要推翻任何已交付阶段的代码。V1 的约 23.6 万行资产仍按「复制 + 合并 + 改名」迁移，只是从「按域一次性搬」改为「按阶段按需搬」。
-4. **GUI 增量主线**：S7 起以定稿 v3 三栏工作台（[design/README.md](design/README.md)）为唯一壳，S8–S11 每阶段按 [docs/gui-design.md](docs/gui-design.md) §5 给同一壳加面（各任务书带「GUI 增量」行）；没有对应投影/命令就不做按钮，视觉验收一律对照该基准。
+1. **结构收敛**:workspace 39 成员 → **21 成员**(19 库 + 2 应用);休眠库存(约 3.3–3.8 万行零消费者代码,近 20% src)裁决归档;确立「消费面先行」硬门——每个模块要么在产品面有真实装配点,要么移出主干。
+2. **依赖治理**:本地化 3 项(rand→getrandom、parking_lot→std::sync、base64→本地 base64url)、死声明清理 2 处、版本升级 8+ 项(消除 Cargo.lock 多版本共存)、rmcp 3.x 专项评估。
+3. **补丁根因重构**:12 个聚类主题(T1–T12,对照表见 §2.1)——协议三通道同源化、宿主单体拆解、幂等持久化、降级可观测、Provider 中立层渗漏封堵、凭证词汇净化、会话分支原生化、沙箱真隔离。
+4. **GUI 工程化**:`apps/desktop` 建立 `ui/theme.rs` tokens 与 `ui/components/` 组件库(97 处硬编码色 → ~20 token;15 处手写按钮、4 组复制菜单 → 11 个组件),菜单改 gpui `anchored()/deferred()`,并收口 V2 遗留的 Changes / `@` / Resources 面与人工验收。
 
-### 1.1 真实测试模型约定（低消耗默认）
+计划原则:
 
-| 通道（provider_id） | 默认测试模型 | 凭证形态 |
+1. **每阶段保持可用**:`pawork` 二进制在任意波次收口时可编译、可运行、既有冒烟行为不回退;重构不断主干。
+2. **冻结契约不静默破坏**:事件信封、session DDL、blob `PWB1`、GUI 帧、headless JSON、config 层级、usage `dedup_key`、audit JSONL(清单见 [docs/v2-summary.md](docs/v2-summary.md) §4)只能经 ADR 版本化演进(R6 分支模型、R7 沙箱为已知的两处);golden 先于实现改动。
+3. **删除优先于门控,门控优先于库存**:零消费者代码默认归档(git tag `v2-final` 兜底可找回),不再以「experimental feature + 登记」方式库存。
+4. **决策先行**:R0 一次性拍板产品形态与库存去留(ADR-038),避免后续阶段反复翻案;R1 包布局(ADR-039)、R6 分支模型(ADR-040)、R7 沙箱(ADR-041)各配独立 ADR。
+
+### 1.1 真实测试模型约定(低消耗默认,沿用 V2)
+
+| 通道(provider_id) | 默认测试模型 | 凭证形态 |
 | --- | --- | --- |
-| DeepSeek（`deepseek`） | `deepseek-v4-flash` | API key |
-| GLM Coding Plan（`glm-coding`） | `glm-4.7` | API key |
-| OpenCode Go（`opencode-go`） | `deepseek-v4-flash` | API key |
-| xAI Grok 订阅（`xai`） | `grok-4.3` | OAuth bearer |
+| DeepSeek(`deepseek`) | `deepseek-v4-flash` | API key |
+| GLM Coding Plan(`glm-coding`) | `glm-4.7` | API key |
+| OpenCode Go(`opencode-go`) | `deepseek-v4-flash` | API key |
+| xAI Grok 订阅(`xai`) | `grok-4.3` | OAuth bearer |
 
-1. 常规冒烟、定向回归与模型评估默认只用矩阵内组合；ChatGPT、Qwen Token Plan 两通道及各通道更高档模型（如 `deepseek-v4-pro`、`glm-5.x`、`kimi-k2.x`、`grok-4.6`、ChatGPT/Codex 系列）默认不使用。
-2. 仅两类例外：① 任务书明确要求的一次性通道接通验证（最小调用量，如 S6 六通道各打通一次）；② 用户为高级功能（多 Agent 编排、长上下文压缩、复杂工具链等）**明确指定**的高级模型专项评估——高级模型永远等用户指定，不得自行升级。
-3. 模型名以 `pawork models` / 通道 model catalog 实际返回为准；目录中无指定名称时终止并报告，不擅自换相邻档位。
-4. 凭证已在 `~/.pawork/auth.json`（env 变量按 [docs/task-guide.md](docs/task-guide.md) §5 降级为 fallback）；缺失或失效即 fail-closed 终止并向用户索取，不静默降级 mock、不换通道。
-
-Secret 红线不变：key/token 不入日志、事件、配置样例与任何可提交文件。
+规则同 V2:常规冒烟、定向回归与行为对比默认只用矩阵内组合;高级模型仅限一次性接通验证或用户明确指定的专项评估;模型名以 `pawork models` 实际返回为准;凭证缺失即 fail-closed。Secret 红线不变:key/token 不入日志、事件、配置样例与任何可提交文件。
 
 ---
 
-## 2. 阶段总览（S0–S13）
+## 2. 阶段总览(R0–R9)
 
-状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞。每阶段的详细任务、退出标准与并行拆分见 `plan/S*.md`；各阶段功能设计与参照项目映射见 [docs/design.md](docs/design.md) §4。
+状态符号:⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞。每阶段详细任务、证据、决策点与并行拆分见 `plan/R*.md`。
 
-| 阶段 | 主题 | 新增用户可见能力 | 激活 / 增强的包 | GUI 增量（v3） | 真实验收要点 | 状态 |
-| --- | --- | --- | --- | --- | --- | --- |
-| [S0](plan/S0-minimal-chat.md) | 最小可对话 CLI | `pawork chat` 流式多轮对话、Ctrl-C 取消、`pawork models`、TOML 配置 + env key | workspace 根、domain（最小）、api（provider）、net、providers/adapters（openai-compatible）、config（最小）、engine（最小）、app（最小）、cli（最小）、apps/pawork | — | 两把真实 key 各完成流式多轮对话；401/429/超时可读呈现 | 🟢 |
-| [S1](plan/S1-sessions.md) | 会话持久化与恢复 | 会话落盘、`pawork sessions list/show`、`--resume` 续聊、`--json` 事件流输出 | sqlite、session（核心）、domain（events 全量）、engine（事件化 + appender） | — | 中断/杀进程后 resume 续聊上下文连续；envelope golden 与 append-only 契约生效 | 🟢 |
-| [S2](plan/S2-tool-loop.md) | Agent Loop 与只读工具 | Agent 自主调用 read/list/search/find 回答仓库问题；`@`引用前身（相对路径语义） | api（tool）、tools（只读四件）、workspace（roots）、engine（工具循环）、providers/adapters（anthropic-messages）、testkit（MockProvider） | — | 真实仓库问答任务；OpenAI/Anthropic 双协议 tool-calling 对比评估 | 🟢 |
-| [S3](plan/S3-safe-edits.md) | 写入工具与审批 | write/edit/apply_patch + 终端审批交互（`--approval-mode`） | policy（整包）、tools（写三件）、engine/cli（审批位点） | — | 真实小编码任务经审批落盘；越界/symlink 拒绝；deny 后会话可续 | 🟢 |
-| [S4](plan/S4-exec-sandbox.md) | 命令执行与沙箱 | run_command（进程树清理 + 沙箱 + 输出截断）——首个完整「读-改-跑」编码闭环 | exec（process/sandbox）、tools（run_command）、policy（shell 分类接线） | — | 「跑 cargo check 并修复报错」端到端；Ctrl-C 杀整棵进程树；fail-closed | 🟢 |
-| [S5](plan/S5-context-usage.md) | 上下文预算与用量 | 长任务不炸上下文（预算/截断/压缩）、token 与费用统计显示 | engine（context 接线）、session（compaction feature）、provider-core（usage/registry/pricing） | — | 超长多轮任务连贯完成；token 计量与厂商侧抽查一致 | 🟢 |
-| [S6](plan/S6-providers-auth.md) | 首发 Provider 与认证 | 六通道适配、`pawork models` 聚合、auth 文件、API key 与 ChatGPT/xAI OAuth | providers/adapters（六通道）、auth、diagnostics（脱敏 layer）、config（凭证解析） | — | 六通道真实使用；运行中切换 provider/model；OAuth 临期刷新；secret 不入日志回归 | 🔵 |
-| [S7](plan/S7-gui-agent.md) | 最小 Agent GUI（波 0–D ✅） | 已锁定并交付 v3 三栏工作台：TaskRail 双分组与定向新建、流式对话、内嵌审批、取消、ContextMeter / RunStatusBar；跨通道 `glm-4.7`→`deepseek-v4-flash` 冒烟通过 | protocol（最小帧）、transport（local）、gui-server（单客户端）、client、apps/desktop、cli `gui serve` | v3 三栏壳整体：TaskRail 双分组与定向新建、内嵌审批、Composer+ContextMeter、RunStatusBar、InspectorToolTabs 预留 | 设计锁定；真实模型流式对话；关窗不杀 Run；跨通道切换；1440×1024 人工对照定稿图未做 | 🟢 |
-| [S8](plan/S8-git-checkpoint.md) | Git、Diff 与 Checkpoint（波 A–B ✅） | 会话改动 diff 呈现、编辑前快照、`pawork rollback` 一键回滚；CLI 审批 hunk 预览 | git（git+diff）、blob-store（artifact/protected/checkpoint）、engine/app/cli 接线 | Inspector Changes（Files/Summary）+ ActivityPopover Changes 摘要（Desktop 面延期，见 §4） | 真实任务后 diff 审阅 + 回滚还原；git 注入防护回归 | 🟢 |
-| [S9](plan/S9-mcp-resources.md) | MCP、资源与兼容导入（波 A–C ✅） | 外接 MCP server 工具、AGENTS.md/Skills 生效、`@file` 引用、导入 Claude/Codex 等配置；CLI `mcp`/`import`/`sessions import|export` | mcp（rmcp 收口）、resources、compat、workspace（file-index）、config（完整层级）、engine/app/cli 接线 | Composer `@` 补全；Resources 只读（MCP/规则）（Desktop 面延期，见 §4） | 真实 MCP server 工具与内置共存；本机 Claude 配置导入可用 | 🟢 |
-| [S10](plan/S10-serve-clients.md) | 服务化与客户端补齐（10a ✅ · 10b ✅ · 收口 ✅ · S0–S9 回归 ✅ · Zed ACP ✅） | headless/SDK/ACP/service、多 GUI Replay、Fork、PTY；`--json` 对齐正式协议 | protocol 收口、transport 补齐、gui-server 多客户端、sdk、channels、app/cli 正式化、exec（pty）、session lifecycle、protocol-probe | 正式 Replay、Fork、Terminal tab；本机 GPUI 多窗口未做（§4） | protocol-probe 全过；SDK e2e；两 GUI Replay 已过；S0–S9 回归已复跑；Zed 1.15 Agent Panel `pong`/`end_turn` | 🟢 |
-| [S11](plan/S11-workflow-control.md) | 工作流、多 Agent 与控制面（波 A–D ✅） | Plan 整版审批 gate、`pawork tasks`、`pawork usage`、`pawork agents demo`；多账户 factory/routing 与 Desktop Workflow 面未做（§4） | workflow、memory、review、orchestration、control-plane、provider-control、quota、app/cli 接线 | Host 已接 `QuotaOverview`；Desktop Workflow / quota 条 / ActivityPopover Agent 列表未做 | plan 拦截→批准→改计划再拦；usage 与 S5 行 1:1；tasks 跨进程可见；supervisor demo 完成/cancel-tree/budget-gate；两通道短指令评估 | 🟢 |
-| [S12](plan/S12-project-code-review.md) | 全项目 Code Review 与整改拆分 | —（只读审查 + finding 任务化） | 全部现有包及跨包接口 | 审查 v3 设计、投影、协议能力与现有证据的一致性；不改 UI、不启动窗口 | CR-01～CR-09 独立报告完成；安全/Bug/性能/假完成/未落地需求均有证据与置信度；Confirmed finding 当时写入 §3.2，S13 收口后压缩进 §3.1 | 🟢 |
-| [S13](plan/S13-s12-remediation.md) | S12 finding 整改（波 A–C ✅） | 无新功能：读路径 symlink 内核、Seatbelt/命令分类/MCP 与凭证边界、gui serve 认证、会话分支投影、审批/Replay/幂等正确性、Desktop 锚点/键盘/多行等 57 项修复 | 按 finding 写入集触及受影响包（policy/tools/exec/config/net/mcp/session/blob/engine/workflow/orchestration/protocol/host/clients/desktop/manifests/docs） | 不新增面；修复 Timeline 锚点/抢滚/多行 Composer/键盘可访问性，v3 漂移按基准收口（F56 拍板） | 57 项已收口（§3.1 归档）；安全红线回归全绿；契约改动 golden 先行；GUI 人工证据并 K-03；文档三处一致 | 🟢 |
+| 阶段 | 主题 | 关键动作 | 触及范围 | 硬前置 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决 | ADR-038(单机 vs 多租户、remote/teams/三域/account-control 去留);归档约 3.3–3.8 万行零消费者代码;K-07 删除、K-08 停止虚假宣告;死 feature/死声明清理 | 全仓休眠面(workflow/orchestration/control-plane/transport/diagnostics/net/session/engine/host) | 无 | ⚪ |
+| [R1](plan/R1-package-consolidation.md) | 包合并 39→21 | ADR-039(目标布局 + 目录扁平化);api→domain、sqlite+session+blob→storage、net+core+adapters→providers、core+resources+config+compat→workspace、mcp→tools、quota+provider-control→control-plane、gui-server→app、channels→cli、sdk→client、diagnostics 解散、probe→client 测试;golden 随迁 | 全部 crate 的 Cargo.toml/目录/use 路径;design.md §2 重写 | R0 | ⚪ |
+| [R2](plan/R2-dependency-governance.md) | 依赖治理 | rand/parking_lot/base64 本地化;notify 8、windows 0.61、portable-pty 0.9、ts-rs 12、reqwest 0.13、toml 1.1、rusqlite 0.40、sha2 0.11 升级;lock 多版本去重断言;rmcp 3.x 专项 | 各 crate Cargo.toml + 少量调用点 | R1 | ⚪ |
+| [R3](plan/R3-protocol-unification.md) | 协议与投影同源化(T3+T5) | 单一 command/capability registry,GUI 帧/headless/ACP 三通道 mapping 同源派生(宣告=授权=实现);Timeline 投影 reducer 下沉 protocol 共享模块,host/desktop 同源 + 投影 golden;OnFailure 档位裁决 | protocol、app、cli(headless/acp)、client、desktop projection | R1(R2 可并行) | ⚪ |
+| [R4](plan/R4-host-decomposition.md) | 宿主拆解与可靠性内核(T2+T8+T9) | app 单体按领域服务拆分(巨 match → registry 分发);幂等 CommandLedger 持久化 + K-02 审批等待前落盘;ACP host actor 化;降级事件化契约(消灭静默 `let _`/回退) | app、cli、storage(幂等表)、protocol(降级事件) | R3 | ⚪ |
+| [R5](plan/R5-provider-neutrality.md) | Provider 中立化与凭证收口(T6+T11) | provider_hints 命名空间契约(删存储层 provider 键名清单);通道 preset 数据化(新增通道单点登记);credential locator 合一 + keychain 词汇迁移;K-10 Anthropic 能力收口 + CapabilityNegotiator 接线;ReasoningProtector 持久化(PWB1 首个生产消费者) | providers、auth、storage(event_store)、workspace(config)、engine 守护测试 | R1(建议 R4 后) | ⚪ |
+| [R6](plan/R6-session-branching.md) | 会话分支模型原生化(T4,ADR-040) | 事件/投影原生 branch lineage(替换后补 `branch_id` 列 + 反查回填);schema v11 迁移 + 旧库升级 golden;压缩按分支水位;K-05 本机会话导入 | storage、engine(compact)、app(resume/fork)、desktop projection | R4(投影同源已就位) | ⚪ |
+| [R7](plan/R7-sandbox-isolation.md) | 执行面真隔离(T7,ADR-041) | macOS Seatbelt 按需白名单 profile(替换整盘只读+deny);PTY 入 policy 闸;shell 风险分类结构化解析;K-09 egress 决策;三平台沙箱回归 | exec、policy、tools(run_command)、app(PTY 装配) | R1(可与 R3–R6 并行) | ⚪ |
+| [R8](plan/R8-gui-components.md) | GUI 组件化与 Desktop 收口(T12) | theme.rs tokens + ui/components/ 11 组件;菜单 anchored/deferred;hover/active 补齐(先更 GUI 基准);Timeline 虚拟化;K-04 Changes 面、K-06 `@`/Resources 面;K-03 人工验收 | apps/desktop、docs/gui-design.md、design/ | R3(投影 reducer);R2(gpui 树) | ⚪ |
+| [R9](plan/R9-consistency-closeout.md) | 一致性收口 | K-01 config 路径核对;S6 OAuth 自然临期 refresh 人工验收(V2 唯一未收口项);安全红线/golden/协议定向回归全量复跑;文档三处一致;遗留与候选登记 | 全仓只读核对 + 文档 | R0–R8 | ⚪ |
 
-**关键节点**：S4 结束即达成旧计划 M4 的首要验收（真实仓库「读文件-改代码-跑命令」闭环）。S5–S6 补齐用量与首发通道后，**S7 已按 v3 定稿交付最小 Agent GUI**（正式帧真实对话/审批/取消/重连/TaskRail/跨通道切换）；S8–S11 按 [docs/gui-design.md](docs/gui-design.md) §5 在同一壳上依次点亮 Changes → `@`/Resources → Replay/Fork/Terminal/多窗口 → Workflow/quota/Agent 列表，其中 S10 把单窗口升级为多客户端服务；S12 对完整结果做只读 Code Review，并把整改登记为 57 项任务；S13 已按波 A 安全 → 波 B Bug → 波 C 收口统一整改（[plan/S13-s12-remediation.md](plan/S13-s12-remediation.md)）。发布不在当前 S0–S13 排期。WASM 插件 / Hooks / LSP / 市场同样不在当前排期，见 §4。
+**依赖关系**:R0→R1→R2 串行主干(裁决 → 合并 → 治理)。R3–R7 在 R1 后开启:推荐顺序 R3→R4→R5→R6(四者都触 host,串行避免写入集冲突;R2 与 R3 写入集不相交可并行);R7(exec/policy 域)可与 R3–R6 并行。R8 依赖 R3(共享投影 reducer)与 R2(gpui 传递树升级)。R9 收口全部阶段。跨阶段并行须满足写入集不相交,由 [v3_plan.md](v3_plan.md) §4 按波裁定。
 
-**依赖关系**：S0→S1→S2→S3→S4 严格串行（主干长成）；S5 与 S6 在 S4 后可并行；S7 依赖 S1–S5（会话/事件/工具/审批），S6 建议先行但不阻塞设计波；S8 依赖 S3（写工具），可与 S7 部分并行，有 Desktop 则同步 Changes；S9 依赖 S2 与 S6；S10 依赖 S7；S11 依赖 S10；S12 在 S0–S11 状态、延期项与证据完成回写后启动。S12 不实现或测试 finding；整改由 S13 统一排期。S13 依赖 S12 登记完成（已满足）；波内按写入集簇并行、串行点见任务书；S13 收口是任何发布类任务的前置。GUI 各阶段加面的视觉与交互验收一律对照 [design/README.md](design/README.md) v3 基准。
+### 2.1 补丁主题 → 阶段映射(T1–T12)
+
+来自补丁式实现全仓扫描(2026-08-18,60 处原始补丁聚类;逐项证据在各任务书):
+
+| 主题 | 内容 | 归属 |
+| --- | --- | --- |
+| T1 休眠库存大清仓 | 约 3.3–3.8 万行零消费者代码裁决 | R0 |
+| T2 host/app 单体拆解 | `lib.rs` 4,057 行 + `gui_host.rs` 2,594 行巨 match → 领域服务 | R4 |
+| T3 三通道协议面归一 | GUI/headless/ACP 三套 mapping/授权 → 单一 registry | R3 |
+| T4 会话分支模型原生化 | 后补 `branch_id` 列 + 反查回填 → 原生 lineage | R6 |
+| T5 Timeline 投影单一事实源 | host/desktop/client 三处手搓投影 → 共享 reducer | R3 |
+| T6 Provider 扩展元数据契约化 | 存储层 provider 键名清单、通道三处硬编码 → 命名空间契约 + 注册表 | R5 |
+| T7 沙箱与执行面真隔离 | 诚实标签 → 真隔离(profile 重设计、PTY 入闸) | R7 |
+| T8 降级与吞错可观测契约 | 323 处 `let _`、HOME→temp 静默回退 → 降级事件化 | R4 |
+| T9 幂等与占用原语统一 | 内存 CAS、9 张 Mutex map、序列补洞 → 持久化 ledger + actor | R4 |
+| T10 控制面多租户对齐单机现实 | `local/default` 哨兵宇宙裁决 | R0(拍板)+ R1(收编) |
+| T11 凭证/配置解析去重与词汇净化 | env 双实现、keychain 兼容名、mcp-auth 前缀白名单 → 单一 locator | R5 |
+| T12 Desktop UI 工程化 | 单文件 UI、零组件、97 硬编码色 → theme + components | R8 |
 
 ---
 
@@ -78,99 +95,84 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 
 | 任务 | 完成日期 | 产出 |
 | --- | --- | --- |
-| V1 全量 Review 与 V2 重构方案（原 ROADMAP_V2.md） | 2026-08-14 | [docs/v1-migration-reference.md](docs/v1-migration-reference.md)（Review 结论、目录结构、映射总表、发布与测试策略） |
-| 按域迁移计划 M0–M8 登记（后被增量式取代；正文未落仓） | 2026-08-14 | [plan/archive/](plan/archive/README.md)（索引）+ [迁移映射 §4.1](docs/v1-migration-reference.md) |
-| 重规划为增量式阶段计划 S0–S12 | 2026-08-14 | 本文 §2 + [plan/S0–S12](plan/) |
-| 调整后续顺序：插件移出排期、GUI 提前并先设计 | 2026-08-16 | 本文 §2/§4；[docs/gui-design.md](docs/gui-design.md)；[plan/S7-gui-agent.md](plan/S7-gui-agent.md)；旧扩展任务书归档为 [plan/archive/S10-extensions-deferred.md](plan/archive/S10-extensions-deferred.md) |
-| 多账户额度/切换/子 Agent 路由/输入缓存调研与方案确认（G1–G7 → F1–F6，决策 D1–D8 全部确认） | 2026-08-14 | [docs/research/](docs/research/) 三篇；候选登记 [docs/design.md](docs/design.md) §5 |
-| 文档体系整合（五文档结构：索引 / 任务书 / 设计 / 参照 / 规范） | 2026-08-14 | 本文 + [docs/design.md](docs/design.md) + [docs/references.md](docs/references.md) + [docs/task-guide.md](docs/task-guide.md) + [docs/v1-migration-reference.md](docs/v1-migration-reference.md) |
-| Desktop GUI v3 视觉基准定稿（三栏工作台、TaskRail 双分组、ContextMeter/RunStatusBar/InspectorToolTabs/ActivityPopover） | 2026-08-17 | [design/README.md](design/README.md) + 三张定稿图；[docs/gui-design.md](docs/gui-design.md) 同步修订 |
-| ROADMAP 按 GUI 主线重设计 + 低消耗测试模型约定 | 2026-08-17 | 本文 §1.1/§2；[docs/task-guide.md](docs/task-guide.md) §5 同步 |
-| V1 代码归档与 V2 升为仓库根 | 2026-08-17 | 仓库根全部 V1 资产移至仓库外同级目录 [../Pawork_v1](../Pawork_v1/)（移出 git 管理，历史仍可追溯）；`Pawork_v2/` 内容经 `git mv` 升为仓库根（staged：1280 D / 267 R / 6 同名替换）；本文头部、S12 行与 §4 同步。后续跟进：`foundation/config` 的仓库根加载路径按新布局回归 |
-| 重建仓库根文件与全量引用修复 | 2026-08-17 | 重建 [AGENTS.md](AGENTS.md)（V2 版，§5 开发期验证放宽与 task-guide §6 双向同步）、[README.md](README.md)、[.gitattributes](.gitattributes)；修复迁移断链 84 处（V1 资产链接改指 [../Pawork_v1/](../Pawork_v1/)、未落仓 `archive/M0–M8` 回退 [plan/archive/README.md](plan/archive/README.md)、深度修正 2 处）与 15 处陈旧文本引用 |
-| S12 从发布硬化重规划为全项目 Code Review | 2026-08-17 | 原 Release Hardening/发布任务移出当前排期；新增 [S12 审查任务书](plan/S12-project-code-review.md)，按九个独立审查包产出 finding，并逐项回写 §3.2 |
-| S13 立项：S12 finding 整改任务书与文档同步 | 2026-08-18 | [plan/S13-s12-remediation.md](plan/S13-s12-remediation.md)；本文 S0–S13 同步与 §3.2 登记修正（F05/F09/F13/F17/F30/F31/F49）；v2_plan §3/§4、AGENTS §5、task-guide §6、README 同步 |
-| 参照项目补入 Codex Router + 按功能规划反向分类 | 2026-08-18 | [docs/references.md](docs/references.md) §1/§3.2/§6；[docs/design.md](docs/design.md) §4/§5 正向映射同步；research 总表与 G6/F6 导入源补记 |
-| S13 收口：S12 finding 57 项整改 | 2026-08-18 | [S13 任务书](plan/S13-s12-remediation.md) 波 A–C；审查 [docs/reviews/s12/](docs/reviews/s12/)（九报告 + 五裁定）；契约 [ADR-037](docs/adr/ADR-037-s13-wave-b-contracts.md)。57 项全部 🟢（实现 53 + 登记支 F37/F40/F49/F57）。延期：F37 多窗口、F40 goal/automation/monitor、F49 分级裁剪见 §4；F57 并入 K-04。人工窗证据并 K-03；F03 Windows SCM 按 S10 降级；F10 两 GUI 冒烟未复跑。未吸收 K-01～K-10；S6 OAuth refresh 仍 🔵。 |
+| V3 立项分析:包合并 ×2、依赖用面审计、GUI 组件分析、补丁式实现全仓扫描(五路只读) | 2026-08-18 | 结论沉淀于 [plan/R0–R9](plan/) 各任务书与本文 §1/§2 |
+| V2 文档归档:v2_plan/V2 ROADMAP/plan S0–S13 压缩为总结 | 2026-08-18 | [docs/v2-summary.md](docs/v2-summary.md);原文档删除,git 历史可溯 |
 
-### 3.2 待执行（阶段之外）
+### 3.2 V2 遗留债务 → V3 阶段映射
 
-| 任务 | 说明 | 任务书 / 依据 | 状态 |
-| --- | --- | --- | --- |
-| 多账户功能族并入 plan | 把已确认的 F1–F5 与 G6 增量写入 S2/S5/S6/S9/S11 计划文档，并按「少测试」约定核减非关键测试项；release 目标只保留为未来发布任务输入，不写入 S12 | [docs/research/multi-account-quota-plan-merge.md](docs/research/multi-account-quota-plan-merge.md) §4（前置条件已满足，可随时开启） | ⚪ |
-| K-01 仓库根迁移后的 config 路径闭环 | 核对 `foundation/config` 在 V2 摊平后的仓库根发现、层级加载与示例路径；若不一致再用独立实现任务修复 | §3.1 的迁移后跟进项；[S9 任务书](plan/S9-mcp-resources.md) | ⚪ |
-| K-02 审批请求等待前持久化 | 让 `ToolApprovalRequested` 在进入用户等待前落盘，定义崩溃/`kill -9` 后 seal、resume 与“不重复执行”语义 | [S3 任务书](plan/S3-safe-edits.md)；`host/app/src/gui_host.rs` 的现有时序注释 | ⚪ |
-| K-03 S7 Desktop 人工验收 | 补中文 IME、多行粘贴、1440×1024 对照 v3 定稿图和 1080×720 可用性证据；S13-F14 主路径键盘走查（审批/取消/切换）；S13-F35 Composer 三行粘贴高度；S13-F56 Inspector ~440px / 折叠归零 / Fork 收进条目操作。不以 probe/源码替代真实窗口 | [S7 任务书](plan/S7-gui-agent.md)；[GUI 设计](docs/gui-design.md) | ⚪ |
-| K-04 S8 Desktop Changes 面 | 实现并真实验收 Inspector Changes（Files/Summary）与 ActivityPopover Changes 摘要，复用已有 `DiffListFiles`/`DiffGet`；并入 `HunkStageService` GUI 暂存消费（S12-F57，S8/S11 原承诺时点已过） | [S8 任务书](plan/S8-git-checkpoint.md)；[GUI 设计](docs/gui-design.md) §5 | ⚪ |
-| K-05 S9 本机会话格式导入 | 在取得脱敏样本后适配 `~/.claude/projects/**/*.jsonl` 与现行 Codex rollout `{timestamp,type,payload}`，保持源文件只读与 Secret 拒绝 | [S9 任务书](plan/S9-mcp-resources.md) | ⚪ |
-| K-06 S9 Desktop `@` / Resources 面 | 实现 Composer `@file` 补全与 Resources 只读 MCP/规则视图，只消费既有 Host 查询/注入能力 | [S9 任务书](plan/S9-mcp-resources.md)；[GUI 设计](docs/gui-design.md) §5 | ⚪ |
-| K-07 Host 增量事件限流接线 | `host/app/src/rate_limit.rs` 已有实现与测试但没有生产热路径调用；独立任务决定接入 Event Hub/GUI 广播或删除库存能力，并验证背压与丢弃可观测性 | `host/app/src/rate_limit.rs`；`v2_plan.md` S10 波次记录 | ⚪ |
-| K-08 GUI ArtifactStreaming 能力一致性 | 当前客户端/Host 宣告 `ArtifactStreaming`，但 `host/gui-server/src/session.rs` 仍固定返回 unsupported，client 读取又受 `experimental` 门控；独立任务选择完整接线或停止宣告，并补协议行为证据 | [S10 任务书](plan/S10-serve-clients.md)；`host/gui-server/src/session.rs`、`clients/gui-client/src/lib.rs` | ⚪ |
-| K-09 macOS sandbox host allowlist 语义 | 当前 `NetworkMode::Enforce` 对 `network_allow_hosts` 保持全拒并明确未实现；独立任务决定引入 egress broker，或收窄/移除不可兑现配置，同时保持 fail-closed | [S4 任务书](plan/S4-exec-sandbox.md)；`execution/exec/src/os/macos.rs` | ⚪ |
-| K-10 Anthropic Messages 能力收口 | 对照 S6 的完成声明与 adapter 顶部 TODO，逐项决定 prompt cache、thinking、hosted tools、signature/server_tool/citations 是实现、显式 unsupported 还是延期，并同步能力表 | [S6 任务书](plan/S6-providers-auth.md)；`providers/adapters/src/anthropic/mod.rs` | ⚪ |
+V2 收口时的 K-01~K-10 与其他挂账项(原委见 [docs/v2-summary.md](docs/v2-summary.md) §6)全部并入 V3 阶段,不再单列执行:
 
-S12 审查产出与 S13 整改已归档到 [§3.1](#31-已完成)「S13 收口：S12 finding 57 项整改」行（审查目录 [docs/reviews/s12/](docs/reviews/s12/)，任务书 [plan/S13-s12-remediation.md](plan/S13-s12-remediation.md)）。逐项状态不再列于本表。波 B 登记延期见 §4（F37/F40/F49）与 K-04（F57）。F14/F34/F35/F36/F53–F56 真实窗口证据仍并入 K-03；F03 Windows SCM 按 S10 降级；F10 两 GUI 冒烟未复跑。
+| 遗留项 | 内容 | V3 归属 |
+| --- | --- | --- |
+| K-01 | config 仓库根路径闭环核对 | R9 |
+| K-02 | `ToolApprovalRequested` 等待前持久化 | R4 波 B |
+| K-03 | Desktop 人工验收(IME/1440×1024/键盘走查) | R8 波 E |
+| K-04 | Desktop Changes 面(+`HunkStageService` 消费,S12-F57) | R8 波 D |
+| K-05 | 本机会话格式导入(Claude jsonl / Codex rollout) | R6 波 C |
+| K-06 | Desktop `@`/Resources 面 | R8 波 D |
+| K-07 | `rate_limit.rs` 无生产调用 | R0(裁决:删除,Hub 序列补洞随之简化) |
+| K-08 | `ArtifactStreaming` 宣告与实现不一致 | R0(停止宣告)+ R3(宣告=实现同源根治) |
+| K-09 | macOS `network_allow_hosts` 全拒未实现 | R7 波 C |
+| K-10 | Anthropic Messages 能力收口 | R5 波 C |
+| S6 挂账 | ChatGPT/xAI OAuth 自然临期真实 refresh 人工验收 | R9 |
+| F03 | Windows Service SCM 本机无法验收 | 候选(§3.3,需 Windows 环境) |
+| F10 | 两 GUI 冒烟复跑 | R9(随定向回归) |
 
-以上 K-01～K-10 是文档核对已确认的**待完善基线**，不是完整 Code Review 结论，也不等同于已确认安全漏洞。新 finding 若再出现，以独立编号追加到本表；Needs Verification 只留在审查报告。
+### 3.3 候选(未排期)
 
-### 3.3 候选（未排期）
+纳入排期时:在 §3.2 登记任务并入对应 `plan/R*.md` 或另立任务书,按 §6 回写约定执行。
 
-候选功能池见 [docs/design.md](docs/design.md) §5（已确认扩展功能族 G1–G7）与 §6（候选功能对照，30 项 P1–P3；2026-08-17 补入 DeepSeek Harness）。参照项目按功能规划的反向分类见 [docs/references.md](docs/references.md) §6（2026-08-18 补入 Codex Router）。候选纳入排期时：在本节 §3.2 登记任务并把内容并入对应 `plan/S*.md`，按 §6 状态回写约定执行。
+- **多账户 factory 装配**(G1–G7/F1–F5 已确认,D1–D8 已拍板):R0 归档 account-control-v1 后,激活时按新装配面重写(归档代码经 git tag `v2-final` 可查,[docs/research/](docs/research/) 调研仍有效)。
+- **远程 GUI(transport remote)**:R0 归档 TLS 实现(3,721 行);复活须按当时协议版本重评。
+- **teams / goal / automation / monitor 复活**:domain 事件保留可重放;reducer 归档;对应产品面立项时另立任务。
+- **GUI git 面板**(Branch/Stash/Conflict/History 服务):R0 归档;产品定义后另立。
+- **扩展生态整族(WASM 插件 / 市场 / Hooks / LSP)**:沿 V2 决议移出排期;预留保留(`PluginId`、`ToolCapability::ExternalPlugin`、GUI 未知 capability 隐藏);资产见 [plan/archive/S10-extensions-deferred.md](plan/archive/S10-extensions-deferred.md)。
+- **对外账户池网关(F6-B)**:维持不内建。
+- **发布 / 全量门禁 / 三平台矩阵**:须用户明确授权后另立任务(License 为硬前置)。
+- **artifact 流式(GUI)**:R0 停止宣告后转候选;R3 registry 就位后接线成本低。
+- **DeepSeek Harness 等候选功能池**:见 [docs/design.md](docs/design.md) §5/§6(30 项 P1–P3,继续有效)。
 
 ---
 
 ## 4. 未决事项
 
-| 事项 | 说明 | 需要拍板的时点 |
+| 事项 | 说明 | 拍板时点 |
 | --- | --- | --- |
-| License | crates.io 发布硬前置 | 任何未来发布任务开始前 |
-| crates.io 占名 | 是否早期以 0.0.1 空包占位 | 不阻塞开发 |
-| 冻结候审资产砍留 | quota 远端 / browser-computer / tool_search（清单见 [docs/v1-migration-reference.md](docs/v1-migration-reference.md) §4.4） | 其后（S11 已过） |
-| V1 目录处置 | 2026-08-17 决议并提前执行：V1 归档至仓库外同级 `../Pawork_v1` 并移出 git 管理；V2 升为仓库根（见 §3.1） | 已闭环 |
-| **扩展生态整族（WASM 插件 / 市场 / 用户 Hooks / LSP）** | **移出 S0–S13 排期，待设计与决策。** 必要预留保留：`PluginId`、`ToolCapability::ExternalPlugin`、policy 对 ExternalPlugin 的审批文案、事件/工具注册面不按「无插件」裁剪、`pawork-api` 预留 `plugin` feature 但不激活、GUI 未知 capability 隐藏、resources loader 抽象可供日后 LSP 注入。实现资产见 [plan/archive/S10-extensions-deferred.md](plan/archive/S10-extensions-deferred.md)。需拍板：要不要做、WASM vs 仅 MCP、市场是否运营、Hooks 信任域。 | 不阻塞当前主干；纳入排期时走 §3.3 |
-| OpenCode Go 仅走 `/messages` 的模型 | 是否在 S2 anthropic 适配器中一并覆盖 | S2 计划内决定 |
-| `pawork-diagnostics` `experimental` 门控面 | metrics/bundle 两模块已随波 B 迁移但以 `experimental` feature 门控、默认不编译；激活条件：出现真实诊断导出/指标消费方（候选 S10 gui-server 指标 / diagnostic bundle 导出） | S10 |
-| `pawork-control-plane` OTel audit exporter | S11 波 A 已迁 `OtelAuditExporter` / `TracingAuditExporter` 类型，无 collector、未接宿主；波 D 生产 audit 走 JSONL。激活条件：出现真实审计导出消费者 | 其后 |
-| `pawork-provider-control` `account-control-v1` 生产环 | S11 波 A 已迁 account/routing/health/factory/reconciler（feature 默认开）；lease/binding/pool 始终可用。波 D demo 经 `AcquireRequest` + `InMemoryCredentialPool` 走租约路径，未接 account/routing/health/factory。激活条件：真实多账户 factory 装配 | 其后 |
-| `pawork-workflow` `process-exec` | S11 波 B 已迁五合一 reducer；默认纯状态机、不拉 `pawork-exec`。波 D `pawork tasks` 只消费状态机 + `tasks.json`。激活条件：后台任务需要真实 process 时再开 | 其后 |
-| `pawork-memory` 生产环 | S11 波 B 已迁 Provider 无关抽象 + Mock 召回；全仓无真实 `EmbeddingProvider`，未接 context/host。crate 默认可测（无 default-off feature）。激活条件：真实 embedder + 宿主置 `memory_available` | 其后 |
-| `pawork-review` Forge 实接 | S11 波 B 已迁 re-anchor / resolution / `ForgeAdapter` + Generic 占位；无 GitHub/GitLab 实现，未接会话 diff 流。激活条件：会话内评审接线；真实平台 adapter 另立 | 其后 |
-| `pawork-orchestration` teams / 真实双子 run_session | S11 波 D 已接 `pawork agents demo`（Supervisor spawn / cancel-tree / budget-gate；双子 AcquireRequest 指向 `glm-coding`/`glm-4.7` 与 `opencode-go`/`deepseek-v4-flash`）。未接 EventHub sink、`TeamEvent` CLI、两个真实 `run_session` 文件任务。激活条件：需要 teams 面或真实并行子 Agent 循环时另立 | 其后 |
-| 对外账户池网关模式（F6-B） | 近期不内建（F6-A 已确认）；以 `pawork-channels` 扩展 feature 长期评估，见 [docs/design.md](docs/design.md) §5 | S13 收口后按需 |
-| `plan/archive` M0–M8 正文缺失 | `plan/archive/README.md` 与历史登记引用九份 M0–M8 包级细则，但文件从未落仓；当前以 `docs/v1-migration-reference.md` §4.1 为唯一迁移词典，禁止臆造细则 | 后续文档维护任务；不阻塞 S8 代码收口 |
-| 全量门禁、三平台验证与发布如何重排 | 原 S12 Release Hardening 已移出当前排期；历史清单仍可从 [V1 迁移参考 §6.3](docs/v1-migration-reference.md#63-release-hardening-一次性清单原-m8) 取线索，但不得自动执行 | S13 收口后，只有用户明确决定发布时另立任务 |
-| S10 本机 GPUI 多窗口 | S10 GUI 增量曾列「本机多窗口」，实现只有一次 `open_window`；多进程多客户端已就绪。激活条件：产品定义每窗独立/共享会话策略后另立任务（S12-F37） | 其后 |
-| `pawork-workflow` goal 域 | S11 已迁状态机与测试，无宿主/CLI/GUI 消费面。激活条件：需要 Goal 分解面或与 Plan 联动的宿主装配时另立（S12-F40） | 其后 |
-| `pawork-workflow` automation 域 | S11 已迁状态机与测试，无宿主消费面。激活条件：需要自动化规则引擎接入 host/cli 时另立（S12-F40） | 其后 |
-| `pawork-workflow` monitor 域 | S11 已迁状态机与测试，无宿主消费面。激活条件：需要监控/告警面接入 host 时另立（S12-F40） | 其后 |
-| tool result 分级裁剪 | F24 已扩 `ToolResultContent.artifacts`；engine 热路径分级裁剪未接线（engine 不得依赖 blob store）。激活条件：超大 tool output 进 provider 前需要分级裁剪时另立（S12-F49） | 其后 |
-| `HunkStageService` GUI 暂存 | S11 已迁服务，无 GUI 消费面。激活条件：并入 K-04 Desktop Changes 面时消费（S12-F57）；不列入 §4.4 冻结候审 | 其后 |
+| ADR-038 库存与产品形态 | 单机优先 vs 多租户、remote/teams/三域/account-control/lifecycle/identity_schema/OTel exporter 去留——任务书 [plan/R0](plan/R0-inventory-decisions.md) 已给推荐决议,须用户确认后执行 | R0 波 0 |
+| ADR-039 目录布局 | 推荐扁平 `crates/` + `apps/`(19 库规模下功能域目录成为噪音);备选保留域目录 | R1 波 A |
+| ADR-040 分支模型 | 推荐原生 lineage(Fork 是已交付能力,删除属产品倒退);备选冻结线性 + 删 Fork | R6 波 0 |
+| ADR-041 沙箱信任模型 | macOS 白名单 profile 的兼容性代价(Darwin 25 实测)与 PTY 语义 | R7 波 0 |
+| rmcp 3.x | wire 兼容性未评估;若破坏 MCP golden 则锁 2.2 并登记 | R2 波 C |
+| directories 5→6 | 目录语义兼容(`dev.pawork.pawork` 布局)评估后升级或显式锁定 | R2 波 B |
+| gpui 升级跟踪 | `=0.2.2` 为当前最新(ADR-035);上游发新版后评估(影响 R8 组件 API) | 出现新版时 |
+| License 与 crates.io 占名 | 发布硬前置;不阻塞 R0–R9 | 发布任务前 |
+| `session_bindings` 孤儿表 | R0 归档 binding 后该表无读写方;迁移 append-only,留表 + 注释登记「预留」,不回滚 DDL | R0 执行时登记 |
+| PWB1 protected 消费者 | R5 将 ReasoningProtector 接到 ProtectedBlobStore(兑现 S6 注释承诺);若 R5 裁决删除则 PWB1 契约转冻结候审 | R5 波 C |
 
 ---
 
-## 5. 增量式特有风险与缓解
+## 5. 风险与缓解
 
 | 风险 | 缓解 |
 | --- | --- |
-| 最小实现偏离 V1 语义，后期迁移对不上 | [docs/design.md](docs/design.md) §3.2 契约表：激活即采用 V1 完整形状；engine 等「增量长出」的实现以 V1 测试为准绳逐步替换/并入 |
-| 「先简后改」侵蚀冻结契约 | golden 先于消费实现迁移；`--json` 等未定型输出显式标注 unstable |
-| 真实 API 波动导致验收不稳定 | 冒烟（人工）与自动化（Mock/golden）分离；真实 API 测试 env 门控、不进默认测试路径 |
-| env 注入 key 的过渡机制被长期留存 | S6 退出标准包含「仓库外 auth 文件为主、env 降级为 fallback 且行为有回归测试」 |
-| 早期包数量多、单包极薄带来的维护噪音 | 薄包只含终局布局中必然存在的包；不为增量新造任何临时包 |
-| 双线漂移（V1 继续演进） | V1 冻结为只收安全修复（沿用旧计划约定）；新功能一律在 V2 做 |
-| GUI 实现偏离 v3 定稿视觉/交互 | [design/README.md](design/README.md) 为验收基准；有意差异先更新设计文档再改代码；1440×1024 对照验收 + 1080×720 可用性验证 |
-| 低消耗默认模型能力不足，掩盖高级功能缺陷 | §1.1 矩阵只承担常规冒烟/回归与接通验证；高级功能由用户指定高级模型专项评估（§1.1 例外②），评估记录按 [docs/task-guide.md](docs/task-guide.md) §8 留档 |
-| 全项目审查范围过大，退化为无证据清单 | S12 固定拆为 CR-01～CR-09；每包列出实际覆盖与未覆盖路径，finding 必须带路径/符号/行号、置信度和后续验证建议；S12 内不边审边改 |
-| 整改引入回归或改动扩散 | 每项整改最小写入集 + 定向验证；安全红线回归与契约 golden 不推迟；波内写入集不重叠、串行点显式登记；同批随动项独立验收（[S13 任务书](plan/S13-s12-remediation.md)） |
+| 归档误删未来必需资产 | R0 执行前打 git tag `v2-final`;归档决议逐项过 ADR-038;domain 事件类型一律保留(重放红线) |
+| 大规模 git mv 丢失历史可读性 | R1 目录移动与内容改动分开提交;`git log --follow` 验证抽查;合并波内「先 mv 后改」两步走 |
+| 合并引入循环依赖 | R1 每波收口跑 `cargo tree` 断言(已知唯一风险点:policy 不得卷入含 tools 的包);desktop deny-list 断言随迁 |
+| 冻结契约被「顺手」破坏 | golden 先行(信封/DDL/PWB1/帧/headless);serde 形状 diff 审查;R6/R7 之外不允许 schema 变更 |
+| feature 传染 | storage 的 session/blob/protected 分 feature;providers 六通道 feature 保留;合并波逐包核对 `cargo tree -p pawork` 闭包不膨胀 |
+| 编译粒度变粗(providers/storage 单体) | 记入 ADR-039 决策代价;增量构建实测对比记录 |
+| 重构期行为回退 | 每波收口复跑该域定向测试;R9 全量复跑安全红线/golden/协议三类;真实冒烟按 §1.1 矩阵 |
+| host 拆解(R4)牵动所有通道 | R3 先建协议 golden + registry,R4 在契约测试护航下拆;波内单一 owner |
+| 沙箱重设计三平台行为差异 | R7 独立 ADR + 平台探测回归;fail-closed 语义不放宽(ADR-031 可观测回退保持) |
+| GUI 视觉漂移 | hover/active 等有意改动先更新 [design/README.md](design/README.md) 再实现;R8 波 E 按 1440×1024 基准人工对照 |
 
 ---
 
 ## 6. 状态回写约定
 
-- **阶段任务**：阶段收尾时更新 §2 总览表状态列 + 对应 `plan/S*.md` 冒烟清单与退出标准打勾；experimental / 延期项在 §4 登记激活条件。开发期不做逐任务文档同步。
-- **阶段外任务**：开启 / 完成时更新 §3.2 状态列；完成后移入 §3.1 并登记产出链接。
-- **S12 finding**：每个审查包先写报告；Confirmed finding 以独立 `S12-Fxx` 任务追加到 §3.2，需决策项进 §4，候选能力进 §3.3。S12 只登记，不实现、不测试、不发布。
-- **S13 整改**：已收口。57 行压缩为 [§3.1](#31-已完成) 归档记录并链接任务书与 [docs/reviews/s12/](docs/reviews/s12/)；未收口项与决策延期见 §4 / K-01～K-10。
-- **候选转正**：候选功能纳入排期时按 §3.3 流程登记。
-- **模型评估记录**：注明所用通道与模型；默认应属 §1.1 矩阵，例外须写明属于接通验证还是用户指定的高级模型评估。
-- S0–S11 的完整收尾清单（测试、冒烟、评估记录、报告格式）见 [docs/task-guide.md](docs/task-guide.md) §8；S12 例外以 [审查任务书](plan/S12-project-code-review.md) 的退出标准为准。
+- **阶段任务**:阶段收尾更新 §2 状态列 + 对应 `plan/R*.md` 退出标准打勾;experimental/延期项在 §4 或 §3.3 登记激活条件。
+- **阶段外任务**:开启/完成时更新 §3.2/§3.3;完成后移入 §3.1 并登记产出链接。
+- **ADR**:R0/R1/R6/R7 的 ADR 编号续接(ADR-038 起),落 [docs/adr/](docs/adr/);状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。
+- **候选转正**:按 §3.3 流程登记。
+- **模型评估记录**:注明通道与模型;默认属 §1.1 矩阵,例外须写明理由。
+- 完整收尾清单(测试、冒烟、报告格式)见 [docs/task-guide.md](docs/task-guide.md) §8。

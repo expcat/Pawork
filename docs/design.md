@@ -1,8 +1,10 @@
-# Pawork V2 设计文档
+# Pawork 设计文档
 
-> 本文档是 V2 的**设计事实源**：包布局与激活映射、冻结契约与「追加不重写」三道保险、各阶段功能设计及其到参照项目的映射、已确认扩展功能族与候选功能、发布策略。
+> 本文档是**设计事实源**：包布局与激活映射、冻结契约与「追加不重写」三道保险、各阶段功能设计及其到参照项目的映射、已确认扩展功能族与候选功能、发布策略。
 >
-> 关联文档：[../ROADMAP.md](../ROADMAP.md)（任务总索引）· [../plan/](../plan/)（逐阶段任务书）· [gui-design.md](gui-design.md)（Desktop GUI 设计）· [references.md](references.md)（参照项目手册）· [task-guide.md](task-guide.md)（任务实现规范）· [v1-migration-reference.md](v1-migration-reference.md)（V1 Review 与迁移词典全文）。
+> **V3 状态说明（2026-08-18）**：V2（S0–S13）已收官（总结见 [v2-summary.md](v2-summary.md)），当前执行 V3 重构线 R0–R9（[../ROADMAP.md](../ROADMAP.md)）。本文 §2 的包布局与 §4 的阶段映射描述 **V2 交付实态**，仍是当前代码的事实源；V3 目标布局（39→21）见 [../plan/R1-package-consolidation.md](../plan/R1-package-consolidation.md)，R1 收口后 §2 重写。§3 冻结契约在 V3 期间继续有效（R6/R7 的版本化演进除外）。原 S0–S13 阶段任务书已删除，历史见 [v2-summary.md](v2-summary.md) 与 git 历史。
+>
+> 关联文档：[../ROADMAP.md](../ROADMAP.md)（任务总索引）· [../v3_plan.md](../v3_plan.md)（任务开启编排）· [../plan/](../plan/)（阶段任务书 R0–R9）· [gui-design.md](gui-design.md)（Desktop GUI 设计）· [references.md](references.md)（参照项目手册）· [task-guide.md](task-guide.md)（任务实现规范）· [v2-summary.md](v2-summary.md)（V2 归档总结）· [v1-migration-reference.md](v1-migration-reference.md)（V1 Review 与迁移词典全文）。
 
 ---
 
@@ -109,9 +111,9 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 ## 4. 各阶段功能设计与参照项目映射
 
-> 每阶段列出**用户可见功能**（细粒度任务、涉及包与验收见对应 [../plan/](../plan/) 任务书），「参照」列给出该功能在参照项目中的对应实现与资料入口——项目背景见 [references.md](references.md)，**参照项目 → 功能规划**的反向分类见同文 §6，机制细节见 [research/](research/) 调研文档（记作 research §N，指 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md)）。V1 资产来源统一见 [v1-migration-reference.md](v1-migration-reference.md) §4.1，不在表内重复。
+> 本节按 V2 阶段（S0–S13，均已交付）记录**用户可见功能**与参照映射，是「功能 ↔ 参照项目」的持续事实源；原逐阶段任务书已删除，交付细节见 [v2-summary.md](v2-summary.md) §2。「参照」列给出该功能在参照项目中的对应实现与资料入口——项目背景见 [references.md](references.md)，**参照项目 → 功能规划**的反向分类见同文 §6，机制细节见 [research/](research/) 调研文档（记作 research §N，指 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md)）。V1 资产来源统一见 [v1-migration-reference.md](v1-migration-reference.md) §4.1，不在表内重复。
 
-### S0 最小可对话 CLI（[任务书](../plan/S0-minimal-chat.md)）
+### S0 最小可对话 CLI
 
 | 功能 | 参照 |
 | --- | --- |
@@ -121,7 +123,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | openai-compatible 适配器（可配 `base_url`） | GLM Coding Plan / OpenCode Go / 自建网关（opencodex、[Codex Router](https://github.com/duolahypercho/codex-router) 等）均为此形态；通道端点见 [task-guide.md](task-guide.md) §5 |
 | 可读错误呈现（401/429/超时/断网） | OpenCode ≤5 次重试、遵循 Retry-After（research §2.1）；Pi agent 层退避（research §2.2）。S0 只做呈现；自动冷却/换号是 S11 F3 的范畴 |
 
-### S1 会话持久化与恢复（[任务书](../plan/S1-sessions.md)）
+### S1 会话持久化与恢复
 
 | 功能 | 参照 |
 | --- | --- |
@@ -129,7 +131,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | `pawork sessions list/show`、`--resume` 续聊 | [Codex](https://developers.openai.com/codex) sessions/resume；OpenCode/Pi 会话恢复；DeepSeek Harness 从同一事件流 resume |
 | `pawork run`（非交互单次）+ `--json` JSONL 事件流（unstable） | Codex exec / headless 输出形态；DeepSeek Harness `dsh-headless` + JSONL session；S10 对齐正式 headless 协议；S7 GUI 不走这条输出 |
 
-### S2 Agent Loop 与只读工具（[任务书](../plan/S2-tool-loop.md)）
+### S2 Agent Loop 与只读工具
 
 | 功能 | 参照 |
 | --- | --- |
@@ -140,7 +142,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | MockProvider 确定性测试 | 工程实践（testkit） |
 | **已确认待并入**：F5 canonical 缓存注解占位（§5 G5，契约见 §3.2 末行） | — |
 
-### S3 写入工具与审批（[任务书](../plan/S3-safe-edits.md)）
+### S3 写入工具与审批
 
 | 功能 | 参照 |
 | --- | --- |
@@ -149,7 +151,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 未信任 workspace 强制询问 | Pi Project Trust（[earendil-works/pi](https://github.com/earendil-works/pi)） |
 | 路径越界/symlink/TOCTOU 红线 + 提示注入回归 | V1 安全红线资产（policy 整包随迁） |
 
-### S4 命令执行与沙箱（[任务书](../plan/S4-exec-sandbox.md)）
+### S4 命令执行与沙箱
 
 | 功能 | 参照 |
 | --- | --- |
@@ -158,7 +160,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 取消 = 清理整棵进程树 | V1 `cancel.rs` + 进程树管理（Job Object/进程组） |
 | 输出截断 + 完整输出落工件 | 上下文预算纪律（S5 铺垫、S8 artifact 接管）；对照 research §5.3 前缀稳定技巧 |
 
-### S5 上下文预算与用量（[任务书](../plan/S5-context-usage.md)）
+### S5 上下文预算与用量
 
 | 功能 | 参照 |
 | --- | --- |
@@ -167,7 +169,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 模型 registry（context window / 定价 / 别名） | [models.dev](https://models.dev)（OpenCode 路线）；Pi `models-store.json` + `models.json` 扩展（research §2.2） |
 | **已确认待并入**：F5 前缀稳定性分段产出、缓存用量并入统计（§5 G5） | — |
 
-### S6 多 Provider 与认证（[任务书](../plan/S6-providers-auth.md)）
+### S6 多 Provider 与认证
 
 | 功能 | 参照 |
 | --- | --- |
@@ -179,7 +181,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | Z.AI GLM Coding Plan 端点预设 | 国际站 Coding Plan 专属端点 `https://api.z.ai/api/coding/paas/v4`；中国区旧测试通道继续显式配置，不作为首发默认值 |
 | **已确认待并入**：plan 凭证 kind（D2）、adapter 缓存映射 + registry 能力表、F2-B 被动配额信号 per-adapter 登记、首个缓存命中测试 ≥95%（§5） | — |
 
-### S7 最小 Agent GUI（[任务书](../plan/S7-gui-agent.md) · [设计](gui-design.md)）
+### S7 最小 Agent GUI（[设计](gui-design.md)）
 
 | 功能 | 参照 |
 | --- | --- |
@@ -187,7 +189,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | `pawork gui serve` + GPUI Desktop：会话 / Timeline / Composer / 取消 / 模型切换 / 时间线内审批 | 独立进程 + GUI Connection Protocol（ADR-022/023/035）；S7 只做单客户端本机 |
 | 协议帧完整形状、只消费对话子集 | V1 gui-protocol（ADR-036）；`--json` 仍 unstable，正式 headless 收口在 S10 |
 
-### S8 Git、Diff 与 Checkpoint（[任务书](../plan/S8-git-checkpoint.md)）
+### S8 Git、Diff 与 Checkpoint
 
 | 功能 | 参照 |
 | --- | --- |
@@ -196,7 +198,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | git 状态感知（status/branch/worktree）+ 注入防护 | V1 git-service（`validate_position_arg` 等防御随迁） |
 | 审批 UX 升级为 diff 预览 | S3 预留升级点的兑现 |
 
-### S9 MCP、资源与兼容导入（[任务书](../plan/S9-mcp-resources.md)）
+### S9 MCP、资源与兼容导入
 
 | 功能 | 参照 |
 | --- | --- |
@@ -207,7 +209,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | config 完整六层 + Profile | V1 config-service 层级合并引擎 |
 | **已确认待并入**：G6 账户/端点导入源、F4 Agent Profile 绑定字段随 profiles 契约定型（§5） | — |
 
-### S10 服务化与客户端补齐（[任务书](../plan/S10-serve-clients.md)）
+### S10 服务化与客户端补齐
 
 | 功能 | 参照 |
 | --- | --- |
@@ -218,7 +220,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | `pawork service install/start/stop` + 运维子命令（status/watch/shutdown/doctor） | V1 六运行模式（外部无直接对标） |
 | PTY 交互式命令 + GUI Terminal | V1 pty-service（PTY 重连语义）；DeepSeek Harness `tool-terminal` + 持久 bash |
 
-### S11 工作流、多 Agent 与控制面（[任务书](../plan/S11-workflow-control.md)）
+### S11 工作流、多 Agent 与控制面
 
 | 功能 | 参照 |
 | --- | --- |
@@ -231,11 +233,11 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 评审（re-anchor/resolution）与记忆抽象 | V1 review-engine / memory-service（memory 无 EmbeddingProvider 则 experimental 登记） |
 | **已确认待并入**：F1–F4 全部 + 命中测试补全场景（§5） | — |
 
-### S12 全项目 Code Review 与整改拆分（[任务书](../plan/S12-project-code-review.md)）
+### S12 全项目 Code Review 与整改拆分
 
 | 功能 | 参照 |
 | --- | --- |
-| 全包与跨包接口只读审查：安全、Bug、持久化/并发、性能、维护性、需求追踪与假完成 | 工程审查，无外部功能对标；按 [S12 任务书](../plan/S12-project-code-review.md) 的 CR-01～CR-09 独立产出 finding，Confirmed 项逐条进入 ROADMAP §3.2；本阶段不实现、不测试、不发布 |
+| 全包与跨包接口只读审查：安全、Bug、持久化/并发、性能、维护性、需求追踪与假完成 | 工程审查，无外部功能对标；按 CR-01～CR-09 独立产出 finding（报告存 [reviews/s12/](reviews/s12/)），Confirmed 项经 S13 三波整改收口（见 [v2-summary.md](v2-summary.md) §5–§6）；该阶段不实现、不测试、不发布 |
 | **已确认待并入**：缓存命中 ≥99% 纳入 Release Gate（§5；[research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.3） | — |
 
 ---

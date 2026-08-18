@@ -6,7 +6,7 @@
 
 ## 背景
 
-S12 全项目 Code Review 将五条契约 / 红线级 finding 登记为须先拍板再改代码（[plan/S13-s12-remediation.md](../../plan/S13-s12-remediation.md)）。用户于 2026-08-18 确认下列五支。信封 `schema_version = 1`、`UNIQUE(session_id, sequence)`、append-only 事实表不在本 ADR 范围内（F09 已钉死）。
+S12 全项目 Code Review 将五条契约 / 红线级 finding 登记为须先拍板再改代码（原 S13 任务书已随 V2 归档删除，整改原委见 [v2-summary.md](../v2-summary.md) §5）。用户于 2026-08-18 确认下列五支。信封 `schema_version = 1`、`UNIQUE(session_id, sequence)`、append-only 事实表不在本 ADR 范围内（F09 已钉死）。
 
 ## 决策
 
@@ -28,7 +28,7 @@ S12 全项目 Code Review 将五条契约 / 红线级 finding 登记为须先拍
 源码已按 [ADR-031](../../../Pawork_v1/docs/adr/ADR-031-sandbox-backend-architecture.md)（归档）在硬隔离不可用时回退 `NativeRestricted`，禁止静默降级。本波：
 
 - **不**改选择器为拒跑（Windows 无硬隔离，且 `--sandbox off` 不存在）。
-- 把该口径写回 [docs/design.md](../design.md) 与 [plan/S4-exec-sandbox.md](../../plan/S4-exec-sandbox.md) 第 24 行。
+- 把该口径写回 [docs/design.md](../design.md) 与原 S4 任务书第 24 行（该任务书已随 V2 归档删除；回写当时已完成）。
 - CLI / GUI 必须把 fallback / isolation 展示给用户，不能只留工具 metadata。
 
 ### F24 — 扩 `ToolResultContent.artifacts`
@@ -52,5 +52,5 @@ S12 全项目 Code Review 将五条契约 / 红线级 finding 登记为须先拍
 
 ## 相关
 
-- [S13 任务书](../../plan/S13-s12-remediation.md) · [CR-01](../reviews/s12/CR-01-manifests-layout.md) · [CR-03](../reviews/s12/CR-03-exec-cli.md) · [CR-06](../reviews/s12/CR-06-engine-workflow.md)
-- [ADR-016](../../../Pawork_v1/docs/adr/ADR-016-events-must-be-replayable.md)（归档）· [ADR-018](../../../Pawork_v1/docs/adr/ADR-018-large-content-via-blobs.md)（归档）· [ADR-031](../../../Pawork_v1/docs/adr/ADR-031-sandbox-backend-architecture.md)（归档）· [ADR-033](../../../Pawork_v1/docs/adr/ADR-033-control-plane-separation.md)（归档）
+- S13 整改总结（[v2-summary.md](../v2-summary.md) §5，原任务书已删除）· [CR-01](../reviews/s12/CR-01-manifests-layout.md) · [CR-03](../reviews/s12/CR-03-exec-cli.md) · [CR-06](../reviews/s12/CR-06-engine-workflow.md)
+- [ADR-016](../../../Pawork_v1/docs/adr/ADR-016-core-event-persist-replay.md)（归档）· [ADR-018](../../../Pawork_v1/docs/adr/ADR-018-large-payload-artifact-id.md)（归档）· [ADR-031](../../../Pawork_v1/docs/adr/ADR-031-sandbox-backend-architecture.md)（归档）· [ADR-033](../../../Pawork_v1/docs/adr/ADR-033-control-plane-separation.md)（归档）
