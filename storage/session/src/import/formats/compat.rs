@@ -798,6 +798,7 @@ pub(crate) fn map_to_events(
                             content: vec![ContentPart::Text(TextContent { text: content })],
                             is_error,
                             metadata: serde_json::Value::Null,
+                            artifacts: Vec::new(),
                         },
                     },
                 ));

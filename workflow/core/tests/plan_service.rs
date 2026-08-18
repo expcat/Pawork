@@ -3,17 +3,17 @@
 
 use pawork_domain::{
     CheckpointId, PlanCommentAnchor, PlanEvent, PlanId, PlanReviewStatus, PlanStepId,
-    PlanStepStatus, PlanVersionId,
+    PlanStepSnapshot, PlanStepStatus, PlanVersionId,
 };
 use pawork_domain::AgentEvent;
 use pawork_workflow::plan::{apply, replay, PlanError, PlanService, PlanState};
 
 fn step_id_at(event: &PlanEvent, idx: usize) -> PlanStepId {
     match event {
-        PlanEvent::Created { steps, .. } | PlanEvent::Replaced { steps, .. } => {
-            steps[idx].step_id.clone()
-        }
-        _ => panic!("expected Created/Replaced event"),
+        PlanEvent::Created { steps, .. }
+        | PlanEvent::Replaced { steps, .. }
+        | PlanEvent::Revised { steps, .. } => steps[idx].step_id.clone(),
+        _ => panic!("expected Created/Replaced/Revised event"),
     }
 }
 
@@ -311,15 +311,24 @@ fn review_revise_approve_flow_with_checkpoint() {
         PlanReviewStatus::ChangesRequested
     );
 
-    // 修订：新版本带 parent_version，旧版本保留在历史中。
+    // 修订：新版本带 parent_version，旧版本保留在历史中；内容写入事件。
     let v2 = PlanVersionId::new("planver_99");
-    svc.revise(&v2, &v1).unwrap();
+    let revised_steps = vec![PlanStepSnapshot {
+        step_id: PlanStepId::new("step_rev"),
+        text: "改计划".into(),
+        status: PlanStepStatus::Pending,
+    }];
+    svc.revise(&v2, &v1, "revised title", revised_steps.clone())
+        .unwrap();
     let snap = svc.plan_snapshot().unwrap();
     assert_eq!(snap.version, v2);
+    assert_eq!(snap.title, "revised title");
+    assert_eq!(snap.steps, revised_steps);
     assert_eq!(snap.review_status, PlanReviewStatus::Draft);
     let history = svc.version_history();
     assert_eq!(history.len(), 2);
     assert_eq!(history[1].parent_version.as_ref(), Some(&v1));
+    assert_eq!(history[1].title, "revised title");
 
     // 重新提交评审 → 审批（带 checkpoint）。
     svc.request_review(&v2).unwrap();
@@ -355,7 +364,7 @@ fn approval_gate_closed_until_approved() {
     assert!(!svc.is_approved_for_execution(&plan_id, &v1)); // InReview
     svc.request_changes(&v1).unwrap();
     assert!(!svc.is_approved_for_execution(&plan_id, &v1)); // ChangesRequested
-    svc.revise(&v2, &v1).unwrap();
+    svc.revise(&v2, &v1, "revised", Vec::new()).unwrap();
     svc.request_review(&v2).unwrap();
     svc.reject(&plan_id, &v2, "方向不对").unwrap();
     assert!(!svc.is_approved_for_execution(&plan_id, &v2)); // Rejected（终态）
@@ -399,10 +408,10 @@ fn illegal_review_transitions_rejected() {
 
     // ChangesRequested → 修订（Draft）合法；但 InReview 状态下不能直接修订。
     let v2 = PlanVersionId::new("planver_98");
-    svc.revise(&v2, &v1).unwrap();
+    svc.revise(&v2, &v1, "revised", Vec::new()).unwrap();
     svc.request_review(&v2).unwrap();
     assert!(matches!(
-        svc.revise(&PlanVersionId::new("planver_97"), &v2),
+        svc.revise(&PlanVersionId::new("planver_97"), &v2, "x", Vec::new()),
         Err(PlanError::NotChangesRequested { .. })
     ));
 
@@ -451,7 +460,7 @@ fn approve_or_reject_directly_from_review() {
         Err(PlanError::IllegalReviewTransition { .. })
     ));
     assert!(matches!(
-        svc.revise(&PlanVersionId::new("planver_70"), &v1),
+        svc.revise(&PlanVersionId::new("planver_70"), &v1, "x", Vec::new()),
         Err(PlanError::NotChangesRequested { .. })
     ));
 }
@@ -519,13 +528,15 @@ fn revise_validates_version_chain() {
     assert!(matches!(
         svc.revise(
             &PlanVersionId::new("planver_60"),
-            &PlanVersionId::new("planver_59")
+            &PlanVersionId::new("planver_59"),
+            "x",
+            Vec::new(),
         ),
         Err(PlanError::VersionMismatch { .. })
     ));
     // 新版本必须不同于 parent。
     assert!(matches!(
-        svc.revise(&v1, &v1),
+        svc.revise(&v1, &v1, "x", Vec::new()),
         Err(PlanError::SameVersion(_))
     ));
 
@@ -534,7 +545,7 @@ fn revise_validates_version_chain() {
     svc2.create_plan("p", vec!["a".into()]).unwrap();
     let v1 = svc2.plan_snapshot().unwrap().version.clone();
     assert!(matches!(
-        svc2.revise(&PlanVersionId::new("planver_60"), &v1),
+        svc2.revise(&PlanVersionId::new("planver_60"), &v1, "x", Vec::new()),
         Err(PlanError::NotChangesRequested { .. })
     ));
 
@@ -543,10 +554,50 @@ fn revise_validates_version_chain() {
     assert!(matches!(
         svc3.revise(
             &PlanVersionId::new("planver_60"),
-            &PlanVersionId::new("planver_1")
+            &PlanVersionId::new("planver_1"),
+            "x",
+            Vec::new(),
         ),
         Err(PlanError::NotCreated)
     ));
+}
+
+#[test]
+fn revise_replay_preserves_content_and_rejects_duplicate_version() {
+    let svc = PlanService::new();
+    let mut events = vec![svc.create_plan("p", vec!["a".into()]).unwrap()];
+    let v1 = svc.plan_snapshot().unwrap().version.clone();
+    events.push(svc.request_review(&v1).unwrap());
+    events.push(svc.request_changes(&v1).unwrap());
+    let v2 = PlanVersionId::new("planver_80");
+    let steps = vec![PlanStepSnapshot {
+        step_id: PlanStepId::new("step_new"),
+        text: "新步骤".into(),
+        status: PlanStepStatus::Pending,
+    }];
+    let revised = svc.revise(&v2, &v1, "new title", steps.clone()).unwrap();
+    assert!(matches!(
+        &revised,
+        PlanEvent::Revised {
+            title,
+            steps: ev_steps,
+            ..
+        } if title == "new title" && ev_steps == &steps
+    ));
+    events.push(revised);
+
+    events.push(svc.request_review(&v2).unwrap());
+    events.push(svc.request_changes(&v2).unwrap());
+    assert!(matches!(
+        svc.revise(&v1, &v2, "dup", Vec::new()),
+        Err(PlanError::DuplicateVersion(_))
+    ));
+
+    let replayed = PlanService::from_events(&events);
+    let snap = replayed.plan_snapshot().unwrap();
+    assert_eq!(snap.title, "new title");
+    assert_eq!(snap.steps, steps);
+    assert_eq!(snap.version, v2);
 }
 
 #[test]
@@ -563,7 +614,10 @@ fn review_command_errors() {
         svc.request_changes(&vid),
         Err(PlanError::NotCreated)
     ));
-    assert!(matches!(svc.revise(&vid, &vid), Err(PlanError::NotCreated)));
+    assert!(matches!(
+        svc.revise(&vid, &vid, "x", Vec::new()),
+        Err(PlanError::NotCreated)
+    ));
     assert!(matches!(
         svc.approve(&pid, &vid, None),
         Err(PlanError::NotCreated)
@@ -620,7 +674,7 @@ fn review_flow_replays_identically() {
     events.push(svc.request_review(&v1).unwrap());
     events.push(svc.request_changes(&v1).unwrap());
     let v2 = PlanVersionId::new("planver_99");
-    events.push(svc.revise(&v2, &v1).unwrap());
+    events.push(svc.revise(&v2, &v1, "revised", Vec::new()).unwrap());
     events.push(svc.request_review(&v2).unwrap());
     let anchor = PlanCommentAnchor {
         step_id: svc.plan_snapshot().unwrap().steps[0].step_id.clone(),
@@ -669,7 +723,9 @@ fn review_events_round_trip_through_agent_event() {
     let v1 = svc.plan_snapshot().unwrap().version.clone();
     svc.request_review(&v1).unwrap();
     svc.request_changes(&v1).unwrap();
-    let revised = svc.revise(&PlanVersionId::new("planver_99"), &v1).unwrap();
+    let revised = svc
+        .revise(&PlanVersionId::new("planver_99"), &v1, "revised-99", Vec::new())
+        .unwrap();
     svc.request_review(&PlanVersionId::new("planver_99"))
         .unwrap();
     let approved = svc

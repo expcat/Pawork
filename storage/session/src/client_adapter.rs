@@ -1,8 +1,8 @@
 use async_trait::async_trait;
-use pawork_domain::{ConnectionId, SessionId, Timestamp};
-use pawork_protocol::adapter::{
-    AdapterError, CapabilitySnapshot, ClientProtocol, ClientSessionId, ClientSessionRecord,
-    ClientSessionState, RegistryWriteOutcome, SessionRegistryStore,
+use pawork_domain::{
+    CapabilitySnapshot, ClientProtocol, ClientSessionId, ClientSessionRecord, ClientSessionState,
+    ConnectionId, RegistryWriteOutcome, SessionId, SessionRegistryError, SessionRegistryStore,
+    Timestamp,
 };
 use rusqlite::params;
 
@@ -25,11 +25,11 @@ impl SqliteClientSessionRegistryStore {
 
 #[async_trait]
 impl SessionRegistryStore for SqliteClientSessionRegistryStore {
-    async fn load_all(&self) -> Result<Vec<ClientSessionRecord>, AdapterError> {
+    async fn load_all(&self) -> Result<Vec<ClientSessionRecord>, SessionRegistryError> {
         self.store
             .database()
             .call(
-                |connection| -> Result<Vec<ClientSessionRecord>, AdapterError> {
+                |connection| -> Result<Vec<ClientSessionRecord>, SessionRegistryError> {
                     let mut statement = connection
                         .prepare(
                             "SELECT client_session_id, schema_version, protocol, core_session_id, \
@@ -58,18 +58,18 @@ impl SessionRegistryStore for SqliteClientSessionRegistryStore {
                 },
             )
             .await
-            .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?
+            .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?
     }
 
     async fn insert(
         &self,
         record: &ClientSessionRecord,
-    ) -> Result<RegistryWriteOutcome, AdapterError> {
+    ) -> Result<RegistryWriteOutcome, SessionRegistryError> {
         let record = record.clone();
         self.store
             .database()
             .call(
-                move |connection| -> Result<RegistryWriteOutcome, AdapterError> {
+                move |connection| -> Result<RegistryWriteOutcome, SessionRegistryError> {
                     let schema_version =
                         stored_i64(u64::from(record.schema_version), "schema_version")?;
                     let ownership_epoch = stored_i64(record.ownership_epoch, "ownership_epoch")?;
@@ -77,9 +77,9 @@ impl SessionRegistryStore for SqliteClientSessionRegistryStore {
                     let updated_at_ms =
                         stored_i64(record.updated_at.as_unix_millis(), "updated_at")?;
                     let state = serde_json::to_string(&record.state)
-                        .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?;
+                        .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?;
                     let capability_json = serde_json::to_string(&record.capabilities)
-                        .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?;
+                        .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?;
                     let changed = connection
                         .execute(
                             "INSERT INTO client_adapter_sessions \
@@ -110,7 +110,7 @@ impl SessionRegistryStore for SqliteClientSessionRegistryStore {
                 },
             )
             .await
-            .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?
+            .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?
     }
 
     async fn compare_and_swap(
@@ -118,12 +118,12 @@ impl SessionRegistryStore for SqliteClientSessionRegistryStore {
         expected_epoch: u64,
         expected_revision: u64,
         record: &ClientSessionRecord,
-    ) -> Result<RegistryWriteOutcome, AdapterError> {
+    ) -> Result<RegistryWriteOutcome, SessionRegistryError> {
         let record = record.clone();
         self.store
             .database()
             .call(
-                move |connection| -> Result<RegistryWriteOutcome, AdapterError> {
+                move |connection| -> Result<RegistryWriteOutcome, SessionRegistryError> {
                     let schema_version =
                         stored_i64(u64::from(record.schema_version), "schema_version")?;
                     let ownership_epoch = stored_i64(record.ownership_epoch, "ownership_epoch")?;
@@ -133,9 +133,9 @@ impl SessionRegistryStore for SqliteClientSessionRegistryStore {
                     let updated_at_ms =
                         stored_i64(record.updated_at.as_unix_millis(), "updated_at")?;
                     let state = serde_json::to_string(&record.state)
-                        .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?;
+                        .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?;
                     let capability_json = serde_json::to_string(&record.capabilities)
-                        .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?;
+                        .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?;
                     let changed = connection
                         .execute(
                             "UPDATE client_adapter_sessions SET schema_version=?2, protocol=?3, \
@@ -162,7 +162,7 @@ impl SessionRegistryStore for SqliteClientSessionRegistryStore {
                 },
             )
             .await
-            .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?
+            .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?
     }
 
     async fn remove_if_owner(
@@ -170,12 +170,12 @@ impl SessionRegistryStore for SqliteClientSessionRegistryStore {
         client_session_id: &ClientSessionId,
         expected_epoch: u64,
         expected_revision: u64,
-    ) -> Result<RegistryWriteOutcome, AdapterError> {
+    ) -> Result<RegistryWriteOutcome, SessionRegistryError> {
         let client_session_id = client_session_id.clone();
         self.store
             .database()
             .call(
-                move |connection| -> Result<RegistryWriteOutcome, AdapterError> {
+                move |connection| -> Result<RegistryWriteOutcome, SessionRegistryError> {
                     let expected_epoch = stored_i64(expected_epoch, "expected_epoch")?;
                     let expected_revision = stored_i64(expected_revision, "expected_revision")?;
                     let changed = connection
@@ -189,7 +189,7 @@ impl SessionRegistryStore for SqliteClientSessionRegistryStore {
                 },
             )
             .await
-            .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?
+            .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?
     }
 }
 
@@ -197,7 +197,7 @@ fn write_outcome(
     connection: &rusqlite::Connection,
     id: &ClientSessionId,
     changed: usize,
-) -> Result<RegistryWriteOutcome, AdapterError> {
+) -> Result<RegistryWriteOutcome, SessionRegistryError> {
     if changed == 1 {
         Ok(RegistryWriteOutcome::Applied)
     } else {
@@ -210,7 +210,7 @@ fn write_outcome(
 fn load_optional(
     connection: &rusqlite::Connection,
     id: &ClientSessionId,
-) -> Result<Option<ClientSessionRecord>, AdapterError> {
+) -> Result<Option<ClientSessionRecord>, SessionRegistryError> {
     use rusqlite::OptionalExtension;
     connection
         .query_row(
@@ -242,9 +242,9 @@ fn load_optional(
 fn load_one(
     connection: &rusqlite::Connection,
     id: &ClientSessionId,
-) -> Result<ClientSessionRecord, AdapterError> {
+) -> Result<ClientSessionRecord, SessionRegistryError> {
     load_optional(connection, id)?
-        .ok_or_else(|| AdapterError::HostUnavailable("conflicting registry row disappeared".into()))
+        .ok_or_else(|| SessionRegistryError::Unavailable("conflicting registry row disappeared".into()))
 }
 
 fn decode_record(
@@ -260,7 +260,7 @@ fn decode_record(
         String,
         i64,
     ),
-) -> Result<ClientSessionRecord, AdapterError> {
+) -> Result<ClientSessionRecord, SessionRegistryError> {
     let (
         client_session_id,
         schema,
@@ -282,38 +282,37 @@ fn decode_record(
         ownership_epoch: stored_u64(epoch, "ownership_epoch")?,
         revision: stored_u64(revision, "revision")?,
         state: serde_json::from_str::<ClientSessionState>(&state)
-            .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?,
+            .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?,
         capabilities: serde_json::from_str::<CapabilitySnapshot>(&capabilities)
-            .map_err(|error| AdapterError::HostUnavailable(error.to_string()))?,
+            .map_err(|error| SessionRegistryError::Unavailable(error.to_string()))?,
         updated_at: Timestamp::from_unix_millis(stored_u64(updated, "updated_at")?),
     })
 }
 
-fn stored_i64(value: u64, field: &str) -> Result<i64, AdapterError> {
+fn stored_i64(value: u64, field: &str) -> Result<i64, SessionRegistryError> {
     i64::try_from(value)
-        .map_err(|_| AdapterError::HostUnavailable(format!("{field} exceeds SQLite range")))
+        .map_err(|_| SessionRegistryError::Unavailable(format!("{field} exceeds SQLite range")))
 }
 
-fn stored_u64(value: i64, field: &str) -> Result<u64, AdapterError> {
+fn stored_u64(value: i64, field: &str) -> Result<u64, SessionRegistryError> {
     u64::try_from(value)
-        .map_err(|_| AdapterError::HostUnavailable(format!("invalid negative {field}")))
+        .map_err(|_| SessionRegistryError::Unavailable(format!("invalid negative {field}")))
 }
 
-fn stored_u32(value: i64, field: &str) -> Result<u32, AdapterError> {
-    u32::try_from(value).map_err(|_| AdapterError::HostUnavailable(format!("invalid {field}")))
+fn stored_u32(value: i64, field: &str) -> Result<u32, SessionRegistryError> {
+    u32::try_from(value).map_err(|_| SessionRegistryError::Unavailable(format!("invalid {field}")))
 }
 
-fn database_error(error: rusqlite::Error) -> AdapterError {
-    AdapterError::HostUnavailable(error.to_string())
+fn database_error(error: rusqlite::Error) -> SessionRegistryError {
+    SessionRegistryError::Unavailable(error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use pawork_protocol::adapter::{
-        ClientCapability, SessionRegistry, CLIENT_ADAPTER_SCHEMA_VERSION,
-    };
+    use pawork_domain::{ClientCapability, CLIENT_ADAPTER_SCHEMA_VERSION};
+    use pawork_protocol::adapter::{AdapterError, SessionRegistry};
     use rusqlite::OptionalExtension;
     use tempfile::tempdir;
 

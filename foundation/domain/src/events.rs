@@ -196,9 +196,14 @@ pub enum AgentEvent {
     RunCancelled {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        /// 失败/取消前已观测到的累计用量；缺省兼容旧行。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<TokenUsage>,
     },
     RunFailed {
         error: ErrorContext,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<TokenUsage>,
     },
     /// Phase 16 P16-1/P16-2 Plan Mode 事件（只读计划与评审/审批 gate）。
     Plan(PlanEvent),
@@ -318,7 +323,13 @@ mod tests {
                 trigger_message_id: MessageId::from("message-1"),
             },
         );
-        let next = envelope(42, AgentEvent::RunCancelled { reason: None });
+        let next = envelope(
+            42,
+            AgentEvent::RunCancelled {
+                reason: None,
+                usage: None,
+            },
+        );
         let skipped = envelope(
             44,
             AgentEvent::RunFailed {
@@ -329,6 +340,7 @@ mod tests {
                     retry_after_ms: None,
                     diagnostics: Default::default(),
                 },
+                usage: None,
             },
         );
 
@@ -354,6 +366,7 @@ mod tests {
             2,
             AgentEvent::RunCancelled {
                 reason: None,
+                usage: None,
             },
         );
         other.session_id = SessionId::from("session-other");
@@ -370,6 +383,7 @@ mod tests {
             2,
             AgentEvent::RunCancelled {
                 reason: Some("user".into()),
+                usage: None,
             },
         )
         .with_parent(EventId::from("event-1"));
@@ -380,7 +394,13 @@ mod tests {
 
     #[test]
     fn parent_event_is_omitted_when_absent() {
-        let event = envelope(1, AgentEvent::RunCancelled { reason: None });
+        let event = envelope(
+            1,
+            AgentEvent::RunCancelled {
+                reason: None,
+                usage: None,
+            },
+        );
         let value = serde_json::to_value(&event).expect("serialize event");
         assert!(value.get("parent_event_id").is_none());
     }
@@ -445,5 +465,44 @@ mod tests {
                 serde_json::from_str(&json).expect("deserialize event");
             assert_eq!(decoded, event);
         }
+    }
+
+    #[test]
+    fn run_cancelled_and_failed_usage_is_additive() {
+        let legacy_cancelled: AgentEvent =
+            serde_json::from_str(r#"{"type":"run_cancelled","data":{}}"#).expect("legacy");
+        assert_eq!(
+            legacy_cancelled,
+            AgentEvent::RunCancelled {
+                reason: None,
+                usage: None
+            }
+        );
+
+        let with_usage = AgentEvent::RunCancelled {
+            reason: Some("user".into()),
+            usage: Some(TokenUsage {
+                input_tokens: 2,
+                output_tokens: 1,
+                ..TokenUsage::default()
+            }),
+        };
+        let value = serde_json::to_value(&with_usage).expect("serialize");
+        assert_eq!(value["data"]["usage"]["input_tokens"], 2);
+        let decoded: AgentEvent = serde_json::from_value(value).expect("round-trip");
+        assert_eq!(decoded, with_usage);
+
+        let omitted = AgentEvent::RunFailed {
+            error: ErrorContext {
+                category: ErrorCategory::Internal,
+                message: "boom".into(),
+                retryable: false,
+                retry_after_ms: None,
+                diagnostics: Default::default(),
+            },
+            usage: None,
+        };
+        let value = serde_json::to_value(&omitted).expect("serialize omitted");
+        assert!(value["data"].get("usage").is_none());
     }
 }

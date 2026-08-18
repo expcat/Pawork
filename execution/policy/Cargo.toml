@@ -13,7 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 dunce.workspace = true
-regex = "1"
+regex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

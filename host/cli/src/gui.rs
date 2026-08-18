@@ -25,6 +25,7 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
     core.configure_approval(core.approval_mode(), core.workspace_trusted(), approvals.clone());
     let core = Arc::new(tokio::sync::RwLock::new(core));
     let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
+    let pty = adapter.pty();
     let data_dir = pawork_app::default_data_dir();
     let socket_path = socket.unwrap_or_else(|| gui_socket_path(&data_dir, instance));
     if let Some(parent) = socket_path.parent() {
@@ -114,6 +115,7 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
     }
     drop(connections);
     remove_pid_file(&pid_path);
+    let _ = pty.shutdown().await;
     if let Ok(core) = Arc::try_unwrap(core) {
         core.into_inner().shutdown().await?;
     }

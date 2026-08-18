@@ -8,6 +8,7 @@
 use crate::{ApiVersion, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+#[cfg(feature = "typegen")]
 use ts_rs::TS;
 
 /// 单帧 JSON 载荷上限（字节）。防止损坏或恶意的行声明超大内容；
@@ -15,7 +16,8 @@ use ts_rs::TS;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
 /// 协议对外可协商的能力（与 GUI Connection Protocol 的 capabilities 正交）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum SdkCapability {
     /// Session 生命周期（create / open / fork）。
@@ -31,7 +33,8 @@ pub enum SdkCapability {
 }
 
 /// 客户端 → Host 请求帧。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HeadlessRequest {
     /// 握手：声明客户端身份、支持版本与请求能力。
@@ -67,7 +70,8 @@ pub enum HeadlessRequest {
 /// 握手请求（`hello` 帧的解析后形态）。由 Host 接线层消费，不进入
 /// [`TranslatedRequest`] 分发路径；Host 返回 [`HeadlessResponse::HelloAck`]
 /// 或显式错误帧。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct HelloRequest {
     pub client_name: String,
     pub client_version: String,
@@ -119,7 +123,8 @@ impl HeadlessRequest {
 }
 
 /// Host → 客户端响应帧。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HeadlessResponse {
     /// 握手成功。`negotiated` 是双方共同支持的协议版本；
@@ -158,7 +163,8 @@ pub enum HeadlessResponse {
 
 /// 显式协议错误类别。unknown / unsupported 都有独立类别，客户端可按类别
 /// 决定降级路径（能力协商、版本升级或跳过）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ProtocolErrorKind {
     /// 请求帧 `type` 无法识别（显式 unknown 错误）。
@@ -218,7 +224,8 @@ impl HeadlessError {
 }
 
 /// 外部会话来源（与 `session-store::compat_import::ExternalSource` 一一对应）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum CompatSource {
     Claude,
@@ -245,7 +252,8 @@ impl std::fmt::Display for CompatSource {
 }
 
 /// compat 导入选项。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct CompatImportOptions {
     /// 只校验与解析，不落库（dry run 返回完整报告但不持久化）。
     #[serde(default)]
@@ -253,7 +261,8 @@ pub struct CompatImportOptions {
 }
 
 /// 导入报告（协议面；Host 从 `session-store::CompatImportReport` 映射）。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct CompatImportReport {
     pub source: Option<CompatSource>,
     pub session_id: String,
@@ -271,7 +280,8 @@ pub struct CompatImportReport {
 }
 
 /// 导入历史条目（协议面）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct CompatHistoryEntry {
     pub session_id: String,
     pub source: CompatSource,

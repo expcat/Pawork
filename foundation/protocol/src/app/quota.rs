@@ -2,6 +2,7 @@
 
 use pawork_domain::{ModelId, ProviderId, TenantId, Timestamp};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "typegen")]
 use ts_rs::TS;
 
 /// 默认 legacy Quota 身份作用域：tenant `local`、account `local/default`。
@@ -31,7 +32,8 @@ pub const DEFAULT_QUOTA_TENANT_CANONICAL: &str = "local/default";
 // 永不包含 secret/token/cookie。
 
 /// Canonical 配额窗口。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum QuotaWindow {
     #[default]
@@ -42,7 +44,8 @@ pub enum QuotaWindow {
 }
 
 /// Canonical 配额单位。`Cost` 携带 ISO-4217 币种。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum QuotaUnit {
     #[default]
@@ -54,7 +57,8 @@ pub enum QuotaUnit {
 }
 
 /// Canonical 非负度量值。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum QuotaMeasure {
     Exact(u64),
@@ -63,7 +67,8 @@ pub enum QuotaMeasure {
     Unknown,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct QuotaValues {
     pub used: QuotaMeasure,
     pub limit: QuotaMeasure,
@@ -71,7 +76,8 @@ pub struct QuotaValues {
 }
 
 /// 可信度优先级：exact > derived > scraped；默认最低信任 scraped。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum QuotaConfidence {
     Exact,
@@ -81,7 +87,8 @@ pub enum QuotaConfidence {
 }
 
 /// Canonical 适配器来源种类（脱敏枚举，不含任何凭证字段）。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum QuotaAdapterKind {
     ApiKeyApi,
@@ -92,7 +99,8 @@ pub enum QuotaAdapterKind {
 }
 
 /// 安全的来源元数据。`endpoint` 已去除 query/fragment，永不泄漏 token。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct QuotaProvenanceView {
     pub adapter_kind: QuotaAdapterKind,
     pub source: String,
@@ -106,7 +114,8 @@ pub struct QuotaProvenanceView {
 }
 
 /// 窗口重置语义：绝对 / 相对 / 未知。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum QuotaReset {
     Absolute {
@@ -123,7 +132,8 @@ pub enum QuotaReset {
 }
 
 /// Quota 查询：tenant/account 必填，其余为可选过滤维度。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct QuotaOverviewQuery {
     pub tenant_id: TenantId,
     pub account_id: String,
@@ -166,7 +176,8 @@ impl QuotaOverviewQuery {
 }
 
 /// 作用域视图：只暴露脱敏的 `credential_hint`，永不暴露凭证原文。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct QuotaScopeView {
     pub tenant_id: TenantId,
     pub account_id: String,
@@ -178,7 +189,8 @@ pub struct QuotaScopeView {
 }
 
 /// 单窗口快照（脱敏后的 canonical 镜像）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct QuotaSnapshotView {
     pub scope: QuotaScopeView,
     pub window: QuotaWindow,
@@ -196,7 +208,8 @@ pub struct QuotaSnapshotView {
 ///
 /// `adapter_kind` 仅当失败确实来自某个 adapter 时为 `Some`；scope 校验、
 /// 无候选、取消、内部耗尽等查询级失败为 `None`，不虚构归属。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct QuotaFailureView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter_kind: Option<QuotaAdapterKind>,
@@ -208,7 +221,8 @@ pub struct QuotaFailureView {
 }
 
 /// 单个 (scope, window, unit) 读数结果。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum WindowReadView {
     /// 至少一个适配器产出了可用快照（可能为过期缓存兜底）。
@@ -223,14 +237,16 @@ pub enum WindowReadView {
     NoData,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct WindowReadEntry {
     pub window: QuotaWindow,
     pub read: WindowReadView,
 }
 
 /// Quota 总览视图：每个窗口一项，附生成时刻与是否命中缓存。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct QuotaOverviewView {
     pub scope: QuotaScopeView,
     pub windows: Vec<WindowReadEntry>,
@@ -244,7 +260,8 @@ pub struct QuotaOverviewView {
 /// 形态冻结（snake_case）。消费端按 kind 派生可执行动作与文案，不解析
 /// 自由文本 `message`；`Threshold` 的 advisory 语义由
 /// [`QuotaAlertSeverity`] 区分（Warning = advisory 估算，Critical = 真实触限）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum QuotaAlertKind {
     /// 剩余额度跌破配置阈值（advisory 时为抓取/估算数据，非硬停）。
@@ -259,7 +276,8 @@ pub enum QuotaAlertKind {
     PartialFailure,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum QuotaAlertSeverity {
     Info,
@@ -273,7 +291,8 @@ pub enum QuotaAlertSeverity {
 /// query/fragment 或 secret/token/cookie 原文；`kind` 是稳定种类，动作由
 /// 消费端派生。二者均为 `Option`：`kind`/`source` 是后加的持久化字段，
 /// 旧事件 JSON 缺省时可解码为 `None`（重放兼容），新事件总是 `Some`。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct QuotaAlert {
     pub tenant_id: TenantId,
     pub account_id: String,

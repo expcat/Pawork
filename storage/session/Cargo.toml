@@ -15,7 +15,6 @@ compaction = []
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-protocol = { path = "../../foundation/protocol", default-features = false, features = ["adapter"] }
 pawork-sqlite = { path = "../../foundation/sqlite" }
 async-trait.workspace = true
 rusqlite.workspace = true
@@ -26,5 +25,6 @@ blake3.workspace = true
 tokio = { workspace = true, features = ["sync", "fs", "io-util", "macros"] }
 
 [dev-dependencies]
+pawork-protocol = { path = "../../foundation/protocol", default-features = false, features = ["adapter"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

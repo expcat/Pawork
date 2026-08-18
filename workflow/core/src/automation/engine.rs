@@ -242,6 +242,9 @@ impl AutomationEngine {
                 task_id: task_id.clone(),
             });
         }
+        if inner.state.has_archived_task(automation_id, task_id) {
+            return Ok(Vec::new());
+        }
 
         let mut emitted = Vec::new();
 
@@ -249,6 +252,7 @@ impl AutomationEngine {
             automation_id: automation_id.clone(),
             artifact_id: artifact_id.clone(),
             run_id: run_id.clone(),
+            task_id: Some(task_id.clone()),
         };
         inner.state.apply(&archived);
         emitted.push(archived);

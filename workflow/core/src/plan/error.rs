@@ -47,6 +47,9 @@ pub enum PlanError {
     #[error("revision version must differ from its parent: {0}")]
     SameVersion(PlanVersionId),
 
+    #[error("plan version already exists: {0}")]
+    DuplicateVersion(PlanVersionId),
+
     #[error("rejection reason must not be empty")]
     EmptyReason,
 

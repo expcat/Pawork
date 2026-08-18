@@ -195,7 +195,8 @@ impl CheckpointService {
 
     /// 写前快照：读取当前内容（若存在）存 Blob，挂到该 tool_call 的 change 记录。
     ///
-    /// 同一 tool_call 内已记录过的 `relative_path` 不重复记录，返回既有快照。
+    /// 同一 `run_id + tool_call_id + relative_path` 已记录过则直接返回既有快照，
+    /// 不再 `put`。若并发下仍先 `put` 再发现重复，会 `release` 多余引用。
     pub async fn snapshot_before_write(
         &self,
         run_id: &str,
@@ -204,6 +205,16 @@ impl CheckpointService {
         relative_path: &str,
     ) -> Result<FileSnapshot, CheckpointError> {
         let absolute = resolve_within_roots(roots, relative_path).await?;
+
+        if let Some(existing) = self.existing_snapshot(run_id, tool_call_id, relative_path) {
+            tracing::debug!(
+                run_id = run_id,
+                tool_call_id = tool_call_id,
+                relative_path = relative_path,
+                "snapshot already recorded; reusing"
+            );
+            return Ok(existing);
+        }
 
         let (existed, bytes, unix_mode) = match tokio::fs::read(&absolute).await {
             Ok(bytes) => (true, bytes, read_unix_mode(&absolute).await),
@@ -229,13 +240,13 @@ impl CheckpointService {
         let snapshot = FileSnapshot {
             relative_path: relative_path.to_string(),
             existed,
-            pre_blob,
+            pre_blob: pre_blob.clone(),
             pre_hash,
             unix_mode,
         };
 
         // 挂到 change 记录（去重）。锁内只做 BTreeMap 操作，不跨 await。
-        {
+        let duplicate = {
             let mut state = guard(&self.state);
             let run = state
                 .runs
@@ -267,22 +278,31 @@ impl CheckpointService {
                 .find(|file| file.relative_path == relative_path)
                 .cloned()
             {
-                tracing::debug!(
-                    run_id = run_id,
-                    tool_call_id = tool_call_id,
-                    relative_path = relative_path,
-                    "snapshot already recorded; reusing"
-                );
-                return Ok(existing);
+                Some(existing)
+            } else {
+                change.files.push(snapshot.clone());
+                state
+                    .paths
+                    .entry(run_id.to_string())
+                    .or_default()
+                    .entry(tool_call_id.to_string())
+                    .or_default()
+                    .insert(relative_path.to_string(), absolute);
+                None
             }
-            change.files.push(snapshot.clone());
-            state
-                .paths
-                .entry(run_id.to_string())
-                .or_default()
-                .entry(tool_call_id.to_string())
-                .or_default()
-                .insert(relative_path.to_string(), absolute);
+        };
+
+        if let Some(existing) = duplicate {
+            if let Some(id) = pre_blob {
+                self.store.release(&id).await?;
+            }
+            tracing::debug!(
+                run_id = run_id,
+                tool_call_id = tool_call_id,
+                relative_path = relative_path,
+                "snapshot already recorded after put; released extra ref"
+            );
+            return Ok(existing);
         }
 
         self.persist().await?;
@@ -425,31 +445,39 @@ impl CheckpointService {
         Ok((files, abs_map))
     }
 
+    fn existing_snapshot(
+        &self,
+        run_id: &str,
+        tool_call_id: &str,
+        relative_path: &str,
+    ) -> Option<FileSnapshot> {
+        let state = guard(&self.state);
+        state.runs.get(run_id).and_then(|run| {
+            run.changes
+                .iter()
+                .find(|change| change.tool_call_id == tool_call_id)
+                .and_then(|change| {
+                    change
+                        .files
+                        .iter()
+                        .find(|file| file.relative_path == relative_path)
+                        .cloned()
+                })
+        })
+    }
+
     fn find_snapshot(
         &self,
         run_id: &str,
         tool_call_id: &str,
         relative_path: &str,
     ) -> Result<FileSnapshot, CheckpointError> {
-        let state = guard(&self.state);
-        if let Some(run) = state.runs.get(run_id) {
-            if let Some(change) = run
-                .changes
-                .iter()
-                .find(|change| change.tool_call_id == tool_call_id)
-            {
-                if let Some(file) = change
-                    .files
-                    .iter()
-                    .find(|file| file.relative_path == relative_path)
-                {
-                    return Ok(file.clone());
-                }
-            }
-        }
-        Err(CheckpointError::NotFound(format!(
-            "run {run_id} / tool_call {tool_call_id} / {relative_path}"
-        )))
+        self.existing_snapshot(run_id, tool_call_id, relative_path)
+            .ok_or_else(|| {
+                CheckpointError::NotFound(format!(
+                    "run {run_id} / tool_call {tool_call_id} / {relative_path}"
+                ))
+            })
     }
 }
 
@@ -897,6 +925,22 @@ mod tests {
         let cp = svc.list_changes("run").expect("list");
         assert_eq!(cp.changes.len(), 1);
         assert_eq!(cp.changes[0].files.len(), 1);
+
+        let blob = first.pre_blob.expect("existing file has pre_blob");
+        assert_eq!(
+            h.store.metadata(&blob).await.expect("metadata").ref_count,
+            1,
+            "dedupe path must not leak an extra blob ref"
+        );
+
+        svc.rollback_tool_call("run", "tc")
+            .await
+            .expect("rollback");
+        assert_eq!(std::fs::read(h.ws.join("f.txt")).expect("read"), b"x");
+        assert_eq!(h.store.release(&blob).await.expect("release"), 0);
+        let report = h.store.gc().await.expect("gc");
+        assert_eq!(report.deleted, 1);
+        assert!(!h.store.blob_path(&blob).exists(), "gc must reclaim blob");
         h.shutdown().await;
     }
 

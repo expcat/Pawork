@@ -447,6 +447,62 @@ fn consecutive_failures_suspend_and_alert() {
     ));
 }
 
+#[test]
+fn record_result_is_idempotent_for_same_task() {
+    let engine = AutomationEngine::new(
+        Box::new(common::RecordingDispatcher::new()),
+        EngineConfig {
+            failure_threshold: 2,
+        },
+    );
+    let id = AutomationId::from("once");
+    engine
+        .register(
+            Automation {
+                automation_id: id.clone(),
+                trigger: AutomationTrigger::Interval { secs: 10 },
+                action: AutomationAction::Prompt { prompt: "p".into() },
+            },
+            0,
+        )
+        .unwrap();
+    let task_id = engine.fire(&id, 10).unwrap().task_id;
+    let first = engine
+        .record_result(
+            &id,
+            &task_id,
+            ArtifactId::from("art-a"),
+            None,
+            InboxStatus::Failed,
+            11,
+        )
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert!(matches!(
+        first[0],
+        AutomationEvent::ResultArchived { .. }
+    ));
+    let archived_len = engine.events().iter().filter(|e| {
+        matches!(e, AutomationEvent::ResultArchived { .. })
+    }).count();
+    let second = engine
+        .record_result(
+            &id,
+            &task_id,
+            ArtifactId::from("art-b"),
+            None,
+            InboxStatus::Failed,
+            12,
+        )
+        .unwrap();
+    assert!(second.is_empty());
+    let archived_len_after = engine.events().iter().filter(|e| {
+        matches!(e, AutomationEvent::ResultArchived { .. })
+    }).count();
+    assert_eq!(archived_len, archived_len_after);
+    assert!(!engine.state().is_suspended(&id));
+}
+
 /// 触发与结果为 AutomationEvent，经 AgentEvent::Automation 包装可持久化，且可重放。
 #[test]
 fn events_round_trip_via_agent_event_and_replay() {
@@ -480,6 +536,7 @@ fn events_round_trip_via_agent_event_and_replay() {
             automation_id: id.clone(),
             artifact_id: ArtifactId::from("art"),
             run_id: None,
+            task_id: Some(outcome.task_id.clone()),
         },
     ];
     engine

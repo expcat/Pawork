@@ -700,7 +700,14 @@ mod tests {
             )
             .await
             .expect("append 1");
-        let dangling = event(&session, 2, AgentEvent::RunCancelled { reason: None })
+        let dangling = event(
+            &session,
+            2,
+            AgentEvent::RunCancelled {
+                reason: None,
+                usage: None,
+            },
+        )
             .with_parent(EventId::from("does-not-exist"));
         let error = store
             .append_event(DEFAULT_BRANCH_ID, dangling)
@@ -1509,7 +1516,14 @@ mod tests {
         store
             .append_event(
                 DEFAULT_BRANCH_ID,
-                event(&session, 2, AgentEvent::RunCancelled { reason: None }),
+                event(
+                    &session,
+                    2,
+                    AgentEvent::RunCancelled {
+                        reason: None,
+                        usage: None,
+                    },
+                ),
             )
             .await
             .expect("main 2");

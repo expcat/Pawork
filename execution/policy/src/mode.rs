@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// 审批模式，决定 [`crate::PolicyEngine`] 在不同能力下如何裁决。
 ///
-/// 严格程度大致递增：`NeverAsk` < `OnFailure` < `AskForDangerous` <
+/// 严格程度大致递增：`NeverAsk` < `AskForDangerous` <
 /// `AskForWrites` < `AlwaysAsk` < `ReadOnly`。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -15,7 +15,7 @@ pub enum ApprovalMode {
     AskForWrites,
     /// 仅对危险命令（如 `rm -rf`、`sudo`）询问。
     AskForDangerous,
-    /// 默认放行，失败后再处理。
+    /// 当前等价 NeverAsk（S13-F16 收窄）；枚举保留。
     OnFailure,
     /// 从不询问（自动放行）。
     NeverAsk,

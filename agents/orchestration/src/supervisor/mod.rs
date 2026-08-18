@@ -5,8 +5,9 @@
 //! - 生命周期全部事件化、可重放（[`crate::OrchestrationEvent`]）；
 //! - 取消树：取消 parent 递归联动全部后代，lease 以
 //!   [`pawork_provider_control::LeaseOutcome::Cancelled`] 幂等释放，**不惩罚账号健康**；
-//! - 恢复：重放事件后，任何仍处于活动态且无存活运行时的 worker 一律标记
-//!   `Failed`，不留悬挂 worker。
+//! - 恢复：[`AgentSupervisor::recover_report`] 为 report-only——重放事件后把
+//!   活动孤儿在**报告**中记为 `Failed`，不重建 `WorkerEntry` / children /
+//!   cancel token，也不 emit 恢复事件。
 
 mod budget_gate;
 mod cancel_tree;
@@ -856,7 +857,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recover_marks_active_workers_failed_leaving_no_dangling_workers() {
+    async fn recover_report_is_report_only_and_does_not_rebuild_operable_state() {
         let supervisor = harness(
             Arc::new(InMemoryCredentialPool::new(4)),
             Arc::new(InMemoryTenantPolicyEngine::default()),
@@ -907,7 +908,7 @@ mod tests {
             },
         ];
 
-        let report = supervisor.recover(&events).await;
+        let report = supervisor.recover_report(&events).await;
         assert_eq!(report.orphaned, vec![AgentId::new("a"), AgentId::new("b")]);
         assert_eq!(
             report.recovered_states[&AgentId::new("a")],
@@ -925,11 +926,141 @@ mod tests {
             report.recovered_states[&AgentId::new("d")],
             WorkerState::Failed
         );
-        // 不留悬挂 worker：所有恢复状态均为终态。
         assert!(report
             .recovered_states
             .values()
             .all(|state| state.is_terminal()));
+        // report-only：Supervisor 自身不被重建，不能据此 cancel / assign / flush。
+        assert!(supervisor.state(&AgentId::new("a")).is_none());
+        assert!(supervisor.state(&AgentId::new("b")).is_none());
+        assert!(supervisor.state(&AgentId::new("c")).is_none());
+        assert!(supervisor.cancel_token(&AgentId::new("a")).is_none());
+        assert!(supervisor.events().is_empty());
+        assert!(
+            supervisor
+                .children
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .is_empty()
+        );
+        assert_eq!(supervisor.active_worker_count(None), 0);
+    }
+
+    #[tokio::test]
+    async fn spawn_rejects_missing_parent_without_writing_children_or_workers() {
+        let supervisor = harness(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        );
+        let mut req = spawn_request(None);
+        req.parent_id = Some(AgentId::new("no-such-parent"));
+        let err = supervisor.spawn(req).await.unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("does not exist")),
+            "{err:?}"
+        );
+        assert!(supervisor.state(&AgentId::new("no-such-parent")).is_none());
+        assert_eq!(supervisor.active_worker_count(None), 0);
+        assert!(supervisor.events().is_empty());
+        assert!(
+            supervisor
+                .children
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .is_empty()
+        );
+        assert!(
+            supervisor
+                .workers
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_rejects_cross_tenant_and_cross_session_parent() {
+        let supervisor = harness(
+            Arc::new(InMemoryCredentialPool::new(8)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        );
+        let parent = supervisor.spawn(spawn_request(None)).await.unwrap();
+        let before_events = supervisor.events().len();
+
+        let cross_tenant = SpawnRequest {
+            parent_id: Some(parent.clone()),
+            tenant_id: TenantId::new("tenant-b"),
+            ..spawn_request(None)
+        };
+        let err = supervisor.spawn(cross_tenant).await.unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("tenant mismatch")),
+            "{err:?}"
+        );
+
+        let cross_session = SpawnRequest {
+            parent_id: Some(parent.clone()),
+            session_id: SessionId::new("session-other"),
+            ..spawn_request(None)
+        };
+        let err = supervisor.spawn(cross_session).await.unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("session mismatch")),
+            "{err:?}"
+        );
+
+        assert_eq!(supervisor.state(&parent), Some(WorkerState::Starting));
+        assert_eq!(supervisor.active_worker_count(None), 1);
+        assert!(
+            supervisor
+                .children
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .get(&parent)
+                .is_none()
+        );
+        assert_eq!(
+            supervisor
+                .workers
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .len(),
+            1
+        );
+        assert_eq!(
+            supervisor.events().len(),
+            before_events,
+            "rejected spawn must not emit worker lifecycle events"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_rejects_terminal_parent() {
+        let supervisor = harness(
+            Arc::new(InMemoryCredentialPool::new(4)),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+        );
+        let parent = supervisor.spawn(spawn_request(None)).await.unwrap();
+        supervisor.start_worker(&parent).await.unwrap();
+        supervisor.complete(&parent).await.unwrap();
+        let req = SpawnRequest {
+            parent_id: Some(parent.clone()),
+            ..spawn_request(None)
+        };
+        let err = supervisor.spawn(req).await.unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("cannot spawn")),
+            "{err:?}"
+        );
+        assert!(
+            supervisor
+                .children
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .get(&parent)
+                .is_none()
+        );
+        assert_eq!(supervisor.active_worker_count(None), 0);
     }
 
     #[tokio::test]

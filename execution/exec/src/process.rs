@@ -4,7 +4,8 @@
 //! 超大输出截断；timeout 与协作式 cancel 任一触发即终止进程树。
 //!
 //! - Unix：`pre_exec` 中 `setpgid(0,0)` 建立进程组，kill 树用 `killpg(pgid)`；
-//!   Linux 额外冻结并遍历 `/proc` 后代，回收已通过 `setsid` 离组的进程。
+//!   Linux / macOS 额外冻结并遍历后代（`/proc` 或 libproc），回收已通过
+//!   `setsid` 离组的进程。
 //! - Windows：Job Object 绑定整棵进程树，句柄关闭即回收后代。
 
 use std::process::Stdio;
@@ -920,21 +921,46 @@ mod tests {
         assert!(reaped.is_ok(), "descendant {descendant} survived tree kill");
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn escaped_setsid_script() -> Option<String> {
+        fn available(program: &str, args: &[&str]) -> bool {
+            std::process::Command::new(program)
+                .args(args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+        }
+        if available("setsid", &["--version"]) {
+            return Some(
+                "setsid sh -c 'echo $$; sleep 30' & escaped=$!; wait $escaped".to_string(),
+            );
+        }
+        if available("perl", &["-MPOSIX", "-e", "setsid()"]) {
+            return Some(
+                r#"perl -MPOSIX -e 'setsid(); $| = 1; print "$$\n"; exec "sleep", "30" or die $!' & escaped=$!; wait $escaped"#
+                    .to_string(),
+            );
+        }
+        None
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
     async fn kill_reaps_descendant_that_escaped_with_setsid() {
-        if std::process::Command::new("setsid")
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_err()
-        {
-            return;
-        }
+        let script = match escaped_setsid_script() {
+            Some(script) => script,
+            None => {
+                #[cfg(target_os = "macos")]
+                panic!("macOS must reap setsid descendants; perl POSIX::setsid was unavailable");
+                #[cfg(not(target_os = "macos"))]
+                return;
+            }
+        };
 
         let runtime = ProcessRuntime::new();
-        let spec = shell("setsid sh -c 'echo $$; sleep 30' & escaped=$!; wait $escaped");
+        let spec = shell(&script);
         let (mut rx, mut handle) = runtime
             .spawn_stream(spec, CancellationToken::new())
             .await

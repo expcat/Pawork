@@ -105,7 +105,7 @@ impl DesktopController {
             .map_err(|error| format!("connect task failed: {error}"))?
             .map_err(|error| error.to_string())?;
         let (handshake, resume) = handshake;
-        let snapshot = handshake
+        let mut snapshot = handshake
             .initial_snapshot()
             .ok_or_else(|| "handshake did not deliver an initial snapshot".to_string())?;
         if last_ack.is_none() {
@@ -122,6 +122,9 @@ impl DesktopController {
                     self.record_last_acked(current_sequence.0);
                 }
                 ResumeDisposition::SnapshotRequired { .. } => {
+                    if let Some(fresh) = &outcome.snapshot {
+                        snapshot = fresh.clone();
+                    }
                     self.record_last_acked(snapshot.snapshot_sequence.0);
                     let _ = handshake.ack(snapshot.snapshot_sequence).await;
                 }

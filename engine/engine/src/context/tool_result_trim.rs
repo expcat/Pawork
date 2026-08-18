@@ -285,6 +285,7 @@ mod tests {
             content,
             is_error: false,
             metadata: Value::Null,
+            artifacts: Vec::new(),
         }
     }
 

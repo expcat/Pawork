@@ -1,7 +1,7 @@
 //! 把 `AgentEventEnvelope` 打到终端。
 //!
 //! 文本模式：`AssistantTextDelta` → stdout，thinking / 工具活动 / 失败 → stderr。
-//! `--json`：每行一个信封 JSON，只写 stdout。
+//! `--json` 由 chat/run/headless 走 `HeadlessResponse` JSONL，不经本模块。
 
 use std::collections::HashMap;
 use std::io::{self, IsTerminal, Write};
@@ -197,6 +197,9 @@ impl AgentEventSink for TextSink {
                 if result_truncated(&result) {
                     eprintln!("{}", TRUNCATED_LINE);
                 }
+                if let Some(notice) = sandbox_fallback_notice(&result.metadata) {
+                    eprintln!("{notice}");
+                }
                 let line = format_tool_activity_line(
                     name,
                     &detail,
@@ -208,24 +211,21 @@ impl AgentEventSink for TextSink {
                     .flush()
                     .map_err(|error| EngineError::sink(error.to_string()))?;
             }
+            AgentEvent::Diagnostic { code, details } if code == "sandbox.fallback" => {
+                close_thinking(self)?;
+                let notice = details
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| sandbox_fallback_notice(&details))
+                    .unwrap_or_else(|| "沙箱回退：隔离已降级".into());
+                eprintln!("{notice}");
+                io::stderr()
+                    .flush()
+                    .map_err(|error| EngineError::sink(error.to_string()))?;
+            }
             _ => {}
         }
-        Ok(())
-    }
-}
-
-#[allow(dead_code)]
-pub struct JsonlSink;
-
-#[async_trait]
-impl AgentEventSink for JsonlSink {
-    async fn emit(&self, envelope: AgentEventEnvelope) -> Result<(), EngineError> {
-        let line = serde_json::to_string(&envelope)
-            .map_err(|error| EngineError::sink(error.to_string()))?;
-        println!("{line}");
-        io::stdout()
-            .flush()
-            .map_err(|error| EngineError::sink(error.to_string()))?;
         Ok(())
     }
 }
@@ -284,6 +284,30 @@ fn result_truncated(result: &ToolResultContent) -> bool {
         .get("truncated")
         .and_then(Value::as_bool)
         .unwrap_or(false)
+}
+
+fn sandbox_fallback_notice(metadata: &Value) -> Option<String> {
+    let sandbox = metadata
+        .get("sandbox")
+        .or_else(|| metadata.get("fallback").and_then(|_| Some(metadata)))?;
+    let fallback = sandbox.get("fallback").and_then(Value::as_bool)?;
+    if !fallback {
+        return None;
+    }
+    let isolation = sandbox
+        .get("isolation")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let backend = sandbox
+        .get("backend")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let note = sandbox.get("note").and_then(Value::as_str).unwrap_or("");
+    Some(if note.is_empty() {
+        format!("沙箱回退：isolation={isolation} backend={backend}")
+    } else {
+        format!("沙箱回退：isolation={isolation} backend={backend}（{note}）")
+    })
 }
 
 fn decision_label(decision: ApprovalDecision) -> &'static str {
@@ -440,8 +464,30 @@ mod tests {
             content: Vec::new(),
             is_error: false,
             metadata: serde_json::json!({"truncated": true}),
+            artifacts: Vec::new(),
         };
         assert!(result_truncated(&result));
         assert_eq!(TRUNCATED_LINE, "已截断");
+    }
+
+    #[test]
+    fn sandbox_fallback_metadata_is_detected() {
+        assert_eq!(
+            sandbox_fallback_notice(&serde_json::json!({
+                "sandbox": {
+                    "fallback": true,
+                    "isolation": "soft",
+                    "backend": "native_restricted",
+                    "note": "seatbelt unavailable"
+                }
+            })),
+            Some("沙箱回退：isolation=soft backend=native_restricted（seatbelt unavailable）".into())
+        );
+        assert_eq!(
+            sandbox_fallback_notice(&serde_json::json!({
+                "sandbox": { "fallback": false, "isolation": "hard" }
+            })),
+            None
+        );
     }
 }

@@ -610,11 +610,13 @@ impl GuiClient {
                     ResumeDisposition::SnapshotRequired {
                         earliest_available_sequence,
                     } => {
-                        // V2 gui-server 对 SnapshotRequired 只回 disposition，不自动补发 Snapshot。
+                        // 服务端附带第二帧 Snapshot（gui-design §4.1）；收齐后再返回。
                         disposition = Some(ResumeDisposition::SnapshotRequired {
                             earliest_available_sequence,
                         });
-                        break;
+                        if snapshot.is_some() {
+                            break;
+                        }
                     }
                     ResumeDisposition::UpToDate { current_sequence } => {
                         disposition = Some(ResumeDisposition::UpToDate { current_sequence });
@@ -638,14 +640,20 @@ impl GuiClient {
                     None => self.stash(ServerFrame::Event(event)).await,
                 },
                 ServerFrame::Snapshot(found) => {
-                    snapshot = Some(found.clone());
                     if matches!(
                         disposition,
-                        Some(ResumeDisposition::SnapshotRequired { .. })
+                        Some(ResumeDisposition::SnapshotRequired { .. }) | None
                     ) {
-                        break;
+                        snapshot = Some(found);
+                        if matches!(
+                            disposition,
+                            Some(ResumeDisposition::SnapshotRequired { .. })
+                        ) {
+                            break;
+                        }
+                    } else {
+                        self.stash(ServerFrame::Snapshot(found)).await;
                     }
-                    self.stash(ServerFrame::Snapshot(found)).await;
                 }
                 ServerFrame::Error(envelope) => {
                     return Err(ClientError::Protocol(envelope.error));

@@ -6,13 +6,15 @@ use pawork_domain::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(feature = "typegen")]
 use ts_rs::TS;
 
 use super::command::{ActorIdentity, CommandSource, WorkspaceRelativePath};
 use super::quota::QuotaOverviewQuery;
 use super::version::ApiVersion;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct AppQueryEnvelope {
     pub api_version: ApiVersion,
     pub request_id: QueryId,
@@ -22,7 +24,8 @@ pub struct AppQueryEnvelope {
     pub query: AppQuery,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum AppQuery {
     WorkspaceList,
@@ -62,7 +65,8 @@ pub enum AppQuery {
     McpList,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct TimelinePage {
     pub items: Vec<TimelineItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,7 +75,8 @@ pub struct TimelinePage {
     pub complete: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct TimelineItem {
     pub sequence: u64,
     pub event_id: String,
@@ -89,7 +94,8 @@ pub struct TimelineItem {
     pub timestamp: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum TimelineItemKind {
     UserMessage,
@@ -108,7 +114,8 @@ pub enum TimelineItemKind {
     Other,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct AppResponseEnvelope {
     pub api_version: ApiVersion,
     pub request_id: QueryId,
@@ -116,7 +123,8 @@ pub struct AppResponseEnvelope {
     pub response: AppResponse,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum AppResponse {
     Accepted {

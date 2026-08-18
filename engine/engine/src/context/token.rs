@@ -275,6 +275,7 @@ mod tests {
             })], // 2 tokens
             is_error: false,
             metadata: serde_json::Value::Null,
+            artifacts: Vec::new(),
         });
         // tool_name(3) + nested text(2) + metadata "null"(1)
         assert_eq!(est.count_content_part(&part), 3 + 2 + 1);

@@ -2,6 +2,7 @@
 
 use pawork_domain::{AccountId, ModelId, ProviderId, TenantId};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "typegen")]
 use ts_rs::TS;
 
 // =========================================================================
@@ -14,7 +15,8 @@ use ts_rs::TS;
 // tenant-service 构造时已完成脱敏，此处只透传。
 
 /// 主体最小角色（与 tenant-service `PrincipalRole` 对齐）。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum PrincipalRole {
     /// 租户管理员：全部权限，含 audit 导出与策略管理。
@@ -29,7 +31,8 @@ pub enum PrincipalRole {
 }
 
 /// 策略闸口（与 tenant-service `PolicyGate` 对齐）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyGate {
     /// route candidate 过滤。
@@ -53,7 +56,8 @@ pub enum PolicyGate {
 }
 
 /// 决策种类：allow / deny / limit / fallback。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyDecisionKind {
     #[default]
@@ -64,7 +68,8 @@ pub enum PolicyDecisionKind {
 }
 
 /// Audit 导出策略视图（deny-first：未启用一律拒绝）。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct AuditExportPolicyView {
     /// 是否启用导出（默认关闭）。
     #[serde(default)]
@@ -75,14 +80,16 @@ pub struct AuditExportPolicyView {
 }
 
 /// 单条 principal → role 绑定（TS 友好的 Vec 形态，替代 map）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct PrincipalRoleBinding {
     pub principal_id: String,
     pub role: PrincipalRole,
 }
 
 /// 权限配置视图：默认角色 + 按 principal 覆盖。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct PermissionProfileView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_role: Option<PrincipalRole>,
@@ -91,7 +98,8 @@ pub struct PermissionProfileView {
 }
 
 /// 租户策略视图（deny-first PolicySet 镜像）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct TenantPolicyView {
     pub tenant_id: TenantId,
     /// 策略版本（每次更新递增；未知租户为 0）。
@@ -125,7 +133,8 @@ pub struct TenantPolicyView {
 }
 
 /// 版本化、脱敏的决策事件视图（审计读取输出）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct PolicyDecisionEventView {
     /// 决策发生时生效的策略版本。
     pub policy_version: u64,

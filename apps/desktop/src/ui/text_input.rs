@@ -38,7 +38,8 @@ pub struct TextInput {
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
-    last_layout: Option<ShapedLine>,
+    last_layout: Option<Vec<ShapedLine>>,
+    last_line_starts: Vec<usize>,
     last_bounds: Option<gpui::Bounds<Pixels>>,
 }
 
@@ -59,6 +60,7 @@ impl TextInput {
             selection_reversed: false,
             marked_range: None,
             last_layout: None,
+            last_line_starts: Vec::new(),
             last_bounds: None,
         }
     }
@@ -78,8 +80,14 @@ impl TextInput {
         self.selection_reversed = false;
         self.marked_range = None;
         self.last_layout = None;
+        self.last_line_starts.clear();
         self.last_bounds = None;
         cx.notify();
+    }
+
+    /// 按原文换行计数（空内容视为 1 行），供 Composer 高度与验收断言使用。
+    pub fn visual_line_count(&self) -> usize {
+        line_byte_ranges(&self.content).len().max(1)
     }
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
@@ -317,19 +325,22 @@ impl EntityInputHandler for TextInput {
         &mut self,
         range_utf16: Range<usize>,
         bounds: gpui::Bounds<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
-        let last_layout = self.last_layout.as_ref()?;
+        let lines = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
+        let (line_index, line_start) = line_index_for_offset(&self.last_line_starts, range.start)?;
+        let line = lines.get(line_index)?;
+        let line_height = window.line_height();
+        let local_start = range.start.saturating_sub(line_start);
+        let local_end = range.end.saturating_sub(line_start).min(line.len());
+        let top = bounds.top() + line_height * line_index as f32;
         Some(gpui::Bounds::from_corners(
+            point(bounds.left() + line.x_for_index(local_start), top),
             point(
-                bounds.left() + last_layout.x_for_index(range.start),
-                bounds.top(),
-            ),
-            point(
-                bounds.left() + last_layout.x_for_index(range.end),
-                bounds.bottom(),
+                bounds.left() + line.x_for_index(local_end),
+                top + line_height,
             ),
         ))
     }
@@ -337,14 +348,24 @@ impl EntityInputHandler for TextInput {
     fn character_index_for_point(
         &mut self,
         point: Point<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
         let line_point = self.last_bounds?.localize(&point)?;
-        let last_layout = self.last_layout.as_ref()?;
-
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
-        Some(self.offset_to_utf16(utf8_index))
+        let lines = self.last_layout.as_ref()?;
+        if lines.is_empty() {
+            return Some(0);
+        }
+        let line_height = window.line_height();
+        let mut index = 0usize;
+        if line_height > px(0.) {
+            index = (f32::from(line_point.y) / f32::from(line_height)) as usize;
+        }
+        index = index.min(lines.len() - 1);
+        let line = &lines[index];
+        let utf8_index = line.index_for_x(line_point.x).unwrap_or(line.len());
+        let start = *self.last_line_starts.get(index).unwrap_or(&0);
+        Some(self.offset_to_utf16(start + utf8_index))
     }
 }
 
@@ -353,9 +374,102 @@ struct TextElement {
 }
 
 struct PrepaintState {
-    line: Option<ShapedLine>,
+    lines: Vec<ShapedLine>,
+    line_starts: Vec<usize>,
     cursor: Option<PaintQuad>,
-    selection: Option<PaintQuad>,
+    selection: Vec<PaintQuad>,
+}
+
+fn line_byte_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for (idx, ch) in text.char_indices() {
+        if ch == '\n' {
+            ranges.push((start, idx));
+            start = idx + 1;
+        }
+    }
+    ranges.push((start, text.len()));
+    ranges
+}
+
+fn line_index_for_offset(starts: &[usize], offset: usize) -> Option<(usize, usize)> {
+    if starts.is_empty() {
+        return None;
+    }
+    let mut index = 0;
+    for (i, start) in starts.iter().enumerate() {
+        if *start <= offset {
+            index = i;
+        } else {
+            break;
+        }
+    }
+    Some((index, starts[index]))
+}
+
+fn clamp_composer_height(line_height: Pixels, line_count: usize) -> Pixels {
+    let desired = line_height * line_count as f32 + px(8.);
+    let min = px(88.);
+    let max = px(220.);
+    if desired < min {
+        min
+    } else if desired > max {
+        max
+    } else {
+        desired
+    }
+}
+
+fn runs_for_span(
+    span_start: usize,
+    span_end: usize,
+    base: &TextRun,
+    marked: Option<&Range<usize>>,
+) -> Vec<TextRun> {
+    let len = span_end.saturating_sub(span_start);
+    if len == 0 {
+        return Vec::new();
+    }
+    let Some(marked) = marked else {
+        return vec![TextRun {
+            len,
+            ..base.clone()
+        }];
+    };
+    if marked.end <= span_start || marked.start >= span_end {
+        return vec![TextRun {
+            len,
+            ..base.clone()
+        }];
+    }
+    let mark_start = marked.start.max(span_start) - span_start;
+    let mark_end = marked.end.min(span_end) - span_start;
+    let mut runs = Vec::new();
+    if mark_start > 0 {
+        runs.push(TextRun {
+            len: mark_start,
+            ..base.clone()
+        });
+    }
+    if mark_end > mark_start {
+        runs.push(TextRun {
+            len: mark_end - mark_start,
+            underline: Some(UnderlineStyle {
+                color: Some(base.color),
+                thickness: px(1.0),
+                wavy: false,
+            }),
+            ..base.clone()
+        });
+    }
+    if mark_end < len {
+        runs.push(TextRun {
+            len: len - mark_end,
+            ..base.clone()
+        });
+    }
+    runs.into_iter().filter(|run| run.len > 0).collect()
 }
 
 impl IntoElement for TextElement {
@@ -387,7 +501,8 @@ impl Element for TextElement {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        style.size.height = window.line_height().into();
+        let line_count = self.input.read(cx).visual_line_count();
+        style.size.height = clamp_composer_height(window.line_height(), line_count).into();
         (window.request_layout(style, [], cx), ())
     }
 
@@ -411,80 +526,80 @@ impl Element for TextElement {
         } else {
             (content, style.color)
         };
-
-        let run = TextRun {
-            len: display_text.len(),
+        let marked = input.marked_range.clone();
+        let base = TextRun {
+            len: 0,
             font: style.font(),
             color: text_color,
             background_color: None,
             underline: None,
             strikethrough: None,
         };
-        let runs = if let Some(marked_range) = input.marked_range.as_ref() {
-            vec![
-                TextRun {
-                    len: marked_range.start,
-                    ..run.clone()
-                },
-                TextRun {
-                    len: marked_range.end - marked_range.start,
-                    underline: Some(UnderlineStyle {
-                        color: Some(run.color),
-                        thickness: px(1.0),
-                        wavy: false,
-                    }),
-                    ..run.clone()
-                },
-                TextRun {
-                    len: display_text.len() - marked_range.end,
-                    ..run
-                },
-            ]
-            .into_iter()
-            .filter(|run| run.len > 0)
-            .collect()
-        } else {
-            vec![run]
-        };
-
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let line = window
-            .text_system()
-            .shape_line(display_text, font_size, &runs, None);
+        let line_height = window.line_height();
+        let ranges = line_byte_ranges(&display_text);
+        let mut lines = Vec::new();
+        let mut line_starts = Vec::new();
+        for (start, end) in ranges {
+            let line_text: SharedString = display_text[start..end].to_string().into();
+            let runs = runs_for_span(start, end, &base, marked.as_ref());
+            let shaped = window.text_system().shape_line(line_text, font_size, &runs, None);
+            lines.push(shaped);
+            line_starts.push(start);
+        }
+        if lines.is_empty() {
+            lines.push(window.text_system().shape_line("".into(), font_size, &[], None));
+            line_starts.push(0);
+        }
 
-        let cursor_pos = line.x_for_index(cursor);
-        let (selection, cursor) = if selected_range.is_empty() {
-            (
-                None,
+        let mut selection = Vec::new();
+        let cursor_quad = if selected_range.is_empty() {
+            line_index_for_offset(&line_starts, cursor).and_then(|(index, start)| {
+                let line = lines.get(index)?;
+                let top = bounds.top() + line_height * index as f32;
                 Some(fill(
                     gpui::Bounds::new(
-                        point(bounds.left() + cursor_pos, bounds.top()),
-                        size(px(2.), bounds.bottom() - bounds.top()),
+                        point(bounds.left() + line.x_for_index(cursor - start), top),
+                        size(px(2.), line_height),
                     ),
                     gpui::blue(),
-                )),
-            )
+                ))
+            })
         } else {
-            (
-                Some(fill(
+            for (index, start) in line_starts.iter().copied().enumerate() {
+                let end = line_starts
+                    .get(index + 1)
+                    .copied()
+                    .unwrap_or(display_text.len());
+                let overlap_start = selected_range.start.max(start);
+                let overlap_end = selected_range.end.min(end);
+                if overlap_start >= overlap_end {
+                    continue;
+                }
+                let Some(line) = lines.get(index) else {
+                    continue;
+                };
+                let top = bounds.top() + line_height * index as f32;
+                selection.push(fill(
                     gpui::Bounds::from_corners(
                         point(
-                            bounds.left() + line.x_for_index(selected_range.start),
-                            bounds.top(),
+                            bounds.left() + line.x_for_index(overlap_start - start),
+                            top,
                         ),
                         point(
-                            bounds.left() + line.x_for_index(selected_range.end),
-                            bounds.bottom(),
+                            bounds.left() + line.x_for_index(overlap_end - start),
+                            top + line_height,
                         ),
                     ),
                     rgba(0x5b9dff55),
-                )),
-                None,
-            )
+                ));
+            }
+            None
         };
         PrepaintState {
-            line: Some(line),
-            cursor,
+            lines,
+            line_starts,
+            cursor: cursor_quad,
             selection,
         }
     }
@@ -505,12 +620,14 @@ impl Element for TextElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        if let Some(selection) = prepaint.selection.take() {
-            window.paint_quad(selection)
+        for quad in prepaint.selection.drain(..) {
+            window.paint_quad(quad);
         }
-        let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
-            .unwrap();
+        let line_height = window.line_height();
+        for (index, line) in prepaint.lines.iter().enumerate() {
+            let origin = point(bounds.origin.x, bounds.origin.y + line_height * index as f32);
+            line.paint(origin, line_height, window, cx).unwrap();
+        }
 
         if focus_handle.is_focused(window) {
             if let Some(cursor) = prepaint.cursor.take() {
@@ -519,7 +636,8 @@ impl Element for TextElement {
         }
 
         self.input.update(cx, |input, _cx| {
-            input.last_layout = Some(line);
+            input.last_layout = Some(prepaint.lines.clone());
+            input.last_line_starts = prepaint.line_starts.clone();
             input.last_bounds = Some(bounds);
         });
     }
@@ -555,5 +673,18 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::line_byte_ranges;
+
+    #[test]
+    fn paste_three_lines_counts_three_visual_lines() {
+        assert_eq!(line_byte_ranges("a\nb\nc").len(), 3);
+        assert_eq!(line_byte_ranges("").len(), 1);
+        assert_eq!(line_byte_ranges("single").len(), 1);
+        assert_eq!(line_byte_ranges("trail\n").len(), 2);
     }
 }

@@ -377,8 +377,8 @@ impl DesktopProjection {
     }
 
     /// 重连三态：Replay 续接事件；SnapshotRequired 丢 stale 换基线；
-    /// UpToDate 不碰 Timeline。`fallback_snapshot` 用于 SnapshotRequired 且
-    /// resume 未附带 Snapshot 的情况（V2 gui-server 常见）。
+    /// UpToDate 不碰 Timeline。优先消费 `ResumeOutcome.snapshot`（服务端第二帧）；
+    /// `fallback_snapshot` 只在未附带时兜底握手首帧。
     pub fn apply_resume_outcome(
         &mut self,
         outcome: &ResumeOutcome,
@@ -609,6 +609,23 @@ impl DesktopProjection {
                 }
                 return true;
             }
+            AppEvent::ToolOutput {
+                run_id,
+                tool_call_id,
+                delta,
+                ..
+            } => {
+                if self.update_tool_entry(
+                    Some(run_id.as_str()),
+                    Some(tool_call_id.as_str()),
+                    None,
+                    None,
+                    Some(delta),
+                ) {
+                    self.seen.insert(sequence);
+                    return true;
+                }
+            }
             AppEvent::ToolCompleted { run_id, tool_call_id, success } => {
                 let status = if *success { "succeeded" } else { "failed" };
                 let run = run_id.as_str();
@@ -664,6 +681,16 @@ impl DesktopProjection {
                         self.pending_model = None;
                         return true;
                     }
+                }
+                if code == "sandbox.fallback" && self.seen.insert(sequence) {
+                    self.push_entry(TimelineEntry {
+                        sequence,
+                        event_id,
+                        kind: TimelineEntryKind::RunState(sandbox_fallback_label(message)),
+                        timestamp,
+                        run_id: None,
+                    });
+                    return true;
                 }
             }
             _ => {}
@@ -897,9 +924,36 @@ impl DesktopProjection {
                     });
                 }
             }
+            "approval_requested" => {
+                if self.seen.insert(item.sequence) {
+                    let tool = item.tool_name.unwrap_or("tool");
+                    let reason = item.text.or(item.detail).unwrap_or_default();
+                    self.insert_entry(TimelineEntry {
+                        sequence: item.sequence,
+                        event_id: item.event_id.to_string(),
+                        kind: TimelineEntryKind::RunState(if reason.is_empty() {
+                            format!("approval requested · {tool}")
+                        } else {
+                            format!("approval requested · {tool} · {reason}")
+                        }),
+                        timestamp: item.timestamp.to_string(),
+                        run_id: item.run_id.map(str::to_string),
+                    });
+                }
+            }
             "approval_responded" => {
                 self.pending_approval = None;
                 self.snapshot_pendings.clear();
+                if self.seen.insert(item.sequence) {
+                    let decision = item.status.or(item.detail).or(item.text).unwrap_or("responded");
+                    self.insert_entry(TimelineEntry {
+                        sequence: item.sequence,
+                        event_id: item.event_id.to_string(),
+                        kind: TimelineEntryKind::RunState(format!("approval {decision}")),
+                        timestamp: item.timestamp.to_string(),
+                        run_id: item.run_id.map(str::to_string),
+                    });
+                }
             }
             "diagnostic" => {
                 if self.seen.insert(item.sequence) {
@@ -1354,6 +1408,19 @@ fn extract_tool_name(reason: &str) -> String {
         .to_string()
 }
 
+fn sandbox_fallback_label(message: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<Value>(message) {
+        if let Some(text) = value.get("message").and_then(Value::as_str) {
+            return text.to_string();
+        }
+    }
+    if message.is_empty() {
+        "沙箱回退：隔离已降级".into()
+    } else {
+        message.to_string()
+    }
+}
+
 fn parse_model_switch_message(message: &str) -> Option<(String, String)> {
     let value: Value = serde_json::from_str(message).ok()?;
     let target = value.get("to").cloned().unwrap_or(value);
@@ -1634,6 +1701,27 @@ mod tests {
             Some(("mock", "model-2"))
         );
         assert_eq!(projection.pending_model, None);
+    }
+
+    #[test]
+    fn sandbox_fallback_diagnostic_appears_on_timeline() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&event(
+            1,
+            json!({
+                "type": "diagnostic",
+                "data": {
+                    "level": "info",
+                    "code": "sandbox.fallback",
+                    "message": "{\"message\":\"沙箱回退：isolation=soft backend=native_restricted\"}"
+                }
+            }),
+        )));
+        assert!(matches!(
+            &projection.timeline[0].kind,
+            TimelineEntryKind::RunState(text) if text.contains("沙箱回退")
+        ));
     }
 
     fn snapshot_with_runs_and_approvals(runs: Vec<Value>, approvals: Vec<Value>) -> Snapshot {
@@ -2061,6 +2149,21 @@ mod tests {
         )
     }
 
+    fn tool_output(sequence: u64, tool_call_id: &str, delta: &str) -> AppEventEnvelope {
+        event(
+            sequence,
+            json!({
+                "type": "tool_output",
+                "data": {
+                    "run_id": "r-1",
+                    "tool_call_id": tool_call_id,
+                    "delta": delta,
+                    "truncated": false
+                }
+            }),
+        )
+    }
+
     fn tool_completed(sequence: u64, tool_call_id: &str, success: bool) -> AppEventEnvelope {
         event(
             sequence,
@@ -2119,6 +2222,99 @@ mod tests {
             &entry.kind,
             TimelineEntryKind::ToolCall { status, .. } if status == "running"
         )));
+    }
+
+    #[test]
+    fn live_tool_output_fills_running_entry() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&tool_started(10, "call-1", "fs_read")));
+        assert!(projection.apply_event(&tool_output(11, "call-1", "chunk-a")));
+        assert!(matches!(
+            &projection.timeline[0].kind,
+            TimelineEntryKind::ToolCall { name, status, detail }
+                if name == "fs_read" && status == "running" && detail.as_deref() == Some("chunk-a")
+        ));
+        projection.apply_timeline_page(&page(
+            vec![history_item(
+                11,
+                "tool_output",
+                json!({ "tool_name": "fs_read", "text": "chunk-a" }),
+            )],
+            false,
+        ));
+        let tools: Vec<_> = projection
+            .timeline
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                TimelineEntryKind::ToolCall { name, status, detail } => {
+                    Some((name.as_str(), status.as_str(), detail.as_deref()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tools, vec![("fs_read", "running", Some("chunk-a"))]);
+    }
+
+    #[test]
+    fn history_approval_events_leave_traces() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        projection.apply_timeline_page(&page(
+            vec![
+                history_item(
+                    1,
+                    "approval_requested",
+                    json!({ "tool_name": "write_file", "text": "edit src/lib.rs" }),
+                ),
+                history_item(
+                    2,
+                    "approval_responded",
+                    json!({ "status": "approve_once" }),
+                ),
+            ],
+            true,
+        ));
+        let labels: Vec<&str> = projection
+            .timeline
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                TimelineEntryKind::RunState(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            labels.iter().any(|text| text.contains("approval requested") && text.contains("write_file")),
+            "history approval_requested should remain, got {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|text| text.contains("approval approve_once")),
+            "history approval_responded should remain, got {labels:?}"
+        );
+        assert!(projection.pending_approval.is_none());
+    }
+
+    #[test]
+    fn fifty_thousand_timeline_entries_iter_without_clone() {
+        let mut projection = DesktopProjection::default();
+        projection.timeline.reserve(50_000);
+        for sequence in 0..50_000u64 {
+            projection.timeline.push(TimelineEntry {
+                sequence,
+                event_id: format!("e{sequence}"),
+                kind: TimelineEntryKind::RunState("x".into()),
+                timestamp: "1".into(),
+                run_id: None,
+            });
+        }
+        let started = std::time::Instant::now();
+        let count = projection.timeline.iter().map(|entry| entry.sequence).count();
+        let elapsed = started.elapsed();
+        assert_eq!(count, 50_000);
+        assert!(
+            elapsed.as_millis() < 100,
+            "borrowed timeline iter should stay cheap, took {elapsed:?}"
+        );
     }
 
     #[test]

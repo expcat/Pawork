@@ -226,11 +226,14 @@ impl PlanService {
     }
 
     /// 修订：`ChangesRequested → Draft`（新版本，`parent_version` 指向被修订版本）。
-    /// 校验 `parent_version` 必须等于当前版本且新版本不同于 parent（保留修订链）。
+    /// 校验 `parent_version` 必须等于当前版本、新版本不同于 parent、且 version
+    /// 不与历史冲突。`title`/`steps` 写入 `PlanEvent::Revised`（ADR-037）。
     pub fn revise(
         &self,
         version: &PlanVersionId,
         parent_version: &PlanVersionId,
+        title: impl Into<String>,
+        steps: Vec<PlanStepSnapshot>,
     ) -> Result<PlanEvent, PlanError> {
         let mut inner = self.inner.lock();
         let state = &mut inner.state;
@@ -248,6 +251,9 @@ impl PlanService {
         if version == parent_version {
             return Err(PlanError::SameVersion(version.clone()));
         }
+        if state.history().iter().any(|h| &h.version == version) {
+            return Err(PlanError::DuplicateVersion(version.clone()));
+        }
         let from = state.review_status();
         if from != PlanReviewStatus::ChangesRequested {
             return Err(PlanError::NotChangesRequested { current: from });
@@ -256,6 +262,8 @@ impl PlanService {
             plan_id,
             version: version.clone(),
             parent_version: parent_version.clone(),
+            title: title.into(),
+            steps,
         };
         apply(state, &event);
         Ok(event)
@@ -432,8 +440,15 @@ fn seed_counters(events: &[&PlanEvent]) -> (u64, u64, u64) {
                     step = step.max(suffix(s.step_id.as_str()));
                 }
             }
+            PlanEvent::Revised {
+                version: v, steps, ..
+            } => {
+                version = version.max(suffix(v.as_str()));
+                for s in steps {
+                    step = step.max(suffix(s.step_id.as_str()));
+                }
+            }
             PlanEvent::ReviewRequested { version: v, .. }
-            | PlanEvent::Revised { version: v, .. }
             | PlanEvent::Approved { version: v, .. }
             | PlanEvent::Rejected { version: v, .. }
             | PlanEvent::CommentAdded { version: v, .. } => {

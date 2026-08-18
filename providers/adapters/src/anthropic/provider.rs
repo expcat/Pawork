@@ -66,6 +66,18 @@ impl AnthropicProvider {
         config: AnthropicConfig,
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
+        if credential.is_some()
+            && config
+                .http
+                .extra_headers
+                .iter()
+                .any(|(name, _)| crate::is_credential_header(name))
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                "authenticated Anthropic transport cannot override credential headers",
+            ));
+        }
         let http_config = match config.request_timeout {
             Some(timeout) => {
                 let mut cloned = config.http.clone();
@@ -335,5 +347,21 @@ mod tests {
             .iter()
             .any(|model| model.id == ModelId::new("claude-3-5-sonnet")));
         assert!(models.iter().all(|model| model.capabilities.tool_calls));
+    }
+
+    #[test]
+    fn fixed_credential_header_is_rejected() {
+        let mut config = AnthropicConfig::new("https://gateway.example");
+        config
+            .http
+            .extra_headers
+            .push(("x-api-key".into(), "sk-attacker".into()));
+        let error = AnthropicProvider::new(
+            config,
+            Some(ResolvedCredential::new(CredentialKind::ApiKey, "sk-ant-test")),
+        )
+        .err()
+        .expect("duplicate credential header must fail");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
     }
 }

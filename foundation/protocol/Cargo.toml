@@ -13,7 +13,7 @@ adapter = ["dep:async-trait"]
 client-auth = ["dep:rand"]
 # stdio Handler 使用 async-trait；tokio 特征写在主依赖上，避免测试再开 feature。
 headless = ["dep:async-trait"]
-typegen = []
+typegen = ["dep:ts-rs", "pawork-domain/typegen"]
 
 [[bin]]
 name = "pawork-protocol-typegen"
@@ -21,11 +21,11 @@ path = "src/bin/typegen.rs"
 required-features = ["typegen"]
 
 [dependencies]
-pawork-domain = { path = "../domain", features = ["typegen"] }
+pawork-domain = { path = "../domain" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-ts-rs.workspace = true
+ts-rs = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["io-util", "sync", "macros", "rt", "time"] }
 async-trait = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }

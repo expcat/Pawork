@@ -2,10 +2,12 @@
 
 use std::sync::atomic::AtomicU64;
 
-use pawork_api::{CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError};
+use pawork_api::{
+    CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ProviderStreamEvent,
+};
 use pawork_domain::{
     AgentEvent, CancellationToken, ErrorContext, Message, MessageId, MessageMetadata, ModelId,
-    ProviderId, RunId, SessionId, Timestamp,
+    ProviderId, RunId, SessionId, Timestamp, TokenUsage,
 };
 
 use crate::appender::AssembledTurn;
@@ -103,6 +105,7 @@ pub async fn run_session_turn(
         emitter
             .emit(AgentEvent::RunCancelled {
                 reason: Some("turn cancelled".into()),
+                usage: None,
             })
             .await?;
         return Err(ProviderError::cancelled("turn cancelled").into());
@@ -149,21 +152,46 @@ pub async fn run_session_turn(
             Ok(summary)
         }
         Err(error) if error.kind == pawork_api::ProviderErrorKind::Cancelled => {
+            let usage = last_stream_usage(&sink.drain_events());
             emitter
                 .emit(AgentEvent::RunCancelled {
                     reason: Some(error.message.clone()),
+                    usage: optional_usage(&usage),
                 })
                 .await?;
             Err(error.into())
         }
         Err(error) => {
+            let usage = last_stream_usage(&sink.drain_events());
             let context = ErrorContext::from(error.clone());
             emitter
-                .emit(AgentEvent::RunFailed { error: context })
+                .emit(AgentEvent::RunFailed {
+                    error: context,
+                    usage: optional_usage(&usage),
+                })
                 .await?;
             Err(error.into())
         }
     }
+}
+
+fn optional_usage(usage: &TokenUsage) -> Option<TokenUsage> {
+    if usage.is_zero() {
+        None
+    } else {
+        Some(usage.clone())
+    }
+}
+
+fn last_stream_usage(events: &[ProviderStreamEvent]) -> TokenUsage {
+    events
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            ProviderStreamEvent::UsageUpdated(usage) => Some(usage.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

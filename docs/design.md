@@ -153,7 +153,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| run_command + 沙箱（AppContainer/Landlock/Seatbelt）+ fail-closed | [Codex](https://github.com/openai/codex) sandbox（Landlock/Seatbelt 路线）；DeepSeek Harness `ctx.sandbox` 与审批分轨（`workspace-write` / `danger-full-access`）；V1 exec 链（Windows Job Object + AppContainer，Rust 生态稀缺资产，发布主打包） |
+| run_command + 沙箱（AppContainer/Landlock/Seatbelt）+ fail-closed（ADR-031：**可观测回退**，不是拒跑；CLI/GUI 必须展示 fallback） | [Codex](https://github.com/openai/codex) sandbox（Landlock/Seatbelt 路线）；DeepSeek Harness `ctx.sandbox` 与审批分轨（`workspace-write` / `danger-full-access`）；V1 exec 链（Windows Job Object + AppContainer，Rust 生态稀缺资产，发布主打包）；[ADR-031](../../Pawork_v1/docs/adr/ADR-031-sandbox-backend-architecture.md)（归档）· [ADR-037](adr/ADR-037-s13-wave-b-contracts.md) |
 | shell 风险分类 → 审批（Dangerous 必询） | V1 policy `shell` 分类；OpenCode `permission.bash` 语义 |
 | 取消 = 清理整棵进程树 | V1 `cancel.rs` + 进程树管理（Job Object/进程组） |
 | 输出截断 + 完整输出落工件 | 上下文预算纪律（S5 铺垫、S8 artifact 接管）；对照 research §5.3 前缀稳定技巧 |

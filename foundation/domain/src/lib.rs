@@ -4,6 +4,7 @@
 //! 数据库、HTTP、Git、任何 GUI framework（包括 GPUI/Tauri）、OS Keychain 或任何具体 Provider。
 
 mod cancel;
+mod client_session;
 mod error;
 mod events;
 mod ids;
@@ -15,6 +16,7 @@ mod tool;
 mod workflow;
 
 pub use cancel::{CancellationFuture, CancellationToken};
+pub use client_session::*;
 pub use error::{ErrorCategory, ErrorContext};
 pub use events::*;
 pub use ids::*;

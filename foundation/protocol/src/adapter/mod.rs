@@ -23,73 +23,11 @@ use tokio::sync::Mutex;
 pub use identity::{
     bind_tenant, ExternalAgentIdentity, IdentityError, TenantBinding, TrustedTenantContext,
 };
-
-pub const CLIENT_ADAPTER_SCHEMA_VERSION: u32 = 1;
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ClientSessionId(pub String);
-
-impl ClientSessionId {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ClientProtocol(pub String);
-
-impl ClientProtocol {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ClientCapability(pub String);
-
-impl ClientCapability {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CapabilitySnapshot {
-    pub schema_version: u32,
-    pub protocol: ClientProtocol,
-    pub protocol_version: String,
-    pub client_version: String,
-    pub revision: u64,
-    #[serde(default)]
-    pub capabilities: BTreeSet<ClientCapability>,
-}
-
-impl CapabilitySnapshot {
-    pub fn supports(&self, capability: &ClientCapability) -> bool {
-        self.capabilities.contains(capability)
-    }
-
-    pub fn validate(&self) -> Result<(), AdapterError> {
-        if self.schema_version != CLIENT_ADAPTER_SCHEMA_VERSION {
-            return Err(AdapterError::UnsupportedSchema {
-                found: self.schema_version,
-                supported: CLIENT_ADAPTER_SCHEMA_VERSION,
-            });
-        }
-        if self.protocol.0.trim().is_empty()
-            || self.protocol_version.trim().is_empty()
-            || self.client_version.trim().is_empty()
-        {
-            return Err(AdapterError::InvalidFrame(
-                "protocol and version fields must be non-empty".into(),
-            ));
-        }
-        Ok(())
-    }
-}
+pub use pawork_domain::{
+    CapabilitySnapshot, ClientCapability, ClientProtocol, ClientSessionId, ClientSessionRecord,
+    ClientSessionState, RegistryWriteOutcome, SessionRegistryError, SessionRegistryStore,
+    CLIENT_ADAPTER_SCHEMA_VERSION,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AdapterWireFrame {
@@ -406,55 +344,16 @@ impl ClientAdapter for MockClientAdapter {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClientSessionState {
-    Loaded,
-    Subscribed,
-    Executing,
-    Disconnected,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClientSessionRecord {
-    pub schema_version: u32,
-    pub protocol: ClientProtocol,
-    pub client_session_id: ClientSessionId,
-    pub core_session_id: SessionId,
-    pub connection_id: ConnectionId,
-    pub ownership_epoch: u64,
-    pub revision: u64,
-    pub state: ClientSessionState,
-    pub capabilities: CapabilitySnapshot,
-    pub updated_at: Timestamp,
-}
-
-#[async_trait]
-pub trait SessionRegistryStore: Send + Sync {
-    async fn load_all(&self) -> Result<Vec<ClientSessionRecord>, AdapterError>;
-    async fn insert(
-        &self,
-        record: &ClientSessionRecord,
-    ) -> Result<RegistryWriteOutcome, AdapterError>;
-    async fn compare_and_swap(
-        &self,
-        expected_epoch: u64,
-        expected_revision: u64,
-        record: &ClientSessionRecord,
-    ) -> Result<RegistryWriteOutcome, AdapterError>;
-    async fn remove_if_owner(
-        &self,
-        client_session_id: &ClientSessionId,
-        expected_epoch: u64,
-        expected_revision: u64,
-    ) -> Result<RegistryWriteOutcome, AdapterError>;
-}
-
-/// Store 负责原子 ownership compare-and-swap；冲突时返回最新权威记录供重同步。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RegistryWriteOutcome {
-    Applied,
-    Conflict(Box<Option<ClientSessionRecord>>),
+impl From<SessionRegistryError> for AdapterError {
+    fn from(error: SessionRegistryError) -> Self {
+        match error {
+            SessionRegistryError::Unavailable(message) => Self::HostUnavailable(message),
+            SessionRegistryError::InvalidRecord(message) => Self::InvalidFrame(message),
+            SessionRegistryError::UnsupportedSchema { found, supported } => {
+                Self::UnsupportedSchema { found, supported }
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -464,14 +363,14 @@ pub struct InMemorySessionRegistryStore {
 
 #[async_trait]
 impl SessionRegistryStore for InMemorySessionRegistryStore {
-    async fn load_all(&self) -> Result<Vec<ClientSessionRecord>, AdapterError> {
+    async fn load_all(&self) -> Result<Vec<ClientSessionRecord>, SessionRegistryError> {
         Ok(self.records.lock().await.values().cloned().collect())
     }
 
     async fn insert(
         &self,
         record: &ClientSessionRecord,
-    ) -> Result<RegistryWriteOutcome, AdapterError> {
+    ) -> Result<RegistryWriteOutcome, SessionRegistryError> {
         let mut records = self.records.lock().await;
         if let Some(current) = records.get(&record.client_session_id) {
             return Ok(RegistryWriteOutcome::Conflict(Box::new(Some(
@@ -487,7 +386,7 @@ impl SessionRegistryStore for InMemorySessionRegistryStore {
         expected_epoch: u64,
         expected_revision: u64,
         record: &ClientSessionRecord,
-    ) -> Result<RegistryWriteOutcome, AdapterError> {
+    ) -> Result<RegistryWriteOutcome, SessionRegistryError> {
         let mut records = self.records.lock().await;
         let Some(current) = records.get(&record.client_session_id) else {
             return Ok(RegistryWriteOutcome::Conflict(Box::new(None)));
@@ -506,7 +405,7 @@ impl SessionRegistryStore for InMemorySessionRegistryStore {
         client_session_id: &ClientSessionId,
         expected_epoch: u64,
         expected_revision: u64,
-    ) -> Result<RegistryWriteOutcome, AdapterError> {
+    ) -> Result<RegistryWriteOutcome, SessionRegistryError> {
         let mut records = self.records.lock().await;
         let Some(current) = records.get(client_session_id) else {
             return Ok(RegistryWriteOutcome::Conflict(Box::new(None)));

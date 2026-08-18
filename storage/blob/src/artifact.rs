@@ -11,7 +11,8 @@
 //! - 相同内容只落盘一份；重复 `put` 仅增加引用计数（去重）。
 //! - `release` 防下溢：引用计数已为零或 blob 不存在时返回错误，绝不变负。
 //! - 读取时重算 BLAKE3 哈希，检测缺失与损坏。
-//! - `gc` 只删除引用计数为零的 blob，永不触碰有引用的内容。
+//! - `gc` 删除引用计数为零的 blob，永不触碰有引用的内容；并在安全延迟 +
+//!   哈希校验后回收磁盘有、数据库无记录的 final 孤儿（崩溃窗口残留）。
 //! - 磁盘预算不足时安全报错，不删除任何已存储 blob。
 
 use std::{
@@ -34,6 +35,8 @@ const BLOBS_DIR: &str = "blobs";
 const DATABASE_FILE: &str = "artifacts.sqlite3";
 /// 崩溃残留的 `.tmp-` 写入临时文件超过该年龄后，由 `gc` 回收。
 const TMP_ORPHAN_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+/// rename 成功但 DB 未落账的 final blob 超过该年龄后，由 `gc` 回收。
+const FINAL_ORPHAN_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 const SCHEMA_SQL: &str = "
     CREATE TABLE IF NOT EXISTS artifact_blobs (
@@ -150,6 +153,8 @@ pub struct GcReport {
     pub reclaimed_bytes: u64,
     /// 清理的过期 `.tmp-` 孤儿文件数量。
     pub deleted_tmp_orphans: u64,
+    /// 清理的过期 final 孤儿（磁盘有、数据库无记录）数量。
+    pub deleted_final_orphans: u64,
 }
 
 /// `integrity_check` 的结果。
@@ -552,9 +557,12 @@ impl ArtifactStore {
         Ok(report)
     }
 
-    /// 回收引用计数为零的 blob；有引用的 blob 一律不触碰。
+    /// 回收引用计数为零的 blob；有引用 / 有数据库记录的 blob 一律不触碰。
     ///
-    /// 同时清理 `blobs/` 下 mtime 超过 24h 的 `.tmp-` 崩溃残留文件。
+    /// 同时清理 `blobs/` 下：
+    /// - mtime 超过 24h 的 `.tmp-` 崩溃残留；
+    /// - mtime 超过 24h、内容哈希与文件名一致、且数据库无记录的 final 孤儿
+    ///   （rename 成功后 INSERT 前崩溃留下的内容寻址文件）。
     pub async fn gc(&self) -> Result<GcReport, ArtifactStoreError> {
         let root = self.root.clone();
         let mut report = self
@@ -567,6 +575,7 @@ impl ArtifactStore {
                         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
+                drop(statement);
                 let mut report = GcReport::default();
                 for (hash, size) in rows {
                     let id = BlobId::from_str(&hash)?;
@@ -581,6 +590,16 @@ impl ArtifactStore {
                     report.deleted += 1;
                     report.reclaimed_bytes += size.max(0) as u64;
                 }
+                let mut known_statement =
+                    connection.prepare("SELECT hash FROM artifact_blobs")?;
+                let known = known_statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<HashSet<_>>>()?;
+                drop(known_statement);
+                let (final_orphans, final_bytes) =
+                    reclaim_stale_final_orphans(&root.join(BLOBS_DIR), &known, FINAL_ORPHAN_MAX_AGE)?;
+                report.deleted_final_orphans = final_orphans;
+                report.reclaimed_bytes += final_bytes;
                 Ok(report)
             })
             .await??;
@@ -733,6 +752,83 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// 回收「磁盘有、数据库无」且已过安全延迟、内容哈希与文件名一致的 final blob。
+fn reclaim_stale_final_orphans(
+    dir: &Path,
+    known: &HashSet<String>,
+    max_age: Duration,
+) -> Result<(u64, u64), ArtifactStoreError> {
+    let mut files = Vec::new();
+    collect_files(dir, &mut files).map_err(|source| ArtifactStoreError::Io {
+        source,
+        path: dir.to_path_buf(),
+    })?;
+    let now = SystemTime::now();
+    let mut deleted = 0u64;
+    let mut reclaimed_bytes = 0u64;
+    for path in files {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if known.contains(name) {
+            continue;
+        }
+        let Ok(id) = BlobId::from_str(name) else {
+            continue;
+        };
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(ArtifactStoreError::Io {
+                    source,
+                    path: path.clone(),
+                });
+            }
+        };
+        let modified = match metadata.modified() {
+            Ok(modified) => modified,
+            Err(source) => {
+                return Err(ArtifactStoreError::Io {
+                    source,
+                    path: path.clone(),
+                });
+            }
+        };
+        let age = match now.duration_since(modified) {
+            Ok(age) => age,
+            Err(_) => continue,
+        };
+        if age <= max_age {
+            continue;
+        }
+        let data = match fs::read(&path) {
+            Ok(data) => data,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(ArtifactStoreError::Io {
+                    source,
+                    path: path.clone(),
+                });
+            }
+        };
+        if blake3::hash(&data) != id.to_hash() {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                deleted += 1;
+                reclaimed_bytes += data.len() as u64;
+            }
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(ArtifactStoreError::Io { source, path });
+            }
+        }
+    }
+    Ok((deleted, reclaimed_bytes))
 }
 
 /// 清理 mtime 超过阈值的 `.tmp-` 崩溃残留文件。
@@ -1008,9 +1104,58 @@ mod tests {
         let report = store.gc().await.expect("gc");
         assert_eq!(report.deleted, 0);
         assert_eq!(report.deleted_tmp_orphans, 1);
+        assert_eq!(report.deleted_final_orphans, 0);
         assert!(!stale.exists(), "stale .tmp- orphan must be reclaimed");
         assert!(fresh.exists(), "fresh .tmp- must survive 24h threshold");
         assert!(store.blob_path(&referenced).exists());
+        store.shutdown().await.expect("shutdown");
+        cleanup(&root);
+    }
+
+    #[tokio::test]
+    async fn gc_reclaims_stale_final_orphans_after_rename_without_db_row() {
+        let root = temp_root("gc-final-orphan");
+        let store = ArtifactStore::open(&root).await.expect("open store");
+        let kept = store.put(b"has db row").await.expect("put kept").id;
+
+        let orphan_content = b"rename succeeded but db insert never ran";
+        let orphan_id = BlobId::from_hash(blake3::hash(orphan_content));
+        let orphan_path = store.blob_path(&orphan_id);
+        fs::create_dir_all(orphan_path.parent().expect("parent")).expect("mkdir");
+        fs::write(&orphan_path, orphan_content).expect("simulate rename");
+        let stale_mtime = SystemTime::now() - Duration::from_secs(25 * 60 * 60);
+        fs::File::options()
+            .write(true)
+            .open(&orphan_path)
+            .expect("open orphan")
+            .set_modified(stale_mtime)
+            .expect("backdate orphan");
+
+        let fresh_content = b"fresh crash-window blob";
+        let fresh_id = BlobId::from_hash(blake3::hash(fresh_content));
+        let fresh_path = store.blob_path(&fresh_id);
+        fs::create_dir_all(fresh_path.parent().expect("parent")).expect("mkdir");
+        fs::write(&fresh_path, fresh_content).expect("write fresh orphan");
+
+        fs::File::options()
+            .write(true)
+            .open(store.blob_path(&kept))
+            .expect("open kept")
+            .set_modified(stale_mtime)
+            .expect("backdate kept");
+
+        let report = store.gc().await.expect("gc");
+        assert_eq!(report.deleted, 0);
+        assert_eq!(report.deleted_final_orphans, 1);
+        assert_eq!(report.reclaimed_bytes, orphan_content.len() as u64);
+        assert!(!orphan_path.exists(), "stale final orphan must be reclaimed");
+        assert!(
+            fresh_path.exists(),
+            "fresh final orphan must survive safety delay"
+        );
+        assert!(store.blob_path(&kept).exists());
+        assert_eq!(store.get(&kept).await.expect("kept readable"), b"has db row");
+
         store.shutdown().await.expect("shutdown");
         cleanup(&root);
     }

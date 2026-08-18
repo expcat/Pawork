@@ -13,9 +13,9 @@ pub(crate) const PROCESS_TREE_KILL_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct ProcessTreeGuard {
     #[cfg(unix)]
     pgid: i32,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     root_pid: i32,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     root_start_time: u64,
     #[cfg(windows)]
     job: crate::os::windows::Job,
@@ -63,13 +63,13 @@ impl ProcessTreeGuard {
                     format!("external process {pid} is not a process-group leader (pgid={pgid})"),
                 ));
             }
-            #[cfg(target_os = "linux")]
-            let root_start_time = crate::os::linux::linux_process_tree::start_time(pid)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let root_start_time = unix_root_start_time(pid)?;
             Ok(Self {
                 pgid,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 root_pid: pid,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 root_start_time,
             })
         }
@@ -96,13 +96,13 @@ impl ProcessTreeGuard {
             let pgid = i32::try_from(pid).map_err(|_| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, "process id exceeds i32")
             })?;
-            #[cfg(target_os = "linux")]
-            let root_start_time = crate::os::linux::linux_process_tree::start_time(pgid)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let root_start_time = unix_root_start_time(pgid)?;
             Ok(Self {
                 pgid,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 root_pid: pgid,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 root_start_time,
             })
         }
@@ -123,15 +123,11 @@ impl ProcessTreeGuard {
     pub fn terminate(&self) -> std::io::Result<()> {
         #[cfg(unix)]
         {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
-                crate::os::linux::linux_process_tree::terminate(
-                    self.root_pid,
-                    self.pgid,
-                    self.root_start_time,
-                )
+                unix_terminate_tree(self.root_pid, self.pgid, self.root_start_time)
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 let result = unsafe { libc::killpg(self.pgid, libc::SIGKILL) };
                 if result == 0 {
@@ -153,6 +149,30 @@ impl ProcessTreeGuard {
         {
             Ok(())
         }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn unix_root_start_time(pid: i32) -> std::io::Result<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        crate::os::linux::linux_process_tree::start_time(pid)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::os::macos::macos_process_tree::start_time(pid)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn unix_terminate_tree(root_pid: i32, pgid: i32, root_start_time: u64) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        crate::os::linux::linux_process_tree::terminate(root_pid, pgid, root_start_time)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::os::macos::macos_process_tree::terminate(root_pid, pgid, root_start_time)
     }
 }
 

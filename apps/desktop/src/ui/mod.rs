@@ -5,11 +5,13 @@ pub mod text_input;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     actions, App, AnyView, Context, Entity, FocusHandle, Focusable, KeyBinding, Render,
     ScrollHandle, SharedString, Styled, Window, div, prelude::*, px, rgb,
 };
+use pawork_client::AppEvent;
 
 use crate::controller::{ControllerEvent, DesktopController};
 use crate::platform::Platform;
@@ -150,6 +152,11 @@ pub struct AppView {
     scope_menu_open: bool,
     collapsed_projects: BTreeSet<String>,
     inspector_open: bool,
+    workspace_picker_open: bool,
+    entry_menu_event_id: Option<String>,
+    run_clock_running: bool,
+    follow_timeline: bool,
+    follow_terminal: bool,
     focus_handle: FocusHandle,
     approve_once_focus: FocusHandle,
     approve_for_run_focus: FocusHandle,
@@ -184,6 +191,11 @@ impl AppView {
             scope_menu_open: false,
             collapsed_projects: BTreeSet::new(),
             inspector_open: true,
+            workspace_picker_open: false,
+            entry_menu_event_id: None,
+            run_clock_running: false,
+            follow_timeline: true,
+            follow_terminal: true,
             focus_handle: cx.focus_handle(),
             approve_once_focus: cx.focus_handle().tab_stop(true),
             approve_for_run_focus: cx.focus_handle().tab_stop(true),
@@ -314,14 +326,34 @@ impl AppView {
             }
             ControllerEvent::TimelineLoaded { session_id, page } => {
                 if self.projection.active_session_id.as_deref() == Some(&session_id) {
+                    if !is_scrolled_to_bottom(&self.scroll_handle) {
+                        self.follow_timeline = false;
+                    }
                     self.projection.apply_timeline_page(&page);
-                    self.scroll_handle.scroll_to_bottom();
+                    if self.follow_timeline {
+                        self.scroll_handle.scroll_to_bottom();
+                    }
                 }
             }
             ControllerEvent::Event(envelope) => {
-                if self.projection.apply_event(&envelope) {
-                    self.scroll_handle.scroll_to_bottom();
-                    self.terminal_scroll.scroll_to_bottom();
+                let terminal_event = matches!(
+                    envelope.payload,
+                    AppEvent::TerminalOutput { .. }
+                );
+                if terminal_event {
+                    if !is_scrolled_to_bottom(&self.terminal_scroll) {
+                        self.follow_terminal = false;
+                    }
+                    if self.projection.apply_event(&envelope) && self.follow_terminal {
+                        self.terminal_scroll.scroll_to_bottom();
+                    }
+                } else {
+                    if !is_scrolled_to_bottom(&self.scroll_handle) {
+                        self.follow_timeline = false;
+                    }
+                    if self.projection.apply_event(&envelope) && self.follow_timeline {
+                        self.scroll_handle.scroll_to_bottom();
+                    }
                 }
             }
             ControllerEvent::SessionCreated { session_id } => {
@@ -353,13 +385,42 @@ impl AppView {
                 self.status_hint = Some(format!("{action} failed: {reason}"));
             }
         }
+        self.arm_run_clock(cx);
         cx.notify();
+    }
+
+    fn arm_run_clock(&mut self, cx: &mut Context<Self>) {
+        if self.run_clock_running || self.projection.active_run_id.is_none() {
+            return;
+        }
+        self.run_clock_running = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                smol::Timer::after(Duration::from_secs(1)).await;
+                let keep = this
+                    .update(cx, |view, cx| {
+                        if view.projection.active_run_id.is_some() {
+                            cx.notify();
+                            true
+                        } else {
+                            view.run_clock_running = false;
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         self.projection.select_session(&session_id);
         self.status_hint = None;
         self.scroll_handle = ScrollHandle::new();
+        self.follow_timeline = true;
         self.controller.open_session(session_id);
         cx.notify();
     }
@@ -379,11 +440,25 @@ impl AppView {
     }
 
     fn on_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let workspace = self
-            .scope_workspace_id
-            .clone()
-            .or_else(|| self.projection.workspace_id.clone());
-        self.create_task(workspace, window, cx);
+        match resolve_new_task_workspace(self.scope_workspace_id.as_deref()) {
+            Some(workspace) => self.create_task(Some(workspace.to_string()), window, cx),
+            None => {
+                self.workspace_picker_open = true;
+                self.status_hint =
+                    Some("All projects: confirm a workspace before creating a task.".into());
+                cx.notify();
+            }
+        }
+    }
+
+    fn on_confirm_workspace(
+        &mut self,
+        workspace_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace_picker_open = false;
+        self.create_task(Some(workspace_id), window, cx);
     }
 
     fn on_project_add_task(
@@ -997,7 +1072,12 @@ impl AppView {
         block
     }
 
-    fn timeline_entry_element(&self, entry: &TimelineEntry, cx: &mut Context<Self>) -> gpui::Div {
+    fn timeline_entry_element(
+        entry: &TimelineEntry,
+        menu_open: bool,
+        can_fork: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         let body = match &entry.kind {
             TimelineEntryKind::UserMessage { text } => div()
                 .py_1()
@@ -1033,10 +1113,47 @@ impl AppView {
                 .child(format!("Error: {message}")),
         };
         let event_id = entry.event_id.clone();
-        let can_fork = matches!(
-            self.projection.connection,
-            ConnectionState::Connected { .. }
-        ) && self.projection.active_session_id.is_some();
+        let mut actions = div()
+            .id(SharedString::from(format!("entry-menu-{}", entry.event_id)))
+            .px_1()
+            .text_size(px(11.))
+            .text_color(rgb(0x9a9a9a))
+            .cursor_pointer()
+            .child("···")
+            .on_click(cx.listener({
+                let event_id = event_id.clone();
+                move |view, _event, _window, cx| {
+                    view.entry_menu_event_id = if view.entry_menu_event_id.as_deref() == Some(event_id.as_str())
+                    {
+                        None
+                    } else {
+                        Some(event_id.clone())
+                    };
+                    cx.notify();
+                }
+            }));
+        if menu_open {
+            let fork_id = event_id.clone();
+            actions = actions.child(
+                div()
+                    .id(SharedString::from(format!("fork-{}", entry.event_id)))
+                    .mt_1()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(0x1a1a1a))
+                    .border_1()
+                    .border_color(rgb(0x3a3a3a))
+                    .text_color(if can_fork { rgb(0xe8e8e8) } else { rgb(0x5a5a5a) })
+                    .child("Fork")
+                    .when(can_fork, |button| {
+                        button.on_click(cx.listener(move |view, _event, _window, cx| {
+                            view.entry_menu_event_id = None;
+                            view.on_fork(&fork_id, cx);
+                        }))
+                    }),
+            );
+        }
         div()
             .flex()
             .flex_row()
@@ -1044,20 +1161,7 @@ impl AppView {
             .justify_between()
             .gap_2()
             .child(div().flex_1().child(body))
-            .child(
-                div()
-                    .id(SharedString::from(format!("fork-{}", entry.event_id)))
-                    .px_1()
-                    .text_size(px(11.))
-                    .text_color(if can_fork { rgb(0x9a9a9a) } else { rgb(0x5a5a5a) })
-                    .cursor_pointer()
-                    .child("Fork")
-                    .when(can_fork, |button| {
-                        button.on_click(cx.listener(move |view, _event, _window, cx| {
-                            view.on_fork(&event_id, cx);
-                        }))
-                    }),
-            )
+            .child(actions)
     }
 
     fn inspector_element(&self, connected: bool, cx: &mut Context<Self>) -> gpui::Div {
@@ -1074,7 +1178,7 @@ impl AppView {
         div()
             .flex()
             .flex_col()
-            .w(px(320.))
+            .w(px(440.))
             .h_full()
             .bg(rgb(0x161616))
             .border_l_1()
@@ -1176,6 +1280,78 @@ impl AppView {
                     ),
             )
     }
+
+    fn composer_workspace_label(&self) -> String {
+        if let Some(session_id) = &self.projection.active_session_id {
+            if let Some(session) = self
+                .projection
+                .sessions
+                .iter()
+                .find(|session| &session.session_id == session_id)
+            {
+                return format!(
+                    "Workspace · {}",
+                    self.projection.workspace_name(session.workspace_id.as_deref())
+                );
+            }
+        }
+        match self.scope_workspace_id.as_deref() {
+            Some(id) => format!("Workspace · {}", self.projection.workspace_name(Some(id))),
+            None => "Workspace · confirm in All projects".into(),
+        }
+    }
+
+    fn workspace_confirm_element(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let choices: Vec<(String, String)> = self
+            .projection
+            .project_scope_options()
+            .into_iter()
+            .filter_map(|(id, name)| id.map(|id| (id, name)))
+            .collect();
+        let mut list = div()
+            .id("workspace-confirm")
+            .p_1()
+            .rounded_md()
+            .bg(rgb(0x1a1a1a))
+            .border_1()
+            .border_color(rgb(0x3a3a3a));
+        if choices.is_empty() {
+            return list.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_size(px(12.))
+                    .text_color(rgb(0xf0d58c))
+                    .child("Add a workspace before creating a task."),
+            );
+        }
+        for (id, name) in choices {
+            let pick = id.clone();
+            list = list.child(
+                div()
+                    .id(SharedString::from(format!("workspace-confirm-{id}")))
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .child(name)
+                    .on_click(cx.listener(move |view, _event, window, cx| {
+                        view.on_confirm_workspace(pick.clone(), window, cx);
+                    })),
+            );
+        }
+        list
+    }
+}
+
+fn is_scrolled_to_bottom(handle: &ScrollHandle) -> bool {
+    let max = handle.max_offset().height;
+    let y = handle.offset().y;
+    max <= px(1.) || y <= px(16.) - max
+}
+
+fn resolve_new_task_workspace(scope_workspace_id: Option<&str>) -> Option<&str> {
+    scope_workspace_id
 }
 
 impl Render for AppView {
@@ -1340,7 +1516,11 @@ impl Render for AppView {
                     .child("Local"),
             );
 
-        let timeline_entries = self.projection.timeline.clone();
+        let can_fork_entry = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && self.projection.active_session_id.is_some();
+        let open_entry_menu = self.entry_menu_event_id.clone();
         let timeline = div()
             .id("timeline")
             .flex()
@@ -1351,11 +1531,14 @@ impl Render for AppView {
             .px_3()
             .py_2()
             .gap_1()
-            .children(
-                timeline_entries
-                    .iter()
-                    .map(|entry| self.timeline_entry_element(entry, cx)),
-            )
+            .children(self.projection.timeline.iter().map(|entry| {
+                Self::timeline_entry_element(
+                    entry,
+                    open_entry_menu.as_deref() == Some(entry.event_id.as_str()),
+                    can_fork_entry,
+                    cx,
+                )
+            }))
             .when(self.projection.pending_approval.is_some(), |timeline| {
                 let pending = self
                     .projection
@@ -1518,14 +1701,29 @@ impl Render for AppView {
                             .text_size(px(11.))
                             .text_color(rgb(0x9a9a9a))
                             .child(context_meter),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(0x9a9a9a))
+                            .child(self.composer_workspace_label()),
                     ),
             )
+            .when(self.workspace_picker_open, |composer| {
+                composer.child(self.workspace_confirm_element(cx))
+            })
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .gap_2()
-                    .child(div().flex_1().child(self.text_input.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h(px(88.))
+                            .max_h(px(220.))
+                            .child(self.text_input.clone()),
+                    )
                     .child({
                         let cancel_focus = self.cancel_focus.clone();
                         let cancel_tooltip = if can_cancel {
@@ -1597,25 +1795,6 @@ impl Render for AppView {
         let mut main = div().flex().flex_row().flex_1().child(workspace);
         if inspector_open {
             main = main.child(self.inspector_element(connected, cx));
-        } else {
-            main = main.child(
-                div()
-                    .id("inspector-expand")
-                    .w(px(28.))
-                    .h_full()
-                    .bg(rgb(0x161616))
-                    .border_l_1()
-                    .border_color(rgb(0x2e2e2e))
-                    .px_1()
-                    .py_2()
-                    .text_size(px(11.))
-                    .text_color(rgb(0x9a9a9a))
-                    .cursor_pointer()
-                    .child("⟨")
-                    .on_click(cx.listener(|view, _event, window, cx| {
-                        view.on_toggle_inspector(window, cx);
-                    })),
-            );
         }
 
         div()
@@ -1645,12 +1824,27 @@ impl Render for AppView {
                             .px_3()
                             .flex()
                             .items_center()
+                            .justify_between()
                             .border_t_1()
                             .border_color(rgb(0x2e2e2e))
                             .bg(rgb(0x161616))
                             .text_size(px(11.))
                             .text_color(rgb(0x9a9a9a))
-                            .child(run_status),
+                            .child(run_status)
+                            .child(
+                                div()
+                                    .id("inspector-toggle")
+                                    .px_2()
+                                    .cursor_pointer()
+                                    .child(if inspector_open {
+                                        "Hide inspector"
+                                    } else {
+                                        "Inspector"
+                                    })
+                                    .on_click(cx.listener(|view, _event, window, cx| {
+                                        view.on_toggle_inspector(window, cx);
+                                    })),
+                            ),
                     ),
             )
     }
@@ -1694,5 +1888,11 @@ mod tests {
                 "missing tab_stop marker for {id}"
             );
         }
+    }
+
+    #[test]
+    fn all_projects_new_task_requires_workspace_confirm() {
+        assert!(resolve_new_task_workspace(None).is_none());
+        assert_eq!(resolve_new_task_workspace(Some("ws-a")), Some("ws-a"));
     }
 }

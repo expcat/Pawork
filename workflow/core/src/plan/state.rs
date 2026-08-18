@@ -182,20 +182,22 @@ pub fn apply(state: &mut PlanState, event: &PlanEvent) {
         PlanEvent::Revised {
             version,
             parent_version,
+            title,
+            steps,
             ..
         } => {
+            state.title = Some(title.clone());
+            state.steps = steps.clone();
             state.current_version = Some(version.clone());
             state.parent_version = Some(parent_version.clone());
             state.review_status = PlanReviewStatus::Draft;
             state.approved_checkpoint_id = None;
             if !state.history.iter().any(|h| &h.version == version) {
-                let title = state.title.clone().unwrap_or_default();
-                let steps = state.steps.clone();
                 state.history.push(PlanVersionInfo {
                     version: version.clone(),
                     parent_version: Some(parent_version.clone()),
-                    title,
-                    steps,
+                    title: title.clone(),
+                    steps: steps.clone(),
                 });
             }
         }

@@ -45,7 +45,7 @@
 - [x] protocol-probe 自检报告全绿（9 场景：`session-events` / `snapshot-reconnect` / `resume-snapshot-fallback` / `three-gui-sync` / `command-idempotency` / `artifact-chunks` / `version-reject` / `disconnect-keeps-run` / `quota-alert-roundtrip`）。
 - [x] 交互式命令经 PTY：`protocol-probe --live-pty` 对真实 serve，`echo s10-pty` 回显 14 字节，重连 `up_to_date`（无新事件故 0 replayed），Snapshot 仍有 terminal id。`--live-two-gui` 在断线后继续写 PTY，Resume Replay 48 条含后续输出。Snapshot **不含** PTY buffer；Inspector Terminal 是滚动文本，不是 VT100。
 - [x] `pawork sessions fork` CLI 已接（V1 **没有**该子命令；调 `fork_from_event`，默认 switch；`--no-switch` 保留原 branch）。2026-08-17 两分支真实 resume（`glm-coding`/`glm-4.7`）：`--no-switch` 后 `chat --resume S` 回 `main-branch`，`--resume S --branch <id>` 回 `fork-branch`；库内 `main` 27 条 / fork 20 条。修复：`PersistThenRender` 改为写入 session **active branch**（原先写死 `main`，fork 上 `append_event` 被拒、`--json` 空等）。首轮曾遇 GLM `timeout`（retryable），不阻塞后续两分支。
-- [x] `pawork service install/start`：本机 darwin launchd `--apply` 已过（实例 `s10svc`，**不是**默认 `pawork`）。`install` 写 `~/Library/LaunchAgents/pawork.s10svc.plist`（`RunAtLoad`/`KeepAlive`，`ProgramArguments`=`pawork --instance s10svc gui serve`）；`start` 后 `status` `listening=true`，`doctor` `handshake=ok`；`stop --apply` 后未监听、进程退出并删 plist。修复：`--json --apply` 先前只打印 `applied=true` 不执行。Windows Service 本机无法验收，**不打勾**。
+- [x] `pawork service install/start`：本机 darwin launchd `--apply` 已过（实例 `s10svc`，**不是**默认 `pawork`）。`install` 写 `~/Library/LaunchAgents/pawork.s10svc.plist`（`RunAtLoad`/`KeepAlive`，`ProgramArguments`=`pawork --instance s10svc gui serve`）；`start` 后 `status` `listening=true`，`doctor` `handshake=ok`；`stop --apply` 当时只 `launchctl unload`、**未删 plist**（S12-CR09-02 / S12-F39）。删除 launchd plist / systemd unit 由 S13 F03（2026-08-18）补齐。修复：`--json --apply` 先前只打印 `applied=true` 不执行。Windows Service 本机无法验收，**不打勾**。
 - [x] `--json` 新旧格式迁移说明可用：流式 stdout 为 `HeadlessResponse`（`type=event|response|error`），无 hello；见 [docs/headless-json-migration.md](../docs/headless-json-migration.md)。2026-08-17 人工对照：`run` / `chat --prompt` 顶层只有 `type=event|response`，event 带 `envelope.global_sequence`，无顶层 `schema_version`。
 
 ## 定向自动化测试
@@ -66,7 +66,7 @@
 
 ## GUI 增量
 
-按 [gui-design.md](../docs/gui-design.md) §5：正式 Replay、Fork、Terminal、本机多窗口。不新起壳。
+按 [gui-design.md](../docs/gui-design.md) §5：正式 Replay、Fork、Terminal。**本机 GPUI 多窗口未实现**（S10 当时列入增量但无第二 `open_window`；S13-F37 登记延期，见 [ROADMAP §4](../ROADMAP.md)）。不新起壳。
 
 ## 为后续阶段预留 / 明确不做
 

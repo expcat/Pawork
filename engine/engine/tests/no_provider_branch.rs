@@ -7,10 +7,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// 已知 provider 名（小写）。Agent 核心源码不应出现这些字面量。
+///
+/// 与 S6 首发六通道对齐（chatgpt / xai / glm-coding / opencode-go /
+/// qwen-token-plan / deepseek），并保留 openai / anthropic 基线与常见别名。
 const FORBIDDEN_PROVIDER_NAMES: &[&str] = &[
     "openai",
     "anthropic",
     "claude",
+    "chatgpt",
+    "xai",
+    "grok",
+    "glm",
+    "glm-coding",
+    "opencode",
+    "opencode-go",
+    "qwen",
+    "qwen-token-plan",
+    "deepseek",
     "google",
     "gemini",
     "bedrock",

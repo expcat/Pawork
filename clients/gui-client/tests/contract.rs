@@ -433,7 +433,10 @@ async fn resume_falls_back_to_snapshot_required_when_replay_unavailable() {
         outcome.disposition
     );
     assert!(outcome.replayed.is_empty());
-    let snapshot = client.snapshot().await.expect("manual snapshot after resume");
+    let snapshot = outcome
+        .snapshot
+        .as_ref()
+        .expect("SnapshotRequired 应附带重建 Snapshot");
     assert_eq!(snapshot.instance_id, client.handle().instance_id);
 }
 #[tokio::test]

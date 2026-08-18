@@ -153,7 +153,7 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 | S7 | 最小 `gui serve` + 单客户端协议 | 本设计的 Agent 壳：日期内项目分组 TaskRail / 紧凑 Composer / Context / 取消 / 模型 / 审批按钮；状态栏只显示已有权威字段 |
 | S8 | diff / checkpoint / rollback | InspectorToolTabs 激活 Changes；折叠态 ActivityPopover 显示文件数与增删行摘要 |
 | S9 | MCP / AGENTS.md / `@file` | Composer `@` 补全；Resources 只读：MCP 列表、已加载规则 |
-| S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal、多窗口本地 |
+| S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal；本机多窗口未做（ROADMAP §4） |
 | S11 | Plan / 后台任务 / usage / 多 Agent | Workflow 与完整用量/quota 状态条；ActivityPopover 激活 Main / subagent 状态列表 |
 | S12 | 全项目 Code Review | 只读核对 Desktop 四层边界、状态投影、能力声明、可访问性及 S7–S11 GUI 需求/证据；不改界面、不启动窗口 |
 | 待决策 | WASM 插件 / Hooks / LSP / 市场 | 预留 Resources 空位与协议扩展点，**不画假市场页** |

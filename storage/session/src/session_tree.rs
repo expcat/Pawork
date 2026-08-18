@@ -330,7 +330,14 @@ mod tests {
         store
             .append_event(
                 DEFAULT_BRANCH_ID,
-                event(&session, 2, AgentEvent::RunCancelled { reason: None }),
+                event(
+                    &session,
+                    2,
+                    AgentEvent::RunCancelled {
+                        reason: None,
+                        usage: None,
+                    },
+                ),
             )
             .await
             .expect("append 2");

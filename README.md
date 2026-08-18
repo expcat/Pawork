@@ -18,7 +18,7 @@ Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心�
 | [S10](plan/S10-serve-clients.md) | 服务化与客户端补齐 | 🟢 |
 | [S11](plan/S11-workflow-control.md) | 工作流、多 Agent 与控制面 | 🟢 |
 | [S12](plan/S12-project-code-review.md) | 全项目 Code Review 与整改拆分（只读） | 🟢 |
-| [S13](plan/S13-s12-remediation.md) | S12 finding 整改（波 A ✅ · 波 B Bug → 波 C 收口） | 🔵 |
+| [S13](plan/S13-s12-remediation.md) | S12 finding 整改（波 A ✅ · 波 B ✅ · 波 C 收口） | 🔵 |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成。阶段明细与真实验收要点见 [ROADMAP.md](ROADMAP.md) §2。
 
@@ -38,21 +38,25 @@ cargo build                      # workspace dev 构建
 
 ```text
 Pawork/                  # 仓库根 = Cargo workspace 根
-├── apps/                # 可执行入口：pawork（CLI 宿主）、desktop（GPUI GUI）
+├── apps/                # 可执行入口：pawork（CLI 宿主）、desktop（GPUI GUI）、protocol-probe
+├── agents/              # orchestration（Supervisor / teams）
+├── control-plane/       # tenant / quota / provider-control
+├── workflow/            # plan / goal / task / automation / monitor、memory、review
 ├── foundation/          # domain、api、protocol、config、sqlite、testkit、diagnostics
 ├── engine/              # Agent Engine（工具循环、上下文、事件）
 ├── execution/           # exec（进程/沙箱）、policy、tools
 ├── providers/           # core、adapters（多通道）、auth
 ├── storage/             # session（持久化/重放）、blob
-├── host/                # app、cli、gui-server、transport
-├── clients/             # gui-client
+├── host/                # app、cli、gui-server、transport、channels
+├── clients/             # gui-client、sdk、compat
 ├── net/                 # HTTP/传输基础
 ├── vcs/                 # git（diff/checkpoint/rollback）
 ├── extensions/          # mcp（S9）
 ├── workspace/           # core（workspace 服务）、resources（AGENTS.md/Skills 加载）
+├── schemas/             # protocol typegen 检入的 .d.ts
 ├── fixtures/            # 测试夹具
 ├── design/              # GUI v3 定稿视觉基准
-├── docs/                # 设计、规范、参照、迁移词典
+├── docs/                # 设计、规范、参照、迁移词典、ADR
 └── plan/                # 阶段任务书 S0–S13
 ```
 

@@ -202,6 +202,7 @@ pub fn tool_results_message(message_id: MessageId, results: Vec<ToolCallResult>)
                 content: result.result.content,
                 is_error,
                 metadata: result.result.metadata,
+                artifacts: result.result.artifacts,
             })
         })
         .collect();

@@ -410,7 +410,12 @@ impl GuiHostAdapter {
             .map_err(Self::app_error)
     }
 
+    pub fn pty(&self) -> Arc<PtyService> {
+        Arc::clone(&self.pty)
+    }
+
     pub async fn shutdown(self) -> Result<(), crate::AppError> {
+        let _ = self.pty.shutdown().await;
         match Arc::try_unwrap(self.core) {
             Ok(lock) => lock.into_inner().shutdown().await,
             Err(_) => Ok(()),
@@ -897,14 +902,24 @@ impl GuiHost for GuiHostAdapter {
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
         let tenant = TenantId::new(DEFAULT_CONTROL_PLANE_TENANT);
         let (command_id, idempotency_key) = scoped_idempotency(envelope);
-        match self
-            .idempotency
-            .check(&tenant, &command_id, idempotency_key.as_deref())
-        {
-            IdempotencyCheck::Replay(cached) => return Ok(cached.response),
-            IdempotencyCheck::New => {}
+        loop {
+            match self
+                .idempotency
+                .check(&tenant, &command_id, idempotency_key.as_deref())
+            {
+                IdempotencyCheck::Replay(cached) => return Ok(cached.response),
+                IdempotencyCheck::InFlight(notify) => notify.notified().await,
+                IdempotencyCheck::New => break,
+            }
         }
-        let response = self.dispatch_command(envelope).await?;
+        let response = match self.dispatch_command(envelope).await {
+            Ok(response) => response,
+            Err(error) => {
+                self.idempotency
+                    .release(&tenant, &command_id, idempotency_key.as_deref());
+                return Err(error);
+            }
+        };
         let cached = AppResponseEnvelope {
             api_version: envelope.api_version,
             request_id: QueryId::from(envelope.command_id.as_str()),
@@ -918,6 +933,9 @@ impl GuiHost for GuiHostAdapter {
                 idempotency_key.as_deref(),
                 cached,
             );
+        } else {
+            self.idempotency
+                .release(&tenant, &command_id, idempotency_key.as_deref());
         }
         Ok(response)
     }
@@ -1312,6 +1330,8 @@ impl GuiHostAdapter {
                 self.spawn_terminal_forwarder(terminal_id.clone(), owner);
                 Ok(AppResponse::Data(json!({
                     "terminal_session_id": terminal_id.as_str(),
+                    "uncontrolled": true,
+                    "note": "本机不受控终端：不经沙箱与审批",
                 })))
             }
             AppCommand::TerminalWrite {
@@ -1410,7 +1430,7 @@ pub fn project_timeline_item(envelope: &AgentEventEnvelope) -> Option<TimelineIt
             Some(join_text(&result.content)),
             result.tool_name.clone(),
             Some(if result.is_error { "failed" } else { "succeeded" }.into()),
-            None,
+            sandbox_timeline_detail(&result.metadata),
         ),
         AgentEvent::ToolApprovalRequested { reason, .. } => (
             TimelineItemKind::ApprovalRequested,
@@ -1435,7 +1455,7 @@ pub fn project_timeline_item(envelope: &AgentEventEnvelope) -> Option<TimelineIt
         AgentEvent::RunCancelled { .. } => {
             (TimelineItemKind::RunCancelled, None, None, None, None)
         }
-        AgentEvent::RunFailed { error } => (
+        AgentEvent::RunFailed { error, .. } => (
             TimelineItemKind::RunFailed,
             None,
             None,
@@ -1476,6 +1496,22 @@ pub fn project_timeline_item(envelope: &AgentEventEnvelope) -> Option<TimelineIt
         detail,
         timestamp: envelope.timestamp.as_unix_millis().to_string(),
     })
+}
+
+fn sandbox_timeline_detail(metadata: &serde_json::Value) -> Option<String> {
+    let sandbox = metadata.get("sandbox")?;
+    if !sandbox.get("fallback")?.as_bool()? {
+        return None;
+    }
+    let isolation = sandbox
+        .get("isolation")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let backend = sandbox
+        .get("backend")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    Some(format!("沙箱回退：isolation={isolation} backend={backend}"))
 }
 
 fn join_text(parts: &[ContentPart]) -> String {
@@ -1596,6 +1632,13 @@ fn scoped_idempotency(envelope: &AppCommandEnvelope) -> (CommandId, Option<Strin
                 .idempotency_key
                 .as_ref()
                 .map(|key| format!("{client_id}/{key}")),
+        ),
+        None if matches!(envelope.source, CommandSource::Automation) => (
+            CommandId::from(format!("automation/{}", envelope.command_id.as_str())),
+            envelope
+                .idempotency_key
+                .as_ref()
+                .map(|key| format!("automation/{key}")),
         ),
         None => (
             envelope.command_id.clone(),

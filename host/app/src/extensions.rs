@@ -17,7 +17,7 @@ use pawork_mcp::manager::{ConnectionState, ManagedMcpClient};
 use pawork_mcp::{McpError, McpPeer};
 use pawork_resources::{
     CurrentPathKind, ResourceInstructionKind, ResourceLoader, ResourceLoaderOptions,
-    ResourceRequest, ResourceSelection, WorkspaceRelativePath,
+    ResourceOrigin, ResourceRequest, ResourceSelection, WorkspaceRelativePath,
 };
 use pawork_tools::{
     ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, RunCommandTool,
@@ -341,6 +341,13 @@ impl AppCore {
             Ok(bundle) => bundle
                 .instructions
                 .into_iter()
+                .filter(|instruction| {
+                    self.workspace_trusted
+                        || !matches!(
+                            instruction.provenance.origin,
+                            ResourceOrigin::Workspace { .. }
+                        )
+                })
                 .map(|instruction| InjectedLayer {
                     kind: instruction_kind_name(instruction.kind).into(),
                     resource_id: instruction.resource_id,

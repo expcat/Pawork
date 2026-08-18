@@ -9,6 +9,7 @@ use pawork_domain::{
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
+#[cfg(feature = "typegen")]
 use ts_rs::TS;
 
 use super::version::{ApiVersion, DEFAULT_CONTROL_PLANE_PRINCIPAL};
@@ -21,7 +22,8 @@ pub const MAX_CLIENT_CONTEXT_DIAGNOSTICS: usize = 1024;
 pub const MAX_CLIENT_CONTEXT_URI_BYTES: usize = 4096;
 pub const MAX_CLIENT_CONTEXT_MESSAGE_BYTES: usize = 4096;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct AppCommandEnvelope {
     pub api_version: ApiVersion,
     pub command_id: CommandId,
@@ -35,7 +37,8 @@ pub struct AppCommandEnvelope {
     pub command: AppCommand,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CommandSource {
     LocalCli {
@@ -54,7 +57,8 @@ pub enum CommandSource {
     Mcp,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActorIdentity {
     LocalUser {
@@ -80,19 +84,22 @@ pub enum ActorIdentity {
 
 /// Host 观察到的文本位置；采用 LSP 的 zero-based line/character 语义，但不
 /// 依赖任何 IDE/LSP crate，保持 Core canonical domain 中立。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ClientTextPosition {
     pub line: u32,
     pub character: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ClientTextRange {
     pub start: ClientTextPosition,
     pub end: ClientTextPosition,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ClientDiagnosticSeverity {
     Error,
@@ -103,7 +110,8 @@ pub enum ClientDiagnosticSeverity {
 
 /// 单个打开文档的有限元数据。刻意不携带正文，只保留上下文定位和字节数提示，
 /// 避免 IDE 通道变成绕过 Workspace/Policy 的文件读取入口。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ClientDocumentContext {
     pub uri: String,
     pub language_id: String,
@@ -117,7 +125,8 @@ pub struct ClientDocumentContext {
 }
 
 /// IDE/LSP 展示的诊断快照。`message` 是不可信观察数据，不具备指令权限。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ClientDiagnostic {
     pub document_uri: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -135,7 +144,8 @@ pub struct ClientDiagnostic {
 /// 外部 Host 对一个 Core session 的全量、单调版本化上下文快照。
 ///
 /// 替换语义使断线重连可直接重放最新状态，不需要累积不可恢复的增量日志。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ClientContextSnapshot {
     pub revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -279,7 +289,8 @@ impl ActorIdentity {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum AppCommand {
     CoreInitialize,
@@ -368,7 +379,8 @@ pub enum AppCommand {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     ApproveOnce,
@@ -378,7 +390,8 @@ pub enum ApprovalDecision {
 }
 
 /// 已验证的 Workspace 相对路径。反序列化同样执行校验，不能绕过构造器。
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct WorkspaceRelativePath(String);
 
 impl WorkspaceRelativePath {

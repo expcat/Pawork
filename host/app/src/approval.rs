@@ -225,7 +225,7 @@ pub fn parse_approval_mode(value: &str) -> Result<ApprovalMode, String> {
         "never-ask" | "never_ask" => Ok(ApprovalMode::NeverAsk),
         "read-only" | "read_only" => Ok(ApprovalMode::ReadOnly),
         other => Err(format!(
-            "unknown approval mode `{other}`; expected always-ask|ask-for-writes|ask-for-dangerous|on-failure|never-ask|read-only"
+            "unknown approval mode `{other}`; expected always-ask|ask-for-writes|ask-for-dangerous|on-failure|never-ask|read-only (on-failure currently equals never-ask)"
         )),
     }
 }
@@ -413,6 +413,14 @@ mod tests {
         assert_eq!(
             parse_approval_mode("read_only").expect("snake"),
             ApprovalMode::ReadOnly
+        );
+        assert_eq!(
+            parse_approval_mode("on-failure").expect("kebab"),
+            ApprovalMode::OnFailure
+        );
+        assert_eq!(
+            parse_approval_mode("on_failure").expect("snake"),
+            ApprovalMode::OnFailure
         );
         assert!(parse_approval_mode("yolo").is_err());
     }

@@ -53,6 +53,27 @@ impl MemoryService {
         MemoryId::new(format!("mem-{n}"))
     }
 
+    /// 从已见 `memory_id` 推进分配游标：解析 `mem-{n}`，将 `next_id` 提升到
+    /// `max(n)+1`。非该形态的 id 忽略。
+    fn advance_next_id(&self, memory_id: &MemoryId) {
+        if let Some(n) = parse_mem_seq(memory_id.as_str()) {
+            let _ = self.next_id.fetch_max(n.saturating_add(1), Ordering::Relaxed);
+        }
+    }
+
+    /// 从 canonical 事件序列重放重建 service（恢复入口）。
+    pub fn from_events<'a>(
+        provider: Arc<dyn EmbeddingProvider>,
+        model: ModelId,
+        events: impl IntoIterator<Item = &'a MemoryEvent>,
+    ) -> Self {
+        let mut service = Self::new(provider, model);
+        for event in events {
+            service.apply(event);
+        }
+        service
+    }
+
     /// 嵌入候选文本并写入记忆，返回 canonical `Recorded` 事件以持久化。
     ///
     /// 空 / 含 Secret 的候选被拒绝（不进入记忆）。`workspace_id` 用于跨 workspace 隔离。
@@ -157,9 +178,22 @@ impl MemoryService {
     }
 
     /// 折叠 canonical 事件（replay / 重放入口，委托 store）。
+    ///
+    /// 按事件中已见的 `mem-{n}` 推进分配游标，避免重放后 `record()` 从
+    /// `mem-0` 重发并覆盖历史记忆。
     pub fn apply(&mut self, event: &MemoryEvent) {
         self.store.apply(event);
+        match event {
+            MemoryEvent::Recorded { memory_id, .. }
+            | MemoryEvent::Invalidated { memory_id, .. } => {
+                self.advance_next_id(memory_id);
+            }
+        }
     }
+}
+
+fn parse_mem_seq(id: &str) -> Option<u64> {
+    id.strip_prefix("mem-")?.parse().ok()
 }
 
 enum InvalidationStatus {
@@ -347,6 +381,81 @@ mod tests {
         assert_eq!(replayed.valid, live.valid);
         // replay 后 embedding 不再为空（ADR-016）。
         assert!(!replayed.embedding.is_empty());
+    }
+
+    #[tokio::test]
+    async fn apply_mem7_then_record_does_not_collide() {
+        let mut service = svc();
+        service.apply(&MemoryEvent::Recorded {
+            memory_id: MemoryId::new("mem-7"),
+            summary: "historical fact".to_owned(),
+            source_event_id: None,
+            privacy: pawork_domain::MemoryPrivacy::WorkspaceLocal,
+            workspace_id: None,
+            embedding: vec![1.0, 0.0],
+            confidence: 1.0,
+        });
+        assert_eq!(
+            service.get(&MemoryId::new("mem-7")).unwrap().summary,
+            "historical fact"
+        );
+
+        let event = service
+            .record(
+                CandidateMemory::new("fresh fact after replay"),
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("record after apply");
+        let MemoryEvent::Recorded { memory_id, .. } = &event else {
+            panic!("expected Recorded");
+        };
+        assert_ne!(memory_id.as_str(), "mem-0");
+        assert_ne!(memory_id.as_str(), "mem-7");
+        assert_eq!(memory_id.as_str(), "mem-8");
+        assert_eq!(
+            service.get(&MemoryId::new("mem-7")).unwrap().summary,
+            "historical fact"
+        );
+        assert_eq!(
+            service.get(memory_id).unwrap().summary,
+            "fresh fact after replay"
+        );
+    }
+
+    #[tokio::test]
+    async fn from_events_seeds_next_id_like_apply() {
+        let events = [MemoryEvent::Recorded {
+            memory_id: MemoryId::new("mem-7"),
+            summary: "from events".to_owned(),
+            source_event_id: None,
+            privacy: pawork_domain::MemoryPrivacy::WorkspaceLocal,
+            workspace_id: None,
+            embedding: vec![1.0],
+            confidence: 0.5,
+        }];
+        let mut service = MemoryService::from_events(
+            Arc::new(FixedEmbedder),
+            ModelId::new("embed-test"),
+            events.iter(),
+        );
+        let event = service
+            .record(
+                CandidateMemory::new("after from_events"),
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("record");
+        let MemoryEvent::Recorded { memory_id, .. } = &event else {
+            panic!("expected Recorded");
+        };
+        assert_eq!(memory_id.as_str(), "mem-8");
+        assert_eq!(
+            service.get(&MemoryId::new("mem-7")).unwrap().summary,
+            "from events"
+        );
     }
 
     #[tokio::test]

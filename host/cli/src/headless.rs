@@ -69,20 +69,7 @@ impl HeadlessHandler {
         capability: Option<SdkCapability>,
         request_id: Option<String>,
     ) -> Option<HeadlessResponse> {
-        match capability {
-            Some(capability) if self.granted.contains(&capability) => None,
-            Some(capability) => Some(HeadlessResponse::Error {
-                request_id,
-                kind: ProtocolErrorKind::UnsupportedCapability,
-                message: format!("capability `{capability:?}` is not granted to this client"),
-            }),
-            None if self.granted.is_empty() => Some(HeadlessResponse::Error {
-                request_id,
-                kind: ProtocolErrorKind::UnsupportedCapability,
-                message: "no capabilities granted".into(),
-            }),
-            None => None,
-        }
+        gate_capability(&self.granted, capability, request_id)
     }
 
     async fn store(&self) -> Result<SessionStore, String> {
@@ -315,6 +302,26 @@ impl HeadlessHandler {
     }
 }
 
+fn gate_capability(
+    granted: &[SdkCapability],
+    capability: Option<SdkCapability>,
+    request_id: Option<String>,
+) -> Option<HeadlessResponse> {
+    match capability {
+        Some(capability) if granted.contains(&capability) => None,
+        Some(capability) => Some(HeadlessResponse::Error {
+            request_id,
+            kind: ProtocolErrorKind::UnsupportedCapability,
+            message: format!("capability `{capability:?}` is not granted to this client"),
+        }),
+        None => Some(HeadlessResponse::Error {
+            request_id,
+            kind: ProtocolErrorKind::UnsupportedCapability,
+            message: "command is not mapped to a capability".into(),
+        }),
+    }
+}
+
 fn command_capability(command: &AppCommand) -> Option<SdkCapability> {
     match command {
         AppCommand::SessionCreate { .. }
@@ -354,6 +361,54 @@ fn map_source_back(source: ExternalSource) -> CompatSource {
         ExternalSource::Codex => CompatSource::Codex,
         ExternalSource::Grok => CompatSource::Grok,
         ExternalSource::Cursor => CompatSource::Cursor,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_add_is_unmapped_and_fail_closed_with_compat_history() {
+        let command = AppCommand::WorkspaceAdd {
+            root_path: "/tmp/ws".into(),
+        };
+        assert!(
+            command_capability(&command).is_none(),
+            "WorkspaceAdd 不得静默映射到已有 capability"
+        );
+        let rejected = gate_capability(
+            &[SdkCapability::CompatHistory],
+            command_capability(&command),
+            Some("req-1".into()),
+        );
+        assert!(
+            matches!(
+                rejected,
+                Some(HeadlessResponse::Error {
+                    kind: ProtocolErrorKind::UnsupportedCapability,
+                    ..
+                })
+            ),
+            "仅 CompatHistory 握手后 WorkspaceAdd 应 UnsupportedCapability，got {rejected:?}"
+        );
+    }
+
+    #[test]
+    fn granted_session_capability_still_allows_mapped_commands() {
+        let command = AppCommand::SessionCreate {
+            workspace_id: pawork_domain::WorkspaceId::from("ws-1"),
+            title: None,
+        };
+        assert_eq!(command_capability(&command), Some(SdkCapability::Sessions));
+        assert!(
+            gate_capability(
+                &[SdkCapability::Sessions],
+                command_capability(&command),
+                Some("req-2".into()),
+            )
+            .is_none()
+        );
     }
 }
 

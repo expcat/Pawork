@@ -88,6 +88,9 @@ pub struct ToolResultContent {
     pub is_error: bool,
     #[serde(default)]
     pub metadata: Value,
+    /// 工具产出的 artifact 引用（ADR-037 / S13-F24）。空向量不序列化，旧事件可解码。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ArtifactReference>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +141,13 @@ pub struct TokenUsage {
 impl TokenUsage {
     pub const fn total_tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens
+    }
+
+    pub const fn is_zero(&self) -> bool {
+        self.input_tokens == 0
+            && self.output_tokens == 0
+            && self.cache_read_tokens == 0
+            && self.cache_write_tokens == 0
     }
 }
 
@@ -210,6 +220,7 @@ mod tests {
                 })],
                 is_error: false,
                 metadata: Value::Null,
+                artifacts: Vec::new(),
             }),
             ContentPart::ArtifactRef(artifact),
         ];
@@ -240,6 +251,40 @@ mod tests {
         let json = serde_json::to_string(&message).expect("serialize message");
         let decoded: Message = serde_json::from_str(&json).expect("deserialize message");
         assert_eq!(decoded, message);
+    }
+
+    #[test]
+    fn tool_result_content_artifacts_round_trip_and_legacy_default() {
+        let with_artifacts = ToolResultContent {
+            tool_call_id: ToolCallId::from("call-1"),
+            tool_name: Some("write_file".into()),
+            content: Vec::new(),
+            is_error: false,
+            metadata: Value::Null,
+            artifacts: vec![ArtifactReference {
+                id: crate::ArtifactId::from("blob-1"),
+                media_type: "text/plain".into(),
+                byte_length: 4,
+                content_hash: Some("abcd".into()),
+                label: Some("out".into()),
+            }],
+        };
+        let json = serde_json::to_string(&with_artifacts).expect("serialize");
+        assert!(json.contains("blob-1"));
+        let decoded: ToolResultContent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, with_artifacts);
+
+        let legacy = serde_json::json!({
+            "tool_call_id": "call-2",
+            "content": [],
+            "is_error": false,
+            "metadata": null
+        });
+        let old: ToolResultContent =
+            serde_json::from_value(legacy).expect("legacy tool result without artifacts");
+        assert!(old.artifacts.is_empty());
+        let encoded = serde_json::to_string(&old).expect("serialize empty artifacts");
+        assert!(!encoded.contains("artifacts"));
     }
 
     #[test]

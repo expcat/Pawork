@@ -151,7 +151,7 @@ pub async fn run_session(
         .await?;
 
     if cancel.is_cancelled() {
-        return emit_cancelled(&emitter, "turn cancelled").await;
+        return emit_cancelled(&emitter, "turn cancelled", &TokenUsage::default()).await;
     }
 
     let mut current = apply_injected_layers(request, &context.injected_layers);
@@ -169,7 +169,7 @@ pub async fn run_session(
 
     loop {
         if cancel.is_cancelled() {
-            return emit_cancelled(&emitter, "turn cancelled").await;
+            return emit_cancelled(&emitter, "turn cancelled", &run_usage).await;
         }
 
         // S5：每轮请求前估算输入 token 并发 ContextPrepared（estimator 未配置时
@@ -249,10 +249,20 @@ pub async fn run_session(
                     .request_approval(&invocations, run_approved, cancel.clone())
                     .await;
                 if cancel.is_cancelled() {
-                    return emit_cancelled(&emitter, "turn cancelled").await;
+                    return emit_cancelled(&emitter, "turn cancelled", &run_usage).await;
                 }
-                let (to_run, mut decided) =
-                    apply_approval_gates(&invocations, &gates, &mut run_approved);
+                let (to_run, mut decided) = if gates.len() != invocations.len() {
+                    let mut decided = BTreeMap::new();
+                    for invocation in &invocations {
+                        decided.insert(
+                            invocation.tool_call_id.clone(),
+                            ApprovalDecision::Denied,
+                        );
+                    }
+                    (Vec::new(), decided)
+                } else {
+                    apply_approval_gates(&invocations, &gates, &mut run_approved)
+                };
                 for invocation in &invocations {
                     if let Some(decision) = decided.get(&invocation.tool_call_id) {
                         emitter
@@ -299,7 +309,7 @@ pub async fn run_session(
                         .await
                 };
                 if cancel.is_cancelled() {
-                    return emit_cancelled(&emitter, "turn cancelled").await;
+                    return emit_cancelled(&emitter, "turn cancelled", &run_usage).await;
                 }
                 for result in &raw {
                     decided.remove(&result.tool_call_id);
@@ -321,12 +331,21 @@ pub async fn run_session(
                 let results = align_tool_results(&invocations, merged);
 
                 for result in &results {
+                    let content = tool_result_content(result);
                     emitter
                         .emit(AgentEvent::ToolExecutionCompleted {
                             tool_call_id: result.tool_call_id.clone(),
-                            result: tool_result_content(result),
+                            result: content.clone(),
                         })
                         .await?;
+                    if let Some(details) = sandbox_fallback_details(&content.metadata) {
+                        emitter
+                            .emit(AgentEvent::Diagnostic {
+                                code: "sandbox.fallback".into(),
+                                details,
+                            })
+                            .await?;
+                    }
                 }
 
                 let tool_message =
@@ -354,18 +373,26 @@ pub async fn run_session(
                                 retry_after_ms: None,
                                 diagnostics: Default::default(),
                             },
+                            usage: optional_usage(&run_usage),
                         })
                         .await?;
                     return Err(EngineError::MaxToolRounds(max_tool_rounds));
                 }
             }
             Err(error) if error.kind == pawork_api::ProviderErrorKind::Cancelled => {
-                return emit_cancelled(&emitter, error.message.clone()).await;
+                let stream_usage = last_stream_usage(&sink.drain_events());
+                run_usage = saturating_add_usage(&run_usage, &stream_usage);
+                return emit_cancelled(&emitter, error.message.clone(), &run_usage).await;
             }
             Err(error) => {
+                let stream_usage = last_stream_usage(&sink.drain_events());
+                run_usage = saturating_add_usage(&run_usage, &stream_usage);
                 let context = ErrorContext::from(error.clone());
                 emitter
-                    .emit(AgentEvent::RunFailed { error: context })
+                    .emit(AgentEvent::RunFailed {
+                        error: context,
+                        usage: optional_usage(&run_usage),
+                    })
                     .await?;
                 return Err(error.into());
             }
@@ -574,14 +601,66 @@ async fn apply_context_limits(
 async fn emit_cancelled(
     emitter: &EventEmitter<'_>,
     reason: impl Into<String>,
+    usage: &TokenUsage,
 ) -> Result<ModelResponseSummary, EngineError> {
     let reason = reason.into();
     emitter
         .emit(AgentEvent::RunCancelled {
             reason: Some(reason.clone()),
+            usage: optional_usage(usage),
         })
         .await?;
     Err(ProviderError::cancelled(reason).into())
+}
+
+fn optional_usage(usage: &TokenUsage) -> Option<TokenUsage> {
+    if usage.is_zero() {
+        None
+    } else {
+        Some(usage.clone())
+    }
+}
+
+fn last_stream_usage(events: &[ProviderStreamEvent]) -> TokenUsage {
+    events
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            ProviderStreamEvent::UsageUpdated(usage) => Some(usage.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn sandbox_fallback_details(metadata: &serde_json::Value) -> Option<serde_json::Value> {
+    let sandbox = metadata.get("sandbox")?;
+    if !sandbox.get("fallback")?.as_bool()? {
+        return None;
+    }
+    let isolation = sandbox
+        .get("isolation")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let backend = sandbox
+        .get("backend")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let note = sandbox
+        .get("note")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let message = if note.is_empty() {
+        format!("沙箱回退：isolation={isolation} backend={backend}")
+    } else {
+        format!("沙箱回退：isolation={isolation} backend={backend}（{note}）")
+    };
+    Some(serde_json::json!({
+        "message": message,
+        "isolation": isolation,
+        "backend": backend,
+        "note": note,
+        "fallback": true,
+    }))
 }
 
 /// 摘要请求的 User 指令：要求保留关键事实 / 约束 / 未完成工作。
@@ -945,6 +1024,7 @@ fn tool_result_content(result: &ToolCallResult) -> ToolResultContent {
         content: result.result.content.clone(),
         is_error: result.result.is_error(),
         metadata: result.result.metadata.clone(),
+        artifacts: result.result.artifacts.clone(),
     }
 }
 
@@ -973,10 +1053,10 @@ mod tests {
         ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
     };
     use pawork_domain::{
-        AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, CheckpointId,
-        ContentPart, ErrorCategory, EventId, EventSequence, Message, MessageId, MessageRole,
-        ModelId, ProviderId, RequestId, RunId, SessionId, StopReason, TextContent, Timestamp,
-        TokenUsage, ToolCallId, WorkspaceId,
+        AgentEvent, AgentEventEnvelope, ApprovalDecision, ArtifactId, ArtifactReference,
+        CancellationToken, CheckpointId, ContentPart, ErrorCategory, EventId, EventSequence,
+        Message, MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId, SessionId,
+        StopReason, TextContent, Timestamp, TokenUsage, ToolCallId, WorkspaceId,
     };
     use pawork_testkit::{MockProvider, MockScript, MockTool};
 
@@ -1617,9 +1697,19 @@ mod tests {
         let provider = RecordingProvider::new(MockProvider::sequence(vec![
             MockScript::new()
                 .tool_call("echo", serde_json::json!({"n": 1}))
+                .usage(TokenUsage {
+                    input_tokens: 3,
+                    output_tokens: 1,
+                    ..TokenUsage::default()
+                })
                 .complete_with(StopReason::ToolUse),
             MockScript::new()
                 .tool_call("echo", serde_json::json!({"n": 2}))
+                .usage(TokenUsage {
+                    input_tokens: 4,
+                    output_tokens: 2,
+                    ..TokenUsage::default()
+                })
                 .complete_with(StopReason::ToolUse),
             MockScript::new()
                 .tool_call("echo", serde_json::json!({"n": 3}))
@@ -1649,17 +1739,25 @@ mod tests {
         let types = sink.types();
         assert!(types.contains(&"RunFailed"));
         assert!(!types.contains(&"RunCompleted"));
-        let failed = sink
+        let (failed, usage) = sink
             .snapshot()
             .into_iter()
             .find_map(|envelope| match envelope.payload {
-                AgentEvent::RunFailed { error } => Some(error),
+                AgentEvent::RunFailed { error, usage } => Some((error, usage)),
                 _ => None,
             })
             .expect("RunFailed");
         assert_eq!(failed.category, ErrorCategory::ResourceExhausted);
         assert!(failed.message.contains("maximum tool rounds exceeded"));
         assert!(failed.message.contains('2'));
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 7,
+                output_tokens: 3,
+                ..TokenUsage::default()
+            })
+        );
     }
 
     struct ScriptedApprovalCtx {
@@ -1786,6 +1884,245 @@ mod tests {
             }
         });
         assert_eq!(decision, Some(ApprovalDecision::ApprovedOnce));
+    }
+
+    struct EmptyGateCtx {
+        inner: TestContext,
+        executed: AtomicU64,
+    }
+
+    impl EmptyGateCtx {
+        fn new(tools: Vec<MockTool>) -> Self {
+            Self {
+                inner: TestContext::new(tools),
+                executed: AtomicU64::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LoopContext for EmptyGateCtx {
+        async fn execute_tools(
+            &self,
+            calls: Vec<PendingToolInvocation>,
+            events: LoopEventEmitter<'_>,
+            cancel: CancellationToken,
+        ) -> Vec<ToolCallResult> {
+            self.executed.fetch_add(1, Ordering::SeqCst);
+            self.inner.execute_tools(calls, events, cancel).await
+        }
+
+        async fn request_approval(
+            &self,
+            _calls: &[PendingToolInvocation],
+            _already_approved_for_run: bool,
+            _cancel: CancellationToken,
+        ) -> Vec<ApprovalGate> {
+            Vec::new()
+        }
+
+        fn next_message_id(&self) -> MessageId {
+            self.inner.next_message_id()
+        }
+
+        fn next_request_id(&self) -> RequestId {
+            self.inner.next_request_id()
+        }
+    }
+
+    #[tokio::test]
+    async fn short_approval_gates_fail_closed_without_executing() {
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("write_file", serde_json::json!({"path": "a.rs"}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("stopped").complete(),
+        ]));
+        let write = MockTool::new(
+            "write_file",
+            ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "ok".into(),
+            })]),
+        );
+        let ctx = EmptyGateCtx::new(vec![write.clone()]);
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            sample_request(vec![write_tool_def()]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
+        )
+        .await
+        .expect("denied tools still complete the run");
+
+        assert_eq!(ctx.executed.load(Ordering::SeqCst), 0);
+        assert_eq!(write.calls().len(), 0);
+        assert!(sink.types().contains(&"ToolApprovalResponded"));
+        assert!(!sink.types().contains(&"ToolExecutionStarted"));
+    }
+
+    #[tokio::test]
+    async fn tool_result_artifacts_reach_completed_event_and_tool_message() {
+        let artifact = ArtifactReference {
+            id: ArtifactId::from("art-1"),
+            media_type: "text/plain".into(),
+            byte_length: 2,
+            content_hash: None,
+            label: Some("out".into()),
+        };
+        let mut result = ToolResult::success(vec![ContentPart::Text(TextContent {
+            text: "ok".into(),
+        })]);
+        result.artifacts = vec![artifact.clone()];
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("echo", serde_json::json!({}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]));
+        let echo = MockTool::new("echo", result);
+        let ctx = TestContext::new(vec![echo]);
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            sample_request(vec![echo_tool_def()]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
+        )
+        .await
+        .expect("tool artifacts");
+
+        let completed = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::ToolExecutionCompleted { result, .. } => Some(result),
+                _ => None,
+            }
+        });
+        let completed = completed.expect("ToolExecutionCompleted");
+        assert_eq!(completed.artifacts, vec![artifact.clone()]);
+
+        let tool_message = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::MessageCommitted { message }
+                    if message.role == MessageRole::Tool =>
+                {
+                    Some(message)
+                }
+                _ => None,
+            }
+        });
+        let tool_message = tool_message.expect("tool message");
+        match &tool_message.content[0] {
+            ContentPart::ToolResult(content) => {
+                assert_eq!(content.artifacts, vec![artifact]);
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sandbox_fallback_emits_diagnostic() {
+        let mut result = ToolResult::success(vec![ContentPart::Text(TextContent {
+            text: "ok".into(),
+        })]);
+        result.metadata = serde_json::json!({
+            "sandbox": {
+                "backend": "native_restricted",
+                "isolation": "soft",
+                "fallback": true,
+                "note": "seatbelt unavailable"
+            }
+        });
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("run_command", serde_json::json!({}))
+                .complete_with(StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]));
+        let cmd = MockTool::new("run_command", result);
+        let ctx = TestContext::new(vec![cmd]);
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            sample_request(vec![ToolDefinition {
+                name: "run_command".into(),
+                description: "run".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }]),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
+        )
+        .await
+        .expect("sandbox fallback");
+
+        let diagnostic = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::Diagnostic { code, details } if code == "sandbox.fallback" => {
+                    Some(details)
+                }
+                _ => None,
+            }
+        });
+        let details = diagnostic.expect("sandbox.fallback Diagnostic");
+        assert_eq!(details["fallback"], true);
+        assert!(details["message"]
+            .as_str()
+            .is_some_and(|text| text.contains("沙箱回退")));
+    }
+
+    #[tokio::test]
+    async fn provider_error_after_usage_keeps_run_failed_usage() {
+        let usage = TokenUsage {
+            input_tokens: 11,
+            output_tokens: 5,
+            ..TokenUsage::default()
+        };
+        let provider = RecordingProvider::new(MockProvider::new(
+            MockScript::new()
+                .usage(usage.clone())
+                .fail(ProviderError::new(
+                    pawork_api::ProviderErrorKind::Unknown,
+                    "upstream",
+                )),
+        ));
+        let ctx = TestContext::new(Vec::new());
+        let sink = RecordingEvents::default();
+
+        run_session(
+            &provider,
+            sample_request(Vec::new()),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
+        )
+        .await
+        .expect_err("provider error");
+
+        let recorded = sink.snapshot().into_iter().find_map(|envelope| {
+            match envelope.payload {
+                AgentEvent::RunFailed { usage, .. } => usage,
+                _ => None,
+            }
+        });
+        assert_eq!(recorded, Some(usage));
     }
 
     struct CheckpointingCtx {

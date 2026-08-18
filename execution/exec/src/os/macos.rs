@@ -258,6 +258,257 @@ pub fn probe_reason() -> String {
     "sandbox-exec only available on macOS".to_string()
 }
 
+/// macOS 进程树终止：用 `proc_listpids` + `proc_pidinfo` 实现与
+/// [`crate::os::linux::linux_process_tree::terminate`] 同语义——冻树、扫 ppid
+/// 链、按 start_time 防 PID 复用、`killpg` + 杀已 `setsid` 逃逸的后代。
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_process_tree {
+    use std::collections::{HashMap, HashSet};
+    use std::io;
+
+    const MAX_FREEZE_ROUNDS: usize = 16;
+    /// `<libproc.h>` `PROC_ALL_PIDS`；libc 未导出该常量。
+    const PROC_ALL_PIDS: u32 = 1;
+
+    #[derive(Clone, Copy, Debug)]
+    struct ProcessRecord {
+        pid: i32,
+        ppid: i32,
+        pgrp: i32,
+        start_time: u64,
+    }
+
+    fn encode_start_time(sec: u64, usec: u64) -> u64 {
+        sec.saturating_mul(1_000_000).saturating_add(usec)
+    }
+
+    fn read_process(pid: i32) -> io::Result<Option<ProcessRecord>> {
+        let mut info = unsafe { std::mem::zeroed::<libc::proc_bsdinfo>() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        // SAFETY: `info` 是本函数栈上的 `proc_bsdinfo`；`proc_pidinfo` 至多写入
+        // `size` 字节。失败（进程已退出 / 无权限）按 Linux `/proc` 缺席处理。
+        let got = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                (&raw mut info).cast(),
+                size,
+            )
+        };
+        if got <= 0 || got != size {
+            return Ok(None);
+        }
+        let Ok(pid) = i32::try_from(info.pbi_pid) else {
+            return Ok(None);
+        };
+        let Ok(ppid) = i32::try_from(info.pbi_ppid) else {
+            return Ok(None);
+        };
+        let Ok(pgrp) = i32::try_from(info.pbi_pgid) else {
+            return Ok(None);
+        };
+        Ok(Some(ProcessRecord {
+            pid,
+            ppid,
+            pgrp,
+            start_time: encode_start_time(info.pbi_start_tvsec, info.pbi_start_tvusec),
+        }))
+    }
+
+    fn snapshot() -> io::Result<HashMap<i32, ProcessRecord>> {
+        // SAFETY: buffer=NULL 且 buffersize=0 是 `proc_listpids` 的询大小约定，不写内存。
+        let needed = unsafe { libc::proc_listpids(PROC_ALL_PIDS, 0, std::ptr::null_mut(), 0) };
+        if needed <= 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let slack = 128 * std::mem::size_of::<libc::pid_t>();
+        let mut bytes = vec![0u8; needed as usize + slack];
+        // SAFETY: `bytes` 是本函数拥有的缓冲区；长度以字节传给 `proc_listpids`。
+        let filled = unsafe {
+            libc::proc_listpids(
+                PROC_ALL_PIDS,
+                0,
+                bytes.as_mut_ptr().cast(),
+                bytes.len() as libc::c_int,
+            )
+        };
+        if filled <= 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let pid_size = std::mem::size_of::<libc::pid_t>();
+        let n = ((filled as usize) / pid_size).min(bytes.len() / pid_size);
+        let pids = unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<libc::pid_t>(), n) };
+        let mut processes = HashMap::new();
+        for &raw in pids {
+            if raw <= 0 {
+                continue;
+            }
+            if let Some(process) = read_process(raw)? {
+                processes.insert(process.pid, process);
+            }
+        }
+        Ok(processes)
+    }
+
+    pub(crate) fn start_time(pid: i32) -> io::Result<u64> {
+        read_process(pid)?
+            .map(|process| process.start_time)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("process {pid} exited before tree guard attachment"),
+                )
+            })
+    }
+
+    fn descendants(
+        processes: &HashMap<i32, ProcessRecord>,
+        root_pid: i32,
+        root_start_time: u64,
+    ) -> Vec<(ProcessRecord, usize)> {
+        let mut descendants = Vec::new();
+        for process in processes.values().copied() {
+            if process.pid == root_pid || process.start_time < root_start_time {
+                continue;
+            }
+            let mut current = process;
+            let mut depth = 0usize;
+            let mut visited = HashSet::new();
+            while current.ppid > 1 && visited.insert(current.pid) {
+                depth += 1;
+                if current.ppid == root_pid {
+                    descendants.push((process, depth));
+                    break;
+                }
+                let Some(parent) = processes.get(&current.ppid).copied() else {
+                    break;
+                };
+                current = parent;
+            }
+        }
+        descendants
+    }
+
+    fn signal_raw(pid: i32, signal: i32) -> io::Result<()> {
+        if unsafe { libc::kill(pid, signal) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
+    fn signal_group(pgid: i32, signal: i32) -> io::Result<()> {
+        if unsafe { libc::killpg(pgid, signal) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
+    fn signal_record(process: ProcessRecord, signal: i32) -> io::Result<()> {
+        match read_process(process.pid)? {
+            Some(current) if current.start_time == process.start_time => {
+                signal_raw(process.pid, signal)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn remember_error(slot: &mut Option<io::Error>, result: io::Result<()>) {
+        if slot.is_none() {
+            if let Err(error) = result {
+                *slot = Some(error);
+            }
+        }
+    }
+
+    pub(crate) fn terminate(root_pid: i32, pgid: i32, root_start_time: u64) -> io::Result<()> {
+        let initial = snapshot()?;
+        match initial.get(&root_pid) {
+            Some(root) if root.start_time != root_start_time => {
+                // PID/PGID 已复用，绝不能杀死新的无关进程树。
+                return Ok(());
+            }
+            None if !initial
+                .values()
+                .any(|process| process.pgrp == pgid && process.start_time >= root_start_time) =>
+            {
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        let mut first_error = None;
+        remember_error(&mut first_error, signal_group(pgid, libc::SIGSTOP));
+        let mut frozen = HashMap::<i32, (ProcessRecord, usize)>::new();
+        for _ in 0..MAX_FREEZE_ROUNDS {
+            let processes = match snapshot() {
+                Ok(processes) => processes,
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                    break;
+                }
+            };
+            if matches!(
+                processes.get(&root_pid),
+                Some(root) if root.start_time != root_start_time
+            ) {
+                break;
+            }
+            let mut added = 0usize;
+            for (process, depth) in descendants(&processes, root_pid, root_start_time) {
+                let is_new = frozen
+                    .get(&process.pid)
+                    .is_none_or(|(known, _)| known.start_time != process.start_time);
+                if is_new {
+                    remember_error(&mut first_error, signal_record(process, libc::SIGSTOP));
+                    frozen.insert(process.pid, (process, depth));
+                    added += 1;
+                }
+            }
+            if added == 0 {
+                break;
+            }
+            std::thread::yield_now();
+        }
+
+        let mut descendants = frozen.into_values().collect::<Vec<_>>();
+        descendants.sort_unstable_by_key(|(_, depth)| std::cmp::Reverse(*depth));
+        for (process, _) in descendants {
+            remember_error(&mut first_error, signal_record(process, libc::SIGKILL));
+        }
+        remember_error(&mut first_error, signal_group(pgid, libc::SIGKILL));
+        first_error.map_or(Ok(()), Err)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn start_time_reads_current_process() {
+            let pid = i32::try_from(std::process::id()).expect("pid fits i32");
+            let started = start_time(pid).expect("self start_time");
+            assert!(started > 0);
+            let snapshot = snapshot().expect("snapshot");
+            let self_record = snapshot.get(&pid).expect("self pid in snapshot");
+            assert_eq!(self_record.start_time, started);
+            assert_eq!(self_record.pid, pid);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -76,6 +76,7 @@ impl PolicyEngine {
             ApprovalMode::ReadOnly => PolicyDecision::Deny {
                 reason: "read_only approval mode forbids non-read-only capabilities".into(),
             },
+            // OnFailure 当前等价 NeverAsk（S13-F16 收窄）；同一分支，不实现失败回问。
             ApprovalMode::NeverAsk | ApprovalMode::OnFailure => allow_or_constrained(cap),
             ApprovalMode::AlwaysAsk => ask(cap, input, effective_risk(cap, input)),
             ApprovalMode::AskForWrites => {
@@ -547,5 +548,22 @@ mod tests {
     fn engine_mode_getter_returns_default() {
         let eng = PolicyEngine::new(ApprovalMode::AskForDangerous);
         assert_eq!(eng.mode(), ApprovalMode::AskForDangerous);
+    }
+
+    #[test]
+    fn on_failure_matches_never_ask_for_non_catastrophic() {
+        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let cases = [
+            (ToolCapability::WorkspaceWrite, json!({})),
+            (ToolCapability::Process, json!({"command": "echo hi"})),
+            (ToolCapability::Network, json!({})),
+            (ToolCapability::GitWrite, json!({})),
+            (ToolCapability::ReadOnly, json!({})),
+        ];
+        for (cap, value) in cases {
+            let never = eng.decide(&input(cap.clone(), true, ApprovalMode::NeverAsk, value.clone()));
+            let on_failure = eng.decide(&input(cap.clone(), true, ApprovalMode::OnFailure, value));
+            assert_eq!(never, on_failure, "cap={cap:?}");
+        }
     }
 }

@@ -104,10 +104,17 @@ pub enum PlanEvent {
         version: PlanVersionId,
     },
     /// `changes_requested` 触发的新版本修订（保留修订链）。
+    ///
+    /// `title` / `steps` 为 ADR-037 / S13-F26 附加式字段：旧事件缺省为空，
+    /// 新写入必须带修订后内容。
     Revised {
         plan_id: PlanId,
         version: PlanVersionId,
         parent_version: PlanVersionId,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        steps: Vec<PlanStepSnapshot>,
     },
     /// 审批通过；`checkpoint_id` 标记批准点（可回滚）。
     Approved {
@@ -302,11 +309,16 @@ pub enum AutomationEvent {
         task_id: BackgroundTaskId,
     },
     /// 执行产出归档进 result inbox（artifact）。
+    ///
+    /// `task_id` 为 ADR-037 / S13-F28 附加式字段；新写入必填，幂等键为
+    /// `(automation_id, task_id)`。
     ResultArchived {
         automation_id: AutomationId,
         artifact_id: ArtifactId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         run_id: Option<RunId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<BackgroundTaskId>,
     },
     /// 连续失败暂停并告警，不静默吞错。
     Suspended {

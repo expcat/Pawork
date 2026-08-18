@@ -11,6 +11,7 @@ description = "Pawork Provider 与 Tool 无关的 canonical 请求、流式与�
 default = ["provider", "tool"]
 provider = []
 tool = []
+plugin = []
 
 [dependencies]
 pawork-domain = { path = "../domain" }

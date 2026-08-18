@@ -2,6 +2,7 @@
 
 use pawork_domain::{CoreInstanceId, TenantId};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "typegen")]
 use ts_rs::TS;
 
 use super::quota::DEFAULT_QUOTA_ACCOUNT;
@@ -21,7 +22,8 @@ pub const API_VERSION: ApiVersion = ApiVersion { major: 1, minor: 2 };
 /// [ADR-036](../../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md) 定义的废弃与删除流程。
 pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[V1_0, V1_1, API_VERSION];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ApiVersion {
     pub major: u16,
     pub minor: u16,
@@ -45,7 +47,8 @@ impl ApiVersion {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ApiHandle {
     pub instance_id: CoreInstanceId,
     pub api_version: ApiVersion,
@@ -99,7 +102,8 @@ pub const DEFAULT_CONTROL_PLANE_ACCOUNT: &str = DEFAULT_QUOTA_ACCOUNT;
 pub const DEFAULT_CONTROL_PLANE_PRINCIPAL: &str = "local/user";
 
 /// 控制面作用域：tenant / account / principal 三元组（脱敏，**无 secret 字段**）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ControlPlaneScope {
     pub tenant_id: TenantId,
     pub account_id: String,

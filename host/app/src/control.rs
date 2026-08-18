@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use pawork_control_plane::{
     default_principal, default_tenant, AuditAction, AuditDecision, AuditEventV1, AuditSink,
-    AuditTargetKind, FileAuditStore, InMemoryAuditStore, InMemoryUsageLedger, SqliteUsageLedger,
-    UsageLedger, UsageQuery, UsageRecord, UsageTotals, RECORD_VERSION,
+    AuditTargetKind, CostConfidence, FileAuditStore, InMemoryAuditStore, InMemoryUsageLedger,
+    SqliteUsageLedger, UsageLedger, UsageQuery, UsageRecord, UsageTotals, RECORD_VERSION,
 };
 use pawork_domain::{
     AgentId, EventId, ModelId, ProviderId, RequestId, RunId, SessionId, TenantId, TokenUsage,
@@ -153,13 +153,7 @@ pub fn usage_record(
         cache_read_tokens: usage.cache_read_tokens,
         cache_write_tokens: usage.cache_write_tokens,
         cost_micros,
-        currency: if currency.len() == 3
-            && currency.bytes().all(|byte| byte.is_ascii_uppercase())
-        {
-            currency.to_string()
-        } else {
-            "USD".to_string()
-        },
+        currency: priced_currency(currency),
         occurred_at_ms: pawork_engine::now_timestamp().as_unix_millis(),
         request_id: Some(request_id.clone()),
         event_id: None,
@@ -167,8 +161,32 @@ pub fn usage_record(
         trace_id: None,
         rate_card: None,
         rate_version: None,
-        cost_confidence: None,
-        cost_provenance: None,
+        cost_confidence: if is_iso_currency(currency) {
+            Some(CostConfidence::Estimated)
+        } else {
+            Some(CostConfidence::Unknown)
+        },
+        cost_provenance: Some(
+            if is_iso_currency(currency) {
+                "model-registry:estimate"
+            } else {
+                "unpriced"
+            }
+            .into(),
+        ),
+    }
+}
+
+fn is_iso_currency(currency: &str) -> bool {
+    currency.len() == 3 && currency.bytes().all(|byte| byte.is_ascii_uppercase())
+}
+
+/// 无定价或非法币种用 ISO 4217 `XXX`（未指定），禁止静默标 USD。
+fn priced_currency(currency: &str) -> String {
+    if is_iso_currency(currency) {
+        currency.to_string()
+    } else {
+        "XXX".into()
     }
 }
 
@@ -288,6 +306,33 @@ pub fn append_audit(
     );
     if let Err(error) = audit.append(event) {
         tracing::warn!(error = %error, "audit append failed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pawork_domain::{ModelId, ProviderId, RequestId, RunId, SessionId, TokenUsage};
+
+    #[test]
+    fn unpriced_usage_uses_xxx_not_usd() {
+        let record = usage_record(
+            &SessionId::from("s"),
+            &RunId::from("r"),
+            &RequestId::from("req"),
+            &ProviderId::from("p"),
+            &ModelId::from("m"),
+            &TokenUsage {
+                input_tokens: 1,
+                ..TokenUsage::default()
+            },
+            0,
+            "",
+        );
+        assert_eq!(record.currency, "XXX");
+        assert_eq!(record.cost_confidence, Some(CostConfidence::Unknown));
+        assert_eq!(record.cost_provenance.as_deref(), Some("unpriced"));
+        assert_ne!(record.currency, "USD");
     }
 }
 

@@ -7,13 +7,15 @@ use pawork_domain::{
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+#[cfg(feature = "typegen")]
 use ts_rs::TS;
 
 use super::command::CommandSource;
 use super::quota::{QuotaAlert, QuotaOverviewView};
 use super::version::{ApiHandle, ApiVersion};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct AppEventEnvelope {
     pub api_version: ApiVersion,
     pub instance_id: CoreInstanceId,
@@ -46,7 +48,8 @@ impl AppEventEnvelope {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct GlobalSequence(pub u64);
 
 impl GlobalSequence {
@@ -55,7 +58,8 @@ impl GlobalSequence {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", content = "id", rename_all = "snake_case")]
 pub enum EventStream {
     Global,
@@ -66,7 +70,8 @@ pub enum EventStream {
     GuiClient(GuiClientId),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventSource {
     Core,
@@ -88,7 +93,8 @@ pub enum EventSource {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum AppEvent {
     CoreReady {
@@ -185,7 +191,8 @@ pub enum AppEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
     Created,
@@ -202,7 +209,8 @@ pub enum RunState {
     Interrupted,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderStatus {
     Ready,
@@ -211,7 +219,8 @@ pub enum ProviderStatus {
     AuthenticationRequired,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticLevel {
     Info,
@@ -240,7 +249,8 @@ pub enum AppEventOrderError {
 // 事件流，崩溃恢复的重放源仍为 team 事件流。
 
 /// 成员角色镜像（与 `teams::MemberRole` 1:1）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum TeamMemberRole {
     /// 团队根（P12 parent）：可审批 plan、增删成员、解散 team。
@@ -250,7 +260,8 @@ pub enum TeamMemberRole {
 }
 
 /// 任务状态镜像（与 `orchestration::TaskState` 1:1，复用 P12 状态机）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum TeamTaskState {
     Created,
@@ -264,7 +275,8 @@ pub enum TeamTaskState {
 }
 
 /// Plan 步骤状态镜像（与 `pawork_domain::PlanStepStatus` 1:1）。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum TeamPlanStepStatus {
     #[default]
@@ -275,7 +287,8 @@ pub enum TeamPlanStepStatus {
 }
 
 /// Plan 步骤快照镜像（与 `pawork_domain::PlanStepSnapshot` 1:1）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct TeamPlanStepSnapshot {
     pub step_id: String,
     pub text: String,
@@ -283,7 +296,8 @@ pub struct TeamPlanStepSnapshot {
 }
 
 /// Plan 行锚点镜像（与 `pawork_domain::PlanCommentAnchor` 1:1）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct TeamPlanCommentAnchor {
     pub step_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -295,7 +309,8 @@ pub struct TeamPlanCommentAnchor {
 }
 
 /// 成员 presence 镜像（与 `teams::Presence` 1:1）。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum TeamPresence {
     #[default]
@@ -306,7 +321,8 @@ pub enum TeamPresence {
 }
 
 /// mailbox 投递范围镜像（与 `teams::Recipients` 1:1）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TeamRecipients {
     /// 点对点：精确的成员列表。
@@ -316,7 +332,8 @@ pub enum TeamRecipients {
 }
 
 /// 共享任务板条目镜像（与 `teams::BoardTask` 1:1）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct TeamBoardTask {
     pub task_id: String,
     /// 张贴者。
@@ -336,7 +353,8 @@ pub struct TeamBoardTask {
 }
 
 /// Team 协作 canonical 事件镜像（与 `teams::TeamEvent` 1:1，18 变体）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TeamEvent {
     TeamCreated {

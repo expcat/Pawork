@@ -643,7 +643,14 @@ mod tests {
             }],
             events: vec![ExportedEvent {
                 branch_id: DEFAULT_BRANCH_ID.into(),
-                event: event(&other, 1, AgentEvent::RunCancelled { reason: None }),
+                event: event(
+                    &other,
+                    1,
+                    AgentEvent::RunCancelled {
+                        reason: None,
+                        usage: None,
+                    },
+                ),
             }],
             tags: vec![],
         };

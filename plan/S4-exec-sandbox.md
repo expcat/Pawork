@@ -21,7 +21,7 @@ Agent 获得受控的命令执行能力：run_command 工具经 shell 风险分�
 1. **exec 迁移**：Windows 路径先行实测（Job Object 树清理、AppContainer 可用性探测与 fail-closed）；Linux/macOS 代码随迁、交叉 `cargo check` 可选，三平台实跑改为 S12 审查后另立验证任务。
 2. **run_command 工具**：审批提示呈现完整命令 + 风险等级；`ApprovedForRun` 对同 run 重复命令生效。
 3. **取消链路**：Ctrl-C → `CancelHandle.cancel(User)` → 工具 cancel token + 进程树清理 → 事件收尾，全链一次打通。
-4. **fail-closed**：沙箱后端探测失败 / 显式 `--sandbox off` 之外的任何异常 → 拒绝执行并事件化说明（绝不静默裸跑）。
+4. **fail-closed**：按 [ADR-031](../../Pawork_v1/docs/adr/ADR-031-sandbox-backend-architecture.md)（归档）与 [ADR-037](../docs/adr/ADR-037-s13-wave-b-contracts.md)：硬隔离探测失败时**可观测回退**到 `NativeRestricted`，不是拒跑。`--sandbox off` 不存在。禁止静默降级：选择结果进工具 metadata，且 CLI / GUI 必须向用户展示 fallback / isolation。
 5. **输出纪律**：命令输出只经工具结果/事件进入模型上下文（截断后），完整输出落工件文件（临时目录），为 S5 上下文预算减负、为 S8 artifact 化铺路。
 
 ## 真实测试与评估（冒烟清单）
@@ -32,7 +32,7 @@ Agent 获得受控的命令执行能力：run_command 工具经 shell 风险分�
 - [x] 长命令（如 `cargo build`）执行中 Ctrl-C：命令进程与其子进程全部终止（任务管理器核对无残留）、run 以 `RunCancelled` 收尾、REPL 可继续。（macOS：REPL 中 `sleep 60` 见 `⚙ run_command` 后 SIGINT → 文本「已取消」；`session_events`：`tool_execution_started` → `run_cancelled`，无 `tool_execution_completed`；`pgrep` 无残留；续聊 `PONG`）
 - [x] 危险命令审批：诱导 Agent 执行 `Remove-Item -Recurse` / `git push --force` 类命令 → `Dangerous` 级审批弹出；拒绝后 Agent 改用安全方案。（分类器不认 PowerShell `Remove-Item`；实测 `git push --force` → `[dangerous]` + 完整命令，`n` 后未执行，模型改口 `--force-with-lease`）
 - [x] 输出洪水：`type` 一个大文件 → 截断生效、上下文不被撑爆、提示已截断。（macOS：`seq 200000`；`metadata.truncated=true`，`max_output_bytes=1MiB`；文本渲染「已截断」由 cli 单测覆盖。`--json` 完成结果仍约 1.2MiB，S5 上下文预算再收）
-- [x] 沙箱降级：人为使沙箱后端不可用（或注入探测失败）→ 命令被拒绝执行且解释清晰（fail-closed 实证）。（按 ADR-031 / 波 A：fail-closed = **可观测回退，不是拒跑**。本机 `sandbox_exec` + `isolation=hard` + `fallback=false`。无 `--sandbox off`、无探测失败注入钩子。未信任 workspace：`tool is not allowed in an untrusted workspace`，未 spawn）
+- [x] 沙箱降级：人为使沙箱后端不可用（或注入探测失败）→ **可观测回退**（ADR-031 / ADR-037），不是拒跑。本机成功档 `sandbox_exec` + `isolation=HardWritesAndNetwork` + `fallback=false`。探测失败回退 `NativeRestricted`（Soft），`fallback=true` 进 metadata 并由 CLI/GUI 展示。无 `--sandbox off`、无探测失败注入钩子。未信任 workspace：`tool is not allowed in an untrusted workspace`，未 spawn。
 - [x] 超时：`Start-Sleep 600` 类命令按约束超时终止、事件可见。（macOS：`sleep 600` → `run_command` 报 `timed out after 30000ms`；无残留。scheduler 外层封顶 30s，严于 policy 注入的 60s）
 
 ### 模型评估记录（2026-08-15 S4 冒烟）

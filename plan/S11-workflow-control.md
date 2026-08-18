@@ -39,7 +39,7 @@
 ## 定向自动化测试
 
 - `cargo test -p pawork-workflow`：各 reducer 独立单测 + 事件重放投影一致；`process-exec` 两档构建。
-- `cargo test -p pawork-orchestration`：supervisor 拆分后行为等价（spawn/cancel-tree/recovery/budget-gate）、`TeamEvent` golden。
+- `cargo test -p pawork-orchestration`：supervisor 拆分后行为等价（spawn/cancel-tree/`recover_report` 仅诊断、不重建 WorkerEntry/cancel token/budget-gate）、`TeamEvent` golden。
 - `cargo test -p pawork-control-plane`：`dedup_key`/audit JSONL golden、feature 门控两档、usage 投影 trait round-trip。
 - `cargo test -p pawork-quota`：LocalLedger 累计/触限。
 - `cargo test -p pawork-provider-control`：feature 两档、schema 迁移 round-trip（V1 库可升级）。
@@ -59,6 +59,7 @@
 ## 为后续阶段预留 / 明确不做
 
 - 预留：tenant 多租户词表在位（单机默认单租户）；ForgeAdapter 真实平台实现按需求激活。
+- Supervisor `recover` / `recover_report` 为 report-only：只生成 `RecoveryReport`，不重建 `WorkerEntry` / children / cancel token，也不能作为 cancel / assign / flush 的恢复态。
 - 不做：quota 远端六厂商适配器 + WebScrape（冻结候审）；分布式编排；插件编排面。
 
 ## 并行拆分建议

@@ -24,6 +24,7 @@
 use pawork_domain::{ArtifactId, CommandId, ConnectionId, CoreInstanceId, GuiClientId, Timestamp};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(feature = "typegen")]
 use ts_rs::TS;
 
 pub mod app;
@@ -37,6 +38,7 @@ pub mod handshake;
 pub mod headless;
 pub mod resume;
 pub mod snapshot;
+#[cfg(feature = "typegen")]
 pub mod typegen;
 
 pub use app::*;
@@ -69,7 +71,8 @@ pub const MAX_ARTIFACT_CHUNK_BYTES: usize = 64 * 1024;
 /// Snapshot section 内联 data 的编码后上限；超过则必须改用 `artifact_id`。
 pub const MAX_SNAPSHOT_SECTION_DATA_BYTES: usize = 256 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ClientFrame {
     Handshake(HandshakeRequest),
@@ -96,7 +99,8 @@ pub enum ClientFrame {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ServerFrame {
     Handshake(HandshakeResponse),
@@ -118,7 +122,8 @@ pub enum ServerFrame {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct HandshakeRequest {
     pub request_id: String,
     pub client_name: String,
@@ -130,7 +135,8 @@ pub struct HandshakeRequest {
     pub authentication: Option<ClientAuthentication>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum HandshakeResponse {
     Accepted {
@@ -150,7 +156,8 @@ pub enum HandshakeResponse {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum GuiCapability {
     Events,
@@ -161,7 +168,8 @@ pub enum GuiCapability {
 }
 
 /// 握手凭证只携带 opaque proof；协议日志必须单独执行 redaction。
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ClientAuthentication {
     pub scheme: String,
     pub proof: String,
@@ -177,7 +185,8 @@ impl std::fmt::Debug for ClientAuthentication {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct SubscribeRequest {
     pub request_id: String,
     pub subscription_id: String,
@@ -185,19 +194,22 @@ pub struct SubscribeRequest {
     pub streams: Vec<crate::app::EventStream>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ResumeRequest {
     pub request_id: String,
     pub last_global_sequence: crate::app::GlobalSequence,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ResumeResponse {
     pub request_id: String,
     pub disposition: ResumeDisposition,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResumeDisposition {
     Replay {
@@ -212,7 +224,8 @@ pub enum ResumeDisposition {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct Snapshot {
     pub instance_id: CoreInstanceId,
     pub snapshot_sequence: crate::app::GlobalSequence,
@@ -220,7 +233,8 @@ pub struct Snapshot {
     pub sections: Vec<SnapshotSection>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct SnapshotSection {
     pub kind: SnapshotSectionKind,
     pub revision: u64,
@@ -231,7 +245,8 @@ pub struct SnapshotSection {
     pub artifact_id: Option<ArtifactId>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotSectionKind {
     Workspaces,
@@ -242,7 +257,8 @@ pub enum SnapshotSectionKind {
     ProviderStatus,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ArtifactReadRequest {
     pub request_id: String,
     pub artifact_id: ArtifactId,
@@ -250,7 +266,8 @@ pub struct ArtifactReadRequest {
     pub limit: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ArtifactChunk {
     pub request_id: String,
     pub artifact_id: ArtifactId,
@@ -271,14 +288,16 @@ impl ArtifactChunk {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ProtocolErrorEnvelope {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
     pub error: ProtocolError,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ProtocolError {
     pub code: ProtocolErrorCode,
     pub message: String,
@@ -286,7 +305,8 @@ pub struct ProtocolError {
     pub retryable: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ProtocolErrorCode {
     IncompatibleVersion,

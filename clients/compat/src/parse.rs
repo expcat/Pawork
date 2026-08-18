@@ -929,8 +929,8 @@ fn global_permission(file: &DetectedFile, mode: ApprovalMode, outcomes: &mut Vec
         ApprovalMode::AlwaysAsk | ApprovalMode::AskForWrites | ApprovalMode::AskForDangerous => {
             PermissionDecision::Ask
         }
-        // OnFailure / NeverAsk 在外部语义里是「自动放行」，无法安全映射为 Allow
-        // （绝不静默放宽权限）：统一降级为 Ask 并保留 requires_review。
+        // OnFailure 当前等价 NeverAsk（S13-F16 收窄）。引擎自动放行，但导入
+        // 不映成 Allow（绝不静默放宽权限）：与 NeverAsk 同为 Ask，并保留 requires_review。
         ApprovalMode::OnFailure | ApprovalMode::NeverAsk => PermissionDecision::Ask,
     };
     let mut item = base_item(

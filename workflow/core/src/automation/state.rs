@@ -23,6 +23,8 @@ pub struct ArchivedResult {
     pub artifact_id: ArtifactId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<RunId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<BackgroundTaskId>,
 }
 
 /// 单条 automation 的事件溯源视图。
@@ -77,11 +79,13 @@ impl AutomationState {
                 automation_id,
                 artifact_id,
                 run_id,
+                task_id,
             } => {
                 self.archived.push(ArchivedResult {
                     automation_id: automation_id.clone(),
                     artifact_id: artifact_id.clone(),
                     run_id: run_id.clone(),
+                    task_id: task_id.clone(),
                 });
             }
             AutomationEvent::Suspended {
@@ -139,6 +143,17 @@ impl AutomationState {
     /// 只读：归档结果列表。
     pub fn archived(&self) -> &[ArchivedResult] {
         &self.archived
+    }
+
+    /// 同一 `(automation_id, task_id)` 是否已有归档（S13-F28 幂等键）。
+    pub fn has_archived_task(
+        &self,
+        automation_id: &AutomationId,
+        task_id: &BackgroundTaskId,
+    ) -> bool {
+        self.archived.iter().any(|item| {
+            item.automation_id == *automation_id && item.task_id.as_ref() == Some(task_id)
+        })
     }
 
     /// 只读：某 automation 是否处于挂起态。
@@ -210,6 +225,7 @@ mod tests {
                 automation_id: id.clone(),
                 artifact_id: ArtifactId::from("art1"),
                 run_id: None,
+                task_id: Some(BackgroundTaskId::from("t1")),
             },
         ];
 

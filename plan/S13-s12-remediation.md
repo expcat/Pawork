@@ -1,6 +1,6 @@
 # S13：S12 finding 整改
 
-> 阶段 S13 · 整改与收口 · 状态：🔵进行中（2026-08-18 波 A 完成；波 B/C 未开） · 依赖：S12 🟢（60 条 finding 已合并登记为 57 项 S12-F01～F57，见 [ROADMAP](../ROADMAP.md) §3.2） · 规模：大（57 项整改，波 A 安全 → 波 B Bug → 波 C 收口）
+> 阶段 S13 · 整改与收口 · 状态：🔵进行中（2026-08-18 波 A ✅ · 波 B ✅；波 C 未开） · 依赖：S12 🟢（60 条 finding 已合并登记为 57 项 S12-F01～F57，见 [ROADMAP](../ROADMAP.md) §3.2） · 规模：大（57 项整改，波 A 安全 → 波 B Bug → 波 C 收口）
 
 ## 目标
 
@@ -64,11 +64,11 @@
 | --- | --- |
 | F01 | **已拍板（2026-08-18）**：读写均拒绝 `.git`（与 V1 写路径一致）；不设「允许审计」开关 |
 | F09 | **已拍板（2026-08-18）**：支 A — schema v10 附加式迁移 + `ancestor_lineage` API；不改事件信封 v1、append-only 事实表、`UNIQUE(session_id, sequence)` |
-| F15 | trait 归 session vs domain；维持现状则改写词典 §4.1 #13 并留 ADR |
-| F19 | 拒跑（显式 `--sandbox off` 除外） vs ADR-031 可观测回退写回 design/S4 |
-| F24 | tool artifacts canonical 承载（扩 ToolResultContent / ToolExecutionCompleted / 新 AgentEvent） |
-| F26 | Plan Revised 携带内容 vs Replaced 组合 |
-| F28 | automation record_result 幂等键定义 |
+| F15 | **已拍板（2026-08-18）**：trait + 记录归 domain（[ADR-037](../docs/adr/ADR-037-s13-wave-b-contracts.md)）；session 去掉 protocol 依赖 |
+| F19 | **已拍板（2026-08-18）**：维持 ADR-031 可观测回退，写回 design/S4，CLI/GUI 必须展示 fallback |
+| F24 | **已拍板（2026-08-18）**：扩 `ToolResultContent.artifacts`（附加式）；不新增 AgentEvent 变体 |
+| F26 | **已拍板（2026-08-18）**：`Revised` 加 `title`/`steps`（附加式）；拒绝重复 version |
+| F28 | **已拍板（2026-08-18）**：`ResultArchived` 加 `task_id`；幂等键 `(automation_id, task_id)` |
 
 **任务内二选一**（簇内拍板并记录理由；默认倾向以报告建议为准）：
 
@@ -81,7 +81,21 @@ F02（移除整盘只读 vs 诚实降级标签）· F05（SecretRef 域形态）
 - **F06**：剥离 workspace `proxy_url` / 非回环 `providers[].base_url`，且出站 `redirect(Policy::none())`。
 - **F07**：丢弃错误 body；`classify_status` 消息仅 `HTTP {status}`。
 - **F08**：剥离 workspace `trusted`/`auto_start`；宿主 clamp；未信任 workspace 不自动启动。
-- **F11**：Lagged 发 `ReplayUnavailable` Error 帧后停转发；不发假 Resume / `SnapshotRequired`（F32 仍属波 B）。
+- **F11**：Lagged 发 `ReplayUnavailable` Error 帧后停转发；不发假 Resume / `SnapshotRequired`（F32 已在波 B 消费附带 Snapshot）。
+
+波 B 任务内已拍板（2026-08-18）：
+
+- **F16**：收窄为「当前等价 NeverAsk」；compat OnFailure 与 NeverAsk 同映射（Ask）。
+- **F17**：host 按 `workspace_trusted` 过滤 Workspace origin 注入。
+- **F18**：显式降级「本机不受控终端」+ 退出路径 `pty.shutdown()`；不接沙箱。
+- **F30**：report-only，不假装重建 Supervisor。
+- **F32**：客户端消费服务端附带 Snapshot（gui-design §4.1）。
+- **F33**：未映射 headless 命令 fail-closed；不改 GUI capabilities（K-08）。
+- **F37**：文档修正（不实现多窗口），§4 登记激活条件。
+- **F40 / F49 / F57**：§4 登记（F57 并入 K-04）。
+- **F41**：空 `plugin = []`。
+- **F44**：改词典 #30（tokio 保持无条件）。
+- **F56**：按 v3 基准改（Inspector ~440px、折叠归零、Fork 进条目操作）。
 
 ## 与 K-01～K-10 基线的关系
 
@@ -108,10 +122,10 @@ S13 不吸收任何 K 项；仅登记证据共享与禁止顺带边界：
 ## 退出标准
 
 - [x] 波 A：F01–F14（含随动 F45/F50/F52）全部验收通过，安全红线定向回归汇总全绿。F14 真实窗口键盘走查并入 K-03；F03 Windows SCM 按 S10 降级。
-- [ ] 波 B：F15–F40（含随动 Low 项）全部验收通过或经确认转 §4 延期。
-- [ ] 契约 / 红线级决策（F01/F09 已记录；F15/F19/F24/F26/F28 待波 B）均有 ADR 或用户确认记录。
+- [x] 波 B：F15–F40（含随动 Low 项）全部验收通过或经确认转 §4 延期。
+- [x] 契约 / 红线级决策（F01/F09/F15/F19/F24/F26/F28）均有 ADR 或用户确认记录（ADR-037）。
 - [ ] 波 C：§3.2 状态全量回写、文档一致性复核（F38/F39 口径）、§3.1 归档完成。
-- [x] 全程未实现新功能、未设全量门禁、未发布、未吸收 K 项。（波 A 迄今成立；波 B/C 继续守）
+- [x] 全程未实现新功能、未设全量门禁、未发布、未吸收 K 项。（波 A/B 迄今成立；波 C 继续守）
 
 ## 明确不做
 

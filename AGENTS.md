@@ -26,7 +26,7 @@
 - 项目名：`Pawork`；CLI 二进制名：`pawork`。
 - `pawork`（apps/pawork）是 Core 的唯一正式宿主；不存在独立的 daemon / rpc 入口。
 - 仓库根即 Cargo workspace 根（2026-08-17 已把原 `Pawork_v2/` 摊平，不再嵌套外层目录）。
-- 包按功能域分目录：foundation（domain/api/protocol/config/sqlite/testkit/diagnostics）、engine、execution（exec/policy/tools）、providers（core/adapters/auth）、storage（session/blob）、host（app/cli/gui-server/transport）、clients、net、vcs、extensions（mcp）、workspace（core/resources）；应用入口在 apps/（pawork、desktop）。
+- 包按功能域分目录：foundation（domain/api/protocol/config/sqlite/testkit/diagnostics）、engine、execution（exec/policy/tools）、providers（core/adapters/auth）、storage（session/blob）、host（app/cli/gui-server/transport/channels）、clients（gui-client/sdk/compat）、agents（orchestration）、control-plane（core/quota/provider-control）、workflow（core/memory/review）、net、vcs、extensions（mcp）、workspace（core/resources）；应用入口在 apps/（pawork、desktop、protocol-probe）；协议 schema 在 schemas/。
 - crate 统一 `pawork-` 前缀（`pawork-domain`、`pawork-engine`……）；新增包须在 [docs/design.md](docs/design.md) §2 包布局登记并明确依赖方向。
 
 ## 4. 任务粒度

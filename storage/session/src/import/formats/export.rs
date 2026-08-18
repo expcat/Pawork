@@ -235,7 +235,14 @@ mod tests {
                 "forked_from_event_id": null,
                 "head_sequence": 1
             }],
-            "events": [event(&session, 1, AgentEvent::RunCancelled { reason: None })],
+            "events": [event(
+                &session,
+                1,
+                AgentEvent::RunCancelled {
+                    reason: None,
+                    usage: None,
+                },
+            )],
             "tags": []
         });
         let decoded = SessionExport::from_json(&legacy.to_string()).expect("read v1");

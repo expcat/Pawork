@@ -100,6 +100,7 @@ fn variant_payloads() -> Vec<AgentEvent> {
                 content: Vec::new(),
                 is_error: false,
                 metadata: Value::Null,
+                artifacts: Vec::new(),
             },
         },
         AgentEvent::MessageCommitted {
@@ -156,7 +157,10 @@ fn variant_payloads() -> Vec<AgentEvent> {
             stop_reason: StopReason::Completed,
             usage: usage(),
         },
-        AgentEvent::RunCancelled { reason: None },
+        AgentEvent::RunCancelled {
+            reason: None,
+            usage: None,
+        },
         AgentEvent::RunFailed {
             error: ErrorContext {
                 category: ErrorCategory::Internal,
@@ -165,6 +169,7 @@ fn variant_payloads() -> Vec<AgentEvent> {
                 retry_after_ms: None,
                 diagnostics: Default::default(),
             },
+            usage: None,
         },
         AgentEvent::Plan(PlanEvent::Created {
             plan_id: PlanId::from("plan-1"),
@@ -279,6 +284,7 @@ fn parent_envelope() -> AgentEventEnvelope {
         2,
         AgentEvent::RunCancelled {
             reason: Some("user".into()),
+            usage: None,
         },
     )
     .with_parent(EventId::from("event-1"))

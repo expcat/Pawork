@@ -84,6 +84,9 @@ impl AgentSupervisor {
     /// lease / worktree 分配失败时把该 worker 标记 `Failed` 后返回错误，
     /// 保证事件流一致、恢复时不留悬挂 worker。
     pub async fn spawn(&self, req: SpawnRequest) -> Result<AgentId, SupervisorError> {
+        // 0. parent 准入：存在、同 tenant、同 session、状态可派生。失败不写
+        //    children / workers，也不占用并发预约。
+        self.validate_parent(&req)?;
         // 1. 并发预约（race-free）：与活动 worker 计数在单一临界区内合并判定
         //    全局 / 租户并发，杜绝 check-then-act 超配。预约以 RAII 归还——
         //    spawn 任一后续步骤失败（闸门拒绝 / worktree / lease / 注册）都自动
@@ -613,6 +616,47 @@ impl AgentSupervisor {
     }
 
 
+
+    /// parent 必须存在于 workers、与本次请求同 tenant / session，且状态允许派生
+    ///（活动且非 Cancelling）。失败返回 PolicyDenied，调用方不得写 children / workers。
+    fn validate_parent(&self, req: &SpawnRequest) -> Result<(), SupervisorError> {
+        let Some(parent_id) = req.parent_id.as_ref() else {
+            return Ok(());
+        };
+        let reason = {
+            let workers = self
+                .workers
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            match workers.get(parent_id) {
+                None => format!("parent agent {parent_id} does not exist"),
+                Some(parent) if parent.instance.tenant_id != req.tenant_id => {
+                    format!(
+                        "parent agent {parent_id} tenant mismatch: parent={} request={}",
+                        parent.instance.tenant_id, req.tenant_id
+                    )
+                }
+                Some(parent) if parent.instance.session_id != req.session_id => {
+                    format!(
+                        "parent agent {parent_id} session mismatch: parent={} request={}",
+                        parent.instance.session_id, req.session_id
+                    )
+                }
+                Some(parent)
+                    if !parent.state.state().is_active()
+                        || parent.state.state() == WorkerState::Cancelling =>
+                {
+                    format!(
+                        "parent agent {parent_id} state {} cannot spawn children",
+                        parent.state.state()
+                    )
+                }
+                Some(_) => return Ok(()),
+            }
+        };
+        self.record_policy_denial(req, PolicyGate::AgentSpawn, &reason);
+        Err(SupervisorError::PolicyDenied(reason))
+    }
 
     /// 沿 parent_id 计深度：根（无 parent）为 0，子代为 1，孙代为 2。
     fn worker_depth(&self, parent_id: Option<&AgentId>) -> u64 {

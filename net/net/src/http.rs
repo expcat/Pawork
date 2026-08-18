@@ -3,6 +3,7 @@
 //! 跨平台的统一 HTTP 客户端：超时、代理、自定义 header、trace ID 贯穿与
 //! 请求取消，作为所有 Provider 网络访问的统一底层。
 
+use std::fmt;
 use std::time::Duration;
 
 use pawork_domain::CancellationToken;
@@ -14,7 +15,7 @@ use std::pin::Pin;
 use crate::retry::{classify_request_error, classify_status};
 
 /// HTTP 客户端配置。
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct HttpClientConfig {
     /// 建立连接及单次读操作的超时；每次成功读取后重置读计时，`None` 表示不限。
     ///
@@ -28,6 +29,31 @@ pub struct HttpClientConfig {
     pub extra_headers: Vec<(String, String)>,
     /// 是否读取系统代理环境变量（默认 true）。测试中可设 false 以避免环境干扰。
     pub system_proxy: bool,
+}
+
+impl fmt::Debug for HttpClientConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HttpClientConfig")
+            .field("timeout", &self.timeout)
+            .field("proxy", &self.proxy)
+            .field("user_agent", &self.user_agent)
+            .field("extra_headers", &RedactedHeaders(&self.extra_headers))
+            .field("system_proxy", &self.system_proxy)
+            .finish()
+    }
+}
+
+/// Debug 只保留 header 键名，值一律脱敏，避免 extra_headers 里的 token 入日志。
+struct RedactedHeaders<'a>(&'a [(String, String)]);
+
+impl fmt::Debug for RedactedHeaders<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_list()
+            .entries(self.0.iter().map(|(name, _)| (name.as_str(), "[REDACTED]")))
+            .finish()
+    }
 }
 
 impl Default for HttpClientConfig {
@@ -348,5 +374,25 @@ mod tests {
     fn client_constructs_with_default_config() {
         let client = HttpClient::new(HttpClientConfig::default()).expect("构造客户端");
         assert_eq!(client.config().timeout, Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn extra_headers_debug_redacts_values_and_keeps_names() {
+        let config = HttpClientConfig::builder()
+            .header("x-api-key", "sk-secret-plaintext")
+            .header("X-Custom", "also-secret")
+            .build();
+        let debug = format!("{config:?}");
+        assert!(debug.contains("x-api-key"), "{debug}");
+        assert!(debug.contains("X-Custom"), "{debug}");
+        assert!(debug.contains("[REDACTED]"), "{debug}");
+        assert!(
+            !debug.contains("sk-secret-plaintext"),
+            "header value must be redacted: {debug}"
+        );
+        assert!(
+            !debug.contains("also-secret"),
+            "header value must be redacted: {debug}"
+        );
     }
 }

@@ -1,4 +1,5 @@
 //! typegen 输出必须与检入的 `schemas/` 一致。
+#![cfg(feature = "typegen")]
 
 #[test]
 fn typegen_matches_checked_in_schemas() {

@@ -420,6 +420,7 @@ mod tests {
                 })],
                 is_error: false,
                 metadata: Value::Null,
+                artifacts: Vec::new(),
             })],
             metadata: MessageMetadata::default(),
         });
