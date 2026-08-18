@@ -1,41 +1,40 @@
 # 参照项目手册
 
-> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见 [research/](research/) 下各文档（深入处以「详见 research §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §4，**参照项目 → 功能规划**的反向分类见本文 §6。文中既有项目的 star 数与项目事实均为 **2026-08-14** 快照（复核口径见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8）；DeepSeek Harness 为 **2026-08-17** 登记快照；Codex Router 为 **2026-08-18** 登记快照。实现前应复核最新实态。
+> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见 [research/](research/) 下各文档（深入处以「详见 research §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §4，**参照项目 → 功能规划**的反向分类见本文 §6，**V3 阶段（R0–R9）参照指引**见本文 §7。文中 star 数与项目事实为 **2026-08-18** 复核快照（GitHub API 全量复核；收录标准与历次移除记录见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8——最近一次为 2026-08-18 功能重叠二次清理，移除 5 项，见 §3.6 注）。实现前应复核最新实态。
 
 ---
 
 ## 1. 总览
 
-三类参照项目：**A** = 主要对标编码 Agent；**B** = 多账户、网关与路由专题；**C** = 其他编码 Agent 与协议/标准。star 为数量级快照。
+三类参照项目：**A** = 主要对标编码 Agent；**B** = 多账户、网关与路由专题；**C** = 其他编码 Agent、协议/标准与专项库（GUI 组件 / 沙箱）。star 为数量级快照。
 
 | 项目 | 类别 / 形态 | 一句话定位 | 主链接 |
 | --- | --- | --- | --- |
-| OpenCode（197k） | A / TUI 编码 Agent（TS/Bun） | 多形态（TUI / Desktop beta / Web / IDE）编码 Agent，自营 Zen/Go 托管模型 | [anomalyco/opencode](https://github.com/anomalyco/opencode) |
-| Pi（90k） | A / TUI 编码 Agent（TS/Bun monorepo） | provider 无关 Context 与 Pi Packages 能力包生态 | [earendil-works/pi](https://github.com/earendil-works/pi) |
-| Codex | A / CLI + Desktop + Cloud | OpenAI 官方编码 Agent 产品线，SDK / MCP server 等集成面最广 | [developers.openai.com/codex](https://developers.openai.com/codex) |
-| DeepSeek Harness（147k） | A / Web + headless 编码 Agent（TS/Node） | DeepSeek 官方开源 harness：一切皆插件；append-only 会话事件为 SSOT | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) |
-| opencodex（9.9k） | B / 本地代理 + dashboard（Bun） | Codex 协议翻译（40+ provider）+ ChatGPT 账户池三窗口配额路由 | [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) |
-| Codex Router（2.4k） | B / 本地路由器 + 托盘（JS / LiteLLM） | 一安装多客户端：把外部模型并入 Codex / DeepSeek Harness / Gemini CLI 目录，凭证隔离转发 | [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router) |
-| cc-switch（127k） | B / Tauri 桌面应用 | 多工具供应商**配置级**切换（SSOT SQLite 原子写回） | [farion1231/cc-switch](https://github.com/farion1231/cc-switch) |
-| CLIProxyAPI（47k） | B / Go 守护进程 | 多 OAuth 订阅账户封装为兼容 API（轮询 + 冷却 + 亲和） | [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) |
-| claude-relay-service（13k） | B / Claude 订阅池中继（Node） | 内容 hash sticky session 保 prompt cache | [Wei-Shaw/claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service) |
+| OpenCode（199k） | A / TUI 编码 Agent（TS/Bun） | 多形态（TUI / Desktop beta / Web / IDE）编码 Agent，自营 Zen/Go 托管模型 | [anomalyco/opencode](https://github.com/anomalyco/opencode) |
+| Pi（93k） | A / TUI 编码 Agent（TS/Bun monorepo） | provider 无关 Context 与 Pi Packages 能力包生态 | [earendil-works/pi](https://github.com/earendil-works/pi) |
+| Codex（107k） | A / CLI + Desktop + Cloud | OpenAI 官方编码 Agent 产品线，SDK / MCP server 等集成面最广；CLI 主体为 Rust workspace（codex-rs） | [developers.openai.com/codex](https://developers.openai.com/codex) |
+| DeepSeek Harness（157k） | A / Web + headless 编码 Agent（TS/Node） | DeepSeek 官方开源 harness：一切皆插件；append-only 会话事件为 SSOT（只读发布仓，不收 issue/PR） | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) |
+| opencodex（11k） | B / 本地代理 + dashboard（Bun） | Codex 协议翻译（40+ provider）+ ChatGPT 账户池三窗口配额路由 | [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) |
+| Codex Router（2.5k） | B / 本地路由器 + 托盘（JS / LiteLLM） | 一安装多客户端：把外部模型并入 Codex / DeepSeek Harness / Gemini CLI 目录，凭证隔离转发 | [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router) |
+| cc-switch（128k） | B / Tauri 桌面应用 | 多工具供应商**配置级**切换（SSOT SQLite 原子写回） | [farion1231/cc-switch](https://github.com/farion1231/cc-switch) |
+| CLIProxyAPI（48k） | B / Go 守护进程 | 多 OAuth 订阅账户封装为兼容 API（轮询 + 冷却 + 亲和） | [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) |
+| claude-relay-service（12.5k） | B / Claude 订阅池中继（Node） | 内容 hash sticky session 保 prompt cache（增长停滞，作者重心转向 sub2api；保留观察） | [Wei-Shaw/claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service) |
 | claude-code-router（37k） | B / Claude Code 本地网关（TS） | 场景化路由 + transformer 链改写 | [musistudio/claude-code-router](https://github.com/musistudio/claude-code-router) |
-| LiteLLM（56k） | B / Proxy/Router（Python） | 层级预算 + 多策略路由 + 缓存感知路由 | [BerriAI/litellm](https://github.com/BerriAI/litellm) |
-| new-api（45k） | B / 计费网关（Go） | 渠道-账户-令牌三层 quota 折算计费 | [QuantumNous/new-api](https://github.com/QuantumNous/new-api) |
-| gpt-load（6.3k） | B / key 池透明代理（Go） | key 轮换 + 失败拉黑 + 定时验证恢复 | [tbphp/gpt-load](https://github.com/tbphp/gpt-load) |
-| claude-code-hub（3.3k） | B / 代理（Next.js/Hono） | Redis Lua 多维限流 + session 绑定首成锁 | [ding113/claude-code-hub](https://github.com/ding113/claude-code-hub) |
-| meridian（1.8k） | B / 订阅桥（Claude Agent SDK） | 多 profile 切换 + sticky routing；不拦 OAuth 的合规路线 | [rynfar/meridian](https://github.com/rynfar/meridian) |
-| antigravity-claude-proxy | B / Google 账户池代理 | Hybrid / Sticky / RR 三策略，缓存命中是调度一等权衡 | [docs（load-balancing）](https://www.mintlify.com/badrisnarayanan/antigravity-claude-proxy/guides/load-balancing) |
-| OmniRoute（47k） | B / 自托管网关（TS） | 19 种策略 + cacheAffinity 因子钉热缓存账号 | [diegosouzapw/OmniRoute](https://github.com/diegosouzapw/OmniRoute) |
-| Bifrost（7.3k） | B / Go 网关 | 统一 API + 每 provider 多 key 治理，高性能叙事 | [maximhq/bifrost](https://github.com/maximhq/bifrost) |
+| LiteLLM（57k） | B / Proxy/Router（Rust core + Python SDK） | 层级预算 + 多策略路由 + 缓存感知路由 | [BerriAI/litellm](https://github.com/BerriAI/litellm) |
+| new-api（46k） | B / 计费网关（Go，AGPL-3.0） | 渠道-账户-令牌三层 quota 折算计费 | [QuantumNous/new-api](https://github.com/QuantumNous/new-api) |
+| OmniRoute（50k） | B / 自托管网关（TS） | 19 种策略 + cacheAffinity 因子钉热缓存账号（「免费聚合」画像与 9router 同质，关注安全面） | [diegosouzapw/OmniRoute](https://github.com/diegosouzapw/OmniRoute) |
+| Bifrost（7.4k） | B / Go 网关 | 统一 API + 每 provider 多 key 治理，高性能叙事 | [maximhq/bifrost](https://github.com/maximhq/bifrost) |
 | Envoy AI Gateway（1.9k） | B / K8s 网关（CNCF v1.0 GA） | 统一 cache_control API 跨厂商翻译 + 内建 MCP 网关 | [envoyproxy/ai-gateway](https://github.com/envoyproxy/ai-gateway) |
-| uni-api（1.3k） | B / Python 网关 | 单 YAML 极简派，channel 加权 + key 轮询 | [yym68686/uni-api](https://github.com/yym68686/uni-api) |
-| sub2api（37k） | B / 订阅池网关（Go + 管理台） | 订阅池 + key 分发 + 拼车计费（CRS 同作者二代） | [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) |
-| 9router（25k） | B / 本地代理 | 40+ provider 多账号 + 三级 fallback；安全通告选型反面警示 | [decolua/9router](https://github.com/decolua/9router) |
+| sub2api（38k） | B / 订阅池网关（Go + 管理台，LGPL-3.0） | 订阅池 + key 分发 + 拼车计费（CRS 同作者二代） | [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) |
+| 9router（26k） | B / 本地代理 | 40+ provider 多账号 + 三级 fallback；安全通告选型反面警示 | [decolua/9router](https://github.com/decolua/9router) |
 | Cline（66k） | C / VS Code 编码 Agent | BYOK 手动切换 + Plan/Act 双模型绑定 | [cline/cline](https://github.com/cline/cline) |
 | Kilo Code（27k） | C / VS Code 编码 Agent + 自营网关 | 难度分类路由与缓存命中协同设计 | [Kilo-Org/kilocode](https://github.com/Kilo-Org/kilocode) |
 | MCP | C / 协议/标准 | Model Context Protocol；research 中以 MCP 工具管理、MCP 网关、Codex as MCP server 形式出现 | — |
+| ACP（agent-client-protocol） | C / 协议/标准 | 编辑器 ↔ Agent 协议（Zed 生态）：capability ↔ 方法组一一映射、schema 单源派生多语言 SDK；已迁 agentclientprotocol 组织 | [agent-client-protocol](https://github.com/zed-industries/agent-client-protocol) |
 | models.dev | C / 模型目录注册表 | OpenCode 同团队维护的中心模型元数据目录 | [models.dev](https://models.dev) |
+| gpui-component（13k） | C / GPUI 组件库（Rust，Apache-2.0） | 60+ 组件 + ~140 语义 token 主题 + VirtualList 变高虚拟化；v0.5.1 适配 crates.io gpui ^0.2.2 | [longbridge/gpui-component](https://github.com/longbridge/gpui-component) |
+| Zed `ui`/`theme` crates | C / GPUI 官方组件层（GPL-3.0） | ButtonLike/ContextMenu 等 ~40 组件与 theme token 组织；**只参 API 形状，不抄代码**（gpui 本体 Apache-2.0 除外） | [zed-industries/zed](https://github.com/zed-industries/zed/tree/main/crates/ui) |
+| sandbox-runtime（srt） | C / 沙箱运行时库（TS，Apache-2.0） | Claude Code 官方沙箱隔离层：Seatbelt/bubblewrap profile 生成 + egress 本地代理域名白名单 | [anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) |
 
 ---
 
@@ -119,22 +118,17 @@ Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [de
 | 项目 | 形态 | 与本仓相关的核心机制 | 详见 |
 | --- | --- | --- | --- |
 | [claude-code-router](https://github.com/musistudio/claude-code-router) | Claude Code 本地网关（TS） | 场景化路由（default / background / think / longContext）+ transformer 链（`cleancache` 剥除 cache_control）；in-band 子代理标签是 F4-C 不采纳反例 | §4.1 |
-| [LiteLLM](https://github.com/BerriAI/litellm) | Proxy/Router（Python） | 层级预算（org/team/user/key）、cooldown/fallback、`PromptCachingDeploymentCheck` + session_affinity 缓存感知路由、缓存差价计费 | §4.2 |
-| [new-api](https://github.com/QuantumNous/new-api) | 计费网关（Go） | 渠道-账户-令牌三层 quota 折算、渠道优先级/权重 + 渠道内多 key 轮询、失败自动禁用与换渠道重试 | §4.3 |
-| [gpt-load](https://github.com/tbphp/gpt-load) | key 池透明代理（Go） | 累计失败拉黑 + 定时验证恢复、failover 状态码可配置 | §4.5 |
-| [claude-code-hub](https://github.com/ding113/claude-code-hub) | 代理（Next.js/Hono） | Redis Lua 多维限流、session 绑定 `SET NX` 首成锁 + 健康度迁移、Redis 故障 Fail-Open 降级 | §4.6 |
-| [meridian](https://github.com/rynfar/meridian) | 订阅桥（Claude Agent SDK） | 多 profile 即时切换 + 可选 sticky routing 保每账户缓存温热；不拦 OAuth 的合规路线 | §4.6 |
-| [antigravity-claude-proxy](https://www.mintlify.com/badrisnarayanan/antigravity-claude-proxy/guides/load-balancing) | Google 账户池代理 | Hybrid / Sticky / Round-Robin 三策略；Sticky = 首条 user 消息 SHA256，限流 <2min 等待不切换 | §4.6 |
+| [LiteLLM](https://github.com/BerriAI/litellm) | Proxy/Router（Rust core + Python SDK） | 层级预算（org/team/user/key）、cooldown/fallback、`PromptCachingDeploymentCheck` + session_affinity 缓存感知路由、缓存差价计费 | §4.2 |
+| [new-api](https://github.com/QuantumNous/new-api) | 计费网关（Go，AGPL-3.0） | 渠道-账户-令牌三层 quota 折算、渠道优先级/权重 + 渠道内多 key 轮询、失败自动禁用与换渠道重试 | §4.3 |
 | [OmniRoute](https://github.com/diegosouzapw/OmniRoute) | 自托管网关（TS） | 19 种策略 + Auto-Combo 14 因子（含配额 headroom）、cacheAffinity 钉热缓存账号 | §8 |
 | [Bifrost](https://github.com/maximhq/bifrost) | Go 网关 | 每 provider 多 key 权重随机 + 失败/限流切换、cache_control 透传 + 语义缓存插件 | §8 |
 | [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway) | K8s 网关（CNCF v1.0 GA） | 统一 cache_control API 跨厂商翻译（F5-B adapter 映射层的同构先例）、内建 MCP 网关 | §8 |
-| [uni-api](https://github.com/yym68686/uni-api) | Python 网关 | channel 加权 + channel 内 key 轮询（smart_round_robin）、单 YAML 极简派 | §8 |
-| [sub2api](https://github.com/Wei-Shaw/sub2api) | 订阅池网关（Go + 管理台） | 订阅池 + key 分发 + 限额 + 拼车计费；CRS 同作者二代，ToS 风险最重 | §8 |
+| [sub2api](https://github.com/Wei-Shaw/sub2api) | 订阅池网关（Go + 管理台，LGPL-3.0） | 订阅池 + key 分发 + 限额 + 拼车计费；CRS 同作者二代，ToS 风险最重 | §8 |
 | [9router](https://github.com/decolua/9router) | 本地代理 | 40+ provider 多账号、订阅→低价→免费三级 fallback；**19 份安全通告（6 critical），选型反面警示** | §8 |
 | [Cline](https://github.com/cline/cline) | VS Code 编码 Agent | BYOK 配置档手动切换；按模型清单在 system + 末 1–2 user 打 `cache_control`，粘滞交给 OpenRouter；Plan/Act 双模型绑定 | §8 |
 | [Kilo Code](https://github.com/Kilo-Org/kilocode) | VS Code 编码 Agent + 自营网关 | 沿 Cline 谱系断点、`kilo-auto` 会话亲和分层路由、难度分类路由与缓存命中协同设计 | §8 |
 
-> **收录标准**（沿用 research §8，2026-08-14 按 pushed_at 复核）：仅收录活跃维护项目，已归档或约 3 个月以上无提交者不作参考——TensorZero、Roo Code、Helicone AI Gateway、Arch/archgw、Portkey、one-api、gemini-balance 共 7 项已按此标准移除；移除记录与「外部网关存续风险 → 自持进程内能力（F6-A）更稳」结论见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8。
+> **收录标准**（沿用 research §8）：仅收录活跃维护、且在表内承担**不可替代角色**的项目。历次移除：① 2026-08-14 按 pushed_at 复核活跃度，移除 TensorZero、Roo Code、Helicone AI Gateway、Arch/archgw、Portkey、one-api、gemini-balance 共 7 项；② 2026-08-18 GitHub API 全量复核后按「同功能与实现思路可由表内更强项目替代 + star 停滞或活跃不足」二次清理，移除 gpt-load、uni-api、claude-code-hub、meridian、antigravity-claude-proxy 共 5 项。逐项理由、替代关系与「外部网关存续风险 → 自持进程内能力（F6-A）更稳」结论见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8；被移除项的机制原文仍保留在 research §4.5/§4.6/§5.4（历史快照）。同日复核另记：claude-relay-service 增长停滞（作者重心转向 sub2api），仍为 G3 sticky 主参照，保留观察；meridian 仓库无 LICENSE（移除的附加原因：不可参考其代码）。
 
 ---
 
@@ -170,7 +164,7 @@ F1–F6 与 [design.md](design.md) §5 已确认扩展功能族（G1–G7）的�
 
 ## 6. 参照项目按功能规划分类
 
-> 正向映射（功能 → 参照）以 [design.md](design.md) §4 / §5 为准；本节是**反向索引**：打开某个参照项目时，它在当前规划里参与哪些功能。标「主」= 实现时优先对照；「对照」= 取舍或形态参考；「反例」= 明确不采纳。S12 / S13 是工程审查与整改，无外部功能对标。
+> 正向映射（功能 → 参照）以 [design.md](design.md) §4 / §5 为准；本节是**反向索引**：打开某个参照项目时，它在当前规划里参与哪些功能。标「主」= 实现时优先对照；「对照」= 取舍或形态参考；「反例」= 明确不采纳。S12 / S13 是工程审查与整改，无外部功能对标。**V3 阶段轴（R0–R9 → 参照）见 §7。**
 
 ### 6.1 按规划轴
 
@@ -190,7 +184,7 @@ F1–F6 与 [design.md](design.md) §5 已确认扩展功能族（G1–G7）的�
 | **S11** 多 Agent / 账户池 / 额度 / 路由 | OpenCode `task` 子代理；opencodex / CLIProxyAPI / CRS（F1–F3）；LiteLLM 预算 | Codex Router 窄错误 failover 与「仅注册表验证模型可作子代理」；Pi「核心不内置子代理」 | CCR in-band 子代理标签（F4-C）；请求级默认轮换（F3-C） |
 | **G1 / F1** 同 Provider 多账户与 plan 凭证 | opencodex 账户池、CLIProxyAPI auth-dir | Codex / Pi 订阅 OAuth；Codex Router 复用 Kimi/Grok CLI 会话（单凭证隔离，不是池） | 身份伪装换号 |
 | **G2 / F2** 额度感知与预算 | opencodex 三窗口探测、LiteLLM 层级预算 | CLIProxyAPI-Plus 阈值停用；Codex Router 托盘用量 + 仅信提供商复位窗口 | 主动刷配额接口（F2-C/D 冻结） |
-| **G3 / F3** 缓存感知亲和路由 | CRS sticky、CLIProxyAPI session-affinity、opencodex thread affinity | OmniRoute cacheAffinity、LiteLLM `session_affinity`、antigravity Sticky；Codex Router 只做额度耗尽换**模型**，不做会话-账户钉扎 | cc-switch 配置级切换（缓存作废）；请求级轮换 |
+| **G3 / F3** 缓存感知亲和路由 | CRS sticky、CLIProxyAPI session-affinity、opencodex thread affinity | OmniRoute cacheAffinity、LiteLLM `session_affinity`；Codex Router 只做额度耗尽换**模型**，不做会话-账户钉扎 | cc-switch 配置级切换（缓存作废）；请求级轮换 |
 | **G4 / F4** 子 Agent 声明式绑定 | OpenCode `agent.model` + 权限派生 | DeepSeek Harness `tool-subagent`；Codex Router 仅 registry-proven 模型可作 v2 spawn | CCR `<CCR-SUBAGENT-MODEL>` 标签 |
 | **G5 / F5** canonical 输入缓存 | Anthropic / OpenAI 官方；Pi / OpenCode 断点实践 | Envoy AI Gateway 跨厂商 `cache_control` 翻译；Cline/Kilo 断点 | CCR `cleancache` 作为默认；响应缓存（F5-C） |
 | **G6** 账户/端点只读导入 | cc-switch SQLite、CLIProxyAPI auth-dir、opencodex config、官方 Codex/Claude 布局 | Codex Router 托管 config 块与 `~/.codex/codex-router` 状态目录 | 导入 secret 落仓库或中间文件 |
@@ -211,19 +205,46 @@ F1–F6 与 [design.md](design.md) §5 已确认扩展功能族（G1–G7）的�
 | claude-relay-service | B | G3 sticky 保缓存主参照 |
 | claude-code-router | B | S11/G4 场景路由对照；F4-C in-band 标签反例；G5 `cleancache` 对照 |
 | LiteLLM | B | G2 层级预算；G3 缓存感知路由；S5 缓存差价计费。Codex Router 把它当翻译层，Pawork 不引入该运行时 |
-| new-api | B | G2 三层 quota 折算 |
-| gpt-load | B | G3/F3 key 池拉黑与恢复 |
-| claude-code-hub | B | G3 session 首成锁 |
-| meridian | B | G3 合规 sticky（不拦 OAuth） |
-| antigravity-claude-proxy | B | G3 把缓存命中当调度一等权衡 |
-| OmniRoute | B | G3 cacheAffinity / 配额 headroom |
+| new-api | B | G2 三层 quota 折算；渠道内多 key 轮询与失败自动禁用/恢复（原 gpt-load / uni-api 参照面并入此项与 CLIProxyAPI） |
+| OmniRoute | B | G3 cacheAffinity / 配额 headroom（原 antigravity「缓存命中一等权衡」参照面并入此项与 CRS） |
 | Bifrost | B | G1 每 provider 多 key |
 | Envoy AI Gateway | B | G5 统一 `cache_control` 跨厂商翻译 |
-| uni-api | B | G3 极简加权 + key 轮询 |
 | sub2api | B | G7 ToS / 拼车反例 |
 | 9router | B | 选型安全反例 |
 | Cline | C | G5 断点摆放；Plan/Act 双模型对照 |
 | Kilo Code | C | G3 难度分类路由与缓存协同 |
-| MCP | C | S9 MCP client；候选 B7（Pawork 作 MCP server） |
-| models.dev | C | S0/S5 模型 registry |
+| MCP | C | S9 MCP client；候选 B7（Pawork 作 MCP server）；R3 capabilities 协商措辞对照 |
+| ACP | C | S10 `acp serve` 协议事实源；R3 capability ↔ 方法组映射与 schema 单源派生对照 |
+| models.dev | C | S0/S5 模型 registry；R5 通道注册表数据化对照 |
+| gpui-component | C | R8 组件库 / theme token / VirtualList 主参照（Apache-2.0，可借鉴实现） |
+| Zed `ui`/`theme` | C | R8 组件 API 形状与 token 组织对照（GPL-3.0：只参形状不抄代码） |
+| sandbox-runtime（srt） | C | R7 沙箱策略语义与 egress 架构主参照（写 allow-only / 读挖洞 / 域名白名单 + 双代理） |
+
+---
+
+## 7. V3 阶段参照指引（R0–R9）
+
+> 与 [../ROADMAP.md](../ROADMAP.md) §2 阶段表对应，开工核对时与阶段任务书（[../plan/](../plan/)）、[design.md](design.md) §4（V2 功能 ↔ 参照映射，仍是功能面事实源）配合使用。本节为 **2026-08-18** 调研快照（GitHub API 复核 + 三路专项调研），执行各波前按 [../v3_plan.md](../v3_plan.md) §5.2 重验外部实态。「主参照」= 设计时优先对照；「对照 / 反例」= 取舍参考或明确不采纳。R0/R2/R4/R9 以仓库内证据驱动，无外部主参照。
+
+### 7.1 阶段 → 参照映射
+
+| 阶段 | 主参照 | 对照 / 反例 | 关键参照点 |
+| --- | --- | --- | --- |
+| **R0** 决策收口与库存裁决 | —（仓库内消费面证据驱动） | Pi「核心不内置」哲学（裁剪心态）；LiteLLM org/team/user/key 多租户层级（D1 单机决议的反面形态） | 归档判据全部来自本仓扫描；不引外部 |
+| **R1** 包合并 39→21 | Codex [codex-rs workspace](https://github.com/openai/codex/tree/main/codex-rs)（布局纪律） | Pi 三层 monorepo（ai / agent-core / coding-agent ↔ domain / engine / host 分层对照）；DeepSeek Harness「一切皆插件」拆包形态（不采纳） | codex-rs：统一 `codex-` 前缀、扁平布局 + 少量分组子目录、`workspace.dependencies` 集中声明、每个域「protocol → 宿主 → client」三层切分。**反面教材**：其 134 成员微 crate 增殖——Pawork 方向相反（39→21），只抄布局纪律不抄粒度 |
+| **R2** 依赖治理 | —（依赖用面审计驱动） | rmcp 官方仓库 [modelcontextprotocol/rust-sdk](https://github.com/modelcontextprotocol/rust-sdk)（波 C 专项） | rmcp 3.x wire 兼容性以官方 changelog + 本仓 59 条 MCP 契约测试 + 真实 server 冒烟为准；兼容则升，破坏则锁 `=2.2.0` 登记 |
+| **R3** 协议与投影同源化 | Codex [app-server-protocol](https://github.com/openai/codex/tree/main/codex-rs/app-server-protocol) 宏 registry；ACP capability 模型 | MCP capabilities 协商措辞；DeepSeek Harness append-only 事件 → Trajectory 投影同源（既有 S1 参照的延伸） | codex：四个宏单点登记（variant / wire 名 / 参数响应类型 / experimental 标记），同一展开派生 dispatch enum、TS/JSON schema、experimental 门控名单——「宣告 = 授权 = dispatch = schema 同源」的直接同形；ACP：capability ↔ 方法组（`session/*`、`fs/*`、`terminal/*`）一一映射、capability 缺省 false 即禁用、`schema/v1/schema.json` 单源派生多语言 SDK；MCP 仅有「MUST only use capabilities that were successfully negotiated」措辞，**无字面「未宣告即拒绝」条款——fail-closed 语义须 Pawork 自建为结构保证** |
+| **R4** 宿主拆解与可靠性内核 | —（内部契约工程） | codex-rs core / cli 职责边界（拆解规模感）；DeepSeek Harness 插件化服务切分（形态反例：拆服务不拆插件） | 幂等 CommandLedger、K-02 审批落盘、降级事件化、ACP actor 化均无外部同形；依托 R3 registry 分发与本仓 88+ 条 app 契约测试护航 |
+| **R5** Provider 中立化与凭证收口 | Codex Router 注册表驱动目录；[models.dev](https://models.dev)；Envoy AI Gateway 统一 cache_control 翻译 | Pi 自维护模型目录 + compat 矩阵、`auth.json` 解析优先级（CLI > auth.json > env > models.json）；OpenCode transform 归一化与 auth/config 分离 | 通道 preset 数据化 ↔ Codex Router「仅注册表验证过的 provider/model 进 picker」（本文 §3.2）；K-10 能力收口 ↔ Envoy「统一 cache API → 各家 cachePoint 翻译」（F5-B adapter 映射同构先例）；credential locator 合一 ↔ Pi/OpenCode 单文件凭证 + 解析链实践 |
+| **R6** 会话分支模型原生化 | DeepSeek Harness `ctx.sessions.fork`（turn 边界 + lineage 元数据） | Pi per-entry `parentId` 树（GUI 分支导航交互语义）；OpenCode 子 session（`parentID`）；**反面教材**：Claude Code 跨文件 DAG 重建（昂贵且脆弱） | DSH 不变量「fork 只许切在 turn 边界，越界即拒绝」+ `(parentSession, seedLength)` lineage 直接翻译为 Pawork `(parent_branch_id, fork_point_seq)`；差别：DSH 深拷贝 seed 事件，Pawork 单表 `branch_id` 引用零拷贝（单表方案优势）。**K-05 导入映射要点**：Claude `~/.claude/projects/**/*.jsonl`——`uuid/parentUuid` 链（同 parentUuid 多子 = 分叉点）、`isSidechain`/`agent-*.jsonl` = 子代理支线、`system.compact_boundary`+`logicalParentUuid` = 压缩边界、`tool_use{id}`↔`tool_result{tool_use_id}` 配对；Codex rollout `{timestamp,type,payload}`——首行 `session_meta`（含 `forked_from_id` 跨会话 lineage）、`turn_context` = turn 边界与模型、`function_call{call_id}`↔`function_call_output{call_id}` 配对、`reasoning.encrypted_content` 不可解只能存占位。两格式均非稳定契约：导入器逐行容错，未知 type 落为不透明扩展事件 |
+| **R7** 执行面真隔离 | Codex sandboxing（[docs/sandbox.md](https://github.com/openai/codex/blob/main/docs/sandbox.md)，deny-default Seatbelt，Rust 直接可抄结构）；[sandbox-runtime（srt）](https://github.com/anthropic-experimental/sandbox-runtime)（Claude Code 沙箱层，策略语义事实源） | [codex-network-proxy](https://github.com/openai/codex/blob/main/codex-rs/network-proxy/README.md)（egress 纯 Rust 实现）；DeepSeek Harness 沙箱/审批分 knob（既有 S3/S4 参照） | codex：`(deny default)` base sbpl + 可写根参数化组装 + `.git`/metadata `require-not` 挖洞 + 网络 fail-closed + `seatbelt_tests.rs` 回归；Linux 为 Landlock + seccomp（+bwrap）。srt 策略语义：写 = allow-only（默认全拒 + `allowWrite` 白名单）、读 = deny-then-allow（默认可读 + `denyRead` 挖洞——**两家读侧都不是全 deny**）、`.bashrc`/`.git/hooks`/`.env` 永久禁写、egress = 域名白名单（deny 优先 + 面向模型的拒绝理由）。K-09 若做 egress（ADR-041 选项 a）：采「本地策略代理 + 沙箱内仅放行 loopback 代理端口 + 域名白名单」两层模型（srt 架构 + codex-network-proxy 实现；注意两家均如实标注 DNS rebinding 局限） |
+| **R8** GUI 组件化与 Desktop 收口 | [gpui-component](https://github.com/longbridge/gpui-component) **v0.5.1 tag**（Apache-2.0；该版依赖 crates.io gpui ^0.2.2 与本仓 ADR-035 锁定一致，主干已改跟 Zed git 主干，勿参主干） | Zed [`crates/ui`](https://github.com/zed-industries/zed/tree/main/crates/ui)/`crates/theme`（**GPL-3.0：只参 API 形状不抄代码**）；Codex Desktop / OpenCode Desktop 壳形态（既有 S7 参照） | gpui-component：60+ 组件全覆盖 R8 十一组件清单、`ThemeColor` ~140 语义 token + `ActiveTheme` trait（对照 theme.rs ~20 token 的收敛目标）、`VirtualList` 变高虚拟化（对照 Timeline `list()` 改造）；Zed ui：`ButtonLike` 基座 + `ButtonCommon` trait（id/style/size/tooltip builder）、enum 型 `ContextMenu`（Header/Entry/Separator + `anchored()` + FocusHandle）——组件组织方式参照 |
+| **R9** 一致性收口 | —（内部核对） | — | 本节使用记录纳入 R9「文档三处一致」核查；参照快照过期项按 §3.6 收录标准复核 |
+
+### 7.2 使用纪律
+
+- **许可证红线**：GPL 系（Zed `ui`/`theme`）与无 LICENSE 仓库只参照 API 形状与机制思路，禁止复制代码；Apache-2.0 / MIT 系（codex-rs、gpui-component、srt）可借鉴实现但仍以自写为主，引入片段须记录出处。
+- **参照不改契约**：对照外部设计时，本仓冻结契约（[design.md](design.md) §3.2、[v2-summary.md](v2-summary.md) §4）优先；外部形状与冻结契约冲突的，走 ADR 而不是「顺手对齐」。
+- **快照时效**：本节结论为 2026-08-18 快照；R6/R7/R8 等距今较远的阶段开工时，按 [../v3_plan.md](../v3_plan.md) §5.2 重验参照项目实态（版本、许可证、API 形状），漂移即回写本节。
+- **登记约定**：2026-08-18 随本节新入册 ACP、gpui-component、Zed `ui`/`theme`、sandbox-runtime 四项（§1 总览与 §6.2 已同步）；R8 任务书引用的「Zed ui 与 gpui-component API 形状」自此在本手册有落点。后续 V3 专项调研继续按 §5 约定登记。
 

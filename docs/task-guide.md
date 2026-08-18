@@ -33,7 +33,7 @@
 3. **ADR 闸门**：R0 波 0、R1 波 A、R6 波 0、R7 波 0 产出的 ADR（038–041）须 Accepted（用户确认）后，同阶段后续波次才可开工；主代理不代替用户拍板破坏式决议。
 4. **契约核对**：[design.md](design.md) §3.2 冻结契约表 + [v2-summary.md](v2-summary.md) §4/§5 中列出本任务涉及的契约与 S13 拍板；确认 golden 测试先于实现改动（golden 先行）。
 5. **证据重验**：任务书内的行数/消费者/调用点证据基于 2026-08-18 分析快照，执行时按 [../v3_plan.md](../v3_plan.md) §5.2 重验；实态与任务书冲突以实态为准并回写任务书。
-6. **查参照资料**：[design.md](design.md) §4 功能 ↔ 参照项目映射；需要机制细节时进 [references.md](references.md) 与 [research/](research/)；考古已归档代码用 git 历史与 tag `v2-final`（V1 资产另见 [v1-migration-reference.md](v1-migration-reference.md)）。
+6. **查参照资料**：V3 阶段波次先看 [references.md](references.md) §7（R0–R9 阶段参照指引）；功能面映射看 [design.md](design.md) §4；需要机制细节时进 [references.md](references.md) 全文与 [research/](research/)；考古已归档代码用 git 历史与 tag `v2-final`（V1 资产另见 [v1-migration-reference.md](v1-migration-reference.md)）。
 7. **凭证检查**（需真实 API 的任务）：确认所需凭证已在 Pawork auth 文件或环境变量（§5）；**缺失或失效即终止任务并向用户索取，不静默跳过、不换用其他凭证、不降级为 mock 继续**（fail-closed，[research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.1）。
 
 ---

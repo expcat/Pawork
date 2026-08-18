@@ -17,7 +17,7 @@
 | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计;R8 组件化以其与 [design/README.md](design/README.md) 视觉基准为准 |
 | [docs/task-guide.md](docs/task-guide.md) | 开启核对、红线、测试通道、并行纪律、收尾与报告 |
 | [docs/v2-summary.md](docs/v2-summary.md) | V2 交付、冻结契约清单、S13 拍板、遗留债务原委 |
-| [docs/references.md](docs/references.md) | 参照项目手册 |
+| [docs/references.md](docs/references.md) | 参照项目手册;§7 为 R0–R9 阶段参照指引(开波时随任务书查阅) |
 | [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1 迁移词典(冻结;归档代码考古用) |
 | [AGENTS.md](AGENTS.md) | 仓库级红线与工作约定(V3 版) |
 

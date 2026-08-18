@@ -246,7 +246,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 > 2026-08-14 调研并经用户确认（决策原则：**减少实现复杂度、优先缓存命中**；决策记录 D1–D8 见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md)）。调研全文见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md)；分功能方案（F1–F6，**已确认**）见 [research/multi-account-quota-proposals.md](research/multi-account-quota-proposals.md)。
 >
-> 对照来源（第二批调研）：opencodex（lidge-jun/opencodex）、cc-switch（farion1231/cc-switch）、CLIProxyAPI（router-for-me）、claude-code-router、LiteLLM、new-api、claude-relay-service、gpt-load、claude-code-hub 等，以及 OpenCode/Pi 在多账户与缓存维度的补充调研（项目手册见 [references.md](references.md) §3）。2026-08-18 补入 Codex Router（duolahypercho/codex-router）：凭证隔离的多客户端本地路由器，不作账户池主参照。
+> 对照来源（第二批调研）：opencodex（lidge-jun/opencodex）、cc-switch（farion1231/cc-switch）、CLIProxyAPI（router-for-me）、claude-code-router、LiteLLM、new-api、claude-relay-service、gpt-load、claude-code-hub 等，以及 OpenCode/Pi 在多账户与缓存维度的补充调研（项目手册见 [references.md](references.md) §3）。2026-08-18 补入 Codex Router（duolahypercho/codex-router）：凭证隔离的多客户端本地路由器，不作账户池主参照。同日参照表二次清理：gpt-load、claude-code-hub 已移出手册（机制调研留档 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §4.5 / §4.6），本节结论不受影响。
 
 | ID | 功能 | 来源参照 | 说明 | 优先级 | 落点 |
 | --- | --- | --- | --- | --- | --- |

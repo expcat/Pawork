@@ -186,16 +186,18 @@
 
 ### 4.5 tbphp/gpt-load
 
+> 2026-08-18 已按功能重叠标准移出参照表（见 §8 移除记录）；本节保留为机制快照。
+
 - Go 透明代理，完整保留 OpenAI/Gemini/Claude 原生格式——`cache_control` 等字段原样透传（由透明代理特性推断，未证实）；key 池负载均衡器，无 per-user quota 计费。
 - **key 生命周期**：分组 key 池 + 自动轮换；`blacklist_threshold`（默认 3）累计失败拉黑；后台按 `key_validation_interval_minutes`（默认 60）定时验证黑名单 key，通过即恢复。
 - **失败处理**：`max_retries`（默认 3）单请求换 key 重试；`failover_status_codes` 可配置触发 failover 的状态码列表（支持区间语法），分组可覆盖。
 
 ### 4.6 新兴同类项目（2025–2026）
 
-- **[ding113/claude-code-hub](https://github.com/ding113/claude-code-hub)**：Claude Code & Codex 代理（Next.js+Hono+PostgreSQL+Redis）。权重+优先级+分组调度、熔断器、最多 3 次故障转移；RPM/金额（5h/周/月）/并发 session 多维限流用 Redis Lua 保原子、Redis 挂了 Fail-Open 降级；session 绑定 provider 用 Redis `SET NX` 原子首成锁，复用前查健康度、支持向高优先级 provider 迁移（[DeepWiki session-binding](https://deepwiki.com/ding113/claude-code-hub/4.2-session-binding-and-provider-stickiness)）。
+- **[ding113/claude-code-hub](https://github.com/ding113/claude-code-hub)**（2026-08-18 移出参照表，见 §8）：Claude Code & Codex 代理（Next.js+Hono+PostgreSQL+Redis）。权重+优先级+分组调度、熔断器、最多 3 次故障转移；RPM/金额（5h/周/月）/并发 session 多维限流用 Redis Lua 保原子、Redis 挂了 Fail-Open 降级；session 绑定 provider 用 Redis `SET NX` 原子首成锁，复用前查健康度、支持向高优先级 provider 迁移（[DeepWiki session-binding](https://deepwiki.com/ding113/claude-code-hub/4.2-session-binding-and-provider-stickiness)）。
 - **[ztx888/CLIProxyAPI-Plus](https://github.com/ztx888/CLIProxyAPI-Plus)**：CLIProxyAPI 社区强化版，Codex 配额运营：展示 5h/周额度与恢复窗口、`usage_limit_reached` 后自动持久停用、周额度低于阈值（如 3%）提前停用、按剩余额度排序。
-- **[rynfar/meridian](https://github.com/rynfar/meridian)**（约 1.8k stars）：经 Claude Agent SDK 把 Claude 订阅桥接为标准 Anthropic/OpenAI 协议（不做 OAuth 拦截）；多 profile 账户即时切换 + 可选 sticky session routing，会话分散到多账户的同时保持每账户 prompt cache 温热。
-- **[badrisnarayanan/antigravity-claude-proxy](https://www.mintlify.com/badrisnarayanan/antigravity-claude-proxy/guides/load-balancing)**：Google 账户池代理，策略三选一：Hybrid（健康度/余量/恢复期综合）、**Sticky（缓存最优：session ID = 首条 user message 的 SHA256，限流 <2min 时等待不切换）**、Round-Robin（吞吐最优、缓存最差）——把「缓存命中」作为调度策略的一等权衡维度。
+- **[rynfar/meridian](https://github.com/rynfar/meridian)**（约 1.8k stars；2026-08-18 移出参照表，见 §8）：经 Claude Agent SDK 把 Claude 订阅桥接为标准 Anthropic/OpenAI 协议（不做 OAuth 拦截）；多 profile 账户即时切换 + 可选 sticky session routing，会话分散到多账户的同时保持每账户 prompt cache 温热。
+- **[badrisnarayanan/antigravity-claude-proxy](https://www.mintlify.com/badrisnarayanan/antigravity-claude-proxy/guides/load-balancing)**（2026-08-18 移出参照表，见 §8）：Google 账户池代理，策略三选一：Hybrid（健康度/余量/恢复期综合）、**Sticky（缓存最优：session ID = 首条 user message 的 SHA256，限流 <2min 时等待不切换）**、Round-Robin（吞吐最优、缓存最差）——把「缓存命中」作为调度策略的一等权衡维度。
 - **[duolahypercho/codex-router](https://github.com/duolahypercho/codex-router)**（约 2.4k stars，2026-08-18 登记）：本地路由器 + 托盘，把外部模型并入 Codex / DeepSeek Harness / Gemini CLI 的原生目录。Design B 只改 `openai_base_url` + `model_catalog_json`；入站 Codex 凭据丢弃，只向所选上游注入对应 OAuth/API key。Failover 默认开但窗口极窄（402 / 余额耗尽 / 需等待 >1min 的 429 才换**已启用的下一模型**，坏 key 与宕机仍 fail-closed）。**不是** ChatGPT 账户池，也没有会话-账户 sticky；作 F2/F3 窄错误分类与 F6-A 上游对照，不作 G1/G3 主参照。机制详见 [references.md](../references.md) §3.2。
 
 ---
@@ -278,11 +280,13 @@ V1 已有大量同构资产（详见 [provider-control-plane](../../../Pawork_v1
 
 ---
 
-## 8. 参考项目对照总表（2026-08-14 快照）
+## 8. 参考项目对照总表（2026-08-14 快照 · 2026-08-18 复核清理）
 
 > 覆盖 §2–§4 详查项目 + 2026-08-14 补充调研发现的流行项目。star 为当日数量级快照（GitHub API 抽样复核：cc-switch 127,132、opencode 197,254、OmniRoute 47,446 与调研一致）；「缓存策略与公开效果」列仅录**公开**数据——绝大多数项目不公布命中率，仅有的公开口径（Pi 社区双标记 80%+、Codex 会话级 62%）与 Pawork 的 95/97/99 目标口径（排除冷启动的会话级聚合，见 [multi-account-quota-plan-merge.md](multi-account-quota-plan-merge.md) §1.3）不同，不可直接对比。
 >
-> **收录标准与移除记录（2026-08-14 按 pushed_at 复核）**：仅收录活跃维护项目——已归档或约 3 个月以上无提交者不作参考。据此移除 7 项：TensorZero（2026-06 归档停运）、Roo Code（2026-05 停运归档）、Helicone AI Gateway（被 Mintlify 收购转维护模式，2025-11 后无提交）、Arch/archgw→Plano（被 DigitalOcean 收购，2026-04 后无提交）、Portkey（被 Palo Alto Networks 收购，2026-05-25 后无提交）、one-api（2026-01-09 后无提交，机制由 new-api 继承）、gemini-balance（2025-09-30 后无提交）。antigravity-claude-proxy 最后提交 2026-06-08（约 2 个月，未过阈值）暂保留观察。2026 年商业开源网关整合潮（多起收购/停运）本身是重要事实：**依赖外部网关的方案有存续风险，自持进程内能力（F6-A 路线）因此更稳**。
+> **收录标准与移除记录（2026-08-14 按 pushed_at 复核）**：仅收录活跃维护项目——已归档或约 3 个月以上无提交者不作参考。据此移除 7 项：TensorZero（2026-06 归档停运）、Roo Code（2026-05 停运归档）、Helicone AI Gateway（被 Mintlify 收购转维护模式，2025-11 后无提交）、Arch/archgw→Plano（被 DigitalOcean 收购，2026-04 后无提交）、Portkey（被 Palo Alto Networks 收购，2026-05-25 后无提交）、one-api（2026-01-09 后无提交，机制由 new-api 继承）、gemini-balance（2025-09-30 后无提交）。2026 年商业开源网关整合潮（多起收购/停运）本身是重要事实：**依赖外部网关的方案有存续风险，自持进程内能力（F6-A 路线）因此更稳**。
+>
+> **2026-08-18 二次清理（功能重叠去重，GitHub API 全量复核）**：按「同功能与实现思路可由表内更强项目替代 + star 停滞或活跃不足」移除 5 项，对应行已从下表删除，机制原文保留于 §4.5/§4.6/§5.4（历史快照）——① **gpt-load**（key 池拉黑 + 定时验证恢复：由 CLIProxyAPI 冷却/自动恢复链与 new-api 失败自动禁用/恢复覆盖，V1 `ErrorClassifier` 语义更细；6.3k 完全停滞）；② **uni-api**（channel 加权 + key 轮询：由 new-api / CLIProxyAPI 覆盖；1.3k 零增长、个人项目流量稀疏）；③ **claude-code-hub**（`SET NX` 首成锁与 Redis Lua 多维限流：sticky 由 CRS / CLIProxyAPI 覆盖，Redis 集中式形态与 Pawork 单机产品不匹配；3.3k 停滞、提交放缓）；④ **meridian**（「不拦 OAuth 合规 sticky」立场已内化为 F1-B/F3-B 已确认决议；1.9k，且仓库无 LICENSE，代码不可参考）；⑤ **antigravity-claude-proxy**（2026-06-08 后停更 71 天，越过上轮「暂保留观察」；「缓存命中为调度一等权衡」由 OmniRoute cacheAffinity 与 CRS sticky 承载；已确认其仓库为 badrisnarayanan/antigravity-claude-proxy，约 3.9k）。同日复核另记：claude-relay-service 增长停滞于 12.5k（作者重心转向 sub2api，topics 自标 "crs2"），仍为 G3 sticky 主参照，保留观察；OmniRoute（50k，+3k/4 天）与 9router 同属「免费聚合 + token 压缩」画像，持续关注安全面；9router 19 份安全通告确认为 6 critical / 11 high / 2 medium（最新 2026-07-16）；LiteLLM 已重写为 Rust core + Python SDK；许可证注记——new-api AGPL-3.0、sub2api LGPL-3.0（open issues 2.7k 积压）、LiteLLM 混合授权（MIT 主体 + enterprise 目录）。子代理另建议移除 Codex Router（2.5k、功能面窄），**不采纳**：该项目 2026-07-19 新建非「较老」，且承担与 opencodex 不同的「凭证隔离多客户端 + 注册表驱动目录」角色（S6 通道端点形态 / S9 G6 导入源 / S11 F2-F3 窄 failover / R5 通道注册表数据化），表内无替代。
 
 | 项目（star≈） | 类别 / 形态 | 账号 / 凭证切换 | 缓存策略与公开效果 | 反代 / 协议处理 | 差异与借鉴（含 2026 状态） |
 | --- | --- | --- | --- | --- | --- |
@@ -297,18 +301,12 @@ V1 已有大量同构资产（详见 [provider-control-plane](../../../Pawork_v1
 | [claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service)（13k） | Claude 订阅池中继（Node） | 账户池 + 429/529 标记排除 + Redis 排队 | **内容 hash sticky session**（作者明示切换毁缓存 + 封号风险） | Claude 专用透明中继；每账户独立代理 IP | OAuth AES 加密存 Redis；5h 窗口展示 |
 | [opencodex](https://github.com/lidge-jun/opencodex)（9.9k） | 本地代理 + dashboard（Bun） | ChatGPT 账户池 quota/RR/fill-first；会话级切换 | **thread affinity 钉账户**；日志显示 cache 读写 | base_url 截持（只改一个字段）+ 七适配器协议翻译 | 5h/周/30d 主动配额窗口探测；401/403 fail-closed |
 | [Codex Router](https://github.com/duolahypercho/codex-router)（2.4k，2026-08-18） | 本地路由器 + 托盘（JS / LiteLLM） | 单凭证隔离，非账户池；额度耗尽才换**模型** | 无会话-账户 sticky；外部 compaction 用自有 `kcr1:` 摘要 | Codex Responses → LiteLLM 翻译；托管改 `openai_base_url` + catalog | 一安装服务 Codex / Harness / Gemini CLI；login-free 别名与匿名免费网关 Pawork 不采纳 |
-| [gpt-load](https://github.com/tbphp/gpt-load)（6.3k） | key 池透明代理（Go） | key 轮换 + 累计失败拉黑 + 定时验证恢复 | 透明透传（推断，未证实） | 透明代理，保留三家原生格式 | failover 状态码列表可配 |
-| [claude-code-hub](https://github.com/ding113/claude-code-hub)（3.3k） | 代理（Next.js/Hono） | 权重 + 优先级 + 分组 + 熔断；Redis Lua 多维限流 | session 绑定 `SET NX` 首成锁 + 健康度迁移 | Claude Code/Codex 双协议 | Redis 故障 Fail-Open 降级设计 |
-| [meridian](https://github.com/rynfar/meridian)（1.8k） | 订阅桥（Claude Agent SDK） | 多 profile 即时切换 | 可选 sticky routing 保每账户缓存温热 | 经官方 SDK 桥接（不拦 OAuth） | 规避 OAuth 拦截的合规路线 |
-| [antigravity-claude-proxy](https://www.mintlify.com/badrisnarayanan/antigravity-claude-proxy/guides/load-balancing) | Google 账户池代理 | Hybrid / Sticky / RR 三策略可选 | Sticky = 首 user 消息 SHA256；限流 <2min 等待不切换 | 代理翻译 | 把缓存命中作为调度一等权衡维度 |
-| [LiteLLM](https://github.com/BerriAI/litellm)（56k） | Proxy/Router（Python） | 多 deployment 加权 / least-busy / usage-based v2；cooldown/fallback | **PromptCachingDeploymentCheck** + session_affinity（TTL 1h）缓存感知路由；缓存差价计费 | OpenAI 兼容翻译 100+ 上游 | 层级预算（org/team/user/key）最完整 |
+| [LiteLLM](https://github.com/BerriAI/litellm)（56k） | Proxy/Router（Rust core + Python SDK，2026-08 复核） | 多 deployment 加权 / least-busy / usage-based v2；cooldown/fallback | **PromptCachingDeploymentCheck** + session_affinity（TTL 1h）缓存感知路由；缓存差价计费 | OpenAI 兼容翻译 100+ 上游 | 层级预算（org/team/user/key）最完整 |
 | [OmniRoute](https://github.com/diegosouzapw/OmniRoute)（47k） | 自托管网关（TS） | 多账号/多 provider 池；19 种策略 + Auto-Combo 14 因子（含配额 headroom/reset-aware） | **cache-optimized 策略 + cacheAffinity 因子**钉热缓存账号；`X-OmniRoute-Decision` 决策头 | OpenAI 兼容 + 330+ provider 转换 + 15–95% token 压缩 | 2026 token-saver 爆款；免费/OAuth 池化 ToS 风险 |
 | [new-api](https://github.com/QuantumNous/new-api)（45k） | 计费网关（Go，承自 one-api） | 渠道优先级 + 权重；渠道内多 key RR/加权 + 渠道级限流 | 缓存感知路由未见；缓存差价计费未证实 | OpenAI 兼容翻译 | quota 折算三层计费（渠道/账户/令牌） |
 | [claude-code-router](https://github.com/musistudio/claude-code-router)（37k） | Claude Code 网关（TS） | provider 级路由（无账户池） | `cleancache` 剥除 cache_control；Anthropic transformer 保留断点 | Claude Code 专用 + transformer 链改写 | 场景路由（default/background/think/longContext）；子代理 in-band 标签（反例） |
 | [Bifrost](https://github.com/maximhq/bifrost)（7.3k） | Go 网关 | 每 provider 多 key 权重随机 + 失败/限流切换；虚拟 key 治理 | cache_control 透传 + 语义缓存插件；prompt cache 指标未证实 | 统一 API + 各家 SDK drop-in 双向翻译 | 11µs@5k RPS 性能叙事，LiteLLM 位竞争者 |
 | [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway)（1.9k，CNCF v1.0 GA） | K8s 网关（Go/Envoy） | provider failover + token 级限流 | **统一 cache_control API 跨厂商翻译**（Vertex/Bedrock cachePoint，≤4 断点）+ cached_tokens 回传 | K8s Gateway API 协议翻译 | 首个产线 GA 的 CNCF 系 AI 网关，内建 MCP 网关 |
-| [uni-api](https://github.com/yym68686/uni-api)（1.3k） | Python 网关 | channel 加权 + channel 内 key 轮询（含按成功率 smart_round_robin） | 无 | OpenAI 系入口翻译（无 /v1/messages） | 单 YAML 极简派代表 |
-
 邻层项目（另一品类，不单列）：Kong AI Gateway（~44k）与 Higress（~9.1k）为通用 API 网关加 AI 插件/语义缓存；NVIDIA Dynamo（~7.7k）为推理集群内 KV-cache-aware 路由（serving 层）；metapi（~3.2k）为聚合 new-api 等的「路由器之路由器」。行业目录：[awesome-ai-gateway](https://github.com/cuihuan/awesome-ai-gateway)。
 
 **对 Pawork 实现的三点结论**：
