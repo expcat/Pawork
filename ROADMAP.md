@@ -90,6 +90,7 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 | 重建仓库根文件与全量引用修复 | 2026-08-17 | 重建 [AGENTS.md](AGENTS.md)（V2 版，§5 开发期验证放宽与 task-guide §6 双向同步）、[README.md](README.md)、[.gitattributes](.gitattributes)；修复迁移断链 84 处（V1 资产链接改指 [../Pawork_v1/](../Pawork_v1/)、未落仓 `archive/M0–M8` 回退 [plan/archive/README.md](plan/archive/README.md)、深度修正 2 处）与 15 处陈旧文本引用 |
 | S12 从发布硬化重规划为全项目 Code Review | 2026-08-17 | 原 Release Hardening/发布任务移出当前排期；新增 [S12 审查任务书](plan/S12-project-code-review.md)，按九个独立审查包产出 finding，并逐项回写 §3.2 |
 | S13 立项：S12 finding 整改任务书与文档同步 | 2026-08-18 | [plan/S13-s12-remediation.md](plan/S13-s12-remediation.md)；本文 S0–S13 同步与 §3.2 登记修正（F05/F09/F13/F17/F30/F31/F49）；v2_plan §3/§4、AGENTS §5、task-guide §6、README 同步 |
+| 参照项目补入 Codex Router + 按功能规划反向分类 | 2026-08-18 | [docs/references.md](docs/references.md) §1/§3.2/§6；[docs/design.md](docs/design.md) §4/§5 正向映射同步；research 总表与 G6/F6 导入源补记 |
 
 ### 3.2 待执行（阶段之外）
 
@@ -187,7 +188,7 @@ S13 统一排期（2026-08-18 立项）：57 项整改由阶段 [S13](plan/S13-s
 
 ### 3.3 候选（未排期）
 
-候选功能池见 [docs/design.md](docs/design.md) §5（已确认扩展功能族 G1–G7）与 §6（候选功能对照，30 项 P1–P3；2026-08-17 补入 DeepSeek Harness）。候选纳入排期时：在本节 §3.2 登记任务并把内容并入对应 `plan/S*.md`，按 §6 状态回写约定执行。
+候选功能池见 [docs/design.md](docs/design.md) §5（已确认扩展功能族 G1–G7）与 §6（候选功能对照，30 项 P1–P3；2026-08-17 补入 DeepSeek Harness）。参照项目按功能规划的反向分类见 [docs/references.md](docs/references.md) §6（2026-08-18 补入 Codex Router）。候选纳入排期时：在本节 §3.2 登记任务并把内容并入对应 `plan/S*.md`，按 §6 状态回写约定执行。
 
 ---
 

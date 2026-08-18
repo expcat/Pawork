@@ -96,7 +96,7 @@ S0–S5 的前期功能验证使用用户提供的两把 key；端点只来自�
 | GLM Coding Plan | Anthropic Messages | `https://open.bigmodel.cn/api/anthropic` | S2 起作为第二协议通道，验证 provider 契约不过拟合 OpenAI 形状 |
 | OpenCode Go | OpenAI Chat Completions | `https://opencode.ai/zen/go/v1` | Bearer 认证；模型目录经 `GET /models` 可查（`deepseek-v4-pro`、`kimi-k2.x`、`glm-5.x` 等）；少数模型仅走 Anthropic `/messages` |
 
-> 若实际提供的 key 属于自建代理（如 opencodex 网关），仅 `base_url` 不同，接入方式完全一致。
+> 若实际提供的 key 属于自建代理（如 opencodex、Codex Router），仅 `base_url` 不同，接入方式完全一致。
 
 S6 首发产品范围冻结如下；这里的“已预设”不等于“已完成登录或真实冒烟”，阶段状态以 [S6 任务书](../plan/S6-providers-auth.md) 为准。
 

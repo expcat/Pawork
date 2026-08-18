@@ -109,7 +109,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 ## 4. 各阶段功能设计与参照项目映射
 
-> 每阶段列出**用户可见功能**（细粒度任务、涉及包与验收见对应 [../plan/](../plan/) 任务书），「参照」列给出该功能在参照项目中的对应实现与资料入口——项目背景见 [references.md](references.md)，机制细节见 [research/](research/) 调研文档（记作 research §N，指 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md)）。V1 资产来源统一见 [v1-migration-reference.md](v1-migration-reference.md) §4.1，不在表内重复。
+> 每阶段列出**用户可见功能**（细粒度任务、涉及包与验收见对应 [../plan/](../plan/) 任务书），「参照」列给出该功能在参照项目中的对应实现与资料入口——项目背景见 [references.md](references.md)，**参照项目 → 功能规划**的反向分类见同文 §6，机制细节见 [research/](research/) 调研文档（记作 research §N，指 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md)）。V1 资产来源统一见 [v1-migration-reference.md](v1-migration-reference.md) §4.1，不在表内重复。
 
 ### S0 最小可对话 CLI（[任务书](../plan/S0-minimal-chat.md)）
 
@@ -118,7 +118,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | `pawork chat` 流式多轮 REPL、Ctrl-C 取消当轮 | [Codex CLI](https://developers.openai.com/codex)；OpenCode/Pi 的终端交互语义（仅对标行为——Pawork 无 TUI，见 §6.1 红线排除） |
 | `pawork models` 模型目录 | OpenCode 外置 [models.dev](https://models.dev) 注册表 vs Pi 自维护内置目录（research §2.2 对比表）——Pawork 走 registry + config 覆盖（S5 完整化） |
 | TOML 配置 + env key（配置**无 api_key 字段**） | OpenCode `opencode.json` 与 `auth.json` 分离（research §2.1）；Pi `auth.json`（0600）与 `!command`/`$ENV` 插值（research §2.2） |
-| openai-compatible 适配器（可配 `base_url`） | GLM Coding Plan / OpenCode Go / 自建网关（opencodex 等）均为此形态；通道端点见 [task-guide.md](task-guide.md) §5 |
+| openai-compatible 适配器（可配 `base_url`） | GLM Coding Plan / OpenCode Go / 自建网关（opencodex、[Codex Router](https://github.com/duolahypercho/codex-router) 等）均为此形态；通道端点见 [task-guide.md](task-guide.md) §5 |
 | 可读错误呈现（401/429/超时/断网） | OpenCode ≤5 次重试、遵循 Retry-After（research §2.1）；Pi agent 层退避（research §2.2）。S0 只做呈现；自动冷却/换号是 S11 F3 的范畴 |
 
 ### S1 会话持久化与恢复（[任务书](../plan/S1-sessions.md)）
@@ -162,7 +162,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| 上下文预算（软限压缩 / 硬限截断）+ `/compact` 手动触发 | OpenCode context overflow 自动 compaction（research §2.1）；**compaction=重写前缀=缓存全失效**的折中纪律（research §5.3） |
+| 上下文预算（软限压缩 / 硬限截断）+ `/compact` 手动触发 | OpenCode context overflow 自动 compaction（research §2.1）；**compaction=重写前缀=缓存全失效**的折中纪律（research §5.3）；Codex Router 可选旧工具结果老化与外部模型 continuation 摘要（宿主仍拥有 compact，路由器只翻译） |
 | token 与费用统计（micros 定价、无定价不编造） | OpenCode 消息级 cost/tokens 落库（research §2.1）；Pi footer 实时命中率与成本（research §2.2）；LiteLLM 缓存差价计费（research §4.2） |
 | 模型 registry（context window / 定价 / 别名） | [models.dev](https://models.dev)（OpenCode 路线）；Pi `models-store.json` + `models.json` 扩展（research §2.2） |
 | **已确认待并入**：F5 前缀稳定性分段产出、缓存用量并入统计（§5 G5） | — |
@@ -171,7 +171,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| 六条首发通道：ChatGPT OAuth、xAI Grok OAuth、Z.AI GLM Coding Plan、OpenCode Go、Qwen Token Plan、DeepSeek；其它厂商延期 | 各厂商官方 API；范围与 credential/transport 冻结见任务书 |
+| 六条首发通道：ChatGPT OAuth、xAI Grok OAuth、Z.AI GLM Coding Plan、OpenCode Go、Qwen Token Plan、DeepSeek；其它厂商延期 | 各厂商官方 API；范围与 credential/transport 冻结见任务书。端点/凭证形态对照：[Codex Router](https://github.com/duolahypercho/codex-router) 注册表（zai-coding / opencode-go / qwen-plan / deepseek / grok-oauth） |
 | ChatGPT/xAI 共用 Responses transport；xAI 与 API-key 混合通道按模型 capability 选 Chat/Responses | canonical 保持 provider-neutral，Engine 不按厂商名分支 |
 | `auth.json` 文件凭证 + `pawork auth` 子命令 | 形态对齐 Codex CLI；Pawork 额外锁定 0600、跨进程 write/refresh 锁、独立临时文件 + rename 原子写、损坏 fail-closed、掩码展示与全链日志脱敏。env 仅作 headless/CI fallback |
 | ChatGPT/xAI OAuth（PKCE/Device/refresh/callback） | Codex Sign in with ChatGPT；xAI 登录兼容性需真实账号验收；OAuth client secret 不进入 adapter/仓库 |
@@ -203,7 +203,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | MCP client（rmcp 收口）+ 与内置工具共存注册 | [MCP 官方](https://modelcontextprotocol.io)；OpenCode/Codex/Claude Code/DeepSeek Harness 均支持 MCP；「Pawork 作为 MCP server」为候选反向形态（§6.3 B7） |
 | AGENTS.md / Skills / profiles 加载注入 | [AGENTS.md 开放约定](https://agents.md)；OpenCode rules、Codex AGENTS.md、Claude Code 同类机制；DeepSeek Harness `tool-skill` + agent preset；Skills 对标 Claude/Cursor 的 SKILL.md 机制 |
 | `@file` 引用 + file-index 模糊补全 | 各家 `@` 语义；OpenCode References（工作区外引用）为候选扩展（§6.3 B4） |
-| 一键导入本机 Claude/Codex/Grok/Cursor/Pi 配置（只读） | 各工具本机配置布局；账户/端点导入源（G6）：cc-switch SQLite SSOT（research §3.2）、CLIProxyAPI auth-dir（research §3.3）、opencodex config（research §3.1） |
+| 一键导入本机 Claude/Codex/Grok/Cursor/Pi 配置（只读） | 各工具本机配置布局；账户/端点导入源（G6）：cc-switch SQLite SSOT（research §3.2）、CLIProxyAPI auth-dir（research §3.3）、opencodex config（research §3.1）、Codex Router 托管 `config.toml` 块 + `~/.codex/codex-router` 状态目录（[references.md](references.md) §3.2） |
 | config 完整六层 + Profile | V1 config-service 层级合并引擎 |
 | **已确认待并入**：G6 账户/端点导入源、F4 Agent Profile 绑定字段随 profiles 契约定型（§5） | — |
 
@@ -224,9 +224,9 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | --- | --- |
 | Plan 审批 gate（未批准整版拦截 turn；host 在 `run_session` 前校验，无 plan 放行） | V1 plan-service；相邻机制：OpenCode question/todowrite、DeepSeek Harness planning / `tool-todo` / `ctx.goals` 为模型侧轻量形态（候选 §6.3 B2/B3/B9） |
 | 多 Agent 编排（spawn/registry/cancel-tree/recovery/budget-gate） | OpenCode `task` 子代理 + 权限派生 + `subagent_depth`（research §2.1）；Pi「核心不内置子代理」哲学与 extension 自建（research §2.2）；DeepSeek Harness `tool-subagent` + workflows；CCR in-band 标签为**明确不采纳**的反例（F4-C，research §4.1） |
-| 子 Agent 声明式 provider/model/账户绑定 + 预算分配（F4） | opencode `agent.model` 声明式绑定（research §2.1）；方案 [research/multi-account-quota-proposals.md](research/multi-account-quota-proposals.md) F4-A+B |
-| 多账户池 / 租约 / 路由 / 会话-账户亲和（F1/F3） | opencodex 账户池 + 三窗口配额 + thread affinity（research §3.1）；CLIProxyAPI RR/加权/fill-first + 冷却 + session-affinity（research §3.3）；claude-relay-service 内容 hash sticky（research §4.4）；V1 provider-control 资产对照（research §7） |
-| 额度感知与预算 gate（F2）+ `pawork usage` | opencodex 主动配额窗口探测（research §3.1）；LiteLLM 层级预算（research §4.2）；V1 quota-service/usage-ledger |
+| 子 Agent 声明式 provider/model/账户绑定 + 预算分配（F4） | opencode `agent.model` 声明式绑定（research §2.1）；Codex Router 仅 registry-proven 模型可作 v2 spawn（本地设置不能提升未验证模型）；方案 [research/multi-account-quota-proposals.md](research/multi-account-quota-proposals.md) F4-A+B |
+| 多账户池 / 租约 / 路由 / 会话-账户亲和（F1/F3） | opencodex 账户池 + 三窗口配额 + thread affinity（research §3.1）；CLIProxyAPI RR/加权/fill-first + 冷却 + session-affinity（research §3.3）；claude-relay-service 内容 hash sticky（research §4.4）；Codex Router 仅额度耗尽换**模型**（窄 402/长 429，非账户池 sticky，[references.md](references.md) §3.2）；V1 provider-control 资产对照（research §7） |
+| 额度感知与预算 gate（F2）+ `pawork usage` | opencodex 主动配额窗口探测（research §3.1）；LiteLLM 层级预算（research §4.2）；Codex Router 托盘用量 + 只信提供商复位窗口（上限 6h）；V1 quota-service/usage-ledger |
 | audit / tenant 控制面 | LiteLLM org/team/user/key 层级（research §4.2）；V1 `dedup_key`/audit JSONL 冻结契约（§3.2） |
 | 评审（re-anchor/resolution）与记忆抽象 | V1 review-engine / memory-service（memory 无 EmbeddingProvider 则 experimental 登记） |
 | **已确认待并入**：F1–F4 全部 + 命中测试补全场景（§5） | — |
@@ -244,7 +244,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 > 2026-08-14 调研并经用户确认（决策原则：**减少实现复杂度、优先缓存命中**；决策记录 D1–D8 见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md)）。调研全文见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md)；分功能方案（F1–F6，**已确认**）见 [research/multi-account-quota-proposals.md](research/multi-account-quota-proposals.md)。
 >
-> 对照来源（第二批调研）：opencodex（lidge-jun/opencodex）、cc-switch（farion1231/cc-switch）、CLIProxyAPI（router-for-me）、claude-code-router、LiteLLM、new-api、claude-relay-service、gpt-load、claude-code-hub 等，以及 OpenCode/Pi 在多账户与缓存维度的补充调研（项目手册见 [references.md](references.md) §3）。
+> 对照来源（第二批调研）：opencodex（lidge-jun/opencodex）、cc-switch（farion1231/cc-switch）、CLIProxyAPI（router-for-me）、claude-code-router、LiteLLM、new-api、claude-relay-service、gpt-load、claude-code-hub 等，以及 OpenCode/Pi 在多账户与缓存维度的补充调研（项目手册见 [references.md](references.md) §3）。2026-08-18 补入 Codex Router（duolahypercho/codex-router）：凭证隔离的多客户端本地路由器，不作账户池主参照。
 
 | ID | 功能 | 来源参照 | 说明 | 优先级 | 落点 |
 | --- | --- | --- | --- | --- | --- |
@@ -253,8 +253,8 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | G3 | 缓存感知的会话-账户亲和路由 | claude-relay-service sticky session、CLIProxyAPI session-affinity、opencodex thread affinity | SessionBinding 亲和默认开 + 新会话再平衡 + 新增「配额余量优先」路由策略 + 分类错误 rebind；请求级轮换不作默认 | P1 | S11（方案 F3-B） |
 | G4 | 子 Agent 声明式 provider/model/账户绑定 | opencode agent.model + 权限派生；CCR 子代理标签（反例，不采纳）；opencodex 模型即子代理 | Agent Profile/spawn 参数声明绑定 → RouteContext → provider-control 选账户；默认继承父绑定、显式覆盖；预算经 budget-gate 分配 | P1 | S9 profile 铺垫 / S11（方案 F4-A+B） |
 | G5 | canonical 输入缓存策略控制 | Anthropic cache_control、OpenAI prompt_cache_key、pi/opencode/Claude Code 断点收敛实践 | cache 注解（canonical，无厂商字段）+ registry 缓存能力表 + adapter 断点/亲和键映射 + 缓存用量入账与命中率观测 + compaction 联动 | P1 | S2 占位 / S5 分段 / S6 全量（方案 F5-B） |
-| G6 | 账户/端点配置导入 | cc-switch SQLite SSOT、CLIProxyAPI auth-dir、opencodex config、Claude/Codex 官方布局 | pawork-compat 增加账户与端点只读导入源，secret 直接转存 Pawork auth 文件，不落仓库或中间文件 | P2 | S9（方案 F1 附属） |
-| G7 | 对外账户池网关模式 | opencodex / CLIProxyAPI 网关形态 | 近期不内建：以 openai-compatible 上游接外部网关 + 对内账户池；长期按需评估 channels 扩展 feature | P3 | 暂不排期（方案 F6，决策项；登记于 [../ROADMAP.md](../ROADMAP.md) §4） |
+| G6 | 账户/端点配置导入 | cc-switch SQLite SSOT、CLIProxyAPI auth-dir、opencodex config、Codex Router 托管 config 块、Claude/Codex 官方布局 | pawork-compat 增加账户与端点只读导入源，secret 直接转存 Pawork auth 文件，不落仓库或中间文件 | P2 | S9（方案 F1 附属） |
+| G7 | 对外账户池网关模式 | opencodex / CLIProxyAPI / Codex Router 网关形态 | 近期不内建：以 openai-compatible 上游接外部网关 + 对内账户池；长期按需评估 channels 扩展 feature | P3 | 暂不排期（方案 F6，决策项；登记于 [../ROADMAP.md](../ROADMAP.md) §4） |
 
 **状态**：G1–G6 已确认、待由独立任务并入对应 `plan/S*.md`（任务书见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §4，已登记于 [../ROADMAP.md](../ROADMAP.md) §3.2；按 ROADMAP §6 状态回写约定执行）；G7 维持不做。其中 G5 涉及冻结契约的附加式字段扩展（CanonicalModelRequest/ModelResponseSummary），须遵守 §3.2 golden 先行原则。配套工作约定（执行期凭证 fail-closed / 少测试无门禁 / 缓存命中 95-97-99 目标）见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1 与 [task-guide.md](task-guide.md)。
 

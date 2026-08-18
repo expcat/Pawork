@@ -96,7 +96,7 @@ opencodex / CLIProxyAPI 做成独立代理进程，是因为它们改不了所�
 
 1. **协议形态不兼容**（Anthropic Messages / OpenAI Chat Completions / OpenAI Responses / Gemini 四形态）：每形态一个 adapter 做 canonical ↔ 厂商翻译；V1 已有各家 adapter，S0 以 openai-compatible 已打通 GLM 与 OpenCode Go。新增 OpenAI 兼容形态供应商 = 填配置（base_url + 模型表）；全新协议形态才需新写 adapter crate，核心不动。
 2. **能力不兼容**（不支持工具 / 图片 / 缓存 / thinking / 结构化输出）：model registry 能力表声明 + Engine 查表降级（thinking → 标签文本、图片 → 占位、缓存注解 → 忽略、工具 → 禁用并提示）；红线禁止按厂商名写特例分支。Pi 的 compat 矩阵为成熟先例（参考文档 §2.2）。
-3. **完全接不进**（无 API、OAuth 被厂商封锁如 Claude plan）：不硬接、不做身份伪装（UA 伪装 / identity-confuse 均排除）；用户自愿时把外部网关（opencodex 等）当一个 openai-compatible 上游接入（S0 已支持），风险外置。**注意**：外部网关与 Pawork 双层账户池并存时，同一 provider 的轮换只在一层启用，否则双层轮换互相毁缓存。
+3. **完全接不进**（无 API、OAuth 被厂商封锁如 Claude plan）：不硬接、不做身份伪装（UA 伪装 / identity-confuse 均排除）；用户自愿时把外部网关（opencodex、Codex Router 等）当一个 openai-compatible 上游接入（S0 已支持），风险外置。**注意**：外部网关与 Pawork 双层账户池并存时，同一 provider 的轮换只在一层启用，否则双层轮换互相毁缓存。
 
 ## 4. 并入计划任务书（后续独立任务执行）
 
@@ -109,7 +109,7 @@ opencodex / CLIProxyAPI 做成独立代理进程，是因为它们改不了所�
 | `plan/S2-tool-loop.md` | F5 canonical 缓存注解占位字段 + golden 要求（仅当 D4 批准） |
 | `plan/S5-context-usage.md` | F5 前缀稳定性分段产出；缓存用量并入 token 统计路径；compaction 附缓存重置标注 |
 | `plan/S6-providers-auth.md` | F1 auth 文件多凭证命名规约；plan OAuth 凭证 kind（D2）；F5 adapter 缓存映射 + registry 能力表 + 缓存用量入账；F2-B 被动配额信号捕获的 per-adapter 登记；**首个真实缓存命中测试（多轮对话场景，≥95%，§1.3）** |
-| `plan/S9-mcp-resources.md` | G6 账户/端点只读导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI 布局，secret 直转 Pawork auth 文件）；F4 Agent Profile 绑定字段随 profiles 契约定型 |
+| `plan/S9-mcp-resources.md` | G6 账户/端点只读导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI/Codex Router 布局，secret 直转 Pawork auth 文件）；F4 Agent Profile 绑定字段随 profiles 契约定型 |
 | `plan/S11-workflow-control.md` | F1 账户层激活 + `pawork accounts` CLI；F2-A+B 额度感知；F3-B 亲和默认 +「配额余量优先」策略（D3）；F4-A+B 子 Agent 声明式绑定与预算分配；退出标准增补（缓存命中率指标、rebind 事件可重放）；**命中测试补全 agent/长任务/多 Agent 场景（下限 95%、均值 97%）** |
 | 全部 `plan/S*.md`（并入时顺带） | 按 §1.2 核减非关键测试项（只删不加，保留冒烟/关键路径/契约 golden），核对无门禁表述 |
 | `docs/design.md` + `ROADMAP.md` | design.md §5 G 表状态列更新；ROADMAP.md §3.2 任务状态更新；99% release 目标保留为 ROADMAP §4 的未来发布任务输入 |

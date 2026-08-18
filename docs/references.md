@@ -1,6 +1,6 @@
 # 参照项目手册
 
-> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见 [research/](research/) 下各文档（深入处以「详见 research §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §4。文中既有项目的 star 数与项目事实均为 **2026-08-14** 快照（复核口径见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8）；DeepSeek Harness 为 **2026-08-17** 登记快照。实现前应复核最新实态。
+> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见 [research/](research/) 下各文档（深入处以「详见 research §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §4，**参照项目 → 功能规划**的反向分类见本文 §6。文中既有项目的 star 数与项目事实均为 **2026-08-14** 快照（复核口径见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8）；DeepSeek Harness 为 **2026-08-17** 登记快照；Codex Router 为 **2026-08-18** 登记快照。实现前应复核最新实态。
 
 ---
 
@@ -15,6 +15,7 @@
 | Codex | A / CLI + Desktop + Cloud | OpenAI 官方编码 Agent 产品线，SDK / MCP server 等集成面最广 | [developers.openai.com/codex](https://developers.openai.com/codex) |
 | DeepSeek Harness（147k） | A / Web + headless 编码 Agent（TS/Node） | DeepSeek 官方开源 harness：一切皆插件；append-only 会话事件为 SSOT | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) |
 | opencodex（9.9k） | B / 本地代理 + dashboard（Bun） | Codex 协议翻译（40+ provider）+ ChatGPT 账户池三窗口配额路由 | [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) |
+| Codex Router（2.4k） | B / 本地路由器 + 托盘（JS / LiteLLM） | 一安装多客户端：把外部模型并入 Codex / DeepSeek Harness / Gemini CLI 目录，凭证隔离转发 | [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router) |
 | cc-switch（127k） | B / Tauri 桌面应用 | 多工具供应商**配置级**切换（SSOT SQLite 原子写回） | [farion1231/cc-switch](https://github.com/farion1231/cc-switch) |
 | CLIProxyAPI（47k） | B / Go 守护进程 | 多 OAuth 订阅账户封装为兼容 API（轮询 + 冷却 + 亲和） | [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) |
 | claude-relay-service（13k） | B / Claude 订阅池中继（Node） | 内容 hash sticky session 保 prompt cache | [Wei-Shaw/claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service) |
@@ -83,28 +84,35 @@ Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [de
 - **与 Pawork 的关系**：F2-B 被动配额信号捕获与 F3-B「配额余量优先」策略、会话-账户亲和的直接参照；F6-A 下可作 openai-compatible 上游网关；config 布局是 G6 只读导入源候选；其本地凭证文件是导入参照，Pawork 额外要求 0600、原子写、损坏 fail-closed、掩码展示与日志脱敏。
 - **链接**：[lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) · [opencodex.me](https://opencodex.me) · [configuration](https://opencodex.me/reference/configuration/) · [How It Works](https://opencodex.me/getting-started/how-it-works/)。详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §3.1。
 
-### 3.2 cc-switch
+### 3.2 Codex Router
+
+- **定位与形态**：本地路由器（JS + 内嵌 LiteLLM，默认 `127.0.0.1:4202`）+ 本机托盘；社区项目，与 OpenAI / opencodex 均无隶属。一次安装、一套凭证，把外部模型并入 [Codex](https://developers.openai.com/codex) 原生 picker，并同样发布到 DeepSeek Harness 与 Gemini CLI。宿主仍拥有 Agent 循环、工具、权限、MCP 与会话；路由器只做推理转发与协议翻译。
+- **核心机制**：① Design B 注入：托管改写 `~/.codex/config.toml` 的 `openai_base_url` + `model_catalog_json`，把外部条目并入 Codex 原生目录；② 凭证隔离：丢弃入站 Codex 凭据，只向所选上游注入对应 OAuth/API key（Kimi Code / Grok CLI 会话复用，不读 Copilot 官方凭据库）；③ 注册表驱动：`config/` 校验过的 provider/model 才进 picker，凭证感知（无凭据不展示）；④ 额度耗尽 failover（默认开）：仅 402 / 余额耗尽 / 需等待 >1min 的 429 才换到已启用的下一模型，坏 key / 未知模型 / 宕机仍原样报错；提供商声明的复位窗口会冷却（上限 6h）；⑤ 可选旧工具结果老化与外部模型 compaction 摘要；⑥ 文本模型的 vision bridge（把粘贴图交给已启用视觉模型再代换成证据文本）。
+- **与 Pawork 的关系**：与 opencodex 同属「截 Codex `base_url` 的本地路由器」，但重点是**多客户端共享的凭证隔离目录**，不是 ChatGPT 账户池。参照——S0/S6 openai-compatible 上游与六条首发通道的端点/凭证形态（GLM Coding Plan、OpenCode Go、Qwen Token Plan、DeepSeek、xAI OAuth）；S5 工具结果老化 / 外部 compaction 对照；S9 G6 导入源候选（托管 `config.toml` 块 + `~/.codex/codex-router` 状态目录）；S11 F2/F3 的窄错误分类 failover 与冷却（对照，不是 sticky 账户池）；S11 F4 的「仅注册表验证过的模型可作子代理」；F6-A 下可作 openai-compatible 上游。红线排除——JS/LiteLLM 运行时、login-free 把外部模型别名到原生 GPT slug、匿名免费网关、身份伪装。本仓暂无独立 research 专章（2026-08-18 按公开 README / HOW-IT-WORKS 登记）。
+- **链接**：[duolahypercho/codex-router](https://github.com/duolahypercho/codex-router) · [How it works](https://github.com/duolahypercho/codex-router/blob/main/docs/HOW-IT-WORKS.md) · [Install](https://github.com/duolahypercho/codex-router/blob/main/docs/INSTALL.md) · [Compatible apps](https://github.com/duolahypercho/codex-router/blob/main/docs/COMPATIBLE-APPS.md)。
+
+### 3.3 cc-switch
 
 - **定位与形态**：跨平台桌面 GUI（Tauri 2，另有 Web/CLI 形态），统一管理 8 个工具（Claude Code、Codex、Gemini CLI 等）的供应商配置，50+ provider 预设。
 - **核心机制**：① SSOT：provider 集中存 `~/.cc-switch/cc-switch.db`（SQLite），切换时原子写回各工具 live 配置文件（临时文件 + rename + 失败回滚 + backfill 回读）；② 切换粒度为全局配置级、手动为主（Claude Code 支持热切换），另有本地代理模式（auto-failover、circuit breaker）；③ 额度侧仅本地记账 dashboard 与可配置余额查询脚本，无配额驱动自动换号。
 - **与 Pawork 的关系**：G6（F1 附属）导入源候选（cc-switch SQLite 布局）；「配置级切换 + 无 sticky」是 F3-B 的反面对照（切换即缓存作废）；导入后的 secret 直接写入 Pawork auth 文件，不落仓库或中间文件。
 - **链接**：[farion1231/cc-switch](https://github.com/farion1231/cc-switch) · [cc-switch.cc](https://cc-switch.cc/) · [README_ZH](https://github.com/farion1231/cc-switch/blob/HEAD/README_ZH.md)。详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §3.2。
 
-### 3.3 CLIProxyAPI
+### 3.4 CLIProxyAPI
 
 - **定位与形态**：Go 守护进程（默认端口 8317，支持 Docker / TLS / Go SDK 嵌入），把 Gemini CLI、Codex、Claude Code、Qwen Code 等 OAuth 订阅账户封装为 OpenAI / Gemini / Claude 兼容 API。
 - **核心机制**：① 账户池：auth-dir 内一账户一 JSON token 文件，round-robin / 加权 / fill-first 轮询；② 额度耗尽被动检测：429 → 指数退避冷却（1s→30min）自动换凭据重试，另有降级链（switch-project / switch-preview-model）；③ session-affinity（v6.9.27+，默认关）：多来源 session ID + TTL SessionCache，明确以 prompt cache 命中率为目标；④ OAuth 后台自动刷新（过期前刷新、401 即时刷新重试）。
 - **与 Pawork 的关系**：sticky session 与错误分类冷却是 F3-B 同构参照（V1 `ErrorClassifier` 语义更细）；auth-dir 是 G6 导入源候选；其 `codex.identity-confuse`（按所选账户重写 `prompt_cache_key` 与安装身份）属身份伪装，Pawork **明确不采纳**。
 - **链接**：[router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) · [authentication](https://router-for-me-cliproxyapi.mintlify.app/concepts/authentication) · [routing](https://mintlify.wiki/router-for-me/CLIProxyAPI/concepts/routing) · [configuration options](https://help.router-for.me/configuration/options)。详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §3.3。
 
-### 3.4 claude-relay-service
+### 3.5 claude-relay-service
 
 - **定位与形态**：Claude 订阅账户池中继（Node），在自发 API Key（`cr_` 前缀）层做限速、并发与模型黑名单控制。
 - **核心机制**：① **内容 hash sticky session**：对可缓存前缀做 SHA-256，Redis 存 hash→账户映射（带 TTL），同会话固定账户保 prompt cache（作者明示频繁切换毁缓存且可能增加封号风险）；② 429/529 标记排除、5xx 临时暂停，并发用 Redis Sorted Set 排队；③ 每账户独立代理 IP，OAuth token AES 加密存 Redis。
 - **与 Pawork 的关系**：sticky 保缓存路线的代表实现（F3-B 参照；Pawork 绑定键用自有 session_id，无需内容 hash）；「非限流 429（Extra usage is required）应透传而非锁账户」的错误分类教训已被 V1 错误表覆盖。
 - **链接**：[Wei-Shaw/claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service)。详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §4.4。
 
-### 3.5 其余专题项目速查表
+### 3.6 其余专题项目速查表
 
 下表「详见」列均指 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) 对应章节。
 
@@ -156,4 +164,66 @@ Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [de
 | [research/multi-account-quota-proposals.md](research/multi-account-quota-proposals.md) | F1–F6 实施方案与推荐（**已确认**）：多账户凭证、额度感知、切换路由、子 Agent 绑定、输入缓存、网关模式；含分阶段落地图 |
 | [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) | 决策记录 D1–D8 与并入 plan 任务书（决策唯一入口，含工作约定与疑问解答归档） |
 
-F1–F6 与 [design.md](design.md) §5 已确认扩展功能族（G1–G7）的对应关系见 proposals 文档 §7。后续新增专题调研继续放入 [research/](research/) 目录，并在本手册（§1 总览 + 对应章节）登记。
+F1–F6 与 [design.md](design.md) §5 已确认扩展功能族（G1–G7）的对应关系见 proposals 文档 §7。后续新增专题调研继续放入 [research/](research/) 目录，并在本手册（§1 总览 + 对应章节 + §6 反向分类）登记。
+
+---
+
+## 6. 参照项目按功能规划分类
+
+> 正向映射（功能 → 参照）以 [design.md](design.md) §4 / §5 为准；本节是**反向索引**：打开某个参照项目时，它在当前规划里参与哪些功能。标「主」= 实现时优先对照；「对照」= 取舍或形态参考；「反例」= 明确不采纳。S12 / S13 是工程审查与整改，无外部功能对标。
+
+### 6.1 按规划轴
+
+| 规划轴 | 主参照 | 对照 | 反例 / 排除 |
+| --- | --- | --- | --- |
+| **S0** 对话 CLI / 模型目录 / openai-compatible `base_url` | OpenCode、Codex、models.dev | Pi；opencodex / Codex Router / CLIProxyAPI（自建网关上游） | OpenCode/Pi TUI |
+| **S1** 事件流落盘 / resume / headless JSONL | DeepSeek Harness、Codex | Pi session tree、OpenCode SQLite | — |
+| **S2** 只读工具 / 工具循环 / 双协议 | OpenCode、Codex | Pi Anthropic tools；本文 §4 缓存协议 | — |
+| **S3** 写入工具 / 审批档 | Codex approval、OpenCode permission | DeepSeek Harness 沙箱与审批分 knob、Pi Project Trust | — |
+| **S4** 命令执行 / 沙箱 | Codex sandbox、V1 exec | DeepSeek Harness `ctx.sandbox`、OpenCode `permission.bash` | — |
+| **S5** 上下文预算 / 用量 / registry | OpenCode compaction、models.dev、Pi | LiteLLM 缓存差价；Codex Router 旧工具结果老化与外部 compaction 摘要 | 把 compaction 当免费缓存续命 |
+| **S6** 六通道 / 文件凭证 / OAuth / `/model` | Codex auth 形态、各厂商官方 API | OpenCode/Pi 切换与 handoff；Codex Router 的 GLM / OpenCode Go / Qwen / DeepSeek / xAI 端点与凭证形态 | Pi Anthropic OAuth 伪装；CLIProxyAPI `identity-confuse` |
+| **S7** 最小 Agent GUI | Codex Desktop、OpenCode Desktop/Web | DeepSeek Harness Trajectory（默认壳不吸收） | 把 Web UI 当默认壳 |
+| **S8** Git / checkpoint | V1 checkpoint；OpenCode `/undo` `/redo`（粒度对照） | — | 把 turn 级 undo 当成 Run 级 rollback |
+| **S9** MCP / Skills / 兼容导入 | MCP 官方、OpenCode/Codex/DeepSeek Harness | G6 导入源：cc-switch、CLIProxyAPI auth-dir、opencodex config、Codex Router 托管 `config.toml` + 状态目录 | 覆盖用户自有 skills |
+| **S10** headless / SDK / fork / 服务化 | Codex SDK、OpenCode serve、Pi `createAgentSession`、DeepSeek Harness headless | Codex Router 的「一安装多客户端」是 F6 对照，不是 Pawork 对外网关 | — |
+| **S11** 多 Agent / 账户池 / 额度 / 路由 | OpenCode `task` 子代理；opencodex / CLIProxyAPI / CRS（F1–F3）；LiteLLM 预算 | Codex Router 窄错误 failover 与「仅注册表验证模型可作子代理」；Pi「核心不内置子代理」 | CCR in-band 子代理标签（F4-C）；请求级默认轮换（F3-C） |
+| **G1 / F1** 同 Provider 多账户与 plan 凭证 | opencodex 账户池、CLIProxyAPI auth-dir | Codex / Pi 订阅 OAuth；Codex Router 复用 Kimi/Grok CLI 会话（单凭证隔离，不是池） | 身份伪装换号 |
+| **G2 / F2** 额度感知与预算 | opencodex 三窗口探测、LiteLLM 层级预算 | CLIProxyAPI-Plus 阈值停用；Codex Router 托盘用量 + 仅信提供商复位窗口 | 主动刷配额接口（F2-C/D 冻结） |
+| **G3 / F3** 缓存感知亲和路由 | CRS sticky、CLIProxyAPI session-affinity、opencodex thread affinity | OmniRoute cacheAffinity、LiteLLM `session_affinity`、antigravity Sticky；Codex Router 只做额度耗尽换**模型**，不做会话-账户钉扎 | cc-switch 配置级切换（缓存作废）；请求级轮换 |
+| **G4 / F4** 子 Agent 声明式绑定 | OpenCode `agent.model` + 权限派生 | DeepSeek Harness `tool-subagent`；Codex Router 仅 registry-proven 模型可作 v2 spawn | CCR `<CCR-SUBAGENT-MODEL>` 标签 |
+| **G5 / F5** canonical 输入缓存 | Anthropic / OpenAI 官方；Pi / OpenCode 断点实践 | Envoy AI Gateway 跨厂商 `cache_control` 翻译；Cline/Kilo 断点 | CCR `cleancache` 作为默认；响应缓存（F5-C） |
+| **G6** 账户/端点只读导入 | cc-switch SQLite、CLIProxyAPI auth-dir、opencodex config、官方 Codex/Claude 布局 | Codex Router 托管 config 块与 `~/.codex/codex-router` 状态目录 | 导入 secret 落仓库或中间文件 |
+| **G7 / F6** 对外账户池网关 | —（已确认不内建） | opencodex / CLIProxyAPI / Codex Router 均可当 openai-compatible **上游** | 独立网关 app（F6-C）；订阅转售（sub2api） |
+
+### 6.2 按项目
+
+| 项目 | 类别 | 参与的功能规划（打开它时看这些） |
+| --- | --- | --- |
+| OpenCode | A | S0 对话/目录/配置分离；S2–S4 工具与权限；S5 compaction/用量；S6 `/models`；S7 流式 GUI；S8 turn undo 对照；S9 MCP/rules；S10 SDK/子 session；S11 `task` 子代理（G4）；候选 A1–A4、B1–B4、D1–D5 |
+| Pi | A | S0 `auth.json`；S1 树形 session；S3 Project Trust；S5 精细断点/长 TTL（G5）；S6 跨厂商 handoff 与订阅 OAuth；S9/S10 profiles 与 fork；S11「核心不内置子代理」对照；候选 C1、D3、D8 |
+| Codex | A | S0/S1 CLI 与 resume；S3/S4 approval + sandbox；S6 ChatGPT OAuth 与文件凭证形态；S7 Desktop 壳；S9 AGENTS.md / MCP；S10 SDK / app-server；G5 `prompt_cache_key` 亲和；候选 B1/B5–B7、C2/C3、D1/D2/D6/D7 |
+| DeepSeek Harness | A | S1 append-only `SessionEvent` SSOT；S3/S4 沙箱与审批分轨；S7 Trajectory（不吸收默认壳）；S9 skills；S10 headless/fork；S11 子代理与工作流；候选 B2/B3/B8/B9、D4 |
+| opencodex | B | S0/F6-A 上游网关；G1 账户池；G2 三窗口配额；G3 thread affinity；G6 导入源；S11 主体 |
+| **Codex Router** | B | S0/S6 六通道端点与凭证形态、openai-compatible 上游；S5 工具结果老化 / 外部 compaction；S9 G6 导入源（托管 `config.toml` + 状态目录）；S11 F2/F3 **窄**额度 failover（换模型不换账户池）；S11 F4 仅验证过的模型可作子代理；G7/F6-A 上游。**不**作 G1 ChatGPT 账户池或 G3 sticky 主参照 |
+| cc-switch | B | G6 导入源主参照；G3 反面对照（配置级切换毁缓存） |
+| CLIProxyAPI | B | G1 auth-dir；G3 session-affinity；G6 导入；S11 冷却/降级；F6-A 上游。`identity-confuse` 反例 |
+| claude-relay-service | B | G3 sticky 保缓存主参照 |
+| claude-code-router | B | S11/G4 场景路由对照；F4-C in-band 标签反例；G5 `cleancache` 对照 |
+| LiteLLM | B | G2 层级预算；G3 缓存感知路由；S5 缓存差价计费。Codex Router 把它当翻译层，Pawork 不引入该运行时 |
+| new-api | B | G2 三层 quota 折算 |
+| gpt-load | B | G3/F3 key 池拉黑与恢复 |
+| claude-code-hub | B | G3 session 首成锁 |
+| meridian | B | G3 合规 sticky（不拦 OAuth） |
+| antigravity-claude-proxy | B | G3 把缓存命中当调度一等权衡 |
+| OmniRoute | B | G3 cacheAffinity / 配额 headroom |
+| Bifrost | B | G1 每 provider 多 key |
+| Envoy AI Gateway | B | G5 统一 `cache_control` 跨厂商翻译 |
+| uni-api | B | G3 极简加权 + key 轮询 |
+| sub2api | B | G7 ToS / 拼车反例 |
+| 9router | B | 选型安全反例 |
+| Cline | C | G5 断点摆放；Plan/Act 双模型对照 |
+| Kilo Code | C | G3 难度分类路由与缓存协同 |
+| MCP | C | S9 MCP client；候选 B7（Pawork 作 MCP server） |
+| models.dev | C | S0/S5 模型 registry |
+

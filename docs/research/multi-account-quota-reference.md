@@ -23,10 +23,12 @@
 | claude-relay-service（CRS） | [Wei-Shaw/claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service) | Claude 订阅账户池中继 | **内容 hash sticky session 保 prompt cache**、429/529 标记排除、每账户独立代理 IP |
 | gpt-load | [tbphp/gpt-load](https://github.com/tbphp/gpt-load) | Go key 池透明代理 | 累计失败拉黑 + 定时验证恢复、failover 状态码可配置 |
 | 新兴项目（2025–2026） | claude-code-hub、CLIProxyAPI-Plus、meridian、antigravity-claude-proxy | 见 §4.6 | 账户池 + sticky session 已成标配设计 |
+| Codex Router | [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router) | 本地路由器 + 托盘（JS / LiteLLM，默认 127.0.0.1:4202） | 一安装多客户端（Codex / DeepSeek Harness / Gemini CLI）；凭证隔离转发；额度耗尽换模型（非账户池 sticky） |
 
 **同名项目辨析**（避免张冠李戴）：
 
 - `opencodex` 另有两个不相关同名项目：[ymichael/open-codex](https://github.com/ymichael/open-codex)（Codex CLI 多 Provider fork，改用 Chat Completions，疑似停更，未证实）与 [codingmoh/open-codex](https://github.com/codingmoh/open-codex)（Python 本地模型 CLI，与本主题无关）。本文所述均指 lidge-jun/opencodex。
+- `codex-router` 指 [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router)（2026-08-18 按公开 README 登记，约 2.4k stars），与 musistudio/claude-code-router、lidge-jun/opencodex 均不是同一项目。
 - `ccswitch` 另有基于 CLIProxyAPI 的包装 CLI（如 kaitranntt/ccs）；本文所述均指 farion1231/cc-switch。
 
 全部参考项目（含本表之外 2026-08 补充的流行项目）的功能对照总表见 §8。
@@ -194,6 +196,7 @@
 - **[ztx888/CLIProxyAPI-Plus](https://github.com/ztx888/CLIProxyAPI-Plus)**：CLIProxyAPI 社区强化版，Codex 配额运营：展示 5h/周额度与恢复窗口、`usage_limit_reached` 后自动持久停用、周额度低于阈值（如 3%）提前停用、按剩余额度排序。
 - **[rynfar/meridian](https://github.com/rynfar/meridian)**（约 1.8k stars）：经 Claude Agent SDK 把 Claude 订阅桥接为标准 Anthropic/OpenAI 协议（不做 OAuth 拦截）；多 profile 账户即时切换 + 可选 sticky session routing，会话分散到多账户的同时保持每账户 prompt cache 温热。
 - **[badrisnarayanan/antigravity-claude-proxy](https://www.mintlify.com/badrisnarayanan/antigravity-claude-proxy/guides/load-balancing)**：Google 账户池代理，策略三选一：Hybrid（健康度/余量/恢复期综合）、**Sticky（缓存最优：session ID = 首条 user message 的 SHA256，限流 <2min 时等待不切换）**、Round-Robin（吞吐最优、缓存最差）——把「缓存命中」作为调度策略的一等权衡维度。
+- **[duolahypercho/codex-router](https://github.com/duolahypercho/codex-router)**（约 2.4k stars，2026-08-18 登记）：本地路由器 + 托盘，把外部模型并入 Codex / DeepSeek Harness / Gemini CLI 的原生目录。Design B 只改 `openai_base_url` + `model_catalog_json`；入站 Codex 凭据丢弃，只向所选上游注入对应 OAuth/API key。Failover 默认开但窗口极窄（402 / 余额耗尽 / 需等待 >1min 的 429 才换**已启用的下一模型**，坏 key 与宕机仍 fail-closed）。**不是** ChatGPT 账户池，也没有会话-账户 sticky；作 F2/F3 窄错误分类与 F6-A 上游对照，不作 G1/G3 主参照。机制详见 [references.md](../references.md) §3.2。
 
 ---
 
@@ -293,6 +296,7 @@ V1 已有大量同构资产（详见 [provider-control-plane](../../../Pawork_v1
 | [9router](https://github.com/decolua/9router)（25k） | 本地代理 | 40+ provider 多账号；订阅→低价→免费三级 fallback | token 压缩卖点；缓存处理未证实 | BYOK 本地代理 + 协议转换 | **19 份安全通告（6 critical）**——选型反面警示 |
 | [claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service)（13k） | Claude 订阅池中继（Node） | 账户池 + 429/529 标记排除 + Redis 排队 | **内容 hash sticky session**（作者明示切换毁缓存 + 封号风险） | Claude 专用透明中继；每账户独立代理 IP | OAuth AES 加密存 Redis；5h 窗口展示 |
 | [opencodex](https://github.com/lidge-jun/opencodex)（9.9k） | 本地代理 + dashboard（Bun） | ChatGPT 账户池 quota/RR/fill-first；会话级切换 | **thread affinity 钉账户**；日志显示 cache 读写 | base_url 截持（只改一个字段）+ 七适配器协议翻译 | 5h/周/30d 主动配额窗口探测；401/403 fail-closed |
+| [Codex Router](https://github.com/duolahypercho/codex-router)（2.4k，2026-08-18） | 本地路由器 + 托盘（JS / LiteLLM） | 单凭证隔离，非账户池；额度耗尽才换**模型** | 无会话-账户 sticky；外部 compaction 用自有 `kcr1:` 摘要 | Codex Responses → LiteLLM 翻译；托管改 `openai_base_url` + catalog | 一安装服务 Codex / Harness / Gemini CLI；login-free 别名与匿名免费网关 Pawork 不采纳 |
 | [gpt-load](https://github.com/tbphp/gpt-load)（6.3k） | key 池透明代理（Go） | key 轮换 + 累计失败拉黑 + 定时验证恢复 | 透明透传（推断，未证实） | 透明代理，保留三家原生格式 | failover 状态码列表可配 |
 | [claude-code-hub](https://github.com/ding113/claude-code-hub)（3.3k） | 代理（Next.js/Hono） | 权重 + 优先级 + 分组 + 熔断；Redis Lua 多维限流 | session 绑定 `SET NX` 首成锁 + 健康度迁移 | Claude Code/Codex 双协议 | Redis 故障 Fail-Open 降级设计 |
 | [meridian](https://github.com/rynfar/meridian)（1.8k） | 订阅桥（Claude Agent SDK） | 多 profile 即时切换 | 可选 sticky routing 保每账户缓存温热 | 经官方 SDK 桥接（不拦 OAuth） | 规避 OAuth 拦截的合规路线 |

@@ -42,7 +42,7 @@
 
 **推荐 F1-B**。理由：词表与状态机已是 V1 冻结资产（参考 §7 对照表），激活成本远低于新造；auth 文件已有 0600、原子写、损坏 fail-closed、掩码展示与日志脱敏基线；plan OAuth 是两条真实测试通道（GLM Coding Plan、OpenCode Go）之后最现实的账户形态。
 
-**契约影响与开放问题**：plan-credential kind 为 account-control schema 的**附加**变体（unknown-field fail-closed 契约下需登记 schema 迁移）；ToS/封号风险需在文档显著声明（参考 §6.7——Anthropic 已封锁第三方 OAuth 的先例）；**不做**身份伪装类手段（Claude Code UA 伪装、`identity-confuse`），宁可少接一家。附属候选 G6：`pawork-compat`（S9）增加账户/端点只读导入源（`~/.codex/auth.json`、cc-switch SQLite、CLIProxyAPI auth-dir、opencodex config），导入的 secret 直接转存 Pawork auth 文件、不落仓库或中间文件。
+**契约影响与开放问题**：plan-credential kind 为 account-control schema 的**附加**变体（unknown-field fail-closed 契约下需登记 schema 迁移）；ToS/封号风险需在文档显著声明（参考 §6.7——Anthropic 已封锁第三方 OAuth 的先例）；**不做**身份伪装类手段（Claude Code UA 伪装、`identity-confuse`），宁可少接一家。附属候选 G6：`pawork-compat`（S9）增加账户/端点只读导入源（`~/.codex/auth.json`、cc-switch SQLite、CLIProxyAPI auth-dir、opencodex config、Codex Router 托管 `config.toml` 块与 `~/.codex/codex-router` 状态目录），导入的 secret 直接转存 Pawork auth 文件、不落仓库或中间文件。
 
 ---
 
@@ -135,7 +135,7 @@
 
 **方案选项**：
 
-- **F6-A（推荐）**：**不内建**。近期需求两条腿走：① Pawork 作为消费者——经 openai-compatible adapter 把外部网关（opencodex、CLIProxyAPI 等）当上游（S0 起仅需 base_url，已支持，[../task-guide.md](../task-guide.md) §5 已注明 opencodex 网关场景）；② Pawork 自身多账户能力对内服务（F1–F4）。
+- **F6-A（推荐）**：**不内建**。近期需求两条腿走：① Pawork 作为消费者——经 openai-compatible adapter 把外部网关（opencodex、CLIProxyAPI、Codex Router 等）当上游（S0 起仅需 base_url，已支持，[../task-guide.md](../task-guide.md) §5 已注明自建网关场景）；② Pawork 自身多账户能力对内服务（F1–F4）。
 - **F6-B（长期候选，P3）**：以 `pawork-channels` 扩展 feature 评估——V1 `client-claude-gateway` / `client-codex-app-server`（14.4k 行 channels 资产）已有「外部客户端协议 → Pawork」的翻译层，反向暴露「模型代理端点」在技术上是其邻接能力；若未来有真实需求（如团队共享 Pawork 账户池），在 S12 审查与高优先级整改后按 [../../ROADMAP.md](../../ROADMAP.md) §3.3 候选流程评估。
 - **F6-C（不做）**：独立网关 app——偏离产品定位（Coding Agent 而非 API 网关），且订阅账户转售式代理的 ToS 风险最重（参考 §6.7）。
 
@@ -150,7 +150,7 @@
 | S2 | F5-B-1 canonical 缓存注解占位（契约激活即完整形状，字段暂闲置） | api/provider-core（契约） |
 | S5 | F5-B-1 context 前缀分段产出；缓存用量并入 token 统计路径 | engine、provider-core、session |
 | S6 | F1-B-2 plan 凭证 kind 铺垫 + auth 文件多凭证命名；F5-B-2/3 adapter 缓存映射、registry 能力表、用量入账 | providers、auth、provider-core、config |
-| S9 | G6 账户/端点导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI 布局）；F4 Agent Profile 绑定字段随 profiles 契约定型 | compat、resources |
+| S9 | G6 账户/端点导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI/Codex Router 布局）；F4 Agent Profile 绑定字段随 profiles 契约定型 | compat、resources |
 | S11 | F1-B 账户层激活与 CLI；F2-A+B 额度感知；F3-B 亲和 + 再平衡 + 配额余量策略；F4-A+B 子 Agent 绑定与预算 | provider-control、quota、control-plane、orchestration、cli |
 | 冻结不变 | quota 六厂商远端适配器 + WebScrape（F2-C/D）；激活条件沿用 [../v1-migration-reference.md](../v1-migration-reference.md) §4.4 | — |
 | 明确不做 | 请求级默认轮换（F3-C）、in-band 子代理标签（F4-C）、身份伪装/identity-confuse、响应缓存（F5-C）、独立网关 app（F6-C） | — |
