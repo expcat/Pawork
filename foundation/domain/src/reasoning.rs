@@ -7,8 +7,8 @@ use crate::{ProtectedBlobRef, ReasoningItemId};
 
 /// Canonical reasoning effort（P15-8，P17-5 起由 pawork-domain 定义）。
 ///
-/// `AgentProfileV2.effort` 以本枚举为一等字段，经 pawork-api
-/// `ReasoningConfig` → `CapabilityNegotiator` → Provider Adapter 翻译；禁止
+/// `AgentProfileV2.effort` 以本枚举为一等字段，经本 crate `provider_api`
+/// 模块的 `ReasoningConfig` → `CapabilityNegotiator` → Provider Adapter 翻译；禁止
 /// Profile 或 Agent Core 按 Provider 名分支。显式 `ReasoningConfig` 优先；
 /// 旧 `ThinkingConfig.level` 仅在缺省时派生；`XHigh / Max` 进入旧 P6 adapter
 /// 时显式 clamp 为 `High`，不形成双轨。
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn reasoning_effort_is_canonical_and_serde_stable() {
-        // Canonical 枚举序列化名稳定：Profile v2 / pawork-api 共用同一词汇。
+        // Canonical 枚举序列化名稳定：Profile v2 / provider_api 契约面共用同一词汇。
         assert_eq!(
             serde_json::to_string(&ReasoningEffort::XHigh).expect("serialize"),
             r#""x_high""#

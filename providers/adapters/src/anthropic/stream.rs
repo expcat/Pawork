@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use pawork_api::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
+use pawork_domain::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
 use pawork_domain::{TokenUsage, ToolCallId};
 use serde_json::Value;
 

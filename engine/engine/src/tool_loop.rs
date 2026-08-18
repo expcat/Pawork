@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ProviderEventSink,
     ProviderStreamEvent, ToolResult,
 };
@@ -379,7 +379,7 @@ pub async fn run_session(
                     return Err(EngineError::MaxToolRounds(max_tool_rounds));
                 }
             }
-            Err(error) if error.kind == pawork_api::ProviderErrorKind::Cancelled => {
+            Err(error) if error.kind == pawork_domain::ProviderErrorKind::Cancelled => {
                 let stream_usage = last_stream_usage(&sink.drain_events());
                 run_usage = saturating_add_usage(&run_usage, &stream_usage);
                 return emit_cancelled(&emitter, error.message.clone(), &run_usage).await;
@@ -1047,7 +1047,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use pawork_api::{
+    use pawork_domain::{
         AgentTool, CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError,
         ProviderEventSink, ToolDefinition, ToolError, ToolErrorKind, ToolEventSink,
         ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
@@ -1118,8 +1118,8 @@ mod tests {
 
         async fn list_models(
             &self,
-            credential: Option<&pawork_api::ResolvedCredential>,
-        ) -> Result<Vec<pawork_api::ModelDefinition>, ProviderError> {
+            credential: Option<&pawork_domain::ResolvedCredential>,
+        ) -> Result<Vec<pawork_domain::ModelDefinition>, ProviderError> {
             self.inner.list_models(credential).await
         }
 
@@ -1451,8 +1451,8 @@ mod tests {
 
         async fn list_models(
             &self,
-            _credential: Option<&pawork_api::ResolvedCredential>,
-        ) -> Result<Vec<pawork_api::ModelDefinition>, ProviderError> {
+            _credential: Option<&pawork_domain::ResolvedCredential>,
+        ) -> Result<Vec<pawork_domain::ModelDefinition>, ProviderError> {
             Ok(Vec::new())
         }
 
@@ -2096,7 +2096,7 @@ mod tests {
             MockScript::new()
                 .usage(usage.clone())
                 .fail(ProviderError::new(
-                    pawork_api::ProviderErrorKind::Unknown,
+                    pawork_domain::ProviderErrorKind::Unknown,
                     "upstream",
                 )),
         ));
@@ -2533,7 +2533,7 @@ mod tests {
         assert!(matches!(
             error,
             EngineError::Provider(ref err)
-                if err.kind == pawork_api::ProviderErrorKind::Cancelled
+                if err.kind == pawork_domain::ProviderErrorKind::Cancelled
         ));
 
         let types = sink.types();

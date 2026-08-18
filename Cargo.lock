@@ -4279,22 +4279,10 @@ name = "pawork"
 version = "0.1.0"
 dependencies = [
  "pawork-cli",
- "pawork-diagnostics",
+ "regex",
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "pawork-api"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pawork-domain",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
 ]
 
 [[package]]
@@ -4303,7 +4291,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
- "pawork-api",
  "pawork-auth",
  "pawork-blob-store",
  "pawork-compat",
@@ -4347,7 +4334,6 @@ dependencies = [
  "async-trait",
  "base64",
  "directories",
- "pawork-api",
  "pawork-domain",
  "rand 0.8.7",
  "reqwest 0.12.28",
@@ -4401,7 +4387,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap",
- "pawork-api",
  "pawork-app",
  "pawork-channels",
  "pawork-client",
@@ -4492,21 +4477,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "pawork-diagnostics"
-version = "0.1.0"
-dependencies = [
- "regex",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "pawork-domain"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
  "ts-rs",
 ]
 
@@ -4516,7 +4494,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
- "pawork-api",
  "pawork-domain",
  "pawork-testkit",
  "serde",
@@ -4580,7 +4557,6 @@ name = "pawork-mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "pawork-api",
  "pawork-auth",
  "pawork-config",
  "pawork-domain",
@@ -4603,7 +4579,6 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "futures",
- "pawork-api",
  "pawork-domain",
  "proptest",
  "reqwest 0.12.28",
@@ -4678,7 +4653,6 @@ name = "pawork-provider-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "pawork-api",
  "pawork-domain",
  "serde",
  "serde_json",
@@ -4692,7 +4666,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
- "pawork-api",
  "pawork-domain",
  "pawork-net",
  "pawork-provider-core",
@@ -4709,7 +4682,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
- "pawork-api",
  "pawork-control-plane",
  "pawork-domain",
  "serde",
@@ -4780,7 +4752,6 @@ name = "pawork-testkit"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "pawork-api",
  "pawork-domain",
  "serde_json",
  "tokio",
@@ -4795,7 +4766,6 @@ dependencies = [
  "encoding_rs",
  "globset",
  "ignore",
- "pawork-api",
  "pawork-domain",
  "pawork-exec",
  "pawork-policy",

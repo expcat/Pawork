@@ -13,7 +13,7 @@ mod tool_loop;
 
 use std::collections::BTreeMap;
 
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, ModelProvider, ModelResponseSummary, PromptCachePreference,
     ProviderError, ProviderEventSink, RequestBudget, ResponseFormat, ToolChoice, ToolDefinition,
 };
@@ -99,7 +99,7 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use pawork_api::{
+    use pawork_domain::{
         ModelDefinition, ProviderErrorKind, ProviderStreamEvent, ResolvedCredential, ToolDefinition,
     };
     use pawork_domain::{

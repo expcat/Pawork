@@ -1,7 +1,7 @@
 //! Pawork Model Context Protocol client.
 //!
 //! The MCP SDK stays inside this crate. Agent Core consumes canonical
-//! [`pawork_api`] tools and transport-independent capability snapshots.
+//! [`pawork_domain`] tools and transport-independent capability snapshots.
 
 use std::time::Duration;
 
@@ -105,7 +105,7 @@ pub trait McpPeer: Send + Sync {
         &self,
         call: McpToolCall,
         cancel: CancellationToken,
-    ) -> Result<pawork_api::ToolResult, McpError>;
+    ) -> Result<pawork_domain::ToolResult, McpError>;
 }
 
 #[cfg(test)]
@@ -115,7 +115,7 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use pawork_api::{
+    use pawork_domain::{
         AgentTool, ToolError, ToolEventSink, ToolExecutionContext, ToolRequest, ToolResult,
     };
     use pawork_domain::{

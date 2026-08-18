@@ -19,7 +19,6 @@ deepseek = []
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-api = { path = "../../foundation/api" }
 pawork-provider-core = { path = "../core" }
 pawork-net = { path = "../../net/net", features = ["http"] }
 async-trait.workspace = true

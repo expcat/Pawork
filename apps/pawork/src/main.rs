@@ -3,7 +3,9 @@
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use pawork_diagnostics::{RedactingFmtLayer, Redactor};
+mod redact;
+
+use redact::{RedactingFmtLayer, Redactor};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;

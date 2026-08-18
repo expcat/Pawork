@@ -12,7 +12,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use pawork_api::{CredentialKind, ModelProvider, ResolvedCredential};
+use pawork_domain::{CredentialKind, ModelProvider, ResolvedCredential};
 use pawork_app::AppCore;
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, Message, MessageId,

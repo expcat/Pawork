@@ -8,7 +8,7 @@
 //! - 明文 access / refresh token **绝不**进入 [`StoredCredential`] 的可序列化字段，
 //!   只存在于 [`SecretBackend`]（auth 文件 / 内存）中。
 //! - 所有错误（[`AuthError`]）都不得携带明文 token。
-//! - `resolve` 返回的 [`ResolvedCredential`](pawork_api::ResolvedCredential) 仅供
+//! - `resolve` 返回的 [`ResolvedCredential`](pawork_domain::ResolvedCredential) 仅供
 //!   Provider adapter 构造认证请求时短暂使用。
 
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use pawork_domain::{ProviderId, Timestamp};
 use base64::Engine;
-use pawork_api::{CredentialKind, ResolvedCredential};
+use pawork_domain::{CredentialKind, ResolvedCredential};
 use rand::RngCore;
 use serde_json::Value;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};

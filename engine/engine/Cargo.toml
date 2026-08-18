@@ -9,7 +9,6 @@ description = "Pawork Agent Engine（assemble_request + run_turn + 工具循环�
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-api = { path = "../../foundation/api" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true

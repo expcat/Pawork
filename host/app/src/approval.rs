@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use pawork_api::ToolRequest;
+use pawork_domain::ToolRequest;
 use pawork_domain::{ApprovalDecision, CancellationToken, RunId, ToolCallId};
 use pawork_policy::{ApprovalMode, RiskLevel};
 use pawork_tools::{ApprovalOutcome, ApprovalResolver};

@@ -9,7 +9,6 @@ description = "Pawork 应用门面（配置装配 + session store + run_session 
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-api = { path = "../../foundation/api" }
 pawork-config = { path = "../../foundation/config" }
 pawork-engine = { path = "../../engine/engine" }
 pawork-providers = { path = "../../providers/adapters", features = [
@@ -56,7 +55,6 @@ async-trait.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 wiremock.workspace = true
-pawork-api = { path = "../../foundation/api" }
 pawork-domain = { path = "../../foundation/domain" }
 pawork-engine = { path = "../../engine/engine" }
 pawork-providers = { path = "../../providers/adapters", features = ["anthropic"] }

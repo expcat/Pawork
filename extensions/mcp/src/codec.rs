@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::time::Duration;
 
-use pawork_api::ToolResult;
+use pawork_domain::ToolResult;
 use pawork_domain::{
     CancellationToken, ContentPart, ErrorCategory, ErrorContext, ImageContent, ImageSource,
     TextContent,

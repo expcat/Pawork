@@ -1,3 +1,9 @@
+//! 全局脱敏日志基础设施(R1 波 A 自 `pawork-diagnostics` 迁入宿主,ADR-039;
+//! 包其余组件已在 R0 删除,见 ADR-038 D8)。
+//!
+//! `Redactor` 按字段名/字段值脱敏,`RedactingFmtLayer` 是全局 fmt 层:
+//! 修复 V1 缺口(StructuredLogLayer 只进内存 buffer、fmt 输出无脱敏)。
+
 use std::{
     collections::BTreeMap,
     fmt,

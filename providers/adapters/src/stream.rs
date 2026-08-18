@@ -4,7 +4,7 @@
 //! delta（文本 / tool_calls）、usage 与 finish_reason 映射为 canonical 事件。
 
 use pawork_domain::{TokenUsage, ToolCallId};
-use pawork_api::ProviderStreamEvent;
+use pawork_domain::ProviderStreamEvent;
 use crate::usage::{map_stop_reason, normalize_usage};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -132,7 +132,7 @@ pub fn is_done(data: &str) -> bool {
 mod tests {
     use super::*;
     use pawork_domain::StopReason;
-    use pawork_api::ProviderStreamEvent;
+    use pawork_domain::ProviderStreamEvent;
 
     #[test]
     fn text_delta_maps() {

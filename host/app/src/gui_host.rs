@@ -1979,7 +1979,7 @@ mod tests {
         let provider = MockProvider::sequence(vec![
             MockScript::new().text("hello from other").complete(),
         ])
-        .with_models(vec![pawork_api::ModelDefinition {
+        .with_models(vec![pawork_domain::ModelDefinition {
             id: pawork_domain::ModelId::from("model-2"),
             display_name: "Model 2".into(),
             context_window_tokens: 8_000,

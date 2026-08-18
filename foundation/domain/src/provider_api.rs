@@ -1,27 +1,21 @@
-//! Provider 无关的 canonical 请求、流式事件、错误协议与工具执行契约。
+//! Provider 无关的 canonical 请求、流式事件、错误协议（R1 起自 `pawork-api`
+//! 并入 `pawork-domain`，ADR-039）。
 //!
 //! 具体 Provider 负责在本协议和远端 API 之间转换；Agent Engine 不得按
 //! Provider 名称分支，也不得依赖 HTTP 实现细节。
 //!
-//! 工具描述符（`ToolDescriptor` 等）定义在 `pawork-domain`；本 crate 的
-//! `tool` feature 只提供 `AgentTool` 执行面，不再做一层兼容 re-export。
-
-mod tool;
-
-pub use tool::{
-    AgentTool, ToolError, ToolErrorKind, ToolEventSink, ToolExecutionContext, ToolOutputChannel,
-    ToolRequest, ToolResult, ToolStreamEvent,
-};
+//! 工具描述符（`ToolDescriptor` 等）定义在同 crate 的 `tool` 模块；
+//! `AgentTool` 执行面在同 crate 的 `tool_api` 模块。
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
 };
 
-use pawork_domain::{
+use crate::{
     CancellationToken, ErrorCategory, ErrorContext, Message, ModelId, ProviderId,
-    ProviderTranscriptEnvelope, ReasoningItem, RequestId, ServerToolEvent, StopReason, TokenUsage,
-    ToolCallId, ToolCapabilityTag,
+    ProviderTranscriptEnvelope, ReasoningEffort, ReasoningItem, RequestId, ServerToolEvent,
+    StopReason, TokenUsage, ToolCallId, ToolCapabilityTag,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -89,11 +83,11 @@ pub struct HostedToolRequest {
     /// canonical 工具名（如 `web_search`）。
     pub name: String,
     /// 服务端工具类别（如 WebSearch）。
-    pub kind: pawork_domain::ToolCapabilityTag,
+    pub kind: crate::ToolCapabilityTag,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<pawork_domain::ToolCapabilityTag>,
+    pub capabilities: Vec<crate::ToolCapabilityTag>,
     /// Provider 中立的附加配置（不得包含 Provider 名称 / Secret）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<Value>,
@@ -109,7 +103,7 @@ pub struct ExtensionToolRequest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<pawork_domain::ToolCapabilityTag>,
+    pub capabilities: Vec<crate::ToolCapabilityTag>,
     /// 是否要求显式审批（未信任工作区默认拒绝）。
     #[serde(default)]
     pub requires_approval: bool,
@@ -309,13 +303,6 @@ impl ModelTransport {
         matches!(self, Self::Responses | Self::Messages)
     }
 }
-
-/// Canonical reasoning effort（P15-8）。
-///
-/// P17-5 起由 `pawork-domain` 定义并在此重导出，`AgentProfileV2.effort` 与
-/// `ReasoningConfig.effort` 共用同一枚举，杜绝双轨。显式 `ReasoningConfig`
-/// 优先；旧 `ThinkingConfig.level` 仅在缺省时派生。
-pub use pawork_domain::ReasoningEffort;
 
 /// clamp 到旧 `ThinkingLevel`（XHigh / Max → High），供 P6 adapter 复用。
 ///
@@ -646,7 +633,7 @@ impl From<ErrorContext> for ProviderError {
 mod tests {
     use std::sync::Mutex;
 
-    use pawork_domain::{MessageId, MessageMetadata, MessageRole};
+    use crate::{MessageId, MessageMetadata, MessageRole};
 
     use super::*;
 
@@ -757,9 +744,9 @@ mod tests {
         });
         value.hosted_tools.push(HostedToolRequest {
             name: "web_search".into(),
-            kind: pawork_domain::ToolCapabilityTag::WebSearch,
+            kind: crate::ToolCapabilityTag::WebSearch,
             description: "search the web".into(),
-            capabilities: vec![pawork_domain::ToolCapabilityTag::WebSearch],
+            capabilities: vec![crate::ToolCapabilityTag::WebSearch],
             config: Some(serde_json::json!({"max_results": 5})),
         });
         value.extensions.push(ExtensionToolRequest {
@@ -789,7 +776,7 @@ mod tests {
         });
         value.hosted_tools.push(HostedToolRequest {
             name: "web_search".into(),
-            kind: pawork_domain::ToolCapabilityTag::WebSearch,
+            kind: crate::ToolCapabilityTag::WebSearch,
             description: String::new(),
             capabilities: Vec::new(),
             config: None,
@@ -821,7 +808,7 @@ mod tests {
 
     #[test]
     fn provider_stream_event_round_trips_server_tool_and_transcript_envelope() {
-        use pawork_domain::{
+        use crate::{
             ArtifactId, Citation, CitationSourceKind, ProgramStream, ProviderTranscriptEnvelope,
             ServerToolEvent, TranscriptItem,
         };
@@ -887,10 +874,10 @@ mod tests {
 
     #[test]
     fn provider_stream_reasoning_item_round_trip_uses_safe_reference() {
-        let item = pawork_domain::ReasoningItem {
-            id: pawork_domain::ReasoningItemId::from("reasoning-1"),
+        let item = crate::ReasoningItem {
+            id: crate::ReasoningItemId::from("reasoning-1"),
             summary: Some("safe summary".into()),
-            protected_blob_ref: pawork_domain::ProtectedBlobRef::from("protected-1"),
+            protected_blob_ref: crate::ProtectedBlobRef::from("protected-1"),
             opaque_metadata: BTreeMap::new(),
             continuation_metadata: BTreeMap::new(),
         };

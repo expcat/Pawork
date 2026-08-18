@@ -9,7 +9,7 @@ use std::time::Duration;
 use pawork_domain::CancellationToken;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use pawork_api::{ProviderError, ProviderErrorKind};
+use pawork_domain::{ProviderError, ProviderErrorKind};
 use std::pin::Pin;
 
 use crate::retry::{classify_request_error, classify_status};

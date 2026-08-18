@@ -24,7 +24,7 @@ const IMAGE_PLACEHOLDER_TOKENS: u64 = 85;
 
 /// 可计数的工具定义表示。
 ///
-/// 镜像 `pawork-api::ToolDefinition` 的 JSON 形状，但**独立定义**，以保持
+/// 镜像 `pawork-domain/provider_api` 的 `ToolDefinition` JSON 形状，但**独立定义**，以保持
 /// context 模块仅依赖 `pawork-domain`。调用方（engine 循环）可将 canonical
 /// `ToolDefinition` 序列化后反序列化为本类型，字段一一对应，无需手动转换。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

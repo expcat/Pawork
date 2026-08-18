@@ -88,7 +88,7 @@ impl AppCore {
         self.tool_defs = self
             .descriptors
             .iter()
-            .map(|descriptor| pawork_api::ToolDefinition {
+            .map(|descriptor| pawork_domain::ToolDefinition {
                 name: descriptor.name.clone(),
                 description: descriptor.description.clone(),
                 input_schema: descriptor.input_schema.clone(),
@@ -450,14 +450,14 @@ impl AppCore {
 fn builtin_registry(workspaces: &WorkspaceService) -> Result<ToolRegistry, AppError> {
     let mut registry = ToolRegistry::new();
     registry.extend([
-        Arc::new(ReadFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-        Arc::new(ListDirectoryTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-        Arc::new(SearchTextTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-        Arc::new(FindFilesTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-        Arc::new(WriteFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-        Arc::new(EditFileTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-        Arc::new(ApplyPatchTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
-        Arc::new(RunCommandTool::new(workspaces.clone())) as Arc<dyn pawork_api::AgentTool>,
+        Arc::new(ReadFileTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(ListDirectoryTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(SearchTextTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(FindFilesTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(WriteFileTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(EditFileTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(ApplyPatchTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(RunCommandTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
     ])?;
     Ok(registry)
 }

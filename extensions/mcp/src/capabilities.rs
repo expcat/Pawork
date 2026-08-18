@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use pawork_api::{
+use pawork_domain::{
     AgentTool, ToolError, ToolErrorKind, ToolEventSink, ToolExecutionContext, ToolRequest,
     ToolResult,
 };

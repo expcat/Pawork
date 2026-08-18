@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use pawork_domain::{CancellationToken, ModelId, ProviderId, StopReason, TokenUsage};
 use async_trait::async_trait;
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider, ModelResponseSummary,
     ProviderError, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, ResolvedCredential,
 };
@@ -315,7 +315,7 @@ mod tests {
             .extra_headers
             .push(("Authorization".into(), "Bearer attacker".into()));
         let credential = ResolvedCredential::new(
-            pawork_api::CredentialKind::ApiKey,
+            pawork_domain::CredentialKind::ApiKey,
             "real-credential",
         );
         let error = OpenAiCompatibleProvider::new(config, Some(credential))

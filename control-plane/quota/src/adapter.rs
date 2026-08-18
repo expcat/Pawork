@@ -1,7 +1,7 @@
 //! 配额适配器抽象与获取方式分类。
 
 use async_trait::async_trait;
-use pawork_api::ResolvedCredential;
+use pawork_domain::ResolvedCredential;
 use pawork_domain::CancellationToken;
 use serde::{Deserialize, Serialize};
 

@@ -4,7 +4,7 @@
 //! tool-call 闭合形状。P15 capability / server_tool / citation / reasoning
 //! 断言不在本波次迁入。
 
-use pawork_api::ProviderStreamEvent;
+use pawork_domain::ProviderStreamEvent;
 
 /// 断言文本流：至少含一条非空 TextDelta，并以 ResponseCompleted 收尾。
 pub fn assert_text_stream(events: &[ProviderStreamEvent]) {

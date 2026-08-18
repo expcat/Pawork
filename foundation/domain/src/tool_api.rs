@@ -1,10 +1,10 @@
-//! 内置工具、MCP 工具与 WASM 工具共享的执行契约。
+//! 内置工具、MCP 工具与 WASM 工具共享的执行契约（R1 起自 `pawork-api`
+//! 并入 `pawork-domain`，ADR-039）。
 //!
 //! `ToolDescriptor` / `ToolKind` / `ToolHosting` 等描述符类型定义在
-//! `pawork-domain`；本模块只承载 `AgentTool` 执行面，不再做一层兼容
-//! re-export 薄壳。
+//! 同 crate 的 `tool` 模块；本模块只承载 `AgentTool` 执行面。
 
-use pawork_domain::{
+use crate::{
     ArtifactReference, CancellationToken, ContentPart, ErrorCategory, ErrorContext, RunId,
     ToolCallId, ToolDescriptor, WorkspaceId,
 };
@@ -195,7 +195,7 @@ impl From<ToolError> for ErrorContext {
 
 #[cfg(test)]
 mod tests {
-    use pawork_domain::{ContinuationMode, ToolCapability, ToolHosting, ToolKind};
+    use crate::{ContinuationMode, ToolCapability, ToolHosting, ToolKind};
 
     use super::*;
 

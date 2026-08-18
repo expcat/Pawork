@@ -9,7 +9,6 @@ description = "Pawork 认证方式与 Secret 后端（API Key / auth file / OAut
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-api = { path = "../../foundation/api" }
 async-trait.workspace = true
 base64.workspace = true
 rand.workspace = true

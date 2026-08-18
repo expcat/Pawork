@@ -9,7 +9,7 @@
 //! env 值只进入 [`ResolvedCredential`]（`Debug` 已脱敏），不落任何日志或 Debug
 //! 泄漏字段；env 名推导在本 crate 内实现，不依赖 `pawork-config`。
 
-use pawork_api::{CredentialKind, ResolvedCredential};
+use pawork_domain::{CredentialKind, ResolvedCredential};
 use pawork_domain::{CredentialId, ProviderId};
 
 use crate::backend::SecretBackend;

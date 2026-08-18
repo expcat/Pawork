@@ -271,7 +271,7 @@ impl QuotaAdapter for LedgerQuotaAdapter {
     async fn fetch(
         &self,
         request: &QuotaRequest,
-        _credential: Option<&pawork_api::ResolvedCredential>,
+        _credential: Option<&pawork_domain::ResolvedCredential>,
         cancel: &CancellationToken,
     ) -> Result<QuotaSnapshot, QuotaError> {
         if cancel.is_cancelled() {

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use pawork_api::{
+use pawork_domain::{
     ProviderError, ProviderEventSink, ProviderStreamEvent, ToolOutputChannel, ToolStreamEvent,
 };
 use pawork_domain::{
@@ -33,7 +33,7 @@ impl EngineError {
     pub fn is_cancelled(&self) -> bool {
         matches!(
             self,
-            Self::Provider(error) if error.kind == pawork_api::ProviderErrorKind::Cancelled
+            Self::Provider(error) if error.kind == pawork_domain::ProviderErrorKind::Cancelled
         )
     }
 }
@@ -168,7 +168,7 @@ impl ProviderEventSink for LoopSink<'_> {
             if let Err(error) = self.emitter.emit(payload).await {
                 *self.persist_error.lock().expect("persist error mutex") = Some(error);
                 return Err(ProviderError::new(
-                    pawork_api::ProviderErrorKind::Unknown,
+                    pawork_domain::ProviderErrorKind::Unknown,
                     "event sink failed",
                 ));
             }

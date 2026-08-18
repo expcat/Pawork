@@ -2,12 +2,12 @@
 //!
 //! 原子写（tmp+sync+rename）、建父目录、保留已有文件权限。路径走 policy 安全内核。
 
-use pawork_api::AgentTool;
-use pawork_api::ToolError;
-use pawork_api::ToolEventSink;
-use pawork_api::ToolExecutionContext;
-use pawork_api::ToolRequest;
-use pawork_api::ToolResult;
+use pawork_domain::AgentTool;
+use pawork_domain::ToolError;
+use pawork_domain::ToolEventSink;
+use pawork_domain::ToolExecutionContext;
+use pawork_domain::ToolRequest;
+use pawork_domain::ToolResult;
 use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
@@ -123,7 +123,7 @@ impl From<WriteFileError> for BuiltinToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_api::ToolErrorKind;
+    use pawork_domain::ToolErrorKind;
     use pawork_domain::WorkspaceId;
     use pawork_policy::PathSafetyError;
     use std::fs;

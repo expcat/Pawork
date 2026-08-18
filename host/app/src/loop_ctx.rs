@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use pawork_api::{
+use pawork_domain::{
     ToolError, ToolEventSink, ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
 };
 use pawork_domain::{
@@ -64,7 +64,7 @@ impl ToolEventSink for ForwardingSink<'_> {
             .emit_tool_event(self.tool_call_id.clone(), event)
             .await
             .map_err(|error| ToolError {
-                kind: pawork_api::ToolErrorKind::Internal,
+                kind: pawork_domain::ToolErrorKind::Internal,
                 message: error.to_string(),
                 retryable: false,
                 retry_after_ms: None,

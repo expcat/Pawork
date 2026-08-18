@@ -9,7 +9,6 @@ description = "Pawork MCP client transports, capability bridge, configuration, a
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-api = { path = "../../foundation/api" }
 pawork-tools = { path = "../../execution/tools" }
 pawork-config = { path = "../../foundation/config" }
 pawork-auth = { path = "../../providers/auth" }

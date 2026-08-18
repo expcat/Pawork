@@ -9,7 +9,7 @@
 //! - `retry` 解析失败时忽略；忽略流首的 UTF-8 BOM。
 
 #[cfg(feature = "http")]
-use pawork_api::{ProviderError, ProviderErrorKind};
+use pawork_domain::{ProviderError, ProviderErrorKind};
 use thiserror::Error;
 
 /// 单条 SSE 行或事件允许占用的最大缓冲（1 MiB）。

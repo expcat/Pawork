@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use pawork_api::{
+use pawork_domain::{
     AgentTool, CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary,
     ProviderError, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, ResolvedCredential,
     ToolError, ToolEventSink, ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
@@ -455,7 +455,7 @@ pub fn assert_provider_request_order(provider: &MockProvider, expected: &[&str])
 mod tests {
     use std::collections::BTreeMap;
 
-    use pawork_api::{
+    use pawork_domain::{
         PromptCachePreference, RequestBudget, ResponseFormat, ToolChoice, ToolErrorKind,
     };
     use pawork_domain::{

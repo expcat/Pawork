@@ -9,7 +9,6 @@ description = "Pawork 本地额度投影与 LocalLedger（远端适配器冻结�
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-api = { path = "../../foundation/api" }
 pawork-control-plane = { path = "../core" }
 async-trait.workspace = true
 futures.workspace = true

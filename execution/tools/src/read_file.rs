@@ -3,12 +3,12 @@
 //! 只读读取工作区相对文件：行号、offset/limit、编码检测与二进制检测；
 //! 路径基于 `workspace_id + relative_path`，经 policy 内核校验。
 
-use pawork_api::AgentTool;
-use pawork_api::ToolError;
-use pawork_api::ToolEventSink;
-use pawork_api::ToolExecutionContext;
-use pawork_api::ToolRequest;
-use pawork_api::ToolResult;
+use pawork_domain::AgentTool;
+use pawork_domain::ToolError;
+use pawork_domain::ToolEventSink;
+use pawork_domain::ToolExecutionContext;
+use pawork_domain::ToolRequest;
+use pawork_domain::ToolResult;
 use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
@@ -252,7 +252,7 @@ impl From<ReadFileError> for BuiltinToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_api::ToolErrorKind;
+    use pawork_domain::ToolErrorKind;
     use pawork_domain::WorkspaceId;
     use pawork_policy::PathSafetyError;
     use std::fs;

@@ -19,7 +19,7 @@
 //! —— 进 `Reject`；`XHigh / Max` 但模型不支持细粒度 effort 时 clamp 为 `High`
 //! 并记录 `ClampedEffort`。clamp helper 供 adapter 复用（不形成双轨）。
 
-use pawork_api::{
+use pawork_domain::{
     CapabilityFallback, CapabilityRequirements, ModelCapabilities, ModelTransport,
     ReasoningConfig, ReasoningEffort, ResolvedCapabilities, ThinkingConfig, ThinkingLevel,
 };
@@ -187,7 +187,7 @@ pub fn clamp_reasoning_to_thinking(
     thinking: Option<&ThinkingConfig>,
 ) -> ThinkingConfig {
     if let Some(reasoning) = reasoning {
-        let level = pawork_api::clamp_effort_to_thinking_level(reasoning.effort);
+        let level = pawork_domain::clamp_effort_to_thinking_level(reasoning.effort);
         return ThinkingConfig {
             level,
             budget_tokens: thinking.and_then(|config| config.budget_tokens),
@@ -204,7 +204,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    use pawork_api::ReasoningStateCapability;
+    use pawork_domain::ReasoningStateCapability;
     use pawork_domain::{ModelId, ToolCapabilityTag};
 
     use crate::registry::merge_capabilities;
@@ -237,7 +237,7 @@ mod tests {
             .collect(),
             citations: true,
             reasoning: ReasoningStateCapability {
-                state: pawork_api::ReasoningStateDescriptor {
+                state: pawork_domain::ReasoningStateDescriptor {
                     requires_signature: true,
                     requires_encrypted: true,
                     supports_interleaved: true,

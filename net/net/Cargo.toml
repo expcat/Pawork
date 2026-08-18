@@ -9,23 +9,21 @@ description = "Pawork 共用的 HTTP 运行时与流式解析器"
 
 [features]
 default = ["parsers"]
-# SSE；零重依赖（无 reqwest、无 pawork-api、无 pawork-domain）。JSONL / partial-JSON 已在 R0 波 B 删除。
+# SSE；零重依赖（无 reqwest、无 pawork-domain）。JSONL / partial-JSON 已在 R0 波 B 删除。
 parsers = []
-# HTTP 客户端 + 错误归一；打开 reqwest / bytes / futures / tokio / pawork-domain / pawork-api。
+# HTTP 客户端 + 错误归一；打开 reqwest / bytes / futures / tokio / pawork-domain。
 http = [
     "dep:bytes",
     "dep:futures",
     "dep:reqwest",
     "dep:tokio",
     "dep:pawork-domain",
-    "dep:pawork-api",
 ]
 
 [dependencies]
 thiserror.workspace = true
 serde_json.workspace = true
 pawork-domain = { path = "../../foundation/domain", optional = true }
-pawork-api = { path = "../../foundation/api", optional = true }
 reqwest = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }

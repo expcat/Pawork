@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider, ModelResponseSummary,
     ProviderError, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, ResolvedCredential,
 };
@@ -274,7 +274,7 @@ impl ModelProvider for AnthropicProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_api::CredentialKind;
+    use pawork_domain::CredentialKind;
 
     #[test]
     fn messages_url_trims_trailing_slash() {

@@ -1,0 +1,1 @@
+{"kind":"rate_limited","message":"slow down","retryable":true,"retry_after_ms":250,"provider_request_id":"req-upstream-9","http_status":429,"redacted_details":"[REDACTED] upstream body","diagnostics":{"upstream":"HTTP 429"}}

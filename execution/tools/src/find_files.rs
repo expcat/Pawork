@@ -2,12 +2,12 @@
 //!
 //! glob 匹配、类型过滤、ignore、最大深度/结果、稳定字典序排序。
 
-use pawork_api::AgentTool;
-use pawork_api::ToolError;
-use pawork_api::ToolEventSink;
-use pawork_api::ToolExecutionContext;
-use pawork_api::ToolRequest;
-use pawork_api::ToolResult;
+use pawork_domain::AgentTool;
+use pawork_domain::ToolError;
+use pawork_domain::ToolEventSink;
+use pawork_domain::ToolExecutionContext;
+use pawork_domain::ToolRequest;
+use pawork_domain::ToolResult;
 use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
@@ -90,7 +90,7 @@ impl AgentTool for FindFilesTool {
             tokio::task::spawn_blocking(move || find(&service, &workspace_id, &input, &cancel))
                 .await
                 .map_err(|error| ToolError {
-                    kind: pawork_api::ToolErrorKind::Internal,
+                    kind: pawork_domain::ToolErrorKind::Internal,
                     message: format!("find_files worker failed: {error}"),
                     retryable: false,
                     retry_after_ms: None,

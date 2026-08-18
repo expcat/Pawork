@@ -3,14 +3,14 @@
 //! 非 PTY 执行：经 SandboxSelector 选择隔离后端，并保留流式输出、timeout、
 //! cancel、资源限制与进程树清理语义。审批走 scheduler + policy。
 
-use pawork_api::AgentTool;
-use pawork_api::ToolError;
-use pawork_api::ToolEventSink;
-use pawork_api::ToolExecutionContext;
-use pawork_api::ToolOutputChannel;
-use pawork_api::ToolRequest;
-use pawork_api::ToolResult;
-use pawork_api::ToolStreamEvent;
+use pawork_domain::AgentTool;
+use pawork_domain::ToolError;
+use pawork_domain::ToolEventSink;
+use pawork_domain::ToolExecutionContext;
+use pawork_domain::ToolOutputChannel;
+use pawork_domain::ToolRequest;
+use pawork_domain::ToolResult;
+use pawork_domain::ToolStreamEvent;
 use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
@@ -424,8 +424,8 @@ impl From<RunCommandError> for BuiltinToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_api::ToolOutputChannel;
-    use pawork_api::ToolStreamEvent;
+    use pawork_domain::ToolOutputChannel;
+    use pawork_domain::ToolStreamEvent;
     use pawork_domain::WorkspaceId;
     use pawork_testkit::RecordingToolSink;
     use std::sync::atomic::AtomicU64;

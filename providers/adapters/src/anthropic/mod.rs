@@ -1,7 +1,7 @@
 //! Anthropic Messages 基线适配器（S2）。
 //!
 //! 将 canonical 请求转换为 Anthropic Messages API（`/v1/messages`），并把流式
-//! SSE 事件组装回 [`ProviderStreamEvent`](pawork_api::ProviderStreamEvent)。
+//! SSE 事件组装回 [`ProviderStreamEvent`](pawork_domain::ProviderStreamEvent)。
 //! 本波只覆盖 text / `tool_use` / `tool_result`；`base_url` 必填，不内置官方端点。
 //!
 //! TODO(S6): prompt cache（`cache_control`）、thinking 请求体、hosted tools、

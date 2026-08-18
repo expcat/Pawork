@@ -9,7 +9,6 @@ description = "Pawork 内置只读/写工具与最小调度器"
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-api = { path = "../../foundation/api" }
 pawork-workspace = { path = "../../workspace/core" }
 pawork-policy = { path = "../policy" }
 pawork-exec = { path = "../exec" }

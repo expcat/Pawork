@@ -43,10 +43,10 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 当前阶段 | R1([plan/R1-package-consolidation.md](plan/R1-package-consolidation.md))⚪ 待开启 |
-| 阶段状态 | R0 🟢(波 0/A/B/C 全部收口,2026-08-18;改判 3+1 项见 ADR-038 落实改判记录);R1–R9 ⚪ |
-| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档) |
-| **下一波次** | R1 波 A:ADR-039 起草 + 用户确认(布局 + 不合并清单),确认后做 api→domain 契约包迁移(golden 先行)与 diagnostics 迁宿主撤包;串行 |
+| 当前阶段 | R1([plan/R1-package-consolidation.md](plan/R1-package-consolidation.md))🔵 进行中 |
+| 阶段状态 | R0 🟢(波 0/A/B/C 全部收口,2026-08-18;改判 3+1 项见 ADR-038 落实改判记录);R1 🔵;R2–R9 ⚪ |
+| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档)、R1 波 A(ADR-039 Accepted + api→domain golden 先行平移 + diagnostics 迁宿主撤包,2026-08-19;members 37→35) |
+| **下一波次** | R1 波 B:三大合并 storage(sqlite+session+blob)∥ providers(net+core+adapters)∥ workspace(core+resources+config+compat);并行 ×3(写入集不相交,下游 use 修复各自负责) |
 | 阻塞 | 无 |
 
 自动选择以本表为准,再用 ROADMAP / 任务书 / 工作区实态交叉校验。三者冲突时:**工作区实态 > 本表 > ROADMAP 状态列**;更新本表使三者一致后再开工。

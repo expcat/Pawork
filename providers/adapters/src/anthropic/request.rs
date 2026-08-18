@@ -4,7 +4,7 @@
 //! 连续 [`MessageRole::Tool`](pawork_domain::MessageRole::Tool) 合并为一条 user，
 //! 且同一条 user 里 `tool_result` 块排在最前。
 
-use pawork_api::{CanonicalModelRequest, ResponseFormat, ToolChoice};
+use pawork_domain::{CanonicalModelRequest, ResponseFormat, ToolChoice};
 use pawork_domain::{ContentPart, ImageSource, Message, MessageRole};
 use serde_json::{json, Map, Value};
 
@@ -255,7 +255,7 @@ fn tool_choice_to_anthropic(choice: &ToolChoice) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_api::{PromptCachePreference, RequestBudget, ThinkingConfig, ThinkingLevel, ToolDefinition};
+    use pawork_domain::{PromptCachePreference, RequestBudget, ThinkingConfig, ThinkingLevel, ToolDefinition};
     use pawork_domain::{
         ImageContent, MessageId, MessageMetadata, TextContent, ToolCallContent, ToolCallId,
         ToolResultContent,

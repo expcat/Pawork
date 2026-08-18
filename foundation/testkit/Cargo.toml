@@ -9,7 +9,6 @@ description = "Pawork 可编程 Mock Provider、Mock Tool 与协议测试辅助"
 
 [dependencies]
 pawork-domain = { path = "../domain" }
-pawork-api = { path = "../api" }
 async-trait.workspace = true
 serde_json.workspace = true
 

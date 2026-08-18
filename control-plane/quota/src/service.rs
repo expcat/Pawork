@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::future;
-use pawork_api::ResolvedCredential;
+use pawork_domain::ResolvedCredential;
 use pawork_domain::{CancellationToken, ModelId, ProviderId, TenantId, Timestamp};
 use tokio::sync::Notify;
 
@@ -1212,7 +1212,7 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     use async_trait::async_trait;
-    use pawork_api::{CredentialKind, ResolvedCredential};
+    use pawork_domain::{CredentialKind, ResolvedCredential};
     use pawork_control_plane::{InMemoryUsageLedger, UsageLedger, UsageRecord};
 
     use super::*;

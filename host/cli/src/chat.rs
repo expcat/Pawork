@@ -2,7 +2,7 @@
 
 use std::io::{self, IsTerminal, Write};
 
-use pawork_api::ProviderErrorKind;
+use pawork_domain::ProviderErrorKind;
 use pawork_app::{session_title_from_text, AppCore, AppError, GuiApprovalHost};
 use pawork_domain::{ContentPart, Message, MessageId, MessageRole, RunId, SessionId};
 use pawork_engine::{

@@ -4,7 +4,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pawork_api::ToolResult;
+use pawork_domain::ToolResult;
 use pawork_domain::CancellationToken;
 use async_trait::async_trait;
 use tokio::sync::Mutex;

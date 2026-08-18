@@ -14,7 +14,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Waker};
 
-use pawork_api::{ModelCapabilities, ModelDefinition, ModelProvider, ResolvedCredential};
+use pawork_domain::{ModelCapabilities, ModelDefinition, ModelProvider, ResolvedCredential};
 use pawork_domain::{Cost, ModelId, ProviderId, TokenUsage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -170,7 +170,7 @@ impl ProviderCapabilitySource for Vec<(ProviderId, Vec<ModelDefinition>)> {
 
 /// 三来源保守合并：present 来源逐字段取交集，来源缺失不约束。
 ///
-/// 在 serde Value 层面做字段级合并，自动覆盖 pawork-api 同期新增的 v2
+/// 在 serde Value 层面做字段级合并，自动覆盖 pawork-domain/provider_api 同期新增的 v2
 /// 能力字段（bool 取 AND、数组取元素交集、其它字段全部来源相等才保留，
 /// 冲突即 fail-closed 移除该键取字段默认值），后续字段落地时无需改动本函数。
 pub fn merge_capabilities(sources: &[&ModelCapabilities]) -> ModelCapabilities {
@@ -786,7 +786,7 @@ fn caps_satisfied(have: &ModelCapabilities, required: &ModelCapabilities) -> boo
     }
     // v2：transport——required 声明非默认（非 ChatCompletions）transport 时，
     // have 必须声明同一 transport。required 为默认 ChatCompletions 视为「不约束」。
-    if required.transport != pawork_api::ModelTransport::ChatCompletions
+    if required.transport != pawork_domain::ModelTransport::ChatCompletions
         && have.transport != required.transport
     {
         return false;
@@ -804,7 +804,7 @@ fn caps_satisfied(have: &ModelCapabilities, required: &ModelCapabilities) -> boo
 
 /// 构造能力集合的便捷函数。
 //
-// pawork-api 同期新增 v2 能力字段时用 ..Default 兼容，避免构造点编译失败；
+// pawork-domain/provider_api 同期新增 v2 能力字段时用 ..Default 兼容，避免构造点编译失败；
 // v2 目录经 `ModelRegistry::merge_provider_models` / `ProviderCapabilitySource`
 // 合并，而不是扩展本函数参数表。
 #[allow(clippy::too_many_arguments)]
@@ -912,7 +912,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use async_trait::async_trait;
-    use pawork_api::{
+    use pawork_domain::{
         CanonicalModelRequest, ModelResponseSummary, ProviderError, ProviderErrorKind,
         ProviderEventSink,
     };
@@ -1296,7 +1296,7 @@ mod tests {
     fn caps_satisfied_v2_citations_and_transport_and_tools() {
         let full = ModelCapabilities {
             citations: true,
-            transport: pawork_api::ModelTransport::Responses,
+            transport: pawork_domain::ModelTransport::Responses,
             hosted_tool_tags: [pawork_domain::ToolCapabilityTag::WebSearch]
                 .into_iter()
                 .collect(),
@@ -1312,12 +1312,12 @@ mod tests {
 
         // 要求 Responses transport：声明即满足；要求 Messages 不满足。
         let req_responses = ModelCapabilities {
-            transport: pawork_api::ModelTransport::Responses,
+            transport: pawork_domain::ModelTransport::Responses,
             ..ModelCapabilities::default()
         };
         assert!(caps_satisfied(&full, &req_responses));
         let req_messages = ModelCapabilities {
-            transport: pawork_api::ModelTransport::Messages,
+            transport: pawork_domain::ModelTransport::Messages,
             ..ModelCapabilities::default()
         };
         assert!(
@@ -1882,7 +1882,7 @@ mod tests {
             thinking: true,
             structured_output: true,
             prompt_cache: true,
-            transport: pawork_api::ModelTransport::Responses,
+            transport: pawork_domain::ModelTransport::Responses,
             citations: true,
             ..ModelCapabilities::default()
         };
@@ -1895,7 +1895,7 @@ mod tests {
         let static_caps = evidence.static_declared.expect("static after merge");
         assert_eq!(
             static_caps.transport,
-            pawork_api::ModelTransport::Responses
+            pawork_domain::ModelTransport::Responses
         );
         assert!(static_caps.citations);
         assert_eq!(
@@ -1938,7 +1938,7 @@ mod tests {
         );
         assert_eq!(
             added.static_declared.unwrap().transport,
-            pawork_api::ModelTransport::Responses
+            pawork_domain::ModelTransport::Responses
         );
     }
 }

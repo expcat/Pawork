@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, PromptCachePreference, RequestBudget, ResponseFormat, ToolChoice,
     ToolDefinition,
 };

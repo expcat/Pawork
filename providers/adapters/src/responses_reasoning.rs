@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use pawork_api::ReasoningMappingError;
+use pawork_domain::ReasoningMappingError;
 use pawork_domain::{ProtectedBlobRef, ReasoningItem, ReasoningItemId};
 use serde_json::Value;
 

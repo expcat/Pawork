@@ -253,7 +253,7 @@ mod tests {
     use super::*;
     use crate::channels::OAuthFlow;
     use async_trait::async_trait;
-        use pawork_api::{
+        use pawork_domain::{
             CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary,
             ProviderError, ProviderErrorKind, ProviderEventSink,
         };
@@ -277,7 +277,7 @@ mod tests {
 
         async fn list_models(
             &self,
-            _credential: Option<&pawork_api::ResolvedCredential>,
+            _credential: Option<&pawork_domain::ResolvedCredential>,
         ) -> Result<Vec<ModelDefinition>, ProviderError> {
             Ok(Vec::new())
         }

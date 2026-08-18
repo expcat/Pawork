@@ -1,0 +1,13 @@
+{"type":"response_started","data":{"response_id":"resp-1"}}
+{"type":"text_delta","data":"hello"}
+{"type":"thinking_delta","data":"考虑中"}
+{"type":"reasoning_item","data":{"id":"reasoning-1","summary":"safe summary","protected_blob_ref":"protected-1","opaque_metadata":{"origin":"wire"}}}
+{"type":"tool_call_started","data":{"id":"tc-1","name":"read_file"}}
+{"type":"tool_call_arguments_delta","data":{"id":"tc-1","json":"{\"path\":"}}
+{"type":"tool_call_completed","data":{"id":"tc-1"}}
+{"type":"usage_updated","data":{"input_tokens":10,"output_tokens":20,"cache_read_tokens":1,"cache_write_tokens":2}}
+{"type":"response_completed","data":{"kind":"tool_use"}}
+{"type":"provider_metadata","data":{"wire":"v1"}}
+{"type":"server_tool","data":{"kind":"started","data":{"tool_call_id":"st-1","name":"web_search","arguments":{"query":"pawork"}}}}
+{"type":"transcript_envelope","data":{"items":[{"kind":"text","data":"final"}],"cursor":"cursor-1","continuation_reference":"ref-1"}}
+{"type":"error","data":{"kind":"rate_limited","message":"slow down","retryable":true,"retry_after_ms":250,"provider_request_id":"req-upstream-9","http_status":429,"redacted_details":"[REDACTED] upstream body","diagnostics":{"upstream":"HTTP 429"}}}

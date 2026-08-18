@@ -1,6 +1,6 @@
 //! canonical 请求 → OpenAI Chat Completions 请求体的转换。
 
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, ResponseFormat, ThinkingConfig, ThinkingLevel, ToolChoice,
 };
 use serde_json::{json, Map, Value};
@@ -272,7 +272,7 @@ mod tests {
         ContentPart, Message, MessageId, MessageMetadata, MessageRole, TextContent,
         ToolCallContent, ToolCallId, ToolResultContent,
     };
-    use pawork_api::{ToolChoice, ToolDefinition};
+    use pawork_domain::{ToolChoice, ToolDefinition};
 
     fn user(text: &str) -> Message {
         Message {
@@ -298,8 +298,8 @@ mod tests {
             max_output_tokens: Some(128),
             stop_sequences: vec!["END".into()],
             response_format: ResponseFormat::Text,
-            prompt_cache: pawork_api::PromptCachePreference::Automatic,
-            budget: pawork_api::RequestBudget::default(),
+            prompt_cache: pawork_domain::PromptCachePreference::Automatic,
+            budget: pawork_domain::RequestBudget::default(),
             provider_options: BTreeMap::new(),
             trace_id: None,
             reasoning: None,

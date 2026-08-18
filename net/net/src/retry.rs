@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use pawork_api::{ProviderError, ProviderErrorKind};
+use pawork_domain::{ProviderError, ProviderErrorKind};
 
 /// 归一化 HTTP 响应状态码为 [`ProviderError`]。
 ///

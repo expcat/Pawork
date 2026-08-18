@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelDefinition, ModelProvider, ModelResponseSummary,
     ModelTransport, ProviderError, ProviderErrorKind, ProviderEventSink, ResolvedCredential,
 };

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference, ProviderError,
     ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, RequestBudget, ResolvedCredential,
     ResponseFormat, ToolChoice,
@@ -38,7 +38,7 @@ impl ProviderEventSink for RecordingProviderSink {
 }
 
 mod contract {
-    use pawork_api::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
+    use pawork_domain::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
 
     pub fn assert_text_stream(events: &[ProviderStreamEvent]) {
         assert!(

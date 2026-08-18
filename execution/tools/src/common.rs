@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pawork_api::{ToolError, ToolErrorKind};
+use pawork_domain::{ToolError, ToolErrorKind};
 use pawork_domain::WorkspaceId;
 use pawork_policy::{resolve_workspace_path, PathSafetyError};
 use pawork_workspace::{WorkspaceError, WorkspacePathError, WorkspaceService};

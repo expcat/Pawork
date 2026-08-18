@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pawork_domain::{ProviderId, Timestamp};
-use pawork_api::{CredentialKind, ResolvedCredential};
+use pawork_domain::{CredentialKind, ResolvedCredential};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::SecretBackend;

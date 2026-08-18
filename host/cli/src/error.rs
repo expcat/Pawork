@@ -1,6 +1,6 @@
 //! `ProviderError.kind` → 可读错误。S0 只呈现，不重试、不换号、不打印 Secret。
 
-use pawork_api::{ProviderError, ProviderErrorKind};
+use pawork_domain::{ProviderError, ProviderErrorKind};
 
 pub fn format_provider_error(err: &ProviderError) -> String {
     match &err.kind {
@@ -34,7 +34,7 @@ pub fn format_provider_error(err: &ProviderError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use pawork_api::ProviderError;
+    use pawork_domain::ProviderError;
 
     use super::*;
 

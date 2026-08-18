@@ -7,12 +7,12 @@ use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use pawork_api::AgentTool;
-use pawork_api::ToolError;
-use pawork_api::ToolEventSink;
-use pawork_api::ToolExecutionContext;
-use pawork_api::ToolRequest;
-use pawork_api::ToolResult;
+use pawork_domain::AgentTool;
+use pawork_domain::ToolError;
+use pawork_domain::ToolEventSink;
+use pawork_domain::ToolExecutionContext;
+use pawork_domain::ToolRequest;
+use pawork_domain::ToolResult;
 use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,

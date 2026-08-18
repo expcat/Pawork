@@ -16,7 +16,7 @@
 //!
 //! 远端 Provider 适配器与 RefreshScheduler 冻结候审，不在本 crate。
 //!
-//! 凭证安全：secret 仅以 [`pawork_api::ResolvedCredential`] 在适配器调用边界注入；
+//! 凭证安全：secret 仅以 [`pawork_domain::ResolvedCredential`] 在适配器调用边界注入；
 //! 该类型 `Debug` 已脱敏且未实现 `Serialize`，故本 crate 的任何类型都无法在结构上
 //! 持有或泄漏明文 secret。
 

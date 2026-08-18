@@ -14,8 +14,8 @@ use std::thread;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use pawork_api::ModelProvider;
-use pawork_api::{
+use pawork_domain::ModelProvider;
+use pawork_domain::{
     CanonicalModelRequest, CredentialKind, PromptCachePreference, ProviderError, ProviderErrorKind,
     ProviderEventSink, ProviderStreamEvent, RequestBudget, ResolvedCredential, ResponseFormat,
     ToolChoice,
@@ -46,7 +46,7 @@ impl ProviderEventSink for RecordingProviderSink {
 }
 
 mod contract {
-    use pawork_api::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
+    use pawork_domain::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
     use pawork_domain::StopReason;
 
     /// 断言文本流：至少含一条 TextDelta，并以 ResponseCompleted 收尾。
@@ -647,7 +647,7 @@ async fn contract_partial_json_tool_arguments() {
         .events()
         .iter()
         .filter_map(|e| match e {
-            pawork_api::ProviderStreamEvent::ToolCallArgumentsDelta { json, .. } => {
+            pawork_domain::ProviderStreamEvent::ToolCallArgumentsDelta { json, .. } => {
                 Some(json.clone())
             }
             _ => None,

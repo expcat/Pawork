@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
     ProviderErrorKind, ProviderEventSink, ResolvedCredential, ToolDefinition,
 };
@@ -2034,7 +2034,7 @@ fn oauth_refresh_endpoint(
 /// extra["model_transports"]：{"model-id": "responses"|"chat_completions"|"messages"}。
 fn model_transport_overrides(
     config: &PaworkConfig,
-) -> Vec<(String, pawork_api::ModelTransport)> {
+) -> Vec<(String, pawork_domain::ModelTransport)> {
     let Some(table) = config.extra.get("model_transports") else {
         return Vec::new();
     };
@@ -2044,11 +2044,11 @@ fn model_transport_overrides(
     map.iter()
         .filter_map(|(model, value)| {
             let transport = match value.as_str()? {
-                "responses" => pawork_api::ModelTransport::Responses,
+                "responses" => pawork_domain::ModelTransport::Responses,
                 "chat_completions" | "openai-compatible" => {
-                    pawork_api::ModelTransport::ChatCompletions
+                    pawork_domain::ModelTransport::ChatCompletions
                 }
-                "messages" | "anthropic-messages" => pawork_api::ModelTransport::Messages,
+                "messages" | "anthropic-messages" => pawork_domain::ModelTransport::Messages,
                 _ => return None,
             };
             Some((model.clone(), transport))
@@ -2113,7 +2113,7 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use pawork_api::{
+    use pawork_domain::{
         CanonicalModelRequest, ModelCapabilities, ProviderStreamEvent,
     };
     use pawork_domain::{
@@ -2192,7 +2192,7 @@ mod tests {
         async fn stream(
             &self,
             _request: CanonicalModelRequest,
-            sink: &dyn pawork_api::ProviderEventSink,
+            sink: &dyn pawork_domain::ProviderEventSink,
             _cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {
             for event in &self.events {
@@ -3249,7 +3249,7 @@ mod tests {
             async fn stream(
                 &self,
                 _request: CanonicalModelRequest,
-                sink: &dyn pawork_api::ProviderEventSink,
+                sink: &dyn pawork_domain::ProviderEventSink,
                 _cancel: CancellationToken,
             ) -> Result<ModelResponseSummary, ProviderError> {
                 let index = self

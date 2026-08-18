@@ -1,0 +1,2 @@
+{"content":[{"type":"text","data":{"text":"done"}}],"artifacts":[{"id":"artifact-1","media_type":"text/plain","byte_length":42,"content_hash":"sha256:abc","label":"log"}],"metadata":{"elapsed_ms":7},"truncated":true,"success":true}
+{"content":[],"artifacts":[],"metadata":null,"truncated":false,"success":false,"error":{"category":"timeout","message":"tool timed out","retryable":true,"retry_after_ms":100,"diagnostics":{"tool":"run_command"}}}

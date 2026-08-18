@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use pawork_api::{
+use pawork_domain::{
     AgentTool, ToolError, ToolErrorKind, ToolEventSink, ToolExecutionContext, ToolRequest,
     ToolResult, ToolStreamEvent,
 };

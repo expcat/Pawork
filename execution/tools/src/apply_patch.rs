@@ -7,12 +7,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use pawork_api::AgentTool;
-use pawork_api::ToolError;
-use pawork_api::ToolEventSink;
-use pawork_api::ToolExecutionContext;
-use pawork_api::ToolRequest;
-use pawork_api::ToolResult;
+use pawork_domain::AgentTool;
+use pawork_domain::ToolError;
+use pawork_domain::ToolEventSink;
+use pawork_domain::ToolExecutionContext;
+use pawork_domain::ToolRequest;
+use pawork_domain::ToolResult;
 use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
@@ -511,6 +511,6 @@ mod tests {
             ApplyPatchError::Common(BuiltinToolError::PolicyPath(PathSafetyError::Traversal(_)))
         ));
         let error: ToolError = BuiltinToolError::from(err).into();
-        assert_eq!(error.kind, pawork_api::ToolErrorKind::PermissionDenied);
+        assert_eq!(error.kind, pawork_domain::ToolErrorKind::PermissionDenied);
     }
 }

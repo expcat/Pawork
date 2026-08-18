@@ -34,7 +34,7 @@
 
 ## 2. 关键判定依据(合并 / 不合并的结构性理由)
 
-- **api→domain**:api 的 ~13 个消费者全部已依赖 domain;`provider/tool/plugin` features 零门控;`ReasoningEffort` 本就在 domain 由 api 重导出。desktop 将编译 provider trait 纯类型——不违反「GUI 不加载 Core」(红线指 Core 运行时);ADR-039 里明示该取舍。
+- **api→domain**:api 的 11 个消费者(2026-08-18 波 A 核查重验,原估 ~13)全部已依赖 domain;features 已收敛为空锚点 `plugin = []`、src 零门控(`provider`/`tool` 已于 R0 D14 移除);`ReasoningEffort` 本就在 domain 由 api 重导出。desktop 将编译 provider trait 纯类型——不违反「GUI 不加载 Core」(红线指 Core 运行时);ADR-039 里明示该取舍。
 - **policy 必须独立**:tools→workspace→policy 链存在(`workspace/core/src/path.rs` 5 处),policy 若并入含 tools 的包即成环;且 `PolicyDecision` 是冻结契约、安全回归锚。
 - **exec/auth 必须独立**:exec 零内部依赖自含(`execution/exec/src/lib.rs:3`)、5 个消费者;auth 是 Secret 审计边界且有 mcp/app 两个异质消费者。**写入 ADR-039「不合并清单」:policy、exec、auth、git、engine、protocol、testkit、transport、orchestration、workflow。**
 - **gui-server→app 而非 cli**:app 实现 GuiHost trait,并入 cli 会造成 cli→app→cli 循环。
@@ -53,7 +53,7 @@
 
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
-| A | ADR-039(布局 + 不合并清单 + 取舍)用户确认;api→domain(契约包,golden 先行);diagnostics 活符号迁 `apps/pawork` 并撤包 | docs/adr/、foundation/{domain,api,diagnostics}、apps/pawork、全部引用 api 的 Cargo.toml/use | 串行(契约包单一 owner) |
+| A ✅(2026-08-19) | ADR-039(布局 + 不合并清单 + 取舍)用户确认;api→domain(契约包,golden 先行);diagnostics 活符号迁 `apps/pawork` 并撤包 | docs/adr/、foundation/{domain,api,diagnostics}、apps/pawork、全部引用 api 的 Cargo.toml/use | 串行(契约包单一 owner) |
 | B | 三大合并:storage(sqlite+session+blob)∥ providers(net+core+adapters)∥ workspace(core+resources+config+compat) | storage/*、foundation/sqlite、providers/*、net/、workspace/*、clients/compat | 并行 ×3(写入集不相交;下游 use 修复各自负责) |
 | C | tools(+mcp)∥ control-plane(core+quota+provider-control 核心) | execution/tools、extensions/mcp、control-plane/* | 并行 ×2 |
 | D | host 与 clients:app(+gui-server)∥ cli(+channels)∥ client(+sdk、probe→tests/example) | host/{app,gui-server}、host/{cli,channels}、clients/{gui-client,sdk}、apps/protocol-probe | 并行 ×3(app 与 cli 的接缝——cli 改经 app 取 GuiHost——由 app 路先定 trait 位置,cli 路后接;若冲突改串行) |
@@ -71,6 +71,8 @@
 | config 六层矩阵 | workspace `config/`(44 测试随迁) |
 | usage `dedup_key` / audit JSONL | control-plane(fixtures 随迁) |
 | MCP 契约(59 测试)+ rmcp 隔离断言 | tools `mcp/` |
+
+> 2026-08-18 波 A 核查补注(golden 缺口,已于 2026-08-19 波 A 落实):`ProviderStreamEvent` 13 变体、`ProviderError`、`CanonicalModelRequest`、`ToolResult` 原仅有内存 roundtrip 覆盖;波 A 已按「golden 先行」补齐字节级夹具并随类型整组平移 `foundation/domain/tests/{contract_golden.rs,fixtures/}`,迁移前后零 diff。diagnostics 两测试(Redactor/RedactingFmtLayer)已随迁 `apps/pawork/src/redact.rs`。
 
 ## 6. 验证
 

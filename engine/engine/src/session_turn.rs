@@ -2,7 +2,7 @@
 
 use std::sync::atomic::AtomicU64;
 
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ProviderStreamEvent,
 };
 use pawork_domain::{
@@ -151,7 +151,7 @@ pub async fn run_session_turn(
                 .await?;
             Ok(summary)
         }
-        Err(error) if error.kind == pawork_api::ProviderErrorKind::Cancelled => {
+        Err(error) if error.kind == pawork_domain::ProviderErrorKind::Cancelled => {
             let usage = last_stream_usage(&sink.drain_events());
             emitter
                 .emit(AgentEvent::RunCancelled {
@@ -199,7 +199,7 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use pawork_api::{
+    use pawork_domain::{
         ModelDefinition, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent,
         ResolvedCredential,
     };

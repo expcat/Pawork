@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
-use pawork_api::{
+use pawork_domain::{
     CanonicalModelRequest, ModelDefinition, ModelResponseSummary, ProviderError,
     ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, ReasoningEffort, ResponseFormat,
     ResolvedCredential, ThinkingLevel, ToolChoice, ToolDefinition,
@@ -555,7 +555,7 @@ fn standard_model_definitions(value: &Value) -> Vec<ModelDefinition> {
             display_name: id.to_string(),
             context_window_tokens: 0,
             max_output_tokens: 0,
-            capabilities: pawork_api::ModelCapabilities {
+            capabilities: pawork_domain::ModelCapabilities {
                 text: true,
                 tool_calls: true,
                 ..Default::default()
@@ -841,7 +841,7 @@ mod tests {
     fn fixed_headers_cannot_override_auth() {
         let mut config = ResponsesTransportConfig::new("https://example.com", "test");
         config.request_headers.push(("Authorization".into(), "attacker".into()));
-        let credential = ResolvedCredential::new(pawork_api::CredentialKind::OAuthBearer, "token");
+        let credential = ResolvedCredential::new(pawork_domain::CredentialKind::OAuthBearer, "token");
         let error = ResponsesTransport::new(config, credential).err().unwrap();
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
 
@@ -850,7 +850,7 @@ mod tests {
             .http
             .extra_headers
             .push(("x-api-key".into(), "attacker".into()));
-        let credential = ResolvedCredential::new(pawork_api::CredentialKind::ApiKey, "token");
+        let credential = ResolvedCredential::new(pawork_domain::CredentialKind::ApiKey, "token");
         let error = ResponsesTransport::new(config, credential).err().unwrap();
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
     }
