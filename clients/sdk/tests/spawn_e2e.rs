@@ -1,6 +1,7 @@
 //! 真实命令 e2e：`PaworkClient::spawn` 启动工作区构建的 `pawork` 二进制
-//! （`headless --json-stdio`），验证握手、Command/Query 往返、compat 导入
-//! 与历史（经真实 SessionStore 持久化）以及关闭回收。
+//! （`headless --json-stdio`），验证握手、已映射 Command/Query 往返、
+//! 未映射命令/查询 fail-closed（S12 CR-07）、compat 导入与历史（经真实
+//! SessionStore 持久化）以及关闭回收。
 
 //! 二进制定位：`PAWORK_BIN` 环境变量优先，否则回退到工作区默认构建产物
 //! `target/debug/pawork`；二进制不存在或尚无 `headless` 子命令时跳过
@@ -81,28 +82,34 @@ async fn spawns_real_pawork_and_round_trips() {
     assert!(capabilities.contains(&SdkCapability::CompatImport));
     assert!(capabilities.contains(&SdkCapability::CompatHistory));
 
-    // Query 往返（同一 AppService 分发）。
-    let response = client.query(AppQuery::WorkspaceList).await.expect("query");
-    assert!(matches!(response.response, AppResponse::Data(_)));
+    // 未映射 query fail-closed：WorkspaceList 无专属能力域，不得放行。
+    let error = client
+        .query(AppQuery::WorkspaceList)
+        .await
+        .expect_err("unmapped query must fail closed");
+    assert_eq!(
+        error.kind(),
+        SdkErrorKind::Protocol(ProtocolErrorKind::UnsupportedCapability),
+        "{error}"
+    );
 
-    // Command 往返：添加 workspace（SessionCreate 要求 workspace 已存在）。
-    let workspace = client
+    // 未映射 command fail-closed：WorkspaceAdd 在能力门被拒（先于业务分发），
+    // 即使路径合法也不得静默映射到已有 capability。
+    let error = client
         .command(AppCommand::WorkspaceAdd {
             root_path: root_path.clone(),
         })
         .await
-        .expect("workspace add");
-    let workspace_id = match workspace.response {
-        AppResponse::Data(value) => WorkspaceId::from(
-            value
-                .get("id")
-                .and_then(Value::as_str)
-                .expect("workspace id"),
-        ),
-        other => panic!("unexpected workspace add response: {other:?}"),
-    };
+        .expect_err("unmapped command must fail closed");
+    assert_eq!(
+        error.kind(),
+        SdkErrorKind::Protocol(ProtocolErrorKind::UnsupportedCapability),
+        "{error}"
+    );
 
-    // Command 往返：创建会话。
+    // 已映射 Command 往返：创建会话（SessionCreate 绑定任意 workspace_id，
+    // 无需 WorkspaceAdd）。
+    let workspace_id = WorkspaceId::from("ws-sdk-e2e");
     let created = client
         .command(AppCommand::SessionCreate {
             workspace_id,
@@ -120,6 +127,17 @@ async fn spawns_real_pawork_and_round_trips() {
         other => panic!("unexpected session create response: {other:?}"),
     };
     assert!(!session_id.as_str().is_empty());
+
+    // 已映射 Query 往返（同一 AppService 分发）。
+    let response = client
+        .query(AppQuery::SessionGet {
+            session_id: session_id.clone(),
+            timeline_after_sequence: None,
+            timeline_limit: None,
+        })
+        .await
+        .expect("mapped query round trip");
+    assert!(matches!(response.response, AppResponse::Data(_)));
 
     // 订阅不报错（真实进程的事件流槽位）。
     let _subscription = client
@@ -158,7 +176,6 @@ async fn run_start_without_provider_returns_error_response() {
         return;
     };
     let data_dir = tempfile::tempdir().expect("tempdir for data");
-    let root_path = data_dir.path().display().to_string();
     let options = PaworkOptions {
         binary,
         timeout: Duration::from_secs(30),
@@ -178,21 +195,20 @@ async fn run_start_without_provider_returns_error_response() {
     };
 
     let client = PaworkClient::spawn(options).await.expect("spawn");
-    let workspace = client
+    // 未映射 command fail-closed：WorkspaceAdd 在能力门被拒。
+    let error = client
         .command(AppCommand::WorkspaceAdd {
-            root_path: root_path.clone(),
+            root_path: data_dir.path().display().to_string(),
         })
         .await
-        .expect("workspace add");
-    let workspace_id = match workspace.response {
-        AppResponse::Data(value) => WorkspaceId::from(
-            value
-                .get("id")
-                .and_then(Value::as_str)
-                .expect("workspace id"),
-        ),
-        other => panic!("unexpected workspace add response: {other:?}"),
-    };
+        .expect_err("unmapped command must fail closed");
+    assert_eq!(
+        error.kind(),
+        SdkErrorKind::Protocol(ProtocolErrorKind::UnsupportedCapability),
+        "{error}"
+    );
+
+    let workspace_id = WorkspaceId::from("ws-sdk-e2e");
     let created = client
         .command(AppCommand::SessionCreate {
             workspace_id,
@@ -255,11 +271,42 @@ async fn real_host_enforces_granted_capabilities() {
         "host grants exactly the requested subset"
     );
 
-    // 通用 query（无专属能力域）：任一 granted 即可 → 放行。
+    // 已映射 + 已授予：Sessions 内的 Command 正常往返。
+    let created = client
+        .command(AppCommand::SessionCreate {
+            workspace_id: WorkspaceId::from("ws-sdk-e2e"),
+            title: Some("gate e2e".into()),
+        })
+        .await
+        .expect("mapped command allowed with Sessions grant");
+    let session_id = match created.response {
+        AppResponse::Data(value) => SessionId::from(
+            value
+                .get("session_id")
+                .and_then(Value::as_str)
+                .expect("session_id"),
+        ),
+        other => panic!("unexpected session create response: {other:?}"),
+    };
+    // 未映射 query：即使已有授予也 fail-closed。
     let response = client
         .query(AppQuery::WorkspaceList)
         .await
-        .expect("generic query allowed with any grant");
+        .expect_err("unmapped query fails closed even with grant");
+    assert_eq!(
+        response.kind(),
+        SdkErrorKind::Protocol(ProtocolErrorKind::UnsupportedCapability),
+        "{response}"
+    );
+    // 已映射 + 已授予：Sessions 内的 Query 正常往返。
+    let response = client
+        .query(AppQuery::SessionGet {
+            session_id,
+            timeline_after_sequence: None,
+            timeline_limit: None,
+        })
+        .await
+        .expect("mapped query allowed with Sessions grant");
     assert!(matches!(response.response, AppResponse::Data(_)));
 
     // Runs 未授予 → RunStart 被 Host 能力门显式拒绝（先于业务分发）。

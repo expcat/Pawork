@@ -2,7 +2,7 @@
 
 > 本文档是**设计事实源**：包布局与激活映射、冻结契约与「追加不重写」三道保险、各阶段功能设计及其到参照项目的映射、已确认扩展功能族与候选功能、发布策略。
 >
-> **V3 状态说明（2026-08-18）**：V2（S0–S13）已收官（总结见 [v2-summary.md](v2-summary.md)），当前执行 V3 重构线 R0–R9（[../ROADMAP.md](../ROADMAP.md)）。本文 §2 的包布局与 §4 的阶段映射描述 **V2 交付实态**，仍是当前代码的事实源；V3 目标布局（39→21）见 [../plan/R1-package-consolidation.md](../plan/R1-package-consolidation.md)，R1 收口后 §2 重写。§3 冻结契约在 V3 期间继续有效（R6/R7 的版本化演进除外）。原 S0–S13 阶段任务书已删除，历史见 [v2-summary.md](v2-summary.md) 与 git 历史。
+> **V3 状态说明（2026-08-18）**：V2（S0–S13）已收官（总结见 [v2-summary.md](v2-summary.md)），当前执行 V3 重构线 R0–R9（[../ROADMAP.md](../ROADMAP.md)）。本文 §2 的包布局与 §4 的阶段映射描述 **V2 交付实态**（S13 收官时 39 成员；R0 已归档 memory/review 并裁剪 transport remote、workflow 三域外模块、teams、provider-control 大块，当前 workspace 实测 37 成员，当前代码以 `cargo metadata` 为准）；V3 目标布局（37→21）见 [../plan/R1-package-consolidation.md](../plan/R1-package-consolidation.md)，R1 收口后 §2 重写。§3 冻结契约在 V3 期间继续有效（R6/R7 的版本化演进除外）。原 S0–S13 阶段任务书已删除，历史见 [v2-summary.md](v2-summary.md) 与 git 历史。
 >
 > 关联文档：[../ROADMAP.md](../ROADMAP.md)（任务总索引）· [../v3_plan.md](../v3_plan.md)（任务开启编排）· [../plan/](../plan/)（阶段任务书 R0–R9）· [gui-design.md](gui-design.md)（Desktop GUI 设计）· [references.md](references.md)（参照项目手册）· [task-guide.md](task-guide.md)（任务实现规范）· [v2-summary.md](v2-summary.md)（V2 归档总结）· [v1-migration-reference.md](v1-migration-reference.md)（V1 Review 与迁移词典全文）。
 
