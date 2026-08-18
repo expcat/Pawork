@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use pawork_blob_store::{CheckpointService, FileSnapshot, RunCheckpoint};
+use pawork_storage::blob::{CheckpointService, FileSnapshot, RunCheckpoint};
 use pawork_domain::{
     AgentEvent, ArtifactId, CancellationToken, CheckpointId, RunId, SessionId,
 };

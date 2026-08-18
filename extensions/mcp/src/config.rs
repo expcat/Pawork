@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use pawork_auth::SecretBackend;
-use pawork_config::ResolvedConfig;
+use pawork_workspace::config::ResolvedConfig;
 use pawork_exec::{SandboxBackend, SandboxPolicy};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -487,7 +487,7 @@ fn validate_server_name(name: &str) -> Result<(), McpError> {
 mod tests {
     use super::*;
     use pawork_auth::MemoryBackend;
-    use pawork_config::{ConfigTier, Loader};
+    use pawork_workspace::config::{ConfigTier, Loader};
     use pawork_exec::{NativeRestricted, SandboxPolicy};
     use serde_json::json;
 

@@ -16,7 +16,7 @@ use pawork_domain::{
     SessionId, TenantId, TextContent, WorkspaceId,
 };
 use pawork_exec::{OwnerSessionId, PtyCreateSpec, PtyEvent, PtyService, PtyWindowSize, TerminalId};
-use pawork_session::{SessionRecord, SessionTree};
+use pawork_storage::session::{SessionRecord, SessionTree};
 use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
 use pawork_gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{
@@ -401,7 +401,7 @@ impl GuiHostAdapter {
         self.instance.clone()
     }
 
-    pub async fn session_store(&self) -> Result<pawork_session::SessionStore, GuiHostError> {
+    pub async fn session_store(&self) -> Result<pawork_storage::session::SessionStore, GuiHostError> {
         self.core
             .read()
             .await
@@ -439,12 +439,12 @@ impl GuiHostAdapter {
         Self::host_error(code, error.to_string())
     }
 
-    fn session_error(error: pawork_session::SessionStoreError) -> GuiHostError {
+    fn session_error(error: pawork_storage::session::SessionStoreError) -> GuiHostError {
         let code = match error {
-            pawork_session::SessionStoreError::SessionNotFound(_)
-            | pawork_session::SessionStoreError::ParentEventNotFound(_)
-            | pawork_session::SessionStoreError::BranchNotFound { .. } => "not_found",
-            pawork_session::SessionStoreError::BranchAlreadyExists { .. } => "conflict",
+            pawork_storage::session::SessionStoreError::SessionNotFound(_)
+            | pawork_storage::session::SessionStoreError::ParentEventNotFound(_)
+            | pawork_storage::session::SessionStoreError::BranchNotFound { .. } => "not_found",
+            pawork_storage::session::SessionStoreError::BranchAlreadyExists { .. } => "conflict",
             _ => "app_error",
         };
         Self::host_error(code, error.to_string())
@@ -1776,7 +1776,7 @@ mod tests {
 
     async fn core_with_turn() -> (Arc<AppCore>, tempfile::TempDir, SessionId) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
             .await
             .expect("store");
         let provider = MockProvider::sequence(vec![
@@ -1860,7 +1860,7 @@ mod tests {
     #[tokio::test]
     async fn workspace_list_includes_registered_roots() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
             .await
             .expect("store");
         let provider = MockProvider::sequence(vec![MockScript::new().complete()]);
@@ -1921,7 +1921,7 @@ mod tests {
     #[tokio::test]
     async fn run_start_reports_run_and_registry_drains_after_completion() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
             .await
             .expect("store");
         let provider = MockProvider::sequence(vec![
@@ -1973,7 +1973,7 @@ mod tests {
     #[tokio::test]
     async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
             .await
             .expect("store");
         let provider = MockProvider::sequence(vec![
@@ -2041,7 +2041,7 @@ mod tests {
         };
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         let dir = tempfile::tempdir().expect("tempdir");
-        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
             .await
             .expect("store");
         let core = AppCore::from_parts(
@@ -2120,7 +2120,7 @@ mod tests {
     #[tokio::test]
     async fn command_idempotency_replays_first_response_without_repeating_side_effects() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
             .await
             .expect("store");
         let provider = MockProvider::sequence(vec![MockScript::new().wait_for_cancellation()]);
@@ -2238,7 +2238,7 @@ mod tests {
     #[tokio::test]
     async fn distinct_gui_clients_do_not_collide_on_command_id() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
             .await
             .expect("store");
         let provider = MockProvider::sequence(vec![MockScript::new().wait_for_cancellation()]);
@@ -2409,7 +2409,7 @@ mod tests {
     #[tokio::test]
     async fn run_start_second_turn_includes_session_history() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
             .await
             .expect("store");
         let provider = MockProvider::sequence(vec![
@@ -2491,7 +2491,7 @@ mod tests {
         wait_completed(&mut events, &second_run).await;
         drop(adapter);
 
-        let (store, _) = pawork_session::SessionStore::open(db)
+        let (store, _) = pawork_storage::session::SessionStore::open(db)
             .await
             .expect("reopen store");
         let prepared: Vec<u64> = store
@@ -2561,7 +2561,7 @@ mod tests {
     #[tokio::test]
     async fn run_start_with_provider_does_not_silently_keep_same_model_id() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
             .await
             .expect("store");
         let core = AppCore::from_parts(

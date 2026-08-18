@@ -15,13 +15,13 @@ use pawork_domain::{
     ApprovalDecision, CancellationToken, ContentPart, ErrorContext, EventId, EventSequence,
     MessageId, RequestId, RunId, TextContent, ToolCallId, ToolDescriptor, WorkspaceId,
 };
-use pawork_blob_store::CheckpointService;
+use pawork_storage::blob::CheckpointService;
 use pawork_engine::{
     now_timestamp, ApprovalGate, AutoCompactionReason, CompactionOutcome, LoopContext,
     LoopEventEmitter, PendingToolInvocation, ToolCallResult, WriteCheckpoint,
 };
 use pawork_policy::{ApprovalMode, ApprovalPrompt, PolicyDecision, PolicyEngine, PolicyInput, RiskLevel};
-use pawork_session::{
+use pawork_storage::session::{
     CompactionEngine, CompactionReason as SessionCompactionReason, RetentionInputs,
     RetentionMessage, RetentionToolCall, SessionStore, ToolCallRetentionState,
 };
@@ -47,7 +47,7 @@ pub(crate) struct SessionLoopCtx<'a> {
     /// 压缩回调需要的持久化宿主；测试替身可为 None（engine 退回消息层压缩）。
     pub store: Option<&'a SessionStore>,
     pub session_id: Option<pawork_domain::SessionId>,
-    pub token_estimator: Option<Arc<dyn pawork_session::TokenEstimator>>,
+    pub token_estimator: Option<Arc<dyn pawork_storage::session::TokenEstimator>>,
     pub checkpoints: Option<CheckpointService>,
     pub workspace_roots: Vec<PathBuf>,
 }
@@ -244,7 +244,7 @@ impl LoopContext for SessionLoopCtx<'_> {
         // 让持久化投影与 engine 重建历史在同一边界折叠。
         let engine = CompactionEngine::with_policy(
             store,
-            pawork_session::RetentionPolicy {
+            pawork_storage::session::RetentionPolicy {
                 retained_turns: (crate::RETAINED_MESSAGES / 2) as u32,
                 ..Default::default()
             },

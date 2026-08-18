@@ -54,7 +54,7 @@
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
 | A ✅(2026-08-19) | ADR-039(布局 + 不合并清单 + 取舍)用户确认;api→domain(契约包,golden 先行);diagnostics 活符号迁 `apps/pawork` 并撤包 | docs/adr/、foundation/{domain,api,diagnostics}、apps/pawork、全部引用 api 的 Cargo.toml/use | 串行(契约包单一 owner) |
-| B | 三大合并:storage(sqlite+session+blob)∥ providers(net+core+adapters)∥ workspace(core+resources+config+compat) | storage/*、foundation/sqlite、providers/*、net/、workspace/*、clients/compat | 并行 ×3(写入集不相交;下游 use 修复各自负责) |
+| B ✅(2026-08-19) | 三大合并:storage(sqlite+session+blob)∥ providers(net+core+adapters)∥ workspace(core+resources+config+compat) | storage/*、foundation/sqlite、foundation/config、providers/*、net/、workspace/*、clients/compat;下游:storage 路修 cli/gui-client/protocol-probe/control-plane Cargo.toml,workspace 路修 mcp/tools,host/app 装配缝由主代理串行收口 | 并行 ×3(写入集不相交;下游 use 修复各自负责) |
 | C | tools(+mcp)∥ control-plane(core+quota+provider-control 核心) | execution/tools、extensions/mcp、control-plane/* | 并行 ×2 |
 | D | host 与 clients:app(+gui-server)∥ cli(+channels)∥ client(+sdk、probe→tests/example) | host/{app,gui-server}、host/{cli,channels}、clients/{gui-client,sdk}、apps/protocol-probe | 并行 ×3(app 与 cli 的接缝——cli 改经 app 取 GuiHost——由 app 路先定 trait 位置,cli 路后接;若冲突改串行) |
 | E | 收口:members 定稿 21;剩余未动包 `git mv` 到新布局;design.md §2 重写为 V3 布局;README 仓库结构更新;依赖红线断言更新(desktop deny-list、`cargo tree` 无环);全量受影响包定向测试 | 根 Cargo.toml、全目录 mv、docs/design.md、README.md、各红线测试 | 串行(主代理) |
@@ -63,16 +63,24 @@
 
 | 契约 | golden 位置(迁移后) |
 | --- | --- |
-| 事件信封 v1 / schema v10 | domain(类型)+ storage `session/`(DDL/迁移/信封 golden) |
+| 事件信封 v1 / schema v10 | domain(类型 + 信封字节 golden:`foundation/domain/tests/events_golden.rs` + fixtures)+ storage `session/`(DDL/迁移/export/快照测试锚,无独立 SQL golden) |
 | Provider 契约 13 变体 serde | domain `provider_api`(**形状不变,tag/content 不动**) |
 | blob `PWB1` + checkpoint | storage `blob/` golden |
 | GUI 帧 / headless-json / `schemas/` typegen | protocol(不动;typegen 链 `pawork-domain/typegen` 保持) |
 | `PolicyDecision` / `ApprovalMode` | policy(不动) |
-| config 六层矩阵 | workspace `config/`(44 测试随迁) |
+| config 六层矩阵 | workspace `config/`(47 测试随迁,2026-08-19 波 B 核查重数) |
 | usage `dedup_key` / audit JSONL | control-plane(fixtures 随迁) |
 | MCP 契约(59 测试)+ rmcp 隔离断言 | tools `mcp/` |
 
 > 2026-08-18 波 A 核查补注(golden 缺口,已于 2026-08-19 波 A 落实):`ProviderStreamEvent` 13 变体、`ProviderError`、`CanonicalModelRequest`、`ToolResult` 原仅有内存 roundtrip 覆盖;波 A 已按「golden 先行」补齐字节级夹具并随类型整组平移 `foundation/domain/tests/{contract_golden.rs,fixtures/}`,迁移前后零 diff。diagnostics 两测试(Redactor/RedactingFmtLayer)已随迁 `apps/pawork/src/redact.rs`。
+
+> 2026-08-19 波 B 三路核查补注(实态重验,已按实态执行):
+> - 写入集补 `foundation/config`(config 实态在 foundation/,不在 workspace/);compat 实态在 clients/(目录错位,本波并入 workspace `import/`)。
+> - `workspace/core` 对 policy 的生产依赖为 3 处(path.rs:11/45/87),另 2 处仅测试;任务书「5 处」以实态为准。
+> - storage feature 实态:session/blob 原无独立 feature,blob `default = []` 且 protected/checkpoint opt-in,session compaction opt-in;control-plane 的 `pawork-sqlite` 为死依赖(零源码引用,`SqliteUsageLedger` 自开 rusqlite 连接)。本波落地 ADR-039 D6 分层:`default = ["session","blob"]`,compaction/checkpoint/protected 保持 opt-in;control-plane 直接移除死依赖(prod optional + dev),「只取 Actor」以不依赖达成。
+> - providers:`channels/` = adapters 现有通道模块(anthropic/、chatgpt.rs、xai.rs、api_key.rs)内聚重组,cfg feature 门控原样保留;host 通道表(`host/app/src/channels.rs`)不在本波写入集。adapters 原 `usage.rs` 薄 re-export 与 core `usage` 合一。
+> - 信封字节 golden 实态在 domain(非 session);v2-summary §4「golden 在 pawork-session」与 design.md:33,47 的过时表述由波 E 统一修正。desktop deny-list 与 gui-design.md 的包名引用(session/sqlite/provider-core)同样在波 E 更新。
+> - host/app 同时是三路下游,装配缝(Cargo.toml + use)由主代理在三路完成后串行收口,不并行派发。
 
 ## 6. 验证
 

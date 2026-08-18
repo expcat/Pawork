@@ -11,7 +11,7 @@ use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
     StopReason, TextContent,
 };
-use pawork_net::http::HttpClientConfig;
+use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{XaiConfig, XaiProvider};
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

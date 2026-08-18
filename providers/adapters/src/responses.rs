@@ -17,9 +17,9 @@ use pawork_domain::{
     CancellationToken, ContentPart, ImageContent, ImageSource, Message, MessageRole, ProviderId,
     StopReason, TokenUsage, ToolCallId,
 };
-use pawork_net::http::{HttpClient, HttpClientConfig};
-use pawork_net::sse::SseParser;
-use pawork_provider_core::{clamp_reasoning_to_thinking, ReasoningProtector};
+use crate::net::http::{HttpClient, HttpClientConfig};
+use crate::net::sse::SseParser;
+use crate::{clamp_reasoning_to_thinking, ReasoningProtector};
 use serde_json::{json, Map, Value};
 
 use crate::error_table::normalize_vendor_error;

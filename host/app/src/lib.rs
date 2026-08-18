@@ -34,7 +34,7 @@ use pawork_domain::{
     CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
     ProviderErrorKind, ProviderEventSink, ResolvedCredential, ToolDefinition,
 };
-use pawork_config::{
+use pawork_workspace::config::{
     api_key_env_name, ConfigError, Loader, PaworkConfig, ProviderConfig,
 };
 use pawork_domain::{
@@ -58,8 +58,8 @@ use pawork_auth::{
     MemoryBackend, OAuthRefreshConfig, SecretBackend,
 };
 use pawork_policy::PolicyEngine;
-use pawork_provider_core::{CatalogEntry, ModelRegistry};
-use pawork_session::{SessionStore, SessionStoreError};
+use pawork_providers::{CatalogEntry, ModelRegistry};
+use pawork_storage::session::{SessionStore, SessionStoreError};
 use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
 use pawork_workspace::{FileIndex, FileIndexError, WorkspaceError, WorkspaceService};
 use thiserror::Error;
@@ -106,9 +106,9 @@ pub use pawork_workflow::plan::PlanSnapshot;
 pub use pawork_workflow::task::TaskSnapshot;
 pub use plan_host::review_status_label;
 pub use tasks_host::parse_task_kind;
-pub use pawork_compat::ExternalSource as CompatExternalSource;
+pub use pawork_workspace::import::ExternalSource as CompatExternalSource;
 pub use pawork_policy::{ApprovalMode, RiskLevel};
-pub use pawork_session::{SessionExport, SessionRecord, EXPORT_SCHEMA_VERSION};
+pub use pawork_storage::session::{SessionExport, SessionRecord, EXPORT_SCHEMA_VERSION};
 
 /// 从配置文件与 CLI 覆盖构造 [`AppCore`] 的选项。
 #[derive(Clone, Default)]
@@ -217,9 +217,9 @@ pub enum AppError {
     #[error("{0}")]
     InvalidInstance(String),
     #[error(transparent)]
-    Checkpoint(#[from] pawork_blob_store::CheckpointError),
+    Checkpoint(#[from] pawork_storage::blob::CheckpointError),
     #[error(transparent)]
-    Artifact(#[from] pawork_blob_store::ArtifactStoreError),
+    Artifact(#[from] pawork_storage::blob::ArtifactStoreError),
     #[error(transparent)]
     Git(#[from] pawork_git::GitError),
     #[error("checkpoint store is not open")]
@@ -231,9 +231,9 @@ pub enum AppError {
     #[error(transparent)]
     Mcp(#[from] pawork_mcp::McpError),
     #[error(transparent)]
-    Resources(#[from] pawork_resources::ResourceLoadError),
+    Resources(#[from] pawork_workspace::resources::ResourceLoadError),
     #[error(transparent)]
-    Compat(#[from] pawork_compat::error::CompatError),
+    Compat(#[from] pawork_workspace::import::error::CompatError),
     #[error(transparent)]
     FileIndex(#[from] FileIndexError),
     #[error("{0}")]
@@ -327,7 +327,7 @@ pub struct AppCore {
     /// engine 侧启发式 token 估算器（预算 / 截断 / 压缩判定共用）。
     heuristic: Arc<HeuristicEstimator>,
     /// session 侧窄口 TokenEstimator（压缩快照统计），由 heuristic 桥接。
-    session_estimator: Arc<dyn pawork_session::TokenEstimator>,
+    session_estimator: Arc<dyn pawork_storage::session::TokenEstimator>,
     adapter_protocol: AdapterProtocol,
     store: Option<SessionStore>,
     scheduler: Arc<ToolScheduler>,
@@ -345,10 +345,10 @@ pub struct AppCore {
     pub(crate) workspace_roots: Vec<PathBuf>,
     pub(crate) workspaces: WorkspaceService,
     pub(crate) file_index: FileIndex,
-    pub(crate) resource_loader: Option<pawork_resources::ResourceLoader>,
+    pub(crate) resource_loader: Option<pawork_workspace::resources::ResourceLoader>,
     pub(crate) mcp_servers: Vec<extensions::McpServerSlot>,
-    pub(crate) checkpoints: Option<pawork_blob_store::CheckpointService>,
-    pub(crate) artifacts: Option<pawork_blob_store::ArtifactStore>,
+    pub(crate) checkpoints: Option<pawork_storage::blob::CheckpointService>,
+    pub(crate) artifacts: Option<pawork_storage::blob::ArtifactStore>,
     pub(crate) control: control::ControlPlaneRuntime,
     pub(crate) tasks: pawork_workflow::task::TaskManager,
     pub(crate) tasks_path: Option<PathBuf>,
@@ -361,7 +361,7 @@ pub struct AppCore {
 /// 把 engine 的完整估算器桥接到 session 侧窄口 trait（依赖倒置的宿主实现）。
 struct SessionTokenEstimatorBridge(Arc<HeuristicEstimator>);
 
-impl pawork_session::TokenEstimator for SessionTokenEstimatorBridge {
+impl pawork_storage::session::TokenEstimator for SessionTokenEstimatorBridge {
     fn count_text(&self, text: &str) -> u64 {
         self.0.count_text(text)
     }
@@ -629,7 +629,7 @@ impl AppCore {
         registry: ModelRegistry,
     ) -> Self {
         let heuristic = Arc::new(HeuristicEstimator::default());
-        let session_estimator: Arc<dyn pawork_session::TokenEstimator> =
+        let session_estimator: Arc<dyn pawork_storage::session::TokenEstimator> =
             Arc::new(SessionTokenEstimatorBridge(heuristic.clone()));
         Self {
             provider,
@@ -695,7 +695,7 @@ impl AppCore {
         let redirect = reqwest::redirect::Policy::none();
         match &config.proxy_url {
             Some(proxy) => {
-                let proxy = pawork_net::http::loopback_aware_proxy(proxy)
+                let proxy = pawork_providers::net::http::loopback_aware_proxy(proxy)
                     .map_err(|err| AppError::InvalidProxy(err))?;
                 reqwest::Client::builder()
                     .proxy(proxy)
@@ -740,8 +740,8 @@ impl AppCore {
     pub async fn open_checkpoints(&mut self, root: impl AsRef<Path>) -> Result<(), AppError> {
         let root = root.as_ref();
         std::fs::create_dir_all(root)?;
-        let store = pawork_blob_store::ArtifactStore::open(root).await?;
-        let checkpoints = pawork_blob_store::CheckpointService::open(store.clone()).await?;
+        let store = pawork_storage::blob::ArtifactStore::open(root).await?;
+        let checkpoints = pawork_storage::blob::CheckpointService::open(store.clone()).await?;
         self.artifacts = Some(store);
         self.checkpoints = Some(checkpoints);
         Ok(())
@@ -1544,7 +1544,7 @@ impl AppCore {
                     .await
                     {
                         Ok(result) => result,
-                        Err(_) => Err(pawork_provider_core::ProbeError::new(
+                        Err(_) => Err(pawork_providers::ProbeError::new(
                             "runtime model probe timed out",
                         )),
                     };
@@ -1637,7 +1637,7 @@ impl AppCore {
     pub fn estimate_cost_for(&self, model: &ModelId, usage: &TokenUsage) -> Option<Cost> {
         let entry = self.registry.resolve(model.as_str())?;
         let pricing = entry.pricing.as_ref()?;
-        Some(pawork_provider_core::estimate_cost(usage, pricing))
+        Some(pawork_providers::estimate_cost(usage, pricing))
     }
 
     /// 手动压缩（REPL /compact）：与自动链同一 engine 函数与事件序，
@@ -2071,7 +2071,7 @@ fn apply_transport_overrides(registry: &mut ModelRegistry, config: &PaworkConfig
 /// 能力 fail-closed 全 false，定价 None——不编造）。
 fn apply_config_models(
     registry: &mut ModelRegistry,
-    models: &[pawork_config::ModelConfig],
+    models: &[pawork_workspace::config::ModelConfig],
     provider_id: &ProviderId,
 ) {
     for config in models {
@@ -2121,7 +2121,7 @@ mod tests {
         TextContent, TokenUsage,
     };
     use pawork_engine::EngineError;
-    use pawork_session::DEFAULT_BRANCH_ID;
+    use pawork_storage::session::DEFAULT_BRANCH_ID;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -3114,7 +3114,7 @@ mod tests {
         let mut registry = ModelRegistry::builtin();
         apply_config_models(
             &mut registry,
-            &[pawork_config::ModelConfig {
+            &[pawork_workspace::config::ModelConfig {
                 id: "glm-5.2".into(),
                 context_window: Some(200_000),
                 max_output: Some(16_384),
@@ -3140,7 +3140,7 @@ mod tests {
         let mut zero_window = ModelRegistry::builtin();
         apply_config_models(
             &mut zero_window,
-            &[pawork_config::ModelConfig {
+            &[pawork_workspace::config::ModelConfig {
                 id: "glm-5.2".into(),
                 context_window: Some(0),
                 max_output: None,
@@ -3848,7 +3848,7 @@ mod tests {
         let before = std::fs::metadata(&source).expect("meta").modified().ok();
         let before_bytes = std::fs::read(&source).expect("bytes");
         let report = core
-            .apply_compat_import(pawork_compat::ExternalSource::Claude, Some(home.path()))
+            .apply_compat_import(pawork_workspace::import::ExternalSource::Claude, Some(home.path()))
             .expect("import");
         assert!(report.sources_unchanged);
         assert_eq!(
@@ -3869,7 +3869,7 @@ mod tests {
             .export_session_doc(Some(session.as_str()))
             .await
             .expect("export");
-        assert_eq!(export.schema_version, pawork_session::EXPORT_SCHEMA_VERSION);
+        assert_eq!(export.schema_version, pawork_storage::session::EXPORT_SCHEMA_VERSION);
         let dir = tempfile::tempdir().expect("import store");
         let path = dir.path().join("session.db");
         let (store, _) = SessionStore::open(&path).await.expect("store");

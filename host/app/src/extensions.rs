@@ -15,7 +15,7 @@ use pawork_mcp::config::{McpConfig, StdioSandboxRuntime, TransportSpec};
 use pawork_mcp::sandbox::apply_mcp_stdio_env_hygiene;
 use pawork_mcp::manager::{ConnectionState, ManagedMcpClient};
 use pawork_mcp::{McpError, McpPeer};
-use pawork_resources::{
+use pawork_workspace::resources::{
     CurrentPathKind, ResourceInstructionKind, ResourceLoader, ResourceLoaderOptions,
     ResourceOrigin, ResourceRequest, ResourceSelection, WorkspaceRelativePath,
 };
@@ -462,7 +462,7 @@ fn builtin_registry(workspaces: &WorkspaceService) -> Result<ToolRegistry, AppEr
     Ok(registry)
 }
 
-fn mcp_config_from_pawork(config: &pawork_config::PaworkConfig) -> Result<McpConfig, McpError> {
+fn mcp_config_from_pawork(config: &pawork_workspace::config::PaworkConfig) -> Result<McpConfig, McpError> {
     match config.extra.get("mcp") {
         Some(value) => McpConfig::from_value(value),
         None => Ok(McpConfig::default()),

@@ -52,7 +52,7 @@ providers/storage 单体化后,「改一个 adapter 重编整包」。接受该�
 
 - provider-core 不依赖 net → providers 包内模块可见性(`net/` 不对 `registry/` 等暴露)+ 定向测试。
 - rmcp 隔离断言 `public_sources_do_not_mention_rmcp` 随迁为 tools 包 `mcp/` 模块级测试。
-- storage feature 分层:`sqlite` 基座常开,`session`/`blob` default-on;control-plane 以 `default-features = false, features = ["sqlite"]` 只取 Actor 面。
+- storage feature 分层:`sqlite` 基座常开(`pawork-storage` 中不设同名 feature),`session`/`blob` default-on;control-plane 以 `default-features = false` 只取 Actor 面(2026-08-19 落实修正:经核查 control-plane 对 sqlite Actor 零引用,死依赖直接移除,见波 B 落实记录)。
 - engine domain-only 断言、desktop deny-list 更新、`cargo tree` 无环与闭包断言:波 E 建立/更新。
 
 ### D7 — 契约保护(golden 先行)
@@ -77,6 +77,18 @@ providers/storage 单体化后,「改一个 adapter 重编整包」。接受该�
 - **diagnostics 撤包**:`Redactor`/`RedactingFmtLayer` 与两测试迁 `apps/pawork/src/redact.rs`(宿主增 `regex` 依赖);`foundation/diagnostics` 删除。
 - **验证**:`cargo test -p` domain(含迁移后 golden 4+信封 golden 3)/cli(100)/mcp(59,含 rmcp 隔离断言)/quota/auth/engine/testkit/app/tools/providers/provider-core/net/pawork(bin,脱敏 2)全绿;protocol 含 typegen 全绿;desktop 与 protocol-probe `cargo check` 绿;members 37→35;`cargo tree -p pawork` 闭包 817→800 行,无环、无 api/diagnostics。
 - **遗留**:D5 编译粒度实测数据待波 B/C(providers/storage 单体化)收口补录;design.md §2、README、AGENTS.md 成员数回写在波 E。
+
+### 波 B(2026-08-19,storage / providers / workspace 三大合并)
+
+- **storage**:`foundation/sqlite` 改名 `pawork-storage`,吸收 `storage/session`→`session/`、`storage/blob`→`blob/`;D6 feature 分层落地:`default = ["session","blob"]`,`compaction`/`checkpoint`/`protected` 保持 opt-in,sqlite 基座常开。control-plane 的 `pawork-sqlite` 经核查为死依赖(零源码引用,`SqliteUsageLedger` 自开 rusqlite 连接),prod optional 与 dev 两处一并移除——「只取 Actor 面」以「不依赖」达成,`sqlite = ["dep:rusqlite"]` feature 保留。
+- **providers**:`providers/adapters` 吸收 `net/net`→`net/`(http/sse/retry 包内常开)、`providers/core`→`registry/pricing/usage/negotiate/reasoning/error` 六根模块;通道内聚 `channels/`(anthropic/、chatgpt、xai、api_key),cfg feature 门控与 `required-features` 集成测试原样;adapters 原 `usage.rs` 薄 shim 与 core `usage` 合一。D6「core 不依赖 net」降级为模块纪律 + 源扫描定向测试(`core_modules_do_not_mention_crate_net`)。host 通道表本体(`host/app/src/channels.rs`)未迁入 providers,仅随装配缝替换其中 config 的 use 路径。
+- **workspace**:`workspace/core` 吸收 `resources/`、`config/`、compat→`import/`(五来源 fixtures 随迁);mcp 改 `pawork_workspace::config`,tools 零改动。
+- **host/app 装配缝**:主代理串行收口,7 个解散包依赖收敛为 `pawork-storage`(features compaction+checkpoint)/`pawork-workspace`/`pawork-providers` 三个方向,use 路径 12 文件机械替换。
+- **根 Cargo.toml 最小触碰(对 D1 字面的偏离记录)**:`net/*`、`storage/*` 两 glob 在成员清空后被 Cargo 拒绝(空 glob 报错),先行移除这两条 glob 并注记;终局 members 定稿与目录迁移仍集中波 E。空目录 `net/`、`storage/` 已删。
+- **验证**:storage 默认 86+5 绿,全 feature 133 + PWB1 golden 4(`pwb1_valid_hex_*`、`seal_for_test_matches_pwb1_golden_hex` 实际运行)+ read_range 5 绿,`--no-default-features` check 绿;providers 默认 134+8+16、全通道 140+ 各集成测试绿,模块纪律测试在位;workspace 112+12+14 绿(config 47 测含 `six_layer_default_model_matrix_and_profile_provenance`,compat 五来源 smoke 绿);app 93、mcp 64、tools 65、cli 30、client 6+7、control-plane 69、domain 44+contract_golden 4+events_golden 3、desktop 34(含 `desktop_direct_deps_stay_on_client_deny_list`)全绿;protocol-probe 9 场景绿;28 成员全体 `cargo check` 绿。
+- **members 35→28**;`cargo tree -p pawork` 闭包 800→751 行;无环;解散七包名在闭包与 Cargo.lock 零残留。
+- **D5 实测补录**:providers 包 touch-单文件增量 `cargo check -p`——合并前(HEAD 基线 worktree,独立 target)≈0.14–0.16s,合并后 ≈3.7–4.7s。编译粒度代价成立但绝对值仍在秒级,维持 D5 取舍。
+- **偏差/遗留**:①三路验证期间因根 workspace 暂不可解析,子代理在 /tmp 隔离拷贝验证,收口后全部由主代理在仓库根复跑为上方结果;②protocol-probe `snapshot-reconnect` 一次批量下偶发 10s 帧超时(单跑 3/3 绿,纯路径改名不涉该链路),判定既有偶发,已登记 ROADMAP §4 待 R9 复跑;③design.md §2、README、v2-summary §4(信封 golden 位置表述)、gui-design.md、desktop deny-list 包名、AGENTS.md 成员数 —— 波 E 统一回写。
 
 ## 相关
 

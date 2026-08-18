@@ -260,7 +260,7 @@ mod tests {
     use pawork_auth::{
         load_default_oauth_credential, resolve_oauth_credential, MemoryBackend,
     };
-    use pawork_config::PaworkConfig;
+    use pawork_workspace::config::PaworkConfig;
     use pawork_domain::{CancellationToken, ModelId};
     use serde_json::json;
     use std::sync::Arc;

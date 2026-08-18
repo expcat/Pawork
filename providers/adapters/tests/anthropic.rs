@@ -165,7 +165,7 @@ fn request(model: &str) -> CanonicalModelRequest {
 
 fn provider(server: &MockServer) -> AnthropicProvider {
     let mut config = AnthropicConfig::new(server.uri()).with_provider_id("test");
-    config.http = pawork_net::http::HttpClientConfig::builder()
+    config.http = pawork_providers::net::http::HttpClientConfig::builder()
         .disable_system_proxy()
         .build();
     AnthropicProvider::new(

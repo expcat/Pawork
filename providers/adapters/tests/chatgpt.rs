@@ -11,7 +11,7 @@ use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
     StopReason, TextContent,
 };
-use pawork_net::http::HttpClientConfig;
+use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{ChatGptConfig, ChatGptProvider};
 use wiremock::matchers::{body_partial_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};

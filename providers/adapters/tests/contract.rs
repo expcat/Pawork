@@ -189,7 +189,7 @@ fn provider(server: &MockServer, timeout: Option<Duration>) -> OpenAiCompatibleP
 fn provider_at(base_url: impl Into<String>, timeout: Option<Duration>) -> OpenAiCompatibleProvider {
     let mut config = OpenAiCompatibleConfig::new(base_url).with_provider_id("test");
     // 测试环境禁用系统代理，避免 NO_PROXY/系统代理干扰本地 mock server
-    config.http = pawork_net::http::HttpClientConfig::builder()
+    config.http = pawork_providers::net::http::HttpClientConfig::builder()
         .disable_system_proxy()
         .build();
     if let Some(t) = timeout {
@@ -704,7 +704,7 @@ async fn contract_no_authorization_when_credential_none() {
         .await;
 
     let mut config = OpenAiCompatibleConfig::new(server.uri()).with_provider_id("test");
-    config.http = pawork_net::http::HttpClientConfig::builder()
+    config.http = pawork_providers::net::http::HttpClientConfig::builder()
         .disable_system_proxy()
         .build();
     let p = OpenAiCompatibleProvider::new(config, None).expect("构造 adapter");

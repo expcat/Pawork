@@ -19,18 +19,20 @@ deepseek = []
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-provider-core = { path = "../core" }
-pawork-net = { path = "../../net/net", features = ["http"] }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["sync", "rt"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 futures.workspace = true
 tracing.workspace = true
+reqwest.workspace = true
+bytes.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 wiremock.workspace = true
+proptest.workspace = true
 
 [[test]]
 name = "anthropic"

@@ -4,7 +4,7 @@
 //! `PaworkConfig.extra["provider_protocols"]`（顶层 TOML 表），再加本 crate
 //! 对样例三条 id 的默认表。engine 不读本模块。
 
-use pawork_config::PaworkConfig;
+use pawork_workspace::config::PaworkConfig;
 
 /// host 装配用的协议枚举（不是冻结契约字段）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +77,7 @@ impl std::error::Error for ProtocolError {}
 mod tests {
     use std::collections::BTreeMap;
 
-    use pawork_config::PaworkConfig;
+    use pawork_workspace::config::PaworkConfig;
     use serde_json::json;
 
     use super::*;

@@ -13,7 +13,7 @@ pawork-client = { path = "../../clients/gui-client" }
 pawork-domain = { path = "../../foundation/domain" }
 pawork-gui-server = { path = "../../host/gui-server" }
 pawork-protocol = { path = "../../foundation/protocol" }
-pawork-session = { path = "../../storage/session" }
+pawork-storage = { path = "../../foundation/sqlite", default-features = false, features = ["session"] }
 pawork-testkit = { path = "../../foundation/testkit" }
 pawork-transport = { path = "../../host/transport", features = ["local", "memory"] }
 clap.workspace = true

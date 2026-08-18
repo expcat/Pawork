@@ -10,7 +10,7 @@ description = "Pawork MCP client transports, capability bridge, configuration, a
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
 pawork-tools = { path = "../../execution/tools" }
-pawork-config = { path = "../../foundation/config" }
+pawork-workspace = { path = "../../workspace/core" }
 pawork-auth = { path = "../../providers/auth" }
 pawork-exec = { path = "../../execution/exec" }
 async-trait.workspace = true

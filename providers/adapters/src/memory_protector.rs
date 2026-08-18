@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
 use pawork_domain::ProtectedBlobRef;
-use pawork_provider_core::{ReasoningProtectError, ReasoningProtector};
+use crate::{ReasoningProtectError, ReasoningProtector};
 
 /// 只保证同一实例、同一进程内回放的 reasoning protector。
 pub struct InMemoryReasoningProtector {

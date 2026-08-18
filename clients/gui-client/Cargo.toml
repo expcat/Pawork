@@ -20,7 +20,7 @@ tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
 [dev-dependencies]
 pawork-app = { path = "../../host/app" }
 pawork-gui-server = { path = "../../host/gui-server" }
-pawork-session = { path = "../../storage/session" }
+pawork-storage = { path = "../../foundation/sqlite", default-features = false, features = ["session"] }
 pawork-testkit = { path = "../../foundation/testkit" }
 pawork-transport = { path = "../../host/transport" }
 serde_json.workspace = true

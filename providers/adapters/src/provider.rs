@@ -11,8 +11,8 @@ use pawork_domain::{
     CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider, ModelResponseSummary,
     ProviderError, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, ResolvedCredential,
 };
-use pawork_net::http::{HttpClient, HttpClientConfig};
-use pawork_net::sse::SseParser;
+use crate::net::http::{HttpClient, HttpClientConfig};
+use crate::net::sse::SseParser;
 use serde_json::Value;
 
 use crate::stream::{chunk_to_events, is_done, ChunkState};

@@ -9,11 +9,10 @@ description = "Pawork 控制面：tenant/identity、usage ledger、audit JSONL"
 
 [features]
 default = ["sqlite"]
-sqlite = ["dep:rusqlite", "dep:pawork-sqlite"]
+sqlite = ["dep:rusqlite"]
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-sqlite = { path = "../../foundation/sqlite", optional = true }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -26,4 +25,3 @@ tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 rusqlite.workspace = true
-pawork-sqlite = { path = "../../foundation/sqlite" }

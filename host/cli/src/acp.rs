@@ -8,7 +8,7 @@ use pawork_channels::acp::wire::{ERROR_PARSE, JsonRpcError};
 use pawork_channels::acp::OutboxItem;
 use pawork_channels::{AcpHost, JsonRpcMessage};
 use pawork_protocol::adapter::SessionRegistry;
-use pawork_session::SqliteClientSessionRegistryStore;
+use pawork_storage::session::SqliteClientSessionRegistryStore;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
 use tokio::sync::Mutex;

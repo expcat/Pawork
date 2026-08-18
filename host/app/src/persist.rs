@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use pawork_domain::AgentEventEnvelope;
 use pawork_engine::{AgentEventSink, EngineError};
-use pawork_session::SessionStore;
+use pawork_storage::session::SessionStore;
 
 /// persist-first：先 `append_event`，成功后再交给渲染 sink。
 ///

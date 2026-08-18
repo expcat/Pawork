@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use pawork_blob_store::{ArtifactStore, FileSnapshot};
+use pawork_storage::blob::{ArtifactStore, FileSnapshot};
 use pawork_domain::{CancellationToken, SessionId};
 use pawork_git::diff::FileStatus;
 use pawork_git::{
@@ -241,7 +241,7 @@ fn normalize_path(path: &str) -> String {
 async fn snapshot_diff(
     artifacts: Option<&ArtifactStore>,
     roots: &[PathBuf],
-    runs: &[pawork_blob_store::RunCheckpoint],
+    runs: &[pawork_storage::blob::RunCheckpoint],
 ) -> Result<Vec<DiffFile>, AppError> {
     let Some(artifacts) = artifacts else {
         return Ok(Vec::new());

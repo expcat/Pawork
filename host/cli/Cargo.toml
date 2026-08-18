@@ -15,7 +15,7 @@ pawork-domain = { path = "../../foundation/domain" }
 pawork-engine = { path = "../../engine/engine" }
 pawork-gui-server = { path = "../gui-server" }
 pawork-protocol = { path = "../../foundation/protocol" }
-pawork-session = { path = "../../storage/session" }
+pawork-storage = { path = "../../foundation/sqlite", default-features = false, features = ["session"] }
 pawork-transport = { path = "../transport" }
 async-trait.workspace = true
 clap.workspace = true

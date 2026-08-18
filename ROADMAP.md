@@ -56,7 +56,7 @@ V3 由四条目标定义(依据:2026-08-18 五路只读分析——两路包合�
 | 阶段 | 主题 | 关键动作 | 触及范围 | 硬前置 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决 | ADR-038(单机 vs 多租户、remote/teams/三域/account-control 去留);归档约 3.3–3.8 万行零消费者代码;K-07 删除、K-08 停止虚假宣告;死 feature/死声明清理 | 全仓休眠面(workflow/orchestration/control-plane/transport/diagnostics/net/session/engine/host) | 无 | 🟢 |
-| [R1](plan/R1-package-consolidation.md) | 包合并 37→21 | ADR-039(目标布局 + 目录扁平化);api→domain、sqlite+session+blob→storage、net+core+adapters→providers、core+resources+config+compat→workspace、mcp→tools、quota+provider-control→control-plane、gui-server→app、channels→cli、sdk→client、diagnostics 解散、probe→client 测试;golden 随迁 | 全部 crate 的 Cargo.toml/目录/use 路径;design.md §2 重写 | R0 | 🔵(波 A ✅ 2026-08-19,members 35) |
+| [R1](plan/R1-package-consolidation.md) | 包合并 37→21 | ADR-039(目标布局 + 目录扁平化);api→domain、sqlite+session+blob→storage、net+core+adapters→providers、core+resources+config+compat→workspace、mcp→tools、quota+provider-control→control-plane、gui-server→app、channels→cli、sdk→client、diagnostics 解散、probe→client 测试;golden 随迁 | 全部 crate 的 Cargo.toml/目录/use 路径;design.md §2 重写 | R0 | 🔵(波 A ✅ 波 B ✅ 2026-08-19,members 28) |
 | [R2](plan/R2-dependency-governance.md) | 依赖治理 | rand/parking_lot/base64 本地化;notify 8、windows 0.61、portable-pty 0.9、ts-rs 12、reqwest 0.13、toml 1.1、rusqlite 0.40、sha2 0.11 升级;lock 多版本去重断言;rmcp 3.x 专项 | 各 crate Cargo.toml + 少量调用点 | R1 | ⚪ |
 | [R3](plan/R3-protocol-unification.md) | 协议与投影同源化(T3+T5) | 单一 command/capability registry,GUI 帧/headless/ACP 三通道 mapping 同源派生(宣告=授权=实现);Timeline 投影 reducer 下沉 protocol 共享模块,host/desktop 同源 + 投影 golden;OnFailure 档位裁决 | protocol、app、cli(headless/acp)、client、desktop projection | R1(R2 可并行) | ⚪ |
 | [R4](plan/R4-host-decomposition.md) | 宿主拆解与可靠性内核(T2+T8+T9) | app 单体按领域服务拆分(巨 match → registry 分发);幂等 CommandLedger 持久化 + K-02 审批等待前落盘;ACP host actor 化;降级事件化契约(消灭静默 `let _`/回退) | app、cli、storage(幂等表)、protocol(降级事件) | R3 | ⚪ |
@@ -152,6 +152,7 @@ V2 收口时的 K-01~K-10 与其他挂账项(原委见 [docs/v2-summary.md](docs
 | `session_bindings` 孤儿表 | R0 归档 binding 后该表无读写方;迁移 append-only,留表 + 注释登记「预留」,不回滚 DDL | ✅ 已登记(`storage/session/src/migration.rs` v9 注释,2026-08-18) |
 | usage 幂等键冲突(冒烟发现) | R0 波 C 冒烟实证:`host/app/src/control.rs:140` 以 `rec-{run_id}` 为 record_id,含工具调用的多轮迭代在同一 run 下产生多条内容不同的 usage 记录,命中 ledger 幂等键 (tenant, account, record_id) 判 Conflict;失败记录入重试队列,后续运行反复重放同一 warn(如 `rec-run-1787064020223-1`)。既有缺陷,与 R0 改动无关;按 task-guide §1 窄任务修(record_id 加迭代序号或聚合为每 run 一条) | 阶段外窄任务,不阻塞 R0 |
 | PWB1 protected 消费者 | R5 将 ReasoningProtector 接到 ProtectedBlobStore(兑现 S6 注释承诺);若 R5 裁决删除则 PWB1 契约转冻结候审 | R5 波 C |
+| protocol-probe `snapshot-reconnect` 偶发超时 | R1 波 B 收口发现:批量 `cargo test` 下 `snapshot-reconnect` 场景一次「receive frame timed out after 10s」,单独连跑 3 次全绿;波 B 对该链路只有纯路径改名,判定为既有偶发;R9 全量复跑时验证 | R9 复跑核对 |
 
 ---
 

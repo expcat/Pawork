@@ -10,7 +10,7 @@ use pawork_protocol::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppResponse, CommandSource, GuiCapability,
     HandshakeService, API_VERSION, SUPPORTED_API_VERSIONS,
 };
-use pawork_session::SessionStore;
+use pawork_storage::session::SessionStore;
 use pawork_testkit::{MockProvider, MockScript};
 use pawork_transport::{
     ConnectOptions, GuiConnection, GuiListener, GuiTransportClient, MemoryTransport,

@@ -15,7 +15,7 @@ use pawork_protocol::headless::{
 use pawork_protocol::{
     negotiate_api_version_with, AppCommand, AppQuery, AppResponse, SUPPORTED_API_VERSIONS,
 };
-use pawork_session::{ExternalSource, SessionStore};
+use pawork_storage::session::{ExternalSource, SessionStore};
 use tokio::io::{stdin, stdout, BufReader};
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -412,7 +412,7 @@ mod tests {
     }
 }
 
-fn map_report(report: pawork_session::CompatImportReport) -> CompatImportReport {
+fn map_report(report: pawork_storage::session::CompatImportReport) -> CompatImportReport {
     CompatImportReport {
         source: report.source.map(map_source_back),
         session_id: report.session_id,

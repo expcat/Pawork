@@ -3,6 +3,10 @@
 //! 路径安全校验（symlink / `.git` / TOCTOU）委托 `pawork-policy`，
 //! `resolve_relative_path` 对外签名保持不变。
 
+pub mod config;
+pub mod import;
+pub mod resources;
+
 mod file_index;
 mod path;
 

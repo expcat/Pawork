@@ -22,7 +22,7 @@ use pawork_engine::{AgentEventSink, EngineError};
 use pawork_providers::{
     AnthropicConfig, AnthropicProvider, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
-use pawork_session::SessionStore;
+use pawork_storage::session::SessionStore;
 
 #[derive(Default)]
 struct RecordingEvents(Mutex<Vec<AgentEventEnvelope>>);

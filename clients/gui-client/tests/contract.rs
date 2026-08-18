@@ -28,7 +28,7 @@ use pawork_protocol::{
     CommandSource, GlobalSequence, GuiCapability, HandshakeService,
     ProtocolErrorCode, RunState, SnapshotSectionKind, API_VERSION, SUPPORTED_API_VERSIONS,
 };
-use pawork_session::SessionStore;
+use pawork_storage::session::SessionStore;
 use pawork_testkit::{MockProvider, MockScript};
 use pawork_transport::{ConnectOptions, GuiConnection, GuiListener, GuiTransportClient, LocalTransport, TransportEndpoint};
 use serde_json::json;

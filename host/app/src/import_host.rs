@@ -3,13 +3,13 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use pawork_compat::mcp::McpServerConfig as CompatMcpServer;
-use pawork_compat::{
+use pawork_workspace::import::mcp::McpServerConfig as CompatMcpServer;
+use pawork_workspace::import::{
     CompatLoader, CompatPayload, ExternalSource, GlobalSource, ImportCategory, ImportStatus,
 };
-use pawork_config::{workspace_config_path, ConfigTier, PaworkConfig};
+use pawork_workspace::config::{workspace_config_path, ConfigTier, PaworkConfig};
 use pawork_domain::SessionId;
-use pawork_session::{
+use pawork_storage::session::{
     CompatImportReport as SessionCompatReport, ExternalSource as SessionExternalSource,
     PiImportReport, SessionExport,
 };
@@ -195,7 +195,7 @@ impl AppCore {
         &self,
         tool: ExternalSource,
         global_root: Option<&Path>,
-    ) -> Result<(pawork_compat::CompatPlan, Vec<PathBuf>, Vec<FileSnapshot>), AppError> {
+    ) -> Result<(pawork_workspace::import::CompatPlan, Vec<PathBuf>, Vec<FileSnapshot>), AppError> {
         let workspace = self
             .workspace_root()
             .ok_or_else(|| AppError::Import("workspace is not attached".into()))?;

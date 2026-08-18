@@ -159,7 +159,7 @@ pub fn api_key_channel(id: &str) -> Option<pawork_providers::ApiKeyChannel> {
 ///
 /// Device Flow 只需 `device_auth_url`；PKCE 需要 `auth_url` + `redirect_uri`。
 /// 两者同时提供时 device 优先（Device Flow 无回调端口要求）。
-pub fn oauth_override(config: &pawork_config::PaworkConfig, id: &str) -> Option<OAuthPreset> {
+pub fn oauth_override(config: &pawork_workspace::config::PaworkConfig, id: &str) -> Option<OAuthPreset> {
     let table = config.extra.get("oauth")?.get(id)?;
     let string_field = |key: &str| -> Option<String> {
         table.get(key).and_then(|value| value.as_str()).map(String::from)
@@ -196,7 +196,7 @@ pub fn oauth_override(config: &pawork_config::PaworkConfig, id: &str) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_config::PaworkConfig;
+    use pawork_workspace::config::PaworkConfig;
     use serde_json::json;
 
     #[test]
