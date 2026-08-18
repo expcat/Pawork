@@ -172,7 +172,7 @@ Pawork_v2/
 | 10 | `pawork-providers` | providers/adapters | provider-openai-compatible + openai + anthropic + google + xai + zhipu + qwen + moonshot | 15k | W3 | 每厂商一个 feature；openai/xai 两份 Responses 组装器（约 1.3k 行 × 2）下沉为共享模块；厂商错误码归一做成数据表 |
 | 11 | `pawork-auth` | providers/auth | auth-service | 2.0k | W3 | Keychain + OAuth（PKCE/Device/refresh/callback）通用 LLM 认证包 |
 | 12 | `pawork-blob-store` | storage/blob | artifact-store + protected-blob-store + checkpoint-service | 3.3k | W3 | feature：`protected`（AEAD 加密层）/`checkpoint`（写快照回滚）；数据库文件与安全语义保持分离（ADR-032 不破） |
-| 13 | `pawork-session` | storage/session | session-store + compaction-engine | 11k | 内部 | compaction 以 `TokenEstimator` trait 注入解耦后并入（feature `compaction`）；对 client-adapter-api 的反向依赖用 trait 倒置修复（S13-F15 / ADR-037：记录类型 + `SessionRegistryStore` 归 domain，session 不再依赖 protocol）；P16-9 四来源导入解析器收为 `import::formats` 内部模块 |
+| 13 | `pawork-session` | storage/session | session-store + compaction-engine | 11k | 内部 | compaction 以 `TokenEstimator` trait 注入解耦后并入（feature `compaction`）；对 client-adapter-api 的反向依赖已落地（S13-F15 / ADR-037：记录类型 + `SessionRegistryStore` 归 domain，session 不再依赖 protocol）；P16-9 四来源导入解析器收为 `import::formats` 内部模块 |
 | 14 | `pawork-workspace` | workspace/core | workspace-service + file-index | 1.4k | 内部 | file-index 首次接线（`@file` 搜索消费者在 M4 落地） |
 | 15 | `pawork-resources` | workspace/resources | resource-loader | 6.7k | 内部 | 包内分两层：loader 基础设施 / profiles+skills 格式契约 |
 | 16 | `pawork-exec` | execution/exec | process-runtime + sandbox-runtime + pty-service | 4.9k | W1 | **对外发布主打包**（进程树 + Job Object/进程组 + Landlock/Seatbelt/AppContainer + PTY 重连）；agent-domain 类型换中性类型；按 `os/{linux,macos,windows}.rs` 重排 |
@@ -189,7 +189,7 @@ Pawork_v2/
 | 27 | `pawork-memory` | workflow/memory | memory-service | 0.8k | 内部 | Provider 无关记忆抽象；等真实 EmbeddingProvider 接线 |
 | 28 | `pawork-review` | workflow/review | review-engine | 2.2k | 内部 | 行锚点 re-anchor + resolution 生命周期；ForgeAdapter 平台无关保留 |
 | 29 | `pawork-orchestration` | agents/orchestration | orchestration + teams | 9.5k | 内部 | supervisor.rs（3.4k 行）拆模块；budget 对 ledger/tenant 的依赖 trait 化注入；TeamEvent 双通道语义保持 |
-| 30 | `pawork-control-plane` | control-plane/core | tenant-service + usage-ledger + audit-log | 4.5k | 内部 | 三者同为控制面词表 + 多后端存储；tokio 保持无条件（crate 为 async），rusqlite 继续 sqlite feature 门控；dedup_key 索引、JSONL 审计格式保持 |
+| 30 | `pawork-control-plane` | control-plane/core | tenant-service + usage-ledger + audit-log | 4.5k | 内部 | 三者同为控制面词表 + 多后端存储；tokio 保持无条件（crate 为 async，S13-F44），rusqlite 继续 sqlite feature 门控；dedup_key 索引、JSONL 审计格式保持 |
 | 31 | `pawork-provider-control` | control-plane/provider-control | provider-control | 13.5k | 内部 | 保留现有 `account-control` feature 边界（lease/binding 始终可用层 vs account/routing/health 完整层）；schema 迁移从 app-database 收回本包 |
 | 32 | `pawork-quota` | control-plane/quota | quota-service（核心） | 约 6k | 内部 | 只迁 domain/service/ledger 投影 + LocalLedger 适配器；约 8k 行远端适配器冻结候审（§4.4） |
 | 33 | `pawork-app` | host/app | app-service + core-runtime + subscription-hub | 23k | 内部 | 应用门面 + 生命周期装配 + Event Hub 合一；aggregate/router/supervisor/team/user_hook 按模块整理；SQLite sink 下沉存储层 |
@@ -274,7 +274,7 @@ Pawork_v2/
 
 ### 6.3 Release Hardening 一次性清单（原 M8，历史参考）
 
-历史建议是在功能完备核对后集中执行：workspace 全量 build/test/clippy/fmt；三平台矩阵（Windows/macOS/Linux 真实 runner，含 sandbox/PTY/Named Pipe 定向）；解析器与安全路径 fuzz 扩展（cargo-fuzz：路径解析、unified diff、shell 分类、SSE/partial-JSON）；schema/typegen 校验接回 CI；依赖卫生（machete/udeps/audit）；license inventory；crates.io 发布 dry-run；安全验收清单（沿用 [../../Pawork_v1/docs/quality/security-acceptance.md](../../Pawork_v1/docs/quality/security-acceptance.md) 框架裁剪）。当前不自动执行；S12 审查整改完成且用户明确决定发布后，新的发布任务可重新核对并裁剪本清单。
+历史建议是在功能完备核对后集中执行：workspace 全量 build/test/clippy/fmt；三平台矩阵（Windows/macOS/Linux 真实 runner，含 sandbox/PTY/Named Pipe 定向）；解析器与安全路径 fuzz 扩展（cargo-fuzz：路径解析、unified diff、shell 分类、SSE/partial-JSON）；schema/typegen 校验接回 CI；依赖卫生（machete/udeps/audit）；license inventory；crates.io 发布 dry-run；安全验收清单（沿用 [../../Pawork_v1/docs/quality/security-acceptance.md](../../Pawork_v1/docs/quality/security-acceptance.md) 框架裁剪）。当前不自动执行；S13 收口后且用户明确决定发布后，新的发布任务可重新核对并裁剪本清单。
 
 ## 7. 风险与缓解（重构总体）
 

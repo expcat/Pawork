@@ -40,9 +40,9 @@
 
 S0–S11 的实现任务以 [docs/task-guide.md](docs/task-guide.md) §6 为准——少测试、无全量门禁：只做能证明本任务核心行为的关键定向测试（`cargo check -p <crate>` / `cargo test -p <crate>`，多包重复 `-p`，不因包多改用 `--workspace`）。三类关键测试不推迟：安全红线定向回归、持久化与重放契约 golden、协议与解析 golden/种子。
 
-S12 是只读全项目 Code Review：按 [plan/S12-project-code-review.md](plan/S12-project-code-review.md) 审查和登记 finding，不修改生产代码，不运行测试、构建、格式化、fuzz、三平台矩阵或真实冒烟。Workspace Full Gate 与发布不在当前 S0–S13 排期；未来若获明确授权，须在 S13 整改收口后另立任务和门禁。
+S12 是只读全项目 Code Review：按 [plan/S12-project-code-review.md](plan/S12-project-code-review.md) 审查和登记 finding，不修改生产代码，不运行测试、构建、格式化、fuzz、三平台矩阵或真实冒烟。Workspace Full Gate 与发布不在当前 S0–S13 排期；S13 已收口，未来若获明确授权，须另立任务和门禁。
 
-S13 是 S12 finding 整改阶段：按 [plan/S13-s12-remediation.md](plan/S13-s12-remediation.md) 分波执行（波 A 安全 → 波 B Bug → 波 C 收口），验证沿用 S0–S11 定向约定（三类关键测试不推迟、契约改动 golden 先行）；契约/红线级决策先 ADR 或用户确认；不设全量门禁、不发布。
+S13 是 S12 finding 整改阶段：已按 [plan/S13-s12-remediation.md](plan/S13-s12-remediation.md) 分三波收口（波 A 安全 → 波 B Bug → 波 C 文档）；验证沿用 S0–S11 定向约定（三类关键测试不推迟、契约改动 golden 先行）；契约/红线级决策先 ADR 或用户确认；不设全量门禁、不发布。后续新 finding 须另行授权。
 
 沿用的硬约束：
 
@@ -62,7 +62,7 @@ Full workspace gate: NOT RUN（当前 S0–S13 未设置全量门禁）
 ## 6. 文档约定
 
 - 中文撰写，保留关键术语英文。
-- 常设文档体系：[ROADMAP.md](ROADMAP.md)（任务总索引）· [plan/](plan/)（阶段任务书 S0–S12）· [docs/design.md](docs/design.md)（设计与冻结契约）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI 设计）· [docs/references.md](docs/references.md)（参照项目手册）· [docs/task-guide.md](docs/task-guide.md)（任务实现规范）· [docs/v1-migration-reference.md](docs/v1-migration-reference.md)（V1 迁移词典，冻结参考）。
+- 常设文档体系：[ROADMAP.md](ROADMAP.md)（任务总索引）· [plan/](plan/)（阶段任务书 S0–S13）· [docs/design.md](docs/design.md)（设计与冻结契约）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI 设计）· [docs/references.md](docs/references.md)（参照项目手册）· [docs/task-guide.md](docs/task-guide.md)（任务实现规范）· [docs/v1-migration-reference.md](docs/v1-migration-reference.md)（V1 迁移词典，冻结参考）。
 - 架构决策用 ADR 记录，编号续接 V1（ADR-0xx），状态字段：Proposed / Accepted / Superseded。
 - 交叉引用使用仓库内相对路径链接；指向已归档 V1 资产时用 `../Pawork_v1/...` 并注明归档。
 

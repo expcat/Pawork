@@ -41,7 +41,7 @@
 | `pawork-workspace` | S2（roots/相对路径） | S9（file-index + `@file`） | |
 | `pawork-tools` | S2（只读四件） | S3（写三件）、S4（run_command） | `tool_search` 冻结候审不迁 |
 | `pawork-policy` | S3（整包） | — | 安全内核，红线回归随迁 |
-| `pawork-exec` | S4（process + sandbox） | S10（pty，消费者=交互式终端/GUI Terminal） | Windows 先实测，Linux/macOS 代码随迁；三平台实跑移出当前 S12，待审查整改后另立验证任务 |
+| `pawork-exec` | S4（process + sandbox） | S10（pty，消费者=交互式终端/GUI Terminal） | Windows 先实测，Linux/macOS 代码随迁；三平台实跑移出当前 S12，S13 收口后另立验证任务 |
 | `pawork-provider-core` | S5（usage/negotiate/registry/pricing） | — | 依赖 `pawork-domain` / `pawork-api`，由 `pawork-providers` 消费；不依赖 net/SQLite/blob store。若 S0 的 openai-compatible 迁移需要 `stream_assembly`，则该模块提前至 S0 最小激活 |
 | `pawork-auth` | S6 | — | `auth.json` 文件后端 + OAuth + masked；0600、跨进程 write/refresh 锁、独立临时文件+rename 原子写，OAuth access/refresh/meta 批量单次提交，损坏 fail-closed |
 | `pawork-diagnostics` | S6（脱敏 tracing layer 接线） | — | 早期阶段以纪律 + 断言测试兜底 |
@@ -352,4 +352,4 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 ## 7. 发布策略
 
-W1–W4 波次与包清单保留为 [v1-migration-reference.md](v1-migration-reference.md) §5.2 的历史候选策略，不属于当前 S0–S12 执行范围。各包在激活阶段仍保持发布卫生（元数据、无类型泄漏、`publish = false` 默认）；S12 只审查其真实状态，不翻转 `publish`。只有在 S12 finding 整改完成且用户明确决定发布后，才另立发布任务并重新核对波次、License、全量门禁与三平台证据。
+W1–W4 波次与包清单保留为 [v1-migration-reference.md](v1-migration-reference.md) §5.2 的历史候选策略，不属于当前 S0–S13 执行范围。各包在激活阶段仍保持发布卫生（元数据、无类型泄漏、`publish = false` 默认）；S12 只审查其真实状态，不翻转 `publish`。只有在 S13 收口后且用户明确决定发布后，才另立发布任务并重新核对波次、License、全量门禁与三平台证据。

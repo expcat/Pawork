@@ -18,7 +18,7 @@ Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心�
 | [S10](plan/S10-serve-clients.md) | 服务化与客户端补齐 | 🟢 |
 | [S11](plan/S11-workflow-control.md) | 工作流、多 Agent 与控制面 | 🟢 |
 | [S12](plan/S12-project-code-review.md) | 全项目 Code Review 与整改拆分（只读） | 🟢 |
-| [S13](plan/S13-s12-remediation.md) | S12 finding 整改（波 A ✅ · 波 B ✅ · 波 C 收口） | 🔵 |
+| [S13](plan/S13-s12-remediation.md) | S12 finding 整改（波 A–C ✅） | 🟢 |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成。阶段明细与真实验收要点见 [ROADMAP.md](ROADMAP.md) §2。
 
@@ -40,8 +40,8 @@ cargo build                      # workspace dev 构建
 Pawork/                  # 仓库根 = Cargo workspace 根
 ├── apps/                # 可执行入口：pawork（CLI 宿主）、desktop（GPUI GUI）、protocol-probe
 ├── agents/              # orchestration（Supervisor / teams）
-├── control-plane/       # tenant / quota / provider-control
-├── workflow/            # plan / goal / task / automation / monitor、memory、review
+├── control-plane/       # core / quota / provider-control
+├── workflow/            # core（plan/goal/task/automation/monitor）、memory、review
 ├── foundation/          # domain、api、protocol、config、sqlite、testkit、diagnostics
 ├── engine/              # Agent Engine（工具循环、上下文、事件）
 ├── execution/           # exec（进程/沙箱）、policy、tools
@@ -79,7 +79,7 @@ V1 时期文档（架构、ADR-001~035、features、quality、REVIEW 等）随 V
 
 ## 贡献
 
-- 工作约定见 [AGENTS.md](AGENTS.md)；V2 当前路线的定向验证约定见 [docs/task-guide.md](docs/task-guide.md) §6。S12 只做审查与任务登记，S13 按波次整改；全量门禁和发布需在 S13 收口后另立任务。
+- 工作约定见 [AGENTS.md](AGENTS.md)；V2 当前路线的定向验证约定见 [docs/task-guide.md](docs/task-guide.md) §6。S12 只做审查与任务登记，S13 已按三波收口；全量门禁和发布须用户明确授权后另立任务。
 - 架构决策须以 ADR 记录，编号续接 V1。
 - 新增包须在 [docs/design.md](docs/design.md) §2 登记并明确依赖方向。
 

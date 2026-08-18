@@ -1,6 +1,6 @@
 # S13：S12 finding 整改
 
-> 阶段 S13 · 整改与收口 · 状态：🔵进行中（2026-08-18 波 A ✅ · 波 B ✅；波 C 未开） · 依赖：S12 🟢（60 条 finding 已合并登记为 57 项 S12-F01～F57，见 [ROADMAP](../ROADMAP.md) §3.2） · 规模：大（57 项整改，波 A 安全 → 波 B Bug → 波 C 收口）
+> 阶段 S13 · 整改与收口 · 状态：🟢已完成（2026-08-18 波 A–C ✅） · 依赖：S12 🟢（60 条 finding 已合并登记为 57 项 S12-F01～F57，收口后压缩进 [ROADMAP](../ROADMAP.md) §3.1） · 规模：大（57 项整改，波 A 安全 → 波 B Bug → 波 C 收口）
 
 ## 目标
 
@@ -47,7 +47,7 @@
 | B6 engine / workflow / orchestration | F24（契约级拍板，先于 F49）、F25、F26（契约级拍板）、F27、F28（契约级拍板）、F29（先于 F30）、F30（拍板）；随动 F49（拍板，依赖 F24 契约）、F51（只改测试） | `foundation/api`、`foundation/domain`、`engine`、`workflow/*`、`pawork-memory`、`agents/orchestration` | 契约改动 golden 先行；F24 不修 K-08；F25 不顺带 K-02；F29 先于 F30 重建支；F49 接线支不得让 engine 依赖 blob store |
 | B7 协议幂等与能力 | F31、F32（拍板）、F33（拍板） | `host/app`（idempotency.rs、gui_host.rs）、`clients/gui-client`、`host/gui-server`、`host/cli`（headless.rs） | F31 勿改信封、勿持久化 SQLite；F32 与 F11 信号归一；F33 勿改 GUI capabilities（K-08）与 ACP method 表；与 B3 在 gui_host.rs 串行 |
 | B8 Desktop 体验 | F34、F35、F36、F37（拍板）；随动 F53、F54、F55、F56（拍板） | `apps/desktop`（ui/projection）、F37/F56 或涉 `design/README.md`+`docs/gui-design.md` | F35/F56 人工证据并入 K-03；F37 不与 K-03 合并；F56 有意差异先改基准再留现状；quota「—」归 S11 延期不立项 |
-| B9 文档一致性 | F38、F39、F40（拍板）；随动 F57（拍板） | `README.md`、`AGENTS.md`、`plan/S10-serve-clients.md`、`v2_plan.md`、`ROADMAP.md` §4 | F39 行为补齐归 F03、本条只改文档，复验在 F03 后；F40/F57 的 §4 登记支在本簇内即可完成；F38 状态表已随 S13 立项部分对齐（README S12 🟢 + S13 行），剩结构图与 AGENTS §3 补域 |
+| B9 文档一致性 | F38、F39、F40（拍板）；随动 F57（拍板） | `README.md`、`AGENTS.md`、`plan/S10-serve-clients.md`、`v2_plan.md`、`ROADMAP.md` §4 | F39 行为补齐归 F03、本条只改文档，复验在 F03 后；F40/F57 的 §4 登记支在本簇内即可完成；F38 结构图与 AGENTS §3 三域已于波 B 对齐，波 C 只复核残留用词与状态符号 |
 
 ### 波 C：收口
 
@@ -124,8 +124,8 @@ S13 不吸收任何 K 项；仅登记证据共享与禁止顺带边界：
 - [x] 波 A：F01–F14（含随动 F45/F50/F52）全部验收通过，安全红线定向回归汇总全绿。F14 真实窗口键盘走查并入 K-03；F03 Windows SCM 按 S10 降级。
 - [x] 波 B：F15–F40（含随动 Low 项）全部验收通过或经确认转 §4 延期。
 - [x] 契约 / 红线级决策（F01/F09/F15/F19/F24/F26/F28）均有 ADR 或用户确认记录（ADR-037）。
-- [ ] 波 C：§3.2 状态全量回写、文档一致性复核（F38/F39 口径）、§3.1 归档完成。
-- [x] 全程未实现新功能、未设全量门禁、未发布、未吸收 K 项。（波 A/B 迄今成立；波 C 继续守）
+- [x] 波 C：§3.2 状态全量回写并压缩进 §3.1、文档一致性复核（F38/F39 口径）、§3.1 归档完成。
+- [x] 全程未实现新功能、未设全量门禁、未发布、未吸收 K 项。
 
 ## 明确不做
 
