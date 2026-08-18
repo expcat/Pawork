@@ -1,10 +1,14 @@
-//! S2 临时相对路径校验入口。
+//! 工作区相对路径解析入口。
 //!
-//! 只做词法规则：空路径、绝对路径、`..` 越 root、Windows 保留设备名。
-//! symlink 逃逸、`.git` 段拒绝、FIFO/TOCTOU 留给 S3 替换实现；本模块对外签名保持不变。
+//! 先做 Windows 盘符 / UNC / `//` 与保留设备名检查（policy 内核没有这两项），
+//! 再委托 [`pawork_policy::resolve_workspace_path`]：symlink 逃逸、`.git` 段、
+//! 非普通文件与 TOCTOU 复核。对外签名保持不变。
 
 use std::ffi::OsStr;
+use std::io;
 use std::path::{Component, Path, PathBuf};
+
+use pawork_policy::PathSafetyError;
 
 /// 解析后的工作区相对路径。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -16,7 +20,7 @@ pub struct ResolvedPath {
 }
 
 /// 相对路径校验错误。
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum WorkspacePathError {
     #[error("relative path is empty")]
     Empty,
@@ -26,8 +30,31 @@ pub enum WorkspacePathError {
     Traversal(String),
     #[error("reserved Windows device name: {0}")]
     ReservedDeviceName(String),
+    #[error("path escapes workspace root via symlink")]
+    SymlinkEscape,
+    #[error("paths inside .git are forbidden")]
+    GitInternals,
+    #[error("non-regular file (device/fifo/socket) is forbidden")]
+    NonRegular,
     #[error("no workspace root matched")]
     NoRoot,
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
+impl From<PathSafetyError> for WorkspacePathError {
+    fn from(error: PathSafetyError) -> Self {
+        match error {
+            PathSafetyError::Empty => Self::Empty,
+            PathSafetyError::AbsolutePath => Self::AbsolutePath,
+            PathSafetyError::Traversal(path) => Self::Traversal(path),
+            PathSafetyError::SymlinkEscape => Self::SymlinkEscape,
+            PathSafetyError::GitInternals => Self::GitInternals,
+            PathSafetyError::NonRegular => Self::NonRegular,
+            PathSafetyError::NoRoot => Self::NoRoot,
+            PathSafetyError::Io(error) => Self::Io(error),
+        }
+    }
 }
 
 const RESERVED_DEVICE_NAMES: &[&str] = &[
@@ -37,7 +64,7 @@ const RESERVED_DEVICE_NAMES: &[&str] = &[
 
 /// 将 `relative` 解析到 `roots` 中按登记顺序命中的第一个 root。
 ///
-/// `absolute = root.join(normalized)`。S2 不做存在性、symlink 或 `.git` 检查。
+/// Windows 盘符 / UNC / 保留设备名在本入口拦截；其余安全规则由 policy 内核判定。
 pub fn resolve_relative_path(
     roots: &[PathBuf],
     relative: &str,
@@ -49,43 +76,20 @@ pub fn resolve_relative_path(
         return Err(WorkspacePathError::AbsolutePath);
     }
 
-    let normalized = normalize_components(Path::new(relative))?;
-    for component in &normalized {
-        if let Some(name) = reserved_device_name(component) {
-            return Err(WorkspacePathError::ReservedDeviceName(name));
+    for component in Path::new(relative).components() {
+        if let Component::Normal(name) = component {
+            if let Some(reserved) = reserved_device_name(name) {
+                return Err(WorkspacePathError::ReservedDeviceName(reserved));
+            }
         }
     }
 
-    if roots.is_empty() {
-        return Err(WorkspacePathError::NoRoot);
-    }
-
-    let relative = normalized
-        .iter()
-        .map(|component| component.to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
-
-    let join = |root: &PathBuf| {
-        let mut absolute = root.clone();
-        for component in &normalized {
-            absolute.push(component);
-        }
-        ResolvedPath {
-            absolute,
-            root: root.clone(),
-            relative: relative.clone(),
-        }
-    };
-
-    // 按登记顺序：已存在的路径优先命中；都不存在时落到第一个 root（由工具层报 NotFound）。
-    for root in roots {
-        let resolved = join(root);
-        if resolved.absolute.exists() {
-            return Ok(resolved);
-        }
-    }
-    Ok(join(&roots[0]))
+    let resolved = pawork_policy::resolve_workspace_path(roots, relative)?;
+    Ok(ResolvedPath {
+        absolute: resolved.absolute,
+        root: resolved.root,
+        relative: resolved.relative,
+    })
 }
 
 fn is_absolute_input(relative: &str) -> bool {
@@ -101,25 +105,6 @@ fn is_absolute_input(relative: &str) -> bool {
         (chars.next(), chars.next()),
         (Some(letter), Some(':')) if letter.is_ascii_alphabetic()
     )
-}
-
-fn normalize_components(path: &Path) -> Result<Vec<std::ffi::OsString>, WorkspacePathError> {
-    let mut stack = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(name) => stack.push(name.to_os_string()),
-            Component::ParentDir => {
-                if stack.pop().is_none() {
-                    return Err(WorkspacePathError::Traversal(path.display().to_string()));
-                }
-            }
-            Component::RootDir | Component::Prefix(_) => {
-                return Err(WorkspacePathError::AbsolutePath);
-            }
-        }
-    }
-    Ok(stack)
 }
 
 fn reserved_device_name(component: &OsStr) -> Option<String> {
@@ -148,10 +133,10 @@ mod tests {
     #[test]
     fn rejects_empty() {
         let (_dir, roots) = temp_roots();
-        assert_eq!(
+        assert!(matches!(
             resolve_relative_path(&roots, "").unwrap_err(),
             WorkspacePathError::Empty
-        );
+        ));
     }
 
     #[test]
@@ -161,18 +146,18 @@ mod tests {
         let native_abs = r"C:\Windows\System32\cmd.exe";
         #[cfg(not(windows))]
         let native_abs = "/etc/passwd";
-        assert_eq!(
+        assert!(matches!(
             resolve_relative_path(&roots, native_abs).unwrap_err(),
             WorkspacePathError::AbsolutePath
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             resolve_relative_path(&roots, r"C:\Windows\system32\cmd.exe").unwrap_err(),
             WorkspacePathError::AbsolutePath
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             resolve_relative_path(&roots, r"\\server\share\file").unwrap_err(),
             WorkspacePathError::AbsolutePath
-        );
+        ));
     }
 
     #[test]
@@ -209,28 +194,53 @@ mod tests {
         let (_dir, roots) = temp_roots();
         let resolved = resolve_relative_path(&roots, "a/../b").expect("resolve");
         assert_eq!(resolved.relative, "b");
-        assert_eq!(resolved.root, roots[0]);
-        assert_eq!(resolved.absolute, roots[0].join("b"));
+        let canon_root = pawork_policy::canonicalize_platform(&roots[0]).expect("canon root");
+        assert_eq!(resolved.root, canon_root);
+        assert_eq!(resolved.absolute, canon_root.join("b"));
     }
 
     #[test]
     fn no_roots_yields_no_root() {
-        assert_eq!(
+        assert!(matches!(
             resolve_relative_path(&[], "file.txt").unwrap_err(),
             WorkspacePathError::NoRoot
-        );
+        ));
     }
 
     #[test]
-    fn prefers_existing_path_in_later_registered_root() {
+    fn first_root_wins_for_new_path_via_policy() {
         let first = tempfile::tempdir().expect("first root");
         let second = tempfile::tempdir().expect("second root");
         std::fs::write(second.path().join("only-in-second.txt"), b"ok").expect("write");
         let roots = vec![first.path().to_path_buf(), second.path().to_path_buf()];
-        let resolved =
-            resolve_relative_path(&roots, "only-in-second.txt").expect("hit second root");
-        assert_eq!(resolved.root, second.path());
+        let resolved = resolve_relative_path(&roots, "only-in-second.txt").expect("resolve");
+        let canon_first = pawork_policy::canonicalize_platform(first.path()).expect("canon first");
+        assert_eq!(resolved.root, canon_first);
         assert_eq!(resolved.relative, "only-in-second.txt");
-        assert!(resolved.absolute.exists());
+        assert!(resolved.absolute.starts_with(&canon_first));
+    }
+
+    #[test]
+    fn rejects_git_internals() {
+        let (_dir, roots) = temp_roots();
+        for path in [".git/config", "sub/.git/refs", ".git"] {
+            let err = resolve_relative_path(&roots, path).unwrap_err();
+            assert!(
+                matches!(err, WorkspacePathError::GitInternals),
+                "{path}: {err:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlink_escape() {
+        let tmp = tempfile::tempdir().expect("ws");
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("secret"), b"top").expect("write");
+        std::os::unix::fs::symlink(outside.path(), tmp.path().join("escape")).expect("symlink");
+        let roots = vec![tmp.path().to_path_buf()];
+        let err = resolve_relative_path(&roots, "escape").unwrap_err();
+        assert!(matches!(err, WorkspacePathError::SymlinkEscape), "{err:?}");
     }
 }

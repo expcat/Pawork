@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use pawork_client::{
     ActorIdentity, AppCommand, AppEventEnvelope, AppQuery, AppResponse, AppResponseEnvelope,
-    ClientConfig, ClientError, CommandSource, ConnectOptions, GlobalSequence, GuiCapability,
-    GuiClient, GuiTransportClient, LocalTransport, ResumeDisposition, ResumeOutcome, Snapshot,
-    TimelinePage, TransportEndpoint,
+    ClientAuthentication, ClientConfig, ClientError, CommandSource, ConnectOptions, GlobalSequence,
+    GuiCapability, GuiClient, GuiTransportClient, LocalTransport, ResumeDisposition, ResumeOutcome,
+    Snapshot, TimelinePage, TransportEndpoint, TOKEN_SCHEME,
 };
 use serde_json::json;
 
@@ -75,6 +75,8 @@ impl DesktopController {
     /// 连接 + 握手 + 订阅。有 last_ack 时走 `connect_with_resume`，不要永远
     /// 全新 Snapshot。
     pub async fn connect(&self, socket: PathBuf) -> Result<DesktopConnect, String> {
+        let token_path = crate::platform::token_path_for_socket(&socket);
+        let authentication = load_desktop_authentication(&token_path)?;
         let (sender, receiver) = smol::channel::bounded::<ControllerEvent>(512);
         let transport: Arc<dyn GuiTransportClient> = Arc::new(LocalTransport::default());
         let endpoint = TransportEndpoint::Local {
@@ -93,7 +95,7 @@ impl DesktopController {
                     transport,
                     endpoint,
                     options,
-                    None,
+                    Some(authentication),
                     last_ack,
                     desktop_client_config(),
                 )
@@ -293,14 +295,14 @@ impl DesktopController {
         });
     }
 
-    /// 发送用户消息：RunStart。可选 model 只影响下一轮。
-    pub fn send_message(&self, session_id: String, text: String, model: Option<String>) {
+    /// 发送用户消息：RunStart。可选 `(provider, model)` 只影响下一轮。
+    pub fn send_message(&self, session_id: String, text: String, model: Option<(String, String)>) {
         let Some(client) = self.current_client() else {
             return;
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            let command = run_start_command(&session_id, &text, model.as_deref());
+            let command = run_start_command(&session_id, &text, model.as_ref());
             match client.command(command, command_source(), actor_identity()).await {
                 Ok(response) => match response.response {
                     AppResponse::Accepted { run_id: Some(run_id), .. } => {
@@ -734,13 +736,44 @@ fn session_get_query(session_id: &str, after: Option<u64>) -> AppQuery {
     .expect("session_get query shape is frozen")
 }
 
-fn run_start_command(session_id: &str, text: &str, model: Option<&str>) -> AppCommand {
+fn load_desktop_authentication(token_path: &std::path::Path) -> Result<ClientAuthentication, String> {
+    let bytes = std::fs::read(token_path).map_err(|error| {
+        format!(
+            "gui token file not found or unreadable ({}): {error}",
+            token_path.display()
+        )
+    })?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        format!(
+            "gui token file is empty or malformed: {}",
+            token_path.display()
+        )
+    })?;
+    let proof = text.trim();
+    if proof.is_empty() {
+        return Err(format!(
+            "gui token file is empty or malformed: {}",
+            token_path.display()
+        ));
+    }
+    Ok(ClientAuthentication {
+        scheme: TOKEN_SCHEME.into(),
+        proof: proof.to_string(),
+    })
+}
+
+fn run_start_command(
+    session_id: &str,
+    text: &str,
+    model: Option<&(String, String)>,
+) -> AppCommand {
     let mut params = json!({
         "session_id": session_id,
         "user_message": text
     });
-    if let Some(model) = model {
-        params["model"] = json!(model);
+    if let Some((provider, id)) = model {
+        params["provider"] = json!(provider);
+        params["model"] = json!(id);
     }
     serde_json::from_value(json!({
         "method": "run_start",
@@ -822,6 +855,31 @@ fn timeline_page(response: &AppResponseEnvelope) -> Result<Option<TimelinePage>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_token_file_fails_closed() {
+        let err = load_desktop_authentication(std::path::Path::new(
+            "/nonexistent/pawork-desktop-missing.token",
+        ))
+        .expect_err("missing token must fail");
+        assert!(
+            err.contains("not found") || err.contains("unreadable"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn run_start_command_writes_provider_and_model() {
+        let command = run_start_command(
+            "s-1",
+            "hi",
+            Some(&("deepseek".into(), "deepseek-v4-flash".into())),
+        );
+        let value = serde_json::to_value(&command).expect("serialize run_start");
+        assert_eq!(value["method"], "run_start");
+        assert_eq!(value["params"]["provider"], "deepseek");
+        assert_eq!(value["params"]["model"], "deepseek-v4-flash");
+    }
 
     #[test]
     fn last_acked_advances_from_events_and_acks() {

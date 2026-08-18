@@ -35,14 +35,23 @@ pub(super) fn spawn(
     let info = connection.info();
     let (done_tx, done_rx) = watch::channel(false);
     let handle = SessionHandle {
-        host_tx,
+        host_tx: host_tx.clone(),
         close_tx: StdMutex::new(Some(close_tx)),
         info,
         closed: AtomicBool::new(false),
         done_rx: StdMutex::new(done_rx),
     };
     let task = async move {
-        run(inner, connection, client_id, connection_id, host_rx, close_rx).await;
+        run(
+            inner,
+            connection,
+            client_id,
+            connection_id,
+            host_tx,
+            host_rx,
+            close_rx,
+        )
+        .await;
         let _ = done_tx.send(true);
     };
     (handle, task)
@@ -101,6 +110,7 @@ async fn run(
     connection: Box<dyn GuiConnection>,
     client_id: GuiClientId,
     connection_id: ConnectionId,
+    host_tx: mpsc::UnboundedSender<TransportFrame>,
     mut host_rx: mpsc::UnboundedReceiver<TransportFrame>,
     mut close_rx: oneshot::Receiver<()>,
 ) {
@@ -161,7 +171,12 @@ async fn run(
     }
 
     let (stop_tx, stop_rx) = oneshot::channel();
-    let _forwarder = spawn_forwarder(Arc::clone(&inner), client_id.clone(), stop_rx);
+    let _forwarder = spawn_forwarder(
+        Arc::clone(&inner),
+        client_id.clone(),
+        stop_rx,
+        host_tx,
+    );
 
     let mut watchdog = interval(watchdog_interval(
         inner.connections.config().heartbeat_timeout,
@@ -555,6 +570,7 @@ fn spawn_forwarder(
     inner: Arc<Inner>,
     client_id: GuiClientId,
     stop: oneshot::Receiver<()>,
+    host_tx: mpsc::UnboundedSender<TransportFrame>,
 ) -> tokio::task::JoinHandle<()> {
     let mut subscription = inner.host.subscribe_events();
     tokio::spawn(async move {
@@ -570,7 +586,10 @@ fn spawn_forwarder(
                             }
                             if let Err(error) = inner.connections.enqueue(&client_id, event) {
                                 match error {
-                                    ManagerError::Lagged { .. } => continue,
+                                    ManagerError::Lagged { .. } => {
+                                        send_lagged_error(&host_tx, &error);
+                                        return;
+                                    }
                                     ManagerError::UnknownClient(_) | ManagerError::ChannelClosed(_) => {
                                         return
                                     }
@@ -582,13 +601,25 @@ fn spawn_forwarder(
                         }
                         Err(broadcast::error::RecvError::Closed) => return,
                         Err(broadcast::error::RecvError::Lagged(_)) => {
+                            let error = ManagerError::Lagged {
+                                client_id: client_id.clone(),
+                            };
                             let _ = inner.connections.mark_lagged(&client_id);
+                            send_lagged_error(&host_tx, &error);
+                            return;
                         }
                     }
                 }
             }
         }
     })
+}
+
+fn send_lagged_error(host_tx: &mpsc::UnboundedSender<TransportFrame>, error: &ManagerError) {
+    let frame = manager_error_frame(None, error);
+    if let Ok(bytes) = encode_server_frame(&frame) {
+        let _ = host_tx.send(TransportFrame::new(bytes));
+    }
 }
 
 fn watchdog_interval(timeout: Duration) -> Duration {

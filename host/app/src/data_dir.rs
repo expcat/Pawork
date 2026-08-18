@@ -25,13 +25,17 @@ pub fn default_data_dir() -> PathBuf {
     std::env::temp_dir().join("pawork")
 }
 
-/// 校验 `--instance`：非空、不能含路径分隔或 `..`。
+/// 校验 `--instance`：trim 后仅允许 `[A-Za-z0-9._-]`；空、空白、分号、
+/// 换行、引号、`/`、`..` 一律拒绝。`default` 保持原语义（合法标识）。
 pub fn normalize_instance(name: &str) -> Result<&str, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("instance name must not be empty".into());
     }
-    if name.contains('/') || name.contains('\\') || name.contains("..") {
+    let allowed = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !allowed || name.contains("..") {
         return Err(format!("invalid instance name `{name}`"));
     }
     Ok(name)
@@ -103,8 +107,23 @@ mod tests {
     #[test]
     fn normalize_instance_rejects_path_escape() {
         assert_eq!(normalize_instance("default").expect("ok"), "default");
+        assert_eq!(normalize_instance("  default  ").expect("trim"), "default");
+        assert_eq!(normalize_instance("dev").expect("ok"), "dev");
+        assert_eq!(
+            normalize_instance("my-inst_1.0").expect("ok"),
+            "my-inst_1.0"
+        );
         assert!(normalize_instance("").is_err());
+        assert!(normalize_instance("   ").is_err());
         assert!(normalize_instance("../x").is_err());
         assert!(normalize_instance("a/b").is_err());
+        assert!(normalize_instance("a b").is_err());
+        assert!(normalize_instance("a;b").is_err());
+        assert!(normalize_instance("a\nb").is_err());
+        assert!(normalize_instance("a'b").is_err());
+        assert!(normalize_instance("a\"b").is_err());
+        assert!(normalize_instance("..").is_err());
+        assert!(normalize_instance("foo..bar").is_err());
+        assert!(normalize_instance("evil;rm -rf").is_err());
     }
 }

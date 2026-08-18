@@ -1,7 +1,7 @@
 //! pawork-workspace：roots 管理、相对路径解析与文件索引。
 //!
-//! 完整安全校验（symlink / `.git` / TOCTOU）在 S3 接 `pawork-policy`，
-//! 本包对外签名保持不变。
+//! 路径安全校验（symlink / `.git` / TOCTOU）委托 `pawork-policy`，
+//! `resolve_relative_path` 对外签名保持不变。
 
 mod file_index;
 mod path;

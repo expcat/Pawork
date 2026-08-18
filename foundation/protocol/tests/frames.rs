@@ -36,6 +36,7 @@ fn command_envelope() -> AppCommandEnvelope {
             session_id: SessionId::from("session-1"),
             user_message: "hello".into(),
             model: None,
+            provider: None,
             profile: None,
         },
     }

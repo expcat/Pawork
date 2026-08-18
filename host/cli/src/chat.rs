@@ -110,6 +110,7 @@ pub async fn run_json(
             session_id: session_id.clone(),
             user_message: text,
             model: None,
+            provider: None,
             profile: None,
         },
     )

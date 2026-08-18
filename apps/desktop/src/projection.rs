@@ -266,21 +266,30 @@ pub struct ActiveRun {
 }
 
 /// Assistant 流式合并锚点：同一 run + message 的 delta 追加到同一条目。
+/// 用 event_id / sequence 回查，不存会因中间插入而失效的 index。
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct AssistantAnchor {
     run_id: Option<String>,
     message_id: Option<String>,
-    index: usize,
+    event_id: String,
+    sequence: u64,
 }
 
 /// Tool 条目锚点：ToolCompleted/ToolOutput 按 run + tool_call_id（live）或
 /// run + tool_name（分页历史，TimelineItem 不携带 tool_call_id）回填。
+/// 用 event_id / sequence 回查，不存会因中间插入而失效的 index。
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ToolAnchor {
     run_id: Option<String>,
     tool_call_id: Option<String>,
     name: Option<String>,
-    index: usize,
+    event_id: String,
+    sequence: u64,
+}
+
+struct TimelineIdentity {
+    event_id: String,
+    sequence: u64,
 }
 
 /// 从 TimelinePage item 解出的字段值（TimelineItem 类型未从 pawork-client
@@ -578,9 +587,9 @@ impl DesktopProjection {
                     return false;
                 }
                 let run = Some(run_id.as_str().to_string());
-                let index = self.insert_entry(TimelineEntry {
+                self.insert_entry(TimelineEntry {
                     sequence,
-                    event_id,
+                    event_id: event_id.clone(),
                     kind: TimelineEntryKind::ToolCall {
                         name: name.clone(),
                         status: "running".into(),
@@ -589,12 +598,15 @@ impl DesktopProjection {
                     timestamp,
                     run_id: run.clone(),
                 });
-                self.tool_anchors.push(ToolAnchor {
-                    run_id: run,
-                    tool_call_id: Some(tool_call_id.as_str().to_string()),
-                    name: Some(name.clone()),
-                    index,
-                });
+                if let Some(anchor) = self.anchor_after_insert(&event_id, sequence) {
+                    self.tool_anchors.push(ToolAnchor {
+                        run_id: run,
+                        tool_call_id: Some(tool_call_id.as_str().to_string()),
+                        name: Some(name.clone()),
+                        event_id: anchor.event_id,
+                        sequence: anchor.sequence,
+                    });
+                }
                 return true;
             }
             AppEvent::ToolCompleted { run_id, tool_call_id, success } => {
@@ -672,35 +684,35 @@ impl DesktopProjection {
         let run = Some(run_id.to_string());
         let message = message_id.map(str::to_string);
         if let Some(anchor) = &self.assistant_anchor {
-            if anchor.run_id == run
-                && anchor.message_id == message
-                && matches!(
-                    self.timeline.get(anchor.index).map(|entry| &entry.kind),
-                    Some(TimelineEntryKind::AssistantMessage { .. })
-                )
-            {
-                if let Some(TimelineEntryKind::AssistantMessage { text }) =
-                    self.timeline.get_mut(anchor.index).map(|entry| &mut entry.kind)
+            if anchor.run_id == run && anchor.message_id == message {
+                if let Some(index) = self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
                 {
-                    text.push_str(delta);
-                    return true;
+                    if let Some(TimelineEntryKind::AssistantMessage { text }) =
+                        self.timeline.get_mut(index).map(|entry| &mut entry.kind)
+                    {
+                        text.push_str(delta);
+                        return true;
+                    }
                 }
             }
         }
-        let index = self.insert_entry(TimelineEntry {
+        self.insert_entry(TimelineEntry {
             sequence,
-            event_id,
+            event_id: event_id.clone(),
             kind: TimelineEntryKind::AssistantMessage {
                 text: delta.to_string(),
             },
             timestamp,
             run_id: run.clone(),
         });
-        self.assistant_anchor = Some(AssistantAnchor {
-            run_id: run,
-            message_id: message,
-            index,
-        });
+        if let Some(identity) = self.anchor_after_insert(&event_id, sequence) {
+            self.assistant_anchor = Some(AssistantAnchor {
+                run_id: run,
+                message_id: message,
+                event_id: identity.event_id,
+                sequence: identity.sequence,
+            });
+        }
         true
     }
 
@@ -711,7 +723,7 @@ impl DesktopProjection {
         match item.kind {
             "user_message" => {
                 if self.seen.insert(item.sequence) {
-                    self.push_entry(TimelineEntry {
+                    self.insert_entry(TimelineEntry {
                         sequence: item.sequence,
                         event_id: item.event_id.to_string(),
                         kind: TimelineEntryKind::UserMessage {
@@ -741,35 +753,47 @@ impl DesktopProjection {
                 let run = item.run_id.map(str::to_string);
                 let committed = item.text.unwrap_or_default().to_string();
                 if let Some(anchor) = &self.assistant_anchor {
-                    if anchor.run_id == run
-                        && anchor.message_id.is_none()
-                        && matches!(
-                            self.timeline.get(anchor.index).map(|entry| &entry.kind),
-                            Some(TimelineEntryKind::AssistantMessage { .. })
-                        )
-                    {
-                        let index = anchor.index;
-                        if let Some(entry) = self.timeline.get_mut(index) {
-                            entry.sequence = item.sequence;
-                            entry.event_id = item.event_id.to_string();
-                            entry.timestamp = item.timestamp.to_string();
-                            entry.kind = TimelineEntryKind::AssistantMessage { text: committed };
+                    if anchor.run_id == run && anchor.message_id.is_none() {
+                        if let Some(index) =
+                            self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
+                        {
+                            if matches!(
+                                self.timeline.get(index).map(|entry| &entry.kind),
+                                Some(TimelineEntryKind::AssistantMessage { .. })
+                            ) {
+                                if let Some(entry) = self.timeline.get_mut(index) {
+                                    entry.sequence = item.sequence;
+                                    entry.event_id = item.event_id.to_string();
+                                    entry.timestamp = item.timestamp.to_string();
+                                    entry.kind =
+                                        TimelineEntryKind::AssistantMessage { text: committed };
+                                }
+                                if let Some(anchor) = &mut self.assistant_anchor {
+                                    anchor.event_id = item.event_id.to_string();
+                                    anchor.sequence = item.sequence;
+                                }
+                                return;
+                            }
                         }
-                        return;
                     }
                 }
-                let index = self.insert_entry(TimelineEntry {
+                self.insert_entry(TimelineEntry {
                     sequence: item.sequence,
                     event_id: item.event_id.to_string(),
                     kind: TimelineEntryKind::AssistantMessage { text: committed },
                     timestamp: item.timestamp.to_string(),
                     run_id: run.clone(),
                 });
-                self.assistant_anchor = Some(AssistantAnchor {
-                    run_id: run,
-                    message_id: None,
-                    index,
-                });
+                if let Some(identity) =
+                    self.anchor_after_insert(item.event_id, item.sequence)
+                {
+                    self.assistant_anchor = Some(AssistantAnchor {
+                        run_id: run,
+                        message_id: None,
+                        event_id: identity.event_id,
+                        sequence: identity.sequence,
+                    });
+                }
             }
             "tool_started" => {
                 if !self.seen.insert(item.sequence) {
@@ -777,7 +801,7 @@ impl DesktopProjection {
                 }
                 let run = item.run_id.map(str::to_string);
                 let name = item.tool_name.unwrap_or("tool").to_string();
-                let index = self.insert_entry(TimelineEntry {
+                self.insert_entry(TimelineEntry {
                     sequence: item.sequence,
                     event_id: item.event_id.to_string(),
                     kind: TimelineEntryKind::ToolCall {
@@ -788,12 +812,17 @@ impl DesktopProjection {
                     timestamp: item.timestamp.to_string(),
                     run_id: run.clone(),
                 });
-                self.tool_anchors.push(ToolAnchor {
-                    run_id: run,
-                    tool_call_id: None,
-                    name: Some(name),
-                    index,
-                });
+                if let Some(identity) =
+                    self.anchor_after_insert(item.event_id, item.sequence)
+                {
+                    self.tool_anchors.push(ToolAnchor {
+                        run_id: run,
+                        tool_call_id: None,
+                        name: Some(name),
+                        event_id: identity.event_id,
+                        sequence: identity.sequence,
+                    });
+                }
             }
             "tool_output" => {
                 if self.seen.insert(item.sequence) {
@@ -816,7 +845,7 @@ impl DesktopProjection {
                 } else if self.seen.insert(item.sequence) {
                     let run = item.run_id.map(str::to_string);
                     let name = item.tool_name.unwrap_or("tool").to_string();
-                    let index = self.insert_entry(TimelineEntry {
+                    self.insert_entry(TimelineEntry {
                         sequence: item.sequence,
                         event_id: item.event_id.to_string(),
                         kind: TimelineEntryKind::ToolCall {
@@ -827,12 +856,17 @@ impl DesktopProjection {
                         timestamp: item.timestamp.to_string(),
                         run_id: run.clone(),
                     });
-                    self.tool_anchors.push(ToolAnchor {
-                        run_id: run,
-                        tool_call_id: None,
-                        name: Some(name),
-                        index,
-                    });
+                    if let Some(identity) =
+                        self.anchor_after_insert(item.event_id, item.sequence)
+                    {
+                        self.tool_anchors.push(ToolAnchor {
+                            run_id: run,
+                            tool_call_id: None,
+                            name: Some(name),
+                            event_id: identity.event_id,
+                            sequence: identity.sequence,
+                        });
+                    }
                 }
             }
             "run_started" | "run_completed" | "run_cancelled" => {
@@ -889,12 +923,32 @@ impl DesktopProjection {
     }
 
     /// 按 sequence 有序插入（页数据可能晚于已到达的 live 事件）。
-    fn insert_entry(&mut self, entry: TimelineEntry) -> usize {
+    fn insert_entry(&mut self, entry: TimelineEntry) {
         let position = self
             .timeline
             .partition_point(|existing| existing.sequence < entry.sequence);
         self.timeline.insert(position, entry);
-        position
+    }
+
+    fn entry_index_by_identity(&self, event_id: &str, sequence: u64) -> Option<usize> {
+        self.timeline
+            .iter()
+            .position(|entry| entry.event_id == event_id)
+            .or_else(|| {
+                self.timeline
+                    .iter()
+                    .position(|entry| entry.sequence == sequence)
+            })
+    }
+
+    /// `insert_entry` 之后按 identity 回查，避免使用插入时的瞬时 index。
+    fn anchor_after_insert(&self, event_id: &str, sequence: u64) -> Option<TimelineIdentity> {
+        let index = self.entry_index_by_identity(event_id, sequence)?;
+        let entry = self.timeline.get(index)?;
+        Some(TimelineIdentity {
+            event_id: entry.event_id.clone(),
+            sequence: entry.sequence,
+        })
     }
 
     /// 按 run + tool_call_id（live）或 run + tool_name（历史）回填 tool 条目。
@@ -921,9 +975,12 @@ impl DesktopProjection {
                     return None;
                 }
             }
-            Some(anchor.index)
+            Some((anchor.event_id.clone(), anchor.sequence))
         });
-        let Some(index) = found else {
+        let Some((event_id, sequence)) = found else {
+            return false;
+        };
+        let Some(index) = self.entry_index_by_identity(&event_id, sequence) else {
             return false;
         };
         if let Some(TimelineEntryKind::ToolCall { status, detail, .. }) =
@@ -1988,5 +2045,106 @@ mod tests {
         assert_eq!(projection.terminal.output, "hello\nworld");
         assert!(!projection.apply_event(&terminal_output(3, "term-other", "nope")));
         assert_eq!(projection.terminal.output, "hello\nworld");
+    }
+
+    fn tool_started(sequence: u64, tool_call_id: &str, name: &str) -> AppEventEnvelope {
+        event(
+            sequence,
+            json!({
+                "type": "tool_started",
+                "data": {
+                    "run_id": "r-1",
+                    "tool_call_id": tool_call_id,
+                    "name": name
+                }
+            }),
+        )
+    }
+
+    fn tool_completed(sequence: u64, tool_call_id: &str, success: bool) -> AppEventEnvelope {
+        event(
+            sequence,
+            json!({
+                "type": "tool_completed",
+                "data": {
+                    "run_id": "r-1",
+                    "tool_call_id": tool_call_id,
+                    "success": success
+                }
+            }),
+        )
+    }
+
+    #[test]
+    fn live_tool_survives_earlier_page_insert_without_duplicate() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+
+        assert!(projection.apply_event(&tool_started(10, "call-1", "fs_read")));
+        assert_eq!(projection.timeline.len(), 1);
+        assert!(matches!(
+            &projection.timeline[0].kind,
+            TimelineEntryKind::ToolCall { name, status, .. }
+                if name == "fs_read" && status == "running"
+        ));
+
+        projection.apply_timeline_page(&page(
+            vec![history_item(5, "user_message", json!({ "text": "hi" }))],
+            false,
+        ));
+        assert_eq!(projection.timeline.len(), 2);
+        assert!(matches!(
+            &projection.timeline[0].kind,
+            TimelineEntryKind::UserMessage { text } if text == "hi"
+        ));
+        assert!(matches!(
+            &projection.timeline[1].kind,
+            TimelineEntryKind::ToolCall { name, status, .. }
+                if name == "fs_read" && status == "running"
+        ));
+
+        assert!(projection.apply_event(&tool_completed(11, "call-1", true)));
+        let tools: Vec<(&str, &str)> = projection
+            .timeline
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                TimelineEntryKind::ToolCall { name, status, .. } => {
+                    Some((name.as_str(), status.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tools, vec![("fs_read", "succeeded")]);
+        assert!(!projection.timeline.iter().any(|entry| matches!(
+            &entry.kind,
+            TimelineEntryKind::ToolCall { status, .. } if status == "running"
+        )));
+    }
+
+    #[test]
+    fn live_assistant_survives_earlier_page_insert_without_split() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+
+        assert!(projection.apply_event(&assistant_delta(10, "m-1", "Hello")));
+        projection.apply_timeline_page(&page(
+            vec![history_item(5, "user_message", json!({ "text": "hi" }))],
+            false,
+        ));
+        assert!(projection.apply_event(&assistant_delta(11, "m-1", " world")));
+
+        let assistants: Vec<&str> = projection
+            .timeline
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                TimelineEntryKind::AssistantMessage { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(assistants, vec!["Hello world"]);
+        assert!(matches!(
+            &projection.timeline[0].kind,
+            TimelineEntryKind::UserMessage { text } if text == "hi"
+        ));
     }
 }

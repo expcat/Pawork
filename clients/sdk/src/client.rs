@@ -404,6 +404,7 @@ impl PaworkClient {
                 session_id,
                 user_message,
                 model,
+                provider: None,
                 profile: None,
             })
             .await?;

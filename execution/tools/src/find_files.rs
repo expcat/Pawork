@@ -20,6 +20,7 @@ use pawork_workspace::WorkspaceService;
 
 use crate::common::opt_u64;
 use crate::common::require_str;
+use crate::common::resolve_write_rel;
 use crate::common::workspace_roots;
 use crate::common::BuiltinToolError;
 
@@ -131,7 +132,11 @@ fn find(
 
     for root in &roots {
         let mut builder = WalkBuilder::new(root);
-        builder.ignore(true).git_ignore(true).git_exclude(true);
+        builder
+            .follow_links(false)
+            .ignore(true)
+            .git_ignore(true)
+            .git_exclude(true);
         if let Some(depth) = max_depth {
             builder.max_depth(Some(depth));
         }
@@ -164,6 +169,10 @@ fn find(
                 continue;
             }
             if glob_set.is_match(rel) || glob_set.is_match(path) {
+                let rel_str = rel.to_string_lossy();
+                if resolve_write_rel(std::slice::from_ref(root), rel_str.as_ref()).is_err() {
+                    continue;
+                }
                 found.push(rel.display().to_string());
             }
         }
@@ -341,5 +350,33 @@ mod tests {
         cancel.cancel();
         let error = find(&service, &id, &json!({"pattern": "**/*"}), &cancel).unwrap_err();
         assert!(matches!(error, FindFilesError::Cancelled));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_symlink_escape_and_git_internals() {
+        let (service, id, root, _ws_dir) = make_service();
+        let outside = temp_root("outside");
+        fs::write(outside.path().join("secret.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), root.join("auth-link"))
+            .unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join(".git/config"), "x").unwrap();
+        fs::write(root.join("ok.txt"), "x").unwrap();
+
+        let res = find(
+            &service,
+            &id,
+            &json!({"pattern": "**/*", "file_type": "any"}),
+            &CancellationToken::new(),
+        )
+        .expect("find");
+        let text = match &res.content[0] {
+            ContentPart::Text(t) => t.text.as_str(),
+            _ => panic!("text"),
+        };
+        assert!(text.contains("ok.txt"), "{text}");
+        assert!(!text.contains("auth-link"), "{text}");
+        assert!(!text.contains(".git"), "{text}");
     }
 }

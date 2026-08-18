@@ -236,6 +236,7 @@ mod tests {
             Arc::new(RegistryPeer),
             McpPermissions::default(),
             false,
+            false,
         )
         .await
         .expect("register mcp");

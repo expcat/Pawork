@@ -36,11 +36,13 @@
 - 任何任务完成后，对应文档与 ROADMAP 状态须同步更新（状态回写约定见 [ROADMAP.md](ROADMAP.md) §6）。
 - 任务开启 / 进行 / 收尾的公共规范见 [docs/task-guide.md](docs/task-guide.md)；阶段任务书见 [plan/](plan/)；阶段外任务登记见 [ROADMAP.md](ROADMAP.md) §3。
 
-## 5. 验证决策（当前 S0–S12 路线）
+## 5. 验证决策（当前 S0–S13 路线）
 
 S0–S11 的实现任务以 [docs/task-guide.md](docs/task-guide.md) §6 为准——少测试、无全量门禁：只做能证明本任务核心行为的关键定向测试（`cargo check -p <crate>` / `cargo test -p <crate>`，多包重复 `-p`，不因包多改用 `--workspace`）。三类关键测试不推迟：安全红线定向回归、持久化与重放契约 golden、协议与解析 golden/种子。
 
-S12 是只读全项目 Code Review：按 [plan/S12-project-code-review.md](plan/S12-project-code-review.md) 审查和登记 finding，不修改生产代码，不运行测试、构建、格式化、fuzz、三平台矩阵或真实冒烟。Workspace Full Gate 与发布不在当前 S0–S12 排期；未来若获明确授权，须在 S12 整改后另立任务和门禁。
+S12 是只读全项目 Code Review：按 [plan/S12-project-code-review.md](plan/S12-project-code-review.md) 审查和登记 finding，不修改生产代码，不运行测试、构建、格式化、fuzz、三平台矩阵或真实冒烟。Workspace Full Gate 与发布不在当前 S0–S13 排期；未来若获明确授权，须在 S13 整改收口后另立任务和门禁。
+
+S13 是 S12 finding 整改阶段：按 [plan/S13-s12-remediation.md](plan/S13-s12-remediation.md) 分波执行（波 A 安全 → 波 B Bug → 波 C 收口），验证沿用 S0–S11 定向约定（三类关键测试不推迟、契约改动 golden 先行）；契约/红线级决策先 ADR 或用户确认；不设全量门禁、不发布。
 
 沿用的硬约束：
 
@@ -54,7 +56,7 @@ S12 是只读全项目 Code Review：按 [plan/S12-project-code-review.md](plan/
 ```text
 Validated: <实际命令 / tests / checks，或 none 及理由>
 Targeted regressions: <实际覆盖，或 none>
-Full workspace gate: NOT RUN（当前 S0–S12 未设置全量门禁）
+Full workspace gate: NOT RUN（当前 S0–S13 未设置全量门禁）
 ```
 
 ## 6. 文档约定

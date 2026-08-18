@@ -31,7 +31,7 @@ pub enum PathSafetyError {
     Traversal(String),
     #[error("path escapes workspace root via symlink")]
     SymlinkEscape,
-    #[error("writing inside .git is forbidden")]
+    #[error("paths inside .git are forbidden")]
     GitInternals,
     #[error("non-regular file (device/fifo/socket) is forbidden")]
     NonRegular,

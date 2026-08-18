@@ -9,6 +9,7 @@ description = "Pawork workspace roots、相对路径解析与文件索引"
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
+pawork-policy = { path = "../../execution/policy" }
 dunce.workspace = true
 ignore.workspace = true
 notify.workspace = true

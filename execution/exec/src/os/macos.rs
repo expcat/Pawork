@@ -90,9 +90,17 @@ pub fn generate_seatbelt_profile(policy: &SandboxPolicy, workspace_roots: &[Path
         );
     }
     for d in &policy.filesystem.deny {
-        let escaped = escape_seatbelt_string(&d.to_string_lossy());
-        let _ = writeln!(s, "(deny file-read* (subpath {escaped}))");
-        let _ = writeln!(s, "(deny file-write* (subpath {escaped}))");
+        let mut denied = vec![d.clone()];
+        if let Ok(canon) = std::fs::canonicalize(d) {
+            if !denied.iter().any(|p| p == &canon) {
+                denied.push(canon);
+            }
+        }
+        for path in denied {
+            let escaped = escape_seatbelt_string(&path.to_string_lossy());
+            let _ = writeln!(s, "(deny file-read* (subpath {escaped}))");
+            let _ = writeln!(s, "(deny file-write* (subpath {escaped}))");
+        }
     }
     match policy.network_mode {
         NetworkMode::Enforce => {
@@ -284,17 +292,180 @@ mod tests {
 
     #[test]
     fn profile_emits_deny_for_secret_paths() {
+        let deny = vec![
+            PathBuf::from("/Users/x/.ssh"),
+            PathBuf::from("/Users/x/.pawork/auth.json"),
+            PathBuf::from("/opt/pawork-home/auth.json"),
+            PathBuf::from("/Users/x/.gnupg"),
+            PathBuf::from("/Users/x/.config"),
+        ];
         let policy = SandboxPolicy {
             filesystem: FilesystemPolicy {
-                deny: vec![PathBuf::from("/Users/x/.ssh")],
+                deny: deny.clone(),
                 ..Default::default()
             },
             ..Default::default()
         };
         let profile = generate_seatbelt_profile(&policy, &[]);
-        assert!(profile.contains("(deny file-read* (subpath \"/Users/x/.ssh\"))"));
-        assert!(profile.contains("(deny file-write* (subpath \"/Users/x/.ssh\"))"));
+        assert!(
+            profile.contains("(allow file-read* (subpath \"/\"))"),
+            "Darwin 25+ 整盘只读 allow 必须保留"
+        );
+        for path in &deny {
+            let escaped = escape_seatbelt_string(&path.to_string_lossy());
+            assert!(
+                profile.contains(&format!("(deny file-read* (subpath {escaped}))")),
+                "profile 缺少 file-read deny: {escaped}"
+            );
+            assert!(
+                profile.contains(&format!("(deny file-write* (subpath {escaped}))")),
+                "profile 缺少 file-write deny: {escaped}"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_emits_deny_for_default_secret_paths() {
+        let secrets = crate::sandbox::default_secret_paths();
+        if secrets.is_empty() {
+            return;
+        }
+        let policy = SandboxPolicy {
+            filesystem: FilesystemPolicy {
+                deny: secrets.clone(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let profile = generate_seatbelt_profile(&policy, &[]);
         assert!(profile.contains("(allow file-read* (subpath \"/\"))"));
+        for path in &secrets {
+            let escaped = escape_seatbelt_string(&path.to_string_lossy());
+            assert!(
+                profile.contains(&format!("(deny file-read* (subpath {escaped}))")),
+                "default secret 未写入 deny: {escaped}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn seatbelt_denies_cat_of_secret_paths() {
+        let probe_profile = generate_seatbelt_profile(&SandboxPolicy::default(), &[]);
+        let probe = std::process::Command::new(SANDBOX_EXEC_PATH)
+            .args(["-p", &probe_profile, "/usr/bin/true"])
+            .output();
+        if !matches!(&probe, Ok(output) if output.status.success()) {
+            return;
+        }
+
+        let tmp = std::env::temp_dir().join(format!(
+            "pawork-seatbelt-secret-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).expect("create secret dir");
+        let secret = tmp.join("auth.json");
+        std::fs::write(&secret, "secret-canary").expect("write secret");
+
+        let policy = SandboxPolicy {
+            filesystem: FilesystemPolicy {
+                deny: vec![tmp.clone()],
+                ..Default::default()
+            },
+            network_mode: NetworkMode::Off,
+            ..Default::default()
+        };
+        let profile = generate_seatbelt_profile(&policy, &[]);
+        assert!(profile.contains("(allow file-read* (subpath \"/\"))"));
+        let output = std::process::Command::new(SANDBOX_EXEC_PATH)
+            .args(["-p", &profile, "/bin/cat", &secret.to_string_lossy()])
+            .output()
+            .expect("sandbox-exec cat");
+        assert!(
+            !output.status.success(),
+            "cat of denied secret path must fail under Seatbelt: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("secret-canary"),
+            "denied cat must not leak secret contents: {stdout}"
+        );
+
+        let default_policy = SandboxPolicy {
+            filesystem: FilesystemPolicy {
+                deny: crate::sandbox::default_secret_paths(),
+                ..Default::default()
+            },
+            network_mode: NetworkMode::Off,
+            ..Default::default()
+        };
+        let default_profile = generate_seatbelt_profile(&default_policy, &[]);
+        for path in crate::sandbox::default_secret_paths() {
+            let target = if path.is_file() {
+                path
+            } else if path.is_dir() {
+                match first_regular_file(&path) {
+                    Some(file) => file,
+                    None => continue,
+                }
+            } else {
+                continue;
+            };
+            let output = std::process::Command::new(SANDBOX_EXEC_PATH)
+                .args(["-p", &default_profile, "/bin/cat", &target.to_string_lossy()])
+                .output()
+                .expect("sandbox-exec cat default secret");
+            assert!(
+                !output.status.success(),
+                "cat {} must be denied by default secret paths",
+                target.display()
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn first_regular_file(dir: &std::path::Path) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        entries.flatten().map(|entry| entry.path()).find(|p| p.is_file())
+    }
+
+    #[test]
+    fn profile_emits_canonical_deny_for_existing_path() {
+        let tmp = std::env::temp_dir().join(format!(
+            "pawork-seatbelt-canon-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).expect("create deny dir");
+        let policy = SandboxPolicy {
+            filesystem: FilesystemPolicy {
+                deny: vec![tmp.clone()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let profile = generate_seatbelt_profile(&policy, &[]);
+        let logical = escape_seatbelt_string(&tmp.to_string_lossy());
+        assert!(profile.contains(&format!("(deny file-read* (subpath {logical}))")));
+        if let Ok(canon) = std::fs::canonicalize(&tmp) {
+            let escaped = escape_seatbelt_string(&canon.to_string_lossy());
+            assert!(
+                profile.contains(&format!("(deny file-read* (subpath {escaped}))")),
+                "existing deny path must also emit canonical form: {escaped}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(tmp);
     }
 
     #[test]

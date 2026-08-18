@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::McpError;
 
+/// MCP SecretRef 必须落在独立命名空间，禁止解析 Provider / OAuth 凭证。
+const MCP_SERVICE_PREFIX: &str = "pawork.mcp.";
+
 /// Locator for a plaintext secret held by a [`SecretBackend`].
 ///
 /// Only `service` and `account` are persisted/serialized — they are keychain
@@ -49,7 +52,15 @@ impl SecretRef {
     /// must not persist or log it. Resolution failures are mapped to
     /// [`McpError::Secret`] without ever embedding plaintext (which never
     /// leaves the backend).
+    ///
+    /// `service` must start with [`MCP_SERVICE_PREFIX`]; Provider locators such
+    /// as `pawork.openai` / `pawork.chatgpt.oauth` fail closed.
     pub fn resolve(&self, backend: &dyn SecretBackend) -> Result<ResolvedSecret, McpError> {
+        if !self.service.starts_with(MCP_SERVICE_PREFIX) {
+            return Err(McpError::Secret(
+                "secret service must be in the pawork.mcp.* namespace".into(),
+            ));
+        }
         let secret = backend
             .get(&self.service, &self.account)
             .map_err(map_auth_error)?;
@@ -125,7 +136,7 @@ mod tests {
 
     #[test]
     fn debug_output_contains_no_plaintext() {
-        let reference = SecretRef::new("pawork.mcp", "cred-1");
+        let reference = SecretRef::new("pawork.mcp.test", "cred-1");
         assert!(!format!("{reference:?}").contains(SECRET));
     }
 
@@ -133,10 +144,10 @@ mod tests {
     fn resolve_returns_plaintext_without_leaking_in_debug() {
         let backend = MemoryBackend::new();
         backend
-            .store("pawork.mcp", "cred-1", SECRET)
+            .store("pawork.mcp.test", "cred-1", SECRET)
             .expect("store");
 
-        let resolved = SecretRef::new("pawork.mcp", "cred-1")
+        let resolved = SecretRef::new("pawork.mcp.test", "cred-1")
             .resolve(&backend)
             .expect("resolve");
         assert_eq!(resolved.expose_secret(), SECRET);
@@ -147,7 +158,7 @@ mod tests {
     #[test]
     fn resolve_missing_maps_to_secret_error_without_plaintext() {
         let backend = MemoryBackend::new();
-        let error = SecretRef::new("pawork.mcp", "missing")
+        let error = SecretRef::new("pawork.mcp.test", "missing")
             .resolve(&backend)
             .expect_err("missing secret should fail");
         match error {
@@ -156,6 +167,40 @@ mod tests {
                 assert!(!message.contains(SECRET));
             }
             other => panic!("expected Secret error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_rejects_provider_and_oauth_namespaces() {
+        let backend = MemoryBackend::new();
+        backend
+            .store("pawork.openai", "default", SECRET)
+            .expect("store provider");
+        backend
+            .store("pawork.chatgpt.oauth", "default", SECRET)
+            .expect("store oauth");
+        backend
+            .store("pawork.mcp", "default", SECRET)
+            .expect("store exact mcp stem");
+
+        for (service, account) in [
+            ("pawork.openai", "default"),
+            ("pawork.chatgpt.oauth", "default"),
+            ("pawork.mcp", "default"),
+        ] {
+            let error = SecretRef::new(service, account)
+                .resolve(&backend)
+                .expect_err("non-mcp service must fail closed");
+            match error {
+                McpError::Secret(message) => {
+                    assert!(
+                        message.contains("pawork.mcp.*"),
+                        "expected namespace error, got {message}"
+                    );
+                    assert!(!message.contains(SECRET));
+                }
+                other => panic!("expected Secret error, got {other:?}"),
+            }
         }
     }
 }

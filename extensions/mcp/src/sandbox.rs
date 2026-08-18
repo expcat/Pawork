@@ -61,6 +61,27 @@ impl SandboxedStdioSpawner {
     }
 }
 
+/// MCP stdio env hygiene: clear inherited host env, keep the untrusted-default
+/// allowlist, and deny `PAWORK_API_KEY_*`. Does **not** change `network_mode`
+/// (K-09 egress Enforce stays out of this path).
+pub fn apply_mcp_stdio_env_hygiene(policy: &mut SandboxPolicy) {
+    let env_base = SandboxPolicy::untrusted_default(Vec::new());
+    policy.env_clear = true;
+    policy.env_allowlist = env_base.env_allowlist;
+    let mut deny = env_base.env_denylist;
+    if !deny.iter().any(|pattern| pattern == "PAWORK_API_KEY_*") {
+        deny.push("PAWORK_API_KEY_*".into());
+    }
+    policy.env_denylist = deny;
+}
+
+fn is_provider_api_key_env(name: &str) -> bool {
+    name.len() >= "PAWORK_API_KEY_".len()
+        && name
+            .get(.."PAWORK_API_KEY_".len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("PAWORK_API_KEY_"))
+}
+
 fn bridge_exec_cancel(
     domain: &CancellationToken,
 ) -> (
@@ -96,14 +117,38 @@ impl StdioSpawner for SandboxedStdioSpawner {
                     "sandboxed stdio spawn requires a trusted workspace root or working dir".into(),
                 )
             })?;
+        let mut policy = self.policy.clone();
+        apply_mcp_stdio_env_hygiene(&mut policy);
+        for key in cfg.env.keys() {
+            if !policy.env_allowlist.iter().any(|pattern| pattern == key) {
+                policy.env_allowlist.push(key.clone());
+            }
+        }
+
+        let mut env = Vec::new();
+        for key in &policy.env_allowlist {
+            if key.contains('*') || is_provider_api_key_env(key) {
+                continue;
+            }
+            if let Ok(value) = std::env::var(key) {
+                env.push((key.clone(), value));
+            }
+        }
+        for (key, value) in &cfg.env {
+            if is_provider_api_key_env(key) {
+                continue;
+            }
+            if let Some(slot) = env.iter_mut().find(|(existing, _)| existing == key) {
+                slot.1 = value.clone();
+            } else {
+                env.push((key.clone(), value.clone()));
+            }
+        }
+
         let mut command = CommandSpec::new(cfg.command.clone());
         command.args = cfg.args.clone();
         command.cwd = Some(cwd);
-        command.env = cfg
-            .env
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect();
+        command.env = env;
         command.max_output_bytes = STDIO_MAX_OUTPUT_BYTES + STDIO_CHUNK_SLACK_BYTES;
 
         let domain_cancel = CancellationToken::new();
@@ -115,7 +160,7 @@ impl StdioSpawner for SandboxedStdioSpawner {
                     command,
                     workspace_roots: self.workspace_roots.clone(),
                 },
-                self.policy.clone(),
+                policy,
                 exec_cancel,
             )
             .await
@@ -457,6 +502,69 @@ mod tests {
             Err(error) => error,
         };
         assert!(err.to_string().contains("trusted workspace root"));
+    }
+
+    #[test]
+    fn mcp_stdio_env_hygiene_clears_host_secrets_without_enforcing_network() {
+        let mut policy = SandboxPolicy {
+            network_mode: NetworkMode::Hint,
+            allow_spawn: true,
+            ..SandboxPolicy::default()
+        };
+        apply_mcp_stdio_env_hygiene(&mut policy);
+        assert!(policy.env_clear);
+        assert!(
+            policy
+                .env_denylist
+                .iter()
+                .any(|pattern| pattern == "PAWORK_API_KEY_*"),
+            "PAWORK_API_KEY_* must be denied: {:?}",
+            policy.env_denylist
+        );
+        assert!(
+            !policy.env_allowlist.is_empty(),
+            "PATH/HOME allowlist should be reused from untrusted_default"
+        );
+        assert_eq!(
+            policy.network_mode,
+            NetworkMode::Hint,
+            "must not flip to NetworkMode::Enforce (K-09)"
+        );
+        assert!(!is_provider_api_key_env("PATH"));
+        assert!(is_provider_api_key_env("PAWORK_API_KEY_OPENAI"));
+        assert!(is_provider_api_key_env("pawork_api_key_glm_coding"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sandboxed_stdio_does_not_inherit_pawork_api_key() {
+        const ENV_NAME: &str = "PAWORK_API_KEY_TEST_A3";
+        const CANARY: &str = "should-not-leak-to-mcp";
+        std::env::set_var(ENV_NAME, CANARY);
+
+        let root = std::env::temp_dir();
+        let mut policy = policy(&root);
+        apply_mcp_stdio_env_hygiene(&mut policy);
+        let spawner = SandboxedStdioSpawner::new(
+            Arc::new(NativeRestricted::new()),
+            policy,
+            vec![root],
+        );
+        let script = format!("printf 'MARK=%s' \"${ENV_NAME}\"");
+        let cfg = StdioTransportConfig::new("sh")
+            .with_args(["-c", &script])
+            .with_working_dir(std::env::temp_dir());
+        let mut spawned = match spawner.spawn(&cfg).await {
+            Ok(value) => value,
+            Err(error) => panic!("spawn failed: {error}"),
+        };
+        let (got, terminal) = read_until_terminal(&mut spawned.read).await;
+        assert!(terminal.is_none(), "stdio should exit cleanly: {terminal:?}");
+        let text = String::from_utf8_lossy(&got);
+        assert!(
+            !text.contains(CANARY),
+            "MCP stdio inherited {ENV_NAME}: {text:?}"
+        );
     }
 
     #[tokio::test]

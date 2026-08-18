@@ -114,6 +114,10 @@ impl HttpClient {
             builder = builder.user_agent(user_agent.clone());
         }
 
+        // Cross-origin redirects must fail closed. reqwest's default policy
+        // follows 10 hops and only strips Authorization/Cookie, not x-api-key.
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+
         let client = builder.build().map_err(http_error)?;
         Ok(Self { client, config })
     }

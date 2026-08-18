@@ -45,7 +45,47 @@ impl Default for Platform {
 /// pawork-app crate：PAWORK_DATA_DIR →（Windows）%LOCALAPPDATA%/pawork →
 /// $HOME/.pawork → 临时目录/pawork。
 pub fn default_socket_path() -> PathBuf {
-    default_data_dir().join("pawork-gui.sock")
+    socket_path_for_instance(None)
+}
+
+/// 默认 GUI token 路径：<data_dir>/gui.token（与 A5 `{data_dir}/gui.token` 对齐）。
+pub fn default_token_path() -> PathBuf {
+    token_path_for_instance(None)
+}
+
+/// 非 default 实例：`pawork-gui-{instance}.sock` / `gui-{instance}.token`。
+pub fn socket_path_for_instance(instance: Option<&str>) -> PathBuf {
+    default_data_dir().join(instance_file_name("pawork-gui", "sock", instance))
+}
+
+pub fn token_path_for_instance(instance: Option<&str>) -> PathBuf {
+    default_data_dir().join(instance_file_name("gui", "token", instance))
+}
+
+/// 按 socket 文件名推断同目录 token（`pawork-gui.sock` → `gui.token`，
+/// `pawork-gui-{instance}.sock` → `gui-{instance}.token`）。
+pub fn token_path_for_socket(socket: &std::path::Path) -> PathBuf {
+    let parent = socket
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_data_dir);
+    let file_name = socket.file_name().and_then(|name| name.to_str());
+    let token_name = match file_name {
+        Some(name) if name.starts_with("pawork-gui-") && name.ends_with(".sock") => {
+            let instance = &name["pawork-gui-".len()..name.len() - ".sock".len()];
+            format!("gui-{instance}.token")
+        }
+        _ => "gui.token".into(),
+    };
+    parent.join(token_name)
+}
+
+fn instance_file_name(stem: &str, extension: &str, instance: Option<&str>) -> String {
+    match instance.map(str::trim).filter(|name| !name.is_empty() && *name != "default") {
+        Some(name) => format!("{stem}-{name}.{extension}"),
+        None => format!("{stem}.{extension}"),
+    }
 }
 
 fn default_data_dir() -> PathBuf {
@@ -69,6 +109,7 @@ fn default_data_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn default_socket_path_lives_under_data_dir() {
@@ -76,6 +117,28 @@ mod tests {
         assert!(
             path.ends_with("pawork-gui.sock"),
             "unexpected socket path: {path:?}"
+        );
+    }
+
+    #[test]
+    fn default_token_path_aligns_with_a5_gui_token() {
+        let path = default_token_path();
+        assert!(
+            path.ends_with("gui.token"),
+            "unexpected token path: {path:?}"
+        );
+        assert_eq!(
+            token_path_for_instance(Some("default")),
+            default_token_path()
+        );
+        assert!(token_path_for_instance(Some("dev")).ends_with("gui-dev.token"));
+        assert_eq!(
+            token_path_for_socket(&PathBuf::from("/tmp/pawork-gui.sock")),
+            PathBuf::from("/tmp/gui.token")
+        );
+        assert_eq!(
+            token_path_for_socket(&PathBuf::from("/tmp/pawork-gui-dev.sock")),
+            PathBuf::from("/tmp/gui-dev.token")
         );
     }
 
@@ -114,6 +177,7 @@ mod tests {
             "pawork-sqlite",
             "pawork-tools",
             "pawork-git",
+            "pawork-protocol",
         ] {
             assert!(
                 !deps.iter().any(|name| *name == forbidden),

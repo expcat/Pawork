@@ -356,6 +356,7 @@ impl AcpClientAdapter {
                 session_id: record.core_session_id,
                 user_message,
                 model: None,
+                provider: None,
                 profile: None,
             },
         )))

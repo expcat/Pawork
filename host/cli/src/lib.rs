@@ -1032,5 +1032,9 @@ mod tests {
             named.ends_with("pawork-gui-dev.sock") || named.ends_with("pawork-gui-dev.sock"),
             "{named:?}"
         );
+        let token = crate::ops::gui_token_path("/tmp/pawork-data", DEFAULT_INSTANCE);
+        assert!(token.ends_with("gui.token"), "{token:?}");
+        let named_token = crate::ops::gui_token_path("/tmp/pawork-data", "dev");
+        assert!(named_token.ends_with("gui-dev.token"), "{named_token:?}");
     }
 }

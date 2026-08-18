@@ -81,6 +81,72 @@ pub(super) async fn connect(
     Ok(Box::new(StreamConnection::new(reader, writer, info)))
 }
 
+/// Owner-only DACL (`D:P(A;;GA;;;OW)`) via SDDL, then
+/// [`ServerOptions::create_with_security_attributes_raw`].
+fn create_owner_only_pipe(
+    path: &str,
+    first: bool,
+) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+
+    #[repr(C)]
+    struct SecurityAttributes {
+        n_length: u32,
+        lp_security_descriptor: *mut c_void,
+        inherit_handle: i32,
+    }
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            string_security_descriptor: *const u16,
+            string_sd_revision: u32,
+            security_descriptor: *mut *mut c_void,
+            security_descriptor_size: *mut u32,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LocalFree(mem: *mut c_void) -> *mut c_void;
+    }
+
+    const SDDL_REVISION_1: u32 = 1;
+    // Protected DACL: Generic All for the creating owner only.
+    let sddl: Vec<u16> = std::ffi::OsStr::new("D:P(A;;GA;;;OW)")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut descriptor: *mut c_void = ptr::null_mut();
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            ptr::null_mut(),
+        )
+    };
+    if converted == 0 || descriptor.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut attrs = SecurityAttributes {
+        n_length: std::mem::size_of::<SecurityAttributes>() as u32,
+        lp_security_descriptor: descriptor,
+        inherit_handle: 0,
+    };
+    let created = unsafe {
+        ServerOptions::new()
+            .first_pipe_instance(first)
+            .create_with_security_attributes_raw(path, (&raw mut attrs).cast::<c_void>())
+    };
+    unsafe {
+        LocalFree(descriptor);
+    }
+    created
+}
+
 struct NamedPipeListener {
     path: String,
     max_frame_bytes: u64,
@@ -98,18 +164,15 @@ impl GuiListener for NamedPipeListener {
             return Err(connection_closed("listener is closed"));
         }
         let first = self.first_instance.fetch_add(1, Ordering::Relaxed) == 0;
-        let server = ServerOptions::new()
-            .first_pipe_instance(first)
-            .create(&self.path)
-            .map_err(|error| {
-                transport_error(
-                    TransportErrorKind::BindFailed,
-                    format!(
-                        "failed to create named pipe instance {}: {error}",
-                        self.path
-                    ),
-                )
-            })?;
+        let server = create_owner_only_pipe(&self.path, first).map_err(|error| {
+            transport_error(
+                TransportErrorKind::BindFailed,
+                format!(
+                    "failed to create named pipe instance {}: {error}",
+                    self.path
+                ),
+            )
+        })?;
         server.connect().await.map_err(|error| {
             transport_error(
                 TransportErrorKind::ConnectionFailed,

@@ -7,9 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use pawork_api::{ToolError, ToolErrorKind};
 use pawork_domain::WorkspaceId;
 use pawork_policy::{resolve_workspace_path, PathSafetyError};
-use pawork_workspace::{
-    resolve_relative_path, WorkspaceError, WorkspacePathError, WorkspaceService,
-};
+use pawork_workspace::{WorkspaceError, WorkspacePathError, WorkspaceService};
 use serde_json::Value;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -50,8 +48,18 @@ impl From<BuiltinToolError> for ToolError {
                 WorkspacePathError::NoRoot => (ToolErrorKind::NotFound, path.to_string()),
                 WorkspacePathError::AbsolutePath
                 | WorkspacePathError::Traversal(_)
-                | WorkspacePathError::ReservedDeviceName(_) => {
+                | WorkspacePathError::ReservedDeviceName(_)
+                | WorkspacePathError::SymlinkEscape
+                | WorkspacePathError::GitInternals
+                | WorkspacePathError::NonRegular => {
                     (ToolErrorKind::PermissionDenied, path.to_string())
+                }
+                WorkspacePathError::Io(io) => {
+                    if io.kind() == std::io::ErrorKind::NotFound {
+                        (ToolErrorKind::NotFound, io.to_string())
+                    } else {
+                        (ToolErrorKind::ExecutionFailed, io.to_string())
+                    }
                 }
             },
             BuiltinToolError::PolicyPath(path) => match path {
@@ -131,14 +139,7 @@ pub fn workspace_roots(
     Ok(workspace.roots.clone())
 }
 
-/// 把工作区相对路径安全解析为绝对路径。
-pub fn resolve_rel(roots: &[PathBuf], relative: &str) -> Result<PathBuf, BuiltinToolError> {
-    resolve_relative_path(roots, relative)
-        .map(|resolved| resolved.absolute)
-        .map_err(BuiltinToolError::Path)
-}
-
-/// 写工具路径解析：走 policy 安全内核（越界 / symlink / `.git` / 非普通文件）。
+/// 读写共用路径解析：走 policy 安全内核（越界 / symlink / `.git` / 非普通文件）。
 pub fn resolve_write_rel(roots: &[PathBuf], relative: &str) -> Result<PathBuf, BuiltinToolError> {
     resolve_workspace_path(roots, relative)
         .map(|resolved| resolved.absolute)

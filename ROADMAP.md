@@ -1,13 +1,13 @@
-# Pawork V2 开发路线图（增量式 · S0–S12）
+# Pawork V2 开发路线图（增量式 · S0–S13）
 
-> 本文档是 Pawork V2 的**任务总索引**：登记全部任务（已完成 / 未完成）的状态与粗略介绍，并链接到 [plan/](plan/) 内的详细任务文档。V2 采用「最小可用 → 逐级追加」的增量开发方式：S0 先交付一个能真实对话的 `pawork` CLI，S0–S11 在可运行的二进制上逐层追加能力并以真实冒烟 + 定向自动化验收；S12 改为只读的全项目 Code Review，把发现拆成独立后续任务，不在审查阶段直接修复或发布。
+> 本文档是 Pawork V2 的**任务总索引**：登记全部任务（已完成 / 未完成）的状态与粗略介绍，并链接到 [plan/](plan/) 内的详细任务文档。V2 采用「最小可用 → 逐级追加」的增量开发方式：S0 先交付一个能真实对话的 `pawork` CLI，S0–S11 在可运行的二进制上逐层追加能力并以真实冒烟 + 定向自动化验收；S12 改为只读的全项目 Code Review，把发现拆成独立后续任务，不在审查阶段直接修复或发布；S13 按波次统一整改这些发现，仍不含发布。
 >
 > **文档体系**（五份常设文档 + 三类附件）：
 >
 > | 文档 | 职责 |
 > | --- | --- |
 > | 本文 `ROADMAP.md` | 任务总索引：阶段状态、阶段外任务、未决事项、风险 |
-> | [plan/S0–S12](plan/) | 每阶段任务书：目标、范围、退出标准与并行拆分；S0–S11 含冒烟/定向自动化，S12 含独立审查包与 finding 回写规则（附件 [plan/archive/](plan/archive/README.md)：旧按域计划索引；M0–M8 正文未落仓，迁移细则回退到 `docs/v1-migration-reference.md` §4.1） |
+> | [plan/S0–S13](plan/) | 每阶段任务书：目标、范围、退出标准与并行拆分；S0–S11 含冒烟/定向自动化，S12 含独立审查包与 finding 回写规则，S13 含整改波次与决策点（附件 [plan/archive/](plan/archive/README.md)：旧按域计划索引；M0–M8 正文未落仓，迁移细则回退到 `docs/v1-migration-reference.md` §4.1） |
 > | [docs/design.md](docs/design.md) | 设计文档：包布局与激活映射、冻结契约、各阶段功能设计与参照项目映射、候选功能 |
 > | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计：最小 Agent 壳、参照取舍、随阶段增量图（附件 [design/README.md](design/README.md)：v3 定稿视觉实施基准与三张定稿图） |
 > | [docs/references.md](docs/references.md) | 参照项目手册：对标项目的目标、功能与文档链接（附件 [docs/research/](docs/research/)：专题调研全文） |
@@ -23,7 +23,7 @@
 旧「按域整体迁移」计划（M0–M8；[plan/archive/](plan/archive/README.md) 仅保留索引，正文未落仓）第一个可运行物要到第 5 个里程碑才出现，此前全部是「库先行、零消费者」——正是 V1「组件齐全、主干未通电」病灶（[docs/v1-migration-reference.md](docs/v1-migration-reference.md) §1.2）在计划层的重演。现行计划的四条组织原则：
 
 1. **每阶段交付可运行增量**：从 S0 起 `pawork` 二进制始终可编译、可运行、可被真实使用；每个阶段以「新增哪些用户可见能力」定义，而不是以「迁移了哪些包」定义。
-2. **真实测试优先、低消耗默认**：S0–S11 的冒烟与模型行为评估用真实通道执行；S0–S5 期为 GLM Coding Plan + OpenCode Go 两通道，S6 接通首发通道后默认切换为 §1.1 低消耗模型矩阵，高级模型仅在用户明确指定时使用。自动化测试只做关键定向项（契约 golden、安全红线、解析器种子），当前 S0–S12 不设 Workspace Full Gate；S12 只审查和登记。全量门禁、三平台验证与发布不再挂在 S12，只有在审查整改完成且用户明确决定发布后才另立任务。
+2. **真实测试优先、低消耗默认**：S0–S11 的冒烟与模型行为评估用真实通道执行；S0–S5 期为 GLM Coding Plan + OpenCode Go 两通道，S6 接通首发通道后默认切换为 §1.1 低消耗模型矩阵，高级模型仅在用户明确指定时使用。自动化测试只做关键定向项（契约 golden、安全红线、解析器种子），当前 S0–S13 不设 Workspace Full Gate；S12 只审查和登记，S13 整改仍只做定向验证。全量门禁、三平台验证与发布不再挂在 S12，只有在审查整改完成且用户明确决定发布后才另立任务。
 3. **追加而非重写**：用三道保险（终局包布局先行、冻结契约先行、迁移词典与「无消费者不合入」，见 [docs/design.md](docs/design.md) §3）保证后期把 V1 全部功能追加进来时，不需要推翻任何已交付阶段的代码。V1 的约 23.6 万行资产仍按「复制 + 合并 + 改名」迁移，只是从「按域一次性搬」改为「按阶段按需搬」。
 4. **GUI 增量主线**：S7 起以定稿 v3 三栏工作台（[design/README.md](design/README.md)）为唯一壳，S8–S11 每阶段按 [docs/gui-design.md](docs/gui-design.md) §5 给同一壳加面（各任务书带「GUI 增量」行）；没有对应投影/命令就不做按钮，视觉验收一律对照该基准。
 
@@ -45,7 +45,7 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 
 ---
 
-## 2. 阶段总览（S0–S12）
+## 2. 阶段总览（S0–S13）
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞。每阶段的详细任务、退出标准与并行拆分见 `plan/S*.md`；各阶段功能设计与参照项目映射见 [docs/design.md](docs/design.md) §4。
 
@@ -64,10 +64,11 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 | [S10](plan/S10-serve-clients.md) | 服务化与客户端补齐（10a ✅ · 10b ✅ · 收口 ✅ · S0–S9 回归 ✅ · Zed ACP ✅） | headless/SDK/ACP/service、多 GUI Replay、Fork、PTY；`--json` 对齐正式协议 | protocol 收口、transport 补齐、gui-server 多客户端、sdk、channels、app/cli 正式化、exec（pty）、session lifecycle、protocol-probe | 正式 Replay、Fork、Terminal tab、本机多窗口 | protocol-probe 全过；SDK e2e；两 GUI Replay 已过；S0–S9 回归已复跑；Zed 1.15 Agent Panel `pong`/`end_turn` | 🟢 |
 | [S11](plan/S11-workflow-control.md) | 工作流、多 Agent 与控制面（波 A–D ✅） | Plan 整版审批 gate、`pawork tasks`、`pawork usage`、`pawork agents demo`；多账户 factory/routing 与 Desktop Workflow 面未做（§4） | workflow、memory、review、orchestration、control-plane、provider-control、quota、app/cli 接线 | Host 已接 `QuotaOverview`；Desktop Workflow / quota 条 / ActivityPopover Agent 列表未做 | plan 拦截→批准→改计划再拦；usage 与 S5 行 1:1；tasks 跨进程可见；supervisor demo 完成/cancel-tree/budget-gate；两通道短指令评估 | 🟢 |
 | [S12](plan/S12-project-code-review.md) | 全项目 Code Review 与整改拆分 | —（只读审查 + finding 任务化） | 全部现有包及跨包接口 | 审查 v3 设计、投影、协议能力与现有证据的一致性；不改 UI、不启动窗口 | CR-01～CR-09 独立报告完成；安全/Bug/性能/假完成/未落地需求均有证据与置信度；Confirmed finding 逐项写入 §3.2 | 🟢 |
+| [S13](plan/S13-s12-remediation.md) | S12 finding 整改（波 A ✅ · 波 B Bug → 波 C 收口） | 无新功能：读路径 symlink 内核、Seatbelt/命令分类/MCP 与凭证边界、gui serve 认证、会话分支投影、审批/Replay/幂等正确性、Desktop 锚点/键盘/多行等 57 项修复 | 按 finding 写入集触及受影响包（policy/tools/exec/config/net/mcp/session/blob/engine/workflow/orchestration/protocol/host/clients/desktop/manifests/docs） | 不新增面；修复 Timeline 锚点/抢滚/多行 Composer/键盘可访问性，v3 漂移按基准收口（F56 拍板） | 57 项逐项验收（§3.2 登记行 + S13 任务书边界）；安全红线回归全绿；契约改动 golden 先行；GUI 人工证据并 K-03；文档三处一致 | 🔵 |
 
-**关键节点**：S4 结束即达成旧计划 M4 的首要验收（真实仓库「读文件-改代码-跑命令」闭环）。S5–S6 补齐用量与首发通道后，**S7 已按 v3 定稿交付最小 Agent GUI**（正式帧真实对话/审批/取消/重连/TaskRail/跨通道切换）；S8–S11 按 [docs/gui-design.md](docs/gui-design.md) §5 在同一壳上依次点亮 Changes → `@`/Resources → Replay/Fork/Terminal/多窗口 → Workflow/quota/Agent 列表，其中 S10 把单窗口升级为多客户端服务；S12 对完整结果做只读 Code Review，并把整改拆成阶段外独立任务。发布不在当前 S0–S12 排期。WASM 插件 / Hooks / LSP / 市场同样不在当前排期，见 §4。
+**关键节点**：S4 结束即达成旧计划 M4 的首要验收（真实仓库「读文件-改代码-跑命令」闭环）。S5–S6 补齐用量与首发通道后，**S7 已按 v3 定稿交付最小 Agent GUI**（正式帧真实对话/审批/取消/重连/TaskRail/跨通道切换）；S8–S11 按 [docs/gui-design.md](docs/gui-design.md) §5 在同一壳上依次点亮 Changes → `@`/Resources → Replay/Fork/Terminal/多窗口 → Workflow/quota/Agent 列表，其中 S10 把单窗口升级为多客户端服务；S12 对完整结果做只读 Code Review，并把整改登记为 57 项任务；S13 按波 A 安全 → 波 B Bug → 波 C 收口统一整改（[plan/S13-s12-remediation.md](plan/S13-s12-remediation.md)）。发布不在当前 S0–S13 排期。WASM 插件 / Hooks / LSP / 市场同样不在当前排期，见 §4。
 
-**依赖关系**：S0→S1→S2→S3→S4 严格串行（主干长成）；S5 与 S6 在 S4 后可并行；S7 依赖 S1–S5（会话/事件/工具/审批），S6 建议先行但不阻塞设计波；S8 依赖 S3（写工具），可与 S7 部分并行，有 Desktop 则同步 Changes；S9 依赖 S2 与 S6；S10 依赖 S7；S11 依赖 S10；S12 在 S0–S11 状态、延期项与证据完成回写后启动。S12 不实现或测试 finding；整改按 §3.2 逐项排期。GUI 各阶段加面的视觉与交互验收一律对照 [design/README.md](design/README.md) v3 基准。
+**依赖关系**：S0→S1→S2→S3→S4 严格串行（主干长成）；S5 与 S6 在 S4 后可并行；S7 依赖 S1–S5（会话/事件/工具/审批），S6 建议先行但不阻塞设计波；S8 依赖 S3（写工具），可与 S7 部分并行，有 Desktop 则同步 Changes；S9 依赖 S2 与 S6；S10 依赖 S7；S11 依赖 S10；S12 在 S0–S11 状态、延期项与证据完成回写后启动。S12 不实现或测试 finding；整改由 S13 统一排期。S13 依赖 S12 登记完成（已满足）；波内按写入集簇并行、串行点见任务书；S13 收口是任何发布类任务的前置。GUI 各阶段加面的视觉与交互验收一律对照 [design/README.md](design/README.md) v3 基准。
 
 ---
 
@@ -88,6 +89,7 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 | V1 代码归档与 V2 升为仓库根 | 2026-08-17 | 仓库根全部 V1 资产移至仓库外同级目录 [../Pawork_v1](../Pawork_v1/)（移出 git 管理，历史仍可追溯）；`Pawork_v2/` 内容经 `git mv` 升为仓库根（staged：1280 D / 267 R / 6 同名替换）；本文头部、S12 行与 §4 同步。后续跟进：`foundation/config` 的仓库根加载路径按新布局回归 |
 | 重建仓库根文件与全量引用修复 | 2026-08-17 | 重建 [AGENTS.md](AGENTS.md)（V2 版，§5 开发期验证放宽与 task-guide §6 双向同步）、[README.md](README.md)、[.gitattributes](.gitattributes)；修复迁移断链 84 处（V1 资产链接改指 [../Pawork_v1/](../Pawork_v1/)、未落仓 `archive/M0–M8` 回退 [plan/archive/README.md](plan/archive/README.md)、深度修正 2 处）与 15 处陈旧文本引用 |
 | S12 从发布硬化重规划为全项目 Code Review | 2026-08-17 | 原 Release Hardening/发布任务移出当前排期；新增 [S12 审查任务书](plan/S12-project-code-review.md)，按九个独立审查包产出 finding，并逐项回写 §3.2 |
+| S13 立项：S12 finding 整改任务书与文档同步 | 2026-08-18 | [plan/S13-s12-remediation.md](plan/S13-s12-remediation.md)；本文 S0–S13 同步与 §3.2 登记修正（F05/F09/F13/F17/F30/F31/F49）；v2_plan §3/§4、AGENTS §5、task-guide §6、README 同步 |
 
 ### 3.2 待执行（阶段之外）
 
@@ -96,7 +98,7 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 | 多账户功能族并入 plan | 把已确认的 F1–F5 与 G6 增量写入 S2/S5/S6/S9/S11 计划文档，并按「少测试」约定核减非关键测试项；release 目标只保留为未来发布任务输入，不写入 S12 | [docs/research/multi-account-quota-plan-merge.md](docs/research/multi-account-quota-plan-merge.md) §4（前置条件已满足，可随时开启） | ⚪ |
 | K-01 仓库根迁移后的 config 路径闭环 | 核对 `foundation/config` 在 V2 摊平后的仓库根发现、层级加载与示例路径；若不一致再用独立实现任务修复 | §3.1 的迁移后跟进项；[S9 任务书](plan/S9-mcp-resources.md) | ⚪ |
 | K-02 审批请求等待前持久化 | 让 `ToolApprovalRequested` 在进入用户等待前落盘，定义崩溃/`kill -9` 后 seal、resume 与“不重复执行”语义 | [S3 任务书](plan/S3-safe-edits.md)；`host/app/src/gui_host.rs` 的现有时序注释 | ⚪ |
-| K-03 S7 Desktop 人工验收 | 补中文 IME、多行粘贴、1440×1024 对照 v3 定稿图和 1080×720 可用性证据；不以 probe/源码替代真实窗口 | [S7 任务书](plan/S7-gui-agent.md)；[GUI 设计](docs/gui-design.md) | ⚪ |
+| K-03 S7 Desktop 人工验收 | 补中文 IME、多行粘贴、1440×1024 对照 v3 定稿图和 1080×720 可用性证据；S13-F14 主路径键盘走查（审批/取消/切换）；不以 probe/源码替代真实窗口 | [S7 任务书](plan/S7-gui-agent.md)；[GUI 设计](docs/gui-design.md) | ⚪ |
 | K-04 S8 Desktop Changes 面 | 实现并真实验收 Inspector Changes（Files/Summary）与 ActivityPopover Changes 摘要，复用已有 `DiffListFiles`/`DiffGet` | [S8 任务书](plan/S8-git-checkpoint.md)；[GUI 设计](docs/gui-design.md) §5 | ⚪ |
 | K-05 S9 本机会话格式导入 | 在取得脱敏样本后适配 `~/.claude/projects/**/*.jsonl` 与现行 Codex rollout `{timestamp,type,payload}`，保持源文件只读与 Secret 拒绝 | [S9 任务书](plan/S9-mcp-resources.md) | ⚪ |
 | K-06 S9 Desktop `@` / Resources 面 | 实现 Composer `@file` 补全与 Resources 只读 MCP/规则视图，只消费既有 Host 查询/注入能力 | [S9 任务书](plan/S9-mcp-resources.md)；[GUI 设计](docs/gui-design.md) §5 | ⚪ |
@@ -107,24 +109,26 @@ Secret 红线不变：key/token 不入日志、事件、配置样例与任何可
 
 S12 全项目 Code Review（2026-08-17～18 审查并收口，九份报告 + 五份交叉复核见 [docs/reviews/s12/](docs/reviews/s12/)）共产出 60 条 finding（全部 Confirmed，Needs Verification 0；裁定后 High 15 / Medium 27 / Low 18），按回写规则合并为以下 57 项任务：S12-CR02-01/02 根因与写入集相同合并为 S12-F01；S12-CR04-06 仅补证据链接 K-10，不另建行；S12-CR09-05 随 S12-F01 统一收口，不另立写入集。排队顺序：安全与数据风险 → 功能缺口与 Bug → 性能与维护性。每项整改均为独立任务，实施与验证在各自任务中另行授权。
 
+S13 统一排期（2026-08-18 立项）：57 项整改由阶段 [S13](plan/S13-s12-remediation.md) 按「波 A 安全（F01–F14，随动 F45/F50/F52）→ 波 B Bug（F15–F40，随动其余 Low）→ 波 C 收口」执行；同写入集或强依赖的 Low 项随动入簇（独立验收、独立回写），簇拆分、串行点与决策点以任务书为准。立项核对（重读十四份报告对照登记）已回写以下修正：F13 验收方向按交叉复核纠偏、F31 Automation 前缀改回可选、F09 写入集补齐 compact_history/Timeline 消费面与冻结备选、F05 补 env 继承收口、F17 补 Skills、F30/F49 验收补齐二选一两支。本表状态列继续作为逐项收口的事实源。波 A 已于 2026-08-18 收口（F01–F14、F45/F50/F52 🟢）；F14 真实窗口键盘走查仍并入 K-03，F03 Windows SCM 按 S10 降级。
+
 **安全与数据风险（High，S12-F01～F14）**
 
 | 任务 | 说明 | 任务书 / 依据 | 状态 |
 | --- | --- | --- | --- |
-| S12-F01 只读工具 symlink 逃逸与 S3 路径内核假完成 | 读路径（read_file/list_directory/search_text）统一走 policy 路径内核（保持 `resolve_relative_path` 签名或 `resolve_rel` 转调），canonical 复核 + `.git` 段拒绝；四套路径校验实现以 policy::path 为单一事实源收口；`.git` 只读策略先拍板；同步纠正 S3 任务书勾选。验收：fixture 内 symlink→`~/.pawork/auth.json` 与 `/etc` 三工具拒绝、`.git/config` 读取拒绝、`rg resolve_rel execution/tools/src` 无生产调用、policy symlink/.git 单测加读工具用例全绿 | [CR-02](docs/reviews/s12/CR-02-policy-tools-git.md) S12-CR02-01/02（High，交叉复核 uphold）· [CR-09](docs/reviews/s12/CR-09-traceability-consistency.md) S12-CR09-05 | ⚪ |
-| S12-F02 macOS Seatbelt 整盘只读与 Hard 标签失真 | 移除无条件 `(allow file-read* (subpath "/"))` 或将 isolation 标签诚实降级；`default_secret_paths` 补 `~/.pawork/auth.json`、`~/.gnupg`、`~/.config`。验收：Seatbelt 下 `cat` 上述路径被拒，且工具 metadata 的 isolation/note 与实际一致 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-01（High，uphold） | ⚪ |
-| S12-F03 service stop --apply 回收单元定义与 --instance 标识校验 | `normalize_instance` 限制为 `[A-Za-z0-9._-]`；stop --apply 删除 launchd plist、disable 并删除 systemd unit（Windows SCM 另验）。验收：install→start→stop --apply 后 plist/unit 不存在；带空格/分号/换行的 instance 被拒绝 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-03（High，uphold） | ⚪ |
-| S12-F04 Dangerous 命令分类补齐本机 shell 高危动词 | `Remove-Item`、`cmd /c del`、`curl|sh`/`wget|sh` 远程管道、`python -c`、`osascript`、`diskpart`、`schtasks`、`launchctl` 等纳入 Dangerous。验收：`classify_command` 对报告点名命令的矩阵单测全绿，AskForDangerous 下不再静默放行 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-04（High，uphold） | ⚪ |
-| S12-F05 MCP SecretRef 解析域隔离 | SecretRef 限制 `pawork.mcp.*` 或独立 MCP 后端；workspace 层不得解析用户全局 auth.json；注意加重事实：MCP 子进程 `env_clear=false` 继承宿主环境（含 `PAWORK_API_KEY_*`）。验收：SecretRef 指向 `pawork.openai`/`default` 时 fail-closed 定向测试 | [CR-04](docs/reviews/s12/CR-04-secret-net-mcp.md) S12-CR04-01（High，uphold） | ⚪ |
-| S12-F06 workspace proxy_url/base_url 覆盖与跨域凭证泄漏 | `proxy_url`/非回环 `base_url` 与 `trust_workspaces` 同级剥离；出站客户端跨 origin 跳转 fail-closed 或剥离全部凭证头（含 `x-api-key`）。验收：sink 代理/伪造 base_url 不见 Bearer 与 x-api-key；跨 host 302 不带出 | [CR-04](docs/reviews/s12/CR-04-secret-net-mcp.md) S12-CR04-02（High，uphold） | ⚪ |
-| S12-F07 上游错误正文未脱敏进入可持久化 RunFailed | `classify_status` 只保留 status/稳定错误码，正文经 Redactor 或丢弃。验收：mock 401 body 含明文 token 时 `session_events` 与 `RunFailed` JSON 无明文，定向回归 | [CR-04](docs/reviews/s12/CR-04-secret-net-mcp.md) S12-CR04-03（High，uphold） | ⚪ |
-| S12-F08 workspace MCP 自封 trusted + auto_start 任意 stdio | workspace 层剥离 `mcp.*.trusted`/`auto_start`（或整段 mcp）；stdio 命令需全局 allowlist 或用户确认；MCP trusted 不得高于宿主 `workspace_trusted`；stdio 沙箱经 SandboxSelector。验收：未信任 workspace `trusted=true`+`auto_start` 不得启动，`allowed_in_untrusted_workspace` 仍为 false | [CR-04](docs/reviews/s12/CR-04-secret-net-mcp.md) S12-CR04-04（High，uphold） | ⚪ |
-| S12-F09 分支/Fork 消费面补 branch 维度投影 | messages 投影增加分支/祖先语义（可能需要 v10 附加式迁移），`resume_messages`/compaction 按 active branch 祖先链；不改事件信封 v1 与 append-only 事实表。验收：fork 后 resume 只含祖先前缀；fork 分支压缩不删 main 低水位消息（定向测试） | [CR-05](docs/reviews/s12/CR-05-persistence-ledgers.md) S12-CR05-01（High，uphold） | ⚪ |
-| S12-F10 gui serve 强制认证与本机 socket 收紧 | 生产装配接 `TokenAuthenticator`（无 authenticator fail-closed）；UDS 0600/目录 0700、Windows Named Pipe DACL；Desktop/client/probe 共用 `TOKEN_SCHEME`（与 S12-F52 同批）。验收：无 token 握手 Rejected；socket mode 0600；同机另一进程无凭证不能驱动 Run/PTY/审批 | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-01（High，uphold） | ⚪ |
-| S12-F11 连接 Lagged fail-closed 通知重建 | 队列满/broadcast Lagged 时向该连接发 `ReplayUnavailable`/`SnapshotRequired` 或断开；客户端消费该帧按 gui-design §4.1 重建。验收：`queue_capacity=2` 灌事件，客户端收到 ReplayUnavailable 或被踢且 Snapshot/Resume 收敛 | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-02（High，uphold） | ⚪ |
-| S12-F12 Timeline 锚点跨分页失效 | assistant/tool 锚点改存 event_id/sequence（或插入时平移）。验收：低 sequence 页晚于 live 锚点到达的乱序单测，工具状态回填与 assistant 合并目标正确 | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-01（High，uphold） | ⚪ |
-| S12-F13 RunStart 携带 provider 维度 | 协议 `RunStart` 追加 optional provider（minor bump + golden 先行）→ host 按 provider 优先解析 → Desktop 发送；三处一个任务链，不可只改 Desktop。验收：deepseek 与 opencode-go 同名 `deepseek-v4-flash` 下选择后者，Host 实际 provider 断言 | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-02（High，uphold，方向经复核修正） | ⚪ |
-| S12-F14 Desktop 主路径键盘可操作与可访问名称 | 审批/取消/模型/会话/新建/Inspector/菜单补焦点链与 keybinding；角标按钮 tooltip + accessible name + 禁用原因文本。验收：键盘走查完成审批/取消/切换（并入 K-03 人工验收）；控件级焦点/tooltip 静态断言 | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-03（High，uphold） | ⚪ |
+| S12-F01 只读工具 symlink 逃逸与 S3 路径内核假完成 | 读路径（read_file/list_directory/search_text）统一走 policy 路径内核（保持 `resolve_relative_path` 签名或 `resolve_rel` 转调），canonical 复核 + `.git` 段拒绝；四套路径校验实现以 policy::path 为单一事实源收口；`.git` 只读策略先拍板；同步纠正 S3 任务书勾选。验收：fixture 内 symlink→`~/.pawork/auth.json` 与 `/etc` 三工具拒绝、`.git/config` 读取拒绝、`rg resolve_rel execution/tools/src` 无生产调用、policy symlink/.git 单测加读工具用例全绿 | [CR-02](docs/reviews/s12/CR-02-policy-tools-git.md) S12-CR02-01/02（High，交叉复核 uphold）· [CR-09](docs/reviews/s12/CR-09-traceability-consistency.md) S12-CR09-05 | 🟢 2026-08-18：读写均拒 `.git`；读工具走 `policy::path`；`resolve_rel` 已删。定向 `pawork-policy`/`workspace`/`tools`/`review` |
+| S12-F02 macOS Seatbelt 整盘只读与 Hard 标签失真 | 移除无条件 `(allow file-read* (subpath "/"))` 或将 isolation 标签诚实降级；`default_secret_paths` 补 `~/.pawork/auth.json`、`~/.gnupg`、`~/.config`。验收：Seatbelt 下 `cat` 上述路径被拒，且工具 metadata 的 isolation/note 与实际一致 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-01（High，uphold） | 🟢 2026-08-18：支 B 诚实标签 `HardWritesAndNetwork`，保留 `/` 只读；补 auth.json/gnupg/config。本机 Seatbelt `cat` 被拒 |
+| S12-F03 service stop --apply 回收单元定义与 --instance 标识校验 | `normalize_instance` 限制为 `[A-Za-z0-9._-]`；stop --apply 删除 launchd plist、disable 并删除 systemd unit（Windows SCM 另验）。验收：install→start→stop --apply 后 plist/unit 不存在；带空格/分号/换行的 instance 被拒绝 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-03（High，uphold） | 🟢 2026-08-18：instance `[A-Za-z0-9._-]`；stop `--apply` 删 plist / systemd unit。Windows SCM 按 S10 降级未验 |
+| S12-F04 Dangerous 命令分类补齐本机 shell 高危动词 | `Remove-Item`、`cmd /c del`、`curl|sh`/`wget|sh` 远程管道、`python -c`、`osascript`、`diskpart`、`schtasks`、`launchctl` 等纳入 Dangerous。验收：`classify_command` 对报告点名命令的矩阵单测全绿，AskForDangerous 下不再静默放行 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-04（High，uphold） | 🟢 2026-08-18：Remove-Item / 远程管道 / python -c / osascript 等入 Dangerous。`classify_command` 矩阵绿 |
+| S12-F05 MCP SecretRef 解析域隔离 | SecretRef 限制 `pawork.mcp.*` 或独立 MCP 后端；workspace 层不得解析用户全局 auth.json；注意加重事实：MCP 子进程 `env_clear=false` 继承宿主环境（含 `PAWORK_API_KEY_*`）。验收：SecretRef 指向 `pawork.openai`/`default` 时 fail-closed 定向测试；MCP 子进程不再默认继承 `PAWORK_API_KEY_*` | [CR-04](docs/reviews/s12/CR-04-secret-net-mcp.md) S12-CR04-01（High，uphold） | 🟢 2026-08-18：SecretRef 仅 `pawork.mcp.*`；独立 `mcp-auth.json`；stdio `env_clear` + 拒 `PAWORK_API_KEY_*` |
+| S12-F06 workspace proxy_url/base_url 覆盖与跨域凭证泄漏 | `proxy_url`/非回环 `base_url` 与 `trust_workspaces` 同级剥离；出站客户端跨 origin 跳转 fail-closed 或剥离全部凭证头（含 `x-api-key`）。验收：sink 代理/伪造 base_url 不见 Bearer 与 x-api-key；跨 host 302 不带出 | [CR-04](docs/reviews/s12/CR-04-secret-net-mcp.md) S12-CR04-02（High，uphold） | 🟢 2026-08-18：剥离 workspace `proxy_url`/非回环 `base_url`；`HttpClient` `redirect(Policy::none())` |
+| S12-F07 上游错误正文未脱敏进入可持久化 RunFailed | `classify_status` 只保留 status/稳定错误码，正文经 Redactor 或丢弃。验收：mock 401 body 含明文 token 时 `session_events` 与 `RunFailed` JSON 无明文，定向回归 | [CR-04](docs/reviews/s12/CR-04-secret-net-mcp.md) S12-CR04-03（High，uphold） | 🟢 2026-08-18：`classify_status` 只留 `HTTP {status}`，丢弃 body |
+| S12-F08 workspace MCP 自封 trusted + auto_start 任意 stdio | workspace 层剥离 `mcp.*.trusted`/`auto_start`（或整段 mcp）；stdio 命令需全局 allowlist 或用户确认；MCP trusted 不得高于宿主 `workspace_trusted`；stdio 沙箱经 SandboxSelector。验收：未信任 workspace `trusted=true`+`auto_start` 不得启动，`allowed_in_untrusted_workspace` 仍为 false | [CR-04](docs/reviews/s12/CR-04-secret-net-mcp.md) S12-CR04-04（High，uphold） | 🟢 2026-08-18：剥离 workspace `trusted`/`auto_start`；宿主 clamp；未信任不自动启动 |
+| S12-F09 分支/Fork 消费面补 branch 维度投影 | messages 投影增加分支/祖先语义（可能需要 v10 附加式迁移；备选：拍板冻结线性模型并修文档，契约级决策），`resume_messages`/`compact_history`/Timeline/CLI 消费面按 active branch 祖先链；不改事件信封 v1 与 append-only 事实表。验收：fork 后 resume 只含祖先前缀；fork 分支压缩不删 main 低水位消息（定向测试） | [CR-05](docs/reviews/s12/CR-05-persistence-ledgers.md) S12-CR05-01（High，uphold） | 🟢 2026-08-18：支 A schema v10 + `ancestor_lineage`；信封 v1 / append-only 未改。`pawork-session` + app fork/resume/compact 绿 |
+| S12-F10 gui serve 强制认证与本机 socket 收紧 | 生产装配接 `TokenAuthenticator`（无 authenticator fail-closed）；UDS 0600/目录 0700、Windows Named Pipe DACL；Desktop/client/probe 共用 `TOKEN_SCHEME`（与 S12-F52 同批）。验收：无 token 握手 Rejected；socket mode 0600；同机另一进程无凭证不能驱动 Run/PTY/审批 | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-01（High，uphold） | 🟢 2026-08-18：生产 `gui serve` 接 TokenAuthenticator；UDS 0600 / data_dir 0700；Desktop/client/probe 共用 `TOKEN_SCHEME`。两 GUI 真实冒烟未复跑 |
+| S12-F11 连接 Lagged fail-closed 通知重建 | 队列满/broadcast Lagged 时向该连接发 `ReplayUnavailable`/`SnapshotRequired` 或断开；客户端消费该帧按 gui-design §4.1 重建。验收：`queue_capacity=2` 灌事件，客户端收到 ReplayUnavailable 或被踢且 Snapshot/Resume 收敛 | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-02（High，uphold） | 🟢 2026-08-18：Lagged 发 `ReplayUnavailable` 后停转发；不发假 Resume。F32 Snapshot 归一仍属波 B |
+| S12-F12 Timeline 锚点跨分页失效 | assistant/tool 锚点改存 event_id/sequence（或插入时平移）。验收：低 sequence 页晚于 live 锚点到达的乱序单测，工具状态回填与 assistant 合并目标正确 | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-01（High，uphold） | 🟢 2026-08-18：锚点改存 `event_id`/`sequence`；乱序页回填单测绿 |
+| S12-F13 RunStart 携带 provider 维度 | 协议 `RunStart` 追加 optional provider（minor bump + golden 先行）→ host 按 provider 优先解析 → Desktop 发送；三处一个任务链，不可只改 Desktop。验收：catalog 同时含 deepseek 与 opencode-go 的同名 `deepseek-v4-flash` 时按 `RunStart.provider` 命中用户所选通道（不取目录首项），Host 侧断言实际 provider | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-02（High，uphold，方向经复核修正） | 🟢 2026-08-18：`RunStart.provider` + API 1.2；Host 有 provider 走 `switch_provider`；Desktop 发送 `(provider, model)` |
+| S12-F14 Desktop 主路径键盘可操作与可访问名称 | 审批/取消/模型/会话/新建/Inspector/菜单补焦点链与 keybinding；角标按钮 tooltip + accessible name + 禁用原因文本。验收：键盘走查完成审批/取消/切换（并入 K-03 人工验收）；控件级焦点/tooltip 静态断言 | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-03（High，uphold） | 🟢 2026-08-18：主路径 keybinding + tab_stop/tooltip 静态断言。真实窗口键盘走查仍并入 K-03 |
 
 **功能缺口与 Bug（Medium，S12-F15～F40）**
 
@@ -132,7 +136,7 @@ S12 全项目 Code Review（2026-08-17～18 审查并收口，九份报告 + 五
 | --- | --- | --- | --- |
 | S12-F15 storage/session → protocol::adapter 反向依赖 trait 倒置 | 先拍板 trait 归属（session vs domain；维持现状则改写词典 §4.1 #13 并留 ADR）。验收：`rg pawork_protocol storage/session/src` 收敛于 client_adapter.rs + 「protocol 类型变更不触碰 storage」编译边界断言 | [CR-01](docs/reviews/s12/CR-01-manifests-layout.md) S12-CR01-01 | ⚪ |
 | S12-F16 ApprovalMode::OnFailure 语义落空 | 实现失败后再问（至少 WorkspaceWrite/Process/GitWrite）或收窄文档/CLI 为「当前等价 NeverAsk」（二选一）。验收：on-failure 下工具失败后第二次同类调用行为定向断言 | [CR-02](docs/reviews/s12/CR-02-policy-tools-git.md) S12-CR02-03 | ⚪ |
-| S12-F17 未信任 workspace 仍注入 AGENTS.md/Skills 正文 | host 注入点按 `workspace_trusted` 过滤仓库层指令，或 loader 增加 trust 开关；不实现通用注入分类器。验收：未信任 fixture 的仓库 AGENTS.md 不进 `injected_layers` | [CR-02](docs/reviews/s12/CR-02-policy-tools-git.md) S12-CR02-04 | ⚪ |
+| S12-F17 未信任 workspace 仍注入 AGENTS.md/Skills 正文 | host 注入点按 `workspace_trusted` 过滤仓库层指令，或 loader 增加 trust 开关；不实现通用注入分类器。验收：未信任 fixture 的仓库 AGENTS.md/Skills 不进 `injected_layers` | [CR-02](docs/reviews/s12/CR-02-policy-tools-git.md) S12-CR02-04 | ⚪ |
 | S12-F18 GUI PTY 沙箱/审批接线与退出回收 | `TerminalCreate` 复用 run_command 隔离/审批，或显式降级为「本机不受控终端」并告知；`GuiHostAdapter::shutdown` 与 gui serve 退出路径调用 `pty.shutdown()`。验收：Ctrl-C / service stop / kill -9 后 `pgrep` 无 PTY 孤儿；若接沙箱则 Terminal 内读 auth.json 被拒 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-02（交叉复核 High→Medium） | ⚪ |
 | S12-F19 沙箱不可用时的回退口径拍板 | S4「绝不静默裸跑」与 ADR-031 可观测回退二选一：改选择器拒跑（显式 `--sandbox off` 除外），或把 ADR-031 写回 design/S4 退出标准并让 CLI/GUI 显示 fallback。验收：探测失败后 run_command 行为与文档一致且 fallback 对用户可见 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-05 | ⚪ |
 | S12-F20 macOS 协作式取消回收 setsid 后代 | Linux `/proc` 扫树语义抽到 Unix，或 macOS 用 libproc 等价实现。验收：macOS `setsid sleep 300` / `disown` 后台进程在 Ctrl-C 后无残留 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-06 | ⚪ |
@@ -145,8 +149,8 @@ S12 全项目 Code Review（2026-08-17～18 审查并收口，九份报告 + 五
 | S12-F27 MemoryService replay 后 ID 碰撞 | apply 后按事件流派生 next_id 或提供 `from_events`。验收：apply `mem-7` 后 `record()` 不分配 mem-0 且不覆盖 mem-7 | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-04 | ⚪ |
 | S12-F28 automation record_result 幂等 | 定义幂等键（可能需要契约决策）+ archived 去重 + failure streak 不重复累计。验收：同 task 重复 `record_result(Failed)` 不新增事件/archived + replay golden | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-05 | ⚪ |
 | S12-F29 Supervisor spawn parent 准入校验 | 校验 parent 存在/同 tenant/同 session/状态可派生，失败返回 PolicyDenied。验收：不存在与跨 tenant/session parent 均被拒且不写 children/workers | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-06 | ⚪ |
-| S12-F30 Supervisor recover() 语义拍板 | 重建可操作状态（WorkerEntry/children/cancel token + 孤儿 WorkerFailed 事件化），或改名 report-only 并修文档（二选一）。验收：恢复后 registry/cancel-tree/event log 可见终态 | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-07 | ⚪ |
-| S12-F31 IdempotencyStore check/record 原子化 | check CAS 占位（inflight/completed）+ record 错误不吞；Automation 通道补连接前缀。验收：并发同 command_id SessionCreate 只建一条（ACP 同 id 重试窄路径回归） | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-03（交叉复核 High→Medium） | ⚪ |
+| S12-F30 Supervisor recover() 语义拍板 | 重建可操作状态（WorkerEntry/children/cancel token + 孤儿 WorkerFailed 事件化），或改名 report-only 并修文档（二选一）。验收：重建支——恢复后 registry/cancel-tree/event log 可见终态；report-only 支——改名 + 文档 + 测试口径一致 | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-07 | ⚪ |
+| S12-F31 IdempotencyStore check/record 原子化 | check CAS 占位（inflight/completed）+ record 错误不吞；Automation 通道连接前缀按报告建议可选评估。验收：并发同 command_id SessionCreate 只建一条（ACP 同 id 重试窄路径回归） | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-03（交叉复核 High→Medium） | ⚪ |
 | S12-F32 SnapshotRequired 附带 Snapshot 契约归一 | 客户端消费附带 Snapshot 或服务端停止附带（二选一），两侧测试断言统一。验收：越窗 Resume 客户端 `ResumeOutcome.snapshot` 符合归一后契约 | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-04 | ⚪ |
 | S12-F33 headless 未映射命令 fail-closed | `command_capability` 未映射返回 UnsupportedCapability；补 Workspace/Terminal/Auth 能力映射或显式拒绝。验收：仅 CompatHistory 握手后发 WorkspaceAdd 被拒 | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-05 | ⚪ |
 | S12-F34 Timeline 抢滚与 Terminal 滚动串扰 | 仅用户位于底部时跟随流式；Terminal 滚动只由 Terminal 输出驱动。验收：流式期间上滚不被拉回；聊天事件到达 Terminal 视口不变 | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-04 | ⚪ |
@@ -165,14 +169,14 @@ S12 全项目 Code Review（2026-08-17～18 审查并收口，九份报告 + 五
 | S12-F42 protocol 无条件开启 domain typegen | `typegen = ["dep:ts-rs", "pawork-domain/typegen"]` 条件化。验收：`cargo tree -p pawork -i ts-rs` 无结果、`--features typegen` 时出现 | [CR-01](docs/reviews/s12/CR-01-manifests-layout.md) S12-CR01-03 | ⚪ |
 | S12-F43 workspace 依赖集中化补齐 | policy/tools/adapters 五处内联版本改 `workspace = true`。验收：`cargo metadata` 依赖解析不变 | [CR-01](docs/reviews/s12/CR-01-manifests-layout.md) S12-CR01-04 | ⚪ |
 | S12-F44 control-plane/core tokio 门控口径 | 补 feature 门控或修词典 §4.1 #30 措辞（二选一） | [CR-01](docs/reviews/s12/CR-01-manifests-layout.md) S12-CR01-05 | ⚪ |
-| S12-F45 `list_directory` 回传 symlink 绝对目标 | target 相对化，或对越 root 目标改写/省略。验收：`ln -s /etc/passwd link` 后工具输出无宿主绝对路径 | [CR-02](docs/reviews/s12/CR-02-policy-tools-git.md) S12-CR02-05 | ⚪ |
+| S12-F45 `list_directory` 回传 symlink 绝对目标 | target 相对化，或对越 root 目标改写/省略。验收：`ln -s /etc/passwd link` 后工具输出无宿主绝对路径 | [CR-02](docs/reviews/s12/CR-02-policy-tools-git.md) S12-CR02-05 | 🟢 2026-08-18：越 root symlink target 省略/相对化（随 F01） |
 | S12-F46 遗留 JsonlSink 收敛 | 删除或门控，避免再次接入生产路径。验收：无生产调用点 | [CR-03](docs/reviews/s12/CR-03-exec-cli.md) S12-CR03-07 | ⚪ |
 | S12-F47 无定价记录币种口径 | 无定价不静默标 USD（cost>0 才要求币种，或显式 unknown/none 附加式表示）。验收：无定价 usage record 不声明 USD，有定价保持原币种 | [CR-05](docs/reviews/s12/CR-05-persistence-ledgers.md) S12-CR05-04 | ⚪ |
 | S12-F48 final blob 孤儿回收 | gc/repair 在安全延迟 + 哈希校验后回收 DB 无记录的 final blob。验收：故障注入后 gc/repair 删除孤儿且不误删有记录 blob | [CR-05](docs/reviews/s12/CR-05-persistence-ledgers.md) S12-CR05-05 | ⚪ |
-| S12-F49 tool result 分级裁剪接线或登记 | 接线 engine/host 热路径（engine 不得依赖 blob store），或 feature gate + ROADMAP §4 登记；与 S12-F24 协同。验收：超大输出分级裁剪在进 provider 前生效且 artifact 引用可持久化 | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-08 | ⚪ |
-| S12-F50 review anchor 路径 canonical 校验 | `safe_path` 做 canonicalize + root 前缀校验。验收：workspace 内 symlink 指向外部文件时 `resolve()`/`reanchor()` 拒绝 | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-09 | ⚪ |
+| S12-F49 tool result 分级裁剪接线或登记 | 接线 engine/host 热路径（engine 不得依赖 blob store），或 feature gate + ROADMAP §4 登记；与 S12-F24 协同。验收：接线支——超大输出分级裁剪在进 provider 前生效且 artifact 引用可持久化；登记支——§4 激活条件行落地 | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-08 | ⚪ |
+| S12-F50 review anchor 路径 canonical 校验 | `safe_path` 做 canonicalize + root 前缀校验。验收：workspace 内 symlink 指向外部文件时 `resolve()`/`reanchor()` 拒绝 | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-09 | 🟢 2026-08-18：review `safe_path` canonicalize + root 前缀（随 F01） |
 | S12-F51 engine Provider 禁用名单同步 | 名单与首发通道同步，或抽共享测试清单。验收：注入新 Provider 名时该测试失败 | [CR-06](docs/reviews/s12/CR-06-engine-workflow.md) S12-CR06-10 | ⚪ |
-| S12-F52 探针认证 scheme 统一 | protocol-probe 改用 `pawork_protocol::client_auth::TOKEN_SCHEME`（随 S12-F10 同批）。验收：错误/正确 scheme 各握手一次行为符合预期 | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-06 | ⚪ |
+| S12-F52 探针认证 scheme 统一 | protocol-probe 改用 `pawork_protocol::client_auth::TOKEN_SCHEME`（随 S12-F10 同批）。验收：错误/正确 scheme 各握手一次行为符合预期 | [CR-07](docs/reviews/s12/CR-07-protocol-host-clients.md) S12-CR07-06 | 🟢 2026-08-18：protocol-probe 用 `TOKEN_SCHEME`（随 F10）；handshake golden `bearer` 未改 |
 | S12-F53 Timeline 事件保真补齐 | live `ToolOutput` 回填、历史 `approval_requested` 条目、`approval_responded` 留痕。验收：live 与历史对同一事件流投影一致 | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-08 | ⚪ |
 | S12-F54 RunStatusBar 运行中定时刷新 | 运行中周期性 notify，终态停表。验收：慢 run 静默 10 秒时长仍走动 | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-09 | ⚪ |
 | S12-F55 render 避免全量克隆 Timeline | 借阅/迭代渲染；长列表虚拟化可作后续项。验收：5 万条目渲染基准（任务内执行） | [CR-08](docs/reviews/s12/CR-08-desktop-gui.md) S12-CR08-10 | ⚪ |
@@ -206,7 +210,7 @@ S12 全项目 Code Review（2026-08-17～18 审查并收口，九份报告 + 五
 | `pawork-orchestration` teams / 真实双子 run_session | S11 波 D 已接 `pawork agents demo`（Supervisor spawn / cancel-tree / budget-gate；双子 AcquireRequest 指向 `glm-coding`/`glm-4.7` 与 `opencode-go`/`deepseek-v4-flash`）。未接 EventHub sink、`TeamEvent` CLI、两个真实 `run_session` 文件任务。激活条件：需要 teams 面或真实并行子 Agent 循环时另立 | 其后 |
 | 对外账户池网关模式（F6-B） | 近期不内建（F6-A 已确认）；以 `pawork-channels` 扩展 feature 长期评估，见 [docs/design.md](docs/design.md) §5 | S12 审查与整改后按需 |
 | `plan/archive` M0–M8 正文缺失 | `plan/archive/README.md` 与历史登记引用九份 M0–M8 包级细则，但文件从未落仓；当前以 `docs/v1-migration-reference.md` §4.1 为唯一迁移词典，禁止臆造细则 | 后续文档维护任务；不阻塞 S8 代码收口 |
-| 全量门禁、三平台验证与发布如何重排 | 原 S12 Release Hardening 已移出当前排期；历史清单仍可从 [V1 迁移参考 §6.3](docs/v1-migration-reference.md#63-release-hardening-一次性清单原-m8) 取线索，但不得自动执行 | S12 finding 整改完成后，只有用户明确决定发布时另立任务 |
+| 全量门禁、三平台验证与发布如何重排 | 原 S12 Release Hardening 已移出当前排期；历史清单仍可从 [V1 迁移参考 §6.3](docs/v1-migration-reference.md#63-release-hardening-一次性清单原-m8) 取线索，但不得自动执行 | S13 收口后，只有用户明确决定发布时另立任务 |
 
 ---
 
@@ -223,6 +227,7 @@ S12 全项目 Code Review（2026-08-17～18 审查并收口，九份报告 + 五
 | GUI 实现偏离 v3 定稿视觉/交互 | [design/README.md](design/README.md) 为验收基准；有意差异先更新设计文档再改代码；1440×1024 对照验收 + 1080×720 可用性验证 |
 | 低消耗默认模型能力不足，掩盖高级功能缺陷 | §1.1 矩阵只承担常规冒烟/回归与接通验证；高级功能由用户指定高级模型专项评估（§1.1 例外②），评估记录按 [docs/task-guide.md](docs/task-guide.md) §8 留档 |
 | 全项目审查范围过大，退化为无证据清单 | S12 固定拆为 CR-01～CR-09；每包列出实际覆盖与未覆盖路径，finding 必须带路径/符号/行号、置信度和后续验证建议；S12 内不边审边改 |
+| 整改引入回归或改动扩散 | 每项整改最小写入集 + 定向验证；安全红线回归与契约 golden 不推迟；波内写入集不重叠、串行点显式登记；同批随动项独立验收（[S13 任务书](plan/S13-s12-remediation.md)） |
 
 ---
 
@@ -231,6 +236,7 @@ S12 全项目 Code Review（2026-08-17～18 审查并收口，九份报告 + 五
 - **阶段任务**：阶段收尾时更新 §2 总览表状态列 + 对应 `plan/S*.md` 冒烟清单与退出标准打勾；experimental / 延期项在 §4 登记激活条件。开发期不做逐任务文档同步。
 - **阶段外任务**：开启 / 完成时更新 §3.2 状态列；完成后移入 §3.1 并登记产出链接。
 - **S12 finding**：每个审查包先写报告；Confirmed finding 以独立 `S12-Fxx` 任务追加到 §3.2，需决策项进 §4，候选能力进 §3.3。S12 只登记，不实现、不测试、不发布。
+- **S13 整改**：每项 S12-Fxx 完成即在 §3.2 状态列标 🟢（日期 + 证据链接）；S13 收口时 57 行压缩为一条 §3.1 归档记录并链接任务书，未收口项与决策延期转 §4。
 - **候选转正**：候选功能纳入排期时按 §3.3 流程登记。
 - **模型评估记录**：注明所用通道与模型；默认应属 §1.1 矩阵，例外须写明属于接通验证还是用户指定的高级模型评估。
 - S0–S11 的完整收尾清单（测试、冒烟、评估记录、报告格式）见 [docs/task-guide.md](docs/task-guide.md) §8；S12 例外以 [审查任务书](plan/S12-project-code-review.md) 的退出标准为准。

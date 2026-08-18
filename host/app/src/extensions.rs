@@ -6,11 +6,13 @@ use std::sync::Arc;
 
 use pawork_domain::{ContentPart, TextContent};
 use pawork_engine::InjectedLayer;
+use pawork_auth::{FileBackend, SecretBackend};
 use pawork_exec::{
     default_secret_paths, FilesystemPolicy, NativeRestricted, NetworkMode, SandboxPolicy,
 };
 use pawork_mcp::capabilities::register_server_tools;
-use pawork_mcp::config::{McpConfig, StdioSandboxRuntime};
+use pawork_mcp::config::{McpConfig, StdioSandboxRuntime, TransportSpec};
+use pawork_mcp::sandbox::apply_mcp_stdio_env_hygiene;
 use pawork_mcp::manager::{ConnectionState, ManagedMcpClient};
 use pawork_mcp::{McpError, McpPeer};
 use pawork_resources::{
@@ -132,6 +134,7 @@ impl AppCore {
             }
         };
         let mut slots = Vec::new();
+        let mcp_backend = mcp_secret_backend();
         for (name, server) in &config.servers {
             let transport = server.transport.kind().to_string();
             if !server.auto_start {
@@ -145,7 +148,20 @@ impl AppCore {
                 });
                 continue;
             }
-            match server.build_client(name.clone(), self.backend.clone(), runtime.clone()) {
+            if !self.workspace_trusted {
+                slots.push(McpServerSlot {
+                    name: name.clone(),
+                    transport,
+                    state: "configured".into(),
+                    last_error: Some(
+                        "MCP auto-start is disabled in an untrusted workspace".into(),
+                    ),
+                    tools: Vec::new(),
+                    client: None,
+                });
+                continue;
+            }
+            match server.build_client(name.clone(), mcp_backend.clone(), runtime.clone()) {
                 Ok(client) => {
                     let client = Arc::new(client);
                     let peer: Arc<dyn McpPeer> = client.clone();
@@ -154,7 +170,8 @@ impl AppCore {
                         name,
                         peer,
                         server.permissions.clone(),
-                        server.trusted,
+                        server.trusted && self.workspace_trusted,
+                        self.workspace_trusted,
                     )
                     .await
                     {
@@ -253,10 +270,16 @@ impl AppCore {
         let workspace = self.workspaces.get(&self.workspace_id)?.ok_or_else(|| {
             AppError::Import("workspace is not attached".into())
         })?;
+        if matches!(server.transport, TransportSpec::Stdio { .. }) && !self.workspace_trusted
+        {
+            return Err(AppError::Mcp(McpError::PermissionDenied(format!(
+                "stdio MCP server '{name}' cannot start in an untrusted workspace"
+            ))));
+        }
         let runtime = stdio_runtime(&workspace.roots, self.workspace_trusted);
         let client = Arc::new(server.build_client(
             name.to_string(),
-            self.backend.clone(),
+            mcp_secret_backend(),
             runtime,
         )?);
         client.ping().await?;
@@ -439,11 +462,17 @@ fn mcp_config_from_pawork(config: &pawork_config::PaworkConfig) -> Result<McpCon
     }
 }
 
+/// Independent MCP secret store next to auth.json. Never the Provider FileBackend.
+fn mcp_secret_backend() -> Arc<dyn SecretBackend> {
+    let path = FileBackend::new().path().with_file_name("mcp-auth.json");
+    Arc::new(FileBackend::with_path(path))
+}
+
 fn stdio_runtime(roots: &[PathBuf], trusted: bool) -> Option<StdioSandboxRuntime> {
     if roots.is_empty() {
         return None;
     }
-    let policy = SandboxPolicy {
+    let mut policy = SandboxPolicy {
         filesystem: FilesystemPolicy {
             read_roots: roots.to_vec(),
             write_roots: if trusted {
@@ -457,6 +486,7 @@ fn stdio_runtime(roots: &[PathBuf], trusted: bool) -> Option<StdioSandboxRuntime
         allow_spawn: true,
         ..SandboxPolicy::default()
     };
+    apply_mcp_stdio_env_hygiene(&mut policy);
     StdioSandboxRuntime::new(Arc::new(NativeRestricted::new()), policy, roots.to_vec()).ok()
 }
 

@@ -5,7 +5,7 @@ use pawork_protocol::{ApiVersion, SUPPORTED_API_VERSIONS};
 /// SDK 自身语义化版本（crate 版本；按 semver 演进）。
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// SDK 期望的协议版本（V2 `API_VERSION` = 1.1；与 Host 握手时协商）。
+/// SDK 期望的协议版本（V2 `API_VERSION` = 1.2；与 Host 握手时协商）。
 ///
 /// 策略：SDK 的 minor 版本固定于它编译所对的协议 minor；Host 取 major 相同
 /// 的最高共同 minor。SDK 遇到不兼容 major 时以

@@ -5040,6 +5040,7 @@ dependencies = [
  "ignore",
  "notify 7.0.0",
  "pawork-domain",
+ "pawork-policy",
  "serde",
  "tempfile",
  "thiserror 2.0.20",

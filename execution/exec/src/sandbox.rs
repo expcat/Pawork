@@ -4,7 +4,7 @@
 //! 不可用时携带结构化原因回退，不会把软限制伪装成硬隔离。
 //! fail-closed = ADR-031 可观测回退，不是拒跑。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -310,9 +310,9 @@ impl SandboxSelector {
                     Box::new(backend),
                     BackendSelection {
                         id,
-                        isolation: IsolationLevel::Hard,
+                        isolation: IsolationLevel::HardWritesAndNetwork,
                         fallback: false,
-                        note: "macOS sandbox-exec (Seatbelt): write/network enforced; file-read not confined to listed system paths on Darwin 25+".into(),
+                        note: "macOS sandbox-exec (Seatbelt): writes confined to write_roots, network Enforce fully denied; file-read unconfined (Darwin 25+ allow file-read* subpath /)".into(),
                         attempted,
                     },
                 );
@@ -432,8 +432,12 @@ pub struct BackendSelection {
 pub enum IsolationLevel {
     /// NativeRestricted：env/路径/资源软限制，非对抗性边界。
     Soft,
-    /// 平台原生硬隔离（sandbox-exec / bwrap）：文件/网络/进程系统级隔离。
+    /// 平台原生硬隔离（Linux bwrap）：文件/网络/进程系统级隔离。
     Hard,
+    /// 写限制在 write_roots、网络 Enforce 全拒、**读未收敛**
+    /// （Darwin 25+ 整盘只读 allow）。不要误用 [`HardFilesystemOnly`]
+    /// （那表示网络未强制）或 [`Degraded`]（那表示 spawn 不可用）。
+    HardWritesAndNetwork,
     /// 仅文件系统硬隔离（如 landlock），网络未强制。
     HardFilesystemOnly,
     /// 探测到硬隔离能力但 spawn 路径暂不可用（process-runtime 边界），实际走软沙箱。
@@ -445,6 +449,7 @@ impl IsolationLevel {
         match self {
             Self::Soft => "soft",
             Self::Hard => "hard",
+            Self::HardWritesAndNetwork => "hard_writes_and_network",
             Self::HardFilesystemOnly => "hard_filesystem_only",
             Self::Degraded => "degraded",
         }
@@ -576,14 +581,31 @@ fn env_matches(pattern: &str, name: &str) -> bool {
 /// 平台密钥/凭据目录拒绝清单（权威单一来源，`untrusted_default` 与
 /// builtin-tools 的 run_command 共用；平台精确路径在后续阶段细化）。
 pub fn default_secret_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
-        let home = PathBuf::from(home);
-        paths.extend([".ssh", ".aws", ".azure", ".kube"].map(|name| home.join(name)));
-    }
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from);
+    let pawork_home = std::env::var_os("PAWORK_HOME").map(PathBuf::from);
+    #[allow(unused_mut)] // Windows 才 push gcloud
+    let mut paths = secret_paths_for(home.as_deref(), pawork_home.as_deref());
     #[cfg(windows)]
     if let Some(appdata) = std::env::var_os("APPDATA") {
         paths.push(PathBuf::from(appdata).join("gcloud"));
+    }
+    paths
+}
+
+/// 由 home / `PAWORK_HOME` 构造 secret deny 路径（不含 Windows gcloud）。
+fn secret_paths_for(home: Option<&Path>, pawork_home: Option<&Path>) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = home {
+        paths.extend([".ssh", ".aws", ".azure", ".kube"].map(|name| home.join(name)));
+        paths.push(home.join(".pawork").join("auth.json"));
+        paths.push(home.join(".gnupg"));
+        paths.push(home.join(".config"));
+    }
+    if let Some(pawork_home) = pawork_home {
+        if !pawork_home.as_os_str().is_empty() {
+            paths.push(pawork_home.join("auth.json"));
+        }
     }
     paths
 }
@@ -694,6 +716,28 @@ mod tests {
                 "fallback must be backed by at least one failed probe"
             );
         }
+    }
+
+    #[test]
+    fn macos_sandbox_exec_reports_hard_writes_and_network() {
+        let (_backend, selection) = SandboxSelector::new().pick();
+        if selection.id != "sandbox_exec" {
+            return;
+        }
+        assert_eq!(
+            selection.isolation,
+            IsolationLevel::HardWritesAndNetwork
+        );
+        assert_eq!(
+            selection.isolation.as_str(),
+            "hard_writes_and_network"
+        );
+        assert!(!selection.fallback, "backend is usable; fallback must stay false");
+        assert!(
+            selection.note.contains("file-read unconfined"),
+            "note must honestly report file-read unconfined: {}",
+            selection.note
+        );
     }
 
     #[test]
@@ -856,6 +900,27 @@ mod tests {
                     expected.display()
                 );
             }
+            for expected in [
+                PathBuf::from(&home).join(".pawork").join("auth.json"),
+                PathBuf::from(&home).join(".gnupg"),
+                PathBuf::from(&home).join(".config"),
+            ] {
+                assert!(
+                    secrets.iter().any(|p| p == &expected),
+                    "secret paths 缺少 {}",
+                    expected.display()
+                );
+            }
+        }
+        if let Some(pawork_home) = std::env::var_os("PAWORK_HOME") {
+            if !pawork_home.is_empty() {
+                let expected = PathBuf::from(pawork_home).join("auth.json");
+                assert!(
+                    secrets.iter().any(|p| p == &expected),
+                    "secret paths 缺少 {}",
+                    expected.display()
+                );
+            }
         }
         #[cfg(windows)]
         if let Some(appdata) = std::env::var_os("APPDATA") {
@@ -863,6 +928,34 @@ mod tests {
                 .iter()
                 .any(|p| p == &PathBuf::from(&appdata).join("gcloud")));
         }
+    }
+
+    #[test]
+    fn secret_paths_include_pawork_auth_gnupg_config_and_pawork_home() {
+        let home = PathBuf::from("/Users/x");
+        let paths = secret_paths_for(Some(&home), None);
+        for expected in [
+            home.join(".ssh"),
+            home.join(".aws"),
+            home.join(".azure"),
+            home.join(".kube"),
+            home.join(".pawork").join("auth.json"),
+            home.join(".gnupg"),
+            home.join(".config"),
+        ] {
+            assert!(
+                paths.iter().any(|p| p == &expected),
+                "secret paths 缺少 {}",
+                expected.display()
+            );
+        }
+        let with_home = secret_paths_for(Some(&home), Some(Path::new("/opt/pawork")));
+        assert!(
+            with_home
+                .iter()
+                .any(|p| p == &PathBuf::from("/opt/pawork/auth.json")),
+            "PAWORK_HOME/auth.json 必须进入 deny"
+        );
     }
 
     /// 平台 shell 打印 secret 的 argv。

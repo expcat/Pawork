@@ -5,6 +5,7 @@ use pawork_domain::{
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
+use crate::session_tree::{load_ancestor_lineage, visible_on_lineage};
 use crate::{SessionStore, SessionStoreError};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,6 +74,7 @@ pub struct ProjectionSnapshot {
 pub(crate) fn apply_projection(
     connection: &Connection,
     event: &AgentEventEnvelope,
+    branch_id: &str,
 ) -> Result<(), SessionStoreError> {
     let session_id = event.session_id.to_string();
     let run_id = event.run_id.to_string();
@@ -94,8 +96,17 @@ pub(crate) fn apply_projection(
                 .unwrap_or("unknown")
                 .to_owned();
             connection.execute(
-                "INSERT INTO messages(message_id, session_id, run_id, sequence, role, message_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![message.id.to_string(), session_id, run_id, sequence, role, serde_json::to_string(message)?],
+                "INSERT INTO messages(message_id, session_id, run_id, sequence, role, message_json, branch_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    message.id.to_string(),
+                    session_id,
+                    run_id,
+                    sequence,
+                    role,
+                    serde_json::to_string(message)?,
+                    branch_id
+                ],
             )?;
         }
         AgentEvent::ToolCallStarted { tool_call_id, name } => {
@@ -172,8 +183,8 @@ pub(crate) fn apply_projection(
             let through = i64::try_from(compacted_through.value())
                 .map_err(|_| SessionStoreError::SequenceOverflow)?;
             connection.execute(
-                "DELETE FROM messages WHERE session_id=?1 AND sequence<=?2",
-                params![session_id, through],
+                "DELETE FROM messages WHERE session_id=?1 AND branch_id=?2 AND sequence<=?3",
+                params![session_id, branch_id, through],
             )?;
         }
         AgentEvent::RunCompleted { .. } => {
@@ -449,13 +460,27 @@ fn append_server_tool_json(
 }
 
 impl SessionStore {
+    /// 按 **active branch** 的祖先链过滤 `messages`；runs / tool_calls 仍为全 session。
     pub async fn projection_snapshot(
         &self,
         session_id: &SessionId,
     ) -> Result<ProjectionSnapshot, SessionStoreError> {
         let session_id = session_id.to_string();
         self.database()
-            .call(move |connection| load_snapshot(connection, &session_id))
+            .call(move |connection| load_snapshot(connection, &session_id, None))
+            .await?
+    }
+
+    /// 按指定 branch 的祖先链过滤 `messages`；runs / tool_calls 仍为全 session。
+    pub async fn projection_snapshot_on_branch(
+        &self,
+        session_id: &SessionId,
+        branch_id: impl Into<String>,
+    ) -> Result<ProjectionSnapshot, SessionStoreError> {
+        let session_id = session_id.to_string();
+        let branch_id = branch_id.into();
+        self.database()
+            .call(move |connection| load_snapshot(connection, &session_id, Some(branch_id)))
             .await?
     }
 
@@ -480,18 +505,21 @@ impl SessionStore {
                 transaction.execute("DELETE FROM runs WHERE session_id=?1", [&session_id])?;
                 let rows = {
                     let mut statement = transaction.prepare(
-                        "SELECT payload_json FROM session_events WHERE session_id=?1 ORDER BY sequence ASC",
+                        "SELECT payload_json, branch_id FROM session_events \
+                         WHERE session_id=?1 ORDER BY sequence ASC",
                     )?;
                     let rows = statement
-                        .query_map([&session_id], |row| row.get::<_, String>(0))?
+                        .query_map([&session_id], |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                        })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     rows
                 };
-                for json in rows {
+                for (json, branch_id) in rows {
                     let event: AgentEventEnvelope = serde_json::from_str(&json)?;
-                    apply_projection(&transaction, &event)?;
+                    apply_projection(&transaction, &event, &branch_id)?;
                 }
-                let snapshot = load_snapshot(&transaction, &session_id)?;
+                let snapshot = load_snapshot(&transaction, &session_id, None)?;
                 transaction.commit()?;
                 Ok(snapshot)
             })
@@ -542,16 +570,39 @@ fn require_one(changed: usize, message: &str) -> Result<(), SessionStoreError> {
 fn load_snapshot(
     connection: &Connection,
     session_id: &str,
+    branch_id: Option<String>,
 ) -> Result<ProjectionSnapshot, SessionStoreError> {
+    let branch_id = match branch_id {
+        Some(branch) => branch,
+        None => connection
+            .query_row(
+                "SELECT active_branch FROM sessions WHERE session_id=?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| SessionStoreError::SessionNotFound(session_id.into()))?,
+    };
+    let lineage = load_ancestor_lineage(connection, session_id, &branch_id)?;
     let messages = {
         let mut statement = connection.prepare(
-            "SELECT message_json FROM messages WHERE session_id=?1 ORDER BY sequence, message_id",
+            "SELECT message_json, branch_id, sequence FROM messages \
+             WHERE session_id=?1 ORDER BY sequence, message_id",
         )?;
         let rows = statement
-            .query_map([session_id], |row| row.get::<_, String>(0))?
+            .query_map([session_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.into_iter()
-            .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
+            .filter(|(_, message_branch, sequence)| {
+                visible_on_lineage(&lineage, message_branch, *sequence)
+            })
+            .map(|(json, _, _)| serde_json::from_str(&json).map_err(SessionStoreError::from))
             .collect::<Result<Vec<_>, _>>()?
     };
     let runs = {
@@ -1017,6 +1068,171 @@ mod tests {
             .expect("delete projection");
         let rebuilt = store.rebuild_projection(&session).await.expect("rebuild");
         assert_eq!(rebuilt, before);
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn fork_lineage_snapshot_excludes_post_fork_main_messages() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-fork-snapshot");
+        store
+            .create_session(&session, "fork-snapshot", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        for sequence in 1..=3u64 {
+            store
+                .append_event(
+                    DEFAULT_BRANCH_ID,
+                    event(
+                        &session,
+                        sequence,
+                        AgentEvent::MessageCommitted {
+                            message: text_message(&format!("m-{sequence}"), &format!("t-{sequence}")),
+                        },
+                    ),
+                )
+                .await
+                .expect("append");
+        }
+        store
+            .fork_from_event(
+                &session,
+                "experiment",
+                &pawork_domain::EventId::from("event-1"),
+            )
+            .await
+            .expect("fork");
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch");
+
+        let active = store.projection_snapshot(&session).await.expect("active");
+        let ids: Vec<&str> = active
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["m-1"], "active=experiment 只含祖先前缀");
+
+        let main = store
+            .projection_snapshot_on_branch(&session, DEFAULT_BRANCH_ID)
+            .await
+            .expect("main");
+        let main_ids: Vec<&str> = main
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(main_ids, vec!["m-1", "m-2", "m-3"]);
+
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn fork_compaction_does_not_delete_main_messages() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-fork-compact");
+        store
+            .create_session(&session, "fork-compact", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        for sequence in 1..=3u64 {
+            store
+                .append_event(
+                    DEFAULT_BRANCH_ID,
+                    event(
+                        &session,
+                        sequence,
+                        AgentEvent::MessageCommitted {
+                            message: text_message(&format!("m-{sequence}"), &format!("t-{sequence}")),
+                        },
+                    ),
+                )
+                .await
+                .expect("append");
+        }
+        store
+            .fork_from_event(
+                &session,
+                "experiment",
+                &pawork_domain::EventId::from("event-1"),
+            )
+            .await
+            .expect("fork");
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch");
+        store
+            .append_event(
+                "experiment",
+                event(
+                    &session,
+                    4,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-fork", "fork-only"),
+                    },
+                ),
+            )
+            .await
+            .expect("fork message");
+        store
+            .append_event(
+                "experiment",
+                event(
+                    &session,
+                    5,
+                    AgentEvent::CompactionCompleted {
+                        summary_message_id: pawork_domain::MessageId::from("m-fork"),
+                        compacted_through: EventSequence::new(4),
+                    },
+                ),
+            )
+            .await
+            .expect("fork compact");
+
+        let remaining: Vec<(String, String, i64)> = store
+            .database()
+            .call(|connection| {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT message_id, branch_id, sequence FROM messages \
+                         WHERE session_id='session-fork-compact' ORDER BY sequence, message_id",
+                    )
+                    .expect("prepare");
+                statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                    .expect("query")
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .expect("collect")
+            })
+            .await
+            .expect("actor");
+        assert_eq!(
+            remaining,
+            vec![
+                ("m-1".into(), DEFAULT_BRANCH_ID.into(), 1),
+                ("m-2".into(), DEFAULT_BRANCH_ID.into(), 2),
+                ("m-3".into(), DEFAULT_BRANCH_ID.into(), 3),
+            ],
+            "fork 压缩不得删 main 中低于全局水位的消息"
+        );
+
+        store
+            .switch_branch(&session, DEFAULT_BRANCH_ID)
+            .await
+            .expect("switch main");
+        let main = store.projection_snapshot(&session).await.expect("main");
+        let ids: Vec<&str> = main
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["m-1", "m-2", "m-3"]);
+
         store.shutdown().await.expect("shutdown");
     }
 }

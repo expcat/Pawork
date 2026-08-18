@@ -1,13 +1,95 @@
-//! Session 分支树视图与从任意事件 Fork。
+//! Session 分支树视图、祖先链与从任意事件 Fork。
 //!
 //! [`SessionStore::events_by_branch`] / [`SessionStore::create_branch`] /
 //! [`SessionStore::switch_branch`] 已在 `event_store`；本模块的
 //! [`SessionStore::fork_from_event`] 复用 `create_branch`，不另写插入。
+//! [`SessionStore::events_by_branch`] 只含本支追加，不能当 resume 源——
+//! resume / compact / Timeline 必须走 [`SessionStore::events_on_lineage`]。
 
-use pawork_domain::{EventId, SessionId};
-use rusqlite::{params, OptionalExtension};
+use std::collections::HashSet;
+
+use pawork_domain::{AgentEventEnvelope, EventId, SessionId};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{SessionStore, SessionStoreError};
+
+/// 本支无上界；祖先支的 `max_sequence` 含 fork 点事件本身。
+pub(crate) const LINEAGE_UNBOUNDED: i64 = i64::MAX;
+
+/// 沿 `parent_branch_id` + `forked_from_event_id` 走到 root。
+/// 本支：`max_sequence = i64::MAX`；祖先支：fork 点事件的 sequence（含该事件）。
+pub(crate) fn load_ancestor_lineage(
+    connection: &Connection,
+    session_id: &str,
+    branch_id: &str,
+) -> Result<Vec<(String, i64)>, SessionStoreError> {
+    let session_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?1)",
+        [session_id],
+        |row| row.get(0),
+    )?;
+    if !session_exists {
+        return Err(SessionStoreError::SessionNotFound(session_id.into()));
+    }
+
+    let mut lineage = Vec::new();
+    let mut current = branch_id.to_string();
+    let mut seen = HashSet::new();
+    let mut is_tip = true;
+
+    loop {
+        if !seen.insert(current.clone()) {
+            return Err(SessionStoreError::ProjectionInvariant(format!(
+                "branch lineage cycle at {current}"
+            )));
+        }
+        let row: Option<(Option<String>, Option<String>)> = connection
+            .query_row(
+                "SELECT parent_branch_id, forked_from_event_id \
+                 FROM session_branches WHERE session_id=?1 AND branch_id=?2",
+                params![session_id, current],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((parent_branch_id, forked_from_event_id)) = row else {
+            return Err(SessionStoreError::BranchNotFound {
+                session_id: session_id.into(),
+                branch_id: current,
+            });
+        };
+
+        if is_tip {
+            lineage.push((current.clone(), LINEAGE_UNBOUNDED));
+            is_tip = false;
+        }
+
+        let Some(parent) = parent_branch_id.filter(|value| !value.is_empty()) else {
+            break;
+        };
+        let max_sequence = match forked_from_event_id.as_deref() {
+            Some(event_id) => connection
+                .query_row(
+                    "SELECT sequence FROM session_events \
+                     WHERE session_id=?1 AND event_id=?2",
+                    params![session_id, event_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .ok_or_else(|| SessionStoreError::ParentEventNotFound(event_id.into()))?,
+            None => 0,
+        };
+        lineage.push((parent.clone(), max_sequence));
+        current = parent;
+    }
+
+    Ok(lineage)
+}
+
+pub(crate) fn visible_on_lineage(lineage: &[(String, i64)], branch_id: &str, sequence: i64) -> bool {
+    lineage
+        .iter()
+        .any(|(bound_branch, max_sequence)| bound_branch == branch_id && sequence <= *max_sequence)
+}
 
 /// 树中的一个分支节点。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,6 +206,73 @@ impl SessionStore {
             return Err(SessionStoreError::SessionNotFound(session_id));
         }
         Ok(SessionTree { branches })
+    }
+
+    /// 从 `branch_id` 沿 parent / fork 点走到 root。
+    ///
+    /// 本支 `max_sequence` 为 [`LINEAGE_UNBOUNDED`]；祖先支为该 fork 点事件的
+    /// sequence（含该事件）。
+    pub async fn ancestor_lineage(
+        &self,
+        session_id: &SessionId,
+        branch_id: impl Into<String>,
+    ) -> Result<Vec<(String, i64)>, SessionStoreError> {
+        let session_id = session_id.to_string();
+        let branch_id = branch_id.into();
+        self.database()
+            .call(move |connection| load_ancestor_lineage(connection, &session_id, &branch_id))
+            .await?
+    }
+
+    /// 祖先前缀 ∪ 本支追加，按全局 sequence 升序。
+    ///
+    /// [`SessionStore::events_by_branch`] 只含本支追加，不能当 resume 源。
+    pub async fn events_on_lineage(
+        &self,
+        session_id: &SessionId,
+        branch_id: impl Into<String>,
+        from_sequence: u64,
+        limit: usize,
+    ) -> Result<Vec<AgentEventEnvelope>, SessionStoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let session_id = session_id.to_string();
+        let branch_id = branch_id.into();
+        let from_sequence =
+            i64::try_from(from_sequence).map_err(|_| SessionStoreError::SequenceOverflow)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let json_rows = self
+            .database()
+            .call(move |connection| -> Result<Vec<String>, SessionStoreError> {
+                let lineage = load_ancestor_lineage(connection, &session_id, &branch_id)?;
+                let mut statement = connection.prepare(
+                    "SELECT payload_json, branch_id, sequence FROM session_events \
+                     WHERE session_id=?1 AND sequence>=?2 ORDER BY sequence ASC",
+                )?;
+                let rows = statement
+                    .query_map(params![session_id, from_sequence], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows
+                    .into_iter()
+                    .filter(|(_, event_branch, sequence)| {
+                        visible_on_lineage(&lineage, event_branch, *sequence)
+                    })
+                    .take(usize::try_from(limit).unwrap_or(usize::MAX))
+                    .map(|(json, _, _)| json)
+                    .collect())
+            })
+            .await??;
+        json_rows
+            .into_iter()
+            .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
+            .collect()
     }
 }
 
@@ -288,6 +437,110 @@ mod tests {
             missing,
             Err(SessionStoreError::SessionNotFound(_))
         ));
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn ancestor_lineage_and_events_exclude_post_fork_parent_appends() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-lineage");
+        store
+            .create_session(&session, "lineage", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        for sequence in 1..=3u64 {
+            store
+                .append_event(
+                    DEFAULT_BRANCH_ID,
+                    event(
+                        &session,
+                        sequence,
+                        AgentEvent::MessageCommitted {
+                            message: pawork_domain::Message {
+                                id: pawork_domain::MessageId::from(format!("m-{sequence}")),
+                                role: pawork_domain::MessageRole::User,
+                                content: vec![pawork_domain::ContentPart::Text(
+                                    pawork_domain::TextContent {
+                                        text: format!("msg-{sequence}"),
+                                    },
+                                )],
+                                metadata: Default::default(),
+                            },
+                        },
+                    ),
+                )
+                .await
+                .expect("append");
+        }
+        store
+            .fork_from_event(&session, "experiment", &EventId::from("event-1"))
+            .await
+            .expect("fork");
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch");
+
+        let lineage = store
+            .ancestor_lineage(&session, "experiment")
+            .await
+            .expect("lineage");
+        assert_eq!(
+            lineage,
+            vec![
+                ("experiment".into(), LINEAGE_UNBOUNDED),
+                (DEFAULT_BRANCH_ID.into(), 1),
+            ]
+        );
+
+        let sequences = |events: Vec<AgentEventEnvelope>| {
+            events
+                .into_iter()
+                .map(|envelope| envelope.sequence.value())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            sequences(
+                store
+                    .events_on_lineage(&session, "experiment", 1, 10)
+                    .await
+                    .expect("lineage events")
+            ),
+            vec![1],
+            "fork lineage 只含祖先前缀，不含 main 在 fork 点之后的 2–3"
+        );
+        assert_eq!(
+            sequences(
+                store
+                    .events_by_branch(&session, "experiment", 1, 10)
+                    .await
+                    .expect("branch-only")
+            ),
+            Vec::<u64>::new(),
+            "events_by_branch 只含本支追加，不能当 resume 源"
+        );
+        assert_eq!(
+            sequences(
+                store
+                    .events_on_lineage(&session, DEFAULT_BRANCH_ID, 1, 10)
+                    .await
+                    .expect("main lineage")
+            ),
+            vec![1, 2, 3]
+        );
+
+        let snapshot = store
+            .projection_snapshot(&session)
+            .await
+            .expect("active snapshot");
+        let ids: Vec<&str> = snapshot
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["m-1"]);
+
         store.shutdown().await.expect("shutdown");
     }
 }

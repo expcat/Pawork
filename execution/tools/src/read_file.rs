@@ -1,7 +1,7 @@
 //! `read_file` 工具。
 //!
 //! 只读读取工作区相对文件：行号、offset/limit、编码检测与二进制检测；
-//! 路径基于 `workspace_id + relative_path`，经 `pawork-workspace` 入口校验。
+//! 路径基于 `workspace_id + relative_path`，经 policy 内核校验。
 
 use pawork_api::AgentTool;
 use pawork_api::ToolError;
@@ -21,7 +21,7 @@ use pawork_workspace::WorkspaceService;
 
 use crate::common::opt_u64;
 use crate::common::require_str;
-use crate::common::resolve_rel;
+use crate::common::resolve_write_rel;
 use crate::common::workspace_roots;
 use crate::common::BuiltinToolError;
 
@@ -102,7 +102,7 @@ async fn read(
     let limit = opt_u64(input, "limit").unwrap_or(DEFAULT_LIMIT).max(1) as usize;
 
     let roots = workspace_roots(service, workspace_id)?;
-    let absolute = resolve_rel(&roots, &path)?;
+    let absolute = resolve_write_rel(&roots, &path)?;
     let metadata = tokio::fs::metadata(&absolute).await?;
     let file = tokio::fs::File::open(&absolute).await?;
     let mut limited = file.take(MAX_READ_BYTES + 1);
@@ -254,7 +254,7 @@ mod tests {
     use super::*;
     use pawork_api::ToolErrorKind;
     use pawork_domain::WorkspaceId;
-    use pawork_workspace::WorkspacePathError;
+    use pawork_policy::PathSafetyError;
     use std::fs;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
@@ -355,7 +355,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            ReadFileError::Common(BuiltinToolError::Path(WorkspacePathError::AbsolutePath))
+            ReadFileError::Common(BuiltinToolError::PolicyPath(PathSafetyError::AbsolutePath))
         ));
         let error: ToolError = BuiltinToolError::from(err).into();
         assert_eq!(error.kind, ToolErrorKind::PermissionDenied);
@@ -370,7 +370,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            ReadFileError::Common(BuiltinToolError::Path(WorkspacePathError::Traversal(_)))
+            ReadFileError::Common(BuiltinToolError::PolicyPath(PathSafetyError::Traversal(_)))
         ));
         let error: ToolError = BuiltinToolError::from(err).into();
         assert_eq!(error.kind, ToolErrorKind::PermissionDenied);
@@ -413,5 +413,68 @@ mod tests {
             ContentPart::Text(t) => t.text.clone(),
             _ => String::new(),
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_symlink_escape_and_git_internals() {
+        let (service, id, root, _ws_dir) = make_service();
+        let outside = temp_root("outside");
+        fs::write(outside.path().join("secret.txt"), "top-secret\n").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), root.join("auth-link"))
+            .unwrap();
+        std::os::unix::fs::symlink("/etc", root.join("etc-link")).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join(".git/config"), "[core]\n").unwrap();
+
+        let err = read(
+            &service,
+            &id,
+            &json!({"path": "auth-link"}),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ReadFileError::Common(BuiltinToolError::PolicyPath(PathSafetyError::SymlinkEscape))
+            ),
+            "{err:?}"
+        );
+
+        let err = read(
+            &service,
+            &id,
+            &json!({"path": "etc-link"}),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ReadFileError::Common(BuiltinToolError::PolicyPath(PathSafetyError::SymlinkEscape))
+            ),
+            "{err:?}"
+        );
+
+        let err = read(
+            &service,
+            &id,
+            &json!({"path": ".git/config"}),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ReadFileError::Common(BuiltinToolError::PolicyPath(PathSafetyError::GitInternals))
+            ),
+            "{err:?}"
+        );
+        let error: ToolError = BuiltinToolError::from(err).into();
+        assert_eq!(error.kind, ToolErrorKind::PermissionDenied);
     }
 }

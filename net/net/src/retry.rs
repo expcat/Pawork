@@ -9,13 +9,14 @@ use pawork_api::{ProviderError, ProviderErrorKind};
 
 /// 归一化 HTTP 响应状态码为 [`ProviderError`]。
 ///
-/// `retry_after` 为响应头 `Retry-After` 的原始值（由调用方提取），`body_snippet`
-/// 为截断后的脱敏响应正文片段（仅用于诊断消息，不应包含敏感数据）。
+/// `retry_after` 为响应头 `Retry-After` 的原始值（由调用方提取）。`body_snippet`
+/// 仍由调用方传入以保持签名稳定，但**不得**写入 `message`（上游正文可能回显 token）。
 pub fn classify_status(
     status: reqwest::StatusCode,
     retry_after: Option<&str>,
     body_snippet: &str,
 ) -> ProviderError {
+    let _ = body_snippet;
     let kind = match status.as_u16() {
         401 => ProviderErrorKind::Authentication,
         403 => ProviderErrorKind::Authorization,
@@ -32,7 +33,7 @@ pub fn classify_status(
         _ => ProviderErrorKind::Unknown,
     };
 
-    let mut error = ProviderError::new(kind, format!("HTTP {}: {}", status.as_u16(), body_snippet));
+    let mut error = ProviderError::new(kind, format!("HTTP {}", status.as_u16()));
     error.http_status = Some(status.as_u16());
 
     // Retry-After 仅对可重试类有意义；解析失败时忽略（不 panic）。
@@ -162,7 +163,9 @@ mod tests {
     fn classifies_common_status_codes() {
         let auth = classify_status(reqwest::StatusCode::UNAUTHORIZED, None, "bad key");
         assert_eq!(auth.kind, ProviderErrorKind::Authentication);
+        assert_eq!(auth.message, "HTTP 401");
         assert!(!auth.retryable);
+        assert!(!auth.message.contains("bad key"));
 
         let rl = classify_status(
             reqwest::StatusCode::TOO_MANY_REQUESTS,
@@ -170,16 +173,33 @@ mod tests {
             "slow down",
         );
         assert_eq!(rl.kind, ProviderErrorKind::RateLimited);
+        assert_eq!(rl.message, "HTTP 429");
         assert!(rl.retryable);
         assert_eq!(rl.retry_after_ms, Some(5_000));
 
         let overflow = classify_status(reqwest::StatusCode::PAYLOAD_TOO_LARGE, None, "too big");
         assert_eq!(overflow.kind, ProviderErrorKind::ContextTooLarge);
+        assert_eq!(overflow.message, "HTTP 413");
         assert!(!overflow.retryable);
 
         let server = classify_status(reqwest::StatusCode::BAD_GATEWAY, None, "upstream gone");
         assert_eq!(server.kind, ProviderErrorKind::ProviderUnavailable);
+        assert_eq!(server.message, "HTTP 502");
         assert!(server.retryable);
+    }
+
+    #[test]
+    fn classify_status_401_drops_body_plaintext_token() {
+        const TOKEN: &str = "sk-leak-token-401-body";
+        let error = classify_status(
+            reqwest::StatusCode::UNAUTHORIZED,
+            None,
+            &format!("invalid api key {TOKEN}"),
+        );
+        assert_eq!(error.kind, ProviderErrorKind::Authentication);
+        assert_eq!(error.message, "HTTP 401");
+        assert!(!error.message.contains(TOKEN));
+        assert_eq!(error.http_status, Some(401));
     }
 
     #[test]

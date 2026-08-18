@@ -20,9 +20,9 @@ use pawork_protocol::{
     decode_server_frame, encode_client_frame, ActorIdentity, AppCommand, AppCommandEnvelope,
     AppEvent, AppEventEnvelope, AppQueryEnvelope, AppResponse, ClientFrame, CommandSource,
     EventSource, EventStream, GlobalSequence, HandshakeRequest, HandshakeResponse, HandshakeService,
-    ResumeDisposition, ResumeRequest, ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind,
-    SubscribeRequest, TimelineItem, TimelineItemKind, TimelinePage, API_VERSION,
-    SUPPORTED_API_VERSIONS,
+    ProtocolErrorCode, ResumeDisposition, ResumeRequest, ServerFrame, Snapshot, SnapshotSection,
+    SnapshotSectionKind, SubscribeRequest, TimelineItem, TimelineItemKind, TimelinePage,
+    API_VERSION, SUPPORTED_API_VERSIONS,
 };
 use pawork_transport::{
     ConnectOptions, ConnectionInfo, GuiConnection, GuiListener, GuiTransportClient,
@@ -358,6 +358,11 @@ impl TestClient {
                     }
                     received.push(envelope);
                 }
+                Ok(ServerFrame::Error(envelope))
+                    if envelope.error.code == ProtocolErrorCode::ReplayUnavailable =>
+                {
+                    break;
+                }
                 Ok(other) => panic!("unexpected frame while awaiting events: {other:?}"),
                 Err(_) => break,
             }
@@ -677,18 +682,22 @@ async fn slow_client_does_not_block_other_guis() {
     let fast = runtime.connect_gui().await;
     fast.subscribe_all_ready().await;
 
+    let fast_drain = tokio::spawn(async move {
+        fast.recv_until(|e| e.global_sequence == GlobalSequence(5), WAIT)
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
     let started = Instant::now();
     for seq in 1..=40u64 {
         runtime.host.publish(event(seq));
+        tokio::time::sleep(Duration::from_millis(2)).await;
     }
     assert!(
         started.elapsed() < Duration::from_millis(200),
         "publish 不得被慢客户端阻塞"
     );
 
-    let (_events, done) = fast
-        .recv_until(|e| e.global_sequence == GlobalSequence(5), WAIT)
-        .await;
+    let (_events, done) = fast_drain.await.expect("fast drain task");
     assert!(done, "快客户端应收到事件，不被慢客户端阻塞");
 
     let deadline = Instant::now() + WAIT;

@@ -4,6 +4,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use pawork_api::AgentTool;
@@ -23,7 +24,7 @@ use pawork_workspace::WorkspaceService;
 
 use crate::common::opt_u64;
 use crate::common::require_str;
-use crate::common::resolve_rel;
+use crate::common::resolve_write_rel;
 use crate::common::workspace_roots;
 use crate::common::BuiltinToolError;
 
@@ -129,7 +130,7 @@ fn list_dir(
     let offset = opt_u64(input, "offset").unwrap_or(0) as usize;
 
     let roots = workspace_roots(service, workspace_id)?;
-    let absolute = resolve_rel(&roots, &path)?;
+    let absolute = resolve_write_rel(&roots, &path)?;
     if !absolute.is_dir() {
         return Err(ListDirError::Common(BuiltinToolError::Other(format!(
             "{path} is not a directory"
@@ -147,9 +148,7 @@ fn list_dir(
         let lmeta = std::fs::symlink_metadata(entry.path())?;
         let is_symlink = lmeta.file_type().is_symlink();
         let symlink_target = if is_symlink {
-            std::fs::read_link(entry.path())
-                .map(|p| p.display().to_string())
-                .ok()
+            safe_symlink_target(&entry.path(), &roots)
         } else {
             None
         };
@@ -232,6 +231,37 @@ fn list_dir(
         success: true,
         error: None,
     })
+}
+
+/// 将 symlink 目标相对化到某个 workspace root；越 root 则省略，避免回传宿主绝对路径。
+fn safe_symlink_target(entry_path: &Path, roots: &[PathBuf]) -> Option<String> {
+    let raw = std::fs::read_link(entry_path).ok()?;
+    let parent = entry_path.parent().unwrap_or(entry_path);
+    let joined = if raw.is_absolute() {
+        raw.clone()
+    } else {
+        parent.join(&raw)
+    };
+    match pawork_policy::canonicalize_platform(&joined) {
+        Ok(canon) => {
+            for root in roots {
+                let Ok(canon_root) = pawork_policy::canonicalize_platform(root) else {
+                    continue;
+                };
+                if let Some(rel) = pawork_policy::relative_to_root(&canon, &canon_root) {
+                    return Some(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+            None
+        }
+        Err(_) => {
+            if raw.is_absolute() {
+                None
+            } else {
+                Some(raw.to_string_lossy().replace('\\', "/"))
+            }
+        }
+    }
 }
 
 fn dir_rank(kind: &str) -> u8 {
@@ -325,7 +355,8 @@ mod tests {
         #[cfg(unix)]
         {
             assert!(text.contains("symlink"));
-            assert!(text.contains("link.txt -> "));
+            assert!(text.contains("link.txt -> a.txt"), "{text}");
+            assert!(!text.contains(&root.display().to_string()), "{text}");
         }
         assert!(res.metadata.get("absolute").is_none());
     }
@@ -360,6 +391,39 @@ mod tests {
         assert_eq!(res.metadata["total"], 1);
         assert_eq!(res.metadata["entries"][0]["kind"], "broken_symlink");
         assert_eq!(res.metadata["entries"][0]["is_symlink"], true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlink_escape_dir_and_redacts_host_absolute_target() {
+        let (service, id, root, _ws_dir) = make_service();
+        std::os::unix::fs::symlink("/etc", root.join("etc-link")).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", root.join("passwd-link")).unwrap();
+
+        let err = list_dir(&service, &id, &json!({"path": "etc-link"})).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ListDirError::Common(BuiltinToolError::PolicyPath(
+                    pawork_policy::PathSafetyError::SymlinkEscape
+                ))
+            ),
+            "{err:?}"
+        );
+
+        let res = list_dir(&service, &id, &json!({"path": "."})).expect("list");
+        let text = match &res.content[0] {
+            ContentPart::Text(t) => t.text.as_str(),
+            _ => panic!("text"),
+        };
+        let meta = res.metadata.to_string();
+        assert!(!text.contains("/etc/passwd"), "body leaked host path: {text}");
+        assert!(!meta.contains("/etc/passwd"), "json leaked host path: {meta}");
+        assert!(!text.contains("/etc"), "body leaked host dir: {text}");
+        assert!(
+            !meta.contains("/etc"),
+            "json leaked host dir: {meta}"
+        );
     }
 
     #[test]

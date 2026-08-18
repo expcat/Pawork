@@ -316,6 +316,8 @@ pub enum AppCommand {
         user_message: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<ModelId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<ProviderId>,
         /// P17-5：可选 Agent Profile v2 名称。命中生产 `ResourceBundle.profiles_v2`
         /// 时其不可变配置（prompt / canonical effort / tools / max_turns /
         /// background / isolation / memory）成为该 run 的权威来源；未知 /

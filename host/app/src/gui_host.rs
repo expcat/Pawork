@@ -696,8 +696,13 @@ impl GuiHost for GuiHostAdapter {
             });
         }
         let store = core.store().map_err(Self::app_error)?;
+        let active_branch = store
+            .get_session(session_id)
+            .await
+            .map_err(|error| Self::host_error("app_error", error.to_string()))?
+            .active_branch;
         let envelopes = store
-            .replay_events(session_id, from, limit)
+            .events_on_lineage(session_id, &active_branch, from, limit)
             .await
             .map_err(|error| Self::host_error("app_error", error.to_string()))?;
         let items: Vec<_> = envelopes.iter().filter_map(project_timeline_item).collect();
@@ -1001,7 +1006,8 @@ impl GuiHostAdapter {
                 session_id,
                 user_message,
                 model,
-                ..
+                provider,
+                profile: _,
             } => {
                 let history = {
                     let core = self.core.read().await;
@@ -1026,15 +1032,54 @@ impl GuiHostAdapter {
                         .await
                         .map_err(Self::app_error)?
                 };
-                if let Some(model) = model {
-                    let current = {
-                        let core = self.core.read().await;
-                        (
-                            core.provider_id().as_str().to_string(),
-                            core.model().as_str().to_string(),
-                        )
-                    };
-                    if model.as_str() != current.1 {
+                let current = {
+                    let core = self.core.read().await;
+                    (
+                        core.provider_id().as_str().to_string(),
+                        core.model().as_str().to_string(),
+                    )
+                };
+                if let Some((requested_provider, requested_model)) =
+                    run_start_requested_provider_switch(
+                        &current.0,
+                        &current.1,
+                        provider.as_ref().map(|id| id.as_str()),
+                        model.as_ref().map(|id| id.as_str()),
+                    )
+                {
+                    let mut core = self.core.write().await;
+                    core.switch_provider(
+                        Some(session_id),
+                        &requested_provider,
+                        requested_model.as_deref(),
+                    )
+                    .await
+                    .map_err(Self::app_error)?;
+                    let confirmed = (
+                        core.provider_id().as_str().to_string(),
+                        core.model().as_str().to_string(),
+                    );
+                    drop(core);
+                    if confirmed != current {
+                        self.bus.publish_diagnostic(
+                            self.instance.clone(),
+                            session_id,
+                            "model.switched",
+                            json!({
+                                "from": {
+                                    "provider": current.0,
+                                    "model": current.1
+                                },
+                                "to": {
+                                    "provider": confirmed.0,
+                                    "model": confirmed.1,
+                                }
+                            }),
+                        );
+                    }
+                } else if provider.is_none() {
+                    if let Some(model) = model {
+                        if model.as_str() != current.1 {
                         let mut core = self.core.write().await;
                         let switched = match core
                             .switch_model(Some(session_id), model.as_str())
@@ -1115,6 +1160,7 @@ impl GuiHostAdapter {
                                 }
                             }),
                         );
+                        }
                     }
                 }
                 let n = self.next_gui_run.fetch_add(1, Ordering::Relaxed);
@@ -1558,6 +1604,38 @@ fn scoped_idempotency(envelope: &AppCommandEnvelope) -> (CommandId, Option<Strin
     }
 }
 
+/// 有 `RunStart.provider` 时按用户所选通道切换，禁止回退 catalog 首项。
+fn run_start_requested_provider_switch(
+    current_provider: &str,
+    current_model: &str,
+    requested_provider: Option<&str>,
+    requested_model: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    let provider = requested_provider?;
+    let already = current_provider == provider
+        && requested_model.is_none_or(|model| current_model == model);
+    if already {
+        None
+    } else {
+        Some((provider.to_string(), requested_model.map(str::to_string)))
+    }
+}
+
+/// 旧客户端兼容：仅有 model 时按 overview 顺序取首个同 id。
+#[cfg(test)]
+fn run_start_overview_owner<'a, P, M>(
+    model: &str,
+    overview: impl IntoIterator<Item = &'a (P, M)>,
+) -> Option<String>
+where
+    P: AsRef<str> + 'a,
+    M: AsRef<str> + 'a,
+{
+    overview.into_iter().find_map(|(provider, id)| {
+        (id.as_ref() == model).then(|| provider.as_ref().to_string())
+    })
+}
+
 fn command_name(command: &AppCommand) -> &'static str {
     match command {
         AppCommand::CoreInitialize => "core_initialize",
@@ -1822,6 +1900,7 @@ mod tests {
                 session_id: session.clone(),
                 user_message: "another turn".into(),
                 model: None,
+                provider: None,
                 profile: None,
             }))
             .await
@@ -1879,6 +1958,7 @@ mod tests {
                 session_id: session.clone(),
                 user_message: "hi".into(),
                 model: Some(pawork_domain::ModelId::from("model-2")),
+                provider: None,
                 profile: None,
             }))
             .await
@@ -1890,6 +1970,7 @@ mod tests {
                 session_id: session,
                 user_message: "nope".into(),
                 model: Some(pawork_domain::ModelId::from("missing-model")),
+                provider: None,
                 profile: None,
             }))
             .await
@@ -2049,6 +2130,7 @@ mod tests {
                 session_id: session.clone(),
                 user_message: "go".into(),
                 model: None,
+                provider: None,
                 profile: None,
             },
         );
@@ -2074,7 +2156,8 @@ mod tests {
                     session_id: session,
                     user_message: "go again".into(),
                     model: None,
-                    profile: None,
+                    provider: None,
+                profile: None,
                 },
             ))
             .await
@@ -2145,7 +2228,8 @@ mod tests {
                     session_id: session,
                     user_message: "go".into(),
                     model: None,
-                    profile: None,
+                    provider: None,
+                profile: None,
                 },
             ))
             .await
@@ -2330,6 +2414,7 @@ mod tests {
                 user_message: "Remember the codeword BLUE-PINE. Reply with exactly one word: pong"
                     .into(),
                 model: None,
+                provider: None,
                 profile: None,
             }))
             .await
@@ -2348,6 +2433,7 @@ mod tests {
                 session_id: session.clone(),
                 user_message: "What is the codeword? Reply with only the codeword.".into(),
                 model: None,
+                provider: None,
                 profile: None,
             }))
             .await
@@ -2383,6 +2469,83 @@ mod tests {
         assert!(
             prepared[1] >= prepared[0] + 2,
             "second turn must include prior user+assistant+new user, got {prepared:?}"
+        );
+    }
+
+    #[test]
+    fn run_start_provider_hits_requested_channel_not_catalog_first() {
+        let catalog = [
+            ("opencode-go", "deepseek-v4-flash"),
+            ("deepseek", "deepseek-v4-flash"),
+        ];
+        let first =
+            run_start_overview_owner("deepseek-v4-flash", catalog.iter()).expect("catalog first");
+        assert_eq!(
+            first, "opencode-go",
+            "catalog first item would mis-route without RunStart.provider"
+        );
+
+        let target = run_start_requested_provider_switch(
+            "mock",
+            "model-1",
+            Some("deepseek"),
+            Some("deepseek-v4-flash"),
+        );
+        assert_eq!(
+            target,
+            Some(("deepseek".into(), Some("deepseek-v4-flash".into())))
+        );
+        assert_ne!(
+            target.as_ref().map(|(provider, _)| provider.as_str()),
+            Some(first.as_str())
+        );
+
+        assert_eq!(
+            run_start_requested_provider_switch(
+                "deepseek",
+                "deepseek-v4-flash",
+                Some("deepseek"),
+                Some("deepseek-v4-flash"),
+            ),
+            None
+        );
+        assert_eq!(
+            run_start_overview_owner("deepseek-v4-flash", catalog.iter()).as_deref(),
+            Some("opencode-go")
+        );
+    }
+
+    #[tokio::test]
+    async fn run_start_with_provider_does_not_silently_keep_same_model_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![
+                MockScript::new().text("ok").complete(),
+            ])),
+            None,
+            pawork_domain::ModelId::from("deepseek-v4-flash"),
+            pawork_domain::ProviderId::from("deepseek"),
+            Some(store),
+        );
+        let session = core.create_session("provider-pair").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let error = adapter
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session,
+                user_message: "hi".into(),
+                model: Some(pawork_domain::ModelId::from("deepseek-v4-flash")),
+                provider: Some(pawork_domain::ProviderId::from("opencode-go")),
+                profile: None,
+            }))
+            .await
+            .expect_err("same model id on another channel must not silently accept");
+        assert!(
+            error.message.contains("opencode-go"),
+            "RunStart.provider must target the requested channel, got {}",
+            error.message
         );
     }
 }

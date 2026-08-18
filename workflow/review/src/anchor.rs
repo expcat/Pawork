@@ -1,7 +1,8 @@
 //! 行锚点解析与 re-anchor：邻近行内容指纹稳定化。
 //!
 //! 只读 workspace 文件（仅 `fs::read_to_string`），本模块不执行任何写。
-//! 路径必须是 workspace 根内的相对路径，拒绝绝对路径与 `..` 逃逸。
+//! 路径必须是 workspace 根内的相对路径：词法拒绝绝对路径与 `..` 逃逸，
+//! 再 `canonicalize` + root 前缀校验，拒绝 symlink 逃逸。
 
 use std::{
     fs,
@@ -91,7 +92,7 @@ impl AnchorResolver {
         Self { workspace_root }
     }
 
-    /// 校验锚点文件路径：必须为 workspace 内相对路径，拒绝绝对路径与 `..` 逃逸。
+    /// 校验锚点文件路径：必须为 workspace 内相对路径，拒绝绝对路径、`..` 逃逸与 symlink 越 root。
     pub fn safe_path(&self, file: &str) -> Result<PathBuf, ReviewError> {
         if file.is_empty() {
             return Err(ReviewError::InvalidAnchor {
@@ -110,12 +111,31 @@ impl AnchorResolver {
         if escapes {
             return Err(ReviewError::TraversalDenied(file.to_string()));
         }
-        match &self.workspace_root {
-            Some(root) => Ok(root.join(path)),
-            None => Err(ReviewError::InvalidAnchor {
+        let Some(root) = &self.workspace_root else {
+            return Err(ReviewError::InvalidAnchor {
                 anchor: file.to_string(),
                 reason: "workspace root 未配置，无法解析锚点".to_string(),
-            }),
+            });
+        };
+        let joined = root.join(path);
+        let root_canon = fs::canonicalize(root).map_err(|error| {
+            ReviewError::FileUnavailable(file.to_string(), error.to_string())
+        })?;
+        match fs::canonicalize(&joined) {
+            Ok(canon) => {
+                if !is_within_root(&canon, &root_canon) {
+                    return Err(ReviewError::TraversalDenied(file.to_string()));
+                }
+                Ok(canon)
+            }
+            Err(_) => {
+                if let Ok(meta) = fs::symlink_metadata(&joined) {
+                    if meta.file_type().is_symlink() {
+                        return Err(ReviewError::TraversalDenied(file.to_string()));
+                    }
+                }
+                Ok(joined)
+            }
         }
     }
 
@@ -246,5 +266,61 @@ impl AnchorResolver {
             stale: true,
             reason: StaleReason::ContextMoved,
         })
+    }
+}
+
+fn is_within_root(path: &Path, root: &Path) -> bool {
+    path.strip_prefix(root).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pawork_domain::ReviewAnchor;
+
+    fn anchor(file: &str) -> ReviewAnchor {
+        ReviewAnchor {
+            file: file.to_string(),
+            line: 1,
+            end_line: None,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_and_reanchor_reject_symlink_escape() {
+        let ws = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.rs"), "fn secret() {}\n").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.rs"),
+            ws.path().join("leaked.rs"),
+        )
+        .unwrap();
+
+        let resolver = AnchorResolver::new(Some(ws.path().to_path_buf()));
+        let err = resolver.resolve(&anchor("leaked.rs")).unwrap_err();
+        assert!(
+            matches!(err, ReviewError::TraversalDenied(_)),
+            "{err:?}"
+        );
+
+        let err = resolver
+            .reanchor(&anchor("leaked.rs"), Some("fingerprint"))
+            .unwrap_err();
+        assert!(
+            matches!(err, ReviewError::TraversalDenied(_)),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_reads_regular_workspace_file() {
+        let ws = tempfile::tempdir().unwrap();
+        fs::write(ws.path().join("a.rs"), "alpha\nbeta\n").unwrap();
+        let resolver = AnchorResolver::new(Some(ws.path().to_path_buf()));
+        let resolved = resolver.resolve(&anchor("a.rs")).expect("resolve");
+        assert_eq!(resolved.line_count, 2);
+        assert!(resolved.fingerprint.is_some());
     }
 }

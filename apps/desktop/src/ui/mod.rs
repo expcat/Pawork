@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, KeyBinding, Render, ScrollHandle,
-    SharedString, Window, div, prelude::*, px, rgb,
+    actions, App, AnyView, Context, Entity, FocusHandle, Focusable, KeyBinding, Render,
+    ScrollHandle, SharedString, Styled, Window, div, prelude::*, px, rgb,
 };
 
 use crate::controller::{ControllerEvent, DesktopController};
@@ -19,6 +19,67 @@ use crate::projection::{
 };
 
 pub use text_input::{SendMessage, TextInput};
+
+actions!(
+    desktop_app,
+    [
+        ApproveOnce,
+        ApproveForRun,
+        Deny,
+        CancelRun,
+        NewTask,
+        ToggleInspector,
+    ]
+);
+
+/// 可测的 AppView 快捷键表（审批 / 取消 / 新建 / Inspector）。
+pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
+    ("cmd-.", "CancelRun"),
+    ("cmd-enter", "ApproveOnce"),
+    ("cmd-1", "ApproveOnce"),
+    ("cmd-2", "ApproveForRun"),
+    ("cmd-3", "Deny"),
+    ("cmd-n", "NewTask"),
+    ("cmd-i", "ToggleInspector"),
+];
+
+/// 主路径按钮的可测 tab_stop 标记。
+pub(crate) const MAIN_PATH_TAB_STOP_IDS: &[&str] = &[
+    "approve-once",
+    "approve-for-run",
+    "approve-deny",
+    "cancel",
+    "send",
+    "add-task",
+    "model-picker",
+];
+
+struct TooltipText {
+    text: SharedString,
+}
+
+impl Render for TooltipText {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(0x2a2a2a))
+            .border_1()
+            .border_color(rgb(0x3a3a3a))
+            .text_size(px(11.))
+            .text_color(rgb(0xe8e8e8))
+            .child(self.text.clone())
+    }
+}
+
+fn tooltip_text(text: impl Into<SharedString>, cx: &mut App) -> AnyView {
+    cx.new(|_| TooltipText { text: text.into() }).into()
+}
+
+fn focus_ring_style<T: Styled>(this: T) -> T {
+    this.border_1().border_color(rgb(0x2f6fed))
+}
 
 fn now_unix_ms() -> u64 {
     std::time::SystemTime::now()
@@ -61,6 +122,13 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("end", End, Some("TextInput")),
         KeyBinding::new("cmd-v", Paste, Some("TextInput")),
         KeyBinding::new("ctrl-v", Paste, Some("TextInput")),
+        KeyBinding::new("cmd-.", CancelRun, Some("AppView")),
+        KeyBinding::new("cmd-enter", ApproveOnce, Some("AppView")),
+        KeyBinding::new("cmd-1", ApproveOnce, Some("AppView")),
+        KeyBinding::new("cmd-2", ApproveForRun, Some("AppView")),
+        KeyBinding::new("cmd-3", Deny, Some("AppView")),
+        KeyBinding::new("cmd-n", NewTask, Some("AppView")),
+        KeyBinding::new("cmd-i", ToggleInspector, Some("AppView")),
     ]);
 }
 
@@ -82,6 +150,14 @@ pub struct AppView {
     scope_menu_open: bool,
     collapsed_projects: BTreeSet<String>,
     inspector_open: bool,
+    focus_handle: FocusHandle,
+    approve_once_focus: FocusHandle,
+    approve_for_run_focus: FocusHandle,
+    deny_focus: FocusHandle,
+    cancel_focus: FocusHandle,
+    send_focus: FocusHandle,
+    add_task_focus: FocusHandle,
+    model_focus: FocusHandle,
 }
 
 impl AppView {
@@ -108,6 +184,14 @@ impl AppView {
             scope_menu_open: false,
             collapsed_projects: BTreeSet::new(),
             inspector_open: true,
+            focus_handle: cx.focus_handle(),
+            approve_once_focus: cx.focus_handle().tab_stop(true),
+            approve_for_run_focus: cx.focus_handle().tab_stop(true),
+            deny_focus: cx.focus_handle().tab_stop(true),
+            cancel_focus: cx.focus_handle().tab_stop(true),
+            send_focus: cx.focus_handle().tab_stop(true),
+            add_task_focus: cx.focus_handle().tab_stop(true),
+            model_focus: cx.focus_handle().tab_stop(true),
         };
         view.start_connect(cx);
         view
@@ -463,6 +547,35 @@ impl AppView {
         cx.notify();
     }
 
+    fn on_approve_once(&mut self, _: &ApproveOnce, _: &mut Window, cx: &mut Context<Self>) {
+        self.on_approve("approve_once", cx);
+    }
+
+    fn on_approve_for_run(&mut self, _: &ApproveForRun, _: &mut Window, cx: &mut Context<Self>) {
+        self.on_approve("approve_for_run", cx);
+    }
+
+    fn on_deny(&mut self, _: &Deny, _: &mut Window, cx: &mut Context<Self>) {
+        self.on_approve("deny", cx);
+    }
+
+    fn on_cancel_run(&mut self, _: &CancelRun, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_cancel_clicked(window, cx);
+    }
+
+    fn on_new_task_action(&mut self, _: &NewTask, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_new_session(window, cx);
+    }
+
+    fn on_toggle_inspector_action(
+        &mut self,
+        _: &ToggleInspector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_toggle_inspector(window, cx);
+    }
+
     fn on_start_terminal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.ensure_terminal(cx);
         cx.notify();
@@ -539,10 +652,7 @@ impl AppView {
         if text.trim().is_empty() {
             return;
         }
-        let model = self
-            .projection
-            .effective_model()
-            .map(|(_, id)| id.clone());
+        let model = self.projection.effective_model().cloned();
         self.controller.send_message(session_id, text, model);
     }
 
@@ -598,6 +708,32 @@ impl AppView {
     fn can_cancel(&self) -> bool {
         matches!(self.projection.connection, ConnectionState::Connected { .. })
             && self.projection.active_run_id.is_some()
+    }
+
+    fn approve_disabled_reason(&self) -> String {
+        if self.projection.pending_approval.is_none() {
+            "No pending approval.".into()
+        } else {
+            "Approval needs a live connection.".into()
+        }
+    }
+
+    fn cancel_disabled_reason(&self) -> String {
+        if self.projection.active_run_id.is_none() {
+            "No active run to cancel.".into()
+        } else {
+            "Cancel needs a live connection.".into()
+        }
+    }
+
+    fn model_disabled_reason(&self) -> String {
+        if self.projection.active_run_id.is_some() {
+            "Model switch is disabled while a run is in progress.".into()
+        } else if self.projection.models.is_empty() {
+            "Model catalog is still loading.".into()
+        } else {
+            "Model switch needs a live connection.".into()
+        }
     }
 
     fn model_label(&self) -> String {
@@ -1081,8 +1217,9 @@ impl Render for AppView {
             ),
         };
 
+        let grouping_tooltip = SharedString::from(self.grouping.accessible_name());
         let mut grouping_button = div()
-            .id(SharedString::from(self.grouping.accessible_name()))
+            .id("task-rail-grouping")
             .w(px(28.))
             .h(px(22.))
             .rounded_md()
@@ -1091,6 +1228,7 @@ impl Render for AppView {
             .text_color(rgb(0xe8e8e8))
             .cursor_pointer()
             .child(format!("{grouping_glyph} ▾"))
+            .tooltip(move |_, cx| tooltip_text(grouping_tooltip.clone(), cx))
             .on_click(cx.listener(|view, _event, window, cx| {
                 view.on_toggle_grouping_menu(window, cx);
             }));
@@ -1114,8 +1252,17 @@ impl Render for AppView {
             scope_button = scope_button.child(self.scope_menu_element(cx));
         }
 
+        let add_task_tooltip = if can_create {
+            SharedString::from("New task (⌘N)")
+        } else {
+            SharedString::from(self.add_task_disabled_reason())
+        };
+        let add_task_focus = self.add_task_focus.clone();
         let add_task = div()
             .id("add-task")
+            .tab_stop(true)
+            .track_focus(&add_task_focus)
+            .focus(focus_ring_style)
             .w(px(22.))
             .h(px(22.))
             .rounded_md()
@@ -1123,6 +1270,7 @@ impl Render for AppView {
             .text_color(if can_create { rgb(0xe8e8e8) } else { rgb(0x8f8f8f) })
             .cursor_pointer()
             .child("+")
+            .tooltip(move |_, cx| tooltip_text(add_task_tooltip.clone(), cx))
             .on_click(cx.listener(|view, _event, window, cx| {
                 view.on_new_session(window, cx);
             }));
@@ -1247,11 +1395,32 @@ impl Render for AppView {
                     ("approve-for-run", "Allow for run", "approve_for_run", 0x3d7a4a_u32),
                     ("approve-deny", "Deny", "deny", 0x8a3b32_u32),
                 ];
+                let approve_once_focus = self.approve_once_focus.clone();
+                let approve_for_run_focus = self.approve_for_run_focus.clone();
+                let deny_focus = self.deny_focus.clone();
+                let approve_disabled = SharedString::from(self.approve_disabled_reason());
                 let row = div().flex().flex_row().gap_2().children(buttons.into_iter().map(
                     |(id, label, decision, color)| {
                         let decision = decision.to_string();
+                        let focus = match id {
+                            "approve-once" => approve_once_focus.clone(),
+                            "approve-for-run" => approve_for_run_focus.clone(),
+                            _ => deny_focus.clone(),
+                        };
+                        let tooltip = if can_approve {
+                            SharedString::from(match id {
+                                "approve-once" => "Allow once (⌘1 / ⌘↩)",
+                                "approve-for-run" => "Allow for run (⌘2)",
+                                _ => "Deny (⌘3)",
+                            })
+                        } else {
+                            approve_disabled.clone()
+                        };
                         div()
                             .id(SharedString::from(id))
+                            .tab_stop(true)
+                            .track_focus(&focus)
+                            .focus(focus_ring_style)
                             .px_2()
                             .py_1()
                             .rounded_md()
@@ -1259,6 +1428,7 @@ impl Render for AppView {
                             .text_color(rgb(0xffffff))
                             .cursor_pointer()
                             .child(label)
+                            .tooltip(move |_, cx| tooltip_text(tooltip.clone(), cx))
                             .when(can_approve, |button| {
                                 button.on_click(cx.listener(move |view, _event, _window, cx| {
                                     view.on_approve(&decision, cx);
@@ -1269,8 +1439,17 @@ impl Render for AppView {
                 timeline.child(card.child(row))
             });
 
+        let model_tooltip = if can_switch_model {
+            SharedString::from("Select model")
+        } else {
+            SharedString::from(self.model_disabled_reason())
+        };
+        let model_focus = self.model_focus.clone();
         let mut model_picker = div()
             .id("model-picker")
+            .tab_stop(true)
+            .track_focus(&model_focus)
+            .focus(focus_ring_style)
             .px_2()
             .py_1()
             .rounded_md()
@@ -1278,6 +1457,7 @@ impl Render for AppView {
             .text_color(if can_switch_model { rgb(0xe8e8e8) } else { rgb(0x8f8f8f) })
             .cursor_pointer()
             .child(model_label)
+            .tooltip(move |_, cx| tooltip_text(model_tooltip.clone(), cx))
             .when(can_switch_model, |button| {
                 button.on_click(cx.listener(|view, _event, window, cx| {
                     view.on_toggle_model_menu(window, cx);
@@ -1346,25 +1526,44 @@ impl Render for AppView {
                     .flex_row()
                     .gap_2()
                     .child(div().flex_1().child(self.text_input.clone()))
-                    .when(can_cancel, |row| {
-                        row.child(
-                            div()
-                                .id("cancel")
-                                .px_3()
-                                .py_1()
-                                .rounded_md()
-                                .bg(rgb(0x8a3b32))
-                                .text_color(rgb(0xffffff))
-                                .cursor_pointer()
-                                .child("Cancel")
-                                .on_click(cx.listener(|view, _event, window, cx| {
+                    .child({
+                        let cancel_focus = self.cancel_focus.clone();
+                        let cancel_tooltip = if can_cancel {
+                            SharedString::from("Cancel run (⌘.)")
+                        } else {
+                            SharedString::from(self.cancel_disabled_reason())
+                        };
+                        div()
+                            .id("cancel")
+                            .tab_stop(true)
+                            .track_focus(&cancel_focus)
+                            .focus(focus_ring_style)
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .bg(if can_cancel { rgb(0x8a3b32) } else { rgb(0x3a3a3a) })
+                            .text_color(rgb(0xffffff))
+                            .cursor_pointer()
+                            .child("Cancel")
+                            .tooltip(move |_, cx| tooltip_text(cancel_tooltip.clone(), cx))
+                            .when(can_cancel, |button| {
+                                button.on_click(cx.listener(|view, _event, window, cx| {
                                     view.on_cancel_clicked(window, cx);
-                                })),
-                        )
+                                }))
+                            })
                     })
-                    .child(
+                    .child({
+                        let send_focus = self.send_focus.clone();
+                        let send_tooltip = if can_send {
+                            SharedString::from("Send message (Enter)")
+                        } else {
+                            SharedString::from(composer_hint.clone())
+                        };
                         div()
                             .id("send")
+                            .tab_stop(true)
+                            .track_focus(&send_focus)
+                            .focus(focus_ring_style)
                             .px_3()
                             .py_1()
                             .rounded_md()
@@ -1372,12 +1571,13 @@ impl Render for AppView {
                             .text_color(rgb(0xffffff))
                             .cursor_pointer()
                             .child("Send")
+                            .tooltip(move |_, cx| tooltip_text(send_tooltip.clone(), cx))
                             .when(can_send, |button| {
                                 button.on_click(cx.listener(|view, _event, window, cx| {
                                     view.on_send_clicked(window, cx);
                                 }))
-                            }),
-                    ),
+                            })
+                    }),
             )
             .child(
                 div()
@@ -1419,11 +1619,19 @@ impl Render for AppView {
         }
 
         div()
+            .key_context("AppView")
+            .track_focus(&self.focus_handle)
             .flex()
             .size_full()
             .bg(rgb(0x1e1e1e))
             .text_color(rgb(0xe8e8e8))
             .on_action(cx.listener(Self::on_send_message))
+            .on_action(cx.listener(Self::on_approve_once))
+            .on_action(cx.listener(Self::on_approve_for_run))
+            .on_action(cx.listener(Self::on_deny))
+            .on_action(cx.listener(Self::on_cancel_run))
+            .on_action(cx.listener(Self::on_new_task_action))
+            .on_action(cx.listener(Self::on_toggle_inspector_action))
             .child(sidebar)
             .child(
                 div()
@@ -1445,5 +1653,46 @@ impl Render for AppView {
                             .child(run_status),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keybinding_table_includes_approval_and_cancel() {
+        let actions: Vec<&str> = APP_VIEW_KEYBINDINGS
+            .iter()
+            .map(|(_, action)| *action)
+            .collect();
+        assert!(actions.contains(&"ApproveOnce"));
+        assert!(actions.contains(&"ApproveForRun"));
+        assert!(actions.contains(&"Deny"));
+        assert!(actions.contains(&"CancelRun"));
+        assert!(APP_VIEW_KEYBINDINGS
+            .iter()
+            .any(|(key, action)| *key == "cmd-." && *action == "CancelRun"));
+        assert!(APP_VIEW_KEYBINDINGS
+            .iter()
+            .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce"));
+    }
+
+    #[test]
+    fn main_path_buttons_are_marked_tab_stops() {
+        for id in [
+            "approve-once",
+            "approve-for-run",
+            "approve-deny",
+            "cancel",
+            "send",
+            "add-task",
+            "model-picker",
+        ] {
+            assert!(
+                MAIN_PATH_TAB_STOP_IDS.contains(&id),
+                "missing tab_stop marker for {id}"
+            );
+        }
     }
 }

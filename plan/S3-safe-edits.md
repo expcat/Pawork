@@ -58,7 +58,7 @@ Agent 获得写能力并被审批体系约束：write_file / edit_file / apply_p
 - [x] 冒烟清单全项通过；红线回归全绿。
 - [x] 默认配置零写入（ReadOnly）；未信任 workspace 写工具硬拒绝（Deny，对齐 V1 `allowed_in_untrusted_workspace=false`）。
 - [x] 审批事件对可持久化、可重放，resume 语义明确。（完成的审批成对落盘；中途被杀走重新询问，不重复执行。）
-- [x] S2 的路径校验入口已替换为 policy 实现且外部签名未变。
+- [x] S2 的路径校验入口已替换为 policy 实现且外部签名未变。S13-F01 已把读热路径接到 policy。
 
 ## 为后续阶段预留 / 明确不做
 

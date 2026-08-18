@@ -142,6 +142,7 @@ impl Harness {
                     session_id: session_id.clone(),
                     user_message: message.into(),
                     model: None,
+                    provider: None,
                     profile: None,
                 },
             ))

@@ -214,6 +214,7 @@ async fn run_start_without_provider_returns_error_response() {
             session_id,
             user_message: "hello".into(),
             model: None,
+            provider: None,
             profile: None,
         })
         .await
@@ -267,6 +268,7 @@ async fn real_host_enforces_granted_capabilities() {
             session_id: SessionId::from("s-none"),
             user_message: "hello".into(),
             model: None,
+            provider: None,
             profile: None,
         })
         .await

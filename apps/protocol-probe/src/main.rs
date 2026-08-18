@@ -8,13 +8,15 @@
 mod harness;
 mod scenarios;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
 use std::time::Duration;
 
 use clap::Parser;
+use pawork_app::{default_data_dir, DEFAULT_INSTANCE};
 use pawork_client::{GuiClient, ResumeDisposition};
 use pawork_domain::{ActorId, WorkspaceId};
+use pawork_protocol::client_auth::TOKEN_SCHEME;
 use pawork_protocol::{
     ActorIdentity, AppCommand, AppEvent, AppQuery, AppResponse, ClientAuthentication,
     CommandSource,
@@ -41,7 +43,7 @@ struct Cli {
     /// 真实 serve 上开 PTY、写一行、断线重连后续接。
     #[arg(long, value_name = "ENDPOINT")]
     live_pty: Option<String>,
-    /// 可选握手 proof（V2 本机 serve 默认不校验）。
+    /// 握手 token 文件；省略则读 `{data_dir}/gui.token`（与 `pawork gui serve` 相同）。
     #[arg(long, value_name = "PATH")]
     token: Option<String>,
 }
@@ -52,7 +54,7 @@ async fn main() {
     let code = if cli.self_test {
         scenarios::run_all().await
     } else if let Some(endpoint) = cli.live_two_gui {
-        match live_two_gui(&endpoint).await {
+        match live_two_gui(&endpoint, cli.token.as_deref()).await {
             Ok(report) => {
                 println!("PASS live-two-gui: {report}");
                 0
@@ -63,7 +65,7 @@ async fn main() {
             }
         }
     } else if let Some(endpoint) = cli.live_pty {
-        match live_pty(&endpoint).await {
+        match live_pty(&endpoint, cli.token.as_deref()).await {
             Ok(report) => {
                 println!("PASS live-pty: {report}");
                 0
@@ -97,17 +99,7 @@ async fn connect_mode(endpoint: &str, token_path: Option<&str>) -> Result<(), St
     if address.is_empty() {
         return Err("空的 local:// 端点".into());
     }
-    let authentication = match token_path {
-        Some(path) => {
-            let proof = std::fs::read_to_string(path)
-                .map_err(|error| format!("读取 token 失败: {error}"))?;
-            Some(ClientAuthentication {
-                scheme: "token".into(),
-                proof: proof.trim().to_string(),
-            })
-        }
-        None => None,
-    };
+    let authentication = Some(load_gui_authentication(token_path)?);
 
     let transport: Arc<dyn GuiTransportClient> = Arc::new(LocalTransport::default());
     let client = GuiClient::connect(
@@ -170,7 +162,44 @@ fn parse_local_address(endpoint: &str) -> Result<String, String> {
     Ok(address.into())
 }
 
-async fn connect_named(address: &str, label: &str) -> Result<GuiClient, String> {
+fn gui_token_path(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+    let data_dir = data_dir.as_ref();
+    if instance == DEFAULT_INSTANCE {
+        data_dir.join("gui.token")
+    } else {
+        data_dir.join(format!("gui-{instance}.token"))
+    }
+}
+
+fn load_gui_authentication(token_path: Option<&str>) -> Result<ClientAuthentication, String> {
+    let path = match token_path {
+        Some(path) => PathBuf::from(path),
+        None => gui_token_path(default_data_dir(), DEFAULT_INSTANCE),
+    };
+    let bytes = std::fs::read(&path).map_err(|error| {
+        format!(
+            "读取 token 失败 ({}): {error}",
+            path.display()
+        )
+    })?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        format!("token 文件为空或不是有效 UTF-8: {}", path.display())
+    })?;
+    let proof = text.trim();
+    if proof.is_empty() {
+        return Err(format!("token 文件为空或格式错误: {}", path.display()));
+    }
+    Ok(ClientAuthentication {
+        scheme: TOKEN_SCHEME.into(),
+        proof: proof.to_string(),
+    })
+}
+
+async fn connect_named(
+    address: &str,
+    label: &str,
+    authentication: Option<ClientAuthentication>,
+) -> Result<GuiClient, String> {
     let transport: Arc<dyn GuiTransportClient> = Arc::new(LocalTransport::default());
     GuiClient::connect(
         transport,
@@ -182,7 +211,7 @@ async fn connect_named(address: &str, label: &str) -> Result<GuiClient, String> 
             client_label: Some(label.into()),
             max_frame_bytes: 1024 * 1024,
         },
-        None,
+        authentication,
     )
     .await
     .map_err(|error| format!("{label} 连接/握手失败: {error}"))
@@ -195,10 +224,11 @@ fn local_gui_identity(name: &str) -> ActorIdentity {
     }
 }
 
-async fn live_two_gui(endpoint: &str) -> Result<String, String> {
+async fn live_two_gui(endpoint: &str, token_path: Option<&str>) -> Result<String, String> {
     let address = parse_local_address(endpoint)?;
-    let client_a = connect_named(&address, "live-a").await?;
-    let client_b = connect_named(&address, "live-b").await?;
+    let authentication = Some(load_gui_authentication(token_path)?);
+    let client_a = connect_named(&address, "live-a", authentication.clone()).await?;
+    let client_b = connect_named(&address, "live-b", authentication.clone()).await?;
     if client_a.client_id() == client_b.client_id() {
         return Err("两个客户端拿到了同一个 client_id".into());
     }
@@ -362,7 +392,7 @@ async fn live_two_gui(endpoint: &str) -> Result<String, String> {
             client_label: Some("live-a-resume".into()),
             max_frame_bytes: 1024 * 1024,
         },
-        None,
+        authentication,
         Some(last_a),
     )
     .await
@@ -423,9 +453,10 @@ async fn workspace_id_of(client: &GuiClient, name: &str) -> Result<WorkspaceId, 
     }
 }
 
-async fn live_pty(endpoint: &str) -> Result<String, String> {
+async fn live_pty(endpoint: &str, token_path: Option<&str>) -> Result<String, String> {
     let address = parse_local_address(endpoint)?;
-    let client = connect_named(&address, "live-pty").await?;
+    let authentication = Some(load_gui_authentication(token_path)?);
+    let client = connect_named(&address, "live-pty", authentication.clone()).await?;
     client
         .subscribe_all()
         .await
@@ -512,7 +543,7 @@ async fn live_pty(endpoint: &str) -> Result<String, String> {
             client_label: Some("live-pty-resume".into()),
             max_frame_bytes: 1024 * 1024,
         },
-        None,
+        authentication,
         Some(last),
     )
     .await

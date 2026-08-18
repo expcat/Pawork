@@ -1,6 +1,6 @@
 //! `pawork service install|start|stop`：默认 dry-run，`--apply` 才改系统。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pawork_app::DEFAULT_INSTANCE;
@@ -127,7 +127,7 @@ fn execute_service_action(
                 ],
             ),
             "start" => run_cmd("sc", &["start", name]),
-            "stop" => run_cmd("sc", &["stop", name]),
+            "stop" => apply_teardown(&windows_stop_steps(name)),
             _ => Err(CliError::Usage(format!("unknown service action {action}"))),
         }
     } else if cfg!(target_os = "macos") {
@@ -141,7 +141,7 @@ fn execute_service_action(
                 Ok(())
             }
             "start" => run_cmd("launchctl", &["load", &plist_path.display().to_string()]),
-            "stop" => run_cmd("launchctl", &["unload", &plist_path.display().to_string()]),
+            "stop" => apply_teardown(&macos_stop_steps(&plist_path)),
             _ => Err(CliError::Usage(format!("unknown service action {action}"))),
         }
     } else if cfg!(target_os = "linux") {
@@ -155,7 +155,7 @@ fn execute_service_action(
                 Ok(())
             }
             "start" => run_cmd("systemctl", &["--user", "start", &format!("{name}.service")]),
-            "stop" => run_cmd("systemctl", &["--user", "stop", &format!("{name}.service")]),
+            "stop" => apply_teardown(&linux_stop_steps(name, &unit)),
             _ => Err(CliError::Usage(format!("unknown service action {action}"))),
         }
     } else {
@@ -191,5 +191,196 @@ fn run_cmd(program: &str, args: &[&str]) -> Result<(), CliError> {
             "{program} {} failed with {status}",
             args.join(" ")
         )))
+    }
+}
+
+/// `stop --apply` 回收步骤。前缀命令尽力执行，最后一步（删单元文件或
+/// `sc delete`）必须落地，避免 KeepAlive / 登录再拉起。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TeardownStep {
+    Run { program: String, args: Vec<String> },
+    RemoveFile { path: PathBuf },
+}
+
+fn macos_stop_steps(plist_path: &Path) -> Vec<TeardownStep> {
+    vec![
+        TeardownStep::Run {
+            program: "launchctl".into(),
+            args: vec!["unload".into(), plist_path.display().to_string()],
+        },
+        TeardownStep::RemoveFile {
+            path: plist_path.to_path_buf(),
+        },
+    ]
+}
+
+fn linux_stop_steps(name: &str, unit_path: &Path) -> Vec<TeardownStep> {
+    vec![
+        TeardownStep::Run {
+            program: "systemctl".into(),
+            args: vec![
+                "--user".into(),
+                "stop".into(),
+                format!("{name}.service"),
+            ],
+        },
+        TeardownStep::Run {
+            program: "systemctl".into(),
+            args: vec![
+                "--user".into(),
+                "disable".into(),
+                format!("{name}.service"),
+            ],
+        },
+        TeardownStep::RemoveFile {
+            path: unit_path.to_path_buf(),
+        },
+    ]
+}
+
+fn windows_stop_steps(name: &str) -> Vec<TeardownStep> {
+    vec![
+        TeardownStep::Run {
+            program: "sc".into(),
+            args: vec!["stop".into(), name.to_string()],
+        },
+        TeardownStep::Run {
+            program: "sc".into(),
+            args: vec!["delete".into(), name.to_string()],
+        },
+    ]
+}
+
+fn apply_teardown(steps: &[TeardownStep]) -> Result<(), CliError> {
+    let last = steps.len().saturating_sub(1);
+    for (index, step) in steps.iter().enumerate() {
+        let required = index == last;
+        match step {
+            TeardownStep::Run { program, args } => {
+                let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+                match run_cmd(program, &argv) {
+                    Ok(()) => {}
+                    Err(err) if required => return Err(err),
+                    Err(_) => {}
+                }
+            }
+            TeardownStep::RemoveFile { path } => match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(CliError::Io(err)),
+            },
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_teardown_plan_deletes_macos_plist() {
+        let plist = PathBuf::from("/tmp/Library/LaunchAgents/pawork.dev.plist");
+        let steps = macos_stop_steps(&plist);
+        assert!(
+            steps.iter().any(|step| matches!(
+                step,
+                TeardownStep::Run { program, args }
+                    if program == "launchctl"
+                        && args.first().map(String::as_str) == Some("unload")
+                        && args.get(1).map(String::as_str) == Some(plist.to_str().unwrap_or(""))
+            )),
+            "macOS stop must launchctl unload: {steps:?}"
+        );
+        assert!(
+            steps.iter().any(|step| matches!(
+                step,
+                TeardownStep::RemoveFile { path } if path == &plist
+            )),
+            "macOS stop must delete LaunchAgents plist: {steps:?}"
+        );
+    }
+
+    fn run_args_eq(step: &TeardownStep, program: &str, expected: &[&str]) -> bool {
+        match step {
+            TeardownStep::Run {
+                program: got_program,
+                args,
+            } => {
+                got_program == program
+                    && args
+                        .iter()
+                        .map(String::as_str)
+                        .eq(expected.iter().copied())
+            }
+            TeardownStep::RemoveFile { .. } => false,
+        }
+    }
+
+    #[test]
+    fn stop_teardown_plan_disables_and_deletes_linux_unit() {
+        let unit = PathBuf::from("/tmp/.config/systemd/user/pawork.dev.service");
+        let steps = linux_stop_steps("pawork.dev", &unit);
+        assert!(
+            steps
+                .iter()
+                .any(|step| run_args_eq(step, "systemctl", &["--user", "stop", "pawork.dev.service"])),
+            "Linux stop must systemctl --user stop: {steps:?}"
+        );
+        assert!(
+            steps.iter().any(|step| run_args_eq(
+                step,
+                "systemctl",
+                &["--user", "disable", "pawork.dev.service"]
+            )),
+            "Linux stop must systemctl --user disable: {steps:?}"
+        );
+        assert!(
+            steps.iter().any(|step| matches!(
+                step,
+                TeardownStep::RemoveFile { path } if path == &unit
+            )),
+            "Linux stop must delete user unit file: {steps:?}"
+        );
+    }
+
+    #[test]
+    fn stop_teardown_plan_deletes_windows_scm_service() {
+        let steps = windows_stop_steps("pawork");
+        assert!(
+            steps.iter().any(|step| matches!(
+                step,
+                TeardownStep::Run { program, args }
+                    if program == "sc" && args == &["stop".to_string(), "pawork".to_string()]
+            )),
+            "Windows stop must sc stop: {steps:?}"
+        );
+        assert!(
+            steps.iter().any(|step| matches!(
+                step,
+                TeardownStep::Run { program, args }
+                    if program == "sc" && args == &["delete".to_string(), "pawork".to_string()]
+            )),
+            "Windows stop must sc delete: {steps:?}"
+        );
+    }
+
+    #[test]
+    fn apply_teardown_removes_unit_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "pawork-svc-teardown-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("create teardown dir");
+        let path = dir.join("pawork.test.plist");
+        std::fs::write(&path, "unit").expect("write unit");
+        apply_teardown(&[TeardownStep::RemoveFile { path: path.clone() }])
+            .expect("delete unit file");
+        assert!(!path.exists(), "stop path must delete the unit file");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

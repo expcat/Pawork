@@ -25,7 +25,9 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let socket = args.socket.unwrap_or_else(platform::default_socket_path);
+    let socket = args
+        .socket
+        .unwrap_or_else(|| platform::socket_path_for_instance(args.instance.as_deref()));
     if args.probe_smoke {
         std::process::exit(run_probe_smoke(socket));
     }
@@ -37,6 +39,7 @@ fn main() {
 
 struct Args {
     socket: Option<PathBuf>,
+    instance: Option<String>,
     probe: bool,
     probe_smoke: bool,
 }
@@ -44,27 +47,29 @@ struct Args {
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         socket: None,
+        instance: None,
         probe: false,
         probe_smoke: false,
     };
+    let usage = "usage: pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]";
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--socket" => {
                 let Some(path) = iter.next() else {
-                    return Err(
-                        "usage: pawork-desktop [--socket <path>] [--probe|--probe-smoke]".into(),
-                    );
+                    return Err(usage.into());
                 };
                 args.socket = Some(PathBuf::from(path));
             }
+            "--instance" => {
+                let Some(name) = iter.next() else {
+                    return Err(usage.into());
+                };
+                args.instance = Some(name);
+            }
             "--probe" => args.probe = true,
             "--probe-smoke" => args.probe_smoke = true,
-            other => {
-                return Err(format!(
-                    "unknown argument {other}; usage: pawork-desktop [--socket <path>] [--probe|--probe-smoke]"
-                ))
-            }
+            other => return Err(format!("unknown argument {other}; {usage}")),
         }
     }
     Ok(args)
@@ -148,7 +153,7 @@ async fn probe_smoke(
     controller.send_message(
         session_id.clone(),
         "Reply with exactly one word: pong".into(),
-        Some(first.id.clone()),
+        Some((first.provider_id.clone(), first.id.clone())),
     );
     let first_turn = wait_for_turn(&events, &mut projection, Duration::from_secs(90)).await?;
 
@@ -159,7 +164,7 @@ async fn probe_smoke(
         controller.send_message(
             session_id.clone(),
             "Reply with exactly one word: switched".into(),
-            Some(model.id.clone()),
+            Some((model.provider_id.clone(), model.id.clone())),
         );
         Some(wait_for_turn(&events, &mut projection, Duration::from_secs(90)).await?)
     } else {
@@ -170,7 +175,7 @@ async fn probe_smoke(
         session_id.clone(),
         "Write target/s7-wave-d-smoke.txt containing exactly hello-s7d. Use the write tool."
             .into(),
-        Some(first.id.clone()),
+        Some((first.provider_id.clone(), first.id.clone())),
     );
     let approval = wait_for_approval_or_turn(&events, &mut projection, Duration::from_secs(90)).await?;
     if approval {
@@ -189,7 +194,7 @@ async fn probe_smoke(
     controller.send_message(
         session_id.clone(),
         "Count slowly from 1 to 80 in digits only.".into(),
-        Some(first.id.clone()),
+        Some((first.provider_id.clone(), first.id.clone())),
     );
     let run_id = wait_for_run_id(&events, &mut projection, Duration::from_secs(30)).await?;
     controller.cancel_run(run_id);
@@ -241,7 +246,7 @@ async fn probe_smoke(
     controller.send_message(
         session_id.clone(),
         "Count slowly from 1 to 80 in digits only.".into(),
-        Some(first.id.clone()),
+        Some((first.provider_id.clone(), first.id.clone())),
     );
     let live_run = wait_for_run_id(&events, &mut projection, Duration::from_secs(30)).await?;
     controller.disconnect().await;

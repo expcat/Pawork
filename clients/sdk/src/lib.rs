@@ -33,7 +33,7 @@
 //! ## 版本与稳定面（语义化策略）
 //!
 //! - SDK 自身的 crate 版本按 semver 演进；`SDK_API_VERSION` 声明 SDK 期望的
-//!   协议版本（V2 `API_VERSION` = 1.1），握手时与 Host 协商，major 不兼容即显式失败。
+//!   协议版本（V2 `API_VERSION` = 1.2），握手时与 Host 协商，major 不兼容即显式失败。
 //! - 稳定面：`PaworkClient`、`PaworkOptions`、`EventSubscription`、
 //!   [`error::SdkError`]、`transport::Transport`、`mock::MockTransport`。
 //!   稳定面内的行为改动需要 minor 版本与 CHANGELOG 记录。

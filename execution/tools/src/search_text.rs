@@ -25,6 +25,7 @@ use pawork_workspace::WorkspaceService;
 use crate::common::opt_bool;
 use crate::common::opt_u64;
 use crate::common::require_str;
+use crate::common::resolve_write_rel;
 use crate::common::workspace_roots;
 use crate::common::BuiltinToolError;
 
@@ -140,6 +141,7 @@ fn search(
     for root in &roots {
         let walker = WalkBuilder::new(root)
             .hidden(false)
+            .follow_links(false)
             .ignore(true)
             .git_ignore(true)
             .git_exclude(true)
@@ -154,10 +156,13 @@ fn search(
                 break;
             }
             let entry = entry?;
-            let path = entry.path();
-            if !path.is_file() {
+            let Some(ft) = entry.file_type() else {
+                continue;
+            };
+            if !ft.is_file() {
                 continue;
             }
+            let path = entry.path();
             let rel = match path.strip_prefix(root) {
                 Ok(rel) => rel,
                 Err(_) => continue,
@@ -167,10 +172,15 @@ fn search(
                     continue;
                 }
             }
+            let rel_str = rel.to_string_lossy();
+            let Ok(absolute) = resolve_write_rel(std::slice::from_ref(root), rel_str.as_ref())
+            else {
+                continue;
+            };
             if cancel.is_cancelled() {
                 return Err(SearchTextError::Cancelled);
             }
-            if let Ok(text) = std::fs::read_to_string(path) {
+            if let Ok(text) = std::fs::read_to_string(&absolute) {
                 if let Some(emitted) =
                     scan_file(rel, &text, &matcher, context_lines, &mut budget, cancel)?
                 {
@@ -458,5 +468,49 @@ mod tests {
         cancel.cancel();
         let error = search(&service, &id, &json!({"pattern": "x"}), &cancel).unwrap_err();
         assert!(matches!(error, SearchTextError::Cancelled));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_symlink_escape_and_git_internals() {
+        let (service, id, root, _ws_dir) = make_service();
+        let outside = temp_root("outside");
+        fs::write(outside.path().join("secret.txt"), "unique-search-secret\n").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), root.join("auth-link"))
+            .unwrap();
+        std::os::unix::fs::symlink("/etc", root.join("etc-link")).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join(".git/config"), "unique-git-secret\n").unwrap();
+        fs::write(root.join("ok.txt"), "unique-search-secret\n").unwrap();
+
+        let res = search(
+            &service,
+            &id,
+            &json!({"pattern": "unique-search-secret", "context_lines": 0}),
+            &CancellationToken::new(),
+        )
+        .expect("search");
+        let text = match &res.content[0] {
+            ContentPart::Text(t) => t.text.as_str(),
+            _ => panic!("text"),
+        };
+        assert!(text.contains("ok.txt"), "{text}");
+        assert!(!text.contains("auth-link"), "{text}");
+        assert!(!text.contains("etc-link"), "{text}");
+        assert!(!text.contains(&outside.path().display().to_string()), "{text}");
+
+        let res = search(
+            &service,
+            &id,
+            &json!({"pattern": "unique-git-secret", "context_lines": 0}),
+            &CancellationToken::new(),
+        )
+        .expect("search");
+        let text = match &res.content[0] {
+            ContentPart::Text(t) => t.text.as_str(),
+            _ => panic!("text"),
+        };
+        assert!(!text.contains("unique-git-secret"), "{text}");
+        assert!(!text.contains(".git"), "{text}");
     }
 }

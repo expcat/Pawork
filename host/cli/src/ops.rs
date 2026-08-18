@@ -6,9 +6,11 @@ use std::time::Duration;
 
 use pawork_app::{default_data_dir, instance_dir, session_db_path_for, DEFAULT_INSTANCE};
 use pawork_client::{ClientConfig, GuiClient};
+use pawork_protocol::client_auth::TOKEN_SCHEME;
 use pawork_protocol::headless::translate::encode_protocol_response;
 use pawork_protocol::{
-    headless::HeadlessResponse, AppEvent, GuiCapability, SUPPORTED_API_VERSIONS,
+    headless::HeadlessResponse, AppEvent, ClientAuthentication, GuiCapability,
+    SUPPORTED_API_VERSIONS,
 };
 use pawork_transport::{
     ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint,
@@ -33,6 +35,47 @@ pub fn gui_socket_path(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
     }
 }
 
+pub fn gui_token_path(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+    let data_dir = data_dir.as_ref();
+    if instance == DEFAULT_INSTANCE {
+        data_dir.join("gui.token")
+    } else {
+        data_dir.join(format!("gui-{instance}.token"))
+    }
+}
+
+/// 读取与 `TokenStore::load` 相同格式的 token 文件，组装握手 proof。
+/// 文件缺失或内容为空时失败，不静默回退为 `None`。
+pub fn load_gui_client_authentication(
+    data_dir: impl AsRef<Path>,
+    instance: &str,
+) -> Result<ClientAuthentication, CliError> {
+    let path = gui_token_path(data_dir, instance);
+    let bytes = std::fs::read(&path).map_err(|error| {
+        CliError::Usage(format!(
+            "gui token file not found or unreadable ({}): {error}",
+            path.display()
+        ))
+    })?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        CliError::Usage(format!(
+            "gui token file is empty or malformed: {}",
+            path.display()
+        ))
+    })?;
+    let proof = text.trim();
+    if proof.is_empty() {
+        return Err(CliError::Usage(format!(
+            "gui token file is empty or malformed: {}",
+            path.display()
+        )));
+    }
+    Ok(ClientAuthentication {
+        scheme: TOKEN_SCHEME.into(),
+        proof: proof.to_string(),
+    })
+}
+
 pub fn gui_pid_path(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
     instance_dir(data_dir, instance).join("gui-serve.pid")
 }
@@ -53,7 +96,7 @@ pub async fn run_status(instance: &str, json: bool) -> Result<(), CliError> {
 pub async fn run_doctor(instance: &str, json: bool) -> Result<(), CliError> {
     let mut report = inspect_instance(instance).await;
     if report.listening {
-        report.handshake = Some(probe_handshake(&report.socket).await);
+        report.handshake = Some(probe_handshake(&report.socket, &report.data_dir, &report.instance).await);
     }
     print_report("doctor", &report, json)
 }
@@ -66,6 +109,7 @@ pub async fn run_watch(instance: &str, json: bool) -> Result<(), CliError> {
             report.socket, report.instance
         )));
     }
+    let authentication = load_gui_client_authentication(&report.data_dir, &report.instance)?;
     let transport = Arc::new(LocalTransport::default());
     let client = GuiClient::connect(
         transport,
@@ -77,7 +121,7 @@ pub async fn run_watch(instance: &str, json: bool) -> Result<(), CliError> {
             client_label: Some("pawork-watch".into()),
             max_frame_bytes: 1024 * 1024,
         },
-        None,
+        Some(authentication),
     )
     .await
     .map_err(|error| CliError::Usage(error.to_string()))?;
@@ -187,7 +231,11 @@ async fn probe_socket(socket: &Path) -> bool {
         .is_ok()
 }
 
-async fn probe_handshake(socket: &str) -> String {
+async fn probe_handshake(socket: &str, data_dir: &str, instance: &str) -> String {
+    let authentication = match load_gui_client_authentication(data_dir, instance) {
+        Ok(authentication) => Some(authentication),
+        Err(error) => return format!("failed: {error}"),
+    };
     let transport = Arc::new(LocalTransport::default());
     match GuiClient::connect_with_config(
         transport,
@@ -199,7 +247,7 @@ async fn probe_handshake(socket: &str) -> String {
             client_label: Some("pawork-doctor".into()),
             max_frame_bytes: 1024 * 1024,
         },
-        None,
+        authentication,
         ClientConfig {
             timeout: Duration::from_secs(3),
             client_name: "pawork-doctor".into(),

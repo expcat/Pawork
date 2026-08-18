@@ -60,10 +60,14 @@ pub struct McpToolAdapter {
     peer: Arc<dyn McpPeer>,
     permissions: McpPermissions,
     trusted: bool,
+    host_trusted: bool,
 }
 
 impl McpToolAdapter {
     /// Construct an adapter for one discovered tool.
+    ///
+    /// `host_trusted` defaults to false (fail-closed). Call
+    /// [`Self::with_host_trusted`] when the host workspace is trusted.
     pub fn new(
         server: impl Into<String>,
         tool: &McpToolInfo,
@@ -85,7 +89,15 @@ impl McpToolAdapter {
             peer,
             permissions,
             trusted,
+            host_trusted: false,
         }
+    }
+
+    /// Record whether the host workspace is trusted. MCP `trusted` must not
+    /// exceed this floor.
+    pub fn with_host_trusted(mut self, host_trusted: bool) -> Self {
+        self.host_trusted = host_trusted;
+        self
     }
 
     pub fn namespaced_name(&self) -> &str {
@@ -121,7 +133,8 @@ impl AgentTool for McpToolAdapter {
             supports_concurrency: self.capability.permits_concurrent_execution(),
             default_timeout_ms: None,
             max_output_bytes: self.permissions.max_output_bytes,
-            allowed_in_untrusted_workspace: self.read_only || self.trusted,
+            allowed_in_untrusted_workspace: self.read_only
+                || (self.trusted && self.host_trusted),
         }
     }
 
@@ -205,9 +218,18 @@ pub async fn register_server_tools(
     peer: Arc<dyn McpPeer>,
     permissions: McpPermissions,
     trusted: bool,
+    host_trusted: bool,
 ) -> Result<Vec<ToolDescriptor>, McpError> {
     let capabilities = McpCapabilities::discover(peer.as_ref()).await?;
-    register_discovered_tools(registry, server, &capabilities, peer, permissions, trusted)
+    register_discovered_tools(
+        registry,
+        server,
+        &capabilities,
+        peer,
+        permissions,
+        trusted,
+        host_trusted,
+    )
 }
 
 /// Register discovered tools (synchronous variant).
@@ -218,20 +240,25 @@ pub fn register_discovered_tools(
     peer: Arc<dyn McpPeer>,
     permissions: McpPermissions,
     trusted: bool,
+    host_trusted: bool,
 ) -> Result<Vec<ToolDescriptor>, McpError> {
+    let trusted = trusted && host_trusted;
     let mut descriptors = Vec::new();
     for tool in &capabilities.tools {
         if !permissions.allowed_tools.is_empty() && !permissions.allowed_tools.contains(&tool.name)
         {
             continue;
         }
-        let adapter = Arc::new(McpToolAdapter::new(
-            server,
-            tool,
-            peer.clone(),
-            permissions.clone(),
-            trusted,
-        ));
+        let adapter = Arc::new(
+            McpToolAdapter::new(
+                server,
+                tool,
+                peer.clone(),
+                permissions.clone(),
+                trusted,
+            )
+            .with_host_trusted(host_trusted),
+        );
         descriptors.push(adapter.descriptor());
         registry.register(adapter)?;
     }
@@ -377,6 +404,7 @@ mod tests {
             peer,
             McpPermissions::default(),
             false,
+            false,
         )
         .await
         .expect("register");
@@ -431,7 +459,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trusted_write_tool_descriptor_allows_untrusted_workspace_flag() {
+    async fn trusted_write_tool_is_denied_in_untrusted_workspace() {
         let peer = Arc::new(make_peer(false, "created"));
         let adapter = McpToolAdapter::new(
             "github",
@@ -442,8 +470,26 @@ mod tests {
         );
         let descriptor = adapter.descriptor();
         assert!(descriptor.requires_approval);
-        assert!(descriptor.allowed_in_untrusted_workspace);
+        assert!(
+            !descriptor.allowed_in_untrusted_workspace,
+            "server trusted=true must not self-grant untrusted execution"
+        );
         assert_eq!(descriptor.capability, ToolCapability::ExternalPlugin);
+    }
+
+    #[tokio::test]
+    async fn trusted_write_tool_allowed_only_when_host_is_trusted() {
+        let peer = Arc::new(make_peer(false, "created"));
+        let adapter = McpToolAdapter::new(
+            "github",
+            &make_tool("create_issue", false),
+            peer,
+            McpPermissions::default(),
+            true,
+        )
+        .with_host_trusted(true);
+        let descriptor = adapter.descriptor();
+        assert!(descriptor.allowed_in_untrusted_workspace);
     }
 
     #[tokio::test]
@@ -587,6 +633,7 @@ mod tests {
             peer.clone(),
             permissions.clone(),
             false,
+            false,
         )
         .expect("registration");
         assert!(descriptors.is_empty());
@@ -639,6 +686,29 @@ mod tests {
         assert!(!result.success);
         assert_eq!(result.error.as_ref().unwrap().message, "boom");
         assert!(!result.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn register_clamps_trusted_write_tools_when_host_untrusted() {
+        let peer = Arc::new(make_peer(false, "created"));
+        let mut registry = ToolRegistry::new();
+        let descriptors = register_discovered_tools(
+            &mut registry,
+            "github",
+            &McpCapabilities {
+                tools: vec![make_tool("create_issue", false)],
+            },
+            peer,
+            McpPermissions::default(),
+            true,
+            false,
+        )
+        .expect("register");
+        assert_eq!(descriptors.len(), 1);
+        assert!(
+            !descriptors[0].allowed_in_untrusted_workspace,
+            "write MCP tools must stay denied when the host workspace is untrusted"
+        );
     }
 
     #[tokio::test]

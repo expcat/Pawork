@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use pawork_domain::{CommandId, CoreInstanceId, EventId, QueryId, RunId, SessionId, Timestamp};
-use pawork_gui_server::{GuiHost, GuiHostError, GuiServer, GuiServerConfig};
+use pawork_gui_server::{
+    ConnectionManager, ConnectionManagerConfig, GuiHost, GuiHostError, GuiServer, GuiServerConfig,
+};
 use pawork_protocol::{
     decode_server_frame, encode_client_frame, ActorIdentity, ApiVersion, AppCommand,
     AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
@@ -235,6 +237,13 @@ struct Harness {
 }
 
 async fn open_harness(label: &str) -> Harness {
+    open_harness_with_connections(label, None).await
+}
+
+async fn open_harness_with_connections(
+    label: &str,
+    connections: Option<Arc<ConnectionManager>>,
+) -> Harness {
     let host = MockHost::new();
     let handshake = HandshakeService::new(
         host.instance_id(),
@@ -246,7 +255,7 @@ async fn open_harness(label: &str) -> Harness {
         host: host.clone(),
         handshake,
         transport: transport.clone(),
-        connections: None,
+        connections,
     });
     let temp = tempfile::tempdir().expect("tempdir");
     let socket = temp.path().join(format!("{label}.sock"));
@@ -575,6 +584,47 @@ mod unix_tests {
     }
 
     #[tokio::test]
+    async fn lagged_queue_sends_replay_unavailable() {
+        let connections = Arc::new(ConnectionManager::with_config(ConnectionManagerConfig {
+            heartbeat_timeout: Duration::from_secs(30),
+            queue_capacity: 2,
+        }));
+        let harness = open_harness_with_connections("lagged", Some(connections)).await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+        for seq in 1..=128u64 {
+            harness.host.publish(event(seq));
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let mut saw_replay_unavailable = false;
+        let mut disconnected = false;
+        while tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_millis(200), harness.client.conn.receive())
+                .await
+            {
+                Ok(Ok(bytes)) => match decode_server_frame(bytes.as_bytes()).expect("decode") {
+                    ServerFrame::Error(envelope) => {
+                        assert_eq!(envelope.error.code, ProtocolErrorCode::ReplayUnavailable);
+                        saw_replay_unavailable = true;
+                        break;
+                    }
+                    ServerFrame::Event(_) => continue,
+                    other => panic!("unexpected frame while waiting for Lagged: {other:?}"),
+                },
+                Ok(Err(error)) => {
+                    disconnected = error.kind == TransportErrorKind::ConnectionClosed;
+                    break;
+                }
+                Err(_) => continue,
+            }
+        }
+        assert!(
+            saw_replay_unavailable || disconnected,
+            "expected ReplayUnavailable or connection close after overflowing queue_capacity=2"
+        );
+    }
+
+    #[tokio::test]
     async fn slow_consumer_does_not_block_host() {
         let harness = open_harness("slow").await;
         let _ = handshake_and_snapshot(&harness.client).await;
@@ -595,6 +645,11 @@ mod unix_tests {
                     break;
                 }
                 ServerFrame::Event(_) => continue,
+                ServerFrame::Error(envelope)
+                    if envelope.error.code == ProtocolErrorCode::ReplayUnavailable =>
+                {
+                    break;
+                }
                 other => panic!("unexpected {other:?}"),
             }
         }

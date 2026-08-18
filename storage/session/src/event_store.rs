@@ -340,9 +340,10 @@ impl SessionStore {
     ///
     /// 返回 `branch_id` 上 `sequence >= from_sequence` 的事件，按 sequence 升序，
     /// 至多 `limit` 条；`limit == 0` 返回空。与 `replay_events`（整个 session、
-    /// 不区分 branch）相对，本方法只返回目标 branch 追加的事件；不存在的
-    /// session / branch 同样返回空，需要严格校验时由调用方（如 compaction 的
-    /// `NothingToCompact`）判定。
+    /// 不区分 branch）相对，本方法只返回目标 branch 追加的事件，**不能**当
+    /// resume 源。祖先前缀 ∪ 本支追加请用 [`SessionStore::events_on_lineage`]。
+    /// 不存在的 session / branch 同样返回空，需要严格校验时由调用方（如
+    /// compaction 的 `NothingToCompact`）判定。
     pub async fn events_by_branch(
         &self,
         session_id: &SessionId,
@@ -409,7 +410,7 @@ pub(crate) fn persist_event_in_transaction(
         "INSERT INTO session_events(event_id, session_id, branch_id, run_id, parent_event_id, sequence, event_type, schema_version, timestamp_ms, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![event_id, session_id, branch_id, run_id, parent_event_id, sequence_i64, event_type, schema_version, timestamp, payload_json],
     )?;
-    apply_projection(transaction, &event)?;
+    apply_projection(transaction, &event, branch_id)?;
     transaction.execute(
         "UPDATE session_branches SET head_sequence=?1 WHERE session_id=?2 AND branch_id=?3",
         params![sequence_i64, session_id, branch_id],

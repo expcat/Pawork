@@ -44,6 +44,7 @@ use pawork_transport::{ConnectionInfo, GuiConnection, TransportError, TransportF
 pub use pawork_protocol::ResumeDisposition;
 
 /// Desktop 等上层 crate 的唯一业务依赖面：协议类型与本机传输。
+pub use pawork_protocol::client_auth::TOKEN_SCHEME;
 pub use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope,
     AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ClientAuthentication,
@@ -201,6 +202,14 @@ impl ClientError {
             self,
             ClientError::Protocol(error)
                 if error.code == ProtocolErrorCode::RequestNotFound
+        )
+    }
+
+    pub fn is_replay_unavailable(&self) -> bool {
+        matches!(
+            self,
+            ClientError::Protocol(error)
+                if error.code == ProtocolErrorCode::ReplayUnavailable
         )
     }
 }
@@ -538,6 +547,7 @@ impl GuiClient {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             match self.recv_matching(remaining, FrameWant::Event).await? {
                 ServerFrame::Event(event) => return Ok(event),
+                ServerFrame::Error(envelope) => return Err(ClientError::Protocol(envelope.error)),
                 other => self.stash(other).await,
             }
         }
@@ -886,7 +896,7 @@ impl FrameWant {
     fn matches(self, frame: &ServerFrame) -> bool {
         match self {
             Self::Any => true,
-            Self::Event => matches!(frame, ServerFrame::Event(_)),
+            Self::Event => matches!(frame, ServerFrame::Event(_) | ServerFrame::Error(_)),
             Self::Response => matches!(frame, ServerFrame::Response(_) | ServerFrame::Error(_)),
             Self::Snapshot => matches!(frame, ServerFrame::Snapshot(_) | ServerFrame::Error(_)),
             Self::Resume => matches!(
@@ -1084,11 +1094,9 @@ mod tests {
 
     #[tokio::test]
     async fn recv_frame_rejects_mismatched_version() {
-        // 协商为 1.0，服务端帧信封带 1.1（minor 过高）：拒绝并归类 Version。
-        let conn = mock(vec![TransportFrame::new(response_bytes(ApiVersion::new(
-            1, 2,
-        )))]);
-        let error = recv_frame(&conn, Duration::from_millis(100), Some(API_VERSION))
+        // 协商为 1.0，服务端帧信封带当前 API_VERSION（minor 过高）：拒绝并归类 Version。
+        let conn = mock(vec![TransportFrame::new(response_bytes(API_VERSION))]);
+        let error = recv_frame(&conn, Duration::from_millis(100), Some(ApiVersion::new(1, 0)))
             .await
             .expect_err("too-high minor must be rejected");
         assert!(matches!(error, ClientError::Version(_)));
@@ -1180,5 +1188,50 @@ mod tests {
             .expect("response task")
             .expect("response waiter is not starved by the event pump");
         assert!(matches!(response_frame, ServerFrame::Response(_)));
+    }
+
+    #[tokio::test]
+    async fn next_event_surfaces_replay_unavailable() {
+        use pawork_protocol::{ProtocolError, ProtocolErrorEnvelope};
+
+        let error = ServerFrame::Error(ProtocolErrorEnvelope {
+            request_id: None,
+            error: ProtocolError {
+                code: ProtocolErrorCode::ReplayUnavailable,
+                message: "lagged".into(),
+                retryable: true,
+            },
+        });
+        let client = GuiClient {
+            conn: Arc::new(mock(vec![TransportFrame::new(
+                encode_server_frame(&error).expect("encode error"),
+            )])),
+            config: ClientConfig::default(),
+            info: Arc::new(SessionInfo {
+                handle: ApiHandle {
+                    instance_id: pawork_domain::CoreInstanceId::from("instance-1"),
+                    api_version: API_VERSION,
+                },
+                client_id: GuiClientId::from("client-1"),
+                connection_id: ConnectionId::from("conn-1"),
+                capabilities: Vec::new(),
+                resume: ResumeDisposition::SnapshotRequired {
+                    earliest_available_sequence: GlobalSequence(0),
+                },
+            }),
+            initial_snapshot: Arc::new(Mutex::new(None)),
+            inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
+            io: Arc::new(AsyncMutex::new(())),
+            next_request: Arc::new(AtomicU64::new(0)),
+            next_nonce: Arc::new(AtomicU64::new(0)),
+            last_acked: Arc::new(AtomicU64::new(0)),
+            closed: Arc::new(AtomicBool::new(false)),
+        };
+        let error = client
+            .next_event()
+            .await
+            .expect_err("ReplayUnavailable must be observable");
+        assert!(error.is_replay_unavailable());
+        assert_eq!(error.kind(), ClientErrorKind::Protocol);
     }
 }

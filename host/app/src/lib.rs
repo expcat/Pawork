@@ -694,16 +694,23 @@ impl AppCore {
     /// 未配置时保持 reqwest 默认（读 `HTTPS_PROXY` 等环境变量）；配置后
     /// 显式代理优先生效，回环/`.local` 目标直连（`loopback_aware_proxy`）。
     fn http_from_config(config: &PaworkConfig) -> Result<reqwest::Client, AppError> {
+        // F06: OAuth/探测客户端与 HttpClient 一样禁止跟随跨 origin 跳转
+        // （默认政策会带出 x-api-key）。workspace 层 proxy_url 已在 loader 剥离。
+        let redirect = reqwest::redirect::Policy::none();
         match &config.proxy_url {
             Some(proxy) => {
                 let proxy = pawork_net::http::loopback_aware_proxy(proxy)
                     .map_err(|err| AppError::InvalidProxy(err))?;
                 reqwest::Client::builder()
                     .proxy(proxy)
+                    .redirect(redirect)
                     .build()
                     .map_err(|err| AppError::InvalidProxy(err.to_string()))
             }
-            None => Ok(reqwest::Client::new()),
+            None => reqwest::Client::builder()
+                .redirect(redirect)
+                .build()
+                .map_err(|err| AppError::InvalidProxy(err.to_string())),
         }
     }
 
@@ -1032,9 +1039,13 @@ impl AppCore {
     }
 
     pub async fn resume_messages(&self, session_id: &SessionId) -> Result<Vec<Message>, AppError> {
-        let _ = self.get_session(session_id).await?;
+        let record = self.get_session(session_id).await?;
         self.seal_orphaned_approvals(session_id).await?;
-        Ok(self.store()?.projection_snapshot(session_id).await?.messages)
+        Ok(self
+            .store()?
+            .projection_snapshot_on_branch(session_id, &record.active_branch)
+            .await?
+            .messages)
     }
 
     /// 把中途被杀、仍停在 `waiting_for_approval` 的调用以 Denied 收口，避免 resume 后重跑。
@@ -2761,6 +2772,120 @@ mod tests {
             .count();
         assert_eq!(main_starts, 1, "main should keep only the first run");
         assert_eq!(fork_starts, 1, "forked branch should persist its own run");
+        core.shutdown().await.expect("shutdown");
+    }
+
+    fn committed(session: &SessionId, sequence: u64, id: &str) -> AgentEventEnvelope {
+        AgentEventEnvelope::new(
+            EventId::from(format!("event-{sequence}")),
+            session.clone(),
+            RunId::from("run-fork-resume"),
+            EventSequence::new(sequence),
+            pawork_engine::now_timestamp(),
+            AgentEvent::MessageCommitted {
+                message: Message {
+                    id: MessageId::from(id),
+                    role: MessageRole::User,
+                    content: vec![ContentPart::Text(TextContent {
+                        text: id.into(),
+                    })],
+                    metadata: Default::default(),
+                },
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn resume_messages_on_fork_contains_only_ancestor_prefix() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let session = core.create_session("fork-resume").await.expect("create");
+        let store = core.store().expect("store");
+        for sequence in 1..=3u64 {
+            store
+                .append_event(
+                    DEFAULT_BRANCH_ID,
+                    committed(&session, sequence, &format!("m-{sequence}")),
+                )
+                .await
+                .expect("append");
+        }
+        store
+            .fork_from_event(&session, "experiment", &EventId::from("event-1"))
+            .await
+            .expect("fork");
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch");
+
+        let messages = core.resume_messages(&session).await.expect("resume");
+        let ids: Vec<&str> = messages.iter().map(|message| message.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["m-1"],
+            "fork 后 resume 只含祖先前缀，不含 main 的 2–3"
+        );
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn compact_on_fork_does_not_delete_main_messages() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let session = core.create_session("fork-compact").await.expect("create");
+        let store = core.store().expect("store");
+        for sequence in 1..=3u64 {
+            store
+                .append_event(
+                    DEFAULT_BRANCH_ID,
+                    committed(&session, sequence, &format!("m-{sequence}")),
+                )
+                .await
+                .expect("append");
+        }
+        store
+            .fork_from_event(&session, "experiment", &EventId::from("event-1"))
+            .await
+            .expect("fork");
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch");
+        store
+            .append_event(
+                "experiment",
+                committed(&session, 4, "m-fork"),
+            )
+            .await
+            .expect("fork message");
+        store
+            .append_event(
+                "experiment",
+                AgentEventEnvelope::new(
+                    EventId::from("event-5"),
+                    session.clone(),
+                    RunId::from("run-fork-resume"),
+                    EventSequence::new(5),
+                    pawork_engine::now_timestamp(),
+                    AgentEvent::CompactionCompleted {
+                        summary_message_id: MessageId::from("m-fork"),
+                        compacted_through: EventSequence::new(4),
+                    },
+                ),
+            )
+            .await
+            .expect("fork compact");
+
+        store
+            .switch_branch(&session, DEFAULT_BRANCH_ID)
+            .await
+            .expect("switch main");
+        let messages = core.resume_messages(&session).await.expect("resume main");
+        let ids: Vec<&str> = messages.iter().map(|message| message.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["m-1", "m-2", "m-3"],
+            "fork 压缩后 main 中低于全局水位的消息仍在"
+        );
         core.shutdown().await.expect("shutdown");
     }
 

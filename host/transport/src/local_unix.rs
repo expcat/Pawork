@@ -49,6 +49,16 @@ pub(super) fn bind(
             format!("failed to bind unix socket {address}: {error}"),
         )
     })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
+            transport_error(
+                TransportErrorKind::BindFailed,
+                format!("failed to restrict unix socket mode {address}: {error}"),
+            )
+        })?;
+    }
     Ok(Box::new(UnixSocketListener {
         path: path.to_path_buf(),
         listener: Mutex::new(Some(listener)),
@@ -164,6 +174,24 @@ mod tests {
         TransportEndpoint::Local {
             address: path.to_string_lossy().into_owned(),
         }
+    }
+
+    #[tokio::test]
+    async fn unix_socket_is_owner_only_after_bind() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("gui.sock");
+        let endpoint = local_endpoint(&path);
+        let server = LocalTransport::default();
+        let listener = server.bind(endpoint).await.expect("bind");
+        let mode = std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "bound socket must be owner-only");
+        listener.close().await.expect("close");
     }
 
     #[tokio::test]

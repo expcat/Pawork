@@ -9,12 +9,13 @@ use std::sync::Arc;
 
 use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
 use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
+use pawork_protocol::client_auth::{TokenAuthenticator, TokenStore};
 use pawork_protocol::{GuiCapability, HandshakeService, SUPPORTED_API_VERSIONS};
 use pawork_transport::{
     ConnectOptions, GuiTransportClient, GuiTransportServer, LocalTransport, TransportEndpoint,
 };
 
-use crate::ops::{gui_pid_path, gui_socket_path, remove_pid_file, write_pid_file};
+use crate::ops::{gui_pid_path, gui_socket_path, gui_token_path, remove_pid_file, write_pid_file};
 use crate::{CliError, GuiCommand};
 
 pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Result<(), CliError> {
@@ -28,11 +29,35 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
     let socket_path = socket.unwrap_or_else(|| gui_socket_path(&data_dir, instance));
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        if parent == data_dir.as_path() || parent.starts_with(&data_dir) {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+        }
     }
     let pid_path = gui_pid_path(&data_dir, instance);
     let address = socket_path.to_string_lossy().to_string();
 
     ensure_single_instance(&address).await?;
+
+    let token_path = gui_token_path(&data_dir, instance);
+    let store = TokenStore::new(&token_path);
+    if token_path.exists() {
+        store.load().map_err(|error| {
+            CliError::Usage(format!(
+                "failed to load gui token {}: {error}",
+                token_path.display()
+            ))
+        })?;
+    } else {
+        store.generate().map_err(|error| {
+            CliError::Usage(format!(
+                "failed to generate gui token {}: {error}",
+                token_path.display()
+            ))
+        })?;
+    }
+
     write_pid_file(&pid_path)?;
 
     let transport = Arc::new(LocalTransport::default());
@@ -46,7 +71,8 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
             GuiCapability::TerminalStreaming,
             GuiCapability::Approvals,
         ],
-    );
+    )
+    .with_authenticator(Box::new(TokenAuthenticator::new(store)));
     let server = GuiServer::new(GuiServerConfig {
         host: Arc::new(adapter),
         handshake,

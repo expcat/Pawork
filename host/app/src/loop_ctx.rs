@@ -23,7 +23,7 @@ use pawork_engine::{
 use pawork_policy::{ApprovalMode, ApprovalPrompt, PolicyDecision, PolicyEngine, PolicyInput, RiskLevel};
 use pawork_session::{
     CompactionEngine, CompactionReason as SessionCompactionReason, RetentionInputs,
-    RetentionMessage, RetentionToolCall, SessionStore, ToolCallRetentionState, DEFAULT_BRANCH_ID,
+    RetentionMessage, RetentionToolCall, SessionStore, ToolCallRetentionState,
 };
 use pawork_tools::ToolScheduler;
 
@@ -198,9 +198,10 @@ impl LoopContext for SessionLoopCtx<'_> {
             }
         };
 
-        // 从事件流构建保留策略输入：消息 + 工具调用状态（未完成的调用必须保留）。
+        let active_branch = store.get_session(&session_id).await.ok()?.active_branch;
+        // 从 active branch 祖先链构建保留策略输入（不是全 session replay）。
         let events = store
-            .replay_events(&session_id, 1, usize::MAX)
+            .events_on_lineage(&session_id, &active_branch, 1, usize::MAX)
             .await
             .ok()?;
         let mut inputs = RetentionInputs::default();
@@ -252,7 +253,7 @@ impl LoopContext for SessionLoopCtx<'_> {
         let result = engine
             .compact(
                 &session_id,
-                DEFAULT_BRANCH_ID,
+                &active_branch,
                 session_reason,
                 summary_text,
                 &inputs,

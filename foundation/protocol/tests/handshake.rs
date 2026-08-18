@@ -2,6 +2,7 @@
 
 use pawork_domain::{ConnectionId, CoreInstanceId, GuiClientId};
 use pawork_protocol::{ApiVersion, CommandSource, GlobalSequence, API_VERSION};
+use pawork_protocol::client_auth::{TokenAuthenticator, TokenStore, TOKEN_SCHEME};
 use pawork_protocol::{
     decode_client_frame_checked, decode_server_frame_checked, ensure_compatible_api_version,
     negotiate_api_version, negotiate_api_version_with, validate_client_frame_api_version,
@@ -206,6 +207,42 @@ fn handshake_rejects_when_authentication_fails() {
 }
 
 #[test]
+fn production_token_authenticator_rejects_missing_and_wrong_scheme_and_accepts_valid() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = TokenStore::new(temp.path().join("gui.token"));
+    let token = store.generate().expect("generate");
+    let service = service().with_authenticator(Box::new(TokenAuthenticator::new(store)));
+
+    let missing = service.accept(&request(vec![API_VERSION], vec![]), session());
+    let HandshakeResponse::Rejected { error, .. } = missing else {
+        panic!("expected rejected handshake without token");
+    };
+    assert_eq!(error.code, ProtocolErrorCode::AuthenticationFailed);
+
+    let mut wrong_scheme = request(vec![API_VERSION], vec![]);
+    wrong_scheme.authentication = Some(ClientAuthentication {
+        scheme: "token".into(),
+        proof: token.as_str().into(),
+    });
+    let rejected = service.accept(&wrong_scheme, session());
+    let HandshakeResponse::Rejected { error, .. } = rejected else {
+        panic!("expected rejected handshake for wrong scheme");
+    };
+    assert_eq!(error.code, ProtocolErrorCode::AuthenticationFailed);
+
+    let mut valid = request(vec![API_VERSION], vec![]);
+    valid.authentication = Some(ClientAuthentication {
+        scheme: TOKEN_SCHEME.into(),
+        proof: token.as_str().into(),
+    });
+    let accepted = service.accept(&valid, session());
+    assert!(
+        matches!(accepted, HandshakeResponse::Accepted { .. }),
+        "expected accepted handshake, got {accepted:?}"
+    );
+}
+
+#[test]
 fn handshake_accepts_when_authentication_passes() {
     let service = service().with_authenticator(Box::new(AlwaysAccept));
     let mut request = request(vec![API_VERSION], vec![]);
@@ -223,13 +260,7 @@ fn envelope_version_mismatch_produces_incompatible_version() {
     assert!(ensure_compatible_api_version(API_VERSION, negotiated).is_ok());
     let negotiated_minor_one = ApiVersion::new(1, 1);
     assert!(ensure_compatible_api_version(negotiated_minor_one, negotiated_minor_one).is_ok());
-    assert!(matches!(
-        ensure_compatible_api_version(ApiVersion::new(1, 2), negotiated),
-        Err(ProtocolError {
-            code: ProtocolErrorCode::IncompatibleVersion,
-            ..
-        })
-    ));
+    assert!(ensure_compatible_api_version(ApiVersion::new(1, 2), negotiated).is_ok());
     assert!(ensure_compatible_api_version(ApiVersion::new(1, 1), negotiated).is_ok());
     assert!(matches!(
         ensure_compatible_api_version(ApiVersion::new(1, 3), negotiated),

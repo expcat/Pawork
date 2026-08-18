@@ -4,7 +4,7 @@ use pawork_sqlite::{DatabaseActor, Migration, MigrationReport};
 
 use crate::SessionStoreError;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 9;
+pub const CURRENT_SCHEMA_VERSION: u32 = 10;
 const SCHEMA_MIGRATIONS_TABLE: &str = "schema_migrations";
 
 pub(crate) const MIGRATIONS: &[Migration] = &[
@@ -246,6 +246,28 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
                 ON session_binding_events(tenant_id, session_id, agent_id, seq);
         "#,
     },
+    Migration {
+        version: 10,
+        name: "messages_branch_projection",
+        // F09：messages 是可重建投影，附加 branch_id 供消费面按祖先链过滤。
+        // 不改 session_events 信封、append-only 触发器或 UNIQUE(session_id, sequence)。
+        sql: r#"
+            ALTER TABLE messages
+                ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'main';
+            UPDATE messages
+                SET branch_id = COALESCE(
+                    (
+                        SELECT e.branch_id
+                        FROM session_events e
+                        WHERE e.session_id = messages.session_id
+                          AND e.sequence = messages.sequence
+                    ),
+                    'main'
+                );
+            CREATE INDEX idx_messages_session_branch_sequence
+                ON messages(session_id, branch_id, sequence);
+        "#,
+    },
 ];
 
 pub(crate) async fn migrate(
@@ -306,7 +328,27 @@ mod tests {
                  active_branch TEXT NOT NULL DEFAULT 'main'\
              ); \
              INSERT INTO sessions(session_id, title, created_at_ms, updated_at_ms) \
-             VALUES ('legacy-session-1', 'old', 1, 1);",
+             VALUES ('legacy-session-1', 'old', 1, 1); \
+             CREATE TABLE messages (\
+                 message_id TEXT PRIMARY KEY,\
+                 session_id TEXT NOT NULL,\
+                 run_id TEXT NOT NULL,\
+                 sequence INTEGER NOT NULL,\
+                 role TEXT NOT NULL,\
+                 message_json TEXT NOT NULL\
+             ); \
+             CREATE TABLE session_events (\
+                 event_id TEXT PRIMARY KEY,\
+                 session_id TEXT NOT NULL,\
+                 branch_id TEXT NOT NULL,\
+                 run_id TEXT NOT NULL,\
+                 parent_event_id TEXT,\
+                 sequence INTEGER NOT NULL,\
+                 event_type TEXT NOT NULL,\
+                 schema_version INTEGER NOT NULL,\
+                 timestamp_ms INTEGER NOT NULL,\
+                 payload_json TEXT NOT NULL\
+             );",
         )
     }
 
@@ -316,7 +358,10 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("open store");
         assert_eq!(report.from_version, 0);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(
+            report.applied_versions,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        );
         assert!(report.backup_path.is_none());
         let tables: Vec<String> = store
             .database()
@@ -400,7 +445,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("migrate");
         assert_eq!(report.from_version, 6);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![7, 8, 9]);
+        assert_eq!(report.applied_versions, vec![7, 8, 9, 10]);
         let (tenant, principal): (String, String) = store
             .database()
             .call(|connection| {
@@ -438,7 +483,7 @@ mod tests {
 
     #[tokio::test]
     async fn failing_v8_rolls_back_tenant_columns() {
-        // 对 v6 种子库调用通用 runner：完整 1–9 计划，但 v8 SQL 含语法错误。
+        // 对 v6 种子库调用通用 runner：完整 1–10 计划，但 v8 SQL 含语法错误。
         // 整批事务回滚后不得残留 tenant 列，账本仍为 6。
         let (_dir, path) = temp_db("failure-v8.sqlite3");
         let actor = DatabaseActor::open(&path).await.expect("actor");
@@ -493,5 +538,87 @@ mod tests {
             .expect("ledger");
         assert_eq!(ledger, 6, "账本必须仍为 v6");
         actor.shutdown().await.expect("shutdown");
+    }
+
+    fn seed_v9_messages_without_branch_column(
+        connection: &mut rusqlite::Connection,
+    ) -> rusqlite::Result<()> {
+        connection.execute_batch(
+            "INSERT INTO sessions(\
+                 session_id, title, created_at_ms, updated_at_ms, \
+                 active_branch, tenant_id, principal_id\
+             ) VALUES ('legacy-v9', 'v9', 1, 1, 'main', 'local/default', 'local/user'); \
+             INSERT INTO session_branches(session_id, branch_id, head_sequence) \
+             VALUES ('legacy-v9', 'main', 2); \
+             INSERT INTO session_branches(\
+                 session_id, branch_id, parent_branch_id, forked_from_event_id, head_sequence\
+             ) VALUES ('legacy-v9', 'experiment', 'main', 'event-1', 1); \
+             INSERT INTO session_events(\
+                 event_id, session_id, branch_id, run_id, parent_event_id, sequence, \
+                 event_type, schema_version, timestamp_ms, payload_json\
+             ) VALUES \
+             ('event-1', 'legacy-v9', 'main', 'run-1', NULL, 1, 'message_committed', 1, 1, '{}'), \
+             ('event-2', 'legacy-v9', 'experiment', 'run-1', NULL, 2, 'message_committed', 1, 2, '{}'); \
+             INSERT INTO messages(\
+                 message_id, session_id, run_id, sequence, role, message_json\
+             ) VALUES \
+             ('m-main', 'legacy-v9', 'run-1', 1, 'user', '{\"id\":\"m-main\"}'), \
+             ('m-fork', 'legacy-v9', 'run-1', 2, 'user', '{\"id\":\"m-fork\"}'), \
+             ('m-orphan', 'legacy-v9', 'run-1', 99, 'user', '{\"id\":\"m-orphan\"}');",
+        )
+    }
+
+    #[tokio::test]
+    async fn v9_database_backfills_message_branch_id() {
+        let (_dir, path) = temp_db("legacy-v9-messages.sqlite3");
+        let actor = DatabaseActor::open(&path).await.expect("actor");
+        pawork_sqlite::migrate(
+            &actor,
+            SCHEMA_MIGRATIONS_TABLE,
+            &MIGRATIONS[..9],
+            9,
+            &path,
+            false,
+        )
+        .await
+        .expect("apply v1–v9");
+        actor
+            .call(seed_v9_messages_without_branch_column)
+            .await
+            .expect("actor")
+            .expect("seed v9 messages");
+        actor.shutdown().await.expect("shutdown");
+
+        let (store, report) = SessionStore::open(&path).await.expect("migrate to v10");
+        assert_eq!(report.from_version, 9);
+        assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(report.applied_versions, vec![10]);
+
+        let rows: Vec<(String, String, i64)> = store
+            .database()
+            .call(|connection| {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT message_id, branch_id, sequence FROM messages \
+                         WHERE session_id='legacy-v9' ORDER BY sequence",
+                    )
+                    .expect("prepare");
+                statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                    .expect("query")
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .expect("collect")
+            })
+            .await
+            .expect("actor");
+        assert_eq!(
+            rows,
+            vec![
+                ("m-main".into(), "main".into(), 1),
+                ("m-fork".into(), "experiment".into(), 2),
+                ("m-orphan".into(), "main".into(), 99),
+            ]
+        );
+        store.shutdown().await.expect("shutdown");
     }
 }

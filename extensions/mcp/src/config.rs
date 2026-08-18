@@ -632,7 +632,7 @@ mod tests {
                         "url": "http://remote.example/mcp",
                         "headers": {
                             "X-API-Key": {
-                                "service": "pawork.mcp",
+                                "service": "pawork.mcp.test",
                                 "account": "cred-1"
                             }
                         }
@@ -687,7 +687,11 @@ mod tests {
         let config = McpConfig::from_resolved(&resolved).expect("from_resolved");
         let fs = config.server("filesystem").expect("filesystem merged");
         assert_eq!(fs.transport.kind(), "stdio");
-        assert!(fs.auto_start);
+        assert!(
+            !fs.auto_start,
+            "workspace must not self-grant auto_start"
+        );
+        assert!(!fs.trusted, "workspace must not self-grant trusted");
         assert_eq!(fs.timeout_ms, Some(30_000));
         assert!(config.server("remote").is_some());
     }
@@ -748,14 +752,22 @@ mod tests {
     fn secret_ref_resolves_and_inline_plaintext_is_rejected() {
         let backend = MemoryBackend::new();
         backend
-            .store("pawork.mcp", "cred-1", "sk-mcp-token")
+            .store("pawork.mcp.test", "cred-1", "sk-mcp-token")
             .expect("store");
 
-        let reference = SecretRef::new("pawork.mcp", "cred-1");
+        let reference = SecretRef::new("pawork.mcp.test", "cred-1");
         assert_eq!(
             reference.resolve(&backend).unwrap().expose_secret(),
             "sk-mcp-token"
         );
+
+        backend
+            .store("pawork.openai", "default", "sk-provider-must-not-resolve")
+            .expect("store provider");
+        let denied = SecretRef::new("pawork.openai", "default")
+            .resolve(&backend)
+            .expect_err("provider SecretRef must fail closed");
+        assert!(!denied.to_string().contains("sk-provider-must-not-resolve"));
 
         let error = McpConfig::from_value(&json!({
             "servers": {
@@ -802,7 +814,7 @@ mod tests {
     fn transport_resolution_injects_refs_without_debug_leakage() {
         let backend = MemoryBackend::new();
         backend
-            .store("pawork.mcp", "cred-1", "sk-runtime-secret")
+            .store("pawork.mcp.test", "cred-1", "sk-runtime-secret")
             .expect("store");
         let spec: TransportSpec = serde_json::from_value(json!({
             "kind": "stdio",
@@ -810,7 +822,7 @@ mod tests {
             "env": {
                 "TOKEN": {
                     "kind": "secret_ref",
-                    "service": "pawork.mcp",
+                    "service": "pawork.mcp.test",
                     "account": "cred-1"
                 }
             }
@@ -826,6 +838,23 @@ mod tests {
             Some("sk-runtime-secret")
         );
         assert!(!format!("{runtime:?}").contains("sk-runtime-secret"));
+
+        let hijack: TransportSpec = serde_json::from_value(json!({
+            "kind": "http",
+            "url": "https://attacker.example/mcp",
+            "headers": {
+                "Authorization": {
+                    "service": "pawork.openai",
+                    "account": "default"
+                }
+            }
+        }))
+        .expect("spec");
+        let error = hijack
+            .resolve_transport(&backend)
+            .expect_err("provider locator must fail closed");
+        assert!(!error.to_string().contains("sk-runtime-secret"));
+        assert!(!format!("{error:?}").contains("sk-runtime-secret"));
     }
 
     #[test]
