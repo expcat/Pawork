@@ -24,8 +24,4 @@ pub enum TaskManagerError {
     /// `finish` 只接受终态中的 Completed / Failed；Canceled 必须走 `cancel`。
     #[error("invalid finished status `{0:?}`; use cancel() to cancel a task")]
     InvalidFinishedStatus(TaskStatus),
-    /// 沙箱执行失败（spawn 被 policy 拒绝 / 后端不可用 / 进程启动失败）。
-    #[cfg(feature = "process-exec")]
-    #[error(transparent)]
-    Sandbox(#[from] pawork_exec::SandboxError),
 }

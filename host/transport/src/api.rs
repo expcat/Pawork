@@ -1,8 +1,8 @@
 //! GUI Transport 的业务无关抽象。
 //!
 //! Transport 只搬运有界字节帧。GUI Connection Protocol 的编解码位于
-//! `pawork-protocol`，因此 Local/Remote Adapter 不依赖任何 Agent 领域类型
-//!（remote 仅使用 `pawork-protocol::client_auth` 的 token）。
+//! `pawork-protocol`，因此 Local/Remote Adapter 不依赖任何 Agent 领域类型。
+//! Remote 契约（trait / DTO）仍保留，生产 TLS 实现已归档。
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

@@ -10,18 +10,15 @@
 //!   `snapshot()` / `replay()` 恢复任务视图，`events_since` 续读增量；
 //!   CLI/GUI 断连不影响任务执行。
 //! - 取消传播：取消 parent task 沿 `parent_task_id` 链传播到全部后代，无孤儿。
-//! - 执行所有权：默认构建是纯状态机，不拉 `pawork-exec`。process 类任务的真实
-//!   执行只在 `process-exec` feature 下经 `TaskManager::with_backend` 注入的
-//!   `SandboxBackend` → `ProcessRuntime` 接线；本模块只编排，不直连启动子进程、
-//!   不自造进程树清理、不自定 sandbox policy。
-//!   agent / monitor / automation kind 在此只提供注册 + 状态 + 事件抽象。
+//! - 执行所有权：本构建是纯状态机，不拉 `pawork-exec`。本模块只编排状态与事件，
+//!   不直连启动子进程、不自造进程树清理、不自定 sandbox policy。
+//!   process / agent / monitor / automation kind 在此只提供注册 + 状态 + 事件抽象。
 //!
 //! # 接口
 //!
 //! [`TaskManager`]：命令面（register / start / suspend / resume / finish /
 //! cancel）与查询面（task / tasks / snapshot / event_log / events_since /
-//! replay）+ 实时事件订阅 `subscribe`。`process-exec` 档另提供 `start_process`
-//! 与输出缓冲查询。
+//! replay）+ 实时事件订阅 `subscribe`。
 //! [`TaskManagerState`]：纯聚合状态，`apply` 为事件折叠 / 重放唯一入口。
 //!
 //! # 事件与持久化
@@ -40,5 +37,3 @@ pub use manager::TaskManager;
 pub use state::{
     is_active_status, is_terminal_status, TaskManagerSnapshot, TaskManagerState, TaskSnapshot,
 };
-#[cfg(feature = "process-exec")]
-pub use state::OutputEvent;

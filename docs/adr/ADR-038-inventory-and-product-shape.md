@@ -1,0 +1,69 @@
+# ADR-038:V3 产品形态与休眠库存裁决
+
+- **状态**:Accepted(用户 2026-08-18 确认,22 项决议按推荐决议执行,无改判)
+- **日期**:2026-08-18
+- **落实日期**:R0 波 A–C(本 ADR Accepted 后逐波落地)
+
+## 背景
+
+V2 收官(S0–S13,见 [v2-summary.md](../v2-summary.md))后,workspace 39 成员约 19 万行 src,其中约 3.3 万行为零消费者休眠库存(近 20%)。V3 计划原则要求「删除优先于门控,门控优先于库存」([ROADMAP.md](../../ROADMAP.md) §1),故 R0 一次性拍板产品形态(T10)与全部休眠资产去留(T1),避免后续阶段反复翻案。
+
+证据基础:2026-08-18 五路只读分析(任务书 [plan/R0](../../plan/R0-inventory-decisions.md) §3),并于同日经三路只读核查按实态重验;漂移处已回写任务书,本 ADR 以重验后实态为准。归档兜底:git tag `v2-final`(已打,指向 088b539),任何删除均可找回。
+
+## 决策
+
+### 产品形态
+
+**D1 — 单机优先(T10)**。身份维度收缩为可选扩展点,`local/default` 哨兵宇宙不再扩张;多账户 factory 转候选(激活时按新装配面重写,调研结论 [docs/research/](../research/) 仍有效)。依据:control-plane 三包 28.7k 行中生产链路只用 ledger/audit/policy/lease/pool(`host/app/src/control.rs` 装配 `SqliteUsageLedger`/`FileAuditStore`/`InMemoryTenantPolicyEngine`/`InMemoryCredentialPool`);哨兵派生(`control-plane/core/src/usage.rs:26,105`)从未接真实 lease,宿主入账写死 `LEDGER_ACCOUNT = "local/default"`(`control.rs:29`)。否决支:多租户层级(LiteLLM 形态)——无真实消费面,维持成本高。
+
+### 归档(移出 workspace + 删除源目录,tag 兜底,ROADMAP §3.3 登记复活条件)
+
+- **D2 — provider-control account-control-v1 九模块(8,476 行)归档**。feature 默认开但宿主零装配(`host/app/Cargo.toml:40` `default-features=false`);包外只用 lease/pool。
+- **D3 — provider-control binding.rs + schema/ 归档,legacy.rs 删除**(合计 5,473 行)。包外零引用;`legacy::` 唯一消费方是同批归档的 account-control-v1(`account.rs:340-375`)。`session_bindings` 孤儿表留表登记「预留」(append-only,DDL 不回滚)。
+- **D4 — workflow goal/automation/monitor 三域(3,603 行)归档**;domain canonical 事件类型保留(重放红线);`process-exec` feature 随之移除。包外只消费 `pawork_workflow::plan`/`task`。
+- **D5 — orchestration teams(2,985 行)归档**。生产侧唯一引用是 ACP 标签映射(`host/channels/src/acp/map.rs:298`);supervisor 有 CLI demo 消费,保留。
+- **D6 — pawork-memory(1,134 行)/ pawork-review(1,467 行)整包归档出树**。零反向依赖;`EmbeddingProvider` trait(`foundation/api/src/lib.rs:567`)一并删除(唯一 impl 是包内测试 FixedEmbedder)。
+- **D7 — transport remote 模块(3,721 行 TLS)+ MockRemote(731 行)归档**。feature `remote` 全仓无启用方;cli 仅装配 `LocalTransport`(`host/cli/src/ops.rs:113`)。rcgen 随之退出 lock;rustls/tokio-rustls 经 reqwest 保留属预期(2026-08-18 重验修正)。
+- **D15 — control-plane/core OTel exporter 四实现、identity_schema(484 行)归档;rbac 保留 `Permission`(orchestration `spawn.rs:11` 在用),`PermissionProfile`/`PrincipalRole` 归档**并同步改 orchestration 测试引用(`supervisor/mod.rs:457`)。
+- **D16 — vcs/git 六休眠服务(1,992 行)归档**:Branch/Stash/Conflict/History/CachedStatus+StatusCache+spawn_invalidator。**保留** Diff/Status/GitService/GitRunner(包内基建)/Head/HunkId + HunkStageService(R8 K-04 消费)+ worktree/merge(orchestration `git` feature)。GUI git 面板转候选。
+
+### 删除
+
+- **D8 — diagnostics experimental(bundle 494 + metrics 225)与零消费 logging 组件(StructuredLogLayer/LogBuffer)删除**;`RedactingFmtLayer`/`Redactor` 保留(宿主消费,`apps/pawork/src/main.rs:6`),R1 迁宿主。
+- **D9 — host/app `rate_limit.rs`(532 行,K-07)删除**;`hub.rs:3` 为其预留的序列补洞逻辑随 R4 简化。
+- **D10 — storage/session `lifecycle.rs`(697 行)删除**。生产 fork 路径在 `session_tree.rs:117`,不受影响(2026-08-18 重验确认)。
+- **D11 — net `jsonl.rs`(285)+ `partial_json.rs`(535)删除**。零调用点。
+- **D12 — engine `run_turn` 公开入口删除**(`engine/engine/src/lib.rs:84`),测试改走 tool_loop 入口;生产走 `run_session`。
+- **D14 — 死声明清理**:foundation/api features `provider`/`tool`/`plugin`(src 零门控;`plugin` 空数组保留为 F41 语义则显式注释)、execution/tools `encoding_rs`、host/gui-server `futures`。
+- **D20 — clients/sdk `ide.rs` 空占位(8 行)删除**。
+- **D22 — orchestration/recovery deprecated `recover` 别名删除**(全仓唯一 deprecated),保留 `recover_report`。
+
+### 宣告修正
+
+- **D13 — K-08 `ArtifactStreaming` 双端停止宣告**。服务端 `host/gui-server/src/session.rs:462` `ArtifactRead` 固定 unsupported,而握手在 `host/cli/src/gui.rs:71` 宣告能力、`clients/gui-client` `capabilities`:79 无条件包含;desktop/protocol-probe 均未启用 `experimental` 门控。停止宣告 + 门控删除;artifact 流式转候选,R3 registry 就位后低成本接线。
+
+### 保留(消费计划明确或冻结契约)
+
+- **D17 — `CapabilityNegotiator`(465 行)与 registry `caps()`/`ProviderProbe` 保留**,R5 波 C 接线(K-10 载体);包外可见性降 `pub(crate)` 待 R5 定。
+- **D18 — `protected.rs` PWB1(1,456 行)保留**:冻结契约 + golden(`storage/blob/tests/golden/pwb1_valid.hex`);R5 波 C 接 ReasoningProtector 成为首个生产消费者。
+- **D19 — `Loader::with_session/with_run` 保留**(六层合并冻结契约,S9 承诺;消费在 crate 内测试,`loader.rs:172`)。
+
+### 可见性降级
+
+- **D21 — exec 包外零消费的 pub 平台函数降 `pub(crate)`**(`execution/exec/src/lib.rs:34-44`、`LinuxLandlockPolicy` 在 20-21);集成测试需要的保留并注释。
+
+## 后果
+
+- 归档/删除合计约 3.3 万行(D2–D8、D15、D16 为主);workspace members 39 → 37(memory/review 整包出树),其余为包内模块级裁减。`cargo tree -p pawork` 闭包只减不增,波 C 收口前后快照对比归档。
+- 「归档」= 移出 workspace members + 删除源目录;不复制到仓库其它位置;复活条件登记 [ROADMAP](../../ROADMAP.md) §3.3。domain canonical 事件类型(Plan/Goal/Task/Team 等)一律保留,历史事件可重放。
+- `session_bindings` 孤儿表:留表 + 注释登记「预留」,不回滚 DDL(append-only)。
+- S13 拍板([v2-summary](../v2-summary.md) §5)不回退;安全红线定向回归、持久化/重放 golden、协议 golden 在每波收口保持绿。
+- 破坏式内部改动(删 public API、feature)允许;磁盘/线上冻结契约形状零变更([v2-summary](../v2-summary.md) §4 清单)。
+- 波 A 并行度 ×3(控制面 / workflow+orchestration / transport),波 B ×3,波 C 串行收口——写入集边界见任务书 §4。
+
+## 相关
+
+- [plan/R0-inventory-decisions.md](../../plan/R0-inventory-decisions.md)(任务书,含波次拆分与退出标准)
+- [ROADMAP.md](../../ROADMAP.md) §2 R0 行、§3.2 K-07/K-08、§3.3 候选、§4 未决事项
+- [v2-summary.md](../v2-summary.md) §4(冻结契约)、§5(S13 拍板)
+- ADR-033 控制面分离(随 V1 归档,原则继续有效)

@@ -15,7 +15,6 @@ git = ["dep:pawork-git"]
 pawork-domain = { path = "../../foundation/domain" }
 pawork-control-plane = { path = "../../control-plane/core", default-features = false }
 pawork-provider-control = { path = "../../control-plane/provider-control", default-features = false }
-pawork-workflow = { path = "../../workflow/core" }
 pawork-git = { path = "../../vcs/git", optional = true }
 async-trait.workspace = true
 serde.workspace = true

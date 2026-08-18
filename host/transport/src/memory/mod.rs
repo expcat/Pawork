@@ -18,12 +18,6 @@ use crate::{
     TransportFrame,
 };
 
-mod mock;
-pub use mock::{
-    MockRemoteConnector, MockRemoteListener, MockRemoteTransport,
-    MockRemoteTransportProvider, MOCK_ADAPTER,
-};
-
 /// channel 名 → 已绑定 listener 的入站队列。
 type Registry = Mutex<HashMap<String, mpsc::UnboundedSender<Box<dyn GuiConnection>>>>;
 

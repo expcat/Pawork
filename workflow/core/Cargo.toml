@@ -9,11 +9,9 @@ description = "Pawork 工作流：plan/goal/task/automation/monitor 五合一 re
 
 [features]
 default = []
-process-exec = ["dep:pawork-exec"]
 
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
-pawork-exec = { path = "../../execution/exec", optional = true }
 parking_lot.workspace = true
 serde.workspace = true
 thiserror.workspace = true

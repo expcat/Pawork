@@ -55,7 +55,7 @@ V3 由四条目标定义(依据:2026-08-18 五路只读分析——两路包合�
 
 | 阶段 | 主题 | 关键动作 | 触及范围 | 硬前置 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决 | ADR-038(单机 vs 多租户、remote/teams/三域/account-control 去留);归档约 3.3–3.8 万行零消费者代码;K-07 删除、K-08 停止虚假宣告;死 feature/死声明清理 | 全仓休眠面(workflow/orchestration/control-plane/transport/diagnostics/net/session/engine/host) | 无 | ⚪ |
+| [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决 | ADR-038(单机 vs 多租户、remote/teams/三域/account-control 去留);归档约 3.3–3.8 万行零消费者代码;K-07 删除、K-08 停止虚假宣告;死 feature/死声明清理 | 全仓休眠面(workflow/orchestration/control-plane/transport/diagnostics/net/session/engine/host) | 无 | 🔵 |
 | [R1](plan/R1-package-consolidation.md) | 包合并 39→21 | ADR-039(目标布局 + 目录扁平化);api→domain、sqlite+session+blob→storage、net+core+adapters→providers、core+resources+config+compat→workspace、mcp→tools、quota+provider-control→control-plane、gui-server→app、channels→cli、sdk→client、diagnostics 解散、probe→client 测试;golden 随迁 | 全部 crate 的 Cargo.toml/目录/use 路径;design.md §2 重写 | R0 | ⚪ |
 | [R2](plan/R2-dependency-governance.md) | 依赖治理 | rand/parking_lot/base64 本地化;notify 8、windows 0.61、portable-pty 0.9、ts-rs 12、reqwest 0.13、toml 1.1、rusqlite 0.40、sha2 0.11 升级;lock 多版本去重断言;rmcp 3.x 专项 | 各 crate Cargo.toml + 少量调用点 | R1 | ⚪ |
 | [R3](plan/R3-protocol-unification.md) | 协议与投影同源化(T3+T5) | 单一 command/capability registry,GUI 帧/headless/ACP 三通道 mapping 同源派生(宣告=授权=实现);Timeline 投影 reducer 下沉 protocol 共享模块,host/desktop 同源 + 投影 golden;OnFailure 档位裁决 | protocol、app、cli(headless/acp)、client、desktop projection | R1(R2 可并行) | ⚪ |
@@ -139,10 +139,11 @@ V2 收口时的 K-01~K-10 与其他挂账项(原委见 [docs/v2-summary.md](docs
 
 | 事项 | 说明 | 拍板时点 |
 | --- | --- | --- |
-| ADR-038 库存与产品形态 | 单机优先 vs 多租户、remote/teams/三域/account-control/lifecycle/identity_schema/OTel exporter 去留——任务书 [plan/R0](plan/R0-inventory-decisions.md) 已给推荐决议,须用户确认后执行 | R0 波 0 |
+| ADR-038 库存与产品形态 | [ADR-038](docs/adr/ADR-038-inventory-and-product-shape.md) **Accepted**(用户 2026-08-18 确认,22 项按推荐决议执行,无改判);波 0 tag `v2-final` 已打,波 A(D2–D7)已落地。后续波 B/C 按本决议执行,本行不再是闸门 | 已确认 / R0 波 0 |
 | ADR-039 目录布局 | 推荐扁平 `crates/` + `apps/`(19 库规模下功能域目录成为噪音);备选保留域目录 | R1 波 A |
 | ADR-040 分支模型 | 推荐原生 lineage(Fork 是已交付能力,删除属产品倒退);备选冻结线性 + 删 Fork | R6 波 0 |
 | ADR-041 沙箱信任模型 | macOS 白名单 profile 的兼容性代价(Darwin 25 实测)与 PTY 语义 | R7 波 0 |
+| `plan_service::review_flow_replays_identically` 既有失败 | R0 波 A 收口发现:`revise(v2, v1, "revised", Vec::new())` 后 `steps[0]` 越界;基线 v2-final 复现,与 R0 改动无关(2026-08-18 裁决)。按 task-guide §1 窄任务修(测试或 revise 空 steps 语义) | 阶段外窄任务,不阻塞 R0 |
 | rmcp 3.x | wire 兼容性未评估;若破坏 MCP golden 则锁 2.2 并登记 | R2 波 C |
 | directories 5→6 | 目录语义兼容(`dev.pawork.pawork` 布局)评估后升级或显式锁定 | R2 波 B |
 | gpui 升级跟踪 | `=0.2.2` 为当前最新(ADR-035);上游发新版后评估(影响 R8 组件 API) | 出现新版时 |

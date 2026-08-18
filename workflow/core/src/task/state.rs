@@ -6,8 +6,6 @@
 //! 状态机合法性，再 apply 并返回事件供调用方持久化。
 
 use std::collections::BTreeMap;
-#[cfg(feature = "process-exec")]
-use std::collections::VecDeque;
 
 use pawork_domain::{BackgroundTaskId, CancellationToken, TaskEvent, TaskKind, TaskStatus};
 use serde::{Deserialize, Serialize};
@@ -28,16 +26,6 @@ pub fn is_active_status(status: TaskStatus) -> bool {
         status,
         TaskStatus::Queued | TaskStatus::Running | TaskStatus::Suspended
     )
-}
-
-/// 单条进程输出（stdout/stderr/exit 标记），带单调递增游标。
-#[cfg(feature = "process-exec")]
-#[derive(Clone, Debug)]
-pub struct OutputEvent {
-    /// 该任务输出流内的单调游标（`output_since` 的续传位置）。
-    pub seq: u64,
-    /// 输出内容。
-    pub event: pawork_exec::ProcessEvent,
 }
 
 /// 任务的只读快照（serde 可序列化，用于 snapshot / 重连恢复）。
@@ -76,11 +64,6 @@ pub(crate) struct TaskRecord {
     pub(crate) snapshot: TaskSnapshot,
     /// 进程类任务取消时触发进程树终止；其他 kind 由 adapter 自行消费。
     pub(crate) cancel_token: CancellationToken,
-    /// `pawork-exec` 取消令牌：与 domain token 不同类型，仅 process-exec 档持有。
-    #[cfg(feature = "process-exec")]
-    pub(crate) exec_cancel_token: Option<pawork_exec::CancellationToken>,
-    #[cfg(feature = "process-exec")]
-    pub(crate) output: VecDeque<OutputEvent>,
 }
 
 impl TaskRecord {
@@ -101,10 +84,6 @@ impl TaskRecord {
                 output_bytes: 0,
             },
             cancel_token: CancellationToken::new(),
-            #[cfg(feature = "process-exec")]
-            exec_cancel_token: None,
-            #[cfg(feature = "process-exec")]
-            output: VecDeque::new(),
         }
     }
 }
@@ -236,24 +215,6 @@ impl TaskManagerState {
         self.log.get(seq as usize..).unwrap_or_default().to_vec()
     }
 
-    /// 只读：任务完整输出缓冲。
-    #[cfg(feature = "process-exec")]
-    pub fn output(&self, task_id: &BackgroundTaskId) -> Vec<OutputEvent> {
-        self.tasks
-            .get(task_id)
-            .map(|r| r.output.iter().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    /// 只读：任务输出流中 `seq` 之后的增量输出（断连后续读）。
-    #[cfg(feature = "process-exec")]
-    pub fn output_since(&self, task_id: &BackgroundTaskId, seq: u64) -> Vec<OutputEvent> {
-        self.tasks
-            .get(task_id)
-            .map(|r| r.output.iter().filter(|o| o.seq >= seq).cloned().collect())
-            .unwrap_or_default()
-    }
-
     /// 命令辅助：注册（Queued，不发事件，重放不可见——queued 属于持久化前瞬态）。
     pub(crate) fn insert_queued(
         &mut self,
@@ -300,60 +261,6 @@ impl TaskManagerState {
         self.tasks.get(task_id).map(|r| r.cancel_token.clone())
     }
 
-    /// 命令辅助：读 process-exec 取消令牌（传给 `SandboxBackend::spawn`）。
-    #[cfg(feature = "process-exec")]
-    pub(crate) fn exec_cancel_token(
-        &self,
-        task_id: &BackgroundTaskId,
-    ) -> Option<pawork_exec::CancellationToken> {
-        self.tasks
-            .get(task_id)
-            .and_then(|r| r.exec_cancel_token.clone())
-    }
-
-    /// 命令辅助：设置 process-exec 取消令牌。
-    #[cfg(feature = "process-exec")]
-    pub(crate) fn set_exec_cancel_token(
-        &mut self,
-        task_id: &BackgroundTaskId,
-        token: pawork_exec::CancellationToken,
-    ) -> bool {
-        let Some(record) = self.tasks.get_mut(task_id) else {
-            return false;
-        };
-        record.exec_cancel_token = Some(token);
-        true
-    }
-
-    /// 命令辅助：追加一条进程输出，按字节上限从旧到新淘汰。
-    #[cfg(feature = "process-exec")]
-    pub(crate) fn append_output(
-        &mut self,
-        task_id: &BackgroundTaskId,
-        event: pawork_exec::ProcessEvent,
-        max_output_bytes: u64,
-    ) -> bool {
-        let Some(record) = self.tasks.get_mut(task_id) else {
-            return false;
-        };
-        let size = output_event_size(&event);
-        record.output.push_back(OutputEvent {
-            seq: record.snapshot.output_seq,
-            event,
-        });
-        record.snapshot.output_seq += 1;
-        record.snapshot.output_bytes += size;
-        while record.snapshot.output_bytes > max_output_bytes {
-            let Some(front) = record.output.pop_front() else {
-                break;
-            };
-            record.snapshot.output_bytes = record
-                .snapshot
-                .output_bytes
-                .saturating_sub(output_event_size(&front.event));
-        }
-        true
-    }
 
     /// 命令辅助：收集 `root` 及其全部后代（沿 parent_task_id 链，含 root）。
     pub(crate) fn subtree(&self, root: &BackgroundTaskId) -> Vec<BackgroundTaskId> {
@@ -406,12 +313,3 @@ fn event_task_id(event: &TaskEvent) -> &BackgroundTaskId {
     }
 }
 
-#[cfg(feature = "process-exec")]
-fn output_event_size(event: &pawork_exec::ProcessEvent) -> u64 {
-    match event {
-        pawork_exec::ProcessEvent::Stdout(bytes) | pawork_exec::ProcessEvent::Stderr(bytes) => {
-            bytes.len() as u64
-        }
-        pawork_exec::ProcessEvent::Exit { .. } => 0,
-    }
-}

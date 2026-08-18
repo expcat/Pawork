@@ -205,10 +205,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 9,
         name: "session_binding_affinity",
-        // P18-7（ADR-033）：session affinity / binding 的持久化投影——flat snapshot
-        // 行（tenant+session+agent 复合主键，state 冻结词表 bound/rebinding/released，
-        // revision+ownership_epoch 供原子 CAS）与 append-only 事件日志（重放 / 审计）。
-        // 不含任何 secret 列：只存 opaque 定位符与 lease 引用。
+        // P18-7（ADR-033）曾建 session_bindings/session_binding_events；R0/ADR-038 D3：
+        // binding 状态机已归档（tag v2-final），本表无读写方；append-only 留表「预留」，
+        // 不回滚 DDL；复活条件见 ROADMAP §3.3/§4。
         sql: r#"
             CREATE TABLE session_bindings (
                 tenant_id TEXT NOT NULL,

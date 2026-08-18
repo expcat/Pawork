@@ -10,9 +10,8 @@
 //! - [`LeaseGuard`]：RAII 守卫，`Drop` 时以当前 outcome 自动释放持有的 lease，
 //!   取消永远不会惩罚账号健康。
 //!
-//! schema 模块从 V1 `app-database` 收回控制面 / lease 投影迁移（始终可用）。
-//! `account-control-v1` 下的 account / routing / health / factory 为本波迁入的
-//! 库层，尚无宿主生产接线。
+//! 现仅保留 CredentialPool / Lease 容量闸门与 lease 状态机。
+//! Binding / schema 与 account-control 九模块已按 R0/ADR-038 归档（tag v2-final）。
 
 use std::collections::HashMap;
 use std::fmt;
@@ -37,25 +36,11 @@ pub use lease::{
     ReclaimReport, SystemLeaseClock, LEASE_SCHEMA_VERSION,
 };
 
-// P18-7 session affinity / binding 状态机的关键类型在 crate 根再导出；完整集合
-// 见 [`binding`] 模块。
-pub use binding::{
-    apply_event, fingerprint_hash, AffinityDecision, AffinityFingerprint, BindingAcquisition,
-    BindingEvent, BindingKey, BindingProjection, BindingProjectionError, BindingServiceError,
-    BindingState, BindingTarget, BindingTransitionError, InMemoryBindingProjection,
-    NullBindingProjection, RebindReason, RebindRequest, SessionBinding, SessionBindingService,
-    BINDING_SCHEMA_VERSION,
-};
-#[cfg(feature = "account-control-v1")]
-pub use binding::{capability_fingerprint, policy_fingerprint};
 
 /// 控制面 schema 版本（与 `core-api` / `app-database` 控制面迁移对齐，ADR-033）。
 ///
 /// 所有新增持久化实体与 canonical event 必须携带该版本字段，支持版本化迁移与重放。
 pub const CONTROL_PLANE_SCHEMA_VERSION: u32 = 2;
-
-/// legacy 单凭据回退（始终可用，独立于 `account-control-v1` feature）。
-pub mod legacy;
 
 /// 版本化、evented 的 credential-lease 状态机（P18-4 canonical，始终可用）。
 ///
@@ -64,86 +49,6 @@ pub mod legacy;
 /// [`lease::LeaseProjection`]（对象安全持久化 sink）、[`lease::LeaseClock`] 与
 /// 回收扫描类型。独立于 `account-control-v1`，可被关闭该 feature 的部署使用。
 pub mod lease;
-
-/// 版本化、evented 的 session affinity / binding 状态机（P18-7 canonical，始终可用）。
-///
-/// Canonical 生命周期 `Unbound → Bound → Rebinding → Bound`（或 `→ Released`），
-/// 含 [`binding::SessionBinding`]（versioned，无 secret）、[`binding::BindingEvent`]、
-/// [`binding::BindingProjection`]（对象安全持久化 sink，含 revision/ownership_epoch
-/// CAS）与事件重放。独立于 `account-control-v1`；路由策略 `SessionAffinity` 的
-/// 粘性状态由本模块持有，不在路由器内复制。
-///
-/// `session_bindings` 表已在 `pawork-session` v9；本模块只迁领域状态机 + 内存投影。
-pub mod binding;
-
-/// 控制面 / lease 投影 schema（从 V1 `app-database` 收回，始终可用）。
-pub mod schema;
-
-#[cfg(feature = "account-control-v1")]
-pub mod account;
-#[cfg(feature = "account-control-v1")]
-pub mod classifier;
-#[cfg(feature = "account-control-v1")]
-pub mod credential;
-#[cfg(feature = "account-control-v1")]
-pub mod factory;
-#[cfg(feature = "account-control-v1")]
-pub mod health;
-#[cfg(feature = "account-control-v1")]
-pub mod reconciler;
-#[cfg(feature = "account-control-v1")]
-pub mod registry;
-#[cfg(feature = "account-control-v1")]
-pub mod repository;
-#[cfg(feature = "account-control-v1")]
-pub mod routing;
-#[cfg(feature = "account-control-v1")]
-pub use account::{
-    AccountState, Clock, CredentialKind, CredentialMetadata, CredentialRecord, CredentialState,
-    FixedClock, NotUsableReason, ProviderAccountRecord, RefreshState, SecretRef, SystemClock,
-};
-#[cfg(feature = "account-control-v1")]
-pub use classifier::{
-    ClassifierRegistry, ErrorClassifier, FailureClass, FailureClassification, FailureScope,
-    HealthImpact, HttpErrorClassifier, ProviderClassifier, ProviderErrorKind, ProviderErrorSignal,
-    Retryability,
-};
-#[cfg(feature = "account-control-v1")]
-pub use credential::{
-    BackendErrorCategory, CredentialResolver, InMemoryCredentialResolver, ResolveError,
-};
-#[cfg(feature = "account-control-v1")]
-pub use factory::{
-    wrap_protected_blob, ComposedProvider, FactoryError, ProtectorFactory, ProviderBuilder,
-    ProviderDescriptor, ProviderFactory, SessionRunScope,
-};
-#[cfg(feature = "account-control-v1")]
-pub use health::{
-    BackoffPolicy, CircuitBreaker, CircuitConfig, CircuitState, CooldownKey, CooldownTracker,
-    FailureContext, HealthProbe, HealthRecord, HealthRuntime, HealthState, ProbeBudget,
-    ProbeFailure, ProbeKind, ProbeReport, ProbeRuntime, ProbeTargetKey,
-};
-#[cfg(feature = "account-control-v1")]
-pub use reconciler::{
-    AccountUsability, BindingDesiredView, DesiredBinding, PoolReconciler, ReconcileError,
-    ReconcileReport,
-};
-#[cfg(feature = "account-control-v1")]
-pub use registry::{
-    ProviderRegistry, ProviderRegistrySnapshot, ProviderRegistryStage, RegistryError,
-};
-#[cfg(feature = "account-control-v1")]
-pub use repository::{
-    AccountBinding, CredentialSummary, CredentialTestStatus, InMemoryProviderAccountRepository,
-    ProviderAccountRepository, ProviderAccountSummary, RepoError,
-};
-#[cfg(feature = "account-control-v1")]
-pub use routing::{
-    capabilities_of, AdmitAllHealth, CandidateRef, Capability, FallbackAction, FallbackKind,
-    FallbackPlan, HealthVerdict, HealthView, LocalDefaultPolicy, PolicyDenial, RouteBudget,
-    RouteCandidate, RouteContext, RouteDecision, RouteStep, RoutingError, RoutingPolicy,
-    RoutingStrategy, SelectedRoute, SmoothWeightedPicker, TenantPolicy,
-};
 
 /// 类型安全的 lease 标识。
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -525,48 +430,6 @@ impl CredentialPicker for LegacyCredentialPicker {
         _provider: &ProviderId,
     ) -> Result<CredentialId, PoolError> {
         Ok(CredentialId::new("default"))
-    }
-}
-
-/// 基于账号仓库的选择器：按 `(tenant, account, provider)` 取第一条 Active 凭据。
-///
-/// `list_bindings` 是 async，本选择器实现 `async fn pick`，在 acquire 热路径
-/// （异步任务内）直接 `.await`，不再额外 block_on。
-#[cfg(feature = "account-control-v1")]
-#[derive(Clone)]
-pub struct RepositoryCredentialPicker {
-    repository: Arc<dyn crate::ProviderAccountRepository>,
-}
-
-#[cfg(feature = "account-control-v1")]
-impl RepositoryCredentialPicker {
-    /// 以共享账号仓库构造。
-    pub fn new(repository: Arc<dyn crate::ProviderAccountRepository>) -> Self {
-        Self { repository }
-    }
-}
-
-#[cfg(feature = "account-control-v1")]
-#[async_trait]
-impl CredentialPicker for RepositoryCredentialPicker {
-    async fn pick(
-        &self,
-        tenant: &TenantId,
-        account: &AccountId,
-        provider: &ProviderId,
-    ) -> Result<CredentialId, PoolError> {
-        let bindings = self.repository.list_bindings(tenant, provider).await;
-        bindings
-            .into_iter()
-            .find(|binding| binding.account.account_id == *account)
-            .and_then(|binding| {
-                binding
-                    .credentials
-                    .into_iter()
-                    .find(|credential| credential.state == crate::CredentialState::Active)
-            })
-            .map(|credential| credential.credential_id)
-            .ok_or(PoolError::NoCandidate)
     }
 }
 
@@ -2398,60 +2261,5 @@ mod tests {
             );
             assert_eq!(projection.len(), 0, "终态 lease 已移出 outstanding");
         }
-    }
-}
-
-#[cfg(all(test, feature = "account-control-v1"))]
-mod repository_picker_tests {
-    use super::*;
-    use crate::repository::InMemoryProviderAccountRepository;
-
-    #[tokio::test]
-    async fn repository_credential_picker_selects_legacy_default() {
-        let repo = Arc::new(InMemoryProviderAccountRepository::with_legacy_default());
-        let picker = RepositoryCredentialPicker::new(repo);
-        let credential = picker
-            .pick(
-                &TenantId::new("local/default"),
-                &AccountId::new("local/default"),
-                &ProviderId::new("default"),
-            )
-            .await
-            .expect("legacy default credential");
-        assert_eq!(credential.as_str(), "default");
-    }
-
-    #[tokio::test]
-    async fn repository_credential_picker_unknown_account_is_no_candidate() {
-        let repo = Arc::new(InMemoryProviderAccountRepository::with_legacy_default());
-        let picker = RepositoryCredentialPicker::new(repo);
-        let error = picker
-            .pick(
-                &TenantId::new("local/default"),
-                &AccountId::new("missing"),
-                &ProviderId::new("default"),
-            )
-            .await
-            .expect_err("unknown account must fail closed");
-        assert!(matches!(error, PoolError::NoCandidate));
-    }
-
-    #[tokio::test]
-    async fn repository_credential_picker_without_active_credential_is_no_candidate() {
-        let repo = Arc::new(InMemoryProviderAccountRepository::with_legacy_default());
-        let tenant = TenantId::new("local/default");
-        repo.disable_credential(&tenant, &CredentialId::new("default"))
-            .await
-            .expect("disable legacy credential");
-        let picker = RepositoryCredentialPicker::new(repo);
-        let error = picker
-            .pick(
-                &tenant,
-                &AccountId::new("local/default"),
-                &ProviderId::new("default"),
-            )
-            .await
-            .expect_err("account without an active credential must fail closed");
-        assert!(matches!(error, PoolError::NoCandidate));
     }
 }
