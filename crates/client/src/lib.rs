@@ -16,8 +16,8 @@
 //! 错误一律是结构化 [`ClientError`]；SDK 不向调用方泄漏内部帧字节，意外的
 //! 帧只以 [`ClientError::UnexpectedFrame`] 的类别标签呈现，不携带原始内容。
 //!
-//! 本 crate 不依赖任何 GUI 框架，也不链接 pawork-app / pawork-gui-server（契约
-//! 测试使用的服务端装配仅位于 dev-dependencies）。
+//! 本 crate 不依赖任何 GUI 框架，也不链接 pawork-app（其 `gui_server` 模块只在
+//! 契约测试的 dev-dependencies 装配）。
 
 pub mod headless;
 
@@ -481,7 +481,10 @@ impl GuiClient {
 
     async fn await_response(&self, request_id: &str) -> Result<AppResponseEnvelope, ClientError> {
         loop {
-            match self.recv_matching(self.config.timeout, FrameWant::Response).await? {
+            match self
+                .recv_matching(self.config.timeout, FrameWant::Response(request_id))
+                .await?
+            {
                 ServerFrame::Response(envelope) if envelope.request_id.as_str() == request_id => {
                     return Ok(envelope);
                 }
@@ -556,12 +559,16 @@ impl GuiClient {
     /// 请求完整 Snapshot。
     pub async fn snapshot(&self) -> Result<Snapshot, ClientError> {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed);
+        let request_id = format!("snapshot-{id}");
         self.send_frame(&ClientFrame::SnapshotRequest {
-            request_id: format!("snapshot-{id}"),
+            request_id: request_id.clone(),
         })
         .await?;
         loop {
-            match self.recv_matching(self.config.timeout, FrameWant::Snapshot).await? {
+            match self
+                .recv_matching(self.config.timeout, FrameWant::Snapshot(&request_id))
+                .await?
+            {
                 ServerFrame::Snapshot(snapshot) => return Ok(snapshot),
                 ServerFrame::Error(envelope) => return Err(ClientError::Protocol(envelope.error)),
                 other => self.stash(other).await,
@@ -588,7 +595,10 @@ impl GuiClient {
         let mut replayed = Vec::new();
         let mut snapshot = None;
         loop {
-            match self.recv_matching(self.config.timeout, FrameWant::Resume).await? {
+            match self
+                .recv_matching(self.config.timeout, FrameWant::Resume(&request_id))
+                .await?
+            {
                 ServerFrame::Resume(ResumeResponse {
                     request_id: rid,
                     disposition: found,
@@ -734,7 +744,7 @@ impl GuiClient {
     async fn recv_matching(
         &self,
         timeout: Duration,
-        want: FrameWant,
+        want: FrameWant<'_>,
     ) -> Result<ServerFrame, ClientError> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
@@ -792,7 +802,7 @@ impl GuiClient {
         self.inbox.lock().await.push_back(frame);
     }
 
-    async fn pop_inbox(&self, want: FrameWant) -> Option<ServerFrame> {
+    async fn pop_inbox(&self, want: FrameWant<'_>) -> Option<ServerFrame> {
         let mut inbox = self.inbox.lock().await;
         if let Some(index) = inbox.iter().position(|frame| want.matches(frame)) {
             return Some(inbox.remove(index).expect("inbox index exists"));
@@ -802,28 +812,39 @@ impl GuiClient {
 }
 
 #[derive(Clone, Copy)]
-enum FrameWant {
+enum FrameWant<'a> {
     Any,
     Event,
-    Response,
-    Snapshot,
-    Resume,
+    Response(&'a str),
+    Snapshot(&'a str),
+    Resume(&'a str),
 }
 
-impl FrameWant {
+impl FrameWant<'_> {
     fn matches(self, frame: &ServerFrame) -> bool {
         match self {
             Self::Any => true,
-            Self::Event => matches!(frame, ServerFrame::Event(_) | ServerFrame::Error(_)),
-            Self::Response => matches!(frame, ServerFrame::Response(_) | ServerFrame::Error(_)),
-            Self::Snapshot => matches!(frame, ServerFrame::Snapshot(_) | ServerFrame::Error(_)),
-            Self::Resume => matches!(
-                frame,
-                ServerFrame::Resume(_)
-                    | ServerFrame::Snapshot(_)
-                    | ServerFrame::Event(_)
-                    | ServerFrame::Error(_)
-            ),
+            Self::Event => match frame {
+                ServerFrame::Event(_) => true,
+                ServerFrame::Error(envelope) => envelope.request_id.is_none(),
+                _ => false,
+            },
+            Self::Response(request_id) => match frame {
+                ServerFrame::Response(envelope) => envelope.request_id.as_str() == request_id,
+                ServerFrame::Error(envelope) => envelope.request_id.as_deref() == Some(request_id),
+                _ => false,
+            },
+            Self::Snapshot(request_id) => match frame {
+                ServerFrame::Snapshot(_) => true,
+                ServerFrame::Error(envelope) => envelope.request_id.as_deref() == Some(request_id),
+                _ => false,
+            },
+            Self::Resume(request_id) => match frame {
+                ServerFrame::Resume(response) => response.request_id == request_id,
+                ServerFrame::Snapshot(_) | ServerFrame::Event(_) => true,
+                ServerFrame::Error(envelope) => envelope.request_id.as_deref() == Some(request_id),
+                _ => false,
+            },
         }
     }
 }
@@ -1092,7 +1113,7 @@ mod tests {
         let waiter = client.clone();
         let response = tokio::spawn(async move {
             waiter
-                .recv_matching(Duration::from_secs(1), FrameWant::Response)
+                .recv_matching(Duration::from_secs(1), FrameWant::Response("q-1"))
                 .await
         });
         tokio::task::yield_now().await;
@@ -1106,6 +1127,36 @@ mod tests {
             .expect("response task")
             .expect("response waiter is not starved by the event pump");
         assert!(matches!(response_frame, ServerFrame::Response(_)));
+    }
+
+    #[test]
+    fn frame_wants_route_errors_by_request_id() {
+        use pawork_protocol::{ProtocolError, ProtocolErrorEnvelope};
+
+        let request_error = ServerFrame::Error(ProtocolErrorEnvelope {
+            request_id: Some("q-1".into()),
+            error: ProtocolError {
+                code: ProtocolErrorCode::RequestNotFound,
+                message: "bad request".into(),
+                retryable: false,
+            },
+        });
+        assert!(FrameWant::Response("q-1").matches(&request_error));
+        assert!(!FrameWant::Response("q-2").matches(&request_error));
+        assert!(!FrameWant::Event.matches(&request_error));
+        assert!(!FrameWant::Snapshot("snapshot-1").matches(&request_error));
+        assert!(!FrameWant::Resume("resume-1").matches(&request_error));
+
+        let connection_error = ServerFrame::Error(ProtocolErrorEnvelope {
+            request_id: None,
+            error: ProtocolError {
+                code: ProtocolErrorCode::ReplayUnavailable,
+                message: "lagged".into(),
+                retryable: true,
+            },
+        });
+        assert!(FrameWant::Event.matches(&connection_error));
+        assert!(!FrameWant::Response("q-1").matches(&connection_error));
     }
 
     #[tokio::test]

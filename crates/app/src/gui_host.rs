@@ -1,4 +1,4 @@
-//! GUI Host 端口适配：把 AppCore 装配到 pawork-gui-server 的 GuiHost。
+//! GUI Host 端口适配：把 AppCore 装配到 `pawork-app::gui_server::GuiHost`。
 //!
 //! S10 10b：Snapshot 基线、SessionGet 分页 Timeline、SessionCreate/Fork、
 //! RunStart/RunCancel/ToolApprove、Terminal*、RunStart.model 切换。
@@ -307,7 +307,7 @@ impl GuiRunRegistry {
     }
 }
 
-/// pawork-gui-server 的宿主实现。
+/// `gui_server` 模块的宿主实现。
 pub struct GuiHostAdapter {
     core: Arc<tokio::sync::RwLock<AppCore>>,
     bus: Arc<GuiEventBus>,

@@ -6,7 +6,7 @@
 //! env fallback → 无凭证）。
 //!
 //! 正式接线（`pawork auth`、config 凭证引用、六通道装配与 `auth list` 来源
-//! 标注）属 S6 波 C，由 `pawork-config` / `pawork-app` / `pawork-cli` 完成。
+//! 标注）由 `pawork-workspace::config` / `pawork-app` / `pawork-cli` 承载。
 //!
 //! ## 核心红线
 //!

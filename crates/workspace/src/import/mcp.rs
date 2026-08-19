@@ -1,7 +1,7 @@
-//! MCP 薄类型：与 `pawork-mcp` 同形的配置数据，不含 client / resolve / auth。
+//! MCP 薄类型：与 `pawork-tools::mcp` 同形的配置数据，不含 client / resolve / auth。
 //!
-//! 本模块只承载导入计划里的 MCP 声明形状，避免 `pawork-compat` 依赖
-//! `pawork-mcp` 或 `rmcp`。明文 Secret 不得进入这些类型。
+//! 本模块只承载导入计划里的 MCP 声明形状，避免 workspace 导入层依赖
+//! MCP runtime 或 `rmcp`。明文 Secret 不得进入这些类型。
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -45,7 +45,7 @@
 | --- | --- |
 | 当前阶段 | R2([plan/R2-dependency-governance.md](plan/R2-dependency-governance.md))⚪ 待开启 |
 | 阶段状态 | R0 🟢(波 0/A/B/C 全部收口,2026-08-18;改判 3+1 项见 ADR-038 落实改判记录);R1 🟢(波 A–E 全部收口,2026-08-19);R2–R9 ⚪ |
-| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档)、R1 波 A(ADR-039 Accepted + api→domain golden 先行平移 + diagnostics 迁宿主撤包,2026-08-19;members 37→35)、R1 波 B(storage/providers/workspace 三大合并 + host/app 装配缝,2026-08-19;members 35→28)、R1 波 C(mcp→tools ∥ quota+provider-control→control-plane + host/app 装配缝,2026-08-19;members 28→25)、R1 波 D(gui-server→app `gui_server/` ∥ channels→cli `channels/` ∥ sdk→client `headless/` + probe→client tests/example,2026-08-19;members 25→21)、R1 波 E(members 定稿 21 + 19 库 `git mv` 扁平 `crates/` + design.md §2 重写 + 红线断言随迁 + 21 包定向测试 + 真实冒烟,2026-08-19;desktop --probe-smoke 暴露两既有缺陷已登记 ROADMAP §4,非本波回退) |
+| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档)、R1 波 A(ADR-039 Accepted + api→domain golden 先行平移 + diagnostics 迁宿主撤包,2026-08-19;members 37→35)、R1 波 B(storage/providers/workspace 三大合并 + host/app 装配缝,2026-08-19;members 35→28)、R1 波 C(mcp→tools ∥ quota+provider-control→control-plane + host/app 装配缝,2026-08-19;members 28→25)、R1 波 D(gui-server→app `gui_server/` ∥ channels→cli `channels/` ∥ sdk→client `headless/` + probe→client tests/example,2026-08-19;members 25→21)、R1 波 E(members 定稿 21 + 19 库 `git mv` 扁平 `crates/` + design.md §2 重写 + 红线断言随迁 + 21 包定向测试 + 真实冒烟,2026-08-19;整阶段审查已修复 probe 暴露的动态模型切换与 client 错误帧路由缺陷,并收紧三条红线回归;修复后 desktop probe 全绿) |
 | **下一波次** | R2 波 A(按 [plan/R2-dependency-governance.md](plan/R2-dependency-governance.md) 波次拆分;无 ADR 闸门) |
 | 阻塞 | 无 |
 

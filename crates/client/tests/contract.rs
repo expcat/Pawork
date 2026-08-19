@@ -1,4 +1,4 @@
-//! P13-9 GUI Connection Protocol 契约测试（pawork-client SDK × pawork-gui-server）。
+//! P13-9 GUI Connection Protocol 契约测试（pawork-client × pawork-app::gui_server）。
 //!
 //! 本机装配：LocalTransport + GuiServer + GuiHostAdapter(AppCore) + MockProvider。
 //! UDS 地址落在 tempdir 下的唯一 socket 文件。覆盖：

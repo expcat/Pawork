@@ -1,4 +1,4 @@
-//! pawork-sdk 契约测试：mock transport 驱动握手、往返、事件流、背压、
+//! pawork-client::headless 契约测试：mock transport 驱动握手、往返、事件流、背压、
 //! 取消与 compat 入口；JSON fixture 覆盖固定协议样例。
 
 use pawork_domain::{EventId, QueryId, RunId, SessionId, Timestamp, WorkspaceId};

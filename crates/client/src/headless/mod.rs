@@ -7,7 +7,7 @@
 //! 映射为请求、把 [`AppEvent`](pawork_protocol::AppEvent) 流式暴露给调用方。
 //!
 //! ```text
-//! Rust Application → pawork-sdk (PaworkClient)
+//! Rust Application → pawork-client::headless (PaworkClient)
 //!     → pawork headless --json-stdio（唯一 Core 宿主）
 //! ```
 //!

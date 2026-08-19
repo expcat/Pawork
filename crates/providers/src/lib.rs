@@ -96,15 +96,18 @@ mod module_discipline {
     use std::path::Path;
 
     #[test]
-    fn core_modules_do_not_mention_crate_net() {
+    fn core_modules_do_not_reference_net_module() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let files = ["registry.rs", "pricing.rs", "usage.rs", "negotiate.rs", "reasoning.rs", "error.rs"];
         for name in files {
             let path = src.join(name);
             let contents = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+            let mentions_net = contents
+                .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                .any(|identifier| identifier == "net");
             assert!(
-                !contents.contains("crate::net"),
-                "{} must not reference crate::net",
+                !mentions_net,
+                "{} must not contain a reference to the providers::net module",
                 path.display()
             );
         }

@@ -1,4 +1,4 @@
-//! pawork-blob-store：内容寻址 Artifact、Protected Blob（PWB1）与 Checkpoint 快照。
+//! `pawork-storage::blob`：内容寻址 Artifact、Protected Blob（PWB1）与 Checkpoint 快照。
 //!
 //! 默认面是 [`ArtifactStore`]（`artifacts.sqlite3` + `blobs/`）。
 //! `protected` feature 提供 PWB1 AEAD 层（`protected.sqlite3` + `protected/`）；

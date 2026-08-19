@@ -5,7 +5,7 @@
 //! context 侧只产出触发决策，不执行压缩；session 侧 fork/snapshot 由 host 经
 //! `LoopContext::compact_history` 回调完成，engine 只拿回 [`CompactionOutcome`]
 //! 元数据。[`AutoCompactionReason`] 是 engine → host 的原因传递（手动入口映射
-//! `Manual` 语义），app 侧再映射到 `pawork-session` 的 `CompactionReason`；
+//! `Manual` 语义），app 侧再映射到 `pawork-storage::session` 的 `CompactionReason`；
 //! session 不反向依赖 engine。
 
 use serde::{Deserialize, Serialize};

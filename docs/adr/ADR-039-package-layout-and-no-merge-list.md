@@ -50,10 +50,10 @@ providers/storage 单体化后,「改一个 adapter 重编整包」。接受该�
 
 ### D6 — 合并后包内纪律(原跨包纪律降级为模块纪律的清单)
 
-- provider-core 不依赖 net → providers 包内模块可见性(`net/` 不对 `registry/` 等暴露)+ 定向测试。
+- provider-core 不依赖 net → providers 包内模块纪律 + `core_modules_do_not_reference_net_module` 定向源扫描。
 - rmcp 隔离断言 `public_sources_do_not_mention_rmcp` 随迁为 tools 包 `mcp/` 模块级测试。
 - storage feature 分层:`sqlite` 基座常开(`pawork-storage` 中不设同名 feature),`session`/`blob` default-on;control-plane 以 `default-features = false` 只取 Actor 面(2026-08-19 落实修正:经核查 control-plane 对 sqlite Actor 零引用,死依赖直接移除,见波 B 落实记录)。
-- engine domain-only 断言、desktop deny-list 更新、`cargo tree` 无环与闭包断言:波 E 建立/更新。
+- engine domain-only、desktop client-only 断言、`cargo tree` 无环与闭包断言:波 E 建立/更新。
 
 ### D7 — 契约保护(golden 先行)
 
@@ -81,11 +81,11 @@ providers/storage 单体化后,「改一个 adapter 重编整包」。接受该�
 ### 波 B(2026-08-19,storage / providers / workspace 三大合并)
 
 - **storage**:`foundation/sqlite` 改名 `pawork-storage`,吸收 `storage/session`→`session/`、`storage/blob`→`blob/`;D6 feature 分层落地:`default = ["session","blob"]`,`compaction`/`checkpoint`/`protected` 保持 opt-in,sqlite 基座常开。control-plane 的 `pawork-sqlite` 经核查为死依赖(零源码引用,`SqliteUsageLedger` 自开 rusqlite 连接),prod optional 与 dev 两处一并移除——「只取 Actor 面」以「不依赖」达成,`sqlite = ["dep:rusqlite"]` feature 保留。
-- **providers**:`providers/adapters` 吸收 `net/net`→`net/`(http/sse/retry 包内常开)、`providers/core`→`registry/pricing/usage/negotiate/reasoning/error` 六根模块;通道内聚 `channels/`(anthropic/、chatgpt、xai、api_key),cfg feature 门控与 `required-features` 集成测试原样;adapters 原 `usage.rs` 薄 shim 与 core `usage` 合一。D6「core 不依赖 net」降级为模块纪律 + 源扫描定向测试(`core_modules_do_not_mention_crate_net`)。host 通道表本体(`host/app/src/channels.rs`)未迁入 providers,仅随装配缝替换其中 config 的 use 路径。
+- **providers**:`providers/adapters` 吸收 `net/net`→`net/`(http/sse/retry 包内常开)、`providers/core`→`registry/pricing/usage/negotiate/reasoning/error` 六根模块;通道内聚 `channels/`(anthropic/、chatgpt、xai、api_key),cfg feature 门控与 `required-features` 集成测试原样;adapters 原 `usage.rs` 薄 shim 与 core `usage` 合一。D6「core 不依赖 net」降级为模块纪律 + 源扫描定向测试(`core_modules_do_not_reference_net_module`)。host 通道表本体(`host/app/src/channels.rs`)未迁入 providers,仅随装配缝替换其中 config 的 use 路径。
 - **workspace**:`workspace/core` 吸收 `resources/`、`config/`、compat→`import/`(五来源 fixtures 随迁);mcp 改 `pawork_workspace::config`,tools 零改动。
 - **host/app 装配缝**:主代理串行收口,7 个解散包依赖收敛为 `pawork-storage`(features compaction+checkpoint)/`pawork-workspace`/`pawork-providers` 三个方向,use 路径 12 文件机械替换。
 - **根 Cargo.toml 最小触碰(对 D1 字面的偏离记录)**:`net/*`、`storage/*` 两 glob 在成员清空后被 Cargo 拒绝(空 glob 报错),先行移除这两条 glob 并注记;终局 members 定稿与目录迁移仍集中波 E。空目录 `net/`、`storage/` 已删。
-- **验证**:storage 默认 86+5 绿,全 feature 133 + PWB1 golden 4(`pwb1_valid_hex_*`、`seal_for_test_matches_pwb1_golden_hex` 实际运行)+ read_range 5 绿,`--no-default-features` check 绿;providers 默认 134+8+16、全通道 140+ 各集成测试绿,模块纪律测试在位;workspace 112+12+14 绿(config 47 测含 `six_layer_default_model_matrix_and_profile_provenance`,compat 五来源 smoke 绿);app 93、mcp 64、tools 65、cli 30、client 6+7、control-plane 69、domain 44+contract_golden 4+events_golden 3、desktop 34(含 `desktop_direct_deps_stay_on_client_deny_list`)全绿;protocol-probe 9 场景绿;28 成员全体 `cargo check` 绿。
+- **验证**:storage 默认 86+5 绿,全 feature 133 + PWB1 golden 4(`pwb1_valid_hex_*`、`seal_for_test_matches_pwb1_golden_hex` 实际运行)+ read_range 5 绿,`--no-default-features` check 绿;providers 默认 134+8+16、全通道 140+ 各集成测试绿,模块纪律测试在位;workspace 112+12+14 绿(config 47 测含 `six_layer_default_model_matrix_and_profile_provenance`,compat 五来源 smoke 绿);app 93、mcp 64、tools 65、cli 30、client 6+7、control-plane 69、domain 44+contract_golden 4+events_golden 3、desktop 34(当时测试名 `desktop_direct_deps_stay_on_client_deny_list`)全绿;protocol-probe 9 场景绿;28 成员全体 `cargo check` 绿。
 - **members 35→28**;`cargo tree -p pawork` 闭包 800→751 行;无环;解散七包名在闭包与 Cargo.lock 零残留。
 - **D5 实测补录**:providers 包 touch-单文件增量 `cargo check -p`——合并前(HEAD 基线 worktree,独立 target)≈0.14–0.16s,合并后 ≈3.7–4.7s。编译粒度代价成立但绝对值仍在秒级,维持 D5 取舍。
 - **偏差/遗留**:①三路验证期间因根 workspace 暂不可解析,子代理在 /tmp 隔离拷贝验证,收口后全部由主代理在仓库根复跑为上方结果;②protocol-probe `snapshot-reconnect` 一次批量下偶发 10s 帧超时(单跑 3/3 绿,纯路径改名不涉该链路),判定既有偶发,已登记 ROADMAP §4 待 R9 复跑;③design.md §2、README、v2-summary §4(信封 golden 位置表述)、gui-design.md、desktop deny-list 包名、AGENTS.md 成员数 —— 波 E 统一回写。
@@ -112,12 +112,13 @@ providers/storage 单体化后,「改一个 adapter 重编整包」。接受该�
 
 - **目录迁移(D1 落地)**:19 库 `git mv` 至扁平 `crates/<短名>`——domain/protocol/storage/testkit/providers/auth/workspace/policy/exec/tools/git/engine/workflow/orchestration/control-plane/app/transport/cli/client;apps/{pawork,desktop} 不动;八个空域目录(foundation/providers/net/storage/workspace/execution/control-plane/host/clients/extensions/agents 中已清空者)删除;`cargo metadata` 确认 members = 21(19 库 + 2 应用)。
 - **path 依赖改写**:crates 内互依 `../../<域>/<x>` → `../<短名>`,apps 两包 → `../../crates/<短名>`;**use 路径零变更**(包名不变,import 不动);根 Cargo.toml members 定稿 `crates/*` + `apps/*`,历史 glob 注释清理。
-- **红线断言随迁**:desktop deny-list(`apps/desktop/src/platform.rs`)删 provider-core/session/sqlite 三名、补 `pawork-storage`;新建 `crates/engine/tests/domain_only.rs`(engine 生产依赖仅 pawork-domain);rmcp 隔离断言已在 tools(波 C)。
+- **红线断言随迁**:desktop 业务生产依赖仅 `pawork-client`(`apps/desktop/src/platform.rs`);新建 `crates/engine/tests/domain_only.rs`(engine 生产依赖仅 pawork-domain);providers core→net 源扫描与 rmcp 隔离断言在位。整阶段审查进一步覆盖 target-specific dependency 表与 `package` alias，避免有限 deny-list 漏检。
 - **文档回写**:design.md(头部说明 + §2 整节重写为 21 包表 + §3.1/§3.2/§5 G6 包名)、README(R0/R1 状态 + `crates/` 结构树)、AGENTS.md(成员数与布局表述)、v2-summary.md(信封 golden 在 pawork-domain)、gui-design.md(三处包名)、task-guide.md(两处 `host/` → `crates/app`)、ROADMAP(本行)。
 - **验证**:全 21 包 `cargo check` 绿;73 测试二进制 1644 测绿(`--no-fail-fast` 全量 + 定向复跑);`cargo tree -p pawork` 闭包 724→711 行、无环、16 解散包名在闭包与 Cargo.lock 零残留;engine 生产依赖仅 domain。
 - **既有缺陷修复 ×2**(收口定向测试暴露,按 task-guide §1 窄任务,ROADMAP §4 登记项销账):① client_tests `hello_ack.json` 夹具 negotiated 1.1→1.2(S13 升 API_VERSION 未更夹具);② workflow `review_flow_replays_identically` 测试侧改为携现有步骤修订(revise 空 steps 语义漂移,基线可复现)。两者均测试/夹具侧,不动生产形状。
 - **真实冒烟**(deepseek/deepseek-v4-flash):chat 流式 ✓、read_file 真实执行 ✓、untrusted 工作区 fail-closed 拒 run_command ✓、always-ask 审批闸门真实弹出且超时 fail-closed ✓、never-ask 下 run_command 真实执行 ✓;`gui serve` 启动/握手/snapshot/create_session/RunStart 处理链路 ✓。usage 幂等键 warn(ROADMAP §4 登记项)复现,非回退。
-- **desktop `--probe-smoke` 按实态登记**:确定性失败于首发 send_message,临时插桩定位为两个**既有缺陷**(非本波回退;client/gui_host/app lib/desktop main/providers registry 四行为文件与 HEAD 逐字节一致):① ModelList(运行期探测合并,`crates/app/src/lib.rs` models_overview)与 switch_provider(静态注册表)目录不对称——目录通告 glm-4.7(glm-coding 实探返回)而静态注册表仅 glm-5.2,切换报 UnknownModel;② client `FrameWant::Event` 匹配 `ServerFrame::Error`(S7 波 C 5aa9230 引入),desktop 事件泵常驻 recv 抢走命令错误帧并误判 Disconnected,等待方 10s 超时误报。两项已登记 ROADMAP §4,排期外窄任务。
+- **desktop `--probe-smoke` 按波 E 实态登记**:当时确定性失败于首发 send_message,临时插桩定位为两个**既有缺陷**(非本波回退;client/gui_host/app lib/desktop main/providers registry 四行为文件与 HEAD 逐字节一致):① ModelList(运行期探测合并,`crates/app/src/lib.rs` models_overview)与 switch_provider(静态注册表)目录不对称——目录通告 glm-4.7(glm-coding 实探返回)而静态注册表仅 glm-5.2,切换报 UnknownModel;② client `FrameWant::Event` 匹配 `ServerFrame::Error`(S7 波 C 5aa9230 引入),desktop 事件泵常驻 recv 抢走命令错误帧并误判 Disconnected,等待方 10s 超时误报。两项当时登记 ROADMAP §4,后由 R1 整阶段审查修复(下一条)。
+- **R1 整阶段审查与修复(2026-08-19)**:① app 新增按明确 `(provider, model)` 解析的 `resolve_provider_model`,静态目录未命中目标 provider 时只向该 provider 探测并惰性合并,仍 fail-closed;`switch_provider_accepts_runtime_discovered_model` 回归在位。② client 的 Response/Snapshot/Resume 错误按 request_id 归属,Event 只接 `request_id=None` 的连接级错误;`frame_wants_route_errors_by_request_id` 回归在位。③ desktop/engine 生产依赖红线改为 allow-only,覆盖普通/target-specific 表与 inline/nested `package` alias;providers core→net 扫描收紧为 `net` 标识符零引用。全 21 包 check/test、storage/providers feature 组合、711 行 pawork 闭包与解散包零残留均通过;隔离 instance 的 `pawork-desktop --probe-smoke` 实测 glm-4.7 首轮完成、切换 deepseek-v4-flash 后第二轮完成、取消/持久化/断线存活通过。
 - **D5 实测**:目录纯移动不改变编译单元粒度,无新增 D5 代价;21 包全量 `cargo check` 在默认 target 增量缓存下秒级完成。
 
 ## 相关

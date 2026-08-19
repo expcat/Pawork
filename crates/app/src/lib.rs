@@ -849,45 +849,17 @@ impl AppCore {
         session: Option<&SessionId>,
         model: &str,
     ) -> Result<(), AppError> {
-        let entry = match self.registry.resolve(model).cloned() {
-            Some(entry) => entry,
-            // 静态目录未登记：向当前 provider 探测一次，命中则惰性合并
-            //（与 pawork models 展示一致），未命中仍 fail-closed。
-            None => {
-                let definitions = self
-                    .provider
-                    .list_models(self.credential.as_ref())
-                    .await
-                    .unwrap_or_default();
-                let entry = definitions
-                    .iter()
-                    .find(|definition| definition.id.as_str() == model)
-                    .map(|definition| CatalogEntry {
-                        id: definition.id.clone(),
-                        provider: self.provider_id.clone(),
-                        display_name: definition.display_name.clone(),
-                        context_window_tokens: definition.context_window_tokens,
-                        max_output_tokens: definition.max_output_tokens,
-                        capabilities: definition.capabilities.clone(),
-                        pricing: None,
-                        aliases: Vec::new(),
-                    })
-                    .ok_or_else(|| AppError::UnknownModel {
-                        model: model.to_string(),
-                        provider: self.provider_id.as_str().to_string(),
-                    })?;
-                let registry = std::sync::Arc::make_mut(&mut self.registry);
-                registry.extend_with(vec![entry.clone()]);
-                entry
-            }
-        };
-        if entry.provider != self.provider_id {
-            return Err(AppError::ModelBelongsToProvider {
-                model: model.to_string(),
-                owner: entry.provider.as_str().to_string(),
-                current: self.provider_id.as_str().to_string(),
-            });
-        }
+        let provider = Arc::clone(&self.provider);
+        let credential = self.credential.clone();
+        let provider_id = self.provider_id.clone();
+        let entry = resolve_provider_model(
+            Arc::make_mut(&mut self.registry),
+            provider.as_ref(),
+            credential.as_ref(),
+            &provider_id,
+            model,
+        )
+        .await?;
         let from = (self.provider_id.clone(), self.model.clone());
         self.model = entry.id.clone();
         let to = (self.provider_id.clone(), self.model.clone());
@@ -912,27 +884,20 @@ impl AppCore {
             });
         }
         let target = ProviderId::new(provider);
-        let assembled = assemble_provider(&self.config, &target, &self.backend, true).await?;
+        let mut assembled = assemble_provider(&self.config, &target, &self.backend, true).await?;
 
         // 目标模型：显式参数 → 当前模型（若属于目标 provider）→ 目标 provider
         // 的第一个 registry 条目；都无则要求显式 /model。
         let target_model = if let Some(model) = model {
-            let entry = assembled
-                .registry
-                .resolve(model)
-                .cloned()
-                .ok_or_else(|| AppError::UnknownModel {
-                    model: model.to_string(),
-                    provider: provider.to_string(),
-                })?;
-            if entry.provider != target {
-                return Err(AppError::ModelBelongsToProvider {
-                    model: model.to_string(),
-                    owner: entry.provider.as_str().to_string(),
-                    current: provider.to_string(),
-                });
-            }
-            entry.id
+            resolve_provider_model(
+                &mut assembled.registry,
+                assembled.adapter.as_ref(),
+                assembled.credential.as_ref(),
+                &target,
+                model,
+            )
+            .await?
+            .id
         } else if self
             .registry
             .resolve(self.model.as_str())
@@ -1758,6 +1723,67 @@ impl AppCore {
     }
 }
 
+fn catalog_entry_from_definition(
+    provider_id: &ProviderId,
+    definition: &ModelDefinition,
+) -> CatalogEntry {
+    CatalogEntry {
+        id: definition.id.clone(),
+        provider: provider_id.clone(),
+        display_name: definition.display_name.clone(),
+        context_window_tokens: definition.context_window_tokens,
+        max_output_tokens: definition.max_output_tokens,
+        capabilities: definition.capabilities.clone(),
+        pricing: None,
+        aliases: Vec::new(),
+    }
+}
+
+/// 按明确的 `(provider, model)` 解析模型。静态目录未命中目标 provider 时，
+/// 对该 provider 探测一次并惰性合并；探测仍未命中则保持 fail-closed。
+async fn resolve_provider_model(
+    registry: &mut ModelRegistry,
+    provider: &dyn ModelProvider,
+    credential: Option<&ResolvedCredential>,
+    provider_id: &ProviderId,
+    model: &str,
+) -> Result<CatalogEntry, AppError> {
+    if let Some(entry) = registry
+        .resolve(model)
+        .filter(|entry| entry.provider == *provider_id)
+        .cloned()
+    {
+        return Ok(entry);
+    }
+
+    let static_owner = registry
+        .resolve(model)
+        .map(|entry| entry.provider.as_str().to_string());
+    let discovered = provider
+        .list_models(credential)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|definition| definition.id.as_str() == model)
+        .map(|definition| catalog_entry_from_definition(provider_id, &definition));
+    if let Some(entry) = discovered {
+        registry.extend_with(vec![entry.clone()]);
+        return Ok(entry);
+    }
+
+    match static_owner {
+        Some(owner) => Err(AppError::ModelBelongsToProvider {
+            model: model.to_string(),
+            owner,
+            current: provider_id.as_str().to_string(),
+        }),
+        None => Err(AppError::UnknownModel {
+            model: model.to_string(),
+            provider: provider_id.as_str().to_string(),
+        }),
+    }
+}
+
 fn usage_from_run_json(data: &serde_json::Value) -> Option<TokenUsage> {
     data.get("data")
         .and_then(|inner| inner.get("usage"))
@@ -2382,6 +2408,57 @@ mod tests {
         }
         assert!(overview.iter().any(|entry| entry.id.as_str() == "grok-4"),
             "xai static models missing");
+    }
+
+    #[tokio::test]
+    async fn switch_provider_accepts_runtime_discovered_model() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "runtime-only-model"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider_id = ProviderId::from("runtime-catalog-provider");
+        let backend = Arc::new(pawork_auth::MemoryBackend::new());
+        pawork_auth::store_default_api_key(
+            backend.as_ref(),
+            &provider_id,
+            "not-a-real-key",
+        )
+        .expect("store test credential");
+        let backend: Arc<dyn SecretBackend> = backend;
+        let config = PaworkConfig {
+            providers: vec![ProviderConfig {
+                id: provider_id.as_str().into(),
+                base_url: Some(format!("{}/v1", server.uri())),
+                ..ProviderConfig::default()
+            }],
+            ..PaworkConfig::default()
+        };
+        let mut core = core_with_registry(ModelRegistry::empty(), "initial")
+            .with_state(config, backend);
+
+        core.switch_provider(
+            None,
+            provider_id.as_str(),
+            Some("runtime-only-model"),
+        )
+        .await
+        .expect("ModelList runtime entry must be selectable");
+
+        assert_eq!(core.provider_id(), &provider_id);
+        assert_eq!(core.model().as_str(), "runtime-only-model");
+        assert_eq!(
+            core.registry
+                .resolve("runtime-only-model")
+                .map(|entry| &entry.provider),
+            Some(&provider_id)
+        );
+        server.verify().await;
     }
 
     #[tokio::test]

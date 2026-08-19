@@ -45,7 +45,7 @@ pub struct PaworkConfig {
     /// 全局出站代理（如 `http://127.0.0.1:38081`）。
     ///
     /// 参照 CLIProxyAPI `proxy-url`：应用于 Provider/OAuth 出站请求；
-    /// 回环与 `.local` 目标直连（pawork-net `loopback_aware_proxy`）。
+    /// 回环与 `.local` 目标直连（`pawork-providers::net::loopback_aware_proxy`）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
 
