@@ -124,7 +124,7 @@ GUI 仍走冻结契约形状（[design.md](design.md) §3.2 GUI 协议）：帧�
 V1 Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没有历史 Timeline 内容**；S7 不得把不存在的 `snapshot(session+timeline)` 当作可迁资产。波 A 按以下方式补齐，且不新增同 major 的枚举变体：
 
 1. `SessionGet` 保留现有变体，在协商后的新 minor 中追加可选请求字段 `timeline_after_sequence` / `timeline_limit`。
-2. `AppResponse::Data` 保留现有信封与 Session 数据形状，只追加可选 `timeline_page`：`items`、`next_sequence`、`head_sequence`、`complete`。`items` 是 gui-server 从已持久化 Agent 事件投影出的 presentation-safe 条目，不暴露 SQLite、Secret 或 Protected Blob 明文。
+2. `AppResponse::Data` 保留现有信封与 Session 数据形状，只追加可选 `timeline_page`：`items`、`next_sequence`、`head_sequence`、`complete`。`items` 是 `pawork-app::gui_server` 从已持久化 Agent 事件投影出的 presentation-safe 条目，不暴露 SQLite、Secret 或 Protected Blob 明文。
 3. 首连走 `snapshot(N) → subscribe(after=N) → 分页取 active session Timeline`。历史页加载期间 controller 暂存 live events；到达 `head_sequence` 后按 event id / sequence 去重，再交给 projection。
 4. 重连得到连续 Replay 时直接续接；得到 `SnapshotRequired` 时丢弃 stale 权威标记，以新 Snapshot 替换基线并重新分页当前会话。Desktop 重启同样从持久化 Timeline 重建，不能依赖 GUI 本地业务缓存。
 
@@ -140,7 +140,7 @@ GPUI view  →  projection（纯 Rust，可从 snapshot+events 重建）
            →  local transport  →  pawork gui serve  →  app-service
 ```
 
-`apps/desktop` 的直接业务依赖只允许 `pawork-client`；GPUI 与纯 UI 辅助库不算业务依赖。它不得直接依赖 app / engine / providers / session / sqlite / tools / git；该 deny list 在波 B/C 用 `cargo metadata` 实测。`projection` 不导入 GPUI 或 OS API，`controller` 只调 client，`platform` 只允许窗口、剪贴板、选工作区目录与拉起固定 `pawork` 二进制。GPUI 依赖在创建 crate 时锁定精确 revision。
+`apps/desktop` 的直接业务依赖只允许 `pawork-client`；GPUI 与纯 UI 辅助库不算业务依赖。它不得直接依赖 `pawork-app` / `pawork-engine` / `pawork-providers` / `pawork-storage` / `pawork-tools` / `pawork-git` / `pawork-protocol`（R1 后现名，断言见 `apps/desktop/src/platform.rs`）；该 deny list 在波 B/C 用 `cargo metadata` 实测。`projection` 不导入 GPUI 或 OS API，`controller` 只调 client，`platform` 只允许窗口、剪贴板、选工作区目录与拉起固定 `pawork` 二进制。GPUI 依赖在创建 crate 时锁定精确 revision。
 
 S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长期协议；最小 gui-protocol 激活后，Desktop 只走正式帧。S10 再把 `--json` 对齐 headless，并补 SDK / ACP / 多客户端。
 
@@ -184,7 +184,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 
 - Domain 已有 `PluginId`、`ToolCapability::ExternalPlugin`；时间线按普通 tool 事件渲染即可，不识别插件品牌。
 - Snapshot / capability 集合预留扩展位；未知 capability 隐藏，不报错、不画灰掉的市场入口。
-- 不在 S7–S12 任务里激活 `pawork-api` 的 `plugin` feature、不建 wasm-host / marketplace 页面。
+- 不在 S7–S12 任务里激活 `plugin` feature（R1 起为 `pawork-domain` 的空锚 `plugin = []`）、不建 wasm-host / marketplace 页面。
 - 决策记录见 [ROADMAP §4](../ROADMAP.md)。
 
 ---

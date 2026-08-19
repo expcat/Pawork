@@ -1,26 +1,9 @@
 [workspace]
 resolver = "2"
-# Cargo 要求 glob 的父目录已存在；未激活域的 glob 随对应波次建目录后追加。
-# 终局：foundation/* net/* providers/* storage/* workspace/* execution/*
-#        vcs/* engine/* extensions/* workflow/* agents/* control-plane/*
-#        host/* clients/* apps/*
+# R1 波 E 定稿(ADR-039 D1):19 库平铺 crates/<短名>(目录去 pawork- 前缀,
+# 包名不变)+ 2 应用 apps/{pawork,desktop};members 21。
 members = [
-    "foundation/*",
-    # R1 波 B:net/* 与 storage/* 成员已全部并入 providers/adapters 与
-    # foundation/sqlite(pawork-storage),空 glob 会被 Cargo 拒绝,先行移除;
-    # 终局目录迁移与 members 定稿集中在波 E(ADR-039 D1)。
-    "providers/*",
-    "workspace/*",
-    "execution/*",
-    "vcs/*",
-    "engine/*",
-    # R1 波 C:extensions/* 唯一成员 mcp 已并入 execution/tools(pawork-tools),
-    # 空 glob 会被 Cargo 拒绝,先行移除;终局目录迁移与 members 定稿集中在波 E(ADR-039 D1)。
-    "workflow/*",
-    "agents/*",
-    "control-plane/*",
-    "host/*",
-    "clients/*",
+    "crates/*",
     "apps/*",
 ]
 

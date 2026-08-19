@@ -1,0 +1,21 @@
+[package]
+name = "pawork-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork Agent Engine（assemble_request + run_turn + 工具循环）"
+
+[dependencies]
+pawork-domain = { path = "../domain" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# sync feature 供既有 cancel 测试的 oneshot 使用
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+futures.workspace = true
+pawork-testkit = { path = "../testkit" }

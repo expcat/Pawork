@@ -12,7 +12,7 @@
 ## 2. 架构红线（不可违反）
 
 - CLI 与 Core 同进程同二进制（`pawork` 是唯一正式宿主），纯 Rust 实现；不引入 Node / Bun / V8 / 嵌入式 JS Runtime。GUI 以独立 GPUI 进程（`apps/desktop`）经 GUI Connection Protocol 连接 CLI，不嵌入 Core；Desktop 构建链同样保持纯 Rust。
-- `pawork-domain`（foundation/domain）不得依赖任何 GUI framework（包括 GPUI/Tauri）、SQLite、HTTP Client、OS Keychain、Git、任何具体 Provider。
+- `pawork-domain`（crates/domain）不得依赖任何 GUI framework（包括 GPUI/Tauri）、SQLite、HTTP Client、OS Keychain、Git、任何具体 Provider。
 - 禁止包间循环依赖；包布局与依赖方向见 [docs/design.md](docs/design.md) §2。
 - Agent Engine 不得通过判断 Provider 名称走特例逻辑（统一走 canonical domain）。
 - Secret（明文 Token）不写入数据库与日志。
@@ -26,7 +26,7 @@
 - 项目名：`Pawork`；CLI 二进制名：`pawork`。
 - `pawork`（apps/pawork）是 Core 的唯一正式宿主；不存在独立的 daemon / rpc 入口。
 - 仓库根即 Cargo workspace 根（2026-08-17 已把原 `Pawork_v2/` 摊平，不再嵌套外层目录）。
-- 当前布局为 37 成员按功能域分目录（V2 收官时 39 成员；R0 已归档 memory/review 包并裁剪 transport remote、workflow 三域外模块、teams、provider-control 大块等休眠库存，见 [docs/design.md](docs/design.md) §2 前言）；V3 目标布局为 21 成员（19 库 + 2 应用），由 [plan/R1-package-consolidation.md](plan/R1-package-consolidation.md) 与 ADR-039 定稿执行，收口后回写 design.md §2 与本节。
+- 当前布局为 21 成员（19 库 + 2 应用）：19 库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀），2 应用 `apps/{pawork,desktop}`（R1 收口定稿 2026-08-19，ADR-039 D1；V2 收官时 39 成员，R0 归档裁剪后 37，R1 合并收敛至 21）；包清单与依赖方向见 [docs/design.md](docs/design.md) §2。
 - crate 统一 `pawork-` 前缀（`pawork-domain`、`pawork-engine`……）。**V3 期间不新增包**，只做合并与收敛；任何包布局变更须先过对应 ADR。
 - R0 归档的资产以 git tag `v2-final` 兜底，复活条件登记在 [ROADMAP.md](ROADMAP.md) §3.3；不得把归档代码复制回仓库其它位置。
 

@@ -1,0 +1,30 @@
+[package]
+name = "pawork-orchestration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 多 Agent 编排：Supervisor/Worker 生命周期、任务图、worktree 隔离、预算与 Agent Teams"
+
+[features]
+default = []
+git = ["dep:pawork-git"]
+
+[dependencies]
+pawork-domain = { path = "../domain" }
+pawork-control-plane = { path = "../control-plane", default-features = false }
+pawork-git = { path = "../git", optional = true }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }
+tracing.workspace = true
+blake3.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tempfile.workspace = true
+serde_json.workspace = true

@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 # 业务依赖唯一入口：pawork-client（re-export 协议/传输类型）。
-pawork-client = { path = "../../clients/gui-client" }
+pawork-client = { path = "../../crates/client" }
 # UI / 运行时基建（ADR-035：gpui 精确锁定 0.2.2）。
 gpui = "=0.2.2"
 smol = "2"

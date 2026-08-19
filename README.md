@@ -4,16 +4,16 @@
 
 Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心：以 Pi 的功能与工作流为参考，但**不复用**其 TypeScript 实现。二进制 `pawork` 是 Core 的唯一正式宿主；Desktop GUI（GPUI，`apps/desktop`）作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
 
-当前仓库处于 **V3 重构线（R0–R9，见 [ROADMAP.md](ROADMAP.md)）**：V2 增量开发（S0–S13）已于 2026-08-18 完成并总结于 [docs/v2-summary.md](docs/v2-summary.md)；V3 不加新功能，聚焦结构收敛（39→21 包）、依赖治理、补丁根因重构与 GUI 组件化。V1 全量实现（88 crate）已于 2026-08-17 归档至仓库外同级目录 `../Pawork_v1/`：移出 git 管理，仅作为迁移参照与历史快照保留。
+当前仓库处于 **V3 重构线（R0–R9，见 [ROADMAP.md](ROADMAP.md)）**：V2 增量开发（S0–S13）已于 2026-08-18 完成并总结于 [docs/v2-summary.md](docs/v2-summary.md)；V3 不加新功能，聚焦结构收敛（R0 裁决后 37→21 包，R1 已收口）、依赖治理、补丁根因重构与 GUI 组件化。V1 全量实现（88 crate）已于 2026-08-17 归档至仓库外同级目录 `../Pawork_v1/`：移出 git 管理，仅作为迁移参照与历史快照保留。
 
-## 项目状态（2026-08-18）
+## 项目状态（2026-08-19）
 
 V2（S0–S13）全部 🟢：最小对话 → 会话持久化 → 工具循环 → 写入审批 → 命令执行与沙箱 → 上下文预算与用量 → 六通道 Provider 与 OAuth → Agent GUI（三栏工作台）→ Git/Diff/Checkpoint → MCP 与资源 → 服务化与客户端（headless/ACP/SDK）→ 工作流与多 Agent → 全项目 Code Review → 整改收口。唯一挂账：OAuth 自然临期 refresh 人工验收（并入 R9）。
 
 | V3 阶段 | 主题 | 状态 |
 | --- | --- | --- |
-| [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决（ADR-038） | ⚪ |
-| [R1](plan/R1-package-consolidation.md) | 包合并 39→21（ADR-039） | ⚪ |
+| [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决（ADR-038） | 🟢 |
+| [R1](plan/R1-package-consolidation.md) | 包合并 37→21（ADR-039） | 🟢 |
 | [R2](plan/R2-dependency-governance.md) | 依赖治理（本地化 / 升级 / 去重） | ⚪ |
 | [R3](plan/R3-protocol-unification.md) | 协议与投影同源化 | ⚪ |
 | [R4](plan/R4-host-decomposition.md) | 宿主拆解与可靠性内核 | ⚪ |
@@ -41,21 +41,27 @@ cargo build                      # workspace dev 构建
 
 ```text
 Pawork/                  # 仓库根 = Cargo workspace 根
-├── apps/                # 可执行入口：pawork（CLI 宿主）、desktop（GPUI GUI）、protocol-probe
-├── agents/              # orchestration（Supervisor / teams）
-├── control-plane/       # core / quota / provider-control
-├── workflow/            # core（plan/goal/task/automation/monitor）、memory、review
-├── foundation/          # domain、api、protocol、config、sqlite、testkit、diagnostics
-├── engine/              # Agent Engine（工具循环、上下文、事件）
-├── execution/           # exec（进程/沙箱）、policy、tools
-├── providers/           # core、adapters（多通道）、auth
-├── storage/             # session（持久化/重放）、blob
-├── host/                # app、cli、gui-server、transport、channels
-├── clients/             # gui-client、sdk、compat
-├── net/                 # HTTP/传输基础
-├── vcs/                 # git（diff/checkpoint/rollback）
-├── extensions/          # mcp（S9）
-├── workspace/           # core（workspace 服务）、resources（AGENTS.md/Skills 加载）
+├── crates/              # 19 个库（ADR-039 扁平布局，目录 = 包名去 pawork- 前缀）
+│   ├── domain/          # canonical 领域 + provider_api/tool_api 契约 + 事件信封 golden
+│   ├── protocol/        # GUI 帧 / headless-json / core-api / typegen
+│   ├── testkit/         # dev-only mock 与契约断言
+│   ├── policy/          # 安全内核（PolicyDecision/ApprovalMode）
+│   ├── exec/            # 进程/沙箱/PTY
+│   ├── tools/           # 八工具 + scheduler + mcp/
+│   ├── workspace/       # workspace 服务 + resources/ + config/ + import/
+│   ├── storage/         # sqlite/ + session/ + blob/（PWB1）
+│   ├── providers/       # net/ + registry/pricing/usage/negotiate/reasoning + channels/（六通道）
+│   ├── auth/            # Secret 后端 / OAuth / 脱敏解析链
+│   ├── git/             # Diff/Status/Checkpoint/worktree
+│   ├── engine/          # Agent Engine（生产依赖仅 domain）
+│   ├── workflow/        # plan/task 纯 reducer
+│   ├── orchestration/   # supervisor/budget/lifecycle/task_graph
+│   ├── control-plane/   # 控制面 core + quota/ + credential/
+│   ├── transport/       # local（UDS）+ memory
+│   ├── app/             # 装配宿主 + gui_server/
+│   ├── cli/             # 21 子命令 + channels/acp/
+│   └── client/          # framed 连接面 + headless/（原 sdk）
+├── apps/                # pawork（CLI 宿主 + composition root）、desktop（GPUI GUI）
 ├── schemas/             # protocol typegen 检入的 .d.ts
 ├── fixtures/            # 测试夹具
 ├── design/              # GUI v3 定稿视觉基准
@@ -63,7 +69,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 └── plan/                # 阶段任务书 R0–R9
 ```
 
-以上为当前（V2 遗留）布局；V3 目标布局为 21 成员（19 库 + 2 应用，R1 执行，见 [plan/R1-package-consolidation.md](plan/R1-package-consolidation.md)），收口后本节与 [docs/design.md](docs/design.md) §2 同步重写。包布局与激活映射见 [docs/design.md](docs/design.md) §2；冻结契约与「追加不重写」三道保险见 §3。
+以上为 V3 定稿布局（21 成员：19 库 + 2 应用，R1 收口 2026-08-19，ADR-039 D1）。包清单与依赖方向见 [docs/design.md](docs/design.md) §2；冻结契约与「追加不重写」三道保险见 §3；R1 合并映射见 [plan/R1-package-consolidation.md](plan/R1-package-consolidation.md)。
 
 ## 文档导航
 

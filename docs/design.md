@@ -2,7 +2,7 @@
 
 > 本文档是**设计事实源**：包布局与激活映射、冻结契约与「追加不重写」三道保险、各阶段功能设计及其到参照项目的映射、已确认扩展功能族与候选功能、发布策略。
 >
-> **V3 状态说明（2026-08-18）**：V2（S0–S13）已收官（总结见 [v2-summary.md](v2-summary.md)），当前执行 V3 重构线 R0–R9（[../ROADMAP.md](../ROADMAP.md)）。本文 §2 的包布局与 §4 的阶段映射描述 **V2 交付实态**（S13 收官时 39 成员；R0 已归档 memory/review 并裁剪 transport remote、workflow 三域外模块、teams、provider-control 大块，当前 workspace 实测 37 成员，当前代码以 `cargo metadata` 为准）；V3 目标布局（37→21）见 [../plan/R1-package-consolidation.md](../plan/R1-package-consolidation.md)，R1 收口后 §2 重写。§3 冻结契约在 V3 期间继续有效（R6/R7 的版本化演进除外）。原 S0–S13 阶段任务书已删除，历史见 [v2-summary.md](v2-summary.md) 与 git 历史。
+> **V3 状态说明（2026-08-19）**：V2（S0–S13）已收官（总结见 [v2-summary.md](v2-summary.md)），当前执行 V3 重构线 R0–R9（[../ROADMAP.md](../ROADMAP.md)）。R1 已收口（ADR-039，2026-08-19）：本文 §2 已重写为 **V3 定稿布局**（21 成员：19 库平铺 `crates/<短名>` + 2 应用 `apps/`）；§4 的阶段映射仍记录 **V2 交付史**（S0–S13，收官时 39 成员），是「功能 ↔ 参照项目」的事实源，不再代表现行包布局。§3 冻结契约在 V3 期间继续有效（R6/R7 的版本化演进除外）。原 S0–S13 阶段任务书已删除，历史见 [v2-summary.md](v2-summary.md) 与 git 历史。
 >
 > 关联文档：[../ROADMAP.md](../ROADMAP.md)（任务总索引）· [../v3_plan.md](../v3_plan.md)（任务开启编排）· [../plan/](../plan/)（阶段任务书 R0–R9）· [gui-design.md](gui-design.md)（Desktop GUI 设计）· [references.md](references.md)（参照项目手册）· [task-guide.md](task-guide.md)（任务实现规范）· [v2-summary.md](v2-summary.md)（V2 归档总结）· [v1-migration-reference.md](v1-migration-reference.md)（V1 Review 与迁移词典全文）。
 
@@ -20,56 +20,35 @@
 
 ---
 
-## 2. 包布局与激活映射（40 包 + 3 应用）
+## 2. 包布局与依赖方向（21 包，ADR-039 定稿）
 
-终局目录结构（按功能域分子目录）全文见 [v1-migration-reference.md](v1-migration-reference.md) §3；V1→V2 合并来源、行数与关键动作见同文 §4.1 映射总表（唯一迁移词典）。
+R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用）**：19 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀不变），2 个应用维持 `apps/{pawork,desktop}`。布局决策、合并映射与不合并清单见 [adr/ADR-039](adr/ADR-039-package-layout-and-no-merge-list.md)；V2 时代的激活阶段史（S0–S13 各包何时接入、能力级核对）见 [v2-summary.md](v2-summary.md) 与 [v1-migration-reference.md](v1-migration-reference.md) §3/§4。
 
-下表为**各包的激活阶段与后续增强路径**。「激活」= 建 crate 并接入装配链；「增强」= 后续阶段在该包内追加模块。
-
-| V2 包 | 激活 | 后续增强 | 备注 |
+| 包 | 目录 | 依赖方向 | 备注 |
 | --- | --- | --- | --- |
-| `pawork-domain` | S0（agent-domain 本体整包，不含 events） | S1（events 全量并入） | canonical 纯净红线自 S0 生效 |
-| `pawork-api` | S0（`provider` feature） | S2（`tool`）；`plugin` feature **预留不激活** | `plugin` 待 ROADMAP §4 决策后再开 |
-| `pawork-net` | S0（parsers + http） | — | SSE/JSONL/partial-JSON 解析器 + proptest 种子随迁 |
-| `pawork-config` | S0（三层最小） | S6（凭证解析）、S9（完整六层 + Profile） | schema 照抄 V1，实现分步 |
-| `pawork-providers` | S0（openai-compatible） | S2（anthropic-messages）、S6（六条首发通道 + Responses 组装器下沉） | 首发通道按 feature 启用；其它厂商按后续需求增加 |
-| `pawork-engine` | S0（run_turn 最小） | S1 事件化、S2 工具循环、S3 审批、S4 取消清理、S5 context | 增量长出，语义对齐 V1（§3.2）；S11 Plan gate 在 host，engine 不依赖 workflow |
-| `pawork-app` | S0（最小装配） | S3 审批位点、S7 最小 Event 扇出、S10 Event Hub/正式化、S11 Plan gate / usage ledger / tasks / agents demo | 从 S0 起就是独立包，杜绝后期抽包 |
-| `pawork-cli` | S0（chat/models） | 逐阶段加子命令；S7 `gui serve` 最小；S10 六运行模式齐全；S11 `usage`/`tasks`/`plan`/`agents` | 同上 |
-| `pawork`（bin） | S0（composition root） | 持续 | 唯一正式宿主 |
-| `pawork-sqlite` | S1 | — | Actor + backup/restore + 通用 migration 框架 |
-| `pawork-session` | S1（event store 核心） | S5（`compaction`）、S9（导入器 `import::formats`）、S10（lifecycle + 分支/Fork UX） | V1 migration 序列全量复用；分支数据层 S1 即就绪 |
-| `pawork-testkit` | S2（MockProvider 最小） | 随各域契约补 mock/断言 | |
-| `pawork-workspace` | S2（roots/相对路径） | S9（file-index + `@file`） | |
-| `pawork-tools` | S2（只读四件） | S3（写三件）、S4（run_command） | `tool_search` 冻结候审不迁 |
-| `pawork-policy` | S3（整包） | — | 安全内核，红线回归随迁 |
-| `pawork-exec` | S4（process + sandbox） | S10（pty，消费者=交互式终端/GUI Terminal） | Windows 先实测，Linux/macOS 代码随迁；三平台实跑移出当前 S12，S13 收口后另立验证任务 |
-| `pawork-provider-core` | S5（usage/negotiate/registry/pricing） | — | 依赖 `pawork-domain` / `pawork-api`，由 `pawork-providers` 消费；不依赖 net/SQLite/blob store。若 S0 的 openai-compatible 迁移需要 `stream_assembly`，则该模块提前至 S0 最小激活 |
-| `pawork-auth` | S6 | — | `auth.json` 文件后端 + OAuth + masked；0600、跨进程 write/refresh 锁、独立临时文件+rename 原子写，OAuth access/refresh/meta 批量单次提交，损坏 fail-closed |
-| `pawork-diagnostics` | S6（脱敏 tracing layer 接线） | — | 早期阶段以纪律 + 断言测试兜底 |
-| `pawork-git` | S8 | — | roots 参数化 |
-| `pawork-blob-store` | S8（artifact/protected/checkpoint） | — | `PWB1` golden 先行 |
-| `pawork-mcp` | S9（含 rmcp 收口） | — | |
-| `pawork-resources` | S9 | — | AGENTS.md/Skills/profiles |
-| `pawork-compat` | S9 | — | 五来源只读导入 |
-| `pawork-protocol` | S7（最小 gui 帧） | S10（六合一 + typegen + `--json` 对齐） | 激活即用 V1 完整形状，S7 只消费对话子集 |
-| `pawork-transport` | S7（local） | S10（memory/remote） | remote feature 锁 rustls |
-| `pawork-gui-server` | S7（单客户端） | S10（多客户端 Replay / 慢客户端隔离） | |
-| `pawork-sdk` | S10 | — | headless --json-stdio |
-| `pawork-client` | S7 | S10 补齐 Resume/多客户端 API | Desktop 从 S7 起真实消费 |
-| `pawork-channels` | S10（acp 优先） | codex/claude/remote-control 按需 feature | |
-| `protocol-probe`（bin） | S10 | — | 协议自检 |
-| `apps/desktop` | S7（最小 Agent 壳） | S8–S11 按 [gui-design.md](gui-design.md) §5 加面 | 不链 Core |
-| `pawork-wasm-host` / `pawork-plugin` / `pawork-hooks` / `pawork-lsp` | **不激活（待决策）** | — | 预留目录与契约，见 ROADMAP §4 |
-| `pawork-workflow` | S11 | — | plan/goal/task/automation/monitor |
-| `pawork-memory` | S11（experimental 门控候选） | — | 待 EmbeddingProvider |
-| `pawork-review` | S11 | — | |
-| `pawork-orchestration` | S11 | — | supervisor 拆五模块 |
-| `pawork-control-plane` | S11 | — | dedup_key/audit JSONL golden |
-| `pawork-provider-control` | S11 | — | account-control feature 分层 |
-| `pawork-quota` | S11（核心） | — | 远端适配器冻结候审 |
+| `pawork-domain` | `crates/domain` | 无内部依赖 | canonical 纯净红线；含 `provider_api/`（ModelProvider、CanonicalModelRequest、ProviderStreamEvent 13 变体、ProviderError、ResolvedCredential，R1 波 A 自 api 并入）与 `tool_api/`（AgentTool、ToolResult）；事件信封 v1 与契约字节 golden 在本包 tests/ |
+| `pawork-protocol` | `crates/protocol` | → domain | GUI 帧 / headless-json / core-api / typegen（检入 `schemas/` 三产物） |
+| `pawork-testkit` | `crates/testkit` | → domain | dev-only：MockProvider/MockTool/契约断言 |
+| `pawork-policy` | `crates/policy` | → domain | 安全内核；`PolicyDecision`/`ApprovalMode` 冻结契约与红线回归锚 |
+| `pawork-exec` | `crates/exec` | 无内部依赖 | process/sandbox/pty；R7 沙箱演进承载 |
+| `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、auth | 八工具 + scheduler + `mcp/`（R1 波 C 并入；rmcp 隔离断言为模块级测试） |
+| `pawork-workspace` | `crates/workspace` | → domain、policy | `service/`+`path/`+`file_index/`、`resources/`、`config/`（六层矩阵）、`import/`（原 compat 五来源，R1 波 B 并入） |
+| `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（PWB1+checkpoint/protected，R1 波 B 三合）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
+| `pawork-providers` | `crates/providers` | → domain | `net/`（http/sse/retry）+ `registry/`/`pricing/`/`usage/`/`negotiate/`/`reasoning/`（原 provider-core）+ `channels/`（六通道，feature 门控）（R1 波 B 三合）；core 不依赖 net 降级为模块纪律 + 源扫描测试 |
+| `pawork-auth` | `crates/auth` | → domain | Secret 后端/OAuth/脱敏/解析链（Secret 审计边界） |
+| `pawork-git` | `crates/git` | → domain、exec | Diff/Status/GitService/GitRunner/HunkStage/worktree/merge（R0 已裁剪） |
+| `pawork-engine` | `crates/engine` | → domain（唯一 pawork-* 生产依赖，`tests/domain_only.rs` 断言护航） | tool_loop/session_turn/context/cancel/appender |
+| `pawork-workflow` | `crates/workflow` | → domain | plan/task 纯 reducer |
+| `pawork-orchestration` | `crates/orchestration` | → domain、control-plane（default-features = false）、git(opt) | supervisor/budget/lifecycle/merge/task_graph/worktree/identity；不依赖 workflow（装配在 app） |
+| `pawork-control-plane` | `crates/control-plane` | → domain（rusqlite optional，自开连接） | 控制面 core + `quota/` + `credential/`（lease/pool，R1 波 C 并入）；usage `dedup_key`/audit JSONL golden |
+| `pawork-transport` | `crates/transport` | 无内部依赖（帧长度常量与 protocol 对齐，但不依赖该 crate） | local（UDS/named pipe）+ memory |
+| `pawork-app` | `crates/app` | 领域宿主依赖 + transport | 装配宿主 + `gui_server/`（GuiServer/ConnectionManager/GuiHost trait，R1 波 D 并入） |
+| `pawork-cli` | `crates/cli` | 原 cli 依赖（GuiHost 经 app） | 21 子命令 + `channels/acp/`（AcpHost 四件套，R1 波 D 并入） |
+| `pawork-client` | `crates/client` | → domain、protocol、transport | framed 连接面 + `headless/`（原 sdk，R1 波 D 并入）；probe 9 场景为本包 tests/，live 模式 `examples/probe.rs` |
+| `pawork`（bin） | `apps/pawork` | → cli | composition root + `redact.rs`（Redactor/RedactingFmtLayer，R1 波 A 自 diagnostics 迁入） |
+| `pawork-desktop`（bin） | `apps/desktop` | → client、gpui | 四层 ui/projection/controller/platform；业务依赖仅 pawork-client（deny-list 断言） |
 
-**能力级核对**（基于 V1 全量盘点：docs/features 26 篇 + V1 MVP 验收 22 条 + CLI 六运行模式/全部子命令 + 八工具/八厂商/扩展与控制面 crate 清单）：除 2026-08-15 收窄的 Provider 厂商广度、以及 2026-08-16 移出排期的 WASM 插件/Hooks/LSP/市场外，V1 用户可见能力在上表与 [../ROADMAP.md](../ROADMAP.md) §2 均有落点。易漏项——任意消息 Fork/会话分支 UX → S10（数据层 S1 就绪）；`pawork service` 与 status/watch/shutdown/doctor → S10；手动 compaction → S5；大型 Tool Output 走 Artifact → S4 预留、S8 接管；10 万行 Diff 分页/分片 → S8（paginate）+ S10（Artifact 分片读取）；性能基准是否需要重建由 S12 审查，实施与测量另立任务；GPUI Desktop → **S7 最小壳**，其后按 [gui-design.md](gui-design.md) §5 增量；插件预留接口见 ROADMAP §4，不在本轮激活实现包。
+**不合并清单**（ADR-039 D2 固化）：`policy`、`exec`、`auth`、`git`、`engine`、`protocol`、`testkit`、`transport`、`orchestration`、`workflow` 保持独立包。R1 解散的 16 包与 protocol-probe 为**平移**语义（git 历史 + tag `v2-final` 兜底），模块现址见上表备注列。V3 期间不新增包，后续阶段只往既有包加模块；包布局变更须先过 ADR。
 
 ---
 
@@ -79,9 +58,9 @@
 
 ### 3.1 终局包布局先行
 
-- 目录结构就是 [v1-migration-reference.md](v1-migration-reference.md) §3 的终局布局（40 包 + 3 应用，S7 起含 `apps/desktop`）；每个阶段按该路径**激活**若干目录（建 crate、迁入/新写最小模块），不新造层级、不临时安置代码。未激活域不预建空 crate；workspace `members` glob 随父目录落地追加（Cargo 要求 glob 父目录已存在）。
-- 新能力 = 新包或已有包内新模块；**禁止**「先写在 bin 里、以后再抽包」——host/cli、host/app、engine/engine 这些终局包从 S0 起就以最小形态存在，后续阶段只往里加模块。
-- 包间依赖方向自激活之日起遵守 [v1-migration-reference.md](v1-migration-reference.md) §4.1 映射表；canonical 纯净红线（domain/api 不依赖 GUI/SQLite/HTTP/Keychain/Git/具体 Provider）不变。
+- 现行终局布局为 **21 成员（19 库 + 2 应用）**：19 库平铺 `crates/<短名>`，2 应用 `apps/{pawork,desktop}`（R1 收口定稿，ADR-039 D1）。V2 时期按 [v1-migration-reference.md](v1-migration-reference.md) §3 的 40 包布局逐阶段**激活**（建 crate、迁入/新写最小模块），不新造层级、不临时安置代码，该史见 §4 与 [v2-summary.md](v2-summary.md)；未激活域不预建空 crate。
+- 新能力 = 已有包内新模块（V3 不新增包）；**禁止**「先写在 bin 里、以后再抽包」——`crates/cli`、`crates/app`、`crates/engine` 这些终局包从 S0 起就以最小形态存在，后续阶段只往里加模块。
+- 包间依赖方向遵守 §2 表与 ADR-039 不合并清单；canonical 纯净红线（`pawork-domain` 不依赖 GUI/SQLite/HTTP/Keychain/Git/具体 Provider）不变。
 
 ### 3.2 冻结契约先行（激活即采用 V1 完整形状）
 
@@ -92,7 +71,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | Provider 契约 | `provider-api`：`ModelProvider`（`id`/`list_models`/`stream`）、`CanonicalModelRequest`、`ProviderStreamEvent`（13 变体，tag=`type`/content=`data`）、`ModelResponseSummary`、`ResolvedCredential`（Debug 脱敏）、`ProviderError` | S0 | 整包迁移，不裁剪字段；S0 只消费其中一部分 |
 | 事件信封 | `agent-events`：`AgentEventEnvelope`（`schema_version = 1`、`event_id/session_id/run_id/sequence/timestamp/parent_event_id/payload`）、`AgentEvent` 32 变体（含 `Diagnostic`） | S1 | 整枚举一次迁入 `domain::events`，serde golden 先行（V1 无独立夹具，S1 波 A 补建）；后期各域事件（Plan/Goal/Task/…）变体已在位 |
 | 会话存储 | `session-store`：`session_events` DDL（`UNIQUE(session_id, sequence)`、`CHECK(sequence > 0)`）、append-only 双触发器、`AppendReceipt`、migration 序列（DB `CURRENT_SCHEMA_VERSION = 10`，`messages.branch_id` 为投影附加列，与信封版本 1 相互独立） | S1 | 直接复用 V1 migration 序列全量建库，保证 V1 库文件可打开升级 |
-| 工具契约 | `tool-api` 执行面 + `agent-domain` 描述符：`AgentTool`（`descriptor`/`execute`）、`ToolEventSink`、`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）在 `pawork-api` `tool` feature；`ToolDescriptor`（含 `requires_approval`/`read_only`/`allowed_in_untrusted_workspace`）定义在 `pawork-domain`（S0 已迁入，S2 不复制） | S2 | 执行契约整组迁移、零裁剪；descriptor 的审批/只读语义为 S3 审批直接铺路 |
+| 工具契约 | `tool-api` 执行面 + `agent-domain` 描述符：`AgentTool`（`descriptor`/`execute`）、`ToolEventSink`、`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）原在 `pawork-api` `tool` feature（R1 起并入 `pawork-domain::tool_api`）；`ToolDescriptor`（含 `requires_approval`/`read_only`/`allowed_in_untrusted_workspace`）定义在 `pawork-domain`（S0 已迁入，S2 不复制） | S2 | 执行契约整组迁移、零裁剪；descriptor 的审批/只读语义为 S3 审批直接铺路 |
 | Policy 契约 | `policy-engine`：`PolicyDecision`（`Allow/Deny/AskUser/AllowWithConstraints`）、`ApprovalPrompt`+`RiskLevel`、`ApprovalMode`（默认 `ReadOnly`） | S3 | 整包迁移（V1 实现成熟，安全红线回归随迁） |
 | 配置 schema | `config-service`：TOML、`ConfigTier`（Builtin<Global<Profile<Workspace<Session<Run）、`PaworkConfig`/`ProviderConfig{id, base_url}`（**无 api_key 字段**） | S0 最小 / S9 完整 | S0 只实现 Builtin+Global+Workspace 三层读取与合并，但 schema 字段与文件位置照抄 V1；Profile/Session/Run 层 S9 补齐 |
 | 引擎语义 | `agent-engine`：审批经 `ApprovalResolver` await（`ToolApprovalRequested/Responded` 事件对）、`CancelHandle`+`CancelReason`、`LoopContext` 工具执行注入点 | S2–S3 | engine 实现增量长出，但事件语义、审批/取消语义与 V1 对齐（对应模块迁移时以 V1 测试为准绳） |
@@ -255,7 +234,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | G3 | 缓存感知的会话-账户亲和路由 | claude-relay-service sticky session、CLIProxyAPI session-affinity、opencodex thread affinity | SessionBinding 亲和默认开 + 新会话再平衡 + 新增「配额余量优先」路由策略 + 分类错误 rebind；请求级轮换不作默认 | P1 | S11（方案 F3-B） |
 | G4 | 子 Agent 声明式 provider/model/账户绑定 | opencode agent.model + 权限派生；CCR 子代理标签（反例，不采纳）；opencodex 模型即子代理 | Agent Profile/spawn 参数声明绑定 → RouteContext → provider-control 选账户；默认继承父绑定、显式覆盖；预算经 budget-gate 分配 | P1 | S9 profile 铺垫 / S11（方案 F4-A+B） |
 | G5 | canonical 输入缓存策略控制 | Anthropic cache_control、OpenAI prompt_cache_key、pi/opencode/Claude Code 断点收敛实践 | cache 注解（canonical，无厂商字段）+ registry 缓存能力表 + adapter 断点/亲和键映射 + 缓存用量入账与命中率观测 + compaction 联动 | P1 | S2 占位 / S5 分段 / S6 全量（方案 F5-B） |
-| G6 | 账户/端点配置导入 | cc-switch SQLite SSOT、CLIProxyAPI auth-dir、opencodex config、Codex Router 托管 config 块、Claude/Codex 官方布局 | pawork-compat 增加账户与端点只读导入源，secret 直接转存 Pawork auth 文件，不落仓库或中间文件 | P2 | S9（方案 F1 附属） |
+| G6 | 账户/端点配置导入 | cc-switch SQLite SSOT、CLIProxyAPI auth-dir、opencodex config、Codex Router 托管 config 块、Claude/Codex 官方布局 | `pawork-workspace::import`（原 pawork-compat）增加账户与端点只读导入源，secret 直接转存 Pawork auth 文件，不落仓库或中间文件 | P2 | S9（方案 F1 附属） |
 | G7 | 对外账户池网关模式 | opencodex / CLIProxyAPI / Codex Router 网关形态 | 近期不内建：以 openai-compatible 上游接外部网关 + 对内账户池；长期按需评估 channels 扩展 feature | P3 | 暂不排期（方案 F6，决策项；登记于 [../ROADMAP.md](../ROADMAP.md) §4） |
 
 **状态**：G1–G6 已确认、待由独立任务并入对应 `plan/S*.md`（任务书见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §4，已登记于 [../ROADMAP.md](../ROADMAP.md) §3.2；按 ROADMAP §6 状态回写约定执行）；G7 维持不做。其中 G5 涉及冻结契约的附加式字段扩展（CanonicalModelRequest/ModelResponseSummary），须遵守 §3.2 golden 先行原则。配套工作约定（执行期凭证 fail-closed / 少测试无门禁 / 缓存命中 95-97-99 目标）见 [research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1 与 [task-guide.md](task-guide.md)。

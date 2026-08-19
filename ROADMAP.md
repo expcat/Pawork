@@ -56,7 +56,7 @@ V3 由四条目标定义(依据:2026-08-18 五路只读分析——两路包合�
 | 阶段 | 主题 | 关键动作 | 触及范围 | 硬前置 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决 | ADR-038(单机 vs 多租户、remote/teams/三域/account-control 去留);归档约 3.3–3.8 万行零消费者代码;K-07 删除、K-08 停止虚假宣告;死 feature/死声明清理 | 全仓休眠面(workflow/orchestration/control-plane/transport/diagnostics/net/session/engine/host) | 无 | 🟢 |
-| [R1](plan/R1-package-consolidation.md) | 包合并 37→21 | ADR-039(目标布局 + 目录扁平化);api→domain、sqlite+session+blob→storage、net+core+adapters→providers、core+resources+config+compat→workspace、mcp→tools、quota+provider-control→control-plane、gui-server→app、channels→cli、sdk→client、diagnostics 解散、probe→client 测试;golden 随迁 | 全部 crate 的 Cargo.toml/目录/use 路径;design.md §2 重写 | R0 | 🔵(波 A/B/C/D ✅ 2026-08-19,members 21) |
+| [R1](plan/R1-package-consolidation.md) | 包合并 37→21 | ADR-039(目标布局 + 目录扁平化);api→domain、sqlite+session+blob→storage、net+core+adapters→providers、core+resources+config+compat→workspace、mcp→tools、quota+provider-control→control-plane、gui-server→app、channels→cli、sdk→client、diagnostics 解散、probe→client 测试;golden 随迁 | 全部 crate 的 Cargo.toml/目录/use 路径;design.md §2 重写 | R0 | 🟢(波 A–E ✅ 2026-08-19,members 21,扁平 `crates/` 迁移定稿) |
 | [R2](plan/R2-dependency-governance.md) | 依赖治理 | rand/parking_lot/base64 本地化;notify 8、windows 0.61、portable-pty 0.9、ts-rs 12、reqwest 0.13、toml 1.1、rusqlite 0.40、sha2 0.11 升级;lock 多版本去重断言;rmcp 3.x 专项 | 各 crate Cargo.toml + 少量调用点 | R1 | ⚪ |
 | [R3](plan/R3-protocol-unification.md) | 协议与投影同源化(T3+T5) | 单一 command/capability registry,GUI 帧/headless/ACP 三通道 mapping 同源派生(宣告=授权=实现);Timeline 投影 reducer 下沉 protocol 共享模块,host/desktop 同源 + 投影 golden;OnFailure 档位裁决 | protocol、app、cli(headless/acp)、client、desktop projection | R1(R2 可并行) | ⚪ |
 | [R4](plan/R4-host-decomposition.md) | 宿主拆解与可靠性内核(T2+T8+T9) | app 单体按领域服务拆分(巨 match → registry 分发);幂等 CommandLedger 持久化 + K-02 审批等待前落盘;ACP host actor 化;降级事件化契约(消灭静默 `let _`/回退) | app、cli、storage(幂等表)、protocol(降级事件) | R3 | ⚪ |
@@ -140,19 +140,21 @@ V2 收口时的 K-01~K-10 与其他挂账项(原委见 [docs/v2-summary.md](docs
 | 事项 | 说明 | 拍板时点 |
 | --- | --- | --- |
 | ADR-038 库存与产品形态 | [ADR-038](docs/adr/ADR-038-inventory-and-product-shape.md) **Accepted**(用户 2026-08-18 确认,22 项按推荐决议执行);波 0 tag `v2-final` 已打,波 A(D2–D7)、波 B(D8–D15/D20–D22)、波 C(D16 git 服务裁剪)已全部落地;波 B/C 实态核查共改判 4 项(D12、D14、D15、D16 commit.rs 补判,见 ADR 落实改判记录),本行不再是闸门 | 已确认 / R0 波 0 |
-| ADR-039 目录布局 | [ADR-039](docs/adr/ADR-039-package-layout-and-no-merge-list.md) **Accepted**(用户 2026-08-19 确认):扁平 `crates/<短名>` + `apps/<name>`,目录迁移集中波 E 一次完成;不合并清单(policy/exec/auth/git/engine/protocol/testkit/transport/orchestration/workflow)固化;波 A(api→domain + diagnostics 撤包)、波 B(storage/providers/workspace)、波 C(mcp/quota/provider-control)已落地(members 25),本行不再是闸门 | 已确认 / R1 波 A |
+| ADR-039 目录布局 | [ADR-039](docs/adr/ADR-039-package-layout-and-no-merge-list.md) **Accepted**(用户 2026-08-19 确认):扁平 `crates/<短名>` + `apps/<name>`,目录迁移集中波 E 一次完成;不合并清单(policy/exec/auth/git/engine/protocol/testkit/transport/orchestration/workflow)固化;波 A–E 全部落地(members 21,19 库已迁扁平 `crates/`,design.md §2 已重写),本行不再是闸门 | 已确认 / R1 波 A |
 | ADR-040 分支模型 | 推荐原生 lineage(Fork 是已交付能力,删除属产品倒退);备选冻结线性 + 删 Fork | R6 波 0 |
 | ADR-041 沙箱信任模型 | macOS 白名单 profile 的兼容性代价(Darwin 25 实测)与 PTY 语义 | R7 波 0 |
-| `pawork-sdk` `handshake_exposes_version_instance_and_capabilities` 既有失败 | R0 波 B 收口发现:`clients/sdk/tests/fixtures/hello_ack.json` 内嵌 api_version 1.1,断言对比 `API_VERSION` 常量(S13-F13 已升 1.2);夹具未随 S13 波 B 升级,波 B 写入集未触碰该测试与夹具(2026-08-18 裁决)。按 task-guide §1 窄任务修(夹具版本对齐) | 阶段外窄任务,不阻塞 R0 |
-| `plan_service::review_flow_replays_identically` 既有失败 | R0 波 A 收口发现:`revise(v2, v1, "revised", Vec::new())` 后 `steps[0]` 越界;基线 v2-final 复现,与 R0 改动无关(2026-08-18 裁决)。按 task-guide §1 窄任务修(测试或 revise 空 steps 语义) | 阶段外窄任务,不阻塞 R0 |
+| `pawork-sdk` `handshake_exposes_version_instance_and_capabilities` 既有失败 | R0 波 B 收口发现:`clients/sdk/tests/fixtures/hello_ack.json` 内嵌 api_version 1.1,断言对比 `API_VERSION` 常量(S13-F13 已升 1.2);夹具未随 S13 波 B 升级,波 B 写入集未触碰该测试与夹具(2026-08-18 裁决) | ✅ 已修复(R1 波 E 收口按 task-guide §1 窄任务修:夹具 negotiated 对齐 1.2,现 `crates/client/tests/fixtures/hello_ack.json`,2026-08-19) |
+| `plan_service::review_flow_replays_identically` 既有失败 | R0 波 A 收口发现:`revise(v2, v1, "revised", Vec::new())` 后 `steps[0]` 越界;基线 v2-final 复现,与 R0 改动无关(2026-08-18 裁决) | ✅ 已修复(R1 波 E 收口按 task-guide §1 窄任务修:测试侧改为携现有步骤修订,现 `crates/workflow/tests/plan_service.rs`,2026-08-19) |
 | rmcp 3.x | wire 兼容性未评估;若破坏 MCP golden 则锁 2.2 并登记 | R2 波 C |
 | directories 5→6 | 目录语义兼容(`dev.pawork.pawork` 布局)评估后升级或显式锁定 | R2 波 B |
 | gpui 升级跟踪 | `=0.2.2` 为当前最新(ADR-035);上游发新版后评估(影响 R8 组件 API) | 出现新版时 |
 | License 与 crates.io 占名 | 发布硬前置;不阻塞 R0–R9 | 发布任务前 |
-| `session_bindings` 孤儿表 | R0 归档 binding 后该表无读写方;迁移 append-only,留表 + 注释登记「预留」,不回滚 DDL | ✅ 已登记(`storage/session/src/migration.rs` v9 注释,2026-08-18) |
-| usage 幂等键冲突(冒烟发现) | R0 波 C 冒烟实证:`host/app/src/control.rs:140` 以 `rec-{run_id}` 为 record_id,含工具调用的多轮迭代在同一 run 下产生多条内容不同的 usage 记录,命中 ledger 幂等键 (tenant, account, record_id) 判 Conflict;失败记录入重试队列,后续运行反复重放同一 warn(如 `rec-run-1787064020223-1`)。既有缺陷,与 R0 改动无关;按 task-guide §1 窄任务修(record_id 加迭代序号或聚合为每 run 一条) | 阶段外窄任务,不阻塞 R0 |
+| `session_bindings` 孤儿表 | R0 归档 binding 后该表无读写方;迁移 append-only,留表 + 注释登记「预留」,不回滚 DDL | ✅ 已登记(现 `crates/storage/src/session/migration.rs` v9 注释,2026-08-18) |
+| usage 幂等键冲突(冒烟发现) | R0 波 C 冒烟实证:现 `crates/app/src/control.rs:140` 以 `rec-{run_id}` 为 record_id,含工具调用的多轮迭代在同一 run 下产生多条内容不同的 usage 记录,命中 ledger 幂等键 (tenant, account, record_id) 判 Conflict;失败记录入重试队列,后续运行反复重放同一 warn(如 `rec-run-1787064020223-1`)。既有缺陷,与 R0 改动无关;按 task-guide §1 窄任务修(record_id 加迭代序号或聚合为每 run 一条) | 阶段外窄任务,不阻塞 R0 |
 | PWB1 protected 消费者 | R5 将 ReasoningProtector 接到 ProtectedBlobStore(兑现 S6 注释承诺);若 R5 裁决删除则 PWB1 契约转冻结候审 | R5 波 C |
 | protocol-probe `snapshot-reconnect` 偶发超时 | R1 波 B 收口发现:批量 `cargo test` 下 `snapshot-reconnect` 场景一次「receive frame timed out after 10s」,单独连跑 3 次全绿;波 B 对该链路只有纯路径改名,判定为既有偶发;R9 全量复跑时验证 | R9 复跑核对 |
+| ModelList 与 switch_provider 模型目录不对称(冒烟发现) | R1 波 E 冒烟实证:`models_overview`(`crates/app/src/lib.rs`)把运行期 /models 探测结果合并进 ModelList(实测 glm-coding 实探返回 glm-4.7),而 `switch_provider`/`switch_model` 只在静态注册表解析(glm-coding 静态条目为 glm-5.2)——ModelList 通告的模型 RunStart 不可选,desktop `--probe-smoke` 首发切换即报「未知模型 glm-4.7」;GUI 用户手选探测独有模型同样失败。既有缺陷,与 R1 改动无关(行为文件与 HEAD 逐字节一致,2026-08-19 裁决)。修复方向:切换路径按探测合并目录解析,或 ModelList 条目标注可切换性 | 阶段外窄任务,不阻塞 R1 |
+| client 事件泵抢占命令错误帧(冒烟发现) | R1 波 E 冒烟实证:`crates/client/src/lib.rs` `FrameWant::Event` 同时匹配 `ServerFrame::Error`(S7 波 C 5aa9230 引入);desktop 事件泵常驻 `next_event_timeout` 持有 io 锁,命令失败时错误帧被泵抢先消费并误判 `Disconnected`,命令等待方收不到协议错误,10s 后误报「receive frame timed out」,真实错误被掩盖(带事件泵的任意命令失败均可复现)。既有缺陷,与 R1 改动无关(文件与 HEAD 逐字节一致,2026-08-19 裁决)。修复方向:错误帧按 request_id 归属路由,事件等待仅收 request_id=None 的连接级错误 | 阶段外窄任务,不阻塞 R1 |
 
 ---
 

@@ -99,6 +99,27 @@ providers/storage 单体化后,「改一个 adapter 重编整包」。接受该�
 - **验证**:tools 129(65+64)、control-plane 204(69+100+35)、app 93、cli 30、pawork 2、orchestration 85 全绿;desktop `cargo check` 绿(deny-list 未点名三包,desktop 依赖不变);audit JSONL golden 与 usage dedup_key 四锚定测试随迁面零触碰、保持绿;`cargo tree -p pawork` 闭包 751→724 行、无环、三包名在闭包与 Cargo.lock 零残留。
 - **D5 实测补录**:touch-单文件增量 `cargo check -p`——tools 合并前 ≈10.4s、合并后 ≈11.5s;control-plane 合并前 ≈8.5s、合并后 ≈5.7s(后者在噪声内)。编译粒度代价成立但绝对值仍秒级,维持 D5 取舍。
 
+### 波 D(2026-08-19,gui-server→app ∥ channels→cli ∥ sdk→client + probe→client)
+
+- **app(+gui-server)**:GuiHost trait 随包平移为 `pawork_app::gui_server::GuiHost`(GuiServer/ConnectionManager/EventHub 同迁);app 终态依赖 = 原依赖 + transport(吸收 gui-server 获得);cli 四处 `use pawork_gui_server::GuiHost`(chat/gui/headless/adapter)改经 app。
+- **cli(+channels)**:`acp/{adapter,command_host,host,wire}` 四公开模块 + `pub(crate) map.rs` 平移为 `pawork_cli::channels`;ACP golden fixtures 随迁;cli 顶层子命令实态 **21** 个(任务书「14」过时表述已回写)。
+- **client(+sdk、probe)**:sdk 稳定面(PaworkClient/PaworkOptions/EventSubscription/SdkError{,Kind}/Transport/spawn_pawork/SDK_API_VERSION/SDK_VERSION + experimental::CompatOutcome + protocol reexport)平移为 `pawork_client::headless` 并保持 `pub`,夹具(5 件 + client_tests 20 测 + spawn_e2e 3 测)随迁;probe 9 场景(MemoryTransport harness 形态保留)→ client `tests/`,live 模式(`--connect`/`--live-two-gui`/`--live-pty`)→ client `examples/probe.rs`。
+- **撤包**:host/gui-server、host/channels、clients/sdk、apps/protocol-probe 四源目录删除;**members 25→21**。
+- **契约面**:GUI 帧/headless-json 字节 golden 在 protocol(本波不动);typegen 链输入集不变;行为锚点(EventHub Snapshot/ReplayUnavailable、F33 fail-closed、ACP golden)随迁保绿;UDS 0600/token 锚点在 transport+protocol(写入集外,不动);cli `gui.rs` 强制 token 接线原样保留。
+- **验证**:被合并包与下游 `cargo check/test -p` 全绿;`cargo tree -p pawork` 闭包只减不增、无环;四解散包名在闭包与 Cargo.lock 零残留。
+
+### 波 E(2026-08-19,收口:members 定稿 21 + 扁平目录迁移)
+
+- **目录迁移(D1 落地)**:19 库 `git mv` 至扁平 `crates/<短名>`——domain/protocol/storage/testkit/providers/auth/workspace/policy/exec/tools/git/engine/workflow/orchestration/control-plane/app/transport/cli/client;apps/{pawork,desktop} 不动;八个空域目录(foundation/providers/net/storage/workspace/execution/control-plane/host/clients/extensions/agents 中已清空者)删除;`cargo metadata` 确认 members = 21(19 库 + 2 应用)。
+- **path 依赖改写**:crates 内互依 `../../<域>/<x>` → `../<短名>`,apps 两包 → `../../crates/<短名>`;**use 路径零变更**(包名不变,import 不动);根 Cargo.toml members 定稿 `crates/*` + `apps/*`,历史 glob 注释清理。
+- **红线断言随迁**:desktop deny-list(`apps/desktop/src/platform.rs`)删 provider-core/session/sqlite 三名、补 `pawork-storage`;新建 `crates/engine/tests/domain_only.rs`(engine 生产依赖仅 pawork-domain);rmcp 隔离断言已在 tools(波 C)。
+- **文档回写**:design.md(头部说明 + §2 整节重写为 21 包表 + §3.1/§3.2/§5 G6 包名)、README(R0/R1 状态 + `crates/` 结构树)、AGENTS.md(成员数与布局表述)、v2-summary.md(信封 golden 在 pawork-domain)、gui-design.md(三处包名)、task-guide.md(两处 `host/` → `crates/app`)、ROADMAP(本行)。
+- **验证**:全 21 包 `cargo check` 绿;73 测试二进制 1644 测绿(`--no-fail-fast` 全量 + 定向复跑);`cargo tree -p pawork` 闭包 724→711 行、无环、16 解散包名在闭包与 Cargo.lock 零残留;engine 生产依赖仅 domain。
+- **既有缺陷修复 ×2**(收口定向测试暴露,按 task-guide §1 窄任务,ROADMAP §4 登记项销账):① client_tests `hello_ack.json` 夹具 negotiated 1.1→1.2(S13 升 API_VERSION 未更夹具);② workflow `review_flow_replays_identically` 测试侧改为携现有步骤修订(revise 空 steps 语义漂移,基线可复现)。两者均测试/夹具侧,不动生产形状。
+- **真实冒烟**(deepseek/deepseek-v4-flash):chat 流式 ✓、read_file 真实执行 ✓、untrusted 工作区 fail-closed 拒 run_command ✓、always-ask 审批闸门真实弹出且超时 fail-closed ✓、never-ask 下 run_command 真实执行 ✓;`gui serve` 启动/握手/snapshot/create_session/RunStart 处理链路 ✓。usage 幂等键 warn(ROADMAP §4 登记项)复现,非回退。
+- **desktop `--probe-smoke` 按实态登记**:确定性失败于首发 send_message,临时插桩定位为两个**既有缺陷**(非本波回退;client/gui_host/app lib/desktop main/providers registry 四行为文件与 HEAD 逐字节一致):① ModelList(运行期探测合并,`crates/app/src/lib.rs` models_overview)与 switch_provider(静态注册表)目录不对称——目录通告 glm-4.7(glm-coding 实探返回)而静态注册表仅 glm-5.2,切换报 UnknownModel;② client `FrameWant::Event` 匹配 `ServerFrame::Error`(S7 波 C 5aa9230 引入),desktop 事件泵常驻 recv 抢走命令错误帧并误判 Disconnected,等待方 10s 超时误报。两项已登记 ROADMAP §4,排期外窄任务。
+- **D5 实测**:目录纯移动不改变编译单元粒度,无新增 D5 代价;21 包全量 `cargo check` 在默认 target 增量缓存下秒级完成。
+
 ## 相关
 
 - [plan/R1-package-consolidation.md](../../plan/R1-package-consolidation.md)(任务书:目标包清单、波次拆分、退出标准)

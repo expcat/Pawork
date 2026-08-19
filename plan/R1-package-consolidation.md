@@ -57,7 +57,7 @@
 | B ✅(2026-08-19) | 三大合并:storage(sqlite+session+blob)∥ providers(net+core+adapters)∥ workspace(core+resources+config+compat) | storage/*、foundation/sqlite、foundation/config、providers/*、net/、workspace/*、clients/compat;下游:storage 路修 cli/gui-client/protocol-probe/control-plane Cargo.toml,workspace 路修 mcp/tools,host/app 装配缝由主代理串行收口 | 并行 ×3(写入集不相交;下游 use 修复各自负责) |
 | C ✅(2026-08-19) | tools(+mcp)∥ control-plane(core+quota+provider-control 核心) | execution/tools、extensions/mcp、control-plane/* | 并行 ×2 |
 | D ✅(2026-08-19) | host 与 clients:app(+gui-server)∥ cli(+channels)∥ client(+sdk、probe→tests/example) | host/{app,gui-server}、host/{cli,channels}、clients/{gui-client,sdk}、apps/protocol-probe | 并行 ×3(app 与 cli 的接缝——cli 改经 app 取 GuiHost——由 app 路先定 trait 位置,cli 路后接;若冲突改串行) |
-| E | 收口:members 定稿 21;剩余未动包 `git mv` 到新布局;design.md §2 重写为 V3 布局;README 仓库结构更新;依赖红线断言更新(desktop deny-list、`cargo tree` 无环);全量受影响包定向测试 | 根 Cargo.toml、全目录 mv、docs/design.md、README.md、各红线测试 | 串行(主代理) |
+| E ✅(2026-08-19) | 收口:members 定稿 21;剩余未动包 `git mv` 到新布局;design.md §2 重写为 V3 布局;README 仓库结构更新;依赖红线断言更新(desktop deny-list、`cargo tree` 无环);全量受影响包定向测试 | 根 Cargo.toml、全目录 mv、docs/design.md、README.md、各红线测试 | 串行(主代理) |
 
 ## 5. 契约与 golden 随迁清单(改动前先确认 golden 在位)
 
@@ -106,8 +106,8 @@
 
 ## 7. 退出标准
 
-- [ ] ADR-039 Accepted;members = 21;目录布局定稿并完成迁移
-- [ ] §5 全部 golden 随迁且绿;serde/磁盘/线上形状零 diff(信封、帧、DDL 逐项核对)
-- [ ] 无循环依赖;红线断言(desktop deny-list / engine domain-only / rmcp 隔离)全绿
-- [ ] design.md §2 已重写为 V3 布局;README 结构图同步
-- [ ] 冒烟通过;v3_plan §3 指针更新
+- [x] ADR-039 Accepted;members = 21;目录布局定稿并完成迁移(波 E:19 库 `git mv` 扁平 `crates/`,`cargo metadata` 确认 21 成员)
+- [x] §5 全部 golden 随迁且绿;serde/磁盘/线上形状零 diff(波 A–D golden 先行平移各自验收;波 E 73 测试二进制 1644 测绿含全部契约 golden;波 E 自身零序列化代码改动)
+- [x] 无循环依赖;红线断言(desktop deny-list / engine domain-only / rmcp 隔离)全绿(`cargo tree` 无环、`-p pawork` 闭包 711 行、16 解散包名零残留;desktop deny-list 随迁改名;新建 `crates/engine/tests/domain_only.rs`)
+- [x] design.md §2 已重写为 V3 布局;README 结构图同步(AGENTS.md/gui-design/v2-summary/task-guide 包名引用同步修正)
+- [x] 冒烟通过;v3_plan §3 指针更新(chat 流式/工具/审批/fail-closed 与 `gui serve` 装配全绿;desktop `--probe-smoke` 因两既有缺陷确定性失败——ModelList↔switch_provider 目录不对称、client 事件泵抢错误帧——已登记 ROADMAP §4,四行为文件与 HEAD 逐字节一致,非本波回退)

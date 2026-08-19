@@ -1,0 +1,60 @@
+[package]
+name = "pawork-providers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 首发模型渠道适配器（OAuth + OpenAI-compatible coding plans）"
+
+[features]
+default = ["anthropic"]
+anthropic = []
+chatgpt-oauth = []
+xai-oauth = []
+glm-coding = []
+opencode-go = []
+qwen-token-plan = []
+deepseek = []
+
+[dependencies]
+pawork-domain = { path = "../domain" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+futures.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+bytes.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
+wiremock.workspace = true
+proptest.workspace = true
+
+[[test]]
+name = "anthropic"
+path = "tests/anthropic.rs"
+required-features = ["anthropic"]
+
+[[test]]
+name = "chatgpt"
+path = "tests/chatgpt.rs"
+required-features = ["chatgpt-oauth"]
+
+[[test]]
+name = "xai"
+path = "tests/xai.rs"
+required-features = ["xai-oauth"]
+
+[[test]]
+name = "responses"
+path = "tests/responses.rs"
+required-features = ["chatgpt-oauth"]
+
+[[test]]
+name = "api_key_channels"
+path = "tests/api_key_channels.rs"
+required-features = ["glm-coding", "opencode-go", "qwen-token-plan", "deepseek"]

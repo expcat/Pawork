@@ -13,7 +13,7 @@
 | 本文 `v3_plan.md` | 开启编排、当前指针、统一提示词、子代理模型约定 |
 | [ROADMAP.md](ROADMAP.md) | 阶段总索引(R0–R9)、依赖、状态、遗留映射、未决 ADR |
 | [plan/](plan/) | 本阶段任务书:目标、证据(带路径行号)、决策点、波次拆分、退出标准 |
-| [docs/design.md](docs/design.md) | 包布局与冻结契约(R1 收口后 §2 重写为 V3 布局) |
+| [docs/design.md](docs/design.md) | 包布局与冻结契约(§2 已于 R1 波 E 重写为 V3 布局) |
 | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计;R8 组件化以其与 [design/README.md](design/README.md) 视觉基准为准 |
 | [docs/task-guide.md](docs/task-guide.md) | 开启核对、红线、测试通道、并行纪律、收尾与报告 |
 | [docs/v2-summary.md](docs/v2-summary.md) | V2 交付、冻结契约清单、S13 拍板、遗留债务原委 |
@@ -43,10 +43,10 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 当前阶段 | R1([plan/R1-package-consolidation.md](plan/R1-package-consolidation.md))🔵 进行中 |
-| 阶段状态 | R0 🟢(波 0/A/B/C 全部收口,2026-08-18;改判 3+1 项见 ADR-038 落实改判记录);R1 🔵;R2–R9 ⚪ |
-| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档)、R1 波 A(ADR-039 Accepted + api→domain golden 先行平移 + diagnostics 迁宿主撤包,2026-08-19;members 37→35)、R1 波 B(storage/providers/workspace 三大合并 + host/app 装配缝,2026-08-19;members 35→28)、R1 波 C(mcp→tools ∥ quota+provider-control→control-plane + host/app 装配缝,2026-08-19;members 28→25)、R1 波 D(gui-server→app `gui_server/` ∥ channels→cli `channels/` ∥ sdk→client `headless/` + probe→client tests/example,2026-08-19;members 25→21) |
-| **下一波次** | R1 波 E(收口,串行,主代理):members 定稿 21、剩余包 `git mv` 到扁平布局(ADR-039 D1)、design.md §2 重写、README 结构图、desktop deny-list 与 engine domain-only 等红线断言、全量受影响包定向测试 |
+| 当前阶段 | R2([plan/R2-dependency-governance.md](plan/R2-dependency-governance.md))⚪ 待开启 |
+| 阶段状态 | R0 🟢(波 0/A/B/C 全部收口,2026-08-18;改判 3+1 项见 ADR-038 落实改判记录);R1 🟢(波 A–E 全部收口,2026-08-19);R2–R9 ⚪ |
+| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档)、R1 波 A(ADR-039 Accepted + api→domain golden 先行平移 + diagnostics 迁宿主撤包,2026-08-19;members 37→35)、R1 波 B(storage/providers/workspace 三大合并 + host/app 装配缝,2026-08-19;members 35→28)、R1 波 C(mcp→tools ∥ quota+provider-control→control-plane + host/app 装配缝,2026-08-19;members 28→25)、R1 波 D(gui-server→app `gui_server/` ∥ channels→cli `channels/` ∥ sdk→client `headless/` + probe→client tests/example,2026-08-19;members 25→21)、R1 波 E(members 定稿 21 + 19 库 `git mv` 扁平 `crates/` + design.md §2 重写 + 红线断言随迁 + 21 包定向测试 + 真实冒烟,2026-08-19;desktop --probe-smoke 暴露两既有缺陷已登记 ROADMAP §4,非本波回退) |
+| **下一波次** | R2 波 A(按 [plan/R2-dependency-governance.md](plan/R2-dependency-governance.md) 波次拆分;无 ADR 闸门) |
 | 阻塞 | 无 |
 
 自动选择以本表为准,再用 ROADMAP / 任务书 / 工作区实态交叉校验。三者冲突时:**工作区实态 > 本表 > ROADMAP 状态列**;更新本表使三者一致后再开工。
@@ -60,7 +60,7 @@
 1. 读 ROADMAP §2。硬前置阶段必须为 🟢;若当前阶段 ⚠️,停止并报告阻塞。
 2. 取第一个非 🟢 的主干阶段(R0→R9),再按该任务书选**最早未落地的波次**;与 §3 指针、工作区实态交叉校验。
 3. **ADR 闸门**:R0 波 0、R1 波 A、R6 波 0、R7 波 0 产出的 ADR 须用户确认(Accepted)后,同阶段后续波次才可开工;主代理不得代替用户拍板破坏式决议。
-4. **跨阶段并行**只在 ROADMAP §2 依赖满足、写入集不相交、且用户明确要求时开第二条线(如 R7 ∥ R3–R6;R2 ∥ R3)。R3→R4→R5→R6 都触 `host/`,默认串行。
+4. **跨阶段并行**只在 ROADMAP §2 依赖满足、写入集不相交、且用户明确要求时开第二条线(如 R7 ∥ R3–R6;R2 ∥ R3)。R3→R4→R5→R6 都触 `crates/app`,默认串行。
 5. 用户覆盖(「做 R2 波 B」)立即生效。
 6. 在聊天里用三行声明后立刻进入 §5(不必等确认):本次波次 + 一句话;子代理模型;写入集。
 
@@ -102,7 +102,7 @@ V3 任务书均带 2026-08-18 分析的证据(路径 + 行号),但**执行时实
 ### 5.4 按波次实现
 
 - 核查结束再实现;不要边查边写。
-- 并行度严格按任务书该波标注;写入集互不重叠;契约文件与装配收口(`host/`、`apps/pawork`)不并行。
+- 并行度严格按任务书该波标注;写入集互不重叠;契约文件与装配收口(`crates/app`、`apps/pawork`)不并行。
 - 归档动作统一走「移出 workspace + 删除源目录」,git tag `v2-final` 已兜底(R0 波 0 打 tag);不把归档代码复制到仓库其它角落。
 - 每个实现子代理用 §8.1 骨架(角色=实现)+ 设计切片 + 写入集边界;子代理之间禁止改同一文件。
 

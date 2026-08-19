@@ -1,0 +1,30 @@
+[package]
+name = "pawork-workspace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork workspace roots、相对路径解析与文件索引"
+
+[dependencies]
+pawork-domain = { path = "../domain" }
+pawork-policy = { path = "../policy" }
+directories.workspace = true
+dunce.workspace = true
+ignore.workspace = true
+notify.workspace = true
+semver = { version = "1", features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

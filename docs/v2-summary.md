@@ -48,7 +48,7 @@
 
 | 契约 | 形状与位置 |
 | --- | --- |
-| 事件信封 | envelope v1,append-only;sessions schema v10(S13-F09 增 `ancestor_lineage`);golden 在 `pawork-session` |
+| 事件信封 | envelope v1,append-only;sessions schema v10(S13-F09 增 `ancestor_lineage`);信封字节 golden 在 `pawork-domain`(R1 起,`crates/domain/tests/events_golden.rs`),DDL/迁移锚在 `pawork-storage::session` |
 | 会话存储 | SQLite DDL(sessions/events/usage);import/export v3 格式;fork 分支(`fork_from_event`,active branch 写入) |
 | blob 格式 | `PWB1` + protected AEAD(ADR-032);artifact/protected/checkpoint 三区 |
 | GUI 协议 | 帧格式 ADR-036;`SUPPORTED_API_VERSIONS` 1.0/1.1/1.2(S13-F09 `RunStart.provider` 升 1.2);typegen 检入 [../schemas/](../schemas/)(core-api/gui-protocol/headless-json) |

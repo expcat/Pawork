@@ -171,10 +171,8 @@ mod tests {
         for forbidden in [
             "pawork-app",
             "pawork-engine",
-            "pawork-provider-core",
             "pawork-providers",
-            "pawork-session",
-            "pawork-sqlite",
+            "pawork-storage",
             "pawork-tools",
             "pawork-git",
             "pawork-protocol",
