@@ -438,3 +438,19 @@ fn global_config_dir_resolves_to_some_path() {
         "expected a resolvable global config directory"
     );
 }
+
+#[test]
+#[cfg(target_os = "macos")]
+fn global_config_dir_macos_snapshot_is_dev_pawork_pawork() {
+    // 快照 golden：directories 主版本升级不得改变 macOS 目录语义。
+    let home = std::env::var_os("HOME").expect("HOME is set on macOS");
+    let expected = std::path::PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join("dev.pawork.pawork");
+    assert_eq!(
+        config_dir_for_app().as_deref(),
+        Some(expected.as_path()),
+        "macOS global config dir snapshot changed"
+    );
+}

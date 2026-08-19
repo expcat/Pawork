@@ -123,10 +123,11 @@ fn reset_scratch_directory(path: &Path) -> Result<()> {
 
 fn generate_core_api(output: &Path) -> Result<(&'static str, BTreeMap<String, String>)> {
     fs::create_dir_all(output)?;
-    AppCommandEnvelope::export_all_to(output)?;
-    AppQueryEnvelope::export_all_to(output)?;
-    AppResponseEnvelope::export_all_to(output)?;
-    AppEventEnvelope::export_all_to(output)?;
+    let config = ts_rs::Config::new().with_out_dir(output);
+    AppCommandEnvelope::export_all(&config)?;
+    AppQueryEnvelope::export_all(&config)?;
+    AppResponseEnvelope::export_all(&config)?;
+    AppEventEnvelope::export_all(&config)?;
     write_core_api_versions(output)?;
     Ok(("core-api", collect_declarations(output)?))
 }
@@ -152,15 +153,17 @@ fn write_core_api_versions(output: &Path) -> Result<()> {
 
 fn generate_gui_protocol(output: &Path) -> Result<(&'static str, BTreeMap<String, String>)> {
     fs::create_dir_all(output)?;
-    ClientFrame::export_all_to(output)?;
-    ServerFrame::export_all_to(output)?;
+    let config = ts_rs::Config::new().with_out_dir(output);
+    ClientFrame::export_all(&config)?;
+    ServerFrame::export_all(&config)?;
     Ok(("gui-protocol", collect_declarations(output)?))
 }
 
 fn generate_headless_json(output: &Path) -> Result<(&'static str, BTreeMap<String, String>)> {
     fs::create_dir_all(output)?;
-    HeadlessRequest::export_all_to(output)?;
-    HeadlessResponse::export_all_to(output)?;
+    let config = ts_rs::Config::new().with_out_dir(output);
+    HeadlessRequest::export_all(&config)?;
+    HeadlessResponse::export_all(&config)?;
     Ok(("headless-json", collect_declarations(output)?))
 }
 

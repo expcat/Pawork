@@ -4,4 +4,4 @@ import type { ErrorCategory } from "./ErrorCategory";
 /**
  * 可安全跨边界传递的错误上下文；不得包含 Secret 或未经脱敏的响应正文。
  */
-export type ErrorContext = { category: ErrorCategory, message: string, retryable: boolean, retry_after_ms?: bigint | null, diagnostics?: { [key in string]?: string }, };
+export type ErrorContext = { category: ErrorCategory, message: string, retryable: boolean, retry_after_ms?: bigint | null, diagnostics?: { [key in string]: string }, };

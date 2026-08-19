@@ -4,4 +4,4 @@ import type { CompatSource } from "./CompatSource";
 /**
  * 导入报告（协议面；Host 从 `session-store::CompatImportReport` 映射）。
  */
-export type CompatImportReport = { source: CompatSource | null, session_id: string, original_id: string | null, imported_events: number, imported_messages: number, imported_tool_calls: number, imported_tool_results: number, imported_usages: number, imported_reviews: number, raw_records: number, deduplicated: boolean, unknown_fields?: { [key in string]?: string }, };
+export type CompatImportReport = { source: CompatSource | null, session_id: string, original_id: string | null, imported_events: number, imported_messages: number, imported_tool_calls: number, imported_tool_results: number, imported_usages: number, imported_reviews: number, raw_records: number, deduplicated: boolean, unknown_fields?: { [key in string]: string }, };

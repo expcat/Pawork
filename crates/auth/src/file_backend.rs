@@ -367,6 +367,28 @@ fn write_new_file_0600(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn default_auth_file_path_macos_snapshot_uses_home_pawork_fallback() {
+        // 快照 golden：PAWORK_HOME 优先；未设置时回退 $HOME/.pawork/auth.json。
+        if let Some(pawork_home) = std::env::var_os("PAWORK_HOME") {
+            if !pawork_home.is_empty() {
+                assert_eq!(
+                    default_auth_file_path(),
+                    PathBuf::from(pawork_home).join("auth.json")
+                );
+                return;
+            }
+        }
+        let home = std::env::var_os("HOME").expect("HOME is set on macOS");
+        let expected = PathBuf::from(home).join(".pawork").join("auth.json");
+        assert_eq!(
+            default_auth_file_path(),
+            expected,
+            "macOS auth file home fallback snapshot changed"
+        );
+    }
+
     fn temp_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "pawork-file-backend-{name}-{}",

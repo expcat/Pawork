@@ -1047,13 +1047,7 @@ fn build_command(spec: &PtyCreateSpec) -> CommandBuilder {
 }
 
 fn status_signal(status: &portable_pty::ExitStatus) -> Option<String> {
-    // portable-pty 0.8 不公开 signal 字段；通过 Display 兜底提取。
-    let text = status.to_string();
-    if text.starts_with("Terminated by ") {
-        Some(text.trim_start_matches("Terminated by ").to_string())
-    } else {
-        None
-    }
+    status.signal().map(str::to_string)
 }
 
 #[cfg(test)]

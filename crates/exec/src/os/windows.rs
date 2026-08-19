@@ -109,7 +109,8 @@ mod job {
     use std::mem::size_of;
 
     use tokio::process::Child;
-    use windows::Win32::Foundation::{CloseHandle, BOOL, FILETIME, HANDLE, STILL_ACTIVE};
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, STILL_ACTIVE};
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
@@ -210,7 +211,7 @@ mod job {
             if let Err(error) = assigned {
                 let mut in_job = BOOL::default();
                 let already_assigned = unsafe {
-                    IsProcessInJob(process, self.0, &mut in_job).is_ok() && in_job.as_bool()
+                    IsProcessInJob(process, Some(self.0), &mut in_job).is_ok() && in_job.as_bool()
                 };
                 if !already_assigned {
                     let mut exit_code = 0u32;
@@ -243,7 +244,7 @@ mod job {
                 Err(_) => return Ok(None),
             };
             let mut in_job = BOOL::default();
-            let result = unsafe { IsProcessInJob(process, self.0, &mut in_job) };
+            let result = unsafe { IsProcessInJob(process, Some(self.0), &mut in_job) };
             let _ = unsafe { CloseHandle(process) };
             result.map_err(io::Error::other)?;
             Ok(Some(in_job.as_bool()))
