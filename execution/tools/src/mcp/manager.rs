@@ -9,10 +9,10 @@ use pawork_domain::CancellationToken;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::codec::{self, ClientPeer, RunningClient};
-use crate::config::RestartPolicy;
-use crate::transport::McpConnector;
-use crate::{McpError, McpPeer, McpServerCapabilities, McpToolCall, McpToolInfo};
+use crate::mcp::codec::{self, ClientPeer, RunningClient};
+use crate::mcp::config::RestartPolicy;
+use crate::mcp::transport::McpConnector;
+use crate::mcp::{McpError, McpPeer, McpServerCapabilities, McpToolCall, McpToolInfo};
 
 /// Coarse lifecycle state shown in [`HealthSnapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -375,7 +375,7 @@ impl McpPeer for ManagedMcpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codec::test_support::{InProcessConnector, ServerBehavior};
+    use crate::mcp::codec::test_support::{InProcessConnector, ServerBehavior};
     use pawork_domain::ContentPart;
     use serde_json::Map;
 

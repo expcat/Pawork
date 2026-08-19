@@ -18,11 +18,11 @@ use pawork_domain::{
 };
 use async_trait::async_trait;
 use serde_json::Value;
-use pawork_tools::ToolRegistry;
+use crate::ToolRegistry;
 
-use crate::codec::apply_tool_result_budget;
-use crate::config::McpPermissions;
-use crate::{McpError, McpPeer, McpToolCall, McpToolInfo};
+use crate::mcp::codec::apply_tool_result_budget;
+use crate::mcp::config::McpPermissions;
+use crate::mcp::{McpError, McpPeer, McpToolCall, McpToolInfo};
 
 /// Build a namespaced tool name: `{server}.{tool}`.
 pub fn namespaced_name(server: &str, tool: &str) -> String {
@@ -303,19 +303,19 @@ mod tests {
     use pawork_domain::{ContentPart, RunId, WorkspaceId};
     use serde_json::json;
     use std::collections::BTreeSet;
-    use pawork_tools::NoopToolEventSink;
+    use crate::NoopToolEventSink;
 
     #[derive(Clone)]
     struct MockPeer {
         tool: McpToolInfo,
         response: ToolResult,
-        advertised: crate::McpServerCapabilities,
+        advertised: crate::mcp::McpServerCapabilities,
         honor_cancel: bool,
     }
 
     #[async_trait]
     impl McpPeer for MockPeer {
-        async fn server_capabilities(&self) -> Result<crate::McpServerCapabilities, McpError> {
+        async fn server_capabilities(&self) -> Result<crate::mcp::McpServerCapabilities, McpError> {
             Ok(self.advertised)
         }
 
@@ -357,7 +357,7 @@ mod tests {
         MockPeer {
             tool: make_tool("search", read_only),
             response: text_result(response_text),
-            advertised: crate::McpServerCapabilities::default(),
+            advertised: crate::mcp::McpServerCapabilities::default(),
             honor_cancel: true,
         }
     }
@@ -672,7 +672,7 @@ mod tests {
         let peer = Arc::new(MockPeer {
             tool: make_tool("search", true),
             response: error_response,
-            advertised: crate::McpServerCapabilities::default(),
+            advertised: crate::mcp::McpServerCapabilities::default(),
             honor_cancel: false,
         });
         let adapter = McpToolAdapter::new(
@@ -714,7 +714,7 @@ mod tests {
     #[tokio::test]
     async fn discovery_skips_unadvertised_capability_methods() {
         let mut peer = make_peer(true, "ok");
-        peer.advertised = crate::McpServerCapabilities {
+        peer.advertised = crate::mcp::McpServerCapabilities {
             tools: true,
             resources: false,
             prompts: false,

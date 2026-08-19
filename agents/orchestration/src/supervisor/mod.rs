@@ -4,7 +4,7 @@
 //!   `tokio::spawn`；
 //! - 生命周期全部事件化、可重放（[`crate::OrchestrationEvent`]）；
 //! - 取消树：取消 parent 递归联动全部后代，lease 以
-//!   [`pawork_provider_control::LeaseOutcome::Cancelled`] 幂等释放，**不惩罚账号健康**；
+//!   [`pawork_control_plane::credential::LeaseOutcome::Cancelled`] 幂等释放，**不惩罚账号健康**；
 //! - 恢复：[`AgentSupervisor::recover_report`] 为 report-only——重放事件后把
 //!   活动孤儿在**报告**中记为 `Failed`，不重建 `WorkerEntry` / children /
 //!   cancel token，也不 emit 恢复事件。
@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pawork_domain::{AgentId, CancellationToken, ModelId, ProviderId};
-use pawork_provider_control::{CredentialPool, LeaseOutcome};
+use pawork_control_plane::credential::{CredentialPool, LeaseOutcome};
 use pawork_control_plane::{TenantPolicyEngine, UsageLedger};
 
 #[cfg(test)]
@@ -446,7 +446,7 @@ mod tests {
     use super::*;
     use pawork_domain::{ModelId, PrincipalId, SessionId, TenantId};
     use async_trait::async_trait;
-    use pawork_provider_control::{
+    use pawork_control_plane::credential::{
         AccountId, AcquireRequest, CredentialLease, CredentialPool, InMemoryCredentialPool,
         LeaseGuard, LeaseId, LeaseOutcome, PoolError, ReleaseReceipt,
     };
@@ -1609,7 +1609,7 @@ mod tests {
             self.inner.active_count(account)
         }
 
-        fn account_health(&self, account: &AccountId) -> pawork_provider_control::AccountHealth {
+        fn account_health(&self, account: &AccountId) -> pawork_control_plane::credential::AccountHealth {
             self.inner.account_health(account)
         }
     }
@@ -2266,7 +2266,7 @@ impl pawork_control_plane::UsageLedger for BlockingLedger {
 mod terminal_flush_tests {
     use super::*;
     use pawork_domain::{PrincipalId, SessionId, TenantId};
-    use pawork_provider_control::{AcquireRequest, InMemoryCredentialPool};
+    use pawork_control_plane::credential::{AcquireRequest, InMemoryCredentialPool};
     use std::collections::BTreeSet;
     use pawork_control_plane::{
         InMemoryTenantPolicyEngine, PermissionProfile, PrincipalRole, TenantPolicy,

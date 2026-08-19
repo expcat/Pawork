@@ -14,7 +14,8 @@ members = [
     "execution/*",
     "vcs/*",
     "engine/*",
-    "extensions/*",
+    # R1 波 C:extensions/* 唯一成员 mcp 已并入 execution/tools(pawork-tools),
+    # 空 glob 会被 Cargo 拒绝,先行移除;终局目录迁移与 members 定稿集中在波 E(ADR-039 D1)。
     "workflow/*",
     "agents/*",
     "control-plane/*",

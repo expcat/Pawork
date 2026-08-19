@@ -19,13 +19,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use crate::manager::{ManagedMcpClient, ManagedMcpClientOptions};
-use crate::sandbox::{SandboxedStdioSpawner, StdioSpawner};
-use crate::security::SecretRef;
-use crate::transport::{
+use crate::mcp::manager::{ManagedMcpClient, ManagedMcpClientOptions};
+use crate::mcp::sandbox::{SandboxedStdioSpawner, StdioSpawner};
+use crate::mcp::security::SecretRef;
+use crate::mcp::transport::{
     DefaultConnector, HttpTransportConfig, McpConnector, StdioTransportConfig, TransportConfig,
 };
-use crate::McpError;
+use crate::mcp::McpError;
 
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
 const MIN_MAX_OUTPUT_BYTES: u64 = 1;
@@ -341,7 +341,7 @@ impl McpConnector for SecretResolvingConnector {
         self.spec.kind()
     }
 
-    async fn connect(&self) -> Result<crate::codec::RunningClient, McpError> {
+    async fn connect(&self) -> Result<crate::mcp::codec::RunningClient, McpError> {
         let runtime = self.spec.resolve_transport(self.backend.as_ref())?;
         match (&self.runtime, runtime) {
             (ConnectorRuntime::SandboxedStdio(spawner), TransportConfig::Stdio(config)) => {

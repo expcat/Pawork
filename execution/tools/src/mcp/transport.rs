@@ -1,6 +1,6 @@
 //! MCP transport configuration and connection establishment.
 //!
-//! The SDK handshake lives in [`crate::codec`]. Callers build a [`TransportConfig`]
+//! The SDK handshake lives in [`crate::mcp::codec`]. Callers build a [`TransportConfig`]
 //! and hand it to a [`McpConnector`] (the default implementation is
 //! [`DefaultConnector`]).
 //!
@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::codec::{self, RunningClient};
-use crate::sandbox::StdioSpawner;
-use crate::McpError;
+use crate::mcp::codec::{self, RunningClient};
+use crate::mcp::sandbox::StdioSpawner;
+use crate::mcp::McpError;
 
 /// Placeholder written in place of every secret-bearing field when formatting a config
 /// for logs. Chosen to be visually unambiguous and free of any caller-supplied bytes.

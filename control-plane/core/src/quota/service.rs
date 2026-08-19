@@ -29,8 +29,8 @@ use pawork_domain::ResolvedCredential;
 use pawork_domain::{CancellationToken, ModelId, ProviderId, TenantId, Timestamp};
 use tokio::sync::Notify;
 
-use crate::ledger::LedgerQuotaAdapter;
-use crate::{
+use crate::quota::ledger::LedgerQuotaAdapter;
+use crate::quota::{
     AccountId, AdapterKind, Confidence, QuotaAdapter, QuotaError, QuotaScope, QuotaSnapshot,
 };
 
@@ -53,7 +53,7 @@ pub struct SystemQuotaClock;
 
 impl QuotaClock for SystemQuotaClock {
     fn now(&self) -> Timestamp {
-        crate::util::now_millis()
+        crate::quota::util::now_millis()
     }
 }
 
@@ -220,7 +220,7 @@ pub enum WindowRead {
 #[derive(Clone, Debug)]
 pub struct QuotaOverview {
     pub scope: QuotaScope,
-    pub windows: HashMap<crate::QuotaWindow, WindowRead>,
+    pub windows: HashMap<crate::quota::QuotaWindow, WindowRead>,
 }
 
 impl QuotaOverview {
@@ -278,7 +278,7 @@ impl CacheRead {
 #[derive(Clone, Debug)]
 pub struct CacheOverview {
     pub scope: QuotaScope,
-    pub windows: HashMap<crate::QuotaWindow, CacheRead>,
+    pub windows: HashMap<crate::quota::QuotaWindow, CacheRead>,
 }
 
 impl CacheOverview {
@@ -320,8 +320,8 @@ impl ReadOutcome {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct CacheKey {
     scope: QuotaScope,
-    window: crate::QuotaWindow,
-    unit: crate::QuotaUnit,
+    window: crate::quota::QuotaWindow,
+    unit: crate::quota::QuotaUnit,
 }
 
 #[derive(Clone, Debug)]
@@ -826,7 +826,7 @@ impl QuotaService {
     /// [`QuotaService::read_with_credential`] to inject a credential.
     pub async fn read(
         &self,
-        request: &crate::QuotaRequest,
+        request: &crate::quota::QuotaRequest,
         cancel: &CancellationToken,
     ) -> Result<QuotaRead, Vec<QuotaFailure>> {
         read_impl(self.inner.clone(), request, None, cancel).await
@@ -841,7 +841,7 @@ impl QuotaService {
     /// results regardless of which caller happened to lead.
     pub async fn read_with_credential(
         &self,
-        request: &crate::QuotaRequest,
+        request: &crate::quota::QuotaRequest,
         credential: Option<&ResolvedCredential>,
         cancel: &CancellationToken,
     ) -> Result<QuotaRead, Vec<QuotaFailure>> {
@@ -857,8 +857,8 @@ impl QuotaService {
     pub async fn overview(
         &self,
         scope: &QuotaScope,
-        windows: &[crate::QuotaWindow],
-        unit: &crate::QuotaUnit,
+        windows: &[crate::quota::QuotaWindow],
+        unit: &crate::quota::QuotaUnit,
         cancel: &CancellationToken,
     ) -> QuotaOverview {
         self.overview_with_credential(scope, windows, unit, None, cancel)
@@ -870,13 +870,13 @@ impl QuotaService {
     pub async fn overview_with_credential(
         &self,
         scope: &QuotaScope,
-        windows: &[crate::QuotaWindow],
-        unit: &crate::QuotaUnit,
+        windows: &[crate::quota::QuotaWindow],
+        unit: &crate::quota::QuotaUnit,
         credential: Option<&ResolvedCredential>,
         cancel: &CancellationToken,
     ) -> QuotaOverview {
         let futs = windows.iter().map(|window| {
-            let request = crate::QuotaRequest {
+            let request = crate::quota::QuotaRequest {
                 scope: scope.clone(),
                 window: *window,
                 unit: unit.clone(),
@@ -916,7 +916,7 @@ impl QuotaService {
     /// [`CacheRead::NoData`] when there is no cached entry. `scope` is still
     /// validated (`tenant_id` / `account_id` / `provider_id` non-empty); an
     /// invalid scope surfaces as a plain [`QuotaError`] via [`Result::Err`].
-    pub fn read_cache_only(&self, request: &crate::QuotaRequest) -> Result<CacheRead, QuotaError> {
+    pub fn read_cache_only(&self, request: &crate::quota::QuotaRequest) -> Result<CacheRead, QuotaError> {
         validate_scope(&request.scope)?;
         let key = CacheKey {
             scope: request.scope.clone(),
@@ -943,8 +943,8 @@ impl QuotaService {
     pub fn overview_cache_only(
         &self,
         scope: &QuotaScope,
-        windows: &[crate::QuotaWindow],
-        unit: &crate::QuotaUnit,
+        windows: &[crate::quota::QuotaWindow],
+        unit: &crate::quota::QuotaUnit,
     ) -> Result<CacheOverview, QuotaError> {
         validate_scope(scope)?;
         let now = self.inner.clock.now();
@@ -975,7 +975,7 @@ impl QuotaService {
 
 async fn read_impl(
     inner: Arc<Inner>,
-    request: &crate::QuotaRequest,
+    request: &crate::quota::QuotaRequest,
     credential: Option<&ResolvedCredential>,
     cancel: &CancellationToken,
 ) -> Result<QuotaRead, Vec<QuotaFailure>> {
@@ -1086,7 +1086,7 @@ async fn read_impl(
     }
 }
 
-fn candidates_for(inner: &Inner, request: &crate::QuotaRequest) -> Vec<Arc<dyn QuotaAdapter>> {
+fn candidates_for(inner: &Inner, request: &crate::quota::QuotaRequest) -> Vec<Arc<dyn QuotaAdapter>> {
     inner
         .registry
         .lock()
@@ -1100,7 +1100,7 @@ fn candidates_for(inner: &Inner, request: &crate::QuotaRequest) -> Vec<Arc<dyn Q
 
 async fn fetch_fresh(
     inner: &Inner,
-    request: &crate::QuotaRequest,
+    request: &crate::quota::QuotaRequest,
     credential: Option<&ResolvedCredential>,
     cancel: &CancellationToken,
 ) -> ReadOutcome {
@@ -1213,10 +1213,10 @@ mod tests {
 
     use async_trait::async_trait;
     use pawork_domain::{CredentialKind, ResolvedCredential};
-    use pawork_control_plane::{InMemoryUsageLedger, UsageLedger, UsageRecord};
+    use crate::{InMemoryUsageLedger, UsageLedger, UsageRecord};
 
     use super::*;
-    use crate::{
+    use crate::quota::{
         AccountId, AdapterKind, Confidence, QuotaMeasure, QuotaProvenance, QuotaRequest,
         QuotaReset, QuotaScope, QuotaUnit, QuotaValues, QuotaWindow,
     };

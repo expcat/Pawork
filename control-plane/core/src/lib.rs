@@ -6,8 +6,10 @@
 //! [`SqliteUsageLedger`]。
 
 pub mod audit;
+pub mod credential;
 pub mod decision;
 pub mod identity;
+pub mod quota;
 pub mod rbac;
 pub mod tenant;
 pub mod usage;

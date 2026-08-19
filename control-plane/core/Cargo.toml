@@ -14,14 +14,17 @@ sqlite = ["dep:rusqlite"]
 [dependencies]
 pawork-domain = { path = "../../foundation/domain" }
 async-trait.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 rusqlite = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["sync", "rt", "macros"] }
+tokio = { workspace = true, features = ["sync", "rt", "macros", "time"] }
+url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "macros"] }
+proptest.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }
 rusqlite.workspace = true

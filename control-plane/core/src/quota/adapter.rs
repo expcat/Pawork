@@ -5,7 +5,7 @@ use pawork_domain::ResolvedCredential;
 use pawork_domain::CancellationToken;
 use serde::{Deserialize, Serialize};
 
-use crate::{QuotaError, QuotaRequest, QuotaSnapshot};
+use crate::quota::{QuotaError, QuotaRequest, QuotaSnapshot};
 
 /// 适配器获取配额读数的方式。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -104,9 +104,9 @@ mod tests {
         assert_eq!(adapter.kind(), AdapterKind::ApiKeyApi);
 
         let request = QuotaRequest {
-            scope: crate::QuotaScope::new(
+            scope: crate::quota::QuotaScope::new(
                 pawork_domain::TenantId::new("tenant-a"),
-                crate::AccountId::new("account-1"),
+                crate::quota::AccountId::new("account-1"),
                 pawork_domain::ProviderId::new("mock"),
                 None,
             ),

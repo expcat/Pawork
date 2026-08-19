@@ -15,9 +15,9 @@ use pawork_domain::{
     AgentId, EventId, ModelId, ProviderId, RequestId, RunId, SessionId, TenantId, TokenUsage,
 };
 use pawork_protocol::DEFAULT_QUOTA_TENANT;
-use pawork_provider_control::{CredentialPool, InMemoryCredentialPool};
-use pawork_quota::service::{ScopeMatch, SystemQuotaClock, WindowRead};
-use pawork_quota::{
+use pawork_control_plane::credential::{CredentialPool, InMemoryCredentialPool};
+use pawork_control_plane::quota::service::{ScopeMatch, SystemQuotaClock, WindowRead};
+use pawork_control_plane::quota::{
     LedgerQuotaAdapter, QuotaClock, QuotaMeasure, QuotaScope, QuotaService, QuotaUnit, QuotaWindow,
 };
 use pawork_control_plane::{InMemoryTenantPolicyEngine, TenantPolicyEngine};
@@ -193,7 +193,7 @@ fn priced_currency(currency: &str) -> String {
 pub fn quota_scope(provider_id: &ProviderId) -> QuotaScope {
     QuotaScope::new(
         default_tenant(),
-        pawork_quota::AccountId::new(LEDGER_ACCOUNT),
+        pawork_control_plane::quota::AccountId::new(LEDGER_ACCOUNT),
         provider_id.clone(),
         None,
     )
@@ -335,4 +335,3 @@ mod tests {
         assert_ne!(record.currency, "USD");
     }
 }
-

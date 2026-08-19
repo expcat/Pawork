@@ -10,11 +10,11 @@ use pawork_auth::{FileBackend, SecretBackend};
 use pawork_exec::{
     default_secret_paths, FilesystemPolicy, NativeRestricted, NetworkMode, SandboxPolicy,
 };
-use pawork_mcp::capabilities::register_server_tools;
-use pawork_mcp::config::{McpConfig, StdioSandboxRuntime, TransportSpec};
-use pawork_mcp::sandbox::apply_mcp_stdio_env_hygiene;
-use pawork_mcp::manager::{ConnectionState, ManagedMcpClient};
-use pawork_mcp::{McpError, McpPeer};
+use pawork_tools::mcp::capabilities::register_server_tools;
+use pawork_tools::mcp::config::{McpConfig, StdioSandboxRuntime, TransportSpec};
+use pawork_tools::mcp::sandbox::apply_mcp_stdio_env_hygiene;
+use pawork_tools::mcp::manager::{ConnectionState, ManagedMcpClient};
+use pawork_tools::mcp::{McpError, McpPeer};
 use pawork_workspace::resources::{
     CurrentPathKind, ResourceInstructionKind, ResourceLoader, ResourceLoaderOptions,
     ResourceOrigin, ResourceRequest, ResourceSelection, WorkspaceRelativePath,
@@ -287,7 +287,7 @@ impl AppCore {
             .list_tools()
             .await?
             .into_iter()
-            .map(|tool| pawork_mcp::capabilities::namespaced_name(name, &tool.name))
+            .map(|tool| pawork_tools::mcp::capabilities::namespaced_name(name, &tool.name))
             .collect();
         let health = client.health().await;
         let state = match health.state {

@@ -1,7 +1,7 @@
 //! 注册表：worker 条目、状态查询、事件日志与终态取守卫。
 
 use pawork_domain::{AgentId, CancellationToken, ModelId};
-use pawork_provider_control::LeaseGuard;
+use pawork_control_plane::credential::LeaseGuard;
 
 use crate::budget::WorkerBudgetController;
 use crate::identity::AgentInstance;

@@ -90,6 +90,15 @@ providers/storage 单体化后,「改一个 adapter 重编整包」。接受该�
 - **D5 实测补录**:providers 包 touch-单文件增量 `cargo check -p`——合并前(HEAD 基线 worktree,独立 target)≈0.14–0.16s,合并后 ≈3.7–4.7s。编译粒度代价成立但绝对值仍在秒级,维持 D5 取舍。
 - **偏差/遗留**:①三路验证期间因根 workspace 暂不可解析,子代理在 /tmp 隔离拷贝验证,收口后全部由主代理在仓库根复跑为上方结果;②protocol-probe `snapshot-reconnect` 一次批量下偶发 10s 帧超时(单跑 3/3 绿,纯路径改名不涉该链路),判定既有偶发,已登记 ROADMAP §4 待 R9 复跑;③design.md §2、README、v2-summary §4(信封 golden 位置表述)、gui-design.md、desktop deny-list 包名、AGENTS.md 成员数 —— 波 E 统一回写。
 
+### 波 C(2026-08-19,mcp→tools ∥ quota+provider-control→control-plane)
+
+- **tools(+mcp)**:mcp 八模块 + crate 根(McpError/McpPeer/re-export)整组平移为 `execution/tools/src/mcp/`(mod.rs + 八文件),64 测零裁剪;rmcp 隔离断言随迁为模块级测试(扫描根 `src/mcp`,仍只豁免 codec.rs);tools 依赖并集增 auth/reqwest/rmcp(=2.2.0 原 feature)/url/tracing,dev 增 wiremock/rmcp server/tokio test-util。F05 语义(SecretRef `pawork.mcp.*`、stdio env_clear、拒 `PAWORK_API_KEY_*`)随模块原样平移;`mcp-auth.json` 装配仍在 host/app。
+- **control-plane(+quota+provider-control)**:quota 六文件平移为 `src/quota/`(100 测),provider-control 两文件平移为 `src/credential/`(活树实测 35 测;冻结形状 LeaseState 持久化字符串/LeaseEvent tag=kind/CredentialLease schema_version=2/禁 secret 字段不动,lease 状态机虽仅包内活按零裁剪整组保留);core 增 futures/url 与 dev proptest,`default=["sqlite"]` 原样。
+- **下游收口**:orchestration 由 worker 切换(`pawork-control-plane`,保持 `default-features = false`,`cargo tree -p pawork-orchestration` 无 rusqlite);host/app 装配缝由主代理串行收口(删 mcp/quota/provider-control 三依赖行,use 切 `pawork_tools::mcp::` / `pawork_control_plane::{quota,credential}::`)。
+- **撤包**:extensions/mcp、control-plane/quota、control-plane/provider-control 三源目录删除(平移非删除语义);根 `extensions/*` 空 glob 移除(波 B 先例);**members 28→25**。
+- **验证**:tools 129(65+64)、control-plane 204(69+100+35)、app 93、cli 30、pawork 2、orchestration 85 全绿;desktop `cargo check` 绿(deny-list 未点名三包,desktop 依赖不变);audit JSONL golden 与 usage dedup_key 四锚定测试随迁面零触碰、保持绿;`cargo tree -p pawork` 闭包 751→724 行、无环、三包名在闭包与 Cargo.lock 零残留。
+- **D5 实测补录**:touch-单文件增量 `cargo check -p`——tools 合并前 ≈10.4s、合并后 ≈11.5s;control-plane 合并前 ≈8.5s、合并后 ≈5.7s(后者在噪声内)。编译粒度代价成立但绝对值仍秒级,维持 D5 取舍。
+
 ## 相关
 
 - [plan/R1-package-consolidation.md](../../plan/R1-package-consolidation.md)(任务书:目标包清单、波次拆分、退出标准)

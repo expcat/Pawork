@@ -45,8 +45,8 @@
 | --- | --- |
 | 当前阶段 | R1([plan/R1-package-consolidation.md](plan/R1-package-consolidation.md))🔵 进行中 |
 | 阶段状态 | R0 🟢(波 0/A/B/C 全部收口,2026-08-18;改判 3+1 项见 ADR-038 落实改判记录);R1 🔵;R2–R9 ⚪ |
-| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档)、R1 波 A(ADR-039 Accepted + api→domain golden 先行平移 + diagnostics 迁宿主撤包,2026-08-19;members 37→35)、R1 波 B(storage/providers/workspace 三大合并 + host/app 装配缝,2026-08-19;members 35→28) |
-| **下一波次** | R1 波 C:tools(+mcp)∥ control-plane(core+quota+provider-control 核心);并行 ×2 |
+| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档)、R1 波 A(ADR-039 Accepted + api→domain golden 先行平移 + diagnostics 迁宿主撤包,2026-08-19;members 37→35)、R1 波 B(storage/providers/workspace 三大合并 + host/app 装配缝,2026-08-19;members 35→28)、R1 波 C(mcp→tools ∥ quota+provider-control→control-plane + host/app 装配缝,2026-08-19;members 28→25) |
+| **下一波次** | R1 波 D:host 与 clients——app(+gui-server)∥ cli(+channels)∥ client(+sdk、probe→tests/example);并行 ×3(接缝见任务书,app 路先定 GuiHost trait 位置) |
 | 阻塞 | 无 |
 
 自动选择以本表为准,再用 ROADMAP / 任务书 / 工作区实态交叉校验。三者冲突时:**工作区实态 > 本表 > ROADMAP 状态列**;更新本表使三者一致后再开工。

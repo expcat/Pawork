@@ -21,9 +21,9 @@ use rmcp::ServiceExt;
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::config::is_loopback_url;
-use crate::transport::HttpTransportConfig;
-use crate::{McpError, McpServerCapabilities, McpToolCall, McpToolInfo};
+use crate::mcp::config::is_loopback_url;
+use crate::mcp::transport::HttpTransportConfig;
+use crate::mcp::{McpError, McpServerCapabilities, McpToolCall, McpToolInfo};
 
 pub(crate) struct RunningClient {
     inner: RunningService<RoleClient, ()>,
@@ -435,7 +435,7 @@ pub(crate) mod test_support {
     use rmcp::{ErrorData, RoleServer, ServiceExt as _};
 
     use super::RunningClient;
-    use crate::McpError;
+    use crate::mcp::McpError;
 
     #[derive(Clone, Copy)]
     pub(crate) enum ServerBehavior {
@@ -545,7 +545,7 @@ pub(crate) mod test_support {
     }
 
     #[async_trait::async_trait]
-    impl crate::transport::McpConnector for InProcessConnector {
+    impl crate::mcp::transport::McpConnector for InProcessConnector {
         fn transport_name(&self) -> &'static str {
             "test-in-process"
         }
@@ -583,7 +583,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::HttpTransportConfig;
+    use crate::mcp::transport::HttpTransportConfig;
 
     #[test]
     fn http_config_rejects_invalid_inputs() {

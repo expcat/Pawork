@@ -7,7 +7,7 @@ use pawork_domain::{AgentId, ModelId, ProviderId, SessionId};
 use pawork_orchestration::{
     AgentSupervisor, OrchestrationEvent, SpawnRequest, SupervisorConfig, WorkerBudgetLimits,
 };
-use pawork_provider_control::AcquireRequest;
+use pawork_control_plane::credential::AcquireRequest;
 use serde::Serialize;
 
 use crate::AppError;

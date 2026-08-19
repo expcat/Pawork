@@ -55,7 +55,7 @@
 | --- | --- | --- | --- |
 | A ✅(2026-08-19) | ADR-039(布局 + 不合并清单 + 取舍)用户确认;api→domain(契约包,golden 先行);diagnostics 活符号迁 `apps/pawork` 并撤包 | docs/adr/、foundation/{domain,api,diagnostics}、apps/pawork、全部引用 api 的 Cargo.toml/use | 串行(契约包单一 owner) |
 | B ✅(2026-08-19) | 三大合并:storage(sqlite+session+blob)∥ providers(net+core+adapters)∥ workspace(core+resources+config+compat) | storage/*、foundation/sqlite、foundation/config、providers/*、net/、workspace/*、clients/compat;下游:storage 路修 cli/gui-client/protocol-probe/control-plane Cargo.toml,workspace 路修 mcp/tools,host/app 装配缝由主代理串行收口 | 并行 ×3(写入集不相交;下游 use 修复各自负责) |
-| C | tools(+mcp)∥ control-plane(core+quota+provider-control 核心) | execution/tools、extensions/mcp、control-plane/* | 并行 ×2 |
+| C ✅(2026-08-19) | tools(+mcp)∥ control-plane(core+quota+provider-control 核心) | execution/tools、extensions/mcp、control-plane/* | 并行 ×2 |
 | D | host 与 clients:app(+gui-server)∥ cli(+channels)∥ client(+sdk、probe→tests/example) | host/{app,gui-server}、host/{cli,channels}、clients/{gui-client,sdk}、apps/protocol-probe | 并行 ×3(app 与 cli 的接缝——cli 改经 app 取 GuiHost——由 app 路先定 trait 位置,cli 路后接;若冲突改串行) |
 | E | 收口:members 定稿 21;剩余未动包 `git mv` 到新布局;design.md §2 重写为 V3 布局;README 仓库结构更新;依赖红线断言更新(desktop deny-list、`cargo tree` 无环);全量受影响包定向测试 | 根 Cargo.toml、全目录 mv、docs/design.md、README.md、各红线测试 | 串行(主代理) |
 
@@ -81,6 +81,14 @@
 > - providers:`channels/` = adapters 现有通道模块(anthropic/、chatgpt.rs、xai.rs、api_key.rs)内聚重组,cfg feature 门控原样保留;host 通道表(`host/app/src/channels.rs`)不在本波写入集。adapters 原 `usage.rs` 薄 re-export 与 core `usage` 合一。
 > - 信封字节 golden 实态在 domain(非 session);v2-summary §4「golden 在 pawork-session」与 design.md:33,47 的过时表述由波 E 统一修正。desktop deny-list 与 gui-design.md 的包名引用(session/sqlite/provider-core)同样在波 E 更新。
 > - host/app 同时是三路下游,装配缝(Cargo.toml + use)由主代理在三路完成后串行收口,不并行派发。
+
+> 2026-08-19 波 C 三路核查补注(实态重验,已按实态执行):
+> - MCP 测试实态 **64** 个(本任务书「59 测试」为 2026-08-18 快照),全部在 src 模块内(无 tests/);rmcp 隔离断言在 mcp/src/lib.rs,随迁 tools `mcp/` 后扫描根改 `src/mcp/`、仍只豁免 codec.rs。
+> - provider-control 实态为 `lease.rs` + `lib.rs`(池/闸门在 lib.rs)共 3107 行,**无 `credential/` 目录**——`credential/` 是 control-plane 内的目标模块名;lease 状态机无外部消费者(外部只消费池/闸门根类型),按零裁剪整组平移。
+> - control-plane core 自带 `rusqlite` optional feature(`default=["sqlite"]`,`SqliteUsageLedger` 自开连接),**不依赖 pawork-storage**;§1 #15「→ domain、storage(`sqlite` feature)」以实态为准。quota/provider-control 均不依赖 rusqlite/storage。
+> - tools 现无 auth 依赖;#6 终态依赖里的 auth 随 mcp 并入获得。mcp/quota/provider-control 三包均无 [features] 段;provider-control 被 app/orchestration 以 `default-features = false` 引用为历史空操作,orchestration 切到 control-plane 后必须保持 `default-features = false`(防 rusqlite 传染编排闭包)。
+> - 写入集外下游仅 host/app(三包)与 agents/orchestration(仅 provider-control);cli/desktop 不直连。usage `dedup_key` 与 audit JSONL golden 锚定在 core 自身,本波只新增模块不动该面。
+> - 删除三源目录(extensions/mcp、control-plane/{quota,provider-control})与 host/app 装配缝、根 `extensions/*` glob 移除统一在主代理收口串行执行(保持两路并行期间 workspace 可解析)。
 
 ## 6. 验证
 

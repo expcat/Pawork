@@ -11,9 +11,9 @@ use pawork_auth::oauth::{
 use pawork_auth::{SecretBackend, StoredCredential};
 use tokio::sync::Mutex;
 
-use crate::codec::RunningClient;
-use crate::transport::{DefaultConnector, HttpTransportConfig, McpConnector};
-use crate::McpError;
+use crate::mcp::codec::RunningClient;
+use crate::mcp::transport::{DefaultConnector, HttpTransportConfig, McpConnector};
+use crate::mcp::McpError;
 
 /// Begin a PKCE Authorization Code login for an MCP http server.
 pub fn begin_pkce_login(config: PkceFlowConfig) -> Result<PkceSession, McpError> {

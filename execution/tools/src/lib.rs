@@ -1,12 +1,13 @@
 //! pawork-tools：只读四工具 + 写三件 + run_command + 接 PolicyEngine 的最小 scheduler。
 //!
-//! tool_search 仍不在本包。
+//! MCP 客户端作为 `mcp/` 子模块并入本包。tool_search 仍不在本包。
 
 pub mod apply_patch;
 pub mod common;
 pub mod edit_file;
 pub mod find_files;
 pub mod list_directory;
+pub mod mcp;
 pub mod read_file;
 pub mod run_command;
 pub mod scheduler;

@@ -1,7 +1,7 @@
 //! Usage Ledger-derived quota snapshots (P14-7).
 //!
 //! [`LedgerQuotaAdapter`] bridges the canonical Usage/Cost Ledger
-//! ([`pawork_control_plane::UsageLedger`]) into the quota domain. It is the single
+//! ([`crate::UsageLedger`]) into the quota domain. It is the single
 //! place that derives `used`/`limit`/`remaining` from local usage facts,
 //! so there is never a second usage accumulator: the ledger remains the only
 //! source of truth for usage and cost.
@@ -38,10 +38,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use pawork_control_plane::{UsageLedger, UsageQuery};
+use crate::{UsageLedger, UsageQuery};
 use pawork_domain::{CancellationToken, Timestamp};
 
-use crate::{
+use crate::quota::{
     AdapterKind, Confidence, QuotaAdapter, QuotaError, QuotaMeasure, QuotaProvenance, QuotaRequest,
     QuotaReset, QuotaSnapshot, QuotaUnit, QuotaValues,
 };
@@ -68,24 +68,24 @@ impl BudgetCap {
 /// Window length in milliseconds, used to compute the half-open time range
 /// `[now - len, now)` for ledger queries. [`QuotaWindow::Overall`] uses
 /// `[0, now)` (the full history).
-fn window_length_ms(window: crate::QuotaWindow) -> Option<u64> {
+fn window_length_ms(window: crate::quota::QuotaWindow) -> Option<u64> {
     match window {
-        crate::QuotaWindow::Overall => None,
-        crate::QuotaWindow::Rolling5h => Some(5 * 60 * 60 * 1000),
-        crate::QuotaWindow::Weekly => Some(7 * 24 * 60 * 60 * 1000),
-        crate::QuotaWindow::Monthly => Some(30 * 24 * 60 * 60 * 1000),
+        crate::quota::QuotaWindow::Overall => None,
+        crate::quota::QuotaWindow::Rolling5h => Some(5 * 60 * 60 * 1000),
+        crate::quota::QuotaWindow::Weekly => Some(7 * 24 * 60 * 60 * 1000),
+        crate::quota::QuotaWindow::Monthly => Some(30 * 24 * 60 * 60 * 1000),
     }
 }
 
 /// Wall-clock source used to anchor rolling window bounds. Re-exported from
 /// the service so the refresh scheduler and the ledger adapter share one clock.
-pub use crate::service::QuotaClock;
+pub use crate::quota::service::QuotaClock;
 
 /// Adapter that derives quota from a Usage/Cost Ledger.
 ///
 /// Clone-safe: it holds the ledger by `Arc<dyn UsageLedger>` and an immutable
 /// budget cap. Multiple adapters with different caps can coexist by being
-/// registered under different [`crate::service::ScopeMatch`] predicates.
+/// registered under different [`crate::quota::service::ScopeMatch`] predicates.
 pub struct LedgerQuotaAdapter {
     ledger: Arc<dyn UsageLedger>,
     clock: Arc<dyn QuotaClock>,
@@ -367,7 +367,7 @@ impl QuotaAdapter for LedgerQuotaAdapter {
 }
 
 /// Half-open window start in Unix milliseconds. `Overall` starts at 0.
-fn window_start_ms(window: crate::QuotaWindow, now_ms: u64) -> u64 {
+fn window_start_ms(window: crate::quota::QuotaWindow, now_ms: u64) -> u64 {
     match window_length_ms(window) {
         Some(len) => now_ms.saturating_sub(len),
         None => 0,
@@ -420,7 +420,7 @@ fn overlay_values(remote: &QuotaValues, delta: u64) -> Result<QuotaValues, Quota
 /// resets (Unknown). All rolling resets are marked `uncertain=true` because
 /// the boundary is an approximation (e.g. a 30-day "monthly" window is not a
 /// calendar month).
-fn window_reset(window: crate::QuotaWindow, now: Timestamp) -> QuotaReset {
+fn window_reset(window: crate::quota::QuotaWindow, now: Timestamp) -> QuotaReset {
     match window_length_ms(window) {
         Some(len) => QuotaReset::Relative {
             after_secs: len / 1000,
@@ -477,14 +477,14 @@ pub fn predict_exhaustion(
 mod tests {
     use std::sync::Arc;
 
-    use pawork_control_plane::{InMemoryUsageLedger, UsageLedger, UsageRecord};
+    use crate::{InMemoryUsageLedger, UsageLedger, UsageRecord};
     use pawork_domain::{CancellationToken, ModelId, ProviderId, TenantId, Timestamp};
 
     use super::*;
-    use crate::{AccountId, QuotaScope, QuotaWindow};
+    use crate::quota::{AccountId, QuotaScope, QuotaWindow};
 
     fn clock_at(ms: u64) -> Arc<dyn QuotaClock> {
-        Arc::new(crate::service::MutableQuotaClock::at(ms))
+        Arc::new(crate::quota::service::MutableQuotaClock::at(ms))
     }
 
     fn scope() -> QuotaScope {
@@ -854,17 +854,17 @@ mod tests {
 
     #[test]
     fn window_length_matches_canonical_windows() {
-        assert!(window_length_ms(crate::QuotaWindow::Overall).is_none());
+        assert!(window_length_ms(crate::quota::QuotaWindow::Overall).is_none());
         assert_eq!(
-            window_length_ms(crate::QuotaWindow::Rolling5h),
+            window_length_ms(crate::quota::QuotaWindow::Rolling5h),
             Some(5 * 60 * 60 * 1000)
         );
         assert_eq!(
-            window_length_ms(crate::QuotaWindow::Weekly),
+            window_length_ms(crate::quota::QuotaWindow::Weekly),
             Some(7 * 24 * 60 * 60 * 1000)
         );
         assert_eq!(
-            window_length_ms(crate::QuotaWindow::Monthly),
+            window_length_ms(crate::quota::QuotaWindow::Monthly),
             Some(30 * 24 * 60 * 60 * 1000)
         );
     }

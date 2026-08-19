@@ -18,8 +18,8 @@ use pawork_exec::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
 
-use crate::transport::StdioTransportConfig;
-use crate::McpError;
+use crate::mcp::transport::StdioTransportConfig;
+use crate::mcp::McpError;
 
 /// Combined stdout + stderr output budget for one stdio connection.
 const STDIO_MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;

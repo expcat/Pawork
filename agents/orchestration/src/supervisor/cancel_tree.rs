@@ -1,7 +1,7 @@
 //! 取消树：递归取消子孙并以 Cancelled 释放 lease（不惩罚账号健康）。
 
 use pawork_domain::{AgentId, ModelId, ProviderId};
-use pawork_provider_control::LeaseOutcome;
+use pawork_control_plane::credential::LeaseOutcome;
 
 use crate::lifecycle::{OrchestrationEvent, WorkerTransition};
 use crate::task_graph::TaskId;

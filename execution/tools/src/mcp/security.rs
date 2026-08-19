@@ -11,7 +11,7 @@ use std::fmt;
 use pawork_auth::{AuthError, SecretBackend};
 use serde::{Deserialize, Serialize};
 
-use crate::McpError;
+use crate::mcp::McpError;
 
 /// MCP SecretRef 必须落在独立命名空间，禁止解析 Provider / OAuth 凭证。
 const MCP_SERVICE_PREFIX: &str = "pawork.mcp.";

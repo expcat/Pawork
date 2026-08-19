@@ -4298,13 +4298,10 @@ dependencies = [
  "pawork-exec",
  "pawork-git",
  "pawork-gui-server",
- "pawork-mcp",
  "pawork-orchestration",
  "pawork-policy",
  "pawork-protocol",
- "pawork-provider-control",
  "pawork-providers",
- "pawork-quota",
  "pawork-storage",
  "pawork-testkit",
  "pawork-tools",
@@ -4397,7 +4394,9 @@ name = "pawork-control-plane"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures",
  "pawork-domain",
+ "proptest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -4405,6 +4404,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4496,27 +4496,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pawork-mcp"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pawork-auth",
- "pawork-domain",
- "pawork-exec",
- "pawork-tools",
- "pawork-workspace",
- "reqwest 0.12.28",
- "rmcp",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "url",
- "wiremock",
-]
-
-[[package]]
 name = "pawork-orchestration"
 version = "0.1.0"
 dependencies = [
@@ -4526,7 +4505,6 @@ dependencies = [
  "pawork-control-plane",
  "pawork-domain",
  "pawork-git",
- "pawork-provider-control",
  "serde",
  "serde_json",
  "tempfile",
@@ -4564,20 +4542,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pawork-provider-control"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pawork-domain",
- "proptest",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "pawork-providers"
 version = "0.1.0"
 dependencies = [
@@ -4593,21 +4557,6 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
-]
-
-[[package]]
-name = "pawork-quota"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures",
- "pawork-control-plane",
- "pawork-domain",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "url",
 ]
 
 [[package]]
@@ -4664,6 +4613,7 @@ dependencies = [
  "encoding_rs",
  "globset",
  "ignore",
+ "pawork-auth",
  "pawork-domain",
  "pawork-exec",
  "pawork-policy",
@@ -4671,11 +4621,16 @@ dependencies = [
  "pawork-workspace",
  "proptest",
  "regex",
+ "reqwest 0.12.28",
+ "rmcp",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
+ "url",
+ "wiremock",
 ]
 
 [[package]]

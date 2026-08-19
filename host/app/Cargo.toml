@@ -23,15 +23,12 @@ pawork-auth = { path = "../../providers/auth" }
 pawork-tools = { path = "../../execution/tools" }
 pawork-policy = { path = "../../execution/policy" }
 pawork-workspace = { path = "../../workspace/core" }
-pawork-mcp = { path = "../../extensions/mcp" }
 pawork-exec = { path = "../../execution/exec" }
 pawork-storage = { path = "../../foundation/sqlite", features = ["compaction", "checkpoint"] }
 pawork-git = { path = "../../vcs/git" }
 pawork-workflow = { path = "../../workflow/core" }
 pawork-orchestration = { path = "../../agents/orchestration", default-features = false }
 pawork-control-plane = { path = "../../control-plane/core" }
-pawork-quota = { path = "../../control-plane/quota" }
-pawork-provider-control = { path = "../../control-plane/provider-control", default-features = false }
 pawork-protocol = { path = "../../foundation/protocol" }
 pawork-gui-server = { path = "../gui-server" }
 tracing.workspace = true

@@ -28,10 +28,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{AcquireRequest, LeaseId, LeaseOutcome, CONTROL_PLANE_SCHEMA_VERSION};
+use crate::credential::{AcquireRequest, LeaseId, LeaseOutcome, CONTROL_PLANE_SCHEMA_VERSION};
 
 /// 公开（无 secret）的 lease 视图，由 [`LeaseRecord`] 投影得到，供 Agent/Client 持有。
-pub use crate::CredentialLease;
+pub use crate::credential::CredentialLease;
 
 /// Lease 实体 schema 版本（与 `app-database` 的 `credential_leases` 迁移对齐）。
 ///
@@ -460,7 +460,7 @@ pub enum LeaseProjectionError {
 /// 与旧契约的关键差异（P18-4 主审修复）：
 /// - 方法返回 `Result`：真实后端（如 `DatabaseActor`）会在 `.await` 上挂起并可能失败，
 ///   错误必须可传播，不再被「同步单次 poll」契约吞掉；
-/// - [`crate::LeaseGuard`] 的 `Drop` 路径不再假定投影可同步完成：若首次 poll 返回
+/// - [`crate::credential::LeaseGuard`] 的 `Drop` 路径不再假定投影可同步完成：若首次 poll 返回
 ///   `Pending`，会把释放 future 交给 detached task 继续驱动到完成，避免永久额度泄漏。
 ///
 /// - `apply`：事务化 upsert 快照 + 追加事件（终态快照可从活跃集移除，事件永久保留）；

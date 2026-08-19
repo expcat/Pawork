@@ -229,7 +229,7 @@ pub enum AppError {
     #[error("ambiguous checkpoint `{prefix}` matches: {matches}")]
     AmbiguousCheckpoint { prefix: String, matches: String },
     #[error(transparent)]
-    Mcp(#[from] pawork_mcp::McpError),
+    Mcp(#[from] pawork_tools::mcp::McpError),
     #[error(transparent)]
     Resources(#[from] pawork_workspace::resources::ResourceLoadError),
     #[error(transparent)]

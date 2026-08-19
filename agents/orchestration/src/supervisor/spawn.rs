@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use pawork_domain::{AgentId, CancellationToken, ModelId};
-use pawork_provider_control::LeaseOutcome;
+use pawork_control_plane::credential::LeaseOutcome;
 use pawork_control_plane::{
     IdentityContext, Permission, PolicyDecisionEvent, PolicyDecisionKind, PolicyGate,
 };
@@ -38,7 +38,7 @@ pub struct SpawnRequest {
     /// 模型（可选；提供时经租户策略模型白名单闸门）。
     pub model: Option<ModelId>,
     /// 申请 credential lease 的请求（`None` 不申请）。
-    pub acquire: Option<pawork_provider_control::AcquireRequest>,
+    pub acquire: Option<pawork_control_plane::credential::AcquireRequest>,
     /// 任务依赖（可选；配置 TaskGraph 时注册）。
     pub task_deps: Vec<TaskId>,
     /// 任务描述（可选）。
@@ -681,15 +681,15 @@ impl AgentSupervisor {
 
 /// 校验 pool 返回的 lease 作用域与本次 spawn 的 canonical 请求一致。
 ///
-/// 不信任调用方拼接的 [`pawork_provider_control::AcquireRequest`]（已在闸口拒绝错配），
+/// 不信任调用方拼接的 [`pawork_control_plane::credential::AcquireRequest`]（已在闸口拒绝错配），
 /// 也不信任 pool 返回的 lease 内容：tenant / principal / session / agent 必须与
 /// [`SpawnRequest`] 一致，请求显式指定的 provider / account 必须与 lease 一致。
 /// 任何错配（恶意 / 故障 pool）返回原因串，调用方据此 fail-closed 释放 lease。
 fn validate_lease_scope(
-    lease: &pawork_provider_control::CredentialLease,
+    lease: &pawork_control_plane::credential::CredentialLease,
     req: &SpawnRequest,
     agent_id: &AgentId,
-    acquire: &pawork_provider_control::AcquireRequest,
+    acquire: &pawork_control_plane::credential::AcquireRequest,
 ) -> Result<(), &'static str> {
     if lease.tenant_id != req.tenant_id {
         return Err("tenant mismatch");

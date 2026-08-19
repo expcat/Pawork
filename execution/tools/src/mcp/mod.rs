@@ -42,7 +42,7 @@ pub enum McpError {
     #[error("MCP OAuth failed: {0}")]
     OAuth(String),
     #[error("MCP tool registration rejected by registry: {0}")]
-    Registry(#[from] pawork_tools::ToolRegistryError),
+    Registry(#[from] crate::ToolRegistryError),
 }
 
 impl McpError {
@@ -121,12 +121,12 @@ mod tests {
     use pawork_domain::{
         CancellationToken, ToolCapability, ToolDescriptor, ToolHosting, ToolKind,
     };
-    use pawork_tools::ToolRegistry;
+    use crate::ToolRegistry;
     use serde_json::json;
 
-    use crate::capabilities::{register_server_tools, McpToolAdapter};
-    use crate::config::McpPermissions;
-    use crate::{McpError, McpPeer, McpServerCapabilities, McpToolCall, McpToolInfo};
+    use crate::mcp::capabilities::{register_server_tools, McpToolAdapter};
+    use crate::mcp::config::McpPermissions;
+    use crate::mcp::{McpError, McpPeer, McpServerCapabilities, McpToolCall, McpToolInfo};
 
     struct BuiltinMock;
 
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn public_sources_do_not_mention_rmcp() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/mcp");
         let mut scanned = 0usize;
         for entry in fs::read_dir(&src).expect("src dir") {
             let entry = entry.expect("entry");
