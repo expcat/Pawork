@@ -19,6 +19,8 @@
 //! 本 crate 不依赖任何 GUI 框架，也不链接 pawork-app / pawork-gui-server（契约
 //! 测试使用的服务端装配仅位于 dev-dependencies）。
 
+pub mod headless;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

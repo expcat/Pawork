@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use pawork_app::{AppCore, GuiHostAdapter};
 use pawork_client::{ClientConfig, ClientError, GuiClient, ResumeDisposition, SessionInfo};
 use pawork_domain::{ActorId, ModelId, ProviderId, RunId, SessionId, WorkspaceId};
-use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
+use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppEvent, AppEventEnvelope, AppQuery, AppResponse,
     CommandSource, GlobalSequence, GuiCapability, HandshakeService,

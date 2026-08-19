@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
-use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
+use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::client_auth::{TokenAuthenticator, TokenStore};
 use pawork_protocol::{GuiCapability, HandshakeService, SUPPORTED_API_VERSIONS};
 use pawork_transport::{

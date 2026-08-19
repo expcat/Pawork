@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
-use pawork_channels::{AcpCommandHost, AcpHostError};
+use crate::channels::{AcpCommandHost, AcpHostError};
 use pawork_domain::{CommandId, QueryId, Timestamp};
-use pawork_gui_server::GuiHost;
+use pawork_app::gui_server::GuiHost;
 use pawork_protocol::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, CommandSource, API_VERSION,

@@ -30,14 +30,14 @@ pawork-workflow = { path = "../../workflow/core" }
 pawork-orchestration = { path = "../../agents/orchestration", default-features = false }
 pawork-control-plane = { path = "../../control-plane/core" }
 pawork-protocol = { path = "../../foundation/protocol" }
-pawork-gui-server = { path = "../gui-server" }
+pawork-transport = { path = "../transport" }
 tracing.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "sync", "time"] }
 reqwest.workspace = true
 toml.workspace = true
 
@@ -51,3 +51,13 @@ pawork-engine = { path = "../../engine/engine" }
 pawork-providers = { path = "../../providers/adapters", features = ["anthropic"] }
 pawork-storage = { path = "../../foundation/sqlite" }
 pawork-testkit = { path = "../../foundation/testkit" }
+pawork-transport = { path = "../transport", features = ["local", "memory"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+
+[[test]]
+name = "gui_server_session"
+path = "tests/gui_server/session.rs"
+
+[[test]]
+name = "gui_server_multi_gui_runtime"
+path = "tests/gui_server/multi_gui_runtime.rs"

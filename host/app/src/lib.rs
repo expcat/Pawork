@@ -13,6 +13,7 @@ mod data_dir;
 mod diff;
 mod extensions;
 mod gui_host;
+pub mod gui_server;
 mod hub;
 mod idempotency;
 mod import_host;

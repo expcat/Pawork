@@ -8,7 +8,7 @@ use pawork_domain::{ContentPart, Message, MessageId, MessageRole, RunId, Session
 use pawork_engine::{
     AgentEventSink, CancelHandle, CancelReason, EngineError, NoopProcessTreeCleaner,
 };
-use pawork_gui_server::GuiHost;
+use pawork_app::gui_server::GuiHost;
 use pawork_protocol::headless::translate::encode_protocol_response;
 use pawork_protocol::headless::{HeadlessResponse, ProtocolErrorKind};
 use pawork_protocol::{AppCommand, AppEvent, AppResponse, RunState};

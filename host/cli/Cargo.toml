@@ -9,19 +9,28 @@ description = "Pawork CLI（六运行模式 + 运维：chat/run/headless/acp/gui
 
 [dependencies]
 pawork-app = { path = "../app" }
-pawork-channels = { path = "../channels" }
 pawork-client = { path = "../../clients/gui-client" }
 pawork-domain = { path = "../../foundation/domain" }
 pawork-engine = { path = "../../engine/engine" }
-pawork-gui-server = { path = "../gui-server" }
-pawork-protocol = { path = "../../foundation/protocol" }
+pawork-protocol = { path = "../../foundation/protocol", features = ["adapter"] }
 pawork-storage = { path = "../../foundation/sqlite", default-features = false, features = ["session"] }
 pawork-transport = { path = "../transport" }
 async-trait.workspace = true
 clap.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "io-std", "io-util", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "io-std", "io-util", "sync", "time"] }
+tracing.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[[test]]
+name = "acp_fixtures"
+path = "tests/fixtures.rs"
+
+[[test]]
+name = "acp_floor"
+path = "tests/floor.rs"

@@ -18,7 +18,7 @@ use pawork_domain::{
 use pawork_exec::{OwnerSessionId, PtyCreateSpec, PtyEvent, PtyService, PtyWindowSize, TerminalId};
 use pawork_storage::session::{SessionRecord, SessionTree};
 use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
-use pawork_gui_server::{GuiHost, GuiHostError};
+use crate::gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope,
     AppResponse, AppResponseEnvelope, CommandSource, DiagnosticLevel, EventSource, EventStream,

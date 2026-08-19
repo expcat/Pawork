@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use pawork_app::{AppCore, GuiHostAdapter};
-use pawork_gui_server::GuiHost;
+use pawork_app::gui_server::GuiHost;
 use pawork_domain::SessionId;
 use pawork_protocol::headless::stdio::{self, Handler, LoopConfig};
 use pawork_protocol::headless::{

@@ -4297,7 +4297,6 @@ dependencies = [
  "pawork-engine",
  "pawork-exec",
  "pawork-git",
- "pawork-gui-server",
  "pawork-orchestration",
  "pawork-policy",
  "pawork-protocol",
@@ -4305,6 +4304,7 @@ dependencies = [
  "pawork-storage",
  "pawork-testkit",
  "pawork-tools",
+ "pawork-transport",
  "pawork-workflow",
  "pawork-workspace",
  "reqwest 0.12.28",
@@ -4338,12 +4338,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "pawork-channels"
+name = "pawork-cli"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "clap",
+ "pawork-app",
+ "pawork-client",
  "pawork-domain",
+ "pawork-engine",
  "pawork-protocol",
+ "pawork-storage",
+ "pawork-transport",
  "serde",
  "serde_json",
  "tempfile",
@@ -4353,36 +4359,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "pawork-cli"
+name = "pawork-client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap",
  "pawork-app",
- "pawork-channels",
- "pawork-client",
  "pawork-domain",
- "pawork-engine",
- "pawork-gui-server",
- "pawork-protocol",
- "pawork-storage",
- "pawork-transport",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
-]
-
-[[package]]
-name = "pawork-client"
-version = "0.1.0"
-dependencies = [
- "pawork-app",
- "pawork-domain",
- "pawork-gui-server",
  "pawork-protocol",
  "pawork-storage",
  "pawork-testkit",
  "pawork-transport",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
@@ -4481,21 +4469,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pawork-gui-server"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pawork-domain",
- "pawork-protocol",
- "pawork-transport",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "pawork-orchestration"
 version = "0.1.0"
 dependencies = [
@@ -4557,20 +4530,6 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
-]
-
-[[package]]
-name = "pawork-sdk"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pawork-domain",
- "pawork-protocol",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
 ]
 
 [[package]]
@@ -4949,24 +4908,6 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
-]
-
-[[package]]
-name = "protocol-probe"
-version = "0.1.0"
-dependencies = [
- "clap",
- "pawork-app",
- "pawork-client",
- "pawork-domain",
- "pawork-gui-server",
- "pawork-protocol",
- "pawork-storage",
- "pawork-testkit",
- "pawork-transport",
- "serde_json",
- "tempfile",
- "tokio",
 ]
 
 [[package]]

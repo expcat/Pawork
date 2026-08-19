@@ -56,7 +56,7 @@
 | A ✅(2026-08-19) | ADR-039(布局 + 不合并清单 + 取舍)用户确认;api→domain(契约包,golden 先行);diagnostics 活符号迁 `apps/pawork` 并撤包 | docs/adr/、foundation/{domain,api,diagnostics}、apps/pawork、全部引用 api 的 Cargo.toml/use | 串行(契约包单一 owner) |
 | B ✅(2026-08-19) | 三大合并:storage(sqlite+session+blob)∥ providers(net+core+adapters)∥ workspace(core+resources+config+compat) | storage/*、foundation/sqlite、foundation/config、providers/*、net/、workspace/*、clients/compat;下游:storage 路修 cli/gui-client/protocol-probe/control-plane Cargo.toml,workspace 路修 mcp/tools,host/app 装配缝由主代理串行收口 | 并行 ×3(写入集不相交;下游 use 修复各自负责) |
 | C ✅(2026-08-19) | tools(+mcp)∥ control-plane(core+quota+provider-control 核心) | execution/tools、extensions/mcp、control-plane/* | 并行 ×2 |
-| D | host 与 clients:app(+gui-server)∥ cli(+channels)∥ client(+sdk、probe→tests/example) | host/{app,gui-server}、host/{cli,channels}、clients/{gui-client,sdk}、apps/protocol-probe | 并行 ×3(app 与 cli 的接缝——cli 改经 app 取 GuiHost——由 app 路先定 trait 位置,cli 路后接;若冲突改串行) |
+| D ✅(2026-08-19) | host 与 clients:app(+gui-server)∥ cli(+channels)∥ client(+sdk、probe→tests/example) | host/{app,gui-server}、host/{cli,channels}、clients/{gui-client,sdk}、apps/protocol-probe | 并行 ×3(app 与 cli 的接缝——cli 改经 app 取 GuiHost——由 app 路先定 trait 位置,cli 路后接;若冲突改串行) |
 | E | 收口:members 定稿 21;剩余未动包 `git mv` 到新布局;design.md §2 重写为 V3 布局;README 仓库结构更新;依赖红线断言更新(desktop deny-list、`cargo tree` 无环);全量受影响包定向测试 | 根 Cargo.toml、全目录 mv、docs/design.md、README.md、各红线测试 | 串行(主代理) |
 
 ## 5. 契约与 golden 随迁清单(改动前先确认 golden 在位)
@@ -89,6 +89,14 @@
 > - tools 现无 auth 依赖;#6 终态依赖里的 auth 随 mcp 并入获得。mcp/quota/provider-control 三包均无 [features] 段;provider-control 被 app/orchestration 以 `default-features = false` 引用为历史空操作,orchestration 切到 control-plane 后必须保持 `default-features = false`(防 rusqlite 传染编排闭包)。
 > - 写入集外下游仅 host/app(三包)与 agents/orchestration(仅 provider-control);cli/desktop 不直连。usage `dedup_key` 与 audit JSONL golden 锚定在 core 自身,本波只新增模块不动该面。
 > - 删除三源目录(extensions/mcp、control-plane/{quota,provider-control})与 host/app 装配缝、根 `extensions/*` glob 移除统一在主代理收口串行执行(保持两路并行期间 workspace 可解析)。
+
+> 2026-08-19 波 D 三路核查补注(实态重验,已按实态执行):
+> - workspace 实测 **25 members**(开篇「37」为 R0 后快照);本波解散 gui-server/channels/sdk/protocol-probe 后恰为 21。cli 顶层子命令实态 **21** 个(`host/cli/src/lib.rs:85`,任务书「14 子命令」过时)。
+> - GuiHost 接缝实态:trait 在 `host/gui-server/src/lib.rs:43`,app 已实现 `GuiHostAdapter`(`gui_host.rs:570`)但**不 re-export trait、无 transport 依赖**;cli 四处直接 `use pawork_gui_server::GuiHost`(chat/gui/headless/adapter)。本波落地目标态:trait 随包平移为 `pawork_app::gui_server::GuiHost`,cli 改经 app;app 终态依赖 = 原依赖 + transport(吸收 gui-server 获得)。
+> - probe 与 client dev-deps **不完全同构**(任务书§2 表述过时):probe 用 MemoryTransport 且 testkit/app/gui-server 在 prod 依赖;client `tests/contract.rs` 用 LocalTransport+UDS、同组依赖在 dev-deps。live 模式(`--connect`/`--live-two-gui`/`--live-pty`)在同一 bin 上,非 example。按目标态执行:9 场景(MemoryTransport harness 形态保留)→ client `tests/`,live → client `examples/probe.rs`。
+> - channels 实态:`acp/{adapter,command_host,host,wire}` 四公开模块 + `pub(crate) map.rs`;workspace 唯一消费者为 cli。sdk 实态:**零外部消费者**;稳定面 PaworkClient/PaworkOptions/EventSubscription/SdkError{,Kind}/Transport/spawn_pawork/SDK_API_VERSION/SDK_VERSION + experimental::CompatOutcome + protocol reexport,平移为 `pawork_client::headless` 后保持 `pub`,夹具(clients/sdk/tests/fixtures 5 件 + client_tests 20 测 + spawn_e2e 3 测)随迁。
+> - 契约面无新增缺口:GUI 帧/headless-json 字节 golden 在 protocol(本波不动);typegen 链不引用写入集内包,不改 typegen 输入集。行为锚点随迁:EventHub Snapshot/ReplayUnavailable(gui-server tests session.rs:586、multi_gui_runtime.rs:612 → app 侧;client contract.rs:255/382;probe 9 场景)、F33 fail-closed(cli headless.rs:371,包内移动不动)、ACP golden(channels fixtures → cli)。UDS 0600/token 锚点在 transport+protocol(写入集外,不动);cli `gui.rs:44-75` 强制 token 接线原样保留。
+> - 写入集外本波只动 Cargo.lock(收口时由 cargo 重解析);根 Cargo.toml glob(host/*/clients/*/apps/*)删四源目录后仍可解析,members 定稿与目录扁平化在波 E;docs/design.md、README、AGENTS.md 成员数、desktop deny-list、engine domain-only 断言均属波 E。
 
 ## 6. 验证
 

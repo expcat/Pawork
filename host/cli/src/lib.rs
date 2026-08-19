@@ -24,6 +24,8 @@ mod tasks;
 mod usage;
 mod vcs;
 
+pub mod channels;
+
 use std::io::IsTerminal;
 use std::process::ExitCode;
 use std::sync::Arc;
