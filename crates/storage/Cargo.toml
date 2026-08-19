@@ -33,7 +33,7 @@ checkpoint = [
 protected = [
     "blob",
     "dep:chacha20poly1305",
-    "dep:rand",
+    "dep:getrandom",
     "dep:zeroize",
     "dep:pawork-domain",
 ]
@@ -48,7 +48,7 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 blake3 = { workspace = true, optional = true }
 chacha20poly1305 = { workspace = true, optional = true }
-rand = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 

@@ -43,10 +43,10 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 当前阶段 | R2([plan/R2-dependency-governance.md](plan/R2-dependency-governance.md))⚪ 待开启 |
-| 阶段状态 | R0 🟢(波 0/A/B/C 全部收口,2026-08-18;改判 3+1 项见 ADR-038 落实改判记录);R1 🟢(波 A–E 全部收口,2026-08-19);R2–R9 ⚪ |
-| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档)、R1 波 A(ADR-039 Accepted + api→domain golden 先行平移 + diagnostics 迁宿主撤包,2026-08-19;members 37→35)、R1 波 B(storage/providers/workspace 三大合并 + host/app 装配缝,2026-08-19;members 35→28)、R1 波 C(mcp→tools ∥ quota+provider-control→control-plane + host/app 装配缝,2026-08-19;members 28→25)、R1 波 D(gui-server→app `gui_server/` ∥ channels→cli `channels/` ∥ sdk→client `headless/` + probe→client tests/example,2026-08-19;members 25→21)、R1 波 E(members 定稿 21 + 19 库 `git mv` 扁平 `crates/` + design.md §2 重写 + 红线断言随迁 + 21 包定向测试 + 真实冒烟,2026-08-19;整阶段审查已修复 probe 暴露的动态模型切换与 client 错误帧路由缺陷,并收紧三条红线回归;修复后 desktop probe 全绿) |
-| **下一波次** | R2 波 A(按 [plan/R2-dependency-governance.md](plan/R2-dependency-governance.md) 波次拆分;无 ADR 闸门) |
+| 当前阶段 | R2([plan/R2-dependency-governance.md](plan/R2-dependency-governance.md))🔵 进行中(波 A 已收口) |
+| 阶段状态 | R0 🟢(波 0/A/B/C 全部收口,2026-08-18;改判 3+1 项见 ADR-038 落实改判记录);R1 🟢(波 A–E 全部收口,2026-08-19);R2 🔵(波 A 收口);R3–R9 ⚪ |
+| 已完成波次 | R0 波 0(ADR-038)、R0 波 A(大块归档)、R0 波 B(小块删除与降级)、R0 波 C(D16 git 服务裁剪 + 收口,2026-08-18;补判 commit.rs 归档)、R1 波 A(ADR-039 Accepted + api→domain golden 先行平移 + diagnostics 迁宿主撤包,2026-08-19;members 37→35)、R1 波 B(storage/providers/workspace 三大合并 + host/app 装配缝,2026-08-19;members 35→28)、R1 波 C(mcp→tools ∥ quota+provider-control→control-plane + host/app 装配缝,2026-08-19;members 28→25)、R1 波 D(gui-server→app `gui_server/` ∥ channels→cli `channels/` ∥ sdk→client `headless/` + probe→client tests/example,2026-08-19;members 25→21)、R1 波 E(members 定稿 21 + 19 库 `git mv` 扁平 `crates/` + design.md §2 重写 + 红线断言随迁 + 21 包定向测试 + 真实冒烟,2026-08-19;整阶段审查已修复 probe 暴露的动态模型切换与 client 错误帧路由缺陷,并收紧三条红线回归;修复后 desktop probe 全绿)、R2 波 A(L1 rand→getrandom 6 点 + L2 parking_lot→std::sync 52 处含 orchestration 死声明 + L3 base64→auth 本地 base64url 模块,对拍 golden 先行后固化 13 组固定向量,2026-08-19;rand/parking_lot/base64 退出直接依赖,根 workspace 声明已清) |
+| **下一波次** | R2 波 B(升级 U1–U8、U10,按 [plan/R2-dependency-governance.md](plan/R2-dependency-governance.md);无 ADR 闸门) |
 | 阻塞 | 无 |
 
 自动选择以本表为准,再用 ROADMAP / 任务书 / 工作区实态交叉校验。三者冲突时:**工作区实态 > 本表 > ROADMAP 状态列**;更新本表使三者一致后再开工。

@@ -8,9 +8,9 @@
 
 | # | 动作 | 现用面 | 实施 | 风险 |
 | --- | --- | --- | --- | --- |
-| L1 | rand → `getrandom::fill()` | 6 个生产调用点,全部「填充 N 字节随机」:`foundation/protocol/src/client_auth.rs:97`(32B token)、`providers/auth/src/oauth.rs:131,145`(PKCE verifier/state)、`storage/blob/src/protected.rs:814,948,975`(nonce/盲化/抖动)(remote wire 已随 R0 归档) | ~10 行 diff;getrandom 已在传递树;顺带统一 thread_rng/OsRng 混用为 OS 熵 | 极低;生产树删 rand/rand_core/rand_chacha 三包 |
-| L2 | parking_lot → `std::sync` | 短临界区、无 condvar/timeout 的存留点:`execution/exec/src/pty/mod.rs:19` 等(`vcs/git/src/cache.rs` 三处与 workflow plan/goal 服务已随 R0 波 A/C 归档消失;执行时重验剩余清单与处数) | ~30 行;毒锁策略统一 `unwrap_or_else(PoisonError::into_inner)` 并注释 | 低;CLI 生产树真少一包(gpui 树仍带,仅影响 desktop) |
-| L3 | base64 → 本地 `base64url` 模块(无填充 encode/decode) | 仅 auth 一包 8 处,全部 `URL_SAFE_NO_PAD`:PKCE verifier/challenge(`oauth.rs:132,139,146`)、JWT payload 解码(`oauth.rs:1093`) | ~80 行 + golden 测试(与 base64 crate 输出逐字节对拍后再删依赖);PKCE 定向回归必跑 | 低;算法简单无平台差异 |
+| L1 | rand → `getrandom::fill()` ✅ 波 A 落地 | 6 个生产调用点(波 A 重验零漂移):`crates/protocol/src/client_auth.rs`(32B token)、`crates/auth/src/oauth.rs`(PKCE verifier/state)、`crates/storage/src/blob/protected.rs`(nonce/盲化/抖动) | getrandom 0.4.3 已在传递树(tempfile 链),直接声明复用同版本;统一 thread_rng/OsRng 为 OS 熵;feature 镜像:`client-auth`/`protected` 的 dep:rand→dep:getrandom | 极低;CLI 生产闭包删 rand/rand_core/rand_chacha(lock 整体因 desktop/dev 树仍留) |
+| L2 | parking_lot → `std::sync` ✅ 波 A 落地 | 波 A 重验:git cache 已随 R0 归档,但 `crates/workflow/src/plan/service.rs` 仍是活的使用点(12 处 .lock());`crates/exec/src/pty/mod.rs` 40 处;共 52 处机械替换;另清 orchestration 死声明(源码零使用) | 毒锁策略统一 `unwrap_or_else(PoisonError::into_inner)` 并注释;无 condvar/timeout | 低;CLI 生产闭包真少三件套(parking_lot/parking_lot_core/lock_api,gpui 树仍带) |
+| L3 | base64 → 本地 `base64url` 模块(无填充 encode/decode) ✅ 波 A 落地 | 波 A 重验:生产仅 4 操作点(非 8 处),全部 `URL_SAFE_NO_PAD`:PKCE verifier/challenge/state encode(`oauth.rs`)与 JWT payload decode;另 2 个测试文件(oauth.rs、default_credential.rs)随迁 | `crates/auth/src/base64url.rs` + golden 测试(先与 base64 0.22.1 逐字节对拍,绿后固化 13 组固定向量再整体删依赖);补 decode 错误路径测试;PKCE 定向回归已跑 | 低;算法简单无平台差异 |
 
 ## 2. 版本升级与去重(以 2026-08-18 crates.io 快照为准,执行时重查)
 
@@ -38,7 +38,7 @@
 
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
-| A | 本地化 L1–L3(先对拍 golden 再删依赖) | protocol/auth/storage/exec/git/workflow 的调用点 + 根 Cargo.toml | 并行 ×2(L1+L3 / L2) |
+| A | 本地化 L1–L3(先对拍 golden 再删依赖)✅ 2026-08-19 收口 | protocol/auth/storage/exec/workflow 的调用点 + orchestration 死声明 + 根 Cargo.toml | 并行 ×2(L1+L3 / L2) |
 | B | 升级 U1–U8、U10(逐项独立可回退;每项升完跑该消费面定向测试) | 各消费 crate Cargo.toml + 调用点迁移 | 串行推荐(lock 冲突面小但叠加诊断困难;U1/U3 可并行) |
 | C | rmcp 专项(§3) | tools `mcp/` + 根 Cargo.toml | 串行 |
 | D | 收口:`cargo tree -d`(duplicates)断言——notify/reqwest/toml/sha2/windows(0.58 位)多版本消失;记录前后 lock 包数与增量编译耗时对比 | 根 Cargo.lock、本任务书 | 串行(主代理) |
@@ -51,7 +51,7 @@
 
 ## 6. 退出标准
 
-- [ ] rand/parking_lot/base64 退出直接依赖;encoding_rs/futures 死声明已在 R0 清理(核对)
+- [x] rand/parking_lot/base64 退出直接依赖(波 A ✅;encoding_rs 为 tools 非死依赖见 manifest 注释、futures 三crate在用,均已核对)
 - [ ] U1–U8 完成;U10 有决议;lock 多版本项(thiserror 1.x、windows 0.57 除外)清零
 - [ ] rmcp 有决议并落地(升级或锁定登记)
 - [ ] 全部消费面定向测试绿 + 冒烟通过;v3_plan §3 指针更新

@@ -18,9 +18,7 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use pawork_domain::{ProviderId, Timestamp};
-use base64::Engine;
 use pawork_domain::{CredentialKind, ResolvedCredential};
-use rand::RngCore;
 use serde_json::Value;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
@@ -128,22 +126,22 @@ impl Pkce {
 /// 生成密码学随机的 code_verifier（48B 均匀随机数的 base64url 表达，长度 64）。
 fn random_code_verifier() -> String {
     let mut bytes = [0u8; CODE_VERIFIER_RANDOM_BYTES];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    getrandom::fill(&mut bytes).expect("OS entropy unavailable");
+    crate::base64url::encode(&bytes)
 }
 
 /// 计算 S256 code_challenge = base64url(sha256(verifier))，不含 `=` 填充。
 fn pkce_challenge_s256(verifier: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(verifier.as_bytes());
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+    crate::base64url::encode(&digest)
 }
 
 /// 高熵随机 state（CSRF 防护）。
 pub fn random_state() -> String {
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    getrandom::fill(&mut bytes).expect("OS entropy unavailable");
+    crate::base64url::encode(&bytes)
 }
 
 /// PKCE Authorization Code Flow 配置。
@@ -1089,9 +1087,7 @@ pub(crate) fn oauth_service(provider: &ProviderId) -> String {
 /// 解码 JWT payload 段（base64url，不验签）；仅供提取非机密 claim（如
 /// ChatGPT account id 路由头）使用，不作为信任边界。
 pub(crate) fn decode_jwt_payload(payload_b64: &str) -> Result<Value, AuthError> {
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
+    let bytes = crate::base64url::decode(payload_b64)
         .map_err(|error| AuthError::OAuth(format!("id_token payload is not base64url: {error}")))?;
     serde_json::from_slice(&bytes)
         .map_err(|error| AuthError::OAuth(format!("id_token payload is not JSON: {error}")))
@@ -1169,9 +1165,7 @@ mod tests {
     fn pkce_verifier_is_unbiased_base64url_of_random_bytes() {
         for _ in 0..256 {
             let verifier = random_code_verifier();
-            let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .decode(&verifier)
-                .expect("valid base64url verifier");
+            let decoded = crate::base64url::decode(&verifier).expect("valid base64url verifier");
             assert_eq!(decoded.len(), CODE_VERIFIER_RANDOM_BYTES);
             assert_eq!(verifier.len(), 64);
         }
@@ -1193,6 +1187,30 @@ mod tests {
         assert!(s
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    }
+
+    #[test]
+    fn decode_jwt_payload_rejects_malformed_base64url() {
+        // 字母表外字符
+        assert!(matches!(
+            decode_jwt_payload("not-base64url!"),
+            Err(AuthError::OAuth(_))
+        ));
+        // len % 4 == 1
+        assert!(decode_jwt_payload("A").is_err());
+        // 末符号携带非零余位（非规范编码）
+        assert!(decode_jwt_payload("QR").is_err());
+        // 显式填充
+        assert!(decode_jwt_payload("eyJhbGciOiJub25lIn0=").is_err());
+    }
+
+    #[test]
+    fn decode_jwt_payload_rejects_valid_base64url_with_invalid_json() {
+        let payload = crate::base64url::encode(b"not json");
+        assert!(matches!(
+            decode_jwt_payload(&payload),
+            Err(AuthError::OAuth(message)) if message.contains("not JSON")
+        ));
     }
 
     #[test]

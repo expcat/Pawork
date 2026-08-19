@@ -16,6 +16,7 @@
 //! - 自动测试只用 [`MemoryBackend`] 或显式临时路径的 [`FileBackend`]，不读取真实
 //!   auth 文件。
 
+mod base64url;
 mod backend;
 mod file_backend;
 mod credential;

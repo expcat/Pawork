@@ -297,7 +297,6 @@ mod tests {
     use crate::backend::MemoryBackend;
     use crate::FileBackend;
     use crate::oauth::read_refresh_token;
-    use base64::Engine;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -370,7 +369,7 @@ mod tests {
         let payload = serde_json::json!({
             "https://api.openai.com/auth": { "chatgpt_account_id": "acct-abc-123" }
         });
-        let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+        let payload_b64 = crate::base64url::encode(payload.to_string().as_bytes());
         let id_token = format!("eyJhbGciOiJub25lIn0.{payload_b64}.sig");
         let backend = MemoryBackend::new();
         store_default_oauth_token(

@@ -16,7 +16,6 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::{ClientAuthentication, ClientAuthenticator, ProtocolError};
-use rand::RngCore;
 use thiserror::Error;
 
 /// 握手凭证使用的认证 scheme。
@@ -94,7 +93,7 @@ impl TokenStore {
             }
         }
         let mut bytes = [0u8; TOKEN_BYTES];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        getrandom::fill(&mut bytes).expect("OS entropy unavailable");
         let token = Token(to_hex(&bytes));
         let mut file = fs::OpenOptions::new()
             .write(true)

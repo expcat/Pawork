@@ -12,7 +12,6 @@ default = []
 
 [dependencies]
 pawork-domain = { path = "../domain" }
-parking_lot.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 regex.workspace = true

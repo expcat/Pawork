@@ -4323,10 +4323,9 @@ name = "pawork-auth"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64",
  "directories",
+ "getrandom 0.4.3",
  "pawork-domain",
- "rand 0.8.7",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -4441,7 +4440,6 @@ dependencies = [
  "dunce",
  "landlock",
  "libc",
- "parking_lot",
  "portable-pty",
  "serde",
  "serde_json",
@@ -4474,7 +4472,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "blake3",
- "parking_lot",
  "pawork-control-plane",
  "pawork-domain",
  "pawork-git",
@@ -4504,8 +4501,8 @@ name = "pawork-protocol"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "getrandom 0.4.3",
  "pawork-domain",
- "rand 0.8.7",
  "serde",
  "serde_json",
  "tempfile",
@@ -4539,10 +4536,10 @@ dependencies = [
  "async-trait",
  "blake3",
  "chacha20poly1305",
+ "getrandom 0.4.3",
  "pawork-domain",
  "pawork-protocol",
  "proptest",
- "rand 0.8.7",
  "rusqlite",
  "serde",
  "serde_json",
@@ -4609,7 +4606,6 @@ name = "pawork-workflow"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "parking_lot",
  "pawork-domain",
  "regex",
  "serde",

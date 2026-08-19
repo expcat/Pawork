@@ -20,7 +20,6 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
     XChaCha20Poly1305, XNonce,
 };
-use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, OptionalExtension};
 use thiserror::Error;
 use zeroize::Zeroizing;
@@ -811,7 +810,7 @@ fn seal(
     plaintext: &[u8],
 ) -> Result<Vec<u8>, ()> {
     let mut nonce = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut nonce);
+    getrandom::fill(&mut nonce).expect("OS entropy unavailable");
     seal_with_nonce(scope, blob_ref, version, key, plaintext, nonce)
 }
 
@@ -945,7 +944,7 @@ fn push_len_prefixed(target: &mut Vec<u8>, value: &[u8]) {
 
 fn random_blob_ref() -> ProtectedBlobRef {
     let mut random = [0u8; 32];
-    OsRng.fill_bytes(&mut random);
+    getrandom::fill(&mut random).expect("OS entropy unavailable");
     ProtectedBlobRef::from(format!("pblob_{}", blake3::hash(&random).to_hex()))
 }
 
@@ -972,7 +971,7 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), ProtectedBlobError> {
     let parent = path.parent().expect("ciphertext path has parent");
     fs::create_dir_all(parent).map_err(|source| ProtectedBlobError::io(parent, source))?;
     let mut random = [0u8; 8];
-    OsRng.fill_bytes(&mut random);
+    getrandom::fill(&mut random).expect("OS entropy unavailable");
     let temp = parent.join(format!(
         ".tmp-{}-{}",
         std::process::id(),

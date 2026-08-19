@@ -11,7 +11,6 @@ description = "Pawork 进程树、沙箱与 PTY（Job Object / 进程组 / Landl
 async-trait.workspace = true
 dunce.workspace = true
 libc.workspace = true
-parking_lot.workspace = true
 portable-pty = "0.8"
 serde.workspace = true
 serde_json.workspace = true

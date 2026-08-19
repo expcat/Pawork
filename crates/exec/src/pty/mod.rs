@@ -12,11 +12,11 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+// 毒锁策略：panic 不屏蔽毒化传播的前提下取回内部数据继续（不吞错误状态）。
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use thiserror::Error;
 use tokio::sync::{broadcast, Notify};
@@ -323,7 +323,12 @@ impl PtyService {
 
     /// 创建并启动一个 PTY 会话。blocking 的 openpty/spawn 在 `spawn_blocking` 中执行。
     pub async fn create(&self, spec: PtyCreateSpec) -> Result<TerminalId, PtyError> {
-        if *self.inner.shutting_down.lock() {
+        if *self
+            .inner
+            .shutting_down
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
             return Err(PtyError::ShuttingDown);
         }
 
@@ -373,8 +378,17 @@ impl PtyService {
         });
 
         {
-            let mut guard = self.inner.sessions.lock();
-            if *self.inner.shutting_down.lock() {
+            let mut guard = self
+                .inner
+                .sessions
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if *self
+                .inner
+                .shutting_down
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+            {
                 // 竞态：创建中途关停 → 立即清理。
                 drop(guard);
                 session.force_kill_blocking();
@@ -395,7 +409,10 @@ impl PtyService {
                         Ok(n) => {
                             let chunk = buf[..n].to_vec();
                             let cursor_end = {
-                                let mut ring = reader_session.buffer.lock();
+                                let mut ring = reader_session
+                                    .buffer
+                                    .lock()
+                                    .unwrap_or_else(PoisonError::into_inner);
                                 ring.push(&chunk);
                                 ring.end()
                             };
@@ -413,7 +430,11 @@ impl PtyService {
             });
         if let Err(error) = reader_thread {
             session.force_kill_blocking();
-            self.inner.sessions.lock().remove(&terminal_id);
+            self.inner
+                .sessions
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&terminal_id);
             return Err(PtyError::Create(format!("spawn reader thread: {error}")));
         }
 
@@ -428,7 +449,10 @@ impl PtyService {
                         let code = Some(status.exit_code() as i32);
                         let signal = status_signal(&status);
                         {
-                            let mut runtime = waiter_session.state.lock();
+                            let mut runtime = waiter_session
+                                .state
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner);
                             if runtime.state == PtySessionState::Running {
                                 runtime.state = PtySessionState::Exited;
                             }
@@ -441,7 +465,10 @@ impl PtyService {
                     Err(err) => {
                         warn!(error = %err, "pty wait failed");
                         {
-                            let mut runtime = waiter_session.state.lock();
+                            let mut runtime = waiter_session
+                                .state
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner);
                             if runtime.state == PtySessionState::Running {
                                 runtime.state = PtySessionState::Exited;
                             }
@@ -462,7 +489,11 @@ impl PtyService {
             });
         if let Err(error) = waiter_thread {
             session.force_kill_blocking();
-            self.inner.sessions.lock().remove(&terminal_id);
+            self.inner
+                .sessions
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&terminal_id);
             return Err(PtyError::Create(format!("spawn waiter thread: {error}")));
         }
 
@@ -480,14 +511,17 @@ impl PtyService {
         let terminal_id = terminal_id.clone();
         tokio::task::spawn_blocking(move || {
             session.ensure_running()?;
-            let guard = session.master.lock();
+            let guard = session
+                .master
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             let master = guard
                 .as_ref()
                 .ok_or_else(|| PtyError::Closed(terminal_id.clone()))?;
             master
                 .resize(size.into())
                 .map_err(|e| PtyError::Io(e.to_string()))?;
-            *session.size.lock() = size;
+            *session.size.lock().unwrap_or_else(PoisonError::into_inner) = size;
             Ok(())
         })
         .await
@@ -506,7 +540,10 @@ impl PtyService {
         let session_for_write = Arc::clone(&session);
         let terminal_id = terminal_id.clone();
         tokio::task::spawn_blocking(move || {
-            let mut guard = session_for_write.writer.lock();
+            let mut guard = session_for_write
+                .writer
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             let writer = guard
                 .as_mut()
                 .ok_or_else(|| PtyError::Closed(terminal_id.clone()))?;
@@ -537,9 +574,17 @@ impl PtyService {
         owner: &OwnerSessionId,
     ) -> Result<PtySnapshot, PtyError> {
         let session = self.require_owned(terminal_id, owner)?;
-        let runtime = session.state.lock().clone_fields();
-        let size = *session.size.lock();
-        let (buffer_start, buffer_end, buffered) = session.buffer.lock().snapshot();
+        let runtime = session
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone_fields();
+        let size = *session.size.lock().unwrap_or_else(PoisonError::into_inner);
+        let (buffer_start, buffer_end, buffered) = session
+            .buffer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .snapshot();
         Ok(PtySnapshot {
             terminal_id: session.id.clone(),
             owner_session: session.owner.clone(),
@@ -562,7 +607,11 @@ impl PtyService {
         cursor: OutputCursor,
     ) -> Result<PtyOutputChunk, PtyError> {
         let session = self.require_owned(terminal_id, owner)?;
-        let result = session.buffer.lock().read_since(cursor);
+        let result = session
+            .buffer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .read_since(cursor);
         match result {
             Ok((from, to, data)) => Ok(PtyOutputChunk { from, to, data }),
             Err(RingReadError::Stale {
@@ -585,7 +634,11 @@ impl PtyService {
         owner: &OwnerSessionId,
     ) -> Result<PtySessionState, PtyError> {
         let session = self.require_owned(terminal_id, owner)?;
-        let state = session.state.lock().state;
+        let state = session
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .state;
         Ok(state)
     }
 
@@ -594,6 +647,7 @@ impl PtyService {
         self.inner
             .sessions
             .lock()
+            .unwrap_or_else(PoisonError::into_inner)
             .iter()
             .filter(|(_, s)| &s.owner == owner)
             .map(|(id, _)| id.clone())
@@ -618,7 +672,7 @@ impl PtyService {
     ) -> Result<(Option<i32>, Option<String>), PtyError> {
         let session = self.require_owned(terminal_id, owner)?;
         session.wait_finished().await;
-        let runtime = session.state.lock();
+        let runtime = session.state.lock().unwrap_or_else(PoisonError::into_inner);
         Ok((runtime.exit_code, runtime.exit_signal.clone()))
     }
 
@@ -629,7 +683,11 @@ impl PtyService {
         owner: &OwnerSessionId,
     ) -> Result<(), PtyError> {
         let session = {
-            let guard = self.inner.sessions.lock();
+            let guard = self
+                .inner
+                .sessions
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             match guard.get(terminal_id) {
                 Some(s) if &s.owner == owner => Some(Arc::clone(s)),
                 Some(_) => return Err(PtyError::Ownership(terminal_id.clone(), owner.clone())),
@@ -644,7 +702,11 @@ impl PtyService {
             {
                 warn!(terminal_id = %terminal_id, "pty cleanup timed out waiting for child reap");
             }
-            self.inner.sessions.lock().remove(terminal_id);
+            self.inner
+                .sessions
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(terminal_id);
         }
         Ok(())
     }
@@ -661,14 +723,30 @@ impl PtyService {
 
     /// 关停服务：终止并移除全部会话（幂等）。
     pub async fn shutdown(&self) -> Result<(), PtyError> {
-        *self.inner.shutting_down.lock() = true;
-        let sessions: Vec<Arc<SessionInner>> =
-            self.inner.sessions.lock().values().cloned().collect();
+        *self
+            .inner
+            .shutting_down
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = true;
+        let sessions: Vec<Arc<SessionInner>> = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
         for session in sessions {
             let _ = session.kill_async().await;
         }
-        let sessions: Vec<Arc<SessionInner>> =
-            self.inner.sessions.lock().values().cloned().collect();
+        let sessions: Vec<Arc<SessionInner>> = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
         if tokio::time::timeout(CLEANUP_GRACE, async {
             for session in &sessions {
                 session.wait_finished().await;
@@ -679,13 +757,21 @@ impl PtyService {
         {
             warn!("pty shutdown timed out waiting for child reap");
         }
-        self.inner.sessions.lock().clear();
+        self.inner
+            .sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
         Ok(())
     }
 
     /// 当前活跃会话数（含已退出但未 cleanup 的，便于重连）。
     pub fn session_count(&self) -> usize {
-        self.inner.sessions.lock().len()
+        self.inner
+            .sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 
     fn require_owned(
@@ -693,7 +779,11 @@ impl PtyService {
         terminal_id: &TerminalId,
         owner: &OwnerSessionId,
     ) -> Result<Arc<SessionInner>, PtyError> {
-        let guard = self.inner.sessions.lock();
+        let guard = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         match guard.get(terminal_id) {
             Some(session) if &session.owner == owner => Ok(Arc::clone(session)),
             Some(_) => Err(PtyError::Ownership(terminal_id.clone(), owner.clone())),
@@ -710,7 +800,11 @@ impl Default for PtyService {
 
 impl SessionInner {
     fn ensure_running(&self) -> Result<(), PtyError> {
-        let state = self.state.lock().state;
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .state;
         if state == PtySessionState::Running {
             Ok(())
         } else {
@@ -733,25 +827,40 @@ impl SessionInner {
     }
 
     fn cleanup_handles(&self) {
-        let mut cleaned = self.cleaned.lock();
+        let mut cleaned = self.cleaned.lock().unwrap_or_else(PoisonError::into_inner);
         if *cleaned {
             return;
         }
         *cleaned = true;
         drop(cleaned);
-        if let Some(tree) = self.process_tree.lock().take() {
+        if let Some(tree) = self
+            .process_tree
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
             let _ = tree.terminate();
         }
-        *self.writer.lock() = None;
-        *self.master.lock() = None;
-        *self.killer.lock() = None;
+        *self.writer.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        *self.master.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        *self.killer.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     fn force_kill_blocking(&self) {
-        if let Some(tree) = self.process_tree.lock().as_ref() {
+        if let Some(tree) = self
+            .process_tree
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
             let _ = tree.terminate();
         }
-        if let Some(mut killer) = self.killer.lock().take() {
+        if let Some(mut killer) = self
+            .killer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
             let _ = killer.kill();
         }
         self.cleanup_handles();
@@ -761,7 +870,12 @@ impl SessionInner {
         loop {
             // 先创建通知 future，再检查谓词，避免 waiter 在两步之间通知导致永久等待。
             let notified = self.closed.notified();
-            if self.state.lock().finished {
+            if self
+                .state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .finished
+            {
                 return;
             }
             notified.await;
@@ -770,7 +884,7 @@ impl SessionInner {
 
     async fn kill_async(self: &Arc<Self>) -> Result<(), PtyError> {
         {
-            let mut runtime = self.state.lock();
+            let mut runtime = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             if runtime.state != PtySessionState::Running {
                 // 已退出：仍做幂等 handle 清理。
                 drop(runtime);
@@ -782,14 +896,27 @@ impl SessionInner {
 
         let session = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
-            if let Some(tree) = session.process_tree.lock().as_ref() {
+            if let Some(tree) = session
+                .process_tree
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+            {
                 let _ = tree.terminate();
             }
-            if let Some(mut killer) = session.killer.lock().take() {
+            if let Some(mut killer) = session
+                .killer
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+            {
                 let _ = killer.kill();
             }
             // 丢弃 writer 向 slave 发送 EOF，帮助 shell 退出。
-            *session.writer.lock() = None;
+            *session
+                .writer
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = None;
         })
         .await
         .map_err(|e| PtyError::Io(format!("join error: {e}")))?;
@@ -821,7 +948,9 @@ struct OpenedPty {
 }
 
 fn open_and_spawn(spec: PtyCreateSpec) -> Result<OpenedPty, PtyError> {
-    let _spawn_guard = PTY_SPAWN_LOCK.lock();
+    let _spawn_guard = PTY_SPAWN_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(spec.size.into())

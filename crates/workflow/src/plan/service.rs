@@ -4,7 +4,8 @@
 //! 给调用方（由 session-store 封装为 `pawork_domain::AgentEvent::Plan` 持久化）。
 //! 本服务**只读**：不暴露任何 spawn / exec / write / 文件 / 网络 API。
 
-use parking_lot::Mutex;
+// 毒锁策略：panic 不屏蔽毒化传播的前提下取回内部数据继续（不吞错误状态）。
+use std::sync::{Mutex, PoisonError};
 
 use pawork_domain::{
     CheckpointId, PlanCommentAnchor, PlanEvent, PlanId, PlanReviewStatus, PlanStepId,
@@ -74,7 +75,7 @@ impl PlanService {
             return Err(PlanError::EmptyStepText);
         }
 
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(plan_id) = inner.state.plan_id().cloned() {
             return Err(PlanError::AlreadyExists(plan_id));
         }
@@ -109,7 +110,7 @@ impl PlanService {
             return Err(PlanError::EmptyStepText);
         }
 
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let plan_id = inner
             .state
             .plan_id()
@@ -143,7 +144,7 @@ impl PlanService {
         new_status: PlanStepStatus,
         note: Option<String>,
     ) -> Result<PlanEvent, PlanError> {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let plan_id = inner
             .state
             .plan_id()
@@ -174,17 +175,26 @@ impl PlanService {
 
     /// 查询面：当前 Plan 只读快照；尚未创建时返回 `None`。
     pub fn plan_snapshot(&self) -> Option<PlanSnapshot> {
-        self.inner.lock().state.snapshot()
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .state
+            .snapshot()
     }
 
     /// 查询面：版本修订链（含当前版本，按创建顺序）。
     pub fn version_history(&self) -> Vec<PlanVersionInfo> {
-        self.inner.lock().state.history().to_vec()
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .state
+            .history()
+            .to_vec()
     }
 
     /// 提交评审：`Draft → InReview`；返回 [`PlanEvent::ReviewRequested`]。
     pub fn request_review(&self, version: &PlanVersionId) -> Result<PlanEvent, PlanError> {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut inner.state;
         let plan_id = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
         check_current_version(state, version)?;
@@ -206,7 +216,7 @@ impl PlanService {
     /// 评审方请求修改：`InReview → ChangesRequested`；同样发出
     /// [`PlanEvent::ReviewRequested`]（推进「评审回合」，apply 按当前状态折叠）。
     pub fn request_changes(&self, version: &PlanVersionId) -> Result<PlanEvent, PlanError> {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut inner.state;
         let plan_id = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
         check_current_version(state, version)?;
@@ -235,7 +245,7 @@ impl PlanService {
         title: impl Into<String>,
         steps: Vec<PlanStepSnapshot>,
     ) -> Result<PlanEvent, PlanError> {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut inner.state;
         let plan_id = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
         let current = state
@@ -277,7 +287,7 @@ impl PlanService {
         version: &PlanVersionId,
         checkpoint_id: Option<CheckpointId>,
     ) -> Result<PlanEvent, PlanError> {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut inner.state;
         check_plan_version(state, plan_id, version)?;
         let from = state.review_status();
@@ -309,7 +319,7 @@ impl PlanService {
         if reason.trim().is_empty() {
             return Err(PlanError::EmptyReason);
         }
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut inner.state;
         check_plan_version(state, plan_id, version)?;
         let from = state.review_status();
@@ -343,7 +353,7 @@ impl PlanService {
         if body.trim().is_empty() {
             return Err(PlanError::EmptyComment);
         }
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut inner.state;
         check_plan_version(state, plan_id, version)?;
         if !state.steps().iter().any(|s| s.step_id == anchor.step_id) {
@@ -363,7 +373,7 @@ impl PlanService {
     /// 未创建 / plan_id 或 version 不匹配 / 任何未批准状态一律返回 `false`。
     /// 本 gate 只做只读判定，不授予任何写 / 执行能力。
     pub fn is_approved_for_execution(&self, plan_id: &PlanId, version: &PlanVersionId) -> bool {
-        let inner = self.inner.lock();
+        let inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         inner.state.plan_id().is_some_and(|p| p == plan_id)
             && inner.state.current_version().is_some_and(|v| v == version)
             && inner.state.review_status() == PlanReviewStatus::Approved

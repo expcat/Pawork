@@ -10,7 +10,7 @@ description = "Pawork GUI 与 CLI/Core 宿主之间的连接协议帧"
 [features]
 default = ["adapter", "client-auth", "headless"]
 adapter = ["dep:async-trait"]
-client-auth = ["dep:rand"]
+client-auth = ["dep:getrandom"]
 # stdio Handler 使用 async-trait；tokio 特征写在主依赖上，避免测试再开 feature。
 headless = ["dep:async-trait"]
 typegen = ["dep:ts-rs", "pawork-domain/typegen"]
@@ -28,7 +28,7 @@ thiserror.workspace = true
 ts-rs = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["io-util", "sync", "macros", "rt", "time"] }
 async-trait = { workspace = true, optional = true }
-rand = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
