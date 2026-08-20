@@ -221,11 +221,12 @@ pub fn parse_approval_mode(value: &str) -> Result<ApprovalMode, String> {
         "always-ask" | "always_ask" => Ok(ApprovalMode::AlwaysAsk),
         "ask-for-writes" | "ask_for_writes" => Ok(ApprovalMode::AskForWrites),
         "ask-for-dangerous" | "ask_for_dangerous" => Ok(ApprovalMode::AskForDangerous),
-        "on-failure" | "on_failure" => Ok(ApprovalMode::OnFailure),
+        // on-failure 已移除；拼写继续兼容（等价 never-ask），兼容既有用户脚本。
+        "on-failure" | "on_failure" => Ok(ApprovalMode::NeverAsk),
         "never-ask" | "never_ask" => Ok(ApprovalMode::NeverAsk),
         "read-only" | "read_only" => Ok(ApprovalMode::ReadOnly),
         other => Err(format!(
-            "unknown approval mode `{other}`; expected always-ask|ask-for-writes|ask-for-dangerous|on-failure|never-ask|read-only (on-failure currently equals never-ask)"
+            "unknown approval mode `{other}`; expected always-ask|ask-for-writes|ask-for-dangerous|never-ask|read-only"
         )),
     }
 }
@@ -416,11 +417,11 @@ mod tests {
         );
         assert_eq!(
             parse_approval_mode("on-failure").expect("kebab"),
-            ApprovalMode::OnFailure
+            ApprovalMode::NeverAsk
         );
         assert_eq!(
             parse_approval_mode("on_failure").expect("snake"),
-            ApprovalMode::OnFailure
+            ApprovalMode::NeverAsk
         );
         assert!(parse_approval_mode("yolo").is_err());
     }

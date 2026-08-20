@@ -15,9 +15,8 @@ pub enum ApprovalMode {
     AskForWrites,
     /// 仅对危险命令（如 `rm -rf`、`sudo`）询问。
     AskForDangerous,
-    /// 当前等价 NeverAsk（S13-F16 收窄）；枚举保留。
-    OnFailure,
     /// 从不询问（自动放行）。
+    #[serde(alias = "on_failure")]
     NeverAsk,
     /// 只读模式：拒绝一切非只读能力。
     #[default]
@@ -35,8 +34,16 @@ mod tests {
 
     #[test]
     fn serializes_snake_case() {
-        let json = serde_json::to_string(&ApprovalMode::AskForWrites).expect("serialize");
-        assert_eq!(json, "\"ask_for_writes\"");
+        for (mode, expected) in [
+            (ApprovalMode::AlwaysAsk, "\"always_ask\""),
+            (ApprovalMode::AskForWrites, "\"ask_for_writes\""),
+            (ApprovalMode::AskForDangerous, "\"ask_for_dangerous\""),
+            (ApprovalMode::NeverAsk, "\"never_ask\""),
+            (ApprovalMode::ReadOnly, "\"read_only\""),
+        ] {
+            let json = serde_json::to_string(&mode).expect("serialize");
+            assert_eq!(json, expected, "{mode:?}");
+        }
     }
 
     #[test]
@@ -45,7 +52,7 @@ mod tests {
             ("\"always_ask\"", ApprovalMode::AlwaysAsk),
             ("\"ask_for_writes\"", ApprovalMode::AskForWrites),
             ("\"ask_for_dangerous\"", ApprovalMode::AskForDangerous),
-            ("\"on_failure\"", ApprovalMode::OnFailure),
+            ("\"on_failure\"", ApprovalMode::NeverAsk),
             ("\"never_ask\"", ApprovalMode::NeverAsk),
             ("\"read_only\"", ApprovalMode::ReadOnly),
         ] {

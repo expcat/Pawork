@@ -46,6 +46,13 @@
 > 4. 验证:五包定向 cargo test 全绿(protocol 133 / app 118 / cli 74 / client 43 含 probe 9/9 / desktop 27 含依赖红线);26 帧 golden、events_golden、schemas/、probe fixtures 零 diff;protocol 零新增依赖边;真实冒烟 `pawork-desktop --instance r3c --probe-smoke` 通过(glm-4.7 首轮 completed→切 deepseek-v4-flash 次轮 switched,assistant_turns=3,cancelled=1,persisted=14,disconnect_survive=running,EXIT=0)。
 > 5. 偏差与登记:① desktop projection.rs 1542 行未达 <800 目标——剩余为 UI 态/渲染分组/渲染测试,审查确认无 reducer 语义残留,继续压行需拆文件或丢测试,超出本波写入集,行数目标偏差登记在此;② 既有怪癖原样保留(与旧实现字节一致,非本波引入):ToolCompleted 历史臂无 seen 前置检查、assistant delta 跨臂 message_id 不对称可拆条——留 R4/R6 语境再议;③ probe snapshot-reconnect 既有 flake(ROADMAP §4 已登记)首跑复现一次,重跑与全量均 9/9。
 
+> 波 D 收口记录(2026-08-20,单实现 + 一路审查 + 主代理三通道真实冒烟):
+> 1. 落地:ApprovalMode::OnFailure 变体删除,NeverAsk 加 #[serde(alias = "on_failure")] 实现「接受旧值、不再产出」;compat 导入 codex "on-failure" 与 claude "acceptEdits" 映射 NeverAsk 并挂 CompatIssue::warning("approval_on_failure_mapped")(decision 保持 Ask + requires_review,绝不放宽);app/cli 解析续收 on-failure/on_failure 两种拼写 → NeverAsk(与旧 OnFailure 引擎行为逐字节等价);S13-F16 三处收窄注释(policy/mode.rs、policy/engine.rs、workspace import/parse.rs)全部清除;CLI help 与 unknown 错误文案不再宣告 on-failure 档位。
+> 2. 实态漂移回写:写入集自任务书「policy(mode)、engine、workspace(import 映射)、protocol registry」修正为 policy/workspace/app/cli 六文件——protocol registry 零触碰(ArtifactStreaming 维持候选:无产品接线决议,K-08 已由 R0 停止宣告 + 波 A registry 数据编码闭环);crates/app/src/approval.rs 与 crates/cli/src/lib.rs 为变体删除的强制消费点(2026-08-18 快照未列);任务书「engine」实指 crates/policy/src/engine.rs(PolicyEngine)。
+> 3. wire 暴露裁决:ApprovalMode 不在 protocol 帧/schemas/*.d.ts/事件信封/DDL;唯一 serde 面为 import 载荷 JSON(CompatPayload::PermissionRule.approval_mode)+ CLI 字符串,故按任务书走「接受旧值、不再产出」兼容路径,无需协议 minor 版本;旧 import 报告含 on_failure 仍可反序列化,新产出一律 never_ask。
+> 4. 验证:cargo test 四包定向全绿(policy 62 / workspace 113+13+14 / app 100+6+11+1 / cli 35+16+23);protocol 26 帧 golden 与 domain events_golden 零 diff(protocol/domain 未触碰,cargo tree 确认 protocol 不依赖 policy);cargo check -p pawork 通过;审查 verdict=pass,低阶观察(五值序列化逐字节钉死)同波补测闭环——serializes_snake_case 扩为全变体断言。
+> 5. 真实冒烟(阶段退出标准,auth 文件凭证,ROADMAP §1.1 低消耗矩阵):GUI desktop --probe-smoke 隔离实例 r3d 通过(first=glm-4.7 first_turn=completed → second=deepseek-v4-flash second_turn=switched,assistant_turns=2,cancelled=1,persisted=15,disconnect_survive=running);headless --json-stdio 一轮通过(hello→session_create→run_start→run_changed completed,assistant_delta "pong");ACP initialize/session/new/session/prompt 通过(protocolVersion=1,stopReason=end_turn,agent_message_chunk "pong")。
+
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
 | A | Registry 设计 + protocol 内落地(表驱动或 const fn;含 17+9 条帧 golden 复核);GUI 通道切换到 registry 派生(gui_host dispatch 改造第一步:宣告/授权走 registry,巨 match 拆解留给 R4) | crates/protocol、crates/app(gui_host + gui_server 授权面)、crates/cli/src/gui.rs(仅此文件:GUI 宣告装配点,2026-08-20 实态修正) | 串行(契约面) |
@@ -64,5 +71,5 @@
 
 - [x] 三通道宣告/授权同源于 registry;headless 手写表与 ACP 命令准入白名单删除;未登记命令 fail-closed 有测试(2026-08-20 波 B 收口;gui_host 巨 match 分发仍留 R4)
 - [x] 投影 reducer 单一实现 + golden;desktop projection.rs 只剩渲染适配(目标 <800 行)(2026-08-20 波 C 收口;reducer 单源 + 三种子 golden + 两端对拍达成,行数 1542 偏差见波 C 收口记录 ⑤)
-- [ ] OnFailure 有决议并落地;S13-F16 三处收窄注释消失
-- [ ] 帧 golden 零 diff;冒烟(GUI/headless/ACP)通过;v3_plan §3 更新
+- [x] OnFailure 有决议并落地;S13-F16 三处收窄注释消失(2026-08-20 波 D 收口:删除变体 + serde alias 只进不出 + compat 导入映射 NeverAsk 记 issue)
+- [x] 帧 golden 零 diff;冒烟(GUI/headless/ACP)通过;v3_plan §3 更新(2026-08-20 波 D 收口:26 帧 golden 与 events_golden 零 diff;probe-smoke / headless --json-stdio / ACP 三通道真实冒烟通过,见波 D 收口记录 5)

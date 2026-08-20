@@ -899,7 +899,21 @@ fn codex_approval(
     };
     match text {
         "on-request" => global_permission(file, ApprovalMode::AlwaysAsk, outcomes),
-        "on-failure" => global_permission(file, ApprovalMode::OnFailure, outcomes),
+        "on-failure" => {
+            let mut item = global_permission_item(file, ApprovalMode::NeverAsk);
+            item.issues.push(
+                CompatIssue::warning(
+                    "approval_on_failure_mapped",
+                    "on-failure approval is removed; imported as never-ask".to_string(),
+                )
+                .for_item(
+                    ImportCategory::PermissionRule,
+                    "permission:global",
+                    file.relative_path.clone(),
+                ),
+            );
+            push(outcomes, item);
+        }
         "never" => push(
             outcomes,
             unsupported_item(
@@ -923,15 +937,13 @@ fn codex_approval(
     }
 }
 
-fn global_permission(file: &DetectedFile, mode: ApprovalMode, outcomes: &mut Vec<ParseOutcome>) {
+fn global_permission_item(file: &DetectedFile, mode: ApprovalMode) -> CompatItem {
     let decision = match mode {
         ApprovalMode::ReadOnly => PermissionDecision::Deny,
-        ApprovalMode::AlwaysAsk | ApprovalMode::AskForWrites | ApprovalMode::AskForDangerous => {
-            PermissionDecision::Ask
-        }
-        // OnFailure 当前等价 NeverAsk（S13-F16 收窄）。引擎自动放行，但导入
-        // 不映成 Allow（绝不静默放宽权限）：与 NeverAsk 同为 Ask，并保留 requires_review。
-        ApprovalMode::OnFailure | ApprovalMode::NeverAsk => PermissionDecision::Ask,
+        ApprovalMode::AlwaysAsk
+        | ApprovalMode::AskForWrites
+        | ApprovalMode::AskForDangerous
+        | ApprovalMode::NeverAsk => PermissionDecision::Ask,
     };
     let mut item = base_item(
         file,
@@ -945,7 +957,11 @@ fn global_permission(file: &DetectedFile, mode: ApprovalMode, outcomes: &mut Vec
         spec: None,
         approval_mode: Some(mode),
     });
-    push(outcomes, item);
+    item
+}
+
+fn global_permission(file: &DetectedFile, mode: ApprovalMode, outcomes: &mut Vec<ParseOutcome>) {
+    push(outcomes, global_permission_item(file, mode));
 }
 
 // —— Claude settings.json ——
@@ -1094,7 +1110,21 @@ fn claude_permissions(
     if let Some(mode) = obj.get("defaultMode").and_then(Value::as_str) {
         match mode {
             "default" | "plan" => global_permission(file, ApprovalMode::AskForWrites, outcomes),
-            "acceptEdits" => global_permission(file, ApprovalMode::OnFailure, outcomes),
+            "acceptEdits" => {
+                let mut item = global_permission_item(file, ApprovalMode::NeverAsk);
+                item.issues.push(
+                    CompatIssue::warning(
+                        "approval_on_failure_mapped",
+                        "acceptEdits approval is removed; imported as never-ask".to_string(),
+                    )
+                    .for_item(
+                        ImportCategory::PermissionRule,
+                        "permission:global",
+                        file.relative_path.clone(),
+                    ),
+                );
+                push(outcomes, item);
+            }
             "bypassPermissions" => push(
                 outcomes,
                 unsupported_item(

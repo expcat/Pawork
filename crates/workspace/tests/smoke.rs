@@ -468,8 +468,53 @@ fn on_failure_approval_maps_to_ask_not_allow() {
     let json = serde_json::to_value(global.payload.as_ref().expect("payload")).expect("json");
     assert_eq!(
         json["decision"], "ask",
-        "OnFailure must not widen to allow; it maps to ask"
+        "on-failure imports as never-ask; decision must stay ask, never allow"
     );
+    assert_eq!(
+        json["approval_mode"], "never_ask",
+        "on-failure is removed; payload must carry never_ask"
+    );
+    assert!(global.issues.iter().any(|issue| {
+        issue.code == "approval_on_failure_mapped"
+            && issue.item_id.as_deref() == Some("permission:global")
+    }));
+}
+
+#[test]
+fn accept_edits_approval_maps_to_ask_not_allow() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    std::fs::create_dir_all(root.join(".claude")).expect("mkdir claude");
+    std::fs::write(
+        root.join(".claude/settings.json"),
+        r#"{"permissions":{"defaultMode":"acceptEdits"}}"#,
+    )
+    .expect("write claude settings");
+    let plan = CompatLoader::default()
+        .scan(Some(root), &[], None)
+        .expect("scan claude acceptEdits");
+    let global = plan
+        .items
+        .iter()
+        .find(|item| {
+            item.id == "permission:global" && item.source.external == ExternalSource::Claude
+        })
+        .expect("claude global permission");
+    assert_eq!(global.status, ImportStatus::Imported);
+    assert!(global.requires_review);
+    let json = serde_json::to_value(global.payload.as_ref().expect("payload")).expect("json");
+    assert_eq!(
+        json["decision"], "ask",
+        "acceptEdits imports as never-ask; decision must stay ask, never allow"
+    );
+    assert_eq!(
+        json["approval_mode"], "never_ask",
+        "acceptEdits is removed; payload must carry never_ask"
+    );
+    assert!(global.issues.iter().any(|issue| {
+        issue.code == "approval_on_failure_mapped"
+            && issue.item_id.as_deref() == Some("permission:global")
+    }));
 }
 
 #[test]

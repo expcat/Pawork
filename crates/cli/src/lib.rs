@@ -71,12 +71,11 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
     /// 审批强度。默认 `read-only`（沿用 V1：不改模式就不会写入）。
-    /// `on-failure` 当前等价 `never-ask`。
     #[arg(
         long,
         global = true,
         value_name = "MODE",
-        help = "always-ask|ask-for-writes|ask-for-dangerous|on-failure|never-ask|read-only（on-failure 当前等价 never-ask）"
+        help = "always-ask|ask-for-writes|ask-for-dangerous|never-ask|read-only"
     )]
     pub approval_mode: Option<String>,
     #[command(subcommand)]
@@ -750,7 +749,7 @@ mod tests {
         assert_eq!(cli.approval_mode.as_deref(), Some("on-failure"));
         assert_eq!(
             parse_approval_mode(cli.approval_mode.as_deref().expect("mode")).expect("known"),
-            pawork_app::ApprovalMode::OnFailure
+            pawork_app::ApprovalMode::NeverAsk
         );
     }
 
