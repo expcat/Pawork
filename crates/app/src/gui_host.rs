@@ -28,6 +28,7 @@ use pawork_protocol::{
 };
 use pawork_workspace::resolve_relative_path;
 use serde_json::{json, Value};
+use pawork_protocol::app::registry::{command_wire_name, query_wire_name};
 
 use crate::{
     should_cache, AppCore, EventHub, GuiApprovalHost, HubError, IdempotencyCheck, IdempotencyStore,
@@ -893,7 +894,7 @@ impl GuiHost for GuiHostAdapter {
                 "unsupported",
                 format!(
                     "query {} is not part of the S7 wave A slice",
-                    query_name(other)
+                    query_wire_name(other)
                 ),
             )),
         }
@@ -1378,7 +1379,7 @@ impl GuiHostAdapter {
             }
             other => Err(Self::host_error(
                 "unsupported",
-                format!("command {} is not supported", command_name(other)),
+                format!("command {} is not supported", command_wire_name(other)),
             )),
         }
     }
@@ -1600,22 +1601,6 @@ fn broadcast_event(envelope: &AgentEventEnvelope) -> Option<AppEvent> {
     })
 }
 
-fn query_name(query: &AppQuery) -> &'static str {
-    match query {
-        AppQuery::WorkspaceList => "workspace_list",
-        AppQuery::SessionGet { .. } => "session_get",
-        AppQuery::RunStatus { .. } => "run_status",
-        AppQuery::ModelList { .. } => "model_list",
-        AppQuery::DiffListFiles { .. } => "diff_list_files",
-        AppQuery::DiffGet { .. } => "diff_get",
-        AppQuery::ArtifactRead { .. } => "artifact_read",
-        AppQuery::QuotaOverview { .. } => "quota_overview",
-        AppQuery::SnapshotFetch => "snapshot_fetch",
-        AppQuery::PluginList => "plugin_list",
-        AppQuery::McpList => "mcp_list",
-    }
-}
-
 /// 幂等按 GUI 客户端隔离：各连接独立生成 `gui-cmd-N`，不得把 A 的
 /// SessionCreate 重放成 B 的 RunCancel。
 fn scoped_idempotency(envelope: &AppCommandEnvelope) -> (CommandId, Option<String>) {
@@ -1677,30 +1662,6 @@ where
     overview.into_iter().find_map(|(provider, id)| {
         (id.as_ref() == model).then(|| provider.as_ref().to_string())
     })
-}
-
-fn command_name(command: &AppCommand) -> &'static str {
-    match command {
-        AppCommand::CoreInitialize => "core_initialize",
-        AppCommand::WorkspaceAdd { .. } => "workspace_add",
-        AppCommand::WorkspaceTrust { .. } => "workspace_trust",
-        AppCommand::SessionCreate { .. } => "session_create",
-        AppCommand::SessionOpen { .. } => "session_open",
-        AppCommand::SessionFork { .. } => "session_fork",
-        AppCommand::SessionCompact { .. } => "session_compact",
-        AppCommand::SessionClientContextReplace { .. } => "session_client_context_replace",
-        AppCommand::RunStart { .. } => "run_start",
-        AppCommand::RunCancel { .. } => "run_cancel",
-        AppCommand::RunRetry { .. } => "run_retry",
-        AppCommand::RunTool { .. } => "run_tool",
-        AppCommand::AuthStart { .. } => "auth_start",
-        AppCommand::AuthRemove { .. } => "auth_remove",
-        AppCommand::ToolApprove { .. } => "tool_approve",
-        AppCommand::GitStage { .. } => "git_stage",
-        AppCommand::TerminalCreate { .. } => "terminal_create",
-        AppCommand::TerminalWrite { .. } => "terminal_write",
-        AppCommand::TerminalResize { .. } => "terminal_resize",
-    }
 }
 
 #[cfg(test)]

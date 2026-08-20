@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use pawork_domain::{CommandId, CoreInstanceId, EventId, QueryId, RunId, SessionId, Timestamp};
+use pawork_domain::{
+    CommandId, CoreInstanceId, EventId, QueryId, RunId, SessionId, Timestamp, ToolCallId,
+    WorkspaceId,
+};
 use pawork_app::gui_server::{
     ConnectionManager, ConnectionManagerConfig, GuiHost, GuiHostError, GuiServer, GuiServerConfig,
 };
@@ -12,6 +15,7 @@ use pawork_protocol::{
     decode_server_frame, encode_client_frame, ActorIdentity, ApiVersion, AppCommand,
     AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
     ClientContextSnapshot, ClientFrame, CommandSource, EventSource, EventStream, GlobalSequence,
+    ApprovalDecision, GuiCapability,
     HandshakeRequest, HandshakeResponse, HandshakeService, ProtocolErrorCode, ResumeDisposition,
     ResumeRequest, ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind, SubscribeRequest,
     TimelineItem,
@@ -84,6 +88,10 @@ impl MockHost {
 
     fn recorded_timelines(&self) -> Vec<(SessionId, Option<u64>, Option<u32>)> {
         self.timelines.lock().expect("timelines").clone()
+    }
+
+    fn recorded_queries(&self) -> Vec<RecordedQuery> {
+        self.queries.lock().expect("queries").clone()
     }
 }
 
@@ -685,5 +693,91 @@ mod unix_tests {
         };
         assert_eq!(error.error.code, ProtocolErrorCode::PermissionDenied);
         assert!(harness.host.recorded_commands().is_empty());
+    }
+
+    /// R3 波 A 授权门（未授予分支）：本 harness 握手请求能力为空，服务端
+    /// supported 集亦为空，granted 集必然为空。Terminal*（TerminalStreaming）、
+    /// ToolApprove（Approvals）、SnapshotFetch（Snapshots）必须在进入 host 前
+    /// 被 PermissionDenied 拒绝，host 侧零记录（fail-closed）。
+    #[tokio::test]
+    async fn capability_required_requests_are_denied_before_host_when_not_granted() {
+        let harness = open_harness("caps").await;
+        let (handshake, _) = handshake_and_snapshot(&harness.client).await;
+        let HandshakeResponse::Accepted {
+            capabilities: granted, ..
+        } = handshake
+        else {
+            panic!("expected handshake accepted");
+        };
+        assert!(granted.is_empty(), "precondition: no capabilities granted");
+        assert!(!granted.contains(&GuiCapability::TerminalStreaming));
+        assert!(!granted.contains(&GuiCapability::Approvals));
+        assert!(!granted.contains(&GuiCapability::Snapshots));
+
+        // terminal_create：需要 TerminalStreaming。
+        harness
+            .client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("terminal-denied"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(1),
+                command: AppCommand::TerminalCreate {
+                    workspace_id: WorkspaceId::from("ws-1"),
+                    working_directory: None,
+                },
+            }))
+            .await;
+        let ServerFrame::Error(terminal) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for terminal_create");
+        };
+        assert_eq!(terminal.error.code, ProtocolErrorCode::PermissionDenied);
+
+        // tool_approve：需要 Approvals。
+        harness
+            .client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("approve-denied"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(2),
+                command: AppCommand::ToolApprove {
+                    run_id: RunId::from("run-1"),
+                    tool_call_id: ToolCallId::from("call-1"),
+                    decision: ApprovalDecision::ApproveOnce,
+                },
+            }))
+            .await;
+        let ServerFrame::Error(approve) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for tool_approve");
+        };
+        assert_eq!(approve.error.code, ProtocolErrorCode::PermissionDenied);
+
+        // snapshot_fetch（query）：需要 Snapshots。
+        harness
+            .client
+            .send(&ClientFrame::Query(AppQueryEnvelope {
+                api_version: API_VERSION,
+                request_id: QueryId::from("snapshot-denied"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                issued_at: Timestamp::from_unix_millis(3),
+                query: AppQuery::SnapshotFetch,
+            }))
+            .await;
+        let ServerFrame::Error(snapshot) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for snapshot_fetch");
+        };
+        assert_eq!(snapshot.error.code, ProtocolErrorCode::PermissionDenied);
+
+        // 授权门在进入 host 之前生效：命令与查询均零记录。
+        assert!(harness.host.recorded_commands().is_empty());
+        assert!(harness.host.recorded_queries().is_empty());
     }
 }

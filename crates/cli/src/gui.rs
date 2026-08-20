@@ -10,7 +10,8 @@ use std::sync::Arc;
 use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
 use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::client_auth::{TokenAuthenticator, TokenStore};
-use pawork_protocol::{GuiCapability, HandshakeService, SUPPORTED_API_VERSIONS};
+use pawork_protocol::app::registry::gui_supported_capabilities;
+use pawork_protocol::{HandshakeService, SUPPORTED_API_VERSIONS};
 use pawork_transport::{
     ConnectOptions, GuiTransportClient, GuiTransportServer, LocalTransport, TransportEndpoint,
 };
@@ -65,12 +66,7 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
     let handshake = HandshakeService::new(
         adapter.instance_id(),
         SUPPORTED_API_VERSIONS.to_vec(),
-        vec![
-            GuiCapability::Events,
-            GuiCapability::Snapshots,
-            GuiCapability::TerminalStreaming,
-            GuiCapability::Approvals,
-        ],
+        gui_supported_capabilities(),
     )
     .with_authenticator(Box::new(TokenAuthenticator::new(store)));
     let server = GuiServer::new(GuiServerConfig {

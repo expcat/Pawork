@@ -5,6 +5,7 @@ pub mod event;
 pub mod limits;
 pub mod query;
 pub mod quota;
+pub mod registry;
 pub mod version;
 
 pub use command::*;

@@ -8,12 +8,13 @@ use async_trait::async_trait;
 use pawork_domain::{ActorId, ConnectionId, GuiClientId};
 use pawork_protocol::{
     compute_resume_disposition, decode_client_frame_checked, encode_server_frame,
-    validate_server_frame_api_version, ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope,
+    validate_server_frame_api_version, ActorIdentity, ApiVersion, AppCommandEnvelope,
     AppQuery, AppQueryEnvelope, AppResponseEnvelope, ClientFrame,
     CommandSource, GlobalSequence, GuiCapability, HandshakeRequest, HandshakeResponse,
     HandshakeSession, ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext,
     ResumeDisposition, ResumeRequest, ResumeResponse, ServerFrame,
 };
+use pawork_protocol::app::registry::{command_entry, query_entry, RegistryEntry};
 use pawork_protocol::codec::decode_client_frame;
 use pawork_transport::{
     ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame,
@@ -394,18 +395,13 @@ async fn handle_frame(
 ) -> FrameOutcome {
     match frame {
         ClientFrame::Command(envelope) => {
-            if matches!(
-                envelope.command,
-                AppCommand::SessionClientContextReplace { .. }
-            ) {
+            let granted = granted_capabilities_for(inner, client_id);
+            if let Some(error) =
+                gui_channel_gate(command_entry(&envelope.command), &granted, "command")
+            {
                 return FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
                     request_id: Some(envelope.command_id.as_str().to_string()),
-                    error: ProtocolError {
-                        code: ProtocolErrorCode::PermissionDenied,
-                        message: "session_client_context_replace is not supported in S7"
-                            .into(),
-                        retryable: false,
-                    },
+                    error,
                 })]);
             }
             let stamped = host_stamp_command(envelope, client_id);
@@ -425,6 +421,13 @@ async fn handle_frame(
             }
         }
         ClientFrame::Query(envelope) => {
+            let granted = granted_capabilities_for(inner, client_id);
+            if let Some(error) = gui_channel_gate(query_entry(&envelope.query), &granted, "query") {
+                return FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
+                    request_id: Some(envelope.request_id.as_str().to_string()),
+                    error,
+                })]);
+            }
             let stamped = host_stamp_query(envelope, client_id);
             match &stamped.query {
                 AppQuery::SessionGet {
@@ -643,6 +646,47 @@ fn granted_capabilities(response: &HandshakeResponse) -> Vec<GuiCapability> {
         HandshakeResponse::Accepted { capabilities, .. } => capabilities.clone(),
         HandshakeResponse::Rejected { .. } => Vec::new(),
     }
+}
+
+/// 当前连接被授予的能力集；会话记录缺失时按空集处理（fail-closed）。
+fn granted_capabilities_for(inner: &Inner, client_id: &GuiClientId) -> Vec<GuiCapability> {
+    inner
+        .connections
+        .session(client_id)
+        .map(|session| session.capabilities)
+        .unwrap_or_default()
+}
+
+/// Registry 授权门：GUI 不可用或所需能力未授予即在进入 host 前拒绝。
+/// 错误形状沿用通道现有 PermissionDenied 帧，不新增协议帧。
+fn gui_channel_gate(
+    entry: &RegistryEntry,
+    granted: &[GuiCapability],
+    kind: &str,
+) -> Option<ProtocolError> {
+    if !entry.gui.available {
+        return Some(ProtocolError {
+            code: ProtocolErrorCode::PermissionDenied,
+            message: format!(
+                "{kind} {} is not available on the gui channel",
+                entry.wire_name
+            ),
+            retryable: false,
+        });
+    }
+    if let Some(capability) = entry.gui.required_capability.as_ref() {
+        if !granted.contains(capability) {
+            return Some(ProtocolError {
+                code: ProtocolErrorCode::PermissionDenied,
+                message: format!(
+                    "capability {capability:?} is not granted to this client for {kind} {}",
+                    entry.wire_name
+                ),
+                retryable: false,
+            });
+        }
+    }
+    None
 }
 
 fn manager_error_frame(request_id: Option<String>, error: &ManagerError) -> ServerFrame {

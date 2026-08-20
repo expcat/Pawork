@@ -18,9 +18,15 @@
 
 ## 3. 波次拆分
 
+> 波 A 实态复核记录(2026-08-20,三路只读核查):
+> 1. 「17+9 条帧 golden」实为 25 帧 + 1 类型共 26 条,全部 GUI 面(crates/protocol/tests/golden.rs 驱动);headless 侧无逐帧字节 golden,唯一防线为 tests/fixtures/headless/ 16 案例——波 B 切 headless 前须注意。
+> 2. GUI capability 宣告向量无任何检入快照基线;「registry 派生宣告 vs V2 快照零 diff」须先在波 A 建立 golden(现手写向量:server 端 cli/gui.rs {Events,Snapshots,TerminalStreaming,Approvals})。
+> 3. gui_host.rs 内部无 capability/授权门;GUI 授权面实际分布于 protocol handshake.rs(过滤)、cli/gui.rs(装配 supported 集)、app/gui_server(connection/session 存 granted 集)。波 A 授权门落点在 gui_server 层。
+> 4. 命令全集:AppCommand 19 变体(protocol/src/app/command.rs:295)、AppQuery 11 变体(app/query.rs:30);gui_host 仅实现 10 command(其余落 unsupported fallback);headless 手写表在 crates/cli/src/headless.rs(非 protocol/headless);ACP 白名单在 cli/src/channels/acp/adapter.rs:478。
+
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
-| A | Registry 设计 + protocol 内落地(表驱动或 const fn;含 17+9 条帧 golden 复核);GUI 通道切换到 registry 派生(gui_host dispatch 改造第一步:宣告/授权走 registry,巨 match 拆解留给 R4) | foundation/protocol、host/app(gui_host 授权面) | 串行(契约面) |
+| A | Registry 设计 + protocol 内落地(表驱动或 const fn;含 17+9 条帧 golden 复核);GUI 通道切换到 registry 派生(gui_host dispatch 改造第一步:宣告/授权走 registry,巨 match 拆解留给 R4) | crates/protocol、crates/app(gui_host + gui_server 授权面)、crates/cli/src/gui.rs(仅此文件:GUI 宣告装配点,2026-08-20 实态修正) | 串行(契约面) |
 | B | headless 与 ACP 切换 registry;删除 `command_capability` 手写表与 ACP method 白名单;probe 场景同步 | protocol headless/、cli(headless+acp)、client tests(probe) | 并行 ×2(headless / acp) |
 | C | 投影 reducer 下沉 + 投影 golden;host `timeline()` 与 desktop `projection.rs` 切换消费;live/history 一致性用 golden 钉死(CR08-08 根治) | protocol `projection/`、host/app timeline、apps/desktop projection、clients/client | 串行(单一 owner,三消费点一次切换) |
 | D | OnFailure 裁决落地(推荐删除 + compat 映射 + 三处注释清除);`ArtifactStreaming` 若产品要则按 registry 接线,否则维持候选 | policy(mode)、engine、workspace(import 映射)、protocol registry | 串行 |
