@@ -1,0 +1,1771 @@
+# R2 波 D 收口归档 — cargo tree --duplicates 原始输出(2026-08-20,HEAD=2a407e8)
+# 断言结论见 plan/R2-dependency-governance.md §4 波 D 行;多版本地面真值以 name@version uniq 计
+
+===== cargo tree -p pawork --duplicates(CLI 闭包)=====
+base64 v0.22.1
+├── hyper-util v0.1.20
+│   ├── hyper-rustls v0.27.9
+│   │   └── reqwest v0.13.4
+│   │       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app)
+│   │       │   └── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli)
+│   │       │       └── pawork v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/pawork)
+│   │       ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth)
+│   │       │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │       │   └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools)
+│   │       │       └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │       ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers)
+│   │       │   └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │       ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │       └── rmcp v3.1.3
+│   │           └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   └── reqwest v0.13.4 (*)
+└── reqwest v0.13.4 (*)
+
+base64 v0.23.1
+└── rmcp v3.1.3 (*)
+
+libc v0.2.189
+├── core-foundation v0.10.0
+│   ├── rustls-platform-verifier v0.7.0
+│   │   └── reqwest v0.13.4 (*)
+│   └── security-framework v3.7.0
+│       └── rustls-platform-verifier v0.7.0 (*)
+├── cpufeatures v0.3.0
+│   └── sha2 v0.11.0
+│       └── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+├── dirs-sys v0.5.0
+│   └── directories v6.0.0
+│       ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│       └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace)
+│           ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+├── errno v0.3.14
+│   ├── rustix v1.1.4
+│   │   └── tempfile v3.27.0
+│   │       └── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git)
+│   │           └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   └── signal-hook-registry v1.4.8
+│       └── tokio v1.53.1
+│           ├── hyper v1.11.0
+│           │   ├── hyper-rustls v0.27.9 (*)
+│           │   ├── hyper-util v0.1.20 (*)
+│           │   └── reqwest v0.13.4 (*)
+│           ├── hyper-rustls v0.27.9 (*)
+│           ├── hyper-util v0.1.20 (*)
+│           ├── pawork v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/pawork)
+│           ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│           ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│           ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client)
+│           │   └── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│           ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane)
+│           │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           │   └── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration)
+│           │       └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec)
+│           │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           │   ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│           │   └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│           ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│           ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│           ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol)
+│           │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           │   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│           │   └── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│           ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│           ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage)
+│           │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           │   └── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│           ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│           ├── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport)
+│           │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           │   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│           │   └── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│           ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow)
+│           │   └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           ├── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+│           ├── reqwest v0.13.4 (*)
+│           ├── rmcp v3.1.3 (*)
+│           ├── tokio-rustls v0.26.4
+│           │   ├── hyper-rustls v0.27.9 (*)
+│           │   └── reqwest v0.13.4 (*)
+│           ├── tokio-stream v0.1.19
+│           │   └── rmcp v3.1.3 (*)
+│           ├── tokio-util v0.7.19
+│           │   ├── reqwest v0.13.4 (*)
+│           │   └── rmcp v3.1.3 (*)
+│           └── tower v0.5.3
+│               ├── reqwest v0.13.4 (*)
+│               └── tower-http v0.6.11
+│                   └── reqwest v0.13.4 (*)
+├── filedescriptor v0.8.3
+│   └── portable-pty v0.9.0
+│       └── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+├── fsevent-sys v4.1.0
+│   └── notify v8.2.0
+│       └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+├── getrandom v0.4.3
+│   ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│   ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+│   └── tempfile v3.27.0 (*)
+├── hyper-util v0.1.20 (*)
+├── mio v1.2.2
+│   └── tokio v1.53.1 (*)
+├── nix v0.28.0
+│   └── portable-pty v0.9.0 (*)
+├── notify v8.2.0 (*)
+├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+├── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+├── portable-pty v0.9.0 (*)
+├── rustix v1.1.4 (*)
+├── security-framework v3.7.0 (*)
+├── security-framework-sys v2.17.0
+│   ├── rustls-platform-verifier v0.7.0 (*)
+│   └── security-framework v3.7.0 (*)
+├── serial2 v0.2.38
+│   └── portable-pty v0.9.0 (*)
+├── signal-hook-registry v1.4.8 (*)
+├── socket2 v0.6.5
+│   ├── hyper-util v0.1.20 (*)
+│   └── tokio v1.53.1 (*)
+├── tokio v1.53.1 (*)
+└── tokio-util v0.7.19 (*)
+
+libc v0.2.189
+├── cc v1.4.2
+│   └── cmake v0.1.58
+│       [build-dependencies]
+│       └── aws-lc-sys v0.44.0
+│           └── aws-lc-rs v1.18.0
+│               ├── rustls v0.23.43
+│               │   ├── hyper-rustls v0.27.9 (*)
+│               │   ├── reqwest v0.13.4 (*)
+│               │   ├── rustls-platform-verifier v0.7.0 (*)
+│               │   └── tokio-rustls v0.26.4 (*)
+│               └── rustls-webpki v0.103.14
+│                   └── rustls v0.23.43 (*)
+│   [build-dependencies]
+│   ├── aws-lc-sys v0.44.0 (*)
+│   ├── blake3 v1.8.6
+│   │   ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│   │   └── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│   └── libsqlite3-sys v0.38.2
+│       └── rusqlite v0.40.2
+│           ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│           └── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+└── jobserver v0.1.35
+    └── cc v1.4.2 (*)
+
+syn v2.0.119
+├── synstructure v0.13.2
+│   ├── yoke-derive v0.8.2 (proc-macro)
+│   │   └── yoke v0.8.3
+│   │       ├── icu_collections v2.3.0
+│   │       │   ├── icu_normalizer v2.3.0
+│   │       │   │   └── idna_adapter v1.2.2
+│   │       │   │       └── idna v1.1.0
+│   │       │   │           └── url v2.5.8
+│   │       │   │               ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│   │       │   │               ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│   │       │   │               ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │       │   │               ├── reqwest v0.13.4 (*)
+│   │       │   │               └── tower-http v0.6.11 (*)
+│   │       │   └── icu_properties v2.3.0
+│   │       │       └── idna_adapter v1.2.2 (*)
+│   │       ├── icu_provider v2.3.0
+│   │       │   ├── icu_normalizer v2.3.0 (*)
+│   │       │   └── icu_properties v2.3.0 (*)
+│   │       ├── zerotrie v0.2.5
+│   │       │   ├── icu_properties v2.3.0 (*)
+│   │       │   └── icu_provider v2.3.0 (*)
+│   │       └── zerovec v0.11.7
+│   │           ├── icu_collections v2.3.0 (*)
+│   │           ├── icu_locale_core v2.3.0
+│   │           │   ├── icu_properties v2.3.0 (*)
+│   │           │   └── icu_provider v2.3.0 (*)
+│   │           ├── icu_normalizer v2.3.0 (*)
+│   │           ├── icu_properties v2.3.0 (*)
+│   │           ├── icu_provider v2.3.0 (*)
+│   │           ├── potential_utf v0.1.6
+│   │           │   └── icu_collections v2.3.0 (*)
+│   │           └── tinystr v0.8.4
+│   │               └── icu_locale_core v2.3.0 (*)
+│   └── zerofrom-derive v0.1.7 (proc-macro)
+│       └── zerofrom v0.1.8
+│           ├── icu_collections v2.3.0 (*)
+│           ├── icu_provider v2.3.0 (*)
+│           ├── yoke v0.8.3 (*)
+│           ├── zerotrie v0.2.5 (*)
+│           └── zerovec v0.11.7 (*)
+├── thiserror-impl v1.0.69 (proc-macro)
+│   └── thiserror v1.0.69
+│       └── filedescriptor v0.8.3 (*)
+├── tracing-attributes v0.1.31 (proc-macro)
+│   └── tracing v0.1.44
+│       ├── hyper-util v0.1.20 (*)
+│       ├── pawork v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/pawork)
+│       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│       ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│       ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│       ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│       ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│       ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│       ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│       ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│       ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+│       ├── rmcp v3.1.3 (*)
+│       └── tracing-subscriber v0.3.23
+│           └── pawork v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/pawork)
+├── yoke-derive v0.8.2 (proc-macro) (*)
+└── zerofrom-derive v0.1.7 (proc-macro) (*)
+
+syn v3.0.3
+├── async-trait v0.1.92 (proc-macro)
+│   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│   ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│   ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│   ├── pawork-domain v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/domain)
+│   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│   │   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│   │   ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│   │   ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│   │   ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine)
+│   │   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   │   └── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│   │   ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│   │   ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│   │   ├── pawork-policy v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/policy)
+│   │   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   │   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │   │   └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+│   │   ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+│   │   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│   │   ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│   │   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │   ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+│   │   └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+│   ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+│   ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│   ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│   ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+│   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│   ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   └── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport) (*)
+├── clap_derive v4.6.4 (proc-macro)
+│   └── clap v4.6.6
+│       └── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+├── displaydoc v0.2.7 (proc-macro)
+│   ├── icu_collections v2.3.0 (*)
+│   ├── icu_locale_core v2.3.0 (*)
+│   ├── icu_properties v2.3.0 (*)
+│   ├── icu_provider v2.3.0 (*)
+│   ├── tinystr v0.8.4 (*)
+│   └── zerotrie v0.2.5 (*)
+├── futures-macro v0.3.34 (proc-macro)
+│   └── futures-util v0.3.34
+│       ├── futures v0.3.34
+│       │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       │   ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│       │   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│       │   └── rmcp v3.1.3 (*)
+│       ├── futures-executor v0.3.34
+│       │   └── futures v0.3.34 (*)
+│       ├── hyper-util v0.1.20 (*)
+│       ├── reqwest v0.13.4 (*)
+│       ├── sse-stream v0.2.5
+│       │   └── rmcp v3.1.3 (*)
+│       ├── tower v0.5.3 (*)
+│       └── tower-http v0.6.11 (*)
+├── serde_derive v1.0.229 (proc-macro)
+│   └── serde v1.0.229
+│       ├── chrono v0.4.45
+│       │   └── rmcp v3.1.3 (*)
+│       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│       ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│       ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│       ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│       ├── pawork-domain v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/domain) (*)
+│       ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+│       ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│       ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│       ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│       ├── pawork-policy v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/policy) (*)
+│       ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+│       ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│       ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│       ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│       ├── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport) (*)
+│       ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+│       ├── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+│       ├── reqwest v0.13.4 (*)
+│       ├── rmcp v3.1.3 (*)
+│       └── serde_urlencoded v0.7.1
+│           └── reqwest v0.13.4 (*)
+├── thiserror-impl v2.0.20 (proc-macro)
+│   └── thiserror v2.0.20
+│       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│       ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│       ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│       ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│       ├── pawork-domain v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/domain) (*)
+│       ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+│       ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│       ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│       ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│       ├── pawork-policy v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/policy) (*)
+│       ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+│       ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│       ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│       ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│       ├── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport) (*)
+│       ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+│       ├── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+│       └── rmcp v3.1.3 (*)
+├── tokio-macros v2.7.2 (proc-macro)
+│   └── tokio v1.53.1 (*)
+└── zerovec-derive v0.11.4 (proc-macro)
+    └── zerovec v0.11.7 (*)
+
+thiserror v1.0.69 (*)
+
+thiserror v2.0.20 (*)
+
+thiserror-impl v1.0.69 (proc-macro) (*)
+
+thiserror-impl v2.0.20 (proc-macro) (*)
+
+===== cargo tree --duplicates(全树,含 desktop/dev)=====
+arrayvec v0.7.8
+└── naga v25.0.1
+    [build-dependencies]
+    └── gpui v0.2.2
+        └── pawork-desktop v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/desktop)
+
+arrayvec v0.7.8
+├── av-scenechange v0.14.1
+│   └── rav1e v0.8.1
+│       └── ravif v0.13.0
+│           └── image v0.25.10
+│               └── gpui v0.2.2 (*)
+├── av1-grain v0.2.5
+│   └── rav1e v0.8.1 (*)
+├── avif-serialize v0.8.9
+│   └── ravif v0.13.0 (*)
+├── blake3 v1.8.6
+│   ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration)
+│   │   └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app)
+│   │       └── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli)
+│   │           └── pawork v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/pawork)
+│   │       [dev-dependencies]
+│   │       └── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client)
+│   │           ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│   │           └── pawork-desktop v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/desktop)
+│   └── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage)
+│       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       └── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│       [dev-dependencies]
+│       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       └── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│   [dev-dependencies]
+│   └── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+├── gpui_sum_tree v0.2.2
+│   └── gpui v0.2.2 (*)
+├── kurbo v0.11.3
+│   ├── svgtypes v0.15.3
+│   │   ├── resvg v0.45.1
+│   │   │   └── gpui v0.2.2 (*)
+│   │   └── usvg v0.45.1
+│   │       ├── gpui v0.2.2 (*)
+│   │       └── resvg v0.45.1 (*)
+│   └── usvg v0.45.1 (*)
+├── lyon_geom v1.0.19
+│   └── lyon_path v1.0.19
+│       ├── lyon_algorithms v1.0.20
+│       │   └── lyon v1.0.19
+│       │       └── gpui v0.2.2 (*)
+│       └── lyon_tessellation v1.0.20
+│           └── lyon v1.0.19 (*)
+├── naga v25.0.1
+│   └── blade-graphics v0.7.1
+│       ├── blade-util v0.3.0
+│       │   └── gpui v0.2.2 (*)
+│       └── gpui v0.2.2 (*)
+├── rav1e v0.8.1 (*)
+├── taffy v0.9.0
+│   └── gpui v0.2.2 (*)
+└── tiny-skia v0.11.4
+    └── resvg v0.45.1 (*)
+
+async-channel v1.9.0
+└── async-std v1.13.2
+    └── zed-async-tar v0.5.0-zed
+        └── gpui_http_client v0.2.2
+            └── gpui v0.2.2 (*)
+
+async-channel v2.5.0
+├── async-global-executor v2.4.1
+│   └── async-std v1.13.2 (*)
+├── blocking v1.6.2
+│   ├── async-fs v2.2.0
+│   │   ├── gpui_http_client v0.2.2 (*)
+│   │   ├── gpui_util v0.2.2
+│   │   │   ├── gpui v0.2.2 (*)
+│   │   │   └── gpui_http_client v0.2.2 (*)
+│   │   └── smol v2.0.2
+│   │       ├── gpui v0.2.2 (*)
+│   │       ├── gpui_util v0.2.2 (*)
+│   │       └── pawork-desktop v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/desktop)
+│   ├── async-global-executor v2.4.1 (*)
+│   ├── async-net v2.0.0
+│   │   └── smol v2.0.2 (*)
+│   └── smol v2.0.2 (*)
+└── smol v2.0.2 (*)
+
+base64 v0.22.1
+├── hyper-util v0.1.20
+│   ├── hyper-rustls v0.27.9
+│   │   ├── reqwest v0.13.4
+│   │   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   │   ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth)
+│   │   │   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   │   │   └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools)
+│   │   │   │       └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   │   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers)
+│   │   │   │   └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   │   │   [dev-dependencies]
+│   │   │   │   └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   │   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │   │   └── rmcp v3.1.3
+│   │   │       └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │   │       [dev-dependencies]
+│   │   │       └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │   └── zed-reqwest v0.12.15-zed
+│   │       └── gpui_http_client v0.2.2 (*)
+│   ├── reqwest v0.13.4 (*)
+│   ├── wiremock v0.6.5
+│   │   [dev-dependencies]
+│   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│   │   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│   │   └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   └── zed-reqwest v0.12.15-zed (*)
+├── reqwest v0.13.4 (*)
+├── usvg v0.45.1 (*)
+├── wiremock v0.6.5 (*)
+└── zed-reqwest v0.12.15-zed (*)
+
+base64 v0.23.1
+└── rmcp v3.1.3 (*)
+
+bit-set v0.8.0
+└── naga v25.0.1 (*)
+
+bit-set v0.8.0
+├── naga v25.0.1 (*)
+└── proptest v1.11.0
+    [dev-dependencies]
+    ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane)
+    │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+    │   └── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+    ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git)
+    │   └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+    ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+    ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+    └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+
+bit-vec v0.8.0
+└── bit-set v0.8.0 (*)
+
+bit-vec v0.8.0
+├── bit-set v0.8.0 (*)
+└── proptest v1.11.0 (*)
+
+bitflags v1.3.2
+├── core-graphics-types v0.1.3
+│   └── metal v0.29.0
+│       ├── core-video v0.4.3
+│       │   ├── gpui v0.2.2 (*)
+│       │   └── gpui_media v0.2.2
+│       │       └── gpui v0.2.2 (*)
+│       ├── gpui v0.2.2 (*)
+│       └── gpui_media v0.2.2 (*)
+└── png v0.17.16
+    └── tiny-skia v0.11.4 (*)
+
+bitflags v2.13.1
+├── bindgen v0.71.1
+│   [build-dependencies]
+│   ├── gpui v0.2.2 (*)
+│   └── gpui_media v0.2.2 (*)
+├── blade-graphics v0.7.1 (*)
+├── cocoa v0.26.0
+│   └── gpui v0.2.2 (*)
+├── cocoa-foundation v0.2.0
+│   ├── cocoa v0.26.0 (*)
+│   └── gpui v0.2.2 (*)
+├── core-graphics v0.24.0
+│   ├── cocoa v0.26.0 (*)
+│   ├── core-text v21.0.0
+│   │   ├── gpui v0.2.2 (*)
+│   │   └── zed-font-kit v0.14.1-zed
+│   │       └── gpui v0.2.2 (*)
+│   ├── gpui v0.2.2 (*)
+│   └── zed-font-kit v0.14.1-zed (*)
+├── core-graphics-types v0.2.0
+│   ├── cocoa-foundation v0.2.0 (*)
+│   └── core-graphics v0.24.0 (*)
+├── core-graphics2 v0.4.1
+│   └── core-video v0.4.3 (*)
+├── metal v0.29.0 (*)
+├── naga v25.0.1 (*)
+├── naga v25.0.1 (*)
+├── nix v0.28.0
+│   └── portable-pty v0.9.0
+│       └── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec)
+│           ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│           └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+├── nix v0.29.0
+│   └── gpui_util v0.2.2 (*)
+├── nix v0.31.3
+│   └── command-fds v0.3.3
+│       └── gpui_util v0.2.2 (*)
+├── notify v8.2.0
+│   └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace)
+│       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+├── notify-types v2.1.0
+│   └── notify v8.2.0 (*)
+├── objc2-app-kit v0.3.2
+│   └── blade-graphics v0.7.1 (*)
+├── objc2-core-foundation v0.3.2
+│   ├── blade-graphics v0.7.1 (*)
+│   ├── objc2-app-kit v0.3.2 (*)
+│   ├── objc2-foundation v0.3.2
+│   │   ├── blade-graphics v0.7.1 (*)
+│   │   ├── objc2-app-kit v0.3.2 (*)
+│   │   ├── objc2-metal v0.3.2
+│   │   │   ├── blade-graphics v0.7.1 (*)
+│   │   │   └── objc2-quartz-core v0.3.2
+│   │   │       ├── blade-graphics v0.7.1 (*)
+│   │   │       └── objc2-app-kit v0.3.2 (*)
+│   │   └── objc2-quartz-core v0.3.2 (*)
+│   └── objc2-quartz-core v0.3.2 (*)
+├── objc2-foundation v0.3.2 (*)
+├── objc2-metal v0.3.2 (*)
+├── objc2-quartz-core v0.3.2 (*)
+├── png v0.18.1
+│   └── image v0.25.10 (*)
+├── proptest v1.11.0 (*)
+├── rusqlite v0.40.2
+│   ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│   └── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│   [dev-dependencies]
+│   └── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+├── rustix v0.38.44
+│   └── which v6.0.3
+│       └── gpui_util v0.2.2 (*)
+├── rustix v1.1.4
+│   ├── async-io v2.6.0
+│   │   ├── async-global-executor v2.4.1 (*)
+│   │   ├── async-net v2.0.0 (*)
+│   │   ├── async-process v2.5.0
+│   │   │   ├── async-std v1.13.2 (*)
+│   │   │   └── smol v2.0.2 (*)
+│   │   ├── async-signal v0.2.14
+│   │   │   └── async-process v2.5.0 (*)
+│   │   ├── async-std v1.13.2 (*)
+│   │   └── smol v2.0.2 (*)
+│   ├── async-process v2.5.0 (*)
+│   ├── async-signal v0.2.14 (*)
+│   ├── polling v3.11.0
+│   │   └── async-io v2.6.0 (*)
+│   └── tempfile v3.27.0
+│       ├── cbindgen v0.28.0
+│       │   [build-dependencies]
+│       │   └── gpui v0.2.2 (*)
+│       ├── gpui_http_client v0.2.2 (*)
+│       ├── gpui_util v0.2.2 (*)
+│       ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│       ├── proptest v1.11.0 (*)
+│       └── rusty-fork v0.3.1
+│           └── proptest v1.11.0 (*)
+│       [dev-dependencies]
+│       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│       ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│       ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│       ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│       ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│       ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│       ├── pawork-policy v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/policy)
+│       │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       │   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│       │   └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+│       ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol)
+│       │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       │   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│       │   └── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│       │   [dev-dependencies]
+│       │   └── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│       ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│       ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│       ├── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport)
+│       │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       │   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│       │   └── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│       │   [dev-dependencies]
+│       │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       │   └── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│       └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+├── rustybuzz v0.20.1
+│   └── usvg v0.45.1 (*)
+├── security-framework v3.7.0
+│   ├── rustls-native-certs v0.8.4
+│   │   ├── hyper-rustls v0.27.9 (*)
+│   │   └── zed-reqwest v0.12.15-zed (*)
+│   └── rustls-platform-verifier v0.7.0
+│       └── reqwest v0.13.4 (*)
+├── system-configuration v0.6.1
+│   └── zed-reqwest v0.12.15-zed (*)
+├── tower-http v0.6.11
+│   └── reqwest v0.13.4 (*)
+└── zed-font-kit v0.14.1-zed (*)
+
+block-buffer v0.10.4
+└── digest v0.10.7
+    └── sha2 v0.10.9
+        └── gpui_http_client v0.2.2 (*)
+
+block-buffer v0.12.1
+├── cipher v0.5.2
+│   ├── chacha20 v0.10.1
+│   │   └── chacha20poly1305 v0.11.0
+│   │       [dev-dependencies]
+│   │       └── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│   └── chacha20poly1305 v0.11.0 (*)
+└── digest v0.11.3
+    └── sha2 v0.11.0
+        ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+        └── rust-embed-utils v8.12.0
+            ├── rust-embed v8.12.0
+            │   └── gpui_util v0.2.2 (*)
+            └── rust-embed-impl v8.12.0 (proc-macro)
+                └── rust-embed v8.12.0 (*)
+
+cfg_aliases v0.1.1
+[build-dependencies]
+└── nix v0.28.0 (*)
+
+cfg_aliases v0.2.2
+[build-dependencies]
+├── naga v25.0.1 (*)
+├── naga v25.0.1 (*)
+├── nix v0.29.0 (*)
+└── nix v0.31.3 (*)
+
+codespan-reporting v0.12.0
+├── blade-graphics v0.7.1 (*)
+└── naga v25.0.1 (*)
+
+codespan-reporting v0.12.0
+└── naga v25.0.1 (*)
+
+core-foundation v0.9.4
+├── core-graphics-types v0.1.3 (*)
+└── system-configuration v0.6.1 (*)
+
+core-foundation v0.10.0
+├── cocoa v0.26.0 (*)
+├── cocoa-foundation v0.2.0 (*)
+├── core-graphics v0.24.0 (*)
+├── core-graphics-types v0.2.0 (*)
+├── core-graphics2 v0.4.1 (*)
+├── core-text v21.0.0 (*)
+├── core-video v0.4.3 (*)
+├── gpui v0.2.2 (*)
+├── gpui_media v0.2.2 (*)
+├── io-surface v0.16.1
+│   └── core-video v0.4.3 (*)
+├── rustls-platform-verifier v0.7.0 (*)
+├── security-framework v3.7.0 (*)
+└── zed-font-kit v0.14.1-zed (*)
+
+core-graphics-types v0.1.3 (*)
+
+core-graphics-types v0.2.0 (*)
+
+cpufeatures v0.2.17
+└── sha2 v0.10.9 (*)
+
+cpufeatures v0.3.0
+└── sha2 v0.11.0 (*)
+
+crypto-common v0.1.7
+└── digest v0.10.7 (*)
+
+crypto-common v0.2.2
+├── aead v0.6.1
+│   └── chacha20poly1305 v0.11.0 (*)
+├── cipher v0.5.2 (*)
+├── digest v0.11.3 (*)
+└── universal-hash v0.6.1
+    └── poly1305 v0.9.1
+        └── chacha20poly1305 v0.11.0 (*)
+
+digest v0.10.7 (*)
+
+digest v0.11.3 (*)
+
+dirs v4.0.0
+└── gpui_util v0.2.2 (*)
+
+dirs v5.0.1
+└── zed-font-kit v0.14.1-zed (*)
+
+dirs-sys v0.3.7
+└── dirs v4.0.0 (*)
+
+dirs-sys v0.4.1
+└── dirs v5.0.1 (*)
+
+dirs-sys v0.5.0
+└── directories v6.0.0
+    ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+    └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+
+either v1.17.0
+└── itertools v0.13.0
+    └── bindgen v0.71.1 (*)
+
+either v1.17.0
+├── itertools v0.14.0
+│   ├── gpui v0.2.2 (*)
+│   ├── gpui_util v0.2.2 (*)
+│   └── rav1e v0.8.1 (*)
+├── rayon v1.12.0
+│   ├── av-scenechange v0.14.1 (*)
+│   ├── gpui_sum_tree v0.2.2 (*)
+│   ├── image v0.25.10 (*)
+│   ├── maybe-rayon v0.1.1
+│   │   └── rav1e v0.8.1 (*)
+│   └── ravif v0.13.0 (*)
+├── tokio-socks v0.5.3
+│   └── zed-reqwest v0.12.15-zed (*)
+└── which v6.0.3 (*)
+
+event-listener v2.5.3
+└── async-channel v1.9.0 (*)
+
+event-listener v5.4.2
+├── async-lock v3.4.2
+│   ├── async-fs v2.2.0 (*)
+│   ├── async-global-executor v2.4.1 (*)
+│   ├── async-process v2.5.0 (*)
+│   ├── async-std v1.13.2 (*)
+│   └── smol v2.0.2 (*)
+├── async-process v2.5.0 (*)
+└── event-listener-strategy v0.5.4
+    ├── async-channel v2.5.0 (*)
+    └── async-lock v3.4.2 (*)
+
+fastrand v1.9.0
+└── futures-lite v1.13.0
+    └── gpui_util v0.2.2 (*)
+
+fastrand v2.5.0
+├── async-executor v1.14.0
+│   ├── async-global-executor v2.4.1 (*)
+│   └── smol v2.0.2 (*)
+├── futures-lite v2.6.1
+│   ├── async-executor v1.14.0 (*)
+│   ├── async-fs v2.2.0 (*)
+│   ├── async-global-executor v2.4.1 (*)
+│   ├── async-io v2.6.0 (*)
+│   ├── async-net v2.0.0 (*)
+│   ├── async-process v2.5.0 (*)
+│   ├── async-std v1.13.2 (*)
+│   ├── async_zip v0.0.17
+│   │   └── gpui_util v0.2.2 (*)
+│   ├── blocking v1.6.2 (*)
+│   └── smol v2.0.2 (*)
+├── piper v0.2.5
+│   └── blocking v1.6.2 (*)
+└── tempfile v3.27.0 (*)
+
+foldhash v0.1.5
+└── hashbrown v0.15.5
+    ├── naga v25.0.1 (*)
+    └── naga v25.0.1 (*)
+
+foldhash v0.2.0
+└── hashbrown v0.17.1
+    ├── hashlink v0.12.1
+    │   └── rusqlite v0.40.2 (*)
+    └── indexmap v2.14.0
+        ├── cbindgen v0.28.0 (*)
+        ├── gpui_collections v0.2.2
+        │   ├── gpui v0.2.2 (*)
+        │   ├── gpui_perf v0.2.2
+        │   │   └── gpui_util_macros v0.2.2 (proc-macro)
+        │   │       └── gpui v0.2.2 (*)
+        │   └── gpui_util v0.2.2 (*)
+        ├── h2 v0.4.15
+        │   ├── hyper v1.11.0
+        │   │   ├── hyper-rustls v0.27.9 (*)
+        │   │   ├── hyper-util v0.1.20 (*)
+        │   │   ├── reqwest v0.13.4 (*)
+        │   │   ├── wiremock v0.6.5 (*)
+        │   │   └── zed-reqwest v0.12.15-zed (*)
+        │   └── zed-reqwest v0.12.15-zed (*)
+        ├── naga v25.0.1 (*)
+        ├── naga v25.0.1 (*)
+        ├── rmcp v3.1.3 (*)
+        ├── schemars v1.2.2
+        │   ├── gpui v0.2.2 (*)
+        │   ├── gpui_util v0.2.2 (*)
+        │   └── rmcp v3.1.3 (*)
+        ├── serde_json v1.0.151
+        │   ├── assert-json-diff v2.0.2
+        │   │   └── wiremock v0.6.5 (*)
+        │   ├── gpui v0.2.2 (*)
+        │   ├── gpui_http_client v0.2.2 (*)
+        │   ├── gpui_util v0.2.2 (*)
+        │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+        │   ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+        │   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+        │   ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+        │   ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+        │   ├── pawork-desktop v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/desktop)
+        │   ├── pawork-domain v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/domain)
+        │   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+        │   │   ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+        │   │   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+        │   │   ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+        │   │   ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+        │   │   ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine)
+        │   │   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+        │   │   │   └── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+        │   │   │   [dev-dependencies]
+        │   │   │   └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+        │   │   ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+        │   │   ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+        │   │   ├── pawork-policy v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/policy) (*)
+        │   │   ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+        │   │   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+        │   │   ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+        │   │   ├── pawork-testkit v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/testkit)
+        │   │   │   [dev-dependencies]
+        │   │   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+        │   │   │   ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+        │   │   │   ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+        │   │   │   └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+        │   │   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+        │   │   ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow)
+        │   │   │   └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+        │   │   └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+        │   │   [dev-dependencies]
+        │   │   └── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+        │   ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+        │   ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+        │   ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+        │   ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+        │   ├── pawork-policy v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/policy) (*)
+        │   ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+        │   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+        │   ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+        │   ├── pawork-testkit v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/testkit) (*)
+        │   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+        │   ├── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+        │   ├── reqwest v0.13.4 (*)
+        │   ├── rmcp v3.1.3 (*)
+        │   ├── schemars v1.2.2 (*)
+        │   └── wiremock v0.6.5 (*)
+        │   [dev-dependencies]
+        │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+        │   ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+        │   ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+        │   ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+        │   ├── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport) (*)
+        │   ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+        │   └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+        ├── serde_json v1.0.151
+        │   ├── cbindgen v0.28.0 (*)
+        │   └── gpui_perf v0.2.2 (*)
+        ├── serde_json_lenient v0.2.4
+        │   └── gpui_util v0.2.2 (*)
+        └── toml_edit v0.22.27
+            └── toml v0.8.23
+                └── cbindgen v0.28.0 (*)
+
+futures-lite v1.13.0 (*)
+
+futures-lite v2.6.1 (*)
+
+getrandom v0.2.17
+└── ring v0.17.14
+    ├── rustls v0.23.43
+    │   ├── hyper-rustls v0.27.9 (*)
+    │   ├── reqwest v0.13.4 (*)
+    │   ├── rustls-platform-verifier v0.7.0 (*)
+    │   ├── tokio-rustls v0.26.4
+    │   │   ├── hyper-rustls v0.27.9 (*)
+    │   │   ├── reqwest v0.13.4 (*)
+    │   │   └── zed-reqwest v0.12.15-zed (*)
+    │   └── zed-reqwest v0.12.15-zed (*)
+    └── rustls-webpki v0.103.14
+        └── rustls v0.23.43 (*)
+
+getrandom v0.3.4
+└── rand_core v0.9.5
+    ├── rand v0.9.5
+    │   └── proptest v1.11.0 (*)
+    ├── rand_chacha v0.9.0
+    │   └── proptest v1.11.0 (*)
+    └── rand_xorshift v0.4.0
+        └── proptest v1.11.0 (*)
+
+getrandom v0.4.3
+├── crypto-common v0.2.2 (*)
+├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+├── tempfile v3.27.0 (*)
+└── uuid v1.24.1
+    ├── gpui v0.2.2 (*)
+    └── rmcp v3.1.3 (*)
+
+half v2.7.1
+├── exr v1.74.2
+│   └── image v0.25.10 (*)
+├── naga v25.0.1 (*)
+└── tiff v0.11.3
+    └── image v0.25.10 (*)
+
+half v2.7.1
+└── naga v25.0.1 (*)
+
+hashbrown v0.15.5 (*)
+
+hashbrown v0.17.1 (*)
+
+heck v0.4.1
+└── cbindgen v0.28.0 (*)
+
+heck v0.5.0
+├── clap_derive v4.6.4 (proc-macro)
+│   └── clap v4.6.6
+│       └── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│       [dev-dependencies]
+│       └── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+├── gpui-macros v0.2.2 (proc-macro)
+│   └── gpui v0.2.2 (*)
+├── strum_macros v0.26.4 (proc-macro)
+│   └── strum v0.26.3
+│       ├── naga v25.0.1 (*)
+│       └── naga v25.0.1 (*)
+└── strum_macros v0.27.2 (proc-macro)
+    └── strum v0.27.2
+        └── gpui v0.2.2 (*)
+
+itertools v0.13.0 (*)
+
+itertools v0.14.0 (*)
+
+libc v0.2.189
+├── cgl v0.3.2
+│   └── io-surface v0.16.1 (*)
+├── cocoa v0.26.0 (*)
+├── cocoa-foundation v0.2.0 (*)
+├── core-foundation v0.9.4 (*)
+├── core-foundation v0.10.0 (*)
+├── core-graphics v0.24.0 (*)
+├── core-graphics-types v0.1.3 (*)
+├── core-graphics-types v0.2.0 (*)
+├── core-graphics2 v0.4.1 (*)
+├── core-text v21.0.0 (*)
+├── core-video v0.4.3 (*)
+├── cpufeatures v0.2.17 (*)
+├── cpufeatures v0.3.0 (*)
+├── dirs-sys v0.3.7 (*)
+├── dirs-sys v0.4.1 (*)
+├── dirs-sys v0.5.0 (*)
+├── errno v0.3.14
+│   ├── rustix v0.38.44 (*)
+│   ├── rustix v1.1.4 (*)
+│   └── signal-hook-registry v1.4.8
+│       ├── async-signal v0.2.14 (*)
+│       └── tokio v1.53.1
+│           ├── deadpool v0.12.3
+│           │   └── wiremock v0.6.5 (*)
+│           ├── h2 v0.4.15 (*)
+│           ├── hyper v1.11.0 (*)
+│           ├── hyper-rustls v0.27.9 (*)
+│           ├── hyper-util v0.1.20 (*)
+│           ├── pawork v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/pawork)
+│           ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│           ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│           ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│           ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│           ├── pawork-desktop v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/desktop)
+│           ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│           ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│           ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│           ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+│           ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│           ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│           ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│           ├── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport) (*)
+│           ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+│           ├── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+│           ├── reqwest v0.13.4 (*)
+│           ├── rmcp v3.1.3 (*)
+│           ├── tokio-rustls v0.26.4 (*)
+│           ├── tokio-socks v0.5.3 (*)
+│           ├── tokio-stream v0.1.19
+│           │   └── rmcp v3.1.3 (*)
+│           ├── tokio-util v0.7.19
+│           │   ├── h2 v0.4.15 (*)
+│           │   ├── reqwest v0.13.4 (*)
+│           │   ├── rmcp v3.1.3 (*)
+│           │   └── zed-reqwest v0.12.15-zed (*)
+│           ├── tower v0.5.3
+│           │   ├── reqwest v0.13.4 (*)
+│           │   ├── tower-http v0.6.11 (*)
+│           │   └── zed-reqwest v0.12.15-zed (*)
+│           ├── wiremock v0.6.5 (*)
+│           └── zed-reqwest v0.12.15-zed (*)
+│           [dev-dependencies]
+│           ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│           ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│           ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│           ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│           ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│           ├── pawork-domain v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/domain) (*)
+│           ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+│           ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│           ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│           ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│           ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│           ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│           ├── pawork-testkit v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/testkit) (*)
+│           ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│           ├── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport) (*)
+│           ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+│           └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+├── filedescriptor v0.8.3
+│   └── portable-pty v0.9.0 (*)
+├── filetime v0.2.29
+│   └── zed-async-tar v0.5.0-zed (*)
+├── fsevent-sys v4.1.0
+│   └── notify v8.2.0 (*)
+├── getrandom v0.2.17 (*)
+├── getrandom v0.3.4 (*)
+├── getrandom v0.4.3 (*)
+├── gpui v0.2.2 (*)
+├── gpui_util v0.2.2 (*)
+├── hyper-util v0.1.20 (*)
+├── malloc_buf v0.0.6
+│   └── objc v0.2.7
+│       ├── cocoa v0.26.0 (*)
+│       ├── cocoa-foundation v0.2.0 (*)
+│       ├── gpui v0.2.2 (*)
+│       ├── gpui_media v0.2.2 (*)
+│       └── metal v0.29.0 (*)
+├── memmap2 v0.9.11
+│   └── fontdb v0.23.0
+│       └── usvg v0.45.1 (*)
+├── mio v1.2.2
+│   └── tokio v1.53.1 (*)
+├── nix v0.28.0 (*)
+├── nix v0.29.0 (*)
+├── nix v0.31.3 (*)
+├── notify v8.2.0 (*)
+├── num_cpus v1.17.0
+│   ├── deadpool v0.12.3 (*)
+│   └── gpui v0.2.2 (*)
+├── parking_lot_core v0.9.12
+│   └── parking_lot v0.12.5
+│       ├── gpui v0.2.2 (*)
+│       ├── gpui_http_client v0.2.2 (*)
+│       └── postage v0.5.0
+│           └── gpui v0.2.2 (*)
+├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+├── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+├── portable-pty v0.9.0 (*)
+├── rav1e v0.8.1 (*)
+├── ring v0.17.14 (*)
+├── rustix v0.38.44 (*)
+├── rustix v1.1.4 (*)
+├── security-framework v3.7.0 (*)
+├── security-framework-sys v2.17.0
+│   ├── rustls-platform-verifier v0.7.0 (*)
+│   └── security-framework v3.7.0 (*)
+├── serial2 v0.2.38
+│   └── portable-pty v0.9.0 (*)
+├── signal-hook-registry v1.4.8 (*)
+├── socket2 v0.6.5
+│   ├── hyper-util v0.1.20 (*)
+│   └── tokio v1.53.1 (*)
+├── stacker v0.1.25
+│   └── stacksafe v0.1.4
+│       └── gpui v0.2.2 (*)
+├── system-configuration-sys v0.6.0
+│   └── system-configuration v0.6.1 (*)
+├── tokio v1.53.1 (*)
+├── tokio-util v0.7.19 (*)
+├── wait-timeout v0.2.1
+│   └── rusty-fork v0.3.1 (*)
+├── xattr v0.2.3
+│   └── zed-async-tar v0.5.0-zed (*)
+├── zed-async-tar v0.5.0-zed (*)
+└── zed-font-kit v0.14.1-zed (*)
+
+libc v0.2.189
+├── cc v1.4.2
+│   └── cmake v0.1.58
+│       [build-dependencies]
+│       └── aws-lc-sys v0.44.0
+│           └── aws-lc-rs v1.18.0
+│               ├── rustls v0.23.43 (*)
+│               └── rustls-webpki v0.103.14 (*)
+│   [build-dependencies]
+│   ├── aws-lc-sys v0.44.0 (*)
+│   ├── blake3 v1.8.6 (*)
+│   ├── libsqlite3-sys v0.38.2
+│   │   └── rusqlite v0.40.2 (*)
+│   ├── psm v0.1.32
+│   │   └── stacker v0.1.25 (*)
+│   ├── ring v0.17.14 (*)
+│   └── stacker v0.1.25 (*)
+├── clang-sys v1.9.1
+│   └── bindgen v0.71.1 (*)
+└── jobserver v0.1.35
+    └── cc v1.4.2 (*)
+
+log v0.4.33
+├── bindgen v0.71.1 (*)
+├── cbindgen v0.28.0 (*)
+└── naga v25.0.1 (*)
+
+log v0.4.33
+├── async-std v1.13.2 (*)
+├── av-scenechange v0.14.1 (*)
+├── av1-grain v0.2.5 (*)
+├── blade-graphics v0.7.1 (*)
+├── blade-util v0.3.0 (*)
+├── fontdb v0.23.0 (*)
+├── globset v0.4.20
+│   ├── gpui_util v0.2.2 (*)
+│   ├── ignore v0.4.33
+│   │   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │   └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+│   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   └── rust-embed-utils v8.12.0 (*)
+├── gpui v0.2.2 (*)
+├── gpui_http_client v0.2.2 (*)
+├── gpui_sum_tree v0.2.2 (*)
+├── gpui_util v0.2.2 (*)
+├── ignore v0.4.33 (*)
+├── kv-log-macro v1.0.7
+│   └── async-std v1.13.2 (*)
+├── metal v0.29.0 (*)
+├── naga v25.0.1 (*)
+├── notify v8.2.0 (*)
+├── pathfinder_geometry v0.5.1
+│   ├── gpui v0.2.2 (*)
+│   └── zed-font-kit v0.14.1-zed (*)
+├── portable-pty v0.9.0 (*)
+├── postage v0.5.0 (*)
+├── rav1e v0.8.1 (*)
+├── reqwest v0.13.4 (*)
+├── resvg v0.45.1 (*)
+├── rustls-platform-verifier v0.7.0 (*)
+├── rustybuzz v0.20.1 (*)
+├── simplecss v0.2.2
+│   └── usvg v0.45.1 (*)
+├── tiny-skia v0.11.4 (*)
+├── tracing-log v0.2.0
+│   └── tracing-subscriber v0.3.23
+│       └── pawork v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/pawork)
+├── usvg v0.45.1 (*)
+├── wiremock v0.6.5 (*)
+├── zed-font-kit v0.14.1-zed (*)
+└── zed-reqwest v0.12.15-zed (*)
+
+memchr v2.8.3
+├── aho-corasick v1.1.5
+│   ├── globset v0.4.20 (*)
+│   ├── regex v1.13.1
+│   │   ├── gpui_util v0.2.2 (*)
+│   │   ├── pawork v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/pawork)
+│   │   ├── pawork-policy v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/policy) (*)
+│   │   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │   ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+│   │   └── wiremock v0.6.5 (*)
+│   ├── regex-automata v0.4.18
+│   │   ├── globset v0.4.20 (*)
+│   │   ├── ignore v0.4.33 (*)
+│   │   ├── matchers v0.2.0
+│   │   │   └── tracing-subscriber v0.3.23 (*)
+│   │   ├── regex v1.13.1 (*)
+│   │   └── tracing-subscriber v0.3.23 (*)
+│   └── regex-automata v0.4.18
+│       └── regex v1.13.1
+│           └── bindgen v0.71.1 (*)
+├── async-std v1.13.2 (*)
+├── bstr v1.13.1
+│   └── globset v0.4.20 (*)
+├── chardetng v0.1.17
+│   └── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+├── compression-codecs v0.4.38
+│   └── async-compression v0.4.43
+│       ├── async_zip v0.0.17 (*)
+│       └── gpui_http_client v0.2.2 (*)
+├── futures-lite v1.13.0 (*)
+├── futures-util v0.3.34
+│   ├── futures v0.3.34
+│   │   ├── gpui v0.2.2 (*)
+│   │   ├── gpui_http_client v0.2.2 (*)
+│   │   ├── gpui_util v0.2.2 (*)
+│   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│   │   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│   │   ├── postage v0.5.0 (*)
+│   │   ├── rmcp v3.1.3 (*)
+│   │   └── wiremock v0.6.5 (*)
+│   │   [dev-dependencies]
+│   │   └── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+│   ├── futures-executor v0.3.34
+│   │   └── futures v0.3.34 (*)
+│   ├── hyper-util v0.1.20 (*)
+│   ├── reqwest v0.13.4 (*)
+│   ├── sse-stream v0.2.5
+│   │   └── rmcp v3.1.3 (*)
+│   ├── tokio-socks v0.5.3 (*)
+│   ├── tower v0.5.3 (*)
+│   ├── tower-http v0.6.11 (*)
+│   └── zed-reqwest v0.12.15-zed (*)
+├── ignore v0.4.33 (*)
+├── no_std_io2 v0.9.4
+│   └── bitstream-io v4.10.0
+│       └── rav1e v0.8.1 (*)
+├── nom v8.0.0
+│   └── av1-grain v0.2.5 (*)
+├── regex v1.13.1 (*)
+├── regex-automata v0.4.18 (*)
+├── serde_json v1.0.151 (*)
+└── serde_json_lenient v0.2.4 (*)
+
+memchr v2.8.3
+├── nom v7.1.3
+│   └── cexpr v0.6.0
+│       └── bindgen v0.71.1 (*)
+├── object v0.39.1
+│   └── ar_archive_writer v0.5.3
+│       [build-dependencies]
+│       └── psm v0.1.32 (*)
+├── regex-automata v0.4.18 (*)
+└── serde_json v1.0.151 (*)
+
+mime_guess v2.0.5
+└── zed-reqwest v0.12.15-zed (*)
+
+mime_guess v2.0.5
+└── rust-embed-impl v8.12.0 (proc-macro) (*)
+
+naga v25.0.1 (*)
+
+naga v25.0.1 (*)
+
+nix v0.28.0 (*)
+
+nix v0.29.0 (*)
+
+nix v0.31.3 (*)
+
+nom v7.1.3 (*)
+
+nom v8.0.0 (*)
+
+num-traits v0.2.19
+├── av-scenechange v0.14.1 (*)
+├── chrono v0.4.45
+│   ├── rmcp v3.1.3 (*)
+│   └── schemars v1.2.2 (*)
+├── euclid v0.22.14
+│   ├── etagere v0.2.15
+│   │   └── gpui v0.2.2 (*)
+│   └── lyon_geom v1.0.19 (*)
+├── half v2.7.1 (*)
+├── image v0.25.10 (*)
+├── lyon_algorithms v1.0.20 (*)
+├── lyon_geom v1.0.19 (*)
+├── lyon_path v1.0.19 (*)
+├── lyon_tessellation v1.0.20 (*)
+├── moxcms v0.8.1
+│   └── image v0.25.10 (*)
+├── naga v25.0.1 (*)
+├── num-bigint v0.4.8
+│   └── num-rational v0.4.2
+│       ├── av-scenechange v0.14.1 (*)
+│       └── av1-grain v0.2.5 (*)
+├── num-complex v0.4.6
+│   ├── exr v1.74.2 (*)
+│   └── pulp v0.22.3
+│       └── exr v1.74.2 (*)
+├── num-integer v0.1.47
+│   ├── num-bigint v0.4.8 (*)
+│   └── num-rational v0.4.2 (*)
+├── num-rational v0.4.2 (*)
+├── proptest v1.11.0 (*)
+├── rav1e v0.8.1 (*)
+└── v_frame v0.3.9
+    ├── av-scenechange v0.14.1 (*)
+    ├── av1-grain v0.2.5 (*)
+    └── rav1e v0.8.1 (*)
+
+num-traits v0.2.19
+├── half v2.7.1 (*)
+└── naga v25.0.1 (*)
+
+once_cell v1.21.4
+├── async-global-executor v2.4.1 (*)
+├── async-std v1.13.2 (*)
+├── blade-graphics v0.7.1 (*)
+├── naga v25.0.1 (*)
+├── rustls v0.23.43 (*)
+├── tempfile v3.27.0 (*)
+├── tracing-core v0.1.36
+│   ├── tracing v0.1.44
+│   │   ├── h2 v0.4.15 (*)
+│   │   ├── hyper-util v0.1.20 (*)
+│   │   ├── pawork v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/apps/pawork)
+│   │   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   │   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│   │   ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│   │   ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│   │   ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│   │   ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│   │   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│   │   ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│   │   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │   ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+│   │   ├── rmcp v3.1.3 (*)
+│   │   └── tracing-subscriber v0.3.23 (*)
+│   ├── tracing-log v0.2.0 (*)
+│   └── tracing-subscriber v0.3.23 (*)
+├── tracing-log v0.2.0 (*)
+├── tracing-subscriber v0.3.23 (*)
+├── wiremock v0.6.5 (*)
+└── zed-reqwest v0.12.15-zed (*)
+
+once_cell v1.21.4
+└── naga v25.0.1 (*)
+
+pastey v0.1.1 (proc-macro)
+└── av-scenechange v0.14.1 (*)
+
+pastey v0.2.3 (proc-macro)
+└── rmcp v3.1.3 (*)
+
+png v0.17.16 (*)
+
+png v0.18.1 (*)
+
+quick-error v1.2.3
+└── rusty-fork v0.3.1 (*)
+
+quick-error v2.0.1
+├── image-webp v0.2.4
+│   └── image v0.25.10 (*)
+├── ravif v0.13.0 (*)
+└── tiff v0.11.3 (*)
+
+rand_core v0.9.5 (*)
+
+rand_core v0.10.1
+├── crypto-common v0.2.2 (*)
+└── getrandom v0.4.3 (*)
+
+regex v1.13.1 (*)
+
+regex v1.13.1 (*)
+
+regex-automata v0.4.18 (*)
+
+regex-automata v0.4.18 (*)
+
+regex-syntax v0.8.11
+├── globset v0.4.20 (*)
+├── proptest v1.11.0 (*)
+├── regex v1.13.1 (*)
+└── regex-automata v0.4.18 (*)
+
+regex-syntax v0.8.11
+├── regex v1.13.1 (*)
+└── regex-automata v0.4.18 (*)
+
+rustc-hash v1.1.0
+├── naga v25.0.1 (*)
+└── naga v25.0.1 (*)
+
+rustc-hash v2.1.3
+├── bindgen v0.71.1 (*)
+└── gpui_collections v0.2.2 (*)
+
+rustix v0.38.44 (*)
+
+rustix v1.1.4 (*)
+
+semver v1.0.28
+└── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+
+semver v1.0.28
+└── rustc_version v0.4.1
+    [build-dependencies]
+    ├── derive_more v0.99.20 (proc-macro)
+    │   ├── gpui v0.2.2 (*)
+    │   └── gpui_http_client v0.2.2 (*)
+    └── pathfinder_simd v0.5.6
+        ├── pathfinder_geometry v0.5.1 (*)
+        └── zed-font-kit v0.14.1-zed (*)
+
+serde v1.0.229
+├── assert-json-diff v2.0.2 (*)
+├── chrono v0.4.45 (*)
+├── gpui v0.2.2 (*)
+├── gpui_http_client v0.2.2 (*)
+├── gpui_semantic_version v0.2.2
+│   └── gpui v0.2.2 (*)
+├── gpui_util v0.2.2 (*)
+├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+├── pawork-domain v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/domain) (*)
+├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+├── pawork-policy v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/policy) (*)
+├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+├── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport) (*)
+├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+├── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+├── reqwest v0.13.4 (*)
+├── rmcp v3.1.3 (*)
+├── schemars v1.2.2 (*)
+├── serde_json_lenient v0.2.4 (*)
+├── serde_urlencoded v0.7.1
+│   ├── reqwest v0.13.4 (*)
+│   └── zed-reqwest v0.12.15-zed (*)
+├── wiremock v0.6.5 (*)
+└── zed-reqwest v0.12.15-zed (*)
+
+serde v1.0.229
+├── cbindgen v0.28.0 (*)
+├── gpui_perf v0.2.2 (*)
+├── serde_spanned v0.6.9
+│   ├── toml v0.8.23 (*)
+│   └── toml_edit v0.22.27 (*)
+├── toml v0.8.23 (*)
+├── toml_datetime v0.6.11
+│   ├── toml v0.8.23 (*)
+│   └── toml_edit v0.22.27 (*)
+└── toml_edit v0.22.27 (*)
+
+serde_core v1.0.229
+├── erased-serde v0.4.10
+│   └── value-bag-serde1 v1.13.2
+│       └── value-bag v1.13.2
+│           └── log v0.4.33 (*)
+├── indexmap v2.14.0 (*)
+├── log v0.4.33 (*)
+├── semver v1.0.28 (*)
+├── serde v1.0.229 (*)
+├── serde_fmt v1.1.0
+│   └── value-bag-serde1 v1.13.2 (*)
+├── serde_json v1.0.151 (*)
+├── serde_spanned v1.1.1
+│   └── toml v1.1.4+spec-1.1.0
+│       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       └── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+├── toml v1.1.4+spec-1.1.0 (*)
+├── toml_datetime v1.1.1+spec-1.1.0
+│   └── toml v1.1.4+spec-1.1.0 (*)
+├── uuid v1.24.1 (*)
+└── value-bag-serde1 v1.13.2 (*)
+
+serde_core v1.0.229
+├── serde v1.0.229 (*)
+└── serde_json v1.0.151 (*)
+
+serde_json v1.0.151 (*)
+
+serde_json v1.0.151 (*)
+
+serde_spanned v0.6.9 (*)
+
+serde_spanned v1.1.1 (*)
+
+sha2 v0.10.9 (*)
+
+sha2 v0.11.0 (*)
+
+shlex v1.3.0
+├── bindgen v0.71.1 (*)
+└── gpui_util v0.2.2 (*)
+
+shlex v2.0.1
+└── cc v1.4.2 (*)
+
+strum v0.26.3 (*)
+
+strum v0.27.2 (*)
+
+strum_macros v0.26.4 (proc-macro) (*)
+
+strum_macros v0.27.2 (proc-macro) (*)
+
+syn v1.0.109
+└── hidden-trait v0.1.2 (proc-macro)
+    └── blade-graphics v0.7.1 (*)
+
+syn v2.0.119
+├── arg_enum_proc_macro v0.3.4 (proc-macro)
+│   ├── av-scenechange v0.14.1 (*)
+│   └── rav1e v0.8.1 (*)
+├── bindgen v0.71.1 (*)
+├── blade-macros v0.3.0 (proc-macro)
+│   └── gpui v0.2.2 (*)
+├── cbindgen v0.28.0 (*)
+├── derive_more v0.99.20 (proc-macro) (*)
+├── equator-macro v0.4.2 (proc-macro)
+│   └── equator v0.4.2
+│       └── aligned-vec v0.6.4
+│           ├── rav1e v0.8.1 (*)
+│           └── v_frame v0.3.9 (*)
+├── gpui-macros v0.2.2 (proc-macro) (*)
+├── gpui_derive_refineable v0.2.2 (proc-macro)
+│   └── gpui_refineable v0.2.2
+│       └── gpui v0.2.2 (*)
+├── gpui_util_macros v0.2.2 (proc-macro) (*)
+├── num-derive v0.4.2 (proc-macro)
+│   └── rav1e v0.8.1 (*)
+├── pin-project-internal v1.1.13 (proc-macro)
+│   └── pin-project v1.1.13
+│       ├── async_zip v0.0.17 (*)
+│       ├── gpui v0.2.2 (*)
+│       ├── postage v0.5.0 (*)
+│       └── zed-async-tar v0.5.0-zed (*)
+├── prettyplease v0.2.37
+│   └── bindgen v0.71.1 (*)
+├── proc-macro-error2 v2.0.1
+│   └── stacksafe-macro v0.1.4 (proc-macro)
+│       └── stacksafe v0.1.4 (*)
+├── profiling-procmacros v1.0.18 (proc-macro)
+│   └── profiling v1.0.18
+│       ├── blade-util v0.3.0 (*)
+│       ├── gpui v0.2.2 (*)
+│       └── rav1e v0.8.1 (*)
+├── rust-embed-impl v8.12.0 (proc-macro) (*)
+├── stacksafe-macro v0.1.4 (proc-macro) (*)
+├── strum_macros v0.26.4 (proc-macro) (*)
+├── strum_macros v0.27.2 (proc-macro) (*)
+├── synstructure v0.13.2
+│   ├── yoke-derive v0.8.2 (proc-macro)
+│   │   └── yoke v0.8.3
+│   │       ├── icu_collections v2.3.0
+│   │       │   ├── icu_normalizer v2.3.0
+│   │       │   │   └── idna_adapter v1.2.2
+│   │       │   │       └── idna v1.1.0
+│   │       │   │           └── url v2.5.8
+│   │       │   │               ├── gpui_http_client v0.2.2 (*)
+│   │       │   │               ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│   │       │   │               ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│   │       │   │               ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   │       │   │               ├── reqwest v0.13.4 (*)
+│   │       │   │               ├── tower-http v0.6.11 (*)
+│   │       │   │               ├── wiremock v0.6.5 (*)
+│   │       │   │               └── zed-reqwest v0.12.15-zed (*)
+│   │       │   └── icu_properties v2.3.0
+│   │       │       └── idna_adapter v1.2.2 (*)
+│   │       ├── icu_provider v2.3.0
+│   │       │   ├── icu_normalizer v2.3.0 (*)
+│   │       │   └── icu_properties v2.3.0 (*)
+│   │       ├── zerotrie v0.2.5
+│   │       │   ├── icu_properties v2.3.0 (*)
+│   │       │   └── icu_provider v2.3.0 (*)
+│   │       └── zerovec v0.11.7
+│   │           ├── icu_collections v2.3.0 (*)
+│   │           ├── icu_locale_core v2.3.0
+│   │           │   ├── icu_properties v2.3.0 (*)
+│   │           │   └── icu_provider v2.3.0 (*)
+│   │           ├── icu_normalizer v2.3.0 (*)
+│   │           ├── icu_properties v2.3.0 (*)
+│   │           ├── icu_provider v2.3.0 (*)
+│   │           ├── potential_utf v0.1.6
+│   │           │   └── icu_collections v2.3.0 (*)
+│   │           └── tinystr v0.8.4
+│   │               └── icu_locale_core v2.3.0 (*)
+│   └── zerofrom-derive v0.1.7 (proc-macro)
+│       └── zerofrom v0.1.8
+│           ├── icu_collections v2.3.0 (*)
+│           ├── icu_provider v2.3.0 (*)
+│           ├── yoke v0.8.3 (*)
+│           ├── zerotrie v0.2.5 (*)
+│           └── zerovec v0.11.7 (*)
+├── thiserror-impl v1.0.69 (proc-macro)
+│   └── thiserror v1.0.69
+│       ├── async_zip v0.0.17 (*)
+│       ├── filedescriptor v0.8.3 (*)
+│       ├── postage v0.5.0 (*)
+│       └── tokio-socks v0.5.3 (*)
+├── tracing-attributes v0.1.31 (proc-macro)
+│   └── tracing v0.1.44 (*)
+├── yoke-derive v0.8.2 (proc-macro) (*)
+├── zerocopy-derive v0.8.56 (proc-macro)
+│   └── zerocopy v0.8.56
+│       ├── half v2.7.1 (*)
+│       ├── half v2.7.1 (*)
+│       └── ppv-lite86 v0.2.21
+│           └── rand_chacha v0.9.0 (*)
+└── zerofrom-derive v0.1.7 (proc-macro) (*)
+
+syn v3.0.3
+├── async-trait v0.1.92 (proc-macro)
+│   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│   ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│   ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│   ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│   ├── pawork-domain v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/domain) (*)
+│   ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+│   ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│   ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│   ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+│   ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│   ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│   ├── pawork-testkit v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/testkit) (*)
+│   ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│   └── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport) (*)
+│   [dev-dependencies]
+│   ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│   └── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+├── bytemuck_derive v1.12.0 (proc-macro)
+│   └── bytemuck v1.25.2
+│       ├── blade-graphics v0.7.1 (*)
+│       ├── blade-util v0.3.0 (*)
+│       ├── gpui v0.2.2 (*)
+│       ├── image v0.25.10 (*)
+│       ├── num-complex v0.4.6 (*)
+│       ├── pulp v0.22.3 (*)
+│       ├── qoi v0.4.1
+│       │   └── image v0.25.10 (*)
+│       ├── rgb v0.8.53
+│       │   ├── image v0.25.10 (*)
+│       │   ├── ravif v0.13.0 (*)
+│       │   └── resvg v0.45.1 (*)
+│       ├── rustybuzz v0.20.1 (*)
+│       ├── tiny-skia v0.11.4 (*)
+│       └── tiny-skia-path v0.11.4
+│           ├── tiny-skia v0.11.4 (*)
+│           └── usvg v0.45.1 (*)
+├── clap_derive v4.6.4 (proc-macro) (*)
+├── displaydoc v0.2.7 (proc-macro)
+│   ├── icu_collections v2.3.0 (*)
+│   ├── icu_locale_core v2.3.0 (*)
+│   ├── icu_properties v2.3.0 (*)
+│   ├── icu_provider v2.3.0 (*)
+│   ├── tinystr v0.8.4 (*)
+│   └── zerotrie v0.2.5 (*)
+├── foreign-types-macros v0.2.4 (proc-macro)
+│   └── foreign-types v0.5.0
+│       ├── cocoa v0.26.0 (*)
+│       ├── core-graphics v0.24.0 (*)
+│       ├── core-text v21.0.0 (*)
+│       ├── gpui v0.2.2 (*)
+│       ├── gpui_media v0.2.2 (*)
+│       └── metal v0.29.0 (*)
+├── futures-macro v0.3.34 (proc-macro)
+│   └── futures-util v0.3.34 (*)
+├── ref-cast-impl v1.0.26 (proc-macro)
+│   └── ref-cast v1.0.26
+│       └── schemars v1.2.2 (*)
+├── schemars_derive v1.2.2 (proc-macro)
+│   └── schemars v1.2.2 (*)
+├── serde_derive v1.0.229 (proc-macro)
+│   ├── serde v1.0.229 (*)
+│   └── serde v1.0.229 (*)
+├── serde_derive_internals v0.30.0
+│   └── schemars_derive v1.2.2 (proc-macro) (*)
+├── thiserror-impl v2.0.20 (proc-macro)
+│   ├── thiserror v2.0.20
+│   │   └── naga v25.0.1 (*)
+│   └── thiserror v2.0.20
+│       ├── av-scenechange v0.14.1 (*)
+│       ├── command-fds v0.3.3 (*)
+│       ├── gpui v0.2.2 (*)
+│       ├── naga v25.0.1 (*)
+│       ├── pawork-app v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/app) (*)
+│       ├── pawork-auth v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/auth) (*)
+│       ├── pawork-cli v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/cli) (*)
+│       ├── pawork-client v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/client) (*)
+│       ├── pawork-control-plane v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/control-plane) (*)
+│       ├── pawork-domain v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/domain) (*)
+│       ├── pawork-engine v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/engine) (*)
+│       ├── pawork-exec v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/exec) (*)
+│       ├── pawork-git v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/git) (*)
+│       ├── pawork-orchestration v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/orchestration) (*)
+│       ├── pawork-policy v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/policy) (*)
+│       ├── pawork-protocol v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/protocol) (*)
+│       ├── pawork-providers v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/providers) (*)
+│       ├── pawork-storage v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/storage) (*)
+│       ├── pawork-tools v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/tools) (*)
+│       ├── pawork-transport v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/transport) (*)
+│       ├── pawork-workflow v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workflow) (*)
+│       ├── pawork-workspace v0.1.0 (/Volumes/SSD/Code/Lib/Pawork/crates/workspace) (*)
+│       ├── rav1e v0.8.1 (*)
+│       └── rmcp v3.1.3 (*)
+├── tokio-macros v2.7.2 (proc-macro)
+│   └── tokio v1.53.1 (*)
+└── zerovec-derive v0.11.4 (proc-macro)
+    └── zerovec v0.11.7 (*)
+
+thiserror v1.0.69 (*)
+
+thiserror v2.0.20 (*)
+
+thiserror v2.0.20 (*)
+
+thiserror-impl v1.0.69 (proc-macro) (*)
+
+thiserror-impl v2.0.20 (proc-macro) (*)
+
+toml v0.8.23 (*)
+
+toml v1.1.4+spec-1.1.0 (*)
+
+toml_datetime v0.6.11 (*)
+
+toml_datetime v1.1.1+spec-1.1.0 (*)
+
+winnow v0.7.15
+└── toml_edit v0.22.27 (*)
+
+winnow v1.0.4
+├── toml v1.1.4+spec-1.1.0 (*)
+└── toml_parser v1.1.3+spec-1.1.0
+    └── toml v1.1.4+spec-1.1.0 (*)

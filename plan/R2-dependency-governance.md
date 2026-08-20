@@ -26,7 +26,7 @@
 | U8 | sha2 | `0.10` / 0.10.9+0.11.0 双版本 | `0.11` ✅ 波 B 落地(2026-08-20;0.11.0) | 与 desktop 树(rust-embed)去重;零适配,RFC 7636 golden 字节不变;0.10.9 经 gpui_http_client 残留为例外(见波 D 行登记) |
 | U9 | base64 | `0.22` | (随 L3 删除) | — |
 | U10 | directories | `5` / 5.0.1(最新 6.0.0) | ✅ 决议升 `6` 成立(2026-08-20;6.0.0) | macOS `dev.pawork.pawork` 目录语义兼容硬条件满足:先补快照 golden×2(workspace tests/loader_file.rs + auth file_backend home 兜底),v5/v6 下逐字节一致,消费点零适配;遗留候选(审查 F3,低危):file_backend golden 可被 PAWORK_HOME 环境短路,加固需测试串行化方案 |
-| U11 | thiserror 1.x 残留 | lock 1.0.69+2.0.20 | 不强求 | 1.x 来自传递依赖,随上游自然消失 |
+| U11 | thiserror 1.x 残留 | lock 1.0.69+2.0.20 | 不强求 | 1.x 来自传递依赖,随上游自然消失(波 D 实测:CLI 闭包 1.0.69←portable-pty 0.9→filedescriptor 0.8.3 仍在;desktop 树另有 async_zip/postage/tokio-socks 传递;同期 CLI 闭包新增传递残留 base64 0.22/0.23、syn 2/3,见波 D 行登记) |
 
 ## 3. rmcp 专项(波 C)✅ 2026-08-20 落地(决议:升级,锁 `=3.1.3`)
 
@@ -42,7 +42,7 @@
 | A | 本地化 L1–L3(先对拍 golden 再删依赖)✅ 2026-08-19 收口 | protocol/auth/storage/exec/workflow 的调用点 + orchestration 死声明 + 根 Cargo.toml | 并行 ×2(L1+L3 / L2) |
 | B | 升级 U1–U8、U10(逐项独立可回退;每项升完跑该消费面定向测试)✅ 2026-08-20 收口(九项全落地;lock 836→830;CLI 闭包多版本清零,desktop 树例外 sha2/toml/windows 0.57 登记;U4 形状变化用户拍板 A;U5 TLS 栈切换登记) | 各消费 crate Cargo.toml + 调用点迁移 | 串行推荐(lock 冲突面小但叠加诊断困难;U1/U3 可并行) |
 | C | rmcp 专项(§3)✅ 2026-08-20 收口(决议升级锁 =3.1.3;MSRV 1.85→1.88;lock 830→826) | tools `mcp/` + 根 Cargo.toml + Cargo.lock | 串行 |
-| D | 收口:`cargo tree -d`(duplicates)断言——notify/reqwest 多版本与 windows 0.58 位消失;desktop 树例外登记:sha2 0.10.9←gpui_http_client、toml 0.8.23←cbindgen→gpui、windows 0.57←sysinfo、thiserror 1.x 传递(gpui 0.2.2 未跟进前消不掉);记录前后 lock 包数(波 B 实测 836→830)与增量编译耗时对比 | 根 Cargo.lock、本任务书 | 串行(主代理) |
+| D | 收口 ✅ 2026-08-20:`cargo tree -d` 断言落地(raw 输出归档 [R2-cargo-tree-duplicates-2026-08-20.txt](R2-cargo-tree-duplicates-2026-08-20.txt))——notify 8.2.0 / reqwest 0.13.4 单版本、windows 0.58 退出 lock(余 0.61.3 主版本与 0.57.0←sysinfo 0.31.4←zed-scap 0.0.8-zed gpui media 传递);desktop 树例外四项核实:sha2 0.10.9←gpui_http_client 0.2.2、toml 0.8.23←cbindgen 0.28.0(gpui build-dep)、windows 0.57、thiserror 1.x(async_zip/postage/tokio-socks);**CLI 闭包传递残留登记(pawork 直控面多版本清零,余皆上游传递)**:base64 0.22.1(reqwest 0.13.4→hyper-util)/0.23.1(rmcp 3.1.3,波 C 引入)、syn 2.0.119/3.0.3(async-trait 0.1.92)、thiserror 1.0.69+thiserror-impl 联动(portable-pty 0.9→filedescriptor);lock 包数 836(pre-R2,d78fa46)→830(波 B)→826(波 C,净 -10);增量编译同机同协议对比(git worktree 隔离 target,domain lib.rs 探针改动→`cargo check -p pawork` 17 crate 级联):R2 前 ~2.1s / R2 后 ~2.3s 无回退,干净全量 check 编译单元 242→221(-21);`cargo check -p pawork -p pawork-desktop` 双绿(rustc 1.96.0);冒烟:xAI OAuth 强制过期→`pawork models -p xai` 触发自动刷新并持久化新 expires_at、目录真实返回(验证 auth 层 base64url/getrandom/sha2 链路),MCP `mcp list/test ± --json` 四项 connected(官方 server-filesystem stdio,14 工具,trusted workspace + `trust_workspaces` 全局层闸门符合预期) | 根 Cargo.lock、本任务书 | 串行(主代理) |
 
 ## 5. 验证
 
@@ -53,6 +53,7 @@
 ## 6. 退出标准
 
 - [x] rand/parking_lot/base64 退出直接依赖(波 A ✅;encoding_rs 为 tools 非死依赖见 manifest 注释、futures 三crate在用,均已核对)
-- [x] U1–U8 完成;U10 有决议(波 B ✅ 2026-08-20);lock 多版本项 pawork CLI 闭包已清零,全树残留例外登记:sha2 0.10.9←gpui_http_client、toml 0.8.23←cbindgen→gpui、windows 0.57←sysinfo、thiserror 1.x 传递(正式 `cargo tree -d` 断言归波 D)
+- [x] U1–U8 完成;U10 有决议(波 B ✅ 2026-08-20);lock 多版本项 pawork 直控面已清零(波 D 按实态修正措辞:原「CLI 闭包已清零」不准确——闭包内上游传递残留 base64 0.22/0.23、syn 2/3、thiserror 1.x,已登记波 D 行与 ROADMAP §4);全树残留例外登记:sha2 0.10.9←gpui_http_client、toml 0.8.23←cbindgen→gpui、windows 0.57←sysinfo、thiserror 1.x 传递(正式 `cargo tree -d` 断言波 D ✅ 2026-08-20)
 - [x] rmcp 有决议并落地(波 C ✅ 2026-08-20:升级锁 `=3.1.3`,见 §3 结果)
 - [x] 全部消费面定向测试绿 + 冒烟通过;v3_plan §3 指针更新(波 C ✅ 2026-08-20:129/129 + 消费者 check 绿 + 真实 stdio 冒烟与基线逐字节一致)
+- [x] 波 D 收口断言与登记(2026-08-20:tree -d 断言 + desktop 例外/CLI 传递残留登记 + lock 包数与增量编译对比 + `cargo check -p pawork -p pawork-desktop` 双绿 + OAuth 刷新/MCP 冒烟矩阵,详见 §4 波 D 行)
