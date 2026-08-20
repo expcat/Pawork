@@ -27,7 +27,7 @@
 | S6 | 首发 Provider 与认证 | 六通道适配(DeepSeek/GLM/OpenCode Go/ChatGPT/xAI/Qwen)、`models` 聚合、auth 文件后端为主 + env 降级 fallback、ChatGPT/xAI OAuth(singleflight + 跨进程 write/refresh 锁)、全局脱敏 layer,trace 0 泄漏 |
 | S7 | 最小 Agent GUI | v3 三栏工作台(TaskRail 双分组/定向新建、流式对话、内嵌审批、取消、ContextMeter、RunStatusBar);`gui serve`(UDS 单实例);GPUI 锁定 `=0.2.2`(ADR-035);关窗不杀 Run;跨通道切换 |
 | S8 | Git、Diff 与 Checkpoint | 会话 diff、编辑前快照、`pawork rollback`、审批 hunk 预览;blob store(`PWB1` + protected AEAD,ADR-032);git 注入防护(`--force`/`-o` 拒绝) |
-| S9 | MCP、资源与兼容导入 | rmcp `=2.2.0` 锁入内部 codec、MCP 工具与内置共用 ToolRegistry;AGENTS.md/Skills 注入;`@file`;config 六层 + Profile;五来源只读导入(Claude/Codex 等)+ `sessions import/export`;workspace file-index |
+| S9 | MCP、资源与兼容导入 | rmcp `=2.2.0` 锁入内部 codec(V3 R2 波 C 2026-08-20 升级 `=3.1.3`,wire 兼容实证)、MCP 工具与内置共用 ToolRegistry;AGENTS.md/Skills 注入;`@file`;config 六层 + Profile;五来源只读导入(Claude/Codex 等)+ `sessions import/export`;workspace file-index |
 | S10 | 服务化与客户端 | protocol 收口(typegen 检入 `schemas/`)、EventHub(ring/replay/Lagged)、多客户端 gui-server、`pawork-sdk`、ACP(Zed 1.15 实测)、PTY、`service install`(dry-run 默认)、headless `--json-stdio`、`sessions fork`、protocol-probe 9 场景 |
 | S11 | 工作流、多 Agent 与控制面 | Plan 整版审批 gate、`pawork tasks/usage/agents demo`;control-plane(UsageLedger/audit JSONL)、quota(LocalLedger)、provider-control(lease/binding/pool)、orchestration(Supervisor spawn/cancel-tree/budget-gate) |
 | S12 | 全项目 Code Review | 只读审查 CR-01~CR-09,60 finding(全 Confirmed:H15/M27/L18)→ 57 项任务;报告与裁定见 [reviews/s12/](reviews/s12/);不改代码 |

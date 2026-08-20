@@ -400,9 +400,12 @@ impl ClientPeer {
                 h.await_response().await.map_err(map_service_error)
             } => match result? {
                 ServerResult::CallToolResult(ct) => Ok(call_result_to_tool_result(&ct)),
-                other => Err(McpError::Protocol(format!(
-                    "unexpected call_tool response: {other:?}"
-                ))),
+                other => Err(McpError::Protocol(match other {
+                    ServerResult::InputRequiredResult(_) => {
+                        "MCP server requested additional input; not supported".into()
+                    }
+                    _ => format!("unexpected call_tool response: {other:?}"),
+                })),
             },
         }
     }
@@ -470,21 +473,21 @@ pub(crate) mod test_support {
             &self,
             request: CallToolRequestParams,
             context: RequestContext<RoleServer>,
-        ) -> impl Future<Output = Result<CallToolResult, ErrorData>> + Send {
+        ) -> impl Future<Output = Result<rmcp::model::CallToolResponse, ErrorData>> + Send {
             let behavior = self.behavior;
             async move {
                 match behavior {
                     ServerBehavior::Echo => {
                         let text = format!("echo: {}", request.name);
-                        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+                        Ok(CallToolResult::success(vec![ContentBlock::text(text)]).into())
                     }
                     ServerBehavior::Slow { delay } => {
                         tokio::select! {
                             _ = tokio::time::sleep(delay) => {
-                                Ok(CallToolResult::success(vec![ContentBlock::text("slow-done")]))
+                                Ok(CallToolResult::success(vec![ContentBlock::text("slow-done")]).into())
                             }
                             _ = context.ct.cancelled() => {
-                                Ok(CallToolResult::success(vec![ContentBlock::text("cancelled")]))
+                                Ok(CallToolResult::success(vec![ContentBlock::text("cancelled")]).into())
                             }
                         }
                     }

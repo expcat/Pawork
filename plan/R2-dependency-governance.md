@@ -28,11 +28,12 @@
 | U10 | directories | `5` / 5.0.1(最新 6.0.0) | ✅ 决议升 `6` 成立(2026-08-20;6.0.0) | macOS `dev.pawork.pawork` 目录语义兼容硬条件满足:先补快照 golden×2(workspace tests/loader_file.rs + auth file_backend home 兜底),v5/v6 下逐字节一致,消费点零适配;遗留候选(审查 F3,低危):file_backend golden 可被 PAWORK_HOME 环境短路,加固需测试串行化方案 |
 | U11 | thiserror 1.x 残留 | lock 1.0.69+2.0.20 | 不强求 | 1.x 来自传递依赖,随上游自然消失 |
 
-## 3. rmcp 专项(波 C)
+## 3. rmcp 专项(波 C)✅ 2026-08-20 落地(决议:升级,锁 `=3.1.3`)
 
-- 现状:`=2.2.0` 精确锁定,生产依赖(stdio + streamable-http 两条 transport 都走 rmcp),用面集中在单文件 `codec.rs`(12 处 import 面);crates.io 已到 3.1.x(major)。
-- 动作:在分支上升级 → MCP 契约 59 测试 + rmcp 隔离断言 → 真实 MCP server 冒烟(`npx @modelcontextprotocol/server-filesystem`,S9 同款)→ wire 行为逐项对比。
+- 现状(升级前):`=2.2.0` 精确锁定,生产依赖(stdio + streamable-http 两条 transport 都走 rmcp),用面集中在单文件 `codec.rs`(实态 6 条 `use` / 17 个生产类型);crates.io 已到 3.1.x(major)。
+- 动作:在分支上升级 → MCP 契约测试(实态 64 条;原「59」为 S9A 快照计数,S13A 安全整改 +5) + rmcp 隔离断言 → 真实 MCP server 冒烟(`npx @modelcontextprotocol/server-filesystem`,S9 同款)→ wire 行为逐项对比。
 - 决议规则:兼容则升(锁 `=3.1.x`);任何 wire/行为破坏则**维持 =2.2.0** 并在 ROADMAP §4 登记原因与复评条件。协议库 API 波动大,精确锁定策略本身保留。
+- 结果(2026-08-20,波 C):兼容成立,升级落地,精确锁 `=3.1.3`。写入集:`crates/tools/Cargo.toml`(=3.1.3,顺手删除死声明 `macros` dev feature)+ `crates/tools/src/mcp/codec.rs`(17 行适配:`ServerResult` 变 `#[non_exhaustive]` 新增 `InputRequiredResult`——call_tool 通配臂保持 fail-closed `McpError::Protocol` 并加专名措辞;测试 `EchoServer::call_tool` 返回类型改 `CallToolResponse`)+ 根 `Cargo.toml`(`rust-version` 1.85→1.88,rmcp 3.x 为 edition 2024)+ `Cargo.lock`(830→826:rmcp-macros/darling×3/ident_case 退出,+base64)。验证:`cargo test -p pawork-tools` 129/129 绿(64 条 MCP + 隔离断言 `public_sources_do_not_mention_rmcp` 全过),`cargo check -p pawork-app -p pawork-cli` 绿,`pawork` 二进制重建 + 真实 stdio server 冒烟(`mcp list/test` ± `--json` 四项输出与 2.2.0 基线逐字节一致)。`serve()` 保持 legacy initialize,ping/call_tool 语义不变;3.x OAuth 破坏面不触及自研 oauth.rs;公共 API(McpToolInfo/McpPeer/McpError)零变化。
 
 ## 4. 波次拆分
 
@@ -40,7 +41,7 @@
 | --- | --- | --- | --- |
 | A | 本地化 L1–L3(先对拍 golden 再删依赖)✅ 2026-08-19 收口 | protocol/auth/storage/exec/workflow 的调用点 + orchestration 死声明 + 根 Cargo.toml | 并行 ×2(L1+L3 / L2) |
 | B | 升级 U1–U8、U10(逐项独立可回退;每项升完跑该消费面定向测试)✅ 2026-08-20 收口(九项全落地;lock 836→830;CLI 闭包多版本清零,desktop 树例外 sha2/toml/windows 0.57 登记;U4 形状变化用户拍板 A;U5 TLS 栈切换登记) | 各消费 crate Cargo.toml + 调用点迁移 | 串行推荐(lock 冲突面小但叠加诊断困难;U1/U3 可并行) |
-| C | rmcp 专项(§3) | tools `mcp/` + 根 Cargo.toml | 串行 |
+| C | rmcp 专项(§3)✅ 2026-08-20 收口(决议升级锁 =3.1.3;MSRV 1.85→1.88;lock 830→826) | tools `mcp/` + 根 Cargo.toml + Cargo.lock | 串行 |
 | D | 收口:`cargo tree -d`(duplicates)断言——notify/reqwest 多版本与 windows 0.58 位消失;desktop 树例外登记:sha2 0.10.9←gpui_http_client、toml 0.8.23←cbindgen→gpui、windows 0.57←sysinfo、thiserror 1.x 传递(gpui 0.2.2 未跟进前消不掉);记录前后 lock 包数(波 B 实测 836→830)与增量编译耗时对比 | 根 Cargo.lock、本任务书 | 串行(主代理) |
 
 ## 5. 验证
@@ -53,5 +54,5 @@
 
 - [x] rand/parking_lot/base64 退出直接依赖(波 A ✅;encoding_rs 为 tools 非死依赖见 manifest 注释、futures 三crate在用,均已核对)
 - [x] U1–U8 完成;U10 有决议(波 B ✅ 2026-08-20);lock 多版本项 pawork CLI 闭包已清零,全树残留例外登记:sha2 0.10.9←gpui_http_client、toml 0.8.23←cbindgen→gpui、windows 0.57←sysinfo、thiserror 1.x 传递(正式 `cargo tree -d` 断言归波 D)
-- [ ] rmcp 有决议并落地(升级或锁定登记)
-- [ ] 全部消费面定向测试绿 + 冒烟通过;v3_plan §3 指针更新
+- [x] rmcp 有决议并落地(波 C ✅ 2026-08-20:升级锁 `=3.1.3`,见 §3 结果)
+- [x] 全部消费面定向测试绿 + 冒烟通过;v3_plan §3 指针更新(波 C ✅ 2026-08-20:129/129 + 消费者 check 绿 + 真实 stdio 冒烟与基线逐字节一致)
