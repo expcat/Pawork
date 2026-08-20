@@ -44,7 +44,7 @@
 > 2. golden:新增 projection_golden(三种子:分页交错/Lagged→Snapshot/fork 切换)+ projection_semantics(desktop 8 条语义随迁 + live/history 文案对拍)+ app timeline_projection_host 对拍(真 SessionStore→timeline()→fixture);对拍口径 sequence/kind/timestamp/run_id,event_id 分属 wire/持久化标识域不比对。
 > 3. 行为修正(CR08-08 根治本体,已钉死):live `RunChanged(Created)` 文案统一 `run started`;run/diagnostic 条目由 append 改 partition_point 有序插入(乱序到达不再错位)。
 > 4. 验证:五包定向 cargo test 全绿(protocol 133 / app 118 / cli 74 / client 43 含 probe 9/9 / desktop 27 含依赖红线);26 帧 golden、events_golden、schemas/、probe fixtures 零 diff;protocol 零新增依赖边;真实冒烟 `pawork-desktop --instance r3c --probe-smoke` 通过(glm-4.7 首轮 completed→切 deepseek-v4-flash 次轮 switched,assistant_turns=3,cancelled=1,persisted=14,disconnect_survive=running,EXIT=0)。
-> 5. 偏差与登记:① desktop projection.rs 1542 行未达 <800 目标——剩余为 UI 态/渲染分组/渲染测试,审查确认无 reducer 语义残留,继续压行需拆文件或丢测试,超出本波写入集,行数目标偏差登记在此;② 既有怪癖原样保留(与旧实现字节一致,非本波引入):ToolCompleted 历史臂无 seen 前置检查、assistant delta 跨臂 message_id 不对称可拆条——留 R4/R6 语境再议;③ probe snapshot-reconnect 既有 flake(ROADMAP §4 已登记)首跑复现一次,重跑与全量均 9/9。
+> 5. 偏差与登记:① desktop projection.rs 1542 行未达 <800 目标——剩余为 UI 态/渲染分组/渲染测试,审查确认无 reducer 语义残留,继续压行需拆文件或丢测试,超出本波写入集,行数目标偏差登记在此;② 当时保留的 ToolCompleted seen 前置与 assistant 跨臂锚点怪癖已在下方 R3 整阶段审计中修复并补回归;③ probe snapshot-reconnect 既有 flake(ROADMAP §4 已登记)首跑复现一次,重跑与全量均 9/9。
 
 > 波 D 收口记录(2026-08-20,单实现 + 一路审查 + 主代理三通道真实冒烟):
 > 1. 落地:ApprovalMode::OnFailure 变体删除,NeverAsk 加 #[serde(alias = "on_failure")] 实现「接受旧值、不再产出」;compat 导入 codex "on-failure" 与 claude "acceptEdits" 映射 NeverAsk 并挂 CompatIssue::warning("approval_on_failure_mapped")(decision 保持 Ask + requires_review,绝不放宽);app/cli 解析续收 on-failure/on_failure 两种拼写 → NeverAsk(与旧 OnFailure 引擎行为逐字节等价);S13-F16 三处收窄注释(policy/mode.rs、policy/engine.rs、workspace import/parse.rs)全部清除;CLI help 与 unknown 错误文案不再宣告 on-failure 档位。
@@ -52,6 +52,14 @@
 > 3. wire 暴露裁决:ApprovalMode 不在 protocol 帧/schemas/*.d.ts/事件信封/DDL;唯一 serde 面为 import 载荷 JSON(CompatPayload::PermissionRule.approval_mode)+ CLI 字符串,故按任务书走「接受旧值、不再产出」兼容路径,无需协议 minor 版本;旧 import 报告含 on_failure 仍可反序列化,新产出一律 never_ask。
 > 4. 验证:cargo test 四包定向全绿(policy 62 / workspace 113+13+14 / app 100+6+11+1 / cli 35+16+23);protocol 26 帧 golden 与 domain events_golden 零 diff(protocol/domain 未触碰,cargo tree 确认 protocol 不依赖 policy);cargo check -p pawork 通过;审查 verdict=pass,低阶观察(五值序列化逐字节钉死)同波补测闭环——serializes_snake_case 扩为全变体断言。
 > 5. 真实冒烟(阶段退出标准,auth 文件凭证,ROADMAP §1.1 低消耗矩阵):GUI desktop --probe-smoke 隔离实例 r3d 通过(first=glm-4.7 first_turn=completed → second=deepseek-v4-flash second_turn=switched,assistant_turns=2,cancelled=1,persisted=15,disconnect_survive=running);headless --json-stdio 一轮通过(hello→session_create→run_start→run_changed completed,assistant_delta "pong");ACP initialize/session/new/session/prompt 通过(protocolVersion=1,stopReason=end_turn,agent_message_chunk "pong")。
+
+> R3 整阶段审计修复记录(2026-08-20~21,波 A–D 全量复核 + 四路 `xai/grok-4.6` 分域只读审计 + 一路最终复核):
+> 1. Registry/GUI:registry 原将生产 `GuiHostAdapter` 未实现的 8 command + 4 query 标为 GUI 可用,现按真实 host 面改为 unavailable,拒绝发生在进入 host 前;`Events`/`Snapshots`/`TerminalStreaming`/`ArtifactStreaming` 从只宣告未完整授权改为覆盖首帧 Snapshot、Subscribe/Unsubscribe、SnapshotRequest、Resume replay/fallback、live/replay terminal 过滤及 ArtifactRead fail-closed;client 未获 Snapshots 时不再等待不存在的首帧,Subscribe/Unsubscribe 以同连接 Heartbeat 作有序屏障并消费 request-scoped 错误,无 Events 时拒绝不会污染后续收帧;所有 snapshot 路径在未获 TerminalStreaming 时裁掉 TerminalSessions section。
+> 2. Headless/ACP:对照波 B diff、registry 列、HOST_CAPABILITIES、decode/admit/host dispatch 与 fixtures 未发现缺陷,保持零代码改动。
+> 3. Timeline host:limit=0 归一为 1;分页 complete/next_sequence 改按原始持久化 envelopes 计算,不可投影事件组成的空展示页仍推进游标,不再提前截断历史。
+> 4. Projection reducer:committed assistant 改为移除后按新 sequence 重插,同 run 多轮 assistant 在 committed 后清锚;live message_id 锚点可被后到 committed 权威全文替换并保留 tombstone 吞掉迟到同-message delta,较旧历史页不再清掉较新 live 锚点;ToolCompleted/live ToolOutput 均 seen 前置;工具历史身份用既有 `detail` 字符串承载内部 `tool_call_id` 上下文(reducer 剥离后再展示,不新增冻结 wire 字段),并发工具 output/completed 精确回填,旧历史仅在唯一候选时兼容;历史先到、live start 重放时补齐锚点;完成后释放锚点。三种子 fixture 的 `item.detail` 期望随内部上下文更新,帧/schema 形状不变。
+> 5. OnFailure:实现与兼容映射无缺陷;仅修正 `docs/design.md` 残留的“六档”口径为五档并注明旧 alias。
+> 6. 验证:`cargo test -p pawork-protocol`、`cargo test -p pawork-app`、`cargo test -p pawork-cli -p pawork-client -p pawork-desktop`、`cargo test -p pawork-policy -p pawork-workspace` 与 `cargo check -p pawork` 全绿;新增回归覆盖 GUI 空能力无泄漏、terminal live/snapshot capability、无 Snapshot 握手、订阅拒绝后 heartbeat、不可投影页游标、assistant 排序/多轮/live-history 对账、并发工具身份与重复 live output。联网 app smoke 保持既有 ignored,本轮未重跑凭证型真实冒烟;R3 状态保持 🟢,未进入 R4。
 
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |

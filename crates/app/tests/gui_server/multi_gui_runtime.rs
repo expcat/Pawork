@@ -19,10 +19,10 @@ use pawork_app::gui_server::{
 use pawork_protocol::{
     decode_server_frame, encode_client_frame, ActorIdentity, AppCommand, AppCommandEnvelope,
     AppEvent, AppEventEnvelope, AppQueryEnvelope, AppResponse, ClientFrame, CommandSource,
-    EventSource, EventStream, GlobalSequence, HandshakeRequest, HandshakeResponse, HandshakeService,
-    ProtocolErrorCode, ResumeDisposition, ResumeRequest, ServerFrame, Snapshot, SnapshotSection,
-    SnapshotSectionKind, SubscribeRequest, TimelineItem, TimelineItemKind, TimelinePage,
-    API_VERSION, SUPPORTED_API_VERSIONS,
+    EventSource, EventStream, GlobalSequence, GuiCapability, HandshakeRequest, HandshakeResponse,
+    HandshakeService, ProtocolErrorCode, ResumeDisposition, ResumeRequest, ServerFrame, Snapshot,
+    SnapshotSection, SnapshotSectionKind, SubscribeRequest, TimelineItem, TimelineItemKind,
+    TimelinePage, API_VERSION, SUPPORTED_API_VERSIONS,
 };
 use pawork_transport::{
     ConnectOptions, ConnectionInfo, GuiConnection, GuiListener, GuiTransportClient,
@@ -212,7 +212,7 @@ impl Runtime {
         let handshake = HandshakeService::new(
             host.instance_id(),
             SUPPORTED_API_VERSIONS.to_vec(),
-            vec![],
+            vec![GuiCapability::Events, GuiCapability::Snapshots],
         );
         let memory = Arc::new(MemoryTransport::new());
         let connections =
@@ -298,7 +298,7 @@ impl TestClient {
             client_name: "multi-gui-test".into(),
             client_version: "0.0.1".into(),
             supported_api_versions: vec![API_VERSION],
-            capabilities: vec![],
+            capabilities: vec![GuiCapability::Events, GuiCapability::Snapshots],
             authentication: None,
         }))
         .await;
@@ -741,7 +741,9 @@ async fn disconnect_does_not_issue_run_cancel() {
         expected_revision: None,
         idempotency_key: None,
         issued_at: Timestamp::from_unix_millis(1),
-        command: AppCommand::CoreInitialize,
+        command: AppCommand::SessionOpen {
+            session_id: SessionId::from("session-1"),
+        },
     }))
     .await;
     let ServerFrame::Response(_) = gui.recv().await else {

@@ -4,7 +4,7 @@
 //! [`GuiConnection`] 与 [`pawork-protocol`] 的帧编解码，为 Desktop GUI 与协议
 //! 测试客户端提供有类型的连接面：
 //!
-//! - `connect`：传输连接 + 握手（认证 + 版本协商）+ 消费首帧 Snapshot；
+//! - `connect`：传输连接 + 握手（认证 + 版本协商）；获授 Snapshots 时消费首帧 Snapshot；
 //! - Command / Query 请求-响应往返（按 request_id 关联；同 command_id 重放
 //!   由服务端幂等存储返回首次响应）；
 //! - Subscribe / Unsubscribe 与 `next_event` 事件读取；
@@ -235,7 +235,7 @@ pub struct GuiClient {
 }
 
 impl GuiClient {
-    /// 连接 + 握手（认证与版本协商）+ 消费首帧 Snapshot。
+    /// 连接 + 握手（认证与版本协商）；获授 Snapshots 时消费首帧 Snapshot。
     pub async fn connect(
         transport: Arc<dyn GuiTransportClient>,
         endpoint: TransportEndpoint,
@@ -337,11 +337,16 @@ impl GuiClient {
                 return Err(ClientError::HandshakeRejected(error));
             }
         };
-        // P13-5：Accepted 后服务端先发首帧 Snapshot。
-        let snapshot =
+        // Snapshot 是协商能力：未获授时服务端不得发送，客户端也不得阻塞等待。
+        let snapshot = if capabilities.contains(&GuiCapability::Snapshots) {
+            Some(
             match recv_frame(conn.as_ref(), config.timeout, Some(handle.api_version)).await? {
                 ServerFrame::Snapshot(snapshot) => snapshot,
                 other => return Err(unexpected_frame("initial snapshot", &other)),
+                },
+            )
+        } else {
+            None
             };
         let info = Arc::new(SessionInfo {
             handle: handle.clone(),
@@ -354,7 +359,7 @@ impl GuiClient {
             conn,
             config: config.clone(),
             info,
-            initial_snapshot: Arc::new(Mutex::new(Some(snapshot))),
+            initial_snapshot: Arc::new(Mutex::new(snapshot)),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
             io: Arc::new(AsyncMutex::new(())),
             next_request: Arc::new(AtomicU64::new(0)),
@@ -511,12 +516,14 @@ impl GuiClient {
         streams: Vec<EventStream>,
     ) -> Result<(), ClientError> {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed);
+        let request_id = format!("subscribe-{id}");
         self.send_frame(&ClientFrame::Subscribe(SubscribeRequest {
-            request_id: format!("subscribe-{id}"),
+            request_id: request_id.clone(),
             subscription_id: subscription_id.into(),
             streams,
         }))
-        .await
+        .await?;
+        self.await_subscription_barrier(&request_id).await
     }
 
     /// 全量订阅（等价于空 streams 的 [`GuiClient::subscribe`]）。
@@ -526,11 +533,45 @@ impl GuiClient {
 
     pub async fn unsubscribe(&self, subscription_id: &str) -> Result<(), ClientError> {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed);
+        let request_id = format!("unsubscribe-{id}");
         self.send_frame(&ClientFrame::Unsubscribe {
-            request_id: format!("unsubscribe-{id}"),
+            request_id: request_id.clone(),
             subscription_id: subscription_id.into(),
         })
-        .await
+        .await?;
+        self.await_subscription_barrier(&request_id).await
+    }
+
+    /// Subscribe / Unsubscribe 成功时协议没有专用 Ack。紧随控制帧发送 Heartbeat
+    /// 作为有序屏障：服务端必先处理订阅并返回可能的 request-scoped Error，再回
+    /// Pong。这样 SDK 不会把 PermissionDenied 误报为 Ok，也不会留下错误帧让后续
+    /// Heartbeat 在 inbox 中反复取出再放回。
+    async fn await_subscription_barrier(&self, request_id: &str) -> Result<(), ClientError> {
+        let nonce = self.next_nonce.fetch_add(1, Ordering::Relaxed);
+        self.send_frame(&ClientFrame::Heartbeat { nonce }).await?;
+        let mut error = None;
+        loop {
+            match self
+                .recv_matching(
+                    self.config.timeout,
+                    FrameWant::SubscriptionBarrier { request_id, nonce },
+                )
+                .await?
+            {
+                ServerFrame::Error(envelope)
+                    if envelope.request_id.as_deref() == Some(request_id) =>
+                {
+                    error = Some(envelope.error);
+                }
+                ServerFrame::Pong { nonce: pong } if pong == nonce => {
+                    return match error {
+                        Some(error) => Err(ClientError::Protocol(error)),
+                        None => Ok(()),
+                    };
+                }
+                other => self.stash(other).await,
+            }
+        }
     }
 
     /// 读取下一条事件（受 [`ClientConfig::timeout`] 约束）。
@@ -701,7 +742,10 @@ impl GuiClient {
     pub async fn heartbeat_with_nonce(&self, nonce: u64) -> Result<u64, ClientError> {
         self.send_frame(&ClientFrame::Heartbeat { nonce }).await?;
         loop {
-            match self.recv_matching(self.config.timeout, FrameWant::Any).await? {
+            match self
+                .recv_matching(self.config.timeout, FrameWant::Pong(nonce))
+                .await?
+            {
                 ServerFrame::Pong { nonce: pong } if pong == nonce => return Ok(pong),
                 other => self.stash(other).await,
             }
@@ -735,12 +779,6 @@ impl GuiClient {
             return Err(ClientError::Disconnected);
         }
         send_frame(self.conn.as_ref(), frame).await
-    }
-
-    /// 取下一帧：先查 inbox，再读传输层；服务端主动 Heartbeat 自动回 Pong。
-    /// 单次等待不超过 `timeout`，超时返回 [`ClientError::Timeout`]。
-    async fn recv_frame(&self, timeout: Duration) -> Result<ServerFrame, ClientError> {
-        self.recv_matching(timeout, FrameWant::Any).await
     }
 
     async fn recv_matching(
@@ -815,17 +853,17 @@ impl GuiClient {
 
 #[derive(Clone, Copy)]
 enum FrameWant<'a> {
-    Any,
     Event,
     Response(&'a str),
     Snapshot(&'a str),
     Resume(&'a str),
+    Pong(u64),
+    SubscriptionBarrier { request_id: &'a str, nonce: u64 },
 }
 
 impl FrameWant<'_> {
     fn matches(self, frame: &ServerFrame) -> bool {
         match self {
-            Self::Any => true,
             Self::Event => match frame {
                 ServerFrame::Event(_) => true,
                 ServerFrame::Error(envelope) => envelope.request_id.is_none(),
@@ -844,6 +882,14 @@ impl FrameWant<'_> {
             Self::Resume(request_id) => match frame {
                 ServerFrame::Resume(response) => response.request_id == request_id,
                 ServerFrame::Snapshot(_) | ServerFrame::Event(_) => true,
+                ServerFrame::Error(envelope) => envelope.request_id.as_deref() == Some(request_id),
+                _ => false,
+            },
+            Self::Pong(nonce) => {
+                matches!(frame, ServerFrame::Pong { nonce: pong } if *pong == nonce)
+            }
+            Self::SubscriptionBarrier { request_id, nonce } => match frame {
+                ServerFrame::Pong { nonce: pong } => *pong == nonce,
                 ServerFrame::Error(envelope) => envelope.request_id.as_deref() == Some(request_id),
                 _ => false,
             },

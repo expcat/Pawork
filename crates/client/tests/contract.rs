@@ -99,14 +99,20 @@ impl Harness {
     }
 
     async fn connect_gui(&mut self, label: &str) -> GuiClient {
+        self.connect_gui_with_config(label, ClientConfig::default())
+            .await
+    }
+
+    async fn connect_gui_with_config(&mut self, label: &str, config: ClientConfig) -> GuiClient {
         let listener = Arc::clone(&self.listener);
         let accept = tokio::spawn(async move { listener.accept().await });
         let transport: Arc<dyn GuiTransportClient> = self.transport.clone();
-        let client = GuiClient::connect(
+        let client = GuiClient::connect_with_config(
             transport,
             self.endpoint.clone(),
             Self::connect_options(label),
             None,
+            config,
         )
         .await
         .expect("gui client connect + handshake");
@@ -115,6 +121,65 @@ impl Harness {
         client
     }
 
+}
+
+#[tokio::test]
+async fn connect_without_snapshots_does_not_wait_for_initial_snapshot() {
+    let mut harness = Harness::new("contract-no-snapshot", waiting_script()).await;
+    let mut config = ClientConfig::default();
+    config.capabilities = vec![GuiCapability::Events];
+    let client = harness
+        .connect_gui_with_config("contract-no-snapshot", config)
+        .await;
+
+    assert_eq!(client.capabilities(), &[GuiCapability::Events]);
+    assert!(client.initial_snapshot().is_none());
+    client.subscribe_all().await.expect("Events was granted");
+    assert_eq!(client.heartbeat_with_nonce(7).await.expect("heartbeat"), 7);
+}
+
+#[tokio::test]
+async fn subscribe_without_events_returns_permission_denied_and_does_not_poison_heartbeat() {
+    let mut harness = Harness::new("contract-no-events", waiting_script()).await;
+    let mut config = ClientConfig::default();
+    config.capabilities.clear();
+    let client = harness
+        .connect_gui_with_config("contract-no-events", config)
+        .await;
+
+    assert!(client.capabilities().is_empty());
+    assert!(client.initial_snapshot().is_none());
+    let error = client
+        .subscribe_all()
+        .await
+        .expect_err("Events 未授予时 Subscribe 必须返回服务端错误");
+    assert!(matches!(
+        error,
+        ClientError::Protocol(ref error) if error.code == ProtocolErrorCode::PermissionDenied
+    ));
+    assert_eq!(
+        client
+            .heartbeat_with_nonce(17)
+            .await
+            .expect("订阅错误后的 heartbeat 不得忙等"),
+        17
+    );
+
+    let error = client
+        .unsubscribe("all")
+        .await
+        .expect_err("Events 未授予时 Unsubscribe 必须返回服务端错误");
+    assert!(matches!(
+        error,
+        ClientError::Protocol(ref error) if error.code == ProtocolErrorCode::PermissionDenied
+    ));
+    assert_eq!(
+        client
+            .heartbeat_with_nonce(18)
+            .await
+            .expect("取消订阅错误后的 heartbeat 不得忙等"),
+        18
+    );
 }
 
 fn local_user() -> ActorIdentity {

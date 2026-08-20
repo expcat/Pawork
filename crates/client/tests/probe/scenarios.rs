@@ -399,6 +399,7 @@ async fn artifact_chunks() -> Result<(), String> {
             if !error.is_request_not_found()
                 && !text.contains("unsupported")
                 && !text.contains("not part of")
+                && !text.contains("not available")
             {
                 return Err(format!("缺失 artifact 应 fail-closed，got {error}"));
             }

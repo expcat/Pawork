@@ -9,8 +9,8 @@
 //! - [`project_event`]：持久化 `AgentEventEnvelope` → presentation-safe
 //!   `TimelineItem`（自 app host 逐字平移，wire 形状不变）；
 //! - [`TimelineProjection`]：去重（session sequence）、有序插入
-//!   （partition_point）、assistant delta 合并与 committed 替换、tool 双键锚点
-//!   （live `run+tool_call_id` / 历史 `run+tool_name`）全部单一实现；
+//!   （partition_point）、assistant delta 合并与 committed 替换、tool 身份锚点
+//!   （live / 历史统一使用 `run+tool_call_id`）全部单一实现；
 //! - resume 三态：Replay 保留基线、SnapshotRequired 清基线、UpToDate 不动。
 //!
 //! 本模块是纯数据投影，不进 wire 帧：[`TimelineEntry`] 系列不加 serde derive，
@@ -24,6 +24,9 @@ use pawork_domain::{AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPar
 
 use crate::ResumeDisposition;
 use crate::app::{AppEvent, AppEventEnvelope, RunState, TimelineItem, TimelineItemKind};
+
+const TOOL_CONTEXT_ID_KEY: &str = "_pawork_tool_call_id";
+const TOOL_CONTEXT_DETAIL_KEY: &str = "detail";
 
 /// 把持久化的 Agent 事件投影为 presentation-safe 的 Timeline 条目。
 ///
@@ -56,27 +59,47 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
             None,
             None,
         ),
-        AgentEvent::ToolCallStarted { name, .. } => (
+        AgentEvent::ToolCallStarted { tool_call_id, name } => (
             TimelineItemKind::ToolStarted,
             None,
             Some(name.clone()),
             Some("running".into()),
-            None,
+            Some(tool_timeline_context(tool_call_id.as_str(), None)),
         ),
-        AgentEvent::ToolOutputDelta { delta, .. } => (
+        AgentEvent::ToolOutputDelta {
+            tool_call_id,
+            delta,
+            ..
+        } => (
             TimelineItemKind::ToolOutput,
             Some(delta.clone()),
             None,
             None,
-            None,
+            Some(tool_timeline_context(tool_call_id.as_str(), None)),
         ),
-        AgentEvent::ToolExecutionCompleted { result, .. } => (
+        AgentEvent::ToolExecutionCompleted {
+            tool_call_id,
+            result,
+        } => {
+            let display_detail = sandbox_timeline_detail(&result.metadata);
+            (
             TimelineItemKind::ToolCompleted,
             Some(join_text(&result.content)),
             result.tool_name.clone(),
-            Some(if result.is_error { "failed" } else { "succeeded" }.into()),
-            sandbox_timeline_detail(&result.metadata),
-        ),
+                Some(
+                    if result.is_error {
+                        "failed"
+                    } else {
+                        "succeeded"
+                    }
+                    .into(),
+                ),
+                Some(tool_timeline_context(
+                    tool_call_id.as_str(),
+                    display_detail.as_deref(),
+                )),
+            )
+        }
         AgentEvent::ToolApprovalRequested { reason, .. } => (
             TimelineItemKind::ApprovalRequested,
             None,
@@ -159,6 +182,45 @@ fn sandbox_timeline_detail(metadata: &serde_json::Value) -> Option<String> {
     Some(format!("沙箱回退：isolation={isolation} backend={backend}"))
 }
 
+/// `TimelineItem` 的 wire 形状在 R3 冻结，不能新增 `tool_call_id` 字段。工具
+/// 历史投影仍必须保留稳定身份，否则同一 run 并发工具的 output/completed 会串线。
+/// 因此把关联上下文编码进既有 `detail` 字符串；reducer 消费时剥离，仅把可展示
+/// 的 `detail` 留给 [`TimelineEntryKind::ToolCall`]。
+fn tool_timeline_context(tool_call_id: &str, detail: Option<&str>) -> String {
+    let mut context = serde_json::Map::new();
+    context.insert(
+        TOOL_CONTEXT_ID_KEY.into(),
+        serde_json::Value::String(tool_call_id.to_string()),
+    );
+    if let Some(detail) = detail {
+        context.insert(
+            TOOL_CONTEXT_DETAIL_KEY.into(),
+            serde_json::Value::String(detail.to_string()),
+        );
+    }
+    serde_json::Value::Object(context).to_string()
+}
+
+fn parse_tool_timeline_context(detail: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(raw) = detail else {
+        return (None, None);
+    };
+    let Ok(context) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return (None, Some(raw.to_string()));
+    };
+    let Some(tool_call_id) = context
+        .get(TOOL_CONTEXT_ID_KEY)
+        .and_then(serde_json::Value::as_str)
+    else {
+        return (None, Some(raw.to_string()));
+    };
+    let display_detail = context
+        .get(TOOL_CONTEXT_DETAIL_KEY)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    (Some(tool_call_id.to_string()), display_detail)
+}
+
 fn join_text(parts: &[ContentPart]) -> String {
     let mut text = String::new();
     for part in parts {
@@ -209,12 +271,13 @@ struct AssistantAnchor {
     message_id: Option<String>,
     event_id: String,
     sequence: u64,
+    /// 历史 committed 已用权威全文替换该 live message；后到的同 message delta
+    /// 只标记 sequence 已消费，不得再次追加或新开条目。
+    committed: bool,
 }
 
-/// Tool 条目锚点：ToolCompleted/ToolOutput 按 run + tool_call_id（live）或
-/// run + tool_name（分页历史，TimelineItem 不携带 tool_call_id）回填。
-/// 双键策略是既有语义：live 臂拿 wire tool_call_id，历史臂只有 tool_name，
-/// 两侧键空间不相交，由同一 update_tool_entry 合并核消费。
+/// Tool 条目锚点：ToolCompleted/ToolOutput 优先按 run + tool_call_id 回填；
+/// 旧历史条目缺少身份时，仅在 run（及可用 name）内唯一候选时兼容回填。
 /// 用 event_id / sequence 回查，不存会因中间插入而失效的 index。
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ToolAnchor {
@@ -286,8 +349,10 @@ impl TimelineProjection {
                     return;
                 }
                 let committed = item.text.clone().unwrap_or_default();
-                if let Some(anchor) = &self.assistant_anchor {
-                    if anchor.run_id == item.run_id && anchor.message_id.is_none() {
+                let matching_anchor = self.assistant_anchor.clone().filter(|anchor| {
+                    anchor.run_id == item.run_id && anchor.sequence < item.sequence
+                });
+                if let Some(anchor) = matching_anchor {
                         if let Some(index) =
                             self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
                         {
@@ -295,21 +360,33 @@ impl TimelineProjection {
                                 self.entries.get(index).map(|entry| &entry.kind),
                                 Some(TimelineEntryKind::AssistantMessage { .. })
                             ) {
-                                if let Some(entry) = self.entries.get_mut(index) {
-                                    entry.sequence = item.sequence;
-                                    entry.event_id = item.event_id.clone();
-                                    entry.timestamp = item.timestamp.clone();
-                                    entry.kind =
-                                        TimelineEntryKind::AssistantMessage { text: committed };
-                                }
-                                let anchor = self.assistant_anchor.as_mut().expect("anchor");
-                                anchor.event_id = item.event_id.clone();
-                                anchor.sequence = item.sequence;
+                            // committed 采用自己的 sequence；必须移除后重新按序
+                            // 插入，不能原位改 sequence，否则中间到达的 tool/run
+                            // 条目会让 entries 失序。
+                            let replacement = TimelineEntry {
+                                sequence: item.sequence,
+                                event_id: item.event_id.clone(),
+                                kind: TimelineEntryKind::AssistantMessage { text: committed },
+                                timestamp: item.timestamp.clone(),
+                                run_id: item.run_id.clone(),
+                            };
+                            self.entries.remove(index);
+                            self.insert_entry(replacement);
+                            // live anchor 携带 message_id：保留为 committed tombstone，
+                            // 吞掉已包含在权威全文中的迟到同-message delta；纯历史
+                            // anchor 无 message_id，直接结束，避免下一轮复用。
+                            self.assistant_anchor =
+                                anchor.message_id.map(|message_id| AssistantAnchor {
+                                    run_id: item.run_id.clone(),
+                                    message_id: Some(message_id),
+                                    event_id: item.event_id.clone(),
+                                    sequence: item.sequence,
+                                    committed: true,
+                                });
                                 return;
                             }
                         }
                     }
-                }
                 self.insert_entry(TimelineEntry {
                     sequence: item.sequence,
                     event_id: item.event_id.clone(),
@@ -317,33 +394,28 @@ impl TimelineProjection {
                     timestamp: item.timestamp.clone(),
                     run_id: item.run_id.clone(),
                 });
-                if let Some(identity) = self.anchor_after_insert(&item.event_id, item.sequence) {
-                    self.assistant_anchor = Some(AssistantAnchor {
-                        run_id: item.run_id.clone(),
-                        message_id: None,
-                        event_id: identity.event_id,
-                        sequence: identity.sequence,
-                    });
+                // 较新的 live anchor 可能先于较旧历史页到达；旧 committed 不得
+                // 清掉它。只有同 run 且早于当前 committed 的失效锚点才收口。
+                if self.assistant_anchor.as_ref().is_some_and(|anchor| {
+                    anchor.run_id == item.run_id && anchor.sequence < item.sequence
+                }) {
+                    self.assistant_anchor = None;
                 }
             }
             TimelineItemKind::ToolStarted => {
                 if !self.seen.insert(item.sequence) {
                     return;
                 }
-                let name = item
-                    .tool_name
-                    .clone()
-                    .unwrap_or_else(|| "tool".into());
+                let (tool_call_id, display_detail) =
+                    parse_tool_timeline_context(item.detail.as_deref());
+                let name = item.tool_name.clone().unwrap_or_else(|| "tool".into());
                 self.insert_entry(TimelineEntry {
                     sequence: item.sequence,
                     event_id: item.event_id.clone(),
                     kind: TimelineEntryKind::ToolCall {
                         name: name.clone(),
-                        status: item
-                            .status
-                            .clone()
-                            .unwrap_or_else(|| "running".into()),
-                        detail: None,
+                        status: item.status.clone().unwrap_or_else(|| "running".into()),
+                        detail: display_detail,
                     },
                     timestamp: item.timestamp.clone(),
                     run_id: item.run_id.clone(),
@@ -351,7 +423,7 @@ impl TimelineProjection {
                 if let Some(identity) = self.anchor_after_insert(&item.event_id, item.sequence) {
                     self.tool_anchors.push(ToolAnchor {
                         run_id: item.run_id.clone(),
-                        tool_call_id: None,
+                        tool_call_id,
                         name: Some(name),
                         event_id: identity.event_id,
                         sequence: identity.sequence,
@@ -360,9 +432,10 @@ impl TimelineProjection {
             }
             TimelineItemKind::ToolOutput => {
                 if self.seen.insert(item.sequence) {
+                    let (tool_call_id, _) = parse_tool_timeline_context(item.detail.as_deref());
                     self.update_tool_entry(
                         item.run_id.as_deref(),
-                        None,
+                        tool_call_id.as_deref(),
                         item.tool_name.as_deref(),
                         None,
                         Some(item.text.as_deref().unwrap_or_default()),
@@ -370,42 +443,33 @@ impl TimelineProjection {
                 }
             }
             TimelineItemKind::ToolCompleted => {
+                if !self.seen.insert(item.sequence) {
+                    return;
+                }
                 let status = item.status.as_deref().unwrap_or("succeeded");
+                let (tool_call_id, display_detail) =
+                    parse_tool_timeline_context(item.detail.as_deref());
                 if self.update_tool_entry(
                     item.run_id.as_deref(),
-                    None,
+                    tool_call_id.as_deref(),
                     item.tool_name.as_deref(),
                     Some(status),
-                    None,
+                    display_detail.as_deref(),
                 ) {
-                    self.seen.insert(item.sequence);
-                } else if self.seen.insert(item.sequence) {
-                    let name = item
-                        .tool_name
-                        .clone()
-                        .unwrap_or_else(|| "tool".into());
+                    return;
+                } else {
+                    let name = item.tool_name.clone().unwrap_or_else(|| "tool".into());
                     self.insert_entry(TimelineEntry {
                         sequence: item.sequence,
                         event_id: item.event_id.clone(),
                         kind: TimelineEntryKind::ToolCall {
                             name: name.clone(),
                             status: status.to_string(),
-                            detail: item.detail.clone(),
+                            detail: display_detail,
                         },
                         timestamp: item.timestamp.clone(),
                         run_id: item.run_id.clone(),
                     });
-                    if let Some(identity) =
-                        self.anchor_after_insert(&item.event_id, item.sequence)
-                    {
-                        self.tool_anchors.push(ToolAnchor {
-                            run_id: item.run_id.clone(),
-                            tool_call_id: None,
-                            name: Some(name),
-                            event_id: identity.event_id,
-                            sequence: identity.sequence,
-                        });
-                    }
                 }
             }
             TimelineItemKind::RunStarted
@@ -538,6 +602,10 @@ impl TimelineProjection {
             }
             AppEvent::ToolStarted { run_id, tool_call_id, name } => {
                 if !self.seen.insert(sequence) {
+                    // 历史页可能先以同 sequence 建立条目；live 重放虽然不应
+                    // 重复渲染，仍需补上历史 wire 未显式暴露的 tool_call_id，
+                    // 让后续 live output/completed 精确命中同一锚点。
+                    self.enrich_tool_anchor(sequence, run_id.as_str(), tool_call_id.as_str(), name);
                     return false;
                 }
                 let run = Some(run_id.as_str().to_string());
@@ -569,6 +637,9 @@ impl TimelineProjection {
                 delta,
                 ..
             } => {
+                if !self.seen.insert(sequence) {
+                    return false;
+                }
                 if self.update_tool_entry(
                     Some(run_id.as_str()),
                     Some(tool_call_id.as_str()),
@@ -576,11 +647,17 @@ impl TimelineProjection {
                     None,
                     Some(delta),
                 ) {
-                    self.seen.insert(sequence);
                     return true;
                 }
             }
-            AppEvent::ToolCompleted { run_id, tool_call_id, success } => {
+            AppEvent::ToolCompleted {
+                run_id,
+                tool_call_id,
+                success,
+            } => {
+                if !self.seen.insert(sequence) {
+                    return false;
+                }
                 let status = if *success { "succeeded" } else { "failed" };
                 if self.update_tool_entry(
                     Some(run_id.as_str()),
@@ -589,10 +666,8 @@ impl TimelineProjection {
                     Some(status),
                     None,
                 ) {
-                    self.seen.insert(sequence);
                     return true;
                 }
-                if self.seen.insert(sequence) {
                     self.insert_entry(TimelineEntry {
                         sequence,
                         event_id,
@@ -606,7 +681,6 @@ impl TimelineProjection {
                     });
                     return true;
                 }
-            }
             AppEvent::Diagnostic { code, message, .. } => {
                 if code == "sandbox.fallback" && self.seen.insert(sequence) {
                     self.insert_entry(TimelineEntry {
@@ -655,6 +729,9 @@ impl TimelineProjection {
         let message = message_id.map(str::to_string);
         if let Some(anchor) = &self.assistant_anchor {
             if anchor.run_id == run && anchor.message_id == message {
+                if anchor.committed {
+                    return false;
+                }
                 if let Some(index) = self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
                 {
                     if let Some(TimelineEntryKind::AssistantMessage { text }) =
@@ -681,6 +758,7 @@ impl TimelineProjection {
                 message_id: message,
                 event_id: identity.event_id,
                 sequence: identity.sequence,
+                committed: false,
             });
         }
         true
@@ -715,7 +793,20 @@ impl TimelineProjection {
         })
     }
 
-    /// 按 run + tool_call_id（live）或 run + tool_name（历史）回填 tool 条目。
+    fn enrich_tool_anchor(&mut self, sequence: u64, run_id: &str, tool_call_id: &str, name: &str) {
+        let run = Some(run_id.to_string());
+        if let Some(anchor) = self
+            .tool_anchors
+            .iter_mut()
+            .find(|anchor| anchor.sequence == sequence && anchor.run_id == run)
+        {
+            anchor.tool_call_id = Some(tool_call_id.to_string());
+            anchor.name = Some(name.to_string());
+        }
+    }
+
+    /// 按 run + tool_call_id 精确回填；兼容旧历史条目时只接受唯一候选，
+    /// 绝不把无身份 output 随意写进同 run 最近的并发工具。
     fn update_tool_entry(
         &mut self,
         run_id: Option<&str>,
@@ -725,25 +816,27 @@ impl TimelineProjection {
         detail_delta: Option<&str>,
     ) -> bool {
         let run = run_id.map(str::to_string);
-        let found = self.tool_anchors.iter().rev().find_map(|anchor| {
-            if anchor.run_id != run {
-                return None;
-            }
-            if let Some(expected) = tool_call_id {
-                if anchor.tool_call_id.as_deref() != Some(expected) {
-                    return None;
-                }
-            }
-            if let Some(expected) = name {
-                if anchor.name.as_deref() != Some(expected) {
-                    return None;
-                }
-            }
-            Some((anchor.event_id.clone(), anchor.sequence))
-        });
-        let Some((event_id, sequence)) = found else {
-            return false;
+        let candidates = self
+            .tool_anchors
+            .iter()
+            .enumerate()
+            .filter(|(_, anchor)| anchor.run_id == run)
+            .filter(|(_, anchor)| match tool_call_id {
+                Some(expected) => anchor.tool_call_id.as_deref() == Some(expected),
+                None => match name {
+                    Some(expected) => anchor.name.as_deref() == Some(expected),
+                    None => true,
+                },
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let anchor_index = match candidates.as_slice() {
+            [only] => *only,
+            _ => return false,
         };
+        let anchor = &self.tool_anchors[anchor_index];
+        let event_id = anchor.event_id.clone();
+        let sequence = anchor.sequence;
         let Some(index) = self.entry_index_by_identity(&event_id, sequence) else {
             return false;
         };
@@ -757,8 +850,16 @@ impl TimelineProjection {
             if let Some(delta) = detail_delta {
                 if !delta.is_empty() {
                     let text = detail.take().unwrap_or_default();
-                    detail.replace(text + delta);
+                    let separator = if new_status.is_some() && !text.is_empty() {
+                        "\n"
+                    } else {
+                        ""
+                    };
+                    detail.replace(text + separator + delta);
                 }
+            }
+            if new_status.is_some() {
+                self.tool_anchors.remove(anchor_index);
             }
             return true;
         }

@@ -266,7 +266,7 @@ fn command_registry_covers_every_variant_without_wildcard() {
             AppCommand::CoreInitialize => assert_command_entry(
                 &command,
                 "core_initialize",
-                true,
+                false,
                 None,
                 None,
                 false,
@@ -286,7 +286,7 @@ fn command_registry_covers_every_variant_without_wildcard() {
             AppCommand::WorkspaceTrust { .. } => assert_command_entry(
                 &command,
                 "workspace_trust",
-                true,
+                false,
                 None,
                 None,
                 false,
@@ -326,7 +326,7 @@ fn command_registry_covers_every_variant_without_wildcard() {
             AppCommand::SessionCompact { .. } => assert_command_entry(
                 &command,
                 "session_compact",
-                true,
+                false,
                 None,
                 Some(SdkCapability::Sessions),
                 false,
@@ -366,7 +366,7 @@ fn command_registry_covers_every_variant_without_wildcard() {
             AppCommand::RunRetry { .. } => assert_command_entry(
                 &command,
                 "run_retry",
-                true,
+                false,
                 None,
                 Some(SdkCapability::Runs),
                 false,
@@ -376,7 +376,7 @@ fn command_registry_covers_every_variant_without_wildcard() {
             AppCommand::RunTool { .. } => assert_command_entry(
                 &command,
                 "run_tool",
-                true,
+                false,
                 None,
                 Some(SdkCapability::Runs),
                 false,
@@ -386,7 +386,7 @@ fn command_registry_covers_every_variant_without_wildcard() {
             AppCommand::AuthStart { .. } => assert_command_entry(
                 &command,
                 "auth_start",
-                true,
+                false,
                 None,
                 None,
                 false,
@@ -396,7 +396,7 @@ fn command_registry_covers_every_variant_without_wildcard() {
             AppCommand::AuthRemove { .. } => assert_command_entry(
                 &command,
                 "auth_remove",
-                true,
+                false,
                 None,
                 None,
                 false,
@@ -413,16 +413,9 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 true,
                 V1_0,
             ),
-            AppCommand::GitStage { .. } => assert_command_entry(
-                &command,
-                "git_stage",
-                true,
-                None,
-                None,
-                false,
-                true,
-                V1_0,
-            ),
+            AppCommand::GitStage { .. } => {
+                assert_command_entry(&command, "git_stage", false, None, None, false, true, V1_0)
+            }
             AppCommand::TerminalCreate { .. } => assert_command_entry(
                 &command,
                 "terminal_create",
@@ -535,20 +528,13 @@ fn query_registry_covers_every_variant_without_wildcard() {
                 true,
                 V1_0,
             ),
-            AppQuery::DiffGet { .. } => assert_query_entry(
-                &query,
-                "diff_get",
-                true,
-                None,
-                None,
-                false,
-                true,
-                V1_0,
-            ),
+            AppQuery::DiffGet { .. } => {
+                assert_query_entry(&query, "diff_get", true, None, None, false, true, V1_0)
+            }
             AppQuery::ArtifactRead { .. } => assert_query_entry(
                 &query,
                 "artifact_read",
-                true,
+                false,
                 None,
                 None,
                 false,
@@ -568,33 +554,19 @@ fn query_registry_covers_every_variant_without_wildcard() {
             AppQuery::SnapshotFetch => assert_query_entry(
                 &query,
                 "snapshot_fetch",
-                true,
+                false,
                 Some(GuiCapability::Snapshots),
                 None,
                 false,
                 true,
                 V1_0,
             ),
-            AppQuery::PluginList => assert_query_entry(
-                &query,
-                "plugin_list",
-                true,
-                None,
-                None,
-                false,
-                true,
-                V1_0,
-            ),
-            AppQuery::McpList => assert_query_entry(
-                &query,
-                "mcp_list",
-                true,
-                None,
-                None,
-                false,
-                true,
-                V1_0,
-            ),
+            AppQuery::PluginList => {
+                assert_query_entry(&query, "plugin_list", false, None, None, false, true, V1_0)
+            }
+            AppQuery::McpList => {
+                assert_query_entry(&query, "mcp_list", false, None, None, false, true, V1_0)
+            }
         }
     }
 }

@@ -9,10 +9,10 @@ use pawork_domain::{ActorId, ConnectionId, GuiClientId};
 use pawork_protocol::{
     compute_resume_disposition, decode_client_frame_checked, encode_server_frame,
     validate_server_frame_api_version, ActorIdentity, ApiVersion, AppCommandEnvelope,
-    AppQueryEnvelope, AppResponseEnvelope, ClientFrame,
-    CommandSource, GlobalSequence, GuiCapability, HandshakeRequest, HandshakeResponse,
-    HandshakeSession, ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext,
-    ResumeDisposition, ResumeRequest, ResumeResponse, ServerFrame,
+    AppQueryEnvelope, AppResponseEnvelope, ClientFrame, CommandSource, EventStream, GlobalSequence,
+    GuiCapability, HandshakeRequest, HandshakeResponse, HandshakeSession, ProtocolError,
+    ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext, ResumeDisposition, ResumeRequest,
+    ResumeResponse, ServerFrame, SnapshotSectionKind,
 };
 use pawork_protocol::app::registry::{command_entry, query_entry, RegistryEntry};
 use pawork_protocol::codec::decode_client_frame;
@@ -123,6 +123,7 @@ async fn run(
     let negotiated = negotiated_version(&outcome.response);
     let locality = connection.info().locality;
 
+    let granted = granted_capabilities(&outcome.response);
     let registration = ClientRegistration {
         client_id: client_id.clone(),
         connection_id: connection_id.clone(),
@@ -130,7 +131,7 @@ async fn run(
         version: outcome.request.client_version,
         locality,
         identity: None,
-        capabilities: granted_capabilities(&outcome.response),
+        capabilities: granted.clone(),
         connected_at: now_timestamp(),
     };
     let mut event_rx = match inner.connections.register(registration) {
@@ -142,7 +143,8 @@ async fn run(
         }
     };
 
-    match inner.host.snapshot().await {
+    if granted.contains(&GuiCapability::Snapshots) {
+        match snapshot_for_client(inner.as_ref(), &client_id).await {
         Ok(snapshot) => {
             if send_frame(
                 connection.as_ref(),
@@ -169,6 +171,7 @@ async fn run(
             )
             .await;
         }
+    }
     }
 
     let (stop_tx, stop_rx) = oneshot::channel();
@@ -446,24 +449,25 @@ async fn handle_frame(
                 })]),
             }
         }
-        ClientFrame::ArtifactRead(request) => FrameOutcome::Reply(vec![ServerFrame::Error(
-            ProtocolErrorEnvelope {
-                request_id: Some(request.request_id),
-                error: ProtocolError {
-                    code: ProtocolErrorCode::RequestNotFound,
-                    message: "artifact streaming is unsupported until S10".into(),
-                    retryable: false,
-                },
-            },
+        ClientFrame::ArtifactRead(request) => FrameOutcome::Reply(vec![capability_error_frame(
+            Some(request.request_id),
+            GuiCapability::ArtifactStreaming,
+            "artifact read",
         )]),
         ClientFrame::Heartbeat { nonce } => FrameOutcome::Reply(vec![ServerFrame::Pong { nonce }]),
         ClientFrame::Pong { .. } => FrameOutcome::None,
         ClientFrame::Subscribe(request) => {
-            match inner.connections.subscribe(
-                client_id,
-                &request.subscription_id,
-                request.streams,
-            ) {
+            if !client_has_capability(inner, client_id, &GuiCapability::Events) {
+                return FrameOutcome::Reply(vec![capability_error_frame(
+                    Some(request.request_id),
+                    GuiCapability::Events,
+                    "event subscription",
+                )]);
+            }
+            match inner
+                .connections
+                .subscribe(client_id, &request.subscription_id, request.streams)
+            {
                 Ok(()) => FrameOutcome::None,
                 Err(error) => {
                     FrameOutcome::Reply(vec![manager_error_frame(Some(request.request_id), &error)])
@@ -473,18 +477,40 @@ async fn handle_frame(
         ClientFrame::Unsubscribe {
             request_id,
             subscription_id,
-        } => match inner.connections.unsubscribe(client_id, &subscription_id) {
-            Ok(()) => FrameOutcome::None,
-            Err(error) => FrameOutcome::Reply(vec![manager_error_frame(Some(request_id), &error)]),
-        },
+        } => {
+            if !client_has_capability(inner, client_id, &GuiCapability::Events) {
+                return FrameOutcome::Reply(vec![capability_error_frame(
+                    Some(request_id),
+                    GuiCapability::Events,
+                    "event unsubscription",
+                )]);
+            }
+            match inner.connections.unsubscribe(client_id, &subscription_id) {
+                Ok(()) => FrameOutcome::None,
+                Err(error) => {
+                    FrameOutcome::Reply(vec![manager_error_frame(Some(request_id), &error)])
+                }
+            }
+        }
         ClientFrame::Resume(request) => handle_resume(inner, client_id, request).await,
-        ClientFrame::SnapshotRequest { request_id } => match inner.host.snapshot().await {
-            Ok(snapshot) => FrameOutcome::Reply(vec![ServerFrame::Snapshot(snapshot)]),
-            Err(error) => FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
-                request_id: Some(request_id),
-                error: host_error_to_protocol(&error),
-            })]),
-        },
+        ClientFrame::SnapshotRequest { request_id } => {
+            if !client_has_capability(inner, client_id, &GuiCapability::Snapshots) {
+                return FrameOutcome::Reply(vec![capability_error_frame(
+                    Some(request_id),
+                    GuiCapability::Snapshots,
+                    "snapshot request",
+                )]);
+            }
+            match snapshot_for_client(inner, client_id).await {
+                Ok(snapshot) => FrameOutcome::Reply(vec![ServerFrame::Snapshot(snapshot)]),
+                Err(error) => {
+                    FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
+                        request_id: Some(request_id),
+                        error: host_error_to_protocol(&error),
+                    })])
+                }
+            }
+        }
         ClientFrame::Ack { global_sequence } => {
             if let Err(error) = inner.connections.ack(client_id, global_sequence) {
                 tracing::debug!(%client_id, %error, "gui ack failed");
@@ -521,6 +547,27 @@ async fn handle_resume(
         request.last_global_sequence
     };
     let disposition = compute_resume_disposition(earliest, current, last);
+    match &disposition {
+        ResumeDisposition::Replay { .. }
+            if !client_has_capability(inner, client_id, &GuiCapability::Events) =>
+        {
+            return FrameOutcome::Reply(vec![capability_error_frame(
+                Some(request.request_id),
+                GuiCapability::Events,
+                "resume replay",
+            )]);
+        }
+        ResumeDisposition::SnapshotRequired { .. }
+            if !client_has_capability(inner, client_id, &GuiCapability::Snapshots) =>
+        {
+            return FrameOutcome::Reply(vec![capability_error_frame(
+                Some(request.request_id),
+                GuiCapability::Snapshots,
+                "resume snapshot",
+            )]);
+        }
+        _ => {}
+    }
     let mut replies = vec![ServerFrame::Resume(ResumeResponse {
         request_id: request.request_id.clone(),
         disposition: disposition.clone(),
@@ -530,10 +577,44 @@ async fn handle_resume(
             from_sequence,
             through_sequence,
         } => match inner.host.replay(from_sequence, Some(through_sequence)) {
-            Ok(events) => replies.extend(events.into_iter().map(ServerFrame::Event)),
+            Ok(events) => {
+                let events: Vec<_> = events
+                    .into_iter()
+                    .filter(|event| event_is_granted(inner, client_id, event))
+                    .collect();
+                if let (Some(first), Some(last)) = (events.first(), events.last()) {
+                    replies.clear();
+                    replies.push(ServerFrame::Resume(ResumeResponse {
+                        request_id: request.request_id.clone(),
+                        disposition: ResumeDisposition::Replay {
+                            from_sequence: first.global_sequence,
+                            through_sequence: last.global_sequence,
+                        },
+                    }));
+                    replies.extend(events.into_iter().map(ServerFrame::Event));
+                } else {
+                    // Replay 窗口里可能只有当前客户端未获授权的流（例如 terminal）。
+                    // 以该窗口末端报告 UpToDate，避免客户端等待永远不会发送的事件。
+                    replies.clear();
+                    replies.push(ServerFrame::Resume(ResumeResponse {
+                        request_id: request.request_id.clone(),
+                        disposition: ResumeDisposition::UpToDate {
+                            current_sequence: through_sequence,
+                        },
+                    }));
+                }
+            }
             Err(error) => {
                 tracing::warn!(%error, "resume replay unavailable; falling back to snapshot");
                 replies.clear();
+                if !client_has_capability(inner, client_id, &GuiCapability::Snapshots) {
+                    replies.push(capability_error_frame(
+                        Some(request.request_id),
+                        GuiCapability::Snapshots,
+                        "resume fallback snapshot",
+                    ));
+                    return FrameOutcome::Reply(replies);
+                }
                 replies.push(ServerFrame::Resume(ResumeResponse {
                     request_id: request.request_id,
                     disposition: ResumeDisposition::SnapshotRequired {
@@ -543,13 +624,13 @@ async fn handle_resume(
                             .unwrap_or(GlobalSequence(0)),
                     },
                 }));
-                if let Ok(snapshot) = inner.host.snapshot().await {
+                if let Ok(snapshot) = snapshot_for_client(inner, client_id).await {
                     replies.push(ServerFrame::Snapshot(snapshot));
                 }
             }
         },
         ResumeDisposition::SnapshotRequired { .. } => {
-            if let Ok(snapshot) = inner.host.snapshot().await {
+            if let Ok(snapshot) = snapshot_for_client(inner, client_id).await {
                 replies.push(ServerFrame::Snapshot(snapshot));
             }
         }
@@ -573,6 +654,9 @@ fn spawn_forwarder(
                 received = subscription.recv() => {
                     match received {
                         Ok(event) => {
+                            if !event_is_granted(inner.as_ref(), &client_id, &event) {
+                                continue;
+                            }
                             if !inner.connections.should_forward(&client_id, &event.stream) {
                                 continue;
                             }
@@ -644,6 +728,62 @@ fn granted_capabilities_for(inner: &Inner, client_id: &GuiClientId) -> Vec<GuiCa
         .session(client_id)
         .map(|session| session.capabilities)
         .unwrap_or_default()
+}
+
+fn client_has_capability(
+    inner: &Inner,
+    client_id: &GuiClientId,
+    capability: &GuiCapability,
+) -> bool {
+    inner
+        .connections
+        .session(client_id)
+        .is_some_and(|session| session.capabilities.contains(capability))
+}
+
+/// Snapshot 本身由 host 共源构造；连接层再按协商能力裁掉未授权 section。
+/// TerminalSessions 即使不含输出正文，也会暴露 terminal id / owner / state，
+/// 因而与 live terminal event 一样受 TerminalStreaming 保护。
+async fn snapshot_for_client(
+    inner: &Inner,
+    client_id: &GuiClientId,
+) -> Result<pawork_protocol::Snapshot, GuiHostError> {
+    let mut snapshot = inner.host.snapshot().await?;
+    if !client_has_capability(inner, client_id, &GuiCapability::TerminalStreaming) {
+        snapshot
+            .sections
+            .retain(|section| section.kind != SnapshotSectionKind::TerminalSessions);
+    }
+    Ok(snapshot)
+}
+
+fn event_is_granted(
+    inner: &Inner,
+    client_id: &GuiClientId,
+    event: &pawork_protocol::AppEventEnvelope,
+) -> bool {
+    if !client_has_capability(inner, client_id, &GuiCapability::Events) {
+        return false;
+    }
+    !matches!(event.stream, EventStream::Terminal(_))
+        || client_has_capability(inner, client_id, &GuiCapability::TerminalStreaming)
+}
+
+fn capability_error_frame(
+    request_id: Option<String>,
+    capability: GuiCapability,
+    operation: &str,
+) -> ServerFrame {
+    ServerFrame::Error(ProtocolErrorEnvelope {
+        request_id,
+        error: ProtocolError {
+            code: ProtocolErrorCode::PermissionDenied,
+            message: format!(
+                "capability {capability:?} is not granted to this client for {operation}"
+            ),
+            retryable: false,
+        },
+    })
 }
 
 /// Registry 授权门：GUI 不可用或所需能力未授予即在进入 host 前拒绝。

@@ -51,7 +51,10 @@ static COMMANDS: &[RegistryEntry] = &[
     // --- AppCommand（19）---
     RegistryEntry {
         wire_name: "core_initialize",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -67,7 +70,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "workspace_trust",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -99,7 +105,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "session_compact",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Sessions),
         acp: false,
         idempotent: false,
@@ -134,7 +143,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "run_retry",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Runs),
         acp: false,
         idempotent: false,
@@ -142,7 +154,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "run_tool",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Runs),
         acp: false,
         idempotent: false,
@@ -150,7 +165,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "auth_start",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: false,
@@ -158,7 +176,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "auth_remove",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -177,7 +198,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "git_stage",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -269,10 +293,13 @@ static QUERIES: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_0,
     },
-    // Desktop 读 artifact 不要求 ArtifactStreaming（K-08：不得误伤）。
+    // 专用 ArtifactRead 帧尚未接线；AppQuery 变体也未由 GuiHost 实现。
     RegistryEntry {
         wire_name: "artifact_read",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -289,7 +316,8 @@ static QUERIES: &[RegistryEntry] = &[
     RegistryEntry {
         wire_name: "snapshot_fetch",
         gui: GuiChannelAccess {
-            available: true,
+            // GUI 使用专用 SnapshotRequest 帧；AppQuery 变体未由 GuiHost 实现。
+            available: false,
             required_capability: Some(GuiCapability::Snapshots),
         },
         headless: None,
@@ -299,7 +327,10 @@ static QUERIES: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "plugin_list",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -307,7 +338,10 @@ static QUERIES: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "mcp_list",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,

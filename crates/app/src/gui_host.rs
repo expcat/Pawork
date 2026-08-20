@@ -685,7 +685,7 @@ impl GuiHost for GuiHostAdapter {
     ) -> Result<TimelinePage, GuiHostError> {
         const DEFAULT_LIMIT: u32 = 200;
         const MAX_LIMIT: u32 = 500;
-        let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
+        let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
         let core = self.core.read().await;
         let head = core
             .next_sequence(session_id)
@@ -712,13 +712,13 @@ impl GuiHost for GuiHostAdapter {
             .await
             .map_err(|error| Self::host_error("app_error", error.to_string()))?;
         let items: Vec<_> = envelopes.iter().filter_map(project_timeline_item).collect();
-        let complete = (items.len() < limit)
-            || items.last().is_some_and(|item| item.sequence >= head);
-        let next_sequence = if complete {
-            None
-        } else {
-            items.last().map(|item| item.sequence)
-        };
+        // 分页窗口和游标属于持久化事件序列，而非过滤后的 presentation items。
+        // ContextPrepared/UsageUpdated 等无 TimelineItem 的事件仍必须推进游标；
+        // 否则整页不可投影时会被误报 complete，历史在首个空页即被截断。
+        let page_cursor = envelopes.last().map(|envelope| envelope.sequence.0);
+        let complete =
+            (envelopes.len() < limit) || page_cursor.is_some_and(|sequence| sequence >= head);
+        let next_sequence = if complete { None } else { page_cursor };
         Ok(TimelinePage {
             items,
             next_sequence,

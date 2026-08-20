@@ -107,12 +107,24 @@ impl GuiHost for MockHost {
             instance_id: self.instance_id.clone(),
             snapshot_sequence: GlobalSequence(seq),
             generated_at: Timestamp::from_unix_millis(seq),
-            sections: vec![SnapshotSection {
+            sections: vec![
+                SnapshotSection {
                 kind: SnapshotSectionKind::ActiveRuns,
                 revision: 1,
                 data: Some(serde_json::json!({"run_ids": []})),
                 artifact_id: None,
-            }],
+                },
+                SnapshotSection {
+                    kind: SnapshotSectionKind::TerminalSessions,
+                    revision: 2,
+                    data: Some(serde_json::json!([{
+                        "terminal_session_id": "terminal-secret",
+                        "owner_session": "session-secret",
+                        "state": "running"
+                    }])),
+                    artifact_id: None,
+                },
+            ],
         })
     }
 
@@ -268,11 +280,24 @@ async fn open_harness_with_connections(
     label: &str,
     connections: Option<Arc<ConnectionManager>>,
 ) -> Harness {
+    open_harness_with_capabilities(
+        label,
+        connections,
+        vec![GuiCapability::Events, GuiCapability::Snapshots],
+    )
+    .await
+}
+
+async fn open_harness_with_capabilities(
+    label: &str,
+    connections: Option<Arc<ConnectionManager>>,
+    supported_capabilities: Vec<GuiCapability>,
+) -> Harness {
     let host = MockHost::new();
     let handshake = HandshakeService::new(
         host.instance_id(),
         SUPPORTED_API_VERSIONS.to_vec(),
-        vec![],
+        supported_capabilities,
     );
     let transport = Arc::new(LocalTransport::default());
     let server = GuiServer::new(GuiServerConfig {
@@ -334,12 +359,16 @@ impl GuiListener for ClosedListener {
 }
 
 fn handshake_frame() -> ClientFrame {
+    handshake_frame_with_capabilities(vec![GuiCapability::Events, GuiCapability::Snapshots])
+}
+
+fn handshake_frame_with_capabilities(capabilities: Vec<GuiCapability>) -> ClientFrame {
     ClientFrame::Handshake(HandshakeRequest {
         request_id: "hs-1".into(),
         client_name: "test-gui".into(),
         client_version: "0.1.0".into(),
         supported_api_versions: vec![API_VERSION],
-        capabilities: vec![],
+        capabilities,
         authentication: None,
     })
 }
@@ -435,7 +464,9 @@ mod unix_tests {
                 expected_revision: None,
                 idempotency_key: None,
                 issued_at: Timestamp::from_unix_millis(1),
-                command: AppCommand::CoreInitialize,
+                command: AppCommand::SessionOpen {
+                    session_id: SessionId::from("session-1"),
+                },
             }))
             .await;
         let ServerFrame::Response(envelope) = harness.client.recv().await else {
@@ -463,7 +494,9 @@ mod unix_tests {
                 expected_revision: None,
                 idempotency_key: None,
                 issued_at: Timestamp::from_unix_millis(2),
-                command: AppCommand::CoreInitialize,
+                command: AppCommand::SessionOpen {
+                    session_id: SessionId::from("session-1"),
+                },
             }))
             .await;
         let ServerFrame::Error(error) = harness.client.recv().await else {
@@ -717,8 +750,14 @@ mod unix_tests {
     /// 被 PermissionDenied 拒绝，host 侧零记录（fail-closed）。
     #[tokio::test]
     async fn capability_required_requests_are_denied_before_host_when_not_granted() {
-        let harness = open_harness("caps").await;
-        let (handshake, _) = handshake_and_snapshot(&harness.client).await;
+        let harness = open_harness_with_capabilities("caps", None, vec![]).await;
+        harness
+            .client
+            .send(&handshake_frame_with_capabilities(vec![]))
+            .await;
+        let ServerFrame::Handshake(handshake) = harness.client.recv().await else {
+            panic!("expected handshake accepted");
+        };
         let HandshakeResponse::Accepted {
             capabilities: granted, ..
         } = handshake
@@ -729,6 +768,27 @@ mod unix_tests {
         assert!(!granted.contains(&GuiCapability::TerminalStreaming));
         assert!(!granted.contains(&GuiCapability::Approvals));
         assert!(!granted.contains(&GuiCapability::Snapshots));
+
+        // Events / Snapshots 是连接层内禀能力；未授予时专用帧也必须拒绝，
+        // 且握手后不得先泄漏一帧 Snapshot。
+        harness.client.send(&subscribe_all()).await;
+        let ServerFrame::Error(subscribe) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for event subscription");
+        };
+        assert_eq!(subscribe.error.code, ProtocolErrorCode::PermissionDenied);
+        harness
+            .client
+            .send(&ClientFrame::SnapshotRequest {
+                request_id: "snapshot-frame-denied".into(),
+            })
+            .await;
+        let ServerFrame::Error(snapshot_frame) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for snapshot request");
+        };
+        assert_eq!(
+            snapshot_frame.error.code,
+            ProtocolErrorCode::PermissionDenied
+        );
 
         // terminal_create：需要 TerminalStreaming。
         harness
@@ -795,5 +855,110 @@ mod unix_tests {
         // 授权门在进入 host 之前生效：命令与查询均零记录。
         assert!(harness.host.recorded_commands().is_empty());
         assert!(harness.host.recorded_queries().is_empty());
+    }
+
+    #[tokio::test]
+    async fn terminal_snapshot_sections_require_terminal_streaming_capability_on_all_paths() {
+        let without = open_harness("snapshot-terminal-denied").await;
+        without.client.send(&handshake_frame()).await;
+        let ServerFrame::Handshake(_) = without.client.recv().await else {
+            panic!("expected handshake accepted");
+        };
+        let ServerFrame::Snapshot(initial) = without.client.recv().await else {
+            panic!("expected initial snapshot");
+        };
+        assert!(!initial
+            .sections
+            .iter()
+            .any(|section| section.kind == SnapshotSectionKind::TerminalSessions));
+
+        without
+            .client
+            .send(&ClientFrame::SnapshotRequest {
+                request_id: "snapshot-filtered".into(),
+            })
+            .await;
+        let ServerFrame::Snapshot(requested) = without.client.recv().await else {
+            panic!("expected requested snapshot");
+        };
+        assert!(!requested
+            .sections
+            .iter()
+            .any(|section| section.kind == SnapshotSectionKind::TerminalSessions));
+
+        without
+            .client
+            .send(&ClientFrame::Resume(ResumeRequest {
+                request_id: "resume-filtered".into(),
+                last_global_sequence: GlobalSequence(99),
+            }))
+            .await;
+        let ServerFrame::Resume(resume) = without.client.recv().await else {
+            panic!("expected resume response");
+        };
+        assert!(matches!(
+            resume.disposition,
+            ResumeDisposition::SnapshotRequired { .. }
+        ));
+        let ServerFrame::Snapshot(resumed) = without.client.recv().await else {
+            panic!("expected resume snapshot");
+        };
+        assert!(!resumed
+            .sections
+            .iter()
+            .any(|section| section.kind == SnapshotSectionKind::TerminalSessions));
+
+        let with = open_harness_with_capabilities(
+            "snapshot-terminal-granted",
+            None,
+            vec![GuiCapability::Snapshots, GuiCapability::TerminalStreaming],
+        )
+        .await;
+        with.client
+            .send(&handshake_frame_with_capabilities(vec![
+                GuiCapability::Snapshots,
+                GuiCapability::TerminalStreaming,
+            ]))
+            .await;
+        let ServerFrame::Handshake(_) = with.client.recv().await else {
+            panic!("expected handshake accepted");
+        };
+        let ServerFrame::Snapshot(initial) = with.client.recv().await else {
+            panic!("expected initial snapshot");
+        };
+        assert!(initial
+            .sections
+            .iter()
+            .any(|section| section.kind == SnapshotSectionKind::TerminalSessions));
+    }
+
+    #[tokio::test]
+    async fn terminal_events_require_terminal_streaming_capability() {
+        let harness = open_harness("terminal-event-gate").await;
+        let (handshake, _) = handshake_and_snapshot(&harness.client).await;
+        let HandshakeResponse::Accepted {
+            capabilities: granted,
+            ..
+        } = handshake
+        else {
+            panic!("expected handshake accepted");
+        };
+        assert!(granted.contains(&GuiCapability::Events));
+        assert!(!granted.contains(&GuiCapability::TerminalStreaming));
+
+        let mut terminal = event(1);
+        terminal.stream = EventStream::Terminal("terminal-1".into());
+        terminal.payload = AppEvent::TerminalOutput {
+            terminal_session_id: "terminal-1".into(),
+            delta: "secret terminal output".into(),
+        };
+        harness.host.publish(terminal);
+        harness.host.publish(event(2));
+
+        let ServerFrame::Event(visible) = harness.client.recv().await else {
+            panic!("expected non-terminal event");
+        };
+        assert_eq!(visible.global_sequence, GlobalSequence(2));
+        assert!(!matches!(visible.stream, EventStream::Terminal(_)));
     }
 }

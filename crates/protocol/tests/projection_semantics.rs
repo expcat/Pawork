@@ -48,6 +48,21 @@ fn tool_started(sequence: u64, tool_call_id: &str, name: &str) -> AppEventEnvelo
     )
 }
 
+fn tool_output(sequence: u64, tool_call_id: &str, delta: &str) -> AppEventEnvelope {
+    event(
+        sequence,
+        serde_json::json!({
+            "type": "tool_output",
+            "data": {
+                "run_id": "r-1",
+                "tool_call_id": tool_call_id,
+                "delta": delta,
+                "truncated": false
+            }
+        }),
+    )
+}
+
 fn tool_completed(sequence: u64, tool_call_id: &str, success: bool) -> AppEventEnvelope {
     event(
         sequence,
@@ -146,6 +161,257 @@ fn timeline_items_dedup_by_sequence_and_merge_committed_text() {
 
     // 页数据之外先到的 live 事件重放（同 sequence）不再重复。
     assert!(!projection.apply_event(&assistant_delta(2, "m-1", "He")));
+}
+
+#[test]
+fn historical_assistant_rounds_in_same_run_remain_distinct() {
+    let mut projection = TimelineProjection::default();
+    let items = [
+        item_with(
+            history_item(1, TimelineItemKind::AssistantDelta),
+            Some("first "),
+            None,
+            None,
+            None,
+        ),
+        item_with(
+            history_item(2, TimelineItemKind::AssistantMessage),
+            Some("first answer"),
+            None,
+            None,
+            None,
+        ),
+        item_with(
+            history_item(3, TimelineItemKind::AssistantDelta),
+            Some("second "),
+            None,
+            None,
+            None,
+        ),
+        item_with(
+            history_item(4, TimelineItemKind::AssistantMessage),
+            Some("second answer"),
+            None,
+            None,
+            None,
+        ),
+    ];
+    for item in &items {
+        projection.apply_item(item);
+    }
+
+    assert_eq!(
+        assistant_texts(&projection),
+        vec!["first answer", "second answer"]
+    );
+    assert_eq!(
+        projection
+            .entries
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        vec![2, 4]
+    );
+}
+
+#[test]
+fn historical_committed_replacement_preserves_sequence_order() {
+    let mut projection = TimelineProjection::default();
+    projection.apply_item(&item_with(
+        history_item(5, TimelineItemKind::AssistantDelta),
+        Some("draft"),
+        None,
+        None,
+        None,
+    ));
+    projection.apply_item(&item_with(
+        history_item(7, TimelineItemKind::ToolStarted),
+        None,
+        Some("fs_read"),
+        Some("running"),
+        None,
+    ));
+    projection.apply_item(&item_with(
+        history_item(8, TimelineItemKind::AssistantMessage),
+        Some("committed"),
+        None,
+        None,
+        None,
+    ));
+
+    assert_eq!(
+        projection
+            .entries
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        vec![7, 8]
+    );
+    assert_eq!(assistant_texts(&projection), vec!["committed"]);
+}
+
+#[test]
+fn historical_committed_reconciles_live_anchor_and_absorbs_late_delta() {
+    let mut projection = TimelineProjection::default();
+
+    assert!(projection.apply_event(&assistant_delta(2, "m-1", "draft")));
+    projection.apply_item(&item_with(
+        history_item(4, TimelineItemKind::AssistantMessage),
+        Some("committed"),
+        None,
+        None,
+        None,
+    ));
+
+    assert_eq!(assistant_texts(&projection), vec!["committed"]);
+    assert_eq!(projection.entries[0].sequence, 4);
+    // committed 已是权威全文；后到、但 sequence 更早的同 message delta 不得
+    // 再次追加，也不得新开重复 assistant 条目。
+    assert!(!projection.apply_event(&assistant_delta(3, "m-1", " late")));
+    assert_eq!(assistant_texts(&projection), vec!["committed"]);
+
+    // 新 message 仍能开启下一轮 assistant 输出。
+    assert!(projection.apply_event(&assistant_delta(5, "m-2", "next")));
+    assert_eq!(assistant_texts(&projection), vec!["committed", "next"]);
+}
+
+#[test]
+fn older_historical_committed_does_not_clear_newer_live_anchor() {
+    let mut projection = TimelineProjection::default();
+
+    assert!(projection.apply_event(&assistant_delta(10, "m-new", "new")));
+    projection.apply_item(&item_with(
+        history_item(4, TimelineItemKind::AssistantMessage),
+        Some("old"),
+        None,
+        None,
+        None,
+    ));
+    assert!(projection.apply_event(&assistant_delta(11, "m-new", " answer")));
+
+    assert_eq!(assistant_texts(&projection), vec!["old", "new answer"]);
+    assert_eq!(
+        projection
+            .entries
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        vec![4, 10]
+    );
+}
+
+#[test]
+fn concurrent_historical_tools_keep_outputs_by_tool_call_id() {
+    let mut projection = TimelineProjection::default();
+    let call_a = r#"{"_pawork_tool_call_id":"call-a"}"#;
+    let call_b = r#"{"_pawork_tool_call_id":"call-b"}"#;
+    let items = [
+        item_with(
+            history_item(1, TimelineItemKind::ToolStarted),
+            None,
+            Some("fs_read"),
+            Some("running"),
+            Some(call_a),
+        ),
+        item_with(
+            history_item(2, TimelineItemKind::ToolStarted),
+            None,
+            Some("shell"),
+            Some("running"),
+            Some(call_b),
+        ),
+        item_with(
+            history_item(3, TimelineItemKind::ToolOutput),
+            Some("output-a"),
+            None,
+            None,
+            Some(call_a),
+        ),
+        item_with(
+            history_item(4, TimelineItemKind::ToolOutput),
+            Some("output-b"),
+            None,
+            None,
+            Some(call_b),
+        ),
+        item_with(
+            history_item(5, TimelineItemKind::ToolCompleted),
+            None,
+            Some("fs_read"),
+            Some("succeeded"),
+            Some(call_a),
+        ),
+        item_with(
+            history_item(6, TimelineItemKind::ToolCompleted),
+            None,
+            Some("shell"),
+            Some("failed"),
+            Some(call_b),
+        ),
+    ];
+    for item in &items {
+        projection.apply_item(item);
+    }
+
+    let tools = projection
+        .entries
+        .iter()
+        .filter_map(|entry| match &entry.kind {
+            TimelineEntryKind::ToolCall {
+                name,
+                status,
+                detail,
+            } => Some((name.as_str(), status.as_str(), detail.as_deref())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tools,
+        vec![
+            ("fs_read", "succeeded", Some("output-a")),
+            ("shell", "failed", Some("output-b")),
+        ]
+    );
+}
+
+#[test]
+fn duplicate_live_start_enriches_legacy_history_tool_anchor() {
+    let mut projection = TimelineProjection::default();
+    projection.apply_item(&item_with(
+        history_item(10, TimelineItemKind::ToolStarted),
+        None,
+        Some("fs_read"),
+        Some("running"),
+        None,
+    ));
+
+    assert!(!projection.apply_event(&tool_started(10, "call-1", "fs_read")));
+    assert!(projection.apply_event(&tool_output(11, "call-1", "42 bytes")));
+    assert!(projection.apply_event(&tool_completed(12, "call-1", true)));
+
+    assert_eq!(projection.entries.len(), 1);
+    assert!(matches!(
+        &projection.entries[0].kind,
+        TimelineEntryKind::ToolCall { name, status, detail }
+            if name == "fs_read"
+                && status == "succeeded"
+                && detail.as_deref() == Some("42 bytes")
+    ));
+}
+
+#[test]
+fn duplicate_live_tool_output_is_not_appended_twice() {
+    let mut projection = TimelineProjection::default();
+    assert!(projection.apply_event(&tool_started(1, "call-1", "fs_read")));
+    let output = tool_output(2, "call-1", "chunk");
+    assert!(projection.apply_event(&output));
+    assert!(!projection.apply_event(&output));
+
+    assert!(matches!(
+        &projection.entries[0].kind,
+        TimelineEntryKind::ToolCall { detail, .. }
+            if detail.as_deref() == Some("chunk")
+    ));
 }
 
 #[test]

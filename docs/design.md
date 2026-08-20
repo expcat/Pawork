@@ -126,7 +126,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 功能 | 参照 |
 | --- | --- |
 | write_file/edit_file/apply_patch 写三件 | OpenCode edit/write/patch 工具；Codex apply_patch |
-| 终端审批（一次/本运行/拒绝）+ `--approval-mode` 六档（默认 ReadOnly） | [Codex approval modes](https://developers.openai.com/codex)；OpenCode `permission`（read/edit/bash/task 每项 allow/ask/deny，research §2.1）；DeepSeek Harness 把 `sandbox/mode` 与 `approval/policy` 做成独立 knob，再经 permission preset 捆绑（[权限预设](https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/permission-presets)）；V1 policy-engine 契约（§3.2） |
+| 终端审批（一次/本运行/拒绝）+ `--approval-mode` 五档（默认 ReadOnly；旧 `on-failure` 仅兼容读入并映射 NeverAsk） | [Codex approval modes](https://developers.openai.com/codex)；OpenCode `permission`（read/edit/bash/task 每项 allow/ask/deny，research §2.1）；DeepSeek Harness 把 `sandbox/mode` 与 `approval/policy` 做成独立 knob，再经 permission preset 捆绑（[权限预设](https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/permission-presets)）；V1 policy-engine 契约（§3.2） |
 | 未信任 workspace 强制询问 | Pi Project Trust（[earendil-works/pi](https://github.com/earendil-works/pi)） |
 | 路径越界/symlink/TOCTOU 红线 + 提示注入回归 | V1 安全红线资产（policy 整包随迁） |
 
