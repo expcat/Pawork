@@ -24,6 +24,12 @@
 > 3. gui_host.rs 内部无 capability/授权门;GUI 授权面实际分布于 protocol handshake.rs(过滤)、cli/gui.rs(装配 supported 集)、app/gui_server(connection/session 存 granted 集)。波 A 授权门落点在 gui_server 层。
 > 4. 命令全集:AppCommand 19 变体(protocol/src/app/command.rs:295)、AppQuery 11 变体(app/query.rs:30);gui_host 仅实现 10 command(其余落 unsupported fallback);headless 手写表在 crates/cli/src/headless.rs(非 protocol/headless);ACP 白名单在 cli/src/channels/acp/adapter.rs:478。
 
+> 波 B 实态记录(2026-08-20,三路核查 + 两路实现 + 一路审查):
+> 1. 写入集实缩:protocol headless/(json_mapping/translate/wire)无命令映射,零改动;client tests(probe/fixtures)只跑不改;实际写入仅 crates/cli/src/headless.rs 与 crates/cli/src/channels/acp/adapter.rs。
+> 2. ACP「method 白名单」语义裁决:decode_payload 的 session/* 四臂属 ACP 协议路由(解析),保留;准入决策改经 registry acp 列(admit_acp_command 作用于 Command 产物);session/cancel、$/cancel_request、initialize、session/load 显式拒绝与 catch-all 属协议事实,逐字保留;session/resume→Reattach、session/close→Disconnect 为连接生命周期请求,不经 command 门;registry acp: true 恰为 {session_create,run_start,run_cancel,tool_approve},与现行 ACP 可达面一致。
+> 3. C2 缺口已补:HOST_CAPABILITIES 快照钉死 + registry headless 列 ⊆ HOST_CAPABILITIES 一致性测试(crates/cli/src/headless.rs)。
+> 4. 审查 verdict=pass;两条低阶观察登记:admit_acp_command 拒绝分支现行 decode 路径不可达(fail-closed 防护网,单测直接覆盖);command_entry 对表缺失 panic(fail-fast,穷尽 match + 完整性测试钉死,不构成 fail-closed 变松)。
+
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
 | A | Registry 设计 + protocol 内落地(表驱动或 const fn;含 17+9 条帧 golden 复核);GUI 通道切换到 registry 派生(gui_host dispatch 改造第一步:宣告/授权走 registry,巨 match 拆解留给 R4) | crates/protocol、crates/app(gui_host + gui_server 授权面)、crates/cli/src/gui.rs(仅此文件:GUI 宣告装配点,2026-08-20 实态修正) | 串行(契约面) |
@@ -40,7 +46,7 @@
 
 ## 5. 退出标准
 
-- [ ] 三通道 dispatch/宣告/授权同源于 registry;手写表删除;未登记命令 fail-closed 有测试
+- [x] 三通道宣告/授权同源于 registry;headless 手写表与 ACP 命令准入白名单删除;未登记命令 fail-closed 有测试(2026-08-20 波 B 收口;gui_host 巨 match 分发仍留 R4)
 - [ ] 投影 reducer 单一实现 + golden;desktop projection.rs 只剩渲染适配(目标 <800 行)
 - [ ] OnFailure 有决议并落地;S13-F16 三处收窄注释消失
 - [ ] 帧 golden 零 diff;冒烟(GUI/headless/ACP)通过;v3_plan §3 更新

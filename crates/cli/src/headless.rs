@@ -13,7 +13,7 @@ use pawork_protocol::headless::{
     ProtocolErrorKind, SdkCapability, TranslatedRequest,
 };
 use pawork_protocol::{
-    negotiate_api_version_with, AppCommand, AppQuery, AppResponse, SUPPORTED_API_VERSIONS,
+    negotiate_api_version_with, AppCommand, AppResponse, SUPPORTED_API_VERSIONS,
 };
 use pawork_storage::session::{ExternalSource, SessionStore};
 use tokio::io::{stdin, stdout, BufReader};
@@ -120,7 +120,7 @@ impl Handler for HeadlessHandler {
         match request {
             TranslatedRequest::Command(envelope) => {
                 if let Some(error) = self.gate(
-                    command_capability(&envelope.command),
+                    pawork_protocol::app::registry::command_entry(&envelope.command).headless,
                     Some(envelope.command_id.as_str().to_string()),
                 ) {
                     return vec![error];
@@ -164,7 +164,7 @@ impl Handler for HeadlessHandler {
             }
             TranslatedRequest::Query(envelope) => {
                 if let Some(error) = self.gate(
-                    query_capability(&envelope.query),
+                    pawork_protocol::app::registry::query_entry(&envelope.query).headless,
                     Some(envelope.request_id.as_str().to_string()),
                 ) {
                     return vec![error];
@@ -322,30 +322,6 @@ fn gate_capability(
     }
 }
 
-fn command_capability(command: &AppCommand) -> Option<SdkCapability> {
-    match command {
-        AppCommand::SessionCreate { .. }
-        | AppCommand::SessionOpen { .. }
-        | AppCommand::SessionFork { .. }
-        | AppCommand::SessionCompact { .. }
-        | AppCommand::SessionClientContextReplace { .. } => Some(SdkCapability::Sessions),
-        AppCommand::RunStart { .. }
-        | AppCommand::RunCancel { .. }
-        | AppCommand::RunRetry { .. }
-        | AppCommand::RunTool { .. }
-        | AppCommand::ToolApprove { .. } => Some(SdkCapability::Runs),
-        _ => None,
-    }
-}
-
-fn query_capability(query: &AppQuery) -> Option<SdkCapability> {
-    match query {
-        AppQuery::SessionGet { .. } => Some(SdkCapability::Sessions),
-        AppQuery::RunStatus { .. } => Some(SdkCapability::Runs),
-        _ => None,
-    }
-}
-
 fn map_source(source: CompatSource) -> ExternalSource {
     match source {
         CompatSource::Claude => ExternalSource::Claude,
@@ -367,6 +343,7 @@ fn map_source_back(source: ExternalSource) -> CompatSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pawork_protocol::app::registry::{command_entries, command_entry, query_entries};
 
     #[test]
     fn workspace_add_is_unmapped_and_fail_closed_with_compat_history() {
@@ -374,12 +351,12 @@ mod tests {
             root_path: "/tmp/ws".into(),
         };
         assert!(
-            command_capability(&command).is_none(),
+            command_entry(&command).headless.is_none(),
             "WorkspaceAdd 不得静默映射到已有 capability"
         );
         let rejected = gate_capability(
             &[SdkCapability::CompatHistory],
-            command_capability(&command),
+            command_entry(&command).headless,
             Some("req-1".into()),
         );
         assert!(
@@ -400,14 +377,40 @@ mod tests {
             workspace_id: pawork_domain::WorkspaceId::from("ws-1"),
             title: None,
         };
-        assert_eq!(command_capability(&command), Some(SdkCapability::Sessions));
+        assert_eq!(command_entry(&command).headless, Some(SdkCapability::Sessions));
         assert!(
             gate_capability(
                 &[SdkCapability::Sessions],
-                command_capability(&command),
+                command_entry(&command).headless,
                 Some("req-2".into()),
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn registry_headless_capabilities_stay_within_host_capabilities() {
+        for entry in command_entries().iter().chain(query_entries().iter()) {
+            if let Some(capability) = entry.headless {
+                assert!(
+                    HOST_CAPABILITIES.contains(&capability),
+                    "registry headless capability {capability:?} 不在 HOST_CAPABILITIES 内"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn host_capabilities_snapshot_is_pinned() {
+        assert_eq!(
+            HOST_CAPABILITIES,
+            &[
+                SdkCapability::Sessions,
+                SdkCapability::Runs,
+                SdkCapability::Streaming,
+                SdkCapability::CompatImport,
+                SdkCapability::CompatHistory,
+            ]
         );
     }
 }

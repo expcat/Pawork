@@ -22,6 +22,7 @@ use pawork_protocol::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery,
     AppQueryEnvelope, CommandSource, API_VERSION,
 };
+use pawork_protocol::app::registry::command_entry;
 use serde_json::Value;
 
 use crate::channels::acp::map;
@@ -459,6 +460,20 @@ fn reject_unsupported_session_fields(
     Ok(())
 }
 
+/// registry ACP 准入门：Command 解码结果须登记为 ACP 可达（`acp: true`），
+/// 否则 fail-closed。连接生命周期请求（Reattach/Disconnect）不经命令门。
+fn admit_acp_command(method: &str, envelope: &AppCommandEnvelope) -> Result<(), AdapterError> {
+    let entry = command_entry(&envelope.command);
+    if entry.acp {
+        Ok(())
+    } else {
+        Err(AdapterError::ProtocolUnsupported(format!(
+            "{method} (registry command `{}` is not ACP-reachable)",
+            entry.wire_name
+        )))
+    }
+}
+
 #[async_trait]
 impl ClientAdapter for AcpClientAdapter {
     fn protocol(&self) -> &ClientProtocol {
@@ -475,28 +490,32 @@ impl ClientAdapter for AcpClientAdapter {
         &self,
         frame: AdapterWireFrame,
     ) -> Result<CanonicalClientRequest, AdapterError> {
-        match frame.method.as_str() {
-            "session/new" => self.decode_session_new(&frame).await,
-            "session/prompt" => self.decode_session_prompt(&frame).await,
-            "session/resume" => self.decode_session_resume(&frame).await,
-            "session/close" => self.decode_session_close(&frame).await,
-            "session/cancel" => Err(AdapterError::InvalidFrame(
+        let request = match frame.method.as_str() {
+            "session/new" => self.decode_session_new(&frame).await?,
+            "session/prompt" => self.decode_session_prompt(&frame).await?,
+            "session/resume" => self.decode_session_resume(&frame).await?,
+            "session/close" => self.decode_session_close(&frame).await?,
+            "session/cancel" => return Err(AdapterError::InvalidFrame(
                 "session/cancel is a JSON-RPC notification; use AcpClientAdapter::decode_cancel"
                     .into(),
             )),
-            "$/cancel_request" => Err(AdapterError::InvalidFrame(
+            "$/cancel_request" => return Err(AdapterError::InvalidFrame(
                 "$/cancel_request is a JSON-RPC notification handled by the ACP host, not a canonical request"
                     .into(),
             )),
-            "initialize" => Err(AdapterError::InvalidFrame(
+            "initialize" => return Err(AdapterError::InvalidFrame(
                 "initialize is a handshake method handled by the ACP host, not a canonical request"
                     .into(),
             )),
-            "session/load" => Err(AdapterError::ProtocolUnsupported(
+            "session/load" => return Err(AdapterError::ProtocolUnsupported(
                 "session/load (loadSession capability is not advertised)".into(),
             )),
-            other => Err(AdapterError::ProtocolUnsupported(other.into())),
+            other => return Err(AdapterError::ProtocolUnsupported(other.into())),
+        };
+        if let CanonicalClientRequest::Command(envelope) = &request {
+            admit_acp_command(&frame.method, envelope)?;
         }
+        Ok(request)
     }
 
     async fn encode_payload(
@@ -559,5 +578,81 @@ impl ClientAdapter for AcpClientAdapter {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pawork_domain::SessionId;
+    use pawork_protocol::app::registry::command_entries;
+
+    fn envelope(command: AppCommand) -> AppCommandEnvelope {
+        AppCommandEnvelope {
+            api_version: API_VERSION,
+            command_id: CommandId::from("acp-test"),
+            source: CommandSource::Automation,
+            identity: ActorIdentity::Automation {
+                name: "acp:test".into(),
+            },
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: now_timestamp(),
+            command,
+        }
+    }
+
+    /// registry acp 列 = ACP 可达命令全集：四臂 decode 只产 session_create /
+    /// run_start；run_cancel / tool_approve 由宿主复用 command_envelope 构造，
+    /// 同列准入。列漂移（多登/漏登）必须在此 fail。
+    #[test]
+    fn registry_acp_column_matches_acp_reachable_commands() {
+        let acp_commands: Vec<&str> = command_entries()
+            .iter()
+            .filter(|entry| entry.acp)
+            .map(|entry| entry.wire_name)
+            .collect();
+        assert_eq!(
+            acp_commands,
+            vec!["session_create", "run_start", "run_cancel", "tool_approve"]
+        );
+    }
+
+    #[test]
+    fn acp_gate_admits_registry_acp_commands() {
+        let commands = [
+            AppCommand::SessionCreate {
+                workspace_id: WorkspaceId::new("ws"),
+                title: None,
+            },
+            AppCommand::RunStart {
+                session_id: SessionId::new("session"),
+                user_message: "hi".into(),
+                model: None,
+                provider: None,
+                profile: None,
+            },
+        ];
+        for command in commands {
+            admit_acp_command("session/new", &envelope(command))
+                .expect("registry acp:true command must be admitted");
+        }
+    }
+
+    #[test]
+    fn acp_gate_rejects_commands_outside_registry_acp_column() {
+        let error = admit_acp_command(
+            "session/new",
+            &envelope(AppCommand::WorkspaceAdd {
+                root_path: "/tmp".into(),
+            }),
+        )
+        .expect_err("registry acp:false command must be rejected");
+        assert_eq!(
+            error,
+            AdapterError::ProtocolUnsupported(
+                "session/new (registry command `workspace_add` is not ACP-reachable)".into()
+            )
+        );
     }
 }
