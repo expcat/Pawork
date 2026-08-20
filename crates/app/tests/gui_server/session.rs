@@ -151,7 +151,23 @@ impl GuiHost for MockHost {
             source: envelope.source.clone(),
             identity: envelope.identity.clone(),
         });
-        Ok(AppResponse::Data(serde_json::json!({"ok": true})))
+        // 镜像真实 GuiHost::query：SessionGet 带分页参数时由 query 内部执行
+        // timeline 分页（R3 波 C 移除了 server 层丢弃结果的预调用）。
+        match &envelope.query {
+            AppQuery::SessionGet {
+                session_id,
+                timeline_after_sequence,
+                timeline_limit,
+            } if timeline_after_sequence.is_some() || timeline_limit.is_some() => {
+                let page = self
+                    .timeline(session_id, *timeline_after_sequence, *timeline_limit)
+                    .await?;
+                let mut data = serde_json::json!({"ok": true});
+                data["timeline_page"] = serde_json::to_value(page).expect("timeline page json");
+                Ok(AppResponse::Data(data))
+            }
+            _ => Ok(AppResponse::Data(serde_json::json!({"ok": true}))),
+        }
     }
 
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {

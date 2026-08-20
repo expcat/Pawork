@@ -30,6 +30,22 @@
 > 3. C2 缺口已补:HOST_CAPABILITIES 快照钉死 + registry headless 列 ⊆ HOST_CAPABILITIES 一致性测试(crates/cli/src/headless.rs)。
 > 4. 审查 verdict=pass;两条低阶观察登记:admit_acp_command 拒绝分支现行 decode 路径不可达(fail-closed 防护网,单测直接覆盖);command_entry 对表缺失 panic(fail-fast,穷尽 match + 完整性测试钉死,不构成 fail-closed 变松)。
 
+> 波 C 实态复核记录(2026-08-20,三路只读核查 C1/C2/C3):
+> 1. host 锚点实态为**纯 sequence 游标**(`after: Option<u64>`,gui_host.rs:685-705),event_id 仅是 TimelineItem 载荷字段;「锚点 event_id/sequence」按此现实设计。host 侧**无去重逻辑**,去重/交错回填全在 desktop(`seen: BTreeSet<u64>` + partition_point 有序插入,projection.rs:330/980-998)。
+> 2. host 映射 `project_timeline_item`(gui_host.rs:1389-1500)是类型化 AgentEvent match;desktop 历史臂 `merge_history_item`(projection.rs:749 起)用 snake_case 字符串匹配 TimelineItemKind 并经 `HistoryItem` 手工解构 JSON(因 TimelineItem 未从 pawork-client re-export,projection.rs:296-307 注释)——两侧不同源即 CR08-08 结构性根因。tool 锚点 live 按 run+tool_call_id、历史按 run+tool_name(TimelineItem 不带 tool_call_id,projection.rs:278-287),下沉 reducer 保留双键策略并 golden 钉死。
+> 3. gui_server/session.rs:438-442 对 SessionGet 先调一次 `host.timeline()` 但 `let _ =` 丢弃结果(S7 wave A 遗留),随后 `host.query()` 内部再算一次(:766)——带分页参数的 SessionGet 实际执行 timeline 两次,本波随切换一并清理。
+> 4. desktop 依赖红线:生产 pawork 依赖恰为 {pawork-client}(apps/desktop/src/platform.rs:146/157 断言 + gui-design.md:143 deny list);projection 类型必须经 pawork-client re-export 流入,禁止给 desktop 新增 pawork-protocol 直依赖。
+> 5. wire 面:TimelinePage 经 `AppResponse::Data["timeline_page"]` raw Value 内嵌(gui_host.rs:746-767),无 ServerFrame 级字节 golden;本波**不改承载方式**(raw Value 保持),故 26 条帧 golden 与 schemas/ 零 diff 约束不变。storage `projection_snapshot`(crates/storage/src/session/projection.rs)是另一套词汇,本波不触碰。
+> 6. 测试缺口(改前必须先有 golden):① 同一事件序列 host/desktop 两端对拍 golden 不存在;② fork 分支切换后按 lineage 取数的投影语义两端均无测试;③ resume 三态 × timeline 基线切换组合 host 侧无对拍。既有防线:desktop 去重/交错/三态测试 8 条(projection.rs:1581-2321)随迁 protocol;probe 9 场景不消费 timeline,只跑不改。
+> 7. 影响面:crates/app/src/lib.rs:84 re-export 随迁;client stash/FrameWant(lib.rs:745-852)属帧路由不并入,并入的是 resume disposition→基线切换语义;controller.rs:844-849 保持唯一 timeline_page 解码点。
+
+> 波 C 收口记录(2026-08-20,单实现 + 一路审查):
+> 1. 落地:protocol 新增 `projection/`(805 行:`project_event` 自 gui_host 逐字平移、`TimelineProjection` 合并核 seen/有序插入/双键 tool 锚、resume 基线语义);host 删本地映射改 re-export 保名 + 删 gui_server/session.rs 丢弃结果的重复 `timeline()` 预调用(测试钉死恰好执行一次);client 仅追加 re-export(45-48);desktop projection.rs 2346→1542 行,时间线语义全迁出、只剩渲染适配(审查逐段核实无 reducer 残留)。
+> 2. golden:新增 projection_golden(三种子:分页交错/Lagged→Snapshot/fork 切换)+ projection_semantics(desktop 8 条语义随迁 + live/history 文案对拍)+ app timeline_projection_host 对拍(真 SessionStore→timeline()→fixture);对拍口径 sequence/kind/timestamp/run_id,event_id 分属 wire/持久化标识域不比对。
+> 3. 行为修正(CR08-08 根治本体,已钉死):live `RunChanged(Created)` 文案统一 `run started`;run/diagnostic 条目由 append 改 partition_point 有序插入(乱序到达不再错位)。
+> 4. 验证:五包定向 cargo test 全绿(protocol 133 / app 118 / cli 74 / client 43 含 probe 9/9 / desktop 27 含依赖红线);26 帧 golden、events_golden、schemas/、probe fixtures 零 diff;protocol 零新增依赖边;真实冒烟 `pawork-desktop --instance r3c --probe-smoke` 通过(glm-4.7 首轮 completed→切 deepseek-v4-flash 次轮 switched,assistant_turns=3,cancelled=1,persisted=14,disconnect_survive=running,EXIT=0)。
+> 5. 偏差与登记:① desktop projection.rs 1542 行未达 <800 目标——剩余为 UI 态/渲染分组/渲染测试,审查确认无 reducer 语义残留,继续压行需拆文件或丢测试,超出本波写入集,行数目标偏差登记在此;② 既有怪癖原样保留(与旧实现字节一致,非本波引入):ToolCompleted 历史臂无 seen 前置检查、assistant delta 跨臂 message_id 不对称可拆条——留 R4/R6 语境再议;③ probe snapshot-reconnect 既有 flake(ROADMAP §4 已登记)首跑复现一次,重跑与全量均 9/9。
+
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
 | A | Registry 设计 + protocol 内落地(表驱动或 const fn;含 17+9 条帧 golden 复核);GUI 通道切换到 registry 派生(gui_host dispatch 改造第一步:宣告/授权走 registry,巨 match 拆解留给 R4) | crates/protocol、crates/app(gui_host + gui_server 授权面)、crates/cli/src/gui.rs(仅此文件:GUI 宣告装配点,2026-08-20 实态修正) | 串行(契约面) |
@@ -47,6 +63,6 @@
 ## 5. 退出标准
 
 - [x] 三通道宣告/授权同源于 registry;headless 手写表与 ACP 命令准入白名单删除;未登记命令 fail-closed 有测试(2026-08-20 波 B 收口;gui_host 巨 match 分发仍留 R4)
-- [ ] 投影 reducer 单一实现 + golden;desktop projection.rs 只剩渲染适配(目标 <800 行)
+- [x] 投影 reducer 单一实现 + golden;desktop projection.rs 只剩渲染适配(目标 <800 行)(2026-08-20 波 C 收口;reducer 单源 + 三种子 golden + 两端对拍达成,行数 1542 偏差见波 C 收口记录 ⑤)
 - [ ] OnFailure 有决议并落地;S13-F16 三处收窄注释消失
 - [ ] 帧 golden 零 diff;冒烟(GUI/headless/ACP)通过;v3_plan §3 更新

@@ -9,7 +9,7 @@ use pawork_domain::{ActorId, ConnectionId, GuiClientId};
 use pawork_protocol::{
     compute_resume_disposition, decode_client_frame_checked, encode_server_frame,
     validate_server_frame_api_version, ActorIdentity, ApiVersion, AppCommandEnvelope,
-    AppQuery, AppQueryEnvelope, AppResponseEnvelope, ClientFrame,
+    AppQueryEnvelope, AppResponseEnvelope, ClientFrame,
     CommandSource, GlobalSequence, GuiCapability, HandshakeRequest, HandshakeResponse,
     HandshakeSession, ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext,
     ResumeDisposition, ResumeRequest, ResumeResponse, ServerFrame,
@@ -429,19 +429,8 @@ async fn handle_frame(
                 })]);
             }
             let stamped = host_stamp_query(envelope, client_id);
-            match &stamped.query {
-                AppQuery::SessionGet {
-                    session_id,
-                    timeline_after_sequence,
-                    timeline_limit,
-                } => {
-                    let _ = inner
-                        .host
-                        .timeline(session_id, *timeline_after_sequence, *timeline_limit)
-                        .await;
-                }
-                _ => {}
-            }
+            // SessionGet 的 timeline 分页由 host.query() 内部执行（S7 wave A
+            // 曾在此预调用一次并丢弃结果，导致带分页参数的查询执行两遍）。
             match inner.host.query(&stamped).await {
                 Ok(response) => FrameOutcome::Reply(vec![ServerFrame::Response(
                     AppResponseEnvelope {

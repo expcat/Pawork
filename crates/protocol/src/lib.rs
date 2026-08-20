@@ -12,6 +12,7 @@
 //! - [`handshake`]：版本协商、握手服务端逻辑与信封版本校验；
 //! - [`resume`]：重连 disposition 计算；
 //! - [`snapshot`]：Snapshot 结构校验；
+//! - [`projection`]：Timeline 投影 reducer（历史 / live 双臂同源）；
 //! - [`error`]：线上结构化错误的构造与 IncompatibleVersion 产生路径；
 //! - [`headless`]：Headless JSON（NDJSON）帧、翻译与 stdio 循环；
 //! - [`adapter`]：外部 Agent Client 适配契约（feature `adapter`）；
@@ -36,6 +37,7 @@ pub mod codec;
 pub mod error;
 pub mod handshake;
 pub mod headless;
+pub mod projection;
 pub mod resume;
 pub mod snapshot;
 #[cfg(feature = "typegen")]

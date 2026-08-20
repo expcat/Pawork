@@ -42,10 +42,12 @@ pub use pawork_protocol::ResumeDisposition;
 
 /// Desktop 等上层 crate 的唯一业务依赖面：协议类型与本机传输。
 pub use pawork_protocol::client_auth::TOKEN_SCHEME;
+pub use pawork_protocol::projection;
 pub use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope,
     AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ClientAuthentication,
-    CommandSource, EventStream, GlobalSequence, GuiCapability, Snapshot, TimelinePage,
+    CommandSource, EventStream, GlobalSequence, GuiCapability, RunState, Snapshot, TimelineItem,
+    TimelineItemKind, TimelinePage,
 };
 pub use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 

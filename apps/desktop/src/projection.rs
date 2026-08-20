@@ -1,19 +1,22 @@
-//! 纯 Rust 状态机投影：把 pawork-client 的 Snapshot / TimelinePage / AppEvent
+//! Desktop 渲染适配投影：把 pawork-client 的 Snapshot / TimelinePage / AppEvent
 //! 投影为 Desktop UI 可直接渲染的状态。
 //!
-//! 本模块不依赖 gpui / tokio / OS API（gui-design 四层约束）。
-//! 时间线去重键：live 事件的 stream_sequence 与 TimelinePage item 的 sequence
-//! 同为 session 事件 sequence（gui_host publish 把 AgentEvent sequence 写入
-//! stream_sequence），因此按 sequence 去重即可覆盖「分页期间 live 事件先到」
-//! 的重叠（gui-design §4.1 第 3 条）。
+//! 本模块不依赖 gpui / tokio / OS API（gui-design 四层约束）。时间线语义
+//! （去重 / 有序插入 / assistant 合并 / tool 双键锚点 / resume 基线）委托
+//! pawork-protocol::projection 的单一 reducer（R3 波 C，CR08-08 根治）；
+//! 本文件只保留 UI 态（连接 / session 列表 / 审批卡 / 模型 / run 跟踪）与
+//! 渲染分组。
 
 use std::collections::BTreeSet;
 
 use pawork_client::{
-    AppEvent, AppEventEnvelope, EventStream, ResumeDisposition, ResumeOutcome, Snapshot,
-    TimelinePage,
+    AppEvent, AppEventEnvelope, EventStream, ResumeDisposition, ResumeOutcome, RunState, Snapshot,
+    TimelineItemKind, TimelinePage,
 };
+use pawork_client::projection::TimelineProjection;
 use serde_json::Value;
+
+pub use pawork_client::projection::{TimelineEntry, TimelineEntryKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -223,24 +226,6 @@ pub struct TaskRailDateGroup {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TimelineEntryKind {
-    UserMessage { text: String },
-    AssistantMessage { text: String },
-    ToolCall { name: String, status: String, detail: Option<String> },
-    RunState(String),
-    Error(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TimelineEntry {
-    pub sequence: u64,
-    pub event_id: String,
-    pub kind: TimelineEntryKind,
-    pub timestamp: String,
-    pub run_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingApproval {
     pub session_id: Option<String>,
     pub run_id: String,
@@ -265,47 +250,6 @@ pub struct ActiveRun {
     pub started_at_ms: u64,
 }
 
-/// Assistant 流式合并锚点：同一 run + message 的 delta 追加到同一条目。
-/// 用 event_id / sequence 回查，不存会因中间插入而失效的 index。
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct AssistantAnchor {
-    run_id: Option<String>,
-    message_id: Option<String>,
-    event_id: String,
-    sequence: u64,
-}
-
-/// Tool 条目锚点：ToolCompleted/ToolOutput 按 run + tool_call_id（live）或
-/// run + tool_name（分页历史，TimelineItem 不携带 tool_call_id）回填。
-/// 用 event_id / sequence 回查，不存会因中间插入而失效的 index。
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ToolAnchor {
-    run_id: Option<String>,
-    tool_call_id: Option<String>,
-    name: Option<String>,
-    event_id: String,
-    sequence: u64,
-}
-
-struct TimelineIdentity {
-    event_id: String,
-    sequence: u64,
-}
-
-/// 从 TimelinePage item 解出的字段值（TimelineItem 类型未从 pawork-client
-/// re-export，这里在调用点解构为纯值，保持业务依赖只有 pawork-client）。
-struct HistoryItem<'a> {
-    sequence: u64,
-    event_id: &'a str,
-    kind: &'a str,
-    run_id: Option<&'a str>,
-    text: Option<&'a str>,
-    tool_name: Option<&'a str>,
-    status: Option<&'a str>,
-    detail: Option<&'a str>,
-    timestamp: &'a str,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DesktopProjection {
     pub connection: ConnectionState,
@@ -314,7 +258,8 @@ pub struct DesktopProjection {
     pub workspace_id: Option<String>,
     pub active_session_id: Option<String>,
     pub active_run_id: Option<String>,
-    pub timeline: Vec<TimelineEntry>,
+    /// 时间线语义委托 protocol reducer；Deref 到 `[TimelineEntry]` 供 UI 直接迭代。
+    pub timeline: TimelineProjection,
     pub pending_approval: Option<PendingApproval>,
     pub models: Vec<ModelEntry>,
     pub selected_model: Option<(String, String)>,
@@ -324,10 +269,6 @@ pub struct DesktopProjection {
     pub resume: ResumeState,
     pub terminal: TerminalState,
     snapshot_pendings: Vec<PendingApproval>,
-    /// 已消费的 session sequence（live 与分页共用的去重集）。
-    seen: BTreeSet<u64>,
-    assistant_anchor: Option<AssistantAnchor>,
-    tool_anchors: Vec<ToolAnchor>,
 }
 
 impl DesktopProjection {
@@ -385,6 +326,9 @@ impl DesktopProjection {
         fallback_snapshot: &Snapshot,
     ) -> ResumeApply {
         self.resume = ResumeState::from_disposition(&outcome.disposition);
+        // 时间线基线三态语义（Replay 保留 / SnapshotRequired 清 / UpToDate
+        // 不动）在 protocol reducer 内单一实现。
+        self.timeline.apply_resume_disposition(&outcome.disposition);
         match &outcome.disposition {
             ResumeDisposition::Replay { .. } => {
                 self.merge_snapshot(fallback_snapshot);
@@ -441,10 +385,7 @@ impl DesktopProjection {
         self.active_runs.clear();
         self.active_run_id = None;
         self.active_run_started_at_ms = None;
-        self.timeline.clear();
-        self.seen.clear();
-        self.assistant_anchor = None;
-        self.tool_anchors.clear();
+        self.timeline.reset_baseline();
     }
 
     pub fn apply_terminal_output(&mut self, terminal_session_id: &str, delta: &str) -> bool {
@@ -465,10 +406,7 @@ impl DesktopProjection {
         self.active_run_id = None;
         self.active_run_started_at_ms = None;
         self.pending_approval = None;
-        self.timeline.clear();
-        self.seen.clear();
-        self.assistant_anchor = None;
-        self.tool_anchors.clear();
+        self.timeline.reset_baseline();
         self.restore_active_run_from_snapshot();
         self.pending_approval = self.pending_for_active_session();
     }
@@ -501,17 +439,27 @@ impl DesktopProjection {
     /// 合并一页历史时间线（按 sequence 去重，保持 sequence 升序）。
     pub fn apply_timeline_page(&mut self, page: &TimelinePage) {
         for item in &page.items {
-            self.merge_history_item(HistoryItem {
-                sequence: item.sequence,
-                event_id: item.event_id.as_str(),
-                kind: &enum_name(serde_json::to_value(&item.kind).ok()),
-                run_id: item.run_id.as_deref(),
-                text: item.text.as_deref(),
-                tool_name: item.tool_name.as_deref(),
-                status: item.status.as_deref(),
-                detail: item.detail.as_deref(),
-                timestamp: item.timestamp.as_str(),
-            });
+            // 条目语义（去重 / committed 替换 / tool 双键回填）走 protocol
+            // reducer；这里只保留历史条目携带的 UI 态副作用。
+            self.timeline.apply_item(item);
+            match &item.kind {
+                TimelineItemKind::ToolCompleted => {
+                    let status = item.status.as_deref().unwrap_or("succeeded");
+                    if matches!(status, "succeeded" | "failed" | "cancelled") {
+                        self.pending_approval = None;
+                    }
+                }
+                TimelineItemKind::RunCompleted
+                | TimelineItemKind::RunCancelled
+                | TimelineItemKind::RunFailed => {
+                    self.clear_pending_for_run(item.run_id.as_deref());
+                }
+                TimelineItemKind::ApprovalResponded => {
+                    self.pending_approval = None;
+                    self.snapshot_pendings.clear();
+                }
+                _ => {}
+            }
         }
     }
 
@@ -531,129 +479,27 @@ impl DesktopProjection {
             EventStream::Session(session_id) if session_id.as_str() == active => {}
             _ => return false,
         }
-        let sequence = envelope.stream_sequence;
-        let event_id = envelope.event_id.as_str().to_string();
-        let timestamp = envelope.timestamp.0.to_string();
+        // 时间线语义（去重 / 条目 / 锚点）委托 protocol reducer。
+        let timeline_changed = self.timeline.apply_event(envelope);
+        // UI 态：run 跟踪、审批卡、模型切换（与时间线条目无交集）。
         match &envelope.payload {
             AppEvent::RunChanged { run_id, state } => {
-                let state_name = enum_name(serde_json::to_value(state).ok());
                 let run_id = Some(run_id.as_str().to_string());
-                if matches!(
-                    state_name.as_str(),
-                    "completed" | "cancelled" | "failed" | "interrupted"
-                ) {
+                if run_state_is_terminal(state) {
                     if self.active_run_id.as_deref() == run_id.as_deref() {
                         self.active_run_id = None;
                         self.active_run_started_at_ms = None;
                     }
+                    self.clear_pending_for_run(run_id.as_deref());
                 } else {
-                    self.active_run_id = run_id.clone();
+                    self.active_run_id = run_id;
                     if self.active_run_started_at_ms.is_none() {
-                        self.active_run_started_at_ms = timestamp.parse().ok();
+                        self.active_run_started_at_ms = Some(envelope.timestamp.as_unix_millis());
                     }
                 }
-                if matches!(
-                    state_name.as_str(),
-                    "completed" | "cancelled" | "failed" | "interrupted"
-                ) {
-                    self.clear_pending_for_run(run_id.as_deref());
-                }
-                if self.seen.insert(sequence) {
-                    self.push_entry(TimelineEntry {
-                        sequence,
-                        event_id,
-                        kind: TimelineEntryKind::RunState(format!("run {state_name}")),
-                        timestamp,
-                        run_id,
-                    });
-                    return true;
-                }
             }
-            AppEvent::AssistantDelta { run_id, message_id, delta } => {
-                if !self.seen.insert(sequence) {
-                    return false;
-                }
-                return self.append_assistant_delta(
-                    sequence,
-                    event_id,
-                    timestamp,
-                    run_id.as_str(),
-                    Some(message_id.as_str()),
-                    delta,
-                );
-            }
-            AppEvent::ToolStarted { run_id, tool_call_id, name } => {
-                if !self.seen.insert(sequence) {
-                    return false;
-                }
-                let run = Some(run_id.as_str().to_string());
-                self.insert_entry(TimelineEntry {
-                    sequence,
-                    event_id: event_id.clone(),
-                    kind: TimelineEntryKind::ToolCall {
-                        name: name.clone(),
-                        status: "running".into(),
-                        detail: None,
-                    },
-                    timestamp,
-                    run_id: run.clone(),
-                });
-                if let Some(anchor) = self.anchor_after_insert(&event_id, sequence) {
-                    self.tool_anchors.push(ToolAnchor {
-                        run_id: run,
-                        tool_call_id: Some(tool_call_id.as_str().to_string()),
-                        name: Some(name.clone()),
-                        event_id: anchor.event_id,
-                        sequence: anchor.sequence,
-                    });
-                }
-                return true;
-            }
-            AppEvent::ToolOutput {
-                run_id,
-                tool_call_id,
-                delta,
-                ..
-            } => {
-                if self.update_tool_entry(
-                    Some(run_id.as_str()),
-                    Some(tool_call_id.as_str()),
-                    None,
-                    None,
-                    Some(delta),
-                ) {
-                    self.seen.insert(sequence);
-                    return true;
-                }
-            }
-            AppEvent::ToolCompleted { run_id, tool_call_id, success } => {
-                let status = if *success { "succeeded" } else { "failed" };
-                let run = run_id.as_str();
-                self.clear_pending_for_tool(run, tool_call_id.as_str());
-                if self.update_tool_entry(
-                    Some(run),
-                    Some(tool_call_id.as_str()),
-                    None,
-                    Some(status),
-                    None,
-                ) {
-                    self.seen.insert(sequence);
-                    return true;
-                }
-                if self.seen.insert(sequence) {
-                    self.push_entry(TimelineEntry {
-                        sequence,
-                        event_id,
-                        kind: TimelineEntryKind::ToolCall {
-                            name: tool_call_id.as_str().to_string(),
-                            status: status.into(),
-                            detail: None,
-                        },
-                        timestamp,
-                        run_id: Some(run.to_string()),
-                    });
-                    return true;
-                }
+            AppEvent::ToolCompleted { run_id, tool_call_id, .. } => {
+                self.clear_pending_for_tool(run_id.as_str(), tool_call_id.as_str());
             }
             AppEvent::ToolApprovalRequired {
                 run_id,
@@ -682,377 +528,10 @@ impl DesktopProjection {
                         return true;
                     }
                 }
-                if code == "sandbox.fallback" && self.seen.insert(sequence) {
-                    self.push_entry(TimelineEntry {
-                        sequence,
-                        event_id,
-                        kind: TimelineEntryKind::RunState(sandbox_fallback_label(message)),
-                        timestamp,
-                        run_id: None,
-                    });
-                    return true;
-                }
             }
             _ => {}
         }
-        false
-    }
-
-    /// 追加 assistant delta：命中锚点则合并，否则新开条目。
-    fn append_assistant_delta(
-        &mut self,
-        sequence: u64,
-        event_id: String,
-        timestamp: String,
-        run_id: &str,
-        message_id: Option<&str>,
-        delta: &str,
-    ) -> bool {
-        let run = Some(run_id.to_string());
-        let message = message_id.map(str::to_string);
-        if let Some(anchor) = &self.assistant_anchor {
-            if anchor.run_id == run && anchor.message_id == message {
-                if let Some(index) = self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
-                {
-                    if let Some(TimelineEntryKind::AssistantMessage { text }) =
-                        self.timeline.get_mut(index).map(|entry| &mut entry.kind)
-                    {
-                        text.push_str(delta);
-                        return true;
-                    }
-                }
-            }
-        }
-        self.insert_entry(TimelineEntry {
-            sequence,
-            event_id: event_id.clone(),
-            kind: TimelineEntryKind::AssistantMessage {
-                text: delta.to_string(),
-            },
-            timestamp,
-            run_id: run.clone(),
-        });
-        if let Some(identity) = self.anchor_after_insert(&event_id, sequence) {
-            self.assistant_anchor = Some(AssistantAnchor {
-                run_id: run,
-                message_id: message,
-                event_id: identity.event_id,
-                sequence: identity.sequence,
-            });
-        }
-        true
-    }
-
-    /// 合并单条历史条目。历史中的 assistant 形状是「delta 序列 + 末尾 committed
-    /// 消息」：delta 逐段合并，committed 到达时以提交文本替换累积文本，保证
-    /// 历史回放不双份渲染。
-    fn merge_history_item(&mut self, item: HistoryItem<'_>) {
-        match item.kind {
-            "user_message" => {
-                if self.seen.insert(item.sequence) {
-                    self.insert_entry(TimelineEntry {
-                        sequence: item.sequence,
-                        event_id: item.event_id.to_string(),
-                        kind: TimelineEntryKind::UserMessage {
-                            text: item.text.unwrap_or_default().to_string(),
-                        },
-                        timestamp: item.timestamp.to_string(),
-                        run_id: item.run_id.map(str::to_string),
-                    });
-                }
-            }
-            "assistant_delta" => {
-                if self.seen.insert(item.sequence) {
-                    self.append_assistant_delta(
-                        item.sequence,
-                        item.event_id.to_string(),
-                        item.timestamp.to_string(),
-                        item.run_id.unwrap_or_default(),
-                        None,
-                        item.text.unwrap_or_default(),
-                    );
-                }
-            }
-            "assistant_message" => {
-                if !self.seen.insert(item.sequence) {
-                    return;
-                }
-                let run = item.run_id.map(str::to_string);
-                let committed = item.text.unwrap_or_default().to_string();
-                if let Some(anchor) = &self.assistant_anchor {
-                    if anchor.run_id == run && anchor.message_id.is_none() {
-                        if let Some(index) =
-                            self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
-                        {
-                            if matches!(
-                                self.timeline.get(index).map(|entry| &entry.kind),
-                                Some(TimelineEntryKind::AssistantMessage { .. })
-                            ) {
-                                if let Some(entry) = self.timeline.get_mut(index) {
-                                    entry.sequence = item.sequence;
-                                    entry.event_id = item.event_id.to_string();
-                                    entry.timestamp = item.timestamp.to_string();
-                                    entry.kind =
-                                        TimelineEntryKind::AssistantMessage { text: committed };
-                                }
-                                if let Some(anchor) = &mut self.assistant_anchor {
-                                    anchor.event_id = item.event_id.to_string();
-                                    anchor.sequence = item.sequence;
-                                }
-                                return;
-                            }
-                        }
-                    }
-                }
-                self.insert_entry(TimelineEntry {
-                    sequence: item.sequence,
-                    event_id: item.event_id.to_string(),
-                    kind: TimelineEntryKind::AssistantMessage { text: committed },
-                    timestamp: item.timestamp.to_string(),
-                    run_id: run.clone(),
-                });
-                if let Some(identity) =
-                    self.anchor_after_insert(item.event_id, item.sequence)
-                {
-                    self.assistant_anchor = Some(AssistantAnchor {
-                        run_id: run,
-                        message_id: None,
-                        event_id: identity.event_id,
-                        sequence: identity.sequence,
-                    });
-                }
-            }
-            "tool_started" => {
-                if !self.seen.insert(item.sequence) {
-                    return;
-                }
-                let run = item.run_id.map(str::to_string);
-                let name = item.tool_name.unwrap_or("tool").to_string();
-                self.insert_entry(TimelineEntry {
-                    sequence: item.sequence,
-                    event_id: item.event_id.to_string(),
-                    kind: TimelineEntryKind::ToolCall {
-                        name: name.clone(),
-                        status: item.status.unwrap_or("running").to_string(),
-                        detail: None,
-                    },
-                    timestamp: item.timestamp.to_string(),
-                    run_id: run.clone(),
-                });
-                if let Some(identity) =
-                    self.anchor_after_insert(item.event_id, item.sequence)
-                {
-                    self.tool_anchors.push(ToolAnchor {
-                        run_id: run,
-                        tool_call_id: None,
-                        name: Some(name),
-                        event_id: identity.event_id,
-                        sequence: identity.sequence,
-                    });
-                }
-            }
-            "tool_output" => {
-                if self.seen.insert(item.sequence) {
-                    self.update_tool_entry(
-                        item.run_id,
-                        None,
-                        item.tool_name,
-                        None,
-                        Some(item.text.unwrap_or_default()),
-                    );
-                }
-            }
-            "tool_completed" => {
-                let status = item.status.unwrap_or("succeeded");
-                if matches!(status, "succeeded" | "failed" | "cancelled") {
-                    self.pending_approval = None;
-                }
-                if self.update_tool_entry(item.run_id, None, item.tool_name, Some(status), None) {
-                    self.seen.insert(item.sequence);
-                } else if self.seen.insert(item.sequence) {
-                    let run = item.run_id.map(str::to_string);
-                    let name = item.tool_name.unwrap_or("tool").to_string();
-                    self.insert_entry(TimelineEntry {
-                        sequence: item.sequence,
-                        event_id: item.event_id.to_string(),
-                        kind: TimelineEntryKind::ToolCall {
-                            name: name.clone(),
-                            status: status.to_string(),
-                            detail: item.detail.map(str::to_string),
-                        },
-                        timestamp: item.timestamp.to_string(),
-                        run_id: run.clone(),
-                    });
-                    if let Some(identity) =
-                        self.anchor_after_insert(item.event_id, item.sequence)
-                    {
-                        self.tool_anchors.push(ToolAnchor {
-                            run_id: run,
-                            tool_call_id: None,
-                            name: Some(name),
-                            event_id: identity.event_id,
-                            sequence: identity.sequence,
-                        });
-                    }
-                }
-            }
-            "run_started" | "run_completed" | "run_cancelled" => {
-                if matches!(item.kind, "run_completed" | "run_cancelled") {
-                    self.clear_pending_for_run(item.run_id);
-                }
-                if self.seen.insert(item.sequence) {
-                    let state = item.kind.trim_start_matches("run_");
-                    self.push_entry(TimelineEntry {
-                        sequence: item.sequence,
-                        event_id: item.event_id.to_string(),
-                        kind: TimelineEntryKind::RunState(format!("run {state}")),
-                        timestamp: item.timestamp.to_string(),
-                        run_id: item.run_id.map(str::to_string),
-                    });
-                }
-            }
-            "run_failed" => {
-                self.clear_pending_for_run(item.run_id);
-                if self.seen.insert(item.sequence) {
-                    let reason = item.detail.unwrap_or_default();
-                    self.push_entry(TimelineEntry {
-                        sequence: item.sequence,
-                        event_id: item.event_id.to_string(),
-                        kind: TimelineEntryKind::RunState(format!("run failed · {reason}")),
-                        timestamp: item.timestamp.to_string(),
-                        run_id: item.run_id.map(str::to_string),
-                    });
-                }
-            }
-            "approval_requested" => {
-                if self.seen.insert(item.sequence) {
-                    let tool = item.tool_name.unwrap_or("tool");
-                    let reason = item.text.or(item.detail).unwrap_or_default();
-                    self.insert_entry(TimelineEntry {
-                        sequence: item.sequence,
-                        event_id: item.event_id.to_string(),
-                        kind: TimelineEntryKind::RunState(if reason.is_empty() {
-                            format!("approval requested · {tool}")
-                        } else {
-                            format!("approval requested · {tool} · {reason}")
-                        }),
-                        timestamp: item.timestamp.to_string(),
-                        run_id: item.run_id.map(str::to_string),
-                    });
-                }
-            }
-            "approval_responded" => {
-                self.pending_approval = None;
-                self.snapshot_pendings.clear();
-                if self.seen.insert(item.sequence) {
-                    let decision = item.status.or(item.detail).or(item.text).unwrap_or("responded");
-                    self.insert_entry(TimelineEntry {
-                        sequence: item.sequence,
-                        event_id: item.event_id.to_string(),
-                        kind: TimelineEntryKind::RunState(format!("approval {decision}")),
-                        timestamp: item.timestamp.to_string(),
-                        run_id: item.run_id.map(str::to_string),
-                    });
-                }
-            }
-            "diagnostic" => {
-                if self.seen.insert(item.sequence) {
-                    self.push_entry(TimelineEntry {
-                        sequence: item.sequence,
-                        event_id: item.event_id.to_string(),
-                        kind: TimelineEntryKind::Error(
-                            item.detail.unwrap_or_default().to_string(),
-                        ),
-                        timestamp: item.timestamp.to_string(),
-                        run_id: item.run_id.map(str::to_string),
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn push_entry(&mut self, entry: TimelineEntry) {
-        self.timeline.push(entry);
-    }
-
-    /// 按 sequence 有序插入（页数据可能晚于已到达的 live 事件）。
-    fn insert_entry(&mut self, entry: TimelineEntry) {
-        let position = self
-            .timeline
-            .partition_point(|existing| existing.sequence < entry.sequence);
-        self.timeline.insert(position, entry);
-    }
-
-    fn entry_index_by_identity(&self, event_id: &str, sequence: u64) -> Option<usize> {
-        self.timeline
-            .iter()
-            .position(|entry| entry.event_id == event_id)
-            .or_else(|| {
-                self.timeline
-                    .iter()
-                    .position(|entry| entry.sequence == sequence)
-            })
-    }
-
-    /// `insert_entry` 之后按 identity 回查，避免使用插入时的瞬时 index。
-    fn anchor_after_insert(&self, event_id: &str, sequence: u64) -> Option<TimelineIdentity> {
-        let index = self.entry_index_by_identity(event_id, sequence)?;
-        let entry = self.timeline.get(index)?;
-        Some(TimelineIdentity {
-            event_id: entry.event_id.clone(),
-            sequence: entry.sequence,
-        })
-    }
-
-    /// 按 run + tool_call_id（live）或 run + tool_name（历史）回填 tool 条目。
-    fn update_tool_entry(
-        &mut self,
-        run_id: Option<&str>,
-        tool_call_id: Option<&str>,
-        name: Option<&str>,
-        new_status: Option<&str>,
-        detail_delta: Option<&str>,
-    ) -> bool {
-        let run = run_id.map(str::to_string);
-        let found = self.tool_anchors.iter().rev().find_map(|anchor| {
-            if anchor.run_id != run {
-                return None;
-            }
-            if let Some(expected) = tool_call_id {
-                if anchor.tool_call_id.as_deref() != Some(expected) {
-                    return None;
-                }
-            }
-            if let Some(expected) = name {
-                if anchor.name.as_deref() != Some(expected) {
-                    return None;
-                }
-            }
-            Some((anchor.event_id.clone(), anchor.sequence))
-        });
-        let Some((event_id, sequence)) = found else {
-            return false;
-        };
-        let Some(index) = self.entry_index_by_identity(&event_id, sequence) else {
-            return false;
-        };
-        if let Some(TimelineEntryKind::ToolCall { status, detail, .. }) =
-            self.timeline.get_mut(index).map(|entry| &mut entry.kind)
-        {
-            if let Some(next) = new_status {
-                status.clear();
-                status.push_str(next);
-            }
-            if let Some(delta) = detail_delta {
-                if !delta.is_empty() {
-                    let text = detail.take().unwrap_or_default();
-                    detail.replace(text + delta);
-                }
-            }
-            return true;
-        }
-        false
+        timeline_changed
     }
 
     pub fn set_models(&mut self, models: Vec<ModelEntry>) {
@@ -1408,17 +887,13 @@ fn extract_tool_name(reason: &str) -> String {
         .to_string()
 }
 
-fn sandbox_fallback_label(message: &str) -> String {
-    if let Ok(value) = serde_json::from_str::<Value>(message) {
-        if let Some(text) = value.get("message").and_then(Value::as_str) {
-            return text.to_string();
-        }
-    }
-    if message.is_empty() {
-        "沙箱回退：隔离已降级".into()
-    } else {
-        message.to_string()
-    }
+/// run 终态判定（UI：清 active run 与审批卡）。时间线文案统一在 protocol
+/// reducer 内（run_state_label）。
+fn run_state_is_terminal(state: &RunState) -> bool {
+    matches!(
+        state,
+        RunState::Completed | RunState::Cancelled | RunState::Failed | RunState::Interrupted
+    )
 }
 
 fn parse_model_switch_message(message: &str) -> Option<(String, String)> {
@@ -1570,85 +1045,11 @@ mod tests {
         assert_eq!(
             texts,
             vec![
-                "run:run created".to_string(),
+                "run:run started".to_string(),
                 "assistant:Hello world".to_string(),
                 "run:run completed".to_string()
             ]
         );
-    }
-
-    #[test]
-    fn assistant_deltas_merge_until_message_or_run_changes() {
-        let mut projection = DesktopProjection::default();
-        projection.select_session("s-1");
-
-        projection.apply_event(&assistant_delta(1, "m-1", "a"));
-        projection.apply_event(&assistant_delta(2, "m-1", "b"));
-        projection.apply_event(&assistant_delta(3, "m-2", "c"));
-        assert_eq!(projection.timeline.len(), 2);
-        let texts: Vec<&str> = projection
-            .timeline
-            .iter()
-            .map(|entry| match &entry.kind {
-                TimelineEntryKind::AssistantMessage { text } => text.as_str(),
-                _ => "other",
-            })
-            .collect();
-        assert_eq!(texts, vec!["ab", "c"]);
-    }
-
-    #[test]
-    fn timeline_pages_dedup_by_sequence_and_merge_committed_text() {
-        let mut projection = DesktopProjection::default();
-        projection.select_session("s-1");
-
-        let first = page(
-            vec![
-                history_item(1, "user_message", json!({ "text": "hi" })),
-                history_item(2, "assistant_delta", json!({ "text": "He" })),
-                history_item(3, "assistant_delta", json!({ "text": "llo" })),
-                history_item(4, "assistant_message", json!({ "text": "Hello" })),
-            ],
-            false,
-        );
-        projection.apply_timeline_page(&first);
-        // 重放同一页：sequence 去重，条目数不变。
-        projection.apply_timeline_page(&first);
-        assert_eq!(projection.timeline.len(), 2);
-        assert!(matches!(
-            &projection.timeline[1].kind,
-            TimelineEntryKind::AssistantMessage { text } if text == "Hello"
-        ));
-        // committed 替换后条目携带 committed 的 sequence。
-        assert_eq!(projection.timeline[1].sequence, 4);
-
-        let second = page(
-            vec![
-                history_item(3, "assistant_delta", json!({ "text": "llo" })),
-                history_item(
-                    5,
-                    "tool_started",
-                    json!({ "tool_name": "fs_read", "status": "running" }),
-                ),
-                history_item(6, "tool_output", json!({ "text": "42 bytes" })),
-                history_item(
-                    7,
-                    "tool_completed",
-                    json!({ "tool_name": "fs_read", "status": "succeeded" }),
-                ),
-            ],
-            true,
-        );
-        projection.apply_timeline_page(&second);
-        assert_eq!(projection.timeline.len(), 3);
-        assert!(matches!(
-            &projection.timeline[2].kind,
-            TimelineEntryKind::ToolCall { name, status, detail }
-                if name == "fs_read" && status == "succeeded" && detail.as_deref() == Some("42 bytes")
-        ));
-
-        // 页数据之外先到的 live 事件重放（同 sequence）不再重复。
-        assert!(!projection.apply_event(&assistant_delta(2, "m-1", "He")));
     }
 
     #[test]
@@ -1996,116 +1397,6 @@ mod tests {
         assert_eq!(projection.sessions[0].title, "Wrapped");
     }
 
-    #[test]
-    fn replay_continues_timeline_without_replacing_baseline() {
-        let snapshot = snapshot_with_sessions(vec![session_entry("s-1", "One", 20)]);
-        let mut projection = DesktopProjection::from_snapshot(&snapshot);
-        projection.select_session("s-1");
-        assert!(projection.apply_event(&assistant_delta(2, "m-1", "Hello")));
-        assert_eq!(projection.timeline.len(), 1);
-
-        let outcome = resume_outcome(
-            ResumeDisposition::Replay {
-                from_sequence: pawork_client::GlobalSequence(3),
-                through_sequence: pawork_client::GlobalSequence(4),
-            },
-            vec![
-                assistant_delta(3, "m-1", " "),
-                assistant_delta(4, "m-1", "world"),
-            ],
-            None,
-        );
-        let apply = projection.apply_resume_outcome(&outcome, &snapshot);
-        assert_eq!(apply, ResumeApply::Continued { timeline_changed: true });
-        assert!(!projection.resume.replaces_baseline());
-        assert_eq!(
-            projection.resume.label().as_deref(),
-            Some("Replay · 3–4")
-        );
-        assert_eq!(projection.timeline.len(), 1);
-        assert!(matches!(
-            &projection.timeline[0].kind,
-            TimelineEntryKind::AssistantMessage { text } if text == "Hello world"
-        ));
-        // 同 sequence 再来一遍不得双份。
-        assert!(!projection.apply_event(&assistant_delta(3, "m-1", " ")));
-    }
-
-    #[test]
-    fn snapshot_required_discards_stale_and_replaces_baseline() {
-        let first = snapshot_with_sessions(vec![session_entry("s-1", "One", 20)]);
-        let mut projection = DesktopProjection::from_snapshot(&first);
-        projection.select_session("s-1");
-        projection.apply_event(&assistant_delta(1, "m-1", "stale"));
-        projection.apply_event(&event(
-            2,
-            json!({
-                "type": "tool_approval_required",
-                "data": {
-                    "run_id": "r-old",
-                    "tool_call_id": "call-old",
-                    "reason": "write_file · old"
-                }
-            }),
-        ));
-        assert_eq!(projection.timeline.len(), 1);
-        assert!(projection.pending_approval.is_some());
-
-        let next = snapshot_with_runs_and_approvals(
-            vec![json!({
-                "run_id": "r-new",
-                "session_id": "s-1",
-                "started_at_ms": 9
-            })],
-            vec![],
-        );
-        let outcome = resume_outcome(
-            ResumeDisposition::SnapshotRequired {
-                earliest_available_sequence: pawork_client::GlobalSequence(8),
-            },
-            vec![],
-            None,
-        );
-        assert_eq!(
-            projection.apply_resume_outcome(&outcome, &next),
-            ResumeApply::ReplaceBaseline
-        );
-        assert!(projection.resume.replaces_baseline());
-        assert_eq!(projection.timeline.len(), 0);
-        assert_eq!(projection.pending_approval, None);
-        assert_eq!(projection.active_session_id.as_deref(), Some("s-1"));
-        assert_eq!(projection.active_run_id.as_deref(), Some("r-new"));
-        assert_eq!(
-            projection.resume.label().as_deref(),
-            Some("Snapshot required · from 8")
-        );
-    }
-
-    #[test]
-    fn up_to_date_does_not_flash_reload() {
-        let snapshot = snapshot_with_sessions(vec![session_entry("s-1", "One", 20)]);
-        let mut projection = DesktopProjection::from_snapshot(&snapshot);
-        projection.select_session("s-1");
-        projection.apply_event(&assistant_delta(1, "m-1", "keep"));
-        let outcome = resume_outcome(
-            ResumeDisposition::UpToDate {
-                current_sequence: pawork_client::GlobalSequence(1),
-            },
-            vec![],
-            Some(snapshot_with_sessions(vec![session_entry("s-other", "Other", 1)])),
-        );
-        assert_eq!(
-            projection.apply_resume_outcome(&outcome, &snapshot),
-            ResumeApply::Unchanged
-        );
-        assert_eq!(projection.timeline.len(), 1);
-        assert_eq!(projection.sessions[0].session_id, "s-1");
-        assert_eq!(
-            projection.resume.label().as_deref(),
-            Some("Up to date · 1")
-        );
-    }
-
     fn terminal_output(sequence: u64, terminal: &str, delta: &str) -> AppEventEnvelope {
         serde_json::from_value(json!({
             "api_version": { "major": 1, "minor": 1 },
@@ -2179,52 +1470,6 @@ mod tests {
     }
 
     #[test]
-    fn live_tool_survives_earlier_page_insert_without_duplicate() {
-        let mut projection = DesktopProjection::default();
-        projection.select_session("s-1");
-
-        assert!(projection.apply_event(&tool_started(10, "call-1", "fs_read")));
-        assert_eq!(projection.timeline.len(), 1);
-        assert!(matches!(
-            &projection.timeline[0].kind,
-            TimelineEntryKind::ToolCall { name, status, .. }
-                if name == "fs_read" && status == "running"
-        ));
-
-        projection.apply_timeline_page(&page(
-            vec![history_item(5, "user_message", json!({ "text": "hi" }))],
-            false,
-        ));
-        assert_eq!(projection.timeline.len(), 2);
-        assert!(matches!(
-            &projection.timeline[0].kind,
-            TimelineEntryKind::UserMessage { text } if text == "hi"
-        ));
-        assert!(matches!(
-            &projection.timeline[1].kind,
-            TimelineEntryKind::ToolCall { name, status, .. }
-                if name == "fs_read" && status == "running"
-        ));
-
-        assert!(projection.apply_event(&tool_completed(11, "call-1", true)));
-        let tools: Vec<(&str, &str)> = projection
-            .timeline
-            .iter()
-            .filter_map(|entry| match &entry.kind {
-                TimelineEntryKind::ToolCall { name, status, .. } => {
-                    Some((name.as_str(), status.as_str()))
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(tools, vec![("fs_read", "succeeded")]);
-        assert!(!projection.timeline.iter().any(|entry| matches!(
-            &entry.kind,
-            TimelineEntryKind::ToolCall { status, .. } if status == "running"
-        )));
-    }
-
-    #[test]
     fn live_tool_output_fills_running_entry() {
         let mut projection = DesktopProjection::default();
         projection.select_session("s-1");
@@ -2294,53 +1539,4 @@ mod tests {
         assert!(projection.pending_approval.is_none());
     }
 
-    #[test]
-    fn fifty_thousand_timeline_entries_iter_without_clone() {
-        let mut projection = DesktopProjection::default();
-        projection.timeline.reserve(50_000);
-        for sequence in 0..50_000u64 {
-            projection.timeline.push(TimelineEntry {
-                sequence,
-                event_id: format!("e{sequence}"),
-                kind: TimelineEntryKind::RunState("x".into()),
-                timestamp: "1".into(),
-                run_id: None,
-            });
-        }
-        let started = std::time::Instant::now();
-        let count = projection.timeline.iter().map(|entry| entry.sequence).count();
-        let elapsed = started.elapsed();
-        assert_eq!(count, 50_000);
-        assert!(
-            elapsed.as_millis() < 100,
-            "borrowed timeline iter should stay cheap, took {elapsed:?}"
-        );
-    }
-
-    #[test]
-    fn live_assistant_survives_earlier_page_insert_without_split() {
-        let mut projection = DesktopProjection::default();
-        projection.select_session("s-1");
-
-        assert!(projection.apply_event(&assistant_delta(10, "m-1", "Hello")));
-        projection.apply_timeline_page(&page(
-            vec![history_item(5, "user_message", json!({ "text": "hi" }))],
-            false,
-        ));
-        assert!(projection.apply_event(&assistant_delta(11, "m-1", " world")));
-
-        let assistants: Vec<&str> = projection
-            .timeline
-            .iter()
-            .filter_map(|entry| match &entry.kind {
-                TimelineEntryKind::AssistantMessage { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(assistants, vec!["Hello world"]);
-        assert!(matches!(
-            &projection.timeline[0].kind,
-            TimelineEntryKind::UserMessage { text } if text == "hi"
-        ));
-    }
 }

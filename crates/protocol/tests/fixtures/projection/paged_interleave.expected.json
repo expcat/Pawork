@@ -1,0 +1,10 @@
+{
+  "entries": [
+    {"sequence": 1, "event_id": "evt-1", "kind": {"user_message": {"text": "hi"}}, "timestamp": "1001", "run_id": "r-1"},
+    {"sequence": 4, "event_id": "evt-4", "kind": {"assistant_message": {"text": "Hello"}}, "timestamp": "1004", "run_id": "r-1"},
+    {"sequence": 5, "event_id": "evt-5", "kind": {"tool_call": {"name": "fs_read", "status": "succeeded", "detail": "42 bytes"}}, "timestamp": "1005", "run_id": "r-1"},
+    {"sequence": 8, "event_id": "app-8", "kind": {"run_state": "run started"}, "timestamp": "1008", "run_id": "r-1"},
+    {"sequence": 9, "event_id": "app-9", "kind": {"run_state": "run completed"}, "timestamp": "1009", "run_id": "r-1"}
+  ]
+}
+

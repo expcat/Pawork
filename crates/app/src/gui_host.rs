@@ -22,8 +22,8 @@ use crate::gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope,
     AppResponse, AppResponseEnvelope, CommandSource, DiagnosticLevel, EventSource, EventStream,
-    GlobalSequence, RunState, Snapshot, SnapshotSection, SnapshotSectionKind, TimelineItem,
-    TimelineItemKind, TimelinePage, WorkspaceRelativePath, API_VERSION,
+    GlobalSequence, RunState, Snapshot, SnapshotSection, SnapshotSectionKind, TimelinePage,
+    WorkspaceRelativePath, API_VERSION,
     DEFAULT_CONTROL_PLANE_TENANT,
 };
 use pawork_workspace::resolve_relative_path;
@@ -1384,158 +1384,9 @@ impl GuiHostAdapter {
         }
     }
 }
-
-/// 把持久化的 Agent 事件投影为 presentation-safe 的 Timeline 条目。
-pub fn project_timeline_item(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
-    let (kind, text, tool_name, status, detail) = match &envelope.payload {
-        AgentEvent::MessageCommitted { message } => match message.role {
-            MessageRole::User => (
-                TimelineItemKind::UserMessage,
-                Some(join_text(&message.content)),
-                None,
-                None,
-                None,
-            ),
-            MessageRole::Assistant => (
-                TimelineItemKind::AssistantMessage,
-                Some(join_text(&message.content)),
-                None,
-                None,
-                None,
-            ),
-            _ => return None,
-        },
-        AgentEvent::AssistantTextDelta { delta, .. } => (
-            TimelineItemKind::AssistantDelta,
-            Some(delta.clone()),
-            None,
-            None,
-            None,
-        ),
-        AgentEvent::ToolCallStarted { name, .. } => (
-            TimelineItemKind::ToolStarted,
-            None,
-            Some(name.clone()),
-            Some("running".into()),
-            None,
-        ),
-        AgentEvent::ToolOutputDelta { delta, .. } => (
-            TimelineItemKind::ToolOutput,
-            Some(delta.clone()),
-            None,
-            None,
-            None,
-        ),
-        AgentEvent::ToolExecutionCompleted { result, .. } => (
-            TimelineItemKind::ToolCompleted,
-            Some(join_text(&result.content)),
-            result.tool_name.clone(),
-            Some(if result.is_error { "failed" } else { "succeeded" }.into()),
-            sandbox_timeline_detail(&result.metadata),
-        ),
-        AgentEvent::ToolApprovalRequested { reason, .. } => (
-            TimelineItemKind::ApprovalRequested,
-            None,
-            None,
-            Some("pending".into()),
-            Some(reason.clone()),
-        ),
-        AgentEvent::ToolApprovalResponded { decision, .. } => (
-            TimelineItemKind::ApprovalResponded,
-            None,
-            None,
-            Some(decision_status(decision)),
-            None,
-        ),
-        AgentEvent::RunStarted { .. } => {
-            (TimelineItemKind::RunStarted, None, None, None, None)
-        }
-        AgentEvent::RunCompleted { .. } => {
-            (TimelineItemKind::RunCompleted, None, None, None, None)
-        }
-        AgentEvent::RunCancelled { .. } => {
-            (TimelineItemKind::RunCancelled, None, None, None, None)
-        }
-        AgentEvent::RunFailed { error, .. } => (
-            TimelineItemKind::RunFailed,
-            None,
-            None,
-            Some("failed".into()),
-            Some(error.message.clone()),
-        ),
-        AgentEvent::Diagnostic { code, details } => (
-            TimelineItemKind::Diagnostic,
-            None,
-            None,
-            None,
-            Some(format!("{code}: {details}")),
-        ),
-        AgentEvent::CheckpointCreated { checkpoint_id, .. } => (
-            TimelineItemKind::Other,
-            None,
-            None,
-            None,
-            Some(format!("checkpoint {}", checkpoint_id.as_str())),
-        ),
-        AgentEvent::CheckpointRolledBack { checkpoint_id } => (
-            TimelineItemKind::Other,
-            None,
-            None,
-            None,
-            Some(format!("rollback {}", checkpoint_id.as_str())),
-        ),
-        _ => return None,
-    };
-    Some(TimelineItem {
-        sequence: envelope.sequence.0,
-        event_id: envelope.event_id.as_str().to_string(),
-        kind,
-        run_id: Some(envelope.run_id.as_str().to_string()),
-        text,
-        tool_name,
-        status,
-        detail,
-        timestamp: envelope.timestamp.as_unix_millis().to_string(),
-    })
-}
-
-fn sandbox_timeline_detail(metadata: &serde_json::Value) -> Option<String> {
-    let sandbox = metadata.get("sandbox")?;
-    if !sandbox.get("fallback")?.as_bool()? {
-        return None;
-    }
-    let isolation = sandbox
-        .get("isolation")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("unknown");
-    let backend = sandbox
-        .get("backend")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("unknown");
-    Some(format!("沙箱回退：isolation={isolation} backend={backend}"))
-}
-
-fn join_text(parts: &[ContentPart]) -> String {
-    let mut text = String::new();
-    for part in parts {
-        if let ContentPart::Text(content) = part {
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&content.text);
-        }
-    }
-    text
-}
-
-fn decision_status(decision: &ApprovalDecision) -> String {
-    match decision {
-        ApprovalDecision::ApprovedOnce => "approve_once".into(),
-        ApprovalDecision::ApprovedForRun => "approve_for_run".into(),
-        ApprovalDecision::Denied => "deny".into(),
-        ApprovalDecision::Cancelled => "cancelled".into(),
-    }
-}
+// Timeline 条目映射已下沉 pawork-protocol::projection（R3 波 C）；保留原名
+// 供 app 内 timeline() 与既有 re-export 消费，wire 形状不变。
+pub use pawork_protocol::projection::project_event as project_timeline_item;
 
 /// 选择要广播给 GUI 的 App 事件；其余事件仍持久化，只是不进实时流。
 fn broadcast_event(envelope: &AgentEventEnvelope) -> Option<AppEvent> {
@@ -1669,7 +1520,7 @@ mod tests {
     use super::*;
     use crate::approval::ApprovalPromptHost;
     use pawork_domain::{CommandId, MessageMetadata, Timestamp, WorkspaceId};
-    use pawork_protocol::{ActorIdentity, CommandSource};
+    use pawork_protocol::{ActorIdentity, CommandSource, TimelineItemKind};
     use std::sync::atomic::{AtomicU64, Ordering};
     use pawork_testkit::{MockProvider, MockScript};
 

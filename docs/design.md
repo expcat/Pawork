@@ -27,7 +27,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 | 包 | 目录 | 依赖方向 | 备注 |
 | --- | --- | --- | --- |
 | `pawork-domain` | `crates/domain` | 无内部依赖 | canonical 纯净红线；含 `provider_api/`（ModelProvider、CanonicalModelRequest、ProviderStreamEvent 13 变体、ProviderError、ResolvedCredential，R1 波 A 自 api 并入）与 `tool_api/`（AgentTool、ToolResult）；事件信封 v1 与契约字节 golden 在本包 tests/ |
-| `pawork-protocol` | `crates/protocol` | → domain | GUI 帧 / headless-json / core-api / typegen（检入 `schemas/` 三产物） |
+| `pawork-protocol` | `crates/protocol` | → domain | GUI 帧 / headless-json / core-api / typegen（检入 `schemas/` 三产物）；`app/registry`（R3 波 A 三通道登记）+ `projection/`（R3 波 C 共享投影 reducer） |
 | `pawork-testkit` | `crates/testkit` | → domain | dev-only：MockProvider/MockTool/契约断言 |
 | `pawork-policy` | `crates/policy` | → domain | 安全内核；`PolicyDecision`/`ApprovalMode` 冻结契约与红线回归锚 |
 | `pawork-exec` | `crates/exec` | 无内部依赖 | process/sandbox/pty；R7 沙箱演进承载 |
