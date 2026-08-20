@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-// 毒锁策略：panic 不屏蔽毒化传播的前提下取回内部数据继续（不吞错误状态）。
+// 毒锁策略：取回内部数据继续，保持 parking_lot 的非毒化可恢复语义；触发线程的 panic 仍照常传播。
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;

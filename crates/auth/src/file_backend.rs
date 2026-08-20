@@ -326,14 +326,17 @@ fn unique_temp_path(path: &Path) -> PathBuf {
 
 /// 默认 auth 文件路径：$PAWORK_HOME/auth.json 或 ~/.pawork/auth.json。
 fn default_auth_file_path() -> PathBuf {
-    if let Some(home) = std::env::var_os("PAWORK_HOME") {
-        if !home.is_empty() {
-            return PathBuf::from(home).join("auth.json");
-        }
+    resolve_auth_file_path(
+        std::env::var_os("PAWORK_HOME").map(PathBuf::from),
+        directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()),
+    )
+}
+
+fn resolve_auth_file_path(pawork_home: Option<PathBuf>, base_home: Option<PathBuf>) -> PathBuf {
+    if let Some(home) = pawork_home.filter(|home| !home.as_os_str().is_empty()) {
+        return home.join("auth.json");
     }
-    let home = directories::BaseDirs::new()
-        .map(|dirs| dirs.home_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
+    let home = base_home.unwrap_or_else(|| PathBuf::from("."));
     home.join(".pawork").join("auth.json")
 }
 
@@ -370,22 +373,42 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn default_auth_file_path_macos_snapshot_uses_home_pawork_fallback() {
-        // 快照 golden：PAWORK_HOME 优先；未设置时回退 $HOME/.pawork/auth.json。
-        if let Some(pawork_home) = std::env::var_os("PAWORK_HOME") {
-            if !pawork_home.is_empty() {
-                assert_eq!(
-                    default_auth_file_path(),
-                    PathBuf::from(pawork_home).join("auth.json")
-                );
-                return;
-            }
-        }
-        let home = std::env::var_os("HOME").expect("HOME is set on macOS");
-        let expected = PathBuf::from(home).join(".pawork").join("auth.json");
+        // 快照 golden：directories 主版本升级不得改变 macOS home 兜底语义。
+        let home = directories::BaseDirs::new()
+            .expect("macOS home directory is available")
+            .home_dir()
+            .to_path_buf();
+        let expected = home.join(".pawork").join("auth.json");
         assert_eq!(
-            default_auth_file_path(),
+            resolve_auth_file_path(None, Some(home)),
             expected,
             "macOS auth file home fallback snapshot changed"
+        );
+    }
+
+    #[test]
+    fn auth_file_path_prefers_non_empty_pawork_home() {
+        assert_eq!(
+            resolve_auth_file_path(
+                Some(PathBuf::from("custom-home")),
+                Some(PathBuf::from("base-home")),
+            ),
+            PathBuf::from("custom-home").join("auth.json")
+        );
+    }
+
+    #[test]
+    fn auth_file_path_missing_or_empty_override_uses_base_home() {
+        let expected = PathBuf::from("base-home")
+            .join(".pawork")
+            .join("auth.json");
+        assert_eq!(
+            resolve_auth_file_path(None, Some(PathBuf::from("base-home"))),
+            expected
+        );
+        assert_eq!(
+            resolve_auth_file_path(Some(PathBuf::new()), Some(PathBuf::from("base-home"))),
+            expected
         );
     }
 

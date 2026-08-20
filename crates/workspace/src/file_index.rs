@@ -244,20 +244,16 @@ impl FileIndex {
         let sender = updates.sender.clone();
         let errors = updates.errors.clone();
         let dropped_events = updates.dropped_events.clone();
+        let rescan_roots = workspace.roots.clone();
         let mut watcher =
             notify::recommended_watcher(move |result: notify::Result<Event>| match result {
                 Ok(event) => {
-                    let kind = if matches!(event.kind, EventKind::Remove(_)) {
-                        ChangeKind::Remove
-                    } else {
-                        ChangeKind::Upsert
-                    };
-                    for path in event.paths {
+                    for change in watcher_changes(event, &rescan_roots) {
                         if !enqueue_watcher_change(
                             &sender,
                             &errors,
                             &dropped_events,
-                            PathChange { path, kind },
+                            change,
                         ) {
                             break;
                         }
@@ -312,6 +308,30 @@ pub enum ChangeKind {
 pub struct PathChange {
     pub path: PathBuf,
     pub kind: ChangeKind,
+}
+
+fn watcher_changes(event: Event, rescan_roots: &[PathBuf]) -> Vec<PathChange> {
+    if event.need_rescan() {
+        return rescan_roots
+            .iter()
+            .cloned()
+            .map(|path| PathChange {
+                path,
+                kind: ChangeKind::Upsert,
+            })
+            .collect();
+    }
+
+    let kind = if matches!(event.kind, EventKind::Remove(_)) {
+        ChangeKind::Remove
+    } else {
+        ChangeKind::Upsert
+    };
+    event
+        .paths
+        .into_iter()
+        .map(|path| PathChange { path, kind })
+        .collect()
 }
 
 pub struct DebouncedUpdateHandle {
@@ -977,6 +997,23 @@ mod tests {
         assert!(
             snapshot.iter().any(|error| error.contains("channel full")),
             "full-channel drops must be observable: {snapshot:?}"
+        );
+    }
+
+    #[test]
+    fn rescan_event_schedules_full_rescan_for_every_root() {
+        let roots = [PathBuf::from("root-a"), PathBuf::from("root-b")];
+        let event = Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+
+        assert_eq!(
+            watcher_changes(event, &roots),
+            roots
+                .into_iter()
+                .map(|path| PathChange {
+                    path,
+                    kind: ChangeKind::Upsert,
+                })
+                .collect::<Vec<_>>()
         );
     }
 

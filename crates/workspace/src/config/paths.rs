@@ -22,7 +22,7 @@ pub const WORKSPACE_CONFIG_FILENAME: &str = "config.toml";
 /// 跨平台语义（由 `directories` crate 提供）：
 /// - Linux: `~/.config/pawork/`
 /// - macOS: `~/Library/Application Support/dev.pawork.pawork/`
-/// - Windows: `%APPDATA%\dev\pawork\pawork\`
+/// - Windows: `%APPDATA%\pawork\pawork\config\`
 pub fn config_dir_for_app() -> Option<PathBuf> {
     ProjectDirs::from(APP_QUALIFIER, APP_ORGANIZATION, APP_APPLICATION)
         .map(|dirs| dirs.config_dir().to_path_buf())

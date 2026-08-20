@@ -118,6 +118,18 @@ pub(crate) fn call_result_to_tool_result(result: &CallToolResult) -> ToolResult 
     }
 }
 
+fn server_result_to_tool_result(result: ServerResult) -> Result<ToolResult, McpError> {
+    match result {
+        ServerResult::CallToolResult(call_tool) => Ok(call_result_to_tool_result(&call_tool)),
+        ServerResult::InputRequiredResult(_) => Err(McpError::Protocol(
+            "MCP server requested additional input; not supported".into(),
+        )),
+        other => Err(McpError::Protocol(format!(
+            "unexpected call_tool response: {other:?}"
+        ))),
+    }
+}
+
 fn content_block_to_part(block: &ContentBlock) -> Option<ContentPart> {
     match block {
         ContentBlock::Text(text) => Some(ContentPart::Text(TextContent {
@@ -398,15 +410,7 @@ impl ClientPeer {
                     ));
                 };
                 h.await_response().await.map_err(map_service_error)
-            } => match result? {
-                ServerResult::CallToolResult(ct) => Ok(call_result_to_tool_result(&ct)),
-                other => Err(McpError::Protocol(match other {
-                    ServerResult::InputRequiredResult(_) => {
-                        "MCP server requested additional input; not supported".into()
-                    }
-                    _ => format!("unexpected call_tool response: {other:?}"),
-                })),
-            },
+            } => server_result_to_tool_result(result?),
         }
     }
 }
@@ -674,5 +678,18 @@ mod tests {
         };
         assert!(text.text.is_char_boundary(text.text.len()));
         assert!(text.text.starts_with("hello"));
+    }
+
+    #[test]
+    fn input_required_call_result_fails_closed() {
+        let result = server_result_to_tool_result(ServerResult::InputRequiredResult(
+            rmcp::model::InputRequiredResult::from_request_state("opaque"),
+        ));
+
+        assert!(matches!(
+            result,
+            Err(McpError::Protocol(message))
+                if message == "MCP server requested additional input; not supported"
+        ));
     }
 }

@@ -443,8 +443,11 @@ fn global_config_dir_resolves_to_some_path() {
 #[cfg(target_os = "macos")]
 fn global_config_dir_macos_snapshot_is_dev_pawork_pawork() {
     // 快照 golden：directories 主版本升级不得改变 macOS 目录语义。
-    let home = std::env::var_os("HOME").expect("HOME is set on macOS");
-    let expected = std::path::PathBuf::from(home)
+    let home = directories::BaseDirs::new()
+        .expect("macOS home directory is available")
+        .home_dir()
+        .to_path_buf();
+    let expected = home
         .join("Library")
         .join("Application Support")
         .join("dev.pawork.pawork");
