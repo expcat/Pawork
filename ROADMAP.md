@@ -98,6 +98,7 @@ V3 由四条目标定义(依据:2026-08-18 五路只读分析——两路包合�
 | V3 立项分析:包合并 ×2、依赖用面审计、GUI 组件分析、补丁式实现全仓扫描(五路只读) | 2026-08-18 | 结论沉淀于 [plan/R0–R9](plan/) 各任务书与本文 §1/§2 |
 | V2 文档归档:v2_plan/V2 ROADMAP/plan S0–S13 压缩为总结 | 2026-08-18 | [docs/v2-summary.md](docs/v2-summary.md);原文档删除,git 历史可溯 |
 | 参照项目全面复核与 V3 参照指引:GitHub API 全量复核 + 功能重叠二次清理(移除 5 项) + 新增 ACP/gpui-component/Zed ui/srt 四项 + R0–R9 阶段参照调研(三路子代理) | 2026-08-18 | [docs/references.md](docs/references.md) §7(阶段参照指引);移除记录见 [docs/research/multi-account-quota-reference.md](docs/research/multi-account-quota-reference.md) §8 |
+| 参照项目补官方仓 openai/codex:手册 §1 主链接从产品文档站改为 GitHub 仓;§2.3/§6.2 与 research §1/§8、design/gui-design 引用同步 | 2026-08-21 | [docs/references.md](docs/references.md) §1/§2.3; [docs/research/multi-account-quota-reference.md](docs/research/multi-account-quota-reference.md) §1/§8; [docs/design.md](docs/design.md) §4; [docs/gui-design.md](docs/gui-design.md) §2 |
 
 ### 3.2 V2 遗留债务 → V3 阶段映射
 

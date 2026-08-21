@@ -1,6 +1,6 @@
 # 参照项目手册
 
-> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见 [research/](research/) 下各文档（深入处以「详见 research §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §4，**参照项目 → 功能规划**的反向分类见本文 §6，**V3 阶段（R0–R9）参照指引**见本文 §7。文中 star 数与项目事实为 **2026-08-18** 复核快照（GitHub API 全量复核；收录标准与历次移除记录见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8——最近一次为 2026-08-18 功能重叠二次清理，移除 5 项，见 §3.6 注）。实现前应复核最新实态。
+> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见 [research/](research/) 下各文档（深入处以「详见 research §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §4，**参照项目 → 功能规划**的反向分类见本文 §6，**V3 阶段（R0–R9）参照指引**见本文 §7。文中 star 数与项目事实为 **2026-08-18** 复核快照（GitHub API 全量复核；收录标准与历次移除记录见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §8——最近一次为 2026-08-18 功能重叠二次清理，移除 5 项，见 §3.6 注）。**2026-08-21** 仅把 Codex 主链接改为官方仓 [openai/codex](https://github.com/openai/codex)（当日 star ≈111k）；其余行 star 仍为 08-18 快照。实现前应复核最新实态。
 
 ---
 
@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | OpenCode（199k） | A / TUI 编码 Agent（TS/Bun） | 多形态（TUI / Desktop beta / Web / IDE）编码 Agent，自营 Zen/Go 托管模型 | [anomalyco/opencode](https://github.com/anomalyco/opencode) |
 | Pi（93k） | A / TUI 编码 Agent（TS/Bun monorepo） | provider 无关 Context 与 Pi Packages 能力包生态 | [earendil-works/pi](https://github.com/earendil-works/pi) |
-| Codex（107k） | A / CLI + Desktop + Cloud | OpenAI 官方编码 Agent 产品线，SDK / MCP server 等集成面最广；CLI 主体为 Rust workspace（codex-rs） | [developers.openai.com/codex](https://developers.openai.com/codex) |
+| Codex（111k） | A / CLI + Desktop + Cloud（Rust） | OpenAI 官方编码 Agent；开源实现 [openai/codex](https://github.com/openai/codex)（Apache-2.0，`codex-rs` workspace），SDK / MCP server 等集成面最广 | [openai/codex](https://github.com/openai/codex) |
 | DeepSeek Harness（157k） | A / Web + headless 编码 Agent（TS/Node） | DeepSeek 官方开源 harness：一切皆插件；append-only 会话事件为 SSOT（只读发布仓，不收 issue/PR） | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) |
 | opencodex（11k） | B / 本地代理 + dashboard（Bun） | Codex 协议翻译（40+ provider）+ ChatGPT 账户池三窗口配额路由 | [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) |
 | Codex Router（2.5k） | B / 本地路由器 + 托盘（JS / LiteLLM） | 一安装多客户端：把外部模型并入 Codex / DeepSeek Harness / Gemini CLI 目录，凭证隔离转发 | [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router) |
@@ -56,12 +56,12 @@ Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [de
 - **与 Pawork 的关系**：参照——provider 无关 Context（canonical domain 思路同构）、订阅 OAuth（F1-B plan 凭证）、精细缓存断点与 1h/24h 长 TTL（F5-B 显式族实践）、「核心不内置子代理」哲学（F4 取舍对照）；红线排除——TUI、npm/git 能力包分发（JS 生态路线）；其 Anthropic OAuth 的 Claude Code 伪装实现属身份伪装，Pawork 明确不采纳。
 - **关键链接**：[pi.dev](https://pi.dev) · [earendil-works/pi](https://github.com/earendil-works/pi) · [docs/providers.md](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/providers.md) · [docs/models.md](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md) · [pi-ai README](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md)。机制详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §2.2、§5.2。
 
-### 2.3 Codex
+### 2.3 Codex（openai/codex）
 
-- **定位与目标**：OpenAI 官方编码 Agent 产品线：CLI + Desktop app + Cloud，配 IDE 扩展；产品与生态集成面最广的对标项。
-- **核心功能**：图片输入 / web search / image generation / voice；Computer Use、Browser、Chrome 扩展；`/review` + GitHub PR 自动审查；GitHub Action；Slack / Linear 集成；Codex as MCP server；TS/Python SDK；本地 memories；scheduled tasks 产品；插件目录（连接器）；Bedrock 模型源。
-- **与 Pawork 的关系**：参照——approval/sandbox 体系（对照 Pawork 的 policy / sandbox）、SDK 与 MCP server 对外集成形态、`prompt_cache_key = conversation_id` 会话亲和（F5-B 隐式族亲和键实践；其子会话 fork 缓存命中率 62%→9.6% 是子代理缓存取舍的直接反例）。
-- **关键链接**：[developers.openai.com/codex](https://developers.openai.com/codex) · [client.rs（亲和键实现）](https://github.com/openai/codex/blob/d807d44a/codex-rs/core/src/client.rs) · [issue #21796](https://github.com/openai/codex/issues/21796)。机制详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §5.2、§5.5。
+- **定位与目标**：OpenAI 官方编码 Agent。开源实现在 [openai/codex](https://github.com/openai/codex)（Apache-2.0，Rust workspace `codex-rs`）；产品线覆盖 CLI + Desktop app + Cloud + IDE 扩展，是四家 A 类对标里集成面最广、也最接近 Pawork「纯 Rust CLI 宿主」形态的一项。与社区项目 [opencodex](https://github.com/lidge-jun/opencodex)、[Codex Router](https://github.com/duolahypercho/codex-router) 均无隶属，勿混用。
+- **核心功能**：图片输入 / web search / image generation / voice；Computer Use、Browser、Chrome 扩展；`/review` + GitHub PR 自动审查；GitHub Action；Slack / Linear 集成；Codex as MCP server；TS/Python SDK；本地 memories；scheduled tasks 产品；插件目录（连接器）；Bedrock 模型源。仓库侧对照点：`codex-rs` 扁平 workspace、[app-server-protocol](https://github.com/openai/codex/tree/main/codex-rs/app-server-protocol) 宏 registry、[sandbox.md](https://github.com/openai/codex/blob/main/docs/sandbox.md) Seatbelt/Landlock 结构。
+- **与 Pawork 的关系**：参照——approval/sandbox 体系（对照 Pawork 的 policy / sandbox）、SDK 与 MCP server 对外集成形态、`prompt_cache_key = conversation_id` 会话亲和（F5-B 隐式族亲和键实践；其子会话 fork 缓存命中率 62%→9.6% 是子代理缓存取舍的直接反例）。V3 另对照其 workspace 布局纪律（R1）、协议 registry 同源（R3）、sandbox/egress（R7）；**反面教材**是 134 成员微 crate 增殖——只抄纪律不抄粒度。
+- **关键链接**：[openai/codex](https://github.com/openai/codex) · [codex-rs](https://github.com/openai/codex/tree/main/codex-rs) · [developers.openai.com/codex](https://developers.openai.com/codex)（产品文档） · [client.rs（亲和键实现）](https://github.com/openai/codex/blob/d807d44a/codex-rs/core/src/client.rs) · [issue #21796](https://github.com/openai/codex/issues/21796)。机制详见 [research/multi-account-quota-reference.md](research/multi-account-quota-reference.md) §5.2、§5.5。
 
 ### 2.4 DeepSeek Harness
 
@@ -85,7 +85,7 @@ Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [de
 
 ### 3.2 Codex Router
 
-- **定位与形态**：本地路由器（JS + 内嵌 LiteLLM，默认 `127.0.0.1:4202`）+ 本机托盘；社区项目，与 OpenAI / opencodex 均无隶属。一次安装、一套凭证，把外部模型并入 [Codex](https://developers.openai.com/codex) 原生 picker，并同样发布到 DeepSeek Harness 与 Gemini CLI。宿主仍拥有 Agent 循环、工具、权限、MCP 与会话；路由器只做推理转发与协议翻译。
+- **定位与形态**：本地路由器（JS + 内嵌 LiteLLM，默认 `127.0.0.1:4202`）+ 本机托盘；社区项目，与 OpenAI / opencodex 均无隶属。一次安装、一套凭证，把外部模型并入 [openai/codex](https://github.com/openai/codex) 原生 picker，并同样发布到 DeepSeek Harness 与 Gemini CLI。宿主仍拥有 Agent 循环、工具、权限、MCP 与会话；路由器只做推理转发与协议翻译。
 - **核心机制**：① Design B 注入：托管改写 `~/.codex/config.toml` 的 `openai_base_url` + `model_catalog_json`，把外部条目并入 Codex 原生目录；② 凭证隔离：丢弃入站 Codex 凭据，只向所选上游注入对应 OAuth/API key（Kimi Code / Grok CLI 会话复用，不读 Copilot 官方凭据库）；③ 注册表驱动：`config/` 校验过的 provider/model 才进 picker，凭证感知（无凭据不展示）；④ 额度耗尽 failover（默认开）：仅 402 / 余额耗尽 / 需等待 >1min 的 429 才换到已启用的下一模型，坏 key / 未知模型 / 宕机仍原样报错；提供商声明的复位窗口会冷却（上限 6h）；⑤ 可选旧工具结果老化与外部模型 compaction 摘要；⑥ 文本模型的 vision bridge（把粘贴图交给已启用视觉模型再代换成证据文本）。
 - **与 Pawork 的关系**：与 opencodex 同属「截 Codex `base_url` 的本地路由器」，但重点是**多客户端共享的凭证隔离目录**，不是 ChatGPT 账户池。参照——S0/S6 openai-compatible 上游与六条首发通道的端点/凭证形态（GLM Coding Plan、OpenCode Go、Qwen Token Plan、DeepSeek、xAI OAuth）；S5 工具结果老化 / 外部 compaction 对照；S9 G6 导入源候选（托管 `config.toml` 块 + `~/.codex/codex-router` 状态目录）；S11 F2/F3 的窄错误分类 failover 与冷却（对照，不是 sticky 账户池）；S11 F4 的「仅注册表验证过的模型可作子代理」；F6-A 下可作 openai-compatible 上游。红线排除——JS/LiteLLM 运行时、login-free 把外部模型别名到原生 GPT slug、匿名免费网关、身份伪装。本仓暂无独立 research 专章（2026-08-18 按公开 README / HOW-IT-WORKS 登记）。
 - **链接**：[duolahypercho/codex-router](https://github.com/duolahypercho/codex-router) · [How it works](https://github.com/duolahypercho/codex-router/blob/main/docs/HOW-IT-WORKS.md) · [Install](https://github.com/duolahypercho/codex-router/blob/main/docs/INSTALL.md) · [Compatible apps](https://github.com/duolahypercho/codex-router/blob/main/docs/COMPATIBLE-APPS.md)。
@@ -196,7 +196,7 @@ F1–F6 与 [design.md](design.md) §5 已确认扩展功能族（G1–G7）的�
 | --- | --- | --- |
 | OpenCode | A | S0 对话/目录/配置分离；S2–S4 工具与权限；S5 compaction/用量；S6 `/models`；S7 流式 GUI；S8 turn undo 对照；S9 MCP/rules；S10 SDK/子 session；S11 `task` 子代理（G4）；候选 A1–A4、B1–B4、D1–D5 |
 | Pi | A | S0 `auth.json`；S1 树形 session；S3 Project Trust；S5 精细断点/长 TTL（G5）；S6 跨厂商 handoff 与订阅 OAuth；S9/S10 profiles 与 fork；S11「核心不内置子代理」对照；候选 C1、D3、D8 |
-| Codex | A | S0/S1 CLI 与 resume；S3/S4 approval + sandbox；S6 ChatGPT OAuth 与文件凭证形态；S7 Desktop 壳；S9 AGENTS.md / MCP；S10 SDK / app-server；G5 `prompt_cache_key` 亲和；候选 B1/B5–B7、C2/C3、D1/D2/D6/D7 |
+| Codex（[openai/codex](https://github.com/openai/codex)） | A | S0/S1 CLI 与 resume；S3/S4 approval + sandbox；S6 ChatGPT OAuth 与文件凭证形态；S7 Desktop 壳；S9 AGENTS.md / MCP；S10 SDK / app-server；G5 `prompt_cache_key` 亲和；R1 workspace 布局纪律、R3 app-server-protocol registry、R7 sandbox；候选 B1/B5–B7、C2/C3、D1/D2/D6/D7 |
 | DeepSeek Harness | A | S1 append-only `SessionEvent` SSOT；S3/S4 沙箱与审批分轨；S7 Trajectory（不吸收默认壳）；S9 skills；S10 headless/fork；S11 子代理与工作流；候选 B2/B3/B8/B9、D4 |
 | opencodex | B | S0/F6-A 上游网关；G1 账户池；G2 三窗口配额；G3 thread affinity；G6 导入源；S11 主体 |
 | **Codex Router** | B | S0/S6 六通道端点与凭证形态、openai-compatible 上游；S5 工具结果老化 / 外部 compaction；S9 G6 导入源（托管 `config.toml` + 状态目录）；S11 F2/F3 **窄**额度 failover（换模型不换账户池）；S11 F4 仅验证过的模型可作子代理；G7/F6-A 上游。**不**作 G1 ChatGPT 账户池或 G3 sticky 主参照 |
@@ -246,4 +246,4 @@ F1–F6 与 [design.md](design.md) §5 已确认扩展功能族（G1–G7）的�
 - **许可证红线**：GPL 系（Zed `ui`/`theme`）与无 LICENSE 仓库只参照 API 形状与机制思路，禁止复制代码；Apache-2.0 / MIT 系（codex-rs、gpui-component、srt）可借鉴实现但仍以自写为主，引入片段须记录出处。
 - **参照不改契约**：对照外部设计时，本仓冻结契约（[design.md](design.md) §3.2、[v2-summary.md](v2-summary.md) §4）优先；外部形状与冻结契约冲突的，走 ADR 而不是「顺手对齐」。
 - **快照时效**：本节结论为 2026-08-18 快照；R6/R7/R8 等距今较远的阶段开工时，按 [../v3_plan.md](../v3_plan.md) §5.2 重验参照项目实态（版本、许可证、API 形状），漂移即回写本节。
-- **登记约定**：2026-08-18 随本节新入册 ACP、gpui-component、Zed `ui`/`theme`、sandbox-runtime 四项（§1 总览与 §6.2 已同步）；R8 任务书引用的「Zed ui 与 gpui-component API 形状」自此在本手册有落点。后续 V3 专项调研继续按 §5 约定登记。
+- **登记约定**：2026-08-18 随本节新入册 ACP、gpui-component、Zed `ui`/`theme`、sandbox-runtime 四项（§1 总览与 §6.2 已同步）；R8 任务书引用的「Zed ui 与 gpui-component API 形状」自此在本手册有落点。**2026-08-21**：Codex 主入口改为官方仓 [openai/codex](https://github.com/openai/codex)（此前 §1 只挂产品文档站）；research §8 同步补行。后续 V3 专项调研继续按 §5 约定登记。

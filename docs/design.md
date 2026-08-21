@@ -96,7 +96,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| `pawork chat` 流式多轮 REPL、Ctrl-C 取消当轮 | [Codex CLI](https://developers.openai.com/codex)；OpenCode/Pi 的终端交互语义（仅对标行为——Pawork 无 TUI，见 §6.1 红线排除） |
+| `pawork chat` 流式多轮 REPL、Ctrl-C 取消当轮 | [Codex CLI](https://github.com/openai/codex)（[产品文档](https://developers.openai.com/codex)）；OpenCode/Pi 的终端交互语义（仅对标行为——Pawork 无 TUI，见 §6.1 红线排除） |
 | `pawork models` 模型目录 | OpenCode 外置 [models.dev](https://models.dev) 注册表 vs Pi 自维护内置目录（research §2.2 对比表）——Pawork 走 registry + config 覆盖（S5 完整化） |
 | TOML 配置 + env key（配置**无 api_key 字段**） | OpenCode `opencode.json` 与 `auth.json` 分离（research §2.1）；Pi `auth.json`（0600）与 `!command`/`$ENV` 插值（research §2.2） |
 | openai-compatible 适配器（可配 `base_url`） | GLM Coding Plan / OpenCode Go / 自建网关（opencodex、[Codex Router](https://github.com/duolahypercho/codex-router) 等）均为此形态；通道端点见 [task-guide.md](task-guide.md) §5 |
@@ -107,7 +107,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 功能 | 参照 |
 | --- | --- |
 | 事件流落盘（`AgentEventEnvelope` + append-only 存储） | V1 冻结契约（§3.2）；最接近的外部同形：DeepSeek Harness 仅追加 `SessionEvent` 日志（模型可见输入必须可从日志重建，fork/resume/Trajectory 同源，[references.md](references.md) §2.4）；相邻实现：Pi JSONL 树形 session（`id/parentId` 原地分支，research §2.2）、OpenCode 消息级 SQLite 落库（research §2.1） |
-| `pawork sessions list/show`、`--resume` 续聊 | [Codex](https://developers.openai.com/codex) sessions/resume；OpenCode/Pi 会话恢复；DeepSeek Harness 从同一事件流 resume |
+| `pawork sessions list/show`、`--resume` 续聊 | [Codex](https://github.com/openai/codex) sessions/resume；OpenCode/Pi 会话恢复；DeepSeek Harness 从同一事件流 resume |
 | `pawork run`（非交互单次）+ `--json` JSONL 事件流（unstable） | Codex exec / headless 输出形态；DeepSeek Harness `dsh-headless` + JSONL session；S10 对齐正式 headless 协议；S7 GUI 不走这条输出 |
 
 ### S2 Agent Loop 与只读工具
@@ -126,7 +126,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 | 功能 | 参照 |
 | --- | --- |
 | write_file/edit_file/apply_patch 写三件 | OpenCode edit/write/patch 工具；Codex apply_patch |
-| 终端审批（一次/本运行/拒绝）+ `--approval-mode` 五档（默认 ReadOnly；旧 `on-failure` 仅兼容读入并映射 NeverAsk） | [Codex approval modes](https://developers.openai.com/codex)；OpenCode `permission`（read/edit/bash/task 每项 allow/ask/deny，research §2.1）；DeepSeek Harness 把 `sandbox/mode` 与 `approval/policy` 做成独立 knob，再经 permission preset 捆绑（[权限预设](https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/permission-presets)）；V1 policy-engine 契约（§3.2） |
+| 终端审批（一次/本运行/拒绝）+ `--approval-mode` 五档（默认 ReadOnly；旧 `on-failure` 仅兼容读入并映射 NeverAsk） | [Codex approval modes](https://github.com/openai/codex)；OpenCode `permission`（read/edit/bash/task 每项 allow/ask/deny，research §2.1）；DeepSeek Harness 把 `sandbox/mode` 与 `approval/policy` 做成独立 knob，再经 permission preset 捆绑（[权限预设](https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/permission-presets)）；V1 policy-engine 契约（§3.2） |
 | 未信任 workspace 强制询问 | Pi Project Trust（[earendil-works/pi](https://github.com/earendil-works/pi)） |
 | 路径越界/symlink/TOCTOU 红线 + 提示注入回归 | V1 安全红线资产（policy 整包随迁） |
 
@@ -192,7 +192,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 
 | 功能 | 参照 |
 | --- | --- |
-| `pawork headless --json-stdio` + SDK 编程驱动 | [Codex](https://developers.openai.com/codex) TS/Python SDK 与 app-server；OpenCode SDK/serve（[opencode.ai/docs](https://opencode.ai/docs/)）；Pi SDK `createAgentSession()`（research §2.2）；DeepSeek Harness headless + [Python SDK](https://deepseek-harness.github.io/deepseek-harness/en/guide/python-sdk)。`--json` 对照见 [headless-json-migration.md](headless-json-migration.md) |
+| `pawork headless --json-stdio` + SDK 编程驱动 | [Codex](https://github.com/openai/codex) TS/Python SDK 与 app-server；OpenCode SDK/serve（[opencode.ai/docs](https://opencode.ai/docs/)）；Pi SDK `createAgentSession()`（research §2.2）；DeepSeek Harness headless + [Python SDK](https://deepseek-harness.github.io/deepseek-harness/en/guide/python-sdk)。`--json` 对照见 [headless-json-migration.md](headless-json-migration.md) |
 | `gui serve` 从 S7 单客户端升级为多客户端 + 断线 Replay + 慢客户端隔离 | V1 gui-server 资产；Desktop 增量见 [gui-design.md](gui-design.md) §5 |
 | `pawork acp serve` 接入 ACP 编辑器 | [Agent Client Protocol](https://github.com/zed-industries/agent-client-protocol)（Zed 生态） |
 | 会话分支 / `pawork session fork`（任意消息处分叉） | Pi session tree/clone（JSONL 树形，research §2.2）；OpenCode 子 session（research §2.1 task 工具）；DeepSeek Harness `ctx.sessions.fork`（从同一 `SessionEvent` 流切边界） |

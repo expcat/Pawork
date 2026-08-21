@@ -29,7 +29,7 @@
 
 | 参照 | 吸收 | 不吸收 |
 | --- | --- | --- |
-| [Codex app](https://openai.com/index/introducing-the-codex-app/) | 项目内组织 thread、thread 内持续查看 Agent 进度与结果，桌面与 CLI 会话连续 | 多 Agent command center、Worktree 编排、Skills / Automations、Cloud / Remote 全家桶 |
+| [Codex](https://github.com/openai/codex)（[app](https://openai.com/index/introducing-the-codex-app/)） | 项目内组织 thread、thread 内持续查看 Agent 进度与结果，桌面与 CLI 会话连续 | 多 Agent command center、Worktree 编排、Skills / Automations、Cloud / Remote 全家桶 |
 | [OpenCode](https://opencode.ai/)（[models](https://opencode.ai/v2/docs/models) / [tools](https://dev.opencode.ai/docs/tools/)） | 会话继续、当前会话模型切换、工具详情与 permission 状态可见 | TUI 键位、WebView/JS 插件面板、并行多会话工作站 |
 | [DeepSeek Harness](https://deepseek.com/harness) Web UI | Trajectory / 仅追加会话回放、工具与审批留在同一对话 | Cordis/JS 插件面板、Web-first 默认壳、Code Mode 编辑器 |
 | [Cursor Agent / MCP](https://docs.cursor.com/context/model-context-protocol) | 工具请求、参数与结果在对话内可展开；需要时就地审批 | 编辑器分屏、代码导航、IDE Settings 与 MCP 管理面 |

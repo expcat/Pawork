@@ -14,6 +14,7 @@
 | --- | --- | --- | --- |
 | OpenCode | [anomalyco/opencode](https://github.com/anomalyco/opencode)（原 sst/opencode） | TypeScript/Bun 终端 Coding Agent | models.dev 模型目录、`task` 工具子代理（子 session + 权限派生）、Anthropic 缓存断点、429 重试策略 |
 | Pi | [earendil-works/pi](https://github.com/earendil-works/pi)（原 badlogic/pi-mono，2026-05 迁移） | TypeScript monorepo（pi-ai / pi-agent-core / pi-coding-agent） | provider 无关 Context + 跨厂商 handoff、订阅 OAuth 全线可用、精细缓存断点与长 TTL、扩展式子代理 |
+| Codex | [openai/codex](https://github.com/openai/codex)（Apache-2.0，Rust `codex-rs`） | 官方 CLI + Desktop + Cloud 编码 Agent | 会话亲和 `prompt_cache_key = conversation_id`；approval / sandbox（Seatbelt/Landlock）；**不是**账户池项目，与 opencodex / Codex Router 无隶属 |
 | opencodex | [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex)（npm `@bitkyc08/opencodex`，命令 `ocx`，文档站 [opencodex.me](https://opencodex.me)） | 本地代理守护进程 + Web dashboard（Bun，默认端口 10100） | Codex Responses 协议翻译（40+ provider）、**ChatGPT 账户池**（5h/周/30d 三窗口配额路由 + 线程亲和） |
 | cc-switch | [farion1231/cc-switch](https://github.com/farion1231/cc-switch)（官网 ccswitch.io） | Tauri 桌面应用（另有 Web/CLI 形态） | **配置级**供应商/账户切换（SSOT SQLite → 原子写回各工具 live 配置文件）、本地代理模式下的故障转移 |
 | CLIProxyAPI | [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)（原 luispater） | Go 守护进程（默认端口 8317） | 多 OAuth 订阅账户封装为兼容 API、round-robin/加权/fill-first、429 指数退避冷却、session-affinity |
@@ -28,7 +29,8 @@
 **同名项目辨析**（避免张冠李戴）：
 
 - `opencodex` 另有两个不相关同名项目：[ymichael/open-codex](https://github.com/ymichael/open-codex)（Codex CLI 多 Provider fork，改用 Chat Completions，疑似停更，未证实）与 [codingmoh/open-codex](https://github.com/codingmoh/open-codex)（Python 本地模型 CLI，与本主题无关）。本文所述均指 lidge-jun/opencodex。
-- `codex-router` 指 [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router)（2026-08-18 按公开 README 登记，约 2.4k stars），与 musistudio/claude-code-router、lidge-jun/opencodex 均不是同一项目。
+- `codex` / `openai/codex` 指官方仓 [openai/codex](https://github.com/openai/codex)（2026-08-21 补入本表；A 类对标，手册见 [references.md](../references.md) §2.3）。与 lidge-jun/opencodex、duolahypercho/codex-router 均不是同一项目。
+- `codex-router` 指 [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router)（2026-08-18 按公开 README 登记，约 2.4k stars），与 musistudio/claude-code-router、lidge-jun/opencodex、openai/codex 均不是同一项目。
 - `ccswitch` 另有基于 CLIProxyAPI 的包装 CLI（如 kaitranntt/ccs）；本文所述均指 farion1231/cc-switch。
 
 全部参考项目（含本表之外 2026-08 补充的流行项目）的功能对照总表见 §8。
@@ -292,6 +294,7 @@ V1 已有大量同构资产（详见 [provider-control-plane](../../../Pawork_v1
 | --- | --- | --- | --- | --- | --- |
 | [OpenCode](https://github.com/anomalyco/opencode)（197k） | 编码 Agent（TS/Bun 终端） | provider 单凭证；多账户靠插件或改 XDG 目录 | 前 2 system + 末 2 消息断点；OpenAI `prompt_cache_key`=sessionID；命中未公开 | 无反代，客户端直连；transform 层按目标 SDK 归一化 | 内置 task 子代理 + 权限派生；429 重试完整；多账户空白 |
 | [Pi](https://github.com/earendil-works/pi)（90k） | 编码 Agent（TS monorepo） | provider 单凭证；拆 providerID 绕行 | system + 末 tool + 末 user 断点 + 1h/24h 长 TTL + 亲和头；社区双标记 80%+ | 无反代；compat 矩阵跨厂商 handoff | provider 无关 Context；订阅 OAuth 全线可用；核心零子代理 |
+| [Codex](https://github.com/openai/codex)（111k，2026-08-21） | 官方编码 Agent（Rust CLI + Desktop + Cloud） | ChatGPT 订阅 / API key 单账户形态；**不是**账户池 | `prompt_cache_key = conversation_id`；fork 子会话命中 62%→9.6%（issue #21796） | 无反代，客户端直连 Responses API | A 类主对标；approval/sandbox/app-server 参照；与 opencodex / Codex Router 勿混 |
 | [Cline](https://github.com/cline/cline)（66k） | 编码 Agent（VS Code） | BYOK 配置档手动切换，无轮询 | 按模型清单在 system + 末 1–2 user 打 `cache_control`；粘滞交给 OpenRouter | 无反代 | Plan/Act 双模型绑定 |
 | [Kilo Code](https://github.com/Kilo-Org/kilocode)（27k） | 编码 Agent（VS Code） | 30+ BYOK + 自营网关 | 沿 Cline 谱系断点；网关回传 cache 用量；`kilo-auto` 会话亲和分层路由 | 自营网关 api.kilo.ai | 难度分类路由与缓存命中协同设计 |
 | [cc-switch](https://github.com/farion1231/cc-switch)（127k） | 配置切换工具（Tauri 桌面） | **全局配置级手动切换**（SQLite SSOT 原子写回 8 工具）；代理模式有 failover | 无缓存机制（切换即缓存作废） | 可选本地代理（格式转换/熔断/健康监测） | 多工具统一管理 + 云同步；额度仅本地记账 |
