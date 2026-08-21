@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use pawork_domain::{
-    QueryId, SessionId, TenantId, WorkspaceId,
+    CommandId, QueryId, SessionId, TenantId, WorkspaceId,
 };
 use pawork_exec::PtyService;
 use pawork_storage::session::{SessionRecord, SessionTree};
@@ -34,7 +34,7 @@ use pawork_protocol::app::registry::{command_wire_name, query_wire_name};
 
 use crate::{
     should_cache, AppCore, GuiApprovalHost, HubError, IdempotencyCheck, IdempotencyStore,
-    DEFAULT_HUB_CAPACITY,
+    PendingToolApproval, DEFAULT_HUB_CAPACITY, DEFAULT_IDEMPOTENCY_CAPACITY,
 };
 
 mod bus;
@@ -46,7 +46,7 @@ mod tests;
 pub use bus::{ActiveGuiRun, GuiBroadcastSink, GuiEventBus, GuiRunRegistry};
 #[cfg(test)]
 use handlers::run_start::{run_start_overview_owner, run_start_requested_provider_switch};
-use events::scoped_idempotency;
+use events::client_scope_from_source;
 
 
 fn session_tree_entry(record: &SessionRecord, workspace_id: Option<WorkspaceId>) -> Value {
@@ -92,7 +92,7 @@ pub struct GuiHostAdapter {
     bus: Arc<GuiEventBus>,
     runs: Arc<GuiRunRegistry>,
     approvals: Arc<GuiApprovalHost>,
-    idempotency: IdempotencyStore,
+    waiters: IdempotencyStore,
     instance: pawork_domain::CoreInstanceId,
     next_gui_run: AtomicU64,
     next_fork: AtomicU64,
@@ -155,7 +155,7 @@ impl GuiHostAdapter {
             bus,
             runs: Arc::new(GuiRunRegistry::new()),
             approvals,
-            idempotency: IdempotencyStore::default(),
+            waiters: IdempotencyStore::new(DEFAULT_IDEMPOTENCY_CAPACITY),
             instance,
             next_gui_run: AtomicU64::new(1),
             next_fork: AtomicU64::new(1),
@@ -201,7 +201,7 @@ impl GuiHostAdapter {
         }
     }
 
-    fn host_error(code: &str, message: impl Into<String>) -> GuiHostError {
+    pub(crate) fn host_error(code: &str, message: impl Into<String>) -> GuiHostError {
         GuiHostError {
             code: code.to_string(),
             message: message.into(),
@@ -209,7 +209,7 @@ impl GuiHostAdapter {
         }
     }
 
-    fn app_error(error: crate::AppError) -> GuiHostError {
+    pub(crate) fn app_error(error: crate::AppError) -> GuiHostError {
         let code = match error {
             crate::AppError::UnknownModel { .. }
             | crate::AppError::ModelBelongsToProvider { .. } => "unknown_model",
@@ -218,7 +218,7 @@ impl GuiHostAdapter {
         Self::host_error(code, error.to_string())
     }
 
-    fn session_error(error: pawork_storage::session::SessionStoreError) -> GuiHostError {
+    pub(crate) fn session_error(error: pawork_storage::session::SessionStoreError) -> GuiHostError {
         let code = match error {
             pawork_storage::session::SessionStoreError::SessionNotFound(_)
             | pawork_storage::session::SessionStoreError::ParentEventNotFound(_)
@@ -238,6 +238,46 @@ impl GuiHostAdapter {
         };
         Self::host_error(code, error.to_string())
     }
+
+    /// command() 在 dispatch 之后调用：成功响应写入 ledger，错误响应 release。
+    /// record 失败不可回滚已执行命令，必须记数+打日志后仍返回响应。
+    pub(crate) async fn persist_command_response(
+        ledger: &IdempotencyStore,
+        tenant: &TenantId,
+        command_id: &CommandId,
+        idempotency_key: Option<&str>,
+        cached: AppResponseEnvelope,
+    ) {
+        if should_cache(&cached) {
+            if let Err(error) = ledger
+                .record(tenant, command_id, idempotency_key, cached)
+                .await
+            {
+                Self::on_command_record_failure(ledger, command_id.as_str(), &error);
+            }
+        } else {
+            ledger
+                .release(tenant, command_id, idempotency_key)
+                .await;
+        }
+    }
+
+    fn on_command_record_failure(
+        ledger: &IdempotencyStore,
+        command_id: &str,
+        error: &crate::IdempotencyError,
+    ) {
+        // IdempotencyStore::record already bumps record_failures. This helper
+        // must not bump again (command() would double-count) and must not
+        // swallow the error.
+        tracing::error!(command_id, error = %error, "command ledger record failed");
+        let _ = ledger;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn command_record_failure_count(&self) -> u64 {
+        self.waiters.stats().await.record_failures
+    }
 }
 
 #[async_trait]
@@ -255,7 +295,41 @@ impl GuiHost for GuiHostAdapter {
         } else {
             "ready"
         };
-        let pending = self.approvals.pending();
+        // PendingToolApprovals is host-global, matching GuiApprovalHost::pending()
+        // and SessionStore::waiting_tool_calls(): neither is session-scoped.
+        // snapshot() has no session filter, so restart projections are merged in full.
+        let mut pending = self.approvals.pending();
+        if let Ok(store) = core.store() {
+            if let Ok(waiting) = store.waiting_tool_calls().await {
+                let live: std::collections::HashSet<_> = pending
+                    .iter()
+                    .map(|ask| ask.tool_call_id.as_str().to_string())
+                    .collect();
+                for item in waiting {
+                    if live.contains(item.tool_call.tool_call_id.as_str()) {
+                        continue;
+                    }
+                    let arguments = serde_json::from_str(&item.tool_call.arguments_json)
+                        .unwrap_or(Value::Null);
+                    pending.push(PendingToolApproval {
+                        run_id: item.tool_call.run_id.clone(),
+                        session_id: Some(item.session_id.clone()),
+                        tool_call_id: item.tool_call.tool_call_id.clone(),
+                        tool_name: item.tool_call.name.clone(),
+                        relative_path: crate::approval::relative_path_from_input(&arguments),
+                        risk: pawork_policy::RiskLevel::Moderate,
+                        message: "approval pending across restart".into(),
+                        preview: None,
+                    });
+                }
+            }
+        }
+        pending.sort_by(|a, b| {
+            a.run_id
+                .as_str()
+                .cmp(b.run_id.as_str())
+                .then_with(|| a.tool_call_id.as_str().cmp(b.tool_call_id.as_str()))
+        });
         let mut session_entries = Vec::new();
         for record in &sessions {
             let mut entry =
@@ -418,22 +492,37 @@ impl GuiHost for GuiHostAdapter {
 
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
         let tenant = TenantId::new(DEFAULT_CONTROL_PLANE_TENANT);
-        let (command_id, idempotency_key) = scoped_idempotency(envelope);
+        let command_id = envelope.command_id.clone();
+        let idempotency_key = envelope.idempotency_key.clone();
+        let scope = client_scope_from_source(&envelope.source);
+        let mut ledger = {
+            let core = self.core.read().await;
+            let store = core.store().map_err(|_| {
+                Self::host_error("store_unavailable", "session store is not open")
+            })?;
+            IdempotencyStore::for_store(store.command_ledger()).with_scope(scope)
+        };
+        // 进程内 Notify 必须跨 command() 共享；SQLite 仍是权威 CAS。
+        ledger.share_waiters_from(&self.waiters);
         loop {
-            match self
-                .idempotency
+            match ledger
                 .check(&tenant, &command_id, idempotency_key.as_deref())
+                .await
             {
-                IdempotencyCheck::Replay(cached) => return Ok(cached.response),
-                IdempotencyCheck::InFlight(notify) => notify.notified().await,
-                IdempotencyCheck::New => break,
+                Ok(IdempotencyCheck::Replay(cached)) => return Ok(cached.response),
+                Ok(IdempotencyCheck::InFlight(notify)) => notify.notified().await,
+                Ok(IdempotencyCheck::New) => break,
+                Err(error) => {
+                    return Err(Self::host_error("idempotency", error.to_string()));
+                }
             }
         }
         let response = match self.dispatch_command(envelope).await {
             Ok(response) => response,
             Err(error) => {
-                self.idempotency
-                    .release(&tenant, &command_id, idempotency_key.as_deref());
+                ledger
+                    .release(&tenant, &command_id, idempotency_key.as_deref())
+                    .await;
                 return Err(error);
             }
         };
@@ -443,17 +532,14 @@ impl GuiHost for GuiHostAdapter {
             responded_at: now_timestamp(),
             response: response.clone(),
         };
-        if should_cache(&cached) {
-            let _ = self.idempotency.record(
-                &tenant,
-                &command_id,
-                idempotency_key.as_deref(),
-                cached,
-            );
-        } else {
-            self.idempotency
-                .release(&tenant, &command_id, idempotency_key.as_deref());
-        }
+        Self::persist_command_response(
+            &ledger,
+            &tenant,
+            &command_id,
+            idempotency_key.as_deref(),
+            cached,
+        )
+        .await;
         Ok(response)
     }
 

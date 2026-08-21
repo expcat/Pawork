@@ -1,4 +1,5 @@
 use crate::gui_server::GuiHostError;
+use crate::ApprovalResolve;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppResponse};
 
 use super::super::GuiHostAdapter;
@@ -29,10 +30,49 @@ pub(crate) async fn tool_approve(
     else {
         unreachable!("tool_approve handler receives ToolApprove")
     };
-    adapter
+    let domain = protocol_to_domain_decision(decision);
+    match adapter
         .approvals
-        .resolve(run_id, tool_call_id, protocol_to_domain_decision(decision))
-        .map_err(|message| GuiHostAdapter::host_error("conflict", message))?;
+        .resolve(run_id, tool_call_id, domain.clone())
+        .map_err(|message| GuiHostAdapter::host_error("conflict", message))?
+    {
+        ApprovalResolve::Live => {}
+        ApprovalResolve::Queued => {
+            // live run: keep queued race semantics, never durable-seal a waiting live call.
+            if !adapter.runs().contains(run_id) {
+                let core = adapter.core.read().await;
+                let store = core.store().map_err(GuiHostAdapter::app_error)?;
+                if let Some(waiting) = store
+                    .waiting_tool_call(tool_call_id.as_str())
+                    .await
+                    .map_err(GuiHostAdapter::session_error)?
+                {
+                    if waiting.tool_call.run_id.as_str() != run_id.as_str() {
+                        return Err(GuiHostAdapter::host_error(
+                            "conflict",
+                            format!(
+                                "approval {} belongs to a different run",
+                                tool_call_id.as_str()
+                            ),
+                        ));
+                    }
+                    let mut sequence = core
+                        .next_sequence(&waiting.session_id)
+                        .await
+                        .map_err(GuiHostAdapter::app_error)?;
+                    core.resolve_waiting_tool_call(
+                        &waiting.session_id,
+                        &waiting.tool_call,
+                        domain,
+                        "approval resolved after restart; tool not executed",
+                        &mut sequence,
+                    )
+                    .await
+                    .map_err(GuiHostAdapter::app_error)?;
+                }
+            }
+        }
+    }
     Ok(AppResponse::Accepted {
         command_id: envelope.command_id.clone(),
         run_id: None,

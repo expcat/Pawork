@@ -5,16 +5,16 @@
 ## 1. 现状证据(执行时重验;路径为 R1 合并后位置)
 
 - **单体**:AppCore 承载 resume/compact/usage/checkpoint/task/approval/idempotency 全部;`CatalogOnlyProvider` 兜底假 provider(原 `host/app/src/lib.rs:265`);`RETAINED_MESSAGES` 等横切常量散置。
-- **幂等**:`idempotency.rs` 内存 CAS(F31 修竞态但重启失忆;tenant 冻结 `local/default`);`gui_host.rs:930` `let _ = idempotency.record(...)` 吞 DuplicateCommand/KeyConflict;幂等作用域按 GUI `client_id`(S10 修的撞车问题)。
+- **幂等**(波 B 已落地):`command_ledger` SQLite v11 表,作用域 `(tenant, client_scope, command_id)`;进程内仅 Notify 唤醒。历史路径:`idempotency.rs` 曾为内存 CAS;`gui_host.rs:930`/`gui_host/mod.rs:447` 曾 `let _ = record(...)` 吞错。
 - **吞错热点**:`lib.rs:1325,1334` `let _ = tasks_finish(...)`;`data_dir.rs:22-26` HOME 缺失静默回退 `temp_dir()`(会话库落临时目录无告警);gui-server 断连清理 20+ 处零观测。
 - **ACP host**:40 处 `.expect("…mutex")`(毒锁 panic 整通道)、`prompt_gate` 全局串行锁、9 张独立 Mutex map、Reserved/Active 手搓状态机(R1 后位于 cli `channels/acp/`)。
 - **usage 哨兵**:`control.rs:150-176` `upstream_attempt: Some(1)`/`trace_id: None` 硬填(D1 单机决议后收敛语义)。
-- **K-02**:`ToolApprovalRequested` 进入用户等待前不落盘,崩溃后 resume 语义缺失(时序注释在 gui_host)。
+- **K-02**(波 B 已落地):等待前落盘 `ToolApprovalRequested`;GUI resume 呈现待审批、决策落盘不重跑;CLI resume 维持 seal Denied。
 
 ## 2. 目标设计
 
 1. **领域服务拆分**:AppCore → `SessionService` / `RunService` / `ApprovalService` / `UsageService` / `TaskService` / `ImportService` / `ExtensionService`(MCP/resources),每服务自持状态与横切常量;`gui_host.rs` 巨 match 改 R3 registry 分发,目标 `lib.rs` <1,500 行、`gui_host.rs` <800 行。`CatalogOnlyProvider` 兜底改显式「无凭证」状态(配合降级事件)。
-2. **幂等持久化(CommandLedger)**:幂等表入 SQLite(与会话库同 Actor 栈,storage 新增 `command_ledger` 迁移——新表不动既有 DDL);作用域 `(client_id, command_id)`;重启后可查;record 失败不再吞错。**K-02 并入**:`ToolApprovalRequested` 在进入等待前持久化,定义崩溃/`kill -9` 后 seal → resume 呈现待审批 → 决策不重复执行的语义(定向回归:审批中 kill -9 → resume → deny → 工具未执行)。
+2. **幂等持久化(CommandLedger)**(波 B 已落地):幂等表入 SQLite(与会话库同 Actor 栈,storage v11 `command_ledger`——新表不动既有 DDL);作用域 `(tenant, client_scope, command_id)`;重启后可查;record 失败不再吞错。**K-02 并入**:`ToolApprovalRequested` 在进入等待前持久化;GUI 崩溃后 resume 呈现待审批、决策不重复执行(CLI 维持 seal Denied)。定向回归:审批中 drop+reopen → resume keep-pending → deny → 工具未执行。
 3. **ACP actor 化**:单 actor 循环 + 消息信箱替换 9 张 Mutex map;`expect` 清零(错误进降级事件);prompt 串行语义由 actor 队列天然保证。
 4. **降级可观测契约(T8)**:定义 `DegradeEvent`(或复用 Diagnostic 通道):HOME→temp 回退、无凭证兜底、Lagged 断流、tasks_finish 失败、幂等冲突等一律事件化(进事件流或 stderr 诊断,按敏感度分级);建立「副作用 Result 禁 `let _`」清单——本阶段清理 host 域全部命中点,其余包登记到 R9 复查。
 
@@ -25,15 +25,25 @@
 - 行数:`lib.rs` 4131→1413(<1500 ✅);`gui_host/mod.rs` 679(<800 ✅)。
 - 验证:`cargo test -p pawork-app` 122 绿(1 ignored;+1 为授权 pin 测试);protocol golden / domain events_golden / typegen / client probe+spawn_e2e / desktop 27 / `cargo check -p pawork` 全绿;26 帧 golden 零 diff。
 - 审查(glm_reviewer)verdict=pass;P2-1 状态文档滞后与 P2-2 搬迁丢 1 条 doc 注释 + 若干反引号均同波闭环(主代理补齐 12 处)。
-- 留后续波:CatalogOnlyProvider 显式「无凭证」状态配合 DegradeEvent(波 C/D,T8);K-02 落盘(波 B);`let _` 清理(波 D)。
+- 留后续波:CatalogOnlyProvider 显式「无凭证」状态配合 DegradeEvent(波 C/D,T8);`let _` 清理(波 D)。K-02 已由波 B 落地。
 - 环境备注:worker 首跑 desktop 与 `cargo check -p pawork` 遇 idle-rustc 环境异常(挂起/被终止),主代理串行重跑均绿,非源码问题。
+
+## 2.2 波 B 实态进度(2026-08-21,波 B 已收口)
+
+- CommandLedger 持久化:storage 追加 v11 `command_ledger` 迁移(纯新增表 + 部分唯一索引,不动 v1–v10 DDL;`CURRENT_SCHEMA_VERSION` 10→11);`SessionStore::open` 迁移后 reclaim 残留 inflight(`open_read_only` 不动);check 的 SELECT+INSERT 在单次 actor call 内原子;record 冲突映射 `DuplicateCommand`/`KeyConflict`;容量淘汰全局 4096(与内存前身一致,注释 + 跨 tenant/scope pin 测试)。R6 预定的 v11 编号被本波占用,R6 迁移已顺延 v12(ROADMAP 与 R6 任务书已回写)。
+- app 幂等接线:`IdempotencyStore` 改以 ledger 为持久态,进程内仅余 Notify 唤醒表;client 作用域由 `{client_id}/` 前缀串改为 (tenant, client_scope, command_id) 列式;record 失败 `tracing::error!` + 计数,不再 `let _` 吞错;release 失败改 log。
+- K-02:engine `LoopContext::request_approval` 加 emitter 参数,`ToolApprovalRequested` 在每次阻塞等待(含 batch 短路)前 emit 落盘,engine 只在闸门应用后补 `Responded`;GUI resume 改 `resume_messages_keep_pending` 不 seal(CLI `resume_messages` 维持 seal Denied,fail-closed 语义不变);snapshot PendingToolApprovals 只读合并投影 waiting(全局,对齐 `host.pending()` 语义);`ToolApprove` 对非 live run(GuiRunRegistry 判活)且投影 waiting 的调用走 durable resolve(Responded + ToolExecutionCompleted is_error + MessageCommitted,工具不重跑),live run 维持 queued 竞态语义。
+- 写入集实态:storage(migration/mod/command_ledger 新)+ engine(tool_loop.rs emit 时序,任务书原写集未列,已实态修正)+ app(idempotency/loop_ctx/approval/services/{session,approval}/gui_host 相关),共 15 文件。
+- 验证:storage 90+5 / engine 65+2+1 / app 110+6+13+2 / domain / protocol(45+10+7+5+15+16+3+16+8+8+7)/ client(9+22+9+1+3+1) 全绿,`cargo check -p pawork` 绿,events_golden 与 26 帧 golden 零 diff。
+- 审查(grok_reviewer 双轮):首轮 changes-needed——P0(Queued 竞态误封 live 等待调用,已修:Queued 先判 run 活,live 不落盘)+ P1(record 失败断言改走生产 persist helper;K-02 回归升级为经 GuiHostAdapter.command(ToolApprove) 端到端)+ P2×2(snapshot 合并全局语义、淘汰全局语义,均以注释+pin 登记);修复后复核 verdict=pass。
+- 登记:K-02 崩溃回归为 app 层 drop+reopen 模拟;真实 kill -9 进程冒烟与 GUI 人工验收留待人工验收;protocol/client 整 suite 曾卡 dyld 启动,分拆 `--test` 全绿,判定宿主抖动非本波问题。
 
 ## 3. 波次拆分
 
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
 | A | 服务拆分(纯代码组织,行为零变化;每拆一块跑 app 契约测试) | host/app(R1 后 `pawork-app`) | 串行(单一 owner;心脏手术不并行) |
-| B | CommandLedger 持久化 + K-02 审批落盘语义(storage 迁移 + app 接线 + resume 语义测试) | storage(新迁移)、app(idempotency/approval) | 串行(依赖波 A 的 ApprovalService 边界) |
+| B | ✅ CommandLedger 持久化 + K-02 审批落盘语义(2026-08-21 收口,见 §2.2) | storage(新迁移)、app(idempotency/approval);实态含 engine(tool_loop.rs emit 时序) | 串行(依赖波 A 的 ApprovalService 边界) |
 | C | ACP actor 化 ∥ 降级事件契约(DegradeEvent 定义在 protocol/domain 侧 + host 全部接点) | cli `channels/acp/` ∥ protocol/domain(事件定义)+ app(接点) | 并行 ×2(写入集不相交;DegradeEvent 契约面由主代理先定形状) |
 | D | 收口:`let _` 清理(host 域)、HOME 回退告警、usage 哨兵语义按 D1 收敛、hub 序列逻辑简化(rate_limit 已删) | app、cli | 串行 |
 
@@ -47,7 +57,7 @@
 
 ## 5. 退出标准
 
-- [ ] AppCore 拆为领域服务;巨 match 消失(registry 分发);行数目标达成
-- [ ] 幂等持久化 + K-02 语义落地并有崩溃回归;内存 CAS 删除
+- [x] AppCore 拆为领域服务;巨 match 消失(registry 分发);行数目标达成(波 A,2026-08-21)
+- [x] 幂等持久化 + K-02 语义落地并有崩溃回归;内存 CAS 删除(波 B,2026-08-21;持久态以 SQLite 为准,进程内仅余 Notify 唤醒表)
 - [ ] ACP 无 Mutex map/`expect` 热点;降级事件契约生效且 host 域 `let _` 清零
 - [ ] app/cli/storage 定向测试全绿;冒烟通过;v3_plan §3 更新

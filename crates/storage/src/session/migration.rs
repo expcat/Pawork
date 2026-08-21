@@ -4,7 +4,7 @@ use crate::sqlite::{DatabaseActor, Migration, MigrationReport};
 
 use crate::session::SessionStoreError;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 10;
+pub const CURRENT_SCHEMA_VERSION: u32 = 11;
 const SCHEMA_MIGRATIONS_TABLE: &str = "schema_migrations";
 
 pub(crate) const MIGRATIONS: &[Migration] = &[
@@ -267,6 +267,26 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
                 ON messages(session_id, branch_id, sequence);
         "#,
     },
+    Migration {
+        version: 11,
+        name: "command_ledger",
+        sql: r#"
+            CREATE TABLE command_ledger (
+                tenant_id TEXT NOT NULL,
+                client_scope TEXT NOT NULL,
+                command_id TEXT NOT NULL,
+                idempotency_key TEXT,
+                status TEXT NOT NULL CHECK(status IN ('inflight','completed')),
+                response_json TEXT,
+                created_at_ms INTEGER NOT NULL,
+                completed_at_ms INTEGER,
+                PRIMARY KEY(tenant_id, client_scope, command_id)
+            );
+            CREATE UNIQUE INDEX idx_command_ledger_idempotency_key
+                ON command_ledger(tenant_id, client_scope, idempotency_key)
+                WHERE idempotency_key IS NOT NULL;
+        "#,
+    },
 ];
 
 pub(crate) async fn migrate(
@@ -359,7 +379,7 @@ mod tests {
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(
             report.applied_versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
         );
         assert!(report.backup_path.is_none());
         let tables: Vec<String> = store
@@ -387,6 +407,7 @@ mod tests {
             "sessions",
             "tool_calls",
             "transcript_envelopes",
+            "command_ledger",
         ] {
             assert!(
                 tables.iter().any(|table| table == expected),
@@ -444,7 +465,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("migrate");
         assert_eq!(report.from_version, 6);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![7, 8, 9, 10]);
+        assert_eq!(report.applied_versions, vec![7, 8, 9, 10, 11]);
         let (tenant, principal): (String, String) = store
             .database()
             .call(|connection| {
@@ -482,7 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn failing_v8_rolls_back_tenant_columns() {
-        // 对 v6 种子库调用通用 runner：完整 1–10 计划，但 v8 SQL 含语法错误。
+        // 对 v6 种子库调用通用 runner：完整 1–11 计划，但 v8 SQL 含语法错误。
         // 整批事务回滚后不得残留 tenant 列，账本仍为 6。
         let (_dir, path) = temp_db("failure-v8.sqlite3");
         let actor = DatabaseActor::open(&path).await.expect("actor");
@@ -588,10 +609,10 @@ mod tests {
             .expect("seed v9 messages");
         actor.shutdown().await.expect("shutdown");
 
-        let (store, report) = SessionStore::open(&path).await.expect("migrate to v10");
+        let (store, report) = SessionStore::open(&path).await.expect("migrate to v11");
         assert_eq!(report.from_version, 9);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![10]);
+        assert_eq!(report.applied_versions, vec![10, 11]);
 
         let rows: Vec<(String, String, i64)> = store
             .database()
@@ -619,5 +640,70 @@ mod tests {
             ]
         );
         store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn v10_database_applies_command_ledger_and_unique_constraint() {
+        let (_dir, path) = temp_db("legacy-v10-command-ledger.sqlite3");
+        let actor = DatabaseActor::open(&path).await.expect("actor");
+        crate::sqlite::migrate(
+            &actor,
+            SCHEMA_MIGRATIONS_TABLE,
+            &MIGRATIONS[..10],
+            10,
+            &path,
+            false,
+        )
+        .await
+        .expect("apply v1–v10");
+        actor.shutdown().await.expect("shutdown");
+
+        let (store, report) = SessionStore::open(&path).await.expect("migrate to v11");
+        assert_eq!(report.from_version, 10);
+        assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(report.applied_versions, vec![11]);
+        let tables: Vec<String> = store
+            .database()
+            .call(|connection| {
+                let mut statement = connection
+                    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                    .expect("prepare");
+                statement
+                    .query_map([], |row| row.get(0))
+                    .expect("query")
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .expect("collect")
+            })
+            .await
+            .expect("actor");
+        assert!(
+            tables.iter().any(|table| table == "command_ledger"),
+            "missing command_ledger"
+        );
+        let unique_ok = store
+            .database()
+            .call(|connection| {
+                connection.execute(
+                    "INSERT INTO command_ledger(                         tenant_id, client_scope, command_id, idempotency_key, status, created_at_ms                     ) VALUES ('t','s','cmd-1','key-1','completed',1)",
+                    [],
+                )?;
+                let err = connection.execute(
+                    "INSERT INTO command_ledger(                         tenant_id, client_scope, command_id, idempotency_key, status, created_at_ms                     ) VALUES ('t','s','cmd-2','key-1','completed',2)",
+                    [],
+                );
+                Ok::<_, rusqlite::Error>(err.is_err())
+            })
+            .await
+            .expect("actor")
+            .expect("unique probe");
+        assert!(unique_ok, "idempotency_key unique index must reject duplicates");
+        store.shutdown().await.expect("shutdown");
+        let (store, second) = SessionStore::open(&path).await.expect("reopen");
+        assert!(second.applied_versions.is_empty());
+        store.shutdown().await.expect("shutdown");
+        let readonly = SessionStore::open_read_only(&path)
+            .await
+            .expect("open_read_only matches v11");
+        readonly.shutdown().await.expect("shutdown");
     }
 }

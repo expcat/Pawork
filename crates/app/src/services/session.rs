@@ -98,6 +98,20 @@ impl SessionService {
             .messages)
     }
 
+    /// GUI resume：保留 waiting_for_approval，不把孤儿审批收成 Denied。
+    pub async fn resume_messages_keep_pending(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+    ) -> Result<Vec<Message>, AppError> {
+        let record = self.get_session(core, session_id).await?;
+        Ok(core
+            .store()?
+            .projection_snapshot_on_branch(session_id, &record.active_branch)
+            .await?
+            .messages)
+    }
+
     /// 把中途被杀、仍停在 `waiting_for_approval` 的调用以 Denied 收口，避免 resume 后重跑。
     async fn seal_orphaned_approvals(
         &self,
@@ -117,58 +131,81 @@ impl SessionService {
         }
         let mut sequence = self.next_sequence(core, session_id).await?;
         for call in pending {
-            core.append_payload(
+            self.resolve_waiting_tool_call(
+                core,
                 session_id,
-                &call.run_id,
+                &call,
+                ApprovalDecision::Denied,
+                "pending approval closed on resume",
                 &mut sequence,
-                AgentEvent::ToolApprovalResponded {
-                    tool_call_id: call.tool_call_id.clone(),
-                    decision: ApprovalDecision::Denied,
-                    comment: Some("pending approval closed on resume".into()),
-                },
-            )
-            .await?;
-            if call.result.is_some() {
-                continue;
-            }
-            let result = ToolResultContent {
-                tool_call_id: call.tool_call_id.clone(),
-                tool_name: Some(call.name.clone()),
-                content: vec![ContentPart::Text(TextContent {
-                    text: "pending approval closed on resume".into(),
-                })],
-                is_error: true,
-                metadata: serde_json::Value::Null,
-                artifacts: Vec::new(),
-            };
-            core.append_payload(
-                session_id,
-                &call.run_id,
-                &mut sequence,
-                AgentEvent::ToolExecutionCompleted {
-                    tool_call_id: call.tool_call_id.clone(),
-                    result: result.clone(),
-                },
-            )
-            .await?;
-            let n = core.next_message.fetch_add(1, Ordering::Relaxed);
-            let message = Message {
-                id: MessageId::from(format!(
-                    "msg-{}-{n}",
-                    pawork_engine::now_timestamp().as_unix_millis()
-                )),
-                role: MessageRole::Tool,
-                content: vec![ContentPart::ToolResult(result)],
-                metadata: Default::default(),
-            };
-            core.append_payload(
-                session_id,
-                &call.run_id,
-                &mut sequence,
-                AgentEvent::MessageCommitted { message },
             )
             .await?;
         }
+        Ok(())
+    }
+
+    /// 参数化决策与 comment：Denied/Approved 都落 Responded + ToolExecutionCompleted(is_error) + MessageCommitted，
+    /// 工具一律不重跑。
+    pub(crate) async fn resolve_waiting_tool_call(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+        call: &pawork_storage::session::ProjectedToolCall,
+        decision: ApprovalDecision,
+        comment: &str,
+        sequence: &mut u64,
+    ) -> Result<(), AppError> {
+        core.append_payload(
+            session_id,
+            &call.run_id,
+            sequence,
+            AgentEvent::ToolApprovalResponded {
+                tool_call_id: call.tool_call_id.clone(),
+                decision,
+                comment: Some(comment.into()),
+            },
+        )
+        .await?;
+        if call.result.is_some() {
+            return Ok(());
+        }
+        let result = ToolResultContent {
+            tool_call_id: call.tool_call_id.clone(),
+            tool_name: Some(call.name.clone()),
+            content: vec![ContentPart::Text(TextContent {
+                text: comment.into(),
+            })],
+            is_error: true,
+            metadata: serde_json::Value::Null,
+            artifacts: Vec::new(),
+        };
+        core.append_payload(
+            session_id,
+            &call.run_id,
+            sequence,
+            AgentEvent::ToolExecutionCompleted {
+                tool_call_id: call.tool_call_id.clone(),
+                result: result.clone(),
+            },
+        )
+        .await?;
+        let n = core.next_message.fetch_add(1, Ordering::Relaxed);
+        let message = Message {
+            id: MessageId::from(format!(
+                "msg-{}-{n}",
+                pawork_engine::now_timestamp().as_unix_millis()
+            )),
+            role: MessageRole::Tool,
+            content: vec![ContentPart::ToolResult(result)],
+            metadata: Default::default(),
+        };
+        core.append_payload(
+            session_id,
+            &call.run_id,
+            sequence,
+            AgentEvent::MessageCommitted { message },
+        )
+        .await?;
         Ok(())
     }
 
@@ -454,6 +491,65 @@ mod tests {
 
         let again = core.resume_messages(&session).await.expect("idempotent");
         assert_eq!(again.len(), messages.len());
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn keep_pending_resume_does_not_seal_orphaned_approval() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let session = core.create_session("keep").await.expect("create");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-keep");
+        let run_id = RunId::from("run-keep");
+        let ts = pawork_engine::now_timestamp();
+        core.store()
+            .expect("store")
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    EventId::from("evt-1"),
+                    session.clone(),
+                    run_id.clone(),
+                    EventSequence::new(1),
+                    ts,
+                    AgentEvent::ToolCallStarted {
+                        tool_call_id: tool_call_id.clone(),
+                        name: "write_file".into(),
+                    },
+                ),
+            )
+            .await
+            .expect("started");
+        core.store()
+            .expect("store")
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    EventId::from("evt-2"),
+                    session.clone(),
+                    run_id,
+                    EventSequence::new(2),
+                    ts,
+                    AgentEvent::ToolApprovalRequested {
+                        tool_call_id: tool_call_id.clone(),
+                        reason: "needs approval".into(),
+                    },
+                ),
+            )
+            .await
+            .expect("requested");
+
+        let messages = core
+            .resume_messages_keep_pending(&session)
+            .await
+            .expect("keep pending");
+        assert!(messages.iter().all(|message| message.role != MessageRole::Tool));
+        let waiting = core
+            .store()
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("snap");
+        assert_eq!(waiting.tool_calls[0].state, "waiting_for_approval");
         core.shutdown().await.expect("shutdown");
     }
 }

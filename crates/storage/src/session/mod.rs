@@ -3,6 +3,7 @@
 //! `session_events` 是事实来源；其他表均为可删除、可从事件重建的 Projection。
 
 mod catalog;
+mod command_ledger;
 mod client_adapter;
 mod event_store;
 pub mod import;
@@ -19,6 +20,10 @@ use crate::sqlite::{DatabaseActor, DatabaseError, MigrationError};
 use thiserror::Error;
 
 pub use catalog::SessionRecord;
+pub use command_ledger::{
+    CommandLedger, LedgerCheck, LedgerError, LedgerStats, WaitingToolCall,
+    DEFAULT_COMMAND_LEDGER_CAPACITY,
+};
 pub use client_adapter::SqliteClientSessionRegistryStore;
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
 pub use session_tree::{BranchNode, SessionTree};
@@ -54,7 +59,10 @@ impl SessionStore {
                 .unwrap_or(false);
         let database = DatabaseActor::open(&path).await?;
         let report = migration::migrate(&database, &path, existed).await?;
-        Ok((Self { database, path }, report))
+        let store = Self { database, path };
+        // 单宿主进程模型：写打开后回收上次崩溃遗留的 inflight 占位。
+        store.command_ledger().reclaim_inflight().await?;
+        Ok((store, report))
     }
 
     pub async fn open_read_only(path: impl Into<PathBuf>) -> Result<Self, SessionStoreError> {
@@ -94,6 +102,8 @@ pub enum SessionStoreError {
     Database(#[from] DatabaseError),
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Ledger(#[from] command_ledger::LedgerError),
     #[error("database schema version {found} is newer than supported version {supported}")]
     UnsupportedSchema { found: u32, supported: u32 },
     #[error("export schema version {found} is not supported (expected {supported})")]

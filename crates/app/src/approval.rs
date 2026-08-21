@@ -56,7 +56,18 @@ pub struct PendingToolApproval {
 #[derive(Debug)]
 struct PendingAsk {
     ask: ApprovalAsk,
-    sender: oneshot::Sender<ApprovalDecision>,
+    sender: Option<oneshot::Sender<ApprovalDecision>>,
+}
+
+/// `ToolApprove` 对 GUI 宿主的解析结果。
+///
+/// 只有 Live / Queued 两态：重启后的待审批由 snapshot 只读合并呈现，
+/// 不走 restore_detached。Queued 在 run 仍 live 时禁止落盘，避免
+/// ToolApprove 先于 pending 注册到达时误封 live 调用。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApprovalResolve {
+    Live,
+    Queued,
 }
 
 /// GUI 审批宿主：`decide` 挂起 oneshot，`ToolApprove` 唤醒。
@@ -91,7 +102,7 @@ impl GuiApprovalHost {
         run_id: &RunId,
         tool_call_id: &ToolCallId,
         decision: ApprovalDecision,
-    ) -> Result<(), String> {
+    ) -> Result<ApprovalResolve, String> {
         let key = Self::key(tool_call_id);
         let mut pending = self
             .pending
@@ -109,15 +120,16 @@ impl GuiApprovalHost {
             }
             let entry = pending.remove(&key).expect("pending key exists");
             drop(pending);
-            let _ = entry.sender.send(decision);
-            return Ok(());
+            let sender = entry.sender.expect("live pending always has a sender");
+            let _ = sender.send(decision);
+            return Ok(ApprovalResolve::Live);
         }
         drop(pending);
         self.queued
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(key, decision);
-        Ok(())
+        Ok(ApprovalResolve::Queued)
     }
 
     pub fn pending(&self) -> Vec<PendingToolApproval> {
@@ -176,7 +188,7 @@ impl ApprovalPromptHost for GuiApprovalHost {
                 key.clone(),
                 PendingAsk {
                     ask: ask.clone(),
-                    sender,
+                    sender: Some(sender),
                 },
             );
         let listener = self
@@ -493,12 +505,13 @@ mod tests {
             risk: RiskLevel::Moderate,
             preview: None,
         };
-        host.resolve(
+        let kind = host.resolve(
             &ask.run_id,
             &ask.tool_call_id,
             ApprovalDecision::ApprovedOnce,
         )
         .expect("queue");
+        assert_eq!(kind, ApprovalResolve::Queued);
         let decision = host
             .decide(&ask, CancellationToken::new())
             .await;

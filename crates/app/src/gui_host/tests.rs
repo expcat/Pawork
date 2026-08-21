@@ -2,9 +2,9 @@
     use crate::approval::ApprovalPromptHost;
     use pawork_domain::{
         ApprovalDecision, CancellationToken, CommandId, ContentPart, Message, MessageId,
-        MessageMetadata, MessageRole, RunId, TextContent, Timestamp, WorkspaceId,
+        MessageMetadata, MessageRole, QueryId, RunId, TenantId, TextContent, Timestamp, WorkspaceId,
     };
-    use pawork_protocol::{ActorIdentity, AppQuery, CommandSource, RunState, TimelineItemKind};
+    use pawork_protocol::{ActorIdentity, AppQuery, AppResponseEnvelope, CommandSource, RunState, TimelineItemKind, DEFAULT_CONTROL_PLANE_TENANT};
     use pawork_protocol::app::registry::{command_entries, query_entries};
     use std::sync::atomic::{AtomicU64, Ordering};
     use pawork_testkit::{MockProvider, MockScript};
@@ -912,4 +912,434 @@
             "RunStart.provider must target the requested channel, got {}",
             error.message
         );
+    }
+
+    #[tokio::test]
+    async fn command_idempotency_survives_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("session.db");
+        let (store, _) = pawork_storage::session::SessionStore::open(&db)
+            .await
+            .expect("store");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("ok").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let create = command_envelope_with(
+            CommandId::from("cmd-create-1"),
+            Some("create-once"),
+            AppCommand::SessionCreate {
+                workspace_id: WorkspaceId::from("ws-default"),
+                title: Some("once".into()),
+            },
+        );
+        let first = adapter.command(&create).await.expect("create");
+        drop(adapter);
+
+        let (store, _) = pawork_storage::session::SessionStore::open(&db)
+            .await
+            .expect("reopen store");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("ok").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let replay = adapter.command(&create).await.expect("restart replay");
+        assert_eq!(replay, first);
+        let snapshot = adapter.snapshot().await.expect("snapshot");
+        assert_eq!(session_titles(&snapshot, "once"), 1);
+    }
+
+    #[tokio::test]
+    async fn command_record_failure_is_counted_not_swallowed() {
+        // command() looks up idempotency_key in check() before record(), so a
+        // pre-bound key Replays and never reaches persist. Inject the failure
+        // through persist_command_response — the helper command() actually
+        // calls — with a reserved inflight command_id and a key already bound
+        // to another command. Closing the db is unstable.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("idle").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let mut ledger = crate::IdempotencyStore::for_store(
+            adapter.session_store().await.expect("store").command_ledger(),
+        )
+        .with_scope("automation");
+        ledger.share_waiters_from(&adapter.waiters);
+        let tenant = TenantId::new(DEFAULT_CONTROL_PLANE_TENANT);
+        let primed_id = CommandId::from("cmd-create-shared");
+        let conflict_id = CommandId::from("cmd-create-conflict");
+        let primed = AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: QueryId::from(primed_id.as_str()),
+            responded_at: Timestamp::from_unix_millis(1),
+            response: AppResponse::Accepted {
+                command_id: primed_id.clone(),
+                run_id: None,
+            },
+        };
+        ledger
+            .record(&tenant, &primed_id, Some("shared-key"), primed)
+            .await
+            .expect("prime key");
+        assert!(matches!(
+            ledger.check(&tenant, &conflict_id, None).await.expect("reserve"),
+            crate::IdempotencyCheck::New
+        ));
+        let conflict = AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: QueryId::from(conflict_id.as_str()),
+            responded_at: Timestamp::from_unix_millis(2),
+            response: AppResponse::Accepted {
+                command_id: conflict_id.clone(),
+                run_id: None,
+            },
+        };
+        GuiHostAdapter::persist_command_response(
+            &ledger,
+            &tenant,
+            &conflict_id,
+            Some("shared-key"),
+            conflict,
+        )
+        .await;
+        assert_eq!(adapter.command_record_failure_count().await, 1);
+        let created = adapter
+            .command(&command_envelope_with(
+                CommandId::from("cmd-create-live"),
+                None,
+                AppCommand::SessionCreate {
+                    workspace_id: WorkspaceId::from("ws-default"),
+                    title: Some("live".into()),
+                },
+            ))
+            .await
+            .expect("command still returns");
+        assert!(
+            matches!(created, AppResponse::Data(_)),
+            "expected Data after dispatch, got {created:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_rebuilds_pending_approvals_after_restart() {
+        // Pin: PendingToolApprovals is global (same as host.pending()), so a
+        // waiting projection from any session is merged without a session filter.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("session.db");
+        let (store, _) = pawork_storage::session::SessionStore::open(&db)
+            .await
+            .expect("store");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("idle").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("wait").await.expect("session");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-wait");
+        let run_id = RunId::from("run-wait");
+        append_waiting_write(&core, &session, &run_id, &tool_call_id, "evt", 1).await;
+        drop(core);
+
+        let (store, _) = pawork_storage::session::SessionStore::open(&db)
+            .await
+            .expect("reopen");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("idle").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let snapshot = adapter.snapshot().await.expect("snapshot");
+        let pending = snapshot
+            .sections
+            .iter()
+            .find(|section| section.kind == SnapshotSectionKind::PendingToolApprovals)
+            .and_then(|section| section.data.clone())
+            .expect("pending section");
+        let items = pending.as_array().expect("array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].get("message").and_then(Value::as_str),
+            Some("approval pending across restart")
+        );
+        assert_eq!(
+            items[0].get("relative_path").and_then(Value::as_str),
+            Some("notes.txt")
+        );
+    }
+
+    async fn append_waiting_write(
+        core: &AppCore,
+        session: &SessionId,
+        run_id: &RunId,
+        tool_call_id: &pawork_domain::ToolCallId,
+        event_prefix: &str,
+        start_sequence: u64,
+    ) {
+        let ts = now_timestamp();
+        core.store()
+            .expect("store")
+            .append_event(
+                pawork_storage::session::DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    pawork_domain::EventId::from(format!("{event_prefix}-1")),
+                    session.clone(),
+                    run_id.clone(),
+                    pawork_domain::EventSequence::new(start_sequence),
+                    ts,
+                    AgentEvent::ToolCallStarted {
+                        tool_call_id: tool_call_id.clone(),
+                        name: "write_file".into(),
+                    },
+                ),
+            )
+            .await
+            .expect("started");
+        core.store()
+            .expect("store")
+            .append_event(
+                pawork_storage::session::DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    pawork_domain::EventId::from(format!("{event_prefix}-2")),
+                    session.clone(),
+                    run_id.clone(),
+                    pawork_domain::EventSequence::new(start_sequence + 1),
+                    ts,
+                    AgentEvent::ToolCallArgumentsDelta {
+                        tool_call_id: tool_call_id.clone(),
+                        json_delta: r#"{"path":"notes.txt","content":"secret"}"#.into(),
+                    },
+                ),
+            )
+            .await
+            .expect("args");
+        core.store()
+            .expect("store")
+            .append_event(
+                pawork_storage::session::DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    pawork_domain::EventId::from(format!("{event_prefix}-3")),
+                    session.clone(),
+                    run_id.clone(),
+                    pawork_domain::EventSequence::new(start_sequence + 2),
+                    ts,
+                    AgentEvent::ToolApprovalRequested {
+                        tool_call_id: tool_call_id.clone(),
+                        reason: "tool `write_file` requires approval".into(),
+                    },
+                ),
+            )
+            .await
+            .expect("requested");
+    }
+
+    fn idle_core(store: pawork_storage::session::SessionStore) -> AppCore {
+        AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("idle").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        )
+    }
+
+    fn replay_types(events: &[AgentEventEnvelope]) -> Vec<&'static str> {
+        events
+            .iter()
+            .map(|envelope| match &envelope.payload {
+                AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested",
+                AgentEvent::ToolApprovalResponded { .. } => "ToolApprovalResponded",
+                AgentEvent::ToolExecutionStarted { .. } => "ToolExecutionStarted",
+                AgentEvent::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
+                AgentEvent::MessageCommitted { message }
+                    if message.role == MessageRole::Tool =>
+                {
+                    "MessageCommitted.tool"
+                }
+                _ => "other",
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn tool_approve_live_waiting_does_not_durable_seal() {
+        let host = Arc::new(GuiApprovalHost::new());
+        let ask = crate::ApprovalAsk {
+            run_id: RunId::from("run-live"),
+            session_id: Some(SessionId::from("ses-live")),
+            tool_name: "write_file".into(),
+            tool_call_id: pawork_domain::ToolCallId::from("call-live"),
+            relative_path: Some("notes.txt".into()),
+            message: "Approve workspace file write".into(),
+            risk: pawork_policy::RiskLevel::Moderate,
+            preview: None,
+        };
+        let waiter = {
+            let host = Arc::clone(&host);
+            let ask = ask.clone();
+            tokio::spawn(async move { host.decide(&ask, CancellationToken::new()).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = idle_core(store);
+        let session = core.create_session("live").await.expect("session");
+        let run_id = RunId::from("run-live");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-live");
+        append_waiting_write(&core, &session, &run_id, &tool_call_id, "evt-live", 1).await;
+        let adapter = GuiHostAdapter::with_approvals(Arc::new(core), Arc::clone(&host));
+        adapter.runs().register(
+            ActiveGuiRun {
+                run_id: run_id.clone(),
+                session_id: session.clone(),
+                started_at_ms: 1,
+            },
+            CancellationToken::new(),
+        );
+
+        let response = adapter
+            .command(&command_envelope(AppCommand::ToolApprove {
+                run_id: run_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                decision: pawork_protocol::ApprovalDecision::Deny,
+            }))
+            .await
+            .expect("live approve");
+        assert!(matches!(response, AppResponse::Accepted { .. }));
+        let decision = waiter.await.expect("join");
+        assert_eq!(decision, ApprovalDecision::Denied);
+
+        let events = adapter
+            .session_store()
+            .await
+            .expect("store")
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("replay");
+        let types = replay_types(&events);
+        assert!(!types.contains(&"ToolApprovalResponded"));
+        assert!(!types.contains(&"ToolExecutionCompleted"));
+        assert!(!types.contains(&"MessageCommitted.tool"));
+        let snap = adapter
+            .session_store()
+            .await
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("proj");
+        assert_eq!(snap.tool_calls[0].state, "waiting_for_approval");
+    }
+
+    #[tokio::test]
+    async fn tool_approve_non_live_waiting_projection_is_durable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = idle_core(store);
+        let session = core.create_session("durable").await.expect("session");
+        let run_id = RunId::from("run-detached");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-detached");
+        append_waiting_write(&core, &session, &run_id, &tool_call_id, "evt-d", 1).await;
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        assert!(!adapter.runs().contains(&run_id));
+
+        adapter
+            .command(&command_envelope(AppCommand::ToolApprove {
+                run_id: run_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                decision: pawork_protocol::ApprovalDecision::Deny,
+            }))
+            .await
+            .expect("durable deny");
+
+        let events = adapter
+            .session_store()
+            .await
+            .expect("store")
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("replay");
+        let types = replay_types(&events);
+        assert!(types.contains(&"ToolApprovalResponded"));
+        assert!(types.contains(&"ToolExecutionCompleted"));
+        assert!(types.contains(&"MessageCommitted.tool"));
+        assert!(!types.contains(&"ToolExecutionStarted"));
+        let responded = events
+            .iter()
+            .find_map(|envelope| match &envelope.payload {
+                AgentEvent::ToolApprovalResponded { decision, comment, .. } => {
+                    Some((decision.clone(), comment.clone()))
+                }
+                _ => None,
+            })
+            .expect("responded payload");
+        assert_eq!(responded.0, ApprovalDecision::Denied);
+        assert_eq!(
+            responded.1.as_deref(),
+            Some("approval resolved after restart; tool not executed")
+        );
+        let completed = events.iter().find_map(|envelope| match &envelope.payload {
+            AgentEvent::ToolExecutionCompleted { result, .. } => Some(result.is_error),
+            _ => None,
+        });
+        assert_eq!(completed, Some(true));
+    }
+
+    #[tokio::test]
+    async fn tool_approve_non_live_without_waiting_projection_stays_queued() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = idle_core(store);
+        let session = core.create_session("queued").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let run_id = RunId::from("run-missing");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-missing");
+        assert!(!adapter.runs().contains(&run_id));
+
+        adapter
+            .command(&command_envelope(AppCommand::ToolApprove {
+                run_id,
+                tool_call_id,
+                decision: pawork_protocol::ApprovalDecision::Deny,
+            }))
+            .await
+            .expect("queued");
+
+        let events = adapter
+            .session_store()
+            .await
+            .expect("store")
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("replay");
+        let types = replay_types(&events);
+        assert!(!types.contains(&"ToolApprovalResponded"));
+        assert!(!types.contains(&"ToolExecutionCompleted"));
+        assert_eq!(adapter.approvals().pending().len(), 0);
     }

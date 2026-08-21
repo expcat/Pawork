@@ -55,11 +55,12 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use pawork_domain::{ApprovalDecision, CancellationToken};
+    use pawork_domain::{ApprovalDecision, CancellationToken, MessageRole};
     use pawork_storage::session::SessionStore;
     use pawork_testkit::{MockProvider, MockScript};
 
     use crate::testsupport::{RecordingEvents, user_hello};
+    use crate::gui_server::GuiHost;
     use crate::{AppCore, ApprovalAsk, ApprovalMode, ApprovalPromptHost, DenyAllApprovals};
 
     struct ScriptedHost {
@@ -309,5 +310,188 @@ mod tests {
         assert!(!sink.types().contains(&"ToolApprovalRequested"));
         assert!(!workspace.path().join("notes.txt").exists());
         core.shutdown().await.expect("shutdown");
+    }
+
+
+    struct HangHost;
+
+    #[async_trait]
+    impl ApprovalPromptHost for HangHost {
+        async fn decide(&self, _ask: &ApprovalAsk, cancel: CancellationToken) -> ApprovalDecision {
+            cancel.cancelled().await;
+            ApprovalDecision::Cancelled
+        }
+    }
+
+    #[tokio::test]
+    async fn k02_crash_keeps_pending_and_detached_resolve_does_not_rerun() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let dir = tempfile::tempdir().expect("store");
+        let db = dir.path().join("session.db");
+        let (store, _) = SessionStore::open(&db).await.expect("store");
+        let probe = store.clone();
+        let provider = MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call(
+                    "write_file",
+                    serde_json::json!({"path": "notes.txt", "content": "hello-write"}),
+                )
+                .complete_with(pawork_domain::StopReason::ToolUse),
+            MockScript::new().text("wrote notes").complete(),
+        ]);
+        let mut core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        core.open_checkpoints(dir.path().join("artifacts"))
+            .await
+            .expect("artifacts");
+        core.configure_approval(ApprovalMode::AskForWrites, true, Arc::new(HangHost));
+        core.attach_workspace(workspace.path()).expect("attach");
+        let session = core.create_session("crash").await.expect("create");
+        let sink = RecordingEvents::default();
+        let cancel = CancellationToken::new();
+        let turn_session = session.clone();
+        let handle = tokio::spawn(async move {
+            core.chat_turn(&turn_session, vec![user_hello()], &sink, cancel).await
+        });
+        let mut waiting = None;
+        for _ in 0..100 {
+            if let Ok(snap) = probe.projection_snapshot(&session).await {
+                if snap
+                    .tool_calls
+                    .iter()
+                    .any(|call| call.state == "waiting_for_approval")
+                {
+                    waiting = Some(snap);
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let waiting = waiting.expect("requested should persist before wait");
+        assert_eq!(waiting.tool_calls[0].state, "waiting_for_approval");
+        handle.abort();
+        let _ = handle.await;
+        drop(probe);
+
+        let (store, _) = SessionStore::open(&db).await.expect("reopen after crash");
+        let mut core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("idle").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        core.configure_approval(ApprovalMode::AskForWrites, true, Arc::new(HangHost));
+        core.attach_workspace(workspace.path()).expect("attach");
+        let messages = core
+            .resume_messages_keep_pending(&session)
+            .await
+            .expect("keep pending");
+        assert!(messages.iter().all(|message| message.role != MessageRole::Tool));
+        let snap = core
+            .store()
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("still waiting");
+        assert_eq!(snap.tool_calls[0].state, "waiting_for_approval");
+        let run_id = snap.tool_calls[0].run_id.clone();
+        let tool_call_id = snap.tool_calls[0].tool_call_id.clone();
+        let adapter = crate::GuiHostAdapter::new(std::sync::Arc::new(core));
+        adapter
+            .command(&pawork_protocol::AppCommandEnvelope {
+                api_version: pawork_protocol::API_VERSION,
+                command_id: pawork_domain::CommandId::from("cmd-k02-deny"),
+                source: pawork_protocol::CommandSource::Automation,
+                identity: pawork_protocol::ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: pawork_domain::Timestamp::from_unix_millis(1),
+                command: pawork_protocol::AppCommand::ToolApprove {
+                    run_id,
+                    tool_call_id,
+                    decision: pawork_protocol::ApprovalDecision::Deny,
+                },
+            })
+            .await
+            .expect("tool approve deny after crash");
+        let after = adapter
+            .session_store()
+            .await
+            .expect("store")
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("after");
+        let types: Vec<_> = after
+            .iter()
+            .map(|envelope| match &envelope.payload {
+                pawork_domain::AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested",
+                pawork_domain::AgentEvent::ToolApprovalResponded { .. } => "ToolApprovalResponded",
+                pawork_domain::AgentEvent::ToolExecutionStarted { .. } => "ToolExecutionStarted",
+                pawork_domain::AgentEvent::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
+                pawork_domain::AgentEvent::MessageCommitted { message }
+                    if message.role == MessageRole::Tool =>
+                {
+                    "MessageCommitted.tool"
+                }
+                _ => "other",
+            })
+            .collect();
+        assert!(types.contains(&"ToolApprovalRequested"));
+        assert!(types.contains(&"ToolApprovalResponded"));
+        assert!(types.contains(&"ToolExecutionCompleted"));
+        assert!(types.contains(&"MessageCommitted.tool"));
+        assert!(!types.contains(&"ToolExecutionStarted"));
+        let responded = after.iter().find_map(|envelope| match &envelope.payload {
+            pawork_domain::AgentEvent::ToolApprovalResponded { decision, comment, .. } => {
+                Some((decision.clone(), comment.clone()))
+            }
+            _ => None,
+        }).expect("responded payload");
+        assert_eq!(responded.0, ApprovalDecision::Denied);
+        assert_eq!(
+            responded.1.as_deref(),
+            Some("approval resolved after restart; tool not executed")
+        );
+        let completed_err = after.iter().find_map(|envelope| match &envelope.payload {
+            pawork_domain::AgentEvent::ToolExecutionCompleted { result, .. } => Some(result.is_error),
+            _ => None,
+        });
+        assert_eq!(completed_err, Some(true));
+        assert!(after.iter().any(|envelope| matches!(
+            envelope.payload,
+            pawork_domain::AgentEvent::MessageCommitted { .. }
+        )));
+        assert!(!workspace.path().join("notes.txt").exists());
+        let sequences: Vec<_> = after.iter().map(|envelope| envelope.sequence.value()).collect();
+        assert_eq!(sequences, (1..=after.len() as u64).collect::<Vec<_>>());
+        let store = adapter.session_store().await.expect("store clone");
+        let core = AppCore::from_parts(
+            std::sync::Arc::new(MockProvider::sequence(vec![MockScript::new().text("idle").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let again_len = core
+            .resume_messages_keep_pending(&session)
+            .await
+            .expect("second resume")
+            .len();
+        let replayed = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("replay2");
+        assert_eq!(replayed.len(), after.len());
+        assert_eq!(again_len, messages.len() + 1);
+        drop(core);
+        adapter.shutdown().await.expect("shutdown adapter");
     }
 }

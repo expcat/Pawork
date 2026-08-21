@@ -42,7 +42,7 @@ use pawork_workspace::config::{
     ConfigError, Loader, PaworkConfig,
 };
 use pawork_domain::{
-    AgentEvent, CancellationToken, Message, ModelId, ProviderId, RequestId, RunId, SessionId,
+    AgentEvent, ApprovalDecision, CancellationToken, Message, ModelId, ProviderId, RequestId, RunId, SessionId,
     ToolDescriptor, WorkspaceId, TokenUsage, Cost,
 };
 use pawork_engine::{
@@ -64,8 +64,8 @@ use crate::provider_assembly::{
 };
 
 pub use approval::{
-    parse_approval_mode, ApprovalAsk, ApprovalPromptHost, DenyAllApprovals, GuiApprovalHost,
-    PendingToolApproval,
+    parse_approval_mode, ApprovalAsk, ApprovalPromptHost, ApprovalResolve, DenyAllApprovals,
+    GuiApprovalHost, PendingToolApproval,
 };
 pub use checkpoint::{CheckpointSummary, RollbackOutcome};
 pub use data_dir::{
@@ -825,6 +825,28 @@ impl AppCore {
 
     pub async fn resume_messages(&self, session_id: &SessionId) -> Result<Vec<Message>, AppError> {
         self.session.resume_messages(self, session_id).await
+    }
+
+    pub async fn resume_messages_keep_pending(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<Message>, AppError> {
+        self.session
+            .resume_messages_keep_pending(self, session_id)
+            .await
+    }
+
+    pub(crate) async fn resolve_waiting_tool_call(
+        &self,
+        session_id: &SessionId,
+        call: &pawork_storage::session::ProjectedToolCall,
+        decision: ApprovalDecision,
+        comment: &str,
+        sequence: &mut u64,
+    ) -> Result<(), AppError> {
+        self.session
+            .resolve_waiting_tool_call(self, session_id, call, decision, comment, sequence)
+            .await
     }
 
     async fn session_active_branch(&self, session_id: &SessionId) -> Result<String, AppError> {

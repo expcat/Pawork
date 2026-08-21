@@ -75,12 +75,17 @@ pub trait LoopContext: Send + Sync {
     ) -> Vec<ToolCallResult>;
 
     /// 对一批待执行调用给出闸门。`already_approved_for_run` 为 true 时不应再询问。
+    ///
+    /// 实现必须在每次阻塞等待决策前 emit [`AgentEvent::ToolApprovalRequested`]
+    /// （含 batch 已批准的短路路径），reason 格式逐字
+    /// tool `{name}` requires approval。
     async fn request_approval(
         &self,
         calls: &[PendingToolInvocation],
         already_approved_for_run: bool,
+        events: LoopEventEmitter<'_>,
         cancel: CancellationToken,
-    ) -> Vec<ApprovalGate>;
+    ) -> Result<Vec<ApprovalGate>, EngineError>;
 
     fn next_message_id(&self) -> MessageId;
 
@@ -246,12 +251,18 @@ pub async fn run_session(
                 }
 
                 let gates = loop_ctx
-                    .request_approval(&invocations, run_approved, cancel.clone())
-                    .await;
+                    .request_approval(
+                        &invocations,
+                        run_approved,
+                        loop_events.clone(),
+                        cancel.clone(),
+                    )
+                    .await?;
                 if cancel.is_cancelled() {
                     return emit_cancelled(&emitter, "turn cancelled", &run_usage).await;
                 }
-                let (to_run, mut decided) = if gates.len() != invocations.len() {
+                let mismatch = gates.len() != invocations.len();
+                let (to_run, mut decided) = if mismatch {
                     let mut decided = BTreeMap::new();
                     for invocation in &invocations {
                         decided.insert(
@@ -265,12 +276,14 @@ pub async fn run_session(
                 };
                 for invocation in &invocations {
                     if let Some(decision) = decided.get(&invocation.tool_call_id) {
-                        emitter
-                            .emit(AgentEvent::ToolApprovalRequested {
-                                tool_call_id: invocation.tool_call_id.clone(),
-                                reason: format!("tool `{}` requires approval", invocation.name),
-                            })
-                            .await?;
+                        if mismatch {
+                            emitter
+                                .emit(AgentEvent::ToolApprovalRequested {
+                                    tool_call_id: invocation.tool_call_id.clone(),
+                                    reason: format!("tool `{}` requires approval", invocation.name),
+                                })
+                                .await?;
+                        }
                         emitter
                             .emit(AgentEvent::ToolApprovalResponded {
                                 tool_call_id: invocation.tool_call_id.clone(),
@@ -1239,9 +1252,10 @@ mod tests {
             &self,
             calls: &[PendingToolInvocation],
             _already_approved_for_run: bool,
+            _events: LoopEventEmitter<'_>,
             _cancel: CancellationToken,
-        ) -> Vec<ApprovalGate> {
-            calls.iter().map(|_| ApprovalGate::NotRequired).collect()
+        ) -> Result<Vec<ApprovalGate>, EngineError> {
+            Ok(calls.iter().map(|_| ApprovalGate::NotRequired).collect())
         }
 
         fn next_message_id(&self) -> MessageId {
@@ -1791,27 +1805,38 @@ mod tests {
             &self,
             calls: &[PendingToolInvocation],
             already_approved_for_run: bool,
+            events: LoopEventEmitter<'_>,
             _cancel: CancellationToken,
-        ) -> Vec<ApprovalGate> {
+        ) -> Result<Vec<ApprovalGate>, EngineError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            if already_approved_for_run {
-                return calls
+            let gates = if already_approved_for_run {
+                calls
                     .iter()
                     .map(|_| ApprovalGate::Asked(ApprovalDecision::ApprovedForRun))
-                    .collect();
+                    .collect::<Vec<_>>()
+            } else {
+                let mut queue = self.queue.lock().expect("approval queue");
+                calls
+                    .iter()
+                    .map(|_| {
+                        let decision = if queue.is_empty() {
+                            ApprovalDecision::Denied
+                        } else {
+                            queue.remove(0)
+                        };
+                        ApprovalGate::Asked(decision)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            for call in calls {
+                events
+                    .emit(AgentEvent::ToolApprovalRequested {
+                        tool_call_id: call.tool_call_id.clone(),
+                        reason: format!("tool `{}` requires approval", call.name),
+                    })
+                    .await?;
             }
-            let mut queue = self.queue.lock().expect("approval queue");
-            calls
-                .iter()
-                .map(|_| {
-                    let decision = if queue.is_empty() {
-                        ApprovalDecision::Denied
-                    } else {
-                        queue.remove(0)
-                    };
-                    ApprovalGate::Asked(decision)
-                })
-                .collect()
+            Ok(gates)
         }
 
         fn next_message_id(&self) -> MessageId {
@@ -1916,9 +1941,10 @@ mod tests {
             &self,
             _calls: &[PendingToolInvocation],
             _already_approved_for_run: bool,
+            _events: LoopEventEmitter<'_>,
             _cancel: CancellationToken,
-        ) -> Vec<ApprovalGate> {
-            Vec::new()
+        ) -> Result<Vec<ApprovalGate>, EngineError> {
+            Ok(Vec::new())
         }
 
         fn next_message_id(&self) -> MessageId {
@@ -2152,10 +2178,11 @@ mod tests {
             &self,
             calls: &[PendingToolInvocation],
             already_approved_for_run: bool,
+            events: LoopEventEmitter<'_>,
             cancel: CancellationToken,
-        ) -> Vec<ApprovalGate> {
+        ) -> Result<Vec<ApprovalGate>, EngineError> {
             self.inner
-                .request_approval(calls, already_approved_for_run, cancel)
+                .request_approval(calls, already_approved_for_run, events, cancel)
                 .await
         }
 
@@ -2456,9 +2483,10 @@ mod tests {
             &self,
             calls: &[PendingToolInvocation],
             _already_approved_for_run: bool,
+            _events: LoopEventEmitter<'_>,
             _cancel: CancellationToken,
-        ) -> Vec<ApprovalGate> {
-            calls.iter().map(|_| ApprovalGate::NotRequired).collect()
+        ) -> Result<Vec<ApprovalGate>, EngineError> {
+            Ok(calls.iter().map(|_| ApprovalGate::NotRequired).collect())
         }
 
         fn next_message_id(&self) -> MessageId {
@@ -2547,6 +2575,120 @@ mod tests {
         assert_eq!(cleaned.load(std::sync::atomic::Ordering::SeqCst), 1);
         let last = types.last().copied();
         assert_eq!(last, Some("RunCancelled"));
+    }
+
+    struct HangUntilApprovalCtx {
+        started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        msg_counter: AtomicU64,
+        req_counter: AtomicU64,
+    }
+
+    impl HangUntilApprovalCtx {
+        fn new(started: tokio::sync::oneshot::Sender<()>) -> Self {
+            Self {
+                started: Mutex::new(Some(started)),
+                msg_counter: AtomicU64::new(0),
+                req_counter: AtomicU64::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LoopContext for HangUntilApprovalCtx {
+        async fn execute_tools(
+            &self,
+            _calls: Vec<PendingToolInvocation>,
+            _events: LoopEventEmitter<'_>,
+            _cancel: CancellationToken,
+        ) -> Vec<ToolCallResult> {
+            Vec::new()
+        }
+
+        async fn request_approval(
+            &self,
+            calls: &[PendingToolInvocation],
+            _already_approved_for_run: bool,
+            events: LoopEventEmitter<'_>,
+            cancel: CancellationToken,
+        ) -> Result<Vec<ApprovalGate>, EngineError> {
+            for call in calls {
+                events
+                    .emit(AgentEvent::ToolApprovalRequested {
+                        tool_call_id: call.tool_call_id.clone(),
+                        reason: format!("tool `{}` requires approval", call.name),
+                    })
+                    .await?;
+            }
+            if let Some(tx) = self.started.lock().expect("started mutex").take() {
+                let _ = tx.send(());
+            }
+            cancel.cancelled().await;
+            Ok(calls
+                .iter()
+                .map(|_| ApprovalGate::Asked(ApprovalDecision::Cancelled))
+                .collect())
+        }
+
+        fn next_message_id(&self) -> MessageId {
+            let n = self.msg_counter.fetch_add(1, Ordering::Relaxed);
+            MessageId::from(format!("msg-{n}"))
+        }
+
+        fn next_request_id(&self) -> RequestId {
+            let n = self.req_counter.fetch_add(1, Ordering::Relaxed);
+            RequestId::from(format!("req-{n}"))
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_while_waiting_for_approval_emits_requested_without_responded() {
+        use crate::{CancelHandle, CancelReason};
+
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
+            .tool_call("write_file", serde_json::json!({"path": "a.rs"}))
+            .complete_with(StopReason::ToolUse)]));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let ctx = HangUntilApprovalCtx::new(tx);
+        let sink = RecordingEvents::default();
+        let handle = CancelHandle::new(
+            RunId::from("run-1"),
+            Arc::new(CountingCleaner {
+                run: RunId::from("run-1"),
+                count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }),
+        );
+
+        let session = run_session(
+            &provider,
+            sample_request(vec![write_tool_def()]),
+            sample_turn(),
+            &sink,
+            handle.token(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            TurnContext::default(),
+        );
+        tokio::pin!(session);
+        tokio::select! {
+            result = &mut session => {
+                panic!("session ended before approval wait: {result:?}");
+            }
+            started = rx => {
+                started.expect("requested emitted");
+            }
+        }
+        handle.cancel(CancelReason::User);
+        let error = session.await.expect_err("cancelled");
+        assert!(matches!(
+            error,
+            EngineError::Provider(ref err)
+                if err.kind == pawork_domain::ProviderErrorKind::Cancelled
+        ));
+        let types = sink.types();
+        assert!(types.contains(&"ToolApprovalRequested"));
+        assert!(!types.contains(&"ToolApprovalResponded"));
+        assert!(!types.contains(&"ToolExecutionStarted"));
+        assert_eq!(types.last().copied(), Some("RunCancelled"));
     }
 
     #[tokio::test]
@@ -2813,10 +2955,11 @@ mod tests {
                 &self,
                 calls: &[PendingToolInvocation],
                 already_approved_for_run: bool,
+                events: LoopEventEmitter<'_>,
                 cancel: CancellationToken,
-            ) -> Vec<ApprovalGate> {
+            ) -> Result<Vec<ApprovalGate>, EngineError> {
                 self.inner
-                    .request_approval(calls, already_approved_for_run, cancel)
+                    .request_approval(calls, already_approved_for_run, events, cancel)
                     .await
             }
 

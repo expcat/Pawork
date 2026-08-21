@@ -1,5 +1,5 @@
-use pawork_domain::{AgentEvent, AgentEventEnvelope, CommandId};
-use pawork_protocol::{AppCommandEnvelope, AppEvent, CommandSource, DiagnosticLevel, RunState};
+use pawork_domain::{AgentEvent, AgentEventEnvelope};
+use pawork_protocol::{AppEvent, CommandSource, DiagnosticLevel, RunState};
 
 /// 选择要广播给 GUI 的 App 事件；其余事件仍持久化，只是不进实时流。
 pub(in crate::gui_host) fn broadcast_event(envelope: &AgentEventEnvelope) -> Option<AppEvent> {
@@ -34,9 +34,8 @@ pub(in crate::gui_host) fn broadcast_event(envelope: &AgentEventEnvelope) -> Opt
             artifact_id: None,
         },
         AgentEvent::ToolApprovalRequested { .. } => {
-            // Live 卡片由 GuiApprovalHost::decide 注册时广播；engine 在
-            // decide 返回后才发 Requested/Responded 对，再映射会把已决
-            // 策的卡片重新点亮。
+            // Requested 现在在等待前 emit 并落盘；live 卡片仍由
+            // on_pending 广播 ToolApprovalRequired，mapper 仍返回 None。
             return None;
         }
         AgentEvent::ToolExecutionCompleted { result, .. } => AppEvent::ToolCompleted {
@@ -65,35 +64,13 @@ pub(in crate::gui_host) fn broadcast_event(envelope: &AgentEventEnvelope) -> Opt
     })
 }
 
-/// 幂等按 GUI 客户端隔离：各连接独立生成 `gui-cmd-N`，不得把 A 的
-/// SessionCreate 重放成 B 的 RunCancel。
-pub(in crate::gui_host) fn scoped_idempotency(
-    envelope: &AppCommandEnvelope,
-) -> (CommandId, Option<String>) {
-    let client_id = match &envelope.source {
+/// 幂等按 GUI 客户端列式隔离：command_id / key 保持原值，scope 单独成列。
+pub(in crate::gui_host) fn client_scope_from_source(source: &CommandSource) -> String {
+    match source {
         CommandSource::LocalGui { client_id } | CommandSource::RemoteGui { client_id, .. } => {
-            Some(client_id.as_str())
+            client_id.as_str().to_string()
         }
-        _ => None,
-    };
-    match client_id {
-        Some(client_id) => (
-            CommandId::from(format!("{client_id}/{}", envelope.command_id.as_str())),
-            envelope
-                .idempotency_key
-                .as_ref()
-                .map(|key| format!("{client_id}/{key}")),
-        ),
-        None if matches!(envelope.source, CommandSource::Automation) => (
-            CommandId::from(format!("automation/{}", envelope.command_id.as_str())),
-            envelope
-                .idempotency_key
-                .as_ref()
-                .map(|key| format!("automation/{key}")),
-        ),
-        None => (
-            envelope.command_id.clone(),
-            envelope.idempotency_key.clone(),
-        ),
+        CommandSource::Automation => "automation".into(),
+        _ => String::new(),
     }
 }

@@ -113,8 +113,9 @@ impl LoopContext for SessionLoopCtx<'_> {
         &self,
         calls: &[PendingToolInvocation],
         already_approved_for_run: bool,
+        events: LoopEventEmitter<'_>,
         cancel: CancellationToken,
-    ) -> Vec<ApprovalGate> {
+    ) -> Result<Vec<ApprovalGate>, pawork_engine::EngineError> {
         let mut batch_approved = already_approved_for_run;
         let mut gates = Vec::with_capacity(calls.len());
         for call in calls {
@@ -136,6 +137,12 @@ impl LoopContext for SessionLoopCtx<'_> {
             );
             match decision {
                 PolicyDecision::AskUser { prompt } => {
+                    events
+                        .emit(pawork_domain::AgentEvent::ToolApprovalRequested {
+                            tool_call_id: call.tool_call_id.clone(),
+                            reason: format!("tool `{}` requires approval", call.name),
+                        })
+                        .await?;
                     if batch_approved {
                         gates.push(ApprovalGate::Asked(ApprovalDecision::ApprovedForRun));
                         continue;
@@ -165,7 +172,7 @@ impl LoopContext for SessionLoopCtx<'_> {
                 | PolicyDecision::Deny { .. } => gates.push(ApprovalGate::NotRequired),
             }
         }
-        gates
+        Ok(gates)
     }
 
     fn next_message_id(&self) -> MessageId {

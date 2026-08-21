@@ -77,7 +77,7 @@ ADR 索引(ADR-001~036 归档于 `../../Pawork_v1/docs/adr/`,原则继续有效;
 | 编号 | 内容 |
 | --- | --- |
 | K-01 | 仓库根迁移后 `foundation/config` 路径闭环核对 |
-| K-02 | `ToolApprovalRequested` 等待前持久化(崩溃后 seal/resume/不重复执行语义) |
+| K-02 | `ToolApprovalRequested` 等待前持久化(崩溃后 seal/resume/不重复执行语义)——✅ 已由 R4 波 B 落地(2026-08-21) |
 | K-03 | S7 Desktop 人工验收:中文 IME、多行粘贴、1440×1024 对照定稿图、键盘走查(F14/F34/F35/F36/F53–F56 证据) |
 | K-04 | S8 Desktop Changes 面(Inspector Files/Summary + ActivityPopover 摘要;并入 `HunkStageService` 消费,S12-F57) |
 | K-05 | S9 本机会话格式导入(`~/.claude/projects/**/*.jsonl` 与 Codex rollout,待脱敏样本) |

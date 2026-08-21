@@ -79,7 +79,7 @@ pub(crate) async fn run_start(
                 diagnostics: Default::default(),
             }));
         }
-        core.resume_messages(session_id)
+        core.resume_messages_keep_pending(session_id)
             .await
             .map_err(GuiHostAdapter::app_error)?
     };
