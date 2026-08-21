@@ -14,13 +14,18 @@
 //! 所有权/凭证/Core 一律不在这里重建：session 记录只读写
 //! [`SessionRegistry`]，命令/查询全部经 [`AcpCommandHost`]。本 crate 不依赖
 //! `pawork-app`，也不接入 S11 审计控制面。
+//!
+//! 并发模型：单 actor 循环独占 5 张 map + negotiated + outbox；公开 API 经
+//! mpsc 信箱进出。prompt 串行只覆盖建立临界区（reserve → dispatch → bind）；
+//! 绑定完成后 turn 执行期跨会话可并发。cancel / fail-closed 走独立紧急信箱，
+//! 不被活跃 prompt 队头或 Core dispatch 等待阻塞。禁止 `std::sync::Mutex` / `RwLock`。
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use pawork_domain::{ConnectionId, QueryId, RunId, SessionId, ToolCallId, WorkspaceId};
+use pawork_domain::{ConnectionId, DegradeEvent, DegradeKind, DegradeSeverity, QueryId, RunId, SessionId, ToolCallId, WorkspaceId};
 use pawork_protocol::adapter::{
     AdapterError, AdapterSessionContext, AdapterWireFrame, CanonicalClientRequest,
     CanonicalCoreFrame, CapabilitySnapshot, ClientAdapter, ClientCapability, ClientProtocol,
@@ -33,9 +38,11 @@ use pawork_protocol::{
     API_VERSION,
 };
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use crate::channels::acp::adapter::{AcpClientAdapter, AcpClientAdapterFactory, CwdResolver, SessionResolver};
+use crate::channels::acp::adapter::{
+    AcpClientAdapter, AcpClientAdapterFactory, CwdResolver, NegotiatedAcpAdapter, SessionResolver,
+};
 use crate::channels::acp::command_host::{AcpCommandHost, AcpHostError};
 use crate::channels::acp::map;
 use crate::channels::acp::now_timestamp;
@@ -122,29 +129,6 @@ impl CwdResolver for HostCwdResolver {
     }
 }
 
-/// run → client session 路由（与宿主共享同一 pending 表）。
-struct HostSessionResolver {
-    run_sessions: Arc<Mutex<BTreeMap<RunId, ClientSessionId>>>,
-}
-
-#[async_trait::async_trait]
-impl SessionResolver for HostSessionResolver {
-    async fn resolve_client_session(&self, event: &AppEventEnvelope) -> Option<ClientSessionId> {
-        // GuiEventBus 把 Core 事件标成 EventStream::Session；mock / 部分测试
-        // 用 EventStream::Run。两种都要能回到 pending prompt，否则
-        // session/prompt 会一直等不到 stopReason。
-        let run_id = match &event.stream {
-            EventStream::Run(run_id) => Some(run_id),
-            _ => run_id_of(&event.payload),
-        }?;
-        self.run_sessions
-            .lock()
-            .expect("acp-host run map mutex")
-            .get(run_id)
-            .cloned()
-    }
-}
-
 /// 一次 prompt 的结果（run 终态时经 flush barrier 投递）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptResolution {
@@ -184,26 +168,68 @@ struct PromptOccupancy {
     early_request_cancel: bool,
 }
 
+#[derive(Clone, Default)]
+struct HostSnapshot {
+    occupancy: BTreeMap<ClientSessionId, Option<RunId>>,
+    run_sessions: BTreeMap<RunId, ClientSessionId>,
+    initialized: bool,
+    degraded: Vec<ClientCapability>,
+}
+
+enum Mail {
+    Request {
+        id: JsonRpcId,
+        method: String,
+        params: Option<Value>,
+        reply: oneshot::Sender<Result<RequestStart, JsonRpcError>>,
+    },
+    Notification {
+        method: String,
+        params: Option<Value>,
+        reply: oneshot::Sender<Result<(), JsonRpcError>>,
+    },
+    Response {
+        id: JsonRpcId,
+        result: Result<Value, JsonRpcError>,
+        reply: oneshot::Sender<Result<(), JsonRpcError>>,
+    },
+    DrainAndPump {
+        reply: oneshot::Sender<()>,
+    },
+    PumpEvents {
+        events: Vec<AppEventEnvelope>,
+        reply: oneshot::Sender<()>,
+    },
+    DrainOutbox {
+        reply: std::sync::mpsc::Sender<Vec<OutboxItem>>,
+    },
+}
+
+enum RequestStart {
+    Ready(Value),
+    Prompt(mpsc::Receiver<PromptResolution>),
+}
+
+enum UrgentMail {
+    Notification {
+        method: String,
+        params: Option<Value>,
+        reply: oneshot::Sender<Result<(), JsonRpcError>>,
+    },
+    FailClosed {
+        reason: String,
+        reply: std::sync::mpsc::Sender<()>,
+    },
+}
+
 /// ACP v1 宿主（in-process 胶水，无传输假设）。
 pub struct AcpHost {
     command_host: Arc<dyn AcpCommandHost>,
     registry: Arc<SessionRegistry>,
-    factory: AcpClientAdapterFactory,
-    session_resolver: Arc<dyn SessionResolver>,
-    /// initialize 成功后设置的协商产物。
-    negotiated: Mutex<Option<crate::channels::acp::adapter::NegotiatedAcpAdapter>>,
     connection_id: ConnectionId,
-    /// client session → 当前 ownership (epoch, revision)，随 attach/reattach/close 更新。
-    session_contexts: Mutex<BTreeMap<ClientSessionId, (u64, u64)>>,
-    occupancy: Mutex<BTreeMap<ClientSessionId, PromptOccupancy>>,
-    run_sessions: Arc<Mutex<BTreeMap<RunId, ClientSessionId>>>,
-    pending_prompts: Mutex<HashMap<JsonRpcId, PendingPrompt>>,
-    pending_permissions: Mutex<HashMap<JsonRpcId, PendingPermission>>,
-    outbox: Mutex<VecDeque<OutboxItem>>,
-    next_request_id: AtomicU64,
-    /// 事件泵与 prompt 注册之间的互斥：保证 run→session 映射先于任何 drain。
-    prompt_gate: tokio::sync::Mutex<()>,
-    event_rx: tokio::sync::Mutex<broadcast::Receiver<AppEventEnvelope>>,
+    mail_tx: mpsc::UnboundedSender<Mail>,
+    urgent_tx: mpsc::UnboundedSender<UrgentMail>,
+    snapshot_rx: watch::Receiver<HostSnapshot>,
 }
 
 impl AcpHost {
@@ -215,43 +241,79 @@ impl AcpHost {
             identity_name: identity_name.clone(),
             next_query: AtomicU64::new(0),
         });
-        let run_sessions = Arc::new(Mutex::new(BTreeMap::new()));
-        let session_resolver: Arc<dyn SessionResolver> = Arc::new(HostSessionResolver {
-            run_sessions: Arc::clone(&run_sessions),
-        });
+        let connection_id = ConnectionId::from(format!(
+            "acp-connection-{}-{}",
+            std::process::id(),
+            ACP_CONNECTION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let (mail_tx, mail_rx) = mpsc::unbounded_channel();
+        let (urgent_tx, urgent_rx) = mpsc::unbounded_channel();
+        let (snapshot_tx, snapshot_rx) = watch::channel(HostSnapshot::default());
         let factory = AcpClientAdapterFactory::new(
             crate::channels::acp::adapter::ACP_SUPPORTED_CAPABILITIES
                 .iter()
                 .map(|name| ClientCapability::new(*name)),
             Arc::clone(&registry),
             cwd_resolver,
-            Arc::clone(&session_resolver),
+            Arc::new(SnapshotSessionResolver {
+                snapshot_rx: snapshot_rx.clone(),
+            }),
             Implementation {
                 name: ACP_AGENT_NAME.into(),
                 title: Some("Pawork ACP Host".into()),
                 version: ACP_AGENT_VERSION.into(),
             },
         );
+        let actor = AcpActor {
+            command_host: Arc::clone(&command_host),
+            registry: Arc::clone(&registry),
+            factory,
+            connection_id: connection_id.clone(),
+            negotiated: None,
+            session_contexts: BTreeMap::new(),
+            occupancy: BTreeMap::new(),
+            run_sessions: BTreeMap::new(),
+            pending_prompts: HashMap::new(),
+            pending_permissions: HashMap::new(),
+            outbox: VecDeque::new(),
+            held_events: VecDeque::new(),
+            next_request_id: 1,
+            event_rx,
+            snapshot_tx,
+            mail_rx,
+            urgent_rx,
+            deferred_mail: VecDeque::new(),
+        };
+        // Actor 状态本身是 Send，但公开 API 含同步 drain/fail-closed 等待。
+        // 挂到调用方 ambient runtime 时，current-thread 测试 runtime 上的
+        // std recv 会冻住唯一 worker，actor 无法回执。因此仍用独立 OS 线程
+        // + current_thread runtime。Core dispatch/query 已 tokio::spawn 到
+        // 该 runtime；GuiHostAdapter 的工作线程不受此循环占用。
+        if let Err(error) = std::thread::Builder::new()
+            .name("pawork-acp-actor".into())
+            .spawn(move || match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(actor.run()),
+                Err(error) => report_acp_state(
+                    "failed to start ACP actor runtime",
+                    json!({ "error": error.to_string() }),
+                ),
+            })
+        {
+            report_acp_state(
+                "failed to spawn ACP actor thread",
+                json!({ "error": error.to_string() }),
+            );
+        }
         Self {
             command_host,
             registry,
-            factory,
-            session_resolver,
-            negotiated: Mutex::new(None),
-            connection_id: ConnectionId::from(format!(
-                "acp-connection-{}-{}",
-                std::process::id(),
-                ACP_CONNECTION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-            )),
-            session_contexts: Mutex::new(BTreeMap::new()),
-            occupancy: Mutex::new(BTreeMap::new()),
-            run_sessions,
-            pending_prompts: Mutex::new(HashMap::new()),
-            pending_permissions: Mutex::new(HashMap::new()),
-            outbox: Mutex::new(VecDeque::new()),
-            next_request_id: AtomicU64::new(1),
-            prompt_gate: tokio::sync::Mutex::new(()),
-            event_rx: tokio::sync::Mutex::new(event_rx),
+            connection_id,
+            mail_tx,
+            urgent_tx,
+            snapshot_rx,
         }
     }
 
@@ -272,9 +334,11 @@ impl AcpHost {
 
     /// 取走全部当前可读的出站条目（同步、非阻塞；传输层冲刷用，保持队列顺序）。
     pub fn drain_outbox_items(&self) -> Vec<OutboxItem> {
-        std::mem::take(&mut *self.outbox.lock().expect("acp-host outbox mutex"))
-            .into_iter()
-            .collect()
+        let (reply, rx) = std::sync::mpsc::channel();
+        if self.mail_tx.send(Mail::DrainOutbox { reply }).is_err() {
+            return Vec::new();
+        }
+        wait_std(rx).unwrap_or_default()
     }
 
     /// 取走出站 JSON-RPC 消息（通知 + 请求），并清空 outbox；队列中的冲刷
@@ -322,71 +386,47 @@ impl AcpHost {
     }
 
     /// 订阅滞后且无法可靠补事件时 fail-closed：解除全部未决 prompt / 权限请求。
+    /// 等待 actor 回执后再返回，调用方随后读到的 occupancy / has_active_runs 已收敛。
     pub fn fail_closed_all_prompts(&self, reason: &str) {
-        tracing::warn!(
-            reason,
-            "acp host fail-closed: releasing all in-flight prompts"
-        );
-        let _occupancy =
-            std::mem::take(&mut *self.occupancy.lock().expect("acp-host occupancy mutex"));
-        let prompts =
-            std::mem::take(&mut *self.pending_prompts.lock().expect("acp-host prompts mutex"));
-        let _permissions = std::mem::take(
-            &mut *self
-                .pending_permissions
-                .lock()
-                .expect("acp-host permissions mutex"),
-        );
-        self.run_sessions
-            .lock()
-            .expect("acp-host run sessions mutex")
-            .clear();
-        for prompt in prompts.into_values() {
-            let _ = prompt.completion.try_send(PromptResolution::Failed);
+        let (reply, rx) = std::sync::mpsc::channel();
+        if self
+            .urgent_tx
+            .send(UrgentMail::FailClosed {
+                reason: reason.to_string(),
+                reply,
+            })
+            .is_err()
+        {
+            return;
         }
-        self.resolve_queued_prompts();
-        let _ = reason;
+        // 同步签名保持不变（acp.rs 装配点不改）。actor 在独立线程上回执，
+        // recv 返回后 occupancy / has_active_runs 已收敛。
+        let _ = wait_std(rx);
     }
 
     /// 当前是否有未完成 run（供事件泵循环判定退出）。
     pub fn has_active_runs(&self) -> bool {
-        !self
-            .occupancy
-            .lock()
-            .expect("acp-host occupancy mutex")
-            .is_empty()
+        !self.snapshot_rx.borrow().occupancy.is_empty()
     }
 
     /// 指定 client session 当前绑定的 run id。
     pub fn pending_run(&self, client_session_id: &ClientSessionId) -> Option<RunId> {
-        self.occupancy
-            .lock()
-            .expect("acp-host occupancy mutex")
+        self.snapshot_rx
+            .borrow()
+            .occupancy
             .get(client_session_id)
-            .and_then(|occupancy| occupancy.run_id.clone())
+            .and_then(|run_id| run_id.clone())
     }
 
     /// 握手时被显式降级的客户端能力清单（协商审计）。
     pub fn degraded_capabilities(&self) -> Vec<ClientCapability> {
-        self.negotiated
-            .lock()
-            .expect("acp-host negotiated mutex")
-            .as_ref()
-            .map(|negotiated| negotiated.degraded.clone())
-            .unwrap_or_default()
+        self.snapshot_rx.borrow().degraded.clone()
     }
 
     /// 是否已完成 initialize。
     pub fn is_initialized(&self) -> bool {
-        self.negotiated
-            .lock()
-            .expect("acp-host negotiated mutex")
-            .is_some()
+        self.snapshot_rx.borrow().initialized
     }
-
-    // ------------------------------------------------------------------
-    // 入站消息入口
-    // ------------------------------------------------------------------
 
     /// 处理 client → agent 的 JSON-RPC 请求，返回 result（或 JSON-RPC 错误）。
     /// `session/prompt` 会等待 run 终态后才返回。
@@ -396,8 +436,249 @@ impl AcpHost {
         method: &str,
         params: Option<Value>,
     ) -> Result<Value, JsonRpcError> {
+        let (reply, rx) = oneshot::channel();
+        self.mail_tx
+            .send(Mail::Request {
+                id,
+                method: method.to_string(),
+                params,
+                reply,
+            })
+            .map_err(|_| actor_unavailable())?;
+        let started = rx.await.map_err(|_| actor_unavailable())?;
+        let started = match started {
+            Ok(started) => started,
+            Err(error) => return Err(error),
+        };
+        match started {
+            RequestStart::Ready(value) => Ok(value),
+            RequestStart::Prompt(mut completion_rx) => match completion_rx.recv().await {
+                Some(PromptResolution::Stopped(reason)) => serialize_value(
+                    SessionPromptResult {
+                        stop_reason: reason,
+                    },
+                    "SessionPromptResult",
+                ),
+                Some(PromptResolution::Failed) => Err(JsonRpcError::new(
+                    crate::channels::acp::wire::ERROR_INTERNAL,
+                    "prompt turn failed in Core",
+                )),
+                None => Err(JsonRpcError::new(
+                    crate::channels::acp::wire::ERROR_INTERNAL,
+                    "prompt turn ended without a resolution",
+                )),
+            },
+        }
+    }
+
+    /// 处理 client → agent 的 JSON-RPC 通知（`session/cancel`、`$/cancel_request`）。
+    pub async fn handle_notification(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<(), JsonRpcError> {
+        let (reply, rx) = oneshot::channel();
+        if method == "session/cancel" || method == "$/cancel_request" {
+            self.urgent_tx
+                .send(UrgentMail::Notification {
+                    method: method.to_string(),
+                    params,
+                    reply,
+                })
+                .map_err(|_| actor_unavailable())?;
+        } else {
+            self.mail_tx
+                .send(Mail::Notification {
+                    method: method.to_string(),
+                    params,
+                    reply,
+                })
+                .map_err(|_| actor_unavailable())?;
+        }
+        rx.await.map_err(|_| actor_unavailable())?
+    }
+
+    /// 处理 client → agent 的 JSON-RPC 响应（当前只关联 `session/request_permission`）。
+    pub async fn handle_response(
+        &self,
+        id: JsonRpcId,
+        result: Result<Value, JsonRpcError>,
+    ) -> Result<(), JsonRpcError> {
+        let (reply, rx) = oneshot::channel();
+        self.mail_tx
+            .send(Mail::Response { id, result, reply })
+            .map_err(|_| actor_unavailable())?;
+        rx.await.map_err(|_| actor_unavailable())?
+    }
+
+    /// 冲刷已订阅的 Core 事件并回译。
+    pub async fn drain_and_pump(&self) {
+        let (reply, rx) = oneshot::channel();
+        if self.mail_tx.send(Mail::DrainAndPump { reply }).is_err() {
+            return;
+        }
+        let _ = rx.await;
+    }
+
+    /// 回译给定 canonical 事件（按 run 归属路由；非归属/无 ACP 表示的事件跳过）。
+    pub async fn pump_events(&self, events: Vec<AppEventEnvelope>) {
+        let (reply, rx) = oneshot::channel();
+        if self
+            .mail_tx
+            .send(Mail::PumpEvents { events, reply })
+            .is_err()
+        {
+            return;
+        }
+        let _ = rx.await;
+    }
+}
+
+struct SnapshotSessionResolver {
+    snapshot_rx: watch::Receiver<HostSnapshot>,
+}
+
+#[async_trait::async_trait]
+impl SessionResolver for SnapshotSessionResolver {
+    async fn resolve_client_session(&self, event: &AppEventEnvelope) -> Option<ClientSessionId> {
+        let run_id = match &event.stream {
+            EventStream::Run(run_id) => Some(run_id),
+            _ => run_id_of(&event.payload),
+        }?;
+        self.snapshot_rx.borrow().run_sessions.get(run_id).cloned()
+    }
+}
+
+struct AcpActor {
+    command_host: Arc<dyn AcpCommandHost>,
+    registry: Arc<SessionRegistry>,
+    factory: AcpClientAdapterFactory,
+    connection_id: ConnectionId,
+    negotiated: Option<NegotiatedAcpAdapter>,
+    session_contexts: BTreeMap<ClientSessionId, (u64, u64)>,
+    occupancy: BTreeMap<ClientSessionId, PromptOccupancy>,
+    run_sessions: BTreeMap<RunId, ClientSessionId>,
+    pending_prompts: HashMap<JsonRpcId, PendingPrompt>,
+    pending_permissions: HashMap<JsonRpcId, PendingPermission>,
+    outbox: VecDeque<OutboxItem>,
+    held_events: VecDeque<AppEventEnvelope>,
+    next_request_id: u64,
+    event_rx: broadcast::Receiver<AppEventEnvelope>,
+    snapshot_tx: watch::Sender<HostSnapshot>,
+    mail_rx: mpsc::UnboundedReceiver<Mail>,
+    urgent_rx: mpsc::UnboundedReceiver<UrgentMail>,
+    deferred_mail: VecDeque<Mail>,
+}
+
+impl AcpActor {
+    async fn run(mut self) {
+        loop {
+            while let Ok(urgent) = self.urgent_rx.try_recv() {
+                self.handle_urgent(urgent).await;
+            }
+            if let Some(mail) = self.deferred_mail.pop_front() {
+                self.handle_mail(mail).await;
+                continue;
+            }
+            tokio::select! {
+                biased;
+                urgent = self.urgent_rx.recv() => {
+                    let Some(urgent) = urgent else {
+                        return;
+                    };
+                    self.handle_urgent(urgent).await;
+                }
+                mail = self.mail_rx.recv() => {
+                    let Some(mail) = mail else {
+                        return;
+                    };
+                    self.handle_mail(mail).await;
+                }
+            }
+        }
+    }
+
+    async fn handle_urgent(&mut self, urgent: UrgentMail) {
+        match urgent {
+            UrgentMail::Notification {
+                method,
+                params,
+                reply,
+            } => {
+                let result = self.handle_notification(&method, params).await;
+                let _ = reply.send(result);
+            }
+            UrgentMail::FailClosed { reason, reply } => {
+                self.fail_closed_all_prompts(&reason);
+                let _ = reply.send(());
+            }
+        }
+    }
+
+    async fn handle_mail(&mut self, mail: Mail) {
+        match mail {
+            Mail::Request {
+                id,
+                method,
+                params,
+                reply,
+            } => {
+                let result = self.handle_request(id, &method, params).await;
+                let _ = reply.send(result);
+            }
+            Mail::Notification {
+                method,
+                params,
+                reply,
+            } => {
+                let result = self.handle_notification(&method, params).await;
+                let _ = reply.send(result);
+            }
+            Mail::Response { id, result, reply } => {
+                let result = self.handle_response(id, result).await;
+                let _ = reply.send(result);
+            }
+            Mail::DrainAndPump { reply } => {
+                self.drain_and_pump().await;
+                let _ = reply.send(());
+            }
+            Mail::PumpEvents { events, reply } => {
+                self.pump_events(events).await;
+                let _ = reply.send(());
+            }
+            Mail::DrainOutbox { reply } => {
+                let items = std::mem::take(&mut self.outbox).into_iter().collect();
+                let _ = reply.send(items);
+            }
+        }
+    }
+
+    fn publish_snapshot(&self) {
+        let snapshot = HostSnapshot {
+            occupancy: self
+                .occupancy
+                .iter()
+                .map(|(session, slot)| (session.clone(), slot.run_id.clone()))
+                .collect(),
+            run_sessions: self.run_sessions.clone(),
+            initialized: self.negotiated.is_some(),
+            degraded: self
+                .negotiated
+                .as_ref()
+                .map(|negotiated| negotiated.degraded.clone())
+                .unwrap_or_default(),
+        };
+        let _ = self.snapshot_tx.send(snapshot);
+    }
+
+    async fn handle_request(
+        &mut self,
+        id: JsonRpcId,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<RequestStart, JsonRpcError> {
         if method == "initialize" {
-            return self.initialize(params).await;
+            return Ok(RequestStart::Ready(self.initialize(params).await?));
         }
         let adapter = self.adapter()?;
         let params = params.unwrap_or(Value::Null);
@@ -415,29 +696,29 @@ impl AcpHost {
             }
         };
         match &request {
-            CanonicalClientRequest::Command(envelope) => {
-                match &envelope.command {
-                    AppCommand::SessionCreate { .. } => {
-                        self.release_reservation(reserved_session);
-                        self.session_new(request).await
-                    }
-                    AppCommand::RunStart { .. } => self.session_prompt(&id, &params, request).await,
-                    other => {
-                        self.release_reservation(reserved_session);
-                        Err(JsonRpcError::new(
-                        ERROR_METHOD_NOT_FOUND,
-                        format!("method `{method}` decodes to unsupported canonical command {other:?}"),
-                    ))
-                    }
+            CanonicalClientRequest::Command(envelope) => match &envelope.command {
+                AppCommand::SessionCreate { .. } => {
+                    self.release_reservation(reserved_session);
+                    Ok(RequestStart::Ready(self.session_new(request).await?))
                 }
-            }
+                AppCommand::RunStart { .. } => self.session_prompt(&id, &params, request).await,
+                other => {
+                    self.release_reservation(reserved_session);
+                    Err(JsonRpcError::new(
+                        ERROR_METHOD_NOT_FOUND,
+                        format!(
+                            "method `{method}` decodes to unsupported canonical command {other:?}"
+                        ),
+                    ))
+                }
+            },
             CanonicalClientRequest::Reattach { .. } => {
                 self.release_reservation(reserved_session);
-                self.session_resume(&params, request).await
+                Ok(RequestStart::Ready(self.session_resume(&params, request).await?))
             }
             CanonicalClientRequest::Disconnect { .. } => {
                 self.release_reservation(reserved_session);
-                self.session_close(request).await
+                Ok(RequestStart::Ready(self.session_close(request).await?))
             }
             other => {
                 self.release_reservation(reserved_session);
@@ -451,9 +732,8 @@ impl AcpHost {
         }
     }
 
-    /// 处理 client → agent 的 JSON-RPC 通知（`session/cancel`、`$/cancel_request`）。
-    pub async fn handle_notification(
-        &self,
+    async fn handle_notification(
+        &mut self,
         method: &str,
         params: Option<Value>,
     ) -> Result<(), JsonRpcError> {
@@ -470,10 +750,14 @@ impl AcpHost {
                 Ok(())
             }
             "$/cancel_request" => {
-                let params =
-                    serde_json::from_value::<CancelRequestParams>(params).map_err(|error| {
-                        JsonRpcError::new(crate::channels::acp::wire::ERROR_INVALID_PARAMS, error.to_string())
-                    })?;
+                let params = serde_json::from_value::<CancelRequestParams>(params).map_err(
+                    |error| {
+                        JsonRpcError::new(
+                            crate::channels::acp::wire::ERROR_INVALID_PARAMS,
+                            error.to_string(),
+                        )
+                    },
+                )?;
                 self.cancel_request(&params.request_id).await;
                 Ok(())
             }
@@ -484,18 +768,12 @@ impl AcpHost {
         }
     }
 
-    /// 处理 client → agent 的 JSON-RPC 响应（当前只关联 `session/request_permission`）。
-    pub async fn handle_response(
-        &self,
+    async fn handle_response(
+        &mut self,
         id: JsonRpcId,
         result: Result<Value, JsonRpcError>,
     ) -> Result<(), JsonRpcError> {
-        let Some(permission) = self
-            .pending_permissions
-            .lock()
-            .expect("acp-host permissions mutex")
-            .remove(&id)
-        else {
+        let Some(permission) = self.pending_permissions.remove(&id) else {
             return Ok(());
         };
         let decision = match result {
@@ -503,14 +781,16 @@ impl AcpHost {
                 Ok(crate::channels::acp::adapter::PermissionDecision::Selected { option_id }) => {
                     map::decision_for_option(&option_id).map_err(|error| jsonrpc_error(&error))?
                 }
-                Ok(crate::channels::acp::adapter::PermissionDecision::Cancelled) => ApprovalDecision::Cancel,
+                Ok(crate::channels::acp::adapter::PermissionDecision::Cancelled) => {
+                    ApprovalDecision::Cancel
+                }
                 Err(error) => return Err(jsonrpc_error(&error)),
             },
             Err(error) if error.code == ERROR_REQUEST_CANCELLED => ApprovalDecision::Cancel,
             Err(_) => ApprovalDecision::Deny,
         };
         let envelope = self.adapter()?.command_envelope(
-            &format!("permission-{}", id),
+            &format!("permission-{id}"),
             AppCommand::ToolApprove {
                 run_id: permission.run_id,
                 tool_call_id: permission.tool_call_id,
@@ -522,60 +802,78 @@ impl AcpHost {
         Ok(())
     }
 
-    /// 冲刷已订阅的 Core 事件并回译。
-    pub async fn drain_and_pump(&self) {
+    async fn drain_and_pump(&mut self) {
         let mut events = Vec::new();
-        let mut rx = self.event_rx.lock().await;
         loop {
-            match rx.try_recv() {
+            match self.event_rx.try_recv() {
                 Ok(event) => events.push(event),
                 Err(broadcast::error::TryRecvError::Empty) => break,
                 Err(broadcast::error::TryRecvError::Closed) => break,
                 Err(broadcast::error::TryRecvError::Lagged(_)) => {
-                    drop(rx);
                     self.fail_closed_all_prompts("event subscription lagged");
                     return;
                 }
             }
         }
-        drop(rx);
         if !events.is_empty() {
             self.pump_events(events).await;
         }
     }
 
-    /// 回译给定 canonical 事件（按 run 归属路由；非归属/无 ACP 表示的事件跳过）。
-    pub async fn pump_events(&self, events: Vec<AppEventEnvelope>) {
-        let _gate = self.prompt_gate.lock().await;
+    async fn pump_events(&mut self, events: Vec<AppEventEnvelope>) {
         for envelope in events {
-            let Some(client_session_id) = self
-                .session_resolver
-                .resolve_client_session(&envelope)
-                .await
-            else {
-                continue;
-            };
-            match &envelope.payload {
-                AppEvent::RunChanged { run_id, state } => {
-                    if terminal_state(state) {
-                        self.resolve_prompt(run_id, state).await;
-                    }
-                }
-                AppEvent::ToolApprovalRequired { .. } => {
-                    self.emit_permission_request(client_session_id, &envelope.payload)
-                        .await;
-                }
-                _ => self.emit_update(client_session_id, &envelope).await,
-            }
+            self.route_or_hold(envelope).await;
         }
     }
 
-    // ------------------------------------------------------------------
-    // 握手与能力协商
-    // ------------------------------------------------------------------
+    async fn route_or_hold(&mut self, envelope: AppEventEnvelope) {
+        if self.resolve_client_session(&envelope).is_some() {
+            self.deliver_event(envelope).await;
+            return;
+        }
+        if run_id_of(&envelope.payload).is_some() {
+            self.held_events.push_back(envelope);
+        }
+    }
 
-    async fn initialize(&self, params: Option<Value>) -> Result<Value, JsonRpcError> {
-        if self.is_initialized() {
+    async fn flush_held_events(&mut self) {
+        let held = std::mem::take(&mut self.held_events);
+        for envelope in held {
+            self.route_or_hold(envelope).await;
+        }
+    }
+
+    async fn deliver_event(&mut self, envelope: AppEventEnvelope) {
+        let Some(client_session_id) = self.resolve_client_session(&envelope) else {
+            return;
+        };
+        match &envelope.payload {
+            AppEvent::RunChanged { run_id, state } => {
+                if terminal_state(state) {
+                    self.resolve_prompt(run_id, state);
+                }
+            }
+            AppEvent::ToolApprovalRequired { .. } => {
+                self.emit_permission_request(client_session_id, &envelope.payload)
+                    .await;
+            }
+            AppEvent::Diagnostic { .. } => {
+                // ACP 不新增 session/update 臂：Diagnostic 维持现状丢弃。
+            }
+            _ => self.emit_update(client_session_id, &envelope).await,
+        }
+    }
+
+    fn resolve_client_session(&self, event: &AppEventEnvelope) -> Option<ClientSessionId> {
+        let run_id = match &event.stream {
+            EventStream::Run(run_id) => Some(run_id),
+            _ => run_id_of(&event.payload),
+        }?;
+        self.run_sessions.get(run_id).cloned()
+    }
+
+    async fn initialize(&mut self, params: Option<Value>) -> Result<Value, JsonRpcError> {
+        if self.negotiated.is_some() {
             return Err(JsonRpcError::new(
                 ERROR_INVALID_REQUEST,
                 "initialize was already completed; this host accepts one handshake per connection",
@@ -583,11 +881,14 @@ impl AcpHost {
         }
         let params = serde_json::from_value::<InitializeParams>(params.unwrap_or(Value::Null))
             .map_err(|error| {
-                JsonRpcError::new(crate::channels::acp::wire::ERROR_INVALID_PARAMS, error.to_string())
+                JsonRpcError::new(
+                    crate::channels::acp::wire::ERROR_INVALID_PARAMS,
+                    error.to_string(),
+                )
             })?;
-        params
-            .reject_unknown("initialize")
-            .map_err(|message| JsonRpcError::new(crate::channels::acp::wire::ERROR_INVALID_PARAMS, message))?;
+        params.reject_unknown("initialize").map_err(|message| {
+            JsonRpcError::new(crate::channels::acp::wire::ERROR_INVALID_PARAMS, message)
+        })?;
         if params.protocol_version != PROTOCOL_VERSION {
             return Err(JsonRpcError::new(
                 crate::channels::acp::wire::ERROR_INVALID_PARAMS,
@@ -614,32 +915,31 @@ impl AcpHost {
             .factory
             .create_concrete(snapshot)
             .map_err(|error| jsonrpc_error(&error))?;
-        *self.negotiated.lock().expect("acp-host negotiated mutex") = Some(negotiated);
-        Ok(serde_json::to_value(InitializeResult {
-            protocol_version: PROTOCOL_VERSION,
-            agent_capabilities: crate::channels::acp::wire::AgentCapabilities {
-                session_capabilities: crate::channels::acp::wire::SessionCapabilities {
-                    resume: Some(crate::channels::acp::wire::EmptyCapability {}),
-                    close: Some(crate::channels::acp::wire::EmptyCapability {}),
-                    ..crate::channels::acp::wire::SessionCapabilities::default()
+        self.negotiated = Some(negotiated);
+        self.publish_snapshot();
+        serialize_value(
+            InitializeResult {
+                protocol_version: PROTOCOL_VERSION,
+                agent_capabilities: crate::channels::acp::wire::AgentCapabilities {
+                    session_capabilities: crate::channels::acp::wire::SessionCapabilities {
+                        resume: Some(crate::channels::acp::wire::EmptyCapability {}),
+                        close: Some(crate::channels::acp::wire::EmptyCapability {}),
+                        ..crate::channels::acp::wire::SessionCapabilities::default()
+                    },
+                    ..crate::channels::acp::wire::AgentCapabilities::default()
                 },
-                ..crate::channels::acp::wire::AgentCapabilities::default()
+                agent_info: Some(Implementation {
+                    name: ACP_AGENT_NAME.into(),
+                    title: Some("Pawork ACP Host".into()),
+                    version: ACP_AGENT_VERSION.into(),
+                }),
+                auth_methods: Vec::new(),
             },
-            agent_info: Some(Implementation {
-                name: ACP_AGENT_NAME.into(),
-                title: Some("Pawork ACP Host".into()),
-                version: ACP_AGENT_VERSION.into(),
-            }),
-            auth_methods: Vec::new(),
-        })
-        .expect("InitializeResult always serializes"))
+            "InitializeResult",
+        )
     }
 
-    // ------------------------------------------------------------------
-    // 会话生命周期
-    // ------------------------------------------------------------------
-
-    async fn session_new(&self, request: CanonicalClientRequest) -> Result<Value, JsonRpcError> {
+    async fn session_new(&mut self, request: CanonicalClientRequest) -> Result<Value, JsonRpcError> {
         let adapter = self.adapter()?;
         let placeholder = AdapterSessionContext {
             adapter: Arc::clone(&adapter) as Arc<dyn ClientAdapter>,
@@ -693,24 +993,20 @@ impl AcpHost {
                 "session attach did not produce a session state",
             ));
         };
-        self.session_contexts
-            .lock()
-            .expect("acp-host session contexts mutex")
-            .insert(
-                client_session_id,
-                (record.ownership_epoch, record.revision),
-            );
+        self.session_contexts.insert(
+            client_session_id,
+            (record.ownership_epoch, record.revision),
+        );
         tracing::debug!(session_id, "acp session/new attached");
-        Ok(serde_json::to_value(SessionNewResult { session_id })
-            .expect("SessionNewResult always serializes"))
+        serialize_value(SessionNewResult { session_id }, "SessionNewResult")
     }
 
     async fn session_prompt(
-        &self,
+        &mut self,
         id: &JsonRpcId,
         params: &Value,
         request: CanonicalClientRequest,
-    ) -> Result<Value, JsonRpcError> {
+    ) -> Result<RequestStart, JsonRpcError> {
         let session_id = params
             .get("sessionId")
             .and_then(Value::as_str)
@@ -721,18 +1017,14 @@ impl AcpHost {
                 )
             })?;
         let client_session_id = ClientSessionId::new(session_id);
-        {
-            let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
-            occupancy
-                .entry(client_session_id.clone())
-                .or_insert_with(|| PromptOccupancy {
-                    request_id: id.clone(),
-                    run_id: None,
-                    early_session_cancel: false,
-                    early_request_cancel: false,
-                });
+        if !self.occupancy.contains_key(&client_session_id) {
+            return Err(JsonRpcError::new(
+                crate::channels::acp::wire::ERROR_INTERNAL,
+                "prompt turn failed in Core",
+            ));
         }
-        let (completion_tx, mut completion_rx) = tokio::sync::mpsc::channel(1);
+        self.publish_snapshot();
+        let (completion_tx, completion_rx) = tokio::sync::mpsc::channel(1);
         let context = match self.session_context(&client_session_id).await {
             Ok(context) => context,
             Err(error) => {
@@ -740,7 +1032,6 @@ impl AcpHost {
                 return Err(error);
             }
         };
-        let _gate = self.prompt_gate.lock().await;
         let response = self
             .dispatch_canonical(context, request)
             .await
@@ -748,6 +1039,25 @@ impl AcpHost {
                 self.release_occupancy(&client_session_id, None);
                 jsonrpc_error(&error)
             })?;
+        if !self.occupancy.contains_key(&client_session_id) {
+            if let Ok(run_id) = accepted_run_id(response, "session/prompt") {
+                if let Ok(adapter) = self.adapter() {
+                    let _ = self
+                        .dispatch_attached(
+                            &client_session_id,
+                            adapter.command_envelope(
+                                &format!("fail-closed-{run_id}"),
+                                AppCommand::RunCancel { run_id },
+                            ),
+                        )
+                        .await;
+                }
+            }
+            return Err(JsonRpcError::new(
+                crate::channels::acp::wire::ERROR_INTERNAL,
+                "prompt turn failed in Core",
+            ));
+        }
         let run_id = match accepted_run_id(response, "session/prompt") {
             Ok(run_id) => run_id,
             Err(error) => {
@@ -755,66 +1065,43 @@ impl AcpHost {
                 return Err(error);
             }
         };
-        {
-            let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
-            if let Some(slot) = occupancy.get_mut(&client_session_id) {
-                slot.run_id = Some(run_id.clone());
-            }
+        if let Some(slot) = self.occupancy.get_mut(&client_session_id) {
+            slot.run_id = Some(run_id.clone());
         }
         self.run_sessions
-            .lock()
-            .expect("acp-host run sessions mutex")
             .insert(run_id.clone(), client_session_id.clone());
-        self.pending_prompts
-            .lock()
-            .expect("acp-host prompts mutex")
-            .insert(
-                id.clone(),
-                PendingPrompt {
-                    client_session_id: client_session_id.clone(),
-                    run_id,
-                    completion: completion_tx,
-                },
-            );
-        let (replay_session_cancel, replay_request_cancel) = {
-            let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
-            occupancy
-                .get_mut(&client_session_id)
-                .map(|slot| {
-                    let session = slot.early_session_cancel;
-                    let request = slot.early_request_cancel;
-                    slot.early_session_cancel = false;
-                    slot.early_request_cancel = false;
-                    (session, request)
-                })
-                .unwrap_or((false, false))
-        };
-        drop(_gate);
+        self.pending_prompts.insert(
+            id.clone(),
+            PendingPrompt {
+                client_session_id: client_session_id.clone(),
+                run_id,
+                completion: completion_tx,
+            },
+        );
+        self.publish_snapshot();
+        self.flush_held_events().await;
+        let (replay_session_cancel, replay_request_cancel) = self
+            .occupancy
+            .get_mut(&client_session_id)
+            .map(|slot| {
+                let session = slot.early_session_cancel;
+                let request = slot.early_request_cancel;
+                slot.early_session_cancel = false;
+                slot.early_request_cancel = false;
+                (session, request)
+            })
+            .unwrap_or((false, false));
+        self.publish_snapshot();
         if replay_session_cancel {
             self.cancel_session(&client_session_id).await;
         } else if replay_request_cancel {
             self.cancel_request(id).await;
         }
-        match completion_rx.recv().await {
-            Some(PromptResolution::Stopped(reason)) => {
-                Ok(serde_json::to_value(SessionPromptResult {
-                    stop_reason: reason,
-                })
-                .expect("SessionPromptResult always serializes"))
-            }
-            Some(PromptResolution::Failed) => Err(JsonRpcError::new(
-                crate::channels::acp::wire::ERROR_INTERNAL,
-                "prompt turn failed in Core",
-            )),
-            None => Err(JsonRpcError::new(
-                crate::channels::acp::wire::ERROR_INTERNAL,
-                "prompt turn ended without a resolution",
-            )),
-        }
+        Ok(RequestStart::Prompt(completion_rx))
     }
 
     async fn session_resume(
-        &self,
+        &mut self,
         _params: &Value,
         request: CanonicalClientRequest,
     ) -> Result<Value, JsonRpcError> {
@@ -827,7 +1114,10 @@ impl AcpHost {
             updated_at,
         } = request
         else {
-            unreachable!("session/resume decodes to Reattach");
+            return Err(internal_state(
+                "session/resume did not decode to Reattach",
+                json!({ "method": "session/resume" }),
+            ));
         };
         let record = self.registry.get(&client_session_id).await.ok_or_else(|| {
             JsonRpcError::new(
@@ -861,19 +1151,17 @@ impl AcpHost {
             .await
             .map_err(|error| jsonrpc_error(&error))?;
         let CanonicalCoreFrame::SessionState(record) = response else {
-            return Err(JsonRpcError::new(
-                crate::channels::acp::wire::ERROR_INTERNAL,
+            return Err(internal_state(
                 "session/resume did not produce a session state",
+                json!({ "method": "session/resume" }),
             ));
         };
         self.session_contexts
-            .lock()
-            .expect("acp-host session contexts mutex")
             .insert(client_session_id, (record.ownership_epoch, record.revision));
         Ok(json!({}))
     }
 
-    async fn session_close(&self, request: CanonicalClientRequest) -> Result<Value, JsonRpcError> {
+    async fn session_close(&mut self, request: CanonicalClientRequest) -> Result<Value, JsonRpcError> {
         let CanonicalClientRequest::Disconnect {
             client_session_id,
             ownership_epoch,
@@ -881,7 +1169,10 @@ impl AcpHost {
             updated_at,
         } = request
         else {
-            unreachable!("session/close decodes to Disconnect");
+            return Err(internal_state(
+                "session/close did not decode to Disconnect",
+                json!({ "method": "session/close" }),
+            ));
         };
         self.cancel_session(&client_session_id).await;
         let context = self.session_context(&client_session_id).await?;
@@ -898,26 +1189,19 @@ impl AcpHost {
             .await
             .map_err(|error| jsonrpc_error(&error))?;
         let CanonicalCoreFrame::SessionState(record) = response else {
-            return Err(JsonRpcError::new(
-                crate::channels::acp::wire::ERROR_INTERNAL,
+            return Err(internal_state(
                 "session/close did not produce a session state",
+                json!({ "method": "session/close" }),
             ));
         };
         self.session_contexts
-            .lock()
-            .expect("acp-host session contexts mutex")
             .insert(client_session_id, (record.ownership_epoch, record.revision));
         Ok(json!({}))
     }
 
-    // ------------------------------------------------------------------
-    // 取消
-    // ------------------------------------------------------------------
-
-    async fn cancel_session(&self, client_session_id: &ClientSessionId) {
+    async fn cancel_session(&mut self, client_session_id: &ClientSessionId) {
         let run_id: RunId = {
-            let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
-            match occupancy.get_mut(client_session_id) {
+            match self.occupancy.get_mut(client_session_id) {
                 Some(slot) => {
                     if let Some(run_id) = slot.run_id.clone() {
                         slot.early_session_cancel = false;
@@ -945,17 +1229,12 @@ impl AcpHost {
         }
         let cascaded: Vec<JsonRpcId> = self
             .pending_permissions
-            .lock()
-            .expect("acp-host permissions mutex")
             .iter()
             .filter(|(_, pending)| &pending.client_session_id == client_session_id)
             .map(|(id, _)| id.clone())
             .collect();
         for id in cascaded {
-            self.pending_permissions
-                .lock()
-                .expect("acp-host permissions mutex")
-                .remove(&id);
+            self.pending_permissions.remove(&id);
             self.push_frame(
                 JsonRpcNotification {
                     jsonrpc: "2.0".into(),
@@ -967,11 +1246,9 @@ impl AcpHost {
         }
     }
 
-    async fn cancel_request(&self, request_id: &JsonRpcId) {
+    async fn cancel_request(&mut self, request_id: &JsonRpcId) {
         let prompt = self
             .pending_prompts
-            .lock()
-            .expect("acp-host prompts mutex")
             .get(request_id)
             .map(|prompt| (prompt.client_session_id.clone(), prompt.run_id.clone()));
         if let Some((client_session_id, run_id)) = prompt {
@@ -988,12 +1265,7 @@ impl AcpHost {
             }
             return;
         }
-        let permission = self
-            .pending_permissions
-            .lock()
-            .expect("acp-host permissions mutex")
-            .remove(request_id);
-        if let Some(permission) = permission {
+        if let Some(permission) = self.pending_permissions.remove(request_id) {
             if let Ok(adapter) = self.adapter() {
                 let _ = self
                     .dispatch_attached(
@@ -1011,8 +1283,8 @@ impl AcpHost {
             }
             return;
         }
-        let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
-        if let Some(slot) = occupancy
+        if let Some(slot) = self
+            .occupancy
             .values_mut()
             .find(|slot| &slot.request_id == request_id)
         {
@@ -1020,11 +1292,7 @@ impl AcpHost {
         }
     }
 
-    // ------------------------------------------------------------------
-    // 事件回译
-    // ------------------------------------------------------------------
-
-    async fn resolve_prompt(&self, run_id: &RunId, state: &RunState) {
+    fn resolve_prompt(&mut self, run_id: &RunId, state: &RunState) {
         let resolution = match state {
             RunState::Completed => Some(PromptResolution::Stopped(StopReason::EndTurn)),
             RunState::Cancelled | RunState::Interrupted => {
@@ -1036,26 +1304,33 @@ impl AcpHost {
         let Some(resolution) = resolution else {
             return;
         };
-        let (client_session_id, completion) = {
-            let mut prompts = self.pending_prompts.lock().expect("acp-host prompts mutex");
-            let id = prompts
-                .iter()
-                .find(|(_, prompt)| &prompt.run_id == run_id)
-                .map(|(id, _)| id.clone());
-            let Some(id) = id else {
-                return;
-            };
-            let prompt = prompts.remove(&id).expect("found pending prompt");
-            (prompt.client_session_id, prompt.completion)
+        let id = self
+            .pending_prompts
+            .iter()
+            .find(|(_, prompt)| &prompt.run_id == run_id)
+            .map(|(id, _)| id.clone());
+        let Some(id) = id else {
+            return;
         };
-        self.release_occupancy(&client_session_id, Some(run_id));
+        let Some(prompt) = self.pending_prompts.remove(&id) else {
+            report_acp_state(
+                "pending prompt disappeared after lookup",
+                json!({ "run_id": run_id.as_str() }),
+            );
+            return;
+        };
+        self.release_occupancy(&prompt.client_session_id, Some(run_id));
         self.push_outbox(OutboxItem::FlushBarrier {
-            completion,
+            completion: prompt.completion,
             resolution,
         });
     }
 
-    async fn emit_permission_request(&self, client_session_id: ClientSessionId, event: &AppEvent) {
+    async fn emit_permission_request(
+        &mut self,
+        client_session_id: ClientSessionId,
+        event: &AppEvent,
+    ) {
         let result = async {
             let adapter = self.adapter()?;
             let params = adapter
@@ -1064,38 +1339,37 @@ impl AcpHost {
                 .map_err(|error| jsonrpc_error(&error))?;
             let run_id = run_id_of(event)
                 .ok_or_else(|| {
-                    JsonRpcError::new(
-                        crate::channels::acp::wire::ERROR_INTERNAL,
+                    internal_state(
                         "ToolApprovalRequired event without run_id",
+                        json!({ "session": client_session_id.0 }),
                     )
                 })?
                 .clone();
             let tool_call_id = tool_call_id_of(event)
                 .ok_or_else(|| {
-                    JsonRpcError::new(
-                        crate::channels::acp::wire::ERROR_INTERNAL,
+                    internal_state(
                         "ToolApprovalRequired event without tool_call_id",
+                        json!({ "session": client_session_id.0 }),
                     )
                 })?
                 .clone();
-            let id = Value::Number(self.next_request_id.fetch_add(1, Ordering::SeqCst).into());
-            self.pending_permissions
-                .lock()
-                .expect("acp-host permissions mutex")
-                .insert(
-                    id.clone(),
-                    PendingPermission {
-                        run_id,
-                        tool_call_id,
-                        client_session_id: client_session_id.clone(),
-                    },
-                );
+            let id = Value::Number(self.next_request_id.into());
+            self.next_request_id = self.next_request_id.saturating_add(1);
+            self.pending_permissions.insert(
+                id.clone(),
+                PendingPermission {
+                    run_id,
+                    tool_call_id,
+                    client_session_id: client_session_id.clone(),
+                },
+            );
+            let params = serialize_value(params, "RequestPermissionParams")?;
             self.push_frame(
                 JsonRpcRequest {
                     jsonrpc: "2.0".into(),
                     id,
                     method: "session/request_permission".into(),
-                    params: Some(serde_json::to_value(params).expect("params serialize")),
+                    params: Some(params),
                 }
                 .to_value(),
             );
@@ -1103,11 +1377,16 @@ impl AcpHost {
         }
         .await;
         if let Err(error) = result {
-            tracing::warn!(session_id = %client_session_id.0, code = error.code, message = %error.message, "acp permission request emission failed");
+            tracing::warn!(
+                session_id = %client_session_id.0,
+                code = error.code,
+                message = %error.message,
+                "acp permission request emission failed"
+            );
         }
     }
 
-    async fn emit_update(&self, client_session_id: ClientSessionId, envelope: &AppEventEnvelope) {
+    async fn emit_update(&mut self, client_session_id: ClientSessionId, envelope: &AppEventEnvelope) {
         let result = async {
             let adapter = self.adapter()?;
             let frame = adapter
@@ -1129,29 +1408,56 @@ impl AcpHost {
         }
         .await;
         if let Err(error) = result {
-            tracing::warn!(session_id = %client_session_id.0, code = error.code, message = %error.message, "acp session/update emission failed");
+            tracing::warn!(
+                session_id = %client_session_id.0,
+                code = error.code,
+                message = %error.message,
+                "acp session/update emission failed"
+            );
         }
     }
 
-    // ------------------------------------------------------------------
-    // 内部工具
-    // ------------------------------------------------------------------
+    fn fail_closed_all_prompts(&mut self, reason: &str) {
+        tracing::warn!(
+            reason,
+            "acp host fail-closed: releasing all in-flight prompts"
+        );
+        report_acp_state(
+            "acp host fail-closed",
+            json!({ "reason": reason }),
+        );
+        self.occupancy.clear();
+        let prompts = std::mem::take(&mut self.pending_prompts);
+        self.pending_permissions.clear();
+        self.run_sessions.clear();
+        self.held_events.clear();
+        for prompt in prompts.into_values() {
+            let _ = prompt.completion.try_send(PromptResolution::Failed);
+        }
+        let items = std::mem::take(&mut self.outbox);
+        for item in items {
+            if let OutboxItem::FlushBarrier {
+                completion,
+                resolution,
+            } = item
+            {
+                let _ = completion.try_send(resolution);
+            }
+        }
+        self.publish_snapshot();
+        let _ = reason;
+    }
 
-    fn push_frame(&self, frame: Value) {
+    fn push_frame(&mut self, frame: Value) {
         self.push_outbox(OutboxItem::Frame(frame));
     }
 
-    fn push_outbox(&self, item: OutboxItem) {
-        self.outbox
-            .lock()
-            .expect("acp-host outbox mutex")
-            .push_back(item);
+    fn push_outbox(&mut self, item: OutboxItem) {
+        self.outbox.push_back(item);
     }
 
     fn adapter(&self) -> Result<Arc<AcpClientAdapter>, JsonRpcError> {
         self.negotiated
-            .lock()
-            .expect("acp-host negotiated mutex")
             .as_ref()
             .map(|negotiated| Arc::clone(&negotiated.adapter))
             .ok_or_else(|| {
@@ -1162,21 +1468,16 @@ impl AcpHost {
             })
     }
 
-    fn release_occupancy(&self, client_session_id: &ClientSessionId, run_id: Option<&RunId>) {
-        self.occupancy
-            .lock()
-            .expect("acp-host occupancy mutex")
-            .remove(client_session_id);
+    fn release_occupancy(&mut self, client_session_id: &ClientSessionId, run_id: Option<&RunId>) {
+        self.occupancy.remove(client_session_id);
         if let Some(run_id) = run_id {
-            self.run_sessions
-                .lock()
-                .expect("acp-host run sessions mutex")
-                .remove(run_id);
+            self.run_sessions.remove(run_id);
         }
+        self.publish_snapshot();
     }
 
     fn reserve_prompt_occupancy(
-        &self,
+        &mut self,
         id: &JsonRpcId,
         params: &Value,
     ) -> Result<ClientSessionId, JsonRpcError> {
@@ -1190,17 +1491,15 @@ impl AcpHost {
                 )
             })?;
         let client_session_id = ClientSessionId::new(session_id);
-        let mut occupancy = self.occupancy.lock().expect("acp-host occupancy mutex");
-        if occupancy.contains_key(&client_session_id) {
+        if self.occupancy.contains_key(&client_session_id) {
             return Err(JsonRpcError::new(
                 ERROR_INVALID_REQUEST,
                 format!(
-                    "session `{session_id}` already has an active prompt turn; \
-                     this host supports one prompt per session at a time"
+                    "session `{session_id}` already has an active prompt turn;                      this host supports one prompt per session at a time"
                 ),
             ));
         }
-        occupancy.insert(
+        self.occupancy.insert(
             client_session_id.clone(),
             PromptOccupancy {
                 request_id: id.clone(),
@@ -1209,44 +1508,35 @@ impl AcpHost {
                 early_request_cancel: false,
             },
         );
+        self.publish_snapshot();
         Ok(client_session_id)
     }
 
-    fn release_reservation(&self, reserved: Option<ClientSessionId>) {
+    fn release_reservation(&mut self, reserved: Option<ClientSessionId>) {
         if let Some(client_session_id) = reserved {
             self.release_occupancy(&client_session_id, None);
         }
     }
 
     async fn session_context(
-        &self,
+        &mut self,
         client_session_id: &ClientSessionId,
     ) -> Result<AdapterSessionContext, JsonRpcError> {
-        let (ownership_epoch, revision) = {
-            let cached = self
-                .session_contexts
-                .lock()
-                .expect("acp-host session contexts mutex")
-                .get(client_session_id)
-                .copied();
-            match cached {
-                Some(epoch_revision) => epoch_revision,
-                None => {
-                    let record = self.registry.get(client_session_id).await.ok_or_else(|| {
-                        JsonRpcError::new(
-                            crate::channels::acp::wire::ERROR_RESOURCE_NOT_FOUND,
-                            format!("unknown client session `{}`", client_session_id.0),
-                        )
-                    })?;
-                    self.session_contexts
-                        .lock()
-                        .expect("acp-host session contexts mutex")
-                        .insert(
-                            client_session_id.clone(),
-                            (record.ownership_epoch, record.revision),
-                        );
-                    (record.ownership_epoch, record.revision)
-                }
+        let (ownership_epoch, revision) = match self.session_contexts.get(client_session_id).copied()
+        {
+            Some(epoch_revision) => epoch_revision,
+            None => {
+                let record = self.registry.get(client_session_id).await.ok_or_else(|| {
+                    JsonRpcError::new(
+                        crate::channels::acp::wire::ERROR_RESOURCE_NOT_FOUND,
+                        format!("unknown client session `{}`", client_session_id.0),
+                    )
+                })?;
+                self.session_contexts.insert(
+                    client_session_id.clone(),
+                    (record.ownership_epoch, record.revision),
+                );
+                (record.ownership_epoch, record.revision)
             }
         };
         Ok(AdapterSessionContext {
@@ -1259,21 +1549,70 @@ impl AcpHost {
     }
 
     async fn dispatch_attached(
-        &self,
+        &mut self,
         client_session_id: &ClientSessionId,
         envelope: AppCommandEnvelope,
     ) -> Result<(), JsonRpcError> {
         let context = self.session_context(client_session_id).await?;
-        let response = self
-            .dispatch_canonical(context, CanonicalClientRequest::Command(envelope))
+        self.require_attached(&context)
             .await
             .map_err(|error| jsonrpc_error(&error))?;
-        canonical_response_value(response, "command")?;
+        let response = self
+            .command_host
+            .dispatch(envelope)
+            .await
+            .map_err(|error| jsonrpc_error(&host_unavailable(error)))?;
+        canonical_response_value(CanonicalCoreFrame::Response(response), "command")?;
         Ok(())
     }
 
+    async fn interruptible_core_call<T: Send + 'static>(
+        &mut self,
+        work: impl std::future::Future<Output = Result<T, AcpHostError>> + Send + 'static,
+    ) -> Result<T, AcpHostError> {
+        let mut work = tokio::spawn(work);
+        loop {
+            tokio::select! {
+                biased;
+                urgent = self.urgent_rx.recv() => {
+                    let Some(urgent) = urgent else {
+                        work.abort();
+                        return Err(AcpHostError::Unavailable(
+                            "ACP host actor is unavailable".into(),
+                        ));
+                    };
+                    self.handle_urgent(urgent).await;
+                }
+                mail = self.mail_rx.recv() => {
+                    let Some(mail) = mail else {
+                        work.abort();
+                        return Err(AcpHostError::Unavailable(
+                            "ACP host actor is unavailable".into(),
+                        ));
+                    };
+                    match mail {
+                        Mail::DrainOutbox { reply } => {
+                            let items = std::mem::take(&mut self.outbox).into_iter().collect();
+                            let _ = reply.send(items);
+                        }
+                        other => self.deferred_mail.push_back(other),
+                    }
+                }
+                result = &mut work => {
+                    return match result {
+                        Ok(result) => result,
+                        Err(error) if error.is_cancelled() => Err(AcpHostError::Unavailable(
+                            "ACP core dispatch cancelled".into(),
+                        )),
+                        Err(error) => Err(AcpHostError::Unavailable(error.to_string())),
+                    };
+                }
+            }
+        }
+    }
+
     async fn dispatch_canonical(
-        &self,
+        &mut self,
         context: AdapterSessionContext,
         request: CanonicalClientRequest,
     ) -> Result<CanonicalCoreFrame, AdapterError> {
@@ -1292,18 +1631,18 @@ impl AcpHost {
                         }
                     }
                 }
+                let host = Arc::clone(&self.command_host);
                 let response = self
-                    .command_host
-                    .dispatch(envelope)
+                    .interruptible_core_call(async move { host.dispatch(envelope).await })
                     .await
                     .map_err(host_unavailable)?;
                 Ok(CanonicalCoreFrame::Response(response))
             }
             CanonicalClientRequest::Query(envelope) => {
                 self.require_attached(&context).await?;
+                let host = Arc::clone(&self.command_host);
                 let response = self
-                    .command_host
-                    .query(envelope)
+                    .interruptible_core_call(async move { host.query(envelope).await })
                     .await
                     .map_err(host_unavailable)?;
                 Ok(CanonicalCoreFrame::Response(response))
@@ -1394,8 +1733,7 @@ impl AcpHost {
                 "attach capability snapshot does not match negotiated adapter".into(),
             ));
         }
-        if record.ownership_epoch != context.ownership_epoch || record.revision != context.revision
-        {
+        if record.ownership_epoch != context.ownership_epoch || record.revision != context.revision {
             return Err(AdapterError::InvalidFrame(format!(
                 "attach ownership {}/{} does not match negotiated context {}/{}",
                 record.ownership_epoch, record.revision, context.ownership_epoch, context.revision
@@ -1521,9 +1859,9 @@ fn canonical_response_value(
             map::jsonrpc_code_for_frame(&error),
             error.message,
         )),
-        other => Err(JsonRpcError::new(
-            crate::channels::acp::wire::ERROR_INTERNAL,
-            format!("{context} produced unexpected canonical frame {other:?}"),
+        other => Err(internal_state(
+            &format!("{context} produced unexpected canonical frame"),
+            json!({ "frame": format!("{other:?}") }),
         )),
     }
 }
@@ -1535,22 +1873,22 @@ fn accepted_run_id(frame: CanonicalCoreFrame, context: &str) -> Result<RunId, Js
                 run_id: Some(run_id),
                 ..
             } => Ok(run_id),
-            AppResponse::Accepted { .. } => Err(JsonRpcError::new(
-                crate::channels::acp::wire::ERROR_INTERNAL,
-                format!("{context} was accepted but did not report a run id"),
+            AppResponse::Accepted { .. } => Err(internal_state(
+                &format!("{context} was accepted but did not report a run id"),
+                json!({ "context": context }),
             )),
-            _ => Err(JsonRpcError::new(
-                crate::channels::acp::wire::ERROR_INTERNAL,
-                format!("{context} produced an unexpected response"),
+            _ => Err(internal_state(
+                &format!("{context} produced an unexpected response"),
+                json!({ "context": context }),
             )),
         },
         CanonicalCoreFrame::Error(error) => Err(JsonRpcError::new(
             map::jsonrpc_code_for_frame(&error),
             error.message,
         )),
-        other => Err(JsonRpcError::new(
-            crate::channels::acp::wire::ERROR_INTERNAL,
-            format!("{context} produced unexpected canonical frame {other:?}"),
+        other => Err(internal_state(
+            &format!("{context} produced unexpected canonical frame"),
+            json!({ "frame": format!("{other:?}") }),
         )),
     }
 }
@@ -1624,8 +1962,7 @@ fn ensure_binding(
         || record.capabilities != *context.adapter.capabilities()
     {
         return Err(AdapterError::InvalidFrame(format!(
-            "session binding mismatch: negotiated adapter protocol {:?} / capability snapshot \
-             vs authoritative record protocol {:?}",
+            "session binding mismatch: negotiated adapter protocol {:?} / capability snapshot              vs authoritative record protocol {:?}",
             context.adapter.protocol(),
             record.protocol
         )));
@@ -1665,4 +2002,44 @@ fn ensure_request_handle(
         ));
     }
     Ok(())
+}
+
+fn serialize_value<T: serde::Serialize>(value: T, what: &str) -> Result<Value, JsonRpcError> {
+    serde_json::to_value(value).map_err(|error| {
+        internal_state(
+            &format!("failed to serialize {what}"),
+            json!({ "error": error.to_string(), "what": what }),
+        )
+    })
+}
+
+
+fn wait_std<T>(rx: std::sync::mpsc::Receiver<T>) -> Option<T> {
+    rx.recv().ok()
+}
+fn actor_unavailable() -> JsonRpcError {
+    internal_state(
+        "ACP host actor is unavailable",
+        json!({ "reason": "mailbox closed" }),
+    )
+}
+
+fn internal_state(message: &str, details: Value) -> JsonRpcError {
+    report_acp_state(message, details);
+    JsonRpcError::new(crate::channels::acp::wire::ERROR_INTERNAL, message)
+}
+
+fn report_acp_state(message: &str, details: Value) {
+    let event = DegradeEvent::new(
+        DegradeKind::AcpState,
+        DegradeSeverity::Error,
+        message,
+        details,
+    );
+    tracing::error!(
+        code = %event.code(),
+        message = %event.message,
+        details = ?event.details,
+        "acp host degrade"
+    );
 }

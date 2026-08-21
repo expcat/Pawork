@@ -172,7 +172,27 @@ impl JsonRpcMessage {
             Self::Response(message) => serde_json::to_value(message),
             Self::Error(message) => serde_json::to_value(message),
         }
-        .expect("JSON-RPC messages always serialize")
+        .unwrap_or_else(|error| {
+            let event = pawork_domain::DegradeEvent::new(
+                pawork_domain::DegradeKind::AcpState,
+                pawork_domain::DegradeSeverity::Error,
+                "failed to serialize JSON-RPC message",
+                serde_json::json!({ "error": error.to_string() }),
+            );
+            tracing::error!(
+                code = %event.code(),
+                message = %event.message,
+                details = ?event.details,
+                "acp host degrade"
+            );
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": ERROR_INTERNAL,
+                    "message": event.message,
+                }
+            })
+        })
     }
 }
 

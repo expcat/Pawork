@@ -1,9 +1,11 @@
 //! Task 领域服务：后台任务注册 / 状态机与 tasks.json 快照持久化。
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
-use pawork_domain::{BackgroundTaskId, SessionId, TaskKind, TaskStatus};
+use pawork_domain::{BackgroundTaskId, DegradeEvent, DegradeKind, DegradeSeverity, SessionId, TaskKind, TaskStatus};
 use pawork_workflow::task::{TaskManager, TaskSnapshot};
+use serde_json::json;
 
 use crate::tasks_host::{load_task_manager, save_task_manager};
 use crate::AppError;
@@ -11,6 +13,7 @@ use crate::AppError;
 pub(crate) struct TaskService {
     pub(crate) tasks: TaskManager,
     pub(crate) tasks_path: Option<PathBuf>,
+    last_degrade: Mutex<Option<DegradeEvent>>,
 }
 
 impl TaskService {
@@ -18,6 +21,7 @@ impl TaskService {
         Self {
             tasks: TaskManager::new(),
             tasks_path: None,
+            last_degrade: Mutex::new(None),
         }
     }
 
@@ -70,7 +74,9 @@ impl TaskService {
         self.tasks
             .start(&id)
             .map_err(|error| AppError::Task(error.to_string()))?;
-        let _ = self.persist_tasks();
+        if let Err(error) = self.persist_tasks() {
+            report_tasks_persist_failure(None, &error);
+        }
         Ok(id)
     }
 
@@ -80,11 +86,43 @@ impl TaskService {
         status: TaskStatus,
         detail: Option<String>,
     ) -> Result<(), AppError> {
-        self.tasks
-            .finish(task_id, status, detail)
-            .map_err(|error| AppError::Task(error.to_string()))?;
-        let _ = self.persist_tasks();
+        let degrade = self.tasks_finish_with_degrade(task_id, status, detail)?;
+        *self.last_degrade.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = degrade.clone();
+        if let Some(degrade) = degrade {
+            tracing::error!(
+                code = %degrade.code(),
+                task_id = %task_id.as_str(),
+                "tasks snapshot persist failed"
+            );
+        }
         Ok(())
+    }
+
+    pub(crate) fn take_last_degrade(&self) -> Option<DegradeEvent> {
+        self.last_degrade
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+    }
+
+    /// Finish a task and, on persist failure, return the degrade event so a run
+    /// sink can persist `AgentEvent::Diagnostic`. No-sink callers log instead.
+    pub(crate) fn tasks_finish_with_degrade(
+        &self,
+        task_id: &BackgroundTaskId,
+        status: TaskStatus,
+        detail: Option<String>,
+    ) -> Result<Option<DegradeEvent>, AppError> {
+        self.tasks
+            .finish(task_id, status, detail.clone())
+            .map_err(|error| AppError::Task(error.to_string()))?;
+        match self.persist_tasks() {
+            Ok(()) => Ok(None),
+            Err(error) => Ok(Some(tasks_finish_failed_event(
+                Some(task_id.as_str()),
+                &error,
+            ))),
+        }
     }
 
     pub(crate) fn open_tasks(&mut self, path: PathBuf) -> Result<(), AppError> {
@@ -128,6 +166,29 @@ impl TaskService {
     }
 }
 
+fn tasks_finish_failed_event(task_id: Option<&str>, error: &AppError) -> DegradeEvent {
+    let mut details = json!({ "error": error.to_string() });
+    if let Some(task_id) = task_id {
+        details["task_id"] = json!(task_id);
+    }
+    DegradeEvent::new(
+        DegradeKind::TasksFinishFailed,
+        DegradeSeverity::Error,
+        "tasks snapshot persist failed",
+        details,
+    )
+}
+
+fn report_tasks_persist_failure(task_id: Option<&str>, error: &AppError) {
+    let event = tasks_finish_failed_event(task_id, error);
+    tracing::error!(
+        code = %event.code(),
+        task_id = task_id.unwrap_or("-"),
+        error = %error,
+        "tasks snapshot persist failed"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     #[tokio::test]
@@ -166,6 +227,30 @@ mod tests {
         assert!(listed.iter().any(|task| task.task_id == first
             && task.status == pawork_domain::TaskStatus::Completed));
         assert!(listed.iter().any(|task| task.task_id == second));
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn persist_tasks_failure_emits_degrade_event() {
+        let (mut core, dir) = crate::testsupport::mock_core(Vec::new()).await;
+        core.open_control_plane(dir.path()).expect("control");
+        let id = core
+            .tasks_register(pawork_domain::TaskKind::Agent)
+            .expect("register");
+        // Replace tasks.json with a directory so save_task_manager cannot write.
+        let tasks_path = dir.path().join("tasks.json");
+        std::fs::remove_file(&tasks_path).ok();
+        std::fs::create_dir_all(&tasks_path).expect("block persist path");
+        let degrade = core
+            .tasks
+            .tasks_finish_with_degrade(&id, pawork_domain::TaskStatus::Completed, None)
+            .expect("finish succeeds even if persist fails")
+            .expect("persist failure must yield DegradeEvent");
+        assert_eq!(degrade.code(), "degrade.tasks_finish_failed");
+        assert_eq!(degrade.kind, pawork_domain::DegradeKind::TasksFinishFailed);
+        assert_eq!(degrade.severity, pawork_domain::DegradeSeverity::Error);
+        assert_eq!(degrade.details["task_id"], serde_json::json!(id.as_str()));
+        assert!(degrade.details.get("error").is_some());
         core.shutdown().await.expect("shutdown");
     }
 }

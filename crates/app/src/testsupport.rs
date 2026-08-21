@@ -189,3 +189,97 @@ pub(crate) fn core_with_registry(registry: ModelRegistry, model: &str) -> AppCor
         registry,
     )
 }
+
+
+/// Captures structured tracing fields for degrade emission tests.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CapturedTrace {
+    pub level: String,
+    pub message: String,
+    pub fields: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RecordingSubscriber {
+    events: Arc<Mutex<Vec<CapturedTrace>>>,
+}
+
+impl RecordingSubscriber {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn events(&self) -> Vec<CapturedTrace> {
+        self.events.lock().expect("events").clone()
+    }
+}
+
+impl tracing::Subscriber for RecordingSubscriber {
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut visitor = FieldVisitor::default();
+        event.record(&mut visitor);
+        let mut captured = CapturedTrace {
+            level: event.metadata().level().to_string(),
+            message: visitor.message.unwrap_or_default(),
+            fields: visitor.fields,
+        };
+        if captured.message.is_empty() {
+            if let Some(message) = captured.fields.get("message") {
+                captured.message = message.clone();
+            }
+        }
+        self.events.lock().expect("events").push(captured);
+    }
+
+    fn enter(&self, _span: &tracing::span::Id) {}
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+#[derive(Default)]
+struct FieldVisitor {
+    message: Option<String>,
+    fields: std::collections::BTreeMap<String, String>,
+}
+
+impl tracing::field::Visit for FieldVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        let rendered = format!("{value:?}");
+        if field.name() == "message" {
+            self.message = Some(rendered.trim_matches('"').to_string());
+        } else {
+            self.fields.insert(field.name().to_string(), rendered.trim_matches('"').to_string());
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.message = Some(value.to_string());
+        } else {
+            self.fields.insert(field.name().to_string(), value.to_string());
+        }
+    }
+
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        self.fields.insert(field.name().to_string(), value.to_string());
+    }
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        self.fields.insert(field.name().to_string(), value.to_string());
+    }
+
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        self.fields.insert(field.name().to_string(), value.to_string());
+    }
+}

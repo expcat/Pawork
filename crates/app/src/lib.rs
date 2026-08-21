@@ -70,8 +70,9 @@ pub use approval::{
 pub use checkpoint::{CheckpointSummary, RollbackOutcome};
 pub use data_dir::{
     artifact_store_path, artifact_store_path_for, audit_log_path_for, default_data_dir,
-    instance_dir, normalize_instance, session_db_path, session_db_path_for,
-    tasks_snapshot_path_for, usage_ledger_path_for, DEFAULT_INSTANCE,
+    default_data_dir_outcome, instance_dir, normalize_instance, session_db_path,
+    session_db_path_for, tasks_snapshot_path_for, usage_ledger_path_for, DataDirOutcome,
+    DEFAULT_INSTANCE,
 };
 pub use diff::{paginate_diff, render_diff_file, render_session_diff, GitDiffHeader, SessionDiff};
 pub use pawork_git::{DiffFile, DiffPage};
@@ -258,6 +259,26 @@ pub(crate) const RETAINED_MESSAGES: usize = 4;
 /// fail-closed）。只在 host 装配层使用，Engine 无感知。
 struct CatalogOnlyProvider {
     id: ProviderId,
+}
+
+fn missing_credential_degrade(provider_id: &ProviderId) -> pawork_domain::DegradeEvent {
+    pawork_domain::DegradeEvent::new(
+        pawork_domain::DegradeKind::MissingCredential,
+        pawork_domain::DegradeSeverity::Warning,
+        format!("provider {} has no credential; using catalog-only fallback", provider_id.as_str()),
+        serde_json::json!({ "provider_id": provider_id.as_str() }),
+    )
+}
+
+fn emit_missing_credential_degrade(provider_id: &ProviderId) -> pawork_domain::DegradeEvent {
+    let degrade = missing_credential_degrade(provider_id);
+    tracing::warn!(
+        code = %degrade.code(),
+        provider_id = provider_id.as_str(),
+        "{}",
+        degrade.message
+    );
+    degrade
 }
 
 #[async_trait]
@@ -554,6 +575,7 @@ impl AppCore {
                 ),
                 Err(err) if allow_pending && is_credential_pending(&err) => {
                     pending = true;
+                    emit_missing_credential_degrade(&provider_ref);
                     Self::from_parts_with_protocol(
                         Arc::new(CatalogOnlyProvider {
                             id: provider_ref.clone(),

@@ -3,9 +3,9 @@
 use std::sync::atomic::Ordering;
 
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, EventId, EventSequence,
-    Message, MessageId, MessageRole, ModelResponseSummary, RequestId, RunId, SessionId,
-    TextContent,
+    AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, DegradeEvent, EventId,
+    EventSequence, Message, MessageId, MessageRole, ModelResponseSummary, RequestId, RunId,
+    SessionId, TextContent,
 };
 use pawork_engine::{
     assemble_request_with_tools, run_session, AgentEventSink, EngineError, SessionTurn,
@@ -173,23 +173,60 @@ impl RunService {
                 tracing::warn!(error = %error, "usage ledger record failed");
             }
         }
-        match &result {
-            Ok(_) => {
-                if let Some(task_id) = &task_id {
-                    let _ = core.tasks_finish(
-                        task_id,
-                        pawork_domain::TaskStatus::Completed,
-                        None,
-                    );
+        let finish_status = if result.is_ok() {
+            pawork_domain::TaskStatus::Completed
+        } else {
+            pawork_domain::TaskStatus::Failed
+        };
+        if let Some(task_id) = &task_id {
+            match core.tasks_finish(task_id, finish_status, None) {
+                Ok(()) => {
+                    if let Some(degrade) = core.tasks.take_last_degrade() {
+                        emit_tasks_finish_degrade(core, session_id, &run_id, &sink, degrade).await;
+                    }
                 }
-            }
-            Err(_) => {
-                if let Some(task_id) = &task_id {
-                    let _ = core.tasks_finish(task_id, pawork_domain::TaskStatus::Failed, None);
+                Err(error) => {
+                    let degrade = DegradeEvent::new(
+                        pawork_domain::DegradeKind::TasksFinishFailed,
+                        pawork_domain::DegradeSeverity::Error,
+                        "tasks_finish failed",
+                        serde_json::json!({
+                            "task_id": task_id.as_str(),
+                            "error": error.to_string(),
+                        }),
+                    );
+                    emit_tasks_finish_degrade(core, session_id, &run_id, &sink, degrade).await;
                 }
             }
         }
         Ok(result?)
+    }
+}
+
+async fn emit_tasks_finish_degrade(
+    core: &AppCore,
+    session_id: &SessionId,
+    run_id: &RunId,
+    sink: &dyn AgentEventSink,
+    degrade: DegradeEvent,
+) {
+    let Ok(sequence) = core.next_sequence(session_id).await else {
+        tracing::error!(
+            code = %degrade.code(),
+            "tasks_finish degrade dropped: sequence unavailable"
+        );
+        return;
+    };
+    let envelope = AgentEventEnvelope::new(
+        EventId::from(format!("evt-degrade-{}-{sequence}", run_id.as_str())),
+        session_id.clone(),
+        run_id.clone(),
+        EventSequence::new(sequence),
+        pawork_engine::now_timestamp(),
+        degrade.to_agent_event(),
+    );
+    if let Err(error) = sink.emit(envelope).await {
+        tracing::error!(error = %error, code = %degrade.code(), "tasks_finish degrade emit failed");
     }
 }
 
@@ -449,6 +486,43 @@ mod tests {
             joined.contains("hello-from-workspace"),
             "expected tool output or assistant recap, got {joined}"
         );
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn tasks_finish_persist_failure_emits_diagnostic_through_sink() {
+        let (mut core, dir) = mock_core(vec![
+            ProviderStreamEvent::TextDelta("hi".into()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ])
+        .await;
+        core.open_control_plane(dir.path()).expect("control");
+        let tasks_path = dir.path().join("tasks.json");
+        std::fs::remove_file(&tasks_path).ok();
+        std::fs::create_dir_all(&tasks_path).expect("block persist path");
+        let session = core.create_session("degrade-tasks").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn still succeeds");
+        let found = sink
+            .0
+            .lock()
+            .expect("mutex")
+            .iter()
+            .any(|envelope| match &envelope.payload {
+                AgentEvent::Diagnostic { code, details } => {
+                    code == "degrade.tasks_finish_failed"
+                        && details.get("severity").and_then(|v| v.as_str()) == Some("error")
+                }
+                _ => false,
+            });
+        assert!(found, "run sink must receive tasks_finish_failed Diagnostic");
         core.shutdown().await.expect("shutdown");
     }
 }

@@ -1062,10 +1062,33 @@ mod tests {
             strict,
             Err(AppError::MissingCredential { provider, .. }) if provider == id
         ));
+        let subscriber = crate::testsupport::RecordingSubscriber::new();
+        let dispatch = tracing::Dispatch::new(subscriber.clone());
+        let _guard = tracing::dispatcher::set_default(&dispatch);
         let core = AppCore::from_config_inner(config, None, None, backend, true)
             .await
             .expect("catalog load");
+        drop(_guard);
         assert!(core.provider_pending(), "core should be pending");
+        let events = subscriber.events();
+        let emitted = events.iter().find(|event| {
+            event.fields.get("code").map(String::as_str) == Some("degrade.missing_credential")
+        }).unwrap_or_else(|| panic!("missing credential must emit tracing: {events:?}"));
+        assert_eq!(emitted.level, "WARN");
+        assert_eq!(
+            emitted.fields.get("provider_id").map(String::as_str),
+            Some(id),
+            "details must only contain provider_id: {emitted:?}"
+        );
+        let field_names: Vec<&str> = emitted.fields.keys().map(String::as_str).collect();
+        assert!(
+            field_names.iter().all(|name| matches!(*name, "code" | "provider_id")),
+            "details must only contain provider_id: {emitted:?}"
+        );
+        let encoded = format!("{emitted:?}").to_lowercase();
+        assert!(!encoded.contains("secret"), "{encoded}");
+        assert!(!encoded.contains("token"), "{encoded}");
+        assert!(!emitted.message.to_lowercase().contains("secret"));
         let overview = core.models_overview().await;
         assert!(overview.iter().any(|entry| entry.id.as_str() == "glm-5.2"));
     }

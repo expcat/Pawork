@@ -4,7 +4,7 @@
         ApprovalDecision, CancellationToken, CommandId, ContentPart, Message, MessageId,
         MessageMetadata, MessageRole, QueryId, RunId, TenantId, TextContent, Timestamp, WorkspaceId,
     };
-    use pawork_protocol::{ActorIdentity, AppQuery, AppResponseEnvelope, CommandSource, RunState, TimelineItemKind, DEFAULT_CONTROL_PLANE_TENANT};
+    use pawork_protocol::{ActorIdentity, AppEvent, AppQuery, AppResponseEnvelope, CommandSource, EventStream, RunState, TimelineItemKind, DEFAULT_CONTROL_PLANE_TENANT};
     use pawork_protocol::app::registry::{command_entries, query_entries};
     use std::sync::atomic::{AtomicU64, Ordering};
     use pawork_testkit::{MockProvider, MockScript};
@@ -437,6 +437,25 @@
         assert_eq!(events[1].global_sequence, GlobalSequence(2));
         assert_eq!(bus.hub().earliest_available(), Some(GlobalSequence(1)));
         assert_eq!(bus.hub().capacity(), 4);
+    }
+
+    #[test]
+    fn gui_event_bus_publishes_lagged_degrade_frame() {
+        let bus = GuiEventBus::new(4);
+        let instance = pawork_domain::CoreInstanceId::from("instance-1");
+        let mut subscription = bus.subscribe();
+        bus.publish_event_stream_lagged(instance, Some(3), Some("gui-1"));
+        let event = subscription.try_recv().expect("lagged degrade");
+        match event.payload {
+            AppEvent::Diagnostic { level, code, message } => {
+                assert_eq!(level, pawork_protocol::DiagnosticLevel::Warning);
+                assert_eq!(code, "degrade.event_stream_lagged");
+                assert_eq!(message, "event stream subscriber lagged");
+            }
+            other => panic!("expected lagged diagnostic, got {other:?}"),
+        }
+        assert_eq!(event.stream, EventStream::Global);
+        assert_eq!(bus.current_sequence(), 1);
     }
 
     #[tokio::test]
@@ -1010,7 +1029,11 @@
                 run_id: None,
             },
         };
-        GuiHostAdapter::persist_command_response(
+        let subscriber = crate::testsupport::RecordingSubscriber::new();
+        let dispatch = tracing::Dispatch::new(subscriber.clone());
+        let mut events = adapter.subscribe_events();
+        let _guard = tracing::dispatcher::set_default(&dispatch);
+        adapter.persist_command_response(
             &ledger,
             &tenant,
             &conflict_id,
@@ -1018,7 +1041,22 @@
             conflict,
         )
         .await;
+        drop(_guard);
         assert_eq!(adapter.command_record_failure_count().await, 1);
+        assert!(
+            matches!(events.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)),
+            "IdempotencyConflict must not send a client frame"
+        );
+        let captured = subscriber.events();
+        let emitted = captured.iter().find(|event| {
+            event.fields.get("code").map(String::as_str) == Some("degrade.idempotency_conflict")
+        }).unwrap_or_else(|| panic!("record failure must emit tracing: {captured:?}"));
+        assert_eq!(emitted.level, "ERROR");
+        assert_eq!(
+            emitted.fields.get("command_id").map(String::as_str),
+            Some(conflict_id.as_str()),
+            "{emitted:?}"
+        );
         let created = adapter
             .command(&command_envelope_with(
                 CommandId::from("cmd-create-live"),

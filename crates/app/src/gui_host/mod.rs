@@ -242,6 +242,7 @@ impl GuiHostAdapter {
     /// command() 在 dispatch 之后调用：成功响应写入 ledger，错误响应 release。
     /// record 失败不可回滚已执行命令，必须记数+打日志后仍返回响应。
     pub(crate) async fn persist_command_response(
+        &self,
         ledger: &IdempotencyStore,
         tenant: &TenantId,
         command_id: &CommandId,
@@ -253,7 +254,7 @@ impl GuiHostAdapter {
                 .record(tenant, command_id, idempotency_key, cached)
                 .await
             {
-                Self::on_command_record_failure(ledger, command_id.as_str(), &error);
+                self.on_command_record_failure(command_id.as_str(), &error);
             }
         } else {
             ledger
@@ -263,15 +264,19 @@ impl GuiHostAdapter {
     }
 
     fn on_command_record_failure(
-        ledger: &IdempotencyStore,
+        &self,
         command_id: &str,
         error: &crate::IdempotencyError,
     ) {
         // IdempotencyStore::record already bumps record_failures. This helper
         // must not bump again (command() would double-count) and must not
         // swallow the error.
-        tracing::error!(command_id, error = %error, "command ledger record failed");
-        let _ = ledger;
+        tracing::error!(
+            code = "degrade.idempotency_conflict",
+            command_id,
+            error = %error,
+            "command ledger record failed after the command already executed"
+        );
     }
 
     #[cfg(test)]
@@ -532,7 +537,7 @@ impl GuiHost for GuiHostAdapter {
             responded_at: now_timestamp(),
             response: response.clone(),
         };
-        Self::persist_command_response(
+        self.persist_command_response(
             &ledger,
             &tenant,
             &command_id,
@@ -573,6 +578,14 @@ impl GuiHost for GuiHostAdapter {
             ),
             other => Self::host_error("internal", other.to_string()),
         })
+    }
+
+    fn publish_event_stream_lagged(
+        &self,
+        missed: Option<u64>,
+        client_id: Option<&str>,
+    ) -> Option<AppEventEnvelope> {
+        Some(self.bus.publish_event_stream_lagged(self.instance.clone(), missed, client_id).0)
     }
 }
 

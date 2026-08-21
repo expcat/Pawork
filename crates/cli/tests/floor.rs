@@ -1142,3 +1142,143 @@ async fn query_run_status(harness: &common::TestHarness, run_id: &pawork_domain:
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
+
+#[tokio::test]
+async fn diagnostic_events_are_not_emitted_on_acp_session_update() {
+    use pawork_protocol::{AppEvent, AppEventEnvelope, DiagnosticLevel, EventSource, EventStream, GlobalSequence};
+    let harness =
+        common::TestHarness::new(MockScript::new().text("started ").wait_for_cancellation()).await;
+    let dir = temp_dir("acp-host-diagnostic-pin-");
+    harness.prepare_workspace(dir.path()).await;
+    let session_id = harness
+        .new_session(dir.path().to_str().expect("path"))
+        .await;
+    let prompt = spawn_prompt(&harness, 41, &session_id, "hold for diagnostic pin");
+    assert!(
+        wait_until(
+            || harness
+                .host
+                .pending_run(&ClientSessionId::new(&session_id))
+                .is_some(),
+            Duration::from_secs(10),
+        )
+        .await,
+        "run must register before diagnostic pump",
+    );
+    let run_id = harness
+        .host
+        .pending_run(&ClientSessionId::new(&session_id))
+        .expect("run");
+    let _ = harness.take_outbox();
+    harness
+        .host
+        .pump_events(vec![AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: pawork_domain::CoreInstanceId::from("acp-diagnostic-pin"),
+            event_id: pawork_domain::EventId::from("acp-diagnostic-pin-1"),
+            global_sequence: GlobalSequence(1),
+            stream: EventStream::Run(run_id.clone()),
+            stream_sequence: 1,
+            timestamp: Timestamp::from_unix_millis(1),
+            source: EventSource::Core,
+            payload: AppEvent::Diagnostic {
+                level: DiagnosticLevel::Warning,
+                code: "degrade.acp_state".into(),
+                message: "internal".into(),
+            },
+        }])
+        .await;
+    let frames = harness.take_outbox();
+    assert!(
+        frames.iter().all(|frame| frame.get("method").and_then(Value::as_str) != Some("session/update")),
+        "Diagnostic must not be encoded as ACP session/update, got {frames:?}"
+    );
+    harness
+        .host
+        .handle_notification("session/cancel", Some(json!({ "sessionId": session_id })))
+        .await
+        .expect("cancel diagnostic pin prompt");
+    let mut collected = Vec::new();
+    let _ = await_prompt(&harness, prompt, &mut collected).await;
+}
+
+#[tokio::test]
+async fn interleaved_prompts_from_two_clients_keep_session_serial_and_cancel_unblocked() {
+    let harness =
+        common::TestHarness::new(MockScript::new().text("started ").wait_for_cancellation()).await;
+    let dir = temp_dir("acp-host-two-client-interleave-");
+    harness.prepare_workspace(dir.path()).await;
+    let cwd = std::fs::canonicalize(dir.path())
+        .unwrap_or_else(|_| dir.path().to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    harness.initialize().await.expect("initialize");
+    let new1 = harness
+        .host
+        .handle_request(
+            json!(2),
+            "session/new",
+            Some(json!({ "cwd": cwd.clone(), "mcpServers": [] })),
+        )
+        .await
+        .expect("session1 new");
+    let session1 = new1["sessionId"].as_str().expect("sessionId").to_string();
+    let new2 = harness
+        .host
+        .handle_request(
+            json!(3),
+            "session/new",
+            Some(json!({ "cwd": cwd.clone(), "mcpServers": [] })),
+        )
+        .await
+        .expect("session2 new");
+    let session2 = new2["sessionId"].as_str().expect("sessionId").to_string();
+    let first = spawn_prompt(&harness, 51, &session1, "client-a first");
+    assert!(
+        wait_until(|| harness.host.has_active_runs(), Duration::from_secs(10)).await,
+        "first client prompt must occupy session1",
+    );
+    let rejected = harness
+        .host
+        .handle_request(
+            json!(52),
+            "session/prompt",
+            Some(json!({
+                "sessionId": session1,
+                "prompt": [ { "type": "text", "text": "client-b overlap" } ],
+            })),
+        )
+        .await
+        .expect_err("same-session overlap from a second client must be rejected");
+    assert_eq!(rejected.code, ERROR_INVALID_REQUEST);
+    assert!(
+        rejected.message.contains("already has an active prompt turn"),
+        "got {}",
+        rejected.message
+    );
+    let second = spawn_prompt(&harness, 53, &session2, "client-b other session");
+    let sid2 = ClientSessionId::new(&session2);
+    assert!(
+        wait_until(|| harness.host.pending_run(&sid2).is_some(), Duration::from_secs(10)).await,
+        "second client prompt on another session must register without waiting for the first",
+    );
+    harness
+        .host
+        .handle_notification("session/cancel", Some(json!({ "sessionId": session2 })))
+        .await
+        .expect("cancel second client prompt must not be blocked by first prompt");
+    let mut collected = Vec::new();
+    let done2 = await_prompt(&harness, second, &mut collected)
+        .await
+        .expect("second client prompt");
+    assert_eq!(done2["stopReason"], json!("cancelled"));
+    harness
+        .host
+        .handle_notification("session/cancel", Some(json!({ "sessionId": session1 })))
+        .await
+        .expect("cancel first client prompt");
+    let done1 = await_prompt(&harness, first, &mut collected)
+        .await
+        .expect("first client prompt");
+    assert_eq!(done1["stopReason"], json!("cancelled"));
+}

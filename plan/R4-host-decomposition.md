@@ -38,13 +38,32 @@
 - 审查(grok_reviewer 双轮):首轮 changes-needed——P0(Queued 竞态误封 live 等待调用,已修:Queued 先判 run 活,live 不落盘)+ P1(record 失败断言改走生产 persist helper;K-02 回归升级为经 GuiHostAdapter.command(ToolApprove) 端到端)+ P2×2(snapshot 合并全局语义、淘汰全局语义,均以注释+pin 登记);修复后复核 verdict=pass。
 - 登记:K-02 崩溃回归为 app 层 drop+reopen 模拟;真实 kill -9 进程冒烟与 GUI 人工验收留待人工验收;protocol/client 整 suite 曾卡 dyld 启动,分拆 `--test` 全绿,判定宿主抖动非本波问题。
 
+## 2.3 波 C 开启核查(2026-08-21,grok_explorer ×3,证据漂移回写)
+
+以实态为准修正 §1 证据:
+
+- ACP:「9 张独立 Mutex map」实为 **5 张 map + 7 把 std::sync::Mutex + 2 把 tokio Mutex**(`session_contexts`/`occupancy`/`run_sessions`/`pending_prompts`/`pending_permissions` + `negotiated`/`outbox` 两把非 map 锁,`prompt_gate`/`event_rx` 为 tokio 锁);毒锁 `.expect("…mutex")` 实为 host.rs **35 处**(host.rs `.expect(` 全计 40,另 635/705/803/1048/1098 非毒锁;wire.rs:175 一处;adapter.rs:638 在测试内)。Reserved/Active **不是枚举**,是 `PromptOccupancy{ run_id: Option<RunId> }` 占位/绑定(host.rs:179)。
+- 降级接点实态:`CatalogOnlyProvider` 仍在 `app/src/lib.rs:259-292`(装配 534/558),不在 provider_assembly.rs;`tasks_finish` 吞错落点 `services/run.rs:179,188` + `services/tasks.rs:73,86`(`persist_tasks`);Lagged 主路径在 `gui_server/session.rs:665-684`、`hub.rs`、`acp host.rs:534-537`(gui_host bus/events 不直接处理);HOME→temp 仍在 `app/src/data_dir.rs:22-25` 静默。
+- ACP 兼容面(须保形状):`AcpHost::new/handle_request/handle_notification/handle_response/drain_and_pump/pump_events/take_outbox/drain_outbox_items/fail_closed_all_prompts/pending_run/has_active_runs/is_initialized/subscribe/release_drained_barriers`;floor.rs:805 同 session 第二 prompt 拒绝文案 `already has an active prompt turn` 逐字保留;装配点 `cli/src/acp.rs:24` 不动。
+- 契约决议(主代理定形状,已先行落地 `crates/domain/src/degrade.rs`):DegradeEvent 复用既有 `AgentEvent::Diagnostic`(persist-first 落盘)+ protocol `AppEvent::Diagnostic`(实时帧)双通道,**serde 形状零变更**(26 帧 golden / events_golden / typegen schemas 零 diff);code 命名空间 `degrade.<snake_kind>` 六类冻结;默认 sink 分级(TasksFinishFailed 落盘,其余帧/stderr);**ACP 不新增 session/update 臂**(丢 Diagnostic 维持现状并显式 pin),桌面投影对 degrade.* 安全忽略、不改。
+- 写入集实态修正:C 轨协议面只加 `protocol/src/app/event.rs` 的 `From<&DegradeEvent> for AppEvent` 转换 + pin(domain→App 映射实态在 `app/gui_host/events.rs`,headless 对照表已有 diagnostic 行)。
+
+## 2.4 波 C 实态进度(2026-08-21,波 C 已收口,grok_worker ×2 并行 + grok_reviewer 双轮)
+
+- **契约先行(主代理)**:新增 `crates/domain/src/degrade.rs`——`DegradeKind` 六类(HomeDirFallback/MissingCredential/EventStreamLagged/TasksFinishFailed/IdempotencyConflict/AcpState)+ `DegradeSeverity` + `DegradeSink` 默认分级(TasksFinishFailed 落盘,其余帧/stderr)+ `DegradeEvent` 双出口(`to_agent_event()` → `AgentEvent::Diagnostic` 合并 kind/severity/message 三键;protocol `From<&DegradeEvent> for AppEvent`)。serde 形状零变更:26 帧 golden / events_golden / typegen schemas 零 diff;code 命名空间 `degrade.*` pin 冻结。
+- **轨 a(ACP actor 化,grok_worker)**:`AcpHost` 改单 actor(独立 OS 线程 + current_thread runtime;证据:同步 drain/fail_closed API × #[tokio::test] current-thread 会冻死唯一 worker,注释在 `AcpHost::new`)+ mpsc 信箱独占 5 map/negotiated/outbox;std::sync::Mutex 与 35 处毒锁 expect 清零(wire.rs 序列化 expect 走 `DegradeKind::AcpState` tracing + JSON-RPC error);prompt 串行经 actor 队列,语义与 HEAD 一致(gate 只覆盖 reserve→dispatch→bind,主代理核实旧码 drop 点);urgent cancel 经 select! 插队 dispatch;DrainOutbox 纳入 interruptible 服务;fail_closed_all_prompts 改 ack 同步等待;公开 API 与 `cli/src/acp.rs` 装配零变化;拒绝文案逐字保留;floor.rs 追加两会话交错并发种子 + 「Diagnostic 不发 ACP」pin。
+- **轨 b(降级接点,grok_worker)**:HOME 回退(data_dir.rs,新增 `DataDirOutcome`/`default_data_dir_outcome`,回退点真实 tracing::warn 外发,RecordingSubscriber 测试证外发);无凭证兜底(lib.rs 装配点 tracing::warn,details 只含 provider_id,AppCore.last_degrade 死存储已删);Lagged(gui_server/session.rs 删 seq-0 旁路,改经 hub 真序列取信封 + host_tx 直发受影响连接 + ReplayUnavailable,旧测试改断言递增序列帧);tasks_finish/persist_tasks 失败(TaskService→RunService 交接,run.rs 经 persist-first sink 落盘 `AgentEvent::Diagnostic`,无 sink 处 tracing::error,本接点 let _ 清零);幂等 record 失败(主代理契约拍板:客户端无可行动作且易误读为重试信号,**只** tracing::error 结构化 code,加「不发客户端帧」pin)。`gui_host/events.rs` 对 degrade.* code 特判 level/message 取 details 键,缺省回退现状。
+- **验证**:domain 56 / protocol 141(frames+golden+projection_golden+typegen 全量)/ app 139 / cli acp 41(acp_fixtures 16 + acp_floor 25)全绿,`cargo check -p pawork` 通过;fixtures/golden/schemas 全部零 diff;合计 377 绿。
+- **审查(grok_reviewer 双轮)**:首轮 changes-needed 四项 P1(HOME/无凭证只构造不外发、Lagged seq-0 旁路绕开 hub、ACP fail-closed/drain 阻塞与注释失真、幂等帧或误导重试),修复后复核 verdict=pass findings=0。
+- **登记**:cli map.rs `stop_reason_for`/`cancel_request` 两条 dead_code 为 HEAD 既有(主代理 git grep HEAD 核实),留波 D 清理;`DataDirOutcome` pub 导出暂无生产消费者(预留 R7/CLI 采用);ACP 通道不承载 degrade 帧(只 tracing/JSON-RPC error),桌面投影对 degrade.* 安全忽略——均为本波显式决议;两客户端传输层交错压测(真实双连接)仍缺,种子为单 Host 双会话;Zed 真实冒烟留人工验收。
+
 ## 3. 波次拆分
 
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
 | A | 服务拆分(纯代码组织,行为零变化;每拆一块跑 app 契约测试) | host/app(R1 后 `pawork-app`) | 串行(单一 owner;心脏手术不并行) |
 | B | ✅ CommandLedger 持久化 + K-02 审批落盘语义(2026-08-21 收口,见 §2.2) | storage(新迁移)、app(idempotency/approval);实态含 engine(tool_loop.rs emit 时序) | 串行(依赖波 A 的 ApprovalService 边界) |
-| C | ACP actor 化 ∥ 降级事件契约(DegradeEvent 定义在 protocol/domain 侧 + host 全部接点) | cli `channels/acp/` ∥ protocol/domain(事件定义)+ app(接点) | 并行 ×2(写入集不相交;DegradeEvent 契约面由主代理先定形状) |
+| C | ✅ ACP actor 化 ∥ 降级事件契约(2026-08-21 收口,见 §2.4) | cli `channels/acp/` ∥ domain degrade.rs(主代理先行)+ protocol app/event.rs(From 转换)+ app(五接点);实态含 cli/tests 并发种子 | 并行 ×2(写入集不相交;DegradeEvent 契约面由主代理先定形状) |
 | D | 收口:`let _` 清理(host 域)、HOME 回退告警、usage 哨兵语义按 D1 收敛、hub 序列逻辑简化(rate_limit 已删) | app、cli | 串行 |
 
 ## 4. 验证
@@ -59,5 +78,5 @@
 
 - [x] AppCore 拆为领域服务;巨 match 消失(registry 分发);行数目标达成(波 A,2026-08-21)
 - [x] 幂等持久化 + K-02 语义落地并有崩溃回归;内存 CAS 删除(波 B,2026-08-21;持久态以 SQLite 为准,进程内仅余 Notify 唤醒表)
-- [ ] ACP 无 Mutex map/`expect` 热点;降级事件契约生效且 host 域 `let _` 清零
+- [x] ACP 无 Mutex map/`expect` 热点;降级事件契约生效(波 C,2026-08-21;host 域 `let _` 全量清零留波 D,本波已清零五接点)
 - [ ] app/cli/storage 定向测试全绿;冒烟通过;v3_plan §3 更新

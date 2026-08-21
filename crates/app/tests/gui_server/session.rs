@@ -244,6 +244,46 @@ impl GuiHost for MockHost {
             .cloned()
             .collect())
     }
+
+    fn publish_event_stream_lagged(
+        &self,
+        missed: Option<u64>,
+        client_id: Option<&str>,
+    ) -> Option<AppEventEnvelope> {
+        let next = self
+            .ring
+            .lock()
+            .expect("ring")
+            .back()
+            .map(|event| event.global_sequence.0 + 1)
+            .unwrap_or(1);
+        let mut details = serde_json::json!({});
+        if let Some(missed) = missed {
+            details["missed"] = serde_json::json!(missed);
+        }
+        if let Some(client_id) = client_id {
+            details["client_id"] = serde_json::json!(client_id);
+        }
+        let degrade = pawork_domain::DegradeEvent::new(
+            pawork_domain::DegradeKind::EventStreamLagged,
+            pawork_domain::DegradeSeverity::Warning,
+            "event stream subscriber lagged",
+            details,
+        );
+        let envelope = AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: self.instance_id.clone(),
+            event_id: EventId::from("degrade-event-stream-lagged"),
+            global_sequence: GlobalSequence(next),
+            stream: EventStream::Global,
+            stream_sequence: 0,
+            timestamp: Timestamp::from_unix_millis(next),
+            source: EventSource::Core,
+            payload: AppEvent::from(&degrade),
+        };
+        self.publish(envelope.clone());
+        Some(envelope)
+    }
 }
 
 struct Client {
@@ -655,6 +695,8 @@ mod unix_tests {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         let mut saw_replay_unavailable = false;
         let mut disconnected = false;
+        let mut saw_lagged_degrade = false;
+        let mut last_event_seq = 0u64;
         while tokio::time::Instant::now() < deadline {
             match tokio::time::timeout(Duration::from_millis(200), harness.client.conn.receive())
                 .await
@@ -665,7 +707,21 @@ mod unix_tests {
                         saw_replay_unavailable = true;
                         break;
                     }
-                    ServerFrame::Event(_) => continue,
+                    ServerFrame::Event(event) => {
+                        assert!(
+                            event.global_sequence.0 > last_event_seq,
+                            "lagged path must assign incrementing sequence, last={last_event_seq} got={}",
+                            event.global_sequence.0
+                        );
+                        last_event_seq = event.global_sequence.0;
+                        if let AppEvent::Diagnostic { code, message, .. } = &event.payload {
+                            if code == "degrade.event_stream_lagged" {
+                                assert_eq!(message, "event stream subscriber lagged");
+                                assert_ne!(event.global_sequence, GlobalSequence(0));
+                                saw_lagged_degrade = true;
+                            }
+                        }
+                    }
                     other => panic!("unexpected frame while waiting for Lagged: {other:?}"),
                 },
                 Ok(Err(error)) => {
@@ -678,6 +734,10 @@ mod unix_tests {
         assert!(
             saw_replay_unavailable || disconnected,
             "expected ReplayUnavailable or connection close after overflowing queue_capacity=2"
+        );
+        assert!(
+            saw_lagged_degrade,
+            "expected degrade.event_stream_lagged Event frame with a real incrementing sequence"
         );
     }
 

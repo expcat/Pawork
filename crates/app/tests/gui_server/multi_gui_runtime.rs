@@ -188,6 +188,46 @@ impl GuiHost for MockHost {
             .cloned()
             .collect())
     }
+
+    fn publish_event_stream_lagged(
+        &self,
+        missed: Option<u64>,
+        client_id: Option<&str>,
+    ) -> Option<AppEventEnvelope> {
+        let next = self
+            .ring
+            .lock()
+            .expect("ring")
+            .back()
+            .map(|event| event.global_sequence.0 + 1)
+            .unwrap_or(1);
+        let mut details = serde_json::json!({});
+        if let Some(missed) = missed {
+            details["missed"] = serde_json::json!(missed);
+        }
+        if let Some(client_id) = client_id {
+            details["client_id"] = serde_json::json!(client_id);
+        }
+        let degrade = pawork_domain::DegradeEvent::new(
+            pawork_domain::DegradeKind::EventStreamLagged,
+            pawork_domain::DegradeSeverity::Warning,
+            "event stream subscriber lagged",
+            details,
+        );
+        let envelope = AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: self.instance_id.clone(),
+            event_id: EventId::from("degrade-event-stream-lagged"),
+            global_sequence: GlobalSequence(next),
+            stream: EventStream::Global,
+            stream_sequence: 0,
+            timestamp: Timestamp::from_unix_millis(next),
+            source: EventSource::Core,
+            payload: AppEvent::from(&degrade),
+        };
+        self.publish(envelope.clone());
+        Some(envelope)
+    }
 }
 
 struct Runtime {

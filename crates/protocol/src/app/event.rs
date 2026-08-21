@@ -1,9 +1,9 @@
 //! 应用层事件信封、流序与 Team 镜像。
 
 use pawork_domain::{
-    AgentId, ArtifactId, CheckpointId, CommandId, ConnectionId, CoreInstanceId, ErrorContext,
-    EventId, GuiClientId, MessageId, PlanId, PlanVersionId, PluginId, ProviderId, RunId, SessionId,
-    TenantId, Timestamp, ToolCallId, WorkspaceId,
+    AgentId, ArtifactId, CheckpointId, CommandId, ConnectionId, CoreInstanceId, DegradeEvent,
+    ErrorContext, EventId, GuiClientId, MessageId, PlanId, PlanVersionId, PluginId, ProviderId,
+    RunId, SessionId, TenantId, Timestamp, ToolCallId, WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -227,6 +227,37 @@ pub enum DiagnosticLevel {
     Warning,
     Error,
 }
+
+impl DiagnosticLevel {
+    /// Map a domain `DegradeSeverity` via its frozen `as_str()` wire token.
+    /// Unknown tokens fall back to [`DiagnosticLevel::Info`] so a new severity
+    /// cannot invent a protocol arm.
+    fn from_degrade_severity_str(value: &str) -> Self {
+        match value {
+            "info" => Self::Info,
+            "warning" => Self::Warning,
+            "error" => Self::Error,
+            _ => Self::Info,
+        }
+    }
+}
+
+/// Protocol-side conversion: `DegradeEvent` reuses the existing
+/// [`AppEvent::Diagnostic`] shape (level/code/message). serde is unchanged.
+impl From<&DegradeEvent> for AppEvent {
+    fn from(event: &DegradeEvent) -> Self {
+        AppEvent::Diagnostic {
+            level: DiagnosticLevel::from_degrade_severity_str(event.severity.as_str()),
+            code: event.code(),
+            message: event.message.clone(),
+        }
+    }
+}
+
+// Pin: ACP / desktop consumers must keep treating Diagnostic as the only
+// degrade wire arm. Adding a dedicated AppEvent variant would break 26-frame
+// golden, events_golden, and typegen schemas.
+const _: fn(&DegradeEvent) -> AppEvent = |event| AppEvent::from(event);
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum AppEventOrderError {
@@ -537,6 +568,34 @@ mod tests {
             skipped.validate_after(&second),
             Err(AppEventOrderError::NonContiguousGlobalSequence)
         );
+    }
+
+    #[test]
+    fn degrade_event_maps_to_diagnostic_via_as_str() {
+        use pawork_domain::{DegradeKind, DegradeSeverity};
+        use serde_json::json;
+
+        let cases = [
+            (DegradeSeverity::Info, DiagnosticLevel::Info),
+            (DegradeSeverity::Warning, DiagnosticLevel::Warning),
+            (DegradeSeverity::Error, DiagnosticLevel::Error),
+        ];
+        for (severity, level) in cases {
+            let event = DegradeEvent::new(
+                DegradeKind::HomeDirFallback,
+                severity,
+                "home missing; using temp",
+                json!({}),
+            );
+            assert_eq!(
+                AppEvent::from(&event),
+                AppEvent::Diagnostic {
+                    level,
+                    code: "degrade.home_dir_fallback".into(),
+                    message: "home missing; using temp".into(),
+                }
+            );
+        }
     }
 
     fn event(global_sequence: u64, stream_sequence: u64) -> AppEventEnvelope {

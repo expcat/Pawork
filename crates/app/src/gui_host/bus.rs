@@ -139,6 +139,16 @@ impl GuiEventBus {
             },
         );
     }
+
+    /// Bus-level Lagged degrade: hub publish of a Diagnostic frame.
+    pub fn publish_event_stream_lagged(
+        &self,
+        instance: pawork_domain::CoreInstanceId,
+        missed: Option<u64>,
+        client_id: Option<&str>,
+    ) -> (pawork_protocol::AppEventEnvelope, usize) {
+        self.hub.publish_lagged_degrade_envelope(instance, missed, client_id)
+    }
 }
 
 /// GUI 侧渲染 sink：把 persist 之后的事件映射为 App 事件广播出去。

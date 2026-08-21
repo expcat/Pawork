@@ -73,6 +73,18 @@ pub trait GuiHost: Send + Sync {
         let _ = (from, through);
         Ok(vec![])
     }
+
+    /// Publish a `degrade.event_stream_lagged` Diagnostic onto the host event hub.
+    /// Returns the sequenced envelope so a lagged client can still be told about
+    /// the break after its per-connection queue is already full.
+    fn publish_event_stream_lagged(
+        &self,
+        missed: Option<u64>,
+        client_id: Option<&str>,
+    ) -> Option<pawork_protocol::AppEventEnvelope> {
+        let _ = (missed, client_id);
+        None
+    }
 }
 
 /// GUI 服务器的共享配置。

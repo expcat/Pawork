@@ -1,28 +1,87 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+
+use pawork_domain::{DegradeEvent, DegradeKind, DegradeSeverity};
+use serde_json::json;
 
 /// 缺省实例名（与 V1 `--instance` 默认值对齐）。
 pub const DEFAULT_INSTANCE: &str = "default";
+
+/// `default_data_dir` 的可观测结果：路径 + 可选 HOME 回退降级事件。
+#[derive(Clone, Debug, PartialEq)]
+pub struct DataDirOutcome {
+    pub path: PathBuf,
+    pub degrade: Option<DegradeEvent>,
+}
 
 /// 会话库所在数据目录。覆盖：`PAWORK_DATA_DIR`。
 ///
 /// 默认与 V1 `instance_dir` 对齐：Windows `%LOCALAPPDATA%\pawork`，
 /// 其他平台 `~/.pawork`，再否则临时目录。
 pub fn default_data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("PAWORK_DATA_DIR") {
+    default_data_dir_outcome().path
+}
+
+/// 与 [`default_data_dir`] 同路径选择，HOME 缺失回退时附带 DegradeEvent。
+pub fn default_data_dir_outcome() -> DataDirOutcome {
+    resolve_data_dir_outcome(
+        std::env::var("PAWORK_DATA_DIR").ok(),
+        if cfg!(windows) {
+            std::env::var("LOCALAPPDATA").ok()
+        } else {
+            None
+        },
+        std::env::var_os("HOME"),
+        std::env::temp_dir(),
+    )
+}
+
+fn resolve_data_dir_outcome(
+    pawork_data_dir: Option<String>,
+    local_app_data: Option<String>,
+    home: Option<OsString>,
+    temp_dir: PathBuf,
+) -> DataDirOutcome {
+    if let Some(dir) = pawork_data_dir {
         let trimmed = dir.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
+            return DataDirOutcome {
+                path: PathBuf::from(trimmed),
+                degrade: None,
+            };
         }
     }
     if cfg!(windows) {
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(local).join("pawork");
+        if let Some(local) = local_app_data {
+            return DataDirOutcome {
+                path: PathBuf::from(local).join("pawork"),
+                degrade: None,
+            };
         }
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".pawork");
+    if let Some(home) = home {
+        return DataDirOutcome {
+            path: PathBuf::from(home).join(".pawork"),
+            degrade: None,
+        };
     }
-    std::env::temp_dir().join("pawork")
+    let path = temp_dir.join("pawork");
+    let degrade = DegradeEvent::new(
+        DegradeKind::HomeDirFallback,
+        DegradeSeverity::Warning,
+        "HOME is unset; falling back to the process temp directory",
+        json!({ "path": path.display().to_string() }),
+    );
+    tracing::warn!(
+        code = %degrade.code(),
+        path = %path.display(),
+        "{}",
+        degrade.message
+    );
+    DataDirOutcome {
+        path: path.clone(),
+        degrade: Some(degrade),
+    }
 }
 
 /// 校验 `--instance`：trim 后仅允许 `[A-Za-z0-9._-]`；空、空白、分号、
@@ -84,6 +143,7 @@ pub fn tasks_snapshot_path_for(data_dir: impl AsRef<Path>, instance: &str) -> Pa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn session_db_path_uses_default_instance() {
@@ -125,5 +185,37 @@ mod tests {
         assert!(normalize_instance("..").is_err());
         assert!(normalize_instance("foo..bar").is_err());
         assert!(normalize_instance("evil;rm -rf").is_err());
+    }
+
+    #[test]
+    fn missing_home_falls_back_to_temp_with_degrade_event() {
+        let expected = PathBuf::from("/tmp/process-temp/pawork");
+        let subscriber = crate::testsupport::RecordingSubscriber::new();
+        let outcome = tracing::subscriber::with_default(subscriber.clone(), || {
+            resolve_data_dir_outcome(
+                None,
+                None,
+                None,
+                PathBuf::from("/tmp/process-temp"),
+            )
+        });
+        assert_eq!(outcome.path, expected);
+        let degrade = outcome.degrade.expect("HOME fallback must emit DegradeEvent");
+        assert_eq!(degrade.code(), "degrade.home_dir_fallback");
+        assert_eq!(degrade.kind, DegradeKind::HomeDirFallback);
+        assert_eq!(degrade.severity, DegradeSeverity::Warning);
+        assert_eq!(degrade.details["path"], json!(expected.display().to_string()));
+        let events = subscriber.events();
+        let emitted = events.iter().find(|event| {
+            event.fields.get("code").map(String::as_str) == Some("degrade.home_dir_fallback")
+        }).unwrap_or_else(|| panic!("HOME fallback must emit tracing: {events:?}"));
+        assert_eq!(emitted.level, "WARN");
+        assert!(emitted.message.contains("HOME is unset"), "{emitted:?}");
+        let expected_path = expected.display().to_string();
+        assert_eq!(
+            emitted.fields.get("path").map(String::as_str),
+            Some(expected_path.as_str()),
+            "{emitted:?}"
+        );
     }
 }

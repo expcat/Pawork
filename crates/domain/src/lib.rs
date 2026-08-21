@@ -7,6 +7,7 @@
 
 mod cancel;
 mod client_session;
+mod degrade;
 mod error;
 mod events;
 mod ids;
@@ -21,6 +22,7 @@ mod workflow;
 
 pub use cancel::{CancellationFuture, CancellationToken};
 pub use client_session::*;
+pub use degrade::{DegradeEvent, DegradeKind, DegradeSeverity, DegradeSink};
 pub use error::{ErrorCategory, ErrorContext};
 pub use events::*;
 pub use ids::*;

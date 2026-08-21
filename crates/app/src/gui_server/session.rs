@@ -9,10 +9,10 @@ use pawork_domain::{ActorId, ConnectionId, GuiClientId};
 use pawork_protocol::{
     compute_resume_disposition, decode_client_frame_checked, encode_server_frame,
     validate_server_frame_api_version, ActorIdentity, ApiVersion, AppCommandEnvelope,
-    AppQueryEnvelope, AppResponseEnvelope, ClientFrame, CommandSource, EventStream, GlobalSequence,
-    GuiCapability, HandshakeRequest, HandshakeResponse, HandshakeSession, ProtocolError,
-    ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext, ResumeDisposition, ResumeRequest,
-    ResumeResponse, ServerFrame, SnapshotSectionKind,
+    AppQueryEnvelope, AppResponseEnvelope, ClientFrame, CommandSource, EventStream,
+    GlobalSequence, GuiCapability, HandshakeRequest, HandshakeResponse, HandshakeSession,
+    ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext, ResumeDisposition,
+    ResumeRequest, ResumeResponse, ServerFrame, SnapshotSectionKind,
 };
 use pawork_protocol::app::registry::{command_entry, query_entry, RegistryEntry};
 use pawork_protocol::codec::decode_client_frame;
@@ -663,7 +663,7 @@ fn spawn_forwarder(
                             if let Err(error) = inner.connections.enqueue(&client_id, event) {
                                 match error {
                                     ManagerError::Lagged { .. } => {
-                                        send_lagged_error(&host_tx, &error);
+                                        send_lagged_degrade(&inner, &client_id, None, &host_tx, &error);
                                         return;
                                     }
                                     ManagerError::UnknownClient(_) | ManagerError::ChannelClosed(_) => {
@@ -676,12 +676,12 @@ fn spawn_forwarder(
                             }
                         }
                         Err(broadcast::error::RecvError::Closed) => return,
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                        Err(broadcast::error::RecvError::Lagged(missed)) => {
                             let error = ManagerError::Lagged {
                                 client_id: client_id.clone(),
                             };
                             let _ = inner.connections.mark_lagged(&client_id);
-                            send_lagged_error(&host_tx, &error);
+                            send_lagged_degrade(&inner, &client_id, Some(missed), &host_tx, &error);
                             return;
                         }
                     }
@@ -696,6 +696,38 @@ fn send_lagged_error(host_tx: &mpsc::UnboundedSender<TransportFrame>, error: &Ma
     if let Ok(bytes) = encode_server_frame(&frame) {
         let _ = host_tx.send(TransportFrame::new(bytes));
     }
+}
+
+fn send_lagged_degrade(
+    inner: &Inner,
+    client_id: &GuiClientId,
+    missed: Option<u64>,
+    host_tx: &mpsc::UnboundedSender<TransportFrame>,
+    error: &ManagerError,
+) {
+    if let Some(envelope) = inner
+        .host
+        .publish_event_stream_lagged(missed, Some(client_id.as_str()))
+    {
+        if let Ok(bytes) = encode_server_frame(&ServerFrame::Event(envelope)) {
+            if host_tx.send(TransportFrame::new(bytes)).is_err() {
+                tracing::warn!(
+                    code = "degrade.event_stream_lagged",
+                    %client_id,
+                    missed,
+                    "event stream lagged frame send failed"
+                );
+            }
+        }
+    } else {
+        tracing::warn!(
+            code = "degrade.event_stream_lagged",
+            %client_id,
+            missed,
+            "event stream lagged publish returned no envelope"
+        );
+    }
+    send_lagged_error(host_tx, error);
 }
 
 fn watchdog_interval(timeout: Duration) -> Duration {

@@ -12,7 +12,13 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use pawork_protocol::{AppEventEnvelope, GlobalSequence};
+use pawork_domain::{DegradeEvent, DegradeKind, DegradeSeverity, EventId};
+use pawork_engine::now_timestamp;
+use pawork_protocol::{
+    AppEvent, AppEventEnvelope, EventSource, EventStream, GlobalSequence,
+    API_VERSION,
+};
+use serde_json::json;
 use thiserror::Error;
 use tokio::sync::broadcast;
 
@@ -81,7 +87,13 @@ impl EventHub {
 
     /// 发布一条事件：强制重写 `global_sequence` 保证全局连续，写入 ring buffer
     /// 并广播给所有订阅者。返回成功投递的订阅者数（无订阅者时为 0）。
-    pub fn publish(&self, mut envelope: AppEventEnvelope) -> usize {
+    pub fn publish(&self, envelope: AppEventEnvelope) -> usize {
+        self.publish_with_envelope(envelope).1
+    }
+
+    /// Assign a contiguous global_sequence, retain the event, and broadcast it.
+    /// Returns the sequenced envelope plus the number of live subscribers that received it.
+    pub fn publish_with_envelope(&self, mut envelope: AppEventEnvelope) -> (AppEventEnvelope, usize) {
         let sequence = self.next_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         envelope.global_sequence = GlobalSequence(sequence);
         {
@@ -91,7 +103,63 @@ impl EventHub {
             }
             ring.buffer.push_back(envelope.clone());
         }
-        self.sender.send(envelope).unwrap_or_default()
+        let delivered = self.sender.send(envelope.clone()).unwrap_or_default();
+        (envelope, delivered)
+    }
+
+    /// Publish a `degrade.event_stream_lagged` Diagnostic frame onto the hub.
+    /// Used when a subscriber reports Lagged or a bus publish cannot be delivered.
+    pub fn publish_lagged_degrade(
+        &self,
+        instance_id: pawork_domain::CoreInstanceId,
+        missed: Option<u64>,
+        client_id: Option<&str>,
+    ) -> usize {
+        self.publish_lagged_degrade_envelope(instance_id, missed, client_id).1
+    }
+
+    /// Same as [`EventHub::publish_lagged_degrade`], returning the sequenced envelope
+    /// and the number of live subscribers that received the broadcast.
+    pub fn publish_lagged_degrade_envelope(
+        &self,
+        instance_id: pawork_domain::CoreInstanceId,
+        missed: Option<u64>,
+        client_id: Option<&str>,
+    ) -> (AppEventEnvelope, usize) {
+        let mut details = json!({});
+        if let Some(missed) = missed {
+            details["missed"] = json!(missed);
+        }
+        if let Some(client_id) = client_id {
+            details["client_id"] = json!(client_id);
+        }
+        let degrade = DegradeEvent::new(
+            DegradeKind::EventStreamLagged,
+            DegradeSeverity::Warning,
+            "event stream subscriber lagged",
+            details,
+        );
+        let envelope = AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id,
+            event_id: EventId::from("degrade-event-stream-lagged"),
+            global_sequence: GlobalSequence(0),
+            stream: EventStream::Global,
+            stream_sequence: 0,
+            timestamp: now_timestamp(),
+            source: EventSource::Core,
+            payload: AppEvent::from(&degrade),
+        };
+        let (envelope, delivered) = self.publish_with_envelope(envelope);
+        if delivered == 0 {
+            tracing::warn!(
+                code = "degrade.event_stream_lagged",
+                missed,
+                client_id,
+                "event stream lagged publish delivered to zero subscribers"
+            );
+        }
+        (envelope, delivered)
     }
 
     /// 当前订阅者数量。
@@ -197,7 +265,7 @@ fn lock<T>(inner: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 mod tests {
     use super::*;
     use pawork_domain::{CoreInstanceId, EventId, RunId, Timestamp};
-    use pawork_protocol::{AppEvent, EventSource, EventStream, RunState, API_VERSION};
+    use pawork_protocol::{AppEvent, DiagnosticLevel, EventSource, EventStream, RunState, API_VERSION};
 
     fn envelope(sequence: u64) -> AppEventEnvelope {
         AppEventEnvelope {
@@ -333,5 +401,25 @@ mod tests {
             subscription.try_recv().expect("event").global_sequence,
             GlobalSequence(1)
         );
+    }
+
+    #[test]
+    fn lagged_degrade_frame_is_published_onto_the_hub() {
+        let hub = EventHub::new();
+        let mut subscription = hub.subscribe();
+        hub.publish_lagged_degrade(
+            pawork_domain::CoreInstanceId::from("instance-1"),
+            Some(2),
+            Some("gui-1"),
+        );
+        let event = subscription.try_recv().expect("lagged frame");
+        match event.payload {
+            AppEvent::Diagnostic { level, code, message } => {
+                assert_eq!(level, DiagnosticLevel::Warning);
+                assert_eq!(code, "degrade.event_stream_lagged");
+                assert_eq!(message, "event stream subscriber lagged");
+            }
+            other => panic!("expected lagged diagnostic, got {other:?}"),
+        }
     }
 }
