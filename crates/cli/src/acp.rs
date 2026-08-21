@@ -69,7 +69,8 @@ where
                 batch.push(event);
             }
             pump_host.pump_events(batch).await;
-            if flush_outbox(&pump_host, &pump_writer).await.is_err() {
+            if let Err(error) = flush_outbox(&pump_host, &pump_writer).await {
+                tracing::warn!(%error, "acp pump flush_outbox failed");
                 break;
             }
         }
@@ -85,7 +86,8 @@ where
         }
     }
     pump.abort();
-    if flush_outbox(&host, &writer).await.is_err() {
+    if let Err(error) = flush_outbox(&host, &writer).await {
+        tracing::warn!(%error, "acp teardown flush_outbox failed");
         host.resolve_queued_prompts();
     }
     join_inflight(inflight).await;
@@ -193,7 +195,8 @@ where
                 }
             }
         }
-        if flush_outbox(&host, &writer).await.is_err() {
+        if let Err(error) = flush_outbox(&host, &writer).await {
+            tracing::warn!(%error, "acp frame flush_outbox failed");
             break;
         }
     }

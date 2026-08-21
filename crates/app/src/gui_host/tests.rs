@@ -1041,13 +1041,13 @@
             conflict,
         )
         .await;
+        let captured = subscriber.events();
         drop(_guard);
         assert_eq!(adapter.command_record_failure_count().await, 1);
         assert!(
             matches!(events.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)),
             "IdempotencyConflict must not send a client frame"
         );
-        let captured = subscriber.events();
         let emitted = captured.iter().find(|event| {
             event.fields.get("code").map(String::as_str) == Some("degrade.idempotency_conflict")
         }).unwrap_or_else(|| panic!("record failure must emit tracing: {captured:?}"));
@@ -1380,4 +1380,223 @@
         assert!(!types.contains(&"ToolApprovalResponded"));
         assert!(!types.contains(&"ToolExecutionCompleted"));
         assert_eq!(adapter.approvals().pending().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn inflight_shared_key_different_command_id_does_not_hang() {
+        // Hazard 1: same idempotency_key with a different command_id returns
+        // InFlight, but Notify is keyed by the waiter command_id. Bounded wait
+        // must recheck SQLite instead of hanging forever.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("ok").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let adapter = Arc::new(GuiHostAdapter::new(Arc::new(core)));
+        let mut ledger = crate::IdempotencyStore::for_store(
+            adapter.session_store().await.expect("store").command_ledger(),
+        )
+        .with_scope("automation");
+        ledger.share_waiters_from(&adapter.waiters);
+        let tenant = TenantId::new(DEFAULT_CONTROL_PLANE_TENANT);
+        let holder = CommandId::from("cmd-inflight-holder");
+        assert!(matches!(
+            ledger.check(&tenant, &holder, Some("shared-hang")).await.expect("reserve"),
+            crate::IdempotencyCheck::New
+        ));
+        let waiter = tokio::spawn({
+            let adapter = Arc::clone(&adapter);
+            async move {
+                adapter
+                    .command(&command_envelope_with(
+                        CommandId::from("cmd-inflight-waiter"),
+                        Some("shared-hang"),
+                        AppCommand::SessionCreate {
+                            workspace_id: WorkspaceId::from("ws-default"),
+                            title: Some("waiter".into()),
+                        },
+                    ))
+                    .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        ledger
+            .record(
+                &tenant,
+                &holder,
+                Some("shared-hang"),
+                AppResponseEnvelope {
+                    api_version: API_VERSION,
+                    request_id: QueryId::from(holder.as_str()),
+                    responded_at: Timestamp::from_unix_millis(1),
+                    response: AppResponse::Accepted {
+                        command_id: holder.clone(),
+                        run_id: None,
+                    },
+                },
+            )
+            .await
+            .expect("record holder");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+            .await
+            .expect("waiter join timed out")
+            .expect("waiter task");
+        assert!(
+            result.is_ok(),
+            "shared-key InFlight waiter must finish with Replay or an explicit result, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn inflight_dropped_wakeup_still_converges_via_bounded_poll() {
+        // Hazard 2: notify_waiters does not store a permit. If record completes
+        // after check returns InFlight but before notified() is created, the
+        // wakeup can be lost. Bounded poll must still recheck SQLite.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("ok").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let mut ledger = crate::IdempotencyStore::for_store(
+            adapter.session_store().await.expect("store").command_ledger(),
+        )
+        .with_scope("automation");
+        ledger.share_waiters_from(&adapter.waiters);
+        let tenant = TenantId::new(DEFAULT_CONTROL_PLANE_TENANT);
+        let holder = CommandId::from("cmd-drop-wakeup-holder");
+        let waiter_id = CommandId::from("cmd-drop-wakeup-waiter");
+        assert!(matches!(
+            ledger.check(&tenant, &holder, Some("drop-wakeup")).await.expect("reserve"),
+            crate::IdempotencyCheck::New
+        ));
+        assert!(matches!(
+            ledger.check(&tenant, &waiter_id, Some("drop-wakeup")).await.expect("inflight"),
+            crate::IdempotencyCheck::InFlight(_)
+        ));
+        ledger
+            .record(
+                &tenant,
+                &holder,
+                Some("drop-wakeup"),
+                AppResponseEnvelope {
+                    api_version: API_VERSION,
+                    request_id: QueryId::from(holder.as_str()),
+                    responded_at: Timestamp::from_unix_millis(1),
+                    response: AppResponse::Accepted {
+                        command_id: holder.clone(),
+                        run_id: None,
+                    },
+                },
+            )
+            .await
+            .expect("record before waiter notified()");
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            adapter.command(&command_envelope_with(
+                waiter_id,
+                Some("drop-wakeup"),
+                AppCommand::SessionCreate {
+                    workspace_id: WorkspaceId::from("ws-default"),
+                    title: Some("drop-wakeup".into()),
+                },
+            )),
+        )
+        .await
+        .expect("dropped wakeup waiter timed out");
+        assert!(
+            result.is_ok(),
+            "bounded poll must converge after a lost notify, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_failure_releases_inflight_so_same_command_id_can_reenter() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = AppCore::from_parts(
+            Arc::new(MockProvider::sequence(vec![MockScript::new().text("idle").complete()])),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let mut ledger = crate::IdempotencyStore::for_store(
+            adapter.session_store().await.expect("store").command_ledger(),
+        )
+        .with_scope("automation");
+        ledger.share_waiters_from(&adapter.waiters);
+        let tenant = TenantId::new(DEFAULT_CONTROL_PLANE_TENANT);
+        let primed_id = CommandId::from("cmd-create-shared");
+        let conflict_id = CommandId::from("cmd-create-conflict-retry");
+        let primed = AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: QueryId::from(primed_id.as_str()),
+            responded_at: Timestamp::from_unix_millis(1),
+            response: AppResponse::Accepted {
+                command_id: primed_id.clone(),
+                run_id: None,
+            },
+        };
+        ledger
+            .record(&tenant, &primed_id, Some("shared-key"), primed.clone())
+            .await
+            .expect("prime key");
+        assert!(matches!(
+            ledger.check(&tenant, &conflict_id, None).await.expect("reserve"),
+            crate::IdempotencyCheck::New
+        ));
+        let conflict = AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: QueryId::from(conflict_id.as_str()),
+            responded_at: Timestamp::from_unix_millis(2),
+            response: AppResponse::Accepted {
+                command_id: conflict_id.clone(),
+                run_id: None,
+            },
+        };
+        adapter.persist_command_response(
+            &ledger,
+            &tenant,
+            &conflict_id,
+            Some("shared-key"),
+            conflict,
+        )
+        .await;
+        assert_eq!(adapter.command_record_failure_count().await, 1);
+        match ledger
+            .check(&tenant, &conflict_id, Some("shared-key"))
+            .await
+            .expect("keyed retry after release")
+        {
+            crate::IdempotencyCheck::Replay(replay) => {
+                assert_eq!(replay.response, primed.response, "keyed retry must Replay the primed holder, not re-execute");
+            }
+            other => panic!("expected Replay of primed key holder, got {other:?}"),
+        }
+        match ledger
+            .check(&tenant, &conflict_id, None)
+            .await
+            .expect("reenter after record failure")
+        {
+            crate::IdempotencyCheck::InFlight(_) => panic!(
+                "record failure must release inflight so the same command_id is not stuck"
+            ),
+            crate::IdempotencyCheck::New | crate::IdempotencyCheck::Replay(_) => {}
+        }
     }

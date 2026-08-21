@@ -338,7 +338,23 @@ impl AcpHost {
         if self.mail_tx.send(Mail::DrainOutbox { reply }).is_err() {
             return Vec::new();
         }
-        wait_std(rx).unwrap_or_default()
+        match wait_std(rx) {
+            Ok(items) => items,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                report_acp_state(
+                    "acp drain_outbox ack timed out",
+                    json!({"timeout_ms": 2000}),
+                );
+                Vec::new()
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                report_acp_state(
+                    "acp drain_outbox ack channel closed",
+                    json!({"reason": "actor unavailable"}),
+                );
+                Vec::new()
+            }
+        }
     }
 
     /// 取走出站 JSON-RPC 消息（通知 + 请求），并清空 outbox；队列中的冲刷
@@ -406,9 +422,22 @@ impl AcpHost {
             return;
         }
         // 同步签名保持不变（acp.rs 装配点不改）。actor 在独立线程上回执，
-        // recv 返回后 occupancy / has_active_runs 已收敛。
-        if wait_std(rx).is_none() {
-            tracing::debug!("acp fail-closed reply dropped");
+        // recv 返回后 occupancy / has_active_runs 已收敛。超时则同级告警后
+        // 直接返回（连接即将关闭，不阻塞 teardown）。
+        match wait_std(rx) {
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                report_acp_state(
+                    "acp fail_closed_all_prompts ack timed out",
+                    json!({"timeout_ms": 2000}),
+                );
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                report_acp_state(
+                    "acp fail_closed_all_prompts ack channel closed",
+                    json!({"reason": "actor unavailable"}),
+                );
+            }
         }
     }
 
@@ -2061,8 +2090,10 @@ fn serialize_value<T: serde::Serialize>(value: T, what: &str) -> Result<Value, J
 }
 
 
-fn wait_std<T>(rx: std::sync::mpsc::Receiver<T>) -> Option<T> {
-    rx.recv().ok()
+fn wait_std<T>(
+    rx: std::sync::mpsc::Receiver<T>,
+) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
+    rx.recv_timeout(std::time::Duration::from_secs(2))
 }
 fn actor_unavailable() -> JsonRpcError {
     internal_state(

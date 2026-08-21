@@ -29,7 +29,7 @@ mod tasks_host;
 mod testsupport;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -46,19 +46,16 @@ use pawork_domain::{
     ToolDescriptor, WorkspaceId, TokenUsage, Cost,
 };
 use pawork_engine::{
-    assemble_request, run_manual_compaction, AgentEventSink, ContextBudget, ContextLimits,
-    EngineError, HeuristicEstimator, SessionTurn, TokenEstimator as EngineTokenEstimator,
-    TurnContext,
+    AgentEventSink, ContextBudget, ContextLimits, EngineError, HeuristicEstimator,
+    TokenEstimator as EngineTokenEstimator, TurnContext,
 };
 use pawork_auth::{AuthError, FileBackend, MemoryBackend, SecretBackend};
-use pawork_policy::PolicyEngine;
 use pawork_providers::ModelRegistry;
 use pawork_storage::session::{SessionStore, SessionStoreError};
 use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
 use pawork_workspace::{FileIndexError, WorkspaceError, WorkspaceService};
 use thiserror::Error;
 
-use crate::loop_ctx::SessionLoopCtx;
 use crate::provider_assembly::{
     assemble_provider, assemble_registry, channel_protocol, is_credential_pending,
 };
@@ -1025,62 +1022,9 @@ impl AppCore {
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
     ) -> Result<Vec<Message>, AppError> {
-        let messages = self.resume_messages(session_id).await?;
-        let trigger = messages
-            .last()
-            .cloned()
-            .ok_or(AppError::EmptyTurn)?;
-        let n = self.next_request.fetch_add(1, Ordering::Relaxed);
-        let request = assemble_request(
-            RequestId::from(format!("req-compact-{n}")),
-            self.model.clone(),
-            messages,
-        );
-        let run_n = self.next_run.fetch_add(1, Ordering::Relaxed);
-        let run_id = RunId::from(format!(
-            "compact-{}-{run_n}",
-            pawork_engine::now_timestamp().as_unix_millis()
-        ));
-        let turn = SessionTurn::new(
-            session_id.clone(),
-            run_id.clone(),
-            self.provider_id.clone(),
-            self.model.clone(),
-            self.next_sequence(session_id).await?,
-            trigger,
-        );
-        let sink = PersistThenRender {
-            store: self.store()?,
-            render,
-            branch_id: self.session_active_branch(session_id).await?,
-        };
-        let loop_ctx = SessionLoopCtx {
-            scheduler: self.scheduler.clone(),
-            workspace_id: self.extensions.workspace_id.clone(),
-            run_id,
-            next_message: &self.next_message,
-            next_request: &self.next_request,
-            policy: PolicyEngine::new(self.approval.mode()),
-            approval_mode: self.approval.mode(),
-            workspace_trusted: self.approval.workspace_trusted(),
-            descriptors: self.descriptors.clone(),
-            approval_host: self.approval.host(),
-            store: Some(self.store()?),
-            session_id: Some(session_id.clone()),
-            token_estimator: Some(self.session_estimator.clone()),
-            checkpoints: self.checkpoints.clone(),
-            workspace_roots: self.extensions.workspace_roots.clone(),
-        };
-        Ok(run_manual_compaction(
-            self.provider.as_ref(),
-            request,
-            turn,
-            &sink,
-            cancel,
-            &loop_ctx,
-            self.turn_context(),
-        )
-        .await?)
+        self.run
+            .compact_session(self, session_id, render, cancel)
+            .await
     }
 
     pub async fn session_diff(&self, session_id: &SessionId) -> Result<SessionDiff, AppError> {

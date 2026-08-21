@@ -22,7 +22,7 @@
 
 - 阶段1(2026-08-21 早):抽出 `UsageService` / `TaskService` / `ImportService` / `ExtensionService`,AppCore 对外 pub API 形状不变(门面委托);测试随迁 12 条 + 共享 `testsupport.rs`。
 - 阶段2(2026-08-21,glm_worker 单 owner):Session/Run/Approval 三服务抽取(`services/{session,run,approval}.rs`)+ provider 装配移 `provider_assembly.rs` + lib.rs 33 条内联测试随迁;`gui_host.rs`(2407)目录化为 `gui_host/`(mod.rs 679 + bus/events/handlers/tests),巨 match 改 `QUERY_HANDLERS` 7 / `COMMAND_HANDLERS` 10 静态分发表(wire 名查表,与 protocol registry `gui.available` 双射,新 pin 测试锁定),幂等 wrap 留在分发前,fallback 文案逐字保留。
-- 行数:`lib.rs` 4131→1413(<1500 ✅);`gui_host/mod.rs` 679(<800 ✅)。
+- 行数:`lib.rs` 4131→1413(<1500 ✅);`gui_host/mod.rs` 679(<800 ✅)。整阶段审计时(2026-08-22)lib.rs 实态 1514(波 B/C/D 接线吸收),审计修复后 1458;gui_host/mod.rs 审计后 812,略超 800 目标(增量为有界等待/重试与 hazard 注释,见 §2.6 登记)。
 - 验证:`cargo test -p pawork-app` 122 绿(1 ignored;+1 为授权 pin 测试);protocol golden / domain events_golden / typegen / client probe+spawn_e2e / desktop 27 / `cargo check -p pawork` 全绿;26 帧 golden 零 diff。
 - 审查(glm_reviewer)verdict=pass;P2-1 状态文档滞后与 P2-2 搬迁丢 1 条 doc 注释 + 若干反引号均同波闭环(主代理补齐 12 处)。
 - 留后续波:CatalogOnlyProvider 显式「无凭证」状态配合 DegradeEvent(波 C/D,T8);`let _` 清理(波 D)。K-02 已由波 B 落地。
@@ -59,14 +59,32 @@
 
 ## 2.5 波 D 实态进度(2026-08-21,波 D 已收口,grok_explorer ×3 核查 + glm_worker 单 owner + glm_reviewer)
 
-- **核查漂移回写**:hub 实态位于 `crates/app/src/hub.rs`(EventHub,425 行),非 §1 所指 gui-server 内;host 域非测试 `let _` 基线 58 处(app 24 + cli 36),分类:通道唤醒 25 / 资源清理 11 / 吞 Result 12 / 非 Result 弃绑定 6(测试内 2 处除外)。
-- **`let _` 全量清零**:58 处逐点处理——通道唤醒/资源清理/断连 send_frame 等常态竞态改 `tracing::debug!` 结构化带上下文;tasks_start_agent、RunCancel、flush_outbox、dispatch_request、dispatch_attached 四 fail-closed 路径升 `tracing::warn!`;非 Result 弃绑定改定义处 `_` 前缀或签名级参数改名;收尾 `rg 'let _ =' crates/app/src crates/cli/src` 非测试命中为 0(残留 3 处全在 #[cfg(test)] 内)。acp/host.rs:644 回执 payload 双 trait 缺失,按同文件 `wait_std` 先例用 `is_err()` + 上下文 debug,未为日志扩大类型面。
+- **核查漂移回写**:hub 实态位于 `crates/app/src/hub.rs`(EventHub,核查时 425 行,波 D hub 简化后 412 行),非 §1 所指 gui-server 内;host 域非测试 `let _` 基线 58 处(app 24 + cli 36),分类:通道唤醒 25 / 资源清理 11 / 吞 Result 12 / 非 Result 弃绑定 6(测试内 2 处除外)。
+- **`let _` 全量清零**:58 处逐点处理——通道唤醒/资源清理/断连 send_frame 等常态竞态改 `tracing::debug!` 结构化带上下文;tasks_start_agent、RunCancel、flush_outbox、dispatch_request、dispatch_attached 四 fail-closed 路径升 `tracing::warn!`;非 Result 弃绑定改定义处 `_` 前缀或签名级参数改名;收尾 `rg 'let _ =' crates/app/src crates/cli/src` 非测试命中为 0(整阶段审计复核实态:残留 4 处全在 #[cfg(test)] 内,原「3 处」为漏计)。acp/host.rs:644 回执 payload 双 trait 缺失,按同文件 `wait_std` 先例用 `is_err()` + 上下文 debug,未为日志扩大类型面。
 - **HOME 回退告警升级**:`resolve_data_dir_outcome` / `default_data_dir()` 保持纯路径选择(内部 warn 移除,反向断言钉住);单一结构化出口 `consume_data_dir_outcome` 发 `tracing::warn!`(code=degrade.home_dir_fallback/severity/path/message)。生产消费者:`AppCore::load_with`(会话库落地)与 `ops::inspect_instance`(不经 load_with 的早退路径)。`attach_workspace` / GUI / extension 继续走静默 `default_data_dir()`,避免同一进程重复告警。pin:`consume_data_dir_outcome_warns_once_and_path_helper_stays_silent` + `load_with_home_fallback_consumes_degrade_and_warns_once`(cfg(test) 测试缝 `data_dir_outcome_for_test` 透传私有纯函数)。
 - **usage 哨兵按 D1 收敛**:账本写入值零变化;control.rs 补三段 doc 钉死 ADR-038 D1 哨兵语义(LEDGER_ACCOUNT="local/default"、upstream_attempt=Some(1)、trace_id=None——无上游重试跟踪、哨兵宇宙不扩张),新增 pin 测试断言三字段。登记:control-plane legacy v1 JSON 默认 `upstream_attempt=None` 与 host `Some(1)` 口径差异,留 R9 复查(ROADMAP §4)。
 - **hub 序列简化**:单字段 `RingInner` 拆除直用 VecDeque;零消费公开 API `subscriber_count` 删除;`publish_with_envelope` 收窄 pub(crate)(全仓无外部调用方);过时 rate limiter 测试注释修正;序列连续性/replay 窗口/容量淘汰/lagged 不变量零变化(8 条 hub 测试断言未动)。
 - **死码删除**:acp/map.rs `stop_reason_for`/`cancel_request` 删除(全仓零引用,host.rs 有内联等价表),连带清理未用 import。
 - **写入集实态**:crates/app 10 文件 + crates/cli 8 文件(357+/124-),与设计一致;审查(glm_reviewer)verdict=pass,P2-1(load_with pin 未端到端驱动,接线 4 行已人工核实,接受登记)、P2-2(登记项提醒,已落 ROADMAP §4)。
 - **验证**:app 121+6+13+2 / cli 35+16+25 / protocol golden 5 / domain events_golden 3 全绿零 diff,`cargo check -p pawork` 通过;client 45 条(9+22+9+1+3+1,含 probe 场景与 spawn_e2e)主代理复跑全绿——R4 阶段收口。
+
+## 2.6 整阶段审计(2026-08-22,grok_explorer ×4 只读分域审计 + 主代理逐项裁决 + grok_worker 修复 + grok_reviewer 双轮复核)
+
+模式同 R3 整阶段审计:基线门禁全绿后四路只读分域审计(波 A 服务拆分/lib.rs、波 B CommandLedger 与幂等接线、波 C ACP actor 化与降级契约、波 D let-underscore 收口面与 hub),主代理逐项裁决,确认缺陷交 grok_worker 修复(写集合 7 文件),grok_reviewer 首轮 changes-needed 三项(R-1 record 失败重试次序、R-2 hazard 测试拆分、R-3 超时/断连区分),修复后复核 verdict=pass(findings=0)。
+
+- **确认缺陷与修复(7 项)**:
+  - B-1(P1)`gui_host/mod.rs` command() InFlight 臂:同 idempotency_key 不同 command_id 占位时 waiter 按自身 command_id 注册永不被唤醒,叠加 notify_waiters 丢唤醒竞态 → 50ms 有界等待(select notified/sleep)后回 loop 重查 SQLite 权威 CAS;回归拆 hazard1/hazard2 两个独立测试(hazard2 无 sleep,确定性触发)。
+  - B-2(P1)`persist_command_response`:record 失败后行仍 inflight 不释放(同进程重试挂死、重启 reclaim 重入)→ release 兜底;复核进一步改 DB 类错误(Closed/Other/StoreUnavailable)先重试 record 一次(幂等 UPDATE WHERE status='inflight'),重试仍失败或 KeyConflict/DuplicateCommand 才 release;回归追加带键 check 得 Replay(键持有行)断言,证明带键重试不重执行。
+  - D-1(P1)`services/run.rs` tasks_start_agent `.ok()` 吞错 → fail-closed `tracing::warn!`(对标 orchestration_host 先例)。
+  - A-4(P2)lib.rs 残留 compact_session 内联 63 行 → 逐字搬入 RunService,门面委托,lib.rs 1458(<1500)。
+  - D-3(P2)`cli/acp.rs` pump/teardown/frame loop 三处 flush_outbox 失败无 warn → 补 warn,与 drain 路径一致。
+  - C-1(P2)`acp/host.rs` wait_std 无界 recv → recv_timeout(2s),drain_outbox_items/fail_closed_all_prompts 区分 Timeout/Disconnected 分别 report_acp_state,公开签名与空向量/返回兜底行为不变。
+  - B-3(P2)storage 缺 open_read_only 不 reclaim 回归 → 新增 open_read_only_does_not_reclaim_inflight 测试。
+- **驳回误报(代表性)**:B 初版 P0(引用虚构路径 crates/storage/src/command_ledger.rs,实为 session/ 子目录;check 经 DatabaseActor 单 call 原子);A-2/A-3(引用行号与 canonical_wire_name 符号不存在);C-2(host.rs 无 Mutex map 残留);C-3(floor.rs pin 实态在 :1147 且正确);C-5(host.rs 无 eprintln)。
+- **验证**:主代理独立复跑 cargo check -p pawork-app -p pawork-cli → cargo test -p pawork-app -p pawork-cli -p pawork-storage(355 passed / 0 failed / 1 ignored)→ cargo check -p pawork 全绿;冻结契约零触碰(protocol/domain/engine/golden/schemas/wire 无 diff)。
+- **行数基线漂移**:审计时 lib.rs 1514(波 A 基线 1413,波 B/C/D 接线吸收),修复后 1458;gui_host/mod.rs 812,略超波 A 800 目标(增量为审计修复的有界等待、重试逻辑与 hazard 注释),登记为已知偏差,不阻塞。
+- **登记**:复核残留两项(record 失败计数单次计数、50ms 轮询延迟上界)均非阻塞,维持现状;K-02 kill -9 冒烟与 GUI/Zed 人工验收仍留 ROADMAP §4,本次不变。
+
 
 ## 3. 波次拆分
 

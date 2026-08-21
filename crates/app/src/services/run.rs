@@ -8,8 +8,8 @@ use pawork_domain::{
     SessionId, TextContent,
 };
 use pawork_engine::{
-    assemble_request_with_tools, run_session, AgentEventSink, EngineError, SessionTurn,
-    DEFAULT_MAX_TOOL_ROUNDS,
+    assemble_request, assemble_request_with_tools, run_manual_compaction, run_session,
+    AgentEventSink, EngineError, SessionTurn, DEFAULT_MAX_TOOL_ROUNDS,
 };
 use pawork_policy::PolicyEngine;
 
@@ -149,7 +149,13 @@ impl RunService {
             checkpoints: core.checkpoints.clone(),
             workspace_roots: core.extensions.workspace_roots.clone(),
         };
-        let task_id = core.tasks_start_agent(Some(session_id)).ok();
+        let task_id = match core.tasks_start_agent(Some(session_id)) {
+            Ok(task_id) => Some(task_id),
+            Err(error) => {
+                tracing::warn!(error=%error, "tasks_start_agent failed; run proceeds without task ledger entry");
+                None
+            }
+        };
         let result = run_session(
             core.provider.as_ref(),
             request,
@@ -200,6 +206,74 @@ impl RunService {
             }
         }
         Ok(result?)
+    }
+
+    /// 手动压缩（REPL /compact）：与自动链同一 engine 函数与事件序，
+    /// persist-first 落 CompactionStarted / MessageCommitted(summary) /
+    /// CompactionCompleted；返回重建后的消息列表。
+    pub async fn compact_session(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+        render: &dyn AgentEventSink,
+        cancel: CancellationToken,
+    ) -> Result<Vec<Message>, AppError> {
+        let messages = core.resume_messages(session_id).await?;
+        let trigger = messages
+            .last()
+            .cloned()
+            .ok_or(AppError::EmptyTurn)?;
+        let n = core.next_request.fetch_add(1, Ordering::Relaxed);
+        let request = assemble_request(
+            RequestId::from(format!("req-compact-{n}")),
+            core.model.clone(),
+            messages,
+        );
+        let run_n = core.next_run.fetch_add(1, Ordering::Relaxed);
+        let run_id = RunId::from(format!(
+            "compact-{}-{run_n}",
+            pawork_engine::now_timestamp().as_unix_millis()
+        ));
+        let turn = SessionTurn::new(
+            session_id.clone(),
+            run_id.clone(),
+            core.provider_id.clone(),
+            core.model.clone(),
+            core.next_sequence(session_id).await?,
+            trigger,
+        );
+        let sink = PersistThenRender {
+            store: core.store()?,
+            render,
+            branch_id: core.session_active_branch(session_id).await?,
+        };
+        let loop_ctx = SessionLoopCtx {
+            scheduler: core.scheduler.clone(),
+            workspace_id: core.extensions.workspace_id.clone(),
+            run_id,
+            next_message: &core.next_message,
+            next_request: &core.next_request,
+            policy: PolicyEngine::new(core.approval.mode()),
+            approval_mode: core.approval.mode(),
+            workspace_trusted: core.approval.workspace_trusted(),
+            descriptors: core.descriptors.clone(),
+            approval_host: core.approval.host(),
+            store: Some(core.store()?),
+            session_id: Some(session_id.clone()),
+            token_estimator: Some(core.session_estimator.clone()),
+            checkpoints: core.checkpoints.clone(),
+            workspace_roots: core.extensions.workspace_roots.clone(),
+        };
+        Ok(run_manual_compaction(
+            core.provider.as_ref(),
+            request,
+            turn,
+            &sink,
+            cancel,
+            &loop_ctx,
+            core.turn_context(),
+        )
+        .await?)
     }
 }
 

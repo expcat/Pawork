@@ -696,4 +696,38 @@ mod tests {
         }
         store.shutdown().await.expect("shutdown");
     }
+
+    #[tokio::test]
+    async fn open_read_only_does_not_reclaim_inflight() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ledger.sqlite3");
+        let (store, _) = SessionStore::open(&path).await.expect("open");
+        assert_eq!(
+            store
+                .command_ledger()
+                .check("t", "s", "cmd-inflight", None)
+                .await
+                .expect("reserve inflight"),
+            LedgerCheck::New
+        );
+        store.shutdown().await.expect("close writer before read-only");
+
+        let readonly = SessionStore::open_read_only(&path)
+            .await
+            .expect("open_read_only");
+        let stats = readonly.command_ledger().stats().await;
+        assert_eq!(stats.inflight, 1, "read-only open must not reclaim inflight rows");
+        readonly.shutdown().await.expect("close read-only");
+
+        let (store, _) = SessionStore::open(&path).await.expect("reopen reclaim");
+        assert_eq!(
+            store
+                .command_ledger()
+                .check("t", "s", "cmd-inflight", None)
+                .await
+                .expect("reclaimed"),
+            LedgerCheck::New
+        );
+        store.shutdown().await.expect("shutdown");
+    }
 }

@@ -253,10 +253,29 @@ impl GuiHostAdapter {
     ) {
         if should_cache(&cached) {
             if let Err(error) = ledger
-                .record(tenant, command_id, idempotency_key, cached)
+                .record(tenant, command_id, idempotency_key, cached.clone())
                 .await
             {
                 self.on_command_record_failure(command_id.as_str(), &error);
+                // DB 类错误（Closed / Other / StoreUnavailable）先重试一次
+                // record：UPDATE WHERE status='inflight' 是幂等的。重试成功则
+                // 行 completed，同 command_id 重试走 Replay 不重执行。
+                // KeyConflict 语义是键已被另一命令占用，带键重试仍会 Replay
+                // 键持有行；DuplicateCommand 行已 completed。这两种以及重试
+                // 仍失败才 release。release 只删 inflight。已返回响应不变，
+                // 不发客户端帧（波 C 决议）。
+                let retry_ok = matches!(
+                    error,
+                    crate::IdempotencyError::Closed
+                        | crate::IdempotencyError::Other(_)
+                        | crate::IdempotencyError::StoreUnavailable,
+                ) && ledger
+                    .record(tenant, command_id, idempotency_key, cached)
+                    .await
+                    .is_ok();
+                if !retry_ok {
+                    ledger.release(tenant, command_id, idempotency_key).await;
+                }
             }
         } else {
             ledger
@@ -517,7 +536,20 @@ impl GuiHost for GuiHostAdapter {
                 .await
             {
                 Ok(IdempotencyCheck::Replay(cached)) => return Ok(cached.response),
-                Ok(IdempotencyCheck::InFlight(notify)) => notify.notified().await,
+                Ok(IdempotencyCheck::InFlight(notify)) => {
+                    // Hazard 1: 同 idempotency_key、不同 command_id 的占位会让
+                    // check 返回 InFlight，但 waiter 按调用方自己的 command_id
+                    // 注册；record/release 只唤醒记录方 command_id。
+                    // Hazard 2: notify_waiters 不存 permit，check 返回与
+                    // notified() 被 poll 之间的窗口可能丢唤醒。
+                    // SQLite 是权威 CAS；有界等待后回到 loop 重查，轮询兜底。
+                    let notified = notify.notified();
+                    tokio::pin!(notified);
+                    tokio::select! {
+                        _ = &mut notified => {}
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+                    }
+                }
                 Ok(IdempotencyCheck::New) => break,
                 Err(error) => {
                     return Err(Self::host_error("idempotency", error.to_string()));
