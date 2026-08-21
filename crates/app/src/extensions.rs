@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pawork_domain::{ContentPart, TextContent};
+use pawork_domain::ContentPart;
 use pawork_engine::InjectedLayer;
 use pawork_auth::{FileBackend, SecretBackend};
 use pawork_exec::{
@@ -15,20 +15,17 @@ use pawork_tools::mcp::config::{McpConfig, StdioSandboxRuntime, TransportSpec};
 use pawork_tools::mcp::sandbox::apply_mcp_stdio_env_hygiene;
 use pawork_tools::mcp::manager::{ConnectionState, ManagedMcpClient};
 use pawork_tools::mcp::{McpError, McpPeer};
-use pawork_workspace::resources::{
-    CurrentPathKind, ResourceInstructionKind, ResourceLoader, ResourceLoaderOptions,
-    ResourceOrigin, ResourceRequest, ResourceSelection, WorkspaceRelativePath,
-};
+use pawork_workspace::resources::ResourceInstructionKind;
 use pawork_tools::{
     ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, RunCommandTool,
     SearchTextTool, ToolRegistry, ToolScheduler, ToolSchedulerConfig, WriteFileTool,
 };
-use pawork_workspace::{FileIndex, FileIndexError, IndexOptions, WorkspaceService};
+use pawork_workspace::WorkspaceService;
 use serde::Serialize;
 
 use crate::{AppCore, AppError};
 
-const AT_FILE_MAX_BYTES: usize = 64 * 1024;
+pub(crate) const AT_FILE_MAX_BYTES: usize = 64 * 1024;
 
 /// `pawork mcp list` 的一行。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -59,21 +56,6 @@ pub(crate) struct McpServerSlot {
 }
 
 impl AppCore {
-    pub(crate) fn new_file_index() -> FileIndex {
-        FileIndex::new(IndexOptions::default())
-    }
-
-    pub(crate) fn resource_loader_for(workspaces: WorkspaceService) -> ResourceLoader {
-        ResourceLoader::new(
-            workspaces,
-            ResourceLoaderOptions {
-                global_resource_dir: Some(crate::default_data_dir()),
-                workspace_resource_dir: ".pawork".into(),
-                ..ResourceLoaderOptions::default()
-            },
-        )
-    }
-
     pub(crate) fn install_builtin_tools(
         &mut self,
         workspaces: &WorkspaceService,
@@ -106,8 +88,12 @@ impl AppCore {
 
     /// 扫描 file-index，并启动已配置的 MCP server（失败不拖垮装配）。
     pub async fn prime_extensions(&mut self) -> Result<(), AppError> {
-        if let Ok(Some(workspace)) = self.workspaces.get(&self.workspace_id) {
-            if let Err(error) = self.file_index.scan_workspace(&workspace).await {
+        if let Ok(Some(workspace)) = self
+            .extensions
+            .workspaces
+            .get(&self.extensions.workspace_id)
+        {
+            if let Err(error) = self.extensions.file_index.scan_workspace(&workspace).await {
                 tracing::warn!(error = %error, "file-index scan failed");
             }
         }
@@ -122,11 +108,15 @@ impl AppCore {
         if config.servers.is_empty() {
             return;
         }
-        let Ok(Some(workspace)) = self.workspaces.get(&self.workspace_id) else {
+        let Ok(Some(workspace)) = self
+            .extensions
+            .workspaces
+            .get(&self.extensions.workspace_id)
+        else {
             return;
         };
         let runtime = stdio_runtime(&workspace.roots, self.workspace_trusted);
-        let mut registry = match builtin_registry(&self.workspaces) {
+        let mut registry = match builtin_registry(&self.extensions.workspaces) {
             Ok(registry) => registry,
             Err(error) => {
                 tracing::warn!(error = %error, "rebuild builtin registry for MCP failed");
@@ -211,39 +201,11 @@ impl AppCore {
             }
         }
         self.replace_registry(registry);
-        self.mcp_servers = slots;
+        self.extensions.mcp_servers = slots;
     }
 
     pub fn mcp_list(&self) -> Vec<McpServerStatus> {
-        if self.mcp_servers.is_empty() {
-            if let Ok(config) = mcp_config_from_pawork(&self.config) {
-                return config
-                    .servers
-                    .iter()
-                    .map(|(name, server)| McpServerStatus {
-                        name: name.clone(),
-                        transport: server.transport.kind().to_string(),
-                        state: if server.auto_start {
-                            "configured".into()
-                        } else {
-                            "configured".into()
-                        },
-                        tools: Vec::new(),
-                        last_error: None,
-                    })
-                    .collect();
-            }
-        }
-        self.mcp_servers
-            .iter()
-            .map(|slot| McpServerStatus {
-                name: slot.name.clone(),
-                transport: slot.transport.clone(),
-                state: slot.state.clone(),
-                tools: slot.tools.clone(),
-                last_error: slot.last_error.clone(),
-            })
-            .collect()
+        self.extensions.mcp_list(self)
     }
 
     pub async fn mcp_test(&mut self, name: Option<&str>) -> Result<Vec<McpServerStatus>, AppError> {
@@ -267,9 +229,11 @@ impl AppCore {
             .server(name)
             .ok_or_else(|| AppError::Import(format!("unknown MCP server '{name}'")))?
             .clone();
-        let workspace = self.workspaces.get(&self.workspace_id)?.ok_or_else(|| {
-            AppError::Import("workspace is not attached".into())
-        })?;
+        let workspace = self
+            .extensions
+            .workspaces
+            .get(&self.extensions.workspace_id)?
+            .ok_or_else(|| AppError::Import("workspace is not attached".into()))?;
         if matches!(server.transport, TransportSpec::Stdio { .. }) && !self.workspace_trusted
         {
             return Err(AppError::Mcp(McpError::PermissionDenied(format!(
@@ -296,13 +260,18 @@ impl AppCore {
             ConnectionState::Failed => "failed",
             ConnectionState::Disconnected => "disconnected",
         };
-        if let Some(slot) = self.mcp_servers.iter_mut().find(|slot| slot.name == name) {
+        if let Some(slot) = self
+            .extensions
+            .mcp_servers
+            .iter_mut()
+            .find(|slot| slot.name == name)
+        {
             slot.state = state.into();
             slot.tools = tools;
             slot.last_error = health.last_error.map(|error| error.to_string());
             slot.client = Some(client);
         } else {
-            self.mcp_servers.push(McpServerSlot {
+            self.extensions.mcp_servers.push(McpServerSlot {
                 name: name.to_string(),
                 transport: server.transport.kind().to_string(),
                 state: state.into(),
@@ -315,135 +284,24 @@ impl AppCore {
     }
 
     pub(crate) fn load_injected_layers(&self) -> Vec<InjectedLayer> {
-        let Some(loader) = &self.resource_loader else {
-            return Vec::new();
-        };
-        let mut selection = ResourceSelection {
-            profile: self.config.profile.clone(),
-            ..ResourceSelection::default()
-        };
-        if let Some(root) = self.workspace_roots.first() {
-            selection
-                .active_skills
-                .extend(discover_skill_ids(&root.join(".pawork/skills")));
-        }
-        selection
-            .active_skills
-            .extend(discover_skill_ids(&crate::default_data_dir().join("skills")));
-        let request = ResourceRequest {
-            workspace_id: self.workspace_id.clone(),
-            root_index: 0,
-            current_path: WorkspaceRelativePath::default(),
-            current_path_kind: CurrentPathKind::Directory,
-            selection,
-        };
-        match loader.load(&request) {
-            Ok(bundle) => bundle
-                .instructions
-                .into_iter()
-                .filter(|instruction| {
-                    self.workspace_trusted
-                        || !matches!(
-                            instruction.provenance.origin,
-                            ResourceOrigin::Workspace { .. }
-                        )
-                })
-                .map(|instruction| InjectedLayer {
-                    kind: instruction_kind_name(instruction.kind).into(),
-                    resource_id: instruction.resource_id,
-                    content: instruction.content,
-                })
-                .collect(),
-            Err(error) => {
-                tracing::warn!(error = %error, "resource load failed");
-                Vec::new()
-            }
-        }
+        self.extensions.load_injected_layers(self)
     }
 
     /// 把 `@token` 解析为 file-index 命中，正文作为独立 Text part。
     pub fn expand_at_refs(&self, text: &str) -> Result<Vec<ContentPart>, AppError> {
-        let mut parts = vec![ContentPart::Text(TextContent {
-            text: text.to_string(),
-        })];
-        for query in at_tokens(text) {
-            if let Some(attachment) = self.resolve_at_query(&query)? {
-                let marker = if attachment.truncated {
-                    "truncated"
-                } else {
-                    "complete"
-                };
-                parts.push(ContentPart::Text(TextContent {
-                    text: format!(
-                        "[attached file: {path} ({marker})]\n{body}",
-                        path = attachment.relative_path,
-                        body = attachment.content
-                    ),
-                }));
-            }
-        }
-        Ok(parts)
+        self.extensions.expand_at_refs(text)
     }
 
     pub fn complete_at(&self, query: &str, limit: usize) -> Result<Vec<String>, AppError> {
-        let files = self
-            .file_index
-            .search(&self.workspace_id, query, limit)
-            .or_else(|error| match error {
-                FileIndexError::WorkspaceNotIndexed(_) => Ok(Vec::new()),
-                other => Err(other),
-            })?;
-        Ok(files
-            .into_iter()
-            .map(|file| file.key.relative_path)
-            .collect())
-    }
-
-    fn resolve_at_query(&self, query: &str) -> Result<Option<AtAttachment>, AppError> {
-        let matches = self.complete_at(query, 5)?;
-        let Some(relative_path) = matches.first().cloned() else {
-            return Ok(None);
-        };
-        let root = self
-            .workspace_roots
-            .first()
-            .ok_or_else(|| AppError::Import("workspace is not attached".into()))?;
-        if Path::new(&relative_path).is_absolute()
-            || Path::new(&relative_path)
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(AppError::Import(format!(
-                "@file path escaped workspace: {relative_path}"
-            )));
-        }
-        let path = root.join(&relative_path);
-        let bytes = std::fs::read(&path)?;
-        let truncated = bytes.len() > AT_FILE_MAX_BYTES;
-        let slice = if truncated {
-            &bytes[..AT_FILE_MAX_BYTES]
-        } else {
-            &bytes
-        };
-        let content = String::from_utf8_lossy(slice).into_owned();
-        Ok(Some(AtAttachment {
-            query: query.to_string(),
-            relative_path,
-            content,
-            truncated,
-        }))
+        self.extensions.complete_at(query, limit)
     }
 
     pub fn workspace_root(&self) -> Option<&Path> {
-        self.workspace_roots.first().map(PathBuf::as_path)
+        self.extensions.workspace_root()
     }
 
     pub(crate) async fn shutdown_mcp(&self) {
-        for slot in &self.mcp_servers {
-            if let Some(client) = &slot.client {
-                let _ = client.shutdown().await;
-            }
-        }
+        self.extensions.shutdown_mcp().await
     }
 }
 
@@ -462,7 +320,9 @@ fn builtin_registry(workspaces: &WorkspaceService) -> Result<ToolRegistry, AppEr
     Ok(registry)
 }
 
-fn mcp_config_from_pawork(config: &pawork_workspace::config::PaworkConfig) -> Result<McpConfig, McpError> {
+pub(crate) fn mcp_config_from_pawork(
+    config: &pawork_workspace::config::PaworkConfig,
+) -> Result<McpConfig, McpError> {
     match config.extra.get("mcp") {
         Some(value) => McpConfig::from_value(value),
         None => Ok(McpConfig::default()),
@@ -497,7 +357,7 @@ fn stdio_runtime(roots: &[PathBuf], trusted: bool) -> Option<StdioSandboxRuntime
     StdioSandboxRuntime::new(Arc::new(NativeRestricted::new()), policy, roots.to_vec()).ok()
 }
 
-fn discover_skill_ids(dir: &Path) -> BTreeSet<String> {
+pub(crate) fn discover_skill_ids(dir: &Path) -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return ids;
@@ -512,7 +372,7 @@ fn discover_skill_ids(dir: &Path) -> BTreeSet<String> {
     ids
 }
 
-fn instruction_kind_name(kind: ResourceInstructionKind) -> &'static str {
+pub(crate) fn instruction_kind_name(kind: ResourceInstructionKind) -> &'static str {
     match kind {
         ResourceInstructionKind::AgentProfile => "agent_profile",
         ResourceInstructionKind::UserGlobalInstructions => "user_global_instructions",
@@ -526,7 +386,7 @@ fn instruction_kind_name(kind: ResourceInstructionKind) -> &'static str {
     }
 }
 
-fn at_tokens(text: &str) -> Vec<String> {
+pub(crate) fn at_tokens(text: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = text.chars().collect();
     let mut index = 0;

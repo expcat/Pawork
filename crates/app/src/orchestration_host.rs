@@ -33,9 +33,9 @@ impl crate::AppCore {
         options: MultiAgentDemoOptions,
     ) -> Result<MultiAgentDemoReport, AppError> {
         let supervisor = AgentSupervisor::new(
-            Arc::clone(&self.control.pool),
-            Arc::clone(&self.control.policy),
-            Arc::clone(&self.control.ledger),
+            Arc::clone(&self.usage.control.pool),
+            Arc::clone(&self.usage.control.policy),
+            Arc::clone(&self.usage.control.ledger),
             SupervisorConfig::default(),
         );
         let session_id = SessionId::new("ses-s11-demo");

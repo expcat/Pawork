@@ -43,20 +43,25 @@ pub async fn session_diff(
         None => Vec::new(),
     };
     let session_paths = session_changed_paths(&runs);
-    let root = core.workspace_roots.first().cloned();
+    let root = core.extensions.workspace_roots.first().cloned();
     let (files, git) = match root.as_deref() {
         Some(root) => match try_git_diff(root, &session_paths).await {
             Ok(pair) => pair,
             Err(AppError::Git(GitError::NotARepository(_))) | Err(AppError::Git(GitError::GitNotFound(_))) => {
                 (
-                    snapshot_diff(core.artifacts.as_ref(), &core.workspace_roots, &runs).await?,
+                    snapshot_diff(
+                        core.artifacts.as_ref(),
+                        &core.extensions.workspace_roots,
+                        &runs,
+                    )
+                    .await?,
                     None,
                 )
             }
             Err(error) => return Err(error),
         },
         None => (
-            snapshot_diff(core.artifacts.as_ref(), &core.workspace_roots, &runs).await?,
+            snapshot_diff(core.artifacts.as_ref(), &core.extensions.workspace_roots, &runs).await?,
             None,
         ),
     };

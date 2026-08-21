@@ -81,7 +81,7 @@ impl AppCore {
             .map_err(plan_error)?;
         self.persist_plan_event(session_id, event).await?;
         append_audit(
-            self.control.audit.as_ref(),
+            self.usage.control.audit.as_ref(),
             AuditAction::ApprovalEvaluated,
             AuditTargetKind::Approval,
             AuditDecision::Allow,
@@ -116,7 +116,7 @@ impl AppCore {
             .map_err(plan_error)?;
         self.persist_plan_event(session_id, event).await?;
         append_audit(
-            self.control.audit.as_ref(),
+            self.usage.control.audit.as_ref(),
             AuditAction::ApprovalEvaluated,
             AuditTargetKind::Approval,
             AuditDecision::Deny,
@@ -141,7 +141,7 @@ impl AppCore {
             return Ok(());
         }
         append_audit(
-            self.control.audit.as_ref(),
+            self.usage.control.audit.as_ref(),
             AuditAction::ApprovalEvaluated,
             AuditTargetKind::Approval,
             AuditDecision::Deny,

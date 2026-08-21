@@ -4,10 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use pawork_workspace::import::mcp::McpServerConfig as CompatMcpServer;
-use pawork_workspace::import::{
-    CompatLoader, CompatPayload, ExternalSource, GlobalSource, ImportCategory, ImportStatus,
-};
-use pawork_workspace::config::{workspace_config_path, ConfigTier, PaworkConfig};
+use pawork_workspace::import::{CompatPayload, ExternalSource};
+use pawork_workspace::config::{workspace_config_path, PaworkConfig};
 use pawork_domain::SessionId;
 use pawork_storage::session::{
     CompatImportReport as SessionCompatReport, ExternalSource as SessionExternalSource,
@@ -96,10 +94,10 @@ pub enum SessionImportOutcome {
 }
 
 #[derive(Clone, Debug)]
-struct FileSnapshot {
-    path: PathBuf,
-    modified: Option<SystemTime>,
-    bytes: Vec<u8>,
+pub(crate) struct FileSnapshot {
+    pub(crate) path: PathBuf,
+    pub(crate) modified: Option<SystemTime>,
+    pub(crate) bytes: Vec<u8>,
 }
 
 impl AppCore {
@@ -108,24 +106,8 @@ impl AppCore {
         tool: ExternalSource,
         global_root: Option<&Path>,
     ) -> Result<CompatImportPreview, AppError> {
-        let (plan, source_files, _) = self.scan_compat(tool, global_root)?;
-        Ok(CompatImportPreview {
-            tool: tool.as_str().to_string(),
-            preview: plan.preview(),
-            fingerprint: plan.fingerprint.clone(),
-            items: plan
-                .items
-                .iter()
-                .map(|item| CompatImportItemView {
-                    id: item.id.clone(),
-                    category: item.category.as_str().to_string(),
-                    status: format!("{:?}", item.status).to_ascii_lowercase(),
-                    relative_path: item.source.relative_path.clone(),
-                    requires_review: item.requires_review,
-                })
-                .collect(),
-            source_files,
-        })
+        self.imports
+            .preview_compat_import(self, tool, global_root)
     }
 
     pub fn apply_compat_import(
@@ -133,110 +115,14 @@ impl AppCore {
         tool: ExternalSource,
         global_root: Option<&Path>,
     ) -> Result<CompatImportReport, AppError> {
-        let workspace = self
-            .workspace_root()
-            .ok_or_else(|| AppError::Import("workspace is not attached".into()))?
-            .to_path_buf();
-        let (plan, source_files, snapshots) = self.scan_compat(tool, global_root)?;
-        let preview = plan.preview();
-        let fingerprint = plan.fingerprint.clone();
-        let output_dir = workspace.join(".pawork/compat").join(tool.as_str());
-        let export = CompatLoader::default().export_plan(&plan, &output_dir)?;
-
-        let mut applied = Vec::new();
-        let mut skipped = Vec::new();
-        for item in &plan.items {
-            if item.source.external != tool {
-                skipped.push(format!("{} (other source)", item.id));
-                continue;
-            }
-            if item.status != ImportStatus::Imported {
-                skipped.push(format!("{} ({:?})", item.id, item.status));
-                continue;
-            }
-            match item.category {
-                ImportCategory::UserHook | ImportCategory::PermissionRule => {
-                    skipped.push(format!("{} (hooks/permissions not imported)", item.id));
-                }
-                _ => match item.payload.as_ref() {
-                    Some(payload) => {
-                        apply_payload(&workspace, payload)?;
-                        applied.push(item.id.clone());
-                    }
-                    None => skipped.push(format!("{} (empty payload)", item.id)),
-                },
-            }
-        }
-
-        let sources_unchanged = snapshots_match(&snapshots)?;
-        if !sources_unchanged {
-            return Err(AppError::Import(format!(
-                "source files changed during import: {}",
-                source_files
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )));
-        }
-
-        Ok(CompatImportReport {
-            tool: tool.as_str().to_string(),
-            preview,
-            fingerprint,
-            applied,
-            skipped,
-            plan_path: export.plan_path,
-            sources_unchanged,
-        })
-    }
-
-    fn scan_compat(
-        &self,
-        tool: ExternalSource,
-        global_root: Option<&Path>,
-    ) -> Result<(pawork_workspace::import::CompatPlan, Vec<PathBuf>, Vec<FileSnapshot>), AppError> {
-        let workspace = self
-            .workspace_root()
-            .ok_or_else(|| AppError::Import("workspace is not attached".into()))?;
-        let home = match global_root {
-            Some(path) => path.to_path_buf(),
-            None => home_dir()?,
-        };
-        let globals = [GlobalSource::new(tool, home.clone())];
-        let loader = CompatLoader::default();
-        let mut plan = loader.scan(Some(workspace), &globals, Some(&self.workspace_id))?;
-        plan.items.retain(|item| item.source.external == tool);
-        plan.sources.retain(|source| *source == tool);
-        plan.sort_deterministically();
-
-        let mut source_files = Vec::new();
-        for item in &plan.items {
-            let root = match item.source.tier {
-                ConfigTier::Workspace => workspace.to_path_buf(),
-                _ => home.clone(),
-            };
-            let path = root.join(&item.source.relative_path);
-            if path.is_file() {
-                source_files.push(path);
-            }
-        }
-        source_files.sort();
-        source_files.dedup();
-        let snapshots = snapshot_files(&source_files)?;
-        Ok((plan, source_files, snapshots))
+        self.imports.apply_compat_import(self, tool, global_root)
     }
 
     pub async fn export_session_doc(
         &self,
         spec: Option<&str>,
     ) -> Result<(SessionId, SessionExport), AppError> {
-        let session = match spec {
-            Some(spec) => self.resolve_session(spec).await?,
-            None => self.resolve_session("latest").await?,
-        };
-        let export = self.store()?.export_session(&session).await?;
-        Ok((session, export))
+        self.imports.export_session_doc(self, spec).await
     }
 
     pub async fn import_session_file(
@@ -245,33 +131,9 @@ impl AppCore {
         format: SessionImportFormat,
         compat_source: Option<SessionExternalSource>,
     ) -> Result<SessionImportOutcome, AppError> {
-        let store = self.store()?;
-        match format {
-            SessionImportFormat::Export => {
-                let text = tokio::fs::read_to_string(path).await?;
-                let export = SessionExport::from_json(&text)?;
-                store
-                    .import_session(&export, &export.tenant_id, &export.principal_id)
-                    .await?;
-                Ok(SessionImportOutcome::Export {
-                    session_id: export.session_id,
-                })
-            }
-            SessionImportFormat::Compat => {
-                let source = compat_source.ok_or_else(|| {
-                    AppError::Import(
-                        "sessions import --format compat requires --source claude|codex|grok|cursor"
-                            .into(),
-                    )
-                })?;
-                let report = store.import_compat_from_file(source, path).await?;
-                Ok(SessionImportOutcome::Compat(report))
-            }
-            SessionImportFormat::Pi => {
-                let report = store.import_pi_jsonl(path).await?;
-                Ok(SessionImportOutcome::Pi(report))
-            }
-        }
+        self.imports
+            .import_session_file(self, path, format, compat_source)
+            .await
     }
 }
 
@@ -287,7 +149,7 @@ pub fn parse_session_source(name: &str) -> Result<SessionExternalSource, AppErro
     }
 }
 
-fn apply_payload(workspace: &Path, payload: &CompatPayload) -> Result<(), AppError> {
+pub(crate) fn apply_payload(workspace: &Path, payload: &CompatPayload) -> Result<(), AppError> {
     match payload {
         CompatPayload::Instructions { body, .. } => {
             append_instructions(workspace, body)?;
@@ -410,7 +272,7 @@ fn profile_toml(profile: &pawork_domain::AgentProfileV2) -> Result<String, AppEr
         .map_err(|error| AppError::Import(format!("serialize profile: {error}")))
 }
 
-fn snapshot_files(paths: &[PathBuf]) -> Result<Vec<FileSnapshot>, AppError> {
+pub(crate) fn snapshot_files(paths: &[PathBuf]) -> Result<Vec<FileSnapshot>, AppError> {
     let mut snapshots = Vec::new();
     for path in paths {
         let meta = std::fs::metadata(path)?;
@@ -423,7 +285,7 @@ fn snapshot_files(paths: &[PathBuf]) -> Result<Vec<FileSnapshot>, AppError> {
     Ok(snapshots)
 }
 
-fn snapshots_match(snapshots: &[FileSnapshot]) -> Result<bool, AppError> {
+pub(crate) fn snapshots_match(snapshots: &[FileSnapshot]) -> Result<bool, AppError> {
     for snapshot in snapshots {
         let meta = std::fs::metadata(&snapshot.path)?;
         let bytes = std::fs::read(&snapshot.path)?;
@@ -434,7 +296,7 @@ fn snapshots_match(snapshots: &[FileSnapshot]) -> Result<bool, AppError> {
     Ok(true)
 }
 
-fn home_dir() -> Result<PathBuf, AppError> {
+pub(crate) fn home_dir() -> Result<PathBuf, AppError> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| AppError::Import("HOME is not set".into()))

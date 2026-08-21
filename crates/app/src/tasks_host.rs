@@ -10,56 +10,26 @@ use crate::AppError;
 
 impl crate::AppCore {
     pub fn tasks_list(&self) -> Vec<TaskSnapshot> {
-        self.tasks.tasks()
+        self.tasks.tasks_list()
     }
 
     pub fn tasks_status(&self, spec: &str) -> Result<TaskSnapshot, AppError> {
-        Ok(self.resolve_task(spec)?.1)
+        self.tasks.tasks_status(spec)
     }
 
     pub fn tasks_register(&self, kind: TaskKind) -> Result<BackgroundTaskId, AppError> {
-        let id = self
-            .tasks
-            .register(kind, None)
-            .map_err(|error| AppError::Task(error.to_string()))?;
-        self.tasks
-            .start(&id)
-            .map_err(|error| AppError::Task(error.to_string()))?;
-        self.persist_tasks()?;
-        Ok(id)
+        self.tasks.tasks_register(kind)
     }
 
     pub fn tasks_cancel(&self, spec: &str) -> Result<Vec<BackgroundTaskId>, AppError> {
-        let (id, _) = self.resolve_task(spec)?;
-        let events = self
-            .tasks
-            .cancel(&id)
-            .map_err(|error| AppError::Task(error.to_string()))?;
-        self.persist_tasks()?;
-        Ok(events
-            .into_iter()
-            .map(|event| match event {
-                pawork_domain::TaskEvent::Finished { task_id, .. } => task_id,
-                pawork_domain::TaskEvent::Started { task_id, .. } => task_id,
-                pawork_domain::TaskEvent::Suspended { task_id } => task_id,
-                pawork_domain::TaskEvent::Resumed { task_id } => task_id,
-            })
-            .collect())
+        self.tasks.tasks_cancel(spec)
     }
 
     pub(crate) fn tasks_start_agent(
         &self,
-        _session_id: Option<&SessionId>,
+        session_id: Option<&SessionId>,
     ) -> Result<BackgroundTaskId, AppError> {
-        let id = self
-            .tasks
-            .register(TaskKind::Agent, None)
-            .map_err(|error| AppError::Task(error.to_string()))?;
-        self.tasks
-            .start(&id)
-            .map_err(|error| AppError::Task(error.to_string()))?;
-        let _ = self.persist_tasks();
-        Ok(id)
+        self.tasks.tasks_start_agent(session_id)
     }
 
     pub(crate) fn tasks_finish(
@@ -68,51 +38,11 @@ impl crate::AppCore {
         status: TaskStatus,
         detail: Option<String>,
     ) -> Result<(), AppError> {
-        self.tasks
-            .finish(task_id, status, detail)
-            .map_err(|error| AppError::Task(error.to_string()))?;
-        let _ = self.persist_tasks();
-        Ok(())
+        self.tasks.tasks_finish(task_id, status, detail)
     }
 
     pub(crate) fn open_tasks(&mut self, path: PathBuf) -> Result<(), AppError> {
-        self.tasks = load_task_manager(&path)?;
-        self.tasks_path = Some(path);
-        Ok(())
-    }
-
-    fn persist_tasks(&self) -> Result<(), AppError> {
-        let Some(path) = &self.tasks_path else {
-            return Ok(());
-        };
-        save_task_manager(path, &self.tasks.snapshot())
-    }
-
-    fn resolve_task(&self, spec: &str) -> Result<(BackgroundTaskId, TaskSnapshot), AppError> {
-        let spec = spec.trim();
-        if spec.is_empty() {
-            return Err(AppError::Task("task id is empty".into()));
-        }
-        let tasks = self.tasks.tasks();
-        if let Some(task) = tasks.iter().find(|task| task.task_id.as_str() == spec) {
-            return Ok((task.task_id.clone(), task.clone()));
-        }
-        let matches: Vec<_> = tasks
-            .iter()
-            .filter(|task| task.task_id.as_str().starts_with(spec))
-            .cloned()
-            .collect();
-        match matches.as_slice() {
-            [task] => Ok((task.task_id.clone(), task.clone())),
-            [] => Err(AppError::Task(format!("task not found: {spec}"))),
-            many => Err(AppError::Task(format!(
-                "ambiguous task `{spec}` matches: {}",
-                many.iter()
-                    .map(|task| task.task_id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))),
-        }
+        self.tasks.open_tasks(path)
     }
 }
 
@@ -128,7 +58,7 @@ pub fn parse_task_kind(value: &str) -> Result<TaskKind, AppError> {
     }
 }
 
-fn load_task_manager(path: &Path) -> Result<TaskManager, AppError> {
+pub(crate) fn load_task_manager(path: &Path) -> Result<TaskManager, AppError> {
     if !path.exists() {
         return Ok(TaskManager::new());
     }
@@ -145,7 +75,10 @@ fn load_task_manager(path: &Path) -> Result<TaskManager, AppError> {
     Ok(manager)
 }
 
-fn save_task_manager(path: &Path, snapshot: &TaskManagerSnapshot) -> Result<(), AppError> {
+pub(crate) fn save_task_manager(
+    path: &Path,
+    snapshot: &TaskManagerSnapshot,
+) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

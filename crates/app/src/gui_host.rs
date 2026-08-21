@@ -516,9 +516,9 @@ impl GuiHostAdapter {
         working_directory: Option<&WorkspaceRelativePath>,
     ) -> Result<Option<PathBuf>, GuiHostError> {
         let roots = if workspace_id.as_str() == core.workspace_id().as_str() {
-            core.workspace_roots.clone()
+            core.extensions.workspace_roots.clone()
         } else {
-            core.workspaces
+            core.extensions.workspaces
                 .get(workspace_id)
                 .map_err(|error| Self::host_error("app_error", error.to_string()))?
                 .map(|workspace| workspace.roots)
@@ -732,6 +732,7 @@ impl GuiHost for GuiHostAdapter {
             AppQuery::WorkspaceList => {
                 let core = self.core.read().await;
                 let roots: Vec<Value> = core
+                    .extensions
                     .workspace_roots
                     .iter()
                     .map(|path| json!({ "path": path.display().to_string() }))
