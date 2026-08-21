@@ -352,7 +352,9 @@ impl AcpHost {
                     completion,
                     resolution,
                 } => {
-                    let _ = completion.try_send(resolution);
+                    if let Err(error) = completion.try_send(resolution) {
+                        tracing::debug!(?error, "acp prompt completion dropped");
+                    }
                 }
             }
         }
@@ -367,7 +369,9 @@ impl AcpHost {
                 resolution,
             } = item
             {
-                let _ = completion.try_send(resolution);
+                if let Err(error) = completion.try_send(resolution) {
+                    tracing::debug!(?error, "acp prompt completion dropped");
+                }
             }
         }
     }
@@ -380,7 +384,9 @@ impl AcpHost {
                 resolution,
             } = item
             {
-                let _ = completion.try_send(resolution);
+                if let Err(error) = completion.try_send(resolution) {
+                    tracing::debug!(?error, "acp prompt completion dropped");
+                }
             }
         }
     }
@@ -401,7 +407,9 @@ impl AcpHost {
         }
         // 同步签名保持不变（acp.rs 装配点不改）。actor 在独立线程上回执，
         // recv 返回后 occupancy / has_active_runs 已收敛。
-        let _ = wait_std(rx);
+        if wait_std(rx).is_none() {
+            tracing::debug!("acp fail-closed reply dropped");
+        }
     }
 
     /// 当前是否有未完成 run（供事件泵循环判定退出）。
@@ -517,7 +525,9 @@ impl AcpHost {
         if self.mail_tx.send(Mail::DrainAndPump { reply }).is_err() {
             return;
         }
-        let _ = rx.await;
+        if let Err(error) = rx.await {
+            tracing::debug!(%error, "acp drain_and_pump reply dropped");
+        }
     }
 
     /// 回译给定 canonical 事件（按 run 归属路由；非归属/无 ACP 表示的事件跳过）。
@@ -530,7 +540,9 @@ impl AcpHost {
         {
             return;
         }
-        let _ = rx.await;
+        if let Err(error) = rx.await {
+            tracing::debug!(%error, "acp pump_events reply dropped");
+        }
     }
 }
 
@@ -606,11 +618,15 @@ impl AcpActor {
                 reply,
             } => {
                 let result = self.handle_notification(&method, params).await;
-                let _ = reply.send(result);
+                if let Err(error) = reply.send(result) {
+                    tracing::debug!(?error, "acp urgent notification reply dropped");
+                }
             }
             UrgentMail::FailClosed { reason, reply } => {
                 self.fail_closed_all_prompts(&reason);
-                let _ = reply.send(());
+                if let Err(error) = reply.send(()) {
+                    tracing::debug!(?error, "acp fail-closed reply dropped");
+                }
             }
         }
     }
@@ -624,7 +640,9 @@ impl AcpActor {
                 reply,
             } => {
                 let result = self.handle_request(id, &method, params).await;
-                let _ = reply.send(result);
+                if reply.send(result).is_err() {
+                    tracing::debug!("acp request reply dropped");
+                }
             }
             Mail::Notification {
                 method,
@@ -632,23 +650,33 @@ impl AcpActor {
                 reply,
             } => {
                 let result = self.handle_notification(&method, params).await;
-                let _ = reply.send(result);
+                if let Err(error) = reply.send(result) {
+                    tracing::debug!(?error, "acp notification reply dropped");
+                }
             }
             Mail::Response { id, result, reply } => {
                 let result = self.handle_response(id, result).await;
-                let _ = reply.send(result);
+                if let Err(error) = reply.send(result) {
+                    tracing::debug!(?error, "acp response reply dropped");
+                }
             }
             Mail::DrainAndPump { reply } => {
                 self.drain_and_pump().await;
-                let _ = reply.send(());
+                if let Err(error) = reply.send(()) {
+                    tracing::debug!(?error, "acp drain_and_pump reply dropped");
+                }
             }
             Mail::PumpEvents { events, reply } => {
                 self.pump_events(events).await;
-                let _ = reply.send(());
+                if let Err(error) = reply.send(()) {
+                    tracing::debug!(?error, "acp pump_events reply dropped");
+                }
             }
             Mail::DrainOutbox { reply } => {
                 let items = std::mem::take(&mut self.outbox).into_iter().collect();
-                let _ = reply.send(items);
+                if let Err(error) = reply.send(items) {
+                    tracing::debug!(?error, "acp drain_outbox reply dropped");
+                }
             }
         }
     }
@@ -668,7 +696,9 @@ impl AcpActor {
                 .map(|negotiated| negotiated.degraded.clone())
                 .unwrap_or_default(),
         };
-        let _ = self.snapshot_tx.send(snapshot);
+        if let Err(error) = self.snapshot_tx.send(snapshot) {
+            tracing::debug!(?error, "acp host snapshot receiver dropped");
+        }
     }
 
     async fn handle_request(
@@ -1042,7 +1072,7 @@ impl AcpActor {
         if !self.occupancy.contains_key(&client_session_id) {
             if let Ok(run_id) = accepted_run_id(response, "session/prompt") {
                 if let Ok(adapter) = self.adapter() {
-                    let _ = self
+                    if let Err(error) = self
                         .dispatch_attached(
                             &client_session_id,
                             adapter.command_envelope(
@@ -1050,7 +1080,10 @@ impl AcpActor {
                                 AppCommand::RunCancel { run_id },
                             ),
                         )
-                        .await;
+                        .await
+                    {
+                        tracing::warn!(error = ?error, "acp fail-closed RunCancel dispatch failed");
+                    }
                 }
             }
             return Err(JsonRpcError::new(
@@ -1215,7 +1248,7 @@ impl AcpActor {
             }
         };
         if let Ok(adapter) = self.adapter() {
-            let _ = self
+            if let Err(error) = self
                 .dispatch_attached(
                     client_session_id,
                     adapter.command_envelope(
@@ -1225,7 +1258,10 @@ impl AcpActor {
                         },
                     ),
                 )
-                .await;
+                .await
+            {
+                tracing::warn!(error = ?error, "acp session-cancel RunCancel dispatch failed");
+            }
         }
         let cascaded: Vec<JsonRpcId> = self
             .pending_permissions
@@ -1253,7 +1289,7 @@ impl AcpActor {
             .map(|prompt| (prompt.client_session_id.clone(), prompt.run_id.clone()));
         if let Some((client_session_id, run_id)) = prompt {
             if let Ok(adapter) = self.adapter() {
-                let _ = self
+                if let Err(error) = self
                     .dispatch_attached(
                         &client_session_id,
                         adapter.command_envelope(
@@ -1261,13 +1297,16 @@ impl AcpActor {
                             AppCommand::RunCancel { run_id },
                         ),
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = ?error, "acp cancel-request RunCancel dispatch failed");
+                }
             }
             return;
         }
         if let Some(permission) = self.pending_permissions.remove(request_id) {
             if let Ok(adapter) = self.adapter() {
-                let _ = self
+                if let Err(error) = self
                     .dispatch_attached(
                         &permission.client_session_id,
                         adapter.command_envelope(
@@ -1279,7 +1318,10 @@ impl AcpActor {
                             },
                         ),
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = ?error, "acp cancel-permission dispatch failed");
+                }
             }
             return;
         }
@@ -1432,7 +1474,9 @@ impl AcpActor {
         self.run_sessions.clear();
         self.held_events.clear();
         for prompt in prompts.into_values() {
-            let _ = prompt.completion.try_send(PromptResolution::Failed);
+            if let Err(error) = prompt.completion.try_send(PromptResolution::Failed) {
+                tracing::debug!(?error, "acp fail-closed prompt completion dropped");
+            }
         }
         let items = std::mem::take(&mut self.outbox);
         for item in items {
@@ -1441,11 +1485,12 @@ impl AcpActor {
                 resolution,
             } = item
             {
-                let _ = completion.try_send(resolution);
+                if let Err(error) = completion.try_send(resolution) {
+                    tracing::debug!(?error, "acp fail-closed prompt completion dropped");
+                }
             }
         }
         self.publish_snapshot();
-        let _ = reason;
     }
 
     fn push_frame(&mut self, frame: Value) {
@@ -1593,7 +1638,9 @@ impl AcpActor {
                     match mail {
                         Mail::DrainOutbox { reply } => {
                             let items = std::mem::take(&mut self.outbox).into_iter().collect();
-                            let _ = reply.send(items);
+                            if let Err(error) = reply.send(items) {
+                                tracing::debug!(?error, "acp interruptible drain_outbox reply dropped");
+                            }
                         }
                         other => self.deferred_mail.push_back(other),
                     }

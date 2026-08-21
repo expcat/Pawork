@@ -72,14 +72,13 @@ pub async fn run_json(
     let mut events = adapter.subscribe_events();
 
     let session_id = if let Some(session_id) = resume_id {
-        let request_id = print_command(
+        let _request_id = print_command(
             &adapter,
             AppCommand::SessionOpen {
                 session_id: session_id.clone(),
             },
         )
         .await?;
-        let _ = request_id;
         session_id
     } else {
         match dispatch_command(
@@ -164,14 +163,17 @@ pub async fn run_json(
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                let _ = adapter
+                if let Err(error) = adapter
                     .command(&command_envelope(
                         AppCommand::RunCancel {
                             run_id: run_id.clone(),
                         },
                         "cli-json",
                     ))
-                    .await;
+                    .await
+                {
+                    tracing::warn!(%error, run_id = %run_id, "run cancel on ctrl-c failed");
+                }
             }
         }
     }
@@ -649,4 +651,3 @@ fn next_id(session: &SessionId, next_msg: &mut u64) -> MessageId {
     *next_msg += 1;
     MessageId::from(format!("msg-{session}-{id}"))
 }
-

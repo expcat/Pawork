@@ -215,7 +215,9 @@ impl ExtensionService {
     pub(crate) async fn shutdown_mcp(&self) {
         for slot in &self.mcp_servers {
             if let Some(client) = &slot.client {
-                let _ = client.shutdown().await;
+                if let Err(error) = client.shutdown().await {
+                    tracing::debug!(%error, "mcp client shutdown failed");
+                }
             }
         }
     }

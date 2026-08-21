@@ -45,10 +45,6 @@ pub enum HubError {
     Empty,
 }
 
-struct RingInner {
-    buffer: VecDeque<AppEventEnvelope>,
-}
-
 /// 事件 Hub：全局序列 + ring buffer + 有界广播订阅。
 ///
 /// 克隆廉价（内部 `Arc` 语义由调用方持有）；`publish` 可从任意线程调用。
@@ -56,7 +52,7 @@ pub struct EventHub {
     capacity: usize,
     /// 下一个待分配的全局序列（`fetch_add` 前值 +1 为本次序列，首条为 1）。
     next_sequence: AtomicU64,
-    ring: Mutex<RingInner>,
+    ring: Mutex<VecDeque<AppEventEnvelope>>,
     sender: broadcast::Sender<AppEventEnvelope>,
 }
 
@@ -73,9 +69,7 @@ impl EventHub {
         Self {
             capacity,
             next_sequence: AtomicU64::new(0),
-            ring: Mutex::new(RingInner {
-                buffer: VecDeque::with_capacity(capacity),
-            }),
+            ring: Mutex::new(VecDeque::with_capacity(capacity)),
             sender,
         }
     }
@@ -93,15 +87,15 @@ impl EventHub {
 
     /// Assign a contiguous global_sequence, retain the event, and broadcast it.
     /// Returns the sequenced envelope plus the number of live subscribers that received it.
-    pub fn publish_with_envelope(&self, mut envelope: AppEventEnvelope) -> (AppEventEnvelope, usize) {
+    pub(crate) fn publish_with_envelope(&self, mut envelope: AppEventEnvelope) -> (AppEventEnvelope, usize) {
         let sequence = self.next_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         envelope.global_sequence = GlobalSequence(sequence);
         {
             let mut ring = lock(&self.ring);
-            if ring.buffer.len() == self.capacity {
-                ring.buffer.pop_front();
+            if ring.len() == self.capacity {
+                ring.pop_front();
             }
-            ring.buffer.push_back(envelope.clone());
+            ring.push_back(envelope.clone());
         }
         let delivered = self.sender.send(envelope.clone()).unwrap_or_default();
         (envelope, delivered)
@@ -162,11 +156,6 @@ impl EventHub {
         (envelope, delivered)
     }
 
-    /// 当前订阅者数量。
-    pub fn subscriber_count(&self) -> usize {
-        self.sender.receiver_count()
-    }
-
     /// 最新已发布序列（尚无事件时为 0）。
     pub fn current(&self) -> GlobalSequence {
         GlobalSequence(self.next_sequence.load(Ordering::SeqCst))
@@ -175,7 +164,6 @@ impl EventHub {
     /// ring buffer 中最旧的可用序列；空 Hub 为 `None`。
     pub fn earliest_available(&self) -> Option<GlobalSequence> {
         lock(&self.ring)
-            .buffer
             .front()
             .map(|envelope| envelope.global_sequence)
     }
@@ -191,14 +179,13 @@ impl EventHub {
     ) -> Result<Vec<AppEventEnvelope>, HubError> {
         let to = to.unwrap_or_else(|| self.current());
         let ring = lock(&self.ring);
-        match ring.buffer.front() {
+        match ring.front() {
             None => Ok(Vec::new()),
             Some(earliest) if from < earliest.global_sequence => Err(HubError::ReplayUnavailable {
                 requested_from: from,
                 earliest_available: earliest.global_sequence,
             }),
             Some(_) => Ok(ring
-                .buffer
                 .iter()
                 .filter(|envelope| {
                     envelope.global_sequence >= from && envelope.global_sequence <= to
@@ -287,7 +274,7 @@ mod tests {
     #[test]
     fn publish_rewrites_global_sequence_to_be_contiguous() {
         let hub = EventHub::new();
-        // 上游输入序列带空洞（模拟 rate limiter 合并后的缺口）。
+        // 上游输入序列带空洞；Hub 必须强制重写为连续 global_sequence。
         hub.publish(envelope(100));
         hub.publish(envelope(200));
         hub.publish(envelope(400));

@@ -22,6 +22,22 @@ pub fn default_data_dir() -> PathBuf {
     default_data_dir_outcome().path
 }
 
+/// Consume a [`DataDirOutcome`]: emit the HOME-fallback warning once at the
+/// structured sink, then return the path. Path-only helpers stay silent so
+/// `attach_workspace` / ops / GUI do not duplicate `AppCore::load_with`.
+pub fn consume_data_dir_outcome(outcome: DataDirOutcome) -> PathBuf {
+    if let Some(degrade) = &outcome.degrade {
+        tracing::warn!(
+            code = %degrade.code(),
+            severity = degrade.severity.as_str(),
+            path = %outcome.path.display(),
+            "{}",
+            degrade.message
+        );
+    }
+    outcome.path
+}
+
 /// 与 [`default_data_dir`] 同路径选择，HOME 缺失回退时附带 DegradeEvent。
 pub fn default_data_dir_outcome() -> DataDirOutcome {
     resolve_data_dir_outcome(
@@ -72,16 +88,22 @@ fn resolve_data_dir_outcome(
         "HOME is unset; falling back to the process temp directory",
         json!({ "path": path.display().to_string() }),
     );
-    tracing::warn!(
-        code = %degrade.code(),
-        path = %path.display(),
-        "{}",
-        degrade.message
-    );
     DataDirOutcome {
         path: path.clone(),
         degrade: Some(degrade),
     }
+}
+
+/// Test seam for exercising the real HOME-fallback resolution from other
+/// modules' unit tests without touching process environment variables.
+#[cfg(test)]
+pub(crate) fn data_dir_outcome_for_test(
+    pawork_data_dir: Option<String>,
+    local_app_data: Option<String>,
+    home: Option<OsString>,
+    temp_dir: PathBuf,
+) -> DataDirOutcome {
+    resolve_data_dir_outcome(pawork_data_dir, local_app_data, home, temp_dir)
 }
 
 /// 校验 `--instance`：trim 后仅允许 `[A-Za-z0-9._-]`；空、空白、分号、
@@ -206,16 +228,63 @@ mod tests {
         assert_eq!(degrade.severity, DegradeSeverity::Warning);
         assert_eq!(degrade.details["path"], json!(expected.display().to_string()));
         let events = subscriber.events();
-        let emitted = events.iter().find(|event| {
-            event.fields.get("code").map(String::as_str) == Some("degrade.home_dir_fallback")
-        }).unwrap_or_else(|| panic!("HOME fallback must emit tracing: {events:?}"));
+        assert!(
+            events.iter().all(|event| {
+                event.fields.get("code").map(String::as_str) != Some("degrade.home_dir_fallback")
+            }),
+            "resolve_data_dir_outcome must stay silent: {events:?}"
+        );
+    }
+
+    #[test]
+    fn consume_data_dir_outcome_warns_once_and_path_helper_stays_silent() {
+        let expected = PathBuf::from("/tmp/process-temp/pawork");
+        let outcome = resolve_data_dir_outcome(
+            None,
+            None,
+            None,
+            PathBuf::from("/tmp/process-temp"),
+        );
+        let subscriber = crate::testsupport::RecordingSubscriber::new();
+        let path = tracing::subscriber::with_default(subscriber.clone(), || {
+            consume_data_dir_outcome(outcome.clone())
+        });
+        assert_eq!(path, expected);
+        let events = subscriber.events();
+        let emitted: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.fields.get("code").map(String::as_str) == Some("degrade.home_dir_fallback")
+            })
+            .collect();
+        assert_eq!(emitted.len(), 1, "HOME fallback must warn once: {events:?}");
+        let emitted = emitted[0];
         assert_eq!(emitted.level, "WARN");
         assert!(emitted.message.contains("HOME is unset"), "{emitted:?}");
-        let expected_path = expected.display().to_string();
+        assert_eq!(
+            emitted.fields.get("severity").map(String::as_str),
+            Some("warning"),
+            "{emitted:?}"
+        );
         assert_eq!(
             emitted.fields.get("path").map(String::as_str),
-            Some(expected_path.as_str()),
+            Some(expected.display().to_string().as_str()),
             "{emitted:?}"
+        );
+
+        let subscriber = crate::testsupport::RecordingSubscriber::new();
+        tracing::subscriber::with_default(subscriber.clone(), || {
+            let _ = consume_data_dir_outcome(DataDirOutcome {
+                path: expected.clone(),
+                degrade: None,
+            });
+        });
+        assert!(
+            subscriber.events().iter().all(|event| {
+                event.fields.get("code").map(String::as_str) != Some("degrade.home_dir_fallback")
+            }),
+            "consume_data_dir_outcome must stay silent when degrade is absent: {:?}",
+            subscriber.events()
         );
     }
 }

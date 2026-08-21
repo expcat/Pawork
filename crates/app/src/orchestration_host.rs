@@ -84,7 +84,9 @@ impl crate::AppCore {
         .await?;
 
         for worker in [&left, &right] {
-            let _ = self.tasks_start_agent(None);
+            if let Err(error) = self.tasks_start_agent(None) {
+                tracing::warn!(%error, "failed to start orchestration worker agent task");
+            }
             if let Some(limit) = options.budget_input_tokens {
                 supervisor
                     .record_usage(worker, limit.saturating_add(1), 0, 0)

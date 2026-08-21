@@ -53,7 +53,9 @@ pub(super) fn spawn(
             close_rx,
         )
         .await;
-        let _ = done_tx.send(true);
+        if let Err(error) = done_tx.send(true) {
+            tracing::debug!(error = ?error, "gui session done signal dropped");
+        }
     };
     (handle, task)
 }
@@ -81,7 +83,9 @@ impl GuiConnection for SessionHandle {
     async fn receive(&self) -> Result<TransportFrame, TransportError> {
         let mut done = self.done_rx.lock().expect("done rx lock").clone();
         if !*done.borrow() {
-            let _ = done.changed().await;
+            if let Err(error) = done.changed().await {
+                tracing::debug!(%error, "gui session done watch closed");
+            }
         }
         Err(connection_closed("connection task has ended"))
     }
@@ -91,7 +95,9 @@ impl GuiConnection for SessionHandle {
             return Ok(());
         }
         if let Some(tx) = self.close_tx.lock().expect("close tx lock").take() {
-            let _ = tx.send(());
+            if let Err(error) = tx.send(()) {
+                tracing::debug!(error = ?error, "gui session close signal dropped");
+            }
         }
         Ok(())
     }
@@ -138,7 +144,9 @@ async fn run(
         Ok(receiver) => receiver,
         Err(error) => {
             tracing::warn!(%client_id, %error, "gui client registration failed");
-            let _ = connection.close().await;
+            if let Err(error) = connection.close().await {
+                tracing::debug!(%client_id, %error, "gui connection close failed after registration error");
+            }
             return;
         }
     };
@@ -155,13 +163,15 @@ async fn run(
             .is_err()
             {
                 inner.connections.unregister(&client_id);
-                let _ = connection.close().await;
+                if let Err(error) = connection.close().await {
+                    tracing::debug!(%client_id, %error, "gui connection close failed after snapshot send error");
+                }
                 return;
             }
         }
         Err(error) => {
             tracing::warn!(%client_id, %error, "initial snapshot failed");
-            let _ = send_frame(
+            if let Err(error) = send_frame(
                 connection.as_ref(),
                 &ServerFrame::Error(ProtocolErrorEnvelope {
                     request_id: None,
@@ -169,7 +179,10 @@ async fn run(
                 }),
                 Some(negotiated),
             )
-            .await;
+            .await
+            {
+                tracing::debug!(%client_id, %error, "gui snapshot error frame dropped");
+            }
         }
     }
     }
@@ -234,7 +247,7 @@ async fn run(
                 let frame = match decode_client_frame_checked(bytes.as_bytes(), negotiated) {
                     Ok(frame) => frame,
                     Err(protocol_error) => {
-                        let _ = send_frame(
+                        if let Err(error) = send_frame(
                             connection.as_ref(),
                             &ServerFrame::Error(ProtocolErrorEnvelope {
                                 request_id: None,
@@ -242,11 +255,16 @@ async fn run(
                             }),
                             Some(negotiated),
                         )
-                        .await;
+                        .await
+                        {
+                            tracing::debug!(%client_id, %error, "gui decode error frame dropped");
+                        }
                         break;
                     }
                 };
-                let _ = inner.connections.heartbeat(&client_id, now_timestamp());
+                if let Err(error) = inner.connections.heartbeat(&client_id, now_timestamp()) {
+                    tracing::debug!(%client_id, %error, "gui heartbeat update failed");
+                }
                 match handle_frame(&inner, frame, &client_id).await {
                     FrameOutcome::None => {}
                     FrameOutcome::Reply(replies) => {
@@ -268,9 +286,13 @@ async fn run(
             }
         }
     }
-    let _ = stop_tx.send(());
+    if let Err(error) = stop_tx.send(()) {
+        tracing::debug!(%client_id, error = ?error, "gui forwarder stop signal dropped");
+    }
     inner.connections.unregister(&client_id);
-    let _ = connection.close().await;
+    if let Err(error) = connection.close().await {
+        tracing::debug!(%client_id, %error, "gui connection close failed after session loop");
+    }
 }
 
 async fn handshake_phase(
@@ -290,7 +312,7 @@ async fn handshake_phase(
         Ok(frame) => frame,
         Err(error) => {
             let protocol_error: ProtocolError = error.into();
-            let _ = send_frame(
+            if let Err(error) = send_frame(
                 connection,
                 &ServerFrame::Error(ProtocolErrorEnvelope {
                     request_id: None,
@@ -298,13 +320,18 @@ async fn handshake_phase(
                 }),
                 None,
             )
-            .await;
-            let _ = connection.close().await;
+            .await
+            {
+                tracing::debug!(%client_id, %error, "gui handshake decode error frame dropped");
+            }
+            if let Err(error) = connection.close().await {
+                tracing::debug!(%client_id, %error, "gui connection close failed after handshake decode error");
+            }
             return None;
         }
     };
     let ClientFrame::Handshake(request) = frame else {
-        let _ = send_frame(
+        if let Err(error) = send_frame(
             connection,
             &ServerFrame::Error(ProtocolErrorEnvelope {
                 request_id: None,
@@ -312,8 +339,13 @@ async fn handshake_phase(
             }),
             None,
         )
-        .await;
-        let _ = connection.close().await;
+        .await
+        {
+            tracing::debug!(%client_id, %error, "gui handshake-required error frame dropped");
+        }
+        if let Err(error) = connection.close().await {
+            tracing::debug!(%client_id, %error, "gui connection close failed after non-handshake first frame");
+        }
         return None;
     };
     let current = inner.host.current_sequence();
@@ -352,7 +384,9 @@ async fn handshake_phase(
     }
     if negotiated.is_none() {
         tracing::debug!(%client_id, "gui handshake rejected");
-        let _ = connection.close().await;
+        if let Err(error) = connection.close().await {
+            tracing::debug!(%client_id, %error, "gui connection close failed after handshake reject");
+        }
         return None;
     }
     Some(HandshakeOutcome { request, response })
@@ -680,7 +714,9 @@ fn spawn_forwarder(
                             let error = ManagerError::Lagged {
                                 client_id: client_id.clone(),
                             };
-                            let _ = inner.connections.mark_lagged(&client_id);
+                            if let Err(error) = inner.connections.mark_lagged(&client_id) {
+                                tracing::debug!(%client_id, %error, "gui mark_lagged failed");
+                            }
                             send_lagged_degrade(&inner, &client_id, Some(missed), &host_tx, &error);
                             return;
                         }
@@ -694,7 +730,9 @@ fn spawn_forwarder(
 fn send_lagged_error(host_tx: &mpsc::UnboundedSender<TransportFrame>, error: &ManagerError) {
     let frame = manager_error_frame(None, error);
     if let Ok(bytes) = encode_server_frame(&frame) {
-        let _ = host_tx.send(TransportFrame::new(bytes));
+        if let Err(error) = host_tx.send(TransportFrame::new(bytes)) {
+            tracing::debug!(error = ?error, "gui lagged error frame dropped");
+        }
     }
 }
 

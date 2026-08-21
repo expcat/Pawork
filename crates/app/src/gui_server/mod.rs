@@ -67,10 +67,9 @@ pub trait GuiHost: Send + Sync {
     }
     fn replay(
         &self,
-        from: pawork_protocol::GlobalSequence,
-        through: Option<pawork_protocol::GlobalSequence>,
+        _from: pawork_protocol::GlobalSequence,
+        _through: Option<pawork_protocol::GlobalSequence>,
     ) -> Result<Vec<pawork_protocol::AppEventEnvelope>, GuiHostError> {
-        let _ = (from, through);
         Ok(vec![])
     }
 
@@ -79,10 +78,9 @@ pub trait GuiHost: Send + Sync {
     /// the break after its per-connection queue is already full.
     fn publish_event_stream_lagged(
         &self,
-        missed: Option<u64>,
-        client_id: Option<&str>,
+        _missed: Option<u64>,
+        _client_id: Option<&str>,
     ) -> Option<pawork_protocol::AppEventEnvelope> {
-        let _ = (missed, client_id);
         None
     }
 }

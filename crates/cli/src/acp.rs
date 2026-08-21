@@ -80,7 +80,9 @@ where
     while host.has_active_runs() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(ACP_PUMP_INTERVAL).await;
         host.drain_and_pump().await;
-        let _ = flush_outbox(&host, &writer).await;
+        if let Err(error) = flush_outbox(&host, &writer).await {
+            tracing::warn!(%error, "acp drain flush_outbox failed");
+        }
     }
     pump.abort();
     if flush_outbox(&host, &writer).await.is_err() {
@@ -142,14 +144,17 @@ where
                     let prompt_host = Arc::clone(&host);
                     let prompt_writer = Arc::clone(&writer);
                     inflight.push(tokio::spawn(async move {
-                        let _ = dispatch_request(
+                        if let Err(error) = dispatch_request(
                             &prompt_host,
                             &prompt_writer,
                             id,
                             request.method,
                             request.params,
                         )
-                        .await;
+                        .await
+                        {
+                            tracing::warn!(%error, "acp prompt dispatch_request failed");
+                        }
                     }));
                 } else if let Err(error) =
                     dispatch_request(&host, &writer, id, request.method, request.params).await
@@ -264,7 +269,9 @@ async fn flush_outbox<W: tokio::io::AsyncWrite + Unpin>(
                 completion,
                 resolution,
             } => {
-                let _ = completion.send(resolution).await;
+                if let Err(error) = completion.send(resolution).await {
+                    tracing::debug!(error = ?error, "acp prompt completion dropped");
+                }
             }
         }
     }

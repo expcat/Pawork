@@ -6,12 +6,12 @@
 
 use pawork_domain::{ErrorCategory, ErrorContext};
 use pawork_protocol::adapter::{AdapterError, AdapterErrorFrame};
-use pawork_protocol::{AppEvent, AppResponse, AppResponseEnvelope, ApprovalDecision, RunState};
+use pawork_protocol::{AppEvent, AppResponse, AppResponseEnvelope, ApprovalDecision};
 use serde_json::Value;
 
 use crate::channels::acp::wire::{
-    CancelRequestParams, ContentBlock, JsonRpcError, PermissionOption, PermissionOptionKind,
-    RequestPermissionParams, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
+    ContentBlock, JsonRpcError, PermissionOption, PermissionOptionKind,
+    RequestPermissionParams, SessionUpdate, ToolCallContent, ToolCallStatus,
     ToolCallUpdate, ToolKind, ERROR_AUTH_REQUIRED, ERROR_INTERNAL, ERROR_INVALID_PARAMS,
     ERROR_INVALID_REQUEST, ERROR_METHOD_NOT_FOUND, ERROR_REQUEST_CANCELLED,
     ERROR_RESOURCE_NOT_FOUND,
@@ -203,16 +203,6 @@ pub fn translate_session_update(event: &AppEvent) -> Option<SessionUpdate> {
     }
 }
 
-/// Core run 终态 → ACP stop reason。非终态返回 `None`。
-pub fn stop_reason_for(state: &RunState) -> Option<StopReason> {
-    match state {
-        RunState::Completed => Some(StopReason::EndTurn),
-        RunState::Cancelled | RunState::Interrupted => Some(StopReason::Cancelled),
-        RunState::Failed => None,
-        _ => None,
-    }
-}
-
 /// 权限选项（首轮固定：allow-once / reject-once，均可映射到 canonical 决策）。
 pub fn permission_options() -> Vec<PermissionOption> {
     vec![
@@ -265,11 +255,6 @@ pub fn permission_request(
             app_event_kind(other)
         ))),
     }
-}
-
-/// `$/cancel_request` 通知参数构造（按 id 取消未决请求）。
-pub fn cancel_request(request_id: Value) -> CancelRequestParams {
-    CancelRequestParams { request_id }
 }
 
 /// 稳定的事件种类标签（snake_case，用于诊断与测试断言）。

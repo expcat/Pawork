@@ -121,7 +121,9 @@ impl GuiApprovalHost {
             let entry = pending.remove(&key).expect("pending key exists");
             drop(pending);
             let sender = entry.sender.expect("live pending always has a sender");
-            let _ = sender.send(decision);
+            if let Err(error) = sender.send(decision) {
+                tracing::debug!(error = ?error, "approval waiter closed before live resolve");
+            }
             return Ok(ApprovalResolve::Live);
         }
         drop(pending);

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use pawork_app::{default_data_dir, instance_dir, session_db_path_for, DEFAULT_INSTANCE};
+use pawork_app::{consume_data_dir_outcome, default_data_dir_outcome, instance_dir, session_db_path_for, DEFAULT_INSTANCE};
 use pawork_client::{ClientConfig, GuiClient};
 use pawork_protocol::client_auth::TOKEN_SCHEME;
 use pawork_protocol::headless::translate::encode_protocol_response;
@@ -194,7 +194,7 @@ struct InstanceReport {
 
 async fn inspect_instance(instance: &str) -> InstanceReport {
     let instance = resolved_instance(instance).to_string();
-    let data_dir = default_data_dir();
+    let data_dir = consume_data_dir_outcome(default_data_dir_outcome());
     let socket = gui_socket_path(&data_dir, &instance);
     let pid_file = gui_pid_path(&data_dir, &instance);
     let session_db = session_db_path_for(&data_dir, &instance);
@@ -334,7 +334,9 @@ pub fn write_pid_file(path: &Path) -> Result<(), CliError> {
 }
 
 pub fn remove_pid_file(path: &Path) {
-    let _ = std::fs::remove_file(path);
+    if let Err(error) = std::fs::remove_file(path) {
+        tracing::debug!(path = %path.display(), %error, "pid file remove failed");
+    }
 }
 
 fn event_hint(payload: &AppEvent) -> String {

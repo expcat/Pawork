@@ -15,10 +15,14 @@ pub struct InteractiveApprovals;
 impl ApprovalPromptHost for InteractiveApprovals {
     async fn decide(&self, ask: &ApprovalAsk, cancel: CancellationToken) -> ApprovalDecision {
         eprint!("{}", format_approval_prompt(ask));
-        let _ = io::stderr().flush();
+        if let Err(error) = io::stderr().flush() {
+            tracing::debug!(%error, "approval prompt stderr flush failed");
+        }
         loop {
             eprint!("[y] once  [a] this run  [n] deny > ");
-            let _ = io::stderr().flush();
+            if let Err(error) = io::stderr().flush() {
+                tracing::debug!(%error, "approval prompt stderr flush failed");
+            }
             let mut line = String::new();
             let mut reader = BufReader::new(tokio::io::stdin());
             let result = tokio::select! {

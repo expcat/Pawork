@@ -57,6 +57,17 @@
 - **审查(grok_reviewer 双轮)**:首轮 changes-needed 四项 P1(HOME/无凭证只构造不外发、Lagged seq-0 旁路绕开 hub、ACP fail-closed/drain 阻塞与注释失真、幂等帧或误导重试),修复后复核 verdict=pass findings=0。
 - **登记**:cli map.rs `stop_reason_for`/`cancel_request` 两条 dead_code 为 HEAD 既有(主代理 git grep HEAD 核实),留波 D 清理;`DataDirOutcome` pub 导出暂无生产消费者(预留 R7/CLI 采用);ACP 通道不承载 degrade 帧(只 tracing/JSON-RPC error),桌面投影对 degrade.* 安全忽略——均为本波显式决议;两客户端传输层交错压测(真实双连接)仍缺,种子为单 Host 双会话;Zed 真实冒烟留人工验收。
 
+## 2.5 波 D 实态进度(2026-08-21,波 D 已收口,grok_explorer ×3 核查 + glm_worker 单 owner + glm_reviewer)
+
+- **核查漂移回写**:hub 实态位于 `crates/app/src/hub.rs`(EventHub,425 行),非 §1 所指 gui-server 内;host 域非测试 `let _` 基线 58 处(app 24 + cli 36),分类:通道唤醒 25 / 资源清理 11 / 吞 Result 12 / 非 Result 弃绑定 6(测试内 2 处除外)。
+- **`let _` 全量清零**:58 处逐点处理——通道唤醒/资源清理/断连 send_frame 等常态竞态改 `tracing::debug!` 结构化带上下文;tasks_start_agent、RunCancel、flush_outbox、dispatch_request、dispatch_attached 四 fail-closed 路径升 `tracing::warn!`;非 Result 弃绑定改定义处 `_` 前缀或签名级参数改名;收尾 `rg 'let _ =' crates/app/src crates/cli/src` 非测试命中为 0(残留 3 处全在 #[cfg(test)] 内)。acp/host.rs:644 回执 payload 双 trait 缺失,按同文件 `wait_std` 先例用 `is_err()` + 上下文 debug,未为日志扩大类型面。
+- **HOME 回退告警升级**:`resolve_data_dir_outcome` / `default_data_dir()` 保持纯路径选择(内部 warn 移除,反向断言钉住);单一结构化出口 `consume_data_dir_outcome` 发 `tracing::warn!`(code=degrade.home_dir_fallback/severity/path/message)。生产消费者:`AppCore::load_with`(会话库落地)与 `ops::inspect_instance`(不经 load_with 的早退路径)。`attach_workspace` / GUI / extension 继续走静默 `default_data_dir()`,避免同一进程重复告警。pin:`consume_data_dir_outcome_warns_once_and_path_helper_stays_silent` + `load_with_home_fallback_consumes_degrade_and_warns_once`(cfg(test) 测试缝 `data_dir_outcome_for_test` 透传私有纯函数)。
+- **usage 哨兵按 D1 收敛**:账本写入值零变化;control.rs 补三段 doc 钉死 ADR-038 D1 哨兵语义(LEDGER_ACCOUNT="local/default"、upstream_attempt=Some(1)、trace_id=None——无上游重试跟踪、哨兵宇宙不扩张),新增 pin 测试断言三字段。登记:control-plane legacy v1 JSON 默认 `upstream_attempt=None` 与 host `Some(1)` 口径差异,留 R9 复查(ROADMAP §4)。
+- **hub 序列简化**:单字段 `RingInner` 拆除直用 VecDeque;零消费公开 API `subscriber_count` 删除;`publish_with_envelope` 收窄 pub(crate)(全仓无外部调用方);过时 rate limiter 测试注释修正;序列连续性/replay 窗口/容量淘汰/lagged 不变量零变化(8 条 hub 测试断言未动)。
+- **死码删除**:acp/map.rs `stop_reason_for`/`cancel_request` 删除(全仓零引用,host.rs 有内联等价表),连带清理未用 import。
+- **写入集实态**:crates/app 10 文件 + crates/cli 8 文件(357+/124-),与设计一致;审查(glm_reviewer)verdict=pass,P2-1(load_with pin 未端到端驱动,接线 4 行已人工核实,接受登记)、P2-2(登记项提醒,已落 ROADMAP §4)。
+- **验证**:app 121+6+13+2 / cli 35+16+25 / protocol golden 5 / domain events_golden 3 全绿零 diff,`cargo check -p pawork` 通过;client 45 条(9+22+9+1+3+1,含 probe 场景与 spawn_e2e)主代理复跑全绿——R4 阶段收口。
+
 ## 3. 波次拆分
 
 | 波 | 内容 | 写入集 | 并行度 |
@@ -64,7 +75,7 @@
 | A | 服务拆分(纯代码组织,行为零变化;每拆一块跑 app 契约测试) | host/app(R1 后 `pawork-app`) | 串行(单一 owner;心脏手术不并行) |
 | B | ✅ CommandLedger 持久化 + K-02 审批落盘语义(2026-08-21 收口,见 §2.2) | storage(新迁移)、app(idempotency/approval);实态含 engine(tool_loop.rs emit 时序) | 串行(依赖波 A 的 ApprovalService 边界) |
 | C | ✅ ACP actor 化 ∥ 降级事件契约(2026-08-21 收口,见 §2.4) | cli `channels/acp/` ∥ domain degrade.rs(主代理先行)+ protocol app/event.rs(From 转换)+ app(五接点);实态含 cli/tests 并发种子 | 并行 ×2(写入集不相交;DegradeEvent 契约面由主代理先定形状) |
-| D | 收口:`let _` 清理(host 域)、HOME 回退告警、usage 哨兵语义按 D1 收敛、hub 序列逻辑简化(rate_limit 已删) | app、cli | 串行 |
+| D | ✅ 收口(2026-08-21,见 §2.5):host 域 `let _` 58 处清零、HOME 回退告警升级(单一 consume_data_dir_outcome 出口,load_with/ops 消费,路径 helper 静默)、usage 哨兵按 D1 钉死(doc+pin,值零变化)、hub 简化(RingInner 拆除/死 API 清理)、acp map.rs 死码删除 | app、cli | 串行 |
 
 ## 4. 验证
 
@@ -78,5 +89,5 @@
 
 - [x] AppCore 拆为领域服务;巨 match 消失(registry 分发);行数目标达成(波 A,2026-08-21)
 - [x] 幂等持久化 + K-02 语义落地并有崩溃回归;内存 CAS 删除(波 B,2026-08-21;持久态以 SQLite 为准,进程内仅余 Notify 唤醒表)
-- [x] ACP 无 Mutex map/`expect` 热点;降级事件契约生效(波 C,2026-08-21;host 域 `let _` 全量清零留波 D,本波已清零五接点)
-- [ ] app/cli/storage 定向测试全绿;冒烟通过;v3_plan §3 更新
+- [x] ACP 无 Mutex map/`expect` 热点;降级事件契约生效(波 C,2026-08-21;host 域 `let _` 全量清零于波 D 完成)
+- [x] app/cli/storage 定向测试全绿;probe+spawn_e2e 冒烟通过;v3_plan §3 更新(波 D,2026-08-21;K-02 kill -9 冒烟、GUI/Zed 人工验收与双连接压测登记 ROADMAP §4)

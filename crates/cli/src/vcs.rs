@@ -160,7 +160,9 @@ fn print_checkpoint_list(listed: &[CheckpointSummary]) {
 
 async fn prompt_checkpoint(listed: &[CheckpointSummary]) -> Result<String, CliError> {
     eprint!("checkpoint id: ");
-    let _ = io::stderr().flush();
+    if let Err(error) = io::stderr().flush() {
+        tracing::debug!(%error, "checkpoint prompt stderr flush failed");
+    }
     let mut line = String::new();
     let mut reader = BufReader::new(tokio::io::stdin());
     reader.read_line(&mut line).await?;
@@ -188,7 +190,9 @@ fn confirm_restore(files: &[String]) -> Result<bool, CliError> {
         }
         eprint!("Restore {} file(s)? [y/N] ", files.len());
     }
-    let _ = io::stderr().flush();
+    if let Err(error) = io::stderr().flush() {
+        tracing::debug!(%error, "restore confirm stderr flush failed");
+    }
     let mut line = String::new();
     io::stdin().read_line(&mut line)?;
     Ok(matches!(line.trim(), "y" | "Y"))

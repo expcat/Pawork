@@ -194,7 +194,9 @@ impl GuiHostAdapter {
     }
 
     pub async fn shutdown(self) -> Result<(), crate::AppError> {
-        let _ = self.pty.shutdown().await;
+        if let Err(error) = self.pty.shutdown().await {
+            tracing::debug!(%error, "pty shutdown failed");
+        }
         match Arc::try_unwrap(self.core) {
             Ok(lock) => lock.into_inner().shutdown().await,
             Err(_) => Ok(()),

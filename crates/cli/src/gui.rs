@@ -103,14 +103,18 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
             }
             _ = tokio::signal::ctrl_c() => {
                 eprintln!("shutting down gui server");
-                let _ = listener.close().await;
+                if let Err(error) = listener.close().await {
+                    tracing::debug!(%error, "gui listener close failed during shutdown");
+                }
                 break;
             }
         }
     }
     drop(connections);
     remove_pid_file(&pid_path);
-    let _ = pty.shutdown().await;
+    if let Err(error) = pty.shutdown().await {
+        tracing::debug!(%error, "pty shutdown failed");
+    }
     if let Ok(core) = Arc::try_unwrap(core) {
         core.into_inner().shutdown().await?;
     }

@@ -69,8 +69,8 @@ pub use approval::{
 };
 pub use checkpoint::{CheckpointSummary, RollbackOutcome};
 pub use data_dir::{
-    artifact_store_path, artifact_store_path_for, audit_log_path_for, default_data_dir,
-    default_data_dir_outcome, instance_dir, normalize_instance, session_db_path,
+    artifact_store_path, artifact_store_path_for, audit_log_path_for, consume_data_dir_outcome,
+    default_data_dir, default_data_dir_outcome, instance_dir, normalize_instance, session_db_path,
     session_db_path_for, tasks_snapshot_path_for, usage_ledger_path_for, DataDirOutcome,
     DEFAULT_INSTANCE,
 };
@@ -424,7 +424,11 @@ impl AppCore {
             core.attach_workspace(root)?;
         }
         core.prime_extensions().await?;
-        let data_dir = options.data_dir.unwrap_or_else(default_data_dir);
+        let data_dir = if let Some(data_dir) = options.data_dir {
+            data_dir
+        } else {
+            consume_data_dir_outcome(default_data_dir_outcome())
+        };
         let instance = if options.instance.trim().is_empty() {
             crate::DEFAULT_INSTANCE
         } else {
@@ -1453,5 +1457,58 @@ mod tests {
             .expect("budget demo");
         assert!(budget.budget_exceeded, "{budget:?}");
         core.shutdown().await.expect("shutdown");
+    }
+
+    #[test]
+    fn load_with_home_fallback_consumes_degrade_and_warns_once() {
+        let expected = PathBuf::from("/tmp/process-temp/pawork");
+        let outcome = crate::data_dir::data_dir_outcome_for_test(
+            None,
+            None,
+            None,
+            expected.parent().expect("parent").to_path_buf(),
+        );
+        assert!(outcome.degrade.is_some(), "HOME fallback must produce DegradeEvent");
+        let subscriber = crate::testsupport::RecordingSubscriber::new();
+        let path = tracing::subscriber::with_default(subscriber.clone(), || {
+            crate::data_dir::consume_data_dir_outcome(outcome.clone())
+        });
+        assert_eq!(path, expected);
+        let events = subscriber.events();
+        let emitted: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.fields.get("code").map(String::as_str) == Some("degrade.home_dir_fallback")
+            })
+            .collect();
+        assert_eq!(emitted.len(), 1, "load_with consumer must warn once: {events:?}");
+        let emitted = emitted[0];
+        assert_eq!(emitted.level, "WARN");
+        assert!(emitted.message.contains("HOME is unset"), "{emitted:?}");
+        assert_eq!(
+            emitted.fields.get("severity").map(String::as_str),
+            Some("warning"),
+            "{emitted:?}"
+        );
+        assert_eq!(
+            emitted.fields.get("path").map(String::as_str),
+            Some(expected.display().to_string().as_str()),
+            "{emitted:?}"
+        );
+
+        let subscriber = crate::testsupport::RecordingSubscriber::new();
+        tracing::subscriber::with_default(subscriber.clone(), || {
+            let _ = crate::data_dir::consume_data_dir_outcome(crate::DataDirOutcome {
+                path: expected.clone(),
+                degrade: None,
+            });
+        });
+        assert!(
+            subscriber.events().iter().all(|event| {
+                event.fields.get("code").map(String::as_str) != Some("degrade.home_dir_fallback")
+            }),
+            "consume_data_dir_outcome must stay silent when degrade is absent: {:?}",
+            subscriber.events()
+        );
     }
 }

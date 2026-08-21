@@ -126,6 +126,12 @@ pub fn ledger_tenant(query_tenant: Option<&TenantId>) -> TenantId {
     }
 }
 
+/// Host usage record constructor.
+///
+/// ADR-038 D1 single-machine sentinel: `account_id` is [`LEDGER_ACCOUNT`]
+/// (`local/default`), `upstream_attempt` is always `Some(1)` (no upstream retry
+/// tracking), and `trace_id` is always `None` (trace is not tracked). Multi-tenant
+/// fields remain an optional extension point; this sentinel universe does not expand.
 pub fn usage_record(
     session_id: &SessionId,
     run_id: &RunId,
@@ -190,6 +196,9 @@ fn priced_currency(currency: &str) -> String {
     }
 }
 
+/// Quota scope for the ADR-038 D1 single-machine sentinel (`local/default`).
+/// `upstream_attempt` / `trace_id` are not part of the quota key; the ledger account
+/// is frozen at [`LEDGER_ACCOUNT`] and is not expanded for multi-tenant use.
 pub fn quota_scope(provider_id: &ProviderId) -> QuotaScope {
     QuotaScope::new(
         default_tenant(),
@@ -199,6 +208,9 @@ pub fn quota_scope(provider_id: &ProviderId) -> QuotaScope {
     )
 }
 
+/// Aggregate ledger totals for the ADR-038 D1 sentinel account [`LEDGER_ACCOUNT`].
+/// Querying this account does not invent retry/trace fields; those stay frozen on
+/// [`usage_record`] (`upstream_attempt = Some(1)`, `trace_id = None`).
 pub async fn ledger_totals(
     ledger: &dyn UsageLedger,
     provider_id: &ProviderId,
@@ -333,5 +345,22 @@ mod tests {
         assert_eq!(record.cost_confidence, Some(CostConfidence::Unknown));
         assert_eq!(record.cost_provenance.as_deref(), Some("unpriced"));
         assert_ne!(record.currency, "USD");
+    }
+
+    #[test]
+    fn usage_record_pins_adr038_d1_sentinel_fields() {
+        let record = usage_record(
+            &SessionId::from("s"),
+            &RunId::from("r"),
+            &RequestId::from("req"),
+            &ProviderId::from("p"),
+            &ModelId::from("m"),
+            &TokenUsage::default(),
+            0,
+            "USD",
+        );
+        assert_eq!(record.account_id, LEDGER_ACCOUNT);
+        assert_eq!(record.upstream_attempt, Some(1));
+        assert_eq!(record.trace_id, None);
     }
 }
