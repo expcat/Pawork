@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn xai_refresh_endpoint_resolves_from_preset() {
-        let preset = crate::oauth_refresh_endpoint(&PaworkConfig::default(), "xai")
+        let preset = crate::provider_assembly::oauth_refresh_endpoint(&PaworkConfig::default(), "xai")
             .expect("xai preset");
         assert_eq!(preset.token_url, "https://auth.x.ai/oauth2/token");
         assert_eq!(preset.client_id, "b1a00492-073a-47ea-816f-4c329264a828");

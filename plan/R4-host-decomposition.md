@@ -18,13 +18,15 @@
 3. **ACP actor 化**:单 actor 循环 + 消息信箱替换 9 张 Mutex map;`expect` 清零(错误进降级事件);prompt 串行语义由 actor 队列天然保证。
 4. **降级可观测契约(T8)**:定义 `DegradeEvent`(或复用 Diagnostic 通道):HOME→temp 回退、无凭证兜底、Lagged 断流、tasks_finish 失败、幂等冲突等一律事件化(进事件流或 stderr 诊断,按敏感度分级);建立「副作用 Result 禁 `let _`」清单——本阶段清理 host 域全部命中点,其余包登记到 R9 复查。
 
-## 2.1 波 A 实态进度(2026-08-21)
+## 2.1 波 A 实态进度(2026-08-21,波 A 已收口)
 
-- 阶段1 部分落地:抽出 `UsageService` / `TaskService` / `ImportService` / `ExtensionService`,AppCore 对外 pub API 形状不变(门面委托)。
-- 行数:`crates/app/src/lib.rs` 4131→3477;`gui_host.rs` 仍 2402(巨 match 未改 registry 分发)。
-- 测试随迁 12 条到服务模块 + `testsupport.rs`;`cargo test -p pawork-app` 121 绿(1 ignored)。
-- 未完成:Session/Run/Approval 抽取、gui_host 目录化与 registry 分发、行数目标 <1500/<800。
-- 审查:修 `services/import.rs` 未用 `SessionCompatReport` 别名;glm_worker 429 中断后未跨波。
+- 阶段1(2026-08-21 早):抽出 `UsageService` / `TaskService` / `ImportService` / `ExtensionService`,AppCore 对外 pub API 形状不变(门面委托);测试随迁 12 条 + 共享 `testsupport.rs`。
+- 阶段2(2026-08-21,glm_worker 单 owner):Session/Run/Approval 三服务抽取(`services/{session,run,approval}.rs`)+ provider 装配移 `provider_assembly.rs` + lib.rs 33 条内联测试随迁;`gui_host.rs`(2407)目录化为 `gui_host/`(mod.rs 679 + bus/events/handlers/tests),巨 match 改 `QUERY_HANDLERS` 7 / `COMMAND_HANDLERS` 10 静态分发表(wire 名查表,与 protocol registry `gui.available` 双射,新 pin 测试锁定),幂等 wrap 留在分发前,fallback 文案逐字保留。
+- 行数:`lib.rs` 4131→1413(<1500 ✅);`gui_host/mod.rs` 679(<800 ✅)。
+- 验证:`cargo test -p pawork-app` 122 绿(1 ignored;+1 为授权 pin 测试);protocol golden / domain events_golden / typegen / client probe+spawn_e2e / desktop 27 / `cargo check -p pawork` 全绿;26 帧 golden 零 diff。
+- 审查(glm_reviewer)verdict=pass;P2-1 状态文档滞后与 P2-2 搬迁丢 1 条 doc 注释 + 若干反引号均同波闭环(主代理补齐 12 处)。
+- 留后续波:CatalogOnlyProvider 显式「无凭证」状态配合 DegradeEvent(波 C/D,T8);K-02 落盘(波 B);`let _` 清理(波 D)。
+- 环境备注:worker 首跑 desktop 与 `cargo check -p pawork` 遇 idle-rustc 环境异常(挂起/被终止),主代理串行重跑均绿,非源码问题。
 
 ## 3. 波次拆分
 

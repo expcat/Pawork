@@ -113,7 +113,7 @@ impl ExtensionService {
                 .instructions
                 .into_iter()
                 .filter(|instruction| {
-                    core.workspace_trusted
+                    core.workspace_trusted()
                         || !matches!(
                             instruction.provenance.origin,
                             pawork_workspace::resources::ResourceOrigin::Workspace { .. }

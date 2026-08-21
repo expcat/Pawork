@@ -1,0 +1,459 @@
+//! Session 领域服务：会话生命周期、workspace 绑定、事件序列与 resume 语义。
+
+use std::collections::HashMap;
+use std::sync::atomic::Ordering;
+use std::sync::Mutex;
+
+use pawork_domain::{
+    AgentEvent, ApprovalDecision, ContentPart, Message, MessageId, MessageRole, SessionId,
+    TextContent, ToolResultContent, WorkspaceId,
+};
+use pawork_engine::EngineError;
+use pawork_storage::session::SessionRecord;
+
+use crate::{AppCore, AppError};
+
+pub(crate) struct SessionService {
+    /// 进程内 session → workspace 绑定。不改 S1 sessions DDL；
+    /// Host 重启后无绑定的历史 session 进 Unassigned。
+    pub(crate) workspaces: Mutex<HashMap<String, WorkspaceId>>,
+}
+
+impl SessionService {
+    pub(crate) fn new() -> Self {
+        Self {
+            workspaces: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// 记录 SessionCreate 带来的 canonical workspace（进程内）。
+    pub fn bind_workspace(&self, session_id: &SessionId, workspace_id: WorkspaceId) {
+        self.workspaces
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(session_id.as_str().to_string(), workspace_id);
+    }
+
+    pub fn workspace(&self, session_id: &SessionId) -> Option<WorkspaceId> {
+        self.workspaces
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(session_id.as_str())
+            .cloned()
+    }
+
+    pub fn workspace_for_record(&self, session_id: &str) -> Option<WorkspaceId> {
+        self.workspace(&SessionId::from(session_id))
+    }
+
+    pub async fn create_session(
+        &self,
+        core: &AppCore,
+        title: impl Into<String>,
+    ) -> Result<SessionId, AppError> {
+        let n = core.next_session.fetch_add(1, Ordering::Relaxed);
+        let ts = pawork_engine::now_timestamp();
+        let id = SessionId::from(format!("ses-{}-{n}", ts.as_unix_millis()));
+        core.store()?
+            .create_session(&id, title, ts)
+            .await?;
+        Ok(id)
+    }
+
+    /// GUI SessionCreate：落盘会话并绑定 command 里的 workspace_id。
+    pub async fn create_session_with_workspace(
+        &self,
+        core: &AppCore,
+        title: impl Into<String>,
+        workspace_id: WorkspaceId,
+    ) -> Result<SessionId, AppError> {
+        let id = self.create_session(core, title).await?;
+        self.bind_workspace(&id, workspace_id);
+        Ok(id)
+    }
+
+    pub async fn list_sessions(&self, core: &AppCore) -> Result<Vec<SessionRecord>, AppError> {
+        Ok(core.store()?.list_sessions().await?)
+    }
+
+    pub async fn get_session(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+    ) -> Result<SessionRecord, AppError> {
+        Ok(core.store()?.get_session(session_id).await?)
+    }
+
+    pub async fn resume_messages(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+    ) -> Result<Vec<Message>, AppError> {
+        let record = self.get_session(core, session_id).await?;
+        self.seal_orphaned_approvals(core, session_id).await?;
+        Ok(core
+            .store()?
+            .projection_snapshot_on_branch(session_id, &record.active_branch)
+            .await?
+            .messages)
+    }
+
+    /// 把中途被杀、仍停在 `waiting_for_approval` 的调用以 Denied 收口，避免 resume 后重跑。
+    async fn seal_orphaned_approvals(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+    ) -> Result<(), AppError> {
+        let pending: Vec<_> = core
+            .store()?
+            .projection_snapshot(session_id)
+            .await?
+            .tool_calls
+            .into_iter()
+            .filter(|call| call.state == "waiting_for_approval")
+            .collect();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let mut sequence = self.next_sequence(core, session_id).await?;
+        for call in pending {
+            core.append_payload(
+                session_id,
+                &call.run_id,
+                &mut sequence,
+                AgentEvent::ToolApprovalResponded {
+                    tool_call_id: call.tool_call_id.clone(),
+                    decision: ApprovalDecision::Denied,
+                    comment: Some("pending approval closed on resume".into()),
+                },
+            )
+            .await?;
+            if call.result.is_some() {
+                continue;
+            }
+            let result = ToolResultContent {
+                tool_call_id: call.tool_call_id.clone(),
+                tool_name: Some(call.name.clone()),
+                content: vec![ContentPart::Text(TextContent {
+                    text: "pending approval closed on resume".into(),
+                })],
+                is_error: true,
+                metadata: serde_json::Value::Null,
+                artifacts: Vec::new(),
+            };
+            core.append_payload(
+                session_id,
+                &call.run_id,
+                &mut sequence,
+                AgentEvent::ToolExecutionCompleted {
+                    tool_call_id: call.tool_call_id.clone(),
+                    result: result.clone(),
+                },
+            )
+            .await?;
+            let n = core.next_message.fetch_add(1, Ordering::Relaxed);
+            let message = Message {
+                id: MessageId::from(format!(
+                    "msg-{}-{n}",
+                    pawork_engine::now_timestamp().as_unix_millis()
+                )),
+                role: MessageRole::Tool,
+                content: vec![ContentPart::ToolResult(result)],
+                metadata: Default::default(),
+            };
+            core.append_payload(
+                session_id,
+                &call.run_id,
+                &mut sequence,
+                AgentEvent::MessageCommitted { message },
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn session_active_branch(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+    ) -> Result<String, AppError> {
+        Ok(core.store()?.get_session(session_id).await?.active_branch)
+    }
+
+    pub async fn next_sequence(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+    ) -> Result<u64, AppError> {
+        let tail = core.store()?.tail_events(session_id, 1).await?;
+        Ok(match tail.last() {
+            Some(event) => event
+                .sequence
+                .value()
+                .checked_add(1)
+                .ok_or_else(|| AppError::Engine(EngineError::sink("sequence overflow")))?,
+            None => 1,
+        })
+    }
+
+    /// `latest`、完整 id，或唯一前缀。多命中 fail-closed。
+    pub async fn resolve_session(&self, core: &AppCore, spec: &str) -> Result<SessionId, AppError> {
+        let spec = spec.trim();
+        if spec.is_empty() {
+            return Err(AppError::SessionNotFound(spec.into()));
+        }
+        if spec == "latest" {
+            return self
+                .list_sessions(core)
+                .await?
+                .into_iter()
+                .next()
+                .map(|record| SessionId::from(record.session_id))
+                .ok_or_else(|| AppError::SessionNotFound("latest".into()));
+        }
+        let exact = SessionId::from(spec);
+        if core.store()?.get_session(&exact).await.is_ok() {
+            return Ok(exact);
+        }
+        let matches: Vec<String> = self
+            .list_sessions(core)
+            .await?
+            .into_iter()
+            .map(|record| record.session_id)
+            .filter(|id| id.starts_with(spec))
+            .collect();
+        match matches.as_slice() {
+            [only] => Ok(SessionId::from(only.as_str())),
+            [] => Err(AppError::SessionNotFound(spec.into())),
+            many => Err(AppError::AmbiguousSession {
+                prefix: spec.into(),
+                matches: many.join(", "),
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pawork_domain::{
+        AgentEvent, AgentEventEnvelope, ContentPart, EventId, EventSequence, MessageId,
+        MessageRole, RunId, SessionId, TextContent,
+    };
+    use pawork_storage::session::DEFAULT_BRANCH_ID;
+
+    use crate::testsupport::mock_core;
+
+    fn committed(session: &SessionId, sequence: u64, id: &str) -> AgentEventEnvelope {
+        AgentEventEnvelope::new(
+            EventId::from(format!("event-{sequence}")),
+            session.clone(),
+            RunId::from("run-fork-resume"),
+            EventSequence::new(sequence),
+            pawork_engine::now_timestamp(),
+            AgentEvent::MessageCommitted {
+                message: pawork_domain::Message {
+                    id: MessageId::from(id),
+                    role: MessageRole::User,
+                    content: vec![ContentPart::Text(TextContent {
+                        text: id.into(),
+                    })],
+                    metadata: Default::default(),
+                },
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn resume_messages_on_fork_contains_only_ancestor_prefix() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let session = core.create_session("fork-resume").await.expect("create");
+        let store = core.store().expect("store");
+        for sequence in 1..=3u64 {
+            store
+                .append_event(
+                    DEFAULT_BRANCH_ID,
+                    committed(&session, sequence, &format!("m-{sequence}")),
+                )
+                .await
+                .expect("append");
+        }
+        store
+            .fork_from_event(&session, "experiment", &EventId::from("event-1"))
+            .await
+            .expect("fork");
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch");
+
+        let messages = core.resume_messages(&session).await.expect("resume");
+        let ids: Vec<&str> = messages.iter().map(|message| message.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["m-1"],
+            "fork 后 resume 只含祖先前缀，不含 main 的 2–3"
+        );
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn compact_on_fork_does_not_delete_main_messages() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let session = core.create_session("fork-compact").await.expect("create");
+        let store = core.store().expect("store");
+        for sequence in 1..=3u64 {
+            store
+                .append_event(
+                    DEFAULT_BRANCH_ID,
+                    committed(&session, sequence, &format!("m-{sequence}")),
+                )
+                .await
+                .expect("append");
+        }
+        store
+            .fork_from_event(&session, "experiment", &EventId::from("event-1"))
+            .await
+            .expect("fork");
+        store
+            .switch_branch(&session, "experiment")
+            .await
+            .expect("switch");
+        store
+            .append_event(
+                "experiment",
+                committed(&session, 4, "m-fork"),
+            )
+            .await
+            .expect("fork message");
+        store
+            .append_event(
+                "experiment",
+                AgentEventEnvelope::new(
+                    EventId::from("event-5"),
+                    session.clone(),
+                    RunId::from("run-fork-resume"),
+                    EventSequence::new(5),
+                    pawork_engine::now_timestamp(),
+                    AgentEvent::CompactionCompleted {
+                        summary_message_id: MessageId::from("m-fork"),
+                        compacted_through: EventSequence::new(4),
+                    },
+                ),
+            )
+            .await
+            .expect("fork compact");
+
+        store
+            .switch_branch(&session, DEFAULT_BRANCH_ID)
+            .await
+            .expect("switch main");
+        let messages = core.resume_messages(&session).await.expect("resume main");
+        let ids: Vec<&str> = messages.iter().map(|message| message.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["m-1", "m-2", "m-3"],
+            "fork 压缩后 main 中低于全局水位的消息仍在"
+        );
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn unknown_resume_is_fail_closed() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let err = core
+            .resolve_session("missing-session")
+            .await
+            .expect_err("missing");
+        assert!(matches!(err, crate::AppError::SessionNotFound(_)));
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn resume_seals_orphaned_approval_as_denied() {
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let session = core.create_session("orphan").await.expect("create");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-orphan");
+        let run_id = RunId::from("run-orphan");
+        let ts = pawork_engine::now_timestamp();
+        core.store()
+            .expect("store")
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    EventId::from("evt-1"),
+                    session.clone(),
+                    run_id.clone(),
+                    EventSequence::new(1),
+                    ts,
+                    AgentEvent::ToolCallStarted {
+                        tool_call_id: tool_call_id.clone(),
+                        name: "write_file".into(),
+                    },
+                ),
+            )
+            .await
+            .expect("started");
+        core.store()
+            .expect("store")
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    EventId::from("evt-2"),
+                    session.clone(),
+                    run_id,
+                    EventSequence::new(2),
+                    ts,
+                    AgentEvent::ToolApprovalRequested {
+                        tool_call_id: tool_call_id.clone(),
+                        reason: "needs approval".into(),
+                    },
+                ),
+            )
+            .await
+            .expect("requested");
+
+        let waiting = core
+            .store()
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("snap");
+        assert_eq!(waiting.tool_calls[0].state, "waiting_for_approval");
+
+        let messages = core.resume_messages(&session).await.expect("resume");
+        assert!(messages.iter().any(|message| message.role == MessageRole::Tool));
+
+        let sealed = core
+            .store()
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("sealed");
+        assert_eq!(sealed.tool_calls[0].state, "completed");
+        assert!(sealed.tool_calls[0].result.is_some());
+
+        let replayed = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, 64)
+            .await
+            .expect("replay");
+        let responded = replayed.iter().find_map(|envelope| match &envelope.payload {
+            AgentEvent::ToolApprovalResponded {
+                decision, comment, ..
+            } => Some((decision.clone(), comment.clone())),
+            _ => None,
+        });
+        assert_eq!(
+            responded,
+            Some((
+                pawork_domain::ApprovalDecision::Denied,
+                Some("pending approval closed on resume".into())
+            ))
+        );
+
+        let again = core.resume_messages(&session).await.expect("idempotent");
+        assert_eq!(again.len(), messages.len());
+        core.shutdown().await.expect("shutdown");
+    }
+}

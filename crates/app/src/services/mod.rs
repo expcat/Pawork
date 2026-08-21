@@ -4,3 +4,6 @@ pub(crate) mod usage;
 pub(crate) mod tasks;
 pub(crate) mod import;
 pub(crate) mod extension;
+pub(crate) mod session;
+pub(crate) mod run;
+pub(crate) mod approval;

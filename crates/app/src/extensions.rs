@@ -80,8 +80,8 @@ impl AppCore {
             registry,
             ToolSchedulerConfig {
                 max_concurrent: 8,
-                approval_mode: self.approval_mode,
-                workspace_trusted: self.workspace_trusted,
+                approval_mode: self.approval.mode(),
+                workspace_trusted: self.approval.workspace_trusted(),
             },
         ));
     }
@@ -115,7 +115,7 @@ impl AppCore {
         else {
             return;
         };
-        let runtime = stdio_runtime(&workspace.roots, self.workspace_trusted);
+        let runtime = stdio_runtime(&workspace.roots, self.approval.workspace_trusted());
         let mut registry = match builtin_registry(&self.extensions.workspaces) {
             Ok(registry) => registry,
             Err(error) => {
@@ -138,7 +138,7 @@ impl AppCore {
                 });
                 continue;
             }
-            if !self.workspace_trusted {
+            if !self.approval.workspace_trusted() {
                 slots.push(McpServerSlot {
                     name: name.clone(),
                     transport,
@@ -160,8 +160,8 @@ impl AppCore {
                         name,
                         peer,
                         server.permissions.clone(),
-                        server.trusted && self.workspace_trusted,
-                        self.workspace_trusted,
+                        server.trusted && self.approval.workspace_trusted(),
+                        self.approval.workspace_trusted(),
                     )
                     .await
                     {
@@ -234,13 +234,14 @@ impl AppCore {
             .workspaces
             .get(&self.extensions.workspace_id)?
             .ok_or_else(|| AppError::Import("workspace is not attached".into()))?;
-        if matches!(server.transport, TransportSpec::Stdio { .. }) && !self.workspace_trusted
+        if matches!(server.transport, TransportSpec::Stdio { .. })
+            && !self.approval.workspace_trusted()
         {
             return Err(AppError::Mcp(McpError::PermissionDenied(format!(
                 "stdio MCP server '{name}' cannot start in an untrusted workspace"
             ))));
         }
-        let runtime = stdio_runtime(&workspace.roots, self.workspace_trusted);
+        let runtime = stdio_runtime(&workspace.roots, self.approval.workspace_trusted());
         let client = Arc::new(server.build_client(
             name.to_string(),
             mcp_secret_backend(),
