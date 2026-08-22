@@ -14,8 +14,8 @@ const DEFAULT_RESTART_MAX_DELAY_MS: u64 = 10_000;
 
 /// Locator for a plaintext secret held by a secret backend.
 ///
-/// Only `service` and `account` are persisted/serialized — they are keychain
-/// locators, never the secret itself.
+/// Only `service` and `account` are persisted/serialized — they are secret
+/// backend locators, never the secret itself.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SecretRef {
     service: String,
@@ -31,7 +31,7 @@ impl SecretRef {
         }
     }
 
-    /// Backend `service` (keychain namespace) used to locate the secret.
+    /// Backend `service` (secret backend namespace) used to locate the secret.
     pub fn service(&self) -> &str {
         &self.service
     }

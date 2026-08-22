@@ -8,17 +8,15 @@
 
 use std::fmt;
 
+use pawork_auth::locator::MCP_SERVICE_PREFIX;
 use pawork_auth::{AuthError, SecretBackend};
 use serde::{Deserialize, Serialize};
 
 use crate::mcp::McpError;
 
-/// MCP SecretRef 必须落在独立命名空间，禁止解析 Provider / OAuth 凭证。
-const MCP_SERVICE_PREFIX: &str = "pawork.mcp.";
-
 /// Locator for a plaintext secret held by a [`SecretBackend`].
 ///
-/// Only `service` and `account` are persisted/serialized — they are keychain
+/// Only `service` and `account` are persisted/serialized — they are secret
 /// locators, never the secret itself. `Debug` / `Serialize` / `Display`
 /// therefore cannot leak plaintext by construction.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -36,7 +34,7 @@ impl SecretRef {
         }
     }
 
-    /// Backend `service` (keychain namespace) used to locate the secret.
+    /// Backend `service` (secret backend namespace) used to locate the secret.
     pub fn service(&self) -> &str {
         &self.service
     }

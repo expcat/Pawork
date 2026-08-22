@@ -76,7 +76,7 @@ impl AppCore {
                         self.auth_backend().as_ref(),
                         channel.id,
                     ) {
-                        pawork_auth::CredentialSource::Keychain(stored) => AuthChannelStatus {
+                        pawork_auth::CredentialSource::AuthFile(stored) => AuthChannelStatus {
                             provider: channel.id.into(),
                             kind,
                             source: AuthSource::File,

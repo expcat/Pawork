@@ -13,6 +13,7 @@ use pawork_domain::{CredentialId, ProviderId, Timestamp};
 
 use crate::backend::SecretBackend;
 use crate::credential::StoredCredential;
+use crate::locator::oauth_secret_service;
 use crate::masked::MaskedCredential;
 use crate::oauth::{
     decode_jwt_payload, needs_refresh, refresh_oauth_credential_with, OAuthRefreshConfig, TokenSet,
@@ -21,8 +22,6 @@ use crate::AuthError;
 
 /// default 条目的固定 account 前缀。
 pub const OAUTH_DEFAULT_ACCOUNT: &str = "default";
-const KEYCHAIN_SERVICE_PREFIX: &str = "pawork";
-const SERVICE_SUFFIX: &str = "oauth";
 const REFRESH_GRACE_MILLIS: u64 = 30_000;
 const CHATGPT_ACCOUNT_ID_CLAIM: &str = "chatgpt_account_id";
 const CHATGPT_AUTH_CLAIM_PREFIX: &str = "https://api.openai.com/auth";
@@ -37,11 +36,6 @@ pub struct DefaultOAuthMeta {
     pub scopes: Vec<String>,
     /// ChatGPT 专用：JWT claim 中的 account id（路由头，非 secret）。
     pub account_id: Option<String>,
-}
-
-/// 该 provider 的 OAuth service 名（与 oauth.rs 私有实现保持同一形状）。
-pub fn oauth_service(provider: &ProviderId) -> String {
-    format!("{KEYCHAIN_SERVICE_PREFIX}.{provider}.{SERVICE_SUFFIX}")
 }
 
 fn access_account() -> String {
@@ -68,7 +62,7 @@ pub fn store_default_oauth_token(
     if tokens.refresh_token.as_ref().is_some_and(String::is_empty) {
         return Err(AuthError::InvalidSecret("refresh_token is empty".into()));
     }
-    let service = oauth_service(&provider);
+    let service = oauth_secret_service(&provider);
     let access_account = access_account();
     let refresh_account = refresh_account();
     let meta_account = meta_account();
@@ -101,7 +95,7 @@ pub fn load_default_oauth_credential(
     backend: &dyn SecretBackend,
     provider: &ProviderId,
 ) -> Result<Option<StoredCredential>, AuthError> {
-    let service = oauth_service(provider);
+    let service = oauth_secret_service(provider);
     let meta_json = match backend.get(&service, &meta_account()) {
         Ok(value) => value,
         Err(AuthError::NotFound) => return Ok(None),
@@ -117,7 +111,7 @@ pub fn load_default_oauth_meta(
     backend: &dyn SecretBackend,
     provider: &ProviderId,
 ) -> Result<Option<DefaultOAuthMeta>, AuthError> {
-    match backend.get(&oauth_service(provider), &meta_account()) {
+    match backend.get(&oauth_secret_service(provider), &meta_account()) {
         Ok(meta_json) => serde_json::from_str(&meta_json)
             .map(Some)
             .map_err(|error| {
@@ -133,7 +127,7 @@ pub fn delete_default_oauth_token(
     backend: &dyn SecretBackend,
     provider: &ProviderId,
 ) -> Result<(), AuthError> {
-    let service = oauth_service(provider);
+    let service = oauth_secret_service(provider);
     for account in [access_account(), refresh_account(), meta_account()] {
         match backend.delete(&service, &account) {
             Ok(()) | Err(AuthError::NotFound) => {}
@@ -149,8 +143,8 @@ pub fn update_default_oauth_token(
     stored: &mut StoredCredential,
     tokens: &TokenSet,
 ) -> Result<(), AuthError> {
-    let service = oauth_service(&stored.provider);
-    if stored.keychain_service != service || stored.keychain_account != access_account() {
+    let service = oauth_secret_service(&stored.provider);
+    if stored.secret_service != service || stored.secret_account != access_account() {
         return Err(AuthError::MalformedMetadata(
             "credential is not the default oauth entry".into(),
         ));
@@ -250,14 +244,14 @@ fn serialize_meta(meta: &DefaultOAuthMeta) -> Result<String, AuthError> {
 }
 
 fn stored_from_meta(provider: ProviderId, meta: DefaultOAuthMeta) -> StoredCredential {
-    let service = oauth_service(&provider);
+    let service = oauth_secret_service(&provider);
     StoredCredential {
         id: CredentialId::new(OAUTH_DEFAULT_ACCOUNT),
         provider,
         display_name: "default oauth".into(),
         masked: meta.masked,
-        keychain_service: service,
-        keychain_account: access_account(),
+        secret_service: service,
+        secret_account: access_account(),
         created_at: Timestamp::from_unix_millis(meta.created_at_ms),
         expires_at: meta.expires_at_ms.map(Timestamp::from_unix_millis),
         scopes: meta.scopes,
@@ -323,8 +317,8 @@ mod tests {
         let stored =
             store_default_oauth_token(&backend, provider.clone(), &token_set(None)).expect("store");
         assert_eq!(stored.id.as_str(), OAUTH_DEFAULT_ACCOUNT);
-        assert_eq!(stored.keychain_service, "pawork.chatgpt.oauth");
-        assert_eq!(stored.keychain_account, "default.access");
+        assert_eq!(stored.secret_service, "pawork.chatgpt.oauth");
+        assert_eq!(stored.secret_account, "default.access");
         assert!(stored.expires_at.is_some());
 
         let loaded = load_default_oauth_credential(&backend, &provider)
@@ -414,7 +408,7 @@ mod tests {
             store_default_oauth_token(&backend, provider.clone(), &token_set(None)).expect("store");
         let before_stored = stored.clone();
         let before_access = backend
-            .get(&stored.keychain_service, &stored.keychain_account)
+            .get(&stored.secret_service, &stored.secret_account)
             .expect("old access");
         let before_refresh = read_refresh_token(&stored, &backend).expect("old refresh");
         let before_meta = load_default_oauth_meta(&backend, &provider)
@@ -437,7 +431,7 @@ mod tests {
         assert_eq!(stored, before_stored);
         assert_eq!(
             backend
-                .get(&stored.keychain_service, &stored.keychain_account)
+                .get(&stored.secret_service, &stored.secret_account)
                 .expect("access unchanged"),
             before_access
         );
@@ -659,7 +653,7 @@ mod tests {
             .expect("refreshed credential");
         assert_eq!(
             backend
-                .get(&stored.keychain_service, &stored.keychain_account)
+                .get(&stored.secret_service, &stored.secret_account)
                 .expect("rotated access"),
             "process-new-access"
         );

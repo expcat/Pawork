@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use pawork_domain::ContentPart;
 use pawork_engine::InjectedLayer;
+use pawork_auth::locator::MCP_AUTH_FILE_NAME;
 use pawork_auth::{FileBackend, SecretBackend};
 use pawork_exec::{
     default_secret_paths, FilesystemPolicy, NativeRestricted, NetworkMode, SandboxPolicy,
@@ -332,7 +333,7 @@ pub(crate) fn mcp_config_from_pawork(
 
 /// Independent MCP secret store next to auth.json. Never the Provider FileBackend.
 fn mcp_secret_backend() -> Arc<dyn SecretBackend> {
-    let path = FileBackend::new().path().with_file_name("mcp-auth.json");
+    let path = FileBackend::new().path().with_file_name(MCP_AUTH_FILE_NAME);
     Arc::new(FileBackend::with_path(path))
 }
 

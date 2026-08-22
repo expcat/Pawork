@@ -13,10 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::SecretBackend;
 use crate::error::AuthError;
+use crate::locator::secret_service_for;
 use crate::masked::MaskedCredential;
-
-/// Secret 后端中按 Provider 分组的命名空间前缀。
-const KEYCHAIN_SERVICE_PREFIX: &str = "pawork";
 
 /// 统一使用 [`pawork_domain::CredentialId`]（与控制面 CredentialMetadata 对齐）。
 pub use pawork_domain::CredentialId;
@@ -45,18 +43,12 @@ fn now_unix_millis() -> Timestamp {
     Timestamp::from_unix_millis(millis)
 }
 
-/// 计算 Provider 在 Secret 后端中的 `service` 名（形如 `pawork.openai`）。
-///
-/// 同时供 `crate::resolve` 的 Provider 主条目查找复用，保证 service 命名单一来源。
-pub(crate) fn keychain_service_for(provider: &ProviderId) -> String {
-    format!("{KEYCHAIN_SERVICE_PREFIX}.{provider}")
-}
-
 /// 仅含元数据与脱敏状态的凭证记录，可安全持久化到数据库与日志。
 ///
 /// 明文 secret **不**在此结构中——它只存在于 SecretBackend。字段名
-/// `keychain_service` / `keychain_account` 为 V1 JSON 兼容名，实际用于定位
-/// auth 文件或内存后端中的 service/account。
+/// `secret_service` / `secret_account` 为 auth 文件后端语义，用于定位
+/// auth 文件或内存后端中的 service/account（旧 `keychain_*` 名经 serde
+/// alias 兼容读取一个版本期）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredCredential {
     /// 凭证唯一标识，同时作为 SecretBackend 的 `account`。
@@ -67,10 +59,12 @@ pub struct StoredCredential {
     pub display_name: String,
     /// 脱敏后的展示状态。
     pub masked: MaskedCredential,
-    /// SecretBackend `service`（V1 兼容字段名），用于定位明文 secret。
-    pub keychain_service: String,
-    /// SecretBackend `account`（V1 兼容字段名），用于定位明文 secret。
-    pub keychain_account: String,
+    /// SecretBackend `service`，用于定位 auth 文件后端中的明文 secret。
+    #[serde(alias = "keychain_service")]
+    pub secret_service: String,
+    /// SecretBackend `account`，用于定位明文 secret。
+    #[serde(alias = "keychain_account")]
+    pub secret_account: String,
     /// 创建时间（Unix 毫秒）。
     pub created_at: Timestamp,
     /// 过期时间（Unix 毫秒），`None` 表示不过期。
@@ -87,8 +81,8 @@ impl StoredCredential {
         provider: ProviderId,
         display_name: impl Into<String>,
         masked: MaskedCredential,
-        keychain_service: impl Into<String>,
-        keychain_account: impl Into<String>,
+        secret_service: impl Into<String>,
+        secret_account: impl Into<String>,
         scopes: Vec<String>,
     ) -> Self {
         Self {
@@ -96,8 +90,8 @@ impl StoredCredential {
             provider,
             display_name: display_name.into(),
             masked,
-            keychain_service: keychain_service.into(),
-            keychain_account: keychain_account.into(),
+            secret_service: secret_service.into(),
+            secret_account: secret_account.into(),
             created_at: now_unix_millis(),
             expires_at: None,
             scopes,
@@ -110,11 +104,11 @@ impl StoredCredential {
         self
     }
 
-    /// 返回 SecretBackend 定位所需的 `(service, account)`；方法名沿用 V1。
-    pub fn keychain_ref(&self) -> (&str, &str) {
+    /// 返回 SecretBackend 定位所需的 `(service, account)`。
+    pub fn secret_backend_ref(&self) -> (&str, &str) {
         (
-            self.keychain_service.as_str(),
-            self.keychain_account.as_str(),
+            self.secret_service.as_str(),
+            self.secret_account.as_str(),
         )
     }
 }
@@ -153,19 +147,19 @@ impl ApiKeyCredential {
             return Err(AuthError::InvalidSecret("secret is empty".into()));
         }
         let id = generate_credential_id();
-        let keychain_service = keychain_service_for(&provider);
-        let keychain_account = id.as_str().to_string();
+        let secret_service = secret_service_for(&provider);
+        let secret_account = id.as_str().to_string();
 
         // 明文只在此处短暂出现：写入后端后即从栈上丢弃。
-        backend.store(&keychain_service, &keychain_account, secret)?;
+        backend.store(&secret_service, &secret_account, secret)?;
 
         let stored = StoredCredential {
             masked: MaskedCredential::mask(secret),
             id,
             provider,
             display_name: display_name.to_string(),
-            keychain_service,
-            keychain_account,
+            secret_service,
+            secret_account,
             created_at: now_unix_millis(),
             expires_at: None,
             scopes,
@@ -175,7 +169,7 @@ impl ApiKeyCredential {
 
     /// 由已持久化的元数据构造 API Key 凭证（不接触明文）。
     pub fn from_stored(stored: StoredCredential) -> Result<Self, AuthError> {
-        if stored.keychain_service.is_empty() || stored.keychain_account.is_empty() {
+        if stored.secret_service.is_empty() || stored.secret_account.is_empty() {
             return Err(AuthError::MalformedMetadata(
                 "missing secret backend service/account reference".into(),
             ));
@@ -198,14 +192,14 @@ impl ApiKeyCredential {
     /// 返回值仅供 Provider adapter 构造认证请求使用；调用方不得将其记录到
     /// 日志或事件（`ResolvedCredential` 的 `Debug` 已脱敏）。
     pub fn resolve(&self, backend: &dyn SecretBackend) -> Result<ResolvedCredential, AuthError> {
-        let (service, account) = self.stored.keychain_ref();
+        let (service, account) = self.stored.secret_backend_ref();
         let secret = backend.get(service, account)?;
         Ok(ResolvedCredential::new(CredentialKind::ApiKey, secret))
     }
 
     /// 从 Secret 后端删除对应明文。删除成功后本凭证即不可再 `resolve`。
     pub fn delete(&self, backend: &dyn SecretBackend) -> Result<(), AuthError> {
-        let (service, account) = self.stored.keychain_ref();
+        let (service, account) = self.stored.secret_backend_ref();
         backend.delete(service, account)
     }
 }
@@ -243,7 +237,7 @@ mod tests {
         assert!(stored.masked.as_str().ends_with("7890"));
 
         // 明文确实进入了后端。
-        let (service, account) = stored.keychain_ref();
+        let (service, account) = stored.secret_backend_ref();
         assert_eq!(backend.get(service, account).expect("get"), SECRET);
         assert_eq!(backend.len(), 1);
     }
@@ -306,8 +300,8 @@ mod tests {
         .expect("store second");
 
         // 同 provider、不同 account，互不覆盖。
-        assert_eq!(a.keychain_service, b.keychain_service);
-        assert_ne!(a.keychain_account, b.keychain_account);
+        assert_eq!(a.secret_service, b.secret_service);
+        assert_ne!(a.secret_account, b.secret_account);
         assert_eq!(backend.len(), 2);
 
         let resolved_a = ApiKeyCredential::from_stored(a)
@@ -337,6 +331,45 @@ mod tests {
         assert!(!json.contains("sk-ant-secret-cccccccccccc"));
         let decoded: StoredCredential = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded, stored);
+    }
+
+    #[test]
+    fn legacy_keychain_field_names_migrate_on_rewrite() {
+        // 旧字面 JSON（keychain_* 字段名）仍可读——兼容期一个版本。
+        let legacy_json = r#"{
+            "id": "cred_legacy",
+            "provider": "openai",
+            "display_name": "Legacy V1 entry",
+            "masked": {"masked": "sk-…7890"},
+            "keychain_service": "pawork.openai",
+            "keychain_account": "cred_legacy",
+            "created_at": 1721600000000,
+            "expires_at": null,
+            "scopes": ["chat"]
+        }"#;
+        let expected = StoredCredential {
+            id: CredentialId::new("cred_legacy"),
+            provider: ProviderId::new("openai"),
+            display_name: "Legacy V1 entry".into(),
+            masked: MaskedCredential::from_masked("sk-…7890"),
+            secret_service: "pawork.openai".into(),
+            secret_account: "cred_legacy".into(),
+            created_at: Timestamp::from_unix_millis(1_721_600_000_000),
+            expires_at: None,
+            scopes: vec!["chat".to_string()],
+        };
+        let decoded: StoredCredential = serde_json::from_str(legacy_json).expect("decode legacy");
+        assert_eq!(decoded, expected);
+
+        // 新写只出新名，且 round-trip 相等。
+        let rewritten = serde_json::to_string(&decoded).expect("rewrite");
+        assert!(rewritten.contains("\"secret_service\""));
+        assert!(rewritten.contains("\"secret_account\""));
+        assert!(!rewritten.contains("keychain_service"));
+        assert!(!rewritten.contains("keychain_account"));
+        let round_tripped: StoredCredential =
+            serde_json::from_str(&rewritten).expect("round trip");
+        assert_eq!(round_tripped, decoded);
     }
 
     #[test]

@@ -26,10 +26,8 @@ use crate::backend::SecretBackend;
 use crate::credential::{generate_credential_id, StoredCredential};
 use crate::error::AuthError;
 use crate::file_backend::{try_acquire_file_lock, FileLockGuard};
+use crate::locator::oauth_secret_service;
 use crate::masked::MaskedCredential;
-
-/// OAuth secret 在 SecretBackend 中的 service 命名空间。
-const OAUTH_SERVICE_PREFIX: &str = "pawork";
 
 /// 48 个均匀随机字节经无填充 base64url 编码后得到 64 字符 verifier，满足
 /// RFC 7636 的 43-128 字符限制且没有取模偏差。
@@ -481,7 +479,7 @@ pub fn store_oauth_token(
         return Err(AuthError::InvalidSecret("refresh_token is empty".into()));
     }
     let id = generate_credential_id();
-    let service = oauth_service(&provider);
+    let service = oauth_secret_service(&provider);
     let access_account = format!("{}.access", id.as_str());
     let refresh_account = format!("{}.refresh", id.as_str());
 
@@ -501,8 +499,8 @@ pub fn store_oauth_token(
         id,
         provider,
         display_name: display_name.to_string(),
-        keychain_service: service,
-        keychain_account: access_account,
+        secret_service: service,
+        secret_account: access_account,
         created_at: Timestamp::from_unix_millis(now_unix_millis()),
         expires_at: tokens.expires_in.map(expires_at_from_now),
         scopes,
@@ -523,10 +521,10 @@ pub fn update_oauth_token(
     if tokens.access_token.is_empty() {
         return Err(AuthError::InvalidSecret("access_token is empty".into()));
     }
-    let expected_service = oauth_service(&stored.provider);
+    let expected_service = oauth_secret_service(&stored.provider);
     let expected_access_account = format!("{}.access", stored.id.as_str());
-    if stored.keychain_service != expected_service
-        || stored.keychain_account != expected_access_account
+    if stored.secret_service != expected_service
+        || stored.secret_account != expected_access_account
     {
         return Err(AuthError::MalformedMetadata(
             "credential is not an OAuth token record".into(),
@@ -542,14 +540,14 @@ pub fn update_oauth_token(
     let mut updates = Vec::with_capacity(2);
     if let Some(refresh_token) = &tokens.refresh_token {
         updates.push((
-            stored.keychain_service.as_str(),
+            stored.secret_service.as_str(),
             refresh_account.as_str(),
             refresh_token.as_str(),
         ));
     }
     updates.push((
-        stored.keychain_service.as_str(),
-        stored.keychain_account.as_str(),
+        stored.secret_service.as_str(),
+        stored.secret_account.as_str(),
         tokens.access_token.as_str(),
     ));
     backend.store_batch(&updates)?;
@@ -571,7 +569,7 @@ pub fn resolve_oauth_credential(
     stored: &StoredCredential,
     backend: &dyn SecretBackend,
 ) -> Result<ResolvedCredential, AuthError> {
-    let secret = backend.get(&stored.keychain_service, &stored.keychain_account)?;
+    let secret = backend.get(&stored.secret_service, &stored.secret_account)?;
     Ok(ResolvedCredential::new(CredentialKind::OAuthBearer, secret))
 }
 
@@ -582,7 +580,7 @@ pub fn read_refresh_token(
 ) -> Result<String, AuthError> {
     let refresh_account = format!("{}.refresh", stored.id.as_str());
     backend
-        .get(&stored.keychain_service, &refresh_account)
+        .get(&stored.secret_service, &refresh_account)
         .or(Err(AuthError::NotFound))
 }
 
@@ -655,8 +653,8 @@ impl RefreshGate {
             return false;
         }
         let Ok(current_access) = backend.get(
-            &stored.keychain_service,
-            &stored.keychain_account,
+            &stored.secret_service,
+            &stored.secret_account,
         ) else {
             return false;
         };
@@ -692,8 +690,8 @@ static REFRESH_GATES: OnceLock<StdMutex<HashMap<RefreshGateKey, Arc<RefreshGate>
 fn refresh_gate_for(stored: &StoredCredential) -> Arc<RefreshGate> {
     let gates = REFRESH_GATES.get_or_init(|| StdMutex::new(HashMap::new()));
     let key = (
-        stored.keychain_service.clone(),
-        stored.keychain_account.clone(),
+        stored.secret_service.clone(),
+        stored.secret_account.clone(),
     );
     let mut gates = gates.lock().expect("OAuth refresh gate mutex poisoned");
     gates
@@ -722,7 +720,7 @@ fn backend_token_snapshot(
     backend: &dyn SecretBackend,
 ) -> Result<BackendTokenSnapshot, AuthError> {
     Ok(BackendTokenSnapshot {
-        access_token: backend.get(&stored.keychain_service, &stored.keychain_account)?,
+        access_token: backend.get(&stored.secret_service, &stored.secret_account)?,
         refresh_token: read_refresh_token(stored, backend)?,
     })
 }
@@ -1080,10 +1078,6 @@ fn hex_val(b: u8) -> Option<u8> {
     }
 }
 
-pub(crate) fn oauth_service(provider: &ProviderId) -> String {
-    format!("{OAUTH_SERVICE_PREFIX}.{provider}.oauth")
-}
-
 /// 解码 JWT payload 段（base64url，不验签）；仅供提取非机密 claim（如
 /// ChatGPT account id 路由头）使用，不作为信任边界。
 pub(crate) fn decode_jwt_payload(payload_b64: &str) -> Result<Value, AuthError> {
@@ -1296,12 +1290,12 @@ mod tests {
 
         // 明文进入了后端
         let access_secret = backend
-            .get(&stored.keychain_service, &stored.keychain_account)
+            .get(&stored.secret_service, &stored.secret_account)
             .expect("get access");
         assert_eq!(access_secret, "ya29.access-secret-token-abcdefgh");
         let refresh_secret = backend
             .get(
-                &stored.keychain_service,
+                &stored.secret_service,
                 &format!("{}.refresh", stored.id.as_str()),
             )
             .expect("get refresh");
@@ -1393,7 +1387,7 @@ mod tests {
 
         assert_eq!(
             backend
-                .get(&stored.keychain_service, &stored.keychain_account)
+                .get(&stored.secret_service, &stored.secret_account)
                 .expect("access"),
             "new-access"
         );
@@ -1452,8 +1446,8 @@ mod tests {
             id: CredentialId::new("c1"),
             provider: ProviderId::new("p"),
             display_name: "p".into(),
-            keychain_service: "svc".into(),
-            keychain_account: "acct".into(),
+            secret_service: "svc".into(),
+            secret_account: "acct".into(),
             created_at: Timestamp::from_unix_millis(now_unix_millis()),
             expires_at: Some(Timestamp::from_unix_millis(now_unix_millis() + 60_000)),
             scopes: Vec::new(),
@@ -1753,7 +1747,7 @@ mod tests {
         assert_eq!(first.scopes, second.scopes);
         assert_eq!(
             backend
-                .get(&first.keychain_service, &first.keychain_account)
+                .get(&first.secret_service, &first.secret_account)
                 .expect("access"),
             "singleflight-access"
         );

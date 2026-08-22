@@ -20,7 +20,8 @@ use pawork_providers::{
     AnthropicConfig, AnthropicProvider, ApiKeyChannelConfig, ApiKeyChannelProvider, CatalogEntry,
     ModelRegistry, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
-use pawork_workspace::config::{api_key_env_name, PaworkConfig, ProviderConfig};
+use pawork_auth::locator::api_key_env_name;
+use pawork_workspace::config::{PaworkConfig, ProviderConfig};
 
 use crate::channels::{self, ChannelKind};
 use crate::protocol::{resolve_adapter_protocol, AdapterProtocol};
@@ -544,7 +545,7 @@ fn resolve_api_key_credential(
     id: &str,
 ) -> Result<(ResolvedCredential, crate::AuthSource), AppError> {
     match resolve_provider_credential(backend.as_ref(), id) {
-        CredentialSource::Keychain(stored) => {
+        CredentialSource::AuthFile(stored) => {
             let credential = ApiKeyCredential::from_stored(stored)?
                 .resolve(backend.as_ref())?;
             Ok((credential, crate::AuthSource::File))
@@ -694,7 +695,8 @@ mod tests {
     };
     use pawork_providers::ModelRegistry;
     use pawork_storage::session::SessionStore;
-    use pawork_workspace::config::{api_key_env_name, PaworkConfig, ProviderConfig};
+    use pawork_auth::locator::api_key_env_name;
+    use pawork_workspace::config::{PaworkConfig, ProviderConfig};
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1038,7 +1040,7 @@ mod tests {
         assert!(!message.contains("invalid-old-refresh"));
         assert_eq!(
             backend
-                .get(&stored.keychain_service, &stored.keychain_account)
+                .get(&stored.secret_service, &stored.secret_account)
                 .expect("access remains unchanged"),
             "invalid-old-access"
         );

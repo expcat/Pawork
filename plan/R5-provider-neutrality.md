@@ -22,10 +22,12 @@
 
 ## 3. 波次拆分
 
+> 波 B 实态回写(2026-08-22 三路核查后):§1 证据路径为 R1 前旧路径,实态 foundation/config → crates/workspace/src/config/env.rs、providers/auth → crates/auth;config env 唯一外部消费者是 app/provider_assembly.rs:23(auth 侧 api_key_env_name 需 pub 化为硬前置)。keychain_* 是代码/serde 词汇而非 auth.json 落盘键(落盘键 service 名 pawork.<provider> 等值不变),迁移 = StoredCredential serde 字段改名 + alias 读旧写新 + 迁移测试。mcp-auth.json 装配在 app/extensions.rs:333-338(ADR-039 决议装配留 app),本波只将其文件名与 pawork.mcp.* 前缀常量化进 auth locator 供消费;tools/mcp/oauth.rs 无前缀白名单逻辑(域隔离靠独立后端文件),白名单唯一位于 tools/mcp/security.rs。
+
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
 | A | provider_hints 契约(domain/storage:规则 + 透传 + 读兼容 + golden)∥ 通道注册表(providers/app/engine 守护测试) | storage、domain、providers/responses_reasoning.rs(生产者改新写,轨 a 单点)∥ providers/channels、app(channels/provider_assembly)、engine tests+dev-dep | 并行 ×2 |
-| B | credential locator 合一 + keychain 词汇迁移(auth 格式迁移测试先行)+ mcp-auth 域隔离规则收编 | auth、workspace(config env 删除)、tools(mcp security) | 串行(Secret 面单一 owner;安全回归全跑) |
+| B | credential locator 合一 + keychain 词汇迁移(auth 格式迁移测试先行)+ mcp-auth 域隔离规则收编 | auth(新 locator 模块 + 词汇改名)、workspace(config env 删除)、tools(mcp security/oauth 测试随迁)、app(provider_assembly/auth.rs 消费点 + extensions.rs mcp-auth 常量消费) | 串行(Secret 面单一 owner;安全回归全跑) |
 | C | K-10 能力收口 + CapabilityNegotiator 接线 + ReasoningProtector 持久化 | providers(anthropic/negotiate/reasoning)、app(装配注入)、storage(protected feature 闭包) | 串行 |
 
 ## 4. 验证
@@ -38,8 +40,8 @@
 
 ## 5. 退出标准
 
-- [ ] 存储层 provider 键名清单删除;hints 契约 + golden 生效
-- [ ] 通道注册表单点登记;engine 红线名单自动生成
-- [ ] 凭证解析单一事实源;keychain 词汇消失(存储与代码);mcp 域隔离收编
+- [x] 存储层 provider 键名清单删除;hints 契约 + golden 生效(波 A,2026-08-22)
+- [x] 通道注册表单点登记;engine 红线名单自动生成(波 A,2026-08-22)
+- [x] 凭证解析单一事实源;keychain 词汇消失(存储与代码);mcp 域隔离收编(波 B,2026-08-22;StoredCredential serde alias 读旧名兼容期登记 ROADMAP §4)
 - [ ] K-10 逐项有决议落地;唯一真 TODO 清除;ReasoningProtector 持久化(或显式改判)
 - [ ] 安全红线回归全绿;冒烟通过;v3_plan §3 更新

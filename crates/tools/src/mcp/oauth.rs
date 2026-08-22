@@ -208,7 +208,7 @@ mod tests {
         let cred = provider.credential().await;
         assert_eq!(
             backend
-                .get(&cred.keychain_service, &cred.keychain_account)
+                .get(&cred.secret_service, &cred.secret_account)
                 .unwrap(),
             "fresh-access"
         );
@@ -254,7 +254,7 @@ mod tests {
         let cred = provider.credential().await;
         assert_eq!(
             backend
-                .get(&cred.keychain_service, &cred.keychain_account)
+                .get(&cred.secret_service, &cred.secret_account)
                 .unwrap(),
             "rotated-access"
         );
@@ -326,8 +326,8 @@ mod tests {
             Vec::new(),
         )
         .expect("store");
-        let service = stored.keychain_service.clone();
-        let account = stored.keychain_account.clone();
+        let service = stored.secret_service.clone();
+        let account = stored.secret_account.clone();
         let provider = Arc::new(McpBearerProvider::new(
             stored,
             backend.clone(),

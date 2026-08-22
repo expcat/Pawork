@@ -7,9 +7,9 @@
 //! S9 起 Session / Run 有一等 API（[`Loader::with_session`] / [`Loader::with_run`]）。
 //! `discover` / `discover_from` 仍只自动加入 Builtin + Global 文件 + Workspace 文件；
 //! Profile 仍由 `profile =` 与 `profiles[]` 派生（插在 Global 与 Workspace 之间）。
-//! 配置 schema 不含 `api_key`；凭证只经 `PAWORK_API_KEY_<PROVIDER_ID>` 环境变量读取。
+//! 配置 schema 不含 `api_key`；凭证 env 名与 auth 文件定位统一由
+//! `pawork-auth` locator 定义，config 不再承载过渡实现。
 
-mod env;
 mod error;
 mod loader;
 mod merge;
@@ -18,7 +18,6 @@ mod schema;
 
 use serde::{Deserialize, Serialize};
 
-pub use env::{api_key_env_name, read_api_key_from_env};
 pub use error::{ConfigError, ConfigParseError};
 pub use loader::{
     ConfigSource, ConfigWarning, LoadedSource, LoadedSourceSpan, Loader, ResolvedConfig,

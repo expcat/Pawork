@@ -23,6 +23,7 @@ mod credential;
 mod default_credential;
 mod error;
 mod masked;
+pub mod locator;
 pub mod oauth;
 mod resolve;
 
@@ -31,7 +32,7 @@ pub use file_backend::FileBackend;
 pub use credential::{ApiKeyCredential, CredentialId, StoredCredential};
 pub use default_credential::{
     default_oauth_needs_refresh, delete_default_oauth_token, load_default_oauth_credential,
-    load_default_oauth_meta, oauth_service, refresh_default_oauth_credential_if_needed,
+    load_default_oauth_meta, refresh_default_oauth_credential_if_needed,
     store_default_oauth_token,
     update_default_oauth_token, DefaultOAuthMeta, OAUTH_DEFAULT_ACCOUNT,
 };
