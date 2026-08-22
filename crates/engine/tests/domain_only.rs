@@ -1,5 +1,6 @@
 //! 依赖红线断言(ADR-039 D2/D6):engine 是纯执行核,生产依赖中唯一的
-//! pawork-* 是 pawork-domain。dev-dependencies 允许 pawork-testkit。
+//! pawork-* 是 pawork-domain。dev-dependencies 允许 pawork-testkit 与
+//! pawork-providers(仅守护测试名单派生,R5 波 A)。
 
 #[test]
 fn engine_prod_deps_stay_domain_only() {

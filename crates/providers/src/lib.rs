@@ -73,7 +73,13 @@ pub use channels::xai::DEFAULT_BASE_URL as XAI_DEFAULT_BASE_URL;
     feature = "qwen-token-plan",
     feature = "deepseek"
 ))]
-pub use channels::{ApiKeyChannel, ApiKeyChannelConfig, ApiKeyChannelProvider};
+pub use channels::{ApiKeyChannelConfig, ApiKeyChannelProvider};
+
+// R5 波 A 轨 b：通道 preset 单点登记（纯数据 + 唯一 feature cfg 求值点）。
+pub use channels::registry::{
+    channel_preset, is_enabled, ChannelKind, ChannelPreset, OAuthFlow, OAuthPreset,
+    CHANNEL_REGISTRY,
+};
 
 #[cfg(feature = "anthropic")]
 pub use channels::anthropic;

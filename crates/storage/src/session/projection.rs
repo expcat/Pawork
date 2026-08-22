@@ -516,7 +516,7 @@ impl SessionStore {
                     rows
                 };
                 for (json, branch_id) in rows {
-                    let event: AgentEventEnvelope = serde_json::from_str(&json)?;
+                    let event = crate::session::event_store::decode_persisted_event(&json)?;
                     apply_projection(&transaction, &event, &branch_id)?;
                 }
                 let snapshot = load_snapshot(&transaction, &session_id, None)?;
@@ -602,7 +602,10 @@ fn load_snapshot(
             .filter(|(_, message_branch, sequence)| {
                 visible_on_lineage(&lineage, message_branch, *sequence)
             })
-            .map(|(json, _, _)| serde_json::from_str(&json).map_err(SessionStoreError::from))
+            .map(|(json, _, _)| {
+                crate::session::event_store::decode_persisted_json(&json)
+                    .map_err(SessionStoreError::from)
+            })
             .collect::<Result<Vec<_>, _>>()?
     };
     let runs = {

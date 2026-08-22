@@ -468,10 +468,11 @@ pub(crate) async fn assemble_provider(
             )
         }
         Some(ChannelKind::ApiKey) => {
-            let channel_enum = channels::api_key_channel(id)
+            let preset = channels::api_key_channel(id)
+                .filter(|preset| pawork_providers::is_enabled(*preset))
                 .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })?;
             let (credential, _source) = resolve_api_key_credential(backend, id)?;
-            let mut channel_config = ApiKeyChannelConfig::new(channel_enum);
+            let mut channel_config = ApiKeyChannelConfig::new(preset)?;
             channel_config.http.proxy = config.proxy_url.clone();
             if let Some(base_url) = config_base {
                 channel_config = channel_config.with_base_url(base_url);

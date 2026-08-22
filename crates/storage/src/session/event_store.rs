@@ -1,5 +1,6 @@
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, PrincipalId, SessionId, TenantId, Timestamp,
+    canonical_hint_key, is_provider_hint_key, AgentEvent, AgentEventEnvelope, PrincipalId,
+    SessionId, TenantId, Timestamp, MAX_HINT_VALUE_BYTES,
 };
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
@@ -9,17 +10,16 @@ use crate::session::{projection::apply_projection, SessionStore, SessionStoreErr
 pub const DEFAULT_BRANCH_ID: &str = "main";
 const REDACTED_SECRET: &str = "[REDACTED]";
 
-/// P15-7 安全边界：ReasoningItem 的 metadata 地图在 Event Store 边界采用精确
-/// allowlist，只允许 producer 已确认的非敏感 hint 键：
-///
-///   - `opaque_metadata`：`openai.responses.summary_entries`（结构化 summary 条目）
-///   - `continuation_metadata`：`anthropic_block_kind`（重建一致性校验的 block kind）
-///
-/// 未知键（含嵌套 `data` 等任意载荷）按原形状脱敏；普通 `data` 键（如
-/// TranscriptItem 的 serde content 键）不做全局脱敏。allowlist 是结构化精确
-/// 匹配，不按 Provider 名称分支；新增 hint 必须同步扩展对应常量。
-const OPAQUE_METADATA_ALLOWLIST: &[&str] = &["openai.responses.summary_entries"];
-const CONTINUATION_METADATA_ALLOWLIST: &[&str] = &["anthropic_block_kind"];
+/// P15-7 / R5-T6 安全边界：ReasoningItem 的 `opaque_metadata` /
+/// `continuation_metadata` 在 Event Store 边界统一走
+/// `provider_hints.<provider>.<key>` 命名空间规则（`pawork_domain::provider_hints`）。
+/// 命名空间内键须经 Secret 键扫描、大小上限与已知形状校验后才可保留；
+/// 命名空间外键（含嵌套 `data` 等任意载荷）按原形状脱敏；普通 `data` 键
+/// （如 TranscriptItem 的 serde content 键）不做全局脱敏。旧拼写
+/// （`responses.summary_entries`、`openai.responses.summary_entries`、
+/// `anthropic_block_kind`）读路径映射为规范键，写路径永不产出。
+const RESPONSES_SUMMARY_ENTRIES_SUFFIX: &str = ".responses.summary_entries";
+const BLOCK_KIND_SUFFIX: &str = ".block_kind";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppendReceipt {
@@ -303,7 +303,7 @@ impl SessionStore {
         }).await??;
         json_rows
             .into_iter()
-            .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
+            .map(|json| decode_persisted_event(&json).map_err(SessionStoreError::from))
             .collect()
     }
 
@@ -332,7 +332,7 @@ impl SessionStore {
         json_rows.reverse();
         json_rows
             .into_iter()
-            .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
+            .map(|json| decode_persisted_event(&json).map_err(SessionStoreError::from))
             .collect()
     }
 
@@ -368,16 +368,17 @@ impl SessionStore {
                      ORDER BY sequence ASC LIMIT ?4",
                 )?;
                 let rows = statement
-                    .query_map(params![session_id, branch_id, from_sequence, limit], |row| {
-                        row.get(0)
-                    })?
+                    .query_map(
+                        params![session_id, branch_id, from_sequence, limit],
+                        |row| row.get(0),
+                    )?
                     .collect();
                 rows
             })
             .await??;
         json_rows
             .into_iter()
-            .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
+            .map(|json| decode_persisted_event(&json).map_err(SessionStoreError::from))
             .collect()
     }
 }
@@ -426,8 +427,81 @@ fn redact_event_for_persistence(
     event: &AgentEventEnvelope,
 ) -> Result<AgentEventEnvelope, serde_json::Error> {
     let mut value = serde_json::to_value(event)?;
+    canonicalize_legacy_hint_keys(&mut value);
     redact_sensitive_json(&mut value);
     serde_json::from_value(value)
+}
+
+/// 解码落盘事件信封：整信封解码前先把 legacy hint 键映射为规范命名空间键，
+/// 旧库行读得出；写路径（[`redact_event_for_persistence`]）已保证新行永不
+/// 产出旧拼写。投影表行（messages 等）与非信封读取链统一走
+/// [`decode_persisted_json`]，不得直接 `serde_json::from_str` 绕过映射。
+pub(crate) fn decode_persisted_event(json: &str) -> Result<AgentEventEnvelope, serde_json::Error> {
+    decode_persisted_json(json)
+}
+
+/// 通用落盘 JSON 解码入口（信封与投影行共用）：先应用 legacy → canonical
+/// hint 键映射，再反序列化为目标类型；错误类型与 `serde_json::from_str`
+/// 一致，调用方的错误映射语义保持不变。
+pub(crate) fn decode_persisted_json<T: serde::de::DeserializeOwned>(
+    json: &str,
+) -> Result<T, serde_json::Error> {
+    // 快路径：载荷不含任何旧拼写 JSON 键时直接反序列化，跳过 Value 往返
+    // 与全树遍历。必须匹配带引号的完整旧键，避免规范键
+    // `provider_hints.openai.responses.summary_entries` 误中慢路径。
+    if !json.contains("\"responses.summary_entries\"")
+        && !json.contains("\"openai.responses.summary_entries\"")
+        && !json.contains("\"anthropic_block_kind\"")
+    {
+        return serde_json::from_str(json);
+    }
+    let mut value = serde_json::from_str::<Value>(json)?;
+    canonicalize_legacy_hint_keys(&mut value);
+    serde_json::from_value(value)
+}
+
+/// 在整棵事件 JSON 内定位 `opaque_metadata` / `continuation_metadata` 地图并
+/// 应用 legacy → canonical 键映射；只动这两个地图，其余载荷原样保留。
+/// 同一地图同时存在新旧拼写时规范键优先。
+fn canonicalize_legacy_hint_keys(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            for (key, child) in fields {
+                if key == "opaque_metadata" || key == "continuation_metadata" {
+                    canonicalize_hint_map(child);
+                } else {
+                    canonicalize_legacy_hint_keys(child);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                canonicalize_legacy_hint_keys(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn canonicalize_hint_map(value: &mut Value) {
+    let Value::Object(fields) = value else {
+        return;
+    };
+    let renamed: Vec<(String, Value)> = fields
+        .iter()
+        .filter_map(|(key, child)| {
+            let canonical = canonical_hint_key(key)?;
+            if fields.contains_key(canonical) {
+                None
+            } else {
+                Some((canonical.to_string(), child.clone()))
+            }
+        })
+        .collect();
+    for (canonical, child) in renamed {
+        fields.insert(canonical, child);
+    }
+    fields.retain(|key, _| canonical_hint_key(key).is_none());
 }
 
 fn redact_sensitive_json(value: &mut Value) {
@@ -435,12 +509,10 @@ fn redact_sensitive_json(value: &mut Value) {
         Value::Object(fields) => {
             for (key, child) in fields {
                 // ReasoningItem 的两个 metadata 地图是持久化安全边界：整体走
-                // 精确 allowlist，不再递归通用脱敏。这两个 JSON 键全 workspace
-                // 仅出现在 ReasoningItem 序列化中。
-                if key == "opaque_metadata" {
-                    sanitize_reasoning_metadata(child, OPAQUE_METADATA_ALLOWLIST);
-                } else if key == "continuation_metadata" {
-                    sanitize_reasoning_metadata(child, CONTINUATION_METADATA_ALLOWLIST);
+                // provider_hints 命名空间规则，不再递归通用脱敏。这两个 JSON
+                // 键全 workspace 仅出现在 ReasoningItem 序列化中。
+                if key == "opaque_metadata" || key == "continuation_metadata" {
+                    sanitize_reasoning_metadata(child);
                 } else if is_sensitive_key(key) || is_sensitive_container(key) {
                     redact_value_preserving_shape(child);
                 } else {
@@ -479,28 +551,37 @@ fn redact_value_preserving_shape(value: &mut Value) {
     }
 }
 
-/// 对 `opaque_metadata` / `continuation_metadata` 应用精确 allowlist：
-/// 非 allowlist 键（含嵌套 `data` 等载荷）整值按原形状脱敏；allowlist 键按已知
-/// 形状逐层校验，合法 hint 原样保留。非对象形态 fail-closed 整体脱敏。
-fn sanitize_reasoning_metadata(value: &mut Value, allowlist: &[&str]) {
+/// 对 `opaque_metadata` / `continuation_metadata` 应用 provider_hints 命名空间
+/// 规则（T6）：仅语法与大小合法的 `provider_hints.<provider>.<key>` 键可能
+/// 保留，且须通过既有 Secret 键扫描与单值大小上限；已知形状键按规范后缀校验
+/// （`.responses.summary_entries` 数组逐层校验、`.block_kind` 仅 string 放行）。
+/// 命名空间外键与违规键整值按原形状脱敏；非对象形态 fail-closed 整体脱敏。
+fn sanitize_reasoning_metadata(value: &mut Value) {
     let Value::Object(fields) = value else {
         redact_value_preserving_shape(value);
         return;
     };
     for (key, child) in fields {
         let key = key.as_str();
-        if !allowlist.contains(&key) {
+        if !is_provider_hint_key(key)
+            || is_sensitive_key(key)
+            || serialized_hint_value_exceeds_limit(child)
+        {
             redact_value_preserving_shape(child);
             continue;
         }
-        match key {
-            "openai.responses.summary_entries" => sanitize_summary_entries(child),
-            "anthropic_block_kind" if !child.is_string() => {
-                redact_value_preserving_shape(child);
-            }
-            _ => {}
+        if key.ends_with(RESPONSES_SUMMARY_ENTRIES_SUFFIX) {
+            sanitize_summary_entries(child);
+        } else if key.ends_with(BLOCK_KIND_SUFFIX) && !child.is_string() {
+            redact_value_preserving_shape(child);
         }
     }
+}
+
+fn serialized_hint_value_exceeds_limit(value: &Value) -> bool {
+    serde_json::to_vec(value)
+        .map(|encoded| encoded.len() > MAX_HINT_VALUE_BYTES)
+        .unwrap_or(true)
 }
 
 /// summary 条目 hint 只允许 `{"type": "summary_text", "text": <string>}` 形状；
@@ -708,7 +789,7 @@ mod tests {
                 usage: None,
             },
         )
-            .with_parent(EventId::from("does-not-exist"));
+        .with_parent(EventId::from("does-not-exist"));
         let error = store
             .append_event(DEFAULT_BRANCH_ID, dangling)
             .await
@@ -1163,7 +1244,7 @@ mod tests {
                                         serde_json::json!(encrypted_content),
                                     ),
                                     (
-                                        "openai.responses.summary_entries".into(),
+                                        pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT.into(),
                                         serde_json::json!([
                                             {
                                                 "type": "summary_text",
@@ -1182,7 +1263,10 @@ mod tests {
                                         "continuation_bytes".into(),
                                         serde_json::json!(continuation_bytes),
                                     ),
-                                    ("anthropic_block_kind".into(), serde_json::json!("thinking")),
+                                    (
+                                        pawork_domain::ANTHROPIC_BLOCK_KIND_HINT.into(),
+                                        serde_json::json!("thinking"),
+                                    ),
                                 ]),
                             })],
                             metadata: MessageMetadata::default(),
@@ -1225,12 +1309,13 @@ mod tests {
                 "raw reasoning credentials must be redacted"
             );
             assert!(
-                json.contains("openai.responses.summary_entries")
+                json.contains(pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT)
                     && json.contains("hint entry two"),
                 "summary entries hint must persist"
             );
             assert!(
-                json.contains("anthropic_block_kind") && json.contains("thinking"),
+                json.contains(pawork_domain::ANTHROPIC_BLOCK_KIND_HINT)
+                    && json.contains("thinking"),
                 "anthropic block kind hint must persist"
             );
         }
@@ -1252,7 +1337,7 @@ mod tests {
         assert_eq!(item.opaque_metadata["provider_kind"], REDACTED_SECRET);
         assert_eq!(item.opaque_metadata["encrypted_content"], REDACTED_SECRET);
         assert_eq!(
-            item.opaque_metadata["openai.responses.summary_entries"][1]["text"],
+            item.opaque_metadata[pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT][1]["text"],
             "hint entry two"
         );
         assert_eq!(item.continuation_metadata["signature"], REDACTED_SECRET);
@@ -1261,7 +1346,7 @@ mod tests {
             REDACTED_SECRET
         );
         assert_eq!(
-            item.continuation_metadata["anthropic_block_kind"],
+            item.continuation_metadata[pawork_domain::ANTHROPIC_BLOCK_KIND_HINT],
             "thinking"
         );
 
@@ -1301,11 +1386,12 @@ mod tests {
             REDACTED_SECRET
         );
         assert_eq!(
-            rebuilt_item.continuation_metadata["anthropic_block_kind"],
+            rebuilt_item.continuation_metadata[pawork_domain::ANTHROPIC_BLOCK_KIND_HINT],
             "thinking"
         );
         assert_eq!(
-            rebuilt_item.opaque_metadata["openai.responses.summary_entries"][0]["text"],
+            rebuilt_item.opaque_metadata[pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT][0]
+                ["text"],
             "hint entry one"
         );
 
@@ -1313,7 +1399,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reasoning_metadata_allowlist_redacts_nested_data_and_keeps_hints() {
+    async fn reasoning_metadata_namespace_redacts_nested_data_and_keeps_hints() {
         let (_dir, path) = temp_db();
         let (store, _) = SessionStore::open(&path).await.expect("store");
         let session = SessionId::from("session-reasoning-allowlist");
@@ -1348,7 +1434,7 @@ mod tests {
                                 ),
                                 opaque_metadata: BTreeMap::from([
                                     (
-                                        "openai.responses.summary_entries".into(),
+                                        pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT.into(),
                                         serde_json::json!([
                                             {
                                                 "type": "summary_text",
@@ -1367,7 +1453,10 @@ mod tests {
                                     ),
                                 ]),
                                 continuation_metadata: BTreeMap::from([
-                                    ("anthropic_block_kind".into(), serde_json::json!("thinking")),
+                                    (
+                                        pawork_domain::ANTHROPIC_BLOCK_KIND_HINT.into(),
+                                        serde_json::json!("thinking"),
+                                    ),
                                     ("signature".into(), serde_json::json!(signature)),
                                     ("data".into(), serde_json::json!({ "payload": nested_data })),
                                 ]),
@@ -1409,7 +1498,8 @@ mod tests {
         }
         for json in [&event_json, &projection_json] {
             assert!(
-                json.contains("anthropic_block_kind") && json.contains("thinking"),
+                json.contains(pawork_domain::ANTHROPIC_BLOCK_KIND_HINT)
+                    && json.contains("thinking"),
                 "anthropic block kind hint must persist"
             );
             assert!(
@@ -1434,14 +1524,14 @@ mod tests {
         let ContentPart::Reasoning(item) = &message.content[0] else {
             panic!("message must carry the reasoning part");
         };
-        let entries = &item.opaque_metadata["openai.responses.summary_entries"];
+        let entries = &item.opaque_metadata[pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT];
         assert_eq!(entries[0]["type"], "summary_text");
         assert_eq!(entries[0]["text"], "legal hint A");
         assert_eq!(entries[1]["text"], "legal hint B");
         assert_eq!(entries[1]["data"]["payload"], REDACTED_SECRET);
         assert_eq!(item.opaque_metadata["encrypted_content"], REDACTED_SECRET);
         assert_eq!(
-            item.continuation_metadata["anthropic_block_kind"],
+            item.continuation_metadata[pawork_domain::ANTHROPIC_BLOCK_KIND_HINT],
             "thinking"
         );
         assert_eq!(item.continuation_metadata["signature"], REDACTED_SECRET);
@@ -1460,7 +1550,7 @@ mod tests {
             panic!("projection must carry the reasoning part");
         };
         assert_eq!(
-            before_item.continuation_metadata["anthropic_block_kind"],
+            before_item.continuation_metadata[pawork_domain::ANTHROPIC_BLOCK_KIND_HINT],
             "thinking"
         );
         store
@@ -1480,12 +1570,354 @@ mod tests {
             panic!("rebuilt projection must carry the reasoning part");
         };
         assert_eq!(
-            rebuilt_item.continuation_metadata["anthropic_block_kind"],
+            rebuilt_item.continuation_metadata[pawork_domain::ANTHROPIC_BLOCK_KIND_HINT],
             "thinking"
         );
         assert_eq!(
-            rebuilt_item.opaque_metadata["openai.responses.summary_entries"][1]["text"],
+            rebuilt_item.opaque_metadata[pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT][1]
+                ["text"],
             "legal hint B"
+        );
+
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn legacy_hint_keys_never_persist_and_read_back_canonically() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-hints-legacy");
+        store
+            .create_session(&session, "hints-legacy", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+
+        fn reasoning(id: &str, opaque_key: &str, continuation_key: &str) -> ReasoningItem {
+            ReasoningItem {
+                id: ReasoningItemId::from(id),
+                summary: Some("checked constraints".into()),
+                protected_blob_ref: ProtectedBlobRef::from("protected-blob-legacy"),
+                opaque_metadata: BTreeMap::from([(
+                    opaque_key.to_string(),
+                    serde_json::json!([
+                        {"type": "summary_text", "text": "legacy hint entry"},
+                    ]),
+                )]),
+                continuation_metadata: BTreeMap::from([(
+                    continuation_key.to_string(),
+                    serde_json::json!("thinking"),
+                )]),
+            }
+        }
+        fn message(id: &str, item: ReasoningItem) -> Message {
+            Message {
+                id: MessageId::from(id),
+                role: MessageRole::Assistant,
+                content: vec![ContentPart::Reasoning(item)],
+                metadata: MessageMetadata::default(),
+            }
+        }
+
+        // 写路径：即使调用方仍携带旧拼写，落盘行也只出现规范命名空间键。
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::MessageCommitted {
+                        message: message(
+                            "message-hints-legacy-1",
+                            reasoning(
+                                "reasoning-legacy-1",
+                                "responses.summary_entries",
+                                "anthropic_block_kind",
+                            ),
+                        ),
+                    },
+                ),
+            )
+            .await
+            .expect("append legacy-spelled event");
+        let persisted: String = store
+            .database()
+            .call(|connection| {
+                connection.query_row(
+                    "SELECT payload_json FROM session_events WHERE event_id='event-1'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .expect("database actor")
+            .expect("persisted payload");
+        assert!(persisted.contains(pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT));
+        assert!(persisted.contains(pawork_domain::ANTHROPIC_BLOCK_KIND_HINT));
+        assert!(!persisted.contains("\"responses.summary_entries\""));
+        assert!(!persisted.contains("\"openai.responses.summary_entries\""));
+        assert!(!persisted.contains("\"anthropic_block_kind\""));
+
+        // 读路径：直接 INSERT 携带旧拼写的 payload，模拟 R5 前旧库行
+        // （session_events 由 append-only 触发器保护，禁止 UPDATE/DELETE）。
+        async fn insert_legacy_row(
+            store: &SessionStore,
+            session: &SessionId,
+            sequence: u64,
+            summary_legacy: &str,
+        ) {
+            let envelope = event(
+                session,
+                sequence,
+                AgentEvent::MessageCommitted {
+                    message: message(
+                        &format!("message-hints-legacy-{sequence}"),
+                        reasoning(
+                            &format!("reasoning-legacy-{sequence}"),
+                            pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT,
+                            pawork_domain::ANTHROPIC_BLOCK_KIND_HINT,
+                        ),
+                    ),
+                },
+            );
+            let mut payload = serde_json::to_string(&envelope).expect("serialize legacy row");
+            payload = payload.replace(
+                &format!(
+                    "\"{}\"",
+                    pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT
+                ),
+                &format!("\"{summary_legacy}\""),
+            );
+            payload = payload.replace(
+                &format!("\"{}\"", pawork_domain::ANTHROPIC_BLOCK_KIND_HINT),
+                "\"anthropic_block_kind\"",
+            );
+            let event_id = envelope.event_id.to_string();
+            let session_id = envelope.session_id.to_string();
+            let run_id = envelope.run_id.to_string();
+            let sequence_i64 = i64::try_from(envelope.sequence.value()).expect("sequence");
+            let timestamp = i64::try_from(envelope.timestamp.as_unix_millis()).expect("timestamp");
+            let event_type = event_type(&envelope.payload);
+            let schema_version = i64::from(envelope.schema_version);
+            store
+                .database()
+                .call(move |connection| {
+                    connection.execute(
+                        "INSERT INTO session_events(event_id, session_id, branch_id, run_id, parent_event_id, sequence, event_type, schema_version, timestamp_ms, payload_json) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, ?9)",
+                        params![event_id, session_id, DEFAULT_BRANCH_ID, run_id, sequence_i64, event_type, schema_version, timestamp, payload],
+                    )
+                })
+                .await
+                .expect("database actor")
+                .expect("insert legacy row");
+        }
+        insert_legacy_row(&store, &session, 2, "responses.summary_entries").await;
+        insert_legacy_row(&store, &session, 3, "openai.responses.summary_entries").await;
+
+        let replayed = store.replay_events(&session, 1, 10).await.expect("replay");
+        assert_eq!(replayed.len(), 3);
+        for envelope in &replayed {
+            let AgentEvent::MessageCommitted { message } = &envelope.payload else {
+                panic!("replayed event must keep its schema");
+            };
+            let ContentPart::Reasoning(item) = &message.content[0] else {
+                panic!("message must carry the reasoning part");
+            };
+            assert!(item
+                .opaque_metadata
+                .contains_key(pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT));
+            assert!(!item
+                .opaque_metadata
+                .contains_key("responses.summary_entries"));
+            assert!(!item
+                .opaque_metadata
+                .contains_key("openai.responses.summary_entries"));
+            assert_eq!(
+                item.opaque_metadata[pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT][0]
+                    ["text"],
+                "legacy hint entry"
+            );
+            assert_eq!(
+                item.continuation_metadata[pawork_domain::ANTHROPIC_BLOCK_KIND_HINT],
+                serde_json::json!("thinking")
+            );
+        }
+
+        // rebuild_projection 与 events_on_lineage 同样走共享映射入口，
+        // 旧库行经任何读取链都读回规范命名空间键。
+        let snapshot = store.rebuild_projection(&session).await.expect("rebuild");
+        assert_eq!(snapshot.messages.len(), 3);
+        for message in &snapshot.messages {
+            let ContentPart::Reasoning(item) = &message.content[0] else {
+                panic!("rebuilt message must carry the reasoning part");
+            };
+            assert!(item
+                .opaque_metadata
+                .contains_key(pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT));
+            assert!(!item
+                .opaque_metadata
+                .contains_key("responses.summary_entries"));
+            assert!(!item
+                .opaque_metadata
+                .contains_key("openai.responses.summary_entries"));
+            assert_eq!(
+                item.continuation_metadata[pawork_domain::ANTHROPIC_BLOCK_KIND_HINT],
+                serde_json::json!("thinking")
+            );
+        }
+
+        let lineage = store
+            .events_on_lineage(&session, DEFAULT_BRANCH_ID, 1, 10)
+            .await
+            .expect("events on lineage");
+        assert_eq!(lineage.len(), 3);
+        for envelope in &lineage {
+            let AgentEvent::MessageCommitted { message } = &envelope.payload else {
+                panic!("lineage event must keep its schema");
+            };
+            let ContentPart::Reasoning(item) = &message.content[0] else {
+                panic!("lineage message must carry the reasoning part");
+            };
+            assert!(item
+                .opaque_metadata
+                .contains_key(pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT));
+            assert!(!item
+                .opaque_metadata
+                .contains_key("responses.summary_entries"));
+            assert!(!item
+                .opaque_metadata
+                .contains_key("openai.responses.summary_entries"));
+            assert_eq!(
+                item.continuation_metadata[pawork_domain::ANTHROPIC_BLOCK_KIND_HINT],
+                serde_json::json!("thinking")
+            );
+        }
+
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[test]
+    fn decode_fast_path_ignores_canonical_hint_substring() {
+        let canonical = format!(
+            r#"{{"k":"{}"}}"#,
+            pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT
+        );
+        let decoded: serde_json::Value =
+            decode_persisted_json(&canonical).expect("canonical hint must decode on fast path");
+        assert_eq!(
+            decoded["k"],
+            pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT
+        );
+
+        let legacy = r#"{"opaque_metadata":{"responses.summary_entries":[{"type":"summary_text","text":"legacy"}]}}"#;
+        let mapped: serde_json::Value =
+            decode_persisted_json(legacy).expect("legacy hint must map");
+        assert!(
+            mapped["opaque_metadata"].get(pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT).is_some(),
+            "{mapped:?}"
+        );
+        assert!(mapped["opaque_metadata"].get("responses.summary_entries").is_none());
+    }
+
+    #[tokio::test]
+    async fn provider_hints_namespace_enforces_secret_size_and_shape_limits() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-hints-limits");
+        store
+            .create_session(&session, "hints-limits", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+
+        let secret = "fake-namespaced-api-key-must-not-reach-sqlite";
+        let oversized_value = "x".repeat(pawork_domain::MAX_HINT_VALUE_BYTES);
+        let boundary_value = "y".repeat(pawork_domain::MAX_HINT_VALUE_BYTES - 2);
+        let oversized_key = format!(
+            "provider_hints.openai.{}",
+            "a".repeat(pawork_domain::MAX_HINT_KEY_BYTES)
+        );
+        assert!(oversized_key.len() > pawork_domain::MAX_HINT_KEY_BYTES);
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::MessageCommitted {
+                        message: Message {
+                            id: MessageId::from("message-hints-limits"),
+                            role: MessageRole::Assistant,
+                            content: vec![ContentPart::Reasoning(ReasoningItem {
+                                id: ReasoningItemId::from("reasoning-limits-1"),
+                                summary: Some("checked constraints".into()),
+                                protected_blob_ref: ProtectedBlobRef::from("protected-blob-limits"),
+                                opaque_metadata: BTreeMap::from([
+                                    (
+                                        "provider_hints.openai.api_key".into(),
+                                        serde_json::json!(secret),
+                                    ),
+                                    (
+                                        "provider_hints.anthropic.usage_tokens".into(),
+                                        serde_json::json!(42),
+                                    ),
+                                    (
+                                        oversized_key.clone(),
+                                        serde_json::json!("oversized key hint"),
+                                    ),
+                                    (
+                                        "provider_hints.openai.large".into(),
+                                        serde_json::json!(oversized_value),
+                                    ),
+                                    (
+                                        "provider_hints.openai.boundary".into(),
+                                        serde_json::json!(boundary_value),
+                                    ),
+                                    (
+                                        "provider_hints.openai.note".into(),
+                                        serde_json::json!("kept"),
+                                    ),
+                                ]),
+                                continuation_metadata: BTreeMap::from([(
+                                    "provider_hints.anthropic.block_kind".into(),
+                                    serde_json::json!(7),
+                                )]),
+                            })],
+                            metadata: MessageMetadata::default(),
+                        },
+                    },
+                ),
+            )
+            .await
+            .expect("append reasoning message");
+
+        let replayed = store.replay_events(&session, 1, 10).await.expect("replay");
+        assert_eq!(replayed.len(), 1);
+        let AgentEvent::MessageCommitted { message } = &replayed[0].payload else {
+            panic!("replayed event must keep its schema");
+        };
+        let ContentPart::Reasoning(item) = &message.content[0] else {
+            panic!("message must carry the reasoning part");
+        };
+        assert_eq!(
+            item.opaque_metadata["provider_hints.openai.api_key"],
+            REDACTED_SECRET
+        );
+        assert_eq!(
+            item.opaque_metadata["provider_hints.anthropic.usage_tokens"],
+            42
+        );
+        assert_eq!(item.opaque_metadata[&oversized_key], REDACTED_SECRET);
+        assert_eq!(
+            item.opaque_metadata["provider_hints.openai.large"],
+            REDACTED_SECRET
+        );
+        assert_eq!(
+            item.opaque_metadata["provider_hints.openai.boundary"],
+            serde_json::json!(boundary_value)
+        );
+        assert_eq!(item.opaque_metadata["provider_hints.openai.note"], "kept");
+        assert_eq!(
+            item.continuation_metadata["provider_hints.anthropic.block_kind"],
+            0
         );
 
         store.shutdown().await.expect("shutdown");
@@ -1561,7 +1993,9 @@ mod tests {
                 event(
                     &session,
                     3,
-                    AgentEvent::CompactionStarted { source_event_count: 3 },
+                    AgentEvent::CompactionStarted {
+                        source_event_count: 3,
+                    },
                 ),
             )
             .await

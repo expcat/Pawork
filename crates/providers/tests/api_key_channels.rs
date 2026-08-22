@@ -1,4 +1,5 @@
-//! 首发 API-key 渠道契约：默认 id/URL、凭证 fail-closed、Bearer 请求路径。
+//! 首发 API-key 渠道契约：注册表行驱动、默认 id/URL、凭证 fail-closed、
+//! Bearer 请求路径。
 //!
 //! 全程 wiremock，不接触真实网络与 Key。本文件依赖 pawork-providers 导出
 //! api_key 类型；在 lib.rs 接线前本测试无法编译。
@@ -16,8 +17,11 @@ use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
     StopReason, TextContent,
 };
+use pawork_providers::channels::registry::{
+    channel_preset, is_enabled, ChannelKind, ChannelPreset, CHANNEL_REGISTRY,
+};
 use pawork_providers::net::http::HttpClientConfig;
-use pawork_providers::{ApiKeyChannel, ApiKeyChannelConfig, ApiKeyChannelProvider};
+use pawork_providers::{ApiKeyChannelConfig, ApiKeyChannelProvider};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -67,8 +71,16 @@ fn api_key() -> ResolvedCredential {
     ResolvedCredential::new(CredentialKind::ApiKey, "sk-channel-test")
 }
 
-fn config_for(channel: ApiKeyChannel, base_url: impl Into<String>) -> ApiKeyChannelConfig {
-    ApiKeyChannelConfig::new(channel)
+fn api_key_presets() -> Vec<&'static ChannelPreset> {
+    CHANNEL_REGISTRY
+        .iter()
+        .filter(|preset| preset.kind == ChannelKind::ApiKey)
+        .collect()
+}
+
+fn config_for(preset: &'static ChannelPreset, base_url: impl Into<String>) -> ApiKeyChannelConfig {
+    ApiKeyChannelConfig::new(preset)
+        .expect("api-key preset config")
         .with_base_url(base_url)
         .with_http(HttpClientConfig::builder().disable_system_proxy().build())
 }
@@ -88,35 +100,32 @@ fn sse_body(chunks: &[&str]) -> String {
 fn default_ids_and_base_urls_cover_all_channels() {
     let expected = [
         (
-            ApiKeyChannel::GlmCoding,
             "glm-coding",
             "https://api.z.ai/api/coding/paas/v4",
         ),
         (
-            ApiKeyChannel::OpenCodeGo,
             "opencode-go",
             "https://opencode.ai/zen/go/v1",
         ),
         (
-            ApiKeyChannel::QwenTokenPlan,
             "qwen-token-plan",
             "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         ),
         (
-            ApiKeyChannel::DeepSeek,
             "deepseek",
             "https://api.deepseek.com",
         ),
     ];
 
-    assert_eq!(ApiKeyChannel::ALL.len(), expected.len());
-    for (channel, id, url) in expected {
-        assert_eq!(channel.as_str(), id);
-        assert_eq!(channel.default_base_url(), url);
-        assert_eq!(channel.provider_id().as_str(), id);
+    let presets = api_key_presets();
+    assert_eq!(presets.len(), expected.len());
+    for (preset, (id, url)) in presets.into_iter().zip(expected) {
+        assert_eq!(preset.id, id);
+        assert_eq!(preset.default_base_url, url);
+        assert!(is_enabled(preset), "{id} feature must be enabled here");
 
-        let config = ApiKeyChannelConfig::new(channel);
-        assert_eq!(config.channel, channel);
+        let config = ApiKeyChannelConfig::new(preset).expect("config");
+        assert_eq!(config.preset.id, id);
         assert_eq!(config.base_url, url);
 
         let provider = ApiKeyChannelProvider::new(config, Some(api_key())).expect("construct");
@@ -125,15 +134,25 @@ fn default_ids_and_base_urls_cover_all_channels() {
 }
 
 #[test]
+fn non_api_key_preset_is_fail_closed() {
+    let chatgpt = channel_preset("chatgpt").expect("chatgpt row");
+    assert_ne!(chatgpt.kind, ChannelKind::ApiKey);
+    let error = ApiKeyChannelConfig::new(chatgpt)
+        .err()
+        .expect("non-api-key preset must fail");
+    assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+}
+
+#[test]
 fn missing_or_wrong_credential_is_fail_closed_for_all_channels() {
-    for channel in ApiKeyChannel::ALL.iter().copied() {
-        let missing = ApiKeyChannelProvider::new(ApiKeyChannelConfig::new(channel), None)
+    for preset in api_key_presets() {
+        let missing = ApiKeyChannelProvider::new(ApiKeyChannelConfig::new(preset).expect("config"), None)
             .err()
             .expect("missing credential must fail");
         assert_eq!(missing.kind, ProviderErrorKind::Authentication);
 
         let empty = ApiKeyChannelProvider::new(
-            ApiKeyChannelConfig::new(channel),
+            ApiKeyChannelConfig::new(preset).expect("config"),
             Some(ResolvedCredential::new(CredentialKind::ApiKey, "  ")),
         )
         .err()
@@ -142,7 +161,7 @@ fn missing_or_wrong_credential_is_fail_closed_for_all_channels() {
 
         for kind in [CredentialKind::OAuthBearer, CredentialKind::SessionToken] {
             let error = ApiKeyChannelProvider::new(
-                ApiKeyChannelConfig::new(channel),
+                ApiKeyChannelConfig::new(preset).expect("config"),
                 Some(ResolvedCredential::new(kind, "not-an-api-key")),
             )
             .err()
@@ -154,8 +173,8 @@ fn missing_or_wrong_credential_is_fail_closed_for_all_channels() {
 
 #[test]
 fn fixed_credential_headers_are_rejected_for_all_channels() {
-    for channel in ApiKeyChannel::ALL.iter().copied() {
-        let mut config = ApiKeyChannelConfig::new(channel);
+    for preset in api_key_presets() {
+        let mut config = ApiKeyChannelConfig::new(preset).expect("config");
         config
             .http
             .extra_headers
@@ -169,7 +188,7 @@ fn fixed_credential_headers_are_rejected_for_all_channels() {
 
 #[tokio::test]
 async fn bearer_chat_path_covers_all_channels() {
-    for channel in ApiKeyChannel::ALL.iter().copied() {
+    for preset in api_key_presets() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
@@ -187,9 +206,9 @@ async fn bearer_chat_path_covers_all_channels() {
             .await;
 
         let provider =
-            ApiKeyChannelProvider::new(config_for(channel, server.uri()), Some(api_key()))
+            ApiKeyChannelProvider::new(config_for(preset, server.uri()), Some(api_key()))
                 .expect("construct");
-        assert_eq!(provider.id().as_str(), channel.as_str());
+        assert_eq!(provider.id().as_str(), preset.id);
 
         let sink = RecordingProviderSink::default();
         let summary = provider
@@ -218,7 +237,8 @@ async fn declared_model_transport_selects_responses_without_channel_branching() 
         .mount(&server)
         .await;
 
-    let config = config_for(ApiKeyChannel::OpenCodeGo, server.uri())
+    let opencode_go = channel_preset("opencode-go").expect("opencode-go row");
+    let config = config_for(opencode_go, server.uri())
         .with_model_transport("test-model", ModelTransport::Responses);
     let provider = ApiKeyChannelProvider::new(config, Some(api_key())).unwrap();
     provider

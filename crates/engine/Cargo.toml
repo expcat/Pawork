@@ -19,3 +19,5 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 futures.workspace = true
 pawork-testkit = { path = "../testkit" }
+# R5 波 A 轨 b：守护测试名单从 providers CHANNEL_REGISTRY 派生（仅 dev）。
+pawork-providers = { path = "../providers" }

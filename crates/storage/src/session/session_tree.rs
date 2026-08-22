@@ -271,7 +271,10 @@ impl SessionStore {
             .await??;
         json_rows
             .into_iter()
-            .map(|json| serde_json::from_str(&json).map_err(SessionStoreError::from))
+            .map(|json| {
+                crate::session::event_store::decode_persisted_event(&json)
+                    .map_err(SessionStoreError::from)
+            })
             .collect()
     }
 }

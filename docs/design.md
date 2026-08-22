@@ -34,7 +34,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 | `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、auth | 八工具 + scheduler + `mcp/`（R1 波 C 并入；rmcp 隔离断言为模块级测试） |
 | `pawork-workspace` | `crates/workspace` | → domain、policy | `service/`+`path/`+`file_index/`、`resources/`、`config/`（六层矩阵）、`import/`（原 compat 五来源，R1 波 B 并入） |
 | `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（PWB1+checkpoint/protected，R1 波 B 三合）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
-| `pawork-providers` | `crates/providers` | → domain | `net/`（http/sse/retry）+ `registry/`/`pricing/`/`usage/`/`negotiate/`/`reasoning/`（原 provider-core）+ `channels/`（六通道，feature 门控）（R1 波 B 三合）；core 不依赖 net 降级为模块纪律 + 源扫描测试 |
+| `pawork-providers` | `crates/providers` | → domain | `net/`（http/sse/retry）+ `registry/`/`pricing/`/`usage/`/`negotiate/`/`reasoning/`（原 provider-core）+ `channels/`（六通道，feature 门控；R5 波 A 起通道登记单点为 `channels/registry.rs` `CHANNEL_REGISTRY`，app 侧为 facade）（R1 波 B 三合）；core 不依赖 net 降级为模块纪律 + 源扫描测试 |
 | `pawork-auth` | `crates/auth` | → domain | Secret 后端/OAuth/脱敏/解析链（Secret 审计边界） |
 | `pawork-git` | `crates/git` | → domain、exec | Diff/Status/GitService/GitRunner/HunkStage/worktree/merge（R0 已裁剪） |
 | `pawork-engine` | `crates/engine` | → domain（唯一 pawork-* 生产依赖，`tests/domain_only.rs` 断言护航） | tool_loop/session_turn/context/cancel/appender |

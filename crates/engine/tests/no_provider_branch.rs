@@ -2,28 +2,24 @@
 //!
 //! Agent 核心不得认识任何具体 Provider 名字。本测试扫描本 crate 的 `src/`，
 //! 一旦出现已知 provider 名串（用于比较 / 特例判断）即失败，防止未来回归。
+//! 名单自 R5 波 A 起从 providers CHANNEL_REGISTRY 派生（首发通道 id）并叠加
+//! 固化基线别名；新增通道自动进入守护名单，无需手改本文件（S12-CR06-10 根治）。
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 已知 provider 名（小写）。Agent 核心源码不应出现这些字面量。
-///
-/// 与 S6 首发六通道对齐（chatgpt / xai / glm-coding / opencode-go /
-/// qwen-token-plan / deepseek），并保留 openai / anthropic 基线与常见别名。
-const FORBIDDEN_PROVIDER_NAMES: &[&str] = &[
+use pawork_providers::CHANNEL_REGISTRY;
+
+/// 固化基线别名（非首发通道的常见 provider 名与短别名；与通道注册表无关，
+/// 保持 R5 波 A 前手写名单的别名强度，审查 P2 确认不缩减）。
+const BASELINE_PROVIDER_ALIASES: &[&str] = &[
     "openai",
     "anthropic",
     "claude",
-    "chatgpt",
-    "xai",
     "grok",
     "glm",
-    "glm-coding",
     "opencode",
-    "opencode-go",
     "qwen",
-    "qwen-token-plan",
-    "deepseek",
     "google",
     "gemini",
     "bedrock",
@@ -32,6 +28,34 @@ const FORBIDDEN_PROVIDER_NAMES: &[&str] = &[
     "ollama",
     "vllm",
 ];
+
+/// 守护名单：CHANNEL_REGISTRY 派生（首发通道 id）+ 固化基线别名（小写）。
+fn forbidden_provider_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = CHANNEL_REGISTRY.iter().map(|preset| preset.id).collect();
+    names.extend_from_slice(BASELINE_PROVIDER_ALIASES);
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+#[test]
+fn guard_list_derives_from_channel_registry() {
+    let names = forbidden_provider_names();
+    assert!(!names.is_empty(), "registry-derived guard list must not be empty");
+    for expected in [
+        "chatgpt",
+        "xai",
+        "glm-coding",
+        "opencode-go",
+        "qwen-token-plan",
+        "deepseek",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "guard list missing first-party channel {expected}"
+        );
+    }
+}
 
 /// 递归收集目录下所有 `.rs` 文件（目录缺失返回空）。
 fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
@@ -69,6 +93,7 @@ fn agent_core_source_has_no_provider_name_branches() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src = manifest_dir.join("src");
     let mut offenders: Vec<String> = Vec::new();
+    let forbidden = forbidden_provider_names();
 
     for path in collect_rs_files(&src) {
         let rel = path
@@ -77,7 +102,7 @@ fn agent_core_source_has_no_provider_name_branches() {
             .to_string_lossy()
             .into_owned();
         let content = fs::read_to_string(&path).unwrap_or_default();
-        for name in find_forbidden(&content, FORBIDDEN_PROVIDER_NAMES) {
+        for name in find_forbidden(&content, &forbidden) {
             offenders.push(format!("{rel}: 出现 provider 名 \"{name}\""));
         }
     }

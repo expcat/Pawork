@@ -65,7 +65,7 @@ impl AppCore {
     /// 六通道 + config 自定义 provider 的凭证状态（无网络、无明文）。
     pub fn auth_status(&self) -> Vec<AuthChannelStatus> {
         let mut rows = Vec::new();
-        for channel in channels::FIRST_PARTY_CHANNELS {
+        for channel in channels::FIRST_PARTY_CHANNELS.iter() {
             let kind = match channel.kind {
                 ChannelKind::ApiKey => "api-key",
                 ChannelKind::ChatGptOAuth | ChannelKind::XaiOAuth => "oauth",

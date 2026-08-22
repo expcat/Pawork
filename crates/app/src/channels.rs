@@ -1,140 +1,48 @@
-//! 首发通道装配表（S6 波 C）：装配层的数据驱动 Provider 选择。
+//! 首发通道装配 facade（S6 波 C → R5 波 A 轨 b）：转发 providers 单点注册表。
 //!
 //! 这是 host 装配代码，不是 Engine 分支——Engine 仍只消费
-//! `ModelProvider` trait；本表只回答「这个 provider id 用哪个 adapter、
+//! ModelProvider trait；本表只回答「这个 provider id 用哪个 adapter、
 //! 哪种凭证 kind、默认 endpoint 是什么」。默认 endpoint 可被 config 的
-//! `[[providers]] base_url` 覆盖；OAuth 端点可被 `[oauth.<id>]` 覆盖。
+//! [[providers]] base_url 覆盖；OAuth 端点可被 [oauth.<id>] 覆盖。
+//!
+//! 通道数据自 R5 波 A 起单点登记在 pawork-providers 的 CHANNEL_REGISTRY；
+//! 本模块保留 app 公开名（FIRST_PARTY_CHANNELS 等）与 config 叠加逻辑
+//! （oauth_override 依赖 workspace config，providers 不得反向依赖）。
 
+use std::sync::LazyLock;
 
-/// 首发通道凭证与 adapter 形态。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ChannelKind {
-    /// 四条 API-key 通道（复用 OpenAI-compatible transport，可逐模型切 Responses）。
-    ApiKey,
-    /// ChatGPT OAuth（Responses transport）。
-    ChatGptOAuth,
-    /// xAI Grok OAuth（按模型 capability 选 Chat/Responses）。
-    XaiOAuth,
-}
+pub use pawork_providers::channels::registry::{ChannelKind, OAuthFlow, OAuthPreset};
 
-/// OAuth 授权流形态（预设与 config `[oauth.<id>]` 覆盖共用）。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OAuthFlow {
-    /// Authorization Code + PKCE（浏览器授权 + 本地回调；ChatGPT）。
-    Pkce {
-        auth_url: String,
-        redirect_uri: String,
-        /// 授权 URL 附加参数（如 ChatGPT 的 `codex_cli_simplified_flow`）。
-        extra_auth_params: Vec<(String, String)>,
-    },
-    /// Device Flow（RFC 8628；xAI）。
-    Device {
-        device_auth_url: String,
-    },
-}
+use pawork_providers::channels::registry::{channel_preset, ChannelPreset};
 
-/// OAuth 端点预设。ChatGPT 使用 Codex 公开 client 参数；xAI 使用 auth.x.ai
-/// 公开 Device Flow 端点与 grok-cli 公共 client。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OAuthPreset {
-    pub client_id: String,
-    pub token_url: String,
-    pub scopes: Vec<String>,
-    pub flow: OAuthFlow,
-}
-
-/// 一条首发通道的装配元数据。
+/// 一条首发通道的装配元数据（由 providers CHANNEL_REGISTRY 派生）。
 #[derive(Clone, Debug)]
 pub struct FirstPartyChannel {
     pub id: &'static str,
     pub kind: ChannelKind,
     pub default_base_url: &'static str,
+    preset: &'static ChannelPreset,
 }
 
 impl FirstPartyChannel {
     pub fn oauth_preset(&self) -> Option<OAuthPreset> {
-        match self.kind {
-            ChannelKind::ChatGptOAuth => Some(OAuthPreset {
-                client_id: "app_EMoamEEZ73f0CkXaXp7hrann".into(),
-                token_url: "https://auth.openai.com/oauth/token".into(),
-                scopes: vec![
-                    "openid".into(),
-                    "profile".into(),
-                    "email".into(),
-                    "offline_access".into(),
-                    // 上游 Codex CLI 同款 scope：connectors 权限是后端把
-                    // 会话识别为 Codex 会话的一部分，缺失时 /models 返回空。
-                    "api.connectors.read".into(),
-                    "api.connectors.invoke".into(),
-                ],
-                flow: OAuthFlow::Pkce {
-                    auth_url: "https://auth.openai.com/oauth/authorize".into(),
-                    // redirect URI 必须与 Codex CLI 的 Hydra allow-list 精确匹配：
-                    // host 固定 localhost、path 固定 /auth/callback（端口 1455）。
-                    redirect_uri: "http://localhost:1455/auth/callback".into(),
-                    extra_auth_params: vec![
-                        ("id_token_add_organizations".into(), "true".into()),
-                        ("codex_cli_simplified_flow".into(), "true".into()),
-                    ],
-                },
-            }),
-            // xAI Device Flow（RFC 8628）：端点与公共 client 与上游 grok CLI、
-            // cc-switch 等第三方实现一致；仍可用 config `[oauth.xai]` 覆盖。
-            ChannelKind::XaiOAuth => Some(OAuthPreset {
-                client_id: "b1a00492-073a-47ea-816f-4c329264a828".into(),
-                token_url: "https://auth.x.ai/oauth2/token".into(),
-                scopes: vec![
-                    "openid".into(),
-                    "profile".into(),
-                    "email".into(),
-                    "offline_access".into(),
-                    // grok-cli:access 是订阅级 CLI 推理访问；api:access 覆盖
-                    // api.x.ai REST 调用（xAI 官方文档的 Agentic CLI scope 组）。
-                    "grok-cli:access".into(),
-                    "api:access".into(),
-                ],
-                flow: OAuthFlow::Device {
-                    device_auth_url: "https://auth.x.ai/oauth2/device/code".into(),
-                },
-            }),
-            ChannelKind::ApiKey => None,
-        }
+        self.preset.oauth_preset()
     }
 }
 
-/// 六条首发通道（顺序即 `pawork models` / `auth list` 展示顺序）。
-pub const FIRST_PARTY_CHANNELS: &[FirstPartyChannel] = &[
-    FirstPartyChannel {
-        id: "chatgpt",
-        kind: ChannelKind::ChatGptOAuth,
-        default_base_url: "https://chatgpt.com/backend-api/codex",
-    },
-    FirstPartyChannel {
-        id: "xai",
-        kind: ChannelKind::XaiOAuth,
-        default_base_url: "https://api.x.ai/v1",
-    },
-    FirstPartyChannel {
-        id: "glm-coding",
-        kind: ChannelKind::ApiKey,
-        default_base_url: "https://api.z.ai/api/coding/paas/v4",
-    },
-    FirstPartyChannel {
-        id: "opencode-go",
-        kind: ChannelKind::ApiKey,
-        default_base_url: "https://opencode.ai/zen/go/v1",
-    },
-    FirstPartyChannel {
-        id: "qwen-token-plan",
-        kind: ChannelKind::ApiKey,
-        default_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-    },
-    FirstPartyChannel {
-        id: "deepseek",
-        kind: ChannelKind::ApiKey,
-        default_base_url: "https://api.deepseek.com",
-    },
-];
+/// 六条首发通道（顺序即 pawork models / auth list 展示顺序；
+/// 与 providers CHANNEL_REGISTRY 单点同源派生）。
+pub static FIRST_PARTY_CHANNELS: LazyLock<Vec<FirstPartyChannel>> = LazyLock::new(|| {
+    pawork_providers::CHANNEL_REGISTRY
+        .iter()
+        .map(|preset| FirstPartyChannel {
+            id: preset.id,
+            kind: preset.kind,
+            default_base_url: preset.default_base_url,
+            preset,
+        })
+        .collect()
+});
 
 pub fn first_party_channel(id: &str) -> Option<&'static FirstPartyChannel> {
     FIRST_PARTY_CHANNELS.iter().find(|channel| channel.id == id)
@@ -144,20 +52,16 @@ pub fn is_first_party(id: &str) -> bool {
     first_party_channel(id).is_some()
 }
 
-/// 该 id 对应的 ApiKeyChannel 枚举（仅在对应 feature 启用时可用）。
-pub fn api_key_channel(id: &str) -> Option<pawork_providers::ApiKeyChannel> {
-    match id {
-        "glm-coding" => Some(pawork_providers::ApiKeyChannel::GlmCoding),
-        "opencode-go" => Some(pawork_providers::ApiKeyChannel::OpenCodeGo),
-        "qwen-token-plan" => Some(pawork_providers::ApiKeyChannel::QwenTokenPlan),
-        "deepseek" => Some(pawork_providers::ApiKeyChannel::DeepSeek),
-        _ => None,
-    }
+/// 该 id 对应的 API-key 通道 preset（仅注册表内 kind == ApiKey 的行；
+/// feature 门由装配层用 is_enabled fail-closed 判定）。
+pub fn api_key_channel(id: &str) -> Option<&'static ChannelPreset> {
+    let preset = channel_preset(id)?;
+    (preset.kind == ChannelKind::ApiKey).then_some(preset)
 }
 
-/// config `[oauth.<id>]` 覆盖预设；返回 None 表示「必须配置但缺失」或 id 非OAuth。
+/// config [oauth.<id>] 覆盖预设；返回 None 表示「必须配置但缺失」或 id 非OAuth。
 ///
-/// Device Flow 只需 `device_auth_url`；PKCE 需要 `auth_url` + `redirect_uri`。
+/// Device Flow 只需 device_auth_url；PKCE 需要 auth_url + redirect_uri。
 /// 两者同时提供时 device 优先（Device Flow 无回调端口要求）。
 pub fn oauth_override(config: &pawork_workspace::config::PaworkConfig, id: &str) -> Option<OAuthPreset> {
     let table = config.extra.get("oauth")?.get(id)?;
@@ -198,6 +102,26 @@ mod tests {
     use super::*;
     use pawork_workspace::config::PaworkConfig;
     use serde_json::json;
+
+    #[test]
+    fn first_party_channels_derive_from_provider_registry() {
+        let ids: Vec<&str> = FIRST_PARTY_CHANNELS.iter().map(|channel| channel.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "chatgpt",
+                "xai",
+                "glm-coding",
+                "opencode-go",
+                "qwen-token-plan",
+                "deepseek",
+            ]
+        );
+        for channel in FIRST_PARTY_CHANNELS.iter() {
+            let preset = channel_preset(channel.id).expect("registry row");
+            assert_eq!(channel.default_base_url, preset.default_base_url);
+        }
+    }
 
     #[test]
     fn xai_preset_is_device_flow_with_public_endpoints() {

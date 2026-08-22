@@ -1,7 +1,11 @@
 //! 首发六通道适配器内聚入口。
 //!
 //! feature 名与门控保持原 adapters `lib.rs` 形状，根 crate 继续 re-export
-//! `ApiKeyChannel` / `ChatGptProvider` 等既有对外路径。
+//! `ApiKeyChannelConfig` / `ChatGptProvider` 等既有对外路径。
+//! 通道 preset 自 R5 波 A 起单点登记在 registry（纯数据，行不带 cfg；
+//! ApiKeyChannel 枚举已删除，由注册表行驱动）。
+
+pub mod registry;
 
 #[cfg(feature = "anthropic")]
 pub mod anthropic;
@@ -38,4 +42,9 @@ pub use xai::{builtin_models as xai_builtin_models, XaiConfig, XaiProvider};
     feature = "qwen-token-plan",
     feature = "deepseek"
 ))]
-pub use api_key::{ApiKeyChannel, ApiKeyChannelConfig, ApiKeyChannelProvider};
+pub use api_key::{ApiKeyChannelConfig, ApiKeyChannelProvider};
+
+pub use registry::{
+    channel_preset, is_enabled, ChannelKind, ChannelPreset, OAuthFlow, OAuthPreset,
+    CHANNEL_REGISTRY,
+};

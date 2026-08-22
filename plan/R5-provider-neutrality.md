@@ -4,8 +4,9 @@
 
 ## 1. 现状证据(执行时重验;路径为 R1 合并后位置)
 
-- **中立层渗漏**:`storage` event_store 的 `OPAQUE_METADATA_ALLOWLIST = ["openai.responses.summary_entries"]`、`CONTINUATION_METADATA_ALLOWLIST = ["anthropic_block_kind"]`(原 `storage/session/src/event_store.rs:21-22`)——新增 provider 特性要改存储层常量。
-- **通道三处登记**:`api_key.rs:26-35` 每通道一个 cfg-feature 枚举变体、`host/app/src/channels.rs:108-153` 硬编码六通道表 + `str→ApiKeyChannel` match、engine 红线守护测试名单过期(S12-CR06-10)。
+- **中立层渗漏**:`storage` event_store 的 `OPAQUE_METADATA_ALLOWLIST = ["openai.responses.summary_entries"]`、`CONTINUATION_METADATA_ALLOWLIST = ["anthropic_block_kind"]`(实态 2026-08-22:`crates/storage/src/session/event_store.rs:21-22`,R1 摊平后路径,形状未漂移)——新增 provider 特性要改存储层常量。
+- **通道三处登记**:`crates/providers/src/channels/api_key.rs:26-35` 每通道一个 cfg-feature 枚举变体(实态:在 providers 不在 auth)、`crates/app/src/channels.rs:106-137` 硬编码六通道表 + :148-156 `str→ApiKeyChannel` match(原 `host/app/src/channels.rs:108-153`,行号前移)、engine 红线守护测试名单过期(S12-CR06-10;实态 `crates/engine/tests/no_provider_branch.rs:13-34` 手写 20 名)。
+- **键名错位(2026-08-22 核查新发现)**:任务书所称既有落盘键 `openai.responses.summary_entries` **全仓无生产者**;唯一生产者写无前缀 `responses.summary_entries`(`crates/providers/src/responses_reasoning.rs:13`),因不在 allowlist 落盘时被保形脱敏;storage 测试用 allowlist 拼写自造数据掩盖错位。`anthropic_block_kind` 全仓零生产零消费,属预留脚手架。波 A 读兼容须覆盖两种旧拼写。
 - **凭证双实现**:`foundation/config/src/env.rs:1`「S0–S5 过渡机制」与 `providers/auth/src/resolve.rs:77` 同形独立实现(`api_key_env_name` 双份);`credential.rs:58-72` `keychain_service/keychain_account` 是 V1 兼容名(实际后端 auth 文件);F05 的 `pawork.mcp.*` 前缀白名单 + 独立 `mcp-auth.json` 是补丁式域隔离。
 - **K-10**:`providers/adapters/src/anthropic/mod.rs:7` TODO——prompt cache/thinking/hosted tools/signature/citations 不写 wire,静默丢弃。
 - **ReasoningProtector 烂尾对**:`memory_protector.rs:3`「S6 临时宿主实现…S7 接入 Protected Blob Store 后替换」从未发生;`providers/core/src/reasoning.rs:3` 同注;PWB1 protected(1,456 行)因此零生产消费者(R0 D18 保留待本阶段接线)。
@@ -23,7 +24,7 @@
 
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
-| A | provider_hints 契约(domain/storage:规则 + 透传 + 读兼容 + golden)∥ 通道注册表(providers/app/engine 守护测试) | storage、domain ∥ providers、app(channels)、engine tests | 并行 ×2 |
+| A | provider_hints 契约(domain/storage:规则 + 透传 + 读兼容 + golden)∥ 通道注册表(providers/app/engine 守护测试) | storage、domain、providers/responses_reasoning.rs(生产者改新写,轨 a 单点)∥ providers/channels、app(channels/provider_assembly)、engine tests+dev-dep | 并行 ×2 |
 | B | credential locator 合一 + keychain 词汇迁移(auth 格式迁移测试先行)+ mcp-auth 域隔离规则收编 | auth、workspace(config env 删除)、tools(mcp security) | 串行(Secret 面单一 owner;安全回归全跑) |
 | C | K-10 能力收口 + CapabilityNegotiator 接线 + ReasoningProtector 持久化 | providers(anthropic/negotiate/reasoning)、app(装配注入)、storage(protected feature 闭包) | 串行 |
 

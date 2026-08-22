@@ -89,7 +89,7 @@
 
 ## 5. 测试通道与凭证
 
-首发六通道产品范围沿 V2 冻结（原委见 [v2-summary.md](v2-summary.md)）；endpoint 只来自配置或经核对的 adapter 默认值，`base_url` 始终可覆盖，不能把 endpoint、模型名或认证方式写进 Agent Engine 分支。
+首发六通道产品范围沿 V2 冻结（原委见 [v2-summary.md](v2-summary.md)）；endpoint 只来自配置或经核对的 adapter 默认值，`base_url` 始终可覆盖，不能把 endpoint、模型名或认证方式写进 Agent Engine 分支。通道登记单点为 `crates/providers/src/channels/registry.rs`（`CHANNEL_REGISTRY`，R5 波 A 起；app `channels.rs` 仅为转发 facade），新增通道 = 注册表加一行；engine 红线守护名单从注册表派生。
 
 | 通道 | 凭证 | 默认协议 / endpoint | 说明 |
 | --- | --- | --- | --- |

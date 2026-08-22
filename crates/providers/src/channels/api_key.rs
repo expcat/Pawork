@@ -1,8 +1,9 @@
-//! 首发 API-key 渠道：一个中立枚举 / 配置 / Provider，薄封装 OpenAI-compatible 传输。
+//! 首发 API-key 渠道：preset 驱动的配置 / Provider，薄封装 OpenAI-compatible 传输。
 //!
 //! 四条渠道共用 Bearer 认证与 OpenAI-compatible transport；默认走 Chat
 //! Completions，只有逐模型显式声明时才走 Responses。构造期 fail-closed：必须提供且
-//! 仅接受 CredentialKind::ApiKey。
+//! 仅接受 CredentialKind::ApiKey；preset 必须来自 CHANNEL_REGISTRY 且对应
+//! feature 已启用（R5 波 A 轨 b：枚举删除，数据行单点登记）。
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -15,74 +16,17 @@ use pawork_domain::{
 };
 use pawork_domain::{CancellationToken, ModelId, ProviderId};
 use crate::net::http::HttpClientConfig;
+use crate::channels::registry::{is_enabled, ChannelKind, ChannelPreset};
 use crate::ReasoningProtector;
 
 use crate::normalize_vendor_error;
 use crate::provider::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
 use crate::responses::{ResponsesTransport, ResponsesTransportConfig, ResponsesWireOptions};
 
-/// 首发 API-key 渠道。渠道名只用于默认 id / URL，不进入传输特例。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ApiKeyChannel {
-    #[cfg(feature = "glm-coding")]
-    GlmCoding,
-    #[cfg(feature = "opencode-go")]
-    OpenCodeGo,
-    #[cfg(feature = "qwen-token-plan")]
-    QwenTokenPlan,
-    #[cfg(feature = "deepseek")]
-    DeepSeek,
-}
-
-impl ApiKeyChannel {
-    pub const ALL: &'static [Self] = &[
-        #[cfg(feature = "glm-coding")]
-        Self::GlmCoding,
-        #[cfg(feature = "opencode-go")]
-        Self::OpenCodeGo,
-        #[cfg(feature = "qwen-token-plan")]
-        Self::QwenTokenPlan,
-        #[cfg(feature = "deepseek")]
-        Self::DeepSeek,
-    ];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            #[cfg(feature = "glm-coding")]
-            Self::GlmCoding => "glm-coding",
-            #[cfg(feature = "opencode-go")]
-            Self::OpenCodeGo => "opencode-go",
-            #[cfg(feature = "qwen-token-plan")]
-            Self::QwenTokenPlan => "qwen-token-plan",
-            #[cfg(feature = "deepseek")]
-            Self::DeepSeek => "deepseek",
-        }
-    }
-
-    pub const fn default_base_url(self) -> &'static str {
-        match self {
-            #[cfg(feature = "glm-coding")]
-            Self::GlmCoding => "https://api.z.ai/api/coding/paas/v4",
-            #[cfg(feature = "opencode-go")]
-            Self::OpenCodeGo => "https://opencode.ai/zen/go/v1",
-            #[cfg(feature = "qwen-token-plan")]
-            Self::QwenTokenPlan => {
-                "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-            }
-            #[cfg(feature = "deepseek")]
-            Self::DeepSeek => "https://api.deepseek.com",
-        }
-    }
-
-    pub fn provider_id(self) -> ProviderId {
-        ProviderId::new(self.as_str())
-    }
-}
-
 /// API-key 渠道配置。默认带上渠道 id / URL，允许覆盖 base_url / HTTP / timeout。
 #[derive(Clone, Debug)]
 pub struct ApiKeyChannelConfig {
-    pub channel: ApiKeyChannel,
+    pub preset: &'static ChannelPreset,
     pub base_url: String,
     pub http: HttpClientConfig,
     pub request_timeout: Option<Duration>,
@@ -91,14 +35,31 @@ pub struct ApiKeyChannelConfig {
 }
 
 impl ApiKeyChannelConfig {
-    pub fn new(channel: ApiKeyChannel) -> Self {
-        Self {
-            channel,
-            base_url: channel.default_base_url().into(),
+    /// 构造渠道配置。preset 的 kind 必须 ApiKey 且对应 feature 已启用
+    /// （fail-closed；is_enabled 是注册表唯一的 cfg 求值点）。
+    pub fn new(preset: &'static ChannelPreset) -> Result<Self, ProviderError> {
+        if preset.kind != ChannelKind::ApiKey {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                format!("channel {} is not an API-key channel", preset.id),
+            ));
+        }
+        if !is_enabled(preset) {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                format!(
+                    "channel {} requires feature {} which is not enabled",
+                    preset.id, preset.feature
+                ),
+            ));
+        }
+        Ok(Self {
+            preset,
+            base_url: preset.default_base_url.into(),
             http: HttpClientConfig::default(),
             request_timeout: None,
             model_transports: BTreeMap::new(),
-        }
+        })
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -130,7 +91,7 @@ impl ApiKeyChannelConfig {
 
 /// 首发 API-key Provider：校验凭证后按模型声明委托 Chat 或 Responses transport。
 pub struct ApiKeyChannelProvider {
-    channel: ApiKeyChannel,
+    preset: &'static ChannelPreset,
     chat: OpenAiCompatibleProvider,
     responses: ResponsesTransport,
     model_transports: BTreeMap<ModelId, ModelTransport>,
@@ -143,7 +104,7 @@ impl ApiKeyChannelProvider {
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
         let credential = require_api_key(credential)?;
-        let provider_id = config.channel.provider_id();
+        let provider_id = ProviderId::new(config.preset.id);
         let chat = OpenAiCompatibleProvider::new(
             OpenAiCompatibleConfig {
                 base_url: config.base_url.clone(),
@@ -161,7 +122,7 @@ impl ApiKeyChannelProvider {
             include_encrypted_reasoning: true,
         };
         Ok(Self {
-            channel: config.channel,
+            preset: config.preset,
             chat,
             responses: ResponsesTransport::new(responses, credential)?,
             model_transports: config.model_transports,
@@ -213,7 +174,7 @@ impl ModelProvider for ApiKeyChannelProvider {
             .chat
             .list_models(credential)
             .await
-            .map_err(|error| normalize_vendor_error(self.channel.as_str(), error))?;
+            .map_err(|error| normalize_vendor_error(self.preset.id, error))?;
         for model in &mut models {
             if let Some(transport) = self.model_transports.get(&model.id) {
                 model.capabilities.transport = *transport;
@@ -239,13 +200,13 @@ impl ModelProvider for ApiKeyChannelProvider {
                 self.chat
                     .stream(request, sink, cancel)
                     .await
-                    .map_err(|error| normalize_vendor_error(self.channel.as_str(), error))
+                    .map_err(|error| normalize_vendor_error(self.preset.id, error))
             }
             ModelTransport::Responses => self
                 .responses
                 .stream(request, sink, cancel)
                 .await
-                .map_err(|error| normalize_vendor_error(self.channel.as_str(), error)),
+                .map_err(|error| normalize_vendor_error(self.preset.id, error)),
             ModelTransport::Messages => Err(ProviderError::new(
                 ProviderErrorKind::InvalidRequest,
                 "this API-key adapter cannot route a Messages-only model",
