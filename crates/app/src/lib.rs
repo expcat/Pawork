@@ -1174,6 +1174,7 @@ mod tests {
         );
         let glm = |core: &AppCore| {
             core.auth_status()
+                .expect("auth status")
                 .into_iter()
                 .find(|row| row.provider == "glm-coding")
                 .expect("glm-coding status")

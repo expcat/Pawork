@@ -574,6 +574,11 @@ fn sanitize_reasoning_metadata(value: &mut Value) {
             sanitize_summary_entries(child);
         } else if key.ends_with(BLOCK_KIND_SUFFIX) && !child.is_string() {
             redact_value_preserving_shape(child);
+        } else {
+            // 合法命名空间只决定 hint 是否可透传，不能成为嵌套 Secret 的
+            // 逃逸通道。未知扩展值仍递归复用通用 Secret 扫描；安全字段原样
+            // 保留，敏感键与 header 容器按既有规则保形脱敏。
+            redact_sensitive_json(child);
         }
     }
 }
@@ -1792,6 +1797,35 @@ mod tests {
             );
         }
 
+        // export_session 也是 session_events.payload_json 的生产读入口；旧库
+        // 行导出时必须与 replay / lineage 一样只暴露规范命名空间键。
+        let exported = store.export_session(&session).await.expect("export");
+        assert_eq!(exported.events.len(), 3);
+        for exported_event in &exported.events {
+            let AgentEvent::MessageCommitted { message } = &exported_event.event.payload else {
+                panic!("exported event must keep its schema");
+            };
+            let ContentPart::Reasoning(item) = &message.content[0] else {
+                panic!("exported message must carry the reasoning part");
+            };
+            assert!(item
+                .opaque_metadata
+                .contains_key(pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT));
+            assert!(!item
+                .opaque_metadata
+                .contains_key("responses.summary_entries"));
+            assert!(!item
+                .opaque_metadata
+                .contains_key("openai.responses.summary_entries"));
+            assert_eq!(
+                item.continuation_metadata[pawork_domain::ANTHROPIC_BLOCK_KIND_HINT],
+                serde_json::json!("thinking")
+            );
+            assert!(!item
+                .continuation_metadata
+                .contains_key("anthropic_block_kind"));
+        }
+
         store.shutdown().await.expect("shutdown");
     }
 
@@ -1829,6 +1863,7 @@ mod tests {
             .expect("session");
 
         let secret = "fake-namespaced-api-key-must-not-reach-sqlite";
+        let nested_secret = "fake-nested-api-key-must-not-reach-sqlite";
         let oversized_value = "x".repeat(pawork_domain::MAX_HINT_VALUE_BYTES);
         let boundary_value = "y".repeat(pawork_domain::MAX_HINT_VALUE_BYTES - 2);
         let oversized_key = format!(
@@ -1875,6 +1910,13 @@ mod tests {
                                         "provider_hints.openai.note".into(),
                                         serde_json::json!("kept"),
                                     ),
+                                    (
+                                        "provider_hints.openai.bundle".into(),
+                                        serde_json::json!({
+                                            "api_key": nested_secret,
+                                            "note": "nested-safe-note",
+                                        }),
+                                    ),
                                 ]),
                                 continuation_metadata: BTreeMap::from([(
                                     "provider_hints.anthropic.block_kind".into(),
@@ -1888,6 +1930,23 @@ mod tests {
             )
             .await
             .expect("append reasoning message");
+
+        let (event_json, projection_json): (String, String) = store
+            .database()
+            .call(|connection| {
+                connection.query_row(
+                    "SELECT e.payload_json, m.message_json FROM session_events e \
+                     JOIN messages m ON m.message_id='message-hints-limits' \
+                     WHERE e.event_id='event-1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+            })
+            .await
+            .expect("database actor")
+            .expect("persistence query");
+        assert!(!event_json.contains(nested_secret));
+        assert!(!projection_json.contains(nested_secret));
 
         let replayed = store.replay_events(&session, 1, 10).await.expect("replay");
         assert_eq!(replayed.len(), 1);
@@ -1915,6 +1974,14 @@ mod tests {
             serde_json::json!(boundary_value)
         );
         assert_eq!(item.opaque_metadata["provider_hints.openai.note"], "kept");
+        assert_eq!(
+            item.opaque_metadata["provider_hints.openai.bundle"]["api_key"],
+            REDACTED_SECRET
+        );
+        assert_eq!(
+            item.opaque_metadata["provider_hints.openai.bundle"]["note"],
+            "nested-safe-note"
+        );
         assert_eq!(
             item.continuation_metadata["provider_hints.anthropic.block_kind"],
             0

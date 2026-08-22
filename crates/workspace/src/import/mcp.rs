@@ -11,6 +11,12 @@ const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
 const DEFAULT_RESTART_MAX_ATTEMPTS: u32 = 1;
 const DEFAULT_RESTART_BASE_DELAY_MS: u64 = 200;
 const DEFAULT_RESTART_MAX_DELAY_MS: u64 = 10_000;
+/// 与 auth locator 的冻结域隔离契约一致；workspace 不反向依赖 auth crate。
+const MCP_SECRET_SERVICE_PREFIX: &str = "pawork.mcp.";
+
+pub(super) fn mcp_secret_service(server: &str) -> String {
+    format!("{MCP_SECRET_SERVICE_PREFIX}{server}")
+}
 
 /// Locator for a plaintext secret held by a secret backend.
 ///

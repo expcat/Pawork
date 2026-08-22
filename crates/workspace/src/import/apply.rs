@@ -15,6 +15,7 @@ use super::error::CompatError;
 use super::io::{atomic_write, fnv64, is_symlink, read_utf8_bounded};
 use super::limits::CompatLimits;
 use super::map::resolve_conflicts;
+use super::mcp::mcp_secret_service;
 use super::model::{CompatIssue, CompatPlan, CredentialReference, ImportStatus};
 use super::parse::{parse_content, ParseOutcome};
 use super::source::GlobalSource;
@@ -264,7 +265,7 @@ impl CompatPlan {
                 item.category == super::model::ImportCategory::McpServer
                     && item.source == reference.source
                     && item.id.strip_prefix("mcp:").is_some_and(|server| {
-                        reference.service == "mcp"
+                        reference.service == mcp_secret_service(server)
                             && reference
                                 .account
                                 .strip_prefix(server)

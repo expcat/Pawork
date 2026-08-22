@@ -64,3 +64,28 @@ cargo tree -p pawork | rg chacha20poly1305
 - [x] 凭证解析单一事实源;keychain 词汇消失(存储与代码);mcp 域隔离收编(波 B,2026-08-22;StoredCredential serde alias 读旧名兼容期登记 ROADMAP §4)
 - [x] K-10 逐项有决议落地;唯一真 TODO 清除;ReasoningProtector 持久化(波 C,2026-08-22;instance-level BlobScope 偏差已接受)
 - [x] 安全红线回归全绿;自动化门禁通过;v3_plan §3 更新(波 C,2026-08-22;真实 Anthropic 冒烟 fail-closed 登记 ROADMAP §4)
+
+## 6. 整阶段审计(2026-08-22)
+
+按 `v3_plan.md` 已标记完成的 R5 波 A/B/C 重新基线源码、测试、生成契约与真实工作区差异;使用 `xai/grok-4.6` 分域核查 provider_hints/storage、credential/MCP、Anthropic/negotiator,再由单一 Grok 4.6 reviewer 复核完整修复集。原波次交付主体成立,审计补齐以下可复现缺口:
+
+- **provider_hints / 持久化**:非规范 metadata 的深层 Secret 现在递归脱敏;session export 统一经 persisted-event decoder,旧键只读映射不会重新导出;SQL、projection、replay、export 均有断言。
+- **credential / MCP 隔离**:auth 文件损坏或读取失败不再静默降级到 env,`auth list` 同样 fail-closed;兼容导入生成 `pawork.mcp.<server>` Secret service,与运行时 locator 一致;执行沙箱拒绝 auth、mcp-auth、默认 `~/.pawork`、覆盖后的整个 `PAWORK_HOME` 目录，以及 `PAWORK_DATA_DIR`。
+- **Anthropic / negotiator**:Required cache 在无 system/tools 时回退到最后一条 message 且空请求拒绝;thinking 仅在启用时解析 continuation,预算下限 1024 且严格小于 max_tokens;thinking signature 缺失、redacted data 缺失或 payload 形状错误均在 HTTP 前失败;redacted wire 只发 `{type,data}`;reasoning continuation 绑定产生它的 Anthropic model,切换模型时不复用;CapabilityNegotiator 的 requested/unsupported 分区恢复不变量。
+- **protected master key**:精确读取 32 字节,拒绝符号链接与 Unix 组/其他权限;随机唯一临时文件以 0600 创建并同步,用 no-replace 原子竞争收口并清零失败候选;补并发首次打开、遗留临时文件、权限回归。Windows ACL 未在本机执行,真实 Anthropic 请求仍按 §4 fail-closed 留人工验收。
+
+收口证据:
+
+```text
+cargo test -p pawork-providers --offline --lib --tests --features anthropic  # 153 + 11 + 16 passed
+cargo test -p pawork-auth -p pawork-workspace -p pawork-exec --offline --lib --tests  # 268 passed,1 ignored
+cargo test -p pawork-storage --offline --lib --tests  # 99 passed
+cargo test -p pawork-app -p pawork-cli --offline --lib --tests -- --test-threads=1  # 229 passed,1 ignored
+cargo test -p pawork-app --offline --lib --tests -- --test-threads=1  # 固定数组/错误分支清零后 154 passed,1 ignored
+cargo test -p pawork-app --offline --lib protected::tests -- --test-threads=1  # inode/临时文件清理加固后 8 passed
+cargo test -p pawork-storage --offline --lib --tests --features protected --test pwb1_golden  # 112 passed
+cargo check -p pawork --offline  # passed
+cargo tree -p pawork | rg chacha20poly1305  # 仅 protected 闭包,0.11.0
+```
+
+Grok 4.6 终审 verdict=`PASS`;终审后主代理另发现并修复跨模型 Anthropic continuation 绑定与 master.key 临时副本/错误分支清零,受影响的 providers、app 全门禁已分别再次通过。未运行 workspace 全量门禁,符合 R0–R9 当前验证约定。

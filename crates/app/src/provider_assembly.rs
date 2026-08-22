@@ -565,7 +565,7 @@ fn resolve_api_key_credential(
     backend: &Arc<dyn SecretBackend>,
     id: &str,
 ) -> Result<(ResolvedCredential, crate::AuthSource), AppError> {
-    match resolve_provider_credential(backend.as_ref(), id) {
+    match resolve_provider_credential(backend.as_ref(), id)? {
         CredentialSource::AuthFile(stored) => {
             let credential = ApiKeyCredential::from_stored(stored)?
                 .resolve(backend.as_ref())?;
@@ -761,7 +761,7 @@ mod tests {
         .expect("catalog load tolerates missing defaults");
         assert_eq!(core.provider_id.as_str(), "catalog");
         // auth list 在零配置下可列出六通道（全部 none 来源）。
-        let rows = core.auth_status();
+        let rows = core.auth_status().expect("auth status");
         assert!(rows.iter().any(|row| row.provider == "xai"));
     }
 

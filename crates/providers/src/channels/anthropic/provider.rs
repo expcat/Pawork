@@ -29,9 +29,12 @@ use crate::net::sse::SseParser;
 use crate::registry::{CapabilityEvidence, ModelRegistry};
 use crate::{ReasoningProtectError, ReasoningProtector};
 
-use super::request::{to_messages_body_with_plan, MessagesWirePlan};
+use super::request::{has_prompt_cache_breakpoint, to_messages_body_with_plan, MessagesWirePlan};
 use super::stream::{parse_event, AnthropicStreamState, StreamOutput};
 use super::ANTHROPIC_VERSION;
+
+const MIN_THINKING_BUDGET_TOKENS: u64 = 1024;
+const ANTHROPIC_MODEL_HINT: &str = "provider_hints.anthropic.model";
 
 /// Anthropic 适配器配置。`base_url` 必填，不内置官方端点。
 #[derive(Clone, Debug)]
@@ -142,8 +145,15 @@ impl AnthropicProvider {
     ) -> Result<ModelResponseSummary, ProviderError> {
         let (body, _) = self.prepare_request(request).await?;
         let mut state = AnthropicStreamState::default();
-        self.pump_messages(body, request.trace_id.as_deref(), &mut state, sink, cancel)
-            .await
+        self.pump_messages(
+            body,
+            &request.model,
+            request.trace_id.as_deref(),
+            &mut state,
+            sink,
+            cancel,
+        )
+        .await
     }
 
     async fn prepare_request(
@@ -198,6 +208,12 @@ impl AnthropicProvider {
             None
         };
         if let Some(budget) = thinking_budget {
+            if budget < MIN_THINKING_BUDGET_TOKENS {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::InvalidRequest,
+                    format!("thinking budget_tokens must be at least {MIN_THINKING_BUDGET_TOKENS}"),
+                ));
+            }
             if let Some(temperature) = request.temperature {
                 if (temperature - 1.0).abs() > f64::EPSILON {
                     return Err(ProviderError::new(
@@ -216,14 +232,26 @@ impl AnthropicProvider {
             }
         }
 
-        let resolved_thinking_blocks =
-            resolve_thinking_blocks(request, self.reasoning_protector.as_ref()).await?;
+        let resolved_thinking_blocks = if thinking_budget.is_some() {
+            resolve_thinking_blocks(request, self.reasoning_protector.as_ref()).await?
+        } else {
+            Vec::new()
+        };
         let plan = MessagesWirePlan {
             write_cache,
             thinking_budget,
             resolved_thinking_blocks,
         };
-        Ok((to_messages_body_with_plan(request, &plan), plan))
+        let body = to_messages_body_with_plan(request, &plan);
+        if request.prompt_cache == PromptCachePreference::Required
+            && !has_prompt_cache_breakpoint(&body)
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                "prompt cache is required but request has no cacheable content",
+            ));
+        }
+        Ok((body, plan))
     }
 
     fn capability_evidence(&self, model: &ModelId) -> CapabilityEvidence {
@@ -256,6 +284,7 @@ impl AnthropicProvider {
     async fn pump_messages(
         &self,
         body: Value,
+        model: &ModelId,
         trace_id: Option<&str>,
         state: &mut AnthropicStreamState,
         sink: &dyn ProviderEventSink,
@@ -298,7 +327,7 @@ impl AnthropicProvider {
                 if data.is_empty() {
                     continue;
                 }
-                self.process_chunk(data, state, sink, &mut summary, &mut saw_completion)
+                self.process_chunk(data, model, state, sink, &mut summary, &mut saw_completion)
                     .await?;
             }
         }
@@ -306,7 +335,7 @@ impl AnthropicProvider {
         if let Some(event) = sse.finish()? {
             let data = event.data.trim();
             if !data.is_empty() {
-                self.process_chunk(data, state, sink, &mut summary, &mut saw_completion)
+                self.process_chunk(data, model, state, sink, &mut summary, &mut saw_completion)
                     .await?;
             }
         }
@@ -324,6 +353,7 @@ impl AnthropicProvider {
     async fn process_chunk(
         &self,
         data: &str,
+        model: &ModelId,
         state: &mut AnthropicStreamState,
         sink: &dyn ProviderEventSink,
         summary: &mut ModelResponseSummary,
@@ -336,6 +366,12 @@ impl AnthropicProvider {
                     return Err(ProviderError::new(
                         ProviderErrorKind::MalformedResponse,
                         format!("server tool mapping unsupported: {error}"),
+                    ));
+                }
+                StreamOutput::ReasoningError(error) => {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::MalformedResponse,
+                        error,
                     ));
                 }
                 StreamOutput::PendingSignature {
@@ -363,7 +399,10 @@ impl AnthropicProvider {
                         summary: item_summary,
                         protected_blob_ref: blob_ref,
                         opaque_metadata,
-                        continuation_metadata: std::collections::BTreeMap::new(),
+                        continuation_metadata: std::collections::BTreeMap::from([(
+                            ANTHROPIC_MODEL_HINT.into(),
+                            json!(model.as_str()),
+                        )]),
                     })
                 }
             };
@@ -519,20 +558,78 @@ async fn resolve_thinking_blocks(
             let ContentPart::Reasoning(item) = part else {
                 continue;
             };
+            if let Some(origin_model) = item.continuation_metadata.get(ANTHROPIC_MODEL_HINT) {
+                let Some(origin_model) = origin_model.as_str() else {
+                    return Err(malformed_thinking_block(
+                        "model continuation hint must be a string",
+                    ));
+                };
+                if origin_model != request.model.as_str() {
+                    // 保持与 ContentPart::Reasoning 的位置对齐，request writer 跳过 Null。
+                    blocks.push(Value::Null);
+                    continue;
+                }
+            }
             let payload = protector
                 .resolve(&item.protected_blob_ref)
                 .await
                 .map_err(protect_error)?;
-            let value = serde_json::from_slice(&payload).unwrap_or_else(|_| {
-                json!({
-                    "type": "thinking",
-                    "thinking": String::from_utf8_lossy(&payload),
-                })
-            });
-            blocks.push(value);
+            let value: Value = serde_json::from_slice(&payload).map_err(|_| {
+                ProviderError::new(
+                    ProviderErrorKind::MalformedResponse,
+                    "protected Anthropic thinking block is not valid JSON",
+                )
+            })?;
+            blocks.push(validate_thinking_block(value)?);
         }
     }
     Ok(blocks)
+}
+
+fn validate_thinking_block(mut value: Value) -> Result<Value, ProviderError> {
+    let Some(object) = value.as_object_mut() else {
+        return Err(malformed_thinking_block("must be a JSON object"));
+    };
+    match object.get("type").and_then(Value::as_str) {
+        Some("thinking") => {
+            if object.get("thinking").and_then(Value::as_str).is_none()
+                || object
+                    .get("signature")
+                    .and_then(Value::as_str)
+                    .is_none_or(str::is_empty)
+            {
+                return Err(malformed_thinking_block(
+                    "thinking block requires thinking and non-empty signature strings",
+                ));
+            }
+        }
+        Some("redacted_thinking") => {
+            if object
+                .get("data")
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty)
+            {
+                return Err(malformed_thinking_block(
+                    "redacted_thinking block requires a non-empty data string",
+                ));
+            }
+            // R5 早期 producer 曾错误给 redacted block 带上 signature；回放前归一化。
+            object.remove("signature");
+        }
+        _ => {
+            return Err(malformed_thinking_block(
+                "block type must be thinking or redacted_thinking",
+            ));
+        }
+    }
+    Ok(value)
+}
+
+fn malformed_thinking_block(detail: &str) -> ProviderError {
+    ProviderError::new(
+        ProviderErrorKind::MalformedResponse,
+        format!("protected Anthropic thinking block {detail}"),
+    )
 }
 
 fn protect_error(error: ReasoningProtectError) -> ProviderError {
@@ -712,6 +809,37 @@ mod tests {
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
     }
 
+    #[tokio::test]
+    async fn required_prompt_cache_uses_message_fallback_or_rejects_empty_request() {
+        let provider =
+            AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
+                .expect("adapter");
+        let mut request = sample_request();
+        request.prompt_cache = PromptCachePreference::Required;
+        let error = provider
+            .prepare_request(&request)
+            .await
+            .expect_err("empty request has no cacheable block");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+
+        request.messages.push(pawork_domain::Message {
+            id: pawork_domain::MessageId::new("user"),
+            role: pawork_domain::MessageRole::User,
+            content: vec![ContentPart::Text(pawork_domain::TextContent {
+                text: "cache me".into(),
+            })],
+            metadata: pawork_domain::MessageMetadata::default(),
+        });
+        let (body, _) = provider
+            .prepare_request(&request)
+            .await
+            .expect("message fallback");
+        assert_eq!(
+            body["messages"][0]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+    }
+
     fn sample_request() -> CanonicalModelRequest {
         CanonicalModelRequest {
             request_id: pawork_domain::RequestId::from("r1"),
@@ -735,14 +863,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn thinking_rejects_non_unit_temperature_and_small_max_tokens() {
+    async fn thinking_rejects_invalid_budget_temperature_and_max_tokens() {
         let provider =
             AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
                 .expect("adapter");
         let mut request = sample_request();
         request.thinking = Some(ThinkingConfig {
             level: ThinkingLevel::High,
-            budget_tokens: Some(64),
+            budget_tokens: Some(1024),
         });
         request.temperature = Some(0.2);
         let error = provider
@@ -752,12 +880,21 @@ mod tests {
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
 
         request.temperature = Some(1.0);
-        request.max_output_tokens = Some(64);
+        request.max_output_tokens = Some(1024);
         let error = provider
             .prepare_request(&request)
             .await
             .expect_err("max tokens");
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+
+        request.max_output_tokens = Some(8192);
+        request.thinking.as_mut().expect("thinking").budget_tokens = Some(1023);
+        let error = provider
+            .prepare_request(&request)
+            .await
+            .expect_err("minimum thinking budget");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+        assert!(error.message.contains("at least 1024"));
     }
 
     #[tokio::test]
@@ -815,7 +952,7 @@ mod tests {
         request.temperature = Some(1.0);
         request.thinking = Some(ThinkingConfig {
             level: ThinkingLevel::High,
-            budget_tokens: Some(64),
+            budget_tokens: Some(1024),
         });
         request.messages.push(Message {
             id: MessageId::new("asst"),
@@ -841,7 +978,7 @@ mod tests {
         });
 
         let (body, plan) = provider.prepare_request(&request).await.expect("plan");
-        assert_eq!(plan.thinking_budget, Some(64));
+        assert_eq!(plan.thinking_budget, Some(1024));
         let content = body["messages"][0]["content"].as_array().expect("content");
         let thinking_blocks: Vec<_> = content
             .iter()
@@ -852,10 +989,94 @@ mod tests {
         assert_eq!(thinking_blocks[0]["signature"], "sig-secret");
         assert!(!format!("{body}").contains("visible-thought"));
 
+        let ContentPart::Reasoning(item) = &mut request.messages[0].content[1] else {
+            panic!("reasoning item");
+        };
+        item.continuation_metadata
+            .insert(ANTHROPIC_MODEL_HINT.into(), json!("claude-3-5-sonnet"));
+        request.model = ModelId::from("claude-3-5-haiku");
+        let (cross_model_body, cross_model_plan) = provider
+            .prepare_request(&request)
+            .await
+            .expect("cross-model continuation is omitted");
+        assert_eq!(cross_model_plan.resolved_thinking_blocks, vec![Value::Null]);
+        assert!(cross_model_body["messages"][0]["content"]
+            .as_array()
+            .expect("content")
+            .iter()
+            .all(|block| block["type"] != "thinking"));
+
         request.thinking = None;
         let (body_off, plan_off) = provider.prepare_request(&request).await.expect("off");
         assert!(plan_off.thinking_budget.is_none());
         let content_off = body_off["messages"][0]["content"].as_array().expect("content");
         assert!(content_off.iter().all(|block| block["type"] != "thinking"));
+    }
+
+    #[tokio::test]
+    async fn thinking_off_does_not_resolve_unavailable_continuation() {
+        let provider =
+            AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
+                .expect("adapter");
+        let mut request = sample_request();
+        request.messages.push(pawork_domain::Message {
+            id: pawork_domain::MessageId::new("asst"),
+            role: pawork_domain::MessageRole::Assistant,
+            content: vec![ContentPart::Reasoning(ReasoningItem {
+                id: ReasoningItemId::from("th-missing"),
+                summary: None,
+                protected_blob_ref: pawork_domain::ProtectedBlobRef::from("missing"),
+                opaque_metadata: Default::default(),
+                continuation_metadata: Default::default(),
+            })],
+            metadata: pawork_domain::MessageMetadata::default(),
+        });
+
+        let (body, plan) = provider
+            .prepare_request(&request)
+            .await
+            .expect("thinking off");
+        assert!(plan.resolved_thinking_blocks.is_empty());
+        assert!(body.get("thinking").is_none());
+        assert!(body["messages"][0]["content"]
+            .as_array()
+            .expect("content")
+            .iter()
+            .all(|block| block["type"] != "thinking"));
+    }
+
+    #[tokio::test]
+    async fn malformed_protected_thinking_block_fails_closed() {
+        let protector = InMemoryReasoningProtector::default();
+        let blob_ref = protector.protect(b"not-json").await.expect("protect");
+        let provider =
+            AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
+                .expect("adapter")
+                .with_reasoning_protector(Arc::new(protector));
+        let mut request = sample_request();
+        request.temperature = Some(1.0);
+        request.thinking = Some(ThinkingConfig {
+            level: ThinkingLevel::High,
+            budget_tokens: Some(1024),
+        });
+        request.messages.push(pawork_domain::Message {
+            id: pawork_domain::MessageId::new("asst"),
+            role: pawork_domain::MessageRole::Assistant,
+            content: vec![ContentPart::Reasoning(ReasoningItem {
+                id: ReasoningItemId::from("th-invalid"),
+                summary: None,
+                protected_blob_ref: blob_ref,
+                opaque_metadata: Default::default(),
+                continuation_metadata: Default::default(),
+            })],
+            metadata: pawork_domain::MessageMetadata::default(),
+        });
+
+        let error = provider
+            .prepare_request(&request)
+            .await
+            .expect_err("malformed protected payload");
+        assert_eq!(error.kind, ProviderErrorKind::MalformedResponse);
+        assert!(!error.message.contains("not-json"));
     }
 }

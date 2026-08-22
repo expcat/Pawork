@@ -63,7 +63,7 @@ pub enum OAuthLogin {
 
 impl AppCore {
     /// 六通道 + config 自定义 provider 的凭证状态（无网络、无明文）。
-    pub fn auth_status(&self) -> Vec<AuthChannelStatus> {
+    pub fn auth_status(&self) -> Result<Vec<AuthChannelStatus>, AppError> {
         let mut rows = Vec::new();
         for channel in channels::FIRST_PARTY_CHANNELS.iter() {
             let kind = match channel.kind {
@@ -75,7 +75,7 @@ impl AppCore {
                     let source = match pawork_auth::resolve_provider_credential(
                         self.auth_backend().as_ref(),
                         channel.id,
-                    ) {
+                    )? {
                         pawork_auth::CredentialSource::AuthFile(stored) => AuthChannelStatus {
                             provider: channel.id.into(),
                             kind,
@@ -105,9 +105,7 @@ impl AppCore {
                     let meta = pawork_auth::load_default_oauth_meta(
                         self.auth_backend().as_ref(),
                         &provider,
-                    )
-                    .ok()
-                    .flatten();
+                    )?;
                     rows.push(AuthChannelStatus {
                         provider: channel.id.into(),
                         kind,
@@ -124,7 +122,7 @@ impl AppCore {
                 }
             }
         }
-        rows
+        Ok(rows)
     }
 
     /// pawork auth set-key：明文从 stdin 读入后立即写 auth 文件（0600），不回显、不落日志。
@@ -378,6 +376,7 @@ mod tests {
         // 登录产物落 default 条目：auth list 标注 file 来源。
         let xai_row = core
             .auth_status()
+            .expect("auth status")
             .into_iter()
             .find(|row| row.provider == "xai")
             .expect("xai row");

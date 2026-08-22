@@ -82,6 +82,7 @@ fn plaintext_secrets_are_replaced_by_references_only() {
     let json =
         serde_json::to_value(cursor.payload.as_ref().expect("payload")).expect("cursor json");
     let headers = &json["server"]["transport"]["headers"];
+    assert_eq!(headers["X-Ref"]["service"], "pawork.mcp.cursor-web");
     assert_eq!(headers["X-Ref"]["account"], "cursor-web:X-Ref");
     assert!(headers.get("Authorization").is_none());
     let pending = json["pending_credentials"]
@@ -97,13 +98,18 @@ fn plaintext_secrets_are_replaced_by_references_only() {
     let json =
         serde_json::to_value(github.payload.as_ref().expect("payload")).expect("github json");
     assert_eq!(
+        json["server"]["transport"]["env"]["GITHUB_TOKEN"]["service"],
+        "pawork.mcp.github"
+    );
+    assert_eq!(
         json["server"]["transport"]["env"]["GITHUB_TOKEN"]["account"],
         "github:GITHUB_TOKEN"
     );
     assert!(plan
         .credential_references
         .iter()
-        .any(|reference| reference.account == "github:GITHUB_TOKEN"));
+        .any(|reference| reference.service == "pawork.mcp.github"
+            && reference.account == "github:GITHUB_TOKEN"));
 }
 
 #[test]
