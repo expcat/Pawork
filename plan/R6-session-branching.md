@@ -1,6 +1,8 @@
 # R6 — 会话分支模型原生化(T4,ADR-040)
 
-> 对应 [ROADMAP.md](../ROADMAP.md) §2 R6 行。根因:S1 按线性会话设计(messages 无 branch 维度、sequence 全局),S10 Fork 后补,S13-F09 只能 `ALTER TABLE ADD COLUMN branch_id DEFAULT 'main'` + 事件反查回填 + `ancestor_lineage` API 外挂(`storage/session/src/migration.rs:252-260`)。分支语义靠补列外挂维持,压缩/投影/resume 各自处理分支边界。两个高风险契约阶段之一,必须 ADR 先行。
+> 对应 [ROADMAP.md](../ROADMAP.md) §2 R6 行。根因:S1 按线性会话设计(messages 无 branch 维度、sequence 全局),S10 Fork 后补,S13-F09 只能 `ALTER TABLE ADD COLUMN branch_id DEFAULT 'main'` + 事件反查回填 + `ancestor_lineage` API 外挂。分支语义靠补列外挂维持,压缩/投影/resume 各自处理分支边界。两个高风险契约阶段之一,必须 ADR 先行。
+>
+> **2026-08-22 波 0 三路核查回写(实态修正)**:`session_events.branch_id` 自 v1 即 `NOT NULL` 一等列 + FK 到 `session_branches`(`crates/storage/src/session/migration.rs:30-42`),并非 F09 后补;F09/v10 补的是 `messages` 投影列(`migration.rs:247-269`,原引用路径 `storage/session/src/migration.rs:252-260` 已随 R1 扁平化失效)。当前 `CURRENT_SCHEMA_VERSION = 11`(v11 = R4 波 B `command_ledger`)。压缩结构隐患实态:host `loop_ctx.rs` 用 `events_on_lineage(active)` 算 `compacted_through`,storage `CompactionEngine` 却用 `events_by_branch`(本支)读压缩输入,投影删除按事件所属 branch DELETE——三处语义不一致。`ancestor_lineage` 公开 API 几乎无生产消费者(生产走内部 `load_ancestor_lineage`/`events_on_lineage`)。无检入的真实 v10/v11 库文件升级 golden(现有升级测试全是临时库种子)。
 
 ## 1. ADR-040 决策点(波 0;推荐已列,须用户确认)
 
