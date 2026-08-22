@@ -14,7 +14,8 @@ const DEFAULT_MAX_TOKENS: u64 = 4096;
 /// Anthropic Messages 的能力落地计划（协商之后、写 wire 之前）。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MessagesWirePlan {
-    /// 在最后一个 system 块与最后一个 tool 上写 `cache_control: ephemeral`。
+    /// 在最后一个 system 块与最后一个 tool 上写 `cache_control: ephemeral`；
+    /// 两者都不存在时回退到最后一条 message 的最后一个 content block。
     pub write_cache: bool,
     /// 启用 thinking 时的 `budget_tokens`。
     pub thinking_budget: Option<u64>,
@@ -133,8 +134,11 @@ pub fn to_messages_body_with_plan(
         );
     }
     if plan.write_cache {
-        apply_cache_control_to_last(body.get_mut("system"));
-        apply_cache_control_to_last(body.get_mut("tools"));
+        let wrote_system = apply_cache_control_to_last(body.get_mut("system"));
+        let wrote_tools = apply_cache_control_to_last(body.get_mut("tools"));
+        if !wrote_system && !wrote_tools {
+            apply_cache_control_to_last_message(body.get_mut("messages"));
+        }
     }
 
     for (key, value) in &request.provider_options {
@@ -219,7 +223,7 @@ fn content_blocks<'a>(
             ContentPart::Reasoning(_) => {
                 let block = resolved_thinking.next();
                 if thinking_enabled {
-                    if let Some(block) = block {
+                    if let Some(block) = block.filter(|block| !block.is_null()) {
                         others.push(block.clone());
                     }
                 }
@@ -316,24 +320,52 @@ fn tool_choice_to_anthropic(choice: &ToolChoice) -> Value {
     }
 }
 
-fn apply_cache_control_to_last(value: Option<&mut Value>) {
+fn apply_cache_control_to_last(value: Option<&mut Value>) -> bool {
     match value {
         Some(Value::Array(items)) => {
             if let Some(last) = items.last_mut() {
-                apply_cache_control(last);
+                return apply_cache_control(last);
             }
+            false
         }
         Some(item) => apply_cache_control(item),
-        None => {}
+        None => false,
     }
 }
 
-fn apply_cache_control(value: &mut Value) {
+fn apply_cache_control_to_last_message(value: Option<&mut Value>) -> bool {
+    let Some(Value::Array(messages)) = value else {
+        return false;
+    };
+    let Some(Value::Object(message)) = messages.last_mut() else {
+        return false;
+    };
+    apply_cache_control_to_last(message.get_mut("content"))
+}
+
+fn apply_cache_control(value: &mut Value) -> bool {
     if let Value::Object(map) = value {
-        map.insert(
-            "cache_control".into(),
-            json!({"type": "ephemeral"}),
-        );
+        map.insert("cache_control".into(), json!({"type": "ephemeral"}));
+        true
+    } else {
+        false
+    }
+}
+
+pub(super) fn has_prompt_cache_breakpoint(body: &Value) -> bool {
+    ["system", "tools", "messages"]
+        .into_iter()
+        .filter_map(|key| body.get(key))
+        .any(contains_cache_control)
+}
+
+fn contains_cache_control(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.contains_key("cache_control") || map.values().any(contains_cache_control)
+        }
+        Value::Array(items) => items.iter().any(contains_cache_control),
+        _ => false,
     }
 }
 
@@ -436,7 +468,7 @@ mod tests {
         req.prompt_cache = PromptCachePreference::Required;
         req.thinking = Some(ThinkingConfig {
             level: ThinkingLevel::High,
-            budget_tokens: Some(64),
+            budget_tokens: Some(1024),
         });
         req.messages.insert(
             0,
@@ -460,16 +492,33 @@ mod tests {
             &req,
             &MessagesWirePlan {
                 write_cache: true,
-                thinking_budget: Some(64),
+                thinking_budget: Some(1024),
                 resolved_thinking_blocks: Vec::new(),
             },
         );
         assert_eq!(
             planned["thinking"],
-            json!({"type":"enabled","budget_tokens": 64})
+            json!({"type":"enabled","budget_tokens": 1024})
         );
         assert_eq!(planned["system"]["cache_control"]["type"], "ephemeral");
         assert_eq!(planned["tools"][0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn prompt_cache_falls_back_to_last_message_content() {
+        let req = base_request();
+        let body = to_messages_body_with_plan(
+            &req,
+            &MessagesWirePlan {
+                write_cache: true,
+                ..MessagesWirePlan::default()
+            },
+        );
+        assert_eq!(
+            body["messages"][0]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        assert!(has_prompt_cache_breakpoint(&body));
     }
 
     #[test]
@@ -603,7 +652,7 @@ mod tests {
         let mut req = base_request();
         req.thinking = Some(ThinkingConfig {
             level: ThinkingLevel::High,
-            budget_tokens: Some(64),
+            budget_tokens: Some(1024),
         });
         req.provider_options.insert("top_p".into(), json!(0.9));
         req.provider_options
@@ -637,13 +686,13 @@ mod tests {
             &req,
             &MessagesWirePlan {
                 write_cache: false,
-                thinking_budget: Some(64),
+                thinking_budget: Some(1024),
                 resolved_thinking_blocks: Vec::new(),
             },
         );
         assert_eq!(
             planned["thinking"],
-            json!({"type":"enabled","budget_tokens": 64})
+            json!({"type":"enabled","budget_tokens": 1024})
         );
         assert_ne!(planned["thinking"]["budget_tokens"], json!(999_999));
         assert!(planned.get("cache_control").is_none());
@@ -708,7 +757,7 @@ mod tests {
             &req,
             &MessagesWirePlan {
                 write_cache: false,
-                thinking_budget: Some(64),
+                thinking_budget: Some(1024),
                 resolved_thinking_blocks: vec![json!({
                     "type": "thinking",
                     "thinking": "replayed",

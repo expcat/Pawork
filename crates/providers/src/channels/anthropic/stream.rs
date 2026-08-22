@@ -26,6 +26,8 @@ pub enum StreamOutput {
         payload: Vec<u8>,
         redacted: bool,
     },
+    /// thinking 块缺少官方 continuation 所需的不透明字段。
+    ReasoningError(String),
     MappingError(ServerToolMappingError),
 }
 
@@ -35,7 +37,9 @@ pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<Prov
         .into_iter()
         .filter_map(|output| match output {
             StreamOutput::Event(event) => Some(event),
-            StreamOutput::PendingSignature { .. } | StreamOutput::MappingError(_) => None,
+            StreamOutput::PendingSignature { .. }
+            | StreamOutput::ReasoningError(_)
+            | StreamOutput::MappingError(_) => None,
         })
         .collect()
 }
@@ -248,9 +252,7 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
                 }
             }
             if let Some(block) = state.thinking.remove(&index) {
-                if let Some(pending) = pending_signature_from(block) {
-                    outputs.push(pending);
-                }
+                outputs.push(pending_signature_from(block));
             }
         }
         "message_delta" => {
@@ -329,18 +331,24 @@ fn map_citation(value: Option<&Value>) -> Citation {
     }
 }
 
-fn pending_signature_from(block: ThinkingBlockState) -> Option<StreamOutput> {
-    if block.signature.is_empty() && block.data.is_empty() {
-        return None;
-    }
-    let payload = if block.redacted && !block.data.is_empty() {
+fn pending_signature_from(block: ThinkingBlockState) -> StreamOutput {
+    let payload = if block.redacted {
+        if block.data.is_empty() {
+            return StreamOutput::ReasoningError(
+                "Anthropic redacted_thinking block missing data".into(),
+            );
+        }
         serde_json::to_vec(&serde_json::json!({
             "type": "redacted_thinking",
             "data": block.data,
-            "signature": block.signature,
         }))
         .unwrap_or_default()
     } else {
+        if block.signature.is_empty() {
+            return StreamOutput::ReasoningError(
+                "Anthropic thinking block missing signature".into(),
+            );
+        }
         serde_json::to_vec(&serde_json::json!({
             "type": "thinking",
             "thinking": block.text,
@@ -348,12 +356,12 @@ fn pending_signature_from(block: ThinkingBlockState) -> Option<StreamOutput> {
         }))
         .unwrap_or_default()
     };
-    Some(StreamOutput::PendingSignature {
+    StreamOutput::PendingSignature {
         id: block.id,
         summary: if block.text.is_empty() { None } else { Some(block.text) },
         payload,
         redacted: block.redacted,
-    })
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -560,6 +568,55 @@ mod tests {
             ProviderStreamEvent::ServerTool(ServerToolEvent::CitationAdded { citation, .. })
                 if citation.url.as_deref() == Some("https://example.com")
                     && citation.source_kind == pawork_domain::CitationSourceKind::Unknown
+        ));
+    }
+
+    #[test]
+    fn redacted_thinking_round_trips_exact_wire_shape() {
+        let mut state = AnthropicStreamState::default();
+        assert!(parse_event(
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"opaque-data"}}"#,
+            &mut state,
+        )
+        .is_empty());
+        let stopped = parse_event(r#"{"type":"content_block_stop","index":0}"#, &mut state);
+        let StreamOutput::PendingSignature {
+            payload, redacted, ..
+        } = &stopped[0]
+        else {
+            panic!("expected protected redacted thinking payload");
+        };
+        assert!(*redacted);
+        let value: Value = serde_json::from_slice(payload).expect("payload json");
+        assert_eq!(
+            value,
+            serde_json::json!({"type":"redacted_thinking","data":"opaque-data"})
+        );
+        assert!(value.get("signature").is_none());
+    }
+
+    #[test]
+    fn incomplete_thinking_blocks_fail_closed() {
+        let mut state = AnthropicStreamState::default();
+        let _ = parse_event(
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"plan"}}"#,
+            &mut state,
+        );
+        let stopped = parse_event(r#"{"type":"content_block_stop","index":0}"#, &mut state);
+        assert!(matches!(
+            stopped.as_slice(),
+            [StreamOutput::ReasoningError(error)] if error.contains("missing signature")
+        ));
+
+        let mut state = AnthropicStreamState::default();
+        let _ = parse_event(
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking"}}"#,
+            &mut state,
+        );
+        let stopped = parse_event(r#"{"type":"content_block_stop","index":0}"#, &mut state);
+        assert!(matches!(
+            stopped.as_slice(),
+            [StreamOutput::ReasoningError(error)] if error.contains("missing data")
         ));
     }
 

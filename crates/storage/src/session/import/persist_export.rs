@@ -128,7 +128,7 @@ impl SessionStore {
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     rows.into_iter()
                         .map(|(branch_id, json)| {
-                            let event = serde_json::from_str(&json)
+                            let event = crate::session::event_store::decode_persisted_event(&json)
                                 .map_err(SessionStoreError::from)?;
                             Ok::<ExportedEvent, SessionStoreError>(ExportedEvent {
                                 branch_id,

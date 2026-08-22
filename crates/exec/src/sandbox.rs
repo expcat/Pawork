@@ -584,11 +584,27 @@ pub fn default_secret_paths() -> Vec<PathBuf> {
     let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from);
     let pawork_home = std::env::var_os("PAWORK_HOME").map(PathBuf::from);
+    let pawork_data_dir = std::env::var_os("PAWORK_DATA_DIR");
+    #[cfg(windows)]
+    let has_pawork_data_dir = pawork_data_dir
+        .as_ref()
+        .is_some_and(|path| !path.is_empty());
     #[allow(unused_mut)] // Windows 才 push gcloud
     let mut paths = secret_paths_for(home.as_deref(), pawork_home.as_deref());
+    if let Some(data_dir) = pawork_data_dir {
+        if !data_dir.is_empty() {
+            paths.push(PathBuf::from(data_dir));
+        }
+    }
     #[cfg(windows)]
     if let Some(appdata) = std::env::var_os("APPDATA") {
         paths.push(PathBuf::from(appdata).join("gcloud"));
+    }
+    #[cfg(windows)]
+    if !has_pawork_data_dir {
+        if let Some(localappdata) = std::env::var_os("LOCALAPPDATA") {
+            paths.push(PathBuf::from(localappdata).join("pawork"));
+        }
     }
     paths
 }
@@ -598,13 +614,20 @@ fn secret_paths_for(home: Option<&Path>, pawork_home: Option<&Path>) -> Vec<Path
     let mut paths = Vec::new();
     if let Some(home) = home {
         paths.extend([".ssh", ".aws", ".azure", ".kube"].map(|name| home.join(name)));
-        paths.push(home.join(".pawork").join("auth.json"));
+        let pawork = home.join(".pawork");
+        // 整个 data root 包含 protected/master.key 与加密 blob，不允许模型工具读取。
+        paths.push(pawork.clone());
+        paths.push(pawork.join("auth.json"));
+        paths.push(pawork.join("mcp-auth.json"));
         paths.push(home.join(".gnupg"));
         paths.push(home.join(".config"));
     }
     if let Some(pawork_home) = pawork_home {
         if !pawork_home.as_os_str().is_empty() {
+            // 覆盖 auth.json / mcp-auth.json 旁的原子写临时文件与同目录 Secret。
+            paths.push(pawork_home.to_path_buf());
             paths.push(pawork_home.join("auth.json"));
+            paths.push(pawork_home.join("mcp-auth.json"));
         }
     }
     paths
@@ -901,7 +924,9 @@ mod tests {
                 );
             }
             for expected in [
+                PathBuf::from(&home).join(".pawork"),
                 PathBuf::from(&home).join(".pawork").join("auth.json"),
+                PathBuf::from(&home).join(".pawork").join("mcp-auth.json"),
                 PathBuf::from(&home).join(".gnupg"),
                 PathBuf::from(&home).join(".config"),
             ] {
@@ -914,12 +939,17 @@ mod tests {
         }
         if let Some(pawork_home) = std::env::var_os("PAWORK_HOME") {
             if !pawork_home.is_empty() {
-                let expected = PathBuf::from(pawork_home).join("auth.json");
-                assert!(
-                    secrets.iter().any(|p| p == &expected),
-                    "secret paths 缺少 {}",
-                    expected.display()
-                );
+                for expected in [
+                    PathBuf::from(&pawork_home),
+                    PathBuf::from(&pawork_home).join("auth.json"),
+                    PathBuf::from(&pawork_home).join("mcp-auth.json"),
+                ] {
+                    assert!(
+                        secrets.iter().any(|p| p == &expected),
+                        "secret paths 缺少 {}",
+                        expected.display()
+                    );
+                }
             }
         }
         #[cfg(windows)]
@@ -939,7 +969,9 @@ mod tests {
             home.join(".aws"),
             home.join(".azure"),
             home.join(".kube"),
+            home.join(".pawork"),
             home.join(".pawork").join("auth.json"),
+            home.join(".pawork").join("mcp-auth.json"),
             home.join(".gnupg"),
             home.join(".config"),
         ] {
@@ -953,8 +985,20 @@ mod tests {
         assert!(
             with_home
                 .iter()
+                .any(|p| p == &PathBuf::from("/opt/pawork")),
+            "PAWORK_HOME 目录必须进入 deny"
+        );
+        assert!(
+            with_home
+                .iter()
                 .any(|p| p == &PathBuf::from("/opt/pawork/auth.json")),
             "PAWORK_HOME/auth.json 必须进入 deny"
+        );
+        assert!(
+            with_home
+                .iter()
+                .any(|p| p == &PathBuf::from("/opt/pawork/mcp-auth.json")),
+            "PAWORK_HOME/mcp-auth.json 必须进入 deny"
         );
     }
 

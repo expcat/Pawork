@@ -20,7 +20,7 @@ use serde_json::Value;
 use super::hook::{
     CommandHandler, HandlerConfig, HandlerLifecycle, HookConfig, HookScope, TriggerPoint,
 };
-use super::mcp::{McpServerConfig, SecretRef as McpSecretRef, TransportSpec};
+use super::mcp::{mcp_secret_service, McpServerConfig, SecretRef as McpSecretRef, TransportSpec};
 
 use super::detect::DetectedFile;
 use super::frontmatter::split_frontmatter;
@@ -323,9 +323,10 @@ fn secret_mapping(
             Value::String(text) => {
                 if let Some(inner) = env_interpolation(text) {
                     if !inner.is_empty() {
+                        let service = mcp_secret_service(server);
                         mapping.map.insert(
                             key.clone(),
-                            McpSecretRef::new("mcp", format!("{server}:{key}")),
+                            McpSecretRef::new(service.clone(), format!("{server}:{key}")),
                         );
                         mapping.references.push(CredentialReference {
                             source: ImportSource::new(
@@ -333,7 +334,7 @@ fn secret_mapping(
                                 file.tier,
                                 file.relative_path.clone(),
                             ),
-                            service: "mcp".to_string(),
+                            service,
                             account: format!("{server}:{key}"),
                             location,
                         });

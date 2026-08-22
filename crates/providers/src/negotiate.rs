@@ -153,23 +153,29 @@ impl CapabilityNegotiator {
         // 决定（声明即支持）；模型未声明该维度则进 unsupported。
         let state = reasoning.state;
         if state.requires_signature && !caps.reasoning.state.requires_signature {
-            resolved.unsupported.insert(format!("{key}.signature"));
+            let state_key = format!("{key}.signature");
+            resolved.requested.insert(state_key.clone());
+            resolved.unsupported.insert(state_key.clone());
             resolved.fallback.insert(
-                format!("{key}.signature"),
+                state_key,
                 CapabilityFallback::Reject("signature continuation not supported".into()),
             );
         }
         if state.requires_encrypted && !caps.reasoning.state.requires_encrypted {
-            resolved.unsupported.insert(format!("{key}.encrypted"));
+            let state_key = format!("{key}.encrypted");
+            resolved.requested.insert(state_key.clone());
+            resolved.unsupported.insert(state_key.clone());
             resolved.fallback.insert(
-                format!("{key}.encrypted"),
+                state_key,
                 CapabilityFallback::Reject("encrypted continuation not supported".into()),
             );
         }
         if state.supports_interleaved && !caps.reasoning.state.supports_interleaved {
-            resolved.unsupported.insert(format!("{key}.interleaved"));
+            let state_key = format!("{key}.interleaved");
+            resolved.requested.insert(state_key.clone());
+            resolved.unsupported.insert(state_key.clone());
             resolved.fallback.insert(
-                format!("{key}.interleaved"),
+                state_key,
                 CapabilityFallback::Reject("interleaved thinking not supported".into()),
             );
         }
@@ -292,6 +298,38 @@ mod tests {
         assert!(resolved.unsupported.contains("reasoning"));
         assert!(matches!(
             resolved.fallback.get("reasoning"),
+            Some(CapabilityFallback::Reject(_))
+        ));
+    }
+
+    #[test]
+    fn unsupported_reasoning_state_preserves_requested_partition_invariant() {
+        let mut caps = full_caps();
+        caps.reasoning.state.requires_signature = false;
+        let evidence = evidence_from(caps);
+        let requirements = CapabilityRequirements {
+            reasoning: Some(ReasoningConfig {
+                effort: ReasoningEffort::High,
+                state: pawork_domain::ReasoningStateDescriptor {
+                    requires_signature: true,
+                    requires_encrypted: false,
+                    supports_interleaved: false,
+                },
+            }),
+            ..CapabilityRequirements::default()
+        };
+        let resolved = CapabilityNegotiator::negotiate(&evidence, &requirements);
+        let union: BTreeSet<String> = resolved
+            .supported
+            .iter()
+            .chain(resolved.unsupported.iter())
+            .cloned()
+            .collect();
+        assert_eq!(resolved.requested, union);
+        assert!(resolved.requested.contains("reasoning.signature"));
+        assert!(resolved.unsupported.contains("reasoning.signature"));
+        assert!(matches!(
+            resolved.fallback.get("reasoning.signature"),
             Some(CapabilityFallback::Reject(_))
         ));
     }

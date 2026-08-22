@@ -3,8 +3,9 @@
 //! [`resolve_provider_credential`] 是 Provider 装配期的统一凭证入口：先查
 //! SecretBackend 的 Provider 主条目（service 沿用 [`StoredCredential`] 约定
 //! `pawork.<provider>`，固定 account `default`），未命中再读
-//! `PAWORK_API_KEY_<ID 大写、`-`→`_`>`；两级都缺返回 [`CredentialSource::None`]，
-//! 由调用方 fail-closed。
+//! `PAWORK_API_KEY_<ID 大写、`-`→`_`>`；仅 [`AuthError::NotFound`] 允许降级，
+//! 后端损坏或访问失败原样上抛；两级都缺返回 [`CredentialSource::None`]，由调用方
+//! fail-closed。
 //!
 //! env 值只进入 [`ResolvedCredential`]（`Debug` 已脱敏），不落任何日志或 Debug
 //! 泄漏字段；env 名推导与 service 命名统一由 [`crate::locator`] 单一事实源提供。
@@ -75,12 +76,12 @@ pub enum CredentialSource {
 
 /// 解析 Provider 凭证：auth 文件主条目 → env fallback → 无凭证。
 ///
-/// auth 文件侧的「条目不存在」与后端访问异常都视为未命中并继续 env；两级
-/// 都缺时返回 [`CredentialSource::None`]，绝不构造伪凭证。
+/// auth 文件侧仅「条目不存在」视为未命中并继续 env；后端损坏或访问异常必须
+/// fail-closed。两级都缺时返回 [`CredentialSource::None`]，绝不构造伪凭证。
 pub fn resolve_provider_credential(
     backend: &dyn SecretBackend,
     provider_id: &str,
-) -> CredentialSource {
+) -> Result<CredentialSource, AuthError> {
     let provider = ProviderId::new(provider_id);
     let service = secret_service_for(&provider);
     match backend.get(&service, PROVIDER_DEFAULT_ACCOUNT) {
@@ -94,17 +95,16 @@ pub fn resolve_provider_credential(
                 PROVIDER_DEFAULT_ACCOUNT,
                 Vec::new(),
             );
-            CredentialSource::AuthFile(stored)
+            Ok(CredentialSource::AuthFile(stored))
         }
-        // NotFound = 主条目不存在；其它后端错误在本签名下同样只能降级到 env，
-        // 双缺时以 None 让调用方 fail-closed。
-        Err(_) => match read_api_key_from_env(provider_id) {
+        Err(AuthError::NotFound) => Ok(match read_api_key_from_env(provider_id) {
             Some(value) => CredentialSource::EnvFallback(ResolvedCredential::new(
                 CredentialKind::ApiKey,
                 value,
             )),
             None => CredentialSource::None,
-        },
+        }),
+        Err(error) => Err(error),
     }
 }
 
@@ -151,7 +151,7 @@ mod tests {
             )
             .expect("store");
 
-        let source = resolve_provider_credential(&backend, provider);
+        let source = resolve_provider_credential(&backend, provider).expect("resolve");
         remove_env(&env_name);
 
         let CredentialSource::AuthFile(stored) = source else {
@@ -178,7 +178,7 @@ mod tests {
         let env_name = api_key_env_name(provider);
         set_env(&env_name, "sk-env-fallback-abcdef");
 
-        let source = resolve_provider_credential(&backend, provider);
+        let source = resolve_provider_credential(&backend, provider).expect("resolve");
         let source_debug = format!("{source:?}");
         remove_env(&env_name);
 
@@ -199,7 +199,7 @@ mod tests {
         let env_name = api_key_env_name(provider);
         remove_env(&env_name);
         assert!(matches!(
-            resolve_provider_credential(&backend, provider),
+            resolve_provider_credential(&backend, provider).expect("resolve"),
             CredentialSource::None
         ));
     }
@@ -211,9 +211,33 @@ mod tests {
         let env_name = api_key_env_name(provider);
         set_env(&env_name, "");
         assert!(matches!(
-            resolve_provider_credential(&backend, provider),
+            resolve_provider_credential(&backend, provider).expect("resolve"),
             CredentialSource::None
         ));
         remove_env(&env_name);
+    }
+
+    #[test]
+    fn corrupt_auth_file_never_falls_back_to_env() {
+        let provider = format!("resolve-corrupt-{}", std::process::id());
+        let env_name = api_key_env_name(&provider);
+        set_env(&env_name, "sk-env-must-not-mask-corruption");
+        let path = std::env::temp_dir().join(format!(
+            "pawork-auth-corrupt-{}-{}.json",
+            std::process::id(),
+            crate::credential::generate_credential_id().as_str()
+        ));
+        std::fs::write(&path, b"{not-valid-json").expect("write corrupt auth file");
+        let backend = crate::FileBackend::with_path(&path);
+
+        let error = resolve_provider_credential(&backend, &provider)
+            .expect_err("corrupt auth file must fail closed before env fallback");
+        remove_env(&env_name);
+        std::fs::remove_file(&path).expect("remove corrupt auth fixture");
+
+        assert!(matches!(error, AuthError::Storage(_)));
+        assert!(!error
+            .to_string()
+            .contains("sk-env-must-not-mask-corruption"));
     }
 }

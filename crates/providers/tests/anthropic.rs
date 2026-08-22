@@ -425,9 +425,10 @@ async fn contract_prompt_cache_and_thinking_are_written() {
     let sink = RecordingProviderSink::default();
     let mut req = request("claude-3-5-sonnet");
     req.temperature = Some(1.0);
+    req.max_output_tokens = Some(2048);
     req.thinking = Some(pawork_domain::ThinkingConfig {
         level: pawork_domain::ThinkingLevel::High,
-        budget_tokens: Some(64),
+        budget_tokens: Some(1024),
     });
     req.prompt_cache = PromptCachePreference::Required;
     req.messages.insert(
@@ -456,7 +457,7 @@ async fn contract_prompt_cache_and_thinking_are_written() {
     let sent: serde_json::Value = received[0].body_json().expect("json body");
     assert_eq!(
         sent["thinking"],
-        serde_json::json!({"type":"enabled","budget_tokens":64})
+        serde_json::json!({"type":"enabled","budget_tokens":1024})
     );
     assert_eq!(sent["system"]["cache_control"]["type"], "ephemeral");
 }
@@ -509,9 +510,10 @@ async fn contract_thinking_signature_is_protected_not_emitted() {
     let sink = RecordingProviderSink::default();
     let mut req = request("claude-3-5-sonnet");
     req.temperature = Some(1.0);
+    req.max_output_tokens = Some(2048);
     req.thinking = Some(pawork_domain::ThinkingConfig {
         level: pawork_domain::ThinkingLevel::Low,
-        budget_tokens: Some(64),
+        budget_tokens: Some(1024),
     });
     p.stream(req, &sink, CancellationToken::new())
         .await
@@ -528,6 +530,10 @@ async fn contract_thinking_signature_is_protected_not_emitted() {
     let item = item.expect("reasoning item");
     assert_eq!(item.id.as_str(), "th_1");
     assert!(!item.protected_blob_ref.as_str().is_empty());
+    assert_eq!(
+        item.continuation_metadata["provider_hints.anthropic.model"],
+        serde_json::json!("claude-3-5-sonnet")
+    );
     let dumped = format!("{events:?}");
     assert!(!dumped.contains("sig-secret"), "signature must not leak into events: {dumped}");
 }

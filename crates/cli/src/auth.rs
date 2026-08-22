@@ -22,7 +22,7 @@ pub async fn run_auth(core: &AppCore, command: AuthCommand, json: bool) -> Resul
 }
 
 fn list(core: &AppCore, json: bool) -> Result<(), CliError> {
-    let rows = core.auth_status();
+    let rows = core.auth_status()?;
     if json {
         let payload: Vec<serde_json::Value> = rows
             .iter()
