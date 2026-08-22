@@ -1,31 +1,59 @@
 //! Anthropic SSE 事件 → canonical ProviderStreamEvent 的映射（S2 基线）。
 //!
-//! 只处理 message_start / text / tool_use start-delta-stop / message_delta
-//! usage / message_stop / ping / error。thinking / signature / server_tool_use /
-//! citations 忽略。
+//! 处理 message_start / text / tool_use / thinking_delta / server_tool_use /
+//! citations / message_delta usage / message_stop / ping / error。
+//! signature 明文不进入 [`ProviderStreamEvent`]；由 adapter 在 process_chunk
+//! 中经 ReasoningProtector 换成 ref-only [`ReasoningItem`]。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pawork_domain::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
-use pawork_domain::{TokenUsage, ToolCallId};
+use pawork_domain::{
+    Citation, ServerToolEvent, ServerToolMappingError, TokenUsage, ToolCallId,
+};
 use serde_json::Value;
 
 use crate::usage::{map_stop_reason, normalize_usage};
 
+/// 解析单条 SSE data 时可能得到的流产物。
+#[derive(Debug)]
+pub enum StreamOutput {
+    Event(ProviderStreamEvent),
+    /// thinking / redacted_thinking 完成，待 adapter 经 protector 换成 ReasoningItem。
+    PendingSignature {
+        id: String,
+        summary: Option<String>,
+        payload: Vec<u8>,
+        redacted: bool,
+    },
+    MappingError(ServerToolMappingError),
+}
+
 /// 解析单条 SSE data（一个 Anthropic 事件 JSON），返回应发射的 canonical 事件。
 pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<ProviderStreamEvent> {
+    parse_event(data, state)
+        .into_iter()
+        .filter_map(|output| match output {
+            StreamOutput::Event(event) => Some(event),
+            StreamOutput::PendingSignature { .. } | StreamOutput::MappingError(_) => None,
+        })
+        .collect()
+}
+
+/// 完整解析入口：thinking signature 与 server-tool 映射失败单独返回。
+pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOutput> {
     let value: Value = match serde_json::from_str(data) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
     };
     let event_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
-    let mut events = Vec::new();
+    let mut outputs = Vec::new();
 
     match event_type {
         "message_start" => {
             if let Some(message) = value.get("message") {
                 let response_id = message.get("id").and_then(|i| i.as_str()).map(String::from);
-                events.push(ProviderStreamEvent::ResponseStarted { response_id });
+                outputs.push(StreamOutput::Event(ProviderStreamEvent::ResponseStarted { response_id }));
                 if let Some(usage) = message.get("usage") {
                     let normalized = normalize_usage(usage);
                     if normalized != TokenUsage::default() {
@@ -35,7 +63,7 @@ pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<Prov
                         if normalized.output_tokens > 0 {
                             state.output_tokens = normalized.output_tokens;
                         }
-                        events.push(ProviderStreamEvent::UsageUpdated(normalized));
+                        outputs.push(StreamOutput::Event(ProviderStreamEvent::UsageUpdated(normalized)));
                     }
                 }
             }
@@ -43,22 +71,95 @@ pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<Prov
         "content_block_start" => {
             let index = value.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
             if let Some(block) = value.get("content_block") {
-                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                    let id = block
-                        .get("id")
-                        .and_then(|i| i.as_str())
-                        .map(String::from)
-                        .unwrap_or_else(|| format!("call-{index}"));
-                    let name = block
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .map(String::from)
-                        .unwrap_or_default();
-                    state.tool_ids.insert(index, id.clone());
-                    events.push(ProviderStreamEvent::ToolCallStarted {
-                        id: ToolCallId::new(id),
-                        name,
-                    });
+                match block.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+                    "tool_use" => {
+                        let id = block
+                            .get("id")
+                            .and_then(|i| i.as_str())
+                            .map(String::from)
+                            .unwrap_or_else(|| format!("call-{index}"));
+                        let name = block
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .map(String::from)
+                            .unwrap_or_default();
+                        state.tool_ids.insert(index, id.clone());
+                        outputs.push(StreamOutput::Event(ProviderStreamEvent::ToolCallStarted {
+                            id: ToolCallId::new(id),
+                            name,
+                        }));
+                    }
+                    "thinking" | "redacted_thinking" => {
+                        let id = block
+                            .get("id")
+                            .and_then(|i| i.as_str())
+                            .map(String::from)
+                            .unwrap_or_else(|| format!("thinking-{index}"));
+                        let redacted = block.get("type").and_then(|t| t.as_str()) == Some("redacted_thinking");
+                        let signature = block
+                            .get("signature")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let data = block
+                            .get("data")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let thinking = block
+                            .get("thinking")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        state.thinking.insert(
+                            index,
+                            ThinkingBlockState {
+                                id,
+                                redacted,
+                                text: thinking,
+                                signature,
+                                data,
+                            },
+                        );
+                    }
+                    "server_tool_use" => {
+                        let id = block
+                            .get("id")
+                            .and_then(|i| i.as_str())
+                            .map(String::from)
+                            .unwrap_or_else(|| format!("srv-{index}"));
+                        let name = block
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .map(String::from)
+                            .unwrap_or_default();
+                        if name.is_empty() {
+                            outputs.push(StreamOutput::MappingError(ServerToolMappingError::unsupported(
+                                "server_tool_use missing name",
+                            )));
+                        } else {
+                            state.server_tool_ids.insert(index, id.clone());
+                            state.last_server_tool_id = Some(id.clone());
+                            outputs.push(StreamOutput::Event(ProviderStreamEvent::ServerTool(
+                                ServerToolEvent::Started {
+                                    tool_call_id: ToolCallId::new(id),
+                                    name,
+                                    arguments: block.get("input").cloned(),
+                                },
+                            )));
+                        }
+                    }
+                    "web_search_tool_result" | "code_execution_tool_result" | "mcp_tool_result" => {
+                        let id = block
+                            .get("tool_use_id")
+                            .and_then(|i| i.as_str())
+                            .or_else(|| block.get("id").and_then(|i| i.as_str()))
+                            .map(String::from)
+                            .unwrap_or_else(|| format!("srv-{index}"));
+                        state.server_tool_ids.insert(index, id.clone());
+                        state.last_server_tool_id = Some(id);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -69,18 +170,59 @@ pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<Prov
                     "text_delta" => {
                         if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
                             if !text.is_empty() {
-                                events.push(ProviderStreamEvent::TextDelta(text.to_string()));
+                                outputs.push(StreamOutput::Event(ProviderStreamEvent::TextDelta(text.to_string())));
                             }
                         }
                     }
                     "input_json_delta" => {
                         if let Some(partial) = delta.get("partial_json").and_then(|t| t.as_str()) {
                             if let Some(id) = state.tool_ids.get(&index) {
-                                events.push(ProviderStreamEvent::ToolCallArgumentsDelta {
+                                outputs.push(StreamOutput::Event(ProviderStreamEvent::ToolCallArgumentsDelta {
                                     id: ToolCallId::new(id.clone()),
                                     json: partial.to_string(),
-                                });
+                                }));
+                            } else if let Some(id) = state.server_tool_ids.get(&index) {
+                                outputs.push(StreamOutput::Event(ProviderStreamEvent::ServerTool(
+                                    ServerToolEvent::ArgumentsDelta {
+                                        tool_call_id: ToolCallId::new(id.clone()),
+                                        json_delta: partial.to_string(),
+                                    },
+                                )));
                             }
+                        }
+                    }
+                    "thinking_delta" => {
+                        if let Some(text) = delta.get("thinking").and_then(|t| t.as_str()) {
+                            if !text.is_empty() {
+                                if let Some(block) = state.thinking.get_mut(&index) {
+                                    block.text.push_str(text);
+                                }
+                                outputs.push(StreamOutput::Event(ProviderStreamEvent::ThinkingDelta(text.to_string())));
+                            }
+                        }
+                    }
+                    "signature_delta" => {
+                        if let Some(signature) = delta.get("signature").and_then(|t| t.as_str()) {
+                            if let Some(block) = state.thinking.get_mut(&index) {
+                                block.signature.push_str(signature);
+                            }
+                        }
+                    }
+                    "citations_delta" | "citation" => {
+                        let id = state
+                            .server_tool_ids
+                            .get(&index)
+                            .cloned()
+                            .or_else(|| state.last_server_tool_id.clone());
+                        if let Some(id) = id {
+                            outputs.push(StreamOutput::Event(ProviderStreamEvent::ServerTool(
+                                ServerToolEvent::CitationAdded {
+                                    tool_call_id: ToolCallId::new(id),
+                                    citation: map_citation(
+                                        delta.get("citation").or_else(|| delta.get("citations")),
+                                    ),
+                                },
+                            )));
                         }
                     }
                     _ => {}
@@ -90,9 +232,25 @@ pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<Prov
         "content_block_stop" => {
             let index = value.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
             if let Some(id) = state.tool_ids.get(&index).cloned() {
-                events.push(ProviderStreamEvent::ToolCallCompleted {
+                outputs.push(StreamOutput::Event(ProviderStreamEvent::ToolCallCompleted {
                     id: ToolCallId::new(id),
-                });
+                }));
+            }
+            if let Some(id) = state.server_tool_ids.get(&index).cloned() {
+                if state.completed_server_tools.insert(id.clone()) {
+                    outputs.push(StreamOutput::Event(ProviderStreamEvent::ServerTool(
+                        ServerToolEvent::Completed {
+                            tool_call_id: ToolCallId::new(id),
+                            summary: None,
+                            artifacts: Vec::new(),
+                        },
+                    )));
+                }
+            }
+            if let Some(block) = state.thinking.remove(&index) {
+                if let Some(pending) = pending_signature_from(block) {
+                    outputs.push(pending);
+                }
             }
         }
         "message_delta" => {
@@ -112,28 +270,28 @@ pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<Prov
                 if normalized.cache_write_tokens > 0 {
                     state.cache_write_tokens = normalized.cache_write_tokens;
                 }
-                events.push(ProviderStreamEvent::UsageUpdated(TokenUsage {
+                outputs.push(StreamOutput::Event(ProviderStreamEvent::UsageUpdated(TokenUsage {
                     input_tokens: state.input_tokens,
                     output_tokens: state.output_tokens,
                     cache_read_tokens: state.cache_read_tokens,
                     cache_write_tokens: state.cache_write_tokens,
-                }));
+                })));
             }
         }
         "message_stop" => {
             let has_tool_calls = !state.tool_ids.is_empty();
             let stop = map_stop_reason(state.stop_reason.as_deref(), has_tool_calls);
-            events.push(ProviderStreamEvent::ResponseCompleted(stop));
+            outputs.push(StreamOutput::Event(ProviderStreamEvent::ResponseCompleted(stop)));
             state.finished = true;
         }
         "ping" => {}
         "error" => {
-            events.push(ProviderStreamEvent::Error(map_error_event(&value)));
+            outputs.push(StreamOutput::Event(ProviderStreamEvent::Error(map_error_event(&value))));
         }
         _ => {}
     }
 
-    events
+    outputs
 }
 
 fn map_error_event(value: &Value) -> ProviderError {
@@ -156,10 +314,65 @@ fn map_error_event(value: &Value) -> ProviderError {
     ProviderError::new(kind, message)
 }
 
+fn map_citation(value: Option<&Value>) -> Citation {
+    let Some(value) = value else {
+        return Citation::empty();
+    };
+    Citation {
+        index: value.get("index").and_then(Value::as_u64),
+        url: value.get("url").and_then(Value::as_str).map(str::to_string),
+        title: value.get("title").and_then(Value::as_str).map(str::to_string),
+        snippet: value.get("snippet").and_then(Value::as_str).map(str::to_string),
+        text: value.get("text").or_else(|| value.get("cited_text")).and_then(Value::as_str).map(str::to_string),
+        document_index: value.get("document_index").and_then(Value::as_u64),
+        source_kind: pawork_domain::CitationSourceKind::Unknown,
+    }
+}
+
+fn pending_signature_from(block: ThinkingBlockState) -> Option<StreamOutput> {
+    if block.signature.is_empty() && block.data.is_empty() {
+        return None;
+    }
+    let payload = if block.redacted && !block.data.is_empty() {
+        serde_json::to_vec(&serde_json::json!({
+            "type": "redacted_thinking",
+            "data": block.data,
+            "signature": block.signature,
+        }))
+        .unwrap_or_default()
+    } else {
+        serde_json::to_vec(&serde_json::json!({
+            "type": "thinking",
+            "thinking": block.text,
+            "signature": block.signature,
+        }))
+        .unwrap_or_default()
+    };
+    Some(StreamOutput::PendingSignature {
+        id: block.id,
+        summary: if block.text.is_empty() { None } else { Some(block.text) },
+        payload,
+        redacted: block.redacted,
+    })
+}
+
+#[derive(Clone, Debug, Default)]
+struct ThinkingBlockState {
+    id: String,
+    redacted: bool,
+    text: String,
+    signature: String,
+    data: String,
+}
+
 /// 流解析期间需在事件间保持的状态。
 #[derive(Default)]
 pub struct AnthropicStreamState {
     pub tool_ids: HashMap<usize, String>,
+    pub server_tool_ids: HashMap<usize, String>,
+    thinking: HashMap<usize, ThinkingBlockState>,
+    completed_server_tools: HashSet<String>,
+    last_server_tool_id: Option<String>,
     pub stop_reason: Option<String>,
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -282,24 +495,123 @@ mod tests {
     }
 
     #[test]
-    fn ping_and_unknown_types_are_ignored() {
+    fn ping_is_ignored_and_thinking_server_tool_are_mapped() {
         let mut state = AnthropicStreamState::default();
         assert!(event_to_events(r#"{"type":"ping"}"#, &mut state).is_empty());
-        assert!(event_to_events(
+
+        let thinking_start = event_to_events(
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}"#,
-            &mut state
-        )
-        .is_empty());
-        assert!(event_to_events(
+            &mut state,
+        );
+        assert!(thinking_start.is_empty());
+        let thinking = event_to_events(
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}"#,
-            &mut state
-        )
-        .is_empty());
-        assert!(event_to_events(
+            &mut state,
+        );
+        assert!(matches!(
+            &thinking[0],
+            ProviderStreamEvent::ThinkingDelta(text) if text == "hmm"
+        ));
+        let signature_delta = parse_event(
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-secret"}}"#,
+            &mut state,
+        );
+        assert!(signature_delta.is_empty());
+        let stop = parse_event(
+            r#"{"type":"content_block_stop","index":0}"#,
+            &mut state,
+        );
+        assert!(matches!(
+            &stop[0],
+            StreamOutput::PendingSignature { payload, .. }
+                if String::from_utf8_lossy(payload).contains("sig-secret")
+                    && String::from_utf8_lossy(payload).contains("hmm")
+        ));
+        let public = event_to_events(
+            r#"{"type":"content_block_stop","index":0}"#,
+            &mut AnthropicStreamState::default(),
+        );
+        assert!(public.is_empty());
+
+        let mut state = AnthropicStreamState::default();
+        let started = event_to_events(
             r#"{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srv","name":"web_search"}}"#,
-            &mut state
-        )
-        .is_empty());
+            &mut state,
+        );
+        assert!(matches!(
+            &started[0],
+            ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. }) if name == "web_search"
+        ));
+        let completed = event_to_events(
+            r#"{"type":"content_block_stop","index":1}"#,
+            &mut state,
+        );
+        assert!(matches!(
+            &completed[0],
+            ProviderStreamEvent::ServerTool(ServerToolEvent::Completed { tool_call_id, .. })
+                if tool_call_id.as_str() == "srv"
+        ));
+        let cited = event_to_events(
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"citations_delta","citation":{"url":"https://example.com"}}}"#,
+            &mut state,
+        );
+        assert!(matches!(
+            &cited[0],
+            ProviderStreamEvent::ServerTool(ServerToolEvent::CitationAdded { citation, .. })
+                if citation.url.as_deref() == Some("https://example.com")
+                    && citation.source_kind == pawork_domain::CitationSourceKind::Unknown
+        ));
+    }
+
+    #[test]
+    fn server_tool_use_and_result_emit_completed_once() {
+        let mut state = AnthropicStreamState::default();
+        let started = event_to_events(
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv","name":"web_search"}}"#,
+            &mut state,
+        );
+        assert!(matches!(
+            &started[0],
+            ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. }) if name == "web_search"
+        ));
+        let first_stop = event_to_events(
+            r#"{"type":"content_block_stop","index":0}"#,
+            &mut state,
+        );
+        assert_eq!(
+            first_stop
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    ProviderStreamEvent::ServerTool(ServerToolEvent::Completed { .. })
+                ))
+                .count(),
+            1
+        );
+        let _ = event_to_events(
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srv"}}"#,
+            &mut state,
+        );
+        let second_stop = event_to_events(
+            r#"{"type":"content_block_stop","index":1}"#,
+            &mut state,
+        );
+        assert!(second_stop.iter().all(|event| {
+            !matches!(
+                event,
+                ProviderStreamEvent::ServerTool(ServerToolEvent::Completed { .. })
+            )
+        }));
+        let cited = event_to_events(
+            r#"{"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"url":"https://example.com"}}}"#,
+            &mut state,
+        );
+        assert!(matches!(
+            &cited[0],
+            ProviderStreamEvent::ServerTool(ServerToolEvent::CitationAdded { tool_call_id, citation })
+                if tool_call_id.as_str() == "srv"
+                    && citation.url.as_deref() == Some("https://example.com")
+        ));
     }
 
     #[test]

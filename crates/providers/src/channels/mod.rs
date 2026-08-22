@@ -26,8 +26,9 @@ pub mod api_key;
 
 #[cfg(feature = "anthropic")]
 pub use anthropic::{
-    builtin_models, event_to_events, to_messages_body, AnthropicConfig, AnthropicProvider,
-    AnthropicStreamState, ANTHROPIC_VERSION,
+    builtin_models, event_to_events, parse_event, to_messages_body, to_messages_body_with_plan,
+    AnthropicConfig, AnthropicProvider, AnthropicStreamState, MessagesWirePlan, StreamOutput,
+    ANTHROPIC_VERSION,
 };
 
 #[cfg(feature = "chatgpt-oauth")]

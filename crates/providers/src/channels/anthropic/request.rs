@@ -1,6 +1,7 @@
-//! canonical 请求 → Anthropic Messages 请求体的转换（S2 基线）。
+//! canonical 请求 → Anthropic Messages 请求体的转换。
 //!
-//! 不写 `cache_control` / `thinking`；`prompt_cache` / `thinking` / `hosted_tools` 忽略。
+//! 是否写 `cache_control` / `thinking` 由 [`MessagesWirePlan`] 决定；adapter 在协商后再
+//! 传入 plan。`provider_options` 不得注入 reserved 的 thinking / cache_control。
 //! 连续 [`MessageRole::Tool`](pawork_domain::MessageRole::Tool) 合并为一条 user，
 //! 且同一条 user 里 `tool_result` 块排在最前。
 
@@ -10,15 +11,36 @@ use serde_json::{json, Map, Value};
 
 const DEFAULT_MAX_TOKENS: u64 = 4096;
 
+/// Anthropic Messages 的能力落地计划（协商之后、写 wire 之前）。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MessagesWirePlan {
+    /// 在最后一个 system 块与最后一个 tool 上写 `cache_control: ephemeral`。
+    pub write_cache: bool,
+    /// 启用 thinking 时的 `budget_tokens`。
+    pub thinking_budget: Option<u64>,
+    /// 已解密的 reasoning continuation，按请求中 `ContentPart::Reasoning` 出现顺序消费。
+    pub resolved_thinking_blocks: Vec<Value>,
+}
+
 /// 把 canonical 请求转换为 Anthropic Messages 请求体。
 pub fn to_messages_body(request: &CanonicalModelRequest) -> Value {
+    to_messages_body_with_plan(request, &MessagesWirePlan::default())
+}
+
+/// 按协商后的 [`MessagesWirePlan`] 写 Messages 请求体。
+pub fn to_messages_body_with_plan(
+    request: &CanonicalModelRequest,
+    plan: &MessagesWirePlan,
+) -> Value {
     let mut body = Map::new();
     body.insert("model".into(), Value::String(request.model.to_string()));
 
-    let max_tokens = request
-        .max_output_tokens
-        .unwrap_or(DEFAULT_MAX_TOKENS)
-        .max(2);
+    let max_tokens = match (plan.thinking_budget, request.max_output_tokens) {
+        (Some(budget), Some(max)) => max.max(budget.saturating_add(1)),
+        (Some(budget), None) => DEFAULT_MAX_TOKENS.max(budget.saturating_add(1)),
+        (None, Some(max)) => max.max(2),
+        (None, None) => DEFAULT_MAX_TOKENS,
+    };
     body.insert("max_tokens".into(), json!(max_tokens));
     body.insert("stream".into(), Value::Bool(true));
 
@@ -49,13 +71,22 @@ pub fn to_messages_body(request: &CanonicalModelRequest) -> Value {
 
     let mut out_messages = Vec::new();
     let mut pending_tool_blocks: Vec<Value> = Vec::new();
+    let mut resolved_thinking = plan.resolved_thinking_blocks.iter();
     for message in conversation {
         if message.role == MessageRole::Tool {
-            pending_tool_blocks.extend(content_blocks(message));
+            pending_tool_blocks.extend(content_blocks(
+                message,
+                &mut resolved_thinking,
+                plan.thinking_budget.is_some(),
+            ));
             continue;
         }
         flush_pending_tool_user(&mut pending_tool_blocks, &mut out_messages);
-        out_messages.extend(message_to_anthropic(message));
+        out_messages.extend(message_to_anthropic(
+            message,
+            &mut resolved_thinking,
+            plan.thinking_budget.is_some(),
+        ));
     }
     flush_pending_tool_user(&mut pending_tool_blocks, &mut out_messages);
     body.insert("messages".into(), Value::Array(out_messages));
@@ -95,6 +126,17 @@ pub fn to_messages_body(request: &CanonicalModelRequest) -> Value {
         );
     }
 
+    if let Some(budget) = plan.thinking_budget {
+        body.insert(
+            "thinking".into(),
+            json!({"type":"enabled","budget_tokens": budget}),
+        );
+    }
+    if plan.write_cache {
+        apply_cache_control_to_last(body.get_mut("system"));
+        apply_cache_control_to_last(body.get_mut("tools"));
+    }
+
     for (key, value) in &request.provider_options {
         if is_reserved_provider_option(key) {
             tracing::warn!(
@@ -121,6 +163,7 @@ fn is_reserved_provider_option(key: &str) -> bool {
             | "tools"
             | "tool_choice"
             | "thinking"
+            | "cache_control"
             | "output_config"
             | "reasoning_effort"
             | "reasoning"
@@ -136,14 +179,18 @@ fn is_reserved_provider_option(key: &str) -> bool {
 }
 
 /// 把 pawork-domain Message 转为 Anthropic message(s)。
-fn message_to_anthropic(message: &Message) -> Vec<Value> {
+fn message_to_anthropic<'a>(
+    message: &Message,
+    resolved_thinking: &mut impl Iterator<Item = &'a Value>,
+    thinking_enabled: bool,
+) -> Vec<Value> {
     let role = match message.role {
         MessageRole::User => "user",
         MessageRole::Assistant => "assistant",
         MessageRole::System | MessageRole::Tool => "user",
     };
 
-    let mut blocks = content_blocks(message);
+    let mut blocks = content_blocks(message, resolved_thinking, thinking_enabled);
     if blocks.is_empty() {
         blocks.push(json!({"type":"text","text":""}));
     }
@@ -151,7 +198,11 @@ fn message_to_anthropic(message: &Message) -> Vec<Value> {
     vec![json!({"role": role, "content": blocks})]
 }
 
-fn content_blocks(message: &Message) -> Vec<Value> {
+fn content_blocks<'a>(
+    message: &Message,
+    resolved_thinking: &mut impl Iterator<Item = &'a Value>,
+    thinking_enabled: bool,
+) -> Vec<Value> {
     let mut tool_results = Vec::new();
     let mut others = Vec::new();
 
@@ -160,7 +211,20 @@ fn content_blocks(message: &Message) -> Vec<Value> {
             ContentPart::Text(text) => {
                 others.push(json!({"type":"text","text": text.text}));
             }
-            ContentPart::Thinking(_) | ContentPart::Reasoning(_) | ContentPart::ArtifactRef(_) => {}
+            ContentPart::Thinking(_) => {
+                // Unsigned thinking blocks are rejected by Anthropic Messages.
+                // Engine appender stores Thinking{reasoning_item_id} next to the
+                // signed ReasoningItem; replay only the resolved signed block.
+            }
+            ContentPart::Reasoning(_) => {
+                let block = resolved_thinking.next();
+                if thinking_enabled {
+                    if let Some(block) = block {
+                        others.push(block.clone());
+                    }
+                }
+            }
+            ContentPart::ArtifactRef(_) => {}
             ContentPart::ToolCall(call) => {
                 let input = if call.arguments.is_null() {
                     call.raw_arguments
@@ -249,6 +313,27 @@ fn tool_choice_to_anthropic(choice: &ToolChoice) -> Value {
         ToolChoice::Auto => json!({"type":"auto"}),
         ToolChoice::Required => json!({"type":"any"}),
         ToolChoice::Named(name) => json!({"type":"tool","name": name}),
+    }
+}
+
+fn apply_cache_control_to_last(value: Option<&mut Value>) {
+    match value {
+        Some(Value::Array(items)) => {
+            if let Some(last) = items.last_mut() {
+                apply_cache_control(last);
+            }
+        }
+        Some(item) => apply_cache_control(item),
+        None => {}
+    }
+}
+
+fn apply_cache_control(value: &mut Value) {
+    if let Value::Object(map) = value {
+        map.insert(
+            "cache_control".into(),
+            json!({"type": "ephemeral"}),
+        );
     }
 }
 
@@ -346,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn thinking_and_prompt_cache_are_not_written() {
+    fn thinking_and_prompt_cache_are_written_when_plan_enables_them() {
         let mut req = base_request();
         req.prompt_cache = PromptCachePreference::Required;
         req.thinking = Some(ThinkingConfig {
@@ -370,6 +455,21 @@ mod tests {
         let body = to_messages_body(&req);
         assert!(body.get("thinking").is_none());
         assert!(!body.to_string().contains("cache_control"));
+
+        let planned = to_messages_body_with_plan(
+            &req,
+            &MessagesWirePlan {
+                write_cache: true,
+                thinking_budget: Some(64),
+                resolved_thinking_blocks: Vec::new(),
+            },
+        );
+        assert_eq!(
+            planned["thinking"],
+            json!({"type":"enabled","budget_tokens": 64})
+        );
+        assert_eq!(planned["system"]["cache_control"]["type"], "ephemeral");
+        assert_eq!(planned["tools"][0]["cache_control"]["type"], "ephemeral");
     }
 
     #[test]
@@ -532,6 +632,21 @@ mod tests {
         assert!(body.get("x-api-key").is_none());
         assert_eq!(body["temperature"], 0.5);
         assert_eq!(body["stop_sequences"], json!(["END"]));
+
+        let planned = to_messages_body_with_plan(
+            &req,
+            &MessagesWirePlan {
+                write_cache: false,
+                thinking_budget: Some(64),
+                resolved_thinking_blocks: Vec::new(),
+            },
+        );
+        assert_eq!(
+            planned["thinking"],
+            json!({"type":"enabled","budget_tokens": 64})
+        );
+        assert_ne!(planned["thinking"]["budget_tokens"], json!(999_999));
+        assert!(planned.get("cache_control").is_none());
     }
 
     #[test]
@@ -563,5 +678,63 @@ mod tests {
         let system = body["system"]["text"].as_str().expect("system text");
         assert!(system.contains("JSON Schema named `answer`"));
         assert!(system.contains("\"required\":[\"ok\"]"));
+    }
+
+    #[test]
+    fn thinking_and_reasoning_parts_are_replayed_when_plan_provides_blocks() {
+        use pawork_domain::{ReasoningItem, ReasoningItemId, ThinkingContent};
+
+        let mut req = base_request();
+        req.messages.push(Message {
+            id: MessageId::new("a-think"),
+            role: MessageRole::Assistant,
+            content: vec![
+                ContentPart::Thinking(ThinkingContent {
+                    text: "visible-thought".into(),
+                    reasoning_item_id: Some(ReasoningItemId::from("rs-1")),
+                    redacted: false,
+                }),
+                ContentPart::Reasoning(ReasoningItem {
+                    id: ReasoningItemId::from("rs-1"),
+                    summary: None,
+                    protected_blob_ref: pawork_domain::ProtectedBlobRef::from("ref-1"),
+                    opaque_metadata: BTreeMap::new(),
+                    continuation_metadata: BTreeMap::new(),
+                }),
+            ],
+            metadata: MessageMetadata::default(),
+        });
+        let planned = to_messages_body_with_plan(
+            &req,
+            &MessagesWirePlan {
+                write_cache: false,
+                thinking_budget: Some(64),
+                resolved_thinking_blocks: vec![json!({
+                    "type": "thinking",
+                    "thinking": "replayed",
+                    "signature": "sig-from-protector"
+                })],
+            },
+        );
+        let content = &planned["messages"][1]["content"];
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "replayed");
+        assert_eq!(content[0]["signature"], "sig-from-protector");
+        assert_eq!(content.as_array().expect("content").len(), 1);
+
+        let omitted = to_messages_body_with_plan(
+            &req,
+            &MessagesWirePlan {
+                write_cache: false,
+                thinking_budget: None,
+                resolved_thinking_blocks: vec![json!({
+                    "type": "thinking",
+                    "thinking": "replayed",
+                    "signature": "sig-from-protector"
+                })],
+            },
+        );
+        let omitted_content = omitted["messages"][1]["content"].as_array().expect("content");
+        assert!(omitted_content.iter().all(|block| block["type"] != "thinking"));
     }
 }

@@ -4267,7 +4267,9 @@ name = "pawork-app"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "blake3",
  "futures",
+ "getrandom 0.4.3",
  "pawork-auth",
  "pawork-control-plane",
  "pawork-domain",

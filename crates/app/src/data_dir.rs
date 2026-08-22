@@ -147,6 +147,11 @@ pub fn artifact_store_path_for(data_dir: impl AsRef<Path>, instance: &str) -> Pa
     instance_dir(data_dir, instance).join("artifacts")
 }
 
+/// `<data_dir>/<instance>/protected`：PWB1 ReasoningProtector 存储根。
+pub fn protected_store_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+    instance_dir(data_dir, instance).join("protected")
+}
+
 /// `<data_dir>/<instance>/usage-ledger.sqlite3`。
 pub fn usage_ledger_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
     instance_dir(data_dir, instance).join("usage-ledger.sqlite3")
@@ -183,6 +188,11 @@ mod tests {
         assert!(
             named.ends_with("dev/session.db") || named.ends_with("dev\\session.db"),
             "{named:?}"
+        );
+        let protected = protected_store_path_for("/tmp/pawork-data", "dev");
+        assert!(
+            protected.ends_with("dev/protected") || protected.ends_with("dev\\protected"),
+            "{protected:?}"
         );
     }
 

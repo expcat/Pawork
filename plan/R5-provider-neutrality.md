@@ -8,9 +8,9 @@
 - **通道三处登记**:`crates/providers/src/channels/api_key.rs:26-35` 每通道一个 cfg-feature 枚举变体(实态:在 providers 不在 auth)、`crates/app/src/channels.rs:106-137` 硬编码六通道表 + :148-156 `str→ApiKeyChannel` match(原 `host/app/src/channels.rs:108-153`,行号前移)、engine 红线守护测试名单过期(S12-CR06-10;实态 `crates/engine/tests/no_provider_branch.rs:13-34` 手写 20 名)。
 - **键名错位(2026-08-22 核查新发现)**:任务书所称既有落盘键 `openai.responses.summary_entries` **全仓无生产者**;唯一生产者写无前缀 `responses.summary_entries`(`crates/providers/src/responses_reasoning.rs:13`),因不在 allowlist 落盘时被保形脱敏;storage 测试用 allowlist 拼写自造数据掩盖错位。`anthropic_block_kind` 全仓零生产零消费,属预留脚手架。波 A 读兼容须覆盖两种旧拼写。
 - **凭证双实现**:`foundation/config/src/env.rs:1`「S0–S5 过渡机制」与 `providers/auth/src/resolve.rs:77` 同形独立实现(`api_key_env_name` 双份);`credential.rs:58-72` `keychain_service/keychain_account` 是 V1 兼容名(实际后端 auth 文件);F05 的 `pawork.mcp.*` 前缀白名单 + 独立 `mcp-auth.json` 是补丁式域隔离。
-- **K-10**:`providers/adapters/src/anthropic/mod.rs:7` TODO——prompt cache/thinking/hosted tools/signature/citations 不写 wire,静默丢弃。
-- **ReasoningProtector 烂尾对**:`memory_protector.rs:3`「S6 临时宿主实现…S7 接入 Protected Blob Store 后替换」从未发生;`providers/core/src/reasoning.rs:3` 同注;PWB1 protected(1,456 行)因此零生产消费者(R0 D18 保留待本阶段接线)。
-- **CapabilityNegotiator**(465 行,R0 D17 保留):P15-8 设计件,包外零调用——本阶段的能力收口正是其消费场景。
+- **K-10**(波 C 收口,2026-08-22):任务书旧路径 `providers/adapters/src/anthropic/mod.rs:7` 已随 R1 摊平为 [`crates/providers/src/channels/anthropic/mod.rs`](../crates/providers/src/channels/anthropic/mod.rs);TODO 清除,prompt cache/thinking/hosted tools/signature/server_tool/citations 写 wire 或 HTTP 前显式拒绝,不再静默丢弃。
+- **ReasoningProtector**(波 C 收口,2026-08-22):S6/S7 注释承诺已兑现——宿主 [`crates/app/src/protected.rs`](../crates/app/src/protected.rs) 注入 `ProtectedBlobStore`;PWB1 获首个生产消费者;storage `protected` feature 进入 `pawork` 闭包。Trait 仍在 providers,不依赖 storage。instance-level BlobScope `SessionId::from("instance-reasoning")` 为已接受偏差(canonical request 无 session_id)。
+- **CapabilityNegotiator**(波 C 收口,2026-08-22):Anthropic `prepare_request` 在 HTTP 前调用;hosted_tools/extensions nonempty 进 `required_tools`,未声明拒绝且不发请求。
 
 ## 2. 目标设计
 
@@ -23,6 +23,8 @@
 ## 3. 波次拆分
 
 > 波 B 实态回写(2026-08-22 三路核查后):§1 证据路径为 R1 前旧路径,实态 foundation/config → crates/workspace/src/config/env.rs、providers/auth → crates/auth;config env 唯一外部消费者是 app/provider_assembly.rs:23(auth 侧 api_key_env_name 需 pub 化为硬前置)。keychain_* 是代码/serde 词汇而非 auth.json 落盘键(落盘键 service 名 pawork.<provider> 等值不变),迁移 = StoredCredential serde 字段改名 + alias 读旧写新 + 迁移测试。mcp-auth.json 装配在 app/extensions.rs:333-338(ADR-039 决议装配留 app),本波只将其文件名与 pawork.mcp.* 前缀常量化进 auth locator 供消费;tools/mcp/oauth.rs 无前缀白名单逻辑(域隔离靠独立后端文件),白名单唯一位于 tools/mcp/security.rs。
+>
+> 波 C 实态回写(2026-08-22):K-10 路径见上;negotiator 生产接线在 `crates/providers/src/channels/anthropic/provider.rs`;PWB1 消费者在 `crates/app/src/protected.rs`(同一 `Arc<SwappableReasoningProtector>` 注入适配器,`open_protected` 后 bind)。审查首轮 P1 thinking 无签名回放已修(跳过 `ContentPart::Thinking`,Reasoning 仅在 `thinking_budget` Some 时写签名块)。真实 Anthropic 冒烟 fail-closed 登记 ROADMAP §4,不阻塞阶段 🟢。
 
 | 波 | 内容 | 写入集 | 并行度 |
 | --- | --- | --- | --- |
@@ -35,8 +37,8 @@
 - 信封/DDL golden 零 diff;provider_hints 新旧键读写回归;Secret 扫描拒绝测试。(波 A 已收口)
 - auth 迁移:旧 `keychain_*` 文件读取→新格式写入→再读一致;`invalid_grant`/空 refresh 语义不回退(S6 收口行为);全局脱敏回归(trace 0 泄漏)。(波 B 已收口)
 - 通道注册表:`pawork models` 六通道聚合与 V2 快照一致;engine 守护测试自动名单生效。(波 A 已收口;真实六通道冒烟留人工验收)
-- K-10:每项能力一条 wiremock 契约(写 wire / 显式拒绝);Anthropic 通道真实冒烟(GLM Anthropic 端点,矩阵内)。
-- protected:PWB1 golden + 加密读写回归 + `cargo tree` 确认 chacha20poly1305 仅随 feature 进闭包。
+- K-10:每项能力一条 wiremock 契约(写 wire / 显式拒绝)。(波 C 已收口;真实 Anthropic 冒烟 fail-closed,登记 ROADMAP §4)
+- protected:PWB1 golden + 加密读写回归 + `cargo tree` 确认 chacha20poly1305 仅随 feature 进闭包。(波 C 已收口)
 
 ### 4.1 波 C 默认门禁(写入集 providers / app / storage(protected))
 
@@ -60,5 +62,5 @@ cargo tree -p pawork | rg chacha20poly1305
 - [x] 存储层 provider 键名清单删除;hints 契约 + golden 生效(波 A,2026-08-22)
 - [x] 通道注册表单点登记;engine 红线名单自动生成(波 A,2026-08-22)
 - [x] 凭证解析单一事实源;keychain 词汇消失(存储与代码);mcp 域隔离收编(波 B,2026-08-22;StoredCredential serde alias 读旧名兼容期登记 ROADMAP §4)
-- [ ] K-10 逐项有决议落地;唯一真 TODO 清除;ReasoningProtector 持久化(或显式改判)
-- [ ] 安全红线回归全绿;冒烟通过;v3_plan §3 更新
+- [x] K-10 逐项有决议落地;唯一真 TODO 清除;ReasoningProtector 持久化(波 C,2026-08-22;instance-level BlobScope 偏差已接受)
+- [x] 安全红线回归全绿;自动化门禁通过;v3_plan §3 更新(波 C,2026-08-22;真实 Anthropic 冒烟 fail-closed 登记 ROADMAP §4)

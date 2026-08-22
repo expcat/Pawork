@@ -408,3 +408,126 @@ async fn list_models_is_static_and_does_not_hit_network() {
         "list_models 不得请求 /v1/models 或任何远端"
     );
 }
+
+#[tokio::test]
+async fn contract_prompt_cache_and_thinking_are_written() {
+    let server = MockServer::start().await;
+    let body = sse(&[
+        r#"{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan"}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+        r#"{"type":"message_stop"}"#,
+    ]);
+    mount_ok(&server, body).await;
+
+    let p = provider(&server);
+    let sink = RecordingProviderSink::default();
+    let mut req = request("claude-3-5-sonnet");
+    req.temperature = Some(1.0);
+    req.thinking = Some(pawork_domain::ThinkingConfig {
+        level: pawork_domain::ThinkingLevel::High,
+        budget_tokens: Some(64),
+    });
+    req.prompt_cache = PromptCachePreference::Required;
+    req.messages.insert(
+        0,
+        Message {
+            id: MessageId::new("sys"),
+            role: MessageRole::System,
+            content: vec![ContentPart::Text(TextContent {
+                text: "sys".into(),
+            })],
+            metadata: MessageMetadata::default(),
+        },
+    );
+    p.stream(req, &sink, CancellationToken::new())
+        .await
+        .expect("stream ok");
+    assert!(sink
+        .events()
+        .iter()
+        .any(|event| matches!(event, ProviderStreamEvent::ThinkingDelta(text) if text == "plan")));
+    let received = server
+        .received_requests()
+        .await
+        .expect("request recording enabled");
+    assert_eq!(received.len(), 1);
+    let sent: serde_json::Value = received[0].body_json().expect("json body");
+    assert_eq!(
+        sent["thinking"],
+        serde_json::json!({"type":"enabled","budget_tokens":64})
+    );
+    assert_eq!(sent["system"]["cache_control"]["type"], "ephemeral");
+}
+
+#[tokio::test]
+async fn hosted_tools_are_rejected_before_http() {
+    let server = MockServer::start().await;
+    mount_ok(&server, sse(&[])).await;
+    let p = provider(&server);
+    let sink = RecordingProviderSink::default();
+    let mut req = request("claude-3-5-sonnet");
+    req.hosted_tools.push(pawork_domain::HostedToolRequest {
+        name: "web_search".into(),
+        kind: pawork_domain::ToolCapabilityTag::WebSearch,
+        description: "search".into(),
+        capabilities: vec![pawork_domain::ToolCapabilityTag::WebSearch],
+        config: None,
+    });
+    let err = p
+        .stream(req, &sink, CancellationToken::new())
+        .await
+        .expect_err("undeclared hosted tools must fail closed");
+    assert_eq!(err.kind, ProviderErrorKind::InvalidRequest);
+    assert!(
+        server
+            .received_requests()
+            .await
+            .expect("request recording enabled")
+            .is_empty(),
+        "hosted tool reject must not hit HTTP"
+    );
+}
+
+#[tokio::test]
+async fn contract_thinking_signature_is_protected_not_emitted() {
+    let server = MockServer::start().await;
+    let body = sse(&[
+        r#"{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","id":"th_1"}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan"}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-secret"}}"#,
+        r#"{"type":"content_block_stop","index":0}"#,
+        r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello"}}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+        r#"{"type":"message_stop"}"#,
+    ]);
+    mount_ok(&server, body).await;
+
+    let p = provider(&server);
+    let sink = RecordingProviderSink::default();
+    let mut req = request("claude-3-5-sonnet");
+    req.temperature = Some(1.0);
+    req.thinking = Some(pawork_domain::ThinkingConfig {
+        level: pawork_domain::ThinkingLevel::Low,
+        budget_tokens: Some(64),
+    });
+    p.stream(req, &sink, CancellationToken::new())
+        .await
+        .expect("stream ok");
+    let events = sink.events();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ProviderStreamEvent::ThinkingDelta(text) if text == "plan"
+    )));
+    let item = events.iter().find_map(|event| match event {
+        ProviderStreamEvent::ReasoningItem(item) => Some(item),
+        _ => None,
+    });
+    let item = item.expect("reasoning item");
+    assert_eq!(item.id.as_str(), "th_1");
+    assert!(!item.protected_blob_ref.as_str().is_empty());
+    let dumped = format!("{events:?}");
+    assert!(!dumped.contains("sig-secret"), "signature must not leak into events: {dumped}");
+}

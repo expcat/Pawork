@@ -24,7 +24,7 @@ pawork-tools = { path = "../tools" }
 pawork-policy = { path = "../policy" }
 pawork-workspace = { path = "../workspace" }
 pawork-exec = { path = "../exec" }
-pawork-storage = { path = "../storage", features = ["compaction", "checkpoint"] }
+pawork-storage = { path = "../storage", features = ["compaction", "checkpoint", "protected"] }
 pawork-git = { path = "../git" }
 pawork-workflow = { path = "../workflow" }
 pawork-orchestration = { path = "../orchestration", default-features = false }
@@ -40,6 +40,8 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "sync", "time"] }
 reqwest.workspace = true
 toml.workspace = true
+blake3.workspace = true
+getrandom.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

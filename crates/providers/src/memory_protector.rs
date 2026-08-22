@@ -1,8 +1,9 @@
 //! 进程内 reasoning continuation 保护器。
 //!
-//! 这是 S6 adapter 的临时宿主实现：opaque bytes 只保存在内存表中，canonical
-//! 事件仅携带 [`ProtectedBlobRef`]。S7 接入持久化 Protected Blob Store 后由宿主
-//! 注入替换；本类型不提供跨进程恢复保证。
+//! 进程内临时实现：opaque bytes 只保存在内存表中，canonical 事件仅携带
+//! [`ProtectedBlobRef`]。生产宿主在 `pawork-app::protected` 注入
+//! `ProtectedBlobStore`；本类型仍用于测试与 store 打开前的默认装配，
+//! 不提供跨进程恢复保证。
 
 use std::collections::HashMap;
 use std::collections::hash_map::RandomState;

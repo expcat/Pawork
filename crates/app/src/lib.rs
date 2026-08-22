@@ -21,6 +21,7 @@ mod loop_ctx;
 mod orchestration_host;
 mod persist;
 mod plan_host;
+mod protected;
 mod provider_assembly;
 mod protocol;
 mod services;
@@ -68,7 +69,8 @@ pub use checkpoint::{CheckpointSummary, RollbackOutcome};
 pub use data_dir::{
     artifact_store_path, artifact_store_path_for, audit_log_path_for, consume_data_dir_outcome,
     default_data_dir, default_data_dir_outcome, instance_dir, normalize_instance, session_db_path,
-    session_db_path_for, tasks_snapshot_path_for, usage_ledger_path_for, DataDirOutcome,
+    session_db_path_for, protected_store_path_for, tasks_snapshot_path_for, usage_ledger_path_for,
+    DataDirOutcome,
     DEFAULT_INSTANCE,
 };
 pub use diff::{paginate_diff, render_diff_file, render_session_diff, GitDiffHeader, SessionDiff};
@@ -223,6 +225,10 @@ pub enum AppError {
     #[error("ambiguous checkpoint `{prefix}` matches: {matches}")]
     AmbiguousCheckpoint { prefix: String, matches: String },
     #[error(transparent)]
+    ProtectedBlob(#[from] pawork_storage::blob::ProtectedBlobError),
+    #[error("{0}")]
+    Protected(String),
+    #[error(transparent)]
     Mcp(#[from] pawork_tools::mcp::McpError),
     #[error(transparent)]
     Resources(#[from] pawork_workspace::resources::ResourceLoadError),
@@ -341,6 +347,8 @@ pub struct AppCore {
     pub(crate) extensions: services::extension::ExtensionService,
     pub(crate) checkpoints: Option<pawork_storage::blob::CheckpointService>,
     pub(crate) artifacts: Option<pawork_storage::blob::ArtifactStore>,
+    pub(crate) protected_store: Option<std::sync::Arc<pawork_storage::blob::ProtectedBlobStore>>,
+    pub(crate) reasoning_protector: std::sync::Arc<crate::protected::SwappableReasoningProtector>,
     pub(crate) usage: services::usage::UsageService,
     pub(crate) tasks: services::tasks::TaskService,
     pub(crate) imports: services::import::ImportService,
@@ -435,6 +443,8 @@ impl AppCore {
             .await?;
         core.open_checkpoints(artifact_store_path_for(&data_dir, instance))
             .await?;
+        core.open_protected(protected_store_path_for(&data_dir, instance))
+            .await?;
         core.open_control_plane(crate::instance_dir(&data_dir, instance))?;
         Ok(core)
     }
@@ -461,6 +471,7 @@ impl AppCore {
         core.open_store(store_path).await?;
         if let Some(parent) = store_path.parent() {
             core.open_checkpoints(parent.join("artifacts")).await?;
+            core.open_protected(parent.join("protected")).await?;
             core.open_control_plane(parent.to_path_buf())?;
         }
         Ok(core)
@@ -488,11 +499,15 @@ impl AppCore {
             .ok_or(AppError::MissingDefaultModel)?;
         let provider_ref = ProviderId::from(provider_id.as_str());
         let backend: Arc<dyn SecretBackend> = Arc::new(FileBackend::new());
+        let reasoning_protector =
+            std::sync::Arc::new(crate::protected::SwappableReasoningProtector::in_memory());
         let assembled = futures::executor::block_on(assemble_provider(
             &config,
             &provider_ref,
             &backend,
             false,
+            std::sync::Arc::clone(&reasoning_protector)
+                as Arc<dyn pawork_providers::ReasoningProtector>,
         ))?;
         let mut core = Self::from_parts_with_protocol(
             assembled.adapter,
@@ -504,6 +519,7 @@ impl AppCore {
             assembled.registry,
         )
         .with_state(config, backend);
+        core.reasoning_protector = reasoning_protector;
         core.http = Self::http_from_config(&core.config)?;
         Ok(core)
     }
@@ -550,6 +566,8 @@ impl AppCore {
         let channel = channels::first_party_channel(provider_id.as_str());
         let protocol = channel_protocol(channel, &config, provider_id.as_str())?;
         let registry = assemble_registry(&config, &provider_ref, protocol, channel);
+        let reasoning_protector =
+            std::sync::Arc::new(crate::protected::SwappableReasoningProtector::in_memory());
         let mut pending = false;
         let core = if provider_missing {
             Self::from_parts_with_protocol(
@@ -564,7 +582,15 @@ impl AppCore {
                 registry,
             )
         } else {
-            match assemble_provider(&config, &provider_ref, &backend, true).await {
+            match assemble_provider(
+                &config,
+                &provider_ref,
+                &backend,
+                true,
+                std::sync::Arc::clone(&reasoning_protector)
+                    as Arc<dyn pawork_providers::ReasoningProtector>,
+            )
+            .await {
                 Ok(assembled) => Self::from_parts_with_protocol(
                     assembled.adapter,
                     assembled.credential,
@@ -593,6 +619,7 @@ impl AppCore {
             }
         };
         let mut core = core.with_state(config, backend);
+        core.reasoning_protector = reasoning_protector;
         core.http = Self::http_from_config(&core.config)?;
         core.provider_pending = pending;
         Ok(core)
@@ -654,6 +681,10 @@ impl AppCore {
             extensions: services::extension::ExtensionService::new(),
             checkpoints: None,
             artifacts: None,
+            protected_store: None,
+            reasoning_protector: std::sync::Arc::new(
+                crate::protected::SwappableReasoningProtector::in_memory(),
+            ),
             usage: services::usage::UsageService::in_memory(),
             tasks: services::tasks::TaskService::new(),
             imports: services::import::ImportService,

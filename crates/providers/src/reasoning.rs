@@ -1,8 +1,8 @@
 //! Provider-neutral 的 reasoning continuation 保护 trait（S5 波 A）。
 //!
-//! 迁自 V1 `provider-runtime::reasoning`。本包提供 trait 与内存实现；持久实现由
-//! R5 接到 `pawork-storage::blob`。本 crate 不依赖 storage，只使用
-//! `pawork-domain` 的 `ProtectedBlobRef` 逻辑引用。
+//! 迁自 V1 `provider-runtime::reasoning`。本包提供 trait 与内存实现；R5 波 C
+//! 已由宿主 `pawork-app::protected` 接到 `pawork-storage::blob`。本 crate 不
+//! 依赖 storage，只使用 `pawork-domain` 的 `ProtectedBlobRef` 逻辑引用。
 
 use pawork_domain::ProtectedBlobRef;
 use thiserror::Error;

@@ -1,22 +1,36 @@
-//! Anthropic Messages [`ModelProvider`] 实现（S2 基线路径）。
+//! Anthropic Messages [`ModelProvider`] 实现。
 //!
 //! 认证头 `x-api-key` + `anthropic-version`；明文 secret 只在构造 header 时短暂
 //! 出现，不持久化、不记录。`base_url` 必填，端点为 `{base_url}/v1/messages`。
-//! [`ModelProvider::stream`] 只走 Messages 基线（等价 V1 `drive_legacy_stream`）。
+//! [`ModelProvider::stream`] 在发 HTTP 前走 CapabilityNegotiator；未声明能力拒绝
+//! 而非静默丢弃。thinking signature 经 ReasoningProtector 换成 ref-only
+//! [`ReasoningItem`]。
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use pawork_domain::{
-    CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider, ModelResponseSummary,
-    ProviderError, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, ResolvedCredential,
+    CanonicalModelRequest, CapabilityFallback, CapabilityRequirements, ContentPart,
+    ModelCapabilities, ModelDefinition, ModelProvider,
+    ModelResponseSummary, ModelTransport, PromptCachePreference, ProviderError, ProviderErrorKind,
+    ProviderEventSink, ProviderStreamEvent, ReasoningConfig, ReasoningEffort, ReasoningItem,
+    ReasoningItemId, ReasoningStateCapability, ReasoningStateDescriptor, ResolvedCredential,
+    ThinkingConfig, ThinkingLevel,
 };
 use pawork_domain::{CancellationToken, ModelId, ProviderId, StopReason, TokenUsage};
+use serde_json::{json, Value};
+
+use crate::memory_protector::InMemoryReasoningProtector;
+use crate::negotiate::{clamp_reasoning_to_thinking, CapabilityNegotiator};
 use crate::net::http::{HttpClient, HttpClientConfig};
 use crate::net::sse::SseParser;
-use serde_json::Value;
+use crate::registry::{CapabilityEvidence, ModelRegistry};
+use crate::{ReasoningProtectError, ReasoningProtector};
 
-use super::stream::{event_to_events, AnthropicStreamState};
+use super::request::{to_messages_body_with_plan, MessagesWirePlan};
+use super::stream::{parse_event, AnthropicStreamState, StreamOutput};
 use super::ANTHROPIC_VERSION;
 
 /// Anthropic 适配器配置。`base_url` 必填，不内置官方端点。
@@ -58,6 +72,8 @@ pub struct AnthropicProvider {
     config: AnthropicConfig,
     client: HttpClient,
     credential: Option<ResolvedCredential>,
+    reasoning_protector: Arc<dyn ReasoningProtector>,
+    registry: Option<Arc<ModelRegistry>>,
 }
 
 impl AnthropicProvider {
@@ -91,7 +107,19 @@ impl AnthropicProvider {
             config,
             client,
             credential,
+            reasoning_protector: Arc::new(InMemoryReasoningProtector::default()),
+            registry: None,
         })
+    }
+
+    pub fn with_reasoning_protector(mut self, protector: Arc<dyn ReasoningProtector>) -> Self {
+        self.reasoning_protector = protector;
+        self
+    }
+
+    pub fn with_registry(mut self, registry: Arc<ModelRegistry>) -> Self {
+        self.registry = Some(registry);
+        self
     }
 
     fn auth_headers(&self) -> Vec<(String, String)> {
@@ -112,10 +140,117 @@ impl AnthropicProvider {
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
-        let body = super::request::to_messages_body(request);
+        let (body, _) = self.prepare_request(request).await?;
         let mut state = AnthropicStreamState::default();
         self.pump_messages(body, request.trace_id.as_deref(), &mut state, sink, cancel)
             .await
+    }
+
+    async fn prepare_request(
+        &self,
+        request: &CanonicalModelRequest,
+    ) -> Result<(Value, MessagesWirePlan), ProviderError> {
+        let evidence = self.capability_evidence(&request.model);
+        let caps = evidence.merged();
+        let requirements = requirements_from_request(request);
+        let resolved = CapabilityNegotiator::negotiate(&evidence, &requirements);
+        if let Some(reason) = first_reject(&resolved.fallback) {
+            return Err(ProviderError::new(ProviderErrorKind::InvalidRequest, reason));
+        }
+
+        let write_cache = match request.prompt_cache {
+            PromptCachePreference::Disabled => false,
+            PromptCachePreference::Automatic => caps.prompt_cache,
+            PromptCachePreference::Required => {
+                if !caps.prompt_cache {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::InvalidRequest,
+                        "prompt cache is required but not declared by model",
+                    ));
+                }
+                true
+            }
+        };
+
+        let thinking_on = request
+            .thinking
+            .as_ref()
+            .is_some_and(|config| config.level != ThinkingLevel::Off)
+            || request
+                .reasoning
+                .as_ref()
+                .is_some_and(|config| config.requires_reasoning_support());
+        let thinking = if request
+            .reasoning
+            .as_ref()
+            .is_some_and(|config| config.requires_reasoning_support())
+        {
+            clamp_reasoning_to_thinking(request.reasoning.as_ref(), request.thinking.as_ref())
+        } else {
+            request.thinking.clone().unwrap_or(ThinkingConfig {
+                level: ThinkingLevel::Off,
+                budget_tokens: None,
+            })
+        };
+        let thinking_budget = if thinking_on {
+            Some(thinking_budget_tokens(&thinking))
+        } else {
+            None
+        };
+        if let Some(budget) = thinking_budget {
+            if let Some(temperature) = request.temperature {
+                if (temperature - 1.0).abs() > f64::EPSILON {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::InvalidRequest,
+                        "thinking requires temperature=1.0",
+                    ));
+                }
+            }
+            if let Some(max_tokens) = request.max_output_tokens {
+                if max_tokens <= budget {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::InvalidRequest,
+                        "max_output_tokens must be greater than thinking budget_tokens",
+                    ));
+                }
+            }
+        }
+
+        let resolved_thinking_blocks =
+            resolve_thinking_blocks(request, self.reasoning_protector.as_ref()).await?;
+        let plan = MessagesWirePlan {
+            write_cache,
+            thinking_budget,
+            resolved_thinking_blocks,
+        };
+        Ok((to_messages_body_with_plan(request, &plan), plan))
+    }
+
+    fn capability_evidence(&self, model: &ModelId) -> CapabilityEvidence {
+        if let Some(registry) = &self.registry {
+            if let Some(evidence) = registry.capability_evidence(model.as_str()) {
+                return evidence;
+            }
+        }
+        if let Some(definition) = builtin_models()
+            .into_iter()
+            .find(|definition| definition.id == *model)
+        {
+            return CapabilityEvidence {
+                model: definition.id,
+                provider: Some(self.config.provider_id.clone()),
+                static_declared: Some(definition.capabilities),
+                probe_declared: None,
+                override_declared: None,
+            };
+        }
+        CapabilityEvidence {
+            model: model.clone(),
+            provider: Some(self.config.provider_id.clone()),
+            static_declared: Some(messages_capabilities()),
+            probe_declared: None,
+            override_declared: None,
+        }
     }
 
     async fn pump_messages(
@@ -194,7 +329,44 @@ impl AnthropicProvider {
         summary: &mut ModelResponseSummary,
         saw_completion: &mut bool,
     ) -> Result<(), ProviderError> {
-        for ev in event_to_events(data, state) {
+        for output in parse_event(data, state) {
+            let ev = match output {
+                StreamOutput::Event(event) => event,
+                StreamOutput::MappingError(error) => {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::MalformedResponse,
+                        format!("server tool mapping unsupported: {error}"),
+                    ));
+                }
+                StreamOutput::PendingSignature {
+                    id,
+                    summary: item_summary,
+                    payload,
+                    redacted,
+                } => {
+                    let blob_ref = self
+                        .reasoning_protector
+                        .protect(&payload)
+                        .await
+                        .map_err(protect_error)?;
+                    let mut opaque_metadata = std::collections::BTreeMap::new();
+                    opaque_metadata.insert(
+                        "item_type".into(),
+                        json!(if redacted {
+                            "redacted_thinking"
+                        } else {
+                            "thinking"
+                        }),
+                    );
+                    ProviderStreamEvent::ReasoningItem(ReasoningItem {
+                        id: ReasoningItemId::from(id),
+                        summary: item_summary,
+                        protected_blob_ref: blob_ref,
+                        opaque_metadata,
+                        continuation_metadata: std::collections::BTreeMap::new(),
+                    })
+                }
+            };
             match &ev {
                 ProviderStreamEvent::ResponseStarted { response_id } => {
                     summary.response_id.clone_from(response_id);
@@ -217,19 +389,35 @@ impl AnthropicProvider {
     }
 }
 
-/// Anthropic Messages 协议的静态内置模型目录（S5 registry 合并源）。
-///
-/// 调用方（app 装配层）在选中 Messages 协议时把它并入 ModelRegistry；
-/// 本函数不做 Provider 名称分支，id 由调用方提供。
-pub fn builtin_models() -> Vec<ModelDefinition> {
-    let capabilities = ModelCapabilities {
+fn messages_capabilities() -> ModelCapabilities {
+    ModelCapabilities {
         text: true,
         image_input: true,
         tool_calls: true,
         parallel_tool_calls: true,
         structured_output: true,
-        ..ModelCapabilities::default()
-    };
+        prompt_cache: true,
+        thinking: true,
+        transport: ModelTransport::Messages,
+        hosted_tool_tags: BTreeSet::new(),
+        citations: false,
+        reasoning: ReasoningStateCapability {
+            state: ReasoningStateDescriptor {
+                requires_signature: true,
+                requires_encrypted: false,
+                supports_interleaved: false,
+            },
+            supports_granular_effort: false,
+        },
+    }
+}
+
+/// Anthropic Messages 协议的静态内置模型目录（S5 registry 合并源）。
+///
+/// 调用方（app 装配层）在选中 Messages 协议时把它并入 ModelRegistry；
+/// 本函数不做 Provider 名称分支，id 由调用方提供。
+pub fn builtin_models() -> Vec<ModelDefinition> {
+    let capabilities = messages_capabilities();
     vec![
         ModelDefinition {
             id: ModelId::new("claude-3-5-sonnet"),
@@ -246,6 +434,114 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             capabilities,
         },
     ]
+}
+
+fn requirements_from_request(request: &CanonicalModelRequest) -> CapabilityRequirements {
+    let mut required_tools = BTreeSet::new();
+    for hosted in &request.hosted_tools {
+        required_tools.insert(hosted.kind);
+        required_tools.extend(hosted.capabilities.iter().copied());
+    }
+    for extension in &request.extensions {
+        required_tools.extend(extension.capabilities.iter().copied());
+        if extension.capabilities.is_empty() {
+            required_tools.insert(pawork_domain::ToolCapabilityTag::ServerSideMcp);
+        }
+    }
+
+    let reasoning = request
+        .reasoning
+        .clone()
+        .or_else(|| {
+            request.thinking.as_ref().and_then(|thinking| {
+                if thinking.level == ThinkingLevel::Off {
+                    None
+                } else {
+                    Some(ReasoningConfig {
+                        effort: match thinking.level {
+                            ThinkingLevel::Off => ReasoningEffort::None,
+                            ThinkingLevel::Low => ReasoningEffort::Low,
+                            ThinkingLevel::Medium => ReasoningEffort::Medium,
+                            ThinkingLevel::High => ReasoningEffort::High,
+                        },
+                        state: ReasoningStateDescriptor {
+                            requires_signature: true,
+                            requires_encrypted: false,
+                            supports_interleaved: false,
+                        },
+                    })
+                }
+            })
+        })
+        .map(|mut config| {
+            if config.requires_reasoning_support() {
+                config.state.requires_signature = true;
+            }
+            config
+        });
+
+    CapabilityRequirements {
+        transport_pref: vec![ModelTransport::Messages],
+        required_tools,
+        reasoning,
+        citations: !request.hosted_tools.is_empty(),
+    }
+}
+
+fn first_reject(
+    fallback: &std::collections::BTreeMap<String, CapabilityFallback>,
+) -> Option<String> {
+    fallback.values().find_map(|item| match item {
+        CapabilityFallback::Reject(reason) => Some(reason.clone()),
+        _ => None,
+    })
+}
+
+fn thinking_budget_tokens(thinking: &ThinkingConfig) -> u64 {
+    if let Some(budget) = thinking.budget_tokens {
+        return budget;
+    }
+    match thinking.level {
+        ThinkingLevel::Off => 0,
+        ThinkingLevel::Low => 1024,
+        ThinkingLevel::Medium => 2048,
+        ThinkingLevel::High => 4096,
+    }
+}
+
+async fn resolve_thinking_blocks(
+    request: &CanonicalModelRequest,
+    protector: &dyn ReasoningProtector,
+) -> Result<Vec<Value>, ProviderError> {
+    let mut blocks = Vec::new();
+    for message in &request.messages {
+        for part in &message.content {
+            let ContentPart::Reasoning(item) = part else {
+                continue;
+            };
+            let payload = protector
+                .resolve(&item.protected_blob_ref)
+                .await
+                .map_err(protect_error)?;
+            let value = serde_json::from_slice(&payload).unwrap_or_else(|_| {
+                json!({
+                    "type": "thinking",
+                    "thinking": String::from_utf8_lossy(&payload),
+                })
+            });
+            blocks.push(value);
+        }
+    }
+    Ok(blocks)
+}
+
+fn protect_error(error: ReasoningProtectError) -> ProviderError {
+    let kind = if error.is_corrupted() {
+        ProviderErrorKind::MalformedResponse
+    } else {
+        ProviderErrorKind::ProviderUnavailable
+    };
+    ProviderError::new(kind, error.to_string())
 }
 
 #[async_trait]
@@ -347,6 +643,18 @@ mod tests {
             .iter()
             .any(|model| model.id == ModelId::new("claude-3-5-sonnet")));
         assert!(models.iter().all(|model| model.capabilities.tool_calls));
+        assert!(models.iter().all(|model| model.capabilities.prompt_cache));
+        assert!(models.iter().all(|model| model.capabilities.thinking));
+        assert!(models
+            .iter()
+            .all(|model| model.capabilities.transport == ModelTransport::Messages));
+        assert!(models
+            .iter()
+            .all(|model| model.capabilities.reasoning.state.requires_signature));
+        assert!(models.iter().all(|model| !model.capabilities.citations));
+        assert!(models
+            .iter()
+            .all(|model| model.capabilities.hosted_tool_tags.is_empty()));
     }
 
     #[test]
@@ -363,5 +671,191 @@ mod tests {
         .err()
         .expect("duplicate credential header must fail");
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+    }
+
+    #[tokio::test]
+    async fn required_prompt_cache_without_cap_is_rejected() {
+        let registry = ModelRegistry::empty();
+        registry.set_override(
+            "unknown-model",
+            ModelCapabilities {
+                text: true,
+                ..ModelCapabilities::default()
+            },
+        );
+        let provider = AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
+            .expect("adapter")
+            .with_registry(Arc::new(registry));
+        let request = CanonicalModelRequest {
+            request_id: pawork_domain::RequestId::from("r1"),
+            model: ModelId::from("unknown-model"),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
+            tool_choice: Default::default(),
+            thinking: None,
+            temperature: None,
+            max_output_tokens: Some(128),
+            stop_sequences: Vec::new(),
+            response_format: Default::default(),
+            prompt_cache: PromptCachePreference::Required,
+            budget: Default::default(),
+            provider_options: Default::default(),
+            trace_id: None,
+            reasoning: None,
+        };
+        let error = provider
+            .prepare_request(&request)
+            .await
+            .expect_err("required cache without cap");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+    }
+
+    fn sample_request() -> CanonicalModelRequest {
+        CanonicalModelRequest {
+            request_id: pawork_domain::RequestId::from("r1"),
+            model: ModelId::from("claude-3-5-sonnet"),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
+            tool_choice: Default::default(),
+            thinking: None,
+            temperature: None,
+            max_output_tokens: Some(8192),
+            stop_sequences: Vec::new(),
+            response_format: Default::default(),
+            prompt_cache: PromptCachePreference::Automatic,
+            budget: Default::default(),
+            provider_options: Default::default(),
+            trace_id: None,
+            reasoning: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn thinking_rejects_non_unit_temperature_and_small_max_tokens() {
+        let provider =
+            AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
+                .expect("adapter");
+        let mut request = sample_request();
+        request.thinking = Some(ThinkingConfig {
+            level: ThinkingLevel::High,
+            budget_tokens: Some(64),
+        });
+        request.temperature = Some(0.2);
+        let error = provider
+            .prepare_request(&request)
+            .await
+            .expect_err("temperature");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+
+        request.temperature = Some(1.0);
+        request.max_output_tokens = Some(64);
+        let error = provider
+            .prepare_request(&request)
+            .await
+            .expect_err("max tokens");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+    }
+
+    #[tokio::test]
+    async fn thinking_high_writes_default_budget_and_automatic_cache() {
+        let provider =
+            AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
+                .expect("adapter");
+        let mut request = sample_request();
+        request.thinking = Some(ThinkingConfig {
+            level: ThinkingLevel::High,
+            budget_tokens: None,
+        });
+        request.temperature = Some(1.0);
+        request.max_output_tokens = None;
+        request.messages.push(pawork_domain::Message {
+            id: pawork_domain::MessageId::new("sys"),
+            role: pawork_domain::MessageRole::System,
+            content: vec![pawork_domain::ContentPart::Text(pawork_domain::TextContent {
+                text: "sys".into(),
+            })],
+            metadata: pawork_domain::MessageMetadata::default(),
+        });
+        let (body, plan) = provider.prepare_request(&request).await.expect("plan");
+        assert_eq!(plan.thinking_budget, Some(4096));
+        assert!(plan.write_cache);
+        assert_eq!(
+            body["thinking"],
+            serde_json::json!({"type":"enabled","budget_tokens":4096})
+        );
+        assert_eq!(body["system"]["cache_control"]["type"], "ephemeral");
+        assert_eq!(body["max_tokens"], 4097);
+    }
+
+    #[tokio::test]
+    async fn appender_shaped_thinking_replays_signed_block_only() {
+        use pawork_domain::{
+            Message, MessageId, MessageMetadata, MessageRole, ReasoningItem, ReasoningItemId,
+            TextContent,
+        };
+
+        let protector = InMemoryReasoningProtector::default();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "type": "thinking",
+            "thinking": "plan",
+            "signature": "sig-secret",
+        }))
+        .expect("payload");
+        let blob_ref = protector.protect(&payload).await.expect("protect");
+        let provider =
+            AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
+                .expect("adapter")
+                .with_reasoning_protector(std::sync::Arc::new(protector));
+
+        let mut request = sample_request();
+        request.temperature = Some(1.0);
+        request.thinking = Some(ThinkingConfig {
+            level: ThinkingLevel::High,
+            budget_tokens: Some(64),
+        });
+        request.messages.push(Message {
+            id: MessageId::new("asst"),
+            role: MessageRole::Assistant,
+            content: vec![
+                pawork_domain::ContentPart::Thinking(pawork_domain::ThinkingContent {
+                    text: "plan".into(),
+                    reasoning_item_id: Some(ReasoningItemId::from("th_1")),
+                    redacted: false,
+                }),
+                pawork_domain::ContentPart::Reasoning(ReasoningItem {
+                    id: ReasoningItemId::from("th_1"),
+                    summary: Some("plan".into()),
+                    protected_blob_ref: blob_ref.clone(),
+                    opaque_metadata: Default::default(),
+                    continuation_metadata: Default::default(),
+                }),
+                pawork_domain::ContentPart::Text(TextContent {
+                    text: "hello".into(),
+                }),
+            ],
+            metadata: MessageMetadata::default(),
+        });
+
+        let (body, plan) = provider.prepare_request(&request).await.expect("plan");
+        assert_eq!(plan.thinking_budget, Some(64));
+        let content = body["messages"][0]["content"].as_array().expect("content");
+        let thinking_blocks: Vec<_> = content
+            .iter()
+            .filter(|block| block["type"] == "thinking")
+            .collect();
+        assert_eq!(thinking_blocks.len(), 1);
+        assert_eq!(thinking_blocks[0]["thinking"], "plan");
+        assert_eq!(thinking_blocks[0]["signature"], "sig-secret");
+        assert!(!format!("{body}").contains("visible-thought"));
+
+        request.thinking = None;
+        let (body_off, plan_off) = provider.prepare_request(&request).await.expect("off");
+        assert!(plan_off.thinking_budget.is_none());
+        let content_off = body_off["messages"][0]["content"].as_array().expect("content");
+        assert!(content_off.iter().all(|block| block["type"] != "thinking"));
     }
 }

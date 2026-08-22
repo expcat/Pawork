@@ -20,6 +20,7 @@ use pawork_providers::{
     AnthropicConfig, AnthropicProvider, ApiKeyChannelConfig, ApiKeyChannelProvider, CatalogEntry,
     ModelRegistry, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
+use pawork_providers::ReasoningProtector;
 use pawork_auth::locator::api_key_env_name;
 use pawork_workspace::config::{PaworkConfig, ProviderConfig};
 
@@ -91,7 +92,14 @@ impl AppCore {
             });
         }
         let target = ProviderId::new(provider);
-        let mut assembled = assemble_provider(&self.config, &target, &self.backend, true).await?;
+        let mut assembled = assemble_provider(
+            &self.config,
+            &target,
+            &self.backend,
+            true,
+            Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
+        )
+        .await?;
 
         // 目标模型：显式参数 → 当前模型（若属于目标 provider）→ 目标 provider
         // 的第一个 registry 条目；都无则要求显式 /model。
@@ -131,6 +139,7 @@ impl AppCore {
         self.registry = Arc::new(assembled.registry);
         self.provider_id = target;
         self.model = target_model;
+        self.rebind_persistent_protector();
         let to = (self.provider_id.clone(), self.model.clone());
         if let Some(session) = session {
             self.record_model_switch(session, from, to).await?;
@@ -239,7 +248,14 @@ impl AppCore {
             let assembled = if id.as_str() == self.provider_id.as_str() && !self.provider_pending {
                 Some((Arc::clone(&self.provider), self.credential.clone()))
             } else {
-                match assemble_provider(&self.config, &id, &self.backend, false).await {
+                match assemble_provider(
+                    &self.config,
+                    &id,
+                    &self.backend,
+                    false,
+                    Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
+                )
+                .await {
                     Ok(assembled) => Some((assembled.adapter, assembled.credential)),
                     Err(_) => None,
                 }
@@ -425,12 +441,16 @@ pub(crate) async fn assemble_provider(
     provider_id: &ProviderId,
     backend: &Arc<dyn SecretBackend>,
     refresh_oauth: bool,
+    reasoning_protector: Arc<dyn ReasoningProtector>,
 ) -> Result<AssembledProvider, AppError> {
     let id = provider_id.as_str();
     let channel = channels::first_party_channel(id);
     let config_base = find_provider(&config.providers, id)
         .ok()
         .and_then(|provider| provider.base_url.clone());
+    let protocol = channel_protocol(channel, config, id)?;
+    let registry = assemble_registry(config, provider_id, protocol, channel);
+    let registry_arc = Arc::new(registry.clone());
 
     let (adapter, credential, protocol) = match channel.map(|channel| channel.kind.clone()) {
         Some(ChannelKind::ChatGptOAuth) => {
@@ -446,8 +466,11 @@ pub(crate) async fn assemble_provider(
             let mut chatgpt_config =
                 pawork_providers::ChatGptConfig::new(account_id).with_base_url(base_url);
             chatgpt_config.http.proxy = config.proxy_url.clone();
-            let provider =
-                pawork_providers::ChatGptProvider::new(chatgpt_config, Some(credential.clone()))?;
+            let provider = pawork_providers::ChatGptProvider::new(
+                chatgpt_config,
+                Some(credential.clone()),
+            )?
+            .with_reasoning_protector(Arc::clone(&reasoning_protector));
             (
                 Arc::new(provider) as Arc<dyn ModelProvider>,
                 Some(credential),
@@ -460,8 +483,8 @@ pub(crate) async fn assemble_provider(
                 config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
             let mut xai_config = pawork_providers::XaiConfig::new(base_url);
             xai_config.http.proxy = config.proxy_url.clone();
-            let provider =
-                pawork_providers::XaiProvider::new(xai_config, Some(credential.clone()))?;
+            let provider = pawork_providers::XaiProvider::new(xai_config, Some(credential.clone()))?
+                .with_reasoning_protector(Arc::clone(&reasoning_protector));
             (
                 Arc::new(provider) as Arc<dyn ModelProvider>,
                 Some(credential),
@@ -481,17 +504,15 @@ pub(crate) async fn assemble_provider(
             for (model, transport) in model_transport_overrides(config) {
                 channel_config = channel_config.with_model_transport(model, transport);
             }
-            let provider =
-                ApiKeyChannelProvider::new(channel_config, Some(credential.clone()))?;
+            let provider = ApiKeyChannelProvider::new(channel_config, Some(credential.clone()))?
+                .with_reasoning_protector(Arc::clone(&reasoning_protector));
             (
                 Arc::new(provider) as Arc<dyn ModelProvider>,
                 Some(credential),
                 AdapterProtocol::ChatCompletions,
             )
         }
-        // 非首发通道：config 必须提供 base_url，协议来自 provider_protocols。
         None => {
-            // provider 必须已在 config 登记且提供 base_url（fail-closed）。
             let _provider = find_provider(&config.providers, id)?;
             let base_url = config_base.ok_or_else(|| AppError::MissingBaseUrl {
                 id: id.to_string(),
@@ -508,15 +529,19 @@ pub(crate) async fn assemble_provider(
                     },
                     Some(credential.clone()),
                 )?),
-                AdapterProtocol::Messages => Arc::new(AnthropicProvider::new(
-                    {
-                        let mut c = AnthropicConfig::new(base_url)
-                            .with_provider_id(provider_id.as_str().to_string());
-                        c.http.proxy = config.proxy_url.clone();
-                        c
-                    },
-                    Some(credential.clone()),
-                )?),
+                AdapterProtocol::Messages => Arc::new(
+                    AnthropicProvider::new(
+                        {
+                            let mut c = AnthropicConfig::new(base_url)
+                                .with_provider_id(provider_id.as_str().to_string());
+                            c.http.proxy = config.proxy_url.clone();
+                            c
+                        },
+                        Some(credential.clone()),
+                    )?
+                    .with_reasoning_protector(Arc::clone(&reasoning_protector))
+                    .with_registry(registry_arc),
+                ),
                 AdapterProtocol::Responses => {
                     return Err(AppError::Protocol(crate::ProtocolError::Unknown {
                         provider: id.to_string(),
@@ -528,9 +553,6 @@ pub(crate) async fn assemble_provider(
         }
     };
 
-    // registry 装配与 CatalogOnly 路径共享（builtin + 静态目录 + config 覆盖）。
-    let registry = assemble_registry(config, provider_id, protocol, channel);
-
     Ok(AssembledProvider {
         adapter,
         credential,
@@ -538,7 +560,6 @@ pub(crate) async fn assemble_provider(
         registry,
     })
 }
-
 /// API key 凭证链：auth 文件 → env fallback → fail-closed。
 fn resolve_api_key_credential(
     backend: &Arc<dyn SecretBackend>,
@@ -704,6 +725,7 @@ mod tests {
         core_with_registry, mock_core, remove_env, sample_config, set_env, ScriptedProvider,
     };
     use crate::{AdapterProtocol, AppCore, AppError};
+    use pawork_providers::ReasoningProtector;
 
     use super::*;
 
@@ -1148,5 +1170,32 @@ mod tests {
         let err = AppCore::from_resolved(config, None, None).expect_err("bad protocol");
         remove_env(&env_name);
         assert!(matches!(err, AppError::Protocol(_)));
+    }
+
+    #[tokio::test]
+    async fn assemble_provider_injects_reasoning_protector_for_messages() {
+        let id = "app-core-protector-inject";
+        let env_name = api_key_env_name(id);
+        set_env(&env_name, "not-a-real-key");
+        let mut config = sample_config(id);
+        config.extra.insert(
+            "provider_protocols".into(),
+            serde_json::json!({ id: "messages" }),
+        );
+        let backend: Arc<dyn SecretBackend> = Arc::new(pawork_auth::MemoryBackend::new());
+        let protector = Arc::new(crate::protected::SwappableReasoningProtector::in_memory());
+        let assembled = assemble_provider(
+            &config,
+            &ProviderId::from(id),
+            &backend,
+            false,
+            protector.clone() as Arc<dyn ReasoningProtector>,
+        )
+        .await
+        .expect("assemble");
+        assert_eq!(assembled.protocol, AdapterProtocol::Messages);
+        let blob = protector.protect(b"sig").await.expect("protect");
+        assert_eq!(protector.resolve(&blob).await.expect("resolve"), b"sig");
+        remove_env(&env_name);
     }
 }
