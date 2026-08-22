@@ -14,6 +14,9 @@ mod session_tree;
 #[cfg(feature = "compaction")]
 pub mod compaction;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 use std::path::{Path, PathBuf};
 
 use crate::sqlite::{DatabaseActor, DatabaseError, MigrationError};

@@ -208,22 +208,6 @@ impl SessionStore {
         Ok(SessionTree { branches })
     }
 
-    /// 从 `branch_id` 沿 parent / fork 点走到 root。
-    ///
-    /// 本支 `max_sequence` 为 [`LINEAGE_UNBOUNDED`]；祖先支为该 fork 点事件的
-    /// sequence（含该事件）。
-    pub async fn ancestor_lineage(
-        &self,
-        session_id: &SessionId,
-        branch_id: impl Into<String>,
-    ) -> Result<Vec<(String, i64)>, SessionStoreError> {
-        let session_id = session_id.to_string();
-        let branch_id = branch_id.into();
-        self.database()
-            .call(move |connection| load_ancestor_lineage(connection, &session_id, &branch_id))
-            .await?
-    }
-
     /// 祖先前缀 ∪ 本支追加，按全局 sequence 升序。
     ///
     /// [`SessionStore::events_by_branch`] 只含本支追加，不能当 resume 源。
@@ -451,7 +435,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ancestor_lineage_and_events_exclude_post_fork_parent_appends() {
+    async fn events_on_lineage_excludes_post_fork_parent_appends() {
         let (_dir, path) = temp_db();
         let (store, _) = SessionStore::open(&path).await.expect("store");
         let session = SessionId::from("session-lineage");
@@ -491,18 +475,6 @@ mod tests {
             .switch_branch(&session, "experiment")
             .await
             .expect("switch");
-
-        let lineage = store
-            .ancestor_lineage(&session, "experiment")
-            .await
-            .expect("lineage");
-        assert_eq!(
-            lineage,
-            vec![
-                ("experiment".into(), LINEAGE_UNBOUNDED),
-                (DEFAULT_BRANCH_ID.into(), 1),
-            ]
-        );
 
         let sequences = |events: Vec<AgentEventEnvelope>| {
             events

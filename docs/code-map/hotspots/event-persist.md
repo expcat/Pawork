@@ -7,9 +7,9 @@
 | 契约 | 常量 | 位置 |
 | --- | --- | --- |
 | 事件信封（磁盘/线上 JSON） | `pawork_domain::events::CURRENT_SCHEMA_VERSION = 1` | `crates/domain/src/events.rs` |
-| Session SQLite 迁移 | `pawork_storage::session::CURRENT_SCHEMA_VERSION = 11` | `crates/storage/src/session/migration.rs` |
+| Session SQLite 迁移 | `pawork_storage::session::CURRENT_SCHEMA_VERSION = 12` | `crates/storage/src/session/migration.rs` |
 
-信封 golden：`crates/domain/tests/`（32 变体）。DDL 只追加；v11 是 `command_ledger`（不进 export）。R6 预期 v12 做原生 branch lineage。
+信封 golden：`crates/domain/tests/`（32 变体）。DDL 只追加；v11 是 `command_ledger`（不进 export）；v12（R6 波 A）`messages` 整表重建去 `DEFAULT 'main'`、回填即校验，升级 golden 检入 `crates/storage/src/session/fixtures/`。
 
 ## 写入
 

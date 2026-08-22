@@ -4,7 +4,7 @@ use crate::sqlite::{DatabaseActor, Migration, MigrationReport};
 
 use crate::session::SessionStoreError;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 11;
+pub const CURRENT_SCHEMA_VERSION: u32 = 12;
 const SCHEMA_MIGRATIONS_TABLE: &str = "schema_migrations";
 
 pub(crate) const MIGRATIONS: &[Migration] = &[
@@ -287,6 +287,54 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
                 WHERE idempotency_key IS NOT NULL;
         "#,
     },
+    Migration {
+        version: 12,
+        name: "messages_branch_projection_rebuild",
+        // R6 波 A（ADR-040 D3/D4）：messages 是可重建投影，branch_id 不得再
+        // 依赖 DEFAULT 'main' 静默兜底。回填即校验：缺失事件背书的投影行在
+        // 此 fail-closed（单条迁移事务整批回滚），随后按事件所属 branch 重建
+        // 整表并恢复两个索引。v1–v10 DDL 与 v11 command_ledger 不改写，只追加。
+        sql: r#"
+            CREATE TEMP TABLE v12_orphan_check(x TEXT);
+            CREATE TEMP TRIGGER v12_orphan_fail BEFORE INSERT ON v12_orphan_check
+            BEGIN
+                SELECT RAISE(ABORT, 'v12: messages projection row lacks backing session_event');
+            END;
+            INSERT INTO v12_orphan_check(x)
+                SELECT NULL FROM messages m
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM session_events e
+                    WHERE e.session_id = m.session_id
+                      AND e.sequence = m.sequence
+                );
+            DROP TRIGGER v12_orphan_fail;
+            DROP TABLE v12_orphan_check;
+
+            CREATE TABLE messages_v12(
+                message_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                run_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                message_json TEXT NOT NULL,
+                branch_id TEXT NOT NULL
+            );
+            INSERT INTO messages_v12(
+                message_id, session_id, run_id, sequence, role, message_json, branch_id
+            )
+            SELECT m.message_id, m.session_id, m.run_id, m.sequence, m.role, m.message_json,
+                   (SELECT e.branch_id FROM session_events e
+                    WHERE e.session_id = m.session_id
+                      AND e.sequence = m.sequence)
+            FROM messages m;
+            DROP TABLE messages;
+            ALTER TABLE messages_v12 RENAME TO messages;
+            CREATE INDEX idx_messages_session_sequence
+                ON messages(session_id, sequence);
+            CREATE INDEX idx_messages_session_branch_sequence
+                ON messages(session_id, branch_id, sequence);
+        "#,
+    },
 ];
 
 pub(crate) async fn migrate(
@@ -320,6 +368,8 @@ mod tests {
 
     use super::*;
     use crate::session::SessionStore;
+    use crate::session::test_support as seed;
+    use pawork_domain::{AgentEventEnvelope, SessionId};
 
     fn temp_db(name: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -379,7 +429,7 @@ mod tests {
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(
             report.applied_versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         );
         assert!(report.backup_path.is_none());
         let tables: Vec<String> = store
@@ -465,7 +515,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("migrate");
         assert_eq!(report.from_version, 6);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![7, 8, 9, 10, 11]);
+        assert_eq!(report.applied_versions, vec![7, 8, 9, 10, 11, 12]);
         let (tenant, principal): (String, String) = store
             .database()
             .call(|connection| {
@@ -583,8 +633,7 @@ mod tests {
                  message_id, session_id, run_id, sequence, role, message_json\
              ) VALUES \
              ('m-main', 'legacy-v9', 'run-1', 1, 'user', '{\"id\":\"m-main\"}'), \
-             ('m-fork', 'legacy-v9', 'run-1', 2, 'user', '{\"id\":\"m-fork\"}'), \
-             ('m-orphan', 'legacy-v9', 'run-1', 99, 'user', '{\"id\":\"m-orphan\"}');",
+             ('m-fork', 'legacy-v9', 'run-1', 2, 'user', '{\"id\":\"m-fork\"}');",
         )
     }
 
@@ -609,10 +658,10 @@ mod tests {
             .expect("seed v9 messages");
         actor.shutdown().await.expect("shutdown");
 
-        let (store, report) = SessionStore::open(&path).await.expect("migrate to v11");
+        let (store, report) = SessionStore::open(&path).await.expect("migrate to v12");
         assert_eq!(report.from_version, 9);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![10, 11]);
+        assert_eq!(report.applied_versions, vec![10, 11, 12]);
 
         let rows: Vec<(String, String, i64)> = store
             .database()
@@ -636,7 +685,6 @@ mod tests {
             vec![
                 ("m-main".into(), "main".into(), 1),
                 ("m-fork".into(), "experiment".into(), 2),
-                ("m-orphan".into(), "main".into(), 99),
             ]
         );
         store.shutdown().await.expect("shutdown");
@@ -658,10 +706,10 @@ mod tests {
         .expect("apply v1–v10");
         actor.shutdown().await.expect("shutdown");
 
-        let (store, report) = SessionStore::open(&path).await.expect("migrate to v11");
+        let (store, report) = SessionStore::open(&path).await.expect("migrate to v12");
         assert_eq!(report.from_version, 10);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![11]);
+        assert_eq!(report.applied_versions, vec![11, 12]);
         let tables: Vec<String> = store
             .database()
             .call(|connection| {
@@ -703,7 +751,404 @@ mod tests {
         store.shutdown().await.expect("shutdown");
         let readonly = SessionStore::open_read_only(&path)
             .await
-            .expect("open_read_only matches v11");
+            .expect("open_read_only matches v12");
         readonly.shutdown().await.expect("shutdown");
+    }
+
+    async fn build_seed_database(
+        name: &str,
+        scenario: &seed::SeedScenario,
+        schema_version: u32,
+    ) -> (tempfile::TempDir, PathBuf) {
+        let (dir, path) = temp_db(name);
+        let actor = DatabaseActor::open(&path).await.expect("seed actor");
+        crate::sqlite::migrate(
+            &actor,
+            SCHEMA_MIGRATIONS_TABLE,
+            &MIGRATIONS[..schema_version as usize],
+            schema_version,
+            &path,
+            false,
+        )
+        .await
+        .expect("apply seed schema");
+        seed::seed_scenario(&actor, scenario).await;
+        actor.shutdown().await.expect("seed shutdown");
+        (dir, path)
+    }
+
+    fn render_lineage(events: Vec<AgentEventEnvelope>) -> String {
+        let lines: Vec<String> = events
+            .iter()
+            .map(|envelope| serde_json::to_string(envelope).expect("serialize envelope"))
+            .collect();
+        format!("{}\n", lines.join("\n"))
+    }
+
+    async fn assert_lineage_golden(
+        store: &SessionStore,
+        session: &SessionId,
+        branch: &str,
+        fixture: &str,
+    ) {
+        let events = store
+            .events_on_lineage(session, branch, 1, 100)
+            .await
+            .expect("lineage events");
+        assert_eq!(
+            render_lineage(events), fixture,
+            "lineage golden mismatch on {branch}"
+        );
+    }
+
+    async fn message_rows(
+        store: &SessionStore,
+        session: &'static str,
+    ) -> Vec<(String, String, i64)> {
+        store
+            .database()
+            .call(move |connection| {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT message_id, branch_id, sequence FROM messages  \
+                         WHERE session_id=?1 ORDER BY sequence, message_id",
+                    )
+                    .expect("prepare messages");
+                statement
+                    .query_map([session], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })
+                    .expect("query messages")
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("collect messages")
+            })
+            .await
+            .expect("actor")
+    }
+
+    async fn messages_table_ddl(store: &SessionStore) -> String {
+        store
+            .database()
+            .call(|connection| {
+                connection
+                    .query_row(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .expect("messages ddl")
+            })
+            .await
+            .expect("actor")
+    }
+
+    async fn assert_messages_ddl_has_no_default(store: &SessionStore) {
+        let ddl = messages_table_ddl(store).await;
+        assert!(
+            !ddl.contains("DEFAULT"),
+            "v12 重建后的 messages DDL 不得携带 DEFAULT: {ddl}"
+        );
+    }
+
+    #[tokio::test]
+    async fn v10_fork_tree_database_upgrades_to_v12_with_lineage_golden() {
+        let scenario = seed::fork_tree_scenario();
+        let (_dir, path) = build_seed_database("v10-fork-tree.sqlite3", &scenario, 10).await;
+
+        let (store, report) = SessionStore::open(&path).await.expect("upgrade v10 -> v12");
+        assert_eq!(report.from_version, 10);
+        assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(report.applied_versions, vec![11, 12]);
+        assert!(report.backup_path.as_ref().is_some_and(|path| path.exists()));
+
+        let session = SessionId::from(scenario.session);
+        assert_lineage_golden(
+            &store,
+            &session,
+            "main",
+            include_str!("fixtures/v12_fork_tree.main.jsonl"),
+        )
+        .await;
+        assert_lineage_golden(
+            &store,
+            &session,
+            "fork-a",
+            include_str!("fixtures/v12_fork_tree.fork-a.jsonl"),
+        )
+        .await;
+        assert_lineage_golden(
+            &store,
+            &session,
+            "fork-b",
+            include_str!("fixtures/v12_fork_tree.fork-b.jsonl"),
+        )
+        .await;
+
+        let mut expected = Vec::new();
+        for sequence in 1..=6i64 {
+            expected.push((format!("m-main-{sequence}"), "main".into(), sequence));
+        }
+        for sequence in 7..=9i64 {
+            expected.push((format!("m-fork-a-{sequence}"), "fork-a".into(), sequence));
+        }
+        for sequence in 10..=11i64 {
+            expected.push((format!("m-fork-b-{sequence}"), "fork-b".into(), sequence));
+        }
+        assert_eq!(message_rows(&store, scenario.session).await, expected);
+        assert_messages_ddl_has_no_default(&store).await;
+
+        // 重建一致性：按事件所属 branch 重放投影，行集不变。
+        store.rebuild_projection(&session).await.expect("rebuild");
+        assert_eq!(message_rows(&store, scenario.session).await, expected);
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn v11_interleaved_database_upgrades_to_v12_with_lineage_golden() {
+        let scenario = seed::interleaved_scenario();
+        let (_dir, path) = build_seed_database("v11-interleaved.sqlite3", &scenario, 11).await;
+        // v11 特有面：command_ledger 行须原样穿过 v12 升级。
+        let actor = DatabaseActor::open(&path).await.expect("ledger actor");
+        actor
+            .call(|connection| {
+                connection.execute(
+                    "INSERT INTO command_ledger(tenant_id, client_scope, command_id, idempotency_key, status, response_json, created_at_ms, completed_at_ms)  \
+                     VALUES ('local/default','r6a-golden','cmd-1','key-1','completed','{\"ok\":true}',7,9)",
+                    [],
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("seed ledger row");
+        actor.shutdown().await.expect("ledger shutdown");
+
+        let (store, report) = SessionStore::open(&path).await.expect("upgrade v11 -> v12");
+        assert_eq!(report.from_version, 11);
+        assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(report.applied_versions, vec![12]);
+        assert!(report.backup_path.as_ref().is_some_and(|path| path.exists()));
+
+        let session = SessionId::from(scenario.session);
+        assert_lineage_golden(
+            &store,
+            &session,
+            "main",
+            include_str!("fixtures/v12_interleaved.main.jsonl"),
+        )
+        .await;
+        assert_lineage_golden(
+            &store,
+            &session,
+            "side",
+            include_str!("fixtures/v12_interleaved.side.jsonl"),
+        )
+        .await;
+
+        let ledger: (String, String, String) = store
+            .database()
+            .call(|connection| {
+                connection.query_row(
+                    "SELECT command_id, status, COALESCE(response_json, '') FROM command_ledger",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("ledger row");
+        assert_eq!(
+            ledger,
+            ("cmd-1".into(), "completed".into(), "{\"ok\":true}".into())
+        );
+
+        let expected = vec![
+            ("m-1".into(), "main".into(), 1),
+            ("m-side-2".into(), "side".into(), 2),
+            ("m-3".into(), "main".into(), 3),
+            ("m-side-4".into(), "side".into(), 4),
+            ("m-5".into(), "main".into(), 5),
+            ("m-side-6".into(), "side".into(), 6),
+        ];
+        assert_eq!(message_rows(&store, scenario.session).await, expected);
+        assert_messages_ddl_has_no_default(&store).await;
+        store.rebuild_projection(&session).await.expect("rebuild");
+        assert_eq!(message_rows(&store, scenario.session).await, expected);
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn v10_compaction_database_upgrades_to_v12_keeping_frozen_fold_semantics() {
+        let scenario = seed::compaction_scenario();
+        let (_dir, path) = build_seed_database("v10-compaction.sqlite3", &scenario, 10).await;
+
+        let (store, report) = SessionStore::open(&path).await.expect("upgrade v10 -> v12");
+        assert_eq!(report.from_version, 10);
+        assert_eq!(report.applied_versions, vec![11, 12]);
+
+        let session = SessionId::from(scenario.session);
+        assert_lineage_golden(
+            &store,
+            &session,
+            "main",
+            include_str!("fixtures/v12_compaction.main.jsonl"),
+        )
+        .await;
+        assert_lineage_golden(
+            &store,
+            &session,
+            "side",
+            include_str!("fixtures/v12_compaction.side.jsonl"),
+        )
+        .await;
+
+        // 冻结语义：main 上 <=2 的消息投影保持折叠删除；fork 点之后的
+        // 祖先消息行（m-summary）对 side lineage 仍可见。
+        let expected = vec![
+            ("m-summary".into(), "main".into(), 4),
+            ("m-3".into(), "main".into(), 5),
+            ("m-side-1".into(), "side".into(), 6),
+        ];
+        assert_eq!(message_rows(&store, scenario.session).await, expected);
+        assert_messages_ddl_has_no_default(&store).await;
+        store.rebuild_projection(&session).await.expect("rebuild");
+        assert_eq!(message_rows(&store, scenario.session).await, expected);
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn v11_orphan_message_row_fails_v12_migration_and_preserves_v11_state() {
+        let scenario = seed::fork_tree_scenario();
+        let (_dir, path) = build_seed_database("v11-orphan.sqlite3", &scenario, 11).await;
+        let actor = DatabaseActor::open(&path).await.expect("orphan actor");
+        actor
+            .call(|connection| {
+                connection.execute(
+                    "INSERT INTO messages(message_id, session_id, run_id, sequence, role, message_json, branch_id)  \
+                     VALUES ('m-orphan', 'r6a-fork-tree', 'run-r6a', 999, 'user', '{}', 'main')",
+                    [],
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("seed orphan row");
+        actor.shutdown().await.expect("orphan shutdown");
+
+        let Err(error) = SessionStore::open(&path).await else {
+            panic!("孤儿投影行必须 fail-closed，open 不应成功");
+        };
+        let SessionStoreError::MigrationFailed { version, message, .. } = &error else {
+            panic!("v12 必须以 MigrationFailed 失败: {error:?}");
+        };
+        assert_eq!(*version, 12);
+        assert!(message.contains("lacks backing session_event"), "unexpected: {message}");
+
+        // 失败后：账本仍 v11、messages 原样、v10 的 DEFAULT 仍在 DDL 上（未重建）。
+        let actor = DatabaseActor::open(&path).await.expect("verify actor");
+        let ledger_version = crate::sqlite::schema_version(&actor, SCHEMA_MIGRATIONS_TABLE)
+            .await
+            .expect("ledger version");
+        assert_eq!(ledger_version, 11);
+        let (row_count, orphan_branch): (i64, String) = actor
+            .call(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*),  \
+                         (SELECT branch_id FROM messages WHERE message_id='m-orphan')  \
+                         FROM messages WHERE session_id='r6a-fork-tree'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .expect("verify rows")
+            })
+            .await
+            .expect("actor");
+        assert_eq!(row_count, 12, "种子 11 行 + 孤儿 1 行原样保留");
+        assert_eq!(orphan_branch, "main");
+        let ddl: String = actor
+            .call(|connection| {
+                connection.query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("messages ddl");
+        assert!(
+            ddl.contains("DEFAULT 'main'"),
+            "失败迁移不得触碰 v10 messages DDL: {ddl}"
+        );
+        actor.shutdown().await.expect("verify shutdown");
+
+        // 旧路径只读：v11 库可被 raw read-only 打开核对（SessionStore 层
+        // 的 v12 闸门由 open_read_only 常量比较保证，不在此重复断言）。
+        let reader = DatabaseActor::open_read_only(&path).await.expect("read-only open");
+        let total: i64 = reader
+            .call(|connection| {
+                connection.query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            })
+            .await
+            .expect("actor")
+            .expect("count messages");
+        assert_eq!(total, 12);
+        reader.shutdown().await.expect("reader shutdown");
+    }
+
+    #[test]
+    #[ignore = "set PAWORK_WRITE_STORAGE_GOLDEN=1 to refresh fixtures"]
+    fn write_v12_upgrade_golden() {
+        assert_eq!(
+            std::env::var("PAWORK_WRITE_STORAGE_GOLDEN").ok().as_deref(),
+            Some("1"),
+            "refusing to overwrite golden without PAWORK_WRITE_STORAGE_GOLDEN=1"
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        runtime.block_on(async {
+            let fixture_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/session/fixtures");
+            std::fs::create_dir_all(fixture_dir).expect("create fixtures dir");
+            for scenario in [
+                seed::fork_tree_scenario(),
+                seed::interleaved_scenario(),
+                seed::compaction_scenario(),
+            ] {
+                let dir = tempfile::tempdir().expect("tempdir");
+                let path = dir.path().join("seed.sqlite3");
+                let actor = DatabaseActor::open(&path).await.expect("actor");
+                crate::sqlite::migrate(
+                    &actor,
+                    SCHEMA_MIGRATIONS_TABLE,
+                    MIGRATIONS,
+                    CURRENT_SCHEMA_VERSION,
+                    &path,
+                    false,
+                )
+                .await
+                .expect("apply current schema");
+                seed::seed_scenario(&actor, &scenario).await;
+                for branch in scenario.branches.clone() {
+                    let scenario_session = scenario.session;
+                    let lines = actor
+                        .call(move |connection| {
+                            seed::lineage_payload_lines(
+                                connection,
+                                scenario_session,
+                                branch,
+                            )
+                        })
+                        .await
+                        .expect("actor");
+                    std::fs::write(
+                        format!("{fixture_dir}/{}.{}.jsonl", scenario.name, branch),
+                        format!("{}\n", lines.join("\n")),
+                    )
+                    .expect("write fixture");
+                }
+                actor.shutdown().await.expect("shutdown");
+            }
+        });
     }
 }

@@ -74,9 +74,16 @@ impl SessionStore {
             .call(move |connection| -> Result<(), SessionStoreError> {
                 let transaction = connection.transaction()?;
                 transaction.execute(
-                    "INSERT INTO sessions(session_id, title, created_at_ms, updated_at_ms, tenant_id, principal_id) \
-                     VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
-                    params![session_id, title, timestamp, tenant_id, principal_id],
+                    "INSERT INTO sessions(session_id, title, created_at_ms, updated_at_ms, active_branch, tenant_id, principal_id) \
+                     VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6)",
+                    params![
+                        session_id,
+                        title,
+                        timestamp,
+                        DEFAULT_BRANCH_ID,
+                        tenant_id,
+                        principal_id
+                    ],
                 )?;
                 transaction.execute(
                     "INSERT INTO session_branches(branch_id, session_id, head_sequence) VALUES (?1, ?2, 0)",
@@ -762,6 +769,33 @@ mod tests {
             Timestamp::from_unix_millis(1_000 + sequence),
             payload,
         )
+    }
+
+    #[tokio::test]
+    async fn create_session_writes_explicit_default_active_branch() {
+        // R6 波 A：create_session 必须显式写 active_branch，不再依赖
+        // v3 DDL 的 DEFAULT 'main'（该默认值随 v12 起从写入路径消失）。
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-explicit-active-branch");
+        store
+            .create_session(&session, "explicit", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        let active_branch: String = store
+            .database()
+            .call(move |connection| {
+                connection.query_row(
+                    "SELECT active_branch FROM sessions WHERE session_id=?1",
+                    [session.to_string()],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("active branch");
+        assert_eq!(active_branch, DEFAULT_BRANCH_ID);
+        store.shutdown().await.expect("shutdown");
     }
 
     #[tokio::test]

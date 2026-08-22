@@ -3,6 +3,8 @@
 > 对应 [ROADMAP.md](../ROADMAP.md) §2 R6 行。根因:S1 按线性会话设计(messages 无 branch 维度、sequence 全局),S10 Fork 后补,S13-F09 只能 `ALTER TABLE ADD COLUMN branch_id DEFAULT 'main'` + 事件反查回填 + `ancestor_lineage` API 外挂。分支语义靠补列外挂维持,压缩/投影/resume 各自处理分支边界。两个高风险契约阶段之一,必须 ADR 先行。
 >
 > **2026-08-22 波 0 三路核查回写(实态修正)**:`session_events.branch_id` 自 v1 即 `NOT NULL` 一等列 + FK 到 `session_branches`(`crates/storage/src/session/migration.rs:30-42`),并非 F09 后补;F09/v10 补的是 `messages` 投影列(`migration.rs:247-269`,原引用路径 `storage/session/src/migration.rs:252-260` 已随 R1 扁平化失效)。当前 `CURRENT_SCHEMA_VERSION = 11`(v11 = R4 波 B `command_ledger`)。压缩结构隐患实态:host `loop_ctx.rs` 用 `events_on_lineage(active)` 算 `compacted_through`,storage `CompactionEngine` 却用 `events_by_branch`(本支)读压缩输入,投影删除按事件所属 branch DELETE——三处语义不一致。`ancestor_lineage` 公开 API 几乎无生产消费者(生产走内部 `load_ancestor_lineage`/`events_on_lineage`)。无检入的真实 v10/v11 库文件升级 golden(现有升级测试全是临时库种子)。
+>
+> **2026-08-23 波 A 回写(实态)**:波 A 收口,写入集仅 crates/storage。① 落地:`CURRENT_SCHEMA_VERSION` 11→12;v12 迁移 = 孤儿 fail-closed(TEMP 触发器 RAISE ABORT,整批事务回滚)+ 按事件所属 branch 重建 `messages` 去 `DEFAULT 'main'` + 按原名恢复两索引;检入 4 个升级 golden(v10 fork 树 / v11 交错 / v10 压缩折叠 / v11 孤儿负例),fixture(`src/session/fixtures/` 7 JSONL)由真实写入路径落盘字节生成、`PAWORK_WRITE_STORAGE_GOLDEN=1` 门控再生;删除公开 `ancestor_lineage`(全仓零生产消费者);`create_session` 显式写 active_branch。reviewer verdict=pass。② 核查新发现实态(登记波 B):compaction 引擎 `filter_retention_inputs` 对 host lineage 输入按本支 event_id 二次过滤(engine.rs:141-145),祖先链条目被「读取+过滤」双重排除,比波 0 所述三处口径不一致更硬;`fork_from_event` 对同 fork 点重复 branch_id 一律拒绝,与 `create_branch` 同 `(parent, fork point)` 幂等语义不对称;Pi 导入事件全落 main 但 Branch payload 照插元数据行(零事件归属)。③ 偏差 2 项:既有 v9 升级正例种子的孤儿行 m-orphan 移出(旧断言「孤儿静默归 main」与 D4 fail-closed 直接冲突),孤儿负例由专项 v11 golden 承接;fixture 先落空占位使 crate 可编译、后由生成器写入真实字节(终态无手写字节)。④ 波 B 清单:压缩三处口径合一(含 `filter_retention_inputs`)、fork turn 边界(ADR D5)、`fork_from_event` 幂等不对称、Pi 导入分支归属;golden 生成器与被测读路径共享 lineage 实现,波 B 若动 lineage 保持 fixture 不再生。
 
 ## 1. ADR-040 决策点(波 0;推荐已列,须用户确认)
 
@@ -39,7 +41,7 @@
 
 ## 5. 退出标准
 
-- [ ] ADR-040 Accepted;schema v12 迁移 + 升级 golden 绿
-- [ ] `ancestor_lineage` 外挂、`DEFAULT 'main'` 回填路径、分支特判消失
+- [x] ADR-040 Accepted;schema v12 迁移 + 升级 golden 绿(波 A,2026-08-23)
+- [ ] `ancestor_lineage` 外挂、`DEFAULT 'main'` 回填路径、分支特判消失(前两项已随波 A 消失;分支特判待波 B host/engine 收编)
 - [ ] 压缩按分支水位;fork/resume/导出回归绿
 - [ ] K-05 完成或 fail-closed 登记(缺样本);冒烟通过;v3_plan §3 更新

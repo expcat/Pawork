@@ -15,6 +15,7 @@ src/
   session/                       # feature session
     event_store.rs  catalog.rs  command_ledger.rs
     projection.rs  session_tree.rs  client_adapter.rs  migration.rs
+    test_support.rs  fixtures/       # cfg(test) v12 升级 golden
     compaction/                  # feature compaction
     import/                      # Pi / compat / export
   blob/                          # feature blob
@@ -30,11 +31,12 @@ tests/
 路径为 `pawork_storage::{sqlite,session,blob}`。
 
 - **sqlite**：`DatabaseActor`、`migrate` / `schema_version`、`Migration*`。
-- **session**：`CURRENT_SCHEMA_VERSION = 11`（**SQLite 迁移号**，与信封 v1 独立）；`SessionStore`、`AppendReceipt`、`DEFAULT_BRANCH_ID = "main"`、`SessionTree`；`CommandLedger`（`LedgerCheck::{New, Replay, InFlight}`，容量默认 4096）；投影 `ProjectionSnapshot`；import/export（`EXPORT_SCHEMA_VERSION = 3`）。`SessionStore::open` 会 `reclaim_inflight`。
+- **session**：`CURRENT_SCHEMA_VERSION = 12`（**SQLite 迁移号**，与信封 v1 独立）；`SessionStore`、`AppendReceipt`、`DEFAULT_BRANCH_ID = "main"`、`SessionTree`；`CommandLedger`（`LedgerCheck::{New, Replay, InFlight}`，容量默认 4096）；投影 `ProjectionSnapshot`；import/export（`EXPORT_SCHEMA_VERSION = 3`）。`SessionStore::open` 会 `reclaim_inflight`。
 - **blob**：`ArtifactStore`、`BlobId`；protected：`PWB1_MAGIC` / `PWB1_VERSION = 1` / XChaCha20-Poly1305、`ProtectedBlobStore`、`ProtectedKeyResolver`；checkpoint：`CheckpointService` / `RunCheckpoint`。
 - **compaction**（opt-in）：`CompactionEngine`、`RetentionPolicy`。
 
 `command_ledger` 表为 v11 纯新增，不进 export。
+v12（R6 波 A）起 `messages` 整表重建去 `DEFAULT 'main'`、按事件所属 branch 原生物化（回填即校验，无事件背书的孤儿行整批迁移失败）；升级 golden 检入 `src/session/fixtures/`（`PAWORK_WRITE_STORAGE_GOLDEN=1` 门控再生）。
 
 ## 依赖与被依赖
 
@@ -48,7 +50,7 @@ tests/
 - Secret 不落库：事件 `opaque_metadata` 经 Secret 键扫描与保形脱敏；旧 `provider_hints` 拼写只读不写。
 - Compat 导入检测到 Secret → `CompatSecretDetected`，拒绝导入。
 - PWB1：明文只在 AEAD 信封内；事件只带 `ProtectedBlobRef`；`ProtectedBlob` Debug 为 redacted。
-- 改 DDL 必须迁移 + golden；v1–v10 不改写，只追加。分支 lineage 原生化是 R6（预期 v12），不要提前改信封。
+- 改 DDL 必须迁移 + golden；v1–v11 不改写，只追加。R6 波 A 已落 v12（`messages` 整表重建去 `DEFAULT 'main'`，无事件背书的孤儿行 fail-closed），信封 v1 不变。
 
 ## 相关文档
 
