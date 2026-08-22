@@ -1,0 +1,58 @@
+# pawork-storage
+
+SQLite Actor、Session Event Store、内容寻址 Blob（PWB1）。依赖 `pawork-domain`（session / protected feature）。
+
+## 职责
+
+串行化所有 SQLite 访问；以 append-only 事件流持久化 `AgentEventEnvelope`；提供会话树、投影、CommandLedger（幂等）、可选 compaction / checkpoint；blob 侧做内容寻址工件与受保护 AEAD 信封。调用方从不共享 `rusqlite::Connection`。
+
+## 模块树
+
+```
+src/
+  lib.rs                         # 根级不做 re-export
+  sqlite/{mod.rs, migration.rs}  # 始终编译
+  session/                       # feature session
+    event_store.rs  catalog.rs  command_ledger.rs
+    projection.rs  session_tree.rs  client_adapter.rs  migration.rs
+    compaction/                  # feature compaction
+    import/                      # Pi / compat / export
+  blob/                          # feature blob
+    artifact.rs
+    protected.rs                 # feature protected
+    checkpoint.rs                # feature checkpoint
+tests/
+  pwb1_golden.rs  read_range.rs  golden/pwb1_valid.hex
+```
+
+## 对外入口/API 面
+
+路径为 `pawork_storage::{sqlite,session,blob}`。
+
+- **sqlite**：`DatabaseActor`、`migrate` / `schema_version`、`Migration*`。
+- **session**：`CURRENT_SCHEMA_VERSION = 11`（**SQLite 迁移号**，与信封 v1 独立）；`SessionStore`、`AppendReceipt`、`DEFAULT_BRANCH_ID = "main"`、`SessionTree`；`CommandLedger`（`LedgerCheck::{New, Replay, InFlight}`，容量默认 4096）；投影 `ProjectionSnapshot`；import/export（`EXPORT_SCHEMA_VERSION = 3`）。`SessionStore::open` 会 `reclaim_inflight`。
+- **blob**：`ArtifactStore`、`BlobId`；protected：`PWB1_MAGIC` / `PWB1_VERSION = 1` / XChaCha20-Poly1305、`ProtectedBlobStore`、`ProtectedKeyResolver`；checkpoint：`CheckpointService` / `RunCheckpoint`。
+- **compaction**（opt-in）：`CompactionEngine`、`RetentionPolicy`。
+
+`command_ledger` 表为 v11 纯新增，不进 export。
+
+## 依赖与被依赖
+
+- **依赖**：`rusqlite` / `tokio`（sqlite 无 feature 门）。`session`/`protected` 拉 `pawork-domain`。`chacha20poly1305` 仅 `protected`。
+- **features**：`default = ["session", "blob"]`；另 `compaction` / `checkpoint` / `protected`。
+- **被依赖**：`pawork-app`（开 compaction/checkpoint/protected）；`pawork-cli`（`session` only）；`pawork-client` 仅 dev-dep。
+- **不依赖本包**：`pawork-engine` 生产面；`apps/desktop`（deny-list）。
+
+## 红线与注意事项
+
+- Secret 不落库：事件 `opaque_metadata` 经 Secret 键扫描与保形脱敏；旧 `provider_hints` 拼写只读不写。
+- Compat 导入检测到 Secret → `CompatSecretDetected`，拒绝导入。
+- PWB1：明文只在 AEAD 信封内；事件只带 `ProtectedBlobRef`；`ProtectedBlob` Debug 为 redacted。
+- 改 DDL 必须迁移 + golden；v1–v10 不改写，只追加。分支 lineage 原生化是 R6（预期 v12），不要提前改信封。
+
+## 相关文档
+
+- [docs/design.md](../../docs/design.md) §3.2 会话存储 / blob
+- [plan/R4-host-decomposition.md](../../plan/R4-host-decomposition.md)（CommandLedger）
+- [plan/R6-session-branching.md](../../plan/R6-session-branching.md)
+- [代码地图总索引](../../docs/code-map/README.md)
