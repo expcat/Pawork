@@ -6,7 +6,7 @@ Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心�
 
 当前仓库处于 **V3 重构线（R0–R9，见 [ROADMAP.md](ROADMAP.md)）**：V2 增量开发（S0–S13）已于 2026-08-18 完成并总结于 [docs/v2-summary.md](docs/v2-summary.md)；V3 不加新功能，聚焦结构收敛（R0 裁决后 37→21 包，R1 已收口）、依赖治理、补丁根因重构与 GUI 组件化。V1 全量实现（88 crate）已于 2026-08-17 归档至仓库外同级目录 `../Pawork_v1/`：移出 git 管理，仅作为迁移参照与历史快照保留。
 
-## 项目状态（2026-08-19）
+## 项目状态（2026-08-22）
 
 V2（S0–S13）全部 🟢：最小对话 → 会话持久化 → 工具循环 → 写入审批 → 命令执行与沙箱 → 上下文预算与用量 → 六通道 Provider 与 OAuth → Agent GUI（三栏工作台）→ Git/Diff/Checkpoint → MCP 与资源 → 服务化与客户端（headless/ACP/SDK）→ 工作流与多 Agent → 全项目 Code Review → 整改收口。唯一挂账：OAuth 自然临期 refresh 人工验收（并入 R9）。
 
@@ -14,10 +14,10 @@ V2（S0–S13）全部 🟢：最小对话 → 会话持久化 → 工具循环 
 | --- | --- | --- |
 | [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决（ADR-038） | 🟢 |
 | [R1](plan/R1-package-consolidation.md) | 包合并 37→21（ADR-039） | 🟢 |
-| [R2](plan/R2-dependency-governance.md) | 依赖治理（本地化 / 升级 / 去重） | ⚪ |
-| [R3](plan/R3-protocol-unification.md) | 协议与投影同源化 | ⚪ |
-| [R4](plan/R4-host-decomposition.md) | 宿主拆解与可靠性内核 | ⚪ |
-| [R5](plan/R5-provider-neutrality.md) | Provider 中立化与凭证收口 | ⚪ |
+| [R2](plan/R2-dependency-governance.md) | 依赖治理（本地化 / 升级 / 去重） | 🟢 |
+| [R3](plan/R3-protocol-unification.md) | 协议与投影同源化 | 🟢 |
+| [R4](plan/R4-host-decomposition.md) | 宿主拆解与可靠性内核 | 🟢 |
+| [R5](plan/R5-provider-neutrality.md) | Provider 中立化与凭证收口 | 🟢 |
 | [R6](plan/R6-session-branching.md) | 会话分支模型原生化（ADR-040） | ⚪ |
 | [R7](plan/R7-sandbox-isolation.md) | 执行面真隔离（ADR-041） | ⚪ |
 | [R8](plan/R8-gui-components.md) | GUI 组件化与 Desktop 收口 | ⚪ |
@@ -84,7 +84,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | [docs/task-guide.md](docs/task-guide.md) | 任务实现规范（公共提示词） |
 | [docs/v2-summary.md](docs/v2-summary.md) | V2（S0–S13）归档总结：交付、冻结契约、遗留债务 |
 | [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1→V2 迁移词典（冻结参考） |
-| [docs/code-map/README.md](docs/code-map/README.md) | 三层代码地图（总索引 + 各 crate/app `MODULE.md`） |
+| [docs/code-map/README.md](docs/code-map/README.md) | 按需导览（按写入集读各包 `MODULE.md`），非布局/契约事实源；冲突以源码为准 |
 | [AGENTS.md](AGENTS.md) | 工作约定（V3 版） |
 
 V1 时期文档（架构、ADR-001~035、features、quality、REVIEW 等）随 V1 归档于 `../Pawork_v1/docs/`，仓库内链接以 `../Pawork_v1/...` 标注。

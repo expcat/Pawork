@@ -15,6 +15,7 @@
 > | [docs/task-guide.md](docs/task-guide.md) | 任务实现规范(开启 / 进行 / 收尾公共约定) |
 > | [docs/v2-summary.md](docs/v2-summary.md) | V2 归档总结(S0–S13 交付、冻结契约、遗留债务) |
 > | [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1 迁移词典(冻结参考) |
+> | [docs/code-map/README.md](docs/code-map/README.md) | 按需导览，非布局/契约事实源（按写入集读各包 `MODULE.md`；冲突以源码为准） |
 >
 > 工作约定见仓库根 [AGENTS.md](AGENTS.md)。V2 版 `v2_plan.md`、V2 ROADMAP 与 `plan/S0–S13` 已删除,保留内容压缩于 [docs/v2-summary.md](docs/v2-summary.md);考古以 git 历史为准。
 

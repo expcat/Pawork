@@ -2,7 +2,7 @@
 
 > 本文档是所有 V3 任务（阶段波次、阶段外任务、并行子任务）**开启 / 进行 / 收尾**的公共规范。任务启动时引用本文即可，无需在提示词里重复展开这些约定——这就是「公共提示词」本体。
 >
-> 事实源关系：任务索引 [../ROADMAP.md](../ROADMAP.md) · 开启编排 [../v3_plan.md](../v3_plan.md) · 逐阶段任务书 [../plan/](../plan/)（R0–R9）· 设计与冻结契约 [design.md](design.md) · V2 归档总结 [v2-summary.md](v2-summary.md) · 参照项目手册 [references.md](references.md) · 工作约定基线 [../AGENTS.md](../AGENTS.md)。V2 版本文的阶段性内容（S0–S13 专属约定）已随 V2 收官移除，历史见 [v2-summary.md](v2-summary.md)。
+> 事实源关系：任务索引 [../ROADMAP.md](../ROADMAP.md) · 开启编排 [../v3_plan.md](../v3_plan.md) · 逐阶段任务书 [../plan/](../plan/)（R0–R9）· 设计与冻结契约 [design.md](design.md) · V2 归档总结 [v2-summary.md](v2-summary.md) · 参照项目手册 [references.md](references.md) · 工作约定基线 [../AGENTS.md](../AGENTS.md) · 代码地图 [code-map/README.md](code-map/README.md)（按需导览，**不是**事实源；按写入集读各包 `MODULE.md`，冲突以源码为准）。V2 版本文的阶段性内容（S0–S13 专属约定）已随 V2 收官移除，历史见 [v2-summary.md](v2-summary.md)。
 
 ---
 
@@ -35,6 +35,7 @@
 5. **证据重验**：任务书内的行数/消费者/调用点证据基于 2026-08-18 分析快照，执行时按 [../v3_plan.md](../v3_plan.md) §5.2 重验；实态与任务书冲突以实态为准并回写任务书。
 6. **查参照资料**：V3 阶段波次先看 [references.md](references.md) §7（R0–R9 阶段参照指引）；功能面映射看 [design.md](design.md) §4；需要机制细节时进 [references.md](references.md) 全文与 [research/](research/)；考古已归档代码用 git 历史与 tag `v2-final`（V1 资产另见 [v1-migration-reference.md](v1-migration-reference.md)）。
 7. **凭证检查**（需真实 API 的任务）：确认所需凭证已在 Pawork auth 文件或环境变量（§5）；**缺失或失效即终止任务并向用户索取，不静默跳过、不换用其他凭证、不降级为 mock 继续**（fail-closed，[research/multi-account-quota-plan-merge.md](research/multi-account-quota-plan-merge.md) §1.1）。
+8. **按写入集读地图**：只读写入集各包根目录 `MODULE.md`；禁止一次读完 21 份。不知道包时再开 [code-map/README.md](code-map/README.md) 总索引定位。跨包热路径才读 [code-map/hotspots/](code-map/hotspots/) 对应一篇（Agent loop / GUI Connection Protocol / 事件持久化与重放 / 凭证与脱敏）。地图是导览不是事实源；冲突以源码为准并回写。
 
 ---
 
@@ -90,6 +91,7 @@
    - 登记项：延期 / 新发现的未决事项 / 改判的任务书证据；
    - 明确说明未运行全量门禁属当前路线的正常状态。
 6. **收口加跑（仅主代理、仅一次）**：仅当本波实际改了装配/协议/客户端/桌面时，才追加对应的 protocol golden、probe、spawn_e2e、desktop 或 `cargo check -p pawork`。未改则跳过。
+7. **`MODULE.md` 同批回写**：写入集改了模块树、对外入口、`pawork-*` 依赖边或红线相关行为时，同批更新该包 `MODULE.md`；冲突以源码为准并回写。不借机扩热点。
 
 ---
 
@@ -153,5 +155,5 @@
 
 - **波次收尾**：更新 [../v3_plan.md](../v3_plan.md) §3 指针；阶段收尾更新 [../ROADMAP.md](../ROADMAP.md) §2 状态列 + 对应 `plan/R*.md` 退出标准打勾；延期项在 ROADMAP §4 登记。
 - **阶段外任务**：开启/完成时更新 ROADMAP §3.2 状态；完成后移入 §3.1 并登记产出链接。
-- **文档一致性**：若任务改动了冻结契约、包布局或候选功能状态，同批更新 [design.md](design.md) 对应章节（R1 收口时重写 §2 布局）；新增调研放 [research/](research/) 并在 [references.md](references.md) 登记；ADR 落 [adr/](adr/)（编号续接，现有 ADR-037）。
+- **文档一致性**：若任务改动了冻结契约、包布局或候选功能状态，同批更新 [design.md](design.md) 对应章节（R1 收口时重写 §2 布局）；写入集改了模块树、对外入口、`pawork-*` 依赖边或红线相关行为时，同批更新该包 `MODULE.md`（冲突以源码为准并回写，不借机扩热点）；新增调研放 [research/](research/) 并在 [references.md](references.md) 登记；ADR 落 [adr/](adr/)（编号续接，现有 ADR-037）。
 - **任务报告**按 §4 第 5 条的简式模板；评估记录（模型行为、协议对比、闭环成功率等）必须留档。

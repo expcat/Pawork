@@ -20,6 +20,7 @@
 | [docs/references.md](docs/references.md) | 参照项目手册;§7 为 R0–R9 阶段参照指引(开波时随任务书查阅) |
 | [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1 迁移词典(冻结;归档代码考古用) |
 | [AGENTS.md](AGENTS.md) | 仓库级红线与工作约定(V3 版) |
+| [docs/code-map/README.md](docs/code-map/README.md) | 按需导览(按写入集读各包 `MODULE.md`)，**不是**布局/契约事实源；冲突以源码为准 |
 
 ---
 
@@ -81,7 +82,7 @@
 
 ### 5.1 开启核对(主代理亲自读,不派发)
 
-按 [task-guide.md](docs/task-guide.md) §2:任务书全文、ROADMAP 依赖与 ADR 状态、[design.md](docs/design.md) §3.2 本波相关冻结契约、[v2-summary.md](docs/v2-summary.md) §4/§5(契约与 S13 拍板不可回退)。需要真实 key 的波次缺凭证即 fail-closed。
+按 [task-guide.md](docs/task-guide.md) §2:任务书全文、ROADMAP 依赖与 ADR 状态、[design.md](docs/design.md) §3.2 本波相关冻结契约、[v2-summary.md](docs/v2-summary.md) §4/§5(契约与 S13 拍板不可回退)、写入集各包根 `MODULE.md`(只读写入集;禁止一次读完 21 份;不知道包时再开 [docs/code-map/README.md](docs/code-map/README.md);跨包才读 hotspot 一篇)。需要真实 key 的波次缺凭证即 fail-closed。
 
 ### 5.2 并行核查(只读,2–3 路同时派发)
 
@@ -154,6 +155,8 @@ V3 任务书均带 2026-08-18 分析的证据(路径 + 行号),但**执行时实
 规范(纪律全文,必须遵守):
 - docs/task-guide.md
 - 仓库根 AGENTS.md
+- 写入集各包 MODULE.md(实现前必读;禁止读未列入写入集的包;地图不是事实源,冲突以源码为准)
+- 跨包热路径才读 docs/code-map/hotspots/<一篇>(Agent loop / GUI Connection Protocol / 事件持久化与重放 / 凭证与脱敏)
 
 任务:
 - 阶段任务书:plan/R<N>-*.md
@@ -198,6 +201,7 @@ V3 任务书均带 2026-08-18 分析的证据(路径 + 行号),但**执行时实
 
 - [ ] 子代理模型已由用户指定,且能落到 `Task` 参数
 - [ ] 本次恰好一个波次,写入集已写清
+- [ ] 写入集各包 MODULE.md 已读(禁止一次读完 21 份)
 - [ ] 硬前置阶段 🟢;本波所需 ADR 已 Accepted(R0/R1/R6/R7 闸门)
 - [ ] 核查回传后再写设计;证据漂移已回写任务书
 - [ ] 设计未破坏冻结契约;冲突已升级用户而不是自行拍板

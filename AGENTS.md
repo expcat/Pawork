@@ -5,6 +5,8 @@
 ## 1. 核心原则
 
 - **事实源优先**：以当前分支、工作区差异、源码、生成物、运行日志与真实远程状态为准；历史结论只作检索线索，使用前重新验证。
+- **地图 vs 事实源**：[`docs/code-map/`](docs/code-map/README.md) 与各 crate/app `MODULE.md` 是按需导览，**不是**事实源。包布局与冻结契约以 [docs/design.md](docs/design.md) 为准；公开 API 与行为以源码 / rustdoc / golden 为准。冲突以源码为准并回写地图，禁止按过期 `MODULE.md` 改代码。
+- **按写入集加载地图**：进某包前读该包根 `MODULE.md`；不要一次读完 21 份。总索引只在定位包时打开 [docs/code-map/README.md](docs/code-map/README.md)。跨包热路径再读 [docs/code-map/hotspots/](docs/code-map/hotspots/) 对应一篇（Agent loop / GUI Connection Protocol / 事件持久化与重放 / 凭证与脱敏）。
 - **最小写入集**：保留用户已有未提交改动；新增改动只触碰任务必需的文件。
 - **先确认已落地的内容，再补缺口**：避免重复规划或重做已完成的工作。
 - **范围明确的实现 / 修复任务，定位后直接执行**：不把简单任务过度规划。
@@ -68,6 +70,8 @@ Full workspace gate: NOT RUN（当前 R0–R9 未设置全量门禁）
 
 - 中文撰写，保留关键术语英文。
 - 常设文档体系：[ROADMAP.md](ROADMAP.md)（任务总索引）· [v3_plan.md](v3_plan.md)（任务开启编排）· [plan/](plan/)（阶段任务书 R0–R9）· [docs/design.md](docs/design.md)（设计与冻结契约）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI 设计）· [docs/references.md](docs/references.md)（参照项目手册）· [docs/task-guide.md](docs/task-guide.md)（任务实现规范）· [docs/v2-summary.md](docs/v2-summary.md)（V2 归档总结）· [docs/v1-migration-reference.md](docs/v1-migration-reference.md)（V1 迁移词典，冻结参考）· [docs/code-map/README.md](docs/code-map/README.md)（三层代码地图：总索引 + 各 crate/app `MODULE.md`）。
+- **`MODULE.md` 维护规则**：固定六节（职责 · 模块树 · 对外入口/API 面 · 依赖与被依赖 · 红线与注意事项 · 相关文档）。写入集改了模块树、对外入口、`pawork-*` 依赖边或红线相关行为时**同批**更新该包 `MODULE.md`；冲突以源码为准并回写。不借机扩热点。
+- **热点何时读**：仅四条跨包路径（Agent loop、GUI Connection Protocol、事件持久化与重放、凭证与脱敏）才读 [docs/code-map/hotspots/](docs/code-map/hotspots/) 对应一篇；R6 / R7 / R8 仍以对应 `plan/R*.md` 为准。
 - 架构决策用 ADR 记录，编号续接 V1（ADR-0xx），状态字段：Proposed / Accepted / Superseded。
 - 交叉引用使用仓库内相对路径链接；指向已归档 V1 资产时用 `../Pawork_v1/...` 并注明归档。
 
@@ -88,6 +92,7 @@ Full workspace gate: NOT RUN（当前 R0–R9 未设置全量门禁）
 
 - 文档等一致性关键产物由主代理直接撰写。
 - 实现阶段：边界清晰、写入集互不重叠的任务可并行派发，遵循服务级 `AGENTS.md` 的路由与并发上限。
+- 派发实现 / 核查子代理时，提示词须点名写入集各包 `MODULE.md`（见 [v3_plan.md](v3_plan.md) §8.1）；不要让子代理「先读完 code-map」。
 - 确定性检查先于模型审查；每个门禁只调用一个审查者。
 
 ## 10. 验证命令模板
