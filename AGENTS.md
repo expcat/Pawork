@@ -67,7 +67,7 @@ Full workspace gate: NOT RUN（当前 R0–R9 未设置全量门禁）
 ## 6. 文档约定
 
 - 中文撰写，保留关键术语英文。
-- 常设文档体系：[ROADMAP.md](ROADMAP.md)（任务总索引）· [v3_plan.md](v3_plan.md)（任务开启编排）· [plan/](plan/)（阶段任务书 R0–R9）· [docs/design.md](docs/design.md)（设计与冻结契约）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI 设计）· [docs/references.md](docs/references.md)（参照项目手册）· [docs/task-guide.md](docs/task-guide.md)（任务实现规范）· [docs/v2-summary.md](docs/v2-summary.md)（V2 归档总结）· [docs/v1-migration-reference.md](docs/v1-migration-reference.md)（V1 迁移词典，冻结参考）。
+- 常设文档体系：[ROADMAP.md](ROADMAP.md)（任务总索引）· [v3_plan.md](v3_plan.md)（任务开启编排）· [plan/](plan/)（阶段任务书 R0–R9）· [docs/design.md](docs/design.md)（设计与冻结契约）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI 设计）· [docs/references.md](docs/references.md)（参照项目手册）· [docs/task-guide.md](docs/task-guide.md)（任务实现规范）· [docs/v2-summary.md](docs/v2-summary.md)（V2 归档总结）· [docs/v1-migration-reference.md](docs/v1-migration-reference.md)（V1 迁移词典，冻结参考）· [docs/code-map/README.md](docs/code-map/README.md)（三层代码地图：总索引 + 各 crate/app `MODULE.md`）。
 - 架构决策用 ADR 记录，编号续接 V1（ADR-0xx），状态字段：Proposed / Accepted / Superseded。
 - 交叉引用使用仓库内相对路径链接；指向已归档 V1 资产时用 `../Pawork_v1/...` 并注明归档。
 

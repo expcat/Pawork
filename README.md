@@ -84,6 +84,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | [docs/task-guide.md](docs/task-guide.md) | 任务实现规范（公共提示词） |
 | [docs/v2-summary.md](docs/v2-summary.md) | V2（S0–S13）归档总结：交付、冻结契约、遗留债务 |
 | [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1→V2 迁移词典（冻结参考） |
+| [docs/code-map/README.md](docs/code-map/README.md) | 三层代码地图（总索引 + 各 crate/app `MODULE.md`） |
 | [AGENTS.md](AGENTS.md) | 工作约定（V3 版） |
 
 V1 时期文档（架构、ADR-001~035、features、quality、REVIEW 等）随 V1 归档于 `../Pawork_v1/docs/`，仓库内链接以 `../Pawork_v1/...` 标注。

@@ -6,7 +6,7 @@
 
 1. **先看本页**：确认包在依赖图中的位置，再打开对应 `MODULE.md`。
 2. **按 crate 加载**：进入某包工作时读该包根目录的 `MODULE.md`，不要一次读完全仓。
-3. **热点最后**：跨包热路径（Agent loop、审批、GUI 帧、事件重放等）见 [hotspots/](hotspots/)（模块图写完后补）。
+3. **热点最后**：跨包热路径见 [hotspots/](hotspots/)。
 
 `MODULE.md` 固定六节：职责 · 模块树 · 对外入口/API 面 · 依赖与被依赖 · 红线与注意事项 · 相关文档。函数级不铺开。
 
@@ -42,15 +42,15 @@
 
 ## 第 2 层：模块图
 
-各包根目录 `MODULE.md`。尚未落地的链接会在对应 commit 后变为真实文件；完成状态见任务书 §3。
+上表链接即各包根目录已落地的 `MODULE.md`。
 
 ## 第 3 层：热点
 
-[`hotspots/`](hotspots/) 在 #1–#21 的 `MODULE.md` 全部落地后再写。跨包路径不要塞进单一 crate 的模块图。
+跨包路径见 [`hotspots/`](hotspots/)，不要塞进单一 crate 的模块图。
 
 ## 相关文档
 
 - 包布局与冻结契约：[design.md](../design.md) §2 / §3
 - 工作红线：[../../AGENTS.md](../../AGENTS.md) §2
 - 任务书：[../../plan/out-of-band/code-map.md](../../plan/out-of-band/code-map.md)
-- 任务总索引：[../../ROADMAP.md](../../ROADMAP.md) §3.1b
+- 任务总索引：[../../ROADMAP.md](../../ROADMAP.md) §3.1
