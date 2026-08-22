@@ -102,7 +102,7 @@ V3 任务书均带 2026-08-18 分析的证据(路径 + 行号),但**执行时实
 2. **事实源**:归档/合并/改写的具体路径;保留清单(不动项)。
 3. **契约**:涉及的冻结契约与 golden;宁可字段闲置,禁止顺手裁剪。
 4. **写入集**:允许触碰的目录/包;契约文件单一 owner。
-5. **验证**:`cargo check/test -p <crate>` 清单 + 必要断言(`cargo tree` 无环/闭包不膨胀)+ 是否需真实冒烟。
+5. **验证**:默认只列写入集 `cargo test -p <crate> --offline --lib --tests`(一条 Cargo 进程)。protocol golden / probe / spawn_e2e / desktop / `cargo check -p pawork` 仅当对应文件确有改动、且只由主代理收口跑一次。合并/归档波才加 `cargo tree` 无环/闭包不膨胀。是否需真实冒烟单独标注。
 6. **派发图**:并行 ×N 的每路写入集;串行波主代理自做或只派一个实现子代理。
 
 需要 ADR 或与冻结契约冲突时,先问用户再实现。设计默认留在会话;发现任务书缺口由主代理改任务书。
@@ -116,7 +116,7 @@ V3 任务书均带 2026-08-18 分析的证据(路径 + 行号),但**执行时实
 
 ### 5.5 本波收尾(主代理)
 
-1. 跑本波写入集对应 `cargo check/test -p <crate>`(多包重复 `-p`,不用 `--workspace`);合并/归档波补跑 `cargo tree` 断言与红线测试。
+1. 跑本波写入集对应 `cargo test -p <crate> --offline --lib --tests`(多包可一次多个 `-p`,仍是一个 Cargo 进程,不用 `--workspace`)。审查者读 worker `/tmp` 日志,不再编译;主代理收口不重复 worker 已绿的同一条命令。protocol golden / probe / spawn_e2e / desktop / `cargo check -p pawork` 仅当对应文件确有改动时由主代理加跑一次。合并/归档波补跑 `cargo tree` 断言与红线测试。
 2. 更新本文 §3 指针;阶段仍有剩余波次则 ROADMAP 标 🔵。
 3. 最后一波跑任务书退出标准清单(含真实冒烟项),ROADMAP 标 🟢。
 4. 简式报告(task-guide §4 第 5 条):写入集、验证、登记项;未跑全量门禁属当前路线正常状态。
@@ -172,6 +172,9 @@ V3 任务书均带 2026-08-18 分析的证据(路径 + 行号),但**执行时实
 - git commit / push / 改 git config / git tag
 - 把 Secret 写入仓库或日志
 - 运行 cargo --workspace / clippy 门禁 / cargo clean
+- 并行轨同时跑 cargo(会锁 target,出现 Blocking waiting)
+- 审查者或主代理重复编译 worker 已绿的同一条 cargo 命令
+- 默认跑 protocol golden / probe / spawn_e2e / desktop / cargo check -p pawork(除非本波实际改了对应文件)
 - 核查角色:任何写入;实现角色:开始前改设计、碰契约面(除非写入集明确包含)
 ```
 

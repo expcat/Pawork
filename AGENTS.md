@@ -39,7 +39,7 @@
 
 ## 5. 验证决策（当前 V3 R0–R9 路线）
 
-实现任务以 [docs/task-guide.md](docs/task-guide.md) 为准——少测试、无全量门禁：只做能证明本任务核心行为的关键定向测试（`cargo check -p <crate>` / `cargo test -p <crate>`，多包重复 `-p`，不因包多改用 `--workspace`）。三类关键测试不推迟：安全红线定向回归、持久化与重放契约 golden、协议与解析 golden/种子。
+实现任务以 [docs/task-guide.md](docs/task-guide.md) 为准——少测试、无全量门禁：只做能证明本任务核心行为的关键定向测试。默认死表为 `cargo test -p <crate> --offline --lib --tests`（多包可一次多个 `-p`，但仍是一个 Cargo 进程，不因包多改用 `--workspace`）。`cargo check -p <crate>` 仅在该包无测试或只需类型检查时使用。三类关键测试不推迟：安全红线定向回归、持久化与重放契约 golden、协议与解析 golden/种子；邻包 golden/probe/e2e/desktop/`cargo check -p pawork` 默认不跑，仅主代理收口且对应文件确有改动时加跑一次。
 
 V3 重构线的补充约定：
 
@@ -50,7 +50,8 @@ V3 重构线的补充约定：
 
 沿用的硬约束：
 
-- 禁止 `cargo clean`；复用默认 `target/` 增量缓存，仅清理本任务临时输出。
+- 禁止 `cargo clean`；复用默认 `target/` 增量缓存，仅清理本任务临时输出。R1 遗留 crate 的 stale incremental 用 `python3 scripts/clean-stale-incremental.py` 按前缀清理，禁止 `rm -rf target`。
+- 全会话同一时刻只允许一个 Cargo 进程；并行轨不得抢同一 `target/` 锁。审查者读 worker `/tmp` 日志，不再编译。
 - 文档或不影响构建行为的配置改动只做链接、格式与 diff 检查，不为形式完整跑编译。
 - 前一层失败先收敛原因，不盲目扩大范围。
 - Secret、Policy、路径越界、持久化/重放、破坏性文件/进程操作等高风险改动必须带对应定向回归。
@@ -91,11 +92,10 @@ Full workspace gate: NOT RUN（当前 R0–R9 未设置全量门禁）
 
 ## 10. 验证命令模板
 
-普通实现任务从以下命令选择最小有效子集；多个相关包追加 `-p`：
+普通实现任务默认只跑写入集 crate；多个相关包可一次追加 `-p`，但仍是一个 Cargo 进程：
 
 ```bash
-cargo check -p <crate>
-cargo test -p <crate>
+cargo test -p <crate> --offline --lib --tests
 ```
 
-合并 / 归档波追加 `cargo tree` 断言（无环、`cargo tree -p pawork` 闭包对比）。未来发布任务的全量门禁必须在该任务书中重新定义，不沿用历史默认动作。
+仅在该包无测试或只需类型检查时改用 `cargo check -p <crate> --offline`。protocol golden、probe、spawn_e2e、desktop、`cargo check -p pawork` 默认不跑。合并 / 归档波追加 `cargo tree` 断言（无环、`cargo tree -p pawork` 闭包对比）。未来发布任务的全量门禁必须在该任务书中重新定义，不沿用历史默认动作。

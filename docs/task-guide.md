@@ -63,8 +63,13 @@
 - **少测试、无全量门禁**：只做能证明本任务核心行为的关键定向测试；不跑 Workspace Full Gate、不做 L0–L3 分级、不做 clippy/fmt 门禁。
 - **三类关键测试例外——必须同步落地、不推迟**：安全红线定向回归；持久化与重放契约 golden；协议与解析 golden/种子。
 - engine/工具循环逻辑回归全部走 MockProvider；真实 API 只承担冒烟与 env 门控 `--ignored` 测试（§5），不承载逻辑回归。
-- 验证命令：`cargo check -p <crate>` / `cargo test -p <crate>`（多包重复 `-p`，不因包多改用 `--workspace`）；合并/归档波补 `cargo tree` 断言（无环、`-p pawork` 闭包不膨胀）。
-- 禁止 `cargo clean`；复用默认 `target/` 增量缓存。
+- **默认门禁死表（每波一条 Cargo 进程）**：只跑本波写入集 crate：
+  `cargo test -p <crate> --offline --lib --tests`
+  多包可一次多个 `-p`，但仍是**一个** Cargo 进程，不因包多改用 `--workspace`。`--lib --tests` 跳过 doctest（client 的 `no_run` 示例也会编，无增量收益）。`--offline` 避免 registry 探测。
+- **默认不跑**（除非本波实际改了对应文件）：protocol golden、`--test gui_server_*`、client probe、spawn_e2e、desktop、`cargo check -p pawork`。这些由**主代理在收口时最多跑一次**。
+- 合并/归档波才补 `cargo tree` 断言（无环、`-p pawork` 闭包不膨胀）。
+- 禁止 `cargo --workspace`、clippy/fmt 门禁、`cargo clean`。复用默认 `target/` 增量缓存；R1 遗留 crate 的 stale incremental 用 `python3 scripts/clean-stale-incremental.py` 按前缀清理，禁止 `rm -rf target`。
+- 可选本机加速：`sccache`（未安装则跳过，不作为仓库依赖）。不启用 LTO。
 
 ### 3.4 平台与输出纪律
 
@@ -75,7 +80,7 @@
 
 ## 4. 任务收尾（结束前必做）
 
-1. **定向自动化测试全绿**：任务书「验证」节列出的命令逐条执行。
+1. **定向自动化测试全绿**：只跑任务书「验证」节里**本波写入集**对应的命令；worker 已跑过的同一条命令，主代理收口时不重复编译，只核对 `/tmp` 日志结论。审查者读 worker 日志，**不再编译**。
 2. **冒烟清单执行**（任务书有列时）：真实 key 按 §5 通道；**模型评估记录留档**。
 3. **任务书回写**：波次完成状态与退出标准打勾；核对「非目标」未被越界实现。
 4. **ROADMAP 与指针回写**：按 [../ROADMAP.md](../ROADMAP.md) §6 状态回写约定；同步更新 [../v3_plan.md](../v3_plan.md) §3 当前指针。
@@ -84,6 +89,7 @@
    - 验证：实际运行的命令与结果（含冒烟结论、评估记录要点）；
    - 登记项：延期 / 新发现的未决事项 / 改判的任务书证据；
    - 明确说明未运行全量门禁属当前路线的正常状态。
+6. **收口加跑（仅主代理、仅一次）**：仅当本波实际改了装配/协议/客户端/桌面时，才追加对应的 protocol golden、probe、spawn_e2e、desktop 或 `cargo check -p pawork`。未改则跳过。
 
 ---
 
@@ -122,10 +128,11 @@
 
 ## 6. 测试与验证策略（与根 AGENTS.md 的关系）
 
-- **每波双重验收**：定向自动化（`cargo test -p <pkg>`，多包用多个 `-p`）+ 任务书标注的真实冒烟（真实 key，人评估）。
+- **每波双重验收**：写入集定向自动化（默认 `cargo test -p <pkg> --offline --lib --tests`，多包可多个 `-p` 但必须串行一个 Cargo 进程）+ 任务书标注的真实冒烟（真实 key，人评估）。
 - **三类关键自动化测试**随改动同步落地（不推迟）：安全红线定向回归；持久化与重放契约 golden；协议与解析 golden/种子。
 - **MockProvider 兜底**：engine/工具循环逻辑用 MockProvider 做确定性测试；真实 API 测试只验证「接得通、流解析正确、模型行为可用」。
 - **当前 R0–R9 不做**：Workspace Full Gate、L0–L3 分级、clippy/fmt 门禁、schema drift CI、三平台矩阵、覆盖率。未来若需要发布，另立任务重新定义。
+- **编译成本优先于测试运行时**：R3–R5 实测测试体本身秒级，慢在 rustc + 重复 Cargo。禁止把邻包 golden/e2e/desktop/`cargo check -p pawork` 默认塞进每波。
 - **与根 [../AGENTS.md](../AGENTS.md) 的关系**：根文件 §5 已明确 V3 定向验证与 ADR 闸门；其余章节（架构红线、命名、提交与分支、安全与权限、子代理使用）全量适用。
 
 ---
@@ -136,6 +143,8 @@
 - **跨阶段并行**：满足 [../ROADMAP.md](../ROADMAP.md) §2 依赖关系且写入集不相交时可开第二条线（如 R7 ∥ R3–R6、R2 ∥ R3）；R3→R4→R5→R6 都触 `crates/app`，默认串行。
 - **契约文件单一 owner**：domain/protocol/storage 的契约面（事件信封、帧、DDL、golden）改动不并行派发，由单一任务串行处理，避免形状漂移。
 - **任务类型路由**：机械迁移/替换类（token 替换、use 路径修复、golden 随迁）适合并行子代理；装配/接线类（touch `crates/app`、`apps/pawork`）串行执行；涉及真实 key 的冒烟由主代理执行。
+- **Cargo 串行**：全会话同一时刻只允许一个 `cargo test`/`cargo check`/`cargo tree`。并行轨不得同时 `cargo test -p pawork-providers`（或任何同一 `target/` 的 Cargo）；第二路必须等第一路结束，否则会出现 `Blocking waiting`。长跑写入 `/tmp` 后轮询，禁止 `cargo clean`。
+- **审查者不编译**：reviewer 读 worker `/tmp` 日志与源码 diff；确定性检查先于模型审查。同一门禁命令 worker / reviewer / 主代理不得各跑一遍。
 - **子代理提示词**：统一用 [../v3_plan.md](../v3_plan.md) §8 骨架（含写入集边界与禁止清单）；子代理同样受本文全部纪律约束。
 
 ---

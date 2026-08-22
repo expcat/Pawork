@@ -32,11 +32,28 @@
 
 ## 4. 验证
 
-- 信封/DDL golden 零 diff;provider_hints 新旧键读写回归;Secret 扫描拒绝测试。
-- auth 迁移:旧 `keychain_*` 文件读取→新格式写入→再读一致;`invalid_grant`/空 refresh 语义不回退(S6 收口行为);全局脱敏回归(trace 0 泄漏)。
-- 通道注册表:`pawork models` 六通道聚合与 V2 快照一致;engine 守护测试自动名单生效。
+- 信封/DDL golden 零 diff;provider_hints 新旧键读写回归;Secret 扫描拒绝测试。(波 A 已收口)
+- auth 迁移:旧 `keychain_*` 文件读取→新格式写入→再读一致;`invalid_grant`/空 refresh 语义不回退(S6 收口行为);全局脱敏回归(trace 0 泄漏)。(波 B 已收口)
+- 通道注册表:`pawork models` 六通道聚合与 V2 快照一致;engine 守护测试自动名单生效。(波 A 已收口;真实六通道冒烟留人工验收)
 - K-10:每项能力一条 wiremock 契约(写 wire / 显式拒绝);Anthropic 通道真实冒烟(GLM Anthropic 端点,矩阵内)。
 - protected:PWB1 golden + 加密读写回归 + `cargo tree` 确认 chacha20poly1305 仅随 feature 进闭包。
+
+### 4.1 波 C 默认门禁(写入集 providers / app / storage(protected))
+
+worker 与主代理共用下列命令;全会话同一时刻只跑一个 Cargo 进程;审查者读 `/tmp` 日志,不再编译。`--lib --tests` 跳过 doctest。未改 protocol/client/desktop 则不加跑邻包。
+
+```bash
+cargo test -p pawork-providers --offline --lib --tests --features anthropic
+cargo test -p pawork-app --offline --lib --tests
+cargo test -p pawork-storage --offline --lib --tests --features protected --test pwb1_golden
+```
+
+仅当本波实际改了 app/providers 装配或 `apps/pawork` 时,主代理收口加跑一次:
+
+```bash
+cargo check -p pawork --offline
+cargo tree -p pawork | rg chacha20poly1305
+```
 
 ## 5. 退出标准
 
