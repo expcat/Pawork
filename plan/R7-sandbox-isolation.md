@@ -9,7 +9,7 @@
 - Linux Landlock:白名单式(`crates/exec/src/os/linux.rs`:118-135 建 ruleset,读枚举 SYSTEM_READ_PATHS 于 :13-29/:708-713),嵌套 deny 无法从 allow 根做减法 → 硬拒绝 fail-closed(:681-693);Landlock 无网络强制(标签 `HardFilesystemOnly`,sandbox.rs:350-358;bwrap 才有 `--unshare-net`)。Windows:AppContainer 探测恒不可用,Job Object 实施资源限制,标签 `Degraded` + 诚实 note(sandbox.rs:379-384;源码无字面 `filesystem: none`)。
 - PTY:`crates/app/src/gui_host/handlers/terminal.rs`:123-157 `terminal_create` 直连 `PtyService::create`,不过 `PolicyEngine`,响应如实 `uncontrolled:true`;进程组回收 Unix 靠 waiter/cleanup_handles 显式 `terminate()`(非「依赖 drop」),Windows 靠 Job 句柄 drop。MCP stdio 经 `spawn_interactive` 已过软限制,语义不同。
 - shell 风险分类:`crates/policy/src/shell.rs` 固定词表 + 空白 tokenize + 嵌套引用兜底正则;引号/变量/管道可漏分类;灾难地板在 NeverAsk/ReadOnly 直 Deny(engine.rs:56-67),**AskForDangerous 误分类即静默放行**。
-- ADR-041 决策草案与本机 Seatbelt 原型实测数据(Darwin 25.6.0)见 [docs/adr/ADR-041-sandbox-trust-model.md](../docs/adr/ADR-041-sandbox-trust-model.md)(波 0 产出,Proposed 待用户确认)。
+- ADR-041 决策草案与本机 Seatbelt 原型实测数据(Darwin 25.6.0)见 [docs/adr/ADR-041-sandbox-trust-model.md](../docs/adr/ADR-041-sandbox-trust-model.md)(波 0 产出,Accepted 2026-08-23)。
 
 ## 2. ADR-041 决策点(波 0;须用户确认)
 
@@ -35,7 +35,7 @@
 
 ## 5. 退出标准
 
-- [ ] ADR-041 Accepted;macOS profile 按决议落地且能力标签与实际一致
+- [x] ADR-041 Accepted(2026-08-23);macOS profile 按决议落地且能力标签与实际一致(波 A 验证)
 - [ ] PTY 按决议入闸或显式豁免;进程组回收有回归
 - [ ] shell 分类按决议落地;绕过种子(引号/管道/变量)测试收紧
 - [ ] K-09 字段有终局(实现/删除/标注);全平台探测语义 fail-closed 不变
