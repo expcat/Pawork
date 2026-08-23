@@ -429,10 +429,10 @@ impl Lexer<'_> {
             }
             self.pos += 1;
             w.text.push(c);
-            inner.push(c);
             if c == '`' {
                 break;
             }
+            inner.push(c);
         }
         w.dynamic = true;
         w.substitutions.push(inner);
@@ -1113,6 +1113,11 @@ mod tests {
         );
         // 内层完全静态可判定 → 灾难地板同样命中。
         assert!(floor("sh", &["-c", "echo $(rm -rf /)"]));
+        assert_eq!(
+            danger("sh", &["-c", "echo `rm -rf /`"]),
+            CommandRisk::Dangerous
+        );
+        assert!(floor("sh", &["-c", "echo `rm -rf /`"]));
         assert_eq!(
             danger("sh", &["-c", "echo `sudo id`"]),
             CommandRisk::Dangerous

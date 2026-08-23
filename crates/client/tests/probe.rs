@@ -1,4 +1,4 @@
-//! protocol-probe --self-test：进程内 MemoryTransport + GuiHostAdapter 的 9 场景。
+//! protocol-probe --self-test：进程内 MemoryTransport + GuiHostAdapter 的 10 场景。
 
 #[path = "probe/harness.rs"]
 mod harness;

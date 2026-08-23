@@ -40,3 +40,32 @@
 - [x] shell 分类按决议落地(2026-08-23 波 B:D4 手写 tokenizer;引号/管道/变量绕过种子收紧为红线回归)
 - [x] K-09 字段有终局(2026-08-23 波 C:按 D3 删除字段与死分支);全平台探测语义 fail-closed 不变(Enforce 全拒、Linux/Windows 零改动,msvc 交叉 check 绿)
 - [x] 安全回归全绿(2026-08-23 波 C:exec 64 绿含 Seatbelt 真机逃逸种子无 SKIPPED、tools+app 全绿、`cargo check -p pawork` 绿);Desktop PTY 面板真实冒烟登记 ROADMAP §4 人工验收;v3_plan §3 已更新
+
+## 6. 整阶段审计(2026-08-23;grok_explorer ×4 并行只读审计 + 主代理源码复核 + grok_worker ×2 串行修复)
+
+R7 标记 🟢 后按 v3_plan.md 惯例做完成度审计。四轨:E1 exec 核心与 ADR-041 D1、E2 消费侧与诚实标注、E3 PTY 闸与 golden/probe、E4 shell tokenizer 与波 C 残留。explorer 结论由主代理逐条源码复核;与实态不符的论断不采信(§6.2),只修实证成立且在 R7 写入集内的缺陷。
+
+### 6.1 确认并修复(均属波 B 写入集)
+
+- **P1 反引号地板漏检(E4)**:`take_backtick`(crates/policy/src/shell.rs)把收尾反引号推入 inner 后才 break,而 `take_command_substitution` 的收尾 `)` 不进 inner;导致 \`rm -rf /\` 的 inner 尾 token 变为 `/`+反引号,`catastrophic_single` 的 `== "/"` 不命中,NeverAsk 档 `echo \`rm -rf /\`` 静默放行(同形 `$(...)` 正确拒绝)。修法:收尾符 break 前不入 inner(`w.text` 保留原文),`command_substitution_is_recursively_classified` 补 danger+floor 断言。修复后 `cargo test -p pawork-policy --offline --lib --tests` 73 passed 全绿。
+- **P2 probe 零终端场景(E3)**:波 B 收口称「probe harness 配 AskForDangerous+trusted 保持终端场景走创建路径」,实态九场景无一含 `TerminalCreate`(golden 只钉成功线,拒绝路径无场景)。修法:新增 `terminal-gate` 场景(放行路:默认档断言 terminal_session_id 非空/sandboxed=false/policy/approval_mode/note 形状;拒绝路:ReadOnly 档断言错误文案含「禁止创建终端」与「fail-closed」),harness 增 `new_with_approval` 参数化档位,握手补 `TerminalStreaming` 能力位。修复后 `cargo test -p pawork-client --test probe --offline` 10 场景全绿。
+
+### 6.2 否决改判(explorer 论断与源码实态不符)
+
+- E1 报告「SandboxMode::FailClosed/sandbox_for/Sandboxable」:符号不存在;实态 `SandboxSelector::pick()` 总返回可运行后端,fail-closed 是 ADR-031 可观测回退(不是拒跑)。
+- E2 报告「沙箱回退文案三处不一致」:实测 engine/cli/protocol 统一为「沙箱回退：…」中文串(与两处 golden 钉死一致)。
+- E2 报告「run_command.rs +88 为生产改动」:+88 全在 `mod tests`(单 hunk);生产 SandboxPolicy 构造(run_command.rs:232-252)与波 A 前字节一致。
+- E4「policy 测试 73→76」:macOS 实测编译 73 条全绿;76 为含 path.rs 三条 cfg(windows) 的全源码计数,不参与本平台编译;波 B 收口记录 73 正确。
+
+### 6.3 登记不修(入 ROADMAP §4)
+
+- E1 P2:Seatbelt 真机探针对 `/tmp|/dev` 写洞双形态、symlink 根、`(deny network*)` 无真机验证(golden 已全文钉死 D1 形状,生产实现复核 PASS)。
+- E1 P3:macOS note 未点名 `/private/tmp`;`profile_emits_deny_for_default_secret_paths` 未断言 write deny;Windows `Job::create` 资源限制映射与 Job Drop 回收无单测(前 R7,3e95eb97)。
+- E3 P3:AlwaysAsk→引擎 AskUser→Deny 路径无专项单测;ADR-041 D2 正文保留时点措辞(按 v3_plan 约定 ADR 不回改)。
+- ADR-041/plan/v2-summary 仍叙述 network_allow_hosts:时点/历史文档不回改;代码与 fixtures 活引用零(E4 实测)。
+
+### 6.4 验证
+
+- 六包矩阵 `cargo test --offline --lib --tests`(exec/policy/app/tools/cli/protocol):23 目标 658 passed / 0 failed / 1 ignored(smoke env 门控,既有登记),日志 /tmp/r7-audit-5SVi/gate.log。该门禁跑于修复落盘之后(gate.log 编译阶段重编 pawork-policy,运行窗口 23:27→23:35,与他 cargo 运行无并发),policy 目标已含修复,与 worker 专项复跑一致:policy 73 绿(/tmp/r7-fix-backtick-floor.log)、probe 10 场景绿(/tmp/r7-probe-terminal-gate4.log)。
+- 已知 flake `gui_host::tests::command_record_failure_is_counted_not_swallowed`(thread-local set_default + async 偷步竞态;波 B 已登记):审计门禁复跑复现 1 次(红),同目标复跑即绿(红→绿证据链:gate2.log→flake-rerun1.log),登记不变,修复候选入 ROADMAP §4。
+- `cargo check -p pawork --offline`:绿(EXIT=0,修复落盘后运行,耗时 4m32s,日志 /tmp/r7-audit-5SVi/check.log;仅 pawork-tools 既有 dead-code 警告 2 条,与本写入集无关)。

@@ -7,7 +7,7 @@ use pawork_client::{ClientConfig, ClientError, GuiClient, ResumeDisposition};
 use pawork_domain::{
     ArtifactId, CommandId, EventId, ProviderId, RunId, SessionId, TenantId, Timestamp,
 };
-use pawork_app::gui_server::GuiHost;
+use pawork_app::{gui_server::GuiHost, ApprovalMode};
 use pawork_protocol::{
     decode_server_frame, encode_server_frame, mask_credential_hint, ApiVersion, AppCommand,
     AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppResponse, ArtifactChunk,
@@ -30,6 +30,7 @@ pub async fn run_all() -> i32 {
         "resume-snapshot-fallback",
         "three-gui-sync",
         "command-idempotency",
+        "terminal-gate",
         "artifact-chunks",
         "version-reject",
         "disconnect-keeps-run",
@@ -59,6 +60,7 @@ async fn run_scenario(name: &str) -> Result<(), String> {
         "resume-snapshot-fallback" => resume_snapshot_fallback().await,
         "three-gui-sync" => three_gui_sync().await,
         "command-idempotency" => command_idempotency().await,
+        "terminal-gate" => terminal_gate().await,
         "artifact-chunks" => artifact_chunks().await,
         "version-reject" => version_reject().await,
         "disconnect-keeps-run" => disconnect_keeps_run().await,
@@ -367,6 +369,89 @@ async fn command_idempotency() -> Result<(), String> {
             "同 command_id 重放未返回相同响应: first={:?} replayed={:?}",
             first.response, replayed.response
         ));
+    }
+    Ok(())
+}
+
+async fn terminal_gate() -> Result<(), String> {
+    let mut allow_harness = Harness::new("terminal-gate-allow", streaming_script()).await;
+    let allow_client = allow_harness
+        .connect_gui("terminal-gate-allow", "terminal-gate-allow")
+        .await?;
+    let allow_envelope = AppCommandEnvelope {
+        api_version: API_VERSION,
+        command_id: CommandId::from("terminal-gate-allow-1"),
+        source: harness::gui_source(&allow_client),
+        identity: harness::local_user(),
+        expected_revision: None,
+        idempotency_key: None,
+        issued_at: Timestamp::from_unix_millis(7),
+        command: AppCommand::TerminalCreate {
+            workspace_id: pawork_domain::WorkspaceId::from("ws-unbound"),
+            working_directory: None,
+        },
+    };
+    let allow = allow_client
+        .command_envelope(allow_envelope)
+        .await
+        .map_err(|error| format!("放行路径: {error}"))?;
+    let AppResponse::Data(value) = allow.response else {
+        return Err(format!("放行路径应返回 Data，got {:?}", allow.response));
+    };
+    let terminal_session_id = value
+        .get("terminal_session_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if terminal_session_id.is_empty() {
+        return Err(format!("放行路径 terminal_session_id 应非空，got {value:?}"));
+    }
+    if value.get("sandboxed") != Some(&Value::Bool(false)) {
+        return Err(format!("放行路径 sandboxed 应为 false，got {value:?}"));
+    }
+    if value.get("approval_mode").and_then(Value::as_str) != Some("ask_for_dangerous") {
+        return Err(format!("放行路径 approval_mode 应为 ask_for_dangerous，got {value:?}"));
+    }
+    if value.get("policy").and_then(Value::as_str) != Some("allow_with_constraints") {
+        return Err(format!("放行路径 policy 应为 allow_with_constraints，got {value:?}"));
+    }
+    let note = value.get("note").and_then(Value::as_str).unwrap_or_default();
+    if !note.contains("policy 闸") {
+        return Err(format!("放行路径 note 应含 policy 闸，got {value:?}"));
+    }
+
+    let mut deny_harness = Harness::new_with_approval(
+        "terminal-gate-deny",
+        streaming_script(),
+        ApprovalMode::ReadOnly,
+        true,
+    )
+    .await;
+    let deny_client = deny_harness
+        .connect_gui("terminal-gate-deny", "terminal-gate-deny")
+        .await?;
+    let deny_envelope = AppCommandEnvelope {
+        api_version: API_VERSION,
+        command_id: CommandId::from("terminal-gate-deny-1"),
+        source: harness::gui_source(&deny_client),
+        identity: harness::local_user(),
+        expected_revision: None,
+        idempotency_key: None,
+        issued_at: Timestamp::from_unix_millis(7),
+        command: AppCommand::TerminalCreate {
+            workspace_id: pawork_domain::WorkspaceId::from("ws-unbound"),
+            working_directory: None,
+        },
+    };
+    match deny_client.command_envelope(deny_envelope).await {
+        Err(error) => {
+            let text = error.to_string();
+            if !text.contains("禁止创建终端") || !text.contains("fail-closed") {
+                return Err(format!("拒绝路径文案不符，got {error}"));
+            }
+        }
+        Ok(envelope) => {
+            return Err(format!("拒绝路径应为 ClientError，got {:?}", envelope.response));
+        }
     }
     Ok(())
 }

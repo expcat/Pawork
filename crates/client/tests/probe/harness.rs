@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use pawork_app::{AppCore, ApprovalMode, DenyAllApprovals, GuiHostAdapter};
-use pawork_client::GuiClient;
+use pawork_client::{ClientConfig, GuiClient};
 use pawork_domain::{ActorId, CommandId, ModelId, ProviderId, RunId, SessionId, Timestamp};
 use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::{
@@ -31,6 +31,15 @@ pub struct Harness {
 
 impl Harness {
     pub async fn new(label: &str, script: MockScript) -> Self {
+        Self::new_with_approval(label, script, ApprovalMode::AskForDangerous, true).await
+    }
+
+    pub async fn new_with_approval(
+        label: &str,
+        script: MockScript,
+        mode: ApprovalMode,
+        trusted: bool,
+    ) -> Self {
         let temp = tempfile::tempdir().expect("tempdir");
         let (store, _) = SessionStore::open(temp.path().join("session.db"))
             .await
@@ -46,8 +55,8 @@ impl Harness {
         // R7 波 B:terminal_create 已入 policy 闸;进程内装配用可创建档位
         // (AskForDangerous + trusted,AskUser 一律 fail-closed 由闸内处理)。
         core.configure_approval(
-            ApprovalMode::AskForDangerous,
-            true,
+            mode,
+            trusted,
             Arc::new(DenyAllApprovals),
         );
         let core = Arc::new(core);
@@ -58,6 +67,7 @@ impl Harness {
             vec![
                 GuiCapability::Events,
                 GuiCapability::Snapshots,
+                GuiCapability::TerminalStreaming,
             ],
         );
         let transport = Arc::new(MemoryTransport::new());
@@ -100,11 +110,16 @@ impl Harness {
         let listener = Arc::clone(&self.listener);
         let accept = tokio::spawn(async move { listener.accept().await });
         let transport: Arc<dyn GuiTransportClient> = self.transport.clone();
-        let client = GuiClient::connect(
+        let mut config = ClientConfig::default();
+        if !config.capabilities.contains(&GuiCapability::TerminalStreaming) {
+            config.capabilities.push(GuiCapability::TerminalStreaming);
+        }
+        let client = GuiClient::connect_with_config(
             transport,
             self.endpoint(harness_label),
             Self::connect_options(client_label),
             None,
+            config,
         )
         .await
         .map_err(|error| format!("connect/handshake: {error}"))?;
