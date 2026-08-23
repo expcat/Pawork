@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use pawork_app::{AppCore, GuiHostAdapter};
+use pawork_app::{AppCore, ApprovalMode, DenyAllApprovals, GuiHostAdapter};
 use pawork_client::GuiClient;
 use pawork_domain::{ActorId, CommandId, ModelId, ProviderId, RunId, SessionId, Timestamp};
 use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
@@ -36,13 +36,21 @@ impl Harness {
             .await
             .expect("session store");
         let provider = MockProvider::new(script).with_id(ProviderId::from("mock"));
-        let core = Arc::new(AppCore::from_parts(
+        let mut core = AppCore::from_parts(
             Arc::new(provider),
             None,
             ModelId::from("model-1"),
             ProviderId::from("mock"),
             Some(store),
-        ));
+        );
+        // R7 波 B:terminal_create 已入 policy 闸;进程内装配用可创建档位
+        // (AskForDangerous + trusted,AskUser 一律 fail-closed 由闸内处理)。
+        core.configure_approval(
+            ApprovalMode::AskForDangerous,
+            true,
+            Arc::new(DenyAllApprovals),
+        );
+        let core = Arc::new(core);
         let adapter = Arc::new(GuiHostAdapter::new(core));
         let handshake = HandshakeService::new(
             GuiHost::instance_id(adapter.as_ref()),

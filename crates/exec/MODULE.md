@@ -47,7 +47,7 @@ src/
 - `default_secret_paths()` 是 Secret 目录 deny 的单一来源（含 `~/.pawork/auth.json` 与 `~/.netrc`、`~/.git-credentials`、`~/.docker`、`~/.npmrc`、`~/.pypirc`、`~/.cargo/credentials.toml`），与 builtin `run_command` 共用。
 - macOS Seatbelt profile（ADR-041 D1）：读 = 整盘 allow + secret 挖洞；写 = `write_roots` + `/tmp` + `$TMPDIR`（raw/canonical 双形态）+ `/dev` 白名单，且每个 write_root/workspace_root 永久禁写 `.git`（subpath）与 `.env`（literal）；整体输出由 `profile_full_output_golden` 钉死。
 - 文件工具路径红线在 `pawork-policy`；本 crate 接收已解析 `PathBuf`。
-- PTY 入 policy 闸是 R7 工作，当前不要假定 PTY 已走审批内核。
+- PTY 机制层不经审批内核;创建动作的 policy 闸在 app gui_host(R7 波 B,ADR-041 D2),本 crate 保持纯机制。
 
 ## 相关文档
 

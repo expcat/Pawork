@@ -15,7 +15,7 @@ src/
   mode.rs        # ApprovalMode
   engine.rs      # PolicyEngine::decide
   path.rs        # resolve_workspace_path
-  shell.rs       # classify_command
+  shell.rs       # classify_command(手写 tokenizer 前置,R7 波 B)
 ```
 
 无 `tests/` 目录；红线回归在各文件 `#[cfg(test)]`。
@@ -45,7 +45,8 @@ crate 根 re-export（无私有 `pub mod`）：
 - 未信任 workspace：除非 `allowed_in_untrusted_workspace`，否则 deny。
 - `ReadOnly` **能力**过信任门后 Allow；`ReadOnly` **档位**拒绝非只读能力。
 - `Deny.reason` 不得含 Secret。旧 CLI 档位 `on-failure` 只读入映射 `NeverAsk`。
-- PTY 入闸、macOS 白名单 profile 是 R7，不要把现行软隔离写成终局。
+- shell 分类解析层为手写 tokenizer(引号/转义/管道/重定向/`$()`/变量感知,R7 波 B),固定词表保留为分类输入;灾难地板集合不变;launcher(env/nohup/xargs)不解包为已登记残余局限。
+- PTY 创建入闸已于 R7 波 B 落地(闸在 app gui_host,capability=Process;AskUser fail-closed 落 Deny);macOS 白名单 profile 已于 R7 波 A 正式化。
 
 ## 相关文档
 

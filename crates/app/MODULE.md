@@ -46,6 +46,7 @@ tests/
 - 幂等 `record` 失败要计数并释放 inflight，不可吞错挂死。
 - `home` 回退经 `DataDirOutcome` 结构化告警，禁止静默落到 temp。
 - Reasoning 保护：`protected.rs` 注入 `ProtectedBlobStore`（instance-level `BlobScope` `instance-reasoning` 为已接受偏差）。
+- gui_host `terminal_create` 经 PolicyEngine 闸（capability=Process;NeverAsk/ReadOnly 直拒,AskUser fail-closed 落 Deny——命令级交互审批待 wire ADR;R7 波 B,ADR-041 D2）;会话内容不逐条审批。
 
 ## 相关文档
 

@@ -18,7 +18,7 @@ use pawork_protocol::{
     ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, AppQuery, AppQueryEnvelope,
     AppResponse, AppResponseEnvelope, ResumeDisposition, ResumeRequest, ResumeResponse,
     ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind, SubscribeRequest, TimelineItem,
-    TimelineItemKind, TimelinePage,
+    TimelineItemKind, TimelinePage, WorkspaceRelativePath,
 };
 use serde_json::Value;
 
@@ -169,6 +169,25 @@ fn server_error_frame() -> ServerFrame {
             message: "protocol frame is too large".into(),
             retryable: false,
         },
+    })
+}
+
+fn client_terminal_command_frame(command: AppCommand) -> ClientFrame {
+    ClientFrame::Command(AppCommandEnvelope {
+        api_version: API_VERSION,
+        command_id: CommandId::from("command-terminal-1"),
+        source: CommandSource::RemoteGui {
+            client_id: GuiClientId::from("gui-1"),
+            connection_id: ConnectionId::from("connection-1"),
+        },
+        identity: ActorIdentity::LocalUser {
+            actor_id: pawork_domain::ActorId::from("actor-1"),
+            display_name: None,
+        },
+        expected_revision: None,
+        idempotency_key: None,
+        issued_at: Timestamp::from_unix_millis(2),
+        command,
     })
 }
 
@@ -345,6 +364,37 @@ fn golden_additional_client_frames() {
         "client_pong.json",
         encode_client(&ClientFrame::Pong { nonce: 8 }),
     );
+    assert_golden(
+        "client_command_terminal_create.json",
+        encode_client(&client_terminal_command_frame(AppCommand::TerminalCreate {
+            workspace_id: pawork_domain::WorkspaceId::from("workspace-1"),
+            working_directory: None,
+        })),
+    );
+    assert_golden(
+        "client_command_terminal_create_working_directory.json",
+        encode_client(&client_terminal_command_frame(AppCommand::TerminalCreate {
+            workspace_id: pawork_domain::WorkspaceId::from("workspace-1"),
+            working_directory: Some(
+                WorkspaceRelativePath::new("src").expect("valid relative path"),
+            ),
+        })),
+    );
+    assert_golden(
+        "client_command_terminal_write.json",
+        encode_client(&client_terminal_command_frame(AppCommand::TerminalWrite {
+            terminal_session_id: "terminal-1".into(),
+            data: "echo hi\n".into(),
+        })),
+    );
+    assert_golden(
+        "client_command_terminal_resize.json",
+        encode_client(&client_terminal_command_frame(AppCommand::TerminalResize {
+            terminal_session_id: "terminal-1".into(),
+            columns: 80,
+            rows: 24,
+        })),
+    );
 }
 
 #[test]
@@ -363,6 +413,38 @@ fn golden_additional_server_frames() {
             request_id: pawork_domain::QueryId::from("query-1"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({"workspaces": []})),
+        })),
+    );
+    assert_golden(
+        "server_response_terminal_create.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-1"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "terminal_session_id": "terminal-1",
+                "sandboxed": false,
+                "policy": "allow_with_constraints",
+                "approval_mode": "ask_for_dangerous",
+                "note": "创建已经 policy 闸(ask_for_dangerous 档);PTY 会话内容不经沙箱与逐条审批",
+            })),
+        })),
+    );
+    assert_golden(
+        "server_event_terminal_output.json",
+        encode_server(&ServerFrame::Event(AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: CoreInstanceId::from("instance-1"),
+            event_id: EventId::from("event-1"),
+            global_sequence: GlobalSequence(1),
+            stream: EventStream::Terminal("terminal-1".into()),
+            stream_sequence: 1,
+            timestamp: Timestamp::from_unix_millis(4),
+            source: EventSource::Core,
+            payload: AppEvent::TerminalOutput {
+                terminal_session_id: "terminal-1".into(),
+                delta: "echo hi\r\n".into(),
+            },
         })),
     );
     assert_golden(

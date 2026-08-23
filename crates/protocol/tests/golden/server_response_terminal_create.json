@@ -1,0 +1,21 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 2
+    },
+    "request_id": "query-1",
+    "responded_at": 3,
+    "response": {
+      "data": {
+        "approval_mode": "ask_for_dangerous",
+        "note": "创建已经 policy 闸(ask_for_dangerous 档);PTY 会话内容不经沙箱与逐条审批",
+        "policy": "allow_with_constraints",
+        "sandboxed": false,
+        "terminal_session_id": "terminal-1"
+      },
+      "type": "data"
+    }
+  },
+  "type": "response"
+}

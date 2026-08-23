@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pawork_domain::WorkspaceId;
+use pawork_domain::{ToolCapability, WorkspaceId};
 use pawork_exec::{OwnerSessionId, PtyCreateSpec, PtyEvent, PtyWindowSize, TerminalId};
+use pawork_policy::{ApprovalMode, PolicyDecision, PolicyEngine, PolicyInput};
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppResponse, AppEvent, WorkspaceRelativePath,
 };
@@ -133,6 +134,8 @@ pub(crate) async fn terminal_create(
         unreachable!("terminal_create handler receives TerminalCreate")
     };
     let core = adapter.core.read().await;
+    let approval_mode = core.approval.mode();
+    let workspace_trusted = core.approval.workspace_trusted();
     let cwd =
         GuiHostAdapter::resolve_terminal_cwd(&core, workspace_id, working_directory.as_ref())?;
     drop(core);
@@ -143,6 +146,18 @@ pub(crate) async fn terminal_create(
         size: PtyWindowSize::default(),
         ..PtyCreateSpec::default()
     };
+    let gate = decide_terminal_create(
+        approval_mode,
+        workspace_trusted,
+        &classification_shell(spec.shell.as_deref()),
+        &spec.args,
+    );
+    let policy = match gate {
+        TerminalCreateGate::Allow { policy } => policy,
+        TerminalCreateGate::Deny { reason } => {
+            return Err(GuiHostAdapter::host_error("forbidden", reason));
+        }
+    };
     let terminal_id = adapter
         .pty
         .create(spec)
@@ -150,11 +165,104 @@ pub(crate) async fn terminal_create(
         .map_err(GuiHostAdapter::pty_error)?;
     adapter.remember_terminal(&terminal_id, &owner);
     adapter.spawn_terminal_forwarder(terminal_id.clone(), owner);
-    Ok(AppResponse::Data(json!({
+    Ok(AppResponse::Data(terminal_create_payload(
+        &terminal_id,
+        policy,
+        approval_mode,
+    )))
+}
+
+/// PTY 创建闸的裁决结果;Allow 携带进入响应负载的 policy 标签。
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum TerminalCreateGate {
+    Allow { policy: &'static str },
+    Deny { reason: String },
+}
+
+/// terminal_create 分类输入使用的如实 shell 程序。
+///
+/// `PtyCreateSpec::shell` 为 `None` 时由 `pawork-exec` 内部兜底
+/// (Unix 取 `$SHELL` 否则 `/bin/sh`,Windows 用 `cmd.exe`,
+/// 见 crates/exec/src/pty/mod.rs 的 `build_command`);分类必须取同一值。
+fn classification_shell(shell: Option<&str>) -> String {
+    match shell {
+        Some(shell) => shell.to_string(),
+        None => {
+            #[cfg(windows)]
+            {
+                "cmd.exe".to_string()
+            }
+            #[cfg(not(windows))]
+            {
+                std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
+            }
+        }
+    }
+}
+
+fn approval_mode_label(mode: ApprovalMode) -> String {
+    serde_json::to_value(mode)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| format!("{mode:?}"))
+}
+
+/// ADR-041 D2:GUI terminal_create 的创建动作过 PolicyEngine(capability=Process)。
+/// 纯函数便于单测;handler 只做装配。
+///
+/// - NeverAsk/ReadOnly 按 D2 fail-closed 拒绝创建(比引擎一般语义更紧);
+/// - 未信任 workspace:交互 shell 不属于未信任能力,交给引擎 Deny;
+/// - AskFor* 档产生 AskUser 时,GUI 命令通道不承载命令级交互审批,
+///   按用户拍板(选项 A)fail-closed 落 Deny,reason 如实。
+pub(crate) fn decide_terminal_create(
+    mode: ApprovalMode,
+    trusted: bool,
+    shell: &str,
+    args: &[String],
+) -> TerminalCreateGate {
+    let label = approval_mode_label(mode);
+    if matches!(mode, ApprovalMode::NeverAsk | ApprovalMode::ReadOnly) {
+        return TerminalCreateGate::Deny {
+            reason: format!(
+                "审批档 {label} 禁止创建终端:ADR-041 D2 决议该档拒绝创建交互 shell(fail-closed)"
+            ),
+        };
+    }
+    match PolicyEngine::new(mode).decide(&PolicyInput {
+        capability: ToolCapability::Process,
+        // 与 PolicyEngine::extract_command 的解析形状一致:program 走
+        // `command` 键、参数走 `args` 键(`argv` 键要求含 program 的完整 argv)。
+        input: json!({"command": shell, "args": args}),
+        trusted,
+        allowed_in_untrusted_workspace: false,
+        approval_mode: mode,
+    }) {
+        PolicyDecision::Allow => TerminalCreateGate::Allow { policy: "allow" },
+        PolicyDecision::AllowWithConstraints { .. } => {
+            TerminalCreateGate::Allow { policy: "allow_with_constraints" }
+        }
+        PolicyDecision::Deny { reason } => TerminalCreateGate::Deny {
+            reason: format!("terminal 创建被 policy 拒绝:{reason}"),
+        },
+        PolicyDecision::AskUser { .. } => TerminalCreateGate::Deny {
+            reason: format!(
+                "terminal 创建需交互审批,GUI 命令通道暂不承载命令级审批(已登记待 ADR),fail-closed 拒绝;审批档={label}"
+            ),
+        },
+    }
+}
+
+/// terminal_create 成功响应负载;形状由 protocol golden
+/// server_response_terminal_create.json 钉死。
+fn terminal_create_payload(terminal_id: &TerminalId, policy: &str, mode: ApprovalMode) -> Value {
+    let label = approval_mode_label(mode);
+    json!({
         "terminal_session_id": terminal_id.as_str(),
-        "uncontrolled": true,
-        "note": "本机不受控终端：不经沙箱与审批",
-    })))
+        "sandboxed": false,
+        "policy": policy,
+        "approval_mode": label,
+        "note": format!("创建已经 policy 闸({label} 档);PTY 会话内容不经沙箱与逐条审批"),
+    })
 }
 
 pub(crate) async fn terminal_write(
@@ -217,4 +325,96 @@ pub(crate) async fn terminal_resize(
         command_id: envelope.command_id.clone(),
         run_id: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deny_reason(gate: TerminalCreateGate) -> String {
+        match gate {
+            TerminalCreateGate::Deny { reason } => reason,
+            other => panic!("expected Deny, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_only_mode_denies_terminal_create() {
+        let reason = deny_reason(decide_terminal_create(
+            ApprovalMode::ReadOnly,
+            true,
+            "/bin/zsh",
+            &[],
+        ));
+        assert!(reason.contains("read_only"), "{reason}");
+        assert!(reason.contains("D2"), "{reason}");
+    }
+
+    #[test]
+    fn never_ask_mode_denies_terminal_create() {
+        let reason = deny_reason(decide_terminal_create(
+            ApprovalMode::NeverAsk,
+            true,
+            "/bin/zsh",
+            &[],
+        ));
+        assert!(reason.contains("never_ask"), "{reason}");
+        assert!(reason.contains("fail-closed"), "{reason}");
+    }
+
+    #[test]
+    fn ask_for_dangerous_allows_default_shell_with_constraints() {
+        let shell = classification_shell(None);
+        let gate = decide_terminal_create(ApprovalMode::AskForDangerous, true, &shell, &[]);
+        match gate {
+            TerminalCreateGate::Allow { policy } => {
+                assert_eq!(policy, "allow_with_constraints");
+            }
+            other => panic!("expected Allow, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ask_for_writes_fails_closed_on_ask_user() {
+        let reason = deny_reason(decide_terminal_create(
+            ApprovalMode::AskForWrites,
+            true,
+            "/bin/zsh",
+            &[],
+        ));
+        assert!(reason.contains("ask_for_writes"), "{reason}");
+        assert!(reason.contains("命令级审批"), "{reason}");
+        assert!(reason.contains("fail-closed"), "{reason}");
+    }
+
+    #[test]
+    fn untrusted_workspace_denies_terminal_create() {
+        let reason = deny_reason(decide_terminal_create(
+            ApprovalMode::AskForDangerous,
+            false,
+            "/bin/zsh",
+            &[],
+        ));
+        assert!(reason.contains("untrusted"), "{reason}");
+    }
+
+    #[test]
+    fn terminal_create_payload_reports_policy_gate_truthfully() {
+        let terminal_id = TerminalId::new("terminal-1");
+        let payload = terminal_create_payload(
+            &terminal_id,
+            "allow_with_constraints",
+            ApprovalMode::AskForDangerous,
+        );
+        assert_eq!(
+            payload,
+            json!({
+                "terminal_session_id": "terminal-1",
+                "sandboxed": false,
+                "policy": "allow_with_constraints",
+                "approval_mode": "ask_for_dangerous",
+                "note": "创建已经 policy 闸(ask_for_dangerous 档);PTY 会话内容不经沙箱与逐条审批",
+            })
+        );
+    }
 }
