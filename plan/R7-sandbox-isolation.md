@@ -1,19 +1,21 @@
 # R7 — 执行面真隔离(T7,ADR-041)
 
-> 对应 [ROADMAP.md](../ROADMAP.md) §2 R7 行。根因:S4 沙箱以「诚实标签」交付(能力有限但如实上报),V2 期间未再加深:macOS Seatbelt 用「整盘只读 + 枚举 deny」的粗粒度 profile,`network_allow_hosts` 配置存在但全拒(K-09);PTY 会话不经沙箱与审批闸(gui_host 直连 `pawork-exec` PTY);shell 风险分类靠固定词表字符串匹配。本阶段把执行面从「标签诚实」升级为「语义诚实」。安全域改动,全程定向回归护航,fail-closed 语义只紧不松。
+> 对应 [ROADMAP.md](../ROADMAP.md) §2 R7 行。根因:S4 沙箱以「诚实标签」交付(能力有限但如实上报),V2 期间未再加深。2026-08-23 波 0 实态:macOS Seatbelt 已是 deny-default 写白名单、读因 Darwin 25+ 放开整盘;`network_allow_hosts` 是无生产赋值的内存字段而非配置项(K-09);PTY 会话不经沙箱与审批闸(gui_host 直连 `pawork-exec` PTY);shell 风险分类靠固定词表 + 空白 tokenize。本阶段把执行面从「标签诚实」升级为「语义诚实」。安全域改动,全程定向回归护航,fail-closed 语义只紧不松。
 
-## 1. 现状证据(执行时重验;路径为 R1 合并后位置)
+## 1. 现状证据(2026-08-23 波 0 三路核查重验;本节已按实态回写,原 2026-08-18 快照多处漂移)
 
-- `execution/exec/src/sandbox/macos.rs`:Seatbelt profile 生成——default allow + `(deny file-write*)` 枚举白名单外路径;`network_allow_hosts` 解析后未落到 profile(全拒:`sandbox/mod.rs` K-09 注释)。
-- Linux Landlock:白名单式(较好),但与 macOS 语义不对齐;Windows:Job Object 资源限制,文件系统无隔离(诚实标签 `filesystem: none`)。
-- PTY:`gui_host` PTY 会话直接 spawn,不过 `PolicyEngine` 审批/风险分类;进程组回收依赖 drop(F17 修过 kill 竞态)。
-- shell 风险分类:`execution/policy/src/shell.rs` 固定词表(`rm -rf`、`git push` 等)+ 子串匹配;引号/变量展开/管道可绕过分类(fail-closed 兜底是审批,但分类精度影响 UX 与审批疲劳)。
+- macOS Seatbelt([`crates/exec/src/os/macos.rs`](../crates/exec/src/os/macos.rs) 32-128):**已是 deny-default 白名单**——写仅 `write_roots` 获 `(allow file-write* subpath)`(:73-83),secret deny 列表叠加 `(deny file-read*/file-write*)`(:92-103);读因 Darwin 25+ firmlink/cryptex 放开整盘 `(allow file-read* (subpath "/"))`(:62-65,注释已记载白名单读致 SIGABRT 134);能力标签如实 `HardWritesAndNetwork`。生产 policy 在 `crates/tools/src/run_command.rs`:232-251 构造。**原「default allow + 枚举 deny」表述漂移**。
+- K-09:`network_allow_hosts` 是 `SandboxPolicy` 内存字段(`crates/exec/src/sandbox.rs`:61),**非用户配置项**(workspace schema/fixtures/README 零命中)且无生产赋值(恒空);唯一消费者在 os/macos.rs:105-115(Enforce 下 `(deny network*)`,非空时仅落注释)。**原「配置存在但全拒 + 注释在 sandbox/mod.rs」表述漂移**。
+- Linux Landlock:白名单式(`crates/exec/src/os/linux.rs`:118-135 建 ruleset,读枚举 SYSTEM_READ_PATHS 于 :13-29/:708-713),嵌套 deny 无法从 allow 根做减法 → 硬拒绝 fail-closed(:681-693);Landlock 无网络强制(标签 `HardFilesystemOnly`,sandbox.rs:350-358;bwrap 才有 `--unshare-net`)。Windows:AppContainer 探测恒不可用,Job Object 实施资源限制,标签 `Degraded` + 诚实 note(sandbox.rs:379-384;源码无字面 `filesystem: none`)。
+- PTY:`crates/app/src/gui_host/handlers/terminal.rs`:123-157 `terminal_create` 直连 `PtyService::create`,不过 `PolicyEngine`,响应如实 `uncontrolled:true`;进程组回收 Unix 靠 waiter/cleanup_handles 显式 `terminate()`(非「依赖 drop」),Windows 靠 Job 句柄 drop。MCP stdio 经 `spawn_interactive` 已过软限制,语义不同。
+- shell 风险分类:`crates/policy/src/shell.rs` 固定词表 + 空白 tokenize + 嵌套引用兜底正则;引号/变量/管道可漏分类;灾难地板在 NeverAsk/ReadOnly 直 Deny(engine.rs:56-67),**AskForDangerous 误分类即静默放行**。
+- ADR-041 决策草案与本机 Seatbelt 原型实测数据(Darwin 25.6.0)见 [docs/adr/ADR-041-sandbox-trust-model.md](../docs/adr/ADR-041-sandbox-trust-model.md)(波 0 产出,Proposed 待用户确认)。
 
 ## 2. ADR-041 决策点(波 0;须用户确认)
 
 1. **macOS profile 白名单化**:deny-default + 显式 allow(workspace 写、临时目录、必要系统读)——兼容性代价(Homebrew/工具链路径、Darwin 25 行为)以实测数据进 ADR;不可行处保留枚举 deny 并如实标注能力等级。
 2. **PTY 信任模型**:PTY 会话入 policy 闸(spawn 前风险分类 + 审批档位适用)还是维持「PTY = 用户亲手终端,自担风险」显式豁免?推荐前者(GUI 发起的 PTY 与 agent 工具无本质区别),豁免须用户点头。
-3. **K-09 egress**:三选一——(a) 实现按 host 白名单的 egress broker(代理进程/DNS 解析前置);(b) 删除 `network_allow_hosts` 配置项(诚实:只有 allow-all/deny-all 两档);(c) 维持全拒 + 文档标注。推荐 (b)(单机产品下 host 级白名单收益低、实现重),留 (a) 为候选。
+3. **K-09 egress**:三选一——(a) 实现按 host 白名单的 egress broker(代理进程/DNS 解析前置);(b) 删除 `SandboxPolicy.network_allow_hosts` 内存字段(诚实:只有 allow-all/deny-all 两档;该字段不是用户配置项);(c) 维持全拒 + 文档标注。推荐 (b)(单机产品下 host 级白名单收益低、实现重),留 (a) 为候选。
 4. **shell 分类**:结构化解析(tree-sitter-bash 或手写 tokenizer)替换词表,还是保留词表 + 提高审批档位兜底?推荐手写轻量 tokenizer(管道/重定向/引号感知,不引入大依赖),分类只影响「是否升档审批」,兜底语义不变。
 
 ## 3. 波次拆分
@@ -23,7 +25,7 @@
 | 0 | ADR-041(含 macOS 白名单 profile 原型的本机实测数据)→ 用户确认 | docs/adr/ | 串行 |
 | A | macOS profile 重设计 + Linux Landlock 语义对齐 + Windows 标签复核(平台探测 & fallback 语义不变:探测失败 fail-closed) | exec(sandbox/) | 串行(安全内核单一 owner) |
 | B | PTY 入闸(按 ADR 决议)∥ shell 风险分类结构化 | app(gui_host PTY 装配)、exec(pty)∥ policy(shell) | 并行 ×2 |
-| C | K-09 落地(按 ADR 决议);三平台定向回归 + 沙箱逃逸种子(路径越界/symlink/`.git` 写/网络外呼)全量复跑 | exec、workspace(config 项增删)、docs | 串行 |
+| C | K-09 落地(按 ADR 决议);三平台定向回归 + 沙箱逃逸种子(路径越界/symlink/`.git` 写/网络外呼)全量复跑 | exec、docs(字段删除;无用户配置 schema 项可删) | 串行 |
 
 ## 4. 验证
 
@@ -36,5 +38,5 @@
 - [ ] ADR-041 Accepted;macOS profile 按决议落地且能力标签与实际一致
 - [ ] PTY 按决议入闸或显式豁免;进程组回收有回归
 - [ ] shell 分类按决议落地;绕过种子(引号/管道/变量)测试收紧
-- [ ] K-09 配置项有终局(实现/删除/标注);全平台探测语义 fail-closed 不变
+- [ ] K-09 字段有终局(实现/删除/标注);全平台探测语义 fail-closed 不变
 - [ ] 安全回归全绿;冒烟通过;v3_plan §3 更新
