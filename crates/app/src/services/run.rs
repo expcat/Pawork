@@ -386,10 +386,10 @@ mod tests {
             .find(|event| {
                 matches!(
                     &event.payload,
-                    AgentEvent::MessageCommitted { message } if message.role == MessageRole::User
+                    AgentEvent::RunCompleted { .. }
                 )
             })
-            .expect("user commit");
+            .expect("run completed boundary");
         core.store()
             .expect("store")
             .fork_from_event(&session, "experiment", &parent.event_id)

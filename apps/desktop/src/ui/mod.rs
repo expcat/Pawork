@@ -612,6 +612,19 @@ impl AppView {
             cx.notify();
             return;
         }
+        // 入口级防线：渲染层已按边界禁用 Fork，这里再按 reducer 的单点判型
+        // 复核——connected + active session + run 终止边界缺一不可。
+        let forkable = self.projection.timeline.iter().any(|entry| {
+            entry.event_id == event_id && entry.is_fork_boundary()
+        });
+        if !forkable {
+            self.status_hint = Some(
+                "Fork is only available on a finished run (completed, cancelled, or failed)."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
         self.controller
             .fork_session(session_id, event_id.to_string());
         cx.notify();
@@ -1516,7 +1529,7 @@ impl Render for AppView {
                     .child("Local"),
             );
 
-        let can_fork_entry = matches!(
+        let fork_available = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
         ) && self.projection.active_session_id.is_some();
@@ -1535,7 +1548,7 @@ impl Render for AppView {
                 Self::timeline_entry_element(
                     entry,
                     open_entry_menu.as_deref() == Some(entry.event_id.as_str()),
-                    can_fork_entry,
+                    fork_available && entry.is_fork_boundary(),
                     cx,
                 )
             }))

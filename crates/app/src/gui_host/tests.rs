@@ -689,8 +689,13 @@
                 .expect("replay");
             events
                 .into_iter()
-                .next()
-                .expect("persisted event")
+                .find(|event| {
+                    matches!(
+                        &event.payload,
+                        pawork_domain::AgentEvent::RunCompleted { .. }
+                    )
+                })
+                .expect("run completed boundary")
                 .event_id
         };
         let adapter = GuiHostAdapter::new(core);

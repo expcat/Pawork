@@ -33,7 +33,7 @@ src/
 - **版本**：`API_VERSION = 1.2`；`SUPPORTED_API_VERSIONS` 含 1.0 / 1.1 / 1.2。
 - **app**：`AppCommand`（19）/ `AppQuery`（11）/ `AppEvent` / `AppResponse` 及对应信封。
 - **registry**（`pawork_protocol::app::registry`，**不** glob 到根）：`command_entry` / `query_entry`；未登记 wire 名 fail-closed。三通道（GUI / headless / ACP）可用性由登记表派生。
-- **projection**：`project_event`、`TimelineProjection`——纯内存，无 serde，不在线上。
+- **projection**：`project_event`、`TimelineProjection`、非 wire `ForkBoundary` / `TimelineEntry::is_fork_boundary`——纯内存，无 serde，不在线上；只有闭合 run 终态产生 Desktop fork 标记。
 - **headless**：`HeadlessRequest` / `HeadlessResponse`、stdio `run_loop`；与 GUI 帧正交。
 - **handshake**：`HandshakeRequest` / `HandshakeResponse`；`GuiCapability`（`ArtifactStreaming` 枚举保留、默认不宣告）。
 

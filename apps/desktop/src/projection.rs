@@ -1397,6 +1397,128 @@ mod tests {
         assert_eq!(projection.sessions[0].title, "Wrapped");
     }
 
+    /// 与 `event` 相同，但 stream 指向给定 session/branch（wire 无 branch
+    /// 字段，分支事件以分支自身的 stream id 表达）。
+    fn session_event(sequence: u64, session: &str, payload: Value) -> AppEventEnvelope {
+        serde_json::from_value(json!({
+            "api_version": { "major": 1, "minor": 1 },
+            "instance_id": "instance-1",
+            "event_id": format!("app-{sequence}"),
+            "global_sequence": sequence,
+            "stream": { "type": "session", "id": session },
+            "stream_sequence": sequence,
+            "timestamp": 1_000 + sequence,
+            "source": { "type": "core" },
+            "payload": payload
+        }))
+        .expect("decode AppEventEnvelope")
+    }
+
+    #[test]
+    fn switching_branch_within_session_resets_timeline_baseline() {
+        // R6：切支沿用 select_session -> reset_baseline -> reload，不加 wire
+        // 字段；同一 session 换 branch 也无条件清 entries/seen/anchors。
+        let snapshot = snapshot_with_sessions(vec![json!({
+            "session_id": "s-1",
+            "title": "Branching session",
+            "updated_at_ms": 20,
+            "active_branch": "main",
+            "workspace_id": "ws-default"
+        })]);
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        projection.select_session("s-1");
+
+        let delta = |sequence: u64, session: &str, message_id: &str, text: &str| {
+            session_event(
+                sequence,
+                session,
+                json!({
+                    "type": "assistant_delta",
+                    "data": { "run_id": "r-1", "message_id": message_id, "delta": text }
+                }),
+            )
+        };
+        let tool_started = |sequence: u64, session: &str| {
+            session_event(
+                sequence,
+                session,
+                json!({
+                    "type": "tool_started",
+                    "data": { "run_id": "r-1", "tool_call_id": "call-1", "name": "fs_read" }
+                }),
+            )
+        };
+        let tool_output = |sequence: u64, session: &str| {
+            session_event(
+                sequence,
+                session,
+                json!({
+                    "type": "tool_output",
+                    "data": {
+                        "run_id": "r-1",
+                        "tool_call_id": "call-1",
+                        "delta": "chunk",
+                        "truncated": false
+                    }
+                }),
+            )
+        };
+        let run_completed = |sequence: u64, session: &str| {
+            session_event(
+                sequence,
+                session,
+                json!({ "type": "run_changed", "data": { "run_id": "r-1", "state": "completed" } }),
+            )
+        };
+
+        // 基线：assistant committed tombstone、tool 锚点、run 终态边界。
+        assert!(projection.apply_event(&delta(2, "s-1", "m-1", "Hello")));
+        projection.apply_timeline_page(&page(
+            vec![history_item(4, "assistant_message", json!({ "text": "Hello world" }))],
+            true,
+        ));
+        assert!(!projection.apply_event(&delta(3, "s-1", "m-1", " late")));
+        assert!(projection.apply_event(&tool_started(10, "s-1")));
+        assert!(projection.apply_event(&tool_output(11, "s-1")));
+        assert!(projection.apply_event(&run_completed(12, "s-1")));
+        assert_eq!(projection.timeline.len(), 3);
+        assert!(projection.timeline[2].is_fork_boundary());
+
+        // 同 session 换 branch：entries / seen / assistant / tool anchors 全清。
+        // SessionForked 后 controller 以同一个 session_id 重新 open；active branch
+        // 只存在 host/storage，不进 wire，因此这里必须用同 id 再次选中。
+        projection.select_session("s-1");
+        assert!(projection.timeline.is_empty());
+        assert_eq!(projection.active_session_id.as_deref(), Some("s-1"));
+
+        // seen 已清：同 sequence 重放不判重；tombstone 已清：同 message delta
+        // 不再被吞；tool 锚点已清：重放重建并回填。
+        assert!(projection.apply_event(&delta(2, "s-1", "m-1", "Hello")));
+        assert!(projection.apply_event(&delta(3, "s-1", "m-1", " again")));
+        assert!(projection.apply_event(&tool_started(10, "s-1")));
+        assert!(projection.apply_event(&tool_output(11, "s-1")));
+        assert!(projection.apply_event(&run_completed(12, "s-1")));
+        assert_eq!(projection.timeline.len(), 3);
+        let texts: Vec<String> = projection
+            .timeline
+            .iter()
+            .map(|entry| match &entry.kind {
+                TimelineEntryKind::AssistantMessage { text } => format!("assistant:{text}"),
+                TimelineEntryKind::ToolCall { detail, .. } => format!("tool:{detail:?}"),
+                TimelineEntryKind::RunState(state) => format!("run:{state}"),
+                other => format!("other:{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "assistant:Hello again".to_string(),
+                "tool:Some(\"chunk\")".to_string(),
+                "run:run completed".to_string(),
+            ]
+        );
+    }
+
     fn terminal_output(sequence: u64, terminal: &str, delta: &str) -> AppEventEnvelope {
         serde_json::from_value(json!({
             "api_version": { "major": 1, "minor": 1 },

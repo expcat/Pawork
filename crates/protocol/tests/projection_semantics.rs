@@ -532,6 +532,67 @@ fn run_state_labels_agree_between_live_and_history_arms() {
 }
 
 #[test]
+fn run_terminal_entries_mark_typed_fork_boundary() {
+    // R6/ADR-040 D5：fork 只许切在 run 终止边界。历史臂仅
+    // RunCompleted/RunCancelled/RunFailed 标记；RunStarted / message 不是。
+    let mut history = TimelineProjection::default();
+    let kinds = [
+        TimelineItemKind::RunStarted,
+        TimelineItemKind::RunCompleted,
+        TimelineItemKind::RunCancelled,
+        TimelineItemKind::RunFailed,
+        TimelineItemKind::UserMessage,
+    ];
+    for (index, kind) in kinds.into_iter().enumerate() {
+        history.apply_item(&item_with(
+            history_item(index as u64 + 1, kind),
+            Some("hi"),
+            None,
+            None,
+            None,
+        ));
+    }
+    let boundaries: Vec<bool> = history
+        .entries
+        .iter()
+        .map(|entry| entry.is_fork_boundary())
+        .collect();
+    assert_eq!(boundaries, vec![false, true, true, true, false]);
+    // 标记不改变渲染文案（golden / 两臂对拍保持不变）。
+    assert!(matches!(
+        &history.entries[1].kind,
+        TimelineEntryKind::RunState(text) if text == "run completed"
+    ));
+
+    // live 臂：仅 RunState::{Completed,Cancelled,Failed} 是边界；
+    // Created / StreamingResponse / Interrupted 不是。
+    let mut live = TimelineProjection::default();
+    let states = [
+        "created",
+        "streaming_response",
+        "interrupted",
+        "completed",
+        "cancelled",
+        "failed",
+    ];
+    for (index, state) in states.into_iter().enumerate() {
+        assert!(live.apply_event(&run_changed(index as u64 + 1, state)));
+    }
+    let boundaries: Vec<bool> = live
+        .entries
+        .iter()
+        .map(|entry| entry.is_fork_boundary())
+        .collect();
+    assert_eq!(boundaries, vec![false, false, false, true, true, true]);
+
+    // message / tool 条目同样不可 fork。
+    let mut misc = TimelineProjection::default();
+    assert!(misc.apply_event(&assistant_delta(1, "m-1", "draft")));
+    assert!(misc.apply_event(&tool_started(2, "call-1", "fs_read")));
+    assert!(misc.entries.iter().all(|entry| !entry.is_fork_boundary()));
+}
+
+#[test]
 fn fifty_thousand_timeline_entries_iter_without_clone() {
     let mut projection = TimelineProjection::default();
     projection.entries.reserve(50_000);
@@ -540,6 +601,7 @@ fn fifty_thousand_timeline_entries_iter_without_clone() {
             sequence,
             event_id: format!("e{sequence}"),
             kind: TimelineEntryKind::RunState("x".into()),
+            fork_boundary: None,
             timestamp: "1".into(),
             run_id: None,
         });

@@ -177,9 +177,12 @@ pub(crate) fn apply_projection(
                 ],
             )?;
         }
-        AgentEvent::CompactionCompleted { compacted_through, .. } => {
-            // 压缩语义：sequence <= compacted_through 的消息投影被摘要取代。
-            // 事件流保持 append-only；摘要消息自身的 sequence 大于该水位，不受影响。
+        AgentEvent::CompactionCompleted {
+            compacted_through, ..
+        } => {
+            // 保留 v12 已冻结的物化表折叠语义；branch-aware snapshot 不再以
+            // `messages` 行是否仍存在为事实源，而是从 append-only 事件账本
+            // 重建（见 `load_snapshot`），因此父支晚压缩也不会破坏旧 fork。
             let through = i64::try_from(compacted_through.value())
                 .map_err(|_| SessionStoreError::SequenceOverflow)?;
             connection.execute(
@@ -584,10 +587,16 @@ fn load_snapshot(
             .ok_or_else(|| SessionStoreError::SessionNotFound(session_id.into()))?,
     };
     let lineage = load_ancestor_lineage(connection, session_id, &branch_id)?;
+    let compacted_through = lineage_compacted_through(connection, session_id, &lineage)?;
     let messages = {
+        // `messages` 是可重建物化表，历史 compaction 会按 v12 冻结语义删除
+        // 其中的折叠行。branch snapshot 必须以 append-only event store 为事实源，
+        // 再按目标 lineage 与其可见 compaction 水位过滤，才能支持晚建旧 fork、
+        // 父支晚压缩与兄弟支隔离。
         let mut statement = connection.prepare(
-            "SELECT message_json, branch_id, sequence FROM messages \
-             WHERE session_id=?1 ORDER BY sequence, message_id",
+            "SELECT payload_json, branch_id, sequence FROM session_events \
+             WHERE session_id=?1 AND event_type='message_committed' \
+             ORDER BY sequence, event_id",
         )?;
         let rows = statement
             .query_map([session_id], |row| {
@@ -601,10 +610,16 @@ fn load_snapshot(
         rows.into_iter()
             .filter(|(_, message_branch, sequence)| {
                 visible_on_lineage(&lineage, message_branch, *sequence)
+                    && *sequence > compacted_through
             })
             .map(|(json, _, _)| {
-                crate::session::event_store::decode_persisted_json(&json)
-                    .map_err(SessionStoreError::from)
+                let envelope = crate::session::event_store::decode_persisted_event(&json)?;
+                match envelope.payload {
+                    AgentEvent::MessageCommitted { message } => Ok(message),
+                    _ => Err(SessionStoreError::ProjectionInvariant(
+                        "message_committed row decoded to a different event type".into(),
+                    )),
+                }
             })
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -759,6 +774,45 @@ fn load_snapshot(
     })
 }
 
+/// 该 lineage 可见的最大压缩水位（无可见 `CompactionCompleted` 时为 0）。
+///
+/// R6 波 B 统一口径：折叠只发生在读取侧，且只作用于同一 lineage 上
+/// `sequence <= compacted_through` 的消息行；其他分支上的压缩事件对本
+/// lineage 不可见，不参与折叠（父支晚压缩不破坏旧 fork、兄弟支互不影响）。
+fn lineage_compacted_through(
+    connection: &Connection,
+    session_id: &str,
+    lineage: &[(String, i64)],
+) -> Result<i64, SessionStoreError> {
+    let mut statement = connection.prepare(
+        "SELECT payload_json, branch_id, sequence FROM session_events \
+         WHERE session_id=?1 AND event_type='compaction_completed' \
+         ORDER BY sequence ASC",
+    )?;
+    let rows = statement
+        .query_map([session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut through = 0i64;
+    for (json, event_branch, sequence) in rows {
+        if !visible_on_lineage(lineage, &event_branch, sequence) {
+            continue;
+        }
+        let envelope = crate::session::event_store::decode_persisted_event(&json)?;
+        if let AgentEvent::CompactionCompleted { compacted_through, .. } = envelope.payload {
+            let value = i64::try_from(compacted_through.value())
+                .map_err(|_| SessionStoreError::SequenceOverflow)?;
+            through = through.max(value);
+        }
+    }
+    Ok(through)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -797,6 +851,36 @@ mod tests {
             )],
             metadata: Default::default(),
         }
+    }
+
+    fn fork_boundary() -> AgentEvent {
+        AgentEvent::CompactionCompleted {
+            summary_message_id: MessageId::from("fork-boundary"),
+            compacted_through: EventSequence::new(0),
+        }
+    }
+
+    async fn message_rows(store: &SessionStore, session: &str) -> Vec<(String, String, i64)> {
+        let session = session.to_string();
+        store
+            .database()
+            .call(move |connection| {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT message_id, branch_id, sequence FROM messages \
+                         WHERE session_id=?1 ORDER BY sequence, message_id",
+                    )
+                    .expect("prepare");
+                statement
+                    .query_map([session], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })
+                    .expect("query")
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .expect("collect")
+            })
+            .await
+            .expect("actor")
     }
 
     #[tokio::test]
@@ -893,6 +977,11 @@ mod tests {
             ids,
             vec!["m-summary"],
             "sequence <= compacted_through 的消息投影被摘要取代"
+        );
+        assert_eq!(
+            message_rows(&store, "session-compaction-projection").await,
+            vec![("m-summary".into(), DEFAULT_BRANCH_ID.into(), 5)],
+            "v12 冻结语义仍折叠 messages 物化行"
         );
 
         let replay = store
@@ -1097,7 +1186,28 @@ mod tests {
             .create_session(&session, "fork-snapshot", Timestamp::from_unix_millis(1))
             .await
             .expect("session");
-        for sequence in 1..=3u64 {
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 1, AgentEvent::MessageCommitted {
+                    message: text_message("m-1", "t-1"),
+                }),
+            )
+            .await
+            .expect("append 1");
+        store
+            .append_event(DEFAULT_BRANCH_ID, event(&session, 2, fork_boundary()))
+            .await
+            .expect("append boundary");
+        store
+            .fork_from_event(
+                &session,
+                "experiment",
+                &pawork_domain::EventId::from("event-2"),
+            )
+            .await
+            .expect("fork");
+        for sequence in 3..=4u64 {
             store
                 .append_event(
                     DEFAULT_BRANCH_ID,
@@ -1112,14 +1222,6 @@ mod tests {
                 .await
                 .expect("append");
         }
-        store
-            .fork_from_event(
-                &session,
-                "experiment",
-                &pawork_domain::EventId::from("event-1"),
-            )
-            .await
-            .expect("fork");
         store
             .switch_branch(&session, "experiment")
             .await
@@ -1142,7 +1244,7 @@ mod tests {
             .iter()
             .map(|message| message.id.as_str())
             .collect();
-        assert_eq!(main_ids, vec!["m-1", "m-2", "m-3"]);
+        assert_eq!(main_ids, vec!["m-1", "m-3", "m-4"]);
 
         store.shutdown().await.expect("shutdown");
     }
@@ -1156,7 +1258,28 @@ mod tests {
             .create_session(&session, "fork-compact", Timestamp::from_unix_millis(1))
             .await
             .expect("session");
-        for sequence in 1..=3u64 {
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 1, AgentEvent::MessageCommitted {
+                    message: text_message("m-1", "t-1"),
+                }),
+            )
+            .await
+            .expect("append 1");
+        store
+            .append_event(DEFAULT_BRANCH_ID, event(&session, 2, fork_boundary()))
+            .await
+            .expect("append boundary");
+        store
+            .fork_from_event(
+                &session,
+                "experiment",
+                &pawork_domain::EventId::from("event-2"),
+            )
+            .await
+            .expect("fork");
+        for sequence in 3..=4u64 {
             store
                 .append_event(
                     DEFAULT_BRANCH_ID,
@@ -1169,16 +1292,8 @@ mod tests {
                     ),
                 )
                 .await
-                .expect("append");
+                .expect("append main tail");
         }
-        store
-            .fork_from_event(
-                &session,
-                "experiment",
-                &pawork_domain::EventId::from("event-1"),
-            )
-            .await
-            .expect("fork");
         store
             .switch_branch(&session, "experiment")
             .await
@@ -1188,7 +1303,7 @@ mod tests {
                 "experiment",
                 event(
                     &session,
-                    4,
+                    5,
                     AgentEvent::MessageCommitted {
                         message: text_message("m-fork", "fork-only"),
                     },
@@ -1201,41 +1316,41 @@ mod tests {
                 "experiment",
                 event(
                     &session,
-                    5,
+                    6,
                     AgentEvent::CompactionCompleted {
                         summary_message_id: pawork_domain::MessageId::from("m-fork"),
-                        compacted_through: EventSequence::new(4),
+                        compacted_through: EventSequence::new(1),
                     },
                 ),
             )
             .await
             .expect("fork compact");
 
-        let remaining: Vec<(String, String, i64)> = store
-            .database()
-            .call(|connection| {
-                let mut statement = connection
-                    .prepare(
-                        "SELECT message_id, branch_id, sequence FROM messages \
-                         WHERE session_id='session-fork-compact' ORDER BY sequence, message_id",
-                    )
-                    .expect("prepare");
-                statement
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-                    .expect("query")
-                    .collect::<rusqlite::Result<Vec<_>>>()
-                    .expect("collect")
-            })
-            .await
-            .expect("actor");
+        let remaining = message_rows(&store, "session-fork-compact").await;
         assert_eq!(
             remaining,
             vec![
                 ("m-1".into(), DEFAULT_BRANCH_ID.into(), 1),
-                ("m-2".into(), DEFAULT_BRANCH_ID.into(), 2),
                 ("m-3".into(), DEFAULT_BRANCH_ID.into(), 3),
+                ("m-4".into(), DEFAULT_BRANCH_ID.into(), 4),
+                ("m-fork".into(), "experiment".into(), 5),
             ],
-            "fork 压缩不得删 main 中低于全局水位的消息"
+            "fork 支压缩不得删除 main 的物化行"
+        );
+
+        let experiment = store
+            .projection_snapshot_on_branch(&session, "experiment")
+            .await
+            .expect("experiment");
+        let experiment_ids: Vec<&str> = experiment
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(
+            experiment_ids,
+            vec!["m-fork"],
+            "experiment lineage 按自身水位折叠祖先前缀，保留摘要"
         );
 
         store
@@ -1248,7 +1363,224 @@ mod tests {
             .iter()
             .map(|message| message.id.as_str())
             .collect();
-        assert_eq!(ids, vec!["m-1", "m-2", "m-3"]);
+        assert_eq!(ids, vec!["m-1", "m-3", "m-4"]);
+
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn parent_late_compaction_keeps_old_fork_view() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-parent-late-compact");
+        store
+            .create_session(&session, "parent-late-compact", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 1, AgentEvent::MessageCommitted {
+                    message: text_message("m-1", "t-1"),
+                }),
+            )
+            .await
+            .expect("append 1");
+        store
+            .append_event(DEFAULT_BRANCH_ID, event(&session, 2, fork_boundary()))
+            .await
+            .expect("append boundary");
+        store
+            .fork_from_event(&session, "old-fork", &pawork_domain::EventId::from("event-2"))
+            .await
+            .expect("fork");
+        for sequence in 3..=4u64 {
+            store
+                .append_event(
+                    DEFAULT_BRANCH_ID,
+                    event(
+                        &session,
+                        sequence,
+                        AgentEvent::MessageCommitted {
+                            message: text_message(&format!("m-{sequence}"), &format!("t-{sequence}")),
+                        },
+                    ),
+                )
+                .await
+                .expect("append main tail");
+        }
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 5, AgentEvent::MessageCommitted {
+                    message: text_message("m-summary", "late summary"),
+                }),
+            )
+            .await
+            .expect("append summary");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    6,
+                    AgentEvent::CompactionCompleted {
+                        summary_message_id: pawork_domain::MessageId::from("m-summary"),
+                        compacted_through: EventSequence::new(4),
+                    },
+                ),
+            )
+            .await
+            .expect("parent late compact");
+
+        let main = store
+            .projection_snapshot_on_branch(&session, DEFAULT_BRANCH_ID)
+            .await
+            .expect("main");
+        let main_ids: Vec<&str> = main
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(main_ids, vec!["m-summary"], "main 按自身水位折叠到摘要");
+
+        let old_fork = store
+            .projection_snapshot_on_branch(&session, "old-fork")
+            .await
+            .expect("old fork");
+        let old_ids: Vec<&str> = old_fork
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(
+            old_ids,
+            vec!["m-1"],
+            "父支晚压缩的 CompactionCompleted 不在旧 fork lineage 上，不得折叠旧 fork 视图"
+        );
+
+        // 即使 compaction 已按 v12 冻结语义删除 main 的物化消息行，之后再从
+        // 压缩前边界建立旧 fork，snapshot 仍必须由 append-only 账本恢复祖先前缀。
+        store
+            .fork_from_event(
+                &session,
+                "late-fork",
+                &pawork_domain::EventId::from("event-2"),
+            )
+            .await
+            .expect("late fork from pre-compaction boundary");
+        let late_fork = store
+            .projection_snapshot_on_branch(&session, "late-fork")
+            .await
+            .expect("late fork snapshot");
+        let late_ids: Vec<&str> = late_fork
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(late_ids, vec!["m-1"]);
+
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn sibling_compaction_folds_only_its_own_lineage() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-sibling-compact");
+        store
+            .create_session(&session, "sibling-compact", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 1, AgentEvent::MessageCommitted {
+                    message: text_message("m-1", "t-1"),
+                }),
+            )
+            .await
+            .expect("append 1");
+        store
+            .append_event(DEFAULT_BRANCH_ID, event(&session, 2, fork_boundary()))
+            .await
+            .expect("append boundary");
+        store
+            .fork_from_event(&session, "sib-a", &pawork_domain::EventId::from("event-2"))
+            .await
+            .expect("fork a");
+        store
+            .fork_from_event(&session, "sib-b", &pawork_domain::EventId::from("event-2"))
+            .await
+            .expect("fork b");
+
+        store
+            .switch_branch(&session, "sib-a")
+            .await
+            .expect("switch a");
+        store
+            .append_event(
+                "sib-a",
+                event(&session, 3, AgentEvent::MessageCommitted {
+                    message: text_message("m-a", "a-only"),
+                }),
+            )
+            .await
+            .expect("append a");
+        store
+            .append_event(
+                "sib-a",
+                event(
+                    &session,
+                    4,
+                    AgentEvent::CompactionCompleted {
+                        summary_message_id: pawork_domain::MessageId::from("m-a"),
+                        compacted_through: EventSequence::new(1),
+                    },
+                ),
+            )
+            .await
+            .expect("compact a");
+
+        store
+            .switch_branch(&session, "sib-b")
+            .await
+            .expect("switch b");
+        store
+            .append_event(
+                "sib-b",
+                event(&session, 5, AgentEvent::MessageCommitted {
+                    message: text_message("m-b", "b-only"),
+                }),
+            )
+            .await
+            .expect("append b");
+
+        let sib_a = store
+            .projection_snapshot_on_branch(&session, "sib-a")
+            .await
+            .expect("sib a");
+        let a_ids: Vec<&str> = sib_a
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(a_ids, vec!["m-a"], "sib-a 按自身压缩水位折叠祖先前缀");
+
+        let sib_b = store
+            .projection_snapshot_on_branch(&session, "sib-b")
+            .await
+            .expect("sib b");
+        let b_ids: Vec<&str> = sib_b
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(
+            b_ids,
+            vec!["m-1", "m-b"],
+            "兄弟支的压缩事件不在 sib-b lineage 上，不得折叠其祖先前缀"
+        );
 
         store.shutdown().await.expect("shutdown");
     }

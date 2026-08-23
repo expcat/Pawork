@@ -78,6 +78,8 @@ pub struct PiImportReport {
     /// 已作为 `pi.model_switched` Diagnostic 事件持久化的模型切换数。
     pub imported_model_switches: usize,
     pub imported_compactions: usize,
+    /// 已折叠为 main 上 `pi.branch_collapsed` Diagnostic 的 Branch marker 数；
+    /// 字段名为兼容既有调用方保留，单分支导入语义下不创建任何 branch 行。
     pub imported_branches: usize,
     /// 整条未识别的行（行号 -> 原始 JSON）。
     pub unknown_entries: std::collections::BTreeMap<usize, String>,

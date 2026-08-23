@@ -300,12 +300,49 @@ mod tests {
         )
     }
 
+    fn envelope(
+        session: &SessionId,
+        sequence: u64,
+        payload: AgentEvent,
+    ) -> AgentEventEnvelope {
+        AgentEventEnvelope::new(
+            EventId::from(format!("event-{sequence}")),
+            session.clone(),
+            RunId::from("run-fork-resume"),
+            EventSequence::new(sequence),
+            pawork_engine::now_timestamp(),
+            payload,
+        )
+    }
+
     #[tokio::test]
     async fn resume_messages_on_fork_contains_only_ancestor_prefix() {
         let (core, _dir) = mock_core(Vec::new()).await;
         let session = core.create_session("fork-resume").await.expect("create");
         let store = core.store().expect("store");
-        for sequence in 1..=3u64 {
+        store
+            .append_event(DEFAULT_BRANCH_ID, committed(&session, 1, "m-1"))
+            .await
+            .expect("append 1");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                envelope(
+                    &session,
+                    2,
+                    AgentEvent::CompactionCompleted {
+                        summary_message_id: MessageId::from("fork-boundary"),
+                        compacted_through: EventSequence::new(0),
+                    },
+                ),
+            )
+            .await
+            .expect("append boundary");
+        store
+            .fork_from_event(&session, "experiment", &EventId::from("event-2"))
+            .await
+            .expect("fork");
+        for sequence in 3..=4u64 {
             store
                 .append_event(
                     DEFAULT_BRANCH_ID,
@@ -314,10 +351,6 @@ mod tests {
                 .await
                 .expect("append");
         }
-        store
-            .fork_from_event(&session, "experiment", &EventId::from("event-1"))
-            .await
-            .expect("fork");
         store
             .switch_branch(&session, "experiment")
             .await
@@ -328,7 +361,7 @@ mod tests {
         assert_eq!(
             ids,
             vec!["m-1"],
-            "fork 后 resume 只含祖先前缀，不含 main 的 2–3"
+            "fork 后 resume 只含祖先前缀，不含 main 的 3–4"
         );
         core.shutdown().await.expect("shutdown");
     }
@@ -338,19 +371,37 @@ mod tests {
         let (core, _dir) = mock_core(Vec::new()).await;
         let session = core.create_session("fork-compact").await.expect("create");
         let store = core.store().expect("store");
-        for sequence in 1..=3u64 {
+        store
+            .append_event(DEFAULT_BRANCH_ID, committed(&session, 1, "m-1"))
+            .await
+            .expect("append 1");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                envelope(
+                    &session,
+                    2,
+                    AgentEvent::CompactionCompleted {
+                        summary_message_id: MessageId::from("fork-boundary"),
+                        compacted_through: EventSequence::new(0),
+                    },
+                ),
+            )
+            .await
+            .expect("append boundary");
+        store
+            .fork_from_event(&session, "experiment", &EventId::from("event-2"))
+            .await
+            .expect("fork");
+        for sequence in 3..=4u64 {
             store
                 .append_event(
                     DEFAULT_BRANCH_ID,
                     committed(&session, sequence, &format!("m-{sequence}")),
                 )
                 .await
-                .expect("append");
+                .expect("append main tail");
         }
-        store
-            .fork_from_event(&session, "experiment", &EventId::from("event-1"))
-            .await
-            .expect("fork");
         store
             .switch_branch(&session, "experiment")
             .await
@@ -358,7 +409,7 @@ mod tests {
         store
             .append_event(
                 "experiment",
-                committed(&session, 4, "m-fork"),
+                committed(&session, 5, "m-fork"),
             )
             .await
             .expect("fork message");
@@ -366,19 +417,30 @@ mod tests {
             .append_event(
                 "experiment",
                 AgentEventEnvelope::new(
-                    EventId::from("event-5"),
+                    EventId::from("event-6"),
                     session.clone(),
                     RunId::from("run-fork-resume"),
-                    EventSequence::new(5),
+                    EventSequence::new(6),
                     pawork_engine::now_timestamp(),
                     AgentEvent::CompactionCompleted {
                         summary_message_id: MessageId::from("m-fork"),
-                        compacted_through: EventSequence::new(4),
+                        compacted_through: EventSequence::new(1),
                     },
                 ),
             )
             .await
             .expect("fork compact");
+
+        let fork_messages = core.resume_messages(&session).await.expect("resume fork");
+        let fork_ids: Vec<&str> = fork_messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(
+            fork_ids,
+            vec!["m-fork"],
+            "fork 支按自身 lineage 水位折叠祖先前缀，保留摘要"
+        );
 
         store
             .switch_branch(&session, DEFAULT_BRANCH_ID)
@@ -388,7 +450,7 @@ mod tests {
         let ids: Vec<&str> = messages.iter().map(|message| message.id.as_str()).collect();
         assert_eq!(
             ids,
-            vec!["m-1", "m-2", "m-3"],
+            vec!["m-1", "m-3", "m-4"],
             "fork 压缩后 main 中低于全局水位的消息仍在"
         );
         core.shutdown().await.expect("shutdown");

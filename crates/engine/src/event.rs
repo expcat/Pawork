@@ -84,14 +84,6 @@ impl<'a> EventEmitter<'a> {
         Ok(sequence)
     }
 
-    /// 当前已发出的最大 sequence（尚未发出任何事件时饱和到 0）。
-    pub(crate) fn last_sequence(&self) -> EventSequence {
-        EventSequence::new(
-            self.next_sequence
-                .load(Ordering::SeqCst)
-                .saturating_sub(1),
-        )
-    }
 }
 
 /// 可 Clone 的 Loop 事件发射器；复制的是 sequence 与 sink 的引用。

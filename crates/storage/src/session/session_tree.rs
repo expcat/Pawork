@@ -112,8 +112,9 @@ impl SessionStore {
     /// 从 `from_event_id` 指定的事件处 fork 出新 branch。
     ///
     /// 复用 [`SessionStore::create_branch`]；新 branch 的 `parent_branch_id` 取自该
-    /// 事件所属的 branch。调用前先校验事件存在、目标 branch 尚不存在，便于给出
-    /// 精确的错误变体（`create_branch` 对相同 parent/fork 是幂等成功）。
+    /// 事件所属的 branch。fork 只允许切在闭合 turn 边界（ADR-040 D5：run 终态
+    /// 或 standalone `CompactionCompleted`）；同 `(branch, parent, fork point)`
+    /// 重试由 `create_branch` 幂等承接，相同 branch 不同 fork 点仍报已存在。
     pub async fn fork_from_event(
         &self,
         session_id: &SessionId,
@@ -125,31 +126,28 @@ impl SessionStore {
         let from_event_id = from_event_id.to_string();
 
         let lookup_session_id = session_id_value.clone();
-        let lookup_branch_id = new_branch_id.clone();
         let lookup_event_id = from_event_id.clone();
         let parent_branch_id = self
             .database()
             .call(move |connection| -> Result<String, SessionStoreError> {
-                let parent_branch_id: Option<String> = connection
+                let event: Option<(String, String)> = connection
                     .query_row(
-                        "SELECT branch_id FROM session_events \
+                        "SELECT branch_id, event_type FROM session_events \
                          WHERE session_id=?1 AND event_id=?2",
                         params![lookup_session_id, lookup_event_id.clone()],
-                        |row| row.get(0),
+                        |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .optional()?;
-                let parent_branch_id = parent_branch_id
-                    .ok_or_else(|| SessionStoreError::ParentEventNotFound(lookup_event_id))?;
-                let branch_exists: bool = connection.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM session_branches \
-                     WHERE session_id=?1 AND branch_id=?2)",
-                    params![lookup_session_id, lookup_branch_id.clone()],
-                    |row| row.get(0),
-                )?;
-                if branch_exists {
-                    return Err(SessionStoreError::BranchAlreadyExists {
-                        session_id: lookup_session_id,
-                        branch_id: lookup_branch_id,
+                let (parent_branch_id, event_type) = event.ok_or_else(|| {
+                    SessionStoreError::ParentEventNotFound(lookup_event_id.clone())
+                })?;
+                if !matches!(
+                    event_type.as_str(),
+                    "run_completed" | "run_cancelled" | "run_failed" | "compaction_completed"
+                ) {
+                    return Err(SessionStoreError::ForkPointNotTurnBoundary {
+                        event_id: lookup_event_id,
+                        event_type,
                     });
                 }
                 Ok(parent_branch_id)
@@ -292,6 +290,26 @@ mod tests {
         )
     }
 
+    fn committed(id: &str) -> AgentEvent {
+        AgentEvent::MessageCommitted {
+            message: pawork_domain::Message {
+                id: MessageId::from(id),
+                role: pawork_domain::MessageRole::User,
+                content: vec![pawork_domain::ContentPart::Text(pawork_domain::TextContent {
+                    text: id.into(),
+                })],
+                metadata: Default::default(),
+            },
+        }
+    }
+
+    fn fork_boundary() -> AgentEvent {
+        AgentEvent::CompactionCompleted {
+            summary_message_id: MessageId::from("fork-boundary"),
+            compacted_through: EventSequence::new(0),
+        }
+    }
+
     #[tokio::test]
     async fn fork_from_event_creates_child_branch_pointing_at_event() {
         let (_dir, path) = temp_db();
@@ -377,7 +395,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fork_from_event_rejects_missing_event_and_duplicate_branch() {
+    async fn fork_from_event_enforces_boundary_and_idempotent_retry() {
         let (_dir, path) = temp_db();
         let (store, _) = SessionStore::open(&path).await.expect("store");
         let session = SessionId::from("session-fork-err");
@@ -399,22 +417,52 @@ mod tests {
                 event(
                     &session,
                     1,
-                    AgentEvent::RunStarted {
-                        trigger_message_id: MessageId::from("t"),
-                    },
+                    committed("m-not-boundary"),
                 ),
             )
             .await
             .expect("append");
-        store
-            .fork_from_event(&session, "branch-a", &EventId::from("event-1"))
-            .await
-            .expect("first fork");
-        let duplicate = store
+        let not_boundary = store
             .fork_from_event(&session, "branch-a", &EventId::from("event-1"))
             .await;
         assert!(matches!(
-            duplicate,
+            not_boundary,
+            Err(SessionStoreError::ForkPointNotTurnBoundary {
+                ref event_id,
+                ref event_type,
+            }) if event_id == "event-1" && event_type == "message_committed"
+        ));
+
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    2,
+                    fork_boundary(),
+                ),
+            )
+            .await
+            .expect("append boundary");
+        store
+            .fork_from_event(&session, "branch-a", &EventId::from("event-2"))
+            .await
+            .expect("first fork");
+        // 同 (branch, parent, fork point) 重试：复用 create_branch 幂等语义。
+        store
+            .fork_from_event(&session, "branch-a", &EventId::from("event-2"))
+            .await
+            .expect("identical retry is idempotent");
+        // 相同 branch id 但 fork 点不同：仍报已存在。
+        store
+            .append_event(DEFAULT_BRANCH_ID, event(&session, 3, fork_boundary()))
+            .await
+            .expect("append second boundary");
+        let mismatched = store
+            .fork_from_event(&session, "branch-a", &EventId::from("event-3"))
+            .await;
+        assert!(matches!(
+            mismatched,
             Err(SessionStoreError::BranchAlreadyExists { ref branch_id, .. })
                 if branch_id == "branch-a"
         ));
@@ -443,34 +491,41 @@ mod tests {
             .create_session(&session, "lineage", Timestamp::from_unix_millis(1))
             .await
             .expect("session");
-        for sequence in 1..=3u64 {
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(&session, 1, committed("m-1")),
+            )
+            .await
+            .expect("append 1");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    2,
+                    fork_boundary(),
+                ),
+            )
+            .await
+            .expect("append boundary");
+        store
+            .fork_from_event(&session, "experiment", &EventId::from("event-2"))
+            .await
+            .expect("fork");
+        for sequence in 3..=4u64 {
             store
                 .append_event(
                     DEFAULT_BRANCH_ID,
                     event(
                         &session,
                         sequence,
-                        AgentEvent::MessageCommitted {
-                            message: pawork_domain::Message {
-                                id: pawork_domain::MessageId::from(format!("m-{sequence}")),
-                                role: pawork_domain::MessageRole::User,
-                                content: vec![pawork_domain::ContentPart::Text(
-                                    pawork_domain::TextContent {
-                                        text: format!("msg-{sequence}"),
-                                    },
-                                )],
-                                metadata: Default::default(),
-                            },
-                        },
+                        committed(&format!("m-{sequence}")),
                     ),
                 )
                 .await
                 .expect("append");
         }
-        store
-            .fork_from_event(&session, "experiment", &EventId::from("event-1"))
-            .await
-            .expect("fork");
         store
             .switch_branch(&session, "experiment")
             .await
@@ -489,8 +544,8 @@ mod tests {
                     .await
                     .expect("lineage events")
             ),
-            vec![1],
-            "fork lineage 只含祖先前缀，不含 main 在 fork 点之后的 2–3"
+            vec![1, 2],
+            "fork lineage 含祖先前缀（含边界事件），不含 main 在 fork 点之后的 3–4"
         );
         assert_eq!(
             sequences(
@@ -509,7 +564,7 @@ mod tests {
                     .await
                     .expect("main lineage")
             ),
-            vec![1, 2, 3]
+            vec![1, 2, 3, 4]
         );
 
         let snapshot = store

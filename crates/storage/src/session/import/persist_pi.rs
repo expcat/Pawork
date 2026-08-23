@@ -6,7 +6,7 @@ use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ContentPart, EventId, EventSequence, Message, MessageId,
     MessageMetadata, MessageRole, RunId, SessionId, TextContent, Timestamp, ToolCallId,
 };
-use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Transaction, TransactionBehavior};
 
 use crate::session::event_store::persist_event_in_transaction;
 use crate::session::import::formats::compat::find_secret;
@@ -180,13 +180,17 @@ fn persist_pi_entry(
             }
         }
         PiPayload::Branch { branch_id, parent } => {
-            if let Some(branch_id) = branch_id {
-                if branch_id != DEFAULT_BRANCH_ID {
-                    insert_pi_branch(transaction, session, &branch_id, parent.as_deref())?;
-                    report.imported_branches += 1;
-                }
+            // R6 波 B：Pi 导入收编为单分支语义——Branch marker 不再创建
+            // 零事件归属的 branch 行，树始终只有 main；marker 折叠为 main 上的
+            // Diagnostic（保留 source branch / parent 供追溯）。
+            report.imported_branches += 1;
+            AgentEvent::Diagnostic {
+                code: "pi.branch_collapsed".into(),
+                details: serde_json::json!({
+                    "source_branch": branch_id,
+                    "parent": parent,
+                }),
             }
-            return Ok(());
         }
         PiPayload::Header { .. } | PiPayload::Raw => return Ok(()),
     };
@@ -203,38 +207,6 @@ fn persist_pi_entry(
     *next_sequence = next_sequence
         .checked_add(1)
         .ok_or(SessionStoreError::SequenceOverflow)?;
-    Ok(())
-}
-
-fn insert_pi_branch(
-    transaction: &Transaction<'_>,
-    session_id: &str,
-    branch_id: &str,
-    parent: Option<&str>,
-) -> Result<(), SessionStoreError> {
-    let parent_branch_id = parent.map(str::to_string);
-    let existing: Option<(Option<String>, Option<String>)> = transaction
-        .query_row(
-            "SELECT parent_branch_id, forked_from_event_id FROM session_branches \
-             WHERE session_id=?1 AND branch_id=?2",
-            params![session_id, branch_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    if let Some((existing_parent, existing_fork)) = existing {
-        if existing_parent == parent_branch_id && existing_fork.is_none() {
-            return Ok(());
-        }
-        return Err(SessionStoreError::BranchAlreadyExists {
-            session_id: session_id.to_string(),
-            branch_id: branch_id.to_string(),
-        });
-    }
-    transaction.execute(
-        "INSERT INTO session_branches(branch_id, session_id, parent_branch_id, forked_from_event_id, head_sequence) \
-         VALUES (?1, ?2, ?3, NULL, 0)",
-        params![branch_id, session_id, parent_branch_id],
-    )?;
     Ok(())
 }
 
@@ -331,6 +303,89 @@ mod tests {
             .import_pi_jsonl_lines(r#"{"sequence":1,"role":"user","text":"no header"}"#)
             .await;
         assert!(result.is_err());
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn import_pi_collapses_branch_markers_to_main_diagnostics() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let content = concat!(
+            r#"{"session_id":"pi-branch","title":"branchy"}"#,
+            "\n",
+            r#"{"sequence":1,"role":"user","text":"hello"}"#,
+            "\n",
+            r#"{"branch_id":"feature-x","parent":"main"}"#,
+            "\n",
+            r#"{"branch_id":"main"}"#,
+            "\n",
+            r#"{"branch":true}"#,
+        );
+
+        let report = store
+            .import_pi_jsonl_lines(content)
+            .await
+            .expect("import");
+        assert_eq!(report.imported_branches, 3);
+
+        let session = SessionId::from("pi-branch");
+        let tree = store.session_tree(&session).await.expect("tree");
+        assert_eq!(
+            tree.branches
+                .iter()
+                .map(|node| node.branch_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["main"],
+            "Pi Branch marker 不创建 branch 行，树始终只有 main"
+        );
+
+        let events = store
+            .replay_events(&session, 1, 100)
+            .await
+            .expect("replay");
+        let collapsed: Vec<&serde_json::Value> = events
+            .iter()
+            .filter_map(|envelope| match &envelope.payload {
+                AgentEvent::Diagnostic { code, details }
+                    if code == "pi.branch_collapsed" =>
+                {
+                    Some(details)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(collapsed.len(), 3);
+        assert_eq!(
+            collapsed[0].get("source_branch"),
+            Some(&serde_json::json!("feature-x"))
+        );
+        assert_eq!(
+            collapsed[0].get("parent"),
+            Some(&serde_json::json!("main"))
+        );
+        assert_eq!(
+            collapsed[1].get("source_branch"),
+            Some(&serde_json::json!("main"))
+        );
+        assert!(
+            collapsed[1].get("parent").is_some_and(serde_json::Value::is_null),
+            "无 parent 的 marker 以 null 保留字段形状: {:?}",
+            collapsed[1]
+        );
+        assert!(
+            collapsed[2]
+                .get("source_branch")
+                .is_some_and(serde_json::Value::is_null),
+            "无 branch_id 的 marker 仍折叠为可追溯 Diagnostic: {:?}",
+            collapsed[2]
+        );
+        assert!(
+            collapsed[2].get("parent").is_some_and(serde_json::Value::is_null),
+            "无 branch_id/parent 的 marker 保留 null 字段形状: {:?}",
+            collapsed[2]
+        );
+
         store.shutdown().await.expect("shutdown");
         let _ = fs::remove_file(path);
     }

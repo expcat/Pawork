@@ -42,6 +42,7 @@ tests/
 - 明文 key 不得进入 `AppError` 任何变体；`auth_status` 脱敏。
 - 不按 Provider 名称分支；通道表是 providers registry 的 facade。
 - GUI resume 保留待审批（`resume_messages_keep_pending`）；CLI resume 仍 seal Denied。
+- resume/fork/compact 直接消费 storage lineage；fork resume 只能看到祖先前缀，compaction 存储错误显式上抛而非降级为“未发生”。
 - 幂等 `record` 失败要计数并释放 inflight，不可吞错挂死。
 - `home` 回退经 `DataDirOutcome` 结构化告警，禁止静默落到 temp。
 - Reasoning 保护：`protected.rs` 注入 `ProtectedBlobStore`（instance-level `BlobScope` `instance-reasoning` 为已接受偏差）。

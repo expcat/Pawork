@@ -23,8 +23,8 @@ src/
 
 手动 argv（非 clap）：`--socket`、`--instance`、`--probe`、`--probe-smoke`。默认窗口 1440×1024。
 
-- **ui**：`AppView`、`TextInput`；动作 `ApproveOnce` / `ApproveForRun` / `Deny` / `CancelRun` / `NewTask` / `ToggleInspector`。
-- **projection**：`DesktopProjection`（`from_snapshot` / `apply_event` / `apply_resume_outcome`…）；**不** import gpui / tokio / OS。Timeline 条目类型来自 `pawork_client::projection`。
+- **ui**：`AppView`、`TextInput`；动作 `ApproveOnce` / `ApproveForRun` / `Deny` / `CancelRun` / `Fork` / `NewTask` / `ToggleInspector`。Fork 只对 reducer 标记的闭合 run 边界开放，动作入口再次校验。
+- **projection**：`DesktopProjection`（`from_snapshot` / `apply_event` / `apply_resume_outcome`…）；**不** import gpui / tokio / OS。Timeline 条目类型来自 `pawork_client::projection`；同 session 切 branch 也必须清空 timeline/seen/tombstone/tool anchor 后建立新 baseline。
 - **controller**：`DesktopController`（`connect` / `send_message` / `approve` / `fork_session` / `terminal_*`）。握手 `client_name = "pawork-desktop"`；能力 `Events`、`Snapshots`、`Approvals`、`TerminalStreaming`。
 - **platform**：`default_socket_path` / `token_path_for_instance` 等。数据目录镜像 app 的规则（`PAWORK_DATA_DIR` → 平台默认 → `~/.pawork`），**不**依赖 `pawork-app`。缺 `gui.token` 则失败，禁止无认证静默连接。
 

@@ -152,6 +152,11 @@ pub enum SessionStoreError {
         branch_id: String,
     },
     #[error(
+        "fork point event {event_id} ({event_type}) is not a stable turn boundary; \
+         allowed: run_completed / run_cancelled / run_failed / compaction_completed"
+    )]
+    ForkPointNotTurnBoundary { event_id: String, event_type: String },
+    #[error(
         "branch {requested_branch} is not the active branch of session {session_id}; active is {active_branch}"
     )]
     BranchNotActive {

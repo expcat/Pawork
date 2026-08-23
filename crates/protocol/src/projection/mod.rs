@@ -12,6 +12,10 @@
 //!   （partition_point）、assistant delta 合并与 committed 替换、tool 身份锚点
 //!   （live / 历史统一使用 `run+tool_call_id`）全部单一实现；
 //! - resume 三态：Replay 保留基线、SnapshotRequired 清基线、UpToDate 不动。
+//! - fork 边界（R6/ADR-040 D5）：[`TimelineEntry::fork_boundary`] 以强类型
+//!   标记 run 终止条目（历史 `RunCompleted/RunCancelled/RunFailed` 与 live
+//!   `RunState::{Completed,Cancelled,Failed}`），Desktop fork 单点判型；
+//!   wire / golden 形状不变。
 //!
 //! 本模块是纯数据投影，不进 wire 帧：[`TimelineEntry`] 系列不加 serde derive，
 //! 序列化只发生在测试渲染层。分页游标元数据（next_sequence/complete）留在
@@ -253,14 +257,35 @@ pub enum TimelineEntryKind {
     Error(String),
 }
 
+/// 合法 Desktop fork 边界（纯数据，非 wire 类型）。R6/ADR-040 D5：fork 只许
+/// 切在闭合 turn 边界，因此仅历史 `RunCompleted/RunCancelled/RunFailed` 与
+/// live `RunState::{Completed,Cancelled,Failed}` 产生该标记；`RunStarted`、
+/// `Interrupted`、message / tool / diagnostic 一律不是边界。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForkBoundary {
+    Completed,
+    Cancelled,
+    Failed,
+}
+
 /// 渲染态时间线条目（纯数据，非 wire 类型，不进帧）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimelineEntry {
     pub sequence: u64,
     pub event_id: String,
     pub kind: TimelineEntryKind,
+    /// reducer 单点判型的 fork 边界标记；Desktop 不复制事件词表再判一遍。
+    pub fork_boundary: Option<ForkBoundary>,
     pub timestamp: String,
     pub run_id: Option<String>,
+}
+
+impl TimelineEntry {
+    /// 是否为合法 Desktop fork 边界。connected / active session 由调用方
+    /// 另行校验；判定只依赖本标记，禁止对 `kind` 文案做字符串匹配。
+    pub fn is_fork_boundary(&self) -> bool {
+        self.fork_boundary.is_some()
+    }
 }
 
 /// Assistant 流式合并锚点：同一 run + message 的 delta 追加到同一条目。
@@ -327,6 +352,7 @@ impl TimelineProjection {
                         kind: TimelineEntryKind::UserMessage {
                             text: item.text.clone().unwrap_or_default(),
                         },
+                        fork_boundary: None,
                         timestamp: item.timestamp.clone(),
                         run_id: item.run_id.clone(),
                     });
@@ -367,6 +393,7 @@ impl TimelineProjection {
                                 sequence: item.sequence,
                                 event_id: item.event_id.clone(),
                                 kind: TimelineEntryKind::AssistantMessage { text: committed },
+                                fork_boundary: None,
                                 timestamp: item.timestamp.clone(),
                                 run_id: item.run_id.clone(),
                             };
@@ -391,6 +418,7 @@ impl TimelineProjection {
                     sequence: item.sequence,
                     event_id: item.event_id.clone(),
                     kind: TimelineEntryKind::AssistantMessage { text: committed },
+                    fork_boundary: None,
                     timestamp: item.timestamp.clone(),
                     run_id: item.run_id.clone(),
                 });
@@ -417,6 +445,7 @@ impl TimelineProjection {
                         status: item.status.clone().unwrap_or_else(|| "running".into()),
                         detail: display_detail,
                     },
+                    fork_boundary: None,
                     timestamp: item.timestamp.clone(),
                     run_id: item.run_id.clone(),
                 });
@@ -467,6 +496,7 @@ impl TimelineProjection {
                             status: status.to_string(),
                             detail: display_detail,
                         },
+                        fork_boundary: None,
                         timestamp: item.timestamp.clone(),
                         run_id: item.run_id.clone(),
                     });
@@ -476,16 +506,21 @@ impl TimelineProjection {
             | TimelineItemKind::RunCompleted
             | TimelineItemKind::RunCancelled => {
                 if self.seen.insert(item.sequence) {
-                    let state = match item.kind {
-                        TimelineItemKind::RunStarted => "started",
-                        TimelineItemKind::RunCompleted => "completed",
-                        TimelineItemKind::RunCancelled => "cancelled",
+                    let (state, fork_boundary) = match item.kind {
+                        TimelineItemKind::RunStarted => ("started", None),
+                        TimelineItemKind::RunCompleted => {
+                            ("completed", Some(ForkBoundary::Completed))
+                        }
+                        TimelineItemKind::RunCancelled => {
+                            ("cancelled", Some(ForkBoundary::Cancelled))
+                        }
                         _ => unreachable!("matched arm guarantees run kind"),
                     };
                     self.insert_entry(TimelineEntry {
                         sequence: item.sequence,
                         event_id: item.event_id.clone(),
                         kind: TimelineEntryKind::RunState(format!("run {state}")),
+                        fork_boundary,
                         timestamp: item.timestamp.clone(),
                         run_id: item.run_id.clone(),
                     });
@@ -503,6 +538,7 @@ impl TimelineProjection {
                         sequence: item.sequence,
                         event_id: item.event_id.clone(),
                         kind: TimelineEntryKind::RunState(label),
+                        fork_boundary: Some(ForkBoundary::Failed),
                         timestamp: item.timestamp.clone(),
                         run_id: item.run_id.clone(),
                     });
@@ -524,6 +560,7 @@ impl TimelineProjection {
                         } else {
                             format!("approval requested · {tool} · {reason}")
                         }),
+                        fork_boundary: None,
                         timestamp: item.timestamp.clone(),
                         run_id: item.run_id.clone(),
                     });
@@ -541,6 +578,7 @@ impl TimelineProjection {
                         sequence: item.sequence,
                         event_id: item.event_id.clone(),
                         kind: TimelineEntryKind::RunState(format!("approval {decision}")),
+                        fork_boundary: None,
                         timestamp: item.timestamp.clone(),
                         run_id: item.run_id.clone(),
                     });
@@ -554,6 +592,7 @@ impl TimelineProjection {
                         kind: TimelineEntryKind::Error(
                             item.detail.clone().unwrap_or_default(),
                         ),
+                        fork_boundary: None,
                         timestamp: item.timestamp.clone(),
                         run_id: item.run_id.clone(),
                     });
@@ -581,6 +620,7 @@ impl TimelineProjection {
                             "run {}",
                             run_state_label(state)
                         )),
+                        fork_boundary: live_fork_boundary(state),
                         timestamp,
                         run_id: Some(run_id.as_str().to_string()),
                     });
@@ -617,6 +657,7 @@ impl TimelineProjection {
                         status: "running".into(),
                         detail: None,
                     },
+                    fork_boundary: None,
                     timestamp,
                     run_id: run.clone(),
                 });
@@ -676,6 +717,7 @@ impl TimelineProjection {
                             status: status.into(),
                             detail: None,
                         },
+                        fork_boundary: None,
                         timestamp,
                         run_id: Some(run_id.as_str().to_string()),
                     });
@@ -687,6 +729,7 @@ impl TimelineProjection {
                         sequence,
                         event_id,
                         kind: TimelineEntryKind::RunState(sandbox_fallback_label(message)),
+                        fork_boundary: None,
                         timestamp,
                         run_id: None,
                     });
@@ -749,6 +792,7 @@ impl TimelineProjection {
             kind: TimelineEntryKind::AssistantMessage {
                 text: delta.to_string(),
             },
+            fork_boundary: None,
             timestamp,
             run_id: run.clone(),
         });
@@ -864,6 +908,18 @@ impl TimelineProjection {
             return true;
         }
         false
+    }
+}
+
+/// live `RunChanged` 的 fork 边界映射（与历史臂 run 终态同集）：
+/// `Interrupted` 在 UI 上同样终结 run 跟踪，但不属于 storage fork
+/// 白名单（ADR-040 D5），不产生边界标记。
+fn live_fork_boundary(state: &RunState) -> Option<ForkBoundary> {
+    match state {
+        RunState::Completed => Some(ForkBoundary::Completed),
+        RunState::Cancelled => Some(ForkBoundary::Cancelled),
+        RunState::Failed => Some(ForkBoundary::Failed),
+        _ => None,
     }
 }
 

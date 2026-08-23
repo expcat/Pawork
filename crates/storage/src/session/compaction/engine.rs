@@ -1,8 +1,8 @@
 //! [`CompactionEngine`]：自动 / 手动压缩的统一入口（P5-5）。
 //!
 //! 引擎职责：
-//! 1. 按 branch 读取事件流（[`SessionStore::events_by_branch`]），确定压缩区间
-//!    （`replaced_range`）与 head 事件；
+//! 1. 按 active branch 的祖先链（[`SessionStore::events_on_lineage`]）读取事件流，
+//!    确定压缩区间（`replaced_range`）与 head 事件；
 //! 2. 压缩前用 [`SessionStore::create_branch`] Fork 出可恢复的 recovery branch
 //!    （`forked_from_event_id` = head 事件 id）；
 //! 3. 在 [`RetentionInputs`] 上应用 [`RetentionPolicy`]，产出保留决策；
@@ -108,9 +108,11 @@ impl<'a> CompactionEngine<'a> {
         summary_text: &str,
         inputs: &RetentionInputs,
     ) -> Result<CompactionResult, CompactionError> {
+        // R6 波 B（ADR-040 D5）：压缩读取统一走 active branch lineage——
+        // 与 host（loop_ctx）触发输入、快照折叠同一线性语义。
         let events = self
             .store
-            .events_by_branch(session_id, branch_id, 1, usize::MAX)
+            .events_on_lineage(session_id, branch_id, 1, usize::MAX)
             .await?;
         let head = events
             .last()
@@ -138,21 +140,22 @@ impl<'a> CompactionEngine<'a> {
             )
             .await?;
 
-        // 2. 只让目标 branch 的事件进入保留策略，防止调用方投影混入兄弟分支。
-        let branch_event_ids: HashSet<EventId> =
+        // 2. 只让该 lineage 上的事件进入保留策略，防止调用方输入混入
+        // 兄弟分支或 fork 点之后的祖先追加。
+        let lineage_event_ids: HashSet<EventId> =
             events.iter().map(|event| event.event_id.clone()).collect();
-        let branch_inputs = filter_retention_inputs(inputs, &branch_event_ids);
-        let decision = apply(&self.policy, &branch_inputs);
+        let lineage_inputs = filter_retention_inputs(inputs, &lineage_event_ids);
+        let decision = apply(&self.policy, &lineage_inputs);
 
         // 3. 估算压缩前后 token：before = 全部消息；after = 保留消息 + 摘要。
         // 估算器由构造时注入；消息携带 usage metadata 时优先按实测值计。
         let retained_ids: HashSet<&EventId> = decision.retained_event_ids.iter().collect();
-        let token_usage_before = branch_inputs
+        let token_usage_before = lineage_inputs
             .messages
             .iter()
             .map(|entry| estimate_message_tokens(&entry.message, self.estimator.as_ref()))
             .fold(0u64, u64::saturating_add);
-        let retained_message_tokens = branch_inputs
+        let retained_message_tokens = lineage_inputs
             .messages
             .iter()
             .filter(|entry| retained_ids.contains(&entry.event_id))
@@ -183,43 +186,43 @@ impl<'a> CompactionEngine<'a> {
 
 fn filter_retention_inputs(
     inputs: &RetentionInputs,
-    branch_event_ids: &HashSet<EventId>,
+    lineage_event_ids: &HashSet<EventId>,
 ) -> RetentionInputs {
     RetentionInputs {
         messages: inputs
             .messages
             .iter()
-            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .filter(|entry| lineage_event_ids.contains(&entry.event_id))
             .cloned()
             .collect(),
         tool_calls: inputs
             .tool_calls
             .iter()
-            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .filter(|entry| lineage_event_ids.contains(&entry.event_id))
             .cloned()
             .collect(),
         tasks: inputs
             .tasks
             .iter()
-            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .filter(|entry| lineage_event_ids.contains(&entry.event_id))
             .cloned()
             .collect(),
         constraints: inputs
             .constraints
             .iter()
-            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .filter(|entry| lineage_event_ids.contains(&entry.event_id))
             .cloned()
             .collect(),
         modified_files: inputs
             .modified_files
             .iter()
-            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .filter(|entry| lineage_event_ids.contains(&entry.event_id))
             .cloned()
             .collect(),
         reasoning_items: inputs
             .reasoning_items
             .iter()
-            .filter(|entry| branch_event_ids.contains(&entry.event_id))
+            .filter(|entry| lineage_event_ids.contains(&entry.event_id))
             .cloned()
             .collect(),
     }
@@ -563,7 +566,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compact_uses_only_the_requested_branch_event_range() {
+    async fn compact_uses_only_the_requested_lineage_event_range() {
         let (_dir, path) = temp_db();
         let (store, _) = SessionStore::open(&path).await.expect("open store");
         let session = SessionId::from("session-branch-compaction");
@@ -623,6 +626,10 @@ mod tests {
         let mixed_branch_inputs = RetentionInputs {
             messages: vec![
                 RetentionMessage {
+                    event_id: EventId::from("event-1"),
+                    message: committed("ancestor-message", MessageRole::User),
+                },
+                RetentionMessage {
                     event_id: EventId::from("event-2"),
                     message: committed("experiment-message", MessageRole::User),
                 },
@@ -644,10 +651,12 @@ mod tests {
             .await
             .expect("compact experiment");
 
-        assert_eq!(result.total_events, 1);
+        // lineage = experiment ∪ main(fork 点 event-1 前，含 event-1)：
+        // event-3 是 main 在 fork 点之后的追加，不在压缩区间内。
+        assert_eq!(result.total_events, 2);
         assert_eq!(
             result.snapshot.replaced_range,
-            (EventSequence::new(2), EventSequence::new(2))
+            (EventSequence::new(1), EventSequence::new(2))
         );
         assert_eq!(
             result.snapshot.recovery_branch_id.as_deref(),
@@ -658,7 +667,7 @@ mod tests {
         assert_eq!(forked.as_deref(), Some("event-2"));
         assert_eq!(
             result.decision.retained_event_ids,
-            vec![EventId::from("event-2")]
+            vec![EventId::from("event-1"), EventId::from("event-2")]
         );
 
         store.shutdown().await.expect("shutdown");

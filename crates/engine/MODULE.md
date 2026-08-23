@@ -21,7 +21,7 @@ tests/
 ## 对外入口/API 面
 
 - 装配：`assemble_request` / `assemble_request_with_tools`。
-- 循环：`run_session`、`run_manual_compaction`、`LoopContext`（`execute_tools` / `request_approval` / `compact_history` / `snapshot_write_tools`…）、`DEFAULT_MAX_TOOL_ROUNDS = 20`、`ApprovalGate`。
+- 循环：`run_session`、`run_manual_compaction`、`LoopContext`（`execute_tools` / `request_approval` / `compact_history` / `snapshot_write_tools`…）、`CompactionOutcome`（source count + `compacted_through`）、`DEFAULT_MAX_TOOL_ROUNDS = 20`、`ApprovalGate`。
 - 会话：`SessionTurn`、`run_session_turn`。
 - 上下文（`pub mod context`）：`ContextBudget` / `ContextLimits`、`compute_compaction`、`TokenEstimator` / `HeuristicEstimator`、工具结果 trim。
 - 取消：`CancelHandle`、`CancelReason::{User,Budget,System,Shutdown}`、`ProcessTreeCleaner`（杀树由宿主注入，本包不依赖 exec）。
@@ -39,6 +39,7 @@ tests/
 - `request_approval` 必须在等待前 emit `ToolApprovalRequested`（K-02 / R4 波 B）；engine 只补 `Responded`。
 - 不持久化、不选通道、不读 Secret；宿主注入 Provider / 工具 / cleaner。
 - 压缩 = 重写前缀 = 缓存失效；不要在 engine 里按厂商做 cache 特例。
+- `compact_history` 的 storage 错误必须终止当前 run；无持久化 outcome 时水位只能为 0，不得拿摘要事件自身 sequence 代替。
 
 ## 相关文档
 

@@ -187,16 +187,19 @@ impl LoopContext for SessionLoopCtx<'_> {
 
     /// 压缩回调：session 侧 fork recovery branch + 产出压缩快照，回传元数据。
     ///
-    /// 无持久化宿主（测试替身）时返回 None，engine 退回纯消息层压缩。
+    /// 无持久化宿主（测试替身）时返回 `Ok(None)`，engine 退回纯消息层压缩；
+    /// storage 侧失败显式映射为 [`EngineError::sink`]，不静默吞掉。
     async fn compact_history(
         &self,
         reason: AutoCompactionReason,
         summary_text: &str,
         _cancel: CancellationToken,
-    ) -> Option<CompactionOutcome> {
-        let store = self.store?;
-        let session_id = self.session_id.clone()?;
-        let estimator = self.token_estimator.clone()?;
+    ) -> Result<Option<CompactionOutcome>, pawork_engine::EngineError> {
+        let (Some(store), Some(session_id), Some(estimator)) =
+            (self.store, self.session_id.clone(), self.token_estimator.clone())
+        else {
+            return Ok(None);
+        };
         let session_reason = match reason {
             AutoCompactionReason::Manual => SessionCompactionReason::Manual,
             AutoCompactionReason::HistorySoftLimit => SessionCompactionReason::HistorySoftLimit,
@@ -205,12 +208,24 @@ impl LoopContext for SessionLoopCtx<'_> {
             }
         };
 
-        let active_branch = store.get_session(&session_id).await.ok()?.active_branch;
+        let active_branch = store
+            .get_session(&session_id)
+            .await
+            .map_err(|error| {
+                pawork_engine::EngineError::sink(format!(
+                    "history compaction failed to load session: {error}"
+                ))
+            })?
+            .active_branch;
         // 从 active branch 祖先链构建保留策略输入（不是全 session replay）。
         let events = store
             .events_on_lineage(&session_id, &active_branch, 1, usize::MAX)
             .await
-            .ok()?;
+            .map_err(|error| {
+                pawork_engine::EngineError::sink(format!(
+                    "history compaction failed to read lineage: {error}"
+                ))
+            })?;
         let mut inputs = RetentionInputs::default();
         let mut started_tools: std::collections::BTreeMap<pawork_domain::ToolCallId, (EventId, bool)> =
             Default::default();
@@ -266,10 +281,14 @@ impl LoopContext for SessionLoopCtx<'_> {
                 &inputs,
             )
             .await
-            .ok()?;
+            .map_err(|error| {
+                pawork_engine::EngineError::sink(format!(
+                    "history compaction failed: {error}"
+                ))
+            })?;
         let retained_event_ids: std::collections::HashSet<&pawork_domain::EventId> =
             result.decision.retained_event_ids.iter().collect();
-        Some(CompactionOutcome {
+        Ok(Some(CompactionOutcome {
             source_event_count: result.total_events as u64,
             // 折叠水位 = 被折叠（未保留）消息提交事件的最大 sequence；
             // 保留尾部与摘要（新 sequence）不受影响。无折叠时为 0（projection 不删）。
@@ -284,7 +303,7 @@ impl LoopContext for SessionLoopCtx<'_> {
                 .map(|envelope| envelope.sequence)
                 .max()
                 .unwrap_or(EventSequence::new(0)),
-        })
+        }))
     }
 
     async fn snapshot_write_tools(

@@ -92,14 +92,15 @@ pub trait LoopContext: Send + Sync {
     fn next_request_id(&self) -> RequestId;
 
     /// 压缩回调：host（app）负责 session 侧 fork/snapshot，完成后回传元数据。
-    /// 默认实现返回 None（无持久化宿主时 engine 仍能完成消息层压缩）。
+    /// 默认实现返回 `Ok(None)`（无持久化宿主时 engine 仍能完成消息层压缩）。
+    /// 宿主侧失败必须显式返回 `Err`（映射为 sink 错误），不得静默吞掉。
     async fn compact_history(
         &self,
         _reason: AutoCompactionReason,
         _summary_text: &str,
         _cancel: CancellationToken,
-    ) -> Option<CompactionOutcome> {
-        None
+    ) -> Result<Option<CompactionOutcome>, EngineError> {
+        Ok(None)
     }
 
     /// 写工具执行前由宿主拍快照。engine 不依赖 blob/git；默认空。
@@ -784,8 +785,8 @@ fn message_text(message: &Message) -> String {
 /// 返回重建后的消息列表（summary + retained tail）。
 ///
 /// 被压缩区间为空（消息数不超过 retained）时返回 None；source_event_count 取
-/// host 回传值，无 outcome 时用被压缩消息数；compacted_through 无 outcome 时用
-/// emitter 当前已发最大 sequence。
+/// host 回传值，无 outcome 时用被压缩消息数；compacted_through 无 outcome 时
+/// 为 0（fail-safe：无持久化水位时不折叠任何已投影消息，摘要与尾部全保留）。
 async fn compact_messages(
     provider: &dyn ModelProvider,
     emitter: &EventEmitter<'_>,
@@ -804,7 +805,9 @@ async fn compact_messages(
     let summary_text =
         summarize_history(provider, loop_ctx, model, compacted_range, cancel.clone()).await;
 
-    let outcome = loop_ctx.compact_history(reason, &summary_text, cancel).await;
+    let outcome = loop_ctx
+        .compact_history(reason, &summary_text, cancel)
+        .await?;
     let source_event_count = outcome
         .as_ref()
         .map(|outcome| outcome.source_event_count)
@@ -828,7 +831,7 @@ async fn compact_messages(
         .await?;
     let compacted_through = outcome
         .map(|outcome| outcome.compacted_through)
-        .unwrap_or_else(|| emitter.last_sequence());
+        .unwrap_or_else(|| EventSequence::new(0));
     emitter
         .emit(AgentEvent::CompactionCompleted {
             summary_message_id: summary.id.clone(),
@@ -2863,7 +2866,8 @@ mod tests {
         }).expect("CompactionStarted payload");
         // 默认 host 回调返回 None：source_event_count 用被压缩消息数（6 - retained 2）。
         assert_eq!(started_payload, 4);
-        assert_eq!(completed.1, EventSequence::new(5));
+        // 无 outcome 的 completed 水位 fail-safe 为 0：不得取新摘要自身 sequence。
+        assert_eq!(completed.1, EventSequence::new(0));
 
         let requests = provider.requests();
         assert_eq!(requests.len(), 2);
@@ -2976,14 +2980,14 @@ mod tests {
                 reason: AutoCompactionReason,
                 summary_text: &str,
                 _cancel: CancellationToken,
-            ) -> Option<CompactionOutcome> {
+            ) -> Result<Option<CompactionOutcome>, EngineError> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(reason, AutoCompactionReason::HistorySoftLimit);
                 assert!(!summary_text.is_empty());
-                Some(CompactionOutcome {
+                Ok(Some(CompactionOutcome {
                     source_event_count: 99,
                     compacted_through: EventSequence::new(42),
-                })
+                }))
             }
         }
 
@@ -3029,6 +3033,88 @@ mod tests {
             }
         }).expect("CompactionCompleted");
         assert_eq!(completed, EventSequence::new(42));
+    }
+
+    #[tokio::test]
+    async fn compact_history_error_fails_the_run_instead_of_being_swallowed() {
+        struct FailingCompactCtx {
+            inner: TestContext,
+        }
+
+        #[async_trait]
+        impl LoopContext for FailingCompactCtx {
+            async fn execute_tools(
+                &self,
+                calls: Vec<PendingToolInvocation>,
+                events: LoopEventEmitter<'_>,
+                cancel: CancellationToken,
+            ) -> Vec<ToolCallResult> {
+                self.inner.execute_tools(calls, events, cancel).await
+            }
+
+            async fn request_approval(
+                &self,
+                calls: &[PendingToolInvocation],
+                already_approved_for_run: bool,
+                events: LoopEventEmitter<'_>,
+                cancel: CancellationToken,
+            ) -> Result<Vec<ApprovalGate>, EngineError> {
+                self.inner
+                    .request_approval(calls, already_approved_for_run, events, cancel)
+                    .await
+            }
+
+            fn next_message_id(&self) -> MessageId {
+                self.inner.next_message_id()
+            }
+
+            fn next_request_id(&self) -> RequestId {
+                self.inner.next_request_id()
+            }
+
+            async fn compact_history(
+                &self,
+                _reason: AutoCompactionReason,
+                _summary_text: &str,
+                _cancel: CancellationToken,
+            ) -> Result<Option<CompactionOutcome>, EngineError> {
+                Err(EngineError::sink("session store unavailable"))
+            }
+        }
+
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![
+            MockScript::new().text("summary that will not be committed").complete(),
+        ]));
+        let ctx = FailingCompactCtx {
+            inner: TestContext::new(Vec::new()),
+        };
+        let sink = RecordingEvents::default();
+
+        let error = run_session(
+            &provider,
+            request_with_messages(numbered_messages(6, "with some body")),
+            sample_turn(),
+            &sink,
+            CancellationToken::new(),
+            &ctx,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            turn_context(
+                ContextBudget::from_context_window(1_000_000, 4_096, 0),
+                Some(30),
+                2,
+            ),
+        )
+        .await
+        .expect_err("host compact failure must fail the run");
+
+        assert!(matches!(
+            error,
+            EngineError::Sink(message) if message == "session store unavailable"
+        ));
+        assert!(
+            !sink.types().contains(&"CompactionStarted"),
+            "host 失败后不得继续发压缩事件三连"
+        );
     }
 
     #[tokio::test]
