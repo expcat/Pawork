@@ -312,7 +312,7 @@ impl SandboxSelector {
                         id,
                         isolation: IsolationLevel::HardWritesAndNetwork,
                         fallback: false,
-                        note: "macOS sandbox-exec (Seatbelt): writes confined to write_roots, network Enforce fully denied; file-read unconfined (Darwin 25+ allow file-read* subpath /)".into(),
+                        note: "macOS sandbox-exec (Seatbelt): writes confined to write_roots plus temp dirs (/tmp, $TMPDIR) and /dev, with .git and .env permanently denied; network Enforce fully denied; file-read allowed disk-wide except secret deny holes".into(),
                         attempted,
                     },
                 );
@@ -434,9 +434,10 @@ pub enum IsolationLevel {
     Soft,
     /// 平台原生硬隔离（Linux bwrap）：文件/网络/进程系统级隔离。
     Hard,
-    /// 写限制在 write_roots、网络 Enforce 全拒、**读未收敛**
-    /// （Darwin 25+ 整盘只读 allow）。不要误用 [`HardFilesystemOnly`]
-    /// （那表示网络未强制）或 [`Degraded`]（那表示 spawn 不可用）。
+    /// macOS Seatbelt：写限制在 write_roots + 临时目录 + /dev（`.git`/`.env`
+    /// 永久禁写）、网络 Enforce 全拒、读为整盘 allow 叠加 secret deny 挖洞。
+    /// 不要误用 [`HardFilesystemOnly`]（那表示网络未强制）或
+    /// [`Degraded`]（那表示 spawn 不可用）。
     HardWritesAndNetwork,
     /// 仅文件系统硬隔离（如 landlock），网络未强制。
     HardFilesystemOnly,
@@ -579,7 +580,9 @@ fn env_matches(pattern: &str, name: &str) -> bool {
 }
 
 /// 平台密钥/凭据目录拒绝清单（权威单一来源，`untrusted_default` 与
-/// builtin-tools 的 run_command 共用；平台精确路径在后续阶段细化）。
+/// builtin-tools 的 run_command 共用；按 S13-F02 覆盖 ~/.netrc、
+/// ~/.git-credentials、~/.docker、~/.npmrc、~/.pypirc 与
+/// ~/.cargo/credentials.toml）。
 pub fn default_secret_paths() -> Vec<PathBuf> {
     let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from);
@@ -621,6 +624,12 @@ fn secret_paths_for(home: Option<&Path>, pawork_home: Option<&Path>) -> Vec<Path
         paths.push(pawork.join("mcp-auth.json"));
         paths.push(home.join(".gnupg"));
         paths.push(home.join(".config"));
+        paths.push(home.join(".netrc"));
+        paths.push(home.join(".git-credentials"));
+        paths.push(home.join(".docker"));
+        paths.push(home.join(".npmrc"));
+        paths.push(home.join(".pypirc"));
+        paths.push(home.join(".cargo").join("credentials.toml"));
     }
     if let Some(pawork_home) = pawork_home {
         if !pawork_home.as_os_str().is_empty() {
@@ -650,6 +659,38 @@ pub fn default_env_allowlist() -> Vec<String> {
         "COMSPEC".into(),
         "PATHEXT".into(),
     ]
+}
+
+/// 测试专用：default_secret_paths / profile golden 共享的 env 临界区锁。
+/// 持锁期间可安全改写 HOME / PAWORK_HOME / PAWORK_DATA_DIR / TMPDIR。
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 测试专用：保存指定 env 并在 drop 时还原（含 panic 路径）。
+#[cfg(test)]
+pub(crate) struct TestEnvRestore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+#[cfg(test)]
+impl TestEnvRestore {
+    pub(crate) fn save(keys: &[&'static str]) -> Self {
+        Self(
+            keys.iter()
+                .map(|key| (*key, std::env::var_os(key)))
+                .collect(),
+        )
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestEnvRestore {
+    fn drop(&mut self) {
+        for (key, value) in self.0.drain(..) {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -757,10 +798,148 @@ mod tests {
         );
         assert!(!selection.fallback, "backend is usable; fallback must stay false");
         assert!(
-            selection.note.contains("file-read unconfined"),
-            "note must honestly report file-read unconfined: {}",
+            selection.note.contains("file-read allowed disk-wide except secret deny holes"),
+            "note must honestly report the formal read model: {}",
             selection.note
         );
+        assert_eq!(
+            selection.note,
+            "macOS sandbox-exec (Seatbelt): writes confined to write_roots plus temp dirs (/tmp, $TMPDIR) and /dev, with .git and .env permanently denied; network Enforce fully denied; file-read allowed disk-wide except secret deny holes"
+        );
+    }
+
+    /// golden：IsolationLevel 五词汇 as_str 与 serde snake_case 双钉（形状冻结）。
+    #[test]
+    fn isolation_level_vocabulary_golden() {
+        let cases = [
+            (IsolationLevel::Soft, "soft"),
+            (IsolationLevel::Hard, "hard"),
+            (
+                IsolationLevel::HardWritesAndNetwork,
+                "hard_writes_and_network",
+            ),
+            (IsolationLevel::HardFilesystemOnly, "hard_filesystem_only"),
+            (IsolationLevel::Degraded, "degraded"),
+        ];
+        for (level, expected) in cases {
+            assert_eq!(level.as_str(), expected);
+            assert_eq!(
+                serde_json::to_value(level).expect("serialize isolation level"),
+                serde_json::json!(expected)
+            );
+        }
+    }
+
+    /// golden：secret_paths_for 固定向量（顺序即 deny 清单顺序，含空
+    /// PAWORK_HOME 忽略分支与仅 PAWORK_HOME 分支）。
+    #[test]
+    fn secret_paths_for_exact_vector_golden() {
+        let home = Path::new("/Users/golden");
+        let expected = vec![
+            home.join(".ssh"),
+            home.join(".aws"),
+            home.join(".azure"),
+            home.join(".kube"),
+            home.join(".pawork"),
+            home.join(".pawork/auth.json"),
+            home.join(".pawork/mcp-auth.json"),
+            home.join(".gnupg"),
+            home.join(".config"),
+            home.join(".netrc"),
+            home.join(".git-credentials"),
+            home.join(".docker"),
+            home.join(".npmrc"),
+            home.join(".pypirc"),
+            home.join(".cargo").join("credentials.toml"),
+        ];
+        assert_eq!(secret_paths_for(Some(home), None), expected);
+        assert_eq!(
+            secret_paths_for(Some(home), Some(Path::new(""))),
+            expected,
+            "空 PAWORK_HOME 必须被忽略"
+        );
+
+        let mut with_pawork_home = expected;
+        with_pawork_home.push(PathBuf::from("/opt/pawork"));
+        with_pawork_home.push(PathBuf::from("/opt/pawork/auth.json"));
+        with_pawork_home.push(PathBuf::from("/opt/pawork/mcp-auth.json"));
+        assert_eq!(
+            secret_paths_for(Some(home), Some(Path::new("/opt/pawork"))),
+            with_pawork_home
+        );
+        assert_eq!(
+            secret_paths_for(None, Some(Path::new("/opt/pawork"))),
+            vec![
+                PathBuf::from("/opt/pawork"),
+                PathBuf::from("/opt/pawork/auth.json"),
+                PathBuf::from("/opt/pawork/mcp-auth.json"),
+            ]
+        );
+    }
+
+    /// golden：受控 env 下 default_secret_paths 全向量（含此前零覆盖的
+    /// PAWORK_DATA_DIR 分支与 Windows gcloud/LOCALAPPDATA 追加段）。
+    #[test]
+    fn default_secret_paths_controlled_env_golden() {
+        let _guard = crate::sandbox::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let home_key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        // RAII：断言 panic 也会还原 env。
+        let _restore = TestEnvRestore::save(&[
+            home_key,
+            "PAWORK_HOME",
+            "PAWORK_DATA_DIR",
+            "APPDATA",
+            "LOCALAPPDATA",
+        ]);
+        std::env::set_var(home_key, "/Users/golden");
+        std::env::set_var("PAWORK_HOME", "/opt/pawork");
+        #[cfg(windows)]
+        {
+            std::env::set_var("APPDATA", "/mnt/c/AppData/Roaming");
+            std::env::set_var("LOCALAPPDATA", "/mnt/c/AppData/Local");
+        }
+
+        let base = vec![
+            PathBuf::from("/Users/golden/.ssh"),
+            PathBuf::from("/Users/golden/.aws"),
+            PathBuf::from("/Users/golden/.azure"),
+            PathBuf::from("/Users/golden/.kube"),
+            PathBuf::from("/Users/golden/.pawork"),
+            PathBuf::from("/Users/golden/.pawork/auth.json"),
+            PathBuf::from("/Users/golden/.pawork/mcp-auth.json"),
+            PathBuf::from("/Users/golden/.gnupg"),
+            PathBuf::from("/Users/golden/.config"),
+            PathBuf::from("/Users/golden/.netrc"),
+            PathBuf::from("/Users/golden/.git-credentials"),
+            PathBuf::from("/Users/golden/.docker"),
+            PathBuf::from("/Users/golden/.npmrc"),
+            PathBuf::from("/Users/golden/.pypirc"),
+            PathBuf::from("/Users/golden/.cargo/credentials.toml"),
+            PathBuf::from("/opt/pawork"),
+            PathBuf::from("/opt/pawork/auth.json"),
+            PathBuf::from("/opt/pawork/mcp-auth.json"),
+        ];
+
+        // 场景 1：PAWORK_DATA_DIR 非空 → 入列；Windows 不追加 LOCALAPPDATA/pawork。
+        let mut expected = base.clone();
+        expected.push(PathBuf::from("/data/pawork"));
+        #[cfg(windows)]
+        expected.push(PathBuf::from("/mnt/c/AppData/Roaming/gcloud"));
+        std::env::set_var("PAWORK_DATA_DIR", "/data/pawork");
+        assert_eq!(default_secret_paths(), expected);
+
+        // 场景 2：PAWORK_DATA_DIR 为空 → 被忽略；Windows 回退 LOCALAPPDATA/pawork。
+        #[allow(unused_mut)] // Windows 分支才 push
+        let mut expected_empty = base;
+        #[cfg(windows)]
+        expected_empty.extend([
+            PathBuf::from("/mnt/c/AppData/Roaming/gcloud"),
+            PathBuf::from("/mnt/c/AppData/Local/pawork"),
+        ]);
+        std::env::set_var("PAWORK_DATA_DIR", "");
+        assert_eq!(default_secret_paths(), expected_empty);
     }
 
     #[test]
@@ -892,6 +1071,9 @@ mod tests {
     /// 单一来源清单必须是历史平台清单并集的超集（防漂移回归）。
     #[test]
     fn default_allowlists_are_authoritative_supersets() {
+        let _guard = crate::sandbox::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let env = default_env_allowlist();
         for name in [
             "PATH",

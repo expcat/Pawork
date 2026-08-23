@@ -213,12 +213,7 @@ impl AgentEventSink for TextSink {
             }
             AgentEvent::Diagnostic { code, details } if code == "sandbox.fallback" => {
                 close_thinking(self)?;
-                let notice = details
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or_else(|| sandbox_fallback_notice(&details))
-                    .unwrap_or_else(|| "沙箱回退：隔离已降级".into());
+                let notice = diagnostic_sandbox_fallback_notice(&details);
                 eprintln!("{notice}");
                 io::stderr()
                     .flush()
@@ -308,6 +303,17 @@ fn sandbox_fallback_notice(metadata: &Value) -> Option<String> {
     } else {
         format!("沙箱回退：isolation={isolation} backend={backend}（{note}）")
     })
+}
+
+/// Diagnostic `sandbox.fallback` 的 notice 决策（纯函数）：message 优先直传，
+/// 其次 fallback 元数据，最后落「隔离已降级」默认串。
+fn diagnostic_sandbox_fallback_notice(details: &Value) -> String {
+    details
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| sandbox_fallback_notice(details))
+        .unwrap_or_else(|| "沙箱回退：隔离已降级".into())
 }
 
 fn decision_label(decision: ApprovalDecision) -> &'static str {
@@ -488,6 +494,63 @@ mod tests {
                 "sandbox": { "fallback": false, "isolation": "hard" }
             })),
             None
+        );
+    }
+
+    #[test]
+    fn sandbox_fallback_notice_omits_empty_note() {
+        assert_eq!(
+            sandbox_fallback_notice(&serde_json::json!({
+                "sandbox": {
+                    "fallback": true,
+                    "isolation": "soft",
+                    "backend": "native_restricted",
+                    "note": ""
+                }
+            })),
+            Some("沙箱回退：isolation=soft backend=native_restricted".into())
+        );
+        assert_eq!(
+            sandbox_fallback_notice(&serde_json::json!({
+                "sandbox": {
+                    "fallback": true,
+                    "isolation": "soft",
+                    "backend": "native_restricted"
+                }
+            })),
+            Some("沙箱回退：isolation=soft backend=native_restricted".into())
+        );
+    }
+
+    #[test]
+    fn sandbox_fallback_notice_supports_legacy_diagnostic_shape() {
+        // 旧版 Diagnostic details 直接携带 fallback 字段（无 sandbox 包裹）。
+        assert_eq!(
+            sandbox_fallback_notice(&serde_json::json!({
+                "fallback": true,
+                "isolation": "soft",
+                "backend": "native_restricted"
+            })),
+            Some("沙箱回退：isolation=soft backend=native_restricted".into())
+        );
+    }
+
+    /// Diagnostic `sandbox.fallback` 分支：message 优先直传；无 message 且无
+    /// fallback 元数据时走「沙箱回退：隔离已降级」默认串（该字面量与 protocol
+    /// 投影 golden 同源，由 protocol 侧精确钉死）。
+    /// Diagnostic 路径输出走 stderr 不进 sink 文本，故直接断言 notice 决策纯函数
+    ///（emit 分支消费同一函数，两条分支语义在此钉死）。
+    #[test]
+    fn diagnostic_sandbox_fallback_renders_message_or_default() {
+        assert_eq!(
+            diagnostic_sandbox_fallback_notice(&serde_json::json!({
+                "message": "自定义回退说明"
+            })),
+            "自定义回退说明"
+        );
+        assert_eq!(
+            diagnostic_sandbox_fallback_notice(&serde_json::json!({})),
+            "沙箱回退：隔离已降级"
         );
     }
 }

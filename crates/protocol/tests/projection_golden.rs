@@ -7,9 +7,16 @@
 
 use std::path::Path;
 
-use pawork_domain::AgentEventEnvelope;
+use pawork_domain::{
+    AgentEvent, AgentEventEnvelope, ContentPart, CoreInstanceId, EventId, EventSequence, RunId,
+    SessionId, TextContent, Timestamp, ToolCallId, ToolResultContent,
+};
 use pawork_protocol::projection::{project_event, TimelineEntryKind, TimelineProjection};
-use pawork_protocol::{AppEventEnvelope, GlobalSequence, ResumeDisposition, TimelineItem};
+use pawork_protocol::{
+    AppEvent, AppEventEnvelope, DiagnosticLevel, EventSource, EventStream, GlobalSequence,
+    ResumeDisposition, TimelineItem, API_VERSION,
+};
+use serde_json::json;
 
 struct FixtureLine {
     domain: AgentEventEnvelope,
@@ -94,6 +101,47 @@ fn apply_history(projection: &mut TimelineProjection, lines: &[FixtureLine]) {
         if let Some(item) = project_event(&line.domain) {
             projection.apply_item(&item);
         }
+    }
+}
+
+fn tool_completed_envelope(sequence: u64, metadata: serde_json::Value) -> AgentEventEnvelope {
+    AgentEventEnvelope::new(
+        EventId::from(format!("event-{sequence}")),
+        SessionId::from("session-golden"),
+        RunId::from("run-golden"),
+        EventSequence::new(sequence),
+        Timestamp::from_unix_millis(1_000 + sequence),
+        AgentEvent::ToolExecutionCompleted {
+            tool_call_id: ToolCallId::from("tool-golden"),
+            result: ToolResultContent {
+                tool_call_id: ToolCallId::from("tool-golden"),
+                tool_name: Some("run_command".into()),
+                content: vec![ContentPart::Text(TextContent {
+                    text: "ok".into(),
+                })],
+                is_error: false,
+                metadata,
+                artifacts: Vec::new(),
+            },
+        },
+    )
+}
+
+fn diagnostic_envelope(sequence: u64, code: &str, message: &str) -> AppEventEnvelope {
+    AppEventEnvelope {
+        api_version: API_VERSION,
+        instance_id: CoreInstanceId::from("instance-golden"),
+        event_id: EventId::from(format!("wire-{sequence}")),
+        global_sequence: GlobalSequence(sequence),
+        stream: EventStream::Global,
+        stream_sequence: sequence,
+        timestamp: Timestamp::from_unix_millis(2_000 + sequence),
+        source: EventSource::Core,
+        payload: AppEvent::Diagnostic {
+            level: DiagnosticLevel::Warning,
+            code: code.into(),
+            message: message.into(),
+        },
     }
 }
 
@@ -219,5 +267,83 @@ fn golden_fork_branch_switch_rebuilds_by_lineage() {
         render(&projection),
         expected_state("fork_branch_switch.expected.json"),
         "fork branch switch rebuilt state"
+    );
+}
+
+/// golden：sandbox_timeline_detail 两分支——fallback=true 时 tool detail 携带
+/// 精确回退串（只含 isolation/backend，不含 note）；fallback=false 时不产生
+/// display detail，context 仅剩 tool_call_id 身份键。
+#[test]
+fn golden_sandbox_timeline_detail_branches() {
+    let fallback = tool_completed_envelope(
+        1,
+        json!({"sandbox": {
+            "backend": "native_restricted",
+            "isolation": "soft",
+            "fallback": true,
+            "note": "seatbelt unavailable",
+            "attempted": [],
+            "limits": {}
+        }}),
+    );
+    let item = project_event(&fallback).expect("tool completed item");
+    let context: serde_json::Value =
+        serde_json::from_str(item.detail.as_deref().expect("detail present"))
+            .expect("context json");
+    assert_eq!(
+        context,
+        json!({
+            "_pawork_tool_call_id": "tool-golden",
+            "detail": "沙箱回退：isolation=soft backend=native_restricted"
+        })
+    );
+
+    let clean = tool_completed_envelope(
+        2,
+        json!({"sandbox": {
+            "backend": "sandbox_exec",
+            "isolation": "hard_writes_and_network",
+            "fallback": false
+        }}),
+    );
+    let item = project_event(&clean).expect("tool completed item");
+    let context: serde_json::Value =
+        serde_json::from_str(item.detail.as_deref().expect("detail present"))
+            .expect("context json");
+    assert_eq!(
+        context,
+        json!({"_pawork_tool_call_id": "tool-golden"})
+    );
+}
+
+/// golden：sandbox_fallback_label 三分支——JSON message 提取、空串默认串、
+/// 纯文本直传；非 sandbox.fallback 的 Diagnostic 不进时间线。
+#[test]
+fn golden_sandbox_fallback_diagnostic_label_branches() {
+    let mut projection = TimelineProjection::default();
+    assert!(projection.apply_event(&diagnostic_envelope(
+        1,
+        "sandbox.fallback",
+        "{\"message\":\"沙箱回退：isolation=soft backend=native_restricted\"}"
+    )));
+    assert!(projection.apply_event(&diagnostic_envelope(2, "sandbox.fallback", "")));
+    assert!(projection.apply_event(&diagnostic_envelope(3, "sandbox.fallback", "plain notice")));
+    assert!(!projection.apply_event(&diagnostic_envelope(4, "other.code", "ignored")));
+
+    let labels: Vec<&str> = projection
+        .entries
+        .iter()
+        .map(|entry| match &entry.kind {
+            TimelineEntryKind::RunState(text) => text.as_str(),
+            other => panic!("unexpected timeline kind: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            "沙箱回退：isolation=soft backend=native_restricted",
+            "沙箱回退：隔离已降级",
+            "plain notice",
+        ]
     );
 }

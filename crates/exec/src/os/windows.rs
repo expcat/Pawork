@@ -12,6 +12,8 @@ use std::sync::OnceLock;
 
 /// AppContainer capability（最小权限集；默认不授予 Internet 以实现网络隔离）。
 // frozen, awaiting AppContainer restricted-token spawn：生成器仅保留供诊断/审计与单测。
+// 跨平台编译供单测复用；非 Windows 宿主上无生产消费方，dead_code 属预期。
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppContainerCapability {
     InternetClient,
@@ -25,6 +27,7 @@ pub enum AppContainerCapability {
 
 /// AppContainer 配置（纯数据，供后续 spawn 后端消费）。
 // frozen, awaiting AppContainer spawn：无 spawn 消费方，保留至后端接入。
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Debug, Default)]
 pub struct AppContainerConfig {
     pub capabilities: Vec<AppContainerCapability>,
@@ -40,6 +43,7 @@ pub struct AppContainerConfig {
 /// 网络语义：`Enforce` → 不授予 Internet（出站隔离）；`Off`/`Hint` → 授予 Internet
 /// （AppContainer 作为硬隔离后端，仅在 `Enforce` 时强制网络隔离）。
 // frozen, awaiting AppContainer spawn 后端未接入，生成器保留不删。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn policy_to_appcontainer_config(policy: &SandboxPolicy) -> AppContainerConfig {
     let internet_granted = !matches!(policy.network_mode, NetworkMode::Enforce);
     let mut capabilities = Vec::new();
@@ -72,6 +76,7 @@ unsafe fn current_process_in_job() -> bool {
 
 /// 探测 AppContainer 能力。Windows 下经 `IsProcessInJob` 记录父 Job 状态；受限令牌
 /// spawn 尚不可用，故 `available` 为 false。调用方随后选择可执行的 Job-only 后端。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn probe_appcontainer_job() -> ProbeOutcome {
     static PROBE: OnceLock<ProbeOutcome> = OnceLock::new();
     PROBE

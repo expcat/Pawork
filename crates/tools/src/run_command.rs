@@ -673,6 +673,94 @@ mod tests {
         assert_eq!(sandbox["limits"]["max_procs"], MAX_MAX_PROCS);
     }
 
+    /// golden：metadata.sandbox 键集与 limits 六值（形状冻结，键集变更须过门禁）。
+    #[tokio::test]
+    async fn metadata_sandbox_shape_and_limits_golden() {
+        let (service, id, _root, _ws_dir) = make_service();
+        let res = run(
+            &service,
+            ProcessRuntime::new(),
+            &id,
+            &json!({"command": "echo golden"}),
+            &[],
+            &RecordingToolSink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("run");
+        assert_eq!(res.metadata["exit_code"], 0);
+
+        let sandbox = &res.metadata["sandbox"];
+        let mut keys: Vec<&str> = sandbox
+            .as_object()
+            .expect("sandbox metadata object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["attempted", "backend", "fallback", "isolation", "limits", "note"]
+        );
+
+        let limits = &sandbox["limits"];
+        let mut limit_keys: Vec<&str> = limits
+            .as_object()
+            .expect("limits object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        limit_keys.sort_unstable();
+        assert_eq!(
+            limit_keys,
+            vec![
+                "cpu_seconds",
+                "max_output_bytes",
+                "max_procs",
+                "memory_mb",
+                "open_fds",
+                "timeout_ms",
+            ]
+        );
+        assert_eq!(limits["timeout_ms"], DEFAULT_TIMEOUT_MS);
+        assert_eq!(limits["cpu_seconds"], DEFAULT_CPU_SECONDS);
+        assert_eq!(limits["memory_mb"], DEFAULT_MEMORY_MB);
+        assert_eq!(limits["open_fds"], DEFAULT_OPEN_FDS);
+        assert_eq!(limits["max_procs"], DEFAULT_MAX_PROCS);
+        assert_eq!(limits["max_output_bytes"], MAX_OUTPUT_BYTES);
+
+        assert!(sandbox["note"].as_str().is_some_and(|n| !n.is_empty()));
+        for outcome in sandbox["attempted"].as_array().expect("attempted array") {
+            assert!(outcome["backend"].is_string());
+            assert!(outcome["available"].is_boolean());
+        }
+    }
+
+    /// macOS 真机：sandbox-exec 可用时 isolation 必须如实报告
+    /// hard_writes_and_network 且 fallback=false；探测失败自动跳过。
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn metadata_reports_seatbelt_isolation_when_available() {
+        let (service, id, _root, _ws_dir) = make_service();
+        let res = run(
+            &service,
+            ProcessRuntime::new(),
+            &id,
+            &json!({"command": "echo seatbelt"}),
+            &[],
+            &RecordingToolSink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("run");
+        let sandbox = &res.metadata["sandbox"];
+        if sandbox["backend"] != "sandbox_exec" {
+            return;
+        }
+        assert_eq!(sandbox["isolation"], "hard_writes_and_network");
+        assert_eq!(sandbox["fallback"], false);
+    }
+
     #[tokio::test]
     async fn sandbox_strips_explicit_secret_environment() {
         let (service, id, _root, _ws_dir) = make_service();

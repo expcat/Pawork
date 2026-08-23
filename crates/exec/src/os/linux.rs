@@ -10,6 +10,8 @@ use crate::sandbox::{NetworkMode, SandboxPolicy};
 
 /// 系统只读路径单一来源：bwrap ro-bind 与 Landlock read_paths 共用，
 /// 各消费方按需筛选（bwrap 跳过 /proc 与 /dev，由 --proc/--dev 挂载）。
+// 跨平台编译供单测复用；非 Linux 宿主上无生产消费方，dead_code 属预期。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const SYSTEM_READ_PATHS: &[&str] = &[
     "/usr",
     "/lib",
@@ -377,6 +379,8 @@ pub(crate) mod linux_process_tree {
 }
 
 /// landlock 能力探测结果。
+// 跨平台编译供单测复用；非 Linux 宿主上无生产消费方，dead_code 属预期。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Clone, Debug)]
 pub struct LandlockSupport {
     /// 内核是否启用了 landlock LSM（能力层面）。
@@ -385,6 +389,7 @@ pub struct LandlockSupport {
 }
 
 /// 通过真实 ruleset 创建探测 Landlock，而非依赖可能不可读的 `/sys` 状态文件。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn probe_landlock_support() -> LandlockSupport {
     static SUPPORT: OnceLock<LandlockSupport> = OnceLock::new();
     SUPPORT
@@ -417,6 +422,7 @@ pub fn probe_landlock_support() -> LandlockSupport {
 ///
 /// 强项：文件系统 bind（read/write）、网络 `--unshare-net`（Enforce）、
 /// 进程 `--unshare-pid`、生命周期 `--die-with-parent`。系统只读目录仅绑定实际存在的。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn generate_bwrap_argv(policy: &SandboxPolicy, workspace_roots: &[PathBuf]) -> Vec<String> {
     let mut argv: Vec<String> = Vec::new();
     // 与 Landlock 共用 SYSTEM_READ_PATHS 单一来源；/proc 与 /dev/* 由
@@ -963,6 +969,8 @@ mod landlock_backend {
 pub use landlock_backend::LandlockBackend;
 
 #[cfg(not(target_os = "linux"))]
+// 非 Linux 宿主的跨平台桩，仅单测消费。
+#[allow(dead_code)]
 pub fn bwrap_probe_reason() -> String {
     "bwrap only available on Linux".to_string()
 }

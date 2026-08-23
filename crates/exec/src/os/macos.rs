@@ -2,6 +2,10 @@
 //!
 //! 纯函数 [`escape_seatbelt_string`] / [`generate_seatbelt_profile`] 在所有平台编译
 //! 并单测；spawn 后端 [`SandboxExecBackend`] 与探测仅在 macOS 编译。
+//!
+//! Seatbelt 正式模型（ADR-041 D1）：读 = 整盘 file-read* allow 叠加 secret
+//! deny 挖洞；写 = deny-default 白名单（write_roots + 临时目录 + /dev），
+//! 每个可写根永久禁写 .git 与 .env；网络 Enforce 全拒。
 
 use std::path::PathBuf;
 
@@ -25,10 +29,30 @@ pub fn escape_seatbelt_string(input: &str) -> String {
     out
 }
 
+/// Raw plus canonical path forms. Canonicalize failure keeps only raw.
+fn path_forms(path: &std::path::Path) -> Vec<PathBuf> {
+    let mut forms = vec![path.to_path_buf()];
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        if !forms.iter().any(|existing| existing == &canonical) {
+            forms.push(canonical);
+        }
+    }
+    forms
+}
+
 /// 把 [`SandboxPolicy`] 编译为 Seatbelt profile 文本（version 1 s-expression）。
 ///
-/// 强项：文件系统 read/write/deny 与网络 Enforce。`max_procs` 在 Seatbelt 中无可靠
-/// 原语，profile 仅以注释标注，实际限制依赖 RLIMIT_NPROC（诚实降级）。
+/// 正式模型（ADR-041 D1）：
+/// - 读：整盘 `file-read* (subpath "/")` allow，随后 secret deny 挖洞
+///   （`file-read*` 形态才能盖住整盘 allow）；
+/// - 写：deny-default 白名单 = write_roots + `/tmp` + `/private/tmp` + `$TMPDIR`
+///   （raw 与 canonicalize 双形态）+ `/dev`；临时目录与 /dev 在 profile 层正式化，
+///   不写入 policy，避免改变其他后端写面；
+/// - 写洞：每个 write_root ∪ workspace_root 永久禁写 `<root>/.git`（subpath）
+///   与 `<root>/.env`（literal），均输出 raw 与 canonicalize 双形态，
+///   根授权不放开版本控制与凭证文件；
+/// - 网络：Enforce 全拒；`max_procs` 在 Seatbelt 中无可靠原语，profile 仅以
+///   注释标注，实际限制依赖 RLIMIT_NPROC（诚实降级）。
 pub fn generate_seatbelt_profile(policy: &SandboxPolicy, workspace_roots: &[PathBuf]) -> String {
     use std::fmt::Write;
     let mut s = String::new();
@@ -41,53 +65,76 @@ pub fn generate_seatbelt_profile(policy: &SandboxPolicy, workspace_roots: &[Path
     let _ = writeln!(s, "(allow mach-lookup)");
     let _ = writeln!(s, "(allow ipc-posix-shm)");
     let _ = writeln!(s, "(allow file-read-metadata)");
-    for sys in [
-        "/bin",
-        "/private/etc",
-        "/private/var/db/dyld",
-        "/System",
-        "/usr/bin",
-        "/usr/lib",
-        "/usr/share",
-        "/Library/Apple",
-        "/Library/Frameworks",
-        "/System/Library/Frameworks",
-    ] {
-        let _ = writeln!(
-            s,
-            "(allow file-read* (subpath {}))",
-            escape_seatbelt_string(sys)
-        );
-    }
-    // Darwin 25+：firmlink / cryptex 使上面的 system subpath 不足以加载
-    // `/bin/echo`（SIGABRT 134）。读放开到 `/`，写仍仅 write_roots。
+    // 读侧：整盘 allow。Darwin 25+ firmlink/cryptex 使系统目录枚举不可靠
+    //（早期 subpath 清单不足以加载 /bin/echo），按 ADR-041 D1 正式放开到 `/`。
     // 随后的 secret deny 必须用 `file-read*`（`file*` 盖不住这条 allow）。
     let _ = writeln!(s, "(allow file-read* (subpath \"/\"))");
     for r in &policy.filesystem.read_roots {
-        let _ = writeln!(
-            s,
-            "(allow file-read* (subpath {}))",
-            escape_seatbelt_string(&r.to_string_lossy())
-        );
+        for form in path_forms(r) {
+            let _ = writeln!(
+                s,
+                "(allow file-read* (subpath {}))",
+                escape_seatbelt_string(&form.to_string_lossy())
+            );
+        }
     }
     for w in &policy.filesystem.write_roots {
-        let _ = writeln!(
-            s,
-            "(allow file-read* (subpath {}))",
-            escape_seatbelt_string(&w.to_string_lossy())
-        );
-        let _ = writeln!(
-            s,
-            "(allow file-write* (subpath {}))",
-            escape_seatbelt_string(&w.to_string_lossy())
-        );
+        for form in path_forms(w) {
+            let escaped = escape_seatbelt_string(&form.to_string_lossy());
+            let _ = writeln!(s, "(allow file-read* (subpath {escaped}))");
+            let _ = writeln!(s, "(allow file-write* (subpath {escaped}))");
+        }
     }
     for root in workspace_roots {
-        let _ = writeln!(
-            s,
-            "(allow file-read* (subpath {}))",
-            escape_seatbelt_string(&root.to_string_lossy())
-        );
+        for form in path_forms(root) {
+            let _ = writeln!(
+                s,
+                "(allow file-read* (subpath {}))",
+                escape_seatbelt_string(&form.to_string_lossy())
+            );
+        }
+    }
+    // 写白名单正式化：临时目录与 /dev。$TMPDIR 与 deny 路径同做法输出
+    // raw + canonicalize 双形态，覆盖 symlink 与 firmlink 两种访问路径。
+    let _ = writeln!(s, "(allow file-write* (subpath \"/tmp\"))");
+    let _ = writeln!(s, "(allow file-write* (subpath \"/private/tmp\"))");
+    if let Some(tmpdir) = std::env::var_os("TMPDIR") {
+        if !tmpdir.is_empty() {
+            for form in path_forms(std::path::Path::new(&tmpdir)) {
+                let _ = writeln!(
+                    s,
+                    "(allow file-write* (subpath {}))",
+                    escape_seatbelt_string(&form.to_string_lossy())
+                );
+            }
+        }
+    }
+    let _ = writeln!(s, "(allow file-write* (subpath \"/dev\"))");
+    // 永久写洞：根授权不等于放开 .git（目录树）与 .env（单文件）。
+    let mut write_scoped: Vec<&PathBuf> = policy.filesystem.write_roots.iter().collect();
+    for root in workspace_roots {
+        if !write_scoped.contains(&root) {
+            write_scoped.push(root);
+        }
+    }
+    for root in write_scoped {
+        // 与 deny/TMPDIR 同做法输出 raw + canonicalize 双形态：根可能以
+        // `/var/...` 等 symlink 形态传入，Seatbelt 按 canonical 路径匹配，
+        // 单一 raw 形态会让写洞绕过。
+        for form in path_forms(root) {
+            let git = form.join(".git");
+            let env_file = form.join(".env");
+            let _ = writeln!(
+                s,
+                "(deny file-write* (subpath {}))",
+                escape_seatbelt_string(&git.to_string_lossy())
+            );
+            let _ = writeln!(
+                s,
+                "(deny file-write* (literal {}))",
+                escape_seatbelt_string(&env_file.to_string_lossy())
+            );
+        }
     }
     for d in &policy.filesystem.deny {
         let mut denied = vec![d.clone()];
@@ -607,6 +654,13 @@ mod tests {
             .args(["-p", &probe_profile, "/usr/bin/true"])
             .output();
         if !matches!(&probe, Ok(output) if output.status.success()) {
+            let reason = match &probe {
+                Ok(output) => format!("sandbox-exec probe exit={}", output.status),
+                Err(error) => format!("sandbox-exec probe failed: {error}"),
+            };
+            eprintln!(
+                "SKIPPED seatbelt_denies_cat_of_secret_paths: {reason}"
+            );
             return;
         }
 
@@ -688,6 +742,128 @@ mod tests {
         entries.flatten().map(|entry| entry.path()).find(|p| p.is_file())
     }
 
+    /// macOS 真机行为种子（ADR-041 D1 正式模型；sandbox-exec 探测失败自动跳过）：
+    /// 写 workspace OK、写 $HOME 拒、写 workspace/.git 拒、读 secret 拒、
+    /// 写 $TMPDIR OK。任何一条语义回退都会在此先红。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn seatbelt_enforces_formal_write_whitelist_and_holes() {
+        // profile 生成读取 $TMPDIR，且子进程继承本测试 env；与 TMPDIR 相关
+        // golden 并行时必须串行化，否则会读到其他测试的受控 TMPDIR。
+        let _guard = crate::sandbox::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let probe_profile = generate_seatbelt_profile(&SandboxPolicy::default(), &[]);
+        let probe = std::process::Command::new(SANDBOX_EXEC_PATH)
+            .args(["-p", &probe_profile, "/usr/bin/true"])
+            .output();
+        if !matches!(&probe, Ok(output) if output.status.success()) {
+            let reason = match &probe {
+                Ok(output) => format!("sandbox-exec probe exit={}", output.status),
+                Err(error) => format!("sandbox-exec probe failed: {error}"),
+            };
+            eprintln!(
+                "SKIPPED seatbelt_enforces_formal_write_whitelist_and_holes: {reason}"
+            );
+            return;
+        }
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "pawork-seatbelt-behavior-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join(".git")).expect("create workspace + .git");
+        let secret_dir = root.join("secret");
+        std::fs::create_dir_all(&secret_dir).expect("create secret dir");
+        let secret = secret_dir.join("auth.json");
+        std::fs::write(&secret, "secret-canary").expect("write secret");
+
+        let policy = SandboxPolicy {
+            filesystem: FilesystemPolicy {
+                write_roots: vec![root.clone()],
+                deny: vec![secret_dir.clone()],
+                ..Default::default()
+            },
+            network_mode: NetworkMode::Off,
+            ..Default::default()
+        };
+        let profile = generate_seatbelt_profile(&policy, &[root.clone()]);
+        let run_in_profile = |script: &str| {
+            std::process::Command::new(SANDBOX_EXEC_PATH)
+                .args(["-p", &profile, "/bin/sh", "-c", script])
+                .output()
+                .expect("sandbox-exec sh")
+        };
+
+        let inside = root.join("inside.txt");
+        let output = run_in_profile(&format!("echo ok > {}", inside.display()));
+        assert!(
+            output.status.success(),
+            "workspace write must be allowed: {:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(inside.is_file(), "workspace write must create the file");
+
+        let home_probe = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join(".pawork-r7a-behavior-canary"));
+        if let Some(home_probe) = home_probe {
+            let output = run_in_profile(&format!("echo x > {}", home_probe.display()));
+            assert!(
+                !output.status.success(),
+                "$HOME write must be denied by the formal write whitelist"
+            );
+            let _ = std::fs::remove_file(&home_probe);
+        }
+
+        let git_probe = root.join(".git").join("probe.txt");
+        let output = run_in_profile(&format!("echo x > {}", git_probe.display()));
+        assert!(
+            !output.status.success(),
+            "workspace/.git write must be denied by the permanent hole"
+        );
+        assert!(!git_probe.is_file(), ".git hole must stay empty");
+
+        let env_probe = root.join(".env");
+        let output = run_in_profile(&format!("echo x > {}", env_probe.display()));
+        assert!(
+            !output.status.success(),
+            "workspace/.env write must be denied by the permanent hole"
+        );
+        assert!(!env_probe.is_file(), ".env hole must stay empty");
+
+        let output = run_in_profile(&format!("/bin/cat {}", secret.display()));
+        assert!(
+            !output.status.success(),
+            "secret read must be denied under the profile"
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stdout).contains("secret-canary"),
+            "denied cat must not leak secret contents"
+        );
+
+        if let Some(tmpdir) = std::env::var_os("TMPDIR").filter(|v| !v.is_empty()) {
+            let tmp_probe = PathBuf::from(&tmpdir)
+                .join(format!("pawork-r7a-behavior-{}.tmp", std::process::id()));
+            let output = run_in_profile(&format!("echo ok > {}", tmp_probe.display()));
+            assert!(
+                output.status.success(),
+                "$TMPDIR write must be allowed: {:?} stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(tmp_probe.is_file(), "$TMPDIR write must create the file");
+            let _ = std::fs::remove_file(&tmp_probe);
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn profile_emits_canonical_deny_for_existing_path() {
         let tmp = std::env::temp_dir().join(format!(
@@ -748,5 +924,80 @@ mod tests {
         let profile = generate_seatbelt_profile(&SandboxPolicy::default(), &[]);
         assert!(profile.contains("(version 1)"));
         assert!(profile.contains("(deny default)"));
+    }
+
+    /// golden：Seatbelt profile 生成器整体输出（ADR-041 D1 正式模型）。
+    /// deny 与 TMPDIR 均用不存在路径，canonicalize 失败 → 单形态，全文确定
+    /// 可 assert_eq；workspace_roots 含与 write_roots 重复的根，钉死写洞去重。
+    /// 后续 profile 语义变更必须同步更新本向量（diff 即变更面）。
+    #[test]
+    fn profile_full_output_golden() {
+        let _guard = crate::sandbox::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // RAII：断言 panic 也会还原 TMPDIR。
+        let _restore = crate::sandbox::TestEnvRestore::save(&["TMPDIR"]);
+        // 不存在的 TMPDIR：canonicalize 失败 → 仅 raw 形态，输出确定。
+        std::env::set_var("TMPDIR", "/tmp/pawork-r7a-golden-tmpdir");
+        let policy = SandboxPolicy {
+            filesystem: FilesystemPolicy {
+                read_roots: vec![PathBuf::from("/tmp/pawork-read")],
+                write_roots: vec![
+                    PathBuf::from("/tmp/pawork-ws-a"),
+                    PathBuf::from("/tmp/pawork-ws-b"),
+                ],
+                deny: vec![
+                    PathBuf::from("/definitely/missing/secret-a"),
+                    PathBuf::from("/definitely/missing/secret-b"),
+                ],
+            },
+            network_mode: NetworkMode::Enforce,
+            max_procs: Some(8),
+            ..Default::default()
+        };
+        let profile = generate_seatbelt_profile(
+            &policy,
+            &[
+                PathBuf::from("/tmp/pawork-ws-a"),
+                PathBuf::from("/tmp/pawork-ws-c"),
+            ],
+        );
+        let expected = [
+            "(version 1)",
+            "(deny default)",
+            "(allow process-exec)",
+            "(allow process-fork)",
+            "(allow signal (target self))",
+            "(allow sysctl-read)",
+            "(allow mach-lookup)",
+            "(allow ipc-posix-shm)",
+            "(allow file-read-metadata)",
+            "(allow file-read* (subpath \"/\"))",
+            "(allow file-read* (subpath \"/tmp/pawork-read\"))",
+            "(allow file-read* (subpath \"/tmp/pawork-ws-a\"))",
+            "(allow file-write* (subpath \"/tmp/pawork-ws-a\"))",
+            "(allow file-read* (subpath \"/tmp/pawork-ws-b\"))",
+            "(allow file-write* (subpath \"/tmp/pawork-ws-b\"))",
+            "(allow file-read* (subpath \"/tmp/pawork-ws-a\"))",
+            "(allow file-read* (subpath \"/tmp/pawork-ws-c\"))",
+            "(allow file-write* (subpath \"/tmp\"))",
+            "(allow file-write* (subpath \"/private/tmp\"))",
+            "(allow file-write* (subpath \"/tmp/pawork-r7a-golden-tmpdir\"))",
+            "(allow file-write* (subpath \"/dev\"))",
+            "(deny file-write* (subpath \"/tmp/pawork-ws-a/.git\"))",
+            "(deny file-write* (literal \"/tmp/pawork-ws-a/.env\"))",
+            "(deny file-write* (subpath \"/tmp/pawork-ws-b/.git\"))",
+            "(deny file-write* (literal \"/tmp/pawork-ws-b/.env\"))",
+            "(deny file-write* (subpath \"/tmp/pawork-ws-c/.git\"))",
+            "(deny file-write* (literal \"/tmp/pawork-ws-c/.env\"))",
+            "(deny file-read* (subpath \"/definitely/missing/secret-a\"))",
+            "(deny file-write* (subpath \"/definitely/missing/secret-a\"))",
+            "(deny file-read* (subpath \"/definitely/missing/secret-b\"))",
+            "(deny file-write* (subpath \"/definitely/missing/secret-b\"))",
+            "(deny network*)",
+            "; max_procs=8: not enforceable by Seatbelt; rely on RLIMIT_NPROC",
+        ]
+        .join("\n");
+        assert_eq!(profile, format!("{expected}\n"));
     }
 }
