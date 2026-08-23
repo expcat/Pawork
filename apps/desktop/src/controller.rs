@@ -88,10 +88,15 @@ impl DesktopController {
             max_frame_bytes: 1024 * 1024,
         };
         let last_ack = self.last_acked_sequence().map(GlobalSequence);
-        let handshake = self
+        let has_last_ack = last_ack.is_some();
+        // 连接期全部 client 调用（握手 / ack / subscribe_all）都必须在 tokio
+        // runtime 上执行：cx.spawn 的 gpui 前台执行器没有 reactor，
+        // receive_frame 内的 tokio::time 会在真窗口启动路径直接 panic。
+        let state = Arc::clone(&self.state);
+        let connected = self
             .runtime
             .spawn(async move {
-                GuiClient::connect_with_resume_config(
+                let (handshake, resume) = GuiClient::connect_with_resume_config(
                     transport,
                     endpoint,
                     options,
@@ -100,40 +105,41 @@ impl DesktopController {
                     desktop_client_config(),
                 )
                 .await
-            })
-            .await
-            .map_err(|error| format!("connect task failed: {error}"))?
-            .map_err(|error| error.to_string())?;
-        let (handshake, resume) = handshake;
-        let mut snapshot = handshake
-            .initial_snapshot()
-            .ok_or_else(|| "handshake did not deliver an initial snapshot".to_string())?;
-        if last_ack.is_none() {
-            self.record_last_acked(snapshot.snapshot_sequence.0);
-            let _ = handshake.ack(snapshot.snapshot_sequence).await;
-        }
-        if let Some(outcome) = &resume {
-            match &outcome.disposition {
-                ResumeDisposition::Replay { through_sequence, .. } => {
-                    self.record_last_acked(through_sequence.0);
-                    let _ = handshake.ack(*through_sequence).await;
-                }
-                ResumeDisposition::UpToDate { current_sequence } => {
-                    self.record_last_acked(current_sequence.0);
-                }
-                ResumeDisposition::SnapshotRequired { .. } => {
-                    if let Some(fresh) = &outcome.snapshot {
-                        snapshot = fresh.clone();
-                    }
-                    self.record_last_acked(snapshot.snapshot_sequence.0);
+                .map_err(|error| error.to_string())?;
+                let mut snapshot = handshake
+                    .initial_snapshot()
+                    .ok_or_else(|| "handshake did not deliver an initial snapshot".to_string())?;
+                if !has_last_ack {
+                    record_shared_last_acked(&state, snapshot.snapshot_sequence.0);
                     let _ = handshake.ack(snapshot.snapshot_sequence).await;
                 }
-            }
-        }
-        handshake
-            .subscribe_all()
+                if let Some(outcome) = &resume {
+                    match &outcome.disposition {
+                        ResumeDisposition::Replay { through_sequence, .. } => {
+                            record_shared_last_acked(&state, through_sequence.0);
+                            let _ = handshake.ack(*through_sequence).await;
+                        }
+                        ResumeDisposition::UpToDate { current_sequence } => {
+                            record_shared_last_acked(&state, current_sequence.0);
+                        }
+                        ResumeDisposition::SnapshotRequired { .. } => {
+                            if let Some(fresh) = &outcome.snapshot {
+                                snapshot = fresh.clone();
+                            }
+                            record_shared_last_acked(&state, snapshot.snapshot_sequence.0);
+                            let _ = handshake.ack(snapshot.snapshot_sequence).await;
+                        }
+                    }
+                }
+                handshake
+                    .subscribe_all()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>((handshake, resume, snapshot))
+            })
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| format!("connect task failed: {error}"))??;
+        let (handshake, resume, snapshot) = connected;
 
         *self.state.client.lock().unwrap_or_else(|p| p.into_inner()) = Some(handshake.clone());
         *self.state.events.lock().unwrap_or_else(|p| p.into_inner()) = Some(sender.clone());
@@ -182,10 +188,6 @@ impl DesktopController {
             .last_acked
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-    }
-
-    pub(crate) fn record_last_acked(&self, sequence: u64) {
-        record_shared_last_acked(&self.state, sequence);
     }
 
     /// 分页加载 session 时间线：SessionGet 按 timeline_after_sequence 链式

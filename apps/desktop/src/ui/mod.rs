@@ -1,6 +1,7 @@
 //! UI 层：AppView（Sessions 侧栏 + Timeline + Composer）与事件消费循环。
 
 pub mod text_input;
+mod theme;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -8,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    actions, App, AnyView, Context, Entity, FocusHandle, Focusable, KeyBinding, Render,
-    ScrollHandle, SharedString, Styled, Window, div, prelude::*, px, rgb,
+    actions, div, prelude::*, px, AnyView, App, Context, Entity, FocusHandle, Focusable,
+    KeyBinding, Render, ScrollHandle, SharedString, Styled, Window,
 };
 use pawork_client::AppEvent;
 
@@ -19,6 +20,7 @@ use crate::projection::{
     ConnectionState, DesktopProjection, ModelEntry, ResumeApply, TaskRailDateGroup,
     TaskRailGrouping, TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, UNASSIGNED_PROJECT,
 };
+use theme::{dark, font, metrics};
 
 pub use text_input::{SendMessage, TextInput};
 
@@ -66,11 +68,11 @@ impl Render for TooltipText {
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(rgb(0x2a2a2a))
+            .bg(dark().surface.raised)
             .border_1()
-            .border_color(rgb(0x3a3a3a))
-            .text_size(px(11.))
-            .text_color(rgb(0xe8e8e8))
+            .border_color(dark().border.strong)
+            .text_size(px(font::XS))
+            .text_color(dark().text.primary)
             .child(self.text.clone())
     }
 }
@@ -80,7 +82,7 @@ fn tooltip_text(text: impl Into<SharedString>, cx: &mut App) -> AnyView {
 }
 
 fn focus_ring_style<T: Styled>(this: T) -> T {
-    this.border_1().border_color(rgb(0x2f6fed))
+    this.border_1().border_color(dark().accent.primary)
 }
 
 fn now_unix_ms() -> u64 {
@@ -171,9 +173,8 @@ impl AppView {
     pub fn new(platform: Arc<Platform>, socket: PathBuf, cx: &mut Context<Self>) -> Self {
         let controller = Arc::new(DesktopController::new(platform.handle()));
         let text_input = cx.new(|cx| TextInput::new(cx));
-        let terminal_input = cx.new(|cx| {
-            TextInput::with_placeholder("Terminal input… (Enter to write)", cx)
-        });
+        let terminal_input =
+            cx.new(|cx| TextInput::with_placeholder("Terminal input… (Enter to write)", cx));
         let mut view = Self {
             _platform: platform,
             controller,
@@ -222,8 +223,8 @@ impl AppView {
         self.status_hint = None;
         let controller = Arc::clone(&self.controller);
         let socket = self.socket.clone();
-        cx.spawn(async move |this, cx| {
-            match controller.connect(socket).await {
+        cx.spawn(
+            async move |this, cx| match controller.connect(socket).await {
                 Ok(connected) => {
                     this.update(cx, |view, cx| {
                         view.on_connected(
@@ -239,14 +240,13 @@ impl AppView {
                     this.update(cx, |view, cx| {
                         view.projection
                             .set_connection(ConnectionState::Failed { reason });
-                        view.status_hint =
-                            Some("Connect failed. Click Reconnect to retry.".into());
+                        view.status_hint = Some("Connect failed. Click Reconnect to retry.".into());
                         cx.notify();
                     })
                     .ok();
                 }
-            }
-        })
+            },
+        )
         .detach();
     }
 
@@ -336,10 +336,7 @@ impl AppView {
                 }
             }
             ControllerEvent::Event(envelope) => {
-                let terminal_event = matches!(
-                    envelope.payload,
-                    AppEvent::TerminalOutput { .. }
-                );
+                let terminal_event = matches!(envelope.payload, AppEvent::TerminalOutput { .. });
                 if terminal_event {
                     if !is_scrolled_to_bottom(&self.terminal_scroll) {
                         self.follow_terminal = false;
@@ -363,7 +360,9 @@ impl AppView {
                 self.status_hint = Some(format!("Forked · {session_id}"));
                 self.open_session(session_id, cx);
             }
-            ControllerEvent::TerminalCreated { terminal_session_id } => {
+            ControllerEvent::TerminalCreated {
+                terminal_session_id,
+            } => {
                 self.projection.terminal.session_id = Some(terminal_session_id.clone());
                 self.controller.terminal_resize(
                     terminal_session_id,
@@ -394,23 +393,21 @@ impl AppView {
             return;
         }
         self.run_clock_running = true;
-        cx.spawn(async move |this, cx| {
-            loop {
-                smol::Timer::after(Duration::from_secs(1)).await;
-                let keep = this
-                    .update(cx, |view, cx| {
-                        if view.projection.active_run_id.is_some() {
-                            cx.notify();
-                            true
-                        } else {
-                            view.run_clock_running = false;
-                            false
-                        }
-                    })
-                    .unwrap_or(false);
-                if !keep {
-                    break;
-                }
+        cx.spawn(async move |this, cx| loop {
+            smol::Timer::after(Duration::from_secs(1)).await;
+            let keep = this
+                .update(cx, |view, cx| {
+                    if view.projection.active_run_id.is_some() {
+                        cx.notify();
+                        true
+                    } else {
+                        view.run_clock_running = false;
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            if !keep {
+                break;
             }
         })
         .detach();
@@ -614,9 +611,11 @@ impl AppView {
         }
         // 入口级防线：渲染层已按边界禁用 Fork，这里再按 reducer 的单点判型
         // 复核——connected + active session + run 终止边界缺一不可。
-        let forkable = self.projection.timeline.iter().any(|entry| {
-            entry.event_id == event_id && entry.is_fork_boundary()
-        });
+        let forkable = self
+            .projection
+            .timeline
+            .iter()
+            .any(|entry| entry.event_id == event_id && entry.is_fork_boundary());
         if !forkable {
             self.status_hint = Some(
                 "Fork is only available on a finished run (completed, cancelled, or failed)."
@@ -777,25 +776,33 @@ impl AppView {
     }
 
     fn can_switch_model(&self) -> bool {
-        matches!(self.projection.connection, ConnectionState::Connected { .. })
-            && self.projection.active_run_id.is_none()
+        matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && self.projection.active_run_id.is_none()
             && !self.projection.models.is_empty()
     }
 
     fn can_send(&self) -> bool {
-        matches!(self.projection.connection, ConnectionState::Connected { .. })
-            && self.projection.active_session_id.is_some()
+        matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && self.projection.active_session_id.is_some()
             && self.projection.active_run_id.is_none()
     }
 
     fn can_approve(&self) -> bool {
-        matches!(self.projection.connection, ConnectionState::Connected { .. })
-            && self.projection.pending_approval.is_some()
+        matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && self.projection.pending_approval.is_some()
     }
 
     fn can_cancel(&self) -> bool {
-        matches!(self.projection.connection, ConnectionState::Connected { .. })
-            && self.projection.active_run_id.is_some()
+        matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && self.projection.active_run_id.is_some()
     }
 
     fn approve_disabled_reason(&self) -> String {
@@ -865,9 +872,9 @@ impl AppView {
             .mt_1()
             .p_1()
             .rounded_md()
-            .bg(rgb(0x1a1a1a))
+            .bg(dark().bg.menu)
             .border_1()
-            .border_color(rgb(0x3a3a3a))
+            .border_color(dark().border.strong)
             .children(
                 [
                     (TaskRailGrouping::Timeline, "Timeline"),
@@ -881,7 +888,11 @@ impl AppView {
                         .px_2()
                         .py_1()
                         .rounded_sm()
-                        .bg(if selected { rgb(0x2f6fed) } else { rgb(0x1a1a1a) })
+                        .bg(if selected {
+                            dark().accent.primary
+                        } else {
+                            dark().bg.menu
+                        })
                         .cursor_pointer()
                         .child(if selected {
                             format!("✓ {label}")
@@ -901,9 +912,9 @@ impl AppView {
             .mt_1()
             .p_1()
             .rounded_md()
-            .bg(rgb(0x1a1a1a))
+            .bg(dark().bg.menu)
             .border_1()
-            .border_color(rgb(0x3a3a3a))
+            .border_color(dark().border.strong)
             .children(self.projection.project_scope_options().into_iter().map(
                 |(workspace_id, label)| {
                     let selected = current == workspace_id;
@@ -913,7 +924,11 @@ impl AppView {
                         .px_2()
                         .py_1()
                         .rounded_sm()
-                        .bg(if selected { rgb(0x2f6fed) } else { rgb(0x1a1a1a) })
+                        .bg(if selected {
+                            dark().accent.primary
+                        } else {
+                            dark().bg.menu
+                        })
                         .cursor_pointer()
                         .child(if selected {
                             format!("✓ {label}")
@@ -950,8 +965,8 @@ impl AppView {
                 div()
                     .px_2()
                     .py_2()
-                    .text_size(px(12.))
-                    .text_color(rgb(0x7f7f7f))
+                    .text_size(px(font::SM))
+                    .text_color(dark().text.tertiary)
                     .child("No tasks"),
             );
         }
@@ -962,8 +977,8 @@ impl AppView {
                         div()
                             .px_1()
                             .pt_2()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x9a9a9a))
+                            .text_size(px(font::XS))
+                            .text_color(dark().text.secondary)
                             .child(group.bucket.label().to_string()),
                     );
                     for project in group.projects {
@@ -1009,8 +1024,8 @@ impl AppView {
                     .cursor_pointer()
                     .child(
                         div()
-                            .text_size(px(12.))
-                            .text_color(rgb(0xc8c8c8))
+                            .text_size(px(font::SM))
+                            .text_color(dark().text.emphasis)
                             .child(format!(
                                 "{} {} · {}",
                                 if expanded { "▾" } else { "▸" },
@@ -1027,11 +1042,19 @@ impl AppView {
                 header = header.child(
                     div()
                         .id(add_id)
-                        .w(px(18.))
-                        .h(px(18.))
+                        .w(px(metrics::ICON_SMALL))
+                        .h(px(metrics::ICON_SMALL))
                         .rounded_md()
-                        .bg(if can_create { rgb(0x2a2a2a) } else { rgb(0x242424) })
-                        .text_color(if can_create { rgb(0xe8e8e8) } else { rgb(0x8f8f8f) })
+                        .bg(if can_create {
+                            dark().surface.raised
+                        } else {
+                            dark().surface.disabled
+                        })
+                        .text_color(if can_create {
+                            dark().text.primary
+                        } else {
+                            dark().text.disabled
+                        })
                         .cursor_pointer()
                         .child("+")
                         .on_click(cx.listener(move |view, _event, window, cx| {
@@ -1044,8 +1067,8 @@ impl AppView {
         if expanded {
             for task in &project.tasks {
                 let session_id = task.session_id.clone();
-                let active = self.projection.active_session_id.as_deref()
-                    == Some(task.session_id.as_str());
+                let active =
+                    self.projection.active_session_id.as_deref() == Some(task.session_id.as_str());
                 let running = self
                     .projection
                     .active_runs
@@ -1057,22 +1080,22 @@ impl AppView {
                         .px_2()
                         .py_1()
                         .rounded_sm()
-                        .bg(if active { rgb(0x2a2a2a) } else { rgb(0x161616) })
+                        .bg(if active {
+                            dark().surface.raised
+                        } else {
+                            dark().bg.panel
+                        })
                         .cursor_pointer()
                         .child(
                             div()
                                 .flex()
                                 .flex_row()
                                 .justify_between()
-                                .child(format!(
-                                    "{}{}",
-                                    if running { "● " } else { "" },
-                                    task.title
-                                ))
+                                .child(format!("{}{}", if running { "● " } else { "" }, task.title))
                                 .child(
                                     div()
-                                        .text_size(px(11.))
-                                        .text_color(rgb(0x7f7f7f))
+                                        .text_size(px(font::XS))
+                                        .text_color(dark().text.tertiary)
                                         .child(relative_activity(task.updated_at_ms, now_ms)),
                                 ),
                         )
@@ -1094,54 +1117,59 @@ impl AppView {
         let body = match &entry.kind {
             TimelineEntryKind::UserMessage { text } => div()
                 .py_1()
-                .text_color(rgb(0xe8e8e8))
+                .text_color(dark().text.primary)
                 .child(format!("You: {text}")),
             TimelineEntryKind::AssistantMessage { text } => div()
                 .py_1()
-                .text_color(rgb(0xd7d7ff))
+                .text_color(dark().text.assistant)
                 .child(format!("Assistant: {text}")),
-            TimelineEntryKind::ToolCall { name, status, detail } => {
+            TimelineEntryKind::ToolCall {
+                name,
+                status,
+                detail,
+            } => {
                 let mut element = div()
                     .py_1()
-                    .text_color(rgb(0x9cdcfe))
+                    .text_color(dark().text.tool)
                     .child(format!("{name} · {status}"));
                 if let Some(detail) = detail {
                     if !detail.is_empty() {
                         element = element.child(
                             div()
-                                .text_size(px(11.))
-                                .text_color(rgb(0x7f7f7f))
+                                .text_size(px(font::XS))
+                                .text_color(dark().text.tertiary)
                                 .child(detail.clone()),
                         );
                     }
                 }
                 element
             }
-            TimelineEntryKind::RunState(state) => {
-                div().py_1().text_color(rgb(0x8f8f8f)).child(state.clone())
-            }
+            TimelineEntryKind::RunState(state) => div()
+                .py_1()
+                .text_color(dark().text.disabled)
+                .child(state.clone()),
             TimelineEntryKind::Error(message) => div()
                 .py_1()
-                .text_color(rgb(0xf48771))
+                .text_color(dark().semantic.danger_text)
                 .child(format!("Error: {message}")),
         };
         let event_id = entry.event_id.clone();
         let mut actions = div()
             .id(SharedString::from(format!("entry-menu-{}", entry.event_id)))
             .px_1()
-            .text_size(px(11.))
-            .text_color(rgb(0x9a9a9a))
+            .text_size(px(font::XS))
+            .text_color(dark().text.secondary)
             .cursor_pointer()
             .child("···")
             .on_click(cx.listener({
                 let event_id = event_id.clone();
                 move |view, _event, _window, cx| {
-                    view.entry_menu_event_id = if view.entry_menu_event_id.as_deref() == Some(event_id.as_str())
-                    {
-                        None
-                    } else {
-                        Some(event_id.clone())
-                    };
+                    view.entry_menu_event_id =
+                        if view.entry_menu_event_id.as_deref() == Some(event_id.as_str()) {
+                            None
+                        } else {
+                            Some(event_id.clone())
+                        };
                     cx.notify();
                 }
             }));
@@ -1154,10 +1182,14 @@ impl AppView {
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(0x1a1a1a))
+                    .bg(dark().bg.menu)
                     .border_1()
-                    .border_color(rgb(0x3a3a3a))
-                    .text_color(if can_fork { rgb(0xe8e8e8) } else { rgb(0x5a5a5a) })
+                    .border_color(dark().border.strong)
+                    .text_color(if can_fork {
+                        dark().text.primary
+                    } else {
+                        dark().text.ghost
+                    })
                     .child("Fork")
                     .when(can_fork, |button| {
                         button.on_click(cx.listener(move |view, _event, _window, cx| {
@@ -1191,11 +1223,11 @@ impl AppView {
         div()
             .flex()
             .flex_col()
-            .w(px(440.))
+            .w(px(metrics::INSPECTOR_WIDTH))
             .h_full()
-            .bg(rgb(0x161616))
+            .bg(dark().bg.panel)
             .border_l_1()
-            .border_color(rgb(0x2e2e2e))
+            .border_color(dark().border.subtle)
             .child(
                 div()
                     .flex()
@@ -1205,23 +1237,23 @@ impl AppView {
                     .px_2()
                     .py_1()
                     .border_b_1()
-                    .border_color(rgb(0x2e2e2e))
+                    .border_color(dark().border.subtle)
                     .child(
                         div()
                             .id("inspector-tab-terminal")
                             .px_2()
                             .py_1()
                             .rounded_md()
-                            .bg(rgb(0x2a2a2a))
-                            .text_size(px(12.))
+                            .bg(dark().surface.raised)
+                            .text_size(px(font::SM))
                             .child("Terminal"),
                     )
                     .child(
                         div()
                             .id("inspector-collapse")
                             .px_2()
-                            .text_size(px(12.))
-                            .text_color(rgb(0x9a9a9a))
+                            .text_size(px(font::SM))
+                            .text_color(dark().text.secondary)
                             .cursor_pointer()
                             .child("⟩")
                             .on_click(cx.listener(|view, _event, window, cx| {
@@ -1237,8 +1269,8 @@ impl AppView {
                     .justify_between()
                     .px_2()
                     .py_1()
-                    .text_size(px(11.))
-                    .text_color(rgb(0x9a9a9a))
+                    .text_size(px(font::XS))
+                    .text_color(dark().text.secondary)
                     .child(format!("cwd {cwd}"))
                     .child(
                         div()
@@ -1260,8 +1292,8 @@ impl AppView {
                     .overflow_y_scroll()
                     .px_2()
                     .py_1()
-                    .text_size(px(12.))
-                    .text_color(rgb(0xc8c8c8))
+                    .text_size(px(font::SM))
+                    .text_color(dark().text.emphasis)
                     .child(output),
             )
             .child(
@@ -1271,7 +1303,7 @@ impl AppView {
                     .gap_1()
                     .p_2()
                     .border_t_1()
-                    .border_color(rgb(0x2e2e2e))
+                    .border_color(dark().border.subtle)
                     .child(div().flex_1().child(self.terminal_input.clone()))
                     .child(
                         div()
@@ -1279,8 +1311,12 @@ impl AppView {
                             .px_2()
                             .py_1()
                             .rounded_md()
-                            .bg(if connected { rgb(0x2a2a2a) } else { rgb(0x242424) })
-                            .text_size(px(11.))
+                            .bg(if connected {
+                                dark().surface.raised
+                            } else {
+                                dark().surface.disabled
+                            })
+                            .text_size(px(font::XS))
                             .cursor_pointer()
                             .child(if started { "Size" } else { "Start" })
                             .on_click(cx.listener(move |view, _event, window, cx| {
@@ -1304,7 +1340,8 @@ impl AppView {
             {
                 return format!(
                     "Workspace · {}",
-                    self.projection.workspace_name(session.workspace_id.as_deref())
+                    self.projection
+                        .workspace_name(session.workspace_id.as_deref())
                 );
             }
         }
@@ -1325,16 +1362,16 @@ impl AppView {
             .id("workspace-confirm")
             .p_1()
             .rounded_md()
-            .bg(rgb(0x1a1a1a))
+            .bg(dark().bg.menu)
             .border_1()
-            .border_color(rgb(0x3a3a3a));
+            .border_color(dark().border.strong);
         if choices.is_empty() {
             return list.child(
                 div()
                     .px_2()
                     .py_1()
-                    .text_size(px(12.))
-                    .text_color(rgb(0xf0d58c))
+                    .text_size(px(font::SM))
+                    .text_color(dark().semantic.warning_text)
                     .child("Add a workspace before creating a task."),
             );
         }
@@ -1360,7 +1397,7 @@ impl AppView {
 fn is_scrolled_to_bottom(handle: &ScrollHandle) -> bool {
     let max = handle.max_offset().height;
     let y = handle.offset().y;
-    max <= px(1.) || y <= px(16.) - max
+    max <= px(metrics::SCROLL_EPSILON) || y <= px(metrics::SCROLL_BOTTOM_SLACK) - max
 }
 
 fn resolve_new_task_workspace(scope_workspace_id: Option<&str>) -> Option<&str> {
@@ -1369,7 +1406,10 @@ fn resolve_new_task_workspace(scope_workspace_id: Option<&str>) -> Option<&str> 
 
 impl Render for AppView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let connected = matches!(self.projection.connection, ConnectionState::Connected { .. });
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
         let can_send = self.can_send();
         let can_cancel = self.can_cancel();
         let can_switch_model = self.can_switch_model();
@@ -1409,12 +1449,12 @@ impl Render for AppView {
         let grouping_tooltip = SharedString::from(self.grouping.accessible_name());
         let mut grouping_button = div()
             .id("task-rail-grouping")
-            .w(px(28.))
-            .h(px(22.))
+            .w(px(metrics::ICON_LARGE))
+            .h(px(metrics::ICON_MEDIUM))
             .rounded_md()
-            .bg(rgb(0x2a2a2a))
-            .text_size(px(12.))
-            .text_color(rgb(0xe8e8e8))
+            .bg(dark().surface.raised)
+            .text_size(px(font::SM))
+            .text_color(dark().text.primary)
             .cursor_pointer()
             .child(format!("{grouping_glyph} ▾"))
             .tooltip(move |_, cx| tooltip_text(grouping_tooltip.clone(), cx))
@@ -1430,8 +1470,8 @@ impl Render for AppView {
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(rgb(0x2a2a2a))
-            .text_size(px(12.))
+            .bg(dark().surface.raised)
+            .text_size(px(font::SM))
             .cursor_pointer()
             .child(format!("{scope_label} ▾"))
             .on_click(cx.listener(|view, _event, window, cx| {
@@ -1452,11 +1492,19 @@ impl Render for AppView {
             .tab_stop(true)
             .track_focus(&add_task_focus)
             .focus(focus_ring_style)
-            .w(px(22.))
-            .h(px(22.))
+            .w(px(metrics::ICON_MEDIUM))
+            .h(px(metrics::ICON_MEDIUM))
             .rounded_md()
-            .bg(if can_create { rgb(0x2a2a2a) } else { rgb(0x242424) })
-            .text_color(if can_create { rgb(0xe8e8e8) } else { rgb(0x8f8f8f) })
+            .bg(if can_create {
+                dark().surface.raised
+            } else {
+                dark().surface.disabled
+            })
+            .text_color(if can_create {
+                dark().text.primary
+            } else {
+                dark().text.disabled
+            })
             .cursor_pointer()
             .child("+")
             .tooltip(move |_, cx| tooltip_text(add_task_tooltip.clone(), cx))
@@ -1469,11 +1517,11 @@ impl Render for AppView {
             .flex_col()
             .gap_2()
             .p_2()
-            .w(px(288.))
+            .w(px(metrics::SIDEBAR_WIDTH))
             .h_full()
-            .bg(rgb(0x161616))
+            .bg(dark().bg.panel)
             .border_r_1()
-            .border_color(rgb(0x2e2e2e))
+            .border_color(dark().border.subtle)
             .child(
                 div()
                     .flex()
@@ -1482,8 +1530,8 @@ impl Render for AppView {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(13.))
-                            .text_color(rgb(0xe8e8e8))
+                            .text_size(px(font::BASE))
+                            .text_color(dark().text.primary)
                             .child("Pawork"),
                     )
                     .child(grouping_button),
@@ -1497,8 +1545,8 @@ impl Render for AppView {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x9a9a9a))
+                            .text_size(px(font::XS))
+                            .text_color(dark().text.secondary)
                             .child(connection_label),
                     )
                     .child(add_task),
@@ -1510,8 +1558,8 @@ impl Render for AppView {
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(rgb(0x2f6fed))
-                        .text_color(rgb(0xffffff))
+                        .bg(dark().accent.primary)
+                        .text_color(dark().text.on_accent)
                         .cursor_pointer()
                         .child("Reconnect")
                         .on_click(cx.listener(|view, _event, window, cx| {
@@ -1524,8 +1572,8 @@ impl Render for AppView {
                 div()
                     .mt_auto()
                     .pt_2()
-                    .text_size(px(11.))
-                    .text_color(rgb(0x7f7f7f))
+                    .text_size(px(font::XS))
+                    .text_color(dark().text.tertiary)
                     .child("Local"),
             );
 
@@ -1562,41 +1610,54 @@ impl Render for AppView {
                     .p_2()
                     .rounded_md()
                     .border_l_1()
-                    .border_color(rgb(0x8a6d3b))
-                    .bg(rgb(0x2a2418))
+                    .border_color(dark().semantic.warning_border)
+                    .bg(dark().semantic.warning_bg)
                     .child(
                         div()
-                            .text_size(px(12.))
-                            .text_color(rgb(0xf0d58c))
+                            .text_size(px(font::SM))
+                            .text_color(dark().semantic.warning_text)
                             .child(format!("Approval · {}", pending.tool_name)),
                     )
                     .child(
                         div()
-                            .text_size(px(12.))
-                            .text_color(rgb(0xe8e8e8))
+                            .text_size(px(font::SM))
+                            .text_color(dark().text.primary)
                             .child(pending.reason.clone()),
                     );
                 if let Some(detail) = pending.detail.clone() {
                     if !detail.is_empty() {
                         card = card.child(
                             div()
-                                .text_size(px(11.))
-                                .text_color(rgb(0xb8b8b8))
+                                .text_size(px(font::XS))
+                                .text_color(dark().text.detail)
                                 .child(detail),
                         );
                     }
                 }
                 let buttons = [
-                    ("approve-once", "Allow once", "approve_once", 0x2f6fed_u32),
-                    ("approve-for-run", "Allow for run", "approve_for_run", 0x3d7a4a_u32),
-                    ("approve-deny", "Deny", "deny", 0x8a3b32_u32),
+                    (
+                        "approve-once",
+                        "Allow once",
+                        "approve_once",
+                        dark().accent.primary,
+                    ),
+                    (
+                        "approve-for-run",
+                        "Allow for run",
+                        "approve_for_run",
+                        dark().semantic.success_bg,
+                    ),
+                    ("approve-deny", "Deny", "deny", dark().semantic.danger_bg),
                 ];
                 let approve_once_focus = self.approve_once_focus.clone();
                 let approve_for_run_focus = self.approve_for_run_focus.clone();
                 let deny_focus = self.deny_focus.clone();
                 let approve_disabled = SharedString::from(self.approve_disabled_reason());
-                let row = div().flex().flex_row().gap_2().children(buttons.into_iter().map(
-                    |(id, label, decision, color)| {
+                let row = div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .children(buttons.into_iter().map(|(id, label, decision, color)| {
                         let decision = decision.to_string();
                         let focus = match id {
                             "approve-once" => approve_once_focus.clone(),
@@ -1620,8 +1681,12 @@ impl Render for AppView {
                             .px_2()
                             .py_1()
                             .rounded_md()
-                            .bg(if can_approve { rgb(color) } else { rgb(0x3a3a3a) })
-                            .text_color(rgb(0xffffff))
+                            .bg(if can_approve {
+                                color
+                            } else {
+                                dark().border.strong
+                            })
+                            .text_color(dark().text.on_accent)
                             .cursor_pointer()
                             .child(label)
                             .tooltip(move |_, cx| tooltip_text(tooltip.clone(), cx))
@@ -1630,8 +1695,7 @@ impl Render for AppView {
                                     view.on_approve(&decision, cx);
                                 }))
                             })
-                    },
-                ));
+                    }));
                 timeline.child(card.child(row))
             });
 
@@ -1649,8 +1713,16 @@ impl Render for AppView {
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(if can_switch_model { rgb(0x2a2a2a) } else { rgb(0x242424) })
-            .text_color(if can_switch_model { rgb(0xe8e8e8) } else { rgb(0x8f8f8f) })
+            .bg(if can_switch_model {
+                dark().surface.raised
+            } else {
+                dark().surface.disabled
+            })
+            .text_color(if can_switch_model {
+                dark().text.primary
+            } else {
+                dark().text.disabled
+            })
             .cursor_pointer()
             .child(model_label)
             .tooltip(move |_, cx| tooltip_text(model_tooltip.clone(), cx))
@@ -1665,16 +1737,16 @@ impl Render for AppView {
                     .mt_1()
                     .p_1()
                     .rounded_md()
-                    .bg(rgb(0x1a1a1a))
+                    .bg(dark().bg.menu)
                     .border_1()
-                    .border_color(rgb(0x3a3a3a))
+                    .border_color(dark().border.strong)
                     .children(self.projection.models.iter().cloned().map(|model| {
-                        let selected = self
-                            .projection
-                            .effective_model()
-                            .is_some_and(|(provider, id)| {
-                                provider == &model.provider_id && id == &model.id
-                            });
+                        let selected =
+                            self.projection
+                                .effective_model()
+                                .is_some_and(|(provider, id)| {
+                                    provider == &model.provider_id && id == &model.id
+                                });
                         let label = format!("{} / {}", model.provider_id, model.display_name);
                         div()
                             .id(SharedString::from(format!(
@@ -1684,7 +1756,11 @@ impl Render for AppView {
                             .px_2()
                             .py_1()
                             .rounded_sm()
-                            .bg(if selected { rgb(0x2f6fed) } else { rgb(0x1a1a1a) })
+                            .bg(if selected {
+                                dark().accent.primary
+                            } else {
+                                dark().bg.menu
+                            })
                             .cursor_pointer()
                             .child(label)
                             .on_click(cx.listener(move |view, _event, _window, cx| {
@@ -1700,7 +1776,7 @@ impl Render for AppView {
             .gap_1()
             .p_2()
             .border_t_1()
-            .border_color(rgb(0x2e2e2e))
+            .border_color(dark().border.subtle)
             .child(
                 div()
                     .flex()
@@ -1711,14 +1787,14 @@ impl Render for AppView {
                     .child(
                         div()
                             .flex_1()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x9a9a9a))
+                            .text_size(px(font::XS))
+                            .text_color(dark().text.secondary)
                             .child(context_meter),
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x9a9a9a))
+                            .text_size(px(font::XS))
+                            .text_color(dark().text.secondary)
                             .child(self.composer_workspace_label()),
                     ),
             )
@@ -1733,8 +1809,8 @@ impl Render for AppView {
                     .child(
                         div()
                             .flex_1()
-                            .min_h(px(88.))
-                            .max_h(px(220.))
+                            .min_h(px(metrics::COMPOSER_MIN_HEIGHT))
+                            .max_h(px(metrics::COMPOSER_MAX_HEIGHT))
                             .child(self.text_input.clone()),
                     )
                     .child({
@@ -1752,8 +1828,12 @@ impl Render for AppView {
                             .px_3()
                             .py_1()
                             .rounded_md()
-                            .bg(if can_cancel { rgb(0x8a3b32) } else { rgb(0x3a3a3a) })
-                            .text_color(rgb(0xffffff))
+                            .bg(if can_cancel {
+                                dark().semantic.danger_bg
+                            } else {
+                                dark().border.strong
+                            })
+                            .text_color(dark().text.on_accent)
                             .cursor_pointer()
                             .child("Cancel")
                             .tooltip(move |_, cx| tooltip_text(cancel_tooltip.clone(), cx))
@@ -1778,8 +1858,12 @@ impl Render for AppView {
                             .px_3()
                             .py_1()
                             .rounded_md()
-                            .bg(if can_send { rgb(0x2f6fed) } else { rgb(0x3a3a3a) })
-                            .text_color(rgb(0xffffff))
+                            .bg(if can_send {
+                                dark().accent.primary
+                            } else {
+                                dark().border.strong
+                            })
+                            .text_color(dark().text.on_accent)
                             .cursor_pointer()
                             .child("Send")
                             .tooltip(move |_, cx| tooltip_text(send_tooltip.clone(), cx))
@@ -1792,8 +1876,8 @@ impl Render for AppView {
             )
             .child(
                 div()
-                    .text_size(px(11.))
-                    .text_color(rgb(0x9a9a9a))
+                    .text_size(px(font::XS))
+                    .text_color(dark().text.secondary)
                     .child(self.status_hint.clone().unwrap_or(composer_hint)),
             );
 
@@ -1815,8 +1899,8 @@ impl Render for AppView {
             .track_focus(&self.focus_handle)
             .flex()
             .size_full()
-            .bg(rgb(0x1e1e1e))
-            .text_color(rgb(0xe8e8e8))
+            .bg(dark().bg.base)
+            .text_color(dark().text.primary)
             .on_action(cx.listener(Self::on_send_message))
             .on_action(cx.listener(Self::on_approve_once))
             .on_action(cx.listener(Self::on_approve_for_run))
@@ -1826,39 +1910,34 @@ impl Render for AppView {
             .on_action(cx.listener(Self::on_toggle_inspector_action))
             .child(sidebar)
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .child(main)
-                    .child(
-                        div()
-                            .h(px(24.))
-                            .px_3()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .border_t_1()
-                            .border_color(rgb(0x2e2e2e))
-                            .bg(rgb(0x161616))
-                            .text_size(px(11.))
-                            .text_color(rgb(0x9a9a9a))
-                            .child(run_status)
-                            .child(
-                                div()
-                                    .id("inspector-toggle")
-                                    .px_2()
-                                    .cursor_pointer()
-                                    .child(if inspector_open {
-                                        "Hide inspector"
-                                    } else {
-                                        "Inspector"
-                                    })
-                                    .on_click(cx.listener(|view, _event, window, cx| {
-                                        view.on_toggle_inspector(window, cx);
-                                    })),
-                            ),
-                    ),
+                div().flex().flex_col().flex_1().child(main).child(
+                    div()
+                        .h(px(metrics::STATUS_BAR_HEIGHT))
+                        .px_3()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .border_t_1()
+                        .border_color(dark().border.subtle)
+                        .bg(dark().bg.panel)
+                        .text_size(px(font::XS))
+                        .text_color(dark().text.secondary)
+                        .child(run_status)
+                        .child(
+                            div()
+                                .id("inspector-toggle")
+                                .px_2()
+                                .cursor_pointer()
+                                .child(if inspector_open {
+                                    "Hide inspector"
+                                } else {
+                                    "Inspector"
+                                })
+                                .on_click(cx.listener(|view, _event, window, cx| {
+                                    view.on_toggle_inspector(window, cx);
+                                })),
+                        ),
+                ),
             )
     }
 }

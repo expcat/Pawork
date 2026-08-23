@@ -7,12 +7,12 @@
 
 use std::ops::Range;
 
+use super::theme::{dark, font, metrics};
 use gpui::{
-    App, Context, CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler,
-    FocusHandle, Focusable, GlobalElementId, LayoutId, MouseButton, MouseDownEvent, PaintQuad,
-    Pixels, Point, ShapedLine,
-    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill,
-    hsla, point, prelude::*, px, relative, rgb, rgba, size,
+    actions, div, fill, hsla, point, prelude::*, px, relative, size, App, Context, CursorStyle,
+    ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
+    GlobalElementId, LayoutId, MouseButton, MouseDownEvent, PaintQuad, Pixels, Point, ShapedLine,
+    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use unicode_segmentation::*;
 
@@ -358,7 +358,7 @@ impl EntityInputHandler for TextInput {
         }
         let line_height = window.line_height();
         let mut index = 0usize;
-        if line_height > px(0.) {
+        if line_height > px(metrics::ZERO) {
             index = (f32::from(line_point.y) / f32::from(line_height)) as usize;
         }
         index = index.min(lines.len() - 1);
@@ -409,9 +409,9 @@ fn line_index_for_offset(starts: &[usize], offset: usize) -> Option<(usize, usiz
 }
 
 fn clamp_composer_height(line_height: Pixels, line_count: usize) -> Pixels {
-    let desired = line_height * line_count as f32 + px(8.);
-    let min = px(88.);
-    let max = px(220.);
+    let desired = line_height * line_count as f32 + px(metrics::COMPOSER_TEXT_INSET);
+    let min = px(metrics::COMPOSER_MIN_HEIGHT);
+    let max = px(metrics::COMPOSER_MAX_HEIGHT);
     if desired < min {
         min
     } else if desired > max {
@@ -457,7 +457,7 @@ fn runs_for_span(
             len: mark_end - mark_start,
             underline: Some(UnderlineStyle {
                 color: Some(base.color),
-                thickness: px(1.0),
+                thickness: px(metrics::UNDERLINE_THICKNESS),
                 wavy: false,
             }),
             ..base.clone()
@@ -543,12 +543,18 @@ impl Element for TextElement {
         for (start, end) in ranges {
             let line_text: SharedString = display_text[start..end].to_string().into();
             let runs = runs_for_span(start, end, &base, marked.as_ref());
-            let shaped = window.text_system().shape_line(line_text, font_size, &runs, None);
+            let shaped = window
+                .text_system()
+                .shape_line(line_text, font_size, &runs, None);
             lines.push(shaped);
             line_starts.push(start);
         }
         if lines.is_empty() {
-            lines.push(window.text_system().shape_line("".into(), font_size, &[], None));
+            lines.push(
+                window
+                    .text_system()
+                    .shape_line("".into(), font_size, &[], None),
+            );
             line_starts.push(0);
         }
 
@@ -560,7 +566,7 @@ impl Element for TextElement {
                 Some(fill(
                     gpui::Bounds::new(
                         point(bounds.left() + line.x_for_index(cursor - start), top),
-                        size(px(2.), line_height),
+                        size(px(metrics::CURSOR_WIDTH), line_height),
                     ),
                     gpui::blue(),
                 ))
@@ -582,16 +588,13 @@ impl Element for TextElement {
                 let top = bounds.top() + line_height * index as f32;
                 selection.push(fill(
                     gpui::Bounds::from_corners(
-                        point(
-                            bounds.left() + line.x_for_index(overlap_start - start),
-                            top,
-                        ),
+                        point(bounds.left() + line.x_for_index(overlap_start - start), top),
                         point(
                             bounds.left() + line.x_for_index(overlap_end - start),
                             top + line_height,
                         ),
                     ),
-                    rgba(0x5b9dff55),
+                    dark().accent.selection,
                 ));
             }
             None
@@ -625,7 +628,10 @@ impl Element for TextElement {
         }
         let line_height = window.line_height();
         for (index, line) in prepaint.lines.iter().enumerate() {
-            let origin = point(bounds.origin.x, bounds.origin.y + line_height * index as f32);
+            let origin = point(
+                bounds.origin.x,
+                bounds.origin.y + line_height * index as f32,
+            );
             line.paint(origin, line_height, window, cx).unwrap();
         }
 
@@ -664,8 +670,8 @@ impl Render for TextInput {
             .py_1()
             .px_2()
             .rounded_sm()
-            .bg(rgb(0x2a2a2a))
-            .text_size(px(13.))
+            .bg(dark().surface.raised)
+            .text_size(px(font::BASE))
             .child(TextElement { input: cx.entity() })
     }
 }
