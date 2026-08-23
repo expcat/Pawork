@@ -816,6 +816,10 @@ impl TimelineProjection {
         self.entries.insert(position, entry);
     }
 
+    /// reducer 内部按 identity 回查:先精确匹配 event_id(wire 与 Fork 路径的唯一
+    /// 锚点),未命中才退回按 sequence 的首个命中兜底(此处不校验唯一性,仅依赖
+    /// 库级 UNIQUE(session_id, sequence) 提供的实际不碰撞)。sequence 回退只服务
+    /// 内部防御性查找,不改变「锚点只用 event_id」的对外语义(见 plan/R6 §2.4)。
     fn entry_index_by_identity(&self, event_id: &str, sequence: u64) -> Option<usize> {
         self.entries
             .iter()

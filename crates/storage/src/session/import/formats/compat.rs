@@ -265,15 +265,16 @@ fn parse_claude_export(
 /// Claude Code 本地 JSONL(`~/.claude/projects/**/*.jsonl`)逐行解析。
 ///
 /// 映射裁决(R6 波 C 设计):user/assistant 且非 sidechain 才记录;content parts 中
-/// text 拼接、tool_use/tool_result 配对、thinking 静默跳过;ai-title/custom-title 取
-/// 标题;queue-operation/last-prompt 静默跳过;sidechain 行跳过并计数;其余未知
+/// text 拼接、tool_use/tool_result 配对、thinking 跳过并计数;ai-title/custom-title
+/// 取标题;queue-operation/last-prompt 跳过并计数;sidechain 行跳过并计数——四类
+/// 噪声统一以 `skipped_*` 键写入 unknown_fields(与 codex 侧口径一致);其余未知
 /// type 进 Raw(无损哲学不变)。
 fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
     let mut parsed = ParsedExternalSession {
         source: Some(ExternalSource::Claude),
         ..Default::default()
     };
-    let mut skipped_sidechain = 0u64;
+    let mut skipped: BTreeMap<String, u64> = BTreeMap::new();
     let mut raw_type_counts: BTreeMap<String, u64> = BTreeMap::new();
     let mut unparseable_lines = 0u64;
     for (idx, raw) in content.lines().enumerate() {
@@ -312,10 +313,10 @@ fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, Sess
                     .and_then(Value::as_bool)
                     .unwrap_or(false)
                 {
-                    skipped_sidechain += 1;
+                    *skipped.entry("skipped_sidechain".into()).or_default() += 1;
                     continue;
                 }
-                claude_local_message_records(obj, line_type, idx, &mut parsed.records);
+                claude_local_message_records(obj, line_type, idx, &mut parsed.records, &mut skipped);
             }
             "ai-title" | "custom-title" => {
                 // 真实本地格式的标题键是 aiTitle / customTitle(2026-08-23 本机
@@ -333,7 +334,12 @@ fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, Sess
                     parsed.title = Some(title.to_string());
                 }
             }
-            "queue-operation" | "last-prompt" => {}
+            "queue-operation" => {
+                *skipped.entry("skipped_queue_operation".into()).or_default() += 1;
+            }
+            "last-prompt" => {
+                *skipped.entry("skipped_last_prompt".into()).or_default() += 1;
+            }
             other => {
                 *raw_type_counts.entry(other.to_string()).or_default() += 1;
                 parsed.records.push(ExternalRecord::Raw {
@@ -343,10 +349,10 @@ fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, Sess
             }
         }
     }
-    if skipped_sidechain > 0 {
-        parsed
-            .unknown_fields
-            .insert("skipped_sidechain".into(), skipped_sidechain.to_string());
+    for (key, count) in skipped {
+        if count > 0 {
+            parsed.unknown_fields.insert(key, count.to_string());
+        }
     }
     for (kind, count) in raw_type_counts {
         parsed
@@ -367,12 +373,14 @@ fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, Sess
 /// 把 Claude Code 本地行的 `message.content` 映射为记录序列。
 ///
 /// 文本 parts 先缓冲;遇到 tool_use/tool_result 时先冲刷已缓冲文本,保持
-/// [text, tool_use] 的自然顺序。thinking 与未知 part 静默跳过。
+/// [text, tool_use] 的自然顺序。thinking 跳过并计入 `skipped`;未知 part
+/// 静默跳过。
 fn claude_local_message_records(
     obj: &serde_json::Map<String, Value>,
     line_type: &str,
     idx: usize,
     records: &mut Vec<ExternalRecord>,
+    skipped: &mut BTreeMap<String, u64>,
 ) {
     let Some(message) = obj.get("message").and_then(Value::as_object) else {
         records.push(ExternalRecord::Raw {
@@ -409,7 +417,9 @@ fn claude_local_message_records(
                             text_pending = true;
                         }
                     }
-                    "thinking" => {}
+                    "thinking" => {
+                        *skipped.entry("skipped_thinking".into()).or_default() += 1;
+                    }
                     "tool_use" => {
                         flush_claude_text(&mut text, &mut text_pending, &role, records);
                         let tool_call_id = part_obj
@@ -1712,6 +1722,24 @@ mod tests {
         ));
         assert_eq!(
             parsed.unknown_fields.get("skipped_sidechain").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            parsed.unknown_fields.get("skipped_thinking").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            parsed
+                .unknown_fields
+                .get("skipped_queue_operation")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            parsed
+                .unknown_fields
+                .get("skipped_last_prompt")
+                .map(String::as_str),
             Some("1")
         );
     }
