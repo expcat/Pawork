@@ -58,7 +58,6 @@ pub struct ResourceLimits {
 pub struct SandboxPolicy {
     pub filesystem: FilesystemPolicy,
     pub network_mode: NetworkMode,
-    pub network_allow_hosts: Vec<String>,
     pub allow_spawn: bool,
     pub max_procs: Option<u32>,
     pub env_clear: bool,
