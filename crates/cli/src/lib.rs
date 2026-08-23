@@ -277,13 +277,21 @@ pub enum SessionsCommand {
     },
     /// 导入 session（export v3 / compat / pi）
     Import {
-        path: std::path::PathBuf,
+        /// 单文件路径;省略时须提供 --from
+        path: Option<std::path::PathBuf>,
         /// export|compat|pi
         #[arg(long)]
         format: Option<String>,
         /// compat 来源：claude|codex|grok|cursor
         #[arg(long)]
         source: Option<String>,
+        /// 从本机会话目录批量导入:claude|codex(与 <path> 互斥)
+        #[arg(
+            long,
+            value_name = "claude|codex",
+            conflicts_with_all = ["path", "format", "source"]
+        )]
+        from: Option<String>,
     },
     /// 从历史事件处分叉出新 branch
     Fork {
@@ -858,14 +866,30 @@ mod tests {
                     path,
                     format,
                     source,
+                    from,
                 },
             } => {
-                assert_eq!(path, std::path::PathBuf::from("ses.export.json"));
+                assert_eq!(path, Some(std::path::PathBuf::from("ses.export.json")));
                 assert_eq!(format.as_deref(), Some("export"));
                 assert!(source.is_none());
+                assert!(from.is_none());
             }
             other => panic!("unexpected {other:?}"),
         }
+
+        // --from 批量导入与单文件 format/source 语义互斥。
+        assert!(Cli::try_parse_from([
+            "pawork", "sessions", "import", "--from", "claude", "--format", "export",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "pawork", "sessions", "import", "--from", "codex", "--source", "codex",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "pawork", "sessions", "import", "ses.export.json", "--from", "claude",
+        ])
+        .is_err());
     }
 
     #[test]

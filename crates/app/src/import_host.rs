@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use pawork_workspace::import::mcp::McpServerConfig as CompatMcpServer;
-use pawork_workspace::import::{CompatPayload, ExternalSource};
+use pawork_workspace::import::{CompatPayload, ExternalSource, LocalSessionFile, LocalSessionSource};
 use pawork_workspace::config::{workspace_config_path, PaworkConfig};
 use pawork_domain::SessionId;
 use pawork_storage::session::{
@@ -101,6 +101,15 @@ pub(crate) struct FileSnapshot {
 }
 
 impl AppCore {
+    /// 只读发现本机会话文件(`sessions import --from` 消费;home_root 主要用于测试)。
+    pub fn scan_local_sessions(
+        &self,
+        source: LocalSessionSource,
+        home_root: Option<&Path>,
+    ) -> Result<Vec<LocalSessionFile>, AppError> {
+        self.imports.scan_local_sessions(source, home_root)
+    }
+
     pub fn preview_compat_import(
         &self,
         tool: ExternalSource,

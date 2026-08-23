@@ -11,6 +11,8 @@
 > **DSH 主参考现态复核补充**:`ctx.sessions.fork` 接受「闭合 turn 之后的稳定位置」,包括 `turn/end` 或其后的 standalone log-only event,并拒绝 open turn 内部边界；映射到 Pawork 后，storage 白名单为 `RunCompleted` / `RunCancelled` / `RunFailed` 与 standalone `CompactionCompleted`。`MessageCommitted`（含 user message）不单独证明 turn 已闭合,仍拒绝；Desktop 当前只投影前三类 run 终态,故其 Fork 菜单边界不扩 wire、不为 compaction 伪造条目。
 >
 > **2026-08-23 波 B 回写(代码与自动门禁收口)**:① compact 读取与 retention 二次过滤统一到 active lineage；snapshot 从 append-only event ledger 重建消息并按 lineage 可见水位折叠，父支晚压缩、压缩后从旧边界 late-fork、兄弟支隔离均有回归；host compact 错误显式上抛，无持久化 outcome 水位固定为 0。host 仍先读 lineage 组装 retention inputs，storage 再读同 lineage 做权威范围校验，这是跨 crate 输入边界的有意双检，不是 Provider/branch 特判。② `fork_from_event` 白名单为三类 run 终态 + standalone `CompactionCompleted`，同 tuple 重试幂等；Pi marker 全部折叠为 main 上 `pi.branch_collapsed`（含无 branch_id 的 null 追溯形态），不造零事件 branch。③ protocol 增非 wire `ForkBoundary`，Desktop 渲染与动作入口双重 gate，并在同 session 切 branch 时重置 timeline/seen/锚点基线。④ GLM reviewer 未发现源码 P0–P2；首轮唯一 P1 是漏跑 opt-in compaction tests，补跑 `--features compaction` 后 125 passed / 1 ignored + 5 integration passed；P3 Pi 无 ID marker 已补断言。schema/wire/export v3/波 A fixture 均零 diff。默认 Desktop 构建受本机缺 Metal Toolchain 阻断，改用 `gpui/runtime_shaders` 后 28/28；`cargo check -p pawork` 通过。真实 Provider fork/compact 冒烟未执行，留 §5 阶段人工验收，不阻塞波 C。
+>
+> **2026-08-23 波 C 回写(K-05 收口)**:① 样本取得——本机两格式真实存在,主代理结构采样(只读键名/类型分布,不取内容)后由 worker 合成脱敏 fixture,非 fail-closed。② 落地:compat 解析双形态——`parse_claude` 自动判定 claude.ai 导出 JSON 与 Claude Code 本地 JSONL(sidechain/thinking/queue-operation/last-prompt 跳过并计数,标题取真实键 `aiTitle`/`customTitle`,未知行 type 落 Raw);`parse_codex` 自动判定平铺 typed entry 与 rollout 信封 `{timestamp,type,payload}`(session_meta.payload.id 取 identity,response_item 含 agent_message/user_message 映射,developer/reasoning/event_msg 镜像跳过,event_msg 仅 token_count→Usage);旧路径逐字节不变;损坏文件(零 record 且有 unparseable 行)fail-closed。③ workspace 新增 `session_scan` 只读发现原语(有界、不跟 symlink、根缺失为空、只取元数据;Claude 排除 `agent-*.jsonl` sidecar,因其 sessionId 复用父会话);CLI `sessions import --from claude|codex` 批量导入经 app facade(design.md §2 依赖边不变),文件级 fail-continue 聚合报告;.jsonl 格式嗅探签名化(codex 信封 / claude sessionId,首行整行读取——8KiB 截断曾被真实 session_meta 大首行证伪)。④ fork 往返回归走真实 `fork_from_event` 生产路径。⑤ 写入集实态扩为 storage(import)+workspace(import)+app facade+cli(接线裁决:config 导入惯例 cli→app→workspace,不加 cli→workspace 依赖边),已回写。验证:storage 108+5 / workspace session_scan 定向 / app 135+6+13+2 / cli 39+16+25 全绿,`cargo check -p pawork` 绿;隔离数据目录真实样本导入 + export 还原 + `--from` 幂等通过。收口审查用本机键级统计坐实 Claude `agent-*.jsonl` sidecar 与父会话共用 sessionId,扫描层已排除;P3 登记 ROADMAP §4。
 
 ## 1. ADR-040 决策点(波 0;推荐已列,须用户确认)
 
@@ -52,4 +54,4 @@
 - [x] compact 读取/过滤/投影折叠按同一 lineage；父/子/兄弟双向回归绿且 fixture 字节零 diff(波 B,2026-08-23)
 - [x] fork 只接受闭合 turn 后的稳定事件(run 终态 / compaction 完成)、同点重试幂等；Pi 仅产出 main 单分支；Desktop 切支 reset 回归绿(波 B,2026-08-23)
 - [x] fork/resume/export v3 自动回归绿(波 B,2026-08-23)
-- [ ] K-05 完成或 fail-closed 登记(缺样本);冒烟通过;v3_plan §3 更新
+- [x] K-05 完成(两格式真实冒烟通过,2026-08-23);冒烟通过;v3_plan §3 更新

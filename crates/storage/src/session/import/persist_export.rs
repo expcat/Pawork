@@ -398,8 +398,8 @@ mod tests {
 
     use pawork_domain::{
         AgentEvent, AgentEventEnvelope, ContentPart, EventId, EventSequence, Message, MessageId,
-        MessageMetadata, MessageRole, PrincipalId, RunId, SessionId, TenantId, TextContent,
-        Timestamp, ToolCallId,
+        MessageMetadata, MessageRole, PrincipalId, RunId, SessionId, StopReason, TenantId,
+        TextContent, Timestamp, TokenUsage, ToolCallId,
     };
 
     use super::*;
@@ -611,6 +611,135 @@ mod tests {
                 .map(|event| event.sequence.value())
                 .collect::<Vec<_>>(),
             vec![2]
+        );
+
+        store.shutdown().await.expect("shutdown");
+        store2.shutdown().await.expect("shutdown2");
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(path2);
+    }
+
+    #[tokio::test]
+    async fn fork_from_event_export_import_round_trip_preserves_branch_lineage() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-fork-export");
+        store
+            .create_session(&session, "fork round trip", Timestamp::from_unix_millis(1))
+            .await
+            .expect("session");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    1,
+                    AgentEvent::RunStarted {
+                        trigger_message_id: MessageId::from("m0"),
+                    },
+                ),
+            )
+            .await
+            .expect("main event 1");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    2,
+                    AgentEvent::MessageCommitted {
+                        message: Message {
+                            id: MessageId::from("m1"),
+                            role: MessageRole::User,
+                            content: vec![ContentPart::Text(TextContent {
+                                text: "before fork".into(),
+                            })],
+                            metadata: MessageMetadata::default(),
+                        },
+                    },
+                ),
+            )
+            .await
+            .expect("main event 2");
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                event(
+                    &session,
+                    3,
+                    AgentEvent::RunCompleted {
+                        stop_reason: StopReason::Completed,
+                        usage: TokenUsage::default(),
+                    },
+                ),
+            )
+            .await
+            .expect("main event 3");
+
+        // 生产路径 fork:从 run 终态事件分叉并切换,再在 fork 分支追加。
+        store
+            .fork_from_event(&session, "fork-a", &EventId::from("event-3"))
+            .await
+            .expect("fork from event");
+        store
+            .switch_branch(&session, "fork-a")
+            .await
+            .expect("switch fork");
+        store
+            .append_event(
+                "fork-a",
+                event(
+                    &session,
+                    4,
+                    AgentEvent::MessageCommitted {
+                        message: Message {
+                            id: MessageId::from("m3"),
+                            role: MessageRole::Assistant,
+                            content: vec![ContentPart::Text(TextContent {
+                                text: "after fork".into(),
+                            })],
+                            metadata: MessageMetadata::default(),
+                        },
+                    },
+                ),
+            )
+            .await
+            .expect("fork event");
+
+        let export = store.export_session(&session).await.expect("export");
+        assert_eq!(export.schema_version, EXPORT_SCHEMA_VERSION);
+        assert_eq!(export.branches.len(), 2);
+        let fork_branch = export
+            .branches
+            .iter()
+            .find(|branch| branch.branch_id == "fork-a")
+            .expect("fork branch");
+        assert_eq!(
+            fork_branch.parent_branch_id.as_deref(),
+            Some(DEFAULT_BRANCH_ID)
+        );
+        assert_eq!(fork_branch.forked_from_event_id.as_deref(), Some("event-3"));
+        assert_eq!(export.active_branch, "fork-a");
+
+        let path2 = temp_path();
+        let (store2, _) = SessionStore::open(&path2).await.expect("store2");
+        store2
+            .import_session(&export, &export.tenant_id, &export.principal_id)
+            .await
+            .expect("import");
+        let re_exported = store2.export_session(&session).await.expect("re-export");
+        assert_eq!(re_exported.events, export.events);
+        assert_eq!(re_exported.branches, export.branches);
+        assert_eq!(re_exported.active_branch, export.active_branch);
+        assert_eq!(
+            store2
+                .events_by_branch(&session, "fork-a", 1, 10)
+                .await
+                .expect("fork events")
+                .iter()
+                .map(|event| event.sequence.value())
+                .collect::<Vec<_>>(),
+            vec![4]
         );
 
         store.shutdown().await.expect("shutdown");

@@ -1,7 +1,7 @@
 //! `pawork sessions list/show`。
 
 use pawork_app::{
-    parse_session_source, AppCore, SessionImportFormat, SessionImportOutcome,
+    parse_session_source, AppCore, LocalSessionSource, SessionImportFormat, SessionImportOutcome,
 };
 use pawork_domain::{ContentPart, Message, MessageRole};
 
@@ -20,7 +20,8 @@ pub async fn run_sessions(
             path,
             format,
             source,
-        } => import(core, path, format, source, json).await,
+            from,
+        } => import(core, path, format, source, from, json).await,
         SessionsCommand::Fork {
             session,
             event,
@@ -243,18 +244,32 @@ async fn export(
 
 async fn import(
     core: &AppCore,
-    path: std::path::PathBuf,
+    path: Option<std::path::PathBuf>,
     format: Option<String>,
     source: Option<String>,
+    from: Option<String>,
     json: bool,
 ) -> Result<(), CliError> {
+    if let Some(from) = from.as_deref() {
+        return import_from_local(core, from, json).await;
+    }
+    let Some(path) = path else {
+        return Err(CliError::Usage(
+            "sessions import requires <path> or --from claude|codex".into(),
+        ));
+    };
+    let mut sniffed_source = None;
     let format = match format.as_deref() {
         Some(name) => SessionImportFormat::parse(name)?,
-        None => detect_session_format(&path)?,
+        None => {
+            let (format, source) = detect_session_format(&path)?;
+            sniffed_source = source;
+            format
+        }
     };
     let source = match source.as_deref() {
         Some(name) => Some(parse_session_source(name)?),
-        None => None,
+        None => sniffed_source,
     };
     let outcome = core.import_session_file(&path, format, source).await?;
     match outcome {
@@ -312,28 +327,224 @@ async fn import(
     Ok(())
 }
 
-fn detect_session_format(path: &std::path::Path) -> Result<SessionImportFormat, CliError> {
+async fn import_from_local(core: &AppCore, from: &str, json: bool) -> Result<(), CliError> {
+    let source = parse_local_session_source(from)?;
+    let files = core.scan_local_sessions(source, None)?;
+    if files.is_empty() {
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "format": "compat",
+                    "from": source.as_str(),
+                    "files": [],
+                    "imported": 0,
+                    "deduplicated": 0,
+                    "failed": 0,
+                })
+            );
+        } else {
+            eprintln!("no local {source} sessions found");
+        }
+        return Ok(());
+    }
+    let compat_source = compat_source_for(source);
+    let mut reports = Vec::new();
+    let mut imported = 0usize;
+    let mut deduplicated = 0usize;
+    let mut failed = 0usize;
+    for file in files {
+        let entry = match core
+            .import_session_file(
+                &file.path,
+                SessionImportFormat::Compat,
+                Some(compat_source),
+            )
+            .await
+        {
+            Ok(SessionImportOutcome::Compat(report)) => {
+                if report.deduplicated {
+                    deduplicated += 1;
+                } else {
+                    imported += 1;
+                }
+                serde_json::json!({
+                    "path": file.path,
+                    "status": if report.deduplicated { "deduplicated" } else { "imported" },
+                    "session_id": report.session_id,
+                    "imported_events": report.imported_events,
+                })
+            }
+            Ok(_) => {
+                failed += 1;
+                serde_json::json!({
+                    "path": file.path,
+                    "status": "error",
+                    "error": "unexpected import outcome",
+                })
+            }
+            Err(error) => {
+                failed += 1;
+                serde_json::json!({
+                    "path": file.path,
+                    "status": "error",
+                    "error": error.to_string(),
+                })
+            }
+        };
+        reports.push(entry);
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "format": "compat",
+                "from": source.as_str(),
+                "files": reports,
+                "imported": imported,
+                "deduplicated": deduplicated,
+                "failed": failed,
+            })
+        );
+    } else {
+        for report in &reports {
+            let path = report["path"].as_str().unwrap_or_default();
+            match report["status"].as_str() {
+                Some("imported") => println!(
+                    "imported compat session {} ({} events) <- {path}",
+                    report["session_id"].as_str().unwrap_or_default(),
+                    report["imported_events"].as_u64().unwrap_or(0),
+                ),
+                Some("deduplicated") => println!(
+                    "deduplicated {} <- {path}",
+                    report["session_id"].as_str().unwrap_or_default(),
+                ),
+                _ => eprintln!(
+                    "error importing {path}: {}",
+                    report["error"].as_str().unwrap_or("unknown error"),
+                ),
+            }
+        }
+        println!("summary: {imported} imported, {deduplicated} deduplicated, {failed} failed");
+    }
+    if failed > 0 {
+        return Err(CliError::Turn(format!(
+            "{failed} local session file(s) failed to import"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_local_session_source(name: &str) -> Result<LocalSessionSource, CliError> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "claude" => Ok(LocalSessionSource::Claude),
+        "codex" => Ok(LocalSessionSource::Codex),
+        other => Err(CliError::Usage(format!(
+            "unknown local session source '{other}' (claude|codex)"
+        ))),
+    }
+}
+
+fn compat_source_for(source: LocalSessionSource) -> pawork_storage::session::ExternalSource {
+    match source {
+        LocalSessionSource::Claude => pawork_storage::session::ExternalSource::Claude,
+        LocalSessionSource::Codex => pawork_storage::session::ExternalSource::Codex,
+    }
+}
+
+fn detect_session_format(
+    path: &std::path::Path,
+) -> Result<
+    (
+        SessionImportFormat,
+        Option<pawork_storage::session::ExternalSource>,
+    ),
+    CliError,
+> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
     if name.ends_with(".jsonl") {
-        return Ok(SessionImportFormat::Pi);
+        return match sniff_jsonl_session(path)? {
+            Some((format, source)) => Ok((format, Some(source))),
+            None => Ok((SessionImportFormat::Pi, None)),
+        };
     }
     if name.ends_with(".export.json") {
-        return Ok(SessionImportFormat::Export);
+        return Ok((SessionImportFormat::Export, None));
     }
     let text = std::fs::read_to_string(path)?;
     let trimmed = text.trim_start();
     if trimmed.starts_with('{') {
         if trimmed.contains("\"schema_version\"") {
-            return Ok(SessionImportFormat::Export);
+            return Ok((SessionImportFormat::Export, None));
         }
-        return Ok(SessionImportFormat::Compat);
+        return Ok((SessionImportFormat::Compat, None));
     }
     Err(CliError::Usage(
         "cannot detect session format; pass --format export|compat|pi".into(),
     ))
+}
+
+/// .jsonl 首非空行签名嗅探(逐行读取,读完首个完整非空行即停):Codex 信封(timestamp+type+payload)
+/// → compat/codex;Claude 本地行(有 sessionId、无 payload、有 type;首行常为
+/// ai-title/queue-operation 等无 message 行)→ compat/claude;签名不明确 → None(维持 Pi 默认)。
+fn sniff_jsonl_session(
+    path: &std::path::Path,
+) -> Result<
+    Option<(
+        SessionImportFormat,
+        pawork_storage::session::ExternalSource,
+    )>,
+    CliError,
+> {
+    use std::io::{BufRead as _, BufReader};
+
+    let file = std::fs::File::open(path)?;
+    let mut first = String::new();
+    let mut reader = BufReader::new(file);
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        if !line.trim().is_empty() {
+            first = line;
+            break;
+        }
+    }
+    let first = first.trim();
+    if first.is_empty() {
+        return Ok(None);
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(first) else {
+        return Ok(None);
+    };
+    let Some(obj) = value.as_object() else {
+        return Ok(None);
+    };
+    if obj.contains_key("timestamp")
+        && obj.contains_key("type")
+        && obj.contains_key("payload")
+    {
+        return Ok(Some((
+            SessionImportFormat::Compat,
+            pawork_storage::session::ExternalSource::Codex,
+        )));
+    }
+    // Claude Code 本地行:sessionId 必有,message 可缺(标题/噪声行先行);
+    // payload 不存在用于排除 Codex 信封形态。
+    if obj.contains_key("sessionId")
+        && !obj.contains_key("payload")
+        && obj.contains_key("type")
+    {
+        return Ok(Some((
+            SessionImportFormat::Compat,
+            pawork_storage::session::ExternalSource::Claude,
+        )));
+    }
+    Ok(None)
 }
 
 pub(crate) fn format_millis(ms: i64) -> String {
@@ -372,6 +583,112 @@ fn json_err(error: serde_json::Error) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_jsonl_by_first_line_signature() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let codex = dir.path().join("rollout.jsonl");
+        std::fs::write(
+            &codex,
+            "{\"timestamp\":\"2026-08-23T10:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"s\"}}\n",
+        )
+        .expect("codex");
+        let (format, source) = detect_session_format(&codex).expect("codex detect");
+        assert_eq!(format, SessionImportFormat::Compat);
+        assert!(matches!(
+            source,
+            Some(pawork_storage::session::ExternalSource::Codex)
+        ));
+
+        let claude = dir.path().join("session.jsonl");
+        std::fs::write(
+            &claude,
+            "{\"type\":\"user\",\"sessionId\":\"s1\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n",
+        )
+        .expect("claude");
+        let (format, source) = detect_session_format(&claude).expect("claude detect");
+        assert_eq!(format, SessionImportFormat::Compat);
+        assert!(matches!(
+            source,
+            Some(pawork_storage::session::ExternalSource::Claude)
+        ));
+
+        let pi = dir.path().join("pi.jsonl");
+        std::fs::write(&pi, "{\"type\":\"message\",\"role\":\"user\"}\n").expect("pi");
+        let (format, source) = detect_session_format(&pi).expect("pi detect");
+        assert_eq!(format, SessionImportFormat::Pi);
+        assert!(source.is_none());
+    }
+
+    #[test]
+    fn detects_claude_jsonl_when_first_line_has_no_message() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            "\n{\"type\":\"ai-title\",\"sessionId\":\"s1\",\"aiTitle\":\"synthetic\"}\n{\"type\":\"queue-operation\",\"sessionId\":\"s1\"}\n{\"type\":\"user\",\"sessionId\":\"s1\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n",
+        )
+        .expect("claude");
+        let (format, source) = detect_session_format(&path).expect("detect");
+        assert_eq!(format, SessionImportFormat::Compat);
+        assert!(matches!(
+            source,
+            Some(pawork_storage::session::ExternalSource::Claude)
+        ));
+    }
+
+    #[test]
+    fn detects_jsonl_when_first_line_exceeds_8k() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let padding = "p".repeat(9 * 1024);
+
+        // Codex rollout 首行 session_meta 常含超长 base_instructions(合成 padding)。
+        let codex_meta = serde_json::json!({
+            "timestamp": "2026-08-23T10:00:00.000Z",
+            "type": "session_meta",
+            "payload": {
+                "id": "synthetic-session",
+                "base_instructions": padding,
+            },
+        });
+        let codex = dir.path().join("rollout-long.jsonl");
+        std::fs::write(&codex, format!("{codex_meta}\n")).expect("codex");
+        let (format, source) = detect_session_format(&codex).expect("codex detect");
+        assert_eq!(format, SessionImportFormat::Compat);
+        assert!(matches!(
+            source,
+            Some(pawork_storage::session::ExternalSource::Codex)
+        ));
+
+        // Claude 本地首行同理:超长合成标题不得因读取截断而误落 Pi 默认。
+        let claude_title = serde_json::json!({
+            "type": "ai-title",
+            "sessionId": "synthetic-claude",
+            "aiTitle": padding,
+        });
+        let claude = dir.path().join("session-long.jsonl");
+        std::fs::write(&claude, format!("{claude_title}\n")).expect("claude");
+        let (format, source) = detect_session_format(&claude).expect("claude detect");
+        assert_eq!(format, SessionImportFormat::Compat);
+        assert!(matches!(
+            source,
+            Some(pawork_storage::session::ExternalSource::Claude)
+        ));
+    }
+
+    #[test]
+    fn parse_local_session_source_accepts_only_supported_sources() {
+        assert_eq!(
+            parse_local_session_source("claude").unwrap(),
+            LocalSessionSource::Claude
+        );
+        assert_eq!(
+            parse_local_session_source("codex").unwrap(),
+            LocalSessionSource::Codex
+        );
+        assert!(parse_local_session_source("grok").is_err());
+    }
 
     #[test]
     fn format_millis_unix_epoch() {

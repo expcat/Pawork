@@ -17,7 +17,7 @@ src/
     projection.rs  session_tree.rs  client_adapter.rs  migration.rs
     test_support.rs  fixtures/       # cfg(test) v12 升级 golden
     compaction/                  # feature compaction
-    import/                      # Pi / compat / export
+    import/                      # Pi / compat / export；compat 含 Claude Code 本地 JSONL 与 Codex rollout 信封(R6 波 C)
   blob/                          # feature blob
     artifact.rs
     protected.rs                 # feature protected
@@ -49,7 +49,7 @@ R6 波 B 起 branch snapshot 的消息以 append-only `session_events` 重建，
 ## 红线与注意事项
 
 - Secret 不落库：事件 `opaque_metadata` 经 Secret 键扫描与保形脱敏；旧 `provider_hints` 拼写只读不写。
-- Compat 导入检测到 Secret → `CompatSecretDetected`，拒绝导入。
+- Compat 导入检测到 Secret → `CompatSecretDetected`，拒绝导入。R6 波 C 起 compat 解析双形态：Claude = claude.ai 导出 JSON 或 Claude Code 本地 JSONL（自动判定；sidechain/thinking/噪声行跳过，标题取 `aiTitle`/`customTitle`）；Codex = 平铺 typed entry 或 rollout 信封 `{timestamp,type,payload}`（自动判定；developer/reasoning/event_msg 镜像跳过，未知落 Raw）。
 - 分支读取统一经 storage lineage；父支 fork 后追加/压缩不得污染旧 fork，兄弟支 compaction 互不可见。
 - PWB1：明文只在 AEAD 信封内；事件只带 `ProtectedBlobRef`；`ProtectedBlob` Debug 为 redacted。
 - 改 DDL 必须迁移 + golden；v1–v11 不改写，只追加。R6 波 A 已落 v12（`messages` 整表重建去 `DEFAULT 'main'`，无事件背书的孤儿行 fail-closed），信封 v1 不变。

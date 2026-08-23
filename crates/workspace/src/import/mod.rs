@@ -25,6 +25,7 @@ mod map;
 pub mod mcp;
 pub mod model;
 mod parse;
+mod session_scan;
 pub mod source;
 
 pub use apply::{CompatLoader, ExportOutcome, ExportReport};
@@ -34,4 +35,5 @@ pub use model::{
     ImportCategory, ImportSource, ImportStatus, IssueSeverity, PendingCredential,
     PermissionDecision,
 };
+pub use session_scan::{scan_local_sessions, LocalSessionFile, LocalSessionRoots, LocalSessionSource};
 pub use source::{ExternalSource, GlobalSource};

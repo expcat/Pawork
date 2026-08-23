@@ -11,7 +11,10 @@ use pawork_storage::session::{
     SessionExport,
 };
 use pawork_workspace::config::ConfigTier;
-use pawork_workspace::import::{CompatLoader, ExternalSource, GlobalSource, ImportStatus};
+use pawork_workspace::import::{
+    scan_local_sessions as scan_workspace_local_sessions, CompatLoader, ExternalSource,
+    GlobalSource, ImportStatus, LocalSessionFile, LocalSessionRoots, LocalSessionSource,
+};
 
 use crate::import_host::{
     apply_payload, home_dir, snapshot_files, snapshots_match, CompatImportItemView,
@@ -23,6 +26,23 @@ use crate::{AppCore, AppError};
 pub(crate) struct ImportService;
 
 impl ImportService {
+    /// 只读发现本机会话文件(Claude Code / Codex rollout)。
+    ///
+    /// `home_root` 为 None 时走 workspace 的 directories 解析;Some 用于测试与
+    /// 隔离环境。只列路径与大小,不读取内容;解析与 Secret 扫描仍在后续
+    /// import_session_file(compat)路径完成。
+    pub fn scan_local_sessions(
+        &self,
+        source: LocalSessionSource,
+        home_root: Option<&Path>,
+    ) -> Result<Vec<LocalSessionFile>, AppError> {
+        let roots = match home_root {
+            Some(home) => LocalSessionRoots::from_home(home),
+            None => LocalSessionRoots::detect()?,
+        };
+        scan_workspace_local_sessions(source, &roots).map_err(AppError::from)
+    }
+
     pub fn preview_compat_import(
         &self,
         core: &AppCore,
@@ -203,6 +223,8 @@ impl ImportService {
 
 #[cfg(test)]
 mod tests {
+    use pawork_workspace::import::LocalSessionSource;
+
     #[tokio::test]
     async fn compat_import_writes_pawork_files_and_keeps_source_mtime() {
         let workspace = tempfile::tempdir().expect("workspace");
@@ -226,6 +248,37 @@ mod tests {
         let imported = std::fs::read_to_string(workspace.path().join(".pawork/instructions.md"))
             .expect("instructions");
         assert!(imported.contains("keep diffs small"), "{imported}");
+    }
+
+    #[tokio::test]
+    async fn scan_local_sessions_lists_files_without_reading_content() {
+        let home = tempfile::tempdir().expect("home");
+        let claude = home.path().join(".claude/projects/demo");
+        std::fs::create_dir_all(&claude).expect("claude dirs");
+        std::fs::write(claude.join("session-a.jsonl"), "pending content\n")
+            .expect("claude session");
+        let codex = home.path().join(".codex/sessions/2026");
+        std::fs::create_dir_all(&codex).expect("codex dirs");
+        std::fs::write(codex.join("rollout-b.jsonl"), "pending content\n")
+            .expect("codex rollout");
+        std::fs::write(codex.join("plain.jsonl"), "pending content\n")
+            .expect("non-rollout");
+
+        let (core, _store) = crate::testsupport::mock_core(Vec::new()).await;
+        let claude_files = core
+            .scan_local_sessions(LocalSessionSource::Claude, Some(home.path()))
+            .expect("claude scan");
+        assert_eq!(claude_files.len(), 1);
+        assert!(claude_files[0].path.ends_with("session-a.jsonl"));
+        assert_eq!(claude_files[0].size_bytes, "pending content\n".len() as u64);
+
+        let codex_files = core
+            .scan_local_sessions(LocalSessionSource::Codex, Some(home.path()))
+            .expect("codex scan");
+        assert_eq!(codex_files.len(), 1);
+        assert!(codex_files[0].path.ends_with("rollout-b.jsonl"));
+
+        core.shutdown().await.expect("shutdown");
     }
 
     #[tokio::test]

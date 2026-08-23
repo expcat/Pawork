@@ -103,6 +103,7 @@ pub use pawork_workflow::task::TaskSnapshot;
 pub use plan_host::review_status_label;
 pub use tasks_host::parse_task_kind;
 pub use pawork_workspace::import::ExternalSource as CompatExternalSource;
+pub use pawork_workspace::import::{LocalSessionFile, LocalSessionSource};
 pub use pawork_policy::{ApprovalMode, RiskLevel};
 pub use pawork_storage::session::{SessionExport, SessionRecord, EXPORT_SCHEMA_VERSION};
 

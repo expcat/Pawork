@@ -212,12 +212,26 @@ const CONV_KNOWN: &[&str] = &[
     "model",
 ];
 
-/// Claude 导出 JSON 解析。
+/// Claude 解析:优先按 claude.ai 导出 JSON(顶层 `chat_messages`/`messages` 数组),
+/// 否则回落到 Claude Code 本地 JSONL 逐行解析。
 pub fn parse_claude(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
-    let value: Value = serde_json::from_str(content).map_err(|e| unparseable("claude", e))?;
-    let obj = value
-        .as_object()
-        .ok_or_else(|| unparseable_msg("claude", "expected JSON object"))?;
+    if let Ok(value) = serde_json::from_str::<Value>(content) {
+        if let Some(obj) = value.as_object() {
+            let is_export = ["chat_messages", "messages"].iter().any(|key| {
+                obj.get(*key).is_some_and(|messages| messages.as_array().is_some())
+            });
+            if is_export {
+                return parse_claude_export(obj);
+            }
+        }
+    }
+    parse_claude_local_jsonl(content)
+}
+
+/// claude.ai 导出 JSON(旧路径,行为不变)。
+fn parse_claude_export(
+    obj: &serde_json::Map<String, Value>,
+) -> Result<ParsedExternalSession, SessionStoreError> {
     let original_id = obj
         .get("conversation_id")
         .and_then(Value::as_str)
@@ -246,6 +260,236 @@ pub fn parse_claude(content: &str) -> Result<ParsedExternalSession, SessionStore
         records,
         unknown_fields: collect_unknown(obj, CLAUDE_KNOWN),
     })
+}
+
+/// Claude Code 本地 JSONL(`~/.claude/projects/**/*.jsonl`)逐行解析。
+///
+/// 映射裁决(R6 波 C 设计):user/assistant 且非 sidechain 才记录;content parts 中
+/// text 拼接、tool_use/tool_result 配对、thinking 静默跳过;ai-title/custom-title 取
+/// 标题;queue-operation/last-prompt 静默跳过;sidechain 行跳过并计数;其余未知
+/// type 进 Raw(无损哲学不变)。
+fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
+    let mut parsed = ParsedExternalSession {
+        source: Some(ExternalSource::Claude),
+        ..Default::default()
+    };
+    let mut skipped_sidechain = 0u64;
+    let mut raw_type_counts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut unparseable_lines = 0u64;
+    for (idx, raw) in content.lines().enumerate() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(e) => {
+                unparseable_lines += 1;
+                parsed
+                    .unknown_fields
+                    .insert(format!("line:{}", idx + 1), format!("unparseable: {e}"));
+                continue;
+            }
+        };
+        let Some(obj) = value.as_object() else {
+            parsed.records.push(ExternalRecord::Raw {
+                kind: format!("claude.line:{}", idx + 1),
+                payload: value.clone(),
+            });
+            continue;
+        };
+        if parsed.original_id.is_none() {
+            parsed.original_id = obj
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .map(String::from);
+        }
+        let line_type = obj.get("type").and_then(Value::as_str).unwrap_or("");
+        match line_type {
+            "user" | "assistant" => {
+                if obj
+                    .get("isSidechain")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    skipped_sidechain += 1;
+                    continue;
+                }
+                claude_local_message_records(obj, line_type, idx, &mut parsed.records);
+            }
+            "ai-title" | "custom-title" => {
+                // 真实本地格式的标题键是 aiTitle / customTitle(2026-08-23 本机
+                // 样本核实);保留 title 兜底以兼容手工构造的导出。
+                let title_key = if line_type == "ai-title" {
+                    "aiTitle"
+                } else {
+                    "customTitle"
+                };
+                let title = obj
+                    .get(title_key)
+                    .and_then(Value::as_str)
+                    .or_else(|| obj.get("title").and_then(Value::as_str));
+                if let Some(title) = title {
+                    parsed.title = Some(title.to_string());
+                }
+            }
+            "queue-operation" | "last-prompt" => {}
+            other => {
+                *raw_type_counts.entry(other.to_string()).or_default() += 1;
+                parsed.records.push(ExternalRecord::Raw {
+                    kind: format!("claude.type:{other}"),
+                    payload: value.clone(),
+                });
+            }
+        }
+    }
+    if skipped_sidechain > 0 {
+        parsed
+            .unknown_fields
+            .insert("skipped_sidechain".into(), skipped_sidechain.to_string());
+    }
+    for (kind, count) in raw_type_counts {
+        parsed
+            .unknown_fields
+            .insert(format!("raw_type:{kind}"), count.to_string());
+    }
+    // 零记录且存在解析失败行:大概率是损坏/错误来源文件,fail-closed 拒绝导入;
+    // 全为合法噪声/跳过行(sidechain/title/queue-operation 等)时维持 Ok 空导入。
+    if parsed.records.is_empty() && unparseable_lines > 0 {
+        return Err(unparseable_msg(
+            "claude",
+            &format!("no records parsed; {unparseable_lines} unparseable line(s)"),
+        ));
+    }
+    Ok(parsed)
+}
+
+/// 把 Claude Code 本地行的 `message.content` 映射为记录序列。
+///
+/// 文本 parts 先缓冲;遇到 tool_use/tool_result 时先冲刷已缓冲文本,保持
+/// [text, tool_use] 的自然顺序。thinking 与未知 part 静默跳过。
+fn claude_local_message_records(
+    obj: &serde_json::Map<String, Value>,
+    line_type: &str,
+    idx: usize,
+    records: &mut Vec<ExternalRecord>,
+) {
+    let Some(message) = obj.get("message").and_then(Value::as_object) else {
+        records.push(ExternalRecord::Raw {
+            kind: format!("claude.type:{line_type}"),
+            payload: Value::Object(obj.clone()),
+        });
+        return;
+    };
+    let role = message
+        .get("role")
+        .and_then(Value::as_str)
+        .and_then(parse_role_name)
+        .unwrap_or(if line_type == "assistant" {
+            MessageRole::Assistant
+        } else {
+            MessageRole::User
+        });
+    let mut text = String::new();
+    let mut text_pending = false;
+    match message.get("content") {
+        Some(Value::String(s)) => {
+            text.push_str(s);
+            text_pending = true;
+        }
+        Some(Value::Array(parts)) => {
+            for part in parts {
+                let Some(part_obj) = part.as_object() else {
+                    continue;
+                };
+                match part_obj.get("type").and_then(Value::as_str).unwrap_or("") {
+                    "text" => {
+                        if let Some(t) = part_obj.get("text").and_then(Value::as_str) {
+                            text.push_str(t);
+                            text_pending = true;
+                        }
+                    }
+                    "thinking" => {}
+                    "tool_use" => {
+                        flush_claude_text(&mut text, &mut text_pending, &role, records);
+                        let tool_call_id = part_obj
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(String::from)
+                            .unwrap_or_else(|| format!("claude-call-{}", idx + 1));
+                        let name = part_obj
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("tool")
+                            .to_string();
+                        let arguments = part_obj.get("input").map(|input| input.to_string());
+                        records.push(ExternalRecord::ToolCall {
+                            tool_call_id,
+                            name,
+                            arguments,
+                        });
+                    }
+                    "tool_result" => {
+                        flush_claude_text(&mut text, &mut text_pending, &role, records);
+                        let tool_call_id = part_obj
+                            .get("tool_use_id")
+                            .and_then(Value::as_str)
+                            .map(String::from)
+                            .unwrap_or_else(|| format!("claude-call-{}", idx + 1));
+                        let content = claude_tool_result_text(part_obj);
+                        let is_error = part_obj
+                            .get("is_error")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        records.push(ExternalRecord::ToolResult {
+                            tool_call_id,
+                            content,
+                            is_error,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    flush_claude_text(&mut text, &mut text_pending, &role, records);
+}
+
+fn flush_claude_text(
+    text: &mut String,
+    text_pending: &mut bool,
+    role: &MessageRole,
+    records: &mut Vec<ExternalRecord>,
+) {
+    if !*text_pending || text.is_empty() {
+        text.clear();
+        *text_pending = false;
+        return;
+    }
+    let buffer = std::mem::take(text);
+    *text_pending = false;
+    records.push(match role {
+        MessageRole::Assistant => ExternalRecord::AssistantMessage { text: buffer },
+        _ => ExternalRecord::UserMessage { text: buffer },
+    });
+}
+
+/// tool_result 的 content 兼容 string 与 text blocks 数组两种形态。
+fn claude_tool_result_text(part_obj: &serde_json::Map<String, Value>) -> String {
+    match part_obj.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(parts)) => {
+            let mut buffer = String::new();
+            for part in parts {
+                if let Some(t) = part.get("text").and_then(Value::as_str) {
+                    buffer.push_str(t);
+                }
+            }
+            buffer
+        }
+        _ => String::new(),
+    }
 }
 
 /// Grok 导出 JSON 解析。
@@ -308,8 +552,33 @@ fn parse_json_conversation(
     })
 }
 
-/// Codex rollout JSONL 解析（逐行 typed entry）。
+/// Codex rollout 解析:首非空行同时含 `timestamp`+`type`+`payload` 时走信封模式,
+/// 否则维持旧的平铺 typed entry JSONL 路径(逐字节不变)。
 pub fn parse_codex(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
+    if is_codex_envelope(content) {
+        return parse_codex_envelope(content);
+    }
+    parse_codex_flat(content)
+}
+
+fn is_codex_envelope(content: &str) -> bool {
+    content
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+        .and_then(|value| {
+            value.as_object().map(|obj| {
+                obj.contains_key("timestamp")
+                    && obj.contains_key("type")
+                    && obj.contains_key("payload")
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// 旧平铺 typed entry JSONL(行为不变)。
+fn parse_codex_flat(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
     let mut parsed = ParsedExternalSession {
         source: Some(ExternalSource::Codex),
         ..Default::default()
@@ -406,6 +675,246 @@ pub fn parse_codex(content: &str) -> Result<ParsedExternalSession, SessionStoreE
     }
     parsed.original_id = original_id;
     Ok(parsed)
+}
+
+/// Codex rollout 信封模式(`{timestamp,type,payload}` 逐行)。
+///
+/// 映射裁决(R6 波 C 设计):`session_meta.payload.id` 取 original_id;
+/// `response_item` 按 payload.type 派发(message 只映射 user/assistant,developer/system
+/// 跳过;agent_message/user_message → AssistantMessage/UserMessage,文本提取复用
+/// codex_message_text,无文本不落记录;function_call/custom_tool_call → ToolCall;两类
+/// output → ToolResult;reasoning 跳过;未知 payload.type → Raw);`event_msg` 只取
+/// token_count → Usage,其余与
+/// response_item 镜像的条目静默跳过防重复;turn_context/world_state/
+/// inter_agent_communication_metadata 跳过;跳过项在 unknown_fields 记 `skipped_*` 计数。
+fn parse_codex_envelope(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
+    let mut parsed = ParsedExternalSession {
+        source: Some(ExternalSource::Codex),
+        ..Default::default()
+    };
+    let mut skipped: BTreeMap<String, u64> = BTreeMap::new();
+    let mut unparseable_lines = 0u64;
+    for (idx, raw) in content.lines().enumerate() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(e) => {
+                unparseable_lines += 1;
+                parsed
+                    .unknown_fields
+                    .insert(format!("line:{}", idx + 1), format!("unparseable: {e}"));
+                continue;
+            }
+        };
+        let Some(obj) = value.as_object() else {
+            parsed.records.push(ExternalRecord::Raw {
+                kind: format!("codex.line:{}", idx + 1),
+                payload: value.clone(),
+            });
+            continue;
+        };
+        let envelope_type = obj.get("type").and_then(Value::as_str).unwrap_or("");
+        let payload = obj.get("payload").cloned().unwrap_or(Value::Null);
+        match envelope_type {
+            "session_meta" => {
+                if parsed.original_id.is_none() {
+                    parsed.original_id =
+                        payload.get("id").and_then(Value::as_str).map(String::from);
+                }
+            }
+            "response_item" => {
+                codex_response_item_records(&payload, idx, &mut parsed.records, &mut skipped);
+            }
+            "event_msg" => {
+                let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+                if payload_type == "token_count" {
+                    parsed.records.push(codex_token_count_usage(&payload));
+                } else {
+                    *skipped.entry("skipped_event_msg".into()).or_default() += 1;
+                }
+            }
+            "turn_context" => {
+                *skipped.entry("skipped_turn_context".into()).or_default() += 1;
+            }
+            "world_state" => {
+                *skipped.entry("skipped_world_state".into()).or_default() += 1;
+            }
+            "inter_agent_communication_metadata" => {
+                *skipped
+                    .entry("skipped_inter_agent_communication_metadata".into())
+                    .or_default() += 1;
+            }
+            other => {
+                parsed.records.push(ExternalRecord::Raw {
+                    kind: format!("codex.type:{other}"),
+                    payload: value.clone(),
+                });
+            }
+        }
+    }
+    for (key, count) in skipped {
+        parsed.unknown_fields.insert(key, count.to_string());
+    }
+    // 与 Claude 本地路径同一裁决:零记录 + 解析失败行 → fail-closed;
+    // 全为合法跳过行(session_meta/reasoning/event_msg 镜像等)时维持 Ok 空导入。
+    if parsed.records.is_empty() && unparseable_lines > 0 {
+        return Err(unparseable_msg(
+            "codex",
+            &format!("no records parsed; {unparseable_lines} unparseable line(s)"),
+        ));
+    }
+    Ok(parsed)
+}
+
+fn codex_response_item_records(
+    payload: &Value,
+    idx: usize,
+    records: &mut Vec<ExternalRecord>,
+    skipped: &mut BTreeMap<String, u64>,
+) {
+    let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+    match payload_type {
+        "message" => {
+            let role = payload.get("role").and_then(Value::as_str).unwrap_or("");
+            match role {
+                "user" | "assistant" => {
+                    if let Some(text) = codex_message_text(payload) {
+                        records.push(if role == "assistant" {
+                            ExternalRecord::AssistantMessage { text }
+                        } else {
+                            ExternalRecord::UserMessage { text }
+                        });
+                    }
+                }
+                "developer" | "system" => {
+                    *skipped.entry("skipped_developer_message".into()).or_default() += 1;
+                }
+                _ => {
+                    *skipped.entry("skipped_message".into()).or_default() += 1;
+                }
+            }
+        }
+        "agent_message" | "user_message" => {
+            if let Some(text) = codex_message_text(payload) {
+                records.push(if payload_type == "agent_message" {
+                    ExternalRecord::AssistantMessage { text }
+                } else {
+                    ExternalRecord::UserMessage { text }
+                });
+            }
+        }
+        "function_call" | "custom_tool_call" => {
+            let tool_call_id = payload
+                .get("call_id")
+                .or_else(|| payload.get("id"))
+                .and_then(Value::as_str)
+                .map(String::from)
+                .unwrap_or_else(|| format!("codex-call-{}", idx + 1));
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("tool")
+                .to_string();
+            let arguments = payload
+                .get("arguments")
+                .and_then(Value::as_str)
+                .map(String::from)
+                .or_else(|| payload.get("input").and_then(Value::as_str).map(String::from));
+            records.push(ExternalRecord::ToolCall {
+                tool_call_id,
+                name,
+                arguments,
+            });
+        }
+        "function_call_output" | "custom_tool_call_output" => {
+            let tool_call_id = payload
+                .get("call_id")
+                .or_else(|| payload.get("id"))
+                .and_then(Value::as_str)
+                .map(String::from)
+                .unwrap_or_else(|| format!("codex-call-{}", idx + 1));
+            let content = payload
+                .get("output")
+                .and_then(Value::as_str)
+                .map(String::from)
+                .or_else(|| payload.get("content").and_then(Value::as_str).map(String::from))
+                .unwrap_or_default();
+            let is_error = payload
+                .get("is_error")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            records.push(ExternalRecord::ToolResult {
+                tool_call_id,
+                content,
+                is_error,
+            });
+        }
+        "reasoning" => {
+            *skipped.entry("skipped_reasoning".into()).or_default() += 1;
+        }
+        other => {
+            records.push(ExternalRecord::Raw {
+                kind: format!("codex.payload:{other}"),
+                payload: payload.clone(),
+            });
+        }
+    }
+}
+
+/// message payload 的 content 拼接:仅 input_text/output_text(以及 string content),
+/// encrypted_content 等其余 part 跳过;无任何文本 part 时不落空消息。
+fn codex_message_text(payload: &Value) -> Option<String> {
+    match payload.get("content") {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Array(parts)) => {
+            let mut buffer = String::new();
+            let mut saw_text = false;
+            for part in parts {
+                let Some(part_obj) = part.as_object() else {
+                    continue;
+                };
+                match part_obj.get("type").and_then(Value::as_str).unwrap_or("") {
+                    "input_text" | "output_text" => {
+                        saw_text = true;
+                        if let Some(t) = part_obj.get("text").and_then(Value::as_str) {
+                            buffer.push_str(t);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if saw_text {
+                Some(buffer)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// token_count payload:优先平铺 input/output_tokens,其次 info.total_token_usage。
+fn codex_token_count_usage(payload: &Value) -> ExternalRecord {
+    let totals = payload
+        .get("info")
+        .and_then(|info| info.get("total_token_usage"));
+    let input_tokens = payload
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| totals.and_then(|t| t.get("input_tokens")).and_then(Value::as_u64))
+        .unwrap_or(0);
+    let output_tokens = payload
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| totals.and_then(|t| t.get("output_tokens")).and_then(Value::as_u64))
+        .unwrap_or(0);
+    ExternalRecord::Usage {
+        input_tokens,
+        output_tokens,
+    }
 }
 
 /// 把一条消息对象归一为 [`ExternalRecord`]。`role_key` 决定从 `role` 还是 `sender`
@@ -1076,6 +1585,60 @@ pub(crate) const CODEX_JSONL: &str = concat!(
     r#"{"type":"agent_message_edit","payload":{"rev":2}}"#,
 );
 
+/// Claude Code 本地 JSONL 合成样本(结构对齐 2026-08-23 本机真实采样,内容全虚构)。
+#[cfg(test)]
+pub(crate) const CLAUDE_LOCAL_JSONL: &str = concat!(
+    r#"{"type":"ai-title","sessionId":"claude-local-synthetic","aiTitle":"synthetic draft"}"#,
+    "\n",
+    r#"{"type":"custom-title","sessionId":"claude-local-synthetic","customTitle":"synthetic demo"}"#,
+    "\n",
+    r#"{"type":"user","sessionId":"claude-local-synthetic","uuid":"u1","parentUuid":null,"isSidechain":false,"timestamp":"2026-08-23T10:00:00.000Z","message":{"role":"user","content":"run the synthetic check"},"cwd":"/tmp/synthetic","version":"1.0.0","gitBranch":"main"}"#,
+    "\n",
+    r#"{"type":"assistant","sessionId":"claude-local-synthetic","uuid":"a1","parentUuid":"u1","isSidechain":false,"timestamp":"2026-08-23T10:00:01.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"internal reasoning"},{"type":"text","text":"on it"},{"type":"tool_use","id":"toolu_synth_1","name":"shell","input":{"command":"cargo test -p synthetic"}}]}}"#,
+    "\n",
+    r#"{"type":"user","sessionId":"claude-local-synthetic","uuid":"u2","parentUuid":"a1","isSidechain":false,"timestamp":"2026-08-23T10:00:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_synth_1","content":[{"type":"text","text":"test result: ok. 1 passed"}],"is_error":false}]}}"#,
+    "\n",
+    r#"{"type":"user","sessionId":"claude-local-synthetic","uuid":"u3","parentUuid":"u1","isSidechain":true,"timestamp":"2026-08-23T10:00:03.000Z","message":{"role":"user","content":"sidechain content must be skipped"}}"#,
+    "\n",
+    r#"{"type":"queue-operation","sessionId":"claude-local-synthetic","operation":"noop"}"#,
+    "\n",
+    r#"{"type":"last-prompt","sessionId":"claude-local-synthetic","prompt":"skipped noise"}"#,
+    "\n",
+    r#"{"type":"attachment","sessionId":"claude-local-synthetic","attachment":{"path":"/tmp/synthetic-attachment.png"}}"#,
+);
+
+/// Codex rollout 信封 JSONL 合成样本(结构对齐 2026-08-23 本机真实采样,内容全虚构)。
+#[cfg(test)]
+pub(crate) const CODEX_ENVELOPE_JSONL: &str = concat!(
+    r#"{"timestamp":"2026-08-23T10:00:00.000Z","type":"session_meta","payload":{"id":"rollout-synthetic-7","timestamp":"2026-08-23T10:00:00.000Z","cwd":"/tmp/synthetic","originator":"codex_cli_synthetic","cli_version":"1.0.0"}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"run the synthetic gate"}]}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"starting"},{"type":"encrypted_content","data":"opaque"}]}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:02.500Z","type":"response_item","payload":{"type":"user_message","author":"user","content":[{"type":"input_text","text":"synthetic user prompt"}],"id":"msg_synth_user_0","recipient":"agent"}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:02.600Z","type":"response_item","payload":{"type":"agent_message","author":"agent","content":[{"type":"input_text","text":"synthetic agent reply"},{"type":"encrypted_content","data":"opaque"}],"id":"msg_synth_agent_0","recipient":"user"}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:02.700Z","type":"response_item","payload":{"type":"agent_message","author":"agent","content":[{"type":"encrypted_content","data":"opaque only"}],"id":"msg_synth_agent_1","recipient":"user"}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:03.000Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"hidden developer note"}]}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:04.000Z","type":"response_item","payload":{"type":"reasoning","summary":[],"content":[]}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:05.000Z","type":"response_item","payload":{"type":"function_call","call_id":"call_synth_0","name":"shell","arguments":"cargo test -p synthetic"}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:06.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_synth_0","output":"test result: ok. 1 passed"}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:07.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":120,"cached_input_tokens":10,"output_tokens":30},"last_token_usage":{"input_tokens":20,"output_tokens":5}}}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:08.000Z","type":"event_msg","payload":{"type":"agent_message","message":"mirrored entry skipped"}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:09.000Z","type":"turn_context","payload":{"cwd":"/tmp/synthetic","model":"synthetic-model"}}"#,
+    "\n",
+    r#"{"timestamp":"2026-08-23T10:00:10.000Z","type":"response_item","payload":{"type":"future_kind","data":{"x":1}}}"#,
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1110,6 +1673,175 @@ mod tests {
         ));
         assert!(matches!(parsed.records[4], ExternalRecord::Usage { .. }));
         assert!(matches!(parsed.records[5], ExternalRecord::Raw { .. }));
+    }
+
+    #[test]
+    fn parse_claude_local_jsonl_maps_records_and_counts_skips() {
+        let parsed = parse_claude(CLAUDE_LOCAL_JSONL).unwrap();
+        assert_eq!(parsed.original_id.as_deref(), Some("claude-local-synthetic"));
+        assert_eq!(parsed.title.as_deref(), Some("synthetic demo"));
+        // user 文本 + assistant(文本、tool_call) + tool_result + 未知类型 Raw。
+        assert_eq!(parsed.records.len(), 5);
+        assert!(matches!(
+            parsed.records[0],
+            ExternalRecord::UserMessage { ref text } if text == "run the synthetic check"
+        ));
+        assert!(matches!(
+            parsed.records[1],
+            ExternalRecord::AssistantMessage { ref text } if text == "on it"
+        ));
+        assert!(matches!(
+            parsed.records[2],
+            ExternalRecord::ToolCall {
+                ref tool_call_id,
+                ref name,
+                ..
+            } if tool_call_id == "toolu_synth_1" && name == "shell"
+        ));
+        assert!(matches!(
+            parsed.records[3],
+            ExternalRecord::ToolResult {
+                ref tool_call_id,
+                ref content,
+                is_error: false,
+            } if tool_call_id == "toolu_synth_1" && content == "test result: ok. 1 passed"
+        ));
+        assert!(matches!(
+            parsed.records[4],
+            ExternalRecord::Raw { ref kind, .. } if kind == "claude.type:attachment"
+        ));
+        assert_eq!(
+            parsed.unknown_fields.get("skipped_sidechain").map(String::as_str),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn claude_local_records_map_to_valid_events() {
+        let parsed = parse_claude(CLAUDE_LOCAL_JSONL).unwrap();
+        let events = map_to_events(
+            &SessionId::from("claude-local"),
+            &RunId::from("run-local"),
+            &parsed,
+        );
+        assert!(validate_structure(&events).is_ok());
+        // tool_use 与 tool_result 经 scope 后仍按序配对。
+        assert!(events.iter().any(|event| matches!(
+            &event.payload,
+            AgentEvent::ToolCallStarted { name, .. } if name == "shell"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            &event.payload,
+            AgentEvent::ToolExecutionCompleted { result, .. }
+                if result.content.iter().any(|part| matches!(part, ContentPart::Text(text) if text.text == "test result: ok. 1 passed"))
+        )));
+    }
+
+    #[test]
+    fn claude_local_noise_only_file_stays_empty_ok_but_corrupt_file_fails_closed() {
+        // 全为合法噪声行(标题/队列操作):无可导入内容,维持 Ok 空导入。
+        let noise_only = concat!(
+            r#"{"type":"custom-title","sessionId":"s1","customTitle":"noise only"}"#,
+            "\n",
+            r#"{"type":"queue-operation","sessionId":"s1","operation":"noop"}"#,
+        );
+        let parsed = parse_claude(noise_only).unwrap();
+        assert!(parsed.records.is_empty());
+        assert_eq!(parsed.title.as_deref(), Some("noise only"));
+
+        // 存在 unparseable 行且零记录:fail-closed,避免损坏文件计为空导入。
+        let corrupted = concat!(
+            r#"{"type":"ai-title","sessionId":"s1","aiTitle":"corrupt"}"#,
+            "\n",
+            r#"{"type":"user","sessionId":"s1","message":{"broken"#,
+        );
+        let error = parse_claude(corrupted).unwrap_err();
+        assert!(matches!(
+            error,
+            SessionStoreError::CompatUnparseable { source_label, .. } if source_label == "claude"
+        ));
+    }
+
+    #[test]
+    fn codex_envelope_noise_only_file_stays_empty_ok_but_corrupt_file_fails_closed() {
+        // 仅 session_meta + 跳过行:零记录但全部合法,维持 Ok。
+        let noise_only = concat!(
+            r#"{"timestamp":"2026-08-23T10:00:00.000Z","type":"session_meta","payload":{"id":"s1"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-08-23T10:00:01.000Z","type":"turn_context","payload":{"cwd":"/tmp"}}"#,
+        );
+        let parsed = parse_codex(noise_only).unwrap();
+        assert!(parsed.records.is_empty());
+        assert_eq!(parsed.original_id.as_deref(), Some("s1"));
+
+        // session_meta 合法但后续行损坏且零记录:fail-closed。
+        let corrupted = concat!(
+            r#"{"timestamp":"2026-08-23T10:00:00.000Z","type":"session_meta","payload":{"id":"s1"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-08-23T10:00:01.000Z","type":"response_item","pay"#,
+        );
+        let error = parse_codex(corrupted).unwrap_err();
+        assert!(matches!(
+            error,
+            SessionStoreError::CompatUnparseable { source_label, .. } if source_label == "codex"
+        ));
+    }
+
+    #[test]
+    fn parse_codex_envelope_maps_payloads_and_counts_skips() {
+        let parsed = parse_codex(CODEX_ENVELOPE_JSONL).unwrap();
+        assert_eq!(
+            parsed.original_id.as_deref(),
+            Some("rollout-synthetic-7")
+        );
+        // user + assistant + user_message + agent_message + tool call + tool result
+        // + usage + 未知 payload Raw;encrypted-only agent_message 无文本不落记录。
+        assert_eq!(parsed.records.len(), 8);
+        assert!(matches!(
+            parsed.records[0],
+            ExternalRecord::UserMessage { ref text } if text == "run the synthetic gate"
+        ));
+        assert!(matches!(
+            parsed.records[1],
+            ExternalRecord::AssistantMessage { ref text } if text == "starting"
+        ));
+        assert!(matches!(
+            parsed.records[2],
+            ExternalRecord::UserMessage { ref text } if text == "synthetic user prompt"
+        ));
+        assert!(matches!(
+            parsed.records[3],
+            ExternalRecord::AssistantMessage { ref text } if text == "synthetic agent reply"
+        ));
+        assert!(matches!(
+            parsed.records[4],
+            ExternalRecord::ToolCall { .. }
+        ));
+        assert!(matches!(
+            parsed.records[5],
+            ExternalRecord::ToolResult { ref tool_call_id, is_error: false, .. }
+                if tool_call_id == "call_synth_0"
+        ));
+        assert!(matches!(
+            parsed.records[6],
+            ExternalRecord::Usage { input_tokens: 120, output_tokens: 30 }
+        ));
+        assert!(matches!(
+            parsed.records[7],
+            ExternalRecord::Raw { ref kind, .. } if kind == "codex.payload:future_kind"
+        ));
+        for key in [
+            "skipped_developer_message",
+            "skipped_reasoning",
+            "skipped_event_msg",
+            "skipped_turn_context",
+        ] {
+            assert_eq!(
+                parsed.unknown_fields.get(key).map(String::as_str),
+                Some("1"),
+                "missing skip counter {key}"
+            );
+        }
     }
 
     #[test]
