@@ -21,7 +21,7 @@ V2（S0–S13）全部 🟢：最小对话 → 会话持久化 → 工具循环 
 | [R6](plan/R6-session-branching.md) | 会话分支模型原生化（ADR-040） | 🟢 |
 | [R7](plan/R7-sandbox-isolation.md) | 执行面真隔离（ADR-041） | 🟢 |
 | [R8](plan/R8-gui-components.md) | GUI 组件化与 Desktop 收口 | 🔵 |
-| [R9](plan/R9-consistency-closeout.md) | 一致性收口 | ⚪ |
+| [R9](plan/R9-consistency-closeout.md) | 一致性收口 | 🔵 |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成。阶段明细、依赖与验收要点见 [ROADMAP.md](ROADMAP.md) §2；开发开启方式见 [v3_plan.md](v3_plan.md)。
 
