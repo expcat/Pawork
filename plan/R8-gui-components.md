@@ -1,4 +1,7 @@
 # R8 — GUI 组件化与 Desktop 收口(T12)
+> **实态回写(2026-08-24 波 E 开启,主代理 + grok_explorer 一路核查)**:首部波 E 行「S12-CR09 已修项复核:CR09-02 错误上屏、CR09-04 focus 恢复」编号与名称不符——「错误上屏」「focus 恢复」全仓零命中,[CR-09 报告](../docs/reviews/s12/CR-09-traceability-consistency.md) 实际五项为 01 README/AGENTS 状态结构滞后、02「stop --apply 删 plist」记录失真、03 workflow 三域零消费者、04 HunkStageService 消费时点过期、05 路径校验四处分叉;以实态为准复核五项不回退。复核结论:02 ✅(S10 旧任务书已随 V2 压缩删除,全仓无「删 plist」假话,service.rs:197-212 已是 unload+RemoveFile 并有测试钉死)、04 ✅(ROADMAP §4:180 ADR 候选登记在册);01/03/05 存在新口径漂移——README 状态表停在 2026-08-22(R6/R7/R8 ⚪,实态 🟢/🟢/🔵)且结构图漏 `scripts/`、v2-summary.md:100「状态机+测试已迁」与 R0 归档实态冲突、design.md 缺路径校验语义矩阵且 `crates/workspace/src/resources/io.rs` 仍自写 `canonical_within`(workspace 词法入口已委托 policy、review `safe_path` 随归档移除)——三项漂移已同波修复(README 状态表/结构图、v2-summary 归档注记、design.md §3.3 语义矩阵回写、ROADMAP §4 登记 io.rs 残余)。K-03 自动化取证(隔离实例 r8e 真窗口截图 7 张)发现两项漂移/澄清并登记 ROADMAP §4:1080–1279 rail 收敛 240px + Inspector 默认折叠未实现(固定 288px,V2 起既有);「空闲断连」实为 host 30s 心跳超时 + desktop 无周期心跳的机制性关闭(任意入站帧刷新,波 C「显示器休眠/App Nap」归因不准确),Reconnect 可恢复、run 不取消。mod.rs 1031>900、P3-4 Entry 菜单滚动卸载两项开启时待用户定夺(当日已拍板,见下行拍板回写)。K-03 验收清单与证据已落 [docs/gui-design.md](../docs/gui-design.md) §9 与附录 A。
+>
+> **拍板回写(2026-08-24 波 E,用户四项拍板)**:D1 mod.rs 接受 1031 为终态口径,§1.4/§4 退出标准同批修订不再重瘦;D2 窄窗响应式(rail 240px/Inspector 默认折叠)接受登记,固定 288px 维持现状转候选;D3 空闲 30s 断连已修复——desktop controller 泵循环连续 15 tick(≈15s<30s)空闲即发 client `heartbeat()`(io AsyncMutex 支持泵内并发),心跳失败走既有断线路径,真窗口 soak >2min 不再断连 + desktop 测试 41/41 绿;D4 P3-4 Entry 菜单滚动卸载接受(虚拟化卸载语义下浮层随条目回收)。四项均回写 ROADMAP §4 与 gui-design.md 附录 A.3。K-03 人工走查(附录 A.2 十一项)待用户签字后收口波 E。
 
 > 对应 [ROADMAP.md](../ROADMAP.md) §2 R8 行。依据 2026-08-18 GUI 组件分析:`apps/desktop` 6,657 行、四层边界干净(ui 不碰 socket、projection 纯函数、controller 唯一写者),但 `ui/mod.rs` 1,898 行单文件承载全部渲染——15 处手写按钮、4 组复制粘贴菜单(仅数据不同)、97 处硬编码 `rgb()`、约 40 处魔法尺寸、零 hover 状态、菜单用整屏遮罩层模拟而非 gpui `anchored()/deferred()`、Timeline `uniform_list` 用于变高行(潜在裁剪 bug)。本阶段建立 theme tokens 与组件库,并收口 V2 遗留的三块 GUI 功能面与人工验收(K-03/K-04/K-06)。
 >
@@ -29,7 +32,7 @@
 | `FollowScroll` | 跟随滚动/回底逻辑封装(现内联在 Timeline) |
 
 3. **Timeline 虚拟化**:变高行改 gpui `list()`(measure/cache)替换 `uniform_list`;长会话(千级事件)滚动流畅性目标写入验收;长标题 truncate(F44 遗留)。
-4. **`ui/mod.rs` 瘦身**:目标 <900 行(布局组合 + 路由),渲染细节全部进组件。
+4. **`ui/mod.rs` 瘦身**:目标 <900 行(布局组合 + 路由),渲染细节全部进组件。**波 E 拍板修订(2026-08-24,用户 D1)**:波 C 拆分达标 824 行后,波 D 三页签接线 + 审查修复回弹至 1031 行;changes.rs(705)/resources.rs(210)已拆出、余量有限,接受 1031 为终态口径,不再重瘦。
 5. **功能收口**:K-04 Changes 面(Inspector Files/Summary 页签 + ActivityPopover,消费 `DiffListFiles/DiffGet` 与 `HunkStageService`——S12-F57 登记的零消费者服务在此接线)、K-06 `@` 引用与 Resources 面(gui-design §6.3 IA 内既有规划位)。
 6. **K-03 人工验收**:IME(中文输入法候选窗)、多行粘贴、1440×1024 与 design/ 基准逐屏对照、纯键盘走查、1080×720 最小窗口。
 
@@ -52,7 +55,7 @@
 
 ## 4. 退出标准
 
-- [ ] theme + components 落地;`rgb()` 硬编码清零;mod.rs <900 行;菜单 anchored/deferred
+- [ ] theme + components 落地;`rgb()` 硬编码清零;mod.rs ≤1031 行(波 E 拍板修订,原目标 <900,见 §1.4);菜单 anchored/deferred
 - [ ] Timeline 虚拟化 + hover/active 全态;design 基准与实现一致
 - [ ] K-04/K-06 交付(K-04 为只读 Changes 面,HunkStageService 消费顺延 ADR 候选并登记 ROADMAP §4;K-06 为 `@` 端到端 + MCP Resources,补全 query 与已加载规则登记候选);K-03 人工验收签字
 - [ ] probe-smoke + projection 测试全绿;v3_plan §3 更新

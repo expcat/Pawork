@@ -227,9 +227,12 @@ impl DesktopController {
         let pump_events = sender;
         let pump_state = Arc::clone(&self.state);
         self.runtime.spawn(async move {
+            // 宿主 heartbeat_timeout 为 30s，任意入站帧都会刷新；空闲时由 desktop 周期 heartbeat 保活。
+            let mut idle_ticks = 0u32;
             loop {
                 match pump_client.next_event_timeout(Duration::from_secs(1)).await {
                     Ok(event) => {
+                        idle_ticks = 0;
                         record_shared_last_acked(&pump_state, event.global_sequence.0);
                         let _ = pump_client.ack(event.global_sequence).await;
                         if pump_events
@@ -240,7 +243,23 @@ impl DesktopController {
                             break;
                         }
                     }
-                    Err(ClientError::Timeout { .. }) => continue,
+                    Err(ClientError::Timeout { .. }) => {
+                        idle_ticks += 1;
+                        if idle_ticks < 15 {
+                            continue;
+                        }
+                        idle_ticks = 0;
+                        if let Err(error) = pump_client.heartbeat().await {
+                            let reason = error.to_string();
+                            *pump_state
+                                .client
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner()) = None;
+                            let _ = pump_events
+                                .try_send(ControllerEvent::Disconnected { reason });
+                            break;
+                        }
+                    }
                     Err(error) => {
                         let reason = error.to_string();
                         *pump_state

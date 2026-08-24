@@ -18,9 +18,9 @@ V2（S0–S13）全部 🟢：最小对话 → 会话持久化 → 工具循环 
 | [R3](plan/R3-protocol-unification.md) | 协议与投影同源化 | 🟢 |
 | [R4](plan/R4-host-decomposition.md) | 宿主拆解与可靠性内核 | 🟢 |
 | [R5](plan/R5-provider-neutrality.md) | Provider 中立化与凭证收口 | 🟢 |
-| [R6](plan/R6-session-branching.md) | 会话分支模型原生化（ADR-040） | ⚪ |
-| [R7](plan/R7-sandbox-isolation.md) | 执行面真隔离（ADR-041） | ⚪ |
-| [R8](plan/R8-gui-components.md) | GUI 组件化与 Desktop 收口 | ⚪ |
+| [R6](plan/R6-session-branching.md) | 会话分支模型原生化（ADR-040） | 🟢 |
+| [R7](plan/R7-sandbox-isolation.md) | 执行面真隔离（ADR-041） | 🟢 |
+| [R8](plan/R8-gui-components.md) | GUI 组件化与 Desktop 收口 | 🔵 |
 | [R9](plan/R9-consistency-closeout.md) | 一致性收口 | ⚪ |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成。阶段明细、依赖与验收要点见 [ROADMAP.md](ROADMAP.md) §2；开发开启方式见 [v3_plan.md](v3_plan.md)。
@@ -64,6 +64,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 ├── apps/                # pawork（CLI 宿主 + composition root）、desktop（GPUI GUI）
 ├── schemas/             # protocol typegen 检入的 .d.ts
 ├── fixtures/            # 测试夹具
+├── scripts/             # 维护脚本（如 stale incremental 清理）
 ├── design/              # GUI v3 定稿视觉基准
 ├── docs/                # 设计、规范、参照、迁移词典、V2 总结、ADR
 └── plan/                # 阶段任务书 R0–R9

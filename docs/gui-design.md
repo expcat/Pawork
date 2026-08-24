@@ -204,3 +204,70 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [x] 四层边界与「不链 Core」已形成可执行 deny list；实测留波 B/C。
 - [x] 插件/市场/Hooks/LSP 无产品入口，仅有隐藏扩展点。
 - [x] 方案 2 v3 已形成日期内项目分组、项目定向新建、紧凑 Composer、去重 RunStatusBar，以及 Inspector 展开 / ActivityPopover 折叠状态的视觉实施基准。
+
+---
+
+## 9. V3 组件清单（R8 收口，2026-08-24）
+
+`apps/desktop/src/ui/` 终态形态（19 文件 / 5144 行）：`mod.rs` 只留 AppView 装配、路由与状态（1031 行；行数目标定夺见 [../ROADMAP.md](../ROADMAP.md) §4），渲染细节全部进模块。
+
+| 模块 | 内容 |
+| --- | --- |
+| `theme.rs` | 29 色 token（bg/surface/border/text/accent/semantic 六组 + hover 系）+ 字阶（11/12/13 + `font::MONO`=Menlo）+ metrics |
+| `timeline.rs` | Timeline 容器：gpui `list()` 变高虚拟化、`ListAlignment::Bottom` 钉底、跟随/回底重映射 |
+| `timeline_entry.rs` | 五类条目渲染 + 「···」fork 菜单 |
+| `approval_card.rs` | 内嵌审批卡（list 末项） |
+| `input_area.rs` | Composer + model 菜单族 + workspace 确认锚点 |
+| `inspector.rs` | Changes / Terminal / Resources 三页签 |
+| `changes.rs` | Files / Summary 二级页签 + DiffView（hunk 语义着色 + `overflow_x_scroll`）+ ActivityPopover |
+| `resources.rs` | MCP 只读列表 |
+| `task_rail.rs` | 侧栏装配 + grouping/scope 菜单 + 长标题 `.truncate()` |
+| `text_input.rs` | 单行 TextElement（IME marked_range、UTF-16 映射） |
+
+`ui/components/` 组件库（7 模块 11 公开类型）：`Button`（variant Primary/Ghost/Danger/Success/Raised/Icon + hover/active）、`Dropdown`/`MenuPanel`/`MenuRow`（`deferred(anchored())` 浮层 + `occlude()` 滚轮无穿透）、`FollowScroll`/`BackToBottom`、`Label`/`Badge`、`ListRow`、`Panel`、`StatusBar`。五组菜单（grouping/scope/model/entry fork/workspace confirm）全部浮层化，`Option<MenuKind>` 单开互斥、Escape/外点关闭为宿主接线。
+
+---
+
+## 附录 A. K-03 人工验收记录（R8 波 E，2026-08-24）
+
+验收环境：macOS 3440×1440 @1x；隔离实例 `r8e`（`PAWORK_DATA_DIR=/tmp/r8e.Xepxwh`），HEAD=8b0e3a0（波 D 收口）。
+
+### A.1 自动化已取证项（主代理，截图实证）
+
+| 项 | 结果 | 证据 |
+| --- | --- | --- |
+| 真窗口启动 + Connected 壳层（Inspector 展开） | ✅ rail / 空 Timeline / Composer / Inspector 三页签 / 状态栏与基准一致 | /tmp/r8e-recon2.png |
+| Inspector 折叠 + ActivityPopover | ✅ 折叠态 Workspace 扩展；popover「Changes · unavailable」诚实缺省，无伪造 0 | /tmp/r8e-popover.png |
+| grouping 浮层菜单 | ✅ `✓ Timeline / Projects` 单开浮层、不占布局流 | /tmp/r8e-grouping.png |
+| model 浮层菜单 | ✅ Connected 态锚点上翻浮层，列已配置模型 | /tmp/r8e-model2.png |
+| 断线 fail-soft | ✅ 连接失败/断线如实上屏（传输因 socket refused 可见）+ Reconnect 入口；恢复路径走查见 A.2 | /tmp/r8e-full2.png |
+| 1080×720 最小窗口 | ✅ 最小窗口布局完整不溢出（rail / Composer / 状态栏）；拍摄时为断线态（机制性 idle 关闭，见 A.3-D3），Connected 态最小窗可用性走查见 A.2 | /tmp/r8e-1080c.png |
+| 菜单断线归一化 | ✅ 断线态 model 菜单不打开、触发器仅焦点环（model 翻假归一化） | /tmp/r8e-model.png |
+| 心跳保活 soak（D3 修复后二进制，未提交 diff） | ✅ 空闲 >2min 仍 Connected（修复前 ~30s 必断）；lsof 每 60s 采样实证对等连接 33min+ 持续存活（20/20 peers=2，归档 /tmp/r8e-keepalive.log，21:30:56–21:49:57） | /tmp/r8e-soak.png（Connected 态） |
+
+### A.2 人工走查项（用户签字）
+
+- [ ] IME：中文输入法组合中 Enter 不发送，候选窗位置正常（§6）
+- [ ] 多行粘贴：粘贴多行文本保持原文、Shift+Enter 换行（§6）
+- [ ] 1440×1024 逐屏对照 design/ 三图（Timeline / 折叠 / Projects）
+- [ ] 纯键盘走查（基准 §3.6）：Tab 焦点顺序、菜单 ↑/↓ 与 Enter/Escape——已知缺口：菜单 ↑/↓ 导航与 grouping/scope 触发器 tab stop 未实现（ROADMAP §4 波 B 登记），验收时确认缺口范围无新增
+- [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
+- [ ] Reconnect 恢复：断线态点 Reconnect 回到 Connected，会话/run 状态保留（A.1 full2 的恢复半段）
+- [ ] Connected 态 1080×720 最小窗：连接态下最小窗口 Composer / 状态栏 / Inspector 触发器可用（A.1 1080c 仅覆盖断线态布局）
+- [ ] 虚拟化四例（长会话）：滚动流畅 / 回底重挂 / Entry「···」菜单锚点 / 长标题 truncate
+- [ ] hover / active 交互态抽查（基准 §8.1 取值表）
+- [ ] DiffView 横滚：长 diff 行 `overflow_x_scroll` extent 与滚动条行为（基准 §8.5）
+- [ ] 千级事件会话滚动无卡顿、启动时间不回退（手测 + 帧率观察）
+
+### A.3 漂移与定夺项
+
+- D1 mod.rs 行数：824（波 C 达标 <900）→ 1031（波 D 三页签接线）——✅ 已拍板（2026-08-24）：接受 1031 为终态口径，R8 任务书 §1.4/§4 退出标准同批修订，不再重瘦（ROADMAP §4）
+- D2 窄窗响应式：1080–1279 时 rail 收敛 240px + Inspector 默认折叠未实现（固定 288px，V2 起既有）——✅ 已拍板接受登记（2026-08-24）：固定宽维持现状，窄窗响应式转候选，出现真实需求时立窄任务（ROADMAP §4）
+- D3 空闲 30s 断连：host 30s 心跳超时 + desktop 无周期心跳的机制性关闭，非 R8 回归——✅ 已修复（2026-08-24）：desktop controller 泵循环连续 15s 空闲发 `heartbeat()`，真窗口 soak >2min 不再断连实证，desktop 测试 41/41 绿（ROADMAP §4）
+- D4 P3-4 Entry 菜单滚动卸载：菜单开着时条目滚出可视区被卸载、浮层消失但状态残留（滚回自现，Escape/外点仍有效）——✅ 已拍板接受（2026-08-24）：虚拟化卸载语义下浮层随条目回收属可接受行为（ROADMAP §4）
+
+### A.4 已收口免重复项
+
+Changes 四面 / Resources 行 /「@」端到端 bubble 双 part 已于波 D 真窗口逐项截图实证（/tmp/r8d-*.png）；S12-CR09 五项复核结果见 R8 任务书波 E 回写（01/03/05 口径漂移已同波修复，02/04 维持 ✅）。
+
+验收签字：__________（用户）日期：__________

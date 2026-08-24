@@ -97,7 +97,7 @@ ADR 索引(ADR-001~036 归档于 `../../Pawork_v1/docs/adr/`,原则继续有效;
 | control-plane OTel audit exporter | 类型已迁,无 collector | 真实审计导出消费者 |
 | provider-control account/routing/health/factory | feature `account-control-v1`(默认开);demo 只走 lease 路径 | 真实多账户 factory 装配 |
 | `pawork-workflow` `process-exec` | feature 默认关 | 后台任务需要真实进程 |
-| `pawork-workflow` goal/automation/monitor 域 | 状态机+测试已迁,无宿主消费面(S12-F40) | 对应产品面立项 |
+| `pawork-workflow` goal/automation/monitor 域 | V2 收口时为状态机+测试已迁、无宿主消费面(S12-F40);V3 R0 已随归档裁出(git tag `v2-final` 兜底) | 对应产品面立项(复活条件见 [../ROADMAP.md](../ROADMAP.md) §3.3) |
 | `pawork-memory` | Mock 召回,无真实 EmbeddingProvider | 真实 embedder + 宿主 `memory_available` |
 | `pawork-review` Forge | Generic 占位,无 GitHub/GitLab 实现 | 会话内评审接线 |
 | `pawork-orchestration` teams / 真实双子 run_session | demo 级 | teams 面或真实并行子 Agent |

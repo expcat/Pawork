@@ -42,9 +42,10 @@ src/
 
 - GUI 不得直接访问 Provider、数据库、工具、Git、PTY、quota store。
 - 断线不取消进行中的 Run（`probe-smoke` 的 `disconnect_survive`）。
+- 空闲保活（R8 波 E，2026-08-24）：host `heartbeat_timeout` 为 30s，任意入站帧刷新；controller 事件泵连续 15 tick（≈15s）无事件即发 `heartbeat()`（client 既有 API，io AsyncMutex 支持泵内并发调用），心跳失败走既有断线路径（不取消 Run）。
 - 不宣告 `ArtifactStreaming`（K-08）。
 - `ui/theme.rs` 已落地（R8 波 A：六组 25 色 token + 字阶 + metrics，深色单主题，静态 `dark()` 访问器；波 B 追加 4 个 hover token，共 29 色）。
-- `ui/components/` 已落地（R8 波 B）：Button（variant Primary/Ghost/Danger/Success/Raised/Icon + hover/active）、Dropdown/MenuPanel/MenuRow（`deferred(anchored())` 浮层 + occlude 滚轮无穿透组件机制）、FollowScroll + BackToBottom、Label/Badge、Panel、StatusBar、ListRow。五组菜单（grouping/scope/model/entry fork/workspace confirm）已全部浮层化；Escape/外点关闭与 `Option<MenuKind>` 单开互斥为宿主（ui/mod.rs）接线。 ui/ 域渲染拆分（R8 波 C）：Timeline 经 gpui `list()` 变高虚拟化（`ListAlignment::Bottom` 钉底，跟随/回底语义不变，timeline.rs）；TimelineEntryView / ApprovalCard / InputArea / Inspector / TaskRail 拆分为独立模块，mod.rs 824 行；TaskRail 长标题 `.truncate()` 单行省略。
+- `ui/components/` 已落地（R8 波 B）：Button（variant Primary/Ghost/Danger/Success/Raised/Icon + hover/active）、Dropdown/MenuPanel/MenuRow（`deferred(anchored())` 浮层 + occlude 滚轮无穿透组件机制）、FollowScroll + BackToBottom、Label/Badge、Panel、StatusBar、ListRow。五组菜单（grouping/scope/model/entry fork/workspace confirm）已全部浮层化；Escape/外点关闭与 `Option<MenuKind>` 单开互斥为宿主（ui/mod.rs）接线。 ui/ 域渲染拆分（R8 波 C）：Timeline 经 gpui `list()` 变高虚拟化（`ListAlignment::Bottom` 钉底，跟随/回底语义不变，timeline.rs）；TimelineEntryView / ApprovalCard / InputArea / Inspector / TaskRail 拆分为独立模块，mod.rs 波 C 拆分至 824 行，波 D 三页签接线后 1031 行（R8 波 E 用户拍板接受为终态口径）；TaskRail 长标题 `.truncate()` 单行省略。
 - Changes 面为只读（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口，登记候选（`@` 端到端展开属 host 侧 crates/app，不在本 crate）。
 
 ## 相关文档

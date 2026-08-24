@@ -85,6 +85,7 @@ V1 的磁盘/线上契约与核心 trait 是全部后期迁移的兼容性锚点
 - [v1-migration-reference.md](v1-migration-reference.md) §4.1 映射总表仍是 V1→V2 的**唯一迁移词典**（合并来源、行数、关键动作）；归档的旧里程碑文档（[../plan/archive/](../plan/archive/README.md)）保留包级迁移细则，各阶段计划直接引用。
 - 「无消费者不合入」在增量计划下天然成立：每个包在**被 `pawork` 装配链真实消费的那个阶段**才激活。仍需 feature 门控合入的（如 S5 的 `compaction`），照旧显式登记。
 - 冻结候审清单不变（quota 远端适配器约 8k 行、browser-computer-runtime、tool_search，见 [v1-migration-reference.md](v1-migration-reference.md) §4.4），留在 V1 目录按需激活。
+- 工作区路径校验语义矩阵（S12-CR09-05 收口，2026-08-24 回写）：`pawork-policy` `path::resolve_workspace_path` 为写路径与读工具的唯一安全内核（canonical 复核 + root 收敛 + symlink/`.git`/TOCTOU 防护）；`pawork-workspace` `path::resolve_relative_path` 在平台词法前置拦截（盘符/UNC/设备名）后**委托** policy 内核，不再自存弱语义实现；`pawork-workspace` `resources/io.rs` 的 `canonical_within` 仍保留自写 canonicalize + 前缀比较（服务资源加载专用，与 policy 语义同源但独立实现，收口残余登记于 [../ROADMAP.md](../ROADMAP.md) §4）；workflow review 的 `safe_path` 已随 R0 归档移除。新调用点一律复用 policy 内核，禁止再长第四套实现。
 
 ---
 
