@@ -68,7 +68,9 @@ impl RenderOnce for ListRow {
         let mut row = div().id(self.id).cursor_pointer();
         let hover = match self.kind {
             ListRowKind::Task { selected } => {
-                row = row.px_2().py_1().rounded_sm();
+                // flex_row + min_w_0：让子项 flex_1/truncate 拿到 Definite 宽度
+                // （R8 波 C 长标题截断依赖此约束；选中/底色语义不变）。
+                row = row.flex().flex_row().min_w_0().px_2().py_1().rounded_sm();
                 if selected {
                     row = row.bg(dark().surface.raised);
                     dark().surface.hover
@@ -78,7 +80,7 @@ impl RenderOnce for ListRow {
                 }
             }
             ListRowKind::ProjectHeader => {
-                row = row.flex().flex_row().flex_1().gap_1();
+                row = row.flex().flex_row().flex_1().min_w_0().gap_1();
                 dark().surface.raised
             }
         };

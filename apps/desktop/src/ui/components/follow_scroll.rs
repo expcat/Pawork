@@ -69,12 +69,6 @@ impl FollowScroll {
         self.handle.scroll_to_bottom();
         self.following = true;
     }
-
-    /// 换新滚动容器并回到跟随态（打开 / 切换 session 的 Timeline）。
-    pub fn reset(&mut self) {
-        self.handle = ScrollHandle::new();
-        self.following = true;
-    }
 }
 
 /// 回底控件容器：绝对定位在滚动区右下（bottom-2 / right-2，§8.3），
