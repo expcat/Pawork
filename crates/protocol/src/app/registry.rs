@@ -338,10 +338,7 @@ static QUERIES: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "mcp_list",
-        gui: GuiChannelAccess {
-            available: false,
-            required_capability: None,
-        },
+        gui: GuiChannelAccess { available: true, required_capability: None },
         headless: None,
         acp: false,
         idempotent: true,

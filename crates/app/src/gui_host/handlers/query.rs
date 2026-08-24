@@ -172,6 +172,19 @@ pub(crate) async fn quota_overview(
     ))
 }
 
+pub(crate) async fn mcp_list(
+    adapter: &GuiHostAdapter,
+    query: &AppQuery,
+) -> Result<AppResponse, GuiHostError> {
+    let AppQuery::McpList = query else {
+        unreachable!("mcp_list handler receives McpList")
+    };
+    let servers = adapter.core.read().await.mcp_list();
+    let servers = serde_json::to_value(servers)
+        .map_err(|error| GuiHostAdapter::host_error("internal", error.to_string()))?;
+    Ok(AppResponse::Data(json!({ "servers": servers })))
+}
+
 pub(crate) async fn diff_get(
     adapter: &GuiHostAdapter,
     query: &AppQuery,

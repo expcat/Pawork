@@ -683,6 +683,13 @@ fn query_quota_overview<'a>(
     Box::pin(handlers::query::quota_overview(adapter, query))
 }
 
+fn query_mcp_list<'a>(
+    adapter: &'a GuiHostAdapter,
+    query: &'a pawork_protocol::AppQuery,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::query::mcp_list(adapter, query))
+}
+
 fn command_workspace_add<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -771,6 +778,7 @@ static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
     ("diff_list_files", query_diff_list_files),
     ("diff_get", query_diff_get),
     ("quota_overview", query_quota_overview),
+    ("mcp_list", query_mcp_list),
 ];
 
 static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[

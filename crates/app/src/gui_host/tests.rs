@@ -180,6 +180,220 @@
     }
 
     #[tokio::test]
+    async fn mcp_list_returns_servers_array_shape() {
+        let (core, _dir, _session) = core_with_turn().await;
+        let host: Arc<dyn GuiHost> = Arc::new(GuiHostAdapter::new(core));
+        let response = host
+            .query(&query_envelope(AppQuery::McpList))
+            .await
+            .expect("mcp list");
+        let AppResponse::Data(data) = response else {
+            panic!("mcp list must return data");
+        };
+        let servers = data
+            .get("servers")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("mcp list must carry a servers array: {data:?}"));
+        assert!(
+            servers.is_empty(),
+            "harness assembles no MCP servers: {servers:?}"
+        );
+    }
+
+    async fn wait_run_completed(
+        events: &mut tokio::sync::broadcast::Receiver<AppEventEnvelope>,
+        run_id: &RunId,
+    ) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let envelope = tokio::time::timeout_at(deadline, events.recv())
+                .await
+                .expect("run should complete")
+                .expect("event channel");
+            if let AppEvent::RunChanged {
+                run_id: id,
+                state: RunState::Completed | RunState::Failed | RunState::Cancelled,
+            } = &envelope.payload
+            {
+                if id == run_id {
+                    return;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn run_start_expands_at_refs_into_separate_parts() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::fs::write(
+            workspace.path().join("ROADMAP.md"),
+            "phase R8 wave D wiring\n",
+        )
+        .expect("roadmap");
+        let dir = tempfile::tempdir().expect("store");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![MockScript::new().text("ok").complete()]);
+        let mut core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        core.attach_workspace(workspace.path())
+            .expect("attach workspace");
+        core.prime_extensions().await.expect("prime extensions");
+        let session = core.create_session("at-ref").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let mut events = adapter.subscribe_events();
+        let response = adapter
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session.clone(),
+                user_message: "请展开 @ROADMAP 后回答".into(),
+                model: None,
+                provider: None,
+                profile: None,
+            }))
+            .await
+            .expect("run accepted");
+        let AppResponse::Accepted {
+            run_id: Some(run_id),
+            ..
+        } = response
+        else {
+            panic!("RunStart must be accepted: {response:?}");
+        };
+        wait_run_completed(&mut events, &run_id).await;
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("reopen store");
+        let messages = store
+            .projection_snapshot(&session)
+            .await
+            .expect("projection snapshot")
+            .messages;
+        let user = messages
+            .iter()
+            .rev()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message persisted");
+        assert_eq!(user.content.len(), 2, "{:?}", user.content);
+        match &user.content[0] {
+            ContentPart::Text(text) => assert_eq!(text.text, "请展开 @ROADMAP 后回答"),
+            other => panic!("first part must be the user text: {other:?}"),
+        }
+        match &user.content[1] {
+            ContentPart::Text(text) => {
+                assert!(text.text.contains("ROADMAP.md"), "{:?}", text.text);
+                assert!(
+                    text.text.contains("phase R8 wave D wiring"),
+                    "{:?}",
+                    text.text
+                );
+            }
+            other => panic!("second part must be the attachment: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn run_start_expand_at_refs_failure_does_not_leave_active_run() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::fs::write(
+            workspace.path().join("ROADMAP.md"),
+            "phase R8 wave D wiring\n",
+        )
+        .expect("roadmap");
+        let dir = tempfile::tempdir().expect("store");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![MockScript::new().text("ok").complete()]);
+        let mut core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        core.attach_workspace(workspace.path())
+            .expect("attach workspace");
+        core.prime_extensions().await.expect("prime extensions");
+        std::fs::remove_file(workspace.path().join("ROADMAP.md")).expect("remove indexed file");
+        std::fs::create_dir(workspace.path().join("ROADMAP.md")).expect("replace with directory");
+        let session = core.create_session("at-ref-fail").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let error = adapter
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session.clone(),
+                user_message: "请展开 @ROADMAP 后回答".into(),
+                model: None,
+                provider: None,
+                profile: None,
+            }))
+            .await
+            .expect_err("stale @file must fail closed");
+        assert_eq!(error.code, "app_error", "{error:?}");
+        assert_eq!(adapter.runs().active().len(), 0, "failed expand must not leave a ghost run");
+    }
+
+    #[tokio::test]
+    async fn run_start_without_at_token_passes_single_text_part() {
+        let dir = tempfile::tempdir().expect("store");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![MockScript::new().text("ok").complete()]);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("plain-turn").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let mut events = adapter.subscribe_events();
+        let response = adapter
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session.clone(),
+                user_message: "plain turn without refs".into(),
+                model: None,
+                provider: None,
+                profile: None,
+            }))
+            .await
+            .expect("run accepted");
+        let AppResponse::Accepted {
+            run_id: Some(run_id),
+            ..
+        } = response
+        else {
+            panic!("RunStart must be accepted: {response:?}");
+        };
+        wait_run_completed(&mut events, &run_id).await;
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("reopen store");
+        let messages = store
+            .projection_snapshot(&session)
+            .await
+            .expect("projection snapshot")
+            .messages;
+        let user = messages
+            .iter()
+            .rev()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message persisted");
+        assert_eq!(user.content.len(), 1, "{:?}", user.content);
+        match &user.content[0] {
+            ContentPart::Text(text) => assert_eq!(text.text, "plain turn without refs"),
+            other => panic!("single part must be the user text: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn workspace_list_includes_registered_roots() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))

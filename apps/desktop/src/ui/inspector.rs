@@ -1,6 +1,6 @@
-//! Inspector 侧面板：Terminal 输出 / 尺寸 / 输入行（R8 波 C 自 ui/mod.rs
-//! 逐样式迁移）。终端面板滚动维持 ScrollHandle（FollowScroll）现状，
-//! 不随 Timeline 改 list()。
+//! Inspector 侧面板（R8 波 D）：顶层 Changes / Terminal / Resources 固定三页签
+//! + 各页内容。终端面板滚动维持 ScrollHandle（FollowScroll）现状，不随
+//! Timeline 改 list()；各页签滚动状态独立保留（design/README.md §8.5）。
 
 use gpui::{div, prelude::*, px, Context, Window};
 
@@ -12,8 +12,96 @@ use crate::ui::theme::{dark, font, metrics};
 
 use super::AppView;
 
+/// Inspector 顶层页签（固定三页；默认 Terminal 保持波 C 前的单页行为）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum InspectorTab {
+    Changes,
+    #[default]
+    Terminal,
+    Resources,
+}
+
+impl InspectorTab {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Changes => "Changes",
+            Self::Terminal => "Terminal",
+            Self::Resources => "Resources",
+        }
+    }
+
+    fn button_id(self) -> &'static str {
+        match self {
+            Self::Changes => "inspector-tab-changes",
+            Self::Terminal => "inspector-tab-terminal",
+            Self::Resources => "inspector-tab-resources",
+        }
+    }
+}
+
 impl AppView {
     pub(super) fn inspector_element(&self, connected: bool, cx: &mut Context<Self>) -> Panel {
+        let current = self.inspector_tab;
+        let mut tabs = div().flex().flex_row().items_center().gap_1();
+        for tab in [
+            InspectorTab::Changes,
+            InspectorTab::Terminal,
+            InspectorTab::Resources,
+        ] {
+            let selected = tab == current;
+            tabs = tabs.child(
+                Button::new(tab.button_id())
+                    .variant(if selected {
+                        ButtonVariant::Raised
+                    } else {
+                        ButtonVariant::Ghost
+                    })
+                    .text_size(font::SM)
+                    .text_color(if selected {
+                        dark().text.primary
+                    } else {
+                        dark().text.secondary
+                    })
+                    .label(tab.label())
+                    .on_click(cx.listener(move |view, _event, _window, cx| {
+                        view.select_inspector_tab(tab, cx);
+                    })),
+            );
+        }
+        let header = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(dark().border.subtle)
+            .child(tabs)
+            .child(
+                Button::new("inspector-collapse")
+                    .variant(ButtonVariant::Ghost)
+                    .text_size(font::SM)
+                    .text_color(dark().text.secondary)
+                    .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                    .label("⟩")
+                    .on_click(cx.listener(|view, _event, window, cx| {
+                        view.on_toggle_inspector(window, cx);
+                    })),
+            );
+        Panel::side_left(px(metrics::INSPECTOR_WIDTH))
+            .child(header)
+            .child(match current {
+                InspectorTab::Changes => self.changes_element(cx).into_any_element(),
+                InspectorTab::Terminal => {
+                    self.terminal_page_element(connected, cx).into_any_element()
+                }
+                InspectorTab::Resources => self.resources_element(cx).into_any_element(),
+            })
+    }
+
+    /// Terminal 页（波 C 的面板内容，页签头外移到顶层 strip 后保持原样）。
+    fn terminal_page_element(&self, connected: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal = &self.projection.terminal;
         let output = if terminal.output.is_empty() {
             "Terminal output will appear here. No local PTY — host streams TerminalOutput."
@@ -24,39 +112,11 @@ impl AppView {
         let size_label = format!("{}×{}", terminal.columns, terminal.rows);
         let cwd = terminal.cwd.clone();
         let started = terminal.session_id.is_some();
-        Panel::side_left(px(metrics::INSPECTOR_WIDTH))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .px_2()
-                    .py_1()
-                    .border_b_1()
-                    .border_color(dark().border.subtle)
-                    .child(
-                        div()
-                            .id("inspector-tab-terminal")
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(dark().surface.raised)
-                            .text_size(px(font::SM))
-                            .child("Terminal"),
-                    )
-                    .child(
-                        Button::new("inspector-collapse")
-                            .variant(ButtonVariant::Ghost)
-                            .text_size(font::SM)
-                            .text_color(dark().text.secondary)
-                            .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                            .label("⟩")
-                            .on_click(cx.listener(|view, _event, window, cx| {
-                                view.on_toggle_inspector(window, cx);
-                            })),
-                    ),
-            )
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
             .child(
                 div()
                     .flex()
@@ -183,5 +243,17 @@ impl AppView {
         };
         self.controller
             .terminal_create(workspace, Some(self.projection.terminal.cwd.clone()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 波 C 前的唯一页是 Terminal：顶层页签默认仍为 Terminal（cmd-i 展开
+    /// 行为与旧单页面板连续）。
+    #[test]
+    fn inspector_tab_defaults_to_terminal() {
+        assert_eq!(InspectorTab::default(), InspectorTab::Terminal);
     }
 }

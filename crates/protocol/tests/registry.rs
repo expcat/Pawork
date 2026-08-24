@@ -565,7 +565,7 @@ fn query_registry_covers_every_variant_without_wildcard() {
                 assert_query_entry(&query, "plugin_list", false, None, None, false, true, V1_0)
             }
             AppQuery::McpList => {
-                assert_query_entry(&query, "mcp_list", false, None, None, false, true, V1_0)
+                assert_query_entry(&query, "mcp_list", true, None, None, false, true, V1_0)
             }
         }
     }

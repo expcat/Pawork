@@ -35,7 +35,86 @@ pub enum ControllerEvent {
     ModelsLoaded(Vec<ModelEntry>),
     SessionForked { session_id: String },
     TerminalCreated { terminal_session_id: String },
+    /// diff_list_files 成功（epoch 为 UI 侧请求代次，防过期响应覆盖新状态）。
+    DiffFilesLoaded {
+        epoch: u64,
+        session_id: Option<String>,
+        files: Vec<DiffFileSummary>,
+        git: Option<GitDiffInfo>,
+    },
+    /// diff_get 成功；file 为 None 表示该路径已不在 diff 中（host 空响应）。
+    DiffContentLoaded {
+        epoch: u64,
+        path: String,
+        file: Option<DiffFileDetail>,
+    },
+    /// mcp_list 成功（响应形状 {"servers":[{name,transport,state,tools,last_error}]}）。
+    McpServersLoaded { epoch: u64, servers: Vec<McpServerEntry> },
     OperationFailed { action: &'static str, reason: String },
+}
+
+/// Changes 面 Files 行（diff_list_files 响应的视图模型）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffFileSummary {
+    pub path: String,
+    /// host 序列化的 snake_case 状态（added / modified / …）；缺失记 unknown。
+    pub status: String,
+    pub additions: u64,
+    pub deletions: u64,
+    pub binary: bool,
+}
+
+/// diff_list_files 携带的 git 信息；字段缺失保持 None，UI 显示 unknown。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GitDiffInfo {
+    pub branch: Option<String>,
+    pub work_dir: Option<String>,
+    pub dirty_files: Option<u64>,
+}
+
+/// diff 行类型（host LineKind 的 snake_case wire 名）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffLineKind {
+    Context,
+    Addition,
+    Deletion,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffLineDetail {
+    pub kind: DiffLineKind,
+    /// 行文本（不含 +/-/空格 前缀）。
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffHunkDetail {
+    /// hunk 头原文（如 `@@ -1,3 +1,4 @@`）。
+    pub header: String,
+    pub lines: Vec<DiffLineDetail>,
+}
+
+/// diff_get 响应的单文件视图模型（仅保留渲染所需字段）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffFileDetail {
+    pub path: String,
+    /// rename / copy 时的原始路径。
+    pub previous_path: Option<String>,
+    pub status: String,
+    pub binary: bool,
+    pub additions: u64,
+    pub deletions: u64,
+    pub hunks: Vec<DiffHunkDetail>,
+}
+
+/// Resources 页 MCP server 行；tools 在 wire 上是名称数组，这里只留数量。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpServerEntry {
+    pub name: String,
+    pub transport: String,
+    pub state: String,
+    pub tool_count: u64,
+    pub last_error: Option<String>,
 }
 
 /// 握手 / 重连结果：`resume` 为 None 表示首连（无 last_ack）。
@@ -570,6 +649,113 @@ impl DesktopController {
         });
     }
 
+    /// 拉取 Changes 面文件清单（diff_list_files）。epoch 由 UI 递增，
+    /// 响应原样带回，过期代次在 UI 侧丢弃。
+    pub fn diff_list_files(&self, workspace_id: String, epoch: u64) {
+        let Some(client) = self.current_client() else {
+            if let Some(events) = self.try_event_sender() {
+                try_emit(&events, ControllerEvent::OperationFailed {
+                    action: "load changes",
+                    reason: "not connected".into(),
+                });
+            }
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let query = diff_list_files_query(&workspace_id);
+            match client.query(query, command_source(), actor_identity()).await {
+                Ok(response) => match parse_diff_files(&response) {
+                    Ok((session_id, files, git)) => {
+                        let _ = events
+                            .send(ControllerEvent::DiffFilesLoaded {
+                                epoch,
+                                session_id,
+                                files,
+                                git,
+                            })
+                            .await;
+                    }
+                    Err(reason) => try_emit(&events, ControllerEvent::OperationFailed {
+                        action: "load changes",
+                        reason,
+                    }),
+                },
+                Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
+                    action: "load changes",
+                    reason: error.to_string(),
+                }),
+            }
+        });
+    }
+
+    /// 拉取单文件 diff（diff_get）。host 对不存在路径返回空 files，
+    /// 解析为 None。
+    pub fn diff_get(&self, workspace_id: String, path: String, epoch: u64) {
+        let Some(client) = self.current_client() else {
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let query = diff_get_query(&workspace_id, &path);
+            match client.query(query, command_source(), actor_identity()).await {
+                Ok(response) => match parse_diff_file(&response) {
+                    Ok(file) => {
+                        let _ = events
+                            .send(ControllerEvent::DiffContentLoaded {
+                                epoch,
+                                path,
+                                file,
+                            })
+                            .await;
+                    }
+                    Err(reason) => try_emit(&events, ControllerEvent::OperationFailed {
+                        action: "load diff",
+                        reason,
+                    }),
+                },
+                Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
+                    action: "load diff",
+                    reason: error.to_string(),
+                }),
+            }
+        });
+    }
+
+    /// 拉取 Resources 页 MCP server 清单（mcp_list）。
+    pub fn mcp_list(&self, epoch: u64) {
+        let Some(client) = self.current_client() else {
+            if let Some(events) = self.try_event_sender() {
+                try_emit(&events, ControllerEvent::OperationFailed {
+                    action: "load resources",
+                    reason: "not connected".into(),
+                });
+            }
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let query = mcp_list_query();
+            match client.query(query, command_source(), actor_identity()).await {
+                Ok(response) => match parse_mcp_servers(&response) {
+                    Ok(servers) => {
+                        let _ = events
+                            .send(ControllerEvent::McpServersLoaded { epoch, servers })
+                            .await;
+                    }
+                    Err(reason) => try_emit(&events, ControllerEvent::OperationFailed {
+                        action: "load resources",
+                        reason,
+                    }),
+                },
+                Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
+                    action: "load resources",
+                    reason: error.to_string(),
+                }),
+            }
+        });
+    }
+
     fn event_sender(&self) -> smol::channel::Sender<ControllerEvent> {
         self.state
             .events
@@ -814,6 +1000,32 @@ fn model_list_query() -> AppQuery {
     .expect("model_list query shape is frozen")
 }
 
+fn diff_list_files_query(workspace_id: &str) -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "diff_list_files",
+        "params": { "workspace_id": workspace_id }
+    }))
+    .expect("diff_list_files query shape is frozen")
+}
+
+fn diff_get_query(workspace_id: &str, path: &str) -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "diff_get",
+        "params": {
+            "workspace_id": workspace_id,
+            "path": path
+        }
+    }))
+    .expect("diff_get query shape is frozen")
+}
+
+fn mcp_list_query() -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "mcp_list"
+    }))
+    .expect("mcp_list query shape is frozen")
+}
+
 fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEntry>, String> {
     match &response.response {
         AppResponse::Data(data) => {
@@ -851,6 +1063,172 @@ fn timeline_page(response: &AppResponseEnvelope) -> Result<Option<TimelinePage>,
                 .map_err(|error| format!("decode timeline page: {error}")),
             None => Ok(None),
         },
+        AppResponse::Error(_) => Err("server returned an error response".into()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+fn required_str(entry: &serde_json::Value, field: &str) -> Result<String, String> {
+    entry
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("entry missing {field}"))
+}
+
+fn optional_str(entry: &serde_json::Value, field: &str) -> Option<String> {
+    entry
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+/// diff_list_files 响应：session_id 在无会话（SessionNotFound 空响应）时缺失。
+fn parse_diff_files(
+    response: &AppResponseEnvelope,
+) -> Result<(Option<String>, Vec<DiffFileSummary>, Option<GitDiffInfo>), String> {
+    match &response.response {
+        AppResponse::Data(data) => {
+            let session_id = optional_str(data, "session_id");
+            let files_value = data
+                .get("files")
+                .ok_or_else(|| "diff list missing files".to_string())?;
+            let files = files_value
+                .as_array()
+                .ok_or_else(|| "diff files is not an array".to_string())?
+                .iter()
+                .map(|entry| {
+                    Ok(DiffFileSummary {
+                        path: required_str(entry, "path")?,
+                        status: optional_str(entry, "status")
+                            .unwrap_or_else(|| "unknown".into()),
+                        additions: entry
+                            .get("additions")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(0),
+                        deletions: entry
+                            .get("deletions")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(0),
+                        binary: entry
+                            .get("binary")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let git = data.get("git").map(|git| GitDiffInfo {
+                branch: optional_str(git, "branch"),
+                work_dir: optional_str(git, "work_dir"),
+                dirty_files: git
+                    .get("dirty_files")
+                    .and_then(serde_json::Value::as_u64),
+            });
+            Ok((session_id, files, git))
+        }
+        AppResponse::Error(_) => Err("server returned an error response".into()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// diff_get 响应：files 为空（路径不在 diff / 无会话）时返回 None。
+fn parse_diff_file(response: &AppResponseEnvelope) -> Result<Option<DiffFileDetail>, String> {
+    match &response.response {
+        AppResponse::Data(data) => {
+            let Some(files) = data.get("files").and_then(serde_json::Value::as_array) else {
+                return Err("diff response missing files".into());
+            };
+            let Some(entry) = files.first() else {
+                return Ok(None);
+            };
+            let hunks = entry
+                .get("hunks")
+                .and_then(serde_json::Value::as_array)
+                .map(|hunks| {
+                    hunks.iter()
+                        .map(|hunk| DiffHunkDetail {
+                            header: hunk
+                                .get("header")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                            lines: hunk
+                                .get("lines")
+                                .and_then(serde_json::Value::as_array)
+                                .map(|lines| {
+                                    lines.iter()
+                                        .map(|line| DiffLineDetail {
+                                            kind: match line
+                                                .get("kind")
+                                                .and_then(serde_json::Value::as_str)
+                                            {
+                                                Some("addition") => DiffLineKind::Addition,
+                                                Some("deletion") => DiffLineKind::Deletion,
+                                                _ => DiffLineKind::Context,
+                                            },
+                                            text: line
+                                                .get("text")
+                                                .and_then(serde_json::Value::as_str)
+                                                .unwrap_or("")
+                                                .to_string(),
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(Some(DiffFileDetail {
+                path: required_str(entry, "path")?,
+                previous_path: entry
+                    .get("previous_path")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                status: optional_str(entry, "status").unwrap_or_else(|| "unknown".into()),
+                binary: entry
+                    .get("binary")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                additions: entry
+                    .get("additions")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                deletions: entry
+                    .get("deletions")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                hunks,
+            }))
+        }
+        AppResponse::Error(_) => Err("server returned an error response".into()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// mcp_list 响应（形状由主代理钉死）：{"servers":[{name,transport,state,tools,last_error}]}。
+fn parse_mcp_servers(response: &AppResponseEnvelope) -> Result<Vec<McpServerEntry>, String> {
+    match &response.response {
+        AppResponse::Data(data) => data
+            .get("servers")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "mcp list missing servers".to_string())?
+            .iter()
+            .map(|entry| {
+                Ok(McpServerEntry {
+                    name: required_str(entry, "name")?,
+                    transport: optional_str(entry, "transport")
+                        .unwrap_or_else(|| "unknown".into()),
+                    state: optional_str(entry, "state").unwrap_or_else(|| "unknown".into()),
+                    tool_count: entry
+                        .get("tools")
+                        .and_then(serde_json::Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0) as u64,
+                    last_error: optional_str(entry, "last_error"),
+                })
+            })
+            .collect(),
         AppResponse::Error(_) => Err("server returned an error response".into()),
         other => Err(format!("unexpected response: {other:?}")),
     }
@@ -925,5 +1303,136 @@ mod tests {
         assert_eq!(resize["method"], "terminal_resize");
         assert_eq!(resize["params"]["columns"], 80);
         assert_eq!(resize["params"]["rows"], 24);
+    }
+
+    #[test]
+    fn diff_and_mcp_queries_pin_wire_shapes() {
+        let list = serde_json::to_value(diff_list_files_query("ws-1")).unwrap();
+        assert_eq!(list["method"], "diff_list_files");
+        assert_eq!(list["params"]["workspace_id"], "ws-1");
+
+        let get = serde_json::to_value(diff_get_query("ws-1", "src/main.rs")).unwrap();
+        assert_eq!(get["method"], "diff_get");
+        assert_eq!(get["params"]["workspace_id"], "ws-1");
+        assert_eq!(get["params"]["path"], "src/main.rs");
+
+        let mcp = serde_json::to_value(mcp_list_query()).unwrap();
+        assert_eq!(mcp["method"], "mcp_list");
+        assert_eq!(mcp["params"], serde_json::Value::Null);
+    }
+
+    fn envelope(data: serde_json::Value) -> AppResponseEnvelope {
+        serde_json::from_value(serde_json::json!({
+            "api_version": { "major": 1, "minor": 1 },
+            "request_id": "q-test",
+            "responded_at": 0,
+            "response": { "type": "data", "data": data }
+        }))
+        .expect("test response envelope")
+    }
+
+    #[test]
+    fn parse_diff_files_reads_summaries_and_git() {
+        let (session_id, files, git) = parse_diff_files(&envelope(serde_json::json!({
+            "session_id": "s-1",
+            "files": [
+                {
+                    "path": "src/app.rs",
+                    "status": "modified",
+                    "additions": 3,
+                    "deletions": 1,
+                    "binary": false
+                },
+                { "path": "logo.png", "status": "added", "additions": 0, "deletions": 0, "binary": true }
+            ],
+            "git": { "branch": "main", "work_dir": "/tmp/repo", "dirty_files": 4 }
+        })))
+        .expect("parse diff files");
+        assert_eq!(session_id.as_deref(), Some("s-1"));
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "src/app.rs");
+        assert_eq!(files[0].status, "modified");
+        assert_eq!((files[0].additions, files[0].deletions), (3, 1));
+        assert!(files[1].binary);
+        let git = git.expect("git info");
+        assert_eq!(git.branch.as_deref(), Some("main"));
+        assert_eq!(git.dirty_files, Some(4));
+    }
+
+    #[test]
+    fn parse_diff_files_marks_no_session_response() {
+        let (session_id, files, git) =
+            parse_diff_files(&envelope(serde_json::json!({ "files": [] })))
+                .expect("empty session response parses");
+        assert_eq!(session_id, None);
+        assert!(files.is_empty());
+        assert_eq!(git, None);
+    }
+
+    #[test]
+    fn parse_diff_file_reads_hunks_and_lines() {
+        let file = parse_diff_file(&envelope(serde_json::json!({
+            "path": "src/app.rs",
+            "files": [{
+                "path": "src/app.rs",
+                "previous_path": null,
+                "status": "modified",
+                "binary": false,
+                "additions": 1,
+                "deletions": 1,
+                "hunks": [{
+                    "header": "@@ -1,2 +1,2 @@",
+                    "lines": [
+                        { "kind": "context", "text": "fn main() {" },
+                        { "kind": "addition", "text": "    println!(\"new\");" },
+                        { "kind": "deletion", "text": "    println!(\"old\");" }
+                    ]
+                }]
+            }]
+        })))
+        .expect("parse diff file")
+        .expect("file present");
+        assert_eq!(file.hunks.len(), 1);
+        assert_eq!(file.hunks[0].header, "@@ -1,2 +1,2 @@");
+        assert_eq!(file.hunks[0].lines.len(), 3);
+        assert_eq!(file.hunks[0].lines[1].kind, DiffLineKind::Addition);
+        assert_eq!(file.hunks[0].lines[2].kind, DiffLineKind::Deletion);
+        assert_eq!(file.hunks[0].lines[2].text, "    println!(\"old\");");
+
+        let missing = parse_diff_file(&envelope(serde_json::json!({
+            "path": "gone.rs",
+            "files": [],
+            "complete": true
+        })))
+        .expect("empty diff parses");
+        assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn parse_mcp_servers_reads_pinned_shape() {
+        let servers = parse_mcp_servers(&envelope(serde_json::json!({
+            "servers": [
+                {
+                    "name": "fetch",
+                    "transport": "stdio",
+                    "state": "ready",
+                    "tools": ["fetch_url", "search"],
+                    "last_error": null
+                },
+                {
+                    "name": "broken",
+                    "transport": "http",
+                    "state": "failed",
+                    "tools": [],
+                    "last_error": "connection refused"
+                }
+            ]
+        })))
+        .expect("parse mcp servers");
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].tool_count, 2);
+        assert_eq!(servers[0].last_error, None);
+        assert_eq!(servers[1].state, "failed");
+        assert_eq!(servers[1].last_error.as_deref(), Some("connection refused"));
     }
 }

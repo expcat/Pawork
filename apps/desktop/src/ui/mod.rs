@@ -4,9 +4,11 @@
 //! inspector、Composer → input_area。
 
 mod approval_card;
+mod changes;
 mod components;
 mod input_area;
 mod inspector;
+mod resources;
 mod task_rail;
 pub mod text_input;
 mod theme;
@@ -28,10 +30,14 @@ use pawork_client::AppEvent;
 use crate::controller::{ControllerEvent, DesktopController};
 use crate::platform::Platform;
 use crate::projection::{ConnectionState, DesktopProjection, ResumeApply, TaskRailGrouping};
+use changes::ChangesPanelState;
 use components::button::{Button, ButtonPadding, ButtonVariant};
+use components::dropdown::Dropdown;
 use components::follow_scroll::FollowScroll;
 use components::label::Badge;
 use components::status_bar::StatusBar;
+use inspector::InspectorTab;
+use resources::ResourcesPanelState;
 use theme::{dark, font, metrics};
 
 pub use text_input::{SendMessage, TextInput};
@@ -110,6 +116,8 @@ enum MenuKind {
     Entry(String),
     /// 无触发器：All projects 下新建任务的条件确认浮层。
     WorkspaceConfirm,
+    /// Inspector 折叠态的 ActivityPopover（StatusBar Inspector 触发器弹出）。
+    Activity,
 }
 
 pub fn install_keybindings(cx: &mut App) {
@@ -159,6 +167,12 @@ pub struct AppView {
     scope_workspace_id: Option<String>,
     collapsed_projects: BTreeSet<String>,
     inspector_open: bool,
+    /// Inspector 顶层页签（Changes / Terminal / Resources）。
+    inspector_tab: InspectorTab,
+    /// Changes 面状态（Files / Summary、清单与选中 diff、滚动句柄）。
+    changes: ChangesPanelState,
+    /// Resources 面状态（MCP server 清单、滚动句柄）。
+    resources: ResourcesPanelState,
     /// 当前打开的菜单；单一状态位保证至多一个打开（§8.2）。
     open_menu: Option<MenuKind>,
     /// 同一次物理点击里「外点关闭先于触发器 click」的衔接标记（菜单种类 +
@@ -206,6 +220,9 @@ impl AppView {
             scope_workspace_id: None,
             collapsed_projects: BTreeSet::new(),
             inspector_open: true,
+            inspector_tab: InspectorTab::default(),
+            changes: ChangesPanelState::default(),
+            resources: ResourcesPanelState::default(),
             open_menu: None,
             pending_outside_close: None,
             run_clock_running: false,
@@ -347,6 +364,9 @@ impl AppView {
             }
             ControllerEvent::Event(envelope) => {
                 let terminal_event = matches!(envelope.payload, AppEvent::TerminalOutput { .. });
+                // Run 终态（RunChanged 清空 active_run_id）后刷新 Changes：
+                // 会话 diff 可能已被这轮 run 改写。
+                let had_active_run = self.projection.active_run_id.is_some();
                 if terminal_event {
                     self.terminal_scroll.content_arriving();
                     if self.projection.apply_event(&envelope) {
@@ -354,6 +374,9 @@ impl AppView {
                     }
                 } else if self.projection.apply_event(&envelope) {
                     self.timeline_changed();
+                }
+                if had_active_run && self.projection.active_run_id.is_none() {
+                    self.refresh_changes(cx);
                 }
             }
             ControllerEvent::SessionCreated { session_id } => {
@@ -379,7 +402,10 @@ impl AppView {
                     // 须 reset。
                     self.timeline_changed();
                 }
+                // 程序化展开 Inspector：关闭可能悬浮的菜单（P3-1 泄漏修复）。
+                self.close_open_menu(cx);
                 self.inspector_open = true;
+                self.refresh_open_inspector_tab(cx);
             }
             ControllerEvent::MessageSent { session_id, run_id } => {
                 if self.projection.active_session_id.as_deref() == Some(&session_id) {
@@ -391,7 +417,47 @@ impl AppView {
                 self.projection.set_models(models);
             }
             ControllerEvent::OperationFailed { action, reason } => {
+                // 查询失败回写对应面板状态：避免 Changes / Resources 永远停在
+                // Loading（status_hint 仍照常提示）；仅当前仍在 Fetching 才落
+                // Failed，防止旧请求的失败覆盖新一轮刷新。
+                match action {
+                    "load changes" => {
+                        if self.changes.fetch == changes::ChangesFetch::Fetching {
+                            self.changes.mark_failed(&reason);
+                        }
+                    }
+                    "load diff" => {
+                        if self.changes.diff == changes::DiffFetch::Fetching {
+                            self.changes.mark_diff_failed(&reason);
+                        }
+                    }
+                    "load resources" => {
+                        if self.resources.fetch == resources::ResourcesFetch::Fetching {
+                            self.resources.mark_failed(&reason);
+                        }
+                    }
+                    _ => {}
+                }
                 self.status_hint = Some(format!("{action} failed: {reason}"));
+            }
+            ControllerEvent::DiffFilesLoaded {
+                epoch,
+                session_id,
+                files,
+                git,
+            } => {
+                if self.changes.apply_files(epoch, session_id, files, git) {
+                    // 清单刷新后选中文件仍在：重拉它的 diff，保持两视图一致。
+                    if let Some(path) = self.changes.selected.clone() {
+                        self.fetch_diff(&path, cx);
+                    }
+                }
+            }
+            ControllerEvent::DiffContentLoaded { epoch, path, file } => {
+                self.changes.apply_diff(epoch, &path, file);
+            }
+            ControllerEvent::McpServersLoaded { epoch, servers } => {
+                self.resources.apply_servers(epoch, servers);
             }
         }
         self.arm_run_clock(cx);
@@ -429,7 +495,10 @@ impl AppView {
         self.timeline_changed();
         // 打开 / 切换 session 时补终端跟随重置（§8.3）。
         self.terminal_scroll.jump_to_bottom();
+        // 会话切换：清空旧会话 diff 状态并重新拉取（拉取时机之一）。
+        self.changes.reset_for_session();
         self.controller.open_session(session_id);
+        self.refresh_changes(cx);
         cx.notify();
     }
 
@@ -566,6 +635,121 @@ impl AppView {
         self.inspector_open = !self.inspector_open;
         // 宽度变化改变条目换行高度：list 高度缓存须失效（reset）。
         self.timeline_changed();
+        if self.inspector_open {
+            // 展开时关闭可能悬浮的菜单（如 ActivityPopover），避免面板
+            // 叠在已展开的 Inspector 上（P3-1 泄漏修复）。
+            self.close_open_menu(cx);
+            // Inspector 展开：刷新当前页签数据（拉取时机之一）。
+            self.refresh_open_inspector_tab(cx);
+        }
+        cx.notify();
+    }
+
+    /// 切换 Inspector 顶层页签；切入 Changes / Resources 时拉取数据
+    /// （拉取时机之一）。切页签不改 active session；各页签滚动状态独立保留。
+    fn select_inspector_tab(&mut self, tab: InspectorTab, cx: &mut Context<Self>) {
+        if self.inspector_tab == tab {
+            return;
+        }
+        self.inspector_tab = tab;
+        self.refresh_open_inspector_tab(cx);
+        cx.notify();
+    }
+
+    /// 展开中的 Inspector 当前页签对应的数据刷新（Terminal 无查询面）。
+    fn refresh_open_inspector_tab(&mut self, cx: &mut Context<Self>) {
+        if !self.inspector_open {
+            return;
+        }
+        match self.inspector_tab {
+            InspectorTab::Changes => self.refresh_changes(cx),
+            InspectorTab::Resources => self.refresh_resources(cx),
+            InspectorTab::Terminal => {}
+        }
+    }
+
+    fn on_select_changes_tab(&mut self, tab: changes::ChangesTab, cx: &mut Context<Self>) {
+        if self.changes.tab == tab {
+            return;
+        }
+        self.changes.tab = tab;
+        cx.notify();
+    }
+
+    fn on_select_diff_file(&mut self, path: &str, cx: &mut Context<Self>) {
+        if self.changes.selected.as_deref() == Some(path) {
+            return;
+        }
+        self.fetch_diff(path, cx);
+    }
+
+    /// ActivityPopover 摘要行：展开 Inspector 并定位 Changes 页。
+    fn on_activity_open_changes(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.close_open_menu(cx);
+        if !self.inspector_open {
+            self.inspector_open = true;
+            self.timeline_changed();
+        }
+        self.inspector_tab = InspectorTab::Changes;
+        self.refresh_changes(cx);
+        cx.notify();
+    }
+
+    /// 拉取会话 diff 文件清单（diff_list_files）。失败时诚实标记状态。
+    fn refresh_changes(&mut self, cx: &mut Context<Self>) {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let workspace = self
+            .scope_workspace_id
+            .clone()
+            .or_else(|| self.projection.workspace_id.clone());
+        match (connected, workspace) {
+            (true, Some(workspace)) => {
+                let epoch = self.changes.begin_refresh();
+                self.controller.diff_list_files(workspace, epoch);
+            }
+            (true, None) => self.changes.mark_failed("no workspace"),
+            _ => self.changes.mark_failed("not connected"),
+        }
+        cx.notify();
+    }
+
+    /// 拉取选中文件的 diff（diff_get）。
+    fn fetch_diff(&mut self, path: &str, cx: &mut Context<Self>) {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let workspace = self
+            .scope_workspace_id
+            .clone()
+            .or_else(|| self.projection.workspace_id.clone());
+        match (connected, workspace) {
+            (true, Some(workspace)) => {
+                let epoch = self.changes.begin_diff_fetch(path);
+                self.controller
+                    .diff_get(workspace, path.to_string(), epoch);
+            }
+            (true, None) => self.changes.mark_diff_failed("no workspace"),
+            _ => self.changes.mark_diff_failed("not connected"),
+        }
+        cx.notify();
+    }
+
+    /// 拉取 MCP server 清单（mcp_list）。
+    fn refresh_resources(&mut self, cx: &mut Context<Self>) {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        if connected {
+            let epoch = self.resources.begin_refresh();
+            self.controller.mcp_list(epoch);
+        } else {
+            self.resources.mark_failed("not connected");
+        }
         cx.notify();
     }
 
@@ -712,6 +896,8 @@ impl Render for AppView {
         let now_ms = now_unix_ms();
         let run_status = self.projection.run_status_label(now_ms);
         let inspector_open = self.inspector_open;
+        let activity_popover_open =
+            !inspector_open && matches!(self.open_menu, Some(MenuKind::Activity));
 
         let sidebar = self.sidebar_element(cx);
         let timeline_area = self.timeline_area(cx);
@@ -727,6 +913,32 @@ impl Render for AppView {
         if inspector_open {
             main = main.child(self.inspector_element(connected, cx));
         }
+        // Inspector 展开时触发器直接折叠；折叠时同一触发器弹出
+        // ActivityPopover（§8.5），摘要行点击才展开并定位 Changes。
+        let inspector_trigger = if inspector_open {
+            Button::new("inspector-toggle")
+                .variant(ButtonVariant::Ghost)
+                .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                .label("Hide inspector")
+                .on_click(cx.listener(|view, _event, window, cx| {
+                    view.on_toggle_inspector(window, cx);
+                }))
+                .into_any_element()
+        } else {
+            let trigger = Button::new("inspector-toggle")
+                .variant(ButtonVariant::Ghost)
+                .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                .label("Inspector")
+                .on_click(cx.listener(|view, event, _window, cx| {
+                    let down = Self::click_down_position(event);
+                    view.toggle_menu(MenuKind::Activity, down, cx);
+                }));
+            let mut dropdown = Dropdown::new(trigger);
+            if activity_popover_open {
+                dropdown = dropdown.panel(self.activity_popover_element(cx));
+            }
+            dropdown.into_any_element()
+        };
 
         div()
             .key_context("AppView")
@@ -757,21 +969,16 @@ impl Render for AppView {
             .on_action(cx.listener(Self::on_toggle_inspector_action))
             .child(sidebar)
             .child(
-                div().flex().flex_col().flex_1().child(main).child(
-                    StatusBar::new().child(Badge::new(run_status)).child(
-                        Button::new("inspector-toggle")
-                            .variant(ButtonVariant::Ghost)
-                            .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                            .label(if inspector_open {
-                                "Hide inspector"
-                            } else {
-                                "Inspector"
-                            })
-                            .on_click(cx.listener(|view, _event, window, cx| {
-                                view.on_toggle_inspector(window, cx);
-                            })),
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .child(main)
+                    .child(
+                        StatusBar::new()
+                            .child(Badge::new(run_status))
+                            .child(inspector_trigger),
                     ),
-                ),
             )
     }
 }

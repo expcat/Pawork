@@ -173,6 +173,8 @@ pub mod font {
     pub const SM: f32 = 12.0;
     /// 13px：标题与输入框正文。
     pub const BASE: f32 = 13.0;
+    /// 等宽字体族（R8 波 D DiffView 代码区；本仓当前仅 macOS 构建）。
+    pub const MONO: &str = "Menlo";
 }
 
 /// 间距 / 尺寸常量（px 数值；消费点经 gpui::px 转换）。
@@ -207,6 +209,10 @@ pub mod metrics {
     pub const SCROLL_EPSILON: f32 = 1.0;
     /// 16：贴底吸附阈值。
     pub const SCROLL_BOTTOM_SLACK: f32 = 16.0;
+    /// 320：ActivityPopover 宽度（design/README.md §8.5）。
+    pub const ACTIVITY_POPOVER_WIDTH: f32 = 320.0;
+    /// 200：Changes · Files 文件清单的最大高度（超出滚动，下方留给 DiffView）。
+    pub const CHANGES_FILE_LIST_MAX_HEIGHT: f32 = 200.0;
     /// 0：行高保护性比较。
     pub const ZERO: f32 = 0.0;
 }

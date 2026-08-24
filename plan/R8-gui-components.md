@@ -10,6 +10,8 @@
 
 > **实态回写(2026-08-24 波 C 开启,glm_explorer 三路核查)**:Timeline 现状为 `div#timeline.overflow_y_scroll + .children(iter().map())` 全量 eager 物化(ui/mod.rs:1586-1608),无任何虚拟化——首部旧快照「uniform_list 用于变高行」与 §2 波 C「uniform_list 替换」措辞均不成立,波 C 是首次引入 gpui `list()`(vendored gpui 0.2.2 变高行 + ListAlignment::Bottom 钉底,elements/list.rs:24/216)。**DiffView 不存在**:TimelineEntryKind 无 diff 变体(protocol projection/mod.rs:252),全仓 diff 渲染零命中,其消费面(K-04 Changes 面)属波 D——按消费面先行红线,波 C 不新建 DiffView,留波 D 随 Changes 面同落。「长标题 truncate(F44 遗留)」的 F44 仓内不可溯源(v2-summary S13 序列止于 F40,ROADMAP §4 无条目),改按实态登记:截断点为 TaskRail 的 Task 标题(ui/mod.rs:1136)与项目头名称(1094),gpui `.truncate()` 为本仓首个消费点。为达 §1.4 mod.rs <900 行阶段目标(波 B 收口已指派波 C),波 C 写入集实态扩为:四组件拆分(TimelineEntryView/ApprovalCard/InputArea + Timeline 容器)之外,同模式外移 Inspector 与 Rail 渲染块;基准先行——design/README.md §8.4(虚拟化 + truncate)与 gui-design.md §6 已由主代理先行落地。
 
+> **实态回写(2026-08-24 波 D 开启,glm_explorer 三路核查)**:Inspector 实态为单一静态 Terminal 页签(inspector.rs 187 行,L39-47),无 tab strip 机制、无 Changes/ActivityPopover,折叠态唯一呈现是 StatusBar「Inspector」Ghost 按钮(mod.rs:762-771);Changes 面全部从零新建。读侧已备:registry diff_list_files/diff_get available=true + gui_host handler 就位(query.rs:100-220)。**GitStage 协议自 V1 起仅文件级 stage-only**(command.rs:362-365,V1 core-api 同形状且 V1 handler 仅记录不执行 git),HunkStageService 生产零消费者核实成立(S12-F57);接线须扩 wire 形状,而 V3 约定 wire 演进只允许 R6/R7 + ADR Accepted——**用户拍板(2026-08-24):本波 Changes 面只读**(Files/Summary + DiffView + ActivityPopover 全落),git_stage/HunkStageService 接线顺延为 ADR 候选(协议扩展一并设计 stage/unstage/hunk 双向),K-04 记部分交付。K-06:host run_start 对 GUI user_message 原样透传(run_start.rs:233-240),`expand_at_refs`/`complete_at` 在 AppCore 层(extensions.rs:293/297)仅 CLI 消费——**用户拍板:本波 `@` 引用端到端**(host run_start 应用 expand_at_refs,零 wire 变更),补全浮层所需新 query 顺延候选。Resources:mcp_list 翻 available + host handler(AppCore::mcp_list 现成,extensions.rs:208)+ Inspector 固定页签;plugin_list 与「已加载规则」无 host 出口,登记候选;Add tool 动态注册管理本波不实现。首部「gui-design §6.3 IA」引用过期,实态为 §5 S9 行 + §7/L159 预留位。波 D 写入集实态:apps/desktop(Changes/Resources/ActivityPopover)∥ crates/protocol(mcp_list available 翻转 + registry 断言)+ crates/app(mcp_list handler + run_start `@` 展开)+ crates/client(probe 场景扩展);基准先行——design/README.md §8.5 与 gui-design.md §6 两行已由主代理先行落地。
+
 ## 1. 目标设计
 
 1. **`ui/theme.rs`**:`Theme` 结构(bg/surface/border/text/accent/semantic 六组,~20 token;落地 25 个色字段——24 个 rgb/rgba 去重值 + 审批数组裸 u32 `0x3d7a4a`)+ 字阶/间距/圆角常量;78 行 `rgb(0x…)`/`rgba(0x…)` 调用(92 处)加审批数组 3 裸 u32 全部收编(任务书快照中的跨文件值 `0x3ecf8e` 与 pty_view.rs 实态不存在);深色单主题起步,不做运行时切换(结构上留 Global 挂载点)。
@@ -38,13 +40,13 @@
 | A | theme.rs + 全量 token 机械替换(视觉零变化;截图对比) | apps/desktop/src/ui/ | 串行 |
 | B | components/ 基础族(Button/Dropdown/Tooltip/Label/Panel/StatusBar/ListRow/FollowScroll)+ 菜单迁移 anchored/deferred(实态五组,见首部回写)+ hover/active 补齐(**先更新 design/README.md 基准**) | apps/desktop/src/ui/、design/README.md、docs/gui-design.md | 并行 ×2(基础组件 / 菜单迁移)——同文件冲突时降串行 |
 | C | TimelineEntryView/ApprovalCard/DiffView/InputArea 拆分 + Timeline `list()` 虚拟化 + truncate | apps/desktop/src/ui/ | 串行(Timeline 是核心面) |
-| D | K-04 Changes 面 ∥ K-06 `@`/Resources 面(协议消费面 R3 registry 已备;HunkStageService 接线含 host 侧命令) | apps/desktop、app(diff/hunk 命令面)∥ apps/desktop(resources 面) | 并行 ×2 |
+| D | K-04 Changes 面只读(Files/Summary + DiffView + ActivityPopover;git_stage/HunkStageService 接线顺延 ADR 候选,见首部拍板)∥ K-06 `@` 端到端(host run_start 展开)+ Resources(mcp_list 翻 available + handler + MCP 只读页) | apps/desktop ∥ crates/protocol + crates/app + crates/client(probe 场景) | 并行 ×2 |
 | E | K-03 人工验收 + gui-design.md 收口(组件清单/S12-CR09 已修项复核:CR09-02 错误上屏、CR09-04 focus 恢复等不回退) | 人工 + docs | 串行(用户参与) |
 
 ## 3. 验证
 
 - 波 A/B/C:`cargo check -p pawork-desktop` + 既有 UI 测试(projection 907 行测试不受影响的证明)+ `--probe-smoke` 全绿;截图对比(基准屏 1440×1024)。
-- 波 D:probe 场景扩展(diff 列表/hunk stage 命令往返);Changes 面真实仓库冒烟(本仓库 dirty 状态)。
+- 波 D:probe 场景扩展(diff 列表/mcp_list 命令往返;hunk stage 顺延);Changes 面真实仓库冒烟(本仓库 dirty 状态)+ `@` 展开真实冒烟。
 - 波 E:人工验收清单逐项签字,结果记入 gui-design.md 附录。
 - 性能:千级事件会话滚动无卡顿(手测 + 帧率观察);启动时间不回退。
 
@@ -52,7 +54,7 @@
 
 - [ ] theme + components 落地;`rgb()` 硬编码清零;mod.rs <900 行;菜单 anchored/deferred
 - [ ] Timeline 虚拟化 + hover/active 全态;design 基准与实现一致
-- [ ] K-04/K-06 交付(HunkStageService 有生产消费者);K-03 人工验收签字
+- [ ] K-04/K-06 交付(K-04 为只读 Changes 面,HunkStageService 消费顺延 ADR 候选并登记 ROADMAP §4;K-06 为 `@` 端到端 + MCP Resources,补全 query 与已加载规则登记候选);K-03 人工验收签字
 - [ ] probe-smoke + projection 测试全绿;v3_plan §3 更新
 
 ---
@@ -86,3 +88,13 @@
 - **验证**:`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 28/28 绿三轮(worker /tmp/r8c-worker-test.log、主代理删死方法后 /tmp/r8c-main-test.log、审查修复后 /tmp/r8c-final-test.log);check 同口径绿;probe-smoke 隔离实例 r8csmoke EXIT=0(签名同波 A/B;实例数据已清理);真窗口启动实证两轮——截图实证 Connected 态渲染(rail/空 Timeline/Composer/Inspector/状态栏布局与基准一致,/tmp/r8c-screen2.png)。冻结面零 diff(git diff 仅 ui/ + 三文档);mod.rs 824 行。
 - **审查**:glm_reviewer 首轮 changes-needed——P2-1 gui-design.md 新增行丢列表标记并重复 §8.3 句(主代理修复)+ P3-1 任务书回写段落格式(修复)+ P3-3 空 Timeline 时审批卡多 4px 顶距(修复:仅 len>0 加 pt_1);P3-4 Entry 菜单滚动卸载后状态与视觉短暂失联(滚回自现,Escape/外点仍有效)登记并入波 E K-03 渲染面人工验收清单;审查对 list() 语义、禁动符号、迁移等价逐项核实通过。
 - **登记**:渲染面无自动门禁为既有缺口,虚拟化后滚动/回底/菜单锚点/truncate 四例并入波 E K-03;1440×1024 截图对照留波 E;显示器休眠/App Nap 下心跳超时断连(Reconnect 横幅)为环境性既有行为,与本波无因果。未提交。
+
+### 波 D 收口(2026-08-24,glm_explorer ×3 核查 + glm_worker ×2 并行 + glm_reviewer 双轮)
+
+- **拍板**:Q1=A(Changes 面只读;git_stage/HunkStageService 接线顺延 ADR 候选,K-04 记部分交付)、Q2=A(「@」引用端到端——host run_start 应用 expand_at_refs,零 wire 变更;「@」补全 query 顺延候选)。基准先行:design/README.md 新增 §8.5(Changes 三页签 Files/Diff/Summary 形态、DiffView hunk 语义着色 + font::MONO=Menlo 显式等宽(与 Terminal 默认字体不同款)、ActivityPopover 摘要定位、Resources MCP 只读表、「已加载规则」分区无 host 出口本波不画)+ gui-design.md §6 两行(Resources 只读不伪造、「@」host 展开独立 Text part)+ 任务书 §2/§3/§4 按拍板改写。
+- **轨 a(apps/desktop)**:inspector.rs 三页签(Changes/Terminal/Resources);新增 ui/changes.rs(705 行:Files 行点击经 diff_get 拉 hunks、Summary 七字段缺失显 unknown、DiffView 绿/红 hunk 着色 + overflow_x_scroll 横滚(全仓首个用例)、ActivityPopover「N files · +A/−D」摘要行点击展开定位、session_mismatch 面板 banner「Showing changes for latest session X — not the active session.」+ popover 提示行)与 ui/resources.rs(210 行:MCP 只读表 name/transport/tools 数/状态,缺失显 unknown);controller.rs 拉取 changes/mcp_list 查询接线;theme.rs 补 font::MONO=Menlo 与 ACTIVITY_POPOVER_WIDTH/CHANGES_FILE_LIST_MAX_HEIGHT 两 metrics;mod.rs 824→1031(三页签接线 + 审查修复,超 900 登记波 E 定夺);apps/desktop MODULE.md 六节同批更新。
+- **轨 b(protocol + app + client probe)**:protocol registry mcp_list gui.available 翻 true(帧 golden/schemas 零 diff,仅 available 位);app gui_host QUERY_HANDLERS 新增条目 + query_mcp_list handler(未连接/无配置 fail-soft);run_start 接线 expand_at_refs——「@path」在 host 侧展开为独立 Text part([attached file: path (complete|truncated)]),fail-closed,wire 零变更;client probe +3 场景(diff_list_files/diff_get/mcp_list 往返),13 场景全 PASS;「@」展开由 app host 定向测试覆盖;crates/app MODULE.md 同批更新。
+- **验证**:cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders 41/41 绿(含新增 session_mismatch_only_flags_different_sessions;/tmp/r8d-desktop-test3.log);cargo check -p pawork --offline EXIT=0;probe-smoke 隔离实例 r8dprobe EXIT=0(13 场景);真窗口冒烟(隔离实例 r8dsmoke,host 临时 trust_workspaces=true + smoke-echo stdio MCP,收口已还原清理)逐项截图实证——Changes Files 行(smoke-r8d.txt untracked +1/−0)、DiffView 绿行(+hello-r8d)、Summary 七字段、ActivityPopover(1 file · +1/−0,摘要行点击展开定位)、Resources 表(smoke-echo · stdio · 0 tools · configured)、「@」端到端(DB seq 388 双 text part:[attached file: smoke-r8d.txt (complete)],模型作答引用 hello-r8d;重连后 bubble 回放实证;live 臂无 UserMessage wire 变体为既有协议形态,非缺陷);断线 fail-soft「not connected」实证。截图 /tmp/r8d-changes*.png、r8d-resources4.png、r8d-popover*.png、r8d-tail2.png。
+- **审查双轮**:glm_reviewer 首轮 changes-needed——P2-1 session_mismatch 仅内部 flag 无可见提示(修:面板 banner + popover 行 + 单测 session_mismatch_only_flags_different_sessions)、P2-2 v3_plan §3 指针未同步(同波修复)、P3-1 菜单泄漏两处(修:close_open_menu——mod.rs on_toggle_inspector 展开分支 + TerminalCreated 分支)、P3-2① §8.5 等宽措辞与基准不一致(修:font::MONO=Menlo 显式指定、与 Terminal 默认字体不同款、横滚并入 K-03);probe.rs 场景数注释 10→13;二轮复核 verdict=pass。提交前主代理复核再修 P1:run_start 曾在 expand_at_refs 失败前登记 ActiveGuiRun,失败会留下幽灵 run;已改为先展开再登记,并补 run_start_expand_at_refs_failure_does_not_leave_active_run。
+- **登记**(ROADMAP §4 五项):HunkStageService 接线 ADR 候选(git_stage wire 不存在,V1 起 GitStage 仅文件级 stage-only,stage/unstage/hunk 双向 wire 与审批语义须随协议扩展另立 ADR);「@」补全 query 候选(host file-index 模糊补全 + desktop 浮层);Resources「已加载规则」分区待 host 出口;DiffView 横滚行为无自动门禁并入波 E K-03;mod.rs 1031>900 波 E 重瘦或修订退出标准。K-04 🟡 部分交付(只读面落地 + 真窗口实证,stage 顺延)、K-06 ✅ 落地。
+- **冻结面**:协议帧 golden、schemas/、wire 形状零 diff(mcp_list 仅 registry available 位翻转);Cargo 清单零 diff;禁动符号不受影响。冒烟残留(smoke-r8d.txt、临时 trust/MCP 配置、隔离实例数据)收口时已清理。未提交。

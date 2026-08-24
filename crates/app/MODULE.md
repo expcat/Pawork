@@ -27,7 +27,7 @@ tests/
 
 - **AppCore**：`load*` / `from_config` / `from_parts`；会话 `create_session` / `resume_messages*` / `chat_turn*`；模型与 auth；MCP；diff/checkpoint；usage；plan/tasks；compat import；`run_multi_agent_demo`。
 - **gui_server**：trait `GuiHost`；`GuiServer` / `ConnectionManager`。断线不取消 Run。
-- **gui_host**：`GuiHostAdapter`；query/command 走 protocol registry 派生的分发表（与 `gui.available` 双射）。Timeline 映射 = `pawork_protocol::projection::project_event`。
+- **gui_host**：`GuiHostAdapter`；query/command 走 protocol registry 派生的分发表（与 `gui.available` 双射）。Timeline 映射 = `pawork_protocol::projection::project_event`。R8 波 D（2026-08-24）：`mcp_list` 翻 `gui.available=true` 并落地 handler（响应 `{"servers":[...]}`，桌面 Resources 面只读消费）；`run_start` 接线 `expand_at_refs`——`@token` 命中 file-index 的附件展开为独立 Text part（fail-closed，无 `@` 零行为变化，零 wire 变更；展开成功后才登记 ActiveGuiRun，失败不留幽灵 run）。
 - 其它根 re-export：审批宿主、EventHub、IdempotencyStore（底层 CommandLedger）、首发通道 facade（`FIRST_PARTY_CHANNELS` ← `CHANNEL_REGISTRY`）、diff 渲染等。
 
 `services/` 与 `CatalogOnlyProvider` 不是公开 API。

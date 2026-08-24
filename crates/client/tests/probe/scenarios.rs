@@ -35,6 +35,9 @@ pub async fn run_all() -> i32 {
         "version-reject",
         "disconnect-keeps-run",
         "quota-alert-roundtrip",
+        "diff-list-files",
+        "diff-get",
+        "mcp-list",
     ];
     let mut failed = 0;
     for name in scenarios {
@@ -65,6 +68,9 @@ async fn run_scenario(name: &str) -> Result<(), String> {
         "version-reject" => version_reject().await,
         "disconnect-keeps-run" => disconnect_keeps_run().await,
         "quota-alert-roundtrip" => quota_alert_roundtrip(),
+        "diff-list-files" => diff_list_files().await,
+        "diff-get" => diff_get().await,
+        "mcp-list" => mcp_list().await,
         other => Err(format!("unknown scenario {other}")),
     }
 }
@@ -673,6 +679,93 @@ fn quota_alert_roundtrip() -> Result<(), String> {
     let none_json = serde_json::to_string(&failure).map_err(|error| error.to_string())?;
     if none_json.contains("adapter_kind") {
         return Err(format!("adapter_kind None 不应序列化: {none_json}"));
+    }
+    Ok(())
+}
+
+/// 无会话分支的形状验证：DiffListFiles 往返应返回空 files 数组。
+async fn diff_list_files() -> Result<(), String> {
+    let mut harness = Harness::new("diff-list-files", streaming_script()).await;
+    let client = harness
+        .connect_gui("diff-list-files", "diff-list-files")
+        .await?;
+    let response = client
+        .query(
+            AppQuery::DiffListFiles {
+                workspace_id: pawork_domain::WorkspaceId::from("ws-unbound"),
+            },
+            harness::gui_source(&client),
+            harness::local_user(),
+        )
+        .await
+        .map_err(|error| format!("DiffListFiles: {error}"))?;
+    let AppResponse::Data(data) = &response.response else {
+        return Err(format!(
+            "DiffListFiles 应返回 Data，got {:?}",
+            response.response
+        ));
+    };
+    let files = data
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("DiffListFiles 响应应携带 files 数组: {data:?}"))?;
+    if !files.is_empty() {
+        return Err(format!("无会话时 files 应为空数组，got {files:?}"));
+    }
+    Ok(())
+}
+
+/// 无会话分支的形状验证：DiffGet 往返应返回空 files 且 complete=true。
+async fn diff_get() -> Result<(), String> {
+    let mut harness = Harness::new("diff-get", streaming_script()).await;
+    let client = harness.connect_gui("diff-get", "diff-get").await?;
+    let response = client
+        .query(
+            AppQuery::DiffGet {
+                workspace_id: pawork_domain::WorkspaceId::from("ws-unbound"),
+                path: "README.md"
+                    .parse()
+                    .map_err(|error| format!("path: {error:?}"))?,
+                cursor: None,
+            },
+            harness::gui_source(&client),
+            harness::local_user(),
+        )
+        .await
+        .map_err(|error| format!("DiffGet: {error}"))?;
+    let AppResponse::Data(data) = &response.response else {
+        return Err(format!("DiffGet 应返回 Data，got {:?}", response.response));
+    };
+    let files = data
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("DiffGet 响应应携带 files 数组: {data:?}"))?;
+    if !files.is_empty() {
+        return Err(format!("无会话时 files 应为空数组，got {files:?}"));
+    }
+    if data.get("complete").and_then(Value::as_bool) != Some(true) {
+        return Err(format!("无会话时 complete 应为 true，got {data:?}"));
+    }
+    Ok(())
+}
+
+/// mcp_list 命令往返：响应应携带 servers 数组（装配未 prime，恒为空）。
+async fn mcp_list() -> Result<(), String> {
+    let mut harness = Harness::new("mcp-list", streaming_script()).await;
+    let client = harness.connect_gui("mcp-list", "mcp-list").await?;
+    let response = client
+        .query(AppQuery::McpList, harness::gui_source(&client), harness::local_user())
+        .await
+        .map_err(|error| format!("McpList: {error}"))?;
+    let AppResponse::Data(data) = &response.response else {
+        return Err(format!("McpList 应返回 Data，got {:?}", response.response));
+    };
+    let servers = data
+        .get("servers")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("McpList 响应应携带 servers 数组: {data:?}"))?;
+    if !servers.is_empty() {
+        return Err(format!("未装配 MCP 时 servers 应为空数组，got {servers:?}"));
     }
     Ok(())
 }

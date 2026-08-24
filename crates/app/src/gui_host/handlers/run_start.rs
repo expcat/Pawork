@@ -2,8 +2,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use pawork_domain::{
-    CancellationToken, ContentPart, ErrorCategory, ErrorContext, Message, MessageId, MessageRole,
-    RunId, TextContent,
+    CancellationToken, ErrorCategory, ErrorContext, Message, MessageId, MessageRole, RunId,
 };
 use pawork_engine::now_timestamp;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppEvent, AppResponse, RunState};
@@ -208,6 +207,15 @@ pub(crate) async fn run_start(
             }
         }
     }
+    // 与 CLI run_one_turn 同一语义：user text 原样为首 part，`@token` 命中的
+    // file-index 附件作为独立 Text part 追加；无 `@` 或未命中时零行为变化。
+    // 解析失败按 fail-closed 上抛，禁止把未展开文本静默发给模型。
+    // 必须在登记 ActiveGuiRun 之前完成：失败路径不能留下幽灵 run。
+    let content = {
+        let core = adapter.core.read().await;
+        core.expand_at_refs(user_message)
+            .map_err(GuiHostAdapter::app_error)?
+    };
     let n = adapter.next_gui_run.fetch_add(1, Ordering::Relaxed);
     let run_id = RunId::from(format!(
         "run-gui-{}-{n}",
@@ -233,9 +241,7 @@ pub(crate) async fn run_start(
     messages.push(Message {
         id: MessageId::from("pending"),
         role: MessageRole::User,
-        content: vec![ContentPart::Text(TextContent {
-            text: user_message.clone(),
-        })],
+        content,
         metadata: Default::default(),
     });
     tokio::spawn(async move {
