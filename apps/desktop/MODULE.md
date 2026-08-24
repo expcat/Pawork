@@ -15,6 +15,7 @@ src/
   projection.rs
   platform.rs
   ui/{mod.rs, text_input.rs, theme.rs}
+  ui/components/{mod.rs, button.rs, dropdown.rs, follow_scroll.rs, label.rs, list_row.rs, panel.rs, status_bar.rs}
 ```
 
 无 crate `tests/`；deny-list 断言在 `platform.rs`。
@@ -40,7 +41,8 @@ src/
 - GUI 不得直接访问 Provider、数据库、工具、Git、PTY、quota store。
 - 断线不取消进行中的 Run（`probe-smoke` 的 `disconnect_survive`）。
 - 不宣告 `ArtifactStreaming`（K-08）。
-- `ui/theme.rs` 已落地（R8 波 A：六组 25 色 token + 字阶 + metrics，深色单主题，静态 `dark()` 访问器）；`ui/components/` 未建，不要把组件化写成已落地。
+- `ui/theme.rs` 已落地（R8 波 A：六组 25 色 token + 字阶 + metrics，深色单主题，静态 `dark()` 访问器；波 B 追加 4 个 hover token，共 29 色）。
+- `ui/components/` 已落地（R8 波 B）：Button（variant Primary/Ghost/Danger/Success/Raised/Icon + hover/active）、Dropdown/MenuPanel/MenuRow（`deferred(anchored())` 浮层 + occlude 滚轮无穿透组件机制）、FollowScroll + BackToBottom、Label/Badge、Panel、StatusBar、ListRow。五组菜单（grouping/scope/model/entry fork/workspace confirm）已全部浮层化；Escape/外点关闭与 `Option<MenuKind>` 单开互斥为宿主（ui/mod.rs）接线。
 - Changes / `@` / Resources 面仍是 K-04 / K-06，未在本树。
 
 ## 相关文档

@@ -9,6 +9,10 @@
 //!
 //! 本波不做运行时切换；Global 实现仅是未来主题挂载点：计划在 main.rs 的
 //! Application::run 闭包中 cx.set_global(theme::dark())（写入集外，本波不动）。
+//!
+//! R8 波 B（2026-08-24）追加 4 个 hover / active token（design/README.md §8.1）：
+//! surface.hover / accent.hover / semantic.success_hover / semantic.danger_hover，
+//! 字段数 25 → 29；active 复用 hover 色不另设 token。
 
 use gpui::{rgb, rgba, Global, Rgba};
 
@@ -48,6 +52,8 @@ pub struct SurfaceColors {
     pub raised: Rgba,
     /// #242424：禁用态控件面。
     pub disabled: Rgba,
+    /// #343434：surface.raised 控件与选中行的 hover / active 背景（R8 波 B）。
+    pub hover: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -88,12 +94,16 @@ pub struct AccentColors {
     pub primary: Rgba,
     /// #5b9dff55（RGBA）：输入框选区高亮。
     pub selection: Rgba,
+    /// #3d7bf0：主按钮 hover / active 背景（R8 波 B）。
+    pub hover: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct SemanticColors {
     /// #3d7a4a：允许运行操作背景（Allow for run）。
     pub success_bg: Rgba,
+    /// #4a8c58：允许运行按钮 hover / active 背景（R8 波 B）。
+    pub success_hover: Rgba,
     /// #f0d58c：警示文字。
     pub warning_text: Rgba,
     /// #8a6d3b：警示描边。
@@ -104,6 +114,8 @@ pub struct SemanticColors {
     pub danger_text: Rgba,
     /// #8a3b32：危险操作背景（Cancel）。
     pub danger_bg: Rgba,
+    /// #9c463c：危险操作按钮 hover / active 背景（R8 波 B）。
+    pub danger_hover: Rgba,
 }
 
 /// 静态深色主题访问器（波 A 单主题；值与替换前字面量逐值相等）。
@@ -117,6 +129,7 @@ pub fn dark() -> Theme {
         surface: SurfaceColors {
             raised: rgb(0x2a2a2a),
             disabled: rgb(0x242424),
+            hover: rgb(0x343434),
         },
         border: BorderColors {
             subtle: rgb(0x2e2e2e),
@@ -137,14 +150,17 @@ pub fn dark() -> Theme {
         accent: AccentColors {
             primary: rgb(0x2f6fed),
             selection: rgba(0x5b9dff55),
+            hover: rgb(0x3d7bf0),
         },
         semantic: SemanticColors {
             success_bg: rgb(0x3d7a4a),
+            success_hover: rgb(0x4a8c58),
             warning_text: rgb(0xf0d58c),
             warning_border: rgb(0x8a6d3b),
             warning_bg: rgb(0x2a2418),
             danger_text: rgb(0xf48771),
             danger_bg: rgb(0x8a3b32),
+            danger_hover: rgb(0x9c463c),
         },
     }
 }
@@ -161,6 +177,10 @@ pub mod font {
 
 /// 间距 / 尺寸常量（px 数值；消费点经 gpui::px 转换）。
 pub mod metrics {
+    /// 1：「···」条目菜单触发器的水平内边距（R8 波 B）。
+    pub const PADDING_XS: f32 = 1.0;
+    /// 2：ghost 文本按钮（Inspector 开合 / 状态栏开合）的水平内边距（R8 波 B）。
+    pub const PADDING_SM: f32 = 2.0;
     /// 18：项目级新建按钮边长。
     pub const ICON_SMALL: f32 = 18.0;
     /// 22：全局新建 / 分组按钮边长。

@@ -1,5 +1,6 @@
 //! UI 层：AppView（Sessions 侧栏 + Timeline + Composer）与事件消费循环。
 
+mod components;
 pub mod text_input;
 mod theme;
 
@@ -9,8 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, prelude::*, px, AnyView, App, Context, Entity, FocusHandle, Focusable,
-    KeyBinding, Render, ScrollHandle, SharedString, Styled, Window,
+    actions, anchored, deferred, div, point, prelude::*, px, AnyView, App, ClickEvent, Context,
+    Corner, Entity, FocusHandle, Focusable, KeyBinding, KeyDownEvent, Pixels, Point, Render,
+    SharedString, Styled, Window,
 };
 use pawork_client::AppEvent;
 
@@ -20,7 +22,15 @@ use crate::projection::{
     ConnectionState, DesktopProjection, ModelEntry, ResumeApply, TaskRailDateGroup,
     TaskRailGrouping, TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, UNASSIGNED_PROJECT,
 };
+use components::button::{Button, ButtonPadding, ButtonVariant};
+use components::dropdown::{Dropdown, MenuPanel, MenuRow, ANCHOR_GAP_Y};
+use components::follow_scroll::{BackToBottom, FollowScroll};
+use components::label::{Badge, Label};
+use components::list_row::ListRow;
+use components::panel::Panel;
+use components::status_bar::StatusBar;
 use theme::{dark, font, metrics};
+
 
 pub use text_input::{SendMessage, TextInput};
 
@@ -81,10 +91,6 @@ fn tooltip_text(text: impl Into<SharedString>, cx: &mut App) -> AnyView {
     cx.new(|_| TooltipText { text: text.into() }).into()
 }
 
-fn focus_ring_style<T: Styled>(this: T) -> T {
-    this.border_1().border_color(dark().accent.primary)
-}
-
 fn now_unix_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -95,6 +101,18 @@ fn now_unix_ms() -> u64 {
 enum RailView {
     Timeline(Vec<TaskRailDateGroup>),
     Projects(Vec<TaskRailProjectGroup>),
+}
+
+/// 当前打开的浮层菜单（五组共享，开新即关旧，修互斥不对称）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MenuKind {
+    Grouping,
+    Scope,
+    Model,
+    /// 条目「···」菜单，键为 timeline event_id。
+    Entry(String),
+    /// 无触发器：All projects 下新建任务的条件确认浮层。
+    WorkspaceConfirm,
 }
 
 fn relative_activity(updated_at_ms: u64, now_ms: u64) -> String {
@@ -144,21 +162,22 @@ pub struct AppView {
     projection: DesktopProjection,
     text_input: Entity<TextInput>,
     terminal_input: Entity<TextInput>,
-    scroll_handle: ScrollHandle,
-    terminal_scroll: ScrollHandle,
+    timeline_scroll: FollowScroll,
+    terminal_scroll: FollowScroll,
     status_hint: Option<String>,
-    model_menu_open: bool,
     grouping: TaskRailGrouping,
     scope_workspace_id: Option<String>,
-    grouping_menu_open: bool,
-    scope_menu_open: bool,
     collapsed_projects: BTreeSet<String>,
     inspector_open: bool,
-    workspace_picker_open: bool,
-    entry_menu_event_id: Option<String>,
+    /// 当前打开的菜单；单一状态位保证至多一个打开（§8.2）。
+    open_menu: Option<MenuKind>,
+    /// 同一次物理点击里「外点关闭先于触发器 click」的衔接标记（菜单种类 +
+    /// 按下位置）：触发器 toggle 仅当 click 的按下位置与标记相同（同一次
+    /// 物理点击，ClickEvent 自带 down）才视为「再点触发器关闭」的收尾不再
+    /// 重开；位置不等或键盘触发则为新点击，清标记后正常 toggle
+    /// （见 dismiss_menu_on_outside）。
+    pending_outside_close: Option<(MenuKind, Point<Pixels>)>,
     run_clock_running: bool,
-    follow_timeline: bool,
-    follow_terminal: bool,
     focus_handle: FocusHandle,
     approve_once_focus: FocusHandle,
     approve_for_run_focus: FocusHandle,
@@ -182,21 +201,16 @@ impl AppView {
             projection: DesktopProjection::default(),
             text_input,
             terminal_input,
-            scroll_handle: ScrollHandle::new(),
-            terminal_scroll: ScrollHandle::new(),
+            timeline_scroll: FollowScroll::new(),
+            terminal_scroll: FollowScroll::new(),
             status_hint: None,
-            model_menu_open: false,
             grouping: TaskRailGrouping::Timeline,
             scope_workspace_id: None,
-            grouping_menu_open: false,
-            scope_menu_open: false,
             collapsed_projects: BTreeSet::new(),
             inspector_open: true,
-            workspace_picker_open: false,
-            entry_menu_event_id: None,
+            open_menu: None,
+            pending_outside_close: None,
             run_clock_running: false,
-            follow_timeline: true,
-            follow_terminal: true,
             focus_handle: cx.focus_handle(),
             approve_once_focus: cx.focus_handle().tab_stop(true),
             approve_for_run_focus: cx.focus_handle().tab_stop(true),
@@ -326,30 +340,22 @@ impl AppView {
             }
             ControllerEvent::TimelineLoaded { session_id, page } => {
                 if self.projection.active_session_id.as_deref() == Some(&session_id) {
-                    if !is_scrolled_to_bottom(&self.scroll_handle) {
-                        self.follow_timeline = false;
-                    }
+                    self.timeline_scroll.content_arriving();
                     self.projection.apply_timeline_page(&page);
-                    if self.follow_timeline {
-                        self.scroll_handle.scroll_to_bottom();
-                    }
+                    self.timeline_scroll.follow_new_content();
                 }
             }
             ControllerEvent::Event(envelope) => {
                 let terminal_event = matches!(envelope.payload, AppEvent::TerminalOutput { .. });
                 if terminal_event {
-                    if !is_scrolled_to_bottom(&self.terminal_scroll) {
-                        self.follow_terminal = false;
-                    }
-                    if self.projection.apply_event(&envelope) && self.follow_terminal {
-                        self.terminal_scroll.scroll_to_bottom();
+                    self.terminal_scroll.content_arriving();
+                    if self.projection.apply_event(&envelope) {
+                        self.terminal_scroll.follow_new_content();
                     }
                 } else {
-                    if !is_scrolled_to_bottom(&self.scroll_handle) {
-                        self.follow_timeline = false;
-                    }
-                    if self.projection.apply_event(&envelope) && self.follow_timeline {
-                        self.scroll_handle.scroll_to_bottom();
+                    self.timeline_scroll.content_arriving();
+                    if self.projection.apply_event(&envelope) {
+                        self.timeline_scroll.follow_new_content();
                     }
                 }
             }
@@ -369,6 +375,8 @@ impl AppView {
                     self.projection.terminal.columns,
                     self.projection.terminal.rows,
                 );
+                // 新终端从空输出开始，恢复跟随态。
+                self.terminal_scroll.jump_to_bottom();
                 self.inspector_open = true;
             }
             ControllerEvent::MessageSent { session_id, run_id } => {
@@ -416,8 +424,9 @@ impl AppView {
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         self.projection.select_session(&session_id);
         self.status_hint = None;
-        self.scroll_handle = ScrollHandle::new();
-        self.follow_timeline = true;
+        self.timeline_scroll.reset();
+        // 打开 / 切换 session 时补终端跟随重置（§8.3）。
+        self.terminal_scroll.jump_to_bottom();
         self.controller.open_session(session_id);
         cx.notify();
     }
@@ -440,7 +449,7 @@ impl AppView {
         match resolve_new_task_workspace(self.scope_workspace_id.as_deref()) {
             Some(workspace) => self.create_task(Some(workspace.to_string()), window, cx),
             None => {
-                self.workspace_picker_open = true;
+                self.open_menu = Some(MenuKind::WorkspaceConfirm);
                 self.status_hint =
                     Some("All projects: confirm a workspace before creating a task.".into());
                 cx.notify();
@@ -454,7 +463,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.workspace_picker_open = false;
+        self.open_menu = None;
         self.create_task(Some(workspace_id), window, cx);
     }
 
@@ -508,11 +517,13 @@ impl AppView {
         }
     }
 
-    fn on_toggle_grouping_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.grouping_menu_open = !self.grouping_menu_open;
-        self.scope_menu_open = false;
-        self.model_menu_open = false;
-        cx.notify();
+    fn on_toggle_grouping_menu(
+        &mut self,
+        down_position: Option<Point<Pixels>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_menu(MenuKind::Grouping, down_position, cx);
     }
 
     fn on_select_grouping(
@@ -522,15 +533,17 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.grouping = grouping;
-        self.grouping_menu_open = false;
+        self.open_menu = None;
         cx.notify();
     }
 
-    fn on_toggle_scope_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.scope_menu_open = !self.scope_menu_open;
-        self.grouping_menu_open = false;
-        self.model_menu_open = false;
-        cx.notify();
+    fn on_toggle_scope_menu(
+        &mut self,
+        down_position: Option<Point<Pixels>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_menu(MenuKind::Scope, down_position, cx);
     }
 
     fn on_select_scope(
@@ -540,7 +553,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.scope_workspace_id = workspace_id;
-        self.scope_menu_open = false;
+        self.open_menu = None;
         cx.notify();
     }
 
@@ -554,6 +567,57 @@ impl AppView {
             self.collapsed_projects.remove(&project_key);
         }
         cx.notify();
+    }
+
+    /// 提取 ClickEvent 的按下位置（键盘触发无位置，永不判为同一次物理点击）。
+    fn click_down_position(event: &ClickEvent) -> Option<Point<Pixels>> {
+        match event {
+            ClickEvent::Mouse(mouse) => Some(mouse.down.position),
+            ClickEvent::Keyboard(_) => None,
+        }
+    }
+
+    /// 触发器 toggle：开新关旧（单一 Option<MenuKind>，修互斥不对称），
+    /// 再点同一触发器关闭。外点关闭先行触发且 click 按下位置与标记相同
+    /// （同一次物理点击）时视为关闭收尾，不重开；否则清陈旧标记正常处理。
+    fn toggle_menu(
+        &mut self,
+        target: MenuKind,
+        down_position: Option<Point<Pixels>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((closed, press)) = self.pending_outside_close.take() {
+            if closed == target && down_position == Some(press) {
+                cx.notify();
+                return;
+            }
+        }
+        self.open_menu = if self.open_menu.as_ref() == Some(&target) {
+            None
+        } else {
+            Some(target)
+        };
+        cx.notify();
+    }
+
+    /// 浮层外按下鼠标：关闭并留下衔接标记（种类 + 按下位置，供 toggle_menu
+    /// 判定同一次物理点击）。
+    fn dismiss_menu_on_outside(
+        &mut self,
+        kind: MenuKind,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_menu = None;
+        self.pending_outside_close = Some((kind, position));
+        cx.notify();
+    }
+
+    /// 直接关闭当前菜单（Escape / 选择选项 / Fork 后）。
+    fn close_open_menu(&mut self, cx: &mut Context<Self>) {
+        if self.open_menu.take().is_some() {
+            cx.notify();
+        }
     }
 
     fn project_key(workspace_id: Option<&str>) -> String {
@@ -760,18 +824,22 @@ impl AppView {
         cx.notify();
     }
 
-    fn on_toggle_model_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_toggle_model_menu(
+        &mut self,
+        down_position: Option<Point<Pixels>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.can_switch_model() {
             return;
         }
-        self.model_menu_open = !self.model_menu_open;
-        cx.notify();
+        self.toggle_menu(MenuKind::Model, down_position, cx);
     }
 
     fn on_select_model(&mut self, model: ModelEntry, cx: &mut Context<Self>) {
         self.projection
             .set_pending_model(model.provider_id, model.id);
-        self.model_menu_open = false;
+        self.open_menu = None;
         cx.notify();
     }
 
@@ -845,6 +913,32 @@ impl AppView {
         }
     }
 
+    /// model 菜单面板（从 composer 内联抽出，与其他组同构的浮层 + MenuRow）。
+    fn model_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
+        MenuPanel::new("model-menu")
+            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
+                view.dismiss_menu_on_outside(MenuKind::Model, event.position, cx);
+            }))
+            .children(self.projection.models.iter().cloned().map(|model| {
+                let selected = self
+                    .projection
+                    .effective_model()
+                    .is_some_and(|(provider, id)| {
+                        provider == &model.provider_id && id == &model.id
+                    });
+                let label = format!("{} / {}", model.provider_id, model.display_name);
+                MenuRow::new(SharedString::from(format!(
+                    "model-{}-{}",
+                    model.provider_id, model.id
+                )))
+                .label(label)
+                .selected(selected)
+                .on_click(cx.listener(move |view, _event, _window, cx| {
+                    view.on_select_model(model.clone(), cx);
+                }))
+            }))
+    }
+
     /// Composer 禁用原因（文本说明，不只靠颜色，gui-design §6）。
     fn composer_hint(&self) -> String {
         if self.projection.active_run_id.is_some() {
@@ -866,15 +960,12 @@ impl AppView {
         }
     }
 
-    fn grouping_menu_element(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn grouping_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
         let current = self.grouping;
-        div()
-            .mt_1()
-            .p_1()
-            .rounded_md()
-            .bg(dark().bg.menu)
-            .border_1()
-            .border_color(dark().border.strong)
+        MenuPanel::new("grouping-menu")
+            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
+                view.dismiss_menu_on_outside(MenuKind::Grouping, event.position, cx);
+            }))
             .children(
                 [
                     (TaskRailGrouping::Timeline, "Timeline"),
@@ -883,22 +974,13 @@ impl AppView {
                 .into_iter()
                 .map(|(mode, label)| {
                     let selected = current == mode;
-                    div()
-                        .id(SharedString::from(format!("group-{label}")))
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .bg(if selected {
-                            dark().accent.primary
-                        } else {
-                            dark().bg.menu
-                        })
-                        .cursor_pointer()
-                        .child(if selected {
+                    MenuRow::new(SharedString::from(format!("group-{label}")))
+                        .label(if selected {
                             format!("✓ {label}")
                         } else {
                             format!("  {label}")
                         })
+                        .selected(selected)
                         .on_click(cx.listener(move |view, _event, window, cx| {
                             view.on_select_grouping(mode, window, cx);
                         }))
@@ -906,35 +988,23 @@ impl AppView {
             )
     }
 
-    fn scope_menu_element(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn scope_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
         let current = self.scope_workspace_id.clone();
-        div()
-            .mt_1()
-            .p_1()
-            .rounded_md()
-            .bg(dark().bg.menu)
-            .border_1()
-            .border_color(dark().border.strong)
+        MenuPanel::new("scope-menu")
+            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
+                view.dismiss_menu_on_outside(MenuKind::Scope, event.position, cx);
+            }))
             .children(self.projection.project_scope_options().into_iter().map(
                 |(workspace_id, label)| {
                     let selected = current == workspace_id;
                     let option_id = workspace_id.clone().unwrap_or_else(|| "all".into());
-                    div()
-                        .id(SharedString::from(format!("scope-{option_id}")))
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .bg(if selected {
-                            dark().accent.primary
-                        } else {
-                            dark().bg.menu
-                        })
-                        .cursor_pointer()
-                        .child(if selected {
+                    MenuRow::new(SharedString::from(format!("scope-{option_id}")))
+                        .label(if selected {
                             format!("✓ {label}")
                         } else {
                             label
                         })
+                        .selected(selected)
                         .on_click(cx.listener(move |view, _event, window, cx| {
                             view.on_select_scope(workspace_id.clone(), window, cx);
                         }))
@@ -962,24 +1032,22 @@ impl AppView {
             .gap_1();
         if empty {
             return list.child(
-                div()
-                    .px_2()
-                    .py_2()
-                    .text_size(px(font::SM))
-                    .text_color(dark().text.tertiary)
-                    .child("No tasks"),
+                div().px_2().py_2().child(
+                    Label::new("No tasks")
+                        .size(font::SM)
+                        .color(dark().text.tertiary),
+                ),
             );
         }
         match rail {
             RailView::Timeline(groups) => {
                 for group in groups {
                     list = list.child(
-                        div()
-                            .px_1()
-                            .pt_2()
-                            .text_size(px(font::XS))
-                            .text_color(dark().text.secondary)
-                            .child(group.bucket.label().to_string()),
+                        div().px_1().pt_2().child(
+                            Label::new(group.bucket.label().to_string())
+                                .size(font::XS)
+                                .color(dark().text.secondary),
+                        ),
                     );
                     for project in group.projects {
                         list = list.child(self.project_block(&project, now_ms, can_create, cx));
@@ -1015,13 +1083,7 @@ impl AppView {
             .justify_between()
             .px_1()
             .child(
-                div()
-                    .id(header_id)
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .gap_1()
-                    .cursor_pointer()
+                ListRow::project_header(header_id)
                     .child(
                         div()
                             .text_size(px(font::SM))
@@ -1040,23 +1102,13 @@ impl AppView {
         if !project.is_unassigned() {
             if let Some(workspace_id) = workspace_id {
                 header = header.child(
-                    div()
-                        .id(add_id)
-                        .w(px(metrics::ICON_SMALL))
-                        .h(px(metrics::ICON_SMALL))
-                        .rounded_md()
-                        .bg(if can_create {
-                            dark().surface.raised
-                        } else {
-                            dark().surface.disabled
-                        })
-                        .text_color(if can_create {
-                            dark().text.primary
-                        } else {
-                            dark().text.disabled
-                        })
-                        .cursor_pointer()
-                        .child("+")
+                    Button::new(add_id)
+                        .variant(ButtonVariant::Icon)
+                        .disabled(!can_create)
+                        .padding(ButtonPadding::None)
+                        .width(px(metrics::ICON_SMALL))
+                        .height(px(metrics::ICON_SMALL))
+                        .label("+")
                         .on_click(cx.listener(move |view, _event, window, cx| {
                             view.on_project_add_task(workspace_id.clone(), window, cx);
                         })),
@@ -1075,17 +1127,7 @@ impl AppView {
                     .iter()
                     .any(|run| run.session_id == task.session_id);
                 block = block.child(
-                    div()
-                        .id(SharedString::from(session_id.clone()))
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .bg(if active {
-                            dark().surface.raised
-                        } else {
-                            dark().bg.panel
-                        })
-                        .cursor_pointer()
+                    ListRow::task(SharedString::from(session_id.clone()), active)
                         .child(
                             div()
                                 .flex()
@@ -1093,10 +1135,9 @@ impl AppView {
                                 .justify_between()
                                 .child(format!("{}{}", if running { "● " } else { "" }, task.title))
                                 .child(
-                                    div()
-                                        .text_size(px(font::XS))
-                                        .text_color(dark().text.tertiary)
-                                        .child(relative_activity(task.updated_at_ms, now_ms)),
+                                    Label::new(relative_activity(task.updated_at_ms, now_ms))
+                                        .size(font::XS)
+                                        .color(dark().text.tertiary),
                                 ),
                         )
                         .on_click(cx.listener(move |view, _event, window, cx| {
@@ -1154,49 +1195,41 @@ impl AppView {
                 .child(format!("Error: {message}")),
         };
         let event_id = entry.event_id.clone();
-        let mut actions = div()
-            .id(SharedString::from(format!("entry-menu-{}", entry.event_id)))
-            .px_1()
-            .text_size(px(font::XS))
+        let actions_button = Button::new(format!("entry-menu-{}", entry.event_id))
+            .variant(ButtonVariant::Ghost)
+            .text_size(font::XS)
             .text_color(dark().text.secondary)
-            .cursor_pointer()
-            .child("···")
+            .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
+            .label("···")
             .on_click(cx.listener({
                 let event_id = event_id.clone();
-                move |view, _event, _window, cx| {
-                    view.entry_menu_event_id =
-                        if view.entry_menu_event_id.as_deref() == Some(event_id.as_str()) {
-                            None
-                        } else {
-                            Some(event_id.clone())
-                        };
-                    cx.notify();
+                move |view, event, _window, cx| {
+                    let down = Self::click_down_position(event);
+                    view.toggle_menu(MenuKind::Entry(event_id.clone()), down, cx);
                 }
             }));
+        let mut actions = Dropdown::new(actions_button);
         if menu_open {
             let fork_id = event_id.clone();
-            actions = actions.child(
-                div()
-                    .id(SharedString::from(format!("fork-{}", entry.event_id)))
-                    .mt_1()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(dark().bg.menu)
-                    .border_1()
-                    .border_color(dark().border.strong)
-                    .text_color(if can_fork {
-                        dark().text.primary
-                    } else {
-                        dark().text.ghost
-                    })
-                    .child("Fork")
-                    .when(can_fork, |button| {
-                        button.on_click(cx.listener(move |view, _event, _window, cx| {
-                            view.entry_menu_event_id = None;
-                            view.on_fork(&fork_id, cx);
-                        }))
-                    }),
+            actions = actions.panel(
+                MenuPanel::new(SharedString::from(format!("fork-menu-{}", entry.event_id)))
+                    .dismiss_on_outside(cx.listener({
+                        let kind = MenuKind::Entry(event_id.clone());
+                        move |view, event: &gpui::MouseDownEvent, _, cx| {
+                            view.dismiss_menu_on_outside(kind.clone(), event.position, cx)
+                        }
+                    }))
+                    .child(
+                        MenuRow::new(SharedString::from(format!("fork-{}", entry.event_id)))
+                            .label("Fork")
+                            .disabled(!can_fork)
+                            .when(can_fork, |row| {
+                                row.on_click(cx.listener(move |view, _event, _window, cx| {
+                                    view.close_open_menu(cx);
+                                    view.on_fork(&fork_id, cx);
+                                }))
+                            }),
+                    ),
             );
         }
         div()
@@ -1209,7 +1242,7 @@ impl AppView {
             .child(actions)
     }
 
-    fn inspector_element(&self, connected: bool, cx: &mut Context<Self>) -> gpui::Div {
+    fn inspector_element(&self, connected: bool, cx: &mut Context<Self>) -> Panel {
         let terminal = &self.projection.terminal;
         let output = if terminal.output.is_empty() {
             "Terminal output will appear here. No local PTY — host streams TerminalOutput."
@@ -1220,14 +1253,7 @@ impl AppView {
         let size_label = format!("{}×{}", terminal.columns, terminal.rows);
         let cwd = terminal.cwd.clone();
         let started = terminal.session_id.is_some();
-        div()
-            .flex()
-            .flex_col()
-            .w(px(metrics::INSPECTOR_WIDTH))
-            .h_full()
-            .bg(dark().bg.panel)
-            .border_l_1()
-            .border_color(dark().border.subtle)
+        Panel::side_left(px(metrics::INSPECTOR_WIDTH))
             .child(
                 div()
                     .flex()
@@ -1249,13 +1275,12 @@ impl AppView {
                             .child("Terminal"),
                     )
                     .child(
-                        div()
-                            .id("inspector-collapse")
-                            .px_2()
-                            .text_size(px(font::SM))
+                        Button::new("inspector-collapse")
+                            .variant(ButtonVariant::Ghost)
+                            .text_size(font::SM)
                             .text_color(dark().text.secondary)
-                            .cursor_pointer()
-                            .child("⟩")
+                            .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                            .label("⟩")
                             .on_click(cx.listener(|view, _event, window, cx| {
                                 view.on_toggle_inspector(window, cx);
                             })),
@@ -1273,10 +1298,10 @@ impl AppView {
                     .text_color(dark().text.secondary)
                     .child(format!("cwd {cwd}"))
                     .child(
-                        div()
-                            .id("terminal-resize")
-                            .cursor_pointer()
-                            .child(size_label)
+                        Button::new("terminal-resize")
+                            .variant(ButtonVariant::Ghost)
+                            .padding(ButtonPadding::None)
+                            .label(size_label)
                             .on_click(cx.listener(|view, _event, window, cx| {
                                 view.on_apply_terminal_size(window, cx);
                             })),
@@ -1284,17 +1309,40 @@ impl AppView {
             )
             .child(
                 div()
-                    .id("terminal-output")
+                    .id("terminal-output-area")
+                    .relative()
                     .flex()
                     .flex_col()
                     .flex_1()
-                    .track_scroll(&self.terminal_scroll)
-                    .overflow_y_scroll()
-                    .px_2()
-                    .py_1()
-                    .text_size(px(font::SM))
-                    .text_color(dark().text.emphasis)
-                    .child(output),
+                    .child(
+                        div()
+                            .id("terminal-output")
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .track_scroll(self.terminal_scroll.handle())
+                            .overflow_y_scroll()
+                            .px_2()
+                            .py_1()
+                            .text_size(px(font::SM))
+                            .text_color(dark().text.emphasis)
+                            .on_scroll_wheel(cx.listener(|view, _event, _window, cx| {
+                                view.terminal_scroll.on_scroll_wheel();
+                                cx.notify();
+                            }))
+                            .child(output),
+                    )
+                    .when(!self.terminal_scroll.is_following(), |area| {
+                        area.child(BackToBottom::new(
+                            Button::new("terminal-back-to-bottom")
+                                .variant(ButtonVariant::Raised)
+                                .label("↓ 回到底部")
+                                .on_click(cx.listener(|view, _event, _window, cx| {
+                                    view.terminal_scroll.jump_to_bottom();
+                                    cx.notify();
+                                })),
+                        ))
+                    }),
             )
             .child(
                 div()
@@ -1306,19 +1354,15 @@ impl AppView {
                     .border_color(dark().border.subtle)
                     .child(div().flex_1().child(self.terminal_input.clone()))
                     .child(
-                        div()
-                            .id("terminal-start")
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(if connected {
-                                dark().surface.raised
-                            } else {
-                                dark().surface.disabled
-                            })
-                            .text_size(px(font::XS))
-                            .cursor_pointer()
-                            .child(if started { "Size" } else { "Start" })
+                        // 迁移前 terminal-start 未设文字色（继承 text.primary），
+                        // 禁用态亦保持同色，显式钉住避免 Raised 默认的 disabled 色。
+                        Button::new("terminal-start")
+                            .variant(ButtonVariant::Raised)
+                            .disabled(!connected)
+                            .text_size(font::XS)
+                            .text_color(dark().text.primary)
+                            .disabled_text_color(dark().text.primary)
+                            .label(if started { "Size" } else { "Start" })
                             .on_click(cx.listener(move |view, _event, window, cx| {
                                 if started {
                                     view.on_apply_terminal_size(window, cx);
@@ -1351,22 +1395,19 @@ impl AppView {
         }
     }
 
-    fn workspace_confirm_element(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn workspace_confirm_element(&self, cx: &mut Context<Self>) -> MenuPanel {
         let choices: Vec<(String, String)> = self
             .projection
             .project_scope_options()
             .into_iter()
             .filter_map(|(id, name)| id.map(|id| (id, name)))
             .collect();
-        let mut list = div()
-            .id("workspace-confirm")
-            .p_1()
-            .rounded_md()
-            .bg(dark().bg.menu)
-            .border_1()
-            .border_color(dark().border.strong);
+        let mut panel = MenuPanel::new("workspace-confirm")
+            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
+                view.dismiss_menu_on_outside(MenuKind::WorkspaceConfirm, event.position, cx);
+            }));
         if choices.is_empty() {
-            return list.child(
+            return panel.child(
                 div()
                     .px_2()
                     .py_1()
@@ -1377,27 +1418,16 @@ impl AppView {
         }
         for (id, name) in choices {
             let pick = id.clone();
-            list = list.child(
-                div()
-                    .id(SharedString::from(format!("workspace-confirm-{id}")))
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .child(name)
+            panel = panel.child(
+                MenuRow::new(SharedString::from(format!("workspace-confirm-{id}")))
+                    .label(name)
                     .on_click(cx.listener(move |view, _event, window, cx| {
                         view.on_confirm_workspace(pick.clone(), window, cx);
                     })),
             );
         }
-        list
+        panel
     }
-}
-
-fn is_scrolled_to_bottom(handle: &ScrollHandle) -> bool {
-    let max = handle.max_offset().height;
-    let y = handle.offset().y;
-    max <= px(metrics::SCROLL_EPSILON) || y <= px(metrics::SCROLL_BOTTOM_SLACK) - max
 }
 
 fn resolve_new_task_workspace(scope_workspace_id: Option<&str>) -> Option<&str> {
@@ -1413,9 +1443,14 @@ impl Render for AppView {
         let can_send = self.can_send();
         let can_cancel = self.can_cancel();
         let can_switch_model = self.can_switch_model();
+        // can_switch_model 翻假期间归一化：打开中的 model 菜单随之关闭，
+        // 避免条件恢复后面板无需点击自行重现。
+        if matches!(self.open_menu, Some(MenuKind::Model)) && !can_switch_model {
+            self.open_menu = None;
+        }
         let can_approve = self.can_approve();
         let model_label = self.model_label();
-        let model_menu_open = self.model_menu_open && can_switch_model;
+        let model_menu_open = matches!(self.open_menu, Some(MenuKind::Model)) && can_switch_model;
         let connection_label = match &self.projection.connection {
             ConnectionState::Connected { .. } => match self.projection.resume.label() {
                 Some(resume) => format!("Local · Connected · {resume}"),
@@ -1433,8 +1468,8 @@ impl Render for AppView {
             TaskRailGrouping::Projects => "▤",
         };
         let scope_label = self.scope_label();
-        let grouping_menu_open = self.grouping_menu_open;
-        let scope_menu_open = self.scope_menu_open;
+        let grouping_menu_open = matches!(self.open_menu, Some(MenuKind::Grouping));
+        let scope_menu_open = matches!(self.open_menu, Some(MenuKind::Scope));
         let rail_groups = match self.grouping {
             TaskRailGrouping::Timeline => RailView::Timeline(
                 self.projection
@@ -1447,38 +1482,34 @@ impl Render for AppView {
         };
 
         let grouping_tooltip = SharedString::from(self.grouping.accessible_name());
-        let mut grouping_button = div()
-            .id("task-rail-grouping")
-            .w(px(metrics::ICON_LARGE))
-            .h(px(metrics::ICON_MEDIUM))
-            .rounded_md()
-            .bg(dark().surface.raised)
-            .text_size(px(font::SM))
-            .text_color(dark().text.primary)
-            .cursor_pointer()
-            .child(format!("{grouping_glyph} ▾"))
-            .tooltip(move |_, cx| tooltip_text(grouping_tooltip.clone(), cx))
-            .on_click(cx.listener(|view, _event, window, cx| {
-                view.on_toggle_grouping_menu(window, cx);
+        let grouping_button = Button::new("task-rail-grouping")
+            .variant(ButtonVariant::Raised)
+            .padding(ButtonPadding::None)
+            .width(px(metrics::ICON_LARGE))
+            .height(px(metrics::ICON_MEDIUM))
+            .text_size(font::SM)
+            .label(format!("{grouping_glyph} ▾"))
+            .tooltip(grouping_tooltip)
+            .on_click(cx.listener(|view, event, window, cx| {
+                let down = Self::click_down_position(event);
+                view.on_toggle_grouping_menu(down, window, cx);
             }));
+        let mut grouping = Dropdown::new(grouping_button);
         if grouping_menu_open {
-            grouping_button = grouping_button.child(self.grouping_menu_element(cx));
+            grouping = grouping.panel(self.grouping_menu_element(cx));
         }
 
-        let mut scope_button = div()
-            .id("project-scope")
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(dark().surface.raised)
-            .text_size(px(font::SM))
-            .cursor_pointer()
-            .child(format!("{scope_label} ▾"))
-            .on_click(cx.listener(|view, _event, window, cx| {
-                view.on_toggle_scope_menu(window, cx);
+        let scope_button = Button::new("project-scope")
+            .variant(ButtonVariant::Raised)
+            .text_size(font::SM)
+            .label(format!("{scope_label} ▾"))
+            .on_click(cx.listener(|view, event, window, cx| {
+                let down = Self::click_down_position(event);
+                view.on_toggle_scope_menu(down, window, cx);
             }));
+        let mut scope = Dropdown::new(scope_button);
         if scope_menu_open {
-            scope_button = scope_button.child(self.scope_menu_element(cx));
+            scope = scope.panel(self.scope_menu_element(cx));
         }
 
         let add_task_tooltip = if can_create {
@@ -1487,41 +1518,20 @@ impl Render for AppView {
             SharedString::from(self.add_task_disabled_reason())
         };
         let add_task_focus = self.add_task_focus.clone();
-        let add_task = div()
-            .id("add-task")
-            .tab_stop(true)
+        let add_task = Button::new("add-task")
             .track_focus(&add_task_focus)
-            .focus(focus_ring_style)
-            .w(px(metrics::ICON_MEDIUM))
-            .h(px(metrics::ICON_MEDIUM))
-            .rounded_md()
-            .bg(if can_create {
-                dark().surface.raised
-            } else {
-                dark().surface.disabled
-            })
-            .text_color(if can_create {
-                dark().text.primary
-            } else {
-                dark().text.disabled
-            })
-            .cursor_pointer()
-            .child("+")
-            .tooltip(move |_, cx| tooltip_text(add_task_tooltip.clone(), cx))
+            .variant(ButtonVariant::Icon)
+            .disabled(!can_create)
+            .padding(ButtonPadding::None)
+            .width(px(metrics::ICON_MEDIUM))
+            .height(px(metrics::ICON_MEDIUM))
+            .label("+")
+            .tooltip(add_task_tooltip)
             .on_click(cx.listener(|view, _event, window, cx| {
                 view.on_new_session(window, cx);
             }));
 
-        let sidebar = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_2()
-            .w(px(metrics::SIDEBAR_WIDTH))
-            .h_full()
-            .bg(dark().bg.panel)
-            .border_r_1()
-            .border_color(dark().border.subtle)
+        let mut sidebar = Panel::side_right(px(metrics::SIDEBAR_WIDTH))
             .child(
                 div()
                     .flex()
@@ -1529,69 +1539,65 @@ impl Render for AppView {
                     .items_center()
                     .justify_between()
                     .child(
-                        div()
-                            .text_size(px(font::BASE))
-                            .text_color(dark().text.primary)
-                            .child("Pawork"),
+                        Label::new("Pawork")
+                            .size(font::BASE)
+                            .color(dark().text.primary),
                     )
-                    .child(grouping_button),
+                    .child(grouping),
             )
-            .child(scope_button)
+            .child(scope)
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(font::XS))
-                            .text_color(dark().text.secondary)
-                            .child(connection_label),
-                    )
+                    .child(Badge::new(connection_label))
                     .child(add_task),
-            )
-            .when(!connected, |sidebar| {
-                sidebar.child(
-                    div()
-                        .id("reconnect")
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(dark().accent.primary)
-                        .text_color(dark().text.on_accent)
-                        .cursor_pointer()
-                        .child("Reconnect")
-                        .on_click(cx.listener(|view, _event, window, cx| {
-                            view.on_reconnect(window, cx);
-                        })),
-                )
-            })
+            );
+        if !connected {
+            sidebar = sidebar.child(
+                Button::new("reconnect")
+                    .variant(ButtonVariant::Primary)
+                    .label("Reconnect")
+                    .on_click(cx.listener(|view, _event, window, cx| {
+                        view.on_reconnect(window, cx);
+                    })),
+            );
+        }
+        let sidebar = sidebar
             .child(self.task_rail_list(rail_groups, now_ms, can_create, cx))
             .child(
-                div()
-                    .mt_auto()
-                    .pt_2()
-                    .text_size(px(font::XS))
-                    .text_color(dark().text.tertiary)
-                    .child("Local"),
+                div().mt_auto().pt_2().child(
+                    Label::new("Local")
+                        .size(font::XS)
+                        .color(dark().text.tertiary),
+                ),
             );
 
         let fork_available = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
         ) && self.projection.active_session_id.is_some();
-        let open_entry_menu = self.entry_menu_event_id.clone();
+        let open_entry_menu = match &self.open_menu {
+            Some(MenuKind::Entry(event_id)) => Some(event_id.clone()),
+            _ => None,
+        };
         let timeline = div()
             .id("timeline")
             .flex()
             .flex_col()
-            .track_scroll(&self.scroll_handle)
+            .track_scroll(self.timeline_scroll.handle())
             .flex_1()
             .overflow_y_scroll()
             .px_3()
             .py_2()
             .gap_1()
+            // 用户滚动重估跟随：滚回底部自动重挂（§8.3）。
+            .on_scroll_wheel(cx.listener(|view, _event, _window, cx| {
+                view.timeline_scroll.on_scroll_wheel();
+                cx.notify();
+            }))
             .children(self.projection.timeline.iter().map(|entry| {
                 Self::timeline_entry_element(
                     entry,
@@ -1639,15 +1645,15 @@ impl Render for AppView {
                         "approve-once",
                         "Allow once",
                         "approve_once",
-                        dark().accent.primary,
+                        ButtonVariant::Primary,
                     ),
                     (
                         "approve-for-run",
                         "Allow for run",
                         "approve_for_run",
-                        dark().semantic.success_bg,
+                        ButtonVariant::Success,
                     ),
-                    ("approve-deny", "Deny", "deny", dark().semantic.danger_bg),
+                    ("approve-deny", "Deny", "deny", ButtonVariant::Danger),
                 ];
                 let approve_once_focus = self.approve_once_focus.clone();
                 let approve_for_run_focus = self.approve_for_run_focus.clone();
@@ -1657,7 +1663,7 @@ impl Render for AppView {
                     .flex()
                     .flex_row()
                     .gap_2()
-                    .children(buttons.into_iter().map(|(id, label, decision, color)| {
+                    .children(buttons.into_iter().map(|(id, label, decision, variant)| {
                         let decision = decision.to_string();
                         let focus = match id {
                             "approve-once" => approve_once_focus.clone(),
@@ -1673,30 +1679,41 @@ impl Render for AppView {
                         } else {
                             approve_disabled.clone()
                         };
-                        div()
-                            .id(SharedString::from(id))
-                            .tab_stop(true)
+                        let mut button = Button::new(id)
+                            .variant(variant)
+                            .disabled(!can_approve)
                             .track_focus(&focus)
-                            .focus(focus_ring_style)
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(if can_approve {
-                                color
-                            } else {
-                                dark().border.strong
-                            })
-                            .text_color(dark().text.on_accent)
-                            .cursor_pointer()
-                            .child(label)
-                            .tooltip(move |_, cx| tooltip_text(tooltip.clone(), cx))
-                            .when(can_approve, |button| {
+                            .label(label)
+                            .tooltip(tooltip);
+                        if can_approve {
+                            button =
                                 button.on_click(cx.listener(move |view, _event, _window, cx| {
                                     view.on_approve(&decision, cx);
-                                }))
-                            })
+                                }));
+                        }
+                        button
                     }));
                 timeline.child(card.child(row))
+            });
+
+        // 脱钩时右下浮出回底控件（§8.3）；跟随态隐藏。
+        let timeline_following = self.timeline_scroll.is_following();
+        let timeline_area = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .child(timeline)
+            .when(!timeline_following, |area| {
+                area.child(BackToBottom::new(
+                    Button::new("timeline-back-to-bottom")
+                        .variant(ButtonVariant::Raised)
+                        .label("↓ 回到底部")
+                        .on_click(cx.listener(|view, _event, _window, cx| {
+                            view.timeline_scroll.jump_to_bottom();
+                            cx.notify();
+                        })),
+                ))
             });
 
         let model_tooltip = if can_switch_model {
@@ -1705,69 +1722,21 @@ impl Render for AppView {
             SharedString::from(self.model_disabled_reason())
         };
         let model_focus = self.model_focus.clone();
-        let mut model_picker = div()
-            .id("model-picker")
-            .tab_stop(true)
+        let mut model_button = Button::new("model-picker")
             .track_focus(&model_focus)
-            .focus(focus_ring_style)
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(if can_switch_model {
-                dark().surface.raised
-            } else {
-                dark().surface.disabled
-            })
-            .text_color(if can_switch_model {
-                dark().text.primary
-            } else {
-                dark().text.disabled
-            })
-            .cursor_pointer()
-            .child(model_label)
-            .tooltip(move |_, cx| tooltip_text(model_tooltip.clone(), cx))
-            .when(can_switch_model, |button| {
-                button.on_click(cx.listener(|view, _event, window, cx| {
-                    view.on_toggle_model_menu(window, cx);
-                }))
-            });
+            .variant(ButtonVariant::Raised)
+            .disabled(!can_switch_model)
+            .label(model_label)
+            .tooltip(model_tooltip);
+        if can_switch_model {
+            model_button = model_button.on_click(cx.listener(|view, event, window, cx| {
+                let down = Self::click_down_position(event);
+                view.on_toggle_model_menu(down, window, cx);
+            }));
+        }
+        let mut model_picker = Dropdown::new(model_button);
         if model_menu_open {
-            model_picker = model_picker.child(
-                div()
-                    .mt_1()
-                    .p_1()
-                    .rounded_md()
-                    .bg(dark().bg.menu)
-                    .border_1()
-                    .border_color(dark().border.strong)
-                    .children(self.projection.models.iter().cloned().map(|model| {
-                        let selected =
-                            self.projection
-                                .effective_model()
-                                .is_some_and(|(provider, id)| {
-                                    provider == &model.provider_id && id == &model.id
-                                });
-                        let label = format!("{} / {}", model.provider_id, model.display_name);
-                        div()
-                            .id(SharedString::from(format!(
-                                "model-{}-{}",
-                                model.provider_id, model.id
-                            )))
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(if selected {
-                                dark().accent.primary
-                            } else {
-                                dark().bg.menu
-                            })
-                            .cursor_pointer()
-                            .child(label)
-                            .on_click(cx.listener(move |view, _event, _window, cx| {
-                                view.on_select_model(model.clone(), cx);
-                            }))
-                    })),
-            );
+            model_picker = model_picker.panel(self.model_menu_element(cx));
         }
 
         let composer = div()
@@ -1785,22 +1754,32 @@ impl Render for AppView {
                     .gap_2()
                     .child(model_picker)
                     .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(font::XS))
-                            .text_color(dark().text.secondary)
-                            .child(context_meter),
+                        div().flex_1().child(
+                            Label::new(context_meter)
+                                .size(font::XS)
+                                .color(dark().text.secondary),
+                        ),
                     )
                     .child(
-                        div()
-                            .text_size(px(font::XS))
-                            .text_color(dark().text.secondary)
-                            .child(self.composer_workspace_label()),
+                        Label::new(self.composer_workspace_label())
+                            .size(font::XS)
+                            .color(dark().text.secondary),
                     ),
             )
-            .when(self.workspace_picker_open, |composer| {
-                composer.child(self.workspace_confirm_element(cx))
-            })
+            .when(
+                matches!(self.open_menu, Some(MenuKind::WorkspaceConfirm)),
+                |composer| {
+                    // 无触发器：锚在 label 行正下方（原 in-flow 位置），浮层化不占布局流。
+                    composer.child(
+                        deferred(
+                            anchored()
+                                .anchor(Corner::TopLeft)
+                                .offset(point(px(0.), px(ANCHOR_GAP_Y)))
+                                .child(self.workspace_confirm_element(cx)),
+                        )
+                    )
+                },
+            )
             .child(
                 div()
                     .flex()
@@ -1820,28 +1799,19 @@ impl Render for AppView {
                         } else {
                             SharedString::from(self.cancel_disabled_reason())
                         };
-                        div()
-                            .id("cancel")
-                            .tab_stop(true)
+                        let mut cancel = Button::new("cancel")
+                            .variant(ButtonVariant::Danger)
+                            .disabled(!can_cancel)
                             .track_focus(&cancel_focus)
-                            .focus(focus_ring_style)
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .bg(if can_cancel {
-                                dark().semantic.danger_bg
-                            } else {
-                                dark().border.strong
-                            })
-                            .text_color(dark().text.on_accent)
-                            .cursor_pointer()
-                            .child("Cancel")
-                            .tooltip(move |_, cx| tooltip_text(cancel_tooltip.clone(), cx))
-                            .when(can_cancel, |button| {
-                                button.on_click(cx.listener(|view, _event, window, cx| {
-                                    view.on_cancel_clicked(window, cx);
-                                }))
-                            })
+                            .padding(ButtonPadding::Wide)
+                            .label("Cancel")
+                            .tooltip(cancel_tooltip);
+                        if can_cancel {
+                            cancel = cancel.on_click(cx.listener(|view, _event, window, cx| {
+                                view.on_cancel_clicked(window, cx);
+                            }));
+                        }
+                        cancel
                     })
                     .child({
                         let send_focus = self.send_focus.clone();
@@ -1850,35 +1820,25 @@ impl Render for AppView {
                         } else {
                             SharedString::from(composer_hint.clone())
                         };
-                        div()
-                            .id("send")
-                            .tab_stop(true)
+                        let mut send = Button::new("send")
+                            .variant(ButtonVariant::Primary)
+                            .disabled(!can_send)
                             .track_focus(&send_focus)
-                            .focus(focus_ring_style)
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .bg(if can_send {
-                                dark().accent.primary
-                            } else {
-                                dark().border.strong
-                            })
-                            .text_color(dark().text.on_accent)
-                            .cursor_pointer()
-                            .child("Send")
-                            .tooltip(move |_, cx| tooltip_text(send_tooltip.clone(), cx))
-                            .when(can_send, |button| {
-                                button.on_click(cx.listener(|view, _event, window, cx| {
-                                    view.on_send_clicked(window, cx);
-                                }))
-                            })
+                            .padding(ButtonPadding::Wide)
+                            .label("Send")
+                            .tooltip(send_tooltip);
+                        if can_send {
+                            send = send.on_click(cx.listener(|view, _event, window, cx| {
+                                view.on_send_clicked(window, cx);
+                            }));
+                        }
+                        send
                     }),
             )
             .child(
-                div()
-                    .text_size(px(font::XS))
-                    .text_color(dark().text.secondary)
-                    .child(self.status_hint.clone().unwrap_or(composer_hint)),
+                Label::new(self.status_hint.clone().unwrap_or(composer_hint))
+                    .size(font::XS)
+                    .color(dark().text.secondary),
             );
 
         let inspector_open = self.inspector_open;
@@ -1886,7 +1846,7 @@ impl Render for AppView {
             .flex()
             .flex_col()
             .flex_1()
-            .child(timeline)
+            .child(timeline_area)
             .child(composer);
 
         let mut main = div().flex().flex_row().flex_1().child(workspace);
@@ -1901,6 +1861,19 @@ impl Render for AppView {
             .size_full()
             .bg(dark().bg.base)
             .text_color(dark().text.primary)
+            // Escape 关闭浮层菜单（不动全局 keybinding 字面量）：焦点在窗口内任意
+            // 元素时经冒泡到达根节点；面板经 deferred 绘制、不可聚焦，组件层
+            // on_key_down 不可达，根节点为唯一机制。
+            .on_key_down(cx.listener(
+                |view: &mut Self,
+                 event: &KeyDownEvent,
+                 _window: &mut Window,
+                 cx: &mut Context<Self>| {
+                    if event.keystroke.key == "escape" {
+                        view.close_open_menu(cx);
+                    }
+                },
+            ))
             .on_action(cx.listener(Self::on_send_message))
             .on_action(cx.listener(Self::on_approve_once))
             .on_action(cx.listener(Self::on_approve_for_run))
@@ -1911,32 +1884,19 @@ impl Render for AppView {
             .child(sidebar)
             .child(
                 div().flex().flex_col().flex_1().child(main).child(
-                    div()
-                        .h(px(metrics::STATUS_BAR_HEIGHT))
-                        .px_3()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .border_t_1()
-                        .border_color(dark().border.subtle)
-                        .bg(dark().bg.panel)
-                        .text_size(px(font::XS))
-                        .text_color(dark().text.secondary)
-                        .child(run_status)
-                        .child(
-                            div()
-                                .id("inspector-toggle")
-                                .px_2()
-                                .cursor_pointer()
-                                .child(if inspector_open {
-                                    "Hide inspector"
-                                } else {
-                                    "Inspector"
-                                })
-                                .on_click(cx.listener(|view, _event, window, cx| {
-                                    view.on_toggle_inspector(window, cx);
-                                })),
-                        ),
+                    StatusBar::new().child(Badge::new(run_status)).child(
+                        Button::new("inspector-toggle")
+                            .variant(ButtonVariant::Ghost)
+                            .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                            .label(if inspector_open {
+                                "Hide inspector"
+                            } else {
+                                "Inspector"
+                            })
+                            .on_click(cx.listener(|view, _event, window, cx| {
+                                view.on_toggle_inspector(window, cx);
+                            })),
+                    ),
                 ),
             )
     }

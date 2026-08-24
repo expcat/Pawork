@@ -140,4 +140,40 @@
 - RunStatusBar 不重复 Composer 的模型 / reasoning，并对 quota `Unknown`、无 tokens/s、Run 时间戳不完整与窄窗口溢出提供可观察回归。
 - Inspector 顶层与 Changes 二级 tab 层次不可混用；折叠态 ActivityPopover 的摘要跳转、Agent 状态与 capability 缺失均有定向测试。
 - 在 `1440 × 1024` 对照 v3 截图做视觉验收；在 `1080 × 720` 验证 Inspector / ActivityPopover 切换、日期内项目分组、状态栏收敛与紧凑 Composer 可用。
+- 交互态与浮层菜单按 §8 验收:hover / active 色值来自 theme token、菜单单开互斥、Escape 与外点关闭、浮层滚轮无穿透、回底控件脱钩可见 / 回底隐藏。
 - 后续视觉差异若属于有意改动，先更新本目录与 [GUI 设计](../docs/gui-design.md)，再实现代码。
+
+## 8. 交互态与浮层菜单(2026-08-24 增补,R8 波 B)
+
+本节是有意视觉变更的先行基准:落地前实现侧无任何 hover / active 态,菜单为布局流内 child。实现后本节与实现保持一致,像素对照仍在波 E K-03 进行。
+
+### 8.1 hover / active 交互态
+
+- 范围:全部可点控件——按钮(Send / Cancel / Reconnect / 审批三钮 / 新建角标 / Inspector 开合 / 终端 Start 等)、菜单触发器、菜单选项行、Task / 项目列表行。禁用态不加 hover。
+- 色值全部来自 theme token,不引入散置字面量:
+
+| 控件底色 | hover 背景 | token |
+| --- | --- | --- |
+| 无底色(ghost / 角标 / 「···」) | `#2a2a2a` | `surface.raised` |
+| `surface.raised` 控件(`#2a2a2a`) | `#343434` | `surface.hover`(新增) |
+| `accent.primary` 主按钮(`#2f6fed`) | `#3d7bf0` | `accent.hover`(新增) |
+| `semantic.success_bg`(`#3d7a4a`) | `#4a8c58` | `semantic.success_hover`(新增) |
+| `semantic.danger_bg`(`#8a3b32`) | `#9c463c` | `semantic.danger_hover`(新增) |
+| 菜单选项行(未选中,`bg.menu` 上) | `#2a2a2a` | `surface.raised` |
+| 菜单选项行(选中) | 保持 `accent.primary`,不再叠加 hover | — |
+
+- active(按下)态复用同行 hover 色,不新增 token;hover / active 只改背景,不改尺寸、描边与文字色,不引起布局移动。
+
+### 8.2 浮层菜单形态
+
+- 五组菜单(grouping / scope / model / 条目「···」/ workspace 确认)统一为 gpui `deferred(anchored())` 浮层,不再占布局流,开合不改变下层内容位置。
+- 面板样式沿用现状:`bg.menu` 底、`border.strong` 描边、`rounded_md`;触发器下方对齐,近窗口边缘时按 anchored 自带规则翻转 / 吸附。
+- 同一时刻至多一个菜单打开:开新即关旧(修复既有「model 与 grouping 可双开」互斥不对称)。
+- 关闭路径:选择选项、再点触发器、`Escape`、点击浮层外区域;§3.6 的菜单键位承诺由此落地 Escape,菜单内 ↑/↓ 导航维持缺口至波 E 键盘走查。
+- 遮挡:菜单打开时拦截下层点击与滚轮(滚轮无穿透到下层滚动容器);菜单项超出时菜单自身滚动。
+- workspace 确认菜单维持「无独立触发器、新建任务缺工作区时条件打开」语义,仅形态迁为浮层。
+
+### 8.3 回底控件(FollowScroll)
+
+- Timeline 与终端输出区:用户向上滚动即脱钩自动跟随;脱钩后该区域右下浮出「↓ 回到底部」控件(`surface.raised` 底、`text.primary` 字、`rounded_md`,带 hover 态)。
+- 点击回底控件:滚动到底并重新挂接自动跟随;用户自行滚回底部同样重挂;跟随状态下控件隐藏。
