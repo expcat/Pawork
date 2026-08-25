@@ -15,7 +15,7 @@ src/
   data_dir.rs  diff.rs  extensions.rs  hub.rs  idempotency.rs
   import_host.rs  loop_ctx.rs  orchestration_host.rs  persist.rs
   plan_host.rs  protected.rs  protocol.rs  provider_assembly.rs
-  tasks_host.rs
+  tasks_host.rs  testsupport.rs             # 仅 cfg(test)：测试装配共享件
   gui_server/{mod,connection,session}.rs     # pub mod
   gui_host/{mod,bus,events,handlers/*}.rs    # 私有；类型再导出
   services/{mod,session,run,approval,usage,tasks,import,extension}.rs  # pub(crate)
@@ -44,6 +44,7 @@ tests/
 - GUI resume 保留待审批（`resume_messages_keep_pending`）；CLI resume 仍 seal Denied。
 - resume/fork/compact 直接消费 storage lineage；fork resume 只能看到祖先前缀，compaction 存储错误显式上抛而非降级为“未发生”。
 - 幂等 `record` 失败要计数并释放 inflight，不可吞错挂死。
+- degrade tracing 断言一律用 `testsupport::RecordingCapture`（双注册 Dispatch 钉住 tracing-core interest 缓存）；裸 `set_default` 会因与无 subscriber 测试共享 callsite 的 never 缓存间歇丢事件（R8 整阶段审计修复，2026-08-25）。
 - `home` 回退经 `DataDirOutcome` 结构化告警，禁止静默落到 temp。
 - Reasoning 保护：`protected.rs` 注入 `ProtectedBlobStore`（instance-level `BlobScope` `instance-reasoning` 为已接受偏差）。
 - gui_host `terminal_create` 经 PolicyEngine 闸（capability=Process;NeverAsk/ReadOnly 直拒,AskUser fail-closed 落 Deny——命令级交互审批待 wire ADR;R7 波 B,ADR-041 D2）;会话内容不逐条审批。

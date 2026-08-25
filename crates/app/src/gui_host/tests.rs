@@ -1248,10 +1248,10 @@
                 run_id: None,
             },
         };
-        let subscriber = crate::testsupport::RecordingSubscriber::new();
-        let dispatch = tracing::Dispatch::new(subscriber.clone());
+        // RecordingCapture 双注册钉住 interest 缓存：与无 subscriber 的兄弟测试共享
+        // degrade.idempotency_conflict callsite，裸 set_default 会因 never 缓存间歇丢事件。
+        let capture = crate::testsupport::RecordingCapture::install();
         let mut events = adapter.subscribe_events();
-        let _guard = tracing::dispatcher::set_default(&dispatch);
         adapter.persist_command_response(
             &ledger,
             &tenant,
@@ -1260,8 +1260,8 @@
             conflict,
         )
         .await;
-        let captured = subscriber.events();
-        drop(_guard);
+        let captured = capture.events();
+        capture.dismiss();
         assert_eq!(adapter.command_record_failure_count().await, 1);
         assert!(
             matches!(events.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)),

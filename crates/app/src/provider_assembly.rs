@@ -1087,15 +1087,15 @@ mod tests {
             strict,
             Err(AppError::MissingCredential { provider, .. }) if provider == id
         ));
-        let subscriber = crate::testsupport::RecordingSubscriber::new();
-        let dispatch = tracing::Dispatch::new(subscriber.clone());
-        let _guard = tracing::dispatcher::set_default(&dispatch);
+        // RecordingCapture 双注册钉住 interest 缓存：该 degrade callsite 亦被无
+        // subscriber 的 from_config_inner 调用路径共享，裸 set_default 会间歇丢事件。
+        let capture = crate::testsupport::RecordingCapture::install();
         let core = AppCore::from_config_inner(config, None, None, backend, true)
             .await
             .expect("catalog load");
-        drop(_guard);
         assert!(core.provider_pending(), "core should be pending");
-        let events = subscriber.events();
+        let events = capture.events();
+        capture.dismiss();
         let emitted = events.iter().find(|event| {
             event.fields.get("code").map(String::as_str) == Some("degrade.missing_credential")
         }).unwrap_or_else(|| panic!("missing credential must emit tracing: {events:?}"));

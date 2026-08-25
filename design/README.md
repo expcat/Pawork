@@ -195,3 +195,8 @@
 - **ActivityPopover**:Inspector 折叠时由 StatusBar 既有 Inspector 触发器弹出(§8.2 浮层形态:deferred(anchored())、Escape/外点关闭、occlude 滚轮无穿透),宽约 320px;首行 Changes 摘要(N files · +A/−D),点击展开 Inspector 并定位 Changes 页;Agent 状态分区属 S11 面,本波隐藏不画假入口;摘要未拉取或来源不可用时显示 unavailable,不显示 0。
 - **Resources 页**:MCP server 只读列表(name、transport、state、tools 数、last_error 诚实显示);空列表空态文案;「已加载规则」分区无 Host 出口,本波不画。
 - **`@` 引用**:composer 输入 `@token` 不弹候选浮层(补全留候选);发送后由 Host 展开为独立 Text part(`[attached file: path (marker)]` + 正文),Timeline 用户消息按 parts 顺序拼接渲染(与 CLI 历史语义一致),附件正文随消息展示、不另起条目、不做折叠。
+
+### 8.6 主题残余 token 补齐(2026-08-25 增补,R8 整阶段审计)
+
+- **text.placeholder**:composer 占位文字色,白色 30% 透明(`Rgba { r:1, g:1, b:1, a:0.3 }`,与既有 `hsla(0,0,1,0.3)` 字面量逐值相等);波 A 扫描口径(`rgb(/rgba(/0x`)漏 `hsla(` 形态,审计补入 token,消费处转 `Hsla`,视觉零变化。
+- **metrics::SUMMARY_LABEL_WIDTH**:Changes · Summary 行标签列宽 `88px`,changes.rs 字面量回收入 metrics;同批 `metrics::ZERO` 用于 dropdown 锚点偏移与行高保护性比较。均为行为不变的字面量归位,视觉零变化。

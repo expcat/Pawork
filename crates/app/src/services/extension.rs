@@ -319,8 +319,13 @@ mod tests {
         }
         match &parts[1] {
             pawork_domain::ContentPart::Text(text) => {
-                assert!(text.text.contains("ROADMAP.md"), "{text:?}");
-                assert!(text.text.contains("phase S9 wiring"), "{text:?}");
+                // 钉住附件头 wire 格式：路径 + (complete|truncated) 标记 + 换行 + 正文。
+                let (header, body) = text
+                    .text
+                    .split_once('\n')
+                    .unwrap_or_else(|| panic!("attachment part must contain a header line: {text:?}"));
+                assert_eq!(header, "[attached file: ROADMAP.md (complete)]", "{text:?}");
+                assert_eq!(body.trim_end(), "phase S9 wiring", "{text:?}");
             }
             other => panic!("expected attachment, got {other:?}"),
         }

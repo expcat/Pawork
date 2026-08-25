@@ -1,5 +1,5 @@
 # R8 — GUI 组件化与 Desktop 收口(T12)
-> **实态回写(2026-08-24 波 E 开启,主代理 + grok_explorer 一路核查)**:首部波 E 行「S12-CR09 已修项复核:CR09-02 错误上屏、CR09-04 focus 恢复」编号与名称不符——「错误上屏」「focus 恢复」全仓零命中,[CR-09 报告](../docs/reviews/s12/CR-09-traceability-consistency.md) 实际五项为 01 README/AGENTS 状态结构滞后、02「stop --apply 删 plist」记录失真、03 workflow 三域零消费者、04 HunkStageService 消费时点过期、05 路径校验四处分叉;以实态为准复核五项不回退。复核结论:02 ✅(S10 旧任务书已随 V2 压缩删除,全仓无「删 plist」假话,service.rs:197-212 已是 unload+RemoveFile 并有测试钉死)、04 ✅(ROADMAP §4:180 ADR 候选登记在册);01/03/05 存在新口径漂移——README 状态表停在 2026-08-22(R6/R7/R8 ⚪,实态 🟢/🟢/🔵)且结构图漏 `scripts/`、v2-summary.md:100「状态机+测试已迁」与 R0 归档实态冲突、design.md 缺路径校验语义矩阵且 `crates/workspace/src/resources/io.rs` 仍自写 `canonical_within`(workspace 词法入口已委托 policy、review `safe_path` 随归档移除)——三项漂移已同波修复(README 状态表/结构图、v2-summary 归档注记、design.md §3.3 语义矩阵回写、ROADMAP §4 登记 io.rs 残余)。K-03 自动化取证(隔离实例 r8e 真窗口截图 7 张)发现两项漂移/澄清并登记 ROADMAP §4:1080–1279 rail 收敛 240px + Inspector 默认折叠未实现(固定 288px,V2 起既有);「空闲断连」实为 host 30s 心跳超时 + desktop 无周期心跳的机制性关闭(任意入站帧刷新,波 C「显示器休眠/App Nap」归因不准确),Reconnect 可恢复、run 不取消。mod.rs 1031>900、P3-4 Entry 菜单滚动卸载两项开启时待用户定夺(当日已拍板,见下行拍板回写)。K-03 验收清单与证据已落 [docs/gui-design.md](../docs/gui-design.md) §9 与附录 A。
+> **实态回写(2026-08-24 波 E 开启,主代理 + grok_explorer 一路核查)**:首部波 E 行「S12-CR09 已修项复核:CR09-02 错误上屏、CR09-04 focus 恢复」编号与名称不符——「错误上屏」「focus 恢复」全仓零命中,[CR-09 报告](../docs/reviews/s12/CR-09-traceability-consistency.md) 实际五项为 01 README/AGENTS 状态结构滞后、02「stop --apply 删 plist」记录失真、03 workflow 三域零消费者、04 HunkStageService 消费时点过期、05 路径校验四处分叉;以实态为准复核五项不回退。复核结论:02 ✅(S10 旧任务书已随 V2 压缩删除,全仓无「删 plist」假话,service.rs:197-212 已是 unload+RemoveFile 并有测试钉死)、04 ✅(ROADMAP §4:180 ADR 候选登记在册);01/03/05 存在新口径漂移——README 状态表停在 2026-08-22(R6/R7/R8 ⚪,实态 🟢/🟢/🔵)且结构图漏 `scripts/`、v2-summary.md:100「状态机+测试已迁」与 R0 归档实态冲突、design.md 缺路径校验语义矩阵且 `crates/workspace/src/resources/io.rs` 仍自写 `canonical_within`(workspace 词法入口已委托 policy、review `safe_path` 随归档移除)——三项漂移已同波修复(README 状态表/结构图、v2-summary 归档注记、design.md §3.3 语义矩阵回写、ROADMAP §4 登记 io.rs 残余)。K-03 自动化取证(隔离实例 r8e 真窗口截图 7+1 张,soak 为 D3 实证)发现两项漂移/澄清并登记 ROADMAP §4:1080–1279 rail 收敛 240px + Inspector 默认折叠未实现(固定 288px,V2 起既有);「空闲断连」实为 host 30s 心跳超时 + desktop 无周期心跳的机制性关闭(任意入站帧刷新,波 C「显示器休眠/App Nap」归因不准确),Reconnect 可恢复、run 不取消。mod.rs 1031>900、P3-4 Entry 菜单滚动卸载两项开启时待用户定夺(当日已拍板,见下行拍板回写)。K-03 验收清单与证据已落 [docs/gui-design.md](../docs/gui-design.md) §9 与附录 A。
 >
 > **拍板回写(2026-08-24 波 E,用户四项拍板)**:D1 mod.rs 接受 1031 为终态口径,§1.4/§4 退出标准同批修订不再重瘦;D2 窄窗响应式(rail 240px/Inspector 默认折叠)接受登记,固定 288px 维持现状转候选;D3 空闲 30s 断连已修复——desktop controller 泵循环连续 15 tick(≈15s<30s)空闲即发 client `heartbeat()`(io AsyncMutex 支持泵内并发),心跳失败走既有断线路径,真窗口 soak >2min 不再断连 + desktop 测试 41/41 绿;D4 P3-4 Entry 菜单滚动卸载接受(虚拟化卸载语义下浮层随条目回收)。四项均回写 ROADMAP §4 与 gui-design.md 附录 A.3。K-03 人工走查(附录 A.2 十一项)待用户签字后收口波 E。
 
@@ -101,3 +101,37 @@
 - **审查双轮**:glm_reviewer 首轮 changes-needed——P2-1 session_mismatch 仅内部 flag 无可见提示(修:面板 banner + popover 行 + 单测 session_mismatch_only_flags_different_sessions)、P2-2 v3_plan §3 指针未同步(同波修复)、P3-1 菜单泄漏两处(修:close_open_menu——mod.rs on_toggle_inspector 展开分支 + TerminalCreated 分支)、P3-2① §8.5 等宽措辞与基准不一致(修:font::MONO=Menlo 显式指定、与 Terminal 默认字体不同款、横滚并入 K-03);probe.rs 场景数注释 10→13;二轮复核 verdict=pass。提交前主代理复核再修 P1:run_start 曾在 expand_at_refs 失败前登记 ActiveGuiRun,失败会留下幽灵 run;已改为先展开再登记,并补 run_start_expand_at_refs_failure_does_not_leave_active_run。
 - **登记**(ROADMAP §4 五项):HunkStageService 接线 ADR 候选(git_stage wire 不存在,V1 起 GitStage 仅文件级 stage-only,stage/unstage/hunk 双向 wire 与审批语义须随协议扩展另立 ADR);「@」补全 query 候选(host file-index 模糊补全 + desktop 浮层);Resources「已加载规则」分区待 host 出口;DiffView 横滚行为无自动门禁并入波 E K-03;mod.rs 1031>900 波 E 重瘦或修订退出标准。K-04 🟡 部分交付(只读面落地 + 真窗口实证,stage 顺延)、K-06 ✅ 落地。
 - **冻结面**:协议帧 golden、schemas/、wire 形状零 diff(mcp_list 仅 registry available 位翻转);Cargo 清单零 diff;禁动符号不受影响。冒烟残留(smoke-r8d.txt、临时 trust/MCP 配置、隔离实例数据)收口时已清理。未提交。
+
+## 6. 整阶段审计(2026-08-25;glm_explorer ×4 并行只读审计 + 主代理根因实证与修复)
+
+波 E 自动化部分收口(提交 528ab3d)后,按 v3_plan.md 惯例对标记完成的 R8 做完成度审计。四轨只读审计:E1 theme token 纪律与骨架完整性(字面量残留、基准逐值对照、消费面、禁动符号)、E2 交互面(菜单/滚动/虚拟化/会话切换)、E3 host 侧接线与连接/心跳(「@」展开、mcp_list、测试非空壳、泵循环)、E4 文档/基准/状态与冻结面。explorer 结论由主代理逐条源码复核,13 项发现全部实证成立,无否决改判;修 8 项 + 根治 1 项历史登记,余 5 项与 1 项既有缺口复证登记不修(§6.3)。
+
+### 6.1 确认并修复
+
+- **P2 会话切换 Timeline 跟随态与读史偏移泄漏进新会话(E2)**:open_session(apps/desktop/src/ui/mod.rs)只重置终端跟随(terminal_scroll.jump_to_bottom()),漏重置 timeline_following;sync_list 在 !following 分支把旧会话的 item_ix 原样恢复进新会话 list 视口。会话 A 脱钩读史后切换/新建会话 B,B 开在按 A 偏移决定的历史中部且不跟随新输出(SessionCreated/SessionForked → open_session 同样中招,新建任务后续输出不自动滚底)。修法:与终端重置同点补 self.timeline_following = true;(终端/跟随重置对称)。
+- **P2(历史登记)degrade tracing 断言 flake 根治**:「gui_host record 失败 tracing 断言偶发失败」自 R5 波 A 登记、R7 §6.4 列为修复候选,历史归因「async 块线程迁移」不准确。主代理以 /tmp/r8-flake-repro 复现并对照 tracing-core 0.1.36 源码实证根因:每个 callsite 在全局注册表只缓存一份 Interest,has_just_one=true 时,一个 callsite 若在**无 scoped default** 的线程首次命中,走「JustOne→get_default→NONE」路径缓存 Interest::never(),此后所有线程在该 callsite 的 emit 被宏门 !interest.is_never() 静默跳过,直到某次 Dispatch::new 的 Write 重建治愈。修法:crates/app/src/testsupport.rs 新增 RecordingCapture——对同一 subscriber 做两次 Dispatch::new(两个独立 Arc→两个 registrar):第二次注册把注册表推到 ≥2,置 has_just_one=false 并以 Write 重建治愈既有 never 缓存;pin 存活期间新 callsite 一律走 Read(vec) 路径,投毒窗口完全封闭;dismiss() 依序释放 scoped default 与两个 Dispatch。两个易感调用点(gui_host/tests.rs command_record_failure_is_counted_not_swallowed、provider_assembly.rs catalog_load_tolerates_missing_credential)迁入;补确定性回归 recording_capture_heals_and_shields_interest_cache_poisoning(种子投毒→install 治愈→窗口内再注册不可投毒→窗口内 emit 全捕获)。五处 with_default 站点(data_dir.rs×3、lib.rs×2)为 scoped 用法自愈,未动。负载验证:14 burners 并行 × 45 runs 全绿(/tmp/r8-flake-load.log,每 run 146 tests = 145 基线 + 1 回归)。
+- **P3 占位色以 hsla 形态绕过 token 扫描(E1)**:text_input.rs 占位符 hsla(0., 0., 1., 0.3) 不在波 A 扫描口径(rgb(/rgba(/0x)内。补 text.placeholder token Rgba { r:1, g:1, b:1, a:0.3 }(白 30% 透明,逐值相等),消费处转 Hsla,theme 29→30 色,基准 design/README.md §8.6 同批增补,视觉零变化。
+- **P3 metrics 字面量归位(E1)**:changes.rs Summary 行标签列宽 px(88.0) 收 metrics::SUMMARY_LABEL_WIDTH;dropdown.rs/input_area.rs 锚点偏移两处 px(0.) 收 metrics::ZERO。行为不变的字面量归位,基准 §8.6 同批登记。
+- **P3 附件头 wire 格式未钉死(E3)**:「@」展开测试只断言 contains("ROADMAP.md") 与正文,[attached file: ...] 头与 complete/truncated 标记漂移不会被捕获。改以 split_once('\n') 精确钉住头行 [attached file: ROADMAP.md (complete)] 与正文。
+- **P3 文档/基准对齐四项(E4)**:gui-design.md:174「主题跟随系统 light/dark」改实态「仅 dark 基线一套实现,light 顺延后续阶段」;crates/app/MODULE.md 模块树补列 testsupport.rs 并增 RecordingCapture 使用红线;ROADMAP §2/v3_plan §3/本任务书「K-03 取证截图 7 张」改「7+1 张(soak 为 D3 实证)」;design/README.md §8.6 新增 placeholder 与 metrics 条目。
+
+### 6.2 否决改判
+
+无。explorer 13 项发现经主代理源码复核全部成立;唯一更正为历史归因——R5 波 A 登记、R7 §6.4 沿用的 flake 归因「async 块线程迁移」与实态不符,实为 tracing-core interest 缓存投毒(随修复一并更正,ROADMAP §4 对应行已改写)。
+
+### 6.3 登记不修(入 ROADMAP §4,6 行)
+
+- **BackToBottom 滚轮死区(E2 P3)**:回底浮钮是滚动容器兄弟绝对定位浮层未 occlude(timeline.rs:114-131、inspector.rs:148-176),滚轮落在浮钮上既不滚动也不重估跟随态;影响面小(脱钩时右下角小区域);候选修法 occlude() 或挂入滚动容器内。
+- **desktop 心跳泵自动测试缺口(E3 P3)**:15-tick 空闲计数与心跳失败断线路径无自动化测试(controller.rs:248 内联魔数 15);probe heartbeat 场景只覆盖 client 往返,不覆盖泵计数与重置时机。
+- **泵错误路径 state.client=None 竞态(E3 P3,既有)**:快速 disconnect→reconnect 理论上可让退场中的旧泵清掉新装入的 client;76c22b7 既有、窗口极窄,probe-smoke 实测不受影响,R8 心跳未加重。
+- **main.rs 窗口尺寸字面量(E1 P3)**:size(px(1440.), px(1024.)) 与 design/README.md「1440×1024 对照」基准一致、有设计依据,仅字面量形态未收 metrics。
+- **extension.rs mcp_list 死分支(E3 P3,既有)**:auto_start 两分支同值 "configured",wire 中性;git log 76c22b7..HEAD 该文件零 diff,属前 R8 既有。
+- **gpui 渲染面无自动门禁(既有缺口复证)**:菜单开合/跟随滚动/变高虚拟化/hover 等渲染行为无 gpui 测试设施可依,波 B/C/E 均靠真窗口截图 + K-03 人工走查,本次审计复证。
+
+### 6.4 验证
+
+- cargo test -p pawork-app --offline --lib --tests:lib 146 passed / 0 failed / 0 ignored + gui_server multi_gui_runtime 6 + session 13 + smoke 0(1 ignored,环境门控既有)+ timeline_projection_host 2,EXIT=0;含新回归与两处迁移调用点。
+- cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders:41/41 绿(/tmp/r8-desktop-gate.log),覆盖 ui/*.rs 改动。
+- flake 负载验证:14 burners 并行 × 45 runs 全绿(/tmp/r8-flake-load.log);复现与治愈证据链 /tmp/r8-flake-repro(A captured=0 投毒/B captured=1 修复/D heal delta=1)。
+- 冻结面零 diff:写入集 16 文件(apps/desktop ui/ 7 + crates/app 5 + 文档 4);协议帧 golden、schemas/、wire 形状、投影 golden、Cargo 清单、禁动符号(APP_VIEW_KEYBINDINGS / install_keybindings / MAIN_PATH_TAB_STOP_IDS / resolve_new_task_workspace)全部零触碰。
+- glm_reviewer 审查门:确定性检查之后依约尝试 1 名 glm_reviewer,同一 agent 纯文本 follow-up 仍被路由层以 unreadable_encrypted_agent_task 拒绝;再按「至多换 1 个同模型 reviewer」启用 zai/glm-5.3 备用 reviewer,同样在任务执行前被基础设施拒绝。两者均未读取代码、未给 verdict;不把路由失败记作 pass。四路 glm_explorer 分域审计结论已由主代理逐项源码复核,修复后 app/desktop 定向门与负载门全绿。

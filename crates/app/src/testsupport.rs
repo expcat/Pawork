@@ -283,3 +283,107 @@ impl tracing::field::Visit for FieldVisitor {
         self.fields.insert(field.name().to_string(), value.to_string());
     }
 }
+
+/// 带「interest 缓存钉住」的 degrade 事件捕获器。
+///
+/// 背景（tracing-core 0.1.36）：每个 callsite 在全局注册表里只缓存一份 Interest。
+/// 当注册表 has_just_one 为 true 时，一个 callsite 若在**没有 scoped default** 的线程上
+/// 首次注册，interest 会按「JustOne → get_default → NONE」路径算出并缓存
+/// Interest::never()——此后任何线程在该 callsite 上的 emit 都被宏门
+/// !interest.is_never() 静默跳过，直到某次 Dispatch::new 的 Write 重建将其治愈。
+/// 与无 subscriber 测试共享 callsite 的断言测试因此会间歇丢事件（R8 审计的
+/// command_record_failure_is_counted_not_swallowed flake 即此机制）。
+///
+/// install() 对同一 subscriber 做两次 Dispatch::new（两个独立 Arc → 两个 registrar）：
+/// 第二次注册把注册表推到 ≥2，将 has_just_one 置为 false 并以 Write 重建治愈既有
+/// never 缓存；pin 存活期间，新 callsite 注册一律走 Read(vec) 路径对存活分发器计算
+/// interest，投毒窗口被完全封闭。捕获窗口结束后调用 dismiss() 释放。
+pub(crate) struct RecordingCapture {
+    subscriber: RecordingSubscriber,
+    dispatch: Option<tracing::Dispatch>,
+    pin: Option<tracing::Dispatch>,
+    guard: Option<tracing::dispatcher::DefaultGuard>,
+}
+
+impl RecordingCapture {
+    pub(crate) fn install() -> Self {
+        let subscriber = RecordingSubscriber::new();
+        let dispatch = tracing::Dispatch::new(subscriber.clone());
+        // 第二次注册（独立 Arc）是 has_just_one=false 且触发重建治愈 never 缓存的最小条件；
+        // 它同时作为 pin：存活期间注册表始终 ≥2 个 registrar。
+        let pin = tracing::Dispatch::new(subscriber.clone());
+        let guard = tracing::dispatcher::set_default(&dispatch);
+        Self {
+            subscriber,
+            dispatch: Some(dispatch),
+            pin: Some(pin),
+            guard: Some(guard),
+        }
+    }
+
+    pub(crate) fn events(&self) -> Vec<CapturedTrace> {
+        self.subscriber.events()
+    }
+
+    /// 结束捕获：先解除 scoped default，再释放两个已注册 Dispatch。
+    pub(crate) fn dismiss(mut self) {
+        self.guard.take();
+        self.dispatch.take();
+        self.pin.take();
+    }
+}
+
+#[cfg(test)]
+mod capture_regression_tests {
+    use super::*;
+
+    /// 探针 callsite A：跨线程共享的静态 callsite，首次命中的线程完成注册。
+    fn probe_a(tag: &str) {
+        tracing::warn!(code = "r8.capture_probe_a", tag = %tag, "probe a");
+    }
+
+    /// 探针 callsite B：用于在捕获窗口内再次尝试投毒。
+    fn probe_b(tag: &str) {
+        tracing::warn!(code = "r8.capture_probe_b", tag = %tag, "probe b");
+    }
+
+    #[test]
+    fn recording_capture_heals_and_shields_interest_cache_poisoning() {
+        // 1) 孤立线程上创建 Dispatch 后立即释放：注册表回到「最后一次观察 ≤1」稳态。
+        std::thread::spawn(|| {
+            let _dead = tracing::Dispatch::new(RecordingSubscriber::new());
+        })
+        .join()
+        .expect("seed thread");
+
+        // 2) 无 scoped default 的线程首次命中 probe_a：
+        //    「JustOne → get_default → NONE」路径缓存 Interest::never()（投毒）。
+        std::thread::spawn(|| probe_a("poison")).join().expect("poison thread");
+
+        // 3) install()：第二次注册治愈 never 缓存，并令 has_just_one 保持 false。
+        let capture = RecordingCapture::install();
+
+        // 4) pin 存活期间，另一无 default 线程首次命中 probe_b：不应再被投毒。
+        std::thread::spawn(|| probe_b("late")).join().expect("late thread");
+
+        // 5) 窗口内的 emit 必须全部被捕获。
+        probe_a("inside-window");
+        probe_b("inside-window");
+        let events = capture.events();
+        let has_tag = |code: &str, tag: &str| {
+            events.iter().any(|event| {
+                event.fields.get("code").map(String::as_str) == Some(code)
+                    && event.fields.get("tag").map(String::as_str) == Some(tag)
+            })
+        };
+        assert!(
+            has_tag("r8.capture_probe_a", "inside-window"),
+            "probe_a emit inside capture window must be captured: {events:?}"
+        );
+        assert!(
+            has_tag("r8.capture_probe_b", "inside-window"),
+            "probe_b must not stay poisoned by late registration: {events:?}"
+        );
+        capture.dismiss();
+    }
+}

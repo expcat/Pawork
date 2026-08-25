@@ -493,8 +493,11 @@ impl AppView {
         self.projection.select_session(&session_id);
         self.status_hint = None;
         self.timeline_changed();
-        // 打开 / 切换 session 时补终端跟随重置（§8.3）。
+        // 打开 / 切换 session 时补跟随重置（§8.3）：终端滚底 + Timeline 回
+        // 跟随态。缺后者时旧会话脱钩读史的偏移与 following=false 会泄漏进
+        // 新会话（sync_list 按旧 item_ix 恢复视口，新输出不再自动滚底）。
         self.terminal_scroll.jump_to_bottom();
+        self.timeline_following = true;
         // 会话切换：清空旧会话 diff 状态并重新拉取（拉取时机之一）。
         self.changes.reset_for_session();
         self.controller.open_session(session_id);

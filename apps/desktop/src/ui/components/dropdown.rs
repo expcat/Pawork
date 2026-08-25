@@ -12,7 +12,7 @@ use gpui::{
     IntoElement, MouseDownEvent, RenderOnce, SharedString, Styled, Window,
 };
 
-use crate::ui::theme::dark;
+use crate::ui::theme::{dark, metrics};
 
 /// 浮层与触发器的垂直间距（迁移前 in-flow 面板 mt_1 的等值）。
 pub const ANCHOR_GAP_Y: f32 = 4.0;
@@ -188,7 +188,7 @@ impl RenderOnce for Dropdown {
                 dropdown.child(deferred(
                     anchored()
                         .anchor(Corner::TopLeft)
-                        .offset(point(px(0.), px(ANCHOR_GAP_Y)))
+                        .offset(point(px(metrics::ZERO), px(ANCHOR_GAP_Y)))
                         .child(panel),
                 ))
             })

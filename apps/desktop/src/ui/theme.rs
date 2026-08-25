@@ -13,6 +13,10 @@
 //! R8 波 B（2026-08-24）追加 4 个 hover / active token（design/README.md §8.1）：
 //! surface.hover / accent.hover / semantic.success_hover / semantic.danger_hover，
 //! 字段数 25 → 29；active 复用 hover 色不另设 token。
+//!
+//! R8 整阶段审计（2026-08-25）补 1 个 token（design/README.md §8.6）：
+//! text.placeholder——波 A 扫描口径漏掉的 text_input.rs 占位色（hsla 形态，
+//! 白 30% 透明），字段数 29 → 30，值逐值相等，视觉零变化。
 
 use gpui::{rgb, rgba, Global, Rgba};
 
@@ -86,6 +90,8 @@ pub struct TextColors {
     pub tool: Rgba,
     /// #b8b8b8：审批卡详情。
     pub detail: Rgba,
+    /// 白色 30% 透明：composer 占位文字（精确等价旧 hsla(0,0,1,0.3)）。
+    pub placeholder: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -146,6 +152,12 @@ pub fn dark() -> Theme {
             assistant: rgb(0xd7d7ff),
             tool: rgb(0x9cdcfe),
             detail: rgb(0xb8b8b8),
+            placeholder: Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 0.3,
+            },
         },
         accent: AccentColors {
             primary: rgb(0x2f6fed),
@@ -213,6 +225,8 @@ pub mod metrics {
     pub const ACTIVITY_POPOVER_WIDTH: f32 = 320.0;
     /// 200：Changes · Files 文件清单的最大高度（超出滚动，下方留给 DiffView）。
     pub const CHANGES_FILE_LIST_MAX_HEIGHT: f32 = 200.0;
+    /// 88：Changes · Summary 行标签列宽。
+    pub const SUMMARY_LABEL_WIDTH: f32 = 88.0;
     /// 0：行高保护性比较。
     pub const ZERO: f32 = 0.0;
 }

@@ -566,7 +566,7 @@ fn summary_row(label: &str, value: String) -> impl IntoElement {
         .gap_2()
         .child(
             div()
-                .w(px(88.0))
+                .w(px(metrics::SUMMARY_LABEL_WIDTH))
                 .text_color(dark().text.secondary)
                 .child(label.to_string()),
         )

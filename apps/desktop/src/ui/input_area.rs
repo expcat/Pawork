@@ -81,7 +81,7 @@ impl AppView {
                         deferred(
                             anchored()
                                 .anchor(Corner::TopLeft)
-                                .offset(point(px(0.), px(ANCHOR_GAP_Y)))
+                                .offset(point(px(metrics::ZERO), px(ANCHOR_GAP_Y)))
                                 .child(self.workspace_confirm_element(cx)),
                         )
                     )

@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use super::theme::{dark, font, metrics};
 use gpui::{
-    actions, div, fill, hsla, point, prelude::*, px, relative, size, App, Context, CursorStyle,
+    actions, div, fill, point, prelude::*, px, relative, size, App, Context, CursorStyle,
     ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
     GlobalElementId, LayoutId, MouseButton, MouseDownEvent, PaintQuad, Pixels, Point, ShapedLine,
     SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
@@ -522,7 +522,7 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 1., 0.3))
+            (input.placeholder.clone(), dark().text.placeholder.into())
         } else {
             (content, style.color)
         };
