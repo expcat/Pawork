@@ -5,7 +5,7 @@
 
 ## 背景
 
-V2 S1 按线性会话设计;S10 交付 Fork(`sessions fork`/`chat --branch`/Desktop Fork)后,分支语义由两处后补机制维持:S13-F09 以 v10 迁移给 `messages` 投影补 `branch_id TEXT NOT NULL DEFAULT 'main'` + 按 `session_events` 反查回填(orphan 静默归 `'main'`),并以 `ancestor_lineage` 公开 API 外挂拼装祖先链。R6 任务书 [plan/R6-session-branching.md](../../plan/R6-session-branching.md) 判定其为结构性债务;两个高风险契约阶段之一(R6/R7),必须 ADR 先行。
+V2 S1 按线性会话设计;S10 交付 Fork(`sessions fork`/`chat --branch`/Desktop Fork)后,分支语义由两处后补机制维持:S13-F09 以 v10 迁移给 `messages` 投影补 `branch_id TEXT NOT NULL DEFAULT 'main'` + 按 `session_events` 反查回填(orphan 静默归 `'main'`),并以 `ancestor_lineage` 公开 API 外挂拼装祖先链。R6 任务书(原 plan/R6-session-branching.md,已随收口删除,git 历史)判定其为结构性债务;两个高风险契约阶段之一(R6/R7),必须 ADR 先行。
 
 2026-08-22 波 0 三路只读核查(实态,已回写任务书):
 
@@ -73,8 +73,7 @@ events/投影按 branch lineage 一等建模,保留并正式化 S10 已交付的
 
 ## 相关
 
-- [plan/R6-session-branching.md](../../plan/R6-session-branching.md)(任务书:决策点、波次拆分、验证、退出标准)
-- [ROADMAP.md](../../ROADMAP.md) §2 R6 行、§3.2 K-05
-- [v2-summary.md](../v2-summary.md) §4(冻结契约:信封 v1、会话存储、export v3)、§5(F11/F32 Timeline 锚点 `event_id`/`sequence`)
+- 原任务书 plan/R6-session-branching.md 已随收口删除(git 历史);R6 交付存档见 [history.md](../history.md) R6 节
+- 冻结契约现行事实源:[architecture.md](../architecture.md) §3.2(信封 v1、会话存储、export v3;原 v2-summary §4/§5 存档见 [history.md](../history.md))
 - [design.md](../design.md) §3.2(信封/会话存储契约表)
 - [references.md](../references.md) §7.1 R6 行(DSH fork 不变量、Pi 树、Claude Code 反面教材、K-05 导入映射要点)

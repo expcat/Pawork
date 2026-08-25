@@ -1,10 +1,10 @@
-# Pawork V2 GUI 设计（最小 Agent 界面先行）
+# Pawork Desktop GUI 设计
 
-> 本文是 V2 Desktop GUI 的**设计事实源**。S7 波 0 已于 2026-08-16 锁定；在此之后才可写 `apps/desktop`。后续阶段只按 §5 增量图给已有壳加面，不另起一套信息架构。
+> 本文是 Desktop GUI 的**设计事实源**（S7 波 0 于 2026-08-16 锁定信息架构，R8 组件化后为现行终态）。后续只按 §5 增量图给已有壳加面，不另起一套信息架构。
 >
 > 视觉实施基准：[../design/README.md](../design/README.md)（定稿图、TaskRail 双分组与响应式约束）
 >
-> 关联：[../ROADMAP.md](../ROADMAP.md) · [v2-summary.md](v2-summary.md)（S7/S13 交付原委）· [../plan/R8-gui-components.md](../plan/R8-gui-components.md)（V3 组件化任务书）· [references.md](references.md) · 根仓 [Desktop GUI](../../Pawork_v1/docs/features/desktop-gui.md) · [GUI 连接](../../Pawork_v1/docs/features/gui-connection.md) · [ADR-035](../../Pawork_v1/docs/adr/ADR-035-gpui-desktop.md)
+> 关联：[spec/desktop.md](spec/desktop.md)（当前 Desktop 产品/验收汇总，非视觉事实源）· [spec/crates/desktop.md](spec/crates/desktop.md)（包级 Spec）· [../ROADMAP.md](../ROADMAP.md) · [history.md](history.md)（S7/S13 交付原委）· [../plan/R8-gui-components.md](../plan/R8-gui-components.md)（组件化任务书）· [references.md](references.md) · 根仓 [Desktop GUI](../../Pawork_v1/docs/features/desktop-gui.md) · [GUI 连接](../../Pawork_v1/docs/features/gui-connection.md) · [ADR-035](../../Pawork_v1/docs/adr/ADR-035-gpui-desktop.md)
 
 ---
 
@@ -16,7 +16,7 @@
 
 - 不嵌入 Core，不直连 Provider / SQLite / 工具 / Keychain。
 - 不做 TUI，不做 WebView / JS 壳。
-- 不实现插件市场、Hooks 管理、WASM 安装器（整族待设计，见 [ROADMAP §4](../ROADMAP.md)）。
+- 不实现插件市场、Hooks 管理、WASM 安装器（整族未排期，见 [ROADMAP §5 候选池](../ROADMAP.md)）。
 - 不在 S7 做完整多窗口远程桌面、签名安装器、主题生态。
 
 架构红线沿用根仓：独立 GPUI 进程，只经 GUI Connection Protocol 连接 CLI；关闭窗口不取消已进入 Core 的 Run。
@@ -108,7 +108,7 @@ S7 的唯一主路径是：启动 Desktop → 连接本机 Host → 恢复 Snaps
 
 ## 4. 协议与分层（S7 最小切片）
 
-GUI 仍走冻结契约形状（[design.md](design.md) §3.2 GUI 协议）：帧、Command / Query / Event / Snapshot 用 V1 完整字段，S7 **只消费**对话所需子集。
+GUI 仍走冻结契约形状（[architecture.md](architecture.md) §3.2 GUI 协议）：帧、Command / Query / Event / Snapshot 用 V1 完整字段，S7 **只消费**对话所需子集。
 
 | 切片 | S7 必做 | S10 再补 |
 | --- | --- | --- |
@@ -153,7 +153,7 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 | S7 | 最小 `gui serve` + 单客户端协议 | 本设计的 Agent 壳：日期内项目分组 TaskRail / 紧凑 Composer / Context / 取消 / 模型 / 审批按钮；状态栏只显示已有权威字段 |
 | S8 | diff / checkpoint / rollback | InspectorToolTabs 激活 Changes；折叠态 ActivityPopover 显示文件数与增删行摘要 |
 | S9 | MCP / AGENTS.md / `@file` | Composer `@` 补全；Resources 只读：MCP 列表、已加载规则 |
-| S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal；本机多窗口未做（ROADMAP §4） |
+| S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal；本机多窗口未做（ROADMAP 候选池） |
 | S11 | Plan / 后台任务 / usage / 多 Agent | Workflow 与完整用量/quota 状态条；ActivityPopover 激活 Main / subagent 状态列表 |
 | S12 | 全项目 Code Review | 只读核对 Desktop 四层边界、状态投影、能力声明、可访问性及 S7–S11 GUI 需求/证据；不改界面、不启动窗口 |
 | 待决策 | WASM 插件 / Hooks / LSP / 市场 | 预留 Resources 空位与协议扩展点，**不画假市场页** |
@@ -190,8 +190,8 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 
 - Domain 已有 `PluginId`、`ToolCapability::ExternalPlugin`；时间线按普通 tool 事件渲染即可，不识别插件品牌。
 - Snapshot / capability 集合预留扩展位；未知 capability 隐藏，不报错、不画灰掉的市场入口。
-- 不在 S7–S12 任务里激活 `plugin` feature（R1 起为 `pawork-domain` 的空锚 `plugin = []`）、不建 wasm-host / marketplace 页面。
-- 决策记录见 [ROADMAP §4](../ROADMAP.md)。
+- 不激活 `plugin` feature（`pawork-domain` 的空锚 `plugin = []`）、不建 wasm-host / marketplace 页面。
+- 决策记录见 [ROADMAP §5 候选池](../ROADMAP.md)。
 
 ---
 
@@ -209,7 +209,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 
 ## 9. V3 组件清单（R8 收口，2026-08-24）
 
-`apps/desktop/src/ui/` 终态形态（19 文件 / 5144 行）：`mod.rs` 只留 AppView 装配、路由与状态（1031 行；行数目标定夺见 [../ROADMAP.md](../ROADMAP.md) §4），渲染细节全部进模块。
+`apps/desktop/src/ui/` 终态形态（19 文件 / 5144 行）：`mod.rs` 只留 AppView 装配、路由与状态（1031 行；已拍板接受为终态，见附录 A.3 D1），渲染细节全部进模块。
 
 | 模块 | 内容 |
 | --- | --- |
@@ -250,7 +250,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [ ] IME：中文输入法组合中 Enter 不发送，候选窗位置正常（§6）
 - [ ] 多行粘贴：粘贴多行文本保持原文、Shift+Enter 换行（§6）
 - [ ] 1440×1024 逐屏对照 design/ 三图（Timeline / 折叠 / Projects）
-- [ ] 纯键盘走查（基准 §3.6）：Tab 焦点顺序、菜单 ↑/↓ 与 Enter/Escape——已知缺口：菜单 ↑/↓ 导航与 grouping/scope 触发器 tab stop 未实现（ROADMAP §4 波 B 登记），验收时确认缺口范围无新增
+- [ ] 纯键盘走查（基准 §3.6）：Tab 焦点顺序、菜单 ↑/↓ 与 Enter/Escape——已知缺口：菜单 ↑/↓ 导航与 grouping/scope 触发器 tab stop 未实现（[ROADMAP §4](../ROADMAP.md) 登记），验收时确认缺口范围无新增
 - [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
 - [ ] Reconnect 恢复：断线态点 Reconnect 回到 Connected，会话/run 状态保留（A.1 full2 的恢复半段）
 - [ ] Connected 态 1080×720 最小窗：连接态下最小窗口 Composer / 状态栏 / Inspector 触发器可用（A.1 1080c 仅覆盖断线态布局）
@@ -261,10 +261,10 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 
 ### A.3 漂移与定夺项
 
-- D1 mod.rs 行数：824（波 C 达标 <900）→ 1031（波 D 三页签接线）——✅ 已拍板（2026-08-24）：接受 1031 为终态口径，R8 任务书 §1.4/§4 退出标准同批修订，不再重瘦（ROADMAP §4）
-- D2 窄窗响应式：1080–1279 时 rail 收敛 240px + Inspector 默认折叠未实现（固定 288px，V2 起既有）——✅ 已拍板接受登记（2026-08-24）：固定宽维持现状，窄窗响应式转候选，出现真实需求时立窄任务（ROADMAP §4）
-- D3 空闲 30s 断连：host 30s 心跳超时 + desktop 无周期心跳的机制性关闭，非 R8 回归——✅ 已修复（2026-08-24）：desktop controller 泵循环连续 15s 空闲发 `heartbeat()`，真窗口 soak >2min 不再断连实证，desktop 测试 41/41 绿（ROADMAP §4）
-- D4 P3-4 Entry 菜单滚动卸载：菜单开着时条目滚出可视区被卸载、浮层消失但状态残留（滚回自现，Escape/外点仍有效）——✅ 已拍板接受（2026-08-24）：虚拟化卸载语义下浮层随条目回收属可接受行为（ROADMAP §4）
+- D1 mod.rs 行数：824（波 C 达标 <900）→ 1031（波 D 三页签接线）——✅ 已拍板（2026-08-24）：接受 1031 为终态口径，不再重瘦。
+- D2 窄窗响应式：1080–1279 时 rail 收敛 240px + Inspector 默认折叠未实现（固定 288px，V2 起既有）——✅ 已拍板接受登记（2026-08-24）：固定宽维持现状，窄窗响应式转候选（[ROADMAP §4](../ROADMAP.md)），出现真实需求时立窄任务。
+- D3 空闲 30s 断连：host 30s 心跳超时 + desktop 无周期心跳的机制性关闭，非 R8 回归——✅ 已修复（2026-08-24）：desktop controller 泵循环连续 15s 空闲发 `heartbeat()`，真窗口 soak >2min 不再断连实证，desktop 测试 41/41 绿。
+- D4 P3-4 Entry 菜单滚动卸载：菜单开着时条目滚出可视区被卸载、浮层消失但状态残留（滚回自现，Escape/外点仍有效）——✅ 已拍板接受（2026-08-24）：虚拟化卸载语义下浮层随条目回收属可接受行为。
 
 ### A.4 已收口免重复项
 

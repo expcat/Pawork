@@ -1,0 +1,301 @@
+# pawork-app
+
+> 应用装配门面（assembly host）：把 domain / engine / providers / tools / policy / workspace / exec / storage / git / workflow / orchestration / control-plane 焊成 `AppCore`，并实现 `GuiHost` 服务 GUI Connection Protocol。处于库依赖图顶端，生产上仅被 [pawork-cli](cli.md) 消费（`pawork` 二进制经 cli 间接使用）。
+
+## 1. 职责与边界
+
+**做什么**
+
+- 装配 `AppCore`：配置发现（Builtin → Global → Workspace → CLI 覆盖）、凭证链（auth 文件 → env）、协议中立 provider、内建读写工具 + `run_command`、session store、checkpoint/artifact/protected 存储、usage/quota/audit 控制面。
+- 承载一次 run 的宿主编排：`chat_turn` → `pawork_engine::run_session`，事件 persist-first 落库再渲染；审批、压缩、检查点由 `SessionLoopCtx` 桥接进 engine loop。
+- 实现 GUI 宿主侧：`gui_server`（连接/心跳/订阅/resume 帧循环）+ `gui_host`（`GuiHost` trait 适配 `AppCore`，query/command 静态分发、幂等、timeline 投影分页、事件总线）。
+- 提供 CLI 命令背后的领域门面：auth/OAuth、模型目录与切换、diff/checkpoint/rollback、MCP、compat import、tasks、plan gate、usage 报表、多 Agent demo。
+
+**不做什么**
+
+- 不定义 wire 契约：GUI 帧形状、`AppCommand`/`AppQuery`/`AppEvent`、timeline 投影规则全部在 [pawork-protocol](protocol.md)；本包只消费。
+- 不实现 Provider 协议、工具、持久化、Policy 判定本体（分别在 [providers](providers.md) / [tools](tools.md) / [storage](storage.md) / [policy](policy.md)）。
+- 不做终端/GUI 渲染（cli 与 desktop 的职责）。Desktop 进程**禁止**依赖本包，只经 protocol + transport 连 CLI（架构红线，见 [../../design.md](../../design.md) §2）。
+
+R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handlers/` 静态分发表；`services/` 与 `CatalogOnlyProvider` 均非公开 API。
+
+## 2. 模块与文件地图
+
+全包约 2 万行（含内嵌测试与 tests/）。src/ 共 43 个 `.rs`，tests/ 4 个。
+
+可见性布局：`gui_server` 是唯一 `pub mod`；`gui_host` 与 `services` 目录私有，公开类型统一经 `lib.rs` re-export；`testsupport` 仅 `cfg(test)` 编译。
+
+| 路径 | 行数量级 | 承载内容 |
+| --- | --- | --- |
+| `src/lib.rs` | ~1500 | 模块声明与 re-export 单点；`AppLoadOptions`、`AppError`（30+ 变体错误汇聚）、`CatalogOnlyProvider`（缺凭证 fail-closed 占位 provider）、`AppCore` 结构体与装配（`load*`/`from_config`/`from_parts*`）、会话/运行/usage/diff/checkpoint 门面方法、`SessionTokenEstimatorBridge`、`session_title_from_text` |
+| `src/provider_assembly.rs` | ~1200 | provider 装配单点：`assemble_provider`/`assemble_registry`、通道→协议解析、OAuth 刷新装配、`switch_model`/`switch_provider`（含 ModelSwitched 诊断事件）、`model_catalog`/`models_overview`/`provider_models` 目录聚合（builtin + config 覆盖 + 运行期探测）、`is_credential_pending` |
+| `src/idempotency.rs` | ~660 | `IdempotencyStore`：以 storage `CommandLedger`（SQLite）为权威 CAS 持久态，内存 `Notify` 做 InFlight 有界等待；`IdempotencyCheck`{New/Replay/InFlight}、`should_cache`、容量逐出、`IdempotencyStats` |
+| `src/protected.rs` | ~620 | Reasoning 保护：`SwappableReasoningProtector`（内存 ↔ 持久动态绑定）、`ProtectedBlobStore` + `FileKeyResolver`（`master.key`）注入；instance 级 `BlobScope` `instance-reasoning` |
+| `src/approval.rs` | ~520 | `ApprovalAsk`/`ApprovalResolve`、`ApprovalPromptHost` trait、`GuiApprovalHost`（pending/queued 决议池 + `ToolApprovalRequired` 事件发布）、`DenyAllApprovals`、`PreApprovedResolver`、`parse_approval_mode`、写工具预览（`relative_path_from_input`/`preview_for_tool`） |
+| `src/loop_ctx.rs` | ~430 | `SessionLoopCtx` 实现 `pawork_engine::LoopContext`：审批请求转宿主、工具执行经 `ToolScheduler`、写前 checkpoint、压缩（fork recovery branch + snapshot）、message/request id 发号、事件 emit |
+| `src/extensions.rs` | ~420 | 内建工具注册表、MCP 装配（auto_start/untrusted 拒绝/stdio 沙箱 + env 卫生）、`mcp_list`/`mcp_test`、`@token` 词法 `at_tokens`、`AT_FILE_MAX_BYTES`（64 KiB）、skill 目录发现 |
+| `src/auth.rs` | ~410 | `auth_status`（只报来源 file/env/none，不回显 secret）、`auth_set_key`/`auth_logout`、`oauth_begin`/`oauth_complete`（PKCE 与 Device Flow 编排）、`AuthChannelStatus`/`AuthSource`/`OAuthLogin` |
+| `src/hub.rs` | ~410 | `EventHub`：全局序 + ring buffer（默认 4096）+ `tokio::broadcast` 有界订阅；`global_sequence` 连续重写、`replay_from`、越界→`HubError::ReplayUnavailable`、慢订阅者 `Lagged` |
+| `src/testsupport.rs` | ~390 | 仅 `cfg(test)`：`RecordingEvents`/`ScriptedProvider`/`mock_core*`、`RecordingSubscriber`、`RecordingCapture`（双注册 Dispatch 钉住 tracing-core interest 缓存，防投毒）及其回归测试 |
+| `src/diff.rs` | ~380 | 会话累计 diff：git 仓走 `pawork-git` 且按 session 改动路径过滤，非 git 回退写前快照对比；`SessionDiff`/`GitDiffHeader`、`paginate_diff`、`render_session_diff`、`git_status_note`（注入 provider 请求，失败静默省略） |
+| `src/control.rs` | ~370 | `ControlPlaneRuntime`（in_memory/persistent：`SqliteUsageLedger` + `QuotaService` + `FileAuditStore`）；usage 记录哨兵字段（`record_id = "rec-<run_id>"`、单机 tenant/principal 哨兵）；`ledger_totals`/`quota_windows`/`append_audit`；`UsageOverview` 等报表行类型 |
+| `src/checkpoint.rs` | ~320 | 写工具识别（write_file/edit_file/apply_patch）、写前快照、`list_checkpoints`/`CheckpointSummary`、`rollback`/`perform_rollback`（恢复文件 + 持久化 `CheckpointRolledBack`） |
+| `src/import_host.rs` | ~310 | compat 导入宿主包装：`CompatTool::parse`（claude/codex/grok/cursor/pi）、`SessionImportFormat`、payload 落盘（instructions/skill/MCP merge/profile）、源文件指纹快照（`snapshots_match` 防 TOCTOU） |
+| `src/data_dir.rs` | ~300 | 数据目录解析：`PAWORK_DATA_DIR` → `%LOCALAPPDATA%\pawork`(win) → `~/.pawork` → temp 回退；`DataDirOutcome`（HOME 回退附 `DegradeEvent`）、`consume_data_dir_outcome`（唯一告警点）、`normalize_instance` 白名单校验、各实例文件路径 helper |
+| `src/channels.rs` | ~210 | 首发通道 facade：从 providers `CHANNEL_REGISTRY` 派生 `FIRST_PARTY_CHANNELS`/`first_party_channel`/`is_first_party`/`ChannelKind`，`oauth_override` 允许配置覆盖 OAuth preset；通道登记单点在 providers |
+| `src/orchestration_host.rs` | ~210 | S11 多 Agent demo：`run_multi_agent_demo`（Supervisor spawn 双 worker / cancel-tree / budget-gate），固定样例 provider/model id，非通用编排 API |
+| `src/plan_host.rs` | ~190 | Plan 审批 gate：`plan_snapshot/create/replace/submit/approve/reject`（事件重放构建 `PlanService`，决议落 audit）；`ensure_plan_allows_execution`（无 Plan 放行，有未批准版本拦截 run 并 audit Deny） |
+| `src/protocol.rs` | ~140 | 适配器协议选择：`AdapterProtocol`{ChatCompletions/Messages/Responses}，`extra.provider_protocols[id]` → 样例默认表 → ChatCompletions；未知值 fail-closed（`ProtocolError::Unknown`）；纯配置数据，engine 不读 |
+| `src/tasks_host.rs` | ~90 | tasks 门面转发 + `parse_task_kind`；`tasks.json` 快照 load/replay 与原子写（tmp + rename） |
+| `src/persist.rs` | ~20 | `PersistThenRender`：先 `append_event`（用 session 当前 active branch）成功再交渲染 sink |
+| `src/services/mod.rs` | ~10 | 七服务模块声明（全 `pub(crate)`） |
+| `src/services/session.rs` | ~620 | `SessionService`：会话生命周期、workspace 绑定、事件序号 `next_sequence`、`resolve_session`（前缀/序号）、`resume_messages`（CLI：`seal_orphaned_approvals` 落 Denied）与 `resume_messages_keep_pending`（GUI：保留待审批） |
+| `src/services/run.rs` | ~600 | `RunService`：`chat_turn`/`chat_turn_with_run_id`（Plan gate → quota 预检 → TurnContext 装配含 `git_status_note` → engine `run_session` → usage 落账）、`compact_session` 手动压缩、`append_payload` 事件追加 |
+| `src/services/approval.rs` | ~500 | `ApprovalService`：审批模式与 workspace trust 配置、`ApprovalPromptHost` 委派、模式变更时重建 `ToolScheduler` 配置 |
+| `src/services/usage.rs` | ~400 | `UsageService`：持有 `ControlPlaneRuntime`；`projected_run_usage` 预算预检、`record_completed_usage` 落 `usage-ledger.sqlite3`、`usage_overview`/`session_usage`/`last_run_usage`/`estimate_cost_for` |
+| `src/services/extension.rs` | ~330 | `ExtensionService`：workspace roots/file-index、`expand_at_refs`（命中 file-index 的 `@` 附件展开为独立 Text part，64 KiB 截断标记）、`complete_at`、注入层加载（instructions/skills/profiles）、MCP slot 持有与关停 |
+| `src/services/import.rs` | ~310 | `ImportService`：本机会话扫描、compat 预览/应用（指纹校验 `sources_unchanged`）、`export_session_doc`/`import_session_file`（export/compat/pi 三格式） |
+| `src/services/tasks.rs` | ~260 | `TaskService`：`TaskManager` 状态机 + `tasks.json` 持久化；注册/查询/取消/收尾；persist 失败发 degrade 不吞错 |
+| `src/gui_server/mod.rs` | ~180 | `GuiHost` trait（snapshot/timeline/query/command）、`GuiHostError`、`GuiServer`/`GuiServerConfig`（bind endpoint、accept 循环、按连接 spawn 会话任务）；re-export 连接层常量 |
+| `src/gui_server/connection.rs` | ~550 | `ConnectionManager`：客户端注册/心跳（`DEFAULT_HEARTBEAT_TIMEOUT` 30s idle 清理）/事件订阅；每连接有界 mpsc 队列（`DEFAULT_QUEUE_CAPACITY` 1024），慢客户端标记 `lagged` 丢新事件不阻塞发布者；断连**不**取消 run |
+| `src/gui_server/session.rs` | ~950 | 单连接握手与帧循环：协议版本检查、command 盖 client 戳、capability 门（未授予在宿主前拒绝）、Resume 三态调度（replay / SnapshotRequired / up-to-date）、Heartbeat→Pong、订阅确认、lagged→ReplayUnavailable 帧 |
+| `src/gui_host/mod.rs` | ~820 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进） |
+| `src/gui_host/bus.rs` | ~230 | `GuiEventBus`（内部 `EventHub` 赋全局序 + replay）、`GuiBroadcastSink`（AgentEvent→AppEvent 映射后广播）、`GuiRunRegistry`（活跃 GUI run 与 `CancellationToken` 登记） |
+| `src/gui_host/events.rs` | ~190 | `AgentEventEnvelope`→`AppEvent` 投影助手、诊断事件映射、幂等 client scope 推导 |
+| `src/gui_host/handlers/mod.rs` | ~10 | handler 子模块声明 |
+| `src/gui_host/handlers/terminal.rs` | ~420 | TerminalCreate/Write/Resize：经 `PtyService`；`terminal_create` 过 PolicyEngine（capability=Process；NeverAsk/ReadOnly 直拒，AskUser fail-closed 落 Deny）；输出经事件广播，需 terminal-streaming capability |
+| `src/gui_host/handlers/run_start.rs` | ~280 | RunStart：provider/model 切换校验（未知 fail-closed）→ `expand_at_refs` 展开 → 登记 `ActiveGuiRun` → spawn `chat_turn`；模型切换与失败发诊断事件 |
+| `src/gui_host/handlers/query.rs` | ~240 | WorkspaceList/SessionGet/ModelList（聚合 overview）/RunStatus/DiffListFiles/DiffGet/QuotaOverview/McpList（`{"servers":[...]}`） |
+| `src/gui_host/handlers/session.rs` | ~120 | SessionCreate（建会话 + 绑 workspace）/SessionOpen/SessionFork（自指定事件建分支并切换 active branch） |
+| `src/gui_host/handlers/approval.rs` | ~80 | ToolApprove：协议决定→domain 决定；live 决议 pending，非 live 走 session store 落 queued 决议；写工具附预览 |
+| `src/gui_host/handlers/command.rs` | ~40 | WorkspaceAdd（追加 workspace）、RunCancel（翻转注册的 `CancellationToken`） |
+| `src/gui_host/tests.rs` | ~1800 | `cfg(test)` 内嵌测试集：双射 pin、timeline 分页、`@` 展开三态、幂等（重启存活/失败计数/InFlight 收敛）、审批三态、fork、provider 切换、bus lagged 等 |
+| `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟（`--ignored`），不进默认测试路径 |
+| `tests/timeline_projection_host.rs` | ~160 | host `timeline()` 与 protocol 投影 golden 对拍 |
+| `tests/gui_server/session.rs` | ~1000 | 具名 test bin `gui_server_session`：握手/版本/capability/resume/心跳/慢消费 |
+| `tests/gui_server/multi_gui_runtime.rs` | ~830 | 具名 test bin `gui_server_multi_gui_runtime`：多 GUI 一致性/重连 replay/慢客户端隔离 |
+
+## 3. 对外 API 面
+
+### 3.1 装配与生命周期
+
+- `AppLoadOptions { workspace_root, provider, model, auth_backend }`；`AppLoadOptions::from_cli(provider, model)` 是 CLI 覆盖入口。`auth_backend` 缺省为 `FileBackend`（auth 文件），测试可注入 `MemoryBackend`。
+- `AppCore::load(options) -> Result<AppCore, AppError>`：发现配置（Builtin → Global → Workspace → CLI 覆盖）→ 装配默认 provider（缺凭证即 `AppError::Auth` 失败）→ 打开 `session.db`、checkpoint/artifact/protected 存储与控制面。
+- `AppCore::load_for_catalog(options)`：同路径但缺凭证**不失败**，退回 `CatalogOnlyProvider`——目录、凭证、导入等命令可用；chat 在请求时报 `ProviderErrorKind::Authentication`（fail-closed，错误文案引导 `pawork auth set-key/login <id>`）。`provider_pending() -> bool` 暴露该状态。
+- `load_from` / `from_resolved` / `from_config`：跳过发现、注入已解析配置的低层装配入口（cli 测试与特殊装配路径用）。
+- `from_parts(provider, credential, model, provider_id, store)`：用注入件直接拼 Core，测试与 smoke 专用；测试内部另有 `from_parts_with_protocol` 可再注入 `AdapterProtocol` 与 `ModelRegistry`。
+- 装配后增量开口（`&mut self`）：
+  - `attach_workspace(root)`：注册 workspace 并重建内建工具注册表；
+  - `open_store(path)` / `open_checkpoints(root)` / `open_control_plane(dir)`：分别打开会话库、检查点服务、usage/quota/audit 运行时；
+  - `configure_approval(mode, trusted)`：设置审批模式与 workspace 信任并重建 `ToolScheduler` 配置；
+  - `prime_extensions()`：file-index 扫描（失败仅 warn）+ MCP auto-start（失败不拖垮装配）。
+- `shutdown(self) -> Result<(), AppError>`：关停 MCP 客户端、落 tasks 快照、关闭 store；消费 self。
+- 只读访问器：`provider_id()` / `model()` / `adapter_protocol()` / `config()` / `auth_backend()` / `store()`（无 store 时 `Err`）/ `workspace_id()` / `workspace_name()` / `workspace_trusted()` / `approval_mode()` / `approval_host()` / `tool_names()` / `turn_context()`。
+- `AppError`：30+ 变体的错误汇聚层，粗分为透传（Config/Auth/Provider/Engine/Session/Io/Workspace/Tools/Git/Mcp/Checkpoint/…，`#[from]`）与本包语义（MissingDefaultProvider/MissingCredential/OAuthLoginRequired/UnknownModel/StoreNotOpen/AmbiguousSession/EmptyTurn/PlanNotApproved/…）两类；`Display` 文案面向终端用户（含修复指引），任何变体不携带明文 secret。
+
+### 3.2 会话与运行
+
+- `create_session(title) -> SessionId`；`create_session_with_workspace(title, workspace_id)` 额外绑定归属。
+- `list_sessions() -> Vec<SessionRecord>`；`get_session(&SessionId) -> SessionRecord`（含 `active_branch`）。
+- `resolve_session(spec)`：接受 id 前缀或列表序号，歧义/未命中报 `AppError`。
+- `next_sequence(&SessionId) -> u64`：该会话下一事件序号（宿主外持久化事件时用）。
+- `bind_session_workspace` / `session_workspace` / `session_workspace_for_record`：会话 ↔ workspace 映射维护与查询。
+- `resume_messages(&SessionId) -> Vec<Message>`：**CLI resume 语义**——重放 active branch 构造消息序列，孤儿待审批工具调用持久 seal 为 Denied。
+- `resume_messages_keep_pending(&SessionId)`：**GUI resume 语义**——同重放但保留待审批，另返回 pending 列表供 snapshot 重建审批卡片。
+- `chat_turn(session, messages, sink, cancel) -> ModelResponseSummary`：单轮执行（详见 §4.2）；`sink` 是调用方渲染 sink，宿主内部自动套 `PersistThenRender`，调用方**不要**自己先落库。`chat_turn_with_run_id` 允许外部指定 `RunId`（GUI 路径用，保证响应与事件可关联）。
+- `compact_session(session_id, sink)`：手动压缩历史（§4.5）。
+- `session_title_from_text(text) -> String`：自由函数，从首条用户文本派生会话标题。
+
+### 3.3 模型、凭证与通道
+
+- `list_models()`：当前 provider 实时列举（走网络，缺凭证时经 `CatalogOnlyProvider` 返回静态目录）。
+- `model_catalog()` / `models_overview()` / `provider_models()`：聚合 `CatalogEntry`（builtin 目录 + config 覆盖 + 运行期探测缓存），不发网络请求，GUI ModelList 即消费 overview。
+- `switch_model(model)`：同 registry 内切换默认 model；未知 id fail-closed 报错，不静默沿用。
+- `switch_provider(provider, model)`：重装配 provider（重新走凭证链与协议解析），成功后发 ModelSwitched 诊断事件；带 provider 而 model 未指明时不得静默保留旧 model id。
+- `auth_status() -> Vec<AuthChannelStatus>`：逐通道报 `AuthSource`{File/Env/None}，永不回显 key 本体。
+- `auth_set_key(provider_id, key)` / `auth_logout(provider_id)`：写/删 auth 文件后端。
+- `oauth_begin(provider_id) -> OAuthLogin` / `oauth_complete(...)`：PKCE 与 Device Flow 两形态编排；token 落 auth 后端，不回显。
+- 通道 facade：`FIRST_PARTY_CHANNELS` / `first_party_channel(id)` / `is_first_party(id)` / `ChannelKind`；事实源是 providers `CHANNEL_REGISTRY`，本包不自建通道表；`oauth_override` 允许配置覆盖默认 OAuth preset。
+
+### 3.4 usage、diff、checkpoint
+
+- `usage_overview(window)` → `UsageOverview`（含 `LedgerTotals` 与 `QuotaWindowLine`）；`session_usage(&SessionId) -> TokenUsage`；`last_run_usage`；`estimate_cost_for(model, usage) -> Option<Cost>`（无定价数据返回 None）。
+- `ControlPlaneRuntime::in_memory()` / `persistent(dir)`：usage/quota/audit 运行时装配（cli 直接消费 re-export 的报表行类型）。
+- `session_diff(&SessionId) -> SessionDiff`：git 仓走 `pawork-git` 全量 diff 后按 session 改动路径过滤（含 rename 前路径、untracked 补 hunk）；非 git / 无 git 二进制回退写前快照对比。`GitDiffHeader`（branch/work_dir/dirty_files）仅 git 路径返回。
+- `paginate_diff(files, page, page_size) -> DiffPage`；`render_session_diff` / `render_diff_file`：统一 diff 文本渲染（二进制标注 `Binary files differ`）。
+- `git_status_note(roots) -> Option<String>`：短 git 状态行（branch + dirty 数），任何失败返回 None 不阻断对话。
+- `list_checkpoints(&SessionId) -> Vec<CheckpointSummary>`；`rollback(&SessionId, spec) -> RollbackOutcome`：按快照恢复文件并持久化 `CheckpointRolledBack` 事件。
+
+### 3.5 扩展、MCP、导入、tasks/plan/编排
+
+- `expand_at_refs(text) -> Vec<ContentPart>`：`@token` 命中 file-index 时正文作为**独立** Text part 追加（不拼进 user text），单文件 64 KiB 截断并标记；无 `@` 时返回单 Text part。`complete_at(query, limit)` 补全候选。`workspace_root()`。
+- `mcp_list() -> Vec<McpServerStatus>`（name/transport/state/tools/last_error）；`mcp_test(name?)`：真实建连 + ping + list_tools 并刷新 slot 状态。
+- `scan_local_sessions(source, home_root?)`：只读发现本机会话文件。
+- `preview_compat_import(tool, global_root?)` / `apply_compat_import(...)`：compat 配置导入两段式；apply 前用文件指纹快照校验 `sources_unchanged`，落盘 instructions / skills / MCP merge / profiles。`CompatTool::parse` 接受 claude/codex/grok/cursor/pi。
+- `export_session_doc(spec?)` / `import_session_file(path, format, source?)`：会话文档导出/导入；`SessionImportFormat`{Export/Compat/Pi}，`parse_session_source` 解析来源名。
+- `tasks_list` / `tasks_status(spec)` / `tasks_register(kind)` / `tasks_cancel(spec)` + `parse_task_kind`（agent/automation/monitor/process）。
+- `plan_snapshot` / `plan_create` / `plan_replace` / `plan_submit` / `plan_approve` / `plan_reject` + `review_status_label`：Plan 事件持久化在会话事件流内，approve/reject 落 audit。
+- `run_multi_agent_demo(options) -> MultiAgentDemoReport`：S11 演示（spawn 双 worker / cancel-tree / budget-gate），非通用编排 API。
+
+### 3.6 GUI 宿主与复用组件
+
+- `gui_server`（唯一 `pub mod`）：
+  - trait `GuiHost`：`snapshot()` / `timeline(session, cursor, limit)` / `query(envelope)` / `command(envelope)`，是 cli 与测试注入宿主的接口；
+  - `GuiServer::bind(config, host, transport)` + accept 循环，每连接 spawn 独立会话任务；`GuiServerConfig`；
+  - `ConnectionManager` / `GuiSubscription` / `ManagerError`；常量 `DEFAULT_HEARTBEAT_TIMEOUT`（30s）与 `DEFAULT_QUEUE_CAPACITY`（1024）。
+- `GuiHostAdapter::new(Arc<AppCore>)`：生产 `GuiHost` 实现；配套 `GuiEventBus`、`GuiBroadcastSink`、`GuiRunRegistry`、`project_timeline_item`。
+- `EventHub` / `HubSubscription` / `HubError` / `DEFAULT_HUB_CAPACITY`（4096）：全局序 + ring + broadcast 的通用事件扇出。
+- `IdempotencyStore` / `IdempotencyCheck`{New/Replay/InFlight} / `IdempotencyError` / `IdempotencyStats` / `should_cache` / `DEFAULT_IDEMPOTENCY_CAPACITY`（= storage `DEFAULT_COMMAND_LEDGER_CAPACITY`）。
+- `PersistThenRender { store, render, branch_id }`：persist-first 组合子；`branch_id` 必须是 active branch。
+- 审批宿主家族：`ApprovalPromptHost` trait / `GuiApprovalHost` / `DenyAllApprovals` / `PendingToolApproval` / `ApprovalAsk` / `ApprovalResolve` / `parse_approval_mode`。
+- data_dir 家族：`default_data_dir(_outcome)`、`consume_data_dir_outcome`、`normalize_instance`、`instance_dir`、`session_db_path(_for)`、`artifact_store_path(_for)`、`protected_store_path_for`、`usage_ledger_path_for`、`audit_log_path_for`、`tasks_snapshot_path_for`、`DEFAULT_INSTANCE`（`"default"`）。
+- 便捷 re-export：`AdapterProtocol`/`ProtocolError`；`ApprovalMode`/`RiskLevel`（policy）；`SessionRecord`/`SessionExport`/`EXPORT_SCHEMA_VERSION`（storage）；`PlanSnapshot`/`TaskSnapshot`（workflow）；`DiffFile`/`DiffPage`（git）；`CompatExternalSource`/`LocalSessionFile`/`LocalSessionSource`（workspace）。
+
+## 4. 核心行为与数据流
+
+### 4.1 GUI RunStart 全流程
+
+1. GUI 帧到达 `gui_server::session` 帧循环。首帧必须是握手：做协议版本检查，返回 `HandshakeResponse` + 初始 `Snapshot`；非握手首帧直接拒绝并关闭连接。
+2. 后续 command 帧被盖上 client 戳（连接身份）并做版本校验；client_context 替换尝试被拒绝。
+3. capability 门：所需 capability 未在握手授予的 query/command 在进宿主**之前**被拒（terminal-streaming 相关的 snapshot 分区、事件、命令全路径同规则）。
+4. 帧进入 `GuiHostAdapter::command`：由 envelope 推导幂等 scope（不同 GUI client 的相同 `command_id` 不冲突），`IdempotencyStore::begin` 判定三态——
+   - `Replay`：直接返回缓存响应，副作用不重放；
+   - `InFlight`：有界等待首个执行者（`Notify` + 超时轮询），唤醒丢失也收敛到 SQLite 权威结果；
+   - `New`：领到执行权，继续。
+5. `COMMAND_HANDLERS` 静态表分发到 `handlers/run_start.rs`：
+   - 若请求携带 provider/model 切换，先经 `provider_assembly` 校验并装配——请求的通道直连装配（不是 catalog 顺位），未知 model fail-closed，带 provider 不得静默沿用旧 model id；切换成功发 ModelSwitched 诊断事件；
+   - `expand_at_refs` 展开 `@file` 为独立 ContentPart；
+   - **展开成功后才**在 `GuiRunRegistry` 登记 `ActiveGuiRun`（含 `CancellationToken`），任何前置失败不留幽灵 run。
+6. spawn 异步任务执行 `RunService::chat_turn`（§4.2），响应帧先行返回 run 受理；run 事件在宿主内经 `PersistThenRender` 先落库，再交 `GuiBroadcastSink` 映射为 `AppEvent` 发进 `GuiEventBus`。
+7. `EventHub` 为每条事件赋连续 `global_sequence` 并写 ring buffer；`ConnectionManager` 将事件推入各订阅连接的有界 mpsc 队列；订阅 GUI 收到 Event 帧。
+8. 慢客户端队满被标记 lagged 并丢新事件——发布者与其它 GUI 不被阻塞；lagged 连接随后收到 ReplayUnavailable，走 snapshot 恢复（§4.3）。
+9. RunCompleted 或失败：`GuiRunRegistry` 摘除该 run（失败发诊断事件）；成功响应按 `should_cache` 写回幂等 ledger；record 失败计数并释放 inflight（同 `command_id` 可重入），不吞错挂死。
+
+### 4.2 CLI chat_turn 单轮
+
+1. 调用方（cli REPL / exec）持 `Vec<Message>` 调 `AppCore::chat_turn(session, messages, sink, cancel)`。
+2. Plan gate：`ensure_plan_allows_execution`——会话存在未批准 Plan 版本则拒（`AppError::PlanNotApproved`，audit 记 Deny）；无 Plan 或已批准放行。
+3. quota 预检：`projected_run_usage` 估算本轮输入预算并询问 `QuotaService`，超限直接拒绝，不发请求。
+4. 装配 `TurnContext`：system prompt、注入层（instructions / skills / profiles / AGENTS 文件，经 `load_injected_layers`）、工具定义、`git_status_note` 短状态行（任何 git 失败静默省略，不阻断）。
+5. 进入 `pawork_engine::run_session`。`SessionLoopCtx` 作为 `LoopContext` 提供：
+   - 审批：转 `ApprovalPromptHost`（CLI 为终端 ask，GUI 为 `GuiApprovalHost`）；
+   - 工具执行：经 `ToolScheduler`（并发上限 8，Policy/审批模式约束），写工具执行前先落 checkpoint 快照；
+   - 压缩：超阈值时 fork recovery branch 并产快照；
+   - id 发号与事件 emit。
+6. 全部 agent 事件先 `append_event`（active branch）成功再进调用方渲染 sink（persist-first）。
+7. 收尾：`record_completed_usage` 把 `TokenUsage` 写 `usage-ledger.sqlite3`，`record_id` 用哨兵 `"rec-<run_id>"`（单机形态无上游账号，tenant/principal 亦为默认哨兵，`upstream_attempt = 1`）；返回 `ModelResponseSummary`。
+
+### 4.3 断线 resume / Replay / SnapshotRequired
+
+1. GUI 重连并重新握手后发 Resume（带 last seen `global_sequence` 与 ack 状态）。
+2. 宿主对照 `EventHub` 分三态：
+   - 已最新 → up-to-date，无补发；
+   - 缺口仍在 ring 内 → 逐条补发缺失事件（replay）；
+   - 缺口越界（`HubError::ReplayUnavailable`）→ 回 SnapshotRequired，客户端改拉全量 `snapshot()`。
+3. snapshot 含会话列表、活跃 run、以及重启后由 waiting 投影重建的 pending approvals（`snapshot_rebuilds_pending_approvals_after_restart` 钉住）。
+4. 连接存续期间队列 lagged 同样收敛到 ReplayUnavailable 帧，客户端按 snapshot 路径恢复。
+5. 心跳：客户端周期发 Heartbeat 得 Pong；超过 `DEFAULT_HEARTBEAT_TIMEOUT`（30s）无活动由 `ConnectionManager` 清理连接。
+6. **断连与心跳超时都不取消 run**——run 继续执行并持续落库，取消只能来自显式 RunCancel 命令（翻转登记的 `CancellationToken`）。
+
+### 4.4 审批等待与恢复（K-02）
+
+1. live 路径：engine 发 `ToolApprovalRequested` → `SessionLoopCtx` 挂起等待决议 → `GuiApprovalHost` 登记 pending 并广播审批事件。
+2. GUI 发 ToolApprove 命令（协议 `ApprovalDecision` 译为 domain 决定；写工具附 `preview_for_tool` 生成的预览）→ live 决议唤醒等待中的 run，放行或拒绝该工具。live 等待期间**不**做持久 seal（决议由 run 自身事件流落库，避免双写）。
+3. 非 live（进程重启、run 不在内存）：
+   - session 有 waiting 投影 → ToolApprove 决议持久化落库（durable seal），下次 resume 可见；
+   - 无 waiting 投影 → 决议进 queued 池，等待 run 恢复时消费，不落库。
+4. resume 分叉：CLI `resume_messages` 把孤儿待审批 seal 为 Denied（持久化）；GUI `resume_messages_keep_pending` 保留 pending 并随 snapshot 重建审批卡片，用户可继续决议。
+
+### 4.5 compact_session 手动压缩
+
+1. 校验会话存在且有可压缩历史；fork recovery branch 保留原始完整历史（可回溯）。
+2. 生成摘要快照，token 统计经 `SessionTokenEstimatorBridge`（engine `HeuristicEstimator` 桥接到 storage 窄口 `TokenEstimator`）。
+3. emit 并持久化 `CompactionStarted` / `CompactionCompleted`；active branch 切到压缩后分支。
+4. 后续 resume / fork 直接消费 storage lineage：fork 后 resume 只能看到祖先前缀；压缩过程中的存储错误显式上抛，禁止降级为"未发生"。
+
+以上流程的跨包端到端视角（CLI ↔ GUI ↔ engine ↔ storage）见 [../flows.md](../flows.md)。
+
+## 5. 契约与不变量
+
+- **wire 契约不在本包**：GUI 帧、`AppCommand`/`AppQuery`/`AppEvent`、timeline 投影的 golden 全部钉在 [pawork-protocol](protocol.md)；本包 host 侧以 `tests/timeline_projection_host.rs` 与 protocol 投影 golden 对拍，保证分页路径与 reducer 历史臂同源。
+- **分发表双射 pin**：`QUERY_HANDLERS`/`COMMAND_HANDLERS` 与 protocol registry `gui.available=true` 条目一一对应，由内嵌测试 `dispatch_tables_match_gui_available_registry_entries` 钉死；新增 GUI 能力必须两侧同批。
+- **persist-first**：所有 agent 事件先 `append_event` 成功再渲染/广播（`PersistThenRender`）；`branch_id` 必须是 active branch。事件可持久化可重放是架构红线。
+- **幂等权威在 SQLite**：`CommandLedger` CAS 是唯一权威；重复 `command_id` 返回缓存响应不重放副作用；key 冲突拒绝；`record` 失败必须计数并释放 inflight。幂等状态在进程重启后存活。
+- **EventHub 序列连续**：发布时重写 `global_sequence` 保证连续单调；replay 越界必须显式 `ReplayUnavailable`，禁止静默丢段。
+- **断连不取消 run**；慢客户端只降级自身（lagged），不得阻塞发布者或其它 GUI。
+- **Secret 红线**：明文 key 不进 `AppError` 任何变体、不进日志与数据库；`auth_status` 只报来源；smoke 测试禁止打印 key。
+- **`let _` 非测试归零**：非测试代码不允许 `let _ =` 吞结果（当前全包仅 3 处且都在 `cfg(test)`）。
+- **HOME 回退单点告警**：只有 `consume_data_dir_outcome` 打一次结构化 warn（`degrade.home_dir_fallback`），路径 helper 保持静默，禁止静默落 temp。
+- **usage 哨兵**：单机形态 ledger 记录 `record_id = "rec-<run_id>"`、默认 tenant/principal、`upstream_attempt = 1`，消费方不得把哨兵当真实上游账号。
+- **不按 Provider 名称走特例**（红线）：协议选择只读 `extra.provider_protocols` 配置与样例默认表（`protocol.rs` 是配置数据），未知值 fail-closed。
+- **`@` 展开 fail-closed**：无 `@` 零行为变化；展开失败整个 run_start 失败且不留 ActiveGuiRun；附件正文独立 ContentPart，不拼进 user text，单文件上限 64 KiB。
+- **MCP 信任边界**：untrusted workspace 拒绝 stdio auto-start/test；stdio 走沙箱 + env 卫生；MCP secret 独立文件（不复用 Provider auth 后端）。
+- **instance 名白名单**：`[A-Za-z0-9._-]` 且禁 `..`，拒绝路径逃逸。
+- **compat import 防 TOCTOU**：apply 前对预览时快照的源文件做字节 + mtime 指纹复核，源已变化则 `sources_unchanged = false` 不落盘。
+- **tasks 快照原子写**：`tasks.json` 先写 `.json.tmp` 再 rename；persist 失败发 degrade 事件，不静默吞错。
+- **工具调度**：`ToolScheduler` 并发上限 8；审批模式或 workspace trust 变更必须重建 scheduler 配置（`configure_approval` / `replace_registry` 负责），禁止运行中就地改。
+
+## 6. 依赖关系
+
+**上游（15 个 pawork crate）**：[domain](domain.md)、[engine](engine.md)、[providers](providers.md)（features：anthropic / chatgpt-oauth / xai-oauth / glm-coding / opencode-go / qwen-token-plan / deepseek，六通道全开）、[auth](auth.md)、[tools](tools.md)、[policy](policy.md)、[workspace](workspace.md)、[exec](exec.md)、[storage](storage.md)（features：compaction / checkpoint / protected）、[git](git.md)、[workflow](workflow.md)、[orchestration](orchestration.md)（`default-features = false`）、[control-plane](control-plane.md)、[protocol](protocol.md)、[transport](transport.md)。三方：tokio、reqwest、toml、blake3、getrandom、tracing、serde 系。
+
+**下游**：生产仅 [pawork-cli](cli.md)（`pawork` 二进制 → cli → app）；[pawork-client](client.md) 以 dev-dependency 使用本包做集成测试。desktop **禁止**依赖本包。
+
+**dev-dependencies**：pawork-testkit（MockProvider/MockScript）、pawork-transport（features local + memory，供 gui_server 集成测试起真实 endpoint）、wiremock、tempfile。
+
+依赖方向与全局分层见 [../../architecture.md](../../architecture.md) 与 [../../design.md](../../design.md) §2。本包处在 `pawork` 二进制依赖闭包的最大层：合并/归档波以 `cargo tree -p pawork` 断言无环且闭包不膨胀，给本包新增上游依赖须先过对应任务书。
+
+## 7. 测试与验证资产
+
+默认验证命令：
+
+```bash
+cargo test -p pawork-app --offline --lib --tests
+```
+
+**内嵌 `#[cfg(test)]`（跑在 `--lib`）**，重点覆盖：
+
+- `gui_host/tests.rs`（~45 条，本包最大测试集）：
+  - 分发表与 registry `gui.available` 双射 pin（`dispatch_tables_match_gui_available_registry_entries`）；
+  - timeline 投影分页与 ModelList 聚合、McpList `{"servers":[...]}` 形状；
+  - `run_start` 的 `@` 展开三态：展开成独立 part / 失败不留活跃 run / 无 `@` 单 Text part；二轮带历史；
+  - 幂等：replay 不重放副作用、跨 client 同 `command_id` 不撞、重启存活、record 失败计数不吞错、InFlight 共享 key 不挂死、唤醒丢失有界轮询收敛、失败释放 inflight 可重入；
+  - ToolApprove 三态：live waiting 不 durable seal / 非 live 有 waiting 投影 durable / 无 waiting 保持 queued；
+  - snapshot 重启后重建 pending approvals；SessionCreate / SessionFork（建分支并切换）；
+  - provider/model 切换：请求通道直连不走 catalog 顺位、未知 fail-closed、不静默保留旧 id；
+  - `GuiRunRegistry` cancel 翻转 token；bus 经 EventHub 发布与 lagged degrade 帧。
+- `hub.rs`：ring 超容量逐出、replay 越界 ReplayUnavailable、全局序连续。
+- `idempotency.rs`：容量逐出、SQLite CAS 权威、键冲突拒绝。
+- `data_dir.rs`：HOME 回退 DegradeEvent 结构、告警单点（helper 静默 / consume 恰好一次 WARN）、instance 白名单拒路径逃逸。
+- `protocol.rs`：extra 覆盖 / 样例默认表 / 未知值 fail-closed。
+- `testsupport.rs`：`RecordingCapture` 治愈并屏蔽 tracing interest 缓存投毒的回归（探针双 callsite）。
+- `services/*`、`loop_ctx.rs`、`checkpoint.rs`、`control.rs`、`protected.rs`、`approval.rs`、`extensions.rs`：各自带定向单测（resume seal 语义、压缩 lineage、usage 哨兵、审批模式解析、`at_tokens` 词法等）。
+
+**tests/（integration）**——`tests/gui_server/` 下两个文件不是自动发现的，经 Cargo.toml `[[test]]` 声明为具名 test bin：
+
+| 文件 | 形态 | 覆盖点 |
+| --- | --- | --- |
+| `tests/timeline_projection_host.rs` | 默认跑 | 真实 `GuiHostAdapter::timeline()` 与 protocol 投影 golden（`paged_interleave.jsonl`）逐条对拍；limit=0 收敛最小窗口、游标跨未投影事件推进 |
+| `tests/gui_server/session.rs` | 具名 `[[test]]` `gui_server_session` | 握手往返、非握手首帧拒绝、command 盖戳与版本校验、SessionGet 字段透传、resume 三态与 ack、Heartbeat→Pong、断连不取消 run、lagged→ReplayUnavailable、慢消费不阻塞宿主、client_context 替换拒绝、capability 先于宿主拒绝、terminal-streaming capability 全路径 |
+| `tests/gui_server/multi_gui_runtime.rs` | 具名 `[[test]]` `gui_server_multi_gui_runtime` | 三 GUI 收到相同事件序、重连 replay 缺失事件、replay 不可用回退 snapshot、慢客户端不拖累其它 GUI、断连/心跳超时均不触发 RunCancel |
+| `tests/smoke.rs` | env 门控，默认忽略 | 真实 API 流式冒烟（AssistantTextDelta + RunCompleted）；`cargo test -p pawork-app --test smoke -- --ignored --nocapture`，需 `PAWORK_SMOKE_BASE_URL/API_KEY/MODEL[/PROTOCOL]`，禁止打印 key |
+
+验证约定总览见 [../verification.md](../verification.md)；degrade tracing 断言一律使用 `testsupport::RecordingCapture`，禁止裸 `tracing::subscriber::set_default`。
+
+## 8. 注意事项与已知限制
+
+- **读法建议**：本仓最大库。改 GUI 行为从 `gui_host/mod.rs` 分发表入手；改 run 语义从 `services/run.rs` + `loop_ctx.rs`；改装配从 `lib.rs::load_with` + `provider_assembly.rs`。
+- **`CatalogOnlyProvider` 语义**：`load_for_catalog` 下 chat 请求必然失败（Authentication），这是有意 fail-closed，不是缺陷；判断入口是 `provider_pending()`。
+- **protected 无本包 feature gate**：任务惯称"feature protected"指 storage 侧 feature，由本包 Cargo.toml 常开；`ProtectedBlobStore` 用 instance 级 `BlobScope`（`instance-reasoning`），是已接受偏差（非按 session 隔离）。
+- **`orchestration_host` 是 S11 demo**：固定样例 provider/model id 与固定 session id，仅供 `pawork` demo 命令演示 spawn/cancel-tree/budget-gate，不是通用多 Agent API。
+- **`AdapterProtocol::Responses`** 是 OAuth 通道装配用标记，不可经 `extra.provider_protocols` 配置（解析表只认 chat_completions/messages，未知值报错）。
+- **terminal 审批粒度**：`terminal_create` 在 AskUser 模式 fail-closed 落 Deny（命令级交互审批待 wire ADR，见 R7 ADR-041 D2）；会话内容不逐条审批。
+- **tracing interest 缓存投毒**：与无 subscriber 测试共享 callsite 的断言测试会间歇丢事件（tracing-core 0.1.36 `Interest::never()` 缓存）；`RecordingCapture::install` 以双注册 Dispatch 治愈并钉住，窗口结束调 `dismiss()`。
+- **testsupport 环境写**：`set_env`/`remove_env` 直接写进程环境（unsafe），相关测试串行意识自负。
+- **gui_server 集成测试依赖 dev-features**：需要 pawork-transport 的 `local` + `memory`；生产依赖不开这两个 feature。本包自身不声明任何 cargo feature（providers / storage 的 features 由本包 Cargo.toml 固定开启）。
+- **`mcp_test` 有副作用**：会真实建连并 ping 配置的 MCP server，untrusted workspace 下 stdio 直接报 PermissionDenied。
+- **diff 回退路径是行级替换**：非 git 工作区的快照对比生成单 hunk 全量替换 diff（非最小编辑距离），二进制以 NUL 字节嗅探；`session_diff` 的改动集来自 checkpoint 服务，未 `open_checkpoints` 时返回空 diff 而非报错，git 判定只看首个 workspace root。
+- **`AppCore` 字段全私有或 `pub(crate)`**：消费方只能走方法门面；`Debug` 输出经筛选（provider_id/model/协议/是否有 store 等），不含凭证本体。
+- **内部测试装配件不可外用**：`testsupport` 的 `mock_core` / `ScriptedProvider` / `RecordingCapture` 均 `pub(crate)`；tests/ 集成测试改用 pawork-testkit 的 `MockProvider` / `MockScript`。
+
+相关：产品能力总览 [../capabilities.md](../capabilities.md) · 跨包流程 [../flows.md](../flows.md) · 契约清单 [../contracts.md](../contracts.md) · Spec 索引 [../README.md](../README.md) · 任务状态 [../../../ROADMAP.md](../../../ROADMAP.md)

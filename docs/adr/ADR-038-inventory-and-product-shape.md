@@ -6,17 +6,17 @@
 
 ## 背景
 
-V2 收官(S0–S13,见 [v2-summary.md](../v2-summary.md))后,workspace 39 成员约 19 万行 src,其中约 3.3 万行为零消费者休眠库存(近 20%)。V3 计划原则要求「删除优先于门控,门控优先于库存」([ROADMAP.md](../../ROADMAP.md) §1),故 R0 一次性拍板产品形态(T10)与全部休眠资产去留(T1),避免后续阶段反复翻案。
+V2 收官(S0–S13,存档见 [history.md](../history.md) 第一部分)后,workspace 39 成员约 19 万行 src,其中约 3.3 万行为零消费者休眠库存(近 20%)。V3 计划原则要求「删除优先于门控,门控优先于库存」(原 ROADMAP V3 计划原则,存档见 [history.md](../history.md)),故 R0 一次性拍板产品形态(T10)与全部休眠资产去留(T1),避免后续阶段反复翻案。
 
-证据基础:2026-08-18 五路只读分析(任务书 [plan/R0](../../plan/R0-inventory-decisions.md) §3),并于同日经三路只读核查按实态重验;漂移处已回写任务书,本 ADR 以重验后实态为准。归档兜底:git tag `v2-final`(已打,指向 088b539),任何删除均可找回。
+证据基础:2026-08-18 五路只读分析(原任务书 plan/R0-inventory-decisions.md §3,已随收口删除,见 git 历史),并于同日经三路只读核查按实态重验;漂移处已回写任务书,本 ADR 以重验后实态为准。归档兜底:git tag `v2-final`(已打,指向 088b539),任何删除均可找回。
 
 ## 决策
 
 ### 产品形态
 
-**D1 — 单机优先(T10)**。身份维度收缩为可选扩展点,`local/default` 哨兵宇宙不再扩张;多账户 factory 转候选(激活时按新装配面重写,调研结论 [docs/research/](../research/) 仍有效)。依据:control-plane 三包 28.7k 行中生产链路只用 ledger/audit/policy/lease/pool(`host/app/src/control.rs` 装配 `SqliteUsageLedger`/`FileAuditStore`/`InMemoryTenantPolicyEngine`/`InMemoryCredentialPool`);哨兵派生(`control-plane/core/src/usage.rs:26,105`)从未接真实 lease,宿主入账写死 `LEDGER_ACCOUNT = "local/default"`(`control.rs:29`)。否决支:多租户层级(LiteLLM 形态)——无真实消费面,维持成本高。
+**D1 — 单机优先(T10)**。身份维度收缩为可选扩展点,`local/default` 哨兵宇宙不再扩张;多账户 factory 转候选(激活时按新装配面重写,调研结论仍有效,已并入 [references.md](../references.md) 附录 A–C)。依据:control-plane 三包 28.7k 行中生产链路只用 ledger/audit/policy/lease/pool(`host/app/src/control.rs` 装配 `SqliteUsageLedger`/`FileAuditStore`/`InMemoryTenantPolicyEngine`/`InMemoryCredentialPool`);哨兵派生(`control-plane/core/src/usage.rs:26,105`)从未接真实 lease,宿主入账写死 `LEDGER_ACCOUNT = "local/default"`(`control.rs:29`)。否决支:多租户层级(LiteLLM 形态)——无真实消费面,维持成本高。
 
-### 归档(移出 workspace + 删除源目录,tag 兜底,ROADMAP §3.3 登记复活条件)
+### 归档(移出 workspace + 删除源目录,tag 兜底,ROADMAP 候选池登记复活条件)
 
 - **D2 — provider-control account-control-v1 九模块(8,476 行)归档**。feature 默认开但宿主零装配(`host/app/Cargo.toml:40` `default-features=false`);包外只用 lease/pool。
 - **D3 — provider-control binding.rs + schema/ 归档,legacy.rs 删除**(合计 5,473 行)。包外零引用;`legacy::` 唯一消费方是同批归档的 account-control-v1(`account.rs:340-375`)。`session_bindings` 孤儿表留表登记「预留」(append-only,DDL 不回滚)。
@@ -55,10 +55,10 @@ V2 收官(S0–S13,见 [v2-summary.md](../v2-summary.md))后,workspace 39 成员
 ## 后果
 
 - 归档/删除合计约 3.3 万行(D2–D8、D15、D16 为主);workspace members 39 → 37(memory/review 整包出树),其余为包内模块级裁减。`cargo tree -p pawork` 闭包只减不增,波 C 收口前后快照对比归档。
-- 「归档」= 移出 workspace members + 删除源目录;不复制到仓库其它位置;复活条件登记 [ROADMAP](../../ROADMAP.md) §3.3。domain canonical 事件类型(Plan/Goal/Task/Team 等)一律保留,历史事件可重放。
+- 「归档」= 移出 workspace members + 删除源目录;不复制到仓库其它位置;复活条件登记 [ROADMAP](../../ROADMAP.md) §5 候选池。domain canonical 事件类型(Plan/Goal/Task/Team 等)一律保留,历史事件可重放。
 - `session_bindings` 孤儿表:留表 + 注释登记「预留」,不回滚 DDL(append-only)。
-- S13 拍板([v2-summary](../v2-summary.md) §5)不回退;安全红线定向回归、持久化/重放 golden、协议 golden 在每波收口保持绿。
-- 破坏式内部改动(删 public API、feature)允许;磁盘/线上冻结契约形状零变更([v2-summary](../v2-summary.md) §4 清单)。
+- S13 拍板([architecture.md](../architecture.md) §4)不回退;安全红线定向回归、持久化/重放 golden、协议 golden 在每波收口保持绿。
+- 破坏式内部改动(删 public API、feature)允许;磁盘/线上冻结契约形状零变更([architecture.md](../architecture.md) §3.2 清单)。
 - 波 A 并行度 ×3(控制面 / workflow+orchestration / transport),波 B ×3,波 C 串行收口——写入集边界见任务书 §4。
 
 ## 落实改判记录(2026-08-18 波 B,实态核查驱动)
@@ -71,14 +71,14 @@ V2 收官(S0–S13,见 [v2-summary.md](../v2-summary.md))后,workspace 39 成员
 
 ## 落实改判记录(2026-08-18 波 C,实态核查驱动)
 
-4. **D16 `commit.rs` 补入归档集**:任务书 D16 点名归档 Branch/Stash/Conflict/History/CachedStatus+StatusCache+spawn_invalidator,未提及 `CommitService`/`CommitOptions`(270 行)。波 C 实态核查:crate 外零消费(仅自身测试),保留面不依赖它。按本 ADR「零消费者即归档」总原则一并归档删除;复活条件随 GUI git 面板一并登记 ROADMAP §3.3。
+4. **D16 `commit.rs` 补入归档集**:任务书 D16 点名归档 Branch/Stash/Conflict/History/CachedStatus+StatusCache+spawn_invalidator,未提及 `CommitService`/`CommitOptions`(270 行)。波 C 实态核查:crate 外零消费(仅自身测试),保留面不依赖它。按本 ADR「零消费者即归档」总原则一并归档删除;复活条件随 GUI git 面板一并登记 ROADMAP 候选池。
 5. **D16 收口验证**:删除 branch/stash/conflict/history/cache/commit 六文件(合计 2,262 行),`pawork-git` 定向测试 57+5 golden 全绿;`cargo tree -p pawork` 闭包 833→817 行,只减不增——notify-debouncer-full 与 notify 8 专属传递依赖(file-id/inotify 0.11/notify-types 2.1 等)随之退出闭包;`ignore`/`parking_lot` 仍被闭包内其它消费者使用,仅退出 `pawork-git` 直接依赖。前后快照存 `/tmp/pawork-r0c/`(易失),对比结论固化于本行。
 
 另:D13 握手宣告点实为五处(cli/gui-client 默认/desktop/probe/契约测试),写入集相应扩及 `host/cli`、`apps/desktop`、`apps/protocol-probe`;冻结面(`GuiCapability` 枚举、schemas/ typegen、`SUPPORTED_API_VERSIONS`)未触碰。
 
 ## 相关
 
-- [plan/R0-inventory-decisions.md](../../plan/R0-inventory-decisions.md)(任务书,含波次拆分与退出标准)
-- [ROADMAP.md](../../ROADMAP.md) §2 R0 行、§3.2 K-07/K-08、§3.3 候选、§4 未决事项
-- [v2-summary.md](../v2-summary.md) §4(冻结契约)、§5(S13 拍板)
+- 原任务书 plan/R0-inventory-decisions.md 已随收口删除(git 历史);R0 交付存档见 [history.md](../history.md) R0 节
+- [ROADMAP.md](../../ROADMAP.md) §4 未决事项、§5 候选池
+- 冻结契约与 S13 拍板现行事实源:[architecture.md](../architecture.md) §3.2/§4(原 v2-summary §4/§5 存档见 [history.md](../history.md))
 - ADR-033 控制面分离(随 V1 归档,原则继续有效)

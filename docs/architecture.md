@@ -1,0 +1,115 @@
+# Pawork 架构文档
+
+> 本文是**架构事实源**：架构红线、包布局与依赖方向、冻结契约与「追加不重写」三道保险、S13 安全拍板、ADR 索引。功能设计与候选池见 [design.md](design.md)；包内细节见 [包级 Spec](spec/README.md)；跨包链路见 [spec/flows.md](spec/flows.md)；历史沿革见 [history.md](history.md)。
+>
+> 基线：V3 R1 定稿布局（21 成员，ADR-039，2026-08-19）。冻结契约截至 2026-08-25：R6（session 分支模型，ADR-040）与 R7（沙箱信任模型，ADR-041）已按 ADR 完成版本化演进；此外的 schema/wire 演进须另立 ADR。
+
+---
+
+## 1. 架构红线（不可违反）
+
+- CLI 与 Core 同进程同二进制（`pawork` 是唯一正式宿主），纯 Rust 实现；不引入 Node / Bun / V8 / 嵌入式 JS Runtime；不做 TUI。
+- GUI 以独立 GPUI 进程（`apps/desktop`）经 GUI Connection Protocol 连接 CLI，不嵌入 Core、不直接加载 Core crate；GUI 不得直接访问 Provider、数据库与工具。
+- `pawork-domain` 不得依赖任何 GUI framework（包括 GPUI/Tauri）、SQLite、HTTP Client、OS Keychain、Git、任何具体 Provider（canonical 纯净红线，依赖树可断言）。
+- 禁止包间循环依赖；依赖方向见 §2。
+- Agent Engine 不得通过判断 Provider 名称走特例逻辑；能力差异一律经 registry / capability / `provider_hints` 数据表达。
+- Secret（明文 Token）不写入数据库、日志、事件 payload 与任何可能提交到仓库的文件；`Debug`/`Display` 输出脱敏（`[REDACTED]` 语义）。
+- 所有 Agent 事件必须可持久化、可重放；磁盘/线上格式是冻结契约（§3.2），演进须 ADR Accepted + 版本化迁移 + 升级 golden。
+- 文件操作输入必须基于 `workspace_id + relative_path`，拒绝绝对路径与越 root 的 `..`；子进程、网络、Secret 访问须经 Policy / Sandbox 约束（承载于 `pawork-policy` / `pawork-exec`）。
+
+违反以上任意一条须先升级为 ADR 讨论或向用户确认。V1 时期 ADR（ADR-001 ~ ADR-035）随 V1 归档于 `../Pawork_v1/docs/adr/`，其原则在本仓库继续有效；新决策仍以 ADR 记录（编号续接，见 §5）。
+
+---
+
+## 2. 包布局与依赖方向（21 包，ADR-039 定稿）
+
+R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用）**：19 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀不变），2 个应用维持 `apps/{pawork,desktop}`。布局决策、合并映射与不合并清单见 [adr/ADR-039](adr/ADR-039-package-layout-and-no-merge-list.md)；V2 时代的激活阶段史见 [history.md](history.md)。
+
+| 包 | 目录 | 依赖方向 | 备注 |
+| --- | --- | --- | --- |
+| `pawork-domain` | `crates/domain` | 无内部依赖 | canonical 纯净红线；含 `provider_api/`（ModelProvider、CanonicalModelRequest、ProviderStreamEvent 13 变体、ProviderError、ResolvedCredential）与 `tool_api/`（AgentTool、ToolResult）；事件信封 v1 与契约字节 golden 在本包 tests/ |
+| `pawork-protocol` | `crates/protocol` | → domain | GUI 帧 / headless-json / core-api / typegen（检入 `schemas/` 三产物）；`app/registry`（三通道登记单源）+ `projection/`（共享投影 reducer） |
+| `pawork-testkit` | `crates/testkit` | → domain | dev-only：MockProvider/MockTool/契约断言 |
+| `pawork-policy` | `crates/policy` | → domain | 安全内核；`PolicyDecision`/`ApprovalMode` 冻结契约与红线回归锚；shell 风险分类；`path` 内核 |
+| `pawork-exec` | `crates/exec` | 无内部依赖 | process/sandbox/pty；沙箱按 ADR-041（macOS Seatbelt 写白名单正式化） |
+| `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、auth | 八工具 + scheduler + `mcp/`（rmcp 隔离断言为模块级测试） |
+| `pawork-workspace` | `crates/workspace` | → domain、policy | `service/`+`path/`+`file_index/`、`resources/`、`config/`（六层矩阵）、`import/`（五来源导入 + session_scan） |
+| `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（PWB1+checkpoint/protected）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
+| `pawork-providers` | `crates/providers` | → domain | `net/`（http/sse/retry）+ `registry/`/`pricing/`/`usage/`/`negotiate/`/`reasoning/` + `channels/`（六通道，feature 门控；通道登记单点 `channels/registry.rs` `CHANNEL_REGISTRY`，app 侧为 facade）；core 不依赖 net 为模块纪律 + 源扫描测试 |
+| `pawork-auth` | `crates/auth` | → domain | Secret 后端/OAuth/脱敏/解析链 + `locator` 单一事实源（Secret 审计边界） |
+| `pawork-git` | `crates/git` | → domain、exec | Diff/Status/GitService/GitRunner/HunkStage/worktree/merge |
+| `pawork-engine` | `crates/engine` | → domain（唯一 pawork-* 生产依赖，`tests/domain_only.rs` 断言护航） | tool_loop/session_turn/context/cancel/appender |
+| `pawork-workflow` | `crates/workflow` | → domain | plan/task 纯 reducer |
+| `pawork-orchestration` | `crates/orchestration` | → domain、control-plane（default-features = false）、git(opt) | supervisor/budget/lifecycle/merge/task_graph/worktree/identity；不依赖 workflow（装配在 app） |
+| `pawork-control-plane` | `crates/control-plane` | → domain（rusqlite optional，自开连接） | 控制面 core + `quota/` + `credential/`（lease/pool）；usage `dedup_key`/audit JSONL golden |
+| `pawork-transport` | `crates/transport` | 无内部依赖（帧长度常量与 protocol 对齐，但不依赖该 crate） | local（UDS/named pipe）+ memory |
+| `pawork-app` | `crates/app` | 领域宿主依赖 + transport | 装配宿主 + `gui_server/`（GuiServer/ConnectionManager/GuiHost trait）+ `gui_host/`（分发表） |
+| `pawork-cli` | `crates/cli` | 原 cli 依赖（GuiHost 经 app） | 21 子命令 + `channels/acp/`（AcpHost 四件套） |
+| `pawork-client` | `crates/client` | → domain、protocol、transport | framed 连接面 + `headless/`（原 sdk）；probe 场景为本包 tests/，live 模式 `examples/probe.rs` |
+| `pawork`（bin） | `apps/pawork` | → cli | composition root + `redact.rs`（Redactor/RedactingFmtLayer） |
+| `pawork-desktop`（bin） | `apps/desktop` | → client、gpui | 四层 ui/projection/controller/platform；业务依赖仅 pawork-client（deny-list 断言） |
+
+**不合并清单**（ADR-039 D2 固化）：`policy`、`exec`、`auth`、`git`、`engine`、`protocol`、`testkit`、`transport`、`orchestration`、`workflow` 保持独立包。R1 解散的 16 包与 protocol-probe 为**平移**语义（git 历史 + tag `v2-final` 兜底）。V3 期间不新增包，后续阶段只往既有包加模块；包布局变更须先过 ADR。
+
+---
+
+## 3. 冻结契约与「追加不重写」三道保险
+
+### 3.1 终局包布局先行
+
+- 现行终局布局为 §2 的 21 成员；新能力 = 已有包内新模块（不新增包）；**禁止**「先写在 bin 里、以后再抽包」——`crates/cli`、`crates/app`、`crates/engine` 等终局包自 S0 起即以最小形态存在，只往里加模块。
+- 包间依赖方向遵守 §2 表与 ADR-039 不合并清单；canonical 纯净红线不变。
+
+### 3.2 冻结契约（激活即采用完整形状；golden 先于实现改动）
+
+每个契约在激活时直接采用完整形状，宁可字段暂时闲置，也不做「先简后改」；golden 测试先于消费实现。
+
+| 契约 | 形状要点 | golden / 锚位置 |
+| --- | --- | --- |
+| Provider 契约 | `ModelProvider`（`id`/`list_models`/`stream`）、`CanonicalModelRequest`、`ProviderStreamEvent`（13 变体，tag=`type`/content=`data`）、`ModelResponseSummary`、`ResolvedCredential`（Debug 脱敏、无 Serialize）、`ProviderError` | `crates/domain`（`provider_api`）+ tests/ 契约 golden |
+| 事件信封 | `AgentEventEnvelope`（`schema_version = 1`、`event_id/session_id/run_id/sequence/timestamp/parent_event_id/payload`）、`AgentEvent` 32 变体（含 `Diagnostic`）；与 SQLite migration 版本相互独立 | 信封字节 golden `crates/domain/tests/events_golden.rs` |
+| 会话存储 | `session_events` DDL（`UNIQUE(session_id, sequence)`、`CHECK(sequence > 0)`）、append-only 双触发器、`AppendReceipt`；DB `CURRENT_SCHEMA_VERSION = 12`（v11 = command_ledger 宿主幂等表，纯新增不进 export；v12 = 分支 lineage 原生化，`messages` 整表重建去 `DEFAULT 'main'`、回填即校验孤儿行 fail-closed）；import/export v3；fork 分支（`fork_from_event`） | DDL/迁移锚 `crates/storage/src/session/migration.rs`；升级 golden `crates/storage/src/session/fixtures/`（v9→v12 链） |
+| 工具契约 | `AgentTool`（`descriptor`/`execute`）、`ToolEventSink`、`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）、`ToolDescriptor`（含 `requires_approval`/`read_only`/`allowed_in_untrusted_workspace`） | `crates/domain::tool_api` |
+| Policy 契约 | `PolicyDecision`（`Allow/Deny/AskUser/AllowWithConstraints`）、`ApprovalPrompt`+`RiskLevel`、`ApprovalMode`（默认 `ReadOnly`；旧 `on-failure` 仅兼容读入并映射 `NeverAsk`） | `crates/policy` 安全红线回归 |
+| 引擎语义 | 审批经 `ApprovalResolver` await（`ToolApprovalRequested/Responded` 事件对；Requested 在等待前落盘）、`CancelHandle`+`CancelReason`、`LoopContext` 工具执行注入点 | `crates/engine` 定向回归 |
+| 配置 schema | TOML、`ConfigTier`（Builtin<Global<Profile<Workspace<Session<Run）、`PaworkConfig`/`ProviderConfig{id, base_url}`（**无 api_key 字段**） | `crates/workspace::config` 六层矩阵测试 |
+| blob 格式 | `PWB1` + protected AEAD 边界（ADR-032）；artifact/protected/checkpoint 三区 | `crates/storage::blob` golden |
+| GUI 协议 | 帧格式（ADR-036 版本协商）；`SUPPORTED_API_VERSIONS` 1.0/1.1/1.2；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 26 帧 golden + typegen 断言（`crates/protocol`） |
+| headless JSON | `HeadlessResponse`（`type=event|response`）；`run`/`chat --prompt --json` 已对齐；stdout 仅 JSONL；`--json` → 正式 headless 映射见 [spec/contracts.md](spec/contracts.md) | `crates/protocol` headless golden |
+| 控制面 | usage `dedup_key`；audit JSONL | `fixtures/audit/event-v1.jsonl` + `crates/control-plane` golden |
+| 缓存注解（已确认 D4，附加式） | `CanonicalModelRequest` 缓存策略枚举（`Off/Auto/Explicit{retention}`）+ 前缀分段标注；`ModelResponseSummary`/usage 增 `cache_read`/`cache_write`；serde 向后兼容 | golden 先行；方案见 [references.md](references.md) 附录 B（F5-B） |
+| 协议兼容表 | `PROTOCOL_CRATE_COMPATIBILITY` | `crates/protocol` |
+
+### 3.3 消费面纪律与路径校验语义矩阵
+
+- **无消费者不合入**：任何保留在主 workspace 的模块必须有真实装配点（生产调用链或已登记的激活条件）；零消费者代码归档（git tag `v2-final` 兜底），不以 experimental feature 库存。归档 = 移出 workspace members + 删除源目录；复活条件登记 [ROADMAP.md](../ROADMAP.md) 候选池；不把归档代码复制回仓库其它位置。
+- **合并不裁剪契约**：包合并时契约类型整组平移、零裁剪，golden/测试随迁。
+- **破坏式改动边界**：允许破坏内部代码组织与 API；不允许静默破坏磁盘/线上格式、CLI 用户可见行为与安全语义（fail-closed 只紧不松）。
+- **路径校验语义矩阵**（S12-CR09-05 收口）：`pawork-policy` `path::resolve_workspace_path` 为写路径与读工具的唯一安全内核（canonical 复核 + root 收敛 + symlink/`.git`/TOCTOU 防护）；`pawork-workspace` `path::resolve_relative_path` 在平台词法前置拦截（盘符/UNC/设备名）后**委托** policy 内核；`pawork-workspace` `resources/io.rs` 的 `canonical_within` 仍保留自写 canonicalize + 前缀比较（资源加载专用，语义同源，残余登记于 [ROADMAP.md](../ROADMAP.md)）。新调用点一律复用 policy 内核，禁止再长第四套实现。
+
+---
+
+## 4. S13 安全拍板（重构须保持的安全语义）
+
+- **F01**：读写工具均拒 `.git`（无审计开关）。
+- **F02**：macOS Seatbelt 写+网模式诚实标签 `HardWritesAndNetwork`；`default_secret_paths` 扩充（R7 又扩六项：`.netrc`/`.git-credentials`/`.docker`/`.npmrc`/`.pypirc`/`.cargo/credentials.toml`）。
+- **F05**：MCP 凭证走 SecretRef（仅 `pawork.mcp.*` 命名空间）+ 独立 `mcp-auth.json`；stdio 子进程 `env_clear` 且拒绝透传 `PAWORK_API_KEY_*`。
+- **F06/F07**：workspace 级配置剥离 `proxy_url`/非回环 `base_url`；HTTP 错误只留 `HTTP {status}`；`redirect(Policy::none())`。
+- **F08**：workspace 级配置剥离 MCP `trusted`/`auto_start`。
+- **F11/F32**：EventHub Lagged → `ReplayUnavailable`；客户端收齐附带 Snapshot。
+- **F33**：未映射 headless 命令 fail-closed。
+- 路径检查统一 `policy::path` 内核（读路径 symlink 同内核）；生产 `gui serve` 强制 token（UDS 0600）；Timeline 锚点用 `event_id`/`sequence`。
+- 沙箱不可用时**可观测回退**（ADR-031，V1 归档）：不是拒跑，CLI/GUI 必须展示 fallback；R7 后 PTY 创建入 policy 闸（NeverAsk/ReadOnly 直拒，AskUser fail-closed 落 Deny）。
+
+---
+
+## 5. ADR 索引
+
+- **ADR-001 ~ ADR-036**：随 V1 归档于 `../Pawork_v1/docs/adr/`，原则继续有效。常被引用：ADR-001 纯 Rust、ADR-019 无 TUI、ADR-031 沙箱可观测回退、ADR-032 blob 格式（PWB1）、ADR-035 gpui 锁定 `=0.2.2`、ADR-036 GUI 协议版本协商。
+- **本仓库现存**（[docs/adr/](adr/)，全部 Accepted）：
+  - [ADR-037](adr/ADR-037-s13-wave-b-contracts.md) S13 波 B 五项契约（trait 归 domain / 维持 ADR-031 / `ToolResultContent.artifacts` / `Revised` title+steps / `ResultArchived.task_id`）。
+  - [ADR-038](adr/ADR-038-inventory-and-product-shape.md) 库存与产品形态（R0：单机形态、休眠库存归档裁决）。
+  - [ADR-039](adr/ADR-039-package-layout-and-no-merge-list.md) 包布局与不合并清单（R1：37→21、扁平 `crates/`）。
+  - [ADR-040](adr/ADR-040-session-branch-lineage.md) 会话分支模型原生化（R6：append-only 单表全局 sequence、schema v12 回填即校验、压缩按分支水位）。
+  - [ADR-041](adr/ADR-041-sandbox-trust-model.md) 沙箱信任模型（R7：macOS 写白名单正式化 + 读整盘 allow 挖洞、PTY 入闸、删 `network_allow_hosts`、shell 手写 tokenizer）。
+- 新决策继续以 ADR 记录，编号续接（下一个 ADR-042），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。

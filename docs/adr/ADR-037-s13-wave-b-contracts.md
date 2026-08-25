@@ -6,7 +6,7 @@
 
 ## 背景
 
-S12 全项目 Code Review 将五条契约 / 红线级 finding 登记为须先拍板再改代码（原 S13 任务书已随 V2 归档删除，整改原委见 [v2-summary.md](../v2-summary.md) §5）。用户于 2026-08-18 确认下列五支。信封 `schema_version = 1`、`UNIQUE(session_id, sequence)`、append-only 事实表不在本 ADR 范围内（F09 已钉死）。
+S12 全项目 Code Review 将五条契约 / 红线级 finding 登记为须先拍板再改代码（原 S13 任务书已随 V2 归档删除，整改原委见 [history.md](../history.md) S13 整改节，原 v2-summary §5）。用户于 2026-08-18 确认下列五支。信封 `schema_version = 1`、`UNIQUE(session_id, sequence)`、append-only 事实表不在本 ADR 范围内（F09 已钉死）。
 
 ## 决策
 
@@ -52,5 +52,5 @@ S12 全项目 Code Review 将五条契约 / 红线级 finding 登记为须先拍
 
 ## 相关
 
-- S13 整改总结（[v2-summary.md](../v2-summary.md) §5，原任务书已删除）· [CR-01](../reviews/s12/CR-01-manifests-layout.md) · [CR-03](../reviews/s12/CR-03-exec-cli.md) · [CR-06](../reviews/s12/CR-06-engine-workflow.md)
+- S13 整改总结见 [history.md](../history.md)（原 v2-summary §5）；S12 审查报告 CR-01/CR-03/CR-06 已随文档重构删除，全文见 git 历史 `docs/reviews/s12/`，结论摘要见 [history.md](../history.md) S12 审查节
 - [ADR-016](../../../Pawork_v1/docs/adr/ADR-016-core-event-persist-replay.md)（归档）· [ADR-018](../../../Pawork_v1/docs/adr/ADR-018-large-payload-artifact-id.md)（归档）· [ADR-031](../../../Pawork_v1/docs/adr/ADR-031-sandbox-backend-architecture.md)（归档）· [ADR-033](../../../Pawork_v1/docs/adr/ADR-033-control-plane-separation.md)（归档）

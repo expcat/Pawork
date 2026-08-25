@@ -1,0 +1,232 @@
+# pawork-desktop（apps/desktop，二进制）
+
+> 本机单窗口 GPUI Agent 壳（TaskRail + Timeline + Composer + Inspector）：独立进程经 GUI Connection Protocol 连接 `pawork gui serve`，业务依赖**仅** [pawork-client](client.md)；依赖方向为 desktop → client →（re-export）protocol/transport 类型，不被任何包依赖。
+
+## 1. 职责与边界
+
+- **产品定位**：Pawork 桌面工作台。渲染会话列表、时间线、审批卡、变更 / 终端 / MCP 资源面板，把用户操作转成 GUI Connection Protocol 的 Command / Query，把 host 事件流投影成可渲染状态。
+- **架构红线**（见 [../../architecture.md](../../architecture.md)）：不嵌入 Core；不直连 Provider、数据库、工具、Git、PTY、quota store；一切能力经 CLI 宿主（`pawork gui serve`）代理。
+- **四层结构**（`main.rs` 的模块声明即分层，越界 import 视为违规）：
+  - `ui/`：GPUI 渲染与交互。`AppView` 宿主 + 按 Surface 拆分的域模块 + `ui/components/` 基础组件库。
+  - `projection.rs`：纯状态机，**不** import gpui / tokio / OS API；时间线条目语义委托 client re-export 的 `pawork_client::projection` 共享 reducer。
+  - `controller.rs`：唯一业务出口是 `pawork-client`；所有 client 调用跑在 tokio runtime 上，结果经 `smol::channel` 投回 UI 线程。
+  - `platform.rs`：socket / token 路径发现 + tokio Runtime 宿主；不触碰 GUI 与业务协议。
+- **依赖 deny-list**：生产 `pawork-*` 依赖恰好 `{pawork-client}`。由 `platform.rs` 内测试 `desktop_production_pawork_deps_stay_client_only` 解析本包 `Cargo.toml` 断言，扫描器覆盖 `[dependencies]`、`[target.'cfg(...)'.dependencies]`、`[dependencies.<alias>]` 与 `package = "..."` 重命名形态；dev-dependencies 不计入。
+- **能力面**：握手宣告 `Events` / `Snapshots` / `Approvals` / `TerminalStreaming` 四项；**不**宣告 `ArtifactStreaming`（K-08）。
+- **断线语义**：断线不取消进行中的 Run（ADR-026）；主动 `disconnect` 只关闭连接，不发 RunCancel。
+
+## 2. 模块与文件地图
+
+23 个 `.rs` 文件、约 9.1k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
+
+| 路径 | 行数 | 承载内容 |
+| --- | --- | --- |
+| `src/main.rs` | ~610 | 入口与手动 argv 解析（非 clap）；`run_app`（1440×1024 居中窗口、`install_keybindings`、聚焦 Composer）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器 |
+| `src/controller.rs` | ~1460 | `DesktopController`（connect / 事件泵 / 空闲心跳 / 全部 Command·Query 构造与响应解析）；`ControllerEvent` 枚举；`DiffFileSummary` / `DiffFileDetail` / `DiffHunkDetail` / `DiffLineDetail` / `GitDiffInfo` / `McpServerEntry` 视图模型；11 个测试 |
+| `src/platform.rs` | ~230 | `Platform`（tokio multi_thread Runtime，`handle()` / `block_on()`）；`default_socket_path` / `socket_path_for_instance` / `token_path_for_instance` / `token_path_for_socket` 路径发现；deny-list 断言；4 个测试 |
+| `src/projection.rs` | ~1660 | `DesktopProjection` 渲染适配投影；`ConnectionState` / `ResumeState` / `ResumeApply` / `TerminalState` / `PendingApproval` / `ModelEntry` / `ActiveRun` / `SessionSummary` / `WorkspaceSummary` / TaskRail 分组类型；snapshot 段解析器；14 个测试 |
+| `src/ui/mod.rs` | ~1030 | `AppView` 宿主：连接生命周期、`ControllerEvent` 消费、`MenuKind` 单开互斥与外点衔接标记、gpui 动作与键位表 `APP_VIEW_KEYBINDINGS`、tab_stop 表 `MAIN_PATH_TAB_STOP_IDS`、三栏整体装配与 StatusBar；3 个测试 |
+| `src/ui/theme.rs` | ~230 | 深色单主题 token：六组 30 色（bg 3 / surface 3 / border 2 / text 11 / accent 3 / semantic 8）+ 字阶 `font`（XS=11 / SM=12 / BASE=13 / MONO="Menlo"）+ `metrics` 19 个尺寸常量；静态 `dark()` 访问器；`impl Global` 仅为未来主题挂载点 |
+| `src/ui/timeline.rs` | ~140 | Timeline 容器：gpui `list()` 变高虚拟化 + `ListAlignment::Bottom` 钉底；`install_scroll_follow`（脱钩检测）；`sync_list`（统一 reset、脱钩偏移恢复、Entry 菜单 close-on-reset）；`TIMELINE_OVERDRAW`=200px；回底控件接线 |
+| `src/ui/timeline_entry.rs` | ~140 | `timeline_entry_element`：五类条目渲染 + 条目「···」fork 菜单（MenuPanel/MenuRow）；`on_fork` 入口级复核 |
+| `src/ui/approval_card.rs` | ~110 | 审批卡：警示卡 + Allow once / Allow for run / Deny 三按钮；app 级 focus handle（虚拟化卸载不丢失）；禁用原因 tooltip |
+| `src/ui/input_area.rs` | ~310 | Composer：model 菜单、ContextMeter、workspace 标签、WorkspaceConfirm 浮层（无触发器、锚 label 行下方）、输入行 + Cancel / Send、状态提示行与全部禁用原因文案 |
+| `src/ui/inspector.rs` | ~260 | Inspector 面板：顶层 Changes / Terminal / Resources 三页签（`InspectorTab`，默认 Terminal）；Terminal 页（cwd / size 行、FollowScroll 输出区 + 回底、终端输入 + Start/Size）；`ensure_terminal` 懒创建；1 个测试 |
+| `src/ui/changes.rs` | ~705 | Changes 面：Files / Summary 二级页签、`ChangesPanelState`（双 epoch 防过期）、文件清单、DiffView（hunk 着色 + 横滚）、session_mismatch banner、ActivityPopover；6 个测试 |
+| `src/ui/resources.rs` | ~210 | Resources 页：MCP server 只读表 + `ResourcesPanelState`（epoch 防过期）+ 手动刷新；1 个测试 |
+| `src/ui/task_rail.rs` | ~460 | Sessions 侧栏：grouping / scope 菜单、日期桶与项目块折叠、任务行（运行点 ● + 相对时间 + `.truncate()`）、Reconnect 按钮、连接状态徽标、「Local」页脚 |
+| `src/ui/text_input.rs` | ~700 | `TextInput`（Composer / 终端共用）：内容 / 占位符 / IME `marked_range` 下划线 / UTF-16↔UTF-8 映射（`EntityInputHandler`）/ 多行高度钳制 / 光标与选区绘制 / 点击聚焦；1 个测试 |
+| `src/ui/components/mod.rs` | ~10 | 组件族模块声明 |
+| `src/ui/components/button.rs` | ~270 | `Button`：六 variant（Primary / Ghost / Danger / Success / Raised / Icon）的底色·文字色·hover/active 映射；`ButtonPadding` 四档；tab_stop + track_focus + 聚焦描边三件套；tooltip |
+| `src/ui/components/dropdown.rs` | ~200 | `Dropdown`（触发器 + `deferred(anchored())` 浮层）、`MenuPanel`（`occlude()` + `on_mouse_down_out` + `MENU_MAX_HEIGHT`=240px 内滚动）、`MenuRow`（选中 / 禁用 / hover 语义）、`ANCHOR_GAP_Y`=4px |
+| `src/ui/components/follow_scroll.rs` | ~90 | `FollowScroll`（`ScrollHandle` + 跟随位：贴底判定 / 脱钩 / 重挂；现仅终端使用）与 `BackToBottom` 回底控件容器（绝对定位右下） |
+| `src/ui/components/label.rs` | ~70 | `Label`（单行文本，token 化字号 / 颜色）与 `Badge`（状态徽标别名，默认 XS + text.secondary） |
+| `src/ui/components/list_row.rs` | ~100 | `ListRow`：Task 行（选中态底色）与 ProjectHeader 行两形态；`min_w_0` 保证子项 truncate 拿到确定宽度 |
+| `src/ui/components/panel.rs` | ~80 | `Panel`：`side_right`（TaskRail，右描边 + gap/p-2）与 `side_left`（Inspector，左描边）固定宽面板壳 |
+| `src/ui/components/status_bar.rs` | ~50 | `StatusBar`：底部 24px 状态行容器（顶描边 + XS 次要文字） |
+
+## 3. 用户可见界面与交互面
+
+### 3.1 启动参数与运行模式
+
+```text
+pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
+```
+
+- 手动 argv 解析；未知参数打印 usage 并 exit 2。
+- socket 解析：`--socket` 直接指定；否则按 `--instance` 推导 `<data_dir>/pawork-gui[-{instance}].sock`（`default` 等价无后缀）。
+- `--probe`：不开窗，connect + snapshot + `model_list` 后打印一行 `connected: instance=… sessions=… models=… catalog=…` 退出（成功 0 / 失败 1）。
+- `--probe-smoke`：同一条 controller 路径跑真实冒烟——流式回合、切模型、写文件触发审批、取消 run、两次断线重连（持久化回放 + `disconnect_survive` 断言进行中 run 未被断线取消），打印签名行退出。
+- 正常模式：1440×1024 居中窗口，启动即聚焦 Composer。
+
+### 3.2 三栏工作台（宽度：侧栏 288 / Inspector 440 / 状态栏高 24）
+
+- **TaskRail（左侧栏）**
+  - 标题行「Pawork」+ grouping 菜单（Timeline ◷ / Projects ▤）；scope 菜单（All projects / 各 workspace）。
+  - 连接徽标：`Local · Connected[ · {resume 文案}]`、`Connecting…`、`Disconnected · {reason}`、`Connect failed · {reason}`（文字态，不只靠颜色）；断线时出现 Reconnect 主按钮。
+  - Timeline 分组 = 日期桶（Today / Yesterday / Previous 7 days / Earlier）→ 项目 → 任务；Projects 分组按 canonical workspace，缺 `workspace_id` 进 Unassigned（无「+」）。
+  - 项目头可点折叠（▾/▸ + 任务计数徽标）；项目级「+」按该 workspace 新建任务。
+  - 任务行：运行点 ●（该 session 有 active run）、标题单行 `.truncate()`、相对时间（now / Nm / Nh / Nd）；点击打开会话并聚焦 Composer。
+- **Timeline（中栏上）**：虚拟化列表渲染五类条目——`You:` 用户消息、`Assistant:` 助手消息（流式增量合并为一条）、工具调用（`name · status` + 可选输出摘要）、运行状态行、`Error:` 错误行。每条右侧「···」菜单含 Fork（仅 reducer 判定的闭合 run 边界可用；不可用时灰字禁用行）。用户上滚脱钩后右下浮出「↓ 回到底部」。
+- **审批卡**：`pending_approval` 存在时作为 timeline 末项渲染——警示底色卡片（`Approval · {tool}` / reason / 可选 preview detail）+ 三按钮 Allow once（⌘1 / ⌘↩，Primary）、Allow for run（⌘2，Success）、Deny（⌘3，Danger）；断线时禁用且 tooltip 给出原因。
+- **Composer（中栏下）**
+  - 上行：model 菜单（`provider / display_name`；run 进行中、目录未加载或断线时禁用并 tooltip 给原因）、ContextMeter（`Context · — / {window}` 或 `Context · unavailable`）、workspace 标签。
+  - 输入行：多行输入框（88–220px 随行数自适应）+ Cancel（⌘.，Danger）+ Send（Enter，Primary）。
+  - 提示行：轮换显示 `status_hint` 或禁用原因（如「Run in progress — sending and model switch are disabled. Cancel remains available.」「Enter to send · Shift+Enter for newline」）。
+  - All projects 范围下新建任务先弹 WorkspaceConfirm 浮层选定 workspace（`resolve_new_task_workspace` 判定）。
+- **Inspector（右栏，cmd-i 开合）**：顶层三页签，默认 Terminal，各页滚动状态独立保留。
+  - Changes：Files / Summary 二级页签 + ↻ 手动刷新。Files = 文件清单（路径 · status · `+A/−D`，≤200px 内滚动）+ DiffView（等宽 Menlo；hunk 头 raised 底 secondary 字；addition 行 success_bg 底 / deletion 行 danger_bg 底 / context 行 panel 底；长行 `overflow_x_scroll` 横滚不折行；binary 显示「Binary file — not rendered.」）。Summary = 七字段行（Session / Files / Lines / By status / Branch / Dirty files / Work dir，缺失显 unknown）。数据会话 ≠ 查看会话时顶端 banner 如实标注。
+  - Terminal：host 流式 `TerminalOutput` 滚动文本（非 VT100、无本地 PTY）+ cwd 与 `列×行` 尺寸行 + 终端输入（Enter 写入，未启动时先懒创建）+ Start / Size 按钮 + 脱钩回底控件。
+  - Resources：MCP server 只读表（name + state 徽标，`failed` 红字；`transport · N tools[ · last_error]` 次行）+ ↻ 刷新。
+- **StatusBar + ActivityPopover**：底部状态行左侧 RunStatusBar 徽标 `tokens —  ·  quota —  ·  — tok/s  ·  {mm:ss|—|idle}`（缺权威来源一律 `—`，不伪造）；右侧 Inspector 触发器——展开态显示「Hide inspector」直接折叠，折叠态点击弹 ActivityPopover（320px：「Changes」标题 + 摘要行 `N file(s) · +A/−D` 或 `unavailable`；点击摘要展开 Inspector 并定位 Changes 页；必要时附 latest 会话提示行）。
+
+### 3.3 键盘与焦点
+
+| 上下文 | 键 | 动作 |
+| --- | --- | --- |
+| TextInput | enter | SendMessage（冒泡到 AppView 裁决） |
+| TextInput | shift-enter | NewLine |
+| TextInput | backspace / delete / left / right / home / end | 对应编辑动作 |
+| TextInput | cmd-v / ctrl-v | Paste（`\r\n` 归一为 `\n`） |
+| AppView | cmd-. | CancelRun |
+| AppView | cmd-enter / cmd-1 | ApproveOnce |
+| AppView | cmd-2 | ApproveForRun |
+| AppView | cmd-3 | Deny |
+| AppView | cmd-n | NewTask |
+| AppView | cmd-i | ToggleInspector |
+| 根节点 | escape | 关闭当前浮层菜单 |
+
+主路径按钮（`MAIN_PATH_TAB_STOP_IDS` 七项：approve-once / approve-for-run / approve-deny / cancel / send / add-task / model-picker）挂 tab_stop + track_focus + 聚焦描边三件套。
+
+## 4. 核心行为与数据流
+
+### 4.1 启动 → 连接 → snapshot → 分页 timeline → live 事件 → 断线 Reconnect
+
+1. `AppView::new` 即 `start_connect`；`DesktopController::connect` 先按 socket 文件名推导 token 路径（`pawork-gui-X.sock` → `gui-X.token`）并读 `gui.token`——缺失 / 不可读 / 为空即整个连接失败（fail-closed）。
+2. 建 512 容量 `smol::channel`；`LocalTransport` + `ConnectOptions{ timeout 10s, client_label "pawork-desktop", 帧上限 1MiB }`；带上内存中的 last_acked（若有）。
+3. **在 `runtime.spawn` 内**执行 `GuiClient::connect_with_resume_config`（含握手与能力宣告）→ 取 `initial_snapshot` → 按 resume 三态 ack：首连记录并 ack `snapshot_sequence`；`Replay` 记录并 ack `through_sequence`；`UpToDate` 只记录 `current_sequence`；`SnapshotRequired` 换用 `outcome.snapshot`（无则回退握手首帧）再记录并 ack → `subscribe_all`。连接期任何 client 调用都不得落在 gpui 前台执行器上（见 §8 崩溃教训）。
+4. UI 侧 `on_connected`：无 resume 走 `apply_fresh_snapshot`（原 active session 仍存在则重新打开）；有 resume 走 `apply_resume_outcome`——`Replay` 由 reducer 按 sequence 续接重放事件、不闪全量重载；`SnapshotRequired` 先丢 stale 权威标记（审批卡、snapshot pendings、active runs、timeline 基线）再换基线，对仍存在的 active session 重分页；`UpToDate` 不碰 Timeline。三态文案（`Replay · a–b` 等）落 `status_hint` 与侧栏。
+5. 打开会话（`open_session`）：`select_session` 无条件清 timeline / seen / tombstone / tool anchors 并恢复 snapshot 中该会话的 active run 与 pending approval → controller 按 `session_get{ timeline_after_sequence, timeline_limit: 500 }` 链式分页（至多 200 页）直到 `complete`，每页发 `TimelineLoaded`；分页期间先到的 live 事件由 reducer 按 sequence 去重。
+6. 事件泵：`next_event_timeout(1s)` 循环——收到事件即记 last_acked（单调 max）、回 ack、投 `ControllerEvent::Event`；连续 15 个空闲 tick（≈15s）发一次 `heartbeat()` 保活（host `heartbeat_timeout` 30s，任意入站帧刷新；client io 为 AsyncMutex，支持泵内并发调用）。
+7. 心跳失败或泵错误：清 client 槽、发 `Disconnected{reason}`；UI 置连接态并提示「Connection lost. Click Reconnect.」。用户点 Reconnect 重走 `start_connect`——带 last_acked 走 resume，不永远全新 Snapshot。
+
+### 4.2 发送一次消息到流式渲染
+
+1. Composer Enter（先判 `is_composing()`，IME 组合中的 Enter 属输入法确认直接返回）或 Send 点击 → `can_send`（Connected + 有 active session + 无进行中 run）+ 非空文本。
+2. `run_start{ session_id, user_message[, provider, model] }`（模型取 `effective_model` = pending 优先于 selected，只影响下一轮）→ `Accepted{run_id}` → `MessageSent` 设 `active_run_id` 并清空输入框。
+3. live 事件流（`RunChanged` / `AssistantDelta` / `ToolStarted` / `ToolOutput` / `ToolCompleted` / `Diagnostic`）经 `projection.apply_event`：时间线语义（sequence 去重、有序插入、assistant 按 message_id 增量合并、committed 替换 tombstone、tool 双键锚点回填）全在共享 reducer；本包只更新 UI 态（run 跟踪、审批卡、`model.switched` Diagnostic 确认模型切换）。
+4. 时间线每次变化 `timeline_changed()` 递增代次；render 前 `sync_list` 对 `ListState` 统一 `reset(len + pending_approval)`（projection 有条目替换语义，splice 不安全）。跟随态（Bottom 对齐 `logical_scroll_top == None`）自动钉底；脱钩读史恢复 reset 前偏移，视口不跳；回底 = `scroll_to` 末项底 + 布局自动重挂。
+5. run 终态（completed / cancelled / failed / interrupted）清 `active_run_id`（Composer 恢复可用）、清该 run 的审批卡，并触发 Changes 刷新；run 进行中由 1s 时钟驱动时长徽标重绘。
+
+### 4.3 审批卡交互
+
+1. live `ToolApprovalRequired{ run_id, tool_call_id, reason }` 或 snapshot `pending_tool_approvals` 段 → `pending_approval`（tool_name 从 reason 首段提取；snapshot 形态含 relative_path / preview）。
+2. 按钮点击或 ⌘1 / ⌘2 / ⌘3 → `tool_approve{ run_id, tool_call_id, decision }`，decision ∈ `approve_once` / `approve_for_run` / `deny`。
+3. 清卡路径：对应 `ToolCompleted`、run 终态、历史 `ApprovalResponded`。无任何默认放行：不操作则永远 pending，断线时按钮禁用。
+
+### 4.4 菜单开合语义
+
+- 六种浮层（`MenuKind`：Grouping / Scope / Model / Entry(event_id) / WorkspaceConfirm / Activity）共用单一 `Option<MenuKind>` 状态位：开新即关旧、至多一个打开。
+- 关闭路径：选择选项 / 再点触发器 / Escape（根节点 `on_key_down` 冒泡承接；面板经 `deferred` 绘制不可聚焦，组件层不可达）/ 外点（`MenuPanel::dismiss_on_outside` 的 `on_mouse_down_out`）。
+- 外点关闭先于触发器 click 到达时，以 `(MenuKind, 按下位置)` 衔接标记判定「同一次物理点击」——位置精确相等才视为关闭收尾不重开；键盘触发无位置永不误判。
+- 面板 `occlude()` 拦截下层点击与滚轮（无穿透）；超高在 240px 内自滚。
+- 归一化：model 菜单在 `can_switch_model` 翻假期间由 render 关闭；Entry 菜单在 timeline reset 前先关（锚点条目可能被虚拟化卸载）；Inspector 程序化展开前关闭悬浮菜单（防 ActivityPopover 叠面板）。
+
+### 4.5 Fork 与分支切换
+
+1. 条目「···」→ Fork。渲染层 gate：Connected + active session + `entry.is_fork_boundary()`；`on_fork` 入口再复核同三条件（双重防线）。
+2. `session_fork{ session_id, parent_event_id }` → 响应 Data 提示 `session_id|branch_id`，否则重取 snapshot 挑 `updated_at_ms` 最新 → `SessionForked` → `open_session` 切入分支。
+3. 同一 session 切 branch 也必须走 `select_session` 全量 reset（active branch 只存在 host 侧、不进 wire，UI 无从增量区分）。
+
+### 4.6 Changes / Resources 拉取（epoch 防过期）
+
+- 时机：页签切入、Inspector 展开、会话切换、run 终态、手动 ↻、ActivityPopover 摘要点击。
+- 每次拉取递增 epoch 并随查询带出，响应原样带回；过期代次直接丢弃（`apply_files` / `apply_diff` / `apply_servers` 校验）。diff 响应还须匹配当前选中路径。
+- 清单刷新后：选中文件仍在则重拉其 diff 保持两视图一致；选中文件消失则清空选中与 diff。
+- 失败回写：仅当面板仍处 `Fetching` 才落 `Failed`（防旧请求失败覆盖新一轮），同时 `status_hint` 提示；未连接 / 无 workspace 诚实标 `not connected` / `no workspace`，不画演示数据。
+
+### 4.7 协议消费面（wire method 与响应事件对照）
+
+| 用户动作 | wire method | 结果（ControllerEvent） |
+| --- | --- | --- |
+| 连接 / 重连 | 握手 + resume + subscribe_all | `DesktopConnect{snapshot, resume, events}` |
+| 打开会话 | `session_get`（分页查询） | `TimelineLoaded`（逐页） |
+| 新建任务 | `session_create` → 重取 snapshot | `Snapshot` + `SessionCreated` |
+| 发送消息 | `run_start` | `MessageSent{run_id}` |
+| 取消 run | `run_cancel` | 经事件流 `RunChanged` 收敛 |
+| 审批决策 | `tool_approve` | 经事件流收敛 |
+| Fork | `session_fork` → 重取 snapshot | `Snapshot` + `SessionForked` |
+| 终端 | `terminal_create` / `terminal_write` / `terminal_resize` | `TerminalCreated` / 流式 `TerminalOutput` |
+| 模型目录 | `model_list` | `ModelsLoaded` |
+| Changes | `diff_list_files` / `diff_get` | `DiffFilesLoaded` / `DiffContentLoaded`（带 epoch） |
+| Resources | `mcp_list` | `McpServersLoaded`（带 epoch） |
+| 任意失败 | — | `OperationFailed{action, reason}` |
+
+domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形状（`method` / `params` JSON）构造，避免引入第二个业务依赖；`CommandSource::Automation` + `ActorIdentity::System` 仅为信封占位，服务端 host_stamp 统一覆盖为 LocalGui + LocalUser。
+
+## 5. 契约与不变量
+
+- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（三张 1440×1024 基准图 + §8 组件规范）与 [../../gui-design.md](../../gui-design.md)（Surface 与连接协议消费约定）。theme token 值与迁移前硬编码字面量逐值相等（视觉零变化）；hover / active 只改背景，active 复用 hover 色。
+- **审批 fail-closed**：无默认允许；决策只能来自显式点击或快捷键；断线禁用；run / tool 终态与 `ApprovalResponded` 清卡防幽灵审批。
+- **`gui.token` fail-closed**：token 缺失、不可读或为空即连接失败，禁止无认证静默连接；错误信息只含路径，token 内容不落日志。
+- **Enter / IME 语义**：keybinding 仅 `TextInput` 聚焦时生效；Enter 冒泡到 AppView 后结合 `is_composing()`（`marked_range` 存在即组合中）与发送可用性裁决；Shift+Enter 恒为换行；终端输入框同规则。
+- **禁动符号**（R8 冻结面，bin 内测试钉住内容）：`APP_VIEW_KEYBINDINGS`、`install_keybindings`、`MAIN_PATH_TAB_STOP_IDS`、`resolve_new_task_workspace`。
+- **依赖边界**：生产 `pawork-*` == `{pawork-client}`（deny-list 测试）；`projection.rs` 零 gpui / tokio / OS import；协议类型只经 client re-export。
+- **时间线单一 reducer**：条目去重 / 合并 / 锚点 / resume 基线语义全部委托 `pawork_client::projection`（protocol 共享 reducer，`TimelineEntry` / `TimelineEntryKind` 直接 re-export）；本包只保留 UI 态与渲染分组。timeline 任何变化统一 `reset(count)`，禁 splice。
+- **重连三态可见**：Replay / SnapshotRequired / UpToDate 必须以文字在侧栏区分（不只靠颜色）；仅 SnapshotRequired 换基线重分页。
+- **诚实显示**：tokens / quota / tok/s 无权威来源一律 `—`；ContextMeter 只用 catalog 的 `context_window_tokens`；Changes / Resources 未拉取显 unavailable 而非 0；`now_ms` 由 UI 注入，投影层不读系统时钟。
+- **终端约束**：`terminal_create` 的 cwd 只接受 workspace 相对路径（拒绝绝对路径、Windows 盘符前缀、`..` 分量）；终端面为滚动文本，无本地 PTY。
+- **心跳配比**：15 空闲 tick（≈15s）对 host 30s 超时的节拍不可静默改动；断线不取消 Run。
+- **窗口与焦点**：默认 1440×1024；启动聚焦 Composer；点击输入框显式拉回焦点（`track_focus` 自动聚焦不够，否则第二轮键盘 / IME / 粘贴进不来）。
+
+## 6. 依赖关系
+
+| 依赖 | 版本 / 形态 | 用途 |
+| --- | --- | --- |
+| `pawork-client` | path 依赖 | 唯一业务入口；re-export 协议 / 传输 / 共享投影 reducer 类型 |
+| `gpui` | `= 0.2.2`（ADR-035 精确锁定） | UI 框架；升级须过 ADR |
+| `smol` | 2 | UI 侧 channel 与 1s Timer |
+| `tokio` | workspace（rt-multi-thread / macros / sync / time） | GUI Connection Protocol 异步宿主 |
+| `serde_json` | workspace | 命令 / 查询构造与 snapshot 段、响应解析 |
+| `unicode-segmentation` | 1 | 输入框 grapheme 光标边界 |
+
+- **被依赖**：无。独立二进制，不进 `pawork` CLI 的依赖闭包。
+- **运行时对端**：`pawork gui serve`（host 侧 gui-server）。数据目录规则镜像 app（`PAWORK_DATA_DIR` →（Windows）`%LOCALAPPDATA%/pawork` → `~/.pawork` → 临时目录/pawork），但按分层约束**不**依赖 `pawork-app` crate。
+
+## 7. 测试与验证资产
+
+41 个测试全部内嵌于 bin target（`#[cfg(test)] mod tests`；无 crate `tests/` 目录），按文件分布：
+
+| 文件 | 数量 | 覆盖面 |
+| --- | --- | --- |
+| `controller.rs` | 11 | token 缺失 fail-closed；`run_start` / `session_fork` / `terminal_*` / `diff_*` / `mcp_list` wire 形状钉死；cwd workspace 相对校验；last_acked 单调推进；capabilities 含 TerminalStreaming；diff 清单 / hunk 行 / git 信息 / MCP 响应解析（含无会话空响应与路径消失） |
+| `projection.rs` | 14 | snapshot 重建与事件重放；审批卡随 run 终态清理；pending model 被 `model.switched` Diagnostic 确认；沙箱回退 Diagnostic 上时间线；snapshot active_runs 恢复取消目标与时长；ContextMeter / RunStatus 诚实文案；TaskRail 日期→项目分组与 Unassigned；scope 选项与空态；分组切换不改 active session；session_tree 扁平 / 分支双形态；同 session 切支 reset 基线（seen / tombstone / 锚点全清后重放重建）；TerminalOutput 追加与跨会话隔离；live tool 输出回填 running 条目；历史审批事件留痕 |
+| `platform.rs` | 4 | socket / token 默认路径与 instance 命名；socket→token 推导；deny-list 恰为 `{pawork-client}`；扫描器覆盖别名 / target 表（负例含 dev-dependencies 排除） |
+| `ui/mod.rs` | 3 | 键位表含审批与取消；主路径 tab_stop 全集；All projects 新建须确认 workspace |
+| `ui/changes.rs` | 6 | ActivityPopover 摘要格式与单复数 / unavailable；二级页签默认 Files；epoch 拒过期与选中消失清 diff；diff 响应拒代次 / 路径不匹配；session_mismatch 判定矩阵 |
+| `ui/inspector.rs` | 1 | 顶层页签默认 Terminal（与波 C 前单页行为连续） |
+| `ui/resources.rs` | 1 | 默认 Idle 与 epoch 拒过期 |
+| `ui/text_input.rs` | 1 | 多行粘贴的视觉行计数 |
+
+**验证命令**：
+
+```bash
+cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
+```
+
+- `--bins`：本包是 bin-only（无 lib target），任务指南默认的 `--lib --tests` 匹配不到任何 target。
+- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R8 起的标准口径，历波收口 28/28 → 41/41 绿）。
+
+**运行时验证资产**：`--probe`（连接 + snapshot + 模型目录一行摘要）与 `--probe-smoke`（流式回合 / 切模型 / 审批 / 取消 / 两次断线重连持久化 / `disconnect_survive`），配合隔离实例（`--instance` + `PAWORK_DATA_DIR`）在真实 host 上冒烟。端到端流程见 [../flows.md](../flows.md)；验证总策略见 [../README.md](../README.md)。
+
+## 8. 注意事项与已知限制
+
+- **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic（R8 波 A 实证 exit 134，真窗口自始无法启动）。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归；真窗口启动无自动门禁（登记 [../../../ROADMAP.md](../../../ROADMAP.md) §4）。
+- **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
+- **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
+- **渲染面行为无自动门禁**：菜单开合 / FollowScroll / hover / 虚拟化滚动 / DiffView 横滚依赖人工验收（R8 波 E K-03 清单）；Entry 菜单在锚点条目被虚拟化卸载后状态与视觉短暂失联（滚回自现，Escape / 外点仍有效）。
+- **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
+- **单主题**：仅深色 `dark()`；`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。
+- **文件尺寸口径**：`ui/mod.rs` 约 1030 行，超 R8 阶段 900 行拆分目标，用户拍板接受为终态口径。
+- **`text_input.rs` 血统**：改自 gpui 0.2.2 `examples/input.rs`（Apache-2.0），有意裁剪 ShowCharacterPalette / Copy / Cut / SelectAll / 拖选；后续补齐须对照上游而非自造。
+- **FollowScroll 的滚轮时序假设**：`on_scroll_wheel` 直读已应用（未钳制）的 offset——依赖 vendored gpui 0.2.2 的 Bubble 相监听逆序分发（内部偏移应用先于用户监听）；升级 gpui 时须重核，做 delta 投影会把增量计两次。

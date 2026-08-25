@@ -5,7 +5,7 @@
 
 ## 背景
 
-S4 沙箱以「诚实标签」交付(能力有限但如实上报),V2 期间未再加深。R7 任务书 [plan/R7-sandbox-isolation.md](../../plan/R7-sandbox-isolation.md) 判定其为结构性债务:执行面须从「标签诚实」升级为「语义诚实」。本阶段是 V3 两个高风险契约阶段之一(R6/R7),ADR 先行。
+S4 沙箱以「诚实标签」交付(能力有限但如实上报),V2 期间未再加深。R7 任务书(原 plan/R7-sandbox-isolation.md,已随收口删除,git 历史)判定其为结构性债务:执行面须从「标签诚实」升级为「语义诚实」。本阶段是 V3 两个高风险契约阶段之一(R6/R7),ADR 先行。
 
 2026-08-23 波 0 三路只读核查 + 主代理亲读源码,实态(已回写任务书,任务书 §1 证据为 R1 扁平化前快照,多处漂移):
 
@@ -49,7 +49,7 @@ S4 沙箱以「诚实标签」交付(能力有限但如实上报),V2 期间未�
 
 - 删除 `SandboxPolicy.network_allow_hosts` 字段与 os/macos.rs 的 K-09 注释;`NetworkMode` 三档(Off/Hint/Enforce,默认 Enforce)语义不变——网络只有 allow-all/deny-all 两档事实,标签如实。
 - 依据:字段无配置入口、无生产赋值(恒空)、唯一消费者是注释行;保留它持续制造「可按 host 白名单」的假象。
-- 选项 (a)(egress broker:本地策略代理 + 沙箱内仅放行 loopback 代理端口 + 域名白名单,参照 codex-network-proxy + srt 两层模型)登记 ROADMAP §3.3 候选,激活时另立任务书。
+- 选项 (a)(egress broker:本地策略代理 + 沙箱内仅放行 loopback 代理端口 + 域名白名单,参照 codex-network-proxy + srt 两层模型)登记 ROADMAP §5 候选池,激活时另立任务书。
 - 否决 (c)(维持全拒+文档标注):死字段不删除,诚实标签与 API 面继续失真。
 
 ### D4 — shell 风险分类:手写轻量 tokenizer 替换空白切分
@@ -74,8 +74,7 @@ S4 沙箱以「诚实标签」交付(能力有限但如实上报),V2 期间未�
 
 ## 相关
 
-- [plan/R7-sandbox-isolation.md](../../plan/R7-sandbox-isolation.md)(任务书:决策点、波次拆分、验证、退出标准)
-- [ROADMAP.md](../../ROADMAP.md) §2 R7 行、§3.2 K-09
-- [v2-summary.md](../v2-summary.md) §4/§5(ADR-031 可观测回退、S13-F01/F02 .git 拒写与诚实标签)
+- 原任务书 plan/R7-sandbox-isolation.md 已随收口删除(git 历史);R7 交付存档见 [history.md](../history.md) R7 节
+- 现行安全语义事实源:[architecture.md](../architecture.md) §4(S13 拍板)与 [spec/security.md](../spec/security.md);历史(ADR-031 可观测回退、S13-F01/F02 .git 拒写与诚实标签)见 [history.md](../history.md)
 - [design.md](../design.md) §3.2(Policy 冻结契约)、§4 S3/S4 行
 - [references.md](../references.md) §7 R7 行(codex sandbox / srt 策略语义 / codex-network-proxy)

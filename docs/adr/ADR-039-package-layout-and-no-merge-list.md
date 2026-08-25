@@ -5,7 +5,7 @@
 
 ## 背景
 
-V2 收官 39 成员([v2-summary.md](../v2-summary.md)),R0 裁决后 37 成员([ADR-038](ADR-038-inventory-and-product-shape.md))。V3 计划原则要求结构收敛至 **21 成员(19 库 + 2 应用)**([ROADMAP.md](../../ROADMAP.md) §1);终局包清单与来源映射见任务书 [plan/R1](../../plan/R1-package-consolidation.md) §1,结构性判定依据见其 §2。任务书证据经 2026-08-18 波 A 三路只读核查重验,漂移已回写任务书:
+V2 收官 39 成员(存档见 [history.md](../history.md) 第一部分),R0 裁决后 37 成员([ADR-038](ADR-038-inventory-and-product-shape.md))。V3 计划原则要求结构收敛至 **21 成员(19 库 + 2 应用)**(原 ROADMAP V3 计划原则,存档见 [history.md](../history.md));终局包清单与来源映射见原任务书 plan/R1-package-consolidation.md §1(已随收口删除,git 历史),结构性判定依据见其 §2。任务书证据经 2026-08-18 波 A 三路只读核查重验,漂移已回写任务书:
 
 - api 消费者实为 **11 个**(原估 ~13),全部同时依赖 domain;api features 已收敛为空锚点 `plugin = []`,src 零门控,`async-trait` 已在用,`ReasoningEffort` 定义在 domain、api 仅重导出。
 - diagnostics 对外仅 `Redactor`/`RedactingFmtLayer` 两活符号,唯一消费者 `apps/pawork`;两测试在位可随迁。
@@ -123,8 +123,8 @@ providers/storage 单体化后,「改一个 adapter 重编整包」。接受该�
 
 ## 相关
 
-- [plan/R1-package-consolidation.md](../../plan/R1-package-consolidation.md)(任务书:目标包清单、波次拆分、退出标准)
-- [ROADMAP.md](../../ROADMAP.md) §2 R1 行
+- 原任务书 plan/R1-package-consolidation.md 已随收口删除(git 历史);R1 交付存档见 [history.md](../history.md) R1 节
+- 现行包布局事实源:[architecture.md](../architecture.md) §2
 - [ADR-038](ADR-038-inventory-and-product-shape.md)(R0 裁决;D8 已预告 RedactingFmtLayer/Redactor 迁宿主)
-- [v2-summary.md](../v2-summary.md) §4(冻结契约)、§5(S13 拍板)
+- 冻结契约与 S13 拍板现行事实源:[architecture.md](../architecture.md) §3.2/§4(原 v2-summary §4/§5 存档见 [history.md](../history.md))
 - [references.md](../references.md) §7.1 R1 行(codex-rs 布局纪律)

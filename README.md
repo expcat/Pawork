@@ -2,28 +2,9 @@
 
 > 纯 Rust 编码智能体核心平台 —— CLI 与 Core 同进程同二进制，无 Node / Bun / JavaScript Runtime。
 
-Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心：以 Pi 的功能与工作流为参考，但**不复用**其 TypeScript 实现。二进制 `pawork` 是 Core 的唯一正式宿主；Desktop GUI（GPUI，`apps/desktop`）作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
+Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心。二进制 `pawork` 是 Core 的唯一正式宿主；Desktop GUI（GPUI，`apps/desktop`）作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
 
-当前仓库处于 **V3 重构线（R0–R9，见 [ROADMAP.md](ROADMAP.md)）**：V2 增量开发（S0–S13）已于 2026-08-18 完成并总结于 [docs/v2-summary.md](docs/v2-summary.md)；V3 不加新功能，聚焦结构收敛（R0 裁决后 37→21 包，R1 已收口）、依赖治理、补丁根因重构与 GUI 组件化。V1 全量实现（88 crate）已于 2026-08-17 归档至仓库外同级目录 `../Pawork_v1/`：移出 git 管理，仅作为迁移参照与历史快照保留。
-
-## 项目状态（2026-08-22）
-
-V2（S0–S13）全部 🟢：最小对话 → 会话持久化 → 工具循环 → 写入审批 → 命令执行与沙箱 → 上下文预算与用量 → 六通道 Provider 与 OAuth → Agent GUI（三栏工作台）→ Git/Diff/Checkpoint → MCP 与资源 → 服务化与客户端（headless/ACP/SDK）→ 工作流与多 Agent → 全项目 Code Review → 整改收口。唯一挂账：OAuth 自然临期 refresh 人工验收（并入 R9）。
-
-| V3 阶段 | 主题 | 状态 |
-| --- | --- | --- |
-| [R0](plan/R0-inventory-decisions.md) | 决策收口与休眠库存裁决（ADR-038） | 🟢 |
-| [R1](plan/R1-package-consolidation.md) | 包合并 37→21（ADR-039） | 🟢 |
-| [R2](plan/R2-dependency-governance.md) | 依赖治理（本地化 / 升级 / 去重） | 🟢 |
-| [R3](plan/R3-protocol-unification.md) | 协议与投影同源化 | 🟢 |
-| [R4](plan/R4-host-decomposition.md) | 宿主拆解与可靠性内核 | 🟢 |
-| [R5](plan/R5-provider-neutrality.md) | Provider 中立化与凭证收口 | 🟢 |
-| [R6](plan/R6-session-branching.md) | 会话分支模型原生化（ADR-040） | 🟢 |
-| [R7](plan/R7-sandbox-isolation.md) | 执行面真隔离（ADR-041） | 🟢 |
-| [R8](plan/R8-gui-components.md) | GUI 组件化与 Desktop 收口 | 🔵 |
-| [R9](plan/R9-consistency-closeout.md) | 一致性收口 | 🔵 |
-
-状态符号：⚪未开始 · 🔵进行中 · 🟢已完成。阶段明细、依赖与验收要点见 [ROADMAP.md](ROADMAP.md) §2；开发开启方式见 [v3_plan.md](v3_plan.md)。
+**当前状态（2026-08-25）**：V2 增量开发（S0–S13）已交付完整产品面（对话/持久化/工具循环/审批/沙箱/六通道 Provider/GUI/Git/MCP/headless/多 Agent）；V3 重构线（R0–R9）R0–R7 已收口，R8 仅剩 Desktop 人工签字（K-03），R9 一致性收口进行中。当前任务与剩余工作见 [ROADMAP.md](ROADMAP.md)；历史沿革（V1→V2→V3）见 [docs/history.md](docs/history.md)。V1 全量实现归档于仓库外 `../Pawork_v1/`。
 
 ## 快速开始
 
@@ -41,7 +22,7 @@ cargo build                      # workspace dev 构建
 
 ```text
 Pawork/                  # 仓库根 = Cargo workspace 根
-├── crates/              # 19 个库（ADR-039 扁平布局，目录 = 包名去 pawork- 前缀）
+├── crates/              # 19 个库（扁平布局，目录 = 包名去 pawork- 前缀）
 │   ├── domain/          # canonical 领域 + provider_api/tool_api 契约 + 事件信封 golden
 │   ├── protocol/        # GUI 帧 / headless-json / core-api / typegen
 │   ├── testkit/         # dev-only mock 与契约断言
@@ -65,36 +46,37 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 ├── schemas/             # protocol typegen 检入的 .d.ts
 ├── fixtures/            # 测试夹具
 ├── scripts/             # 维护脚本（如 stale incremental 清理）
-├── design/              # GUI v3 定稿视觉基准
-├── docs/                # 设计、规范、参照、迁移词典、V2 总结、ADR
-└── plan/                # 阶段任务书 R0–R9
+├── design/              # GUI v3 定稿视觉基准（设计图）
+├── docs/                # 架构、设计、Spec、参照、存档、ADR
+└── plan/                # 进行中阶段的任务书
 ```
 
-以上为 V3 定稿布局（21 成员：19 库 + 2 应用，R1 收口 2026-08-19，ADR-039 D1）。包清单与依赖方向见 [docs/design.md](docs/design.md) §2；冻结契约与「追加不重写」三道保险见 §3；R1 合并映射见 [plan/R1-package-consolidation.md](plan/R1-package-consolidation.md)。
+21 成员（19 库 + 2 应用，ADR-039 定稿）。包清单、依赖方向与冻结契约见 [docs/architecture.md](docs/architecture.md)。
 
 ## 文档导航
 
 | 文档 | 职责 |
 | --- | --- |
-| [ROADMAP.md](ROADMAP.md) | 任务总索引：阶段状态、阶段外任务、未决事项、风险 |
-| [v3_plan.md](v3_plan.md) | V3 任务开启编排（当前指针、选波规则、子代理派发） |
-| [plan/](plan/) | 阶段任务书 R0–R9（附件 [plan/archive/](plan/archive/README.md)：旧按域计划索引） |
-| [docs/design.md](docs/design.md) | 设计与冻结契约 |
-| [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（GUI v3 视觉基准） |
-| [docs/references.md](docs/references.md) | 参照项目手册 |
-| [docs/task-guide.md](docs/task-guide.md) | 任务实现规范（公共提示词） |
-| [docs/v2-summary.md](docs/v2-summary.md) | V2（S0–S13）归档总结：交付、冻结契约、遗留债务 |
-| [docs/v1-migration-reference.md](docs/v1-migration-reference.md) | V1→V2 迁移词典（冻结参考） |
-| [docs/code-map/README.md](docs/code-map/README.md) | 按需导览（按写入集读各包 `MODULE.md`），非布局/契约事实源；冲突以源码为准 |
-| [AGENTS.md](AGENTS.md) | 工作约定（V3 版） |
+| [ROADMAP.md](ROADMAP.md) | 任务事实源：当前指针、剩余任务、未决登记、候选池、任务约定 |
+| [plan/](plan/) | 进行中阶段任务书（当前 R8 / R9；已完成阶段的任务书随收口删除，存档见 history） |
+| [docs/architecture.md](docs/architecture.md) | 架构事实源：红线、包布局与依赖方向、冻结契约、S13 安全拍板、ADR 索引 |
+| [docs/design.md](docs/design.md) | 功能设计事实源：功能域 ↔ 参照项目映射、已确认扩展功能族（G1–G7）、候选功能池 |
+| [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引：产品范围/能力/契约/安全/Desktop/验证/运维 + 21 包逐包 Spec + 跨包链路 |
+| [docs/spec/crates/](docs/spec/README.md#包级-spec) | **包级 Spec**：每包一篇，读文档即可了解该包全部功能与行为（agent 辅助阅读主入口） |
+| [docs/spec/flows.md](docs/spec/flows.md) | 跨包核心链路：Agent loop / GUI 连接 / 事件持久化与重放 / 凭证与脱敏 |
+| [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（配套 [design/README.md](design/README.md) 视觉基准与设计图） |
+| [docs/references.md](docs/references.md) | 参照项目手册 + 调研附录（多账户/配额/缓存） |
+| [docs/history.md](docs/history.md) | 历史存档：V1 迁移、V2（S0–S13）交付、V3（R0–R9）各阶段收口记录、已关闭登记项 |
+| [docs/adr/](docs/adr/) | 架构决策记录（ADR-037~041 现存；001~036 随 V1 归档） |
+| [AGENTS.md](AGENTS.md) | 工程约定（代理与人类协作者） |
 
-V1 时期文档（架构、ADR-001~035、features、quality、REVIEW 等）随 V1 归档于 `../Pawork_v1/docs/`，仓库内链接以 `../Pawork_v1/...` 标注。
+V1 时期文档随 V1 归档于 `../Pawork_v1/docs/`，仓库内链接以 `../Pawork_v1/...` 标注。
 
 ## 贡献
 
-- 工作约定见 [AGENTS.md](AGENTS.md)；定向验证约定见 [docs/task-guide.md](docs/task-guide.md)。V3 期间不设全量门禁，发布须用户明确授权后另立任务。
-- 架构决策须以 ADR 记录，编号续接 V1（现有 [ADR-037](docs/adr/ADR-037-s13-wave-b-contracts.md)；V3 将新增 ADR-038~041）。
-- V3 期间**不新增包**，只做合并与收敛；包布局变更经 [plan/R1](plan/R1-package-consolidation.md) 与 ADR-039。
+- 工程约定见 [AGENTS.md](AGENTS.md)；任务开启/进行/收尾约定见 [ROADMAP.md](ROADMAP.md) §7。当前不设全量门禁，发布须用户明确授权后另立任务。
+- 架构决策以 ADR 记录（[docs/adr/](docs/adr/)，编号续接，下一个 ADR-042）。
+- 当前**不新增包**，只往既有包加模块；包布局变更须先过 ADR。
 
 ## 许可证
 
