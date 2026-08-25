@@ -1,0 +1,564 @@
+{
+  "state": "state-c",
+  "image": "reference.png",
+  "masks": [
+    {
+      "id": "rail-project-name-1",
+      "x": 30,
+      "y": 206,
+      "w": 178,
+      "h": 22,
+      "covers": "project-name",
+      "reason": "项目名演示值"
+    },
+    {
+      "id": "rail-project-name-2",
+      "x": 30,
+      "y": 458,
+      "w": 178,
+      "h": 22,
+      "covers": "project-name",
+      "reason": "项目名演示值"
+    },
+    {
+      "id": "rail-project-name-3",
+      "x": 30,
+      "y": 614,
+      "w": 178,
+      "h": 22,
+      "covers": "project-name",
+      "reason": "项目名演示值"
+    },
+    {
+      "id": "rail-project-count-1",
+      "x": 206,
+      "y": 206,
+      "w": 18,
+      "h": 20,
+      "covers": "count",
+      "reason": "项目任务数演示值；保留容器与 + 槽位"
+    },
+    {
+      "id": "rail-project-count-3",
+      "x": 206,
+      "y": 614,
+      "w": 18,
+      "h": 20,
+      "covers": "count",
+      "reason": "项目任务数演示值"
+    },
+    {
+      "id": "rail-task-title-1",
+      "x": 34,
+      "y": 251,
+      "w": 166,
+      "h": 20,
+      "covers": "task-name",
+      "reason": "任务名演示值；保留 dot/密度"
+    },
+    {
+      "id": "rail-task-time-1",
+      "x": 208,
+      "y": 251,
+      "w": 56,
+      "h": 20,
+      "covers": "time",
+      "reason": "相对时间动态值"
+    },
+    {
+      "id": "rail-task-title-2",
+      "x": 34,
+      "y": 301,
+      "w": 166,
+      "h": 20,
+      "covers": "task-name",
+      "reason": "任务名演示值"
+    },
+    {
+      "id": "rail-task-time-2",
+      "x": 208,
+      "y": 301,
+      "w": 56,
+      "h": 20,
+      "covers": "time",
+      "reason": "相对时间动态值"
+    },
+    {
+      "id": "rail-task-title-3",
+      "x": 34,
+      "y": 351,
+      "w": 166,
+      "h": 20,
+      "covers": "task-name",
+      "reason": "任务名演示值"
+    },
+    {
+      "id": "rail-task-time-3",
+      "x": 208,
+      "y": 351,
+      "w": 56,
+      "h": 20,
+      "covers": "time",
+      "reason": "相对时间动态值"
+    },
+    {
+      "id": "rail-task-title-4",
+      "x": 34,
+      "y": 401,
+      "w": 166,
+      "h": 20,
+      "covers": "task-name",
+      "reason": "任务名演示值"
+    },
+    {
+      "id": "rail-task-time-4",
+      "x": 208,
+      "y": 401,
+      "w": 56,
+      "h": 20,
+      "covers": "time",
+      "reason": "相对时间动态值"
+    },
+    {
+      "id": "rail-task-title-5",
+      "x": 34,
+      "y": 508,
+      "w": 166,
+      "h": 20,
+      "covers": "task-name",
+      "reason": "任务名演示值"
+    },
+    {
+      "id": "rail-task-time-5",
+      "x": 208,
+      "y": 508,
+      "w": 56,
+      "h": 20,
+      "covers": "time",
+      "reason": "相对时间动态值"
+    },
+    {
+      "id": "rail-task-title-6",
+      "x": 34,
+      "y": 558,
+      "w": 166,
+      "h": 20,
+      "covers": "task-name",
+      "reason": "任务名演示值"
+    },
+    {
+      "id": "rail-task-time-6",
+      "x": 208,
+      "y": 558,
+      "w": 56,
+      "h": 20,
+      "covers": "time",
+      "reason": "相对时间动态值"
+    },
+    {
+      "id": "rail-account-name",
+      "x": 52,
+      "y": 945,
+      "w": 68,
+      "h": 18,
+      "covers": "account-name",
+      "reason": "账户名动态值；保留头像/齿轮"
+    },
+    {
+      "id": "ws-header-title",
+      "x": 313,
+      "y": 53,
+      "w": 240,
+      "h": 20,
+      "covers": "session-title",
+      "reason": "会话标题演示值"
+    },
+    {
+      "id": "ws-header-branch",
+      "x": 610,
+      "y": 53,
+      "w": 36,
+      "h": 19,
+      "covers": "branch-name",
+      "reason": "分支名动态值；保留 branch 图标"
+    },
+    {
+      "id": "ws-message-meta",
+      "x": 311,
+      "y": 127,
+      "w": 127,
+      "h": 20,
+      "covers": "agent-name|time",
+      "reason": "消息归属与时间动态值"
+    },
+    {
+      "id": "ws-message-body",
+      "x": 312,
+      "y": 164,
+      "w": 515,
+      "h": 19,
+      "covers": "message-content",
+      "reason": "消息正文演示值；紧贴单行 glyph，保留上下行距与容器"
+    },
+    {
+      "id": "ws-tool-durations",
+      "x": 887,
+      "y": 511,
+      "w": 32,
+      "h": 126,
+      "covers": "duration",
+      "reason": "Tool 行时长演示值；保留图标/状态"
+    },
+    {
+      "id": "ws-run-left",
+      "x": 313,
+      "y": 821,
+      "w": 160,
+      "h": 20,
+      "covers": "duration",
+      "reason": "Run 行时长演示值"
+    },
+    {
+      "id": "ws-run-right",
+      "x": 865,
+      "y": 821,
+      "w": 66,
+      "h": 20,
+      "covers": "time",
+      "reason": "Run 行时间动态值"
+    },
+    {
+      "id": "composer-model",
+      "x": 325,
+      "y": 923,
+      "w": 177,
+      "h": 22,
+      "covers": "model-name",
+      "reason": "模型名动态值"
+    },
+    {
+      "id": "sb-task-tokens",
+      "x": 831,
+      "y": 990,
+      "w": 36,
+      "h": 20,
+      "covers": "tokens",
+      "reason": "token 计数动态值（92.4K）；保留 Task/tokens 标签"
+    },
+    {
+      "id": "sb-quota",
+      "x": 1041,
+      "y": 990,
+      "w": 26,
+      "h": 20,
+      "covers": "quota",
+      "reason": "quota 百分比动态值（72%）；保留 Z.AI/quota/left 标签"
+    },
+    {
+      "id": "sb-toks",
+      "x": 1150,
+      "y": 990,
+      "w": 27,
+      "h": 20,
+      "covers": "tokens",
+      "reason": "tok/s 动态值（38.6）；保留 tok/s/avg 标签"
+    },
+    {
+      "id": "sb-run",
+      "x": 1334,
+      "y": 990,
+      "w": 46,
+      "h": 20,
+      "covers": "time",
+      "reason": "Run 时长动态值（2m 14s）；保留 Run 标签"
+    },
+    {
+      "id": "insp-tab-badge",
+      "x": 1046,
+      "y": 78,
+      "w": 30,
+      "h": 23,
+      "covers": "count",
+      "reason": "Files 徽标数值动态；保留徽标形状"
+    },
+    {
+      "id": "insp-summary",
+      "x": 994,
+      "y": 134,
+      "w": 132,
+      "h": 18,
+      "covers": "file-count|added|deleted",
+      "reason": "变更统计动态值"
+    },
+    {
+      "id": "insp-path-2",
+      "x": 1032,
+      "y": 180,
+      "w": 152,
+      "h": 16,
+      "covers": "filename",
+      "reason": "文件路径动态值"
+    },
+    {
+      "id": "insp-path-3",
+      "x": 1032,
+      "y": 224,
+      "w": 152,
+      "h": 16,
+      "covers": "filename",
+      "reason": "文件路径动态值"
+    },
+    {
+      "id": "insp-path-4",
+      "x": 1032,
+      "y": 268,
+      "w": 152,
+      "h": 16,
+      "covers": "filename",
+      "reason": "文件路径动态值"
+    },
+    {
+      "id": "insp-path-5",
+      "x": 1032,
+      "y": 312,
+      "w": 152,
+      "h": 16,
+      "covers": "filename",
+      "reason": "文件路径动态值"
+    },
+    {
+      "id": "insp-diff-path",
+      "x": 1003,
+      "y": 364,
+      "w": 136,
+      "h": 22,
+      "covers": "filename",
+      "reason": "Diff 头路径动态值；保留 M/copy/···"
+    },
+    {
+      "id": "insp-diff-hunk-text",
+      "x": 1052,
+      "y": 403,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "hunk 范围与标题为演示值；保留 @@ 前缀、gutter 与行距"
+    },
+    {
+      "id": "insp-diff-context-42",
+      "x": 1038,
+      "y": 432,
+      "w": 345,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；逐行紧遮，保留 gutter、行距与行底"
+    },
+    {
+      "id": "insp-diff-context-43",
+      "x": 1038,
+      "y": 456,
+      "w": 345,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；逐行紧遮，保留 gutter、行距与行底"
+    },
+    {
+      "id": "insp-diff-delete-44",
+      "x": 1055,
+      "y": 475,
+      "w": 330,
+      "h": 16,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-delete-45",
+      "x": 1055,
+      "y": 497,
+      "w": 330,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-delete-46",
+      "x": 1055,
+      "y": 516,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-47",
+      "x": 1055,
+      "y": 538,
+      "w": 330,
+      "h": 16,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-add-48",
+      "x": 1055,
+      "y": 558,
+      "w": 330,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-add-49",
+      "x": 1055,
+      "y": 576,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-add-50",
+      "x": 1055,
+      "y": 597,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-heading",
+      "x": 1055,
+      "y": 625,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 标题演示值；保留 ## 前缀、gutter 与行距"
+    },
+    {
+      "id": "insp-diff-delete-52",
+      "x": 1055,
+      "y": 652,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-52",
+      "x": 1055,
+      "y": 671,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-delete-53",
+      "x": 1055,
+      "y": 691,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-54",
+      "x": 1055,
+      "y": 711,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-delete-55",
+      "x": 1055,
+      "y": 731,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-56",
+      "x": 1055,
+      "y": 751,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-delete-57",
+      "x": 1055,
+      "y": 770,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-58",
+      "x": 1055,
+      "y": 793,
+      "w": 330,
+      "h": 16,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-context-61",
+      "x": 1038,
+      "y": 834,
+      "w": 345,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；逐行紧遮，保留 gutter、行距与行底"
+    },
+    {
+      "id": "insp-diff-context-62",
+      "x": 1038,
+      "y": 857,
+      "w": 345,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；逐行紧遮，保留 gutter、行距与行底"
+    },
+    {
+      "id": "frame-top",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 2,
+      "covers": "reference-artifact",
+      "reason": "ImageGen window-edge bright line; real GPUI content capture has no frame"
+    },
+    {
+      "id": "frame-bottom",
+      "x": 0,
+      "y": 1022,
+      "w": 1440,
+      "h": 2,
+      "covers": "reference-artifact",
+      "reason": "ImageGen window-edge bright line; real GPUI content capture has no frame"
+    },
+    {
+      "id": "frame-left",
+      "x": 0,
+      "y": 0,
+      "w": 2,
+      "h": 1024,
+      "covers": "reference-artifact",
+      "reason": "ImageGen window-edge bright line; real GPUI content capture has no frame"
+    },
+    {
+      "id": "frame-right",
+      "x": 1438,
+      "y": 0,
+      "w": 2,
+      "h": 1024,
+      "covers": "reference-artifact",
+      "reason": "ImageGen window-edge bright line; real GPUI content capture has no frame"
+    }
+  ]
+}

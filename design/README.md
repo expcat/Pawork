@@ -42,8 +42,39 @@
 - `Composer` 默认高 88–94 px；底部控件高 28–30 px，Send 为 32 px。多行输入按需向上增长，不把常态输入框做成工具栏容器。
 - `RunStatusBar` 高 24 px，位于 Workspace 与 Inspector 底部，不覆盖左栏账户区；Composer 始终位于它上方。
 - Inspector 展开时约 440 px；折叠时宽度归零并让 Workspace 扩展，右上以约 320 px 的 `ActivityPopover` 保留轻量态势，不挤压 Composer、ContextMeter 或审批主操作。
-- 采用 8 px 间距基线；列表、工具活动与 diff 保持原生桌面密度，不使用仪表盘卡片墙。
-- 当前实现色板继续作为代码侧基线：背景 `#1e1e1e`、侧栏 `#161616`、分隔线 `#2e2e2e`、选中面 `#2a2a2a`、主色 `#2f6fed`、正文 `#e8e8e8`、次要文字 `#9a9a9a`。设计图中的细微抗锯齿或渐变不应被硬编码成新 token。
+- 采用 8 px 间距基线；列表、工具活动与 diff 保持原生桌面密度，不使用仪表盘卡片墙。三图实测存在系统性偏离 8px 网格的细节（见 §2.1），实现以本节几何定稿值为准。
+- 色板以 §2.1 的 2026-08-26 重定 token 为准（用户拍板，取代旧的「当前实现色板」基线）。设计图中的细微抗锯齿或渐变不应被硬编码成新 token（Send 等按钮的径向渐变取实体主色）。
+
+### 2.1 几何合同与色板（2026-08-26 R1 Wave A 用户拍板）
+
+**几何合同**：本节 §2 的定稿值（TaskRail 288、Inspector ~440、Composer 88–94、StatusBar 24、ActivityPopover ~320）是实现合同。三张定稿图是近似视觉语言参考，不是逐像素几何事实源——R1 量图实测三图互不一致（TaskRail 283/297/320、Composer 97–102、StatusBar 35–46，明细见 [docs/ui-review/state-*/measurements.md](../docs/ui-review/README.md) 冲突表）。图像与合同的偏差优先由 SSIM 分区的 reference/current 矩形、左右锚点和最低共同覆盖率表达（[docs/ui-review/README.md](../docs/ui-review/README.md) §3）；`geometry-drift` 遮罩只允许收敛到锚点仍无法表达的纯边缘背景，当前三态均不使用。结构与几何硬门禁按合同值 + [UI_Review §0.1](../docs/UI_Review.md) 容差判定。字阶与组件细节以三份量图表为准（在 §0.1 容差内取实测档）。
+
+**色板（新冻结 token 目标，R2 落 theme.rs）**：下表「实测」值取自 R1 量图（1440×1024 坐标，方法见各 measurements.md §6）；「派生」值为主代理按 token 语义内插，R2 在门禁下微调。
+
+| token | 旧值 | 新目标 | 依据 |
+| --- | --- | --- | --- |
+| bg.base | #1e1e1e | #07121a | State A workspace 空区实测 |
+| bg.panel | #161616 | #061219 | State A rail / StatusBar 实测 |
+| bg.menu | #1a1a1a | #0e171d | State B ActivityPopover 实测 |
+| surface.raised | #2a2a2a | #10171c | State C 选中行实测（State A Files 选中 #141d23，范围记录） |
+| surface.hover | #343434 | #182229 | 派生（raised 上浮约 8 灰阶） |
+| surface.disabled | #242424 | #0c161c | 派生 |
+| border.subtle | #2e2e2e | #1a2129 | State C 分隔线实测范围 #1a1f26–#282b33 折中 |
+| border.strong | #3a3a3a | #2c3338 | State B Popover 描边实测 |
+| text.primary | #e8e8e8 | #f0efec | State A 标题 #f5f5f4 / State C #dddcd8 折中 |
+| text.emphasis | #c8c8c8 | #d0d0d0 | State A 正文实测 |
+| text.secondary | #9a9a9a | #8a8d8c | State A 时间 #858889 / State C 次级 #81817f |
+| text.tertiary | #7f7f7f | #7f7f7f | 实测下界不满足小字对比度；保留可访问档 |
+| text.placeholder | 白 30% | #7f7f7f（不透明） | 避免透明色叠在新深色 surface 后低于小字对比度门槛 |
+| text.assistant | #d7d7ff | 收敛到 text.emphasis | 三图 assistant 正文与用户正文同色，无蓝紫分化 |
+| text.tool | #9cdcfe | 收敛到 text.secondary | 图上 tool 名 #959292（State C），无蓝色分化 |
+| accent.primary | #2f6fed | 保持 | 实测蓝区间 #235df2–#4172f5 含现值；Send 径向渐变 #1351e5–#2360fe 取实体色 |
+| accent.hover | #3d7bf0 | #3270e8 | 派生；保留蓝色上浮感并满足白字对比度 |
+| semantic 状态点绿 | —（success_bg #3d7a4a 保持） | 状态点绿 #74c94c（候选 semantic.success_fg，R2 定槽位） | 三图状态点实测 #71b13d–#7bcf4d |
+| semantic.success_hover | #4a8c58 | #438251 | 派生；满足白字对比度 |
+| danger / warning 系 | 保持 | 保持 | 量图未见显著偏离（State B C-06） |
+
+可访问性约束按“文字角色 × 允许 surface”组合判定，不把单个 token 宣称为可与任意背景互换：`text.secondary #8a8d8c` 可落在 `surface.hover #182229`，对比度约 4.82:1；`text.tertiary` / `text.placeholder #7f7f7f` 最亮只允许落到 `surface.raised #10171c`，约 4.52:1，不得用于更亮的 hover surface（会降到约 4.04:1）。白字对 `accent.hover #3270e8` 与 `semantic.success_hover #438251` 约为 4.55:1 / 4.61:1。R2 落 token 后须按真实组件组合重新跑定向对比度门禁；新增组合不能借用其它背景的通过值。
 
 ## 3. 左侧 TaskRail 紧凑操作
 
@@ -116,7 +147,7 @@
 
 ### 5.1 折叠态 ActivityPopover
 
-- 折叠 Inspector 后移除整列与分隔线，Workspace 使用释放出的宽度；右上触发器下方显示约 320 px 的 `ActivityPopover`，用户可再收为单一角标。
+- 折叠 Inspector 后移除整列与分隔线，Workspace 使用释放出的宽度；Activity 触发器固定在 Workspace Header 右上（折叠态常驻角标），自触发器向下展开约 320 px 的 `ActivityPopover`，用户可再收为单一角标。Popover 不得覆盖 Composer、ContextMeter 或审批主操作；底部 StatusBar 触发是历史实现记录，不作为视觉验收依据（见 §8.5 与 UI_Review F-12）。
 - 首行显示 Changes 的文件数与 `+added / −removed`；下方列出当前 Task 关联的 Main / subagent 状态，状态至少覆盖 running、waiting approval、completed、failed、cancelled。
 - 点击 Changes 摘要重新展开 Inspector 并定位 Changes；点击 Agent 行切换到对应 Task / Agent 详情。浮窗只承载摘要，不复制 diff、Terminal 或完整 Timeline。
 - Changes 摘要依赖 S8 diff projection，Agent 列表依赖 S11 多 Agent projection；能力未接通时隐藏对应分区，不能使用截图中的演示数值。
@@ -139,13 +170,13 @@
 - ContextMeter 使用当前上下文估算而非 Session 累计 token；未知容量不显示伪进度。
 - RunStatusBar 不重复 Composer 的模型 / reasoning，并对 quota `Unknown`、无 tokens/s、Run 时间戳不完整与窄窗口溢出提供可观察回归。
 - Inspector 顶层与 Changes 二级 tab 层次不可混用；折叠态 ActivityPopover 的摘要跳转、Agent 状态与 capability 缺失均有定向测试。
-- 在 `1440 × 1024` 对照 v3 截图做视觉验收；在 `1080 × 720` 验证 Inspector / ActivityPopover 切换、日期内项目分组、状态栏收敛与紧凑 Composer 可用。
+- 在 `1440 × 1024` 对照 v3 截图做视觉验收（三状态像素级 99% 门禁）；`1080 × 720` 为响应式**功能**门禁：验证 Inspector / ActivityPopover 切换、日期内项目分组、状态栏收敛与紧凑 Composer 可用，主操作与焦点可达，无裁切、遮挡或状态栏溢出，Connected 与断线边界态均须取证；1080 不与 1440 定稿图做像素对比（UI_Review D-03）。
 - 交互态与浮层菜单按 §8 验收:hover / active 色值来自 theme token、菜单单开互斥、Escape 与外点关闭、浮层滚轮无穿透、回底控件脱钩可见 / 回底隐藏。
-- 后续视觉差异若属于有意改动，先更新本目录与 [GUI 设计](../docs/gui-design.md)，再实现代码。
+- 后续若确需改变设计，必须先取得用户明确批准，再更新本目录与 [GUI 设计](../docs/gui-design.md)；不得先改基准追认实现漂移。
 
-## 8. 交互态与浮层菜单(2026-08-24 增补,R8 波 B)
+## 8. 交互态与浮层菜单(2026-08-24 增补,旧 V3 R8 波 B)
 
-本节是有意视觉变更的先行基准:落地前实现侧无任何 hover / active 态,菜单为布局流内 child。实现后本节与实现保持一致,像素对照仍在波 E K-03 进行。
+本节记录 2026-08-24 的交互基准增补；当前像素对照与全状态复验统一由新 [R7–R8](../plan/R7-R8-ui-quality-gates.md) 执行。
 
 ### 8.1 hover / active 交互态
 
@@ -154,12 +185,12 @@
 
 | 控件底色 | hover 背景 | token |
 | --- | --- | --- |
-| 无底色(ghost / 角标 / 「···」) | `#2a2a2a` | `surface.raised` |
-| `surface.raised` 控件(`#2a2a2a`) | `#343434` | `surface.hover`(新增) |
-| `accent.primary` 主按钮(`#2f6fed`) | `#3d7bf0` | `accent.hover`(新增) |
-| `semantic.success_bg`(`#3d7a4a`) | `#4a8c58` | `semantic.success_hover`(新增) |
+| 无底色(ghost / 角标 / 「···」) | `#10171c` | `surface.raised` |
+| `surface.raised` 控件(`#10171c`) | `#182229` | `surface.hover`(新增) |
+| `accent.primary` 主按钮(`#2f6fed`) | `#3270e8` | `accent.hover`(新增) |
+| `semantic.success_bg`(`#3d7a4a`) | `#438251` | `semantic.success_hover`(新增) |
 | `semantic.danger_bg`(`#8a3b32`) | `#9c463c` | `semantic.danger_hover`(新增) |
-| 菜单选项行(未选中,`bg.menu` 上) | `#2a2a2a` | `surface.raised` |
+| 菜单选项行(未选中,`bg.menu` 上) | `#10171c` | `surface.raised` |
 | 菜单选项行(选中) | 保持 `accent.primary`,不再叠加 hover | — |
 
 - active(按下)态复用同行 hover 色,不新增 token;hover / active 只改背景,不改尺寸、描边与文字色,不引起布局移动。
@@ -178,25 +209,25 @@
 - Timeline 与终端输出区:用户向上滚动即脱钩自动跟随;脱钩后该区域右下浮出「↓ 回到底部」控件(`surface.raised` 底、`text.primary` 字、`rounded_md`,带 hover 态)。
 - 点击回底控件:滚动到底并重新挂接自动跟随;用户自行滚回底部同样重挂;跟随状态下控件隐藏。
 
-### 8.4 Timeline 虚拟化与长文本截断(2026-08-24 增补,R8 波 C)
+### 8.4 Timeline 虚拟化与长文本截断(2026-08-24 增补,旧 V3 R8 波 C)
 
 - Timeline 条目改由 gpui `list()`(变高行、`ListAlignment::Bottom`)承载,替换全量 eager 渲染;可视区外条目不物化,滚动性能不再随会话长度退化。
 - 视觉与交互不变:条目样式、间距、审批卡位置(滚动内容末尾)与 §8.3 跟随语义保持——贴底时新内容自动跟随,用户上滚脱钩并浮出回底控件,回底重挂;长会话下唯一可感知差异是滚动流畅性。
 - 条目内交互(「···」菜单、审批按钮)与焦点行为不回归:菜单仍为 §8.2 浮层,审批按钮保留 tab stop 与 tooltip。
 - 长标题截断:TaskRail 的 Task 标题与项目头名称单行省略号截断(不换行、不撑高行),截断只发生在侧栏宽度不足时;主区 Timeline / Composer 不渲染标题,不受影响。
 
-### 8.5 Changes / Resources 面板与 `@` 引用(2026-08-24 增补,R8 波 D)
+### 8.5 Changes / Resources 面板与 `@` 引用(2026-08-24 增补,旧 V3 R8 波 D)
 
-- **Inspector 顶层 tab strip**:Changes / Terminal / Resources 三个固定文本页签(§5 的 Add tool 动态注册管理本波不实现,Resources 先以固定页签呈现);当前页 raised、其余 ghost,hover/active 按 §8.1;切页签不改 active session,各页签独立保留滚动与展开状态;cmd-i 开合 Inspector 的既有行为不变。
+- **Inspector 顶层 tab strip**:Changes / Terminal / Resources 三个固定文本页签(§5 的 Add tool 动态注册管理本波不实现,Resources 先以固定页签呈现);当前页 raised、其余 ghost,hover/active 按 §8.1;切页签不改 active session,各页签独立保留滚动与展开状态;cmd-i 开合 Inspector 的既有行为不变。固定 Resources 页签是过渡实现记录，不等于定稿图「+」(Add tool) 入口已达成：Add tool 只在 Host 提供 Inspector surface 注册 capability 后以 capability-driven 形态出现，此前 F-10 保持未通过，不得以 Resources 固定页签顶替验收（UI_Review D-02）。
 - **Changes 二级页签**:Files / Summary 为 Changes 内容区内的二级文本页签(字号 11),与顶层层次不混用(§5 既有红线)。
 - **Files 页**:逐文件一行(路径单行 truncate、status、`+added / −removed`),点击行选中后经 diff_get 拉取该文件 hunks;全部数据来自 Host 响应,无会话或无 diff 时空态文案,不画演示数。
-- **DiffView**:hunk 头(`@@` 行)surface.raised 底 + text.secondary;行级语义着色——新增行 semantic.success 系、删除行 semantic.danger 系、上下文行 text.primary;等宽字体为 DiffView 显式指定(`font::MONO` = Menlo;Terminal 页输出仍走 GPUI 默认字体,二者并非同款);长行不换行,容器横向滚动(全仓首个 `overflow_x_scroll` 用例,横滚 extent 行为列入波 E K-03 验证清单);binary / 不支持状态按响应字段如实标注,不尝试渲染。
+- **DiffView**:hunk 头(`@@` 行)surface.raised 底 + text.secondary;行级语义着色——新增行 semantic.success 系、删除行 semantic.danger 系、上下文行 text.primary;等宽字体为 DiffView 显式指定(`font::MONO` = Menlo;Terminal 页输出仍走 GPUI 默认字体,二者并非同款);长行不换行,容器横向滚动(全仓首个 `overflow_x_scroll` 用例,横滚 extent 行为列入新 R6/R8 验证矩阵);binary / 不支持状态按响应字段如实标注,不尝试渲染。
 - **Summary 页**:会话 diff 聚合(文件数、总 `+A / −D`、按 status 分组计数)与响应携带的 git 信息(branch、dirty 文件数);字段缺失显示 unknown,不伪造。
-- **ActivityPopover**:Inspector 折叠时由 StatusBar 既有 Inspector 触发器弹出(§8.2 浮层形态:deferred(anchored())、Escape/外点关闭、occlude 滚轮无穿透),宽约 320px;首行 Changes 摘要(N files · +A/−D),点击展开 Inspector 并定位 Changes 页;Agent 状态分区属 S11 面,本波隐藏不画假入口;摘要未拉取或来源不可用时显示 unavailable,不显示 0。
+- **ActivityPopover**:Inspector 折叠时由 Workspace Header 右上 Activity 触发器向下弹出(§8.2 浮层形态:deferred(anchored())、Escape/外点关闭、occlude 滚轮无穿透),宽约 320px 且不覆盖 Composer;首行 Changes 摘要(N files · +A/−D),点击展开 Inspector 并定位 Changes 页;Agent 状态仅在 Host capability 存在时显示;摘要未拉取或来源不可用时显示 unavailable,不显示 0。StatusBar 底部触发是历史实现，不是定稿目标。
 - **Resources 页**:MCP server 只读列表(name、transport、state、tools 数、last_error 诚实显示);空列表空态文案;「已加载规则」分区无 Host 出口,本波不画。
 - **`@` 引用**:composer 输入 `@token` 不弹候选浮层(补全留候选);发送后由 Host 展开为独立 Text part(`[attached file: path (marker)]` + 正文),Timeline 用户消息按 parts 顺序拼接渲染(与 CLI 历史语义一致),附件正文随消息展示、不另起条目、不做折叠。
 
-### 8.6 主题残余 token 补齐(2026-08-25 增补,R8 整阶段审计)
+### 8.6 主题残余 token 补齐(2026-08-25 增补,旧 V3 R8 整阶段审计)
 
-- **text.placeholder**:composer 占位文字色,白色 30% 透明(`Rgba { r:1, g:1, b:1, a:0.3 }`,与既有 `hsla(0,0,1,0.3)` 字面量逐值相等);波 A 扫描口径(`rgb(/rgba(/0x`)漏 `hsla(` 形态,审计补入 token,消费处转 `Hsla`,视觉零变化。
+- **text.placeholder**：当前生产实现仍为白色 30% 透明（`Rgba { r:1, g:1, b:1, a:0.3 }`，与既有 `hsla(0,0,1,0.3)` 字面量逐值相等）；这是迁移审计的历史现状，不再是 R2 目标。R2 按 §2.1 改为不透明 `#7f7f7f` 并跑真实组合色对比度门禁。
 - **metrics::SUMMARY_LABEL_WIDTH**:Changes · Summary 行标签列宽 `88px`,changes.rs 字面量回收入 metrics;同批 `metrics::ZERO` 用于 dropdown 锚点偏移与行高保护性比较。均为行为不变的字面量归位,视觉零变化。

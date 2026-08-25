@@ -619,3 +619,9 @@ R8 K-03 签字与 R9 开启前,把常设文档从「导览地图 + 分散总结�
 | 21 份 `MODULE.md` + `docs/code-map/`(总索引+四热点) | 由 `docs/spec/crates/` 21 篇包级 Spec(八节模板,含 API 面/行为/契约/测试资产)与 `docs/spec/flows.md`(四条跨包链路)取代 |
 
 终态文档集:README(入口)· AGENTS(工程约定)· ROADMAP(任务事实源+任务约定)· plan/(仅进行中任务书)· docs/{architecture,design,gui-design,references,history}.md · docs/adr/ · docs/spec/(产品篇+crates/+flows)· design/(GUI 视觉基准)。全仓 50 份 markdown 相对链接校验通过;五份 ADR 的死链已改指存档位置(决策内容未动)。
+
+---
+
+## 附：UI 优化路线重排（2026-08-25）
+
+经用户确认，旧 V3 阶段编号停止作为当前任务指针，既有功能与结构任务视为历史完成面；`plan/R8-gui-components.md` 与 `plan/R9-consistency-closeout.md` 退出活动任务目录。旧任务书中仍有价值但尚未获得新证据的 UI 缺口，全部并入新 R1–R8 的视觉合同、组件实现与全功能模拟操作门禁；非 UI 剩余项重新编排为 R9 一致性/代码债务、R10 关键回归/真实环境，发布准备仅在用户另行授权后进入 R11。当前事实源以 [ROADMAP](../ROADMAP.md) 与 [plan](../plan/) 为准，本节只记录编号迁移，不把历史“待签字/待验收”表述改写为已验证。

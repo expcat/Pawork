@@ -1,0 +1,726 @@
+{
+  "state": "state-a",
+  "image": "reference.png",
+  "masks": [
+    {
+      "id": "rail-task-title-1",
+      "x": 34,
+      "y": 284,
+      "w": 172,
+      "h": 22,
+      "covers": "task-title",
+      "reason": "演示会话标题为动态值；保留行位、基线与状态点"
+    },
+    {
+      "id": "rail-task-title-2",
+      "x": 34,
+      "y": 381,
+      "w": 172,
+      "h": 24,
+      "covers": "task-title",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-task-title-3",
+      "x": 34,
+      "y": 425,
+      "w": 172,
+      "h": 24,
+      "covers": "task-title",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-task-title-4",
+      "x": 34,
+      "y": 523,
+      "w": 172,
+      "h": 24,
+      "covers": "task-title",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-task-title-5",
+      "x": 34,
+      "y": 672,
+      "w": 172,
+      "h": 24,
+      "covers": "task-title",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-task-title-6",
+      "x": 34,
+      "y": 768,
+      "w": 172,
+      "h": 24,
+      "covers": "task-title",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-task-time-1",
+      "x": 208,
+      "y": 284,
+      "w": 68,
+      "h": 22,
+      "covers": "time",
+      "reason": "最近活动时间为动态值；右对齐槽位保留"
+    },
+    {
+      "id": "rail-task-time-2",
+      "x": 208,
+      "y": 381,
+      "w": 68,
+      "h": 24,
+      "covers": "time",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-task-time-3",
+      "x": 208,
+      "y": 425,
+      "w": 68,
+      "h": 24,
+      "covers": "time",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-task-time-4",
+      "x": 208,
+      "y": 523,
+      "w": 68,
+      "h": 24,
+      "covers": "time",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-task-time-5",
+      "x": 208,
+      "y": 672,
+      "w": 68,
+      "h": 24,
+      "covers": "time",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-task-time-6",
+      "x": 208,
+      "y": 768,
+      "w": 68,
+      "h": 24,
+      "covers": "time",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-project-name-1",
+      "x": 21,
+      "y": 242,
+      "w": 85,
+      "h": 24,
+      "covers": "workspace-name",
+      "reason": "项目名为演示数据；行位与 + 角标保留"
+    },
+    {
+      "id": "rail-project-name-2",
+      "x": 21,
+      "y": 338,
+      "w": 85,
+      "h": 28,
+      "covers": "workspace-name",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-project-name-3",
+      "x": 21,
+      "y": 477,
+      "w": 85,
+      "h": 28,
+      "covers": "workspace-name",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-project-name-4",
+      "x": 21,
+      "y": 626,
+      "w": 85,
+      "h": 28,
+      "covers": "workspace-name",
+      "reason": "同上"
+    },
+    {
+      "id": "rail-project-name-5",
+      "x": 21,
+      "y": 726,
+      "w": 85,
+      "h": 28,
+      "covers": "workspace-name",
+      "reason": "同上"
+    },
+    {
+      "id": "hdr-task-title",
+      "x": 324,
+      "y": 50,
+      "w": 244,
+      "h": 30,
+      "covers": "task-title",
+      "reason": "Header 任务标题为动态值"
+    },
+    {
+      "id": "hdr-branch-name",
+      "x": 616,
+      "y": 55,
+      "w": 40,
+      "h": 22,
+      "covers": "branch-name",
+      "reason": "git branch 为动态值；图标与 Completed 状态保留"
+    },
+    {
+      "id": "tl-user-time",
+      "x": 382,
+      "y": 127,
+      "w": 70,
+      "h": 24,
+      "covers": "time",
+      "reason": "条目时间戳为动态值"
+    },
+    {
+      "id": "tl-agent-label",
+      "x": 325,
+      "y": 227,
+      "w": 60,
+      "h": 24,
+      "covers": "agent-name",
+      "reason": "Agent 名称为动态值；You 角色标签不遮"
+    },
+    {
+      "id": "tl-agent-time",
+      "x": 410,
+      "y": 227,
+      "w": 44,
+      "h": 24,
+      "covers": "time",
+      "reason": "条目时间戳为动态值"
+    },
+    {
+      "id": "tl-user-message-line",
+      "x": 323,
+      "y": 164,
+      "w": 515,
+      "h": 19,
+      "covers": "message-text",
+      "reason": "用户消息正文为动态内容；紧贴单行 glyph，保留上下行距与容器"
+    },
+    {
+      "id": "tl-assistant-line-1",
+      "x": 323,
+      "y": 268,
+      "w": 545,
+      "h": 18,
+      "covers": "message-text",
+      "reason": "助手正文动态值；逐行紧遮，保留段落间距"
+    },
+    {
+      "id": "tl-assistant-line-2",
+      "x": 323,
+      "y": 311,
+      "w": 140,
+      "h": 17,
+      "covers": "message-text",
+      "reason": "助手正文动态值；逐行紧遮，保留段落间距"
+    },
+    {
+      "id": "tl-assistant-list-1a",
+      "x": 356,
+      "y": 340,
+      "w": 545,
+      "h": 20,
+      "covers": "message-text",
+      "reason": "列表文字动态值；保留 bullet、换行位置与行距"
+    },
+    {
+      "id": "tl-assistant-list-1b",
+      "x": 356,
+      "y": 366,
+      "w": 130,
+      "h": 17,
+      "covers": "message-text",
+      "reason": "列表续行动态值；保留缩进与行距"
+    },
+    {
+      "id": "tl-assistant-list-2a",
+      "x": 356,
+      "y": 395,
+      "w": 505,
+      "h": 21,
+      "covers": "message-text",
+      "reason": "列表文字动态值；保留 bullet、换行位置与行距"
+    },
+    {
+      "id": "tl-assistant-list-2b",
+      "x": 356,
+      "y": 422,
+      "w": 205,
+      "h": 17,
+      "covers": "message-text",
+      "reason": "列表续行动态值；保留缩进与行距"
+    },
+    {
+      "id": "tl-assistant-list-3",
+      "x": 356,
+      "y": 454,
+      "w": 375,
+      "h": 19,
+      "covers": "message-text",
+      "reason": "列表文字动态值；保留 bullet 与行距"
+    },
+    {
+      "id": "tool-name-1",
+      "x": 372,
+      "y": 506,
+      "w": 196,
+      "h": 32,
+      "covers": "tool-name",
+      "reason": "工具活动名称为动态值；图标/✓/状态/耗时槽保留"
+    },
+    {
+      "id": "tool-name-2",
+      "x": 372,
+      "y": 558,
+      "w": 196,
+      "h": 32,
+      "covers": "tool-name",
+      "reason": "同上"
+    },
+    {
+      "id": "tool-name-3",
+      "x": 372,
+      "y": 611,
+      "w": 196,
+      "h": 32,
+      "covers": "tool-name",
+      "reason": "同上"
+    },
+    {
+      "id": "tool-duration-1",
+      "x": 902,
+      "y": 506,
+      "w": 36,
+      "h": 32,
+      "covers": "duration",
+      "reason": "工具耗时为动态值"
+    },
+    {
+      "id": "tool-duration-2",
+      "x": 902,
+      "y": 558,
+      "w": 36,
+      "h": 32,
+      "covers": "duration",
+      "reason": "同上"
+    },
+    {
+      "id": "tool-duration-3",
+      "x": 902,
+      "y": 611,
+      "w": 36,
+      "h": 32,
+      "covers": "duration",
+      "reason": "同上"
+    },
+    {
+      "id": "summary-body-line-1",
+      "x": 395,
+      "y": 744,
+      "w": 310,
+      "h": 17,
+      "covers": "message-text",
+      "reason": "摘要说明动态值；逐行紧遮，保留两行结构"
+    },
+    {
+      "id": "summary-body-line-2",
+      "x": 395,
+      "y": 771,
+      "w": 55,
+      "h": 15,
+      "covers": "message-text",
+      "reason": "摘要说明动态值；逐行紧遮，保留两行结构"
+    },
+    {
+      "id": "tl-footer-duration",
+      "x": 431,
+      "y": 824,
+      "w": 52,
+      "h": 25,
+      "covers": "duration",
+      "reason": "Run 时长为动态值；Run completed 标签保留"
+    },
+    {
+      "id": "tl-footer-time",
+      "x": 880,
+      "y": 824,
+      "w": 66,
+      "h": 25,
+      "covers": "time",
+      "reason": "时间戳为动态值"
+    },
+    {
+      "id": "cmp-model-name",
+      "x": 345,
+      "y": 929,
+      "w": 118,
+      "h": 26,
+      "covers": "model-name",
+      "reason": "模型/推理档位为动态值；下拉容器保留"
+    },
+    {
+      "id": "cmp-workspace-name",
+      "x": 567,
+      "y": 927,
+      "w": 112,
+      "h": 28,
+      "covers": "workspace-name",
+      "reason": "工作目录名为动态值；文件夹图标与 chevron 保留"
+    },
+    {
+      "id": "cmp-context-value",
+      "x": 723,
+      "y": 921,
+      "w": 112,
+      "h": 25,
+      "covers": "tokens",
+      "reason": "Context 数值为动态值；Context 标签与进度条几何保留"
+    },
+    {
+      "id": "insp-files-badge",
+      "x": 1056,
+      "y": 80,
+      "w": 20,
+      "h": 24,
+      "covers": "file-count",
+      "reason": "文件计数为动态值；Files 页签文字保留"
+    },
+    {
+      "id": "insp-files-count-number",
+      "x": 999,
+      "y": 135,
+      "w": 14,
+      "h": 20,
+      "covers": "file-count",
+      "reason": "文件数为动态值；files 标签词保留"
+    },
+    {
+      "id": "insp-diff-stats",
+      "x": 1057,
+      "y": 135,
+      "w": 74,
+      "h": 20,
+      "covers": "diff-stats",
+      "reason": "+added/−removed 统计为动态值"
+    },
+    {
+      "id": "insp-file-path-1",
+      "x": 1037,
+      "y": 179,
+      "w": 157,
+      "h": 24,
+      "covers": "filename",
+      "reason": "文件路径为动态值；图标/M 状态/选中面保留"
+    },
+    {
+      "id": "insp-file-path-2",
+      "x": 1037,
+      "y": 218,
+      "w": 157,
+      "h": 26,
+      "covers": "filename",
+      "reason": "同上"
+    },
+    {
+      "id": "insp-file-path-3",
+      "x": 1037,
+      "y": 260,
+      "w": 157,
+      "h": 27,
+      "covers": "filename",
+      "reason": "同上"
+    },
+    {
+      "id": "insp-file-path-4",
+      "x": 1037,
+      "y": 303,
+      "w": 157,
+      "h": 27,
+      "covers": "filename",
+      "reason": "同上"
+    },
+    {
+      "id": "insp-diff-filename",
+      "x": 1010,
+      "y": 360,
+      "w": 140,
+      "h": 26,
+      "covers": "filename",
+      "reason": "diff 文件名为动态值"
+    },
+    {
+      "id": "insp-diff-hunk-text",
+      "x": 1058,
+      "y": 401,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "hunk 范围与标题为演示值；保留 @@ 前缀、gutter 与行距"
+    },
+    {
+      "id": "insp-diff-context-42",
+      "x": 1043,
+      "y": 428,
+      "w": 335,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；逐行紧遮，保留 gutter、行距与行底"
+    },
+    {
+      "id": "insp-diff-context-43",
+      "x": 1043,
+      "y": 451,
+      "w": 335,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；逐行紧遮，保留 gutter、行距与行底"
+    },
+    {
+      "id": "insp-diff-delete-44",
+      "x": 1060,
+      "y": 472,
+      "w": 330,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-delete-45",
+      "x": 1060,
+      "y": 493,
+      "w": 330,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-delete-46",
+      "x": 1060,
+      "y": 514,
+      "w": 330,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-47",
+      "x": 1060,
+      "y": 535,
+      "w": 330,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-add-48",
+      "x": 1060,
+      "y": 556,
+      "w": 330,
+      "h": 15,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-add-49",
+      "x": 1060,
+      "y": 574,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-add-50",
+      "x": 1060,
+      "y": 595,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-heading",
+      "x": 1060,
+      "y": 622,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 标题演示值；保留 ## 前缀、gutter 与行距"
+    },
+    {
+      "id": "insp-diff-delete-52",
+      "x": 1060,
+      "y": 649,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-52",
+      "x": 1060,
+      "y": 669,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-delete-53",
+      "x": 1060,
+      "y": 689,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-54",
+      "x": 1060,
+      "y": 709,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-delete-55",
+      "x": 1060,
+      "y": 730,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-56",
+      "x": 1060,
+      "y": 750,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-delete-57",
+      "x": 1060,
+      "y": 769,
+      "w": 330,
+      "h": 18,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 − 前缀、gutter、行距与 danger 行底"
+    },
+    {
+      "id": "insp-diff-add-58",
+      "x": 1060,
+      "y": 790,
+      "w": 330,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；保留 + 前缀、gutter、行距与 success 行底"
+    },
+    {
+      "id": "insp-diff-context-61",
+      "x": 1043,
+      "y": 838,
+      "w": 345,
+      "h": 17,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；逐行紧遮，保留 gutter、行距与行底"
+    },
+    {
+      "id": "insp-diff-context-62",
+      "x": 1043,
+      "y": 861,
+      "w": 345,
+      "h": 14,
+      "covers": "diff-text",
+      "reason": "Diff 演示文本；逐行紧遮，保留 gutter、行距与行底"
+    },
+    {
+      "id": "sb-task-tokens",
+      "x": 836,
+      "y": 998,
+      "w": 50,
+      "h": 22,
+      "covers": "tokens",
+      "reason": "token 数为动态值；Task/tokens 标签保留"
+    },
+    {
+      "id": "sb-quota-percent",
+      "x": 1049,
+      "y": 998,
+      "w": 38,
+      "h": 22,
+      "covers": "quota",
+      "reason": "quota 百分比为动态值"
+    },
+    {
+      "id": "sb-tokens-per-sec",
+      "x": 1155,
+      "y": 998,
+      "w": 40,
+      "h": 22,
+      "covers": "tokens",
+      "reason": "tok/s 数值为动态值；avg 标记保留"
+    },
+    {
+      "id": "sb-run-duration",
+      "x": 1336,
+      "y": 998,
+      "w": 62,
+      "h": 22,
+      "covers": "duration",
+      "reason": "Run 时长为动态值；Run 标签保留"
+    },
+    {
+      "id": "frame-top",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 2,
+      "covers": "reference-artifact",
+      "reason": "ImageGen window-edge bright line; real GPUI content capture has no frame"
+    },
+    {
+      "id": "frame-bottom",
+      "x": 0,
+      "y": 1022,
+      "w": 1440,
+      "h": 2,
+      "covers": "reference-artifact",
+      "reason": "ImageGen window-edge bright line; real GPUI content capture has no frame"
+    },
+    {
+      "id": "frame-left",
+      "x": 0,
+      "y": 0,
+      "w": 2,
+      "h": 1024,
+      "covers": "reference-artifact",
+      "reason": "ImageGen window-edge bright line; real GPUI content capture has no frame"
+    },
+    {
+      "id": "frame-right",
+      "x": 1438,
+      "y": 0,
+      "w": 2,
+      "h": 1024,
+      "covers": "reference-artifact",
+      "reason": "ImageGen window-edge bright line; real GPUI content capture has no frame"
+    }
+  ]
+}

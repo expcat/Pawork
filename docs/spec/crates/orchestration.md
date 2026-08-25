@@ -148,4 +148,4 @@
 - `retry_task` 只复位任务图状态，不会复活 Failed worker。
 - `WorktreeGuard` 未显式 release 而 Drop 时 worktree 保持存在（仅告警）——长驻进程需保证终态路径都走显式释放（complete / fail / cancel_tree 已覆盖）。
 - 每个 worker 的 `CancellationToken` 由 spawn 注册，但令牌与实际执行体的绑定由宿主完成；本包只保证取消信号可查询、可触发。
-- 相关文档：[architecture](../../architecture.md) · [design](../../design.md) §2 · [flows](../flows.md) · [Spec 总览](../README.md) · [ROADMAP](../../../ROADMAP.md) §3.3；相邻包：[domain.md](domain.md) · [control-plane.md](control-plane.md) · [git.md](git.md) · [app.md](app.md)。
+- 相关文档：[architecture](../../architecture.md) · [design](../../design.md) §2 · [flows](../flows.md) · [Spec 总览](../README.md) · [ROADMAP](../../../ROADMAP.md) §5；相邻包：[domain.md](domain.md) · [control-plane.md](control-plane.md) · [git.md](git.md) · [app.md](app.md)。

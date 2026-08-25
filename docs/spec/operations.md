@@ -42,7 +42,7 @@
 Builtin < Global < Profile < Workspace < Session < Run
 ```
 
-- 工作区配置位于仓库根 `.pawork/` 体系；R9 K-01 仍要复核从 git 子目录/非 git 目录发现根的闭环。
+- 工作区配置位于仓库根 `.pawork/` 体系；R10 K-01 仍要复核从 git 子目录/非 git 目录发现根的闭环。
 - CLI provider/model/instance/approval 覆盖属于运行入口，不应写回包含 Secret 的配置。
 - `ProviderConfig` 无 `api_key`；凭证通过 `pawork auth` 或受控 env fallback 提供。
 - 配置/会话导入先 dry-run/预览；扫描不得执行 hook、启动 MCP 或联网。
@@ -94,10 +94,9 @@ Builtin < Global < Profile < Workspace < Session < Run
 - `service` 默认 dry-run；只有用户明确选择并传入 apply 语义时才修改系统服务。
 - Windows SCM 实机验收、Linux/Windows Sandbox/服务矩阵未构成当前发布证明。
 - License 仍待定；crates.io 占名、安装器、自更新、签名、公证、SBOM、供应链与发布回滚均未立项。
-- 当前 R0–R9 明确不运行 Workspace Full Gate。正式发布必须另立任务，重新定义而不是沿用历史默认门禁。
+- 当前 R1–R10 明确不运行发布级 Workspace Full Gate。正式发布必须经用户授权 R11 并重新定义，不能沿用历史默认门禁。
 - 远程 GUI、LAN/Web、Cloud 和外部账户池网关未交付；不要把本机 socket 服务暴露为远程控制面。
 
 ## 8. 运维完成条件
 
 本机开发可用的完成条件是：凭证可解析、模型可列出、doctor 正常、目标模式可启动、拒绝/降级可见、数据可恢复。正式运维完成条件尚未定义；只有发布任务通过 License、安装/升级、备份恢复、三平台和供应链门禁后，才能把本文件升级为发布 runbook。
-

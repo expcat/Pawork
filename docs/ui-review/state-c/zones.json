@@ -1,0 +1,17 @@
+{
+  "state": "state-c",
+  "threshold": 0.99,
+  "max_mask_fraction": 0.35,
+  "note": "Reference rects use measurements.md coordinates. R1-D adds a current rect to each zone. Header y0-104 follows State A because this image has no hard divider. Split left/right zones keep anchored controls observable.",
+  "zones": [
+    { "id": "taskrail",        "x": 0,    "y": 0,   "w": 285,  "h": 1024, "anchor": "top-left",  "min_coverage": 0.98 },
+    { "id": "header-left",     "x": 285,  "y": 0,   "w": 400,  "h": 104,  "anchor": "top-left",  "min_coverage": 0.95 },
+    { "id": "header-right",    "x": 685,  "y": 0,   "w": 286,  "h": 104,  "anchor": "top-right", "min_coverage": 0.95 },
+    { "id": "timeline",        "x": 285,  "y": 104, "w": 686,  "h": 759,  "anchor": "top-left",  "min_coverage": 0.95 },
+    { "id": "composer-left",   "x": 285,  "y": 863, "w": 400,  "h": 115,  "anchor": "top-left",  "min_coverage": 0.80 },
+    { "id": "composer-right",  "x": 700,  "y": 863, "w": 271,  "h": 115,  "anchor": "top-right", "min_coverage": 0.80 },
+    { "id": "inspector-body",  "x": 973,  "y": 0,   "w": 467,  "h": 978,  "anchor": "top-left",  "min_coverage": 0.94 },
+    { "id": "inspector-right", "x": 1320, "y": 0,   "w": 120,  "h": 120,  "anchor": "top-right", "min_coverage": 0.95 },
+    { "id": "statusbar",       "x": 285,  "y": 978, "w": 1155, "h": 46,   "anchor": "top-right", "min_coverage": 0.50 }
+  ]
+}

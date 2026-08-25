@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-08-25。实现状态：R8 自动化、真窗口取证和审计部分已收口；[K-03 十一项人工走查](../gui-design.md#a2-人工走查项用户签字)尚未签字，因此 Desktop 不得标为最终验收完成。
+> 基线日期：2026-08-25。生产连接与主要组件链路已经存在，但当前真实窗口未达到 design 的 99% 视觉目标，完整 AX/交互与模拟操作矩阵也未建立；验收以 [新 R1–R8](../../ROADMAP.md#2-顺序排期) 为准，Desktop 不得标为最终完成。
 
 ## 1. 产品定位
 
@@ -22,9 +22,9 @@ flowchart LR
 
 | 区域 | 必须呈现 | 当前限制 |
 | --- | --- | --- |
-| TaskRail | 会话/任务条目、新任务、选中态、长标题截断 | 固定 288px；1080–1279 响应式收窄已拍板转候选。 |
-| Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；条目滚出视区时已打开菜单会随条目卸载，属已接受差异。 |
-| Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。IME/粘贴仍待人工验收。 |
+| TaskRail | 会话/任务条目、新任务、选中态、长标题截断 | 当前固定 288px；1080–1279 收窄与 Inspector 折叠恢复为 R7/R8 必过门禁。 |
+| Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件须在 R4/R7/R8 重验。 |
+| Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。IME、粘贴、草稿与所有输入态纳入 R5/R8。 |
 | Inspector / Changes | Files、Summary、DiffView、ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、流式输出 | 创建需 Policy；安全响应字段尚无完整说明渲染。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
@@ -52,16 +52,16 @@ flowchart LR
 
 | ID | 要求 | 状态 |
 | --- | --- | --- |
-| DESK-01 | 用户能新建/切换会话，选中态与标题在长列表中可辨认。 | 已实现；人工视觉待签。 |
+| DESK-01 | 用户能新建/切换会话，选中态与标题在长列表中可辨认。 | 生产入口已实现；视觉/状态/模拟操作按 R3/R8 重验。 |
 | DESK-02 | Timeline 能按确定顺序投影历史和 live 事件，去重且不跨 Run 串线。 | 已实现；共享 reducer/golden。 |
-| DESK-03 | 流式输出时默认跟随底部；用户上滚后脱钩，显式回底后重挂。 | 已实现；渲染行为待人工签字。 |
-| DESK-04 | 工具请求以审批卡呈现 ApproveOnce/ApproveForRun/Deny；取消动作可见。 | 已实现；审批恢复人工项仍在 R9/R4 登记。 |
+| DESK-03 | 流式输出时默认跟随底部；用户上滚后脱钩，显式回底后重挂。 | 生产逻辑已实现；R4/R8 用真输入、千级 fixture 与性能证据重验。 |
+| DESK-04 | 工具请求以审批卡呈现 ApproveOnce/ApproveForRun/Deny；取消动作可见。 | 生产逻辑已实现；R4/R8 覆盖审批全状态、零副作用拒绝与重连恢复。 |
 | DESK-05 | Fork 只在 reducer 标记的闭合 Run 边界开放，动作入口再次校验。 | 已实现。 |
-| DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 已实现；菜单三例待人工签字。 |
-| DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | 待人工验收。 |
-| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 已实现；横滚与真窗口状态待人工签字。 |
-| DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 已实现；恢复人工签字待完成。 |
-| DESK-10 | 1080×720 下 Composer、状态栏和 Inspector 触发器仍可用。 | 自动截图只覆盖部分状态；Connected 态人工验收待完成。 |
+| DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 生产逻辑已实现；R7/R8 覆盖全部菜单、锚点、键盘和滚轮边界。 |
+| DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | R5/R8 待真实 IME、paste 与系统级输入验收。 |
+| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 生产入口已实现；R6/R8 覆盖真实 diff、横滚、PTY、Resources 与恢复。 |
+| DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 生产逻辑已实现；R8 待真 Host/Desktop 生命周期验收。 |
+| DESK-10 | 1080×720 下 Composer、状态栏和 Inspector 触发器仍可用。 | 当前未通过完整门禁；R7/R8 必须覆盖 Connected 与边界状态。 |
 
 ## 5. 键盘、IME 与可访问性
 
@@ -73,7 +73,7 @@ flowchart LR
 - 菜单支持键盘到达、选择与关闭；长标题以 truncate + 可辨识上下文呈现；
 - 长会话、长 diff 和窄窗不让主要操作不可达。
 
-已知缺口：菜单内 ↑/↓ 导航，以及 grouping/scope 触发器 tab stop 尚未实现。K-03 只确认缺口范围无新增，不得把该项勾选成“完全符合”。
+已知缺口：菜单内 ↑/↓ 导航、grouping/scope 触发器 tab stop，以及当前锁定 GPUI 版本的完整 AX tree 能力尚未闭环。它们分别是 R7 与 R1 的硬门禁，不得降级为“已知差异”后签字。
 
 ## 6. 只读与写入边界
 
@@ -82,17 +82,15 @@ flowchart LR
 - `@` 引用由 host `expand_at_refs` 解析并作为独立 Text part；Desktop 不自行读取任意文件。候选浮层需新增受控 file-index query。
 - Terminal 只发协议命令；Desktop 不持有本机 PTY 服务。Policy 返回的 sandboxed/policy/approval_mode/note 应在未来渲染面任务中明确呈现。
 
-## 7. 人工验收与已接受偏差
+## 7. 当前验收合同
 
-最终签字唯一清单在 [gui-design.md 附录 A.2](../gui-design.md#a2-人工走查项用户签字)，覆盖 IME、多行粘贴、1440×1024 对照、纯键盘、菜单、Reconnect、Connected 1080×720、虚拟化、hover/active、DiffView 横滚和千级事件性能。
+完整清单以 [R7–R8 任务书](../../plan/R7-R8-ui-quality-gates.md) 为唯一执行入口，覆盖 IME、多行粘贴、三张 `1440×1024` 定稿图、纯键盘、AX/VoiceOver、全部菜单、Reconnect、`1080×720`、虚拟化、DiffView 横滚、Terminal 与千级事件性能。
 
-已接受、无需重复争议的偏差：
+边界口径：
 
-- `ui/mod.rs` 1031 行作为 R8 终态口径；
-- TaskRail 保持固定 288px，窄窗响应式转候选；
-- 虚拟化条目卸载时其菜单随之消失、状态暂留；
-- Desktop Changes 只读，Git 写操作另立 ADR；
-- `@` 候选浮层和 Resources 已加载规则分区等待 host 出口。
+- `ui/mod.rs` 行数属于工程结构，不是视觉放行条件；
+- 固定 288px 窄窗、菜单锚点卸载和缺少完整 AX 语义均不再作为可签字偏差；
+- Desktop Changes 只读是当前协议边界，Git 写操作仍需 ADR，不得用假按钮补图；
+- `@` 候选浮层和 Resources 规则分区只有 Host capability 存在时才可展示。
 
-验收证据必须记录实际窗口尺寸、连接态、实例、步骤、结果和截图路径；未由用户签字前，本文件状态保持“待人工验收”。
-
+证据必须记录实际窗口尺寸、连接态、fixture/seed、操作 trace、AX tree、Host/event log、reference/current/overlay/diff 与指标。R8 自动门禁全部通过后仍需用户视觉签字。

@@ -1,0 +1,59 @@
+{
+  "state-a": {
+    "source": "design/desktop-shell-timeline-v3.png",
+    "source_size": [
+      1486,
+      1059
+    ],
+    "source_mode": "RGB",
+    "source_profile": "untagged",
+    "target_size": [
+      1440,
+      1024
+    ],
+    "scale_x": 0.969044,
+    "scale_y": 0.96695,
+    "crop": "none (full canvas resize)",
+    "color": "untagged RGB treated as sRGB; no profile conversion",
+    "titlebar": "inline traffic-light strip kept inside content viewport",
+    "output": "docs/ui-review/state-a/reference.png"
+  },
+  "state-b": {
+    "source": "design/desktop-shell-timeline-collapsed-v3.png",
+    "source_size": [
+      1487,
+      1058
+    ],
+    "source_mode": "RGB",
+    "source_profile": "untagged",
+    "target_size": [
+      1440,
+      1024
+    ],
+    "scale_x": 0.968393,
+    "scale_y": 0.967864,
+    "crop": "none (full canvas resize)",
+    "color": "untagged RGB treated as sRGB; no profile conversion",
+    "titlebar": "inline traffic-light strip kept inside content viewport",
+    "output": "docs/ui-review/state-b/reference.png"
+  },
+  "state-c": {
+    "source": "design/desktop-shell-projects-v3.png",
+    "source_size": [
+      1487,
+      1058
+    ],
+    "source_mode": "RGB",
+    "source_profile": "untagged",
+    "target_size": [
+      1440,
+      1024
+    ],
+    "scale_x": 0.968393,
+    "scale_y": 0.967864,
+    "crop": "none (full canvas resize)",
+    "color": "untagged RGB treated as sRGB; no profile conversion",
+    "titlebar": "inline traffic-light strip kept inside content viewport",
+    "output": "docs/ui-review/state-c/reference.png"
+  }
+}

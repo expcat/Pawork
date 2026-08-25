@@ -112,4 +112,4 @@
 - `TaskSnapshot.output_seq` / `output_bytes` 在当前纯状态机档恒为 0（无输出缓冲；输出通道由执行 adapter 承载）。
 - Plan 的 `apply` 对未知 `step_id` 的 `StepUpdated` 静默忽略（事件是已校验事实，防御性折叠）；Task 的 `apply` 则显式报错——两域容错策略不同，重放时注意区分。
 - `TaskManager` 的广播为 best-effort（无订阅者时 send 失败被忽略）；一致性事实源是事件日志而非广播流。
-- 相关文档：[architecture](../../architecture.md) · [design](../../design.md) §2 · [flows](../flows.md) · [Spec 总览](../README.md) · [ROADMAP](../../../ROADMAP.md) §3.3（goal / automation / monitor 复活条件）；相邻包：[domain.md](domain.md) · [app.md](app.md)。
+- 相关文档：[architecture](../../architecture.md) · [design](../../design.md) §2 · [flows](../flows.md) · [Spec 总览](../README.md) · [ROADMAP](../../../ROADMAP.md) §5（goal / automation / monitor 复活条件）；相邻包：[domain.md](domain.md) · [app.md](app.md)。

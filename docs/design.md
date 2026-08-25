@@ -2,7 +2,7 @@
 
 > 本文档是**功能设计事实源**：目标与原则、各功能域设计及其到参照项目的映射、已确认扩展功能族（G1–G7）与候选功能池、发布策略。包布局、依赖方向、冻结契约与架构红线见 [architecture.md](architecture.md)；包内实现细节见 [包级 Spec](spec/README.md)；Desktop GUI 设计见 [gui-design.md](gui-design.md)；参照项目手册与调研附录见 [references.md](references.md)；V1/V2/V3 历史沿革见 [history.md](history.md)。
 >
-> **状态（2026-08-25）**：V2（S0–S13）已收官，V3 重构线 R0–R7 已收口、R8 待 K-03 人工签字、R9 进行中（见 [../ROADMAP.md](../ROADMAP.md)）。§2 的功能映射按 V2 阶段（S0–S13）组织，是「功能 ↔ 参照项目」的持续事实源，不代表现行包布局（现行布局见 [architecture.md](architecture.md) §2）。
+> **状态（2026-08-25）**：既有功能与结构阶段已归档；当前主线为新 R1–R8 Desktop UI 99% 还原与全功能模拟操作验收，剩余非 UI 工作顺延 R9–R11（见 [../ROADMAP.md](../ROADMAP.md)）。§2 的功能映射按 V2 阶段（S0–S13）组织，是「功能 ↔ 参照项目」的持续事实源，不代表现行包布局（现行布局见 [architecture.md](architecture.md) §2）。
 
 ---
 

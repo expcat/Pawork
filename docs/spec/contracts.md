@@ -77,7 +77,7 @@
 5. 运行该契约的定向测试；真实客户端/旧库升级/人工 UI 证据按风险补齐。
 6. 同批更新 `docs/architecture.md`、本文件、对应包级 Spec（`docs/spec/crates/`）、ROADMAP/任务书和生成 schema。
 
-R9 当前不授权新的 schema/wire 演进。任何此类发现应登记后另立任务，不得借“文档收口”改变契约。
+当前 R1–R10 不授权借 UI polish 或收口任务静默演进 schema/wire。若 design 的真实交互需要新 Host capability，必须先登记为硬前置，按本节流程与 ADR 闸门单独处理。
 
 ## 6. headless `--json` 与正式 headless 协议映射
 

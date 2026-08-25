@@ -6,7 +6,7 @@
 
 - 提供五类能力：仓库检测与 HEAD 元信息（`GitService`）、工作区状态（`StatusService`）、暂存操作（`StageService`）、worktree 管理（`WorktreeService`）、结构化 Diff 与 hunk/行级暂存（`DiffService` / `HunkStageService`）。
 - 唯一后端是系统 `git`：不引入 libgit2 / gitoxide；所有命令经 `GitRunner` → `pawork_exec::ProcessRuntime` 执行，统一 cwd、超时、输出上限与取消归一。
-- **不做**：commit / branch / stash / conflict / history / cache 六个零消费服务已于 R0（ADR-038 D16，2026-08-18 波 C）归档删除，git tag `v2-final` 可找回，复活条件见 [ROADMAP.md](../../../ROADMAP.md) §3.3。
+- **不做**：commit / branch / stash / conflict / history / cache 六个零消费服务已于旧 R0（ADR-038 D16，2026-08-18 波 C）归档删除，git tag `v2-final` 可找回，复活条件见 [ROADMAP.md](../../../ROADMAP.md) §5。
 - 不做持久化、不做协议、不做审批决策；`discard` 等危险操作只做风险分级（`StageRisk`），审批由上层 Policy 执行。
 
 ## 2. 模块与文件地图

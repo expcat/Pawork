@@ -141,7 +141,7 @@
 
 ## 8. 注意事项与已知限制
 
-- `snapshot-reconnect` 场景有既有偶发超时记录（见 [../../../ROADMAP.md](../../../ROADMAP.md) §4）；改 probe 相关代码先复跑该场景。
+- `snapshot-reconnect` 场景有既有偶发超时记录，现排在 [R9/R10](../../../plan/R9-R11-post-ui-closeout.md)；改 probe 相关代码先复跑该场景。
 - `spawn_e2e` 依赖已构建的 `pawork` 二进制，属可跳过 e2e，不纳入默认死表。
 - `GuiClient` 无后台读任务：事件与响应都在调用方 await 中拉取；长时间不调 `next_event` 时事件会积压在服务端 / inbox。`GuiClient` 是 `Clone`（内部 Arc 共享），可以一个克隆跑事件泵、另一个发 command。
 - headless SDK 相反有 `reader_loop` 后台任务；两个连接面的线程模型不同，集成时勿混淆。

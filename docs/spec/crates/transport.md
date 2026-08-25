@@ -91,7 +91,7 @@
 
 ## 8. 注意事项与已知限制
 
-- `Remote` 端点与 trait 存在 ≠ 远程传输已交付；复活须按当时协议版本重评（见 [../../../ROADMAP.md](../../../ROADMAP.md) §3.3）。
+- `Remote` 端点与 trait 存在 ≠ 远程传输已交付；复活须按当时协议版本重评（见 [../../../ROADMAP.md](../../../ROADMAP.md) §5）。
 - GUI 不得经 transport 直连 Provider / 数据库 / 工具，只连 CLI 暴露的 GUI Connection Protocol（架构红线，见 [../../design.md](../../design.md) §2）。
 - `memory` 通道为 mpsc 无界队列：不模拟背压与半关闭细节，仅供进程内装配测试。
 - 声明长度超限后连接被单方面标记关闭，调用方需重连而非重试同一连接。

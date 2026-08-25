@@ -37,7 +37,7 @@
 - 每个任务应在数小时内可独立完成、独立验收。
 - 写入集尽量收敛到单一包或一组紧相关文件；不同任务不修改同一文件。
 - 任何任务完成后，对应文档与 ROADMAP 状态须同步更新（回写约定见 [ROADMAP.md](ROADMAP.md) §7.5）。
-- 任务开启 / 进行 / 收尾的公共规范见 [ROADMAP.md](ROADMAP.md) §7；进行中阶段任务书见 [plan/](plan/)；阶段外任务登记见 [ROADMAP.md](ROADMAP.md) §3。
+- 任务开启 / 进行 / 收尾的公共规范见 [ROADMAP.md](ROADMAP.md) §7；进行中阶段任务书见 [plan/](plan/)；阶段外任务登记见 [ROADMAP.md](ROADMAP.md) §5。
 
 ## 5. 验证决策
 

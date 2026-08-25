@@ -1,6 +1,6 @@
 # 参照项目手册
 
-> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见本文附录 A–C（深入处以「详见附录 A §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §2，**参照项目 → 功能规划**的反向分类见本文 §6，**V3 阶段（R0–R9）参照指引**见本文 §7。多账户/配额/缓存调研已并入本文附录 A/B/C（原 docs/research/ 三文档，2026-08-25 合并，git 历史可溯全文）。文中 star 数与项目事实为 **2026-08-18** 复核快照（GitHub API 全量复核；收录标准与历次移除记录见 [附录 A](#附录-a-多账户配额缓存机制调研原-researchmulti-account-quota-referencemd) §8——最近一次为 2026-08-18 功能重叠二次清理，移除 5 项，见 §3.6 注）。**2026-08-21** 仅把 Codex 主链接改为官方仓 [openai/codex](https://github.com/openai/codex)（当日 star ≈111k）；其余行 star 仍为 08-18 快照。实现前应复核最新实态。
+> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见本文附录 A–C（深入处以「详见附录 A §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §2，**参照项目 → 功能规划**的反向分类见本文 §6，旧 V3（R0–R9）参照快照见本文 §7；当前 UI 主线的 Codex/Zed/Cursor/Claude/VS Code 与测试方法见 [UI 参照调研](../plan/UI-reference-research.md)。多账户/配额/缓存调研已并入本文附录 A/B/C。文中 star 数与项目事实为 **2026-08-18** 快照；实现前应复核最新实态。
 
 ---
 
@@ -166,7 +166,7 @@ F1–F6 与 [design.md](design.md) §3 已确认扩展功能族（G1–G7）的�
 
 ## 6. 参照项目按功能规划分类
 
-> 正向映射（功能 → 参照）以 [design.md](design.md) §2 / §3 为准；本节是**反向索引**：打开某个参照项目时，它在当前规划里参与哪些功能。标「主」= 实现时优先对照；「对照」= 取舍或形态参考；「反例」= 明确不采纳。S12 / S13 是工程审查与整改，无外部功能对标。**V3 阶段轴（R0–R9 → 参照）见 §7。**
+> 正向映射（功能 → 参照）以 [design.md](design.md) §2 / §3 为准；本节是**反向索引**。标「主」= 实现时优先对照；「对照 / 反例」= 取舍参考或明确不采纳。旧 V3 阶段轴见 §7；当前 UI 阶段轴见 [UI 参照调研](../plan/UI-reference-research.md)。
 
 ### 6.1 按规划轴
 
@@ -224,16 +224,16 @@ F1–F6 与 [design.md](design.md) §3 已确认扩展功能族（G1–G7）的�
 
 ---
 
-## 7. V3 阶段参照指引（R0–R9）
+## 7. 历史 V3 阶段参照指引（R0–R9）
 
-> 与 [../ROADMAP.md](../ROADMAP.md) 剩余任务对应，开工核对时与阶段任务书（[../plan/](../plan/)）、[design.md](design.md) §2（V2 功能 ↔ 参照映射，仍是功能面事实源）配合使用。本节为 **2026-08-18** 调研快照（GitHub API 复核 + 三路专项调研），执行各波前按 [../ROADMAP.md](../ROADMAP.md) §7.1 核查约定重验外部实态。「主参照」= 设计时优先对照；「对照 / 反例」= 取舍参考或明确不采纳。**R0–R7 已完成，对应行已从下表删除，已完成阶段的参照指引见 git 历史**；R9 以仓库内证据驱动，无外部主参照。
+> 本节是 **2026-08-18** 的旧 V3 调研快照，不再与当前 ROADMAP 阶段一一对应。当前 R1–R8 的外部行为与测试方法以 [UI 参照调研](../plan/UI-reference-research.md) 为准；以下内容只供历史选型考证。
 
 ### 7.1 阶段 → 参照映射
 
 | 阶段 | 主参照 | 对照 / 反例 | 关键参照点 |
 | --- | --- | --- | --- |
-| **R8** GUI 组件化与 Desktop 收口 | [gpui-component](https://github.com/longbridge/gpui-component) **v0.5.1 tag**（Apache-2.0；该版依赖 crates.io gpui ^0.2.2 与本仓 ADR-035 锁定一致，主干已改跟 Zed git 主干，勿参主干） | Zed [`crates/ui`](https://github.com/zed-industries/zed/tree/main/crates/ui)/`crates/theme`（**GPL-3.0：只参 API 形状不抄代码**）；Codex Desktop / OpenCode Desktop 壳形态（既有 S7 参照） | gpui-component：60+ 组件全覆盖 R8 十一组件清单、`ThemeColor` ~140 语义 token + `ActiveTheme` trait（对照 theme.rs ~20 token 的收敛目标）、`VirtualList` 变高虚拟化（对照 Timeline `list()` 改造）；Zed ui：`ButtonLike` 基座 + `ButtonCommon` trait（id/style/size/tooltip builder）、enum 型 `ContextMenu`（Header/Entry/Separator + `anchored()` + FocusHandle）——组件组织方式参照 |
-| **R9** 一致性收口 | —（内部核对） | — | 本节使用记录纳入 R9「文档三处一致」核查；参照快照过期项按 §3.6 收录标准复核 |
+| **旧 R8** GUI 组件化与 Desktop 收口 | [gpui-component](https://github.com/longbridge/gpui-component) **v0.5.1 tag**（Apache-2.0；该版依赖 crates.io gpui ^0.2.2 与本仓 ADR-035 锁定一致，主干已改跟 Zed git 主干，勿参主干） | Zed [`crates/ui`](https://github.com/zed-industries/zed/tree/main/crates/ui)/`crates/theme`（**GPL-3.0：只参 API 形状不抄代码**）；Codex Desktop / OpenCode Desktop 壳形态（既有 S7 参照） | gpui-component：60+ 组件、`ThemeColor` 语义 token、`VirtualList` 与 Zed `ButtonLike`/`ContextMenu` 只作历史组件组织参照 |
+| **旧 R9** 一致性收口 | —（内部核对） | — | 已由当前 R9/R10 任务书重新整理未完成部分 |
 
 ### 7.2 使用纪律
 

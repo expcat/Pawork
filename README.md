@@ -4,7 +4,7 @@
 
 Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心。二进制 `pawork` 是 Core 的唯一正式宿主；Desktop GUI（GPUI，`apps/desktop`）作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
 
-**当前状态（2026-08-25）**：V2 增量开发（S0–S13）已交付完整产品面（对话/持久化/工具循环/审批/沙箱/六通道 Provider/GUI/Git/MCP/headless/多 Agent）；V3 重构线（R0–R9）R0–R7 已收口，R8 仅剩 Desktop 人工签字（K-03），R9 一致性收口进行中。当前任务与剩余工作见 [ROADMAP.md](ROADMAP.md)；历史沿革（V1→V2→V3）见 [docs/history.md](docs/history.md)。V1 全量实现归档于仓库外 `../Pawork_v1/`。
+**当前状态（2026-08-25）**：既有功能与结构阶段已归档；当前唯一主线从新 R1 开始，按 v3 定稿图完成 Desktop UI 99% 视觉还原、全组件真实交互与模拟操作测试（R1–R8），其余未完成工作顺延至 R9–R11。当前指针见 [ROADMAP.md](ROADMAP.md)，阶段细节见 [plan/](plan/)，历史沿革见 [docs/history.md](docs/history.md)。V1 全量实现归档于仓库外 `../Pawork_v1/`。
 
 ## 快速开始
 
@@ -58,11 +58,11 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | 文档 | 职责 |
 | --- | --- |
 | [ROADMAP.md](ROADMAP.md) | 任务事实源：当前指针、剩余任务、未决登记、候选池、任务约定 |
-| [plan/](plan/) | 进行中阶段任务书（当前 R8 / R9；已完成阶段的任务书随收口删除，存档见 history） |
+| [plan/](plan/) | 当前 R1–R11 任务书与 Agent UI/测试方法调研；已完成任务不保留在此目录 |
 | [docs/architecture.md](docs/architecture.md) | 架构事实源：红线、包布局与依赖方向、冻结契约、S13 安全拍板、ADR 索引 |
 | [docs/design.md](docs/design.md) | 功能设计事实源：功能域 ↔ 参照项目映射、已确认扩展功能族（G1–G7）、候选功能池 |
 | [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引：产品范围/能力/契约/安全/Desktop/验证/运维 + 21 包逐包 Spec + 跨包链路 |
-| [docs/spec/crates/](docs/spec/README.md#包级-spec) | **包级 Spec**：每包一篇，读文档即可了解该包全部功能与行为（agent 辅助阅读主入口） |
+| [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | **包级 Spec**：每包一篇，读文档即可了解该包全部功能与行为（agent 辅助阅读主入口） |
 | [docs/spec/flows.md](docs/spec/flows.md) | 跨包核心链路：Agent loop / GUI 连接 / 事件持久化与重放 / 凭证与脱敏 |
 | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（配套 [design/README.md](design/README.md) 视觉基准与设计图） |
 | [docs/references.md](docs/references.md) | 参照项目手册 + 调研附录（多账户/配额/缓存） |
@@ -80,4 +80,4 @@ V1 时期文档随 V1 归档于 `../Pawork_v1/docs/`，仓库内链接以 `../Pa
 
 ## 许可证
 
-待定（见 [ROADMAP.md](ROADMAP.md) §4 未决事项）。
+待定（见 [ROADMAP.md](ROADMAP.md) §4.3 / R11 发布准备）。

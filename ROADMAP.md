@@ -1,8 +1,8 @@
 # Pawork 路线图
 
-> 本文档是 Pawork 的**任务事实源**：当前指针、剩余任务、阶段外任务、未决登记、候选池，以及任务开启/进行/收尾的工作约定。**已完成的工作不留在本文**——V2（S0–S13）与 V3（R0–R9 各已收口波次）的交付史、决策记录与整改细节见 [docs/history.md](docs/history.md)。
+> 本文档是 Pawork 的**任务事实源**：只保留当前指针、未完成阶段、开放任务、候选池与任务约定。已完成阶段、旧编号和实现过程不在本文重复，统一从 [docs/history.md](docs/history.md) 检索。
 >
-> 文档导航见 [README.md](README.md)；架构红线与冻结契约见 [docs/architecture.md](docs/architecture.md)；工程约定基线见 [AGENTS.md](AGENTS.md)。
+> 文档导航见 [README.md](README.md)；架构红线与冻结契约见 [docs/architecture.md](docs/architecture.md)；Desktop 视觉差异与 99% 门禁见 [docs/UI_Review.md](docs/UI_Review.md)；视觉事实源见 [design/README.md](design/README.md) 与 [docs/gui-design.md](docs/gui-design.md)。
 
 ---
 
@@ -10,107 +10,122 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 活动线 | V3 重构（R0–R9）收尾期：R0–R7 🟢 已收口（史见 [docs/history.md](docs/history.md)） |
-| R8（GUI 组件化） | 🔵 波 A–D ✅、波 E 自动化部分 ✅（提交 528ab3d）+ 整阶段审计修复 ✅（2026-08-25）；**仅剩 K-03 人工走查签字**（[docs/gui-design.md](docs/gui-design.md) 附录 A.2 十一项），签字后 R8 🟢 |
-| R9（一致性收口） | 🔵 波 A1 🟢（2026-08-25：P/S/R 谱系确认 + [Spec 文档集](docs/spec/README.md)建立）；**下一波 A2**（其余文档/登记/红线断言一致性核对 + 发现项修复），其后波 B/C 见 [plan/R9-consistency-closeout.md](plan/R9-consistency-closeout.md) |
-| 阻塞 | 无 |
+| 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
+| 当前阶段 | **R1 — 视觉合同、固定 fixture 与 UI 测试基座**（Wave A 视觉合同已收口，见 [任务书收口记录](plan/R1-ui-visual-contract.md)） |
+| 下一任务 | R1 Wave B（固定真实 fixture）；合同仲裁已拍板（几何=文档定稿值 + 分区锚点/最低覆盖率，`geometry-drift` 仅限纯边缘，色板=按实测与对比度重定 token，见 [design/README.md](design/README.md) §2.1） |
+| 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
+| 阻塞 | 无外部阻塞；Projects 同尺寸视觉基线已建立（docs/ui-review/state-c/）；`gpui = 0.2.2` AX/真窗口能力验证随 R1 Wave C 执行 |
 
-状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞。自动选波以本表为准，与任务书、工作区实态交叉校验；冲突时**工作区实态 > 本表 > 任务书**，更新一致后再开工。
-
----
-
-## 2. 剩余任务
-
-### 2.1 V3 收尾（进行中）
-
-| 任务 | 内容 | 事实源 |
-| --- | --- | --- |
-| R8 K-03 人工签字 | Desktop 人工走查（IME / 1440×1024 / 键盘 / 菜单 / 滚动 / DiffView 横滚等十一项，自动化取证截图已备） | [docs/gui-design.md](docs/gui-design.md) 附录 A；[plan/R8-gui-components.md](plan/R8-gui-components.md) |
-| R9 波 A2 | 其余文档/登记/红线断言一致性核对 + 发现项修复 | [plan/R9-consistency-closeout.md](plan/R9-consistency-closeout.md) |
-| R9 波 B | K-01 config 路径闭环核对；S6 OAuth 自然临期 refresh 人工验收（V2 唯一未收口项）；两 GUI 冒烟复跑（F10） | 同上 |
-| R9 波 C | 安全红线/golden/协议定向回归全量复跑；§4 挂账复查（probe flake、usage 哨兵口径、Seatbelt 探针补强、shell wrapper 收紧评估、`canonical_within` 残余等）；遗留与候选登记收口 | 同上 |
-
-### 2.2 V3 之后
-
-V3 是重构线，不新增用户可见功能。R9 收口后的下一条产品线**须先立产品目标**（候选来源：§5 候选池 + [docs/design.md](docs/design.md) §3 已确认 G1–G6 / §4 候选 28 项），由用户拍板后另立任务书；不追溯扩张已收口阶段。发布 / 全量门禁 / 三平台矩阵须用户明确授权后另立任务（License 为硬前置）。
+状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
 
 ---
 
-## 3. 阶段外任务
+## 2. 顺序排期
 
-### 3.1 进行中
+UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代码债务或产品扩张；其余已知任务按 R9–R11 顺延。
 
-当前无进行中的阶段外任务。最近完成：文档体系重构（2026-08-25，包级 Spec + 存档体系，新旧对照见 [docs/history.md](docs/history.md) 附节）。
+| 阶段 | 目标 | 关键交付 | 任务书 | 状态 |
+| --- | --- | --- | --- | --- |
+| R1 | 视觉合同与测试基座 | 1440×1024 三状态、量图表、真实 fixture、组件/状态清单、UI driver 方案、reference/current/diff 基线 | [R1](plan/R1-ui-visual-contract.md) | 🔵 |
+| R2 | Window shell 与全局视觉系统 | 深色沉浸式 titlebar、三栏几何、字体/图标/间距/surface、StatusBar、窗口级响应式基线 | [R2–R3](plan/R2-R3-ui-shell-navigation.md#r2--window-shell-与全局视觉系统) | ⚪ |
+| R3 | TaskRail 与任务导航 | Timeline/Projects、scope、project/task、连接、新建、账户区、选择/恢复/滚动与键盘导航 | [R2–R3](plan/R2-R3-ui-shell-navigation.md#r3--taskrail-与任务导航) | ⚪ |
+| R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | ⚪ |
+| R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R4–R6](plan/R4-R6-ui-workflows.md#r5--composer-与运行控制) | ⚪ |
+| R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | ⚪ |
+| R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | ⚪ |
+| R8 | 模拟操作全功能验收 | 全组件端到端 UI suite、三状态逐图差分、重连/后台 Run/恢复、性能与失败证据、用户视觉签字 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) | ⚪ |
+| R9 | UI 后一致性与代码债务 | 文档/Spec/断言一致、usage 幂等、依赖与注释漂移、路径内核、测试箱整理 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r9--一致性与代码债务收口) | ⚪ |
+| R10 | 关键回归与真实环境验证 | 三类关键回归、K-01、四通道/三客户端、OAuth refresh、历史人工冒烟与平台探针 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r10--关键回归与真实环境验证) | ⚪ |
+| R11 | 发布准备（条件阶段） | License、供应链、安装/升级/回滚、三平台和发布级全量门禁 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r11--发布准备条件阶段) | ⚪，需用户再次授权 |
 
-### 3.2 待办窄任务（不阻塞主线）
-
-| 任务 | 内容 | 来源 |
-| --- | --- | --- |
-| usage 幂等键冲突修复 | `crates/app/src/control.rs` 以 `rec-{run_id}` 为 record_id，多轮迭代同 run 产生多条 usage 记录判 Conflict 反复重放 warn；修法：record_id 加迭代序号或聚合为每 run 一条 | R0 冒烟发现 |
-| pawork-policy regex 死依赖清理 | R7 波 B tokenizer 化后 shell.rs 零 regex 使用，Cargo.toml 声明未随删 | R7 波 B |
-| Spec 撰写发现的代码侧小漂移 | ① workflow/orchestration Cargo.toml description 仍含 R0 已归档域（「五合一 reducer」「Agent Teams」）；② workflow 声明未使用的 regex/tracing 依赖；③ orchestration `budget.rs` 硬超限文档注释写 `>` 而实现为 `>=`（`budget.rs:233,245`，二选一对齐）；④ `domain/src/degrade.rs:7` 注释「26 帧 golden」过期（实为 32）；⑤ `protocol/src/app/event.rs:186,282,342` 注释仍引用 R0 已归档的 `teams::` 类型（改为「原 teams crate（已归档）」措辞） | 包级 Spec 撰写（2026-08-25） |
-| StoredCredential serde alias 移除 | R5 波 B keychain→secret 词汇迁移保留 `#[serde(alias)]` 读旧兼容一个版本期；期满移除 | R5 波 B |
-| protocol 测试箱合并 | protocol 11 个 `[[test]]` crate 合并降编译成本；顺带评估拆 pawork-client 对 pawork-app 的 dev-dep | 波次门禁膨胀登记 |
-
-### 3.3 V2 遗留未收口项
-
-| 遗留项 | 内容 | 归属 |
-| --- | --- | --- |
-| K-01 | config 仓库根路径闭环核对 | R9 波 B |
-| S6 挂账 | ChatGPT/xAI OAuth 自然临期真实 refresh 人工验收 | R9 波 B |
-| K-03 | Desktop 人工验收 | R8 波 E（仅剩签字） |
-| K-04 残余 | Changes 面只读已交付；git_stage/HunkStageService 接线需 wire 扩展 | 另立 ADR 时（§4） |
-| F03 | Windows Service SCM 本机无法验收 | 候选（需 Windows 环境） |
-
-其余 K 项（K-02/05/06/07/08/09/10）均已落地，原委见 [docs/history.md](docs/history.md)。
+阶段依赖严格串行：`R1 → R2 → … → R10`。R11 只有在用户明确授权发布且 License 前置完成后启动。
 
 ---
 
-## 4. 未决事项（开放登记）
+## 3. UI 主线硬约束
 
-已关闭条目（ADR-038~041 确认、既有测试失败修复、rmcp/directories 升级决议、ModelList 不对称、client 错误帧路由、gui_host record flake 根因等）已移入 [docs/history.md](docs/history.md)，此处只留**开放项**：
+### 3.1 事实源优先级
 
-| 事项 | 说明 | 复查时点 |
+1. 架构红线、协议契约、真实 capability 与数据真实性；
+2. [docs/gui-design.md](docs/gui-design.md) 的信息架构和交互规则；
+3. [design/README.md](design/README.md) 三张 v3 定稿图的视觉细节；
+4. [docs/UI_Review.md](docs/UI_Review.md) 的差异、容差、fixture 和验收合同；
+5. [Agent UI 参照调研](plan/UI-reference-research.md) 的交互经验。
+
+Codex 与其他 Agent 产品只提供**操作方式和状态反馈的参照**，不替代 Pawork design。发生冲突时保留 Pawork 的三栏视觉、协议边界和安全语义，不复制竞品品牌、文案或未接入能力。
+
+### 3.2 所有 UI 阶段共同完成条件
+
+- 设计稿可见的区域、组件、顺序和状态 100% 对齐；只允许 [UI Review §0.1](docs/UI_Review.md#01-99-一致性的硬定义) 规定的细微几何误差。
+- 每个可见控件必须有真实能力或诚实的 hidden/disabled/unavailable 状态；禁止假 quota、假 diff、假 Agent、假按钮和无效点击面。
+- 所有按钮、列表行、tabs、菜单、Popover、输入、滚动区和状态变化必须覆盖 mouse、keyboard、focus、AX name/role/value 与错误恢复。
+- 同一 State 的 reference/current/overlay/diff/mask/checklist 必须成套保存；不能只看全屏 SSIM，也不能用空白区域稀释差异。
+- 生产 UI 不写死 fixture 文案。测试数据必须经 Host、协议与实际 projection 进入 Desktop。
+- 每个阶段先补可观察回归，再改视觉/交互；R8 只汇总和补跨阶段缺口，不替代前置测试。
+
+### 3.3 模拟操作测试架构
+
+UI 自动化分四层，细节见 [R7–R8 任务书](plan/R7-R8-ui-quality-gates.md)：
+
+| 层 | 目的 | 最低证据 |
 | --- | --- | --- |
-| 上游传递多版本残留 | base64 0.22/0.23、syn 2.x/3.x、thiserror 1.x（portable-pty→filedescriptor 等）均为上游传递，直控面已单版本；随上游对齐自然消除 | R9 复跑 `cargo tree -d` |
-| gpui 升级跟踪 | `=0.2.2` 为当前锁定（ADR-035，V1 归档）；上游发新版后评估（影响 Desktop 组件 API） | 出现新版时 |
-| License 与 crates.io 占名 | 发布硬前置；不阻塞当前线 | 发布任务前 |
-| probe `snapshot-reconnect` 偶发超时 | 10s 事件等待偶发超时，多轮复跑全绿，判既有 flake | R9 复跑核对 |
-| usage 哨兵口径差异 | host 侧硬填 `upstream_attempt: Some(1)` vs control-plane legacy `None`，均符合单机语义但口径不一（已 doc+pin 钉死） | R9 复查是否统一 |
-| R4 人工验收项 | K-02 真实 kill -9 崩溃冒烟、GUI 审批恢复人工验收、ACP 双连接交错压测、Zed 真实冒烟 | 人工验收 |
-| R5 真实 Anthropic 冒烟 | 本机无 anthropic 凭证，fail-closed 未发真实请求；GLM Anthropic 端点冒烟留人工验收 | 人工验收 |
-| R6 真实 fork/compact 冒烟 | 真实 Provider 的 main/fork 双支续聊与 fork 后 compact/resume 未执行（消耗外部凭证） | 人工验收 |
-| R6 波 C P3 登记 | ① Claude 多 text part 无分隔拼接；② 畸形缺 id 对回退失配→整文件 fail-closed；③ 嗅探首行整行读取有界接受；④ 部分损坏静默导入残缺且 CLI 未透出 unknown_fields；⑤ 扫描根自身为 symlink 报错 | R9 复查；真实影响再立窄任务 |
-| R7 命令级交互审批（ADR 候选） | terminal_create 的 AskUser 一律 fail-closed 落 Deny（审批回路以 run 为键，命令级无承载）；AlwaysAsk/AskForWrites 档不能创建终端。如需命令级审批，须另立 ADR 做 wire 演进 + desktop 渲染面 | 另立 ADR 时 |
-| R7 Desktop PTY 面板冒烟 | 桌面端真实冒烟未执行；desktop 暂无响应新字段（sandboxed/policy/note）渲染面 | 人工验收 |
-| shell wrapper 升档变松（已接受） | tokenizer 化后 nohup/env/xargs 程序位 wrapper 内危险命令不再升档（旧为子串偶合）；灾难地板与沙箱 Enforce 不受影响 | R9 复查；需收紧立窄任务（有界 launcher 剥离） |
-| Seatbelt 真机探针补强 | `/tmp`、`/dev` 写洞双形态、symlink 根、`(deny network*)` 缺真机种子（golden 已钉死形状） | R9 或另立窄任务 |
-| Desktop 真窗口启动门禁缺口 | controller.connect 非 tokio 上下文路径无自动门禁（崩溃已修）；候选：connect 回归测试或 CI 窗口感知冒烟 | R9 |
-| R8 HunkStageService 接线（ADR 候选） | Changes 面只读已交付；stage/unstage/hunk 双向 wire 与审批语义须随协议扩展一并设计 | 另立 ADR 时 |
-| R8 「@」补全 query | composer 「@token」候选浮层未做，需 host file-index 模糊补全 query + desktop 浮层 | 出现需求时立窄任务 |
-| R8 Resources「已加载规则」分区 | 无 host 出口不画；待 gui 可用 query 暴露已加载 AGENTS.md/技能清单时补渲染面 | host 出口落地时 |
-| Desktop 键盘导航缺口 | 菜单 ↑/↓ 导航与 grouping/scope 触发器 tab stop 未实现（基准 §3.6 既有承诺）；K-03 走查确认缺口范围无新增 | 出现真实需求时立窄任务 |
-| K-03 漂移：窄窗响应式（已拍板接受） | 1080–1279 宽度 TaskRail 收敛未实现（V2 起即固定 288px）；固定宽维持现状，转候选 | 出现真实需求时 |
-| R7/R8 审计 P3 集 | Windows Job 单测缺口（Windows CI 引入时）；终端闸 AlwaysAsk 专项单测缺口；BackToBottom 滚轮死区；desktop 心跳泵无自动测试；泵错误路径 state.client 竞态（窗口极窄）；main.rs 窗口尺寸字面量；extension.rs mcp_list 死分支 | 触碰同文件时 |
-| gpui 渲染面无自动门禁 | 菜单开合/跟随滚动/变高虚拟化/hover 等渲染行为无 gpui 测试设施可依，靠真窗口截图 + K-03 人工走查 | gpui 上游提供测试设施或另立 harness 任务时 |
-| S12-CR09-05 残余 | `crates/workspace/src/resources/io.rs` `canonical_within` 自写 canonicalize+前缀比较（资源加载专用，语义同源）；语义矩阵见 [docs/architecture.md](docs/architecture.md) §3.3 | R9 或触碰同文件时改复用 policy 内核 |
+| U0 状态/投影 | 固定 Session、Run、tool、approval、diff、terminal、disconnect 等输入 | deterministic fixture + projection 断言 |
+| U1 组件/窗口内 | 验证 GPUI 组件渲染状态、动作分发、焦点和布局不变量 | 组件场景测试 + 结构快照/几何断言 |
+| U2 真进程/真协议 | 隔离 `PAWORK_DATA_DIR` 启动 Host + Desktop，模拟点击、键入、快捷键、滚轮、resize 与重连 | driver action trace + screenshot + Host/event log |
+| U3 视觉/系统 | 1440 三状态、1080 响应式、AX/VoiceOver、IME 与性能 | R1 只验证证据管线和失败样本；R8 产出 reference/current/diff、AX tree、性能记录与用户签字 |
+
+R8 的“全功能”含义是：所有组件清单中的可达状态都有脚本、断言和失败证据；不是只跑一条 happy path，也不是完全依赖人工点验。
+
+### 3.4 阶段门禁
+
+```mermaid
+flowchart LR
+    A["R1 冻结视觉与测试基座"] --> B["R2-R3 壳层与导航"]
+    B --> C["R4-R6 核心 Agent 工作流"]
+    C --> D["R7 交互 / AX / 响应式"]
+    D --> E["R8 全组件模拟操作 + 三图差分"]
+    E -->|"任一组件或 State 未通过"| C
+    E -->|"全部通过"| F["R9-R10 非 UI 收口"]
+```
 
 ---
 
-## 5. 候选池（未排期）
+## 4. UI 之后的剩余任务
 
-纳入排期时：在 §3 登记任务并入对应 `plan/*.md` 或另立任务书，按 §7.5 回写约定执行。
+### 4.1 R9：一致性与代码债务
 
-- **多账户 factory 装配**（G1–G6/F1–F5 已确认，D1–D8 已拍板）：激活时按新装配面重写（归档代码经 git tag `v2-final` 可查，调研见 [docs/references.md](docs/references.md) 附录）。
-- **远程 GUI（transport remote）**：R0 归档 TLS 实现；复活须按当时协议版本重评。
-- **teams / goal / automation / monitor 复活**：domain 事件保留可重放；reducer 归档；对应产品面立项时另立任务。
-- **GUI git 面板**（Branch/Stash/Conflict/History/Commit + StatusCache watcher）：R0 归档（tag `v2-final` 可找回）；产品定义后另立。
-- **扩展生态整族（WASM 插件 / 市场 / Hooks / LSP）**：移出排期；预留保留（`PluginId`、`ToolCapability::ExternalPlugin`、GUI 未知 capability 隐藏）；资产清点见 [docs/history.md](docs/history.md)。
-- **对外账户池网关（F6-B）**：维持不内建。
-- **K-09 选项 (a) egress broker**：本地策略代理 + 沙箱内仅放行 loopback 代理端口 + 域名白名单（srt 两层模型 + codex-network-proxy 参照）；ADR-041 D3 已选 (b) 删字段，本项为激活时另立任务书的候选。
-- **artifact 流式（GUI）**：R0 停止宣告后转候选；registry 就位后接线成本低。
-- **候选功能池 28 项**（P1 5 / P2 17 / P3 6）：见 [docs/design.md](docs/design.md) §4；已确认扩展功能族 G1–G7 见同文 §3。
-- **发布 / 全量门禁 / 三平台矩阵**：须用户明确授权后另立任务（License 为硬前置）。
+- 常设文档、包级 Spec、ADR、候选与断言按当前 21 包布局复核；旧 R/S 编号只留 history。
+- 修复 usage record id 多轮冲突；清理 policy/workflow/orchestration 死依赖与过期描述/注释。
+- 到期后移除 `StoredCredential` serde alias；合并 protocol 测试箱并评估 client dev-dep。
+- 统一 resources 的 `canonical_within` 到 policy 路径内核。
+- 复查 Claude import 五项 P3、上游多版本、usage 哨兵、shell wrapper、probe flake 与 UI 主线未顺带关闭的低风险残项；需要扩大行为或 wire 时另立 ADR。
+
+### 4.2 R10：回归与真实环境
+
+- K-01 config 仓库根/子目录/非 git 三态闭环。
+- 安全红线、持久化与重放、协议与解析三类关键回归。
+- 四个低消耗 Provider 通道；`gui serve` + Desktop、Zed ACP、headless json-stdio 与 doctor。
+- ChatGPT/xAI OAuth 自然临期 refresh；真实 Anthropic/GLM Anthropic、fork/compact、kill -9 与 ACP 交错等人工项。
+- Seatbelt 真机探针、Windows SCM/Job 等缺平台项如实记录，不以 mock 代替。
+
+R10 不接收任何未通过的 Desktop UI 项；若 startup、PTY/审批恢复、Diff 横滚或其他组件仍有缺口，则 R8 仍未完成，不能进入本阶段。
+
+### 4.3 R11：发布准备
+
+R11 不因排期出现而自动获得发布授权。启动前必须由用户确认 License 与 crates.io 占名策略，再定义供应链、安装器、自更新、升级/回滚、三平台矩阵与全量门禁。
+
+---
+
+## 5. 开放决策与候选池
+
+以下不进入 R1–R10，除非成为 UI 还原或安全正确性的硬前置：
+
+- HunkStageService 与 stage/unstage/hunk wire：需 ADR 定义协议与审批语义。
+- 命令级交互审批：当前 terminal AskUser fail-closed；新增承载需 ADR。
+- `@` file-index 候选查询与 Resources“已加载规则”Host 出口：只有在目标 UI 真实展示对应入口时，才作为 R5/R6 前置接入。
+- 多账户 factory、远程 GUI、teams/goal/automation/monitor、GUI git 高级面、WASM 插件/市场/Hooks/LSP、artifact 流式与 egress broker：保持候选，资产位置见 [docs/history.md](docs/history.md) 与 [docs/design.md](docs/design.md)。
+- GPUI AX/视觉测试能力：当前锁定 `=0.2.2`。R1 只做有证据的 spike；若确认该版本无法暴露完整 AX 树，则把精确 revision 升级、有限 backport 或等价 AX bridge 作为 UI 硬前置单独决策，不得顺手升级，也不得以坐标测试伪装通过。
+- Windows CI/Job、跨平台真窗口驱动：R8 先完成 macOS 主门禁，R10/R11 再扩平台。
 
 ---
 
@@ -118,12 +133,13 @@ V3 是重构线，不新增用户可见功能。R9 收口后的下一条产品�
 
 | 风险 | 缓解 |
 | --- | --- |
-| 冻结契约被「顺手」破坏 | golden 先行（信封/DDL/PWB1/帧/headless）；serde 形状 diff 审查；ADR 之外不允许 schema 变更（契约清单见 [docs/architecture.md](docs/architecture.md) §3.2） |
-| 重构期行为回退 | 每波收口复跑该域定向测试；R9 全量复跑安全红线/golden/协议三类；真实冒烟按 §7.4 矩阵 |
-| feature 传染 | storage 的 session/blob/protected 分 feature；providers 六通道 feature 保留；触碰装配时核对 `cargo tree -p pawork` 闭包不膨胀 |
-| 归档误删未来必需资产 | git tag `v2-final` 兜底；domain 事件类型一律保留（重放红线）；复活条件登记 §5 |
-| GUI 视觉漂移 | hover/active 等有意改动先更新 [design/README.md](design/README.md) 视觉基准再实现；按 1440×1024 基准人工对照 |
-| 沙箱平台行为差异 | 平台探测回归；fail-closed 语义不放宽（ADR-031 可观测回退保持） |
+| 用当前实现反改 design 以制造通过 | design 变更必须单独请求用户批准；UI 任务只能修实现 |
+| 全屏相似度被空白区域抬高 | 主区域独立比较 + 结构一票否决 + overlay 人工复核 |
+| fixture 侵入生产或伪造能力 | 测试专用种子，经真实 Host/协议/projection；生产组件无演示分支 |
+| UI driver 脆弱、只靠坐标 | 稳定 AX identifier/role + 语义定位；坐标只用于视觉几何验证 |
+| UI 优化破坏 Run/协议/安全 | Desktop 仍只经 GUI Connection Protocol；涉及 wire/审批先过 ADR 与关键回归 |
+| 只测 happy path | 每个组件矩阵同时列 idle/running/completed/failed/disabled/disconnected/overflow |
+| macOS 通过却跨平台退化 | R8 明确 macOS 主门禁；R10/R11 对 Linux/Windows 编译、服务与窗口环境分别登记 |
 
 ---
 
@@ -131,87 +147,62 @@ V3 是重构线，不新增用户可见功能。R9 收口后的下一条产品�
 
 ### 7.1 任务开启
 
-**波次任务**（`plan/*.md` 内的阶段波次）由主代理按以下编排执行；**窄任务**（单点修复、单文件文档、一条 golden）用三行最小提示词直接开工：
+波次任务从 §1 当前阶段对应的 `plan/*.md` 开启；一次只做一个 Wave：
 
 ```text
-按 ROADMAP.md §7 执行 plan/<任务书>.md 的〈波次/任务名〉。
-范围：〈可选——写入集或包边界限定；不写则以任务书该波写入集为准〉
-凭证：〈auth 文件已就绪 / 本任务无需真实 key〉
+按 ROADMAP.md §7 执行 plan/<任务书>.md 的〈阶段 / Wave〉。
+范围：〈写入集；不写则以任务书为准〉
+凭证：〈auth 已就绪 / 本任务无需真实 key〉
 ```
 
-波次编排流程（主代理）：
+开启时主代理必须亲自核对：任务书全文、design/current 同状态证据、写入集包 Spec、相关协议/安全契约和已有测试。需要 ADR、真实凭证或用户视觉决策时先停在闸门，不自行降低目标。
 
-1. **选波**：一次只做一个波次。取 §1 指针的下一波，与任务书、工作区实态交叉校验；硬前置须 🟢；用户覆盖立即生效。**ADR 闸门**：破坏式决议须用户确认 ADR Accepted 后才可开工，主代理不代替用户拍板。
-2. **开启核对**（主代理亲自读）：任务书全文；本波涉及的冻结契约（[docs/architecture.md](docs/architecture.md) §3.2）与 golden 位置；写入集各包 Spec（[docs/spec/crates/](docs/spec/README.md)，只读写入集包，禁止全量通读）；跨包链路才读 [docs/spec/flows.md](docs/spec/flows.md) 对应一条。用户可见行为变更时核对 [docs/spec/](docs/spec/README.md) 相关篇目。需要真实 key 而凭证缺失即 fail-closed 终止并向用户索取，不静默跳过、不降级 mock。
-3. **并行核查**（只读，≤3 路）：任务书证据（消费者/行数/调用点）按工作区实态重验；圈定契约面（改前必须先有 golden）与影响面（写入集外被牵动的 use/测试/断言）。实态与任务书冲突以实态为准并回写任务书。范围小的波次可减为主代理自查。
-4. **本波设计**（主代理在会话内写）：目标/非目标、事实源路径、涉及契约、写入集、验证命令、派发图。需要 ADR 或与冻结契约冲突时先问用户。
-5. **实现**：核查结束再实现。并行度按任务书标注；写入集互不重叠；契约文件与装配收口（`crates/app`、`apps/pawork`）单一 owner 串行。归档动作统一「移出 workspace + 删除源目录」。
-
-子代理提示词统一骨架（核查 | 实现两种角色）：
-
-```text
-你是 Pawork 的〈核查 | 实现〉子代理。只做本提示词里的范围。
-规范：仓库根 AGENTS.md + ROADMAP.md §7；写入集各包 docs/spec/crates/<pkg>.md 实现前必读（禁止读未列入写入集的包；Spec 冲突以源码为准）；跨包链路才读 docs/spec/flows.md 对应一条。
-任务：〈任务书路径 + 波次一句话 + 设计切片（实现角色必填）〉
-范围：〈核查：只读路径清单；实现：允许写入的包/目录清单〉
-产出：〈核查：逐条证据核验（路径+行号）与差异；实现：实际写入文件、验证命令与结果、未做项、计划偏差〉
-禁止：超范围改动；改冻结契约 serde/磁盘/线上形状；git commit/push/tag；Secret 入仓库或日志；cargo --workspace / clippy 门禁 / cargo clean；并行轨同时跑 cargo；重复编译已绿命令；默认跑 protocol golden/probe/spawn_e2e/desktop/cargo check -p pawork（除非本波实际改了对应文件）。
-```
+子代理只用于边界独立的核查/实现/审查，提示必须包含写入集、验收证据、禁止范围以及“不得撤销他人改动”。文档事实源和阶段状态由主代理统一回写。
 
 ### 7.2 进行中纪律
 
-架构红线全文见 [AGENTS.md](AGENTS.md) §2 与 [docs/architecture.md](docs/architecture.md) §1，违反须先升级 ADR 或问用户。重构纪律：
-
-- **消费面先行**：保留在主 workspace 的模块必须有真实装配点；零消费者代码归档，不以 experimental feature 库存。
-- **合并不裁剪契约**：契约类型整组平移、零裁剪，golden/测试随迁；宁可字段闲置，不做「先简后改」。
-- **破坏式改动边界**：允许破坏内部代码组织与 API；不允许静默破坏磁盘/线上格式、CLI 用户可见行为与安全语义（fail-closed 只紧不松）。
-- **平台与输出**：macOS 实测；Linux/Windows 保持编译、交叉 `cargo check` 可选。`--json` 模式 stdout 只承载 JSONL，文本与日志走 stderr。
+- 每个 UI Wave 固定一个 reference State 和一个可重复 fixture；先采 current，再改，再用同输入复拍。
+- 先修结构与交互，再做 token/像素 polish；结构未通过不得靠阴影、渐变或动画掩盖。
+- 不新增 Node/Bun/V8/WebView；Desktop 仍为独立 GPUI 进程，只连接 `pawork` Host。
+- 保留用户未提交改动；写入集最小。新增依赖、提交、推送、发布须另获授权。
+- 无权威数据时保持诚实缺省；不可用组件不得假装可点击。
+- UI 用户可见行为、验证边界或状态变化同批更新 `docs/gui-design.md`、`design/README.md`、`docs/spec/desktop.md`、包级 Desktop Spec 与任务书。
 
 ### 7.3 测试纪律
 
-- **少测试、无全量门禁**：只做能证明本任务核心行为的关键定向测试；不跑 Workspace Full Gate、不做 clippy/fmt 门禁。**三类关键测试不推迟**：安全红线定向回归；持久化与重放契约 golden；协议与解析 golden/种子。
-- **默认门禁死表**（每波一条 Cargo 进程）：`cargo test -p <crate> --offline --lib --tests`；多包一次多个 `-p` 但仍是一个 Cargo 进程，不用 `--workspace`。`cargo check -p <crate>` 仅在该包无测试或只需类型检查时用。
-- **默认不跑**（除非本波实际改了对应文件，且只由主代理收口跑一次）：protocol golden、client probe、spawn_e2e、desktop、`cargo check -p pawork`。合并/归档波才补 `cargo tree` 断言（无环、`-p pawork` 闭包不膨胀）。
-- engine/工具循环逻辑回归全部走 MockProvider；真实 API 只承担冒烟与 env 门控 `--ignored` 测试。
-- **Cargo 串行**：全会话同一时刻只允许一个 Cargo 进程；并行轨不得抢同一 `target/` 锁。禁止 `cargo clean`；stale incremental 用 `python3 scripts/clean-stale-incremental.py` 按前缀清理，禁止 `rm -rf target`。
-- **审查者不编译**：reviewer 读 worker `/tmp` 日志与源码 diff；同一门禁命令 worker/reviewer/主代理不得各跑一遍。确定性检查先于模型审查；每个门禁只调用一个审查者。
+- 普通实现仍按写入集运行关键定向测试；默认：`cargo test -p <crate> --offline --lib --tests`。多个相关包可在一个 Cargo 进程中追加 `-p`，不使用 `--workspace`。
+- UI Wave 还必须执行任务书列出的 U0/U1 场景；触及真窗口、输入、菜单、滚动、resize、重连或视觉时，由主代理执行对应 U2/U3 门禁。
+- 安全红线、持久化与重放、协议与解析三类关键测试不推迟；触及对应面时同批跑定向种子/golden。
+- 全会话同一时刻只允许一个 Cargo 进程。禁止 `cargo clean`；审查者读既有日志与 diff，不重复编译。
+- R8 不是发布级 Workspace Full Gate；只运行完整 UI suite、UI 关联包定向测试和三状态视觉/AX/性能门禁。
 
 ### 7.4 测试通道与凭证
 
-通道登记单点为 `crates/providers/src/channels/registry.rs`（`CHANNEL_REGISTRY`）；endpoint 只来自配置或经核对的 adapter 默认值，`base_url` 始终可覆盖，不得把 endpoint/模型名/认证方式写进 Engine 分支。
+通道事实源为 `crates/providers/src/channels/registry.rs`。真实 API 仅用于 R10 或任务书明确要求的冒烟；常规 UI fixture 不消耗真实 Provider。
 
-| 通道 | 凭证 | 默认协议 / endpoint | 说明 |
-| --- | --- | --- | --- |
-| ChatGPT | OAuth bearer | Responses；`https://chatgpt.com/backend-api/codex` | 需 account id；非公开稳定第三方合约 |
-| xAI Grok | OAuth bearer | 按模型选 Responses/Chat；`https://api.x.ai/v1` | 不接受 xAI API key |
-| Z.AI GLM Coding Plan | API key | Chat；`https://api.z.ai/api/coding/paas/v4` | `provider_id` 为 `glm-coding`；中国区端点由配置显式指定 |
-| OpenCode Go | API key | Chat；`https://opencode.ai/zen/go/v1` | Bearer；混合协议模型须在 registry 显式声明 transport |
-| Qwen Token Plan | API key | Chat；`https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | 专属 endpoint，不与按量计费混用 |
-| DeepSeek | API key | Chat；`https://api.deepseek.com` | OpenAI-compatible |
-
-**低消耗测试矩阵**（常规冒烟、定向回归与行为对比默认只用以下组合；高级模型仅限一次性接通验证或用户明确指定的专项评估；模型名以 `pawork models` 实际返回为准；凭证缺失即 fail-closed）：
-
-| 通道（provider_id） | 默认测试模型 | 凭证形态 |
+| 通道 | 默认低消耗模型 | 凭证 |
 | --- | --- | --- |
-| DeepSeek（`deepseek`） | `deepseek-v4-flash` | API key |
-| GLM Coding Plan（`glm-coding`） | `glm-4.7` | API key |
-| OpenCode Go（`opencode-go`） | `deepseek-v4-flash` | API key |
-| xAI Grok 订阅（`xai`） | `grok-4.3` | OAuth bearer |
+| DeepSeek | `deepseek-v4-flash` | API key |
+| GLM Coding Plan | `glm-4.7` | API key |
+| OpenCode Go | `deepseek-v4-flash` | API key |
+| xAI Grok | `grok-4.3` | OAuth bearer |
 
-**Key 管理红线**：正式存储 `$PAWORK_HOME/auth.json` / `~/.pawork/auth.json`（JSON v1、0600、原子写、损坏 fail-closed）；env `PAWORK_API_KEY_<PROVIDER_ID>` 仅 headless/CI fallback。key/token 不入配置文件、数据库、日志、事件流与任何可提交文件；执行期凭证由用户临场提供，缺失即终止。本地冒烟默认走 auth 文件；`.env`（已 gitignore）仅遗留 fallback。真实 API 测试两种形态：手工冒烟清单（人执行、人评估、留评估记录）与 env 门控 `#[ignore]` 自动化（`PAWORK_SMOKE_*` 变量，不进默认测试路径）。
+正式凭证只放 `$PAWORK_HOME/auth.json` / `~/.pawork/auth.json`；不得进入仓库、fixture、截图、日志或事件。凭证缺失即 fail-closed，不把 mock 写成真实冒烟。
 
 ### 7.5 收尾与状态回写
 
-1. 定向自动化测试全绿（只跑本波写入集命令；worker 已绿的不重复编译，核对 `/tmp` 日志）。任务书有冒烟清单时执行并留评估记录。
-2. 任务书回写：波次状态与退出标准打勾；核对「非目标」未越界。
-3. 本文回写：§1 指针更新；阶段外任务在 §3 登记/移动；延期与新发现挂账入 §4；候选入 §5。阶段全部收口时，把该阶段的完成细节压缩迁入 [docs/history.md](docs/history.md)，本文只留开放项。
-4. 文档一致性：改了冻结契约/包布局 → 同批更新 [docs/architecture.md](docs/architecture.md)；改了功能/候选状态 → [docs/design.md](docs/design.md)；写入集改了模块树、对外入口、依赖边或红线行为 → 同批更新该包 [docs/spec/crates/](docs/spec/README.md) Spec；用户可见能力/契约/安全/Desktop/验证/运维边界变化 → 同批更新对应 [docs/spec/](docs/spec/README.md) 篇目（「已实现」「已验证」「已人工验收」「已发布」分开表述）。新 ADR 落 [docs/adr/](docs/adr/)（编号续接，下一个 ADR-042）。
-5. 简式任务报告：写入集、验证命令与结果、登记项；未跑全量门禁属当前路线正常状态。报告至少含：
+1. 只执行并记录本 Wave 的定向门禁；UI Wave 同时归档对应 State 的 current/overlay/diff 与 action trace。
+2. 回写任务书 Wave 状态、实际写入、验证、未做项和计划偏差。
+3. 回写本文 §1 当前指针；新发现放入 §5 或后续阶段，已完成细节移入 [docs/history.md](docs/history.md)，不留在 ROADMAP。
+4. 影响架构、功能、Spec、Desktop 或验证边界时，同批更新相应常设文档；设计基准变更必须先获用户批准。
+5. 最终报告至少包含：
 
 ```text
-Validated: <实际命令 / tests / checks，或 none 及理由>
-Targeted regressions: <实际覆盖，或 none>
+Implemented: <生产路径/用户入口，或 none>
+Validated: <实际命令、场景和结果，或 none + 原因>
+Targeted regressions: <安全/持久化/协议覆盖，或 none>
+Real-world evidence: <真窗口/Provider/OS/客户端，或 pending + 原因>
 Full workspace gate: NOT RUN（当前未设置全量门禁）
 ```
 
-6. 不提交、不推送，除非用户当场要求。
+6. 不提交、不推送、不发布，除非用户当场要求。

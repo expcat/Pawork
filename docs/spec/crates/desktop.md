@@ -166,7 +166,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 5. 契约与不变量
 
-- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（三张 1440×1024 基准图 + §8 组件规范）与 [../../gui-design.md](../../gui-design.md)（Surface 与连接协议消费约定）。theme token 值与迁移前硬编码字面量逐值相等（视觉零变化）；hover / active 只改背景，active 复用 hover 色。
+- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（三张 1440×1024 基准图 + §8 组件规范）与 [../../gui-design.md](../../gui-design.md)（Surface 与连接协议消费约定）。当前源码中的 theme token 仍与迁移前硬编码字面量逐值相等（历史迁移本身视觉零变化）；R1 已在设计事实源 §2.1 冻结新的色板目标，须由 R2 修改源码并同批回写本 Spec。hover / active 只改背景，active 复用 hover 色。
 - **审批 fail-closed**：无默认允许；决策只能来自显式点击或快捷键；断线禁用；run / tool 终态与 `ApprovalResponded` 清卡防幽灵审批。
 - **`gui.token` fail-closed**：token 缺失、不可读或为空即连接失败，禁止无认证静默连接；错误信息只含路径，token 内容不落日志。
 - **Enter / IME 语义**：keybinding 仅 `TextInput` 聚焦时生效；Enter 冒泡到 AppView 后结合 `is_composing()`（`marked_range` 存在即组合中）与发送可用性裁决；Shift+Enter 恒为换行；终端输入框同规则。
@@ -221,12 +221,13 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 ## 8. 注意事项与已知限制
 
-- **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic（R8 波 A 实证 exit 134，真窗口自始无法启动）。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归；真窗口启动无自动门禁（登记 [../../../ROADMAP.md](../../../ROADMAP.md) §4）。
+- **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic（旧 R8 波 A 实证 exit 134，真窗口自始无法启动）。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归；新 [R1/R8](../../../plan/R1-ui-visual-contract.md) 必须建立真窗口启动门禁。
 - **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
-- **渲染面行为无自动门禁**：菜单开合 / FollowScroll / hover / 虚拟化滚动 / DiffView 横滚依赖人工验收（R8 波 E K-03 清单）；Entry 菜单在锚点条目被虚拟化卸载后状态与视觉短暂失联（滚回自现，Escape / 外点仍有效）。
+- **渲染面自动门禁尚未建立**：菜单开合 / FollowScroll / hover / 虚拟化滚动 / DiffView 横滚当前主要依赖历史人工取证；新 R1–R8 必须补 U1/U2/U3。Entry 菜单在锚点条目被虚拟化卸载后状态与视觉短暂失联，需在 R7/R8 给出可恢复行为，不能沿用旧偏差接受。
+- **ActivityPopover 触发器位置是已知偏差**：现实现由底部 StatusBar 右侧触发、向上展开；定稿为 Workspace Header 右上触发、向下展开约 320px 且不覆盖 Composer（[../../../design/README.md](../../../design/README.md) §5.1/§8.5、UI_Review F-12 / D-01）。迁移完成前 F-12 保持未通过；迁移落地后同批更新本文 §3.2 的 StatusBar 描述。
 - **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
 - **单主题**：仅深色 `dark()`；`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。
-- **文件尺寸口径**：`ui/mod.rs` 约 1030 行，超 R8 阶段 900 行拆分目标，用户拍板接受为终态口径。
+- **文件尺寸口径**：`ui/mod.rs` 约 1030 行；这是历史工程结构口径，不构成新 UI 视觉或交互放行条件。
 - **`text_input.rs` 血统**：改自 gpui 0.2.2 `examples/input.rs`（Apache-2.0），有意裁剪 ShowCharacterPalette / Copy / Cut / SelectAll / 拖选；后续补齐须对照上游而非自造。
 - **FollowScroll 的滚轮时序假设**：`on_scroll_wheel` 直读已应用（未钳制）的 offset——依赖 vendored gpui 0.2.2 的 Bubble 相监听逆序分发（内部偏移应用先于用户监听）；升级 gpui 时须重核，做 delta 投影会把增量计两次。
