@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-08-25。生产连接与主要组件链路已经存在，但当前真实窗口未达到 design 的 99% 视觉目标，完整 AX/交互与模拟操作矩阵也未建立；验收以 [新 R1–R8](../../ROADMAP.md#2-顺序排期) 为准，Desktop 不得标为最终完成。
+> 基线日期：2026-08-26。生产连接、主要组件链路与 macOS AX 语义基座已经存在，但当前真实窗口未达到 design 的 99% 视觉目标，完整交互与模拟操作矩阵也未建立；验收以 [新 R1–R8](../../ROADMAP.md#2-顺序排期) 为准，Desktop 不得标为最终完成。
 
 ## 1. 产品定位
 
@@ -62,6 +62,7 @@ flowchart LR
 | DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 生产入口已实现；R6/R8 覆盖真实 diff、横滚、PTY、Resources 与恢复。 |
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 生产逻辑已实现；R8 待真 Host/Desktop 生命周期验收。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Inspector 触发器仍可用。 | 当前未通过完整门禁；R7/R8 必须覆盖 Connected 与边界状态。 |
+| DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现并通过真窗口语义 action；全组件 VoiceOver、动态状态与 Windows/Linux 平台实现仍待 R7/R8。 |
 
 ## 5. 键盘、IME 与可访问性
 
@@ -72,8 +73,9 @@ flowchart LR
 - Escape 关闭菜单且不吞掉 Composer 的其他键盘语义；Enter/Shift+Enter 与 IME composition 明确区分；
 - 菜单支持键盘到达、选择与关闭；长标题以 truncate + 可辨识上下文呈现；
 - 长会话、长 diff 和窄窗不让主要操作不可达。
+- AX identifier 与用户可见/可本地化 label 分离；disabled 控件不发布可执行 action，未知 action fail-closed；新增可见交互须同批补语义节点。
 
-已知缺口：菜单内 ↑/↓ 导航、grouping/scope 触发器 tab stop，以及当前锁定 GPUI 版本的完整 AX tree 能力尚未闭环。它们分别是 R7 与 R1 的硬门禁，不得降级为“已知差异”后签字。
+当前锁定 GPUI 0.2.2 不原生导出元素级 AX tree；ADR-042 已由 Desktop 显式 `AxTree` + AppKit 虚拟元素补救，真窗口 75 节点、会话 `AXPress` 与 Composer `AXValue` 证据见 [Wave C ax-bridge](../ui-review/wave-c/ax-bridge/)。已知缺口仍包括菜单内 ↑/↓ 导航、grouping/scope 触发器 tab stop、全组件 VoiceOver/动态状态扩面，以及 Windows/Linux 平台 AX；它们不得降级为可签字差异。
 
 ## 6. 只读与写入边界
 

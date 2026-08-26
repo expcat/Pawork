@@ -85,6 +85,20 @@ impl TextInput {
         cx.notify();
     }
 
+    /// 由原生 Accessibility set-value 入口替换全文；与普通输入相同地把光标
+    /// 收到末尾并清除 IME marked range / 旧布局缓存。
+    pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.content = text.into();
+        let end = self.content.len();
+        self.selected_range = end..end;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.last_layout = None;
+        self.last_line_starts.clear();
+        self.last_bounds = None;
+        cx.notify();
+    }
+
     /// 按原文换行计数（空内容视为 1 行），供 Composer 高度与验收断言使用。
     pub fn visual_line_count(&self) -> usize {
         line_byte_ranges(&self.content).len().max(1)
@@ -684,7 +698,9 @@ impl Focusable for TextInput {
 
 #[cfg(test)]
 mod tests {
-    use super::line_byte_ranges;
+    use gpui::{AppContext, TestAppContext};
+
+    use super::{line_byte_ranges, TextInput};
 
     #[test]
     fn paste_three_lines_counts_three_visual_lines() {
@@ -692,5 +708,19 @@ mod tests {
         assert_eq!(line_byte_ranges("").len(), 1);
         assert_eq!(line_byte_ranges("single").len(), 1);
         assert_eq!(line_byte_ranges("trail\n").len(), 2);
+    }
+
+    #[gpui::test]
+    fn accessibility_set_text_replaces_content_and_clears_marked_range(
+        cx: &mut TestAppContext,
+    ) {
+        let input = cx.new(TextInput::new);
+        input.update(cx, |input, cx| {
+            input.marked_range = Some(0..0);
+            input.set_text("AX 输入", cx);
+            assert_eq!(input.text(), "AX 输入");
+            assert_eq!(input.selected_range, input.content.len()..input.content.len());
+            assert!(input.marked_range.is_none());
+        });
     }
 }

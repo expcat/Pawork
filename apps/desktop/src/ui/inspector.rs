@@ -205,12 +205,12 @@ impl AppView {
             )
     }
 
-    fn on_start_terminal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_start_terminal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.ensure_terminal(cx);
         cx.notify();
     }
 
-    fn on_apply_terminal_size(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_apply_terminal_size(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.projection.terminal.session_id.clone() {
             self.controller.terminal_resize(
                 id,

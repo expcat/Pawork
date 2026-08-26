@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)] // objc 0.2 macros probe the historical cargo-clippy feature.
+
 //! pawork-desktop：GPUI Agent 壳（S10 Replay / Fork / Terminal）。
 //!
 //! 四层结构：ui（GPUI 渲染与交互）/ projection（纯状态机）/
@@ -605,8 +607,31 @@ fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
                 },
             )
             .expect("open pawork-desktop window");
+        let accessibility_app = cx.to_async();
+        let accessibility_window = window;
         window
-            .update(cx, |view, window, cx| {
+            .update(cx, move |view, window, cx| {
+                let callback_app = accessibility_app.clone();
+                if let Err(reason) = view.install_accessibility(
+                    window,
+                    move |request| {
+                        let mut app = callback_app.clone();
+                        let executor = app.foreground_executor().clone();
+                        executor
+                            .spawn(async move {
+                                let _ = accessibility_window.update(
+                                    &mut app,
+                                    |view, window, cx| {
+                                        view.handle_accessibility_request(request, window, cx);
+                                    },
+                                );
+                            })
+                            .detach();
+                    },
+                    cx,
+                ) {
+                    eprintln!("pawork-desktop accessibility install failed: {reason}");
+                }
                 window.focus(&view.composer_focus_handle(cx));
                 cx.activate(true);
             })

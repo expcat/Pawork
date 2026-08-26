@@ -64,6 +64,9 @@ State 定义：A = Timeline + Inspector 展开；B = Timeline + Inspector 折叠
     $PY scripts/ui-visual-diff.py --reference docs/ui-review/state-a/reference.png --current docs/ui-review/state-a/current.png --zones docs/ui-review/state-a/zones.json --masks docs/ui-review/state-a/mask.json --out docs/ui-review/state-a
     # 3) 修改 diff 管线后跑定向回归
     $PY -m unittest scripts/test_ui_visual_diff.py
+    $PY -m unittest scripts/test_ui_wave_d_tools.py
+    # State A 真窗口闭环（需解锁屏幕；视觉 zone FAIL 在 R1 预期）
+    scripts/ui-wave-d-state-a.sh run --out /tmp/pawork-wave-d-out --label baseline
 
 ## 5. 工具链事实
 

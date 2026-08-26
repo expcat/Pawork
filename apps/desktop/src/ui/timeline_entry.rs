@@ -105,7 +105,7 @@ impl AppView {
             .child(actions)
     }
 
-    fn on_fork(&mut self, event_id: &str, cx: &mut Context<Self>) {
+    pub(super) fn on_fork(&mut self, event_id: &str, cx: &mut Context<Self>) {
         let Some(session_id) = self.projection.active_session_id.clone() else {
             self.status_hint = Some("Open a session before forking.".into());
             cx.notify();

@@ -11,10 +11,10 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R1 — 视觉合同、固定 fixture 与 UI 测试基座**（Wave A 视觉合同、Wave B 固定真实 fixture 及安全复审加固已收口，见 [任务书收口记录](plan/R1-ui-visual-contract.md)） |
-| 下一任务 | R1 Wave C（UI driver 与可观察性基座：GPUI AX/真窗口能力 spike、U0–U3 工具选型与冻结） |
+| 当前阶段 | **R1 — 视觉合同、固定 fixture 与 UI 测试基座**（Wave A/B/C 已收口；ADR-042 Desktop 原生 AX bridge 与 U0–U3 工具路线已验证，见 [Wave C 记录](plan/R1-ui-visual-contract.md#wave-c-进展记录2026-08-26)） |
+| 下一任务 | R1 Wave D：以 State A 跑通“启动 → 连接 → 语义选择 task → 三栏断言 → `reference/current/overlay/diff/mask/checklist`”，并用故意漂移证明门禁会失败 |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
-| 阻塞 | 无外部阻塞；Projects 同尺寸视觉基线已建立（docs/ui-review/state-c/）；`gpui = 0.2.2` AX/真窗口能力验证随 R1 Wave C 执行 |
+| 阻塞 | 无；Wave C AX 失败基线已由 ADR-042 bridge 补救，真窗口 75 节点与语义 action 证据见 [ax-bridge](docs/ui-review/wave-c/ax-bridge/) |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
 
@@ -101,6 +101,8 @@ flowchart LR
 - 修复 transport local_unix accept 跨 await 持锁导致的 listener close 死锁（R1 Wave B 在 fixture example 侧以 abort accept 任务规避；生产 `pawork gui serve` 靠 select! 丢弃 accept future 不受影响）。
 - 复查 Claude import 五项 P3、上游多版本、usage 哨兵、shell wrapper、probe flake 与 UI 主线未顺带关闭的低风险残项；需要扩大行为或 wire 时另立 ADR。
 
+- 扩展 `scripts/clean-stale-incremental.py` 覆盖 deps 面：2026-08-26 发现 `target/debug/deps` 积累约 77.5 万个 V1/R1 时代 `*.rcgu.o` 与死包产物，冷态 readdir 需数分钟、拖死 rustc 启动扫描；已一次性外科手术清理，脚本化防护待补。
+
 ### 4.2 R10：回归与真实环境
 
 - K-01 config 仓库根/子目录/非 git 三态闭环。
@@ -125,7 +127,6 @@ R11 不因排期出现而自动获得发布授权。启动前必须由用户确�
 - 命令级交互审批：当前 terminal AskUser fail-closed；新增承载需 ADR。
 - `@` file-index 候选查询与 Resources“已加载规则”Host 出口：只有在目标 UI 真实展示对应入口时，才作为 R5/R6 前置接入。
 - 多账户 factory、远程 GUI、teams/goal/automation/monitor、GUI git 高级面、WASM 插件/市场/Hooks/LSP、artifact 流式与 egress broker：保持候选，资产位置见 [docs/history.md](docs/history.md) 与 [docs/design.md](docs/design.md)。
-- GPUI AX/视觉测试能力：当前锁定 `=0.2.2`。R1 只做有证据的 spike；若确认该版本无法暴露完整 AX 树，则把精确 revision 升级、有限 backport 或等价 AX bridge 作为 UI 硬前置单独决策，不得顺手升级，也不得以坐标测试伪装通过。
 - Windows CI/Job、跨平台真窗口驱动：R8 先完成 macOS 主门禁，R10/R11 再扩平台。
 
 ---

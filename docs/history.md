@@ -459,7 +459,7 @@ V3(R0–R9)不是新功能扩张,而是 V2 增量交付完成(S0–S13,见本文
 - **候选计数纠正**:design/ROADMAP 旧汇总「30 项」按表内条目纠正为 **28 项**(P1 5、P2 17、P3 6)。
 - **明确保留待办(不借文档任务宣称完成)**:R8 K-03 人工签字、R9 A2(其余文档/登记/断言一致性)/B(三类回归全量复跑 + 冒烟矩阵)/C(K-01 + S6 OAuth refresh 人工验收 + 收官登记)、docs/v3-summary.md。
 
-### ADR-037~041 摘要索引
+### ADR-037~042 摘要索引
 
 ADR 原文保留在 docs/adr/ 不删;编号续接 V1(ADR-001~035 随 V1 归档,原则继续有效)。
 
@@ -494,6 +494,12 @@ ADR 原文保留在 docs/adr/ 不删;编号续接 V1(ADR-001~035 随 V1 归档,�
 - D1 macOS 写侧 deny-default 白名单正式化(workspace+tmp+$TMPDIR+/dev,.git/.env 永久禁写),读侧整盘 allow + default_secret_paths 挖洞——读白名单经 Darwin 25.6 本机实测不可行(/bin/echo SIGABRT 134;codex/srt 上游读侧同样非全 deny);D2 PTY 创建动作入 policy 闸(NeverAsk/ReadOnly 拒创建;会话内容不逐条审批但如实标注,替换 uncontrolled 裸语义);D3 K-09 删除 `network_allow_hosts` 字段(选项 b;网络只有 allow-all/deny-all 两档事实;egress broker 选项 a 转候选);D4 shell 手写轻量 tokenizer(分类只影响升档,灾难地板不动)。
 - 本机实测进 ADR:写白名单下 clang/git/cargo/brew 全通;`(deny network*)` 下 curl 解析即失败;spawn 开销约 5.7ms/次。
 
+#### ADR-042 — Desktop 原生 Accessibility bridge
+
+- 状态:Accepted(用户 2026-08-26 确认);落地:R1 Wave C。
+- 保持 `gpui = 0.2.2` 与 Desktop→client 唯一业务依赖不变;Desktop 以平台无关 `AxTree` 显式生成语义,macOS 用 AppKit 虚拟元素挂入 `GPUIView`,非 macOS 保留 no-op facade;AX action 回到既有 AppView handler / enable gate,未知请求 fail-closed。
+- 真窗口补救前仅 7 个系统节点;补救后 75 节点、0 截断,稳定 identifier/role/value/action 可用,`AXPress` 选会话与 `AXValue` 写 Composer 均产生可观察状态变化;证据见 `docs/ui-review/wave-c/{ax-gate,ax-bridge}/`。Windows/Linux 平台 AX 与全量 VoiceOver 仍属后续范围。
+
 ### 已闭环登记项存档
 
 自 ROADMAP §4(未决事项)与 §3.2(V2 遗留债务映射)提取:结论已闭环且无遗留未来动作的行。带「R9 复查/复跑」「人工验收」「另立 ADR 时」「触碰…时」「候选」「兼容期满」等未来动作的行仍留 ROADMAP,不收入本表。
@@ -504,6 +510,7 @@ ADR 原文保留在 docs/adr/ 不删;编号续接 V1(ADR-001~035 随 V1 归档,�
 | ADR-039 目录布局 | Accepted;扁平 `crates/<短名>` + `apps/<name>` 与不合并清单固化;波 A–E 全落地(members 21);闸门解除 | 2026-08-19 确认;R1 落地 |
 | ADR-040 分支模型 | Accepted;原生化 + append-only 单表全局 sequence + lineage 单点 + v12 回填即校验 + 压缩分支水位;波 0/A/B/C 全落地;闸门解除 | 2026-08-23 确认;R6 落地 |
 | ADR-041 沙箱信任模型 | Accepted;D1 写白名单+读整盘挖洞 / D2 PTY 入闸 / D3 删 network_allow_hosts / D4 手写 tokenizer;波 A–C 全落地 | 2026-08-23 确认;R7 落地 |
+| ADR-042 Desktop Accessibility bridge | Accepted;保持 GPUI 0.2.2,显式 AxTree + AppKit 虚拟元素 + action 复用既有 UI gate;真窗口 75 节点与两条语义 action 通过,AX 闸门解除 | 2026-08-26 确认;R1 Wave C 落地 |
 | K-02 `ToolApprovalRequested` 等待前持久化 | 等待(含 batch 短路)前 emit 落盘;GUI resume keep-pending 呈现待审批、决策落盘不重跑;CLI resume 维持 seal Denied | R4 波 B,2026-08-21 |
 | K-05 本机会话导入 | Claude Code 本地 JSONL + Codex rollout 双形态 compat 解析;session_scan 只读发现(排除 agent-*.jsonl sidecar);`sessions import --from` 批量;隔离目录真实样本冒烟通过 | R6 波 C,2026-08-23 |
 | K-09 macOS `network_allow_hosts` | 按 ADR-041 D3 删除字段与死分支;网络维持 Enforce 全拒 / Off·Hint 放行两档事实;egress broker 转候选 | R7 波 C,2026-08-23 |

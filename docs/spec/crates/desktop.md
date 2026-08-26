@@ -17,15 +17,18 @@
 
 ## 2. 模块与文件地图
 
-24 个 `.rs` 文件、约 9.6k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
+28 个 `.rs` 文件、约 12.1k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
-| `src/main.rs` | ~615 | 入口与手动 argv 解析（非 clap）；`PAWORK_UI_BARRIER_DIR` env 读取（空值视同未设置，None 全程零开销）；`run_app`（1440×1024 居中窗口、`install_keybindings`、聚焦 Composer）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器 |
+| `src/main.rs` | ~640 | 入口与手动 argv 解析（非 clap）；`PAWORK_UI_BARRIER_DIR` env 读取（空值视同未设置，None 全程零开销）；`run_app`（1440×1024 居中窗口、`install_keybindings`、聚焦 Composer、安装 macOS AX bridge）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器 |
 | `src/controller.rs` | ~1470 | `DesktopController`（connect / 事件泵 / 空闲心跳 / 全部 Command·Query 构造与响应解析）；`ControllerEvent` 枚举；`DiffFileSummary` / `DiffFileDetail` / `DiffHunkDetail` / `DiffLineDetail` / `GitDiffInfo` / `McpServerEntry` 视图模型；11 个测试 |
 | `src/platform.rs` | ~230 | `Platform`（tokio multi_thread Runtime，`handle()` / `block_on()`）；`default_socket_path` / `socket_path_for_instance` / `token_path_for_instance` / `token_path_for_socket` 路径发现；deny-list 断言；4 个测试 |
 | `src/projection.rs` | ~1840 | `DesktopProjection` 渲染适配投影；`ConnectionState` / `ResumeState` / `ResumeApply` / `TerminalState` / `PendingApproval` / `ModelEntry` / `ActiveRun` / `SessionSummary` / `WorkspaceSummary` / TaskRail 分组类型；snapshot 段解析器；15 个测试 |
-| `src/ui/mod.rs` | ~1120 | `AppView` 宿主：连接生命周期、`ControllerEvent` 消费（含分页进行中 / 事件静默跟踪）、`MenuKind` 单开互斥与外点衔接标记、gpui 动作与键位表 `APP_VIEW_KEYBINDINGS`、tab_stop 表 `MAIN_PATH_TAB_STOP_IDS`、三栏整体装配与 StatusBar；1s tick（run 时钟重绘 + barrier settle 发射）；3 个测试 |
+| `src/ui/mod.rs` | ~1130 | `AppView` 宿主：连接生命周期、`ControllerEvent` 消费（含分页进行中 / 事件静默跟踪）、`MenuKind` 单开互斥与外点衔接标记、gpui 动作与键位表 `APP_VIEW_KEYBINDINGS`、tab_stop 表 `MAIN_PATH_TAB_STOP_IDS`、三栏整体装配、StatusBar 与 AX 同步；1s tick（run 时钟重绘 + barrier settle 发射）；3 个测试 |
+| `src/ui/accessibility.rs` | ~410 | 平台无关 `AxTree` / `AxNode` / role / action / request / rect 模型，identifier 唯一性、层级、focus / hit-test 约束；非 macOS no-op facade；3 个测试 |
+| `src/ui/accessibility/app.rs` | ~1320 | 从 `AppView` canonical UI 状态与布局 metric 构建三栏语义树；TaskRail 镜像 grouping/collapse（日期组 → 项目头/新建 → 会话行，折叠只投影头部）；稳定动态 identifier（Timeline 桶限定防重）；Inspector 折叠态走 ActivityPopover 链路；AX Send 复用 IME composing 闸门；把 press / focus / set-value 白名单映射回既有 AppView handler 与 enable gate；3 个测试 |
+| `src/ui/accessibility/macos.rs` | ~940 | ADR-042 AppKit bridge：`GPUIView` AX root、`NSAccessibilityElement` 虚拟元素、frame / parent / hit-test / focus / notification / retain-release、settable/action 双门与 action 回调；结构不变（identifier/role/press 能力/子树形状）时原位刷新既有 element 而非整树重建，内部树同步 super 直调不触发 action 回调；6 个 macOS 测试 |
 | `src/ui/barriers.rs` | ~175 | UI fixture barrier 发射器（R1 Wave B）：`BarrierSink` 读 `PAWORK_UI_BARRIER_DIR`（None 零开销直通）；`timeline_stable`（settle_seq 单调自增 / session_id / entry_count）重写与 `approval_visible` 写/删；tmp+rename 原子替换、IO 失败静默；1 个测试 |
 | `src/ui/theme.rs` | ~230 | 深色单主题 token：六组 30 色（bg 3 / surface 3 / border 2 / text 11 / accent 3 / semantic 8）+ 字阶 `font`（XS=11 / SM=12 / BASE=13 / MONO="Menlo"）+ `metrics` 19 个尺寸常量；静态 `dark()` 访问器；`impl Global` 仅为未来主题挂载点 |
 | `src/ui/timeline.rs` | ~140 | Timeline 容器：gpui `list()` 变高虚拟化 + `ListAlignment::Bottom` 钉底；`install_scroll_follow`（脱钩检测）；`sync_list`（统一 reset、脱钩偏移恢复、Entry 菜单 close-on-reset）；`TIMELINE_OVERDRAW`=200px；回底控件接线 |
@@ -36,7 +39,8 @@
 | `src/ui/changes.rs` | ~705 | Changes 面：Files / Summary 二级页签、`ChangesPanelState`（双 epoch 防过期）、文件清单、DiffView（hunk 着色 + 横滚）、session_mismatch banner、ActivityPopover；6 个测试 |
 | `src/ui/resources.rs` | ~210 | Resources 页：MCP server 只读表 + `ResourcesPanelState`（epoch 防过期）+ 手动刷新；1 个测试 |
 | `src/ui/task_rail.rs` | ~460 | Sessions 侧栏：grouping / scope 菜单、日期桶与项目块折叠、任务行（运行点 ● + 相对时间 + `.truncate()`）、Reconnect 按钮、连接状态徽标、「Local」页脚 |
-| `src/ui/text_input.rs` | ~700 | `TextInput`（Composer / 终端共用）：内容 / 占位符 / IME `marked_range` 下划线 / UTF-16↔UTF-8 映射（`EntityInputHandler`）/ 多行高度钳制 / 光标与选区绘制 / 点击聚焦；1 个测试 |
+| `src/ui/text_input.rs` | ~730 | `TextInput`（Composer / 终端共用）：内容 / 占位符 / IME `marked_range` 下划线 / UTF-16↔UTF-8 映射（`EntityInputHandler`）/ 多行高度钳制 / 光标与选区绘制 / 点击聚焦；AX set-value 使用同一 `set_text` 入口并清 marked range；2 个测试 |
+| `src/ui/u1_probe.rs` | ~300 | R1 Wave C U1 spike（`#[cfg(test)]`）：真实 `TextInput`/`Button`/overflow 滚动容器上的 TestAppContext 进程内驱动探针（action/focus/key/mouse/scroll/resize/clipboard/确定性 executor/debug_bounds）；10 个测试 |
 | `src/ui/components/mod.rs` | ~10 | 组件族模块声明 |
 | `src/ui/components/button.rs` | ~270 | `Button`：六 variant（Primary / Ghost / Danger / Success / Raised / Icon）的底色·文字色·hover/active 映射；`ButtonPadding` 四档；tab_stop + track_focus + 聚焦描边三件套；tooltip |
 | `src/ui/components/dropdown.rs` | ~200 | `Dropdown`（触发器 + `deferred(anchored())` 浮层）、`MenuPanel`（`occlude()` + `on_mouse_down_out` + `MENU_MAX_HEIGHT`=240px 内滚动）、`MenuRow`（选中 / 禁用 / hover 语义）、`ANCHOR_GAP_Y`=4px |
@@ -179,6 +183,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **终端约束**：`terminal_create` 的 cwd 只接受 workspace 相对路径（拒绝绝对路径、Windows 盘符前缀、`..` 分量）；终端面为滚动文本，无本地 PTY。
 - **心跳配比**：15 空闲 tick（≈15s）对 host 30s 超时的节拍不可静默改动；断线不取消 Run。
 - **窗口与焦点**：默认 1440×1024；启动聚焦 Composer；点击输入框显式拉回焦点（`track_focus` 自动聚焦不够，否则第二轮键盘 / IME / 粘贴进不来）。
+- **Accessibility 单一语义源（ADR-042）**：`AppView` 只从自身 canonical UI 状态与布局 metric 构建显式 `AxTree`；稳定 identifier 与本地化 label 分离，macOS bridge 只做 AppKit 映射。AX press / focus / set-value 必须回到既有 AppView handler 与 enable gate，未知请求 fail-closed；disabled 控件不得发布可执行 action。触发器语义与可见路径一致（Inspector 折叠态先弹 ActivityPopover，摘要行才展开）；IME composing 中 AX Send 与键盘 Enter 同样不生效。新增可见交互须同批补节点、bounds、状态和 action 映射；非 macOS 当前为 no-op，不宣称已有平台 AX 实现。
 
 ## 6. 依赖关系
 
@@ -190,13 +195,14 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 | `tokio` | workspace（rt-multi-thread / macros / sync / time） | GUI Connection Protocol 异步宿主 |
 | `serde_json` | workspace | 命令 / 查询构造与 snapshot 段、响应解析 |
 | `unicode-segmentation` | 1 | 输入框 grapheme 光标边界 |
+| `cocoa` / `objc` / `raw-window-handle` | macOS target only：`=0.26.0` / `0.2` / `0.6` | ADR-042 原生 AppKit AX bridge 与从 GPUI window 取得 `NSView`；不增加 `pawork-*` 业务依赖 |
 
 - **被依赖**：无。独立二进制，不进 `pawork` CLI 的依赖闭包。
 - **运行时对端**：`pawork gui serve`（host 侧 gui-server）。数据目录规则镜像 app（`PAWORK_DATA_DIR` →（Windows）`%LOCALAPPDATA%/pawork` → `~/.pawork` → 临时目录/pawork），但按分层约束**不**依赖 `pawork-app` crate。
 
 ## 7. 测试与验证资产
 
-43 个测试全部内嵌于 bin target（`#[cfg(test)] mod tests`；无 crate `tests/` 目录），按文件分布：
+66 个测试全部内嵌于 bin target（`#[cfg(test)]` 模块；无 crate `tests/` 目录），按文件分布：
 
 | 文件 | 数量 | 覆盖面 |
 | --- | --- | --- |
@@ -204,11 +210,15 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 | `projection.rs` | 15 | snapshot 重建与事件重放；审批卡随 run 终态清理；pending model 被 `model.switched` Diagnostic 确认；沙箱回退 Diagnostic 上时间线；snapshot active_runs 恢复取消目标与时长；ContextMeter / RunStatus 诚实文案；TaskRail 日期→项目分组与 Unassigned；scope 选项与空态；分组切换不改 active session；session_tree 扁平 / 分支双形态；同 session 切支 reset 基线（seen / tombstone / 锚点全清后重放重建）；TerminalOutput 追加与跨会话隔离；live tool 输出回填 running 条目；历史审批事件留痕；UI fixture 期望快照（`fixtures/ui/expected/snapshot.json`，再生步骤见该目录 README）重建 7 会话四桶分组、项目分组、pending 审批卡与 provider 状态 |
 | `platform.rs` | 4 | socket / token 默认路径与 instance 命名；socket→token 推导；deny-list 恰为 `{pawork-client}`；扫描器覆盖别名 / target 表（负例含 dev-dependencies 排除） |
 | `ui/mod.rs` | 3 | 键位表含审批与取消；主路径 tab_stop 全集；All projects 新建须确认 workspace |
+| `ui/accessibility.rs` | 3 | identifier 唯一与父子关系校验；focus 单一性；bounds hit-test 与无效树拒绝 |
+| `ui/accessibility/app.rs` | 3 | 动态 identifier 的转义稳定且无 escape-marker 碰撞；项目 identifier 的日期桶限定与 Projects 模式稳定；Timeline 摘要截尾保持 UTF-8 边界 |
+| `ui/accessibility/macos.rs` | 6 | 顶左 bounds → AppKit parent space 坐标转换；value-change diff；结构骨架比较（属性变化不触发重建）；settable/action 双门拒绝越权 value / focus 写入；disabled action fail-closed（macOS） |
 | `ui/barriers.rs` | 1 | timeline_stable 重写且 settle_seq 单调、字段形状齐全；approval_visible 写入（含 tool 名）与消失删除；未启用（None）零写入 |
 | `ui/changes.rs` | 6 | ActivityPopover 摘要格式与单复数 / unavailable；二级页签默认 Files；epoch 拒过期与选中消失清 diff；diff 响应拒代次 / 路径不匹配；session_mismatch 判定矩阵 |
 | `ui/inspector.rs` | 1 | 顶层页签默认 Terminal（与波 C 前单页行为连续） |
 | `ui/resources.rs` | 1 | 默认 Idle 与 epoch 拒过期 |
-| `ui/text_input.rs` | 1 | 多行粘贴的视觉行计数 |
+| `ui/text_input.rs` | 2 | 多行粘贴的视觉行计数；AX set-value 替换内容并清除 IME marked range |
+| `ui/u1_probe.rs` | 10 | R1 Wave C U1 spike：TestAppContext 实测矩阵（action 分发 / focus 断言 / keystrokes+input / mouse click / ScrollWheelEvent / resize / clipboard / 确定性 executor / debug_bounds 几何）；IME composing 与 AX 如实记为不支持，见 [../../ui-review/wave-c/u1/notes.md](../../ui-review/wave-c/u1/notes.md) |
 
 **验证命令**：
 
@@ -217,18 +227,18 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 ```
 
 - `--bins`：本包是 bin-only（无 lib target），任务指南默认的 `--lib --tests` 匹配不到任何 target。
-- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R8 起的标准口径，历波收口 28/28 → 43/43 绿）。
+- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R8 起的标准口径，历波收口 28/28 → 43/43 → 53/53 → 62/62 绿）。
 
-本包唯一 dev-dependency 为 `tempfile`（workspace `3`），仅服务 `ui/barriers.rs` 的临时目录测试，不计入生产 deny-list。
+本包 dev-dependencies 为 `tempfile`（workspace `3`，仅服务 `ui/barriers.rs` 的临时目录测试）与 `gpui` dev 条目（`=0.2.2` + `test-support` feature，R1 Wave C 起；仅测试构建启用 TestAppContext/VisualTestContext，resolver v2 下不进生产二进制闭包），均不计入生产 deny-list。
 
-**运行时验证资产**：`--probe`（连接 + snapshot + 模型目录一行摘要）与 `--probe-smoke`（流式回合 / 切模型 / 审批 / 取消 / 两次断线重连持久化 / `disconnect_survive`），配合隔离实例（`--instance` + `PAWORK_DATA_DIR`）在真实 host 上冒烟。端到端流程见 [../flows.md](../flows.md)；验证总策略见 [../README.md](../README.md)。
+**运行时验证资产**：`--probe`（连接 + snapshot + 模型目录一行摘要）与 `--probe-smoke`（流式回合 / 切模型 / 审批 / 取消 / 两次断线重连持久化 / `disconnect_survive`），配合隔离实例（`--instance` + `PAWORK_DATA_DIR`）在真实 host 上冒烟。R1 另提供 [scripts/ui-ax-dump.swift](../../../scripts/ui-ax-dump.swift) 做真窗口 AX tree / action 取证；补救前后证据分别见 [ax-gate](../../ui-review/wave-c/ax-gate/) 与 [ax-bridge](../../ui-review/wave-c/ax-bridge/)。端到端流程见 [../flows.md](../flows.md)；验证总策略见 [../README.md](../README.md)。
 
 ## 8. 注意事项与已知限制
 
 - **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic（旧 R8 波 A 实证 exit 134，真窗口自始无法启动）。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归；新 [R1/R8](../../../plan/R1-ui-visual-contract.md) 必须建立真窗口启动门禁。
 - **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
-- **渲染面自动门禁尚未建立**：菜单开合 / FollowScroll / hover / 虚拟化滚动 / DiffView 横滚当前主要依赖历史人工取证；新 R1–R8 必须补 U1/U2/U3。Entry 菜单在锚点条目被虚拟化卸载后状态与视觉短暂失联，需在 R7/R8 给出可恢复行为，不能沿用旧偏差接受。
+- **渲染面自动门禁尚未完整**：R1 Wave C 已建立 U1 进程内探针，以及 macOS 真窗口 AX tree / semantic action / screenshot 来源；State A 完整视觉 diff 与故意漂移仍待 Wave D。菜单开合 / FollowScroll / hover / 虚拟化滚动 / DiffView 横滚仍主要依赖历史人工取证，须在 R2–R8 逐组件补齐。Entry 菜单在锚点条目被虚拟化卸载后状态与视觉短暂失联，需在 R7/R8 给出可恢复行为，不能沿用旧偏差接受。
 - **ActivityPopover 触发器位置是已知偏差**：现实现由底部 StatusBar 右侧触发、向上展开；定稿为 Workspace Header 右上触发、向下展开约 320px 且不覆盖 Composer（[../../../design/README.md](../../../design/README.md) §5.1/§8.5、UI_Review F-12 / D-01）。迁移完成前 F-12 保持未通过；迁移落地后同批更新本文 §3.2 的 StatusBar 描述。
 - **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
 - **单主题**：仅深色 `dark()`；`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。

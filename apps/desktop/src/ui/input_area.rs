@@ -275,7 +275,7 @@ impl AppView {
         panel
     }
 
-    fn on_confirm_workspace(
+    pub(super) fn on_confirm_workspace(
         &mut self,
         workspace_id: String,
         window: &mut Window,
@@ -285,7 +285,7 @@ impl AppView {
         self.create_task(Some(workspace_id), window, cx);
     }
 
-    fn on_toggle_model_menu(
+    pub(super) fn on_toggle_model_menu(
         &mut self,
         down_position: Option<Point<Pixels>>,
         _window: &mut Window,
@@ -297,7 +297,7 @@ impl AppView {
         self.toggle_menu(MenuKind::Model, down_position, cx);
     }
 
-    fn on_select_model(&mut self, model: ModelEntry, cx: &mut Context<Self>) {
+    pub(super) fn on_select_model(&mut self, model: ModelEntry, cx: &mut Context<Self>) {
         self.projection
             .set_pending_model(model.provider_id, model.id);
         self.open_menu = None;

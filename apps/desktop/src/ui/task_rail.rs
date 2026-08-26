@@ -371,7 +371,7 @@ impl AppView {
         block
     }
 
-    fn on_toggle_grouping_menu(
+    pub(super) fn on_toggle_grouping_menu(
         &mut self,
         down_position: Option<Point<Pixels>>,
         _window: &mut Window,
@@ -380,7 +380,7 @@ impl AppView {
         self.toggle_menu(MenuKind::Grouping, down_position, cx);
     }
 
-    fn on_select_grouping(
+    pub(super) fn on_select_grouping(
         &mut self,
         grouping: TaskRailGrouping,
         _window: &mut Window,
@@ -391,7 +391,7 @@ impl AppView {
         cx.notify();
     }
 
-    fn on_toggle_scope_menu(
+    pub(super) fn on_toggle_scope_menu(
         &mut self,
         down_position: Option<Point<Pixels>>,
         _window: &mut Window,
@@ -400,7 +400,7 @@ impl AppView {
         self.toggle_menu(MenuKind::Scope, down_position, cx);
     }
 
-    fn on_select_scope(
+    pub(super) fn on_select_scope(
         &mut self,
         workspace_id: Option<String>,
         _window: &mut Window,
@@ -411,7 +411,7 @@ impl AppView {
         cx.notify();
     }
 
-    fn on_toggle_project(
+    pub(super) fn on_toggle_project(
         &mut self,
         project_key: String,
         _window: &mut Window,
@@ -423,7 +423,7 @@ impl AppView {
         cx.notify();
     }
 
-    fn on_project_add_task(
+    pub(super) fn on_project_add_task(
         &mut self,
         workspace_id: String,
         window: &mut Window,

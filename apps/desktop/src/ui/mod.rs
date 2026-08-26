@@ -3,6 +3,7 @@
 //! timeline（条目 → timeline_entry、审批卡 → approval_card）、Inspector →
 //! inspector、Composer → input_area。
 
+mod accessibility;
 mod approval_card;
 mod barriers;
 mod changes;
@@ -15,6 +16,8 @@ pub mod text_input;
 mod theme;
 mod timeline;
 mod timeline_entry;
+#[cfg(test)]
+mod u1_probe;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -187,6 +190,10 @@ pub struct AppView {
     /// R1 Wave B fixture barrier 状态（PAWORK_UI_BARRIER_DIR 未设置则
     /// 零开销直通；发射语义见 ui/barriers.rs）。
     barriers: BarrierSink,
+    /// macOS 原生 accessibility bridge；非 macOS 为零行为占位。
+    ax_bridge: Option<accessibility::AxBridge>,
+    /// 避免同一 AX 投影错误在每帧重复刷屏。
+    ax_error_reported: bool,
     /// session_get 分页是否进行中（open_session 置位，complete / 失败复位）。
     timeline_paging: bool,
     /// 距上个 1s tick 是否有新 ControllerEvent（有则本 tick 视为未静默）。
@@ -241,6 +248,8 @@ impl AppView {
             pending_outside_close: None,
             run_clock_running: false,
             barriers: BarrierSink::new(barrier_dir),
+            ax_bridge: None,
+            ax_error_reported: false,
             timeline_paging: false,
             controller_event_pending: false,
             focus_handle: cx.focus_handle(),
@@ -969,7 +978,8 @@ fn resolve_new_task_workspace(scope_workspace_id: Option<&str>) -> Option<&str> 
 }
 
 impl Render for AppView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_accessibility(window, cx);
         let connected = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }

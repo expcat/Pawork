@@ -2,7 +2,7 @@
 
 > 本文是**架构事实源**：架构红线、包布局与依赖方向、冻结契约与「追加不重写」三道保险、S13 安全拍板、ADR 索引。功能设计与候选池见 [design.md](design.md)；包内细节见 [包级 Spec](spec/README.md)；跨包链路见 [spec/flows.md](spec/flows.md)；历史沿革见 [history.md](history.md)。
 >
-> 基线：V3 R1 定稿布局（21 成员，ADR-039，2026-08-19）。冻结契约截至 2026-08-25：R6（session 分支模型，ADR-040）与 R7（沙箱信任模型，ADR-041）已按 ADR 完成版本化演进；此外的 schema/wire 演进须另立 ADR。
+> 基线：V3 R1 定稿布局（21 成员，ADR-039，2026-08-19）。冻结契约截至 2026-08-26：R6（session 分支模型，ADR-040）与 R7（沙箱信任模型，ADR-041）已按 ADR 完成版本化演进；Desktop AX 补救按 ADR-042 保持 GPUI 0.2.2、由应用侧原生 bridge 承载；此外的 schema/wire 演进须另立 ADR。
 
 ---
 
@@ -47,7 +47,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 | `pawork-cli` | `crates/cli` | 原 cli 依赖（GuiHost 经 app） | 21 子命令 + `channels/acp/`（AcpHost 四件套） |
 | `pawork-client` | `crates/client` | → domain、protocol、transport | framed 连接面 + `headless/`（原 sdk）；probe 场景为本包 tests/，live 模式 `examples/probe.rs` |
 | `pawork`（bin） | `apps/pawork` | → cli | composition root + `redact.rs`（Redactor/RedactingFmtLayer） |
-| `pawork-desktop`（bin） | `apps/desktop` | → client、gpui | 四层 ui/projection/controller/platform；业务依赖仅 pawork-client（deny-list 断言） |
+| `pawork-desktop`（bin） | `apps/desktop` | → client、gpui；macOS platform-only → cocoa、objc、raw-window-handle | 四层 ui/projection/controller/platform；业务依赖仅 pawork-client（deny-list 断言）；ADR-042 AX bridge 不扩张业务依赖 |
 
 **不合并清单**（ADR-039 D2 固化）：`policy`、`exec`、`auth`、`git`、`engine`、`protocol`、`testkit`、`transport`、`orchestration`、`workflow` 保持独立包。R1 解散的 16 包与 protocol-probe 为**平移**语义（git 历史 + tag `v2-final` 兜底）。V3 期间不新增包，后续阶段只往既有包加模块；包布局变更须先过 ADR。
 
@@ -112,4 +112,5 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
   - [ADR-039](adr/ADR-039-package-layout-and-no-merge-list.md) 包布局与不合并清单（R1：37→21、扁平 `crates/`）。
   - [ADR-040](adr/ADR-040-session-branch-lineage.md) 会话分支模型原生化（R6：append-only 单表全局 sequence、schema v12 回填即校验、压缩按分支水位）。
   - [ADR-041](adr/ADR-041-sandbox-trust-model.md) 沙箱信任模型（R7：macOS 写白名单正式化 + 读整盘 allow 挖洞、PTY 入闸、删 `network_allow_hosts`、shell 手写 tokenizer）。
-- 新决策继续以 ADR 记录，编号续接（下一个 ADR-042），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。
+  - [ADR-042](adr/ADR-042-desktop-accessibility-bridge.md) Desktop 原生 Accessibility bridge（保持 GPUI 0.2.2；显式语义树 + AppKit 虚拟 AX 元素 + action 回到既有 AppView gate）。
+- 新决策继续以 ADR 记录，编号续接（下一个 ADR-043），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。

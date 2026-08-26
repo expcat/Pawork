@@ -1,6 +1,6 @@
 # R1 — 视觉合同、固定 fixture 与 UI 测试基座
 
-> 状态：🔵 进行中（Wave A/B 已收口；Wave C/D 未开始）
+> 状态：🔵 进行中（Wave A/B/C 已收口；Wave D 未开始）
 > 目标：在修改生产 UI 前，把“设计稿是什么、测试输入是什么、如何证明一致”冻结成可重复执行的合同。R1 不以主观截图点评代替门禁，也不以写死演示数据换取相似度。
 
 ## 1. 输入与边界
@@ -102,11 +102,42 @@ fixture 必须使用隔离的 `PAWORK_DATA_DIR`，固定 seed、时间、workspa
 - U2：真 `pawork` Host + 真 Desktop 进程，首选 macOS XCUITest/XCTest 或等价 AX 驱动按语义模拟 click/hover/type/key/scroll/resize/reconnect；外部驱动不得进入 Desktop 生产构建，若“纯 Rust 构建链”边界仍有歧义则先请求架构裁决；
 - U3：真窗口 screenshot + ImageMagick（或等价可复现工具）差分、AX audit/VoiceOver、真实 IME 与性能取证；R1 只证明管线能稳定产出证据并能识别当前偏差，不要求当前 UI 达到 99%，也不要求用户签字。
 
-当前调研只证明 `gpui = 0.2.2` 具备若干进程内输入模拟能力，**没有证明**它拥有当前 Zed main 的 AccessKit/完整 AX tree 或 Metal 离屏截图。R1 必须以真 macOS 窗口验证 role/label/value/action/identifier 映射；若 AX 只能看到 Window/traffic lights，R1 直接失败，必须在精确 revision 升级、有限 backport 或等价 AX bridge 中做出有界决策，不能降级为坐标驱动后宣称全功能。
+Wave C 的原生 GPUI spike 起点只证明 `gpui = 0.2.2` 具备若干进程内输入模拟能力，**没有证明**它拥有当前 Zed main 的 AccessKit/完整 AX tree 或 Metal 离屏截图。R1 必须以真 macOS 窗口验证 role/label/value/action/identifier 映射；若 AX 只能看到 Window/traffic lights，R1 直接失败，必须在精确 revision 升级、有限 backport 或等价 AX bridge 中做出有界决策，不能降级为坐标驱动后宣称全功能。
 
-选择标准：能按稳定 identifier/role/name 定位而非只靠坐标；identifier 与本地化 label 分离；能等待明确 barrier 而非固定 sleep；能导出 action trace、窗口几何、截图、AX tree、Host/event log；失败后可单场景重放。GPUI 真实视觉测试若采用主线程/串行机制，必须与“同一时刻一个 Cargo 进程”纪律兼容。
+选择标准：能按稳定 identifier/role/name 定位而非只靠坐标；identifier 与本地化 label 分离；能等待明确 barrier 而非固定 sleep；能导出 action trace、窗口几何、截图、AX tree、Host/event log；失败后可单场景重放。GPUI 真实视觉测试若采用主线程/串行机制，必须与"同一时刻一个 Cargo 进程"纪律兼容。
+
+### Wave C 进展记录（2026-08-26）
+
+**已落地**：
+
+- **U0**：Wave B 已覆盖（devfixture 种子 → GuiHostAdapter snapshot/timeline 断言 + Desktop projection 消费 expected snapshot），本 Wave 复核确认，无新增工作。
+- **U1（已验证并冻结选型）**：进程内驱动定案为 GPUI 0.2.2 `TestAppContext`/`VisualTestContext`，经 dev-only `gpui/test-support` feature 启用（[apps/desktop/Cargo.toml](../apps/desktop/Cargo.toml) dev-dependencies，生产依赖不变）。探针 [u1_probe.rs](../apps/desktop/src/ui/u1_probe.rs) 在真实 `TextInput`/`Button`/overflow 滚动容器上实测：action 分发、focus 断言、keystrokes/input、mouse click、scroll（无 `simulate_scroll`，用 `simulate_event(ScrollWheelEvent)`）、resize、clipboard、确定性 executor（`run_until_parked`/`advance_clock`）、`debug_bounds` 几何断言——10 探针全绿。不支持：IME composing 模拟、AX（如实记录，见 [notes.md](../docs/ui-review/wave-c/u1/notes.md)）。
+- **AX 闸门（真窗口取证，FAIL）**：[scripts/ui-ax-dump.swift](../scripts/ui-ax-dump.swift)（swiftc 编译的进程外 helper，不进生产构建）对真 fixture Host + 真 Desktop 窗口取证：截图确认完整 Pawork UI，AX 树仅 7 节点（`AXApplication` + `AXWindow` + traffic lights + 空 `AXStaticText`），无任何自定义控件 role/label/value/action/identifier。证据 [docs/ui-review/wave-c/ax-gate/](../docs/ui-review/wave-c/ax-gate/)（ax-tree.txt / window.png / notes.md）。与源码级结论互证：gpui 0.2.2 整 crate 无 accessibility/AccessKit 命中。
+- **U2/U3（已验证并冻结选型）**：U2 使用独立 Swift helper [ui-ax-dump.swift](../scripts/ui-ax-dump.swift) 按稳定 identifier / role 导出 AX tree，并执行 `AXPress` / focus / `AXValue`；状态等待以 Wave B 文件 barrier 为准，不使用固定 sleep。U3 使用 `screencapture -x -o -l <wid>` 取真窗口（CGWindowList 定位），差分复用 [ui-visual-diff.py](../scripts/ui-visual-diff.py)。真 Host + 真 Desktop 已验证会话选择、Composer 写入与同步截图，证据见 [ax-bridge](../docs/ui-review/wave-c/ax-bridge/)。XCUITest 只保留可选第二套；pyobjc 不可用，Accessibility Inspector / VoiceOver 无 CLI。真实 IME 与性能取证路线分别为 TIS + keycode、os_signpost + `xctrace`/`sample`，留 R7/R8 扩面。
+
+**AX 补救决策记录（用户已选择选项 3，见 [ADR-042](../docs/adr/ADR-042-desktop-accessibility-bridge.md)）**：
+
+1. **精确 revision 升级**：gpui 升至 zed git revision（AccessKit 于 zed `1d029c5` / PR #56065 引入，2026-05-27）。改动面最大——上游已拆 `gpui_macos` 等子包且 `publish=false`，与 crates.io 0.2.2 布局不兼容，实际为 vendor 整棵 zed gpui 树。
+2. **有限 backport**：`[patch.crates-io]` vendor 0.2.2 + 移植 #56065（27 文件 +2738/−58，其中 mac 侧约 +65），hunk 需改写适配单体树；与 ADR-035 `=0.2.2` 锁定的精神相违（checksum 变化），且 #56065 次日即有 focus panic 修复、上游 a11y 后续又 +2.3k 行，backport 目标是不完整的中间态。
+3. **等价 AX bridge（desktop 侧，已选并落地）**：保持 gpui 0.2.2；Desktop 显式构建平台无关 `AxTree`，macOS 以 AppKit 虚拟 AX 元素挂到 `GPUIView`，role / label / value / identifier / hit-test / action 均来自同一语义源。AX action 经前台 executor 回到既有 `AppView` handler 与 enable gate；非 macOS 为同形 no-op facade。新增 macOS-only `cocoa` / `objc` / `raw-window-handle`，不增加 `pawork-*` 业务依赖。
+
+补救后真窗口完整树为 75 节点、0 截断，覆盖 Pawork 三栏、会话、Timeline 可见条目、Composer、Inspector 与状态面；`AXPress` 选择 fixture 会话、`AXValue` 写入 Composer 均返回成功并产生可观察 UI 状态变化。disabled 元素不发布 `AXPress`，未知 identifier / action fail-closed。失败前后的原始证据分别保存在 [ax-gate](../docs/ui-review/wave-c/ax-gate/) 与 [ax-bridge](../docs/ui-review/wave-c/ax-bridge/)。
+
+**计划偏差**：取证中 `cargo build` 两次"挂起"——根因非 rustc bug，而是 `target/debug/deps` 积累约 77.5 万个陈旧文件（V1/R1 时代 `*.rcgu.o` 为主）致冷态 readdir 需数分钟、rustc 启动扫描 `-L` 路径时 0% CPU 空等。已外科手术清理（仅 `*.rcgu.o` 与 18 个 R1 时代死包前缀，共 774,723 个可再生构建产物，未动 target 其它内容），清理后 `cargo check -p pawork-desktop --offline` 17.7s 完成。AX 闸门取证使用的 desktop 二进制为清理前既有产物（2026-08-25），结论绑定 gpui 0.2.2 窗口实现，不受影响。`scripts/clean-stale-incremental.py` 未覆盖 deps 面，扩展登记见 ROADMAP §4.1。
+
+**验证**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 62/62（既有 53 + AX 模型 3 + 动态 identifier / UTF-8 文本 helper 2 + macOS bridge 3 + TextInput AX 写入 1）；`cargo build -p pawork-desktop --offline --features gpui/runtime_shaders --bin pawork-desktop` 与 `swiftc -O scripts/ui-ax-dump.swift` 通过；AppView action 映射由 seed → serve → Desktop → barrier → AX action → dump → screenshot 的真链路验证。
+
+**未做**：Wave D State A 的完整视觉基线 / diff 与故意漂移捕获；真实 IME、性能和全量 VoiceOver 扩面留 R7/R8；Windows / Linux 平台 AX bridge 不在 ADR-042 范围。
+
+**复审修复轮（2026-08-26）**：grok reviewer 对 AX bridge 写入集只读复审，4 项确认修复（TaskRail AX 树镜像 grouping/collapse 并补项目头与项目新建节点；`inspector-toggle` 折叠态改走 ActivityPopover 链路并发布 `activity-open-changes`；AX Send 复用 IME composing 闸门；value/focus 变化改原位刷新既有原生 element，结构变化才整树重建），2 项带证据驳回（Drop UAF——NSView 显式 retain；Rc 线程 UB——AppKit 主线程服务保证 + debug 断言）。另自查修复上一轮 gate 修复引入的回归：build 期初始 `setAccessibilityValue:` 被早退吞掉，现 build/refresh 统一 super 直调。真窗口复验（分组/折叠/Activity 链/TabGroup/写值/选中）见 [ax-bridge notes §4](../docs/ui-review/wave-c/ax-bridge/notes.md)。验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 66/66。
 
 ## 5. Wave D — 建立首个闭环
+
+### Wave D 进展记录（2026-08-27）
+
+**已落地**：闭环驱动 [scripts/ui-wave-d-state-a.sh](../scripts/ui-wave-d-state-a.sh) + [scripts/ui-wave-d-tools.py](../scripts/ui-wave-d-tools.py)；Desktop 经 `ui-fixture.sh desktop` 启动；identifier/barrier 解析对拍 Wave C dump 与 `timeline_stable` JSON；定向回归 [scripts/test_ui_wave_d_tools.py](../scripts/test_ui_wave_d_tools.py) 3/3。说明见 [wave-d/notes.md](../docs/ui-review/wave-d/notes.md)。
+
+**未做（外部前提）**：State A 真窗口基线 / 两次 compare / 故意漂移。2026-08-26 屏幕锁定，AX 与 `screencapture -l` 不可用；host 连接与 `timeline_stable` 正常。解锁后按 notes.md 复跑。
 
 用 State A 的“启动 → 连接 → 选择 task → 检查三栏骨架 → 截图”跑通 U0–U3：
 
@@ -123,6 +154,6 @@ fixture 必须使用隔离的 `PAWORK_DATA_DIR`，固定 seed、时间、workspa
 - [x] State A/B/C 组件与状态 manifest 完整，所有可见组件都能映射到真实能力或诚实不可用态。
 - [x] 量图表与 99% 判定脚本/步骤可由另一位执行者复现；主区域不能被全屏空白稀释。
 - [x] fixture 经真实 Host/协议/projection 到达 Desktop，隔离、确定、无 Secret、无生产演示分支。（Wave B 收口：GuiHostAdapter 对拍 + Desktop projection 消费 expected snapshot；真窗口端到端属 Wave D）
-- [ ] U0–U3 工具路线已以最小闭环验证；GPUI AX/visual 能力闸门有真实结论，稳定语义定位、显式 barrier 与失败证据可用。
+- [x] U0–U3 工具路线已以最小闭环验证；GPUI 原生 AX 失败结论与 ADR-042 补救均有真窗口证据，稳定语义定位、显式 barrier、截图与失败证据可用。
 - [ ] State A 基线场景可重复执行，且故意漂移能被门禁捕获。
-- [ ] 实际验证、未覆盖项和技术限制已回写本文与 ROADMAP；未满足时不进入 R2。
+- [x] Wave C 的实际验证、未覆盖项和技术限制已回写本文与 ROADMAP；State A 未满足前不进入 R2。
