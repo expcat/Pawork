@@ -1,0 +1,208 @@
+{
+  "generated_at": 0,
+  "instance_id": "<normalized>",
+  "sections": [
+    {
+      "data": [
+        {
+          "id": "fx-alpha-app",
+          "name": "alpha-app",
+          "trusted": false
+        }
+      ],
+      "kind": "workspaces",
+      "revision": 1
+    },
+    {
+      "data": [
+        {
+          "active": true,
+          "active_branch": "main",
+          "archived": false,
+          "branches": [
+            {
+              "active": true,
+              "branch_id": "main",
+              "forked_from_event_id": null,
+              "head_sequence": 70,
+              "parent_branch_id": null
+            }
+          ],
+          "created_at_ms": 1767214800000,
+          "forked_from_event_id": null,
+          "parent_branch_id": null,
+          "session_id": "fx-ses-alpha-today",
+          "title": "Refactor launcher tabs",
+          "updated_at_ms": 1767218400000,
+          "workspace_id": "fx-alpha-app"
+        },
+        {
+          "active": true,
+          "active_branch": "main",
+          "archived": false,
+          "branches": [
+            {
+              "active": true,
+              "branch_id": "main",
+              "forked_from_event_id": null,
+              "head_sequence": 11,
+              "parent_branch_id": null
+            }
+          ],
+          "created_at_ms": 1767214800000,
+          "forked_from_event_id": null,
+          "parent_branch_id": null,
+          "session_id": "fx-ses-beta-pending",
+          "title": "Type the public API surface",
+          "updated_at_ms": 1767216600000,
+          "workspace_id": "fx-beta-lib"
+        },
+        {
+          "active": true,
+          "active_branch": "main",
+          "archived": false,
+          "branches": [
+            {
+              "active": true,
+              "branch_id": "main",
+              "forked_from_event_id": null,
+              "head_sequence": 6,
+              "parent_branch_id": null
+            }
+          ],
+          "created_at_ms": 1767128400000,
+          "forked_from_event_id": null,
+          "parent_branch_id": null,
+          "session_id": "fx-ses-alpha-yesterday",
+          "title": "Investigate provider timeout",
+          "updated_at_ms": 1767132000000,
+          "workspace_id": "fx-alpha-app"
+        },
+        {
+          "active": true,
+          "active_branch": "main",
+          "archived": false,
+          "branches": [
+            {
+              "active": true,
+              "branch_id": "main",
+              "forked_from_event_id": null,
+              "head_sequence": 15,
+              "parent_branch_id": null
+            }
+          ],
+          "created_at_ms": 1766965600000,
+          "forked_from_event_id": null,
+          "parent_branch_id": null,
+          "session_id": "fx-ses-beta-toolfailed",
+          "title": "Build after dependency bump",
+          "updated_at_ms": 1766966400000,
+          "workspace_id": "fx-beta-lib"
+        },
+        {
+          "active": true,
+          "active_branch": "main",
+          "archived": false,
+          "branches": [
+            {
+              "active": true,
+              "branch_id": "main",
+              "forked_from_event_id": null,
+              "head_sequence": 144,
+              "parent_branch_id": null
+            }
+          ],
+          "created_at_ms": 1766875600000,
+          "forked_from_event_id": null,
+          "parent_branch_id": null,
+          "session_id": "fx-ses-beta-long",
+          "title": "Virtualization stress session",
+          "updated_at_ms": 1766880000000,
+          "workspace_id": "fx-beta-lib"
+        },
+        {
+          "active": true,
+          "active_branch": "main",
+          "archived": false,
+          "branches": [
+            {
+              "active": true,
+              "branch_id": "main",
+              "forked_from_event_id": null,
+              "head_sequence": 9,
+              "parent_branch_id": null
+            }
+          ],
+          "created_at_ms": 1766359600000,
+          "forked_from_event_id": null,
+          "parent_branch_id": null,
+          "session_id": "fx-ses-beta-cancelled",
+          "title": "Long batch refactor",
+          "updated_at_ms": 1766361600000,
+          "workspace_id": "fx-beta-lib"
+        },
+        {
+          "active": true,
+          "active_branch": "main",
+          "archived": false,
+          "branches": [
+            {
+              "active": true,
+              "branch_id": "main",
+              "forked_from_event_id": null,
+              "head_sequence": 8,
+              "parent_branch_id": null
+            }
+          ],
+          "created_at_ms": 1766355600000,
+          "forked_from_event_id": null,
+          "parent_branch_id": null,
+          "session_id": "fx-ses-alpha-longtitle",
+          "title": "超长标题回归样本——用于验证任务列表截断、tooltip 与选中态在 200+ 字符标题下的表现。本标题刻意超过二百个字符以触发 UI 的省略逻辑，同时保持可读的语义边界：这里的每一段填充文本都对应 Desktop Timeline 左侧 TaskRail 在窄窗与宽窗下的两种裁切路径，最终断言以完整标题进入 snapshot 为准，而不是以渲染截断为准。附加填充：一二三四五六七八九十一二三四五六七八九十",
+          "updated_at_ms": 1766361600000,
+          "workspace_id": "fx-alpha-app"
+        }
+      ],
+      "kind": "session_tree",
+      "revision": 2
+    },
+    {
+      "data": [],
+      "kind": "active_runs",
+      "revision": 3
+    },
+    {
+      "data": [
+        {
+          "message": "approval pending across restart",
+          "preview": null,
+          "relative_path": "src/lib.ts",
+          "risk": "moderate",
+          "run_id": "run-fx-ses-beta-pending-1",
+          "session_id": "fx-ses-beta-pending",
+          "tool_call_id": "call-fx-ses-beta-pending-0-0",
+          "tool_name": "write_file"
+        }
+      ],
+      "kind": "pending_tool_approvals",
+      "revision": 4
+    },
+    {
+      "data": [],
+      "kind": "terminal_sessions",
+      "revision": 5
+    },
+    {
+      "data": [
+        {
+          "model": "fixture-model",
+          "provider_id": "mock",
+          "status": "ready"
+        }
+      ],
+      "kind": "provider_status",
+      "revision": 6
+    }
+  ],
+  "snapshot_sequence": 0
+}

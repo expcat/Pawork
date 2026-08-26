@@ -20,3 +20,7 @@ smol = "2"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 serde_json.workspace = true
 unicode-segmentation = "1"
+
+[dev-dependencies]
+# 仅 ui/barriers.rs 单测的临时目录（dev-dependencies 不计入生产 deny-list）。
+tempfile.workspace = true

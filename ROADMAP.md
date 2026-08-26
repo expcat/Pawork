@@ -11,8 +11,8 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R1 — 视觉合同、固定 fixture 与 UI 测试基座**（Wave A 视觉合同已收口，见 [任务书收口记录](plan/R1-ui-visual-contract.md)） |
-| 下一任务 | R1 Wave B（固定真实 fixture）；合同仲裁已拍板（几何=文档定稿值 + 分区锚点/最低覆盖率，`geometry-drift` 仅限纯边缘，色板=按实测与对比度重定 token，见 [design/README.md](design/README.md) §2.1） |
+| 当前阶段 | **R1 — 视觉合同、固定 fixture 与 UI 测试基座**（Wave A 视觉合同、Wave B 固定真实 fixture 及安全复审加固已收口，见 [任务书收口记录](plan/R1-ui-visual-contract.md)） |
+| 下一任务 | R1 Wave C（UI driver 与可观察性基座：GPUI AX/真窗口能力 spike、U0–U3 工具选型与冻结） |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
 | 阻塞 | 无外部阻塞；Projects 同尺寸视觉基线已建立（docs/ui-review/state-c/）；`gpui = 0.2.2` AX/真窗口能力验证随 R1 Wave C 执行 |
 
@@ -98,6 +98,7 @@ flowchart LR
 - 修复 usage record id 多轮冲突；清理 policy/workflow/orchestration 死依赖与过期描述/注释。
 - 到期后移除 `StoredCredential` serde alias；合并 protocol 测试箱并评估 client dev-dep。
 - 统一 resources 的 `canonical_within` 到 policy 路径内核。
+- 修复 transport local_unix accept 跨 await 持锁导致的 listener close 死锁（R1 Wave B 在 fixture example 侧以 abort accept 任务规避；生产 `pawork gui serve` 靠 select! 丢弃 accept future 不受影响）。
 - 复查 Claude import 五项 P3、上游多版本、usage 哨兵、shell wrapper、probe flake 与 UI 主线未顺带关闭的低风险残项；需要扩大行为或 wire 时另立 ADR。
 
 ### 4.2 R10：回归与真实环境

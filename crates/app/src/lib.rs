@@ -10,6 +10,9 @@ mod channels;
 mod checkpoint;
 mod control;
 mod data_dir;
+#[cfg(any(test, feature = "ui-fixture"))]
+#[doc(hidden)]
+pub mod devfixture;
 mod diff;
 mod extensions;
 mod gui_host;

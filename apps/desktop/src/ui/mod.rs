@@ -4,6 +4,7 @@
 //! inspector、Composer → input_area。
 
 mod approval_card;
+mod barriers;
 mod changes;
 mod components;
 mod input_area;
@@ -30,6 +31,7 @@ use pawork_client::AppEvent;
 use crate::controller::{ControllerEvent, DesktopController};
 use crate::platform::Platform;
 use crate::projection::{ConnectionState, DesktopProjection, ResumeApply, TaskRailGrouping};
+use barriers::BarrierSink;
 use changes::ChangesPanelState;
 use components::button::{Button, ButtonPadding, ButtonVariant};
 use components::dropdown::Dropdown;
@@ -182,6 +184,13 @@ pub struct AppView {
     /// （见 dismiss_menu_on_outside）。
     pending_outside_close: Option<(MenuKind, Point<Pixels>)>,
     run_clock_running: bool,
+    /// R1 Wave B fixture barrier 状态（PAWORK_UI_BARRIER_DIR 未设置则
+    /// 零开销直通；发射语义见 ui/barriers.rs）。
+    barriers: BarrierSink,
+    /// session_get 分页是否进行中（open_session 置位，complete / 失败复位）。
+    timeline_paging: bool,
+    /// 距上个 1s tick 是否有新 ControllerEvent（有则本 tick 视为未静默）。
+    controller_event_pending: bool,
     focus_handle: FocusHandle,
     approve_once_focus: FocusHandle,
     approve_for_run_focus: FocusHandle,
@@ -193,7 +202,12 @@ pub struct AppView {
 }
 
 impl AppView {
-    pub fn new(platform: Arc<Platform>, socket: PathBuf, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        platform: Arc<Platform>,
+        socket: PathBuf,
+        barrier_dir: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let controller = Arc::new(DesktopController::new(platform.handle()));
         let text_input = cx.new(|cx| TextInput::new(cx));
         let terminal_input =
@@ -226,6 +240,9 @@ impl AppView {
             open_menu: None,
             pending_outside_close: None,
             run_clock_running: false,
+            barriers: BarrierSink::new(barrier_dir),
+            timeline_paging: false,
+            controller_event_pending: false,
             focus_handle: cx.focus_handle(),
             approve_once_focus: cx.focus_handle().tab_stop(true),
             approve_for_run_focus: cx.focus_handle().tab_stop(true),
@@ -249,6 +266,8 @@ impl AppView {
     }
 
     fn start_connect(&mut self, cx: &mut Context<Self>) {
+        self.barriers.remove_timeline_stable();
+        self.barriers.remove_approval_visible();
         self.projection.set_connection(ConnectionState::Connecting);
         self.status_hint = None;
         let controller = Arc::clone(&self.controller);
@@ -302,6 +321,8 @@ impl AppView {
         self.timeline_changed();
         self.controller.load_models();
         self.consume_events(events, cx);
+        // 连接建立即武装 1s tick：barrier 启用而无 run 时也要常驻探测。
+        self.arm_run_clock(cx);
         match apply {
             ResumeApply::ReplaceBaseline => {
                 if let Some(session_id) = self.projection.active_session_id.clone() {
@@ -346,10 +367,16 @@ impl AppView {
     }
 
     fn handle_controller_event(&mut self, event: ControllerEvent, cx: &mut Context<Self>) {
+        self.controller_event_pending = true;
+        // 任一新事件都会使上一轮 settle 失效；下一次静默窗口重新写入。
+        self.barriers.remove_timeline_stable();
+        self.barriers.remove_approval_visible();
         match event {
             ControllerEvent::Disconnected { reason } => {
                 self.projection
                     .set_connection(ConnectionState::Disconnected { reason });
+                // 断连终止一切进行中分页，避免 settle barrier 永久停发。
+                self.timeline_paging = false;
                 self.status_hint = Some("Connection lost. Click Reconnect.".into());
             }
             ControllerEvent::Snapshot(snapshot) => {
@@ -360,6 +387,9 @@ impl AppView {
                 if self.projection.active_session_id.as_deref() == Some(&session_id) {
                     self.timeline_changed();
                     self.projection.apply_timeline_page(&page);
+                    if page.complete {
+                        self.timeline_paging = false;
+                    }
                 }
             }
             ControllerEvent::Event(envelope) => {
@@ -417,6 +447,9 @@ impl AppView {
                 self.projection.set_models(models);
             }
             ControllerEvent::OperationFailed { action, reason } => {
+                if action == "open session" {
+                    self.timeline_paging = false;
+                }
                 // 查询失败回写对应面板状态：避免 Changes / Resources 永远停在
                 // Loading（status_hint 仍照常提示）；仅当前仍在 Fetching 才落
                 // Failed，防止旧请求的失败覆盖新一轮刷新。
@@ -465,7 +498,10 @@ impl AppView {
     }
 
     fn arm_run_clock(&mut self, cx: &mut Context<Self>) {
-        if self.run_clock_running || self.projection.active_run_id.is_none() {
+        // run 进行中驱动时长徽标重绘；barrier 启用时兼作 settle 探测心跳。
+        if self.run_clock_running
+            || (self.projection.active_run_id.is_none() && !self.barriers.is_active())
+        {
             return;
         }
         self.run_clock_running = true;
@@ -473,8 +509,12 @@ impl AppView {
             smol::Timer::after(Duration::from_secs(1)).await;
             let keep = this
                 .update(cx, |view, cx| {
+                    view.emit_settle_barriers();
                     if view.projection.active_run_id.is_some() {
                         cx.notify();
+                        true
+                    } else if view.barriers.is_active() {
+                        // barrier 常驻心跳：无 run 时静默续 tick（不重绘）。
                         true
                     } else {
                         view.run_clock_running = false;
@@ -489,8 +529,52 @@ impl AppView {
         .detach();
     }
 
+    /// 1s tick 的 barrier 发射（PAWORK_UI_BARRIER_DIR 未设置时零开销直通）。
+    /// 静默条件：已连接 && 无进行中 timeline 分页 && 本 tick 窗口内无未消费
+    /// ControllerEvent（时间线已静默 ≥1s，见 Wave B brief §6/§7）。
+    fn emit_settle_barriers(&mut self) {
+        if !self.barriers.is_active() {
+            return;
+        }
+        if std::mem::take(&mut self.controller_event_pending) {
+            return;
+        }
+        let settled = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && !self.timeline_paging;
+        if settled {
+            let session_id = self
+                .projection
+                .active_session_id
+                .clone()
+                .unwrap_or_default();
+            let entry_count = self.projection.timeline.len();
+            self.barriers
+                .write_timeline_stable(&session_id, entry_count);
+        }
+        let pending_approval = self
+            .projection
+            .pending_approval
+            .as_ref()
+            .map(|pending| (pending.tool_name.clone(), pending.run_id.clone()));
+        match pending_approval {
+            Some((tool_name, run_id)) => {
+                if settled {
+                    self.barriers.write_approval_visible(&tool_name, &run_id);
+                }
+            }
+            // 审批卡消失 → 删除 barrier 文件（镜像消失语义，仅 barrier 目录内）。
+            None => self.barriers.remove_approval_visible(),
+        }
+    }
+
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         self.projection.select_session(&session_id);
+        // session_get 分页开始：complete / open session 失败前不写 settle barrier。
+        self.timeline_paging = true;
+        self.barriers.remove_timeline_stable();
+        self.barriers.remove_approval_visible();
         self.status_hint = None;
         self.timeline_changed();
         // 打开 / 切换 session 时补跟随重置（§8.3）：终端滚底 + Timeline 回

@@ -4381,6 +4381,7 @@ dependencies = [
  "pawork-client",
  "serde_json",
  "smol",
+ "tempfile",
  "tokio",
  "unicode-segmentation",
 ]

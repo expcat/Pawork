@@ -42,6 +42,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/checkpoint.rs` | ~320 | 写工具识别（write_file/edit_file/apply_patch）、写前快照、`list_checkpoints`/`CheckpointSummary`、`rollback`/`perform_rollback`（恢复文件 + 持久化 `CheckpointRolledBack`） |
 | `src/import_host.rs` | ~310 | compat 导入宿主包装：`CompatTool::parse`（claude/codex/grok/cursor/pi）、`SessionImportFormat`、payload 落盘（instructions/skill/MCP merge/profile）、源文件指纹快照（`snapshots_match` 防 TOCTOU） |
 | `src/data_dir.rs` | ~300 | 数据目录解析：`PAWORK_DATA_DIR` → `%LOCALAPPDATA%\pawork`(win) → `~/.pawork` → temp 回退；`DataDirOutcome`（HOME 回退附 `DegradeEvent`）、`consume_data_dir_outcome`（唯一告警点）、`normalize_instance` 白名单校验、各实例文件路径 helper |
+| `src/devfixture.rs` | ~1350 | `cfg(any(test, feature = "ui-fixture"))` + `#[doc(hidden)]` dev-only（R1 Wave B）：UI fixture 种子器。默认 feature 关闭，不进入生产编译；声明式数据集在写入前校验引用、枚举、相对路径与时间锚点，拒绝绝对路径 / `.` / `..`、默认数据目录与仓库重叠、Unix socket 路径超限以及时间戳溢出/越界；git 基线隔离用户/系统配置与 `GIT_*` 路由环境；seed 先写 `preparing` marker，完整收口后改 `ready`，失败可安全重试且 serve fail-closed。数据经 SessionStore / CheckpointService 公开 API + git/文件写入隔离 root；不依赖 testkit |
 | `src/channels.rs` | ~210 | 首发通道 facade：从 providers `CHANNEL_REGISTRY` 派生 `FIRST_PARTY_CHANNELS`/`first_party_channel`/`is_first_party`/`ChannelKind`，`oauth_override` 允许配置覆盖 OAuth preset；通道登记单点在 providers |
 | `src/orchestration_host.rs` | ~210 | S11 多 Agent demo：`run_multi_agent_demo`（Supervisor spawn 双 worker / cancel-tree / budget-gate），固定样例 provider/model id，非通用编排 API |
 | `src/plan_host.rs` | ~190 | Plan 审批 gate：`plan_snapshot/create/replace/submit/approve/reject`（事件重放构建 `PlanService`，决议落 audit）；`ensure_plan_allows_execution`（无 Plan 放行，有未批准版本拦截 run 并 audit Deny） |
@@ -253,6 +254,13 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 cargo test -p pawork-app --offline --lib --tests
 ```
 
+UI fixture 属显式 opt-in 验证资产；其集成测试与 example 均声明
+`required-features = ["ui-fixture"]`，定向命令为：
+
+```bash
+cargo test -p pawork-app --offline --lib --tests --features ui-fixture
+```
+
 **内嵌 `#[cfg(test)]`（跑在 `--lib`）**，重点覆盖：
 
 - `gui_host/tests.rs`（~45 条，本包最大测试集）：
@@ -276,9 +284,11 @@ cargo test -p pawork-app --offline --lib --tests
 | 文件 | 形态 | 覆盖点 |
 | --- | --- | --- |
 | `tests/timeline_projection_host.rs` | 默认跑 | 真实 `GuiHostAdapter::timeline()` 与 protocol 投影 golden（`paged_interleave.jsonl`）逐条对拍；limit=0 收敛最小窗口、游标跨未投影事件推进 |
+| `tests/ui_fixture_projection.rs` | `--features ui-fixture` | R1 Wave B Phase C：devfixture 把 `fixtures/ui/seed.json` 种到隔离 tempdir 后，经真实装配的 `GuiHostAdapter` `snapshot()`/`timeline()` 断言 3 workspaces、7 sessions、四日期桶分布、pending approval 重建、completed 会话条目构成（user/assistant/tool/approval/run 全量对拍 seed turns）、alpha diff 4 文件含 ≥200 字符长行；断言值取自 seed.json |
 | `tests/gui_server/session.rs` | 具名 `[[test]]` `gui_server_session` | 握手往返、非握手首帧拒绝、command 盖戳与版本校验、SessionGet 字段透传、resume 三态与 ack、Heartbeat→Pong、断连不取消 run、lagged→ReplayUnavailable、慢消费不阻塞宿主、client_context 替换拒绝、capability 先于宿主拒绝、terminal-streaming capability 全路径 |
 | `tests/gui_server/multi_gui_runtime.rs` | 具名 `[[test]]` `gui_server_multi_gui_runtime` | 三 GUI 收到相同事件序、重连 replay 缺失事件、replay 不可用回退 snapshot、慢客户端不拖累其它 GUI、断连/心跳超时均不触发 RunCancel |
 | `tests/smoke.rs` | env 门控，默认忽略 | 真实 API 流式冒烟（AssistantTextDelta + RunCompleted）；`cargo test -p pawork-app --test smoke -- --ignored --nocapture`，需 `PAWORK_SMOKE_BASE_URL/API_KEY/MODEL[/PROTOCOL]`，禁止打印 key |
+| `examples/ui_fixture.rs` | `--features ui-fixture` dev-only example（非 test bin） | R1 Wave B UI fixture 工具（CLI 冻结）：`seed`（写隔离 root + manifest/ready marker）、`serve`（真实 GuiServer + 按首行前缀分派的 MockProvider；`drop_socket` 可重复触发）、`self-check`（握手+snapshot 校验+RunStart+Resume Replay，每轮先失效旧 `replay_complete`）、`snapshot-dump`（volatile 归一化 + seed 会话过滤）。数据集 `fixtures/ui/seed.json` 与确定性 PTY；验证链路：`seed → serve → self-check → snapshot-dump` |
 
 验证约定总览见 [../verification.md](../verification.md)；degrade tracing 断言一律使用 `testsupport::RecordingCapture`，禁止裸 `tracing::subscriber::set_default`。
 
@@ -292,7 +302,7 @@ cargo test -p pawork-app --offline --lib --tests
 - **terminal 审批粒度**：`terminal_create` 在 AskUser 模式 fail-closed 落 Deny（命令级交互审批待 wire ADR，见 R7 ADR-041 D2）；会话内容不逐条审批。
 - **tracing interest 缓存投毒**：与无 subscriber 测试共享 callsite 的断言测试会间歇丢事件（tracing-core 0.1.36 `Interest::never()` 缓存）；`RecordingCapture::install` 以双注册 Dispatch 治愈并钉住，窗口结束调 `dismiss()`。
 - **testsupport 环境写**：`set_env`/`remove_env` 直接写进程环境（unsafe），相关测试串行意识自负。
-- **gui_server 集成测试依赖 dev-features**：需要 pawork-transport 的 `local` + `memory`；生产依赖不开这两个 feature。本包自身不声明任何 cargo feature（providers / storage 的 features 由本包 Cargo.toml 固定开启）。
+- **gui_server 集成测试依赖 dev-features**：需要 pawork-transport 的 `local` + `memory`；生产依赖不开这两个 feature。本包仅声明默认关闭的 `ui-fixture` feature，用于 opt-in 编译 devfixture / example / 对应集成测试；providers / storage 的 features 仍由本包 Cargo.toml 固定开启。
 - **`mcp_test` 有副作用**：会真实建连并 ping 配置的 MCP server，untrusted workspace 下 stdio 直接报 PermissionDenied。
 - **diff 回退路径是行级替换**：非 git 工作区的快照对比生成单 hunk 全量替换 diff（非最小编辑距离），二进制以 NUL 字节嗅探；`session_diff` 的改动集来自 checkpoint 服务，未 `open_checkpoints` 时返回空 diff 而非报错，git 判定只看首个 workspace root。
 - **`AppCore` 字段全私有或 `pub(crate)`**：消费方只能走方法门面；`Debug` 输出经筛选（provider_id/model/协议/是否有 store 等），不含凭证本体。

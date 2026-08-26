@@ -25,6 +25,11 @@ fn main() {
             std::process::exit(2);
         }
     };
+    // R1 Wave B fixture barrier（可选）：空值视同未设置；None 则全程零开销，
+    // 仅真实窗口路径使用（--probe / --probe-smoke 不发射 barrier）。
+    let barrier_dir = std::env::var_os("PAWORK_UI_BARRIER_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
     let socket = args
         .socket
         .unwrap_or_else(|| platform::socket_path_for_instance(args.instance.as_deref()));
@@ -34,7 +39,7 @@ fn main() {
     if args.probe {
         std::process::exit(run_probe(socket));
     }
-    run_app(socket);
+    run_app(socket, barrier_dir);
 }
 
 struct Args {
@@ -581,20 +586,23 @@ async fn wait_event(
     }
 }
 
-fn run_app(socket: PathBuf) {
+fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
     let platform = Arc::new(platform::Platform::new());
     Application::new().run(move |cx: &mut App| {
         ui::install_keybindings(cx);
         let bounds = Bounds::centered(None, size(px(1440.), px(1024.)), cx);
         let view_platform = Arc::clone(&platform);
         let view_socket = socket.clone();
+        let view_barrier_dir = barrier_dir.clone();
         let window = cx
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                move |_, cx| cx.new(|cx| ui::AppView::new(view_platform, view_socket, cx)),
+                move |_, cx| {
+                    cx.new(|cx| ui::AppView::new(view_platform, view_socket, view_barrier_dir, cx))
+                },
             )
             .expect("open pawork-desktop window");
         window

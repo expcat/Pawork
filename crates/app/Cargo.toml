@@ -7,6 +7,11 @@ publish.workspace = true
 authors.workspace = true
 description = "Pawork 应用门面（配置装配 + session store + run_session / list_models）"
 
+[features]
+default = []
+# R1 UI fixture 仅供 example / 定向集成测试显式启用，不进入默认生产闭包。
+ui-fixture = []
+
 [dependencies]
 pawork-domain = { path = "../domain" }
 pawork-engine = { path = "../engine" }
@@ -63,3 +68,13 @@ path = "tests/gui_server/session.rs"
 [[test]]
 name = "gui_server_multi_gui_runtime"
 path = "tests/gui_server/multi_gui_runtime.rs"
+
+[[test]]
+name = "ui_fixture_projection"
+path = "tests/ui_fixture_projection.rs"
+required-features = ["ui-fixture"]
+
+[[example]]
+name = "ui_fixture"
+path = "examples/ui_fixture.rs"
+required-features = ["ui-fixture"]

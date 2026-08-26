@@ -1661,4 +1661,177 @@ mod tests {
         assert!(projection.pending_approval.is_none());
     }
 
+    /// R1 Wave B Phase C：读取 `fixtures/ui/expected/snapshot.json`（由
+    /// `ui_fixture snapshot-dump` 生成的归一化 golden，再生步骤见
+    /// `fixtures/ui/README.md`），断言 DesktopProjection 分组与状态。
+    #[test]
+    fn ui_fixture_expected_snapshot_rebuilds_groups_and_status() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/ui/expected/snapshot.json"
+        );
+        let raw = std::fs::read_to_string(path).unwrap_or_else(|error| {
+            panic!("读取 {path} 失败（{error}）：golden 由 ui_fixture snapshot-dump 生成，再生步骤见 fixtures/ui/README.md")
+        });
+        let snapshot: Snapshot = serde_json::from_str(&raw).expect("decode expected snapshot");
+        // FIXTURE_NOW_MS 锚点恰为 UTC 午夜；取锚点前 1ms 作参照 now，
+        // 使 seed 中 -2h/-2.5h 同日偏移落 Today、四桶齐全（与 app 侧
+        // tests/ui_fixture_projection.rs 同一分桶口径）。
+        let now_ms = 1_767_225_599_999_u64;
+
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+
+        // 会话清单：7 个种子会话全量恢复，最新在前，绑定各自 workspace。
+        assert_eq!(projection.sessions.len(), 7);
+        assert!(projection.sessions.iter().all(|session| session.active));
+        let ids: BTreeSet<&str> = projection
+            .sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "fx-ses-alpha-today",
+                "fx-ses-alpha-yesterday",
+                "fx-ses-beta-pending",
+                "fx-ses-beta-toolfailed",
+                "fx-ses-beta-cancelled",
+                "fx-ses-alpha-longtitle",
+                "fx-ses-beta-long",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(projection.sessions[0].session_id, "fx-ses-alpha-today");
+        assert_eq!(projection.sessions[0].title, "Refactor launcher tabs");
+        let long_title = projection
+            .sessions
+            .iter()
+            .find(|session| session.session_id == "fx-ses-alpha-longtitle")
+            .expect("long title session");
+        assert!(long_title.title.chars().count() >= 200);
+        // 嵌套 fn 而非闭包：返回引用派生自引用参数时，闭包的 Fn 签名
+        // 只能固定单一生命周期（error: lifetime may not live long enough），
+        // fn 的省略生命周期天然 higher-ranked。
+        fn session_workspace<'a>(projection: &'a DesktopProjection, id: &str) -> Option<&'a str> {
+            projection
+                .sessions
+                .iter()
+                .find(|session| session.session_id == id)
+                .and_then(|session| session.workspace_id.as_deref())
+        }
+        assert_eq!(
+            session_workspace(&projection, "fx-ses-alpha-today"),
+            Some("fx-alpha-app")
+        );
+        assert_eq!(
+            session_workspace(&projection, "fx-ses-beta-pending"),
+            Some("fx-beta-lib")
+        );
+
+        // TaskRail 分组：日期四桶齐全，桶内会话集合与 seed offsets 一致。
+        let timeline = projection.timeline_groups(None, now_ms);
+        assert_eq!(
+            timeline
+                .iter()
+                .map(|group| group.bucket)
+                .collect::<Vec<_>>(),
+            vec![
+                DateBucket::Today,
+                DateBucket::Yesterday,
+                DateBucket::Previous7Days,
+                DateBucket::Earlier,
+            ]
+        );
+        fn ids_of(group: &TaskRailDateGroup) -> Vec<&str> {
+            let mut ids: Vec<&str> = group
+                .projects
+                .iter()
+                .flat_map(|project| project.tasks.iter().map(|task| task.session_id.as_str()))
+                .collect();
+            ids.sort_unstable();
+            ids
+        }
+        assert_eq!(
+            ids_of(&timeline[0]),
+            vec!["fx-ses-alpha-today", "fx-ses-beta-pending"]
+        );
+        assert_eq!(ids_of(&timeline[1]), vec!["fx-ses-alpha-yesterday"]);
+        assert_eq!(
+            ids_of(&timeline[2]),
+            vec!["fx-ses-beta-long", "fx-ses-beta-toolfailed"]
+        );
+        assert_eq!(
+            ids_of(&timeline[3]),
+            vec!["fx-ses-alpha-longtitle", "fx-ses-beta-cancelled"]
+        );
+
+        // Today 桶内项目分组：按最新活动排序；wire workspaces 段当前只携带
+        // 主 workspace，beta 组名回退 id（诚实回退，不臆造名字）。
+        let today = &timeline[0];
+        assert_eq!(today.projects.len(), 2);
+        assert_eq!(
+            today.projects[0].workspace_id.as_deref(),
+            Some("fx-alpha-app")
+        );
+        assert_eq!(today.projects[0].name, "alpha-app");
+        assert_eq!(
+            today.projects[0]
+                .tasks
+                .iter()
+                .map(|task| task.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fx-ses-alpha-today"]
+        );
+        assert_eq!(
+            today.projects[1].workspace_id.as_deref(),
+            Some("fx-beta-lib")
+        );
+        assert_eq!(today.projects[1].name, "fx-beta-lib");
+        assert_eq!(
+            today.projects[1]
+                .tasks
+                .iter()
+                .map(|task| task.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fx-ses-beta-pending"]
+        );
+
+        // Projects 分组：alpha 3 个任务、beta 4 个；gamma 无会话（空项目态），
+        // 无 Unassigned。
+        let projects = projection.project_groups(None);
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| (project.workspace_id.as_deref(), project.task_count()))
+                .collect::<Vec<_>>(),
+            vec![(Some("fx-alpha-app"), 3), (Some("fx-beta-lib"), 4)]
+        );
+        assert!(!projects.iter().any(|project| project.is_unassigned()));
+
+        // 状态：provider 快照恢复；pending 审批卡随会话选择出现/消失；
+        // 纯 seed 数据无 live run。
+        assert_eq!(
+            projection
+                .selected_model
+                .as_ref()
+                .map(|(provider, model)| (provider.as_str(), model.as_str())),
+            Some(("mock", "fixture-model"))
+        );
+        assert!(projection.active_runs.is_empty());
+        assert_eq!(projection.active_run_id, None);
+        assert_eq!(projection.pending_approval, None);
+        projection.select_session("fx-ses-beta-pending");
+        let pending = projection
+            .pending_approval
+            .as_ref()
+            .expect("pending approval restored from snapshot");
+        assert_eq!(pending.tool_call_id, "call-fx-ses-beta-pending-0-0");
+        assert_eq!(pending.tool_name, "write_file");
+        assert!(pending.reason.contains("src/lib.ts"));
+        projection.select_session("fx-ses-alpha-today");
+        assert_eq!(projection.pending_approval, None);
+    }
+
 }

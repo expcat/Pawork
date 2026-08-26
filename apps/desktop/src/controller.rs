@@ -293,6 +293,15 @@ impl DesktopController {
     /// 去重（gui-design §4.1 第 3 条）。
     pub fn open_session(&self, session_id: String) {
         let Some(client) = self.current_client() else {
+            if let Some(events) = self.try_event_sender() {
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "open session",
+                        reason: "not connected".into(),
+                    },
+                );
+            }
             return;
         };
         let events = self.event_sender();
@@ -312,7 +321,13 @@ impl DesktopController {
                 };
                 let page = match timeline_page(&response) {
                     Ok(Some(page)) => page,
-                    Ok(None) => return,
+                    Ok(None) => {
+                        try_emit(&events, ControllerEvent::OperationFailed {
+                            action: "open session",
+                            reason: "session_get response carried no timeline page".into(),
+                        });
+                        return;
+                    }
                     Err(reason) => {
                         try_emit(&events, ControllerEvent::OperationFailed {
                             action: "open session",

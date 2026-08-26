@@ -1,0 +1,186 @@
+{
+  "fixture_version": 1,
+  "now_ms": 1767225600000,
+  "workspaces": [
+    {"id": "fx-alpha-app", "name": "alpha-app", "path": "${ROOT}/workspaces/alpha-app", "git": true},
+    {"id": "fx-beta-lib", "name": "beta-lib", "path": "${ROOT}/workspaces/beta-lib", "git": true},
+    {"id": "fx-gamma-notes", "name": "gamma-notes", "path": "${ROOT}/workspaces/gamma-notes", "git": false}
+  ],
+  "sessions": [
+    {
+      "id": "fx-ses-alpha-today",
+      "workspace_id": "fx-alpha-app",
+      "title": "Refactor launcher tabs",
+      "created_offset_ms": -10800000,
+      "updated_offset_ms": -7200000,
+      "state": "completed",
+      "turns": [
+        {
+          "user": "帮我梳理 launcher 的三个问题：\n\n第一，标签切换时焦点丢失；第二，弹层在窄窗下会盖住输入框。\n\n计划如下：\n\n- 先读 README 确认现状\n- 再改 Workspace 组件\n- 最后补一条回归",
+          "assistant": [
+            "我先读了 README，现状与复述一致：焦点策略在标签切换时被重置，弹层锚点用的是固定宽度。",
+            "接下来我会先修焦点，再处理弹层锚点；两处改动都不触碰 Composer。"
+          ],
+          "stream_chunks": 3,
+          "tools": [{"name": "read_file", "status": "succeeded", "path": "README.md"}],
+          "usage": {"input": 512, "output": 640},
+          "stop": "completed"
+        },
+        {
+          "user": "fixture:write-changes 现在把四个文件按计划落盘：普通修改、长行修改、新增、删除各一个。",
+          "assistant": [
+            "四个文件已按计划更新完毕。",
+            "diff 面板应显示两处修改、一处新增与一处删除；长行用于横向滚动验证。"
+          ],
+          "stream_chunks": 2,
+          "tools": [
+            {"name": "edit_file", "status": "succeeded", "path": "src/main.rs"},
+            {"name": "edit_file", "status": "succeeded", "path": "docs/report.md"},
+            {"name": "write_file", "status": "succeeded", "path": "src/new_feature.rs"},
+            {"name": "apply_patch", "status": "succeeded", "path": "legacy/old.txt"}
+          ],
+          "usage": {"input": 768, "output": 890},
+          "stop": "completed"
+        },
+        {
+          "user": "收个尾：总结本轮改动。",
+          "assistant": ["本轮共改动四个文件：两处修改、一处新增、一处删除；焦点与弹层问题已修复，回归已补。"],
+          "stream_chunks": 3,
+          "tools": [],
+          "usage": {"input": 180, "output": 240},
+          "stop": "completed"
+        }
+      ]
+    },
+    {
+      "id": "fx-ses-alpha-yesterday",
+      "workspace_id": "fx-alpha-app",
+      "title": "Investigate provider timeout",
+      "created_offset_ms": -97200000,
+      "updated_offset_ms": -93600000,
+      "state": "failed",
+      "turns": [
+        {
+          "user": "fixture:fail 模拟一次 provider 失败：请求直接返回错误。",
+          "assistant": [],
+          "stream_chunks": 0,
+          "tools": [],
+          "usage": {"input": 64, "output": 0},
+          "stop": "failed"
+        }
+      ]
+    },
+    {
+      "id": "fx-ses-beta-pending",
+      "workspace_id": "fx-beta-lib",
+      "title": "Type the public API surface",
+      "created_offset_ms": -10800000,
+      "updated_offset_ms": -9000000,
+      "state": "pending_approval",
+      "turns": [
+        {
+          "user": "在 beta 库里把 src/lib.ts 改成显式类型声明，先等审批。",
+          "assistant": ["改动已准备好，正在等待工具审批。"],
+          "stream_chunks": 2,
+          "tools": [{"name": "write_file", "status": "pending", "path": "src/lib.ts"}],
+          "usage": {"input": 220, "output": 160},
+          "stop": "completed"
+        }
+      ]
+    },
+    {
+      "id": "fx-ses-beta-toolfailed",
+      "workspace_id": "fx-beta-lib",
+      "title": "Build after dependency bump",
+      "created_offset_ms": -260000000,
+      "updated_offset_ms": -259200000,
+      "state": "tool_failed",
+      "turns": [
+        {
+          "user": "跑一次会失败的构建命令。",
+          "assistant": ["命令执行失败：构建配额不足，需要释放配额后重试。"],
+          "stream_chunks": 2,
+          "tools": [{"name": "run_command", "status": "failed", "path": "scripts/build.sh", "error": "fixture tool failure: build quota exceeded"}],
+          "usage": {"input": 300, "output": 210},
+          "stop": "completed"
+        }
+      ]
+    },
+    {
+      "id": "fx-ses-beta-cancelled",
+      "workspace_id": "fx-beta-lib",
+      "title": "Long batch refactor",
+      "created_offset_ms": -866000000,
+      "updated_offset_ms": -864000000,
+      "state": "cancelled",
+      "turns": [
+        {
+          "user": "fixture:hang 启动一个长任务，然后我会取消它。",
+          "assistant": [],
+          "stream_chunks": 0,
+          "tools": [{"name": "run_command", "status": "running", "path": "scripts/long_job.sh"}],
+          "usage": {"input": 96, "output": 0},
+          "stop": "cancelled"
+        }
+      ]
+    },
+    {
+      "id": "fx-ses-alpha-longtitle",
+      "workspace_id": "fx-alpha-app",
+      "title": "超长标题回归样本——用于验证任务列表截断、tooltip 与选中态在 200+ 字符标题下的表现。本标题刻意超过二百个字符以触发 UI 的省略逻辑，同时保持可读的语义边界：这里的每一段填充文本都对应 Desktop Timeline 左侧 TaskRail 在窄窗与宽窗下的两种裁切路径，最终断言以完整标题进入 snapshot 为准，而不是以渲染截断为准。附加填充：一二三四五六七八九十一二三四五六七八九十",
+      "created_offset_ms": -870000000,
+      "updated_offset_ms": -864000000,
+      "state": "completed",
+      "turns": [
+        {
+          "user": "最早桶冒烟：确认长标题渲染。",
+          "assistant": ["长标题会话就绪。"],
+          "stream_chunks": 1,
+          "tools": [],
+          "usage": {"input": 40, "output": 24},
+          "stop": "completed"
+        }
+      ]
+    },
+    {
+      "id": "fx-ses-beta-long",
+      "workspace_id": "fx-beta-lib",
+      "title": "Virtualization stress session",
+      "created_offset_ms": -350000000,
+      "updated_offset_ms": -345600000,
+      "state": "completed",
+      "turns": [
+    {"user": "第 1 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 1 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 2 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 2 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 3 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 3 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 4 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 4 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 5 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 5 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 6 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 6 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 7 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 7 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 8 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 8 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 9 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 9 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 10 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 10 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 11 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 11 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 12 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 12 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 13 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 13 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 14 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 14 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 15 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 15 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"},
+    {"user": "第 16 轮：继续压测时间线虚拟化，追加可滚动的条目。", "assistant": ["第 16 轮完成，条目已追加。"], "stream_chunks": 2, "tools": [], "usage": {"input": 64, "output": 48}, "stop": "completed"}
+      ]
+    }
+  ],
+  "diffs": [
+    {
+      "workspace_id": "fx-alpha-app",
+      "session_id": "fx-ses-alpha-today",
+      "files": [
+        {"path": "src/main.rs", "action": "modified", "long_line": false},
+        {"path": "docs/report.md", "action": "modified", "long_line": true},
+        {"path": "src/new_feature.rs", "action": "added", "long_line": false},
+        {"path": "legacy/old.txt", "action": "deleted", "long_line": false}
+      ]
+    }
+  ],
+  "pty": {"script": "pty-fixture.sh"}
+}
+

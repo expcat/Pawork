@@ -17,15 +17,16 @@
 
 ## 2. 模块与文件地图
 
-23 个 `.rs` 文件、约 9.1k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
+24 个 `.rs` 文件、约 9.6k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
-| `src/main.rs` | ~610 | 入口与手动 argv 解析（非 clap）；`run_app`（1440×1024 居中窗口、`install_keybindings`、聚焦 Composer）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器 |
-| `src/controller.rs` | ~1460 | `DesktopController`（connect / 事件泵 / 空闲心跳 / 全部 Command·Query 构造与响应解析）；`ControllerEvent` 枚举；`DiffFileSummary` / `DiffFileDetail` / `DiffHunkDetail` / `DiffLineDetail` / `GitDiffInfo` / `McpServerEntry` 视图模型；11 个测试 |
+| `src/main.rs` | ~615 | 入口与手动 argv 解析（非 clap）；`PAWORK_UI_BARRIER_DIR` env 读取（空值视同未设置，None 全程零开销）；`run_app`（1440×1024 居中窗口、`install_keybindings`、聚焦 Composer）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器 |
+| `src/controller.rs` | ~1470 | `DesktopController`（connect / 事件泵 / 空闲心跳 / 全部 Command·Query 构造与响应解析）；`ControllerEvent` 枚举；`DiffFileSummary` / `DiffFileDetail` / `DiffHunkDetail` / `DiffLineDetail` / `GitDiffInfo` / `McpServerEntry` 视图模型；11 个测试 |
 | `src/platform.rs` | ~230 | `Platform`（tokio multi_thread Runtime，`handle()` / `block_on()`）；`default_socket_path` / `socket_path_for_instance` / `token_path_for_instance` / `token_path_for_socket` 路径发现；deny-list 断言；4 个测试 |
-| `src/projection.rs` | ~1660 | `DesktopProjection` 渲染适配投影；`ConnectionState` / `ResumeState` / `ResumeApply` / `TerminalState` / `PendingApproval` / `ModelEntry` / `ActiveRun` / `SessionSummary` / `WorkspaceSummary` / TaskRail 分组类型；snapshot 段解析器；14 个测试 |
-| `src/ui/mod.rs` | ~1030 | `AppView` 宿主：连接生命周期、`ControllerEvent` 消费、`MenuKind` 单开互斥与外点衔接标记、gpui 动作与键位表 `APP_VIEW_KEYBINDINGS`、tab_stop 表 `MAIN_PATH_TAB_STOP_IDS`、三栏整体装配与 StatusBar；3 个测试 |
+| `src/projection.rs` | ~1840 | `DesktopProjection` 渲染适配投影；`ConnectionState` / `ResumeState` / `ResumeApply` / `TerminalState` / `PendingApproval` / `ModelEntry` / `ActiveRun` / `SessionSummary` / `WorkspaceSummary` / TaskRail 分组类型；snapshot 段解析器；15 个测试 |
+| `src/ui/mod.rs` | ~1120 | `AppView` 宿主：连接生命周期、`ControllerEvent` 消费（含分页进行中 / 事件静默跟踪）、`MenuKind` 单开互斥与外点衔接标记、gpui 动作与键位表 `APP_VIEW_KEYBINDINGS`、tab_stop 表 `MAIN_PATH_TAB_STOP_IDS`、三栏整体装配与 StatusBar；1s tick（run 时钟重绘 + barrier settle 发射）；3 个测试 |
+| `src/ui/barriers.rs` | ~175 | UI fixture barrier 发射器（R1 Wave B）：`BarrierSink` 读 `PAWORK_UI_BARRIER_DIR`（None 零开销直通）；`timeline_stable`（settle_seq 单调自增 / session_id / entry_count）重写与 `approval_visible` 写/删；tmp+rename 原子替换、IO 失败静默；1 个测试 |
 | `src/ui/theme.rs` | ~230 | 深色单主题 token：六组 30 色（bg 3 / surface 3 / border 2 / text 11 / accent 3 / semantic 8）+ 字阶 `font`（XS=11 / SM=12 / BASE=13 / MONO="Menlo"）+ `metrics` 19 个尺寸常量；静态 `dark()` 访问器；`impl Global` 仅为未来主题挂载点 |
 | `src/ui/timeline.rs` | ~140 | Timeline 容器：gpui `list()` 变高虚拟化 + `ListAlignment::Bottom` 钉底；`install_scroll_follow`（脱钩检测）；`sync_list`（统一 reset、脱钩偏移恢复、Entry 菜单 close-on-reset）；`TIMELINE_OVERDRAW`=200px；回底控件接线 |
 | `src/ui/timeline_entry.rs` | ~140 | `timeline_entry_element`：五类条目渲染 + 条目「···」fork 菜单（MenuPanel/MenuRow）；`on_fork` 入口级复核 |
@@ -195,14 +196,15 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 7. 测试与验证资产
 
-41 个测试全部内嵌于 bin target（`#[cfg(test)] mod tests`；无 crate `tests/` 目录），按文件分布：
+43 个测试全部内嵌于 bin target（`#[cfg(test)] mod tests`；无 crate `tests/` 目录），按文件分布：
 
 | 文件 | 数量 | 覆盖面 |
 | --- | --- | --- |
 | `controller.rs` | 11 | token 缺失 fail-closed；`run_start` / `session_fork` / `terminal_*` / `diff_*` / `mcp_list` wire 形状钉死；cwd workspace 相对校验；last_acked 单调推进；capabilities 含 TerminalStreaming；diff 清单 / hunk 行 / git 信息 / MCP 响应解析（含无会话空响应与路径消失） |
-| `projection.rs` | 14 | snapshot 重建与事件重放；审批卡随 run 终态清理；pending model 被 `model.switched` Diagnostic 确认；沙箱回退 Diagnostic 上时间线；snapshot active_runs 恢复取消目标与时长；ContextMeter / RunStatus 诚实文案；TaskRail 日期→项目分组与 Unassigned；scope 选项与空态；分组切换不改 active session；session_tree 扁平 / 分支双形态；同 session 切支 reset 基线（seen / tombstone / 锚点全清后重放重建）；TerminalOutput 追加与跨会话隔离；live tool 输出回填 running 条目；历史审批事件留痕 |
+| `projection.rs` | 15 | snapshot 重建与事件重放；审批卡随 run 终态清理；pending model 被 `model.switched` Diagnostic 确认；沙箱回退 Diagnostic 上时间线；snapshot active_runs 恢复取消目标与时长；ContextMeter / RunStatus 诚实文案；TaskRail 日期→项目分组与 Unassigned；scope 选项与空态；分组切换不改 active session；session_tree 扁平 / 分支双形态；同 session 切支 reset 基线（seen / tombstone / 锚点全清后重放重建）；TerminalOutput 追加与跨会话隔离；live tool 输出回填 running 条目；历史审批事件留痕；UI fixture 期望快照（`fixtures/ui/expected/snapshot.json`，再生步骤见该目录 README）重建 7 会话四桶分组、项目分组、pending 审批卡与 provider 状态 |
 | `platform.rs` | 4 | socket / token 默认路径与 instance 命名；socket→token 推导；deny-list 恰为 `{pawork-client}`；扫描器覆盖别名 / target 表（负例含 dev-dependencies 排除） |
 | `ui/mod.rs` | 3 | 键位表含审批与取消；主路径 tab_stop 全集；All projects 新建须确认 workspace |
+| `ui/barriers.rs` | 1 | timeline_stable 重写且 settle_seq 单调、字段形状齐全；approval_visible 写入（含 tool 名）与消失删除；未启用（None）零写入 |
 | `ui/changes.rs` | 6 | ActivityPopover 摘要格式与单复数 / unavailable；二级页签默认 Files；epoch 拒过期与选中消失清 diff；diff 响应拒代次 / 路径不匹配；session_mismatch 判定矩阵 |
 | `ui/inspector.rs` | 1 | 顶层页签默认 Terminal（与波 C 前单页行为连续） |
 | `ui/resources.rs` | 1 | 默认 Idle 与 epoch 拒过期 |
@@ -215,7 +217,9 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 ```
 
 - `--bins`：本包是 bin-only（无 lib target），任务指南默认的 `--lib --tests` 匹配不到任何 target。
-- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R8 起的标准口径，历波收口 28/28 → 41/41 绿）。
+- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R8 起的标准口径，历波收口 28/28 → 43/43 绿）。
+
+本包唯一 dev-dependency 为 `tempfile`（workspace `3`），仅服务 `ui/barriers.rs` 的临时目录测试，不计入生产 deny-list。
 
 **运行时验证资产**：`--probe`（连接 + snapshot + 模型目录一行摘要）与 `--probe-smoke`（流式回合 / 切模型 / 审批 / 取消 / 两次断线重连持久化 / `disconnect_survive`），配合隔离实例（`--instance` + `PAWORK_DATA_DIR`）在真实 host 上冒烟。端到端流程见 [../flows.md](../flows.md)；验证总策略见 [../README.md](../README.md)。
 
@@ -228,6 +232,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 - **ActivityPopover 触发器位置是已知偏差**：现实现由底部 StatusBar 右侧触发、向上展开；定稿为 Workspace Header 右上触发、向下展开约 320px 且不覆盖 Composer（[../../../design/README.md](../../../design/README.md) §5.1/§8.5、UI_Review F-12 / D-01）。迁移完成前 F-12 保持未通过；迁移落地后同批更新本文 §3.2 的 StatusBar 描述。
 - **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
 - **单主题**：仅深色 `dark()`；`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。
-- **文件尺寸口径**：`ui/mod.rs` 约 1030 行；这是历史工程结构口径，不构成新 UI 视觉或交互放行条件。
+- **文件尺寸口径**：`ui/mod.rs` 约 1120 行；这是工程结构口径，不构成新 UI 视觉或交互放行条件。
 - **`text_input.rs` 血统**：改自 gpui 0.2.2 `examples/input.rs`（Apache-2.0），有意裁剪 ShowCharacterPalette / Copy / Cut / SelectAll / 拖选；后续补齐须对照上游而非自造。
 - **FollowScroll 的滚轮时序假设**：`on_scroll_wheel` 直读已应用（未钳制）的 offset——依赖 vendored gpui 0.2.2 的 Bubble 相监听逆序分发（内部偏移应用先于用户监听）；升级 gpui 时须重核，做 delta 投影会把增量计两次。
+- **UI fixture barrier 钩子（R1 Wave B，测试专用）**：启动读 env `PAWORK_UI_BARRIER_DIR`（main.rs；空值视同未设置，`--probe` / `--probe-smoke` 不发射）。未设置时全程零开销：不 spawn tick、无任何文件 IO。设置后由 ui/mod.rs 既有 1s tick 兼任发射点：已连接 && 无进行中 timeline 分页（`open_session` 置位、complete / `open session` 失败 / `Disconnected` 复位）&& 本 tick 窗口无 ControllerEvent 时重写 `<dir>/timeline_stable`（JSON 含 settle_seq 单调自增 / session_id / entry_count / at_ms / detail）；开始连接、打开会话或收到任一 ControllerEvent 时先删除旧 `timeline_stable` 与 `approval_visible`，防只等存在性的 driver 误收陈旧信号。`pending_approval` 存在且已稳定 → 重写 `approval_visible`（含 tool 名），消失 → 保持删除；目录不存在时由 `BarrierSink::new` 惰性创建。写入 tmp+rename 原子替换、任何 IO 失败静默跳过；`projection.rs` 保持纯状态机零 IO。controller 在未连接、无 TimelinePage 响应或翻页达到上限时发 `OperationFailed`，UI 据此复位分页状态。

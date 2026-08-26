@@ -1,6 +1,6 @@
 # R1 — 视觉合同、固定 fixture 与 UI 测试基座
 
-> 状态：🔵 进行中（Wave A 已收口，合同仲裁已由用户拍板；Wave B/C/D 未开始）
+> 状态：🔵 进行中（Wave A/B 已收口；Wave C/D 未开始）
 > 目标：在修改生产 UI 前，把“设计稿是什么、测试输入是什么、如何证明一致”冻结成可重复执行的合同。R1 不以主观截图点评代替门禁，也不以写死演示数据换取相似度。
 
 ## 1. 输入与边界
@@ -66,6 +66,33 @@ fixture 必须使用隔离的 `PAWORK_DATA_DIR`，固定 seed、时间、workspa
 
 交付物：fixture schema/seed、启动命令、清理边界、projection 断言和敏感信息扫描。
 
+### Wave B 收口记录（2026-08-26）
+
+**已交付**（仓内资产 + dev-only 工具链）：
+
+- 种子器与 fixture host：[crates/app/src/devfixture.rs](../crates/app/src/devfixture.rs)（默认关闭的 `ui-fixture` feature / `cfg(test)` 双门控 + `#[doc(hidden)]` pub 模块，只用 SessionStore / CheckpointService 公开 API 与文件/git 写入，不依赖 testkit）+ [crates/app/examples/ui_fixture.rs](../crates/app/examples/ui_fixture.rs)（`required-features = ["ui-fixture"]` 的 dev-only example，冻结四子命令 `seed / serve / self-check / snapshot-dump`，手动 argv）。
+- 数据集 [fixtures/ui/seed.json](../fixtures/ui/seed.json)（schema v1）：3 workspaces（alpha-app git 含 diff / beta-lib git 干净 / gamma-notes 非 git）、7 sessions 跨 Today / Yesterday / Previous 7 days / Earlier 四桶、五类终态（completed / failed / cancelled / pending_approval / tool_failed）、200+ 字符超长标题、≥50 条目长会话、alpha 仓 4 文件 diff（modified×2 其一 >200 字符长行 / added / deleted）。263 事件经 SessionStore 真实写入路径落库，显式时间戳锚定 `FIXTURE_NOW_MS = 1767225600000`，`--now-ms` 可整体重锚；固定锚点下事件 payload 与 snapshot-dump 输出逐字节确定。
+- serve 模式 MockProvider 前缀分派（默认 3 chunk / `fixture:hang` / `fixture:fail` / `fixture:tool`=read_file），只存在于 dev example；确定性 PTY [fixtures/ui/pty-fixture.sh](../fixtures/ui/pty-fixture.sh)（固定 banner + 回显 + `exit` 收尾，两次运行 sha256 一致）。
+- Barrier 文件合同（禁止固定 sleep）：`host_ready` / `host_restarted` / `drop_socket.request|done` / `serve_stop.request` / `replay_complete` / `timeline_stable` / `approval_visible`；Desktop 侧 env `PAWORK_UI_BARRIER_DIR` 钩子（未设置零开销、tmp+rename 原子写、路径只在 barrier 目录内拼出、目录缺失惰性创建）。
+- 驱动脚本 [scripts/ui-fixture.sh](../scripts/ui-fixture.sh)（seed/serve/desktop/drop-socket/restart-host/self-check/down/clean/scan；先离线 build 再直启最终二进制，PID 与完整 root/命令形态精确对拍；clean 只认 `.pawork-ui-fixture` marker）+ 敏感信息扫描 [scripts/ui-fixture-scan.py](../scripts/ui-fixture-scan.py)（七类规则，命中 exit 2；socket/FIFO/symlink 不读取，但任何形态的 `auth.json` 都 fail-closed）。
+- projection 断言：[crates/app/tests/ui_fixture_projection.rs](../crates/app/tests/ui_fixture_projection.rs)（devfixture 种子 → 真实 GuiHostAdapter snapshot/timeline，断言值全部取自 seed.json）+ desktop `projection.rs` 新测试消费 [fixtures/ui/expected/snapshot.json](../fixtures/ui/expected/snapshot.json)（snapshot-dump 归一化 volatile 字段，再生步骤见 fixtures/ui/README.md）。
+
+**关键设计拍板**（主代理冻结，备查）：
+
+1. 静态数据集经 SessionStore 公开 API 显式时间戳写库，而非 engine 实时跑批：engine 事件时间戳取系统时钟，无法构造跨日期桶；写库路径与 storage/protocol golden 同源（真实持久化路径，非伪造字节）。live 动态面（running / hang / fail / tool）由 serve 模式 MockProvider 经真实 engine loop 产生，满足任务书「scripted provider/tool 生成」的要求面。
+2. fixture host 以 app crate 的 feature-gated example 承载：`ui-fixture` 默认关闭，devfixture 与对应 integration test / example 均显式 opt-in；testkit 永不进生产二进制闭包，不新增包、不新增生产依赖。
+3. Desktop barrier 钩子为 env 门控观测信号，不是 demo 数据分支；生产 UI 无任何 `if demo`。
+
+**验证**：`cargo test -p pawork-app --offline --lib --tests --features ui-fixture` 全绿（lib 152 + 各 test bin，含 `ui_fixture_seed_to_host_snapshot_and_timeline`）；默认 feature 的 `cargo check -p pawork-app --offline` 通过；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 43/43（含 `barrier_sink_writes_and_removes_contract_files` 与 `ui_fixture_expected_snapshot_rebuilds_groups_and_status`）；真实链路 `seed → serve → self-check（Resume Replay 5/5）→ drop-socket×2 → self-check → snapshot-dump → scan（0 命中）→ down（serve_stop 优雅停机、serve exit 0）→ clean` 在全新 `/tmp` 短 root 全通过；另以全局 `gpgsign`/hook 与 `GIT_DIR`/`GIT_WORK_TREE` 注入重跑 seed，外部 hook 未执行且仓库仍精确落在 fixture root；陈旧 PID 指向无关进程时拒绝发信号；`python3 scripts/test_ui_fixture_scan.py` 20/20 OK。
+
+**审查**：GLM reviewer 门禁有条件放行（无 P0/P1）。P2-1 `serve_stop.request` 原为死代码 → `stop_host` 已接线（barrier 优先、信号兜底）并实测优雅停机；P2-2 README 三处失真（diff 文件数 / fixture:tool / pty quit）→ 已修正；P2-3 gamma-notes 经现有 wire 不可达 Desktop（snapshot workspaces 段只携带主 workspace）→ 记为已知缺口，扩段属 wire 演进须 ADR；P3 timeline_paging 窄路径卡死 → controller 发 OperationFailed + Disconnected 复位；P3 barrier 目录不建 → `BarrierSink::new` 惰性创建。
+
+**二次安全复审**：补齐默认关闭 feature gate；seed 在写入前完成 schema 引用/枚举/相对路径、root 重叠、Unix socket 长度与时间锚点溢出/范围校验，并隔离全局 Git 配置与 `GIT_*` 路由环境；marker 采用 `preparing → ready` 两阶段；driver 改为 build 后直启最终二进制并精确核对 PID command line（信号升级逐次复核），过长旧 root 仍允许 `down/clean`；drop/replay/timeline/approval barrier 每轮失效陈旧信号且重复 drop 可用；扫描器不读取非 regular 项，但 `auth.json` symlink 仍按文件名拦截。末轮 GLM 路由因后端无法解密任务失败两次，未继续消耗重试；上述项以静态差异检查、定向回归和真实链路收口。
+
+**未做（按计划属后续 Wave）**：GPUI AX/真窗口 spike 与 U0–U3 选型（Wave C）；State A 闭环与故意漂移捕获（Wave D）；Desktop 真进程的 `timeline_stable` / `approval_visible` 端到端观测（Wave D 真窗口链路）。
+
+**顺带发现**：transport local_unix 的 accept 跨 await 持锁会导致 GuiServer `listener.close()` 死锁（example 以 abort accept 任务规避；生产 `pawork gui serve` 靠 select! 丢弃 accept future 不受影响）——已登记 ROADMAP §4.1（R9）。
+
 ## 4. Wave C — UI driver 与可观察性基座
 
 先做最小技术 spike，再冻结分层工具组合：
@@ -95,7 +122,7 @@ fixture 必须使用隔离的 `PAWORK_DATA_DIR`，固定 seed、时间、workspa
 
 - [x] State A/B/C 组件与状态 manifest 完整，所有可见组件都能映射到真实能力或诚实不可用态。
 - [x] 量图表与 99% 判定脚本/步骤可由另一位执行者复现；主区域不能被全屏空白稀释。
-- [ ] fixture 经真实 Host/协议/projection 到达 Desktop，隔离、确定、无 Secret、无生产演示分支。
+- [x] fixture 经真实 Host/协议/projection 到达 Desktop，隔离、确定、无 Secret、无生产演示分支。（Wave B 收口：GuiHostAdapter 对拍 + Desktop projection 消费 expected snapshot；真窗口端到端属 Wave D）
 - [ ] U0–U3 工具路线已以最小闭环验证；GPUI AX/visual 能力闸门有真实结论，稳定语义定位、显式 barrier 与失败证据可用。
 - [ ] State A 基线场景可重复执行，且故意漂移能被门禁捕获。
 - [ ] 实际验证、未覆盖项和技术限制已回写本文与 ROADMAP；未满足时不进入 R2。

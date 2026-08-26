@@ -55,7 +55,7 @@
 | 目标视口 | `1440×1024` 内容窗口；最终不得把 macOS 额外标题栏高度混入内容区 |
 | 当前截图 | Computer Use 保存的窗口截图被缩放为 `1048×768`，只支持结构和相对比例判断，不支持本轮宣称逐像素通过 |
 | 设计基准 | State A `1486×1059`、State B/C `1487×1058`；使用全画布 LANCZOS 缩放、无裁切归一到 `1440×1024` |
-| 数据状态 | 现有会话短、Changes 无 diff；完整 Timeline、DiffView 与 Agents 仍需固定真实 fixture |
+| 数据状态 | 固定真实 fixture 已由 R1 Wave B 建立（fixtures/ui/seed.json + ui_fixture example）；当前实现同 fixture 的渲染对照待 R1 Wave D 真窗口取证 |
 
 当前截图左上角的紫色小浮层是取证工具控件，不属于 Pawork UI，比较时必须裁除。
 
