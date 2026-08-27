@@ -1,0 +1,52 @@
+2026-08-27T06:00:32Z run start label=wave-b-1 out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r2-wave-b/u2
+2026-08-27T06:00:32Z compile helpers into /tmp/pawork-wave-b-tools.yhG0Lm
+2026-08-27T06:00:36Z seed fixture root=/private/tmp/pawork-ui-fixture.S77JHT
+2026-08-27T06:00:39Z serve fixture (wait host_ready barrier)
+2026-08-27T06:00:42Z launch desktop via ui-fixture
+2026-08-27T06:00:48Z desktop pid=36526
+2026-08-27T06:00:50Z desktop window ready (session-list rendered)
+2026-08-27T06:00:50Z place Desktop window deterministically on the main display
+2026-08-27T06:00:51Z wait timeline_stable (seq>0 session= entries>=0)
+2026-08-27T06:00:52Z timeline_stable ok seq=1 session= entries=0
+2026-08-27T06:00:52Z phase empty: workspace-empty-hint + screenshot
+2026-08-27T06:00:52Z wait phase=empty (phase-aware assertion polling)
+2026-08-27T06:00:52Z phase=empty ok attempt=1
+2026-08-27T06:00:52Z empty-state normalized -> /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r2-wave-b/u2/empty-state.png
+2026-08-27T06:00:52Z focus/blur evidence
+2026-08-27T06:00:54Z focus/blur captured (focused + blurred + reactivated)
+2026-08-27T06:00:54Z resize 1440 -> 1080 (narrow)
+2026-08-27T06:00:54Z resize -> 1080x1024 (narrow)
+2026-08-27T06:00:54Z wait phase=narrow (phase-aware assertion polling)
+2026-08-27T06:00:55Z phase=narrow ok attempt=1
+2026-08-27T06:00:55Z resize 1080 -> 1440 (restored)
+2026-08-27T06:00:55Z resize -> 1440x1024 (restore)
+2026-08-27T06:00:55Z wait phase=restored (phase-aware assertion polling)
+2026-08-27T06:00:55Z phase=restored ok attempt=1
+2026-08-27T06:00:55Z AXPress session-fx-ses-alpha-today (open session)
+2026-08-27T06:00:55Z AXPress session-fx-ses-alpha-today result=0
+2026-08-27T06:00:55Z wait timeline_stable (seq>4 session=fx-ses-alpha-today entries>=1)
+2026-08-27T06:00:57Z timeline_stable ok seq=5 session=fx-ses-alpha-today entries=25
+2026-08-27T06:00:57Z AXPress inspector-collapse (collapse inspector)
+2026-08-27T06:00:57Z AXPress inspector-collapse result=0
+2026-08-27T06:00:57Z AXPress inspector-toggle (open ActivityPopover)
+2026-08-27T06:00:57Z AXPress inspector-toggle result=0
+2026-08-27T06:00:57Z phase collapsed (State B): inspector absent + popover open + screenshot
+2026-08-27T06:00:57Z wait phase=collapsed (phase-aware assertion polling)
+2026-08-27T06:00:57Z phase=collapsed ok attempt=1
+2026-08-27T06:00:58Z State B normalized -> /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r2-wave-b/u2/state-b.png (no zones/current mapping this wave)
+2026-08-27T06:00:58Z desktop-restart (host/data/barriers preserved); pre_restart_seq=5
+2026-08-27T06:01:04Z desktop restarted pid=36973
+2026-08-27T06:01:04Z probe not-ready rc=3 attempt=1 trusted=ax_trusted=true windows=0
+2026-08-27T06:01:06Z desktop window ready (session-list rendered)
+2026-08-27T06:01:06Z wait timeline_stable (seq>0 session= entries>=0)
+2026-08-27T06:01:08Z timeline_stable ok seq=1 session= entries=0
+2026-08-27T06:01:08Z restart baseline barrier seq=1 (no active session in fresh process)
+2026-08-27T06:01:08Z AXPress session-fx-ses-alpha-today (re-open session after restart)
+2026-08-27T06:01:08Z AXPress session-fx-ses-alpha-today result=0
+2026-08-27T06:01:08Z wait timeline_stable (seq>1 session=fx-ses-alpha-today entries>=1)
+2026-08-27T06:01:10Z timeline_stable ok seq=2 session=fx-ses-alpha-today entries=25
+2026-08-27T06:01:10Z phase resumed: session re-opened from host after desktop-restart
+2026-08-27T06:01:10Z wait phase=resumed (phase-aware assertion polling)
+2026-08-27T06:01:10Z phase=resumed ok attempt=1
+2026-08-27T06:01:10Z teardown fixture root=/private/tmp/pawork-ui-fixture.S77JHT
+2026-08-27T06:01:16Z run done (all phase assertions passed)

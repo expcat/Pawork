@@ -43,10 +43,12 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders：
 - **主代理收口修正**：重开相原实现等待「新进程自动恢复原 active session」——但 apply_fresh_snapshot 不恢复进程内 active_session_id（desktop.md §4.1），必超时。已改为重开后等新 barrier 基线再 AXPress 重开会话（host 持久化 + 重连的诚实 resume 语义）。
 - **State B 只产 shell 证据**：不做 zones/current 映射与 SSIM——F-05（Workspace Header）/F-12（Popover 迁右上）未落地，当前 Popover 仍由 StatusBar 触发，视觉门禁留待后续波次如实记录。
 
-## 4. U2 真窗口门禁：⚠️ 环境阻塞（2026-08-27）
+## 4. U2 真窗口门禁：🟢 通过（2026-08-27 14:01 +08）
 
-- 首轮 ui-wave-b-states.sh run 未能完成：运行期间 macOS 控制台处于锁定态（IOConsoleLocked=true，锁定时刻 2026-08-27 11:09:53 +08，先于 driver 启动）。锁定控制台下 CGWindowList 不报告应用窗口、AX 树只剩 AXApplication 空链、screencapture 无法取图——与 R1 Wave D 记录的自动锁屏风险一致，非代码回归（desktop 进程存活、连接与 barrier 正常；锁屏期前台复跑同一二进制进程同样存活但窗口不可见）。
-- 待屏幕解锁后重跑：scripts/ui-wave-b-states.sh run --out <dir> --label wave-b-1，通过后把 empty-state / focus / blur / narrow / State B 证据归档到本目录。
+- 首轮（11:09 +08）因 macOS 自动锁屏未完成：IOConsoleLocked=true 下 CGWindowList 不报告应用窗口、AX 只剩 AXApplication 空链、screencapture 无法取图——与 R1 Wave D 记录的环境风险一致，非代码回归。
+- 屏幕解锁后重跑通过：`scripts/ui-wave-b-states.sh run --out docs/ui-review/r2-wave-b/u2 --label wave-b-1`（git_head=b9f79ec，exit 0）。五相位断言全绿——empty（workspace-empty-hint 在场 + reconnect 缺席 + 时间线空）→ focus/blur（激活/失焦截图）→ narrow（1080：rail 240、Inspector 列缺席、inspector-toggle 在场）→ restored（回 1440 三栏复原）→ collapsed（State B：inspector-collapse / inspector-toggle AXPress、Inspector 列缺席 + activity-popover 在场 + 归一截图）→ resumed（desktop-restart 后 AXPress 重开会话，timeline 25 条恢复，seq 1→2）。run-manifest.json structural_pass=true。
+- 证据归档 [u2/](u2/)：empty-state.png / focus-active.png / focus-blurred.png / narrow-1080.png / state-b.png（归一 1440×1024）、五相位 assert-*.json 与 ax-tree-*.txt、action-*.txt、geometry-*.txt、barriers 与日志。
+- 已知非阻塞项：composer-height 各相位均为 156（合同 88–94），即 Wave D 已登记的 F-09 视觉漂移，断言标记 blocking=false，不属本波回归。
 
 ## 5. 遗留与候选
 

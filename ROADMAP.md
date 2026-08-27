@@ -11,10 +11,10 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R2 — Window shell 与全局视觉系统（进行中）**；Wave A 已于 2026-08-27 收口（[记录](docs/ui-review/r2-wave-a/notes.md)）；Wave B（窗口状态壳层 + F-13 StatusBar 校准 + window_min_size 1080×720 + U2 driver）实现与自动门禁已于 2026-08-27 完成，U2 真窗口门禁待屏幕解锁重跑（[记录](docs/ui-review/r2-wave-b/notes.md)） |
-| 下一任务 | R2 Wave B 收口：屏幕解锁后重跑 `scripts/ui-wave-b-states.sh run` 归档 U2/State B 证据；随后开启 R2 Wave C（TaskRail 视觉 F-03/F-04 属 R3，不进 R2）或按 R2 退出标准盘点剩余缺口 |
+| 当前阶段 | **R2 — Window shell 与全局视觉系统（进行中）**；Wave A 已于 2026-08-27 收口（[记录](docs/ui-review/r2-wave-a/notes.md)）；Wave B（窗口状态壳层 + F-13 StatusBar 校准 + window_min_size 1080×720 + U2 driver）已于 2026-08-27 收口，U2 真窗口五相位门禁通过（[记录](docs/ui-review/r2-wave-b/notes.md)） |
+| 下一任务 | R2 Wave C 或按 R2 退出标准盘点剩余缺口（TaskRail 视觉 F-03/F-04 属 R3，不进 R2） |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
-| 阻塞 | R2 Wave B 的 U2 真窗口门禁受 macOS 自动锁屏阻塞（IOConsoleLocked=true，锁定控制台下 AX/screencapture 不可用；同 R1 Wave D 记录的环境风险）；屏幕解锁后重跑即解除 |
+| 阻塞 | 无；Wave C AX 失败基线已由 ADR-042 bridge 补救，真窗口 75 节点与语义 action 证据见 [ax-bridge](docs/ui-review/wave-c/ax-bridge/) |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
 

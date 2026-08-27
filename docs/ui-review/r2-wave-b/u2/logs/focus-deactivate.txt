@@ -1,0 +1,1 @@
+# focus deactivate pid=36526 frontmost=false front=1304 attempts=1
