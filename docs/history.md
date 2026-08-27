@@ -652,7 +652,7 @@ R1 四波完成后退出活动任务目录；原任务书全文以 git 历史为
 
 ## R2 — Window shell 与全局视觉系统（2026-08-27）
 
-R2 三波完成后退出活动任务目录；原任务书正文仍在 [plan/R2-R3-ui-shell-navigation.md](../plan/R2-R3-ui-shell-navigation.md)（R3 尚未开始）。验证事实见 [r2-wave-a](ui-review/r2-wave-a/notes.md)、[r2-wave-b](ui-review/r2-wave-b/notes.md)、[r2-wave-c](ui-review/r2-wave-c/notes.md)。
+R2 三波完成后退出活动任务目录；原任务书正文仍在 [plan/R2-R3-ui-shell-navigation.md](../plan/R2-R3-ui-shell-navigation.md)（R3 已于同日开启 Wave A）。验证事实见 [r2-wave-a](ui-review/r2-wave-a/notes.md)、[r2-wave-b](ui-review/r2-wave-b/notes.md)、[r2-wave-c](ui-review/r2-wave-c/notes.md)。
 
 - **Wave A · Window chrome 与根 token**：F-01 透明 titlebar、F-02 三栏骨架、design/README §2.1 根 token、1440/1080 layout invariant、State A 壳层证据。U1 74/74。
 - **Wave B · 窗口状态与 U2 driver**：空态引导、Reconnect 相位、F-13 StatusBar 居中与定稿语序、window_min_size 1080×720、U2 五相位（empty/focus-blur/narrow/restored/collapsed/resumed）。desktop 78/78 + 脚本 25/25；真窗口门禁通过。
@@ -660,3 +660,12 @@ R2 三波完成后退出活动任务目录；原任务书正文仍在 [plan/R2-R
 - **退出拍板 a（2026-08-27 用户确认）**：R2 以壳层结构门禁为准退出；State A/B 分区像素 SSIM ≥0.99 依赖 F-03/F-04（R3）、F-05（R4）、F-09（R5）、F-12（R6）内容组件，移交 R8 汇总，不阻塞 R2。Wave A 实测 9/9 zone <0.99（0.65–0.81）是预期中间态，不是回归。
 
 收口验证：Wave A/B desktop 定向测试全绿；Wave B/C 真窗口 U2 通过；脚本 unittest 42/42（wave-c 15 + wave-b 17 + wave-d 8）。未运行全 workspace gate。下一任务转入 R3：TaskRail 顶部 F-03 与列表/底部 F-04。
+
+## R3 — TaskRail 与任务导航（2026-08-27 起）
+
+R3 仍在进行中；Wave A 已收口，证据 [r3-wave-a](ui-review/r3-wave-a/notes.md)。任务书正文仍在 [plan/R2-R3-ui-shell-navigation.md](../plan/R2-R3-ui-shell-navigation.md)。
+
+- **Wave A · TaskRail F-03/F-04**：顶部三行（Pawork 22 / scope 36 / 连接行 Ø10 + 全局 +）、日期桶→项目→44px 任务行、底部「Local」honest-hidden；状态点诚实语义 NeedsInput > Running > 空心灰（无终态绿点）。live `RunChanged` 与 `MessageSent` 乐观登记跨会话维护 `active_runs`；后台审批进出闸门前入账。AX 与 render 共享 `metrics::RAIL_*`。desktop 84/84；脚本 55/55。真窗口 State A taskrail SSIM 0.6941、State C 0.3543（天花板已登记 ROADMAP §5，不阻塞本波）。
+
+收口验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 84/84；`test_ui_r3_wave_a_tools` + wave-b/c/d 55/55；State A/C U2 结构断言 PASS，Wave B/C 回归 PASS。未运行全 workspace gate。下一任务转入 R3 Wave B：导航状态与键盘。
+

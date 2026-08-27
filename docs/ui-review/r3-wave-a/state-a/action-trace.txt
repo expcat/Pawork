@@ -1,0 +1,21 @@
+2026-08-27T09:09:53Z run start label=r3a-2 out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r3-wave-a/state-a
+2026-08-27T09:09:53Z compile helpers into /tmp/pawork-wave-d-tools.lN0Z2p
+2026-08-27T09:09:56Z seed fixture root=/private/tmp/pawork-ui-fixture.vSZeHA
+2026-08-27T09:09:59Z serve fixture (wait host_ready barrier)
+2026-08-27T09:10:02Z launch desktop via ui-fixture (token from socket sibling gui.token)
+2026-08-27T09:10:07Z desktop pid=49137
+2026-08-27T09:10:09Z desktop window ready (session-list rendered)
+2026-08-27T09:10:09Z place Desktop window deterministically on the main display
+2026-08-27T09:10:10Z wait timeline_stable (seq>0 session= entries>=0)
+2026-08-27T09:10:11Z timeline_stable ok seq=1 session= entries=0
+2026-08-27T09:10:11Z initial AX dump + frame probe
+2026-08-27T09:10:12Z AXPress session-fx-ses-alpha-today
+2026-08-27T09:10:12Z AXPress result=0
+2026-08-27T09:10:12Z wait timeline_stable (seq>1 session=fx-ses-alpha-today entries>=1)
+2026-08-27T09:10:13Z timeline_stable ok seq=2 session=fx-ses-alpha-today entries=25
+2026-08-27T09:10:13Z final AX dump + frame probe
+2026-08-27T09:10:13Z screencapture wid=7961
+2026-08-27T09:10:14Z visual diff gate
+2026-08-27T09:10:15Z visual diff exit=1 (0=all pass / 1=zone FAIL / 2=invalid input)
+2026-08-27T09:10:16Z teardown fixture root=/private/tmp/pawork-ui-fixture.vSZeHA
+2026-08-27T09:10:22Z run done initial_assert_ok=0 final_assert_ok=0 gate_exit=1

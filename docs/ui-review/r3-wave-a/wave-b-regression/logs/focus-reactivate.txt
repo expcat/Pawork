@@ -1,0 +1,1 @@
+# focus activate pid=50659 frontmost=true attempts=1

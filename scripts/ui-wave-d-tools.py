@@ -37,6 +37,9 @@ PHASE_GEOMETRY = {
     "disconnected": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
     "connect-failed": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
     "reconnected": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    # R3 Wave A State C：Projects 分组态。三栏壳层与 rail 宽度不随分组模式
+    # 变化；分组语义差异由 skeleton 检查（grouping 值 / 项目块 / 日期桶）承载。
+    "projects": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
 }
 
 SKELETON_BASE = [
@@ -114,6 +117,13 @@ def parse_tree(path):
             values = VALUE_RE.findall(line)
             connection_status = values[0] if values else ""
             break
+    grouping_value = None
+    for line in tree_lines:
+        ids = IDENTIFIER_RE.findall(line)
+        if ids and ids[0] == "task-rail-grouping":
+            values = VALUE_RE.findall(line)
+            grouping_value = values[0] if values else ""
+            break
     return {
         "identifiers": identifiers,
         "role_unknown": role_unknown,
@@ -121,6 +131,7 @@ def parse_tree(path):
         "selected_rows": selected_rows,
         "timeline_entries_alpha_today": timeline_entries,
         "connection_status": connection_status,
+        "grouping_value": grouping_value,
         "summary": summary,
     }
 
@@ -325,7 +336,7 @@ def skeleton_checks(tree, phase="initial"):
             "detail": "reconnect "
                 + ("stray present" if "reconnect" in identifiers else "absent"),
         })
-    if phase in ("collapsed", "resumed", "disconnected", "connect-failed", "reconnected"):
+    if phase in ("collapsed", "resumed", "disconnected", "connect-failed", "reconnected", "projects"):
         # 已选中会话相位：空态引导必须消失（防谓词回归成恒真）。
         # disconnected 保留旧条目（gui-design 空态原则），同样不得出现引导。
         checks.append({
@@ -395,12 +406,56 @@ def skeleton_checks(tree, phase="initial"):
         # Connecting 瞬态同样满足 reconnect 缺席 + 条目保留（show_reconnect
         # 对 Connecting 为 false）；connection-status 文案区分两者，防
         # 未来调用方跳过 settle barrier 直接断言时把瞬态误判为重连成功。
+        # F-03 起可见文案带「Local · 」前缀（spec desktop.md §3.2：
+        # Local · Connected[ · {resume 文案}]），Connecting… 不变。
         status = tree.get("connection_status")
         checks.append({
             "name": "connection-status-connected",
-            "pass": bool(status) and status.startswith("Connected ·"),
+            "pass": bool(status) and status.startswith("Local · Connected"),
             "detail": "connection-status value="
                 + (status if status else "absent"),
+        })
+    if phase == "projects":
+        # State C 语义：菜单选择已提交（值切到 Projects）且浮层已收起；
+        # 日期桶头不得残留，fixture 的两个项目块必须在场（gamma-notes 无
+        # 会话、全部会话都有 workspace，故不出现第三组/Unassigned）。
+        value = tree.get("grouping_value")
+        checks.append({
+            "name": "grouping-projects-selected",
+            "pass": value == "Projects",
+            "detail": "task-rail-grouping value=" + (value if value else "absent"),
+        })
+        checks.append({
+            "name": "grouping-menu-closed",
+            "pass": "grouping-menu" not in identifiers,
+            "detail": "grouping-menu "
+                + ("stray present" if "grouping-menu" in identifiers else "absent"),
+        })
+        stray_date_groups = sorted(
+            name for name in identifiers if name.startswith("date-group-")
+        )
+        checks.append({
+            "name": "date-groups-absent",
+            "pass": not stray_date_groups,
+            "detail": ("stray date groups: " + ",".join(stray_date_groups))
+                if stray_date_groups
+                else "date-group-* absent from AX tree",
+        })
+        project_groups = sorted(
+            name for name in identifiers
+            if name.startswith("project-")
+            and name != "project-scope"
+            and not name.startswith("project-add-")
+        )
+        required_groups = ["project-fx-alpha-app", "project-fx-beta-lib"]
+        missing_groups = [
+            name for name in required_groups if name not in project_groups
+        ]
+        checks.append({
+            "name": "project-groups-present",
+            "pass": not missing_groups,
+            "detail": ("missing: " + ",".join(missing_groups)) if missing_groups
+                else "projects: " + ",".join(project_groups),
         })
     return checks
 
@@ -912,6 +967,7 @@ def main():
             "disconnected",
             "connect-failed",
             "reconnected",
+            "projects",
         ],
         required=True,
     )

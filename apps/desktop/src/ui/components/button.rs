@@ -25,8 +25,6 @@ pub enum ButtonVariant {
     Success,
     /// surface.raised 控件面；hover → surface.hover。
     Raised,
-    /// 方形图标按钮（尺寸由调用方给定）；底色映射同 Raised。
-    Icon,
 }
 
 /// 内边距档位（迁移前现状值；None 用于固定宽高的图标位）。
@@ -57,6 +55,10 @@ pub struct Button {
     padding: ButtonPadding,
     width: Option<Pixels>,
     height: Option<Pixels>,
+    bordered: bool,
+    radius: Option<f32>,
+    center: bool,
+    vcenter: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -75,6 +77,10 @@ impl Button {
             padding: ButtonPadding::Normal,
             width: None,
             height: None,
+            bordered: false,
+            radius: None,
+            center: false,
+            vcenter: false,
             on_click: None,
         }
     }
@@ -140,6 +146,30 @@ impl Button {
         self
     }
 
+    /// 1px border.subtle 描边（量图「1px 描边」档，如 scope 全宽行）。
+    pub fn bordered(mut self) -> Self {
+        self.bordered = true;
+        self
+    }
+
+    /// 覆盖默认圆角（px 数值；默认非 Ghost 为 rounded_md=6px）。
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius);
+        self
+    }
+
+    /// 内容水平垂直居中（固定宽高角标 / 全宽行的文字定位）。
+    pub fn center(mut self) -> Self {
+        self.center = true;
+        self
+    }
+
+    /// 仅垂直居中（文字保持左对齐，如 scope 全宽行：量图文字贴左内缩 12）。
+    pub fn vcenter(mut self) -> Self {
+        self.vcenter = true;
+        self
+    }
+
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -163,7 +193,7 @@ impl ButtonVariant {
                 Some(dark().semantic.success_bg),
                 dark().semantic.success_hover,
             ),
-            Self::Raised | Self::Icon => (Some(dark().surface.raised), dark().surface.hover),
+            Self::Raised => (Some(dark().surface.raised), dark().surface.hover),
         }
     }
 
@@ -171,7 +201,7 @@ impl ButtonVariant {
     fn text_color(self) -> Option<Rgba> {
         match self {
             Self::Primary | Self::Danger | Self::Success => Some(dark().text.on_accent),
-            Self::Raised | Self::Icon => Some(dark().text.primary),
+            Self::Raised => Some(dark().text.primary),
             Self::Ghost => None,
         }
     }
@@ -180,7 +210,7 @@ impl ButtonVariant {
     fn disabled_bg(self) -> Option<Rgba> {
         match self {
             Self::Primary | Self::Danger | Self::Success => Some(dark().border.strong),
-            Self::Raised | Self::Icon => Some(dark().surface.disabled),
+            Self::Raised => Some(dark().surface.disabled),
             Self::Ghost => None,
         }
     }
@@ -189,7 +219,7 @@ impl ButtonVariant {
     fn disabled_text_color(self) -> Option<Rgba> {
         match self {
             Self::Primary | Self::Danger | Self::Success => Some(dark().text.on_accent),
-            Self::Raised | Self::Icon => Some(dark().text.disabled),
+            Self::Raised => Some(dark().text.disabled),
             Self::Ghost => None,
         }
     }
@@ -216,6 +246,12 @@ impl RenderOnce for Button {
         };
 
         let mut button = div().id(self.id);
+        if self.center {
+            button = button.flex().items_center().justify_center();
+        }
+        if self.vcenter {
+            button = button.flex().items_center();
+        }
         if let Some(focus) = self.focus.as_ref() {
             button = button
                 .tab_stop(true)
@@ -234,6 +270,12 @@ impl RenderOnce for Button {
         }
         if !matches!(self.variant, ButtonVariant::Ghost) {
             button = button.rounded_md();
+        }
+        if let Some(radius) = self.radius {
+            button = button.rounded(px(radius));
+        }
+        if self.bordered {
+            button = button.border_1().border_color(dark().border.subtle);
         }
         button = match self.padding {
             ButtonPadding::None => button,

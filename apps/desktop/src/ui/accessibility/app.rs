@@ -3,8 +3,8 @@
 use gpui::{App, Context, Focusable, Window};
 
 use crate::projection::{
-    ConnectionState, DateBucket, ModelEntry, TaskRailGrouping, TaskRailProjectGroup, TimelineEntry,
-    TimelineEntryKind, UNASSIGNED_PROJECT,
+    ConnectionState, DateBucket, ModelEntry, SessionLiveStatus, TaskRailGrouping,
+    TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, UNASSIGNED_PROJECT,
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
@@ -296,18 +296,21 @@ impl AppView {
 
     fn sidebar_ax(&self, window: &Window, frame: AxRect) -> AxNode {
         let can_create = self.can_create_task();
-        // 与可见 TaskRail 对齐：Panel p_2 上边距 8px + 36px traffic-light
-        // 安全区后再进入 grouping 行（F-01）。AX 不得把首控件投影到按钮带。
-        let mut y = PAD + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT;
+        // 与可见 TaskRail 对齐（R3 Wave A，几何单一来源 theme::metrics）：
+        // Panel p_2(8) + 36px traffic-light 安全区 + gap_2(8) 后进入标题行，
+        // 三行节奏 32 / 20；AX 不得把首控件投影到按钮带。
+        let inset = metrics::RAIL_CONTENT_INSET;
+        let mut y = PAD + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT + PAD;
         let grouping = AxNode::new(
             "task-rail-grouping",
             AxRole::Button,
             self.grouping.accessible_name(),
             AxRect::new(
-                (frame.width - PAD - metrics::ICON_LARGE).max(PAD),
-                y,
-                metrics::ICON_LARGE,
-                metrics::ICON_MEDIUM,
+                (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
+                // 标题行高 36、按钮 28：render items_center → 按钮顶 +4。
+                y + (metrics::RAIL_TITLE_ROW_HEIGHT - metrics::RAIL_ICON_BUTTON_SIZE) / 2.0,
+                metrics::RAIL_ICON_BUTTON_SIZE,
+                metrics::RAIL_ICON_BUTTON_SIZE,
             ),
         )
         .value(match self.grouping {
@@ -315,7 +318,7 @@ impl AppView {
             TaskRailGrouping::Projects => "Projects",
         })
         .action(AxAction::Press);
-        y += metrics::ICON_MEDIUM + PAD;
+        y += metrics::RAIL_TITLE_ROW_HEIGHT + metrics::RAIL_TITLE_SCOPE_GAP;
         let scope_label = match &self.scope_workspace_id {
             None => "All projects".into(),
             Some(id) => self.projection.workspace_name(Some(id)),
@@ -324,34 +327,45 @@ impl AppView {
             "project-scope",
             AxRole::Button,
             "Project scope",
-            AxRect::new(PAD, y, (frame.width - PAD * 2.0).max(0.0), CONTROL_HEIGHT),
+            AxRect::new(
+                inset,
+                y,
+                (frame.width - inset * 2.0).max(0.0),
+                metrics::RAIL_TOP_ROW_HEIGHT,
+            ),
         )
         .value(scope_label)
         .action(AxAction::Press);
-        y += CONTROL_HEIGHT + PAD;
+        y += metrics::RAIL_TOP_ROW_HEIGHT + metrics::RAIL_SCOPE_CONNECTION_GAP;
         let connection = AxNode::new(
             "connection-status",
             AxRole::StaticText,
             "Connection",
-            AxRect::new(PAD, y, (frame.width - 52.0).max(0.0), CONTROL_HEIGHT),
+            AxRect::new(
+                inset,
+                y,
+                (frame.width - inset * 2.0 - metrics::RAIL_ICON_BUTTON_SIZE - PAD).max(0.0),
+                metrics::RAIL_TOP_ROW_HEIGHT,
+            ),
         )
-        .value(self.projection.connection.label());
+        // 与 render 同源（ADR-042）：连接行可见文案带 Local 前缀与 resume 相位。
+        .value(self.connection_status_label());
         let add_task = AxNode::new(
             "add-task",
             AxRole::Button,
             "New task",
             AxRect::new(
-                (frame.width - PAD - metrics::ICON_MEDIUM).max(PAD),
-                y,
-                metrics::ICON_MEDIUM,
-                metrics::ICON_MEDIUM,
+                (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
+                y + (metrics::RAIL_TOP_ROW_HEIGHT - metrics::RAIL_ICON_BUTTON_SIZE) / 2.0,
+                metrics::RAIL_ICON_BUTTON_SIZE,
+                metrics::RAIL_ICON_BUTTON_SIZE,
             ),
         )
         .description(self.add_task_disabled_reason())
         .enabled(can_create)
         .focused(self.add_task_focus.is_focused(window))
         .action(AxAction::Press);
-        y += CONTROL_HEIGHT + PAD;
+        y += metrics::RAIL_TOP_ROW_HEIGHT;
 
         let mut sidebar = AxNode::new("task-rail", AxRole::Group, "Tasks", frame)
             .child(grouping)
@@ -361,44 +375,64 @@ impl AppView {
         // 与可见路径同源：Reconnect 仅 Disconnected / ConnectFailed 发布
         // （projection.show_reconnect()，同 task_rail.rs 视觉谓词）。
         if self.projection.show_reconnect() {
+            // render 侧 Reconnect 包在 mt_2(8) 容器里：rect 前先补 8px 上距，
+            // 否则按钮 frame 比可见位置高 8px（ADR-042 同源约束）。
+            y += PAD;
             sidebar = sidebar.child(
                 AxNode::new(
                     "reconnect",
                     AxRole::Button,
                     "Reconnect",
-                    AxRect::new(PAD, y, (frame.width - PAD * 2.0).max(0.0), CONTROL_HEIGHT),
+                    AxRect::new(
+                        inset,
+                        y,
+                        (frame.width - inset * 2.0).max(0.0),
+                        metrics::RAIL_TOP_ROW_HEIGHT,
+                    ),
                 )
                 .action(AxAction::Press),
             );
-            y += CONTROL_HEIGHT + PAD;
+            y += metrics::RAIL_TOP_ROW_HEIGHT;
         }
 
-        let list_top = y;
+        let list_top = y + metrics::RAIL_LIST_TOP_GAP;
         let list_height = (frame.height - list_top - CONTROL_HEIGHT).max(0.0);
-        let list_width = (frame.width - PAD * 2.0).max(0.0);
+        let list_width = (frame.width - inset * 2.0).max(0.0);
         let mut list = AxNode::new(
             "session-list",
             AxRole::List,
             "Sessions",
-            AxRect::new(PAD, list_top, list_width, list_height),
+            AxRect::new(inset, list_top, list_width, list_height),
         );
         // 与可见 TaskRail（task_rail.rs）同一结构：Timeline = 日期组 → 项目块，
-        // Projects = 项目块；折叠的项目只投影头部，不投影其子会话。
+        // Projects = 项目块；折叠的项目只投影头部，不投影其子会话。行高与
+        // 组间距走 theme::metrics（桶头距上组 42 / 项目块间 8）。
         let mut row_y = list_top;
         match self.grouping {
             TaskRailGrouping::Timeline => {
-                for group in self
+                for (group_index, group) in self
                     .projection
                     .timeline_groups(self.scope_workspace_id.as_deref(), crate::ui::now_unix_ms())
+                    .into_iter()
+                    .enumerate()
                 {
+                    if group_index > 0 {
+                        row_y += metrics::RAIL_BUCKET_TOP_GAP;
+                    }
                     list = list.child(AxNode::new(
                         dynamic_identifier("date-group", group.bucket.label()),
                         AxRole::StaticText,
                         group.bucket.label(),
-                        AxRect::new(PAD, row_y, list_width, CONTROL_HEIGHT),
+                        AxRect::new(inset, row_y, list_width, metrics::RAIL_BUCKET_HEADER_HEIGHT),
                     ));
-                    row_y += CONTROL_HEIGHT;
-                    for project in &group.projects {
+                    row_y += metrics::RAIL_BUCKET_HEADER_HEIGHT;
+                    for (project_index, project) in group.projects.iter().enumerate() {
+                        // 与 render 同源：桶头→首项目 2，项目块间 8。
+                        row_y += if project_index == 0 {
+                            metrics::RAIL_BUCKET_TO_PROJECT_GAP
+                        } else {
+                            metrics::RAIL_PROJECT_BLOCK_GAP
+                        };
                         let (nodes, consumed) = self.project_ax_nodes(
                             project,
                             Some(group.bucket),
@@ -414,10 +448,15 @@ impl AppView {
                 }
             }
             TaskRailGrouping::Projects => {
-                for project in &self
+                for (project_index, project) in self
                     .projection
                     .project_groups(self.scope_workspace_id.as_deref())
+                    .iter()
+                    .enumerate()
                 {
+                    if project_index > 0 {
+                        row_y += metrics::RAIL_PROJECT_BLOCK_GAP;
+                    }
                     let (nodes, consumed) =
                         self.project_ax_nodes(project, None, row_y, list_width, can_create);
                     row_y += consumed;
@@ -430,19 +469,26 @@ impl AppView {
         sidebar = sidebar.child(list);
 
         if matches!(self.open_menu, Some(MenuKind::Grouping)) {
+            // 浮层贴 grouping 角标下方：标题行顶 = PAD + 36 安全区 + PAD，
+            // 行高 36；旧 CONTROL_HEIGHT=28 的锚点会把菜单抬到 traffic-light 带。
+            let grouping_menu_y = PAD
+                + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT
+                + PAD
+                + metrics::RAIL_TITLE_ROW_HEIGHT;
+            let grouping_menu_x = (frame.width - inset - 148.0).max(inset);
             sidebar = sidebar.child(
                 AxNode::new(
                     "grouping-menu",
                     AxRole::Group,
                     "Task grouping",
-                    AxRect::new(frame.width - 156.0, PAD + CONTROL_HEIGHT, 148.0, 64.0),
+                    AxRect::new(grouping_menu_x, grouping_menu_y, 148.0, 64.0),
                 )
                 .child(
                     AxNode::new(
                         "group-timeline",
                         AxRole::Button,
                         "Timeline",
-                        AxRect::new(frame.width - 156.0, PAD + CONTROL_HEIGHT, 148.0, 32.0),
+                        AxRect::new(grouping_menu_x, grouping_menu_y, 148.0, 32.0),
                     )
                     .selected(self.grouping == TaskRailGrouping::Timeline)
                     .action(AxAction::Press),
@@ -452,12 +498,7 @@ impl AppView {
                         "group-projects",
                         AxRole::Button,
                         "Projects",
-                        AxRect::new(
-                            frame.width - 156.0,
-                            PAD + CONTROL_HEIGHT + 32.0,
-                            148.0,
-                            32.0,
-                        ),
+                        AxRect::new(grouping_menu_x, grouping_menu_y + 32.0, 148.0, 32.0),
                     )
                     .selected(self.grouping == TaskRailGrouping::Projects)
                     .action(AxAction::Press),
@@ -465,11 +506,17 @@ impl AppView {
             );
         }
         if matches!(self.open_menu, Some(MenuKind::Scope)) {
+            let scope_menu_y = PAD
+                + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT
+                + PAD
+                + metrics::RAIL_TITLE_ROW_HEIGHT
+                + metrics::RAIL_TITLE_SCOPE_GAP
+                + metrics::RAIL_TOP_ROW_HEIGHT;
             let mut menu = AxNode::new(
                 "scope-menu",
                 AxRole::Group,
                 "Project scope options",
-                AxRect::new(PAD, 68.0, frame.width - PAD * 2.0, 200.0),
+                AxRect::new(inset, scope_menu_y, list_width, 200.0),
             );
             for (ix, (workspace_id, label)) in self
                 .projection
@@ -483,9 +530,9 @@ impl AppView {
                         AxRole::Button,
                         label,
                         AxRect::new(
-                            PAD,
-                            68.0 + ix as f32 * ROW_HEIGHT,
-                            frame.width - PAD * 2.0,
+                            inset,
+                            scope_menu_y + ix as f32 * ROW_HEIGHT,
+                            list_width,
                             ROW_HEIGHT,
                         ),
                     )
@@ -535,19 +582,18 @@ impl AppView {
         width: f32,
         can_create: bool,
     ) -> (Vec<AxNode>, f32) {
+        let inset = metrics::RAIL_CONTENT_INSET;
         let key = project_key(project.workspace_id.as_deref());
         let expanded = !self.collapsed_projects.contains(&key);
-        let mut nodes = vec![
-            AxNode::new(
-                rail_project_identifier(bucket, &key),
-                AxRole::Button,
-                project.name.clone(),
-                AxRect::new(PAD, top, width, ROW_HEIGHT),
-            )
-            .value(format!("{} tasks", project.task_count()))
-            .description(if expanded { "Expanded" } else { "Collapsed" })
-            .action(AxAction::Press),
-        ];
+        let mut nodes = vec![AxNode::new(
+            rail_project_identifier(bucket, &key),
+            AxRole::Button,
+            project.name.clone(),
+            AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
+        )
+        .value(format!("{} tasks", project.task_count()))
+        .description(if expanded { "Expanded" } else { "Collapsed" })
+        .action(AxAction::Press)];
         if !project.is_unassigned() && project.workspace_id.is_some() {
             nodes.push(
                 AxNode::new(
@@ -555,44 +601,42 @@ impl AppView {
                     AxRole::Button,
                     format!("New task in {}", project.name),
                     AxRect::new(
-                        PAD + (width - metrics::ICON_SMALL).max(0.0),
-                        top,
-                        metrics::ICON_SMALL,
-                        metrics::ICON_SMALL,
+                        inset + (width - metrics::RAIL_ICON_BUTTON_SIZE).max(0.0),
+                        top + (metrics::RAIL_TASK_ROW_HEIGHT - metrics::RAIL_ICON_BUTTON_SIZE)
+                            / 2.0,
+                        metrics::RAIL_ICON_BUTTON_SIZE,
+                        metrics::RAIL_ICON_BUTTON_SIZE,
                     ),
                 )
                 .enabled(can_create)
                 .action(AxAction::Press),
             );
         }
-        let mut consumed = ROW_HEIGHT;
+        // 与 render 同源：项目头 → 首个任务行 2，任务行间 0。
+        let mut consumed = metrics::RAIL_TASK_ROW_HEIGHT;
+        if expanded && !project.tasks.is_empty() {
+            consumed += metrics::RAIL_PROJECT_TO_TASK_GAP;
+        }
         if expanded {
             for session in &project.tasks {
-                let running = self
-                    .projection
-                    .active_runs
-                    .iter()
-                    .any(|run| run.session_id == session.session_id);
+                // 状态词与可见状态点同源（ADR-042）：Needs input 优先于
+                // Running；无 live 状态不声明语义（不伪造终态）。
+                let status = self.projection.session_live_status(&session.session_id);
                 nodes.push(
                     AxNode::new(
                         session_identifier(&session.session_id),
                         AxRole::ListItem,
                         session.title.clone(),
-                        AxRect::new(
-                            PAD + 12.0,
-                            top + consumed,
-                            (width - 12.0).max(0.0),
-                            ROW_HEIGHT,
-                        ),
+                        AxRect::new(inset, top + consumed, width, metrics::RAIL_TASK_ROW_HEIGHT),
                     )
-                    .description(if running { "Running" } else { "Session" })
+                    .description(session_status_description(status))
                     .selected(
                         self.projection.active_session_id.as_deref()
                             == Some(session.session_id.as_str()),
                     )
                     .action(AxAction::Press),
                 );
-                consumed += ROW_HEIGHT;
+                consumed += metrics::RAIL_TASK_ROW_HEIGHT;
             }
         }
         (nodes, consumed)
@@ -1239,6 +1283,16 @@ fn timeline_accessible_text(entry: &TimelineEntry) -> (String, String) {
     }
 }
 
+/// 会话行 AX description：可见状态点的状态词同源映射（ADR-042——新增可见
+/// 状态须同批补 AX）；无 live 状态不声明语义（不伪造终态）。
+fn session_status_description(status: Option<SessionLiveStatus>) -> &'static str {
+    match status {
+        Some(SessionLiveStatus::NeedsInput) => SessionLiveStatus::NeedsInput.label(),
+        Some(SessionLiveStatus::Running) => SessionLiveStatus::Running.label(),
+        None => "Session",
+    }
+}
+
 fn project_key(workspace_id: Option<&str>) -> String {
     workspace_id.unwrap_or(UNASSIGNED_PROJECT).to_string()
 }
@@ -1342,5 +1396,20 @@ mod tests {
         // Projects 模式 identifier 与既有 U2 定位口径保持 project-{key}。
         assert_eq!(projects_mode, "project-ws");
         assert_eq!(rail_project_add_identifier(None, "ws"), "project-add-ws");
+    }
+
+    /// R3 Wave A：会话行 AX description 携带可见状态点的状态词；无 live
+    /// 状态保持中性「Session」（不伪造终态）。
+    #[test]
+    fn session_ax_description_carries_live_status_word() {
+        assert_eq!(
+            session_status_description(Some(SessionLiveStatus::NeedsInput)),
+            "Needs input"
+        );
+        assert_eq!(
+            session_status_description(Some(SessionLiveStatus::Running)),
+            "Running"
+        );
+        assert_eq!(session_status_description(None), "Session");
     }
 }

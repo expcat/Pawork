@@ -174,6 +174,12 @@ pub fn dark() -> Theme {
 
 /// 字阶（px 数值；Pixels 无法在本 crate 外 const 构造，消费点经 gpui::px 转换）。
 pub mod font {
+    /// 17px：次级行文字（rail 相对时间 / 项目计数 / 连接行文案）。
+    pub const BODY_SM: f32 = 17.0;
+    /// 18px：主体列表字阶（rail 日期头 / 项目头 / 任务标题 / scope / 正文）。
+    pub const BODY: f32 = 18.0;
+    /// 22px：rail App 标题（state-a/c 量图 cap16–17 → 22）。
+    pub const TITLE: f32 = 22.0;
     /// 11px：提示 / 标签 / 次级行。
     pub const XS: f32 = 11.0;
     /// 12px：正文与控件。
@@ -190,12 +196,40 @@ pub mod metrics {
     pub const PADDING_XS: f32 = 1.0;
     /// 2：ghost 文本按钮（Inspector 开合 / 状态栏开合）的水平内边距（R8 波 B）。
     pub const PADDING_SM: f32 = 2.0;
-    /// 18：项目级新建按钮边长。
-    pub const ICON_SMALL: f32 = 18.0;
-    /// 22：全局新建 / 分组按钮边长。
-    pub const ICON_MEDIUM: f32 = 22.0;
-    /// 28：分组按钮宽度。
-    pub const ICON_LARGE: f32 = 28.0;
+    // ── TaskRail 几何（R3 Wave A，state-a/c 量图取档；render 与 AX 树共用单一来源）──
+    /// 20：rail 内容左右统一 inset（量图 16–22 区间取值，标题 / scope / 右缘锚点统一）。
+    pub const RAIL_CONTENT_INSET: f32 = 20.0;
+    /// 12：rail 内层水平内边距（Panel p_2 帧 8 + 12 = 统一 inset 20）。
+    pub const RAIL_INNER_PAD: f32 = 12.0;
+    /// 28：rail 角标按钮边长（grouping / 全局与定向新建；量图 28–30，hit area ≥24）。
+    pub const RAIL_ICON_BUTTON_SIZE: f32 = 28.0;
+    /// 10：rail 状态圆点直径（量图 Ø10–11）。
+    pub const RAIL_STATUS_DOT_SIZE: f32 = 10.0;
+    /// 36：顶部 scope / 连接行高（三图 31–36 取档）。
+    pub const RAIL_TOP_ROW_HEIGHT: f32 = 36.0;
+    /// 36：标题行高（量图 grouping 钮区 y49–84 = 36）。
+    pub const RAIL_TITLE_ROW_HEIGHT: f32 = 36.0;
+    /// 10：标题行 → scope 行纵向间距（内容顶 52 + 36 + 10 = scope 顶 98，
+    /// 与量图 scope 盒 y98 精确对齐；文字到底 33 的读数是行底→文字带口径）。
+    pub const RAIL_TITLE_SCOPE_GAP: f32 = 10.0;
+    /// 12：scope 行 → 连接行纵向间距（98+36+12 = 连接行顶 146，量图 147±1）。
+    pub const RAIL_SCOPE_CONNECTION_GAP: f32 = 12.0;
+    /// 18：连接行 → 列表首行间距（146+36+18 = 桶头顶 200，量图 Today 文字
+    /// y209–221 对应行顶 200）。
+    pub const RAIL_LIST_TOP_GAP: f32 = 18.0;
+    /// 36：日期桶头行高。
+    pub const RAIL_BUCKET_HEADER_HEIGHT: f32 = 36.0;
+    /// 20：日期桶头距上一组的纵向间距（量图「两桶头间距 380」反推 21，
+    /// 4px 半格取 20；「距连接行底 42」是文字带口径不作行距）。
+    pub const RAIL_BUCKET_TOP_GAP: f32 = 20.0;
+    /// 2：日期桶头 → 桶内首个项目头（200+36+2 = 项目头顶 238 ±2 内）。
+    pub const RAIL_BUCKET_TO_PROJECT_GAP: f32 = 2.0;
+    /// 2：项目头 → 首个任务行（238+44+2 = 任务行顶 284，与量图精确对齐）。
+    pub const RAIL_PROJECT_TO_TASK_GAP: f32 = 2.0;
+    /// 44：任务行 / 项目头行高（量图 43–44 / 43–46 取 44）。
+    pub const RAIL_TASK_ROW_HEIGHT: f32 = 44.0;
+    /// 8：项目块间距（量图 任务→下个项目头 52–54 − 行高 44）。
+    pub const RAIL_PROJECT_BLOCK_GAP: f32 = 8.0;
     /// 24：底部状态栏高度。
     pub const STATUS_BAR_HEIGHT: f32 = 24.0;
     /// 288：TaskRail 侧栏宽度。
@@ -240,9 +274,7 @@ mod tests {
                 ((value + 0.055) / 1.055).powf(2.4)
             }
         }
-        0.2126 * channel(color.r)
-            + 0.7152 * channel(color.g)
-            + 0.0722 * channel(color.b)
+        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
     }
 
     /// WCAG 对比度（亮色在前，取值与参数顺序无关）。
@@ -315,5 +347,29 @@ mod tests {
     fn success_fg_is_opaque_status_dot_green() {
         let theme = dark();
         assert_eq!(theme.semantic.success_fg, rgb(0x74c94c));
+    }
+
+    /// R3 Wave A TaskRail 几何 / 字阶合同（state-a §2.1/§3 + state-c §2.1 取档）：
+    /// render 与 AX 树共用本组常量，钉住数值防静默漂移。
+    #[test]
+    fn task_rail_geometry_and_font_constants_match_frozen_tiers() {
+        assert_eq!(font::TITLE, 22.0);
+        assert_eq!(font::BODY, 18.0);
+        assert_eq!(font::BODY_SM, 17.0);
+        assert_eq!(metrics::RAIL_CONTENT_INSET, 20.0);
+        assert_eq!(metrics::RAIL_INNER_PAD, 12.0);
+        assert_eq!(metrics::RAIL_ICON_BUTTON_SIZE, 28.0);
+        assert_eq!(metrics::RAIL_STATUS_DOT_SIZE, 10.0);
+        assert_eq!(metrics::RAIL_TOP_ROW_HEIGHT, 36.0);
+        assert_eq!(metrics::RAIL_TITLE_ROW_HEIGHT, 36.0);
+        assert_eq!(metrics::RAIL_TITLE_SCOPE_GAP, 10.0);
+        assert_eq!(metrics::RAIL_SCOPE_CONNECTION_GAP, 12.0);
+        assert_eq!(metrics::RAIL_LIST_TOP_GAP, 18.0);
+        assert_eq!(metrics::RAIL_BUCKET_HEADER_HEIGHT, 36.0);
+        assert_eq!(metrics::RAIL_BUCKET_TOP_GAP, 20.0);
+        assert_eq!(metrics::RAIL_BUCKET_TO_PROJECT_GAP, 2.0);
+        assert_eq!(metrics::RAIL_PROJECT_TO_TASK_GAP, 2.0);
+        assert_eq!(metrics::RAIL_TASK_ROW_HEIGHT, 44.0);
+        assert_eq!(metrics::RAIL_PROJECT_BLOCK_GAP, 8.0);
     }
 }

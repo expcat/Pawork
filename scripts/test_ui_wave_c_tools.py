@@ -62,7 +62,7 @@ def write_tree(
     entries=0,
     empty_hint=False,
     reconnect=False,
-    connection="Connected · pawork-test",
+    connection="Local · Connected · Up to date · 0",
 ):
     # disconnected 相位正向用例必须显式传入 Disconnected/Connect failed 文案；
     # 默认 Connected 只适用于 reconnected。
@@ -260,7 +260,7 @@ class WaveCToolsTest(unittest.TestCase):
                     "reconnect": True,
                     "selected": True,
                     "entries": 2,
-                    "connection": "Connected · pawork-test",
+                    "connection": "Local · Connected",
                 },
             )
             self.assertEqual(proc.returncode, 5)

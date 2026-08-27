@@ -453,9 +453,8 @@ impl AppView {
                 self.refresh_open_inspector_tab(cx);
             }
             ControllerEvent::MessageSent { session_id, run_id } => {
-                if self.projection.active_session_id.as_deref() == Some(&session_id) {
-                    self.projection.active_run_id = Some(run_id);
-                }
+                self.projection
+                    .note_session_run(&session_id, &run_id, now_unix_ms());
                 self.text_input.update(cx, |input, cx| input.clear(cx));
             }
             ControllerEvent::ModelsLoaded(models) => {

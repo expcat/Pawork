@@ -9,11 +9,11 @@
 
 use std::collections::BTreeSet;
 
+use pawork_client::projection::TimelineProjection;
 use pawork_client::{
     AppEvent, AppEventEnvelope, EventStream, ResumeDisposition, ResumeOutcome, RunState, Snapshot,
     TimelineItemKind, TimelinePage,
 };
-use pawork_client::projection::TimelineProjection;
 use serde_json::Value;
 
 pub use pawork_client::projection::{TimelineEntry, TimelineEntryKind};
@@ -112,9 +112,7 @@ impl ResumeState {
             } => Some(format!(
                 "Snapshot required · from {earliest_available_sequence}"
             )),
-            Self::UpToDate { current_sequence } => {
-                Some(format!("Up to date · {current_sequence}"))
-            }
+            Self::UpToDate { current_sequence } => Some(format!("Up to date · {current_sequence}")),
         }
     }
 
@@ -250,6 +248,25 @@ pub struct ActiveRun {
     pub started_at_ms: u64,
 }
 
+/// TaskRail 每会话 live 状态（诚实语义：只消费 wire 已有数据，不伪造终态）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionLiveStatus {
+    /// 运行中（snapshot active_runs / RunChanged 非终态）。
+    Running,
+    /// 需要输入（pending approval，按 session_id 归属）。
+    NeedsInput,
+}
+
+impl SessionLiveStatus {
+    /// AX description / 状态点语义共用状态词。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Running => "Running",
+            Self::NeedsInput => "Needs input",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DesktopProjection {
     pub connection: ConnectionState,
@@ -291,7 +308,10 @@ impl DesktopProjection {
                 }
                 "workspaces" => {
                     self.workspaces = parse_workspaces(&data);
-                    self.workspace_id = self.workspaces.first().map(|workspace| workspace.id.clone());
+                    self.workspace_id = self
+                        .workspaces
+                        .first()
+                        .map(|workspace| workspace.id.clone());
                 }
                 "provider_status" => {
                     if let Some((provider, model)) = parse_provider_status(&data) {
@@ -426,10 +446,13 @@ impl DesktopProjection {
     }
 
     fn pending_for_active_session(&self) -> Option<PendingApproval> {
-        self.snapshot_pendings.iter().find(|pending| {
-            pending.session_id.as_deref() == self.active_session_id.as_deref()
-                || pending.session_id.is_none()
-        }).cloned()
+        self.snapshot_pendings
+            .iter()
+            .find(|pending| {
+                pending.session_id.as_deref() == self.active_session_id.as_deref()
+                    || pending.session_id.is_none()
+            })
+            .cloned()
     }
 
     pub fn set_connection(&mut self, state: ConnectionState) {
@@ -472,12 +495,77 @@ impl DesktopProjection {
         {
             return self.apply_terminal_output(terminal_session_id, delta);
         }
+        // R3 Wave A 审查修复（P1）：rail 状态点的 run 成员关系跨会话维护，
+        // 必须先于 active-session 闸门——RunChanged 抵达时该会话可能并非
+        // active。非终态登记（修假阴性：发消息后 rail 无蓝点）；终态按
+        // run_id 移除（修假阳性：快照 active run 结束后蓝点残留）并清该
+        // run 的 pendings。成员变化返回 true 触发 rail 重绘。
+        let mut membership_changed = false;
+        if let AppEvent::RunChanged { run_id, state } = &envelope.payload {
+            if let EventStream::Session(session_id) = &envelope.stream {
+                if run_state_is_terminal(state) {
+                    let before = self.active_runs.len();
+                    self.active_runs.retain(|run| run.run_id != run_id.as_str());
+                    membership_changed = self.active_runs.len() != before;
+                    self.clear_pending_for_run(Some(run_id.as_str()));
+                } else if !self
+                    .active_runs
+                    .iter()
+                    .any(|run| run.run_id == run_id.as_str())
+                {
+                    self.active_runs.push(ActiveRun {
+                        run_id: run_id.as_str().to_string(),
+                        session_id: session_id.as_str().to_string(),
+                        started_at_ms: envelope.timestamp.as_unix_millis(),
+                    });
+                    membership_changed = true;
+                }
+            }
+        }
+        // 后台会话的 ToolApprovalRequired 同样必须过闸门前入账，否则
+        // Needs input 点只会出现在当时的 active session 上。
+        if let AppEvent::ToolApprovalRequired {
+            run_id,
+            tool_call_id,
+            reason,
+        } = &envelope.payload
+        {
+            if let EventStream::Session(session_id) = &envelope.stream {
+                let pending = PendingApproval {
+                    session_id: Some(session_id.as_str().to_string()),
+                    run_id: run_id.as_str().to_string(),
+                    tool_call_id: tool_call_id.as_str().to_string(),
+                    tool_name: extract_tool_name(reason),
+                    reason: reason.clone(),
+                    detail: None,
+                };
+                self.snapshot_pendings
+                    .retain(|item| item.tool_call_id != pending.tool_call_id);
+                self.snapshot_pendings.push(pending.clone());
+                if self.active_session_id.as_deref() == Some(session_id.as_str()) {
+                    self.pending_approval = Some(pending);
+                }
+                membership_changed = true;
+            }
+        }
+        if let AppEvent::ToolCompleted {
+            run_id,
+            tool_call_id,
+            ..
+        } = &envelope.payload
+        {
+            let before = self.snapshot_pendings.len();
+            self.clear_pending_for_tool(run_id.as_str(), tool_call_id.as_str());
+            if self.snapshot_pendings.len() != before {
+                membership_changed = true;
+            }
+        }
         let Some(active) = self.active_session_id.as_deref() else {
-            return false;
+            return membership_changed;
         };
         match &envelope.stream {
             EventStream::Session(session_id) if session_id.as_str() == active => {}
-            _ => return false,
+            _ => return membership_changed,
         }
         // 时间线语义（去重 / 条目 / 锚点）委托 protocol reducer。
         let timeline_changed = self.timeline.apply_event(envelope);
@@ -498,28 +586,6 @@ impl DesktopProjection {
                     }
                 }
             }
-            AppEvent::ToolCompleted { run_id, tool_call_id, .. } => {
-                self.clear_pending_for_tool(run_id.as_str(), tool_call_id.as_str());
-            }
-            AppEvent::ToolApprovalRequired {
-                run_id,
-                tool_call_id,
-                reason,
-            } => {
-                let pending = PendingApproval {
-                    session_id: self.active_session_id.clone(),
-                    run_id: run_id.as_str().to_string(),
-                    tool_call_id: tool_call_id.as_str().to_string(),
-                    tool_name: extract_tool_name(reason),
-                    reason: reason.clone(),
-                    detail: None,
-                };
-                self.snapshot_pendings
-                    .retain(|item| item.tool_call_id != pending.tool_call_id);
-                self.snapshot_pendings.push(pending.clone());
-                self.pending_approval = Some(pending);
-                return true;
-            }
             AppEvent::Diagnostic { code, message, .. } => {
                 if code == "model.switched" {
                     if let Some(confirmed) = parse_model_switch_message(message) {
@@ -531,7 +597,7 @@ impl DesktopProjection {
             }
             _ => {}
         }
-        timeline_changed
+        timeline_changed || membership_changed
     }
 
     pub fn set_models(&mut self, models: Vec<ModelEntry>) {
@@ -585,10 +651,7 @@ impl DesktopProjection {
     pub fn project_groups(&self, scope: Option<&str>) -> Vec<TaskRailProjectGroup> {
         group_sessions_by_project(
             self,
-            self.scoped_sessions(scope)
-                .into_iter()
-                .cloned()
-                .collect(),
+            self.scoped_sessions(scope).into_iter().cloned().collect(),
         )
     }
 
@@ -647,12 +710,57 @@ impl DesktopProjection {
         )
     }
 
+    /// TaskRail 每会话 live 状态（R3 Wave A 状态点语义）：
+    /// - Needs input：pending approval 按 session_id 归属（无归属字段的
+    ///   pending 沿用 pending_for_active_session 同规，归 active session）；
+    ///   与 Running 并存时优先。
+    /// - Running：snapshot active_runs / RunChanged 非终态。
+    /// - None：无 live 状态，rail 画空心灰圆（不声明语义）。wire 无每会话
+    ///   终态字段，终态绿点不画（伪造即红线）。
+    pub fn session_live_status(&self, session_id: &str) -> Option<SessionLiveStatus> {
+        let needs_input = self.snapshot_pendings.iter().any(|pending| {
+            pending.session_id.as_deref() == Some(session_id)
+                || (pending.session_id.is_none()
+                    && self.active_session_id.as_deref() == Some(session_id))
+        });
+        if needs_input {
+            return Some(SessionLiveStatus::NeedsInput);
+        }
+        if self
+            .active_runs
+            .iter()
+            .any(|run| run.session_id == session_id)
+        {
+            return Some(SessionLiveStatus::Running);
+        }
+        None
+    }
+
     /// Timeline 空态引导可见条件：无 active session 且无任何条目（含审批卡）。
     /// Disconnected 保留旧条目时条目数非零，不显示引导（gui-design 空态原则）。
     pub fn workspace_empty_hint_visible(&self) -> bool {
         self.active_session_id.is_none()
             && self.timeline.is_empty()
             && self.pending_approval.is_none()
+    }
+
+    /// MessageSent 乐观登记：composer 回执先于 live RunChanged 到达时，
+    /// rail 状态点也必须立刻变成 Running，不能等下一帧事件。
+    pub fn note_session_run(&mut self, session_id: &str, run_id: &str, started_at_ms: u64) {
+        if self.active_session_id.as_deref() == Some(session_id) {
+            self.active_run_id = Some(run_id.to_string());
+            if self.active_run_started_at_ms.is_none() {
+                self.active_run_started_at_ms = Some(started_at_ms);
+            }
+        }
+        if self.active_runs.iter().any(|run| run.run_id == run_id) {
+            return;
+        }
+        self.active_runs.push(ActiveRun {
+            run_id: run_id.to_string(),
+            session_id: session_id.to_string(),
+            started_at_ms,
+        });
     }
 
     fn selected_context_window(&self) -> Option<u64> {
@@ -667,7 +775,8 @@ impl DesktopProjection {
     }
 
     fn clear_pending_for_run(&mut self, run_id: Option<&str>) {
-        self.snapshot_pendings.retain(|pending| run_id != Some(pending.run_id.as_str()));
+        self.snapshot_pendings
+            .retain(|pending| run_id != Some(pending.run_id.as_str()));
         if self
             .pending_approval
             .as_ref()
@@ -678,12 +787,13 @@ impl DesktopProjection {
     }
 
     fn clear_pending_for_tool(&mut self, run_id: &str, tool_call_id: &str) {
-        self.snapshot_pendings.retain(|pending| {
-            !(pending.run_id == run_id && pending.tool_call_id == tool_call_id)
-        });
-        if self.pending_approval.as_ref().is_some_and(|pending| {
-            pending.run_id == run_id && pending.tool_call_id == tool_call_id
-        }) {
+        self.snapshot_pendings
+            .retain(|pending| !(pending.run_id == run_id && pending.tool_call_id == tool_call_id));
+        if self
+            .pending_approval
+            .as_ref()
+            .is_some_and(|pending| pending.run_id == run_id && pending.tool_call_id == tool_call_id)
+        {
             self.pending_approval = None;
         }
     }
@@ -812,10 +922,7 @@ fn group_sessions_by_project(
     let mut groups: Vec<TaskRailProjectGroup> = Vec::new();
     for session in sessions {
         let key = session.workspace_id.clone();
-        if let Some(group) = groups
-            .iter_mut()
-            .find(|group| group.workspace_id == key)
-        {
+        if let Some(group) = groups.iter_mut().find(|group| group.workspace_id == key) {
             group.tasks.push(session);
         } else {
             let name = projection.workspace_name(key.as_deref());
@@ -833,7 +940,10 @@ fn group_sessions_by_project(
 }
 
 fn parse_provider_status(data: &Value) -> Option<(String, String)> {
-    let entry = data.as_array().and_then(|entries| entries.first()).or(Some(data))?;
+    let entry = data
+        .as_array()
+        .and_then(|entries| entries.first())
+        .or(Some(data))?;
     let provider = entry.get("provider_id").and_then(Value::as_str)?;
     let model = entry.get("model").and_then(Value::as_str)?;
     Some((provider.to_string(), model.to_string()))
@@ -843,7 +953,10 @@ fn parse_pending_approvals(data: &Value) -> Vec<PendingApproval> {
     let Some(entries) = data.as_array() else {
         return Vec::new();
     };
-    entries.iter().filter_map(parse_pending_approval_entry).collect()
+    entries
+        .iter()
+        .filter_map(parse_pending_approval_entry)
+        .collect()
 }
 
 fn parse_pending_approval_entry(entry: &Value) -> Option<PendingApproval> {
@@ -1197,6 +1310,104 @@ mod tests {
     }
 
     #[test]
+    fn session_live_status_running_needs_input_priority_and_plain() {
+        let snapshot = snapshot_with_runs_and_approvals(
+            vec![
+                json!({
+                    "run_id": "r-run",
+                    "session_id": "s-run",
+                    "started_at_ms": 10_u64
+                }),
+                json!({
+                    "run_id": "r-both",
+                    "session_id": "s-both",
+                    "started_at_ms": 11_u64
+                }),
+            ],
+            vec![
+                json!({
+                    "run_id": "r-both",
+                    "session_id": "s-both",
+                    "tool_call_id": "c-both",
+                    "tool_name": "write_file",
+                    "message": "Approve workspace file write"
+                }),
+                json!({
+                    "run_id": "r-wait",
+                    "session_id": "s-wait",
+                    "tool_call_id": "c-wait",
+                    "tool_name": "bash",
+                    "message": "Approve command"
+                }),
+            ],
+        );
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        assert_eq!(
+            projection.session_live_status("s-run"),
+            Some(SessionLiveStatus::Running)
+        );
+        // 与 Running 并存时 Needs input 优先。
+        assert_eq!(
+            projection.session_live_status("s-both"),
+            Some(SessionLiveStatus::NeedsInput)
+        );
+        assert_eq!(
+            projection.session_live_status("s-wait"),
+            Some(SessionLiveStatus::NeedsInput)
+        );
+        // 无 live 状态：不声明语义（空心灰圆）。
+        assert_eq!(projection.session_live_status("s-idle"), None);
+
+        // live ToolApprovalRequired 归属当时的 active session。
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&event(
+            1,
+            json!({
+                "type": "tool_approval_required",
+                "data": {
+                    "run_id": "r-live",
+                    "tool_call_id": "c-live",
+                    "reason": "bash · run.sh · Approve command"
+                }
+            }),
+        )));
+        assert_eq!(
+            projection.session_live_status("s-1"),
+            Some(SessionLiveStatus::NeedsInput)
+        );
+
+        // 无 session 归属字段的 snapshot pending 归 active session
+        // （与 pending_for_active_session 同规）。
+        let orphan: Snapshot = serde_json::from_value(json!({
+            "instance_id": "instance-1",
+            "snapshot_sequence": 0,
+            "generated_at": 1,
+            "sections": [
+                {
+                    "kind": "pending_tool_approvals",
+                    "revision": 1,
+                    "data": [
+                        {
+                            "run_id": "r-x",
+                            "tool_call_id": "c-x",
+                            "tool_name": "bash",
+                            "message": "Approve command"
+                        }
+                    ]
+                }
+            ]
+        }))
+        .expect("decode Snapshot");
+        let mut orphan_projection = DesktopProjection::from_snapshot(&orphan);
+        assert_eq!(orphan_projection.session_live_status("s-any"), None);
+        orphan_projection.select_session("s-1");
+        assert_eq!(
+            orphan_projection.session_live_status("s-1"),
+            Some(SessionLiveStatus::NeedsInput)
+        );
+    }
+
+    #[test]
     fn run_status_label_uses_final_order_and_vertical_separators() {
         let mut projection = DesktopProjection::default();
         assert_eq!(
@@ -1209,6 +1420,151 @@ mod tests {
             projection.run_status_label(0),
             "Task — tokens | Quota unavailable | — tok/s | Run —"
         );
+    }
+
+    /// R3 Wave A 审查修复（P1）：live RunChanged 非终态登记 run 成员（含
+    /// 非 active 的后台会话），终态按 run_id 移除并清 pendings——rail
+    /// 状态点不假阴性也不陈旧残留。
+    #[test]
+    fn session_live_status_tracks_live_run_changed_membership() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        // live 非终态：active 会话登记 Running。
+        assert!(projection.apply_event(&run_changed(1, "created")));
+        assert_eq!(
+            projection.session_live_status("s-1"),
+            Some(SessionLiveStatus::Running)
+        );
+        // 后台会话的 RunChanged 同样登记（不过 active 闸门）。
+        let background = serde_json::from_value(json!({
+            "api_version": { "major": 1, "minor": 1 },
+            "instance_id": "instance-1",
+            "event_id": "app-2",
+            "global_sequence": 2,
+            "stream": { "type": "session", "id": "s-2" },
+            "stream_sequence": 2,
+            "timestamp": 1_002,
+            "source": { "type": "core" },
+            "payload": { "type": "run_changed", "data": { "run_id": "r-2", "state": "created" } }
+        }))
+        .expect("decode AppEventEnvelope");
+        assert!(projection.apply_event(&background));
+        assert_eq!(
+            projection.session_live_status("s-2"),
+            Some(SessionLiveStatus::Running)
+        );
+        // 终态移除：蓝点不残留；同 run 的 pending 一并清除。
+        assert!(projection.apply_event(&event(
+            3,
+            json!({
+                "type": "tool_approval_required",
+                "data": {
+                    "run_id": "r-1",
+                    "tool_call_id": "c-1",
+                    "reason": "bash · run.sh · Approve command"
+                }
+            }),
+        )));
+        assert_eq!(
+            projection.session_live_status("s-1"),
+            Some(SessionLiveStatus::NeedsInput)
+        );
+        assert!(projection.apply_event(&run_changed(4, "completed")));
+        assert_eq!(projection.session_live_status("s-1"), None);
+        assert!(projection.snapshot_pendings.is_empty());
+        // 后台会话终态同样清除。
+        let background_done = serde_json::from_value(json!({
+            "api_version": { "major": 1, "minor": 1 },
+            "instance_id": "instance-1",
+            "event_id": "app-5",
+            "global_sequence": 5,
+            "stream": { "type": "session", "id": "s-2" },
+            "stream_sequence": 5,
+            "timestamp": 1_005,
+            "source": { "type": "core" },
+            "payload": { "type": "run_changed", "data": { "run_id": "r-2", "state": "failed" } }
+        }))
+        .expect("decode AppEventEnvelope");
+        assert!(projection.apply_event(&background_done));
+        assert_eq!(projection.session_live_status("s-2"), None);
+        assert!(projection.active_runs.is_empty());
+    }
+
+    #[test]
+    fn note_session_run_marks_running_before_live_run_changed() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        projection.note_session_run("s-1", "r-1", 1_000);
+        assert_eq!(
+            projection.session_live_status("s-1"),
+            Some(SessionLiveStatus::Running)
+        );
+        assert_eq!(projection.active_run_id.as_deref(), Some("r-1"));
+        // 随后的 live RunChanged 不得重复登记。
+        assert!(projection.apply_event(&run_changed(1, "created")));
+        assert_eq!(
+            projection
+                .active_runs
+                .iter()
+                .filter(|run| run.run_id == "r-1")
+                .count(),
+            1
+        );
+        assert!(projection.apply_event(&run_changed(2, "completed")));
+        assert_eq!(projection.session_live_status("s-1"), None);
+    }
+
+    #[test]
+    fn background_tool_approval_marks_needs_input_without_active_session() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        let background = serde_json::from_value(json!({
+            "api_version": { "major": 1, "minor": 1 },
+            "instance_id": "instance-1",
+            "event_id": "app-2",
+            "global_sequence": 2,
+            "stream": { "type": "session", "id": "s-2" },
+            "stream_sequence": 2,
+            "timestamp": 1_002,
+            "source": { "type": "core" },
+            "payload": {
+                "type": "tool_approval_required",
+                "data": {
+                    "run_id": "r-2",
+                    "tool_call_id": "c-2",
+                    "reason": "bash · run.sh · Approve command"
+                }
+            }
+        }))
+        .expect("decode AppEventEnvelope");
+        assert!(projection.apply_event(&background));
+        assert_eq!(
+            projection.session_live_status("s-2"),
+            Some(SessionLiveStatus::NeedsInput)
+        );
+        assert_eq!(projection.session_live_status("s-1"), None);
+        assert!(projection.pending_approval.is_none());
+        let background_done = serde_json::from_value(json!({
+            "api_version": { "major": 1, "minor": 1 },
+            "instance_id": "instance-1",
+            "event_id": "app-3",
+            "global_sequence": 3,
+            "stream": { "type": "session", "id": "s-2" },
+            "stream_sequence": 3,
+            "timestamp": 1_003,
+            "source": { "type": "core" },
+            "payload": {
+                "type": "tool_completed",
+                "data": {
+                    "run_id": "r-2",
+                    "tool_call_id": "c-2",
+                    "success": true
+                }
+            }
+        }))
+        .expect("decode AppEventEnvelope");
+        assert!(projection.apply_event(&background_done));
+        assert_eq!(projection.session_live_status("s-2"), None);
     }
 
     #[test]
@@ -1358,7 +1714,10 @@ mod tests {
             vec![("Beta", 2), ("Alpha", 4), (UNASSIGNED_PROJECT, 1)]
         );
         assert!(projects.last().expect("unassigned").is_unassigned());
-        assert_eq!(projects.last().expect("unassigned").tasks[0].session_id, "s-orphan");
+        assert_eq!(
+            projects.last().expect("unassigned").tasks[0].session_id,
+            "s-orphan"
+        );
 
         let scoped = projection.project_groups(Some("ws-beta"));
         assert_eq!(scoped.len(), 1);
@@ -1551,7 +1910,11 @@ mod tests {
         // 基线：assistant committed tombstone、tool 锚点、run 终态边界。
         assert!(projection.apply_event(&delta(2, "s-1", "m-1", "Hello")));
         projection.apply_timeline_page(&page(
-            vec![history_item(4, "assistant_message", json!({ "text": "Hello world" }))],
+            vec![history_item(
+                4,
+                "assistant_message",
+                json!({ "text": "Hello world" }),
+            )],
             true,
         ));
         assert!(!projection.apply_event(&delta(3, "s-1", "m-1", " late")));
@@ -1691,9 +2054,11 @@ mod tests {
             .timeline
             .iter()
             .filter_map(|entry| match &entry.kind {
-                TimelineEntryKind::ToolCall { name, status, detail } => {
-                    Some((name.as_str(), status.as_str(), detail.as_deref()))
-                }
+                TimelineEntryKind::ToolCall {
+                    name,
+                    status,
+                    detail,
+                } => Some((name.as_str(), status.as_str(), detail.as_deref())),
                 _ => None,
             })
             .collect();
@@ -1711,11 +2076,7 @@ mod tests {
                     "approval_requested",
                     json!({ "tool_name": "write_file", "text": "edit src/lib.rs" }),
                 ),
-                history_item(
-                    2,
-                    "approval_responded",
-                    json!({ "status": "approve_once" }),
-                ),
+                history_item(2, "approval_responded", json!({ "status": "approve_once" })),
             ],
             true,
         ));
@@ -1728,11 +2089,15 @@ mod tests {
             })
             .collect();
         assert!(
-            labels.iter().any(|text| text.contains("approval requested") && text.contains("write_file")),
+            labels
+                .iter()
+                .any(|text| text.contains("approval requested") && text.contains("write_file")),
             "history approval_requested should remain, got {labels:?}"
         );
         assert!(
-            labels.iter().any(|text| text.contains("approval approve_once")),
+            labels
+                .iter()
+                .any(|text| text.contains("approval approve_once")),
             "history approval_responded should remain, got {labels:?}"
         );
         assert!(projection.pending_approval.is_none());
@@ -1910,5 +2275,4 @@ mod tests {
         projection.select_session("fx-ses-alpha-today");
         assert_eq!(projection.pending_approval, None);
     }
-
 }

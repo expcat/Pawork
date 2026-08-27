@@ -1,0 +1,97 @@
+{
+  "scenario": "state-c-projects",
+  "label": "r3a-1",
+  "generated_at": "2026-08-27T09:13:21Z",
+  "git_head": "5d9b78d5238674cd281222eb1ff7525a17e53bce",
+  "phases": {
+    "projects": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": false
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "grouping-projects-selected",
+          "pass": true
+        },
+        {
+          "name": "grouping-menu-closed",
+          "pass": true
+        },
+        {
+          "name": "date-groups-absent",
+          "pass": true
+        },
+        {
+          "name": "project-groups-present",
+          "pass": true
+        },
+        {
+          "name": "session-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-loaded",
+          "pass": true
+        }
+      ]
+    }
+  },
+  "structural_pass": true,
+  "evidence_files": [
+    "action-press-group-projects.txt",
+    "action-press-grouping.txt",
+    "action-press-session.txt",
+    "action-trace.txt",
+    "assert-projects.json",
+    "ax-tree-grouping-menu.txt",
+    "ax-tree-projects.txt",
+    "current.png",
+    "diff-run.txt",
+    "geometry-projects.txt",
+    "grouping-projects-identifier.txt",
+    "normalize.json",
+    "window-place.txt"
+  ]
+}

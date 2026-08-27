@@ -5,11 +5,11 @@
 //! raised 行 → surface.hover），active 复用 hover 色。
 
 use gpui::{
-    div, prelude::*, AnyElement, App, ClickEvent, IntoElement, RenderOnce, SharedString, Styled,
-    Window,
+    div, prelude::*, px, AnyElement, App, ClickEvent, IntoElement, RenderOnce, SharedString,
+    Styled, Window,
 };
 
-use crate::ui::theme::dark;
+use crate::ui::theme::{dark, metrics};
 
 /// 列表行形态。
 #[derive(Debug, Clone, Copy)]
@@ -69,8 +69,16 @@ impl RenderOnce for ListRow {
         let hover = match self.kind {
             ListRowKind::Task { selected } => {
                 // flex_row + min_w_0：让子项 flex_1/truncate 拿到 Definite 宽度
-                // （R8 波 C 长标题截断依赖此约束；选中/底色语义不变）。
-                row = row.flex().flex_row().min_w_0().px_2().py_1().rounded_sm();
+                // （R8 波 C 长标题截断依赖此约束）。R3 Wave A：行高 44（量图
+                // 43–44 取 44）+ 内容垂直居中；选中面 rounded_sm(4) 不变。
+                row = row
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .min_w_0()
+                    .h(px(metrics::RAIL_TASK_ROW_HEIGHT))
+                    .px_2()
+                    .rounded_sm();
                 if selected {
                     row = row.bg(dark().surface.raised);
                     dark().surface.hover
@@ -80,7 +88,16 @@ impl RenderOnce for ListRow {
                 }
             }
             ListRowKind::ProjectHeader => {
-                row = row.flex().flex_row().flex_1().min_w_0().gap_1();
+                // R3 Wave A：项目头行高对齐任务行（44），chevron + 名称垂直居中。
+                row = row
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .gap_1()
+                    .h(px(metrics::RAIL_TASK_ROW_HEIGHT))
+                    .rounded_sm();
                 dark().surface.raised
             }
         };

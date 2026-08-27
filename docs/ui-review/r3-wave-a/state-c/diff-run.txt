@@ -1,0 +1,10 @@
+zone taskrail: ssim=0.354326 rgb=(0.354326,0.646965,0.709823) coverage=1.0000 threshold=0.99 FAIL
+zone header-left: ssim=0.198068 rgb=(0.198068,0.484649,0.570900) coverage=1.0000 threshold=0.99 FAIL
+zone header-right: ssim=0.277260 rgb=(0.277260,0.648679,0.753065) coverage=1.0000 threshold=0.99 FAIL
+zone timeline: ssim=0.246466 rgb=(0.246466,0.507272,0.587265) coverage=1.0000 threshold=0.99 FAIL
+zone composer-left: ssim=0.443598 rgb=(0.443598,0.582192,0.625591) coverage=1.0000 threshold=0.99 FAIL
+zone composer-right: ssim=0.341765 rgb=(0.341765,0.434339,0.466913) coverage=1.0000 threshold=0.99 FAIL
+zone inspector-body: ssim=0.352214 rgb=(0.352214,0.650257,0.713343) coverage=1.0000 threshold=0.99 FAIL
+zone inspector-right: ssim=0.390040 rgb=(0.390040,0.700900,0.764367) coverage=1.0000 threshold=0.99 FAIL
+zone statusbar: ssim=0.227204 rgb=(0.227204,0.510290,0.594439) coverage=1.0000 threshold=0.99 FAIL
+global (auxiliary only): 0.301975

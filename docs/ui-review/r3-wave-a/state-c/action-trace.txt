@@ -1,0 +1,33 @@
+2026-08-27T09:13:03Z run start label=r3a-1 out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r3-wave-a/state-c
+2026-08-27T09:13:03Z compile helpers into /tmp/pawork-r3-projects-tools.A7FXQx
+2026-08-27T09:13:07Z seed fixture root=/private/tmp/pawork-ui-fixture.1udcnN
+2026-08-27T09:13:10Z serve fixture (wait host_ready barrier)
+2026-08-27T09:13:12Z launch desktop via ui-fixture
+2026-08-27T09:13:13Z desktop pid=49926
+2026-08-27T09:13:16Z desktop window ready (session-list rendered)
+2026-08-27T09:13:16Z place Desktop window deterministically on the main display
+2026-08-27T09:13:16Z wait timeline_stable (seq>0 session= entries>=0)
+2026-08-27T09:13:17Z timeline_stable ok seq=1 session= entries=0
+2026-08-27T09:13:17Z open session before grouping switch
+2026-08-27T09:13:17Z AXPress session-fx-ses-alpha-today (open session)
+2026-08-27T09:13:18Z AXPress session-fx-ses-alpha-today result=0
+2026-08-27T09:13:18Z wait timeline_stable (seq>1 session=fx-ses-alpha-today entries>=1)
+2026-08-27T09:13:19Z timeline_stable ok seq=2 session=fx-ses-alpha-today entries=25
+2026-08-27T09:13:19Z open grouping menu
+2026-08-27T09:13:19Z AXPress task-rail-grouping (open grouping menu)
+2026-08-27T09:13:19Z AXPress task-rail-grouping result=0
+2026-08-27T09:13:19Z wait grouping-menu open
+2026-08-27T09:13:19Z grouping-menu open attempt=1
+2026-08-27T09:13:19Z pre-switch grouping=Timeline confirmed
+2026-08-27T09:13:19Z projects menu item resolved: group-projects
+2026-08-27T09:13:19Z AXPress group-projects (select Projects grouping)
+2026-08-27T09:13:20Z AXPress group-projects result=0
+2026-08-27T09:13:20Z wait phase=projects (phase-aware assertion polling)
+2026-08-27T09:13:20Z phase=projects ok attempt=1
+2026-08-27T09:13:20Z capture State C (Projects grouping)
+2026-08-27T09:13:20Z screencapture wid=7969
+2026-08-27T09:13:20Z normalized -> /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r3-wave-a/state-c/current.png
+2026-08-27T09:13:20Z visual diff gate (state-c frozen zones)
+2026-08-27T09:13:21Z visual diff exit=1 (0=all pass / 1=zone FAIL / 2=invalid input)
+2026-08-27T09:13:21Z teardown fixture root=/private/tmp/pawork-ui-fixture.1udcnN
+2026-08-27T09:13:27Z run done (structural pass; gate_exit=1)
