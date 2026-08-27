@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-08-26T23:45:05Z",
+  "run_a": "docs/ui-review/wave-d/state-a/baseline-1",
+  "run_b": "docs/ui-review/wave-d/state-a/baseline-2",
+  "compared": "diff-report zones/global numeric fields (paths and timestamps excluded)",
+  "identical": true,
+  "differences": [],
+  "zone_ssim": {
+    "taskrail": [
+      0.37799688987268765,
+      0.37799688987268765
+    ],
+    "header-left": [
+      0.23378124194430638,
+      0.23378124194430638
+    ],
+    "header-right": [
+      0.30513073512275096,
+      0.30513073512275096
+    ],
+    "timeline": [
+      0.3014879245910992,
+      0.3014879245910992
+    ],
+    "composer-left": [
+      0.24090652219263028,
+      0.24090652219263028
+    ],
+    "composer-right": [
+      0.28125126296519304,
+      0.28125126296519304
+    ],
+    "inspector-body": [
+      0.4083333452085132,
+      0.4083333452085132
+    ],
+    "inspector-right": [
+      0.376172673814363,
+      0.376172673814363
+    ],
+    "statusbar": [
+      0.40501632997901993,
+      0.40501632997901993
+    ]
+  }
+}

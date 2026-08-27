@@ -235,10 +235,10 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 ## 8. 注意事项与已知限制
 
-- **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic（旧 R8 波 A 实证 exit 134，真窗口自始无法启动）。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归；新 [R1/R8](../../../plan/R1-ui-visual-contract.md) 必须建立真窗口启动门禁。
+- **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic（旧 R8 波 A 实证 exit 134，真窗口自始无法启动）。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归；R1 已由 [Wave D](../../ui-review/wave-d/notes.md) 建立真窗口启动门禁，R8 继续扩面。
 - **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
-- **渲染面自动门禁尚未完整**：R1 Wave C 已建立 U1 进程内探针，以及 macOS 真窗口 AX tree / semantic action / screenshot 来源；State A 完整视觉 diff 与故意漂移仍待 Wave D。菜单开合 / FollowScroll / hover / 虚拟化滚动 / DiffView 横滚仍主要依赖历史人工取证，须在 R2–R8 逐组件补齐。Entry 菜单在锚点条目被虚拟化卸载后状态与视觉短暂失联，需在 R7/R8 给出可恢复行为，不能沿用旧偏差接受。
+- **渲染面自动门禁尚未完整**：R1 Wave C 已建立 U1 进程内探针与 macOS 真窗口 AX tree / semantic action / screenshot 来源；[Wave D](../../ui-review/wave-d/notes.md) 已补 State A 双基线、完整 visual diff、故意漂移与恢复。当前视觉 0/9 zone 达到 0.99，菜单开合 / FollowScroll / hover / 虚拟化滚动 / DiffView 横滚仍主要依赖历史人工取证，须在 R2–R8 逐组件补齐。Entry 菜单在锚点条目被虚拟化卸载后状态与视觉短暂失联，需在 R7/R8 给出可恢复行为，不能沿用旧偏差接受。
 - **ActivityPopover 触发器位置是已知偏差**：现实现由底部 StatusBar 右侧触发、向上展开；定稿为 Workspace Header 右上触发、向下展开约 320px 且不覆盖 Composer（[../../../design/README.md](../../../design/README.md) §5.1/§8.5、UI_Review F-12 / D-01）。迁移完成前 F-12 保持未通过；迁移落地后同批更新本文 §3.2 的 StatusBar 描述。
 - **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
 - **单主题**：仅深色 `dark()`；`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。

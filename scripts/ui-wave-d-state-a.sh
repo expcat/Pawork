@@ -61,13 +61,16 @@ pick_python() {
 write_frame_probe() { # $1=target swift source
   cat > "$1" <<'SWIFT'
 import ApplicationServices
+import CoreGraphics
 import Foundation
 
 let args = CommandLine.arguments
-guard args.count == 2, let pid = Int32(args[1]), pid > 0 else {
-    FileHandle.standardError.write(Data("usage: ax-frames <pid>".utf8))
+guard (args.count == 2 || (args.count == 3 && args[2] == "--place-main")),
+      let pid = Int32(args[1]), pid > 0 else {
+    FileHandle.standardError.write(Data("usage: ax-frames <pid> [--place-main]".utf8))
     exit(2)
 }
+let placeMain = args.count == 3
 let app = AXUIElementCreateApplication(pid)
 
 func attr(_ e: AXUIElement, _ name: String) -> AnyObject? {
@@ -91,6 +94,48 @@ func frame(_ e: AXUIElement) -> (CGPoint, CGSize)? {
     guard AXValueGetValue(pv as! AXValue, .cgPoint, &p),
           AXValueGetValue(sv as! AXValue, .cgSize, &s) else { return nil }
     return (p, s)
+}
+
+if placeMain {
+    guard let windows = attr(app, kAXWindowsAttribute as String) as? [AXUIElement],
+          let window = windows.first,
+          let (_, size) = frame(window) else {
+        FileHandle.standardError.write(Data("place-main: AX window/frame unavailable\n".utf8))
+        exit(3)
+    }
+    let display = CGDisplayBounds(CGMainDisplayID())
+    var target = CGPoint(
+        x: display.minX + max(0, (display.width - size.width) / 2),
+        y: display.minY + max(0, (display.height - size.height) / 2)
+    )
+    guard let value = AXValueCreate(.cgPoint, &target) else {
+        FileHandle.standardError.write(Data("place-main: cannot create AX position\n".utf8))
+        exit(3)
+    }
+    let result = AXUIElementSetAttributeValue(
+        window,
+        kAXPositionAttribute as CFString,
+        value
+    )
+    var actual = CGPoint(x: CGFloat.nan, y: CGFloat.nan)
+    if result == .success {
+        for _ in 0..<50 {
+            if let (point, _) = frame(window) {
+                actual = point
+                if abs(point.x - target.x) <= 1 && abs(point.y - target.y) <= 1 {
+                    break
+                }
+            }
+            usleep(20_000)
+        }
+    }
+    print("# place-main result=" + String(result.rawValue)
+        + " display=" + String(CGMainDisplayID())
+        + " target={" + String(describing: target.x) + "," + String(describing: target.y) + "}"
+        + " actual={" + String(describing: actual.x) + "," + String(describing: actual.y) + "}")
+    if result != .success || abs(actual.x - target.x) > 1 || abs(actual.y - target.y) > 1 {
+        exit(3)
+    }
 }
 
 var out: [String] = []
@@ -154,6 +199,16 @@ if [[ "$MODE" == "compare" ]]; then
 fi
 
 [[ -n "$OUT" ]] || usage
+if [[ -e "$OUT" && ! -d "$OUT" ]]; then
+  die "--out must name a new or empty directory: $OUT"
+fi
+if [[ -d "$OUT" ]]; then
+  shopt -s nullglob dotglob
+  out_entries=("$OUT"/*)
+  shopt -u nullglob dotglob
+  (( ${#out_entries[@]} == 0 )) \
+    || die "--out must be new or empty to prevent stale evidence: $OUT"
+fi
 mkdir -p "$OUT/logs" "$OUT/barriers"
 OUT="$(cd "$OUT" && pwd)"
 TRACE="$OUT/action-trace.txt"
@@ -227,6 +282,12 @@ while :; do
   sleep 0.3
 done
 
+trace "place Desktop window deterministically on the main display"
+"$WORK/ax-frames" "$DESKTOP_PID" --place-main > "$OUT/window-place.txt" \
+  || die "failed to place Desktop window on main display (see $OUT/window-place.txt)"
+grep -q '# place-main result=0 ' "$OUT/window-place.txt" \
+  || die "Desktop main-display placement did not converge (see $OUT/window-place.txt)"
+
 wait_timeline_stable() { # $1=min_seq(exclusive) $2=want_session(""=any) $3=min_entries $4=timeout_secs
   local min_seq="$1" want_session="$2" min_entries="$3" timeout_secs="$4"
   local deadline=$(( SECONDS + timeout_secs ))
@@ -279,6 +340,15 @@ FINAL_ASSERT_OK=0
   --tree "$OUT/ax-tree.txt" --phase final --out "$OUT/assert-final.json" \
   || FINAL_ASSERT_OK=1
 
+ZONES_FILE="$REPO_ROOT/docs/ui-review/state-a/zones.json"
+if [[ -n "${WRITE_ZONES_OUT:-}" ]]; then
+  ZONES_FILE="$WORK/zones.json"
+  trace "derive current zone rectangles from final AX frames"
+  "$PY" "$PY_TOOLS" write-current-zones \
+    --zones "$REPO_ROOT/docs/ui-review/state-a/zones.json" \
+    --frames "$OUT/geometry-final.txt" --out "$ZONES_FILE"
+fi
+
 WID="$(cat "$WORK/wid.txt")"
 trace "screencapture wid=$WID"
 screencapture -x -o -l "$WID" "$WORK/shot-raw.png" || die "screencapture failed wid=$WID"
@@ -292,7 +362,7 @@ set +e
 "$PY" "$SCRIPT_DIR/ui-visual-diff.py" \
   --reference "$REPO_ROOT/docs/ui-review/state-a/reference.png" \
   --current "$OUT/current.png" \
-  --zones "$REPO_ROOT/docs/ui-review/state-a/zones.json" \
+  --zones "$ZONES_FILE" \
   --masks "$REPO_ROOT/docs/ui-review/state-a/mask.json" \
   --out "$OUT/diff" > "$OUT/diff-run.txt" 2>&1
 GATE_EXIT=$?
@@ -300,6 +370,15 @@ set -e
 cat "$OUT/diff-run.txt"
 trace "visual diff exit=$GATE_EXIT (0=all pass / 1=zone FAIL / 2=invalid input)"
 [[ "$GATE_EXIT" != 2 ]] || { cat "$OUT/diff-run.txt" >&2; die "ui-visual-diff invalid input (exit 2)"; }
+
+if [[ -n "${WRITE_ZONES_OUT:-}" ]] \
+    && (( INITIAL_ASSERT_OK == 0 && FINAL_ASSERT_OK == 0 )); then
+  trace "write validated current zone rectangles -> $WRITE_ZONES_OUT"
+  mkdir -p "$(dirname "$WRITE_ZONES_OUT")"
+  cp "$ZONES_FILE" "$WRITE_ZONES_OUT"
+elif [[ -n "${WRITE_ZONES_OUT:-}" ]]; then
+  trace "skip current zone write because structural assertions failed"
+fi
 
 cp "$ROOT/logs/serve.log" "$OUT/logs/serve.log" 2>/dev/null || true
 cp "$ROOT/logs/desktop.log" "$OUT/logs/desktop.log" 2>/dev/null || true
@@ -311,12 +390,6 @@ done
   --seed "$REPO_ROOT/fixtures/ui/seed.json" --scenario state-a \
   --label "$LABEL" --gate-exit "$GATE_EXIT"
 "$PY" "$PY_TOOLS" checklist --dir "$OUT"
-
-if [[ -n "${WRITE_ZONES_OUT:-}" ]]; then
-  trace "write current zone rectangles -> $WRITE_ZONES_OUT"
-  "$PY" "$PY_TOOLS" write-current-zones --zones "$REPO_ROOT/docs/ui-review/state-a/zones.json" \
-    --frames "$OUT/geometry-final.txt" --out "$WRITE_ZONES_OUT"
-fi
 
 trace "teardown fixture root=$ROOT"
 "$FIXTURE" down --root "$ROOT"

@@ -1,6 +1,6 @@
 # State A 量图 checklist（Wave A）
 
-> 口径：docs/UI_Review.md §0.1 六层级 + §7 证据包。本清单评价的是 reference 量图包本身的完备性与已登记冲突；交互与 AX 项按 brief 一律 BLOCKED（等 Wave C/D）。实现侧验收在后续波次以本包数值为准。
+> 口径：docs/UI_Review.md §0.1 六层级 + §7 证据包。§1–§4 评价 Wave A reference 量图包本身的完备性与已登记冲突；§5–§7 已按 Wave D 真窗口取证更新，完整交互/AX 与视觉还原仍由 R2–R8 继续。实现侧验收以本包数值为准。
 
 ## 1. 结构与状态（§0.1 L1）
 
@@ -48,8 +48,8 @@
 
 | 项 | 结果 | 证据 |
 | --- | --- | --- |
-| hover / active / focus / 菜单 / 折叠 / 滚动 | BLOCKED | 静态图无法取证；Wave C/D 处理（brief 约定） |
-| AX（VoiceOver / 键盘路径 / 目标尺寸） | BLOCKED | 同上 |
+| hover / active / 菜单 / 折叠 / 滚动 | BLOCKED | State A Wave D 只覆盖 task AXPress 与 Composer focus；完整状态矩阵留 R2–R8 |
+| AX（VoiceOver / 键盘路径 / 目标尺寸） | PARTIAL | Wave C/D 已证明真窗口 AX tree、task semantic action 与 focus；完整 VoiceOver/键盘/目标尺寸留 R7/R8 |
 
 ## 6. 区域量化（§0.1 L6）
 
@@ -57,7 +57,7 @@
 | --- | --- | --- |
 | 动态值遮罩清单（只遮值） | PASS | [mask.json](mask.json)（80 项，含 4 条窗缘 reference artifact；多行正文与 Diff 均逐行紧遮） |
 | 容器/基线/密度/状态图标不遮 | PASS | mask 各条 reason 已注明保留项；gutter、+/− 前缀、行底语义色、状态点、✓、标签词均未遮；任一 zone 遮罩 ≤35% |
-| 分区 SSIM ≥ 0.99 | BLOCKED | 需同 fixture 的 current 截图；Wave A 仅 reference 量图 |
+| 分区 SSIM ≥ 0.99 | FAIL（留 R2–R6） | Wave D 已生成同 fixture current；0/9 zones 通过，global 辅助 SSIM 0.336185，详见 §8 |
 
 ## 7. 证据包清单（§7）
 
@@ -68,6 +68,20 @@
 | crops/（20 项） | PASS | 组件级证据 crop（含 2–4x 放大） |
 | mask.json | PASS | 动态值遮罩 |
 | checklist.md | PASS | 本文件 |
-| current.png | BLOCKED | 等后续波次固定 fixture 截图 |
-| overlay-50.png | BLOCKED | 依赖 current |
-| diff-heatmap.png | BLOCKED | 依赖 current |
+| current.png | PASS（证据存在） | Wave D baseline-1 的无 ICC `RGB` 1440×1024 真窗口截图；不表示视觉门禁通过 |
+| overlay-50.png | PASS（证据存在） | reference/current 50% overlay；视觉差异仍明显 |
+| diff-heatmap.png | PASS（证据存在） | 全图差异热力图；分区结果见 diff-report.json / zone-evidence/ |
+
+## 8. Wave D 真窗口闭环（2026-08-27）
+
+Wave A 的静态量图结论保留在上文；下表追加实现侧 U2/U3 证据，不把当前视觉偏差改写成已还原。
+
+| 项 | 结果 | 证据 |
+| --- | --- | --- |
+| 真 Host / 真 Desktop / fixture / `timeline_stable` / AXPress task | PASS | [baseline-1 manifest](../wave-d/state-a/baseline-1/run-manifest.json) 与 [action trace](../wave-d/state-a/baseline-1/action-trace.txt) |
+| 三栏骨架、1440×1024、rail 288、Inspector 440、StatusBar 24、task 选中、Timeline 加载、Composer focus | PASS | [baseline-1 checklist](../wave-d/state-a/baseline-1/checklist-current.md)；Composer 实测 156px 为 F-09 已知视觉偏差，只在 R1 驱动门禁中记为 `OBSERVED-FAIL`，R2 仍须修到 88–94px |
+| 主显示器位置与截图色彩归一 | PASS | [window placement](../wave-d/state-a/baseline-1/window-place.txt)；截图 embedded ICC 显式转换到 sRGB 后输出无 ICC RGB，见 [normalize.json](../wave-d/state-a/baseline-1/normalize.json) |
+| 两次从零基线可重复 | PASS | `current.png` 字节一致，zone/global 数值指纹完全一致；[repeatability.json](../wave-d/repeatability.json) |
+| 故意把 `SIDEBAR_WIDTH` 288→320 | EXPECTED FAIL | 驱动退出 4；初始/最终 `rail-width` 均 FAIL，完整证据见 [drift manifest](../wave-d/drift/run-manifest.json) 与 [drift comparison](../wave-d/drift-detection.json) |
+| token 恢复 288 后复验 | PASS | 恢复截图与 baseline 字节一致、指纹一致；[recovery comparison](../wave-d/recovery-compare.json) |
+| State A 分区 SSIM ≥0.99 | FAIL（留 R2–R6） | 0/9 zones 通过，global 辅助值 0.336185；规范产物：[current.png](current.png) / [overlay-50.png](overlay-50.png) / [diff-heatmap.png](diff-heatmap.png) / [diff-report.json](diff-report.json) / [checklist-current.md](checklist-current.md) |

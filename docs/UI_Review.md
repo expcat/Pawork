@@ -1,10 +1,10 @@
 # Pawork Desktop UI 视觉复审与 99% 一致性验收合同
 
-> 复审日期：2026-08-25；Wave A 合同复核：2026-08-26<br>
-> 复审对象：`apps/desktop` 当前 `main@ada6249` 的真实 GPUI 窗口<br>
+> 复审日期：2026-08-25；Wave A 合同复核：2026-08-26；Wave D State A 取证：2026-08-27<br>
+> 初始复审对象：`apps/desktop` `main@ada6249` 的真实 GPUI 窗口；最新 State A 证据见 [Wave D 收口记录](ui-review/wave-d/notes.md)<br>
 > 视觉事实源：[GUI v3 视觉实施基准](../design/README.md) · [Desktop GUI 设计](gui-design.md)<br>
 > 定稿图：[Timeline 展开](../design/desktop-shell-timeline-v3.png) · [Timeline 折叠](../design/desktop-shell-timeline-collapsed-v3.png) · [Projects](../design/desktop-shell-projects-v3.png)<br>
-> 当前执行入口：[ROADMAP R1–R8](../ROADMAP.md#2-顺序排期) · [R1 视觉合同](../plan/R1-ui-visual-contract.md) · [R7–R8 全功能验收](../plan/R7-R8-ui-quality-gates.md)<br>
+> 当前执行入口：[ROADMAP R1–R8](../ROADMAP.md#2-顺序排期) · [R1 收口存档](history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) · [R7–R8 全功能验收](../plan/R7-R8-ui-quality-gates.md)<br>
 > 本轮追加约束：后续美观化必须与定稿图对齐；只允许细微像素、大小和宽窄误差，不允许用“已经可用”或“当前实现如此”替代视觉还原。
 
 ## 0. 复审结论：当前不通过
@@ -53,11 +53,11 @@
 | 构建证据 | 先前已验证 `cargo build -p pawork -p pawork-desktop --offline --features gpui/runtime_shaders` 通过；Wave A 只改视觉合同资产、Python 门禁与文档，不改 Rust 生产路径，因此不重复构建 |
 | 运行证据 | 当前源码启动 `pawork gui serve` 与真实 `pawork-desktop`，连接本机持久化会话 |
 | 目标视口 | `1440×1024` 内容窗口；最终不得把 macOS 额外标题栏高度混入内容区 |
-| 当前截图 | Computer Use 保存的窗口截图被缩放为 `1048×768`，只支持结构和相对比例判断，不支持本轮宣称逐像素通过 |
+| 初始截图 | Computer Use 保存的窗口截图被缩放为 `1048×768`，只支持结构和相对比例判断；Wave D 另存同 fixture 的 1440×1024 真窗口 current/diff |
 | 设计基准 | State A `1486×1059`、State B/C `1487×1058`；使用全画布 LANCZOS 缩放、无裁切归一到 `1440×1024` |
-| 数据状态 | 固定真实 fixture 已由 R1 Wave B 建立（fixtures/ui/seed.json + ui_fixture example）；当前实现同 fixture 的渲染对照待 R1 Wave D 真窗口取证 |
+| 数据状态 | 固定真实 fixture 已由 R1 Wave B 建立（fixtures/ui/seed.json + ui_fixture example）；R1 Wave D 已完成 State A 真窗口双基线、故意漂移与恢复取证，当前视觉还原仍由 R2–R6 继续推进 |
 
-当前截图左上角的紫色小浮层是取证工具控件，不属于 Pawork UI，比较时必须裁除。
+初始截图左上角的紫色小浮层是取证工具控件，不属于 Pawork UI，比较时必须裁除。
 
 ## 2. 逐状态复审
 

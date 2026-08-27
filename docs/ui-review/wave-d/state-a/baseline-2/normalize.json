@@ -1,0 +1,41 @@
+{
+  "wid": 7643,
+  "window_bounds_points": [
+    1000,
+    192,
+    1440,
+    1056
+  ],
+  "root_frame_points": {
+    "x": 1000.0,
+    "y": 224.0,
+    "w": 1440.0,
+    "h": 1024.0
+  },
+  "capture_pixels": [
+    1440,
+    1056
+  ],
+  "source_mode": "RGBA",
+  "source_icc_profile_bytes": 512,
+  "source_icc_profile_description": "R34Q81",
+  "color_conversion": "embedded ICC -> sRGB",
+  "scale": 1.0,
+  "crop_pixels": [
+    0,
+    32,
+    1440,
+    1024
+  ],
+  "before_resize": [
+    1440,
+    1024
+  ],
+  "resized_lanczos": false,
+  "final_size": [
+    1440,
+    1024
+  ],
+  "icc_profile_dropped": true,
+  "output_color_interpretation": "untagged RGB; sRGB bytes"
+}

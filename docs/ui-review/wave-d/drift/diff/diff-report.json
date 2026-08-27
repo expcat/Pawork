@@ -1,0 +1,437 @@
+{
+  "method": {
+    "ssim": "11x11 box-window, per RGB channel",
+    "zone_score": "minimum of red/green/blue channel scores",
+    "color_inputs": "untagged RGB bytes interpreted as sRGB",
+    "masked_pixels": "neutralized in both inputs before SSIM and excluded from mean",
+    "heatmap_mask": "union of reference masks and their zone-aligned current positions"
+  },
+  "reference": "/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/state-a/reference.png",
+  "current": "/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/wave-d/drift/current.png",
+  "size": [
+    1440,
+    1024
+  ],
+  "threshold": 0.99,
+  "max_mask_fraction": 0.35,
+  "mask_count": 80,
+  "heatmap_masked_pixels": 332516,
+  "evidence": {
+    "raw_overlay": "overlay-50.png",
+    "masked_heatmap": "diff-heatmap.png",
+    "zone_directory": "zone-evidence"
+  },
+  "zones": [
+    {
+      "id": "taskrail",
+      "anchor": "top-left",
+      "reference": {
+        "x": 0,
+        "y": 0,
+        "w": 297,
+        "h": 1024
+      },
+      "current": {
+        "x": 0,
+        "y": 0,
+        "w": 288,
+        "h": 1024
+      },
+      "common_size": [
+        288,
+        1024
+      ],
+      "aligned_reference_origin": [
+        0,
+        0
+      ],
+      "aligned_current_origin": [
+        0,
+        0
+      ],
+      "coverage_reference": 0.9696969696969697,
+      "coverage_current": 1.0,
+      "evaluated_pixels": 246080,
+      "masked_pixels": 48832,
+      "mask_fraction": 0.1655815972222222,
+      "max_mask_fraction": 0.35,
+      "ssim_channels": {
+        "red": 0.38926645496850487,
+        "green": 0.7337598896666928,
+        "blue": 0.7566986851910261
+      },
+      "ssim": 0.38926645496850487,
+      "pass": false
+    },
+    {
+      "id": "header-left",
+      "anchor": "top-left",
+      "reference": {
+        "x": 300,
+        "y": 0,
+        "w": 400,
+        "h": 104
+      },
+      "current": {
+        "x": 288,
+        "y": 0,
+        "w": 400,
+        "h": 104
+      },
+      "common_size": [
+        400,
+        104
+      ],
+      "aligned_reference_origin": [
+        300,
+        0
+      ],
+      "aligned_current_origin": [
+        288,
+        0
+      ],
+      "coverage_reference": 1.0,
+      "coverage_current": 1.0,
+      "evaluated_pixels": 32600,
+      "masked_pixels": 9000,
+      "mask_fraction": 0.21634615384615385,
+      "max_mask_fraction": 0.35,
+      "ssim_channels": {
+        "red": 0.22353088417148637,
+        "green": 0.5575454248268463,
+        "blue": 0.6513669423870616
+      },
+      "ssim": 0.22353088417148637,
+      "pass": false
+    },
+    {
+      "id": "header-right",
+      "anchor": "top-right",
+      "reference": {
+        "x": 700,
+        "y": 0,
+        "w": 277,
+        "h": 104
+      },
+      "current": {
+        "x": 723,
+        "y": 0,
+        "w": 277,
+        "h": 104
+      },
+      "common_size": [
+        277,
+        104
+      ],
+      "aligned_reference_origin": [
+        700,
+        0
+      ],
+      "aligned_current_origin": [
+        723,
+        0
+      ],
+      "coverage_reference": 1.0,
+      "coverage_current": 1.0,
+      "evaluated_pixels": 28254,
+      "masked_pixels": 554,
+      "mask_fraction": 0.019230769230769232,
+      "max_mask_fraction": 0.35,
+      "ssim_channels": {
+        "red": 0.29470238375210545,
+        "green": 0.6889506542696459,
+        "blue": 0.7923175935332728
+      },
+      "ssim": 0.29470238375210545,
+      "pass": false
+    },
+    {
+      "id": "timeline",
+      "anchor": "top-left",
+      "reference": {
+        "x": 300,
+        "y": 104,
+        "w": 677,
+        "h": 770
+      },
+      "current": {
+        "x": 288,
+        "y": 104,
+        "w": 677,
+        "h": 740
+      },
+      "common_size": [
+        677,
+        740
+      ],
+      "aligned_reference_origin": [
+        300,
+        104
+      ],
+      "aligned_current_origin": [
+        288,
+        104
+      ],
+      "coverage_reference": 0.961038961038961,
+      "coverage_current": 1.0,
+      "evaluated_pixels": 409777,
+      "masked_pixels": 91203,
+      "mask_fraction": 0.18204918360014372,
+      "max_mask_fraction": 0.35,
+      "ssim_channels": {
+        "red": 0.3069349056000596,
+        "green": 0.66090518603614,
+        "blue": 0.753889174376651
+      },
+      "ssim": 0.3069349056000596,
+      "pass": false
+    },
+    {
+      "id": "composer-left",
+      "anchor": "top-left",
+      "reference": {
+        "x": 300,
+        "y": 874,
+        "w": 400,
+        "h": 110
+      },
+      "current": {
+        "x": 288,
+        "y": 844,
+        "w": 400,
+        "h": 110
+      },
+      "common_size": [
+        400,
+        110
+      ],
+      "aligned_reference_origin": [
+        300,
+        874
+      ],
+      "aligned_current_origin": [
+        288,
+        844
+      ],
+      "coverage_reference": 1.0,
+      "coverage_current": 1.0,
+      "evaluated_pixels": 37796,
+      "masked_pixels": 6204,
+      "mask_fraction": 0.141,
+      "max_mask_fraction": 0.35,
+      "ssim_channels": {
+        "red": 0.2504088939146181,
+        "green": 0.459779142130594,
+        "blue": 0.5336967259687485
+      },
+      "ssim": 0.2504088939146181,
+      "pass": false
+    },
+    {
+      "id": "composer-right",
+      "anchor": "top-right",
+      "reference": {
+        "x": 700,
+        "y": 874,
+        "w": 277,
+        "h": 110
+      },
+      "current": {
+        "x": 723,
+        "y": 844,
+        "w": 277,
+        "h": 110
+      },
+      "common_size": [
+        277,
+        110
+      ],
+      "aligned_reference_origin": [
+        700,
+        874
+      ],
+      "aligned_current_origin": [
+        723,
+        844
+      ],
+      "coverage_reference": 1.0,
+      "coverage_current": 1.0,
+      "evaluated_pixels": 27670,
+      "masked_pixels": 2800,
+      "mask_fraction": 0.09189366590088612,
+      "max_mask_fraction": 0.35,
+      "ssim_channels": {
+        "red": 0.28125126296519304,
+        "green": 0.4312245163674591,
+        "blue": 0.48622255169615736
+      },
+      "ssim": 0.28125126296519304,
+      "pass": false
+    },
+    {
+      "id": "inspector-body",
+      "anchor": "top-left",
+      "reference": {
+        "x": 980,
+        "y": 0,
+        "w": 460,
+        "h": 984
+      },
+      "current": {
+        "x": 1000,
+        "y": 0,
+        "w": 440,
+        "h": 984
+      },
+      "common_size": [
+        440,
+        984
+      ],
+      "aligned_reference_origin": [
+        980,
+        0
+      ],
+      "aligned_current_origin": [
+        1000,
+        0
+      ],
+      "coverage_reference": 0.9565217391304348,
+      "coverage_current": 1.0,
+      "evaluated_pixels": 294737,
+      "masked_pixels": 138223,
+      "mask_fraction": 0.31925120103473764,
+      "max_mask_fraction": 0.35,
+      "ssim_channels": {
+        "red": 0.4083333452085132,
+        "green": 0.7082253709164189,
+        "blue": 0.7455533657535425
+      },
+      "ssim": 0.4083333452085132,
+      "pass": false
+    },
+    {
+      "id": "inspector-right",
+      "anchor": "top-right",
+      "reference": {
+        "x": 1320,
+        "y": 0,
+        "w": 120,
+        "h": 120
+      },
+      "current": {
+        "x": 1320,
+        "y": 0,
+        "w": 120,
+        "h": 120
+      },
+      "common_size": [
+        120,
+        120
+      ],
+      "aligned_reference_origin": [
+        1320,
+        0
+      ],
+      "aligned_current_origin": [
+        1320,
+        0
+      ],
+      "coverage_reference": 1.0,
+      "coverage_current": 1.0,
+      "evaluated_pixels": 13924,
+      "masked_pixels": 476,
+      "mask_fraction": 0.03305555555555555,
+      "max_mask_fraction": 0.35,
+      "ssim_channels": {
+        "red": 0.376172673814363,
+        "green": 0.7353154112583244,
+        "blue": 0.7574225264059119
+      },
+      "ssim": 0.376172673814363,
+      "pass": false
+    },
+    {
+      "id": "statusbar",
+      "anchor": "top-right",
+      "reference": {
+        "x": 300,
+        "y": 984,
+        "w": 1140,
+        "h": 40
+      },
+      "current": {
+        "x": 300,
+        "y": 1000,
+        "w": 1140,
+        "h": 24
+      },
+      "common_size": [
+        1140,
+        24
+      ],
+      "aligned_reference_origin": [
+        300,
+        984
+      ],
+      "aligned_current_origin": [
+        300,
+        1000
+      ],
+      "coverage_reference": 0.6,
+      "coverage_current": 1.0,
+      "evaluated_pixels": 25412,
+      "masked_pixels": 1948,
+      "mask_fraction": 0.07119883040935672,
+      "max_mask_fraction": 0.35,
+      "ssim_channels": {
+        "red": 0.4002263236902891,
+        "green": 0.6550314569743678,
+        "blue": 0.6657388927620024
+      },
+      "ssim": 0.4002263236902891,
+      "pass": false
+    }
+  ],
+  "global": {
+    "id": "global",
+    "anchor": "top-left",
+    "reference": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 1024
+    },
+    "current": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 1024
+    },
+    "common_size": [
+      1440,
+      1024
+    ],
+    "aligned_reference_origin": [
+      0,
+      0
+    ],
+    "aligned_current_origin": [
+      0,
+      0
+    ],
+    "coverage_reference": 1.0,
+    "coverage_current": 1.0,
+    "evaluated_pixels": 1168560,
+    "masked_pixels": 306000,
+    "mask_fraction": 0.20751953125,
+    "max_mask_fraction": 0.35,
+    "ssim_channels": {
+      "red": 0.3396322050832166,
+      "green": 0.6618356378483014,
+      "blue": 0.722349606924142
+    },
+    "ssim": 0.3396322050832166
+  },
+  "pass": false,
+  "heatmap_mask_fraction": 0.22550184461805556
+}

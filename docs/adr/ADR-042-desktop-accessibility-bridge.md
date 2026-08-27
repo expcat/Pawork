@@ -63,7 +63,7 @@ R1 Wave C 对真 fixture Host + 真 `pawork-desktop` 窗口做了 macOS Accessib
 
 ## 相关
 
-- [R1 任务书 Wave C](../../plan/R1-ui-visual-contract.md)
+- [R1 Wave C AX bridge 通过取证](../ui-review/wave-c/ax-bridge/notes.md)
 - [Desktop 包级 Spec](../spec/crates/desktop.md)
 - [架构事实源与 ADR 索引](../architecture.md)
 - [AX 失败取证](../ui-review/wave-c/ax-gate/notes.md)

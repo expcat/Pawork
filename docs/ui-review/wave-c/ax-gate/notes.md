@@ -41,7 +41,7 @@ summary：`nodes=7 truncated=0`；roles `AXApplication=1 AXButton=3 AXGroup=1 AX
 
 **FAIL（AX 闸门未过）。** 真窗口上的 Accessibility 树只有 `AXWindow` + 系统 traffic lights（Close / FullScreen / Minimize）+ 空 `AXStaticText`。Pawork 自定义控件（TaskRail 会话、`+`、Grouping、Composer 输入、Cancel/Send、Inspector tabs、Terminal）在 AX 中不存在 role/label/value/action/identifier 映射。
 
-这与 `docs/UI_Review.md` §8.1 及 `plan/R1-ui-visual-contract.md` §4 的失败条件一致：不能把坐标驱动或截图差分宣称成 U2 语义定位通过。U3 截图管线本身可用（本目录 `window.png`），但不能替代 AX。
+这与 `docs/UI_Review.md` §8.1 的失败条件一致：不能把坐标驱动或截图差分宣称成 U2 语义定位通过。U3 截图管线本身可用（本目录 `window.png`），但不能替代 AX。后续 ADR-042 bridge 的通过证据见 [ax-bridge](../ax-bridge/notes.md)。
 
 有界后续（需用户/ADR，本 spike 不改生产代码）：
 
@@ -50,4 +50,3 @@ summary：`nodes=7 truncated=0`；roles `AXApplication=1 AXButton=3 AXGroup=1 AX
 3. 保持 GPUI 0.2.2，由 Desktop 侧实现原生等价 AX bridge（须先经 ADR 决策，且不得绕过既有 UI gate）。
 
 对照：gpui-0.2.2 源码无 `accessibility` / `accesskit` / `AXUIElement` / `NSAccessibility` 命中；NSView 为自绘 layer，不把 GPUI element 注册进 AX。本取证是运行时确认，不是静态猜测。
-

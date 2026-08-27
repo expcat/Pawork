@@ -1,6 +1,6 @@
 # UI 视觉证据目录（R1 视觉合同与 99% 门禁）
 
-> 本目录承载 [R1 任务书](../../plan/R1-ui-visual-contract.md) 与 [UI 视觉复审合同](../UI_Review.md) 的可复现证据：归一参考图、量图表、组件 manifest、遮罩、zones、checklist，以及后续波次的 current/overlay/diff。判定规则以 [docs/UI_Review.md §0.1](../UI_Review.md) 为准，本文件只记录管线与复现步骤。
+> 本目录承载 [R1 收口存档](../history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) 与 [UI 视觉复审合同](../UI_Review.md) 的可复现证据：归一参考图、量图表、组件 manifest、遮罩、zones、checklist，以及后续波次的 current/overlay/diff。判定规则以 [docs/UI_Review.md §0.1](../UI_Review.md) 为准，本文件只记录管线与复现步骤。
 
 ## 1. 目录布局
 
@@ -66,7 +66,8 @@ State 定义：A = Timeline + Inspector 展开；B = Timeline + Inspector 折叠
     $PY -m unittest scripts/test_ui_visual_diff.py
     $PY -m unittest scripts/test_ui_wave_d_tools.py
     # State A 真窗口闭环（需解锁屏幕；视觉 zone FAIL 在 R1 预期）
-    scripts/ui-wave-d-state-a.sh run --out /tmp/pawork-wave-d-out --label baseline
+    WAVE_D_OUT="$(mktemp -d /tmp/pawork-wave-d-out.XXXXXX)"
+    scripts/ui-wave-d-state-a.sh run --out "$WAVE_D_OUT" --label baseline
 
 ## 5. 工具链事实
 

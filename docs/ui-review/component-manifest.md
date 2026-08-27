@@ -1,7 +1,7 @@
 # Pawork Desktop UI 组件 manifest（R1 Wave A）
 
 > 状态：🔒 Wave A 已冻结（2026-08-26 复审修订）· 依据三张 v3 定稿图归一 reference.png（1440×1024）<br>
-> 上游任务：[R1 视觉合同](../../plan/R1-ui-visual-contract.md) §2 · [UI 复审](../UI_Review.md) §3/§4/§5<br>
+> 上游任务：[R1 收口存档](../history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) · [UI 复审](../UI_Review.md) §3/§4/§5<br>
 > 本文件回答「每个状态可见什么组件、如何分层与锚定、有哪些状态、每个组件对应什么真实能力」；几何实测值由同波 measurements.md 承载，本文只引用 design/README.md 已声明的定稿值。
 
 ## 1. 口径与事实源

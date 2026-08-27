@@ -632,3 +632,18 @@ R8 K-03 签字与 R9 开启前,把常设文档从「导览地图 + 分散总结�
 ## 附：UI 优化路线重排（2026-08-25）
 
 经用户确认，旧 V3 阶段编号停止作为当前任务指针，既有功能与结构任务视为历史完成面；`plan/R8-gui-components.md` 与 `plan/R9-consistency-closeout.md` 退出活动任务目录。旧任务书中仍有价值但尚未获得新证据的 UI 缺口，全部并入新 R1–R8 的视觉合同、组件实现与全功能模拟操作门禁；非 UI 剩余项重新编排为 R9 一致性/代码债务、R10 关键回归/真实环境，发布准备仅在用户另行授权后进入 R11。当前事实源以 [ROADMAP](../ROADMAP.md) 与 [plan](../plan/) 为准，本节只记录编号迁移，不把历史“待签字/待验收”表述改写为已验证。
+
+---
+
+## R1 — 视觉合同、固定 fixture 与 UI 测试基座（2026-08-25–27）
+
+R1 四波完成后退出活动任务目录；原任务书全文以 git 历史为准，当前验证事实见 [UI 证据目录](ui-review/README.md) 与 [Wave D 收口记录](ui-review/wave-d/notes.md)。
+
+- **Wave A · 视觉合同**：冻结 State A/B/C 的 1440×1024 reference、量图表、组件 manifest、mask/zones 与逐 RGB channel `SSIM ≥0.99` 分区门禁；TaskRail 288、Inspector 约 440、Composer 88–94、StatusBar 24 以文档合同为准，ImageGen 边差用 anchor/current rect 表达，不反改实现合同。
+- **Wave B · 真实 fixture**：固定 3 workspace / 7 session / 263 event 与 diff/terminal/approval 等状态，经真实 Host、GUI Connection Protocol 与 Desktop projection 消费；数据目录、barrier 与 token 隔离，不向生产 UI 写死演示文案。
+- **Wave C · U0–U3 路线**：U1 选定 GPUI `TestAppContext`；U2/U3 选定稳定 AX identifier + 文件 barrier + `screencapture`。GPUI 0.2.2 原生 AX 空树由 Accepted ADR-042 AppKit bridge 补救，真窗口语义 action、focus/value、TabGroup 与可复用 AX tree 已验证。
+- **Wave D · State A 闭环**：`seed → serve → Desktop → timeline_stable → AXPress task → 三栏/几何/focus 断言 → ICC→sRGB 无 profile 截图 → zone diff → manifest/checklist` 从零运行两次；主显示器位置固定后两份 `current.png` 字节一致，zone/global 指纹完全一致。规范 State A `reference/current/overlay/diff/mask/checklist` 已成套保存。
+- **反证与恢复**：临时把 `SIDEBAR_WIDTH` 288→320，初始/最终 rail 几何硬失败，驱动退出 4；恢复 288 后截图与基线再次字节一致，生产 token 无残留 diff。证据：[repeatability](ui-review/wave-d/repeatability.json) · [drift](ui-review/wave-d/drift-detection.json) · [recovery](ui-review/wave-d/recovery-compare.json)。
+- **诚实边界**：R1 只证明合同与门禁可靠，不宣称 UI 已还原。State A 当前 0/9 zone 达到 0.99（global 辅助 SSIM 0.336185），Composer AX group 实测 156px；这些视觉差异转交 R2–R6。真实 IME、性能、完整 VoiceOver 与三状态全组件验收仍属 R7/R8。
+
+收口验证：`scripts/test_ui_wave_d_tools.py` 8/8；`scripts/test_ui_visual_diff.py` 14/14；`pawork-desktop` 定向测试 66/66（Wave C 写入集）；Wave D baseline-1 / baseline-2 / recovery 结构通过，drift 按预期结构失败；未运行全 workspace gate（当前路线未设置）。下一任务转入 R2 Wave A：Window chrome 与根级 surface/token。

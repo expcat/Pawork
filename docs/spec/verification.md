@@ -38,7 +38,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | PRD-GIT-01 / CAP-GIT-01 | git/app/cli/Desktop Changes | git/checkpoint/diff 定向测试、Desktop projection | 真窗口 Changes、真实 rollback | Core 已实现；Desktop 写操作未实现，横滚人工项待验。 |
 | PRD-RESOURCE-01 / CAP-RESOURCE-01 | workspace/tools/app/Desktop | resources/import/MCP contract | 外部配置、MCP stdio、真窗口 Resources | 主流程已实现；部分 GUI 出口为候选。 |
 | PRD-CLIENT-01 / CAP-CLIENT-01 | protocol/app/client/cli | frame/headless/ACP golden、registry、probe | Desktop probe、Zed ACP、json-stdio | 已实现；R10 客户端终局矩阵未执行，probe 有已登记偶发超时。 |
-| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、fixture、AX 模型/映射测试 | 真 Host/Desktop U2、三图 U3、AX/IME、用户签字 | R1 Wave A–C 已建立合同、fixture、U1 与 macOS AX 语义 action / screenshot 基座；Wave D、R2–R8 完整门禁未执行。 |
+| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、fixture、AX 模型/映射测试 | 真 Host/Desktop U2、三图 U3、AX/IME、用户签字 | R1 Wave A–D 已建立合同、fixture、U1、macOS AX 语义 action / screenshot 基座与 State A 真窗口双基线/漂移恢复；R2–R8 完整门禁未执行。 |
 | PRD-OPS-01 / CAP-OPS-01 | cli ops/service、app data_dir | 路径/状态/doctor 定向测试 | macOS/Linux/Windows service 与恢复演练 | 入口已实现；无发布级三平台/恢复门禁。 |
 
 ## 4. 三类不可推迟的回归
@@ -55,7 +55,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 
 | 缺口 | 状态 | 完成条件 |
 | --- | --- | --- |
-| R1–R8 Desktop 99% 与全功能验收 | 进行中（R1 Wave A–C 已收口） | [R1](../../plan/R1-ui-visual-contract.md) Wave D 完成 State A 基线与故意漂移；[R8](../../plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) 完成组件矩阵、三图差分、AX/IME 与用户签字。 |
+| R1–R8 Desktop 99% 与全功能验收 | 进行中（R1 已收口；R2 待开启） | [R1 Wave D](../ui-review/wave-d/notes.md) 已完成 State A 双基线、故意漂移与恢复；R2–R7 逐层还原并补交互，[R8](../../plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) 完成组件矩阵、三图差分、AX/IME 与用户签字。 |
 | R10 K-01 配置根闭环 | 未执行 | git 根/子目录/非 git 三态与六层配置文档一致，偏差已修或登记。 |
 | ChatGPT/xAI 自然临期 OAuth refresh | 待真实账号/临期窗口 | refresh → retry → success 与 `invalid_grant` 清理均有真实证据。 |
 | R10 三类关键回归 | 未执行 | [R10](../../plan/R9-R11-post-ui-closeout.md#r10--关键回归与真实环境验证) 所列定向命令全绿并归档摘要。 |

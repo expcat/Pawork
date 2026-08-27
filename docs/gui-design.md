@@ -4,7 +4,7 @@
 >
 > 视觉实施基准：[../design/README.md](../design/README.md)（定稿图、TaskRail 双分组与响应式约束）
 >
-> 关联：[spec/desktop.md](spec/desktop.md)（当前 Desktop 产品/验收汇总，非视觉事实源）· [spec/crates/desktop.md](spec/crates/desktop.md)（包级 Spec）· [../ROADMAP.md](../ROADMAP.md) · [UI Review](UI_Review.md) · [R1 任务书](../plan/R1-ui-visual-contract.md) · [R7–R8 任务书](../plan/R7-R8-ui-quality-gates.md) · [history.md](history.md)（S7/S13 与旧 R8 交付原委）· [references.md](references.md) · 根仓 [Desktop GUI](../../Pawork_v1/docs/features/desktop-gui.md) · [GUI 连接](../../Pawork_v1/docs/features/gui-connection.md) · [ADR-035](../../Pawork_v1/docs/adr/ADR-035-gpui-desktop.md)
+> 关联：[spec/desktop.md](spec/desktop.md)（当前 Desktop 产品/验收汇总，非视觉事实源）· [spec/crates/desktop.md](spec/crates/desktop.md)（包级 Spec）· [../ROADMAP.md](../ROADMAP.md) · [UI Review](UI_Review.md) · [R1 收口存档](history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) · [R7–R8 任务书](../plan/R7-R8-ui-quality-gates.md) · [history.md](history.md)（S7/S13 与旧 R8 交付原委）· [references.md](references.md) · 根仓 [Desktop GUI](../../Pawork_v1/docs/features/desktop-gui.md) · [GUI 连接](../../Pawork_v1/docs/features/gui-connection.md) · [ADR-035](../../Pawork_v1/docs/adr/ADR-035-gpui-desktop.md)
 
 ---
 

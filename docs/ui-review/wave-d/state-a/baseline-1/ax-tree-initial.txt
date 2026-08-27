@@ -1,0 +1,75 @@
+# ui-ax-dump
+# pid=11589
+# ax_trusted=true
+# generated_at=2026-08-26T23:43:30Z
+# max_depth=12 max_children=80
+#
+# CGWindowList (owner pid 11589), count=2
+#   wid=7632 owner="pawork-desktop" title="" layer=0 onscreen alpha=1.0 bounds={1000,192,1440,1056}
+#   wid=7633 owner="pawork-desktop" title="" layer=0 offscreen alpha=1.0 bounds={0,940,500,500}
+#
+# AX tree
+role=AXApplication title="pawork-desktop"
+  role=AXWindow subrole=AXStandardWindow focused=0 actions=[AXRaise]
+    role=AXGroup identifier="pawork-root" description="Pawork" focused=0
+      role=AXGroup identifier="task-rail" description="Tasks" enabled=1 focused=0 selected=0
+        role=AXButton value="Timeline" identifier="task-rail-grouping" description="Group tasks · Timeline" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXButton value="All projects" identifier="project-scope" description="Project scope" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXStaticText value="Connected · pawork-1787787805454-11536" identifier="connection-status" description="Connection" enabled=1 focused=0 selected=0
+        role=AXButton identifier="add-task" description="New task" help="Create task is available." enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXList identifier="session-list" description="Sessions" enabled=1 focused=0 selected=0
+          role=AXStaticText identifier="date-group-Earlier" description="Earlier" enabled=1 focused=0 selected=0
+          role=AXButton value="3 tasks" identifier="project-Earlier_3afx-alpha-app" description="alpha-app" help="Expanded" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton identifier="project-add-Earlier_3afx-alpha-app" description="New task in alpha-app" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-alpha-today" description="Refactor launcher tabs" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-alpha-yesterday" description="Investigate provider timeout" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-alpha-longtitle" description="超长标题回归样本——用于验证任务列表截断、tooltip 与选中态在 200+ 字符标题下的表现。本标题刻意超过二百个字符以触发 UI 的省略逻辑，同时保持可读的语义边界：这里的每一段填充文本都对应 Desktop Timeline 左侧 TaskRail 在窄窗与宽窗下的两种裁切路径，最终断言以完整标题进入 snapshot 为准，而不是以渲染截断为准。附加填充：一二三四五六七八九十一二三四五六七八九十" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton value="4 tasks" identifier="project-Earlier_3afx-beta-lib" description="fx-beta-lib" help="Expanded" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton identifier="project-add-Earlier_3afx-beta-lib" description="New task in fx-beta-lib" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-pending" description="Type the public API surface" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-toolfailed" description="Build after dependency bump" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-long" description="Virtualization stress session" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-cancelled" description="Long batch refactor" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+      role=AXGroup identifier="workspace" description="Workspace" enabled=1 focused=0 selected=0
+        role=AXList identifier="timeline" description="Timeline" enabled=1 focused=0 selected=0
+        role=AXGroup identifier="composer" description="Composer" enabled=1 focused=0 selected=0
+          role=AXButton value="mock / fixture-model" identifier="model-picker" description="Model" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXTextArea identifier="composer-input" description="Message" enabled=1 focused=1 selected=0 settable=[AXValue,AXFocused]
+          role=AXButton identifier="cancel" description="Cancel run" enabled=0 focused=0 selected=0
+          role=AXButton identifier="send" description="Send" enabled=0 focused=0 selected=0
+      role=AXGroup identifier="inspector" description="Inspector" enabled=1 focused=0 selected=0
+        role=AXTabGroup identifier="inspector-tabs" description="Inspector tabs" enabled=1 focused=0 selected=0
+          role=AXRadioButton identifier="inspector-tab-changes" description="Changes" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRadioButton identifier="inspector-tab-terminal" description="Terminal" enabled=1 focused=0 selected=1 actions=[AXPress]
+          role=AXRadioButton identifier="inspector-tab-resources" description="Resources" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXButton identifier="inspector-collapse" description="Hide inspector" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXGroup identifier="terminal" description="Terminal" enabled=1 focused=0 selected=0
+          role=AXStaticText value="Terminal output unavailable" identifier="terminal-output" description="Terminal output" help=". · 80×24" enabled=1 focused=0 selected=0
+          role=AXTextArea identifier="terminal-input" description="Terminal input" enabled=1 focused=0 selected=0 settable=[AXValue,AXFocused]
+          role=AXButton identifier="terminal-start" description="Start terminal" enabled=1 focused=0 selected=0 actions=[AXPress]
+      role=AXGroup identifier="status-bar" description="Status" enabled=1 focused=0 selected=0
+        role=AXStaticText value="tokens —  ·  quota —  ·  — tok/s  ·  idle" identifier="run-status" description="Run status" enabled=1 focused=0 selected=0
+    role=AXButton subrole=AXCloseButton enabled=1 focused=0 actions=[AXPress]
+    role=AXButton subrole=AXFullScreenButton help="this button also has an action to zoom the window" enabled=1 focused=0 actions=[AXPress,AXZoomWindow,AXShowMenu]
+      role=AXGroup focused=0
+        role=AXGroup focused=0
+    role=AXButton subrole=AXMinimizeButton enabled=1 focused=0 actions=[AXPress]
+    role=AXStaticText enabled=1 focused=0
+#
+# summary nodes=46 truncated=0
+# roles AXApplication=1 AXButton=15 AXGroup=9 AXList=2 AXRadioButton=3 AXRow=7 AXStaticText=5 AXTabGroup=1 AXTextArea=2 AXWindow=1
+# identifiers pawork-root | task-rail | task-rail-grouping | project-scope | connection-status | add-task | session-list | date-group-Earlier | project-Earlier_3afx-alpha-app | project-add-Earlier_3afx-alpha-app | session-fx-ses-alpha-today | session-fx-ses-alpha-yesterday | session-fx-ses-alpha-longtitle | project-Earlier_3afx-beta-lib | project-add-Earlier_3afx-beta-lib | session-fx-ses-beta-pending | session-fx-ses-beta-toolfailed | session-fx-ses-beta-long | session-fx-ses-beta-cancelled | workspace | timeline | composer | model-picker | composer-input | cancel | send | inspector | inspector-tabs | inspector-tab-changes | inspector-tab-terminal | inspector-tab-resources | inspector-collapse | terminal | terminal-output | terminal-input | terminal-start | status-bar | run-status
+# custom_hint depth=0 role=AXApplication title="pawork-desktop"
+# custom_hint depth=2 role=AXGroup identifier="pawork-root" description="Pawork" focused=0
+# custom_hint depth=4 role=AXButton value="Timeline" identifier="task-rail-grouping" description="Group tasks · Timeline" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=4 role=AXStaticText value="Connected · pawork-1787787805454-11536" identifier="connection-status" description="Connection" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow identifier="session-fx-ses-alpha-longtitle" description="超长标题回归样本——用于验证任务列表截断、tooltip 与选中态在 200+ 字符标题下的表现。本标题刻意超过二百个字符以触发 UI 的省略逻辑，同时保持可读的语义边界：这里的每一段填充文本都对应 Desktop Timeline 左侧 TaskRail 在窄窗与宽窗下的两种裁切路径，最终断言以完整标题进入 snapshot 为准，而不是以渲染截断为准。附加填充：一二三四五六七八九十一二三四五六七八九十" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=4 role=AXList identifier="timeline" description="Timeline" enabled=1 focused=0 selected=0
+# custom_hint depth=4 role=AXGroup identifier="composer" description="Composer" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXTextArea identifier="composer-input" description="Message" enabled=1 focused=1 selected=0 settable=[AXValue,AXFocused]
+# custom_hint depth=3 role=AXGroup identifier="inspector" description="Inspector" enabled=1 focused=0 selected=0
+# custom_hint depth=4 role=AXTabGroup identifier="inspector-tabs" description="Inspector tabs" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRadioButton identifier="inspector-tab-changes" description="Changes" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=5 role=AXRadioButton identifier="inspector-tab-terminal" description="Terminal" enabled=1 focused=0 selected=1 actions=[AXPress]
+# custom_hint depth=5 role=AXRadioButton identifier="inspector-tab-resources" description="Resources" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=4 role=AXButton identifier="inspector-collapse" description="Hide inspector" enabled=1 focused=0 selected=0 actions=[AXPress]
