@@ -46,9 +46,9 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders：
 
 ## 5. 已知限制与开放决策
 
-- **taskrail 分区 SSIM 天花板**：fixture 内容形状（7 会话演示数据的标题/时间分布）与定稿图演示数据不同，分区像素分存在结构性天花板；State C reference 色调整体比冻结 token 暗，压低全区分。0.99 门禁（R3 退出标准）需要 **fixture 演示数据重塑或遮罩策略调整**，属设计侧决策，已登记 ROADMAP §5，待用户拍板。
+- **taskrail 分区 SSIM 天花板**：fixture 内容形状（7 会话演示数据的标题/时间分布）与定稿图演示数据不同，分区像素分存在结构性天花板；State C reference 色调整体比冻结 token 暗，压低全区分。2026-08-28 用户拍板 **c**：R3 以结构门禁退出，0.99 像素门禁连同 fixture 演示数据重塑移交 R8；State C reference 底色是否按冻结 token 归一属设计基准变更，R8 前须另行批准。遮罩策略调整合同不可行（UI_Review §0.1）。量化分解见 [history R3](../../history.md#r3--taskrail-与任务导航2026-08-2728)。
 - State C 低分同时包含非本波区域（timeline / inspector 内容缺口），按波次分工移交后续 R 阶段。
 
 ## 6. 状态
 
-Wave A 已实现、自动门禁通过、证据归档；**等待人工视觉验收**（overlay 复核见 state-a/state-c diff/zone-evidence/）。Wave B（导航状态与键盘）未开始。
+Wave A 已实现、自动门禁通过、证据归档。2026-08-28 拍板 c 后 R3 阶段已退出；overlay 人工复核见 [state-a](state-a/) / [state-c](state-c/) diff/zone-evidence/，终局视觉签字仍属 R8。Wave B 已于同日收口，见 [../r3-wave-b/notes.md](../r3-wave-b/notes.md)。
