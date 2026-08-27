@@ -36,9 +36,9 @@ UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代
 | R8 | 模拟操作全功能验收 | 全组件端到端 UI suite、三状态逐图差分、重连/后台 Run/恢复、性能与失败证据、用户视觉签字 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) | ⚪ |
 | R9 | UI 后一致性与代码债务 | 文档/Spec/断言一致、usage 幂等、依赖与注释漂移、路径内核、测试箱整理 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r9--一致性与代码债务收口) | ⚪ |
 | R10 | 关键回归与真实环境验证 | 三类关键回归、K-01、四通道/三客户端、OAuth refresh、历史人工冒烟与平台探针 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r10--关键回归与真实环境验证) | ⚪ |
-| R11 | 发布准备（条件阶段） | License、供应链、安装/升级/回滚、三平台和发布级全量门禁 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r11--发布准备条件阶段) | ⚪，需用户再次授权 |
+| R11 | 设计稿与实际 UI 终局比对 | 对照 v3 定稿图与已归档 current/diff，将不符合的显示效果归纳为下一阶段完善任务（只改文档） | [R9–R11](plan/R9-R11-post-ui-closeout.md#r11--设计稿与实际-ui-终局比对) | ⚪ |
 
-阶段依赖严格串行：`R1 → R2 → … → R10`。R11 只有在用户明确授权发布且 License 前置完成后启动。
+阶段依赖严格串行：`R1 → R2 → … → R11`。R11 是文档任务：不查询、不修改代码。发布准备已移出本编号，见 §5。
 
 ---
 
@@ -86,6 +86,7 @@ flowchart LR
     D --> E["R8 全组件模拟操作 + 三图差分"]
     E -->|"任一组件或 State 未通过"| C
     E -->|"全部通过"| F["R9-R10 非 UI 收口"]
+    F --> G["R11 设计稿终局比对"]
 ```
 
 ---
@@ -113,21 +114,27 @@ flowchart LR
 
 R10 不接收任何未通过的 Desktop UI 项；若 startup、PTY/审批恢复、Diff 横滚或其他组件仍有缺口，则 R8 仍未完成，不能进入本阶段。
 
-### 4.3 R11：发布准备
+### 4.3 R11：设计稿与实际 UI 终局比对
 
-R11 不因排期出现而自动获得发布授权。启动前必须由用户确认 License 与 crates.io 占名策略，再定义供应链、安装器、自更新、升级/回滚、三平台矩阵与全量门禁。
+R11 只做文档：对照 [design/](design/README.md) 三张 v3 定稿图与 R8（及前置波次）已归档的 current / overlay / diff / checklist，按分区登记仍不符合的**显示效果**，并归纳为下一阶段完善任务。不打开、不查询、不修改任何代码；不重跑实现、不重拍 current、不改 design。
+
+- 输入仅限设计图、gui-design / UI Review 合同、以及已入库的截图与量图证据。
+- 容差内或 R8 已接受的项不重复立项；结构未对齐或仍刺眼的可见差异必须登记，并附 design 与 current/diff 路径。
+- 交付物是差异清单 + 下一阶段完善任务草案（回写后续指针 / 新任务书）。本阶段不修 UI。
+- 发布、License、安装器与全量门禁不属于 R11，见 §5。
 
 ---
 
 ## 5. 开放决策与候选池
 
-以下不进入 R1–R10，除非成为 UI 还原或安全正确性的硬前置：
+以下不进入 R1–R11，除非成为 UI 还原或安全正确性的硬前置：
 
 - HunkStageService 与 stage/unstage/hunk wire：需 ADR 定义协议与审批语义。
 - 命令级交互审批：当前 terminal AskUser fail-closed；新增承载需 ADR。
 - `@` file-index 候选查询与 Resources“已加载规则”Host 出口：只有在目标 UI 真实展示对应入口时，才作为 R5/R6 前置接入。
 - 多账户 factory、远程 GUI、teams/goal/automation/monitor、GUI git 高级面、WASM 插件/市场/Hooks/LSP、artifact 流式与 egress broker：保持候选，资产位置见 [docs/history.md](docs/history.md) 与 [docs/design.md](docs/design.md)。
-- Windows CI/Job、跨平台真窗口驱动：R8 先完成 macOS 主门禁，R10/R11 再扩平台。
+- Windows CI/Job、跨平台真窗口驱动：R8 先完成 macOS 主门禁，R10 再扩平台证据；发布级三平台矩阵见下方发布准备候选。
+- 发布准备：License、crates.io 占名、供应链、安装/升级/回滚、三平台与发布级全量门禁。需用户明确授权后另立阶段，不占用 R11。
 
 ---
 
@@ -141,7 +148,7 @@ R11 不因排期出现而自动获得发布授权。启动前必须由用户确�
 | UI driver 脆弱、只靠坐标 | 稳定 AX identifier/role + 语义定位；坐标只用于视觉几何验证 |
 | UI 优化破坏 Run/协议/安全 | Desktop 仍只经 GUI Connection Protocol；涉及 wire/审批先过 ADR 与关键回归 |
 | 只测 happy path | 每个组件矩阵同时列 idle/running/completed/failed/disabled/disconnected/overflow |
-| macOS 通过却跨平台退化 | R8 明确 macOS 主门禁；R10/R11 对 Linux/Windows 编译、服务与窗口环境分别登记 |
+| macOS 通过却跨平台退化 | R8 明确 macOS 主门禁；R10 对 Linux/Windows 编译、服务与窗口环境分别登记 |
 
 ---
 
@@ -177,6 +184,7 @@ R11 不因排期出现而自动获得发布授权。启动前必须由用户确�
 - 安全红线、持久化与重放、协议与解析三类关键测试不推迟；触及对应面时同批跑定向种子/golden。
 - 全会话同一时刻只允许一个 Cargo 进程。禁止 `cargo clean`；审查者读既有日志与 diff，不重复编译。
 - R8 不是发布级 Workspace Full Gate；只运行完整 UI suite、UI 关联包定向测试和三状态视觉/AX/性能门禁。
+- R11 只改文档：对照已归档 design/current/diff，不跑 cargo、不重拍 current、不查源码。
 
 ### 7.4 测试通道与凭证
 

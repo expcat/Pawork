@@ -86,5 +86,5 @@ R1 的硬闸门是验证 role/label/value/action/identifier 的真实 macOS 映�
 ## 8. 待实现阶段验证的假设
 
 - GPUI 当前锁定版本能否提供稳定语义 identifier、完整 AX tree 与真实输入/截图能力，需要 R1 spike；调研已确认不能从 Zed main 的能力反推 0.2.2。
-- macOS 主门禁可证明当前设计还原，但不能自然推出 Linux/Windows 的窗口行为；跨平台证据留到 R10/R11。
+- macOS 主门禁可证明当前设计还原，但不能自然推出 Linux/Windows 的窗口行为；跨平台证据留到 R10。发布级三平台矩阵仍属 ROADMAP §5 候选。
 - 外部 Agent 产品的公开资料不能证明 Pawork 的 VoiceOver、IME、重连或后台生命周期正确，必须由自身 suite 证明。

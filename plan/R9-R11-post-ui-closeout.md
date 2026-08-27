@@ -1,4 +1,4 @@
-# R9–R11 — UI 后一致性、真实回归与发布准备
+# R9–R11 — UI 后一致性、真实回归与设计稿终局比对
 
 > 状态：⚪ 未开始
 > 前置：R8 已完成全功能 UI suite、99% 三图门禁和用户签字。本任务书只保留尚未完成的工作；历史阶段与已交付细节统一见 [docs/history.md](../docs/history.md)。
@@ -57,13 +57,34 @@ R10 不接收未通过的 Desktop UI 项；出现此类缺口即退回 R8，不�
 - [ ] OAuth refresh、历史人工项与平台证据逐项有结论；无虚构“已验证”。
 - [ ] 形成收口摘要，仍不执行发布级 workspace full gate。
 
-## R11 — 发布准备（条件阶段）
+## R11 — 设计稿与实际 UI 终局比对
 
-R11 只有用户再次明确授权发布后才启动：
+R11 是文档任务。对照 [design/](../design/README.md) 三张 v3 定稿图与已归档的实际 UI 证据，把仍不符合的显示效果归纳为下一阶段完善任务。本阶段**不查询、不修改任何代码**；不启动 Desktop、不重跑 cargo、不重拍 current、不改 design。发布准备已移出本编号，见 [ROADMAP §5](../ROADMAP.md)。
 
-1. 先确认 License 与 crates.io 占名策略；
-2. 冻结供应链、签名、安装/卸载、自更新、升级/回滚和 Secret 迁移方案；
-3. 定义 macOS/Linux/Windows 的发布矩阵、全量门禁、安装包冒烟和回滚演练；
-4. 经用户确认后执行提交、推送和发布动作。
+R11 不替代 [R8 退出标准](R7-R8-ui-quality-gates.md#4-r8-退出标准) 的 99% 门禁与全功能 suite；也不在本阶段修复差异。
 
-未获授权时保持 ⚪，不得把“排入 ROADMAP”解释为发布许可。
+### 比对输入（只读）
+
+- `design/`：Timeline（Inspector 展开）、Timeline（Inspector 折叠）、Projects 三张 v3 定稿图。
+- [docs/gui-design.md](../docs/gui-design.md) 的信息架构与交互规则（用于判断缺状态、缺分区，而不只看像素）。
+- [docs/UI_Review.md](../docs/UI_Review.md) 的分区、容差与结构一票否决（用于区分合同内误差与需完善项）。
+- R8 归档的三状态 `reference` / `current` / overlay / diff / mask / checklist，以及 R2–R7 分波证据作分区线索。不得打开 `apps/desktop` 或其它 crate 源码定位组件。
+
+### Wave A：逐区对照
+
+- 按 State A/B/C 与 UI Review 分区（header、TaskRail、timeline、composer、inspector、statusbar 等）对照 design 与 current。
+- 只登记**显示效果**：布局、色/字/间距、图标、文案可见性、组件有无、状态外观。截图上看不出的交互缺口标「截图无法判定」，不查代码补证。
+- 容差内、已遮罩、或 R8 已明确接受的项不重复立项；结构未对齐或仍刺眼的可见差异必须登记。
+- 每条写：区域、design 期望、当前现象、证据路径（design 资产 + current/diff）、建议优先级。禁止指向源码路径或「应改某函数」。
+
+### Wave B：归纳下一阶段完善任务
+
+- 将差异条收敛为下一阶段可独立执行的完善任务（一任务一缺口族，数小时内可完成）。
+- 回写 [ROADMAP.md](../ROADMAP.md) 下一指针，并起草后续任务书；编号在该阶段开启时确定。
+- 本阶段 git 差异仅文档。不得把 License、安装器、供应链或全量门禁塞进本阶段。
+
+### R11 退出标准
+
+- [ ] 三张定稿图与对应 current 证据已逐区对照，形成差异清单。
+- [ ] 不符合的显示效果已归纳为下一阶段完善任务（含证据链接与优先级）。
+- [ ] 本阶段未查询、未修改代码；design 像素未改。
