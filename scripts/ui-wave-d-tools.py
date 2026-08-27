@@ -15,15 +15,17 @@ from pathlib import Path
 from PIL import Image, ImageCms
 
 IDENTIFIER_RE = re.compile(r'identifier="([^"]*)"')
+VALUE_RE = re.compile(r'value="([^"]*)"')
 
 SESSION_ROW = "session-fx-ses-alpha-today"
 TIMELINE_PREFIX = "timeline-entry-evt-fx-ses-alpha-today"
 NL = chr(10)
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 
-# Wave B 相位合同：root 尺寸 / rail 宽度 / Inspector 列是否必须在场。
+# Wave B/C 相位合同：root 尺寸 / rail 宽度 / Inspector 列是否必须在场。
 # narrow：窄窗（1080 宽）rail=240 且 Inspector 折叠缺席；
 # collapsed：1440 宽下 Inspector 列折叠缺席（State B，Popover 由骨架断言覆盖）。
+# disconnected/connect-failed/reconnected（Wave C）：1440 三栏壳层不因断连/重连变化。
 PHASE_GEOMETRY = {
     "initial": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
     "empty": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
@@ -32,6 +34,9 @@ PHASE_GEOMETRY = {
     "resumed": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
     "narrow": {"root": (1080.0, 1024.0), "rail": (240.0, 3.6), "inspector": "absent"},
     "collapsed": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "absent"},
+    "disconnected": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    "connect-failed": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    "reconnected": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
 }
 
 SKELETON_BASE = [
@@ -102,12 +107,20 @@ def parse_tree(path):
         if line.startswith("# summary"):
             summary = line[2:].strip()
             break
+    connection_status = None
+    for line in tree_lines:
+        ids = IDENTIFIER_RE.findall(line)
+        if ids and ids[0] == "connection-status":
+            values = VALUE_RE.findall(line)
+            connection_status = values[0] if values else ""
+            break
     return {
         "identifiers": identifiers,
         "role_unknown": role_unknown,
         "focused": focused,
         "selected_rows": selected_rows,
         "timeline_entries_alpha_today": timeline_entries,
+        "connection_status": connection_status,
         "summary": summary,
     }
 
@@ -312,8 +325,9 @@ def skeleton_checks(tree, phase="initial"):
             "detail": "reconnect "
                 + ("stray present" if "reconnect" in identifiers else "absent"),
         })
-    if phase in ("collapsed", "resumed"):
+    if phase in ("collapsed", "resumed", "disconnected", "connect-failed", "reconnected"):
         # 已选中会话相位：空态引导必须消失（防谓词回归成恒真）。
+        # disconnected 保留旧条目（gui-design 空态原则），同样不得出现引导。
         checks.append({
             "name": "workspace-empty-hint-absent",
             "pass": "workspace-empty-hint" not in identifiers,
@@ -344,6 +358,49 @@ def skeleton_checks(tree, phase="initial"):
             "pass": "activity-popover" in identifiers,
             "detail": "activity-popover "
                 + ("present" if "activity-popover" in identifiers else "missing"),
+        })
+    if phase in ("disconnected", "connect-failed"):
+        # 两种断连相位：Reconnect 手动入口必须在场。show_reconnect 对
+        # Disconnected/ConnectFailed 均发布（AX 与视觉同源谓词）。
+        checks.append({
+            "name": "reconnect-present",
+            "pass": "reconnect" in identifiers,
+            "detail": "reconnect "
+                + ("present" if "reconnect" in identifiers else "missing"),
+        })
+        status = tree.get("connection_status")
+        if phase == "disconnected":
+            # drop-socket / host-stopped：Disconnected · …；拒绝 Connected /
+            # Connecting / Connect failed，避免循环 1 在 Failed 瞬态误过。
+            ok = bool(status) and status.startswith("Disconnected ·")
+            name = "connection-status-disconnected"
+        else:
+            # host 停机后重试：必须是 Connect failed · …，不能只靠 reconnect。
+            ok = bool(status) and status.startswith("Connect failed ·")
+            name = "connection-status-connect-failed"
+        checks.append({
+            "name": name,
+            "pass": ok,
+            "detail": "connection-status value="
+                + (status if status else "absent"),
+        })
+    if phase == "reconnected":
+        # 重连成功相位：Connected 无需重连入口，reconnect 不得残留。
+        checks.append({
+            "name": "reconnect-absent",
+            "pass": "reconnect" not in identifiers,
+            "detail": "reconnect "
+                + ("stray present" if "reconnect" in identifiers else "absent"),
+        })
+        # Connecting 瞬态同样满足 reconnect 缺席 + 条目保留（show_reconnect
+        # 对 Connecting 为 false）；connection-status 文案区分两者，防
+        # 未来调用方跳过 settle barrier 直接断言时把瞬态误判为重连成功。
+        status = tree.get("connection_status")
+        checks.append({
+            "name": "connection-status-connected",
+            "pass": bool(status) and status.startswith("Connected ·"),
+            "detail": "connection-status value="
+                + (status if status else "absent"),
         })
     return checks
 
@@ -844,7 +901,18 @@ def main():
     asrt.add_argument("--tree", required=True)
     asrt.add_argument(
         "--phase",
-        choices=["initial", "empty", "final", "restored", "resumed", "narrow", "collapsed"],
+        choices=[
+            "initial",
+            "empty",
+            "final",
+            "restored",
+            "resumed",
+            "narrow",
+            "collapsed",
+            "disconnected",
+            "connect-failed",
+            "reconnected",
+        ],
         required=True,
     )
     asrt.add_argument("--out", required=True)

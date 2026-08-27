@@ -1,6 +1,7 @@
 # R2–R3 — Window shell、全局视觉系统与 TaskRail
 
-> 状态：🔵 R2 进行中（Wave A 🟢 2026-08-27：F-01 透明 titlebar、F-02 三栏骨架、§2.1 根 token 落地、1440/1080 layout invariant、State A shell 证据，见 [../docs/ui-review/r2-wave-a/notes.md](../docs/ui-review/r2-wave-a/notes.md)；Wave B 🟢 2026-08-27：窗口状态壳层/空态引导、F-13 StatusBar 校准、window_min_size 1080×720 拍板落地、U2 driver 扩展，78 定向测试 + 25 脚本测试全绿，U2 真窗口五相位门禁（empty/focus-blur/narrow/restored/collapsed/resumed）通过，State B shell 证据归档，见 [../docs/ui-review/r2-wave-b/notes.md](../docs/ui-review/r2-wave-b/notes.md)）；R3 ⚪ 未开始
+> 状态：🟢 R2 已收口（2026-08-27，用户拍板 a：壳层结构门禁为准，分区像素 SSIM 移交 R8）；R3 ⚪ 未开始
+> R2 证据：Wave A [../docs/ui-review/r2-wave-a/notes.md](../docs/ui-review/r2-wave-a/notes.md) · Wave B [../docs/ui-review/r2-wave-b/notes.md](../docs/ui-review/r2-wave-b/notes.md) · Wave C [../docs/ui-review/r2-wave-c/notes.md](../docs/ui-review/r2-wave-c/notes.md) · 阶段存档 [../docs/history.md#r2--window-shell-与全局视觉系统2026-08-27](../docs/history.md#r2--window-shell-与全局视觉系统2026-08-27)
 > 前置：R1 全部退出标准通过。两个阶段严格串行；R2 完成后才开启 R3。
 
 ## R2 — Window shell 与全局视觉系统
@@ -24,12 +25,12 @@
 - U2：启动/关闭/重开、focus/blur、resize、Inspector 开合、连接失败重试；不得依赖固定 sleep。
 - U3：空态 + State A/B 的 shell 分区截图、overlay/diff、AX tree；Window chrome 结构错误直接失败。
 
-### R2 退出标准
+### R2 退出标准（2026-08-27 用户拍板 a）
 
-- [ ] `1440×1024` 壳层结构 100% 对齐，所有区域几何在 UI Review 容差内。
-- [ ] 整窗无白带、重复 titlebar、布局跳动、面板溢出或主操作遮挡。
-- [ ] State A/B 的 shell 各区域 SSIM `≥0.99`，且结构/overlay 人工复核通过。
-- [ ] 启动、连接失败、失焦、resize 与 Inspector 开合均有可重复模拟操作测试。
+- [x] `1440×1024` 壳层结构 100% 对齐，所有区域几何在 UI Review 容差内。
+- [x] 整窗无白带、重复 titlebar、布局跳动、面板溢出或主操作遮挡。
+- [x] State A/B 的 **shell 结构/overlay 人工复核通过**（分区像素 SSIM `≥0.99` 依赖 F-03/F-04/F-05/F-09/F-12 内容组件，按拍板 a 移交 R8 汇总，不阻塞 R2 退出）。
+- [x] 启动、连接失败、失焦、resize 与 Inspector 开合均有可重复模拟操作测试。
 
 ## R3 — TaskRail 与任务导航
 

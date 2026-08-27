@@ -649,3 +649,14 @@ R1 四波完成后退出活动任务目录；原任务书全文以 git 历史为
 - **诚实边界**：R1 只证明合同与门禁可靠，不宣称 UI 已还原。State A 当前 0/9 zone 达到 0.99（global 辅助 SSIM 0.336185），Composer AX group 实测 156px；这些视觉差异转交 R2–R6。真实 IME、性能、完整 VoiceOver 与三状态全组件验收仍属 R7/R8。
 
 收口验证：`scripts/test_ui_wave_d_tools.py` 8/8；`scripts/test_ui_visual_diff.py` 14/14；`pawork-desktop` 定向测试 66/66（Wave C 写入集）；Wave D baseline-1 / baseline-2 / recovery 结构通过，drift 按预期结构失败；未运行全 workspace gate（当前路线未设置）。下一任务转入 R2 Wave A：Window chrome 与根级 surface/token。
+
+## R2 — Window shell 与全局视觉系统（2026-08-27）
+
+R2 三波完成后退出活动任务目录；原任务书正文仍在 [plan/R2-R3-ui-shell-navigation.md](../plan/R2-R3-ui-shell-navigation.md)（R3 尚未开始）。验证事实见 [r2-wave-a](ui-review/r2-wave-a/notes.md)、[r2-wave-b](ui-review/r2-wave-b/notes.md)、[r2-wave-c](ui-review/r2-wave-c/notes.md)。
+
+- **Wave A · Window chrome 与根 token**：F-01 透明 titlebar、F-02 三栏骨架、design/README §2.1 根 token、1440/1080 layout invariant、State A 壳层证据。U1 74/74。
+- **Wave B · 窗口状态与 U2 driver**：空态引导、Reconnect 相位、F-13 StatusBar 居中与定稿语序、window_min_size 1080×720、U2 五相位（empty/focus-blur/narrow/restored/collapsed/resumed）。desktop 78/78 + 脚本 25/25；真窗口门禁通过。
+- **Wave C · 连接失败重试**：drop-socket Disconnected 重试 + host 停机 ConnectFailed 重试双循环。脚本 42/42；真窗口五相位门禁通过（git_head=b744550）。
+- **退出拍板 a（2026-08-27 用户确认）**：R2 以壳层结构门禁为准退出；State A/B 分区像素 SSIM ≥0.99 依赖 F-03/F-04（R3）、F-05（R4）、F-09（R5）、F-12（R6）内容组件，移交 R8 汇总，不阻塞 R2。Wave A 实测 9/9 zone <0.99（0.65–0.81）是预期中间态，不是回归。
+
+收口验证：Wave A/B desktop 定向测试全绿；Wave B/C 真窗口 U2 通过；脚本 unittest 42/42（wave-c 15 + wave-b 17 + wave-d 8）。未运行全 workspace gate。下一任务转入 R3：TaskRail 顶部 F-03 与列表/底部 F-04。

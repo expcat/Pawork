@@ -65,6 +65,7 @@
 
 - State A/B/C 的可见区域、组件、顺序、展开/折叠和选中状态必须 100% 对齐。
 - TaskRail、Header、Timeline、Composer、Inspector/Popover、StatusBar 各区域动态遮罩后 SSIM `≥0.99`；结构一票否决优先于数值。
+- **R2 移交（2026-08-27 拍板 a）**：R2 只以壳层结构门禁退出，不把内容区未落地组件的分区像素差记为 R2 失败。R8 必须在 F-03–F-12 落地后重新采集 State A/B/C current，再跑分区 SSIM；不得沿用 R2 Wave A 的 0.65–0.81 中间态报告作为终局通过。
 - 所有 P0/P1 Review 项关闭；无白 titlebar、缺失 Header、错位 Popover、超高 Composer、假数据、遮挡、截断或布局跳动。
 - 由用户在同尺寸 reference/current/overlay 上完成最终视觉签字；自动门禁通过不能代替签字。
 
