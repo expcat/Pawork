@@ -1,0 +1,348 @@
+{
+  "scenario": "wave-c-connect",
+  "label": "wave-c-1",
+  "generated_at": "2026-08-27T07:02:47Z",
+  "git_head": "b744550fcd8023842f2e6190d2e3bf33aee715ed",
+  "phases": {
+    "disconnected-connect-failed": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": false
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "reconnect-present",
+          "pass": true
+        },
+        {
+          "name": "session-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-loaded",
+          "pass": true
+        }
+      ]
+    },
+    "disconnected-host-stopped": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": false
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "reconnect-present",
+          "pass": true
+        },
+        {
+          "name": "session-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-loaded",
+          "pass": true
+        }
+      ]
+    },
+    "disconnected": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": false
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "reconnect-present",
+          "pass": true
+        },
+        {
+          "name": "session-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-loaded",
+          "pass": true
+        }
+      ]
+    },
+    "reconnected-host-restart": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": false
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "reconnect-absent",
+          "pass": true
+        },
+        {
+          "name": "connection-status-connected",
+          "pass": true
+        },
+        {
+          "name": "session-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-loaded",
+          "pass": true
+        }
+      ]
+    },
+    "reconnected": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": false
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "reconnect-absent",
+          "pass": true
+        },
+        {
+          "name": "connection-status-connected",
+          "pass": true
+        },
+        {
+          "name": "session-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-loaded",
+          "pass": true
+        }
+      ]
+    }
+  },
+  "structural_pass": true,
+  "evidence_files": [
+    "action-press-reconnect-drop.txt",
+    "action-press-reconnect-failed.txt",
+    "action-press-reconnect-restart.txt",
+    "action-press-session-after-restart.txt",
+    "action-press-session-reconnected.txt",
+    "action-press-session.txt",
+    "action-trace.txt",
+    "assert-disconnected-connect-failed.json",
+    "assert-disconnected-host-stopped.json",
+    "assert-disconnected.json",
+    "assert-reconnected-host-restart.json",
+    "assert-reconnected.json",
+    "ax-tree-connect-failed.txt",
+    "ax-tree-disconnected-connect-failed.txt",
+    "ax-tree-disconnected-host-stopped.txt",
+    "ax-tree-disconnected.txt",
+    "ax-tree-reconnected-host-restart.txt",
+    "ax-tree-reconnected.txt",
+    "geometry-disconnected-connect-failed.txt",
+    "geometry-disconnected-host-stopped.txt",
+    "geometry-disconnected.txt",
+    "geometry-reconnected-host-restart.txt",
+    "geometry-reconnected.txt",
+    "window-place.txt"
+  ]
+}
