@@ -11,6 +11,7 @@ mod components;
 mod input_area;
 mod inspector;
 mod resources;
+mod shell_layout;
 mod task_rail;
 pub mod text_input;
 mod theme;
@@ -992,14 +993,19 @@ impl Render for AppView {
         }
         let now_ms = now_unix_ms();
         let run_status = self.projection.run_status_label(now_ms);
-        let inspector_open = self.inspector_open;
+        // R2 Wave A 响应式合同：窄窗（≤1279）rail 240 + Inspector 折叠为
+        // ActivityPopover 抽屉；偏好值保留，加宽后自动恢复（shell_layout）。
+        let shell = shell_layout::resolve(window.viewport_size().width, self.inspector_open);
+        let inspector_open = shell.inspector_open;
         let activity_popover_open =
             !inspector_open && matches!(self.open_menu, Some(MenuKind::Activity));
 
-        let sidebar = self.sidebar_element(cx);
+        let sidebar = self.sidebar_element(px(shell.rail_width), cx);
         let timeline_area = self.timeline_area(cx);
         let composer = self.composer_element(cx);
         let workspace = div()
+            .id("shell-workspace")
+            .debug_selector(|| "shell-workspace".into())
             .flex()
             .flex_col()
             .flex_1()
@@ -1008,7 +1014,13 @@ impl Render for AppView {
 
         let mut main = div().flex().flex_row().flex_1().child(workspace);
         if inspector_open {
-            main = main.child(self.inspector_element(connected, cx));
+            main = main.child(
+                div()
+                    .id("shell-inspector")
+                    .debug_selector(|| "shell-inspector".into())
+                    .flex()
+                    .child(self.inspector_element(connected, cx)),
+            );
         }
         // Inspector 展开时触发器直接折叠；折叠时同一触发器弹出
         // ActivityPopover（§8.5），摘要行点击才展开并定位 Changes。
@@ -1064,7 +1076,13 @@ impl Render for AppView {
             .on_action(cx.listener(Self::on_cancel_run))
             .on_action(cx.listener(Self::on_new_task_action))
             .on_action(cx.listener(Self::on_toggle_inspector_action))
-            .child(sidebar)
+            .child(
+                div()
+                    .id("shell-rail")
+                    .debug_selector(|| "shell-rail".into())
+                    .flex()
+                    .child(sidebar),
+            )
             .child(
                 div()
                     .flex()

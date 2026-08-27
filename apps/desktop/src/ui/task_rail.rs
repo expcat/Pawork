@@ -15,7 +15,7 @@ use crate::ui::components::list_row::ListRow;
 use crate::ui::components::panel::Panel;
 use crate::ui::theme::{dark, font, metrics};
 
-use super::{now_unix_ms, AppView, MenuKind};
+use super::{now_unix_ms, shell_layout, AppView, MenuKind};
 
 enum RailView {
     Timeline(Vec<TaskRailDateGroup>),
@@ -36,7 +36,8 @@ fn relative_activity(updated_at_ms: u64, now_ms: u64) -> String {
 }
 
 impl AppView {
-    pub(super) fn sidebar_element(&self, cx: &mut Context<Self>) -> Panel {
+    /// rail 宽由 shell_layout::resolve 按窗口带宽给出（288 / 窄窗 240）。
+    pub(super) fn sidebar_element(&self, rail_width: Pixels, cx: &mut Context<Self>) -> Panel {
         let connected = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -118,7 +119,10 @@ impl AppView {
                 view.on_new_session(window, cx);
             }));
 
-        let mut sidebar = Panel::side_right(px(metrics::SIDEBAR_WIDTH))
+        let mut sidebar = Panel::side_right(rail_width)
+            // F-01：透明 titlebar 下 traffic lights 悬浮于 rail 左上，
+            // 顶部先留 ≥36px 无交互安全区，再进入 F-03 的既有三行节奏。
+            .child(shell_layout::rail_safe_area())
             .child(
                 div()
                     .flex()
@@ -350,11 +354,28 @@ impl AppView {
                                         .flex_1()
                                         .min_w_0()
                                         .truncate()
-                                        .child(format!(
-                                            "{}{}",
-                                            if running { "● " } else { "" },
-                                            task.title
-                                        )),
+                                        .child(if running {
+                                            div()
+                                                .flex()
+                                                .flex_row()
+                                                .items_center()
+                                                .gap_1()
+                                                .min_w_0()
+                                                .child(
+                                                    div()
+                                                        .text_color(dark().semantic.success_fg)
+                                                        .child("●"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .child(task.title.clone()),
+                                                )
+                                        } else {
+                                            div().truncate().child(task.title.clone())
+                                        }),
                                 )
                                 .child(
                                     Label::new(relative_activity(task.updated_at_ms, now_ms))

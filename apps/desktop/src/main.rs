@@ -14,7 +14,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
+use gpui::{
+    App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size,
+};
 
 use crate::controller::ControllerEvent;
 use crate::projection::{DesktopProjection, ResumeApply, TimelineEntryKind};
@@ -600,6 +602,15 @@ fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    // F-01：macOS 透明 titlebar。gpui 0.2.2 在 appears_transparent
+                    // 时启用 NSFullSizeContentView + 隐藏原生标题（platform/mac/
+                    // window.rs），内容视口贯通全窗、无白带；traffic lights 保持
+                    // 默认位置悬浮于 TaskRail 顶部，由 rail 内 ≥36px 安全区让位。
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Pawork".into()),
+                        appears_transparent: true,
+                        traffic_light_position: None,
+                    }),
                     ..Default::default()
                 },
                 move |_, cx| {

@@ -10,6 +10,7 @@ use crate::projection::{
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
 use crate::ui::changes::ChangesTab;
 use crate::ui::inspector::InspectorTab;
+use crate::ui::shell_layout;
 use crate::ui::theme::metrics;
 use crate::ui::{AppView, MenuKind};
 
@@ -249,8 +250,11 @@ impl AppView {
         let width = f32::from(viewport.width).max(1.0);
         let height = f32::from(viewport.height).max(1.0);
         let content_height = (height - metrics::STATUS_BAR_HEIGHT).max(1.0);
-        let sidebar_width = metrics::SIDEBAR_WIDTH.min(width);
-        let inspector_width = if self.inspector_open {
+        // 与 AppView::render 共享同一壳层几何决定（R2 Wave A 响应式：
+        // 窄窗 rail=240 且 Inspector 强制折叠），AX bounds 不得偏出实际布局。
+        let shell = shell_layout::resolve(viewport.width, self.inspector_open);
+        let sidebar_width = shell.rail_width.min(width);
+        let inspector_width = if shell.inspector_open {
             metrics::INSPECTOR_WIDTH.min((width - sidebar_width).max(0.0))
         } else {
             0.0
@@ -265,7 +269,7 @@ impl AppView {
                 cx,
                 AxRect::new(workspace_x, 0.0, workspace_width, content_height),
             ));
-        if self.inspector_open {
+        if shell.inspector_open {
             tree = tree.child(self.inspector_ax(
                 window,
                 cx,
@@ -277,12 +281,16 @@ impl AppView {
                 ),
             ));
         }
-        tree.child(self.status_ax(AxRect::new(
-            0.0,
-            content_height,
-            width,
-            metrics::STATUS_BAR_HEIGHT,
-        )))
+        // StatusBar 视觉上不覆盖左栏账户区；AX frame 与 render 同源。
+        tree.child(self.status_ax(
+            AxRect::new(
+                sidebar_width,
+                content_height,
+                (width - sidebar_width).max(0.0),
+                metrics::STATUS_BAR_HEIGHT,
+            ),
+            shell.inspector_open,
+        ))
     }
 
     fn sidebar_ax(&self, window: &Window, frame: AxRect) -> AxNode {
@@ -291,7 +299,9 @@ impl AppView {
             ConnectionState::Connected { .. }
         );
         let can_create = self.can_create_task();
-        let mut y = PAD;
+        // 与可见 TaskRail 对齐：Panel p_2 上边距 8px + 36px traffic-light
+        // 安全区后再进入 grouping 行（F-01）。AX 不得把首控件投影到按钮带。
+        let mut y = PAD + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT;
         let grouping = AxNode::new(
             "task-rail-grouping",
             AxRole::Button,
@@ -1142,7 +1152,7 @@ impl AppView {
         resources.child(list)
     }
 
-    fn status_ax(&self, frame: AxRect) -> AxNode {
+    fn status_ax(&self, frame: AxRect, inspector_open: bool) -> AxNode {
         let now = super::super::now_unix_ms();
         let mut status = AxNode::new("status-bar", AxRole::Group, "Status", frame).child(
             AxNode::new(
@@ -1153,7 +1163,7 @@ impl AppView {
             )
             .value(self.projection.run_status_label(now)),
         );
-        if !self.inspector_open {
+        if !inspector_open {
             status = status.child(
                 AxNode::new(
                     "inspector-toggle",

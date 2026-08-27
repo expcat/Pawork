@@ -1,22 +1,25 @@
-//! UI 主题 token（R8 波 A）。
+//! UI 主题 token（R2 Wave A 校准，2026-08-27）。
 //!
-//! 深色单主题：全部颜色 token 的值与替换前的硬编码字面量逐值相等（视觉零变化），
-//! 一个去重值对应一个字段，不合并、不改值。实态基线（2026-08-23）：mod.rs +
-//! text_input.rs 共 92 处 rgb()/rgba() 颜色字面量、24 个去重值（任务书快照记 23
-//! 值，快照遗漏 0x8a3b32，以实态为准）；连同审批按钮数组 3 个裸 u32 条目
-//! （0x2f6fed/0x3d7a4a/0x8a3b32，原经 rgb(color) 间接消费）的全形式口径为 95 处
-//! 消费点、25 个字段。
+//! 深色单主题。当前值以 design/README.md §2.1「2026-08-26 重定 token」表为准
+//! （用户拍板）：bg / surface / border / text / accent.hover / success_hover 按
+//! R1 量图实测或派生值落地，取代 R8 波 A「与硬编码逐值相等（视觉零变化）」
+//! 旧口径；accent.primary / selection 与 danger / warning 系保持 R8 值。
 //!
-//! 本波不做运行时切换；Global 实现仅是未来主题挂载点：计划在 main.rs 的
+//! R2 Wave A 同时做三项收敛 / 新增：
+//! - text.assistant 收敛到 text.emphasis、text.tool 收敛到 text.secondary——
+//!   两字段删除，唯一消费点 timeline_entry.rs 已同批切换；
+//! - text.placeholder 由「白 30% 透明」改为不透明 #7f7f7f，避免透明色叠在
+//!   新深色 surface 后跌破小字对比度门槛；
+//! - 新增 semantic.success_fg #74c94c（状态点绿）。
+//!
+//! 可访问性按「文字角色 × 允许 surface」组合判定（WCAG 相对亮度对比度），
+//! 通过值由本文件 #[cfg(test)] 定向断言钉住（容差 ±0.05）：secondary ×
+//! surface.hover ≈ 4.82、tertiary / placeholder × surface.raised ≈ 4.52、
+//! 白字 × accent.hover ≈ 4.55、白字 × success_hover ≈ 4.61；placeholder ×
+//! surface.hover ≈ 4.04 须保持 <4.5，钉住其不得用于 hover surface 的约束。
+//!
+//! 本波不做运行时切换；Global 实现仍是未来主题挂载点：计划在 main.rs 的
 //! Application::run 闭包中 cx.set_global(theme::dark())（写入集外，本波不动）。
-//!
-//! R8 波 B（2026-08-24）追加 4 个 hover / active token（design/README.md §8.1）：
-//! surface.hover / accent.hover / semantic.success_hover / semantic.danger_hover，
-//! 字段数 25 → 29；active 复用 hover 色不另设 token。
-//!
-//! R8 整阶段审计（2026-08-25）补 1 个 token（design/README.md §8.6）：
-//! text.placeholder——波 A 扫描口径漏掉的 text_input.rs 占位色（hsla 形态，
-//! 白 30% 透明），字段数 29 → 30，值逐值相等，视觉零变化。
 
 use gpui::{rgb, rgba, Global, Rgba};
 
@@ -42,39 +45,39 @@ impl Global for Theme {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct BackgroundColors {
-    /// #1e1e1e：根背景。
+    /// #07121a：根背景。
     pub base: Rgba,
-    /// #161616：侧栏 / Inspector / 状态栏等面板背景。
+    /// #061219：侧栏 / Inspector / 状态栏等面板背景。
     pub panel: Rgba,
-    /// #1a1a1a：菜单 / 浮层背景与其未选中项。
+    /// #0e171d：菜单 / 浮层背景与其未选中项。
     pub menu: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct SurfaceColors {
-    /// #2a2a2a：可用态控件面 / 选中面 / 输入框背景。
+    /// #10171c：可用态控件面 / 选中面 / 输入框背景。
     pub raised: Rgba,
-    /// #242424：禁用态控件面。
+    /// #0c161c：禁用态控件面。
     pub disabled: Rgba,
-    /// #343434：surface.raised 控件与选中行的 hover / active 背景（R8 波 B）。
+    /// #182229：surface.raised 控件与选中行的 hover / active 背景。
     pub hover: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct BorderColors {
-    /// #2e2e2e：面板分隔线。
+    /// #1a2129：面板分隔线。
     pub subtle: Rgba,
-    /// #3a3a3a：浮层描边；亦作禁用态操作按钮背景（值 1:1，不拆分）。
+    /// #2c3338：浮层描边；亦作禁用态操作按钮背景（值 1:1，不拆分）。
     pub strong: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TextColors {
-    /// #e8e8e8：正文。
+    /// #f0efec：正文。
     pub primary: Rgba,
-    /// #c8c8c8：面板内强调正文（项目名 / 终端输出）。
+    /// #d0d0d0：面板内强调正文（项目名 / 终端输出 / Assistant 消息）。
     pub emphasis: Rgba,
-    /// #9a9a9a：次要文字。
+    /// #8a8d8c：次要文字（含工具调用名，收敛自 text.tool）。
     pub secondary: Rgba,
     /// #7f7f7f：辅助文字（时间 / 提示）。
     pub tertiary: Rgba,
@@ -84,13 +87,9 @@ pub struct TextColors {
     pub ghost: Rgba,
     /// #ffffff：主色 / 危险按钮上的文字。
     pub on_accent: Rgba,
-    /// #d7d7ff：Assistant 消息。
-    pub assistant: Rgba,
-    /// #9cdcfe：工具调用名。
-    pub tool: Rgba,
     /// #b8b8b8：审批卡详情。
     pub detail: Rgba,
-    /// 白色 30% 透明：composer 占位文字（精确等价旧 hsla(0,0,1,0.3)）。
+    /// #7f7f7f（不透明）：composer 占位文字；不得用于 surface.hover。
     pub placeholder: Rgba,
 }
 
@@ -100,7 +99,7 @@ pub struct AccentColors {
     pub primary: Rgba,
     /// #5b9dff55（RGBA）：输入框选区高亮。
     pub selection: Rgba,
-    /// #3d7bf0：主按钮 hover / active 背景（R8 波 B）。
+    /// #3270e8：主按钮 hover / active 背景（满足白字对比度）。
     pub hover: Rgba,
 }
 
@@ -108,8 +107,10 @@ pub struct AccentColors {
 pub struct SemanticColors {
     /// #3d7a4a：允许运行操作背景（Allow for run）。
     pub success_bg: Rgba,
-    /// #4a8c58：允许运行按钮 hover / active 背景（R8 波 B）。
+    /// #438251：允许运行按钮 hover / active 背景（满足白字对比度）。
     pub success_hover: Rgba,
+    /// #74c94c：状态点绿（running 状态前景）。
+    pub success_fg: Rgba,
     /// #f0d58c：警示文字。
     pub warning_text: Rgba,
     /// #8a6d3b：警示描边。
@@ -124,49 +125,43 @@ pub struct SemanticColors {
     pub danger_hover: Rgba,
 }
 
-/// 静态深色主题访问器（波 A 单主题；值与替换前字面量逐值相等）。
+/// 静态深色主题访问器（R2 Wave A 校准值，见模块文档与 design/README.md §2.1）。
 pub fn dark() -> Theme {
     Theme {
         bg: BackgroundColors {
-            base: rgb(0x1e1e1e),
-            panel: rgb(0x161616),
-            menu: rgb(0x1a1a1a),
+            base: rgb(0x07121a),
+            panel: rgb(0x061219),
+            menu: rgb(0x0e171d),
         },
         surface: SurfaceColors {
-            raised: rgb(0x2a2a2a),
-            disabled: rgb(0x242424),
-            hover: rgb(0x343434),
+            raised: rgb(0x10171c),
+            disabled: rgb(0x0c161c),
+            hover: rgb(0x182229),
         },
         border: BorderColors {
-            subtle: rgb(0x2e2e2e),
-            strong: rgb(0x3a3a3a),
+            subtle: rgb(0x1a2129),
+            strong: rgb(0x2c3338),
         },
         text: TextColors {
-            primary: rgb(0xe8e8e8),
-            emphasis: rgb(0xc8c8c8),
-            secondary: rgb(0x9a9a9a),
+            primary: rgb(0xf0efec),
+            emphasis: rgb(0xd0d0d0),
+            secondary: rgb(0x8a8d8c),
             tertiary: rgb(0x7f7f7f),
             disabled: rgb(0x8f8f8f),
             ghost: rgb(0x5a5a5a),
             on_accent: rgb(0xffffff),
-            assistant: rgb(0xd7d7ff),
-            tool: rgb(0x9cdcfe),
             detail: rgb(0xb8b8b8),
-            placeholder: Rgba {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 0.3,
-            },
+            placeholder: rgb(0x7f7f7f),
         },
         accent: AccentColors {
             primary: rgb(0x2f6fed),
             selection: rgba(0x5b9dff55),
-            hover: rgb(0x3d7bf0),
+            hover: rgb(0x3270e8),
         },
         semantic: SemanticColors {
             success_bg: rgb(0x3d7a4a),
-            success_hover: rgb(0x4a8c58),
+            success_hover: rgb(0x438251),
+            success_fg: rgb(0x74c94c),
             warning_text: rgb(0xf0d58c),
             warning_border: rgb(0x8a6d3b),
             warning_bg: rgb(0x2a2418),
@@ -229,4 +224,96 @@ pub mod metrics {
     pub const SUMMARY_LABEL_WIDTH: f32 = 88.0;
     /// 0：行高保护性比较。
     pub const ZERO: f32 = 0.0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WCAG 相对亮度（sRGB → 线性化 → 加权）。
+    fn relative_luminance(color: Rgba) -> f64 {
+        fn channel(value: f32) -> f64 {
+            let value = f64::from(value);
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        0.2126 * channel(color.r)
+            + 0.7152 * channel(color.g)
+            + 0.0722 * channel(color.b)
+    }
+
+    /// WCAG 对比度（亮色在前，取值与参数顺序无关）。
+    fn contrast_ratio(foreground: Rgba, background: Rgba) -> f64 {
+        let foreground = relative_luminance(foreground);
+        let background = relative_luminance(background);
+        let (lighter, darker) = if foreground >= background {
+            (foreground, background)
+        } else {
+            (background, foreground)
+        };
+        (lighter + 0.05) / (darker + 0.05)
+    }
+
+    fn assert_contrast_approx(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() <= 0.05,
+            "contrast {actual:.4} not within ±0.05 of {expected:.4}"
+        );
+    }
+
+    /// §2.1：text.secondary × surface.hover ≈ 4.82；tertiary / placeholder ×
+    /// surface.raised ≈ 4.52（placeholder 为不透明 #7f7f7f，与 tertiary 同值）。
+    #[test]
+    fn wcag_text_on_surface_pairs_match_frozen_targets() {
+        let theme = dark();
+        assert_contrast_approx(
+            contrast_ratio(theme.text.secondary, theme.surface.hover),
+            4.82,
+        );
+        assert_contrast_approx(
+            contrast_ratio(theme.text.tertiary, theme.surface.raised),
+            4.52,
+        );
+        assert_eq!(theme.text.placeholder.a, 1.0);
+        assert_contrast_approx(
+            contrast_ratio(theme.text.placeholder, theme.surface.raised),
+            4.52,
+        );
+    }
+
+    /// §2.1：白字（on_accent）× accent.hover ≈ 4.55、× success_hover ≈ 4.61。
+    #[test]
+    fn wcag_on_accent_over_hover_actions_match_frozen_targets() {
+        let theme = dark();
+        assert_contrast_approx(
+            contrast_ratio(theme.text.on_accent, theme.accent.hover),
+            4.55,
+        );
+        assert_contrast_approx(
+            contrast_ratio(theme.text.on_accent, theme.semantic.success_hover),
+            4.61,
+        );
+    }
+
+    /// §2.1：placeholder 落 surface.hover 约 4.04，须保持 <4.5，钉住其
+    /// 不得用于 hover surface 的约束。
+    #[test]
+    fn wcag_placeholder_stays_below_aa_on_hover_surface() {
+        let theme = dark();
+        let ratio = contrast_ratio(theme.text.placeholder, theme.surface.hover);
+        assert!(
+            ratio < 4.5,
+            "placeholder × surface.hover contrast {ratio:.4} must stay below 4.5"
+        );
+    }
+
+    /// §2.1：状态点绿槽位落地为不透明 #74c94c，不得回落到 success_bg。
+    #[test]
+    fn success_fg_is_opaque_status_dot_green() {
+        let theme = dark();
+        assert_eq!(theme.semantic.success_fg, rgb(0x74c94c));
+    }
 }

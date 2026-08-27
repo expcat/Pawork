@@ -32,6 +32,8 @@ impl Default for StatusBar {
 impl RenderOnce for StatusBar {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         div()
+            .id("shell-status-bar")
+            .debug_selector(|| "shell-status-bar".into())
             .h(px(metrics::STATUS_BAR_HEIGHT))
             .px_3()
             .flex()

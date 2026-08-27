@@ -1,6 +1,6 @@
 # R2–R3 — Window shell、全局视觉系统与 TaskRail
 
-> 状态：⚪ 未开始
+> 状态：🔵 R2 进行中（Wave A 🟢 2026-08-27：F-01 透明 titlebar、F-02 三栏骨架、§2.1 根 token 落地、1440/1080 layout invariant、State A shell 证据，见 [../docs/ui-review/r2-wave-a/notes.md](../docs/ui-review/r2-wave-a/notes.md)）；R3 ⚪ 未开始
 > 前置：R1 全部退出标准通过。两个阶段严格串行；R2 完成后才开启 R3。
 
 ## R2 — Window shell 与全局视觉系统

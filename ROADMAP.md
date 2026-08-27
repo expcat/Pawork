@@ -11,8 +11,8 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R2 — Window shell 与全局视觉系统（待开启）**；R1 已于 2026-08-27 收口，真窗口闭环见 [Wave D 记录](docs/ui-review/wave-d/notes.md) |
-| 下一任务 | R2 Wave A：先收敛 Window chrome 与根级 surface/token（F-01/F-02），补 1440×1024 / 1080×720 layout invariant 与 State A shell 视觉证据；不提前进入 TaskRail 功能扩张 |
+| 当前阶段 | **R2 — Window shell 与全局视觉系统（进行中）**；Wave A（F-01/F-02 + 根 token + 1440/1080 invariant + State A shell 证据）已于 2026-08-27 收口，见 [R2 Wave A 记录](docs/ui-review/r2-wave-a/notes.md) |
+| 下一任务 | R2 Wave B：窗口状态继承壳层（启动/连接中/无 Host/空 task/失焦）与 StatusBar/分隔线细节校准；补 U2 启动/focus/blur/resize/Inspector 开合模拟操作与 State B shell 证据；拍板 window_min_size 候选；不提前进入 TaskRail 功能扩张（F-03/F-04 属 R3） |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
 | 阻塞 | 无；Wave C AX 失败基线已由 ADR-042 bridge 补救，真窗口 75 节点与语义 action 证据见 [ax-bridge](docs/ui-review/wave-c/ax-bridge/) |
 
@@ -27,7 +27,7 @@ UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代
 | 阶段 | 目标 | 关键交付 | 任务书 | 状态 |
 | --- | --- | --- | --- | --- |
 | R1 | 视觉合同与测试基座 | 1440×1024 三状态、量图表、真实 fixture、组件/状态清单、UI driver 方案、reference/current/diff 基线 | [R1 存档](docs/history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) | 🟢 |
-| R2 | Window shell 与全局视觉系统 | 深色沉浸式 titlebar、三栏几何、字体/图标/间距/surface、StatusBar、窗口级响应式基线 | [R2–R3](plan/R2-R3-ui-shell-navigation.md#r2--window-shell-与全局视觉系统) | ⚪ |
+| R2 | Window shell 与全局视觉系统 | 深色沉浸式 titlebar、三栏几何、字体/图标/间距/surface、StatusBar、窗口级响应式基线 | [R2–R3](plan/R2-R3-ui-shell-navigation.md#r2--window-shell-与全局视觉系统) | 🔵（Wave A 🟢 2026-08-27） |
 | R3 | TaskRail 与任务导航 | Timeline/Projects、scope、project/task、连接、新建、账户区、选择/恢复/滚动与键盘导航 | [R2–R3](plan/R2-R3-ui-shell-navigation.md#r3--taskrail-与任务导航) | ⚪ |
 | R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | ⚪ |
 | R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R4–R6](plan/R4-R6-ui-workflows.md#r5--composer-与运行控制) | ⚪ |

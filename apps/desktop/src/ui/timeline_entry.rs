@@ -25,7 +25,7 @@ impl AppView {
                 .child(format!("You: {text}")),
             TimelineEntryKind::AssistantMessage { text } => div()
                 .py_1()
-                .text_color(dark().text.assistant)
+                .text_color(dark().text.emphasis)
                 .child(format!("Assistant: {text}")),
             TimelineEntryKind::ToolCall {
                 name,
@@ -34,7 +34,7 @@ impl AppView {
             } => {
                 let mut element = div()
                     .py_1()
-                    .text_color(dark().text.tool)
+                    .text_color(dark().text.secondary)
                     .child(format!("{name} · {status}"));
                 if let Some(detail) = detail {
                     if !detail.is_empty() {
