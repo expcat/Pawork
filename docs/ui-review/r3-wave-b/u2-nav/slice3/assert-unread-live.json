@@ -1,0 +1,22 @@
+{
+  "phase": "unread-live",
+  "generated_at": "2026-08-27T13:15:18Z",
+  "checks": [
+    {
+      "name": "unread-row-present",
+      "pass": true,
+      "detail": "rows with Unread help: session-ses-1787836518072-2"
+    },
+    {
+      "name": "unread-row-not-active",
+      "pass": true,
+      "detail": "unread rows must not be selected: none"
+    },
+    {
+      "name": "connection-connected",
+      "pass": true,
+      "detail": "connection-status=Local \u00b7 Connected \u00b7 Replay \u00b7 5\u20139"
+    }
+  ],
+  "pass": true
+}

@@ -1,0 +1,17 @@
+{
+  "phase": "cycle-down-2",
+  "generated_at": "2026-08-27T15:07:04Z",
+  "checks": [
+    {
+      "name": "selected-cycle-down-2",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-beta-cancelled (expect session-fx-ses-beta-cancelled)"
+    },
+    {
+      "name": "timeline-fx-ses-beta-cancelled",
+      "pass": true,
+      "detail": "timeline-entry-evt-fx-ses-beta-cancelled-* count=4"
+    }
+  ],
+  "pass": true
+}

@@ -8,8 +8,8 @@
 //! Escape API。选项行 hover 取值按 §8.1。
 
 use gpui::{
-    anchored, deferred, div, point, prelude::*, px, AnyElement, App, ClickEvent, Corner,
-    IntoElement, MouseDownEvent, RenderOnce, SharedString, Styled, Window,
+    AnyElement, App, ClickEvent, Corner, IntoElement, MouseDownEvent, RenderOnce, SharedString,
+    Styled, Window, anchored, deferred, div, point, prelude::*, px,
 };
 
 use crate::ui::theme::{dark, metrics};
@@ -26,6 +26,7 @@ pub struct MenuRow {
     id: SharedString,
     label: SharedString,
     selected: bool,
+    highlighted: bool,
     disabled: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
@@ -36,6 +37,7 @@ impl MenuRow {
             id: id.into(),
             label: SharedString::default(),
             selected: false,
+            highlighted: false,
             disabled: false,
             on_click: None,
         }
@@ -48,6 +50,13 @@ impl MenuRow {
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// 键盘高亮行（R3 Wave B 菜单 ↑/↓）：未选中行用 surface.raised（与
+    /// hover 同 token）；选中行保持 accent.primary 不叠加（§8.1）。
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
         self
     }
 
@@ -74,6 +83,8 @@ impl RenderOnce for MenuRow {
         }
         row = row.cursor_pointer().bg(if self.selected {
             dark().accent.primary
+        } else if self.highlighted {
+            dark().surface.raised
         } else {
             dark().bg.menu
         });

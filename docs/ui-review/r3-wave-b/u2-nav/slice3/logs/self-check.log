@@ -1,0 +1,15 @@
+[1787836518068] self-check starting
+[1787836518071] snapshot ok (6 sections)
+[1787836518072] session created ses-1787836518072-2
+[1787836518074] non-event frame: Response(AppResponseEnvelope { api_version: ApiVersion { major: 1, minor: 2 }, request_id: QueryId("self-check-run-start-1787836518072"), responded_at: Timestamp(1787836518074), response: Accepted { command_id: CommandId("self-check-run-start-1787836518072"), run_id: Some(RunId("run-gui-1787836518073-2")) } })
+[1787836518130] event seq=5 payload={"type":"run_changed","data":{"run_id":"run-gui-1787836518073-2","state":"created"}}
+[1787836518131] event seq=6 payload={"type":"assistant_delta","data":{"run_id":"run-gui-1787836518073-2","message_id":"msg-1787836518131-4","delta":"fixture chunk 1 "}}
+[1787836518131] event seq=7 payload={"type":"assistant_delta","data":{"run_id":"run-gui-1787836518073-2","message_id":"msg-1787836518131-4","delta":"fixture chunk 2 "}}
+[1787836518131] event seq=8 payload={"type":"assistant_delta","data":{"run_id":"run-gui-1787836518073-2","message_id":"msg-1787836518131-4","delta":"fixture chunk 3"}}
+[1787836518132] event seq=9 payload={"type":"run_changed","data":{"run_id":"run-gui-1787836518073-2","state":"completed"}}
+[1787836518132] first connection collected 5 events
+[1787836518135] resume replay ok (5/5 through 9)
+ui_fixture self-check ok
+  snapshot sections: 6
+  run events: 5 replayed: 5
+  barrier: /private/tmp/pawork-ui-fixture.PcKeVz/barriers/replay_complete

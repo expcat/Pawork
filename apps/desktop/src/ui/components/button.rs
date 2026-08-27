@@ -7,7 +7,7 @@
 
 use gpui::{
     div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, Pixels, RenderOnce, Rgba,
-    SharedString, Styled, Window,
+    KeyDownEvent, SharedString, Styled, Window,
 };
 
 use crate::ui::theme::dark;
@@ -60,6 +60,7 @@ pub struct Button {
     center: bool,
     vcenter: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_activate: Option<Box<dyn Fn(&KeyDownEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl Button {
@@ -82,6 +83,7 @@ impl Button {
             center: false,
             vcenter: false,
             on_click: None,
+            on_activate: None,
         }
     }
 
@@ -175,6 +177,21 @@ impl Button {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    /// 键盘激活（R3 Wave B Slice 5 P2b）：聚焦的 Button 上裸 Enter / Space
+    /// 在行级 on_key_down 直接调用激活 handler（调用方保证与 on_click 同一
+    /// 激活路径，禁合成 click 兜底——GPUI 把聚焦元素的 keyboard click 挂在
+    /// keyup 合成路径，真窗口注入不可达，同 ListRow::on_activate）。是否
+    /// stop_propagation 由调用方 handler 决定：Grouping / Scope / Model
+    /// 菜单打开时调用方让位（不 stop）让根节点菜单 Enter 接管（spec §3.3）；
+    /// disabled 按钮不激活。
+    pub fn on_activate(
+        mut self,
+        handler: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_activate = Some(Box::new(handler));
         self
     }
 }
@@ -303,6 +320,16 @@ impl RenderOnce for Button {
         }
         if let Some(on_click) = self.on_click {
             button = button.on_click(on_click);
+        }
+        if let Some(on_activate) = self.on_activate {
+            button = button.on_key_down(move |event: &KeyDownEvent, window, cx| {
+                if enabled
+                    && !event.keystroke.modifiers.modified()
+                    && (event.keystroke.key == "enter" || event.keystroke.key == "space")
+                {
+                    on_activate(event, window, cx);
+                }
+            });
         }
         button
     }

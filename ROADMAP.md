@@ -11,8 +11,8 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R3 — TaskRail 与任务导航（进行中：Wave A 已收口）** |
-| 下一任务 | R3 Wave B——导航状态与键盘（任务书范围 5/6：新建/打开/scope/grouping 切换、断线保留 selection、重连恢复、焦点回退、全键盘导航）；Wave A（TaskRail 顶部 F-03 / 列表与底部 F-04）已于 2026-08-27 收口，证据 [docs/ui-review/r3-wave-a/](docs/ui-review/r3-wave-a/) |
+| 当前阶段 | **R3 — TaskRail 与任务导航（进行中：Wave A/B 已收口，等待人工视觉验收与 SSIM 拍板）** |
+| 下一任务 | R3 收口——三状态 TaskRail 分区 SSIM ≥0.99 依赖 fixture 演示数据重塑或遮罩策略调整（§5 登记，待用户拍板）；Wave A（F-03/F-04）2026-08-27 收口（证据 [docs/ui-review/r3-wave-a/](docs/ui-review/r3-wave-a/)），Wave B（导航状态与键盘、Unread/Blocked 状态源）2026-08-28 收口（证据 [docs/ui-review/r3-wave-b/](docs/ui-review/r3-wave-b/)，含 Computer Use 真窗口视觉复核）；拍板后进入 R4 |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
 | 阻塞 | 无；Wave C AX 失败基线已由 ADR-042 bridge 补救，真窗口 75 节点与语义 action 证据见 [ax-bridge](docs/ui-review/wave-c/ax-bridge/) |
 

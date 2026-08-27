@@ -2,13 +2,13 @@
 //! 工作区确认浮层、输入行与 Cancel / Send（R8 波 C 自 ui/mod.rs 逐样式迁移）。
 
 use gpui::{
-    anchored, deferred, div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString,
-    Window,
+    Context, Corner, Pixels, Point, SharedString, Window, anchored, deferred, div, point,
+    prelude::*, px,
 };
 
 use crate::projection::{ConnectionState, ModelEntry};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
-use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow, ANCHOR_GAP_Y};
+use crate::ui::components::dropdown::{ANCHOR_GAP_Y, Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::label::Label;
 use crate::ui::theme::{dark, font, metrics};
 
@@ -77,14 +77,12 @@ impl AppView {
                 matches!(self.open_menu, Some(MenuKind::WorkspaceConfirm)),
                 |composer| {
                     // 无触发器：锚在 label 行正下方（原 in-flow 位置），浮层化不占布局流。
-                    composer.child(
-                        deferred(
-                            anchored()
-                                .anchor(Corner::TopLeft)
-                                .offset(point(px(metrics::ZERO), px(ANCHOR_GAP_Y)))
-                                .child(self.workspace_confirm_element(cx)),
-                        )
-                    )
+                    composer.child(deferred(
+                        anchored()
+                            .anchor(Corner::TopLeft)
+                            .offset(point(px(metrics::ZERO), px(ANCHOR_GAP_Y)))
+                            .child(self.workspace_confirm_element(cx)),
+                    ))
                 },
             )
             .child(
@@ -102,7 +100,7 @@ impl AppView {
                     .child({
                         let cancel_focus = self.cancel_focus.clone();
                         let cancel_tooltip = if can_cancel {
-                            SharedString::from("Cancel run (⌘.)")
+                            SharedString::from("Cancel run (Cmd+.)")
                         } else {
                             SharedString::from(self.cancel_disabled_reason())
                         };
@@ -175,28 +173,49 @@ impl AppView {
 
     /// model 菜单面板（从 composer 内联抽出，与其他组同构的浮层 + MenuRow）。
     fn model_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
+        let selected_ix = self
+            .projection
+            .effective_model()
+            .and_then(|(provider, id)| {
+                self.projection
+                    .models
+                    .iter()
+                    .position(|entry| entry.provider_id == *provider && entry.id == *id)
+            })
+            .unwrap_or(0);
+        let highlight = self.menu_highlight_effective(selected_ix);
         MenuPanel::new("model-menu")
             .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
                 view.dismiss_menu_on_outside(MenuKind::Model, event.position, cx);
             }))
-            .children(self.projection.models.iter().cloned().map(|model| {
-                let selected = self
-                    .projection
-                    .effective_model()
-                    .is_some_and(|(provider, id)| {
-                        provider == &model.provider_id && id == &model.id
-                    });
-                let label = format!("{} / {}", model.provider_id, model.display_name);
-                MenuRow::new(SharedString::from(format!(
-                    "model-{}-{}",
-                    model.provider_id, model.id
-                )))
-                .label(label)
-                .selected(selected)
-                .on_click(cx.listener(move |view, _event, _window, cx| {
-                    view.on_select_model(model.clone(), cx);
-                }))
-            }))
+            .children(
+                self.projection
+                    .models
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(ix, model)| {
+                        let selected =
+                            self.projection
+                                .effective_model()
+                                .is_some_and(|(provider, id)| {
+                                    provider == &model.provider_id && id == &model.id
+                                });
+                        let label = format!("{} / {}", model.provider_id, model.display_name);
+                        MenuRow::new(SharedString::from(format!(
+                            "model-{}-{}",
+                            model.provider_id, model.id
+                        )))
+                        .label(label)
+                        .selected(selected)
+                        .highlighted(ix == highlight)
+                        .on_click(cx.listener(
+                            move |view, _event, _window, cx| {
+                                view.on_select_model(model.clone(), cx);
+                            },
+                        ))
+                    }),
+            )
     }
 
     /// Composer 禁用原因（文本说明，不只靠颜色，gui-design §6）。
@@ -248,10 +267,11 @@ impl AppView {
             .into_iter()
             .filter_map(|(id, name)| id.map(|id| (id, name)))
             .collect();
-        let mut panel = MenuPanel::new("workspace-confirm")
-            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
+        let mut panel = MenuPanel::new("workspace-confirm").dismiss_on_outside(cx.listener(
+            |view, event: &gpui::MouseDownEvent, _, cx| {
                 view.dismiss_menu_on_outside(MenuKind::WorkspaceConfirm, event.position, cx);
-            }));
+            },
+        ));
         if choices.is_empty() {
             return panel.child(
                 div()
@@ -298,6 +318,9 @@ impl AppView {
     }
 
     pub(super) fn on_select_model(&mut self, model: ModelEntry, cx: &mut Context<Self>) {
+        if !self.can_switch_model() {
+            return;
+        }
         self.projection
             .set_pending_model(model.provider_id, model.id);
         self.open_menu = None;

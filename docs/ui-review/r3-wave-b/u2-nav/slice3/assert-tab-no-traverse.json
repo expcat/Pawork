@@ -1,0 +1,12 @@
+{
+  "phase": "tab-no-traverse",
+  "generated_at": "2026-08-27T13:14:45Z",
+  "checks": [
+    {
+      "name": "tab-focus-unchanged",
+      "pass": true,
+      "detail": "focused after tab=composer-input (expect composer-input; GPUI \u65e0\u9ed8\u8ba4 Tab \u904d\u5386\uff0c\u7126\u70b9\u4e0d\u5f97\u6f02\u79fb)"
+    }
+  ],
+  "pass": true
+}

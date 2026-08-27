@@ -20,21 +20,25 @@ mod timeline_entry;
 #[cfg(test)]
 mod u1_probe;
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, prelude::*, px, AnyView, App, ClickEvent, Context, Entity, FocusHandle,
-    Focusable, KeyBinding, KeyDownEvent, ListAlignment, ListState, Pixels, Point, Render,
-    SharedString, Window,
+    AnyView, App, AsyncWindowContext, ClickEvent, Context, Entity, FocusHandle, Focusable,
+    KeyBinding, KeyDownEvent, ListAlignment, ListState, Pixels, Point, Render, ScrollHandle,
+    SharedString, Window, actions, div, prelude::*, px,
 };
 use pawork_client::AppEvent;
 
 use crate::controller::{ControllerEvent, DesktopController};
 use crate::platform::Platform;
-use crate::projection::{ConnectionState, DesktopProjection, ResumeApply, TaskRailGrouping};
+use crate::projection::{
+    ConnectionState, DateBucket, DesktopProjection, ResumeApply, SessionLiveStatus,
+    TaskRailGrouping, UNASSIGNED_PROJECT,
+};
 use barriers::BarrierSink;
 use changes::ChangesPanelState;
 use components::button::{Button, ButtonPadding, ButtonVariant};
@@ -57,10 +61,13 @@ actions!(
         CancelRun,
         NewTask,
         ToggleInspector,
+        TaskCycleUp,
+        TaskCycleDown,
+        NextNeedsAttention,
     ]
 );
 
-/// 可测的 AppView 快捷键表（审批 / 取消 / 新建 / Inspector）。
+/// 可测的 AppView 快捷键表（审批 / 取消 / 新建 / Inspector / 任务导航）。
 pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
     ("cmd-.", "CancelRun"),
     ("cmd-enter", "ApproveOnce"),
@@ -69,12 +76,26 @@ pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
     ("cmd-3", "Deny"),
     ("cmd-n", "NewTask"),
     ("cmd-i", "ToggleInspector"),
+    ("cmd-alt-up", "TaskCycleUp"),
+    ("cmd-alt-down", "TaskCycleDown"),
+    ("cmd-alt-n", "NextNeedsAttention"),
 ];
 
 /// Timeline 空态引导（R2 Wave B）：无 active session 且条目数为 0 时居中
 /// 显示；视觉与 AX 树共用同一文案源（accessibility/app.rs）。
-pub(crate) const WORKSPACE_EMPTY_HINT: &str =
-    "Select a task from the rail, or press ⌘N to start a new one.";
+pub(crate) const WORKSPACE_EMPTY_HINT: &str = "Select a task from the rail, or press Cmd+N to start a new one. Cycle tasks with Cmd+Opt+↓ / Cmd+Opt+↑, or jump to the next task that needs attention with Cmd+Opt+N.";
+
+/// R3 Wave B：rail Tab 焦点顺序前缀（design §3.6：scope → grouping → 全局
+/// 新建）；行为链（项目头 / 定向新建 / task 行）按当前分组渲染序接在其后，
+/// 再接 MAIN_PATH_TAB_STOP_IDS。tab_index 负档保证 rail 整体先于主路径 0 档。
+pub(crate) const RAIL_TAB_STOP_IDS: &[&str] = &["project-scope", "task-rail-grouping", "add-task"];
+/// scope 触发器在 Tab 链中的位次（rail 前缀三档 -20/-19/-18，行统一 -17）。
+pub(crate) const RAIL_TAB_INDEX_SCOPE: isize = -20;
+pub(crate) const RAIL_TAB_INDEX_GROUPING: isize = -19;
+pub(crate) const RAIL_TAB_INDEX_ADD_TASK: isize = -18;
+pub(crate) const RAIL_TAB_INDEX_ROWS: isize = -17;
+/// composer 在 Tab 链中的位次：链尾（1 档），主路径 0 档之后。
+pub(crate) const COMPOSER_TAB_INDEX: isize = 1;
 
 /// 主路径按钮的可测 tab_stop 标记。
 pub(crate) const MAIN_PATH_TAB_STOP_IDS: &[&str] = &[
@@ -154,7 +175,136 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-3", Deny, Some("AppView")),
         KeyBinding::new("cmd-n", NewTask, Some("AppView")),
         KeyBinding::new("cmd-i", ToggleInspector, Some("AppView")),
+        KeyBinding::new("cmd-alt-up", TaskCycleUp, Some("AppView")),
+        KeyBinding::new("cmd-alt-down", TaskCycleDown, Some("AppView")),
+        KeyBinding::new("cmd-alt-n", NextNeedsAttention, Some("AppView")),
     ]);
+}
+
+/// macOS 上 NSWindow 在 sendEvent 层把裸 Tab / Shift-Tab 送进 key-view
+/// 循环：本窗口是单一 GPUI 视图、循环为空，事件被静默吞掉，GPUI 的
+/// keyDown / performKeyEquivalent 都收不到（R3 Wave B Slice 3/4 真窗口
+/// 取证）。旧 API setAllowsKeyboardNavigation: 已被现代 macOS 移除
+///（NSInvalidArgumentException 实证），因此用 NSEvent 本地监听器在
+/// NSWindow 派发前截获裸 Tab，直接驱动 GPUI 焦点链 focus_next /
+/// focus_prev（design §3.6 焦点链唯一属主是 GPUI）。带 cmd / ctrl /
+/// alt 的组合键原样放行，Enter / Space 不在截获范围。
+#[cfg(target_os = "macos")]
+fn install_appkit_tab_monitor(window: &Window, cx: &App) {
+    use cocoa::base::{id, nil};
+    use objc::{class, msg_send, sel, sel_impl};
+    use std::sync::Once;
+
+    /// NSEvent.type == keyDown；本地监听器 mask 只订阅 keyDown。
+    const NSEVENT_TYPE_KEY_DOWN: i64 = 10;
+    const NSEVENT_MASK_KEY_DOWN: u64 = 1 << 10;
+    /// kVK_Tab；Tab 之外一律原样放行。
+    const KEY_CODE_TAB: u16 = 48;
+    /// AppKit modifierFlags 位（NSShift / NSControl / NSAlternate / NSCommand）。
+    const FLAG_SHIFT: u64 = 1 << 17;
+    const FLAG_CONTROL: u64 = 1 << 18;
+    const FLAG_ALT: u64 = 1 << 19;
+    const FLAG_COMMAND: u64 = 1 << 20;
+    /// Apple block ABI BlockFlags（block2-0.6.2/src/abi.rs）：BLOCK_IS_GLOBAL
+    /// = 1<<28——全局块存于全局内存、无捕获、不朽，运行时不做复制 / 释放
+    /// 计数；1<<30 是 BLOCK_HAS_SIGNATURE（Objective-C 类型编码），本监听
+    /// 器块不设。descriptor 为最小布局 reserved + size，无签名域。
+    const BLOCK_IS_GLOBAL: i32 = 1 << 28;
+
+    thread_local! {
+        static TAB_WINDOW: std::cell::RefCell<Option<AsyncWindowContext>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    #[repr(C)]
+    struct BlockDescriptor {
+        reserved: usize,
+        size: usize,
+    }
+
+    /// Apple block ABI（无捕获全局块）。block crate 非 desktop 直接依赖
+    /// 且 Cargo.toml 不在本任务写入集，故手写最小布局。
+    #[repr(C)]
+    struct TabMonitorBlock {
+        isa: *const objc::runtime::Class,
+        flags: i32,
+        reserved: i32,
+        invoke: unsafe extern "C" fn(*mut TabMonitorBlock, id) -> id,
+        descriptor: *const BlockDescriptor,
+    }
+
+    unsafe extern "C" {
+        static _NSConcreteGlobalBlock: objc::runtime::Class;
+    }
+
+    unsafe fn dispatch_tab_event(event: id) -> id {
+        let kind: i64 = msg_send![event, type];
+        if kind != NSEVENT_TYPE_KEY_DOWN {
+            return event;
+        }
+        let key_code: u16 = msg_send![event, keyCode];
+        if key_code != KEY_CODE_TAB {
+            return event;
+        }
+        let flags: u64 = msg_send![event, modifierFlags];
+        if flags & (FLAG_CONTROL | FLAG_ALT | FLAG_COMMAND) != 0 {
+            return event;
+        }
+        let forward = flags & FLAG_SHIFT == 0;
+        let handled = TAB_WINDOW.with_borrow_mut(|slot| {
+            slot.as_mut().map(|cx| {
+                cx.update(|window, _| {
+                    if forward {
+                        window.focus_next();
+                    } else {
+                        window.focus_prev();
+                    }
+                })
+                .is_ok()
+            }) == Some(true)
+        });
+        if handled {
+            nil
+        } else {
+            event
+        }
+    }
+
+    /// 本地监听器在 AppKit C 调用栈上执行，禁止 unwind 穿越：兜底捕获
+    /// 并落日志，避免 panic in a function that cannot unwind 直接 abort。
+    unsafe extern "C" fn tab_monitor_invoke(_block: *mut TabMonitorBlock, event: id) -> id {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dispatch_tab_event(event)
+        }))
+        .unwrap_or_else(|panic| {
+            eprintln!("[tab-monitor] dispatch failed: {panic:?}");
+            event
+        })
+    }
+
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        let descriptor: &'static BlockDescriptor = Box::leak(Box::new(BlockDescriptor {
+            reserved: 0,
+            size: std::mem::size_of::<TabMonitorBlock>(),
+        }));
+        let block: &'static TabMonitorBlock = Box::leak(Box::new(TabMonitorBlock {
+            isa: std::ptr::addr_of!(_NSConcreteGlobalBlock),
+            flags: BLOCK_IS_GLOBAL,
+            reserved: 0,
+            invoke: tab_monitor_invoke,
+            descriptor,
+        }));
+        let cls = class!(NSEvent);
+        let block_ptr = block as *const TabMonitorBlock as id;
+        unsafe {
+            let _: id = msg_send![cls, addLocalMonitorForEventsMatchingMask: NSEVENT_MASK_KEY_DOWN handler: block_ptr];
+        }
+    });
+    // 进程级监听器只装一次；窗口句柄必须每次刷新。Once 包住句柄赋值会
+    // 在窗口重建后把 Tab 打到失效的 AsyncWindowContext（focus_next 失败
+    // 后事件原样放行，AppKit 再吞掉裸 Tab）。
+    TAB_WINDOW.with_borrow_mut(|slot| *slot = Some(window.to_async(cx)));
 }
 
 pub struct AppView {
@@ -186,6 +336,22 @@ pub struct AppView {
     resources: ResourcesPanelState,
     /// 当前打开的菜单；单一状态位保证至多一个打开（§8.2）。
     open_menu: Option<MenuKind>,
+    /// Grouping / Scope / Model 菜单的键盘高亮行（None = 尚未移动，回落到
+    /// 当前选中项；菜单关闭时复位）。
+    menu_highlight: Option<usize>,
+    /// 键盘 Enter 选择菜单项后，触发器在同一物理按键的 keyup 仍会合成
+    /// keyboard click——记录待吞掉的种类，防「选择即重开」（与
+    /// pending_outside_close 同构的衔接标记）。
+    pending_keyboard_menu_select: Option<MenuKind>,
+    /// 行级键盘激活（Enter / Space key_down 直接调激活 handler）后的同键
+    /// keyup 合成 click 衔接标记：物理键盘下 GPUI 会对聚焦行合成
+    /// ClickEvent::Keyboard（无按下位置）；Slice 5 起只要键盘 click + 有
+    /// 标记即吞（不要求行键匹配，防跨行误触发），鼠标 click 有按下位置
+    /// 永不吞（与 pending_keyboard_menu_select 同构）。
+    pending_row_key_activate: Option<String>,
+    /// 按钮键盘激活（Slice 5 P2b：rail 聚焦 Button 的 Enter / Space 行级
+    /// 激活）后的同键 keyup 合成 click 衔接标记，与行级同构。
+    pending_button_key_activate: Option<String>,
     /// 同一次物理点击里「外点关闭先于触发器 click」的衔接标记（菜单种类 +
     /// 按下位置）：触发器 toggle 仅当 click 的按下位置与标记相同（同一次
     /// 物理点击，ClickEvent 自带 down）才视为「再点触发器关闭」的收尾不再
@@ -205,6 +371,8 @@ pub struct AppView {
     /// 距上个 1s tick 是否有新 ControllerEvent（有则本 tick 视为未静默）。
     controller_event_pending: bool,
     focus_handle: FocusHandle,
+    scope_focus: FocusHandle,
+    grouping_focus: FocusHandle,
     approve_once_focus: FocusHandle,
     approve_for_run_focus: FocusHandle,
     deny_focus: FocusHandle,
@@ -212,6 +380,17 @@ pub struct AppView {
     send_focus: FocusHandle,
     add_task_focus: FocusHandle,
     model_focus: FocusHandle,
+    /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
+    /// 无副作用，随窗口生命周期回收）。
+    rail_row_focus: BTreeMap<String, FocusHandle>,
+    /// rail 列表滚动句柄：grouping / scope 切换后滚动 active task 到可见。
+    rail_scroll: ScrollHandle,
+    /// 下一次 render 时把 active task 滚动到可见（design §3.6）。
+    rail_scroll_to_active: bool,
+    /// ReplaceBaseline / Fresh 后 active 落空（snapshot 语义要求聚焦 scope
+    /// 触发器）：下一次 render 消费并聚焦 scope。on_connected 无 Window，
+    /// 借 render 兑现；首次连接不置位，不抢 composer 焦点。
+    pending_scope_focus: bool,
 }
 
 impl AppView {
@@ -251,6 +430,10 @@ impl AppView {
             changes: ChangesPanelState::default(),
             resources: ResourcesPanelState::default(),
             open_menu: None,
+            menu_highlight: None,
+            pending_keyboard_menu_select: None,
+            pending_row_key_activate: None,
+            pending_button_key_activate: None,
             pending_outside_close: None,
             run_clock_running: false,
             barriers: BarrierSink::new(barrier_dir),
@@ -259,16 +442,38 @@ impl AppView {
             timeline_paging: false,
             controller_event_pending: false,
             focus_handle: cx.focus_handle(),
+            scope_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(RAIL_TAB_INDEX_SCOPE),
+            grouping_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(RAIL_TAB_INDEX_GROUPING),
             approve_once_focus: cx.focus_handle().tab_stop(true),
             approve_for_run_focus: cx.focus_handle().tab_stop(true),
             deny_focus: cx.focus_handle().tab_stop(true),
             cancel_focus: cx.focus_handle().tab_stop(true),
             send_focus: cx.focus_handle().tab_stop(true),
-            add_task_focus: cx.focus_handle().tab_stop(true),
+            add_task_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(RAIL_TAB_INDEX_ADD_TASK),
             model_focus: cx.focus_handle().tab_stop(true),
+            rail_row_focus: BTreeMap::new(),
+            rail_scroll: ScrollHandle::new(),
+            rail_scroll_to_active: false,
+            pending_scope_focus: false,
         };
         timeline::install_scroll_follow(&view.timeline_list, &cx.weak_entity());
-        view.start_connect(cx);
+        // R3 Wave B Slice 4：composer 挂 1 档作为 Tab 链尾（rail 负档 →
+        // 主路径 0 档 → composer 1 档 → wrap 回 rail 首停），Tab 从
+        // composer 一步回到 project-scope，与 design §3.6 遍历序一致。
+        view.text_input
+            .read(cx)
+            .focus_handle(cx)
+            .tab_index(COMPOSER_TAB_INDEX);
+            view.start_connect(cx);
         view
     }
 
@@ -344,6 +549,8 @@ impl AppView {
                     self.open_session(session_id, cx);
                     return;
                 }
+                // 基线替换后 active 落空：焦点回落 scope 触发器。
+                self.pending_scope_focus = true;
             }
             ResumeApply::Fresh => {
                 if let Some(session_id) = previous_session {
@@ -356,6 +563,9 @@ impl AppView {
                         self.open_session(session_id, cx);
                         return;
                     }
+                    // 之前的 active 会话在 fresh snapshot 中消失：焦点回落
+                    // scope 触发器；首次连接（previous None）不抢 composer。
+                    self.pending_scope_focus = true;
                 }
             }
             ResumeApply::Continued { .. } | ResumeApply::Unchanged => {}
@@ -519,25 +729,27 @@ impl AppView {
             return;
         }
         self.run_clock_running = true;
-        cx.spawn(async move |this, cx| loop {
-            smol::Timer::after(Duration::from_secs(1)).await;
-            let keep = this
-                .update(cx, |view, cx| {
-                    view.emit_settle_barriers();
-                    if view.projection.active_run_id.is_some() {
-                        cx.notify();
-                        true
-                    } else if view.barriers.is_active() {
-                        // barrier 常驻心跳：无 run 时静默续 tick（不重绘）。
-                        true
-                    } else {
-                        view.run_clock_running = false;
-                        false
-                    }
-                })
-                .unwrap_or(false);
-            if !keep {
-                break;
+        cx.spawn(async move |this, cx| {
+            loop {
+                smol::Timer::after(Duration::from_secs(1)).await;
+                let keep = this
+                    .update(cx, |view, cx| {
+                        view.emit_settle_barriers();
+                        if view.projection.active_run_id.is_some() {
+                            cx.notify();
+                            true
+                        } else if view.barriers.is_active() {
+                            // barrier 常驻心跳：无 run 时静默续 tick（不重绘）。
+                            true
+                        } else {
+                            view.run_clock_running = false;
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
             }
         })
         .detach();
@@ -665,6 +877,47 @@ impl AppView {
         }
     }
 
+    /// 行级键盘激活前置：记录行键，供同键 keyup 合成 click 吞除匹配。
+    fn note_row_key_activate(&mut self, row_key: &str) {
+        self.pending_row_key_activate = Some(row_key.to_string());
+    }
+
+    /// 键盘激活后的 keyup 合成 click（无按下位置）：只要有未消费的键盘激活
+    /// 标记即吞——标记匹配即消费；不匹配视为跨行错位或陈旧标记，一并吞除
+    /// 防跨行误触发（Slice 5 修复：旧实现按行键匹配，标记落在他行时该行
+    /// 会被误激活）。鼠标 click 有按下位置永不吞、不动标记。判定收归自由
+    /// 函数 should_swallow_keyboard_click 供回归测试。
+    fn consume_row_key_click(&mut self, _row_key: &str, event: &ClickEvent) -> bool {
+        if !should_swallow_keyboard_click(
+            Self::click_down_position(event).is_none(),
+            self.pending_row_key_activate.as_deref(),
+        ) {
+            return false;
+        }
+        self.pending_row_key_activate = None;
+        true
+    }
+
+    /// 按钮键盘激活后的同键 keyup 合成 click 吞除（与行级同构，独立按钮
+    /// 标记字段，Slice 5 P2b）：防「Enter 开菜单 / 新建任务后 keyup 合成
+    /// click 把刚开的菜单关掉或重复新建」。
+    fn consume_button_key_click(&mut self, _button_id: &str, event: &ClickEvent) -> bool {
+        if !should_swallow_keyboard_click(
+            Self::click_down_position(event).is_none(),
+            self.pending_button_key_activate.as_deref(),
+        ) {
+            return false;
+        }
+        self.pending_button_key_activate = None;
+        true
+    }
+
+    /// 按钮键盘激活前置：记录按钮 id，供同键 keyup 合成 click 吞除。
+    fn note_button_key_activate(&mut self, button_id: &str) {
+        self.pending_button_key_activate = Some(button_id.to_string());
+    }
+
+
     /// 触发器 toggle：开新关旧（单一 Option<MenuKind>，修互斥不对称），
     /// 再点同一触发器关闭。外点关闭先行触发且 click 按下位置与标记相同
     /// （同一次物理点击）时视为关闭收尾，不重开；否则清陈旧标记正常处理。
@@ -674,6 +927,14 @@ impl AppView {
         down_position: Option<Point<Pixels>>,
         cx: &mut Context<Self>,
     ) {
+        // 键盘 Enter 选择菜单项后的触发器 keyup 合成点击：视为选择收尾，
+        // 不重开菜单（down 无位置，只吞 keyboard click）。
+        if let Some(kind) = self.pending_keyboard_menu_select.take() {
+            if kind == target && down_position.is_none() {
+                cx.notify();
+                return;
+            }
+        }
         if let Some((closed, press)) = self.pending_outside_close.take() {
             if closed == target && down_position == Some(press) {
                 cx.notify();
@@ -685,6 +946,7 @@ impl AppView {
         } else {
             Some(target)
         };
+        self.menu_highlight = None;
         cx.notify();
     }
 
@@ -697,15 +959,317 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.open_menu = None;
+        self.menu_highlight = None;
         self.pending_outside_close = Some((kind, position));
         cx.notify();
     }
 
     /// 直接关闭当前菜单（Escape / 选择选项 / Fork 后）。
     fn close_open_menu(&mut self, cx: &mut Context<Self>) {
+        self.menu_highlight = None;
         if self.open_menu.take().is_some() {
             cx.notify();
         }
+    }
+
+    /// 根节点键盘裁决（R3 Wave B）：Grouping / Scope / Model 菜单打开时
+    /// ↑/↓ 移动高亮、Enter 选择、Escape 关闭并把焦点送回触发器（design
+    /// §3.6 / §8.2 菜单方向键缺口；Slice 5 修订——接管不再以触发器聚焦
+    /// 硬门控，菜单开着即接管，Tab 移焦 / 外点后键盘仍归菜单，spec §3.3）；
+    /// 其余情况下 Escape 沿用既有关闭路径。面板经 deferred 绘制不可聚焦，
+    /// 根节点是唯一可达层；子层（rail ↑/↓、行级与按钮激活）在菜单打开时
+    /// 让位（不 stop_propagation）保证冒泡到达此处。
+    fn handle_root_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = event.keystroke.key.as_str();
+        // Tab 遍历（design §3.6，Slice 4 修复）：GPUI 无默认 tab cycle
+        //（Slice 3 驱动取证 tab-no-traverse），根节点把 Tab / Shift-Tab
+        // 显式映射到 focus_next / focus_prev，沿 tab_index 档位链（rail
+        // 负档 → 主路径 0 档）走焦。TextInput 未绑定 Tab，冒泡到此只移焦
+        // 不插字符；带 cmd / ctrl / alt 的组合键不接管。
+        let modifiers = &event.keystroke.modifiers;
+        if key == "tab" && !modifiers.control && !modifiers.alt && !modifiers.platform {
+            if modifiers.shift {
+                window.focus_prev();
+            } else {
+                window.focus_next();
+            }
+            cx.stop_propagation();
+            return;
+        }
+        let menu = match self.open_menu.as_ref() {
+            Some(kind @ (MenuKind::Grouping | MenuKind::Scope | MenuKind::Model)) => {
+                Some(kind.clone())
+            }
+            _ => None,
+        };
+        if let Some(kind) = menu {
+            match key {
+                "up" => {
+                    self.move_menu_highlight(false);
+                    cx.notify();
+                }
+                "down" => {
+                    self.move_menu_highlight(true);
+                    cx.notify();
+                }
+                "enter" => {
+                    // Return 在 AppKit 走 key equivalent 双路投递（driven
+                    // 实证：第二路 keydown 夹在同键 keyup 之后到达），按钮
+                    // 行级激活第一路已开菜单，第二路到根节点时高亮仍落在
+                    // 当前项——此时 no-op 保持菜单开启（不闪关）；高亮在
+                    // 其它项（↓/↑ 移动后）才执行选择关闭。环绕回当前项
+                    // 的 Enter 同样视为 no-op（语义：选择即当前态）。
+                    let highlight = self.menu_highlight_effective(self.menu_selected_index());
+                    if highlight == self.menu_selected_index() {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    // 阻断触发器在同键 keyup 的合成点击重开菜单由
+                    // pending_keyboard_menu_select 吞掉；此处先记标记再激活。
+                    self.pending_keyboard_menu_select = Some(kind.clone());
+                    self.activate_menu_item(kind, highlight, window, cx);
+                }
+                "escape" => self.close_menu_and_focus_trigger(kind, window, cx),
+                _ => {}
+            }
+            return;
+        }
+        if key == "escape" {
+            self.close_open_menu(cx);
+        }
+    }
+
+    /// 关闭菜单并把焦点送回触发器（design §3.6：Escape 关闭后焦点回触发器）。
+    fn close_menu_and_focus_trigger(
+        &mut self,
+        kind: MenuKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let trigger = match kind {
+            MenuKind::Grouping => self.grouping_focus.clone(),
+            MenuKind::Scope => self.scope_focus.clone(),
+            MenuKind::Model => self.model_focus.clone(),
+            _ => self.focus_handle.clone(),
+        };
+        self.open_menu = None;
+        self.menu_highlight = None;
+        window.focus(&trigger);
+        cx.notify();
+    }
+
+    /// 菜单高亮行数（Grouping=2 / Scope=选项数 / Model=目录数；其余菜单 0）。
+    fn menu_item_count(&self) -> usize {
+        match self.open_menu {
+            Some(MenuKind::Grouping) => 2,
+            Some(MenuKind::Scope) => self.projection.project_scope_options().len(),
+            Some(MenuKind::Model) => self.projection.models.len(),
+            _ => 0,
+        }
+    }
+
+    /// 当前选中项在菜单中的行位（键盘高亮的回落起点）。
+    fn menu_selected_index(&self) -> usize {
+        match self.open_menu {
+            Some(MenuKind::Grouping) => match self.grouping {
+                TaskRailGrouping::Timeline => 0,
+                TaskRailGrouping::Projects => 1,
+            },
+            Some(MenuKind::Scope) => self
+                .projection
+                .project_scope_options()
+                .iter()
+                .position(|(workspace_id, _)| *workspace_id == self.scope_workspace_id)
+                .unwrap_or(0),
+            Some(MenuKind::Model) => self
+                .projection
+                .effective_model()
+                .and_then(|(provider, id)| {
+                    self.projection
+                        .models
+                        .iter()
+                        .position(|model| model.provider_id == *provider && model.id == *id)
+                })
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    /// 生效高亮行：未移动过（None）回落到当前选中项。
+    fn menu_highlight_effective(&self, selected_ix: usize) -> usize {
+        self.menu_highlight.unwrap_or(selected_ix)
+    }
+
+    fn move_menu_highlight(&mut self, forward: bool) {
+        let len = self.menu_item_count();
+        if len == 0 {
+            return;
+        }
+        let current = self
+            .menu_highlight
+            .unwrap_or_else(|| self.menu_selected_index())
+            .min(len - 1);
+        let next = if forward {
+            (current + 1) % len
+        } else {
+            (current + len - 1) % len
+        };
+        self.menu_highlight = Some(next);
+    }
+
+    /// Enter 选择高亮行：等价点击对应 MenuRow（复用既有 select 路径，含
+    /// 单开互斥与菜单关闭）。
+    fn activate_menu_item(
+        &mut self,
+        kind: MenuKind,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match kind {
+            MenuKind::Grouping => {
+                let mode = if ix == 0 {
+                    TaskRailGrouping::Timeline
+                } else {
+                    TaskRailGrouping::Projects
+                };
+                self.on_select_grouping(mode, window, cx);
+            }
+            MenuKind::Scope => {
+                if let Some((workspace_id, _)) =
+                    self.projection.project_scope_options().get(ix).cloned()
+                {
+                    self.on_select_scope(workspace_id, window, cx);
+                }
+            }
+            MenuKind::Model => {
+                if let Some(model) = self.projection.models.get(ix).cloned() {
+                    self.on_select_model(model, cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 当前分组模式下按 design §3.6 顺序的 rail 焦点链（scope → grouping →
+    /// 全局新建 → 项目头 / 定向新建 → task 行）；折叠项目只保留头部。
+    fn rail_stops(&self) -> Vec<RailStop> {
+        rail_focus_stops(
+            self.grouping,
+            self.scope_workspace_id.as_deref(),
+            &self.collapsed_projects,
+            &self.projection,
+            now_unix_ms(),
+        )
+    }
+
+    /// rail 焦点链上各停靠点的句柄（固定触发器 + 行级懒建句柄）。
+    fn rail_stop_focus(&self, stop: &RailStop) -> Option<FocusHandle> {
+        match stop {
+            RailStop::Scope => Some(self.scope_focus.clone()),
+            RailStop::Grouping => Some(self.grouping_focus.clone()),
+            RailStop::AddTask => Some(self.add_task_focus.clone()),
+            RailStop::ProjectHeader { .. }
+            | RailStop::ProjectAdd { .. }
+            | RailStop::Task { .. } => self.rail_row_focus.get(&stop.focus_key()).cloned(),
+        }
+    }
+
+    /// 行级焦点句柄懒建（render 期创建，tab_stop + 行档 tab_index）。
+    fn rail_row_focus_handle(&mut self, key: &str, cx: &Context<Self>) -> FocusHandle {
+        if let Some(handle) = self.rail_row_focus.get(key) {
+            return handle.clone();
+        }
+        let handle = cx
+            .focus_handle()
+            .tab_stop(true)
+            .tab_index(RAIL_TAB_INDEX_ROWS);
+        self.rail_row_focus.insert(key.to_string(), handle.clone());
+        handle
+    }
+
+    /// 当前 rail 可见任务序列（分组 + 展开态决定；task cycling 与
+    /// next-needs-attention 共用）。
+    fn visible_rail_sessions(&self) -> Vec<String> {
+        self.rail_stops()
+            .into_iter()
+            .filter_map(|stop| match stop {
+                RailStop::Task { session_id } => Some(session_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// cmd-alt-up / cmd-alt-down：按当前 rail 可见顺序循环切换 active task
+    ///（空列表 no-op 安全；焦点不动，只换 active）。
+    fn cycle_active_task(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let sessions = self.visible_rail_sessions();
+        let active_ix = self
+            .projection
+            .active_session_id
+            .as_deref()
+            .and_then(|active| sessions.iter().position(|session| session == active));
+        let Some(target) = cycle_index(sessions.len(), active_ix, forward) else {
+            return;
+        };
+        // target 即当前 active（单会话 rail 环绕回原行）时与
+        // on_session_clicked 的 active 短路一致：不重开会话——重开会导致
+        // 重新分页 timeline 与 Composer 失焦（可见抖动），cycling 语义下
+        // 已是目标态即 no-op 安全。
+        if active_ix == Some(target) {
+            return;
+        }
+        self.open_session(sessions[target].clone(), cx);
+    }
+
+    /// cmd-alt-n：按 rail 顺序找下一个 NeedsInput > Blocked > Unread 会话并
+    /// 打开；无候选时经 status_hint 如实提示。
+    fn open_next_needs_attention(&mut self, cx: &mut Context<Self>) {
+        let candidates: Vec<(String, Option<Attention>)> = self
+            .visible_rail_sessions()
+            .into_iter()
+            .map(|session_id| {
+                let attention = attention_for(
+                    self.projection.session_live_status(&session_id),
+                    self.projection.session_unread(&session_id),
+                );
+                (session_id, attention)
+            })
+            .collect();
+        match next_attention_session(&candidates, self.projection.active_session_id.as_deref()) {
+            Some(session_id) => self.open_session(session_id, cx),
+            None => {
+                self.status_hint = Some("No task needs attention.".into());
+                cx.notify();
+            }
+        }
+    }
+
+    fn on_task_cycle_up(&mut self, _: &TaskCycleUp, _window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_active_task(false, cx);
+    }
+
+    fn on_task_cycle_down(
+        &mut self,
+        _: &TaskCycleDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_active_task(true, cx);
+    }
+
+    fn on_next_needs_attention_action(
+        &mut self,
+        _: &NextNeedsAttention,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_next_needs_attention(cx);
     }
 
     fn on_reconnect(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -830,8 +1394,7 @@ impl AppView {
         match (connected, workspace) {
             (true, Some(workspace)) => {
                 let epoch = self.changes.begin_diff_fetch(path);
-                self.controller
-                    .diff_get(workspace, path.to_string(), epoch);
+                self.controller.diff_get(workspace, path.to_string(), epoch);
             }
             (true, None) => self.changes.mark_diff_failed("no workspace"),
             _ => self.changes.mark_diff_failed("not connected"),
@@ -982,8 +1545,200 @@ fn resolve_new_task_workspace(scope_workspace_id: Option<&str>) -> Option<&str> 
     scope_workspace_id
 }
 
+/// rail 焦点链停靠点（design §3.6 顺序的静态语义；focus_key 唯一标识，
+/// ProjectHeader/ProjectAdd 以日期桶限定避免 Timeline 同项目多桶重复）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RailStop {
+    Scope,
+    Grouping,
+    AddTask,
+    ProjectHeader {
+        bucket: Option<DateBucket>,
+        key: String,
+    },
+    ProjectAdd {
+        bucket: Option<DateBucket>,
+        key: String,
+    },
+    Task {
+        session_id: String,
+    },
+}
+
+impl RailStop {
+    fn focus_key(&self) -> String {
+        match self {
+            Self::Scope => RAIL_TAB_STOP_IDS[0].into(),
+            Self::Grouping => RAIL_TAB_STOP_IDS[1].into(),
+            Self::AddTask => RAIL_TAB_STOP_IDS[2].into(),
+            Self::ProjectHeader { bucket, key } => {
+                rail_project_occurrence_key("project", *bucket, key)
+            }
+            Self::ProjectAdd { bucket, key } => {
+                rail_project_occurrence_key("project-add", *bucket, key)
+            }
+            Self::Task { session_id } => rail_session_focus_key(session_id),
+        }
+    }
+}
+
+pub(super) fn rail_session_focus_key(session_id: &str) -> String {
+    format!("task-{session_id}")
+}
+
+pub(super) fn rail_project_occurrence_key(
+    prefix: &str,
+    bucket: Option<DateBucket>,
+    key: &str,
+) -> String {
+    match bucket {
+        Some(bucket) => format!("{prefix}-{}:{key}", bucket.label()),
+        None => format!("{prefix}-{key}"),
+    }
+}
+
+pub(super) fn rail_project_key(workspace_id: Option<&str>) -> String {
+    workspace_id.unwrap_or(UNASSIGNED_PROJECT).to_string()
+}
+
+/// 按 design §3.6 组装 rail 焦点链：scope → grouping → 全局新建 →（按当前
+/// 分组渲染序）项目头 / 定向新建 / task 行。折叠项目只保留头部行。
+fn rail_focus_stops(
+    grouping: TaskRailGrouping,
+    scope: Option<&str>,
+    collapsed: &BTreeSet<String>,
+    projection: &DesktopProjection,
+    now_ms: u64,
+) -> Vec<RailStop> {
+    let mut stops = vec![RailStop::Scope, RailStop::Grouping, RailStop::AddTask];
+    let projects = match grouping {
+        TaskRailGrouping::Timeline => projection
+            .timeline_groups(scope, now_ms)
+            .into_iter()
+            .flat_map(|group| {
+                let bucket = group.bucket;
+                group
+                    .projects
+                    .into_iter()
+                    .map(move |project| (Some(bucket), project))
+            })
+            .collect::<Vec<_>>(),
+        TaskRailGrouping::Projects => projection
+            .project_groups(scope)
+            .into_iter()
+            .map(|project| (None, project))
+            .collect(),
+    };
+    for (bucket, project) in projects {
+        let key = rail_project_key(project.workspace_id.as_deref());
+        stops.push(RailStop::ProjectHeader {
+            bucket,
+            key: key.clone(),
+        });
+        if !project.is_unassigned() && project.workspace_id.is_some() {
+            stops.push(RailStop::ProjectAdd {
+                bucket,
+                key: key.clone(),
+            });
+        }
+        if !collapsed.contains(&key) {
+            for task in &project.tasks {
+                stops.push(RailStop::Task {
+                    session_id: task.session_id.clone(),
+                });
+            }
+        }
+    }
+    stops
+}
+
+/// next-needs-attention 的候选优先级（NeedsInput > Blocked > Unread）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Attention {
+    NeedsInput,
+    Blocked,
+    Unread,
+}
+
+fn attention_for(status: Option<SessionLiveStatus>, unread: bool) -> Option<Attention> {
+    match status {
+        Some(SessionLiveStatus::NeedsInput) => Some(Attention::NeedsInput),
+        Some(SessionLiveStatus::Blocked) => Some(Attention::Blocked),
+        // Running 不是 needs-attention 目标，但 unread 事件仍值得跳转。
+        Some(SessionLiveStatus::Running) | None => unread.then_some(Attention::Unread),
+    }
+}
+
+/// 按列表顺序（active 之后循环起算）选最高优先级候选；同级取 rail 顺序
+/// 更早者。active 自身不作为候选。
+fn next_attention_session(
+    candidates: &[(String, Option<Attention>)],
+    active: Option<&str>,
+) -> Option<String> {
+    let len = candidates.len();
+    if len == 0 {
+        return None;
+    }
+    let active_ix = active.and_then(|active| {
+        candidates
+            .iter()
+            .position(|(session_id, _)| session_id == active)
+    });
+    let scan = match active_ix {
+        Some(_) => len.saturating_sub(1),
+        None => len,
+    };
+    let start = active_ix.map_or(0, |ix| (ix + 1) % len);
+    let mut best: Option<(Attention, usize)> = None;
+    for step in 0..scan {
+        let ix = (start + step) % len;
+        if let Some(attention) = candidates[ix].1 {
+            if best.is_none_or(|(current, _)| attention < current) {
+                best = Some((attention, ix));
+            }
+        }
+    }
+    best.map(|(_, ix)| candidates[ix].0.clone())
+}
+
+/// task cycling 目标行位：无 active 时 down 取首行 / up 取末行，有 active
+/// 时循环步进；空列表安全返回 None。
+fn cycle_index(len: usize, active: Option<usize>, forward: bool) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    Some(match active {
+        None if forward => 0,
+        None => len - 1,
+        Some(ix) if forward => (ix + 1) % len,
+        Some(ix) => (ix + len - 1) % len,
+    })
+}
+
+/// 键盘合成 click 吞除判定（P3b 回归对象，Slice 5 修复）：无按下位置
+/// （键盘合成）且存在未消费的键盘激活标记即吞；行键 / 按钮 id 不参与匹配
+/// ——标记不匹配视为跨行 / 跨元素错位或陈旧标记，一并吞除防误触发；鼠标
+/// click 有按下位置永不吞（consume_row_key_click 布尔反转教训：勿把判定
+/// 写成「仅匹配才吞」导致鼠标路径或错位行被误放行 / 误吞）。
+fn should_swallow_keyboard_click(keyboard_click: bool, marker: Option<&str>) -> bool {
+    keyboard_click && marker.is_some()
+}
+
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 一次性安装 AppKit Tab 本地监听器：NSWindow 会吞掉裸 Tab
+        //（key-view 循环为空），监听器在派发前截获并驱动 GPUI 焦点链。
+        // 监听器进程级只装一次；每次 render 刷新 thread_local 窗口句柄，
+        // 避免窗口重建后 Tab 打到失效上下文。纯注册无同步重入，render
+        // 期调用安全。
+        #[cfg(target_os = "macos")]
+        install_appkit_tab_monitor(window, cx);
+        // on_connected 无 Window 只能置标记：在 AX 同步前消费，把落空的
+        // active 焦点回落到 scope 触发器（design §3.6 焦点链首停）。
+        if self.pending_scope_focus {
+            self.pending_scope_focus = false;
+            window.focus(&self.scope_focus);
+        }
         self.sync_accessibility(window, cx);
         let connected = matches!(
             self.projection.connection,
@@ -1060,17 +1815,17 @@ impl Render for AppView {
             .size_full()
             .bg(dark().bg.base)
             .text_color(dark().text.primary)
-            // Escape 关闭浮层菜单（不动全局 keybinding 字面量）：焦点在窗口内任意
-            // 元素时经冒泡到达根节点；面板经 deferred 绘制、不可聚焦，组件层
-            // on_key_down 不可达，根节点为唯一机制。
+            // 根节点键盘裁决（R3 Wave B）：菜单打开且触发器聚焦时 ↑/↓ 移高亮、
+            // Enter 选择、Escape 关闭并焦点回触发器；其余情况 Escape 沿用既有
+            // 关闭路径；Tab / Shift-Tab 映射 focus_next / focus_prev 走
+            // tab_index 焦点链（Slice 4）。面板经 deferred 绘制、不可聚焦，
+            // 组件层 on_key_down 不可达，根节点为唯一机制。
             .on_key_down(cx.listener(
                 |view: &mut Self,
                  event: &KeyDownEvent,
-                 _window: &mut Window,
+                 window: &mut Window,
                  cx: &mut Context<Self>| {
-                    if event.keystroke.key == "escape" {
-                        view.close_open_menu(cx);
-                    }
+                    view.handle_root_key(event, window, cx);
                 },
             ))
             .on_action(cx.listener(Self::on_send_message))
@@ -1080,6 +1835,9 @@ impl Render for AppView {
             .on_action(cx.listener(Self::on_cancel_run))
             .on_action(cx.listener(Self::on_new_task_action))
             .on_action(cx.listener(Self::on_toggle_inspector_action))
+            .on_action(cx.listener(Self::on_task_cycle_up))
+            .on_action(cx.listener(Self::on_task_cycle_down))
+            .on_action(cx.listener(Self::on_next_needs_attention_action))
             .child(
                 div()
                     .id("shell-rail")
@@ -1088,18 +1846,13 @@ impl Render for AppView {
                     .child(sidebar),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .child(main)
-                    .child(
-                        StatusBar::new()
-                            // F-13：信息串居中；Inspector trigger 留在
-                            // 最右（F-12 迁移到 Workspace Header 后再撤）。
-                            .centered(Badge::new(run_status))
-                            .child(inspector_trigger),
-                    ),
+                div().flex().flex_col().flex_1().child(main).child(
+                    StatusBar::new()
+                        // F-13：信息串居中；Inspector trigger 留在
+                        // 最右（F-12 迁移到 Workspace Header 后再撤）。
+                        .centered(Badge::new(run_status))
+                        .child(inspector_trigger),
+                ),
             )
     }
 }
@@ -1107,6 +1860,19 @@ impl Render for AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projection::SessionSummary;
+
+    fn session(id: &str, workspace: Option<&str>) -> SessionSummary {
+        SessionSummary {
+            session_id: id.into(),
+            title: format!("Task {id}"),
+            updated_at_ms: 1_000,
+            workspace_id: workspace.map(str::to_string),
+            parent_branch_id: None,
+            forked_from_event_id: None,
+            active: false,
+        }
+    }
 
     #[test]
     fn keybinding_table_includes_approval_and_cancel() {
@@ -1118,12 +1884,16 @@ mod tests {
         assert!(actions.contains(&"ApproveForRun"));
         assert!(actions.contains(&"Deny"));
         assert!(actions.contains(&"CancelRun"));
-        assert!(APP_VIEW_KEYBINDINGS
-            .iter()
-            .any(|(key, action)| *key == "cmd-." && *action == "CancelRun"));
-        assert!(APP_VIEW_KEYBINDINGS
-            .iter()
-            .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce"));
+        assert!(
+            APP_VIEW_KEYBINDINGS
+                .iter()
+                .any(|(key, action)| *key == "cmd-." && *action == "CancelRun")
+        );
+        assert!(
+            APP_VIEW_KEYBINDINGS
+                .iter()
+                .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce")
+        );
     }
 
     #[test]
@@ -1148,5 +1918,158 @@ mod tests {
     fn all_projects_new_task_requires_workspace_confirm() {
         assert!(resolve_new_task_workspace(None).is_none());
         assert_eq!(resolve_new_task_workspace(Some("ws-a")), Some("ws-a"));
+    }
+
+    #[test]
+    fn keybinding_table_includes_task_cycling_and_attention() {
+        for (key, action) in [
+            ("cmd-alt-up", "TaskCycleUp"),
+            ("cmd-alt-down", "TaskCycleDown"),
+            ("cmd-alt-n", "NextNeedsAttention"),
+        ] {
+            assert!(
+                APP_VIEW_KEYBINDINGS
+                    .iter()
+                    .any(|(binding, name)| *binding == key && *name == action),
+                "missing {key} -> {action}"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_empty_hint_mentions_cycling_and_attention() {
+        assert!(WORKSPACE_EMPTY_HINT.contains("Cmd+Opt"));
+        assert!(WORKSPACE_EMPTY_HINT.contains("Cmd+N"));
+    }
+
+    /// design §3.6：scope → grouping → 全局新建 → 项目头 / 定向新建 → task 行；
+    /// 折叠项目只保留头部；Timeline 同项目跨桶的头部键以桶限定去重。
+    #[test]
+    fn rail_focus_stops_follow_design_tab_order() {
+        let mut projection = DesktopProjection::default();
+        projection.sessions = vec![
+            session("s-1", Some("ws-a")),
+            session("s-2", Some("ws-a")),
+            session("s-3", None),
+        ];
+        projection.workspaces = vec![crate::projection::WorkspaceSummary {
+            id: "ws-a".into(),
+            name: "Alpha".into(),
+        }];
+        let collapsed = BTreeSet::from(["Unassigned".to_string()]);
+
+        let stops = rail_focus_stops(
+            TaskRailGrouping::Projects,
+            None,
+            &collapsed,
+            &projection,
+            60_000,
+        );
+        let keys: Vec<String> = stops.iter().map(|stop| stop.focus_key()).collect();
+        assert_eq!(
+            &keys[..3],
+            ["project-scope", "task-rail-grouping", "add-task"]
+        );
+        assert_eq!(
+            RAIL_TAB_STOP_IDS,
+            ["project-scope", "task-rail-grouping", "add-task"]
+        );
+        // Projects 模式：Alpha 头 + 定向新建 + 两行任务；折叠的 Unassigned
+        // 只剩头部（无定向新建）。
+        assert_eq!(
+            keys[3..],
+            [
+                "project-ws-a",
+                "project-add-ws-a",
+                "task-s-1",
+                "task-s-2",
+                "project-Unassigned"
+            ]
+        );
+
+        let timeline = rail_focus_stops(
+            TaskRailGrouping::Timeline,
+            None,
+            &BTreeSet::new(),
+            &projection,
+            60_000,
+        );
+        let timeline_keys: Vec<String> = timeline.iter().map(|stop| stop.focus_key()).collect();
+        assert_eq!(
+            timeline_keys[3..],
+            [
+                // 三个 session 同桶（updated_at 相同 → Today）。
+                "project-Today:ws-a",
+                "project-add-Today:ws-a",
+                "task-s-1",
+                "task-s-2",
+                "project-Today:Unassigned",
+                "task-s-3",
+            ]
+        );
+    }
+
+    #[test]
+    fn task_cycling_index_wraps_and_handles_empty() {
+        assert_eq!(cycle_index(0, None, true), None);
+        assert_eq!(cycle_index(3, None, true), Some(0));
+        assert_eq!(cycle_index(3, None, false), Some(2));
+        assert_eq!(cycle_index(3, Some(2), true), Some(0));
+        assert_eq!(cycle_index(3, Some(0), false), Some(2));
+        assert_eq!(cycle_index(3, Some(1), true), Some(2));
+    }
+
+    /// P3b 回归：键盘合成 click（无按下位置）只要有未消费激活标记就吞——
+    /// 标记行键匹配与否都吞（跨行错位防误触发）；鼠标真实 click（有按下
+    /// 位置）永不吞；无标记永不吞。旧实现只按行键匹配吞，标记落在他行时
+    /// 该行会被误激活（consume_row_key_click 布尔反转教训）。
+    #[test]
+    fn keyboard_click_swallow_disregards_marker_identity() {
+        assert!(should_swallow_keyboard_click(true, Some("row-a")));
+        assert!(should_swallow_keyboard_click(true, Some("row-b")));
+        assert!(!should_swallow_keyboard_click(true, None));
+        assert!(!should_swallow_keyboard_click(false, Some("row-a")));
+        assert!(!should_swallow_keyboard_click(false, Some("row-b")));
+        assert!(!should_swallow_keyboard_click(false, None));
+    }
+
+    /// cmd-alt-n：NeedsInput > Blocked > Unread；active 之后循环起算，
+    /// active 自身不作为候选；无候选返回 None。
+    #[test]
+    fn next_attention_session_prefers_input_then_blocked_then_unread() {
+        let list = vec![
+            ("s-unread".to_string(), Some(Attention::Unread)),
+            ("s-plain".to_string(), None),
+            ("s-blocked".to_string(), Some(Attention::Blocked)),
+            ("s-input".to_string(), Some(Attention::NeedsInput)),
+        ];
+        assert_eq!(
+            next_attention_session(&list, Some("s-blocked")),
+            Some("s-input".to_string())
+        );
+        let no_input = vec![
+            ("s-unread".to_string(), Some(Attention::Unread)),
+            ("s-blocked".to_string(), Some(Attention::Blocked)),
+        ];
+        assert_eq!(
+            next_attention_session(&no_input, None),
+            Some("s-blocked".to_string())
+        );
+        let unread_only = vec![
+            ("s-a".to_string(), None),
+            ("s-b".to_string(), Some(Attention::Unread)),
+        ];
+        assert_eq!(next_attention_session(&unread_only, Some("s-b")), None);
+        assert_eq!(
+            next_attention_session(&unread_only, Some("s-a")),
+            Some("s-b".to_string())
+        );
+        assert_eq!(next_attention_session(&[(String::new(), None)], None), None);
+        // running + unread 归 Unread，running 无 unread 不进候选。
+        assert_eq!(
+            attention_for(Some(SessionLiveStatus::Running), true),
+            Some(Attention::Unread)
+        );
+        assert_eq!(attention_for(Some(SessionLiveStatus::Running), false), None);
     }
 }

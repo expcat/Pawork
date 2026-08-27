@@ -255,6 +255,9 @@ pub enum SessionLiveStatus {
     Running,
     /// 需要输入（pending approval，按 session_id 归属）。
     NeedsInput,
+    /// 受阻（live 派生：该 session 最近一条 RunChanged 为终态且
+    /// state ∈ failed / interrupted；completed / cancelled 不算）。
+    Blocked,
 }
 
 impl SessionLiveStatus {
@@ -263,6 +266,7 @@ impl SessionLiveStatus {
         match self {
             Self::Running => "Running",
             Self::NeedsInput => "Needs input",
+            Self::Blocked => "Blocked",
         }
     }
 }
@@ -286,6 +290,14 @@ pub struct DesktopProjection {
     pub resume: ResumeState,
     pub terminal: TerminalState,
     snapshot_pendings: Vec<PendingApproval>,
+    /// R3 Wave B：Blocked 会话（live 派生）。snapshot active_runs 不提供
+    /// 终态，快照重建后清空（wire 无此信息，不伪造）；Replay 重放终态
+    /// 事件可重新派生。
+    blocked_sessions: BTreeSet<String>,
+    /// R3 Wave B：unread 通道（独立于 SessionLiveStatus）。非 active
+    /// session 的 Session-stream 活动事件记 unread；select_session 清除；
+    /// 首连 / 快照重建不产生（无 last-seen 基线）。
+    unread_sessions: BTreeSet<String>,
 }
 
 impl DesktopProjection {
@@ -335,6 +347,15 @@ impl DesktopProjection {
                 _ => {}
             }
         }
+        // R3 Wave B：session 列表换新后，消失 session 的 unread 标记
+        // 一并清除（仍存 session 保留——用户未看过，不伪造已读）。
+        let live: BTreeSet<&str> = self
+            .sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+        self.unread_sessions
+            .retain(|session_id| live.contains(session_id.as_str()));
     }
 
     /// 重连三态：Replay 续接事件；SnapshotRequired 丢 stale 换基线；
@@ -367,6 +388,9 @@ impl DesktopProjection {
     /// 首连：握手 Snapshot 建基线，resume 标 Fresh。
     pub fn apply_fresh_snapshot(&mut self, snapshot: &Snapshot) {
         self.resume = ResumeState::Fresh;
+        // 首连 / 无 resume 重连同样是快照重建：wire 无终态来源，blocked
+        // 清空（诚实）；Replay 路径不经此函数，靠重放重新派生。
+        self.blocked_sessions.clear();
         self.merge_snapshot(snapshot);
     }
 
@@ -382,6 +406,9 @@ impl DesktopProjection {
                 .any(|session| session.session_id == session_id)
             {
                 self.active_session_id = None;
+            } else {
+                // active 仍存：保留并清其 unread（重分页后用户在看）。
+                self.unread_sessions.remove(session_id.as_str());
             }
         }
         self.restore_active_run_from_snapshot();
@@ -405,6 +432,7 @@ impl DesktopProjection {
         self.active_runs.clear();
         self.active_run_id = None;
         self.active_run_started_at_ms = None;
+        self.blocked_sessions.clear();
         self.timeline.reset_baseline();
     }
 
@@ -423,6 +451,8 @@ impl DesktopProjection {
     /// 打开（切换）session：清空时间线与去重状态。
     pub fn select_session(&mut self, session_id: &str) {
         self.active_session_id = Some(session_id.to_string());
+        // R3 Wave B：打开 / 切换即视为已读。
+        self.unread_sessions.remove(session_id);
         self.active_run_id = None;
         self.active_run_started_at_ms = None;
         self.pending_approval = None;
@@ -503,10 +533,25 @@ impl DesktopProjection {
         let mut membership_changed = false;
         if let AppEvent::RunChanged { run_id, state } = &envelope.payload {
             if let EventStream::Session(session_id) = &envelope.stream {
+                // R3 Wave B：Blocked live 派生——session 最近一条 RunChanged
+                // 为终态且 state ∈ {failed, interrupted} 记 Blocked；任何
+                // 其它 RunChanged（非终态，或 completed / cancelled 终态）
+                // 按「最近一条」语义清除。
+                let blocked_now = run_state_is_terminal(state)
+                    && matches!(state, RunState::Failed | RunState::Interrupted);
+                if blocked_now {
+                    membership_changed |= self
+                        .blocked_sessions
+                        .insert(session_id.as_str().to_string());
+                } else {
+                    membership_changed |= self.blocked_sessions.remove(session_id.as_str());
+                }
                 if run_state_is_terminal(state) {
                     let before = self.active_runs.len();
                     self.active_runs.retain(|run| run.run_id != run_id.as_str());
-                    membership_changed = self.active_runs.len() != before;
+                    // |= 而非 =：blocked 清除 / unread 等成员增量不得被
+                    // active_runs 的 no-op retain 抹掉（R3 Wave B）。
+                    membership_changed |= self.active_runs.len() != before;
                     self.clear_pending_for_run(Some(run_id.as_str()));
                 } else if !self
                     .active_runs
@@ -558,6 +603,18 @@ impl DesktopProjection {
             self.clear_pending_for_tool(run_id.as_str(), tool_call_id.as_str());
             if self.snapshot_pendings.len() != before {
                 membership_changed = true;
+            }
+        }
+        // R3 Wave B：unread 通道（独立于 SessionLiveStatus）——非 active 的
+        // Session-stream 活动事件记 unread；select_session 清除；快照 /
+        // 首连不产生（无 last-seen 基线）。MessageSent 是本地 composer
+        // 回执（ControllerEvent），只属于 active session，不经 wire 抵达
+        // 此处，故无对应 arm。
+        if let EventStream::Session(session_id) = &envelope.stream {
+            if self.active_session_id.as_deref() != Some(session_id.as_str())
+                && is_session_activity_event(&envelope.payload)
+            {
+                membership_changed |= self.unread_sessions.insert(session_id.as_str().to_string());
             }
         }
         let Some(active) = self.active_session_id.as_deref() else {
@@ -715,6 +772,8 @@ impl DesktopProjection {
     ///   pending 沿用 pending_for_active_session 同规，归 active session）；
     ///   与 Running 并存时优先。
     /// - Running：snapshot active_runs / RunChanged 非终态。
+    /// - Blocked（R3 Wave B）：最近一条 RunChanged 为 failed / interrupted
+    ///   终态（live 派生；快照重建清空），优先级最低。
     /// - None：无 live 状态，rail 画空心灰圆（不声明语义）。wire 无每会话
     ///   终态字段，终态绿点不画（伪造即红线）。
     pub fn session_live_status(&self, session_id: &str) -> Option<SessionLiveStatus> {
@@ -733,7 +792,16 @@ impl DesktopProjection {
         {
             return Some(SessionLiveStatus::Running);
         }
+        if self.blocked_sessions.contains(session_id) {
+            return Some(SessionLiveStatus::Blocked);
+        }
         None
+    }
+
+    /// R3 Wave B：unread 通道——非 active session 收到 Session-stream 活动
+    /// 事件后为 true，select_session 清除；快照 / 首连不产生 unread。
+    pub fn session_unread(&self, session_id: &str) -> bool {
+        self.unread_sessions.contains(session_id)
     }
 
     /// Timeline 空态引导可见条件：无 active session 且无任何条目（含审批卡）。
@@ -1024,6 +1092,23 @@ fn run_state_is_terminal(state: &RunState) -> bool {
     matches!(
         state,
         RunState::Completed | RunState::Cancelled | RunState::Failed | RunState::Interrupted
+    )
+}
+
+/// unread 通道的 Session-stream 活动事件集合（R3 Wave B 拍板）：RunChanged /
+/// AssistantDelta / ToolStarted / ToolOutput / ToolCompleted / MessageSent /
+/// Diagnostic。MessageSent 为本地 ControllerEvent（composer 回执），只属于
+/// active session，不经 wire 抵达 apply_event，故此处无对应 arm；
+/// ToolApprovalRequired 不在拍板集合内（NeedsInput 状态点另行表达）。
+fn is_session_activity_event(payload: &AppEvent) -> bool {
+    matches!(
+        payload,
+        AppEvent::RunChanged { .. }
+            | AppEvent::AssistantDelta { .. }
+            | AppEvent::ToolStarted { .. }
+            | AppEvent::ToolOutput { .. }
+            | AppEvent::ToolCompleted { .. }
+            | AppEvent::Diagnostic { .. }
     )
 }
 
@@ -1472,7 +1557,8 @@ mod tests {
         assert!(projection.apply_event(&run_changed(4, "completed")));
         assert_eq!(projection.session_live_status("s-1"), None);
         assert!(projection.snapshot_pendings.is_empty());
-        // 后台会话终态同样清除。
+        // 后台会话终态同样清除（用 completed：failed / interrupted 会按
+        // R3 Wave B 语义派生 Blocked，另行专项测试）。
         let background_done = serde_json::from_value(json!({
             "api_version": { "major": 1, "minor": 1 },
             "instance_id": "instance-1",
@@ -1482,7 +1568,7 @@ mod tests {
             "stream_sequence": 5,
             "timestamp": 1_005,
             "source": { "type": "core" },
-            "payload": { "type": "run_changed", "data": { "run_id": "r-2", "state": "failed" } }
+            "payload": { "type": "run_changed", "data": { "run_id": "r-2", "state": "completed" } }
         }))
         .expect("decode AppEventEnvelope");
         assert!(projection.apply_event(&background_done));
@@ -1565,6 +1651,279 @@ mod tests {
         .expect("decode AppEventEnvelope");
         assert!(projection.apply_event(&background_done));
         assert_eq!(projection.session_live_status("s-2"), None);
+    }
+
+    /// R3 Wave B：Blocked live 派生——最近一条 RunChanged 为终态且
+    /// failed / interrupted 记 Blocked；非终态与 completed / cancelled
+    /// 清除；优先级 NeedsInput > Running > Blocked；快照重建清空、
+    /// Replay 重放终态事件重新派生。
+    #[test]
+    fn session_live_status_blocked_derivation_and_clearing() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        assert_eq!(SessionLiveStatus::Blocked.label(), "Blocked");
+
+        // 后台会话 failed / interrupted 终态 → Blocked。
+        assert!(projection.apply_event(&session_event(
+            1,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-2", "state": "failed" } }),
+        )));
+        assert_eq!(
+            projection.session_live_status("s-2"),
+            Some(SessionLiveStatus::Blocked)
+        );
+        // 已 Blocked 的重复终态无成员增量，返回 false 是正确语义。
+        projection.apply_event(&session_event(
+            2,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-2", "state": "interrupted" } }),
+        ));
+        assert_eq!(
+            projection.session_live_status("s-2"),
+            Some(SessionLiveStatus::Blocked)
+        );
+
+        // completed / cancelled 终态不算 Blocked（「最近一条」语义清除）。
+        assert!(projection.apply_event(&session_event(
+            3,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-2", "state": "completed" } }),
+        )));
+        assert_eq!(projection.session_live_status("s-2"), None);
+        // 已清除后的再次非 Blocked 终态无增量，返回 false 是正确语义。
+        projection.apply_event(&session_event(
+            4,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-3", "state": "cancelled" } }),
+        ));
+        assert_eq!(projection.session_live_status("s-2"), None);
+
+        // failed 后同 session 非终态 RunChanged 清除（新一轮 run 开始）。
+        assert!(projection.apply_event(&session_event(
+            5,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-4", "state": "failed" } }),
+        )));
+        assert_eq!(
+            projection.session_live_status("s-2"),
+            Some(SessionLiveStatus::Blocked)
+        );
+        assert!(projection.apply_event(&session_event(
+            6,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-5", "state": "created" } }),
+        )));
+        // 新 run 登记成员：Running（优先级高于 Blocked，且 blocked 已清）。
+        assert_eq!(
+            projection.session_live_status("s-2"),
+            Some(SessionLiveStatus::Running)
+        );
+        assert!(projection.apply_event(&session_event(
+            6,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-5", "state": "completed" } }),
+        )));
+        assert_eq!(projection.session_live_status("s-2"), None);
+
+        // 快照重建清空 blocked（wire 无终态来源，诚实）；Replay 重放终态
+        // 事件可重新派生。
+        assert!(projection.apply_event(&session_event(
+            7,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-6", "state": "interrupted" } }),
+        )));
+        assert_eq!(
+            projection.session_live_status("s-2"),
+            Some(SessionLiveStatus::Blocked)
+        );
+        let snapshot = snapshot_with_sessions(vec![session_entry("s-2", "Two", 20)]);
+        projection.apply_snapshot_required(&snapshot);
+        assert_eq!(projection.session_live_status("s-2"), None);
+        assert!(projection.apply_replay(&[session_event(
+            8,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-7", "state": "failed" } }),
+        )]));
+        assert_eq!(
+            projection.session_live_status("s-2"),
+            Some(SessionLiveStatus::Blocked)
+        );
+
+        // 优先级：snapshot active run（Running）与 pending（NeedsInput）
+        // 均压过 live 派生的 Blocked。
+        let snapshot = snapshot_with_runs_and_approvals(
+            vec![json!({
+                "run_id": "r-run",
+                "session_id": "s-run",
+                "started_at_ms": 10_u64
+            })],
+            vec![json!({
+                "run_id": "r-wait",
+                "session_id": "s-wait",
+                "tool_call_id": "c-wait",
+                "tool_name": "bash",
+                "message": "Approve command"
+            })],
+        );
+        let mut priority = DesktopProjection::from_snapshot(&snapshot);
+        assert!(priority.apply_event(&session_event(
+            9,
+            "s-run",
+            json!({ "type": "run_changed", "data": { "run_id": "r-x", "state": "failed" } }),
+        )));
+        assert_eq!(
+            priority.session_live_status("s-run"),
+            Some(SessionLiveStatus::Running)
+        );
+        assert!(priority.apply_event(&session_event(
+            10,
+            "s-wait",
+            json!({ "type": "run_changed", "data": { "run_id": "r-y", "state": "failed" } }),
+        )));
+        assert_eq!(
+            priority.session_live_status("s-wait"),
+            Some(SessionLiveStatus::NeedsInput)
+        );
+    }
+
+    /// R3 Wave B：unread 通道——非 active session 的 Session-stream 活动
+    /// 事件记 unread；active 自身活动不记；select_session 清除；首连 /
+    /// 快照重建不产生（仍存标记保留、消失清除、新 session 无）；
+    /// Replay 重放后台活动同样记 unread。
+    #[test]
+    fn session_unread_marks_background_activity_and_clears_on_select() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        assert!(!projection.session_unread("s-2"));
+
+        // 拍板集合逐类事件：RunChanged / AssistantDelta / ToolStarted /
+        // ToolOutput / ToolCompleted / Diagnostic。
+        let activities = [
+            json!({ "type": "run_changed", "data": { "run_id": "r-2", "state": "created" } }),
+            json!({ "type": "assistant_delta", "data": { "run_id": "r-2", "message_id": "m-1", "delta": "hi" } }),
+            json!({ "type": "tool_started", "data": { "run_id": "r-2", "tool_call_id": "c-1", "name": "fs_read" } }),
+            json!({ "type": "tool_output", "data": { "run_id": "r-2", "tool_call_id": "c-1", "delta": "chunk", "truncated": false } }),
+            json!({ "type": "tool_completed", "data": { "run_id": "r-2", "tool_call_id": "c-1", "success": true } }),
+            json!({ "type": "diagnostic", "data": { "level": "info", "code": "sandbox.fallback", "message": "{}" } }),
+        ];
+        for (index, payload) in activities.into_iter().enumerate() {
+            projection.apply_event(&session_event(index as u64 + 1, "s-2", payload));
+            assert!(
+                projection.session_unread("s-2"),
+                "activity #{index} should keep unread"
+            );
+        }
+        // active session 自身的活动不记 unread。
+        assert!(projection.apply_event(&assistant_delta(20, "m-9", "active")));
+        assert!(!projection.session_unread("s-1"));
+
+        // select_session（打开 / 切换）清除；切走后新活动重新记 unread。
+        projection.select_session("s-2");
+        assert!(!projection.session_unread("s-2"));
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&session_event(
+            21,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-9", "state": "created" } }),
+        )));
+        assert!(projection.session_unread("s-2"));
+
+        // 快照重建：仍存 session 的 unread 保留；新增 session（本地新建
+        // 同走快照）不产生 unread；全新投影（首连）无 unread。
+        let snapshot = snapshot_with_sessions(vec![
+            session_entry("s-1", "One", 20),
+            session_entry("s-2", "Two", 10),
+        ]);
+        projection.apply_snapshot_required(&snapshot);
+        assert!(projection.session_unread("s-2"));
+        assert!(!projection.session_unread("s-new"));
+        let fresh = DesktopProjection::from_snapshot(&snapshot);
+        assert!(!fresh.session_unread("s-2"));
+
+        // Replay 重放后台活动同样记 unread（断线期间发生的事用户未看过）。
+        let mut replayed = DesktopProjection::default();
+        replayed.select_session("s-1");
+        assert!(replayed.apply_replay(&[session_event(
+            1,
+            "s-2",
+            json!({ "type": "assistant_delta", "data": { "run_id": "r-2", "message_id": "m-1", "delta": "while away" } }),
+        )]));
+        assert!(replayed.session_unread("s-2"));
+    }
+
+    /// R3 Wave B 导航回归：断线（Disconnected）不清 active_session_id /
+    /// unread / blocked——连接态与导航态解耦，Reconnect 后可续。
+    #[test]
+    fn disconnect_preserves_active_unread_and_blocked() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&session_event(
+            1,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-2", "state": "failed" } }),
+        )));
+        assert!(projection.apply_event(&session_event(
+            2,
+            "s-3",
+            json!({ "type": "assistant_delta", "data": { "run_id": "r-3", "message_id": "m-1", "delta": "bg" } }),
+        )));
+        projection.set_connection(ConnectionState::Disconnected {
+            reason: "heartbeat timeout".into(),
+        });
+        assert_eq!(projection.active_session_id.as_deref(), Some("s-1"));
+        assert_eq!(
+            projection.session_live_status("s-2"),
+            Some(SessionLiveStatus::Blocked)
+        );
+        assert!(projection.session_unread("s-3"));
+        assert!(projection.show_reconnect());
+    }
+
+    /// R3 Wave B 导航回归：apply_snapshot_required 换基线——active 仍存
+    /// 则保留并清其 unread、消失则置 None；消失 session 的 unread 清除、
+    /// 仍存保留；blocked 清空（wire 无终态来源）。
+    #[test]
+    fn snapshot_required_keeps_active_clears_unread_and_prunes_vanished() {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&session_event(
+            1,
+            "s-2",
+            json!({ "type": "run_changed", "data": { "run_id": "r-2", "state": "failed" } }),
+        )));
+        // unread 已记的后续活动事件无增量，返回 false 是正确语义。
+        projection.apply_event(&session_event(
+            2,
+            "s-2",
+            json!({ "type": "assistant_delta", "data": { "run_id": "r-2", "message_id": "m-1", "delta": "bg" } }),
+        ));
+        // 公开路径下 active 不产生 unread（select 即清）；直接置位以钉住
+        // 「保留仍存 active 并清其 unread」这条拍板规则。
+        projection.unread_sessions.insert("s-1".into());
+
+        let keeps = snapshot_with_sessions(vec![
+            session_entry("s-1", "One", 20),
+            session_entry("s-new", "New", 10),
+        ]);
+        projection.apply_snapshot_required(&keeps);
+        assert_eq!(projection.active_session_id.as_deref(), Some("s-1"));
+        assert!(!projection.session_unread("s-1"));
+        assert!(!projection.session_unread("s-2"));
+        assert!(!projection.session_unread("s-new"));
+        assert_eq!(projection.session_live_status("s-2"), None);
+
+        // active 消失：置 None（UI 侧焦点回退 scope 触发器）。
+        assert!(projection.apply_event(&session_event(
+            3,
+            "s-3",
+            json!({ "type": "run_changed", "data": { "run_id": "r-3", "state": "created" } }),
+        )));
+        assert!(projection.session_unread("s-3"));
+        let drops = snapshot_with_sessions(vec![session_entry("s-new", "New", 10)]);
+        projection.apply_snapshot_required(&drops);
+        assert_eq!(projection.active_session_id, None);
+        assert!(!projection.session_unread("s-3"));
     }
 
     #[test]

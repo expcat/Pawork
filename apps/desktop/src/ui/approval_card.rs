@@ -78,9 +78,9 @@ impl AppView {
                 };
                 let tooltip = if can_approve {
                     SharedString::from(match id {
-                        "approve-once" => "Allow once (⌘1 / ⌘↩)",
-                        "approve-for-run" => "Allow for run (⌘2)",
-                        _ => "Deny (⌘3)",
+                        "approve-once" => "Allow once (Cmd+1 / Cmd+Return)",
+                        "approve-for-run" => "Allow for run (Cmd+2)",
+                        _ => "Deny (Cmd+3)",
                     })
                 } else {
                     approve_disabled.clone()

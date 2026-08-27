@@ -1,6 +1,6 @@
 # R2–R3 — Window shell、全局视觉系统与 TaskRail
 
-> 状态：🟢 R2 已收口（2026-08-27，用户拍板 a：壳层结构门禁为准，分区像素 SSIM 移交 R8）；R3 🔵 进行中（Wave A：F-03 顶部三行 / F-04 列表与底部已于 2026-08-27 收口，证据 [../docs/ui-review/r3-wave-a/](../docs/ui-review/r3-wave-a/)；剩余 Wave B：范围 5/6 导航状态与键盘、Unread/Blocked 状态源）
+> 状态：🟢 R2 已收口（2026-08-27，用户拍板 a：壳层结构门禁为准，分区像素 SSIM 移交 R8）；R3 🔵 进行中（Wave A：F-03 顶部三行 / F-04 列表与底部 2026-08-27 收口，证据 [../docs/ui-review/r3-wave-a/](../docs/ui-review/r3-wave-a/)；Wave B：范围 5/6 导航状态与键盘、Unread/Blocked 状态源 2026-08-28 收口，证据 [../docs/ui-review/r3-wave-b/](../docs/ui-review/r3-wave-b/)，等待人工视觉验收；R3 退出仅剩三状态分区 SSIM 门禁，依赖 fixture 演示数据/遮罩拍板，登记于 ROADMAP §5）
 > R2 证据：Wave A [../docs/ui-review/r2-wave-a/notes.md](../docs/ui-review/r2-wave-a/notes.md) · Wave B [../docs/ui-review/r2-wave-b/notes.md](../docs/ui-review/r2-wave-b/notes.md) · Wave C [../docs/ui-review/r2-wave-c/notes.md](../docs/ui-review/r2-wave-c/notes.md) · 阶段存档 [../docs/history.md#r2--window-shell-与全局视觉系统2026-08-27](../docs/history.md#r2--window-shell-与全局视觉系统2026-08-27)
 > 前置：R1 全部退出标准通过。两个阶段严格串行；R2 完成后才开启 R3。
 

@@ -13,7 +13,9 @@ use crate::ui::inspector::InspectorTab;
 use crate::ui::inspector::TERMINAL_EMPTY_OUTPUT;
 use crate::ui::shell_layout;
 use crate::ui::theme::metrics;
-use crate::ui::{AppView, MenuKind, WORKSPACE_EMPTY_HINT};
+use crate::ui::{
+    AppView, MenuKind, WORKSPACE_EMPTY_HINT, rail_project_occurrence_key, rail_session_focus_key,
+};
 
 const PAD: f32 = 8.0;
 const CONTROL_HEIGHT: f32 = 28.0;
@@ -317,6 +319,7 @@ impl AppView {
             TaskRailGrouping::Timeline => "Timeline",
             TaskRailGrouping::Projects => "Projects",
         })
+        .focused(self.grouping_focus.is_focused(window))
         .action(AxAction::Press);
         y += metrics::RAIL_TITLE_ROW_HEIGHT + metrics::RAIL_TITLE_SCOPE_GAP;
         let scope_label = match &self.scope_workspace_id {
@@ -335,6 +338,7 @@ impl AppView {
             ),
         )
         .value(scope_label)
+        .focused(self.scope_focus.is_focused(window))
         .action(AxAction::Press);
         y += metrics::RAIL_TOP_ROW_HEIGHT + metrics::RAIL_SCOPE_CONNECTION_GAP;
         let connection = AxNode::new(
@@ -434,6 +438,7 @@ impl AppView {
                             metrics::RAIL_PROJECT_BLOCK_GAP
                         };
                         let (nodes, consumed) = self.project_ax_nodes(
+                            window,
                             project,
                             Some(group.bucket),
                             row_y,
@@ -458,7 +463,7 @@ impl AppView {
                         row_y += metrics::RAIL_PROJECT_BLOCK_GAP;
                     }
                     let (nodes, consumed) =
-                        self.project_ax_nodes(project, None, row_y, list_width, can_create);
+                        self.project_ax_nodes(window, project, None, row_y, list_width, can_create);
                     row_y += consumed;
                     for node in nodes {
                         list = list.child(node);
@@ -476,6 +481,10 @@ impl AppView {
                 + PAD
                 + metrics::RAIL_TITLE_ROW_HEIGHT;
             let grouping_menu_x = (frame.width - inset - 148.0).max(inset);
+            let highlight = self.menu_highlight_effective(match self.grouping {
+                TaskRailGrouping::Timeline => 0,
+                TaskRailGrouping::Projects => 1,
+            });
             sidebar = sidebar.child(
                 AxNode::new(
                     "grouping-menu",
@@ -491,6 +500,7 @@ impl AppView {
                         AxRect::new(grouping_menu_x, grouping_menu_y, 148.0, 32.0),
                     )
                     .selected(self.grouping == TaskRailGrouping::Timeline)
+                    .focused(highlight == 0)
                     .action(AxAction::Press),
                 )
                 .child(
@@ -501,6 +511,7 @@ impl AppView {
                         AxRect::new(grouping_menu_x, grouping_menu_y + 32.0, 148.0, 32.0),
                     )
                     .selected(self.grouping == TaskRailGrouping::Projects)
+                    .focused(highlight == 1)
                     .action(AxAction::Press),
                 ),
             );
@@ -518,12 +529,20 @@ impl AppView {
                 "Project scope options",
                 AxRect::new(inset, scope_menu_y, list_width, 200.0),
             );
+            let options = self.projection.project_scope_options();
+            let highlight = self.menu_highlight_effective(
+                options
+                    .iter()
+                    .position(|(workspace_id, _)| *workspace_id == self.scope_workspace_id)
+                    .unwrap_or(0),
+            );
             for (ix, (workspace_id, label)) in self
                 .projection
                 .project_scope_options()
                 .into_iter()
                 .enumerate()
             {
+                let selected = self.scope_workspace_id == workspace_id;
                 menu = menu.child(
                     AxNode::new(
                         scope_identifier(workspace_id.as_deref()),
@@ -536,7 +555,8 @@ impl AppView {
                             ROW_HEIGHT,
                         ),
                     )
-                    .selected(self.scope_workspace_id == workspace_id)
+                    .selected(selected)
+                    .focused(ix == highlight)
                     .action(AxAction::Press),
                 );
             }
@@ -576,6 +596,7 @@ impl AppView {
     /// 项目可出现于多个日期组，identifier 以日期桶限定保证全树唯一。
     fn project_ax_nodes(
         &self,
+        window: &Window,
         project: &TaskRailProjectGroup,
         bucket: Option<DateBucket>,
         top: f32,
@@ -585,16 +606,25 @@ impl AppView {
         let inset = metrics::RAIL_CONTENT_INSET;
         let key = project_key(project.workspace_id.as_deref());
         let expanded = !self.collapsed_projects.contains(&key);
-        let mut nodes = vec![AxNode::new(
-            rail_project_identifier(bucket, &key),
-            AxRole::Button,
-            project.name.clone(),
-            AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
-        )
-        .value(format!("{} tasks", project.task_count()))
-        .description(if expanded { "Expanded" } else { "Collapsed" })
-        .action(AxAction::Press)];
+        let header_focus_key = rail_project_occurrence_key("project", bucket, &key);
+        let mut nodes = vec![
+            AxNode::new(
+                rail_project_identifier(bucket, &key),
+                AxRole::Button,
+                project.name.clone(),
+                AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
+            )
+            .value(format!("{} tasks", project.task_count()))
+            .description(if expanded { "Expanded" } else { "Collapsed" })
+            .focused(
+                self.rail_row_focus
+                    .get(&header_focus_key)
+                    .is_some_and(|handle| handle.is_focused(window)),
+            )
+            .action(AxAction::Press),
+        ];
         if !project.is_unassigned() && project.workspace_id.is_some() {
+            let add_focus_key = rail_project_occurrence_key("project-add", bucket, &key);
             nodes.push(
                 AxNode::new(
                     rail_project_add_identifier(bucket, &key),
@@ -609,6 +639,11 @@ impl AppView {
                     ),
                 )
                 .enabled(can_create)
+                .focused(
+                    self.rail_row_focus
+                        .get(&add_focus_key)
+                        .is_some_and(|handle| handle.is_focused(window)),
+                )
                 .action(AxAction::Press),
             );
         }
@@ -622,6 +657,8 @@ impl AppView {
                 // 状态词与可见状态点同源（ADR-042）：Needs input 优先于
                 // Running；无 live 状态不声明语义（不伪造终态）。
                 let status = self.projection.session_live_status(&session.session_id);
+                let unread = self.projection.session_unread(&session.session_id);
+                let focus_key = rail_session_focus_key(&session.session_id);
                 nodes.push(
                     AxNode::new(
                         session_identifier(&session.session_id),
@@ -629,7 +666,12 @@ impl AppView {
                         session.title.clone(),
                         AxRect::new(inset, top + consumed, width, metrics::RAIL_TASK_ROW_HEIGHT),
                     )
-                    .description(session_status_description(status))
+                    .description(session_status_description(status, unread))
+                    .focused(
+                        self.rail_row_focus
+                            .get(&focus_key)
+                            .is_some_and(|handle| handle.is_focused(window)),
+                    )
                     .selected(
                         self.projection.active_session_id.as_deref()
                             == Some(session.session_id.as_str()),
@@ -860,6 +902,17 @@ impl AppView {
                 .action(AxAction::Press),
             );
         if matches!(self.open_menu, Some(MenuKind::Model)) {
+            let selected_ix = self
+                .projection
+                .effective_model()
+                .and_then(|(provider, id)| {
+                    self.projection
+                        .models
+                        .iter()
+                        .position(|model| model.provider_id == *provider && model.id == *id)
+                })
+                .unwrap_or(0);
+            let highlight = self.menu_highlight_effective(selected_ix);
             let mut menu = AxNode::new(
                 "model-menu",
                 AxRole::Group,
@@ -886,6 +939,7 @@ impl AppView {
                     .value(format!("{} / {}", model.provider_id, model.id))
                     .enabled(self.can_switch_model())
                     .selected(selected)
+                    .focused(ix == highlight)
                     .action(AxAction::Press),
                 );
             }
@@ -1283,13 +1337,20 @@ fn timeline_accessible_text(entry: &TimelineEntry) -> (String, String) {
     }
 }
 
-/// 会话行 AX description：可见状态点的状态词同源映射（ADR-042——新增可见
-/// 状态须同批补 AX）；无 live 状态不声明语义（不伪造终态）。
-fn session_status_description(status: Option<SessionLiveStatus>) -> &'static str {
-    match status {
+/// 会话行 AX description：可见状态点的状态词 + unread 语义同源映射
+/// （ADR-042——新增可见状态须同批补 AX）；无 live 状态不声明语义（不伪造
+/// 终态），unread 与标题 semibold 视觉同源。
+fn session_status_description(status: Option<SessionLiveStatus>, unread: bool) -> String {
+    let word = match status {
         Some(SessionLiveStatus::NeedsInput) => SessionLiveStatus::NeedsInput.label(),
         Some(SessionLiveStatus::Running) => SessionLiveStatus::Running.label(),
+        Some(SessionLiveStatus::Blocked) => SessionLiveStatus::Blocked.label(),
         None => "Session",
+    };
+    if unread {
+        format!("{word} · Unread")
+    } else {
+        word.to_string()
     }
 }
 
@@ -1399,17 +1460,27 @@ mod tests {
     }
 
     /// R3 Wave A：会话行 AX description 携带可见状态点的状态词；无 live
-    /// 状态保持中性「Session」（不伪造终态）。
+    /// 状态保持中性「Session」（不伪造终态）；R3 Wave B 增 Blocked 与
+    /// unread 语义词。
     #[test]
     fn session_ax_description_carries_live_status_word() {
         assert_eq!(
-            session_status_description(Some(SessionLiveStatus::NeedsInput)),
+            session_status_description(Some(SessionLiveStatus::NeedsInput), false),
             "Needs input"
         );
         assert_eq!(
-            session_status_description(Some(SessionLiveStatus::Running)),
+            session_status_description(Some(SessionLiveStatus::Running), false),
             "Running"
         );
-        assert_eq!(session_status_description(None), "Session");
+        assert_eq!(
+            session_status_description(Some(SessionLiveStatus::Blocked), false),
+            "Blocked"
+        );
+        assert_eq!(session_status_description(None, false), "Session");
+        assert_eq!(session_status_description(None, true), "Session · Unread");
+        assert_eq!(
+            session_status_description(Some(SessionLiveStatus::NeedsInput), true),
+            "Needs input · Unread"
+        );
     }
 }

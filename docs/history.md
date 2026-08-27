@@ -663,9 +663,10 @@ R2 三波完成后退出活动任务目录；原任务书正文仍在 [plan/R2-R
 
 ## R3 — TaskRail 与任务导航（2026-08-27 起）
 
-R3 仍在进行中；Wave A 已收口，证据 [r3-wave-a](ui-review/r3-wave-a/notes.md)。任务书正文仍在 [plan/R2-R3-ui-shell-navigation.md](../plan/R2-R3-ui-shell-navigation.md)。
+R3 仍在进行中；Wave A/B 已收口，证据 [r3-wave-a](ui-review/r3-wave-a/notes.md) 与 [r3-wave-b](ui-review/r3-wave-b/notes.md)。任务书正文仍在 [plan/R2-R3-ui-shell-navigation.md](../plan/R2-R3-ui-shell-navigation.md)。退出仅剩三状态分区 SSIM ≥0.99 拍板（ROADMAP §5）。
 
 - **Wave A · TaskRail F-03/F-04**：顶部三行（Pawork 22 / scope 36 / 连接行 Ø10 + 全局 +）、日期桶→项目→44px 任务行、底部「Local」honest-hidden；状态点诚实语义 NeedsInput > Running > 空心灰（无终态绿点）。live `RunChanged` 与 `MessageSent` 乐观登记跨会话维护 `active_runs`；后台审批进出闸门前入账。AX 与 render 共享 `metrics::RAIL_*`。desktop 84/84；脚本 55/55。真窗口 State A taskrail SSIM 0.6941、State C 0.3543（天花板已登记 ROADMAP §5，不阻塞本波）。
+- **Wave B · 导航状态与键盘 / Unread / Blocked**：`SessionLiveStatus::Blocked` live 派生（failed/interrupted，快照清空、Replay 再派生）与独立 unread 通道；断线保留 active/unread/blocked。键盘：Tab 链（AppKit NSEvent monitor，`BLOCK_IS_GLOBAL=1<<28`）、rail ↑/↓、Enter/Space 行级与按钮级激活、菜单打开即接管、Esc 回触发器、cmd-alt 循环（target==active 短路）与 next-needs-attention（NeedsInput > Blocked > Unread）。收口审查补 scope 焦点回退（`pending_scope_focus`）、空态/tooltip ASCII 快捷键（GPUI 默认字体无 ⌘/⌥ 级联）、`on_select_model` enable 门。U2 归档为 Slice 4 的 22 相位（label `r3-wave-b-u2-nav-slice4`，git_head 69d1fb3）；Slice 5 button-enter 相位写入驱动但按用户指示未复跑。Computer Use 真窗口截图见 [r3-wave-b/visual](ui-review/r3-wave-b/visual/)。SSIM 0.99 仍待 ROADMAP §5 拍板。
 
-收口验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 84/84；`test_ui_r3_wave_a_tools` + wave-b/c/d 55/55；State A/C U2 结构断言 PASS，Wave B/C 回归 PASS。未运行全 workspace gate。下一任务转入 R3 Wave B：导航状态与键盘。
+收口验证：Wave A `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 84/84；Wave B 同命令 94/94；脚本 unittest 35/35（wave-b + wave-a + wave-d，bundled Python + Pillow）；U2 Slice 4 22 相位 PASS；Slice 5 button-enter 未复跑；ASCII 空态字形待支持 Computer Use 的模型复拍。未运行全 workspace gate。下一任务：R3 退出 SSIM 拍板后进入 R4，不在本波开启。
 

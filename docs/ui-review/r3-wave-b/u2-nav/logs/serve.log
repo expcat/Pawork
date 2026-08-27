@@ -1,0 +1,14 @@
+[1787843188118] serve starting
+[1787843188119] host_ready socket=/private/tmp/pawork-ui-fixture.hCde2A/data/pawork-gui.sock
+ui_fixture serving on /private/tmp/pawork-ui-fixture.hCde2A/data/pawork-gui.sock (barriers /private/tmp/pawork-ui-fixture.hCde2A/barriers)
+[1787843190581] accepted connection connection-0
+[1787843227291] drop_socket done
+[1787843227738] accepted connection connection-1
+[ui_fixture] provider stream called
+[ui_fixture] provider stream done: ok=false
+[1787843230184] drop_socket done
+[1787843233248] accepted connection connection-2
+[ui_fixture] provider stream called
+[ui_fixture] provider stream done: ok=true
+[1787843233310] accepted connection connection-3
+[1787843233383] accepted connection connection-4

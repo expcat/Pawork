@@ -254,7 +254,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [ ] IME：中文输入法组合中 Enter 不发送，候选窗位置正常（§6）
 - [ ] 多行粘贴：粘贴多行文本保持原文、Shift+Enter 换行（§6）
 - [ ] 1440×1024 逐屏对照 design/ 三图（Timeline / 折叠 / Projects）
-- [ ] 纯键盘走查（基准 §3.6）：Tab 焦点顺序、菜单 ↑/↓ 与 Enter/Escape——已知缺口：菜单 ↑/↓ 导航与 grouping/scope 触发器 tab stop 未实现，现为 [R7/R8](../plan/R7-R8-ui-quality-gates.md) 必过项
+- [ ] 纯键盘走查（基准 §3.6）：IME / 多步走查仍属 [R7/R8](../plan/R7-R8-ui-quality-gates.md)；R3 Wave B 已落地 Tab 链（scope→grouping→add-task→行→composer）、菜单 ↑/↓/Enter/Escape 与 grouping/scope 触发器 tab stop，剩余为 IME 与完整人工走查
 - [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
 - [ ] Reconnect 恢复：断线态点 Reconnect 回到 Connected，会话/run 状态保留（A.1 full2 的恢复半段）
 - [ ] Connected 态 1080×720 最小窗：连接态下最小窗口 Composer / 状态栏 / Inspector 触发器可用（A.1 1080c 仅覆盖断线态布局）
