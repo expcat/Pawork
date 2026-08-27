@@ -71,6 +71,11 @@ pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
     ("cmd-i", "ToggleInspector"),
 ];
 
+/// Timeline 空态引导（R2 Wave B）：无 active session 且条目数为 0 时居中
+/// 显示；视觉与 AX 树共用同一文案源（accessibility/app.rs）。
+pub(crate) const WORKSPACE_EMPTY_HINT: &str =
+    "Select a task from the rail, or press ⌘N to start a new one.";
+
 /// 主路径按钮的可测 tab_stop 标记。
 pub(crate) const MAIN_PATH_TAB_STOP_IDS: &[&str] = &[
     "approve-once",
@@ -1091,7 +1096,9 @@ impl Render for AppView {
                     .child(main)
                     .child(
                         StatusBar::new()
-                            .child(Badge::new(run_status))
+                            // F-13：信息串居中；Inspector trigger 留在
+                            // 最右（F-12 迁移到 Workspace Header 后再撤）。
+                            .centered(Badge::new(run_status))
                             .child(inspector_trigger),
                     ),
             )

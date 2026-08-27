@@ -21,6 +21,30 @@ TIMELINE_PREFIX = "timeline-entry-evt-fx-ses-alpha-today"
 NL = chr(10)
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 
+# Wave B 相位合同：root 尺寸 / rail 宽度 / Inspector 列是否必须在场。
+# narrow：窄窗（1080 宽）rail=240 且 Inspector 折叠缺席；
+# collapsed：1440 宽下 Inspector 列折叠缺席（State B，Popover 由骨架断言覆盖）。
+PHASE_GEOMETRY = {
+    "initial": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    "empty": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    "final": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    "restored": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    "resumed": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    "narrow": {"root": (1080.0, 1024.0), "rail": (240.0, 3.6), "inspector": "absent"},
+    "collapsed": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "absent"},
+}
+
+SKELETON_BASE = [
+    "task-rail",
+    "session-list",
+    SESSION_ROW,
+    "workspace",
+    "timeline",
+    "composer",
+    "composer-input",
+    "status-bar",
+]
+
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -114,9 +138,15 @@ def near(value, expected, tol):
     return abs(value - expected) <= tol + 1e-9
 
 
-def geometry_checks(frames):
+def geometry_checks(frames, phase="initial"):
     checks = []
     metrics = {}
+    if phase not in PHASE_GEOMETRY:
+        raise ValueError("unknown phase: " + str(phase))
+    spec = PHASE_GEOMETRY[phase]
+    root_w, root_h = spec["root"]
+    rail_target, rail_tol = spec["rail"]
+    inspector_required = spec["inspector"] == "required"
 
     def add(name, ok, detail, *, blocking=True):
         checks.append({
@@ -131,20 +161,31 @@ def geometry_checks(frames):
         add("root-frame", False, "pawork-root frame missing")
         return checks, metrics
     metrics["root"] = root
+    root_name = "root-" + str(int(root_w)) + "x" + str(int(root_h))
     add(
-        "root-1440x1024",
-        near(root["w"], 1440.0, 0.5) and near(root["h"], 1024.0, 0.5),
-        "root w=" + str(root["w"]) + " h=" + str(root["h"]) + " (contract 1440x1024 +/-0.5)",
+        root_name,
+        near(root["w"], root_w, 0.5) and near(root["h"], root_h, 0.5),
+        "root w=" + str(root["w"]) + " h=" + str(root["h"])
+        + " (contract " + str(int(root_w)) + "x" + str(int(root_h)) + " +/-0.5)",
     )
     rail = frames.get("task-rail")
-    rail_ok = rail is not None and not rail.get("error") and near(rail["w"], 288.0, 4.32)
+    rail_ok = rail is not None and not rail.get("error") and near(rail["w"], rail_target, rail_tol)
     add(
         "rail-width",
         rail_ok,
-        "task-rail w=" + (str(rail["w"]) if rail else "missing") + " (contract 288 +/-4.32)",
+        "task-rail w=" + (str(rail["w"]) if rail else "missing")
+        + " (contract " + str(int(rail_target)) + " +/-" + str(rail_tol) + ")",
     )
     insp = frames.get("inspector")
-    if insp and not insp.get("error"):
+    if not inspector_required:
+        add(
+            "inspector-absent",
+            insp is None,
+            "inspector frame absent (phase=" + phase + ")"
+            if insp is None
+            else "inspector frame present w=" + str(insp.get("w")) + " (phase=" + phase + ")",
+        )
+    elif insp and not insp.get("error"):
         metrics["inspector"] = insp
         rel_x = insp["x"] - root["x"]
         add(
@@ -198,9 +239,20 @@ def geometry_checks(frames):
     else:
         add("composer-height", False, "composer frame missing")
     workspace = frames.get("workspace")
-    if workspace and rail and insp and not any(
-        v.get("error") for v in (workspace, rail, insp)
-    ):
+    inspector_span_ok = (
+        inspector_required
+        and insp is not None
+        and workspace is not None
+        and rail is not None
+        and not any(v.get("error") for v in (workspace, rail, insp))
+    )
+    rail_span_ok = (
+        not inspector_required
+        and workspace is not None
+        and rail is not None
+        and not any(v.get("error") for v in (workspace, rail))
+    )
+    if inspector_span_ok:
         span = workspace["x"] + workspace["w"] - root["x"]
         add(
             "workspace-span",
@@ -210,29 +262,33 @@ def geometry_checks(frames):
             + ".." + str(round(span, 2))
             + " expected " + str(rail["w"]) + ".." + str(root["w"] - insp["w"]),
         )
+    elif rail_span_ok:
+        span = workspace["x"] + workspace["w"] - root["x"]
+        add(
+            "workspace-span",
+            near(workspace["x"] - root["x"], rail["w"], 1.0)
+            and near(span, root["w"], 1.0),
+            "workspace x=" + str(round(workspace["x"] - root["x"], 2))
+            + ".." + str(round(span, 2))
+            + " expected " + str(rail["w"]) + ".." + str(root["w"])
+            + " (inspector column absent)",
+        )
     return checks, metrics
 
 
-def skeleton_checks(tree):
-    required = [
-        "task-rail",
-        "session-list",
-        SESSION_ROW,
-        "workspace",
-        "timeline",
-        "composer",
-        "composer-input",
-        "inspector",
-        "inspector-tabs",
-        "status-bar",
-    ]
+def skeleton_checks(tree, phase="initial"):
+    if phase not in PHASE_GEOMETRY:
+        raise ValueError("unknown phase: " + str(phase))
+    required = list(SKELETON_BASE)
+    if PHASE_GEOMETRY[phase]["inspector"] == "required":
+        required += ["inspector", "inspector-tabs"]
     missing = [name for name in required if name not in tree["identifiers"]]
-    return [
+    checks = [
         {
-            "name": "three-column-skeleton",
+            "name": "shell-skeleton",
             "pass": not missing,
             "detail": ("missing: " + ",".join(missing)) if missing
-                else "rail/workspace/inspector/composer/statusbar present",
+                else "shell skeleton present (phase=" + phase + ")",
         },
         {
             "name": "no-unknown-role",
@@ -240,14 +296,64 @@ def skeleton_checks(tree):
             "detail": "role=? count=" + str(tree["role_unknown"]),
         },
     ]
+    identifiers = tree["identifiers"]
+    if phase == "empty":
+        checks.append({
+            "name": "workspace-empty-hint-present",
+            "pass": "workspace-empty-hint" in identifiers,
+            "detail": "workspace-empty-hint "
+                + ("present" if "workspace-empty-hint" in identifiers else "missing"),
+        })
+        # 空态相位 = Connected 无会话：Reconnect 不得发布（AX/视觉同源谓词，
+        # 防 app.rs 镜像漂移回 !connected 旧条件）。
+        checks.append({
+            "name": "reconnect-absent",
+            "pass": "reconnect" not in identifiers,
+            "detail": "reconnect "
+                + ("stray present" if "reconnect" in identifiers else "absent"),
+        })
+    if phase in ("collapsed", "resumed"):
+        # 已选中会话相位：空态引导必须消失（防谓词回归成恒真）。
+        checks.append({
+            "name": "workspace-empty-hint-absent",
+            "pass": "workspace-empty-hint" not in identifiers,
+            "detail": "workspace-empty-hint "
+                + ("stray present" if "workspace-empty-hint" in identifiers else "absent"),
+        })
+    if phase in ("narrow", "collapsed"):
+        stray = [
+            name for name in ("inspector", "inspector-tabs")
+            if name in identifiers
+        ]
+        checks.append({
+            "name": "inspector-column-absent",
+            "pass": not stray,
+            "detail": ("stray inspector ids: " + ",".join(stray)) if stray
+                else "inspector/inspector-tabs absent from AX tree",
+        })
+        # 折叠态触发器是 F-12 迁移前的临时主路径，两个折叠相位都必须在场。
+        checks.append({
+            "name": "inspector-toggle-present",
+            "pass": "inspector-toggle" in identifiers,
+            "detail": "inspector-toggle "
+                + ("present" if "inspector-toggle" in identifiers else "missing"),
+        })
+    if phase == "collapsed":
+        checks.append({
+            "name": "activity-popover-present",
+            "pass": "activity-popover" in identifiers,
+            "detail": "activity-popover "
+                + ("present" if "activity-popover" in identifiers else "missing"),
+        })
+    return checks
 
 
 def cmd_assert(args):
     frames = parse_frames(args.frames)
     tree = parse_tree(args.tree)
-    checks, metrics = geometry_checks(frames)
-    checks.extend(skeleton_checks(tree))
-    if args.phase == "initial":
+    checks, metrics = geometry_checks(frames, args.phase)
+    checks.extend(skeleton_checks(tree, args.phase))
+    if args.phase in ("initial", "empty"):
         focused = tree["focused"]
         allowed_focus = {"pawork-root", "composer-input"}
         ok = len(focused) <= 1 and all(node in allowed_focus for node in focused)
@@ -257,28 +363,38 @@ def cmd_assert(args):
             "detail": "initial focus=" + (",".join(focused) if focused else "none")
                 + " (allowed: none, pawork-root, or composer-input; exactly one at most)",
         })
-        checks.append({
-            "name": "initial-selected-observed",
-            "pass": True,
-            "detail": "startup selected rows=" + (",".join(tree["selected_rows"]) or "none")
-                + " (observation only)",
-        })
+        if args.phase == "initial":
+            checks.append({
+                "name": "initial-selected-observed",
+                "pass": True,
+                "detail": "startup selected rows=" + (",".join(tree["selected_rows"]) or "none")
+                    + " (observation only)",
+            })
+        else:
+            checks.append({
+                "name": "timeline-empty",
+                "pass": tree["timeline_entries_alpha_today"] == 0,
+                "detail": TIMELINE_PREFIX + "-* count="
+                + str(tree["timeline_entries_alpha_today"]) + " (empty state)",
+            })
     else:
-        checks.append({
-            "name": "session-selected",
-            "pass": SESSION_ROW in tree["selected_rows"],
-            "detail": "selected=1 rows: " + (",".join(tree["selected_rows"]) or "none"),
-        })
-        checks.append({
-            "name": "timeline-loaded",
-            "pass": tree["timeline_entries_alpha_today"] >= 1,
-            "detail": TIMELINE_PREFIX + "-* count=" + str(tree["timeline_entries_alpha_today"]),
-        })
-        checks.append({
-            "name": "focus-composer-after-select",
-            "pass": tree["focused"] == ["composer-input"],
-            "detail": "focus after select=" + (",".join(tree["focused"]) or "none"),
-        })
+        if args.phase != "narrow" and args.phase != "restored":
+            checks.append({
+                "name": "session-selected",
+                "pass": SESSION_ROW in tree["selected_rows"],
+                "detail": "selected=1 rows: " + (",".join(tree["selected_rows"]) or "none"),
+            })
+            checks.append({
+                "name": "timeline-loaded",
+                "pass": tree["timeline_entries_alpha_today"] >= 1,
+                "detail": TIMELINE_PREFIX + "-* count=" + str(tree["timeline_entries_alpha_today"]),
+            })
+        if args.phase == "final":
+            checks.append({
+                "name": "focus-composer-after-select",
+                "pass": tree["focused"] == ["composer-input"],
+                "detail": "focus after select=" + (",".join(tree["focused"]) or "none"),
+            })
     payload = {
         "phase": args.phase,
         "generated_at": now_iso(),
@@ -299,6 +415,47 @@ def cmd_assert(args):
             prefix = "OBSERVED-FAIL "
         print(prefix + check["name"] + " - " + check["detail"])
     return 0 if payload["pass"] else 5
+
+
+def cmd_shell_manifest(args):
+    out_dir = Path(args.dir)
+    phases = {}
+    for path in sorted(out_dir.glob("assert-*.json")):
+        name = path.stem[len("assert-"):]
+        try:
+            payload = json.loads(path.read_text("utf-8"))
+            phases[name] = {
+                "pass": bool(payload.get("pass")),
+                "checks": [
+                    {"name": check["name"], "pass": bool(check["pass"])}
+                    for check in payload.get("checks", [])
+                ],
+            }
+        except ValueError:
+            phases[name] = {"pass": False, "error": "invalid json"}
+    evidence = sorted(p.name for p in out_dir.iterdir() if p.is_file())
+    git_head = None
+    try:
+        git_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=args.repo,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError:
+        pass
+    structural_pass = bool(phases) and all(entry["pass"] for entry in phases.values())
+    manifest = {
+        "scenario": args.scenario,
+        "label": args.label,
+        "generated_at": now_iso(),
+        "git_head": git_head,
+        "phases": phases,
+        "structural_pass": structural_pass,
+        "evidence_files": evidence,
+    }
+    (out_dir / "run-manifest.json").write_text(json.dumps(manifest, indent=2) + NL, "utf-8")
+    print("shell manifest written; phases=" + ",".join(phases)
+        + "; structural_pass=" + str(structural_pass))
+    return 0
 
 def cmd_normalize(args):
     wid = Path(args.wid).read_text("utf-8").strip()
@@ -325,6 +482,15 @@ def cmd_normalize(args):
     root = frames.get("pawork-root")
     if root is None or root.get("error"):
         print("pawork-root frame missing", file=sys.stderr)
+        return 3
+    # normalize 的合同是 1440×1024 视觉门禁：窄窗（如 1080 相位）截图
+    # 送进本命令会被静默放大且 final_size 标注失真，显式拒绝（P3 防误用）。
+    if not near(root["w"], 1440.0, 0.5) or not near(root["h"], 1024.0, 0.5):
+        print(
+            "normalize requires 1440x1024 root frame; got w=" + str(root["w"])
+            + " h=" + str(root["h"]),
+            file=sys.stderr,
+        )
         return 3
     image = Image.open(Path(args.shot))
     source_mode = image.mode
@@ -676,9 +842,19 @@ def main():
     asrt = sub.add_parser("assert")
     asrt.add_argument("--frames", required=True)
     asrt.add_argument("--tree", required=True)
-    asrt.add_argument("--phase", choices=["initial", "final"], required=True)
+    asrt.add_argument(
+        "--phase",
+        choices=["initial", "empty", "final", "restored", "resumed", "narrow", "collapsed"],
+        required=True,
+    )
     asrt.add_argument("--out", required=True)
     asrt.set_defaults(func=cmd_assert)
+    shell_man = sub.add_parser("shell-manifest")
+    shell_man.add_argument("--dir", required=True)
+    shell_man.add_argument("--repo", required=True)
+    shell_man.add_argument("--scenario", required=True)
+    shell_man.add_argument("--label", required=True)
+    shell_man.set_defaults(func=cmd_shell_manifest)
     norm = sub.add_parser("normalize")
     norm.add_argument("--shot", required=True)
     norm.add_argument("--tree", required=True)

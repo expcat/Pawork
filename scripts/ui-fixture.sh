@@ -45,6 +45,7 @@ usage() {
   seed --root <dir> [--now-ms <i64>]   生成/重建 fixture（幂等，example 冻结 CLI）
   serve --root <dir>                   后台启动 fixture host，等待 host_ready
   desktop --root <dir>                 后台启动 Desktop，连接 root 内 socket
+  desktop-restart --root <dir>         只停/起 desktop（host/数据/barrier 保留）
   drop-socket --root <dir>             请求 host drop 连接并等 drop_socket.done
   restart-host --root <dir>            停旧起新 host，host_ready 后写 host_restarted
   self-check --root <dir>              内置 client 验证 Resume Replay
@@ -57,6 +58,7 @@ usage() {
   scripts/ui-fixture.sh seed --root "$ROOT"
   scripts/ui-fixture.sh serve --root "$ROOT"
   scripts/ui-fixture.sh desktop --root "$ROOT"
+  scripts/ui-fixture.sh desktop-restart --root "$ROOT"
   scripts/ui-fixture.sh self-check --root "$ROOT"
   scripts/ui-fixture.sh down --root "$ROOT"
   scripts/ui-fixture.sh clean --root "$ROOT"
@@ -287,6 +289,16 @@ cmd_desktop() {
   info "desktop 已启动（pid $(cat "$ROOT/desktop.pid")；连接 ${socket}）"
 }
 
+cmd_desktop_restart() {
+  require_ready_marker
+  require_socket_path
+  stop_desktop
+  cmd_desktop
+  write_barrier "$ROOT/barriers/desktop_restarted" \
+    "desktop-restart 完成：旧 desktop 停止后新 desktop 启动（host/数据/barrier 保留）"
+  info "desktop restarted（pid $(cat "$ROOT/desktop.pid")；host 与数据目录未动）"
+}
+
 cmd_drop_socket() {
   require_ready_marker
   seeded_root_dirs
@@ -437,6 +449,7 @@ main() {
     seed)          require_root; require_socket_path; cmd_seed "$@" ;;
     serve)         require_root; require_socket_path; cmd_serve ;;
     desktop)       require_root; require_socket_path; cmd_desktop ;;
+    desktop-restart) require_root; require_socket_path; cmd_desktop_restart ;;
     drop-socket)   require_root; require_socket_path; cmd_drop_socket ;;
     restart-host)  require_root; require_socket_path; cmd_restart_host ;;
     self-check)    require_root; require_socket_path; cmd_self_check ;;

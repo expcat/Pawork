@@ -11,8 +11,10 @@ use gpui::{div, list, prelude::*, Context, ListOffset, ListState, Pixels, WeakEn
 use crate::projection::ConnectionState;
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::components::follow_scroll::BackToBottom;
+use crate::ui::components::label::Label;
+use crate::ui::theme::{dark, font};
 
-use super::{AppView, MenuKind};
+use super::{AppView, MenuKind, WORKSPACE_EMPTY_HINT};
 
 /// list() 视口外上下方向的预渲染量（px，非视觉尺寸；仅影响滚动顺滑度）。
 pub(super) const TIMELINE_OVERDRAW: f32 = 200.0;
@@ -63,6 +65,7 @@ fn sync_list(view: &mut AppView) {
 impl AppView {
     pub(super) fn timeline_area(&mut self, cx: &mut Context<Self>) -> gpui::Div {
         sync_list(self);
+        let empty_hint_visible = self.projection.workspace_empty_hint_visible();
         let fork_available = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -110,6 +113,23 @@ impl AppView {
         .flex_1()
         .px_3()
         .py_2();
+        // 空态引导（gui-design 空态原则）：无 active session 且条目数为 0 时
+        // 居中一句 tertiary 提示；Disconnected 保留旧条目时不进入本分支。
+        let content = if empty_hint_visible {
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    Label::new(WORKSPACE_EMPTY_HINT)
+                        .size(font::BASE)
+                        .color(dark().text.tertiary),
+                )
+                .into_any_element()
+        } else {
+            entries.into_any_element()
+        };
         // 脱钩时右下浮出回底控件（§8.3）；跟随态隐藏。
         let following = self.timeline_following;
         div()
@@ -117,7 +137,7 @@ impl AppView {
             .flex()
             .flex_col()
             .flex_1()
-            .child(entries)
+            .child(content)
             .when(!following, |area| {
                 area.child(BackToBottom::new(
                     Button::new("timeline-back-to-bottom")

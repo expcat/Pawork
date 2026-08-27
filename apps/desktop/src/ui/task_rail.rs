@@ -38,10 +38,6 @@ fn relative_activity(updated_at_ms: u64, now_ms: u64) -> String {
 impl AppView {
     /// rail 宽由 shell_layout::resolve 按窗口带宽给出（288 / 窄窗 240）。
     pub(super) fn sidebar_element(&self, rail_width: Pixels, cx: &mut Context<Self>) -> Panel {
-        let connected = matches!(
-            self.projection.connection,
-            ConnectionState::Connected { .. }
-        );
         let can_create = self.can_create_task();
         let grouping_glyph = match self.grouping {
             TaskRailGrouping::Timeline => "◷",
@@ -146,7 +142,9 @@ impl AppView {
                     .child(Badge::new(connection_label))
                     .child(add_task),
             );
-        if !connected {
+        // F-02 壳层校准：Reconnect 仅在 Disconnected / ConnectFailed 出现；
+        // Connecting 属进行中，不给重复入口。
+        if self.projection.show_reconnect() {
             sidebar = sidebar.child(
                 Button::new("reconnect")
                     .variant(ButtonVariant::Primary)

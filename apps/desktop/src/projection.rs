@@ -627,6 +627,7 @@ impl DesktopProjection {
     }
 
     /// RunStatusBar：缺权威来源的字段显示 `—`，不伪造 token / quota / tok/s。
+    /// F-13 定稿语序与竖线分隔：Task tokens | quota | tok/s | Run 时长。
     /// `now_ms` 由 UI 注入，投影层不读系统时钟。
     pub fn run_status_label(&self, now_ms: u64) -> String {
         let duration = match (self.active_run_id.as_ref(), self.active_run_started_at_ms) {
@@ -634,7 +635,24 @@ impl DesktopProjection {
             (Some(_), None) => "—".into(),
             (None, _) => "idle".into(),
         };
-        format!("tokens —  ·  quota —  ·  — tok/s  ·  {duration}")
+        format!("Task — tokens | Quota unavailable | — tok/s | Run {duration}")
+    }
+
+    /// Reconnect 相位（F-02 壳层校准）：仅 Disconnected / ConnectFailed 提供
+    /// 手动重连；Connecting 属进行中、Connected 无需重连，均不显示按钮。
+    pub fn show_reconnect(&self) -> bool {
+        matches!(
+            self.connection,
+            ConnectionState::Disconnected { .. } | ConnectionState::Failed { .. }
+        )
+    }
+
+    /// Timeline 空态引导可见条件：无 active session 且无任何条目（含审批卡）。
+    /// Disconnected 保留旧条目时条目数非零，不显示引导（gui-design 空态原则）。
+    pub fn workspace_empty_hint_visible(&self) -> bool {
+        self.active_session_id.is_none()
+            && self.timeline.is_empty()
+            && self.pending_approval.is_none()
     }
 
     fn selected_context_window(&self) -> Option<u64> {
@@ -1174,8 +1192,67 @@ mod tests {
         );
         assert_eq!(
             projection.run_status_label(1_700_000_045_000),
-            "tokens —  ·  quota —  ·  — tok/s  ·  00:45"
+            "Task — tokens | Quota unavailable | — tok/s | Run 00:45"
         );
+    }
+
+    #[test]
+    fn run_status_label_uses_final_order_and_vertical_separators() {
+        let mut projection = DesktopProjection::default();
+        assert_eq!(
+            projection.run_status_label(0),
+            "Task — tokens | Quota unavailable | — tok/s | Run idle"
+        );
+        // active run 缺权威起始时间：时长诚实显示 —，不编造 mm:ss。
+        projection.active_run_id = Some("r-unknown-start".into());
+        assert_eq!(
+            projection.run_status_label(0),
+            "Task — tokens | Quota unavailable | — tok/s | Run —"
+        );
+    }
+
+    #[test]
+    fn reconnect_shows_only_for_disconnected_or_failed() {
+        let mut projection = DesktopProjection::default();
+        projection.connection = ConnectionState::Connecting;
+        assert!(!projection.show_reconnect());
+        projection.connection = ConnectionState::Connected {
+            instance_id: "i-1".into(),
+        };
+        assert!(!projection.show_reconnect());
+        projection.connection = ConnectionState::Disconnected {
+            reason: "heartbeat timeout".into(),
+        };
+        assert!(projection.show_reconnect());
+        projection.connection = ConnectionState::Failed {
+            reason: "no token".into(),
+        };
+        assert!(projection.show_reconnect());
+    }
+
+    #[test]
+    fn workspace_empty_hint_requires_no_session_and_no_entries() {
+        let mut projection = DesktopProjection::default();
+        assert!(projection.workspace_empty_hint_visible());
+        // 有 active session（即使条目尚未加载）不显示引导。
+        projection.active_session_id = Some("s-1".into());
+        assert!(!projection.workspace_empty_hint_visible());
+        // Disconnected 保留旧条目时不显示引导。
+        projection.active_session_id = None;
+        projection.connection = ConnectionState::Disconnected {
+            reason: "connection lost".into(),
+        };
+        projection.timeline.entries.push(TimelineEntry {
+            sequence: 1,
+            event_id: "e-1".into(),
+            kind: TimelineEntryKind::UserMessage {
+                text: "kept entries".into(),
+            },
+            fork_boundary: None,
+            timestamp: "2026-08-27T00:00:00Z".into(),
+            run_id: None,
+        });
+        assert!(!projection.workspace_empty_hint_visible());
     }
 
     #[test]

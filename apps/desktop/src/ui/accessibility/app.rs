@@ -10,9 +10,10 @@ use crate::projection::{
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
 use crate::ui::changes::ChangesTab;
 use crate::ui::inspector::InspectorTab;
+use crate::ui::inspector::TERMINAL_EMPTY_OUTPUT;
 use crate::ui::shell_layout;
 use crate::ui::theme::metrics;
-use crate::ui::{AppView, MenuKind};
+use crate::ui::{AppView, MenuKind, WORKSPACE_EMPTY_HINT};
 
 const PAD: f32 = 8.0;
 const CONTROL_HEIGHT: f32 = 28.0;
@@ -294,10 +295,6 @@ impl AppView {
     }
 
     fn sidebar_ax(&self, window: &Window, frame: AxRect) -> AxNode {
-        let connected = matches!(
-            self.projection.connection,
-            ConnectionState::Connected { .. }
-        );
         let can_create = self.can_create_task();
         // 与可见 TaskRail 对齐：Panel p_2 上边距 8px + 36px traffic-light
         // 安全区后再进入 grouping 行（F-01）。AX 不得把首控件投影到按钮带。
@@ -361,7 +358,9 @@ impl AppView {
             .child(scope)
             .child(connection)
             .child(add_task);
-        if !connected {
+        // 与可见路径同源：Reconnect 仅 Disconnected / ConnectFailed 发布
+        // （projection.show_reconnect()，同 task_rail.rs 视觉谓词）。
+        if self.projection.show_reconnect() {
             sidebar = sidebar.child(
                 AxNode::new(
                     "reconnect",
@@ -538,15 +537,17 @@ impl AppView {
     ) -> (Vec<AxNode>, f32) {
         let key = project_key(project.workspace_id.as_deref());
         let expanded = !self.collapsed_projects.contains(&key);
-        let mut nodes = vec![AxNode::new(
-            rail_project_identifier(bucket, &key),
-            AxRole::Button,
-            project.name.clone(),
-            AxRect::new(PAD, top, width, ROW_HEIGHT),
-        )
-        .value(format!("{} tasks", project.task_count()))
-        .description(if expanded { "Expanded" } else { "Collapsed" })
-        .action(AxAction::Press)];
+        let mut nodes = vec![
+            AxNode::new(
+                rail_project_identifier(bucket, &key),
+                AxRole::Button,
+                project.name.clone(),
+                AxRect::new(PAD, top, width, ROW_HEIGHT),
+            )
+            .value(format!("{} tasks", project.task_count()))
+            .description(if expanded { "Expanded" } else { "Collapsed" })
+            .action(AxAction::Press),
+        ];
         if !project.is_unassigned() && project.workspace_id.is_some() {
             nodes.push(
                 AxNode::new(
@@ -620,6 +621,7 @@ impl AppView {
 
     fn timeline_ax(&self, frame: AxRect) -> AxNode {
         let total = self.projection.timeline.len();
+        let empty_hint_visible = self.projection.workspace_empty_hint_visible();
         let capacity = ((frame.height / TIMELINE_ROW_HEIGHT).ceil() as usize).max(1);
         let start = if self.timeline_following {
             total.saturating_sub(capacity)
@@ -628,6 +630,17 @@ impl AppView {
         };
         let end = (start + capacity).min(total);
         let mut list = AxNode::new("timeline", AxRole::List, "Timeline", frame);
+        if empty_hint_visible {
+            // 空态引导只读节点：与 timeline_area 可见条件同源（projection
+            // 谓词），无 action；垂直居中，宽度占满 timeline 区。
+            let hint_y = frame.y + ((frame.height - ROW_HEIGHT) / 2.0).max(0.0);
+            list = list.child(AxNode::new(
+                "workspace-empty-hint",
+                AxRole::StaticText,
+                WORKSPACE_EMPTY_HINT,
+                AxRect::new(frame.x, hint_y, frame.width, ROW_HEIGHT),
+            ));
+        }
         for (visible_ix, entry) in self.projection.timeline[start..end].iter().enumerate() {
             let row = AxRect::new(
                 frame.x + PAD,
@@ -947,7 +960,8 @@ impl AppView {
         let button_width = 72.0;
         let focus = self.terminal_input.read(cx).focus_handle(cx);
         let output = if self.projection.terminal.output.is_empty() {
-            "Terminal output unavailable".to_string()
+            // 与可见 Terminal 页占位同源（TERMINAL_EMPTY_OUTPUT）。
+            TERMINAL_EMPTY_OUTPUT.to_string()
         } else {
             tail_chars(&self.projection.terminal.output, 8_192)
         };
@@ -1154,12 +1168,16 @@ impl AppView {
 
     fn status_ax(&self, frame: AxRect, inspector_open: bool) -> AxNode {
         let now = super::super::now_unix_ms();
+        // F-13：run-status 信息串在状态行内居中（与 render 同源）；宽度按
+        // 定稿文案留 320px，行宽不足时收缩到整行。
+        let run_status_width = 320.0_f32.min(frame.width);
+        let run_status_x = frame.x + ((frame.width - run_status_width) / 2.0).max(0.0);
         let mut status = AxNode::new("status-bar", AxRole::Group, "Status", frame).child(
             AxNode::new(
                 "run-status",
                 AxRole::StaticText,
                 "Run status",
-                AxRect::new(frame.x + PAD, frame.y, frame.width - 160.0, frame.height),
+                AxRect::new(run_status_x, frame.y, run_status_width, frame.height),
             )
             .value(self.projection.run_status_label(now)),
         );

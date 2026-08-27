@@ -17,29 +17,29 @@
 
 ## 2. 模块与文件地图
 
-29 个 `.rs` 文件、约 13.0k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
+29 个 `.rs` 文件、约 13.1k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
-| `src/main.rs` | ~650 | 入口与手动 argv 解析（非 clap）；`PAWORK_UI_BARRIER_DIR` env 读取（空值视同未设置，None 全程零开销）；`run_app`（1440×1024 居中窗口 + 沉浸式 titlebar——TitlebarOptions appears_transparent，traffic lights 悬浮深色壳、内容视口贯通全窗，R2 Wave A；`install_keybindings`、聚焦 Composer、安装 macOS AX bridge）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器 |
+| `src/main.rs` | ~670 | 入口与手动 argv 解析（非 clap）；`PAWORK_UI_BARRIER_DIR` env 读取（空值视同未设置，None 全程零开销）；`run_app`（1440×1024 居中窗口 + `WINDOW_MIN_SIZE` 1080×720 最小尺寸——R2 Wave B 设计响应式底线，再窄击穿 Workspace ≥560 合同——+ 沉浸式 titlebar：TitlebarOptions appears_transparent，traffic lights 悬浮深色壳、内容视口贯通全窗，R2 Wave A；`install_keybindings`、聚焦 Composer、安装 macOS AX bridge）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器；1 个测试 |
 | `src/controller.rs` | ~1470 | `DesktopController`（connect / 事件泵 / 空闲心跳 / 全部 Command·Query 构造与响应解析）；`ControllerEvent` 枚举；`DiffFileSummary` / `DiffFileDetail` / `DiffHunkDetail` / `DiffLineDetail` / `GitDiffInfo` / `McpServerEntry` 视图模型；11 个测试 |
 | `src/platform.rs` | ~230 | `Platform`（tokio multi_thread Runtime，`handle()` / `block_on()`）；`default_socket_path` / `socket_path_for_instance` / `token_path_for_instance` / `token_path_for_socket` 路径发现；deny-list 断言；4 个测试 |
-| `src/projection.rs` | ~1840 | `DesktopProjection` 渲染适配投影；`ConnectionState` / `ResumeState` / `ResumeApply` / `TerminalState` / `PendingApproval` / `ModelEntry` / `ActiveRun` / `SessionSummary` / `WorkspaceSummary` / TaskRail 分组类型；snapshot 段解析器；15 个测试 |
-| `src/ui/mod.rs` | ~1150 | `AppView` 宿主：连接生命周期、`ControllerEvent` 消费（含分页进行中 / 事件静默跟踪）、`MenuKind` 单开互斥与外点衔接标记、gpui 动作与键位表 `APP_VIEW_KEYBINDINGS`、tab_stop 表 `MAIN_PATH_TAB_STOP_IDS`、三栏整体装配（经 `shell_layout::resolve` 响应式决定 rail 宽与 Inspector 折叠）、StatusBar 与 AX 同步；1s tick（run 时钟重绘 + barrier settle 发射）；3 个测试 |
+| `src/projection.rs` | ~1910 | `DesktopProjection` 渲染适配投影；`ConnectionState` / `ResumeState` / `ResumeApply` / `TerminalState` / `PendingApproval` / `ModelEntry` / `ActiveRun` / `SessionSummary` / `WorkspaceSummary` / TaskRail 分组类型；snapshot 段解析器；F-13 定稿 `run_status_label`（Task tokens | quota | tok/s | Run 竖线分隔）与 `show_reconnect` / `workspace_empty_hint_visible` 可见性谓词（render 与 AX 共源）；18 个测试 |
+| `src/ui/mod.rs` | ~1160 | `AppView` 宿主：连接生命周期、`ControllerEvent` 消费（含分页进行中 / 事件静默跟踪）、`MenuKind` 单开互斥与外点衔接标记、gpui 动作与键位表 `APP_VIEW_KEYBINDINGS`、tab_stop 表 `MAIN_PATH_TAB_STOP_IDS`、空态引导文案 `WORKSPACE_EMPTY_HINT`（视觉与 AX 共源）、三栏整体装配（经 `shell_layout::resolve` 响应式决定 rail 宽与 Inspector 折叠）、StatusBar（F-13 信息串居中 + 右侧 Inspector 触发器）与 AX 同步；1s tick（run 时钟重绘 + barrier settle 发射）；3 个测试 |
 | `src/ui/shell_layout.rs` | ~240 | R2 Wave A 壳层几何合同：`resolve`（唯一计算入口，render 与 AX 树共享）——宽窗 rail=288 / Inspector 440，窗口宽 ≤1279 时 rail=240 且 Inspector 强制折叠为抽屉（Workspace ≥560 底线）；rail 顶部 36px traffic-light 安全区占位；4 个测试（阈值切换 / 1440 合同 / 1080 折叠 / resize 恢复） |
 | `src/ui/accessibility.rs` | ~410 | 平台无关 `AxTree` / `AxNode` / role / action / request / rect 模型，identifier 唯一性、层级、focus / hit-test 约束；非 macOS no-op facade；3 个测试 |
-| `src/ui/accessibility/app.rs` | ~1330 | 从 `AppView` canonical UI 状态与布局 metric 构建三栏语义树；壳层几何与 render 共享 `shell_layout::resolve`（含 36px traffic-light 安全区与窄窗 Inspector 折叠）；TaskRail 镜像 grouping/collapse（日期组 → 项目头/新建 → 会话行，折叠只投影头部）；稳定动态 identifier（Timeline 桶限定防重）；Inspector 折叠态走 ActivityPopover 链路；AX Send 复用 IME composing 闸门；把 press / focus / set-value 白名单映射回既有 AppView handler 与 enable gate；3 个测试 |
+| `src/ui/accessibility/app.rs` | ~1350 | 从 `AppView` canonical UI 状态与布局 metric 构建三栏语义树；壳层几何与 render 共享 `shell_layout::resolve`（含 36px traffic-light 安全区与窄窗 Inspector 折叠）；空态引导只读节点 `workspace-empty-hint`（与 timeline_area 可见条件同源，无 action）；run-status AX frame 随 F-13 居中；TaskRail 镜像 grouping/collapse（日期组 → 项目头/新建 → 会话行，折叠只投影头部）；稳定动态 identifier（Timeline 桶限定防重）；Inspector 折叠态走 ActivityPopover 链路；AX Send 复用 IME composing 闸门；把 press / focus / set-value 白名单映射回既有 AppView handler 与 enable gate；3 个测试 |
 | `src/ui/accessibility/macos.rs` | ~940 | ADR-042 AppKit bridge：`GPUIView` AX root、`NSAccessibilityElement` 虚拟元素、frame / parent / hit-test / focus / notification / retain-release、settable/action 双门与 action 回调；结构不变（identifier/role/press 能力/子树形状）时原位刷新既有 element 而非整树重建，内部树同步 super 直调不触发 action 回调；6 个 macOS 测试 |
 | `src/ui/barriers.rs` | ~175 | UI fixture barrier 发射器（R1 Wave B）：`BarrierSink` 读 `PAWORK_UI_BARRIER_DIR`（None 零开销直通）；`timeline_stable`（settle_seq 单调自增 / session_id / entry_count）重写与 `approval_visible` 写/删；tmp+rename 原子替换、IO 失败静默；1 个测试 |
 | `src/ui/theme.rs` | ~320 | 深色单主题 token：六组 29 色（bg 3 / surface 3 / border 2 / text 9 / accent 3 / semantic 9）+ 字阶 `font`（XS=11 / SM=12 / BASE=13 / MONO="Menlo"）+ `metrics` 19 个尺寸常量；静态 `dark()` 访问器；`impl Global` 仅为未来主题挂载点。R2 Wave A 按 design/README.md §2.1 重定色板（含 text.assistant→emphasis、text.tool→secondary 收敛、placeholder 不透明 #7f7f7f、新增 semantic.success_fg #74c94c）；4 个定向测试 |
-| `src/ui/timeline.rs` | ~140 | Timeline 容器：gpui `list()` 变高虚拟化 + `ListAlignment::Bottom` 钉底；`install_scroll_follow`（脱钩检测）；`sync_list`（统一 reset、脱钩偏移恢复、Entry 菜单 close-on-reset）；`TIMELINE_OVERDRAW`=200px；回底控件接线 |
+| `src/ui/timeline.rs` | ~165 | Timeline 容器：gpui `list()` 变高虚拟化 + `ListAlignment::Bottom` 钉底；空态引导（无 active session 且条目数为 0 时居中 tertiary 一句，R2 Wave B）；`install_scroll_follow`（脱钩检测）；`sync_list`（统一 reset、脱钩偏移恢复、Entry 菜单 close-on-reset）；`TIMELINE_OVERDRAW`=200px；回底控件接线 |
 | `src/ui/timeline_entry.rs` | ~140 | `timeline_entry_element`：五类条目渲染 + 条目「···」fork 菜单（MenuPanel/MenuRow）；`on_fork` 入口级复核 |
 | `src/ui/approval_card.rs` | ~110 | 审批卡：警示卡 + Allow once / Allow for run / Deny 三按钮；app 级 focus handle（虚拟化卸载不丢失）；禁用原因 tooltip |
 | `src/ui/input_area.rs` | ~310 | Composer：model 菜单、ContextMeter、workspace 标签、WorkspaceConfirm 浮层（无触发器、锚 label 行下方）、输入行 + Cancel / Send、状态提示行与全部禁用原因文案 |
-| `src/ui/inspector.rs` | ~260 | Inspector 面板：顶层 Changes / Terminal / Resources 三页签（`InspectorTab`，默认 Terminal）；Terminal 页（cwd / size 行、FollowScroll 输出区 + 回底、终端输入 + Start/Size）；`ensure_terminal` 懒创建；1 个测试 |
+| `src/ui/inspector.rs` | ~265 | Inspector 面板：顶层 Changes / Terminal / Resources 三页签（`InspectorTab`，默认 Terminal）；Terminal 页（cwd / size 行、FollowScroll 输出区 + 回底、终端输入 + Start/Size）；无输出占位文案 `TERMINAL_EMPTY_OUTPUT`（视觉与 AX 共源，R2 Wave B）；`ensure_terminal` 懒创建；1 个测试 |
 | `src/ui/changes.rs` | ~705 | Changes 面：Files / Summary 二级页签、`ChangesPanelState`（双 epoch 防过期）、文件清单、DiffView（hunk 着色 + 横滚）、session_mismatch banner、ActivityPopover；6 个测试 |
 | `src/ui/resources.rs` | ~210 | Resources 页：MCP server 只读表 + `ResourcesPanelState`（epoch 防过期）+ 手动刷新；1 个测试 |
-| `src/ui/task_rail.rs` | ~460 | Sessions 侧栏：grouping / scope 菜单、日期桶与项目块折叠、任务行（运行点 ● + 相对时间 + `.truncate()`）、Reconnect 按钮、连接状态徽标、「Local」页脚 |
+| `src/ui/task_rail.rs` | ~480 | Sessions 侧栏：grouping / scope 菜单、日期桶与项目块折叠、任务行（运行点 ● + 相对时间 + `.truncate()`）、Reconnect 按钮（仅 Disconnected / ConnectFailed，Connecting 不显示，R2 Wave B）、连接状态徽标、「Local」页脚 |
 | `src/ui/text_input.rs` | ~730 | `TextInput`（Composer / 终端共用）：内容 / 占位符 / IME `marked_range` 下划线 / UTF-16↔UTF-8 映射（`EntityInputHandler`）/ 多行高度钳制 / 光标与选区绘制 / 点击聚焦；AX set-value 使用同一 `set_text` 入口并清 marked range；2 个测试 |
 | `src/ui/u1_probe.rs` | ~300 | R1 Wave C U1 spike（`#[cfg(test)]`）：真实 `TextInput`/`Button`/overflow 滚动容器上的 TestAppContext 进程内驱动探针（action/focus/key/mouse/scroll/resize/clipboard/确定性 executor/debug_bounds）；10 个测试 |
 | `src/ui/components/mod.rs` | ~10 | 组件族模块声明 |
@@ -49,7 +49,7 @@
 | `src/ui/components/label.rs` | ~70 | `Label`（单行文本，token 化字号 / 颜色）与 `Badge`（状态徽标别名，默认 XS + text.secondary） |
 | `src/ui/components/list_row.rs` | ~100 | `ListRow`：Task 行（选中态底色）与 ProjectHeader 行两形态；`min_w_0` 保证子项 truncate 拿到确定宽度 |
 | `src/ui/components/panel.rs` | ~80 | `Panel`：`side_right`（TaskRail，右描边 + gap/p-2）与 `side_left`（Inspector，左描边）固定宽面板壳 |
-| `src/ui/components/status_bar.rs` | ~50 | `StatusBar`：底部 24px 状态行容器（顶描边 + XS 次要文字） |
+| `src/ui/components/status_bar.rs` | ~80 | `StatusBar`：底部 24px 状态行容器（顶描边 + XS 次要文字）；F-13 布局——信息串 `centered()` 行内绝对居中（不受右侧触发器宽度偏移），流式子元素靠右 |
 
 ## 3. 用户可见界面与交互面
 
@@ -63,17 +63,17 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
 - socket 解析：`--socket` 直接指定；否则按 `--instance` 推导 `<data_dir>/pawork-gui[-{instance}].sock`（`default` 等价无后缀）。
 - `--probe`：不开窗，connect + snapshot + `model_list` 后打印一行 `connected: instance=… sessions=… models=… catalog=…` 退出（成功 0 / 失败 1）。
 - `--probe-smoke`：同一条 controller 路径跑真实冒烟——流式回合、切模型、写文件触发审批、取消 run、两次断线重连（持久化回放 + `disconnect_survive` 断言进行中 run 未被断线取消），打印签名行退出。
-- 正常模式：1440×1024 居中窗口（透明 titlebar，traffic lights 悬浮于壳层，rail 顶部留 36px 安全区），启动即聚焦 Composer。
+- 正常模式：1440×1024 居中窗口、最小 1080×720（透明 titlebar，traffic lights 悬浮于壳层，rail 顶部留 36px 安全区），启动即聚焦 Composer。
 
 ### 3.2 三栏工作台（宽度：侧栏 288 / Inspector 440 / 状态栏高 24；窗口宽 ≤1279 时侧栏 240 且 Inspector 默认折叠为抽屉，Workspace ≥560）
 
 - **TaskRail（左侧栏）**
   - 标题行「Pawork」+ grouping 菜单（Timeline ◷ / Projects ▤）；scope 菜单（All projects / 各 workspace）。
-  - 连接徽标：`Local · Connected[ · {resume 文案}]`、`Connecting…`、`Disconnected · {reason}`、`Connect failed · {reason}`（文字态，不只靠颜色）；断线时出现 Reconnect 主按钮。
+  - 连接徽标：`Local · Connected[ · {resume 文案}]`、`Connecting…`、`Disconnected · {reason}`、`Connect failed · {reason}`（文字态，不只靠颜色）；Reconnect 主按钮仅在 Disconnected / ConnectFailed 相位出现，Connecting 进行中不显示。
   - Timeline 分组 = 日期桶（Today / Yesterday / Previous 7 days / Earlier）→ 项目 → 任务；Projects 分组按 canonical workspace，缺 `workspace_id` 进 Unassigned（无「+」）。
   - 项目头可点折叠（▾/▸ + 任务计数徽标）；项目级「+」按该 workspace 新建任务。
   - 任务行：运行点 ●（该 session 有 active run）、标题单行 `.truncate()`、相对时间（now / Nm / Nh / Nd）；点击打开会话并聚焦 Composer。
-- **Timeline（中栏上）**：虚拟化列表渲染五类条目——`You:` 用户消息、`Assistant:` 助手消息（流式增量合并为一条）、工具调用（`name · status` + 可选输出摘要）、运行状态行、`Error:` 错误行。每条右侧「···」菜单含 Fork（仅 reducer 判定的闭合 run 边界可用；不可用时灰字禁用行）。用户上滚脱钩后右下浮出「↓ 回到底部」。
+- **Timeline（中栏上）**：虚拟化列表渲染五类条目——`You:` 用户消息、`Assistant:` 助手消息（流式增量合并为一条）、工具调用（`name · status` + 可选输出摘要）、运行状态行、`Error:` 错误行。空态（无 active session 且条目数为 0）居中一句 tertiary 引导「Select a task from the rail, or press ⌘N to start a new one.」（AX 同步 `workspace-empty-hint` 只读节点；Disconnected 保留旧条目时不显示）。每条右侧「···」菜单含 Fork（仅 reducer 判定的闭合 run 边界可用；不可用时灰字禁用行）。用户上滚脱钩后右下浮出「↓ 回到底部」。
 - **审批卡**：`pending_approval` 存在时作为 timeline 末项渲染——警示底色卡片（`Approval · {tool}` / reason / 可选 preview detail）+ 三按钮 Allow once（⌘1 / ⌘↩，Primary）、Allow for run（⌘2，Success）、Deny（⌘3，Danger）；断线时禁用且 tooltip 给出原因。
 - **Composer（中栏下）**
   - 上行：model 菜单（`provider / display_name`；run 进行中、目录未加载或断线时禁用并 tooltip 给原因）、ContextMeter（`Context · — / {window}` 或 `Context · unavailable`）、workspace 标签。
@@ -84,7 +84,7 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
   - Changes：Files / Summary 二级页签 + ↻ 手动刷新。Files = 文件清单（路径 · status · `+A/−D`，≤200px 内滚动）+ DiffView（等宽 Menlo；hunk 头 raised 底 secondary 字；addition 行 success_bg 底 / deletion 行 danger_bg 底 / context 行 panel 底；长行 `overflow_x_scroll` 横滚不折行；binary 显示「Binary file — not rendered.」）。Summary = 七字段行（Session / Files / Lines / By status / Branch / Dirty files / Work dir，缺失显 unknown）。数据会话 ≠ 查看会话时顶端 banner 如实标注。
   - Terminal：host 流式 `TerminalOutput` 滚动文本（非 VT100、无本地 PTY）+ cwd 与 `列×行` 尺寸行 + 终端输入（Enter 写入，未启动时先懒创建）+ Start / Size 按钮 + 脱钩回底控件。
   - Resources：MCP server 只读表（name + state 徽标，`failed` 红字；`transport · N tools[ · last_error]` 次行）+ ↻ 刷新。
-- **StatusBar + ActivityPopover**：底部状态行左侧 RunStatusBar 徽标 `tokens —  ·  quota —  ·  — tok/s  ·  {mm:ss|—|idle}`（缺权威来源一律 `—`，不伪造）；右侧 Inspector 触发器——展开态显示「Hide inspector」直接折叠，折叠态点击弹 ActivityPopover（320px：「Changes」标题 + 摘要行 `N file(s) · +A/−D` 或 `unavailable`；点击摘要展开 Inspector 并定位 Changes 页；必要时附 latest 会话提示行）。
+- **StatusBar + ActivityPopover**：底部状态行居中 RunStatusBar 徽标 `Task — tokens | Quota unavailable | — tok/s | Run {mm:ss|—|idle}`（F-13 定稿语序与竖线分隔；缺权威来源一律 `—`，不伪造）；Inspector 触发器保留最右（F-12 迁移 Workspace Header 后再移除）——展开态显示「Hide inspector」直接折叠，折叠态点击弹 ActivityPopover（320px：「Changes」标题 + 摘要行 `N file(s) · +A/−D` 或 `unavailable`；点击摘要展开 Inspector 并定位 Changes 页；必要时附 latest 会话提示行）。
 
 ### 3.3 键盘与焦点
 
@@ -183,7 +183,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **诚实显示**：tokens / quota / tok/s 无权威来源一律 `—`；ContextMeter 只用 catalog 的 `context_window_tokens`；Changes / Resources 未拉取显 unavailable 而非 0；`now_ms` 由 UI 注入，投影层不读系统时钟。
 - **终端约束**：`terminal_create` 的 cwd 只接受 workspace 相对路径（拒绝绝对路径、Windows 盘符前缀、`..` 分量）；终端面为滚动文本，无本地 PTY。
 - **心跳配比**：15 空闲 tick（≈15s）对 host 30s 超时的节拍不可静默改动；断线不取消 Run。
-- **窗口与焦点**：默认 1440×1024；macOS 透明 titlebar（无白带、无重复标题栏，R2 Wave A）；启动聚焦 Composer；点击输入框显式拉回焦点（`track_focus` 自动聚焦不够，否则第二轮键盘 / IME / 粘贴进不来）。
+- **窗口与焦点**：默认 1440×1024、最小 1080×720（`WINDOW_MIN_SIZE`，R2 Wave B 设计响应式底线——再窄击穿 Workspace ≥560 合同）；macOS 透明 titlebar（无白带、无重复标题栏，R2 Wave A）；启动聚焦 Composer；点击输入框显式拉回焦点（`track_focus` 自动聚焦不够，否则第二轮键盘 / IME / 粘贴进不来）。
 - **Accessibility 单一语义源（ADR-042）**：`AppView` 只从自身 canonical UI 状态与布局 metric 构建显式 `AxTree`；壳层三栏几何与 render 共享 `shell_layout::resolve`（窄窗 rail=240 / Inspector 折叠态 AX bounds 不偏离实际布局）；稳定 identifier 与本地化 label 分离，macOS bridge 只做 AppKit 映射。AX press / focus / set-value 必须回到既有 AppView handler 与 enable gate，未知请求 fail-closed；disabled 控件不得发布可执行 action。触发器语义与可见路径一致（Inspector 折叠态先弹 ActivityPopover，摘要行才展开）；IME composing 中 AX Send 与键盘 Enter 同样不生效。新增可见交互须同批补节点、bounds、状态和 action 映射；非 macOS 当前为 no-op，不宣称已有平台 AX 实现。
 
 ## 6. 依赖关系
@@ -203,12 +203,13 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 7. 测试与验证资产
 
-74 个测试全部内嵌于 bin target（`#[cfg(test)]` 模块；无 crate `tests/` 目录），按文件分布：
+78 个测试全部内嵌于 bin target（`#[cfg(test)]` 模块；无 crate `tests/` 目录），按文件分布：
 
 | 文件 | 数量 | 覆盖面 |
 | --- | --- | --- |
+| `main.rs` | 1 | `WINDOW_MIN_SIZE` 钉 1080×720 设计响应式底线（R2 Wave B） |
 | `controller.rs` | 11 | token 缺失 fail-closed；`run_start` / `session_fork` / `terminal_*` / `diff_*` / `mcp_list` wire 形状钉死；cwd workspace 相对校验；last_acked 单调推进；capabilities 含 TerminalStreaming；diff 清单 / hunk 行 / git 信息 / MCP 响应解析（含无会话空响应与路径消失） |
-| `projection.rs` | 15 | snapshot 重建与事件重放；审批卡随 run 终态清理；pending model 被 `model.switched` Diagnostic 确认；沙箱回退 Diagnostic 上时间线；snapshot active_runs 恢复取消目标与时长；ContextMeter / RunStatus 诚实文案；TaskRail 日期→项目分组与 Unassigned；scope 选项与空态；分组切换不改 active session；session_tree 扁平 / 分支双形态；同 session 切支 reset 基线（seen / tombstone / 锚点全清后重放重建）；TerminalOutput 追加与跨会话隔离；live tool 输出回填 running 条目；历史审批事件留痕；UI fixture 期望快照（`fixtures/ui/expected/snapshot.json`，再生步骤见该目录 README）重建 7 会话四桶分组、项目分组、pending 审批卡与 provider 状态 |
+| `projection.rs` | 18 | snapshot 重建与事件重放；审批卡随 run 终态清理；pending model 被 `model.switched` Diagnostic 确认；沙箱回退 Diagnostic 上时间线；snapshot active_runs 恢复取消目标与时长；ContextMeter / RunStatus 诚实文案（F-13 定稿语序 + 竖线分隔，idle / 缺起始时长 / 运行中三态）；Reconnect 相位（仅 Disconnected / ConnectFailed）；空态引导可见条件（无 session + 无条目；Disconnected 保留条目不显示）；TaskRail 日期→项目分组与 Unassigned；scope 选项与空态；分组切换不改 active session；session_tree 扁平 / 分支双形态；同 session 切支 reset 基线（seen / tombstone / 锚点全清后重放重建）；TerminalOutput 追加与跨会话隔离；live tool 输出回填 running 条目；历史审批事件留痕；UI fixture 期望快照（`fixtures/ui/expected/snapshot.json`，再生步骤见该目录 README）重建 7 会话四桶分组、项目分组、pending 审批卡与 provider 状态 |
 | `platform.rs` | 4 | socket / token 默认路径与 instance 命名；socket→token 推导；deny-list 恰为 `{pawork-client}`；扫描器覆盖别名 / target 表（负例含 dev-dependencies 排除） |
 | `ui/mod.rs` | 3 | 键位表含审批与取消；主路径 tab_stop 全集；All projects 新建须确认 workspace |
 | `ui/accessibility.rs` | 3 | identifier 唯一与父子关系校验；focus 单一性；bounds hit-test 与无效树拒绝 |
@@ -230,7 +231,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 ```
 
 - `--bins`：本包是 bin-only（无 lib target），任务指南默认的 `--lib --tests` 匹配不到任何 target。
-- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R8 起的标准口径，历波收口 28/28 → 43/43 → 53/53 → 62/62 → 74/74 绿）。
+- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R8 起的标准口径，历波收口 28/28 → 43/43 → 53/53 → 62/62 → 74/74 → 78/78 绿）。
 
 本包 dev-dependencies 为 `tempfile`（workspace `3`，仅服务 `ui/barriers.rs` 的临时目录测试）与 `gpui` dev 条目（`=0.2.2` + `test-support` feature，R1 Wave C 起；仅测试构建启用 TestAppContext/VisualTestContext，resolver v2 下不进生产二进制闭包），均不计入生产 deny-list。
 

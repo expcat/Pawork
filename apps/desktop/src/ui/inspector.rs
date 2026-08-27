@@ -12,6 +12,9 @@ use crate::ui::theme::{dark, font, metrics};
 
 use super::AppView;
 
+/// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
+pub(super) const TERMINAL_EMPTY_OUTPUT: &str = "Terminal output will appear here.";
+
 /// Inspector 顶层页签（固定三页；默认 Terminal 保持波 C 前的单页行为）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum InspectorTab {
@@ -104,8 +107,7 @@ impl AppView {
     fn terminal_page_element(&self, connected: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal = &self.projection.terminal;
         let output = if terminal.output.is_empty() {
-            "Terminal output will appear here. No local PTY — host streams TerminalOutput."
-                .to_string()
+            TERMINAL_EMPTY_OUTPUT.to_string()
         } else {
             terminal.output.clone()
         };

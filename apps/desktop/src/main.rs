@@ -46,6 +46,18 @@ fn main() {
     run_app(socket, barrier_dir);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_min_size_pins_design_responsive_floor() {
+        // 1080×720 是设计响应式底线：再窄将击穿 Workspace ≥560 合同。
+        assert_eq!(WINDOW_MIN_SIZE.width, px(1080.));
+        assert_eq!(WINDOW_MIN_SIZE.height, px(720.));
+    }
+}
+
 struct Args {
     socket: Option<PathBuf>,
     instance: Option<String>,
@@ -590,6 +602,11 @@ async fn wait_event(
     }
 }
 
+/// R2 Wave B：窗口最小尺寸钉 1080×720——设计响应式底线（design/README
+/// §2：1080 宽下 rail 收敛 240 + Inspector 折叠后 Workspace ≥560）；再窄
+/// 将击穿三栏合同，故由窗口系统直接限制。
+const WINDOW_MIN_SIZE: gpui::Size<gpui::Pixels> = size(px(1080.), px(720.));
+
 fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
     let platform = Arc::new(platform::Platform::new());
     Application::new().run(move |cx: &mut App| {
@@ -602,6 +619,7 @@ fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(WINDOW_MIN_SIZE),
                     // F-01：macOS 透明 titlebar。gpui 0.2.2 在 appears_transparent
                     // 时启用 NSFullSizeContentView + 隐藏原生标题（platform/mac/
                     // window.rs），内容视口贯通全窗、无白带；traffic lights 保持

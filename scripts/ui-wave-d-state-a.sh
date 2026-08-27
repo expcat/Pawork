@@ -58,114 +58,6 @@ pick_python() {
   die "no python with Pillow/numpy found; set PAWORK_WAVE_D_PYTHON"
 }
 
-write_frame_probe() { # $1=target swift source
-  cat > "$1" <<'SWIFT'
-import ApplicationServices
-import CoreGraphics
-import Foundation
-
-let args = CommandLine.arguments
-guard (args.count == 2 || (args.count == 3 && args[2] == "--place-main")),
-      let pid = Int32(args[1]), pid > 0 else {
-    FileHandle.standardError.write(Data("usage: ax-frames <pid> [--place-main]".utf8))
-    exit(2)
-}
-let placeMain = args.count == 3
-let app = AXUIElementCreateApplication(pid)
-
-func attr(_ e: AXUIElement, _ name: String) -> AnyObject? {
-    var v: AnyObject?
-    guard AXUIElementCopyAttributeValue(e, name as CFString, &v) == .success else { return nil }
-    return v
-}
-
-func str(_ e: AXUIElement, _ name: String) -> String? {
-    guard let v = attr(e, name) else { return nil }
-    if let s = v as? String { return s }
-    if let n = v as? NSNumber { return n.stringValue }
-    return nil
-}
-
-func frame(_ e: AXUIElement) -> (CGPoint, CGSize)? {
-    guard let pv = attr(e, kAXPositionAttribute as String),
-          let sv = attr(e, kAXSizeAttribute as String) else { return nil }
-    var p = CGPoint()
-    var s = CGSize()
-    guard AXValueGetValue(pv as! AXValue, .cgPoint, &p),
-          AXValueGetValue(sv as! AXValue, .cgSize, &s) else { return nil }
-    return (p, s)
-}
-
-if placeMain {
-    guard let windows = attr(app, kAXWindowsAttribute as String) as? [AXUIElement],
-          let window = windows.first,
-          let (_, size) = frame(window) else {
-        FileHandle.standardError.write(Data("place-main: AX window/frame unavailable\n".utf8))
-        exit(3)
-    }
-    let display = CGDisplayBounds(CGMainDisplayID())
-    var target = CGPoint(
-        x: display.minX + max(0, (display.width - size.width) / 2),
-        y: display.minY + max(0, (display.height - size.height) / 2)
-    )
-    guard let value = AXValueCreate(.cgPoint, &target) else {
-        FileHandle.standardError.write(Data("place-main: cannot create AX position\n".utf8))
-        exit(3)
-    }
-    let result = AXUIElementSetAttributeValue(
-        window,
-        kAXPositionAttribute as CFString,
-        value
-    )
-    var actual = CGPoint(x: CGFloat.nan, y: CGFloat.nan)
-    if result == .success {
-        for _ in 0..<50 {
-            if let (point, _) = frame(window) {
-                actual = point
-                if abs(point.x - target.x) <= 1 && abs(point.y - target.y) <= 1 {
-                    break
-                }
-            }
-            usleep(20_000)
-        }
-    }
-    print("# place-main result=" + String(result.rawValue)
-        + " display=" + String(CGMainDisplayID())
-        + " target={" + String(describing: target.x) + "," + String(describing: target.y) + "}"
-        + " actual={" + String(describing: actual.x) + "," + String(describing: actual.y) + "}")
-    if result != .success || abs(actual.x - target.x) > 1 || abs(actual.y - target.y) > 1 {
-        exit(3)
-    }
-}
-
-var out: [String] = []
-var queue: [AXUIElement] = [app]
-var seen = 0
-while !queue.isEmpty {
-    let e = queue.removeFirst()
-    seen += 1
-    if seen > 600 { break }
-    let role = str(e, kAXRoleAttribute as String) ?? "?"
-    if let id = str(e, kAXIdentifierAttribute as String), !id.isEmpty {
-        if let (p, s) = frame(e) {
-            out.append("id=" + id + " role=" + role
-                + " x=" + String(describing: p.x)
-                + " y=" + String(describing: p.y)
-                + " w=" + String(describing: s.width)
-                + " h=" + String(describing: s.height))
-        } else {
-            out.append("id=" + id + " role=" + role + " x=? y=? w=? h=?")
-        }
-    }
-    if let kids = attr(e, kAXChildrenAttribute as String) as? [AXUIElement] {
-        queue.append(contentsOf: kids)
-    }
-}
-print("# ax-frames pid=" + String(describing: pid) + " nodes=" + String(describing: seen))
-for line in out { print(line) }
-SWIFT
-}
-
 MODE=""
 OUT=""
 LABEL="wave-d-run"
@@ -238,8 +130,7 @@ trace "run start label=$LABEL out=$OUT"
 trace "compile helpers into $WORK"
 swiftc -O -o "$WORK/ui-ax-dump" "$SCRIPT_DIR/ui-ax-dump.swift" 2>"$WORK/swiftc-axdump.err" \
   || { cat "$WORK/swiftc-axdump.err" >&2; die "ui-ax-dump compile failed"; }
-write_frame_probe "$WORK/ax-frames.swift"
-swiftc -O -o "$WORK/ax-frames" "$WORK/ax-frames.swift" 2>"$WORK/swiftc-frames.err" \
+swiftc -O -o "$WORK/ax-frames" "$SCRIPT_DIR/ui-ax-frames.swift" 2>"$WORK/swiftc-frames.err" \
   || { cat "$WORK/swiftc-frames.err" >&2; die "ax-frames compile failed"; }
 
 trace "seed fixture root=$ROOT"
