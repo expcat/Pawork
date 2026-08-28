@@ -1,0 +1,3 @@
+PASS barrier-entry-count-equal - timeline_stable entry_count before=35 after=35
+PASS timeline-seed-identifier-sets-identical - seed evt-fx identifier sets identical (before=5 after=5)
+PASS timeline-live-value-multisets-equal - live value multisets (normalized) identical (before=10 after=10); live classes before: app-evt=2 local-echo=1 persisted-evt=7; after: app-evt=0 local-echo=0 persisted-evt=10

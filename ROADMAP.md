@@ -11,8 +11,8 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R4 — Workspace、Timeline 与 Agent 状态（待开启）** |
-| 下一任务 | 按 §7.1 开启 R4（任务书 [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态)）。R3 已于 2026-08-28 用户拍板 c 收口（结构门禁为准；三状态分区 SSIM ≥0.99、fixture 演示数据重塑与 State C reference tone 归一移交 R8，量化分解见 [R3 存档](docs/history.md#r3--taskrail-与任务导航2026-08-2728)；Wave A 证据 [docs/ui-review/r3-wave-a/](docs/ui-review/r3-wave-a/)，Wave B 证据 [docs/ui-review/r3-wave-b/](docs/ui-review/r3-wave-b/)） |
+| 当前阶段 | **R5 — Composer 与运行控制（未开始）** |
+| 下一任务 | 推进 R5 — Composer 与运行控制（任务书 [R4–R6](plan/R4-R6-ui-workflows.md#r5--composer-与运行控制)）：多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态（含 F-09 composer-height 漂移收口）。R4 已于 2026-08-28 收口（Wave A 结构门禁 + Wave B U2 九场景 / State B shell 回归全绿；证据 [docs/ui-review/r4-wave-a/](docs/ui-review/r4-wave-a/) · [docs/ui-review/r4-wave-b/](docs/ui-review/r4-wave-b/)）。用户拍板 1：State A/B 区域 SSIM ≥0.99 同 R3 先例移交 R8。仍开放：live RunChanged 无失败原因 / 无用户消息 wire 事件的现状（乐观回显 + 重放兜底）是否接受或立 ADR 演进 wire |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
 | 阻塞 | 无；Wave C AX 失败基线已由 ADR-042 bridge 补救，真窗口 75 节点与语义 action 证据见 [ax-bridge](docs/ui-review/wave-c/ax-bridge/) |
 
@@ -29,7 +29,7 @@ UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代
 | R1 | 视觉合同与测试基座 | 1440×1024 三状态、量图表、真实 fixture、组件/状态清单、UI driver 方案、reference/current/diff 基线 | [R1 存档](docs/history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) | 🟢 |
 | R2 | Window shell 与全局视觉系统 | 深色沉浸式 titlebar、三栏几何、字体/图标/间距/surface、StatusBar、窗口级响应式基线 | [R2 存档](docs/history.md#r2--window-shell-与全局视觉系统2026-08-27) | 🟢 |
 | R3 | TaskRail 与任务导航 | Timeline/Projects、scope、project/task、连接、新建、账户区、选择/恢复/滚动与键盘导航 | [R3 存档](docs/history.md#r3--taskrail-与任务导航2026-08-2728) | 🟢 |
-| R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | ⚪ |
+| R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | 🟢 |
 | R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R4–R6](plan/R4-R6-ui-workflows.md#r5--composer-与运行控制) | ⚪ |
 | R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | ⚪ |
 | R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | ⚪ |
@@ -131,6 +131,8 @@ R11 只做文档：对照 [design/](design/README.md) 三张 v3 定稿图与 R8�
 
 - HunkStageService 与 stage/unstage/hunk wire：需 ADR 定义协议与审批语义。
 - **State C reference 底色归一（R8 前置，设计基准变更）**：R3 拍板 c 已把 TaskRail 分区 SSIM ≥0.99 与 fixture 演示数据重塑移交 R8（可执行条款见 [R7–R8 任务书](plan/R7-R8-ui-quality-gates.md) §3）。State C 定稿图中位 RGB (0,9,17) 比冻结 token base `0x07121a` 更暗；是否在生成 reference 时按冻结 token 归一底色，须 R8 重采集前由用户批准，不得把当前漂移追认为新基准。
+- **R4 State A/B 分区 SSIM（R8 终局，2026-08-28 拍板 1）**：R4 以结构门禁与 U2 九场景退出；Header/Timeline 等区域 SSIM ≥0.99 同 R3 先例移交 R8。主因仍是 fixture 演示内容与设计稿形状差（重塑已在 R3 拍板 c 移交 R8），不得把当前记录值追认为通过。
+- **live wire 诚实缺口（开放）**：live `RunChanged` 不带失败原因、无用户消息 wire 事件；R4 以乐观回显 + 重放兜底覆盖且零 wire 变更。是否接受现状或立 ADR 演进 wire（含把用户消息持久化提前到 plan 闸门之前）待拍板。
 - 命令级交互审批：当前 terminal AskUser fail-closed；新增承载需 ADR。
 - `@` file-index 候选查询与 Resources“已加载规则”Host 出口：只有在目标 UI 真实展示对应入口时，才作为 R5/R6 前置接入。
 - 多账户 factory、远程 GUI、teams/goal/automation/monitor、GUI git 高级面、WASM 插件/市场/Hooks/LSP、artifact 流式与 egress broker：保持候选，资产位置见 [docs/history.md](docs/history.md) 与 [docs/design.md](docs/design.md)。

@@ -1,0 +1,22 @@
+{
+  "phase": "tool-failed",
+  "generated_at": "2026-08-28T03:40:45Z",
+  "checks": [
+    {
+      "name": "selected-session-fx-ses-beta-toolfailed",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-beta-toolfailed (expect session-fx-ses-beta-toolfailed)"
+    },
+    {
+      "name": "tool-row-failed-value",
+      "pass": true,
+      "detail": "tool-row value=failed: tool-row-evt-fx-ses-beta-toolfailed-9"
+    },
+    {
+      "name": "tool-row-failure-detail",
+      "pass": true,
+      "detail": "failed tool-row help: fixture tool failure: build quota exceeded (expect substring: fixture tool failure)"
+    }
+  ],
+  "pass": true
+}

@@ -222,6 +222,107 @@
         }
     }
 
+    async fn wait_run_registry_drains(runs: &GuiRunRegistry, run: &RunId) {
+        for _ in 0..500 {
+            if !runs.contains(run) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("registry must drain after the run finishes");
+    }
+
+    async fn wait_host_run_task_settled(
+        adapter: &GuiHostAdapter,
+        events: &mut tokio::sync::broadcast::Receiver<AppEventEnvelope>,
+        run: &RunId,
+    ) -> Vec<AppEvent> {
+        // 先等到该 run 的终态上流（RunCancel 不经过 registry 摘除语义，
+        // 只能靠事件观察），再等宿主 task 末尾的 terminal 登记清理 ——
+        // 清理发生在所有兜底 publish 之后，读到 false 即 task 已收尾。
+        // 已消费的事件要带回给断言（终态本身就在其中）。
+        let mut seen = Vec::new();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let envelope = tokio::time::timeout_at(deadline, events.recv())
+                .await
+                .expect("run should reach a terminal state")
+                .expect("event channel");
+            let terminal_for_run = matches!(
+                &envelope.payload,
+                AppEvent::RunChanged {
+                    run_id: id,
+                    state: RunState::Completed | RunState::Failed | RunState::Cancelled,
+                } if id == run
+            );
+            seen.push(envelope.payload);
+            if terminal_for_run {
+                break;
+            }
+        }
+        for _ in 0..500 {
+            if !adapter.bus.terminal_reported(run.as_str()) {
+                return seen;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("host run task must settle after the terminal event");
+    }
+
+    fn drain_wire_events(
+        events: &mut tokio::sync::broadcast::Receiver<AppEventEnvelope>,
+    ) -> Vec<AppEvent> {
+        drain_wire_envelopes(events)
+            .into_iter()
+            .map(|envelope| envelope.payload)
+            .collect()
+    }
+
+    fn drain_wire_envelopes(
+        events: &mut tokio::sync::broadcast::Receiver<AppEventEnvelope>,
+    ) -> Vec<AppEventEnvelope> {
+        let mut wire = Vec::new();
+        loop {
+            match events.try_recv() {
+                Ok(envelope) => wire.push(envelope),
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(missed)) => {
+                    panic!("subscriber lagged: {missed}");
+                }
+                Err(
+                    tokio::sync::broadcast::error::TryRecvError::Empty
+                    | tokio::sync::broadcast::error::TryRecvError::Closed,
+                ) => break,
+            }
+        }
+        wire
+    }
+
+    fn terminal_states_for(wire: &[AppEvent], run: &RunId) -> Vec<RunState> {
+        wire.iter()
+            .filter_map(|event| match event {
+                AppEvent::RunChanged { run_id, state }
+                    if run_id == run
+                        && matches!(
+                            state,
+                            RunState::Completed
+                                | RunState::Cancelled
+                                | RunState::Failed
+                                | RunState::Interrupted
+                        ) =>
+                {
+                    Some(state.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn has_run_failed_diagnostic(wire: &[AppEvent]) -> bool {
+        wire.iter().any(|event| {
+            matches!(event, AppEvent::Diagnostic { code, .. } if code == "run.failed")
+        })
+    }
+
     #[tokio::test]
     async fn run_start_expands_at_refs_into_separate_parts() {
         let workspace = tempfile::tempdir().expect("workspace");
@@ -503,6 +604,221 @@
         assert!(
             !runs.contains(&run),
             "registry must drain after the run finishes"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_start_provider_failure_broadcasts_single_terminal_without_synthetic() {
+        // engine fail 路径：Err 返回前已经 sink 广播 RunChanged{Failed}，
+        // 宿主不得再补发合成终态对（幽灵 "Run failed" + run.failed）。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![MockScript::new().fail(
+            pawork_domain::ProviderError::new(
+                pawork_domain::ProviderErrorKind::Timeout,
+                "scripted timeout",
+            ),
+        )]);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("gui-fail-terminal").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let runs = adapter.runs();
+        let mut events = adapter.subscribe_events();
+        let response = adapter
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session.clone(),
+                user_message: "fail this turn".into(),
+                model: None,
+                provider: None,
+                profile: None,
+            }))
+            .await
+            .expect("run accepted");
+        let AppResponse::Accepted {
+            run_id: Some(run), ..
+        } = response
+        else {
+            panic!("RunStart must be accepted: {response:?}");
+        };
+        wait_run_registry_drains(&runs, &run).await;
+        let wire = drain_wire_events(&mut events);
+        assert_eq!(
+            terminal_states_for(&wire, &run),
+            vec![RunState::Failed],
+            "engine failure must broadcast exactly one terminal RunChanged: {wire:?}"
+        );
+        assert!(
+            !has_run_failed_diagnostic(&wire),
+            "host must not synthesize a duplicate run.failed after the engine terminal: {wire:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_start_cancel_broadcasts_cancelled_without_synthetic_failed() {
+        // cancel 路径：engine 广播 RunChanged{Cancelled} 后以 Err 收尾，
+        // 宿主不得谎报合成 RunChanged{Failed}。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![MockScript::new().wait_for_cancellation()]);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("gui-cancel-terminal").await.expect("session");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let mut events = adapter.subscribe_events();
+        let response = adapter
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session.clone(),
+                user_message: "cancel this turn".into(),
+                model: None,
+                provider: None,
+                profile: None,
+            }))
+            .await
+            .expect("run accepted");
+        let AppResponse::Accepted {
+            run_id: Some(run), ..
+        } = response
+        else {
+            panic!("RunStart must be accepted: {response:?}");
+        };
+        let cancel_response = adapter
+            .command(&command_envelope(AppCommand::RunCancel { run_id: run.clone() }))
+            .await
+            .expect("cancel accepted");
+        assert!(matches!(cancel_response, AppResponse::Accepted { .. }));
+        let mut wire = wait_host_run_task_settled(&adapter, &mut events, &run).await;
+        wire.extend(drain_wire_events(&mut events));
+        assert_eq!(
+            terminal_states_for(&wire, &run),
+            vec![RunState::Cancelled],
+            "cancel must broadcast exactly one terminal RunChanged{{Cancelled}}: {wire:?}"
+        );
+        assert!(
+            !has_run_failed_diagnostic(&wire),
+            "host must not misreport a cancelled run as synthetic failed: {wire:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_start_early_death_without_terminal_still_synthesizes_failed() {
+        // 无终态早死路径：Draft plan 使 chat_turn 在 run_session 之前被闸门拒绝，
+        // engine 未报任何终态 —— 宿主合成 RunChanged{Failed} + run.failed 兜底不丢。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider =
+            MockProvider::sequence(vec![MockScript::new().text("unreachable").complete()]);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("gui-plan-gate").await.expect("session");
+        core.store()
+            .expect("store")
+            .append_event(
+                pawork_storage::session::DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    pawork_domain::EventId::from("evt-plan-gate-1"),
+                    session.clone(),
+                    RunId::from("run-plan-seed"),
+                    pawork_domain::EventSequence::new(1),
+                    now_timestamp(),
+                    AgentEvent::Plan(pawork_domain::PlanEvent::Created {
+                        plan_id: pawork_domain::PlanId::from("plan-gate"),
+                        version: pawork_domain::PlanVersionId::from("plan-gate-v1"),
+                        title: "draft plan".into(),
+                        steps: vec![pawork_domain::PlanStepSnapshot {
+                            step_id: pawork_domain::PlanStepId::from("plan-gate-step-1"),
+                            text: "draft step".into(),
+                            status: pawork_domain::PlanStepStatus::Pending,
+                        }],
+                    }),
+                ),
+            )
+            .await
+            .expect("seed draft plan");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let runs = adapter.runs();
+        let mut events = adapter.subscribe_events();
+        let response = adapter
+            .command(&command_envelope(AppCommand::RunStart {
+                session_id: session.clone(),
+                user_message: "blocked by plan gate".into(),
+                model: None,
+                provider: None,
+                profile: None,
+            }))
+            .await
+            .expect("run accepted");
+        let AppResponse::Accepted {
+            run_id: Some(run), ..
+        } = response
+        else {
+            panic!("RunStart must be accepted: {response:?}");
+        };
+        wait_run_registry_drains(&runs, &run).await;
+        let envelopes = drain_wire_envelopes(&mut events);
+        let wire: Vec<AppEvent> = envelopes
+            .iter()
+            .map(|envelope| envelope.payload.clone())
+            .collect();
+        assert_eq!(
+            terminal_states_for(&wire, &run),
+            vec![RunState::Failed],
+            "early death without an engine terminal must still synthesize exactly one RunChanged{{Failed}}: {wire:?}"
+        );
+        assert!(
+            has_run_failed_diagnostic(&wire),
+            "fallback run.failed diagnostic must survive for early-death paths: {wire:?}"
+        );
+        // 合成兜底不占真实持久化号段：序号从 SYNTHETIC_SEQUENCE_BASE 递增自取，
+        // 有序插入落在既有时间线内容（含用户消息乐观回显）之后而非 seq-0 顶端。
+        let synthetic_sequences: Vec<u64> = envelopes
+            .iter()
+            .filter(|envelope| {
+                matches!(
+                    envelope.payload,
+                    AppEvent::RunChanged {
+                        state: RunState::Failed,
+                        ..
+                    } | AppEvent::Diagnostic { .. }
+                )
+            })
+            .map(|envelope| envelope.stream_sequence)
+            .collect();
+        assert_eq!(
+            synthetic_sequences.len(),
+            2,
+            "early death must emit exactly the synthetic terminal pair: {wire:?}"
+        );
+        assert!(
+            synthetic_sequences
+                .iter()
+                .all(|sequence| *sequence >= super::bus::SYNTHETIC_SEQUENCE_BASE),
+            "synthetic envelopes must not occupy the persisted sequence space: {synthetic_sequences:?}"
+        );
+        assert!(
+            synthetic_sequences[0] < synthetic_sequences[1],
+            "synthetic sequences must follow arrival order: {synthetic_sequences:?}"
         );
     }
 
@@ -1564,6 +1880,86 @@
             _ => None,
         });
         assert_eq!(completed, Some(true));
+    }
+
+    #[tokio::test]
+    async fn tool_approve_non_live_waiting_broadcasts_tool_completed() {
+        // 重启后 queued 决议：persist-first 落库之外还必须补实时广播，
+        // 否则 GUI 的 clear_pending_for_tool 永不触发、审批卡永驻。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let core = idle_core(store);
+        let session = core.create_session("queued-broadcast").await.expect("session");
+        let run_id = RunId::from("run-queued-broadcast");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-queued-broadcast");
+        append_waiting_write(&core, &session, &run_id, &tool_call_id, "evt-qb", 1).await;
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        assert!(!adapter.runs().contains(&run_id));
+        let mut events = adapter.subscribe_events();
+
+        adapter
+            .command(&command_envelope(AppCommand::ToolApprove {
+                run_id: run_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                decision: pawork_protocol::ApprovalDecision::ApproveOnce,
+            }))
+            .await
+            .expect("queued approve broadcast");
+
+        // 广播在 command 返回前同步完成，订阅缓冲此刻已含全部 wire 事件。
+        let mut wire = Vec::new();
+        loop {
+            match events.try_recv() {
+                Ok(envelope) => wire.push(envelope.payload),
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(missed)) => {
+                    panic!("subscriber lagged: {missed}");
+                }
+                Err(
+                    tokio::sync::broadcast::error::TryRecvError::Empty
+                    | tokio::sync::broadcast::error::TryRecvError::Closed,
+                ) => break,
+            }
+        }
+        let completed: Vec<_> = wire
+            .iter()
+            .filter_map(|event| match event {
+                AppEvent::ToolCompleted {
+                    run_id,
+                    tool_call_id,
+                    success,
+                } => Some((run_id.clone(), tool_call_id.clone(), *success)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            completed,
+            vec![(run_id.clone(), tool_call_id.clone(), false)],
+            "queued approval closure must broadcast exactly one failed ToolCompleted"
+        );
+        // 钉住当前 wire 契约：Responded/Committed 不进实时流，
+        // 实时流除 ToolCompleted 外不得出现任何 approval 类事件。
+        assert_eq!(wire.len(), 1, "unexpected wire events: {wire:?}");
+        assert!(
+            !wire
+                .iter()
+                .any(|event| matches!(event, AppEvent::ToolApprovalRequired { .. })),
+            "approval-required must not leak into the closure broadcast"
+        );
+
+        // 持久化先于广播：库内三事件（Responded/Completed/Committed.tool）仍在。
+        let store_events = adapter
+            .session_store()
+            .await
+            .expect("store")
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("replay");
+        let types = replay_types(&store_events);
+        assert!(types.contains(&"ToolApprovalResponded"));
+        assert!(types.contains(&"ToolExecutionCompleted"));
+        assert!(types.contains(&"MessageCommitted.tool"));
     }
 
     #[tokio::test]

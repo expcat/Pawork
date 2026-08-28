@@ -46,7 +46,8 @@ use pawork_workspace::config::{
     ConfigError, Loader, PaworkConfig,
 };
 use pawork_domain::{
-    AgentEvent, ApprovalDecision, CancellationToken, Message, ModelId, ProviderId, RequestId, RunId, SessionId,
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, Message, ModelId, ProviderId,
+    RequestId, RunId, SessionId,
     ToolDescriptor, WorkspaceId, TokenUsage, Cost,
 };
 use pawork_engine::{
@@ -901,7 +902,7 @@ impl AppCore {
         decision: ApprovalDecision,
         comment: &str,
         sequence: &mut u64,
-    ) -> Result<(), AppError> {
+    ) -> Result<Vec<AgentEventEnvelope>, AppError> {
         self.session
             .resolve_waiting_tool_call(self, session_id, call, decision, comment, sequence)
             .await
@@ -921,13 +922,14 @@ impl AppCore {
     }
 
     /// resume / 计划 / 审批收口共用的追补事件入口（persist-first）。
+    /// 返回落库的 envelope，供调用方在持久化成功后补广播。
     pub(crate) async fn append_payload(
         &self,
         session_id: &SessionId,
         run_id: &RunId,
         sequence: &mut u64,
         payload: AgentEvent,
-    ) -> Result<(), AppError> {
+    ) -> Result<AgentEventEnvelope, AppError> {
         self.run
             .append_payload(self, session_id, run_id, sequence, payload)
             .await

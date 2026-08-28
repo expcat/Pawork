@@ -28,8 +28,8 @@ use std::time::Duration;
 
 use gpui::{
     AnyView, App, AsyncWindowContext, ClickEvent, Context, Entity, FocusHandle, Focusable,
-    KeyBinding, KeyDownEvent, ListAlignment, ListState, Pixels, Point, Render, ScrollHandle,
-    SharedString, Window, actions, div, prelude::*, px,
+    FontWeight, KeyBinding, KeyDownEvent, ListAlignment, ListState, Pixels, Point, Rgba, Render,
+    ScrollHandle, SharedString, Window, actions, div, prelude::*, px,
 };
 use pawork_client::AppEvent;
 
@@ -413,7 +413,10 @@ impl AppView {
             terminal_input,
             timeline_list: ListState::new(
                 0,
-                ListAlignment::Bottom,
+                // F-06：Top 对齐让短会话从 Header 下开始；跟随 / 脱钩语义
+                // 改由 AppView::timeline_following + 显式 scroll_to 承载
+                // （Bottom 的 None 钉底不再存在，见 ui/timeline.rs 合同）。
+                ListAlignment::Top,
                 px(timeline::TIMELINE_OVERDRAW),
             ),
             timeline_following: true,
@@ -475,6 +478,139 @@ impl AppView {
             .tab_index(COMPOSER_TAB_INDEX);
             view.start_connect(cx);
         view
+    }
+
+    /// F-05 Workspace Header（骨架常存）：任务标题 / branch / live 终态 /
+    /// 右侧新建任务动作。诚实口径——无 active session 隐藏标题；branch 仅
+    /// 在 Changes 流程已取回 GitDiffInfo.branch 且无 session_mismatch 时
+    /// 显示（wire WorkspaceSummary 无 branch，不伪造）；终态只显示 live
+    /// 可派生态（Running / Needs input / Blocked），空闲会话隐藏该项
+    /// （wire 无终态字段，不画 Completed 绿点）。
+    fn workspace_header_element(&mut self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let title = self
+            .projection
+            .workspace_header_title()
+            .map(str::to_string);
+        let branch = self.header_branch();
+        let status = self.projection.workspace_header_status();
+        let can_create = self.can_create_task();
+        let new_task_tooltip = SharedString::from(if can_create {
+            "New task (Cmd+N)".to_string()
+        } else {
+            self.add_task_disabled_reason()
+        });
+        let mut new_task = Button::new("header-new-task")
+            .variant(ButtonVariant::Ghost)
+            .bordered()
+            .disabled(!can_create)
+            .padding(ButtonPadding::None)
+            .width(px(metrics::HEADER_ACTION_WIDTH))
+            .height(px(metrics::HEADER_ACTION_HEIGHT))
+            .center()
+            .vcenter()
+            .radius(metrics::HEADER_ACTION_RADIUS)
+            .text_size(font::BODY)
+            .text_color(dark().text.emphasis)
+            .label("+")
+            .tooltip(new_task_tooltip);
+        if can_create {
+            new_task = new_task.on_click(
+                cx.listener(|view, _event, window, cx| {
+                    view.on_new_session(window, cx);
+                }),
+            );
+        }
+        div()
+            .id("workspace-header")
+            .debug_selector(|| "workspace-header".into())
+            .flex()
+            .flex_row()
+            .items_center()
+            .flex_none()
+            .h(px(metrics::HEADER_HEIGHT))
+            .pt(px(metrics::HEADER_SAFE_STRIP))
+            .pl(px(metrics::TIMELINE_CONTENT_INSET))
+            .pr(px(metrics::HEADER_INSET_RIGHT))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(metrics::HEADER_TITLE_META_GAP))
+                    .when_some(title, |row, title| {
+                        row.child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(font::HEADER_TITLE))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(dark().text.primary)
+                                .child(title),
+                        )
+                    })
+                    .when_some(branch, |row, branch| {
+                        row.child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_1()
+                                .text_size(px(font::BODY_SM))
+                                .text_color(dark().text.secondary)
+                                .child("⑂")
+                                .child(branch),
+                        )
+                    })
+                    .when_some(status, |row, status| {
+                        let (dot, color) = header_status_visual(status);
+                        row.child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_6()
+                                .text_size(px(font::BODY_SM))
+                                .text_color(dark().text.secondary)
+                                .child(
+                                    div()
+                                        .w(px(dot))
+                                        .h(px(dot))
+                                        .rounded_full()
+                                        .flex_none()
+                                        .bg(color),
+                                )
+                                .child(status.label()),
+                        )
+                    }),
+            )
+            .child(new_task)
+    }
+
+    /// Header branch 诚实数据源：host diff_* 固定解析 latest 会话，仅当
+    /// Changes 已取回 GitDiffInfo.branch 且无 session_mismatch（数据会话
+    /// 与 active 一致）时显示；无 active session 时数据必属他会话，直接
+    /// 隐藏（审查 P3）。
+    fn header_branch(&self) -> Option<String> {
+        let active = self.projection.active_session_id.as_deref()?;
+        let data_session = self.changes.session_id.as_deref();
+        let mismatched = matches!(data_session, Some(data) if data != active);
+        if mismatched {
+            return None;
+        }
+        self.changes
+            .git
+            .as_ref()
+            .and_then(|git| git.branch.clone())
+            .filter(|branch| !branch.is_empty())
+    }
+
+    /// Changes 数据是否对 active session 可用（Review changes 门控）。
+    fn changes_available_for_active(&self) -> bool {
+        self.changes.session_id.is_some()
+            && self.changes.session_id == self.projection.active_session_id
+            && matches!(self.changes.fetch, changes::ChangesFetch::Ready)
     }
 
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
@@ -662,9 +798,17 @@ impl AppView {
                 self.inspector_open = true;
                 self.refresh_open_inspector_tab(cx);
             }
-            ControllerEvent::MessageSent { session_id, run_id } => {
-                self.projection
-                    .note_session_run(&session_id, &run_id, now_unix_ms());
+            ControllerEvent::MessageSent { session_id, run_id, text } => {
+                let now = now_unix_ms();
+                self.projection.note_session_run(&session_id, &run_id, now);
+                // wire 无用户消息事件：发送回执即本地乐观上屏（重放后由
+                // 持久化行替换）。非 active session 不 echo，重放会补。
+                if self
+                    .projection
+                    .note_user_echo(&session_id, &run_id, &text, now)
+                {
+                    self.timeline_changed();
+                }
                 self.text_input.update(cx, |input, cx| input.clear(cx));
             }
             ControllerEvent::ModelsLoaded(models) => {
@@ -1360,6 +1504,28 @@ impl AppView {
         cx.notify();
     }
 
+    /// Run 摘要卡「Review changes」：展开 Inspector 并切到 Changes 页
+    /// （真实本地能力；折叠态可达）。Changes 数据不可用时 status_hint
+    /// 如实说明，不伪造可用。
+    pub(crate) fn on_review_changes(&mut self, cx: &mut Context<Self>) {
+        self.close_open_menu(cx);
+        // 先快照可用性：refresh 会把面板置 Fetching，事后再查必误判
+        // 「不可用」（审查 P2）；仅真不可用（断连 / 无 workspace / 失败）
+        // 才提示，拉取进行中不报。
+        let was_available = self.changes_available_for_active();
+        if !self.inspector_open {
+            self.inspector_open = true;
+            self.timeline_changed();
+        }
+        self.inspector_tab = InspectorTab::Changes;
+        self.refresh_changes(cx);
+        let fetching = matches!(self.changes.fetch, changes::ChangesFetch::Fetching);
+        if !was_available && !fetching {
+            self.status_hint = Some("Changes data is not available yet.".into());
+        }
+        cx.notify();
+    }
+
     /// 拉取会话 diff 文件清单（diff_list_files）。失败时诚实标记状态。
     fn refresh_changes(&mut self, cx: &mut Context<Self>) {
         let connected = matches!(
@@ -1543,6 +1709,17 @@ impl AppView {
 
 fn resolve_new_task_workspace(scope_workspace_id: Option<&str>) -> Option<&str> {
     scope_workspace_id
+}
+
+/// Header 终态点视觉（F-05）：Ø10 语义点，与 TaskRail 状态点同色映射
+/// （NeedsInput 琥珀 > Running 蓝 > Blocked 红；gui-design §R6 状态一致性）。
+fn header_status_visual(status: SessionLiveStatus) -> (f32, Rgba) {
+    let color = match status {
+        SessionLiveStatus::Running => dark().accent.primary,
+        SessionLiveStatus::NeedsInput => dark().semantic.warning_text,
+        SessionLiveStatus::Blocked => dark().semantic.danger_text,
+    };
+    (metrics::HEADER_STATUS_DOT_SIZE, color)
 }
 
 /// rail 焦点链停靠点（design §3.6 顺序的静态语义；focus_key 唯一标识，
@@ -1760,6 +1937,7 @@ impl Render for AppView {
             !inspector_open && matches!(self.open_menu, Some(MenuKind::Activity));
 
         let sidebar = self.sidebar_element(px(shell.rail_width), cx);
+        let header = self.workspace_header_element(cx);
         let timeline_area = self.timeline_area(cx);
         let composer = self.composer_element(cx);
         let workspace = div()
@@ -1768,6 +1946,7 @@ impl Render for AppView {
             .flex()
             .flex_col()
             .flex_1()
+            .child(header)
             .child(timeline_area)
             .child(composer);
 

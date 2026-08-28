@@ -30,7 +30,9 @@ enum RailView {
     Projects(Vec<TaskRailProjectGroup>),
 }
 
-fn relative_activity(updated_at_ms: u64, now_ms: u64) -> String {
+/// 相对时间（now / Nm / Nh / Nd）：rail 会话行与 Timeline 条目时间共用
+/// （R4 Wave A；epoch millis → 可读相对词，不引入 tz 依赖）。
+pub(super) fn relative_activity(updated_at_ms: u64, now_ms: u64) -> String {
     let elapsed = now_ms.saturating_sub(updated_at_ms);
     if elapsed < 60_000 {
         "now".into()

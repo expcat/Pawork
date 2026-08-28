@@ -1,0 +1,74 @@
+2026-08-28T02:45:19Z run start label=r4b-2 out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r4-wave-b/u2
+2026-08-28T02:45:19Z compile helpers into /tmp/pawork-r4b-states-tools.vXiyZQ
+2026-08-28T02:45:22Z seed fixture root=/private/tmp/pawork-ui-fixture.5XZHEW
+2026-08-28T02:45:34Z serve fixture (wait host_ready barrier)
+2026-08-28T02:45:37Z host pid=72684
+2026-08-28T02:45:37Z launch desktop via ui-fixture
+2026-08-28T02:45:37Z desktop pid=72737
+2026-08-28T02:45:40Z desktop window ready (session-list rendered)
+2026-08-28T02:45:40Z place Desktop window deterministically on the main display
+2026-08-28T02:45:40Z wait timeline_stable (seq>0 session= entries>=0)
+2026-08-28T02:45:42Z timeline_stable ok seq=1 session= entries=0
+2026-08-28T02:45:42Z S1: open pending-approval session
+2026-08-28T02:45:42Z AXPress session-fx-ses-beta-pending (open beta-pending)
+2026-08-28T02:45:42Z AXPress session-fx-ses-beta-pending result=0
+2026-08-28T02:45:42Z wait timeline_stable (seq>1 session=fx-ses-beta-pending entries>=1)
+2026-08-28T02:45:44Z timeline_stable ok seq=2 session=fx-ses-beta-pending entries=5
+2026-08-28T02:45:44Z wait approval_visible present
+2026-08-28T02:45:44Z approval_visible present (write_file run-fx-ses-beta-pending-1)
+2026-08-28T02:45:44Z wait phase=approval-visible (states-assert polling)
+2026-08-28T02:45:44Z phase=approval-visible ok attempt=1
+2026-08-28T02:45:44Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r4-wave-b/u2/shot-approval-visible.png
+2026-08-28T02:45:44Z S1: approve once -> card disappears + tool row shows failed
+2026-08-28T02:45:44Z AXPress approve-once (approve once)
+2026-08-28T02:45:44Z AXPress approve-once result=0
+2026-08-28T02:45:44Z wait timeline_stable (seq>2 session=fx-ses-beta-pending entries>=1)
+2026-08-28T02:45:46Z timeline_stable ok seq=3 session=fx-ses-beta-pending entries=5
+2026-08-28T02:45:46Z wait approval_visible absent
+2026-08-28T02:45:46Z approval_visible absent
+2026-08-28T02:45:46Z wait phase=approval-resolved (states-assert polling)
+2026-08-28T02:45:46Z phase=approval-resolved ok attempt=1
+2026-08-28T02:45:46Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r4-wave-b/u2/shot-approval-resolved.png
+2026-08-28T02:45:46Z S1: reselect away+back -> replayed snapshot surfaces decision row
+2026-08-28T02:45:46Z AXPress session-fx-ses-alpha-today (reselect away to alpha-today)
+2026-08-28T02:45:47Z AXPress session-fx-ses-alpha-today result=0
+2026-08-28T02:45:47Z wait timeline_stable (seq>3 session=fx-ses-alpha-today entries>=1)
+2026-08-28T02:45:48Z timeline_stable ok seq=4 session=fx-ses-alpha-today entries=25
+2026-08-28T02:45:48Z AXPress session-fx-ses-beta-pending (reselect back to beta-pending)
+2026-08-28T02:45:48Z AXPress session-fx-ses-beta-pending result=0
+2026-08-28T02:45:48Z wait timeline_stable (seq>4 session=fx-ses-beta-pending entries>=1)
+2026-08-28T02:45:50Z timeline_stable ok seq=5 session=fx-ses-beta-pending entries=6
+2026-08-28T02:45:50Z wait phase=approval-replayed (states-assert polling)
+2026-08-28T02:45:50Z phase=approval-replayed ok attempt=1
+2026-08-28T02:45:50Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r4-wave-b/u2/shot-approval-replayed.png
+2026-08-28T02:45:50Z S2: seeded failed session renders Run failed summary
+2026-08-28T02:45:50Z AXPress session-fx-ses-alpha-yesterday (open alpha-yesterday)
+2026-08-28T02:45:50Z AXPress session-fx-ses-alpha-yesterday result=0
+2026-08-28T02:45:50Z wait timeline_stable (seq>2 session=fx-ses-alpha-yesterday entries>=1)
+2026-08-28T02:45:52Z timeline_stable ok seq=6 session=fx-ses-alpha-yesterday entries=3
+2026-08-28T02:45:52Z wait phase=failed-summary (states-assert polling)
+2026-08-28T02:45:52Z phase=failed-summary ok attempt=1
+2026-08-28T02:45:52Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r4-wave-b/u2/shot-failed-summary.png
+2026-08-28T02:45:53Z S3: seeded cancelled session renders Run cancelled summary
+2026-08-28T02:45:53Z AXPress session-fx-ses-beta-cancelled (open beta-cancelled)
+2026-08-28T02:45:53Z AXPress session-fx-ses-beta-cancelled result=0
+2026-08-28T02:45:53Z wait timeline_stable (seq>6 session=fx-ses-beta-cancelled entries>=1)
+2026-08-28T02:45:54Z timeline_stable ok seq=7 session=fx-ses-beta-cancelled entries=4
+2026-08-28T02:45:54Z wait phase=cancelled-summary (states-assert polling)
+2026-08-28T02:45:54Z phase=cancelled-summary ok attempt=1
+2026-08-28T02:45:54Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r4-wave-b/u2/shot-cancelled-summary.png
+2026-08-28T02:45:54Z S4: seeded tool failure renders raw wire status
+2026-08-28T02:45:54Z AXPress session-fx-ses-beta-toolfailed (open beta-toolfailed)
+2026-08-28T02:45:54Z AXPress session-fx-ses-beta-toolfailed result=0
+2026-08-28T02:45:54Z wait timeline_stable (seq>7 session=fx-ses-beta-toolfailed entries>=1)
+2026-08-28T02:45:56Z timeline_stable ok seq=8 session=fx-ses-beta-toolfailed entries=5
+2026-08-28T02:45:56Z wait phase=tool-failed (states-assert polling)
+2026-08-28T02:45:56Z phase=tool-failed ok attempt=1
+2026-08-28T02:45:56Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r4-wave-b/u2/shot-tool-failed.png
+2026-08-28T02:45:56Z S5: 48 logical rows render as AX window slice
+2026-08-28T02:45:56Z AXPress session-fx-ses-beta-long (open beta-long)
+2026-08-28T02:45:56Z AXPress session-fx-ses-beta-long result=0
+2026-08-28T02:45:56Z wait timeline_stable (seq>8 session=fx-ses-beta-long entries>=48)
+2026-08-28T02:45:58Z timeline_stable ok seq=9 session=fx-ses-beta-long entries=64
+2026-08-28T02:45:58Z wait phase=virtualized (states-assert polling)
+2026-08-28T02:46:28Z phase=virtualized TIMEOUT attempt=80 dump=0 assert=5

@@ -9,6 +9,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,9 +17,13 @@ from PIL import Image, ImageCms
 
 IDENTIFIER_RE = re.compile(r'identifier="([^"]*)"')
 VALUE_RE = re.compile(r'value="([^"]*)"')
+DESCRIPTION_RE = re.compile(r'description="([^"]*)"')
+HELP_RE = re.compile(r'help="([^"]*)"')
+ENABLED_RE = re.compile(r'enabled=([01])')
 
 SESSION_ROW = "session-fx-ses-alpha-today"
 TIMELINE_PREFIX = "timeline-entry-evt-fx-ses-alpha-today"
+SEED_IDENTIFIER_PREFIX = "timeline-entry-evt-fx-"
 NL = chr(10)
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 
@@ -52,6 +57,38 @@ SKELETON_BASE = [
     "composer-input",
     "status-bar",
 ]
+
+# R4 Wave B states（S1-S9）增量断言的常量：审批卡 / 终态摘要 / 工具行 /
+# 虚拟化逻辑行数。文案与 identifier 均核实自 apps/desktop AX 层与
+# fixtures/ui/seed.json；Failed 摘要原因为 WS-1 落地的种子原因原文。
+APPROVAL_CARD = "approval-card"
+APPROVAL_BUTTONS = ("approve-once", "approve-for-run", "approve-deny")
+APPROVAL_SESSION_ID = "fx-ses-beta-pending"
+APPROVAL_SESSION_ROW = "session-" + APPROVAL_SESSION_ID
+FAILED_REASON = "fixture scripted provider failure"
+TOOL_FAILED_DETAIL = "fixture tool failure"
+# live RunChanged{Failed} 不带 ErrorContext（wire 契约），摘要卡只能诚实
+# 兜底；真实原因经快照重放（project_event 读 domain RunFailed）才可见。
+LIVE_FAILED_FALLBACK = "The run failed."
+# fx-ses-beta-long 每轮 4 条目（RunStarted + user + assistant + RunCompleted）
+# × 16 轮 = 64；reducer 条目数即逻辑行数，与是否被 RunSummary 吸收无关。
+BETA_LONG_LOGICAL_ROWS = 64
+STATES_PHASES = (
+    "approval-visible",
+    "approval-resolved",
+    "approval-replayed",
+    "failed-summary",
+    "cancelled-summary",
+    "tool-failed",
+    "virtualized",
+    "streamed-summary",
+    "live-failed",
+    "failed-replayed",
+    "hang-cancelable",
+    "hang-cancelled",
+    "disconnected-retained",
+    "reconnected-replay",
+)
 
 
 def now_iso():
@@ -944,6 +981,541 @@ def cmd_write_current_zones(args):
     return 0
 
 
+def parse_states_tree(path):
+    """R4 Wave B states 解析：审批卡 / 终态摘要 / 工具行 / composer 按钮。
+
+    与 parse_tree 独立（增量面）：label 落在 description= 属性、节点
+    description 落在 help= 属性（macos.rs 桥接语义，r4-wave-a 证据核实）。
+    """
+    lines = [
+        line
+        for line in Path(path).read_text("utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+    identifiers = set()
+    nodes = {}
+    connection_status = ""
+    for line in lines:
+        ids = IDENTIFIER_RE.findall(line)
+        if not ids:
+            continue
+        identifier = ids[0]
+        identifiers.add(identifier)
+        values = VALUE_RE.findall(line)
+        descriptions = DESCRIPTION_RE.findall(line)
+        helps = HELP_RE.findall(line)
+        enabled = ENABLED_RE.findall(line)
+        nodes[identifier] = {
+            "value": values[0] if values else "",
+            "label": descriptions[0] if descriptions else "",
+            "help": helps[0] if helps else "",
+            "enabled": enabled[0] if enabled else None,
+            "selected": "selected=1" in line,
+        }
+        if identifier == "connection-status":
+            connection_status = values[0] if values else ""
+    timeline_values = {
+        identifier: facts["value"]
+        for identifier, facts in nodes.items()
+        if identifier.startswith("timeline-entry-")
+    }
+    return {
+        "identifiers": identifiers,
+        "nodes": nodes,
+        "connection_status": connection_status,
+        "timeline_values": timeline_values,
+    }
+
+
+def states_check(name, ok, detail):
+    return {"name": name, "pass": bool(ok), "detail": detail}
+
+
+def states_selected_row(tree, expected):
+    selected = [
+        identifier
+        for identifier, facts in tree["nodes"].items()
+        if identifier.startswith("session-") and facts["selected"]
+    ]
+    return states_check(
+        "selected-" + expected,
+        selected == [expected],
+        "selected rows: " + (",".join(selected) or "none") + " (expect " + expected + ")",
+    )
+
+
+def states_approval_checks(tree, present):
+    card = tree["nodes"].get(APPROVAL_CARD)
+    buttons = [tree["nodes"].get(name) for name in APPROVAL_BUTTONS]
+    if present:
+        checks = [
+            states_check(
+                "approval-card-present",
+                card is not None,
+                "approval-card " + (
+                    "present value=" + card["value"] if card is not None else "missing"
+                ),
+            ),
+            states_check(
+                "approval-card-tool",
+                card is not None and "write_file" in card["value"],
+                "approval-card value="
+                + (card["value"] if card is not None else "absent")
+                + " (expect pending write_file)",
+            ),
+        ]
+        missing = [
+            name for name, button in zip(APPROVAL_BUTTONS, buttons)
+            if button is None or button["enabled"] != "1"
+        ]
+        checks.append(states_check(
+            "approval-buttons-enabled",
+            not missing,
+            ("missing/disabled: " + ",".join(missing)) if missing
+            else "approve-once/approve-for-run/approve-deny present and enabled",
+        ))
+    else:
+        stray = [name for name in (APPROVAL_CARD, *APPROVAL_BUTTONS) if name in tree["identifiers"]]
+        checks = [states_check(
+            "approval-card-absent",
+            not stray,
+            ("stray approval nodes: " + ",".join(stray)) if stray
+            else "approval-card and decision buttons absent",
+        )]
+    return checks
+
+
+def states_summary_checks(tree, title, help_contains=None, footer_prefix=None, help_exact=None):
+    cards = [
+        (identifier, facts)
+        for identifier, facts in tree["nodes"].items()
+        if identifier.startswith("run-summary-card-") and facts["label"] == title
+    ]
+    checks = [states_check(
+        "run-summary-card-" + title,
+        bool(cards),
+        "run-summary-card-* with label " + title + ": "
+        + (",".join(identifier for identifier, _ in cards) or "none"),
+    )]
+    if help_contains is not None:
+        reasons = [facts["help"] for _, facts in cards]
+        checks.append(states_check(
+            "run-summary-help-contains",
+            any(help_contains in reason for reason in reasons),
+            "card help values: " + (" | ".join(reasons) or "none")
+            + " (expect substring: " + help_contains + ")",
+        ))
+    if help_exact is not None:
+        reasons = [facts["help"] for _, facts in cards]
+        checks.append(states_check(
+            "run-summary-help-exact",
+            any(help_exact == reason for reason in reasons),
+            "card help values: " + (" | ".join(reasons) or "none")
+            + " (expect exact: " + help_exact + ")",
+        ))
+    if footer_prefix is not None:
+        footers = [
+            facts["label"]
+            for identifier, facts in tree["nodes"].items()
+            if identifier.startswith("run-footer-") and facts["label"].startswith(footer_prefix)
+        ]
+        checks.append(states_check(
+            "run-footer-" + footer_prefix,
+            bool(footers),
+            "run-footer labels: "
+            + (" | ".join(footers[:4]) if footers else "none")
+            + " (expect prefix: " + footer_prefix + ")",
+        ))
+    return checks
+
+
+def states_timeline_value_check(tree, needle, name):
+    hits = [
+        identifier
+        for identifier, value in tree["timeline_values"].items()
+        if needle in value
+    ]
+    return states_check(
+        name,
+        bool(hits),
+        "timeline-entry values containing " + needle + ": "
+        + (",".join(hits[:4]) or "none"),
+    )
+
+
+def states_composer_checks(tree, cancel_enabled, send_enabled):
+    checks = []
+    for name, expected in (("cancel", cancel_enabled), ("send", send_enabled)):
+        button = tree["nodes"].get(name)
+        wanted = "1" if expected else "0"
+        checks.append(states_check(
+            "composer-" + name + "-enabled-" + wanted,
+            button is not None and button["enabled"] == wanted,
+            name + " enabled=" + (button["enabled"] if button else "absent")
+            + " (expect " + wanted + ")",
+        ))
+    return checks
+
+
+def states_ax_timeline_rows(tree):
+    return sorted(
+        identifier
+        for identifier in tree["nodes"]
+        if identifier.startswith("timeline-entry-") or identifier.startswith("run-summary-")
+    )
+
+
+def states_phase_checks(tree, phase, logical_entries=None):
+    if phase not in STATES_PHASES:
+        raise ValueError("unknown states phase: " + str(phase))
+    checks = []
+    nodes = tree["nodes"]
+    if phase == "approval-visible":
+        checks.append(states_selected_row(tree, APPROVAL_SESSION_ROW))
+        checks.extend(states_approval_checks(tree, True))
+        pending_help = nodes.get(APPROVAL_SESSION_ROW, {}).get("help", "")
+        checks.append(states_check(
+            "rail-needs-input",
+            "Needs input" in pending_help,
+            APPROVAL_SESSION_ROW + " help=" + (pending_help or "absent"),
+        ))
+        checks.append(states_timeline_value_check(
+            tree, "approval requested", "timeline-approval-requested",
+        ))
+    elif phase == "approval-resolved":
+        checks.append(states_selected_row(tree, APPROVAL_SESSION_ROW))
+        checks.extend(states_approval_checks(tree, False))
+        pending_help = nodes.get(APPROVAL_SESSION_ROW, {}).get("help", "")
+        checks.append(states_check(
+            "rail-needs-input-cleared",
+            "Needs input" not in pending_help,
+            APPROVAL_SESSION_ROW + " help=" + (pending_help or "absent"),
+        ))
+        # wire 契约：决策行只经快照重放（重选/重连）出现，live 不推——
+        # 即时断言交给 approval-replayed；这里只断言 Resolved 调用
+        # 诚实显示 failed（仿 tool-failed 臂扫描，限当前会话行防他
+        # session 的 failed 行污染）。
+        failed_rows = [
+            (identifier, facts)
+            for identifier, facts in nodes.items()
+            if identifier.startswith("tool-row-")
+            and APPROVAL_SESSION_ID in identifier
+            and facts["value"] == "failed"
+        ]
+        checks.append(states_check(
+            "approval-tool-row-failed-value",
+            bool(failed_rows),
+            "approval tool-row value=failed: "
+            + (",".join(identifier for identifier, _ in failed_rows) or "none")
+            + " (session " + APPROVAL_SESSION_ID + ")",
+        ))
+    elif phase == "approval-replayed":
+        # 重选会话后的快照重放一致性：选中行回到 beta-pending、卡不
+        # 复活、决策行 approval approve_once 出现。
+        checks.append(states_selected_row(tree, APPROVAL_SESSION_ROW))
+        checks.extend(states_approval_checks(tree, False))
+        checks.append(states_timeline_value_check(
+            tree, "approval approve_once", "timeline-approval-decision",
+        ))
+    elif phase == "failed-summary":
+        checks.append(states_selected_row(tree, "session-fx-ses-alpha-yesterday"))
+        checks.extend(states_summary_checks(
+            tree, "Run failed", help_contains=FAILED_REASON, footer_prefix="Run failed ·",
+        ))
+    elif phase == "cancelled-summary":
+        checks.append(states_selected_row(tree, "session-fx-ses-beta-cancelled"))
+        checks.extend(states_summary_checks(
+            tree, "Run cancelled", footer_prefix="Run cancelled ·",
+        ))
+    elif phase == "tool-failed":
+        checks.append(states_selected_row(tree, "session-fx-ses-beta-toolfailed"))
+        rows = [
+            (identifier, facts)
+            for identifier, facts in nodes.items()
+            if identifier.startswith("tool-row-")
+        ]
+        failed = [(identifier, facts) for identifier, facts in rows if facts["value"] == "failed"]
+        checks.append(states_check(
+            "tool-row-failed-value",
+            bool(failed),
+            "tool-row value=failed: " + (",".join(i for i, _ in failed) or "none"),
+        ))
+        checks.append(states_check(
+            "tool-row-failure-detail",
+            any(TOOL_FAILED_DETAIL in facts["help"] for _, facts in failed),
+            "failed tool-row help: "
+            + (" | ".join(facts["help"] for _, facts in failed) or "none")
+            + " (expect substring: " + TOOL_FAILED_DETAIL + ")",
+        ))
+    elif phase == "virtualized":
+        checks.append(states_selected_row(tree, "session-fx-ses-beta-long"))
+        expected = BETA_LONG_LOGICAL_ROWS
+        if logical_entries is not None:
+            expected = logical_entries
+        checks.append(states_check(
+            "virtualization-logical-rows",
+            expected == BETA_LONG_LOGICAL_ROWS,
+            "barrier entry_count=" + str(expected)
+            + " (fixture contract " + str(BETA_LONG_LOGICAL_ROWS) + " logical rows)",
+        ))
+        ax_rows = states_ax_timeline_rows(tree)
+        checks.append(states_check(
+            "virtualization-window-slice",
+            len(ax_rows) < expected,
+            "AX timeline-entry-*/run-summary-* nodes=" + str(len(ax_rows))
+            + " < logical rows=" + str(expected)
+            + " (capacity=ceil(frame.height/52) window slice)",
+        ))
+    elif phase == "streamed-summary":
+        checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
+        checks.extend(states_summary_checks(tree, "Ready for review"))
+        completed = [
+            identifier
+            for identifier, value in tree["timeline_values"].items()
+            if value in ("run completed", "Run completed")
+        ]
+        checks.append(states_check(
+            "timeline-run-completed",
+            bool(completed),
+            "terminal run rows: " + (",".join(completed[:4]) or "none"),
+        ))
+        composer = nodes.get("composer-input")
+        checks.append(states_check(
+            "composer-cleared",
+            composer is not None and composer["value"] == "",
+            "composer-input value=" + (repr(composer["value"]) if composer else "absent"),
+        ))
+    elif phase == "live-failed":
+        checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
+        checks.extend(states_summary_checks(
+            tree, "Run failed", help_exact=LIVE_FAILED_FALLBACK,
+            footer_prefix="Run failed ·",
+        ))
+    elif phase == "failed-replayed":
+        checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
+        checks.extend(states_summary_checks(
+            tree, "Run failed", help_contains=FAILED_REASON,
+            footer_prefix="Run failed ·",
+        ))
+    elif phase == "hang-cancelable":
+        checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
+        checks.extend(states_composer_checks(tree, cancel_enabled=True, send_enabled=False))
+    elif phase == "hang-cancelled":
+        checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
+        checks.extend(states_summary_checks(
+            tree, "Run cancelled", footer_prefix="Run cancelled ·",
+        ))
+        checks.extend(states_composer_checks(tree, cancel_enabled=False, send_enabled=True))
+    elif phase == "disconnected-retained":
+        checks.append(states_check(
+            "reconnect-present",
+            "reconnect" in tree["identifiers"],
+            "reconnect " + ("present" if "reconnect" in tree["identifiers"] else "missing"),
+        ))
+        status = tree["connection_status"]
+        checks.append(states_check(
+            "connection-status-disconnected",
+            bool(status) and status.startswith("Disconnected ·"),
+            "connection-status value=" + (status or "absent"),
+        ))
+        checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
+        checks.append(states_check(
+            "timeline-retained",
+            bool(tree["timeline_values"]),
+            "timeline-entry-* retained count=" + str(len(tree["timeline_values"])),
+        ))
+    elif phase == "reconnected-replay":
+        checks.append(states_check(
+            "reconnect-absent",
+            "reconnect" not in tree["identifiers"],
+            "reconnect " + ("stray present" if "reconnect" in tree["identifiers"] else "absent"),
+        ))
+        status = tree["connection_status"]
+        checks.append(states_check(
+            "connection-status-connected",
+            bool(status) and status.startswith("Local · Connected"),
+            "connection-status value=" + (status or "absent"),
+        ))
+        checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
+        checks.append(states_check(
+            "timeline-replayed",
+            bool(tree["timeline_values"]),
+            "timeline-entry-* replayed count=" + str(len(tree["timeline_values"])),
+        ))
+    return checks
+
+
+def cmd_states_assert(args):
+    tree = parse_states_tree(args.tree)
+    checks = states_phase_checks(tree, args.phase, args.logical_entries)
+    payload = {
+        "phase": args.phase,
+        "generated_at": now_iso(),
+        "checks": checks,
+        "pass": all(check["pass"] for check in checks),
+    }
+    Path(args.out).write_text(json.dumps(payload, indent=2) + NL, "utf-8")
+    for check in checks:
+        prefix = "PASS " if check["pass"] else "FAIL "
+        print(prefix + check["name"] + " - " + check["detail"])
+    return 0 if payload["pass"] else 5
+
+
+def cmd_approval_read(args):
+    try:
+        payload = json.loads(Path(args.file).read_text("utf-8"))
+    except (OSError, ValueError):
+        return 1
+    tool = payload.get("tool")
+    run_id = payload.get("run_id")
+    if not tool or not run_id:
+        return 1
+    print(str(tool) + " " + str(run_id))
+    return 0
+
+
+def normalize_live_value(value):
+    """live/replay 唯一已拍板的文案差：run failed · <reason> 归一为 run failed。"""
+    if value.startswith("run failed · "):
+        return "run failed"
+    return value
+
+
+def live_identifier_class(identifier):
+    """live 产生行的三类天然 id 形态（计数报告用，不参与相等判定）。"""
+    if identifier.startswith("timeline-entry-app-evt-"):
+        return "app-evt"
+    if identifier.startswith("timeline-entry-local-echo-"):
+        return "local-echo"
+    return "persisted-evt"
+
+
+def live_class_counts(live_rows):
+    counts = Counter(
+        live_identifier_class(identifier) for identifier in live_rows
+    )
+    return {
+        "total": len(live_rows),
+        "app-evt": counts["app-evt"],
+        "local-echo": counts["local-echo"],
+        "persisted-evt": counts["persisted-evt"],
+    }
+
+
+def value_multiset_diff_summary(only_a, only_b):
+    def render(counter):
+        return ",".join(
+            value + " x" + str(count) for value, count in sorted(counter.items())
+        ) or "none"
+
+    return "only-before: " + render(only_a) + "; only-after: " + render(only_b)
+
+
+def cmd_entry_compare(args):
+    """R4 Wave B WS-4b entry-compare v2 三重合同：
+    1. barrier entry_count 相等；
+    2. 种子行（evt-fx-*）identifier 集合一致——种子历史是重放一致性主体；
+    3. live 产生行（非 evt-fx-*）value 多重集一致（比较前做 run failed · …
+       诚实降级归一）；identifier 不参与——app-evt-* / local-echo-* /
+       持久化 evt-* 三类 id 天然不同。
+    """
+    tree_a = parse_states_tree(args.tree_a)
+    tree_b = parse_states_tree(args.tree_b)
+    seed_a = {
+        identifier
+        for identifier in tree_a["timeline_values"]
+        if identifier.startswith(SEED_IDENTIFIER_PREFIX)
+    }
+    seed_b = {
+        identifier
+        for identifier in tree_b["timeline_values"]
+        if identifier.startswith(SEED_IDENTIFIER_PREFIX)
+    }
+    live_a = {
+        identifier: value
+        for identifier, value in tree_a["timeline_values"].items()
+        if not identifier.startswith(SEED_IDENTIFIER_PREFIX)
+    }
+    live_b = {
+        identifier: value
+        for identifier, value in tree_b["timeline_values"].items()
+        if not identifier.startswith(SEED_IDENTIFIER_PREFIX)
+    }
+    values_a = Counter(
+        normalize_live_value(value) for value in live_a.values()
+    )
+    values_b = Counter(
+        normalize_live_value(value) for value in live_b.values()
+    )
+    classes_a = live_class_counts(live_a)
+    classes_b = live_class_counts(live_b)
+
+    def class_line():
+        return (
+            "live classes before: app-evt=" + str(classes_a["app-evt"])
+            + " local-echo=" + str(classes_a["local-echo"])
+            + " persisted-evt=" + str(classes_a["persisted-evt"])
+            + "; after: app-evt=" + str(classes_b["app-evt"])
+            + " local-echo=" + str(classes_b["local-echo"])
+            + " persisted-evt=" + str(classes_b["persisted-evt"])
+        )
+
+    checks = [
+        states_check(
+            "barrier-entry-count-equal",
+            args.entries_a == args.entries_b,
+            "timeline_stable entry_count before=" + str(args.entries_a)
+            + " after=" + str(args.entries_b),
+        ),
+        states_check(
+            "timeline-seed-identifier-sets-identical",
+            seed_a == seed_b,
+            "seed evt-fx identifier sets "
+            + ("identical" if seed_a == seed_b else "differ")
+            + " (before=" + str(len(seed_a)) + " after=" + str(len(seed_b)) + ")",
+        ),
+        states_check(
+            "timeline-live-value-multisets-equal",
+            values_a == values_b,
+            "live value multisets (normalized) "
+            + ("identical" if values_a == values_b else "differ")
+            + " (before=" + str(sum(values_a.values()))
+            + " after=" + str(sum(values_b.values())) + "); " + class_line(),
+        ),
+    ]
+    only_seed_a = sorted(seed_a - seed_b)
+    only_seed_b = sorted(seed_b - seed_a)
+    if only_seed_a or only_seed_b:
+        checks.append(states_check(
+            "timeline-seed-identifier-diffs",
+            False,
+            "only-before: " + (",".join(only_seed_a[:6]) or "none")
+            + "; only-after: " + (",".join(only_seed_b[:6]) or "none"),
+        ))
+    only_values_a = values_a - values_b
+    only_values_b = values_b - values_a
+    if only_values_a or only_values_b:
+        checks.append(states_check(
+            "timeline-live-value-diffs",
+            False,
+            value_multiset_diff_summary(only_values_a, only_values_b),
+        ))
+    payload = {
+        "generated_at": now_iso(),
+        "checks": checks,
+        "pass": all(check["pass"] for check in checks),
+        "entries_before": args.entries_a,
+        "entries_after": args.entries_b,
+        "seed_counts": {"before": len(seed_a), "after": len(seed_b)},
+        "live_counts": {"before": classes_a, "after": classes_b},
+    }
+    Path(args.out).write_text(json.dumps(payload, indent=2) + NL, "utf-8")
+    for check in checks:
+        prefix = "PASS " if check["pass"] else "FAIL "
+        print(prefix + check["name"] + " - " + check["detail"])
+    return 0 if payload["pass"] else 6
+
+
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1008,6 +1580,22 @@ def main():
     zones_cmd.add_argument("--frames", required=True)
     zones_cmd.add_argument("--out", required=True)
     zones_cmd.set_defaults(func=cmd_write_current_zones)
+    states_asrt = sub.add_parser("states-assert")
+    states_asrt.add_argument("--tree", required=True)
+    states_asrt.add_argument("--phase", choices=list(STATES_PHASES), required=True)
+    states_asrt.add_argument("--out", required=True)
+    states_asrt.add_argument("--logical-entries", type=int, default=None)
+    states_asrt.set_defaults(func=cmd_states_assert)
+    approval_read = sub.add_parser("approval-read")
+    approval_read.add_argument("--file", required=True)
+    approval_read.set_defaults(func=cmd_approval_read)
+    entry_cmp = sub.add_parser("entry-compare")
+    entry_cmp.add_argument("--tree-a", required=True)
+    entry_cmp.add_argument("--tree-b", required=True)
+    entry_cmp.add_argument("--entries-a", type=int, required=True)
+    entry_cmp.add_argument("--entries-b", type=int, required=True)
+    entry_cmp.add_argument("--out", required=True)
+    entry_cmp.set_defaults(func=cmd_entry_compare)
     args = parser.parse_args()
     return args.func(args)
 

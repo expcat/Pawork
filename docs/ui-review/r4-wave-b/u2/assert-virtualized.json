@@ -1,0 +1,22 @@
+{
+  "phase": "virtualized",
+  "generated_at": "2026-08-28T04:17:50Z",
+  "checks": [
+    {
+      "name": "selected-session-fx-ses-beta-long",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-beta-long (expect session-fx-ses-beta-long)"
+    },
+    {
+      "name": "virtualization-logical-rows",
+      "pass": true,
+      "detail": "barrier entry_count=64 (fixture contract 64 logical rows)"
+    },
+    {
+      "name": "virtualization-window-slice",
+      "pass": true,
+      "detail": "AX timeline-entry-*/run-summary-* nodes=23 < logical rows=64 (capacity=ceil(frame.height/52) window slice)"
+    }
+  ],
+  "pass": true
+}

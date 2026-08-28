@@ -50,8 +50,8 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/tasks_host.rs` | ~90 | tasks 门面转发 + `parse_task_kind`；`tasks.json` 快照 load/replay 与原子写（tmp + rename） |
 | `src/persist.rs` | ~20 | `PersistThenRender`：先 `append_event`（用 session 当前 active branch）成功再交渲染 sink |
 | `src/services/mod.rs` | ~10 | 七服务模块声明（全 `pub(crate)`） |
-| `src/services/session.rs` | ~620 | `SessionService`：会话生命周期、workspace 绑定、事件序号 `next_sequence`、`resolve_session`（前缀/序号）、`resume_messages`（CLI：`seal_orphaned_approvals` 落 Denied）与 `resume_messages_keep_pending`（GUI：保留待审批） |
-| `src/services/run.rs` | ~600 | `RunService`：`chat_turn`/`chat_turn_with_run_id`（Plan gate → quota 预检 → TurnContext 装配含 `git_status_note` → engine `run_session` → usage 落账）、`compact_session` 手动压缩、`append_payload` 事件追加 |
+| `src/services/session.rs` | ~630 | `SessionService`：会话生命周期、workspace 绑定、事件序号 `next_sequence`、`resolve_session`（前缀/序号）、`resume_messages`（CLI：`seal_orphaned_approvals` 落 Denied）与 `resume_messages_keep_pending`（GUI：保留待审批）；`resolve_waiting_tool_call` 返回落库 envelope 序列供宿主补广播 |
+| `src/services/run.rs` | ~600 | `RunService`：`chat_turn`/`chat_turn_with_run_id`（Plan gate → quota 预检 → TurnContext 装配含 `git_status_note` → engine `run_session` → usage 落账）、`compact_session` 手动压缩、`append_payload` 事件追加（返回 envelope 供补广播） |
 | `src/services/approval.rs` | ~500 | `ApprovalService`：审批模式与 workspace trust 配置、`ApprovalPromptHost` 委派、模式变更时重建 `ToolScheduler` 配置 |
 | `src/services/usage.rs` | ~400 | `UsageService`：持有 `ControlPlaneRuntime`；`projected_run_usage` 预算预检、`record_completed_usage` 落 `usage-ledger.sqlite3`、`usage_overview`/`session_usage`/`last_run_usage`/`estimate_cost_for` |
 | `src/services/extension.rs` | ~330 | `ExtensionService`：workspace roots/file-index、`expand_at_refs`（命中 file-index 的 `@` 附件展开为独立 Text part，64 KiB 截断标记）、`complete_at`、注入层加载（instructions/skills/profiles）、MCP slot 持有与关停 |
@@ -61,16 +61,16 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_server/connection.rs` | ~550 | `ConnectionManager`：客户端注册/心跳（`DEFAULT_HEARTBEAT_TIMEOUT` 30s idle 清理）/事件订阅；每连接有界 mpsc 队列（`DEFAULT_QUEUE_CAPACITY` 1024），慢客户端标记 `lagged` 丢新事件不阻塞发布者；断连**不**取消 run |
 | `src/gui_server/session.rs` | ~950 | 单连接握手与帧循环：协议版本检查、command 盖 client 戳、capability 门（未授予在宿主前拒绝）、Resume 三态调度（replay / SnapshotRequired / up-to-date）、Heartbeat→Pong、订阅确认、lagged→ReplayUnavailable 帧 |
 | `src/gui_host/mod.rs` | ~820 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进） |
-| `src/gui_host/bus.rs` | ~230 | `GuiEventBus`（内部 `EventHub` 赋全局序 + replay）、`GuiBroadcastSink`（AgentEvent→AppEvent 映射后广播）、`GuiRunRegistry`（活跃 GUI run 与 `CancellationToken` 登记） |
+| `src/gui_host/bus.rs` | ~275 | `GuiEventBus`（内部 `EventHub` 赋全局序 + replay；engine 终态上流时登记 run_id，供宿主合成终态兜底去重；`publish_raw` 合成事件序号从 `SYNTHETIC_SEQUENCE_BASE`=2^60 递增自取，不占真实持久化号段且排在既有时间线内容之后）、`GuiBroadcastSink`（AgentEvent→AppEvent 映射后广播）、`GuiRunRegistry`（活跃 GUI run 与 `CancellationToken` 登记） |
 | `src/gui_host/events.rs` | ~190 | `AgentEventEnvelope`→`AppEvent` 投影助手、诊断事件映射、幂等 client scope 推导 |
 | `src/gui_host/handlers/mod.rs` | ~10 | handler 子模块声明 |
 | `src/gui_host/handlers/terminal.rs` | ~420 | TerminalCreate/Write/Resize：经 `PtyService`；`terminal_create` 过 PolicyEngine（capability=Process；NeverAsk/ReadOnly 直拒，AskUser fail-closed 落 Deny）；输出经事件广播，需 terminal-streaming capability |
-| `src/gui_host/handlers/run_start.rs` | ~280 | RunStart：provider/model 切换校验（未知 fail-closed）→ `expand_at_refs` 展开 → 登记 `ActiveGuiRun` → spawn `chat_turn`；模型切换与失败发诊断事件 |
+| `src/gui_host/handlers/run_start.rs` | ~290 | RunStart：provider/model 切换校验（未知 fail-closed）→ `expand_at_refs` 展开 → 登记 `ActiveGuiRun` → spawn `chat_turn`；模型切换发诊断事件；engine 未报终态即死时才补发合成 `RunChanged{Failed}` + `run.failed` |
 | `src/gui_host/handlers/query.rs` | ~240 | WorkspaceList/SessionGet/ModelList（聚合 overview）/RunStatus/DiffListFiles/DiffGet/QuotaOverview/McpList（`{"servers":[...]}`） |
 | `src/gui_host/handlers/session.rs` | ~120 | SessionCreate（建会话 + 绑 workspace）/SessionOpen/SessionFork（自指定事件建分支并切换 active branch） |
-| `src/gui_host/handlers/approval.rs` | ~80 | ToolApprove：协议决定→domain 决定；live 决议 pending，非 live 走 session store 落 queued 决议；写工具附预览 |
+| `src/gui_host/handlers/approval.rs` | ~90 | ToolApprove：协议决定→domain 决定；live 决议 pending，非 live 走 session store 落 queued 决议、落库成功后经 `GuiBroadcastSink` 补广播（仅 `ToolCompleted` 上 wire）；写工具附预览 |
 | `src/gui_host/handlers/command.rs` | ~40 | WorkspaceAdd（追加 workspace）、RunCancel（翻转注册的 `CancellationToken`） |
-| `src/gui_host/tests.rs` | ~1800 | `cfg(test)` 内嵌测试集：双射 pin、timeline 分页、`@` 展开三态、幂等（重启存活/失败计数/InFlight 收敛）、审批三态、fork、provider 切换、bus lagged 等 |
+| `src/gui_host/tests.rs` | ~2050 | `cfg(test)` 内嵌测试集：双射 pin、timeline 分页、`@` 展开三态、幂等（重启存活/失败计数/InFlight 收敛）、审批三态与重启后广播收口、合成终态闸门（fail 不重复/cancel 不谎报/早死兜底）、fork、provider 切换、bus lagged 等 |
 | `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟（`--ignored`），不进默认测试路径 |
 | `tests/timeline_projection_host.rs` | ~160 | host `timeline()` 与 protocol 投影 golden 对拍 |
 | `tests/gui_server/session.rs` | ~1000 | 具名 test bin `gui_server_session`：握手/版本/capability/resume/心跳/慢消费 |
@@ -170,7 +170,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 6. spawn 异步任务执行 `RunService::chat_turn`（§4.2），响应帧先行返回 run 受理；run 事件在宿主内经 `PersistThenRender` 先落库，再交 `GuiBroadcastSink` 映射为 `AppEvent` 发进 `GuiEventBus`。
 7. `EventHub` 为每条事件赋连续 `global_sequence` 并写 ring buffer；`ConnectionManager` 将事件推入各订阅连接的有界 mpsc 队列；订阅 GUI 收到 Event 帧。
 8. 慢客户端队满被标记 lagged 并丢新事件——发布者与其它 GUI 不被阻塞；lagged 连接随后收到 ReplayUnavailable，走 snapshot 恢复（§4.3）。
-9. RunCompleted 或失败：`GuiRunRegistry` 摘除该 run（失败发诊断事件）；成功响应按 `should_cache` 写回幂等 ledger；record 失败计数并释放 inflight（同 `command_id` 可重入），不吞错挂死。
+9. Run 收尾合成终态闸门：fail/cancel 路径 engine 在 Err 返回前已经 sink 广播真实终态（`RunChanged{Failed}` / `RunChanged{Cancelled}`），宿主据 `GuiEventBus` 的终态登记（`terminal_reported`）去重，不再补发；只在 engine 未报终态即死（plan 闸门拒绝、宿主侧早退等）时经 `publish_raw` 补发合成 `RunChanged{Failed}` + `run.failed` 诊断——`publish_raw` 的合成 `stream_sequence` 从 `SYNTHETIC_SEQUENCE_BASE`（2^60）递增自取：真实持久化 sequence 从 1 单调递增不会到达该段，既不触发 reducer seen 去重吞掉真实事件，也让合成条目有序插入落在既有时间线内容（含用户消息乐观回显）之后（seq-0 旧行为曾把合成 "Run failed" 插到时间线顶端，R4 Wave B 评审 P2 修复）；语义仍是宿主兜底而非 engine 事实。随后 `GuiRunRegistry` 摘除该 run 并清理终态登记（防无界增长）；成功响应按 `should_cache` 写回幂等 ledger；record 失败计数并释放 inflight（同 `command_id` 可重入），不吞错挂死。
 
 ### 4.2 CLI chat_turn 单轮
 
@@ -203,7 +203,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 1. live 路径：engine 发 `ToolApprovalRequested` → `SessionLoopCtx` 挂起等待决议 → `GuiApprovalHost` 登记 pending 并广播审批事件。
 2. GUI 发 ToolApprove 命令（协议 `ApprovalDecision` 译为 domain 决定；写工具附 `preview_for_tool` 生成的预览）→ live 决议唤醒等待中的 run，放行或拒绝该工具。live 等待期间**不**做持久 seal（决议由 run 自身事件流落库，避免双写）。
 3. 非 live（进程重启、run 不在内存）：
-   - session 有 waiting 投影 → ToolApprove 决议持久化落库（durable seal），下次 resume 可见；
+   - session 有 waiting 投影 → ToolApprove 决议持久化落库（durable seal），下次 resume 可见；落库成功后经 `GuiBroadcastSink` 逐事件补广播（persist-first），`broadcast_event` 过滤后仅 `ToolExecutionCompleted` 映射 `AppEvent::ToolCompleted`（success=false）上 wire，GUI 借此清 pending 并把 tool 行显示为 failed；`ToolApprovalResponded`/`MessageCommitted` 仍不进实时流，wire 契约不变（`tool_approve_non_live_waiting_broadcasts_tool_completed` 钉住）；
    - 无 waiting 投影 → 决议进 queued 池，等待 run 恢复时消费，不落库。
 4. resume 分叉：CLI `resume_messages` 把孤儿待审批 seal 为 Denied（持久化）；GUI `resume_messages_keep_pending` 保留 pending 并随 snapshot 重建审批卡片，用户可继续决议。
 
@@ -267,6 +267,7 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
   - 分发表与 registry `gui.available` 双射 pin（`dispatch_tables_match_gui_available_registry_entries`）；
   - timeline 投影分页与 ModelList 聚合、McpList `{"servers":[...]}` 形状；
   - `run_start` 的 `@` 展开三态：展开成独立 part / 失败不留活跃 run / 无 `@` 单 Text part；二轮带历史；
+  - 合成终态闸门：engine fail 恰一条 `RunChanged{Failed}` 无合成重复、cancel 恰一条 `RunChanged{Cancelled}` 不被谎报 Failed、无终态早死（Draft plan 闸门拒绝）仍补发合成 `RunChanged{Failed}` + `run.failed` 兜底、且合成信封序号为 ≥2^60 合成段且按到达序递增；
   - 幂等：replay 不重放副作用、跨 client 同 `command_id` 不撞、重启存活、record 失败计数不吞错、InFlight 共享 key 不挂死、唤醒丢失有界轮询收敛、失败释放 inflight 可重入；
   - ToolApprove 三态：live waiting 不 durable seal / 非 live 有 waiting 投影 durable / 无 waiting 保持 queued；
   - snapshot 重启后重建 pending approvals；SessionCreate / SessionFork（建分支并切换）；

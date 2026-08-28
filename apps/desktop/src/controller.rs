@@ -31,7 +31,8 @@ pub enum ControllerEvent {
     TimelineLoaded { session_id: String, page: TimelinePage },
     Event(AppEventEnvelope),
     SessionCreated { session_id: String },
-    MessageSent { session_id: String, run_id: String },
+    /// 发送回执：text 随行携带，供 UI 在 wire 用户消息事件缺席时乐观回显。
+    MessageSent { session_id: String, run_id: String, text: String },
     ModelsLoaded(Vec<ModelEntry>),
     SessionForked { session_id: String },
     TerminalCreated { terminal_session_id: String },
@@ -429,6 +430,7 @@ impl DesktopController {
                             .send(ControllerEvent::MessageSent {
                                 session_id,
                                 run_id,
+                                text,
                             })
                             .await;
                     }

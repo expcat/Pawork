@@ -3,8 +3,9 @@
 use gpui::{App, Context, Focusable, Window};
 
 use crate::projection::{
-    ConnectionState, DateBucket, ModelEntry, SessionLiveStatus, TaskRailGrouping,
-    TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, UNASSIGNED_PROJECT,
+    ConnectionState, DateBucket, ForkBoundary, ModelEntry, SessionLiveStatus, TaskRailGrouping,
+    TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, TimelineRow, UNASSIGNED_PROJECT,
+    run_footer_label, run_summary_texts,
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
@@ -13,8 +14,10 @@ use crate::ui::inspector::InspectorTab;
 use crate::ui::inspector::TERMINAL_EMPTY_OUTPUT;
 use crate::ui::shell_layout;
 use crate::ui::theme::metrics;
+use crate::ui::timeline_entry::display_time;
 use crate::ui::{
     AppView, MenuKind, WORKSPACE_EMPTY_HINT, rail_project_occurrence_key, rail_session_focus_key,
+    timeline,
 };
 
 const PAD: f32 = 8.0;
@@ -102,6 +105,8 @@ impl AppView {
             "task-rail-grouping" => self.on_toggle_grouping_menu(None, window, cx),
             "project-scope" => self.on_toggle_scope_menu(None, window, cx),
             "add-task" => self.on_new_session(window, cx),
+            // F-05 Header 动作：与 rail 全局「+」同 handler / enable gate。
+            "header-new-task" => self.on_new_session(window, cx),
             "reconnect" => self.on_reconnect(window, cx),
             "model-picker" => self.on_toggle_model_menu(None, window, cx),
             "cancel" => self.on_cancel_clicked(window, cx),
@@ -230,6 +235,19 @@ impl AppView {
                 {
                     self.close_open_menu(cx);
                     self.on_fork(&event_id, cx);
+                    return true;
+                }
+                // Run 摘要卡 Review changes（enabled 由树节点校验 + 谓词
+                // 双重把关，与 render 同源）。
+                if self
+                    .projection
+                    .timeline
+                    .iter()
+                    .find(|entry| run_review_identifier(&entry.event_id) == identifier)
+                    .filter(|entry| entry.fork_boundary == Some(ForkBoundary::Completed))
+                    .is_some()
+                {
+                    self.on_review_changes(cx);
                     return true;
                 }
                 if let Some(path) = self
@@ -690,23 +708,109 @@ impl AppView {
             + metrics::COMPOSER_TEXT_INSET)
             .clamp(metrics::COMPOSER_MIN_HEIGHT, metrics::COMPOSER_MAX_HEIGHT);
         let composer_height = (input_height + 68.0).min(frame.height);
-        let timeline_height = (frame.height - composer_height).max(0.0);
+        let header_height = metrics::HEADER_HEIGHT.min(frame.height);
+        let timeline_height = (frame.height - composer_height - header_height).max(0.0);
         AxNode::new("workspace", AxRole::Group, "Workspace", frame)
-            .child(self.timeline_ax(AxRect::new(frame.x, frame.y, frame.width, timeline_height)))
+            .child(self.header_ax(AxRect::new(
+                frame.x,
+                frame.y,
+                frame.width,
+                header_height,
+            )))
+            .child(self.timeline_ax(AxRect::new(
+                frame.x,
+                frame.y + header_height,
+                frame.width,
+                timeline_height,
+            )))
             .child(self.composer_ax(
                 window,
                 cx,
                 AxRect::new(
                     frame.x,
-                    frame.y + timeline_height,
+                    frame.y + header_height + timeline_height,
                     frame.width,
                     composer_height,
                 ),
             ))
     }
 
+    /// F-05 Header 语义树（与 render 同源谓词 / metrics）：标题 / branch /
+    /// live 终态 / 新建任务按钮。各项可见条件与 render 完全一致（无数据
+    /// 诚实隐藏；几何共享 HEADER_* 常量，文本宽度为近似值）。
+    fn header_ax(&self, frame: AxRect) -> AxNode {
+        let content_top = frame.y + metrics::HEADER_SAFE_STRIP;
+        let content_height = (frame.height - metrics::HEADER_SAFE_STRIP).max(0.0);
+        let row_height = metrics::HEADER_STATUS_DOT_SIZE + 14.0;
+        let row_y = content_top + ((content_height - row_height) / 2.0).max(0.0);
+        let mut header = AxNode::new(
+            "workspace-header",
+            AxRole::Group,
+            "Workspace header",
+            frame,
+        );
+        let mut x = frame.x + metrics::TIMELINE_CONTENT_INSET;
+        if let Some(title) = self.projection.workspace_header_title() {
+            let width = 340.0_f32.min((frame.x + frame.width - x).max(0.0));
+            header = header.child(AxNode::new(
+                "header-title",
+                AxRole::StaticText,
+                title,
+                AxRect::new(x, row_y, width, row_height),
+            ));
+            x += width + metrics::HEADER_TITLE_META_GAP;
+        }
+        if let Some(branch) = self.header_branch() {
+            let width = 120.0_f32.min((frame.x + frame.width - x).max(0.0));
+            header = header.child(
+                AxNode::new(
+                    "header-branch",
+                    AxRole::StaticText,
+                    branch,
+                    AxRect::new(x, row_y, width, row_height),
+                )
+                .description("Git branch"),
+            );
+            x += width + 24.0;
+        }
+        if let Some(status) = self.projection.workspace_header_status() {
+            let width = 150.0_f32.min((frame.x + frame.width - x).max(0.0));
+            header = header.child(
+                AxNode::new(
+                    "header-status",
+                    AxRole::StaticText,
+                    status.label(),
+                    AxRect::new(x, row_y, width, row_height),
+                )
+                .description("Live status"),
+            );
+        }
+        let action_x = (frame.x + frame.width
+            - metrics::HEADER_INSET_RIGHT
+            - metrics::HEADER_ACTION_WIDTH)
+            .max(frame.x);
+        let action_y =
+            content_top + ((content_height - metrics::HEADER_ACTION_HEIGHT) / 2.0).max(0.0);
+        header.child(
+            AxNode::new(
+                "header-new-task",
+                AxRole::Button,
+                "New task",
+                AxRect::new(
+                    action_x,
+                    action_y,
+                    metrics::HEADER_ACTION_WIDTH,
+                    metrics::HEADER_ACTION_HEIGHT,
+                ),
+            )
+            .enabled(self.can_create_task())
+            .action(AxAction::Press),
+        )
+    }
+
     fn timeline_ax(&self, frame: AxRect) -> AxNode {
-        let total = self.projection.timeline.len();
+        let rows = self.projection.timeline_rows();
+        let total = rows.len();
         let empty_hint_visible = self.projection.workspace_empty_hint_visible();
         let capacity = ((frame.height / TIMELINE_ROW_HEIGHT).ceil() as usize).max(1);
         let start = if self.timeline_following {
@@ -727,50 +831,14 @@ impl AppView {
                 AxRect::new(frame.x, hint_y, frame.width, ROW_HEIGHT),
             ));
         }
-        for (visible_ix, entry) in self.projection.timeline[start..end].iter().enumerate() {
-            let row = AxRect::new(
+        for (visible_ix, row) in rows[start..end].iter().enumerate() {
+            let rect = AxRect::new(
                 frame.x + PAD,
                 frame.y + PAD + visible_ix as f32 * TIMELINE_ROW_HEIGHT,
                 (frame.width - PAD * 2.0).max(0.0),
                 TIMELINE_ROW_HEIGHT,
             );
-            let (label, value) = timeline_accessible_text(entry);
-            let mut node = AxNode::new(
-                dynamic_identifier("timeline-entry", &entry.event_id),
-                AxRole::ListItem,
-                label,
-                row,
-            )
-            .value(value)
-            .description(entry.timestamp.clone())
-            .child(
-                AxNode::new(
-                    entry_menu_identifier(&entry.event_id),
-                    AxRole::Button,
-                    "Entry actions",
-                    AxRect::new(row.x + row.width - 32.0, row.y, 32.0, 28.0),
-                )
-                .action(AxAction::Press),
-            );
-            if matches!(&self.open_menu, Some(MenuKind::Entry(id)) if id == &entry.event_id) {
-                node = node.child(
-                    AxNode::new(
-                        fork_identifier(&entry.event_id),
-                        AxRole::Button,
-                        "Fork",
-                        AxRect::new(row.x + row.width - 112.0, row.y + 28.0, 112.0, 30.0),
-                    )
-                    .enabled(
-                        matches!(
-                            self.projection.connection,
-                            ConnectionState::Connected { .. }
-                        ) && self.projection.active_session_id.is_some()
-                            && entry.is_fork_boundary(),
-                    )
-                    .action(AxAction::Press),
-                );
-            }
-            list = list.child(node);
+            list = list.child(self.timeline_row_ax(row, rect));
         }
         if let Some(pending) = self.projection.pending_approval.as_ref() {
             let approval_height = 112.0_f32.min(frame.height);
@@ -833,6 +901,238 @@ impl AppView {
             );
         }
         list
+    }
+
+    /// 渲染行 → AX 节点（与 timeline.rs 组装同源）。消息 / 错误条目保持
+    /// 既有 timeline-entry / entry-menu / fork identifier；tool 组与 Run
+    /// 摘要区域为新结构节点。
+    fn timeline_row_ax(&self, row: &TimelineRow, rect: AxRect) -> AxNode {
+        match row {
+            TimelineRow::Message { entry_index } => {
+                self.timeline_entry_ax(&self.projection.timeline[*entry_index], rect, true)
+            }
+            TimelineRow::Error { entry_index } => {
+                self.timeline_entry_ax(&self.projection.timeline[*entry_index], rect, true)
+            }
+            // 中间相位单行（§4.5）：无「···」菜单（非 fork 边界，原菜单
+            // 亦不可用），只保留条目语义。
+            TimelineRow::RunPhase { entry_index } => {
+                self.timeline_entry_ax(&self.projection.timeline[*entry_index], rect, false)
+            }
+            TimelineRow::ToolGroup { entry_indices } => {
+                let mut group = AxNode::new(
+                    dynamic_identifier(
+                        "tool-group",
+                        &self.projection.timeline[entry_indices[0]].event_id,
+                    ),
+                    AxRole::Group,
+                    format!("Tool activity · {} tools", entry_indices.len()),
+                    rect,
+                );
+                for (ix, &entry_index) in entry_indices.iter().enumerate() {
+                    let entry = &self.projection.timeline[entry_index];
+                    let TimelineEntryKind::ToolCall {
+                        name,
+                        status,
+                        detail,
+                    } = &entry.kind
+                    else {
+                        continue;
+                    };
+                    let tool_rect = AxRect::new(
+                        rect.x,
+                        rect.y + ix as f32 * metrics::TOOL_ROW_HEIGHT,
+                        rect.width,
+                        metrics::TOOL_ROW_HEIGHT,
+                    );
+                    group = group.child(
+                        AxNode::new(
+                            dynamic_identifier("tool-row", &entry.event_id),
+                            AxRole::ListItem,
+                            format!("Tool · {name}"),
+                            tool_rect,
+                        )
+                        .value(timeline::tool_status_label(status))
+                        .description(detail.clone().unwrap_or_default()),
+                    );
+                }
+                group
+            }
+            TimelineRow::RunSummary { group, terminal } => {
+                let terminal_entry = &self.projection.timeline[*terminal];
+                let now_ms = crate::ui::now_unix_ms();
+                let mut region = AxNode::new(
+                    dynamic_identifier("run-summary", &terminal_entry.event_id),
+                    AxRole::Group,
+                    "Run summary",
+                    rect,
+                );
+                let mut y = rect.y;
+                if let Some(entry_indices) = group {
+                    for &entry_index in entry_indices {
+                        let entry = &self.projection.timeline[entry_index];
+                        let TimelineEntryKind::ToolCall {
+                            name,
+                            status,
+                            detail,
+                        } = &entry.kind
+                        else {
+                            continue;
+                        };
+                        region = region.child(
+                            AxNode::new(
+                                dynamic_identifier("tool-row", &entry.event_id),
+                                AxRole::ListItem,
+                                format!("Tool · {name}"),
+                                AxRect::new(
+                                    rect.x,
+                                    y,
+                                    rect.width,
+                                    metrics::TOOL_ROW_HEIGHT,
+                                ),
+                            )
+                            .value(timeline::tool_status_label(status))
+                            .description(detail.clone().unwrap_or_default()),
+                        );
+                        y += metrics::TOOL_ROW_HEIGHT;
+                    }
+                    y += metrics::SUMMARY_CARD_GAP;
+                }
+                let (title, description) =
+                    run_summary_texts(terminal_entry).unwrap_or(("Run", String::new()));
+                region = region.child(
+                    AxNode::new(
+                        dynamic_identifier("run-summary-card", &terminal_entry.event_id),
+                        AxRole::StaticText,
+                        title,
+                        AxRect::new(rect.x, y, rect.width, metrics::SUMMARY_CHECK_CIRCLE),
+                    )
+                    .description(description),
+                );
+                let review_enabled = terminal_entry.fork_boundary
+                    == Some(ForkBoundary::Completed)
+                    && self.changes_available_for_active();
+                region = region.child(
+                    AxNode::new(
+                        run_review_identifier(&terminal_entry.event_id),
+                        AxRole::Button,
+                        "Review changes",
+                        AxRect::new(
+                            (rect.x + rect.width - metrics::SUMMARY_BUTTON_WIDTH).max(rect.x),
+                            y,
+                            metrics::SUMMARY_BUTTON_WIDTH,
+                            metrics::SUMMARY_BUTTON_HEIGHT,
+                        ),
+                    )
+                    .enabled(review_enabled)
+                    .action(AxAction::Press),
+                );
+                y += metrics::SUMMARY_CHECK_CIRCLE + metrics::TIMELINE_FOOTER_GAP;
+                if let Some(label) = run_footer_label(terminal_entry) {
+                    region = region.child(AxNode::new(
+                        dynamic_identifier("run-footer", &terminal_entry.event_id),
+                    AxRole::StaticText,
+                    format!(
+                        "{label} · {}",
+                        display_time(&terminal_entry.timestamp, now_ms)
+                    ),
+                    AxRect::new(rect.x, y, rect.width, ROW_HEIGHT),
+                ));
+                }
+                // 终态条目保留「···」fork 菜单语义（identifier 冻结）。
+                let menu_row = AxRect::new(
+                    rect.x + rect.width - 32.0,
+                    rect.y + rect.height - 28.0,
+                    32.0,
+                    28.0,
+                );
+                let mut entry_node = AxNode::new(
+                    dynamic_identifier("timeline-entry", &terminal_entry.event_id),
+                    AxRole::ListItem,
+                    "Run",
+                    rect,
+                )
+                .value(run_footer_label(terminal_entry).unwrap_or_default())
+                .description(display_time(&terminal_entry.timestamp, now_ms))
+                .child(
+                    AxNode::new(
+                        entry_menu_identifier(&terminal_entry.event_id),
+                        AxRole::Button,
+                        "Entry actions",
+                        menu_row,
+                    )
+                    .action(AxAction::Press),
+                );
+                if matches!(&self.open_menu, Some(MenuKind::Entry(id)) if id == &terminal_entry.event_id)
+                {
+                    let fork_node = AxNode::new(
+                        fork_identifier(&terminal_entry.event_id),
+                        AxRole::Button,
+                        "Fork",
+                        AxRect::new(menu_row.x - 80.0, menu_row.y + 28.0, 112.0, 30.0),
+                    )
+                    .enabled(
+                        matches!(
+                            self.projection.connection,
+                            ConnectionState::Connected { .. }
+                        ) && self.projection.active_session_id.is_some()
+                            && terminal_entry.is_fork_boundary(),
+                    )
+                    .action(AxAction::Press);
+                    entry_node = entry_node.child(fork_node);
+                }
+                region.child(entry_node)
+            }
+        }
+    }
+
+    /// 消息 / 错误 / 中间相位条目节点（identifier 与迁移前一致）。
+    fn timeline_entry_ax(
+        &self,
+        entry: &TimelineEntry,
+        row: AxRect,
+        with_menu: bool,
+    ) -> AxNode {
+        let now_ms = crate::ui::now_unix_ms();
+        let (label, value) = timeline_accessible_text(entry);
+        let mut node = AxNode::new(
+            dynamic_identifier("timeline-entry", &entry.event_id),
+            AxRole::ListItem,
+            label,
+            row,
+        )
+        .value(value)
+        .description(display_time(&entry.timestamp, now_ms));
+        if with_menu {
+            node = node.child(
+                AxNode::new(
+                    entry_menu_identifier(&entry.event_id),
+                    AxRole::Button,
+                    "Entry actions",
+                    AxRect::new(row.x + row.width - 32.0, row.y, 32.0, 28.0),
+                )
+                .action(AxAction::Press),
+            );
+            if matches!(&self.open_menu, Some(MenuKind::Entry(id)) if id == &entry.event_id) {
+                node = node.child(
+                    AxNode::new(
+                        fork_identifier(&entry.event_id),
+                        AxRole::Button,
+                        "Fork",
+                        AxRect::new(row.x + row.width - 112.0, row.y + 28.0, 112.0, 30.0),
+                    )
+                    .enabled(
+                        matches!(
+                            self.projection.connection,
+                            ConnectionState::Connected { .. }
+                        ) && self.projection.active_session_id.is_some()
+                            && entry.is_fork_boundary(),
+                    )
+                    .action(AxAction::Press),
+                );
+            }
+        }
+        node
     }
 
     fn composer_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
@@ -1319,7 +1619,7 @@ impl AppView {
 fn timeline_accessible_text(entry: &TimelineEntry) -> (String, String) {
     match &entry.kind {
         TimelineEntryKind::UserMessage { text } => ("You".into(), text.clone()),
-        TimelineEntryKind::AssistantMessage { text } => ("Assistant".into(), text.clone()),
+        TimelineEntryKind::AssistantMessage { text } => ("Pawork".into(), text.clone()),
         TimelineEntryKind::ToolCall {
             name,
             status,
@@ -1411,6 +1711,10 @@ fn entry_menu_identifier(event_id: &str) -> String {
 
 fn fork_identifier(event_id: &str) -> String {
     dynamic_identifier("fork", event_id)
+}
+
+fn run_review_identifier(event_id: &str) -> String {
+    dynamic_identifier("run-review-changes", event_id)
 }
 
 fn diff_file_identifier(path: &str) -> String {

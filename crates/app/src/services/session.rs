@@ -5,8 +5,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use pawork_domain::{
-    AgentEvent, ApprovalDecision, ContentPart, Message, MessageId, MessageRole, SessionId,
-    TextContent, ToolResultContent, WorkspaceId,
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, Message, MessageId,
+    MessageRole, SessionId, TextContent, ToolResultContent, WorkspaceId,
 };
 use pawork_engine::EngineError;
 use pawork_storage::session::SessionRecord;
@@ -146,6 +146,8 @@ impl SessionService {
 
     /// 参数化决策与 comment：Denied/Approved 都落 Responded + ToolExecutionCompleted(is_error) + MessageCommitted，
     /// 工具一律不重跑。
+    /// 返回本次落库的 envelope 序列（result 已存在时早退只含 Responded），
+    /// 供宿主在 persist-first 之后补实时广播。
     pub(crate) async fn resolve_waiting_tool_call(
         &self,
         core: &AppCore,
@@ -154,20 +156,23 @@ impl SessionService {
         decision: ApprovalDecision,
         comment: &str,
         sequence: &mut u64,
-    ) -> Result<(), AppError> {
-        core.append_payload(
-            session_id,
-            &call.run_id,
-            sequence,
-            AgentEvent::ToolApprovalResponded {
-                tool_call_id: call.tool_call_id.clone(),
-                decision,
-                comment: Some(comment.into()),
-            },
-        )
-        .await?;
+    ) -> Result<Vec<AgentEventEnvelope>, AppError> {
+        let mut envelopes = Vec::new();
+        envelopes.push(
+            core.append_payload(
+                session_id,
+                &call.run_id,
+                sequence,
+                AgentEvent::ToolApprovalResponded {
+                    tool_call_id: call.tool_call_id.clone(),
+                    decision,
+                    comment: Some(comment.into()),
+                },
+            )
+            .await?,
+        );
         if call.result.is_some() {
-            return Ok(());
+            return Ok(envelopes);
         }
         let result = ToolResultContent {
             tool_call_id: call.tool_call_id.clone(),
@@ -179,16 +184,18 @@ impl SessionService {
             metadata: serde_json::Value::Null,
             artifacts: Vec::new(),
         };
-        core.append_payload(
-            session_id,
-            &call.run_id,
-            sequence,
-            AgentEvent::ToolExecutionCompleted {
-                tool_call_id: call.tool_call_id.clone(),
-                result: result.clone(),
-            },
-        )
-        .await?;
+        envelopes.push(
+            core.append_payload(
+                session_id,
+                &call.run_id,
+                sequence,
+                AgentEvent::ToolExecutionCompleted {
+                    tool_call_id: call.tool_call_id.clone(),
+                    result: result.clone(),
+                },
+            )
+            .await?,
+        );
         let n = core.next_message.fetch_add(1, Ordering::Relaxed);
         let message = Message {
             id: MessageId::from(format!(
@@ -199,14 +206,16 @@ impl SessionService {
             content: vec![ContentPart::ToolResult(result)],
             metadata: Default::default(),
         };
-        core.append_payload(
-            session_id,
-            &call.run_id,
-            sequence,
-            AgentEvent::MessageCommitted { message },
-        )
-        .await?;
-        Ok(())
+        envelopes.push(
+            core.append_payload(
+                session_id,
+                &call.run_id,
+                sequence,
+                AgentEvent::MessageCommitted { message },
+            )
+            .await?,
+        );
+        Ok(envelopes)
     }
 
     pub(crate) async fn session_active_branch(

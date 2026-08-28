@@ -16,7 +16,7 @@ use pawork_client::{
 };
 use serde_json::Value;
 
-pub use pawork_client::projection::{TimelineEntry, TimelineEntryKind};
+pub use pawork_client::projection::{ForkBoundary, TimelineEntry, TimelineEntryKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -246,6 +246,28 @@ pub struct ActiveRun {
     pub run_id: String,
     pub session_id: String,
     pub started_at_ms: u64,
+}
+
+/// Timeline 渲染行（R4 Wave A F-08 组装纯数据）：连续 ToolCall（同 run
+/// 相邻）合并为 tool activity 组；run 终态条目（fork_boundary 单点判型）
+/// 与紧邻其前的 tool 组合成 Run 摘要区域。索引指向 timeline.entries，
+/// 行序与条目序一致；approval 卡由 UI 作为 list 末项另行附加，不占行。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TimelineRow {
+    /// user / assistant 消息条目。
+    Message { entry_index: usize },
+    /// error 条目（Diagnostic）。
+    Error { entry_index: usize },
+    /// tool activity 组：同 run 相邻的连续 ToolCall 条目。
+    ToolGroup { entry_indices: Vec<usize> },
+    /// 非终态 RunState 中间相位行（disabled 单行，不纳入摘要；Interrupted
+    /// 无 fork 边界，同按本行处理）。
+    RunPhase { entry_index: usize },
+    /// run 终态摘要区域：终态条目 + 紧邻前文 tool 组（可无）。
+    RunSummary {
+        group: Option<Vec<usize>>,
+        terminal: usize,
+    },
 }
 
 /// TaskRail 每会话 live 状态（诚实语义：只消费 wire 已有数据，不伪造终态）。
@@ -812,6 +834,90 @@ impl DesktopProjection {
             && self.pending_approval.is_none()
     }
 
+    /// Workspace Header 任务标题（F-05）：active session 的权威标题；
+    /// 无 active session 返回 None（UI 隐藏标题项，骨架常存）。
+    pub fn workspace_header_title(&self) -> Option<&str> {
+        let session_id = self.active_session_id.as_deref()?;
+        self.sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .map(|session| session.title.as_str())
+    }
+
+    /// Workspace Header 终态（F-05 诚实口径）：active session 的 live 派生
+    /// 态，与 TaskRail 状态点同源（NeedsInput > Running > Blocked）；wire
+    /// 无每会话终态字段，空闲会话返回 None（不画 Completed 绿点）。
+    pub fn workspace_header_status(&self) -> Option<SessionLiveStatus> {
+        self.active_session_id
+            .as_deref()
+            .and_then(|session_id| self.session_live_status(session_id))
+    }
+
+    /// timeline 条目 → 渲染行组装（F-08 §4.2）。纯函数，render 与 AX 共用
+    /// 同一结果保证同源；每帧调用成本为条目数线性扫描。
+    pub fn timeline_rows(&self) -> Vec<TimelineRow> {
+        let entries = &self.timeline.entries;
+        let mut rows = Vec::new();
+        let mut ix = 0;
+        while ix < entries.len() {
+            match &entries[ix].kind {
+                TimelineEntryKind::UserMessage { .. }
+                | TimelineEntryKind::AssistantMessage { .. } => {
+                    rows.push(TimelineRow::Message { entry_index: ix });
+                    ix += 1;
+                }
+                TimelineEntryKind::Error(_) => {
+                    rows.push(TimelineRow::Error { entry_index: ix });
+                    ix += 1;
+                }
+                TimelineEntryKind::ToolCall { .. } => {
+                    let run_id = entries[ix].run_id.clone();
+                    let mut group = vec![ix];
+                    ix += 1;
+                    while ix < entries.len() {
+                        let next = &entries[ix];
+                        if !matches!(next.kind, TimelineEntryKind::ToolCall { .. })
+                            || next.run_id != run_id
+                        {
+                            break;
+                        }
+                        group.push(ix);
+                        ix += 1;
+                    }
+                    // 紧邻其后的 run 终态条目吸收该组为摘要区域；终态必须
+                    // 与本组同 run（含 None==None 的未知 run 近邻），防止
+                    // 跨 run 吞并（审查 P2）。
+                    if ix < entries.len()
+                        && is_run_terminal(&entries[ix])
+                        && entries[ix].run_id == run_id
+                    {
+                        rows.push(TimelineRow::RunSummary {
+                            group: Some(group),
+                            terminal: ix,
+                        });
+                        ix += 1;
+                    } else {
+                        rows.push(TimelineRow::ToolGroup {
+                            entry_indices: group,
+                        });
+                    }
+                }
+                TimelineEntryKind::RunState(_) => {
+                    if is_run_terminal(&entries[ix]) {
+                        rows.push(TimelineRow::RunSummary {
+                            group: None,
+                            terminal: ix,
+                        });
+                    } else {
+                        rows.push(TimelineRow::RunPhase { entry_index: ix });
+                    }
+                    ix += 1;
+                }
+            }
+        }
+        rows
+    }
+
     /// MessageSent 乐观登记：composer 回执先于 live RunChanged 到达时，
     /// rail 状态点也必须立刻变成 Running，不能等下一帧事件。
     pub fn note_session_run(&mut self, session_id: &str, run_id: &str, started_at_ms: u64) {
@@ -829,6 +935,42 @@ impl DesktopProjection {
             session_id: session_id.to_string(),
             started_at_ms,
         });
+    }
+
+    /// MessageSent 本地乐观回显：wire 对 MessageCommitted 返回 None（用户
+    /// 消息不进实时流），发送回执即上屏，重选 / 重连后由快照重放的持久化
+    /// 行替换。只在 active session 追加；是否追加以返回值告知调用方 bump
+    /// 时间线代次。禁止改 protocol 共享 reducer——这里直接 push。
+    pub fn note_user_echo(
+        &mut self,
+        session_id: &str,
+        run_id: &str,
+        text: &str,
+        now_ms: u64,
+    ) -> bool {
+        if self.active_session_id.as_deref() != Some(session_id) {
+            return false;
+        }
+        // 借用当前最大 wire sequence（entries 升序）：不进 seen、不占号段，
+        // 后续 wire 事件严格更大，insert_entry 有序插入自然落在 echo 之后；
+        // 重复 wire 事件仍被 seen 去重，不会双插。entries 为空时兜底 0。
+        let sequence = self
+            .timeline
+            .entries
+            .last()
+            .map(|entry| entry.sequence)
+            .unwrap_or(0);
+        self.timeline.entries.push(TimelineEntry {
+            sequence,
+            event_id: format!("local-echo-{run_id}"),
+            kind: TimelineEntryKind::UserMessage {
+                text: text.to_string(),
+            },
+            fork_boundary: None,
+            timestamp: now_ms.to_string(),
+            run_id: Some(run_id.to_string()),
+        });
+        true
     }
 
     fn selected_context_window(&self) -> Option<u64> {
@@ -1095,6 +1237,61 @@ fn run_state_is_terminal(state: &RunState) -> bool {
     )
 }
 
+/// timeline 行组装的 run 终态判定：reducer 的 fork_boundary 是唯一定义源
+/// （历史 RunCompleted/Cancelled/Failed 与 live 对应态；Interrupted 无边
+/// 界），禁止对 kind 文案做字符串匹配。
+fn is_run_terminal(entry: &TimelineEntry) -> bool {
+    entry.fork_boundary.is_some()
+}
+
+/// Failed 终态摘要原因：protocol reducer 历史臂（RunFailed）把 provider
+/// 失败原因写进 RunState 标签 `run failed · {reason}`，live 臂（RunChanged）
+/// 只有 `run failed` 无原因。此处仅剥离前缀取原因原文（原因内部再含
+/// ` · ` 不受影响）；标签格式变化须与 protocol reducer 同批调整。
+fn failed_run_reason(label: &str) -> Option<&str> {
+    label
+        .strip_prefix("run failed · ")
+        .filter(|reason| !reason.is_empty())
+}
+
+/// Run 摘要卡内容（F-08 诚实文案）：无权威数据用通用描述，禁止编造
+/// 耗时 / 数字；失败原因取 reducer 标签原文；非终态条目返回 None。
+pub fn run_summary_texts(entry: &TimelineEntry) -> Option<(&'static str, String)> {
+    match entry.fork_boundary {
+        Some(ForkBoundary::Completed) => Some((
+            "Ready for review",
+            "The run finished. Review the changes from this turn.".to_string(),
+        )),
+        Some(ForkBoundary::Cancelled) => Some((
+            "Run cancelled",
+            "The run was cancelled. Output from this turn is preserved.".to_string(),
+        )),
+        // 失败摘要是唯一的失败原因出口（Error 仅来自 Diagnostic，RunFailed
+        // 不产生 Error 条目）：有原因用原文，无原因 / 标签剥离失败走通用
+        // 兜底，不指向不存在的"上方错误详情"。
+        Some(ForkBoundary::Failed) => Some((
+            "Run failed",
+            match &entry.kind {
+                TimelineEntryKind::RunState(label) => failed_run_reason(label)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "The run failed.".to_string()),
+                _ => "The run failed.".to_string(),
+            },
+        )),
+        None => None,
+    }
+}
+
+/// Timeline 页脚终态词（§4.4：completed / cancelled / failed；非终态 None）。
+pub fn run_footer_label(entry: &TimelineEntry) -> Option<&'static str> {
+    match entry.fork_boundary {
+        Some(ForkBoundary::Completed) => Some("Run completed"),
+        Some(ForkBoundary::Cancelled) => Some("Run cancelled"),
+        Some(ForkBoundary::Failed) => Some("Run failed"),
+        None => None,
+    }
+}
+
 /// unread 通道的 Session-stream 活动事件集合（R3 Wave B 拍板）：RunChanged /
 /// AssistantDelta / ToolStarted / ToolOutput / ToolCompleted / MessageSent /
 /// Diagnostic。MessageSent 为本地 ControllerEvent（composer 回执），只属于
@@ -1223,6 +1420,39 @@ mod tests {
             }
         }
         item
+    }
+
+    fn raw_entry(sequence: u64, kind: TimelineEntryKind, run_id: Option<&str>) -> TimelineEntry {
+        TimelineEntry {
+            sequence,
+            event_id: format!("raw-{sequence}"),
+            kind,
+            fork_boundary: None,
+            timestamp: "2000".into(),
+            run_id: run_id.map(str::to_string),
+        }
+    }
+
+    fn tool_entry(sequence: u64, run_id: &str, name: &str, status: &str) -> TimelineEntry {
+        raw_entry(
+            sequence,
+            TimelineEntryKind::ToolCall {
+                name: name.into(),
+                status: status.into(),
+                detail: None,
+            },
+            Some(run_id),
+        )
+    }
+
+    fn terminal_entry(sequence: u64, boundary: ForkBoundary) -> TimelineEntry {
+        let mut entry = raw_entry(
+            sequence,
+            TimelineEntryKind::RunState("run terminal".into()),
+            Some("r-1"),
+        );
+        entry.fork_boundary = Some(boundary);
+        entry
     }
 
     #[test]
@@ -1598,6 +1828,82 @@ mod tests {
         );
         assert!(projection.apply_event(&run_changed(2, "completed")));
         assert_eq!(projection.session_live_status("s-1"), None);
+    }
+
+    /// R4 Wave B WS-4a：用户消息乐观回显——active session 回执即上屏，
+    /// 后续 wire 事件严格落在 echo 之后；非 active 不产生行。
+    #[test]
+    fn note_user_echo_appends_active_then_wire_events_land_after() {
+        // entries 为空的理论分支：sequence 兜底 0。
+        let mut fresh = DesktopProjection::default();
+        fresh.select_session("s-1");
+        assert!(fresh.note_user_echo("s-1", "r-0", "first", 1_000));
+        assert_eq!(fresh.timeline.len(), 1);
+        assert_eq!(fresh.timeline[0].sequence, 0);
+
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&assistant_delta(4, "m-1", "before")));
+        assert!(projection.note_user_echo("s-1", "r-2", "hello", 5_000));
+        let echo = projection.timeline.last().expect("echo appended");
+        // 借用最大 wire sequence，不占号段、不进 seen。
+        assert_eq!(echo.sequence, 4);
+        assert_eq!(echo.event_id, "local-echo-r-2");
+        assert_eq!(echo.run_id.as_deref(), Some("r-2"));
+        assert_eq!(echo.timestamp, "5000");
+        assert!(matches!(
+            &echo.kind,
+            TimelineEntryKind::UserMessage { text } if text == "hello"
+        ));
+        // 后续 wire 事件（sequence 严格更大）有序插到 echo 之后。
+        assert!(projection.apply_event(&run_changed(5, "created")));
+        assert_eq!(projection.timeline.len(), 3);
+        assert_eq!(
+            projection
+                .timeline
+                .last()
+                .expect("wire after echo")
+                .event_id,
+            "app-5"
+        );
+        // 非 active session（发送后已切走）不 echo：重放会补。
+        assert!(!projection.note_user_echo("s-2", "r-3", "away", 6_000));
+        assert_eq!(projection.timeline.len(), 3);
+    }
+
+    /// R4 Wave B 评审 P2 修复：早死路径（engine 未报终态）的合成
+    /// RunChanged{Failed} 由宿主 publish_raw 分配 2^60 起的合成序号
+    /// （crates/app gui_host SYNTHETIC_SEQUENCE_BASE，不占真实持久化号段），
+    /// 有序插入落在用户消息乐观回显之后；seq-0 旧行为会插到时间线顶端。
+    #[test]
+    fn synthetic_terminal_after_user_echo_lands_at_bottom() {
+        const SYNTHETIC_BASE: u64 = 1 << 60;
+        let mut projection = DesktopProjection::default();
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&assistant_delta(4, "m-1", "before")));
+        assert!(projection.note_user_echo("s-1", "r-1", "blocked message", 5_000));
+        assert!(projection.apply_event(&run_changed(SYNTHETIC_BASE, "failed")));
+        assert_eq!(projection.timeline.len(), 3);
+        assert_eq!(projection.timeline[0].event_id, "app-4");
+        assert_eq!(projection.timeline[1].event_id, "local-echo-r-1");
+        assert_eq!(
+            projection.timeline[2].event_id,
+            format!("app-{SYNTHETIC_BASE}")
+        );
+        assert!(matches!(
+            &projection.timeline[2].kind,
+            TimelineEntryKind::RunState(label) if label == "run failed"
+        ));
+        // 条目序列保持升序不变量（insert_entry 的 partition_point 前提）。
+        assert!(
+            projection.timeline[1].sequence <= projection.timeline[2].sequence,
+            "entries must stay ascending by sequence: {:?}",
+            projection
+                .timeline
+                .iter()
+                .map(|entry| entry.sequence)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -2633,5 +2939,186 @@ mod tests {
         assert!(pending.reason.contains("src/lib.ts"));
         projection.select_session("fx-ses-alpha-today");
         assert_eq!(projection.pending_approval, None);
+    }
+
+    #[test]
+    fn timeline_rows_group_adjacent_tools_and_absorb_into_summary() {
+        let mut projection = DesktopProjection::default();
+        projection.timeline.entries = vec![
+            raw_entry(
+                1,
+                TimelineEntryKind::UserMessage {
+                    text: "go".into(),
+                },
+                Some("r-1"),
+            ),
+            tool_entry(2, "r-1", "read_file", "succeeded"),
+            tool_entry(3, "r-1", "edit_file", "succeeded"),
+            // 同 run 终态紧邻 → 吸收该组为摘要区域。
+            terminal_entry(4, ForkBoundary::Completed),
+            // 不同 run 的 tool 不被跨 run 终态吞并（审查 P2 防护）。
+            tool_entry(5, "r-2", "bash", "succeeded"),
+            terminal_entry(6, ForkBoundary::Completed),
+        ];
+        let rows = projection.timeline_rows();
+        assert_eq!(
+            rows,
+            vec![
+                TimelineRow::Message { entry_index: 0 },
+                TimelineRow::RunSummary {
+                    group: Some(vec![1, 2]),
+                    terminal: 3,
+                },
+                TimelineRow::ToolGroup { entry_indices: vec![4] },
+                TimelineRow::RunSummary {
+                    group: None,
+                    terminal: 5,
+                },
+            ]
+        );
+
+        // 不同 run 的相邻 tool 不并组。
+        let mut projection = DesktopProjection::default();
+        projection.timeline.entries = vec![
+            tool_entry(1, "r-1", "read_file", "succeeded"),
+            tool_entry(2, "r-2", "bash", "running"),
+            tool_entry(3, "r-2", "edit_file", "succeeded"),
+        ];
+        let rows = projection.timeline_rows();
+        assert_eq!(
+            rows,
+            vec![
+                TimelineRow::ToolGroup { entry_indices: vec![0] },
+                TimelineRow::ToolGroup {
+                    entry_indices: vec![1, 2],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn timeline_rows_terminal_without_group_and_phases_stay_single() {
+        let mut projection = DesktopProjection::default();
+        projection.timeline.entries = vec![
+            raw_entry(
+                1,
+                TimelineEntryKind::AssistantMessage {
+                    text: "hi".into(),
+                },
+                Some("r-1"),
+            ),
+            raw_entry(
+                2,
+                TimelineEntryKind::RunState("run streaming_response".into()),
+                Some("r-1"),
+            ),
+            raw_entry(
+                3,
+                TimelineEntryKind::RunState("approval approved".into()),
+                Some("r-1"),
+            ),
+            terminal_entry(4, ForkBoundary::Failed),
+        ];
+        let rows = projection.timeline_rows();
+        assert_eq!(
+            rows,
+            vec![
+                TimelineRow::Message { entry_index: 0 },
+                TimelineRow::RunPhase { entry_index: 1 },
+                TimelineRow::RunPhase { entry_index: 2 },
+                TimelineRow::RunSummary {
+                    group: None,
+                    terminal: 3,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn run_summary_and_footer_texts_map_terminal_boundaries_only() {
+        let completed = terminal_entry(1, ForkBoundary::Completed);
+        assert_eq!(
+            run_summary_texts(&completed),
+            Some((
+                "Ready for review",
+                "The run finished. Review the changes from this turn.".to_string()
+            ))
+        );
+        assert_eq!(run_footer_label(&completed), Some("Run completed"));
+        assert_eq!(
+            run_footer_label(&terminal_entry(2, ForkBoundary::Cancelled)),
+            Some("Run cancelled")
+        );
+        assert_eq!(
+            run_footer_label(&terminal_entry(3, ForkBoundary::Failed)),
+            Some("Run failed")
+        );
+        // 非终态（含 Interrupted：无 fork 边界）不产生摘要 / 页脚。
+        let phase = raw_entry(
+            4,
+            TimelineEntryKind::RunState("run interrupted".into()),
+            Some("r-1"),
+        );
+        assert_eq!(run_summary_texts(&phase), None);
+        assert_eq!(run_footer_label(&phase), None);
+    }
+
+    #[test]
+    fn failed_run_summary_description_reports_real_reason() {
+        let failed_entry = |sequence: u64, label: &str| {
+            let mut entry = raw_entry(
+                sequence,
+                TimelineEntryKind::RunState(label.into()),
+                Some("r-1"),
+            );
+            entry.fork_boundary = Some(ForkBoundary::Failed);
+            entry
+        };
+        // 有原因：摘要卡显示原因原文；原因内部再含分隔符只剥一次前缀。
+        assert_eq!(
+            run_summary_texts(&failed_entry(1, "run failed · provider timeout")),
+            Some(("Run failed", "provider timeout".to_string()))
+        );
+        assert_eq!(
+            run_summary_texts(&failed_entry(2, "run failed · a · b")),
+            Some(("Run failed", "a · b".to_string()))
+        );
+        // 无原因（live 臂标签）：兜底通用失败文案，不指向不存在的错误详情。
+        assert_eq!(
+            run_summary_texts(&failed_entry(3, "run failed")),
+            Some(("Run failed", "The run failed.".to_string()))
+        );
+        // 剥离失败（非 reducer 格式标签）/ 剥离后为空：同样兜底。
+        assert_eq!(
+            run_summary_texts(&failed_entry(4, "run terminal")),
+            Some(("Run failed", "The run failed.".to_string()))
+        );
+        assert_eq!(
+            run_summary_texts(&failed_entry(5, "run failed · ")),
+            Some(("Run failed", "The run failed.".to_string()))
+        );
+    }
+
+    #[test]
+    fn workspace_header_predicates_follow_active_session_and_live_status() {
+        let snapshot = snapshot_with_sessions(vec![session_entry("s-1", "Ship it", 10)]);
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        assert_eq!(projection.workspace_header_title(), None);
+        assert_eq!(projection.workspace_header_status(), None);
+
+        projection.select_session("s-1");
+        assert_eq!(projection.workspace_header_title(), Some("Ship it"));
+        // 空闲会话：无 live 终态可显示（诚实口径，不画 Completed）。
+        assert_eq!(projection.workspace_header_status(), None);
+
+        projection.active_runs.push(ActiveRun {
+            run_id: "r-1".into(),
+            session_id: "s-1".into(),
+            started_at_ms: 1,
+        });
+        assert_eq!(
+            projection.workspace_header_status(),
+            Some(SessionLiveStatus::Running)
+        );
     }
 }

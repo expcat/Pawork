@@ -670,3 +670,13 @@ R3 已收口；Wave A/B 证据 [r3-wave-a](ui-review/r3-wave-a/notes.md) 与 [r3
 - **退出拍板 c（2026-08-28 用户确认）**：R3 以结构门禁为准退出（同 R2 拍板 a 先例）；三状态 TaskRail 分区 SSIM ≥0.99 连同 fixture 演示数据重塑、State C reference tone 归一（设计基准变更，届时需用户批准）移交 R8 终局门禁，条款见 [plan/R7-R8-ui-quality-gates.md](../plan/R7-R8-ui-quality-gates.md) §3。天花板量化分解（与归档 diff-report 一致 0.6941/0.3543）：State A ≈100% fixture 内容形状（标题/时间值已遮，行数/行位/密度/省略形状按合同须对齐，tone 校正上限 0.7490）；State C = tone 差 ≈50% + 内容形状 ≈50%（reference 中位 RGB (0,9,17) 比冻结 token base 0x07121a 更暗，非实现漂移；tone 校正后 0.6885）。遮罩调整方案合同不可行：§0.1 只允许遮「值本身」、禁止空白稀释，taskrail 遮罩已用 16.6%/14.9%（上限 35%），合法微调收益 ≤0.05。fixture 重塑估算 0.5–1 天（seed.json 数据形状 + golden + 约 18 文件断言同步 + 三状态重采集），最佳时机为 R8 重采集前一次完成。
 
 收口验证：Wave A `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 84/84；Wave B 同命令 94/94；脚本 unittest 35/35（wave-b + wave-a + wave-d，bundled Python + Pillow）；U2 Slice 4 22 相位 PASS；Slice 5 button-enter 未复跑；ASCII 空态字形待支持 Computer Use 的模型复拍。未运行全 workspace gate。下一任务：R4 — Workspace、Timeline 与 Agent 状态。
+
+## R4 — Workspace、Timeline 与 Agent 状态（2026-08-28）
+
+R4 已收口；Wave A/B 证据 [r4-wave-a](ui-review/r4-wave-a/notes.md) 与 [r4-wave-b](ui-review/r4-wave-b/notes.md)。任务书正文仍在 [plan/R4-R6-ui-workflows.md](../plan/R4-R6-ui-workflows.md)。
+
+- **Wave A · F-05–F-08**：Workspace Header 骨架常存（branch 仅 GitDiffInfo 诚实源、终态只画 live 可派生状态）；Timeline Top 对齐四合同（跟随态单一表达、滚动事件事实判定贴底，评审 P0 修 handler 内读 ListState 的 BorrowMutError）；消息层级 You/Pawork + 相对时间；连续同 run ToolCall 合组、紧邻终态吸收为 RunSummary（终态判定 = fork_boundary.is_some()）。desktop 107/107；State A 结构门禁 r4a-2 通过。
+- **Wave B · Agent 状态 U2 九场景**：Failed 摘要真实原因（live 诚实兜底 "The run failed."）；种子审批决议补广播（WS-3a，仅 ToolCompleted 上 wire）；用户消息乐观回显（WS-4a，local-echo 不进 seen）；entry-compare v2 三重合同；合成终态闸门（WS-5，terminal_reported 去重，cancel 不再谎报 Failed）。评审 P2：合成 seq-0 压回显 → publish_raw 从 2^60 递增自取。P3：早死 run 回显重选消失，登记 desktop Spec §8。app 156 / desktop 110 / 脚本 22；U2 r4b-6 14 相位 + entry-compare 全 PASS；State B shell r4b-shell-1 结构 PASS（composer-height=F-09，R5）。
+- **退出拍板 1（2026-08-28 用户确认）**：R4 以结构门禁与 U2 九场景为准退出（同 R2 拍板 a / R3 拍板 c）；State A/B 分区 SSIM ≥0.99 移交 R8 终局门禁，条款见 [plan/R7-R8-ui-quality-gates.md](../plan/R7-R8-ui-quality-gates.md) §3。Wave A 记录值 timeline 0.665 / header-left 0.940 / header-right 0.883 / global 0.648，主因 fixture 演示内容形状差（重塑已在 R3 拍板 c 移交，本条不另开数据任务）。仍开放：live RunChanged 无失败原因 / 无用户消息 wire 事件是否立 ADR。
+
+收口验证：`cargo test -p pawork-app --offline --lib --tests` 156/156；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 110/110；脚本 unittest 22/22；U2 r4b-6 全 PASS。未运行全 workspace gate。下一任务：R5 — Composer 与运行控制。

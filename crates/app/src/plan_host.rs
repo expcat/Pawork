@@ -175,6 +175,7 @@ impl AppCore {
         let run_id = RunId::from(format!("run-plan-{sequence}"));
         self.append_payload(session_id, &run_id, &mut sequence, AgentEvent::Plan(event))
             .await
+            .map(|_| ())
     }
 }
 

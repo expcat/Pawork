@@ -178,6 +178,7 @@ impl AppCore {
             },
         )
         .await
+        .map(|_| ())
     }
 
     /// 模型目录（builtin + config 覆盖 + 运行期 /models 探测合并，探测失败退回静态）。

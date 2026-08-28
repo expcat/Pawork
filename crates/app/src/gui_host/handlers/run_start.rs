@@ -258,23 +258,30 @@ pub(crate) async fn run_start(
             .await
         };
         if let Err(error) = outcome {
-            bus.publish_raw(
-                instance.clone(),
-                &session,
-                AppEvent::RunChanged {
-                    run_id: run.clone(),
-                    state: RunState::Failed,
-                },
-            );
-            bus.publish_diagnostic(
-                instance,
-                &session,
-                "run.failed",
-                json!({ "message": error.to_string() }),
-            );
+            // fail/cancel 路径 engine 已在 Err 返回前经 sink 广播真实终态
+            // （RunChanged{Failed/Cancelled}）；此处只在 engine 未报终态即死
+            // （plan 闸门拒绝、宿主侧早退等）时补发合成终态对，避免幽灵
+            // "Run failed" 重复插入时间线且把 cancel 谎报为 Failed。
+            if !bus.terminal_reported(run.as_str()) {
+                bus.publish_raw(
+                    instance.clone(),
+                    &session,
+                    AppEvent::RunChanged {
+                        run_id: run.clone(),
+                        state: RunState::Failed,
+                    },
+                );
+                bus.publish_diagnostic(
+                    instance,
+                    &session,
+                    "run.failed",
+                    json!({ "message": error.to_string() }),
+                );
+            }
         }
         approvals.clear_run(&run);
         runs.remove(&run);
+        bus.clear_terminal_reported(run.as_str());
     });
     Ok(AppResponse::Accepted {
         command_id: envelope.command_id.clone(),

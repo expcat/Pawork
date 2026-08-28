@@ -21,6 +21,7 @@ pub(crate) struct RunService;
 
 impl RunService {
     /// resume / 计划 / 审批收口共用的追补事件入口（persist-first）。
+    /// 返回构造并落库的 envelope，供调用方在持久化成功后补广播。
     pub(crate) async fn append_payload(
         &self,
         core: &AppCore,
@@ -28,7 +29,7 @@ impl RunService {
         run_id: &RunId,
         sequence: &mut u64,
         payload: AgentEvent,
-    ) -> Result<(), AppError> {
+    ) -> Result<AgentEventEnvelope, AppError> {
         let value = *sequence;
         *sequence = sequence
             .checked_add(1)
@@ -42,9 +43,9 @@ impl RunService {
             payload,
         );
         core.store()?
-            .append_event(core.session_active_branch(session_id).await?, envelope)
+            .append_event(core.session_active_branch(session_id).await?, envelope.clone())
             .await?;
-        Ok(())
+        Ok(envelope)
     }
 
     /// 事件化单轮：persist-first 双写。`messages` 最后一条必须是本轮 user。

@@ -1,0 +1,37 @@
+{
+  "phase": "approval-visible",
+  "generated_at": "2026-08-28T04:17:35Z",
+  "checks": [
+    {
+      "name": "selected-session-fx-ses-beta-pending",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-beta-pending (expect session-fx-ses-beta-pending)"
+    },
+    {
+      "name": "approval-card-present",
+      "pass": true,
+      "detail": "approval-card present value=write_file \u00b7 write_file \u00b7 src/lib.ts \u00b7 approval pending across restart"
+    },
+    {
+      "name": "approval-card-tool",
+      "pass": true,
+      "detail": "approval-card value=write_file \u00b7 write_file \u00b7 src/lib.ts \u00b7 approval pending across restart (expect pending write_file)"
+    },
+    {
+      "name": "approval-buttons-enabled",
+      "pass": true,
+      "detail": "approve-once/approve-for-run/approve-deny present and enabled"
+    },
+    {
+      "name": "rail-needs-input",
+      "pass": true,
+      "detail": "session-fx-ses-beta-pending help=Needs input"
+    },
+    {
+      "name": "timeline-approval-requested",
+      "pass": true,
+      "detail": "timeline-entry values containing approval requested: timeline-entry-evt-fx-ses-beta-pending-11"
+    }
+  ],
+  "pass": true
+}

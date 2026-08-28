@@ -1,8 +1,9 @@
 use crate::gui_server::GuiHostError;
 use crate::ApprovalResolve;
+use pawork_engine::AgentEventSink;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppResponse};
 
-use super::super::GuiHostAdapter;
+use super::super::{GuiBroadcastSink, GuiHostAdapter};
 
 fn protocol_to_domain_decision(
     decision: &pawork_protocol::ApprovalDecision,
@@ -60,15 +61,25 @@ pub(crate) async fn tool_approve(
                         .next_sequence(&waiting.session_id)
                         .await
                         .map_err(GuiHostAdapter::app_error)?;
-                    core.resolve_waiting_tool_call(
-                        &waiting.session_id,
-                        &waiting.tool_call,
-                        domain,
-                        "approval resolved after restart; tool not executed",
-                        &mut sequence,
-                    )
-                    .await
-                    .map_err(GuiHostAdapter::app_error)?;
+                    let envelopes = core
+                        .resolve_waiting_tool_call(
+                            &waiting.session_id,
+                            &waiting.tool_call,
+                            domain,
+                            "approval resolved after restart; tool not executed",
+                            &mut sequence,
+                        )
+                        .await
+                        .map_err(GuiHostAdapter::app_error)?;
+                    // persist-first 已落库；复用 live 路径的广播 sink 补实时事件。
+                    // broadcast_event 过滤后仅 ToolCompleted 上 wire，契约不变。
+                    let sink =
+                        GuiBroadcastSink::new(adapter.bus.clone(), adapter.instance.clone());
+                    for envelope in envelopes {
+                        if let Err(error) = sink.emit(envelope).await {
+                            tracing::warn!(error = %error, "queued approval closure broadcast failed");
+                        }
+                    }
                 }
             }
         }

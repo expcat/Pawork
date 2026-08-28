@@ -174,6 +174,9 @@ pub fn dark() -> Theme {
 
 /// 字阶（px 数值；Pixels 无法在本 crate 外 const 构造，消费点经 gpui::px 转换）。
 pub mod font {
+    /// 24px：Workspace Header 任务标题（state-a 量图 cap17→≈24 semibold，
+    /// state-b cap≈18→≈25；取档 24，容差 ±1 内）。
+    pub const HEADER_TITLE: f32 = 24.0;
     /// 17px：次级行文字（rail 相对时间 / 项目计数 / 连接行文案）。
     pub const BODY_SM: f32 = 17.0;
     /// 18px：主体列表字阶（rail 日期头 / 项目头 / 任务标题 / scope / 正文）。
@@ -232,6 +235,71 @@ pub mod metrics {
     pub const RAIL_PROJECT_BLOCK_GAP: f32 = 8.0;
     /// 24：底部状态栏高度。
     pub const STATUS_BAR_HEIGHT: f32 = 24.0;
+    // ── Workspace Header / Timeline 几何（R4 Wave A，state-a §2.2/§2.3 与
+    // state-b §2 量图取档；render 与 AX 树共用单一来源）──
+    /// 36：Header 顶部 traffic-light 安全条（与 rail 顶安全区同源）。
+    pub const HEADER_SAFE_STRIP: f32 = 36.0;
+    /// 104：Workspace Header 总高（state-a zones header 区 y0–104；
+    /// state-b 安全条 48 下 Header 本体 49，两态同一组件取 104 含安全条）。
+    pub const HEADER_HEIGHT: f32 = 104.0;
+    /// 28：Workspace 内容统一左 inset（标题 x328 / 首标签 x328 / 工具面板
+    /// x326，相对 workspace 左缘 300，量图 26–28 取 28）。
+    pub const TIMELINE_CONTENT_INSET: f32 = 28.0;
+    /// 25：Header 右缘 inset（量图右缘 951，相对 workspace 右缘 976）。
+    pub const HEADER_INSET_RIGHT: f32 = 25.0;
+    /// 35：Header 标题尾到 branch 图标间距（量图 563→598）。
+    pub const HEADER_TITLE_META_GAP: f32 = 35.0;
+    /// 10：Header 终态圆点直径（量图 Ø~10）。
+    pub const HEADER_STATUS_DOT_SIZE: f32 = 10.0;
+    /// 40：Header 右侧动作按钮宽（量图 40×37）。
+    pub const HEADER_ACTION_WIDTH: f32 = 40.0;
+    /// 37：Header 右侧动作按钮高（量图 40×37）。
+    pub const HEADER_ACTION_HEIGHT: f32 = 37.0;
+    /// 4：Header 动作按钮圆角（量图 r≈3±1 取 4 与组件库一致）。
+    pub const HEADER_ACTION_RADIUS: f32 = 4.0;
+    /// 618：Timeline 可读列最大宽（state-a 内容 x326–944；state-b
+    /// x=347..962 = 615，取 618，两态同值；防折叠态无限拉宽）。
+    pub const TIMELINE_READABLE_WIDTH: f32 = 618.0;
+    /// 28：Header 底到首条 Timeline 标签顶（state-a y104→132）。
+    pub const TIMELINE_TOP_GAP: f32 = 28.0;
+    /// 24：消息正文行高（量图段内行距 ≈24）。
+    pub const MSG_LINE_HEIGHT: f32 = 24.0;
+    /// 12：消息标签行（You/Pawork+时间）底到正文顶（量图 144→167=23，
+    /// 标签行 24 线高后余 11，取 12）。
+    pub const MSG_LABEL_BODY_GAP: f32 = 12.0;
+    /// 28：正文段落间隙（量图 ≈27 取 28）。
+    pub const MSG_PARAGRAPH_GAP: f32 = 28.0;
+    /// 40：相邻消息条目间距（量图标签顶到标签顶 100 − 标签24 − 间12 −
+    /// 单行正文24，取 40；多行正文按实际高度累加）。
+    pub const MSG_ENTRY_GAP: f32 = 40.0;
+    /// 5：Tool activity 面板圆角（量图 r≈5±1）。
+    pub const TOOL_GROUP_RADIUS: f32 = 5.0;
+    /// 15：Tool activity 面板内左 inset（量图图标 x341，面板 x326）。
+    pub const TOOL_GROUP_INNER_INSET: f32 = 15.0;
+    /// 52：Tool 行高（量图行距 ≈54 − 分隔线 2）。
+    pub const TOOL_ROW_HEIGHT: f32 = 52.0;
+    /// 2：Tool 行间分隔线厚度（量图 2px）。
+    pub const TOOL_ROW_DIVIDER: f32 = 2.0;
+    /// 19：Tool 行左侧图标槽（量图 x341–360）。
+    pub const TOOL_ICON_SIZE: f32 = 19.0;
+    /// 14：Tool 行状态 ✓ 直径（量图 Ø14）。
+    pub const TOOL_CHECK_SIZE: f32 = 14.0;
+    /// 48：上文到底部 Tool 面板 / 摘要卡组间距（量图 49 取 48）。
+    pub const TOOL_GROUP_TOP_GAP: f32 = 48.0;
+    /// 12：Tool 面板 → Run 摘要卡间距（量图 13 取 12）。
+    pub const SUMMARY_CARD_GAP: f32 = 12.0;
+    /// 40：Run 摘要卡 ✓ 状态圆直径（量图 Ø40）。
+    pub const SUMMARY_CHECK_CIRCLE: f32 = 40.0;
+    /// 168：Run 摘要卡动作按钮宽（量图 168×40 / 168×39）。
+    pub const SUMMARY_BUTTON_WIDTH: f32 = 168.0;
+    /// 40：Run 摘要卡动作按钮高。
+    pub const SUMMARY_BUTTON_HEIGHT: f32 = 40.0;
+    /// 8：Run 摘要卡动作按钮圆角（量图 r≈8–10±2 取 8）。
+    pub const SUMMARY_BUTTON_RADIUS: f32 = 8.0;
+    /// 20：摘要卡两动作按钮间距（量图 19 取 20）。
+    pub const SUMMARY_BUTTON_GAP: f32 = 20.0;
+    /// 24：摘要卡底到 Timeline 页脚（量图 23 取 24）。
+    pub const TIMELINE_FOOTER_GAP: f32 = 24.0;
     /// 288：TaskRail 侧栏宽度。
     pub const SIDEBAR_WIDTH: f32 = 288.0;
     /// 440：Inspector 面板宽度。
@@ -371,5 +439,41 @@ mod tests {
         assert_eq!(metrics::RAIL_PROJECT_TO_TASK_GAP, 2.0);
         assert_eq!(metrics::RAIL_TASK_ROW_HEIGHT, 44.0);
         assert_eq!(metrics::RAIL_PROJECT_BLOCK_GAP, 8.0);
+    }
+
+    /// R4 Wave A Workspace Header / Timeline 几何合同（state-a §2.2/§2.3 与
+    /// state-b §2 量图取档）：钉住数值防静默漂移。
+    #[test]
+    fn workspace_timeline_geometry_constants_match_frozen_tiers() {
+        assert_eq!(font::HEADER_TITLE, 24.0);
+        assert_eq!(metrics::HEADER_SAFE_STRIP, 36.0);
+        assert_eq!(metrics::HEADER_HEIGHT, 104.0);
+        assert_eq!(metrics::TIMELINE_CONTENT_INSET, 28.0);
+        assert_eq!(metrics::HEADER_INSET_RIGHT, 25.0);
+        assert_eq!(metrics::HEADER_TITLE_META_GAP, 35.0);
+        assert_eq!(metrics::HEADER_STATUS_DOT_SIZE, 10.0);
+        assert_eq!(metrics::HEADER_ACTION_WIDTH, 40.0);
+        assert_eq!(metrics::HEADER_ACTION_HEIGHT, 37.0);
+        assert_eq!(metrics::HEADER_ACTION_RADIUS, 4.0);
+        assert_eq!(metrics::TIMELINE_READABLE_WIDTH, 618.0);
+        assert_eq!(metrics::TIMELINE_TOP_GAP, 28.0);
+        assert_eq!(metrics::MSG_LINE_HEIGHT, 24.0);
+        assert_eq!(metrics::MSG_LABEL_BODY_GAP, 12.0);
+        assert_eq!(metrics::MSG_PARAGRAPH_GAP, 28.0);
+        assert_eq!(metrics::MSG_ENTRY_GAP, 40.0);
+        assert_eq!(metrics::TOOL_GROUP_RADIUS, 5.0);
+        assert_eq!(metrics::TOOL_GROUP_INNER_INSET, 15.0);
+        assert_eq!(metrics::TOOL_ROW_HEIGHT, 52.0);
+        assert_eq!(metrics::TOOL_ROW_DIVIDER, 2.0);
+        assert_eq!(metrics::TOOL_ICON_SIZE, 19.0);
+        assert_eq!(metrics::TOOL_CHECK_SIZE, 14.0);
+        assert_eq!(metrics::TOOL_GROUP_TOP_GAP, 48.0);
+        assert_eq!(metrics::SUMMARY_CARD_GAP, 12.0);
+        assert_eq!(metrics::SUMMARY_CHECK_CIRCLE, 40.0);
+        assert_eq!(metrics::SUMMARY_BUTTON_WIDTH, 168.0);
+        assert_eq!(metrics::SUMMARY_BUTTON_HEIGHT, 40.0);
+        assert_eq!(metrics::SUMMARY_BUTTON_RADIUS, 8.0);
+        assert_eq!(metrics::SUMMARY_BUTTON_GAP, 20.0);
+        assert_eq!(metrics::TIMELINE_FOOTER_GAP, 24.0);
     }
 }

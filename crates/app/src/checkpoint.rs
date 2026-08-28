@@ -317,4 +317,5 @@ pub(crate) async fn persist_rolled_back(
         },
     )
     .await
+    .map(|_| ())
 }

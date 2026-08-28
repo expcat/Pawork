@@ -1,9 +1,13 @@
 # R4–R6 — 核心 Agent 工作流
 
-> 状态：⚪ 未开始
+> 状态：🟢 R4 已收口（Wave A 🟢 2026-08-28 / Wave B 🟢 2026-08-28；拍板 1：State A/B 分区 SSIM ≥0.99 移交 R8；wire 演进仍开放）
 > 前置：R2、R3 依次通过。R4 → R5 → R6 串行推进，每阶段同时完成视觉、真实交互与对应 UI 场景测试。
 
 ## R4 — Workspace、Timeline 与 Agent 状态
+
+> 波次状态：
+> - **Wave A（🟢 2026-08-28）**：F-05 Header / F-06 Top 对齐 / F-07 消息层级 / F-08 tool group 与 Run 摘要视觉与结构；评审 P0–P3 全修复；107/107 定向测试；State A 结构门禁通过（证据 [docs/ui-review/r4-wave-a/](../docs/ui-review/r4-wave-a/)）。State A/B 区域 SSIM 记录值未达 0.99（fixture 内容差），2026-08-28 拍板 1 同 R3 先例移交 R8。
+> - **Wave B（🟢 2026-08-28）**：审批流 / error 原因 / 取消 / 流式 follow / 千级虚拟化 / 断线重放一致 U2 九场景 + Failed 摘要原因显示（WS-1）+ 用户消息乐观回显（WS-4a）+ entry-compare v2（WS-4b）；修复两个真 bug——种子审批决议补广播（WS-3a，wire 契约零变更）与合成终态闸门（WS-5，terminal_reported 去重）；评审 P2（合成 seq-0 压回显 → 2^60 合成序号段）同批修复、P3（早死回显重选消失）登记已知限制；app 156 + desktop 110 定向测试全绿；State B shell 回归 r4b-shell-1 与 U2 九场景 r4b-6 全 PASS（证据与收口记录 [docs/ui-review/r4-wave-b/](../docs/ui-review/r4-wave-b/)）。
 
 ### 工作范围
 
@@ -18,12 +22,12 @@
 
 短会话、长会话、流式追加、用户上滚后新消息、tool 全状态、approval allow/deny/cancel、Host error/retry、断线重连、完成摘要与多 task 状态同步。
 
-### R4 退出标准
+### R4 退出标准（2026-08-28 拍板 1）
 
-- [ ] Header、消息、tool group、approval、错误/取消和完成摘要均与设计层级一致且由权威事件驱动。
-- [ ] State A/B Timeline 分区结构通过，区域 SSIM `≥0.99`。
-- [ ] 每种 Agent 状态都有 U0/U1/U2 场景；重放后 UI 与实时执行一致。
-- [ ] 长会话无巨幅空白、无限行宽、截断、滚动抢夺或明显输入延迟。
+- [x] Header、消息、tool group、approval、错误/取消和完成摘要均与设计层级一致且由权威事件驱动（Wave A 结构 + Wave B U2 九场景）。
+- [x] State A/B Timeline **结构门禁**通过；区域 SSIM `≥0.99` 按拍板 1 移交 R8 终局门禁（Wave A 记录值 timeline 0.665 / header-left 0.940 / header-right 0.883，主因 fixture 内容形状差；条款见 [R7–R8 任务书](R7-R8-ui-quality-gates.md) §3），不阻塞 R4 退出。
+- [x] 每种 Agent 状态都有 U0/U1/U2 场景；重放后 UI 与实时执行一致（r4b-6 九场景 + entry-compare 35==35）。
+- [x] 长会话无巨幅空白、无限行宽、截断、滚动抢夺或明显输入延迟（S5 虚拟化 barrier 64 / AX 窗口切片卸载；滚轮抢夺留 U1 登记）。
 
 ## R5 — Composer 与运行控制
 
