@@ -1,0 +1,2 @@
+2026-08-29 17:53:47.626 pawork-desktop[51525:9805745] TSM AdjustCapsLockLEDForKeyTransitionHandling - _ISSetPhysicalKeyboardCapsLockLED Inhibit
+2026-08-29 17:53:47.652 pawork-desktop[51525:9805745] error messaging the mach port for IMKCFRunLoopWakeUpReliable

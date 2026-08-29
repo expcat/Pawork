@@ -1,0 +1,32 @@
+{
+  "phase": "t1-ready",
+  "generated_at": "2026-08-29T08:47:06Z",
+  "checks": [
+    {
+      "name": "inspector-tab-terminal-selected",
+      "pass": true,
+      "detail": "inspector-tab-terminal selected=True"
+    },
+    {
+      "name": "terminal-output-present",
+      "pass": true,
+      "detail": "terminal-output present"
+    },
+    {
+      "name": "terminal-created",
+      "pass": false,
+      "detail": "'Start terminal'"
+    },
+    {
+      "name": "terminal-resize-enabled",
+      "pass": false,
+      "detail": "terminal-resize enabled=False"
+    },
+    {
+      "name": "terminal-resize-not-yet-confirmed",
+      "pass": true,
+      "detail": "'Terminal output'"
+    }
+  ],
+  "pass": false
+}

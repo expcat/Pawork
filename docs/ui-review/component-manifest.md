@@ -2,6 +2,7 @@
 
 > 状态：🔒 Wave A 已冻结（2026-08-26 复审修订）· 依据三张 v3 定稿图归一 reference.png（1440×1024）<br>
 > 上游任务：[R1 收口存档](../history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) · [UI 复审](../UI_Review.md) §3/§4/§5<br>
+> 现状态（2026-08-29）：本文几何与 §7 capability 判定仍为权威；**§6 状态表与「现实现差异」列已由 [r7-wave-a/component-matrix.md](r7-wave-a/component-matrix.md) 按当前源码与真实 AX 树复审**——过期行（F-05 Header 缺失、TL-04 按钮不渲染、SB-02/D-01 位置冲突等）以矩阵为准，矩阵未列出的行维持本文口径。<br>
 > 本文件回答「每个状态可见什么组件、如何分层与锚定、有哪些状态、每个组件对应什么真实能力」；几何实测值由同波 measurements.md 承载，本文只引用 design/README.md 已声明的定稿值。
 
 ## 1. 口径与事实源

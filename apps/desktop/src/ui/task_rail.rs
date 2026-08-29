@@ -6,8 +6,8 @@
 //! 每会话终态字段，不画终态绿点）。几何常量与 AX 树共享 theme::metrics。
 
 use gpui::{
-    AnyElement, ClickEvent, Context, FontWeight, KeyDownEvent, Pixels, Point, Rgba, SharedString,
-    Window, div, prelude::*, px,
+    div, prelude::*, px, AnyElement, ClickEvent, Context, FontWeight, KeyDownEvent, Pixels, Point,
+    Rgba, SharedString, Window,
 };
 
 use crate::projection::{
@@ -21,8 +21,8 @@ use crate::ui::components::panel::Panel;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{
-    AppView, MenuKind, RailStop, now_unix_ms, rail_project_key, rail_session_focus_key,
-    shell_layout,
+    now_unix_ms, rail_project_key, rail_session_focus_key, shell_layout, AppView, MenuKind,
+    RailStop,
 };
 
 enum RailView {
@@ -259,16 +259,26 @@ impl AppView {
         // F-02 壳层校准：Reconnect 仅在 Disconnected / ConnectFailed 出现；
         // Connecting 属进行中，不给重复入口。
         if self.projection.show_reconnect() {
+            let reconnect_focus = self.reconnect_focus.clone();
             content = content.child(
                 div().mt_2().child(
                     Button::new("reconnect")
+                        .track_focus(&reconnect_focus)
                         .variant(ButtonVariant::Primary)
                         .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
                         .center()
                         .text_size(font::BODY_SM)
                         .label("Reconnect")
-                        .on_click(cx.listener(|view, _event, window, cx| {
+                        .on_click(cx.listener(|view, event, window, cx| {
+                            if view.consume_button_key_click("reconnect", event) {
+                                return;
+                            }
                             view.on_reconnect(window, cx);
+                        }))
+                        .on_activate(cx.listener(|view, _event, window, cx| {
+                            view.note_button_key_activate("reconnect");
+                            view.on_reconnect(window, cx);
+                            cx.stop_propagation();
                         })),
                 ),
             );
@@ -748,6 +758,7 @@ impl AppView {
     ) {
         self.grouping = grouping;
         self.open_menu = None;
+        self.menu_highlight = None;
         // §3.6：切换分组不改 active session，但下一次 render 把 active task
         // 滚动到可见；展开状态（collapsed_projects）原样保留。
         self.rail_scroll_to_active = true;
@@ -771,6 +782,8 @@ impl AppView {
     ) {
         self.scope_workspace_id = workspace_id;
         self.open_menu = None;
+        self.menu_highlight = None;
+        self.reconcile_terminal_workspace();
         // §3.6：切 scope 与切分组同规——active 保留 + 滚动到可见。
         self.rail_scroll_to_active = true;
         cx.notify();

@@ -186,17 +186,27 @@ def phase_checks(tree, phase):
         "button-enter-add-task-popover",
     ):
         # Slice 5 P2b：聚焦 rail 触发器（Tab 到达）后裸 Enter 行级激活——与
-        # click 同一激活路径、不用 click_id，断言焦点仍在触发器且目标浮层
-        # 已开（keyup 合成 click 由衔接标记吞掉，菜单不被闪关）。
-        target, menu_id = {
-            "button-enter-scope-menu": ("project-scope", "scope-menu"),
-            "button-enter-grouping-menu": ("task-rail-grouping", "grouping-menu"),
-            "button-enter-add-task-popover": ("add-task", "workspace-confirm"),
+        # click 同一激活路径、不用 click_id，断言目标浮层已开（keyup 合成
+        # click 由衔接标记吞掉，菜单不被闪关）。
+        # R7 Wave A 焦点口径：菜单打开后 AX 焦点移交给菜单当前高亮项（树内
+        # 唯一焦点）。若触发器仍发布 focused=1，会形成双 focused 的错误 AX
+        # 树，必须 fail-closed；不能仅因浮层存在就误报通过。
+        trigger_id, menu_id, highlighted_id = {
+            "button-enter-scope-menu": ("project-scope", "scope-menu", "scope-all"),
+            "button-enter-grouping-menu": (
+                "task-rail-grouping",
+                "grouping-menu",
+                "group-timeline",
+            ),
+            "button-enter-add-task-popover": (
+                "add-task",
+                "workspace-confirm",
+                "workspace-confirm-fx-alpha-app",
+            ),
         }[phase]
-        checks.append(assert_focused(tree, target))
         checks.append(
             check(
-                "menu-open-" + target,
+                "menu-open-" + trigger_id,
                 menu_id in tree["identifiers"],
                 menu_id
                 + (
@@ -204,6 +214,21 @@ def phase_checks(tree, phase):
                     if menu_id in tree["identifiers"]
                     else " absent after bare Enter"
                 ),
+            )
+        )
+        checks.append(
+            check(
+                "menu-focus-" + highlighted_id,
+                tree["focused"] == [highlighted_id],
+                "focused="
+                + (",".join(tree["focused"]) or "none")
+                + " (expect only "
+                + highlighted_id
+                + " while "
+                + menu_id
+                + " is open; trigger "
+                + trigger_id
+                + " must not remain AX focused)",
             )
         )
     elif phase == "rail-focus-alpha-header":
@@ -218,7 +243,30 @@ def phase_checks(tree, phase):
             )
         )
     elif phase == "rail-focus-add-task":
-        checks.append(assert_focused(tree, "add-task"))
+        # R7 Wave A 焦点口径：click add-task 打开 workspace-confirm 后，AX
+        # 焦点同样移交给弹层高亮项（与裸 Enter / AXPress 同一可观察终态）。
+        # 触发器仍发布 focused=1 属双焦点错误树，fail-closed。
+        checks.append(
+            check(
+                "rail-click-add-task-popover-open",
+                "workspace-confirm" in tree["identifiers"],
+                "workspace-confirm "
+                + (
+                    "present (click opened it)"
+                    if "workspace-confirm" in tree["identifiers"]
+                    else "absent after click"
+                ),
+            )
+        )
+        checks.append(
+            check(
+                "rail-click-add-task-focus-handover",
+                tree["focused"] == ["workspace-confirm-fx-alpha-app"],
+                "focused="
+                + (",".join(tree["focused"]) or "none")
+                + " (expect only workspace-confirm-fx-alpha-app while popover open)",
+            )
+        )
     elif phase == "rail-focus-alpha-add":
         checks.append(assert_focused(tree, "project-add-Earlier_3afx-alpha-app"))
     elif phase == "rail-focus-beta-header":

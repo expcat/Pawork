@@ -1,0 +1,5 @@
+{
+  "scene": "r1",
+  "status": "pending",
+  "reason": "pending: fixtures/ui/seed.json has no MCP ready/failed profile"
+}

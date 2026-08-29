@@ -15,9 +15,9 @@
 //! - pub(super) enum ToolRowStatus { Pending, Running, Succeeded, Failed, Cancelled, Other }
 //! - pub(super) fn tool_group_element(&self, rows: &[ToolRowView]) -> gpui::Div
 //! - pub(super) struct RunSummaryView { pub title: String, pub description: String, pub review_changes_enabled: bool, pub review_changes_disabled_reason: Option<String> }
-//! - pub(super) fn run_summary_element(&self, view: &RunSummaryView, cx: &mut Context<Self>) -> gpui::Div（内部经 cx.listener 调 AppView::on_review_changes，mod.rs 实现）
+//! - pub(super) fn run_summary_element(&mut self, view: &RunSummaryView, event_id: &str, cx: &mut Context<Self>) -> gpui::Div（内部经 cx.listener 调 AppView 的 event-specific Review handler，mod.rs 实现）
 //! - pub(super) fn run_footer_element(&self, label: &str, time: &str) -> gpui::Div
-//! - pub(super) fn error_entry_element(&self, entry: &TimelineEntry, menu_open: bool, can_fork: bool, cx: &mut Context<Self>) -> gpui::Div
+//! - pub(super) fn error_entry_element(&mut self, entry: &TimelineEntry, menu_open: bool, can_fork: bool, cx: &mut Context<Self>) -> gpui::Div
 //! - pub(super) fn display_time(timestamp: &str, now_ms: u64) -> String（epoch 串→相对时间词，render/AX 同源；解析失败原样兜底）
 //!
 //! 构造辅助：ToolRowView::from_parts(name, status, detail) 把 wire 原文
@@ -35,7 +35,7 @@ use crate::ui::theme::{dark, font, metrics};
 
 use super::task_rail::relative_activity;
 use super::timeline::tool_status_label;
-use super::{AppView, MenuKind, now_unix_ms};
+use super::{now_unix_ms, AppView, MenuKind};
 
 /// 显示时间（R4 Wave A P3）：epoch 毫秒串经 task_rail::relative_activity 转
 /// 相对时间词（now / Nm / Nh / Nd）；解析失败（如 fixture 任意串）原样返回，
@@ -205,23 +205,45 @@ fn message_body_element(text: &str, color: Rgba) -> gpui::Div {
 
 /// 条目「···」fork 菜单（identifier 与行为自旧 timeline_entry_element 冻结迁移）。
 fn entry_actions_element(
+    view: &mut AppView,
     cx: &mut Context<AppView>,
     entry: &TimelineEntry,
     menu_open: bool,
     can_fork: bool,
 ) -> Dropdown {
     let event_id = entry.event_id.clone();
-    let actions_button = Button::new(format!("entry-menu-{}", entry.event_id))
+    let button_id = format!("entry-menu-{}", entry.event_id);
+    let entry_focus = view.timeline_entry_focus(&event_id, cx);
+    let actions_button = Button::new(button_id.clone())
         .variant(ButtonVariant::Ghost)
         .text_size(font::XS)
         .text_color(dark().text.secondary)
         .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
         .label("···")
+        .track_focus(&entry_focus)
         .on_click(cx.listener({
             let event_id = event_id.clone();
+            let button_id = button_id.clone();
             move |view, event, _window, cx| {
+                if view.consume_button_key_click(&button_id, event) {
+                    return;
+                }
                 let down = AppView::click_down_position(event);
                 view.toggle_menu(MenuKind::Entry(event_id.clone()), down, cx);
+            }
+        }))
+        .on_activate(cx.listener({
+            let event_id = event_id.clone();
+            let button_id = button_id.clone();
+            move |view, _event, _window, cx| {
+                // 已开的浮层由 root menu 负责选择；这里仍留去重标记吞掉
+                // 同键 keyup 合成 click，避免 Fork 后菜单被重新打开。
+                if view.open_menu.is_some() {
+                    view.note_button_key_activate(&button_id);
+                    return;
+                }
+                view.open_entry_menu_from_keyboard(&event_id, cx);
+                cx.stop_propagation();
             }
         }));
     let mut actions = Dropdown::new(actions_button);
@@ -254,6 +276,7 @@ fn entry_actions_element(
 /// 条目壳层：左列（标签行 + 正文，min_w_0 保证正文在可读列宽内 wrap）+
 /// 右侧「···」菜单。行宽不超 TIMELINE_READABLE_WIDTH（防无限拉宽）。
 fn entry_shell_element(
+    view: &mut AppView,
     cx: &mut Context<AppView>,
     entry: &TimelineEntry,
     menu_open: bool,
@@ -261,7 +284,7 @@ fn entry_shell_element(
     label: gpui::Div,
     body: gpui::Div,
 ) -> gpui::Div {
-    let actions = entry_actions_element(cx, entry, menu_open, can_fork);
+    let actions = entry_actions_element(view, cx, entry, menu_open, can_fork);
     div()
         .flex()
         .flex_row()
@@ -394,7 +417,7 @@ fn tool_row_element(row: &ToolRowView) -> gpui::Div {
 impl AppView {
     /// F-07 消息条目：标签行（You / Pawork + 时间）+ 正文（段落 / 列表两级）。
     pub(super) fn message_entry_element(
-        &self,
+        &mut self,
         entry: &TimelineEntry,
         menu_open: bool,
         can_fork: bool,
@@ -418,25 +441,21 @@ impl AppView {
                 name,
                 status,
                 detail,
-            } => (
-                "Tool",
-                dark().text.secondary,
-                {
-                    let mut element = div()
-                        .py_1()
-                        .text_color(dark().text.secondary)
-                        .child(format!("{name} · {status}"));
-                    if let Some(detail) = detail.as_deref().filter(|d| !d.is_empty()) {
-                        element = element.child(
-                            div()
-                                .text_size(px(font::XS))
-                                .text_color(dark().text.tertiary)
-                                .child(detail.to_string()),
-                        );
-                    }
-                    element
-                },
-            ),
+            } => ("Tool", dark().text.secondary, {
+                let mut element = div()
+                    .py_1()
+                    .text_color(dark().text.secondary)
+                    .child(format!("{name} · {status}"));
+                if let Some(detail) = detail.as_deref().filter(|d| !d.is_empty()) {
+                    element = element.child(
+                        div()
+                            .text_size(px(font::XS))
+                            .text_color(dark().text.tertiary)
+                            .child(detail.to_string()),
+                    );
+                }
+                element
+            }),
             TimelineEntryKind::RunState(state) => (
                 "Run",
                 dark().text.disabled,
@@ -452,6 +471,7 @@ impl AppView {
             ),
         };
         entry_shell_element(
+            self,
             cx,
             entry,
             menu_open,
@@ -488,11 +508,14 @@ impl AppView {
     /// 数据不可用时 disabled 并给原因；“Open in editor” 无 Host capability
     /// 不画）。无权威数据时 description 为组装层给的一句通用完成说明。
     pub(super) fn run_summary_element(
-        &self,
+        &mut self,
         view: &RunSummaryView,
+        event_id: &str,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let mut button = Button::new("run-summary-review-changes")
+        let button_id = format!("run-review-{event_id}");
+        let review_focus = self.timeline_review_focus(event_id, cx);
+        let mut button = Button::new(button_id.clone())
             .variant(ButtonVariant::Primary)
             .width(px(metrics::SUMMARY_BUTTON_WIDTH))
             .height(px(metrics::SUMMARY_BUTTON_HEIGHT))
@@ -500,7 +523,8 @@ impl AppView {
             .radius(metrics::SUMMARY_BUTTON_RADIUS)
             .text_size(font::BODY_SM)
             .label("Review changes")
-            .disabled(!view.review_changes_enabled);
+            .disabled(!view.review_changes_enabled)
+            .track_focus(&review_focus);
         if let Some(reason) = view
             .review_changes_disabled_reason
             .as_deref()
@@ -509,26 +533,33 @@ impl AppView {
             button = button.tooltip(reason.to_string());
         }
         if view.review_changes_enabled {
-            button = button.on_click(cx.listener(|view, _event, _window, cx| {
-                view.on_review_changes(cx);
-            }));
+            button = button
+                .on_click(cx.listener({
+                    let event_id = event_id.to_string();
+                    let button_id = button_id.clone();
+                    move |view, event, _window, cx| {
+                        if view.consume_button_key_click(&button_id, event) {
+                            return;
+                        }
+                        // click 与普通键盘最终复用同一 Review handler；两条
+                        // 路径仅在同一个 render enable gate 下挂接。键盘入口
+                        // 额外按 event_id 复核，防虚拟化条目状态变更后越权。
+                        let _ = &event_id;
+                        view.on_review_changes(cx);
+                    }
+                }))
+                .on_activate(cx.listener({
+                    let event_id = event_id.to_string();
+                    move |view, _event, _window, cx| {
+                        view.activate_review_changes_from_keyboard(&event_id, cx);
+                        cx.stop_propagation();
+                    }
+                }));
         }
         let (circle_bg, circle_fg, circle_glyph) = match view.terminal {
-            RunSummaryTerminal::Completed => (
-                dark().semantic.success_fg,
-                dark().bg.base,
-                "✓",
-            ),
-            RunSummaryTerminal::Failed => (
-                dark().semantic.danger_bg,
-                dark().text.on_accent,
-                "✕",
-            ),
-            RunSummaryTerminal::Cancelled => (
-                dark().surface.disabled,
-                dark().text.tertiary,
-                "—",
-            ),
+            RunSummaryTerminal::Completed => (dark().semantic.success_fg, dark().bg.base, "✓"),
+            RunSummaryTerminal::Failed => (dark().semantic.danger_bg, dark().text.on_accent, "✕"),
+            RunSummaryTerminal::Cancelled => (dark().surface.disabled, dark().text.tertiary, "—"),
         };
         let check_circle = div()
             .w(px(metrics::SUMMARY_CHECK_CIRCLE))
@@ -620,7 +651,7 @@ impl AppView {
     /// F-07/F-08 错误条目：danger_text 新条目层级（标签行 + 正文），
     /// 不加假 retry 按钮（retry 条件属 Wave B 场景）。
     pub(super) fn error_entry_element(
-        &self,
+        &mut self,
         entry: &TimelineEntry,
         menu_open: bool,
         can_fork: bool,
@@ -632,6 +663,7 @@ impl AppView {
         };
         let time = display_time(&entry.timestamp, now_unix_ms());
         entry_shell_element(
+            self,
             cx,
             entry,
             menu_open,
@@ -751,11 +783,7 @@ mod tests {
         );
         assert_eq!(
             split_message_blocks("- first\n- second\n- third"),
-            vec![List(vec![
-                "first".into(),
-                "second".into(),
-                "third".into()
-            ])]
+            vec![List(vec!["first".into(), "second".into(), "third".into()])]
         );
         assert_eq!(
             split_message_blocks("Plan:\n- a\n- b\nOutro"),

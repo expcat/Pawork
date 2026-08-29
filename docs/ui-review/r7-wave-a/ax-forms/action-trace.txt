@@ -1,0 +1,9 @@
+2026-08-29T11:10:53Z build Desktop exactly once
+2026-08-29T11:10:55Z compile AX probe helper
+2026-08-29T11:10:57Z raw: seed and serve isolated fixture
+2026-08-29T11:11:02Z raw: first and only Desktop launch (no automatic restart)
+2026-08-29T11:11:12Z raw: first classification archived
+2026-08-29T11:11:12Z bundled-signed: seed and serve isolated fixture
+2026-08-29T11:11:17Z bundled-signed: first and only Desktop launch (no automatic restart)
+2026-08-29T11:11:27Z bundled-signed: first classification archived
+2026-08-29T11:11:27Z PASS: raw and bundled-signed first-launch AX trees contain Pawork identifiers

@@ -1,0 +1,4 @@
+[1788006238991] serve starting profile=default
+[1788006238992] host_ready socket=/private/tmp/pawork-ui-fixture.gIZeKX/data/pawork-gui.sock
+ui_fixture serving on /private/tmp/pawork-ui-fixture.gIZeKX/data/pawork-gui.sock (barriers /private/tmp/pawork-ui-fixture.gIZeKX/barriers)
+[1788006241262] accepted connection connection-0

@@ -4,13 +4,13 @@
 //! Forked / 发送失败等瞬态反馈落 footer Label。
 
 use gpui::{
-    Context, Corner, Pixels, Point, SharedString, Window, anchored, deferred, div, point,
-    prelude::*, px,
+    anchored, deferred, div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString,
+    Window,
 };
 
 use crate::projection::{ConnectionState, ModelEntry};
 use crate::ui::components::button::{Button, ButtonVariant};
-use crate::ui::components::dropdown::{ANCHOR_GAP_Y, Dropdown, MenuPanel, MenuRow};
+use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow, ANCHOR_GAP_Y};
 use crate::ui::components::label::Label;
 use crate::ui::theme::{dark, font, metrics};
 
@@ -42,10 +42,25 @@ impl AppView {
             .max_width(px(220.0))
             .vcenter();
         if can_switch_model {
-            model_button = model_button.on_click(cx.listener(|view, event, window, cx| {
-                let down = Self::click_down_position(event);
-                view.on_toggle_model_menu(down, window, cx);
-            }));
+            model_button = model_button
+                .on_click(cx.listener(|view, event, window, cx| {
+                    if view.consume_button_key_click("model-picker", event) {
+                        return;
+                    }
+                    let down = Self::click_down_position(event);
+                    view.on_toggle_model_menu(down, window, cx);
+                }))
+                .on_activate(cx.listener(|view, _event, window, cx| {
+                    if view.open_menu.is_some() {
+                        // 菜单已开时让位给 root 的菜单 Enter 处理，并重新
+                        // 武装 keyup 合成 click 吞除标记。
+                        view.note_button_key_activate("model-picker");
+                        return;
+                    }
+                    view.note_button_key_activate("model-picker");
+                    view.on_toggle_model_menu(None, window, cx);
+                    cx.stop_propagation();
+                }));
         }
         let mut model_picker = Dropdown::new(model_button);
         if model_menu_open {
@@ -68,9 +83,18 @@ impl AppView {
                 .label("✕")
                 .tooltip(cancel_tooltip);
             if can_cancel {
-                cancel = cancel.on_click(cx.listener(|view, _event, window, cx| {
-                    view.on_cancel_clicked(window, cx);
-                }));
+                cancel = cancel
+                    .on_click(cx.listener(|view, event, window, cx| {
+                        if view.consume_button_key_click("composer-action", event) {
+                            return;
+                        }
+                        view.on_cancel_clicked(window, cx);
+                    }))
+                    .on_activate(cx.listener(|view, _event, window, cx| {
+                        view.note_button_key_activate("composer-action");
+                        view.on_cancel_clicked(window, cx);
+                        cx.stop_propagation();
+                    }));
             }
             cancel.into_any_element()
         } else {
@@ -88,12 +112,24 @@ impl AppView {
                 .label("↑")
                 .tooltip(send_tooltip);
             if can_send {
-                send = send.on_click(cx.listener(|view, _event, _window, cx| {
-                    if view.text_input.read(cx).is_composing() {
-                        return;
-                    }
-                    view.send_current_message(cx);
-                }));
+                send = send
+                    .on_click(cx.listener(|view, event, _window, cx| {
+                        if view.consume_button_key_click("composer-action", event) {
+                            return;
+                        }
+                        if view.text_input.read(cx).is_composing() {
+                            return;
+                        }
+                        view.send_current_message(cx);
+                    }))
+                    .on_activate(cx.listener(|view, _event, _window, cx| {
+                        if view.text_input.read(cx).is_composing() {
+                            return;
+                        }
+                        view.note_button_key_activate("composer-action");
+                        view.send_current_message(cx);
+                        cx.stop_propagation();
+                    }));
             }
             send.into_any_element()
         };
@@ -146,19 +182,13 @@ impl AppView {
                             .child(model_picker),
                     )
                     .child(
-                        div()
-                            .max_w(px(180.0))
-                            .min_w_0()
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .truncate()
-                                    .child(
-                                        Label::new(self.composer_workspace_label())
-                                            .size(font::XS)
-                                            .color(dark().text.secondary),
-                                    ),
+                        div().max_w(px(180.0)).min_w_0().overflow_hidden().child(
+                            div().truncate().child(
+                                Label::new(self.composer_workspace_label())
+                                    .size(font::XS)
+                                    .color(dark().text.secondary),
                             ),
+                        ),
                     )
                     .child(
                         Label::new(context_meter)
@@ -167,17 +197,13 @@ impl AppView {
                     )
                     .when_some(self.status_hint.as_ref(), |footer, hint| {
                         footer.child(
-                            div()
-                                .max_w(px(360.0))
-                                .min_w_0()
-                                .overflow_hidden()
-                                .child(
-                                    div().truncate().child(
-                                        Label::new(hint.clone())
-                                            .size(font::XS)
-                                            .color(dark().semantic.warning_text),
-                                    ),
+                            div().max_w(px(360.0)).min_w_0().overflow_hidden().child(
+                                div().truncate().child(
+                                    Label::new(hint.clone())
+                                        .size(font::XS)
+                                        .color(dark().semantic.warning_text),
                                 ),
+                            ),
                         )
                     })
                     .child(div().flex_1())
@@ -357,11 +383,13 @@ impl AppView {
                     .child("Add a workspace before creating a task."),
             );
         }
-        for (id, name) in choices {
+        let highlight = self.menu_highlight_effective(0);
+        for (ix, (id, name)) in choices.into_iter().enumerate() {
             let pick = id.clone();
             panel = panel.child(
                 MenuRow::new(SharedString::from(format!("workspace-confirm-{id}")))
                     .label(name)
+                    .highlighted(ix == highlight)
                     .on_click(cx.listener(move |view, _event, window, cx| {
                         view.on_confirm_workspace(pick.clone(), window, cx);
                     })),
@@ -377,6 +405,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.open_menu = None;
+        self.menu_highlight = None;
         self.create_task(Some(workspace_id), window, cx);
     }
 
@@ -399,6 +428,7 @@ impl AppView {
         self.projection
             .set_pending_model(model.provider_id, model.id);
         self.open_menu = None;
+        self.menu_highlight = None;
         cx.notify();
     }
 
@@ -529,7 +559,10 @@ mod tests {
             .unwrap_or(0);
         assert_eq!(selected_ix, 1);
         assert_eq!(
-            format!("{} / {}", models[selected_ix].provider_id, models[selected_ix].display_name),
+            format!(
+                "{} / {}",
+                models[selected_ix].provider_id, models[selected_ix].display_name
+            ),
             "anthropic / Opus"
         );
         let none_ix = None::<(String, String)>

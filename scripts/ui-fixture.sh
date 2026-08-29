@@ -13,6 +13,10 @@
 #   PAWORK_UI_SERVE_TIMEOUT_SECS   serve 等待 host_ready 的超时（默认 300；
 #                                  首次 cargo build 编译较慢时可调大）
 #   PAWORK_UI_BARRIER_TIMEOUT_SECS drop-socket/self-check 等 barrier 超时（默认 120）
+#   PAWORK_UI_DESKTOP_BIN          仅覆盖 desktop 启动的已构建可执行文件；必须是
+#                                  默认 build 产物或仓库外、名为 pawork-desktop 的
+#                                  绝对路径。未设置时仍
+#                                  build/启动 target/debug/pawork-desktop。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -32,7 +36,33 @@ else
   TARGET_DIR="$REPO_ROOT/target"
 fi
 UI_FIXTURE_BIN="$TARGET_DIR/debug/examples/ui_fixture"
-DESKTOP_BIN="$TARGET_DIR/debug/pawork-desktop"
+DEFAULT_DESKTOP_BIN="$TARGET_DIR/debug/pawork-desktop"
+DESKTOP_BIN="$DEFAULT_DESKTOP_BIN"
+if [[ -n "${PAWORK_UI_DESKTOP_BIN:-}" ]]; then
+  [[ "$PAWORK_UI_DESKTOP_BIN" == /* ]] \
+    || { printf 'ui-fixture: PAWORK_UI_DESKTOP_BIN 必须是绝对路径\n' >&2; exit 1; }
+  [[ "$PAWORK_UI_DESKTOP_BIN" != *$'\n'* && "$PAWORK_UI_DESKTOP_BIN" != *$'\r'* ]] \
+    || { printf 'ui-fixture: PAWORK_UI_DESKTOP_BIN 不得含换行\n' >&2; exit 1; }
+  [[ "${PAWORK_UI_DESKTOP_BIN##*/}" == "pawork-desktop" ]] \
+    || { printf 'ui-fixture: PAWORK_UI_DESKTOP_BIN 文件名必须是 pawork-desktop\n' >&2; exit 1; }
+  DESKTOP_BIN=$(python3 - "$PAWORK_UI_DESKTOP_BIN" "$REPO_ROOT" "$DEFAULT_DESKTOP_BIN" <<'PY'
+import os
+import sys
+
+raw, repo_raw, default_raw = sys.argv[1:]
+path = os.path.realpath(raw)
+repo = os.path.realpath(repo_raw)
+default = os.path.realpath(default_raw)
+try:
+    inside = os.path.commonpath((path, repo)) == repo
+except ValueError:
+    inside = False
+if inside and path != default:
+    raise SystemExit("PAWORK_UI_DESKTOP_BIN 在仓库内时只能指向默认 Desktop build 产物")
+print(path)
+PY
+  ) || { printf 'ui-fixture: PAWORK_UI_DESKTOP_BIN 路径校验失败\n' >&2; exit 1; }
+fi
 
 die() { printf 'ui-fixture: %s\n' "$*" >&2; exit 1; }
 info() { printf 'ui-fixture: %s\n' "$*"; }
@@ -43,11 +73,12 @@ usage() {
 
 命令（root 型命令必须显式 --root <dir>，禁止指向默认数据目录）：
   seed --root <dir> [--now-ms <i64>]   生成/重建 fixture（幂等，example 冻结 CLI）
-  serve --root <dir>                   后台启动 fixture host，等待 host_ready
+  serve --root <dir> [--profile <name>] 后台启动 fixture host，等待 host_ready
   desktop --root <dir>                 后台启动 Desktop，连接 root 内 socket
   desktop-restart --root <dir>         只停/起 desktop（host/数据/barrier 保留）
   drop-socket --root <dir>             请求 host drop 连接并等 drop_socket.done
-  restart-host --root <dir>            停旧起新 host，host_ready 后写 host_restarted
+  restart-host --root <dir> [--profile <name>]
+                                      停旧起新 host，host_ready 后写 host_restarted
   self-check --root <dir>              内置 client 验证 Resume Replay
   down --root <dir>                    停止 host/desktop（数据与 barrier 保留）
   clean --root <dir>                   只删除带 .pawork-ui-fixture marker 的 root
@@ -56,7 +87,7 @@ usage() {
 示例：
   ROOT="$(mktemp -d /tmp/pawork-ui-fixture.XXXXXX)"
   scripts/ui-fixture.sh seed --root "$ROOT"
-  scripts/ui-fixture.sh serve --root "$ROOT"
+  scripts/ui-fixture.sh serve --root "$ROOT" --profile r6-terminal
   scripts/ui-fixture.sh desktop --root "$ROOT"
   scripts/ui-fixture.sh desktop-restart --root "$ROOT"
   scripts/ui-fixture.sh self-check --root "$ROOT"
@@ -189,8 +220,10 @@ build_ui_fixture() {
 }
 
 build_desktop() {
-  (cd "$REPO_ROOT" && cargo build -p pawork-desktop --offline \
-    --features gpui/runtime_shaders --bin pawork-desktop)
+  if [[ -z "${PAWORK_UI_DESKTOP_BIN:-}" ]]; then
+    (cd "$REPO_ROOT" && cargo build -p pawork-desktop --offline \
+      --features gpui/runtime_shaders --bin pawork-desktop)
+  fi
   [[ -x "$DESKTOP_BIN" ]] || die "找不到已构建的 pawork-desktop：$DESKTOP_BIN"
 }
 
@@ -201,7 +234,12 @@ pid_matches_kind() { # $1=pid $2=host|desktop
   [[ -n "$command" ]] || return 1
   case "$kind" in
     host)    [[ "$command " == *"/ui_fixture serve --root $ROOT "* ]] ;;
-    desktop) [[ "$command " == *"/pawork-desktop --socket $ROOT/data/pawork-gui.sock "* ]] ;;
+    desktop)
+      local launch_path
+      launch_path=$(cat "$ROOT/desktop.launch-path" 2>/dev/null || true)
+      [[ -n "$launch_path" ]] || launch_path="$DESKTOP_BIN"
+      [[ "$command" == "$launch_path --socket $ROOT/data/pawork-gui.sock"* ]]
+      ;;
     *)       return 1 ;;
   esac
 }
@@ -241,6 +279,14 @@ cmd_seed() {
 }
 
 cmd_serve() {
+  local -a forwarded=()
+  while (( $# )); do
+    case "$1" in
+      --root) shift 2 ;;
+      --root=*) shift ;;
+      *) forwarded+=("$1"); shift ;;
+    esac
+  done
   require_ready_marker
   refuse_if_running "$ROOT/host.pid" "host" host
   build_ui_fixture
@@ -252,8 +298,13 @@ cmd_serve() {
         "$ROOT/barriers/drop_socket.done"
   info "启动 ui_fixture serve（日志：$ROOT/logs/serve.log）"
   (
-    nohup "$UI_FIXTURE_BIN" serve --root "$ROOT" \
-      </dev/null >>"$ROOT/logs/serve.log" 2>&1 &
+    if [[ -n "${forwarded[0]+present}" ]]; then
+      nohup "$UI_FIXTURE_BIN" serve --root "$ROOT" "${forwarded[@]}" \
+        </dev/null >>"$ROOT/logs/serve.log" 2>&1 &
+    else
+      nohup "$UI_FIXTURE_BIN" serve --root "$ROOT" \
+        </dev/null >>"$ROOT/logs/serve.log" 2>&1 &
+    fi
     printf '%s' "$!" > "$ROOT/host.pid"
   )
   local pid ticks=$(( SERVE_TIMEOUT_SECS * 10 )) n=0
@@ -280,6 +331,7 @@ cmd_desktop() {
   seeded_root_dirs
   [[ -S "$socket" ]] || die "socket 不存在：${socket}（先 serve --root '$ROOT'）"
   info "启动 desktop（日志：$ROOT/logs/desktop.log）"
+  printf '%s\n' "$DESKTOP_BIN" > "$ROOT/desktop.launch-path"
   (
     PAWORK_UI_BARRIER_DIR="$ROOT/barriers" \
       nohup "$DESKTOP_BIN" --socket "$socket" \
@@ -313,7 +365,7 @@ cmd_drop_socket() {
 cmd_restart_host() {
   require_ready_marker
   stop_host
-  cmd_serve
+  cmd_serve "$@"
   write_barrier "$ROOT/barriers/host_restarted" "restart-host 完成：旧 host 停止后新 host_ready"
   info "host restarted（desktop 无需重启，走断连重连恢复路径）"
 }
@@ -385,6 +437,7 @@ stop_desktop() {
   pid=$(cat "$ROOT/desktop.pid" 2>/dev/null || true)
   if [[ -n "$pid" ]]; then stop_pid_tree "$pid" desktop desktop; fi
   rm -f "$ROOT/desktop.pid"
+  rm -f "$ROOT/desktop.launch-path"
 }
 
 cmd_down() {
@@ -447,11 +500,11 @@ main() {
   extract_root "$@"
   case "$cmd" in
     seed)          require_root; require_socket_path; cmd_seed "$@" ;;
-    serve)         require_root; require_socket_path; cmd_serve ;;
+    serve)         require_root; require_socket_path; cmd_serve "$@" ;;
     desktop)       require_root; require_socket_path; cmd_desktop ;;
     desktop-restart) require_root; require_socket_path; cmd_desktop_restart ;;
     drop-socket)   require_root; require_socket_path; cmd_drop_socket ;;
-    restart-host)  require_root; require_socket_path; cmd_restart_host ;;
+    restart-host)  require_root; require_socket_path; cmd_restart_host "$@" ;;
     self-check)    require_root; require_socket_path; cmd_self_check ;;
     down)          require_root; cmd_down ;;
     clean)         require_root; cmd_clean ;;

@@ -11,7 +11,7 @@ use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::panel::Panel;
 use crate::ui::theme::{dark, font, metrics};
 
-use super::AppView;
+use super::{terminal_can_operate, terminal_start_enabled, AppView};
 
 /// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
 pub(super) const TERMINAL_EMPTY_OUTPUT: &str = "Terminal output will appear here.";
@@ -34,7 +34,7 @@ impl InspectorTab {
         }
     }
 
-    fn button_id(self) -> &'static str {
+    pub(super) fn button_id(self) -> &'static str {
         match self {
             Self::Changes => "inspector-tab-changes",
             Self::Terminal => "inspector-tab-terminal",
@@ -65,6 +65,9 @@ impl AppView {
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
+                    .tab_stop(true)
+                    .track_focus(&self.inspector_tab_focus[tab as usize])
+                    .focus(|style| style.border_1().border_color(dark().accent.primary))
                     .text_size(px(font::BODY))
                     .text_color(if selected {
                         dark().text.primary
@@ -85,7 +88,10 @@ impl AppView {
                                 .bg(dark().accent.primary),
                         )
                     })
-                    .on_click(cx.listener(move |view, _event, _window, cx| {
+                    .on_click(cx.listener(move |view, event, _window, cx| {
+                        if view.consume_button_key_click(tab.button_id(), event) {
+                            return;
+                        }
                         view.select_inspector_tab(tab, cx);
                     })),
             );
@@ -108,7 +114,11 @@ impl AppView {
                     .text_color(dark().text.secondary)
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
                     .label("⟩")
-                    .on_click(cx.listener(|view, _event, window, cx| {
+                    .track_focus(&self.inspector_collapse_focus)
+                    .on_click(cx.listener(|view, event, window, cx| {
+                        if view.consume_button_key_click("inspector-collapse", event) {
+                            return;
+                        }
                         view.on_toggle_inspector(window, cx);
                     })),
             );
@@ -124,7 +134,7 @@ impl AppView {
     }
 
     /// Terminal 页（波 C 的面板内容，页签头外移到顶层 strip 后保持原样）。
-    fn terminal_page_element(&self, connected: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn terminal_page_element(&self, _connected: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal = &self.projection.terminal;
         let output = if terminal.output.is_empty() {
             TERMINAL_EMPTY_OUTPUT.to_string()
@@ -134,6 +144,23 @@ impl AppView {
         let size_label = format!("{}×{}", terminal.columns, terminal.rows);
         let cwd = terminal.cwd.clone();
         let started = terminal.session_id.is_some();
+        let owner = terminal.workspace_id.as_deref().unwrap_or("unassigned");
+        let mut state_label = terminal.availability_label();
+        if terminal.dropped_events > 0 {
+            state_label.push_str(&format!(
+                " · {} output events dropped",
+                terminal.dropped_events
+            ));
+        }
+        if terminal.resize_confirmed {
+            state_label.push_str(" · resize confirmed");
+        }
+        let terminal_operable = terminal_can_operate(&self.projection.connection, terminal);
+        let terminal_start_enabled = terminal_start_enabled(
+            &self.projection.connection,
+            terminal,
+            self.terminal_pending_create_workspace.as_ref(),
+        );
         div()
             .flex()
             .flex_col()
@@ -149,13 +176,18 @@ impl AppView {
                     .py_1()
                     .text_size(px(font::XS))
                     .text_color(dark().text.secondary)
-                    .child(format!("cwd {cwd}"))
+                    .child(format!("workspace {owner} · cwd {cwd} · {state_label}"))
                     .child(
                         Button::new("terminal-resize")
                             .variant(ButtonVariant::Ghost)
+                            .disabled(!terminal_operable)
                             .padding(ButtonPadding::None)
                             .label(size_label)
-                            .on_click(cx.listener(|view, _event, window, cx| {
+                            .track_focus(&self.terminal_resize_focus)
+                            .on_click(cx.listener(|view, event, window, cx| {
+                                if view.consume_button_key_click("terminal-resize", event) {
+                                    return;
+                                }
                                 view.on_apply_terminal_size(window, cx);
                             })),
                     ),
@@ -190,7 +222,13 @@ impl AppView {
                             Button::new("terminal-back-to-bottom")
                                 .variant(ButtonVariant::Raised)
                                 .label("↓ 回到底部")
-                                .on_click(cx.listener(|view, _event, _window, cx| {
+                                .track_focus(&self.terminal_back_to_bottom_focus)
+                                .on_click(cx.listener(|view, event, _window, cx| {
+                                    if view
+                                        .consume_button_key_click("terminal-back-to-bottom", event)
+                                    {
+                                        return;
+                                    }
                                     view.terminal_scroll.jump_to_bottom();
                                     cx.notify();
                                 })),
@@ -211,12 +249,16 @@ impl AppView {
                         // 禁用态亦保持同色，显式钉住避免 Raised 默认的 disabled 色。
                         Button::new("terminal-start")
                             .variant(ButtonVariant::Raised)
-                            .disabled(!connected)
+                            .disabled(!terminal_start_enabled)
                             .text_size(font::XS)
                             .text_color(dark().text.primary)
                             .disabled_text_color(dark().text.primary)
                             .label(if started { "Size" } else { "Start" })
-                            .on_click(cx.listener(move |view, _event, window, cx| {
+                            .track_focus(&self.terminal_start_focus)
+                            .on_click(cx.listener(move |view, event, window, cx| {
+                                if view.consume_button_key_click("terminal-start", event) {
+                                    return;
+                                }
                                 if started {
                                     view.on_apply_terminal_size(window, cx);
                                 } else {
@@ -233,6 +275,12 @@ impl AppView {
     }
 
     pub(super) fn on_apply_terminal_size(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !terminal_can_operate(&self.projection.connection, &self.projection.terminal) {
+            self.status_hint =
+                Some("Terminal is not ready; resize was not sent to the host.".into());
+            cx.notify();
+            return;
+        }
         if let Some(id) = self.projection.terminal.session_id.clone() {
             self.controller.terminal_resize(
                 id,
@@ -248,6 +296,15 @@ impl AppView {
         if self.projection.terminal.session_id.is_some() {
             return;
         }
+        let workspace = self.inspector_workspace_id();
+        if let Some(pending) = self.terminal_pending_create_workspace.as_ref() {
+            if workspace.as_ref() == Some(pending) {
+                self.status_hint = Some("Starting terminal…".into());
+            } else {
+                self.status_hint = Some("Waiting for the current terminal creation.".into());
+            }
+            return;
+        }
         if !matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -255,14 +312,11 @@ impl AppView {
             self.status_hint = Some("Terminal needs a live connection.".into());
             return;
         }
-        let Some(workspace) = self
-            .scope_workspace_id
-            .clone()
-            .or_else(|| self.projection.workspace_id.clone())
-        else {
+        let Some(workspace) = workspace else {
             self.status_hint = Some("Choose a project before opening Terminal.".into());
             return;
         };
+        self.terminal_pending_create_workspace = Some(workspace.clone());
         self.controller
             .terminal_create(workspace, Some(self.projection.terminal.cwd.clone()));
     }

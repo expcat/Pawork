@@ -1,0 +1,16 @@
+# ui-ax-dump
+# pid=30479
+# ax_trusted=true
+# generated_at=2026-08-29T08:42:04Z
+# max_depth=18 max_children=80
+#
+# CGWindowList (owner pid 30479), count=1
+#   wid=11854 owner="pawork-desktop" title="" layer=0 offscreen alpha=1.0 bounds={0,940,500,500}
+#
+# AX tree
+role=AXApplication title="pawork-desktop"
+#
+# summary nodes=1 truncated=0
+# roles AXApplication=1
+# identifiers (none)
+# custom_hint depth=0 role=AXApplication title="pawork-desktop"

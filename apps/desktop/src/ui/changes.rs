@@ -56,6 +56,9 @@ pub(super) struct ChangesPanelState {
     pub git: Option<GitDiffInfo>,
     pub selected: Option<String>,
     pub diff: DiffFetch,
+    /// 断线/重连期间保留最后一次成功数据，但必须显式标成 stale；epoch 同时
+    /// 失效，旧响应不能在新连接上把 stale 静默抹掉。
+    pub stale_reason: Option<String>,
     pub list_scroll: ScrollHandle,
     pub diff_scroll: ScrollHandle,
 }
@@ -72,6 +75,7 @@ impl Default for ChangesPanelState {
             git: None,
             selected: None,
             diff: DiffFetch::Idle,
+            stale_reason: None,
             list_scroll: ScrollHandle::new(),
             diff_scroll: ScrollHandle::new(),
         }
@@ -83,11 +87,37 @@ impl ChangesPanelState {
     pub(super) fn begin_refresh(&mut self) -> u64 {
         self.epoch += 1;
         self.fetch = ChangesFetch::Fetching;
+        self.stale_reason = None;
         self.epoch
     }
 
     pub(super) fn mark_failed(&mut self, reason: &str) {
         self.fetch = ChangesFetch::Failed(reason.into());
+        self.stale_reason = None;
+    }
+
+    pub(super) fn mark_failed_for_epoch(&mut self, epoch: u64, reason: &str) -> bool {
+        if epoch != self.epoch {
+            return false;
+        }
+        self.mark_failed(reason);
+        true
+    }
+
+    pub(super) fn mark_stale(&mut self, reason: &str) {
+        self.epoch += 1;
+        self.diff_epoch += 1;
+        if self.fetch == ChangesFetch::Fetching {
+            self.fetch = if self.session_id.is_some() || !self.files.is_empty() {
+                ChangesFetch::Ready
+            } else {
+                ChangesFetch::Idle
+            };
+        }
+        if self.diff == DiffFetch::Fetching {
+            self.diff = DiffFetch::Failed(reason.into());
+        }
+        self.stale_reason = Some(reason.into());
     }
 
     /// 应用清单响应；选中路径从清单消失时清空选中与 diff。
@@ -112,6 +142,7 @@ impl ChangesPanelState {
         self.files = files;
         self.git = git;
         self.fetch = ChangesFetch::Ready;
+        self.stale_reason = None;
         true
     }
 
@@ -127,6 +158,19 @@ impl ChangesPanelState {
         if self.selected.is_some() {
             self.diff = DiffFetch::Failed(reason.into());
         }
+    }
+
+    pub(super) fn mark_diff_failed_for_epoch(
+        &mut self,
+        epoch: u64,
+        path: &str,
+        reason: &str,
+    ) -> bool {
+        if epoch != self.diff_epoch || self.selected.as_deref() != Some(path) {
+            return false;
+        }
+        self.mark_diff_failed(reason);
+        true
     }
 
     /// 应用 diff 响应；代次或选中路径不匹配（用户已改选 / 重新拉清单）时丢弃。
@@ -148,12 +192,15 @@ impl ChangesPanelState {
 
     /// 会话切换：清空旧会话数据（新清单由随后的刷新拉取）。
     pub(super) fn reset_for_session(&mut self) {
+        self.epoch += 1;
+        self.diff_epoch += 1;
         self.fetch = ChangesFetch::Idle;
         self.session_id = None;
         self.files.clear();
         self.git = None;
         self.selected = None;
         self.diff = DiffFetch::Idle;
+        self.stale_reason = None;
     }
 
     /// (文件数, 总新增, 总删除)。
@@ -175,6 +222,9 @@ impl ChangesPanelState {
     /// ActivityPopover 首行摘要（§8.5：N files · +A/−D；未就绪显示
     /// unavailable，不显示 0）。
     pub(super) fn activity_summary(&self) -> String {
+        if self.stale_reason.is_some() {
+            return "stale".into();
+        }
         match &self.fetch {
             ChangesFetch::Ready => {
                 let (files, additions, deletions) = self.totals();
@@ -203,6 +253,9 @@ impl AppView {
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
+                    .tab_stop(true)
+                    .track_focus(&self.changes_tab_focus[target as usize])
+                    .focus(|style| style.border_1().border_color(dark().accent.primary))
                     .text_size(px(font::BODY_SM))
                     .text_color(if current {
                         dark().text.primary
@@ -223,7 +276,10 @@ impl AppView {
                                 .bg(dark().accent.primary),
                         )
                     })
-                    .on_click(cx.listener(move |view, _event, _window, cx| {
+                    .on_click(cx.listener(move |view, event, _window, cx| {
+                        if view.consume_button_key_click(id, event) {
+                            return;
+                        }
                         view.on_select_changes_tab(target, cx);
                     }))
             };
@@ -257,7 +313,11 @@ impl AppView {
                     .text_color(dark().text.secondary)
                     .label("↻")
                     .tooltip("Refresh changes")
-                    .on_click(cx.listener(|view, _event, _window, cx| {
+                    .track_focus(&self.changes_refresh_focus)
+                    .on_click(cx.listener(|view, event, _window, cx| {
+                        if view.consume_button_key_click("changes-refresh", event) {
+                            return;
+                        }
                         view.refresh_changes(cx);
                     })),
             );
@@ -267,6 +327,28 @@ impl AppView {
             .flex_1()
             .min_h_0()
             .child(header)
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(dark().border.subtle)
+                    .text_size(px(font::XS))
+                    .text_color(dark().text.tertiary)
+                    .child("Current working tree · filtered to latest task paths"),
+            )
+            .when_some(self.changes.stale_reason.clone(), |block, reason| {
+                block.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .border_b_1()
+                        .border_color(dark().semantic.warning_text)
+                        .text_size(px(font::XS))
+                        .text_color(dark().semantic.warning_text)
+                        .child(format!("Stale data · {reason}")),
+                )
+            })
             .when_some(self.changes_session_mismatch(), |block, data_session| {
                 // host diff_* 固定解析 latest 会话（P2-1）：数据会话与当前
                 // 查看会话不一致时如实标注，不静默张冠李戴。
@@ -336,31 +418,36 @@ impl AppView {
         for file in &self.changes.files {
             let selected = Some(&file.path) == self.changes.selected.as_ref();
             let path = file.path.clone();
-            list = list.child(
-                ListRow::task(format!("changes-file-{}", file.path), selected)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(font::SM))
-                            .text_color(dark().text.primary)
-                            .child(path.clone()),
-                    )
-                    .child(
-                        Label::new(file.status.clone())
-                            .size(font::XS)
-                            .color(dark().text.tertiary),
-                    )
-                    .child(
-                        Label::new(format!("+{}/−{}", file.additions, file.deletions))
-                            .size(font::XS)
-                            .color(dark().text.secondary),
-                    )
-                    .on_click(cx.listener(move |view, _event, _window, cx| {
-                        view.on_select_diff_file(&path, cx);
-                    })),
-            );
+            let focus = self.changes_file_focus.get(&path).cloned();
+            let mut row = ListRow::task(format!("changes-file-{}", file.path), selected)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(font::SM))
+                        .text_color(dark().text.primary)
+                        .child(path.clone()),
+                )
+                .child(
+                    Label::new(file.status.clone())
+                        .size(font::XS)
+                        .color(dark().text.tertiary),
+                )
+                .child(
+                    Label::new(format!("+{}/−{}", file.additions, file.deletions))
+                        .size(font::XS)
+                        .color(dark().text.secondary),
+                );
+            if let Some(focus) = focus {
+                row = row.track_focus(&focus);
+            }
+            list = list.child(row.on_click(cx.listener(move |view, event, _window, cx| {
+                if view.consume_row_key_click(&path, event) {
+                    return;
+                }
+                view.on_select_diff_file(&path, cx);
+            })));
         }
         div()
             .flex()
@@ -535,6 +622,7 @@ impl AppView {
                     .child(
                         MenuRow::new("activity-open-changes")
                             .label(summary)
+                            .highlighted(self.menu_highlight_effective(0) == 0)
                             .on_click(cx.listener(|view, _event, window, cx| {
                                 view.on_activity_open_changes(window, cx);
                             })),
@@ -723,5 +811,22 @@ mod tests {
         assert_eq!(session_mismatch(Some("s-1"), Some("s-1")), None);
         // 数据会话（latest 解析结果）与查看会话不同 → 返回数据会话 id。
         assert_eq!(session_mismatch(Some("s-2"), Some("s-1")), Some("s-2"));
+    }
+
+    #[test]
+    fn disconnect_keeps_ready_changes_stale_and_invalidates_old_responses() {
+        let mut state = ready_state(vec![DiffFileSummary {
+            path: "a.rs".into(),
+            status: "modified".into(),
+            additions: 1,
+            deletions: 0,
+            binary: false,
+        }]);
+        let old_epoch = state.epoch;
+        state.mark_stale("connection lost");
+        assert_eq!(state.fetch, ChangesFetch::Ready);
+        assert_eq!(state.files.len(), 1);
+        assert_eq!(state.activity_summary(), "stale");
+        assert!(!state.mark_failed_for_epoch(old_epoch, "late failure"));
     }
 }

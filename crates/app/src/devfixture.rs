@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, ArtifactId, ContentPart, ErrorCategory,
@@ -20,12 +21,14 @@ use pawork_domain::{
     ToolCallId, ToolOutputStream, ToolResultContent, WorkspaceId,
 };
 use pawork_storage::blob::{ArtifactStore, CheckpointService};
+use pawork_policy::ApprovalMode;
 use pawork_storage::session::SessionStore;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::extensions::McpServerSlot;
 use crate::services::extension::ExtensionService;
-use crate::{AppCore, AppError};
+use crate::{AppCore, AppError, DenyAllApprovals};
 use pawork_workspace::WorkspaceService;
 
 /// 固定时间锚点：2026-01-01T00:00:00Z。
@@ -149,6 +152,81 @@ pub struct SeedOutcome {
     pub events: usize,
     pub checkpoints: usize,
     pub manifest: PathBuf,
+}
+
+/// `ui_fixture serve --profile` 的 dev-only Host 装配档。
+///
+/// profile 只改变隔离 fixture Host 的审批/trust 与 MCP 状态输入，不进入
+/// seed 数据库、生产配置或 GUI wire。R6 用三个互斥档分别证明终端成功、
+/// Resources ready/failed 与 read_only fail-closed，避免把互相冲突的状态
+/// 伪造在同一 Host 生命周期里。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FixtureHostProfile {
+    Default,
+    R6Terminal,
+    R6Resources,
+    R6ReadOnly,
+}
+
+impl FixtureHostProfile {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "default" => Ok(Self::Default),
+            "r6-terminal" => Ok(Self::R6Terminal),
+            "r6-resources" => Ok(Self::R6Resources),
+            "r6-read-only" => Ok(Self::R6ReadOnly),
+            other => Err(format!(
+                "未知 UI fixture Host profile {other:?}（可选 default、r6-terminal、r6-resources、r6-read-only）"
+            )),
+        }
+    }
+
+    fn approval(self) -> Option<(ApprovalMode, bool)> {
+        match self {
+            Self::Default => None,
+            Self::R6Terminal | Self::R6Resources => {
+                Some((ApprovalMode::AskForDangerous, true))
+            }
+            Self::R6ReadOnly => Some((ApprovalMode::ReadOnly, true)),
+        }
+    }
+}
+
+fn fixture_mcp_slots(profile: FixtureHostProfile) -> Vec<McpServerSlot> {
+    if profile != FixtureHostProfile::R6Resources {
+        return Vec::new();
+    }
+    vec![
+        McpServerSlot {
+            name: "fixture-files".into(),
+            transport: "stdio".into(),
+            state: "connected".into(),
+            last_error: None,
+            tools: vec!["fixture_files.read".into(), "fixture_files.list".into()],
+            client: None,
+        },
+        McpServerSlot {
+            name: "fixture-broken".into(),
+            transport: "stdio".into(),
+            state: "failed".into(),
+            last_error: Some("fixture scripted MCP startup failure".into()),
+            tools: Vec::new(),
+            client: None,
+        },
+    ]
+}
+
+/// 在 attach workspace 之前应用选定的 dev-only Host profile。
+pub fn configure_fixture_host_profile(
+    core: &mut AppCore,
+    profile: &str,
+) -> Result<FixtureHostProfile, String> {
+    let profile = FixtureHostProfile::parse(profile)?;
+    if let Some((mode, trusted)) = profile.approval() {
+        core.configure_approval(mode, trusted, Arc::new(DenyAllApprovals));
+    }
+    core.extensions.mcp_servers = fixture_mcp_slots(profile);
+    Ok(profile)
 }
 
 /// 校验 fixture root：只接受隔离目录，拒绝默认数据目录、仓库与其
@@ -1349,5 +1427,36 @@ mod tests {
         let error = validate_seed_timestamps(&spec, i64::MAX)
             .expect_err("extreme time anchor must fail cleanly");
         assert!(error.contains("支持范围"), "{error}");
+    }
+
+    #[test]
+    fn fixture_host_profiles_are_closed_and_resource_matrix_is_deterministic() {
+        assert_eq!(
+            FixtureHostProfile::parse("r6-terminal").expect("terminal profile"),
+            FixtureHostProfile::R6Terminal
+        );
+        assert!(FixtureHostProfile::parse("unknown").is_err());
+        assert!(fixture_mcp_slots(FixtureHostProfile::Default).is_empty());
+
+        let slots = fixture_mcp_slots(FixtureHostProfile::R6Resources);
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].name, "fixture-files");
+        assert_eq!(slots[0].state, "connected");
+        assert_eq!(slots[0].tools.len(), 2);
+        assert_eq!(slots[1].name, "fixture-broken");
+        assert_eq!(slots[1].state, "failed");
+        assert_eq!(
+            slots[1].last_error.as_deref(),
+            Some("fixture scripted MCP startup failure")
+        );
+
+        assert!(matches!(
+            FixtureHostProfile::R6Terminal.approval(),
+            Some((ApprovalMode::AskForDangerous, true))
+        ));
+        assert!(matches!(
+            FixtureHostProfile::R6ReadOnly.approval(),
+            Some((ApprovalMode::ReadOnly, true))
+        ));
     }
 }

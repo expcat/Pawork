@@ -1,0 +1,2 @@
+2026-08-29T11:23:35Z compile helpers into /tmp/pawork-r7a-states.anXnbg
+2026-08-29T11:23:39Z build Desktop once

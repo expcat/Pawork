@@ -26,16 +26,48 @@ const MAX_PAGES: usize = 200;
 /// UI 消费的控制器事件（经 smol channel 跨线程投递）。
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
-    Disconnected { reason: String },
+    Disconnected {
+        reason: String,
+    },
     Snapshot(Snapshot),
-    TimelineLoaded { session_id: String, page: TimelinePage },
+    TimelineLoaded {
+        session_id: String,
+        page: TimelinePage,
+    },
     Event(AppEventEnvelope),
-    SessionCreated { session_id: String },
+    SessionCreated {
+        session_id: String,
+    },
     /// 发送回执：text 随行携带，供 UI 在 wire 用户消息事件缺席时乐观回显。
-    MessageSent { session_id: String, run_id: String, text: String },
+    MessageSent {
+        session_id: String,
+        run_id: String,
+        text: String,
+    },
     ModelsLoaded(Vec<ModelEntry>),
-    SessionForked { session_id: String },
-    TerminalCreated { terminal_session_id: String },
+    SessionForked {
+        session_id: String,
+    },
+    TerminalCreated {
+        workspace_id: String,
+        terminal_session_id: String,
+    },
+    TerminalWriteSucceeded {
+        terminal_session_id: String,
+    },
+    TerminalWriteFailed {
+        terminal_session_id: String,
+        reason: String,
+    },
+    TerminalResizeSucceeded {
+        terminal_session_id: String,
+        columns: u16,
+        rows: u16,
+    },
+    TerminalResizeFailed {
+        terminal_session_id: String,
+        reason: String,
+    },
     /// diff_list_files 成功（epoch 为 UI 侧请求代次，防过期响应覆盖新状态）。
     DiffFilesLoaded {
         epoch: u64,
@@ -50,8 +82,27 @@ pub enum ControllerEvent {
         file: Option<DiffFileDetail>,
     },
     /// mcp_list 成功（响应形状 {"servers":[{name,transport,state,tools,last_error}]}）。
-    McpServersLoaded { epoch: u64, servers: Vec<McpServerEntry> },
-    OperationFailed { action: &'static str, reason: String },
+    McpServersLoaded {
+        epoch: u64,
+        servers: Vec<McpServerEntry>,
+    },
+    DiffFilesFailed {
+        epoch: u64,
+        reason: String,
+    },
+    DiffContentFailed {
+        epoch: u64,
+        path: String,
+        reason: String,
+    },
+    McpServersFailed {
+        epoch: u64,
+        reason: String,
+    },
+    OperationFailed {
+        action: &'static str,
+        reason: String,
+    },
 }
 
 /// Changes 面 Files 行（diff_list_files 响应的视图模型）。
@@ -149,7 +200,11 @@ impl DesktopController {
     }
 
     fn current_client(&self) -> Option<GuiClient> {
-        self.state.client.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        self.state
+            .client
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// 连接 + 握手 + 订阅。有 last_ack 时走 `connect_with_resume`，不要永远
@@ -195,7 +250,9 @@ impl DesktopController {
                 }
                 if let Some(outcome) = &resume {
                     match &outcome.disposition {
-                        ResumeDisposition::Replay { through_sequence, .. } => {
+                        ResumeDisposition::Replay {
+                            through_sequence, ..
+                        } => {
                             record_shared_last_acked(&state, through_sequence.0);
                             let _ = handshake.ack(*through_sequence).await;
                         }
@@ -252,23 +309,19 @@ impl DesktopController {
                         idle_ticks = 0;
                         if let Err(error) = pump_client.heartbeat().await {
                             let reason = error.to_string();
-                            *pump_state
-                                .client
-                                .lock()
-                                .unwrap_or_else(|p| p.into_inner()) = None;
+                            *pump_state.client.lock().unwrap_or_else(|p| p.into_inner()) = None;
                             let _ = pump_events
-                                .try_send(ControllerEvent::Disconnected { reason });
+                                .send(ControllerEvent::Disconnected { reason })
+                                .await;
                             break;
                         }
                     }
                     Err(error) => {
                         let reason = error.to_string();
-                        *pump_state
-                            .client
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner()) = None;
+                        *pump_state.client.lock().unwrap_or_else(|p| p.into_inner()) = None;
                         let _ = pump_events
-                            .try_send(ControllerEvent::Disconnected { reason });
+                            .send(ControllerEvent::Disconnected { reason })
+                            .await;
                         break;
                     }
                 }
@@ -310,30 +363,42 @@ impl DesktopController {
             let mut after: Option<u64> = None;
             for _ in 0..MAX_PAGES {
                 let query = session_get_query(&session_id, after);
-                let response = match client.query(query, command_source(), actor_identity()).await {
+                let response = match client
+                    .query(query, command_source(), actor_identity())
+                    .await
+                {
                     Ok(response) => response,
                     Err(error) => {
-                        try_emit(&events, ControllerEvent::OperationFailed {
-                            action: "open session",
-                            reason: error.to_string(),
-                        });
+                        try_emit(
+                            &events,
+                            ControllerEvent::OperationFailed {
+                                action: "open session",
+                                reason: error.to_string(),
+                            },
+                        );
                         return;
                     }
                 };
                 let page = match timeline_page(&response) {
                     Ok(Some(page)) => page,
                     Ok(None) => {
-                        try_emit(&events, ControllerEvent::OperationFailed {
-                            action: "open session",
-                            reason: "session_get response carried no timeline page".into(),
-                        });
+                        try_emit(
+                            &events,
+                            ControllerEvent::OperationFailed {
+                                action: "open session",
+                                reason: "session_get response carried no timeline page".into(),
+                            },
+                        );
                         return;
                     }
                     Err(reason) => {
-                        try_emit(&events, ControllerEvent::OperationFailed {
-                            action: "open session",
-                            reason,
-                        });
+                        try_emit(
+                            &events,
+                            ControllerEvent::OperationFailed {
+                                action: "open session",
+                                reason,
+                            },
+                        );
                         return;
                     }
                 };
@@ -353,10 +418,13 @@ impl DesktopController {
                     return;
                 }
             }
-            try_emit(&events, ControllerEvent::OperationFailed {
-                action: "open session",
-                reason: format!("timeline exceeded {MAX_PAGES} pages"),
-            });
+            try_emit(
+                &events,
+                ControllerEvent::OperationFailed {
+                    action: "open session",
+                    reason: format!("timeline exceeded {MAX_PAGES} pages"),
+                },
+            );
         });
     }
 
@@ -365,23 +433,30 @@ impl DesktopController {
     pub fn create_session(&self, workspace_id: String) {
         let Some(client) = self.current_client() else {
             if let Some(events) = self.try_event_sender() {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "create session",
-                    reason: "not connected".into(),
-                });
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "create session",
+                        reason: "not connected".into(),
+                    },
+                );
             }
             return;
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
             let command = session_create_command(&workspace_id);
-            if let Err(error) =
-                client.command(command, command_source(), actor_identity()).await
+            if let Err(error) = client
+                .command(command, command_source(), actor_identity())
+                .await
             {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "create session",
-                    reason: error.to_string(),
-                });
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "create session",
+                        reason: error.to_string(),
+                    },
+                );
                 return;
             }
             match client.snapshot().await {
@@ -390,7 +465,11 @@ impl DesktopController {
                         .into_iter()
                         .map(|session| session.session_id)
                         .next();
-                    if events.send(ControllerEvent::Snapshot(snapshot)).await.is_err() {
+                    if events
+                        .send(ControllerEvent::Snapshot(snapshot))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                     if let Some(session_id) = latest {
@@ -398,17 +477,24 @@ impl DesktopController {
                             .send(ControllerEvent::SessionCreated { session_id })
                             .await;
                     } else {
-                        try_emit(&events, ControllerEvent::OperationFailed {
-                            action: "create session",
-                            reason: "host accepted SessionCreate but snapshot has no sessions".into(),
-                        });
+                        try_emit(
+                            &events,
+                            ControllerEvent::OperationFailed {
+                                action: "create session",
+                                reason: "host accepted SessionCreate but snapshot has no sessions"
+                                    .into(),
+                            },
+                        );
                     }
                 }
                 Err(error) => {
-                    try_emit(&events, ControllerEvent::OperationFailed {
-                        action: "create session",
-                        reason: error.to_string(),
-                    });
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "create session",
+                            reason: error.to_string(),
+                        },
+                    );
                 }
             }
         });
@@ -422,9 +508,15 @@ impl DesktopController {
         let events = self.event_sender();
         self.runtime.spawn(async move {
             let command = run_start_command(&session_id, &text, model.as_ref());
-            match client.command(command, command_source(), actor_identity()).await {
+            match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
                 Ok(response) => match response.response {
-                    AppResponse::Accepted { run_id: Some(run_id), .. } => {
+                    AppResponse::Accepted {
+                        run_id: Some(run_id),
+                        ..
+                    } => {
                         let run_id = run_id.as_str().to_string();
                         let _ = events
                             .send(ControllerEvent::MessageSent {
@@ -435,17 +527,23 @@ impl DesktopController {
                             .await;
                     }
                     other => {
-                        try_emit(&events, ControllerEvent::OperationFailed {
-                            action: "send message",
-                            reason: format!("unexpected response: {other:?}"),
-                        });
+                        try_emit(
+                            &events,
+                            ControllerEvent::OperationFailed {
+                                action: "send message",
+                                reason: format!("unexpected response: {other:?}"),
+                            },
+                        );
                     }
                 },
                 Err(error) => {
-                    try_emit(&events, ControllerEvent::OperationFailed {
-                        action: "send message",
-                        reason: error.to_string(),
-                    });
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "send message",
+                            reason: error.to_string(),
+                        },
+                    );
                 }
             }
         });
@@ -462,10 +560,13 @@ impl DesktopController {
                 .command(command, command_source(), actor_identity())
                 .await
             {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "cancel run",
-                    reason: error.to_string(),
-                });
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "cancel run",
+                        reason: error.to_string(),
+                    },
+                );
             }
         });
     }
@@ -481,10 +582,13 @@ impl DesktopController {
                 .command(command, command_source(), actor_identity())
                 .await
             {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "approve tool",
-                    reason: error.to_string(),
-                });
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "approve tool",
+                        reason: error.to_string(),
+                    },
+                );
             }
         });
     }
@@ -504,7 +608,9 @@ impl DesktopController {
 
     /// 给 `--probe` 用的同步目录查询：不经 UI channel。
     pub async fn fetch_models(&self) -> Result<Vec<ModelEntry>, String> {
-        let client = self.current_client().ok_or_else(|| "not connected".to_string())?;
+        let client = self
+            .current_client()
+            .ok_or_else(|| "not connected".to_string())?;
         let response = client
             .query(model_list_query(), command_source(), actor_identity())
             .await
@@ -517,10 +623,13 @@ impl DesktopController {
     pub fn fork_session(&self, session_id: String, parent_event_id: String) {
         let Some(client) = self.current_client() else {
             if let Some(events) = self.try_event_sender() {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "fork session",
-                    reason: "not connected".into(),
-                });
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "fork session",
+                        reason: "not connected".into(),
+                    },
+                );
             }
             return;
         };
@@ -533,10 +642,13 @@ impl DesktopController {
             {
                 Ok(response) => match &response.response {
                     AppResponse::Error(_) => {
-                        try_emit(&events, ControllerEvent::OperationFailed {
-                            action: "fork session",
-                            reason: "server returned an error response".into(),
-                        });
+                        try_emit(
+                            &events,
+                            ControllerEvent::OperationFailed {
+                                action: "fork session",
+                                reason: "server returned an error response".into(),
+                            },
+                        );
                     }
                     AppResponse::Accepted { .. } | AppResponse::Data(_) => {
                         let hinted = forked_session_id(&response);
@@ -548,7 +660,10 @@ impl DesktopController {
                                         .map(|session| session.session_id)
                                         .next()
                                 });
-                                if events.send(ControllerEvent::Snapshot(snapshot)).await.is_err()
+                                if events
+                                    .send(ControllerEvent::Snapshot(snapshot))
+                                    .await
+                                    .is_err()
                                 {
                                     return;
                                 }
@@ -558,33 +673,40 @@ impl DesktopController {
                                         .await;
                                 }
                             }
-                            Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
-                                action: "fork session",
-                                reason: error.to_string(),
-                            }),
+                            Err(error) => try_emit(
+                                &events,
+                                ControllerEvent::OperationFailed {
+                                    action: "fork session",
+                                    reason: error.to_string(),
+                                },
+                            ),
                         }
                     }
-                    other => try_emit(&events, ControllerEvent::OperationFailed {
-                        action: "fork session",
-                        reason: format!("unexpected response: {other:?}"),
-                    }),
+                    other => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "fork session",
+                            reason: format!("unexpected response: {other:?}"),
+                        },
+                    ),
                 },
-                Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "fork session",
-                    reason: error.to_string(),
-                }),
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "fork session",
+                        reason: error.to_string(),
+                    },
+                ),
             }
         });
     }
 
     pub fn terminal_create(&self, workspace_id: String, cwd: Option<String>) {
         let Some(client) = self.current_client() else {
-            if let Some(events) = self.try_event_sender() {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "create terminal",
-                    reason: "not connected".into(),
-                });
-            }
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "create terminal",
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -592,10 +714,12 @@ impl DesktopController {
             let command = match terminal_create_command(&workspace_id, cwd.as_deref()) {
                 Ok(command) => command,
                 Err(reason) => {
-                    try_emit(&events, ControllerEvent::OperationFailed {
-                        action: "create terminal",
-                        reason,
-                    });
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
+                            action: "create terminal",
+                            reason,
+                        })
+                        .await;
                     return;
                 }
             };
@@ -606,56 +730,115 @@ impl DesktopController {
                 Ok(response) => match terminal_session_id(&response) {
                     Some(terminal_session_id) => {
                         let _ = events
-                            .send(ControllerEvent::TerminalCreated { terminal_session_id })
+                            .send(ControllerEvent::TerminalCreated {
+                                workspace_id,
+                                terminal_session_id,
+                            })
                             .await;
                     }
-                    None => try_emit(&events, ControllerEvent::OperationFailed {
-                        action: "create terminal",
-                        reason: format!("unexpected response: {:?}", response.response),
-                    }),
+                    None => {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
+                                action: "create terminal",
+                                reason: format!("unexpected response: {:?}", response.response),
+                            })
+                            .await;
+                    }
                 },
-                Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "create terminal",
-                    reason: error.to_string(),
-                }),
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
+                            action: "create terminal",
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
             }
         });
     }
 
     pub fn terminal_write(&self, terminal_session_id: String, data: String) {
         let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::TerminalWriteFailed {
+                terminal_session_id,
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
             let command = terminal_write_command(&terminal_session_id, &data);
-            if let Err(error) = client
+            match client
                 .command(command, command_source(), actor_identity())
                 .await
             {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "write terminal",
-                    reason: error.to_string(),
-                });
+                Ok(response) if !matches!(&response.response, AppResponse::Error(_)) => {
+                    let _ = events
+                        .send(ControllerEvent::TerminalWriteSucceeded {
+                            terminal_session_id,
+                        })
+                        .await;
+                }
+                Ok(response) => {
+                    let _ = events
+                        .send(ControllerEvent::TerminalWriteFailed {
+                            terminal_session_id,
+                            reason: format!("server returned {:?}", response.response),
+                        })
+                        .await;
+                }
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::TerminalWriteFailed {
+                            terminal_session_id,
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
             }
         });
     }
 
     pub fn terminal_resize(&self, terminal_session_id: String, columns: u16, rows: u16) {
         let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::TerminalResizeFailed {
+                terminal_session_id,
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
             let command = terminal_resize_command(&terminal_session_id, columns, rows);
-            if let Err(error) = client
+            match client
                 .command(command, command_source(), actor_identity())
                 .await
             {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "resize terminal",
-                    reason: error.to_string(),
-                });
+                Ok(response) if !matches!(&response.response, AppResponse::Error(_)) => {
+                    let _ = events
+                        .send(ControllerEvent::TerminalResizeSucceeded {
+                            terminal_session_id,
+                            columns,
+                            rows,
+                        })
+                        .await;
+                }
+                Ok(response) => {
+                    let _ = events
+                        .send(ControllerEvent::TerminalResizeFailed {
+                            terminal_session_id,
+                            reason: format!("server returned {:?}", response.response),
+                        })
+                        .await;
+                }
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::TerminalResizeFailed {
+                            terminal_session_id,
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
             }
         });
     }
@@ -667,20 +850,29 @@ impl DesktopController {
         let events = self.event_sender();
         self.runtime.spawn(async move {
             let query = model_list_query();
-            match client.query(query, command_source(), actor_identity()).await {
+            match client
+                .query(query, command_source(), actor_identity())
+                .await
+            {
                 Ok(response) => match parse_models(&response) {
                     Ok(models) => {
                         let _ = events.send(ControllerEvent::ModelsLoaded(models)).await;
                     }
-                    Err(reason) => try_emit(&events, ControllerEvent::OperationFailed {
-                        action: "load models",
-                        reason,
-                    }),
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "load models",
+                            reason,
+                        },
+                    ),
                 },
-                Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "load models",
-                    reason: error.to_string(),
-                }),
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "load models",
+                        reason: error.to_string(),
+                    },
+                ),
             }
         });
     }
@@ -690,17 +882,23 @@ impl DesktopController {
     pub fn diff_list_files(&self, workspace_id: String, epoch: u64) {
         let Some(client) = self.current_client() else {
             if let Some(events) = self.try_event_sender() {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "load changes",
-                    reason: "not connected".into(),
-                });
+                try_emit(
+                    &events,
+                    ControllerEvent::DiffFilesFailed {
+                        epoch,
+                        reason: "not connected".into(),
+                    },
+                );
             }
             return;
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
             let query = diff_list_files_query(&workspace_id);
-            match client.query(query, command_source(), actor_identity()).await {
+            match client
+                .query(query, command_source(), actor_identity())
+                .await
+            {
                 Ok(response) => match parse_diff_files(&response) {
                     Ok((session_id, files, git)) => {
                         let _ = events
@@ -712,15 +910,17 @@ impl DesktopController {
                             })
                             .await;
                     }
-                    Err(reason) => try_emit(&events, ControllerEvent::OperationFailed {
-                        action: "load changes",
-                        reason,
-                    }),
+                    Err(reason) => {
+                        try_emit(&events, ControllerEvent::DiffFilesFailed { epoch, reason })
+                    }
                 },
-                Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "load changes",
-                    reason: error.to_string(),
-                }),
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::DiffFilesFailed {
+                        epoch,
+                        reason: error.to_string(),
+                    },
+                ),
             }
         });
     }
@@ -729,31 +929,48 @@ impl DesktopController {
     /// 解析为 None。
     pub fn diff_get(&self, workspace_id: String, path: String, epoch: u64) {
         let Some(client) = self.current_client() else {
+            if let Some(events) = self.try_event_sender() {
+                try_emit(
+                    &events,
+                    ControllerEvent::DiffContentFailed {
+                        epoch,
+                        path,
+                        reason: "not connected".into(),
+                    },
+                );
+            }
             return;
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
             let query = diff_get_query(&workspace_id, &path);
-            match client.query(query, command_source(), actor_identity()).await {
+            match client
+                .query(query, command_source(), actor_identity())
+                .await
+            {
                 Ok(response) => match parse_diff_file(&response) {
                     Ok(file) => {
                         let _ = events
-                            .send(ControllerEvent::DiffContentLoaded {
-                                epoch,
-                                path,
-                                file,
-                            })
+                            .send(ControllerEvent::DiffContentLoaded { epoch, path, file })
                             .await;
                     }
-                    Err(reason) => try_emit(&events, ControllerEvent::OperationFailed {
-                        action: "load diff",
-                        reason,
-                    }),
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::DiffContentFailed {
+                            epoch,
+                            path,
+                            reason,
+                        },
+                    ),
                 },
-                Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "load diff",
-                    reason: error.to_string(),
-                }),
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::DiffContentFailed {
+                        epoch,
+                        path,
+                        reason: error.to_string(),
+                    },
+                ),
             }
         });
     }
@@ -762,32 +979,40 @@ impl DesktopController {
     pub fn mcp_list(&self, epoch: u64) {
         let Some(client) = self.current_client() else {
             if let Some(events) = self.try_event_sender() {
-                try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "load resources",
-                    reason: "not connected".into(),
-                });
+                try_emit(
+                    &events,
+                    ControllerEvent::McpServersFailed {
+                        epoch,
+                        reason: "not connected".into(),
+                    },
+                );
             }
             return;
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
             let query = mcp_list_query();
-            match client.query(query, command_source(), actor_identity()).await {
+            match client
+                .query(query, command_source(), actor_identity())
+                .await
+            {
                 Ok(response) => match parse_mcp_servers(&response) {
                     Ok(servers) => {
                         let _ = events
                             .send(ControllerEvent::McpServersLoaded { epoch, servers })
                             .await;
                     }
-                    Err(reason) => try_emit(&events, ControllerEvent::OperationFailed {
-                        action: "load resources",
-                        reason,
-                    }),
+                    Err(reason) => {
+                        try_emit(&events, ControllerEvent::McpServersFailed { epoch, reason })
+                    }
                 },
-                Err(error) => try_emit(&events, ControllerEvent::OperationFailed {
-                    action: "load resources",
-                    reason: error.to_string(),
-                }),
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::McpServersFailed {
+                        epoch,
+                        reason: error.to_string(),
+                    },
+                ),
             }
         });
     }
@@ -808,12 +1033,20 @@ impl DesktopController {
             .unwrap_or_else(|p| p.into_inner())
             .clone()
     }
+
+    /// 关键生命周期/回执事件不得被 512 槽 event channel 的瞬时峰值吞掉。
+    /// 同步 API 里没有 await 点，因此把可靠投递交给 runtime；只有 UI 已
+    /// 销毁（receiver 关闭）时才允许失败。
+    fn emit_reliable(&self, event: ControllerEvent) {
+        if let Some(events) = self.try_event_sender() {
+            self.runtime.spawn(async move {
+                let _ = events.send(event).await;
+            });
+        }
+    }
 }
 
-fn try_emit(
-    events: &smol::channel::Sender<ControllerEvent>,
-    event: ControllerEvent,
-) {
+fn try_emit(events: &smol::channel::Sender<ControllerEvent>, event: ControllerEvent) {
     let _ = events.try_send(event);
 }
 
@@ -880,17 +1113,15 @@ fn is_workspace_relative_cwd(cwd: &str) -> bool {
         return false;
     }
     let bytes = trimmed.as_bytes();
-    let has_windows_prefix =
-        bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    let has_windows_prefix = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
     !(trimmed.starts_with(['/', '\\'])
         || has_windows_prefix
-        || trimmed.split(['/', '\\']).any(|component| component == ".."))
+        || trimmed
+            .split(['/', '\\'])
+            .any(|component| component == ".."))
 }
 
-fn terminal_create_command(
-    workspace_id: &str,
-    cwd: Option<&str>,
-) -> Result<AppCommand, String> {
+fn terminal_create_command(workspace_id: &str, cwd: Option<&str>) -> Result<AppCommand, String> {
     let mut params = json!({ "workspace_id": workspace_id });
     if let Some(cwd) = cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) {
         if !is_workspace_relative_cwd(cwd) {
@@ -962,7 +1193,9 @@ fn session_get_query(session_id: &str, after: Option<u64>) -> AppQuery {
     .expect("session_get query shape is frozen")
 }
 
-fn load_desktop_authentication(token_path: &std::path::Path) -> Result<ClientAuthentication, String> {
+fn load_desktop_authentication(
+    token_path: &std::path::Path,
+) -> Result<ClientAuthentication, String> {
     let bytes = std::fs::read(token_path).map_err(|error| {
         format!(
             "gui token file not found or unreadable ({}): {error}",
@@ -988,11 +1221,7 @@ fn load_desktop_authentication(token_path: &std::path::Path) -> Result<ClientAut
     })
 }
 
-fn run_start_command(
-    session_id: &str,
-    text: &str,
-    model: Option<&(String, String)>,
-) -> AppCommand {
+fn run_start_command(session_id: &str, text: &str, model: Option<&(String, String)>) -> AppCommand {
     let mut params = json!({
         "session_id": session_id,
         "user_message": text
@@ -1065,7 +1294,9 @@ fn mcp_list_query() -> AppQuery {
 fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEntry>, String> {
     match &response.response {
         AppResponse::Data(data) => {
-            let entries = data.as_array().ok_or_else(|| "model list is not an array".to_string())?;
+            let entries = data
+                .as_array()
+                .ok_or_else(|| "model list is not an array".to_string())?;
             Ok(entries
                 .iter()
                 .filter_map(|entry| {
@@ -1136,8 +1367,7 @@ fn parse_diff_files(
                 .map(|entry| {
                     Ok(DiffFileSummary {
                         path: required_str(entry, "path")?,
-                        status: optional_str(entry, "status")
-                            .unwrap_or_else(|| "unknown".into()),
+                        status: optional_str(entry, "status").unwrap_or_else(|| "unknown".into()),
                         additions: entry
                             .get("additions")
                             .and_then(serde_json::Value::as_u64)
@@ -1156,9 +1386,7 @@ fn parse_diff_files(
             let git = data.get("git").map(|git| GitDiffInfo {
                 branch: optional_str(git, "branch"),
                 work_dir: optional_str(git, "work_dir"),
-                dirty_files: git
-                    .get("dirty_files")
-                    .and_then(serde_json::Value::as_u64),
+                dirty_files: git.get("dirty_files").and_then(serde_json::Value::as_u64),
             });
             Ok((session_id, files, git))
         }
@@ -1181,7 +1409,8 @@ fn parse_diff_file(response: &AppResponseEnvelope) -> Result<Option<DiffFileDeta
                 .get("hunks")
                 .and_then(serde_json::Value::as_array)
                 .map(|hunks| {
-                    hunks.iter()
+                    hunks
+                        .iter()
                         .map(|hunk| DiffHunkDetail {
                             header: hunk
                                 .get("header")
@@ -1192,7 +1421,8 @@ fn parse_diff_file(response: &AppResponseEnvelope) -> Result<Option<DiffFileDeta
                                 .get("lines")
                                 .and_then(serde_json::Value::as_array)
                                 .map(|lines| {
-                                    lines.iter()
+                                    lines
+                                        .iter()
                                         .map(|line| DiffLineDetail {
                                             kind: match line
                                                 .get("kind")
@@ -1253,8 +1483,7 @@ fn parse_mcp_servers(response: &AppResponseEnvelope) -> Result<Vec<McpServerEntr
             .map(|entry| {
                 Ok(McpServerEntry {
                     name: required_str(entry, "name")?,
-                    transport: optional_str(entry, "transport")
-                        .unwrap_or_else(|| "unknown".into()),
+                    transport: optional_str(entry, "transport").unwrap_or_else(|| "unknown".into()),
                     state: optional_str(entry, "state").unwrap_or_else(|| "unknown".into()),
                     tool_count: entry
                         .get("tools")
@@ -1339,6 +1568,26 @@ mod tests {
         assert_eq!(resize["method"], "terminal_resize");
         assert_eq!(resize["params"]["columns"], 80);
         assert_eq!(resize["params"]["rows"], 24);
+    }
+
+    #[test]
+    fn lifecycle_events_carry_workspace_terminal_and_epoch_identity() {
+        let created = ControllerEvent::TerminalCreated {
+            workspace_id: "ws-1".into(),
+            terminal_session_id: "term-1".into(),
+        };
+        assert!(
+            matches!(created, ControllerEvent::TerminalCreated { workspace_id, terminal_session_id }
+            if workspace_id == "ws-1" && terminal_session_id == "term-1")
+        );
+        let failed = ControllerEvent::DiffFilesFailed {
+            epoch: 7,
+            reason: "stale".into(),
+        };
+        assert!(matches!(
+            failed,
+            ControllerEvent::DiffFilesFailed { epoch: 7, .. }
+        ));
     }
 
     #[test]

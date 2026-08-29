@@ -1,0 +1,12 @@
+{
+  "phase": "rail-focus-task",
+  "generated_at": "2026-08-29T11:09:10Z",
+  "checks": [
+    {
+      "name": "focus-session-fx-ses-beta-pending",
+      "pass": true,
+      "detail": "focused=session-fx-ses-beta-pending (expect session-fx-ses-beta-pending)"
+    }
+  ],
+  "pass": true
+}

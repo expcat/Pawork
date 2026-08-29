@@ -1,0 +1,117 @@
+{
+  "scenario": "r7-wave-a-ax-launch-forms",
+  "label": "r7-wave-a-ax-forms",
+  "generated_at": "2026-08-29T11:11:27.355945Z",
+  "git": {
+    "head": "7c7e2197acff30dc0d1b34fc60b9ef533c72285c",
+    "status": [
+      " M ROADMAP.md",
+      " M apps/desktop/src/controller.rs",
+      " M apps/desktop/src/projection.rs",
+      " M apps/desktop/src/ui/accessibility/app.rs",
+      " M apps/desktop/src/ui/approval_card.rs",
+      " M apps/desktop/src/ui/changes.rs",
+      " M apps/desktop/src/ui/components/button.rs",
+      " M apps/desktop/src/ui/components/list_row.rs",
+      " M apps/desktop/src/ui/input_area.rs",
+      " M apps/desktop/src/ui/inspector.rs",
+      " M apps/desktop/src/ui/mod.rs",
+      " M apps/desktop/src/ui/resources.rs",
+      " M apps/desktop/src/ui/task_rail.rs",
+      " M apps/desktop/src/ui/text_input.rs",
+      " M apps/desktop/src/ui/timeline.rs",
+      " M apps/desktop/src/ui/timeline_entry.rs",
+      " M apps/desktop/src/ui/u1_probe.rs",
+      " M crates/app/examples/ui_fixture.rs",
+      " M crates/app/src/devfixture.rs",
+      " M docs/ui-review/component-manifest.md",
+      " M plan/R4-R6-ui-workflows.md",
+      " M plan/R7-R8-ui-quality-gates.md",
+      " M scripts/test_ui_r3_wave_b_tools.py",
+      " M scripts/ui-fixture.sh",
+      " M scripts/ui-r3-wave-b-nav.sh",
+      " M scripts/ui-r3-wave-b-tools.py",
+      "?? docs/ui-review/r6-wave-b/",
+      "?? docs/ui-review/r7-wave-a/",
+      "?? scripts/test_ui_r6_wave_b_states.py",
+      "?? scripts/ui-r6-wave-b-states.sh",
+      "?? scripts/ui-r7-wave-a-ax-forms.sh"
+    ]
+  },
+  "host": {
+    "sw_vers": [
+      "ProductName:\t\tmacOS",
+      "ProductVersion:\t\t26.6.2",
+      "BuildVersion:\t\t25G83"
+    ]
+  },
+  "single_desktop_build": {
+    "build_output_path": "/Volumes/SSD/Code/Lib/Pawork/target/debug/pawork-desktop",
+    "raw_launch_path": "/tmp/pawork-r7-ax-forms.5VVn2k/raw/pawork-desktop",
+    "raw_sha256": "e9b02b7f3780102bbcec6ee66c6182dba94aac105487c06238849d2af20e0c82",
+    "bundle_launch_path": "/tmp/pawork-r7-ax-forms.5VVn2k/Pawork AX Forms.app/Contents/MacOS/pawork-desktop",
+    "bundle_sha256_before_sign": "e9b02b7f3780102bbcec6ee66c6182dba94aac105487c06238849d2af20e0c82",
+    "bundle_sha256_after_sign": "caf2df963e778643f00c94c313809b1edfa9e1b0471c874f862e7a3de268dd47",
+    "same_payload_before_sign": true
+  },
+  "codesign_display_exit_codes": {
+    "raw": 0,
+    "bundled_signed": 0
+  },
+  "forms": {
+    "raw": {
+      "launch_path": "/tmp/pawork-r7-ax-forms.5VVn2k/raw/pawork-desktop",
+      "first_classification": {
+        "classification": "pawork-identifiers",
+        "pass": true,
+        "probe_exit_code": 0,
+        "ax_application_nodes": 2,
+        "required_identifiers": [
+          "pawork-root",
+          "task-rail",
+          "session-list",
+          "workspace",
+          "status-bar"
+        ],
+        "missing_identifiers": [],
+        "identifier_count": 46,
+        "used_axwindows_fallback": false
+      },
+      "evidence": {
+        "ax_probe": "raw/ax-probe.txt",
+        "classification": "raw/first-classification.json",
+        "codesign": "raw/codesign.txt",
+        "sha256": "raw/sha256.txt",
+        "desktop_log": "raw/logs/desktop.log"
+      }
+    },
+    "bundled-signed": {
+      "launch_path": "/tmp/pawork-r7-ax-forms.5VVn2k/Pawork AX Forms.app/Contents/MacOS/pawork-desktop",
+      "first_classification": {
+        "classification": "pawork-identifiers",
+        "pass": true,
+        "probe_exit_code": 0,
+        "ax_application_nodes": 2,
+        "required_identifiers": [
+          "pawork-root",
+          "task-rail",
+          "session-list",
+          "workspace",
+          "status-bar"
+        ],
+        "missing_identifiers": [],
+        "identifier_count": 63,
+        "used_axwindows_fallback": false
+      },
+      "evidence": {
+        "ax_probe": "bundled-signed/ax-probe.txt",
+        "classification": "bundled-signed/first-classification.json",
+        "codesign": "bundled-signed/codesign.txt",
+        "sha256": "bundled-signed/sha256.txt",
+        "desktop_log": "bundled-signed/logs/desktop.log"
+      }
+    }
+  },
+  "pass": true,
+  "policy": "fail-closed on recursive AXApplication, system chrome only, or missing Pawork identifiers"
+}

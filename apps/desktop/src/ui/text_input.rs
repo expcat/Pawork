@@ -12,8 +12,8 @@ use gpui::{
     actions, div, fill, point, prelude::*, px, relative, size, App, ClipboardItem, Context,
     CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle,
     Focusable, GlobalElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, Pixels, Point, ScrollHandle, ShapedLine, SharedString, Style,
-    TextRun, UTF16Selection, UnderlineStyle, Window,
+    MouseUpEvent, PaintQuad, Pixels, Point, ScrollHandle, ShapedLine, SharedString, Style, TextRun,
+    UTF16Selection, UnderlineStyle, Window,
 };
 use unicode_segmentation::*;
 
@@ -122,7 +122,11 @@ impl TextInput {
     }
 
     /// Composer 动态 hint：空内容时显示，颜色走 theme placeholder token。
-    pub fn set_placeholder(&mut self, placeholder: impl Into<SharedString>, cx: &mut Context<Self>) {
+    pub fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         let placeholder = placeholder.into();
         if self.placeholder == placeholder {
             return;
@@ -267,7 +271,12 @@ impl TextInput {
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
     }
 
-    fn select_to_line_start(&mut self, _: &SelectToLineStart, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_to_line_start(
+        &mut self,
+        _: &SelectToLineStart,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.select_to(0, cx);
     }
 
@@ -363,7 +372,12 @@ impl TextInput {
         self.is_selecting = false;
     }
 
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_selecting {
             self.select_to(self.index_for_mouse_position(event.position, window), cx);
         }
@@ -453,7 +467,9 @@ impl TextInput {
             // 容器尚未 prepaint，等下一帧（pending 标记保留）。
             return;
         }
-        let Some((line_index, _)) = line_index_for_offset(&self.last_line_starts, self.cursor_offset()) else {
+        let Some((line_index, _)) =
+            line_index_for_offset(&self.last_line_starts, self.cursor_offset())
+        else {
             return;
         };
         let line_top = f32::from(self.last_line_height) * line_index as f32;
@@ -1070,15 +1086,16 @@ mod tests {
     }
 
     #[gpui::test]
-    fn accessibility_set_text_replaces_content_and_clears_marked_range(
-        cx: &mut TestAppContext,
-    ) {
+    fn accessibility_set_text_replaces_content_and_clears_marked_range(cx: &mut TestAppContext) {
         let input = cx.new(TextInput::new);
         input.update(cx, |input, cx| {
             input.marked_range = Some(0..0);
             input.set_text("AX 输入", cx);
             assert_eq!(input.text(), "AX 输入");
-            assert_eq!(input.selected_range, input.content.len()..input.content.len());
+            assert_eq!(
+                input.selected_range,
+                input.content.len()..input.content.len()
+            );
             assert!(input.marked_range.is_none());
         });
     }
@@ -1088,7 +1105,10 @@ mod tests {
         let input = cx.new(TextInput::new);
         input.update(cx, |input, cx| {
             assert!(input.placeholder().contains("Enter to send"));
-            input.set_placeholder("Run in progress — sending is disabled. Cancel remains available.", cx);
+            input.set_placeholder(
+                "Run in progress — sending is disabled. Cancel remains available.",
+                cx,
+            );
             assert_eq!(
                 input.placeholder(),
                 "Run in progress — sending is disabled. Cancel remains available."
@@ -1175,8 +1195,9 @@ mod tests {
             });
         });
         cx.run_until_parked();
-        let (text, stacked, composing) =
-            input.read_with(cx, |i, _| (i.text().to_string(), i.undo_len(), i.is_composing()));
+        let (text, stacked, composing) = input.read_with(cx, |i, _| {
+            (i.text().to_string(), i.undo_len(), i.is_composing())
+        });
         assert_eq!(text, "你");
         assert!(!composing);
         assert_eq!(stacked, before + 1, "commit 必须恰好单次入栈");
@@ -1204,7 +1225,10 @@ mod tests {
                 i.scroll.offset(),
             )
         });
-        assert!(max_offset.height > px(0.), "80 行内容必须产生真实可滚动区间");
+        assert!(
+            max_offset.height > px(0.),
+            "80 行内容必须产生真实可滚动区间"
+        );
         assert!(
             viewport <= px(super::composer_input_max_height() + 0.5),
             "composer 视口不得突破面板预算：{viewport:?}"

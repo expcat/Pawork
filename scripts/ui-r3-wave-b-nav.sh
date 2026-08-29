@@ -512,7 +512,7 @@ cp "$WORK/wait-tree.txt" "$OUT/ax-tree-scope-menu.txt"
 escape_close scope-menu scope-menu-closed \
   || die "scope menu did not close via Escape"
 
-trace "phase a: click grouping trigger (menu opens; trigger keeps focus)"
+trace "phase a: click grouping trigger (menu opens; highlight owns AX focus)"
 click_id task-rail-grouping
 wait_tree_contains 'identifier="grouping-menu"' "$PHASE_TIMEOUT_SECS" grouping-menu-open \
   || { echo "ui-r3b-nav: grouping menu did not open (evidence kept: $OUT)" >&2; exit 4; }
@@ -520,7 +520,7 @@ cp "$WORK/wait-tree.txt" "$OUT/ax-tree-grouping-menu-a.txt"
 escape_close grouping-menu grouping-menu-closed-a \
   || die "grouping menu did not close via Escape"
 
-trace "phase a: click add-task (workspace confirm popover + published focus)"
+trace "phase a: click add-task (popover opens; focus hands over to highlight)"
 click_id add-task
 require_phase rail-focus-add-task
 cp "$OUT/ax-tree-rail-focus-add-task.txt" "$OUT/ax-tree-add-task-focus.txt"

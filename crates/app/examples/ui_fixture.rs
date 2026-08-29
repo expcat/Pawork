@@ -64,7 +64,7 @@ fn main() {
 
 fn usage_and_exit() -> ! {
     eprintln!(
-        "用法：ui_fixture <seed|serve|self-check|snapshot-dump> --root <dir> [--now-ms <i64>] [--out <file>]"
+        "用法：ui_fixture <seed|serve|self-check|snapshot-dump> --root <dir> [--now-ms <i64>] [--out <file>] [--profile <default|r6-terminal|r6-resources|r6-read-only>]"
     );
     std::process::exit(2);
 }
@@ -73,12 +73,14 @@ struct ParsedArgs {
     root: PathBuf,
     now_ms: Option<i64>,
     out: Option<PathBuf>,
+    profile: Option<String>,
 }
 
 fn parse_args(args: &[String], need_out: bool) -> Result<ParsedArgs, String> {
     let mut root = None;
     let mut now_ms = None;
     let mut out = None;
+    let mut profile = None;
     let mut index = 0;
     while index < args.len() {
         let flag = args[index].as_str();
@@ -91,6 +93,7 @@ fn parse_args(args: &[String], need_out: bool) -> Result<ParsedArgs, String> {
                 now_ms = Some(value.parse::<i64>().map_err(|_| "--now-ms 需要 i64")?);
             }
             "--out" => out = Some(PathBuf::from(value)),
+            "--profile" => profile = Some(value.clone()),
             other => return Err(format!("未知参数 {other:?}")),
         }
         index += 2;
@@ -99,7 +102,12 @@ fn parse_args(args: &[String], need_out: bool) -> Result<ParsedArgs, String> {
     if need_out && out.is_none() {
         return Err("缺少 --out <file>".into());
     }
-    Ok(ParsedArgs { root, now_ms, out })
+    Ok(ParsedArgs {
+        root,
+        now_ms,
+        out,
+        profile,
+    })
 }
 
 fn seed_json_path() -> PathBuf {
@@ -134,7 +142,7 @@ fn require_seeded_root(root: &Path) -> Result<(), String> {
 }
 
 /// serve / self-check / snapshot-dump 共用的 fixture host 装配。
-async fn fixture_core(root: &Path, spec: &SeedSpec) -> Result<AppCore, String> {
+async fn fixture_core(root: &Path, spec: &SeedSpec, profile: &str) -> Result<AppCore, String> {
     let (store, _) = SessionStore::open(root.join("data/session.db"))
         .await
         .map_err(|error| format!("打开 session.db 失败：{error}"))?;
@@ -145,6 +153,7 @@ async fn fixture_core(root: &Path, spec: &SeedSpec) -> Result<AppCore, String> {
         pawork_domain::ProviderId::from("mock"),
         Some(store),
     );
+    devfixture::configure_fixture_host_profile(&mut core, profile)?;
     let workspaces = devfixture::resolve_workspaces(spec, root)?;
     devfixture::attach_fixture_workspaces(&mut core, &workspaces)
         .map_err(|error| error.to_string())?;
@@ -235,6 +244,9 @@ fn script_for_request(request: &CanonicalModelRequest) -> MockScript {
 
 async fn cmd_seed(args: &[String]) -> Result<(), String> {
     let parsed = parse_args(args, false)?;
+    if parsed.profile.is_some() {
+        return Err("--profile 只允许用于 serve".into());
+    }
     let spec = load_spec()?;
     let outcome = devfixture::seed(&parsed.root, parsed.now_ms, &spec, &pty_script_path()).await?;
     println!("ui_fixture seed ok");
@@ -252,7 +264,8 @@ async fn cmd_serve(args: &[String]) -> Result<(), String> {
     let parsed = parse_args(args, false)?;
     require_seeded_root(&parsed.root)?;
     let spec = load_spec()?;
-    let core = fixture_core(&parsed.root, &spec).await?;
+    let profile = parsed.profile.as_deref().unwrap_or("default");
+    let core = fixture_core(&parsed.root, &spec, profile).await?;
     let approvals = Arc::new(pawork_app::GuiApprovalHost::new());
     let core = Arc::new(tokio::sync::RwLock::new(core));
     let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
@@ -273,7 +286,7 @@ async fn cmd_serve(args: &[String]) -> Result<(), String> {
     }
 
     let log_path = parsed.root.join("logs/serve.log");
-    log(&log_path, "serve starting")?;
+    log(&log_path, format!("serve starting profile={profile}"))?;
 
     let transport = Arc::new(LocalTransport::default());
     let handshake = HandshakeService::new(
@@ -554,6 +567,9 @@ impl Client {
 
 async fn cmd_self_check(args: &[String]) -> Result<(), String> {
     let parsed = parse_args(args, false)?;
+    if parsed.profile.is_some() {
+        return Err("--profile 只允许用于 serve".into());
+    }
     require_seeded_root(&parsed.root)?;
     let spec = load_spec()?;
     let barriers = barrier_dir(&parsed.root);
@@ -771,9 +787,12 @@ fn assert_snapshot(spec: &SeedSpec, snapshot: &Snapshot) -> Result<(), String> {
 
 async fn cmd_snapshot_dump(args: &[String]) -> Result<(), String> {
     let parsed = parse_args(args, true)?;
+    if parsed.profile.is_some() {
+        return Err("--profile 只允许用于 serve".into());
+    }
     require_seeded_root(&parsed.root)?;
     let spec = load_spec()?;
-    let core = fixture_core(&parsed.root, &spec).await?;
+    let core = fixture_core(&parsed.root, &spec, "default").await?;
     let adapter = GuiHostAdapter::new(Arc::new(core));
     let snapshot = adapter
         .snapshot()

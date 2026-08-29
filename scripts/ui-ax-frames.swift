@@ -90,8 +90,17 @@ func firstWindow() -> AXUIElement? {
 }
 
 if placeMain {
-    guard let window = firstWindow(),
-          let (_, size) = frame(window) else {
+    // macOS 26.x 对无 bundle debug 二进制的 AX 注册存在秒级间歇延迟；
+    // place-main 前有界轮询窗口属性（重试耗尽仍 fail-closed 退出）。
+    var windowAndFrame: (AXUIElement, CGSize)? = nil
+    for _ in 0..<20 {
+        if let window = firstWindow(), let (_, size) = frame(window) {
+            windowAndFrame = (window, size)
+            break
+        }
+        usleep(500_000)
+    }
+    guard let (window, size) = windowAndFrame else {
         die("ui-ax-frames: place-main AX window/frame 不可用", code: 3)
     }
     let display = CGDisplayBounds(CGMainDisplayID())

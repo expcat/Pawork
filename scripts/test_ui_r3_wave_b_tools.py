@@ -106,12 +106,34 @@ def write_tree(path, **overrides):
     )
     if overrides.get("reconnect_button"):
         lines.append('role=AXButton identifier="reconnect"')
+    menu_focused = overrides.get("menu_focused")
     if overrides.get("menu_open"):
-        lines.append('role=AXGroup identifier="grouping-menu"')
+        lines.extend(
+            [
+                'role=AXGroup identifier="grouping-menu"',
+                button("group-timeline", focused=menu_focused == "group-timeline"),
+                button("group-projects", focused=menu_focused == "group-projects"),
+            ]
+        )
     if overrides.get("scope_menu"):
-        lines.append('role=AXGroup identifier="scope-menu"')
+        lines.extend(
+            [
+                'role=AXGroup identifier="scope-menu"',
+                button("scope-all", focused=menu_focused == "scope-all"),
+                button("scope-fx-alpha-app", focused=menu_focused == "scope-fx-alpha-app"),
+                button("scope-fx-beta-lib", focused=menu_focused == "scope-fx-beta-lib"),
+            ]
+        )
     if overrides.get("workspace_confirm"):
-        lines.append('role=AXGroup identifier="workspace-confirm"')
+        lines.extend(
+            [
+                'role=AXGroup identifier="workspace-confirm"',
+                button(
+                    "workspace-confirm-fx-alpha-app",
+                    focused=menu_focused == "workspace-confirm-fx-alpha-app",
+                ),
+            ]
+        )
     if overrides.get("focused_button"):
         lines.append(button(overrides["focused_button"], focused=True))
     if overrides.get("alpha_collapsed"):
@@ -193,7 +215,6 @@ class R3WaveBToolsTest(unittest.TestCase):
 
     def test_rail_focus_phases_pin_focused_identifier(self):
         cases = {
-            "rail-focus-add-task": "add-task",
             "rail-focus-alpha-header": "project-Earlier_3afx-alpha-app",
             "rail-focus-alpha-add": "project-add-Earlier_3afx-alpha-app",
             "rail-focus-beta-header": "project-Earlier_3afx-beta-lib",
@@ -211,24 +232,81 @@ class R3WaveBToolsTest(unittest.TestCase):
                 proc, _ = run_assert(raw, phase)
                 self.assertEqual(proc.returncode, 5, phase)
 
-    def test_button_enter_phases_require_focus_and_opened_menu(self):
+    def test_rail_click_add_task_hands_focus_to_popover_highlight(self):
+        with tempfile.TemporaryDirectory() as raw:
+            proc, payload = run_assert(
+                raw,
+                "rail-focus-add-task",
+                workspace_confirm=True,
+                menu_focused="workspace-confirm-fx-alpha-app",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertTrue(payload["pass"])
+        with tempfile.TemporaryDirectory() as raw:
+            proc, payload = run_assert(
+                raw,
+                "rail-focus-add-task",
+                workspace_confirm=True,
+                focused_button="add-task",
+            )
+            self.assertEqual(proc.returncode, 5)
+            names = {check["name"]: check for check in payload["checks"]}
+            self.assertFalse(names["rail-click-add-task-focus-handover"]["pass"])
+
+    def test_button_enter_phases_require_only_menu_highlight_focus_and_open_menu(self):
         cases = {
-            "button-enter-grouping-menu": ("task-rail-grouping", "grouping-menu", "menu_open"),
-            "button-enter-add-task-popover": ("add-task", "workspace-confirm", "workspace_confirm"),
-            "button-enter-scope-menu": ("project-scope", "scope-menu", "scope_menu"),
+            "button-enter-grouping-menu": (
+                "task-rail-grouping",
+                "grouping-menu",
+                "group-timeline",
+                "menu_open",
+            ),
+            "button-enter-add-task-popover": (
+                "add-task",
+                "workspace-confirm",
+                "workspace-confirm-fx-alpha-app",
+                "workspace_confirm",
+            ),
+            "button-enter-scope-menu": (
+                "project-scope",
+                "scope-menu",
+                "scope-all",
+                "scope_menu",
+            ),
         }
-        for phase, (target, menu_id, override) in cases.items():
+        for phase, (target, menu_id, highlighted_id, override) in cases.items():
             with tempfile.TemporaryDirectory() as raw:
                 proc, payload = run_assert(
-                    raw, phase, focused_button=target, **{override: True}
+                    raw, phase, menu_focused=highlighted_id, **{override: True}
                 )
                 self.assertEqual(proc.returncode, 0, phase + ": " + proc.stdout)
                 self.assertTrue(payload["pass"], phase)
             with tempfile.TemporaryDirectory() as raw:
-                proc, payload = run_assert(raw, phase, focused_button=target)
+                proc, payload = run_assert(raw, phase, **{override: True})
+                self.assertEqual(proc.returncode, 5, phase)
+                names = {check["name"]: check for check in payload["checks"]}
+                self.assertTrue(names["menu-open-" + target]["pass"], menu_id)
+                self.assertFalse(names["menu-focus-" + highlighted_id]["pass"])
+            with tempfile.TemporaryDirectory() as raw:
+                proc, payload = run_assert(raw, phase, menu_focused=highlighted_id)
                 self.assertEqual(proc.returncode, 5, phase)
                 names = {check["name"]: check for check in payload["checks"]}
                 self.assertFalse(names["menu-open-" + target]["pass"])
+            with tempfile.TemporaryDirectory() as raw:
+                proc, payload = run_assert(
+                    raw,
+                    phase,
+                    focused_button=target,
+                    menu_focused=highlighted_id,
+                    **{override: True},
+                )
+                self.assertEqual(proc.returncode, 5, phase)
+                names = {check["name"]: check for check in payload["checks"]}
+                self.assertFalse(names["menu-focus-" + highlighted_id]["pass"])
+                self.assertIn(
+                    "trigger " + target,
+                    names["menu-focus-" + highlighted_id]["detail"],
+                )
 
     def test_key_open_task_asserts_active_and_timeline(self):
         with tempfile.TemporaryDirectory() as raw:

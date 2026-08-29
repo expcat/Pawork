@@ -1,0 +1,25 @@
+Executable=/private/tmp/pawork-r7-ax-forms.5VVn2k/raw/pawork-desktop
+Identifier=pawork_desktop-999de890c07773dd
+Format=Mach-O thin (arm64)
+CodeDirectory v=20400 size=316408 flags=0x20002(adhoc,linker-signed) hashes=9884+0 location=embedded
+VersionPlatform=1
+VersionMin=720896
+VersionSDK=1705216
+Hash type=sha256 size=32
+CandidateCDHash sha256=0514e8f3ca72330d36005072523f11419c54eb0c
+CandidateCDHashFull sha256=0514e8f3ca72330d36005072523f11419c54eb0c44a19233b24893caad44e932
+Hash choices=sha256
+CMSDigest=0514e8f3ca72330d36005072523f11419c54eb0c44a19233b24893caad44e932
+CMSDigestType=2
+Executable Segment base=0
+Executable Segment limit=15182192
+Executable Segment flags=0x1
+Page size=4096
+CDHash=0514e8f3ca72330d36005072523f11419c54eb0c
+Signature=adhoc
+Info.plist=not bound
+TeamIdentifier=not set
+Sealed Resources=none
+Internal requirements=none
+
+exit_code=0

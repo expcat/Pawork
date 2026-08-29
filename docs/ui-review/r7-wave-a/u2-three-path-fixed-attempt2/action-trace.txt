@@ -1,0 +1,120 @@
+2026-08-29T11:04:30Z run start label=r7-wave-a-three-path-fixed-2 out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-a/u2-three-path-fixed
+2026-08-29T11:04:30Z compile helpers into /tmp/pawork-r3b-nav-tools.WsQA0m
+2026-08-29T11:04:35Z seed fixture root=/private/tmp/pawork-ui-fixture.wLBn6q
+2026-08-29T11:04:38Z serve fixture (wait host_ready barrier)
+2026-08-29T11:04:40Z launch desktop via ui-fixture
+2026-08-29T11:04:41Z desktop pid=68725
+2026-08-29T11:04:43Z desktop window ready (session-list rendered)
+2026-08-29T11:04:43Z place Desktop window deterministically on the main display
+2026-08-29T11:04:43Z wait timeline_stable (seq>0 session=)
+2026-08-29T11:04:45Z timeline_stable ok seq=1 session=
+2026-08-29T11:04:45Z phase f: cmd-alt-n jumps to Needs input session (pristine state)
+2026-08-29T11:04:48Z wait phase=next-needs-attention (assertion polling)
+2026-08-29T11:04:48Z phase=next-needs-attention ok attempt=1
+2026-08-29T11:04:48Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-a/u2-three-path-fixed/shot-next-needs-attention.png
+2026-08-29T11:04:48Z phase a: Tab traverses design 3.6 focus chain (composer -> scope -> grouping -> add-task)
+2026-08-29T11:04:48Z wait phase=tab-traverse-scope (assertion polling)
+2026-08-29T11:04:49Z phase=tab-traverse-scope TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T11:04:49Z wait phase=tab-traverse-scope (assertion polling)
+2026-08-29T11:04:49Z phase=tab-traverse-scope ok attempt=1
+2026-08-29T11:04:49Z wait phase=tab-traverse-grouping (assertion polling)
+2026-08-29T11:04:50Z phase=tab-traverse-grouping TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T11:04:50Z wait phase=tab-traverse-grouping (assertion polling)
+2026-08-29T11:04:50Z phase=tab-traverse-grouping ok attempt=1
+2026-08-29T11:04:50Z wait phase=tab-traverse-add-task (assertion polling)
+2026-08-29T11:04:51Z phase=tab-traverse-add-task TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T11:04:51Z wait phase=tab-traverse-add-task (assertion polling)
+2026-08-29T11:04:51Z phase=tab-traverse-add-task ok attempt=1
+2026-08-29T11:04:51Z phase a: Shift-Tab reverses focus to grouping
+2026-08-29T11:04:51Z wait phase=tab-reverse-grouping (assertion polling)
+2026-08-29T11:04:52Z phase=tab-reverse-grouping TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T11:04:52Z wait phase=tab-reverse-grouping (assertion polling)
+2026-08-29T11:04:52Z phase=tab-reverse-grouping ok attempt=1
+2026-08-29T11:04:53Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-a/u2-three-path-fixed/shot-tab-traverse.png
+2026-08-29T11:04:53Z phase a2: Tab 聚焦 rail 触发器后裸 Enter 打开菜单 / 浮层（不用 click_id）
+2026-08-29T11:04:53Z wait phase=button-enter-grouping-menu (assertion polling)
+2026-08-29T11:04:54Z phase=button-enter-grouping-menu TIMEOUT attempt=3 dump=0 assert=5
+2026-08-29T11:04:54Z wait phase=button-enter-grouping-menu (assertion polling)
+2026-08-29T11:04:54Z phase=button-enter-grouping-menu ok attempt=1
+2026-08-29T11:04:55Z wait tree contains: grouping-menu-closed-a2
+2026-08-29T11:04:55Z tree contains ok: grouping-menu-closed-a2 attempt=1
+2026-08-29T11:04:55Z wait phase=tab-traverse-add-task (assertion polling)
+2026-08-29T11:04:56Z phase=tab-traverse-add-task TIMEOUT attempt=3 dump=0 assert=5
+2026-08-29T11:04:56Z wait phase=tab-traverse-add-task (assertion polling)
+2026-08-29T11:04:56Z phase=tab-traverse-add-task ok attempt=1
+2026-08-29T11:04:56Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T11:04:57Z phase=button-enter-add-task-popover TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T11:04:57Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T11:04:57Z phase=button-enter-add-task-popover ok attempt=1
+2026-08-29T11:04:58Z wait tree contains: add-task-popover-closed-a2
+2026-08-29T11:04:58Z tree contains ok: add-task-popover-closed-a2 attempt=1
+2026-08-29T11:04:58Z wait phase=tab-reverse-grouping (assertion polling)
+2026-08-29T11:04:59Z phase=tab-reverse-grouping TIMEOUT attempt=3 dump=0 assert=5
+2026-08-29T11:04:59Z wait phase=tab-reverse-grouping (assertion polling)
+2026-08-29T11:04:59Z phase=tab-reverse-grouping ok attempt=1
+2026-08-29T11:04:59Z wait phase=tab-reverse-scope (assertion polling)
+2026-08-29T11:05:00Z phase=tab-reverse-scope TIMEOUT attempt=1 dump=0 assert=5
+2026-08-29T11:05:00Z wait phase=tab-reverse-scope (assertion polling)
+2026-08-29T11:05:00Z phase=tab-reverse-scope ok attempt=1
+2026-08-29T11:05:00Z wait phase=button-enter-scope-menu (assertion polling)
+2026-08-29T11:05:01Z phase=button-enter-scope-menu TIMEOUT attempt=1 dump=0 assert=5
+2026-08-29T11:05:02Z wait phase=button-enter-scope-menu (assertion polling)
+2026-08-29T11:05:02Z phase=button-enter-scope-menu ok attempt=1
+2026-08-29T11:05:02Z wait tree contains: scope-menu-closed-a2
+2026-08-29T11:05:02Z tree contains ok: scope-menu-closed-a2 attempt=1
+2026-08-29T11:05:02Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-a/u2-three-path-fixed/shot-button-enter.png
+2026-08-29T11:05:02Z phase a: click scope (opens scope menu; GPUI mouse-down moves focus)
+2026-08-29T11:05:03Z click project-scope at 1144.0,324.0
+2026-08-29T11:05:03Z wait tree contains: scope-menu-open
+2026-08-29T11:05:03Z tree contains ok: scope-menu-open attempt=1
+2026-08-29T11:05:04Z wait tree contains: scope-menu-closed
+2026-08-29T11:05:04Z tree contains ok: scope-menu-closed attempt=1
+2026-08-29T11:05:04Z phase a: click grouping trigger (menu opens; highlight owns AX focus)
+2026-08-29T11:05:04Z click task-rail-grouping at 1254.0,278.0
+2026-08-29T11:05:04Z wait tree contains: grouping-menu-open
+2026-08-29T11:05:04Z tree contains ok: grouping-menu-open attempt=1
+2026-08-29T11:05:05Z wait tree contains: grouping-menu-closed-a
+2026-08-29T11:05:05Z tree contains ok: grouping-menu-closed-a attempt=1
+2026-08-29T11:05:05Z phase a: click add-task (popover opens; focus hands over to highlight)
+2026-08-29T11:05:05Z click add-task at 1254.0,372.0
+2026-08-29T11:05:05Z wait phase=rail-focus-add-task (assertion polling)
+2026-08-29T11:05:06Z phase=rail-focus-add-task ok attempt=1
+2026-08-29T11:05:06Z wait tree contains: add-task-popover-closed
+2026-08-29T11:05:06Z tree contains ok: add-task-popover-closed attempt=1
+2026-08-29T11:05:06Z phase a: click alpha header (focus enters rail list chain; click collapses)
+2026-08-29T11:05:06Z click project-Earlier_3afx-alpha-app at 1144.0,468.0
+2026-08-29T11:05:07Z wait phase=rail-focus-alpha-header (assertion polling)
+2026-08-29T11:05:07Z phase=rail-focus-alpha-header ok attempt=1
+2026-08-29T11:05:07Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:08Z phase=rail-focus-alpha-add TIMEOUT attempt=3 dump=0 assert=5
+2026-08-29T11:05:08Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:11Z phase=rail-focus-alpha-add TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T11:05:11Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:12Z phase=rail-focus-alpha-add TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T11:05:12Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:15Z phase=rail-focus-alpha-add TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T11:05:15Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:16Z phase=rail-focus-alpha-add TIMEOUT attempt=3 dump=0 assert=5
+2026-08-29T11:05:16Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:19Z phase=rail-focus-alpha-add TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T11:05:19Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:20Z phase=rail-focus-alpha-add TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T11:05:20Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:23Z phase=rail-focus-alpha-add TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T11:05:23Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:24Z phase=rail-focus-alpha-add TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T11:05:24Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:27Z phase=rail-focus-alpha-add TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T11:05:27Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:28Z phase=rail-focus-alpha-add TIMEOUT attempt=3 dump=0 assert=5
+2026-08-29T11:05:28Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:31Z phase=rail-focus-alpha-add TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T11:05:31Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:32Z phase=rail-focus-alpha-add TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T11:05:32Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:35Z phase=rail-focus-alpha-add TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T11:05:35Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:36Z phase=rail-focus-alpha-add TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T11:05:36Z wait phase=rail-focus-alpha-add (assertion polling)
+2026-08-29T11:05:39Z phase=rail-focus-alpha-add TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T11:05:39Z key_until_phase TIMEOUT phase=rail-focus-alpha-add key=down

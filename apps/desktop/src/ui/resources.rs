@@ -24,6 +24,7 @@ pub(super) struct ResourcesPanelState {
     epoch: u64,
     pub fetch: ResourcesFetch,
     pub servers: Vec<McpServerEntry>,
+    pub stale_reason: Option<String>,
     pub scroll: ScrollHandle,
 }
 
@@ -33,6 +34,7 @@ impl Default for ResourcesPanelState {
             epoch: 0,
             fetch: ResourcesFetch::Idle,
             servers: Vec::new(),
+            stale_reason: None,
             scroll: ScrollHandle::new(),
         }
     }
@@ -42,11 +44,33 @@ impl ResourcesPanelState {
     pub(super) fn begin_refresh(&mut self) -> u64 {
         self.epoch += 1;
         self.fetch = ResourcesFetch::Fetching;
+        self.stale_reason = None;
         self.epoch
     }
 
     pub(super) fn mark_failed(&mut self, reason: &str) {
         self.fetch = ResourcesFetch::Failed(reason.into());
+        self.stale_reason = None;
+    }
+
+    pub(super) fn mark_failed_for_epoch(&mut self, epoch: u64, reason: &str) -> bool {
+        if epoch != self.epoch {
+            return false;
+        }
+        self.mark_failed(reason);
+        true
+    }
+
+    pub(super) fn mark_stale(&mut self, reason: &str) {
+        self.epoch += 1;
+        if self.fetch == ResourcesFetch::Fetching {
+            self.fetch = if self.servers.is_empty() {
+                ResourcesFetch::Idle
+            } else {
+                ResourcesFetch::Ready
+            };
+        }
+        self.stale_reason = Some(reason.into());
     }
 
     pub(super) fn apply_servers(&mut self, epoch: u64, servers: Vec<McpServerEntry>) -> bool {
@@ -55,6 +79,7 @@ impl ResourcesPanelState {
         }
         self.servers = servers;
         self.fetch = ResourcesFetch::Ready;
+        self.stale_reason = None;
         true
     }
 }
@@ -84,7 +109,11 @@ impl AppView {
                     .text_color(dark().text.secondary)
                     .label("↻")
                     .tooltip("Refresh resources")
-                    .on_click(cx.listener(|view, _event, _window, cx| {
+                    .track_focus(&self.resources_refresh_focus)
+                    .on_click(cx.listener(|view, event, _window, cx| {
+                        if view.consume_button_key_click("resources-refresh", event) {
+                            return;
+                        }
                         view.refresh_resources(cx);
                     })),
             );
@@ -95,11 +124,10 @@ impl AppView {
             ResourcesFetch::Fetching if self.resources.servers.is_empty() => {
                 resources_placeholder("Loading resources…").into_any_element()
             }
-            ResourcesFetch::Failed(reason) => resources_placeholder_colored(
-                reason.clone(),
-                dark().semantic.danger_text,
-            )
-            .into_any_element(),
+            ResourcesFetch::Failed(reason) => {
+                resources_placeholder_colored(reason.clone(), dark().semantic.danger_text)
+                    .into_any_element()
+            }
             ResourcesFetch::Fetching | ResourcesFetch::Ready => {
                 if self.resources.servers.is_empty() {
                     resources_placeholder("No MCP servers configured.").into_any_element()
@@ -111,7 +139,8 @@ impl AppView {
                         .track_scroll(&self.resources.scroll)
                         .overflow_y_scroll();
                     for server in &self.resources.servers {
-                        let mut meta = format!("{} · {} tools", server.transport, server.tool_count);
+                        let mut meta =
+                            format!("{} · {} tools", server.transport, server.tool_count);
                         if let Some(error) = &server.last_error {
                             meta.push_str(&format!(" · {error}"));
                         }
@@ -134,15 +163,13 @@ impl AppView {
                                             .text_color(dark().text.primary)
                                             .child(server.name.clone()),
                                     )
-                                    .child(
-                                        Label::new(server.state.clone())
-                                            .size(font::XS)
-                                            .color(if server.state == "failed" {
-                                                dark().semantic.danger_text
-                                            } else {
-                                                dark().text.secondary
-                                            }),
-                                    ),
+                                    .child(Label::new(server.state.clone()).size(font::XS).color(
+                                        if server.state == "failed" {
+                                            dark().semantic.danger_text
+                                        } else {
+                                            dark().text.secondary
+                                        },
+                                    )),
                             )
                             .child(
                                 div()
@@ -163,6 +190,18 @@ impl AppView {
             .flex_1()
             .min_h_0()
             .child(header)
+            .when_some(self.resources.stale_reason.clone(), |block, reason| {
+                block.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .border_b_1()
+                        .border_color(dark().semantic.warning_text)
+                        .text_size(px(font::XS))
+                        .text_color(dark().semantic.warning_text)
+                        .child(format!("Stale data · {reason}")),
+                )
+            })
             .child(body)
     }
 }
@@ -206,5 +245,26 @@ mod tests {
         ));
         assert_eq!(state.fetch, ResourcesFetch::Ready);
         assert_eq!(state.servers.len(), 1);
+    }
+
+    #[test]
+    fn disconnect_keeps_ready_resources_stale_and_invalidates_old_responses() {
+        let mut state = ResourcesPanelState::default();
+        let epoch = state.begin_refresh();
+        assert!(state.apply_servers(
+            epoch,
+            vec![McpServerEntry {
+                name: "fetch".into(),
+                transport: "stdio".into(),
+                state: "ready".into(),
+                tool_count: 2,
+                last_error: None,
+            }]
+        ));
+        state.mark_stale("connection lost");
+        assert_eq!(state.fetch, ResourcesFetch::Ready);
+        assert_eq!(state.servers.len(), 1);
+        assert_eq!(state.stale_reason.as_deref(), Some("connection lost"));
+        assert!(!state.mark_failed_for_epoch(epoch, "late failure"));
     }
 }

@@ -23,8 +23,8 @@ use gpui::{
 };
 
 use crate::projection::{
-    ConnectionState, ForkBoundary, TimelineEntry, TimelineEntryKind, TimelineRow,
-    run_footer_label, run_summary_texts,
+    run_footer_label, run_summary_texts, ConnectionState, ForkBoundary, TimelineEntry,
+    TimelineEntryKind, TimelineRow,
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
@@ -32,8 +32,8 @@ use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::label::Label;
 use crate::ui::theme::{dark, font, metrics};
 
-use super::timeline_entry::{RunSummaryTerminal, RunSummaryView, ToolRowView, display_time};
-use super::{AppView, MenuKind, WORKSPACE_EMPTY_HINT, now_unix_ms};
+use super::timeline_entry::{display_time, RunSummaryTerminal, RunSummaryView, ToolRowView};
+use super::{now_unix_ms, AppView, MenuKind, WORKSPACE_EMPTY_HINT};
 
 /// list() 视口外上下方向的预渲染量（px，非视觉尺寸；仅影响滚动顺滑度）。
 pub(super) const TIMELINE_OVERDRAW: f32 = 200.0;
@@ -103,9 +103,9 @@ pub(super) fn tool_status_label(status: &str) -> String {
 /// 40；独立 tool 组 48；摘要区域带组时 48（组面板即区域首元素），无组 12。
 fn row_top_gap(row: &TimelineRow) -> f32 {
     match row {
-        TimelineRow::Message { .. }
-        | TimelineRow::Error { .. }
-        | TimelineRow::RunPhase { .. } => metrics::MSG_ENTRY_GAP,
+        TimelineRow::Message { .. } | TimelineRow::Error { .. } | TimelineRow::RunPhase { .. } => {
+            metrics::MSG_ENTRY_GAP
+        }
         TimelineRow::ToolGroup { .. } => metrics::TOOL_GROUP_TOP_GAP,
         TimelineRow::RunSummary { group, .. } => {
             if group.is_some() {
@@ -195,6 +195,7 @@ impl AppView {
         };
         // 脱钩时右下浮出回底控件（§8.3）；跟随态隐藏。
         let following = self.timeline_following;
+        let back_to_bottom_focus = self.timeline_back_to_bottom_focus.clone();
         div()
             .relative()
             .flex()
@@ -206,9 +207,19 @@ impl AppView {
                     Button::new("timeline-back-to-bottom")
                         .variant(ButtonVariant::Raised)
                         .label("↓ 回到底部")
-                        .on_click(cx.listener(|view, _event, _window, cx| {
+                        .track_focus(&back_to_bottom_focus)
+                        .on_click(cx.listener(|view, event, _window, cx| {
+                            if view.consume_button_key_click("timeline-back-to-bottom", event) {
+                                return;
+                            }
                             view.timeline_jump_to_bottom();
                             cx.notify();
+                        }))
+                        .on_activate(cx.listener(|view, _event, _window, cx| {
+                            view.note_button_key_activate("timeline-back-to-bottom");
+                            view.timeline_jump_to_bottom();
+                            cx.notify();
+                            cx.stop_propagation();
                         })),
                 ))
             })
@@ -218,21 +229,21 @@ impl AppView {
     /// 消息与错误条目的视觉与 fork 菜单由 timeline_entry builders 承载；
     /// 摘要区域的终态条目保留「···」fork 菜单（既有行为 / identifier）。
     fn timeline_row_element(
-        &self,
+        &mut self,
         row: &TimelineRow,
         fork_available: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match row {
             TimelineRow::Message { entry_index } | TimelineRow::Error { entry_index } => {
-                let entry = &self.projection.timeline[*entry_index];
-                let menu_open = self.entry_menu_open(entry);
+                let entry = self.projection.timeline[*entry_index].clone();
+                let menu_open = self.entry_menu_open(&entry);
                 let can_fork = fork_available && entry.is_fork_boundary();
                 let element = match &entry.kind {
                     TimelineEntryKind::Error(_) => {
-                        self.error_entry_element(entry, menu_open, can_fork, cx)
+                        self.error_entry_element(&entry, menu_open, can_fork, cx)
                     }
-                    _ => self.message_entry_element(entry, menu_open, can_fork, cx),
+                    _ => self.message_entry_element(&entry, menu_open, can_fork, cx),
                 };
                 element.into_any_element()
             }
@@ -252,25 +263,23 @@ impl AppView {
                 self.tool_group_element(&rows).into_any_element()
             }
             TimelineRow::RunSummary { group, terminal } => {
-                let entry = &self.projection.timeline[*terminal];
-                let summary = self.run_summary_view(entry);
+                let entry = self.projection.timeline[*terminal].clone();
+                let summary = self.run_summary_view(&entry);
                 let mut region = div().flex().flex_col();
                 if let Some(entry_indices) = group {
                     let rows = self.tool_row_views(entry_indices);
-                    region = region
-                        .child(self.tool_group_element(&rows))
-                        .child(
-                            div()
-                                .mt(px(metrics::SUMMARY_CARD_GAP))
-                                .child(self.run_summary_element(&summary, cx)),
-                        );
+                    region = region.child(self.tool_group_element(&rows)).child(
+                        div()
+                            .mt(px(metrics::SUMMARY_CARD_GAP))
+                            .child(self.run_summary_element(&summary, &entry.event_id, cx)),
+                    );
                 } else {
-                    region = region.child(self.run_summary_element(&summary, cx));
+                    region = region.child(self.run_summary_element(&summary, &entry.event_id, cx));
                 }
-                let footer_label = run_footer_label(entry).unwrap_or("Run");
+                let footer_label = run_footer_label(&entry).unwrap_or("Run");
                 let footer_time = display_time(&entry.timestamp, now_unix_ms());
                 let footer = self.run_footer_element(footer_label, &footer_time);
-                let menu = self.entry_menu_dropdown(entry, fork_available, cx);
+                let menu = self.entry_menu_dropdown(&entry, fork_available, cx);
                 region
                     .child(
                         div()
@@ -340,24 +349,45 @@ impl AppView {
 
     /// 终态条目的「···」fork 菜单（与消息条目同构；identifier 冻结）。
     fn entry_menu_dropdown(
-        &self,
+        &mut self,
         entry: &TimelineEntry,
         fork_available: bool,
         cx: &mut Context<Self>,
     ) -> Dropdown {
         let menu_open = self.entry_menu_open(entry);
         let event_id = entry.event_id.clone();
-        let actions_button = Button::new(format!("entry-menu-{}", entry.event_id))
+        let button_id = format!("entry-menu-{}", entry.event_id);
+        let entry_focus = self.timeline_entry_focus(&event_id, cx);
+        let actions_button = Button::new(button_id.clone())
             .variant(ButtonVariant::Ghost)
             .text_size(font::XS)
             .text_color(dark().text.secondary)
             .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
             .label("···")
+            .track_focus(&entry_focus)
             .on_click(cx.listener({
                 let event_id = event_id.clone();
+                let button_id = button_id.clone();
                 move |view, event, _window, cx| {
+                    if view.consume_button_key_click(&button_id, event) {
+                        return;
+                    }
                     let down = Self::click_down_position(event);
                     view.toggle_menu(MenuKind::Entry(event_id.clone()), down, cx);
+                }
+            }))
+            .on_activate(cx.listener({
+                let event_id = event_id.clone();
+                let button_id = button_id.clone();
+                move |view, _event, _window, cx| {
+                    // 菜单已开时让位给根节点的 Entry 菜单选择；同时吞掉
+                    // 同键 keyup 合成 click，避免选 Fork 后重开浮层。
+                    if view.open_menu.is_some() {
+                        view.note_button_key_activate(&button_id);
+                        return;
+                    }
+                    view.open_entry_menu_from_keyboard(&event_id, cx);
+                    cx.stop_propagation();
                 }
             }));
         let mut actions = Dropdown::new(actions_button);

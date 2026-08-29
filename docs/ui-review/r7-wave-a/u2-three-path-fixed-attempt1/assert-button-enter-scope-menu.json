@@ -1,0 +1,17 @@
+{
+  "phase": "button-enter-scope-menu",
+  "generated_at": "2026-08-29T11:01:42Z",
+  "checks": [
+    {
+      "name": "menu-open-project-scope",
+      "pass": true,
+      "detail": "scope-menu present (Enter opened it)"
+    },
+    {
+      "name": "menu-focus-scope-all",
+      "pass": true,
+      "detail": "focused=scope-all (expect only scope-all while scope-menu is open; trigger project-scope must not remain AX focused)"
+    }
+  ],
+  "pass": true
+}

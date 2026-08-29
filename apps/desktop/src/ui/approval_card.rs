@@ -85,6 +85,8 @@ impl AppView {
                 } else {
                     approve_disabled.clone()
                 };
+                let click_decision = decision.clone();
+                let activate_decision = decision;
                 let mut button = Button::new(id)
                     .variant(variant)
                     .disabled(!can_approve)
@@ -92,9 +94,18 @@ impl AppView {
                     .label(label)
                     .tooltip(tooltip);
                 if can_approve {
-                    button = button.on_click(cx.listener(move |view, _event, _window, cx| {
-                        view.on_approve(&decision, cx);
-                    }));
+                    button = button
+                        .on_click(cx.listener(move |view, event, _window, cx| {
+                            if view.consume_button_key_click(id, event) {
+                                return;
+                            }
+                            view.on_approve(&click_decision, cx);
+                        }))
+                        .on_activate(cx.listener(move |view, _event, _window, cx| {
+                            view.note_button_key_activate(id);
+                            view.on_approve(&activate_decision, cx);
+                            cx.stop_propagation();
+                        }));
                 }
                 button
             }));

@@ -1,0 +1,31 @@
+ M ROADMAP.md
+ M apps/desktop/src/controller.rs
+ M apps/desktop/src/projection.rs
+ M apps/desktop/src/ui/accessibility/app.rs
+ M apps/desktop/src/ui/approval_card.rs
+ M apps/desktop/src/ui/changes.rs
+ M apps/desktop/src/ui/components/button.rs
+ M apps/desktop/src/ui/components/list_row.rs
+ M apps/desktop/src/ui/input_area.rs
+ M apps/desktop/src/ui/inspector.rs
+ M apps/desktop/src/ui/mod.rs
+ M apps/desktop/src/ui/resources.rs
+ M apps/desktop/src/ui/task_rail.rs
+ M apps/desktop/src/ui/text_input.rs
+ M apps/desktop/src/ui/timeline.rs
+ M apps/desktop/src/ui/timeline_entry.rs
+ M apps/desktop/src/ui/u1_probe.rs
+ M crates/app/examples/ui_fixture.rs
+ M crates/app/src/devfixture.rs
+ M docs/ui-review/component-manifest.md
+ M plan/R4-R6-ui-workflows.md
+ M plan/R7-R8-ui-quality-gates.md
+ M scripts/test_ui_r3_wave_b_tools.py
+ M scripts/ui-fixture.sh
+ M scripts/ui-r3-wave-b-nav.sh
+ M scripts/ui-r3-wave-b-tools.py
+?? docs/ui-review/r6-wave-b/
+?? docs/ui-review/r7-wave-a/
+?? scripts/test_ui_r6_wave_b_states.py
+?? scripts/ui-r6-wave-b-states.sh
+?? scripts/ui-r7-wave-a-ax-forms.sh

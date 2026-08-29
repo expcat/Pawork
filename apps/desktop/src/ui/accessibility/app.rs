@@ -3,22 +3,24 @@
 use gpui::{App, Context, Focusable, Window};
 
 use crate::projection::{
-    run_footer_label, run_summary_texts, ConnectionState, DateBucket, ForkBoundary, ModelEntry,
-    SessionLiveStatus, TaskRailGrouping, TaskRailProjectGroup, TimelineEntry, TimelineEntryKind,
-    TimelineRow, UNASSIGNED_PROJECT,
+    ConnectionState, DateBucket, ForkBoundary, ModelEntry, SessionLiveStatus, TaskRailGrouping,
+    TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, TimelineRow, UNASSIGNED_PROJECT,
+    run_footer_label, run_summary_texts,
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
-use crate::ui::changes::ChangesTab;
+use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::ANCHOR_GAP_Y;
 use crate::ui::inspector::InspectorTab;
 use crate::ui::inspector::TERMINAL_EMPTY_OUTPUT;
+use crate::ui::resources::ResourcesFetch;
 use crate::ui::shell_layout;
 use crate::ui::theme::metrics;
 use crate::ui::timeline_entry::display_time;
 use crate::ui::{
-    activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key, timeline,
-    AppView, MenuKind, WORKSPACE_EMPTY_HINT,
+    AppView, MenuKind, WORKSPACE_EMPTY_HINT, activity_header_visibility,
+    rail_project_occurrence_key, rail_session_focus_key, terminal_can_operate,
+    terminal_start_enabled, timeline,
 };
 
 const PAD: f32 = 8.0;
@@ -185,6 +187,7 @@ impl AppView {
             "changes-tab-summary" => self.on_select_changes_tab(ChangesTab::Summary, cx),
             "changes-refresh" => self.refresh_changes(cx),
             "resources-refresh" => self.refresh_resources(cx),
+            "terminal-resize" => self.on_apply_terminal_size(window, cx),
             "terminal-start" => {
                 if self.projection.terminal.session_id.is_some() {
                     self.on_apply_terminal_size(window, cx);
@@ -388,7 +391,9 @@ impl AppView {
             TaskRailGrouping::Timeline => "Timeline",
             TaskRailGrouping::Projects => "Projects",
         })
-        .focused(self.grouping_focus.is_focused(window))
+        // R7 Wave A：菜单打开时 AX 焦点移交高亮项（macOS 菜单惯例），
+        // 触发器让出 focused，树内保持唯一焦点。
+        .focused(self.open_menu.is_none() && self.grouping_focus.is_focused(window))
         .action(AxAction::Press);
         y += metrics::RAIL_TITLE_ROW_HEIGHT + metrics::RAIL_TITLE_SCOPE_GAP;
         let scope_label = match &self.scope_workspace_id {
@@ -407,7 +412,8 @@ impl AppView {
             ),
         )
         .value(scope_label)
-        .focused(self.scope_focus.is_focused(window))
+        // R7 Wave A：scope 菜单打开时 AX 焦点移交高亮项（同 grouping）。
+        .focused(self.open_menu.is_none() && self.scope_focus.is_focused(window))
         .action(AxAction::Press);
         y += metrics::RAIL_TOP_ROW_HEIGHT + metrics::RAIL_SCOPE_CONNECTION_GAP;
         let connection = AxNode::new(
@@ -436,7 +442,7 @@ impl AppView {
         )
         .description(self.add_task_disabled_reason())
         .enabled(can_create)
-        .focused(self.add_task_focus.is_focused(window))
+        .focused(self.open_menu.is_none() && self.add_task_focus.is_focused(window))
         .action(AxAction::Press);
         y += metrics::RAIL_TOP_ROW_HEIGHT;
 
@@ -463,6 +469,7 @@ impl AppView {
                         metrics::RAIL_TOP_ROW_HEIGHT,
                     ),
                 )
+                .focused(self.open_menu.is_none() && self.reconnect_focus.is_focused(window))
                 .action(AxAction::Press),
             );
             y += metrics::RAIL_TOP_ROW_HEIGHT;
@@ -676,20 +683,24 @@ impl AppView {
         let key = project_key(project.workspace_id.as_deref());
         let expanded = !self.collapsed_projects.contains(&key);
         let header_focus_key = rail_project_occurrence_key("project", bucket, &key);
-        let mut nodes = vec![AxNode::new(
-            rail_project_identifier(bucket, &key),
-            AxRole::Button,
-            project.name.clone(),
-            AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
-        )
-        .value(format!("{} tasks", project.task_count()))
-        .description(if expanded { "Expanded" } else { "Collapsed" })
-        .focused(
-            self.rail_row_focus
-                .get(&header_focus_key)
-                .is_some_and(|handle| handle.is_focused(window)),
-        )
-        .action(AxAction::Press)];
+        let mut nodes = vec![
+            AxNode::new(
+                rail_project_identifier(bucket, &key),
+                AxRole::Button,
+                project.name.clone(),
+                AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
+            )
+            .value(format!("{} tasks", project.task_count()))
+            .description(if expanded { "Expanded" } else { "Collapsed" })
+            .focused(
+                self.open_menu.is_none()
+                    && self
+                        .rail_row_focus
+                        .get(&header_focus_key)
+                        .is_some_and(|handle| handle.is_focused(window)),
+            )
+            .action(AxAction::Press),
+        ];
         if !project.is_unassigned() && project.workspace_id.is_some() {
             let add_focus_key = rail_project_occurrence_key("project-add", bucket, &key);
             nodes.push(
@@ -707,9 +718,11 @@ impl AppView {
                 )
                 .enabled(can_create)
                 .focused(
-                    self.rail_row_focus
-                        .get(&add_focus_key)
-                        .is_some_and(|handle| handle.is_focused(window)),
+                    self.open_menu.is_none()
+                        && self
+                            .rail_row_focus
+                            .get(&add_focus_key)
+                            .is_some_and(|handle| handle.is_focused(window)),
                 )
                 .action(AxAction::Press),
             );
@@ -735,9 +748,11 @@ impl AppView {
                     )
                     .description(session_status_description(status, unread))
                     .focused(
-                        self.rail_row_focus
-                            .get(&focus_key)
-                            .is_some_and(|handle| handle.is_focused(window)),
+                        self.open_menu.is_none()
+                            && self
+                                .rail_row_focus
+                                .get(&focus_key)
+                                .is_some_and(|handle| handle.is_focused(window)),
                     )
                     .selected(
                         self.projection.active_session_id.as_deref()
@@ -770,15 +785,19 @@ impl AppView {
         let timeline_height = (frame.height - composer_height - header_height).max(0.0);
         AxNode::new("workspace", AxRole::Group, "Workspace", frame)
             .child(self.header_ax(
+                window,
                 AxRect::new(frame.x, frame.y, frame.width, header_height),
                 inspector_open,
             ))
-            .child(self.timeline_ax(AxRect::new(
-                frame.x,
-                frame.y + header_height,
-                frame.width,
-                timeline_height,
-            )))
+            .child(self.timeline_ax(
+                window,
+                AxRect::new(
+                    frame.x,
+                    frame.y + header_height,
+                    frame.width,
+                    timeline_height,
+                ),
+            ))
             .child(self.composer_ax(
                 window,
                 cx,
@@ -794,7 +813,7 @@ impl AppView {
     /// F-05 Header 语义树（与 render 同源谓词 / metrics）：标题 / branch /
     /// live 终态 / 新建任务按钮。各项可见条件与 render 完全一致（无数据
     /// 诚实隐藏；几何共享 HEADER_* 常量，文本宽度为近似值）。
-    fn header_ax(&self, frame: AxRect, inspector_open: bool) -> AxNode {
+    fn header_ax(&self, window: &Window, frame: AxRect, inspector_open: bool) -> AxNode {
         let content_top = frame.y + metrics::HEADER_SAFE_STRIP;
         let content_height = (frame.height - metrics::HEADER_SAFE_STRIP).max(0.0);
         let row_height = metrics::HEADER_STATUS_DOT_SIZE + 14.0;
@@ -847,6 +866,10 @@ impl AppView {
         if trigger_visible {
             header = header.child(
                 AxNode::new("inspector-toggle", AxRole::Button, "Activity", action)
+                    .focused(
+                        self.open_menu.is_none()
+                            && self.inspector_activity_focus.is_focused(window),
+                    )
                     .action(AxAction::Press),
             );
             if popover_visible {
@@ -872,6 +895,7 @@ impl AppView {
                             geometry.open_changes,
                         )
                         .value(self.changes.activity_summary())
+                        .focused(self.menu_highlight_effective(0) == 0)
                         .action(AxAction::Press),
                     ),
                 );
@@ -881,12 +905,15 @@ impl AppView {
             header.child(
                 AxNode::new("header-new-task", AxRole::Button, "New task", action)
                     .enabled(self.can_create_task())
+                    .focused(
+                        self.open_menu.is_none() && self.header_new_task_focus.is_focused(window),
+                    )
                     .action(AxAction::Press),
             )
         }
     }
 
-    fn timeline_ax(&self, frame: AxRect) -> AxNode {
+    fn timeline_ax(&self, window: &Window, frame: AxRect) -> AxNode {
         let rows = self.projection.timeline_rows();
         let total = rows.len();
         let empty_hint_visible = self.projection.workspace_empty_hint_visible();
@@ -916,7 +943,7 @@ impl AppView {
                 (frame.width - PAD * 2.0).max(0.0),
                 TIMELINE_ROW_HEIGHT,
             );
-            list = list.child(self.timeline_row_ax(row, rect));
+            list = list.child(self.timeline_row_ax(window, row, rect));
         }
         if let Some(pending) = self.projection.pending_approval.as_ref() {
             let approval_height = 112.0_f32.min(frame.height);
@@ -938,6 +965,9 @@ impl AppView {
                             AxRect::new(approval.x, approval.y + 72.0, 104.0, 32.0),
                         )
                         .enabled(enabled)
+                        .focused(
+                            self.open_menu.is_none() && self.approve_once_focus.is_focused(window),
+                        )
                         .action(AxAction::Press),
                     )
                     .child(
@@ -948,6 +978,10 @@ impl AppView {
                             AxRect::new(approval.x + 112.0, approval.y + 72.0, 116.0, 32.0),
                         )
                         .enabled(enabled)
+                        .focused(
+                            self.open_menu.is_none()
+                                && self.approve_for_run_focus.is_focused(window),
+                        )
                         .action(AxAction::Press),
                     )
                     .child(
@@ -958,6 +992,7 @@ impl AppView {
                             AxRect::new(approval.x + 236.0, approval.y + 72.0, 72.0, 32.0),
                         )
                         .enabled(enabled)
+                        .focused(self.open_menu.is_none() && self.deny_focus.is_focused(window))
                         .action(AxAction::Press),
                     ),
             );
@@ -975,6 +1010,10 @@ impl AppView {
                         32.0,
                     ),
                 )
+                .focused(
+                    self.open_menu.is_none()
+                        && self.timeline_back_to_bottom_focus.is_focused(window),
+                )
                 .action(AxAction::Press),
             );
         }
@@ -984,18 +1023,18 @@ impl AppView {
     /// 渲染行 → AX 节点（与 timeline.rs 组装同源）。消息 / 错误条目保持
     /// 既有 timeline-entry / entry-menu / fork identifier；tool 组与 Run
     /// 摘要区域为新结构节点。
-    fn timeline_row_ax(&self, row: &TimelineRow, rect: AxRect) -> AxNode {
+    fn timeline_row_ax(&self, window: &Window, row: &TimelineRow, rect: AxRect) -> AxNode {
         match row {
             TimelineRow::Message { entry_index } => {
-                self.timeline_entry_ax(&self.projection.timeline[*entry_index], rect, true)
+                self.timeline_entry_ax(window, &self.projection.timeline[*entry_index], rect, true)
             }
             TimelineRow::Error { entry_index } => {
-                self.timeline_entry_ax(&self.projection.timeline[*entry_index], rect, true)
+                self.timeline_entry_ax(window, &self.projection.timeline[*entry_index], rect, true)
             }
             // 中间相位单行（§4.5）：无「···」菜单（非 fork 边界，原菜单
             // 亦不可用），只保留条目语义。
             TimelineRow::RunPhase { entry_index } => {
-                self.timeline_entry_ax(&self.projection.timeline[*entry_index], rect, false)
+                self.timeline_entry_ax(window, &self.projection.timeline[*entry_index], rect, false)
             }
             TimelineRow::ToolGroup { entry_indices } => {
                 let mut group = AxNode::new(
@@ -1097,6 +1136,13 @@ impl AppView {
                         ),
                     )
                     .enabled(review_enabled)
+                    .focused(
+                        self.open_menu.is_none()
+                            && self
+                                .timeline_review_changes_focus
+                                .get(&terminal_entry.event_id)
+                                .is_some_and(|focus| focus.is_focused(window)),
+                    )
                     .action(AxAction::Press),
                 );
                 y += metrics::SUMMARY_CHECK_CIRCLE + metrics::TIMELINE_FOOTER_GAP;
@@ -1133,6 +1179,13 @@ impl AppView {
                         "Entry actions",
                         menu_row,
                     )
+                    .focused(
+                        self.open_menu.is_none()
+                            && self
+                                .timeline_entry_action_focus
+                                .get(&terminal_entry.event_id)
+                                .is_some_and(|focus| focus.is_focused(window)),
+                    )
                     .action(AxAction::Press),
                 );
                 if matches!(&self.open_menu, Some(MenuKind::Entry(id)) if id == &terminal_entry.event_id)
@@ -1150,6 +1203,7 @@ impl AppView {
                         ) && self.projection.active_session_id.is_some()
                             && terminal_entry.is_fork_boundary(),
                     )
+                    .focused(self.menu_highlight_effective(0) == 0)
                     .action(AxAction::Press);
                     entry_node = entry_node.child(fork_node);
                 }
@@ -1159,7 +1213,13 @@ impl AppView {
     }
 
     /// 消息 / 错误 / 中间相位条目节点（identifier 与迁移前一致）。
-    fn timeline_entry_ax(&self, entry: &TimelineEntry, row: AxRect, with_menu: bool) -> AxNode {
+    fn timeline_entry_ax(
+        &self,
+        window: &Window,
+        entry: &TimelineEntry,
+        row: AxRect,
+        with_menu: bool,
+    ) -> AxNode {
         let now_ms = crate::ui::now_unix_ms();
         let (label, value) = timeline_accessible_text(entry);
         let mut node = AxNode::new(
@@ -1178,6 +1238,13 @@ impl AppView {
                     "Entry actions",
                     AxRect::new(row.x + row.width - 32.0, row.y, 32.0, 28.0),
                 )
+                .focused(
+                    self.open_menu.is_none()
+                        && self
+                            .timeline_entry_action_focus
+                            .get(&entry.event_id)
+                            .is_some_and(|focus| focus.is_focused(window)),
+                )
                 .action(AxAction::Press),
             );
             if matches!(&self.open_menu, Some(MenuKind::Entry(id)) if id == &entry.event_id) {
@@ -1195,6 +1262,7 @@ impl AppView {
                         ) && self.projection.active_session_id.is_some()
                             && entry.is_fork_boundary(),
                     )
+                    .focused(self.menu_highlight_effective(0) == 0)
                     .action(AxAction::Press),
                 );
             }
@@ -1238,7 +1306,7 @@ impl AppView {
                     AxRect::new(frame.x + pad, input_y, input_width, input_height),
                 )
                 .value(input_value)
-                .focused(input_focus.is_focused(window))
+                .focused(self.open_menu.is_none() && input_focus.is_focused(window))
                 .action(AxAction::Focus)
                 .action(AxAction::SetValue),
             )
@@ -1256,7 +1324,8 @@ impl AppView {
                 )
                 .value(current_model)
                 .enabled(self.can_switch_model())
-                .focused(self.model_focus.is_focused(window))
+                // R7 Wave A：model 菜单打开时 AX 焦点移交高亮项（同 grouping）。
+                .focused(self.open_menu.is_none() && self.model_focus.is_focused(window))
                 .action(AxAction::Press),
             );
         let action_rect = AxRect::new(
@@ -1269,14 +1338,18 @@ impl AppView {
             composer = composer.child(
                 AxNode::new("cancel", AxRole::Button, "Cancel run", action_rect)
                     .enabled(self.can_cancel())
-                    .focused(self.composer_action_focus.is_focused(window))
+                    .focused(
+                        self.open_menu.is_none() && self.composer_action_focus.is_focused(window),
+                    )
                     .action(AxAction::Press),
             );
         } else {
             composer = composer.child(
                 AxNode::new("send", AxRole::Button, "Send", action_rect)
                     .enabled(self.can_send(cx))
-                    .focused(self.composer_action_focus.is_focused(window))
+                    .focused(
+                        self.open_menu.is_none() && self.composer_action_focus.is_focused(window),
+                    )
                     .action(AxAction::Press),
             );
         }
@@ -1330,6 +1403,7 @@ impl AppView {
             composer = composer.child(menu);
         }
         if matches!(self.open_menu, Some(MenuKind::WorkspaceConfirm)) {
+            let highlight = self.menu_highlight_effective(0);
             let mut menu = AxNode::new(
                 "workspace-confirm",
                 AxRole::Group,
@@ -1341,12 +1415,18 @@ impl AppView {
                     220.0,
                 ),
             );
-            for (ix, workspace) in self.projection.workspaces.iter().enumerate() {
+            for (ix, workspace) in self
+                .projection
+                .project_scope_options()
+                .into_iter()
+                .filter_map(|(id, name)| id.map(|id| (id, name)))
+                .enumerate()
+            {
                 menu = menu.child(
                     AxNode::new(
-                        workspace_confirm_identifier(&workspace.id),
+                        workspace_confirm_identifier(&workspace.0),
                         AxRole::Button,
-                        workspace.name.clone(),
+                        workspace.1,
                         AxRect::new(
                             frame.x + pad,
                             footer_y + metrics::COMPOSER_SEND_SIZE + ix as f32 * ROW_HEIGHT,
@@ -1354,6 +1434,7 @@ impl AppView {
                             ROW_HEIGHT,
                         ),
                     )
+                    .focused(ix == highlight)
                     .action(AxAction::Press),
                 );
             }
@@ -1383,6 +1464,9 @@ impl AppView {
                         AxRect::new(tab_x, frame.y, tab_width, strip_height),
                     )
                     .selected(self.inspector_tab == InspectorTab::Changes)
+                    .focused(
+                        self.open_menu.is_none() && self.inspector_tab_focus[0].is_focused(window),
+                    )
                     .action(AxAction::Press),
                 )
                 .child(
@@ -1393,6 +1477,9 @@ impl AppView {
                         AxRect::new(tab_x + tab_width, frame.y, tab_width, strip_height),
                     )
                     .selected(self.inspector_tab == InspectorTab::Terminal)
+                    .focused(
+                        self.open_menu.is_none() && self.inspector_tab_focus[1].is_focused(window),
+                    )
                     .action(AxAction::Press),
                 )
                 .child(
@@ -1403,6 +1490,9 @@ impl AppView {
                         AxRect::new(tab_x + tab_width * 2.0, frame.y, tab_width, strip_height),
                     )
                     .selected(self.inspector_tab == InspectorTab::Resources)
+                    .focused(
+                        self.open_menu.is_none() && self.inspector_tab_focus[2].is_focused(window),
+                    )
                     .action(AxAction::Press),
                 ),
             )
@@ -1418,6 +1508,9 @@ impl AppView {
                         CONTROL_HEIGHT,
                     ),
                 )
+                .focused(
+                    self.open_menu.is_none() && self.inspector_collapse_focus.is_focused(window),
+                )
                 .action(AxAction::Press),
             );
         let body = AxRect::new(
@@ -1428,8 +1521,8 @@ impl AppView {
         );
         inspector = match self.inspector_tab {
             InspectorTab::Terminal => inspector.child(self.terminal_ax(window, cx, body)),
-            InspectorTab::Changes => inspector.child(self.changes_ax(body)),
-            InspectorTab::Resources => inspector.child(self.resources_ax(body)),
+            InspectorTab::Changes => inspector.child(self.changes_ax(window, body)),
+            InspectorTab::Resources => inspector.child(self.resources_ax(window, body)),
         };
         inspector
     }
@@ -1445,7 +1538,47 @@ impl AppView {
         } else {
             tail_chars(&self.projection.terminal.output, 8_192)
         };
+        let owner = self
+            .projection
+            .terminal
+            .workspace_id
+            .as_deref()
+            .unwrap_or("unassigned");
+        let mut terminal_description = format!(
+            "workspace {owner} · {} · {}×{} · {}",
+            self.projection.terminal.cwd,
+            self.projection.terminal.columns,
+            self.projection.terminal.rows,
+            self.projection.terminal.availability_label()
+        );
+        if self.projection.terminal.dropped_events > 0 {
+            terminal_description.push_str(&format!(
+                " · {} output events dropped",
+                self.projection.terminal.dropped_events
+            ));
+        }
+        if self.projection.terminal.resize_confirmed {
+            terminal_description.push_str(" · resize confirmed");
+        }
+        let terminal_operable =
+            terminal_can_operate(&self.projection.connection, &self.projection.terminal);
+        let terminal_start_enabled = terminal_start_enabled(
+            &self.projection.connection,
+            &self.projection.terminal,
+            self.terminal_pending_create_workspace.as_ref(),
+        );
         let mut terminal = AxNode::new("terminal", AxRole::Group, "Terminal", frame)
+            .child(
+                AxNode::new(
+                    "terminal-resize",
+                    AxRole::Button,
+                    "Apply terminal size",
+                    AxRect::new(frame.x + frame.width - 80.0, frame.y, 72.0, CONTROL_HEIGHT),
+                )
+                .focused(self.open_menu.is_none() && self.terminal_resize_focus.is_focused(window))
+                .enabled(terminal_operable)
+                .action(AxAction::Press),
+            )
             .child(
                 AxNode::new(
                     "terminal-output",
@@ -1459,12 +1592,7 @@ impl AppView {
                     ),
                 )
                 .value(output)
-                .description(format!(
-                    "{} · {}×{}",
-                    self.projection.terminal.cwd,
-                    self.projection.terminal.columns,
-                    self.projection.terminal.rows
-                )),
+                .description(terminal_description),
             )
             .child(
                 AxNode::new(
@@ -1479,7 +1607,7 @@ impl AppView {
                     ),
                 )
                 .value(self.terminal_input.read(cx).text())
-                .focused(focus.is_focused(window))
+                .focused(self.open_menu.is_none() && focus.is_focused(window))
                 .action(AxAction::Focus)
                 .action(AxAction::SetValue),
             )
@@ -1499,10 +1627,8 @@ impl AppView {
                         input_height,
                     ),
                 )
-                .enabled(matches!(
-                    self.projection.connection,
-                    ConnectionState::Connected { .. }
-                ))
+                .focused(self.open_menu.is_none() && self.terminal_start_focus.is_focused(window))
+                .enabled(terminal_start_enabled)
                 .action(AxAction::Press),
             );
         // 与可见回到底部按钮（inspector.rs）一致：仅在滚动脱钩时发布。
@@ -1519,19 +1645,36 @@ impl AppView {
                         32.0,
                     ),
                 )
+                .focused(
+                    self.open_menu.is_none()
+                        && self.terminal_back_to_bottom_focus.is_focused(window),
+                )
                 .action(AxAction::Press),
             );
         }
         terminal
     }
 
-    fn changes_ax(&self, frame: AxRect) -> AxNode {
+    fn changes_ax(&self, window: &Window, frame: AxRect) -> AxNode {
         let strip_height = metrics::CHANGES_TAB_HEIGHT;
         let tab_width = metrics::CHANGES_TAB_WIDTH;
         let tab_x = frame.x + 12.0;
         let refresh_y = frame.y + ((strip_height - CONTROL_HEIGHT) / 2.0).max(0.0);
         let body_top = frame.y + strip_height;
+        let fetch_state = match &self.changes.fetch {
+            ChangesFetch::Idle => "idle".to_string(),
+            ChangesFetch::Fetching => "loading".to_string(),
+            ChangesFetch::Ready => format!("ready · {} files", self.changes.files.len()),
+            ChangesFetch::Failed(reason) => format!("failed · {reason}"),
+        };
+        let description = match &self.changes.stale_reason {
+            Some(reason) => format!(
+                "Current working tree filtered to latest task paths · {fetch_state} · stale · {reason}"
+            ),
+            None => format!("Current working tree filtered to latest task paths · {fetch_state}"),
+        };
         let mut changes = AxNode::new("changes", AxRole::Group, "Changes", frame)
+            .description(description)
             .child(
                 AxNode::new(
                     "changes-tabs",
@@ -1547,6 +1690,9 @@ impl AppView {
                         AxRect::new(tab_x, frame.y, tab_width, strip_height),
                     )
                     .selected(self.changes.tab == ChangesTab::Files)
+                    .focused(
+                        self.open_menu.is_none() && self.changes_tab_focus[0].is_focused(window),
+                    )
                     .action(AxAction::Press),
                 )
                 .child(
@@ -1557,6 +1703,9 @@ impl AppView {
                         AxRect::new(tab_x + tab_width, frame.y, tab_width, strip_height),
                     )
                     .selected(self.changes.tab == ChangesTab::Summary)
+                    .focused(
+                        self.open_menu.is_none() && self.changes_tab_focus[1].is_focused(window),
+                    )
                     .action(AxAction::Press),
                 ),
             )
@@ -1572,6 +1721,7 @@ impl AppView {
                         CONTROL_HEIGHT,
                     ),
                 )
+                .focused(self.open_menu.is_none() && self.changes_refresh_focus.is_focused(window))
                 .action(AxAction::Press),
             );
         if self.changes.tab == ChangesTab::Files {
@@ -1604,6 +1754,13 @@ impl AppView {
                         file.status, file.additions, file.deletions
                     ))
                     .selected(self.changes.selected.as_deref() == Some(file.path.as_str()))
+                    .focused(
+                        self.open_menu.is_none()
+                            && self
+                                .changes_file_focus
+                                .get(&file.path)
+                                .is_some_and(|focus| focus.is_focused(window)),
+                    )
                     .action(AxAction::Press),
                 );
             }
@@ -1612,16 +1769,31 @@ impl AppView {
         changes
     }
 
-    fn resources_ax(&self, frame: AxRect) -> AxNode {
-        let resources = AxNode::new("resources", AxRole::Group, "Resources", frame).child(
-            AxNode::new(
-                "resources-refresh",
-                AxRole::Button,
-                "Refresh resources",
-                AxRect::new(frame.x + frame.width - 40.0, frame.y + PAD, 32.0, 28.0),
-            )
-            .action(AxAction::Press),
-        );
+    fn resources_ax(&self, window: &Window, frame: AxRect) -> AxNode {
+        let fetch_state = match &self.resources.fetch {
+            ResourcesFetch::Idle => "idle".to_string(),
+            ResourcesFetch::Fetching => "loading".to_string(),
+            ResourcesFetch::Ready => format!("ready · {} servers", self.resources.servers.len()),
+            ResourcesFetch::Failed(reason) => format!("failed · {reason}"),
+        };
+        let description = match &self.resources.stale_reason {
+            Some(reason) => format!("Host MCP servers · {fetch_state} · stale · {reason}"),
+            None => format!("Host MCP servers · {fetch_state}"),
+        };
+        let resources = AxNode::new("resources", AxRole::Group, "Resources", frame)
+            .description(description)
+            .child(
+                AxNode::new(
+                    "resources-refresh",
+                    AxRole::Button,
+                    "Refresh resources",
+                    AxRect::new(frame.x + frame.width - 40.0, frame.y + PAD, 32.0, 28.0),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.resources_refresh_focus.is_focused(window),
+                )
+                .action(AxAction::Press),
+            );
         let mut list = AxNode::new(
             "mcp-server-list",
             AxRole::List,

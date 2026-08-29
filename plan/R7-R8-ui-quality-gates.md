@@ -1,9 +1,15 @@
 # R7–R8 — 全局交互质量与模拟操作全功能验收
 
-> 状态：⚪ 未开始
-> 前置：R1–R6 逐阶段通过。R7 解决跨组件一致性；R8 运行完整矩阵并补跨阶段缺口，不允许把前置未实现项直接记为通过。
+> 状态：🔵 R7 Wave A 进行中（2026-08-29 开启）· R8 ⚪ 未开始
+> 前置：默认要求 R1–R6 逐阶段通过；用户于 2026-08-29 明确授权跳过未收口的 R6、直接进入 R7。该授权只解除执行顺序，不构成 R6 通过证据；R7 解决跨组件一致性，R8 运行完整矩阵并补跨阶段缺口，均不得把前置未实现项直接记为通过。
 
 ## R7 — 全局交互、Accessibility 与响应式
+
+### 执行波次
+
+- **Wave A（🔵 2026-08-29）— 组件状态矩阵与 AX 基线**：自动门禁已通过（45 组件矩阵、三路径焦点修复、U2 26 相位、A3 bundled/签名对照、A4 State A hover/active/focus 九图）；VoiceOver/overlay 仍待人工签字。写入限 apps/desktop、Desktop Spec、R7 测试脚本与本波证据；不改 GUI wire、Host、Policy 或 fixture 业务数据。macOS 26 AX 递归劣化已 fail-closed 取证（attempt7–10），不以重启成功冒充根治。
+- **Wave B（⚪）— 全局 focus、菜单与 Popover 等价路径**：收敛 hover/active/focus/disabled/loading/error/selected、单开浮层、Escape/外点 dismissal、可发现快捷键与面板/菜单/审批后的焦点恢复；同一 action 必须复用既有 enable gate。
+- **Wave C（⚪）— 响应式、长内容与平台偏好**：覆盖 1080×720、字号放大、CJK/emoji/超长行、千级列表、反复 resize、reduced motion/高对比偏好与性能基线；只记录平台真实能力，不伪造跨平台 AX 支持。
 
 ### 1. 交互状态
 

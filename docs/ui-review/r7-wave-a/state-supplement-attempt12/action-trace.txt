@@ -1,0 +1,7 @@
+2026-08-29T14:42:37Z compile helpers into /tmp/pawork-r7a-states.fVDRLZ
+2026-08-29T14:42:41Z build Desktop once
+2026-08-29T14:42:42Z seed fixture root=/private/tmp/pawork-ui-fixture.CW5ShG
+2026-08-29T14:42:45Z serve fixture (wait host_ready barrier)
+2026-08-29T14:42:47Z launch desktop via ui-fixture
+2026-08-29T14:42:49Z desktop window ready (session-list rendered; AX registered)
+2026-08-29T14:42:51Z place Desktop window deterministically on the main display

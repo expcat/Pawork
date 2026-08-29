@@ -1,0 +1,18 @@
+2026-08-29T14:46:17Z compile helpers into /tmp/pawork-r7a-states.7zWNcP
+2026-08-29T14:46:21Z build Desktop once
+2026-08-29T14:46:22Z seed fixture root=/private/tmp/pawork-ui-fixture.zYVfLZ
+2026-08-29T14:46:25Z serve fixture (wait host_ready barrier)
+2026-08-29T14:46:28Z launch desktop via ui-fixture
+2026-08-29T14:46:29Z desktop window ready (session-list rendered; AX registered)
+2026-08-29T14:46:31Z place Desktop window deterministically on the main display
+2026-08-29T14:46:32Z hover set: rail trigger / session row / model picker / inspector tab / send
+2026-08-29T14:46:33Z hover task-rail-grouping captured
+2026-08-29T14:46:34Z hover session-fx-ses-beta-pending captured
+2026-08-29T14:46:36Z hover model-picker captured
+2026-08-29T14:46:37Z hover inspector-tab-terminal captured
+2026-08-29T14:46:38Z hover send captured
+2026-08-29T14:46:38Z active set: grouping trigger press-hold (release opens menu, Escape closes)
+2026-08-29T14:46:41Z active task-rail-grouping captured (menu opened then closed)
+2026-08-29T14:46:41Z focus set: AX focus session row / composer-input
+2026-08-29T14:46:43Z write run manifest
+2026-08-29T14:46:43Z run done (supplemental evidence complete)

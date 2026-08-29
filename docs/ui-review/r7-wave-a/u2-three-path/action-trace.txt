@@ -1,0 +1,77 @@
+2026-08-29T10:24:36Z run start label=r7-wave-a-three-path out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-a/u2-three-path
+2026-08-29T10:24:36Z compile helpers into /tmp/pawork-r3b-nav-tools.ceoIXX
+2026-08-29T10:24:40Z seed fixture root=/private/tmp/pawork-ui-fixture.7QCKYr
+2026-08-29T10:24:44Z serve fixture (wait host_ready barrier)
+2026-08-29T10:24:53Z launch desktop via ui-fixture
+2026-08-29T10:24:59Z desktop pid=60412
+2026-08-29T10:25:01Z desktop window ready (session-list rendered)
+2026-08-29T10:25:01Z place Desktop window deterministically on the main display
+2026-08-29T10:25:02Z wait timeline_stable (seq>0 session=)
+2026-08-29T10:25:04Z timeline_stable ok seq=1 session=
+2026-08-29T10:25:04Z phase f: cmd-alt-n jumps to Needs input session (pristine state)
+2026-08-29T10:25:07Z wait phase=next-needs-attention (assertion polling)
+2026-08-29T10:25:07Z phase=next-needs-attention ok attempt=1
+2026-08-29T10:25:07Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-a/u2-three-path/shot-next-needs-attention.png
+2026-08-29T10:25:07Z phase a: Tab traverses design 3.6 focus chain (composer -> scope -> grouping -> add-task)
+2026-08-29T10:25:07Z wait phase=tab-traverse-scope (assertion polling)
+2026-08-29T10:25:08Z phase=tab-traverse-scope TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T10:25:08Z wait phase=tab-traverse-scope (assertion polling)
+2026-08-29T10:25:08Z phase=tab-traverse-scope ok attempt=1
+2026-08-29T10:25:08Z wait phase=tab-traverse-grouping (assertion polling)
+2026-08-29T10:25:09Z phase=tab-traverse-grouping TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T10:25:09Z wait phase=tab-traverse-grouping (assertion polling)
+2026-08-29T10:25:09Z phase=tab-traverse-grouping ok attempt=1
+2026-08-29T10:25:09Z wait phase=tab-traverse-add-task (assertion polling)
+2026-08-29T10:25:10Z phase=tab-traverse-add-task TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T10:25:10Z wait phase=tab-traverse-add-task (assertion polling)
+2026-08-29T10:25:10Z phase=tab-traverse-add-task ok attempt=1
+2026-08-29T10:25:10Z phase a: Shift-Tab reverses focus to grouping
+2026-08-29T10:25:10Z wait phase=tab-reverse-grouping (assertion polling)
+2026-08-29T10:25:11Z phase=tab-reverse-grouping TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T10:25:11Z wait phase=tab-reverse-grouping (assertion polling)
+2026-08-29T10:25:11Z phase=tab-reverse-grouping ok attempt=1
+2026-08-29T10:25:12Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-a/u2-three-path/shot-tab-traverse.png
+2026-08-29T10:25:12Z phase a2: Tab 聚焦 rail 触发器后裸 Enter 打开菜单 / 浮层（不用 click_id）
+2026-08-29T10:25:12Z wait phase=button-enter-grouping-menu (assertion polling)
+2026-08-29T10:25:13Z phase=button-enter-grouping-menu TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T10:25:13Z wait phase=button-enter-grouping-menu (assertion polling)
+2026-08-29T10:25:13Z phase=button-enter-grouping-menu ok attempt=1
+2026-08-29T10:25:14Z wait tree contains: grouping-menu-closed-a2
+2026-08-29T10:25:14Z tree contains ok: grouping-menu-closed-a2 attempt=1
+2026-08-29T10:25:14Z wait phase=tab-traverse-add-task (assertion polling)
+2026-08-29T10:25:15Z phase=tab-traverse-add-task TIMEOUT attempt=3 dump=0 assert=5
+2026-08-29T10:25:15Z wait phase=tab-traverse-add-task (assertion polling)
+2026-08-29T10:25:15Z phase=tab-traverse-add-task ok attempt=1
+2026-08-29T10:25:15Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:16Z phase=button-enter-add-task-popover TIMEOUT attempt=2 dump=0 assert=5
+2026-08-29T10:25:16Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:19Z phase=button-enter-add-task-popover TIMEOUT attempt=7 dump=0 assert=5
+2026-08-29T10:25:19Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:20Z phase=button-enter-add-task-popover TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T10:25:20Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:23Z phase=button-enter-add-task-popover TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T10:25:23Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:24Z phase=button-enter-add-task-popover TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T10:25:24Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:27Z phase=button-enter-add-task-popover TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T10:25:27Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:28Z phase=button-enter-add-task-popover TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T10:25:28Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:31Z phase=button-enter-add-task-popover TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T10:25:31Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:32Z phase=button-enter-add-task-popover TIMEOUT attempt=3 dump=0 assert=5
+2026-08-29T10:25:32Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:35Z phase=button-enter-add-task-popover TIMEOUT attempt=9 dump=0 assert=5
+2026-08-29T10:25:35Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:36Z phase=button-enter-add-task-popover TIMEOUT attempt=3 dump=0 assert=5
+2026-08-29T10:25:36Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:39Z phase=button-enter-add-task-popover TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T10:25:39Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:40Z phase=button-enter-add-task-popover TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T10:25:40Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:43Z phase=button-enter-add-task-popover TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T10:25:43Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:44Z phase=button-enter-add-task-popover TIMEOUT attempt=4 dump=0 assert=5
+2026-08-29T10:25:44Z wait phase=button-enter-add-task-popover (assertion polling)
+2026-08-29T10:25:47Z phase=button-enter-add-task-popover TIMEOUT attempt=8 dump=0 assert=5
+2026-08-29T10:25:47Z key_until_phase TIMEOUT phase=button-enter-add-task-popover key=return

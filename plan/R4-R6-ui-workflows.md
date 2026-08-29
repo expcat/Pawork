@@ -1,6 +1,6 @@
 # R4–R6 — 核心 Agent 工作流
 
-> 状态：🟢 R4 已收口（Wave A 🟢 2026-08-28 / Wave B 🟢 2026-08-28；拍板 1：State A/B 分区 SSIM ≥0.99 移交 R8；wire 演进仍开放）· 🟢 R5 已收口（Wave A 🟢 2026-08-28 / Wave B + U2 🟢 2026-08-29；Composer SSIM 经用户确认移交 R8）· 🔵 R6 进行中（Wave A 🟢 2026-08-29；Wave B ⚪）
+> 状态：🟢 R4 已收口（Wave A 🟢 2026-08-28 / Wave B 🟢 2026-08-28；拍板 1：State A/B 分区 SSIM ≥0.99 移交 R8；wire 演进仍开放）· 🟢 R5 已收口（Wave A 🟢 2026-08-28 / Wave B + U2 🟢 2026-08-29；Composer SSIM 经用户确认移交 R8）· ⏭️ R6 按用户指令跳过（Wave A 🟢 2026-08-29；Wave B 未收口）
 > 前置：R2、R3 依次通过。R4 → R5 → R6 串行推进，每阶段同时完成视觉、真实交互与对应 UI 场景测试。
 
 ## R4 — Workspace、Timeline 与 Agent 状态
@@ -61,7 +61,7 @@
 
 > 波次状态：
 > - **Wave A（🟢 2026-08-29）**：实现侧已收敛 Inspector 顶层 strip 与 Changes Files/Summary 二级 strip 的层级/默认落点，并将折叠态 Activity 从 StatusBar 迁到 Workspace Header 右上向下展开约 320px；render/AX/U1、长内容不挤窄 Inspector 与 Header Activity AX 锚点公式回归 132/132 通过，只展示权威 Changes 摘要，不伪造 Add tool / Agent capability。真窗口阻塞根因定位为 macOS 26.6.2 对无 bundle debug 二进制的 AX server 注册 flake（非代码回归），driver 层以 AXWindows 回退 + desktop-restart ≤3 兜底（fail-closed）绕过；Connected State A/B 三相位结构断言全过（label r6a-connected，git_head=d793999），分区 SSIM 记录值同 R3–R5 先例移交 R8；收口审查 P1×1 + P2×2 已整改并回归全绿。证据见 [r6-wave-a](../docs/ui-review/r6-wave-a/notes.md)。
-> - **Wave B（⚪）**：覆盖 Changes/Terminal/Resources 真实生命周期、tab/二级 tab/滚动/focus/session 恢复、键盘与断线重连，完成 R6 U2 矩阵与阶段收口。
+> - **Wave B（⏭️ 2026-08-29，未收口）**：已按工作区实态开启并形成未提交实现/验证资产；用户随后明确指令「跳过并忽略 R6，直接进行 R7」，因此停止本波，不运行余下门禁、不勾选 R6 退出标准，也不把现有工作树状态追记为完成。开启与停点记录见 [r6-wave-b](../docs/ui-review/r6-wave-b/notes.md)。
 
 ### 工作范围
 

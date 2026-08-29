@@ -24,6 +24,9 @@
 //   ui-key-event --pid <pid> --key <name|code> [--modifiers cmd,alt,shift,ctrl]
 //                [--down-only | --up-only]
 //   ui-key-event --pid <pid> --click-at <x>,<y>
+//   ui-key-event --pid <pid> --hover-at <x>,<y>   仅移动（hover 采图）
+//   ui-key-event --pid <pid> --press-at <x>,<y>   移动+按下（active 采图）
+//   ui-key-event --pid <pid> --release-at <x>,<y> 抬起（收尾；配对 press）
 //   ui-key-event --pid <pid> --pin-ascii-input-source
 //   ui-key-event --pid <pid> --restore-input-source <id>
 //
@@ -45,6 +48,9 @@ struct Options {
     var downOnly = false
     var upOnly = false
     var clickAt: String = ""
+    var hoverAt: String = ""
+    var pressAt: String = ""
+    var releaseAt: String = ""
     var pinAsciiInputSource = false
     var restoreInputSource = ""
 }
@@ -132,6 +138,12 @@ func parseArgs(_ argv: [String]) -> Options {
             opts.upOnly = true
         case "--click-at":
             opts.clickAt = needValue()
+        case "--hover-at":
+            opts.hoverAt = needValue()
+        case "--press-at":
+            opts.pressAt = needValue()
+        case "--release-at":
+            opts.releaseAt = needValue()
         case "--pin-ascii-input-source":
             opts.pinAsciiInputSource = true
         case "--restore-input-source":
@@ -140,6 +152,9 @@ func parseArgs(_ argv: [String]) -> Options {
             fputs(
                 "用法：ui-key-event --pid <pid> --key <name|code> [--modifiers cmd,alt,shift,ctrl] [--down-only | --up-only]\n"
                     + "      ui-key-event --pid <pid> --click-at <x>,<y>\n"
+                    + "      ui-key-event --pid <pid> --hover-at <x>,<y>\n"
+                    + "      ui-key-event --pid <pid> --press-at <x>,<y>\n"
+                    + "      ui-key-event --pid <pid> --release-at <x>,<y>\n"
                     + "      ui-key-event --pid <pid> --pin-ascii-input-source\n"
                     + "      ui-key-event --pid <pid> --restore-input-source <id>\n",
                 stderr)
@@ -160,12 +175,20 @@ func parseArgs(_ argv: [String]) -> Options {
         if opts.pinAsciiInputSource && !opts.restoreInputSource.isEmpty {
             die("--pin-ascii-input-source 与 --restore-input-source 互斥", code: 2)
         }
-    } else if !opts.clickAt.isEmpty {
-        if !opts.key.isEmpty || opts.downOnly || opts.upOnly {
-            die("--click-at 与键盘参数互斥", code: 2)
+    } else {
+        let mouseModes = [
+            ("--click-at", opts.clickAt), ("--hover-at", opts.hoverAt),
+            ("--press-at", opts.pressAt), ("--release-at", opts.releaseAt),
+        ].filter { !$0.1.isEmpty }
+        if mouseModes.count > 1 {
+            die("鼠标模式互斥：" + mouseModes.map { $0.0 }.joined(separator: ","), code: 2)
         }
-    } else if opts.key.isEmpty {
-        die("必须提供 --key <name|code> 或 --click-at <x>,<y>", code: 2)
+        if !mouseModes.isEmpty && (!opts.key.isEmpty || opts.downOnly || opts.upOnly) {
+            die("\(mouseModes[0].0) 与键盘参数互斥", code: 2)
+        }
+        if mouseModes.isEmpty && opts.key.isEmpty {
+            die("必须提供 --key <name|code> 或鼠标坐标模式", code: 2)
+        }
     }
     return opts
 }
@@ -279,6 +302,44 @@ if !opts.restoreInputSource.isEmpty {
 }
 guard kill(opts.pid, 0) == 0 else {
     die("目标 PID 不在运行：\(opts.pid)", code: 4)
+}
+func parsePoint(_ raw: String, flag: String) -> CGPoint {
+    let parts = raw.split(separator: ",").map { Double($0) }
+    guard parts.count == 2, let x = parts[0], let y = parts[1] else {
+        die("\(flag) 格式必须是 <x>,<y>", code: 2)
+    }
+    return CGPoint(x: x, y: y)
+}
+func postMouseEvent(
+    _ source: CGEventSource, _ type: CGEventType, _ point: CGPoint
+) {
+    guard
+        let event = CGEvent(
+            mouseEventSource: source, mouseType: type,
+            mouseCursorPosition: point, mouseButton: .left)
+    else {
+        die("鼠标事件构造失败 type=\(type.rawValue)", code: 3)
+    }
+    event.post(tap: .cghidEventTap)
+}
+if !opts.hoverAt.isEmpty || !opts.pressAt.isEmpty || !opts.releaseAt.isEmpty {
+    let flag = !opts.hoverAt.isEmpty
+        ? "--hover-at" : (!opts.pressAt.isEmpty ? "--press-at" : "--release-at")
+    let raw = !opts.hoverAt.isEmpty
+        ? opts.hoverAt : (!opts.pressAt.isEmpty ? opts.pressAt : opts.releaseAt)
+    let point = parsePoint(raw, flag: flag)
+    guard let source = CGEventSource(stateID: .combinedSessionState) else {
+        die("CGEventSource 创建失败", code: 3)
+    }
+    // hover：仅落点（hover 态采图）；press：落点+按下（active 态采图，
+    // 抬起由配对的 --release-at 完成）；release：仅抬起。
+    postMouseEvent(source, .mouseMoved, point)
+    if flag != "--hover-at" {
+        usleep(10_000)
+        postMouseEvent(source, flag == "--press-at" ? .leftMouseDown : .leftMouseUp, point)
+    }
+    fputs("ui-key-event pid=\(opts.pid) \(flag)=\(raw) posted\n", stderr)
+    exit(0)
 }
 if !opts.clickAt.isEmpty {
     let parts = opts.clickAt.split(separator: ",").map { Double($0) }

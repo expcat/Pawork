@@ -307,7 +307,8 @@ fn shift_select_copy_cut_and_undo_via_actions(cx: &mut TestAppContext) {
     let (host, cx) = mount_probe(cx);
     focus_composer(&host, cx);
     host.update(cx, |host, cx| {
-        host.input.update(cx, |input, cx| input.reset_text("abcd", cx));
+        host.input
+            .update(cx, |input, cx| input.reset_text("abcd", cx));
     });
     cx.dispatch_action(text_input::SelectAll);
     cx.run_until_parked();
@@ -370,7 +371,8 @@ fn wave_b_keymap_bindings_dispatch_through_keystrokes(cx: &mut TestAppContext) {
     let (host, cx) = mount_probe(cx);
     focus_composer(&host, cx);
     host.update(cx, |host, cx| {
-        host.input.update(cx, |input, cx| input.reset_text("abcd", cx));
+        host.input
+            .update(cx, |input, cx| input.reset_text("abcd", cx));
     });
     cx.simulate_keystrokes("cmd-a");
     cx.run_until_parked();

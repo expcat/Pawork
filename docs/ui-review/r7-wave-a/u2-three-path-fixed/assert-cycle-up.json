@@ -1,0 +1,17 @@
+{
+  "phase": "cycle-up",
+  "generated_at": "2026-08-29T11:09:28Z",
+  "checks": [
+    {
+      "name": "selected-cycle-up",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-beta-long (expect session-fx-ses-beta-long)"
+    },
+    {
+      "name": "timeline-fx-ses-beta-long",
+      "pass": true,
+      "detail": "timeline-entry-evt-fx-ses-beta-long-* count=16"
+    }
+  ],
+  "pass": true
+}

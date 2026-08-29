@@ -1,0 +1,12 @@
+{
+  "phase": "rail-focus-add-task",
+  "generated_at": "2026-08-29T11:02:16Z",
+  "checks": [
+    {
+      "name": "focus-add-task",
+      "pass": false,
+      "detail": "focused=workspace-confirm-fx-alpha-app (expect add-task)"
+    }
+  ],
+  "pass": false
+}

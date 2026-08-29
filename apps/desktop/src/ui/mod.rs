@@ -36,7 +36,7 @@ use crate::controller::{ControllerEvent, DesktopController};
 use crate::platform::Platform;
 use crate::projection::{
     ConnectionState, DateBucket, DesktopProjection, ResumeApply, SessionLiveStatus,
-    TaskRailGrouping, UNASSIGNED_PROJECT,
+    TaskRailGrouping, TerminalState, UNASSIGNED_PROJECT,
 };
 use barriers::BarrierSink;
 use changes::ChangesPanelState;
@@ -88,13 +88,21 @@ pub(crate) const WORKSPACE_EMPTY_HINT: &str = "Select a task from the rail, or p
 /// 新建）；行为链（项目头 / 定向新建 / task 行）按当前分组渲染序接在其后，
 /// 再接 MAIN_PATH_TAB_STOP_IDS。tab_index 负档保证 rail 整体先于主路径 0 档。
 pub(crate) const RAIL_TAB_STOP_IDS: &[&str] = &["project-scope", "task-rail-grouping", "add-task"];
-/// scope 触发器在 Tab 链中的位次（rail 前缀三档 -20/-19/-18，行统一 -17）。
+/// scope 触发器在 Tab 链中的位次（rail 前缀三档 -20/-19/-18，断线 reconnect
+/// -17，行级 -16）。
 pub(crate) const RAIL_TAB_INDEX_SCOPE: isize = -20;
 pub(crate) const RAIL_TAB_INDEX_GROUPING: isize = -19;
 pub(crate) const RAIL_TAB_INDEX_ADD_TASK: isize = -18;
-pub(crate) const RAIL_TAB_INDEX_ROWS: isize = -17;
+/// Reconnect 仅在断线态渲染，视觉位在 add-task 与行为链之间（R6B 键盘
+/// 路径补全）；不渲染时自动退出 Tab 链。
+pub(crate) const RAIL_TAB_INDEX_RECONNECT: isize = -17;
+pub(crate) const RAIL_TAB_INDEX_ROWS: isize = -16;
 /// composer 在 Tab 链中的位次：链尾（1 档），主路径 0 档之后。
 pub(crate) const COMPOSER_TAB_INDEX: isize = 1;
+
+/// Inspector 控件与其它主路径控件同属 0 档；可见元素的 render 顺序决定
+/// 顶层 tabs → collapse → 当前 surface 控件 → Composer 的普通 Tab 顺序。
+pub(crate) const INSPECTOR_TAB_INDEX: isize = 0;
 
 /// 主路径按钮的可测 tab_stop 标记。
 pub(crate) const MAIN_PATH_TAB_STOP_IDS: &[&str] = &[
@@ -103,7 +111,10 @@ pub(crate) const MAIN_PATH_TAB_STOP_IDS: &[&str] = &[
     "approve-deny",
     "composer-action",
     "add-task",
+    "header-new-task",
+    "reconnect",
     "model-picker",
+    "timeline-back-to-bottom",
 ];
 
 struct TooltipText {
@@ -351,6 +362,15 @@ pub struct AppView {
     timeline_list_rev: u64,
     timeline_list_count: usize,
     terminal_scroll: FollowScroll,
+    /// 单一 Terminal write 回执槽。输入仅在同一 terminal 的成功回执到达且
+    /// 用户未继续编辑时清空；失败/断线保留文本，避免静默丢命令。
+    terminal_pending_write: Option<(String, String)>,
+    /// 单一 Terminal create pending（按 Inspector 所属 workspace 去重）。
+    /// Host 只回 terminal id，因此双击/快速键盘连打不得发出第二个 create。
+    terminal_pending_create_workspace: Option<String>,
+    /// 当前连接的事件消费任务。重连前必须替换并丢弃旧 receiver，防止旧
+    /// 连接迟到的 terminal 回执污染新连接上的 pending 状态。
+    event_task: Option<gpui::Task<()>>,
     status_hint: Option<String>,
     grouping: TaskRailGrouping,
     scope_workspace_id: Option<String>,
@@ -408,7 +428,25 @@ pub struct AppView {
     /// 状态切换不丢焦点、不留下幽灵 tab stop。
     composer_action_focus: FocusHandle,
     add_task_focus: FocusHandle,
+    header_new_task_focus: FocusHandle,
+    /// 断线态 Reconnect 按钮焦点（track_focus + 行级激活，R6B 键盘补全）。
+    reconnect_focus: FocusHandle,
     model_focus: FocusHandle,
+    timeline_back_to_bottom_focus: FocusHandle,
+    /// Timeline 虚拟化 action 按 event_id 懒建稳定焦点句柄；条目卸载/重挂
+    /// 不丢普通键盘焦点语义，删除后的遗留项随窗口生命周期回收。
+    timeline_entry_action_focus: BTreeMap<String, FocusHandle>,
+    timeline_review_changes_focus: BTreeMap<String, FocusHandle>,
+    inspector_tab_focus: [FocusHandle; 3],
+    inspector_collapse_focus: FocusHandle,
+    inspector_activity_focus: FocusHandle,
+    changes_tab_focus: [FocusHandle; 2],
+    changes_refresh_focus: FocusHandle,
+    changes_file_focus: BTreeMap<String, FocusHandle>,
+    resources_refresh_focus: FocusHandle,
+    terminal_resize_focus: FocusHandle,
+    terminal_back_to_bottom_focus: FocusHandle,
+    terminal_start_focus: FocusHandle,
     /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
     /// 无副作用，随窗口生命周期回收）。
     rail_row_focus: BTreeMap<String, FocusHandle>,
@@ -420,6 +458,15 @@ pub struct AppView {
     /// 触发器）：下一次 render 消费并聚焦 scope。on_connected 无 Window，
     /// 借 render 兑现；首次连接不置位，不抢 composer 焦点。
     pending_scope_focus: bool,
+    /// 折叠后回焦 Header Activity；恢复后回焦当前顶层 tab。目标元素可能
+    /// 要到下一帧才进入树，因此由 render 在 AX 同步前兑现。
+    pending_inspector_focus: Option<InspectorFocusTarget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InspectorFocusTarget {
+    Activity,
+    SelectedTab,
 }
 
 impl AppView {
@@ -461,6 +508,9 @@ impl AppView {
             timeline_list_rev: 0,
             timeline_list_count: 0,
             terminal_scroll: FollowScroll::new(),
+            terminal_pending_write: None,
+            terminal_pending_create_workspace: None,
+            event_task: None,
             status_hint: None,
             grouping: TaskRailGrouping::Timeline,
             scope_workspace_id: None,
@@ -498,11 +548,65 @@ impl AppView {
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(RAIL_TAB_INDEX_ADD_TASK),
+            header_new_task_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            reconnect_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(RAIL_TAB_INDEX_RECONNECT),
             model_focus: cx.focus_handle().tab_stop(true),
+            timeline_back_to_bottom_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            timeline_entry_action_focus: BTreeMap::new(),
+            timeline_review_changes_focus: BTreeMap::new(),
+            inspector_tab_focus: std::array::from_fn(|_| {
+                cx.focus_handle()
+                    .tab_stop(true)
+                    .tab_index(INSPECTOR_TAB_INDEX)
+            }),
+            inspector_collapse_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            inspector_activity_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            changes_tab_focus: std::array::from_fn(|_| {
+                cx.focus_handle()
+                    .tab_stop(true)
+                    .tab_index(INSPECTOR_TAB_INDEX)
+            }),
+            changes_refresh_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            changes_file_focus: BTreeMap::new(),
+            resources_refresh_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_resize_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_back_to_bottom_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_start_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
             rail_row_focus: BTreeMap::new(),
             rail_scroll: ScrollHandle::new(),
             rail_scroll_to_active: false,
             pending_scope_focus: false,
+            pending_inspector_focus: None,
         };
         timeline::install_scroll_follow(&view.timeline_list, &cx.weak_entity());
         // R3 Wave B Slice 4：composer 挂 1 档作为 Tab 链尾（rail 负档 →
@@ -513,6 +617,11 @@ impl AppView {
             .focus_handle(cx)
             .tab_stop(true)
             .tab_index(COMPOSER_TAB_INDEX);
+        view.terminal_input
+            .read(cx)
+            .focus_handle(cx)
+            .tab_stop(true)
+            .tab_index(INSPECTOR_TAB_INDEX);
         view.start_connect(cx);
         view
     }
@@ -539,6 +648,7 @@ impl AppView {
             self.add_task_disabled_reason()
         });
         let mut new_task = Button::new("header-new-task")
+            .track_focus(&self.header_new_task_focus)
             .variant(ButtonVariant::Ghost)
             .bordered()
             .disabled(!can_create)
@@ -553,9 +663,22 @@ impl AppView {
             .label("+")
             .tooltip(new_task_tooltip);
         if can_create {
-            new_task = new_task.on_click(cx.listener(|view, _event, window, cx| {
-                view.on_new_session(window, cx);
-            }));
+            new_task = new_task
+                .on_click(cx.listener(|view, event, window, cx| {
+                    if view.consume_button_key_click("header-new-task", event) {
+                        return;
+                    }
+                    view.on_new_session(window, cx);
+                }))
+                .on_activate(cx.listener(|view, _event, window, cx| {
+                    if view.open_menu.is_some() {
+                        view.note_button_key_activate("header-new-task");
+                        return;
+                    }
+                    view.note_button_key_activate("header-new-task");
+                    view.on_new_session(window, cx);
+                    cx.stop_propagation();
+                }));
         }
         // R6 Wave A（F-12）：折叠态 Activity 触发器自 StatusBar 迁入 Header，
         // 占用最右动作槽并向下弹出 ActivityPopover；展开态该槽恢复 New task，
@@ -574,9 +697,22 @@ impl AppView {
                 .text_color(dark().text.emphasis)
                 .label("⋯")
                 .tooltip("Activity")
+                .track_focus(&self.inspector_activity_focus)
                 .on_click(cx.listener(|view, event, _window, cx| {
+                    if view.consume_button_key_click("inspector-toggle", event) {
+                        return;
+                    }
                     let down = Self::click_down_position(event);
                     view.toggle_menu(MenuKind::Activity, down, cx);
+                }))
+                .on_activate(cx.listener(|view, _event, _window, cx| {
+                    if view.open_menu.is_some() {
+                        view.note_button_key_activate("inspector-toggle");
+                        return;
+                    }
+                    view.note_button_key_activate("inspector-toggle");
+                    view.toggle_menu(MenuKind::Activity, None, cx);
+                    cx.stop_propagation();
                 }));
             let mut dropdown = Dropdown::new(trigger).panel_anchor(
                 Corner::TopRight,
@@ -684,10 +820,71 @@ impl AppView {
         self.changes.session_id.is_some()
             && self.changes.session_id == self.projection.active_session_id
             && matches!(self.changes.fetch, changes::ChangesFetch::Ready)
+            && self.changes.stale_reason.is_none()
     }
 
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
         self.text_input.read(cx).focus_handle(cx)
+    }
+
+    /// Timeline 虚拟化控件在 render 时按稳定 event_id 取得焦点句柄。
+    pub(super) fn timeline_entry_focus(
+        &mut self,
+        event_id: &str,
+        cx: &mut Context<Self>,
+    ) -> FocusHandle {
+        self.timeline_entry_action_focus
+            .entry(event_id.to_string())
+            .or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_stop(true)
+                    .tab_index(INSPECTOR_TAB_INDEX)
+            })
+            .clone()
+    }
+
+    pub(super) fn timeline_review_focus(
+        &mut self,
+        event_id: &str,
+        cx: &mut Context<Self>,
+    ) -> FocusHandle {
+        self.timeline_review_changes_focus
+            .entry(event_id.to_string())
+            .or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_stop(true)
+                    .tab_index(INSPECTOR_TAB_INDEX)
+            })
+            .clone()
+    }
+
+    pub(super) fn open_entry_menu_from_keyboard(
+        &mut self,
+        event_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let button_id = format!("entry-menu-{event_id}");
+        self.note_button_key_activate(&button_id);
+        self.toggle_menu(MenuKind::Entry(event_id.to_string()), None, cx);
+    }
+
+    pub(super) fn activate_review_changes_from_keyboard(
+        &mut self,
+        event_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let button_id = format!("run-review-{event_id}");
+        self.note_button_key_activate(&button_id);
+        if self
+            .projection
+            .timeline
+            .iter()
+            .any(|entry| entry.event_id == event_id
+                && entry.fork_boundary == Some(crate::projection::ForkBoundary::Completed))
+            && self.changes_available_for_active()
+        {
+            self.on_review_changes(cx);
+        }
     }
 
     fn focus_composer(&self, window: &mut Window, cx: &App) {
@@ -779,6 +976,10 @@ impl AppView {
             }
             ResumeApply::Continued { .. } | ResumeApply::Unchanged => {}
         }
+        self.reconcile_terminal_workspace();
+        // Replay / UpToDate 不重开 timeline，但 Inspector 查询面必须在新连接
+        // 上重新取权威数据；旧内容在此之前一直带 stale 标记保留。
+        self.refresh_open_inspector_tab(cx);
         cx.notify();
     }
 
@@ -787,7 +988,8 @@ impl AppView {
         events: smol::channel::Receiver<ControllerEvent>,
         cx: &mut Context<Self>,
     ) {
-        cx.spawn(async move |this, cx| {
+        self.event_task = None;
+        let task = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this
                     .update(cx, |view, cx| view.handle_controller_event(event, cx))
@@ -796,8 +998,8 @@ impl AppView {
                     break;
                 }
             }
-        })
-        .detach();
+        });
+        self.event_task = Some(task);
     }
 
     fn handle_controller_event(&mut self, event: ControllerEvent, cx: &mut Context<Self>) {
@@ -807,8 +1009,13 @@ impl AppView {
         self.barriers.remove_approval_visible();
         match event {
             ControllerEvent::Disconnected { reason } => {
+                let stale_reason = format!("connection lost · {reason}");
                 self.projection
                     .set_connection(ConnectionState::Disconnected { reason });
+                self.changes.mark_stale(&stale_reason);
+                self.resources.mark_stale(&stale_reason);
+                self.terminal_pending_write = None;
+                self.terminal_pending_create_workspace = None;
                 // 断连终止一切进行中分页，避免 settle barrier 永久停发。
                 self.timeline_paging = false;
                 self.status_hint = Some("Connection lost. Click Reconnect.".into());
@@ -851,9 +1058,13 @@ impl AppView {
                 self.open_session(session_id, cx);
             }
             ControllerEvent::TerminalCreated {
+                workspace_id,
                 terminal_session_id,
             } => {
-                self.projection.terminal.session_id = Some(terminal_session_id.clone());
+                self.terminal_pending_create_workspace = None;
+                self.projection
+                    .apply_terminal_created(workspace_id, terminal_session_id.clone());
+                self.reconcile_terminal_workspace();
                 self.controller.terminal_resize(
                     terminal_session_id,
                     self.projection.terminal.columns,
@@ -870,6 +1081,47 @@ impl AppView {
                 self.close_open_menu(cx);
                 self.inspector_open = true;
                 self.refresh_open_inspector_tab(cx);
+            }
+            ControllerEvent::TerminalWriteSucceeded {
+                terminal_session_id,
+            } => {
+                self.projection.mark_terminal_ready(&terminal_session_id);
+                if let Some((pending_id, pending_text)) = self.terminal_pending_write.take() {
+                    if pending_id == terminal_session_id
+                        && self.projection.terminal.session_id.as_deref()
+                            == Some(terminal_session_id.as_str())
+                        && self.terminal_input.read(cx).text() == pending_text
+                    {
+                        self.terminal_input.update(cx, |input, cx| input.clear(cx));
+                    }
+                }
+                self.status_hint = Some("Terminal input sent.".into());
+            }
+            ControllerEvent::TerminalWriteFailed {
+                terminal_session_id,
+                reason,
+            } => {
+                self.terminal_pending_write = None;
+                self.projection
+                    .mark_terminal_failed(&terminal_session_id, reason.clone());
+                self.status_hint = Some(format!("Terminal write failed: {reason}"));
+            }
+            ControllerEvent::TerminalResizeSucceeded {
+                terminal_session_id,
+                columns,
+                rows,
+            } => {
+                self.projection
+                    .apply_terminal_resize(&terminal_session_id, columns, rows);
+                self.status_hint = Some(format!("Terminal size · {columns}×{rows}"));
+            }
+            ControllerEvent::TerminalResizeFailed {
+                terminal_session_id,
+                reason,
+            } => {
+                self.projection
+                    .mark_terminal_failed(&terminal_session_id, reason.clone());
+                self.status_hint = Some(format!("Terminal resize failed: {reason}"));
             }
             ControllerEvent::MessageSent {
                 session_id,
@@ -895,26 +1147,9 @@ impl AppView {
                 if action == "open session" {
                     self.timeline_paging = false;
                 }
-                // 查询失败回写对应面板状态：避免 Changes / Resources 永远停在
-                // Loading（status_hint 仍照常提示）；仅当前仍在 Fetching 才落
-                // Failed，防止旧请求的失败覆盖新一轮刷新。
-                match action {
-                    "load changes" => {
-                        if self.changes.fetch == changes::ChangesFetch::Fetching {
-                            self.changes.mark_failed(&reason);
-                        }
-                    }
-                    "load diff" => {
-                        if self.changes.diff == changes::DiffFetch::Fetching {
-                            self.changes.mark_diff_failed(&reason);
-                        }
-                    }
-                    "load resources" => {
-                        if self.resources.fetch == resources::ResourcesFetch::Fetching {
-                            self.resources.mark_failed(&reason);
-                        }
-                    }
-                    _ => {}
+                if action == "create terminal" {
+                    self.terminal_pending_create_workspace = None;
+                    self.projection.terminal.mark_failed(reason.clone());
                 }
                 self.status_hint = Some(format!("{action} failed: {reason}"));
             }
@@ -925,6 +1160,19 @@ impl AppView {
                 git,
             } => {
                 if self.changes.apply_files(epoch, session_id, files, git) {
+                    // 文件行焦点句柄随 canonical 清单建立；清单删除的路径同步
+                    // 摘除，避免 Tab 链残留不可见停靠点。
+                    self.changes_file_focus
+                        .retain(|path, _| self.changes.files.iter().any(|file| &file.path == path));
+                    for file in &self.changes.files {
+                        self.changes_file_focus
+                            .entry(file.path.clone())
+                            .or_insert_with(|| {
+                                cx.focus_handle()
+                                    .tab_stop(true)
+                                    .tab_index(INSPECTOR_TAB_INDEX)
+                            });
+                    }
                     // 清单刷新后选中文件仍在：重拉它的 diff，保持两视图一致。
                     if let Some(path) = self.changes.selected.clone() {
                         self.fetch_diff(&path, cx);
@@ -936,6 +1184,28 @@ impl AppView {
             }
             ControllerEvent::McpServersLoaded { epoch, servers } => {
                 self.resources.apply_servers(epoch, servers);
+            }
+            ControllerEvent::DiffFilesFailed { epoch, reason } => {
+                if self.changes.mark_failed_for_epoch(epoch, &reason) {
+                    self.status_hint = Some(format!("Load changes failed: {reason}"));
+                }
+            }
+            ControllerEvent::DiffContentFailed {
+                epoch,
+                path,
+                reason,
+            } => {
+                if self
+                    .changes
+                    .mark_diff_failed_for_epoch(epoch, &path, &reason)
+                {
+                    self.status_hint = Some(format!("Load diff failed: {reason}"));
+                }
+            }
+            ControllerEvent::McpServersFailed { epoch, reason } => {
+                if self.resources.mark_failed_for_epoch(epoch, &reason) {
+                    self.status_hint = Some(format!("Load resources failed: {reason}"));
+                }
             }
         }
         self.arm_run_clock(cx);
@@ -1019,6 +1289,7 @@ impl AppView {
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         self.stash_composer_draft(cx);
         self.projection.select_session(&session_id);
+        self.reconcile_terminal_workspace();
         // session_get 分页开始：complete / open session 失败前不写 settle barrier。
         self.timeline_paging = true;
         self.barriers.remove_timeline_stable();
@@ -1057,6 +1328,7 @@ impl AppView {
             Some(workspace) => self.create_task(Some(workspace.to_string()), window, cx),
             None => {
                 self.open_menu = Some(MenuKind::WorkspaceConfirm);
+                self.menu_highlight = None;
                 self.status_hint =
                     Some("All projects: confirm a workspace before creating a task.".into());
                 cx.notify();
@@ -1194,7 +1466,7 @@ impl AppView {
         }
     }
 
-    /// 根节点键盘裁决（R3 Wave B）：Grouping / Scope / Model 菜单打开时
+    /// 根节点键盘裁决：所有可交互 MenuKind 打开时
     /// ↑/↓ 移动高亮、Enter 选择、Escape 关闭并把焦点送回触发器（design
     /// §3.6 / §8.2 菜单方向键缺口；Slice 5 修订——接管不再以触发器聚焦
     /// 硬门控，菜单开着即接管，Tab 移焦 / 外点后键盘仍归菜单，spec §3.3）；
@@ -1223,12 +1495,7 @@ impl AppView {
             cx.stop_propagation();
             return;
         }
-        let menu = match self.open_menu.as_ref() {
-            Some(kind @ (MenuKind::Grouping | MenuKind::Scope | MenuKind::Model)) => {
-                Some(kind.clone())
-            }
-            _ => None,
-        };
+        let menu = self.open_menu.clone();
         if let Some(kind) = menu {
             match key {
                 "up" => {
@@ -1239,15 +1506,18 @@ impl AppView {
                     self.move_menu_highlight(true);
                     cx.notify();
                 }
-                "enter" => {
+                "enter" | "space" => {
                     // Return 在 AppKit 走 key equivalent 双路投递（driven
                     // 实证：第二路 keydown 夹在同键 keyup 之后到达），按钮
                     // 行级激活第一路已开菜单，第二路到根节点时高亮仍落在
                     // 当前项——此时 no-op 保持菜单开启（不闪关）；高亮在
                     // 其它项（↓/↑ 移动后）才执行选择关闭。环绕回当前项
                     // 的 Enter 同样视为 no-op（语义：选择即当前态）。
-                    let highlight = self.menu_highlight_effective(self.menu_selected_index());
-                    if highlight == self.menu_selected_index() {
+                    let selected = self.menu_selected_index();
+                    let highlight = self.menu_highlight_effective(selected);
+                    if matches!(kind, MenuKind::Grouping | MenuKind::Scope | MenuKind::Model)
+                        && highlight == selected
+                    {
                         cx.stop_propagation();
                         return;
                     }
@@ -1259,11 +1529,148 @@ impl AppView {
                 "escape" => self.close_menu_and_focus_trigger(kind, window, cx),
                 _ => {}
             }
+            if matches!(key, "up" | "down" | "enter" | "space" | "escape") {
+                cx.stop_propagation();
+            }
+            return;
+        }
+        if self.handle_inspector_key(event, window, cx) {
             return;
         }
         if key == "escape" {
             self.close_open_menu(cx);
         }
+    }
+
+    /// Inspector 的普通键盘路径。所有判断都基于与 render/AX 共用的
+    /// FocusHandle：tabs 用 ←/→，文件行用 ↑/↓，Enter/Space 与 click 复用
+    /// 同一 action。返回 true 表示已消费。
+    fn handle_inspector_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if event.keystroke.modifiers.modified() {
+            return false;
+        }
+        let key = event.keystroke.key.as_str();
+        let activate = key == "enter" || key == "space";
+
+        if let Some(ix) = self
+            .inspector_tab_focus
+            .iter()
+            .position(|focus| focus.is_focused(window))
+        {
+            let target = inspector_tab_key_target(ix, key);
+            if let Some(target) = target {
+                let tab = [
+                    InspectorTab::Changes,
+                    InspectorTab::Terminal,
+                    InspectorTab::Resources,
+                ][target];
+                self.note_button_key_activate(tab.button_id());
+                self.select_inspector_tab(tab, cx);
+                window.focus(&self.inspector_tab_focus[target]);
+                cx.stop_propagation();
+                return true;
+            }
+        }
+
+        if let Some(ix) = self
+            .changes_tab_focus
+            .iter()
+            .position(|focus| focus.is_focused(window))
+        {
+            let target = changes_tab_key_target(ix, key);
+            if let Some(target) = target {
+                let tab = [changes::ChangesTab::Files, changes::ChangesTab::Summary][target];
+                let id = if target == 0 {
+                    "changes-tab-files"
+                } else {
+                    "changes-tab-summary"
+                };
+                self.note_button_key_activate(id);
+                self.on_select_changes_tab(tab, cx);
+                window.focus(&self.changes_tab_focus[target]);
+                cx.stop_propagation();
+                return true;
+            }
+        }
+
+        let focused_file = self.changes.files.iter().position(|file| {
+            self.changes_file_focus
+                .get(&file.path)
+                .is_some_and(|focus| focus.is_focused(window))
+        });
+        if let Some(ix) = focused_file {
+            let target = match key {
+                "up" => Some((ix + self.changes.files.len() - 1) % self.changes.files.len()),
+                "down" => Some((ix + 1) % self.changes.files.len()),
+                _ if activate => Some(ix),
+                _ => None,
+            };
+            if let Some(target) = target {
+                let path = self.changes.files[target].path.clone();
+                self.pending_row_key_activate = Some(path.clone());
+                self.on_select_diff_file(&path, cx);
+                if let Some(focus) = self.changes_file_focus.get(&path) {
+                    window.focus(focus);
+                }
+                cx.stop_propagation();
+                return true;
+            }
+        }
+
+        let action = if self.inspector_collapse_focus.is_focused(window) && activate {
+            Some("inspector-collapse")
+        } else if self.inspector_activity_focus.is_focused(window) && activate {
+            Some("inspector-toggle")
+        } else if self.changes_refresh_focus.is_focused(window) && activate {
+            Some("changes-refresh")
+        } else if self.resources_refresh_focus.is_focused(window) && activate {
+            Some("resources-refresh")
+        } else if self.terminal_resize_focus.is_focused(window)
+            && activate
+            && terminal_can_operate(&self.projection.connection, &self.projection.terminal)
+        {
+            Some("terminal-resize")
+        } else if self.terminal_back_to_bottom_focus.is_focused(window) && activate {
+            Some("terminal-back-to-bottom")
+        } else if self.terminal_start_focus.is_focused(window)
+            && activate
+            && terminal_start_enabled(
+                &self.projection.connection,
+                &self.projection.terminal,
+                self.terminal_pending_create_workspace.as_ref(),
+            )
+        {
+            Some("terminal-start")
+        } else {
+            None
+        };
+        let Some(action) = action else {
+            return false;
+        };
+        self.note_button_key_activate(action);
+        match action {
+            "inspector-collapse" => self.on_toggle_inspector(window, cx),
+            "inspector-toggle" => self.toggle_menu(MenuKind::Activity, None, cx),
+            "changes-refresh" => self.refresh_changes(cx),
+            "resources-refresh" => self.refresh_resources(cx),
+            "terminal-resize" => self.on_apply_terminal_size(window, cx),
+            "terminal-back-to-bottom" => {
+                self.terminal_scroll.jump_to_bottom();
+                cx.notify();
+            }
+            "terminal-start" if self.projection.terminal.session_id.is_some() => {
+                self.on_apply_terminal_size(window, cx)
+            }
+            "terminal-start" => self.on_start_terminal(window, cx),
+            _ => unreachable!(),
+        }
+        cx.stop_propagation();
+        true
     }
 
     /// 关闭菜单并把焦点送回触发器（design §3.6：Escape 关闭后焦点回触发器）。
@@ -1277,7 +1684,13 @@ impl AppView {
             MenuKind::Grouping => self.grouping_focus.clone(),
             MenuKind::Scope => self.scope_focus.clone(),
             MenuKind::Model => self.model_focus.clone(),
-            _ => self.focus_handle.clone(),
+            MenuKind::Entry(event_id) => self
+                .timeline_entry_action_focus
+                .get(&event_id)
+                .cloned()
+                .unwrap_or_else(|| self.focus_handle.clone()),
+            MenuKind::WorkspaceConfirm => self.add_task_focus.clone(),
+            MenuKind::Activity => self.inspector_activity_focus.clone(),
         };
         self.open_menu = None;
         self.menu_highlight = None;
@@ -1285,19 +1698,27 @@ impl AppView {
         cx.notify();
     }
 
-    /// 菜单高亮行数（Grouping=2 / Scope=选项数 / Model=目录数；其余菜单 0）。
+    /// 菜单高亮行数。所有可点击 MenuRow 均进入同一普通键盘分派。
     fn menu_item_count(&self) -> usize {
-        match self.open_menu {
+        match self.open_menu.as_ref() {
             Some(MenuKind::Grouping) => 2,
             Some(MenuKind::Scope) => self.projection.project_scope_options().len(),
             Some(MenuKind::Model) => self.projection.models.len(),
-            _ => 0,
+            Some(MenuKind::Entry(_)) => 1,
+            Some(MenuKind::WorkspaceConfirm) => self
+                .projection
+                .project_scope_options()
+                .into_iter()
+                .filter(|(id, _)| id.is_some())
+                .count(),
+            Some(MenuKind::Activity) => 1,
+            None => 0,
         }
     }
 
     /// 当前选中项在菜单中的行位（键盘高亮的回落起点）。
     fn menu_selected_index(&self) -> usize {
-        match self.open_menu {
+        match self.open_menu.as_ref() {
             Some(MenuKind::Grouping) => match self.grouping {
                 TaskRailGrouping::Timeline => 0,
                 TaskRailGrouping::Projects => 1,
@@ -1374,7 +1795,28 @@ impl AppView {
                     self.on_select_model(model, cx);
                 }
             }
-            _ => {}
+            MenuKind::Entry(event_id) => {
+                if ix == 0 && self.can_fork_entry(&event_id) {
+                    self.close_open_menu(cx);
+                    self.on_fork(&event_id, cx);
+                }
+            }
+            MenuKind::WorkspaceConfirm => {
+                if let Some((workspace_id, _)) = self
+                    .projection
+                    .project_scope_options()
+                    .into_iter()
+                    .filter_map(|(id, name)| id.map(|id| (id, name)))
+                    .nth(ix)
+                {
+                    self.on_confirm_workspace(workspace_id, window, cx);
+                }
+            }
+            MenuKind::Activity => {
+                if ix == 0 {
+                    self.on_activity_open_changes(window, cx);
+                }
+            }
         }
     }
 
@@ -1520,6 +1962,7 @@ impl AppView {
 
     fn on_toggle_inspector(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.inspector_open = !self.inspector_open;
+        self.pending_inspector_focus = Some(inspector_focus_after_toggle(self.inspector_open));
         // 宽度变化改变条目换行高度：list 高度缓存须失效（reset）。
         self.timeline_changed();
         if self.inspector_open {
@@ -1578,6 +2021,7 @@ impl AppView {
             self.timeline_changed();
         }
         self.inspector_tab = InspectorTab::Changes;
+        self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
         self.refresh_changes(cx);
         cx.notify();
     }
@@ -1610,17 +2054,14 @@ impl AppView {
             self.projection.connection,
             ConnectionState::Connected { .. }
         );
-        let workspace = self
-            .scope_workspace_id
-            .clone()
-            .or_else(|| self.projection.workspace_id.clone());
+        let workspace = self.inspector_workspace_id();
         match (connected, workspace) {
             (true, Some(workspace)) => {
                 let epoch = self.changes.begin_refresh();
                 self.controller.diff_list_files(workspace, epoch);
             }
             (true, None) => self.changes.mark_failed("no workspace"),
-            _ => self.changes.mark_failed("not connected"),
+            _ => self.changes.mark_stale("not connected"),
         }
         cx.notify();
     }
@@ -1631,10 +2072,7 @@ impl AppView {
             self.projection.connection,
             ConnectionState::Connected { .. }
         );
-        let workspace = self
-            .scope_workspace_id
-            .clone()
-            .or_else(|| self.projection.workspace_id.clone());
+        let workspace = self.inspector_workspace_id();
         match (connected, workspace) {
             (true, Some(workspace)) => {
                 let epoch = self.changes.begin_diff_fetch(path);
@@ -1644,6 +2082,23 @@ impl AppView {
             _ => self.changes.mark_diff_failed("not connected"),
         }
         cx.notify();
+    }
+
+    /// Inspector 面板的归属 workspace。active task 存在时它是唯一事实源；
+    /// 没有 active task 时才用 rail scope，再回落 snapshot 默认 workspace。
+    pub(super) fn inspector_workspace_id(&self) -> Option<String> {
+        if self.projection.active_session_id.is_some() {
+            return self.projection.active_workspace_id().map(str::to_string);
+        }
+        self.scope_workspace_id
+            .clone()
+            .or_else(|| self.projection.workspace_id.clone())
+    }
+
+    pub(super) fn reconcile_terminal_workspace(&mut self) {
+        let workspace_id = self.inspector_workspace_id();
+        self.projection
+            .select_terminal_for_workspace(workspace_id.as_deref());
     }
 
     /// 拉取 MCP server 清单（mcp_list）。
@@ -1656,7 +2111,7 @@ impl AppView {
             let epoch = self.resources.begin_refresh();
             self.controller.mcp_list(epoch);
         } else {
-            self.resources.mark_failed("not connected");
+            self.resources.mark_stale("not connected");
         }
         cx.notify();
     }
@@ -1691,6 +2146,27 @@ impl AppView {
     }
 
     fn send_terminal_input(&mut self, cx: &mut Context<Self>) {
+        if !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) {
+            self.status_hint = Some("Terminal needs a live connection; input was kept.".into());
+            cx.notify();
+            return;
+        }
+        if self.terminal_pending_write.is_some() {
+            self.status_hint = Some("Waiting for the previous terminal write.".into());
+            cx.notify();
+            return;
+        }
+        if self.projection.terminal.session_id.is_some()
+            && !terminal_can_operate(&self.projection.connection, &self.projection.terminal)
+        {
+            self.status_hint =
+                Some("Terminal is not ready; input was kept and nothing was written.".into());
+            cx.notify();
+            return;
+        }
         if self.projection.terminal.session_id.is_none() {
             self.ensure_terminal(cx);
             self.status_hint = Some("Starting terminal…".into());
@@ -1705,12 +2181,12 @@ impl AppView {
             return;
         }
         let data = if text.ends_with('\n') {
-            text
+            text.clone()
         } else {
             format!("{text}\n")
         };
+        self.terminal_pending_write = Some((id.clone(), text));
         self.controller.terminal_write(id, data);
-        self.terminal_input.update(cx, |input, cx| input.clear(cx));
         cx.notify();
     }
 
@@ -1732,6 +2208,10 @@ impl AppView {
     }
 
     fn on_cancel_clicked(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        // 最终入口再次复核，避免快捷键绕过 render/AX 的 disabled gate。
+        if !self.can_cancel() {
+            return;
+        }
         let Some(run_id) = self.projection.active_run_id.clone() else {
             return;
         };
@@ -1740,6 +2220,10 @@ impl AppView {
     }
 
     fn on_approve(&mut self, decision: &str, cx: &mut Context<Self>) {
+        // mouse / Button key / global shortcut / AX 都汇入此处，统一 fail-closed。
+        if !self.can_approve() {
+            return;
+        }
         let Some(pending) = self.projection.pending_approval.clone() else {
             return;
         };
@@ -1810,17 +2294,28 @@ impl AppView {
     }
 
     fn can_approve(&self) -> bool {
-        matches!(
-            self.projection.connection,
-            ConnectionState::Connected { .. }
-        ) && self.projection.pending_approval.is_some()
+        live_action_enabled(
+            &self.projection.connection,
+            self.projection.pending_approval.is_some(),
+        )
     }
 
     fn can_cancel(&self) -> bool {
-        matches!(
-            self.projection.connection,
-            ConnectionState::Connected { .. }
-        ) && self.projection.active_run_id.is_some()
+        live_action_enabled(
+            &self.projection.connection,
+            self.projection.active_run_id.is_some(),
+        )
+    }
+
+    fn can_fork_entry(&self, event_id: &str) -> bool {
+        live_action_enabled(
+            &self.projection.connection,
+            self.projection.active_session_id.is_some(),
+        ) && self
+            .projection
+            .timeline
+            .iter()
+            .any(|entry| entry.event_id == event_id && entry.is_fork_boundary())
     }
 
     /// Timeline 数据 / 可视宽度变更标记：下一次 render 时对 list 做一次
@@ -1832,6 +2327,12 @@ impl AppView {
 
 fn resolve_new_task_workspace(scope_workspace_id: Option<&str>) -> Option<&str> {
     scope_workspace_id
+}
+
+/// 所有需要 live connection 的 action 共用 fail-closed 基础 gate。render、
+/// 普通键盘、快捷键与 AX 最终 handler 必须在入口处再次复核。
+fn live_action_enabled(connection: &ConnectionState, target_present: bool) -> bool {
+    matches!(connection, ConnectionState::Connected { .. }) && target_present
 }
 
 /// Header 终态点视觉（F-05）：Ø10 语义点，与 TaskRail 状态点同色映射
@@ -2024,6 +2525,58 @@ fn should_swallow_keyboard_click(keyboard_click: bool, marker: Option<&str>) -> 
     keyboard_click && marker.is_some()
 }
 
+fn inspector_tab_key_target(current: usize, key: &str) -> Option<usize> {
+    match key {
+        "left" => Some((current + 2) % 3),
+        "right" => Some((current + 1) % 3),
+        "enter" | "space" => Some(current),
+        _ => None,
+    }
+}
+
+fn changes_tab_key_target(current: usize, key: &str) -> Option<usize> {
+    match key {
+        "left" | "up" | "right" | "down" => Some((current + 1) % 2),
+        "enter" | "space" => Some(current),
+        _ => None,
+    }
+}
+
+fn inspector_focus_after_toggle(open: bool) -> InspectorFocusTarget {
+    if open {
+        InspectorFocusTarget::SelectedTab
+    } else {
+        InspectorFocusTarget::Activity
+    }
+}
+
+/// Terminal 面板的三态共用谓词：视觉按钮、AX 动作与键盘路径必须使用同一
+/// 可操作策略，不能只让 AX 看起来禁用而 Enter 仍写入 Stale/Failed 终端。
+pub(crate) fn terminal_can_operate(connection: &ConnectionState, terminal: &TerminalState) -> bool {
+    matches!(connection, ConnectionState::Connected { .. })
+        && terminal.session_id.is_some()
+        && matches!(
+            &terminal.availability,
+            crate::projection::TerminalAvailability::Ready
+        )
+}
+
+/// 底部 Start/Size 的单槽谓词。已有 Stale/Failed 终端时禁止继续按 Size，
+/// 未创建时由 create-pending 去重防快速双击生成多个终端。
+pub(crate) fn terminal_start_enabled(
+    connection: &ConnectionState,
+    terminal: &TerminalState,
+    pending_create_workspace: Option<&String>,
+) -> bool {
+    if !matches!(connection, ConnectionState::Connected { .. }) {
+        return false;
+    }
+    if terminal.session_id.is_some() {
+        return terminal_can_operate(connection, terminal);
+    }
+    pending_create_workspace.is_none()
+}
+
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 一次性安装 AppKit Tab 本地监听器：NSWindow 会吞掉裸 Tab
@@ -2038,6 +2591,14 @@ impl Render for AppView {
         if self.pending_scope_focus {
             self.pending_scope_focus = false;
             window.focus(&self.scope_focus);
+        }
+        if let Some(target) = self.pending_inspector_focus.take() {
+            match target {
+                InspectorFocusTarget::Activity => window.focus(&self.inspector_activity_focus),
+                InspectorFocusTarget::SelectedTab => {
+                    window.focus(&self.inspector_tab_focus[self.inspector_tab as usize])
+                }
+            }
         }
         self.sync_accessibility(window, cx);
         let connected = matches!(
@@ -2206,7 +2767,10 @@ mod tests {
             "approve-deny",
             "composer-action",
             "add-task",
+            "header-new-task",
+            "reconnect",
             "model-picker",
+            "timeline-back-to-bottom",
         ] {
             assert!(
                 MAIN_PATH_TAB_STOP_IDS.contains(&id),
@@ -2344,6 +2908,68 @@ mod tests {
         assert!(!should_swallow_keyboard_click(false, Some("row-a")));
         assert!(!should_swallow_keyboard_click(false, Some("row-b")));
         assert!(!should_swallow_keyboard_click(false, None));
+    }
+
+    #[test]
+    fn inspector_keyboard_targets_wrap_and_preserve_activation() {
+        assert_eq!(inspector_tab_key_target(0, "left"), Some(2));
+        assert_eq!(inspector_tab_key_target(2, "right"), Some(0));
+        assert_eq!(inspector_tab_key_target(1, "enter"), Some(1));
+        assert_eq!(inspector_tab_key_target(1, "space"), Some(1));
+        assert_eq!(changes_tab_key_target(0, "down"), Some(1));
+        assert_eq!(changes_tab_key_target(1, "up"), Some(0));
+        assert_eq!(changes_tab_key_target(0, "escape"), None);
+    }
+
+    #[test]
+    fn inspector_toggle_focus_moves_between_panel_and_activity() {
+        assert_eq!(
+            inspector_focus_after_toggle(false),
+            InspectorFocusTarget::Activity
+        );
+        assert_eq!(
+            inspector_focus_after_toggle(true),
+            InspectorFocusTarget::SelectedTab
+        );
+    }
+
+    #[test]
+    fn terminal_action_gate_matches_visual_ax_and_keyboard() {
+        use crate::projection::TerminalAvailability;
+
+        let connected = ConnectionState::Connected {
+            instance_id: "instance-1".into(),
+        };
+        let disconnected = ConnectionState::Disconnected {
+            reason: "closed".into(),
+        };
+        let mut terminal = TerminalState {
+            session_id: Some("term-a".into()),
+            availability: TerminalAvailability::Ready,
+            ..TerminalState::default()
+        };
+        assert!(terminal_can_operate(&connected, &terminal));
+        assert!(terminal_start_enabled(&connected, &terminal, None));
+        assert!(!terminal_can_operate(&disconnected, &terminal));
+        assert!(!terminal_start_enabled(&disconnected, &terminal, None));
+
+        terminal.availability = TerminalAvailability::Stale {
+            reason: "connection lost".into(),
+        };
+        assert!(!terminal_can_operate(&connected, &terminal));
+        assert!(!terminal_start_enabled(&connected, &terminal, None));
+
+        terminal.session_id = None;
+        terminal.availability = TerminalAvailability::Stale {
+            reason: "not started".into(),
+        };
+        assert!(terminal_start_enabled(&connected, &terminal, None));
+        let pending = "ws-a".to_string();
+        assert!(!terminal_start_enabled(
+            &connected,
+            &terminal,
+            Some(&pending)
+        ));
     }
 
     /// cmd-alt-n：NeedsInput > Blocked > Unread；active 之后循环起算，

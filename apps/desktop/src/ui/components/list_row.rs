@@ -5,8 +5,8 @@
 //! raised 行 → surface.hover），active 复用 hover 色。
 
 use gpui::{
-    AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, RenderOnce, SharedString,
-    Styled, Window, div, prelude::*, px,
+    div, prelude::*, px, AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent,
+    RenderOnce, SharedString, Styled, Window,
 };
 
 use crate::ui::theme::{dark, metrics};

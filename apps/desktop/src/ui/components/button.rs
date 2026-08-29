@@ -6,8 +6,8 @@
 //! 面板统一走 Dropdown（轨 2）。
 
 use gpui::{
-    div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, Pixels, RenderOnce, Rgba,
-    KeyDownEvent, SharedString, Styled, Window,
+    div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, Pixels,
+    RenderOnce, Rgba, SharedString, Styled, Window,
 };
 
 use crate::ui::theme::dark;
@@ -318,8 +318,10 @@ impl RenderOnce for Button {
         if let Some(size) = self.text_size {
             button = button.text_size(px(size));
         }
-        if !matches!(self.variant, ButtonVariant::Ghost | ButtonVariant::IconCircle)
-            && !self.circle
+        if !matches!(
+            self.variant,
+            ButtonVariant::Ghost | ButtonVariant::IconCircle
+        ) && !self.circle
         {
             button = button.rounded_md();
         }

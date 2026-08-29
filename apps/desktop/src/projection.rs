@@ -138,21 +138,121 @@ pub enum ResumeApply {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalState {
     pub session_id: Option<String>,
+    /// Host snapshot 的 owner_session；Desktop 将其解释为 terminal 所属
+    /// workspace，而不是当前打开的 task/session。
+    pub workspace_id: Option<String>,
     pub output: String,
     pub columns: u16,
     pub rows: u16,
     /// 仅 workspace 相对路径。
     pub cwd: String,
+    /// Host 快照原样给出的 PTY 状态（running / exited / killed）；不从
+    /// output 或本地 UI 动作猜测退出态。
+    pub runtime_state: Option<String>,
+    /// 实时广播被覆写的权威计数；非零时 UI 可诚实提示输出可能不完整。
+    pub dropped_events: u64,
+    /// Desktop 本连接已收到 Host resize 回执；snapshot 本身不含该事实，
+    /// 重连/快照重建后不宣称已确认。
+    pub resize_confirmed: bool,
+    pub availability: TerminalAvailability,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalAvailability {
+    Ready,
+    Stale { reason: String },
+    Failed { reason: String },
 }
 
 impl Default for TerminalState {
     fn default() -> Self {
         Self {
             session_id: None,
+            workspace_id: None,
             output: String::new(),
             columns: 80,
             rows: 24,
             cwd: ".".into(),
+            runtime_state: None,
+            dropped_events: 0,
+            resize_confirmed: false,
+            availability: TerminalAvailability::Stale {
+                reason: "not started".into(),
+            },
+        }
+    }
+}
+
+impl TerminalState {
+    fn from_snapshot(entry: &Value) -> Option<Self> {
+        let session_id = entry
+            .get("terminal_session_id")
+            .or_else(|| entry.get("id"))
+            .and_then(Value::as_str)?;
+        let workspace_id = entry
+            .get("owner_session")
+            .or_else(|| entry.get("workspace_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let runtime_state = entry
+            .get("state")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let availability = match runtime_state.as_deref() {
+            Some("running") => TerminalAvailability::Ready,
+            Some(state @ ("exited" | "killed")) => TerminalAvailability::Stale {
+                reason: format!("terminal {state}"),
+            },
+            Some(state) => TerminalAvailability::Stale {
+                reason: format!("terminal state {state}"),
+            },
+            None => TerminalAvailability::Stale {
+                reason: "terminal state unavailable".into(),
+            },
+        };
+        Some(Self {
+            session_id: Some(session_id.to_string()),
+            workspace_id,
+            columns: entry
+                .get("columns")
+                .and_then(Value::as_u64)
+                .and_then(|value| u16::try_from(value).ok())
+                .unwrap_or(80),
+            rows: entry
+                .get("rows")
+                .and_then(Value::as_u64)
+                .and_then(|value| u16::try_from(value).ok())
+                .unwrap_or(24),
+            runtime_state,
+            dropped_events: entry
+                .get("dropped_events")
+                .or_else(|| entry.get("dropped"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            availability,
+            ..Self::default()
+        })
+    }
+
+    fn mark_stale(&mut self, reason: impl Into<String>) {
+        self.availability = TerminalAvailability::Stale {
+            reason: reason.into(),
+        };
+    }
+
+    pub fn mark_failed(&mut self, reason: impl Into<String>) {
+        self.availability = TerminalAvailability::Failed {
+            reason: reason.into(),
+        };
+    }
+
+    pub fn availability_label(&self) -> String {
+        match &self.availability {
+            TerminalAvailability::Ready => {
+                self.runtime_state.clone().unwrap_or_else(|| "ready".into())
+            }
+            TerminalAvailability::Stale { reason } => format!("stale · {reason}"),
+            TerminalAvailability::Failed { reason } => format!("failed · {reason}"),
         }
     }
 }
@@ -311,6 +411,7 @@ pub struct DesktopProjection {
     pub active_run_started_at_ms: Option<u64>,
     pub resume: ResumeState,
     pub terminal: TerminalState,
+    pub terminals: Vec<TerminalState>,
     snapshot_pendings: Vec<PendingApproval>,
     /// R3 Wave B：Blocked 会话（live 派生）。snapshot active_runs 不提供
     /// 终态，快照重建后清空（wire 无此信息，不伪造）；Replay 重放终态
@@ -333,6 +434,7 @@ impl DesktopProjection {
     /// 用 Snapshot 的 session_tree / workspaces 段替换列表，保留连接状态、
     /// 打开的 session 与时间线。
     pub fn merge_snapshot(&mut self, snapshot: &Snapshot) {
+        let mut terminal_snapshot = None;
         for section in &snapshot.sections {
             let kind = enum_name(serde_json::to_value(&section.kind).ok());
             let data = section.data.clone().unwrap_or(Value::Null);
@@ -362,12 +464,25 @@ impl DesktopProjection {
                     self.restore_active_run_from_snapshot();
                 }
                 "terminal_sessions" => {
-                    if let Some(id) = parse_terminal_session_id(&data) {
-                        self.terminal.session_id = Some(id);
-                    }
+                    terminal_snapshot = Some(parse_terminal_sessions(&data));
                 }
                 _ => {}
             }
+        }
+        if let Some(mut terminals) = terminal_snapshot {
+            for terminal in &mut terminals {
+                if let Some(old) = self
+                    .terminals
+                    .iter()
+                    .find(|old| old.session_id == terminal.session_id)
+                {
+                    terminal.output = old.output.clone();
+                    terminal.cwd = old.cwd.clone();
+                }
+            }
+            self.terminals = terminals;
+            let workspace_id = self.active_workspace_id().map(str::to_string);
+            self.select_terminal_for_workspace(workspace_id.as_deref());
         }
         // R3 Wave B：session 列表换新后，消失 session 的 unread 标记
         // 一并清除（仍存 session 保留——用户未看过，不伪造已读）。
@@ -459,6 +574,20 @@ impl DesktopProjection {
     }
 
     pub fn apply_terminal_output(&mut self, terminal_session_id: &str, delta: &str) -> bool {
+        if let Some(terminal) = self
+            .terminals
+            .iter_mut()
+            .find(|terminal| terminal.session_id.as_deref() == Some(terminal_session_id))
+        {
+            terminal.output.push_str(delta);
+            terminal.runtime_state = Some("running".into());
+            terminal.availability = TerminalAvailability::Ready;
+            if self.terminal.session_id.as_deref() == Some(terminal_session_id) {
+                self.terminal = terminal.clone();
+                return true;
+            }
+            return false;
+        }
         if let Some(current) = self.terminal.session_id.as_deref() {
             if current != terminal_session_id {
                 return false;
@@ -467,7 +596,172 @@ impl DesktopProjection {
             self.terminal.session_id = Some(terminal_session_id.to_string());
         }
         self.terminal.output.push_str(delta);
+        self.terminal.runtime_state = Some("running".into());
+        self.terminal.availability = TerminalAvailability::Ready;
+        self.terminals.push(self.terminal.clone());
         true
+    }
+
+    pub fn apply_terminal_created(&mut self, workspace_id: String, terminal_session_id: String) {
+        let mut terminal = self
+            .terminals
+            .iter()
+            .find(|terminal| terminal.session_id.as_deref() == Some(terminal_session_id.as_str()))
+            .cloned()
+            .or_else(|| {
+                (self.terminal.session_id.as_deref() == Some(terminal_session_id.as_str()))
+                    .then(|| self.terminal.clone())
+            })
+            .unwrap_or_else(|| TerminalState {
+                session_id: Some(terminal_session_id.clone()),
+                ..TerminalState::default()
+            });
+        // create 回执只补身份与运行态；Host 可能先广播首段 shell prompt，
+        // 这里若重置整状态会清掉已经到达的 output。
+        terminal.workspace_id = Some(workspace_id.clone());
+        terminal.runtime_state = Some("running".into());
+        terminal.availability = TerminalAvailability::Ready;
+        if let Some(existing) = self
+            .terminals
+            .iter_mut()
+            .find(|existing| existing.session_id.as_deref() == Some(terminal_session_id.as_str()))
+        {
+            *existing = terminal.clone();
+        } else {
+            self.terminals.push(terminal.clone());
+        }
+        if self.active_workspace_id() == Some(workspace_id.as_str()) {
+            self.terminal = terminal;
+        }
+    }
+
+    pub fn mark_terminal_ready(&mut self, terminal_session_id: &str) -> bool {
+        self.update_terminal(terminal_session_id, |terminal| {
+            terminal.runtime_state = Some("running".into());
+            terminal.availability = TerminalAvailability::Ready;
+        })
+    }
+
+    pub fn mark_terminal_failed(
+        &mut self,
+        terminal_session_id: &str,
+        reason: impl Into<String>,
+    ) -> bool {
+        let reason = reason.into();
+        self.update_terminal(terminal_session_id, |terminal| {
+            terminal.mark_failed(reason.clone());
+        })
+    }
+
+    pub fn apply_terminal_resize(
+        &mut self,
+        terminal_session_id: &str,
+        columns: u16,
+        rows: u16,
+    ) -> bool {
+        self.update_terminal(terminal_session_id, |terminal| {
+            terminal.columns = columns;
+            terminal.rows = rows;
+            terminal.resize_confirmed = true;
+            terminal.runtime_state = Some("running".into());
+            terminal.availability = TerminalAvailability::Ready;
+        })
+    }
+
+    fn update_terminal(
+        &mut self,
+        terminal_session_id: &str,
+        update: impl Fn(&mut TerminalState),
+    ) -> bool {
+        let mut found = false;
+        if let Some(terminal) = self
+            .terminals
+            .iter_mut()
+            .find(|terminal| terminal.session_id.as_deref() == Some(terminal_session_id))
+        {
+            update(terminal);
+            found = true;
+            if self.terminal.session_id.as_deref() == Some(terminal_session_id) {
+                self.terminal = terminal.clone();
+            }
+        } else if self.terminal.session_id.as_deref() == Some(terminal_session_id) {
+            update(&mut self.terminal);
+            self.terminals.push(self.terminal.clone());
+            found = true;
+        }
+        found
+    }
+
+    pub fn select_terminal_for_workspace(&mut self, workspace_id: Option<&str>) -> bool {
+        let current = self.terminal.session_id.as_deref();
+        let selected = if current.is_some_and(|id| {
+            self.terminals.iter().any(|terminal| {
+                terminal.session_id.as_deref() == Some(id)
+                    && terminal.workspace_id.as_deref() == workspace_id
+            })
+        }) {
+            self.terminal.clone()
+        } else {
+            self.terminals
+                .iter()
+                .filter(|terminal| terminal.workspace_id.as_deref() == workspace_id)
+                .min_by_key(|terminal| {
+                    (
+                        usize::from(terminal.runtime_state.as_deref() != Some("running")),
+                        terminal.session_id.clone().unwrap_or_default(),
+                    )
+                })
+                .cloned()
+                .unwrap_or_else(|| TerminalState {
+                    workspace_id: workspace_id.map(str::to_string),
+                    ..TerminalState::default()
+                })
+        };
+        let changed = self.terminal != selected;
+        self.terminal = selected;
+        changed
+    }
+
+    pub fn mark_terminals_stale(&mut self, reason: impl Into<String>) {
+        let reason = reason.into();
+        for terminal in &mut self.terminals {
+            terminal.mark_stale(reason.clone());
+        }
+        self.terminal.mark_stale(reason);
+    }
+
+    fn restore_terminal_availability(&mut self) {
+        for terminal in &mut self.terminals {
+            terminal.availability = match terminal.runtime_state.as_deref() {
+                Some("running") => TerminalAvailability::Ready,
+                Some(state) => TerminalAvailability::Stale {
+                    reason: format!("terminal {state}"),
+                },
+                None => TerminalAvailability::Stale {
+                    reason: "terminal state unavailable".into(),
+                },
+            };
+        }
+        if let Some(current) = self
+            .terminals
+            .iter()
+            .find(|terminal| terminal.session_id == self.terminal.session_id)
+        {
+            self.terminal = current.clone();
+        }
+    }
+
+    /// Inspector 的 workspace 归属：有 active task 时只认该 task 的
+    /// canonical workspace；无 active task 才回落到 snapshot 默认 workspace。
+    pub fn active_workspace_id(&self) -> Option<&str> {
+        match self.active_session_id.as_deref() {
+            Some(session_id) => self
+                .sessions
+                .iter()
+                .find(|session| session.session_id == session_id)
+                .and_then(|session| session.workspace_id.as_deref()),
+            None => self.workspace_id.as_deref(),
+        }
     }
 
     /// 打开（切换）session：清空时间线与去重状态。
@@ -481,6 +775,8 @@ impl DesktopProjection {
         self.timeline.reset_baseline();
         self.restore_active_run_from_snapshot();
         self.pending_approval = self.pending_for_active_session();
+        let workspace_id = self.active_workspace_id().map(str::to_string);
+        self.select_terminal_for_workspace(workspace_id.as_deref());
     }
 
     fn restore_active_run_from_snapshot(&mut self) {
@@ -508,6 +804,11 @@ impl DesktopProjection {
     }
 
     pub fn set_connection(&mut self, state: ConnectionState) {
+        if matches!(state, ConnectionState::Connected { .. }) {
+            self.restore_terminal_availability();
+        } else {
+            self.mark_terminals_stale(state.label());
+        }
         self.connection = state;
     }
 
@@ -1076,19 +1377,15 @@ fn parse_sessions(data: &Value) -> Vec<SessionSummary> {
     sessions
 }
 
-fn parse_terminal_session_id(data: &Value) -> Option<String> {
-    if let Some(id) = data.get("terminal_session_id").and_then(Value::as_str) {
-        return Some(id.to_string());
+fn parse_terminal_sessions(data: &Value) -> Vec<TerminalState> {
+    match data {
+        Value::Array(entries) => entries
+            .iter()
+            .filter_map(TerminalState::from_snapshot)
+            .collect(),
+        Value::Object(_) => TerminalState::from_snapshot(data).into_iter().collect(),
+        _ => Vec::new(),
     }
-    data.as_array().and_then(|entries| {
-        entries.iter().find_map(|entry| {
-            entry
-                .get("terminal_session_id")
-                .or_else(|| entry.get("id"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-    })
 }
 
 fn parse_workspaces(data: &Value) -> Vec<WorkspaceSummary> {
@@ -2653,6 +2950,121 @@ mod tests {
         assert_eq!(projection.terminal.output, "hello\nworld");
     }
 
+    #[test]
+    fn terminal_created_preserves_output_that_arrived_before_receipt() {
+        let mut projection = DesktopProjection::default();
+        projection.workspace_id = Some("ws-a".into());
+        assert!(projection.apply_event(&terminal_output(1, "term-a", "shell$ ")));
+        projection.apply_terminal_created("ws-a".into(), "term-a".into());
+        assert_eq!(projection.terminal.output, "shell$ ");
+        assert_eq!(projection.terminals[0].output, "shell$ ");
+        assert_eq!(projection.terminal.workspace_id.as_deref(), Some("ws-a"));
+        assert_eq!(
+            projection.terminal.availability,
+            TerminalAvailability::Ready
+        );
+    }
+
+    #[test]
+    fn terminal_selection_prefers_current_then_uses_deterministic_fallback() {
+        let mut projection = DesktopProjection::default();
+        let terminal = |id: &str| TerminalState {
+            session_id: Some(id.into()),
+            workspace_id: Some("ws-a".into()),
+            runtime_state: Some("running".into()),
+            availability: TerminalAvailability::Ready,
+            ..TerminalState::default()
+        };
+        projection.terminals = vec![terminal("term-b"), terminal("term-a")];
+        projection.terminal = terminal("term-b");
+        assert!(!projection.select_terminal_for_workspace(Some("ws-a")));
+        assert_eq!(projection.terminal.session_id.as_deref(), Some("term-b"));
+
+        projection.terminal = terminal("term-other");
+        projection.terminal.workspace_id = Some("ws-b".into());
+        assert!(projection.select_terminal_for_workspace(Some("ws-a")));
+        assert_eq!(projection.terminal.session_id.as_deref(), Some("term-a"));
+    }
+
+    #[test]
+    fn terminal_snapshot_parses_all_fields_and_selects_active_workspace() {
+        let snapshot: Snapshot = serde_json::from_value(json!({
+            "instance_id": "instance-1", "snapshot_sequence": 0, "generated_at": 1,
+            "sections": [
+                { "kind": "workspaces", "revision": 1, "data": [
+                    { "id": "ws-a", "name": "A" }, { "id": "ws-b", "name": "B" }
+                ]},
+                { "kind": "session_tree", "revision": 1, "data": [
+                    { "session_id": "s-b", "title": "B task", "updated_at_ms": 1,
+                      "workspace_id": "ws-b" }
+                ]},
+                { "kind": "terminal_sessions", "revision": 2, "data": [
+                    { "terminal_session_id": "term-a", "owner_session": "ws-a",
+                      "state": "running", "columns": 120, "rows": 40, "dropped_events": 3 },
+                    { "terminal_session_id": "term-b", "owner_session": "ws-b",
+                      "state": "exited", "columns": 90, "rows": 30, "dropped_events": 0 }
+                ]}
+            ]
+        }))
+        .expect("terminal snapshot");
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        assert_eq!(projection.terminals.len(), 2);
+        assert_eq!(projection.terminal.session_id.as_deref(), Some("term-a"));
+        assert_eq!(
+            (projection.terminal.columns, projection.terminal.rows),
+            (120, 40)
+        );
+        assert_eq!(projection.terminal.dropped_events, 3);
+        assert_eq!(
+            projection.terminal.availability,
+            TerminalAvailability::Ready
+        );
+        projection.select_session("s-b");
+        assert_eq!(projection.active_workspace_id(), Some("ws-b"));
+        assert_eq!(projection.terminal.session_id.as_deref(), Some("term-b"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Stale { .. }
+        ));
+    }
+
+    #[test]
+    fn terminal_disconnect_and_failure_are_honest_states() {
+        let mut projection = DesktopProjection::default();
+        projection.workspace_id = Some("ws-a".into());
+        projection.apply_terminal_created("ws-a".into(), "term-a".into());
+        assert!(!projection.terminal.resize_confirmed);
+        assert!(projection.apply_terminal_resize("term-a", 100, 30));
+        assert!(projection.terminal.resize_confirmed);
+        assert_eq!(
+            (projection.terminal.columns, projection.terminal.rows),
+            (100, 30)
+        );
+        assert!(projection.mark_terminal_failed("term-a", "write denied"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Failed { .. }
+        ));
+        assert!(matches!(
+            projection.terminals[0].availability,
+            TerminalAvailability::Failed { .. }
+        ));
+        projection.set_connection(ConnectionState::Disconnected {
+            reason: "socket closed".into(),
+        });
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Stale { .. }
+        ));
+        projection.set_connection(ConnectionState::Connected {
+            instance_id: "instance-1".into(),
+        });
+        assert_eq!(
+            projection.terminal.availability,
+            TerminalAvailability::Ready
+        );
+    }
+
     fn tool_started(sequence: u64, tool_call_id: &str, name: &str) -> AppEventEnvelope {
         event(
             sequence,
@@ -2947,9 +3359,7 @@ mod tests {
         projection.timeline.entries = vec![
             raw_entry(
                 1,
-                TimelineEntryKind::UserMessage {
-                    text: "go".into(),
-                },
+                TimelineEntryKind::UserMessage { text: "go".into() },
                 Some("r-1"),
             ),
             tool_entry(2, "r-1", "read_file", "succeeded"),
@@ -2969,7 +3379,9 @@ mod tests {
                     group: Some(vec![1, 2]),
                     terminal: 3,
                 },
-                TimelineRow::ToolGroup { entry_indices: vec![4] },
+                TimelineRow::ToolGroup {
+                    entry_indices: vec![4]
+                },
                 TimelineRow::RunSummary {
                     group: None,
                     terminal: 5,
@@ -2988,7 +3400,9 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                TimelineRow::ToolGroup { entry_indices: vec![0] },
+                TimelineRow::ToolGroup {
+                    entry_indices: vec![0]
+                },
                 TimelineRow::ToolGroup {
                     entry_indices: vec![1, 2],
                 },
@@ -3002,9 +3416,7 @@ mod tests {
         projection.timeline.entries = vec![
             raw_entry(
                 1,
-                TimelineEntryKind::AssistantMessage {
-                    text: "hi".into(),
-                },
+                TimelineEntryKind::AssistantMessage { text: "hi".into() },
                 Some("r-1"),
             ),
             raw_entry(

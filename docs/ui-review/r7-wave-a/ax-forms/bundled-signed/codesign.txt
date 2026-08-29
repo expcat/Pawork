@@ -1,0 +1,25 @@
+Executable=/private/tmp/pawork-r7-ax-forms.5VVn2k/Pawork AX Forms.app/Contents/MacOS/pawork-desktop
+Identifier=dev.pawork.desktop.ax-forms
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=79284 flags=0x2(adhoc) hashes=2471+3 location=embedded
+VersionPlatform=1
+VersionMin=720896
+VersionSDK=1705216
+Hash type=sha256 size=32
+CandidateCDHash sha256=4223f703f4cf04c3a6dadcae1a0e82e569535b3d
+CandidateCDHashFull sha256=4223f703f4cf04c3a6dadcae1a0e82e569535b3de500ac4ea2b6f04ca74db410
+Hash choices=sha256
+CMSDigest=4223f703f4cf04c3a6dadcae1a0e82e569535b3de500ac4ea2b6f04ca74db410
+CMSDigestType=2
+Executable Segment base=0
+Executable Segment limit=21381120
+Executable Segment flags=0x1
+Page size=16384
+CDHash=4223f703f4cf04c3a6dadcae1a0e82e569535b3d
+Signature=adhoc
+Info.plist entries=7
+TeamIdentifier=not set
+Sealed Resources version=2 rules=13 files=0
+Internal requirements count=0 size=12
+
+exit_code=0

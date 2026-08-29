@@ -1,0 +1,192 @@
+{
+  "scenario": "r6-wave-a-state-b",
+  "label": "r7-wave-a-debug-baseline",
+  "generated_at": "2026-08-29T09:53:55Z",
+  "git_head": "7c7e2197acff30dc0d1b34fc60b9ef533c72285c",
+  "phases": {
+    "r6-state-b-open": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-absent",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-size",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-header-inset",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-size",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-anchor",
+          "pass": true
+        },
+        {
+          "name": "activity-changes-heading-height",
+          "pass": true
+        },
+        {
+          "name": "activity-open-changes-height",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-column-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-present",
+          "pass": true
+        },
+        {
+          "name": "header-new-task-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-under-header",
+          "pass": true
+        },
+        {
+          "name": "activity-open-changes-press",
+          "pass": true
+        },
+        {
+          "name": "session-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-loaded",
+          "pass": true
+        }
+      ]
+    },
+    "r6-state-b-resumed": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-tab-changes-selected",
+          "pass": true
+        },
+        {
+          "name": "header-new-task-present",
+          "pass": true
+        },
+        {
+          "name": "activity-controls-absent",
+          "pass": true
+        },
+        {
+          "name": "session-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-loaded",
+          "pass": true
+        }
+      ]
+    }
+  },
+  "structural_pass": true,
+  "evidence_files": [
+    "action-press-activity-open-changes.txt",
+    "action-press-inspector-collapse.txt",
+    "action-press-inspector-toggle.txt",
+    "assert-r6-state-b-open.json",
+    "assert-r6-state-b-resumed.json",
+    "ax-tree-collapsed.txt",
+    "ax-tree-open.txt",
+    "ax-tree-resumed.txt",
+    "current.png",
+    "diff-run.txt",
+    "geometry-collapsed.txt",
+    "geometry-open.txt",
+    "geometry-resumed.txt",
+    "normalize.json",
+    "shot-activity-popover.png"
+  ]
+}
