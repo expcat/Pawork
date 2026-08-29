@@ -1,4 +1,5 @@
-//! Inspector 侧面板（R8 波 D）：顶层 Changes / Terminal / Resources 固定三页签
+//! Inspector 侧面板（R6 Wave A）：顶层 Changes / Terminal / Resources 固定三页签
+//!（默认 Changes，58px 页签条 + accent 下划线）
 //! + 各页内容。终端面板滚动维持 ScrollHandle（FollowScroll）现状，不随
 //! Timeline 改 list()；各页签滚动状态独立保留（design/README.md §8.5）。
 
@@ -15,11 +16,11 @@ use super::AppView;
 /// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
 pub(super) const TERMINAL_EMPTY_OUTPUT: &str = "Terminal output will appear here.";
 
-/// Inspector 顶层页签（固定三页；默认 Terminal 保持波 C 前的单页行为）。
+/// Inspector 顶层页签（固定三页；R6 Wave A 起默认 Changes）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum InspectorTab {
-    Changes,
     #[default]
+    Changes,
     Terminal,
     Resources,
 }
@@ -53,19 +54,37 @@ impl AppView {
         ] {
             let selected = tab == current;
             tabs = tabs.child(
-                Button::new(tab.button_id())
-                    .variant(if selected {
-                        ButtonVariant::Raised
-                    } else {
-                        ButtonVariant::Ghost
-                    })
-                    .text_size(font::SM)
+                // R6 Wave A：页签不再是 Raised/Ghost 按钮，改为 58px 条内
+                // 文本级页签，选中态 accent 下划线（与二级 56px 层次区分）。
+                div()
+                    .id(tab.button_id())
+                    .relative()
+                    .w(px(metrics::INSPECTOR_TAB_WIDTH))
+                    .h(px(metrics::INSPECTOR_TAB_HEIGHT))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .text_size(px(font::BODY))
                     .text_color(if selected {
                         dark().text.primary
                     } else {
                         dark().text.secondary
                     })
-                    .label(tab.label())
+                    .hover(move |style| style.text_color(dark().text.primary))
+                    .child(div().child(tab.label()))
+                    .when(selected, |tab| {
+                        tab.child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .w_full()
+                                .h(px(metrics::TAB_UNDERLINE_HEIGHT))
+                                .bg(dark().accent.primary),
+                        )
+                    })
                     .on_click(cx.listener(move |view, _event, _window, cx| {
                         view.select_inspector_tab(tab, cx);
                     })),
@@ -76,8 +95,9 @@ impl AppView {
             .flex_row()
             .items_center()
             .justify_between()
-            .px_2()
-            .py_1()
+            .pl_3()
+            .pr_2()
+            .h(px(metrics::INSPECTOR_TAB_HEIGHT))
             .border_b_1()
             .border_color(dark().border.subtle)
             .child(tabs)
@@ -252,10 +272,10 @@ impl AppView {
 mod tests {
     use super::*;
 
-    /// 波 C 前的唯一页是 Terminal：顶层页签默认仍为 Terminal（cmd-i 展开
-    /// 行为与旧单页面板连续）。
+    /// R6 Wave A：顶层页签默认 Changes（折叠态 Activity 摘要展开后落点
+    /// 即默认页）。
     #[test]
-    fn inspector_tab_defaults_to_terminal() {
-        assert_eq!(InspectorTab::default(), InspectorTab::Terminal);
+    fn inspector_tab_defaults_to_changes() {
+        assert_eq!(InspectorTab::default(), InspectorTab::Changes);
     }
 }

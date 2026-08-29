@@ -53,7 +53,9 @@ impl RenderOnce for Panel {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let mut panel = div().flex().flex_col().h_full().bg(dark().bg.panel);
         if let Some(width) = self.width {
-            panel = panel.w(width);
+            // 固定宽侧栏必须拒绝 flex shrink；否则 Workspace 内长文本的
+            // min-content 宽度会把真实 Inspector 挤窄，而 AX 仍报告合同宽度。
+            panel = panel.w(width).flex_none();
         }
         if self.border_left {
             panel = panel.border_l_1();

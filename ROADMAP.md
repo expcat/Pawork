@@ -11,10 +11,10 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R5 — Composer 与运行控制（Wave A / Wave B / U2 自动门禁均 🟢；仅剩 SSIM 移交 R8 的用户拍板）** |
-| 下一任务 | 用户拍板 R5 composer 区域 SSIM `≥0.99` 是否按 R3/R4 先例移交 R8；若同意，则归档 R5 并开启 R6 Wave A（任务书 [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity)）。R5 Wave B 已于 2026-08-29 收口：cargo test 129 / python 40 / warnings 15 持平 / 零 wire 变更，两轮评审问题全修复，U2 九场景 22 份断言全 PASS（证据 [docs/ui-review/r5-wave-b/](docs/ui-review/r5-wave-b/)）。Wave A 已于 2026-08-28 收口（F-09：真窗口常态总高 156→91 ∈ 88–94；Send/Cancel 同槽 32 互换；证据 [docs/ui-review/r5-wave-a/](docs/ui-review/r5-wave-a/)）。R5 composer SSIM 记录值 0.423 / 0.619；仍开放：live RunChanged 无失败原因 / 无用户消息 wire 事件的现状（乐观回显 + 重放兜底）是否接受或立 ADR 演进 wire |
+| 当前阶段 | **R6 — Inspector、Changes、Terminal 与 Activity（Wave A 🔵；render / AX / U1 🟢，Connected State A/B 证据待收口）** |
+| 下一任务 | 收口 R6 Wave A 真窗口证据：修复/绕过自动启动路径只返回递归 `AXApplication` 的 macOS AX 可发现性问题，使 GUI 进入 Connected 投影后以同一 fixture 重采 State A/B，验证默认 Changes、58/56px 两级 tab、折叠态 Header Activity 向下约 320px 且右缘对齐、摘要点击回到 Changes，再生成结构断言与 reference/current/overlay/diff。实现、GLM 只读审查整改与 132/132 定向测试已完成，现有手工截图只证明 1440 内容区 rail 288 / workspace 712 / Inspector 440 与两级 strip，不计 Connected/State B 通过；证据见 [r6-wave-a](docs/ui-review/r6-wave-a/notes.md) |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
-| 阻塞 | 无；Wave C AX 失败基线已由 ADR-042 bridge 补救，真窗口 75 节点与语义 action 证据见 [ax-bridge](docs/ui-review/wave-c/ax-bridge/) |
+| 阻塞 | R6 Wave A 自动 State A driver 两次均在 AX ready 阶段超时：`ax_trusted=true` 且窗口/host 连接存在，但外部树只返回递归 `AXApplication`、无 identifier；手工前台 GUI 又停在 Connecting（独立 `--probe` 对同 socket 成功）。在恢复 Connected + AX 可发现性前，不关闭 Wave A、不追记 State B/视觉门禁通过；详见 [证据说明](docs/ui-review/r6-wave-a/notes.md) |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
 
@@ -30,8 +30,8 @@ UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代
 | R2 | Window shell 与全局视觉系统 | 深色沉浸式 titlebar、三栏几何、字体/图标/间距/surface、StatusBar、窗口级响应式基线 | [R2 存档](docs/history.md#r2--window-shell-与全局视觉系统2026-08-27) | 🟢 |
 | R3 | TaskRail 与任务导航 | Timeline/Projects、scope、project/task、连接、新建、账户区、选择/恢复/滚动与键盘导航 | [R3 存档](docs/history.md#r3--taskrail-与任务导航2026-08-2728) | 🟢 |
 | R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | 🟢 |
-| R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R4–R6](plan/R4-R6-ui-workflows.md#r5--composer-与运行控制) | 🔵 |
-| R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | ⚪ |
+| R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R5 存档](docs/history.md#r5--composer-与运行控制2026-08-2829) | 🟢 |
+| R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | 🔵 |
 | R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | ⚪ |
 | R8 | 模拟操作全功能验收 | 全组件端到端 UI suite、三状态逐图差分、重连/后台 Run/恢复、性能与失败证据、用户视觉签字 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) | ⚪ |
 | R9 | UI 后一致性与代码债务 | 文档/Spec/断言一致、usage 幂等、依赖与注释漂移、路径内核、测试箱整理 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r9--一致性与代码债务收口) | ⚪ |

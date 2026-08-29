@@ -680,3 +680,13 @@ R4 已收口；Wave A/B 证据 [r4-wave-a](ui-review/r4-wave-a/notes.md) 与 [r4
 - **退出拍板 1（2026-08-28 用户确认）**：R4 以结构门禁与 U2 九场景为准退出（同 R2 拍板 a / R3 拍板 c）；State A/B 分区 SSIM ≥0.99 移交 R8 终局门禁，条款见 [plan/R7-R8-ui-quality-gates.md](../plan/R7-R8-ui-quality-gates.md) §3。Wave A 记录值 timeline 0.665 / header-left 0.940 / header-right 0.883 / global 0.648，主因 fixture 演示内容形状差（重塑已在 R3 拍板 c 移交，本条不另开数据任务）。仍开放：live RunChanged 无失败原因 / 无用户消息 wire 事件是否立 ADR。
 
 收口验证：`cargo test -p pawork-app --offline --lib --tests` 156/156；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 110/110；脚本 unittest 22/22；U2 r4b-6 全 PASS。未运行全 workspace gate。下一任务：R5 — Composer 与运行控制。
+
+## R5 — Composer 与运行控制（2026-08-28–29）
+
+R5 已收口；Wave A/B 证据分别见 [r5-wave-a](ui-review/r5-wave-a/notes.md) 与 [r5-wave-b](ui-review/r5-wave-b/notes.md)，任务书正文仍在 [plan/R4-R6-ui-workflows.md](../plan/R4-R6-ui-workflows.md)（R6 已开启）。
+
+- **Wave A · F-09 Composer 结构**：真窗口常态总高 156→91，进入 88–94 合同；输入区 + footer 两行结构、model/workspace/ContextMeter 与 32×32 Send/Cancel 同槽互换落地；彻除常驻提示行与幽灵 tab stop，Terminal TextInput 参数化解耦；无权威 capability 的 reasoning/附件/队列不画。State A 结构三轮 PASS，desktop 119/119。
+- **Wave B · 输入与 U2**：shift/鼠标选择、Copy/Cut/SelectAll、Undo/Redo、overflow scroll、IME composing 闸门、trim 发送、per-session 草稿与 Terminal 解耦落地；两轮评审发现的 P0–P2 均修复，含鼠标/IME 坐标映射根因（`content_bounds` 归一化）。desktop 129/129，Python 40/40，warnings 15 持平，零 wire 变更；U2 九场景 22 份断言全 PASS。
+- **退出拍板（2026-08-29）**：用户指令按 ROADMAP 开启下一任务，确认将 State A/B Composer 分区 SSIM ≥0.99 同 R3/R4 先例移交 R8。Wave A 记录值 0.423 / 0.619 只是中间态，不追认为通过；R8 须在 fixture 演示数据重塑后重采 idle/running current 并重跑终局分区门禁。
+
+收口验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 129/129；脚本 unittest 40/40；U2 九场景 22 份断言全 PASS。未运行全 workspace gate。下一任务：R6 Wave A — Inspector/Changes 层级与 Workspace Header ActivityPopover。

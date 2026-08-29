@@ -6,30 +6,22 @@ use crate::ui::theme::{dark, font, metrics};
 
 /// 底部 24px 状态行：bg.panel + 顶描边 + XS 次要文字。
 ///
-/// F-13 布局：信息串（RunStatusBar）在行内绝对居中，不随右侧触发器宽度
-/// 偏移；流式子元素（Inspector trigger 等）靠右排列。高度与描边不动。
+/// F-13 布局：信息串（RunStatusBar）在行内绝对居中。R6 Wave A 已把
+/// Inspector 折叠态 Activity 触发器迁至 Workspace Header，StatusBar
+/// 不再承载动作。高度与描边不动。
 #[derive(IntoElement)]
 pub struct StatusBar {
     centered: Option<AnyElement>,
-    children: Vec<AnyElement>,
 }
 
 impl StatusBar {
     pub fn new() -> Self {
-        Self {
-            centered: None,
-            children: Vec::new(),
-        }
+        Self { centered: None }
     }
 
     /// 行内绝对居中的信息串（忽略右侧触发器宽度，保持真居中）。
     pub fn centered(mut self, child: impl IntoElement) -> Self {
         self.centered = Some(child.into_any_element());
-        self
-    }
-
-    pub fn child(mut self, child: impl IntoElement) -> Self {
-        self.children.push(child.into_any_element());
         self
     }
 }
@@ -71,6 +63,5 @@ impl RenderOnce for StatusBar {
                 ),
                 None => bar,
             })
-            .children(self.children)
     }
 }

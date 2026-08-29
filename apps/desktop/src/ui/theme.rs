@@ -197,7 +197,7 @@ pub mod font {
 pub mod metrics {
     /// 1：「···」条目菜单触发器的水平内边距（R8 波 B）。
     pub const PADDING_XS: f32 = 1.0;
-    /// 2：ghost 文本按钮（Inspector 开合 / 状态栏开合）的水平内边距（R8 波 B）。
+    /// 2：ghost 文本按钮（Inspector 开合 / Header 动作）的水平内边距（R8 波 B）。
     pub const PADDING_SM: f32 = 2.0;
     // ── TaskRail 几何（R3 Wave A，state-a/c 量图取档；render 与 AX 树共用单一来源）──
     /// 20：rail 内容左右统一 inset（量图 16–22 区间取值，标题 / scope / 右缘锚点统一）。
@@ -337,6 +337,19 @@ pub mod metrics {
     pub const SCROLL_BOTTOM_SLACK: f32 = 16.0;
     /// 320：ActivityPopover 宽度（design/README.md §8.5）。
     pub const ACTIVITY_POPOVER_WIDTH: f32 = 320.0;
+    /// 320：ActivityPopover 外框目标高度（R6 Wave A State B 基准约 347px；
+    /// Agent 状态能力尚未进入 S11，因此本波保留诚实空白而不伪造行）。
+    pub const ACTIVITY_POPOVER_HEIGHT: f32 = 320.0;
+    /// 58：Inspector 顶层页签条高度（R6 Wave A 两级页签）。
+    pub const INSPECTOR_TAB_HEIGHT: f32 = 58.0;
+    /// 100：Inspector 顶层单个页签的固定命中宽度。
+    pub const INSPECTOR_TAB_WIDTH: f32 = 100.0;
+    /// 56：Changes 二级页签条高度（与顶层 58 形成层次差）。
+    pub const CHANGES_TAB_HEIGHT: f32 = 56.0;
+    /// 96：Changes 二级单个页签的固定命中宽度。
+    pub const CHANGES_TAB_WIDTH: f32 = 96.0;
+    /// 2：选中页签的 accent 下划线厚度。
+    pub const TAB_UNDERLINE_HEIGHT: f32 = 2.0;
     /// 200：Changes · Files 文件清单的最大高度（超出滚动，下方留给 DiffView）。
     pub const CHANGES_FILE_LIST_MAX_HEIGHT: f32 = 200.0;
     /// 88：Changes · Summary 行标签列宽。
@@ -492,6 +505,19 @@ mod tests {
         assert_eq!(metrics::SUMMARY_BUTTON_RADIUS, 8.0);
         assert_eq!(metrics::SUMMARY_BUTTON_GAP, 20.0);
         assert_eq!(metrics::TIMELINE_FOOTER_GAP, 24.0);
+    }
+
+    /// R6 Wave A 两级页签 / ActivityPopover 合同：顶层 58、二级 56、
+    /// accent 下划线 2px；折叠态 Activity 自 Workspace Header 向下约 320px。
+    #[test]
+    fn inspector_tabs_and_activity_popover_constants_match_frozen_tiers() {
+        assert_eq!(metrics::INSPECTOR_TAB_HEIGHT, 58.0);
+        assert_eq!(metrics::INSPECTOR_TAB_WIDTH, 100.0);
+        assert_eq!(metrics::CHANGES_TAB_HEIGHT, 56.0);
+        assert_eq!(metrics::CHANGES_TAB_WIDTH, 96.0);
+        assert_eq!(metrics::TAB_UNDERLINE_HEIGHT, 2.0);
+        assert_eq!(metrics::ACTIVITY_POPOVER_WIDTH, 320.0);
+        assert_eq!(metrics::ACTIVITY_POPOVER_HEIGHT, 320.0);
     }
 
     /// R5 Wave A Composer 几何合同（design/README.md §2：常态总高 88–94，

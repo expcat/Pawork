@@ -26,9 +26,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    AnyView, App, AsyncWindowContext, ClickEvent, Context, Entity, FocusHandle, Focusable,
-    FontWeight, KeyBinding, KeyDownEvent, ListAlignment, ListState, Pixels, Point, Rgba, Render,
-    ScrollHandle, SharedString, Window, actions, div, prelude::*, px,
+    actions, div, point, prelude::*, px, AnyView, App, AsyncWindowContext, ClickEvent, Context,
+    Corner, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent, ListAlignment,
+    ListState, Pixels, Point, Render, Rgba, ScrollHandle, SharedString, Window,
 };
 use pawork_client::AppEvent;
 
@@ -146,7 +146,8 @@ enum MenuKind {
     Entry(String),
     /// 无触发器：All projects 下新建任务的条件确认浮层。
     WorkspaceConfirm,
-    /// Inspector 折叠态的 ActivityPopover（StatusBar Inspector 触发器弹出）。
+    /// Inspector 折叠态的 ActivityPopover（Workspace Header Activity
+    /// 触发器弹出，R6 Wave A 自 StatusBar 迁入）。
     Activity,
 }
 
@@ -168,7 +169,11 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("ctrl-v", Paste, Some("TextInput")),
         KeyBinding::new("shift-left", text_input::SelectLeft, Some("TextInput")),
         KeyBinding::new("shift-right", text_input::SelectRight, Some("TextInput")),
-        KeyBinding::new("shift-home", text_input::SelectToLineStart, Some("TextInput")),
+        KeyBinding::new(
+            "shift-home",
+            text_input::SelectToLineStart,
+            Some("TextInput"),
+        ),
         KeyBinding::new("shift-end", text_input::SelectToLineEnd, Some("TextInput")),
         KeyBinding::new("cmd-a", text_input::SelectAll, Some("TextInput")),
         KeyBinding::new("ctrl-a", text_input::SelectAll, Some("TextInput")),
@@ -191,6 +196,16 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-alt-down", TaskCycleDown, Some("AppView")),
         KeyBinding::new("cmd-alt-n", NextNeedsAttention, Some("AppView")),
     ]);
+}
+
+/// Workspace Header 的 Activity 触发器 / 浮层可见性（R6 Wave A · F-12）：
+/// 触发器仅 Inspector 折叠态出现；浮层再叠加「菜单打开」条件。render 与
+/// AX 树（accessibility/app.rs header_ax）同用此口径。
+pub(super) fn activity_header_visibility(
+    inspector_open: bool,
+    activity_menu_open: bool,
+) -> (bool, bool) {
+    (!inspector_open, !inspector_open && activity_menu_open)
 }
 
 /// macOS 上 NSWindow 在 sendEvent 层把裸 Tab / Shift-Tab 送进 key-view
@@ -285,13 +300,11 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
     /// 本地监听器在 AppKit C 调用栈上执行，禁止 unwind 穿越：兜底捕获
     /// 并落日志，避免 panic in a function that cannot unwind 直接 abort。
     unsafe extern "C" fn tab_monitor_invoke(_block: *mut TabMonitorBlock, event: id) -> id {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            dispatch_tab_event(event)
-        }))
-        .unwrap_or_else(|panic| {
-            eprintln!("[tab-monitor] dispatch failed: {panic:?}");
-            event
-        })
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch_tab_event(event)))
+            .unwrap_or_else(|panic| {
+                eprintln!("[tab-monitor] dispatch failed: {panic:?}");
+                event
+            })
     }
 
     static INSTALL: Once = Once::new();
@@ -418,15 +431,14 @@ impl AppView {
     ) -> Self {
         let controller = Arc::new(DesktopController::new(platform.handle()));
         let text_input = cx.new(|cx| TextInput::new(cx));
-        let terminal_input =
-            cx.new(|cx| {
-                TextInput::with_placeholder("Terminal input… (Enter to write)", cx)
-                    .id("terminal-input")
-                    .height_clamp(
-                        crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT,
-                        crate::ui::theme::metrics::COMPOSER_MAX_HEIGHT,
-                    )
-            });
+        let terminal_input = cx.new(|cx| {
+            TextInput::with_placeholder("Terminal input… (Enter to write)", cx)
+                .id("terminal-input")
+                .height_clamp(
+                    crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                    crate::ui::theme::metrics::COMPOSER_MAX_HEIGHT,
+                )
+        });
         let mut view = Self {
             _platform: platform,
             controller,
@@ -501,7 +513,7 @@ impl AppView {
             .focus_handle(cx)
             .tab_stop(true)
             .tab_index(COMPOSER_TAB_INDEX);
-            view.start_connect(cx);
+        view.start_connect(cx);
         view
     }
 
@@ -511,11 +523,13 @@ impl AppView {
     /// 显示（wire WorkspaceSummary 无 branch，不伪造）；终态只显示 live
     /// 可派生态（Running / Needs input / Blocked），空闲会话隐藏该项
     /// （wire 无终态字段，不画 Completed 绿点）。
-    fn workspace_header_element(&mut self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let title = self
-            .projection
-            .workspace_header_title()
-            .map(str::to_string);
+    fn workspace_header_element(
+        &mut self,
+        activity_trigger_visible: bool,
+        activity_popover_open: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let title = self.projection.workspace_header_title().map(str::to_string);
         let branch = self.header_branch();
         let status = self.projection.workspace_header_status();
         let can_create = self.can_create_task();
@@ -539,12 +553,43 @@ impl AppView {
             .label("+")
             .tooltip(new_task_tooltip);
         if can_create {
-            new_task = new_task.on_click(
-                cx.listener(|view, _event, window, cx| {
-                    view.on_new_session(window, cx);
-                }),
-            );
+            new_task = new_task.on_click(cx.listener(|view, _event, window, cx| {
+                view.on_new_session(window, cx);
+            }));
         }
+        // R6 Wave A（F-12）：折叠态 Activity 触发器自 StatusBar 迁入 Header，
+        // 占用最右动作槽并向下弹出 ActivityPopover；展开态该槽恢复 New task，
+        // 折叠仍走 Inspector 面板内的 inspector-collapse。
+        let activity_trigger = activity_trigger_visible.then(|| {
+            let trigger = Button::new("inspector-toggle")
+                .variant(ButtonVariant::Ghost)
+                .bordered()
+                .padding(ButtonPadding::None)
+                .width(px(metrics::HEADER_ACTION_WIDTH))
+                .height(px(metrics::HEADER_ACTION_HEIGHT))
+                .center()
+                .vcenter()
+                .radius(metrics::HEADER_ACTION_RADIUS)
+                .text_size(font::BODY)
+                .text_color(dark().text.emphasis)
+                .label("⋯")
+                .tooltip("Activity")
+                .on_click(cx.listener(|view, event, _window, cx| {
+                    let down = Self::click_down_position(event);
+                    view.toggle_menu(MenuKind::Activity, down, cx);
+                }));
+            let mut dropdown = Dropdown::new(trigger).panel_anchor(
+                Corner::TopRight,
+                point(
+                    px(metrics::HEADER_ACTION_WIDTH),
+                    px(metrics::HEADER_ACTION_HEIGHT),
+                ),
+            );
+            if activity_popover_open {
+                dropdown = dropdown.panel(self.activity_popover_element(cx));
+            }
+            dropdown
+        });
         div()
             .id("workspace-header")
             .debug_selector(|| "workspace-header".into())
@@ -610,7 +655,10 @@ impl AppView {
                         )
                     }),
             )
-            .child(new_task)
+            .when(activity_trigger_visible, |header| {
+                header.when_some(activity_trigger, |header, trigger| header.child(trigger))
+            })
+            .when(!activity_trigger_visible, |header| header.child(new_task))
     }
 
     /// Header branch 诚实数据源：host diff_* 固定解析 latest 会话，仅当
@@ -823,7 +871,11 @@ impl AppView {
                 self.inspector_open = true;
                 self.refresh_open_inspector_tab(cx);
             }
-            ControllerEvent::MessageSent { session_id, run_id, text } => {
+            ControllerEvent::MessageSent {
+                session_id,
+                run_id,
+                text,
+            } => {
                 let now = now_unix_ms();
                 self.projection.note_session_run(&session_id, &run_id, now);
                 // wire 无用户消息事件：发送回执即本地乐观上屏（重放后由
@@ -1087,7 +1139,6 @@ impl AppView {
     fn note_button_key_activate(&mut self, button_id: &str) {
         self.pending_button_key_activate = Some(button_id.to_string());
     }
-
 
     /// 触发器 toggle：开新关旧（单一 Option<MenuKind>，修互斥不对称），
     /// 再点同一触发器关闭。外点关闭先行触发且 click 按下位置与标记相同
@@ -2005,11 +2056,14 @@ impl Render for AppView {
         // ActivityPopover 抽屉；偏好值保留，加宽后自动恢复（shell_layout）。
         let shell = shell_layout::resolve(window.viewport_size().width, self.inspector_open);
         let inspector_open = shell.inspector_open;
-        let activity_popover_open =
-            !inspector_open && matches!(self.open_menu, Some(MenuKind::Activity));
+        let (activity_trigger_visible, activity_popover_open) = activity_header_visibility(
+            inspector_open,
+            matches!(self.open_menu, Some(MenuKind::Activity)),
+        );
 
         let sidebar = self.sidebar_element(px(shell.rail_width), cx);
-        let header = self.workspace_header_element(cx);
+        let header =
+            self.workspace_header_element(activity_trigger_visible, activity_popover_open, cx);
         let timeline_area = self.timeline_area(cx);
         let composer = self.composer_element(cx);
         let workspace = div()
@@ -2018,11 +2072,12 @@ impl Render for AppView {
             .flex()
             .flex_col()
             .flex_1()
+            .min_w_0()
             .child(header)
             .child(timeline_area)
             .child(composer);
 
-        let mut main = div().flex().flex_row().flex_1().child(workspace);
+        let mut main = div().flex().flex_row().flex_1().min_w_0().child(workspace);
         if inspector_open {
             main = main.child(
                 div()
@@ -2032,33 +2087,6 @@ impl Render for AppView {
                     .child(self.inspector_element(connected, cx)),
             );
         }
-        // Inspector 展开时触发器直接折叠；折叠时同一触发器弹出
-        // ActivityPopover（§8.5），摘要行点击才展开并定位 Changes。
-        let inspector_trigger = if inspector_open {
-            Button::new("inspector-toggle")
-                .variant(ButtonVariant::Ghost)
-                .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                .label("Hide inspector")
-                .on_click(cx.listener(|view, _event, window, cx| {
-                    view.on_toggle_inspector(window, cx);
-                }))
-                .into_any_element()
-        } else {
-            let trigger = Button::new("inspector-toggle")
-                .variant(ButtonVariant::Ghost)
-                .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                .label("Inspector")
-                .on_click(cx.listener(|view, event, _window, cx| {
-                    let down = Self::click_down_position(event);
-                    view.toggle_menu(MenuKind::Activity, down, cx);
-                }));
-            let mut dropdown = Dropdown::new(trigger);
-            if activity_popover_open {
-                dropdown = dropdown.panel(self.activity_popover_element(cx));
-            }
-            dropdown.into_any_element()
-        };
-
         div()
             .key_context("AppView")
             .track_focus(&self.focus_handle)
@@ -2097,13 +2125,17 @@ impl Render for AppView {
                     .child(sidebar),
             )
             .child(
-                div().flex().flex_col().flex_1().child(main).child(
-                    StatusBar::new()
-                        // F-13：信息串居中；Inspector trigger 留在
-                        // 最右（F-12 迁移到 Workspace Header 后再撤）。
-                        .centered(Badge::new(run_status))
-                        .child(inspector_trigger),
-                ),
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(main)
+                    .child(
+                        // F-13：信息串居中；Inspector/Activity 触发器已随
+                        // F-12（R6 Wave A）迁至 Workspace Header。
+                        StatusBar::new().centered(Badge::new(run_status)),
+                    ),
             )
     }
 }
@@ -2135,22 +2167,34 @@ mod tests {
         assert!(actions.contains(&"ApproveForRun"));
         assert!(actions.contains(&"Deny"));
         assert!(actions.contains(&"CancelRun"));
-        assert!(
-            APP_VIEW_KEYBINDINGS
-                .iter()
-                .any(|(key, action)| *key == "cmd-." && *action == "CancelRun")
-        );
-        assert!(
-            APP_VIEW_KEYBINDINGS
-                .iter()
-                .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce")
-        );
+        assert!(APP_VIEW_KEYBINDINGS
+            .iter()
+            .any(|(key, action)| *key == "cmd-." && *action == "CancelRun"));
+        assert!(APP_VIEW_KEYBINDINGS
+            .iter()
+            .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce"));
+    }
+
+    /// R6 Wave A（F-12）：折叠态 Activity 触发器随 Workspace Header；浮层
+    /// 仅在折叠且菜单打开时出现；展开态无触发器（折叠走 inspector-collapse）。
+    #[test]
+    fn activity_header_visibility_follows_inspector_state() {
+        assert_eq!(activity_header_visibility(true, false), (false, false));
+        assert_eq!(activity_header_visibility(true, true), (false, false));
+        assert_eq!(activity_header_visibility(false, false), (true, false));
+        assert_eq!(activity_header_visibility(false, true), (true, true));
     }
 
     #[test]
     fn message_sent_clears_visible_composer_only_for_active_session() {
-        assert!(AppView::message_sent_clears_visible_composer(Some("s-a"), "s-a"));
-        assert!(!AppView::message_sent_clears_visible_composer(Some("s-a"), "s-b"));
+        assert!(AppView::message_sent_clears_visible_composer(
+            Some("s-a"),
+            "s-a"
+        ));
+        assert!(!AppView::message_sent_clears_visible_composer(
+            Some("s-a"),
+            "s-b"
+        ));
         assert!(!AppView::message_sent_clears_visible_composer(None, "s-b"));
     }
 
@@ -2178,9 +2222,8 @@ mod tests {
     fn composer_action_slot_is_single_tab_stop() {
         assert!(MAIN_PATH_TAB_STOP_IDS.contains(&"composer-action"));
         assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 32.0);
-        let height = AppView::composer_panel_height(
-            crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT,
-        );
+        let height =
+            AppView::composer_panel_height(crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT);
         assert!(height <= 94.0 && height >= 88.0);
     }
 

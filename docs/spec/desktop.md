@@ -25,7 +25,7 @@ flowchart LR
 | TaskRail | 会话/任务条目、新任务、选中态、长标题截断 | 当前固定 288px；1080–1279 收窄与 Inspector 折叠恢复为 R7/R8 必过门禁。 |
 | Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件须在 R4/R7/R8 重验。 |
 | Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。IME、粘贴、草稿与所有输入态纳入 R5/R8。 |
-| Inspector / Changes | Files、Summary、DiffView、ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
+| Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、流式输出 | 创建需 Policy；安全响应字段尚无完整说明渲染。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
 
@@ -59,16 +59,16 @@ flowchart LR
 | DESK-05 | Fork 只在 reducer 标记的闭合 Run 边界开放，动作入口再次校验。 | 已实现。 |
 | DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 生产逻辑已实现；R7/R8 覆盖全部菜单、锚点、键盘和滚轮边界。 |
 | DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | R5/R8 待真实 IME、paste 与系统级输入验收。 |
-| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 生产入口已实现；R6/R8 覆盖真实 diff、横滚、PTY、Resources 与恢复。 |
+| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | R6 Wave A 已落地默认 Changes、58/56px 两级 tab 与 Header Activity；R6 Wave B/R8 继续覆盖真实 diff、横滚、PTY、Resources 与恢复。 |
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 生产逻辑已实现；R8 待真 Host/Desktop 生命周期验收。 |
-| DESK-10 | 1080×720 下 Composer、状态栏和 Inspector 触发器仍可用。 | 当前未通过完整门禁；R7/R8 必须覆盖 Connected 与边界状态。 |
+| DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 当前未通过完整门禁；R7/R8 必须覆盖 Connected 与边界状态。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现并通过真窗口语义 action；全组件 VoiceOver、动态状态与 Windows/Linux 平台实现仍待 R7/R8。 |
 
 ## 5. 键盘、IME 与可访问性
 
 最低验收要求：
 
-- Tab 顺序覆盖 TaskRail、Timeline 操作、Composer、Inspector 触发器和当前页主要控件；
+- Tab 顺序覆盖 TaskRail、Timeline 操作、Composer、Inspector/Header Activity 触发器和当前页主要控件；
 - 焦点环清晰；hover 不是唯一状态表达；错误、审批和连接状态不只靠颜色；
 - Escape 关闭菜单且不吞掉 Composer 的其他键盘语义；Enter/Shift+Enter 与 IME composition 明确区分；
 - 菜单支持键盘到达、选择与关闭；长标题以 truncate + 可辨识上下文呈现；

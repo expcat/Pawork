@@ -3,28 +3,80 @@
 use gpui::{App, Context, Focusable, Window};
 
 use crate::projection::{
-    ConnectionState, DateBucket, ForkBoundary, ModelEntry, SessionLiveStatus, TaskRailGrouping,
-    TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, TimelineRow, UNASSIGNED_PROJECT,
-    run_footer_label, run_summary_texts,
+    run_footer_label, run_summary_texts, ConnectionState, DateBucket, ForkBoundary, ModelEntry,
+    SessionLiveStatus, TaskRailGrouping, TaskRailProjectGroup, TimelineEntry, TimelineEntryKind,
+    TimelineRow, UNASSIGNED_PROJECT,
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
 use crate::ui::changes::ChangesTab;
+use crate::ui::components::dropdown::ANCHOR_GAP_Y;
 use crate::ui::inspector::InspectorTab;
 use crate::ui::inspector::TERMINAL_EMPTY_OUTPUT;
 use crate::ui::shell_layout;
 use crate::ui::theme::metrics;
 use crate::ui::timeline_entry::display_time;
 use crate::ui::{
-    AppView, MenuKind, WORKSPACE_EMPTY_HINT, rail_project_occurrence_key, rail_session_focus_key,
-    timeline,
+    activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key, timeline,
+    AppView, MenuKind, WORKSPACE_EMPTY_HINT,
 };
 
 const PAD: f32 = 8.0;
 const CONTROL_HEIGHT: f32 = 28.0;
 const ROW_HEIGHT: f32 = 32.0;
 const TIMELINE_ROW_HEIGHT: f32 = 52.0;
-const INSPECTOR_HEADER_HEIGHT: f32 = 36.0;
+const ACTIVITY_CONTENT_INSET_X: f32 = 20.0;
+const ACTIVITY_HEADING_OFFSET_Y: f32 = 50.0;
+const ACTIVITY_SUMMARY_OFFSET_Y: f32 = 28.0;
+const ACTIVITY_HEADING_HEIGHT: f32 = 20.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ActivityPopoverAxGeometry {
+    frame: AxRect,
+    heading: AxRect,
+    open_changes: AxRect,
+}
+
+fn header_action_ax_rect(frame: AxRect) -> AxRect {
+    let content_top = frame.y + metrics::HEADER_SAFE_STRIP;
+    let content_height = (frame.height - metrics::HEADER_SAFE_STRIP).max(0.0);
+    AxRect::new(
+        (frame.x + frame.width - metrics::HEADER_INSET_RIGHT - metrics::HEADER_ACTION_WIDTH)
+            .max(frame.x),
+        content_top + ((content_height - metrics::HEADER_ACTION_HEIGHT) / 2.0).max(0.0),
+        metrics::HEADER_ACTION_WIDTH,
+        metrics::HEADER_ACTION_HEIGHT,
+    )
+}
+
+fn activity_popover_ax_geometry(
+    header_frame: AxRect,
+    trigger: AxRect,
+) -> ActivityPopoverAxGeometry {
+    let frame = AxRect::new(
+        (trigger.x + trigger.width - metrics::ACTIVITY_POPOVER_WIDTH).max(header_frame.x),
+        trigger.y + trigger.height + ANCHOR_GAP_Y,
+        metrics::ACTIVITY_POPOVER_WIDTH,
+        metrics::ACTIVITY_POPOVER_HEIGHT,
+    );
+    let heading = AxRect::new(
+        frame.x + ACTIVITY_CONTENT_INSET_X,
+        frame.y + ACTIVITY_HEADING_OFFSET_Y,
+        (frame.width - 2.0 * ACTIVITY_CONTENT_INSET_X).max(0.0),
+        ACTIVITY_HEADING_HEIGHT,
+    );
+    let open_changes = AxRect::new(
+        heading.x,
+        heading.y + ACTIVITY_SUMMARY_OFFSET_Y,
+        heading.width,
+        ROW_HEIGHT,
+    );
+    ActivityPopoverAxGeometry {
+        frame,
+        heading,
+        open_changes,
+    }
+}
 
 impl AppView {
     pub(crate) fn install_accessibility(
@@ -121,8 +173,9 @@ impl AppView {
             "approve-for-run" => self.on_approve("approve_for_run", cx),
             "approve-deny" => self.on_approve("deny", cx),
             "timeline-back-to-bottom" => self.timeline_jump_to_bottom(),
-            // Inspector 折叠态触发器的可见语义是弹出 ActivityPopover（mod.rs
-            // status bar），摘要行才展开 Inspector；展开态由 inspector-collapse 收起。
+            // Inspector 折叠态触发器的可见语义是弹出 ActivityPopover（R6
+            // Wave A 起位于 Workspace Header），摘要行才展开 Inspector；
+            // 展开态由 inspector-collapse 收起。
             "inspector-toggle" => self.toggle_menu(MenuKind::Activity, None, cx),
             "inspector-collapse" => self.on_toggle_inspector(window, cx),
             "inspector-tab-changes" => self.select_inspector_tab(InspectorTab::Changes, cx),
@@ -289,6 +342,7 @@ impl AppView {
                 window,
                 cx,
                 AxRect::new(workspace_x, 0.0, workspace_width, content_height),
+                shell.inspector_open,
             ));
         if shell.inspector_open {
             tree = tree.child(self.inspector_ax(
@@ -303,15 +357,12 @@ impl AppView {
             ));
         }
         // StatusBar 视觉上不覆盖左栏账户区；AX frame 与 render 同源。
-        tree.child(self.status_ax(
-            AxRect::new(
-                sidebar_width,
-                content_height,
-                (width - sidebar_width).max(0.0),
-                metrics::STATUS_BAR_HEIGHT,
-            ),
-            shell.inspector_open,
-        ))
+        tree.child(self.status_ax(AxRect::new(
+            sidebar_width,
+            content_height,
+            (width - sidebar_width).max(0.0),
+            metrics::STATUS_BAR_HEIGHT,
+        )))
     }
 
     fn sidebar_ax(&self, window: &Window, frame: AxRect) -> AxNode {
@@ -625,22 +676,20 @@ impl AppView {
         let key = project_key(project.workspace_id.as_deref());
         let expanded = !self.collapsed_projects.contains(&key);
         let header_focus_key = rail_project_occurrence_key("project", bucket, &key);
-        let mut nodes = vec![
-            AxNode::new(
-                rail_project_identifier(bucket, &key),
-                AxRole::Button,
-                project.name.clone(),
-                AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
-            )
-            .value(format!("{} tasks", project.task_count()))
-            .description(if expanded { "Expanded" } else { "Collapsed" })
-            .focused(
-                self.rail_row_focus
-                    .get(&header_focus_key)
-                    .is_some_and(|handle| handle.is_focused(window)),
-            )
-            .action(AxAction::Press),
-        ];
+        let mut nodes = vec![AxNode::new(
+            rail_project_identifier(bucket, &key),
+            AxRole::Button,
+            project.name.clone(),
+            AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
+        )
+        .value(format!("{} tasks", project.task_count()))
+        .description(if expanded { "Expanded" } else { "Collapsed" })
+        .focused(
+            self.rail_row_focus
+                .get(&header_focus_key)
+                .is_some_and(|handle| handle.is_focused(window)),
+        )
+        .action(AxAction::Press)];
         if !project.is_unassigned() && project.workspace_id.is_some() {
             let add_focus_key = rail_project_occurrence_key("project-add", bucket, &key);
             nodes.push(
@@ -702,7 +751,13 @@ impl AppView {
         (nodes, consumed)
     }
 
-    fn workspace_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
+    fn workspace_ax(
+        &self,
+        window: &Window,
+        cx: &App,
+        frame: AxRect,
+        inspector_open: bool,
+    ) -> AxNode {
         let input_height = (f32::from(window.line_height())
             * self.text_input.read(cx).visual_line_count() as f32
             + metrics::COMPOSER_TEXT_INSET)
@@ -714,12 +769,10 @@ impl AppView {
         let header_height = metrics::HEADER_HEIGHT.min(frame.height);
         let timeline_height = (frame.height - composer_height - header_height).max(0.0);
         AxNode::new("workspace", AxRole::Group, "Workspace", frame)
-            .child(self.header_ax(AxRect::new(
-                frame.x,
-                frame.y,
-                frame.width,
-                header_height,
-            )))
+            .child(self.header_ax(
+                AxRect::new(frame.x, frame.y, frame.width, header_height),
+                inspector_open,
+            ))
             .child(self.timeline_ax(AxRect::new(
                 frame.x,
                 frame.y + header_height,
@@ -741,17 +794,12 @@ impl AppView {
     /// F-05 Header 语义树（与 render 同源谓词 / metrics）：标题 / branch /
     /// live 终态 / 新建任务按钮。各项可见条件与 render 完全一致（无数据
     /// 诚实隐藏；几何共享 HEADER_* 常量，文本宽度为近似值）。
-    fn header_ax(&self, frame: AxRect) -> AxNode {
+    fn header_ax(&self, frame: AxRect, inspector_open: bool) -> AxNode {
         let content_top = frame.y + metrics::HEADER_SAFE_STRIP;
         let content_height = (frame.height - metrics::HEADER_SAFE_STRIP).max(0.0);
         let row_height = metrics::HEADER_STATUS_DOT_SIZE + 14.0;
         let row_y = content_top + ((content_height - row_height) / 2.0).max(0.0);
-        let mut header = AxNode::new(
-            "workspace-header",
-            AxRole::Group,
-            "Workspace header",
-            frame,
-        );
+        let mut header = AxNode::new("workspace-header", AxRole::Group, "Workspace header", frame);
         let mut x = frame.x + metrics::TIMELINE_CONTENT_INSET;
         if let Some(title) = self.projection.workspace_header_title() {
             let width = 340.0_f32.min((frame.x + frame.width - x).max(0.0));
@@ -788,27 +836,54 @@ impl AppView {
                 .description("Live status"),
             );
         }
-        let action_x = (frame.x + frame.width
-            - metrics::HEADER_INSET_RIGHT
-            - metrics::HEADER_ACTION_WIDTH)
-            .max(frame.x);
-        let action_y =
-            content_top + ((content_height - metrics::HEADER_ACTION_HEIGHT) / 2.0).max(0.0);
-        header.child(
-            AxNode::new(
-                "header-new-task",
-                AxRole::Button,
-                "New task",
-                AxRect::new(
-                    action_x,
-                    action_y,
-                    metrics::HEADER_ACTION_WIDTH,
-                    metrics::HEADER_ACTION_HEIGHT,
-                ),
+        let action = header_action_ax_rect(frame);
+        // R6 Wave A（F-12）：与 render 同用 activity_header_visibility 口径；
+        // 折叠态 Activity 占 Header 最右动作槽，浮层右缘与触发器右缘对齐；
+        // 展开态该槽恢复 New task。
+        let (trigger_visible, popover_visible) = activity_header_visibility(
+            inspector_open,
+            matches!(self.open_menu, Some(MenuKind::Activity)),
+        );
+        if trigger_visible {
+            header = header.child(
+                AxNode::new("inspector-toggle", AxRole::Button, "Activity", action)
+                    .action(AxAction::Press),
+            );
+            if popover_visible {
+                let geometry = activity_popover_ax_geometry(frame, action);
+                header = header.child(
+                    AxNode::new(
+                        "activity-popover",
+                        AxRole::Group,
+                        "Activity",
+                        geometry.frame,
+                    )
+                    .child(AxNode::new(
+                        "activity-changes-heading",
+                        AxRole::StaticText,
+                        "Changes",
+                        geometry.heading,
+                    ))
+                    .child(
+                        AxNode::new(
+                            "activity-open-changes",
+                            AxRole::Button,
+                            "Open changes",
+                            geometry.open_changes,
+                        )
+                        .value(self.changes.activity_summary())
+                        .action(AxAction::Press),
+                    ),
+                );
+            }
+            header
+        } else {
+            header.child(
+                AxNode::new("header-new-task", AxRole::Button, "New task", action)
+                    .enabled(self.can_create_task())
+                    .action(AxAction::Press),
             )
-            .enabled(self.can_create_task())
-            .action(AxAction::Press),
-        )
+        }
     }
 
     fn timeline_ax(&self, frame: AxRect) -> AxNode {
@@ -987,12 +1062,7 @@ impl AppView {
                                 dynamic_identifier("tool-row", &entry.event_id),
                                 AxRole::ListItem,
                                 format!("Tool · {name}"),
-                                AxRect::new(
-                                    rect.x,
-                                    y,
-                                    rect.width,
-                                    metrics::TOOL_ROW_HEIGHT,
-                                ),
+                                AxRect::new(rect.x, y, rect.width, metrics::TOOL_ROW_HEIGHT),
                             )
                             .value(timeline::tool_status_label(status))
                             .description(detail.clone().unwrap_or_default()),
@@ -1012,8 +1082,7 @@ impl AppView {
                     )
                     .description(description),
                 );
-                let review_enabled = terminal_entry.fork_boundary
-                    == Some(ForkBoundary::Completed)
+                let review_enabled = terminal_entry.fork_boundary == Some(ForkBoundary::Completed)
                     && self.changes_available_for_active();
                 region = region.child(
                     AxNode::new(
@@ -1034,13 +1103,13 @@ impl AppView {
                 if let Some(label) = run_footer_label(terminal_entry) {
                     region = region.child(AxNode::new(
                         dynamic_identifier("run-footer", &terminal_entry.event_id),
-                    AxRole::StaticText,
-                    format!(
-                        "{label} · {}",
-                        display_time(&terminal_entry.timestamp, now_ms)
-                    ),
-                    AxRect::new(rect.x, y, rect.width, ROW_HEIGHT),
-                ));
+                        AxRole::StaticText,
+                        format!(
+                            "{label} · {}",
+                            display_time(&terminal_entry.timestamp, now_ms)
+                        ),
+                        AxRect::new(rect.x, y, rect.width, ROW_HEIGHT),
+                    ));
                 }
                 // 终态条目保留「···」fork 菜单语义（identifier 冻结）。
                 let menu_row = AxRect::new(
@@ -1090,12 +1159,7 @@ impl AppView {
     }
 
     /// 消息 / 错误 / 中间相位条目节点（identifier 与迁移前一致）。
-    fn timeline_entry_ax(
-        &self,
-        entry: &TimelineEntry,
-        row: AxRect,
-        with_menu: bool,
-    ) -> AxNode {
+    fn timeline_entry_ax(&self, entry: &TimelineEntry, row: AxRect, with_menu: bool) -> AxNode {
         let now_ms = crate::ui::now_unix_ms();
         let (label, value) = timeline_accessible_text(entry);
         let mut node = AxNode::new(
@@ -1151,7 +1215,8 @@ impl AppView {
         let pad = metrics::COMPOSER_PAD;
         let input_y = frame.y + pad;
         let footer_y = frame.y + frame.height - pad - metrics::COMPOSER_SEND_SIZE;
-        let input_height = (footer_y - metrics::COMPOSER_GAP - input_y).max(metrics::COMPOSER_INPUT_MIN_HEIGHT);
+        let input_height =
+            (footer_y - metrics::COMPOSER_GAP - input_y).max(metrics::COMPOSER_INPUT_MIN_HEIGHT);
         let action_x = frame.x + frame.width - pad - metrics::COMPOSER_SEND_SIZE;
         let input_width = (action_x - pad - (frame.x + pad)).max(0.0);
         let running = self.projection.active_run_id.is_some();
@@ -1231,7 +1296,12 @@ impl AppView {
                 "model-menu",
                 AxRole::Group,
                 "Models",
-                AxRect::new(frame.x + pad, footer_y + metrics::COMPOSER_SEND_SIZE, 260.0, 240.0),
+                AxRect::new(
+                    frame.x + pad,
+                    footer_y + metrics::COMPOSER_SEND_SIZE,
+                    260.0,
+                    240.0,
+                ),
             );
             for (ix, model) in self.projection.models.iter().enumerate() {
                 let selected = self
@@ -1264,7 +1334,12 @@ impl AppView {
                 "workspace-confirm",
                 AxRole::Group,
                 "Choose workspace",
-                AxRect::new(frame.x + pad, footer_y + metrics::COMPOSER_SEND_SIZE, 280.0, 220.0),
+                AxRect::new(
+                    frame.x + pad,
+                    footer_y + metrics::COMPOSER_SEND_SIZE,
+                    280.0,
+                    220.0,
+                ),
             );
             for (ix, workspace) in self.projection.workspaces.iter().enumerate() {
                 menu = menu.child(
@@ -1288,26 +1363,24 @@ impl AppView {
     }
 
     fn inspector_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
-        let tab_width = 92.0;
+        let tab_width = metrics::INSPECTOR_TAB_WIDTH;
+        let strip_height = metrics::INSPECTOR_TAB_HEIGHT;
+        let tab_x = frame.x + 12.0;
+        let collapse_y = frame.y + ((strip_height - CONTROL_HEIGHT) / 2.0).max(0.0);
         let mut inspector = AxNode::new("inspector", AxRole::Group, "Inspector", frame)
             .child(
                 AxNode::new(
                     "inspector-tabs",
                     AxRole::TabGroup,
                     "Inspector tabs",
-                    AxRect::new(
-                        frame.x + PAD,
-                        frame.y,
-                        frame.width - 48.0,
-                        INSPECTOR_HEADER_HEIGHT,
-                    ),
+                    AxRect::new(tab_x, frame.y, tab_width * 3.0, strip_height),
                 )
                 .child(
                     AxNode::new(
                         "inspector-tab-changes",
                         AxRole::Tab,
                         "Changes",
-                        AxRect::new(frame.x + PAD, frame.y + 4.0, tab_width, CONTROL_HEIGHT),
+                        AxRect::new(tab_x, frame.y, tab_width, strip_height),
                     )
                     .selected(self.inspector_tab == InspectorTab::Changes)
                     .action(AxAction::Press),
@@ -1317,12 +1390,7 @@ impl AppView {
                         "inspector-tab-terminal",
                         AxRole::Tab,
                         "Terminal",
-                        AxRect::new(
-                            frame.x + PAD + tab_width,
-                            frame.y + 4.0,
-                            tab_width,
-                            CONTROL_HEIGHT,
-                        ),
+                        AxRect::new(tab_x + tab_width, frame.y, tab_width, strip_height),
                     )
                     .selected(self.inspector_tab == InspectorTab::Terminal)
                     .action(AxAction::Press),
@@ -1332,12 +1400,7 @@ impl AppView {
                         "inspector-tab-resources",
                         AxRole::Tab,
                         "Resources",
-                        AxRect::new(
-                            frame.x + PAD + tab_width * 2.0,
-                            frame.y + 4.0,
-                            tab_width,
-                            CONTROL_HEIGHT,
-                        ),
+                        AxRect::new(tab_x + tab_width * 2.0, frame.y, tab_width, strip_height),
                     )
                     .selected(self.inspector_tab == InspectorTab::Resources)
                     .action(AxAction::Press),
@@ -1348,15 +1411,20 @@ impl AppView {
                     "inspector-collapse",
                     AxRole::Button,
                     "Hide inspector",
-                    AxRect::new(frame.x + frame.width - 40.0, frame.y + 4.0, 32.0, 28.0),
+                    AxRect::new(
+                        frame.x + frame.width - 40.0,
+                        collapse_y,
+                        32.0,
+                        CONTROL_HEIGHT,
+                    ),
                 )
                 .action(AxAction::Press),
             );
         let body = AxRect::new(
             frame.x,
-            frame.y + INSPECTOR_HEADER_HEIGHT,
+            frame.y + strip_height,
             frame.width,
-            frame.height - INSPECTOR_HEADER_HEIGHT,
+            frame.height - strip_height,
         );
         inspector = match self.inspector_tab {
             InspectorTab::Terminal => inspector.child(self.terminal_ax(window, cx, body)),
@@ -1458,20 +1526,25 @@ impl AppView {
     }
 
     fn changes_ax(&self, frame: AxRect) -> AxNode {
+        let strip_height = metrics::CHANGES_TAB_HEIGHT;
+        let tab_width = metrics::CHANGES_TAB_WIDTH;
+        let tab_x = frame.x + 12.0;
+        let refresh_y = frame.y + ((strip_height - CONTROL_HEIGHT) / 2.0).max(0.0);
+        let body_top = frame.y + strip_height;
         let mut changes = AxNode::new("changes", AxRole::Group, "Changes", frame)
             .child(
                 AxNode::new(
                     "changes-tabs",
                     AxRole::TabGroup,
                     "Changes tabs",
-                    AxRect::new(frame.x + PAD, frame.y + PAD, 170.0, CONTROL_HEIGHT),
+                    AxRect::new(tab_x, frame.y, tab_width * 2.0, strip_height),
                 )
                 .child(
                     AxNode::new(
                         "changes-tab-files",
                         AxRole::Tab,
                         "Files",
-                        AxRect::new(frame.x + PAD, frame.y + PAD, 72.0, CONTROL_HEIGHT),
+                        AxRect::new(tab_x, frame.y, tab_width, strip_height),
                     )
                     .selected(self.changes.tab == ChangesTab::Files)
                     .action(AxAction::Press),
@@ -1481,7 +1554,7 @@ impl AppView {
                         "changes-tab-summary",
                         AxRole::Tab,
                         "Summary",
-                        AxRect::new(frame.x + 88.0, frame.y + PAD, 82.0, CONTROL_HEIGHT),
+                        AxRect::new(tab_x + tab_width, frame.y, tab_width, strip_height),
                     )
                     .selected(self.changes.tab == ChangesTab::Summary)
                     .action(AxAction::Press),
@@ -1492,7 +1565,12 @@ impl AppView {
                     "changes-refresh",
                     AxRole::Button,
                     "Refresh changes",
-                    AxRect::new(frame.x + frame.width - 40.0, frame.y + PAD, 32.0, 28.0),
+                    AxRect::new(
+                        frame.x + frame.width - 40.0,
+                        refresh_y,
+                        32.0,
+                        CONTROL_HEIGHT,
+                    ),
                 )
                 .action(AxAction::Press),
             );
@@ -1503,7 +1581,7 @@ impl AppView {
                 "Changed files",
                 AxRect::new(
                     frame.x + PAD,
-                    frame.y + 44.0,
+                    body_top,
                     frame.width - PAD * 2.0,
                     metrics::CHANGES_FILE_LIST_MAX_HEIGHT,
                 ),
@@ -1516,7 +1594,7 @@ impl AppView {
                         file.path.clone(),
                         AxRect::new(
                             frame.x + PAD,
-                            frame.y + 44.0 + ix as f32 * ROW_HEIGHT,
+                            body_top + ix as f32 * ROW_HEIGHT,
                             frame.width - PAD * 2.0,
                             ROW_HEIGHT,
                         ),
@@ -1578,13 +1656,15 @@ impl AppView {
         resources.child(list)
     }
 
-    fn status_ax(&self, frame: AxRect, inspector_open: bool) -> AxNode {
+    /// R6 Wave A：Activity 触发器迁至 Workspace Header（header_ax），
+    /// StatusBar 只保留居中的 run-status 信息串。
+    fn status_ax(&self, frame: AxRect) -> AxNode {
         let now = super::super::now_unix_ms();
         // F-13：run-status 信息串在状态行内居中（与 render 同源）；宽度按
         // 定稿文案留 320px，行宽不足时收缩到整行。
         let run_status_width = 320.0_f32.min(frame.width);
         let run_status_x = frame.x + ((frame.width - run_status_width) / 2.0).max(0.0);
-        let mut status = AxNode::new("status-bar", AxRole::Group, "Status", frame).child(
+        let status = AxNode::new("status-bar", AxRole::Group, "Status", frame).child(
             AxNode::new(
                 "run-status",
                 AxRole::StaticText,
@@ -1593,39 +1673,6 @@ impl AppView {
             )
             .value(self.projection.run_status_label(now)),
         );
-        if !inspector_open {
-            status = status.child(
-                AxNode::new(
-                    "inspector-toggle",
-                    AxRole::Button,
-                    "Inspector",
-                    AxRect::new(frame.x + frame.width - 120.0, frame.y, 112.0, frame.height),
-                )
-                .action(AxAction::Press),
-            );
-            // 与可见 ActivityPopover（changes.rs）对应：摘要行展开 Inspector·Changes。
-            if matches!(self.open_menu, Some(MenuKind::Activity)) {
-                let popover_x = frame.x + (frame.width - 328.0).max(0.0);
-                status = status.child(
-                    AxNode::new(
-                        "activity-popover",
-                        AxRole::Group,
-                        "Activity",
-                        AxRect::new(popover_x, frame.y - 96.0, 320.0, 96.0),
-                    )
-                    .child(
-                        AxNode::new(
-                            "activity-open-changes",
-                            AxRole::Button,
-                            "Open changes",
-                            AxRect::new(popover_x, frame.y - 96.0, 320.0, ROW_HEIGHT),
-                        )
-                        .value(self.changes.activity_summary())
-                        .action(AxAction::Press),
-                    ),
-                );
-            }
-        }
         status
     }
 }
@@ -1809,5 +1856,23 @@ mod tests {
         assert!(height <= 94.0);
         assert_ne!(height, input + 68.0);
         assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 32.0);
+    }
+
+    /// R6 Wave A：折叠态 Header Activity 的 AX 触发器与 Popover 锚点公式
+    /// 必须钉住生产 render 所用的 40×37 槽、右侧 25px inset、4px gap 与
+    /// 320×320 外框；Connected 真窗口证据受环境阻塞时仍能防止静默漂移。
+    #[test]
+    fn activity_header_ax_geometry_matches_render_anchor_contract() {
+        let header = AxRect::new(240.0, 0.0, 840.0, metrics::HEADER_HEIGHT);
+        let trigger = header_action_ax_rect(header);
+        assert_eq!(trigger, AxRect::new(1015.0, 51.5, 40.0, 37.0));
+
+        let popover = activity_popover_ax_geometry(header, trigger);
+        assert_eq!(popover.frame, AxRect::new(735.0, 92.5, 320.0, 320.0));
+        assert_eq!(popover.heading, AxRect::new(755.0, 142.5, 280.0, 20.0));
+        assert_eq!(
+            popover.open_changes,
+            AxRect::new(755.0, 170.5, 280.0, ROW_HEIGHT)
+        );
     }
 }

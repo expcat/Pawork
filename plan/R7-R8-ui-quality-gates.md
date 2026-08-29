@@ -68,6 +68,7 @@
 - **R2 移交（2026-08-27 拍板 a）**：R2 只以壳层结构门禁退出，不把内容区未落地组件的分区像素差记为 R2 失败。R8 必须在 F-03–F-12 落地后重新采集 State A/B/C current，再跑分区 SSIM；不得沿用 R2 Wave A 的 0.65–0.81 中间态报告作为终局通过。
 - **R3 移交（2026-08-28 拍板 c）**：R3 以 TaskRail 结构门禁退出（Wave A State A/C 结构断言全 PASS；State B 与 State A 同 Timeline 模式，未单独采 TaskRail 分区图），三状态分区 SSIM ≥0.99 不在 R3 判定。R8 重采集 current 前必须先完成 **fixture 演示数据重塑**（fixtures/ui/seed.json 数据形状对齐定稿图演示形状：标题长度/时间分布/会话数，同步 golden 与约 18 处断言引用，估算 0.5–1 天）；并就是否按冻结 token 归一 State C reference 底色另行取得用户批准（设计基准变更）。天花板量化分解：State A ≈100% 内容形状（0.6941，tone 校正上限 0.7490）；State C = tone ≈50% + 形状 ≈50%（0.3543，tone 校正后 0.6885）。遮罩侧无合规余量（已用 16.6%/14.9%，上限 35%），不得靠放宽 UI_Review §0.1 遮罩合同制造通过。细节见 [../docs/history.md](../docs/history.md#r3--taskrail-与任务导航2026-08-2728)。
 - **R4 移交（2026-08-28 拍板 1）**：R4 以 Header/Timeline 结构门禁与 U2 九场景退出，State A/B 分区 SSIM ≥0.99 不在 R4 判定。R8 重采集 current 时一并覆盖 Header / Timeline / 相关 Workspace 分区；不得沿用 Wave A 记录值（timeline 0.665 / header-left 0.940 / header-right 0.883 / global 0.648）作为终局通过。主因与 R3 相同：fixture 演示内容形状差，重塑已在拍板 c 移交，本条不另开数据任务。细节见 [../docs/history.md](../docs/history.md#r4--workspacetimeline-与-agent-状态2026-08-28)。
+- **R5 移交（2026-08-29 用户确认）**：R5 以 Composer 几何结构门禁、定向测试与 U2 九场景退出，State A/B Composer 分区 SSIM ≥0.99 不在 R5 判定。R8 必须用重塑后的同一 fixture 重采 current 并覆盖 idle/running Composer；不得沿用 R5 Wave A 记录值 0.423 / 0.619 作为终局通过。详见 [../docs/history.md](../docs/history.md#r5--composer-与运行控制2026-08-2829)。
 - 所有 P0/P1 Review 项关闭；无白 titlebar、缺失 Header、错位 Popover、超高 Composer、假数据、遮挡、截断或布局跳动。
 - 由用户在同尺寸 reference/current/overlay 上完成最终视觉签字；自动门禁通过不能代替签字。
 

@@ -1,0 +1,34 @@
+2026-08-29T01:20:26Z run start label=r6a-state-a-2 out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-a/state-a
+2026-08-29T01:20:26Z compile helpers into /tmp/pawork-wave-d-tools.IoOJ8K
+2026-08-29T01:20:29Z seed fixture root=/private/tmp/pawork-ui-fixture.s4mKOr
+2026-08-29T01:20:33Z serve fixture (wait host_ready barrier)
+2026-08-29T01:20:35Z launch desktop via ui-fixture (token from socket sibling gui.token)
+2026-08-29T01:20:39Z desktop pid=80089
+2026-08-29T01:20:41Z probe not-ready rc=0 attempt=1 trusted=ax_trusted=true windows=1
+2026-08-29T01:20:45Z probe not-ready rc=0 attempt=11 trusted=ax_trusted=true windows=1
+2026-08-29T01:20:49Z probe not-ready rc=0 attempt=21 trusted=ax_trusted=true windows=1
+2026-08-29T01:20:53Z probe not-ready rc=0 attempt=31 trusted=ax_trusted=true windows=1
+2026-08-29T01:20:57Z probe not-ready rc=0 attempt=41 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:01Z probe not-ready rc=0 attempt=51 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:05Z probe not-ready rc=0 attempt=61 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:09Z probe not-ready rc=0 attempt=71 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:13Z probe not-ready rc=0 attempt=81 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:18Z probe not-ready rc=0 attempt=91 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:22Z probe not-ready rc=0 attempt=101 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:27Z probe not-ready rc=0 attempt=111 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:31Z probe not-ready rc=0 attempt=121 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:36Z probe not-ready rc=0 attempt=131 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:40Z probe not-ready rc=0 attempt=141 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:44Z probe not-ready rc=0 attempt=151 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:49Z probe not-ready rc=0 attempt=161 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:53Z probe not-ready rc=0 attempt=171 trusted=ax_trusted=true windows=1
+2026-08-29T01:21:58Z probe not-ready rc=0 attempt=181 trusted=ax_trusted=true windows=1
+2026-08-29T01:22:02Z probe not-ready rc=0 attempt=191 trusted=ax_trusted=true windows=1
+2026-08-29T01:22:06Z probe not-ready rc=0 attempt=201 trusted=ax_trusted=true windows=1
+2026-08-29T01:22:11Z probe not-ready rc=0 attempt=211 trusted=ax_trusted=true windows=1
+2026-08-29T01:22:15Z probe not-ready rc=0 attempt=221 trusted=ax_trusted=true windows=1
+2026-08-29T01:22:20Z probe not-ready rc=0 attempt=231 trusted=ax_trusted=true windows=1
+2026-08-29T01:22:24Z probe not-ready rc=0 attempt=241 trusted=ax_trusted=true windows=1
+2026-08-29T01:22:29Z probe not-ready rc=0 attempt=251 trusted=ax_trusted=true windows=1
+2026-08-29T01:22:33Z probe not-ready rc=0 attempt=261 trusted=ax_trusted=true windows=1
+2026-08-29T01:22:37Z probe not-ready rc=0 attempt=271 trusted=ax_trusted=true windows=1

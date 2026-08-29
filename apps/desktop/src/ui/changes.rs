@@ -16,7 +16,8 @@ use crate::ui::theme::{dark, font, metrics};
 
 use super::{AppView, MenuKind};
 
-/// Changes 内容区二级页签（§8.5：字号 11，与顶层页签层次不混用）。
+/// Changes 内容区二级页签（§8.5：字号 17；R6 Wave A：56px 条 + accent
+/// 下划线，与顶层 58px 层次区分）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum ChangesTab {
     #[default]
@@ -191,35 +192,48 @@ impl AppView {
     /// Changes 页内容（二级页签 + Files / Summary）。
     pub(super) fn changes_element(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tab = self.changes.tab;
-        let secondary_tab = |id: &'static str,
-                             label: &'static str,
-                             current: bool,
-                             target: ChangesTab|
-         -> Button {
-            Button::new(id)
-                .variant(if current {
-                    ButtonVariant::Raised
-                } else {
-                    ButtonVariant::Ghost
-                })
-                .text_size(font::XS)
-                .text_color(if current {
-                    dark().text.primary
-                } else {
-                    dark().text.secondary
-                })
-                .label(label)
-                .on_click(cx.listener(move |view, _event, _window, cx| {
-                    view.on_select_changes_tab(target, cx);
-                }))
-        };
+        let secondary_tab =
+            |id: &'static str, label: &'static str, current: bool, target: ChangesTab| {
+                div()
+                    .id(id)
+                    .relative()
+                    .w(px(metrics::CHANGES_TAB_WIDTH))
+                    .h(px(metrics::CHANGES_TAB_HEIGHT))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .text_size(px(font::BODY_SM))
+                    .text_color(if current {
+                        dark().text.primary
+                    } else {
+                        dark().text.secondary
+                    })
+                    .hover(move |style| style.text_color(dark().text.primary))
+                    .child(div().child(label))
+                    .when(current, |tab| {
+                        tab.child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .w_full()
+                                .h(px(metrics::TAB_UNDERLINE_HEIGHT))
+                                .bg(dark().accent.primary),
+                        )
+                    })
+                    .on_click(cx.listener(move |view, _event, _window, cx| {
+                        view.on_select_changes_tab(target, cx);
+                    }))
+            };
         let header = div()
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
-            .px_2()
-            .py_1()
+            .pl_3()
+            .pr_2()
+            .h(px(metrics::CHANGES_TAB_HEIGHT))
             .border_b_1()
             .border_color(dark().border.subtle)
             .child(secondary_tab(
@@ -361,7 +375,9 @@ impl AppView {
     /// 等宽字体、长行横向滚动。
     fn diff_view_element(&self) -> impl IntoElement {
         match &self.changes.diff {
-            DiffFetch::Idle => changes_placeholder("Select a file to view its diff.").into_any_element(),
+            DiffFetch::Idle => {
+                changes_placeholder("Select a file to view its diff.").into_any_element()
+            }
             DiffFetch::Fetching => changes_placeholder("Loading diff…").into_any_element(),
             DiffFetch::Failed(reason) => {
                 changes_placeholder_colored(reason.clone(), dark().semantic.danger_text)
@@ -409,16 +425,12 @@ impl AppView {
                         );
                         for line in &hunk.lines {
                             let (prefix, bg, color) = match line.kind {
-                                DiffLineKind::Addition => (
-                                    '+',
-                                    dark().semantic.success_bg,
-                                    dark().text.on_accent,
-                                ),
-                                DiffLineKind::Deletion => (
-                                    '-',
-                                    dark().semantic.danger_bg,
-                                    dark().text.on_accent,
-                                ),
+                                DiffLineKind::Addition => {
+                                    ('+', dark().semantic.success_bg, dark().text.on_accent)
+                                }
+                                DiffLineKind::Deletion => {
+                                    ('-', dark().semantic.danger_bg, dark().text.on_accent)
+                                }
                                 DiffLineKind::Context => {
                                     (' ', dark().bg.panel, dark().text.primary)
                                 }
@@ -490,28 +502,35 @@ impl AppView {
         div().flex().flex_col().flex_1().min_h_0().child(body)
     }
 
-    /// ActivityPopover（Inspector 折叠态，StatusBar 触发器弹出；§8.2 浮层形态，
-    /// §8.5 宽约 320px）。Agent 状态分区属 S11 面，本波不画。
+    /// ActivityPopover（Inspector 折叠态，R6 Wave A 起由 Workspace Header
+    /// 触发器弹出；§8.2 浮层形态，§8.5 宽约 320px）。
+    /// 面板标题 Activity；Changes 摘要来自真实 diff 数据。Agent 状态分区
+    /// 属 S11 面，不画假数据。
     pub(super) fn activity_popover_element(&self, cx: &mut Context<Self>) -> MenuPanel {
         let summary = self.changes.activity_summary();
         let mismatch = self.changes_session_mismatch();
         let panel = MenuPanel::new("activity-popover")
-            .dismiss_on_outside(cx.listener(
-                |view, event: &MouseDownEvent, _window, cx| {
-                    view.dismiss_menu_on_outside(MenuKind::Activity, event.position, cx);
-                },
-            ))
+            .max_height(metrics::ACTIVITY_POPOVER_HEIGHT + 8.0)
+            .dismiss_on_outside(cx.listener(|view, event: &MouseDownEvent, _window, cx| {
+                view.dismiss_menu_on_outside(MenuKind::Activity, event.position, cx);
+            }))
             .child(
                 div()
                     .w(px(metrics::ACTIVITY_POPOVER_WIDTH))
+                    .h(px(metrics::ACTIVITY_POPOVER_HEIGHT))
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .p_1()
+                    .gap_2()
+                    .p_4()
+                    .child(
+                        Label::new("Activity")
+                            .size(font::BODY)
+                            .color(dark().text.primary),
+                    )
                     .child(
                         Label::new("Changes")
-                            .size(font::XS)
-                            .color(dark().text.tertiary),
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
                     )
                     .child(
                         MenuRow::new("activity-open-changes")
@@ -616,7 +635,10 @@ mod tests {
         }]);
         assert_eq!(state.activity_summary(), "1 file · +2/−0");
 
-        assert_eq!(ChangesPanelState::default().activity_summary(), "unavailable");
+        assert_eq!(
+            ChangesPanelState::default().activity_summary(),
+            "unavailable"
+        );
         let mut fetching = ChangesPanelState::default();
         fetching.begin_refresh();
         assert_eq!(fetching.activity_summary(), "unavailable");

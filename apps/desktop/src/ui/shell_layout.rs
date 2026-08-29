@@ -82,8 +82,15 @@ mod tests {
                 .debug_selector(|| "shell-workspace".into())
                 .flex()
                 .flex_col()
-                .flex_1();
-            let mut main = div().flex().flex_row().flex_1().child(workspace);
+                .flex_1()
+                .min_w_0()
+                // 回归真实空态：长单行内容不得用 min-content 宽度挤缩
+                // Inspector 的固定 440px 列。
+                .child(div().child(
+                    "Select a task from the rail, or press Cmd+N to start a new one. \
+                     Cycle tasks with Cmd+Opt+Down / Cmd+Opt+Up.",
+                ));
+            let mut main = div().flex().flex_row().flex_1().min_w_0().child(workspace);
             if layout.inspector_open {
                 main = main.child(
                     div()
@@ -93,17 +100,22 @@ mod tests {
                         .child(Panel::side_left(px(metrics::INSPECTOR_WIDTH))),
                 );
             }
-            div()
-                .flex()
-                .size_full()
-                .child(rail)
-                .child(div().flex().flex_col().flex_1().child(main).child(StatusBar::new()))
+            div().flex().size_full().child(rail).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(main)
+                    .child(StatusBar::new()),
+            )
         }
     }
 
     fn mount_shell(cx: &mut TestAppContext, width: f32, height: f32) -> &mut VisualTestContext {
-        let (_host, cx) =
-            cx.add_window_view(|_window, _cx| ShellProbeHost { inspector_preferred: true });
+        let (_host, cx) = cx.add_window_view(|_window, _cx| ShellProbeHost {
+            inspector_preferred: true,
+        });
         cx.simulate_resize(size(px(width), px(height)));
         cx.refresh().expect("refresh after mount");
         cx.run_until_parked();
@@ -126,7 +138,10 @@ mod tests {
     fn resolve_switches_rail_width_at_1280() {
         let narrow = resolve(px(1279.), true);
         assert_eq!(narrow.rail_width, RAIL_NARROW_WIDTH);
-        assert!(!narrow.inspector_open, "narrow band must collapse inspector");
+        assert!(
+            !narrow.inspector_open,
+            "narrow band must collapse inspector"
+        );
 
         let wide = resolve(px(1280.), true);
         assert_eq!(wide.rail_width, metrics::SIDEBAR_WIDTH);
@@ -143,7 +158,9 @@ mod tests {
         let safe = cx
             .debug_bounds("shell-rail-safe-area")
             .expect("safe area bounds");
-        let workspace = cx.debug_bounds("shell-workspace").expect("workspace bounds");
+        let workspace = cx
+            .debug_bounds("shell-workspace")
+            .expect("workspace bounds");
         let inspector = cx
             .debug_bounds("shell-inspector")
             .expect("inspector bounds");
@@ -166,7 +183,10 @@ mod tests {
             workspace.size.width,
             px(1440. - metrics::SIDEBAR_WIDTH - metrics::INSPECTOR_WIDTH)
         );
-        assert_eq!(inspector.origin.x, workspace.origin.x + workspace.size.width);
+        assert_eq!(
+            inspector.origin.x,
+            workspace.origin.x + workspace.size.width
+        );
         assert_eq!(inspector.size.width, px(metrics::INSPECTOR_WIDTH));
         assert_eq!(inspector.origin.x + inspector.size.width, px(1440.));
         assert_eq!(
@@ -194,7 +214,9 @@ mod tests {
     fn narrow_shell_collapses_inspector_at_1080(cx: &mut TestAppContext) {
         let cx = mount_shell(cx, 1080., 720.);
         let rail = cx.debug_bounds("shell-rail").expect("rail bounds");
-        let workspace = cx.debug_bounds("shell-workspace").expect("workspace bounds");
+        let workspace = cx
+            .debug_bounds("shell-workspace")
+            .expect("workspace bounds");
         let status = cx
             .debug_bounds("shell-status-bar")
             .expect("status bar bounds");
@@ -227,7 +249,9 @@ mod tests {
         cx.simulate_resize(size(px(1080.), px(720.)));
         cx.refresh().expect("refresh after shrink");
         cx.run_until_parked();
-        let workspace = cx.debug_bounds("shell-workspace").expect("workspace at 1080");
+        let workspace = cx
+            .debug_bounds("shell-workspace")
+            .expect("workspace at 1080");
         assert_eq!(workspace.size.width, px(1080. - RAIL_NARROW_WIDTH));
 
         // 偏好未被 resize 改写：加宽后 Inspector 自动恢复 440 右栏。

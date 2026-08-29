@@ -8,8 +8,9 @@
 //! Escape API。选项行 hover 取值按 §8.1。
 
 use gpui::{
-    AnyElement, App, ClickEvent, Corner, IntoElement, MouseDownEvent, RenderOnce, SharedString,
-    Styled, Window, anchored, deferred, div, point, prelude::*, px,
+    anchored, deferred, div, point, prelude::*, px, AnchoredPositionMode, AnyElement, App,
+    ClickEvent, Corner, IntoElement, MouseDownEvent, Pixels, Point, RenderOnce, SharedString,
+    Styled, Window,
 };
 
 use crate::ui::theme::{dark, metrics};
@@ -109,6 +110,7 @@ impl RenderOnce for MenuRow {
 pub struct MenuPanel {
     id: SharedString,
     children: Vec<AnyElement>,
+    max_height: f32,
     on_outside_click: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -117,6 +119,7 @@ impl MenuPanel {
         Self {
             id: id.into(),
             children: Vec::new(),
+            max_height: MENU_MAX_HEIGHT,
             on_outside_click: None,
         }
     }
@@ -130,6 +133,13 @@ impl MenuPanel {
         for child in children {
             self.children.push(child.into_any_element());
         }
+        self
+    }
+
+    /// 覆盖菜单默认最大高度。Activity 这类较高的浮层可按冻结视觉合同放宽，
+    /// 普通下拉菜单仍保持 240px 并在面板内滚动。
+    pub fn max_height(mut self, max_height: f32) -> Self {
+        self.max_height = max_height;
         self
     }
 
@@ -152,7 +162,7 @@ impl RenderOnce for MenuPanel {
             .bg(dark().bg.menu)
             .border_1()
             .border_color(dark().border.strong)
-            .max_h(px(MENU_MAX_HEIGHT))
+            .max_h(px(self.max_height))
             .overflow_y_scroll()
             // 拦截面板命中区内的下层点击与滚轮（§8.2 滚轮无穿透）。
             .occlude();
@@ -172,6 +182,7 @@ impl RenderOnce for MenuPanel {
 pub struct Dropdown {
     trigger: AnyElement,
     panel: Option<AnyElement>,
+    panel_anchor: Option<(Corner, Point<Pixels>)>,
 }
 
 impl Dropdown {
@@ -179,6 +190,7 @@ impl Dropdown {
         Self {
             trigger: trigger.into_any_element(),
             panel: None,
+            panel_anchor: None,
         }
     }
 
@@ -187,21 +199,33 @@ impl Dropdown {
         self.panel = Some(panel.into_any_element());
         self
     }
+
+    /// 以触发器包装层的局部坐标明确锚定面板。默认仍是触发器左下方；
+    /// Workspace Header 的 Activity 用右下角坐标保证浮层与触发器右边缘对齐。
+    pub fn panel_anchor(mut self, corner: Corner, position: Point<Pixels>) -> Self {
+        self.panel_anchor = Some((corner, position));
+        self
+    }
 }
 
 impl RenderOnce for Dropdown {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let panel_anchor = self.panel_anchor;
         div()
             .flex()
             .flex_col()
             .child(self.trigger)
             .when_some(self.panel, |dropdown, panel| {
-                dropdown.child(deferred(
-                    anchored()
-                        .anchor(Corner::TopLeft)
-                        .offset(point(px(metrics::ZERO), px(ANCHOR_GAP_Y)))
-                        .child(panel),
-                ))
+                let mut anchor = anchored()
+                    .anchor(Corner::TopLeft)
+                    .offset(point(px(metrics::ZERO), px(ANCHOR_GAP_Y)));
+                if let Some((corner, position)) = panel_anchor {
+                    anchor = anchor
+                        .anchor(corner)
+                        .position_mode(AnchoredPositionMode::Local)
+                        .position(position);
+                }
+                dropdown.child(deferred(anchor.child(panel)))
             })
     }
 }
