@@ -95,4 +95,4 @@
 
 - **TR-11 Unassigned 桶**：无 fixture 样本行，三路径结论依赖源码同源；建议后续 fixture 增样本（涉 crates/app fixture 数据，超出本波写入集）。
 - **CP-06/CP-07/TL-03/IN-05/SB-01**：结构性 partial 维持（无 wire 来源 / 视觉重构目标），见 manifest §7。
-- **AX server 注册 flake**：macOS 26.6.2 平台时段性递归 AXApplication 劣化（2026-08-29 20:23 起持续，26 层递归链、无 session-list、仅系统菜单 identifiers，desktop-restart 不恢复；state-supplement-attempt7–10 fail-closed 归档）。A3 bundled/签名对照已通过（ax-forms/：raw 46 / bundled-signed 63 Pawork identifiers，required 五项全中，无 AXWindows 回退）；State A 补充采集待劣化窗口过后重跑 scripts/ui-r7-wave-a-states.sh。
+- **AX server 注册 flake**：macOS 26.6.2 平台时段性递归 AXApplication 劣化（2026-08-29 20:23–21:00 取证，26 层递归链、无 session-list、仅系统菜单 identifiers，desktop-restart 不恢复；state-supplement-attempt7–10 fail-closed 归档）。A3 bundled/签名对照已通过（ax-forms/：raw 46 / bundled-signed 63 Pawork identifiers，required 五项全中，无 AXWindows 回退）。A4 State A 补充图已于 22:46 用 bundled-adhoc 形态采齐（[state-supplement/](state-supplement/)，九张 hover/active/focus）。

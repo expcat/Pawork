@@ -157,6 +157,20 @@ trace "launch desktop via ui-fixture"
 PAWORK_UI_DESKTOP_BIN="$LAUNCH_PATH" "$FIXTURE" desktop --root "$ROOT"
 DESKTOP_PID="$(cat "$ROOT/desktop.pid")"
 
+axdump_with_timeout() { # $1=timeout_secs; remaining args go to ui-ax-dump
+  local timeout_secs="$1" rc=0
+  shift
+  PAWORK_AXDUMP_TIMEOUT="$timeout_secs" python3 -c 'import os, signal, subprocess, sys
+proc = subprocess.Popen(sys.argv[1:], start_new_session=True)
+try:
+    raise SystemExit(proc.wait(timeout=float(os.environ["PAWORK_AXDUMP_TIMEOUT"])))
+except subprocess.TimeoutExpired:
+    os.killpg(proc.pid, signal.SIGKILL)
+    proc.wait()
+    raise SystemExit(124)' "$@" || rc=$?
+  return "$rc"
+}
+
 is_ax_recursion() { # $1=probe-file: AX server registration failure signature
   local probe="$1" ax_app_lines
   [[ -f "$probe" ]] || return 1
@@ -184,7 +198,7 @@ wait_desktop_ready() { # AX session-list 可见；递归签名走 desktop-restar
   local probe_attempts=0 probe_rc ax_restarts=0
   while :; do
     set +e
-    "$AXDUMP" --pid "$DESKTOP_PID" --out "$WORK/probe.txt" >/dev/null 2>&1
+    axdump_with_timeout 8 "$AXDUMP" --pid "$DESKTOP_PID" --out "$WORK/probe.txt" >/dev/null 2>&1
     probe_rc=$?
     set -e
     if (( probe_rc == 0 )) && grep -q 'identifier="session-list"' "$WORK/probe.txt"; then
@@ -256,30 +270,18 @@ trace "place Desktop window deterministically on the main display"
 place_main_or_die
 
 dump_tree() { # $1=label
-  PAWORK_AXDUMP_TIMEOUT="$PHASE_TIMEOUT_SECS" python3 -c 'import os, signal, subprocess, sys
-proc = subprocess.Popen(sys.argv[1:], start_new_session=True)
-try:
-    raise SystemExit(proc.wait(timeout=float(os.environ["PAWORK_AXDUMP_TIMEOUT"])))
-except subprocess.TimeoutExpired:
-    os.killpg(proc.pid, signal.SIGKILL)
-    proc.wait()
-    raise SystemExit(124)' "$AXDUMP" --pid "$DESKTOP_PID" --out "$WORK/tree-$1.txt" --wid-out "$WORK/wid-$1.id"
-  local rc=$?
-  (( rc == 0 )) || die "AX dump failed (phase $1 rc=$rc)"
+  axdump_with_timeout "$PHASE_TIMEOUT_SECS" "$AXDUMP" --pid "$DESKTOP_PID" \
+    --out "$WORK/tree-$1.txt" --wid-out "$WORK/wid-$1.id" \
+    || die "AX dump failed (phase $1 rc=$?)"
   [[ -s "$WORK/tree-$1.txt" ]] || die "AX dump empty (phase $1)"
 }
 activate() {
   "$FOCUS_SWITCH" activate --pid "$DESKTOP_PID" >/dev/null 2>&1 || true
 }
 ax_focus() { # $1=identifier
-  PAWORK_AXDUMP_TIMEOUT="$PHASE_TIMEOUT_SECS" python3 -c 'import os, signal, subprocess, sys
-proc = subprocess.Popen(sys.argv[1:], start_new_session=True)
-try:
-    raise SystemExit(proc.wait(timeout=float(os.environ["PAWORK_AXDUMP_TIMEOUT"])))
-except subprocess.TimeoutExpired:
-    os.killpg(proc.pid, signal.SIGKILL)
-    proc.wait()
-    raise SystemExit(124)' "$AXDUMP" --pid "$DESKTOP_PID" --focus "$1" --out "$WORK/tree-current.txt" --wid-out "$WORK/wid-current.id"
+  axdump_with_timeout "$PHASE_TIMEOUT_SECS" "$AXDUMP" --pid "$DESKTOP_PID" \
+    --focus "$1" --out "$WORK/tree-current.txt" --wid-out "$WORK/wid-current.id" \
+    || return $?
 }
 shot() { # $1=label
   local wid
@@ -383,7 +385,7 @@ trace "active task-rail-grouping captured (menu opened then closed)"
 
 trace "focus set: AX focus session row / composer-input"
 activate
-ax_focus "$SESSION_ROW_ID"
+ax_focus "$SESSION_ROW_ID" || fail_phase "AX focus failed ($SESSION_ROW_ID)"
 point="$(center_of "$SESSION_ROW_ID")"
 "$KEYEVENT" --pid "$DESKTOP_PID" --click-at "$point" >/dev/null \
   || fail_phase "click post failed (session row)"
@@ -402,7 +404,7 @@ done
 shot "focus-session-row"
 PHASES+=("focus-session-row:pass")
 activate
-ax_focus "composer-input"
+ax_focus "composer-input" || fail_phase "AX focus failed (composer-input)"
 point="$(center_of composer-input)"
 "$KEYEVENT" --pid "$DESKTOP_PID" --click-at "$point" >/dev/null \
   || fail_phase "click post failed (composer-input)"
