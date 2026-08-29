@@ -309,24 +309,30 @@ class StatesAssertTest(unittest.TestCase):
         running = SHELL + [
             session_row("session-fx-ses-alpha-today", selected=True),
             button("cancel", 1),
-            button("send", 0),
         ]
         proc, payload = self.assert_tree(running, "hang-cancelable")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        idle_cancel = SHELL + [
+        idle_slot = SHELL + [
             session_row("session-fx-ses-alpha-today", selected=True),
-            button("cancel", 0),
-            button("send", 0),
+            button("send", 1),
         ]
-        proc, payload = self.assert_tree(idle_cancel, "hang-cancelable")
+        proc, payload = self.assert_tree(idle_slot, "hang-cancelable")
         self.assertEqual(proc.returncode, 5)
         self.assertIn("composer-cancel-enabled-1", self.failed_checks(payload))
+        # 负例：旧双节点形态（send+cancel 同存）必须失败。
+        dual = SHELL + [
+            session_row("session-fx-ses-alpha-today", selected=True),
+            button("cancel", 1),
+            button("send", 0),
+        ]
+        proc, payload = self.assert_tree(dual, "hang-cancelable")
+        self.assertEqual(proc.returncode, 5)
+        self.assertIn("composer-send-absent", self.failed_checks(payload))
 
         cancelled = SHELL + [
             session_row("session-fx-ses-alpha-today", selected=True),
             summary_card("run-summary-card-evt-fx-ses-alpha-today-96", "Run cancelled"),
             static("run-footer-evt-fx-ses-alpha-today-96", "Run cancelled · 1m"),
-            button("cancel", 0),
             button("send", 1),
             'role=AXTextArea identifier="composer-input" description="Message" enabled=1',
         ]

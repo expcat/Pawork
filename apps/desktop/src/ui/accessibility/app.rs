@@ -706,8 +706,11 @@ impl AppView {
         let input_height = (f32::from(window.line_height())
             * self.text_input.read(cx).visual_line_count() as f32
             + metrics::COMPOSER_TEXT_INSET)
-            .clamp(metrics::COMPOSER_MIN_HEIGHT, metrics::COMPOSER_MAX_HEIGHT);
-        let composer_height = (input_height + 68.0).min(frame.height);
+            .clamp(
+                metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                Self::composer_input_ax_max(),
+            );
+        let composer_height = Self::composer_panel_height(input_height).min(frame.height);
         let header_height = metrics::HEADER_HEIGHT.min(frame.height);
         let timeline_height = (frame.height - composer_height - header_height).max(0.0);
         AxNode::new("workspace", AxRole::Group, "Workspace", frame)
@@ -1135,72 +1138,83 @@ impl AppView {
         node
     }
 
+    fn composer_input_ax_max() -> f32 {
+        (metrics::COMPOSER_PANEL_MAX_HEIGHT
+            - metrics::COMPOSER_BORDER
+            - metrics::COMPOSER_PAD * 2.0
+            - metrics::COMPOSER_GAP
+            - metrics::COMPOSER_SEND_SIZE)
+            .max(metrics::COMPOSER_INPUT_MIN_HEIGHT)
+    }
+
     fn composer_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
-        let header_y = frame.y + PAD;
-        let input_y = header_y + CONTROL_HEIGHT + PAD;
-        let input_height = (frame.height - CONTROL_HEIGHT - PAD * 3.0).max(0.0);
-        let button_width = 72.0;
-        let send_x = frame.x + frame.width - PAD - button_width;
-        let cancel_x = send_x - PAD - button_width;
-        let input_width = (cancel_x - PAD - (frame.x + PAD)).max(0.0);
+        let pad = metrics::COMPOSER_PAD;
+        let input_y = frame.y + pad;
+        let footer_y = frame.y + frame.height - pad - metrics::COMPOSER_SEND_SIZE;
+        let input_height = (footer_y - metrics::COMPOSER_GAP - input_y).max(metrics::COMPOSER_INPUT_MIN_HEIGHT);
+        let action_x = frame.x + frame.width - pad - metrics::COMPOSER_SEND_SIZE;
+        let input_width = (action_x - pad - (frame.x + pad)).max(0.0);
+        let running = self.projection.active_run_id.is_some();
         let current_model = self
             .projection
             .effective_model()
             .map(|(provider, model)| format!("{provider} / {model}"))
             .unwrap_or_else(|| "No model".into());
         let input_focus = self.text_input.read(cx).focus_handle(cx);
+        // AXValue 恒为纯文本：空输入即空串，placeholder 不得回退进 value
+        // （R4 U2 composer-cleared / R5 r5-1 契约）。
+        let input_value = self.text_input.read(cx).text().to_string();
         let mut composer = AxNode::new("composer", AxRole::Group, "Composer", frame)
-            .child(
-                AxNode::new(
-                    "model-picker",
-                    AxRole::Button,
-                    "Model",
-                    AxRect::new(
-                        frame.x + PAD,
-                        header_y,
-                        220.0_f32.min(frame.width),
-                        CONTROL_HEIGHT,
-                    ),
-                )
-                .value(current_model)
-                .enabled(self.can_switch_model())
-                .focused(self.model_focus.is_focused(window))
-                .action(AxAction::Press),
-            )
             .child(
                 AxNode::new(
                     "composer-input",
                     AxRole::TextArea,
                     "Message",
-                    AxRect::new(frame.x + PAD, input_y, input_width, input_height),
+                    AxRect::new(frame.x + pad, input_y, input_width, input_height),
                 )
-                .value(self.text_input.read(cx).text())
+                .value(input_value)
                 .focused(input_focus.is_focused(window))
                 .action(AxAction::Focus)
                 .action(AxAction::SetValue),
             )
             .child(
                 AxNode::new(
-                    "cancel",
+                    "model-picker",
                     AxRole::Button,
-                    "Cancel run",
-                    AxRect::new(cancel_x, input_y, button_width, CONTROL_HEIGHT),
+                    "Model",
+                    AxRect::new(
+                        frame.x + pad,
+                        footer_y,
+                        220.0_f32.min(frame.width),
+                        metrics::COMPOSER_FOOTER_CONTROL,
+                    ),
                 )
-                .enabled(self.can_cancel())
-                .focused(self.cancel_focus.is_focused(window))
-                .action(AxAction::Press),
-            )
-            .child(
-                AxNode::new(
-                    "send",
-                    AxRole::Button,
-                    "Send",
-                    AxRect::new(send_x, input_y, button_width, CONTROL_HEIGHT),
-                )
-                .enabled(self.can_send())
-                .focused(self.send_focus.is_focused(window))
+                .value(current_model)
+                .enabled(self.can_switch_model())
+                .focused(self.model_focus.is_focused(window))
                 .action(AxAction::Press),
             );
+        let action_rect = AxRect::new(
+            action_x,
+            footer_y,
+            metrics::COMPOSER_SEND_SIZE,
+            metrics::COMPOSER_SEND_SIZE,
+        );
+        if running {
+            composer = composer.child(
+                AxNode::new("cancel", AxRole::Button, "Cancel run", action_rect)
+                    .enabled(self.can_cancel())
+                    .focused(self.composer_action_focus.is_focused(window))
+                    .action(AxAction::Press),
+            );
+        } else {
+            composer = composer.child(
+                AxNode::new("send", AxRole::Button, "Send", action_rect)
+                    .enabled(self.can_send(cx))
+                    .focused(self.composer_action_focus.is_focused(window))
+                    .action(AxAction::Press),
+            );
+        }
         if matches!(self.open_menu, Some(MenuKind::Model)) {
             let selected_ix = self
                 .projection
@@ -1217,7 +1231,7 @@ impl AppView {
                 "model-menu",
                 AxRole::Group,
                 "Models",
-                AxRect::new(frame.x + PAD, header_y + CONTROL_HEIGHT, 260.0, 240.0),
+                AxRect::new(frame.x + pad, footer_y + metrics::COMPOSER_SEND_SIZE, 260.0, 240.0),
             );
             for (ix, model) in self.projection.models.iter().enumerate() {
                 let selected = self
@@ -1230,8 +1244,8 @@ impl AppView {
                         AxRole::Button,
                         model.display_name.clone(),
                         AxRect::new(
-                            frame.x + PAD,
-                            header_y + CONTROL_HEIGHT + ix as f32 * ROW_HEIGHT,
+                            frame.x + pad,
+                            footer_y + metrics::COMPOSER_SEND_SIZE + ix as f32 * ROW_HEIGHT,
                             260.0,
                             ROW_HEIGHT,
                         ),
@@ -1250,7 +1264,7 @@ impl AppView {
                 "workspace-confirm",
                 AxRole::Group,
                 "Choose workspace",
-                AxRect::new(frame.x + PAD, header_y + CONTROL_HEIGHT, 280.0, 220.0),
+                AxRect::new(frame.x + pad, footer_y + metrics::COMPOSER_SEND_SIZE, 280.0, 220.0),
             );
             for (ix, workspace) in self.projection.workspaces.iter().enumerate() {
                 menu = menu.child(
@@ -1259,8 +1273,8 @@ impl AppView {
                         AxRole::Button,
                         workspace.name.clone(),
                         AxRect::new(
-                            frame.x + PAD,
-                            header_y + CONTROL_HEIGHT + ix as f32 * ROW_HEIGHT,
+                            frame.x + pad,
+                            footer_y + metrics::COMPOSER_SEND_SIZE + ix as f32 * ROW_HEIGHT,
                             280.0,
                             ROW_HEIGHT,
                         ),
@@ -1786,5 +1800,14 @@ mod tests {
             session_status_description(Some(SessionLiveStatus::NeedsInput), true),
             "Needs input · Unread"
         );
+    }
+
+    #[test]
+    fn composer_ax_panel_formula_drops_plus_68_drift() {
+        let input = crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT;
+        let height = crate::ui::AppView::composer_panel_height(input);
+        assert!(height <= 94.0);
+        assert_ne!(height, input + 68.0);
+        assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 32.0);
     }
 }

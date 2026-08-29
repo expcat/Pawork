@@ -1,0 +1,17 @@
+{
+  "phase": "model-menu-open",
+  "generated_at": "2026-08-28T23:27:29Z",
+  "checks": [
+    {
+      "name": "model-menu-present",
+      "pass": true,
+      "detail": "model-menu present"
+    },
+    {
+      "name": "model-menu-has-rows",
+      "pass": true,
+      "detail": "model options=model-deepseek_3adeepseek-chat,model-deepseek_3adeepseek-reasoner,model-glm-coding_3aglm-5.2,model-opencode-go_3adeepseek-v4-pro,model-qwen-token-plan_3aqwen3.8-max,model-xai_3agrok-2,model-xai_3agrok-3,model-xai_3agrok-4,model-xai_3agrok-4-fast count=9"
+    }
+  ],
+  "pass": true
+}

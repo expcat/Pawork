@@ -1,0 +1,22 @@
+{
+  "phase": "send-restored",
+  "generated_at": "2026-08-28T23:27:16Z",
+  "checks": [
+    {
+      "name": "selected-session-fx-ses-alpha-today",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-alpha-today (expect session-fx-ses-alpha-today)"
+    },
+    {
+      "name": "composer-send-enabled-0",
+      "pass": true,
+      "detail": "send enabled=0 (expect enabled=0)"
+    },
+    {
+      "name": "composer-cancel-absent",
+      "pass": true,
+      "detail": "cancel absent"
+    }
+  ],
+  "pass": true
+}

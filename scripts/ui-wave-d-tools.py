@@ -1143,17 +1143,40 @@ def states_timeline_value_check(tree, needle, name):
     )
 
 
-def states_composer_checks(tree, cancel_enabled, send_enabled):
+def states_composer_checks(tree, running, send_enabled=True):
+    """R5 single-slot AX: running=cancel only (enabled=1); idle/terminal=send only."""
     checks = []
-    for name, expected in (("cancel", cancel_enabled), ("send", send_enabled)):
-        button = tree["nodes"].get(name)
-        wanted = "1" if expected else "0"
+    send = tree["nodes"].get("send")
+    cancel = tree["nodes"].get("cancel")
+    if running:
         checks.append(states_check(
-            "composer-" + name + "-enabled-" + wanted,
-            button is not None and button["enabled"] == wanted,
-            name + " enabled=" + (button["enabled"] if button else "absent")
-            + " (expect " + wanted + ")",
+            "composer-cancel-enabled-1",
+            cancel is not None and cancel["enabled"] == "1",
+            "cancel enabled=" + (cancel["enabled"] if cancel else "absent")
+            + " (expect 1)",
         ))
+        checks.append(states_check(
+            "composer-send-absent",
+            send is None,
+            "send " + (
+                "present enabled=" + send["enabled"] if send is not None else "absent"
+            ),
+        ))
+        return checks
+    wanted = "1" if send_enabled else "0"
+    checks.append(states_check(
+        "composer-send-enabled-" + wanted,
+        send is not None and send["enabled"] == wanted,
+        "send enabled=" + (send["enabled"] if send else "absent")
+        + " (expect " + wanted + ")",
+    ))
+    checks.append(states_check(
+        "composer-cancel-absent",
+        cancel is None,
+        "cancel " + (
+            "present enabled=" + cancel["enabled"] if cancel is not None else "absent"
+        ),
+    ))
     return checks
 
 
@@ -1299,13 +1322,13 @@ def states_phase_checks(tree, phase, logical_entries=None):
         ))
     elif phase == "hang-cancelable":
         checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
-        checks.extend(states_composer_checks(tree, cancel_enabled=True, send_enabled=False))
+        checks.extend(states_composer_checks(tree, running=True))
     elif phase == "hang-cancelled":
         checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
         checks.extend(states_summary_checks(
             tree, "Run cancelled", footer_prefix="Run cancelled ·",
         ))
-        checks.extend(states_composer_checks(tree, cancel_enabled=False, send_enabled=True))
+        checks.extend(states_composer_checks(tree, running=False, send_enabled=True))
     elif phase == "disconnected-retained":
         checks.append(states_check(
             "reconnect-present",

@@ -1,0 +1,466 @@
+{
+  "scenario": "r5-wave-b-states",
+  "label": "r5-wave-b-states",
+  "generated_at": "2026-08-28T23:27:30Z",
+  "git_head": "fc863b6f0f9e795449b6ff4606cad439506a2e69",
+  "phases": {
+    "disconnected-draft": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "composer-send-enabled-0",
+          "pass": true
+        },
+        {
+          "name": "connection-status-disconnected",
+          "pass": true
+        },
+        {
+          "name": "draft-retained",
+          "pass": true
+        },
+        {
+          "name": "draft-not-placeholder",
+          "pass": true
+        }
+      ]
+    },
+    "draft-a-restored": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-alpha-today",
+          "pass": true
+        },
+        {
+          "name": "draft-a-restored",
+          "pass": true
+        }
+      ]
+    },
+    "draft-a": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-alpha-today",
+          "pass": true
+        },
+        {
+          "name": "draft-a",
+          "pass": true
+        }
+      ]
+    },
+    "draft-b-empty": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-alpha-yesterday",
+          "pass": true
+        },
+        {
+          "name": "draft-b-empty",
+          "pass": true
+        }
+      ]
+    },
+    "draft-b": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-alpha-yesterday",
+          "pass": true
+        },
+        {
+          "name": "draft-b",
+          "pass": true
+        }
+      ]
+    },
+    "draft-set": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "composer-send-enabled-1",
+          "pass": true
+        },
+        {
+          "name": "composer-cancel-absent",
+          "pass": true
+        },
+        {
+          "name": "composer-value",
+          "pass": true
+        }
+      ]
+    },
+    "empty-input": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-alpha-today",
+          "pass": true
+        },
+        {
+          "name": "composer-send-enabled-0",
+          "pass": true
+        },
+        {
+          "name": "composer-cancel-absent",
+          "pass": true
+        },
+        {
+          "name": "composer-empty-value",
+          "pass": true
+        }
+      ]
+    },
+    "hang-cancelable": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-alpha-today",
+          "pass": true
+        },
+        {
+          "name": "composer-cancel-enabled-1",
+          "pass": true
+        },
+        {
+          "name": "composer-send-absent",
+          "pass": true
+        }
+      ]
+    },
+    "keyboard-cancelled": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "composer-send-enabled-0",
+          "pass": true
+        },
+        {
+          "name": "composer-cancel-absent",
+          "pass": true
+        }
+      ]
+    },
+    "keyboard-newline": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "composer-send-enabled-1",
+          "pass": true
+        },
+        {
+          "name": "composer-cancel-absent",
+          "pass": true
+        },
+        {
+          "name": "shift-return-newline",
+          "pass": true
+        },
+        {
+          "name": "keyboard-newline-value",
+          "pass": true
+        }
+      ]
+    },
+    "keyboard-sent": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "keyboard-timeline-echo",
+          "pass": true
+        }
+      ]
+    },
+    "keyboard-typed": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "composer-send-enabled-1",
+          "pass": true
+        },
+        {
+          "name": "composer-cancel-absent",
+          "pass": true
+        },
+        {
+          "name": "keyboard-typed",
+          "pass": true
+        }
+      ]
+    },
+    "model-menu-open": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "model-menu-present",
+          "pass": true
+        },
+        {
+          "name": "model-menu-has-rows",
+          "pass": true
+        }
+      ]
+    },
+    "model-trigger-changed": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "model-trigger-changed",
+          "pass": true
+        },
+        {
+          "name": "model-menu-absent",
+          "pass": true
+        }
+      ]
+    },
+    "multiline-echoed": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "multiline-timeline-echo",
+          "pass": true
+        }
+      ]
+    },
+    "narrow-reachable": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1080x720",
+          "pass": true
+        },
+        {
+          "name": "composer-present",
+          "pass": true
+        },
+        {
+          "name": "send-or-cancel-present",
+          "pass": true
+        },
+        {
+          "name": "composer-within-root",
+          "pass": true
+        },
+        {
+          "name": "action-within-root",
+          "pass": true
+        },
+        {
+          "name": "action-within-composer",
+          "pass": true
+        }
+      ]
+    },
+    "paste-complete": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "composer-send-enabled-1",
+          "pass": true
+        },
+        {
+          "name": "paste-complete",
+          "pass": true
+        },
+        {
+          "name": "paste-min-prefix",
+          "pass": true
+        }
+      ]
+    },
+    "paste-echoed": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "paste-timeline-echo",
+          "pass": true
+        }
+      ]
+    },
+    "reconnected-draft": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "connection-status-connected",
+          "pass": true
+        },
+        {
+          "name": "draft-survived-reconnect",
+          "pass": true
+        },
+        {
+          "name": "composer-send-enabled-1",
+          "pass": true
+        }
+      ]
+    },
+    "running-cancelable": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-alpha-today",
+          "pass": true
+        },
+        {
+          "name": "composer-cancel-enabled-1",
+          "pass": true
+        },
+        {
+          "name": "composer-send-absent",
+          "pass": true
+        }
+      ]
+    },
+    "send-enabled": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-alpha-today",
+          "pass": true
+        },
+        {
+          "name": "composer-send-enabled-1",
+          "pass": true
+        },
+        {
+          "name": "composer-cancel-absent",
+          "pass": true
+        },
+        {
+          "name": "composer-value",
+          "pass": true
+        }
+      ]
+    },
+    "send-restored": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-alpha-today",
+          "pass": true
+        },
+        {
+          "name": "composer-send-enabled-0",
+          "pass": true
+        },
+        {
+          "name": "composer-cancel-absent",
+          "pass": true
+        }
+      ]
+    }
+  },
+  "structural_pass": true,
+  "evidence_files": [
+    "action-focus-composer-input.txt",
+    "action-press-alpha-today.txt",
+    "action-press-cancel-hang.txt",
+    "action-press-cancel-multiline.txt",
+    "action-press-model-option.txt",
+    "action-press-model-picker.txt",
+    "action-press-r5-2-session.txt",
+    "action-press-r5-3-session.txt",
+    "action-press-r5-4-a-back.txt",
+    "action-press-r5-4-a.txt",
+    "action-press-r5-4-b.txt",
+    "action-press-r5-5-session.txt",
+    "action-press-r5-6-session.txt",
+    "action-press-r5-7-session.txt",
+    "action-press-r5-8-session.txt",
+    "action-press-r5-9-session.txt",
+    "action-press-reconnect.txt",
+    "action-press-send-hang.txt",
+    "action-press-send-keyboard-hang.txt",
+    "action-press-send-multiline.txt",
+    "action-press-send-paste.txt",
+    "action-set-value-clear-before-send.txt",
+    "action-set-value-clear-keyboard.txt",
+    "action-set-value-clear-paste.txt",
+    "action-set-value-disconnect-draft.txt",
+    "action-set-value-draft-a.txt",
+    "action-set-value-draft-b.txt",
+    "action-set-value-hang.txt",
+    "action-set-value-keyboard-hang.txt",
+    "action-set-value-multiline.txt",
+    "action-trace.txt",
+    "assert-disconnected-draft.json",
+    "assert-draft-a-restored.json",
+    "assert-draft-a.json",
+    "assert-draft-b-empty.json",
+    "assert-draft-b.json",
+    "assert-draft-set.json",
+    "assert-empty-input.json",
+    "assert-hang-cancelable.json",
+    "assert-keyboard-cancelled.json",
+    "assert-keyboard-newline.json",
+    "assert-keyboard-sent.json",
+    "assert-keyboard-typed.json",
+    "assert-model-menu-open.json",
+    "assert-model-trigger-changed.json",
+    "assert-multiline-echoed.json",
+    "assert-narrow-reachable.json",
+    "assert-paste-complete.json",
+    "assert-paste-echoed.json",
+    "assert-reconnected-draft.json",
+    "assert-running-cancelable.json",
+    "assert-send-enabled.json",
+    "assert-send-restored.json",
+    "ax-tree-disconnected-draft.txt",
+    "ax-tree-draft-a-restored.txt",
+    "ax-tree-draft-a.txt",
+    "ax-tree-draft-b-empty.txt",
+    "ax-tree-draft-b.txt",
+    "ax-tree-draft-set.txt",
+    "ax-tree-empty-input.txt",
+    "ax-tree-hang-cancelable.txt",
+    "ax-tree-keyboard-cancelled.txt",
+    "ax-tree-keyboard-newline.txt",
+    "ax-tree-keyboard-sent.txt",
+    "ax-tree-keyboard-typed.txt",
+    "ax-tree-model-menu-open.txt",
+    "ax-tree-model-trigger-changed.txt",
+    "ax-tree-multiline-echoed.txt",
+    "ax-tree-narrow-reachable.txt",
+    "ax-tree-paste-complete.txt",
+    "ax-tree-paste-echoed.txt",
+    "ax-tree-reconnected-draft.txt",
+    "ax-tree-running-cancelable.txt",
+    "ax-tree-send-enabled.txt",
+    "ax-tree-send-restored.txt",
+    "geometry-narrow.txt",
+    "input-source-pin.txt",
+    "r5-2-multiline.txt",
+    "r5-5-paste.txt",
+    "r5-7-model-after.txt",
+    "r5-7-model-before.txt",
+    "resize-narrow.txt",
+    "resize-restore.txt",
+    "shot-disconnected-draft.png",
+    "shot-draft-a-restored.png",
+    "shot-draft-a.png",
+    "shot-draft-b-empty.png",
+    "shot-draft-b.png",
+    "shot-draft-set.png",
+    "shot-empty-input.png",
+    "shot-hang-cancelable.png",
+    "shot-keyboard-cancelled.png",
+    "shot-keyboard-newline.png",
+    "shot-keyboard-sent.png",
+    "shot-keyboard-typed.png",
+    "shot-model-menu-open.png",
+    "shot-model-trigger-changed.png",
+    "shot-narrow-reachable.png",
+    "shot-paste-complete.png",
+    "shot-paste-echoed.png",
+    "shot-reconnected-draft.png",
+    "shot-running-cancelable.png",
+    "shot-send-enabled.png",
+    "shot-send-restored.png",
+    "window-place.txt"
+  ]
+}

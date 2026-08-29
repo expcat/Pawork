@@ -1,5 +1,7 @@
-//! Composer 输入区（InputArea）：模型选择菜单、上下文 / 工作区标签、
-//! 工作区确认浮层、输入行与 Cancel / Send（R8 波 C 自 ui/mod.rs 逐样式迁移）。
+//! Composer 输入区（InputArea）：两行结构（R5 Wave A）。
+//! 行 1 输入区；行 2 footer（model / workspace / ContextMeter / 瞬态 status_hint / 32×32 动作槽）。
+//! Send 与 Cancel 同槽互换（element id `composer-action`）；placeholder 只走状态机，
+//! Forked / 发送失败等瞬态反馈落 footer Label。
 
 use gpui::{
     Context, Corner, Pixels, Point, SharedString, Window, anchored, deferred, div, point,
@@ -7,7 +9,7 @@ use gpui::{
 };
 
 use crate::projection::{ConnectionState, ModelEntry};
-use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
+use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::components::dropdown::{ANCHOR_GAP_Y, Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::label::Label;
 use crate::ui::theme::{dark, font, metrics};
@@ -16,12 +18,13 @@ use super::{AppView, MenuKind};
 
 impl AppView {
     pub(super) fn composer_element(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let can_send = self.can_send();
+        let can_send = self.can_send(cx);
         let can_cancel = self.can_cancel();
         let can_switch_model = self.can_switch_model();
         let model_menu_open = matches!(self.open_menu, Some(MenuKind::Model)) && can_switch_model;
-        let composer_hint = self.composer_hint();
+        let composer_hint = self.composer_placeholder_hint();
         let context_meter = self.projection.context_meter_label();
+        self.sync_composer_placeholder(composer_hint.clone(), cx);
 
         let model_tooltip = if can_switch_model {
             SharedString::from("Select model")
@@ -34,7 +37,10 @@ impl AppView {
             .variant(ButtonVariant::Raised)
             .disabled(!can_switch_model)
             .label(self.model_label())
-            .tooltip(model_tooltip);
+            .tooltip(model_tooltip)
+            .height(px(metrics::COMPOSER_FOOTER_CONTROL))
+            .max_width(px(220.0))
+            .vcenter();
         if can_switch_model {
             model_button = model_button.on_click(cx.listener(|view, event, window, cx| {
                 let down = Self::click_down_position(event);
@@ -46,37 +52,77 @@ impl AppView {
             model_picker = model_picker.panel(self.model_menu_element(cx));
         }
 
+        let running = self.projection.active_run_id.is_some();
+        let action_slot = if running {
+            let action_focus = self.composer_action_focus.clone();
+            let cancel_tooltip = if can_cancel {
+                SharedString::from("Cancel run (Cmd+.)")
+            } else {
+                SharedString::from(self.cancel_disabled_reason())
+            };
+            let mut cancel = Button::new("composer-action")
+                .variant(ButtonVariant::Danger)
+                .icon_circle(metrics::COMPOSER_SEND_SIZE)
+                .disabled(!can_cancel)
+                .track_focus(&action_focus)
+                .label("✕")
+                .tooltip(cancel_tooltip);
+            if can_cancel {
+                cancel = cancel.on_click(cx.listener(|view, _event, window, cx| {
+                    view.on_cancel_clicked(window, cx);
+                }));
+            }
+            cancel.into_any_element()
+        } else {
+            let action_focus = self.composer_action_focus.clone();
+            let send_tooltip = if can_send {
+                SharedString::from("Send message (Enter)")
+            } else {
+                SharedString::from(self.send_disabled_reason())
+            };
+            let mut send = Button::new("composer-action")
+                .variant(ButtonVariant::Primary)
+                .icon_circle(metrics::COMPOSER_SEND_SIZE)
+                .disabled(!can_send)
+                .track_focus(&action_focus)
+                .label("↑")
+                .tooltip(send_tooltip);
+            if can_send {
+                send = send.on_click(cx.listener(|view, _event, _window, cx| {
+                    if view.text_input.read(cx).is_composing() {
+                        return;
+                    }
+                    view.send_current_message(cx);
+                }));
+            }
+            send.into_any_element()
+        };
+
         div()
             .flex()
             .flex_col()
-            .gap_1()
-            .p_2()
+            .gap(px(metrics::COMPOSER_GAP))
+            .p(px(metrics::COMPOSER_PAD))
+            .min_h(px(metrics::COMPOSER_PANEL_MIN_HEIGHT))
+            .max_h(px(metrics::COMPOSER_PANEL_MAX_HEIGHT))
             .border_t_1()
             .border_color(dark().border.subtle)
             .child(
                 div()
                     .flex()
                     .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(model_picker)
+                    .min_h(px(metrics::COMPOSER_INPUT_MIN_HEIGHT))
                     .child(
-                        div().flex_1().child(
-                            Label::new(context_meter)
-                                .size(font::XS)
-                                .color(dark().text.secondary),
-                        ),
-                    )
-                    .child(
-                        Label::new(self.composer_workspace_label())
-                            .size(font::XS)
-                            .color(dark().text.secondary),
+                        div()
+                            .flex_1()
+                            .min_h(px(metrics::COMPOSER_INPUT_MIN_HEIGHT))
+                            .child(self.text_input.clone()),
                     ),
             )
             .when(
                 matches!(self.open_menu, Some(MenuKind::WorkspaceConfirm)),
                 |composer| {
-                    // 无触发器：锚在 label 行正下方（原 in-flow 位置），浮层化不占布局流。
+                    // 无触发器：锚在 footer 行上方（原 label 行位置），浮层化不占布局流。
                     composer.child(deferred(
                         anchored()
                             .anchor(Corner::TopLeft)
@@ -89,61 +135,61 @@ impl AppView {
                 div()
                     .flex()
                     .flex_row()
+                    .items_center()
                     .gap_2()
+                    .h(px(metrics::COMPOSER_SEND_SIZE))
                     .child(
                         div()
-                            .flex_1()
-                            .min_h(px(metrics::COMPOSER_MIN_HEIGHT))
-                            .max_h(px(metrics::COMPOSER_MAX_HEIGHT))
-                            .child(self.text_input.clone()),
+                            .max_w(px(220.0))
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(model_picker),
                     )
-                    .child({
-                        let cancel_focus = self.cancel_focus.clone();
-                        let cancel_tooltip = if can_cancel {
-                            SharedString::from("Cancel run (Cmd+.)")
-                        } else {
-                            SharedString::from(self.cancel_disabled_reason())
-                        };
-                        let mut cancel = Button::new("cancel")
-                            .variant(ButtonVariant::Danger)
-                            .disabled(!can_cancel)
-                            .track_focus(&cancel_focus)
-                            .padding(ButtonPadding::Wide)
-                            .label("Cancel")
-                            .tooltip(cancel_tooltip);
-                        if can_cancel {
-                            cancel = cancel.on_click(cx.listener(|view, _event, window, cx| {
-                                view.on_cancel_clicked(window, cx);
-                            }));
-                        }
-                        cancel
+                    .child(
+                        div()
+                            .max_w(px(180.0))
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .child(
+                                        Label::new(self.composer_workspace_label())
+                                            .size(font::XS)
+                                            .color(dark().text.secondary),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        Label::new(context_meter)
+                            .size(font::XS)
+                            .color(dark().text.secondary),
+                    )
+                    .when_some(self.status_hint.as_ref(), |footer, hint| {
+                        footer.child(
+                            div()
+                                .max_w(px(360.0))
+                                .min_w_0()
+                                .overflow_hidden()
+                                .child(
+                                    div().truncate().child(
+                                        Label::new(hint.clone())
+                                            .size(font::XS)
+                                            .color(dark().semantic.warning_text),
+                                    ),
+                                ),
+                        )
                     })
-                    .child({
-                        let send_focus = self.send_focus.clone();
-                        let send_tooltip = if can_send {
-                            SharedString::from("Send message (Enter)")
-                        } else {
-                            SharedString::from(composer_hint.clone())
-                        };
-                        let mut send = Button::new("send")
-                            .variant(ButtonVariant::Primary)
-                            .disabled(!can_send)
-                            .track_focus(&send_focus)
-                            .padding(ButtonPadding::Wide)
-                            .label("Send")
-                            .tooltip(send_tooltip);
-                        if can_send {
-                            send = send.on_click(cx.listener(|view, _event, _window, cx| {
-                                view.send_current_message(cx);
-                            }));
-                        }
-                        send
-                    }),
-            )
-            .child(
-                Label::new(self.status_hint.clone().unwrap_or(composer_hint))
-                    .size(font::XS)
-                    .color(dark().text.secondary),
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .w(px(metrics::COMPOSER_SEND_SIZE))
+                            .h(px(metrics::COMPOSER_SEND_SIZE))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(action_slot),
+                    ),
             )
     }
 
@@ -218,25 +264,54 @@ impl AppView {
             )
     }
 
-    /// Composer 禁用原因（文本说明，不只靠颜色，gui-design §6）。
-    fn composer_hint(&self) -> String {
+    /// Composer 空输入 placeholder：只走连接/session/run 状态机，不被
+    /// status_hint 覆盖（瞬态反馈改落 footer Label）。
+    pub(super) fn composer_placeholder_hint(&self) -> String {
+        composer_placeholder_hint(
+            &self.projection.connection,
+            self.projection.active_session_id.is_some(),
+            self.projection.active_run_id.is_some(),
+        )
+    }
+
+    fn send_disabled_reason(&self) -> String {
         if self.projection.active_run_id.is_some() {
-            return "Run in progress — sending and model switch are disabled. Cancel remains available.".into();
-        }
-        match &self.projection.connection {
-            ConnectionState::Connected { .. } => {
-                if self.projection.active_session_id.is_none() {
-                    "Open a session to send messages.".into()
-                } else {
-                    "Enter to send · Shift+Enter for newline".into()
+            "Run in progress — sending is disabled. Cancel remains available.".into()
+        } else {
+            match &self.projection.connection {
+                ConnectionState::Connected { .. } => {
+                    if self.projection.active_session_id.is_none() {
+                        "Open a session to send messages.".into()
+                    } else {
+                        "Message is empty.".into()
+                    }
                 }
+                ConnectionState::Connecting => "Waiting for connection…".into(),
+                ConnectionState::Disconnected { .. } => {
+                    "Disconnected — click Reconnect before sending.".into()
+                }
+                ConnectionState::Failed { .. } => "Connect failed — click Reconnect.".into(),
             }
-            ConnectionState::Connecting => "Waiting for connection…".into(),
-            ConnectionState::Disconnected { .. } => {
-                "Disconnected — click Reconnect before sending.".into()
-            }
-            ConnectionState::Failed { .. } => "Connect failed — click Reconnect.".into(),
         }
+    }
+
+    fn sync_composer_placeholder(&self, hint: String, cx: &mut Context<Self>) {
+        self.text_input.update(cx, |input, cx| {
+            input.set_placeholder(hint, cx);
+        });
+    }
+
+    /// 面板常态总高：border + pad×2 + 输入行 + gap + 动作槽。
+    pub(super) fn composer_panel_height(input_height: f32) -> f32 {
+        (metrics::COMPOSER_BORDER
+            + metrics::COMPOSER_PAD * 2.0
+            + input_height.max(metrics::COMPOSER_INPUT_MIN_HEIGHT)
+            + metrics::COMPOSER_GAP
+            + metrics::COMPOSER_SEND_SIZE)
+            .clamp(
+                metrics::COMPOSER_PANEL_MIN_HEIGHT,
+                metrics::COMPOSER_PANEL_MAX_HEIGHT,
+            )
     }
 
     fn composer_workspace_label(&self) -> String {
@@ -333,5 +408,138 @@ impl AppView {
         } else {
             "Cancel needs a live connection.".into()
         }
+    }
+}
+
+fn composer_placeholder_hint(
+    connection: &ConnectionState,
+    has_session: bool,
+    running: bool,
+) -> String {
+    if running {
+        return "Run in progress — sending is disabled. Cancel remains available.".into();
+    }
+    match connection {
+        ConnectionState::Connected { .. } => {
+            if has_session {
+                "Message Pawork… (Enter to send, Shift+Enter for newline)".into()
+            } else {
+                "Open a session to send messages.".into()
+            }
+        }
+        ConnectionState::Connecting => "Waiting for connection…".into(),
+        ConnectionState::Disconnected { .. } => {
+            "Disconnected — click Reconnect before sending.".into()
+        }
+        ConnectionState::Failed { .. } => "Connect failed — click Reconnect.".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{composer_placeholder_hint, AppView};
+    use crate::projection::{ConnectionState, ModelEntry};
+    use crate::ui::theme::metrics;
+
+    #[test]
+    fn composer_placeholder_hint_follows_connection_and_run_state() {
+        let connected = ConnectionState::Connected {
+            instance_id: "dev".into(),
+        };
+        assert_eq!(
+            composer_placeholder_hint(&connected, true, false),
+            "Message Pawork… (Enter to send, Shift+Enter for newline)"
+        );
+        assert_eq!(
+            composer_placeholder_hint(&connected, false, false),
+            "Open a session to send messages."
+        );
+        assert_eq!(
+            composer_placeholder_hint(&connected, true, true),
+            "Run in progress — sending is disabled. Cancel remains available."
+        );
+        assert_eq!(
+            composer_placeholder_hint(&ConnectionState::Connecting, true, false),
+            "Waiting for connection…"
+        );
+        assert_eq!(
+            composer_placeholder_hint(
+                &ConnectionState::Disconnected {
+                    reason: "lost".into(),
+                },
+                true,
+                false,
+            ),
+            "Disconnected — click Reconnect before sending."
+        );
+        assert_eq!(
+            composer_placeholder_hint(
+                &ConnectionState::Failed {
+                    reason: "boom".into(),
+                },
+                true,
+                false,
+            ),
+            "Connect failed — click Reconnect."
+        );
+        // 瞬态 status_hint 不再覆盖 placeholder 状态机。
+        assert_ne!(
+            composer_placeholder_hint(&connected, true, false),
+            "Forked · s-1"
+        );
+    }
+
+    #[test]
+    fn composer_panel_height_clamps_across_input_sizes() {
+        let idle = AppView::composer_panel_height(metrics::COMPOSER_INPUT_MIN_HEIGHT);
+        assert!(idle >= 88.0 && idle <= 94.0, "idle panel {idle}");
+        assert_eq!(idle, metrics::COMPOSER_PANEL_MIN_HEIGHT);
+        let mid = AppView::composer_panel_height(80.0);
+        assert!(mid > idle);
+        assert!(mid < metrics::COMPOSER_PANEL_MAX_HEIGHT);
+        let capped = AppView::composer_panel_height(400.0);
+        assert_eq!(capped, metrics::COMPOSER_PANEL_MAX_HEIGHT);
+        assert_eq!(metrics::COMPOSER_SEND_SIZE, 32.0);
+    }
+
+    #[test]
+    fn model_menu_selected_follows_effective_model() {
+        let models = [
+            ModelEntry {
+                provider_id: "openai".into(),
+                id: "gpt-4.1".into(),
+                display_name: "GPT-4.1".into(),
+                context_window_tokens: Some(128_000),
+            },
+            ModelEntry {
+                provider_id: "anthropic".into(),
+                id: "opus".into(),
+                display_name: "Opus".into(),
+                context_window_tokens: Some(200_000),
+            },
+        ];
+        let selected = Some(("anthropic".to_string(), "opus".to_string()));
+        let selected_ix = selected
+            .as_ref()
+            .and_then(|(provider, id)| {
+                models
+                    .iter()
+                    .position(|entry| entry.provider_id == *provider && entry.id == *id)
+            })
+            .unwrap_or(0);
+        assert_eq!(selected_ix, 1);
+        assert_eq!(
+            format!("{} / {}", models[selected_ix].provider_id, models[selected_ix].display_name),
+            "anthropic / Opus"
+        );
+        let none_ix = None::<(String, String)>
+            .as_ref()
+            .and_then(|(provider, id)| {
+                models
+                    .iter()
+                    .position(|entry| entry.provider_id == *provider && entry.id == *id)
+            })
+            .unwrap_or(0);
+        assert_eq!(none_ix, 0);
     }
 }

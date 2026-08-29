@@ -1,0 +1,37 @@
+{
+  "phase": "narrow-reachable",
+  "generated_at": "2026-08-28T23:27:18Z",
+  "checks": [
+    {
+      "name": "root-1080x720",
+      "pass": true,
+      "detail": "pawork-root w=1080.0 h=720.0"
+    },
+    {
+      "name": "composer-present",
+      "pass": true,
+      "detail": "composer frame={'x': 1240.0, 'y': 813.0, 'w': 840.0, 'h': 91.0}"
+    },
+    {
+      "name": "send-or-cancel-present",
+      "pass": true,
+      "detail": "action slot frame={'x': 2040.0, 'y': 864.0, 'w': 32.0, 'h': 32.0}"
+    },
+    {
+      "name": "composer-within-root",
+      "pass": true,
+      "detail": "composer={'x': 1240.0, 'y': 813.0, 'w': 840.0, 'h': 91.0} root={'x': 1000.0, 'y': 208.0, 'w': 1080.0, 'h': 720.0}"
+    },
+    {
+      "name": "action-within-root",
+      "pass": true,
+      "detail": "action={'x': 2040.0, 'y': 864.0, 'w': 32.0, 'h': 32.0} root={'x': 1000.0, 'y': 208.0, 'w': 1080.0, 'h': 720.0}"
+    },
+    {
+      "name": "action-within-composer",
+      "pass": true,
+      "detail": "action={'x': 2040.0, 'y': 864.0, 'w': 32.0, 'h': 32.0} composer={'x': 1240.0, 'y': 813.0, 'w': 840.0, 'h': 91.0}"
+    }
+  ],
+  "pass": true
+}

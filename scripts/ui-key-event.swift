@@ -24,13 +24,17 @@
 //   ui-key-event --pid <pid> --key <name|code> [--modifiers cmd,alt,shift,ctrl]
 //                [--down-only | --up-only]
 //   ui-key-event --pid <pid> --click-at <x>,<y>
+//   ui-key-event --pid <pid> --pin-ascii-input-source
+//   ui-key-event --pid <pid> --restore-input-source <id>
 //
 // 按键名（大小写不敏感）：tab return enter escape esc space delete
 //   up down left right home end pageup pagedown help a-z 0-9。
 // 修饰键别名：cmd/command/super、alt/option/opt、shift、ctrl/control。
 //
-// 退出码：0 全部事件投递成功；2 参数错误；3 事件构造/投递失败；4 PID 不在运行。
+// 退出码：0 成功；2 参数错误；3 事件构造/投递失败；4 PID 不在运行；
+// 5 输入源枚举/切换失败。
 
+import Carbon
 import CoreGraphics
 import Foundation
 
@@ -41,6 +45,8 @@ struct Options {
     var downOnly = false
     var upOnly = false
     var clickAt: String = ""
+    var pinAsciiInputSource = false
+    var restoreInputSource = ""
 }
 
 func die(_ message: String, code: Int32) -> Never {
@@ -126,10 +132,16 @@ func parseArgs(_ argv: [String]) -> Options {
             opts.upOnly = true
         case "--click-at":
             opts.clickAt = needValue()
+        case "--pin-ascii-input-source":
+            opts.pinAsciiInputSource = true
+        case "--restore-input-source":
+            opts.restoreInputSource = needValue()
         case "-h", "--help":
             fputs(
                 "用法：ui-key-event --pid <pid> --key <name|code> [--modifiers cmd,alt,shift,ctrl] [--down-only | --up-only]\n"
-                    + "      ui-key-event --pid <pid> --click-at <x>,<y>\n",
+                    + "      ui-key-event --pid <pid> --click-at <x>,<y>\n"
+                    + "      ui-key-event --pid <pid> --pin-ascii-input-source\n"
+                    + "      ui-key-event --pid <pid> --restore-input-source <id>\n",
                 stderr)
             exit(0)
         default:
@@ -141,7 +153,14 @@ func parseArgs(_ argv: [String]) -> Options {
     if opts.downOnly && opts.upOnly {
         die("--down-only 与 --up-only 互斥", code: 2)
     }
-    if !opts.clickAt.isEmpty {
+    if opts.pinAsciiInputSource || !opts.restoreInputSource.isEmpty {
+        if !opts.key.isEmpty || !opts.clickAt.isEmpty || opts.downOnly || opts.upOnly {
+            die("输入源模式与键盘/点击参数互斥", code: 2)
+        }
+        if opts.pinAsciiInputSource && !opts.restoreInputSource.isEmpty {
+            die("--pin-ascii-input-source 与 --restore-input-source 互斥", code: 2)
+        }
+    } else if !opts.clickAt.isEmpty {
         if !opts.key.isEmpty || opts.downOnly || opts.upOnly {
             die("--click-at 与键盘参数互斥", code: 2)
         }
@@ -149,6 +168,71 @@ func parseArgs(_ argv: [String]) -> Options {
         die("必须提供 --key <name|code> 或 --click-at <x>,<y>", code: 2)
     }
     return opts
+}
+
+// ---- 输入源管理（R5 Wave B r5-9 实跑：IME 组合会话吞 keyDown，键盘场景
+// 必须把前台输入源钉到 ASCII；退出时由 --restore-input-source 恢复）----
+
+func inputSourceID(_ source: TISInputSource) -> String {
+    guard let ptr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
+    else { return "" }
+    return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+}
+
+func inputSourceEnabled(_ source: TISInputSource, _ key: CFString) -> Bool {
+    guard let ptr = TISGetInputSourceProperty(source, key) else { return false }
+    return CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque(ptr).takeUnretainedValue())
+}
+
+func currentInputSourceID() -> String {
+    guard let current = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
+    else { return "" }
+    return inputSourceID(current)
+}
+
+func keyboardInputSources() -> [TISInputSource] {
+    guard
+        let list = TISCreateInputSourceList(nil, false)?.takeRetainedValue(),
+        let sources = list as? [TISInputSource]
+    else { return [] }
+    return sources
+}
+
+func pinAsciiInputSource() {
+    let before = currentInputSourceID()
+    var fallback: TISInputSource?
+    for source in keyboardInputSources()
+    where inputSourceEnabled(source, kTISPropertyInputSourceIsASCIICapable)
+        && inputSourceEnabled(source, kTISPropertyInputSourceIsSelectCapable)
+    {
+        let id = inputSourceID(source)
+        if id == "com.apple.keylayout.ABC" || id == "com.apple.keylayout.US" {
+            guard TISSelectInputSource(source) == noErr else {
+                die("TISSelectInputSource \(id) 失败", code: 5)
+            }
+            fputs("ui-key-event input-source-before=\(before) after=\(id)\n", stderr)
+            return
+        }
+        if fallback == nil { fallback = source }
+    }
+    guard let chosen = fallback else { die("无可用 ASCII 输入源", code: 5) }
+    let id = inputSourceID(chosen)
+    guard TISSelectInputSource(chosen) == noErr else {
+        die("TISSelectInputSource \(id) 失败", code: 5)
+    }
+    fputs("ui-key-event input-source-before=\(before) after=\(id)\n", stderr)
+}
+
+func restoreInputSource(id wanted: String) {
+    let before = currentInputSourceID()
+    for source in keyboardInputSources() where inputSourceID(source) == wanted {
+        guard TISSelectInputSource(source) == noErr else {
+            die("TISSelectInputSource \(wanted) 失败", code: 5)
+        }
+        fputs("ui-key-event input-source-before=\(before) after=\(wanted) (restored)\n", stderr)
+        return
+    }
+    die("输入源不存在 id=\(wanted)", code: 5)
 }
 
 func resolveKeyCode(_ raw: String) -> CGKeyCode? {
@@ -185,6 +269,14 @@ func postEvent(
 }
 
 let opts = parseArgs(Array(CommandLine.arguments.dropFirst()))
+if opts.pinAsciiInputSource {
+    pinAsciiInputSource()
+    exit(0)
+}
+if !opts.restoreInputSource.isEmpty {
+    restoreInputSource(id: opts.restoreInputSource)
+    exit(0)
+}
 guard kill(opts.pid, 0) == 0 else {
     die("目标 PID 不在运行：\(opts.pid)", code: 4)
 }

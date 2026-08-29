@@ -20,8 +20,7 @@ mod timeline_entry;
 #[cfg(test)]
 mod u1_probe;
 
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -102,8 +101,7 @@ pub(crate) const MAIN_PATH_TAB_STOP_IDS: &[&str] = &[
     "approve-once",
     "approve-for-run",
     "approve-deny",
-    "cancel",
-    "send",
+    "composer-action",
     "add-task",
     "model-picker",
 ];
@@ -168,6 +166,20 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("end", End, Some("TextInput")),
         KeyBinding::new("cmd-v", Paste, Some("TextInput")),
         KeyBinding::new("ctrl-v", Paste, Some("TextInput")),
+        KeyBinding::new("shift-left", text_input::SelectLeft, Some("TextInput")),
+        KeyBinding::new("shift-right", text_input::SelectRight, Some("TextInput")),
+        KeyBinding::new("shift-home", text_input::SelectToLineStart, Some("TextInput")),
+        KeyBinding::new("shift-end", text_input::SelectToLineEnd, Some("TextInput")),
+        KeyBinding::new("cmd-a", text_input::SelectAll, Some("TextInput")),
+        KeyBinding::new("ctrl-a", text_input::SelectAll, Some("TextInput")),
+        KeyBinding::new("cmd-c", text_input::Copy, Some("TextInput")),
+        KeyBinding::new("ctrl-c", text_input::Copy, Some("TextInput")),
+        KeyBinding::new("cmd-x", text_input::Cut, Some("TextInput")),
+        KeyBinding::new("ctrl-x", text_input::Cut, Some("TextInput")),
+        KeyBinding::new("cmd-z", text_input::Undo, Some("TextInput")),
+        KeyBinding::new("cmd-shift-z", text_input::Redo, Some("TextInput")),
+        KeyBinding::new("ctrl-z", text_input::Undo, Some("TextInput")),
+        KeyBinding::new("ctrl-shift-z", text_input::Redo, Some("TextInput")),
         KeyBinding::new("cmd-.", CancelRun, Some("AppView")),
         KeyBinding::new("cmd-enter", ApproveOnce, Some("AppView")),
         KeyBinding::new("cmd-1", ApproveOnce, Some("AppView")),
@@ -315,6 +327,9 @@ pub struct AppView {
     projection: DesktopProjection,
     text_input: Entity<TextInput>,
     terminal_input: Entity<TextInput>,
+    /// per-session Composer 草稿（不含终端）。无 active session 时走独立槽。
+    composer_drafts: HashMap<String, String>,
+    no_session_draft: String,
     /// Timeline 虚拟化状态（Bottom 对齐钉底；跟随语义见 ui/timeline.rs）。
     timeline_list: ListState,
     timeline_following: bool,
@@ -376,8 +391,9 @@ pub struct AppView {
     approve_once_focus: FocusHandle,
     approve_for_run_focus: FocusHandle,
     deny_focus: FocusHandle,
-    cancel_focus: FocusHandle,
-    send_focus: FocusHandle,
+    /// Send / Cancel 同槽单一焦点：idle 与 running 都 track 此句柄，
+    /// 状态切换不丢焦点、不留下幽灵 tab stop。
+    composer_action_focus: FocusHandle,
     add_task_focus: FocusHandle,
     model_focus: FocusHandle,
     /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
@@ -403,7 +419,14 @@ impl AppView {
         let controller = Arc::new(DesktopController::new(platform.handle()));
         let text_input = cx.new(|cx| TextInput::new(cx));
         let terminal_input =
-            cx.new(|cx| TextInput::with_placeholder("Terminal input… (Enter to write)", cx));
+            cx.new(|cx| {
+                TextInput::with_placeholder("Terminal input… (Enter to write)", cx)
+                    .id("terminal-input")
+                    .height_clamp(
+                        crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                        crate::ui::theme::metrics::COMPOSER_MAX_HEIGHT,
+                    )
+            });
         let mut view = Self {
             _platform: platform,
             controller,
@@ -411,6 +434,8 @@ impl AppView {
             projection: DesktopProjection::default(),
             text_input,
             terminal_input,
+            composer_drafts: HashMap::new(),
+            no_session_draft: String::new(),
             timeline_list: ListState::new(
                 0,
                 // F-06：Top 对齐让短会话从 Header 下开始；跟随 / 脱钩语义
@@ -456,8 +481,7 @@ impl AppView {
             approve_once_focus: cx.focus_handle().tab_stop(true),
             approve_for_run_focus: cx.focus_handle().tab_stop(true),
             deny_focus: cx.focus_handle().tab_stop(true),
-            cancel_focus: cx.focus_handle().tab_stop(true),
-            send_focus: cx.focus_handle().tab_stop(true),
+            composer_action_focus: cx.focus_handle().tab_stop(true),
             add_task_focus: cx
                 .focus_handle()
                 .tab_stop(true)
@@ -475,6 +499,7 @@ impl AppView {
         view.text_input
             .read(cx)
             .focus_handle(cx)
+            .tab_stop(true)
             .tab_index(COMPOSER_TAB_INDEX);
             view.start_connect(cx);
         view
@@ -809,7 +834,7 @@ impl AppView {
                 {
                     self.timeline_changed();
                 }
-                self.text_input.update(cx, |input, cx| input.clear(cx));
+                self.apply_message_sent_draft(&session_id, cx);
             }
             ControllerEvent::ModelsLoaded(models) => {
                 self.projection.set_models(models);
@@ -940,6 +965,7 @@ impl AppView {
     }
 
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
+        self.stash_composer_draft(cx);
         self.projection.select_session(&session_id);
         // session_get 分页开始：complete / open session 失败前不写 settle barrier。
         self.timeline_paging = true;
@@ -956,6 +982,7 @@ impl AppView {
         self.changes.reset_for_session();
         self.controller.open_session(session_id);
         self.refresh_changes(cx);
+        self.restore_composer_draft(cx);
         cx.notify();
     }
 
@@ -1642,7 +1669,7 @@ impl AppView {
             cx.notify();
             return;
         };
-        if !self.can_send() {
+        if !self.can_send(cx) {
             return;
         }
         let text = self.text_input.read(cx).text().to_string();
@@ -1678,12 +1705,57 @@ impl AppView {
             && !self.projection.models.is_empty()
     }
 
-    fn can_send(&self) -> bool {
+    fn composer_has_sendable_text(&self, cx: &App) -> bool {
+        !self.text_input.read(cx).text().trim().is_empty()
+    }
+
+    fn can_send(&self, cx: &App) -> bool {
         matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
         ) && self.projection.active_session_id.is_some()
             && self.projection.active_run_id.is_none()
+            && self.composer_has_sendable_text(cx)
+    }
+
+    fn stash_composer_draft(&mut self, cx: &App) {
+        let text = self.text_input.read(cx).text().to_string();
+        match self.projection.active_session_id.clone() {
+            Some(session_id) => {
+                self.composer_drafts.insert(session_id, text);
+            }
+            None => self.no_session_draft = text,
+        }
+    }
+
+    fn restore_composer_draft(&mut self, cx: &mut Context<Self>) {
+        let draft = match self.projection.active_session_id.as_deref() {
+            Some(session_id) => self
+                .composer_drafts
+                .get(session_id)
+                .cloned()
+                .unwrap_or_default(),
+            None => self.no_session_draft.clone(),
+        };
+        self.text_input
+            .update(cx, |input, cx| input.reset_text(draft, cx));
+    }
+
+    /// MessageSent：发送方草稿条目恒清；可见 Composer 只在回执属于
+    /// 当前 active session 时清空。无 session 槽只在无 active 时写入，
+    /// 因此这里不再另清 no_session_draft。
+    fn apply_message_sent_draft(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        self.composer_drafts.remove(session_id);
+        if Self::message_sent_clears_visible_composer(
+            self.projection.active_session_id.as_deref(),
+            session_id,
+        ) {
+            self.text_input.update(cx, |input, cx| input.clear(cx));
+        }
+    }
+
+    fn message_sent_clears_visible_composer(active: Option<&str>, receipt: &str) -> bool {
+        active == Some(receipt)
     }
 
     fn can_approve(&self) -> bool {
@@ -2076,13 +2148,19 @@ mod tests {
     }
 
     #[test]
+    fn message_sent_clears_visible_composer_only_for_active_session() {
+        assert!(AppView::message_sent_clears_visible_composer(Some("s-a"), "s-a"));
+        assert!(!AppView::message_sent_clears_visible_composer(Some("s-a"), "s-b"));
+        assert!(!AppView::message_sent_clears_visible_composer(None, "s-b"));
+    }
+
+    #[test]
     fn main_path_buttons_are_marked_tab_stops() {
         for id in [
             "approve-once",
             "approve-for-run",
             "approve-deny",
-            "cancel",
-            "send",
+            "composer-action",
             "add-task",
             "model-picker",
         ] {
@@ -2091,6 +2169,19 @@ mod tests {
                 "missing tab_stop marker for {id}"
             );
         }
+        assert!(!MAIN_PATH_TAB_STOP_IDS.contains(&"send"));
+        assert!(!MAIN_PATH_TAB_STOP_IDS.contains(&"cancel"));
+        assert!(COMPOSER_TAB_INDEX == 1);
+    }
+
+    #[test]
+    fn composer_action_slot_is_single_tab_stop() {
+        assert!(MAIN_PATH_TAB_STOP_IDS.contains(&"composer-action"));
+        assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 32.0);
+        let height = AppView::composer_panel_height(
+            crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT,
+        );
+        assert!(height <= 94.0 && height >= 88.0);
     }
 
     #[test]

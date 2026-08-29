@@ -1,6 +1,6 @@
 # R4–R6 — 核心 Agent 工作流
 
-> 状态：🟢 R4 已收口（Wave A 🟢 2026-08-28 / Wave B 🟢 2026-08-28；拍板 1：State A/B 分区 SSIM ≥0.99 移交 R8；wire 演进仍开放）
+> 状态：🟢 R4 已收口（Wave A 🟢 2026-08-28 / Wave B 🟢 2026-08-28；拍板 1：State A/B 分区 SSIM ≥0.99 移交 R8；wire 演进仍开放）· 🔵 R5 进行中（Wave A 🟢 2026-08-28 / Wave B + U2 🟢 2026-08-29；仅剩 Composer SSIM 移交 R8 待用户拍板）
 > 前置：R2、R3 依次通过。R4 → R5 → R6 串行推进，每阶段同时完成视觉、真实交互与对应 UI 场景测试。
 
 ## R4 — Workspace、Timeline 与 Agent 状态
@@ -31,6 +31,10 @@
 
 ## R5 — Composer 与运行控制
 
+> 波次状态：
+> - **Wave A（🟢 2026-08-28）**：F-09 收口——真窗口 Composer 常态总高 156→91（合同 88–94，blocking PASS）；两行结构（输入区 + footer：model 28 truncate / workspace 只读 Label / ContextMeter / 32×32 动作槽）；Send/Cancel 同槽互换 + 单 composer_action_focus（无幽灵 tab stop）；提示行拆除（placeholder 状态机 + footer 瞬态 status_hint）；TextInput 参数化解耦 Terminal（terminal-input，28–220 独立 clamp）；诚实缺省（reasoning / 附件 / 进度条 / queue 不画，workspace 无点击面）；119/119 定向测试；评审 P1×3 + P2×2 全修复；State A 结构门禁三轮全 PASS（证据 [docs/ui-review/r5-wave-a/](../docs/ui-review/r5-wave-a/)）。composer SSIM 记录值 0.423/0.619，按先例移交 R8（待用户拍板）。
+> - **Wave B（🟢 2026-08-29）**：输入交互落地——shift 选择 / 鼠标点选拖选 / Copy/Cut/SelectAll / Undo Redo / overflow scroll（TextElement 全内容高 + 父容器视口，caret 滚进视口）/ IME composing 闸门 / can_send trim / per-session 草稿 / Terminal 解耦；U2 九场景与 driver 18 用例交付。cargo test 129 绿、python 40 绿、warnings 15 持平、零 wire 变更。两轮评审：F1–F5（P0×2+P1×2+P2）全修复；第二轮 P1 鼠标/IME 坐标映射根因修复（prepaint 归一化 content_bounds，帧时序无关）+ IME 行高取 last_line_height。解锁后 U2 九场景 22 份断言全 PASS（含输入源 pin/restore 与 model 场景隔离），证据与处置见 [docs/ui-review/r5-wave-b/](../docs/ui-review/r5-wave-b/)。
+
 ### 工作范围
 
 - 常态总高、增长上限、输入区、footer controls、ContextMeter 与 Send/Cancel 几何严格按定稿图；`88–94px` 是常态总高，不是输入框最小高。
@@ -46,10 +50,12 @@
 
 ### R5 退出标准
 
-- [ ] Composer 所有可见控件真实可用或诚实不可用，生产路径无演示数据与空点击面。
+- [x] Composer 所有可见控件真实可用或诚实不可用，生产路径无演示数据与空点击面。
 - [ ] State A/B 常态与 running Composer 几何/视觉在容差内，区域 SSIM `≥0.99`。
-- [ ] IME、paste、多行、草稿、send/cancel、菜单和 focus 恢复场景稳定通过。
-- [ ] 任何状态均无按钮拉伸、遮挡、布局跳动或输入丢失。
+- [x] IME、paste、多行、草稿、send/cancel、菜单和 focus 恢复场景稳定通过。
+- [x] 任何状态均无按钮拉伸、遮挡、布局跳动或输入丢失。
+
+> R5 自动门禁已收口，仅剩区域 SSIM `≥0.99`：Wave A 记录 0.423 / 0.619，拟同 R3/R4 先例移交 R8 终局视觉门禁，等待用户拍板后退出 R5。
 
 ## R6 — Inspector、Changes、Terminal 与 Activity
 

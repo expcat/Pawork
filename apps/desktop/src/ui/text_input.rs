@@ -3,16 +3,17 @@
 //! Adapted from gpui 0.2.2 examples/input.rs (Apache-2.0).
 //! 裁剪范围：保留内容/占位符/marked_range（IME）/UTF16Selection、
 //! Backspace/Delete/Home/End/左右/Paste，以及点击聚焦（波 C 多轮/IME 必需）。
-//! ShowCharacterPalette、Copy/Cut/SelectAll 与拖选仍按波 B 范围删除。
+//! R5 Wave B：shift 选择、鼠标点选/拖选、Copy/Cut/SelectAll、Undo/Redo、overflow scroll。
 
 use std::ops::Range;
 
 use super::theme::{dark, font, metrics};
 use gpui::{
-    actions, div, fill, point, prelude::*, px, relative, size, App, Context, CursorStyle,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
-    GlobalElementId, LayoutId, MouseButton, MouseDownEvent, PaintQuad, Pixels, Point, ShapedLine,
-    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
+    actions, div, fill, point, prelude::*, px, relative, size, App, ClipboardItem, Context,
+    CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle,
+    Focusable, GlobalElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, Pixels, Point, ScrollHandle, ShapedLine, SharedString, Style,
+    TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use unicode_segmentation::*;
 
@@ -24,9 +25,18 @@ actions!(
         Left,
         Right,
         Home,
+        SelectLeft,
+        SelectRight,
+        SelectToLineStart,
+        SelectToLineEnd,
+        SelectAll,
         End,
         Paste,
         NewLine,
+        Cut,
+        Copy,
+        Undo,
+        Redo,
         SendMessage,
     ]
 );
@@ -35,12 +45,28 @@ pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
     placeholder: SharedString,
+    element_id: SharedString,
+    min_height: f32,
+    max_height: f32,
     selected_range: Range<usize>,
     selection_reversed: bool,
+    is_selecting: bool,
+    undo_stack: Vec<EditSnapshot>,
+    redo_stack: Vec<EditSnapshot>,
+    scroll: ScrollHandle,
+    pending_caret_scroll: bool,
+    last_line_height: Pixels,
     marked_range: Option<Range<usize>>,
     last_layout: Option<Vec<ShapedLine>>,
     last_line_starts: Vec<usize>,
     last_bounds: Option<gpui::Bounds<Pixels>>,
+}
+
+#[derive(Clone)]
+struct EditSnapshot {
+    content: SharedString,
+    selected_range: Range<usize>,
+    selection_reversed: bool,
 }
 
 impl TextInput {
@@ -56,12 +82,21 @@ impl TextInput {
             focus_handle: cx.focus_handle(),
             content: "".into(),
             placeholder: placeholder.into(),
+            element_id: SharedString::from("composer-input"),
+            min_height: metrics::COMPOSER_INPUT_MIN_HEIGHT,
+            max_height: composer_input_max_height(),
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
             last_layout: None,
             last_line_starts: Vec::new(),
             last_bounds: None,
+            is_selecting: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            scroll: ScrollHandle::new(),
+            pending_caret_scroll: false,
+            last_line_height: px(metrics::ZERO),
         }
     }
 
@@ -75,6 +110,7 @@ impl TextInput {
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.push_undo();
         self.content = "".into();
         self.selected_range = 0..0;
         self.selection_reversed = false;
@@ -85,9 +121,39 @@ impl TextInput {
         cx.notify();
     }
 
+    /// Composer 动态 hint：空内容时显示，颜色走 theme placeholder token。
+    pub fn set_placeholder(&mut self, placeholder: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let placeholder = placeholder.into();
+        if self.placeholder == placeholder {
+            return;
+        }
+        self.placeholder = placeholder;
+        cx.notify();
+    }
+
+    pub fn placeholder(&self) -> &str {
+        &self.placeholder
+    }
+
+    /// 覆盖 GPUI element id（Composer 默认 `composer-input`；Terminal 用
+    /// `terminal-input`，避免与 Composer AX 节点冲突）。
+    pub fn id(mut self, id: impl Into<SharedString>) -> Self {
+        self.element_id = id.into();
+        self
+    }
+
+    /// 覆盖高度钳制。Composer 走面板预算；Terminal 独立 28–220，不被
+    /// Composer 面板预算截断。
+    pub fn height_clamp(mut self, min: f32, max: f32) -> Self {
+        self.min_height = min;
+        self.max_height = max.max(min);
+        self
+    }
+
     /// 由原生 Accessibility set-value 入口替换全文；与普通输入相同地把光标
     /// 收到末尾并清除 IME marked range / 旧布局缓存。
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.push_undo();
         self.content = text.into();
         let end = self.content.len();
         self.selected_range = end..end;
@@ -102,6 +168,71 @@ impl TextInput {
     /// 按原文换行计数（空内容视为 1 行），供 Composer 高度与验收断言使用。
     pub fn visual_line_count(&self) -> usize {
         line_byte_ranges(&self.content).len().max(1)
+    }
+
+    fn snapshot(&self) -> EditSnapshot {
+        EditSnapshot {
+            content: self.content.clone(),
+            selected_range: self.selected_range.clone(),
+            selection_reversed: self.selection_reversed,
+        }
+    }
+
+    fn restore_snapshot(&mut self, snap: EditSnapshot) {
+        self.content = snap.content;
+        self.selected_range = snap.selected_range;
+        self.selection_reversed = snap.selection_reversed;
+        self.marked_range = None;
+        self.last_layout = None;
+        self.last_line_starts.clear();
+        self.last_bounds = None;
+        self.is_selecting = false;
+        self.pending_caret_scroll = true;
+    }
+
+    fn push_undo(&mut self) {
+        let snap = if let Some(marked) = &self.marked_range {
+            let content = format!(
+                "{}{}",
+                &self.content[..marked.start],
+                &self.content[marked.end..]
+            );
+            EditSnapshot {
+                content: content.into(),
+                selected_range: marked.start..marked.start,
+                selection_reversed: false,
+            }
+        } else {
+            self.snapshot()
+        };
+        self.undo_stack.push(snap);
+        self.redo_stack.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn undo_len(&self) -> usize {
+        self.undo_stack.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selected_range(&self) -> Range<usize> {
+        self.selected_range.clone()
+    }
+
+    pub(crate) fn reset_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.content = text.into();
+        let end = self.content.len();
+        self.selected_range = end..end;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.last_layout = None;
+        self.last_line_starts.clear();
+        self.last_bounds = None;
+        self.is_selecting = false;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.pending_caret_scroll = true;
+        cx.notify();
     }
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
@@ -128,6 +259,63 @@ impl TextInput {
         self.move_to(self.content.len(), cx);
     }
 
+    fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.previous_boundary(self.cursor_offset()), cx);
+    }
+
+    fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.next_boundary(self.cursor_offset()), cx);
+    }
+
+    fn select_to_line_start(&mut self, _: &SelectToLineStart, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(0, cx);
+    }
+
+    fn select_to_line_end(&mut self, _: &SelectToLineEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.content.len(), cx);
+    }
+
+    fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(0, cx);
+        self.select_to(self.content.len(), cx);
+    }
+
+    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            self.content[self.selected_range.clone()].to_string(),
+        ));
+    }
+
+    fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            self.content[self.selected_range.clone()].to_string(),
+        ));
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(prev) = self.undo_stack.pop() else {
+            return;
+        };
+        self.redo_stack.push(self.snapshot());
+        self.restore_snapshot(prev);
+        cx.notify();
+    }
+
+    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(next) = self.redo_stack.pop() else {
+            return;
+        };
+        self.undo_stack.push(self.snapshot());
+        self.restore_snapshot(next);
+        cx.notify();
+    }
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
@@ -157,15 +345,33 @@ impl TextInput {
     /// 进不了第二轮。
     fn on_mouse_down(
         &mut self,
-        _event: &MouseDownEvent,
+        event: &MouseDownEvent,
         window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus_handle);
+        self.is_selecting = true;
+        let index = self.index_for_mouse_position(event.position, window);
+        if event.modifiers.shift {
+            self.select_to(index, cx);
+        } else {
+            self.move_to(index, cx);
+        }
+    }
+
+    fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, _cx: &mut Context<Self>) {
+        self.is_selecting = false;
+    }
+
+    fn on_mouse_move(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_selecting {
+            self.select_to(self.index_for_mouse_position(event.position, window), cx);
+        }
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
+        self.pending_caret_scroll = true;
         cx.notify()
     }
 
@@ -187,7 +393,82 @@ impl TextInput {
             self.selection_reversed = !self.selection_reversed;
             self.selected_range = self.selected_range.end..self.selected_range.start;
         }
+        self.pending_caret_scroll = true;
         cx.notify()
+    }
+
+    fn index_for_mouse_position(&self, position: Point<Pixels>, window: &Window) -> usize {
+        if self.content.is_empty() {
+            return 0;
+        }
+        let Some(bounds) = self.last_bounds else {
+            return 0;
+        };
+        let Some(lines) = self.last_layout.as_ref() else {
+            return 0;
+        };
+        if lines.is_empty() {
+            return 0;
+        }
+        let line_height = if self.last_line_height > px(metrics::ZERO) {
+            self.last_line_height
+        } else {
+            window.line_height()
+        };
+        let viewport = self.scroll.bounds();
+        let hit_bounds = if viewport.size.height > px(metrics::ZERO) {
+            viewport
+        } else {
+            bounds
+        };
+        if position.y < hit_bounds.top() {
+            return 0;
+        }
+        if position.y > hit_bounds.bottom() {
+            return self.content.len();
+        }
+        // last_bounds 已归一化为布局原点（见 PrepaintState::content_bounds），
+        // 内容 y = 视口内 y − scroll offset；该式在稳态帧与滚动后一帧的
+        // 过渡态下均成立。
+        let content_y = f32::from(position.y - bounds.top()) - f32::from(self.scroll.offset().y);
+        let mut index = 0usize;
+        if line_height > px(metrics::ZERO) {
+            index = (content_y.max(0.0) / f32::from(line_height)) as usize;
+        }
+        index = index.min(lines.len() - 1);
+        let line = &lines[index];
+        let start = *self.last_line_starts.get(index).unwrap_or(&0);
+        let local = line.closest_index_for_x(position.x - bounds.left());
+        (start + local).min(self.content.len())
+    }
+
+    fn scroll_caret_into_view(&mut self) {
+        if self.last_line_starts.is_empty() || self.last_line_height <= px(metrics::ZERO) {
+            return;
+        }
+        // 视口必须取 ScrollHandle 记录的容器高；last_bounds 是完整内容高，
+        // 拿它当视口会让「caret 超出视口」永不成立（R5 Wave B 评审 F3 死症）。
+        let viewport = f32::from(self.scroll.bounds().size.height);
+        if viewport <= 0.0 {
+            // 容器尚未 prepaint，等下一帧（pending 标记保留）。
+            return;
+        }
+        let Some((line_index, _)) = line_index_for_offset(&self.last_line_starts, self.cursor_offset()) else {
+            return;
+        };
+        let line_top = f32::from(self.last_line_height) * line_index as f32;
+        let line_bottom = line_top + f32::from(self.last_line_height);
+        let current = f32::from(self.scroll.offset().y);
+        let mut next = current;
+        if line_top + current < 0.0 {
+            next = -line_top;
+        } else if line_bottom + current > viewport {
+            next = viewport - line_bottom;
+        }
+        if (next - current).abs() > f32::EPSILON {
+            self.scroll.set_offset(point(px(metrics::ZERO), px(next)));
+        }
+        self.pending_caret_scroll = false;
     }
 
     fn offset_from_utf16(&self, offset: usize) -> usize {
@@ -296,12 +577,14 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
+        self.push_undo();
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
         cx.notify();
+        self.pending_caret_scroll = true;
     }
 
     fn replace_and_mark_text_in_range(
@@ -370,10 +653,19 @@ impl EntityInputHandler for TextInput {
         if lines.is_empty() {
             return Some(0);
         }
-        let line_height = window.line_height();
+        // 与 paint 时行高一致：平台调用发生在 paint 之外，window.line_height()
+        // 拿不到元素 text_size 上下文（与 index_for_mouse_position 同一回退）。
+        let line_height = if self.last_line_height > px(metrics::ZERO) {
+            self.last_line_height
+        } else {
+            window.line_height()
+        };
         let mut index = 0usize;
         if line_height > px(metrics::ZERO) {
-            index = (f32::from(line_point.y) / f32::from(line_height)) as usize;
+            // 与 index_for_mouse_position 同一坐标语义：last_bounds 为归一化
+            // 布局原点，内容 y 须再减 scroll offset。
+            let content_y = f32::from(line_point.y) - f32::from(self.scroll.offset().y);
+            index = (content_y.max(0.0) / f32::from(line_height)) as usize;
         }
         index = index.min(lines.len() - 1);
         let line = &lines[index];
@@ -392,6 +684,10 @@ struct PrepaintState {
     line_starts: Vec<usize>,
     cursor: Option<PaintQuad>,
     selection: Vec<PaintQuad>,
+    /// 去掉滚动平移的布局原点 bounds（origin − element_offset）。GPUI 0.2.2
+    /// 滚动容器子元素 prepaint bounds 是否含 scroll offset 取决于帧时序，
+    /// 归一化后鼠标 / IME 坐标映射在任何帧状态下都一致。
+    content_bounds: gpui::Bounds<Pixels>,
 }
 
 fn line_byte_ranges(text: &str) -> Vec<(usize, usize)> {
@@ -422,17 +718,14 @@ fn line_index_for_offset(starts: &[usize], offset: usize) -> Option<(usize, usiz
     Some((index, starts[index]))
 }
 
-fn clamp_composer_height(line_height: Pixels, line_count: usize) -> Pixels {
-    let desired = line_height * line_count as f32 + px(metrics::COMPOSER_TEXT_INSET);
-    let min = px(metrics::COMPOSER_MIN_HEIGHT);
-    let max = px(metrics::COMPOSER_MAX_HEIGHT);
-    if desired < min {
-        min
-    } else if desired > max {
-        max
-    } else {
-        desired
-    }
+fn composer_input_max_height() -> f32 {
+    // 面板预算扣掉 border / pad / gap / footer 动作槽后，才是输入区可增长高度。
+    (metrics::COMPOSER_PANEL_MAX_HEIGHT
+        - metrics::COMPOSER_BORDER
+        - metrics::COMPOSER_PAD * 2.0
+        - metrics::COMPOSER_GAP
+        - metrics::COMPOSER_SEND_SIZE)
+        .max(metrics::COMPOSER_INPUT_MIN_HEIGHT)
 }
 
 fn runs_for_span(
@@ -516,7 +809,11 @@ impl Element for TextElement {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
         let line_count = self.input.read(cx).visual_line_count();
-        style.size.height = clamp_composer_height(window.line_height(), line_count).into();
+        // 完整内容高交给父 overflow 视口；此处只保底单行，不 clamp 到 max。
+        let min_height = self.input.read(cx).min_height;
+        let desired = window.line_height() * line_count as f32 + px(metrics::COMPOSER_TEXT_INSET);
+        let min = px(min_height);
+        style.size.height = if desired < min { min } else { desired }.into();
         (window.request_layout(style, [], cx), ())
     }
 
@@ -529,6 +826,10 @@ impl Element for TextElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        let content_bounds = gpui::Bounds {
+            origin: bounds.origin - window.element_offset(),
+            size: bounds.size,
+        };
         let input = self.input.read(cx);
         let content = input.content.clone();
         let selected_range = input.selected_range.clone();
@@ -618,6 +919,7 @@ impl Element for TextElement {
             line_starts,
             cursor: cursor_quad,
             selection,
+            content_bounds,
         }
     }
 
@@ -655,10 +957,19 @@ impl Element for TextElement {
             }
         }
 
-        self.input.update(cx, |input, _cx| {
+        self.input.update(cx, |input, cx| {
             input.last_layout = Some(prepaint.lines.clone());
             input.last_line_starts = prepaint.line_starts.clone();
-            input.last_bounds = Some(bounds);
+            input.last_bounds = Some(prepaint.content_bounds);
+            input.last_line_height = line_height;
+            if input.pending_caret_scroll {
+                let before = input.scroll.offset();
+                input.scroll_caret_into_view();
+                if input.scroll.offset() != before {
+                    // offset 变更发生在容器本帧 paint 之后，需再排一帧生效。
+                    cx.notify();
+                }
+            }
         });
     }
 }
@@ -668,6 +979,7 @@ impl Render for TextInput {
         div()
             .flex()
             .key_context("TextInput")
+            .max_h(px(self.max_height))
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
@@ -678,14 +990,28 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::new_line))
-            .id("composer-input")
+            .on_action(cx.listener(Self::select_left))
+            .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::select_to_line_start))
+            .on_action(cx.listener(Self::select_to_line_end))
+            .on_action(cx.listener(Self::select_all))
+            .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::cut))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
+            .id(self.element_id.clone())
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_move(cx.listener(Self::on_mouse_move))
             .w_full()
             .py_1()
             .px_2()
             .rounded_sm()
             .bg(dark().surface.raised)
             .text_size(px(font::BASE))
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .child(TextElement { input: cx.entity() })
     }
 }
@@ -698,9 +1024,42 @@ impl Focusable for TextInput {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{
+        point, px, size, AppContext, EntityInputHandler, Focusable, Modifiers, TestAppContext,
+        VisualTestContext,
+    };
 
     use super::{line_byte_ranges, TextInput};
+
+    const PROBE_WINDOW: gpui::Size<gpui::Pixels> = size(px(640.), px(360.));
+
+    /// 真窗口挂载单个 TextInput（与 u1_probe 同路径）：overflow scroll 与
+    /// 点击映射的断言依赖真实布局 / paint。
+    fn mount_input(cx: &mut TestAppContext) -> (gpui::Entity<TextInput>, &mut VisualTestContext) {
+        cx.update(|cx| crate::ui::install_keybindings(cx));
+        let (input, cx) = cx.add_window_view(|_window, cx| TextInput::new(cx));
+        cx.simulate_resize(PROBE_WINDOW);
+        cx.refresh().expect("refresh after mount");
+        cx.run_until_parked();
+        (input, cx)
+    }
+
+    fn focus_input(input: &gpui::Entity<TextInput>, cx: &mut VisualTestContext) {
+        cx.update(|window, cx| {
+            let handle = input.read(cx).focus_handle(cx);
+            window.focus(&handle);
+            window.activate_window();
+        });
+        cx.refresh().expect("refresh after focus");
+        cx.run_until_parked();
+    }
+
+    fn eighty_lines() -> String {
+        (0..80)
+            .map(|i| format!("line-{i:02}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 
     #[test]
     fn paste_three_lines_counts_three_visual_lines() {
@@ -721,6 +1080,237 @@ mod tests {
             assert_eq!(input.text(), "AX 输入");
             assert_eq!(input.selected_range, input.content.len()..input.content.len());
             assert!(input.marked_range.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn set_placeholder_updates_empty_hint(cx: &mut TestAppContext) {
+        let input = cx.new(TextInput::new);
+        input.update(cx, |input, cx| {
+            assert!(input.placeholder().contains("Enter to send"));
+            input.set_placeholder("Run in progress — sending is disabled. Cancel remains available.", cx);
+            assert_eq!(
+                input.placeholder(),
+                "Run in progress — sending is disabled. Cancel remains available."
+            );
+        });
+    }
+
+    #[test]
+    fn composer_viewport_budget_keeps_panel_within_max() {
+        // R5 Wave B 起输入区不再自我 clamp：TextElement 按完整内容高布局，
+        // 视口由父容器 max_h = composer_input_max_height() 兑现；此处锁定
+        // 预算算术，面板总高合同（≤220）由该 max_h 保证。
+        let viewport_max = super::composer_input_max_height();
+        use crate::ui::theme::metrics;
+        assert!(viewport_max >= metrics::COMPOSER_INPUT_MIN_HEIGHT);
+        assert!(viewport_max < metrics::COMPOSER_MAX_HEIGHT);
+        let panel = metrics::COMPOSER_BORDER
+            + metrics::COMPOSER_PAD * 2.0
+            + viewport_max
+            + metrics::COMPOSER_GAP
+            + metrics::COMPOSER_SEND_SIZE;
+        assert!(panel <= metrics::COMPOSER_PANEL_MAX_HEIGHT + 0.5);
+    }
+
+    #[gpui::test]
+    fn terminal_height_clamp_is_independent_of_composer_budget(cx: &mut TestAppContext) {
+        // Terminal 独立 28–220，不被 Composer 面板预算（163）截断。
+        let terminal = cx.new(|cx| TextInput::new(cx).height_clamp(28.0, 220.0));
+        terminal.update(cx, |terminal, _| {
+            assert_eq!(terminal.min_height, 28.0);
+            assert_eq!(terminal.max_height, 220.0);
+            assert!(terminal.max_height > super::composer_input_max_height());
+        });
+        let composer = cx.new(TextInput::new);
+        composer.update(cx, |composer, _| {
+            assert_eq!(
+                composer.min_height,
+                crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT
+            );
+            assert_eq!(composer.max_height, super::composer_input_max_height());
+        });
+    }
+    #[gpui::test]
+    fn shift_select_via_action_handlers(cx: &mut TestAppContext) {
+        let (input, cx) = mount_input(cx);
+        focus_input(&input, cx);
+        input.update(cx, |input, cx| {
+            input.reset_text("abcd", cx);
+            input.move_to(2, cx);
+        });
+        cx.dispatch_action(super::SelectLeft);
+        cx.run_until_parked();
+        assert_eq!(input.read_with(cx, |i, _| i.selected_range()), 1..2);
+        cx.dispatch_action(super::SelectLeft);
+        cx.run_until_parked();
+        assert_eq!(input.read_with(cx, |i, _| i.selected_range()), 0..2);
+        cx.dispatch_action(super::SelectRight);
+        cx.run_until_parked();
+        assert_eq!(input.read_with(cx, |i, _| i.selected_range()), 1..2);
+        let selected = input.read_with(cx, |i, _| i.text()[i.selected_range()].to_string());
+        assert_eq!(selected, "b");
+    }
+
+    #[gpui::test]
+    fn ime_commit_stacks_single_undo_via_input_handler(cx: &mut TestAppContext) {
+        // 平台 IME 真实路径：replace_and_mark_text_in_range（拼音中间态）→
+        // replace_text_in_range（commit）。中间态不入 undo 栈，commit 恰好
+        // 单次入栈，undo 一步回到 commit 前。
+        let (input, cx) = mount_input(cx);
+        focus_input(&input, cx);
+        input.update(cx, |input, cx| input.reset_text("", cx));
+        let before = input.read_with(cx, |i, _| i.undo_len());
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+            });
+        });
+        let (composing, mid) = input.read_with(cx, |i, _| (i.is_composing(), i.undo_len()));
+        assert!(composing, "marked 区间存在即组合中");
+        assert_eq!(mid, before, "拼音中间态不得入 undo 栈");
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.replace_text_in_range(None, "你", window, cx);
+            });
+        });
+        cx.run_until_parked();
+        let (text, stacked, composing) =
+            input.read_with(cx, |i, _| (i.text().to_string(), i.undo_len(), i.is_composing()));
+        assert_eq!(text, "你");
+        assert!(!composing);
+        assert_eq!(stacked, before + 1, "commit 必须恰好单次入栈");
+        cx.dispatch_action(super::Undo);
+        cx.run_until_parked();
+        assert_eq!(input.read_with(cx, |i, _| i.text().to_string()), "");
+        cx.dispatch_action(super::Redo);
+        cx.run_until_parked();
+        assert_eq!(input.read_with(cx, |i, _| i.text().to_string()), "你");
+    }
+
+    #[gpui::test]
+    fn overflow_scroll_engages_and_caret_scrolls_into_view(cx: &mut TestAppContext) {
+        let (input, cx) = mount_input(cx);
+        input.update(cx, |input, cx| {
+            input.reset_text(eighty_lines(), cx);
+            input.move_to(0, cx);
+        });
+        cx.refresh().expect("refresh after paste");
+        cx.run_until_parked();
+        let (max_offset, viewport, offset_at_top) = input.read_with(cx, |i, _| {
+            (
+                i.scroll.max_offset(),
+                i.scroll.bounds().size.height,
+                i.scroll.offset(),
+            )
+        });
+        assert!(max_offset.height > px(0.), "80 行内容必须产生真实可滚动区间");
+        assert!(
+            viewport <= px(super::composer_input_max_height() + 0.5),
+            "composer 视口不得突破面板预算：{viewport:?}"
+        );
+        assert!(
+            viewport >= px(crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT),
+            "composer 视口不得小于单行保底：{viewport:?}"
+        );
+        assert_eq!(
+            offset_at_top,
+            point(px(0.), px(0.)),
+            "caret 在首行时不需要滚动"
+        );
+        let end = input.read_with(cx, |i, _| i.text().len());
+        input.update(cx, |input, cx| input.move_to(end, cx));
+        cx.refresh().expect("refresh after caret to end");
+        cx.run_until_parked();
+        let (offset, max_offset) =
+            input.read_with(cx, |i, _| (i.scroll.offset(), i.scroll.max_offset()));
+        assert!(
+            offset.y < px(0.),
+            "caret 移到末行后必须向上滚动（GPUI offset 语义：向下滚动为负）：{offset:?}"
+        );
+        assert!(
+            f32::from(offset.y).abs() <= f32::from(max_offset.height) + 0.5,
+            "滚动量不得超出 max_offset：offset={offset:?} max={max_offset:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn click_maps_to_visible_line_with_scroll_offset(cx: &mut TestAppContext) {
+        let (input, cx) = mount_input(cx);
+        input.update(cx, |input, cx| {
+            input.reset_text(eighty_lines(), cx);
+        });
+        cx.refresh().expect("refresh after paste");
+        cx.run_until_parked();
+        // reset_text 把 caret 放到末尾 → 内容首帧后已滚到底（offset<0）。
+        let (offset, viewport_top, elem_top, left, line_height, starts) =
+            input.read_with(cx, |i, _| {
+                let b = i.last_bounds.expect("painted bounds");
+                (
+                    i.scroll.offset(),
+                    i.scroll.bounds().top(),
+                    b.top(),
+                    b.left(),
+                    i.last_line_height,
+                    i.last_line_starts.clone(),
+                )
+            });
+        assert!(offset.y < px(0.), "前置：必须已处于滚动态");
+        assert_eq!(starts.len(), 80);
+        // 精确期望行：last_bounds 已归一化为布局原点（与帧时序无关），
+        // 内容 y = 点击 y − 元素顶 − offset.y；双重计入 offset 会撞
+        // ≈2×expected，漏计会撞首行，均无法通过相等断言。
+        let click = point(left + px(8.), viewport_top + line_height / 2.0);
+        let expected_line = ((f32::from(click.y - elem_top) - f32::from(offset.y)).max(0.0)
+            / f32::from(line_height)) as usize;
+        assert!(
+            (1..=78).contains(&expected_line),
+            "前置：期望行必须是被滚入视口的中间行（实测 expected={expected_line}）"
+        );
+        cx.simulate_click(click, Modifiers::none());
+        cx.run_until_parked();
+        let caret = input.read_with(cx, |i, _| i.selected_range().start);
+        let (line, _) = super::line_index_for_offset(&starts, caret).expect("caret maps to a line");
+        assert_eq!(
+            line, expected_line,
+            "滚动态点击必须精确映回物理可见行（caret={caret}）"
+        );
+        // IME/AX 的 character_index_for_point 必须与鼠标映射同一坐标语义。
+        let ime_index = cx
+            .update(|window, cx| {
+                input.update(cx, |input, cx| {
+                    input.character_index_for_point(click, window, cx)
+                })
+            })
+            .expect("point inside bounds");
+        // 内容全 ASCII，UTF-16 偏移 = 字节偏移。
+        let (ime_line, _) =
+            super::line_index_for_offset(&starts, ime_index).expect("ime index maps to a line");
+        assert_eq!(ime_line, expected_line, "IME 映射必须与鼠标映射一致");
+        // 再点视口末行：caret 必须严格更靠后且不越出末行。
+        let viewport_bottom = input.read_with(cx, |i, _| i.scroll.bounds().bottom());
+        let click = point(left + px(8.), viewport_bottom - line_height / 2.0);
+        cx.simulate_click(click, Modifiers::none());
+        cx.run_until_parked();
+        let caret_bottom = input.read_with(cx, |i, _| i.selected_range().start);
+        let (line_bottom, _) =
+            super::line_index_for_offset(&starts, caret_bottom).expect("caret maps to a line");
+        assert!(line_bottom > line, "视口末行点击必须比首行更靠后");
+        assert!(line_bottom <= 79, "不得越出末行");
+    }
+
+    #[gpui::test]
+    fn reset_text_restores_draft_without_undo_history(cx: &mut TestAppContext) {
+        let input = cx.new(TextInput::new);
+        input.update(cx, |input, cx| {
+            input.reset_text("draft-A", cx);
+            input.set_text("mutated", cx);
+            assert_eq!(input.undo_len(), 1);
+            input.reset_text("draft-B", cx);
+            assert_eq!(input.text(), "draft-B");
+            assert_eq!(input.undo_len(), 0);
+            input.reset_text("", cx);
+            assert_eq!(input.text(), "");
         });
     }
 }

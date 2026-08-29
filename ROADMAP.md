@@ -11,8 +11,8 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R5 — Composer 与运行控制（未开始）** |
-| 下一任务 | 推进 R5 — Composer 与运行控制（任务书 [R4–R6](plan/R4-R6-ui-workflows.md#r5--composer-与运行控制)）：多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态（含 F-09 composer-height 漂移收口）。R4 已于 2026-08-28 收口（Wave A 结构门禁 + Wave B U2 九场景 / State B shell 回归全绿；证据 [docs/ui-review/r4-wave-a/](docs/ui-review/r4-wave-a/) · [docs/ui-review/r4-wave-b/](docs/ui-review/r4-wave-b/)）。用户拍板 1：State A/B 区域 SSIM ≥0.99 同 R3 先例移交 R8。仍开放：live RunChanged 无失败原因 / 无用户消息 wire 事件的现状（乐观回显 + 重放兜底）是否接受或立 ADR 演进 wire |
+| 当前阶段 | **R5 — Composer 与运行控制（Wave A / Wave B / U2 自动门禁均 🟢；仅剩 SSIM 移交 R8 的用户拍板）** |
+| 下一任务 | 用户拍板 R5 composer 区域 SSIM `≥0.99` 是否按 R3/R4 先例移交 R8；若同意，则归档 R5 并开启 R6 Wave A（任务书 [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity)）。R5 Wave B 已于 2026-08-29 收口：cargo test 129 / python 40 / warnings 15 持平 / 零 wire 变更，两轮评审问题全修复，U2 九场景 22 份断言全 PASS（证据 [docs/ui-review/r5-wave-b/](docs/ui-review/r5-wave-b/)）。Wave A 已于 2026-08-28 收口（F-09：真窗口常态总高 156→91 ∈ 88–94；Send/Cancel 同槽 32 互换；证据 [docs/ui-review/r5-wave-a/](docs/ui-review/r5-wave-a/)）。R5 composer SSIM 记录值 0.423 / 0.619；仍开放：live RunChanged 无失败原因 / 无用户消息 wire 事件的现状（乐观回显 + 重放兜底）是否接受或立 ADR 演进 wire |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
 | 阻塞 | 无；Wave C AX 失败基线已由 ADR-042 bridge 补救，真窗口 75 节点与语义 action 证据见 [ax-bridge](docs/ui-review/wave-c/ax-bridge/) |
 
@@ -30,7 +30,7 @@ UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代
 | R2 | Window shell 与全局视觉系统 | 深色沉浸式 titlebar、三栏几何、字体/图标/间距/surface、StatusBar、窗口级响应式基线 | [R2 存档](docs/history.md#r2--window-shell-与全局视觉系统2026-08-27) | 🟢 |
 | R3 | TaskRail 与任务导航 | Timeline/Projects、scope、project/task、连接、新建、账户区、选择/恢复/滚动与键盘导航 | [R3 存档](docs/history.md#r3--taskrail-与任务导航2026-08-2728) | 🟢 |
 | R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | 🟢 |
-| R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R4–R6](plan/R4-R6-ui-workflows.md#r5--composer-与运行控制) | ⚪ |
+| R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R4–R6](plan/R4-R6-ui-workflows.md#r5--composer-与运行控制) | 🔵 |
 | R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | ⚪ |
 | R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | ⚪ |
 | R8 | 模拟操作全功能验收 | 全组件端到端 UI suite、三状态逐图差分、重连/后台 Run/恢复、性能与失败证据、用户视觉签字 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) | ⚪ |

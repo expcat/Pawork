@@ -1,0 +1,27 @@
+{
+  "phase": "empty-input",
+  "generated_at": "2026-08-28T23:26:54Z",
+  "checks": [
+    {
+      "name": "selected-session-fx-ses-alpha-today",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-alpha-today (expect session-fx-ses-alpha-today)"
+    },
+    {
+      "name": "composer-send-enabled-0",
+      "pass": true,
+      "detail": "send enabled=0 (expect enabled=0)"
+    },
+    {
+      "name": "composer-cancel-absent",
+      "pass": true,
+      "detail": "cancel absent"
+    },
+    {
+      "name": "composer-empty-value",
+      "pass": true,
+      "detail": "composer-input value='' (expect '')"
+    }
+  ],
+  "pass": true
+}

@@ -1,0 +1,5 @@
+ui-visual-diff: zone composer-left common crop coverage 0.8000 is below min_coverage 0.8500
+zone taskrail: ssim=0.693805 rgb=(0.693805,0.774404,0.787948) coverage=0.9697 threshold=0.99 FAIL
+zone header-left: ssim=0.939623 rgb=(0.939623,0.941239,0.952043) coverage=1.0000 threshold=0.99 FAIL
+zone header-right: ssim=0.882710 rgb=(0.882710,0.892977,0.899687) coverage=1.0000 threshold=0.99 FAIL
+zone timeline: ssim=0.679378 rgb=(0.679378,0.715057,0.724239) coverage=0.9610 threshold=0.99 FAIL

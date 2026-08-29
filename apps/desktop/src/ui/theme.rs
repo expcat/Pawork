@@ -304,12 +304,29 @@ pub mod metrics {
     pub const SIDEBAR_WIDTH: f32 = 288.0;
     /// 440：Inspector 面板宽度。
     pub const INSPECTOR_WIDTH: f32 = 440.0;
-    /// 88：Composer 最小高度。
+    /// 88：Composer 面板常态总高（F-09 合同下限；不是输入框 min）。
+    /// 布局实测 91 落在 88–94；常量为合同下限而非逐像素预测。
     pub const COMPOSER_MIN_HEIGHT: f32 = 88.0;
-    /// 220：Composer 最大高度。
+    /// 220：Composer 面板增长上限（超限后输入内部滚动属 Wave B）。
     pub const COMPOSER_MAX_HEIGHT: f32 = 220.0;
-    /// 8：Composer 多行高度计算的内边距余量。
+    /// 8：Composer 输入行高计算的内边距余量（TextInput py_1 上下各 4）。
     pub const COMPOSER_TEXT_INSET: f32 = 8.0;
+    /// 8：Composer 面板内边距（GPUI p_2 = 0.5rem = 8px）。
+    pub const COMPOSER_PAD: f32 = 8.0;
+    /// 8：Composer 输入行与 footer 间距（GPUI gap_2 = 8px）。
+    pub const COMPOSER_GAP: f32 = 8.0;
+    /// 1：Composer 顶部分隔线厚度（border_t_1）。
+    pub const COMPOSER_BORDER: f32 = 1.0;
+    /// 28：Composer 输入区单行最小高（行高 20 + py_1 上下 4+4）。
+    pub const COMPOSER_INPUT_MIN_HEIGHT: f32 = 28.0;
+    /// 28：Composer footer 控件高（model / workspace / ContextMeter）。
+    pub const COMPOSER_FOOTER_CONTROL: f32 = 28.0;
+    /// 32：Composer Send / Cancel 同槽圆形按钮边长。
+    pub const COMPOSER_SEND_SIZE: f32 = 32.0;
+    /// 88：COMPOSER_MIN_HEIGHT 的面板语义别名。
+    pub const COMPOSER_PANEL_MIN_HEIGHT: f32 = COMPOSER_MIN_HEIGHT;
+    /// 220：COMPOSER_MAX_HEIGHT 的面板语义别名。
+    pub const COMPOSER_PANEL_MAX_HEIGHT: f32 = COMPOSER_MAX_HEIGHT;
     /// 1：IME marked range 下划线厚度。
     pub const UNDERLINE_THICKNESS: f32 = 1.0;
     /// 2：输入光标宽度。
@@ -475,5 +492,32 @@ mod tests {
         assert_eq!(metrics::SUMMARY_BUTTON_RADIUS, 8.0);
         assert_eq!(metrics::SUMMARY_BUTTON_GAP, 20.0);
         assert_eq!(metrics::TIMELINE_FOOTER_GAP, 24.0);
+    }
+
+    /// R5 Wave A Composer 几何合同（design/README.md §2：常态总高 88–94，
+    /// footer 控件 28–30，Send 32）。COMPOSER_MIN_HEIGHT 语义改为面板总高，
+    /// 不再当作输入框 min。
+    #[test]
+    fn composer_geometry_constants_match_frozen_tiers() {
+        assert_eq!(metrics::COMPOSER_MIN_HEIGHT, 88.0);
+        assert_eq!(metrics::COMPOSER_MAX_HEIGHT, 220.0);
+        assert_eq!(metrics::COMPOSER_PANEL_MIN_HEIGHT, 88.0);
+        assert_eq!(metrics::COMPOSER_PANEL_MAX_HEIGHT, 220.0);
+        assert_eq!(metrics::COMPOSER_TEXT_INSET, 8.0);
+        assert_eq!(metrics::COMPOSER_PAD, 8.0);
+        assert_eq!(metrics::COMPOSER_GAP, 8.0);
+        assert_eq!(metrics::COMPOSER_BORDER, 1.0);
+        assert_eq!(metrics::COMPOSER_INPUT_MIN_HEIGHT, 28.0);
+        assert_eq!(metrics::COMPOSER_FOOTER_CONTROL, 28.0);
+        assert_eq!(metrics::COMPOSER_SEND_SIZE, 32.0);
+        let laid_out = metrics::COMPOSER_BORDER
+            + metrics::COMPOSER_PAD * 2.0
+            + metrics::COMPOSER_INPUT_MIN_HEIGHT
+            + metrics::COMPOSER_GAP
+            + metrics::COMPOSER_SEND_SIZE;
+        // 1+8+8+28+8+32 = 85；面板合同下限 88 覆盖实测 91，不把余量写进常量公式。
+        assert_eq!(laid_out, 85.0);
+        assert!(metrics::COMPOSER_PANEL_MIN_HEIGHT <= 94.0);
+        assert!(laid_out <= metrics::COMPOSER_PANEL_MIN_HEIGHT);
     }
 }

@@ -25,6 +25,9 @@ pub enum ButtonVariant {
     Success,
     /// surface.raised 控件面；hover → surface.hover。
     Raised,
+    /// 32×32 圆形图标按钮（Composer Send / Cancel 同槽）。颜色映射与
+    /// Primary / Danger 相同，尺寸由 `icon_circle` builder 钉死，不改默认档。
+    IconCircle,
 }
 
 /// 内边距档位（迁移前现状值；None 用于固定宽高的图标位）。
@@ -55,10 +58,12 @@ pub struct Button {
     padding: ButtonPadding,
     width: Option<Pixels>,
     height: Option<Pixels>,
+    max_width: Option<Pixels>,
     bordered: bool,
     radius: Option<f32>,
     center: bool,
     vcenter: bool,
+    circle: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_activate: Option<Box<dyn Fn(&KeyDownEvent, &mut Window, &mut App) + 'static>>,
 }
@@ -78,10 +83,12 @@ impl Button {
             padding: ButtonPadding::Normal,
             width: None,
             height: None,
+            max_width: None,
             bordered: false,
             radius: None,
             center: false,
             vcenter: false,
+            circle: false,
             on_click: None,
             on_activate: None,
         }
@@ -148,6 +155,12 @@ impl Button {
         self
     }
 
+    /// 限制触发器最大宽度（Composer model 菜单过长名 truncate）。
+    pub fn max_width(mut self, width: Pixels) -> Self {
+        self.max_width = Some(width);
+        self
+    }
+
     /// 1px border.subtle 描边（量图「1px 描边」档，如 scope 全宽行）。
     pub fn bordered(mut self) -> Self {
         self.bordered = true;
@@ -170,6 +183,20 @@ impl Button {
     pub fn vcenter(mut self) -> Self {
         self.vcenter = true;
         self
+    }
+
+    /// Composer 动作槽：32×32 圆形图标按钮。不改默认 padding / radius，
+    /// Rail / 审批按钮不得走此入口。
+    pub fn icon_circle(mut self, size: f32) -> Self {
+        if matches!(self.variant, ButtonVariant::Primary) {
+            self.variant = ButtonVariant::IconCircle;
+        }
+        self.circle = true;
+        self.padding(ButtonPadding::None)
+            .width(gpui::px(size))
+            .height(gpui::px(size))
+            .radius(size / 2.0)
+            .center()
     }
 
     pub fn on_click(
@@ -200,7 +227,7 @@ impl ButtonVariant {
     /// （enabled 底色, hover / active 色）；Ghost 无底色。
     fn colors(self) -> (Option<Rgba>, Rgba) {
         match self {
-            Self::Primary => (Some(dark().accent.primary), dark().accent.hover),
+            Self::Primary | Self::IconCircle => (Some(dark().accent.primary), dark().accent.hover),
             Self::Ghost => (None, dark().surface.raised),
             Self::Danger => (
                 Some(dark().semantic.danger_bg),
@@ -217,7 +244,9 @@ impl ButtonVariant {
     /// enabled 文字色（None = 继承容器）。
     fn text_color(self) -> Option<Rgba> {
         match self {
-            Self::Primary | Self::Danger | Self::Success => Some(dark().text.on_accent),
+            Self::Primary | Self::IconCircle | Self::Danger | Self::Success => {
+                Some(dark().text.on_accent)
+            }
             Self::Raised => Some(dark().text.primary),
             Self::Ghost => None,
         }
@@ -226,7 +255,9 @@ impl ButtonVariant {
     /// disabled 底色（Ghost 无底色）。
     fn disabled_bg(self) -> Option<Rgba> {
         match self {
-            Self::Primary | Self::Danger | Self::Success => Some(dark().border.strong),
+            Self::Primary | Self::IconCircle | Self::Danger | Self::Success => {
+                Some(dark().border.strong)
+            }
             Self::Raised => Some(dark().surface.disabled),
             Self::Ghost => None,
         }
@@ -235,7 +266,9 @@ impl ButtonVariant {
     /// disabled 文字色（None = 继承容器）。
     fn disabled_text_color(self) -> Option<Rgba> {
         match self {
-            Self::Primary | Self::Danger | Self::Success => Some(dark().text.on_accent),
+            Self::Primary | Self::IconCircle | Self::Danger | Self::Success => {
+                Some(dark().text.on_accent)
+            }
             Self::Raised => Some(dark().text.disabled),
             Self::Ghost => None,
         }
@@ -285,7 +318,9 @@ impl RenderOnce for Button {
         if let Some(size) = self.text_size {
             button = button.text_size(px(size));
         }
-        if !matches!(self.variant, ButtonVariant::Ghost) {
+        if !matches!(self.variant, ButtonVariant::Ghost | ButtonVariant::IconCircle)
+            && !self.circle
+        {
             button = button.rounded_md();
         }
         if let Some(radius) = self.radius {
@@ -306,6 +341,9 @@ impl RenderOnce for Button {
         if let Some(height) = self.height {
             button = button.h(height);
         }
+        if let Some(max_width) = self.max_width {
+            button = button.max_w(max_width).min_w_0().overflow_hidden();
+        }
         if enabled {
             // hover / active 只改背景（基准 §8.1）；active 复用 hover 色。
             button = button
@@ -313,7 +351,11 @@ impl RenderOnce for Button {
                 .active(move |style| style.bg(hover));
         }
         if let Some(label) = self.label {
-            button = button.child(label);
+            if self.max_width.is_some() {
+                button = button.child(div().min_w_0().truncate().child(label));
+            } else {
+                button = button.child(label);
+            }
         }
         if let Some(tooltip) = self.tooltip {
             button = button.tooltip(move |_, cx| crate::ui::tooltip_text(tooltip.clone(), cx));

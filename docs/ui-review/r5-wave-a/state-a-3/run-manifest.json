@@ -1,0 +1,366 @@
+{
+  "scenario": "state-a",
+  "label": "r5a-3",
+  "generated_at": "2026-08-28T08:56:08Z",
+  "seed": {
+    "path": "fixtures/ui/seed.json",
+    "fixture_version": 1,
+    "now_ms": 1767225600000
+  },
+  "git": {
+    "head": "fc863b6f0f9e795449b6ff4606cad439506a2e69",
+    "dirty_file_count": 10,
+    "dirty_sample": [
+      " M apps/desktop/src/ui/accessibility/app.rs",
+      " M apps/desktop/src/ui/components/button.rs",
+      " M apps/desktop/src/ui/input_area.rs",
+      " M apps/desktop/src/ui/mod.rs",
+      " M apps/desktop/src/ui/text_input.rs",
+      " M apps/desktop/src/ui/theme.rs",
+      " M docs/spec/crates/desktop.md",
+      " M docs/ui-review/state-a/zones.json",
+      " M docs/ui-review/state-b/zones.json",
+      "?? docs/ui-review/r5-wave-a/"
+    ],
+    "theme_rs_dirty": true
+  },
+  "host": {
+    "sw_vers": [
+      "ProductName:\t\tmacOS",
+      "ProductVersion:\t\t26.6.2",
+      "BuildVersion:\t\t25G83"
+    ],
+    "display": [
+      "Resolution: 3440 x 1440 (UWQHD - Ultra-Wide Quad HD)",
+      "UI Looks like: 3440 x 1440 @ 100.00Hz",
+      "Resolution: 2560 x 1440 (QHD/WQHD - Wide Quad High Definition)",
+      "UI Looks like: 2560 x 1440 @ 60.00Hz"
+    ]
+  },
+  "window": {
+    "wid": 10095,
+    "window_bounds_points": [
+      1000,
+      208,
+      1440,
+      1024
+    ],
+    "root_frame_points": {
+      "x": 1000.0,
+      "y": 208.0,
+      "w": 1440.0,
+      "h": 1024.0
+    },
+    "capture_pixels": [
+      1440,
+      1024
+    ],
+    "source_mode": "RGBA",
+    "source_icc_profile_bytes": 512,
+    "source_icc_profile_description": "R34Q81",
+    "color_conversion": "embedded ICC -> sRGB",
+    "scale": 1.0,
+    "crop_pixels": [
+      0,
+      0,
+      1440,
+      1024
+    ],
+    "before_resize": [
+      1440,
+      1024
+    ],
+    "resized_lanczos": false,
+    "final_size": [
+      1440,
+      1024
+    ],
+    "icc_profile_dropped": true,
+    "output_color_interpretation": "untagged RGB; sRGB bytes"
+  },
+  "assertions": {
+    "initial": {
+      "phase": "initial",
+      "generated_at": "2026-08-28T08:56:04Z",
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true,
+          "blocking": true,
+          "detail": "root w=1440.0 h=1024.0 (contract 1440x1024 +/-0.5)"
+        },
+        {
+          "name": "rail-width",
+          "pass": true,
+          "blocking": true,
+          "detail": "task-rail w=288.0 (contract 288 +/-4.32)"
+        },
+        {
+          "name": "inspector-width",
+          "pass": true,
+          "blocking": true,
+          "detail": "inspector w=440.0 (contract 440 +/-6.6)"
+        },
+        {
+          "name": "inspector-x",
+          "pass": true,
+          "blocking": true,
+          "detail": "inspector rel_x=1000.0 (expected 1000)"
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true,
+          "blocking": true,
+          "detail": "status-bar h=24.0 (contract 24 +/-0.5)"
+        },
+        {
+          "name": "composer-height",
+          "pass": true,
+          "blocking": true,
+          "detail": "composer h=91.0 (contract 88-94, component tolerance [86,96]; not the frozen R1 baseline; blocking drift)"
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true,
+          "blocking": true,
+          "detail": "composer bottom=1000.0 statusbar top=1000.0"
+        },
+        {
+          "name": "workspace-span",
+          "pass": true,
+          "blocking": true,
+          "detail": "workspace x=288.0..1000.0 expected 288.0..1000.0"
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true,
+          "detail": "shell skeleton present (phase=initial)"
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true,
+          "detail": "role=? count=0"
+        },
+        {
+          "name": "focus-start",
+          "pass": true,
+          "detail": "initial focus=composer-input (allowed: none, pawork-root, or composer-input; exactly one at most)"
+        },
+        {
+          "name": "initial-selected-observed",
+          "pass": true,
+          "detail": "startup selected rows=none (observation only)"
+        }
+      ],
+      "metrics": {
+        "root": {
+          "role": "AXGroup",
+          "x": 1000.0,
+          "y": 208.0,
+          "w": 1440.0,
+          "h": 1024.0
+        },
+        "inspector": {
+          "role": "AXGroup",
+          "x": 2000.0,
+          "y": 208.0,
+          "w": 440.0,
+          "h": 1000.0
+        },
+        "statusbar": {
+          "role": "AXGroup",
+          "x": 1288.0,
+          "y": 1208.0,
+          "w": 1152.0,
+          "h": 24.0
+        },
+        "composer": {
+          "role": "AXGroup",
+          "x": 1288.0,
+          "y": 1117.0,
+          "w": 712.0,
+          "h": 91.0
+        }
+      },
+      "pass": true
+    },
+    "final": {
+      "phase": "final",
+      "generated_at": "2026-08-28T08:56:06Z",
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true,
+          "blocking": true,
+          "detail": "root w=1440.0 h=1024.0 (contract 1440x1024 +/-0.5)"
+        },
+        {
+          "name": "rail-width",
+          "pass": true,
+          "blocking": true,
+          "detail": "task-rail w=288.0 (contract 288 +/-4.32)"
+        },
+        {
+          "name": "inspector-width",
+          "pass": true,
+          "blocking": true,
+          "detail": "inspector w=440.0 (contract 440 +/-6.6)"
+        },
+        {
+          "name": "inspector-x",
+          "pass": true,
+          "blocking": true,
+          "detail": "inspector rel_x=1000.0 (expected 1000)"
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true,
+          "blocking": true,
+          "detail": "status-bar h=24.0 (contract 24 +/-0.5)"
+        },
+        {
+          "name": "composer-height",
+          "pass": true,
+          "blocking": true,
+          "detail": "composer h=91.0 (contract 88-94, component tolerance [86,96]; not the frozen R1 baseline; blocking drift)"
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true,
+          "blocking": true,
+          "detail": "composer bottom=1000.0 statusbar top=1000.0"
+        },
+        {
+          "name": "workspace-span",
+          "pass": true,
+          "blocking": true,
+          "detail": "workspace x=288.0..1000.0 expected 288.0..1000.0"
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true,
+          "detail": "shell skeleton present (phase=final)"
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true,
+          "detail": "role=? count=0"
+        },
+        {
+          "name": "session-selected",
+          "pass": true,
+          "detail": "selected=1 rows: session-fx-ses-alpha-today"
+        },
+        {
+          "name": "timeline-loaded",
+          "pass": true,
+          "detail": "timeline-entry-evt-fx-ses-alpha-today-* count=13"
+        },
+        {
+          "name": "focus-composer-after-select",
+          "pass": true,
+          "detail": "focus after select=composer-input"
+        }
+      ],
+      "metrics": {
+        "root": {
+          "role": "AXGroup",
+          "x": 1000.0,
+          "y": 208.0,
+          "w": 1440.0,
+          "h": 1024.0
+        },
+        "inspector": {
+          "role": "AXGroup",
+          "x": 2000.0,
+          "y": 208.0,
+          "w": 440.0,
+          "h": 1000.0
+        },
+        "statusbar": {
+          "role": "AXGroup",
+          "x": 1288.0,
+          "y": 1208.0,
+          "w": 1152.0,
+          "h": 24.0
+        },
+        "composer": {
+          "role": "AXGroup",
+          "x": 1288.0,
+          "y": 1117.0,
+          "w": 712.0,
+          "h": 91.0
+        }
+      },
+      "pass": true
+    }
+  },
+  "structural_pass": true,
+  "gate": {
+    "exit_code": 1,
+    "threshold": 0.99,
+    "zone_pass": 0,
+    "zone_total": 9,
+    "zone_results": [
+      {
+        "id": "taskrail",
+        "ssim": 0.6938054476552922,
+        "pass": false
+      },
+      {
+        "id": "header-left",
+        "ssim": 0.9396233649754614,
+        "pass": false
+      },
+      {
+        "id": "header-right",
+        "ssim": 0.8827100012159872,
+        "pass": false
+      },
+      {
+        "id": "timeline",
+        "ssim": 0.6793778617565981,
+        "pass": false
+      },
+      {
+        "id": "composer-left",
+        "ssim": 0.4232991618826198,
+        "pass": false
+      },
+      {
+        "id": "composer-right",
+        "ssim": 0.6189535484378796,
+        "pass": false
+      },
+      {
+        "id": "inspector-body",
+        "ssim": 0.5990847962381323,
+        "pass": false
+      },
+      {
+        "id": "inspector-right",
+        "ssim": 0.7398847854040713,
+        "pass": false
+      },
+      {
+        "id": "statusbar",
+        "ssim": 0.6174774414445676,
+        "pass": false
+      }
+    ],
+    "global_ssim": 0.658124418706565
+  },
+  "evidence": {
+    "current": "current.png",
+    "ax_initial": "ax-tree-initial.txt",
+    "ax_final": "ax-tree.txt",
+    "geometry_initial": "geometry-initial.txt",
+    "geometry_final": "geometry-final.txt",
+    "action_press": "action-press-session.txt",
+    "action_trace": "action-trace.txt",
+    "window_placement": "window-place.txt",
+    "diff": "diff/",
+    "logs": "logs/",
+    "barriers": "barriers/"
+  }
+}

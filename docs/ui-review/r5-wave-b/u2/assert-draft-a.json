@@ -1,0 +1,17 @@
+{
+  "phase": "draft-a",
+  "generated_at": "2026-08-28T23:27:05Z",
+  "checks": [
+    {
+      "name": "selected-session-fx-ses-alpha-today",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-alpha-today (expect session-fx-ses-alpha-today)"
+    },
+    {
+      "name": "draft-a",
+      "pass": true,
+      "detail": "composer-input value='draft-A' (expect 'draft-A')"
+    }
+  ],
+  "pass": true
+}

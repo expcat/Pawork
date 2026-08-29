@@ -11,10 +11,10 @@ use std::sync::{
 use std::time::Duration;
 
 use gpui::{
-    div, point, prelude::*, px, size, ClipboardItem, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement, Modifiers, ParentElement, Render, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, StatefulInteractiveElement, Styled, TestAppContext, VisualTestContext,
-    Window,
+    div, point, prelude::*, px, size, ClipboardItem, Context, Entity, EntityInputHandler,
+    FocusHandle, Focusable, InteractiveElement, Modifiers, ParentElement, Render, ScrollDelta,
+    ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement, Styled, TestAppContext,
+    VisualTestContext, Window,
 };
 
 use super::components::button::{Button, ButtonVariant};
@@ -155,6 +155,16 @@ fn keystrokes_type_and_edit_text_input(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn shift_enter_inserts_newline_via_keymap(cx: &mut TestAppContext) {
+    let (host, cx) = mount_probe(cx);
+    focus_composer(&host, cx);
+    cx.simulate_input("ab");
+    cx.simulate_keystrokes("shift-enter");
+    cx.run_until_parked();
+    assert_eq!(composer_text(&host, cx), "ab\n");
+}
+
+#[gpui::test]
 fn mouse_click_focuses_text_input(cx: &mut TestAppContext) {
     let (host, cx) = mount_probe(cx);
     let bounds = cx
@@ -290,4 +300,108 @@ fn debug_bounds_reports_named_geometry(cx: &mut TestAppContext) {
     assert!(root.size.width > px(0.) && root.size.height > px(0.));
     assert!(scroll.size.height > px(0.));
     assert!(scroll.origin.y >= root.origin.y);
+}
+
+#[gpui::test]
+fn shift_select_copy_cut_and_undo_via_actions(cx: &mut TestAppContext) {
+    let (host, cx) = mount_probe(cx);
+    focus_composer(&host, cx);
+    host.update(cx, |host, cx| {
+        host.input.update(cx, |input, cx| input.reset_text("abcd", cx));
+    });
+    cx.dispatch_action(text_input::SelectAll);
+    cx.run_until_parked();
+    let selected = host.read_with(cx, |host, cx| {
+        let input = host.input.read(cx);
+        input.selected_range()
+    });
+    assert_eq!(selected, 0.."abcd".len());
+    cx.dispatch_action(text_input::Copy);
+    cx.run_until_parked();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("copy writes clipboard");
+    assert_eq!(copied, "abcd");
+    cx.dispatch_action(text_input::Cut);
+    cx.run_until_parked();
+    assert_eq!(composer_text(&host, cx), "");
+    cx.dispatch_action(text_input::Undo);
+    cx.run_until_parked();
+    assert_eq!(composer_text(&host, cx), "abcd");
+    cx.dispatch_action(text_input::Redo);
+    cx.run_until_parked();
+    assert_eq!(composer_text(&host, cx), "");
+}
+
+#[gpui::test]
+fn ime_commit_undo_stacks_once_and_empty_text_is_not_sendable(cx: &mut TestAppContext) {
+    // 平台 IME 真实路径（EntityInputHandler）：marked 中间态不入 undo 栈，
+    // commit 恰好单次入栈；空白文本不可发送（trim 语义）。
+    let (host, cx) = mount_probe(cx);
+    focus_composer(&host, cx);
+    let input = host.read_with(cx, |host, _| host.input.clone());
+    input.update(cx, |input, cx| input.reset_text("", cx));
+    let before = input.read_with(cx, |i, _| i.undo_len());
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+        });
+    });
+    let (composing, mid) = input.read_with(cx, |i, _| (i.is_composing(), i.undo_len()));
+    assert!(composing);
+    assert_eq!(mid, before, "拼音中间态不得入 undo 栈");
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_text_in_range(None, "你", window, cx);
+        });
+    });
+    cx.run_until_parked();
+    let stacked = input.read_with(cx, |i, _| i.undo_len());
+    assert_eq!(stacked, before + 1, "commit 必须恰好单次入栈");
+    assert!(!composer_text(&host, cx).trim().is_empty());
+    input.update(cx, |input, cx| input.reset_text("   ", cx));
+    assert!(composer_text(&host, cx).trim().is_empty());
+}
+
+#[gpui::test]
+fn wave_b_keymap_bindings_dispatch_through_keystrokes(cx: &mut TestAppContext) {
+    // R5 Wave B 键位表的真实链路：keystroke → keymap → action → handler。
+    let (host, cx) = mount_probe(cx);
+    focus_composer(&host, cx);
+    host.update(cx, |host, cx| {
+        host.input.update(cx, |input, cx| input.reset_text("abcd", cx));
+    });
+    cx.simulate_keystrokes("cmd-a");
+    cx.run_until_parked();
+    let selected = host.read_with(cx, |host, cx| host.input.read(cx).selected_range());
+    assert_eq!(selected, 0..4);
+    cx.simulate_keystrokes("cmd-c");
+    cx.run_until_parked();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("cmd-c writes clipboard");
+    assert_eq!(copied, "abcd");
+    cx.simulate_keystrokes("cmd-x");
+    cx.run_until_parked();
+    assert_eq!(composer_text(&host, cx), "");
+    cx.simulate_keystrokes("cmd-z");
+    cx.run_until_parked();
+    assert_eq!(composer_text(&host, cx), "abcd");
+    cx.simulate_keystrokes("cmd-shift-z");
+    cx.run_until_parked();
+    assert_eq!(composer_text(&host, cx), "");
+    cx.simulate_keystrokes("cmd-z");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("end");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("shift-left");
+    cx.run_until_parked();
+    let selected = host.read_with(cx, |host, cx| host.input.read(cx).selected_range());
+    assert_eq!(selected, 3..4);
+    cx.simulate_keystrokes("shift-home");
+    cx.run_until_parked();
+    let selected = host.read_with(cx, |host, cx| host.input.read(cx).selected_range());
+    assert_eq!(selected, 0..4);
 }
