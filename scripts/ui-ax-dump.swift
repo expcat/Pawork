@@ -4,6 +4,10 @@
 // role / subrole / title / value / identifier / description / actions，并可按
 // identifier 执行 press / focus / set-value。
 //
+// macOS 26 间歇性出现 app 元素 AXChildren 递归返回自身（重复 AXApplication、
+// 无 AXWindow、无 identifier）。检测到该签名时回退 kAXWindowsAttribute 逐窗口
+// dump 与搜索 action 目标，并在头部标注 `# WARN ax-fallback=axwindows`。
+//
 // 用法：
 //   ui-ax-dump --pid <pid> [--out <file>] [--wid-out <file>] [--max-depth N]
 //              [--press <identifier> | --focus <identifier>
@@ -165,7 +169,7 @@ func axChildren(_ element: AXUIElement) -> [AXUIElement] {
     } ?? []
 }
 
-func findElement(
+func findElementInSubtree(
     _ root: AXUIElement, identifier: String, maxDepth: Int = 24
 ) -> AXUIElement? {
     var pending: [(AXUIElement, Int)] = [(root, 0)]
@@ -182,15 +186,85 @@ func findElement(
     return nil
 }
 
+func findElement(
+    _ roots: [AXUIElement], identifier: String, maxDepth: Int = 24
+) -> AXUIElement? {
+    for root in roots {
+        if let element = findElementInSubtree(
+            root, identifier: identifier, maxDepth: maxDepth)
+        {
+            return element
+        }
+    }
+    return nil
+}
+
+struct ChildrenWalkProbe {
+    var applicationCount = 0
+    var windowCount = 0
+    var identifierCount = 0
+}
+
+// 损坏签名：app 元素 AXChildren 走完后，AXApplication 节点 ≥2 且整棵树
+// 无 AXWindow、无 identifier → children 路径损坏（macOS 26 间歇性问题）。
+func childrenPathBroken(_ probe: ChildrenWalkProbe) -> Bool {
+    probe.applicationCount >= 2 && probe.windowCount == 0
+        && probe.identifierCount == 0
+}
+
+// 与 dump 相同的 maxDepth/maxChildren 边界内只读 role / identifier 走一遍树。
+func probeChildrenWalk(
+    _ root: AXUIElement, maxDepth: Int, maxChildren: Int
+) -> ChildrenWalkProbe {
+    var probe = ChildrenWalkProbe()
+    var pending: [(AXUIElement, Int)] = [(root, 0)]
+    while let (element, depth) = pending.popLast() {
+        let role = axString(element, kAXRoleAttribute as String)
+        if role == "AXApplication" { probe.applicationCount += 1 }
+        if role == "AXWindow" { probe.windowCount += 1 }
+        if let identifier = axString(element, kAXIdentifierAttribute as String),
+            !identifier.isEmpty
+        {
+            probe.identifierCount += 1
+        }
+        if depth < maxDepth {
+            let children = axChildren(element)
+            let shown = min(children.count, maxChildren)
+            for index in (0..<shown).reversed() {
+                pending.append((children[index], depth + 1))
+            }
+        }
+    }
+    return probe
+}
+
+// 回退根集合：kAXWindowsAttribute 为主，kAXMainWindowAttribute 去重补充。
+func axWindowsFallbackRoots(_ application: AXUIElement) -> [AXUIElement] {
+    var roots: [AXUIElement] = []
+    if let value = axCopy(application, kAXWindowsAttribute as String) {
+        let windows = (value as? NSArray)?.compactMap { child in
+            (child as! AXUIElement)
+        } ?? []
+        roots.append(contentsOf: windows)
+    }
+    if let raw = axCopy(application, kAXMainWindowAttribute as String) {
+        let main = raw as! AXUIElement
+        if !roots.contains(where: { existing in CFEqual(existing, main) }) {
+            roots.append(main)
+        }
+    }
+    return roots
+}
+
 func performRequestedAction(
-    _ action: RequestedAction, application: AXUIElement
+    _ action: RequestedAction, roots: [AXUIElement]
 ) -> (String, AXError) {
     let identifier: String
     switch action {
     case .press(let value), .focus(let value), .setValue(let value, _):
         identifier = value
     }
-    guard let element = findElement(application, identifier: identifier) else {
+    guard let element = findElement(roots, identifier: identifier) else {
         return ("target=\(identifier) result=not-found", .noValue)
     }
     switch action {
@@ -395,9 +469,16 @@ func main() {
         lines.append("# WARN: 当前进程未被授予 Accessibility 权限；AX 树可能为空或只有系统 chrome")
     }
     let application = AXUIElementCreateApplication(opts.pid)
+    let probe = probeChildrenWalk(
+        application, maxDepth: opts.maxDepth, maxChildren: opts.maxChildren)
+    let useFallback = childrenPathBroken(probe)
+    let walkRoots = useFallback ? axWindowsFallbackRoots(application) : [application]
+    if useFallback {
+        lines.append("# WARN ax-fallback=axwindows")
+    }
     var actionError: AXError = .success
     if let action = opts.action {
-        let (trace, error) = performRequestedAction(action, application: application)
+        let (trace, error) = performRequestedAction(action, roots: walkRoots)
         actionError = error
         lines.append("# action \(trace)")
     }
@@ -407,13 +488,15 @@ func main() {
     }
     lines.append("# AX tree")
     var stats = DumpStats()
-    dumpNode(
-        application,
-        depth: 0,
-        maxDepth: opts.maxDepth,
-        maxChildren: opts.maxChildren,
-        into: &lines,
-        stats: &stats)
+    for root in walkRoots {
+        dumpNode(
+            root,
+            depth: 0,
+            maxDepth: opts.maxDepth,
+            maxChildren: opts.maxChildren,
+            into: &lines,
+            stats: &stats)
+    }
 
     lines.append("#")
     lines.append("# summary nodes=\(stats.nodes) truncated=\(stats.truncated)")

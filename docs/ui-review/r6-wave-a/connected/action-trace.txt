@@ -1,0 +1,45 @@
+2026-08-29T05:50:57Z run start label=r6a-connected out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-a/connected
+2026-08-29T05:50:57Z compile helpers into /tmp/pawork-r6a-states-tools.t7TerC
+2026-08-29T05:50:59Z seed fixture root=/tmp/pawork-ui-fixture.0ctflR
+2026-08-29T05:51:03Z serve fixture (wait host_ready barrier)
+2026-08-29T05:51:05Z launch desktop via ui-fixture (token from socket sibling gui.token)
+2026-08-29T05:51:06Z desktop pid=3601
+2026-08-29T05:51:09Z desktop window ready (session-list rendered)
+2026-08-29T05:51:09Z place Desktop window deterministically on the main display
+2026-08-29T05:51:09Z wait timeline_stable (seq>0 session= entries>=0)
+2026-08-29T05:51:10Z timeline_stable ok seq=1 session= entries=0
+2026-08-29T05:51:10Z initial timeline_stable seq=1
+2026-08-29T05:51:10Z State A: AXPress session-fx-ses-alpha-today (select session before capture)
+2026-08-29T05:51:10Z AXPress session-fx-ses-alpha-today (select fx-ses-alpha-today)
+2026-08-29T05:51:10Z AXPress session-fx-ses-alpha-today result=0
+2026-08-29T05:51:10Z wait timeline_stable (seq>1 session=fx-ses-alpha-today entries>=1)
+2026-08-29T05:51:12Z timeline_stable ok seq=2 session=fx-ses-alpha-today entries=25
+2026-08-29T05:51:12Z State A: Inspector open with default Changes (r6-state-a)
+2026-08-29T05:51:12Z assert phase=r6-state-a (poll dump+frames+assert)
+2026-08-29T05:51:13Z phase=r6-state-a ok attempt=1
+2026-08-29T05:51:13Z screencapture wid=11673 -> /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-a/connected/state-a/current.png
+2026-08-29T05:51:14Z visual diff state-a exit=1 (0=all pass / 1=zone FAIL known-gap / 2=invalid input)
+2026-08-29T05:51:14Z State B step 1: collapse Inspector (same desktop session)
+2026-08-29T05:51:14Z AXPress inspector-collapse (collapse inspector)
+2026-08-29T05:51:14Z AXPress inspector-collapse result=0
+2026-08-29T05:51:14Z wait tree absent: inspector-collapsed
+2026-08-29T05:51:14Z tree absent ok: inspector-collapsed attempt=1
+2026-08-29T05:51:15Z screencapture wid=11673 -> /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-a/connected/state-b/current.png
+2026-08-29T05:51:16Z visual diff state-b exit=1 (0=all pass / 1=zone FAIL known-gap / 2=invalid input)
+2026-08-29T05:51:16Z State B step 2: open Header Activity popover (r6-state-b-open)
+2026-08-29T05:51:16Z AXPress inspector-toggle (open Activity popover)
+2026-08-29T05:51:16Z AXPress inspector-toggle result=0
+2026-08-29T05:51:16Z wait tree present: activity-popover-open
+2026-08-29T05:51:16Z tree present ok: activity-popover-open attempt=1
+2026-08-29T05:51:16Z assert phase=r6-state-b-open (poll dump+frames+assert)
+2026-08-29T05:51:16Z phase=r6-state-b-open ok attempt=1
+2026-08-29T05:51:16Z screencapture wid=11673 -> /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-a/connected/state-b/shot-activity-popover.png (activity popover evidence)
+2026-08-29T05:51:17Z State B step 3: summary click resumes Inspector on Changes (r6-state-b-resumed)
+2026-08-29T05:51:17Z AXPress activity-open-changes (resume inspector via popover)
+2026-08-29T05:51:17Z AXPress activity-open-changes result=0
+2026-08-29T05:51:17Z wait tree present: inspector-resumed
+2026-08-29T05:51:17Z tree present ok: inspector-resumed attempt=1
+2026-08-29T05:51:17Z assert phase=r6-state-b-resumed (poll dump+frames+assert)
+2026-08-29T05:51:17Z phase=r6-state-b-resumed ok attempt=1
+2026-08-29T05:51:17Z teardown fixture root=/tmp/pawork-ui-fixture.0ctflR
+2026-08-29T05:51:23Z run done assert_a=0 assert_b_open=0 assert_b_resumed=0 gate_a=1 gate_b=1

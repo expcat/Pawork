@@ -11,10 +11,10 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R6 — Inspector、Changes、Terminal 与 Activity（Wave A 🔵；render / AX / U1 🟢，Connected State A/B 证据待收口）** |
-| 下一任务 | 收口 R6 Wave A 真窗口证据：修复/绕过自动启动路径只返回递归 `AXApplication` 的 macOS AX 可发现性问题，使 GUI 进入 Connected 投影后以同一 fixture 重采 State A/B，验证默认 Changes、58/56px 两级 tab、折叠态 Header Activity 向下约 320px 且右缘对齐、摘要点击回到 Changes，再生成结构断言与 reference/current/overlay/diff。实现、GLM 只读审查整改与 132/132 定向测试已完成，现有手工截图只证明 1440 内容区 rail 288 / workspace 712 / Inspector 440 与两级 strip，不计 Connected/State B 通过；证据见 [r6-wave-a](docs/ui-review/r6-wave-a/notes.md) |
+| 当前阶段 | **R6 — Inspector、Changes、Terminal 与 Activity（Wave A 🟢 2026-08-29；Wave B ⚪）** |
+| 下一任务 | 开启 R6 Wave B：覆盖 Changes/Terminal/Resources 真实生命周期、tab/二级 tab/滚动/focus/session 恢复、键盘与断线重连，完成 R6 U2 矩阵与阶段收口（任务书 [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) §R6 Wave B；Wave A 收口证据见 [r6-wave-a](docs/ui-review/r6-wave-a/notes.md)） |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
-| 阻塞 | R6 Wave A 自动 State A driver 两次均在 AX ready 阶段超时：`ax_trusted=true` 且窗口/host 连接存在，但外部树只返回递归 `AXApplication`、无 identifier；手工前台 GUI 又停在 Connecting（独立 `--probe` 对同 socket 成功）。在恢复 Connected + AX 可发现性前，不关闭 Wave A、不追记 State B/视觉门禁通过；详见 [证据说明](docs/ui-review/r6-wave-a/notes.md) |
+| 阻塞 | 无（R6 Wave A 已于 2026-08-29 收口：AX 递归根因定位为 macOS 26.6.2 对无 bundle debug 二进制的 AX server 注册 flake，driver 层 fail-closed 绕过；详见 [r6-wave-a](docs/ui-review/r6-wave-a/notes.md)） |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
 
@@ -133,6 +133,7 @@ R11 只做文档：对照 [design/](design/README.md) 三张 v3 定稿图与 R8�
 - **State C reference 底色归一（R8 前置，设计基准变更）**：R3 拍板 c 已把 TaskRail 分区 SSIM ≥0.99 与 fixture 演示数据重塑移交 R8（可执行条款见 [R7–R8 任务书](plan/R7-R8-ui-quality-gates.md) §3）。State C 定稿图中位 RGB (0,9,17) 比冻结 token base `0x07121a` 更暗；是否在生成 reference 时按冻结 token 归一底色，须 R8 重采集前由用户批准，不得把当前漂移追认为新基准。
 - **R4 State A/B 分区 SSIM（R8 终局，2026-08-28 拍板 1）**：R4 以结构门禁与 U2 九场景退出；Header/Timeline 等区域 SSIM ≥0.99 同 R3 先例移交 R8。主因仍是 fixture 演示内容与设计稿形状差（重塑已在 R3 拍板 c 移交 R8），不得把当前记录值追认为通过。
 - **live wire 诚实缺口（开放）**：live `RunChanged` 不带失败原因、无用户消息 wire 事件；R4 以乐观回显 + 重放兜底覆盖且零 wire 变更。是否接受现状或立 ADR 演进 wire（含把用户消息持久化提前到 plan 闸门之前）待拍板。
+- **macOS 26 AX server 注册 flake（R7 前置复核）**：无 bundle debug 二进制的外部 AX 树间歇性只返回递归 `AXApplication`（自进程诞生即存在、激活无效、进程级持久、按时段成簇）；R6 Wave A 已在 driver 层以 AXWindows 回退 + desktop-restart ≤3 兜底绕过（fail-closed）。R7 VoiceOver/AX 门禁前须复核 bundled/签名形态能否根治，否则该门禁可能同类受阻。
 - 命令级交互审批：当前 terminal AskUser fail-closed；新增承载需 ADR。
 - `@` file-index 候选查询与 Resources“已加载规则”Host 出口：只有在目标 UI 真实展示对应入口时，才作为 R5/R6 前置接入。
 - 多账户 factory、远程 GUI、teams/goal/automation/monitor、GUI git 高级面、WASM 插件/市场/Hooks/LSP、artifact 流式与 egress broker：保持候选，资产位置见 [docs/history.md](docs/history.md) 与 [docs/design.md](docs/design.md)。

@@ -16,6 +16,7 @@ from PIL import Image, ImageCms
 
 TOOLS = Path(__file__).with_name("ui-wave-d-tools.py")
 DRIVER = Path(__file__).with_name("ui-wave-d-state-a.sh")
+NL = chr(10)
 AX_TREE = (
     Path(__file__).resolve().parents[1]
     / "docs/ui-review/wave-c/ax-bridge/ax-tree.txt"
@@ -277,6 +278,297 @@ class WaveDToolsTest(unittest.TestCase):
             self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
             self.assertIn("must be new or empty", proc.stderr)
             self.assertTrue((out / "stale.json").exists())
+
+
+def r6_common_frames(inspector_open):
+    """Connected 1440x1024 三栏壳层（root 位于 0,0；合同见 PHASE_GEOMETRY）。"""
+    workspace_w = 712.0 if inspector_open else 1152.0
+    frames = {
+        "pawork-root": (0.0, 0.0, 1440.0, 1024.0),
+        "task-rail": (0.0, 0.0, 288.0, 1024.0),
+        "workspace": (288.0, 0.0, workspace_w, 1000.0),
+        "composer": (288.0, 906.0, workspace_w, 94.0),
+        "status-bar": (0.0, 1000.0, 1440.0, 24.0),
+    }
+    if inspector_open:
+        frames["inspector"] = (1000.0, 0.0, 440.0, 1000.0)
+    frames["workspace-header"] = (288.0, 0.0, workspace_w, 104.0)
+    return frames
+
+
+def r6_state_a_frames():
+    """State A：Inspector 展开、默认 Changes/Files；几何源同 app.rs。"""
+    frames = r6_common_frames(inspector_open=True)
+    frames.update({
+        # header_action_ax_rect：right = header 右缘 -25，y 居中 content 区。
+        "header-new-task": (935.0, 51.5, 40.0, 37.0),
+        "inspector-tabs": (1012.0, 0.0, 300.0, 58.0),
+        "inspector-tab-changes": (1012.0, 0.0, 100.0, 58.0),
+        "inspector-tab-terminal": (1112.0, 0.0, 100.0, 58.0),
+        "inspector-tab-resources": (1212.0, 0.0, 100.0, 58.0),
+        "inspector-collapse": (1400.0, 15.0, 32.0, 28.0),
+        "changes": (1000.0, 58.0, 440.0, 942.0),
+        "changes-tabs": (1012.0, 58.0, 192.0, 56.0),
+        "changes-tab-files": (1012.0, 58.0, 96.0, 56.0),
+        "changes-tab-summary": (1108.0, 58.0, 96.0, 56.0),
+    })
+    return frames
+
+
+def r6_state_b_open_frames(anchor_ok=True):
+    """State B open：Inspector 折叠，Header Activity Popover 打开。"""
+    frames = r6_common_frames(inspector_open=False)
+    frames["inspector-toggle"] = (1375.0, 51.5, 40.0, 37.0)  # 右缘 = header 右缘 -25。
+    popover_x = 1095.0 if anchor_ok else 1100.0  # 右缘对齐 / 偏 5px 失败样例。
+    frames["activity-popover"] = (popover_x, 92.5, 320.0, 320.0)
+    frames["activity-changes-heading"] = (1115.0, 142.5, 280.0, 20.0)
+    frames["activity-open-changes"] = (1115.0, 170.5, 280.0, 32.0)
+    return frames
+
+
+def r6_state_b_resumed_frames():
+    frames = r6_common_frames(inspector_open=True)
+    frames["header-new-task"] = (935.0, 51.5, 40.0, 37.0)
+    frames["inspector-tabs"] = (1012.0, 0.0, 300.0, 58.0)
+    frames["inspector-tab-changes"] = (1012.0, 0.0, 100.0, 58.0)
+    frames["changes"] = (1000.0, 58.0, 440.0, 942.0)
+    return frames
+
+
+def r6_tree_text(phase, *, terminal_selected=False, stray_popover=False,
+                 toggle_on_root=False):
+    """伪造 ui-ax-dump.swift 树（按深度 2 空格缩进）。"""
+    lines = [
+        'role=AXGroup identifier="pawork-root"',
+        '  role=AXGroup identifier="task-rail"',
+        '    role=AXList identifier="session-list"',
+        '      role=AXButton identifier="session-fx-ses-alpha-today" selected=1',
+        '  role=AXGroup identifier="workspace"',
+    ]
+    if phase == "r6-state-b-open":
+        header_lines = [
+            '    role=AXGroup identifier="workspace-header"',
+            '      role=AXGroup identifier="activity-popover"',
+            '        role=AXStaticText identifier="activity-changes-heading"',
+            '        role=AXButton identifier="activity-open-changes" enabled=1 actions=[AXPress]',
+        ]
+        if not toggle_on_root:
+            header_lines.insert(
+                1, '      role=AXButton identifier="inspector-toggle" enabled=1 actions=[AXPress]'
+            )
+        lines += header_lines
+    else:
+        lines += [
+            '    role=AXGroup identifier="workspace-header"',
+            '      role=AXButton identifier="header-new-task" enabled=1 actions=[AXPress]',
+        ]
+    lines += [
+        '    role=AXList identifier="timeline"',
+        '      role=AXGroup identifier="timeline-entry-evt-fx-ses-alpha-today-1"',
+        '    role=AXGroup identifier="composer"',
+        '      role=AXTextArea identifier="composer-input" focused=1',
+    ]
+    if phase in ("r6-state-a", "r6-state-b-resumed"):
+        tab_lines = [
+            '  role=AXGroup identifier="inspector"',
+            '    role=AXTabGroup identifier="inspector-tabs"',
+        ]
+        if phase == "r6-state-a":
+            tab_lines += [
+                '      role=AXTab identifier="inspector-tab-changes" selected=1 actions=[AXPress]',
+                '      role=AXTab identifier="inspector-tab-terminal"'
+                + (' selected=1' if terminal_selected else '')
+                + ' actions=[AXPress]',
+                '      role=AXTab identifier="inspector-tab-resources" actions=[AXPress]',
+                '    role=AXButton identifier="inspector-collapse" enabled=1 actions=[AXPress]',
+                '    role=AXGroup identifier="changes"',
+                '      role=AXTabGroup identifier="changes-tabs"',
+                '        role=AXTab identifier="changes-tab-files" selected=1 actions=[AXPress]',
+                '        role=AXTab identifier="changes-tab-summary" actions=[AXPress]',
+            ]
+        else:
+            tab_lines += [
+                '      role=AXTab identifier="inspector-tab-changes" selected=1 actions=[AXPress]',
+            ]
+            if stray_popover:
+                tab_lines += [
+                    '      role=AXGroup identifier="activity-popover"',
+                ]
+        lines += tab_lines
+    if toggle_on_root:
+        # 负路径：触发器改挂 pawork-root（深度 1、置于 status-bar 前，
+        # 不扰动其他节点的父映射），使 _r6_under 判定失败。
+        lines.append('  role=AXButton identifier="inspector-toggle" enabled=1 actions=[AXPress]')
+    lines.append('  role=AXGroup identifier="status-bar"')
+    return NL.join(lines) + NL
+
+
+class R6PhaseAssertionTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tools = load_tools()
+
+    def assert_phase(self, phase, frames, tree_text):
+        with tempfile.TemporaryDirectory() as raw:
+            frames_path = Path(raw) / "geometry.txt"
+            tree_path = Path(raw) / "ax-tree.txt"
+            out_path = Path(raw) / "assert.json"
+            frames_path.write_text(
+                NL.join(
+                    "id=" + name + " role=AXGroup x=" + str(x) + " y=" + str(y)
+                    + " w=" + str(w) + " h=" + str(h)
+                    for name, (x, y, w, h) in frames.items()
+                ) + NL,
+                encoding="utf-8",
+            )
+            tree_path.write_text(tree_text, encoding="utf-8")
+            proc = subprocess.run(
+                [
+                    sys.executable, str(TOOLS), "assert",
+                    "--frames", str(frames_path),
+                    "--tree", str(tree_path),
+                    "--phase", phase,
+                    "--out", str(out_path),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(out_path.read_text("utf-8"))
+            return proc, payload
+
+    def check_names(self, payload):
+        return {check["name"]: check for check in payload["checks"]}
+
+    def test_parse_tree_extracts_r6_selection_actions_and_parents(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "tree.txt"
+            path.write_text(
+                NL.join(
+                    [
+                        'role=AXGroup identifier="workspace"',
+                        '  role=AXGroup identifier="workspace-header"',
+                        '    role=AXButton identifier="inspector-toggle" enabled=1 actions=[AXPress]',
+                        '    role=AXTab identifier="inspector-tab-changes" selected=1',
+                    ]
+                ) + NL,
+                encoding="utf-8",
+            )
+            tree = self.tools.parse_tree(path)
+            self.assertEqual(tree["selected_identifiers"], {"inspector-tab-changes"})
+            self.assertEqual(tree["press_identifiers"], {"inspector-toggle"})
+            self.assertEqual(tree["parents"]["inspector-toggle"], "workspace-header")
+            self.assertEqual(tree["parents"]["workspace-header"], "workspace")
+
+    def test_r6_state_a_pass(self):
+        proc, payload = self.assert_phase(
+            "r6-state-a", r6_state_a_frames(), r6_tree_text("r6-state-a")
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(payload["pass"], proc.stdout)
+        names = self.check_names(payload)
+        for name in (
+            "inspector-tabs-height",
+            "inspector-tabs-tabs-adjacent",
+            "inspector-tab-changes-selected",
+            "inspector-tab-terminal-not-selected",
+            "inspector-tab-resources-not-selected",
+            "changes-tabs-height",
+            "changes-tabs-tabs-adjacent",
+            "changes-tab-files-selected",
+            "inspector-collapse-size",
+            "header-new-task-size",
+        ):
+            self.assertIn(name, names)
+            self.assertTrue(names[name]["pass"], names[name]["detail"])
+
+    def test_r6_state_a_fail_on_wrong_tab_selection_and_adjacency(self):
+        frames = r6_state_a_frames()
+        # dx=98 破坏相邻合同。
+        frames["changes-tab-summary"] = (1110.0, 58.0, 96.0, 56.0)
+        proc, payload = self.assert_phase(
+            "r6-state-a", frames, r6_tree_text("r6-state-a", terminal_selected=True)
+        )
+        self.assertEqual(proc.returncode, 5, proc.stdout + proc.stderr)
+        self.assertFalse(payload["pass"])
+        names = self.check_names(payload)
+        self.assertFalse(names["inspector-tab-terminal-not-selected"]["pass"])
+        self.assertFalse(names["changes-tabs-tabs-adjacent"]["pass"])
+
+    def test_r6_state_b_open_pass(self):
+        proc, payload = self.assert_phase(
+            "r6-state-b-open",
+            r6_state_b_open_frames(),
+            r6_tree_text("r6-state-b-open"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(payload["pass"], proc.stdout)
+        names = self.check_names(payload)
+        for name in (
+            "inspector-absent",
+            "inspector-column-absent",
+            "inspector-toggle-size",
+            "inspector-toggle-header-inset",
+            "inspector-toggle-under-header",
+            "activity-popover-size",
+            "activity-popover-anchor",
+            "activity-changes-heading-height",
+            "activity-open-changes-height",
+            "activity-open-changes-press",
+            "header-new-task-absent",
+        ):
+            self.assertIn(name, names)
+            self.assertTrue(names[name]["pass"], names[name]["detail"])
+
+    def test_r6_state_b_open_fail_on_popover_anchor_drift(self):
+        proc, payload = self.assert_phase(
+            "r6-state-b-open",
+            r6_state_b_open_frames(anchor_ok=False),
+            r6_tree_text("r6-state-b-open"),
+        )
+        self.assertEqual(proc.returncode, 5, proc.stdout + proc.stderr)
+        self.assertFalse(payload["pass"])
+        names = self.check_names(payload)
+        self.assertFalse(names["activity-popover-anchor"]["pass"])
+
+    def test_r6_state_b_open_fail_on_toggle_outside_header_subtree(self):
+        proc, payload = self.assert_phase(
+            "r6-state-b-open",
+            r6_state_b_open_frames(),
+            r6_tree_text("r6-state-b-open", toggle_on_root=True),
+        )
+        self.assertEqual(proc.returncode, 5, proc.stdout + proc.stderr)
+        self.assertFalse(payload["pass"])
+        names = self.check_names(payload)
+        self.assertFalse(names["inspector-toggle-under-header"]["pass"])
+
+    def test_r6_state_b_resumed_pass(self):
+        proc, payload = self.assert_phase(
+            "r6-state-b-resumed",
+            r6_state_b_resumed_frames(),
+            r6_tree_text("r6-state-b-resumed"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(payload["pass"], proc.stdout)
+        names = self.check_names(payload)
+        for name in (
+            "inspector-tab-changes-selected",
+            "header-new-task-present",
+            "activity-controls-absent",
+        ):
+            self.assertIn(name, names)
+            self.assertTrue(names[name]["pass"], names[name]["detail"])
+
+    def test_r6_state_b_resumed_fail_on_stray_popover(self):
+        proc, payload = self.assert_phase(
+            "r6-state-b-resumed",
+            r6_state_b_resumed_frames(),
+            r6_tree_text("r6-state-b-resumed", stray_popover=True),
+        )
+        self.assertEqual(proc.returncode, 5, proc.stdout + proc.stderr)
+        self.assertFalse(payload["pass"])
+        names = self.check_names(payload)
+        self.assertFalse(names["activity-controls-absent"]["pass"])
 
 
 if __name__ == "__main__":

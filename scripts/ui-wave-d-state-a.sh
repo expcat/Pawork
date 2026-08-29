@@ -144,9 +144,24 @@ trace "launch desktop via ui-fixture (token from socket sibling gui.token)"
 DESKTOP_PID="$(cat "$ROOT/desktop.pid")"
 trace "desktop pid=$DESKTOP_PID"
 
+is_ax_recursion() { # $1=probe-file: AX server registration failure signature
+  local probe="$1" ax_app_lines
+  [[ -f "$probe" ]] || return 1
+  ax_app_lines="$(grep -c 'role=AXApplication' "$probe" 2>/dev/null || true)"
+  [[ "$ax_app_lines" =~ ^[0-9]+$ ]] || ax_app_lines=0
+  if (( ax_app_lines >= 3 )) && grep -q '# identifiers (none)' "$probe"; then
+    return 0
+  fi
+  # axdump 已在进程内检测到递归并切 AXWindows 回退根；回退树仍无 session-list
+  # 说明回退降级/为空，等同递归态，走 desktop-restart 兜底。
+  grep -q '^# WARN ax-fallback=axwindows' "$probe" \
+    && ! grep -q 'identifier="session-list"' "$probe"
+}
+
 AXDUMP="$WORK/ui-ax-dump"
 deadline=$(( SECONDS + WINDOW_TIMEOUT_SECS ))
 probe_attempts=0
+ax_restarts=0
 while :; do
   set +e
   "$AXDUMP" --pid "$DESKTOP_PID" --out "$WORK/probe.txt" >/dev/null 2>&1
@@ -159,6 +174,18 @@ while :; do
   probe_attempts=$(( probe_attempts + 1 ))
   if (( probe_attempts % 10 == 1 )); then
     trace "probe not-ready rc=$probe_rc attempt=$probe_attempts trusted=$(grep -o 'ax_trusted=[a-z]*' "$WORK/probe.txt" 2>/dev/null | head -1) windows=$(grep -c 'wid=' "$WORK/probe.txt" 2>/dev/null)"
+  fi
+  if (( probe_attempts >= 30 )) && is_ax_recursion "$WORK/probe.txt"; then
+    if (( ax_restarts >= 3 )); then
+      cp "$WORK/probe.txt" "$OUT/ax-tree-probe-recursive-final.txt" 2>/dev/null || true
+      die "AX recursion persisted after $ax_restarts desktop restarts (evidence in $OUT)"
+    fi
+    ax_restarts=$(( ax_restarts + 1 ))
+    trace "AX recursion signature detected (not-ready=$probe_attempts); desktop-restart $ax_restarts/3"
+    "$FIXTURE" desktop-restart --root "$ROOT"
+    DESKTOP_PID="$(cat "$ROOT/desktop.pid")"
+    trace "desktop restarted pid=$DESKTOP_PID (AX ready counter reset)"
+    probe_attempts=0
   fi
   kill -0 "$DESKTOP_PID" 2>/dev/null \
     || { tail -5 "$ROOT/logs/desktop.log" >&2 || true; die "desktop exited early"; }

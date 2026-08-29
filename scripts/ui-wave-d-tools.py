@@ -45,7 +45,30 @@ PHASE_GEOMETRY = {
     # R3 Wave A State C：Projects 分组态。三栏壳层与 rail 宽度不随分组模式
     # 变化；分组语义差异由 skeleton 检查（grouping 值 / 项目块 / 日期桶）承载。
     "projects": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    # R6 Wave A：Inspector 两级 tab（State A）与 Header Activity 弹出层
+    # （State B open/resumed）。三栏壳层合同不变；两级 tab / 触发器 /
+    # Popover 的结构差异由 r6_geometry_checks + r6_skeleton_checks 承载。
+    "r6-state-a": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    "r6-state-b-open": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "absent"},
+    "r6-state-b-resumed": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
 }
+
+# R6 Wave A 结构合同（源：apps/desktop/src/ui/theme.rs metrics、
+# accessibility/app.rs 常量 CONTROL_HEIGHT/ROW_HEIGHT 与 components/
+# dropdown.rs ANCHOR_GAP_Y）。几何容差沿用现有相位 ±0.5px 惯例。
+R6_PHASES = ("r6-state-a", "r6-state-b-open", "r6-state-b-resumed")
+R6_GEOM_TOL = 0.5
+R6_INSPECTOR_TABS_HEIGHT = 58.0
+R6_INSPECTOR_TAB_SIZE = (100.0, 58.0)
+R6_CHANGES_TABS_HEIGHT = 56.0
+R6_CHANGES_TAB_SIZE = (96.0, 56.0)
+R6_CONTROL_SIZE = (32.0, 28.0)
+R6_HEADER_ACTION_SIZE = (40.0, 37.0)
+R6_HEADER_INSET_RIGHT = 25.0
+R6_ACTIVITY_POPOVER_SIZE = (320.0, 320.0)
+R6_ACTIVITY_ANCHOR_GAP_Y = 4.0
+R6_ACTIVITY_HEADING_HEIGHT = 20.0
+R6_ACTIVITY_ROW_HEIGHT = 32.0
 
 SKELETON_BASE = [
     "task-rail",
@@ -131,6 +154,12 @@ def parse_tree(path):
     focused = []
     selected_rows = []
     timeline_entries = 0
+    selected_identifiers = set()
+    press_identifiers = set()
+    # ui-ax-dump.swift 按深度缩进（2 空格/层）；据此构建直接父映射，
+    # 供 R6 断言区分节点挂在哪个子树（如 inspector-toggle 属 workspace-header）。
+    parents = {}
+    stack = []
     for line in tree_lines:
         ids = IDENTIFIER_RE.findall(line)
         if not ids:
@@ -142,6 +171,16 @@ def parse_tree(path):
             selected_rows.append(identifier)
         if identifier.startswith(TIMELINE_PREFIX + "-"):
             timeline_entries += 1
+        if "selected=1" in line:
+            selected_identifiers.add(identifier)
+        if "AXPress" in line:
+            press_identifiers.add(identifier)
+        indent = len(line) - len(line.lstrip(" "))
+        depth = indent // 2
+        while stack and stack[-1][0] >= depth:
+            stack.pop()
+        parents[identifier] = stack[-1][1] if stack else None
+        stack.append((depth, identifier))
     summary = ""
     for line in lines:
         if line.startswith("# summary"):
@@ -167,6 +206,9 @@ def parse_tree(path):
         "focused": focused,
         "selected_rows": selected_rows,
         "timeline_entries_alpha_today": timeline_entries,
+        "selected_identifiers": selected_identifiers,
+        "press_identifiers": press_identifiers,
+        "parents": parents,
         "connection_status": connection_status,
         "grouping_value": grouping_value,
         "summary": summary,
@@ -334,7 +376,180 @@ def geometry_checks(frames, phase="initial"):
             + " expected " + str(rail["w"]) + ".." + str(root["w"])
             + " (inspector column absent)",
         )
+    if phase in R6_PHASES:
+        checks.extend(r6_geometry_checks(frames, phase))
     return checks, metrics
+
+
+def _r6_frame(frames, name):
+    frame = frames.get(name)
+    if frame is None or frame.get("error"):
+        return None
+    return frame
+
+
+def _r6_check(name, ok, detail):
+    return {"name": name, "pass": bool(ok), "blocking": True, "detail": detail}
+
+
+def _r6_size_check(frames, name, width, height):
+    frame = _r6_frame(frames, name)
+    ok = (
+        frame is not None
+        and near(frame["w"], width, R6_GEOM_TOL)
+        and near(frame["h"], height, R6_GEOM_TOL)
+    )
+    return _r6_check(
+        name + "-size",
+        ok,
+        name + " "
+        + (
+            "w=" + str(frame["w"]) + " h=" + str(frame["h"])
+            if frame is not None
+            else "frame missing"
+        )
+        + " (contract " + str(int(width)) + "x" + str(int(height))
+        + " +/-" + str(R6_GEOM_TOL) + ")",
+    )
+
+
+def _r6_height_check(frames, name, height):
+    frame = _r6_frame(frames, name)
+    ok = frame is not None and near(frame["h"], height, R6_GEOM_TOL)
+    return _r6_check(
+        name + "-height",
+        ok,
+        name + " "
+        + ("h=" + str(frame["h"]) if frame is not None else "frame missing")
+        + " (contract " + str(int(height)) + " +/-" + str(R6_GEOM_TOL) + ")",
+    )
+
+
+def _r6_strip_checks(frames, strip_name, strip_height, tab_names, tab_size):
+    """两级 tab strip：strip 高 / 各 tab 尺寸 / 依次相邻 / y 与 strip 对齐。"""
+    strip = _r6_frame(frames, strip_name)
+    checks = [_r6_check(
+        strip_name + "-height",
+        strip is not None and near(strip["h"], strip_height, R6_GEOM_TOL),
+        strip_name + " "
+        + ("h=" + str(strip["h"]) if strip is not None else "frame missing")
+        + " (contract " + str(int(strip_height)) + " +/-" + str(R6_GEOM_TOL) + ")",
+    )]
+    width, height = tab_size
+    tab_frames = [_r6_frame(frames, name) for name in tab_names]
+    for name in tab_names:
+        checks.append(_r6_size_check(frames, name, width, height))
+    ok = all(frame is not None for frame in tab_frames) and strip is not None
+    details = []
+    if ok:
+        for left, right in zip(tab_frames, tab_frames[1:]):
+            dx = right["x"] - left["x"]
+            step_ok = near(dx, width, R6_GEOM_TOL)
+            ok = ok and step_ok
+            details.append(
+                "dx=" + str(round(dx, 2)) + (" ok" if step_ok else " expected " + str(int(width)))
+            )
+        for name, frame in zip(tab_names, tab_frames):
+            dy = frame["y"] - strip["y"]
+            dy_ok = near(dy, 0.0, R6_GEOM_TOL)
+            ok = ok and dy_ok
+            details.append(
+                "dy(" + name + ")=" + str(round(dy, 2)) + (" ok" if dy_ok else " expected 0")
+            )
+    else:
+        missing_tabs = [
+            name for name, frame in zip(tab_names, tab_frames) if frame is None
+        ]
+        if missing_tabs:
+            details.append("tab frames missing: " + ",".join(missing_tabs))
+        if strip is None:
+            details.append("strip " + strip_name + " missing")
+    checks.append(_r6_check(strip_name + "-tabs-adjacent", ok, "; ".join(details)))
+    return checks
+
+
+def r6_geometry_checks(frames, phase):
+    """R6 Wave A 相位增量几何合同（通用壳层检查在 geometry_checks 中）。"""
+    if phase == "r6-state-a":
+        checks = _r6_strip_checks(
+            frames,
+            "inspector-tabs",
+            R6_INSPECTOR_TABS_HEIGHT,
+            ("inspector-tab-changes", "inspector-tab-terminal", "inspector-tab-resources"),
+            R6_INSPECTOR_TAB_SIZE,
+        )
+        checks.extend(_r6_strip_checks(
+            frames,
+            "changes-tabs",
+            R6_CHANGES_TABS_HEIGHT,
+            ("changes-tab-files", "changes-tab-summary"),
+            R6_CHANGES_TAB_SIZE,
+        ))
+        checks.append(_r6_size_check(frames, "inspector-collapse", *R6_CONTROL_SIZE))
+        checks.append(_r6_size_check(frames, "header-new-task", *R6_HEADER_ACTION_SIZE))
+        return checks
+    if phase == "r6-state-b-open":
+        checks = [_r6_size_check(frames, "inspector-toggle", *R6_HEADER_ACTION_SIZE)]
+        header = _r6_frame(frames, "workspace-header")
+        toggle = _r6_frame(frames, "inspector-toggle")
+        if header is not None and toggle is not None:
+            inset = (header["x"] + header["w"]) - (toggle["x"] + toggle["w"])
+            checks.append(_r6_check(
+                "inspector-toggle-header-inset",
+                near(inset, R6_HEADER_INSET_RIGHT, R6_GEOM_TOL),
+                "toggle right inset=" + str(round(inset, 2))
+                + " (contract " + str(int(R6_HEADER_INSET_RIGHT))
+                + " +/-" + str(R6_GEOM_TOL) + ")",
+            ))
+        else:
+            checks.append(_r6_check(
+                "inspector-toggle-header-inset",
+                False,
+                "frames missing: " + ",".join(
+                    name
+                    for name, frame in (
+                        ("workspace-header", header), ("inspector-toggle", toggle),
+                    )
+                    if frame is None
+                ),
+            ))
+        checks.append(_r6_size_check(frames, "activity-popover", *R6_ACTIVITY_POPOVER_SIZE))
+        popover = _r6_frame(frames, "activity-popover")
+        if toggle is not None and popover is not None:
+            right_delta = (toggle["x"] + toggle["w"]) - (popover["x"] + popover["w"])
+            top_gap = popover["y"] - (toggle["y"] + toggle["h"])
+            checks.append(_r6_check(
+                "activity-popover-anchor",
+                near(right_delta, 0.0, R6_GEOM_TOL)
+                and near(top_gap, R6_ACTIVITY_ANCHOR_GAP_Y, R6_GEOM_TOL),
+                "right delta=" + str(round(right_delta, 2)) + " (contract 0)"
+                + "; top gap=" + str(round(top_gap, 2))
+                + " (contract " + str(int(R6_ACTIVITY_ANCHOR_GAP_Y)) + ")"
+                + " +/-" + str(R6_GEOM_TOL),
+            ))
+        else:
+            checks.append(_r6_check(
+                "activity-popover-anchor",
+                False,
+                "frames missing: " + ",".join(
+                    name
+                    for name, frame in (
+                        ("inspector-toggle", toggle), ("activity-popover", popover),
+                    )
+                    if frame is None
+                ),
+            ))
+        checks.append(_r6_height_check(
+            frames, "activity-changes-heading", R6_ACTIVITY_HEADING_HEIGHT,
+        ))
+        checks.append(_r6_height_check(
+            frames, "activity-open-changes", R6_ACTIVITY_ROW_HEIGHT,
+        ))
+        return checks
+    # r6-state-b-resumed：Inspector 回到展开 Changes；Header 槽位恢复
+    # New task。几何与 State A 同源，此处只保留壳层合同（presence/selected
+    # 差异由 r6_skeleton_checks 承载）。
+    return []
 
 
 def skeleton_checks(tree, phase="initial"):
@@ -373,7 +588,10 @@ def skeleton_checks(tree, phase="initial"):
             "detail": "reconnect "
                 + ("stray present" if "reconnect" in identifiers else "absent"),
         })
-    if phase in ("collapsed", "resumed", "disconnected", "connect-failed", "reconnected", "projects"):
+    if phase in (
+        "collapsed", "resumed", "disconnected", "connect-failed", "reconnected",
+        "projects", *R6_PHASES,
+    ):
         # 已选中会话相位：空态引导必须消失（防谓词回归成恒真）。
         # disconnected 保留旧条目（gui-design 空态原则），同样不得出现引导。
         checks.append({
@@ -382,7 +600,7 @@ def skeleton_checks(tree, phase="initial"):
             "detail": "workspace-empty-hint "
                 + ("stray present" if "workspace-empty-hint" in identifiers else "absent"),
         })
-    if phase in ("narrow", "collapsed"):
+    if phase in ("narrow", "collapsed", "r6-state-b-open"):
         stray = [
             name for name in ("inspector", "inspector-tabs")
             if name in identifiers
@@ -493,6 +711,95 @@ def skeleton_checks(tree, phase="initial"):
             "pass": not missing_groups,
             "detail": ("missing: " + ",".join(missing_groups)) if missing_groups
                 else "projects: " + ",".join(project_groups),
+        })
+    if phase in R6_PHASES:
+        checks.extend(r6_skeleton_checks(tree, phase))
+    return checks
+
+
+def _r6_under(parents, identifier, ancestor):
+    """identifier 是否挂在 ancestor 子树内（允许中间包装节点）。"""
+    current = parents.get(identifier)
+    while current is not None:
+        if current == ancestor:
+            return True
+        current = parents.get(current)
+    return False
+
+
+def r6_skeleton_checks(tree, phase):
+    """R6 Wave A 相位增量树合同（选中态 / 动作 / 互斥 presence）。"""
+    identifiers = tree["identifiers"]
+    selected = tree["selected_identifiers"]
+    checks = []
+    if phase == "r6-state-a":
+        # 展开态默认二级视图：Inspector 顶层 Changes 选中（其余未选），
+        # Changes 二级 Files 选中。
+        for name, expected in (
+            ("inspector-tab-changes", True),
+            ("inspector-tab-terminal", False),
+            ("inspector-tab-resources", False),
+            ("changes-tab-files", True),
+        ):
+            is_selected = name in selected
+            checks.append({
+                "name": name + ("-selected" if expected else "-not-selected"),
+                "pass": is_selected == expected,
+                "detail": name + " selected=" + ("1" if is_selected else "0")
+                    + " (expect " + ("1" if expected else "0") + ")",
+            })
+    elif phase == "r6-state-b-open":
+        # 折叠态互斥：最右槽是 Activity 触发器而非 New task；触发器必须
+        # 挂在 workspace-header 子树内；Open changes 按钮带 Press 动作。
+        checks.append({
+            "name": "header-new-task-absent",
+            "pass": "header-new-task" not in identifiers,
+            "detail": "header-new-task "
+                + ("stray present" if "header-new-task" in identifiers else "absent"),
+        })
+        under_header = _r6_under(tree["parents"], "inspector-toggle", "workspace-header")
+        checks.append({
+            "name": "inspector-toggle-under-header",
+            "pass": "inspector-toggle" in identifiers and under_header,
+            "detail": "inspector-toggle "
+                + (
+                    "under workspace-header"
+                    if under_header
+                    else "present but not under workspace-header"
+                    if "inspector-toggle" in identifiers
+                    else "missing"
+                ),
+        })
+        pressable = "activity-open-changes" in tree["press_identifiers"]
+        checks.append({
+            "name": "activity-open-changes-press",
+            "pass": "activity-open-changes" in identifiers and pressable,
+            "detail": "activity-open-changes "
+                + ("actions include AXPress" if pressable else "missing or no AXPress"),
+        })
+    elif phase == "r6-state-b-resumed":
+        # 摘要点击后回到展开 Changes：触发器与浮层都不得残留。
+        checks.append({
+            "name": "inspector-tab-changes-selected",
+            "pass": "inspector-tab-changes" in selected,
+            "detail": "inspector-tab-changes selected="
+                + ("1" if "inspector-tab-changes" in selected else "0") + " (expect 1)",
+        })
+        checks.append({
+            "name": "header-new-task-present",
+            "pass": "header-new-task" in identifiers,
+            "detail": "header-new-task "
+                + ("present" if "header-new-task" in identifiers else "missing"),
+        })
+        stray = [
+            name for name in ("inspector-toggle", "activity-popover")
+            if name in identifiers
+        ]
+        checks.append({
+            "name": "activity-controls-absent",
+            "pass": not stray,
+            "detail": ("stray nodes: " + ",".join(stray)) if stray
+                else "inspector-toggle/activity-popover absent",
         })
     return checks
 
@@ -1563,6 +1870,9 @@ def main():
             "connect-failed",
             "reconnected",
             "projects",
+            "r6-state-a",
+            "r6-state-b-open",
+            "r6-state-b-resumed",
         ],
         required=True,
     )

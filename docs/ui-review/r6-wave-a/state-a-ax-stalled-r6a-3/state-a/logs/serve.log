@@ -1,0 +1,4 @@
+[1787980578740] serve starting
+[1787980578741] host_ready socket=/private/tmp/pawork-ui-fixture.m8VRD3/data/pawork-gui.sock
+ui_fixture serving on /private/tmp/pawork-ui-fixture.m8VRD3/data/pawork-gui.sock (barriers /private/tmp/pawork-ui-fixture.m8VRD3/barriers)
+[1787980581197] accepted connection connection-0

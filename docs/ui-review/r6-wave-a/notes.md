@@ -1,6 +1,6 @@
 # R6 Wave A — Inspector 层级与 Header Activity
 
-> 状态：🔵 进行中（render / AX / U1 已实现并通过；State A 结构截图已人工核对；同 fixture 的 Connected State A/B 自动证据仍待收口）
+> 状态：🟢 已收口（2026-08-29；render / AX / U1 与 Connected State A/B 结构断言全过；SSIM 分区记录值按 R3–R5 先例移交 R8 终局门禁，不追认为通过）
 
 ## 本波范围
 
@@ -25,19 +25,28 @@
 
 GLM 只读审查未发现 P0/P1；唯一 P2 指出 Connected 真窗口取证受阻时 Header Activity 的 AX 锚点缺自动化钉子。已把触发器/Popover/内部摘要 frame 提取为单一几何函数并新增精确回归，随后重跑上述 132 项门禁通过。
 
-## 真窗口证据与当前阻塞
+## 真窗口证据（Connected State A/B，2026-08-29 收口）
 
-自动 State A driver 连续两次在 AX ready 阶段超时。两次均满足 `ax_trusted=true`、窗口存在、fixture host 接受连接，但外部 AX 查询只得到递归 `AXApplication → AXApplication`，没有任何 identifier：
+早前「AX ready 阶段超时」阻塞的根因已定位：R5→R6 间 Desktop 侧改动不涉及 AX 链路（GPUI 0.2.2 mac 平台无任何 accessibility 代码，AX 树全靠自研 bridge `accessibility/macos.rs`）；实测递归态下进程完全健康（已 Connected、timeline_stable 已写、主线程空闲），递归自进程诞生即存在、激活无效、进程级持久，且按时段成簇出现——判定为 **macOS 26.6.2 对无 bundle debug 二进制的 AX server 注册间歇性故障**，非代码回归。更正此前记录：「GUI 停在 Connecting」为误判——stalled 证据里 barriers 目录为空只是 driver 在 ready 闸门前超时、从未执行到拷贝步；GUI 实际已进入 Connected 投影。
 
-- [第一次 trace](state-a-ax-stalled-r6a-1/action-trace.txt) / [AX timeout](state-a-ax-stalled-r6a-1/ax-tree-probe-timeout.txt)
-- [第二次 trace](state-a-ax-stalled-r6a-2/action-trace.txt) / [AX timeout](state-a-ax-stalled-r6a-2/ax-tree-probe-timeout.txt)
+绕过落在 driver 层，均 fail-closed（失败安全，不误 PASS）：
 
-手工以前台 Desktop + 同一 seeded fixture host 复核时，独立 `--probe` 连接成功并报告 `sessions=7, models=9`，证明 socket/fixture 数据可用；但 GUI 进程停在 Connecting，未形成 Connected 投影。保留的 [State A 结构截图](manual-structure/state-a-unconnected.png) 因此只作为结构证据，不作为同 fixture Connected 或视觉门禁通过证据。截图含窗口阴影；内容区横向边界实测为 rail 288px、workspace 712px、Inspector 440px，且可见默认 Changes、58px 顶层 strip 与 56px Files/Summary strip。对应外部 AX 递归样本见 [ax-recursion.txt](manual-structure/ax-recursion.txt)。
+- [ui-ax-dump.swift](../../../scripts/ui-ax-dump.swift)：检测递归签名（AXApplication≥2 且无 AXWindow 且无 identifier）后切换 `kAXWindowsAttribute`/`kAXMainWindowAttribute` 回退根 dump 并标注 `# WARN ax-fallback=axwindows`；健康路径输出逐字节不变。
+- [ui-r6-wave-a-states.sh](../../../scripts/ui-r6-wave-a-states.sh) 与 [ui-wave-d-state-a.sh](../../../scripts/ui-wave-d-state-a.sh)：就绪轮询识别递归签名（含收口审查 P1 整改补上的「WARN 回退仍无 session-list」降级分支），触发 desktop-restart ≤3 次；仍递归则以 exit 3 + 证据收场。
+- 结构断言新增三相位（[ui-wave-d-tools.py](../../../scripts/ui-wave-d-tools.py)）：`r6-state-a` / `r6-state-b-open` / `r6-state-b-resumed`，逐值对齐 theme.rs / app.rs / dropdown.rs 合同；脚本 unittest 16/16，同级全部 9 套件回归全绿。
 
-因此本波目前只可标记为“已实现 + U1 通过”。State B 折叠态 Activity 真窗口开合/锚点、Connected State A 数据投影、reference/current/overlay 与区域指标均未取得，不得追记为通过。
+通过证据（label `r6a-connected`，git_head=d793999，2026-08-29T05:51Z）：
 
-## 下一步
+- **State A**（选中 fx-ses-alpha-today 后）：`assert r6-state-a` PASS——默认 Changes、两级 strip 58/56px、tab 相邻性与选中态、header-new-task 40×37、长内容下 Inspector 440px 不收缩。[截图](connected/state-a/current.png) · [geometry](connected/state-a/geometry.txt) · [断言 JSON](connected/state-a/assert-r6-state-a.json)。
+- **State B**：inspector-collapse → inspector-toggle 开 popover → `r6-state-b-open` PASS（320×320、右缘对齐、顶距 toggle 底 +4、heading 高 20、toggle 挂 header 子树、header-new-task 缺席）→ activity-open-changes 恢复 → `r6-state-b-resumed` PASS（toggle/popover 无残留、Inspector 回到 Changes、Files/Summary 选中态正确）。[geometry-open](connected/state-b/geometry-open.txt) · [断言 open](connected/state-b/assert-r6-state-b-open.json) · [断言 resumed](connected/state-b/assert-r6-state-b-resumed.json)。
+- 全程 trace：[action-trace.txt](connected/action-trace.txt)，末行 `run done assert_a=0 assert_b_open=0 assert_b_resumed=0 gate_a=1 gate_b=1`；reference/current/overlay/diff 成套于 [connected/](connected/)。
 
-1. 恢复自动启动路径的 macOS AX bridge 可发现性，并确认 GUI 进程进入 Connected 投影。
-2. 用同一 fixture 重采 State A 与 State B，验证 Header Activity 开合、右缘对齐、约 320px 高度、摘要点击回到 Changes。
-3. 生成 reference/current/overlay/diff 与结构断言；全部通过后才关闭 Wave A，随后进入 R6 Wave B。
+视觉门禁：两状态分区 SSIM 均未达 0.99——State A：global 0.662、taskrail 0.694、header-left 0.940、header-right 0.883、timeline 0.679、composer-left 0.423、composer-right 0.620、inspector-body 0.614、inspector-right 0.800、statusbar 0.649；State B：global 0.618、taskrail 0.544、header-left 0.774、header-right 0.693、timeline 0.650、composer-left 0.449、composer-right 0.765、statusbar 0.462、popover-left 0.528、popover-right 0.573。主因仍是 fixture 演示内容与设计稿形状差，同 R3 拍板 c / R4 拍板 1 / R5 用户指令先例记为已知缺口移交 R8 终局门禁，不追认为通过。
+
+早前三次阻塞样本归档于 [state-a-ax-stalled-r6a-1](state-a-ax-stalled-r6a-1/)、[-2](state-a-ax-stalled-r6a-2/)、[-3](state-a-ax-stalled-r6a-3/)，契约缺口一次归档于 [connected-attempt1](connected-attempt1/)；[State A 结构截图](manual-structure/state-a-unconnected.png)（rail 288 / workspace 712 / Inspector 440、两级 strip 可见）仍只作结构证据。
+
+## 遗留与移交
+
+- 分区 SSIM ≥0.99 与 fixture 演示数据重塑：移交 R8 终局视觉门禁（条款见 [plan/R7-R8-ui-quality-gates.md](../../../plan/R7-R8-ui-quality-gates.md) §3）。
+- AX server 注册 flake 的产品侧复核（bundled/签名形态）：登记 ROADMAP §5，R7 VoiceOver/AX 门禁前复核；driver 层绕过已就位。
+- 断言覆盖已知子集缺口（收口审查 P2 登记）：popover 内部偏移（heading/summary offset、左右 inset 20/宽 280）与 `.max(header_frame.x)` 钳制未断言，本次采集值恰好全部吻合；需要时随 Wave B 补强。
