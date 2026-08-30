@@ -11,10 +11,10 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R7 — 全局交互、Accessibility 与响应式（Wave C 🔵）** |
-| 下一任务 | 继续 R7 Wave C：1080×720、CJK/emoji/超长内容、1024 行 Timeline、反复 resize、断线重连、单次性能基线与窄窗连接长文案定宽截断均已通过最终 U2；下一步只补字号放大与主动 reduced motion / 高对比平台态缺口，不改 GUI wire / Host / Policy / 正式 fixture 业务数据（任务书 [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式)；进展证据 [r7-wave-c](docs/ui-review/r7-wave-c/notes.md)） |
+| 当前阶段 | **R8 — 模拟操作全功能验收（🔵）** |
+| 下一任务 | 开启 R8 首个实现切片：按已批准的移交合同重塑 `fixtures/ui/seed.json` 演示数据形状（标题长度 / 时间分布 / 会话数），同步既有 golden 与直接断言引用；不重采 reference/current，不改设计基准，也不改 GUI wire / Host / Policy。State C reference 是否按冻结 token 归一底色仍须在重采前取得用户批准（任务书 [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收)；R7 收口证据 [r7-wave-c](docs/ui-review/r7-wave-c/notes.md)） |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
-| 阻塞 | Wave C 当前自动化子集无代码阻塞，最终 U2 已在解锁会话后通过；但收口条件尚未满足：应用没有已批准的字号放大机制，主动 reduced motion / 高对比态需要先确定支持边界，并由用户授权 / 人工切换真实系统偏好后复跑。当前只记录四项均关闭的只读平台快照，不宣称主动态通过。VoiceOver 仍未执行，屏幕朗读措辞 / 顺序未验证；R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 仍移交 R8。 |
+| 阻塞 | R8 fixture 演示数据重塑本身无代码阻塞；但 State C reference 底色归一属于设计基准变更，重采前必须由用户拍板。R7 主动 Reduce Motion / Increase Contrast 真系统态测试已按用户 2026-08-30 指令跳过，四项 Accessibility Display 偏好已恢复为关闭且不记为通过；VoiceOver 仍未执行，屏幕朗读措辞 / 顺序未验证。R3–R6 移交的分区 SSIM `≥0.99` 均在 R8 重新采集后判定。 |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞 · ⏭️用户跳过（未完成）。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
 
@@ -32,13 +32,13 @@ UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代
 | R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | 🟢 |
 | R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R5 存档](docs/history.md#r5--composer-与运行控制2026-08-2829) | 🟢 |
 | R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | 🟢 |
-| R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | 🔵（Wave A/B 🟢；Wave C 进行中） |
-| R8 | 模拟操作全功能验收 | 全组件端到端 UI suite、三状态逐图差分、重连/后台 Run/恢复、性能与失败证据、用户视觉签字 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) | ⚪ |
+| R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | 🟢（主动系统偏好 U3 ⏭️；VoiceOver 未执行） |
+| R8 | 模拟操作全功能验收 | 全组件端到端 UI suite、三状态逐图差分、重连/后台 Run/恢复、性能与失败证据、用户视觉签字 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) | 🔵 |
 | R9 | UI 后一致性与代码债务 | 文档/Spec/断言一致、usage 幂等、依赖与注释漂移、路径内核、测试箱整理 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r9--一致性与代码债务收口) | ⚪ |
 | R10 | 关键回归与真实环境验证 | 三类关键回归、K-01、四通道/三客户端、OAuth refresh、历史人工冒烟与平台探针 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r10--关键回归与真实环境验证) | ⚪ |
 | R11 | 设计稿与实际 UI 终局比对 | 对照 v3 定稿图与已归档 current/diff，将不符合的显示效果归纳为下一阶段完善任务（只改文档） | [R9–R11](plan/R9-R11-post-ui-closeout.md#r11--设计稿与实际-ui-终局比对) | ⚪ |
 
-阶段默认严格串行：`R1 → R2 → … → R11`。2026-08-29 用户先授权 R6→R7 的单次跳过，后又明确恢复 R6 Wave B；Wave B 实现、定向门禁与审查后最终二进制 U2 于 2026-08-30 收口，同日用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 Wave A 的自动门禁与九图人工 overlay 已于 2026-08-30 通过；用户批准本波以原生 AX tree/action + 纯键盘 + U2 替代 VoiceOver，故 VoiceOver 仍记为未执行且不宣称屏幕朗读措辞 / 顺序通过。R7 Wave B 同日以 144/144 Desktop 测试、Python 17/17 + 22/22、两套主真窗口 U2 及一套 3 相位审查边角 U2 收口。Wave C 已完成默认平台态下的 1080×720、CJK/emoji/超长内容、1024 行虚拟化、反复 resize、断线重连、单次性能基线与窄窗连接长文案定宽截断，最终 U2 全绿；字号放大及主动 reduced motion / 高对比平台态仍未完成，故当前指针不前移。R11 是文档任务：不查询、不修改代码。发布准备已移出本编号，见 §5。
+阶段默认严格串行：`R1 → R2 → … → R11`。2026-08-29 用户先授权 R6→R7 的单次跳过，后又明确恢复 R6 Wave B；Wave B 实现、定向门禁与审查后最终二进制 U2 于 2026-08-30 收口，同日用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 Wave A 的自动门禁与九图人工 overlay 已于 2026-08-30 通过；用户批准本波以原生 AX tree/action + 纯键盘 + U2 替代 VoiceOver，故 VoiceOver 仍记为未执行且不宣称屏幕朗读措辞 / 顺序通过。R7 Wave B 同日以 144/144 Desktop 测试、Python 17/17 + 22/22、两套主真窗口 U2 及一套 3 相位审查边角 U2 收口。Wave C 又完成 1080×720、长内容、1024 行、resize/reconnect 与应用内 100%/125%/150% 字号缩放；150% 最小窗最终以 320px rail 和受影响区域 U2 复验收口。Increase Contrast 生产路径及自动刷新已落地并由代码级定向测试覆盖，当前 UI 无动画故 Reduce Motion 无需渲染分支；按用户最终指令，任何需修改系统设置的主动 U3 均跳过且设置已恢复，不宣称真系统态通过。R7 至此退出，指针进入 R8。R11 是文档任务：不查询、不修改代码。发布准备已移出本编号，见 §5。
 
 ---
 

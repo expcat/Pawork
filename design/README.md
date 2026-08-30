@@ -39,6 +39,7 @@
 - 定稿图画布：约 `1486 × 1058`（ImageGen 输出可能有 `1 px` 边差）；实现仍须在 `1440 × 1024` 对照验收，当前默认窗口 `1080 × 720` 必须可用。
 - 宽屏采用三栏：左侧 `TaskRail` 288 px、中央 `WorkspaceView` 弹性伸缩、右侧 `InspectorPanel` 约 440 px。
 - `1080–1279` 宽度下左栏收敛到 240 px，右侧 Inspector 默认折叠为抽屉；中央对话区不得小于 560 px。
+- 应用内字号为 100% / 125% / 150% 三档；100% 是三张 reference 的唯一像素基线。150% 时 TaskRail 扩为 320px，窗口不足 1320 时保持 Inspector 折叠；`1080×720` 的 Workspace 保留 760px。该可访问性几何变体不反改 100% reference。
 - `Composer` 默认高 88–94 px；底部控件高 28–30 px，Send 为 32 px。多行输入按需向上增长，不把常态输入框做成工具栏容器。
 - `RunStatusBar` 高 24 px，位于 Workspace 与 Inspector 底部，不覆盖左栏账户区；Composer 始终位于它上方。
 - Inspector 展开时约 440 px；折叠时宽度归零并让 Workspace 扩展，右上以约 320 px 的 `ActivityPopover` 保留轻量态势，不挤压 Composer、ContextMeter 或审批主操作。
@@ -47,7 +48,7 @@
 
 ### 2.1 几何合同与色板（2026-08-26 R1 Wave A 用户拍板）
 
-**几何合同**：本节 §2 的定稿值（TaskRail 288、Inspector ~440、Composer 88–94、StatusBar 24、ActivityPopover ~320）是实现合同。三张定稿图是近似视觉语言参考，不是逐像素几何事实源——R1 量图实测三图互不一致（TaskRail 283/297/320、Composer 97–102、StatusBar 35–46，明细见 [docs/ui-review/state-*/measurements.md](../docs/ui-review/README.md) 冲突表）。图像与合同的偏差优先由 SSIM 分区的 reference/current 矩形、左右锚点和最低共同覆盖率表达（[docs/ui-review/README.md](../docs/ui-review/README.md) §3）；`geometry-drift` 遮罩只允许收敛到锚点仍无法表达的纯边缘背景，当前三态均不使用。结构与几何硬门禁按合同值 + [UI_Review §0.1](../docs/UI_Review.md) 容差判定。字阶与组件细节以三份量图表为准（在 §0.1 容差内取实测档）。
+**几何合同**：本节 §2 的定稿值（TaskRail 288、Inspector ~440、Composer 88–94、StatusBar 24、ActivityPopover ~320）是 **100% 字号**实现合同；1080 的 240px rail 与 150% 的 320px rail 是功能/可访问性变体，不参与 1440 reference 像素判定。三张定稿图是近似视觉语言参考，不是逐像素几何事实源——R1 量图实测三图互不一致（TaskRail 283/297/320、Composer 97–102、StatusBar 35–46，明细见 [docs/ui-review/state-*/measurements.md](../docs/ui-review/README.md) 冲突表）。图像与合同的偏差优先由 SSIM 分区的 reference/current 矩形、左右锚点和最低共同覆盖率表达（[docs/ui-review/README.md](../docs/ui-review/README.md) §3）；`geometry-drift` 遮罩只允许收敛到锚点仍无法表达的纯边缘背景，当前三态均不使用。结构与几何硬门禁按合同值 + [UI_Review §0.1](../docs/UI_Review.md) 容差判定。字阶与组件细节以三份量图表为准（在 §0.1 容差内取实测档）。
 
 **色板（新冻结 token 目标，R2 落 theme.rs）**：下表「实测」值取自 R1 量图（1440×1024 坐标，方法见各 measurements.md §6）；「派生」值为主代理按 token 语义内插，R2 在门禁下微调。
 
@@ -75,6 +76,8 @@
 | danger / warning 系 | 保持 | 保持 | 量图未见显著偏离（State B C-06） |
 
 可访问性约束按“文字角色 × 允许 surface”组合判定，不把单个 token 宣称为可与任意背景互换：`text.secondary #8a8d8c` 可落在 `surface.hover #182229`，对比度约 4.82:1；`text.tertiary` / `text.placeholder #7f7f7f` 最亮只允许落到 `surface.raised #10171c`，约 4.52:1，不得用于更亮的 hover surface（会降到约 4.04:1）。白字对 `accent.hover #3270e8` 与 `semantic.success_hover #438251` 约为 4.55:1 / 4.61:1。R2 落 token 后须按真实组件组合重新跑定向对比度门禁；新增组合不能借用其它背景的通过值。
+
+macOS Increase Contrast 是同一深色基线的运行时可访问 palette：增强 secondary/tertiary/disabled/ghost/detail/placeholder、hover surface、border 与 selection，不改变组件几何、语义色或 reference。当前 UI 无动画/过渡，Reduce Motion 无视觉分支。R7 的主动系统偏好 U3 依用户指令跳过，设计文档不把代码级分支测试记成真系统态通过。
 
 ## 3. 左侧 TaskRail 紧凑操作
 
@@ -170,7 +173,7 @@
 - ContextMeter 使用当前上下文估算而非 Session 累计 token；未知容量不显示伪进度。
 - RunStatusBar 不重复 Composer 的模型 / reasoning，并对 quota `Unknown`、无 tokens/s、Run 时间戳不完整与窄窗口溢出提供可观察回归。
 - Inspector 顶层与 Changes 二级 tab 层次不可混用；折叠态 ActivityPopover 的摘要跳转、Agent 状态与 capability 缺失均有定向测试。
-- 在 `1440 × 1024` 对照 v3 截图做视觉验收（三状态像素级 99% 门禁）；`1080 × 720` 为响应式**功能**门禁：验证 Inspector / ActivityPopover 切换、日期内项目分组、状态栏收敛与紧凑 Composer 可用，主操作与焦点可达，无裁切、遮挡或状态栏溢出，Connected 与断线边界态均须取证；1080 不与 1440 定稿图做像素对比（UI_Review D-03）。
+- 在 `1440 × 1024`、100% 字号下对照 v3 截图做视觉验收（三状态像素级 99% 门禁）；`1080 × 720` 为响应式**功能**门禁：100% 与 150% 均验证 Inspector / ActivityPopover、日期内项目分组、状态栏与 Composer，主操作和焦点可达，无裁切、遮挡或溢出，Connected 与断线边界态均须取证；1080 不与 1440 定稿图做像素对比（UI_Review D-03）。
 - 交互态与浮层菜单按 §8 验收:hover / active 色值来自 theme token、菜单单开互斥、Escape 与外点关闭、浮层滚轮无穿透、回底控件脱钩可见 / 回底隐藏。
 - 后续若确需改变设计，必须先取得用户明确批准，再更新本目录与 [GUI 设计](../docs/gui-design.md)；不得先改基准追认实现漂移。
 

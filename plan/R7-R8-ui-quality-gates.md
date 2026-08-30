@@ -1,6 +1,6 @@
 # R7–R8 — 全局交互质量与模拟操作全功能验收
 
-> 状态：🔵 R7 Wave A/B 🟢 已关闭、Wave C 进行中；VoiceOver 未执行且不宣称通过 · R8 ⚪ 未开始
+> 状态：R7 🟢 已关闭（主动系统偏好 U3 依用户指令 ⏭️；VoiceOver 未执行且不宣称通过）· R8 🔵 已开启
 > 前置：R1–R6 已依次退出。用户于 2026-08-29 曾授权跳过当时未收口的 R6、直接进入 R7；R6 Wave B 随后恢复并于 2026-08-30 完成实现、定向门禁与审查后最终 U2，同日用户明确确认将 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 解决跨组件一致性，R8 运行完整矩阵并补跨阶段缺口，均不得把移交项记为已经通过。
 
 ## R7 — 全局交互、Accessibility 与响应式
@@ -9,7 +9,7 @@
 
 - **Wave A（🟢 2026-08-29–30）— 组件状态矩阵与 AX 基线**：自动门禁已通过（45 组件矩阵、三路径焦点修复、U2 26 相位、A3 bundled/签名对照、A4 State A hover/active/focus 九图）；人工 overlay 续查发现并修复 Inspector 顶层页签无可见 hover 的缺口，2026-08-30 用户确认九图通过。用户同时批准本波以原生 AX tree/action + 纯键盘 + U2 替代 VoiceOver；VoiceOver 未执行、不记为通过，屏幕朗读措辞 / 顺序仍未验证。写入限 apps/desktop、Desktop Spec、R7 测试脚本与本波证据；未改 GUI wire、Host、Policy 或 fixture 业务数据。macOS 26 AX 递归劣化已 fail-closed 取证（attempt7–10），不以重启成功冒充根治。
 - **Wave B（🟢 2026-08-30）— 全局 focus、菜单与 Popover 等价路径**：基于 Wave A 45 组件矩阵、R3 导航 U2 与 R6 Inspector U2 核对现状，收敛六个真实焦点缺口：task 切换关闭旧菜单并聚焦 Composer，审批 action 关闭菜单并聚焦 Composer，Review changes 展开 Inspector 后聚焦 Changes 选中页签，Fork 接受后聚焦 Composer；独立审查再补当前 task 的 AXPress 关闭菜单，以及仅一个可见 task 时 cycling 不重开 session 但仍聚焦 Composer。mouse / keyboard / AX 继续汇入既有 handler 与 enable gate。Desktop 144/144、Python 17/17 + 22/22、导航 26 相位、审批/状态 14 相位及审查边角 3 相位真窗口 U2 全绿；首次审批长驱动暴露的是 R4 对“空输入 Send enabled”的过期断言，按 R5 冻结合同改为 disabled 后同驱动全绿。审查边角仅在隔离临时 fixture root 通过既有 `archived` 字段构造单可见 task，仓库 seed 与 fixture 业务数据未改。证据见 [r7-wave-b](../docs/ui-review/r7-wave-b/notes.md)。未改 GUI wire、Host 或 Policy。
-- **Wave C（🔵 2026-08-30）— 响应式、长内容与平台偏好**：默认平台态真窗口子集已覆盖 1080×720 Connected / ActivityPopover / Disconnected、CJK/emoji/超长内容、1024 行虚拟化与离底/回底、三轮宽窄 resize、焦点保持、重连及单次性能基线；首轮截图发现 TaskRail 连接长文案越界，审查补齐截图级 paint 门禁、重连相位与千行 barrier 硬化，解锁复跑又暴露第一次 truncate 修复不充分，根因定宽修复后最终 U2 15 相位 / paint 门禁全绿。正式 seed 未改，千级数据只派生于隔离临时数据库。当前只读快照中的 reduced motion / 高对比等四项均关闭，不代表主动态通过；固定 px 字体尚无已批准的字号放大机制，故本波仍进行中。证据见 [r7-wave-c](../docs/ui-review/r7-wave-c/notes.md)。
+- **Wave C（🟢 2026-08-30）— 响应式、长内容与平台偏好**：默认平台态真窗口子集覆盖 1080×720 Connected / ActivityPopover / Disconnected、CJK/emoji/超长内容、1024 行虚拟化与离底/回底、三轮宽窄 resize、焦点保持、重连及单次性能基线；连接长文案最终以定宽槽 + 截图级 paint 门禁收口。字体 token 从固定 px 改为 rem，新增 `Cmd+=` / `Cmd++`、`Cmd+-`、`Cmd+0` 的应用内 100%/125%/150% 缩放；150% 最小窗使用 320px rail，Workspace 保留 760px，Task 标题/日期间距修复后受影响区域真窗口 U2 通过。macOS Increase Contrast 读取与显示选项变更刷新已落地，默认 token 不变；当前 UI 无动画，Reduce Motion 无需渲染分支。用户最终要求跳过一切需要修改系统设置的测试并恢复原值，因此主动 Reduce Motion / Increase Contrast U3 记为 ⏭️ 而非通过，最终只读快照四项均为 `false`。正式 seed 未改，千级数据只派生于隔离临时数据库。证据见 [r7-wave-c](../docs/ui-review/r7-wave-c/notes.md)。
 
 ### 1. 交互状态
 
@@ -23,7 +23,7 @@
 - 为所有交互元素提供稳定 identifier、AX role/name/value/state；图标按钮必须有名称，状态不能只靠颜色。
 - 纯键盘可完成连接重试、新建/选择 task、发送/取消、tool 展开、审批、Changes、Terminal、Inspector/Activity 和菜单关闭。
 - 原生 AX audit + VoiceOver 验证 role/name/value/enabled/focused/order/action，以及动态状态、流式消息、审批请求、错误和完成通知；避免重复播报整条 Timeline。AX 树只含 Window/traffic lights 时直接失败。R7 Wave A 依用户 2026-08-30 决定，以原生 AX tree/action + 纯键盘 + U2 作为该波替代门禁；这不等于 VoiceOver 通过，也不覆盖屏幕朗读措辞 / 顺序，R8 的系统级口径另行执行。
-- 文字/状态/焦点对比度、字号放大、reduced motion 与高对比偏好按平台可用能力验证；官方竞品未公开的 AX 行为不得当作已证明。
+- 文字/状态/焦点对比度、字号放大、reduced motion 与高对比偏好按平台可用能力验证；R7 已实现应用内 100%/125%/150% 缩放和 macOS Increase Contrast 运行时 palette 刷新，当前 UI 无动画故无 Reduce Motion 分支。依用户指令，主动系统偏好 U3 未执行且不得当作已证明；官方竞品未公开的 AX 行为同样不得当作已证明。
 
 ### 3. 响应式与耐久性
 
@@ -31,14 +31,14 @@
 - 超长标题、CJK/emoji、长代码行、空/错误/断连态、千级列表、连续流式和反复 resize 不截断关键动作、不泄漏焦点。
 - 记录启动到可交互、长列表滚动、输入响应、resize 与 screenshot 稳定时间；阈值在 R1 基线后冻结，禁止用固定长 sleep 掩盖抖动。
 
-Wave C 已归档一次 `baseline_only` 真实机器采样；该样本只建立量测入口，阈值保持 `null`，不能据此宣称性能无回退。字号放大与主动平台偏好态仍是退出缺口。
+Wave C 已归档 `baseline_only` 真实机器采样；该样本只建立量测入口，阈值保持 `null`，不能据此宣称性能无回退。字号放大真窗口路径已覆盖；主动平台偏好态依用户指令跳过，不计为通过。
 
 ### R7 退出标准
 
-- [ ] 组件状态矩阵没有缺口；mouse、纯键盘和 AX 三条主路径等价。
-- [ ] State A/B/C 的 hover/active/focus/menu/popover 补充图通过人工 overlay。
-- [ ] `1080×720`、字号放大、长内容和边界状态无主操作遮挡、溢出或不可恢复焦点。
-- [ ] AX tree、通知和 focus trace 可自动留证；已知平台限制明确登记。
+- [x] 组件状态矩阵没有缺口；mouse、纯键盘和 AX 三条主路径等价。
+- [x] State A/B/C 的 hover/active/focus/menu/popover 补充图通过人工 overlay。
+- [x] `1080×720`、字号放大、长内容和边界状态无主操作遮挡、溢出或不可恢复焦点。
+- [x] AX tree、通知和 focus trace 可自动留证；VoiceOver 与主动系统偏好 U3 的未执行边界已明确登记。
 
 ## R8 — 模拟操作全功能验收
 

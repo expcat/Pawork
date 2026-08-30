@@ -134,7 +134,7 @@
 | F-13 P1 | RunStatusBar | 24px，Task/quota/tok/s/Run 顺序稳定 | 字阶和分隔弱，Inspector 触发器喧宾夺主 | 恢复信息顺序、稳定占位和窄窗收敛 | 高度、基线、分隔与目标一致；缺值诚实 |
 | F-14 P0 | Projects | 项目头、count、展开、定向 `+`、Task 选中完整 | 终态无当前截图 | 补真实 Projects 取证并逐组件修复 | State C reference/current/diff 全部存在后才能签字 |
 | F-15 P0 | 字体/图标/间距 | 桌面可读字阶、克制字重、16px 级图标、8px 节奏 | 全局 11/12/13px 过小，控件像调试 UI | Wave 0 先量图，不把 `12/14/16` 猜测写成定稿 | 字体/图标 `±1px`，重复间距 `±2px`，层级肉眼一致 |
-| F-16 P1 | 交互与 focus | hover/active/focus 不改布局；菜单可键盘操作 | R7 Wave A/B 已补齐主路径与边角焦点交接；Wave C 默认平台态又通过 1080×720、1024 行、长内容、三轮 resize、断线重连、Composer 焦点耐久与连接长文案定宽截断的最终 U2；VoiceOver、字号放大、主动平台偏好和 R8 全矩阵仍未完成 | Wave C 补字号放大与主动 reduced motion / 高对比态，R8 汇总系统级与全组件证据 | 原生 AX、鼠标和纯键盘 trace/清单通过；无颜色单一编码 |
+| F-16 P1 | 交互与 focus | hover/active/focus 不改布局；菜单可键盘操作 | R7 已补齐主路径/边角焦点交接、1080×720、1024 行、长内容、三轮 resize、断线重连及应用内 100%/125%/150% 字号；150% 最小窗标题/日期修复后真窗口复验通过。VoiceOver 未执行；主动系统偏好 U3 依用户指令跳过且不记为通过 | R8 汇总全组件与 VoiceOver/AX 证据；保持主动系统偏好未验证边界，不在未重新授权时修改系统设置 | 原生 AX、鼠标和纯键盘 trace/清单通过；字号路径有 AX/截图证据；无颜色单一编码 |
 
 ## 4. 设计文档冲突与处理决定
 
@@ -245,7 +245,7 @@ flowchart LR
 3. **文字与对比度风险（高风险）**：当前 `11px` tertiary/disabled 文本过小；Wave 0 量图与 Wave 2 字阶修复后，再对每组 token 做对比度检查。
 4. **键盘路径风险（Wave B 自动路径已收口，R8 汇总）**：grouping/scope 触发器 tab stop、菜单方向键 / Enter / Escape、task cycling / next-needs-attention，以及 task/审批/Fork/Review changes 后的焦点交接已由 R7 Wave A/B 的导航 26 相位、审批/状态 14 相位和审查边角 3 相位 U2 通过；边角证据同时覆盖 AXPress 当前 task 关闭菜单与单可见 task cycling 的焦点交接。VoiceOver 与完整系统级人工顺序仍按风险 1 保留。
 5. **状态表达风险（中风险）**：Task 状态大量依赖小圆点颜色；还需要文字、选中面和 accessible name。
-6. **平台偏好与字号风险（Wave C 未收口）**：默认平台态真窗口已通过 1080×720、长内容、1024 行与反复 resize；只读快照中 reduced motion / 高对比等四项均关闭。当前固定 px 字体没有已批准的字号放大机制，也未验证主动平台偏好态，不能据默认态证据宣称支持。
+6. **主动平台偏好验收边界（已登记）**：应用内字号已改为 rem token 并以真窗口覆盖 100%/125%/150%；150% + 1080×720 使用 320px rail。Increase Contrast palette 与系统通知刷新已实现，当前 UI 无动画故 Reduce Motion 无渲染分支；但主动 Reduce Motion / Increase Contrast 真系统态 U3 依用户指令跳过，最终只读快照四项均关闭，不能据代码级测试宣称真系统态通过。
 
 ## 9. 99% 完成定义
 
@@ -257,7 +257,7 @@ flowchart LR
 - [ ] 固定 fixture 中的 tool group、run summary、Files/DiffView、Projects 和 capability 缺省均由真实数据链路渲染。
 - [ ] hover/active/focus/menu/scroll/折叠无布局位移、遮挡或不可达状态。
 - [ ] VoiceOver 与纯键盘主路径通过；颜色不作为唯一状态编码。
-- [x] 1080×720 响应式功能门禁通过：Connected / ActivityPopover / Disconnected、三轮宽窄 resize 与长连接文案定宽截断均有修复后真实窗口证据，截图级门禁最终 `lit=0`（[R7 Wave C](ui-review/r7-wave-c/notes.md)）；字号放大与主动平台偏好另列未完成。
+- [x] 1080×720 响应式功能门禁通过：Connected / ActivityPopover / Disconnected、三轮宽窄 resize、长连接文案 paint `lit=0` 与 100%→150%→100% 字号均有真实窗口证据；150% 标题/日期间隔修复后受影响区域复验通过（[R7 Wave C](ui-review/r7-wave-c/notes.md)）。主动平台偏好 U3 依用户指令跳过，不计为通过。
 - [ ] 用户在 1440×1024 三状态逐屏对照后完成新 R8 视觉签字。
 
 ## 10. 主要代码触点

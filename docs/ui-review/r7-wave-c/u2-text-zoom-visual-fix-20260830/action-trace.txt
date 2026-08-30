@@ -1,0 +1,36 @@
+2026-08-30T14:04:52Z run start label=r7-wave-c-text-zoom-visual-fix out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-c/u2-text-zoom-visual-fix-20260830
+2026-08-30T14:04:52Z compile AX/frame/input/platform helpers
+2026-08-30T14:04:58Z platform preferences captured read-only
+2026-08-30T14:04:58Z seed canonical fixture then derive 1024 logical rows in temp DB
+2026-08-30T14:05:10Z desktop ready attempt=1
+2026-08-30T14:05:12Z timeline_stable seq=1 session= entries=0
+2026-08-30T14:05:14Z timeline_stable seq=2 session=fx-ses-beta-long entries=1024
+2026-08-30T14:05:14Z wait phase=r7c-wide tag=initial
+2026-08-30T14:05:14Z phase=r7c-wide tag=initial passed
+2026-08-30T14:05:14Z wait virtualized-thousand tag=initial
+2026-08-30T14:05:14Z virtualized-thousand tag=initial passed
+2026-08-30T14:05:15Z wait virtualized-thousand tag=after-scroll
+2026-08-30T14:05:16Z virtualized-thousand tag=after-scroll passed
+2026-08-30T14:05:16Z wait phase=r7c-narrow tag=narrow-initial
+2026-08-30T14:05:16Z phase=r7c-narrow tag=narrow-initial passed
+2026-08-30T14:05:16Z exercise app text zoom at 1080x720
+2026-08-30T14:05:17Z wait phase=r7c-narrow-zoom tag=zoom-150
+2026-08-30T14:05:17Z phase=r7c-narrow-zoom tag=zoom-150 passed
+2026-08-30T14:05:18Z wait phase=r7c-narrow tag=zoom-reset
+2026-08-30T14:05:18Z phase=r7c-narrow tag=zoom-reset passed
+2026-08-30T14:05:18Z wait phase=r7c-narrow-popover tag=popover
+2026-08-30T14:05:18Z phase=r7c-narrow-popover tag=popover passed
+2026-08-30T14:05:18Z wait phase=r7c-narrow tag=popover-closed
+2026-08-30T14:05:19Z phase=r7c-narrow tag=popover-closed passed
+2026-08-30T14:05:19Z wait phase=r7c-wide tag=wide-1
+2026-08-30T14:05:19Z phase=r7c-wide tag=wide-1 passed
+2026-08-30T14:05:19Z wait phase=r7c-narrow tag=narrow-1
+2026-08-30T14:05:19Z phase=r7c-narrow tag=narrow-1 passed
+2026-08-30T14:05:19Z drop socket at 1080x720 and assert retained session/timeline/reconnect
+2026-08-30T14:05:19Z wait phase=r7c-disconnected tag=dropped
+2026-08-30T14:05:20Z phase=r7c-disconnected tag=dropped passed
+2026-08-30T14:05:22Z timeline_stable seq=8 session=fx-ses-beta-long entries=1024
+2026-08-30T14:05:23Z timeline_stable seq=9 session=fx-ses-beta-long entries=1024
+2026-08-30T14:05:23Z wait phase=r7c-narrow-reconnected tag=reconnected
+2026-08-30T14:05:23Z phase=r7c-narrow-reconnected tag=reconnected passed
+2026-08-30T14:05:23Z run done; teardown fixture root=/private/tmp/pawork-r7-wave-c-fixture.LR8Udv

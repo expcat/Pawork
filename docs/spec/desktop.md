@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-08-30。生产连接、主要组件链路与 macOS AX 语义基座已经存在；R6 Wave B 的 Inspector 九场景真实交互矩阵已通过，但当前真实窗口仍未达到 design 的 99% 视觉目标，终局验收以 [R1–R8](../../ROADMAP.md#2-顺序排期) 为准。
+> 基线日期：2026-08-30。生产连接、主要组件链路与 macOS AX 语义基座已经存在；R7 已完成全局交互、1080 响应式与应用内字号缩放并退出，当前进入 R8 全功能/视觉终局验收。真实窗口仍未达到 design 的 99% 视觉签字条件，终局以 [R1–R8](../../ROADMAP.md#2-顺序排期) 为准。
 
 ## 1. 产品定位
 
@@ -22,7 +22,7 @@ flowchart LR
 
 | 区域 | 必须呈现 | 当前限制 |
 | --- | --- | --- |
-| TaskRail | 会话/任务条目、新任务、选中态、长标题截断 | 当前固定 288px；1080–1279 收窄与 Inspector 折叠恢复为 R7/R8 必过门禁。 |
+| TaskRail | 会话/任务条目、新任务、选中态、长标题截断 | 100%：宽窗 288px、1080–1279 为 240px；150% 时 320px，窗口不足 1320 保持 Inspector 折叠。 |
 | Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件须在 R4/R7/R8 重验。 |
 | Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。IME、粘贴、草稿与所有输入态纳入 R5/R8。 |
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
@@ -62,7 +62,7 @@ flowchart LR
 | DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | R5/R8 待真实 IME、paste 与系统级输入验收。 |
 | DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | R6 Wave B U2 已覆盖真实 diff/summary、长行横滚、PTY、Resources、折叠恢复与 task/latest-session scope；R8 仍负责终局视觉与跨阶段全矩阵。 |
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | R6 Wave B 已以真 Host/Desktop 覆盖 Terminal/Resources/Changes 重连与 Host 重启后的 policy fail-closed；全应用生命周期仍由 R8 汇总验收。 |
-| DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 当前未通过完整门禁；R7/R8 必须覆盖 Connected 与边界状态。 |
+| DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | R7 Wave C 已覆盖 Connected / ActivityPopover / Disconnected、三轮 resize 与 150% 字号；最终真窗口证据通过。R8 仍做跨阶段终局复验。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现并通过真窗口语义 action；全组件 VoiceOver、动态状态与 Windows/Linux 平台实现仍待 R7/R8。 |
 
 ## 5. 键盘、IME 与可访问性
@@ -75,8 +75,10 @@ flowchart LR
 - 菜单支持键盘到达、选择与关闭；长标题以 truncate + 可辨识上下文呈现；
 - 长会话、长 diff 和窄窗不让主要操作不可达。
 - AX identifier 与用户可见/可本地化 label 分离；disabled 控件不发布可执行 action，未知 action fail-closed；新增可见交互须同批补语义节点。
+- 应用内字号支持 100% / 125% / 150%：`Cmd+=` / `Cmd++` 放大、`Cmd+-` 缩小、`Cmd+0` 重置；状态栏与 AX 发布当前百分比。150% + 1080×720 使用 320px TaskRail，Workspace 保留 760px。
+- macOS Increase Contrast 在同一深色主题内增强辅助文字、surface、边界与选区并监听系统变更；当前 UI 无动画，Reduce Motion 无渲染分支。R7 主动系统偏好 U3 依用户指令跳过，不宣称真系统态通过。
 
-当前锁定 GPUI 0.2.2 不原生导出元素级 AX tree；ADR-042 已由 Desktop 显式 `AxTree` + AppKit 虚拟元素补救，真窗口 75 节点、会话 `AXPress` 与 Composer `AXValue` 证据见 [Wave C ax-bridge](../ui-review/wave-c/ax-bridge/)。已知缺口仍包括菜单内 ↑/↓ 导航、grouping/scope 触发器 tab stop、全组件 VoiceOver/动态状态扩面，以及 Windows/Linux 平台 AX；它们不得降级为可签字差异。
+当前锁定 GPUI 0.2.2 不原生导出元素级 AX tree；ADR-042 已由 Desktop 显式 `AxTree` + AppKit 虚拟元素补救，真窗口 75 节点、会话 `AXPress` 与 Composer `AXValue` 证据见 [Wave C ax-bridge](../ui-review/wave-c/ax-bridge/)。R7 已补菜单 ↑/↓、grouping/scope tab stop 与全局焦点等价路径；已知缺口仍包括 VoiceOver 屏幕朗读措辞/顺序、主动系统偏好 U3，以及 Windows/Linux 平台 AX，它们不得降级为已通过。
 
 ## 6. 只读与写入边界
 
@@ -92,7 +94,7 @@ flowchart LR
 边界口径：
 
 - `ui/mod.rs` 行数属于工程结构，不是视觉放行条件；
-- 固定 288px 窄窗、菜单锚点卸载和缺少完整 AX 语义均不再作为可签字偏差；
+- 窄窗使用 240px TaskRail，150% 字号使用 320px；菜单锚点卸载和缺少完整 AX 语义均不作为可签字偏差；
 - Desktop Changes 只读是当前协议边界，Git 写操作仍需 ADR，不得用假按钮补图；
 - `@` 候选浮层和 Resources 规则分区只有 Host capability 存在时才可展示。
 

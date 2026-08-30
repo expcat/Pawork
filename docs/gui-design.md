@@ -169,15 +169,15 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 - 左栏必须通过标题行角标菜单提供 Timeline / Projects 两种组织方式；Timeline 使用日期 → 项目 → Task，连接行提供全局新建，项目头提供定向新建。实现前对照 [视觉实施基准](../design/README.md)，不得恢复占满整行的切换或新建按钮。
 - Composer 保持紧凑；ContextMeter 与 RunStatusBar 必须区分当前上下文、Session 累计 usage、quota、tokens/s 与 Run duration。模型 / reasoning 只在 Composer 选择器出现，缺值诚实显示 unavailable，不能用推断值填满界面。
 - Inspector 顶层工具 tab 与 Changes 内 Files / Summary 二级 tab 必须保持层次；折叠态只用 ActivityPopover 呈现可操作摘要，Surface 未接通时不画可点击假入口。固定 Resources 页签是过渡实现记录，是「已注册只读 surface 的首个实例」，不视为定稿 Add tool 入口的达成。
-- `1080 × 720` 为响应式功能门禁：验证主操作可达、焦点可见与布局不溢出（rail 收敛 240px、Inspector 默认折叠、中央对话区 ≥560px）；不参与 `1440 × 1024` 定稿图的像素对照，也不得以固定宽度溢出为由降低可用性。
+- `1080 × 720` 为响应式功能门禁：100% 字号时 rail 收敛 240px、Inspector 默认折叠、中央对话区 ≥560px；150% 字号时 rail 扩为 320px，窗口不足 1320 时保持 Inspector 折叠，1080 中央区保留 760px。两种字号都须保证主操作可达、焦点可见与布局不溢出；1080 不参与 `1440 × 1024` 定稿图的像素对照。
 - 工具调用是 Timeline 里的折叠块（名字、状态、短摘要），不是单独 IDE 面板。
 - 流式输出按 token/事件追加；取消只取消当轮，历史保留。
 - 审批 fail-closed：无用户动作不得当默认允许。
-- 主题当前仅 dark 基线一套实现（取值见 [视觉实施基准](../design/README.md) §8，残余补齐见 §8.6），不跟随系统 light/dark，light 支持顺延后续阶段；S7 不做主题市场。
+- 主题当前仅 dark 基线一套实现（取值见 [视觉实施基准](../design/README.md) §8，残余补齐见 §8.6），不跟随系统 light/dark；macOS Increase Contrast 只在同一 dark 主题内增强辅助文字、surface、边界与选区，不构成第二套主题。light 支持顺延后续阶段；S7 不做主题市场。
 - `Enter` 仅在 IME 未组合时发送，`Shift+Enter` 换行；多行粘贴保持原文。
 - Timeline 只在用户位于底部时追随流式输出；用户向上阅读后不得抢滚动位置。
 - 连接、Run、tool 与审批状态必须有文本/图标语义，不能只靠颜色；主路径可全键盘操作。
-- Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离，role/value/enabled/focused/selected/bounds/action 随 canonical UI 状态同步；macOS 由 ADR-042 AppKit bridge 导出，AX action 回到既有 AppView handler 与 enable gate。新增可见交互必须同批补语义；Windows/Linux 平台实现仍属后续阶段。R7 Wave A 于 2026-08-30 依用户决定以原生 AX tree/action + 纯键盘 + U2 替代该波 VoiceOver；VoiceOver 未执行且屏幕朗读措辞 / 顺序未验证，R8 系统级验收不由此自动豁免。
+- Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离，role/value/enabled/focused/selected/bounds/action 随 canonical UI 状态同步；macOS 由 ADR-042 AppKit bridge 导出，AX action 回到既有 AppView handler 与 enable gate。应用内字号以 `Cmd+=` / `Cmd++`、`Cmd+-`、`Cmd+0` 在 100%/125%/150% 间切换，状态栏与 AX 发布百分比。新增可见交互必须同批补语义；Windows/Linux 平台实现仍属后续阶段。R7 Wave A 依用户决定以原生 AX tree/action + 纯键盘 + U2 替代该波 VoiceOver；VoiceOver 未执行。R7 Wave C 主动 Reduce Motion / Increase Contrast 系统态测试依用户最终指令跳过，设置已恢复且不宣称通过；当前 UI 无动画，Reduce Motion 无渲染分支。
 - 可交互控件必须有 hover 反馈与按下态，色值经 theme token；hover / active 只改背景，不引起布局移动（旧 V3 R8 波 B 起，取值表见 [视觉实施基准](../design/README.md) §8.1）。
 - 菜单为 `anchored()/deferred()` 浮层，不占布局流；同一时刻单开互斥，选择 / 再点触发器 / `Escape` / 点击浮层外关闭，打开时滚轮不穿透到下层滚动容器（形态细则见基准 §8.2）。
 - 焦点交接必须可预测：用户发起的 task click / Enter / AX press / cycling / next-needs-attention 切换、审批决策和 Fork 接受后回到 Composer；Review changes 展开 Inspector 后落到当前选中的 Changes 顶层页签；任何 session reset 先关闭旧菜单。AXPress 当前 task 仍须关闭菜单并聚焦 Composer；仅一个可见 task 时 cycling 不重开 session，但仍须交接焦点。R7 Wave B 已以导航 26 相位、审批/状态 14 相位及审查边角 3 相位真窗口 U2 验证这些路径（[证据](ui-review/r7-wave-b/notes.md)）。
@@ -259,7 +259,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [ ] 纯键盘走查（基准 §3.6）：R7 Wave B 已自动通过 Tab 链、菜单 ↑/↓/Enter/Escape、task cycling / next-needs-attention、审批与焦点恢复；VoiceOver、IME 的系统级人工复核与 R8 完整汇总仍未执行
 - [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
 - [ ] Reconnect 恢复：R6 Wave B 已覆盖 Inspector/Terminal/Resources 与会话选择恢复；仍需 R8 汇总验证进行中 Run 的全应用生命周期
-- [x] Connected 态 1080×720 最小窗：R7 Wave C 已以真实 Host / Desktop 覆盖 Connected、ActivityPopover、Disconnected 与三轮宽窄 resize；Composer / 状态栏 / Inspector 触发器可用。连接长文案以定宽槽截断显示省略号，截图级 paint 门禁与最终 U2 全绿（[证据](ui-review/r7-wave-c/notes.md)）。该结论只覆盖默认字号与当前平台偏好态。
+- [x] Connected 态 1080×720 最小窗：R7 Wave C 已以真实 Host / Desktop 覆盖 Connected、ActivityPopover、Disconnected、三轮宽窄 resize 与 100%→150%→100% 字号；150% 使用 320px rail，最终标题/日期间隔复验截图无遮挡。连接长文案 paint 门禁 `lit=0`（[证据](ui-review/r7-wave-c/notes.md)）。主动平台偏好态依用户指令跳过，不计为通过。
 - [ ] 虚拟化四例（长会话）：滚动流畅 / 回底重挂 / Entry「···」菜单锚点 / 长标题 truncate
 - [ ] hover / active 交互态抽查（基准 §8.1 取值表）
 - [x] DiffView 横滚：R6 Wave B 真窗口长行通过，AX 记录 horizontal offset `-720.0 / 2477.0`（[证据](ui-review/r6-wave-b/u2-reviewfix-pass-20260830/)）
@@ -269,7 +269,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 ### A.3 漂移与定夺项
 
 - D1 mod.rs 行数：824（波 C 达标 <900）→ 1031（波 D 三页签接线）——✅ 已拍板（2026-08-24）：接受 1031 为终态口径，不再重瘦。
-- D2 窄窗响应式：1080–1279 时 rail 收敛 240px + Inspector 默认折叠未实现（固定 288px，V2 起既有）——历史上曾接受延期；2026-08-25 的 99% UI Review 已撤回该完成口径，现为 R7/R8 必过功能门禁。
+- D2 窄窗响应式：R7 Wave C 已实现 1080–1279 时 100% rail=240px + Inspector 默认折叠，150% rail=320px；真实 Host/Desktop 的 Connected、ActivityPopover、Disconnected、resize 与字号复验通过。该项不再是实现缺口，R8 只做终局汇总。
 - D3 空闲 30s 断连：host 30s 心跳超时 + desktop 无周期心跳的机制性关闭，非 R8 回归——✅ 已修复（2026-08-24）：desktop controller 泵循环连续 15s 空闲发 `heartbeat()`，真窗口 soak >2min 不再断连实证，desktop 测试 41/41 绿。
 - D4 P3-4 Entry 菜单滚动卸载：菜单开着时条目滚出可视区被卸载、浮层消失但状态残留（滚回自现，Escape/外点仍有效）——✅ 已拍板接受（2026-08-24）：虚拟化卸载语义下浮层随条目回收属可接受行为。
 
