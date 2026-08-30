@@ -1,0 +1,4 @@
+[1788089880439] serve starting profile=default
+[1788089880440] host_ready socket=/private/tmp/pawork-r7-wave-c-fixture.lwn79W/data/pawork-gui.sock
+ui_fixture serving on /private/tmp/pawork-r7-wave-c-fixture.lwn79W/data/pawork-gui.sock (barriers /private/tmp/pawork-r7-wave-c-fixture.lwn79W/barriers)
+[1788089886643] accepted connection connection-0

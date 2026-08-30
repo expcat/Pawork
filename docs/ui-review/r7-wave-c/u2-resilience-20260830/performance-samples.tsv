@@ -1,0 +1,16 @@
+desktop_ready	7604	launch-to-session-list
+timeline_1024_load	2194	AXPress-to-timeline_stable
+screenshot	147	wide-1k
+timeline_scroll_up	3783	sentinel-visible-to-absent
+timeline_scroll_bottom	1145	sentinel-absent-to-visible
+composer_input	249	AXSetValue-to-AXValue
+resize_narrow	300	narrow-initial
+screenshot	127	connected-1080x720
+screenshot	109	popover-1080x720
+resize_wide	372	wide-1
+resize_narrow	324	narrow-1
+resize_wide	340	wide-2
+resize_narrow	383	narrow-2
+resize_wide	368	wide-3
+resize_narrow	292	narrow-3
+screenshot	122	disconnected-1080x720

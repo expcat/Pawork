@@ -51,12 +51,32 @@ PHASE_GEOMETRY = {
     "r6-state-a": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
     "r6-state-b-open": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "absent"},
     "r6-state-b-resumed": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    # R7 Wave C：1080×720 是功能门（非像素门）；宽窗仅用于反复 resize
+    # 后的恢复断言。千级列表固定使用 fx-ses-beta-long，选中/焦点/断连
+    # 语义由 skeleton/cmd_assert 的 R7C 增量合同覆盖。
+    "r7c-wide": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
+    "r7c-narrow": {"root": (1080.0, 720.0), "rail": (240.0, 3.6), "inspector": "absent"},
+    "r7c-narrow-reconnected": {"root": (1080.0, 720.0), "rail": (240.0, 3.6), "inspector": "absent"},
+    "r7c-narrow-popover": {"root": (1080.0, 720.0), "rail": (240.0, 3.6), "inspector": "absent"},
+    "r7c-disconnected": {"root": (1080.0, 720.0), "rail": (240.0, 3.6), "inspector": "absent"},
 }
 
 # R6 Wave A 结构合同（源：apps/desktop/src/ui/theme.rs metrics、
 # accessibility/app.rs 常量 CONTROL_HEIGHT/ROW_HEIGHT 与 components/
 # dropdown.rs ANCHOR_GAP_Y）。几何容差沿用现有相位 ±0.5px 惯例。
 R6_PHASES = ("r6-state-a", "r6-state-b-open", "r6-state-b-resumed")
+R7C_PHASES = (
+    "r7c-wide", "r7c-narrow", "r7c-narrow-reconnected",
+    "r7c-narrow-popover", "r7c-disconnected",
+)
+R7C_NARROW_PHASES = (
+    "r7c-narrow", "r7c-narrow-reconnected", "r7c-narrow-popover",
+    "r7c-disconnected",
+)
+R7C_SESSION_ROW = "session-fx-ses-beta-long"
+R7C_SESSION_ROW_ID = "fx-ses-beta-long"
+R7C_TIMELINE_PREFIX = "timeline-entry-evt-r7c-fx-ses-beta-long-"
+R7C_SENTINEL = "R7C 千级列表末尾 🐾🧪"
 R6_GEOM_TOL = 0.5
 R6_INSPECTOR_TABS_HEIGHT = 58.0
 R6_INSPECTOR_TAB_SIZE = (100.0, 58.0)
@@ -104,6 +124,7 @@ STATES_PHASES = (
     "cancelled-summary",
     "tool-failed",
     "virtualized",
+    "virtualized-thousand",
     "streamed-summary",
     "live-failed",
     "failed-replayed",
@@ -154,6 +175,7 @@ def parse_tree(path):
     focused = []
     selected_rows = []
     timeline_entries = 0
+    timeline_entries_beta_long = 0
     selected_identifiers = set()
     press_identifiers = set()
     # ui-ax-dump.swift 按深度缩进（2 空格/层）；据此构建直接父映射，
@@ -171,6 +193,8 @@ def parse_tree(path):
             selected_rows.append(identifier)
         if identifier.startswith(TIMELINE_PREFIX + "-"):
             timeline_entries += 1
+        if identifier.startswith("timeline-entry-") and "fx-ses-beta-long" in identifier:
+            timeline_entries_beta_long += 1
         if "selected=1" in line:
             selected_identifiers.add(identifier)
         if "AXPress" in line:
@@ -206,6 +230,7 @@ def parse_tree(path):
         "focused": focused,
         "selected_rows": selected_rows,
         "timeline_entries_alpha_today": timeline_entries,
+        "timeline_entries_beta_long": timeline_entries_beta_long,
         "selected_identifiers": selected_identifiers,
         "press_identifiers": press_identifiers,
         "parents": parents,
@@ -378,6 +403,39 @@ def geometry_checks(frames, phase="initial"):
         )
     if phase in R6_PHASES:
         checks.extend(r6_geometry_checks(frames, phase))
+    if phase == "r7c-disconnected":
+        for name in ("connection-status", "reconnect"):
+            frame = frames.get(name)
+            if rail is None or rail.get("error") or frame is None or frame.get("error"):
+                add(name + "-within-rail", False, name + " or task-rail frame missing")
+                continue
+            within_rail = (
+                frame["x"] >= rail["x"] - 0.5
+                and frame["y"] >= rail["y"] - 0.5
+                and frame["x"] + frame["w"] <= rail["x"] + rail["w"] + 0.5
+                and frame["y"] + frame["h"] <= rail["y"] + rail["h"] + 0.5
+            )
+            add(
+                name + "-within-rail",
+                within_rail,
+                name + "=" + str(frame) + " rail=" + str(rail),
+            )
+    if phase == "r7c-narrow-popover":
+        popover = frames.get("activity-popover")
+        if popover is None or popover.get("error"):
+            add("activity-popover-in-window", False, "activity-popover frame missing")
+        else:
+            in_window = (
+                popover["x"] >= root["x"] - 0.5
+                and popover["y"] >= root["y"] - 0.5
+                and popover["x"] + popover["w"] <= root["x"] + root["w"] + 0.5
+                and popover["y"] + popover["h"] <= root["y"] + root["h"] + 0.5
+            )
+            add(
+                "activity-popover-in-window",
+                in_window,
+                "popover=" + str(popover) + " root=" + str(root),
+            )
     return checks, metrics
 
 
@@ -590,7 +648,7 @@ def skeleton_checks(tree, phase="initial"):
         })
     if phase in (
         "collapsed", "resumed", "disconnected", "connect-failed", "reconnected",
-        "projects", *R6_PHASES,
+        "projects", *R6_PHASES, *R7C_PHASES,
     ):
         # 已选中会话相位：空态引导必须消失（防谓词回归成恒真）。
         # disconnected 保留旧条目（gui-design 空态原则），同样不得出现引导。
@@ -600,7 +658,7 @@ def skeleton_checks(tree, phase="initial"):
             "detail": "workspace-empty-hint "
                 + ("stray present" if "workspace-empty-hint" in identifiers else "absent"),
         })
-    if phase in ("narrow", "collapsed", "r6-state-b-open"):
+    if phase in ("narrow", "collapsed", "r6-state-b-open", *R7C_NARROW_PHASES):
         stray = [
             name for name in ("inspector", "inspector-tabs")
             if name in identifiers
@@ -618,12 +676,19 @@ def skeleton_checks(tree, phase="initial"):
             "detail": "inspector-toggle "
                 + ("present" if "inspector-toggle" in identifiers else "missing"),
         })
-    if phase == "collapsed":
+    if phase in ("collapsed", "r7c-narrow-popover"):
         checks.append({
             "name": "activity-popover-present",
             "pass": "activity-popover" in identifiers,
             "detail": "activity-popover "
                 + ("present" if "activity-popover" in identifiers else "missing"),
+        })
+    if phase in ("r7c-wide", "r7c-narrow", "r7c-narrow-reconnected", "r7c-disconnected"):
+        checks.append({
+            "name": "activity-popover-absent",
+            "pass": "activity-popover" not in identifiers,
+            "detail": "activity-popover "
+                + ("stray present" if "activity-popover" in identifiers else "absent"),
         })
     if phase in ("disconnected", "connect-failed"):
         # 两种断连相位：Reconnect 手动入口必须在场。show_reconnect 对
@@ -649,6 +714,32 @@ def skeleton_checks(tree, phase="initial"):
             "pass": ok,
             "detail": "connection-status value="
                 + (status if status else "absent"),
+        })
+    if phase == "r7c-disconnected":
+        checks.append({
+            "name": "reconnect-present",
+            "pass": "reconnect" in identifiers,
+            "detail": "reconnect "
+                + ("present" if "reconnect" in identifiers else "missing"),
+        })
+        status = tree.get("connection_status")
+        checks.append({
+            "name": "connection-status-disconnected",
+            "pass": bool(status) and status.startswith("Disconnected ·"),
+            "detail": "connection-status value=" + (status if status else "absent"),
+        })
+    if phase == "r7c-narrow-reconnected":
+        checks.append({
+            "name": "reconnect-absent",
+            "pass": "reconnect" not in identifiers,
+            "detail": "reconnect "
+                + ("stray present" if "reconnect" in identifiers else "absent"),
+        })
+        status = tree.get("connection_status")
+        checks.append({
+            "name": "connection-status-connected",
+            "pass": bool(status) and status.startswith("Local · Connected"),
+            "detail": "connection-status value=" + (status if status else "absent"),
         })
     if phase == "reconnected":
         # 重连成功相位：Connected 无需重连入口，reconnect 不得残留。
@@ -834,7 +925,26 @@ def cmd_assert(args):
                 + str(tree["timeline_entries_alpha_today"]) + " (empty state)",
             })
     else:
-        if args.phase != "narrow" and args.phase != "restored":
+        if args.phase in R7C_PHASES:
+            checks.append({
+                "name": "session-beta-long-selected",
+                "pass": R7C_SESSION_ROW in tree["selected_rows"],
+                "detail": "selected=1 rows: " + (",".join(tree["selected_rows"]) or "none"),
+            })
+            checks.append({
+                "name": "timeline-beta-long-loaded",
+                "pass": tree["timeline_entries_beta_long"] >= 1,
+                "detail": "beta-long visible timeline rows="
+                + str(tree["timeline_entries_beta_long"]),
+            })
+            if args.phase in ("r7c-wide", "r7c-narrow", "r7c-narrow-reconnected"):
+                checks.append({
+                    "name": "focus-composer-retained",
+                    "pass": tree["focused"] == ["composer-input"],
+                    "detail": "focused=" + (",".join(tree["focused"]) or "none")
+                    + " (expect composer-input)",
+                })
+        elif args.phase != "narrow" and args.phase != "restored":
             checks.append({
                 "name": "session-selected",
                 "pass": SESSION_ROW in tree["selected_rows"],
@@ -1499,7 +1609,7 @@ def states_ax_timeline_rows(tree):
     )
 
 
-def states_phase_checks(tree, phase, logical_entries=None):
+def states_phase_checks(tree, phase, logical_entries=None, barrier=None):
     if phase not in STATES_PHASES:
         raise ValueError("unknown states phase: " + str(phase))
     checks = []
@@ -1606,6 +1716,53 @@ def states_phase_checks(tree, phase, logical_entries=None):
             + " < logical rows=" + str(expected)
             + " (capacity=ceil(frame.height/52) window slice)",
         ))
+    elif phase == "virtualized-thousand":
+        checks.append(states_selected_row(tree, R7C_SESSION_ROW))
+        barrier_rows = barrier.get("entry_count") if isinstance(barrier, dict) else None
+        expected = barrier_rows if barrier_rows is not None else (logical_entries or 0)
+        rows_source = (
+            "timeline_stable barrier"
+            if barrier_rows is not None
+            else "caller logical_entries (not independent proof)"
+        )
+        checks.append(states_check(
+            "virtualization-thousand-logical-rows",
+            isinstance(expected, int) and expected >= 1000,
+            "entry_count=" + str(expected) + " source=" + rows_source
+            + " (expect >=1000)",
+        ))
+        if barrier is None:
+            checks.append(states_check(
+                "virtualization-thousand-barrier-required",
+                False,
+                "timeline_stable barrier not provided",
+            ))
+        else:
+            barrier_session = barrier.get("session_id") if isinstance(barrier, dict) else None
+            checks.append(states_check(
+                "virtualization-thousand-barrier-session",
+                barrier_session == R7C_SESSION_ROW_ID,
+                "barrier session_id=" + str(barrier_session)
+                + " (expect " + R7C_SESSION_ROW_ID + ")",
+            ))
+        ax_rows = states_ax_timeline_rows(tree)
+        checks.append(states_check(
+            "virtualization-thousand-window-slice",
+            0 < len(ax_rows) < expected,
+            "AX timeline-entry-*/run-summary-* nodes=" + str(len(ax_rows))
+            + " < logical rows=" + str(expected),
+        ))
+        sentinel_rows = [
+            identifier
+            for identifier, facts in tree["nodes"].items()
+            if identifier.startswith(R7C_TIMELINE_PREFIX)
+            and R7C_SENTINEL in facts["value"]
+        ]
+        checks.append(states_check(
+            "virtualization-cjk-emoji-long-row",
+            bool(sentinel_rows),
+            "visible sentinel rows=" + (",".join(sentinel_rows) or "none"),
+        ))
     elif phase == "streamed-summary":
         checks.append(states_selected_row(tree, "session-fx-ses-alpha-today"))
         checks.extend(states_summary_checks(tree, "Ready for review"))
@@ -1689,7 +1846,15 @@ def states_phase_checks(tree, phase, logical_entries=None):
 
 def cmd_states_assert(args):
     tree = parse_states_tree(args.tree)
-    checks = states_phase_checks(tree, args.phase, args.logical_entries)
+    barrier = None
+    if args.barrier:
+        try:
+            barrier = json.loads(Path(args.barrier).read_text("utf-8"))
+        except (OSError, ValueError) as error:
+            barrier = {"parse_error": str(error)}
+    checks = states_phase_checks(
+        tree, args.phase, args.logical_entries, barrier=barrier
+    )
     payload = {
         "phase": args.phase,
         "generated_at": now_iso(),
@@ -1885,6 +2050,11 @@ def main():
             "r6-state-a",
             "r6-state-b-open",
             "r6-state-b-resumed",
+            "r7c-wide",
+            "r7c-narrow",
+            "r7c-narrow-reconnected",
+            "r7c-narrow-popover",
+            "r7c-disconnected",
         ],
         required=True,
     )
@@ -1930,6 +2100,7 @@ def main():
     states_asrt.add_argument("--phase", choices=list(STATES_PHASES), required=True)
     states_asrt.add_argument("--out", required=True)
     states_asrt.add_argument("--logical-entries", type=int, default=None)
+    states_asrt.add_argument("--barrier", default=None)
     states_asrt.set_defaults(func=cmd_states_assert)
     approval_read = sub.add_parser("approval-read")
     approval_read.add_argument("--file", required=True)

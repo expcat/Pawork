@@ -1,0 +1,131 @@
+# ui-ax-dump
+# pid=7505
+# ax_trusted=true
+# generated_at=2026-08-30T08:23:12Z
+# max_depth=16 max_children=80
+#
+# CGWindowList (owner pid 7505), count=2
+#   wid=13652 owner="pawork-desktop" title="Pawork" layer=0 onscreen alpha=1.0 bounds={1000,208,1440,1024}
+#   wid=13653 owner="pawork-desktop" title="" layer=0 offscreen alpha=1.0 bounds={0,940,500,500}
+#
+# AX tree
+role=AXApplication title="pawork-desktop"
+  role=AXWindow subrole=AXStandardWindow title="Pawork" focused=0 actions=[AXRaise]
+    role=AXGroup identifier="pawork-root" description="Pawork" focused=0
+      role=AXGroup identifier="task-rail" description="Tasks" enabled=1 focused=0 selected=0
+        role=AXButton value="Timeline" identifier="task-rail-grouping" description="Group tasks · Timeline" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXButton value="All projects" identifier="project-scope" description="Project scope" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXStaticText value="Local · Connected" identifier="connection-status" description="Connection" enabled=1 focused=0 selected=0
+        role=AXButton identifier="add-task" description="New task" help="Create task is available." enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXList identifier="session-list" description="Sessions" enabled=1 focused=0 selected=0
+          role=AXStaticText identifier="date-group-Earlier" description="Earlier" enabled=1 focused=0 selected=0
+          role=AXButton value="3 tasks" identifier="project-Earlier_3afx-alpha-app" description="alpha-app" help="Expanded" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton identifier="project-add-Earlier_3afx-alpha-app" description="New task in alpha-app" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-alpha-today" description="Refactor launcher tabs" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-alpha-yesterday" description="Investigate provider timeout" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-alpha-longtitle" description="超长标题回归样本——用于验证任务列表截断、tooltip 与选中态在 200+ 字符标题下的表现。本标题刻意超过二百个字符以触发 UI 的省略逻辑，同时保持可读的语义边界：这里的每一段填充文本都对应 Desktop Timeline 左侧 TaskRail 在窄窗与宽窗下的两种裁切路径，最终断言以完整标题进入 snapshot 为准，而不是以渲染截断为准。附加填充：一二三四五六七八九十一二三四五六七八九十" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton value="4 tasks" identifier="project-Earlier_3afx-beta-lib" description="fx-beta-lib" help="Expanded" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton identifier="project-add-Earlier_3afx-beta-lib" description="New task in fx-beta-lib" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-pending" description="Type the public API surface" help="Needs input" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-toolfailed" description="Build after dependency bump" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-long" description="Virtualization stress session" help="Session" enabled=1 focused=0 selected=1 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-cancelled" description="Long batch refactor" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+      role=AXGroup identifier="workspace" description="Workspace" enabled=1 focused=0 selected=0
+        role=AXGroup identifier="workspace-header" description="Workspace header" enabled=1 focused=0 selected=0
+          role=AXStaticText identifier="header-title" description="Virtualization stress session" enabled=1 focused=0 selected=0
+          role=AXButton identifier="header-new-task" description="New task" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXList identifier="timeline" description="Timeline" enabled=1 focused=0 selected=0
+          role=AXRow value="R7C 千级列表边界行 0945 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1089" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1089" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0946 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1090" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1090" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0947 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1091" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1091" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0948 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1092" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1092" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0949 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1093" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1093" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0950 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1094" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1094" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0951 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1095" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1095" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0952 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1096" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1096" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0953 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1097" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1097" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0954 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1098" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1098" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0955 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1099" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1099" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0956 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1100" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1100" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0957 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1101" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1101" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0958 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1102" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1102" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表边界行 0959 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1103" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1103" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="R7C 千级列表末尾 🐾🧪 · CJK/emoji/超长行 · 边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1104" description="You" help="245d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-r7c-fx-ses-beta-long-1104" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXGroup identifier="composer" description="Composer" enabled=1 focused=0 selected=0
+          role=AXTextArea identifier="composer-input" description="Message" enabled=1 focused=1 selected=0 settable=[AXValue,AXFocused]
+          role=AXButton value="mock / fixture-model" identifier="model-picker" description="Model" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton identifier="send" description="Send" enabled=0 focused=0 selected=0
+      role=AXGroup identifier="inspector" description="Inspector" enabled=1 focused=0 selected=0
+        role=AXTabGroup identifier="inspector-tabs" description="Inspector tabs" enabled=1 focused=0 selected=0
+          role=AXRadioButton identifier="inspector-tab-changes" description="Changes" enabled=1 focused=0 selected=1 actions=[AXPress]
+          role=AXRadioButton identifier="inspector-tab-terminal" description="Terminal" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRadioButton identifier="inspector-tab-resources" description="Resources" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXButton identifier="inspector-collapse" description="Hide inspector" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXGroup identifier="changes" description="Changes" help="Host latest-session diff; workspace context is not a filter · ready · 4 files" enabled=1 focused=0 selected=0
+          role=AXTabGroup identifier="changes-tabs" description="Changes tabs" enabled=1 focused=0 selected=0
+            role=AXRadioButton identifier="changes-tab-files" description="Files" enabled=1 focused=0 selected=1 actions=[AXPress]
+            role=AXRadioButton identifier="changes-tab-summary" description="Summary" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton identifier="changes-refresh" description="Refresh changes" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXList identifier="changes-file-list" description="Changed files" enabled=1 focused=0 selected=0
+            role=AXRow value="modified · +0 / −0" identifier="changes-file-docs_2freport.md" description="docs/report.md" enabled=1 focused=0 selected=0 actions=[AXPress]
+            role=AXRow value="deleted · +0 / −0" identifier="changes-file-legacy_2fold.txt" description="legacy/old.txt" enabled=1 focused=0 selected=0 actions=[AXPress]
+            role=AXRow value="modified · +0 / −0" identifier="changes-file-src_2fmain.rs" description="src/main.rs" enabled=1 focused=0 selected=0 actions=[AXPress]
+            role=AXRow value="untracked · +4 / −0" identifier="changes-file-src_2fnew_5ffeature.rs" description="src/new_feature.rs" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXGroup identifier="changes-diff-view" description="Diff view" help="horizontal offset 0.0 of 0.0" enabled=1 focused=0 selected=0
+      role=AXGroup identifier="status-bar" description="Status" enabled=1 focused=0 selected=0
+        role=AXStaticText value="Task — tokens | Quota unavailable | — tok/s | Run idle" identifier="run-status" description="Run status" enabled=1 focused=0 selected=0
+    role=AXButton subrole=AXCloseButton enabled=1 focused=0 actions=[AXPress]
+    role=AXButton subrole=AXFullScreenButton help="this button also has an action to zoom the window" enabled=1 focused=0 actions=[AXPress,AXZoomWindow,AXShowMenu]
+      role=AXGroup focused=0
+        role=AXGroup focused=0
+    role=AXButton subrole=AXMinimizeButton enabled=1 focused=0 actions=[AXPress]
+#
+# summary nodes=86 truncated=0
+# roles AXApplication=1 AXButton=31 AXGroup=11 AXList=3 AXRadioButton=5 AXRow=27 AXStaticText=4 AXTabGroup=2 AXTextArea=1 AXWindow=1
+# identifiers pawork-root | task-rail | task-rail-grouping | project-scope | connection-status | add-task | session-list | date-group-Earlier | project-Earlier_3afx-alpha-app | project-add-Earlier_3afx-alpha-app | session-fx-ses-alpha-today | session-fx-ses-alpha-yesterday | session-fx-ses-alpha-longtitle | project-Earlier_3afx-beta-lib | project-add-Earlier_3afx-beta-lib | session-fx-ses-beta-pending | session-fx-ses-beta-toolfailed | session-fx-ses-beta-long | session-fx-ses-beta-cancelled | workspace | workspace-header | header-title | header-new-task | timeline | timeline-entry-evt-r7c-fx-ses-beta-long-1089 | entry-menu-evt-r7c-fx-ses-beta-long-1089 | timeline-entry-evt-r7c-fx-ses-beta-long-1090 | entry-menu-evt-r7c-fx-ses-beta-long-1090 | timeline-entry-evt-r7c-fx-ses-beta-long-1091 | entry-menu-evt-r7c-fx-ses-beta-long-1091 | timeline-entry-evt-r7c-fx-ses-beta-long-1092 | entry-menu-evt-r7c-fx-ses-beta-long-1092 | timeline-entry-evt-r7c-fx-ses-beta-long-1093 | entry-menu-evt-r7c-fx-ses-beta-long-1093 | timeline-entry-evt-r7c-fx-ses-beta-long-1094 | entry-menu-evt-r7c-fx-ses-beta-long-1094 | timeline-entry-evt-r7c-fx-ses-beta-long-1095 | entry-menu-evt-r7c-fx-ses-beta-long-1095 | timeline-entry-evt-r7c-fx-ses-beta-long-1096 | entry-menu-evt-r7c-fx-ses-beta-long-1096 | timeline-entry-evt-r7c-fx-ses-beta-long-1097 | entry-menu-evt-r7c-fx-ses-beta-long-1097 | timeline-entry-evt-r7c-fx-ses-beta-long-1098 | entry-menu-evt-r7c-fx-ses-beta-long-1098 | timeline-entry-evt-r7c-fx-ses-beta-long-1099 | entry-menu-evt-r7c-fx-ses-beta-long-1099 | timeline-entry-evt-r7c-fx-ses-beta-long-1100 | entry-menu-evt-r7c-fx-ses-beta-long-1100 | timeline-entry-evt-r7c-fx-ses-beta-long-1101 | entry-menu-evt-r7c-fx-ses-beta-long-1101 | timeline-entry-evt-r7c-fx-ses-beta-long-1102 | entry-menu-evt-r7c-fx-ses-beta-long-1102 | timeline-entry-evt-r7c-fx-ses-beta-long-1103 | entry-menu-evt-r7c-fx-ses-beta-long-1103 | timeline-entry-evt-r7c-fx-ses-beta-long-1104 | entry-menu-evt-r7c-fx-ses-beta-long-1104 | composer | composer-input | model-picker | send | inspector | inspector-tabs | inspector-tab-changes | inspector-tab-terminal | inspector-tab-resources | inspector-collapse | changes | changes-tabs | changes-tab-files | changes-tab-summary | changes-refresh | changes-file-list | changes-file-docs_2freport.md | changes-file-legacy_2fold.txt | changes-file-src_2fmain.rs | changes-file-src_2fnew_5ffeature.rs | changes-diff-view | status-bar | run-status
+# custom_hint depth=0 role=AXApplication title="pawork-desktop"
+# custom_hint depth=1 role=AXWindow subrole=AXStandardWindow title="Pawork" focused=0 actions=[AXRaise]
+# custom_hint depth=2 role=AXGroup identifier="pawork-root" description="Pawork" focused=0
+# custom_hint depth=4 role=AXButton value="Timeline" identifier="task-rail-grouping" description="Group tasks · Timeline" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=5 role=AXRow identifier="session-fx-ses-alpha-longtitle" description="超长标题回归样本——用于验证任务列表截断、tooltip 与选中态在 200+ 字符标题下的表现。本标题刻意超过二百个字符以触发 UI 的省略逻辑，同时保持可读的语义边界：这里的每一段填充文本都对应 Desktop Timeline 左侧 TaskRail 在窄窗与宽窗下的两种裁切路径，最终断言以完整标题进入 snapshot 为准，而不是以渲染截断为准。附加填充：一二三四五六七八九十一二三四五六七八九十" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=4 role=AXList identifier="timeline" description="Timeline" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0945 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1089" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0946 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1090" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0947 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1091" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0948 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1092" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0949 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1093" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0950 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1094" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0951 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1095" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0952 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1096" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0953 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1097" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0954 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1098" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0955 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1099" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0956 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1100" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0957 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1101" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0958 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1102" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表边界行 0959 · 中文 mixed text 🐾" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1103" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="R7C 千级列表末尾 🐾🧪 · CJK/emoji/超长行 · 边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本边界文本" identifier="timeline-entry-evt-r7c-fx-ses-beta-long-1104" description="You" help="245d" enabled=1 focused=0 selected=0
+# custom_hint depth=4 role=AXGroup identifier="composer" description="Composer" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXTextArea identifier="composer-input" description="Message" enabled=1 focused=1 selected=0 settable=[AXValue,AXFocused]
+# custom_hint depth=3 role=AXGroup identifier="inspector" description="Inspector" enabled=1 focused=0 selected=0
+# custom_hint depth=4 role=AXTabGroup identifier="inspector-tabs" description="Inspector tabs" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRadioButton identifier="inspector-tab-changes" description="Changes" enabled=1 focused=0 selected=1 actions=[AXPress]
+# custom_hint depth=5 role=AXRadioButton identifier="inspector-tab-terminal" description="Terminal" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=5 role=AXRadioButton identifier="inspector-tab-resources" description="Resources" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=4 role=AXButton identifier="inspector-collapse" description="Hide inspector" enabled=1 focused=0 selected=0 actions=[AXPress]

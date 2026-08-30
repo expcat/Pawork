@@ -9,7 +9,7 @@
 
 - **Wave A（🟢 2026-08-29–30）— 组件状态矩阵与 AX 基线**：自动门禁已通过（45 组件矩阵、三路径焦点修复、U2 26 相位、A3 bundled/签名对照、A4 State A hover/active/focus 九图）；人工 overlay 续查发现并修复 Inspector 顶层页签无可见 hover 的缺口，2026-08-30 用户确认九图通过。用户同时批准本波以原生 AX tree/action + 纯键盘 + U2 替代 VoiceOver；VoiceOver 未执行、不记为通过，屏幕朗读措辞 / 顺序仍未验证。写入限 apps/desktop、Desktop Spec、R7 测试脚本与本波证据；未改 GUI wire、Host、Policy 或 fixture 业务数据。macOS 26 AX 递归劣化已 fail-closed 取证（attempt7–10），不以重启成功冒充根治。
 - **Wave B（🟢 2026-08-30）— 全局 focus、菜单与 Popover 等价路径**：基于 Wave A 45 组件矩阵、R3 导航 U2 与 R6 Inspector U2 核对现状，收敛六个真实焦点缺口：task 切换关闭旧菜单并聚焦 Composer，审批 action 关闭菜单并聚焦 Composer，Review changes 展开 Inspector 后聚焦 Changes 选中页签，Fork 接受后聚焦 Composer；独立审查再补当前 task 的 AXPress 关闭菜单，以及仅一个可见 task 时 cycling 不重开 session 但仍聚焦 Composer。mouse / keyboard / AX 继续汇入既有 handler 与 enable gate。Desktop 144/144、Python 17/17 + 22/22、导航 26 相位、审批/状态 14 相位及审查边角 3 相位真窗口 U2 全绿；首次审批长驱动暴露的是 R4 对“空输入 Send enabled”的过期断言，按 R5 冻结合同改为 disabled 后同驱动全绿。审查边角仅在隔离临时 fixture root 通过既有 `archived` 字段构造单可见 task，仓库 seed 与 fixture 业务数据未改。证据见 [r7-wave-b](../docs/ui-review/r7-wave-b/notes.md)。未改 GUI wire、Host 或 Policy。
-- **Wave C（🔵 2026-08-30）— 响应式、长内容与平台偏好**：覆盖 1080×720、字号放大、CJK/emoji/超长行、千级列表、反复 resize、reduced motion/高对比偏好与性能基线；只记录平台真实能力，不伪造跨平台 AX 支持。
+- **Wave C（🔵 2026-08-30）— 响应式、长内容与平台偏好**：默认平台态真窗口子集已覆盖 1080×720 Connected / ActivityPopover / Disconnected、CJK/emoji/超长内容、1024 行虚拟化与离底/回底、三轮宽窄 resize、焦点保持、重连及单次性能基线；首轮截图发现 TaskRail 连接长文案越界并已修复，审查同步补齐截图级 paint 门禁、重连相位、千行 barrier 硬化，但修复后的最终视觉复跑被 macOS 锁屏阻塞、待解锁补跑。正式 seed 未改，千级数据只派生于隔离临时数据库。当前只读快照中的 reduced motion / 高对比等四项均关闭，不代表主动态通过；固定 px 字体尚无已批准的字号放大机制，故本波仍进行中。证据见 [r7-wave-c](../docs/ui-review/r7-wave-c/notes.md)。
 
 ### 1. 交互状态
 
@@ -30,6 +30,8 @@
 - `1440×1024` 是 99% 视觉主门禁；`1080×720` 验证折叠顺序、主操作可见、Popover/菜单不越界。
 - 超长标题、CJK/emoji、长代码行、空/错误/断连态、千级列表、连续流式和反复 resize 不截断关键动作、不泄漏焦点。
 - 记录启动到可交互、长列表滚动、输入响应、resize 与 screenshot 稳定时间；阈值在 R1 基线后冻结，禁止用固定长 sleep 掩盖抖动。
+
+Wave C 已归档一次 `baseline_only` 真实机器采样；该样本只建立量测入口，阈值保持 `null`，不能据此宣称性能无回退。字号放大与主动平台偏好态仍是退出缺口。
 
 ### R7 退出标准
 

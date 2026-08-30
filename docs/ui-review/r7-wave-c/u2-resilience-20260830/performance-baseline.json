@@ -1,0 +1,164 @@
+{
+  "classification": "baseline_only",
+  "dataset": {
+    "base_logical_rows": 64,
+    "branch_id": "main",
+    "first_inserted_sequence": 145,
+    "generated_at": "2026-08-30T08:22:59Z",
+    "inserted_message_rows": 960,
+    "last_inserted_sequence": 1104,
+    "scope": "temporary_fixture_database_only",
+    "sentinel": "R7C 千级列表末尾 🐾🧪",
+    "session_id": "fx-ses-beta-long",
+    "target_logical_rows": 1024
+  },
+  "generated_at": "2026-08-30T08:23:26Z",
+  "platform": {
+    "accessibility_display": {
+      "differentiate_without_color": false,
+      "increase_contrast": false,
+      "reduce_motion": false,
+      "reduce_transparency": false
+    },
+    "generated_at": "2026-08-30T08:22:55Z",
+    "platform": {
+      "locale": "zh_CN",
+      "operating_system": "Version 26.6.2 (Build 25G83)"
+    },
+    "scope": "read_only_platform_snapshot"
+  },
+  "samples": [
+    {
+      "detail": "launch-to-session-list",
+      "metric": "desktop_ready",
+      "value_ms": 7604
+    },
+    {
+      "detail": "AXPress-to-timeline_stable",
+      "metric": "timeline_1024_load",
+      "value_ms": 2194
+    },
+    {
+      "detail": "wide-1k",
+      "metric": "screenshot",
+      "value_ms": 147
+    },
+    {
+      "detail": "sentinel-visible-to-absent",
+      "metric": "timeline_scroll_up",
+      "value_ms": 3783
+    },
+    {
+      "detail": "sentinel-absent-to-visible",
+      "metric": "timeline_scroll_bottom",
+      "value_ms": 1145
+    },
+    {
+      "detail": "AXSetValue-to-AXValue",
+      "metric": "composer_input",
+      "value_ms": 249
+    },
+    {
+      "detail": "narrow-initial",
+      "metric": "resize_narrow",
+      "value_ms": 300
+    },
+    {
+      "detail": "connected-1080x720",
+      "metric": "screenshot",
+      "value_ms": 127
+    },
+    {
+      "detail": "popover-1080x720",
+      "metric": "screenshot",
+      "value_ms": 109
+    },
+    {
+      "detail": "wide-1",
+      "metric": "resize_wide",
+      "value_ms": 372
+    },
+    {
+      "detail": "narrow-1",
+      "metric": "resize_narrow",
+      "value_ms": 324
+    },
+    {
+      "detail": "wide-2",
+      "metric": "resize_wide",
+      "value_ms": 340
+    },
+    {
+      "detail": "narrow-2",
+      "metric": "resize_narrow",
+      "value_ms": 383
+    },
+    {
+      "detail": "wide-3",
+      "metric": "resize_wide",
+      "value_ms": 368
+    },
+    {
+      "detail": "narrow-3",
+      "metric": "resize_narrow",
+      "value_ms": 292
+    },
+    {
+      "detail": "disconnected-1080x720",
+      "metric": "screenshot",
+      "value_ms": 122
+    }
+  ],
+  "summary": {
+    "composer_input": {
+      "count": 1,
+      "max_ms": 249,
+      "median_ms": 249,
+      "min_ms": 249
+    },
+    "desktop_ready": {
+      "count": 1,
+      "max_ms": 7604,
+      "median_ms": 7604,
+      "min_ms": 7604
+    },
+    "resize_narrow": {
+      "count": 4,
+      "max_ms": 383,
+      "median_ms": 312.0,
+      "min_ms": 292
+    },
+    "resize_wide": {
+      "count": 3,
+      "max_ms": 372,
+      "median_ms": 368,
+      "min_ms": 340
+    },
+    "screenshot": {
+      "count": 4,
+      "max_ms": 147,
+      "median_ms": 124.5,
+      "min_ms": 109
+    },
+    "timeline_1024_load": {
+      "count": 1,
+      "max_ms": 2194,
+      "median_ms": 2194,
+      "min_ms": 2194
+    },
+    "timeline_scroll_bottom": {
+      "count": 1,
+      "max_ms": 1145,
+      "median_ms": 1145,
+      "min_ms": 1145
+    },
+    "timeline_scroll_up": {
+      "count": 1,
+      "max_ms": 3783,
+      "median_ms": 3783,
+      "min_ms": 3783
+    }
+  },
+  "threshold_note": "First R7 Wave C real-window sample; no regression threshold is claimed until repeated clean-machine samples are reviewed.",
+  "thresholds": null
+}

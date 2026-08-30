@@ -247,11 +247,18 @@ impl AppView {
                             .flex_row()
                             .items_center()
                             .gap_2()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
                             .child(status_dot(connection_dot_filled, connection_dot_color))
                             .child(
-                                Label::new(connection_label)
-                                    .size(font::BODY_SM)
-                                    .color(dark().text.secondary),
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(font::BODY_SM))
+                                    .text_color(dark().text.secondary)
+                                    .child(connection_label),
                             ),
                     )
                     .child(add_task),

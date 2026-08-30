@@ -1,0 +1,39 @@
+2026-08-30T08:22:50Z run start label=r7-wave-c-resilience out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-c/u2-resilience-20260830
+2026-08-30T08:22:50Z compile AX/frame/input/platform helpers
+2026-08-30T08:22:55Z platform preferences captured read-only
+2026-08-30T08:22:55Z seed canonical fixture then derive 1024 logical rows in temp DB
+2026-08-30T08:23:09Z desktop ready attempt=1
+2026-08-30T08:23:10Z timeline_stable seq=1 session= entries=0
+2026-08-30T08:23:12Z timeline_stable seq=2 session=fx-ses-beta-long entries=1024
+2026-08-30T08:23:12Z wait phase=r7c-wide tag=initial
+2026-08-30T08:23:12Z phase=r7c-wide tag=initial passed
+2026-08-30T08:23:12Z wait virtualized-thousand tag=initial
+2026-08-30T08:23:13Z virtualized-thousand tag=initial passed
+2026-08-30T08:23:18Z wait virtualized-thousand tag=after-scroll
+2026-08-30T08:23:18Z virtualized-thousand tag=after-scroll passed
+2026-08-30T08:23:19Z wait phase=r7c-narrow tag=narrow-initial
+2026-08-30T08:23:19Z phase=r7c-narrow tag=narrow-initial passed
+2026-08-30T08:23:19Z wait phase=r7c-narrow-popover tag=popover
+2026-08-30T08:23:19Z phase=r7c-narrow-popover tag=popover passed
+2026-08-30T08:23:20Z wait phase=r7c-narrow tag=popover-closed
+2026-08-30T08:23:20Z phase=r7c-narrow tag=popover-closed passed
+2026-08-30T08:23:20Z wait phase=r7c-wide tag=wide-1
+2026-08-30T08:23:20Z phase=r7c-wide tag=wide-1 passed
+2026-08-30T08:23:20Z wait phase=r7c-narrow tag=narrow-1
+2026-08-30T08:23:20Z phase=r7c-narrow tag=narrow-1 passed
+2026-08-30T08:23:21Z wait phase=r7c-wide tag=wide-2
+2026-08-30T08:23:21Z phase=r7c-wide tag=wide-2 passed
+2026-08-30T08:23:21Z wait phase=r7c-narrow tag=narrow-2
+2026-08-30T08:23:21Z phase=r7c-narrow tag=narrow-2 passed
+2026-08-30T08:23:21Z wait phase=r7c-wide tag=wide-3
+2026-08-30T08:23:22Z phase=r7c-wide tag=wide-3 passed
+2026-08-30T08:23:22Z wait phase=r7c-narrow tag=narrow-3
+2026-08-30T08:23:22Z phase=r7c-narrow tag=narrow-3 passed
+2026-08-30T08:23:22Z drop socket at 1080x720 and assert retained session/timeline/reconnect
+2026-08-30T08:23:22Z wait phase=r7c-disconnected tag=dropped
+2026-08-30T08:23:22Z phase=r7c-disconnected tag=dropped passed
+2026-08-30T08:23:25Z timeline_stable seq=13 session=fx-ses-beta-long entries=1024
+2026-08-30T08:23:26Z timeline_stable seq=14 session=fx-ses-beta-long entries=1024
+2026-08-30T08:23:26Z wait phase=r7c-narrow tag=reconnected
+2026-08-30T08:23:26Z phase=r7c-narrow tag=reconnected passed
+2026-08-30T08:23:26Z run done; teardown fixture root=/private/tmp/pawork-r7-wave-c-fixture.jaVuhu
