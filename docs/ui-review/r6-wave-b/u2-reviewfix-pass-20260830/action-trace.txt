@@ -1,0 +1,53 @@
+2026-08-30T00:14:30Z compile AX/key helpers
+2026-08-30T00:14:34Z seed/serve/desktop isolated fixture
+2026-08-30T00:14:45Z C1 canonical Changes files
+2026-08-30T00:14:45Z assert phase=c1-files
+2026-08-30T00:14:46Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-c1-files.png
+2026-08-30T00:14:46Z C3 keyboard secondary tabs and file rows
+2026-08-30T00:15:15Z assert phase=c3-summary
+2026-08-30T00:15:22Z assert phase=c3-file-focus
+2026-08-30T00:15:23Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-c3-file-focus.png
+2026-08-30T00:15:23Z assert phase=c3-long-line
+2026-08-30T00:15:24Z C3 horizontal scroll point=2220.0,594.0 delta=-720 (bounded assertion retry)
+2026-08-30T00:15:25Z C3 horizontal scroll passed attempts=1
+2026-08-30T00:15:25Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-c3-horizontal-scroll.png
+2026-08-30T00:15:25Z T1 terminal create/write/output
+2026-08-30T00:15:50Z assert phase=t1-idle
+2026-08-30T00:15:56Z assert phase=t1-ready
+2026-08-30T00:16:26Z assert phase=t1-resized
+2026-08-30T00:16:29Z assert phase=t1-output
+2026-08-30T00:16:29Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-t1-output.png
+2026-08-30T00:16:29Z I1 keyboard collapse and Activity restore
+2026-08-30T00:16:57Z assert phase=i1-collapsed
+2026-08-30T00:16:58Z assert phase=i1-restored
+2026-08-30T00:16:58Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-i1-restored.png
+2026-08-30T00:16:58Z S1 latest-session scope remains distinct from active old session
+2026-08-30T00:17:01Z assert phase=s1-latest-scope
+2026-08-30T00:17:01Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-s1-latest-scope.png
+2026-08-30T00:17:01Z D1 disconnect/reconnect terminal state
+2026-08-30T00:17:29Z assert phase=d1-disconnected
+2026-08-30T00:17:29Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-d1-disconnected.png
+2026-08-30T00:17:29Z assert phase=d1-reconnected
+2026-08-30T00:17:30Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-d1-reconnected.png
+2026-08-30T00:17:30Z C2 new clean beta task returns ready empty Changes
+2026-08-30T00:17:32Z timeline_stable seq=130 session=ses-1788049050492-1 entries=0
+2026-08-30T00:17:32Z assert phase=c2-empty
+2026-08-30T00:17:32Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-c2-empty.png
+2026-08-30T00:17:32Z R1 empty Resources then deterministic connected/failed matrix
+2026-08-30T00:17:33Z assert phase=r1-empty
+2026-08-30T00:17:57Z assert phase=r1-empty
+2026-08-30T00:17:58Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-r1-empty.png
+2026-08-30T00:17:58Z restart fixture Host profile=r6-resources
+2026-08-30T00:18:01Z assert phase=profile-disconnected
+2026-08-30T00:18:02Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-r1-profile-disconnected.png
+2026-08-30T00:18:02Z assert phase=r1-matrix
+2026-08-30T00:18:03Z assert phase=r1-matrix
+2026-08-30T00:18:03Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-r1-matrix.png
+2026-08-30T00:18:03Z T2 read_only profile rejects terminal creation fail-closed
+2026-08-30T00:18:03Z restart fixture Host profile=r6-read-only
+2026-08-30T00:18:06Z assert phase=profile-disconnected
+2026-08-30T00:18:07Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-t2-profile-disconnected.png
+2026-08-30T00:18:09Z assert phase=t1-idle
+2026-08-30T00:18:42Z assert phase=t2-denied
+2026-08-30T00:18:42Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-reviewfix-pass-20260830/shot-t2-denied.png
+2026-08-30T00:18:42Z run done; all requested real-interface scenes passed

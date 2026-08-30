@@ -1,6 +1,6 @@
 # R6 Wave B — Inspector 生命周期、键盘与重连
 
-> 状态：🔵 实现与定向门禁已收口（2026-08-30）；审查后最终二进制的 U2 复跑被 macOS AX 注册 flake 阻断，待外部状态恢复后补录。R6 总阶段仍等待既定视觉退出口径。
+> 状态：🟢 已收口（2026-08-30）；审查后最终二进制的 U2 九场景已在 macOS AX 注册恢复后一次补录通过。R6 总阶段仍等待既定视觉退出口径的用户确认。
 
 ## 结果
 
@@ -16,15 +16,16 @@ R6 Wave B 已在冻结 GUI wire 内完成：Changes、Terminal、Resources 与 I
 
 ## 真实界面证据
 
-最近一次完整通过目录：[u2-rootfix-pass-20260830](u2-rootfix-pass-20260830/)：
+审查后最终二进制的完整通过目录：[u2-reviewfix-pass-20260830](u2-reviewfix-pass-20260830/)：
 
 - `scenario-matrix.json`：`c1/c2/c3/t1/i1/s1/d1/r1/t2` 九场景齐全。
 - 19 份 `assert-*.json` 全部 `pass: true`；trace 以 `run done; all requested real-interface scenes passed` 结束。
 - C3 由真实 CGEvent 横向滚动，AX 记录 offset `-720.0 / 2477.0`，证明不是只画 nowrap 文本。
 - T2 在 Host 重启后真实命中 `ReadOnly` policy 拒绝，证明新连接请求未重放旧 `Accepted`。
 - fixture secret scan：87 files、0 hits。
+- 00:14–00:18 UTC 的完整运行一次通过；trace 未出现 `AX recursion`、`desktop-restart` 或 AXWindows fallback。
 
-上述完整矩阵形成于最终只读审查之前。审查随后发现并修复两个矩阵未覆盖/诊断边角：create 回执前切 workspace 的 terminal 首段串屏，以及新 latest session 不含旧路径时空 `diff_get` 缺 session id。两项已由 app/desktop 定向回归覆盖。审查后尝试只补录一次完整矩阵，但 macOS AX 连续 3 次只返回递归 `AXApplication`，在任何业务场景前 fail-closed；证据见 [u2-reviewfix-ax-blocked-20260830](u2-reviewfix-ax-blocked-20260830/)。不把这次平台失败记为通过，也不原样重试。
+审查前完整矩阵形成于 [u2-rootfix-pass-20260830](u2-rootfix-pass-20260830/)。审查随后发现并修复两个矩阵未覆盖/诊断边角：create 回执前切 workspace 的 terminal 首段串屏，以及新 latest session 不含旧路径时空 `diff_get` 缺 session id。两项先由 app/desktop 定向回归覆盖；第一次审查后补录在任何业务场景前被 macOS AX 连续 3 次递归 `AXApplication` fail-closed，证据保留于 [u2-reviewfix-ax-blocked-20260830](u2-reviewfix-ax-blocked-20260830/)。外部状态恢复后先做一次临时 C1 预检，再执行且仅执行一次最终九场景补录，完整通过。
 
 ## 验证
 
@@ -34,7 +35,7 @@ R6 Wave B 已在冻结 GUI wire 内完成：Changes、Terminal、Resources 与 I
 - `python3 -m unittest scripts/test_ui_r6_wave_b_states.py`：6/6 通过。
 - `bash -n scripts/ui-r6-wave-b-states.sh`、`swiftc -typecheck scripts/ui-key-event.swift`、`git diff --check`：通过。
 - 只读模型审查：发现 P1 terminal 首段串屏与 P2 空 diff scope 诊断；均已最小修复并通过上述定向门禁，其余检查 clean。
-- 完整 U2 真进程矩阵：审查前 9 场景/19 断言通过；审查后唯一复跑在场景开始前被既有 macOS AX 注册 flake 阻断，仍待补录最终二进制证据。
+- 完整 U2 真进程矩阵：审查后最终二进制 9 场景/19 断言全部通过；87 文件 Secret 扫描 0 命中。
 
 ## 冻结边界与后续
 

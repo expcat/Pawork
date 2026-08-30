@@ -11,10 +11,10 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R6 — Inspector、Changes、Terminal 与 Activity（Wave B 🔵）** |
-| 下一任务 | 待 macOS AX 注册恢复后，只补录一次审查后最终二进制的 R6 Wave B U2 九场景；通过后再确认 State A/B 分区 SSIM `≥0.99` 是否统一留给 R8，并关闭 R6/恢复 R7（任务书 [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity)；证据 [r6-wave-b](docs/ui-review/r6-wave-b/notes.md)） |
+| 当前阶段 | **R6 — Inspector、Changes、Terminal 与 Activity（阶段退出闸门 🔵）** |
+| 下一任务 | 用户确认是否将 State A/B Inspector/Activity 分区 SSIM `≥0.99` 与 R3–R5 一致移交 R8；确认后关闭 R6，并恢复 R7 Wave A 的人工验收（任务书 [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity)；最终 U2 证据 [r6-wave-b](docs/ui-review/r6-wave-b/notes.md)） |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
-| 阻塞 | 实现与定向门禁无阻塞；审查后 U2 复跑在业务场景前连续 3 次命中 macOS AX 递归 `AXApplication`，按 fail-closed/熔断规则停止同方式重试。此前完整矩阵已通过，最终两项补修由 app 178 + Desktop 144 定向测试覆盖，但最终二进制 U2 仍待外部状态恢复后补录。R6 退出另需视觉门禁移交确认。 |
+| 阻塞 | 实现、定向门禁与审查后最终二进制 U2 均无阻塞：2026-08-30 AX 注册恢复后，九场景/19 断言一次补录全 PASS。R6 退出只待用户确认 State A/B Inspector/Activity 分区 SSIM `≥0.99` 是否移交 R8；当前记录值不追认为通过。 |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞 · ⏭️用户跳过（未完成）。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
 
@@ -31,14 +31,14 @@ UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代
 | R3 | TaskRail 与任务导航 | Timeline/Projects、scope、project/task、连接、新建、账户区、选择/恢复/滚动与键盘导航 | [R3 存档](docs/history.md#r3--taskrail-与任务导航2026-08-2728) | 🟢 |
 | R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | 🟢 |
 | R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R5 存档](docs/history.md#r5--composer-与运行控制2026-08-2829) | 🟢 |
-| R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | 🔵（Wave A 🟢；Wave B 实现/定向绿，U2 最终补录待 AX） |
+| R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | 🔵（Wave A/B/U2 🟢；待视觉移交确认） |
 | R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | ⚪（Wave A 资产已交付；R6 退出后恢复） |
 | R8 | 模拟操作全功能验收 | 全组件端到端 UI suite、三状态逐图差分、重连/后台 Run/恢复、性能与失败证据、用户视觉签字 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) | ⚪ |
 | R9 | UI 后一致性与代码债务 | 文档/Spec/断言一致、usage 幂等、依赖与注释漂移、路径内核、测试箱整理 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r9--一致性与代码债务收口) | ⚪ |
 | R10 | 关键回归与真实环境验证 | 三类关键回归、K-01、四通道/三客户端、OAuth refresh、历史人工冒烟与平台探针 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r10--关键回归与真实环境验证) | ⚪ |
 | R11 | 设计稿与实际 UI 终局比对 | 对照 v3 定稿图与已归档 current/diff，将不符合的显示效果归纳为下一阶段完善任务（只改文档） | [R9–R11](plan/R9-R11-post-ui-closeout.md#r11--设计稿与实际-ui-终局比对) | ⚪ |
 
-阶段默认严格串行：`R1 → R2 → … → R11`。2026-08-29 用户先授权 R6→R7 的单次跳过，后又明确恢复 R6 Wave B；Wave B 实现与定向门禁已于 2026-08-30 收口，当前指针仍停在 R6 等待最终二进制 U2 补录与阶段退出确认。R7 Wave A 已交付资产不作废、但暂停继续验收。R11 是文档任务：不查询、不修改代码。发布准备已移出本编号，见 §5。
+阶段默认严格串行：`R1 → R2 → … → R11`。2026-08-29 用户先授权 R6→R7 的单次跳过，后又明确恢复 R6 Wave B；Wave B 实现、定向门禁与审查后最终二进制 U2 已于 2026-08-30 收口，当前指针仍停在 R6 等待视觉门禁移交确认。R7 Wave A 已交付资产不作废、但暂停继续验收。R11 是文档任务：不查询、不修改代码。发布准备已移出本编号，见 §5。
 
 ---
 

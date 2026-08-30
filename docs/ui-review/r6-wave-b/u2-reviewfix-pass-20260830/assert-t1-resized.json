@@ -1,0 +1,22 @@
+{
+  "phase": "t1-resized",
+  "generated_at": "2026-08-30T00:16:27Z",
+  "checks": [
+    {
+      "name": "inspector-tab-terminal-selected",
+      "pass": true,
+      "detail": "inspector-tab-terminal selected=True"
+    },
+    {
+      "name": "terminal-output-present",
+      "pass": true,
+      "detail": "terminal-output present"
+    },
+    {
+      "name": "terminal-resize-receipt",
+      "pass": true,
+      "detail": "'workspace fx-alpha-app · . · 80×24 · running · resize confirmed'"
+    }
+  ],
+  "pass": true
+}

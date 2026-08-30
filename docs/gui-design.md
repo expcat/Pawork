@@ -261,7 +261,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [ ] Connected 态 1080×720 最小窗：连接态下最小窗口 Composer / 状态栏 / Inspector 触发器可用（A.1 1080c 仅覆盖断线态布局）
 - [ ] 虚拟化四例（长会话）：滚动流畅 / 回底重挂 / Entry「···」菜单锚点 / 长标题 truncate
 - [ ] hover / active 交互态抽查（基准 §8.1 取值表）
-- [x] DiffView 横滚：R6 Wave B 真窗口长行通过，AX 记录 horizontal offset `-720.0 / 2477.0`（[证据](ui-review/r6-wave-b/u2-rootfix-pass-20260830/)）
+- [x] DiffView 横滚：R6 Wave B 真窗口长行通过，AX 记录 horizontal offset `-720.0 / 2477.0`（[证据](ui-review/r6-wave-b/u2-reviewfix-pass-20260830/)）
 - [ ] 千级事件会话滚动无卡顿、启动时间不回退（手测 + 帧率观察）
 
 ### A.3 漂移与定夺项
