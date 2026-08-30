@@ -70,7 +70,7 @@ impl AppView {
                     .tab_stop(true)
                     .track_focus(&self.inspector_tab_focus[tab as usize])
                     .focus(|style| style.border_1().border_color(dark().accent.primary))
-                    .text_size(px(font::BODY))
+                    .text_size(font::BODY)
                     .text_color(if selected {
                         dark().text.primary
                     } else {
@@ -177,7 +177,7 @@ impl AppView {
                     .justify_between()
                     .px_2()
                     .py_1()
-                    .text_size(px(font::XS))
+                    .text_size(font::XS)
                     .text_color(dark().text.secondary)
                     .child(format!("workspace {owner} · cwd {cwd} · {state_label}"))
                     .child(
@@ -212,7 +212,7 @@ impl AppView {
                             .overflow_y_scroll()
                             .px_2()
                             .py_1()
-                            .text_size(px(font::SM))
+                            .text_size(font::SM)
                             .text_color(dark().text.emphasis)
                             .on_scroll_wheel(cx.listener(|view, _event, _window, cx| {
                                 view.terminal_scroll.on_scroll_wheel();

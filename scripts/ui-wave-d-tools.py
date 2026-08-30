@@ -56,6 +56,7 @@ PHASE_GEOMETRY = {
     # 语义由 skeleton/cmd_assert 的 R7C 增量合同覆盖。
     "r7c-wide": {"root": (1440.0, 1024.0), "rail": (288.0, 4.32), "inspector": "required"},
     "r7c-narrow": {"root": (1080.0, 720.0), "rail": (240.0, 3.6), "inspector": "absent"},
+    "r7c-narrow-zoom": {"root": (1080.0, 720.0), "rail": (320.0, 4.8), "inspector": "absent"},
     "r7c-narrow-reconnected": {"root": (1080.0, 720.0), "rail": (240.0, 3.6), "inspector": "absent"},
     "r7c-narrow-popover": {"root": (1080.0, 720.0), "rail": (240.0, 3.6), "inspector": "absent"},
     "r7c-disconnected": {"root": (1080.0, 720.0), "rail": (240.0, 3.6), "inspector": "absent"},
@@ -66,12 +67,12 @@ PHASE_GEOMETRY = {
 # dropdown.rs ANCHOR_GAP_Y）。几何容差沿用现有相位 ±0.5px 惯例。
 R6_PHASES = ("r6-state-a", "r6-state-b-open", "r6-state-b-resumed")
 R7C_PHASES = (
-    "r7c-wide", "r7c-narrow", "r7c-narrow-reconnected",
+    "r7c-wide", "r7c-narrow", "r7c-narrow-zoom", "r7c-narrow-reconnected",
     "r7c-narrow-popover", "r7c-disconnected",
 )
 R7C_NARROW_PHASES = (
-    "r7c-narrow", "r7c-narrow-reconnected", "r7c-narrow-popover",
-    "r7c-disconnected",
+    "r7c-narrow", "r7c-narrow-zoom", "r7c-narrow-reconnected",
+    "r7c-narrow-popover", "r7c-disconnected",
 )
 R7C_SESSION_ROW = "session-fx-ses-beta-long"
 R7C_SESSION_ROW_ID = "fx-ses-beta-long"
@@ -341,19 +342,30 @@ def geometry_checks(frames, phase="initial"):
     composer = frames.get("composer")
     if composer and not composer.get("error"):
         metrics["composer"] = composer
-        composer_contract_ok = 86.0 <= composer["h"] <= 96.0
+        zoom_phase = phase == "r7c-narrow-zoom"
+        composer_contract_ok = (
+            102.0 <= composer["h"] <= 106.0
+            if zoom_phase
+            else 86.0 <= composer["h"] <= 96.0
+        )
         known_r1_height = near(composer["h"], 156.0, 1.0)
+        if zoom_phase:
+            composer_detail = " (150% text zoom contract [102,106])"
+        elif known_r1_height:
+            composer_detail = (
+                " (contract 88-94, component tolerance [86,96]; "
+                "known 156+/-1 F-09 visual drift, recorded but nonblocking for the R1 baseline)"
+            )
+        else:
+            composer_detail = (
+                " (contract 88-94, component tolerance [86,96]; "
+                "not the frozen R1 baseline; blocking drift)"
+            )
         add(
             "composer-height",
             composer_contract_ok,
-            "composer h=" + str(composer["h"])
-            + " (contract 88-94, component tolerance [86,96]; "
-            + (
-                "known 156+/-1 F-09 visual drift, recorded but nonblocking for the R1 baseline)"
-                if known_r1_height
-                else "not the frozen R1 baseline; blocking drift)"
-            ),
-            blocking=not known_r1_height,
+            "composer h=" + str(composer["h"]) + composer_detail,
+            blocking=zoom_phase or not known_r1_height,
         )
         if status and not status.get("error"):
             composer_bottom = composer["y"] + composer["h"] - root["y"]
@@ -683,7 +695,10 @@ def skeleton_checks(tree, phase="initial"):
             "detail": "activity-popover "
                 + ("present" if "activity-popover" in identifiers else "missing"),
         })
-    if phase in ("r7c-wide", "r7c-narrow", "r7c-narrow-reconnected", "r7c-disconnected"):
+    if phase in (
+        "r7c-wide", "r7c-narrow", "r7c-narrow-zoom",
+        "r7c-narrow-reconnected", "r7c-disconnected",
+    ):
         checks.append({
             "name": "activity-popover-absent",
             "pass": "activity-popover" not in identifiers,
@@ -937,7 +952,10 @@ def cmd_assert(args):
                 "detail": "beta-long visible timeline rows="
                 + str(tree["timeline_entries_beta_long"]),
             })
-            if args.phase in ("r7c-wide", "r7c-narrow", "r7c-narrow-reconnected"):
+            if args.phase in (
+                "r7c-wide", "r7c-narrow", "r7c-narrow-zoom",
+                "r7c-narrow-reconnected",
+            ):
                 checks.append({
                     "name": "focus-composer-retained",
                     "pass": tree["focused"] == ["composer-input"],
@@ -2052,6 +2070,7 @@ def main():
             "r6-state-b-resumed",
             "r7c-wide",
             "r7c-narrow",
+            "r7c-narrow-zoom",
             "r7c-narrow-reconnected",
             "r7c-narrow-popover",
             "r7c-disconnected",

@@ -719,8 +719,8 @@ R7 已收口；Wave A/B/C 的证据分别见 [r7-wave-a](ui-review/r7-wave-a/not
 
 - **Wave A · 组件状态与 AX 基线**：45 组件状态矩阵、三路径焦点、原生 AX tree/action 与 State A hover/active/focus 九图收口；用户批准以原生 AX + 纯键盘 + U2 作为该波 VoiceOver 替代门禁。VoiceOver 未执行，屏幕朗读措辞/顺序不记为通过。
 - **Wave B · 全局焦点与菜单等价路径**：task click/Enter/AXPress/cycling、审批、Fork、Review changes 与单可见 task 边角统一回既有 handler/gate；导航 26 相位、审批/状态 14 相位及审查边角 3 相位真窗口 U2 全绿。Desktop 144/144，Python 17/17 + 22/22。
-- **Wave C · 响应式、耐久与字号**：1080×720 Connected/ActivityPopover/Disconnected、CJK/emoji/长内容、1024 行虚拟化、三轮 resize、焦点、重连、连接长文案 paint `lit=0` 与 `baseline_only` 性能入口完成。字体 token 改为 rem，新增 100%/125%/150% 应用内缩放；150% 最小窗 rail=320、Workspace=760，Task 标题/日期 8px 间隔修复后受影响区域真窗口复验通过。macOS Increase Contrast palette 与系统显示选项通知刷新已实现；当前 UI 无动画，Reduce Motion 无渲染分支。
+- **Wave C · 响应式、耐久与字号**：1080×720 Connected/ActivityPopover/Disconnected、CJK/emoji/长内容、1024 行虚拟化、三轮 resize、焦点、重连、连接长文案 paint `lit=0` 与 `baseline_only` 性能入口完成。字体 token 改为 rem，新增 100%/125%/150% 应用内缩放；150% 最小窗 rail=320、Workspace=760，Task 标题/日期 8px 间隔与消息行高 rem 缩放先后修复并复验。macOS Increase Contrast palette 与系统显示选项通知刷新已实现；当前 UI 无动画，Reduce Motion 无渲染分支。
 - **系统设置边界**：用户先授权临时切换，随后明确要求跳过一切需修改系统设置的测试并恢复原值。实际 Reduce Motion 未改变；短暂开启 Increase Contrast 时系统联动 Reduce Transparency，收到新指令后两者立即恢复。只读复核与最终 U2 均记录四项 Accessibility Display 偏好为 `false`。主动系统偏好 U3 记为 ⏭️，不计为通过。
 - **范围**：未改 GUI wire、Host、Policy、正式 fixture 业务数据或 1440 reference；无新增依赖。R6 及更早移交的分区 SSIM `≥0.99` 仍由 R8 在 fixture 演示数据重塑后统一重采，不把 R7 结构/交互通过冒充视觉终局。
 
-收口验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 146/146；Wave C Python 4/4；完整字号 U2 17 相位及受影响区域复验 13 相位均 `structural_pass=true`；最终 150% / 1080×720 截图已人工检查。VoiceOver、主动系统偏好 U3、性能阈值与 Workspace Full Gate 均未运行/冻结。下一任务进入 R8：先重塑 `fixtures/ui/seed.json` 演示数据形状并同步既有 golden/断言；State C reference 底色归一仍须重采前取得用户批准。
+收口验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 146/146；Wave C Python 4/4；完整字号 U2 17 相位、间隔修复 13 相位与提交前行高修复 13 相位均 `structural_pass=true`；最终 150% / 1080×720 截图经 OCR 与像素尺寸检查可读无行叠。VoiceOver、主动系统偏好 U3、性能阈值与 Workspace Full Gate 均未运行/冻结。下一任务进入 R8：先重塑 `fixtures/ui/seed.json` 演示数据形状并同步既有 golden/断言；State C reference 底色归一仍须重采前取得用户批准。

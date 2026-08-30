@@ -58,7 +58,8 @@ fn status_dot(filled: bool, color: Rgba) -> gpui::Div {
 }
 
 impl AppView {
-    /// rail 宽由 shell_layout::resolve 按窗口带宽给出（288 / 窄窗 240）。
+    /// rail 宽由 shell_layout::resolve 按窗口带宽与文本缩放给出
+    ///（默认 288 / 窄窗 240 / 150% 文本 320）。
     pub(super) fn sidebar_element(&mut self, rail_width: Pixels, cx: &mut Context<Self>) -> Panel {
         let can_create = self.can_create_task();
         let grouping_glyph = match self.grouping {
@@ -224,7 +225,7 @@ impl AppView {
                     .h(px(metrics::RAIL_TITLE_ROW_HEIGHT))
                     .child(
                         div()
-                            .text_size(px(font::TITLE))
+                            .text_size(font::TITLE)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(dark().text.primary)
                             .child("Pawork"),
@@ -261,7 +262,7 @@ impl AppView {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_size(px(font::BODY_SM))
+                                    .text_size(font::BODY_SM)
                                     .text_color(dark().text.secondary)
                                     .child(connection_label),
                             ),
@@ -455,7 +456,7 @@ impl AppView {
                         .pl_2()
                         .child(
                             div()
-                                .text_size(px(font::BODY))
+                                .text_size(font::BODY)
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(dark().text.secondary)
                                 .child(group.bucket.label().to_string()),
@@ -574,7 +575,7 @@ impl AppView {
                             .items_center()
                             .gap_1()
                             .min_w_0()
-                            .text_size(px(font::BODY))
+                            .text_size(font::BODY)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(dark().text.emphasis)
                             .child(if expanded { "▾" } else { "▸" })
@@ -710,7 +711,7 @@ impl AppView {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_size(px(font::BODY))
+                                    .text_size(font::BODY)
                                     .font_weight(if unread {
                                         FontWeight::SEMIBOLD
                                     } else {
@@ -721,9 +722,11 @@ impl AppView {
                             ),
                     )
                     .child(
-                        Label::new(relative_activity(task.updated_at_ms, now_ms))
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
+                        div().ml_2().flex_none().child(
+                            Label::new(relative_activity(task.updated_at_ms, now_ms))
+                                .size(font::BODY_SM)
+                                .color(dark().text.secondary),
+                        ),
                     )
                     .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
                         // 行级键盘激活后的同键 keyup 合成 click 在此吞除。

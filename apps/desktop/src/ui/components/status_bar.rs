@@ -46,7 +46,7 @@ impl RenderOnce for StatusBar {
             .border_t_1()
             .border_color(dark().border.subtle)
             .bg(dark().bg.panel)
-            .text_size(px(font::XS))
+            .text_size(font::XS)
             .text_color(dark().text.secondary)
             .map(|bar| match self.centered {
                 Some(centered) => bar.child(

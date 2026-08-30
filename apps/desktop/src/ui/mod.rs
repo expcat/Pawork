@@ -10,6 +10,7 @@ mod changes;
 mod components;
 mod input_area;
 mod inspector;
+mod platform_preferences;
 mod resources;
 mod shell_layout;
 mod task_rail;
@@ -63,6 +64,9 @@ actions!(
         TaskCycleUp,
         TaskCycleDown,
         NextNeedsAttention,
+        IncreaseTextSize,
+        DecreaseTextSize,
+        ResetTextSize,
     ]
 );
 
@@ -78,6 +82,10 @@ pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
     ("cmd-alt-up", "TaskCycleUp"),
     ("cmd-alt-down", "TaskCycleDown"),
     ("cmd-alt-n", "NextNeedsAttention"),
+    ("cmd-=", "IncreaseTextSize"),
+    ("cmd-+", "IncreaseTextSize"),
+    ("cmd--", "DecreaseTextSize"),
+    ("cmd-0", "ResetTextSize"),
 ];
 
 /// Timeline 空态引导（R2 Wave B）：无 active session 且条目数为 0 时居中
@@ -130,7 +138,7 @@ impl Render for TooltipText {
             .bg(dark().surface.raised)
             .border_1()
             .border_color(dark().border.strong)
-            .text_size(px(font::XS))
+            .text_size(font::XS)
             .text_color(dark().text.primary)
             .child(self.text.clone())
     }
@@ -206,6 +214,10 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-alt-up", TaskCycleUp, Some("AppView")),
         KeyBinding::new("cmd-alt-down", TaskCycleDown, Some("AppView")),
         KeyBinding::new("cmd-alt-n", NextNeedsAttention, Some("AppView")),
+        KeyBinding::new("cmd-=", IncreaseTextSize, Some("AppView")),
+        KeyBinding::new("cmd-+", IncreaseTextSize, Some("AppView")),
+        KeyBinding::new("cmd--", DecreaseTextSize, Some("AppView")),
+        KeyBinding::new("cmd-0", ResetTextSize, Some("AppView")),
     ]);
 }
 
@@ -376,6 +388,7 @@ pub struct AppView {
     /// 连接迟到的 terminal 回执污染新连接上的 pending 状态。
     event_task: Option<gpui::Task<()>>,
     status_hint: Option<String>,
+    text_scale: font::TextScale,
     grouping: TaskRailGrouping,
     scope_workspace_id: Option<String>,
     collapsed_projects: BTreeSet<String>,
@@ -518,6 +531,7 @@ impl AppView {
             terminal_pending_create_workspace: None,
             event_task: None,
             status_hint: None,
+            text_scale: font::TextScale::default(),
             grouping: TaskRailGrouping::Timeline,
             scope_workspace_id: None,
             collapsed_projects: BTreeSet::new(),
@@ -756,7 +770,7 @@ impl AppView {
                             div()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(font::HEADER_TITLE))
+                                .text_size(font::HEADER_TITLE)
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(dark().text.primary)
                                 .child(title),
@@ -769,7 +783,7 @@ impl AppView {
                                 .flex_row()
                                 .items_center()
                                 .gap_1()
-                                .text_size(px(font::BODY_SM))
+                                .text_size(font::BODY_SM)
                                 .text_color(dark().text.secondary)
                                 .child("⑂")
                                 .child(branch),
@@ -783,7 +797,7 @@ impl AppView {
                                 .flex_row()
                                 .items_center()
                                 .gap_6()
-                                .text_size(px(font::BODY_SM))
+                                .text_size(font::BODY_SM)
                                 .text_color(dark().text.secondary)
                                 .child(
                                     div()
@@ -864,11 +878,7 @@ impl AppView {
             .clone()
     }
 
-    pub(super) fn open_entry_menu_from_keyboard(
-        &mut self,
-        event_id: &str,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn open_entry_menu_from_keyboard(&mut self, event_id: &str, cx: &mut Context<Self>) {
         let button_id = format!("entry-menu-{event_id}");
         self.note_button_key_activate(&button_id);
         self.toggle_menu(MenuKind::Entry(event_id.to_string()), None, cx);
@@ -881,13 +891,10 @@ impl AppView {
     ) {
         let button_id = format!("run-review-{event_id}");
         self.note_button_key_activate(&button_id);
-        if self
-            .projection
-            .timeline
-            .iter()
-            .any(|entry| entry.event_id == event_id
-                && entry.fork_boundary == Some(crate::projection::ForkBoundary::Completed))
-            && self.changes_available_for_active()
+        if self.projection.timeline.iter().any(|entry| {
+            entry.event_id == event_id
+                && entry.fork_boundary == Some(crate::projection::ForkBoundary::Completed)
+        }) && self.changes_available_for_active()
         {
             self.on_review_changes(cx);
         }
@@ -1067,8 +1074,7 @@ impl AppView {
                 workspace_id,
                 terminal_session_id,
             } => {
-                if self.terminal_pending_create_workspace.as_deref()
-                    == Some(workspace_id.as_str())
+                if self.terminal_pending_create_workspace.as_deref() == Some(workspace_id.as_str())
                 {
                     self.terminal_pending_create_workspace = None;
                 }
@@ -1096,8 +1102,7 @@ impl AppView {
                 workspace_id,
                 reason,
             } => {
-                if self.terminal_pending_create_workspace.as_deref()
-                    == Some(workspace_id.as_str())
+                if self.terminal_pending_create_workspace.as_deref() == Some(workspace_id.as_str())
                 {
                     self.terminal_pending_create_workspace = None;
                 }
@@ -1914,12 +1919,7 @@ impl AppView {
 
     /// cmd-alt-up / cmd-alt-down：按当前 rail 可见顺序循环切换 active task
     ///（空列表 no-op 安全；切换后与 click / AX 路径同样聚焦 Composer）。
-    fn cycle_active_task(
-        &mut self,
-        forward: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn cycle_active_task(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let sessions = self.visible_rail_sessions();
         let active_ix = self
             .projection
@@ -2168,8 +2168,7 @@ impl AppView {
                     .update(cx, |input, cx| input.reset_text(draft, cx));
             } else if let Some(workspace) = workspace_id.as_ref() {
                 // 初次建立 workspace 归属时保留用户已输入但尚未归属的文本。
-                self.terminal_drafts
-                    .insert(workspace.clone(), visible_text);
+                self.terminal_drafts.insert(workspace.clone(), visible_text);
             }
             self.terminal_input_workspace = workspace_id.clone();
         }
@@ -2211,6 +2210,45 @@ impl AppView {
 
     fn on_cancel_run(&mut self, _: &CancelRun, window: &mut Window, cx: &mut Context<Self>) {
         self.on_cancel_clicked(window, cx);
+    }
+
+    fn set_text_scale(
+        &mut self,
+        scale: font::TextScale,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.text_scale = scale;
+        window.set_rem_size(px(scale.rem_pixels()));
+        self.status_hint = Some(format!("Text size · {}%", scale.percent()));
+        cx.notify();
+    }
+
+    fn on_increase_text_size(
+        &mut self,
+        _: &IncreaseTextSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_text_scale(self.text_scale.increase(), window, cx);
+    }
+
+    fn on_decrease_text_size(
+        &mut self,
+        _: &DecreaseTextSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_text_scale(self.text_scale.decrease(), window, cx);
+    }
+
+    fn on_reset_text_size(
+        &mut self,
+        _: &ResetTextSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_text_scale(font::TextScale::default(), window, cx);
     }
 
     fn on_new_task_action(&mut self, _: &NewTask, window: &mut Window, cx: &mut Context<Self>) {
@@ -2304,12 +2342,7 @@ impl AppView {
         cx.notify();
     }
 
-    fn on_approve(
-        &mut self,
-        decision: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_approve(&mut self, decision: &str, window: &mut Window, cx: &mut Context<Self>) {
         // mouse / Button key / global shortcut / AX 都汇入此处，统一 fail-closed。
         if !self.can_approve() {
             return;
@@ -2673,6 +2706,10 @@ pub(crate) fn terminal_start_enabled(
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // AppKit posts a workspace notification when display accessibility
+        // preferences change. Refresh the palette before constructing this
+        // frame and keep the current window available to the callback.
+        platform_preferences::install(window, cx);
         // 一次性安装 AppKit Tab 本地监听器：NSWindow 会吞掉裸 Tab
         //（key-view 循环为空），监听器在派发前截获并驱动 GPUI 焦点链。
         // 监听器进程级只装一次；每次 render 刷新 thread_local 窗口句柄，
@@ -2708,8 +2745,13 @@ impl Render for AppView {
         let now_ms = now_unix_ms();
         let run_status = self.projection.run_status_label(now_ms);
         // R2 Wave A 响应式合同：窄窗（≤1279）rail 240 + Inspector 折叠为
-        // ActivityPopover 抽屉；偏好值保留，加宽后自动恢复（shell_layout）。
-        let shell = shell_layout::resolve(window.viewport_size().width, self.inspector_open);
+        // ActivityPopover 抽屉；150% 文本缩放时 rail 扩到 320，1080 宽仍
+        // 留 760px Workspace。偏好值保留，加宽后自动恢复（shell_layout）。
+        let shell = shell_layout::resolve(
+            window.viewport_size().width,
+            self.inspector_open,
+            self.text_scale == font::TextScale::Percent150,
+        );
         let inspector_open = shell.inspector_open;
         let (activity_trigger_visible, activity_popover_open) = activity_header_visibility(
             inspector_open,
@@ -2772,6 +2814,9 @@ impl Render for AppView {
             .on_action(cx.listener(Self::on_task_cycle_up))
             .on_action(cx.listener(Self::on_task_cycle_down))
             .on_action(cx.listener(Self::on_next_needs_attention_action))
+            .on_action(cx.listener(Self::on_increase_text_size))
+            .on_action(cx.listener(Self::on_decrease_text_size))
+            .on_action(cx.listener(Self::on_reset_text_size))
             .child(
                 div()
                     .id("shell-rail")
@@ -2828,6 +2873,19 @@ mod tests {
         assert!(APP_VIEW_KEYBINDINGS
             .iter()
             .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce"));
+        for (key, action) in [
+            ("cmd-=", "IncreaseTextSize"),
+            ("cmd-+", "IncreaseTextSize"),
+            ("cmd--", "DecreaseTextSize"),
+            ("cmd-0", "ResetTextSize"),
+        ] {
+            assert!(
+                APP_VIEW_KEYBINDINGS
+                    .iter()
+                    .any(|(bound, bound_action)| *bound == key && *bound_action == action),
+                "missing text scale binding {key} -> {action}"
+            );
+        }
     }
 
     /// R6 Wave A（F-12）：折叠态 Activity 触发器随 Workspace Header；浮层

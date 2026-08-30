@@ -305,6 +305,17 @@ wait_composer_value() { # value output
   done
 }
 
+wait_text_scale() { # value output
+  local value="$1" output="$2" deadline=$(( SECONDS + PHASE_TIMEOUT_SECS ))
+  while :; do
+    "$AXDUMP" --pid "$DESKTOP_PID" --max-depth 16 --out "$output" >/dev/null 2>&1 \
+      || die "AX dump failed waiting text scale"
+    grep 'identifier="composer-status-hint"' "$output" | grep -Fq "value=\"$value\"" && return 0
+    (( SECONDS < deadline )) || die "text scale did not settle: $value"
+    sleep 0.1
+  done
+}
+
 start="$(now_ms)"
 "$FIXTURE" desktop --root "$ROOT"
 DESKTOP_PID="$(cat "$ROOT/desktop.pid")"
@@ -341,6 +352,18 @@ ax_action focus composer-input "" "$OUT/action-focus-composer.txt"
 
 resize_window 1080x720 narrow-initial r7c-narrow resize_narrow
 shot_phase r7c-narrow-narrow-initial "$OUT/connected-1080x720.png" "connected-1080x720"
+trace "exercise app text zoom at 1080x720"
+"$WORK/ui-key-event" --pid "$DESKTOP_PID" --key "=" --modifiers cmd \
+  >>"$OUT/logs/input-events.log" 2>&1 || die "text zoom 125% injection failed"
+"$WORK/ui-key-event" --pid "$DESKTOP_PID" --key "=" --modifiers cmd \
+  >>"$OUT/logs/input-events.log" 2>&1 || die "text zoom 150% injection failed"
+wait_text_scale "Text size · 150%" "$OUT/ax-tree-text-scale-150.txt"
+require_phase r7c-narrow-zoom zoom-150
+shot_phase r7c-narrow-zoom-zoom-150 "$OUT/text-zoom-150-1080x720.png" "text-zoom-150-1080x720"
+"$WORK/ui-key-event" --pid "$DESKTOP_PID" --key 0 --modifiers cmd \
+  >>"$OUT/logs/input-events.log" 2>&1 || die "text zoom reset injection failed"
+wait_text_scale "Text size · 100%" "$OUT/ax-tree-text-scale-reset.txt"
+require_phase r7c-narrow zoom-reset
 ax_action press inspector-toggle "" "$OUT/action-open-activity-popover.txt"
 require_phase r7c-narrow-popover popover
 shot_phase r7c-narrow-popover-popover "$OUT/activity-popover-1080x720.png" "popover-1080x720"

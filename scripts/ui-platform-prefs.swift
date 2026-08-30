@@ -1,8 +1,8 @@
 // ui-platform-prefs.swift — R7 Wave C 平台显示偏好只读快照。
 //
 // 只读取当前 macOS 会话公开的 Accessibility display preferences；不改
-// 系统设置，也不声称应用已响应这些偏好。输出供真实窗口证据与已知限制
-// 记录使用。
+// 系统设置。快照本身不声称应用已响应偏好，需与真实窗口 palette/结构门禁
+// 一起使用。
 
 import AppKit
 import Foundation

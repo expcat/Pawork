@@ -1,0 +1,32 @@
+{
+  "phase": "virtualized-thousand",
+  "generated_at": "2026-08-30T15:10:39Z",
+  "checks": [
+    {
+      "name": "selected-session-fx-ses-beta-long",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-beta-long (expect session-fx-ses-beta-long)"
+    },
+    {
+      "name": "virtualization-thousand-logical-rows",
+      "pass": true,
+      "detail": "entry_count=1024 source=timeline_stable barrier (expect >=1000)"
+    },
+    {
+      "name": "virtualization-thousand-barrier-session",
+      "pass": true,
+      "detail": "barrier session_id=fx-ses-beta-long (expect fx-ses-beta-long)"
+    },
+    {
+      "name": "virtualization-thousand-window-slice",
+      "pass": true,
+      "detail": "AX timeline-entry-*/run-summary-* nodes=10 < logical rows=1024"
+    },
+    {
+      "name": "virtualization-cjk-emoji-long-row",
+      "pass": true,
+      "detail": "visible sentinel rows=timeline-entry-evt-r7c-fx-ses-beta-long-1104"
+    }
+  ],
+  "pass": true
+}

@@ -2,7 +2,7 @@
 //! name / transport / state / tools 数 / last_error 全部来自 Host 响应；
 //! 「已加载规则」分区无 Host 出口，本波不画（design/README.md §8.5）。
 
-use gpui::{div, prelude::*, px, Context, ScrollHandle};
+use gpui::{div, prelude::*, Context, ScrollHandle};
 
 use crate::controller::McpServerEntry;
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
@@ -159,7 +159,7 @@ impl AppView {
                                             .flex_1()
                                             .min_w_0()
                                             .truncate()
-                                            .text_size(px(font::SM))
+                                            .text_size(font::SM)
                                             .text_color(dark().text.primary)
                                             .child(server.name.clone()),
                                     )
@@ -175,7 +175,7 @@ impl AppView {
                                 div()
                                     .px_2()
                                     .pb_2()
-                                    .text_size(px(font::XS))
+                                    .text_size(font::XS)
                                     .text_color(dark().text.tertiary)
                                     .child(meta),
                             );
@@ -197,7 +197,7 @@ impl AppView {
                         .py_1()
                         .border_b_1()
                         .border_color(dark().semantic.warning_text)
-                        .text_size(px(font::XS))
+                        .text_size(font::XS)
                         .text_color(dark().semantic.warning_text)
                         .child(format!("Stale data · {reason}")),
                 )
@@ -217,7 +217,7 @@ fn resources_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> 
         .items_start()
         .justify_start()
         .p_2()
-        .text_size(px(font::SM))
+        .text_size(font::SM)
         .text_color(color)
         .child(text.into())
 }

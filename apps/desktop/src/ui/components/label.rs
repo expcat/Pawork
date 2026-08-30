@@ -3,7 +3,9 @@
 //! 统一 mod.rs 中散置的单行文本 span：色阶走 text.* token，视觉与迁移前一致。
 //! Badge 是状态语义别名（连接 / 运行状态），默认 XS + text.secondary。
 
-use gpui::{div, prelude::*, px, App, IntoElement, RenderOnce, Rgba, SharedString, Styled, Window};
+use gpui::{
+    div, prelude::*, App, IntoElement, Rems, RenderOnce, Rgba, SharedString, Styled, Window,
+};
 
 use crate::ui::theme::{dark, font};
 
@@ -11,7 +13,7 @@ use crate::ui::theme::{dark, font};
 #[derive(IntoElement)]
 pub struct Label {
     text: SharedString,
-    size: Option<f32>,
+    size: Option<Rems>,
     color: Option<Rgba>,
 }
 
@@ -24,7 +26,7 @@ impl Label {
         }
     }
 
-    pub fn size(mut self, size: f32) -> Self {
+    pub fn size(mut self, size: Rems) -> Self {
         self.size = Some(size);
         self
     }
@@ -39,7 +41,7 @@ impl RenderOnce for Label {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let mut label = div();
         if let Some(size) = self.size {
-            label = label.text_size(px(size));
+            label = label.text_size(size);
         }
         if let Some(color) = self.color {
             label = label.text_color(color);

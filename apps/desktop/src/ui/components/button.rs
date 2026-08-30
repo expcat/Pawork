@@ -6,7 +6,7 @@
 //! 面板统一走 Dropdown（轨 2）。
 
 use gpui::{
-    div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, Pixels,
+    div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, Pixels, Rems,
     RenderOnce, Rgba, SharedString, Styled, Window,
 };
 
@@ -52,7 +52,7 @@ pub struct Button {
     label: Option<SharedString>,
     tooltip: Option<SharedString>,
     focus: Option<FocusHandle>,
-    text_size: Option<f32>,
+    text_size: Option<Rems>,
     text_color: Option<Rgba>,
     disabled_text_color: Option<Rgba>,
     padding: ButtonPadding,
@@ -122,8 +122,8 @@ impl Button {
         self
     }
 
-    /// 文字字号（theme::font 数值，渲染时转 px）。
-    pub fn text_size(mut self, size: f32) -> Self {
+    /// 文字字号（theme::font rem token，随窗口字号档位缩放）。
+    pub fn text_size(mut self, size: Rems) -> Self {
         self.text_size = Some(size);
         self
     }
@@ -316,7 +316,7 @@ impl RenderOnce for Button {
             button = button.text_color(color);
         }
         if let Some(size) = self.text_size {
-            button = button.text_size(px(size));
+            button = button.text_size(size);
         }
         if !matches!(
             self.variant,

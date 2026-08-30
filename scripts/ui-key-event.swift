@@ -33,7 +33,7 @@
 //   ui-key-event --pid <pid> --restore-input-source <id>
 //
 // 按键名（大小写不敏感）：tab return enter escape esc space delete
-//   up down left right home end pageup pagedown help a-z 0-9。
+//   up down left right home end pageup pagedown help a-z 0-9 = -。
 // 修饰键别名：cmd/command/super、alt/option/opt、shift、ctrl/control。
 //
 // 退出码：0 成功；2 参数错误；3 事件构造/投递失败；4 PID 不在运行；
@@ -84,14 +84,14 @@ let keyCodes: [String: CGKeyCode] = [
     "help": 114,
 ]
 
-// 字母 / 数字虚拟键码（kVK_ANSI_*；测试所需的常用键子集）。
+// 字母 / 数字 / 缩放快捷键虚拟键码（kVK_ANSI_*；测试所需的常用键子集）。
 let letterCodes: [String: CGKeyCode] = [
     "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8,
     "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
     "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25,
     "7": 26, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37,
     "j": 38, "k": 40, "n": 45,
-    "m": 46, "0": 29, "8": 28,
+    "m": 46, "0": 29, "8": 28, "=": 24, "-": 27,
 ]
 
 let modifierFlags: [String: CGEventFlags] = [

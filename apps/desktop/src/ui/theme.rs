@@ -18,10 +18,12 @@
 //! 白字 × accent.hover ≈ 4.55、白字 × success_hover ≈ 4.61；placeholder ×
 //! surface.hover ≈ 4.04 须保持 <4.5，钉住其不得用于 hover surface 的约束。
 //!
-//! 本波不做运行时切换；Global 实现仍是未来主题挂载点：计划在 main.rs 的
-//! Application::run 闭包中 cx.set_global(theme::dark())（写入集外，本波不动）。
+//! 运行时仍只有一套 dark 主题；macOS Increase Contrast 只选择同一主题的
+//! 可访问 palette 变体。Global 实现保留为未来主题挂载点，当前未 set_global。
 
 use gpui::{rgb, rgba, Global, Rgba};
+
+use super::platform_preferences;
 
 /// 六组颜色 token 宿主。
 #[derive(Debug, Clone, Copy)]
@@ -40,7 +42,7 @@ pub struct Theme {
     pub semantic: SemanticColors,
 }
 
-/// 未来主题挂载点（见模块文档）；波 A 仅静态 dark() 访问。
+/// 未来主题挂载点（见模块文档）；当前仍由 dark() 按帧读取 palette。
 impl Global for Theme {}
 
 #[derive(Debug, Clone, Copy)]
@@ -125,9 +127,14 @@ pub struct SemanticColors {
     pub danger_hover: Rgba,
 }
 
-/// 静态深色主题访问器（R2 Wave A 校准值，见模块文档与 design/README.md §2.1）。
+/// 深色主题访问器。默认态保持 R2 冻结 token；macOS Increase Contrast 开启时
+/// 只增强辅助文字、交互 surface 与边界，不改变布局或语义色。
 pub fn dark() -> Theme {
-    Theme {
+    dark_for(platform_preferences::increase_contrast())
+}
+
+fn dark_for(increase_contrast: bool) -> Theme {
+    let mut theme = Theme {
         bg: BackgroundColors {
             base: rgb(0x07121a),
             panel: rgb(0x061219),
@@ -169,26 +176,90 @@ pub fn dark() -> Theme {
             danger_bg: rgb(0x8a3b32),
             danger_hover: rgb(0x9c463c),
         },
+    };
+    if increase_contrast {
+        theme.surface.hover = rgb(0x24323b);
+        theme.border.subtle = rgb(0x66717a);
+        theme.border.strong = rgb(0x8d979e);
+        theme.text.secondary = rgb(0xd0d0d0);
+        theme.text.tertiary = rgb(0xb8b8b8);
+        theme.text.disabled = rgb(0xb8b8b8);
+        theme.text.ghost = rgb(0x9ca3a8);
+        theme.text.detail = rgb(0xd0d0d0);
+        theme.text.placeholder = rgb(0xb8b8b8);
+        theme.accent.selection = rgba(0x5b9dffaa);
+        theme.semantic.warning_border = theme.semantic.warning_text;
     }
+    theme
 }
 
-/// 字阶（px 数值；Pixels 无法在本 crate 外 const 构造，消费点经 gpui::px 转换）。
+/// 字阶以 16px 根字号的 rem 表达；100% 时与冻结 px 值逐项相等，窗口调整
+/// `rem_size` 后统一变为 125% / 150%，几何 token 仍保持 px 不变。
 pub mod font {
+    use gpui::Rems;
+
+    pub const BASE_REM_PIXELS: f32 = 16.0;
+
+    pub const fn from_pixels(pixels: f32) -> Rems {
+        Rems(pixels / BASE_REM_PIXELS)
+    }
+
+    #[cfg(test)]
+    pub const fn default_pixels(size: Rems) -> f32 {
+        size.0 * BASE_REM_PIXELS
+    }
+
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+    pub enum TextScale {
+        #[default]
+        Percent100,
+        Percent125,
+        Percent150,
+    }
+
+    impl TextScale {
+        pub const fn percent(self) -> u16 {
+            match self {
+                Self::Percent100 => 100,
+                Self::Percent125 => 125,
+                Self::Percent150 => 150,
+            }
+        }
+
+        pub const fn rem_pixels(self) -> f32 {
+            BASE_REM_PIXELS * self.percent() as f32 / 100.0
+        }
+
+        pub const fn increase(self) -> Self {
+            match self {
+                Self::Percent100 => Self::Percent125,
+                Self::Percent125 | Self::Percent150 => Self::Percent150,
+            }
+        }
+
+        pub const fn decrease(self) -> Self {
+            match self {
+                Self::Percent150 => Self::Percent125,
+                Self::Percent125 | Self::Percent100 => Self::Percent100,
+            }
+        }
+    }
+
     /// 24px：Workspace Header 任务标题（state-a 量图 cap17→≈24 semibold，
     /// state-b cap≈18→≈25；取档 24，容差 ±1 内）。
-    pub const HEADER_TITLE: f32 = 24.0;
+    pub const HEADER_TITLE: Rems = from_pixels(24.0);
     /// 17px：次级行文字（rail 相对时间 / 项目计数 / 连接行文案）。
-    pub const BODY_SM: f32 = 17.0;
+    pub const BODY_SM: Rems = from_pixels(17.0);
     /// 18px：主体列表字阶（rail 日期头 / 项目头 / 任务标题 / scope / 正文）。
-    pub const BODY: f32 = 18.0;
+    pub const BODY: Rems = from_pixels(18.0);
     /// 22px：rail App 标题（state-a/c 量图 cap16–17 → 22）。
-    pub const TITLE: f32 = 22.0;
+    pub const TITLE: Rems = from_pixels(22.0);
     /// 11px：提示 / 标签 / 次级行。
-    pub const XS: f32 = 11.0;
+    pub const XS: Rems = from_pixels(11.0);
     /// 12px：正文与控件。
-    pub const SM: f32 = 12.0;
+    pub const SM: Rems = from_pixels(12.0);
     /// 13px：标题与输入框正文。
-    pub const BASE: f32 = 13.0;
+    pub const BASE: Rems = from_pixels(13.0);
     /// 等宽字体族（R8 波 D DiffView 代码区；本仓当前仅 macOS 构建）。
     pub const MONO: &str = "Menlo";
 }
@@ -400,7 +471,7 @@ mod tests {
     /// surface.raised ≈ 4.52（placeholder 为不透明 #7f7f7f，与 tertiary 同值）。
     #[test]
     fn wcag_text_on_surface_pairs_match_frozen_targets() {
-        let theme = dark();
+        let theme = dark_for(false);
         assert_contrast_approx(
             contrast_ratio(theme.text.secondary, theme.surface.hover),
             4.82,
@@ -419,7 +490,7 @@ mod tests {
     /// §2.1：白字（on_accent）× accent.hover ≈ 4.55、× success_hover ≈ 4.61。
     #[test]
     fn wcag_on_accent_over_hover_actions_match_frozen_targets() {
-        let theme = dark();
+        let theme = dark_for(false);
         assert_contrast_approx(
             contrast_ratio(theme.text.on_accent, theme.accent.hover),
             4.55,
@@ -434,7 +505,7 @@ mod tests {
     /// 不得用于 hover surface 的约束。
     #[test]
     fn wcag_placeholder_stays_below_aa_on_hover_surface() {
-        let theme = dark();
+        let theme = dark_for(false);
         let ratio = contrast_ratio(theme.text.placeholder, theme.surface.hover);
         assert!(
             ratio < 4.5,
@@ -445,17 +516,50 @@ mod tests {
     /// §2.1：状态点绿槽位落地为不透明 #74c94c，不得回落到 success_bg。
     #[test]
     fn success_fg_is_opaque_status_dot_green() {
-        let theme = dark();
+        let theme = dark_for(false);
         assert_eq!(theme.semantic.success_fg, rgb(0x74c94c));
+    }
+
+    #[test]
+    fn increase_contrast_strengthens_text_and_boundaries() {
+        let default = dark_for(false);
+        let contrast = dark_for(true);
+        assert!(
+            contrast_ratio(contrast.border.subtle, contrast.bg.panel) >= 3.0,
+            "high-contrast panel boundaries must reach 3:1"
+        );
+        assert!(
+            contrast_ratio(contrast.border.subtle, contrast.bg.panel)
+                > contrast_ratio(default.border.subtle, default.bg.panel)
+        );
+        assert!(
+            contrast_ratio(contrast.text.tertiary, contrast.surface.raised)
+                > contrast_ratio(default.text.tertiary, default.surface.raised)
+        );
+    }
+
+    #[test]
+    fn text_scale_steps_are_bounded_and_keep_default_pixels() {
+        use font::TextScale;
+
+        assert_eq!(TextScale::Percent100.decrease(), TextScale::Percent100);
+        assert_eq!(TextScale::Percent100.increase(), TextScale::Percent125);
+        assert_eq!(TextScale::Percent125.increase(), TextScale::Percent150);
+        assert_eq!(TextScale::Percent150.increase(), TextScale::Percent150);
+        assert_eq!(TextScale::Percent150.decrease(), TextScale::Percent125);
+        assert_eq!(TextScale::Percent100.rem_pixels(), 16.0);
+        assert_eq!(TextScale::Percent125.rem_pixels(), 20.0);
+        assert_eq!(TextScale::Percent150.rem_pixels(), 24.0);
+        assert_eq!(font::default_pixels(font::BASE), 13.0);
     }
 
     /// R3 Wave A TaskRail 几何 / 字阶合同（state-a §2.1/§3 + state-c §2.1 取档）：
     /// render 与 AX 树共用本组常量，钉住数值防静默漂移。
     #[test]
     fn task_rail_geometry_and_font_constants_match_frozen_tiers() {
-        assert_eq!(font::TITLE, 22.0);
-        assert_eq!(font::BODY, 18.0);
-        assert_eq!(font::BODY_SM, 17.0);
+        assert_eq!(font::default_pixels(font::TITLE), 22.0);
+        assert_eq!(font::default_pixels(font::BODY), 18.0);
+        assert_eq!(font::default_pixels(font::BODY_SM), 17.0);
         assert_eq!(metrics::RAIL_CONTENT_INSET, 20.0);
         assert_eq!(metrics::RAIL_INNER_PAD, 12.0);
         assert_eq!(metrics::RAIL_ICON_BUTTON_SIZE, 28.0);
@@ -478,7 +582,11 @@ mod tests {
     /// state-b §2 量图取档）：钉住数值防静默漂移。
     #[test]
     fn workspace_timeline_geometry_constants_match_frozen_tiers() {
-        assert_eq!(font::HEADER_TITLE, 24.0);
+        assert_eq!(font::default_pixels(font::HEADER_TITLE), 24.0);
+        assert_eq!(
+            font::default_pixels(font::from_pixels(metrics::MSG_LINE_HEIGHT)),
+            24.0
+        );
         assert_eq!(metrics::HEADER_SAFE_STRIP, 36.0);
         assert_eq!(metrics::HEADER_HEIGHT, 104.0);
         assert_eq!(metrics::TIMELINE_CONTENT_INSET, 28.0);

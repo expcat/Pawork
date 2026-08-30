@@ -1025,7 +1025,7 @@ impl Render for TextInput {
             .px_2()
             .rounded_sm()
             .bg(dark().surface.raised)
-            .text_size(px(font::BASE))
+            .text_size(font::BASE)
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             .child(TextElement { input: cx.entity() })

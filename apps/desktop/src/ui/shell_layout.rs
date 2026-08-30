@@ -2,19 +2,23 @@
 //!
 //! 合同（design/README.md §2）：宽窗三栏 TaskRail 288 / Workspace 弹性 /
 //! Inspector 440，StatusBar 24；窗口宽 1080–1279 时 rail 收敛 240、
-//! Inspector 折叠为 ActivityPopover 抽屉、Workspace ≥560。resolve 是
+//! Inspector 折叠为 ActivityPopover 抽屉、Workspace ≥560；150% 文本
+//! 缩放时 rail 扩为 320，窗口不足 1320 时保持 Inspector 折叠。resolve 是
 //! AppView::render 与本模块 #[gpui::test] 共享的唯一计算入口；探针主机
 //! 复用生产 Panel / StatusBar 组件装配同构壳层（参照 u1_probe.rs，不挂
 //! AppView / Platform / socket）。
 
-use gpui::{div, prelude::*, px, Context, IntoElement, Pixels, Render, Window};
+use gpui::{div, prelude::*, px, IntoElement, Pixels};
 
-use super::components::panel::Panel;
-use super::components::status_bar::StatusBar;
 use super::theme::metrics;
 
 /// 窄窗（1080–1279）TaskRail 宽度。
 pub(crate) const RAIL_NARROW_WIDTH: f32 = 240.0;
+/// 150% 文本缩放时 TaskRail 宽度；1080 窗口仍保留 760px Workspace。
+pub(crate) const RAIL_LARGE_TEXT_WIDTH: f32 = 320.0;
+/// 150% 文本缩放且 Inspector 展开时的最小窗口宽度：320+440+560。
+pub(crate) const LARGE_TEXT_INSPECTOR_MIN_WIDTH: f32 =
+    RAIL_LARGE_TEXT_WIDTH + metrics::INSPECTOR_WIDTH + WORKSPACE_MIN_WIDTH;
 /// 窄窗带宽上界（含）：内容宽 ≤1279 视为窄窗。
 pub(crate) const NARROW_WIDTH_MAX: f32 = 1279.0;
 /// 中央 Workspace 底线宽度。
@@ -26,7 +30,7 @@ pub(crate) const TRAFFIC_LIGHT_SAFE_HEIGHT: f32 = 36.0;
 /// 一次 render 的壳层几何决定。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ShellLayout {
-    /// TaskRail 宽度：宽窗 = metrics::SIDEBAR_WIDTH（288），窄窗 = 240。
+    /// TaskRail 宽度：默认宽窗 288 / 窄窗 240；150% 文本缩放 320。
     pub(crate) rail_width: f32,
     /// Inspector 是否作为 440px 右栏参与布局。
     pub(crate) inspector_open: bool,
@@ -34,18 +38,29 @@ pub(crate) struct ShellLayout {
 
 /// 由窗口内容宽度与用户 Inspector 偏好解析壳层几何。
 ///
-/// 窄窗强制折叠 Inspector：1080–1279 合同要求默认折叠且 Workspace ≥560，
-/// 而 240+440+560=1240 只覆盖带宽尾部，展开必然击穿底线；偏好值不在
-/// resize 时改写，窗口加宽后按偏好自动恢复。
-pub(crate) fn resolve(window_width: Pixels, inspector_preferred: bool) -> ShellLayout {
+/// 默认字号在窄窗强制折叠 Inspector；150% 字号需至少
+/// 320+440+560=1320 才展开。偏好值不在 resize 时改写，窗口加宽后按偏好
+/// 自动恢复。
+pub(crate) fn resolve(
+    window_width: Pixels,
+    inspector_preferred: bool,
+    large_text: bool,
+) -> ShellLayout {
     let narrow = window_width <= px(NARROW_WIDTH_MAX);
     ShellLayout {
-        rail_width: if narrow {
+        rail_width: if large_text {
+            RAIL_LARGE_TEXT_WIDTH
+        } else if narrow {
             RAIL_NARROW_WIDTH
         } else {
             metrics::SIDEBAR_WIDTH
         },
-        inspector_open: !narrow && inspector_preferred,
+        inspector_open: inspector_preferred
+            && if large_text {
+                window_width >= px(LARGE_TEXT_INSPECTOR_MIN_WIDTH)
+            } else {
+                !narrow
+            },
     }
 }
 
@@ -61,7 +76,9 @@ pub(crate) fn rail_safe_area() -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{size, Bounds, TestAppContext, VisualTestContext};
+    use crate::ui::components::panel::Panel;
+    use crate::ui::components::status_bar::StatusBar;
+    use gpui::{size, Bounds, Context, TestAppContext, VisualTestContext, Window};
 
     /// 与 AppView::render 同构的壳层探针：resolve 决定几何，rail /
     /// workspace / inspector / StatusBar 用生产组件装配。
@@ -71,7 +88,11 @@ mod tests {
 
     impl Render for ShellProbeHost {
         fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let layout = resolve(window.viewport_size().width, self.inspector_preferred);
+            let layout = resolve(
+                window.viewport_size().width,
+                self.inspector_preferred,
+                false,
+            );
             let rail = div()
                 .id("shell-rail")
                 .debug_selector(|| "shell-rail".into())
@@ -136,19 +157,27 @@ mod tests {
 
     #[test]
     fn resolve_switches_rail_width_at_1280() {
-        let narrow = resolve(px(1279.), true);
+        let narrow = resolve(px(1279.), true, false);
         assert_eq!(narrow.rail_width, RAIL_NARROW_WIDTH);
         assert!(
             !narrow.inspector_open,
             "narrow band must collapse inspector"
         );
 
-        let wide = resolve(px(1280.), true);
+        let wide = resolve(px(1280.), true, false);
         assert_eq!(wide.rail_width, metrics::SIDEBAR_WIDTH);
         assert!(wide.inspector_open);
 
-        assert!(!resolve(px(1440.), false).inspector_open);
-        assert_eq!(resolve(px(1080.), true).rail_width, RAIL_NARROW_WIDTH);
+        assert!(!resolve(px(1440.), false, false).inspector_open);
+        assert_eq!(
+            resolve(px(1080.), true, false).rail_width,
+            RAIL_NARROW_WIDTH
+        );
+        let large_text = resolve(px(1080.), true, true);
+        assert_eq!(large_text.rail_width, RAIL_LARGE_TEXT_WIDTH);
+        assert!(!large_text.inspector_open);
+        assert!(!resolve(px(1319.), true, true).inspector_open);
+        assert!(resolve(px(1320.), true, true).inspector_open);
     }
 
     #[gpui::test]

@@ -265,7 +265,7 @@ impl AppView {
                     .tab_stop(true)
                     .track_focus(&self.changes_tab_focus[target as usize])
                     .focus(|style| style.border_1().border_color(dark().accent.primary))
-                    .text_size(px(font::BODY_SM))
+                    .text_size(font::BODY_SM)
                     .text_color(if current {
                         dark().text.primary
                     } else {
@@ -342,7 +342,7 @@ impl AppView {
                     .py_1()
                     .border_b_1()
                     .border_color(dark().border.subtle)
-                    .text_size(px(font::XS))
+                    .text_size(font::XS)
                     .text_color(dark().text.tertiary)
                     .child("Host latest-session diff · workspace context is not a filter"),
             )
@@ -353,7 +353,7 @@ impl AppView {
                         .py_1()
                         .border_b_1()
                         .border_color(dark().semantic.warning_text)
-                        .text_size(px(font::XS))
+                        .text_size(font::XS)
                         .text_color(dark().semantic.warning_text)
                         .child(format!("Stale data · {reason}")),
                 )
@@ -367,7 +367,7 @@ impl AppView {
                         .py_1()
                         .border_b_1()
                         .border_color(dark().border.subtle)
-                        .text_size(px(font::XS))
+                        .text_size(font::XS)
                         .text_color(dark().text.tertiary)
                         .child(format!(
                             "Showing changes for latest session {data_session} — not the active session."
@@ -434,7 +434,7 @@ impl AppView {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(px(font::SM))
+                        .text_size(font::SM)
                         .text_color(dark().text.primary)
                         .child(path.clone()),
                 )
@@ -491,7 +491,7 @@ impl AppView {
                     .overflow_y_scroll()
                     .overflow_x_scroll()
                     .font_family(font::MONO)
-                    .text_size(px(font::SM));
+                    .text_size(font::SM);
                 if file.binary {
                     body = body.child(
                         div()
@@ -517,9 +517,8 @@ impl AppView {
                         .hunks
                         .iter()
                         .flat_map(|hunk| {
-                            std::iter::once(hunk.header.chars().count()).chain(
-                                hunk.lines.iter().map(|line| line.text.chars().count() + 1),
-                            )
+                            std::iter::once(hunk.header.chars().count())
+                                .chain(hunk.lines.iter().map(|line| line.text.chars().count() + 1))
                         })
                         .max()
                         .unwrap_or_default();
@@ -528,7 +527,7 @@ impl AppView {
                         .flex_col()
                         .flex_none()
                         .min_w_full()
-                        .w(px((longest_line as f32 + 2.0) * font::SM));
+                        .w(gpui::Rems((longest_line as f32 + 2.0) * font::SM.0));
                     for hunk in &file.hunks {
                         content = content.child(
                             div()
@@ -605,7 +604,7 @@ impl AppView {
                     .flex_col()
                     .gap_2()
                     .p_2()
-                    .text_size(px(font::SM))
+                    .text_size(font::SM)
                     .child(summary_row("Session", session))
                     .child(summary_row("Files", files.to_string()))
                     .child(summary_row("Lines", format!("+{additions} / −{deletions}")))
@@ -665,7 +664,7 @@ impl AppView {
                 div()
                     .px_1()
                     .pb_1()
-                    .text_size(px(font::XS))
+                    .text_size(font::XS)
                     .text_color(dark().text.tertiary)
                     .child(format!("from latest session {data_session}")),
             ),
@@ -692,7 +691,7 @@ fn changes_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> Di
         .items_start()
         .justify_start()
         .p_2()
-        .text_size(px(font::SM))
+        .text_size(font::SM)
         .text_color(color)
         .child(text.into())
 }

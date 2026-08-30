@@ -3,9 +3,9 @@
 use gpui::{App, Context, Focusable, Window};
 
 use crate::projection::{
-    ConnectionState, DateBucket, ForkBoundary, ModelEntry, SessionLiveStatus, TaskRailGrouping,
-    TaskRailProjectGroup, TimelineEntry, TimelineEntryKind, TimelineRow, UNASSIGNED_PROJECT,
-    run_footer_label, run_summary_texts,
+    run_footer_label, run_summary_texts, ConnectionState, DateBucket, ForkBoundary, ModelEntry,
+    SessionLiveStatus, TaskRailGrouping, TaskRailProjectGroup, TimelineEntry, TimelineEntryKind,
+    TimelineRow, UNASSIGNED_PROJECT,
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
@@ -15,12 +15,12 @@ use crate::ui::inspector::InspectorTab;
 use crate::ui::inspector::TERMINAL_EMPTY_OUTPUT;
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::shell_layout;
-use crate::ui::theme::metrics;
+use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::display_time;
 use crate::ui::{
-    AppView, MenuKind, WORKSPACE_EMPTY_HINT, activity_header_visibility,
-    rail_project_occurrence_key, rail_session_focus_key, terminal_can_operate,
-    terminal_start_enabled, timeline,
+    activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
+    terminal_can_operate, terminal_start_enabled, timeline, AppView, MenuKind,
+    WORKSPACE_EMPTY_HINT,
 };
 
 const PAD: f32 = 8.0;
@@ -328,8 +328,13 @@ impl AppView {
         let height = f32::from(viewport.height).max(1.0);
         let content_height = (height - metrics::STATUS_BAR_HEIGHT).max(1.0);
         // 与 AppView::render 共享同一壳层几何决定（R2 Wave A 响应式：
-        // 窄窗 rail=240 且 Inspector 强制折叠），AX bounds 不得偏出实际布局。
-        let shell = shell_layout::resolve(viewport.width, self.inspector_open);
+        // 窄窗 rail=240 且 Inspector 强制折叠；150% 文本 rail=320），
+        // AX bounds 不得偏出实际布局。
+        let shell = shell_layout::resolve(
+            viewport.width,
+            self.inspector_open,
+            self.text_scale == font::TextScale::Percent150,
+        );
         let sidebar_width = shell.rail_width.min(width);
         let inspector_width = if shell.inspector_open {
             metrics::INSPECTOR_WIDTH.min((width - sidebar_width).max(0.0))
@@ -423,7 +428,9 @@ impl AppView {
             AxRect::new(
                 inset,
                 y,
-                (frame.width - inset * 2.0 - metrics::RAIL_ICON_BUTTON_SIZE
+                (frame.width
+                    - inset * 2.0
+                    - metrics::RAIL_ICON_BUTTON_SIZE
                     - metrics::RAIL_CONNECTION_ADD_GAP)
                     .max(0.0),
                 metrics::RAIL_TOP_ROW_HEIGHT,
@@ -685,24 +692,22 @@ impl AppView {
         let key = project_key(project.workspace_id.as_deref());
         let expanded = !self.collapsed_projects.contains(&key);
         let header_focus_key = rail_project_occurrence_key("project", bucket, &key);
-        let mut nodes = vec![
-            AxNode::new(
-                rail_project_identifier(bucket, &key),
-                AxRole::Button,
-                project.name.clone(),
-                AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
-            )
-            .value(format!("{} tasks", project.task_count()))
-            .description(if expanded { "Expanded" } else { "Collapsed" })
-            .focused(
-                self.open_menu.is_none()
-                    && self
-                        .rail_row_focus
-                        .get(&header_focus_key)
-                        .is_some_and(|handle| handle.is_focused(window)),
-            )
-            .action(AxAction::Press),
-        ];
+        let mut nodes = vec![AxNode::new(
+            rail_project_identifier(bucket, &key),
+            AxRole::Button,
+            project.name.clone(),
+            AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
+        )
+        .value(format!("{} tasks", project.task_count()))
+        .description(if expanded { "Expanded" } else { "Collapsed" })
+        .focused(
+            self.open_menu.is_none()
+                && self
+                    .rail_row_focus
+                    .get(&header_focus_key)
+                    .is_some_and(|handle| handle.is_focused(window)),
+        )
+        .action(AxAction::Press)];
         if !project.is_unassigned() && project.workspace_id.is_some() {
             let add_focus_key = rail_project_occurrence_key("project-add", bucket, &key);
             nodes.push(
@@ -1330,6 +1335,24 @@ impl AppView {
                 .focused(self.open_menu.is_none() && self.model_focus.is_focused(window))
                 .action(AxAction::Press),
             );
+        if let Some(hint) = self.status_hint.as_ref() {
+            let hint_x = frame.x + pad + 228.0;
+            let hint_width = (action_x - pad - hint_x).max(0.0);
+            composer = composer.child(
+                AxNode::new(
+                    "composer-status-hint",
+                    AxRole::StaticText,
+                    "Status",
+                    AxRect::new(
+                        hint_x,
+                        footer_y,
+                        hint_width,
+                        metrics::COMPOSER_FOOTER_CONTROL,
+                    ),
+                )
+                .value(hint.clone()),
+            );
+        }
         let action_rect = AxRect::new(
             action_x,
             footer_y,

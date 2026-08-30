@@ -1,0 +1,12 @@
+{
+  "base_logical_rows": 64,
+  "branch_id": "main",
+  "first_inserted_sequence": 145,
+  "generated_at": "2026-08-30T15:10:23Z",
+  "inserted_message_rows": 960,
+  "last_inserted_sequence": 1104,
+  "scope": "temporary_fixture_database_only",
+  "sentinel": "R7C 千级列表末尾 🐾🧪",
+  "session_id": "fx-ses-beta-long",
+  "target_logical_rows": 1024
+}

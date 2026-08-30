@@ -161,14 +161,14 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div 
         .gap_3()
         .child(
             div()
-                .text_size(px(font::BODY))
+                .text_size(font::BODY)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(role_color)
                 .child(role.to_string()),
         )
         .child(
             div()
-                .text_size(px(font::BODY_SM))
+                .text_size(font::BODY_SM)
                 .text_color(dark().text.tertiary)
                 .truncate()
                 .child(time.to_string()),
@@ -181,8 +181,8 @@ fn message_body_element(text: &str, color: Rgba) -> gpui::Div {
         .flex()
         .flex_col()
         .gap(px(metrics::MSG_PARAGRAPH_GAP))
-        .text_size(px(font::BODY))
-        .line_height(px(metrics::MSG_LINE_HEIGHT))
+        .text_size(font::BODY)
+        .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
         .text_color(color);
     for block in split_message_blocks(text) {
         let mut block_element = div().flex().flex_col();
@@ -319,7 +319,7 @@ fn tool_icon_element(name: &str) -> gpui::Div {
         .flex_none()
         .items_center()
         .justify_center()
-        .text_size(px(font::BASE))
+        .text_size(font::BASE)
         .text_color(dark().text.secondary)
         .child(glyph)
 }
@@ -337,7 +337,7 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
         }
     };
     let word = div()
-        .text_size(px(font::BODY_SM))
+        .text_size(font::BODY_SM)
         .text_color(word_color)
         .child(row.status_label.clone());
     match row.status {
@@ -386,7 +386,7 @@ fn tool_row_element(row: &ToolRowView) -> gpui::Div {
         div()
             .min_w_0()
             .truncate()
-            .text_size(px(font::BODY))
+            .text_size(font::BODY)
             .text_color(dark().text.emphasis)
             .child(row.name.clone()),
     );
@@ -396,7 +396,7 @@ fn tool_row_element(row: &ToolRowView) -> gpui::Div {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(font::BODY_SM))
+                .text_size(font::BODY_SM)
                 .text_color(dark().text.tertiary)
                 .child(detail.to_string()),
         );
@@ -449,7 +449,7 @@ impl AppView {
                 if let Some(detail) = detail.as_deref().filter(|d| !d.is_empty()) {
                     element = element.child(
                         div()
-                            .text_size(px(font::XS))
+                            .text_size(font::XS)
                             .text_color(dark().text.tertiary)
                             .child(detail.to_string()),
                     );
@@ -570,7 +570,7 @@ impl AppView {
             .justify_center()
             .rounded_full()
             .bg(circle_bg)
-            .text_size(px(font::BODY))
+            .text_size(font::BODY)
             .text_color(circle_fg)
             .child(circle_glyph);
         let left_column = div()
@@ -588,7 +588,7 @@ impl AppView {
                     .child(check_circle)
                     .child(
                         div()
-                            .text_size(px(font::BODY))
+                            .text_size(font::BODY)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(dark().text.primary)
                             .child(view.title.clone()),
@@ -604,8 +604,8 @@ impl AppView {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(font::BODY_SM))
-                            .line_height(px(metrics::MSG_LINE_HEIGHT))
+                            .text_size(font::BODY_SM)
+                            .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
                             .line_clamp(2)
                             .text_color(dark().text.secondary)
                             .child(view.description.clone()),
@@ -673,12 +673,7 @@ impl AppView {
         )
     }
 
-    pub(super) fn on_fork(
-        &mut self,
-        event_id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn on_fork(&mut self, event_id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session_id) = self.projection.active_session_id.clone() else {
             self.status_hint = Some("Open a session before forking.".into());
             cx.notify();

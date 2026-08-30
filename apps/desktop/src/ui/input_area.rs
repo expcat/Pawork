@@ -378,7 +378,7 @@ impl AppView {
                 div()
                     .px_2()
                     .py_1()
-                    .text_size(px(font::SM))
+                    .text_size(font::SM)
                     .text_color(dark().semantic.warning_text)
                     .child("Add a workspace before creating a task."),
             );

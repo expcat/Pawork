@@ -71,13 +71,19 @@ def create_fixture_db(path: Path) -> None:
     connection.close()
 
 
-def frame_lines(width: int, height: int, inspector: bool, disconnected: bool = False) -> str:
+def frame_lines(
+    width: int,
+    height: int,
+    inspector: bool,
+    disconnected: bool = False,
+    composer_height: int = 88,
+    large_text: bool = False,
+) -> str:
     root_x, root_y = 100, 50
-    rail = 288 if width == 1440 else 240
+    rail = 320 if large_text else 288 if width == 1440 else 240
     inspector_width = 440 if inspector else 0
     workspace_x = root_x + rail
     workspace_width = width - rail - inspector_width
-    composer_height = 88
     status_y = root_y + height - 24
     composer_y = status_y - composer_height
     lines = [
@@ -225,6 +231,46 @@ class R7WaveCResilienceTest(unittest.TestCase):
             self.assertTrue(names["root-1080x720"]["pass"])
             self.assertTrue(names["focus-composer-retained"]["pass"])
 
+            frames.write_text(
+                frame_lines(
+                    1080,
+                    720,
+                    False,
+                    composer_height=104,
+                    large_text=True,
+                ),
+                "utf-8",
+            )
+            zoom_phase = subprocess.run(
+                [
+                    sys.executable,
+                    str(WAVE_D_TOOLS),
+                    "assert",
+                    "--frames",
+                    str(frames),
+                    "--tree",
+                    str(tree),
+                    "--phase",
+                    "r7c-narrow-zoom",
+                    "--out",
+                    str(result),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(
+                zoom_phase.returncode,
+                0,
+                zoom_phase.stdout + zoom_phase.stderr,
+            )
+            names = {
+                item["name"]: item
+                for item in json.loads(result.read_text("utf-8"))["checks"]
+            }
+            self.assertTrue(names["composer-height"]["pass"])
+            self.assertTrue(names["rail-width"]["pass"])
+
             frames.write_text(frame_lines(1080, 720, False, disconnected=True), "utf-8")
             tree.write_text(r7_tree(disconnected=True), "utf-8")
             disconnected_phase = subprocess.run(
@@ -363,6 +409,8 @@ class R7WaveCResilienceTest(unittest.TestCase):
             "performance-baseline.json",
             "r7c-disconnected",
             "paint-assert",
+            "Text size · 150%",
+            "r7c-narrow-zoom",
         ):
             self.assertIn(token, text)
 
@@ -401,7 +449,6 @@ class R7WaveCResilienceTest(unittest.TestCase):
             bad = subprocess.run(command, text=True, capture_output=True, check=False)
             self.assertEqual(bad.returncode, 5, bad.stdout + bad.stderr)
             self.assertFalse(json.loads(result.read_text("utf-8"))["pass"])
-
 
 if __name__ == "__main__":
     unittest.main()
