@@ -208,6 +208,8 @@ pub mod metrics {
     pub const RAIL_ICON_BUTTON_SIZE: f32 = 28.0;
     /// 10：rail 状态圆点直径（量图 Ø10–11）。
     pub const RAIL_STATUS_DOT_SIZE: f32 = 10.0;
+    /// 8：连接行文案槽与全局「+」按钮的保留间隔（render 与 AX 共享）。
+    pub const RAIL_CONNECTION_ADD_GAP: f32 = 8.0;
     /// 36：顶部 scope / 连接行高（三图 31–36 取档）。
     pub const RAIL_TOP_ROW_HEIGHT: f32 = 36.0;
     /// 36：标题行高（量图 grouping 钮区 y49–84 = 36）。
@@ -458,6 +460,7 @@ mod tests {
         assert_eq!(metrics::RAIL_INNER_PAD, 12.0);
         assert_eq!(metrics::RAIL_ICON_BUTTON_SIZE, 28.0);
         assert_eq!(metrics::RAIL_STATUS_DOT_SIZE, 10.0);
+        assert_eq!(metrics::RAIL_CONNECTION_ADD_GAP, 8.0);
         assert_eq!(metrics::RAIL_TOP_ROW_HEIGHT, 36.0);
         assert_eq!(metrics::RAIL_TITLE_ROW_HEIGHT, 36.0);
         assert_eq!(metrics::RAIL_TITLE_SCOPE_GAP, 10.0);

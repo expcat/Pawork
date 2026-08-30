@@ -1,0 +1,5 @@
+[1788094047733] serve starting profile=default
+[1788094047734] host_ready socket=/private/tmp/pawork-r7-wave-c-fixture.00XdXL/data/pawork-gui.sock
+ui_fixture serving on /private/tmp/pawork-r7-wave-c-fixture.00XdXL/data/pawork-gui.sock (barriers /private/tmp/pawork-r7-wave-c-fixture.00XdXL/barriers)
+[1788094050250] accepted connection connection-0
+[1788094060545] drop_socket done

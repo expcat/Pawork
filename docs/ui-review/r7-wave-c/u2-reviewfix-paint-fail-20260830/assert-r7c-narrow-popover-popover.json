@@ -1,0 +1,118 @@
+{
+  "phase": "r7c-narrow-popover",
+  "generated_at": "2026-08-30T12:47:38Z",
+  "checks": [
+    {
+      "name": "root-1080x720",
+      "pass": true,
+      "blocking": true,
+      "detail": "root w=1080.0 h=720.0 (contract 1080x720 +/-0.5)"
+    },
+    {
+      "name": "rail-width",
+      "pass": true,
+      "blocking": true,
+      "detail": "task-rail w=240.0 (contract 240 +/-3.6)"
+    },
+    {
+      "name": "inspector-absent",
+      "pass": true,
+      "blocking": true,
+      "detail": "inspector frame absent (phase=r7c-narrow-popover)"
+    },
+    {
+      "name": "statusbar-height",
+      "pass": true,
+      "blocking": true,
+      "detail": "status-bar h=24.0 (contract 24 +/-0.5)"
+    },
+    {
+      "name": "composer-height",
+      "pass": true,
+      "blocking": true,
+      "detail": "composer h=91.0 (contract 88-94, component tolerance [86,96]; not the frozen R1 baseline; blocking drift)"
+    },
+    {
+      "name": "composer-above-statusbar",
+      "pass": true,
+      "blocking": true,
+      "detail": "composer bottom=696.0 statusbar top=696.0"
+    },
+    {
+      "name": "workspace-span",
+      "pass": true,
+      "blocking": true,
+      "detail": "workspace x=240.0..1080.0 expected 240.0..1080.0 (inspector column absent)"
+    },
+    {
+      "name": "activity-popover-in-window",
+      "pass": true,
+      "blocking": true,
+      "detail": "popover={'role': 'AXGroup', 'x': 1735.0, 'y': 300.5, 'w': 320.0, 'h': 320.0} root={'role': 'AXGroup', 'x': 1000.0, 'y': 208.0, 'w': 1080.0, 'h': 720.0}"
+    },
+    {
+      "name": "shell-skeleton",
+      "pass": true,
+      "detail": "shell skeleton present (phase=r7c-narrow-popover)"
+    },
+    {
+      "name": "no-unknown-role",
+      "pass": true,
+      "detail": "role=? count=0"
+    },
+    {
+      "name": "workspace-empty-hint-absent",
+      "pass": true,
+      "detail": "workspace-empty-hint absent"
+    },
+    {
+      "name": "inspector-column-absent",
+      "pass": true,
+      "detail": "inspector/inspector-tabs absent from AX tree"
+    },
+    {
+      "name": "inspector-toggle-present",
+      "pass": true,
+      "detail": "inspector-toggle present"
+    },
+    {
+      "name": "activity-popover-present",
+      "pass": true,
+      "detail": "activity-popover present"
+    },
+    {
+      "name": "session-beta-long-selected",
+      "pass": true,
+      "detail": "selected=1 rows: session-fx-ses-beta-long"
+    },
+    {
+      "name": "timeline-beta-long-loaded",
+      "pass": true,
+      "detail": "beta-long visible timeline rows=10"
+    }
+  ],
+  "metrics": {
+    "root": {
+      "role": "AXGroup",
+      "x": 1000.0,
+      "y": 208.0,
+      "w": 1080.0,
+      "h": 720.0
+    },
+    "statusbar": {
+      "role": "AXGroup",
+      "x": 1240.0,
+      "y": 904.0,
+      "w": 840.0,
+      "h": 24.0
+    },
+    "composer": {
+      "role": "AXGroup",
+      "x": 1240.0,
+      "y": 813.0,
+      "w": 840.0,
+      "h": 91.0
+    }
+  },
+  "pass": true
+}

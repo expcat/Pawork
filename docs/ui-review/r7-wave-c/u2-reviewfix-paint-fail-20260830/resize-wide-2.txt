@@ -1,0 +1,5 @@
+# resize result=0 target={1440.0,1024.0} actual={1440.0,1024.0}
+# ax-frames pid=30508 nodes=16
+id=pawork-root role=AXGroup x=1000.0 y=208.0 w=1440.0 h=1024.0
+id=task-rail role=AXGroup x=1000.0 y=512.0 w=240.0 h=696.0
+id=workspace role=AXGroup x=1240.0 y=512.0 w=840.0 h=696.0

@@ -134,7 +134,7 @@
 | F-13 P1 | RunStatusBar | 24px，Task/quota/tok/s/Run 顺序稳定 | 字阶和分隔弱，Inspector 触发器喧宾夺主 | 恢复信息顺序、稳定占位和窄窗收敛 | 高度、基线、分隔与目标一致；缺值诚实 |
 | F-14 P0 | Projects | 项目头、count、展开、定向 `+`、Task 选中完整 | 终态无当前截图 | 补真实 Projects 取证并逐组件修复 | State C reference/current/diff 全部存在后才能签字 |
 | F-15 P0 | 字体/图标/间距 | 桌面可读字阶、克制字重、16px 级图标、8px 节奏 | 全局 11/12/13px 过小，控件像调试 UI | Wave 0 先量图，不把 `12/14/16` 猜测写成定稿 | 字体/图标 `±1px`，重复间距 `±2px`，层级肉眼一致 |
-| F-16 P1 | 交互与 focus | hover/active/focus 不改布局；菜单可键盘操作 | R7 Wave A/B 已补齐主路径与边角焦点交接；Wave C 默认平台态又通过 1080×720、1024 行、长内容、三轮 resize、断线重连与 Composer 焦点耐久，连接长文案越界已修复（最终视觉复跑待解锁补跑）；VoiceOver、字号放大、主动平台偏好和 R8 全矩阵仍未完成 | Wave C 补最终视觉复跑、字号放大与主动 reduced motion / 高对比态，R8 汇总系统级与全组件证据 | 原生 AX、鼠标和纯键盘 trace/清单通过；无颜色单一编码 |
+| F-16 P1 | 交互与 focus | hover/active/focus 不改布局；菜单可键盘操作 | R7 Wave A/B 已补齐主路径与边角焦点交接；Wave C 默认平台态又通过 1080×720、1024 行、长内容、三轮 resize、断线重连、Composer 焦点耐久与连接长文案定宽截断的最终 U2；VoiceOver、字号放大、主动平台偏好和 R8 全矩阵仍未完成 | Wave C 补字号放大与主动 reduced motion / 高对比态，R8 汇总系统级与全组件证据 | 原生 AX、鼠标和纯键盘 trace/清单通过；无颜色单一编码 |
 
 ## 4. 设计文档冲突与处理决定
 
@@ -257,7 +257,7 @@ flowchart LR
 - [ ] 固定 fixture 中的 tool group、run summary、Files/DiffView、Projects 和 capability 缺省均由真实数据链路渲染。
 - [ ] hover/active/focus/menu/scroll/折叠无布局位移、遮挡或不可达状态。
 - [ ] VoiceOver 与纯键盘主路径通过；颜色不作为唯一状态编码。
-- [x] 1080×720 响应式功能门禁通过：Connected / ActivityPopover / Disconnected 与三轮宽窄 resize 有首轮真实窗口证据；长连接文案溢出已修复并加截图级门禁（该门禁已验证能判旧截图 FAIL），修复后视觉复跑待解锁补跑（[R7 Wave C](ui-review/r7-wave-c/notes.md)）；字号放大与主动平台偏好另列未完成。
+- [x] 1080×720 响应式功能门禁通过：Connected / ActivityPopover / Disconnected、三轮宽窄 resize 与长连接文案定宽截断均有修复后真实窗口证据，截图级门禁最终 `lit=0`（[R7 Wave C](ui-review/r7-wave-c/notes.md)）；字号放大与主动平台偏好另列未完成。
 - [ ] 用户在 1440×1024 三状态逐屏对照后完成新 R8 视觉签字。
 
 ## 10. 主要代码触点

@@ -259,11 +259,11 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [ ] 纯键盘走查（基准 §3.6）：R7 Wave B 已自动通过 Tab 链、菜单 ↑/↓/Enter/Escape、task cycling / next-needs-attention、审批与焦点恢复；VoiceOver、IME 的系统级人工复核与 R8 完整汇总仍未执行
 - [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
 - [ ] Reconnect 恢复：R6 Wave B 已覆盖 Inspector/Terminal/Resources 与会话选择恢复；仍需 R8 汇总验证进行中 Run 的全应用生命周期
-- [x] Connected 态 1080×720 最小窗：R7 Wave C 已以真实 Host / Desktop 覆盖 Connected、ActivityPopover、Disconnected 与三轮宽窄 resize；Composer / 状态栏 / Inspector 触发器可用。首轮截图暴露的连接长文案越界已修复并补截图级 paint 门禁，但修复后最终视觉复跑被锁屏阻塞、待解锁补跑（[证据](ui-review/r7-wave-c/notes.md)）。该结论只覆盖默认字号与当前平台偏好态。
+- [x] Connected 态 1080×720 最小窗：R7 Wave C 已以真实 Host / Desktop 覆盖 Connected、ActivityPopover、Disconnected 与三轮宽窄 resize；Composer / 状态栏 / Inspector 触发器可用。连接长文案以定宽槽截断显示省略号，截图级 paint 门禁与最终 U2 全绿（[证据](ui-review/r7-wave-c/notes.md)）。该结论只覆盖默认字号与当前平台偏好态。
 - [ ] 虚拟化四例（长会话）：滚动流畅 / 回底重挂 / Entry「···」菜单锚点 / 长标题 truncate
 - [ ] hover / active 交互态抽查（基准 §8.1 取值表）
 - [x] DiffView 横滚：R6 Wave B 真窗口长行通过，AX 记录 horizontal offset `-720.0 / 2477.0`（[证据](ui-review/r6-wave-b/u2-reviewfix-pass-20260830/)）
-- [x] 千级事件功能门禁：R7 Wave C 临时派生 1024 行真实投影，虚拟化、离底 / 回底与 CJK/emoji 末尾哨兵通过，并归档单次时延基线（[证据](ui-review/r7-wave-c/u2-resilience-20260830/performance-baseline.json)）。
+- [x] 千级事件功能门禁：R7 Wave C 临时派生 1024 行真实投影，虚拟化、离底 / 回底与 CJK/emoji 末尾哨兵通过，并归档单次时延基线（[证据](ui-review/r7-wave-c/u2-reviewfix-pass-20260830/performance-baseline.json)）。
 - [ ] 千级事件性能回退门禁：仍需重复干净机器样本、阈值与帧率观察；当前 `baseline_only` 不宣称无回退。
 
 ### A.3 漂移与定夺项

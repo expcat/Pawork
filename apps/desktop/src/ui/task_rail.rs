@@ -70,6 +70,10 @@ impl AppView {
         let scope_menu_open = matches!(self.open_menu, Some(MenuKind::Scope));
         let now_ms = now_unix_ms();
         let connection_label = self.connection_status_label();
+        let connection_slot_width = f32::from(rail_width)
+            - metrics::RAIL_CONTENT_INSET * 2.0
+            - metrics::RAIL_ICON_BUTTON_SIZE
+            - metrics::RAIL_CONNECTION_ADD_GAP;
 
         // F-03 标题行：角标钮（ghost 档 hover surface.raised，§8.1），hit area
         // 28×28 ≥ 24；identifier / tooltip / accessible name 冻结不变。
@@ -243,11 +247,12 @@ impl AppView {
                     .justify_between()
                     .child(
                         div()
+                            .w(px(connection_slot_width))
+                            .flex_none()
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap_2()
-                            .flex_1()
                             .min_w_0()
                             .overflow_hidden()
                             .child(status_dot(connection_dot_filled, connection_dot_color))

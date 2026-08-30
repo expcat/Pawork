@@ -423,7 +423,9 @@ impl AppView {
             AxRect::new(
                 inset,
                 y,
-                (frame.width - inset * 2.0 - metrics::RAIL_ICON_BUTTON_SIZE - PAD).max(0.0),
+                (frame.width - inset * 2.0 - metrics::RAIL_ICON_BUTTON_SIZE
+                    - metrics::RAIL_CONNECTION_ADD_GAP)
+                    .max(0.0),
                 metrics::RAIL_TOP_ROW_HEIGHT,
             ),
         )

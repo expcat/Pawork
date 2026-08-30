@@ -1,0 +1,968 @@
+{
+  "scenario": "r7-wave-c-resilience",
+  "label": "r7-wave-c-reviewfix-final",
+  "generated_at": "2026-08-30T12:53:18Z",
+  "git_head": "a98080e694ff322bd2d41433115c77a14c603211",
+  "phases": {
+    "r7c-disconnected-dropped": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1080x720",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-absent",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "connection-status-within-rail",
+          "pass": true
+        },
+        {
+          "name": "reconnect-within-rail",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-column-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-present",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "reconnect-present",
+          "pass": true
+        },
+        {
+          "name": "connection-status-disconnected",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-disconnected-rail-paint": {
+      "pass": true,
+      "checks": []
+    },
+    "r7c-narrow-narrow-1": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1080x720",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-absent",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-column-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-present",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-narrow-narrow-2": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1080x720",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-absent",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-column-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-present",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-narrow-narrow-3": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1080x720",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-absent",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-column-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-present",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-narrow-narrow-initial": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1080x720",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-absent",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-column-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-present",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-narrow-popover-closed": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1080x720",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-absent",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-column-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-present",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-narrow-popover-popover": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1080x720",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-absent",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-in-window",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-column-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-present",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-present",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-narrow-reconnected-reconnected": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1080x720",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-absent",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-column-absent",
+          "pass": true
+        },
+        {
+          "name": "inspector-toggle-present",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "reconnect-absent",
+          "pass": true
+        },
+        {
+          "name": "connection-status-connected",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-wide-initial": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-wide-wide-1": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-wide-wide-2": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "r7c-wide-wide-3": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "root-1440x1024",
+          "pass": true
+        },
+        {
+          "name": "rail-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-width",
+          "pass": true
+        },
+        {
+          "name": "inspector-x",
+          "pass": true
+        },
+        {
+          "name": "statusbar-height",
+          "pass": true
+        },
+        {
+          "name": "composer-height",
+          "pass": true
+        },
+        {
+          "name": "composer-above-statusbar",
+          "pass": true
+        },
+        {
+          "name": "workspace-span",
+          "pass": true
+        },
+        {
+          "name": "shell-skeleton",
+          "pass": true
+        },
+        {
+          "name": "no-unknown-role",
+          "pass": true
+        },
+        {
+          "name": "workspace-empty-hint-absent",
+          "pass": true
+        },
+        {
+          "name": "activity-popover-absent",
+          "pass": true
+        },
+        {
+          "name": "session-beta-long-selected",
+          "pass": true
+        },
+        {
+          "name": "timeline-beta-long-loaded",
+          "pass": true
+        },
+        {
+          "name": "focus-composer-retained",
+          "pass": true
+        }
+      ]
+    },
+    "virtualized-thousand-after-scroll": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-beta-long",
+          "pass": true
+        },
+        {
+          "name": "virtualization-thousand-logical-rows",
+          "pass": true
+        },
+        {
+          "name": "virtualization-thousand-barrier-session",
+          "pass": true
+        },
+        {
+          "name": "virtualization-thousand-window-slice",
+          "pass": true
+        },
+        {
+          "name": "virtualization-cjk-emoji-long-row",
+          "pass": true
+        }
+      ]
+    },
+    "virtualized-thousand-initial": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "selected-session-fx-ses-beta-long",
+          "pass": true
+        },
+        {
+          "name": "virtualization-thousand-logical-rows",
+          "pass": true
+        },
+        {
+          "name": "virtualization-thousand-barrier-session",
+          "pass": true
+        },
+        {
+          "name": "virtualization-thousand-window-slice",
+          "pass": true
+        },
+        {
+          "name": "virtualization-cjk-emoji-long-row",
+          "pass": true
+        }
+      ]
+    }
+  },
+  "structural_pass": true,
+  "evidence_files": [
+    "action-clear-composer.txt",
+    "action-close-activity-popover.txt",
+    "action-focus-composer.txt",
+    "action-open-activity-popover.txt",
+    "action-open-beta-long.txt",
+    "action-reconnect.txt",
+    "action-refocus-after-popover.txt",
+    "action-refocus-reconnected.txt",
+    "action-reopen-beta-long.txt",
+    "action-set-composer.txt",
+    "action-trace.txt",
+    "activity-popover-1080x720.png",
+    "assert-r7c-disconnected-dropped.json",
+    "assert-r7c-disconnected-rail-paint.json",
+    "assert-r7c-narrow-narrow-1.json",
+    "assert-r7c-narrow-narrow-2.json",
+    "assert-r7c-narrow-narrow-3.json",
+    "assert-r7c-narrow-narrow-initial.json",
+    "assert-r7c-narrow-popover-closed.json",
+    "assert-r7c-narrow-popover-popover.json",
+    "assert-r7c-narrow-reconnected-reconnected.json",
+    "assert-r7c-wide-initial.json",
+    "assert-r7c-wide-wide-1.json",
+    "assert-r7c-wide-wide-2.json",
+    "assert-r7c-wide-wide-3.json",
+    "assert-virtualized-thousand-after-scroll.json",
+    "assert-virtualized-thousand-initial.json",
+    "ax-tree-composer-value.txt",
+    "ax-tree-r7c-disconnected-dropped.txt",
+    "ax-tree-r7c-narrow-narrow-1.txt",
+    "ax-tree-r7c-narrow-narrow-2.txt",
+    "ax-tree-r7c-narrow-narrow-3.txt",
+    "ax-tree-r7c-narrow-narrow-initial.txt",
+    "ax-tree-r7c-narrow-popover-closed.txt",
+    "ax-tree-r7c-narrow-popover-popover.txt",
+    "ax-tree-r7c-narrow-reconnected-reconnected.txt",
+    "ax-tree-r7c-wide-initial.txt",
+    "ax-tree-r7c-wide-wide-1.txt",
+    "ax-tree-r7c-wide-wide-2.txt",
+    "ax-tree-r7c-wide-wide-3.txt",
+    "ax-tree-scroll-bottom.txt",
+    "ax-tree-scroll-up.txt",
+    "ax-tree-virtualized-thousand-after-scroll.txt",
+    "ax-tree-virtualized-thousand-initial.txt",
+    "connected-1080x720.png",
+    "dataset.json",
+    "disconnected-1080x720.png",
+    "geometry-r7c-disconnected-dropped.txt",
+    "geometry-r7c-narrow-narrow-1.txt",
+    "geometry-r7c-narrow-narrow-2.txt",
+    "geometry-r7c-narrow-narrow-3.txt",
+    "geometry-r7c-narrow-narrow-initial.txt",
+    "geometry-r7c-narrow-popover-closed.txt",
+    "geometry-r7c-narrow-popover-popover.txt",
+    "geometry-r7c-narrow-reconnected-reconnected.txt",
+    "geometry-r7c-wide-initial.txt",
+    "geometry-r7c-wide-wide-1.txt",
+    "geometry-r7c-wide-wide-2.txt",
+    "geometry-r7c-wide-wide-3.txt",
+    "performance-baseline.json",
+    "performance-samples.tsv",
+    "platform-preferences.json",
+    "resize-narrow-1.txt",
+    "resize-narrow-2.txt",
+    "resize-narrow-3.txt",
+    "resize-narrow-initial.txt",
+    "resize-wide-1.txt",
+    "resize-wide-2.txt",
+    "resize-wide-3.txt",
+    "wide-1440x1024.png",
+    "window-place.txt"
+  ]
+}
