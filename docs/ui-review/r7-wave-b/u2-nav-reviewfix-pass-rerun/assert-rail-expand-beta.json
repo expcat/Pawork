@@ -1,0 +1,17 @@
+{
+  "phase": "rail-expand-beta",
+  "generated_at": "2026-08-30T06:55:04Z",
+  "checks": [
+    {
+      "name": "focus-project-Earlier_3afx-beta-lib",
+      "pass": true,
+      "detail": "focused=project-Earlier_3afx-beta-lib (expect project-Earlier_3afx-beta-lib)"
+    },
+    {
+      "name": "beta-rows-visible",
+      "pass": true,
+      "detail": "session-fx-ses-beta-pending visible"
+    }
+  ],
+  "pass": true
+}

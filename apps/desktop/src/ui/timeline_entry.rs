@@ -25,7 +25,7 @@
 //! 原文，未知状态原样显示不伪造）。条目「···」fork 菜单（identifier 与
 //! 行为冻结）迁入 message / error 条目；旧 timeline_entry_element 删除。
 
-use gpui::{div, prelude::*, px, Context, FontWeight, Rgba, SharedString};
+use gpui::{div, prelude::*, px, Context, FontWeight, Rgba, SharedString, Window};
 
 use crate::projection::{ConnectionState, TimelineEntry, TimelineEntryKind};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
@@ -262,9 +262,9 @@ fn entry_actions_element(
                         .label("Fork")
                         .disabled(!can_fork)
                         .when(can_fork, |row| {
-                            row.on_click(cx.listener(move |view, _event, _window, cx| {
+                            row.on_click(cx.listener(move |view, _event, window, cx| {
                                 view.close_open_menu(cx);
-                                view.on_fork(&fork_id, cx);
+                                view.on_fork(&fork_id, window, cx);
                             }))
                         }),
                 ),
@@ -673,7 +673,12 @@ impl AppView {
         )
     }
 
-    pub(super) fn on_fork(&mut self, event_id: &str, cx: &mut Context<Self>) {
+    pub(super) fn on_fork(
+        &mut self,
+        event_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session_id) = self.projection.active_session_id.clone() else {
             self.status_hint = Some("Open a session before forking.".into());
             cx.notify();
@@ -704,6 +709,9 @@ impl AppView {
         }
         self.controller
             .fork_session(session_id, event_id.to_string());
+        // Fork 响应会重建 Timeline 并卸载当前条目触发器；先把焦点交回
+        // Composer，避免菜单选择后留下悬空的行级 FocusHandle。
+        self.focus_composer(window, cx);
         cx.notify();
     }
 }

@@ -24,7 +24,8 @@
 #      不带原因）-> 切走再切回强制快照重拉 -> failed-replayed（真实
 #      provider 原因经重放出现）。
 #   S8 hang-cancel：fixture:hang -> cancel 可用 -> AXPress cancel ->
-#      Run cancelled 摘要 + composer 复可用（send enabled）。
+#      Run cancelled 摘要 + composer 回到空闲可输入态（草稿已清空，
+#      所以空输入 Send disabled）。
 #   S9 replay：host 停（serve_stop.request）-> disconnected 保留 -> host 起
 #      -> AXPress reconnect -> reconnected + 断线前后 entry_count 与
 #      timeline-entry identifier 集合一致（entry-compare）。
@@ -435,7 +436,7 @@ require_phase failed-replayed
 screenshot failed-replayed
 
 # ---------------------------------------------------------------- S8 hang + cancel
-trace "S8: fixture:hang -> cancel -> Run cancelled + composer reusable"
+trace "S8: fixture:hang -> cancel -> Run cancelled + composer idle/input-ready"
 S8_SEQ="$(barrier_field "$ROOT/barriers/timeline_stable" seq)"
 [[ "$S8_SEQ" =~ ^[0-9]+$ ]] || S8_SEQ="$S7_SEQ"
 S8_BEFORE="$(timeline_entries)"

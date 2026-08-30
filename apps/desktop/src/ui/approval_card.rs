@@ -95,15 +95,15 @@ impl AppView {
                     .tooltip(tooltip);
                 if can_approve {
                     button = button
-                        .on_click(cx.listener(move |view, event, _window, cx| {
+                        .on_click(cx.listener(move |view, event, window, cx| {
                             if view.consume_button_key_click(id, event) {
                                 return;
                             }
-                            view.on_approve(&click_decision, cx);
+                            view.on_approve(&click_decision, window, cx);
                         }))
-                        .on_activate(cx.listener(move |view, _event, _window, cx| {
+                        .on_activate(cx.listener(move |view, _event, window, cx| {
                             view.note_button_key_activate(id);
-                            view.on_approve(&activate_decision, cx);
+                            view.on_approve(&activate_decision, window, cx);
                             cx.stop_propagation();
                         }));
                 }

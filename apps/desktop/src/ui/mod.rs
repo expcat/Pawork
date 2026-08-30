@@ -1321,6 +1321,9 @@ impl AppView {
     }
 
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
+        // task 切换会重建 Timeline；先关闭可能锚在旧条目或旧上下文上的浮层，
+        // 避免快捷键切换后留下不可见但仍接管键盘的 MenuKind。
+        self.close_open_menu(cx);
         self.stash_composer_draft(cx);
         self.projection.select_session(&session_id);
         self.reconcile_terminal_workspace(cx);
@@ -1353,6 +1356,9 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         if self.projection.active_session_id.as_deref() == Some(session_id) {
+            // AX / click 激活当前行也要完成与切换路径一致的浮层收口；否则
+            // 菜单仍会接管键盘，Composer 虽被 focus 却不会在 AX 树中发布。
+            self.close_open_menu(cx);
             self.focus_composer(window, cx);
             return;
         }
@@ -1835,7 +1841,7 @@ impl AppView {
             MenuKind::Entry(event_id) => {
                 if ix == 0 && self.can_fork_entry(&event_id) {
                     self.close_open_menu(cx);
-                    self.on_fork(&event_id, cx);
+                    self.on_fork(&event_id, window, cx);
                 }
             }
             MenuKind::WorkspaceConfirm => {
@@ -1907,8 +1913,13 @@ impl AppView {
     }
 
     /// cmd-alt-up / cmd-alt-down：按当前 rail 可见顺序循环切换 active task
-    ///（空列表 no-op 安全；焦点不动，只换 active）。
-    fn cycle_active_task(&mut self, forward: bool, cx: &mut Context<Self>) {
+    ///（空列表 no-op 安全；切换后与 click / AX 路径同样聚焦 Composer）。
+    fn cycle_active_task(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let sessions = self.visible_rail_sessions();
         let active_ix = self
             .projection
@@ -1918,19 +1929,21 @@ impl AppView {
         let Some(target) = cycle_index(sessions.len(), active_ix, forward) else {
             return;
         };
-        // target 即当前 active（单会话 rail 环绕回原行）时与
-        // on_session_clicked 的 active 短路一致：不重开会话——重开会导致
-        // 重新分页 timeline 与 Composer 失焦（可见抖动），cycling 语义下
-        // 已是目标态即 no-op 安全。
+        // target 即当前 active（单会话 rail 环绕回原行）时不重开会话，
+        // 但仍完成 cycling 的焦点合同；否则快捷键从 rail 控件发起时焦点
+        // 会滞留在原控件，与 click / AX 激活当前 task 的终态不等价。
         if active_ix == Some(target) {
+            self.close_open_menu(cx);
+            self.focus_composer(window, cx);
             return;
         }
         self.open_session(sessions[target].clone(), cx);
+        self.focus_composer(window, cx);
     }
 
     /// cmd-alt-n：按 rail 顺序找下一个 NeedsInput > Blocked > Unread 会话并
     /// 打开；无候选时经 status_hint 如实提示。
-    fn open_next_needs_attention(&mut self, cx: &mut Context<Self>) {
+    fn open_next_needs_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let candidates: Vec<(String, Option<Attention>)> = self
             .visible_rail_sessions()
             .into_iter()
@@ -1943,7 +1956,10 @@ impl AppView {
             })
             .collect();
         match next_attention_session(&candidates, self.projection.active_session_id.as_deref()) {
-            Some(session_id) => self.open_session(session_id, cx),
+            Some(session_id) => {
+                self.open_session(session_id, cx);
+                self.focus_composer(window, cx);
+            }
             None => {
                 self.status_hint = Some("No task needs attention.".into());
                 cx.notify();
@@ -1951,26 +1967,26 @@ impl AppView {
         }
     }
 
-    fn on_task_cycle_up(&mut self, _: &TaskCycleUp, _window: &mut Window, cx: &mut Context<Self>) {
-        self.cycle_active_task(false, cx);
+    fn on_task_cycle_up(&mut self, _: &TaskCycleUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_active_task(false, window, cx);
     }
 
     fn on_task_cycle_down(
         &mut self,
         _: &TaskCycleDown,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_active_task(true, cx);
+        self.cycle_active_task(true, window, cx);
     }
 
     fn on_next_needs_attention_action(
         &mut self,
         _: &NextNeedsAttention,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_next_needs_attention(cx);
+        self.open_next_needs_attention(window, cx);
     }
 
     fn on_reconnect(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -2077,6 +2093,7 @@ impl AppView {
             self.timeline_changed();
         }
         self.inspector_tab = InspectorTab::Changes;
+        self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
         self.refresh_changes(cx);
         let fetching = matches!(self.changes.fetch, changes::ChangesFetch::Fetching);
         if !was_available && !fetching {
@@ -2175,16 +2192,21 @@ impl AppView {
         cx.notify();
     }
 
-    fn on_approve_once(&mut self, _: &ApproveOnce, _: &mut Window, cx: &mut Context<Self>) {
-        self.on_approve("approve_once", cx);
+    fn on_approve_once(&mut self, _: &ApproveOnce, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_approve("approve_once", window, cx);
     }
 
-    fn on_approve_for_run(&mut self, _: &ApproveForRun, _: &mut Window, cx: &mut Context<Self>) {
-        self.on_approve("approve_for_run", cx);
+    fn on_approve_for_run(
+        &mut self,
+        _: &ApproveForRun,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_approve("approve_for_run", window, cx);
     }
 
-    fn on_deny(&mut self, _: &Deny, _: &mut Window, cx: &mut Context<Self>) {
-        self.on_approve("deny", cx);
+    fn on_deny(&mut self, _: &Deny, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_approve("deny", window, cx);
     }
 
     fn on_cancel_run(&mut self, _: &CancelRun, window: &mut Window, cx: &mut Context<Self>) {
@@ -2282,7 +2304,12 @@ impl AppView {
         cx.notify();
     }
 
-    fn on_approve(&mut self, decision: &str, cx: &mut Context<Self>) {
+    fn on_approve(
+        &mut self,
+        decision: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // mouse / Button key / global shortcut / AX 都汇入此处，统一 fail-closed。
         if !self.can_approve() {
             return;
@@ -2292,6 +2319,10 @@ impl AppView {
         };
         self.controller
             .approve(pending.run_id, pending.tool_call_id, decision);
+        // 审批卡会在响应事件后卸载；mouse / Button key / shortcut / AX
+        // 统一关闭旧浮层并把焦点交回 Composer，避免焦点悬挂在消失按钮。
+        self.close_open_menu(cx);
+        self.focus_composer(window, cx);
         cx.notify();
     }
 

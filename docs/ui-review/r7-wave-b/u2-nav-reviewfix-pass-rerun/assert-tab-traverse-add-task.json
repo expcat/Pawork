@@ -1,0 +1,12 @@
+{
+  "phase": "tab-traverse-add-task",
+  "generated_at": "2026-08-30T06:54:37Z",
+  "checks": [
+    {
+      "name": "tab-focus-add-task",
+      "pass": true,
+      "detail": "focused=add-task (expect add-task; Tab/Shift-Tab \u7ecf\u6839\u8282\u70b9\u6620\u5c04 focus_next/focus_prev)"
+    }
+  ],
+  "pass": true
+}

@@ -134,7 +134,7 @@
 | F-13 P1 | RunStatusBar | 24px，Task/quota/tok/s/Run 顺序稳定 | 字阶和分隔弱，Inspector 触发器喧宾夺主 | 恢复信息顺序、稳定占位和窄窗收敛 | 高度、基线、分隔与目标一致；缺值诚实 |
 | F-14 P0 | Projects | 项目头、count、展开、定向 `+`、Task 选中完整 | 终态无当前截图 | 补真实 Projects 取证并逐组件修复 | State C reference/current/diff 全部存在后才能签字 |
 | F-15 P0 | 字体/图标/间距 | 桌面可读字阶、克制字重、16px 级图标、8px 节奏 | 全局 11/12/13px 过小，控件像调试 UI | Wave 0 先量图，不把 `12/14/16` 猜测写成定稿 | 字体/图标 `±1px`，重复间距 `±2px`，层级肉眼一致 |
-| F-16 P1 | 交互与 focus | hover/active/focus 不改布局；菜单可键盘操作 | 主路径 tab stop 与菜单方向键有已知缺口 | 补齐语义、焦点顺序、方向键、Escape 与 focus ring | 鼠标和纯键盘录像/清单通过；无颜色单一编码 |
+| F-16 P1 | 交互与 focus | hover/active/focus 不改布局；菜单可键盘操作 | R7 Wave A/B 已补齐主路径 tab stop、菜单方向键/Enter/Escape 与 task/审批/Fork/Inspector 焦点交接，并覆盖 AXPress 当前 task 与单可见 task cycling 边角；VoiceOver 和 R8 全矩阵仍未完成 | Wave C 补响应式/长内容焦点耐久，R8 汇总系统级与全组件证据 | 原生 AX、鼠标和纯键盘 trace/清单通过；无颜色单一编码 |
 
 ## 4. 设计文档冲突与处理决定
 
@@ -240,10 +240,10 @@ flowchart LR
 
 这些是风险，不等同于已完成 WCAG 合规判定。
 
-1. **macOS Accessibility tree 缺口（高风险）**：现有 AX 抓取只看到标准窗口和 traffic lights，Pawork 自定义按钮、tabs、列表和输入区未暴露。需用 VoiceOver + Accessibility Inspector 复核后定性。
+1. **macOS Accessibility 系统验收仍不完整（高风险）**：R7 Wave A 已取得含 Pawork 自定义节点的 raw / bundled AX 树（46 / 63 identifiers）、原生 AX action 与焦点 trace，不再是仅有 Window / traffic lights；但 VoiceOver 未执行，屏幕朗读措辞 / 顺序仍未验证。用户于 2026-08-30 批准原生 AX tree/action + 纯键盘 + U2 仅作为 Wave A 替代门禁，R8 系统级口径不自动豁免。
 2. **目标尺寸风险（高风险）**：项目 `+` 约 `18px`、全局新增/Grouping 约 `22px`；建议可见 glyph 保持定稿密度，但实际 hit area 至少 `24×24px`，主操作更大。
 3. **文字与对比度风险（高风险）**：当前 `11px` tertiary/disabled 文本过小；Wave 0 量图与 Wave 2 字阶修复后，再对每组 token 做对比度检查。
-4. **键盘路径缺口（已知）**：grouping/scope 触发器 tab stop 与菜单方向键路径不完整，不能只验证鼠标。
+4. **键盘路径风险（Wave B 自动路径已收口，R8 汇总）**：grouping/scope 触发器 tab stop、菜单方向键 / Enter / Escape、task cycling / next-needs-attention，以及 task/审批/Fork/Review changes 后的焦点交接已由 R7 Wave A/B 的导航 26 相位、审批/状态 14 相位和审查边角 3 相位 U2 通过；边角证据同时覆盖 AXPress 当前 task 关闭菜单与单可见 task cycling 的焦点交接。VoiceOver 与完整系统级人工顺序仍按风险 1 保留。
 5. **状态表达风险（中风险）**：Task 状态大量依赖小圆点颜色；还需要文字、选中面和 accessible name。
 
 ## 9. 99% 完成定义

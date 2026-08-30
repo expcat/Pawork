@@ -1,0 +1,17 @@
+{
+  "phase": "single-visible-before-cycle",
+  "generated_at": "2026-08-30T06:52:28Z",
+  "checks": [
+    {
+      "name": "single-visible-active-single-visible-before-cycle",
+      "pass": false,
+      "detail": "visible rows=session-ses-1788072715269-1,session-fx-ses-alpha-today,session-fx-ses-alpha-yesterday,session-fx-ses-alpha-longtitle; selected=session-ses-1788072715269-1"
+    },
+    {
+      "name": "focus-project-Earlier_3afx-alpha-app",
+      "pass": true,
+      "detail": "focused=project-Earlier_3afx-alpha-app (expect project-Earlier_3afx-alpha-app)"
+    }
+  ],
+  "pass": false
+}

@@ -1,0 +1,17 @@
+{
+  "phase": "rail-focus-alpha-header",
+  "generated_at": "2026-08-30T06:13:13Z",
+  "checks": [
+    {
+      "name": "focus-project-Earlier_3afx-alpha-app",
+      "pass": true,
+      "detail": "focused=project-Earlier_3afx-alpha-app (expect project-Earlier_3afx-alpha-app)"
+    },
+    {
+      "name": "alpha-collapsed-after-click",
+      "pass": true,
+      "detail": "alpha rows hidden after header click (collapsed)"
+    }
+  ],
+  "pass": true
+}

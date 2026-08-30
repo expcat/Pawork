@@ -15,10 +15,15 @@
 #      ↓ 沿 header -> project-add -> task 行，→ 展开项目。
 #   b. key-open-task：行聚焦 + Enter 行级 key_down 激活，断言 active 切换
 #      与 timeline 加载（正向，无 cmd-alt-down 兜底）。
+#      ax-current-task-menu：菜单打开时 AXPress 当前 task，断言菜单关闭且
+#      唯一焦点回 Composer（不重开当前 session）。
 #   c. grouping-menu-keyboard：真鼠标点开菜单（聚焦触发器），↓ 移高亮，
 #      Enter 选 Projects -> 再开 -> ↓ 环绕 -> Enter 回 Timeline；selection
 #      与 timeline 保留。
 #   d. cmd-alt cycling：cmd-alt-down/down/up 各步 selected 变化 + 加载。
+#      single-visible-cycle：focus-edge 模式在隔离运行时 archive 其余 seed
+#      task，仅保留一个真实 task；从 scope 触发器发 cmd-alt-down，断言不
+#      重开 session 但焦点仍回 Composer（不改仓库 seed）。
 #   e. disconnected-kept/reconnected-kept：drop-socket 断线保留 selection，
 #      AXPress reconnect 恢复。
 #   g. blocked-live：project-add 建稿 -> composer AX set-value "fixture:fail"
@@ -29,7 +34,7 @@
 # 同步只用 barrier/轮询（相位断言即收敛轮询），禁固定 sleep 猜测。
 # 清理只删自建 fixture root 与临时工具目录；失败保留证据退出非零。
 #
-# Usage: scripts/ui-r3-wave-b-nav.sh run --out <dir> [--label <name>]
+# Usage: scripts/ui-r3-wave-b-nav.sh {run|focus-edge} --out <dir> [--label <name>]
 #
 # Exit codes: 0 all phases pass; 2 usage; 3 infrastructure; 4 assertion failure.
 
@@ -52,7 +57,7 @@ CYCLE_SESSION="fx-ses-beta-long"
 
 die() { echo "ui-r3b-nav: $*" >&2; exit 3; }
 usage() {
-  echo "usage: scripts/ui-r3-wave-b-nav.sh run --out <dir> [--label <name>]" >&2
+  echo "usage: scripts/ui-r3-wave-b-nav.sh {run|focus-edge} --out <dir> [--label <name>]" >&2
   exit 2
 }
 
@@ -80,7 +85,7 @@ OUT=""
 LABEL="r3-wave-b-nav"
 while (( $# )); do
   case "$1" in
-    run) MODE="$1"; shift ;;
+    run|focus-edge) MODE="$1"; shift ;;
     --out) OUT="$2"; shift 2 ;;
     --label) LABEL="$2"; shift 2 ;;
     -h|--help) usage ;;
@@ -162,6 +167,17 @@ KEY="$WORK/ui-key-event"
 
 trace "seed fixture root=$ROOT"
 "$FIXTURE" seed --root "$ROOT"
+if [[ "$MODE" == "focus-edge" ]]; then
+  trace "focus edge fixture variant: archive all sessions except fx-ses-beta-long in isolated root"
+  sqlite3 "$ROOT/data/session.db" \
+    "UPDATE sessions SET archived = CASE WHEN session_id = 'fx-ses-beta-long' THEN 0 ELSE 1 END;" \
+    || die "failed to prepare isolated one-session fixture variant"
+  sqlite3 -header -column "$ROOT/data/session.db" \
+    "SELECT session_id, archived FROM sessions ORDER BY session_id;" \
+    | sed 's/[[:space:]]*$//' \
+    > "$OUT/focus-edge-fixture-state.txt" \
+    || die "failed to record isolated fixture variant"
+fi
 trace "serve fixture (wait host_ready barrier)"
 "$FIXTURE" serve --root "$ROOT"
 trace "launch desktop via ui-fixture"
@@ -459,6 +475,21 @@ screenshot() { # $1=phase
   trace "screenshot $OUT/shot-$1.png"
 }
 
+run_single_visible_cycle() {
+  trace "focus edge: one visible task, cmd-alt-down still hands focus to Composer"
+  # 以真实 click + Escape 建立非 Composer 的确定起始焦点；Escape 合同把
+  # 焦点送回 scope 触发器，随后 cycling 必须交接到 Composer。
+  click_id project-scope
+  wait_tree_contains 'identifier="scope-menu"' "$PHASE_TIMEOUT_SECS" scope-menu-open-focus-edge \
+    || { echo "ui-r3b-nav: scope menu did not open for focus-edge setup (evidence kept: $OUT)" >&2; exit 4; }
+  escape_close scope-menu scope-menu-closed-focus-edge \
+    || die "scope menu did not close for focus-edge setup"
+  require_phase single-visible-before-cycle
+  key_until_phase down single-visible-cycle cmd,alt \
+    || { echo "ui-r3b-nav: single-visible cycling did not focus Composer (evidence kept: $OUT)" >&2; exit 4; }
+  screenshot single-visible-cycle
+}
+
 wait_desktop_ready
 
 trace "place Desktop window deterministically on the main display"
@@ -469,6 +500,33 @@ grep -q '# place-main result=0 ' "$OUT/window-place.txt" \
 
 INITIAL_SEQ="$(wait_timeline_stable 0 "" "$BARRIER_TIMEOUT_SECS")"
 activate
+
+if [[ "$MODE" == "focus-edge" ]]; then
+  trace "targeted focus edge: select the sole real session"
+  ax_press session-fx-ses-beta-long "$OUT/action-press-only-session.txt" \
+    "select sole visible session"
+  require_phase single-visible-cycle
+
+  trace "targeted focus edge: menu open -> AXPress current task closes it"
+  click_id task-rail-grouping
+  wait_tree_contains 'identifier="grouping-menu"' "$PHASE_TIMEOUT_SECS" \
+    focus-edge-grouping-menu-open \
+    || { echo "ui-r3b-nav: grouping menu did not open for current-task edge (evidence kept: $OUT)" >&2; exit 4; }
+  ax_press session-fx-ses-beta-long "$OUT/action-press-current-only-task.txt" \
+    "activate sole current task while menu open"
+  require_phase ax-current-task-menu
+  run_single_visible_cycle
+  copy_runtime_evidence
+  "$PY" "$WAVE_D_TOOLS" shell-manifest --dir "$OUT" --repo "$REPO_ROOT" \
+    --scenario r7-wave-b-focus-edge --label "$LABEL"
+  trace "teardown targeted fixture root=$ROOT"
+  "$FIXTURE" down --root "$ROOT"
+  "$FIXTURE" clean --root "$ROOT"
+  DESKTOP_PID=""
+  rm -rf "$WORK"
+  trace "targeted run done (focus edge passes)"
+  exit 0
+fi
 
 # ---------------------------------------------------------------- f. next-needs-attention
 trace "phase f: cmd-alt-n jumps to Needs input session (pristine state)"
@@ -554,6 +612,14 @@ require_phase key-open-task
 screenshot key-open-task
 printf '{"enter_gap": 0, "activation": "row-key-down", "target": "%s"}\n' \
   "$OPEN_SESSION" > "$OUT/enter-gap.json"
+
+trace "phase b2: grouping menu open -> AXPress current task closes menu and focuses Composer"
+click_id task-rail-grouping
+wait_tree_contains 'identifier="grouping-menu"' "$PHASE_TIMEOUT_SECS" grouping-menu-open-current-task \
+  || { echo "ui-r3b-nav: grouping menu did not open before current-task AXPress (evidence kept: $OUT)" >&2; exit 4; }
+ax_press "session-$OPEN_SESSION" "$OUT/action-press-current-task.txt" "activate current task while menu open"
+require_phase ax-current-task-menu
+screenshot ax-current-task-menu
 
 # ---------------------------------------------------------------- c. grouping menu keyboard
 trace "phase c: grouping menu keyboard Timeline -> Projects"

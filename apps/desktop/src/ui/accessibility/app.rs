@@ -171,9 +171,9 @@ impl AppView {
                 }
                 self.send_current_message(cx);
             }
-            "approve-once" => self.on_approve("approve_once", cx),
-            "approve-for-run" => self.on_approve("approve_for_run", cx),
-            "approve-deny" => self.on_approve("deny", cx),
+            "approve-once" => self.on_approve("approve_once", window, cx),
+            "approve-for-run" => self.on_approve("approve_for_run", window, cx),
+            "approve-deny" => self.on_approve("deny", window, cx),
             "timeline-back-to-bottom" => self.timeline_jump_to_bottom(),
             // Inspector 折叠态触发器的可见语义是弹出 ActivityPopover（R6
             // Wave A 起位于 Workspace Header），摘要行才展开 Inspector；
@@ -290,7 +290,7 @@ impl AppView {
                     .map(|entry| entry.event_id.clone())
                 {
                     self.close_open_menu(cx);
-                    self.on_fork(&event_id, cx);
+                    self.on_fork(&event_id, window, cx);
                     return true;
                 }
                 // Run 摘要卡 Review changes（enabled 由树节点校验 + 谓词

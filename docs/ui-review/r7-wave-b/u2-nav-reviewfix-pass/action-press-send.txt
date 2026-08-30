@@ -1,0 +1,11 @@
+# ui-ax-dump
+# pid=88319
+# ax_trusted=true
+# generated_at=2026-08-30T06:51:55Z
+# max_depth=12 max_children=80
+#
+# CGWindowList (owner pid 88319), count=2
+#   wid=13503 owner="pawork-desktop" title="Pawork" layer=0 onscreen alpha=1.0 bounds={1000,208,1440,1024}
+#   wid=13504 owner="pawork-desktop" title="" layer=0 offscreen alpha=1.0 bounds={0,940,500,500}
+#
+# action kind=press target=send result=0

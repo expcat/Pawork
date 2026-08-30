@@ -1,0 +1,12 @@
+{
+  "phase": "rail-focus-beta-add",
+  "generated_at": "2026-08-30T06:51:23Z",
+  "checks": [
+    {
+      "name": "focus-project-add-Earlier_3afx-beta-lib",
+      "pass": true,
+      "detail": "focused=project-add-Earlier_3afx-beta-lib (expect project-add-Earlier_3afx-beta-lib)"
+    }
+  ],
+  "pass": true
+}

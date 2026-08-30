@@ -1,0 +1,29 @@
+2026-08-30T07:00:29Z run start label=r7-wave-b-focus-edge out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-b/u2-focus-edge
+2026-08-30T07:00:29Z compile helpers into /tmp/pawork-r3b-nav-tools.z95liu
+2026-08-30T07:00:34Z seed fixture root=/private/tmp/pawork-ui-fixture.Ul9dRA
+2026-08-30T07:00:37Z serve fixture (wait host_ready barrier)
+2026-08-30T07:00:40Z launch desktop via ui-fixture
+2026-08-30T07:00:40Z desktop pid=94507
+2026-08-30T07:00:42Z desktop window ready (session-list rendered)
+2026-08-30T07:00:42Z place Desktop window deterministically on the main display
+2026-08-30T07:00:43Z wait timeline_stable (seq>0 session=)
+2026-08-30T07:00:44Z timeline_stable ok seq=1 session=
+2026-08-30T07:00:45Z targeted focus edge: create one Today task in alpha workspace
+2026-08-30T07:00:45Z AXPress project-add-Earlier_3afx-alpha-app (create active alpha task)
+2026-08-30T07:00:45Z wait tree contains: focus-edge-today-task
+2026-08-30T07:00:45Z tree contains ok: focus-edge-today-task attempt=1
+2026-08-30T07:00:45Z focus edge: scope/折叠后仅当前 task 可见，cmd-alt-down 仍交接 Composer 焦点
+2026-08-30T07:00:45Z AXPress project-scope (open scope menu for single visible task)
+2026-08-30T07:00:45Z wait tree contains: scope-menu-open-single
+2026-08-30T07:00:45Z tree contains ok: scope-menu-open-single attempt=1
+2026-08-30T07:00:45Z AXPress scope-fx-alpha-app (scope to alpha workspace)
+2026-08-30T07:00:45Z AXPress project-Earlier_3afx-alpha-app (collapse Earlier alpha group)
+2026-08-30T07:00:45Z wait tree contains: earlier-alpha-collapsed
+2026-08-30T07:00:46Z tree contains ok: earlier-alpha-collapsed attempt=1
+2026-08-30T07:00:46Z click project-scope at 1144.0,324.0
+2026-08-30T07:00:46Z wait tree contains: scope-menu-open-focus-edge
+2026-08-30T07:00:47Z tree contains ok: scope-menu-open-focus-edge attempt=1
+2026-08-30T07:00:48Z wait tree contains: scope-menu-closed-focus-edge
+2026-08-30T07:00:49Z tree contains ok: scope-menu-closed-focus-edge attempt=1
+2026-08-30T07:00:49Z wait phase=single-visible-before-cycle (assertion polling)
+2026-08-30T07:01:19Z phase=single-visible-before-cycle TIMEOUT attempt=88 dump=0 assert=5

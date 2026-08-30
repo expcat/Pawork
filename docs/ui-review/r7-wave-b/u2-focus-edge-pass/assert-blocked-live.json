@@ -1,0 +1,22 @@
+{
+  "phase": "blocked-live",
+  "generated_at": "2026-08-30T07:06:00Z",
+  "checks": [
+    {
+      "name": "blocked-row-present",
+      "pass": true,
+      "detail": "rows with Blocked help: session-ses-1788073559564-1"
+    },
+    {
+      "name": "blocked-row-active",
+      "pass": true,
+      "detail": "blocked rows selected: session-ses-1788073559564-1"
+    },
+    {
+      "name": "blocked-row-is-new-session",
+      "pass": true,
+      "detail": "blocked rows outside seed set: session-ses-1788073559564-1"
+    }
+  ],
+  "pass": true
+}

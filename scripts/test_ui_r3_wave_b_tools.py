@@ -46,6 +46,7 @@ def button(identifier, focused=False, help_text=None):
 def write_tree(path, **overrides):
     """Synthetic r3b tree; overrides replace keyed lines."""
     selected = overrides.get("selected", "session-fx-ses-beta-pending")
+    focused_button = overrides.get("focused_button")
     rows = overrides.get("rows")
     if rows is None:
         hide_alpha = overrides.get("alpha_collapsed", False)
@@ -79,7 +80,8 @@ def write_tree(path, **overrides):
         'role=AXGroup identifier="task-rail"',
         'role=AXButton value="'
         + overrides.get("grouping", "Timeline")
-        + '" identifier="task-rail-grouping"',
+        + '" identifier="task-rail-grouping"'
+        + (" focused=1" if focused_button == "task-rail-grouping" else ""),
         'role=AXButton identifier="add-task"',
         'role=AXGroup identifier="session-list"',
     ]
@@ -134,8 +136,8 @@ def write_tree(path, **overrides):
                 ),
             ]
         )
-    if overrides.get("focused_button"):
-        lines.append(button(overrides["focused_button"], focused=True))
+    if focused_button and focused_button != "task-rail-grouping":
+        lines.append(button(focused_button, focused=True))
     if overrides.get("alpha_collapsed"):
         lines.append(button("project-Earlier_3afx-alpha-app", help_text="Collapsed"))
         lines.append(button("project-add-Earlier_3afx-alpha-app"))
@@ -185,12 +187,15 @@ class R3WaveBToolsTest(unittest.TestCase):
 
     def test_next_needs_attention_passes_and_fails_without_help_word(self):
         with tempfile.TemporaryDirectory() as raw:
-            proc, payload = run_assert(raw, "next-needs-attention")
+            proc, payload = run_assert(raw, "next-needs-attention", composer_focused=True)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertTrue(payload["pass"])
         with tempfile.TemporaryDirectory() as raw:
             proc, payload = run_assert(
-                raw, "next-needs-attention", pending_help="Session"
+                raw,
+                "next-needs-attention",
+                pending_help="Session",
+                composer_focused=True,
             )
             self.assertEqual(proc.returncode, 5)
             names = {check["name"]: check for check in payload["checks"]}
@@ -315,6 +320,7 @@ class R3WaveBToolsTest(unittest.TestCase):
                 "key-open-task",
                 selected="session-fx-ses-beta-toolfailed",
                 entry_session="fx-ses-beta-toolfailed",
+                composer_focused=True,
             )
             self.assertEqual(proc.returncode, 0)
             self.assertTrue(payload["pass"])
@@ -323,6 +329,31 @@ class R3WaveBToolsTest(unittest.TestCase):
             self.assertEqual(proc.returncode, 5)
             names = {check["name"]: check for check in payload["checks"]}
             self.assertFalse(names["timeline-fx-ses-beta-toolfailed"]["pass"])
+
+    def test_ax_current_task_closes_menu_and_focuses_composer(self):
+        with tempfile.TemporaryDirectory() as raw:
+            proc, payload = run_assert(
+                raw,
+                "ax-current-task-menu",
+                selected="session-fx-ses-beta-toolfailed",
+                entry_session="fx-ses-beta-toolfailed",
+                composer_focused=True,
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertTrue(payload["pass"])
+        with tempfile.TemporaryDirectory() as raw:
+            proc, payload = run_assert(
+                raw,
+                "ax-current-task-menu",
+                selected="session-fx-ses-beta-toolfailed",
+                entry_session="fx-ses-beta-toolfailed",
+                menu_open=True,
+                menu_focused="group-timeline",
+            )
+            self.assertEqual(proc.returncode, 5)
+            names = {check["name"]: check for check in payload["checks"]}
+            self.assertFalse(names["ax-current-task-menu-closed"]["pass"])
+            self.assertFalse(names["composer-focus-ax-current-task-menu"]["pass"])
 
     def test_grouping_keyboard_round_trip_pins_value_menu_and_selection(self):
         for phase, grouping in (
@@ -336,6 +367,7 @@ class R3WaveBToolsTest(unittest.TestCase):
                     grouping=grouping,
                     selected="session-fx-ses-beta-toolfailed",
                     entry_session="fx-ses-beta-toolfailed",
+                    focused_button="task-rail-grouping",
                 )
                 self.assertEqual(proc.returncode, 0, phase)
                 self.assertTrue(payload["pass"])
@@ -354,10 +386,59 @@ class R3WaveBToolsTest(unittest.TestCase):
         for phase, selected, timeline_session in cases:
             with tempfile.TemporaryDirectory() as raw:
                 proc, payload = run_assert(
-                    raw, phase, selected=selected, entry_session=timeline_session
+                    raw,
+                    phase,
+                    selected=selected,
+                    entry_session=timeline_session,
+                    composer_focused=True,
                 )
                 self.assertEqual(proc.returncode, 0, phase)
                 self.assertTrue(payload["pass"], phase)
+
+        with tempfile.TemporaryDirectory() as raw:
+            proc, payload = run_assert(
+                raw,
+                "cycle-down-1",
+                selected="session-fx-ses-beta-long",
+                entry_session="fx-ses-beta-long",
+            )
+            self.assertEqual(proc.returncode, 5)
+            names = {check["name"]: check for check in payload["checks"]}
+            self.assertFalse(names["composer-focus-cycle-down-1"]["pass"])
+
+    def test_single_visible_cycle_requires_focus_handoff_without_switching(self):
+        only_row = [row("session-ses-only", selected=True)]
+        with tempfile.TemporaryDirectory() as raw:
+            proc, payload = run_assert(
+                raw,
+                "single-visible-before-cycle",
+                rows=only_row,
+                focused_button="project-scope",
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertTrue(payload["pass"])
+        with tempfile.TemporaryDirectory() as raw:
+            proc, payload = run_assert(
+                raw,
+                "single-visible-cycle",
+                rows=only_row,
+                composer_focused=True,
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertTrue(payload["pass"])
+        with tempfile.TemporaryDirectory() as raw:
+            proc, payload = run_assert(
+                raw,
+                "single-visible-cycle",
+                rows=[
+                    row("session-ses-only", selected=True),
+                    row("session-ses-extra"),
+                ],
+                composer_focused=True,
+            )
+            self.assertEqual(proc.returncode, 5)
+            names = {check["name"]: check for check in payload["checks"]}
+            self.assertFalse(names["single-visible-active-single-visible-cycle"]["pass"])
 
     def test_disconnect_phases_require_connection_marker_and_selection(self):
         with tempfile.TemporaryDirectory() as raw:

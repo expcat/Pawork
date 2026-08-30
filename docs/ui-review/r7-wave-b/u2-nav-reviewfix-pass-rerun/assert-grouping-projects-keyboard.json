@@ -1,0 +1,32 @@
+{
+  "phase": "grouping-projects-keyboard",
+  "generated_at": "2026-08-30T06:55:22Z",
+  "checks": [
+    {
+      "name": "grouping-projects",
+      "pass": true,
+      "detail": "task-rail-grouping value=Projects"
+    },
+    {
+      "name": "grouping-menu-closed",
+      "pass": true,
+      "detail": "grouping-menu absent"
+    },
+    {
+      "name": "selected-grouping-projects-keyboard",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-beta-toolfailed (expect session-fx-ses-beta-toolfailed)"
+    },
+    {
+      "name": "timeline-fx-ses-beta-toolfailed",
+      "pass": true,
+      "detail": "timeline-entry-evt-fx-ses-beta-toolfailed-* count=4"
+    },
+    {
+      "name": "focus-task-rail-grouping",
+      "pass": true,
+      "detail": "focused=task-rail-grouping (expect task-rail-grouping)"
+    }
+  ],
+  "pass": true
+}

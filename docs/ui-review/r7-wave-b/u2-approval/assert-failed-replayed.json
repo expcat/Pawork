@@ -1,0 +1,27 @@
+{
+  "phase": "failed-replayed",
+  "generated_at": "2026-08-30T06:15:04Z",
+  "checks": [
+    {
+      "name": "selected-session-fx-ses-alpha-today",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-alpha-today (expect session-fx-ses-alpha-today)"
+    },
+    {
+      "name": "run-summary-card-Run failed",
+      "pass": true,
+      "detail": "run-summary-card-* with label Run failed: run-summary-card-evt-run-gui-1788070497237-2-85"
+    },
+    {
+      "name": "run-summary-help-contains",
+      "pass": true,
+      "detail": "card help values: fixture scripted provider failure (expect substring: fixture scripted provider failure)"
+    },
+    {
+      "name": "run-footer-Run failed \u00b7",
+      "pass": true,
+      "detail": "run-footer labels: Run failed \u00b7 now (expect prefix: Run failed \u00b7)"
+    }
+  ],
+  "pass": true
+}

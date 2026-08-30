@@ -407,9 +407,9 @@ impl AppView {
                             .label("Fork")
                             .disabled(!can_fork)
                             .when(can_fork, |row| {
-                                row.on_click(cx.listener(move |view, _event, _window, cx| {
+                                row.on_click(cx.listener(move |view, _event, window, cx| {
                                     view.close_open_menu(cx);
-                                    view.on_fork(&fork_id, cx);
+                                    view.on_fork(&fork_id, window, cx);
                                 }))
                             }),
                     ),

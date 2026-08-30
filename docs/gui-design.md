@@ -177,9 +177,10 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 - `Enter` 仅在 IME 未组合时发送，`Shift+Enter` 换行；多行粘贴保持原文。
 - Timeline 只在用户位于底部时追随流式输出；用户向上阅读后不得抢滚动位置。
 - 连接、Run、tool 与审批状态必须有文本/图标语义，不能只靠颜色；主路径可全键盘操作。
-- Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离，role/value/enabled/focused/selected/bounds/action 随 canonical UI 状态同步；macOS 由 ADR-042 AppKit bridge 导出，AX action 回到既有 AppView handler 与 enable gate。新增可见交互必须同批补语义；Windows/Linux 平台实现与全量 VoiceOver 验收仍属 R7/R8。
+- Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离，role/value/enabled/focused/selected/bounds/action 随 canonical UI 状态同步；macOS 由 ADR-042 AppKit bridge 导出，AX action 回到既有 AppView handler 与 enable gate。新增可见交互必须同批补语义；Windows/Linux 平台实现仍属后续阶段。R7 Wave A 于 2026-08-30 依用户决定以原生 AX tree/action + 纯键盘 + U2 替代该波 VoiceOver；VoiceOver 未执行且屏幕朗读措辞 / 顺序未验证，R8 系统级验收不由此自动豁免。
 - 可交互控件必须有 hover 反馈与按下态，色值经 theme token；hover / active 只改背景，不引起布局移动（旧 V3 R8 波 B 起，取值表见 [视觉实施基准](../design/README.md) §8.1）。
 - 菜单为 `anchored()/deferred()` 浮层，不占布局流；同一时刻单开互斥，选择 / 再点触发器 / `Escape` / 点击浮层外关闭，打开时滚轮不穿透到下层滚动容器（形态细则见基准 §8.2）。
+- 焦点交接必须可预测：用户发起的 task click / Enter / AX press / cycling / next-needs-attention 切换、审批决策和 Fork 接受后回到 Composer；Review changes 展开 Inspector 后落到当前选中的 Changes 顶层页签；任何 session reset 先关闭旧菜单。AXPress 当前 task 仍须关闭菜单并聚焦 Composer；仅一个可见 task 时 cycling 不重开 session，但仍须交接焦点。R7 Wave B 已以导航 26 相位、审批/状态 14 相位及审查边角 3 相位真窗口 U2 验证这些路径（[证据](ui-review/r7-wave-b/notes.md)）。
 - 用户向上滚动脱钩跟随的滚动区（Timeline / 终端）提供回底控件，点击或自行滚到底即重挂跟随（基准 §8.3）。
 - Timeline 条目经变高虚拟化渲染，长会话滚动性能不随长度退化；侧栏长标题单行省略号截断（基准 §8.4，旧 V3 R8 波 C 起）。
 - Resources 页只读呈现 MCP 状态（name / transport / state / tools / last_error），字段缺失显示 unknown，不伪造；无 Host 出口的分区（如已加载规则）不画入口（基准 §8.5，旧 V3 R8 波 D 起）。
@@ -255,7 +256,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [ ] IME：中文输入法组合中 Enter 不发送，候选窗位置正常（§6）
 - [ ] 多行粘贴：粘贴多行文本保持原文、Shift+Enter 换行（§6）
 - [ ] 1440×1024 逐屏对照 design/ 三图（Timeline / 折叠 / Projects）
-- [ ] 纯键盘走查（基准 §3.6）：IME / 多步走查仍属 [R7/R8](../plan/R7-R8-ui-quality-gates.md)；R3 Wave B 已落地 Tab 链（scope→grouping→add-task→行→composer）、菜单 ↑/↓/Enter/Escape 与 grouping/scope 触发器 tab stop，剩余为 IME 与完整人工走查
+- [ ] 纯键盘走查（基准 §3.6）：R7 Wave B 已自动通过 Tab 链、菜单 ↑/↓/Enter/Escape、task cycling / next-needs-attention、审批与焦点恢复；VoiceOver、IME 的系统级人工复核与 R8 完整汇总仍未执行
 - [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
 - [ ] Reconnect 恢复：R6 Wave B 已覆盖 Inspector/Terminal/Resources 与会话选择恢复；仍需 R8 汇总验证进行中 Run 的全应用生命周期
 - [ ] Connected 态 1080×720 最小窗：连接态下最小窗口 Composer / 状态栏 / Inspector 触发器可用（A.1 1080c 仅覆盖断线态布局）

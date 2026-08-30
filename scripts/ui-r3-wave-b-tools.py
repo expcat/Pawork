@@ -52,7 +52,7 @@ def parse_tree(path):
             focused.append(identifier)
         helps = HELP_RE.findall(line)
         values = VALUE_RE.findall(line)
-        if identifier.startswith("session-"):
+        if identifier.startswith("session-") and identifier != "session-list":
             rows[identifier] = {
                 "help": helps[0] if helps else "",
                 "value": values[0] if values else "",
@@ -104,11 +104,33 @@ def assert_timeline_loaded(tree, session):
     )
 
 
+def assert_composer_focused(tree, phase):
+    focused = tree["focused"]
+    return check(
+        "composer-focus-" + phase,
+        focused == ["composer-input"],
+        "focused=" + (",".join(focused) or "none") + " (expect composer-input)",
+    )
+
+
 def assert_focused(tree, expected):
     return check(
         "focus-" + expected,
         tree["focused"] == [expected],
         "focused=" + (",".join(tree["focused"]) or "none") + " (expect " + expected + ")",
+    )
+
+
+def assert_single_visible_active(tree, phase):
+    rows = list(tree["rows"])
+    selected = selected_rows(tree)
+    return check(
+        "single-visible-active-" + phase,
+        len(rows) == 1 and selected == rows,
+        "visible rows="
+        + (",".join(rows) or "none")
+        + "; selected="
+        + (",".join(selected) or "none"),
     )
 
 
@@ -130,11 +152,14 @@ PHASES = {
     "rail-focus-beta-add",
     "rail-focus-task",
     "key-open-task",
+    "ax-current-task-menu",
     "grouping-projects-keyboard",
     "grouping-timeline-keyboard",
     "cycle-down-1",
     "cycle-down-2",
     "cycle-up",
+    "single-visible-before-cycle",
+    "single-visible-cycle",
     "disconnected-kept",
     "reconnected-kept",
     "blocked-live",
@@ -156,6 +181,7 @@ def phase_checks(tree, phase):
             )
         )
         checks.append(assert_timeline_loaded(tree, "fx-ses-beta-pending"))
+        checks.append(assert_composer_focused(tree, phase))
     elif phase in (
         "tab-traverse-scope",
         "tab-traverse-grouping",
@@ -288,6 +314,33 @@ def phase_checks(tree, phase):
     elif phase == "key-open-task":
         checks.append(assert_single_selected(tree, phase, "session-fx-ses-beta-toolfailed"))
         checks.append(assert_timeline_loaded(tree, "fx-ses-beta-toolfailed"))
+        checks.append(assert_composer_focused(tree, phase))
+    elif phase == "ax-current-task-menu":
+        selected = selected_rows(tree)
+        checks.append(
+            check(
+                "selected-" + phase,
+                len(selected) == 1,
+                "selected rows: " + (",".join(selected) or "none") + " (expect one)",
+            )
+        )
+        if len(selected) == 1:
+            checks.append(assert_timeline_loaded(tree, selected[0].removeprefix("session-")))
+        else:
+            checks.append(check("timeline-selected-session", False, "no unique selected session"))
+        checks.append(
+            check(
+                "ax-current-task-menu-closed",
+                "grouping-menu" not in tree["identifiers"],
+                "grouping-menu "
+                + (
+                    "stray present after AXPress current task"
+                    if "grouping-menu" in tree["identifiers"]
+                    else "absent"
+                ),
+            )
+        )
+        checks.append(assert_composer_focused(tree, phase))
     elif phase in ("grouping-projects-keyboard", "grouping-timeline-keyboard"):
         expected = "Projects" if phase.endswith("projects-keyboard") else "Timeline"
         checks.append(
@@ -309,6 +362,7 @@ def phase_checks(tree, phase):
             assert_single_selected(tree, phase, "session-fx-ses-beta-toolfailed")
         )
         checks.append(assert_timeline_loaded(tree, "fx-ses-beta-toolfailed"))
+        checks.append(assert_focused(tree, "task-rail-grouping"))
     elif phase in ("cycle-down-1", "cycle-down-2", "cycle-up"):
         expected = {
             "cycle-down-1": "session-fx-ses-beta-long",
@@ -322,6 +376,13 @@ def phase_checks(tree, phase):
         }[phase]
         checks.append(assert_single_selected(tree, phase, expected))
         checks.append(assert_timeline_loaded(tree, timeline_session))
+        checks.append(assert_composer_focused(tree, phase))
+    elif phase == "single-visible-before-cycle":
+        checks.append(assert_single_visible_active(tree, phase))
+        checks.append(assert_focused(tree, "project-scope"))
+    elif phase == "single-visible-cycle":
+        checks.append(assert_single_visible_active(tree, phase))
+        checks.append(assert_composer_focused(tree, phase))
     elif phase in ("disconnected-kept", "reconnected-kept"):
         marker = "Disconnected" if phase.startswith("disconnected") else "Connected"
         status = tree["connection_status"]

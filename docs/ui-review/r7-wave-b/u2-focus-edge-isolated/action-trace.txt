@@ -1,0 +1,37 @@
+2026-08-30T07:25:19Z run start label=r7-wave-b-focus-edge-isolated out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-b/u2-focus-edge-isolated
+2026-08-30T07:25:19Z compile helpers into /tmp/pawork-r3b-nav-tools.SXYKZl
+2026-08-30T07:25:24Z seed fixture root=/private/tmp/pawork-ui-fixture.rzA0rb
+2026-08-30T07:25:27Z focus edge fixture variant: archive all sessions except fx-ses-beta-long in isolated root
+2026-08-30T07:25:27Z serve fixture (wait host_ready barrier)
+2026-08-30T07:25:30Z launch desktop via ui-fixture
+2026-08-30T07:25:31Z desktop pid=899
+2026-08-30T07:25:33Z desktop window ready (session-list rendered)
+2026-08-30T07:25:33Z place Desktop window deterministically on the main display
+2026-08-30T07:25:33Z wait timeline_stable (seq>0 session=)
+2026-08-30T07:25:35Z timeline_stable ok seq=1 session=
+2026-08-30T07:25:36Z targeted focus edge: select the sole real session
+2026-08-30T07:25:36Z AXPress session-fx-ses-beta-long (select sole visible session)
+2026-08-30T07:25:36Z wait phase=single-visible-cycle (assertion polling)
+2026-08-30T07:25:36Z phase=single-visible-cycle ok attempt=1
+2026-08-30T07:25:36Z targeted focus edge: menu open -> AXPress current task closes it
+2026-08-30T07:25:36Z click task-rail-grouping at 1254.0,278.0
+2026-08-30T07:25:37Z wait tree contains: focus-edge-grouping-menu-open
+2026-08-30T07:25:38Z tree contains ok: focus-edge-grouping-menu-open attempt=1
+2026-08-30T07:25:38Z AXPress session-fx-ses-beta-long (activate sole current task while menu open)
+2026-08-30T07:25:38Z wait phase=ax-current-task-menu (assertion polling)
+2026-08-30T07:25:38Z phase=ax-current-task-menu ok attempt=1
+2026-08-30T07:25:38Z focus edge: one visible task, cmd-alt-down still hands focus to Composer
+2026-08-30T07:25:38Z click project-scope at 1144.0,324.0
+2026-08-30T07:25:39Z wait tree contains: scope-menu-open-focus-edge
+2026-08-30T07:25:40Z tree contains ok: scope-menu-open-focus-edge attempt=1
+2026-08-30T07:25:41Z wait tree contains: scope-menu-closed-focus-edge
+2026-08-30T07:25:42Z tree contains ok: scope-menu-closed-focus-edge attempt=1
+2026-08-30T07:25:42Z wait phase=single-visible-before-cycle (assertion polling)
+2026-08-30T07:25:42Z phase=single-visible-before-cycle ok attempt=1
+2026-08-30T07:25:42Z wait phase=single-visible-cycle (assertion polling)
+2026-08-30T07:25:43Z phase=single-visible-cycle TIMEOUT attempt=2 dump=0 assert=5
+2026-08-30T07:25:43Z wait phase=single-visible-cycle (assertion polling)
+2026-08-30T07:25:44Z phase=single-visible-cycle ok attempt=1
+2026-08-30T07:25:45Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-b/u2-focus-edge-isolated/shot-single-visible-cycle.png
+2026-08-30T07:25:45Z teardown targeted fixture root=/private/tmp/pawork-ui-fixture.rzA0rb
+2026-08-30T07:25:51Z targeted run done (focus edge passes)

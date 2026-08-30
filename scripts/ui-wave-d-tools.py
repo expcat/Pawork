@@ -1300,6 +1300,7 @@ def parse_states_tree(path):
         if not line.lstrip().startswith("#")
     ]
     identifiers = set()
+    focused = []
     nodes = {}
     connection_status = ""
     for line in lines:
@@ -1308,6 +1309,8 @@ def parse_states_tree(path):
             continue
         identifier = ids[0]
         identifiers.add(identifier)
+        if "focused=1" in line:
+            focused.append(identifier)
         values = VALUE_RE.findall(line)
         descriptions = DESCRIPTION_RE.findall(line)
         helps = HELP_RE.findall(line)
@@ -1328,6 +1331,7 @@ def parse_states_tree(path):
     }
     return {
         "identifiers": identifiers,
+        "focused": focused,
         "nodes": nodes,
         "connection_status": connection_status,
         "timeline_values": timeline_values,
@@ -1515,6 +1519,12 @@ def states_phase_checks(tree, phase, logical_entries=None):
     elif phase == "approval-resolved":
         checks.append(states_selected_row(tree, APPROVAL_SESSION_ROW))
         checks.extend(states_approval_checks(tree, False))
+        checks.append(states_check(
+            "approval-focus-composer",
+            tree["focused"] == ["composer-input"],
+            "focused=" + (",".join(tree["focused"]) or "none")
+            + " (expect composer-input)",
+        ))
         pending_help = nodes.get(APPROVAL_SESSION_ROW, {}).get("help", "")
         checks.append(states_check(
             "rail-needs-input-cleared",
@@ -1635,7 +1645,9 @@ def states_phase_checks(tree, phase, logical_entries=None):
         checks.extend(states_summary_checks(
             tree, "Run cancelled", footer_prefix="Run cancelled ·",
         ))
-        checks.extend(states_composer_checks(tree, running=False, send_enabled=True))
+        # R5 后发送成功会清空输入；取消终态恢复 idle 槽，但空输入的 Send
+        # 必须保持 disabled。可复用性由 Composer 可聚焦且可再次输入证明。
+        checks.extend(states_composer_checks(tree, running=False, send_enabled=False))
     elif phase == "disconnected-retained":
         checks.append(states_check(
             "reconnect-present",

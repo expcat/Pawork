@@ -1,0 +1,17 @@
+[1788070856264] serve starting profile=default
+[1788070856264] host_ready socket=/private/tmp/pawork-ui-fixture.3MzG9N/data/pawork-gui.sock
+ui_fixture serving on /private/tmp/pawork-ui-fixture.3MzG9N/data/pawork-gui.sock (barriers /private/tmp/pawork-ui-fixture.3MzG9N/barriers)
+[1788070859209] accepted connection connection-0
+[ui_fixture] provider stream called
+[ui_fixture] provider stream done: ok=true
+[ui_fixture] provider stream called
+[ui_fixture] provider stream done: ok=false
+[ui_fixture] provider stream called
+[ui_fixture] provider stream done: ok=false
+[1788070892203] serve_stop request
+[1788070892204] shutdown complete
+ui_fixture serve stopped
+[1788070895748] serve starting profile=default
+[1788070895748] host_ready socket=/private/tmp/pawork-ui-fixture.3MzG9N/data/pawork-gui.sock
+ui_fixture serving on /private/tmp/pawork-ui-fixture.3MzG9N/data/pawork-gui.sock (barriers /private/tmp/pawork-ui-fixture.3MzG9N/barriers)
+[1788070895984] accepted connection connection-0

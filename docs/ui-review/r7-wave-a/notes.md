@@ -1,10 +1,10 @@
 # R7 Wave A — 组件状态矩阵与 AX 基线
 
-> 状态：🔵 自动门禁已通过、overlay 人工验收中；VoiceOver 按用户指令未执行（2026-08-29 开启；2026-08-30 R6 退出后恢复）
+> 状态：🟢 已关闭（2026-08-29 开启；2026-08-30 用户确认九图通过，并批准原生 AX / 键盘 / U2 替代本波 VoiceOver）
 
 ## 开启决策
 
-- 2026-08-29 用户曾明确指令跳过当时未收口的 R6、直接进入 R7；R6 随后恢复并完成 Wave B。2026-08-30 用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出，本波恢复 VoiceOver/overlay 人工验收；移交项仍不得记为通过。
+- 2026-08-29 用户曾明确指令跳过当时未收口的 R6、直接进入 R7；R6 随后恢复并完成 Wave B。2026-08-30 用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出，本波恢复人工验收；移交项仍不得记为通过。
 - 本波只处理跨组件交互状态与 Accessibility 基线，不扩 GUI wire，不改 Host / Policy / storage，不新增依赖，也不消费真实 Provider 凭证。
 - Desktop 仍是独立 GPUI 进程，业务依赖只允许 `pawork-client`；`gpui = 0.2.2` 与 ADR-042 原生 AppKit AX bridge 决策保持冻结。
 
@@ -69,8 +69,11 @@
 - **发现与修复**：以五张同状态 hover 截图的逐像素 RGB 中位数为基线核对时，原 [`shot-hover-inspector-tab-terminal.png`](state-supplement/shot-hover-inspector-tab-terminal.png) 相对基线变化 **0 pixels**，未证明可见 hover；源码只把 `text.secondary` 改为 `text.primary`，也不符合 [`design/README.md` §8.1](../../../design/README.md) 的「hover / active 只改背景」合同。`ui/inspector.rs` 已收敛为 `surface.raised` 背景，active 复用同色，不改页签几何。
 - **定向验证**：Desktop 定向门禁 **144 passed / 0 failed**；当前源码以 bundled-adhoc 真窗口重采到 [`state-supplement-hoverfix/`](state-supplement-hoverfix/)。Terminal hover 图相对同轮五图 hover 中位基线变化 **5,577 pixels**，边界 `(1117, 0)–(1216, 56)`，精确落在 100×58 页签内；机器可读结果见 [`pixel-check.json`](state-supplement-hoverfix/pixel-check.json)。
 - **证据口径**：本次只替换受影响的 Terminal hover 图；其余八图仍以 [`state-supplement/`](state-supplement/) 为准。重复全套采集的第一张 grouping hover 因指针起始位置与目标重合而未再次触发 hover，不纳入新基准，也不把重跑当作通过依据。
-- **人工边界**：用户明确要求不使用 VoiceOver；本轮保持关闭且未执行该走查。该要求不自动等于豁免验收标准，Wave A 继续保持开启。
+- **人工边界**：用户明确要求不使用 VoiceOver；本轮保持关闭且未执行该走查。该要求本身不自动等于豁免验收标准，因此在取得下述替代决定前，Wave A 仍保持开启。
 
-## 尚未执行
+## 2026-08-30 用户验收与关闭决定
 
-- State A 九图 overlay 用户签字；VoiceOver 人工走查未执行（用户要求不使用），等待用户决定豁免或替代门禁。自动门禁与人工 overlay 分开记录。
+- 用户确认 State A hover / active / focus 九图通过：八张以 [`state-supplement/`](state-supplement/) 为准，Inspector Terminal hover 以修复后 [`state-supplement-hoverfix/shot-hover-inspector-tab-terminal.png`](state-supplement-hoverfix/shot-hover-inspector-tab-terminal.png) 为准。
+- 用户批准本波以原生 AX tree/action + 纯键盘 + U2 替代 VoiceOver：对应证据为 [`component-matrix.md`](component-matrix.md)、[`u2-three-path-fixed/`](u2-three-path-fixed/) 与 [`ax-forms/`](ax-forms/)。
+- 边界：VoiceOver 始终未执行、不记为通过；上述替代只关闭 R7 Wave A，不证明屏幕朗读措辞 / 顺序，也不静默豁免 R8 的系统级验收。
+- 结论：自动门禁与人工九图均通过，平台递归 AX 失败包已 fail-closed 保留，Wave A 关闭并进入 Wave B。

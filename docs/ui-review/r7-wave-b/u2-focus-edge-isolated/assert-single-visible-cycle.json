@@ -1,0 +1,17 @@
+{
+  "phase": "single-visible-cycle",
+  "generated_at": "2026-08-30T07:25:44Z",
+  "checks": [
+    {
+      "name": "single-visible-active-single-visible-cycle",
+      "pass": true,
+      "detail": "visible rows=session-fx-ses-beta-long; selected=session-fx-ses-beta-long"
+    },
+    {
+      "name": "composer-focus-single-visible-cycle",
+      "pass": true,
+      "detail": "focused=composer-input (expect composer-input)"
+    }
+  ],
+  "pass": true
+}

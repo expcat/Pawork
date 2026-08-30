@@ -128,10 +128,15 @@ class StatesAssertTest(unittest.TestCase):
             session_row("session-fx-ses-beta-pending", selected=True),
             timeline_row("timeline-entry-evt-fx-ses-beta-pending-9", "approval requested · tool · write_file"),
             tool_row("tool-row-evt-fx-ses-beta-pending-10", "failed", "write_file 失败"),
+            'role=AXTextArea identifier="composer-input" focused=1',
         ]
         proc, payload = self.assert_tree(base, "approval-resolved")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(payload["pass"])
+        no_focus = [line.replace(" focused=1", "") for line in base]
+        proc, payload = self.assert_tree(no_focus, "approval-resolved")
+        self.assertEqual(proc.returncode, 5)
+        self.assertIn("approval-focus-composer", self.failed_checks(payload))
         stray = base + ['role=AXGroup identifier="approval-card" value="write_file"']
         proc, payload = self.assert_tree(stray, "approval-resolved")
         self.assertEqual(proc.returncode, 5)
@@ -333,15 +338,15 @@ class StatesAssertTest(unittest.TestCase):
             session_row("session-fx-ses-alpha-today", selected=True),
             summary_card("run-summary-card-evt-fx-ses-alpha-today-96", "Run cancelled"),
             static("run-footer-evt-fx-ses-alpha-today-96", "Run cancelled · 1m"),
-            button("send", 1),
+            button("send", 0),
             'role=AXTextArea identifier="composer-input" description="Message" enabled=1',
         ]
         proc, payload = self.assert_tree(cancelled, "hang-cancelled")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        stuck = [line.replace('identifier="send" enabled=1', 'identifier="send" enabled=0') for line in cancelled]
+        stuck = [line.replace('identifier="send" enabled=0', 'identifier="send" enabled=1') for line in cancelled]
         proc, payload = self.assert_tree(stuck, "hang-cancelled")
         self.assertEqual(proc.returncode, 5)
-        self.assertIn("composer-send-enabled-1", self.failed_checks(payload))
+        self.assertIn("composer-send-enabled-0", self.failed_checks(payload))
 
     def test_connection_phases_and_negatives(self):
         disconnected = SHELL + [

@@ -1,15 +1,15 @@
 # R7–R8 — 全局交互质量与模拟操作全功能验收
 
-> 状态：🔵 R7 Wave A 自动门禁已通过、overlay 人工验收中；VoiceOver 按用户指令未执行 · R8 ⚪ 未开始
+> 状态：🔵 R7 Wave A/B 🟢 已关闭、Wave C 进行中；VoiceOver 未执行且不宣称通过 · R8 ⚪ 未开始
 > 前置：R1–R6 已依次退出。用户于 2026-08-29 曾授权跳过当时未收口的 R6、直接进入 R7；R6 Wave B 随后恢复并于 2026-08-30 完成实现、定向门禁与审查后最终 U2，同日用户明确确认将 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 解决跨组件一致性，R8 运行完整矩阵并补跨阶段缺口，均不得把移交项记为已经通过。
 
 ## R7 — 全局交互、Accessibility 与响应式
 
 ### 执行波次
 
-- **Wave A（🔵 2026-08-29–30，人工验收中）— 组件状态矩阵与 AX 基线**：自动门禁已通过（45 组件矩阵、三路径焦点修复、U2 26 相位、A3 bundled/签名对照、A4 State A hover/active/focus 九图）；人工 overlay 续查发现并修复 Inspector 顶层页签无可见 hover 的缺口，等待用户签字。VoiceOver 因用户明确要求不使用而未执行，须由用户另行决定豁免或替代口径，不能据此关闭 Wave A。写入限 apps/desktop、Desktop Spec、R7 测试脚本与本波证据；不改 GUI wire、Host、Policy 或 fixture 业务数据。macOS 26 AX 递归劣化已 fail-closed 取证（attempt7–10），不以重启成功冒充根治。
-- **Wave B（⚪）— 全局 focus、菜单与 Popover 等价路径**：收敛 hover/active/focus/disabled/loading/error/selected、单开浮层、Escape/外点 dismissal、可发现快捷键与面板/菜单/审批后的焦点恢复；同一 action 必须复用既有 enable gate。
-- **Wave C（⚪）— 响应式、长内容与平台偏好**：覆盖 1080×720、字号放大、CJK/emoji/超长行、千级列表、反复 resize、reduced motion/高对比偏好与性能基线；只记录平台真实能力，不伪造跨平台 AX 支持。
+- **Wave A（🟢 2026-08-29–30）— 组件状态矩阵与 AX 基线**：自动门禁已通过（45 组件矩阵、三路径焦点修复、U2 26 相位、A3 bundled/签名对照、A4 State A hover/active/focus 九图）；人工 overlay 续查发现并修复 Inspector 顶层页签无可见 hover 的缺口，2026-08-30 用户确认九图通过。用户同时批准本波以原生 AX tree/action + 纯键盘 + U2 替代 VoiceOver；VoiceOver 未执行、不记为通过，屏幕朗读措辞 / 顺序仍未验证。写入限 apps/desktop、Desktop Spec、R7 测试脚本与本波证据；未改 GUI wire、Host、Policy 或 fixture 业务数据。macOS 26 AX 递归劣化已 fail-closed 取证（attempt7–10），不以重启成功冒充根治。
+- **Wave B（🟢 2026-08-30）— 全局 focus、菜单与 Popover 等价路径**：基于 Wave A 45 组件矩阵、R3 导航 U2 与 R6 Inspector U2 核对现状，收敛六个真实焦点缺口：task 切换关闭旧菜单并聚焦 Composer，审批 action 关闭菜单并聚焦 Composer，Review changes 展开 Inspector 后聚焦 Changes 选中页签，Fork 接受后聚焦 Composer；独立审查再补当前 task 的 AXPress 关闭菜单，以及仅一个可见 task 时 cycling 不重开 session 但仍聚焦 Composer。mouse / keyboard / AX 继续汇入既有 handler 与 enable gate。Desktop 144/144、Python 17/17 + 22/22、导航 26 相位、审批/状态 14 相位及审查边角 3 相位真窗口 U2 全绿；首次审批长驱动暴露的是 R4 对“空输入 Send enabled”的过期断言，按 R5 冻结合同改为 disabled 后同驱动全绿。审查边角仅在隔离临时 fixture root 通过既有 `archived` 字段构造单可见 task，仓库 seed 与 fixture 业务数据未改。证据见 [r7-wave-b](../docs/ui-review/r7-wave-b/notes.md)。未改 GUI wire、Host 或 Policy。
+- **Wave C（🔵 2026-08-30）— 响应式、长内容与平台偏好**：覆盖 1080×720、字号放大、CJK/emoji/超长行、千级列表、反复 resize、reduced motion/高对比偏好与性能基线；只记录平台真实能力，不伪造跨平台 AX 支持。
 
 ### 1. 交互状态
 
@@ -22,7 +22,7 @@
 
 - 为所有交互元素提供稳定 identifier、AX role/name/value/state；图标按钮必须有名称，状态不能只靠颜色。
 - 纯键盘可完成连接重试、新建/选择 task、发送/取消、tool 展开、审批、Changes、Terminal、Inspector/Activity 和菜单关闭。
-- 原生 AX audit + VoiceOver 验证 role/name/value/enabled/focused/order/action，以及动态状态、流式消息、审批请求、错误和完成通知；避免重复播报整条 Timeline。AX 树只含 Window/traffic lights 时直接失败。
+- 原生 AX audit + VoiceOver 验证 role/name/value/enabled/focused/order/action，以及动态状态、流式消息、审批请求、错误和完成通知；避免重复播报整条 Timeline。AX 树只含 Window/traffic lights 时直接失败。R7 Wave A 依用户 2026-08-30 决定，以原生 AX tree/action + 纯键盘 + U2 作为该波替代门禁；这不等于 VoiceOver 通过，也不覆盖屏幕朗读措辞 / 顺序，R8 的系统级口径另行执行。
 - 文字/状态/焦点对比度、字号放大、reduced motion 与高对比偏好按平台可用能力验证；官方竞品未公开的 AX 行为不得当作已证明。
 
 ### 3. 响应式与耐久性

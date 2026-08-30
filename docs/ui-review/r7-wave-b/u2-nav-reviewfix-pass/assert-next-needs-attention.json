@@ -1,0 +1,27 @@
+{
+  "phase": "next-needs-attention",
+  "generated_at": "2026-08-30T06:50:40Z",
+  "checks": [
+    {
+      "name": "selected-next-needs-attention",
+      "pass": true,
+      "detail": "selected rows: session-fx-ses-beta-pending (expect session-fx-ses-beta-pending)"
+    },
+    {
+      "name": "needs-input-help",
+      "pass": true,
+      "detail": "session-fx-ses-beta-pending help=Needs input"
+    },
+    {
+      "name": "timeline-fx-ses-beta-pending",
+      "pass": true,
+      "detail": "timeline-entry-evt-fx-ses-beta-pending-* count=4"
+    },
+    {
+      "name": "composer-focus-next-needs-attention",
+      "pass": true,
+      "detail": "focused=composer-input (expect composer-input)"
+    }
+  ],
+  "pass": true
+}
