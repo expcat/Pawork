@@ -103,7 +103,7 @@ S7 的唯一主路径是：启动 Desktop → 连接本机 Host → 恢复 Snaps
 - Inspector 顶部预留 capability-driven `InspectorToolTabs`；Changes 是 S8 surface，Terminal 是 S10 surface，Files / Summary 仍是 Changes 内部二级 tab。折叠时 Inspector 宽度归零，Workspace 扩展，右上 `ActivityPopover` 摘要显示 Changes 行数与 Main / subagent 状态；点击摘要恢复对应 Inspector surface。折叠态 ActivityPopover 的触发器随 Workspace Header 落位右上，不由 StatusBar 承载；StatusBar 只保留状态信息。
 - ActivityPopover 的 Changes 分区随 S8 启用，Agent 状态列表随 S11 启用；不可用阶段隐藏对应分区，不做可点击假入口或截图演示数据。
 - 上述展示只消费 projection / Host capability，经 controller → `pawork-client` 获取；GUI 不直连 Provider、quota store、Git、PTY 或数据库。
-- R6 Wave B 已用真 Host/Desktop 九场景验证 Changes/Terminal/Resources、折叠恢复、task/latest-session scope 与断线重连；DiffView 横滚由真实 CGEvent 产生可观测 offset。该结构/交互证据不替代 R8 的三图 SSIM 与用户视觉签字。
+- R6 Wave B 已用真 Host/Desktop 九场景验证 Changes/Terminal/Resources、折叠恢复、task/latest-session scope 与断线重连；DiffView 横滚由真实 CGEvent 产生可观测 offset。该结构/交互证据不替代 R10 的三图 SSIM 与用户视觉签字。
 
 ---
 
@@ -234,7 +234,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 
 ## 附录 A. 历史 K-03 取证记录（旧 R8 波 E，2026-08-24）
 
-> 本附录保存旧路线的取证，不再承担当前签字。未完成项已全部移交 [新 R7–R8 任务书](../plan/R7-R8-ui-quality-gates.md)，且 [UI Review](UI_Review.md) 已撤回会降低 99% 目标的旧偏差接受。
+> 本附录保存旧路线的取证，不再承担当前签字。未完成项已全部移交新任务书（比对见 [R7–R8](../plan/R7-R8-ui-quality-gates.md)，终局门禁见 [R9–R11](../plan/R9-R11-post-ui-closeout.md) R10），且 [UI Review](UI_Review.md) 已撤回会降低 99% 目标的旧偏差接受。
 
 验收环境：macOS 3440×1440 @1x；隔离实例 `r8e`（`PAWORK_DATA_DIR=/tmp/r8e.Xepxwh`），HEAD=8b0e3a0（波 D 收口）。
 
@@ -256,9 +256,9 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [ ] IME：中文输入法组合中 Enter 不发送，候选窗位置正常（§6）
 - [ ] 多行粘贴：粘贴多行文本保持原文、Shift+Enter 换行（§6）
 - [ ] 1440×1024 逐屏对照 design/ 三图（Timeline / 折叠 / Projects）
-- [ ] 纯键盘走查（基准 §3.6）：R7 Wave B 已自动通过 Tab 链、菜单 ↑/↓/Enter/Escape、task cycling / next-needs-attention、审批与焦点恢复；VoiceOver、IME 的系统级人工复核与 R8 完整汇总仍未执行
+- [ ] 纯键盘走查（基准 §3.6）：R7 Wave B 已自动通过 Tab 链、菜单 ↑/↓/Enter/Escape、task cycling / next-needs-attention、审批与焦点恢复；VoiceOver、IME 的系统级人工复核与 R10 完整汇总仍未执行
 - [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
-- [ ] Reconnect 恢复：R6 Wave B 已覆盖 Inspector/Terminal/Resources 与会话选择恢复；仍需 R8 汇总验证进行中 Run 的全应用生命周期
+- [ ] Reconnect 恢复：R6 Wave B 已覆盖 Inspector/Terminal/Resources 与会话选择恢复；仍需 R10 汇总验证进行中 Run 的全应用生命周期
 - [x] Connected 态 1080×720 最小窗：R7 Wave C 已以真实 Host / Desktop 覆盖 Connected、ActivityPopover、Disconnected、三轮宽窄 resize 与 100%→150%→100% 字号；150% 使用 320px rail，最终标题/日期间隔复验截图无遮挡。连接长文案 paint 门禁 `lit=0`（[证据](ui-review/r7-wave-c/notes.md)）。主动平台偏好态依用户指令跳过，不计为通过。
 - [ ] 虚拟化四例（长会话）：滚动流畅 / 回底重挂 / Entry「···」菜单锚点 / 长标题 truncate
 - [ ] hover / active 交互态抽查（基准 §8.1 取值表）
@@ -269,10 +269,10 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 ### A.3 漂移与定夺项
 
 - D1 mod.rs 行数：824（波 C 达标 <900）→ 1031（波 D 三页签接线）——✅ 已拍板（2026-08-24）：接受 1031 为终态口径，不再重瘦。
-- D2 窄窗响应式：R7 Wave C 已实现 1080–1279 时 100% rail=240px + Inspector 默认折叠，150% rail=320px；真实 Host/Desktop 的 Connected、ActivityPopover、Disconnected、resize 与字号复验通过。该项不再是实现缺口，R8 只做终局汇总。
+- D2 窄窗响应式：R7 Wave C 已实现 1080–1279 时 100% rail=240px + Inspector 默认折叠，150% rail=320px；真实 Host/Desktop 的 Connected、ActivityPopover、Disconnected、resize 与字号复验通过。该项不再是实现缺口，R10 只做终局汇总。
 - D3 空闲 30s 断连：host 30s 心跳超时 + desktop 无周期心跳的机制性关闭，非 R8 回归——✅ 已修复（2026-08-24）：desktop controller 泵循环连续 15s 空闲发 `heartbeat()`，真窗口 soak >2min 不再断连实证，desktop 测试 41/41 绿。
 - D4 P3-4 Entry 菜单滚动卸载：菜单开着时条目滚出可视区被卸载、浮层消失但状态残留（滚回自现，Escape/外点仍有效）——✅ 已拍板接受（2026-08-24）：虚拟化卸载语义下浮层随条目回收属可接受行为。
 
 ### A.4 已收口免重复项
 
-Changes 四面 / Resources 行 /「@」端到端 bubble 双 part 已于波 D 真窗口逐项截图实证（/tmp/r8d-*.png）；旧 R8 过程与 S12-CR09 复核已归档于 [history](history.md)。这些历史截图不替代新 R8 的固定 fixture、同尺寸差分和用户签字。
+Changes 四面 / Resources 行 /「@」端到端 bubble 双 part 已于波 D 真窗口逐项截图实证（/tmp/r8d-*.png）；旧 R8 过程与 S12-CR09 复核已归档于 [history](history.md)。这些历史截图不替代新 R10 的固定 fixture、同尺寸差分和用户签字。

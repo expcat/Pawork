@@ -2,7 +2,7 @@
   "state": "state-a",
   "threshold": 0.99,
   "max_mask_fraction": 0.35,
-  "note": "Reference rects use measurements.md coordinates. R1-D adds a current rect to each zone. Split left/right zones keep anchored controls observable when the contract column widths differ from the ImageGen reference. The 3px dividers at x297-299 and x977-979 are intentionally unassigned. composer reference h=110 含定稿图 12px 背景带，current 为合同几何 91，min_coverage 0.80（>0.50 硬下限）系合同差非放水；SSIM 记录值移交 R8.",
+  "note": "Reference rects use measurements.md coordinates. R1-D adds a current rect to each zone. Split left/right zones keep anchored controls observable when the contract column widths differ from the ImageGen reference. The 3px dividers at x297-299 and x977-979 are intentionally unassigned. composer reference h=110 含定稿图 12px 背景带，current 为合同几何 91，min_coverage 0.80（>0.50 硬下限）系合同差非放水；SSIM 记录值移交 R10.",
   "zones": [
     {
       "id": "taskrail",

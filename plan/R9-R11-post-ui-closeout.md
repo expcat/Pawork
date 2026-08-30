@@ -1,9 +1,118 @@
-# R9–R11 — UI 后一致性、真实回归与 UI 终局比对
+# R9–R11 — UI 修复、全功能测试与收尾
 
 > 状态：⚪ 未开始
-> 前置：R8 已完成全功能 UI suite、99% 三图门禁和用户签字。本任务书只保留尚未完成的工作；历史阶段与已交付细节统一见 [docs/history.md](../docs/history.md)。
+> 前置：R8（UI 终局比对与优化文档）已产出 `docs/ui-optimization.md`。2026-08-31 用户重排：原 R11（比对）前提到 R8；新增 R9 修复 R8 发现的问题；原 R8（模拟操作全功能验收）与原 R10（关键回归与真实环境验证）并入本阶段线 R10 测试；原 R9（一致性与代码债务）顺移为 R11 收尾。历史阶段与已交付细节统一见 [docs/history.md](../docs/history.md)。
 
-## R9 — 一致性与代码债务收口
+## R9 — 修复 R8 发现的 UI 问题
+
+### 输入与纪律
+
+- 唯一输入是 R8 产出的 `docs/ui-optimization.md`（分区差异清单 + 主流样式对照 + 修复任务草案）；文档未登记的缺口先回写文档再实施。
+- 修复顺序：结构对齐优先，其次组件样式，最后美观度打磨；不靠阴影、渐变或动画掩盖结构问题。
+- 写入集最小；涉及 design 基准变更（如 State C 底色归一）须先取得用户批准；不扩张 wire/能力，不借机重构无关代码。
+- 生产 UI 不写死 fixture 文案；测试数据仍经 Host、协议与实际 projection 进入 Desktop。
+
+### 执行波次
+
+按优化文档的缺口族划分 Wave（一 Wave 一缺口族，数小时内可完成）。每个 Wave：
+
+- 先补可观察回归（结构/几何断言），再改视觉与样式。
+- 修复后用同一 fixture 复拍受影响区域，运行写入集定向测试与受影响区域的 U2/截图复验。
+- 同批更新 `docs/gui-design.md`、`design/README.md`、Desktop 相关 Spec，并把优化文档对应条目标记为已修复。
+
+### R9 退出标准
+
+- [ ] `docs/ui-optimization.md` 登记的缺口族全部修复，或经用户确认降级/移交。
+- [ ] 每个修复 Wave 有定向测试与受影响区域复验证据。
+- [ ] 优化文档条目状态已回写；无文档外施工。
+
+## R10 — 测试
+
+本阶段合并原 R8（模拟操作全功能验收）与原 R10（关键回归与真实环境验证）的全部合同；R2–R6 各波「移交 R8」条款全部由本阶段承接，中间态记录值不得追认为通过。
+
+### 1. 前置：重采集准备
+
+- **fixture 演示数据重塑**（R3 拍板 c 移交）：`fixtures/ui/seed.json` 数据形状对齐定稿图演示形状（标题长度/时间分布/会话数），同步既有 golden 与约 18 处断言引用，估算 0.5–1 天。
+- **State C reference 底色归一**：定稿图中位 RGB (0,9,17) 比冻结 token base `0x07121a` 更暗；是否按冻结 token 归一属设计基准变更，重采集前必须由用户拍板，不得把当前漂移追认为新基准。
+- 完成上述前置后重新采集 State A/B/C 的 reference/current，再进入视觉终局门禁；不得沿用 R2–R6 中间态记录值。
+
+### 2. UI 全功能验收
+
+#### 2.1 全量场景矩阵
+
+| 领域 | 必须模拟的操作与状态 |
+| --- | --- |
+| 启动与连接 | 无 Host、连接、失败重试、断连、重连、window close/reopen；区分 persisted/connected/executing/blocked |
+| TaskRail | Timeline/Projects、scope、project 展开、全局/定向新建、task 切换、selection/scroll/focus 恢复、Unread/Needs input |
+| Composer | click/type、多行、IME、paste、model/reasoning/workspace/context/`@`、send、cancel、草稿与不可用态 |
+| Timeline | stream、tool 全状态、展开/收起、approval allow/deny、error/retry、cancel、completion、follow-scroll 与千级事件 |
+| Changes | 空态、真实多文件 diff、Files/Summary/DiffView、长行横滚、scope 与只读动作 |
+| Terminal | create、input/output、resize、stop、失败、task/workspace 切换、重连与 Policy 拒绝 |
+| Resources | 空/可用/失败、resource 打开、Add tool/capability 缺失的诚实状态 |
+| Inspector/Activity | tab、二级 tab、折叠/恢复、右上 Popover、dismiss、焦点/滚动/session 保持 |
+| 浮层与快捷键 | grouping/scope/model/reasoning/`@` 菜单，command palette，Tab/方向键/Enter/Esc，窗口边界与 outside click |
+| 响应式/AX | State A/B/C 的 1440 图、1080 窄窗、字号放大、纯键盘、VoiceOver/AX、状态非纯颜色 |
+| 生命周期 | Run 中关闭窗口、Host 仍运行、重开恢复、approval 等待恢复、完成通知与后台状态真实性 |
+
+每一行至少覆盖成功、失败/拒绝和恢复路径；所有 manifest 组件及可达状态必须能反查到场景 ID。单条 happy path、只测 renderer 或人工随意点击均不构成“全功能”。
+
+#### 2.2 执行策略
+
+- 使用 R1 固定 seed 与隔离数据；每场景独立 reset，允许按标签重跑。
+- 语义定位优先：AX identifier/role/name + 明确状态等待；坐标只用于几何验证，固定 sleep 只允许有界兼容并需记录原因。
+- U0/U1 先行，U2 真进程覆盖所有用户动作，U3 只对稳定终态采图；真实 Provider 不属于 UI fixture。
+- PR/本地默认运行 U0/U1 与小型稳定视觉集；macOS 定时门禁运行完整 XCUITest/视觉集；本阶段收口再串行执行 U0–U3、真实 IME/VoiceOver 与性能，避免并发争抢 Cargo/主线程窗口资源。
+- flaky 测试不可“重跑即绿”后隐藏：记录首次失败、重试结果、随机种子和根因；同一场景连续不稳定即阻塞签字。
+- failure bundle 至少含 action trace、AX tree/当前焦点、Host/event log 与协议 sequence、窗口尺寸、current/reference/overlay/diff/mask、AE/PDC/RMSE/SSIM 指标、fixture manifest、seed、OS/Xcode/GPU/scale/locale/input source/font、时间与源码状态；若使用 XCTest，同批保留失败 `xcresult`/attachments。
+
+#### 2.3 视觉终局门禁
+
+- State A/B/C 的可见区域、组件、顺序、展开/折叠和选中状态必须 100% 对齐。
+- TaskRail、Header、Timeline、Composer、Inspector/Popover、StatusBar 各区域动态遮罩后 SSIM `≥0.99`；结构一票否决优先于数值。
+- **R2 移交（2026-08-27 拍板 a）**：R2 只以壳层结构门禁退出，不把内容区未落地组件的分区像素差记为 R2 失败。本阶段必须在 F-03–F-12 落地后重新采集 State A/B/C current，再跑分区 SSIM；不得沿用 R2 Wave A 的 0.65–0.81 中间态报告作为终局通过。
+- **R3 移交（2026-08-28 拍板 c）**：R3 以 TaskRail 结构门禁退出（Wave A State A/C 结构断言全 PASS；State B 与 State A 同 Timeline 模式，未单独采 TaskRail 分区图），三状态分区 SSIM ≥0.99 不在 R3 判定。本阶段重采集 current 前必须先完成 **fixture 演示数据重塑**（见 §1 前置）；并就是否按冻结 token 归一 State C reference 底色另行取得用户批准（设计基准变更）。天花板量化分解：State A ≈100% 内容形状（0.6941，tone 校正上限 0.7490）；State C = tone ≈50% + 形状 ≈50%（0.3543，tone 校正后 0.6885）。遮罩侧无合规余量（已用 16.6%/14.9%，上限 35%），不得靠放宽 UI_Review §0.1 遮罩合同制造通过。细节见 [../docs/history.md](../docs/history.md#r3--taskrail-与任务导航2026-08-2728)。
+- **R4 移交（2026-08-28 拍板 1）**：R4 以 Header/Timeline 结构门禁与 U2 九场景退出，State A/B 分区 SSIM ≥0.99 不在 R4 判定。本阶段重采集 current 时一并覆盖 Header / Timeline / 相关 Workspace 分区；不得沿用 Wave A 记录值（timeline 0.665 / header-left 0.940 / header-right 0.883 / global 0.648）作为终局通过。主因与 R3 相同：fixture 演示内容形状差，重塑已在拍板 c 移交，本条不另开数据任务。细节见 [../docs/history.md](../docs/history.md#r4--workspacetimeline-与-agent-状态2026-08-28)。
+- **R5 移交（2026-08-29 用户确认）**：R5 以 Composer 几何结构门禁、定向测试与 U2 九场景退出，State A/B Composer 分区 SSIM ≥0.99 不在 R5 判定。本阶段必须用重塑后的同一 fixture 重采 current 并覆盖 idle/running Composer；不得沿用 R5 Wave A 记录值 0.423 / 0.619 作为终局通过。详见 [../docs/history.md](../docs/history.md#r5--composer-与运行控制2026-08-2829)。
+- **R6 移交（2026-08-30 用户确认）**：R6 以 Inspector/Activity 结构门禁、定向测试与审查后最终二进制 U2 九场景/19 断言退出，State A/B Inspector/Activity 分区 SSIM ≥0.99 不在 R6 判定。State A 中间态 Inspector 记录值为 0.614/0.800；State B 原 `current.png` 在 Popover 打开前采集，不能证明 Popover 视觉，已用正确的 `shot-activity-popover.png` 归一补录为 0.712/0.860。本阶段必须在 fixture 演示数据重塑后，以真正打开的 ActivityPopover 重采 current 并覆盖 Inspector/Popover；上述记录值均不得作为终局通过。详见 [../docs/ui-review/r6-wave-a/notes.md](../docs/ui-review/r6-wave-a/notes.md)。
+- 所有 P0/P1 Review 项关闭；无白 titlebar、缺失 Header、错位 Popover、超高 Composer、假数据、遮挡、截断或布局跳动。
+- 由用户在同尺寸 reference/current/overlay 上完成最终视觉签字；自动门禁通过不能代替签字。
+
+### 3. 关键回归与真实环境
+
+#### 3.1 关键契约
+
+- K-01：`.pawork/config.toml` 在 git 根、git 子目录和非 git 目录三态的发现/合并行为闭环。
+- 安全红线：路径越界、symlink、`.git` 写、审批 deny、Sandbox fail-closed/可观察降级、Secret 脱敏与外部 Secret 拒绝。
+- 持久化与重放：envelope、schema 升级、lineage/compaction、PWB1、checkpoint、export/import、projection、CommandLedger 崩溃/重试。
+- 协议与解析：GUI frame、headless JSON、ACP、MCP、registry fail-closed、config 矩阵和 usage dedup。
+
+#### 3.2 真实通道与客户端
+
+- 低消耗矩阵四通道各一轮 chat；`gui serve` + Desktop probe-smoke/真窗口、Zed ACP、headless json-stdio、typed client 与 `pawork doctor --json`。
+- ChatGPT/xAI 在自然临期 token 上验证 refresh → retry → success 与 `invalid_grant` 清理。
+- 真实 Anthropic/GLM Anthropic 端点、fork/compact 与其它仍缺真实证据的主路径逐项执行或明确登记阻塞。
+
+#### 3.3 人工/平台挂账
+
+- kill -9、ACP 双连接交错、Seatbelt 真机探针、Windows SCM/Job 等不能由 mock 代替的非 UI 项目。
+- Linux/Windows 缺平台项分别记录真实验证、仅编译证明或未验证；不得把 macOS UI 门禁写成三平台发布证明。
+
+UI 全功能验收未通过的项退回 R9 修复，不在本阶段重复登记或降级放行。
+
+### R10 退出标准
+
+- [ ] manifest 的组件 × 状态 × 输入方式覆盖率 100%，所有场景可独立重放并有明确断言。
+- [ ] U0/U1/U2/U3 全部通过；跨进程、断连、恢复、后台 Run 与审批恢复有真实证据。
+- [ ] 三张定稿图的结构门禁、分区 SSIM 与人工 overlay 全通过，无 P0/P1 遗留。
+- [ ] 用户完成视觉签字；已知 P2/P3 只可在不破坏 99% 与全功能的前提下明确接受并登记。
+- [ ] 三类关键回归全绿，K-01 闭环。
+- [ ] 四通道与计划内客户端实际通过或以可复现外部阻塞明确登记。
+- [ ] OAuth refresh、历史人工项与平台证据逐项有结论；无虚构“已验证”。
+- [ ] 失败证据、性能基线、AX 结果与实际命令归档；形成收口摘要；ROADMAP 指针移至 R11。仍不执行发布级 workspace full gate。
+
+## R11 — 收尾
+
+一致性与代码债务收口（原 R9）。本阶段不涉及发布准备（[ROADMAP §5](../ROADMAP.md) 候选，须用户另行授权），也不新增门禁测试。
 
 ### Wave A：事实源与断言
 
@@ -19,81 +128,11 @@
 - 合并 protocol 重复测试箱，评估并移除不再需要的 client dev-dep。
 - 将 resources 残余路径判断统一到 policy `canonical_within` / 路径内核。
 - 复查 Claude import 五项 P3：多 text part 分隔、缺失 id 对的 fail-closed、首行嗅探上界、部分损坏/unknown_fields 可见性、扫描根 symlink；只有真实影响成立才立窄修复。
-- 清理 UI 主线未顺带关闭的低风险残项：heartbeat pump 可观察测试、极窄窗口 client 状态竞态、`mcp_list` 死分支等；BackToBottom、窗口 metrics、Terminal AlwaysAsk 测试应优先在 R2/R4/R6/R8 原阶段关闭，不得拖到本阶段。
+- 清理 UI 主线未顺带关闭的低风险残项：heartbeat pump 可观察测试、极窄窗口 client 状态竞态、`mcp_list` 死分支等；BackToBottom、窗口 metrics、Terminal AlwaysAsk 测试应优先在 R2/R4/R6/R10 对应阶段关闭，不得拖到本阶段。
 - 复查上游重复版本、usage 哨兵、shell wrapper 与 probe flake；超出小任务或涉及 wire/schema 时登记候选或先立 ADR。
 
-### R9 退出标准
+### R11 退出标准
 
 - [ ] 常设文档、Spec、ADR、断言与源码一致，无旧阶段任务死链。
 - [ ] 列出的剩余债务已修复并运行各写入集定向测试，或因明确前置移入候选且说明证据。
 - [ ] 已完成细节移入 history，ROADMAP 只保留下一未完成指针。
-
-## R10 — 关键回归与真实环境验证
-
-### Wave A：关键契约
-
-- K-01：`.pawork/config.toml` 在 git 根、git 子目录和非 git 目录三态的发现/合并行为闭环。
-- 安全红线：路径越界、symlink、`.git` 写、审批 deny、Sandbox fail-closed/可观察降级、Secret 脱敏与外部 Secret 拒绝。
-- 持久化与重放：envelope、schema 升级、lineage/compaction、PWB1、checkpoint、export/import、projection、CommandLedger 崩溃/重试。
-- 协议与解析：GUI frame、headless JSON、ACP、MCP、registry fail-closed、config 矩阵和 usage dedup。
-
-### Wave B：真实通道与客户端
-
-- 低消耗矩阵四通道各一轮 chat；`gui serve` + Desktop probe-smoke/真窗口、Zed ACP、headless json-stdio、typed client 与 `pawork doctor --json`。
-- ChatGPT/xAI 在自然临期 token 上验证 refresh → retry → success 与 `invalid_grant` 清理。
-- 真实 Anthropic/GLM Anthropic 端点、fork/compact 与其它仍缺真实证据的主路径逐项执行或明确登记阻塞。
-
-### Wave C：人工/平台挂账
-
-- kill -9、ACP 双连接交错、Seatbelt 真机探针、Windows SCM/Job 等不能由 mock 代替的非 UI 项目。
-- Linux/Windows 缺平台项分别记录真实验证、仅编译证明或未验证；不得把 macOS UI 门禁写成三平台发布证明。
-
-R10 不接收未通过的 Desktop UI 项；出现此类缺口即退回 R8，不在本阶段重复登记或降级放行。
-
-### R10 退出标准
-
-- [ ] 三类关键回归全绿，K-01 闭环。
-- [ ] 四通道与计划内客户端实际通过或以可复现外部阻塞明确登记。
-- [ ] OAuth refresh、历史人工项与平台证据逐项有结论；无虚构“已验证”。
-- [ ] 形成收口摘要，仍不执行发布级 workspace full gate。
-
-## R11 — UI 终局比对与优化文档
-
-R11 是文档任务。对照 [design/](../design/README.md) 三张 v3 定稿图与已归档的实际 UI 证据，从**结构、UI 组件样式、真实美观度**三个维度评估实际 UI 与设计效果的差距，并参考主流 Agent/开发者工具与设计体系的公开样式实践，输出一份 UI 优化文档（`docs/ui-optimization.md`），告诉后续 Agent 该优化哪些 UI、样式与风格。本阶段**不查询、不修改任何代码**；不启动 Desktop、不重跑 cargo、不重拍 current、不改 design。发布准备已移出本编号，见 [ROADMAP §5](../ROADMAP.md)。
-
-R11 不替代 [R8 退出标准](R7-R8-ui-quality-gates.md#4-r8-退出标准) 的 99% 门禁与全功能 suite；也不在本阶段修复差异。UI 优化文档是后续阶段的输入，本身不授权实现；落地须另立任务书。
-
-### 比对输入（只读）
-
-- `design/`：Timeline（Inspector 展开）、Timeline（Inspector 折叠）、Projects 三张 v3 定稿图。
-- [docs/gui-design.md](../docs/gui-design.md) 的信息架构与交互规则（用于判断缺状态、缺分区，而不只看像素）。
-- [docs/UI_Review.md](../docs/UI_Review.md) 的分区、容差与结构一票否决（用于区分合同内误差与需完善项）。
-- R8 归档的三状态 `reference` / `current` / overlay / diff / mask / checklist，以及 R2–R7 分波证据作分区线索。不得打开 `apps/desktop` 或其它 crate 源码定位组件。
-- [Agent UI 参照调研](UI-reference-research.md) 的交互经验，以及 Codex、Zed、Cursor、VS Code 等主流产品和主流设计体系/组件库的**公开**视觉样式资料（官方文档/截图/HIG 等）；营销图只作线索，不作事实。
-
-### Wave A：逐区对照（结构 + 组件样式）
-
-- 按 State A/B/C 与 UI Review 分区（header、TaskRail、timeline、composer、inspector、statusbar 等）对照 design 与 current。
-- 只登记**显示效果**：布局、色/字/间距、圆角/描边、图标、文案可见性、组件有无、状态外观。截图上看不出的交互缺口标「截图无法判定」，不查代码补证。
-- 容差内、已遮罩、或 R8 已明确接受的项不重复立项；结构未对齐或仍刺眼的可见差异必须登记。
-- 每条写：区域、design 期望、当前现象、证据路径（design 资产 + current/diff）、建议优先级。禁止指向源码路径或「应改某函数」。
-
-### Wave B：真实美观度与主流样式对照
-
-- 在真实 UI 证据上评估美观度：视觉层级是否清楚、密度与节奏是否舒适、对比/留白/对齐/分隔是否精致、深色 surface 层级是否分明、控件质感是否统一。
-- 对主流产品与设计体系做公开资料级样式扫描（组件质感、字阶、状态色、浮层、空态、密度档位等），与 Pawork 同类组件并排对照，提炼可吸收的样式经验；不复制品牌、文案、竞品专属能力或 Pawork 未接入能力的入口。
-- 每条写：主题、主流做法（附公开来源）、Pawork 现状与证据路径、吸收建议与优先级；与 Wave A 差异去重合并。
-
-### Wave C：输出 UI 优化文档
-
-- 汇总 Wave A/B 为 `docs/ui-optimization.md`：分区差异清单 + 主流样式对照 + 后续优化任务草案（一任务一缺口族，数小时内可完成，含证据链接、优先级与验收线索）。
-- 优化文档面向后续 Agent：明确该优化哪些 UI、样式、风格，以及不属于优化范围的内容（design 基准变更、wire/能力扩张、品牌与文案照搬等）。
-- 回写 [ROADMAP.md](../ROADMAP.md) 下一指针，并起草后续任务书；编号在该阶段开启时确定。
-- 本阶段 git 差异仅文档。不得把 License、安装器、供应链或全量门禁塞进本阶段。
-
-### R11 退出标准
-
-- [ ] 三张定稿图与对应 current 证据已逐区对照，结构与组件样式差异形成清单。
-- [ ] 真实美观度评估与主流样式对照完成，可吸收经验已提炼并标注公开来源。
-- [ ] UI 优化文档（`docs/ui-optimization.md`）已产出：告诉后续 Agent 该优化哪些 UI、样式、风格，含证据链接与优先级。
-- [ ] 本阶段未查询、未修改代码；design 像素未改。

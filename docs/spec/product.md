@@ -1,6 +1,6 @@
 # Pawork 产品规格
 
-> 基线日期：2026-08-25。既有功能与结构阶段已归档；当前主线是新 R1–R8 Desktop UI 99% 还原与全功能模拟操作验收，非 UI 剩余工作顺延 R9–R10，R11 为 UI 终局比对与优化文档。Pawork 当前是本机开发产品，不是已发布发行版。
+> 基线日期：2026-08-25。既有功能与结构阶段已归档；当前主线是新 R1–R10 Desktop UI 99% 还原与全功能模拟操作验收：R8 比对、R9 修复、R10 测试，R11 收尾。Pawork 当前是本机开发产品，不是已发布发行版。
 
 ## 1. 产品定义
 
@@ -63,7 +63,7 @@ flowchart LR
 | PRD-RESOURCE-01 | 必须加载 AGENTS.md、Skills、profiles、`@file`，并作为 MCP Client 管理资源；导入不得执行外部 hook。 | 已实现；Desktop 的 `@` 候选浮层和已加载规则分区未实现。 |
 | PRD-GIT-01 | 必须能查看 diff、创建 checkpoint/rollback；GUI 变更面默认只读。 | 已实现/部分实现：CLI 与核心能力已实现，Desktop stage/unstage/hunk 写操作为候选。 |
 | PRD-CLIENT-01 | Desktop、headless 与 ACP 必须连接同一宿主，能力宣告、授权与实现保持同源且未登记 fail-closed。 | 已实现。 |
-| PRD-DESKTOP-01 | Desktop 必须呈现 TaskRail、Timeline、Composer、审批和 Inspector，并在断线后可恢复且不取消 Run。 | 生产链路已实现；视觉 99%、完整 AX/交互与模拟操作矩阵按新 R1–R8 重验。 |
+| PRD-DESKTOP-01 | Desktop 必须呈现 TaskRail、Timeline、Composer、审批和 Inspector，并在断线后可恢复且不取消 Run。 | 生产链路已实现；视觉 99%、完整 AX/交互与模拟操作矩阵按新 R1–R10 重验。 |
 | PRD-OPS-01 | 本机实例必须可诊断、可观测数据目录/连接状态，并提供 service/status/watch/shutdown/doctor/usage 入口。 | 已实现；发布级运维、安装和三平台证据未立项。 |
 
 ## 5. 关键用户流程
@@ -104,9 +104,9 @@ flowchart LR
 - 不提供已交付的远程 GUI、Web UI、Cloud 执行、组织 SSO、第一方 IDE 扩展或对外账户池网关。
 - `NativeRestricted` 不是对抗性隔离；Sandbox 不应被表述为能抵御主动读取全部本机数据的恶意进程。
 - Desktop Changes 不执行 stage/unstage/hunk；`@` 有 host 展开但无候选浮层；Resources 无“已加载规则”分区。
-- 新 R1–R8 UI 视觉/交互验收、R10 终局回归/真实冒烟、OAuth 自然临期 refresh 尚未完成。
+- 新 R1–R10 UI 视觉/交互验收与终局回归/真实冒烟、OAuth 自然临期 refresh 尚未完成。
 - License、安装器、自更新、发布/回滚 runbook、全量门禁与三平台发布矩阵未获授权，不属于当前交付。
 
 ## 7. 产品完成口径
 
-当前产品 Spec 认为“范围完整”是：需求、状态、限制、契约和证据入口均已记录。它不把产品或发布状态改成完成。Desktop 完成必须满足 [R8 退出标准](../../plan/R7-R8-ui-quality-gates.md#4-r8-退出标准)；非 UI 收口必须满足 [R9–R10 退出标准](../../plan/R9-R11-post-ui-closeout.md)；[R11](../../plan/R9-R11-post-ui-closeout.md#r11--ui-终局比对与优化文档) 输出 UI 优化文档，把剩余可见差异与样式优化方向归纳为下一阶段完善任务。发布仍需用户另行授权，不占用 R11。
+当前产品 Spec 认为“范围完整”是：需求、状态、限制、契约和证据入口均已记录。它不把产品或发布状态改成完成。Desktop 完成必须满足 [R10 退出标准](../../plan/R9-R11-post-ui-closeout.md#r10-退出标准)（UI 全功能验收与关键回归）；[R8](../../plan/R7-R8-ui-quality-gates.md#r8-退出标准) 输出 UI 优化文档，R9 完成修复，[R11](../../plan/R9-R11-post-ui-closeout.md#r11-退出标准) 完成一致性与代码债务收尾。发布仍需用户另行授权，不占用 R8–R11。

@@ -14,11 +14,11 @@
 | CAP-EXEC-01 | 子进程、进程树回收、Sandbox、PTY | `run_command`、Desktop Terminal | 已实现 | Sandbox 可观测回退；PTY 创建的 AskUser 当前 fail-closed 为 Deny。 |
 | CAP-PROVIDER-01 | 六条第一方通道、Anthropic 协议适配、OpenAI-compatible 端点 | `models`、全局 provider/model、配置 | 已实现 | 六通道：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek；未启用 feature/未知能力显式拒绝。 |
 | CAP-AUTH-01 | API key、OAuth 登录/刷新、脱敏状态 | `auth list/set-key/login/logout` | 已实现；部分待人工验收 | ChatGPT/xAI 自然临期 refresh 安排在 R10。OS Keychain 不在当前实现。 |
-| CAP-CONTEXT-01 | 上下文预算、compaction、用量/定价 | Run、`usage` | 已实现 | usage 幂等冲突与哨兵口径安排在 R9/R10。 |
+| CAP-CONTEXT-01 | 上下文预算、compaction、用量/定价 | Run、`usage` | 已实现 | usage 幂等冲突与哨兵口径安排在 R10/R11。 |
 | CAP-GIT-01 | diff、checkpoint、rollback、fork/worktree 支撑 | `diff`、`rollback`、Desktop Changes | 部分实现 | Core/CLI 已实现；Desktop Changes 只读，stage/unstage/hunk 是 ADR 候选。 |
 | CAP-RESOURCE-01 | AGENTS.md、Skills、profiles、`@file`、配置导入 | chat/run、`import` | 已实现；部分 GUI 缺口 | Desktop 已消费 host `@` 展开和 MCP 列表；无 `@` 候选浮层/已加载规则 query。 |
 | CAP-MCP-01 | MCP Client 配置、测试、工具/资源 | `mcp list/test`、Desktop Resources | 已实现 | MCP auth 与主 Provider auth 分域；Pawork 作为 MCP Server 未实现。 |
-| CAP-GUI-01 | 本机 GUI server 与 GPUI Desktop | `gui serve`、`pawork-desktop` | 生产链路已实现；新 UI 门禁未完成 | R1–R8 重验 99% 视觉、全组件交互、AX/IME 与真进程恢复；断线不取消 Run。 |
+| CAP-GUI-01 | 本机 GUI server 与 GPUI Desktop | `gui serve`、`pawork-desktop` | 生产链路已实现；新 UI 门禁未完成 | R1–R10 重验 99% 视觉、全组件交互、AX/IME 与真进程恢复；断线不取消 Run。 |
 | CAP-CLIENT-01 | GUI typed client、headless JSON、ACP | `headless`、`acp serve`、`pawork-client` | 已实现 | GUI/headless/ACP 能力表同源；wire/JSON 受冻结契约约束。 |
 | CAP-WORKFLOW-01 | plan、tasks 与演示型多 Agent 编排 | `plan`、`tasks`、`agents demo` | 已实现/受限 | `agents` 是 demo 入口；teams/goal/automation/monitor 的完整产品面已归档或候选。 |
 | CAP-OPS-01 | 服务安装/启停、状态、观察、关闭、诊断 | `service`、`status`、`watch`、`shutdown`、`doctor` | 已实现；平台验收不完整 | service 默认 dry-run，显式 `--apply` 才改系统；Windows SCM 实机仍为候选验收。 |
@@ -47,7 +47,7 @@
 | `watch` | 观察服务/实例状态 | 已实现；在加载 AppCore 前运行。 |
 | `shutdown` | 请求关闭服务 | 已实现；在加载 AppCore 前运行。 |
 | `doctor` | 数据目录、socket、DB、握手诊断 | 已实现；支持结构化输出。 |
-| `usage` | 用量查询 | 已实现；R9/R10 仍需复核既有 usage 登记项。 |
+| `usage` | 用量查询 | 已实现；R10/R11 仍需复核既有 usage 登记项。 |
 | `tasks` | 后台任务状态与控制面 | 已实现。 |
 | `plan` | Plan 工作流 | 已实现。 |
 | `agents` | 多 Agent demo | 仅演示入口，不代表完整 teams/automation 产品。 |
@@ -71,12 +71,12 @@
 
 | 面 | 当前能力 | 状态 |
 | --- | --- | --- |
-| TaskRail | 会话/任务选择、新建、长标题截断 | 生产入口已实现；R2/R3/R7/R8 重验 design、键盘、AX 与状态恢复。 |
-| Timeline | 变高虚拟化、流式条目、审批、fork 边界、回底 | 生产入口已实现；R4/R7/R8 重验视觉、长会话和全状态。 |
-| Composer | 输入、发送、`@` host 展开 | 部分实现；R5/R8 覆盖 IME/粘贴/草稿/菜单，`@` 候选仅在 Host capability 存在时实现。 |
-| Changes | Files/Summary/DiffView/ActivityPopover | 只读生产入口已实现；R6/R8 重验 scope、真实 diff、横滚与 Popover。 |
-| Terminal | 创建、输入、resize、输出 | 生产入口已实现；R6/R8 重验真 PTY、Policy、断线恢复与安全说明。 |
-| Resources | MCP server/tool 状态只读列表 | 生产入口已实现；R6/R8 只显示权威 capability，无 host query 的分区不展示。 |
+| TaskRail | 会话/任务选择、新建、长标题截断 | 生产入口已实现；R2/R3/R7/R10 重验 design、键盘、AX 与状态恢复。 |
+| Timeline | 变高虚拟化、流式条目、审批、fork 边界、回底 | 生产入口已实现；R4/R7/R10 重验视觉、长会话和全状态。 |
+| Composer | 输入、发送、`@` host 展开 | 部分实现；R5/R10 覆盖 IME/粘贴/草稿/菜单，`@` 候选仅在 Host capability 存在时实现。 |
+| Changes | Files/Summary/DiffView/ActivityPopover | 只读生产入口已实现；R6/R10 重验 scope、真实 diff、横滚与 Popover。 |
+| Terminal | 创建、输入、resize、输出 | 生产入口已实现；R6/R10 重验真 PTY、Policy、断线恢复与安全说明。 |
+| Resources | MCP server/tool 状态只读列表 | 生产入口已实现；R6/R10 只显示权威 capability，无 host query 的分区不展示。 |
 
 ## 5. 不可宣称为已交付
 

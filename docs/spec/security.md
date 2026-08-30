@@ -106,4 +106,4 @@ Policy 输出固定为 `Allow`、`Deny`、`AskUser`、`AllowWithConstraints`。�
 6. 用户可见的拒绝/降级文案，不吞错、不静默 fallback；
 7. 需要改 wire/schema/架构红线时先过 ADR。
 
-当前终局安全复验安排在 [R10 关键回归](../../plan/R9-R11-post-ui-closeout.md#r10--关键回归与真实环境验证)，尚未执行完毕；UI 阶段触及安全边界时仍须同批运行对应定向回归，不得推迟。
+当前终局安全复验安排在 [R10 关键回归](../../plan/R9-R11-post-ui-closeout.md#r10--测试)，尚未执行完毕；UI 阶段触及安全边界时仍须同批运行对应定向回归，不得推迟。

@@ -1,6 +1,6 @@
 # R6 Wave A — Inspector 层级与 Header Activity
 
-> 状态：🟢 已收口（2026-08-29；render / AX / U1 与 Connected State A/B 结构断言全过；2026-08-30 用户确认将 SSIM 分区门禁移交 R8，不追认为通过）
+> 状态：🟢 已收口（2026-08-29；render / AX / U1 与 Connected State A/B 结构断言全过；2026-08-30 用户确认将 SSIM 分区门禁移交 R10，不追认为通过）
 
 ## 本波范围
 
@@ -41,12 +41,12 @@ GLM 只读审查未发现 P0/P1；唯一 P2 指出 Connected 真窗口取证受�
 - **State B**：inspector-collapse → inspector-toggle 开 popover → `r6-state-b-open` PASS（320×320、右缘对齐、顶距 toggle 底 +4、heading 高 20、toggle 挂 header 子树、header-new-task 缺席）→ activity-open-changes 恢复 → `r6-state-b-resumed` PASS（toggle/popover 无残留、Inspector 回到 Changes、Files/Summary 选中态正确）。[geometry-open](connected/state-b/geometry-open.txt) · [断言 open](connected/state-b/assert-r6-state-b-open.json) · [断言 resumed](connected/state-b/assert-r6-state-b-resumed.json)。
 - 全程 trace：[action-trace.txt](connected/action-trace.txt)，末行 `run done assert_a=0 assert_b_open=0 assert_b_resumed=0 gate_a=1 gate_b=1`。State A 的 reference/current/overlay/diff 成套于 [connected/state-a](connected/state-a/)；State B 原 `current.png`/`diff/` 采于 Popover 打开前，只保留作折叠态审计，正确 Popover 补录见 [current-popover.png](connected/state-b/current-popover.png) 与 [diff-popover](connected/state-b/diff-popover/)。
 
-视觉门禁：两状态分区 SSIM 均未达 0.99——State A：global 0.662、taskrail 0.694、header-left 0.940、header-right 0.883、timeline 0.679、composer-left 0.423、composer-right 0.620、inspector-body 0.614、inspector-right 0.800、statusbar 0.649。State B 首次报告误把 Popover 打开前的 `current.png` 用作视觉输入，原 popover-left 0.528 / popover-right 0.573 **不是有效 Popover 分数**；2026-08-30 以同次运行的正确 `shot-activity-popover.png` 重新执行 ICC→sRGB 归一与同一 zones/mask 门禁，得到 global 0.637、taskrail 0.544、header-left 0.774、header-right 0.736、timeline 0.681、composer-left 0.449、composer-right 0.765、statusbar 0.462、popover-left 0.712、popover-right 0.860；归一元数据见 [normalize-popover.json](connected/state-b/normalize-popover.json)，完整报告见 [diff-popover/diff-report.json](connected/state-b/diff-popover/diff-report.json)，运行记录见 [diff-popover-run.txt](connected/state-b/diff-popover-run.txt)。主因仍是 fixture 演示内容形状与冻结 capability 的诚实缺省（reference 有 Agents，当前 wire 无对应权威数据）和设计稿不同；2026-08-30 用户确认同 R3–R5 先例移交 R8 终局门禁，不追认为通过。
+视觉门禁：两状态分区 SSIM 均未达 0.99——State A：global 0.662、taskrail 0.694、header-left 0.940、header-right 0.883、timeline 0.679、composer-left 0.423、composer-right 0.620、inspector-body 0.614、inspector-right 0.800、statusbar 0.649。State B 首次报告误把 Popover 打开前的 `current.png` 用作视觉输入，原 popover-left 0.528 / popover-right 0.573 **不是有效 Popover 分数**；2026-08-30 以同次运行的正确 `shot-activity-popover.png` 重新执行 ICC→sRGB 归一与同一 zones/mask 门禁，得到 global 0.637、taskrail 0.544、header-left 0.774、header-right 0.736、timeline 0.681、composer-left 0.449、composer-right 0.765、statusbar 0.462、popover-left 0.712、popover-right 0.860；归一元数据见 [normalize-popover.json](connected/state-b/normalize-popover.json)，完整报告见 [diff-popover/diff-report.json](connected/state-b/diff-popover/diff-report.json)，运行记录见 [diff-popover-run.txt](connected/state-b/diff-popover-run.txt)。主因仍是 fixture 演示内容形状与冻结 capability 的诚实缺省（reference 有 Agents，当前 wire 无对应权威数据）和设计稿不同；2026-08-30 用户确认同 R3–R5 先例移交 R10 终局门禁，不追认为通过。
 
 早前三次阻塞样本归档于 [state-a-ax-stalled-r6a-1](state-a-ax-stalled-r6a-1/)、[-2](state-a-ax-stalled-r6a-2/)、[-3](state-a-ax-stalled-r6a-3/)，契约缺口一次归档于 [connected-attempt1](connected-attempt1/)；[State A 结构截图](manual-structure/state-a-unconnected.png)（rail 288 / workspace 712 / Inspector 440、两级 strip 可见）仍只作结构证据。
 
 ## 遗留与移交
 
-- 分区 SSIM ≥0.99 与 fixture 演示数据重塑：2026-08-30 经用户确认移交 R8 终局视觉门禁（条款见 [plan/R7-R8-ui-quality-gates.md](../../../plan/R7-R8-ui-quality-gates.md) §3）。
+- 分区 SSIM ≥0.99 与 fixture 演示数据重塑：2026-08-30 经用户确认移交 R10 终局视觉门禁（条款见 [plan/R9-R11-post-ui-closeout.md](../../../plan/R9-R11-post-ui-closeout.md) R10 §2.3）。
 - AX server 注册 flake 的产品侧复核（bundled/签名形态）：登记 ROADMAP §5，R7 VoiceOver/AX 门禁前复核；driver 层绕过已就位。
 - 断言覆盖已知子集缺口（收口审查 P2 登记）：popover 内部偏移（heading/summary offset、左右 inset 20/宽 280）与 `.max(header_frame.x)` 钳制未断言，本次采集值恰好全部吻合；需要时随 Wave B 补强。

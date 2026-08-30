@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-08-30。生产连接、主要组件链路与 macOS AX 语义基座已经存在；R7 已完成全局交互、1080 响应式与应用内字号缩放并退出，当前进入 R8 全功能/视觉终局验收。真实窗口仍未达到 design 的 99% 视觉签字条件，终局以 [R1–R8](../../ROADMAP.md#2-顺序排期) 为准。
+> 基线日期：2026-08-31。生产连接、主要组件链路与 macOS AX 语义基座已经存在；R7 已完成全局交互、1080 响应式与应用内字号缩放并退出，当前进入 R8（UI 终局比对与优化文档，只改文档）；R9 修复比对发现的问题，R10 承接全功能/视觉终局验收。真实窗口仍未达到 design 的 99% 视觉签字条件，终局以 [R1–R10](../../ROADMAP.md#2-顺序排期) 为准。
 
 ## 1. 产品定位
 
@@ -23,7 +23,7 @@ flowchart LR
 | 区域 | 必须呈现 | 当前限制 |
 | --- | --- | --- |
 | TaskRail | 会话/任务条目、新任务、选中态、长标题截断 | 100%：宽窗 288px、1080–1279 为 240px；150% 时 320px，窗口不足 1320 保持 Inspector 折叠。 |
-| Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件须在 R4/R7/R8 重验。 |
+| Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件须在 R4/R7/R10 重验。 |
 | Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。IME、粘贴、草稿与所有输入态纳入 R5/R8。 |
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、流式输出；任务切换隔离草稿；失败、断线与 snapshot 终态诚实显示 | 创建需 Policy；冻结 wire 无 stop/close 命令与 live exit/failure 事件，不能宣称完整生命周期。 |
@@ -53,15 +53,15 @@ flowchart LR
 
 | ID | 要求 | 状态 |
 | --- | --- | --- |
-| DESK-01 | 用户能新建/切换会话，选中态与标题在长列表中可辨认。 | 生产入口已实现；视觉/状态/模拟操作按 R3/R8 重验。 |
+| DESK-01 | 用户能新建/切换会话，选中态与标题在长列表中可辨认。 | 生产入口已实现；视觉/状态/模拟操作按 R3/R10 重验。 |
 | DESK-02 | Timeline 能按确定顺序投影历史和 live 事件，去重且不跨 Run 串线。 | 已实现；共享 reducer/golden。 |
 | DESK-03 | 流式输出时默认跟随底部；用户上滚后脱钩，显式回底后重挂。 | 生产逻辑已实现；R4/R8 用真输入、千级 fixture 与性能证据重验。 |
 | DESK-04 | 工具请求以审批卡呈现 ApproveOnce/ApproveForRun/Deny；取消动作可见。 | 生产逻辑已实现；R4/R8 覆盖审批全状态、零副作用拒绝与重连恢复。 |
 | DESK-05 | Fork 只在 reducer 标记的闭合 Run 边界开放，动作入口再次校验。 | 已实现。 |
 | DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 生产逻辑已实现；R7/R8 覆盖全部菜单、锚点、键盘和滚轮边界。 |
 | DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | R5/R8 待真实 IME、paste 与系统级输入验收。 |
-| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | R6 Wave B U2 已覆盖真实 diff/summary、长行横滚、PTY、Resources、折叠恢复与 task/latest-session scope；R8 仍负责终局视觉与跨阶段全矩阵。 |
-| DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | R6 Wave B 已以真 Host/Desktop 覆盖 Terminal/Resources/Changes 重连与 Host 重启后的 policy fail-closed；全应用生命周期仍由 R8 汇总验收。 |
+| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | R6 Wave B U2 已覆盖真实 diff/summary、长行横滚、PTY、Resources、折叠恢复与 task/latest-session scope；R10 仍负责终局视觉与跨阶段全矩阵。 |
+| DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | R6 Wave B 已以真 Host/Desktop 覆盖 Terminal/Resources/Changes 重连与 Host 重启后的 policy fail-closed；全应用生命周期仍由 R10 汇总验收。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | R7 Wave C 已覆盖 Connected / ActivityPopover / Disconnected、三轮 resize 与 150% 字号；最终真窗口证据通过。R8 仍做跨阶段终局复验。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现并通过真窗口语义 action；全组件 VoiceOver、动态状态与 Windows/Linux 平台实现仍待 R7/R8。 |
 
@@ -89,7 +89,7 @@ flowchart LR
 
 ## 7. 当前验收合同
 
-完整清单以 [R7–R8 任务书](../../plan/R7-R8-ui-quality-gates.md) 为唯一执行入口，覆盖 IME、多行粘贴、三张 `1440×1024` 定稿图、纯键盘、AX/VoiceOver、全部菜单、Reconnect、`1080×720`、虚拟化、DiffView 横滚、Terminal 与千级事件性能。
+完整清单以 [R10 测试](../../plan/R9-R11-post-ui-closeout.md#r10--测试) 为唯一执行入口，覆盖 IME、多行粘贴、三张 `1440×1024` 定稿图、纯键盘、AX/VoiceOver、全部菜单、Reconnect、`1080×720`、虚拟化、DiffView 横滚、Terminal 与千级事件性能。
 
 边界口径：
 
@@ -98,4 +98,4 @@ flowchart LR
 - Desktop Changes 只读是当前协议边界，Git 写操作仍需 ADR，不得用假按钮补图；
 - `@` 候选浮层和 Resources 规则分区只有 Host capability 存在时才可展示。
 
-证据必须记录实际窗口尺寸、连接态、fixture/seed、操作 trace、AX tree、Host/event log、reference/current/overlay/diff 与指标。R8 自动门禁全部通过后仍需用户视觉签字。
+证据必须记录实际窗口尺寸、连接态、fixture/seed、操作 trace、AX tree、Host/event log、reference/current/overlay/diff 与指标。R10 自动门禁全部通过后仍需用户视觉签字。

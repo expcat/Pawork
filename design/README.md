@@ -179,7 +179,7 @@ macOS Increase Contrast 是同一深色基线的运行时可访问 palette：增
 
 ## 8. 交互态与浮层菜单(2026-08-24 增补,旧 V3 R8 波 B)
 
-本节记录 2026-08-24 的交互基准增补；当前像素对照与全状态复验统一由新 [R7–R8](../plan/R7-R8-ui-quality-gates.md) 执行。
+本节记录 2026-08-24 的交互基准增补；当前像素对照与全状态复验统一由新任务书执行（比对见 [R7–R8](../plan/R7-R8-ui-quality-gates.md)，终局门禁见 [R9–R11](../plan/R9-R11-post-ui-closeout.md) R10）。
 
 ### 8.1 hover / active 交互态
 
@@ -224,7 +224,7 @@ macOS Increase Contrast 是同一深色基线的运行时可访问 palette：增
 - **Inspector 顶层 tab strip**:Changes / Terminal / Resources 三个固定文本页签(§5 的 Add tool 动态注册管理本波不实现,Resources 先以固定页签呈现);R6 Wave A 起为 100×58 文本页签、选中态底部 2px accent 下划线、字阶 `font::BODY` 18，不再使用 raised/ghost 按钮形态;切页签不改 active session,各页签独立保留滚动与展开状态;cmd-i 开合 Inspector 的既有行为不变。固定 Resources 页签是过渡实现记录，不等于定稿图「+」(Add tool) 入口已达成：Add tool 只在 Host 提供 Inspector surface 注册 capability 后以 capability-driven 形态出现，此前 F-10 保持未通过，不得以 Resources 固定页签顶替验收（UI_Review D-02）。
 - **Changes 二级页签**:Files / Summary 为 Changes 内容区内的二级文本页签，固定 96×56、字阶 `font::BODY_SM` 17、选中态同样 2px accent 下划线，与顶层 58px 层次不混用(§5 既有红线)。
 - **Files 页**:逐文件一行(路径单行 truncate、status、`+added / −removed`),点击行选中后经 diff_get 拉取该文件 hunks;全部数据来自 Host 响应,无会话或无 diff 时空态文案,不画演示数。
-- **DiffView**:hunk 头(`@@` 行)surface.raised 底 + text.secondary;行级语义着色——新增行 semantic.success 系、删除行 semantic.danger 系、上下文行 text.primary;等宽字体为 DiffView 显式指定(`font::MONO` = Menlo;Terminal 页输出仍走 GPUI 默认字体,二者并非同款);长行不换行,容器横向滚动(全仓首个 `overflow_x_scroll` 用例,横滚 extent 行为列入新 R6/R8 验证矩阵);binary / 不支持状态按响应字段如实标注,不尝试渲染。
+- **DiffView**:hunk 头(`@@` 行)surface.raised 底 + text.secondary;行级语义着色——新增行 semantic.success 系、删除行 semantic.danger 系、上下文行 text.primary;等宽字体为 DiffView 显式指定(`font::MONO` = Menlo;Terminal 页输出仍走 GPUI 默认字体,二者并非同款);长行不换行,容器横向滚动(全仓首个 `overflow_x_scroll` 用例,横滚 extent 行为列入新 R6/R10 验证矩阵);binary / 不支持状态按响应字段如实标注,不尝试渲染。
 - **Summary 页**:会话 diff 聚合(文件数、总 `+A / −D`、按 status 分组计数)与响应携带的 git 信息(branch、dirty 文件数);字段缺失显示 unknown,不伪造。
 - **ActivityPopover**:Inspector 折叠时由 Workspace Header 右上 Activity 触发器向下弹出(§8.2 浮层形态:deferred(anchored())、Escape/外点关闭、occlude 滚轮无穿透),宽约 320px 且不覆盖 Composer;首行 Changes 摘要(N files · +A/−D),点击展开 Inspector 并定位 Changes 页;Agent 状态仅在 Host capability 存在时显示;摘要未拉取或来源不可用时显示 unavailable,不显示 0。StatusBar 底部触发是历史实现，不是定稿目标。
 - **Resources 页**:MCP server 只读列表(name、transport、state、tools 数、last_error 诚实显示);空列表空态文案;「已加载规则」分区无 Host 出口,本波不画。

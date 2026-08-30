@@ -226,14 +226,14 @@ F1–F6 与 [design.md](design.md) §3 已确认扩展功能族（G1–G7）的�
 
 ## 7. 历史 V3 阶段参照指引（R0–R9）
 
-> 本节是 **2026-08-18** 的旧 V3 调研快照，不再与当前 ROADMAP 阶段一一对应。当前 R1–R8 的外部行为与测试方法以 [UI 参照调研](../plan/UI-reference-research.md) 为准；以下内容只供历史选型考证。
+> 本节是 **2026-08-18** 的旧 V3 调研快照，不再与当前 ROADMAP 阶段一一对应。当前 R1–R10 的外部行为与测试方法以 [UI 参照调研](../plan/UI-reference-research.md) 为准；以下内容只供历史选型考证。
 
 ### 7.1 阶段 → 参照映射
 
 | 阶段 | 主参照 | 对照 / 反例 | 关键参照点 |
 | --- | --- | --- | --- |
 | **旧 R8** GUI 组件化与 Desktop 收口 | [gpui-component](https://github.com/longbridge/gpui-component) **v0.5.1 tag**（Apache-2.0；该版依赖 crates.io gpui ^0.2.2 与本仓 ADR-035 锁定一致，主干已改跟 Zed git 主干，勿参主干） | Zed [`crates/ui`](https://github.com/zed-industries/zed/tree/main/crates/ui)/`crates/theme`（**GPL-3.0：只参 API 形状不抄代码**）；Codex Desktop / OpenCode Desktop 壳形态（既有 S7 参照） | gpui-component：60+ 组件、`ThemeColor` 语义 token、`VirtualList` 与 Zed `ButtonLike`/`ContextMenu` 只作历史组件组织参照 |
-| **旧 R9** 一致性收口 | —（内部核对） | — | 已由当前 R9/R10 任务书重新整理未完成部分 |
+| **旧 R9** 一致性收口 | —（内部核对） | — | 已由当前 R10/R11 任务书重新整理未完成部分 |
 
 ### 7.2 使用纪律
 

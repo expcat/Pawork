@@ -31,12 +31,12 @@
 
 - **r4a-1（00:31 +08）**：probe 271 次未就绪——AX dump 只剩 AXApplication 空链、desktop.log 空。当时工作树处于评审修复编辑中断态（编译不过，二进制为中间产物），非环境权限问题（ax_trusted=true、窗口在屏）。修复编译后复跑即恢复，结案为中间态非回归。
 - **r4a-2（01:16 +08）**：`scripts/ui-wave-d-state-a.sh run --out docs/ui-review/r4-wave-a/state-a --label r4a-2`，**结构门禁通过（exit 0）**：initial/final 相位断言全 PASS（root 1440×1024、rail 288、Inspector 440@1000、StatusBar 24、shell skeleton、会话选中、timeline-entry 12 条、focus 归 composer）；composer-height 156 为 F-09 已知漂移（R5 范围，blocking=false 登记）。
-- **分区 SSIM（记录值，阈值 0.99）**：taskrail 0.694 / header-left 0.940 / header-right 0.883 / timeline 0.665 / composer-left 0.438 / composer-right 0.414 / inspector-body 0.588 / inspector-right 0.740 / statusbar 0.617；global 辅助 0.648。timeline/header 未达 0.99 的主因是 fixture 演示内容与设计稿内容不一致（fixture 数据重塑已随 R3 拍板 c 移交 R8），结构对齐以断言为准；**State A/B 区域 SSIM ≥0.99 的 R4 退出条款已于 2026-08-28 拍板 1 同 R3 先例移交 R8**。
+- **分区 SSIM（记录值，阈值 0.99）**：taskrail 0.694 / header-left 0.940 / header-right 0.883 / timeline 0.665 / composer-left 0.438 / composer-right 0.414 / inspector-body 0.588 / inspector-right 0.740 / statusbar 0.617；global 辅助 0.648。timeline/header 未达 0.99 的主因是 fixture 演示内容与设计稿内容不一致（fixture 数据重塑已随 R3 拍板 c 移交 R10），结构对齐以断言为准；**State A/B 区域 SSIM ≥0.99 的 R4 退出条款已于 2026-08-28 拍板 1 同 R3 先例移交 R10**。
 - 证据：[state-a/](state-a/)（current.png、assert-*.json、ax-tree-*.txt、geometry-*.txt、diff/ 分区报告与 heatmap、run-manifest.json、checklist-current.md、action trace、barriers 与日志）。
 
 ## 5. 已知偏差与遗留
 
-- Header branch 图标用文本「⑂」（禁 emoji 约束下的字体回退）；与定稿图标的差异归 R11 终局比对登记。
-- 时间显示采用相对词（now/Nm/Nh/Nd）而非定稿的绝对钟点（如 10:40 AM）：规避 tz 依赖的拍板，mask 已遮动态时间值；终局一致性归 R11。
+- Header branch 图标用文本「⑂」（禁 emoji 约束下的字体回退）；与定稿图标的差异归 R8 终局比对登记。
+- 时间显示采用相对词（now/Nm/Nh/Nd）而非定稿的绝对钟点（如 10:40 AM）：规避 tz 依赖的拍板，mask 已遮动态时间值；终局一致性归 R8。
 - 审批交互、error/retry、断线重放一致、流式 follow、千级虚拟化、State B shell 回归：Wave B 范围（见 [plan/R4-R6-ui-workflows.md](../../../plan/R4-R6-ui-workflows.md)）。
 - composer-height 156（合同 88–94）= F-09，R5 范围；State B zones current 映射待 F-12（R6）后补齐。

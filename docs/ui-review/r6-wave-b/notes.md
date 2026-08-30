@@ -1,6 +1,6 @@
 # R6 Wave B — Inspector 生命周期、键盘与重连
 
-> 状态：🟢 已收口（2026-08-30）；审查后最终二进制的 U2 九场景已在 macOS AX 注册恢复后一次补录通过。同日用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 总阶段已退出。
+> 状态：🟢 已收口（2026-08-30）；审查后最终二进制的 U2 九场景已在 macOS AX 注册恢复后一次补录通过。同日用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R10，R6 总阶段已退出。
 
 ## 结果
 
@@ -41,4 +41,4 @@ R6 Wave B 已在冻结 GUI wire 内完成：Changes、Terminal、Resources 与 I
 
 - GUI wire 仍无 terminal stop/close 命令和 live exit/failure 事件；不得以写入 `exit`、本地 kill 或假按钮冒充。若要新增，先立 ADR 演进 wire。
 - Changes 仍为 Host latest-session 只读 diff；stage/unstage/hunk 与 Add tool registry 没有冻结协议，不在本波。
-- 三张定稿图分区 SSIM、完整 VoiceOver/hover/性能与用户视觉签字仍由 R7/R8 汇总；本波的结构/交互通过不等于视觉终局通过。
+- 三张定稿图分区 SSIM、完整 VoiceOver/hover/性能与用户视觉签字仍由 R7/R10 汇总；本波的结构/交互通过不等于视觉终局通过。

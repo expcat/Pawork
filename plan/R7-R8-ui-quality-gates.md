@@ -1,7 +1,7 @@
-# R7–R8 — 全局交互质量与模拟操作全功能验收
+# R7–R8 — 全局交互质量与 UI 终局比对
 
-> 状态：R7 🟢 已关闭（主动系统偏好 U3 依用户指令 ⏭️；VoiceOver 未执行且不宣称通过）· R8 🔵 已开启
-> 前置：R1–R6 已依次退出。用户于 2026-08-29 曾授权跳过当时未收口的 R6、直接进入 R7；R6 Wave B 随后恢复并于 2026-08-30 完成实现、定向门禁与审查后最终 U2，同日用户明确确认将 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 解决跨组件一致性，R8 运行完整矩阵并补跨阶段缺口，均不得把移交项记为已经通过。
+> 状态：R7 🟢 已关闭（主动系统偏好 U3 依用户指令 ⏭️；VoiceOver 未执行且不宣称通过）· R8 ⚪ 待开启
+> 前置：R1–R6 已依次退出，R7 已关闭。2026-08-31 用户重排 R8–R11：原 R11（UI 终局比对与优化文档）前提到 R8 位置，先与设计稿对比；原 R8（模拟操作全功能验收）连同全部「移交 R8」条款（R2–R6 分区 SSIM、fixture 演示数据重塑、State C reference 底色拍板、用户视觉签字）并入 R10 测试，见 [R9–R11 任务书](R9-R11-post-ui-closeout.md)。移交项不得记为已经通过。
 
 ## R7 — 全局交互、Accessibility 与响应式
 
@@ -22,7 +22,7 @@
 
 - 为所有交互元素提供稳定 identifier、AX role/name/value/state；图标按钮必须有名称，状态不能只靠颜色。
 - 纯键盘可完成连接重试、新建/选择 task、发送/取消、tool 展开、审批、Changes、Terminal、Inspector/Activity 和菜单关闭。
-- 原生 AX audit + VoiceOver 验证 role/name/value/enabled/focused/order/action，以及动态状态、流式消息、审批请求、错误和完成通知；避免重复播报整条 Timeline。AX 树只含 Window/traffic lights 时直接失败。R7 Wave A 依用户 2026-08-30 决定，以原生 AX tree/action + 纯键盘 + U2 作为该波替代门禁；这不等于 VoiceOver 通过，也不覆盖屏幕朗读措辞 / 顺序，R8 的系统级口径另行执行。
+- 原生 AX audit + VoiceOver 验证 role/name/value/enabled/focused/order/action，以及动态状态、流式消息、审批请求、错误和完成通知；避免重复播报整条 Timeline。AX 树只含 Window/traffic lights 时直接失败。R7 Wave A 依用户 2026-08-30 决定，以原生 AX tree/action + 纯键盘 + U2 作为该波替代门禁；这不等于 VoiceOver 通过，也不覆盖屏幕朗读措辞 / 顺序，R10 的系统级口径另行执行。
 - 文字/状态/焦点对比度、字号放大、reduced motion 与高对比偏好按平台可用能力验证；R7 已实现应用内 100%/125%/150% 缩放和 macOS Increase Contrast 运行时 palette 刷新，当前 UI 无动画故无 Reduce Motion 分支。依用户指令，主动系统偏好 U3 未执行且不得当作已证明；官方竞品未公开的 AX 行为同样不得当作已证明。
 
 ### 3. 响应式与耐久性
@@ -40,51 +40,43 @@ Wave C 已归档 `baseline_only` 真实机器采样；该样本只建立量测�
 - [x] `1080×720`、字号放大、长内容和边界状态无主操作遮挡、溢出或不可恢复焦点。
 - [x] AX tree、通知和 focus trace 可自动留证；VoiceOver 与主动系统偏好 U3 的未执行边界已明确登记。
 
-## R8 — 模拟操作全功能验收
+## R8 — UI 终局比对与优化文档
 
-### 1. 全量场景矩阵
+R8 是文档任务。对照 [design/](../design/README.md) 三张 v3 定稿图与 R1–R7 各波已归档的实际 UI 证据，从**结构、UI 组件样式、真实美观度**三个维度评估实际 UI 与设计效果的差距，并参考主流 Agent/开发者工具与设计体系的公开样式实践，输出一份 UI 优化文档（`docs/ui-optimization.md`），告诉后续 Agent 该优化哪些 UI、样式与风格。本阶段**不查询、不修改任何代码**；不启动 Desktop、不重跑 cargo、不重拍 current、不改 design。发布准备不属于本阶段，见 [ROADMAP §5](../ROADMAP.md)。
 
-| 领域 | 必须模拟的操作与状态 |
-| --- | --- |
-| 启动与连接 | 无 Host、连接、失败重试、断连、重连、window close/reopen；区分 persisted/connected/executing/blocked |
-| TaskRail | Timeline/Projects、scope、project 展开、全局/定向新建、task 切换、selection/scroll/focus 恢复、Unread/Needs input |
-| Composer | click/type、多行、IME、paste、model/reasoning/workspace/context/`@`、send、cancel、草稿与不可用态 |
-| Timeline | stream、tool 全状态、展开/收起、approval allow/deny、error/retry、cancel、completion、follow-scroll 与千级事件 |
-| Changes | 空态、真实多文件 diff、Files/Summary/DiffView、长行横滚、scope 与只读动作 |
-| Terminal | create、input/output、resize、stop、失败、task/workspace 切换、重连与 Policy 拒绝 |
-| Resources | 空/可用/失败、resource 打开、Add tool/capability 缺失的诚实状态 |
-| Inspector/Activity | tab、二级 tab、折叠/恢复、右上 Popover、dismiss、焦点/滚动/session 保持 |
-| 浮层与快捷键 | grouping/scope/model/reasoning/`@` 菜单，command palette，Tab/方向键/Enter/Esc，窗口边界与 outside click |
-| 响应式/AX | State A/B/C 的 1440 图、1080 窄窗、字号放大、纯键盘、VoiceOver/AX、状态非纯颜色 |
-| 生命周期 | Run 中关闭窗口、Host 仍运行、重开恢复、approval 等待恢复、完成通知与后台状态真实性 |
+R8 不替代 [R10 退出标准](R9-R11-post-ui-closeout.md#r10-退出标准) 的 99% 门禁与全功能 suite；也不在本阶段修复差异。UI 优化文档是 R9 修复阶段的输入，本身不授权实现。
 
-每一行至少覆盖成功、失败/拒绝和恢复路径；所有 manifest 组件及可达状态必须能反查到场景 ID。单条 happy path、只测 renderer 或人工随意点击均不构成“全功能”。
+### 比对输入（只读）
 
-### 2. 执行策略
+- `design/`：Timeline（Inspector 展开）、Timeline（Inspector 折叠）、Projects 三张 v3 定稿图。
+- [docs/gui-design.md](../docs/gui-design.md) 的信息架构与交互规则（用于判断缺状态、缺分区，而不只看像素）。
+- [docs/UI_Review.md](../docs/UI_Review.md) 的分区、容差与结构一票否决（用于区分合同内误差与需完善项）。
+- R1–R7 各波归档的三状态 `reference` / `current` / overlay / diff / mask / checklist（以最新一波为准）；已知 fixture 演示内容形状差按既有记录登记为数据缺口，移交 R10 前置处理。不得打开 `apps/desktop` 或其它 crate 源码定位组件。
+- [Agent UI 参照调研](UI-reference-research.md) 的交互经验，以及 Codex、Zed、Cursor、VS Code 等主流产品和主流设计体系/组件库的**公开**视觉样式资料（官方文档/截图/HIG 等）；营销图只作线索，不作事实。
 
-- 使用 R1 固定 seed 与隔离数据；每场景独立 reset，允许按标签重跑。
-- 语义定位优先：AX identifier/role/name + 明确状态等待；坐标只用于几何验证，固定 sleep 只允许有界兼容并需记录原因。
-- U0/U1 先行，U2 真进程覆盖所有用户动作，U3 只对稳定终态采图；真实 Provider 不属于 UI fixture。
-- PR/本地默认运行 U0/U1 与小型稳定视觉集；macOS 定时门禁运行完整 XCUITest/视觉集；R8 收口再串行执行 U0–U3、真实 IME/VoiceOver 与性能，避免并发争抢 Cargo/主线程窗口资源。
-- flaky 测试不可“重跑即绿”后隐藏：记录首次失败、重试结果、随机种子和根因；同一场景连续不稳定即阻塞签字。
-- failure bundle 至少含 action trace、AX tree/当前焦点、Host/event log 与协议 sequence、窗口尺寸、current/reference/overlay/diff/mask、AE/PDC/RMSE/SSIM 指标、fixture manifest、seed、OS/Xcode/GPU/scale/locale/input source/font、时间与源码状态；若使用 XCTest，同批保留失败 `xcresult`/attachments。
+### Wave A：逐区对照（结构 + 组件样式）
 
-### 3. 视觉终局门禁
+- 按 State A/B/C 与 UI Review 分区（header、TaskRail、timeline、composer、inspector、statusbar 等）对照 design 与 current。
+- 只登记**显示效果**：布局、色/字/间距、圆角/描边、图标、文案可见性、组件有无、状态外观。截图上看不出的交互缺口标「截图无法判定」，不查代码补证。
+- 容差内、已遮罩、或前置波次已明确接受的项不重复立项；结构未对齐或仍刺眼的可见差异必须登记。
+- 每条写：区域、design 期望、当前现象、证据路径（design 资产 + current/diff）、建议优先级。禁止指向源码路径或「应改某函数」。
 
-- State A/B/C 的可见区域、组件、顺序、展开/折叠和选中状态必须 100% 对齐。
-- TaskRail、Header、Timeline、Composer、Inspector/Popover、StatusBar 各区域动态遮罩后 SSIM `≥0.99`；结构一票否决优先于数值。
-- **R2 移交（2026-08-27 拍板 a）**：R2 只以壳层结构门禁退出，不把内容区未落地组件的分区像素差记为 R2 失败。R8 必须在 F-03–F-12 落地后重新采集 State A/B/C current，再跑分区 SSIM；不得沿用 R2 Wave A 的 0.65–0.81 中间态报告作为终局通过。
-- **R3 移交（2026-08-28 拍板 c）**：R3 以 TaskRail 结构门禁退出（Wave A State A/C 结构断言全 PASS；State B 与 State A 同 Timeline 模式，未单独采 TaskRail 分区图），三状态分区 SSIM ≥0.99 不在 R3 判定。R8 重采集 current 前必须先完成 **fixture 演示数据重塑**（fixtures/ui/seed.json 数据形状对齐定稿图演示形状：标题长度/时间分布/会话数，同步 golden 与约 18 处断言引用，估算 0.5–1 天）；并就是否按冻结 token 归一 State C reference 底色另行取得用户批准（设计基准变更）。天花板量化分解：State A ≈100% 内容形状（0.6941，tone 校正上限 0.7490）；State C = tone ≈50% + 形状 ≈50%（0.3543，tone 校正后 0.6885）。遮罩侧无合规余量（已用 16.6%/14.9%，上限 35%），不得靠放宽 UI_Review §0.1 遮罩合同制造通过。细节见 [../docs/history.md](../docs/history.md#r3--taskrail-与任务导航2026-08-2728)。
-- **R4 移交（2026-08-28 拍板 1）**：R4 以 Header/Timeline 结构门禁与 U2 九场景退出，State A/B 分区 SSIM ≥0.99 不在 R4 判定。R8 重采集 current 时一并覆盖 Header / Timeline / 相关 Workspace 分区；不得沿用 Wave A 记录值（timeline 0.665 / header-left 0.940 / header-right 0.883 / global 0.648）作为终局通过。主因与 R3 相同：fixture 演示内容形状差，重塑已在拍板 c 移交，本条不另开数据任务。细节见 [../docs/history.md](../docs/history.md#r4--workspacetimeline-与-agent-状态2026-08-28)。
-- **R5 移交（2026-08-29 用户确认）**：R5 以 Composer 几何结构门禁、定向测试与 U2 九场景退出，State A/B Composer 分区 SSIM ≥0.99 不在 R5 判定。R8 必须用重塑后的同一 fixture 重采 current 并覆盖 idle/running Composer；不得沿用 R5 Wave A 记录值 0.423 / 0.619 作为终局通过。详见 [../docs/history.md](../docs/history.md#r5--composer-与运行控制2026-08-2829)。
-- **R6 移交（2026-08-30 用户确认）**：R6 以 Inspector/Activity 结构门禁、定向测试与审查后最终二进制 U2 九场景/19 断言退出，State A/B Inspector/Activity 分区 SSIM ≥0.99 不在 R6 判定。State A 中间态 Inspector 记录值为 0.614/0.800；State B 原 `current.png` 在 Popover 打开前采集，不能证明 Popover 视觉，已用正确的 `shot-activity-popover.png` 归一补录为 0.712/0.860。R8 必须在 fixture 演示数据重塑后，以真正打开的 ActivityPopover 重采 current 并覆盖 Inspector/Popover；上述记录值均不得作为终局通过。详见 [../docs/ui-review/r6-wave-a/notes.md](../docs/ui-review/r6-wave-a/notes.md)。
-- 所有 P0/P1 Review 项关闭；无白 titlebar、缺失 Header、错位 Popover、超高 Composer、假数据、遮挡、截断或布局跳动。
-- 由用户在同尺寸 reference/current/overlay 上完成最终视觉签字；自动门禁通过不能代替签字。
+### Wave B：真实美观度与主流样式对照
 
-### 4. R8 退出标准
+- 在真实 UI 证据上评估美观度：视觉层级是否清楚、密度与节奏是否舒适、对比/留白/对齐/分隔是否精致、深色 surface 层级是否分明、控件质感是否统一。
+- 对主流产品与设计体系做公开资料级样式扫描（组件质感、字阶、状态色、浮层、空态、密度档位等），与 Pawork 同类组件并排对照，提炼可吸收的样式经验；不复制品牌、文案、竞品专属能力或 Pawork 未接入能力的入口。
+- 每条写：主题、主流做法（附公开来源）、Pawork 现状与证据路径、吸收建议与优先级；与 Wave A 差异去重合并。
 
-- [ ] manifest 的组件 × 状态 × 输入方式覆盖率 100%，所有场景可独立重放并有明确断言。
-- [ ] U0/U1/U2/U3 全部通过；跨进程、断连、恢复、后台 Run 与审批恢复有真实证据。
-- [ ] 三张定稿图的结构门禁、分区 SSIM 与人工 overlay 全通过，无 P0/P1 遗留。
-- [ ] 用户完成视觉签字；已知 P2/P3 只可在不破坏 99% 与全功能的前提下明确接受并登记。
-- [ ] 失败证据、性能基线、AX 结果和实际命令归档；ROADMAP 指针移至 R9。
+### Wave C：输出 UI 优化文档
+
+- 汇总 Wave A/B 为 `docs/ui-optimization.md`：分区差异清单 + 主流样式对照 + R9 修复任务草案（一任务一缺口族，数小时内可完成，含证据链接、优先级与验收线索）。
+- 优化文档面向后续 Agent：明确该优化哪些 UI、样式、风格，以及不属于优化范围的内容（design 基准变更、wire/能力扩张、品牌与文案照搬等）。
+- 回写 [ROADMAP.md](../ROADMAP.md) 下一指针（R9 修复）。
+- 本阶段 git 差异仅文档。不得把 License、安装器、供应链或全量门禁塞进本阶段。
+
+### R8 退出标准
+
+- [ ] 三张定稿图与对应 current 证据已逐区对照，结构与组件样式差异形成清单。
+- [ ] 真实美观度评估与主流样式对照完成，可吸收经验已提炼并标注公开来源。
+- [ ] UI 优化文档（`docs/ui-optimization.md`）已产出：告诉后续 Agent 该优化哪些 UI、样式、风格，含证据链接与优先级。
+- [ ] 本阶段未查询、未修改代码；design 像素未改。

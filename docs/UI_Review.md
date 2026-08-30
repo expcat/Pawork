@@ -4,12 +4,12 @@
 > 初始复审对象：`apps/desktop` `main@ada6249` 的真实 GPUI 窗口；最新 State A 证据见 [Wave D 收口记录](ui-review/wave-d/notes.md)<br>
 > 视觉事实源：[GUI v3 视觉实施基准](../design/README.md) · [Desktop GUI 设计](gui-design.md)<br>
 > 定稿图：[Timeline 展开](../design/desktop-shell-timeline-v3.png) · [Timeline 折叠](../design/desktop-shell-timeline-collapsed-v3.png) · [Projects](../design/desktop-shell-projects-v3.png)<br>
-> 当前执行入口：[ROADMAP R1–R8](../ROADMAP.md#2-顺序排期) · [R1 收口存档](history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) · [R7–R8 全功能验收](../plan/R7-R8-ui-quality-gates.md)<br>
+> 当前执行入口：[ROADMAP R1–R11](../ROADMAP.md#2-顺序排期) · [R1 收口存档](history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) · [R7–R8 比对任务书](../plan/R7-R8-ui-quality-gates.md) · [R9–R11 修复/测试/收尾](../plan/R9-R11-post-ui-closeout.md)<br>
 > 本轮追加约束：后续美观化必须与定稿图对齐；只允许细微像素、大小和宽窄误差，不允许用“已经可用”或“当前实现如此”替代视觉还原。
 
 ## 0. 复审结论：当前不通过
 
-当前 UI **明显未达到 99% 一致性，也不具备新路线 R8 的 1440×1024 视觉签字条件**。差异集中在窗口壳、Workspace header、Timeline 内容层级、Composer、折叠态 ActivityPopover、字体与 Projects 取证，不属于只需微调颜色或圆角的尾差。
+当前 UI **明显未达到 99% 一致性，也不具备新路线 R10 的 1440×1024 视觉签字条件**。差异集中在窗口壳、Workspace header、Timeline 内容层级、Composer、折叠态 ActivityPopover、字体与 Projects 取证，不属于只需微调颜色或圆角的尾差。
 
 本轮不输出虚假的“当前完成度百分比”：现有当前截图被取证工具缩放为 `1048×768`，且 Projects 终态缺失，不满足同尺寸、同状态的像素量化前提。但白色标题栏、缺失 Header、底部 Popover、平面 Timeline 和超高 Composer 等结构级差异已经足以判定 **远低于 99%**。
 
@@ -134,7 +134,7 @@
 | F-13 P1 | RunStatusBar | 24px，Task/quota/tok/s/Run 顺序稳定 | 字阶和分隔弱，Inspector 触发器喧宾夺主 | 恢复信息顺序、稳定占位和窄窗收敛 | 高度、基线、分隔与目标一致；缺值诚实 |
 | F-14 P0 | Projects | 项目头、count、展开、定向 `+`、Task 选中完整 | 终态无当前截图 | 补真实 Projects 取证并逐组件修复 | State C reference/current/diff 全部存在后才能签字 |
 | F-15 P0 | 字体/图标/间距 | 桌面可读字阶、克制字重、16px 级图标、8px 节奏 | 全局 11/12/13px 过小，控件像调试 UI | Wave 0 先量图，不把 `12/14/16` 猜测写成定稿 | 字体/图标 `±1px`，重复间距 `±2px`，层级肉眼一致 |
-| F-16 P1 | 交互与 focus | hover/active/focus 不改布局；菜单可键盘操作 | R7 已补齐主路径/边角焦点交接、1080×720、1024 行、长内容、三轮 resize、断线重连及应用内 100%/125%/150% 字号；150% 最小窗标题/日期修复后真窗口复验通过。VoiceOver 未执行；主动系统偏好 U3 依用户指令跳过且不记为通过 | R8 汇总全组件与 VoiceOver/AX 证据；保持主动系统偏好未验证边界，不在未重新授权时修改系统设置 | 原生 AX、鼠标和纯键盘 trace/清单通过；字号路径有 AX/截图证据；无颜色单一编码 |
+| F-16 P1 | 交互与 focus | hover/active/focus 不改布局；菜单可键盘操作 | R7 已补齐主路径/边角焦点交接、1080×720、1024 行、长内容、三轮 resize、断线重连及应用内 100%/125%/150% 字号；150% 最小窗标题/日期修复后真窗口复验通过。VoiceOver 未执行；主动系统偏好 U3 依用户指令跳过且不记为通过 | R10 汇总全组件与 VoiceOver/AX 证据；保持主动系统偏好未验证边界，不在未重新授权时修改系统设置 | 原生 AX、鼠标和纯键盘 trace/清单通过；字号路径有 AX/截图证据；无颜色单一编码 |
 
 ## 4. 设计文档冲突与处理决定
 
@@ -173,9 +173,9 @@
 - 截图前等待字体、diff、滚动与状态稳定；关闭光标闪烁、取证浮层和非 Pawork overlay。
 - 每次只比较同一 State；不得拿空会话与丰富设计稿、Timeline 与 Projects、Inspector 展开与折叠交叉比较。
 
-## 6. 修复顺序与新 R1–R8 映射
+## 6. 修复顺序与新 R1–R10 映射
 
-下图保留审计发现的修复依赖，不再作为独立旧任务编号：Wave 0 对应 R1；Wave 1 分配到 R2/R4/R5/R6；Wave 2 分配到 R3/R4/R6；Wave 3 对应 R7；最终整套复跑与用户签字对应 R8。实际状态与细节以 ROADMAP 和 `plan/` 为准。
+下图保留审计发现的修复依赖，不再作为独立旧任务编号：Wave 0 对应 R1；Wave 1 分配到 R2/R4/R5/R6；Wave 2 分配到 R3/R4/R6；Wave 3 对应 R7；最终整套复跑与用户签字对应 R10。实际状态与细节以 ROADMAP 和 `plan/` 为准。
 
 ```mermaid
 flowchart LR
@@ -186,7 +186,7 @@ flowchart LR
     D --> E["State A+B+C 分区 SSIM + 人工复核"]
     E -->|"任一硬失败"| D
     E -->|"通过"| F["Wave 3：hover / focus / AX / 1080 响应式"]
-    F --> G["R8 全功能复跑 + 用户视觉签字"]
+    F --> G["R10 全功能复跑 + 用户视觉签字"]
 ```
 
 ### Wave 0 — 建立不可被稀释的基线
@@ -240,10 +240,10 @@ flowchart LR
 
 这些是风险，不等同于已完成 WCAG 合规判定。
 
-1. **macOS Accessibility 系统验收仍不完整（高风险）**：R7 Wave A 已取得含 Pawork 自定义节点的 raw / bundled AX 树（46 / 63 identifiers）、原生 AX action 与焦点 trace，不再是仅有 Window / traffic lights；但 VoiceOver 未执行，屏幕朗读措辞 / 顺序仍未验证。用户于 2026-08-30 批准原生 AX tree/action + 纯键盘 + U2 仅作为 Wave A 替代门禁，R8 系统级口径不自动豁免。
+1. **macOS Accessibility 系统验收仍不完整（高风险）**：R7 Wave A 已取得含 Pawork 自定义节点的 raw / bundled AX 树（46 / 63 identifiers）、原生 AX action 与焦点 trace，不再是仅有 Window / traffic lights；但 VoiceOver 未执行，屏幕朗读措辞 / 顺序仍未验证。用户于 2026-08-30 批准原生 AX tree/action + 纯键盘 + U2 仅作为 Wave A 替代门禁，R10 系统级口径不自动豁免。
 2. **目标尺寸风险（高风险）**：项目 `+` 约 `18px`、全局新增/Grouping 约 `22px`；建议可见 glyph 保持定稿密度，但实际 hit area 至少 `24×24px`，主操作更大。
 3. **文字与对比度风险（高风险）**：当前 `11px` tertiary/disabled 文本过小；Wave 0 量图与 Wave 2 字阶修复后，再对每组 token 做对比度检查。
-4. **键盘路径风险（Wave B 自动路径已收口，R8 汇总）**：grouping/scope 触发器 tab stop、菜单方向键 / Enter / Escape、task cycling / next-needs-attention，以及 task/审批/Fork/Review changes 后的焦点交接已由 R7 Wave A/B 的导航 26 相位、审批/状态 14 相位和审查边角 3 相位 U2 通过；边角证据同时覆盖 AXPress 当前 task 关闭菜单与单可见 task cycling 的焦点交接。VoiceOver 与完整系统级人工顺序仍按风险 1 保留。
+4. **键盘路径风险（Wave B 自动路径已收口，R10 汇总）**：grouping/scope 触发器 tab stop、菜单方向键 / Enter / Escape、task cycling / next-needs-attention，以及 task/审批/Fork/Review changes 后的焦点交接已由 R7 Wave A/B 的导航 26 相位、审批/状态 14 相位和审查边角 3 相位 U2 通过；边角证据同时覆盖 AXPress 当前 task 关闭菜单与单可见 task cycling 的焦点交接。VoiceOver 与完整系统级人工顺序仍按风险 1 保留。
 5. **状态表达风险（中风险）**：Task 状态大量依赖小圆点颜色；还需要文字、选中面和 accessible name。
 6. **主动平台偏好验收边界（已登记）**：应用内字号已改为 rem token 并以真窗口覆盖 100%/125%/150%；150% + 1080×720 使用 320px rail。Increase Contrast palette 与系统通知刷新已实现，当前 UI 无动画故 Reduce Motion 无渲染分支；但主动 Reduce Motion / Increase Contrast 真系统态 U3 依用户指令跳过，最终只读快照四项均关闭，不能据代码级测试宣称真系统态通过。
 
@@ -258,7 +258,7 @@ flowchart LR
 - [ ] hover/active/focus/menu/scroll/折叠无布局位移、遮挡或不可达状态。
 - [ ] VoiceOver 与纯键盘主路径通过；颜色不作为唯一状态编码。
 - [x] 1080×720 响应式功能门禁通过：Connected / ActivityPopover / Disconnected、三轮宽窄 resize、长连接文案 paint `lit=0` 与 100%→150%→100% 字号均有真实窗口证据；150% 标题/日期间隔修复后受影响区域复验通过（[R7 Wave C](ui-review/r7-wave-c/notes.md)）。主动平台偏好 U3 依用户指令跳过，不计为通过。
-- [ ] 用户在 1440×1024 三状态逐屏对照后完成新 R8 视觉签字。
+- [ ] 用户在 1440×1024 三状态逐屏对照后完成新 R10 视觉签字。
 
 ## 10. 主要代码触点
 

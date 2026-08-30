@@ -5,8 +5,8 @@
 ## 目标与边界
 
 - 目标：基于当前源码、Wave A 组件矩阵和既有真窗口证据，核对全局 focus、单开浮层、dismissal、快捷键及 mouse / keyboard / AX action 等价性；只修复当前可证明的缺口。
-- 非目标：不改 GUI wire、Host、Policy、storage、fixture 业务数据或设计 reference；不开始 Wave C 的 1080×720、长内容、平台偏好与性能工作；不重做 R8 三图视觉终局门禁。
-- VoiceOver 边界沿用用户决定：Wave A 以原生 AX tree/action + 纯键盘 + U2 替代该波 VoiceOver。VoiceOver 仍未执行、不记为通过，屏幕朗读措辞 / 顺序未验证，R8 系统级口径不自动豁免。
+- 非目标：不改 GUI wire、Host、Policy、storage、fixture 业务数据或设计 reference；不开始 Wave C 的 1080×720、长内容、平台偏好与性能工作；不重做 R10 三图视觉终局门禁。
+- VoiceOver 边界沿用用户决定：Wave A 以原生 AX tree/action + 纯键盘 + U2 替代该波 VoiceOver。VoiceOver 仍未执行、不记为通过，屏幕朗读措辞 / 顺序未验证，R10 系统级口径不自动豁免。
 
 ## 事实基线与审计结论
 
@@ -38,5 +38,5 @@
 
 - 已实现：六个焦点交接缺口均收敛，mouse / keyboard / AX 继续复用同一 handler 与 enable gate。
 - 自动门禁：Desktop 定向测试、两组 Python 断言、两套主 U2 与审查边角定向 U2 均通过。
-- 人工验收：本波没有新增独立视觉签字要求；Wave A 九图签字保持有效，但不替代 R8 三图 SSIM。
-- 结论：Wave B 关闭；当前指针进入 Wave C。VoiceOver、响应式/长内容、平台偏好和 R8 视觉终局仍未完成。
+- 人工验收：本波没有新增独立视觉签字要求；Wave A 九图签字保持有效，但不替代 R10 三图 SSIM。
+- 结论：Wave B 关闭；当前指针进入 Wave C。VoiceOver、响应式/长内容、平台偏好和 R10 视觉终局仍未完成。

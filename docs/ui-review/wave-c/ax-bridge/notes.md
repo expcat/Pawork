@@ -24,7 +24,7 @@
 
 **PASS（ADR-042 的 AX 补救与 Wave C 语义驱动源通过）。** 与失败基线 [`../ax-gate/`](../ax-gate/) 的 7 节点窗口壳相比，Desktop 现已从同一显式语义树导出稳定 identifier、role、label/value、状态、层级和 action；U2 可用 Swift helper 做真进程语义定位，不再依赖坐标点击。U3 的真窗口截图继续使用 `screencapture`，视觉差分复用 `scripts/ui-visual-diff.py`。
 
-本证据不宣称 R1 已整体完成：State A 的完整 `reference/current/overlay/diff/mask/checklist` 闭环与故意漂移捕获仍属 Wave D；真实 IME、性能与全量 VoiceOver 验收仍留 R7/R8。bridge 当前仅实现 macOS，Timeline AX 面按可见/有界条目生成；Windows / Linux 平台实现不在 ADR-042 范围内。
+本证据不宣称 R1 已整体完成：State A 的完整 `reference/current/overlay/diff/mask/checklist` 闭环与故意漂移捕获仍属 Wave D；真实 IME、性能与全量 VoiceOver 验收仍留 R7/R10。bridge 当前仅实现 macOS，Timeline AX 面按可见/有界条目生成；Windows / Linux 平台实现不在 ADR-042 范围内。
 
 ## 4. 复审修复轮（2026-08-26，grok reviewer → 主代理修复）
 

@@ -1,6 +1,6 @@
 # R2–R3 — Window shell、全局视觉系统与 TaskRail
 
-> 状态：🟢 R2 已收口（2026-08-27，用户拍板 a：壳层结构门禁为准，分区像素 SSIM 移交 R8）；R3 🟢 已收口（2026-08-28，用户拍板 c：结构门禁为准，三状态分区 SSIM ≥0.99 连同 fixture 演示数据重塑与 State C reference tone 归一移交 R8；Wave A F-03/F-04 证据 [../docs/ui-review/r3-wave-a/](../docs/ui-review/r3-wave-a/)，Wave B 导航状态与键盘、Unread/Blocked 状态源证据 [../docs/ui-review/r3-wave-b/](../docs/ui-review/r3-wave-b/)，量化分解与收口细节见 [../docs/history.md](../docs/history.md#r3--taskrail-与任务导航2026-08-2728)）
+> 状态：🟢 R2 已收口（2026-08-27，用户拍板 a：壳层结构门禁为准，分区像素 SSIM 移交 R10）；R3 🟢 已收口（2026-08-28，用户拍板 c：结构门禁为准，三状态分区 SSIM ≥0.99 连同 fixture 演示数据重塑与 State C reference tone 归一移交 R10；Wave A F-03/F-04 证据 [../docs/ui-review/r3-wave-a/](../docs/ui-review/r3-wave-a/)，Wave B 导航状态与键盘、Unread/Blocked 状态源证据 [../docs/ui-review/r3-wave-b/](../docs/ui-review/r3-wave-b/)，量化分解与收口细节见 [../docs/history.md](../docs/history.md#r3--taskrail-与任务导航2026-08-2728)）
 > R2 证据：Wave A [../docs/ui-review/r2-wave-a/notes.md](../docs/ui-review/r2-wave-a/notes.md) · Wave B [../docs/ui-review/r2-wave-b/notes.md](../docs/ui-review/r2-wave-b/notes.md) · Wave C [../docs/ui-review/r2-wave-c/notes.md](../docs/ui-review/r2-wave-c/notes.md) · 阶段存档 [../docs/history.md#r2--window-shell-与全局视觉系统2026-08-27](../docs/history.md#r2--window-shell-与全局视觉系统2026-08-27)
 > 前置：R1 全部退出标准通过。两个阶段严格串行；R2 完成后才开启 R3。
 
@@ -29,7 +29,7 @@
 
 - [x] `1440×1024` 壳层结构 100% 对齐，所有区域几何在 UI Review 容差内。
 - [x] 整窗无白带、重复 titlebar、布局跳动、面板溢出或主操作遮挡。
-- [x] State A/B 的 **shell 结构/overlay 人工复核通过**（分区像素 SSIM `≥0.99` 依赖 F-03/F-04/F-05/F-09/F-12 内容组件，按拍板 a 移交 R8 汇总，不阻塞 R2 退出）。
+- [x] State A/B 的 **shell 结构/overlay 人工复核通过**（分区像素 SSIM `≥0.99` 依赖 F-03/F-04/F-05/F-09/F-12 内容组件，按拍板 a 移交 R10 汇总，不阻塞 R2 退出）。
 - [x] 启动、连接失败、失焦、resize 与 Inspector 开合均有可重复模拟操作测试。
 
 ## R3 — TaskRail 与任务导航
@@ -60,4 +60,4 @@
 - [x] TaskRail 结构、选中和状态与定稿图对齐（结构门禁：Wave A State A/C 结构断言全 PASS，Wave B 导航/键盘相位 PASS；State B 与 State A 同 Timeline 模式未单独采分区图；行密度/省略形状属 fixture 内容形状差，按拍板 c 不阻塞退出）。
 - [x] Grouping/scope/新建/project/task/账户区的所有可达控件均有真实动作或诚实不可用态。
 - [x] Timeline/Projects 的 selection、scroll、focus、重连恢复和长列表没有回退。
-- [x] 三状态 TaskRail **结构门禁**通过；分区像素 SSIM `≥0.99` 按拍板 c 移交 R8 终局门禁（Wave A 实测 State A 0.6941 / State C 0.3543，量化分解与移交条款见 [R7–R8 任务书](R7-R8-ui-quality-gates.md) §3 与 [../docs/history.md](../docs/history.md#r3--taskrail-与任务导航2026-08-2728)），不阻塞 R3 退出。组件状态矩阵与模拟操作测试全绿（desktop 94/94、脚本 35/35、U2 Slice 4 22 相位 PASS）。
+- [x] 三状态 TaskRail **结构门禁**通过；分区像素 SSIM `≥0.99` 按拍板 c 移交 R10 终局门禁（Wave A 实测 State A 0.6941 / State C 0.3543，量化分解与移交条款见 [R9–R11 任务书](R9-R11-post-ui-closeout.md) R10 §2.3 与 [../docs/history.md](../docs/history.md#r3--taskrail-与任务导航2026-08-2728)），不阻塞 R3 退出。组件状态矩阵与模拟操作测试全绿（desktop 94/94、脚本 35/35、U2 Slice 4 22 相位 PASS）。

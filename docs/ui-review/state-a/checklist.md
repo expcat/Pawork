@@ -1,6 +1,6 @@
 # State A 量图 checklist（Wave A）
 
-> 口径：docs/UI_Review.md §0.1 六层级 + §7 证据包。§1–§4 评价 Wave A reference 量图包本身的完备性与已登记冲突；§5–§7 已按 Wave D 真窗口取证更新，完整交互/AX 与视觉还原仍由 R2–R8 继续。实现侧验收以本包数值为准。
+> 口径：docs/UI_Review.md §0.1 六层级 + §7 证据包。§1–§4 评价 Wave A reference 量图包本身的完备性与已登记冲突；§5–§7 已按 Wave D 真窗口取证更新，完整交互/AX 与视觉还原仍由 R2–R10 继续。实现侧验收以本包数值为准。
 
 ## 1. 结构与状态（§0.1 L1）
 
@@ -48,8 +48,8 @@
 
 | 项 | 结果 | 证据 |
 | --- | --- | --- |
-| hover / active / 菜单 / 折叠 / 滚动 | BLOCKED | State A Wave D 只覆盖 task AXPress 与 Composer focus；完整状态矩阵留 R2–R8 |
-| AX（VoiceOver / 键盘路径 / 目标尺寸） | PARTIAL | Wave C/D 已证明真窗口 AX tree、task semantic action 与 focus；完整 VoiceOver/键盘/目标尺寸留 R7/R8 |
+| hover / active / 菜单 / 折叠 / 滚动 | BLOCKED | State A Wave D 只覆盖 task AXPress 与 Composer focus；完整状态矩阵留 R2–R10 |
+| AX（VoiceOver / 键盘路径 / 目标尺寸） | PARTIAL | Wave C/D 已证明真窗口 AX tree、task semantic action 与 focus；完整 VoiceOver/键盘/目标尺寸留 R7/R10 |
 
 ## 6. 区域量化（§0.1 L6）
 

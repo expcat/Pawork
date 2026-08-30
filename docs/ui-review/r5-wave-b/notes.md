@@ -33,5 +33,5 @@ W-B1 输入交互：shift 选择（SelectLeft/Right/ToLineStart/ToLineEnd）、�
 
 ## 移交
 
-- composer 区域 SSIM ≥0.99：同 R3/R4/Wave A 先例移交 R8，待用户拍板。
-- `bounds_for_range`（IME marked-text 弹层定位）在滚动态下使用注册时 bounds，存在同类一帧滞后；当前测试未覆盖，列入 R6/R8 观察项。
+- composer 区域 SSIM ≥0.99：同 R3/R4/Wave A 先例移交 R10，待用户拍板。
+- `bounds_for_range`（IME marked-text 弹层定位）在滚动态下使用注册时 bounds，存在同类一帧滞后；当前测试未覆盖，列入 R6/R10 观察项。

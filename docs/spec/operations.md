@@ -94,7 +94,7 @@ Builtin < Global < Profile < Workspace < Session < Run
 - `service` 默认 dry-run；只有用户明确选择并传入 apply 语义时才修改系统服务。
 - Windows SCM 实机验收、Linux/Windows Sandbox/服务矩阵未构成当前发布证明。
 - License 仍待定；crates.io 占名、安装器、自更新、签名、公证、SBOM、供应链与发布回滚均未立项。
-- 当前 R1–R11 明确不运行发布级 Workspace Full Gate。正式发布必须经用户另行授权后重新定义（现为 [ROADMAP §5](../../ROADMAP.md) 候选，不占用 R11），不能沿用历史默认门禁。
+- 当前 R1–R11 明确不运行发布级 Workspace Full Gate。正式发布必须经用户另行授权后重新定义（现为 [ROADMAP §5](../../ROADMAP.md) 候选，不占用 R8–R11），不能沿用历史默认门禁。
 - 远程 GUI、LAN/Web、Cloud 和外部账户池网关未交付；不要把本机 socket 服务暴露为远程控制面。
 
 ## 8. 运维完成条件

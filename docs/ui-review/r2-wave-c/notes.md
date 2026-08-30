@@ -37,4 +37,4 @@
 | State A/B shell 各区域 SSIM ≥0.99 + 结构/overlay 人工复核 | ❌ Wave A 实测 9/9 zone 小于 0.99（0.65–0.81）；分区内容依赖 F-03/F-04（R3）、F-05（R4）、F-09（R5）、F-12（R6，State B 前置），R2 范围内无法达成 |
 | 启动、连接失败、失焦、resize、Inspector 开合可重复模拟操作测试 | ✅ 本波补齐连接失败重试后全覆盖（Wave B 五相位 + 本波双循环） |
 
-结论：R2 范围内可做的实现与测试已清零。2026-08-27 用户拍板 **a**：R2 以壳层结构门禁为准退出，分区像素 SSIM 移交 R8 汇总（见 [plan/R7-R8](../../../plan/R7-R8-ui-quality-gates.md#3-视觉终局门禁) 与 [history R2](../../history.md#r2--window-shell-与全局视觉系统2026-08-27)）。R3 可开启。
+结论：R2 范围内可做的实现与测试已清零。2026-08-27 用户拍板 **a**：R2 以壳层结构门禁为准退出，分区像素 SSIM 移交 R10 汇总（见 [plan/R9–R11](../../../plan/R9-R11-post-ui-closeout.md) R10 与 [history R2](../../history.md#r2--window-shell-与全局视觉系统2026-08-27)）。R3 可开启。

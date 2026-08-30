@@ -31,9 +31,9 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 
 - **键盘相位深度验证**：按用户 2026-08-28 指示，本轮快捷键不做过度验证。U2 归档证据为 Slice 4 的 22 相位；Slice 5 的 button-enter 正向相位已写入驱动但未复跑。后续复验以 Computer Use 为准（裸 dev binary 无 bundle id，需临时 bundle 包装，本次已验证该路径可行）。
 - **快捷键字形**：空态引导与 tooltip 的 ⌘/⌥ 在 GPUI 0.2.2 `.AppleSystemUIFont` 下不级联，真窗口显示为 tofu（修复前截图 [visual/cu-timeline-connected.png](visual/cu-timeline-connected.png)）；收口审查改为 ASCII `Cmd+N` / `Cmd+Opt`。历史 AX dump 不改。本轮父模型无 Computer Use，ASCII 空态复拍标记后续手动启用支持该功能的模型验证。
-- **观察（移交 R11 比对）**：task 行标题截断处与时间列之间无可见省略号/间隙（如 "Refactor launcher tab238d"），fixture 长标题样本同样硬截断；属 Wave A 几何既有表现，非本波回归，R11 终局比对时对照定稿图定夺。
-- **R3 退出标准（拍板 c 后）**：State A/B/C 分区 SSIM ≥0.99 连同 fixture 演示数据重塑移交 R8；State C reference tone 归一仍须 R8 前用户批准设计基准变更。本波不触及像素门禁。
+- **观察（移交 R8 比对）**：task 行标题截断处与时间列之间无可见省略号/间隙（如 "Refactor launcher tab238d"），fixture 长标题样本同样硬截断；属 Wave A 几何既有表现，非本波回归，R8 终局比对时对照定稿图定夺。
+- **R3 退出标准（拍板 c 后）**：State A/B/C 分区 SSIM ≥0.99 连同 fixture 演示数据重塑移交 R10；State C reference tone 归一仍须 R10 重采集前用户批准设计基准变更。本波不触及像素门禁。
 
 ## 5. 状态
 
-Wave B 已实现、自动门禁与真窗口验证通过、证据归档（[u2-nav/](u2-nav/) Slice 4 的 22 相位 + [visual/](visual/) Computer Use 截图）。2026-08-28 拍板 c 后 R3 阶段已退出；终局视觉签字仍属 R8。
+Wave B 已实现、自动门禁与真窗口验证通过、证据归档（[u2-nav/](u2-nav/) Slice 4 的 22 相位 + [visual/](visual/) Computer Use 截图）。2026-08-28 拍板 c 后 R3 阶段已退出；终局视觉签字仍属 R10。

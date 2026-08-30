@@ -4,7 +4,7 @@
 
 ## 开启决策
 
-- 2026-08-29 用户曾明确指令跳过当时未收口的 R6、直接进入 R7；R6 随后恢复并完成 Wave B。2026-08-30 用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出，本波恢复人工验收；移交项仍不得记为通过。
+- 2026-08-29 用户曾明确指令跳过当时未收口的 R6、直接进入 R7；R6 随后恢复并完成 Wave B。2026-08-30 用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R10，R6 正式退出，本波恢复人工验收；移交项仍不得记为通过。
 - 本波只处理跨组件交互状态与 Accessibility 基线，不扩 GUI wire，不改 Host / Policy / storage，不新增依赖，也不消费真实 Provider 凭证。
 - Desktop 仍是独立 GPUI 进程，业务依赖只允许 `pawork-client`；`gpui = 0.2.2` 与 ADR-042 原生 AppKit AX bridge 决策保持冻结。
 
@@ -41,7 +41,7 @@
 
 ### 2026-08-29 白班
 
-- **A1 fresh 基线**：[baseline-debug/](baseline-debug/)（09:53–09:54 UTC）——State A/B fresh current.png、ax-tree（85 nodes / pass:True assert）、geometry、run-manifest。视觉 diff 全区 FAIL（SSIM 0.42–0.94）按 R3–R6 先例移交 R8，不阻塞本波。
+- **A1 fresh 基线**：[baseline-debug/](baseline-debug/)（09:53–09:54 UTC）——State A/B fresh current.png、ax-tree（85 nodes / pass:True assert）、geometry、run-manifest。视觉 diff 全区 FAIL（SSIM 0.42–0.94）按 R3–R6 先例移交 R10，不阻塞本波。
 - **A2 三路径差额与修复**：
   - 首跑取证 [u2-three-path-dual-focus-gap/](u2-three-path-dual-focus-gap/)：菜单打开时触发器与高亮项双 focused（assert-button-enter-grouping-menu focus check FAIL）。
   - 修复：触发器 focused 改为 open_menu.is_none() && focus.is_focused(window)（grouping/scope/add-task/reconnect，accessibility/app.rs:396/416/445/472）；workspace-confirm 浮层纳入高亮体系（menu_item_count + focused(ix==highlight)）；TL-04 Review changes / TL-07 EntryMenu / TR-06 Reconnect 键盘 on_activate 接线收口。
@@ -75,5 +75,5 @@
 
 - 用户确认 State A hover / active / focus 九图通过：八张以 [`state-supplement/`](state-supplement/) 为准，Inspector Terminal hover 以修复后 [`state-supplement-hoverfix/shot-hover-inspector-tab-terminal.png`](state-supplement-hoverfix/shot-hover-inspector-tab-terminal.png) 为准。
 - 用户批准本波以原生 AX tree/action + 纯键盘 + U2 替代 VoiceOver：对应证据为 [`component-matrix.md`](component-matrix.md)、[`u2-three-path-fixed/`](u2-three-path-fixed/) 与 [`ax-forms/`](ax-forms/)。
-- 边界：VoiceOver 始终未执行、不记为通过；上述替代只关闭 R7 Wave A，不证明屏幕朗读措辞 / 顺序，也不静默豁免 R8 的系统级验收。
+- 边界：VoiceOver 始终未执行、不记为通过；上述替代只关闭 R7 Wave A，不证明屏幕朗读措辞 / 顺序，也不静默豁免 R10 的系统级验收。
 - 结论：自动门禁与人工九图均通过，平台递归 AX 失败包已 fail-closed 保留，Wave A 关闭并进入 Wave B。

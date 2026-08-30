@@ -270,7 +270,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 ```
 
 - `--bins`：本包是 bin-only（无 lib target），任务指南默认的 `--lib --tests` 匹配不到任何 target。
-- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R8 起的标准口径，R7 Wave C 收口为 146/146 绿）。
+- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R10 起的标准口径，R7 Wave C 收口为 146/146 绿）。
 
 本包 dev-dependencies 为 `tempfile`（workspace `3`，仅服务 `ui/barriers.rs` 的临时目录测试）与 `gpui` dev 条目（`=0.2.2` + `test-support` feature，R1 Wave C 起；仅测试构建启用 TestAppContext/VisualTestContext，resolver v2 下不进生产二进制闭包），均不计入生产 deny-list。
 
@@ -279,11 +279,11 @@ R3 Wave B 起 [scripts/ui-r3-wave-b-nav.sh](../../../scripts/ui-r3-wave-b-nav.sh
 
 ## 8. 注意事项与已知限制
 
-- **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic（旧 R8 波 A 实证 exit 134，真窗口自始无法启动）。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归；R1 已由 [Wave D](../../ui-review/wave-d/notes.md) 建立真窗口启动门禁，R8 继续扩面。
+- **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic（旧 R8 波 A 实证 exit 134，真窗口自始无法启动）。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归；R1 已由 [Wave D](../../ui-review/wave-d/notes.md) 建立真窗口启动门禁，R10 继续扩面。
 - **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
-- **渲染面自动门禁尚未完整**：R7 Wave A 的 State A hover/active/focus 九图已由用户签字，并依用户决定以原生 AX tree/action + 纯键盘 + U2 替代本波 VoiceOver；Wave B 的 focus/menu/approval 等价路径已收口；Wave C 已完成 1080×720、长内容、1024 行、resize/reconnect、应用内 100%/125%/150% 字号和连接 paint 门禁。主动 Reduce Motion / Increase Contrast 真系统态依用户指令跳过且不宣称通过；VoiceOver 未执行，性能阈值未冻结；三张定稿图分区 SSIM 与终局视觉签字留 R8。
-- **ActivityPopover 结构已取证，视觉终局未签字**：R6 Wave A 已在 Connected State A/B 三相位通过结构断言，触发器/Popover 锚点与层级成立；分区 SSIM 按 R3–R5 同口径移交 R8，不把结构通过冒充视觉通过。证据见 [r6-wave-a](../../ui-review/r6-wave-a/notes.md)。
+- **渲染面自动门禁尚未完整**：R7 Wave A 的 State A hover/active/focus 九图已由用户签字，并依用户决定以原生 AX tree/action + 纯键盘 + U2 替代本波 VoiceOver；Wave B 的 focus/menu/approval 等价路径已收口；Wave C 已完成 1080×720、长内容、1024 行、resize/reconnect、应用内 100%/125%/150% 字号和连接 paint 门禁。主动 Reduce Motion / Increase Contrast 真系统态依用户指令跳过且不宣称通过；VoiceOver 未执行，性能阈值未冻结；三张定稿图分区 SSIM 与终局视觉签字留 R10。
+- **ActivityPopover 结构已取证，视觉终局未签字**：R6 Wave A 已在 Connected State A/B 三相位通过结构断言，触发器/Popover 锚点与层级成立；分区 SSIM 按 R3–R5 同口径移交 R10，不把结构通过冒充视觉通过。证据见 [r6-wave-a](../../ui-review/r6-wave-a/notes.md)。
 - **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
 - **早死 run 的回显行重选后消失（R4 Wave B 评审 P3，存量语义）**：plan 闸门在 `MessageCommitted` 之前拒绝时，用户消息从未持久化；乐观回显让用户先看见消息，重选 / 重连后快照重建时该行随基线清空消失。消息此前根本不显示，echo 只是使该语义可观察；是否把用户消息持久化提前到闸门之前属产品决策（ROADMAP §5 live wire 诚实缺口仍开放）。同理，合成兜底条目（≥2^60 序号）在屏时若同会话又有真实事件到达，真实事件按序号插到合成条目之前（深边角化妆性排序），重选即自愈。同一 run 的乐观回显行与稍后到达的持久化 UserMessage 在未经重选/重连时理论上可并存（echo 不进 seen）；实际触发面极窄——最新用户消息只经快照到达而快照会重建 timeline——重选即自愈。
 - **单主题**：仅深色 `dark()`；Increase Contrast 是同一深色主题的可访问 palette 变体，不是第二套主题。`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。
