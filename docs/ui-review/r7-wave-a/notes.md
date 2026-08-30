@@ -1,10 +1,10 @@
 # R7 Wave A — 组件状态矩阵与 AX 基线
 
-> 状态：🔵 进行中（2026-08-29 开启）
+> 状态：🔵 自动门禁已通过、人工验收中（2026-08-29 开启；2026-08-30 R6 退出后恢复）
 
 ## 开启决策
 
-- 用户明确指令跳过并忽略未收口的 R6，直接进入 R7。本记录只移动活动指针；R6 Wave B 不追记为完成，R7/R8 也不得把其未实现项当作已通过。
+- 2026-08-29 用户曾明确指令跳过当时未收口的 R6、直接进入 R7；R6 随后恢复并完成 Wave B。2026-08-30 用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出，本波恢复 VoiceOver/overlay 人工验收；移交项仍不得记为通过。
 - 本波只处理跨组件交互状态与 Accessibility 基线，不扩 GUI wire，不改 Host / Policy / storage，不新增依赖，也不消费真实 Provider 凭证。
 - Desktop 仍是独立 GPUI 进程，业务依赖只允许 `pawork-client`；`gpui = 0.2.2` 与 ADR-042 原生 AppKit AX bridge 决策保持冻结。
 
@@ -66,4 +66,4 @@
 
 ## 尚未执行
 
-- VoiceOver 人工走查与 overlay 签字（等待人工验收）。自动门禁与人工 overlay 分开记录。
+- VoiceOver 人工走查与 overlay 签字（2026-08-30 已恢复，等待用户人工验收）。自动门禁与人工 overlay 分开记录。

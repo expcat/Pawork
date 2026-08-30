@@ -1,13 +1,13 @@
 # R7–R8 — 全局交互质量与模拟操作全功能验收
 
-> 状态：🔵 R7 Wave A 自动门禁已通过、暂停等待 R6 退出后恢复人工验收 · R8 ⚪ 未开始
-> 前置：默认要求 R1–R6 逐阶段通过；用户于 2026-08-29 明确授权跳过当时未收口的 R6、直接进入 R7。R6 Wave B 的实现、定向门禁与审查后最终 U2 已于 2026-08-30 补齐，但 R6 阶段仍等待 State A/B 视觉门禁移交确认；此前跳过授权不构成该视觉决定。R7 解决跨组件一致性，R8 运行完整矩阵并补跨阶段缺口，均不得把前置未通过项直接记为通过。
+> 状态：🔵 R7 Wave A 自动门禁已通过、VoiceOver/overlay 人工验收已恢复 · R8 ⚪ 未开始
+> 前置：R1–R6 已依次退出。用户于 2026-08-29 曾授权跳过当时未收口的 R6、直接进入 R7；R6 Wave B 随后恢复并于 2026-08-30 完成实现、定向门禁与审查后最终 U2，同日用户明确确认将 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 解决跨组件一致性，R8 运行完整矩阵并补跨阶段缺口，均不得把移交项记为已经通过。
 
 ## R7 — 全局交互、Accessibility 与响应式
 
 ### 执行波次
 
-- **Wave A（🔵 2026-08-29，暂停）— 组件状态矩阵与 AX 基线**：自动门禁已通过（45 组件矩阵、三路径焦点修复、U2 26 相位、A3 bundled/签名对照、A4 State A hover/active/focus 九图）；VoiceOver/overlay 仍待人工签字，待 R6 退出后恢复。写入限 apps/desktop、Desktop Spec、R7 测试脚本与本波证据；不改 GUI wire、Host、Policy 或 fixture 业务数据。macOS 26 AX 递归劣化已 fail-closed 取证（attempt7–10），不以重启成功冒充根治。
+- **Wave A（🔵 2026-08-29–30，人工验收中）— 组件状态矩阵与 AX 基线**：自动门禁已通过（45 组件矩阵、三路径焦点修复、U2 26 相位、A3 bundled/签名对照、A4 State A hover/active/focus 九图）；R6 退出后已恢复 VoiceOver/overlay 人工签字。写入限 apps/desktop、Desktop Spec、R7 测试脚本与本波证据；不改 GUI wire、Host、Policy 或 fixture 业务数据。macOS 26 AX 递归劣化已 fail-closed 取证（attempt7–10），不以重启成功冒充根治。
 - **Wave B（⚪）— 全局 focus、菜单与 Popover 等价路径**：收敛 hover/active/focus/disabled/loading/error/selected、单开浮层、Escape/外点 dismissal、可发现快捷键与面板/菜单/审批后的焦点恢复；同一 action 必须复用既有 enable gate。
 - **Wave C（⚪）— 响应式、长内容与平台偏好**：覆盖 1080×720、字号放大、CJK/emoji/超长行、千级列表、反复 resize、reduced motion/高对比偏好与性能基线；只记录平台真实能力，不伪造跨平台 AX 支持。
 
@@ -75,6 +75,7 @@
 - **R3 移交（2026-08-28 拍板 c）**：R3 以 TaskRail 结构门禁退出（Wave A State A/C 结构断言全 PASS；State B 与 State A 同 Timeline 模式，未单独采 TaskRail 分区图），三状态分区 SSIM ≥0.99 不在 R3 判定。R8 重采集 current 前必须先完成 **fixture 演示数据重塑**（fixtures/ui/seed.json 数据形状对齐定稿图演示形状：标题长度/时间分布/会话数，同步 golden 与约 18 处断言引用，估算 0.5–1 天）；并就是否按冻结 token 归一 State C reference 底色另行取得用户批准（设计基准变更）。天花板量化分解：State A ≈100% 内容形状（0.6941，tone 校正上限 0.7490）；State C = tone ≈50% + 形状 ≈50%（0.3543，tone 校正后 0.6885）。遮罩侧无合规余量（已用 16.6%/14.9%，上限 35%），不得靠放宽 UI_Review §0.1 遮罩合同制造通过。细节见 [../docs/history.md](../docs/history.md#r3--taskrail-与任务导航2026-08-2728)。
 - **R4 移交（2026-08-28 拍板 1）**：R4 以 Header/Timeline 结构门禁与 U2 九场景退出，State A/B 分区 SSIM ≥0.99 不在 R4 判定。R8 重采集 current 时一并覆盖 Header / Timeline / 相关 Workspace 分区；不得沿用 Wave A 记录值（timeline 0.665 / header-left 0.940 / header-right 0.883 / global 0.648）作为终局通过。主因与 R3 相同：fixture 演示内容形状差，重塑已在拍板 c 移交，本条不另开数据任务。细节见 [../docs/history.md](../docs/history.md#r4--workspacetimeline-与-agent-状态2026-08-28)。
 - **R5 移交（2026-08-29 用户确认）**：R5 以 Composer 几何结构门禁、定向测试与 U2 九场景退出，State A/B Composer 分区 SSIM ≥0.99 不在 R5 判定。R8 必须用重塑后的同一 fixture 重采 current 并覆盖 idle/running Composer；不得沿用 R5 Wave A 记录值 0.423 / 0.619 作为终局通过。详见 [../docs/history.md](../docs/history.md#r5--composer-与运行控制2026-08-2829)。
+- **R6 移交（2026-08-30 用户确认）**：R6 以 Inspector/Activity 结构门禁、定向测试与审查后最终二进制 U2 九场景/19 断言退出，State A/B Inspector/Activity 分区 SSIM ≥0.99 不在 R6 判定。State A 中间态 Inspector 记录值为 0.614/0.800；State B 原 `current.png` 在 Popover 打开前采集，不能证明 Popover 视觉，已用正确的 `shot-activity-popover.png` 归一补录为 0.712/0.860。R8 必须在 fixture 演示数据重塑后，以真正打开的 ActivityPopover 重采 current 并覆盖 Inspector/Popover；上述记录值均不得作为终局通过。详见 [../docs/ui-review/r6-wave-a/notes.md](../docs/ui-review/r6-wave-a/notes.md)。
 - 所有 P0/P1 Review 项关闭；无白 titlebar、缺失 Header、错位 Popover、超高 Composer、假数据、遮挡、截断或布局跳动。
 - 由用户在同尺寸 reference/current/overlay 上完成最终视觉签字；自动门禁通过不能代替签字。
 

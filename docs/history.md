@@ -691,6 +691,17 @@ R5 已收口；Wave A/B 证据分别见 [r5-wave-a](ui-review/r5-wave-a/notes.md
 
 收口验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 129/129；脚本 unittest 40/40；U2 九场景 22 份断言全 PASS。未运行全 workspace gate。下一任务：R6 Wave A — Inspector/Changes 层级与 Workspace Header ActivityPopover。
 
+## R6 — Inspector、Changes、Terminal 与 Activity（2026-08-29–30）
+
+R6 已收口；Wave A/B 证据分别见 [r6-wave-a](ui-review/r6-wave-a/notes.md) 与 [r6-wave-b](ui-review/r6-wave-b/notes.md)，任务书正文仍在 [plan/R4-R6-ui-workflows.md](../plan/R4-R6-ui-workflows.md)。
+
+- **Wave A · Inspector 层级与 Header Activity**：Inspector 顶层 Changes/Terminal/Resources 与 Files/Summary 二级 strip、默认 Changes、440px 固定栏和 320×320 Header ActivityPopover 收口；只展示权威 Changes 摘要，不伪造 Add tool/Agent capability。render/AX/U1 132/132，Connected State A/B 三相位结构断言全 PASS。macOS 26.6.2 AX 注册 flake 以 AXWindows 回退 + desktop-restart≤3 fail-closed 取证。
+- **Wave B · 生命周期、键盘与重连**：Changes latest-session/scope/真实横滚，Terminal 多 workspace 草稿与 snapshot/replay/reconnect，Resources stale/刷新，Inspector 键盘/AX，以及 Host 重启后的 GuiClient request namespace 均在冻结 wire 内完成。审查发现的 terminal 首段串屏与空 diff scope 诊断已最小修复。
+- **视觉证据更正**：State B 原 `current.png`/`diff/` 在 Popover 打开前采集，原 0.528/0.573 不能作为 ActivityPopover 分区分数，保留作审计。2026-08-30 以同次运行的正确 `shot-activity-popover.png` 补录 ICC→sRGB current/diff，popover-left/right 为 0.712/0.860；State A Inspector 中间态为 0.614/0.800，均未达到 0.99。
+- **退出拍板（2026-08-30 用户确认）**：R6 以结构、交互、定向门禁与审查后最终二进制 U2 为准退出；State A/B Inspector/Activity 分区 SSIM ≥0.99 与 R3–R5 一致移交 R8，所有中间态记录值均不追认为通过。R8 须在 fixture 演示数据重塑后重新采集真正打开的 ActivityPopover 与 Inspector current。
+
+收口验证：`cargo test -p pawork-app --offline --lib --tests` 178/178；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 144/144；`cargo test -p pawork-client --offline --lib --tests` 41/41；driver unittest 6/6；审查后最终二进制 U2 九场景/19 断言全 PASS；87 文件 Secret 扫描 0 命中。状态回写仅复核归档证据与补录正确 State B 视觉 diff，未重跑 Cargo。未运行全 workspace gate。下一任务：恢复 R7 Wave A VoiceOver/overlay 人工验收。
+
 ## 附：默认死表 opt-in 门控（2026-08-30，阶段外任务）
 
 用户要求清理多余测试与门禁以缩短开发期测试/构建耗时。盘点结论：仓库无 CI / 全量门禁可撤；三类关键测试与 UI 波次脚本（被 Spec 与 R8/R11 证据链引用）保留；protocol 测试箱合并仍留 R9。实际收敛三项默认不跑但每次仍被编译的测试箱为 required-features opt-in（沿用 ui-fixture / provider 通道既有模式），默认死表不再编译：

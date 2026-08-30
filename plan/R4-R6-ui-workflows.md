@@ -1,6 +1,6 @@
 # R4–R6 — 核心 Agent 工作流
 
-> 状态：🟢 R4 已收口（Wave A 🟢 2026-08-28 / Wave B 🟢 2026-08-28；拍板 1：State A/B 分区 SSIM ≥0.99 移交 R8；wire 演进仍开放）· 🟢 R5 已收口（Wave A 🟢 2026-08-28 / Wave B + U2 🟢 2026-08-29；Composer SSIM 经用户确认移交 R8）· 🔵 R6 进行中（Wave A 🟢 2026-08-29；Wave B + 审查后最终 U2 🟢 2026-08-30；阶段退出等待视觉门禁移交确认）
+> 状态：🟢 R4 已收口（Wave A 🟢 2026-08-28 / Wave B 🟢 2026-08-28；拍板 1：State A/B 分区 SSIM ≥0.99 移交 R8；wire 演进仍开放）· 🟢 R5 已收口（Wave A 🟢 2026-08-28 / Wave B + U2 🟢 2026-08-29；Composer SSIM 经用户确认移交 R8）· 🟢 R6 已收口（Wave A 🟢 2026-08-29；Wave B + 审查后最终 U2 🟢 2026-08-30；Inspector/Activity SSIM 经用户确认移交 R8）
 > 前置：R2、R3 依次通过。R4 → R5 → R6 串行推进，每阶段同时完成视觉、真实交互与对应 UI 场景测试。
 
 ## R4 — Workspace、Timeline 与 Agent 状态
@@ -60,7 +60,7 @@
 ## R6 — Inspector、Changes、Terminal 与 Activity
 
 > 波次状态：
-> - **Wave A（🟢 2026-08-29）**：实现侧已收敛 Inspector 顶层 strip 与 Changes Files/Summary 二级 strip 的层级/默认落点，并将折叠态 Activity 从 StatusBar 迁到 Workspace Header 右上向下展开约 320px；render/AX/U1、长内容不挤窄 Inspector 与 Header Activity AX 锚点公式回归 132/132 通过，只展示权威 Changes 摘要，不伪造 Add tool / Agent capability。真窗口阻塞根因定位为 macOS 26.6.2 对无 bundle debug 二进制的 AX server 注册 flake（非代码回归），driver 层以 AXWindows 回退 + desktop-restart ≤3 兜底（fail-closed）绕过；Connected State A/B 三相位结构断言全过（label r6a-connected，git_head=d793999），分区 SSIM 记录值同 R3–R5 先例移交 R8；收口审查 P1×1 + P2×2 已整改并回归全绿。证据见 [r6-wave-a](../docs/ui-review/r6-wave-a/notes.md)。
+> - **Wave A（🟢 2026-08-29）**：实现侧已收敛 Inspector 顶层 strip 与 Changes Files/Summary 二级 strip 的层级/默认落点，并将折叠态 Activity 从 StatusBar 迁到 Workspace Header 右上向下展开约 320px；render/AX/U1、长内容不挤窄 Inspector 与 Header Activity AX 锚点公式回归 132/132 通过，只展示权威 Changes 摘要，不伪造 Add tool / Agent capability。真窗口阻塞根因定位为 macOS 26.6.2 对无 bundle debug 二进制的 AX server 注册 flake（非代码回归），driver 层以 AXWindows 回退 + desktop-restart ≤3 兜底（fail-closed）绕过；Connected State A/B 三相位结构断言全过（label r6a-connected，git_head=d793999）。State B 原视觉报告误用了 Popover 打开前截图，2026-08-30 已以正确截图补录；两状态分区仍未达 0.99，按用户确认移交 R8。收口审查 P1×1 + P2×2 已整改并回归全绿。证据见 [r6-wave-a](../docs/ui-review/r6-wave-a/notes.md)。
 > - **Wave B（🟢 2026-08-30）**：冻结 wire 内实现已收口：Changes latest-session/scope/真实横滚、Terminal 多 workspace 草稿与 snapshot/replay/reconnect、Resources stale/刷新、Inspector 键盘/AX，以及 Host 重启后的 GuiClient 请求幂等碰撞。app 178、Desktop 144、client 41、driver unittest 6 全绿；审查补修两个边角后，最终二进制 U2 九场景 19 断言在 AX 注册恢复后一次补录全 PASS，87 文件 Secret 扫描 0 命中。详见 [r6-wave-b](../docs/ui-review/r6-wave-b/notes.md)。
 
 ### 工作范围
@@ -78,7 +78,10 @@ Changes 空态与真实 diff、文件切换、Summary/DiffView、长行横滚；
 
 ### R6 退出标准
 
-- [ ] State A Inspector 与 State B ActivityPopover 结构、锚点、层级和内容密度对齐；各区域 SSIM `≥0.99`。
+- [x] State A Inspector 与 State B ActivityPopover 的结构、锚点和层级门禁通过。
+- [ ] State A/B Inspector/Activity 内容密度与各区域 SSIM `≥0.99`；经 2026-08-30 用户确认移交 R8 终局门禁，不追认为通过（State A Inspector 0.614/0.800；State B 正确 Popover 截图 0.712/0.860）。
 - [x] Changes/Terminal/Resources 的展示范围与真实 capability 一致，无越权、假动作或错误 scope（审查后最终二进制 U2 九场景 + 审查后定向回归）。
 - [x] 所有 tab、二级 tab、滚动、折叠、恢复和本波键盘路径有 U1/U2 场景；跨阶段全部菜单由 R7/R8 汇总。
 - [x] Terminal/approval/断线不会破坏 Run 生命周期、协议边界或安全决策；Host 重启后的 ReadOnly 拒绝已真进程验证。
+
+> R6 于 2026-08-30 按用户确认退出：实现、定向门禁、审查后最终二进制 U2 九场景/19 断言均已通过；State A/B Inspector/Activity 分区 SSIM `≥0.99` 与 R3–R5 一致移交 R8。旧 State B `current.png`/`diff/` 是 Popover 打开前的折叠态记录，仅保留作审计；正确 Popover 证据为 `current-popover.png`/`diff-popover/`。

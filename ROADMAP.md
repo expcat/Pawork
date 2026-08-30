@@ -11,10 +11,10 @@
 | 字段 | 值 |
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
-| 当前阶段 | **R6 — Inspector、Changes、Terminal 与 Activity（阶段退出闸门 🔵）** |
-| 下一任务 | 用户确认是否将 State A/B Inspector/Activity 分区 SSIM `≥0.99` 与 R3–R5 一致移交 R8；确认后关闭 R6，并恢复 R7 Wave A 的人工验收（任务书 [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity)；最终 U2 证据 [r6-wave-b](docs/ui-review/r6-wave-b/notes.md)） |
+| 当前阶段 | **R7 — 全局交互、Accessibility 与响应式（Wave A 人工验收 🔵）** |
+| 下一任务 | 完成 R7 Wave A 的 VoiceOver 人工走查与 State A hover/active/focus 九图 overlay 签字；通过后关闭 Wave A，开启 Wave B（任务书 [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式)；证据 [r7-wave-a](docs/ui-review/r7-wave-a/notes.md)） |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
-| 阻塞 | 实现、定向门禁与审查后最终二进制 U2 均无阻塞：2026-08-30 AX 注册恢复后，九场景/19 断言一次补录全 PASS。R6 退出只待用户确认 State A/B Inspector/Activity 分区 SSIM `≥0.99` 是否移交 R8；当前记录值不追认为通过。 |
+| 阻塞 | 实现与自动门禁无阻塞；当前只待用户完成 R7 Wave A 的 VoiceOver/overlay 人工验收。R6 已于 2026-08-30 经用户确认退出，State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，记录值不追认为通过。 |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞 · ⏭️用户跳过（未完成）。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
 
@@ -31,14 +31,14 @@ UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代
 | R3 | TaskRail 与任务导航 | Timeline/Projects、scope、project/task、连接、新建、账户区、选择/恢复/滚动与键盘导航 | [R3 存档](docs/history.md#r3--taskrail-与任务导航2026-08-2728) | 🟢 |
 | R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | 🟢 |
 | R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R5 存档](docs/history.md#r5--composer-与运行控制2026-08-2829) | 🟢 |
-| R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | 🔵（Wave A/B/U2 🟢；待视觉移交确认） |
-| R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | ⚪（Wave A 资产已交付；R6 退出后恢复） |
+| R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | 🟢 |
+| R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | 🔵（Wave A 自动门禁 🟢；人工验收中） |
 | R8 | 模拟操作全功能验收 | 全组件端到端 UI suite、三状态逐图差分、重连/后台 Run/恢复、性能与失败证据、用户视觉签字 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) | ⚪ |
 | R9 | UI 后一致性与代码债务 | 文档/Spec/断言一致、usage 幂等、依赖与注释漂移、路径内核、测试箱整理 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r9--一致性与代码债务收口) | ⚪ |
 | R10 | 关键回归与真实环境验证 | 三类关键回归、K-01、四通道/三客户端、OAuth refresh、历史人工冒烟与平台探针 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r10--关键回归与真实环境验证) | ⚪ |
 | R11 | 设计稿与实际 UI 终局比对 | 对照 v3 定稿图与已归档 current/diff，将不符合的显示效果归纳为下一阶段完善任务（只改文档） | [R9–R11](plan/R9-R11-post-ui-closeout.md#r11--设计稿与实际-ui-终局比对) | ⚪ |
 
-阶段默认严格串行：`R1 → R2 → … → R11`。2026-08-29 用户先授权 R6→R7 的单次跳过，后又明确恢复 R6 Wave B；Wave B 实现、定向门禁与审查后最终二进制 U2 已于 2026-08-30 收口，当前指针仍停在 R6 等待视觉门禁移交确认。R7 Wave A 已交付资产不作废、但暂停继续验收。R11 是文档任务：不查询、不修改代码。发布准备已移出本编号，见 §5。
+阶段默认严格串行：`R1 → R2 → … → R11`。2026-08-29 用户先授权 R6→R7 的单次跳过，后又明确恢复 R6 Wave B；Wave B 实现、定向门禁与审查后最终二进制 U2 于 2026-08-30 收口，同日用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 Wave A 既有自动门禁资产继续有效，当前恢复 VoiceOver/overlay 人工验收。R11 是文档任务：不查询、不修改代码。发布准备已移出本编号，见 §5。
 
 ---
 
@@ -133,9 +133,9 @@ R11 只做文档：对照 [design/](design/README.md) 三张 v3 定稿图与 R8�
 - **State C reference 底色归一（R8 前置，设计基准变更）**：R3 拍板 c 已把 TaskRail 分区 SSIM ≥0.99 与 fixture 演示数据重塑移交 R8（可执行条款见 [R7–R8 任务书](plan/R7-R8-ui-quality-gates.md) §3）。State C 定稿图中位 RGB (0,9,17) 比冻结 token base `0x07121a` 更暗；是否在生成 reference 时按冻结 token 归一底色，须 R8 重采集前由用户批准，不得把当前漂移追认为新基准。
 - **R4 State A/B 分区 SSIM（R8 终局，2026-08-28 拍板 1）**：R4 以结构门禁与 U2 九场景退出；Header/Timeline 等区域 SSIM ≥0.99 同 R3 先例移交 R8。主因仍是 fixture 演示内容与设计稿形状差（重塑已在 R3 拍板 c 移交 R8），不得把当前记录值追认为通过。
 - **live wire 诚实缺口（开放）**：live `RunChanged` 不带失败原因、无用户消息 wire 事件；R4 以乐观回显 + 重放兜底覆盖且零 wire 变更。是否接受现状或立 ADR 演进 wire（含把用户消息持久化提前到 plan 闸门之前）待拍板。
-- **macOS 26 AX server 注册 flake（R7 前置复核）**：无 bundle debug 二进制的外部 AX 树间歇性只返回递归 `AXApplication`（自进程诞生即存在、激活无效、进程级持久、按时段成簇）；R6 Wave A 已在 driver 层以 AXWindows 回退 + desktop-restart ≤3 兜底绕过（fail-closed）。R7 VoiceOver/AX 门禁前须复核 bundled/签名形态能否根治，否则该门禁可能同类受阻。**2026-08-29 A3 结论**：bundled/签名形态注册正常（raw 46 / bundled 63 Pawork identifiers，无 AXWindows 回退），但当晚 20:23 起平台时段性递归劣化对两种形态均生效且 desktop-restart 不恢复——判定为平台时段问题而非 app 形态问题，State 补充采集待窗口过后重跑。
+- **macOS 26 AX server 注册 flake（R7 人工验收风险）**：无 bundle debug 二进制的外部 AX 树间歇性只返回递归 `AXApplication`（自进程诞生即存在、激活无效、进程级持久、按时段成簇）；R6 Wave A 已在 driver 层以 AXWindows 回退 + desktop-restart ≤3 兜底绕过（fail-closed）。**2026-08-29 A3/A4 结论**：bundled/签名形态正常时 raw 46 / bundled 63 Pawork identifiers 均可注册且无需 AXWindows 回退；当晚 20:23 起平台时段性递归劣化对两种形态均生效且 desktop-restart 不恢复，22:46 窗口恢复后 State A hover/active/focus 九图已补录。判定为平台时段问题而非 app 形态根治；R7 VoiceOver 人工走查若再出现递归树仍须 fail-closed 留证，不以重启成功冒充通过。
 - 命令级交互审批：当前 terminal AskUser fail-closed；新增承载需 ADR。
-- **Terminal stop / exit 生命周期 wire（R6 Wave B 闸门）**：冻结 GUI 协议当前只有 `terminal_create` / `terminal_write` / `terminal_resize` 与 `TerminalOutput`，无 stop/close 命令及 live exit/failure 事件；不得把写入 `exit` 或本地进程操作伪装为通用停止能力。Wave B 先完成现有合同内的 create/write/output/resize/snapshot reconnect 与失败诚实展示；若 R6 退出仍要求专用 Stop 与 live 终态，须另立 ADR 演进 wire。
+- **Terminal stop / exit 生命周期 wire（R6 收口后候选）**：冻结 GUI 协议当前只有 `terminal_create` / `terminal_write` / `terminal_resize` 与 `TerminalOutput`，无 stop/close 命令及 live exit/failure 事件；不得把写入 `exit` 或本地进程操作伪装为通用停止能力。R6 已在现有合同内完成 create/write/output/resize/snapshot reconnect 与失败诚实展示并退出；未来若要求专用 Stop 与 live 终态，须另立 ADR 演进 wire。
 - `@` file-index 候选查询与 Resources“已加载规则”Host 出口：只有在目标 UI 真实展示对应入口时，才作为 R5/R6 前置接入。
 - 多账户 factory、远程 GUI、teams/goal/automation/monitor、GUI git 高级面、WASM 插件/市场/Hooks/LSP、artifact 流式与 egress broker：保持候选，资产位置见 [docs/history.md](docs/history.md) 与 [docs/design.md](docs/design.md)。
 - Windows CI/Job、跨平台真窗口驱动：R8 先完成 macOS 主门禁，R10 再扩平台证据；发布级三平台矩阵见下方发布准备候选。
