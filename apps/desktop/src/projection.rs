@@ -496,8 +496,9 @@ impl DesktopProjection {
     }
 
     /// 重连三态：Replay 续接事件；SnapshotRequired 丢 stale 换基线；
-    /// UpToDate 不碰 Timeline。优先消费 `ResumeOutcome.snapshot`（服务端第二帧）；
-    /// `fallback_snapshot` 只在未附带时兜底握手首帧。
+    /// UpToDate 保留 Timeline、但仍合并握手快照里的非事件权威状态（尤其
+    /// wire 无 live exit 的 terminal）。`ResumeOutcome.snapshot` 只在
+    /// SnapshotRequired 时存在；其余分支使用握手首帧。
     pub fn apply_resume_outcome(
         &mut self,
         outcome: &ResumeOutcome,
@@ -518,7 +519,10 @@ impl DesktopProjection {
                 self.apply_snapshot_required(snapshot);
                 ResumeApply::ReplaceBaseline
             }
-            ResumeDisposition::UpToDate { .. } => ResumeApply::Unchanged,
+            ResumeDisposition::UpToDate { .. } => {
+                self.merge_snapshot(fallback_snapshot);
+                ResumeApply::Unchanged
+            }
         }
     }
 
@@ -580,29 +584,42 @@ impl DesktopProjection {
             .find(|terminal| terminal.session_id.as_deref() == Some(terminal_session_id))
         {
             terminal.output.push_str(delta);
-            terminal.runtime_state = Some("running".into());
-            terminal.availability = TerminalAvailability::Ready;
+            // Replay 可能在当前 snapshot 之后补到 terminal 的历史输出。
+            // exited/killed 等 snapshot 终态是更强事实，不能被旧输出复活。
+            if terminal
+                .runtime_state
+                .as_deref()
+                .is_none_or(|state| state == "running")
+            {
+                terminal.runtime_state = Some("running".into());
+                terminal.availability = TerminalAvailability::Ready;
+            }
             if self.terminal.session_id.as_deref() == Some(terminal_session_id) {
                 self.terminal = terminal.clone();
                 return true;
             }
             return false;
         }
-        if let Some(current) = self.terminal.session_id.as_deref() {
-            if current != terminal_session_id {
-                return false;
-            }
-        } else {
-            self.terminal.session_id = Some(terminal_session_id.to_string());
-        }
-        self.terminal.output.push_str(delta);
-        self.terminal.runtime_state = Some("running".into());
-        self.terminal.availability = TerminalAvailability::Ready;
-        self.terminals.push(self.terminal.clone());
-        true
+        // TerminalOutput 可以先于 create 回执抵达。先按 id 缓存；在
+        // TerminalCreated 给出权威 workspace 前不展示，避免任务切换期间串屏。
+        let terminal = TerminalState {
+            session_id: Some(terminal_session_id.to_string()),
+            output: delta.to_string(),
+            runtime_state: Some("running".into()),
+            availability: TerminalAvailability::Ready,
+            ..TerminalState::default()
+        };
+        self.terminals.push(terminal);
+        false
     }
 
     pub fn apply_terminal_created(&mut self, workspace_id: String, terminal_session_id: String) {
+        // 同 workspace 的无 id 占位只用于显示 create failure；成功后由真实
+        // terminal 取代，避免占位在确定性选择中遮住新会话。
+        self.terminals.retain(|terminal| {
+            terminal.session_id.is_some()
+                || terminal.workspace_id.as_deref() != Some(workspace_id.as_str())
+        });
         let mut terminal = self
             .terminals
             .iter()
@@ -630,7 +647,9 @@ impl DesktopProjection {
         } else {
             self.terminals.push(terminal.clone());
         }
-        if self.active_workspace_id() == Some(workspace_id.as_str()) {
+        if self.active_workspace_id() == Some(workspace_id.as_str())
+            || self.terminal.workspace_id.as_deref() == Some(workspace_id.as_str())
+        {
             self.terminal = terminal;
         }
     }
@@ -651,6 +670,38 @@ impl DesktopProjection {
         self.update_terminal(terminal_session_id, |terminal| {
             terminal.mark_failed(reason.clone());
         })
+    }
+
+    /// terminal_create 尚无 terminal id，按请求 workspace 保存失败归属；
+    /// 用户切回该 workspace 时仍能看到真实原因，且不会污染当前 workspace。
+    pub fn mark_terminal_create_failed(&mut self, workspace_id: &str, reason: impl Into<String>) {
+        let reason = reason.into();
+        let mut failed = self
+            .terminals
+            .iter()
+            .find(|terminal| {
+                terminal.workspace_id.as_deref() == Some(workspace_id)
+                    && terminal.session_id.is_none()
+            })
+            .cloned()
+            .unwrap_or_else(|| TerminalState {
+                workspace_id: Some(workspace_id.to_string()),
+                ..TerminalState::default()
+            });
+        failed.mark_failed(reason);
+        if let Some(existing) = self.terminals.iter_mut().find(|terminal| {
+            terminal.workspace_id.as_deref() == Some(workspace_id)
+                && terminal.session_id.is_none()
+        }) {
+            *existing = failed.clone();
+        } else {
+            self.terminals.push(failed.clone());
+        }
+        if self.active_workspace_id() == Some(workspace_id)
+            || self.terminal.workspace_id.as_deref() == Some(workspace_id)
+        {
+            self.terminal = failed;
+        }
     }
 
     pub fn apply_terminal_resize(
@@ -694,15 +745,16 @@ impl DesktopProjection {
 
     pub fn select_terminal_for_workspace(&mut self, workspace_id: Option<&str>) -> bool {
         let current = self.terminal.session_id.as_deref();
-        let selected = if current.is_some_and(|id| {
-            self.terminals.iter().any(|terminal| {
-                terminal.session_id.as_deref() == Some(id)
-                    && terminal.workspace_id.as_deref() == workspace_id
+        let selected = current
+            .and_then(|id| {
+                self.terminals.iter().find(|terminal| {
+                    terminal.session_id.as_deref() == Some(id)
+                        && terminal.workspace_id.as_deref() == workspace_id
+                })
             })
-        }) {
-            self.terminal.clone()
-        } else {
-            self.terminals
+            .cloned()
+            .or_else(|| {
+                self.terminals
                 .iter()
                 .filter(|terminal| terminal.workspace_id.as_deref() == workspace_id)
                 .min_by_key(|terminal| {
@@ -712,11 +764,11 @@ impl DesktopProjection {
                     )
                 })
                 .cloned()
-                .unwrap_or_else(|| TerminalState {
-                    workspace_id: workspace_id.map(str::to_string),
-                    ..TerminalState::default()
-                })
-        };
+            })
+            .unwrap_or_else(|| TerminalState {
+                workspace_id: workspace_id.map(str::to_string),
+                ..TerminalState::default()
+            });
         let changed = self.terminal != selected;
         self.terminal = selected;
         changed
@@ -2942,19 +2994,20 @@ mod tests {
     #[test]
     fn terminal_output_appends_without_vt100() {
         let mut projection = DesktopProjection::default();
-        assert!(projection.apply_event(&terminal_output(1, "term-1", "hello")));
-        assert!(projection.apply_event(&terminal_output(2, "term-1", "\nworld")));
-        assert_eq!(projection.terminal.session_id.as_deref(), Some("term-1"));
-        assert_eq!(projection.terminal.output, "hello\nworld");
+        assert!(!projection.apply_event(&terminal_output(1, "term-1", "hello")));
+        assert!(!projection.apply_event(&terminal_output(2, "term-1", "\nworld")));
+        assert_eq!(projection.terminal.session_id, None);
+        assert_eq!(projection.terminals[0].output, "hello\nworld");
         assert!(!projection.apply_event(&terminal_output(3, "term-other", "nope")));
-        assert_eq!(projection.terminal.output, "hello\nworld");
+        assert!(projection.terminal.output.is_empty());
     }
 
     #[test]
     fn terminal_created_preserves_output_that_arrived_before_receipt() {
         let mut projection = DesktopProjection::default();
         projection.workspace_id = Some("ws-a".into());
-        assert!(projection.apply_event(&terminal_output(1, "term-a", "shell$ ")));
+        assert!(!projection.apply_event(&terminal_output(1, "term-a", "shell$ ")));
+        assert!(projection.terminal.output.is_empty());
         projection.apply_terminal_created("ws-a".into(), "term-a".into());
         assert_eq!(projection.terminal.output, "shell$ ");
         assert_eq!(projection.terminals[0].output, "shell$ ");
@@ -2963,6 +3016,20 @@ mod tests {
             projection.terminal.availability,
             TerminalAvailability::Ready
         );
+    }
+
+    #[test]
+    fn terminal_output_waits_for_workspace_receipt_before_becoming_visible() {
+        let mut projection = DesktopProjection::default();
+        projection.workspace_id = Some("ws-b".into());
+        assert!(!projection.apply_event(&terminal_output(1, "term-a", "shell$ ")));
+        assert_eq!(projection.terminal.workspace_id.as_deref(), None);
+
+        projection.apply_terminal_created("ws-a".into(), "term-a".into());
+        assert_eq!(projection.terminal.session_id, None);
+        projection.select_terminal_for_workspace(Some("ws-a"));
+        assert_eq!(projection.terminal.session_id.as_deref(), Some("term-a"));
+        assert_eq!(projection.terminal.output, "shell$ ");
     }
 
     #[test]
@@ -3029,6 +3096,77 @@ mod tests {
     }
 
     #[test]
+    fn up_to_date_snapshot_keeps_timeline_and_terminal_exit_beats_replayed_output() {
+        let initial: Snapshot = serde_json::from_value(json!({
+            "instance_id": "instance-1", "snapshot_sequence": 1, "generated_at": 1,
+            "sections": [
+                { "kind": "workspaces", "revision": 1, "data": [
+                    { "id": "ws-a", "name": "A" }
+                ]},
+                { "kind": "session_tree", "revision": 1, "data": [
+                    { "session_id": "s-1", "title": "A task", "updated_at_ms": 1,
+                      "workspace_id": "ws-a" }
+                ]},
+                { "kind": "terminal_sessions", "revision": 1, "data": [
+                    { "terminal_session_id": "term-a", "owner_session": "ws-a",
+                      "state": "running", "columns": 80, "rows": 24 }
+                ]}
+            ]
+        }))
+        .expect("initial terminal snapshot");
+        let mut projection = DesktopProjection::from_snapshot(&initial);
+        projection.select_session("s-1");
+        assert!(projection.apply_event(&run_changed(1, "created")));
+        let timeline_len = projection.timeline.len();
+        projection.set_connection(ConnectionState::Disconnected {
+            reason: "socket closed".into(),
+        });
+
+        let exited: Snapshot = serde_json::from_value(json!({
+            "instance_id": "instance-1", "snapshot_sequence": 1, "generated_at": 2,
+            "sections": [
+                { "kind": "workspaces", "revision": 2, "data": [
+                    { "id": "ws-a", "name": "A" }
+                ]},
+                { "kind": "session_tree", "revision": 2, "data": [
+                    { "session_id": "s-1", "title": "A task", "updated_at_ms": 1,
+                      "workspace_id": "ws-a" }
+                ]},
+                { "kind": "terminal_sessions", "revision": 2, "data": [
+                    { "terminal_session_id": "term-a", "owner_session": "ws-a",
+                      "state": "exited", "columns": 80, "rows": 24 }
+                ]}
+            ]
+        }))
+        .expect("exited terminal snapshot");
+        let apply = projection.apply_resume_outcome(
+            &resume_outcome(
+                ResumeDisposition::UpToDate {
+                    current_sequence: pawork_client::GlobalSequence(1),
+                },
+                Vec::new(),
+                None,
+            ),
+            &exited,
+        );
+        assert_eq!(apply, ResumeApply::Unchanged);
+        assert_eq!(projection.timeline.len(), timeline_len);
+        assert_eq!(projection.terminal.runtime_state.as_deref(), Some("exited"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Stale { .. }
+        ));
+
+        assert!(projection.apply_event(&terminal_output(2, "term-a", "late output")));
+        assert_eq!(projection.terminal.output, "late output");
+        assert_eq!(projection.terminal.runtime_state.as_deref(), Some("exited"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Stale { .. }
+        ));
+    }
+
+    #[test]
     fn terminal_disconnect_and_failure_are_honest_states() {
         let mut projection = DesktopProjection::default();
         projection.workspace_id = Some("ws-a".into());
@@ -3062,6 +3200,28 @@ mod tests {
         assert_eq!(
             projection.terminal.availability,
             TerminalAvailability::Ready
+        );
+
+        projection.mark_terminal_create_failed("ws-b", "policy denied");
+        assert_eq!(projection.terminal.workspace_id.as_deref(), Some("ws-a"));
+        projection.select_terminal_for_workspace(Some("ws-b"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Failed { .. }
+        ));
+        projection.apply_terminal_created("ws-b".into(), "term-b".into());
+        assert_eq!(projection.terminal.session_id.as_deref(), Some("term-b"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Ready
+        ));
+        assert_eq!(
+            projection
+                .terminals
+                .iter()
+                .filter(|terminal| terminal.workspace_id.as_deref() == Some("ws-b"))
+                .count(),
+            1
         );
     }
 

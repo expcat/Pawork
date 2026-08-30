@@ -228,6 +228,10 @@ pub struct GuiClient {
     /// 单连接只允许一个任务读传输层。事件泵与 command/snapshot 并发
     /// `receive` 会把对端响应拆丢；锁内先按调用方类型查 inbox。
     io: Arc<AsyncMutex<()>>,
+    /// 每个 SDK 连接实例的请求命名空间。Host 进程重启后 server-assigned
+    /// client_id 会从 client-0 重新计数；若这里只用 client_id + 本地序号，
+    /// 持久化幂等账本会把新进程请求误判为旧命令重放。
+    request_namespace: Arc<str>,
     next_request: Arc<AtomicU64>,
     next_nonce: Arc<AtomicU64>,
     last_acked: Arc<AtomicU64>,
@@ -362,6 +366,7 @@ impl GuiClient {
             initial_snapshot: Arc::new(Mutex::new(snapshot)),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
             io: Arc::new(AsyncMutex::new(())),
+            request_namespace: Arc::from(new_request_namespace()),
             next_request: Arc::new(AtomicU64::new(0)),
             next_nonce: Arc::new(AtomicU64::new(0)),
             last_acked: Arc::new(AtomicU64::new(0)),
@@ -431,8 +436,9 @@ impl GuiClient {
         self.command_envelope(AppCommandEnvelope {
             api_version: self.api_version(),
             command_id: CommandId::from(format!(
-                "gui-cmd-{}-{id}",
-                self.info.client_id.as_str()
+                "gui-cmd-{}-{}-{id}",
+                self.info.client_id.as_str(),
+                self.request_namespace,
             )),
             source,
             identity,
@@ -465,8 +471,9 @@ impl GuiClient {
         self.query_envelope(AppQueryEnvelope {
             api_version: self.api_version(),
             request_id: QueryId::from(format!(
-                "gui-query-{}-{id}",
-                self.info.client_id.as_str()
+                "gui-query-{}-{}-{id}",
+                self.info.client_id.as_str(),
+                self.request_namespace,
             )),
             source,
             identity,
@@ -981,6 +988,17 @@ fn now_timestamp() -> Timestamp {
     )
 }
 
+static NEXT_REQUEST_NAMESPACE: AtomicU64 = AtomicU64::new(0);
+
+fn new_request_namespace() -> String {
+    let sequence = NEXT_REQUEST_NAMESPACE.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{:x}-{nanos:x}-{sequence:x}", std::process::id())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -990,6 +1008,11 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
     use pawork_transport::{ConnectionLocality, TransportErrorKind};
+
+    #[test]
+    fn request_namespaces_do_not_repeat_within_a_process() {
+        assert_ne!(new_request_namespace(), new_request_namespace());
+    }
 
     /// 返回固定帧字节队列的测试连接。gui-client 无 async-trait 依赖，按
     /// `#[async_trait]` 的脱糖签名手工实现 `GuiConnection`。
@@ -1152,6 +1175,7 @@ mod tests {
             initial_snapshot: Arc::new(Mutex::new(None)),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
             io: Arc::new(AsyncMutex::new(())),
+            request_namespace: Arc::from("test-request"),
             next_request: Arc::new(AtomicU64::new(0)),
             next_nonce: Arc::new(AtomicU64::new(0)),
             last_acked: Arc::new(AtomicU64::new(0)),
@@ -1239,6 +1263,7 @@ mod tests {
             initial_snapshot: Arc::new(Mutex::new(None)),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
             io: Arc::new(AsyncMutex::new(())),
+            request_namespace: Arc::from("test-request"),
             next_request: Arc::new(AtomicU64::new(0)),
             next_nonce: Arc::new(AtomicU64::new(0)),
             last_acked: Arc::new(AtomicU64::new(0)),

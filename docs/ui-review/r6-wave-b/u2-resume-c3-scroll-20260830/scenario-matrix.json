@@ -1,0 +1,18 @@
+{
+  "scenes": {
+    "c1": "real four-file Changes list from the existing alpha fixture",
+    "c2": "clean beta task produces a real empty Changes result",
+    "c3": "Changes Files/Summary, file-row keyboard path, and long-line horizontal scroll",
+    "t1": "Terminal create/write/output/resize contract",
+    "i1": "Inspector collapse/Activity restore and focus contract",
+    "s1": "latest-session Changes scope remains honest after task switch",
+    "d1": "disconnect/reconnect keeps terminal state honest and disables writes",
+    "r1": "Resources empty plus connected/failed MCP Host profile",
+    "t2": "read_only Host profile rejects terminal create fail-closed"
+  },
+  "profiles": {
+    "c2": "available: clean beta task",
+    "r1": "available: r6-resources",
+    "t2": "available: r6-read-only"
+  }
+}

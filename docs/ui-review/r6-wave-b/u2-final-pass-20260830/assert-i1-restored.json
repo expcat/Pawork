@@ -1,0 +1,17 @@
+{
+  "phase": "i1-restored",
+  "generated_at": "2026-08-29T16:46:52Z",
+  "checks": [
+    {
+      "name": "inspector-present",
+      "pass": true,
+      "detail": "inspector present"
+    },
+    {
+      "name": "inspector-tab-changes-selected",
+      "pass": true,
+      "detail": "inspector-tab-changes selected=True"
+    }
+  ],
+  "pass": true
+}

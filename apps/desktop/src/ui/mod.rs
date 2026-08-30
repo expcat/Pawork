@@ -354,6 +354,10 @@ pub struct AppView {
     /// per-session Composer 草稿（不含终端）。无 active session 时走独立槽。
     composer_drafts: HashMap<String, String>,
     no_session_draft: String,
+    /// Terminal 输入按 Inspector 所属 workspace 隔离；任务切换时保存/恢复，
+    /// 避免未发送命令泄漏到另一 workspace。
+    terminal_drafts: HashMap<String, String>,
+    terminal_input_workspace: Option<String>,
     /// Timeline 虚拟化状态（Bottom 对齐钉底；跟随语义见 ui/timeline.rs）。
     timeline_list: ListState,
     timeline_following: bool,
@@ -364,7 +368,7 @@ pub struct AppView {
     terminal_scroll: FollowScroll,
     /// 单一 Terminal write 回执槽。输入仅在同一 terminal 的成功回执到达且
     /// 用户未继续编辑时清空；失败/断线保留文本，避免静默丢命令。
-    terminal_pending_write: Option<(String, String)>,
+    terminal_pending_write: Option<(String, Option<String>, String)>,
     /// 单一 Terminal create pending（按 Inspector 所属 workspace 去重）。
     /// Host 只回 terminal id，因此双击/快速键盘连打不得发出第二个 create。
     terminal_pending_create_workspace: Option<String>,
@@ -495,6 +499,8 @@ impl AppView {
             terminal_input,
             composer_drafts: HashMap::new(),
             no_session_draft: String::new(),
+            terminal_drafts: HashMap::new(),
+            terminal_input_workspace: None,
             timeline_list: ListState::new(
                 0,
                 // F-06：Top 对齐让短会话从 Header 下开始；跟随 / 脱钩语义
@@ -976,7 +982,7 @@ impl AppView {
             }
             ResumeApply::Continued { .. } | ResumeApply::Unchanged => {}
         }
-        self.reconcile_terminal_workspace();
+        self.reconcile_terminal_workspace(cx);
         // Replay / UpToDate 不重开 timeline，但 Inspector 查询面必须在新连接
         // 上重新取权威数据；旧内容在此之前一直带 stale 标记保留。
         self.refresh_open_inspector_tab(cx);
@@ -1061,10 +1067,14 @@ impl AppView {
                 workspace_id,
                 terminal_session_id,
             } => {
-                self.terminal_pending_create_workspace = None;
+                if self.terminal_pending_create_workspace.as_deref()
+                    == Some(workspace_id.as_str())
+                {
+                    self.terminal_pending_create_workspace = None;
+                }
                 self.projection
                     .apply_terminal_created(workspace_id, terminal_session_id.clone());
-                self.reconcile_terminal_workspace();
+                self.reconcile_terminal_workspace(cx);
                 self.controller.terminal_resize(
                     terminal_session_id,
                     self.projection.terminal.columns,
@@ -1082,11 +1092,34 @@ impl AppView {
                 self.inspector_open = true;
                 self.refresh_open_inspector_tab(cx);
             }
+            ControllerEvent::TerminalCreateFailed {
+                workspace_id,
+                reason,
+            } => {
+                if self.terminal_pending_create_workspace.as_deref()
+                    == Some(workspace_id.as_str())
+                {
+                    self.terminal_pending_create_workspace = None;
+                }
+                self.projection
+                    .mark_terminal_create_failed(&workspace_id, reason.clone());
+                self.reconcile_terminal_workspace(cx);
+                self.status_hint = Some(format!("Create terminal failed: {reason}"));
+            }
             ControllerEvent::TerminalWriteSucceeded {
                 terminal_session_id,
             } => {
                 self.projection.mark_terminal_ready(&terminal_session_id);
-                if let Some((pending_id, pending_text)) = self.terminal_pending_write.take() {
+                if let Some((pending_id, pending_workspace, pending_text)) =
+                    self.terminal_pending_write.take()
+                {
+                    if pending_id == terminal_session_id {
+                        if let Some(workspace_id) = pending_workspace.as_deref() {
+                            if self.terminal_drafts.get(workspace_id) == Some(&pending_text) {
+                                self.terminal_drafts.remove(workspace_id);
+                            }
+                        }
+                    }
                     if pending_id == terminal_session_id
                         && self.projection.terminal.session_id.as_deref()
                             == Some(terminal_session_id.as_str())
@@ -1147,10 +1180,6 @@ impl AppView {
                 if action == "open session" {
                     self.timeline_paging = false;
                 }
-                if action == "create terminal" {
-                    self.terminal_pending_create_workspace = None;
-                    self.projection.terminal.mark_failed(reason.clone());
-                }
                 self.status_hint = Some(format!("{action} failed: {reason}"));
             }
             ControllerEvent::DiffFilesLoaded {
@@ -1179,8 +1208,13 @@ impl AppView {
                     }
                 }
             }
-            ControllerEvent::DiffContentLoaded { epoch, path, file } => {
-                self.changes.apply_diff(epoch, &path, file);
+            ControllerEvent::DiffContentLoaded {
+                epoch,
+                path,
+                session_id,
+                file,
+            } => {
+                self.changes.apply_diff(epoch, &path, session_id, file);
             }
             ControllerEvent::McpServersLoaded { epoch, servers } => {
                 self.resources.apply_servers(epoch, servers);
@@ -1289,7 +1323,7 @@ impl AppView {
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         self.stash_composer_draft(cx);
         self.projection.select_session(&session_id);
-        self.reconcile_terminal_workspace();
+        self.reconcile_terminal_workspace(cx);
         // session_get 分页开始：complete / open session 失败前不写 settle barrier。
         self.timeline_paging = true;
         self.barriers.remove_timeline_stable();
@@ -1305,6 +1339,9 @@ impl AppView {
         self.changes.reset_for_session();
         self.controller.open_session(session_id);
         self.refresh_changes(cx);
+        if self.inspector_open && self.inspector_tab == InspectorTab::Resources {
+            self.refresh_resources(cx);
+        }
         self.restore_composer_draft(cx);
         cx.notify();
     }
@@ -2095,8 +2132,30 @@ impl AppView {
             .or_else(|| self.projection.workspace_id.clone())
     }
 
-    pub(super) fn reconcile_terminal_workspace(&mut self) {
+    pub(super) fn reconcile_terminal_workspace(&mut self, cx: &mut Context<Self>) {
         let workspace_id = self.inspector_workspace_id();
+        if self.terminal_input_workspace != workspace_id {
+            let visible_text = self.terminal_input.read(cx).text().to_string();
+            if let Some(previous) = self.terminal_input_workspace.as_ref() {
+                self.terminal_drafts
+                    .insert(previous.clone(), visible_text.clone());
+            }
+
+            let draft = workspace_id
+                .as_ref()
+                .and_then(|workspace| self.terminal_drafts.get(workspace))
+                .cloned()
+                .unwrap_or_default();
+            if self.terminal_input_workspace.is_some() || visible_text.is_empty() {
+                self.terminal_input
+                    .update(cx, |input, cx| input.reset_text(draft, cx));
+            } else if let Some(workspace) = workspace_id.as_ref() {
+                // 初次建立 workspace 归属时保留用户已输入但尚未归属的文本。
+                self.terminal_drafts
+                    .insert(workspace.clone(), visible_text);
+            }
+            self.terminal_input_workspace = workspace_id.clone();
+        }
         self.projection
             .select_terminal_for_workspace(workspace_id.as_deref());
     }
@@ -2185,7 +2244,11 @@ impl AppView {
         } else {
             format!("{text}\n")
         };
-        self.terminal_pending_write = Some((id.clone(), text));
+        self.terminal_pending_write = Some((
+            id.clone(),
+            self.projection.terminal.workspace_id.clone(),
+            text,
+        ));
         self.controller.terminal_write(id, data);
         cx.notify();
     }

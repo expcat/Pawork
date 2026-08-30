@@ -1,0 +1,5 @@
+2026-08-29T17:22:59Z compile AX/key helpers
+2026-08-29T17:23:04Z seed/serve/desktop isolated fixture
+2026-08-29T17:23:31Z AX recursion: desktop-restart 1/3
+2026-08-29T17:23:47Z AX recursion: desktop-restart 2/3
+2026-08-29T17:24:04Z AX recursion: desktop-restart 3/3

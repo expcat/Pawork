@@ -66,12 +66,12 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_host/handlers/mod.rs` | ~10 | handler 子模块声明 |
 | `src/gui_host/handlers/terminal.rs` | ~420 | TerminalCreate/Write/Resize：经 `PtyService`；`terminal_create` 过 PolicyEngine（capability=Process；NeverAsk/ReadOnly 直拒，AskUser fail-closed 落 Deny）；输出经事件广播，需 terminal-streaming capability |
 | `src/gui_host/handlers/run_start.rs` | ~290 | RunStart：provider/model 切换校验（未知 fail-closed）→ `expand_at_refs` 展开 → 登记 `ActiveGuiRun` → spawn `chat_turn`；模型切换发诊断事件；engine 未报终态即死时才补发合成 `RunChanged{Failed}` + `run.failed` |
-| `src/gui_host/handlers/query.rs` | ~240 | WorkspaceList/SessionGet/ModelList（聚合 overview）/RunStatus/DiffListFiles/DiffGet/QuotaOverview/McpList（`{"servers":[...]}`） |
+| `src/gui_host/handlers/query.rs` | ~240 | WorkspaceList/SessionGet/ModelList（聚合 overview）/RunStatus/DiffListFiles/DiffGet（latest session 已解析时，路径缺失的空结果仍携 `session_id`，供客户端 fail-closed 判 scope）/QuotaOverview/McpList（`{"servers":[...]}`） |
 | `src/gui_host/handlers/session.rs` | ~120 | SessionCreate（建会话 + 绑 workspace）/SessionOpen/SessionFork（自指定事件建分支并切换 active branch） |
 | `src/gui_host/handlers/approval.rs` | ~90 | ToolApprove：协议决定→domain 决定；live 决议 pending，非 live 走 session store 落 queued 决议、落库成功后经 `GuiBroadcastSink` 补广播（仅 `ToolCompleted` 上 wire）；写工具附预览 |
 | `src/gui_host/handlers/command.rs` | ~40 | WorkspaceAdd（追加 workspace）、RunCancel（翻转注册的 `CancellationToken`） |
 | `src/gui_host/tests.rs` | ~2050 | `cfg(test)` 内嵌测试集：双射 pin、timeline 分页、`@` 展开三态、幂等（重启存活/失败计数/InFlight 收敛）、审批三态与重启后广播收口、合成终态闸门（fail 不重复/cancel 不谎报/早死兜底）、fork、provider 切换、bus lagged 等 |
-| `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟（`--ignored`），不进默认测试路径 |
+| `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟（`--ignored`），不进默认测试路径（`live-smoke` feature 显式启用） |
 | `tests/timeline_projection_host.rs` | ~160 | host `timeline()` 与 protocol 投影 golden 对拍 |
 | `tests/gui_server/session.rs` | ~1000 | 具名 test bin `gui_server_session`：握手/版本/capability/resume/心跳/慢消费 |
 | `tests/gui_server/multi_gui_runtime.rs` | ~830 | 具名 test bin `gui_server_multi_gui_runtime`：多 GUI 一致性/重连 replay/慢客户端隔离 |
@@ -288,7 +288,7 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
 | `tests/ui_fixture_projection.rs` | `--features ui-fixture` | R1 Wave B Phase C：devfixture 把 `fixtures/ui/seed.json` 种到隔离 tempdir 后，经真实装配的 `GuiHostAdapter` `snapshot()`/`timeline()` 断言 3 workspaces、7 sessions、四日期桶分布、pending approval 重建、completed 会话条目构成（user/assistant/tool/approval/run 全量对拍 seed turns）、alpha diff 4 文件含 ≥200 字符长行；断言值取自 seed.json |
 | `tests/gui_server/session.rs` | 具名 `[[test]]` `gui_server_session` | 握手往返、非握手首帧拒绝、command 盖戳与版本校验、SessionGet 字段透传、resume 三态与 ack、Heartbeat→Pong、断连不取消 run、lagged→ReplayUnavailable、慢消费不阻塞宿主、client_context 替换拒绝、capability 先于宿主拒绝、terminal-streaming capability 全路径 |
 | `tests/gui_server/multi_gui_runtime.rs` | 具名 `[[test]]` `gui_server_multi_gui_runtime` | 三 GUI 收到相同事件序、重连 replay 缺失事件、replay 不可用回退 snapshot、慢客户端不拖累其它 GUI、断连/心跳超时均不触发 RunCancel |
-| `tests/smoke.rs` | env 门控，默认忽略 | 真实 API 流式冒烟（AssistantTextDelta + RunCompleted）；`cargo test -p pawork-app --test smoke -- --ignored --nocapture`，需 `PAWORK_SMOKE_BASE_URL/API_KEY/MODEL[/PROTOCOL]`，禁止打印 key |
+| `tests/smoke.rs` | `live-smoke` feature + env 门控，默认忽略 | 真实 API 流式冒烟（AssistantTextDelta + RunCompleted）；`cargo test -p pawork-app --features live-smoke --test smoke -- --ignored --nocapture`，需 `PAWORK_SMOKE_BASE_URL/API_KEY/MODEL[/PROTOCOL]`，禁止打印 key |
 | `examples/ui_fixture.rs` | `--features ui-fixture` dev-only example（非 test bin） | R1 Wave B UI fixture 工具（CLI 冻结）：`seed`（写隔离 root + manifest/ready marker）、`serve`（真实 GuiServer + 按首行前缀分派的 MockProvider；`drop_socket` 可重复触发）、`self-check`（握手+snapshot 校验+RunStart+Resume Replay，每轮先失效旧 `replay_complete`）、`snapshot-dump`（volatile 归一化 + seed 会话过滤）。数据集 `fixtures/ui/seed.json` 与确定性 PTY；验证链路：`seed → serve → self-check → snapshot-dump` |
 
 验证约定总览见 [../verification.md](../verification.md)；degrade tracing 断言一律使用 `testsupport::RecordingCapture`，禁止裸 `tracing::subscriber::set_default`。

@@ -105,7 +105,8 @@ trap 'kill "$RUN_WATCHDOG" 2>/dev/null || true; die "run watchdog timeout"' TERM
 trace "compile AX/key helpers"
 swiftc -O -o "$WORK/ui-ax-dump" "$SCRIPT_DIR/ui-ax-dump.swift" || die "ui-ax-dump compile failed"
 swiftc -O -o "$WORK/ui-key-event" "$SCRIPT_DIR/ui-key-event.swift" || die "ui-key-event compile failed"
-AXDUMP="$WORK/ui-ax-dump"; KEY="$WORK/ui-key-event"
+swiftc -O -o "$WORK/ui-ax-frames" "$SCRIPT_DIR/ui-ax-frames.swift" || die "ui-ax-frames compile failed"
+AXDUMP="$WORK/ui-ax-dump"; KEY="$WORK/ui-key-event"; FRAMES="$WORK/ui-ax-frames"
 
 trace "seed/serve/desktop isolated fixture"
 "$FIXTURE" seed --root "$ROOT"
@@ -227,6 +228,50 @@ key() {
   run_bounded "$PHASE_TIMEOUT_SECS" "$SCRIPT_DIR/ui-focus-switch.sh" activate --pid "$DESKTOP_PID" >/dev/null 2>&1 || true
   run_bounded "$PHASE_TIMEOUT_SECS" "$KEY" --pid "$DESKTOP_PID" --key "$1" >/dev/null || action_failed "key $1"
 }
+scroll_diff_horizontally() {
+  local frame_file="$OUT/action-frames-c3-long-line.txt" point
+  local deadline=$((SECONDS + PHASE_TIMEOUT_SECS)) attempts=0 rc tree json
+  run_bounded "$PHASE_TIMEOUT_SECS" "$FRAMES" "$DESKTOP_PID" > "$frame_file" \
+    || action_failed "AX frame dump for diff horizontal scroll"
+  point="$("$PY" - "$frame_file" <<'PY'
+import re
+import sys
+
+line = next((line for line in open(sys.argv[1], encoding="utf-8")
+             if line.startswith("id=changes-diff-view ")), "")
+values = {key: float(value) for key, value in re.findall(r"([xywh])=([-0-9.]+)", line)}
+if set(values) != {"x", "y", "w", "h"}:
+    raise SystemExit(4)
+print(f"{values['x'] + values['w'] / 2:.1f},{values['y'] + min(values['h'] / 2, 72):.1f}")
+PY
+)" || action_failed "resolve diff horizontal-scroll point"
+  trace "C3 horizontal scroll point=$point delta=-720 (bounded assertion retry)"
+  tree="$OUT/ax-tree-c3-horizontal-scroll.txt"
+  json="$OUT/assert-c3-horizontal-scroll.json"
+  while :; do
+    attempts=$((attempts + 1))
+    run_bounded "$PHASE_TIMEOUT_SECS" "$SCRIPT_DIR/ui-focus-switch.sh" \
+      activate --pid "$DESKTOP_PID" >/dev/null 2>&1 || true
+    run_bounded "$PHASE_TIMEOUT_SECS" "$KEY" --pid "$DESKTOP_PID" \
+      --scroll-at "$point" --scroll-x -720 >/dev/null \
+      || action_failed "horizontal scroll diff"
+    set +e
+    run_bounded "$PHASE_TIMEOUT_SECS" "$AXDUMP" --pid "$DESKTOP_PID" \
+      --max-depth 18 --out "$tree" >/dev/null 2>&1
+    rc=$?
+    (( rc == 0 )) && run_bounded "$PHASE_TIMEOUT_SECS" python3 "$TOOLS" \
+      assert --tree "$tree" --phase c3-horizontal-scroll --out "$json" >/dev/null 2>&1
+    rc=$?
+    set -e
+    if (( rc == 0 )); then
+      trace "C3 horizontal scroll passed attempts=$attempts"
+      return 0
+    fi
+    alive "c3-horizontal-scroll"
+    (( SECONDS < deadline )) || { trace "phase=c3-horizontal-scroll timeout rc=$rc attempts=$attempts"; exit 4; }
+    sleep 0.2
+  done
+}
 set_value() { run_bounded "$PHASE_TIMEOUT_SECS" "$AXDUMP" --pid "$DESKTOP_PID" --set-value "$1" "$2" --action-only --out "$OUT/action-set-$3.txt" >/dev/null || action_failed "AXSetValue $1"; }
 screenshot() { # $1=phase
   local phase="$1" wid
@@ -292,6 +337,10 @@ if want c3; then
   focus_by_keys 'changes-file-src_2fmain.rs' c3-first-file; key down; key enter
   wait_phase c3-file-focus
   screenshot c3-file-focus
+  press 'changes-file-docs_2freport.md' c3-long-line
+  wait_phase c3-long-line
+  scroll_diff_horizontally
+  screenshot c3-horizontal-scroll
 fi
 if want t1 || want d1; then
   trace "T1 terminal create/write/output"
@@ -367,6 +416,12 @@ fi
 if want t2; then
   trace "T2 read_only profile rejects terminal creation fail-closed"
   switch_host_profile r6-read-only t2-profile
+  # C2 creates a process-local task whose workspace binding intentionally does
+  # not survive a fixture Host restart. Re-select a seeded canonical task so
+  # T2 measures read_only policy denial rather than the unrelated no-workspace
+  # guard.
+  press "session-$SESSION_A" t2-select-alpha
+  wait_timeline "$SESSION_A"
   press inspector-tab-terminal t2-terminal
   wait_phase t1-idle
   focus_by_keys terminal-start t2-start; key enter

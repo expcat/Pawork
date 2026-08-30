@@ -1,0 +1,32 @@
+{
+  "phase": "c2-empty",
+  "generated_at": "2026-08-29T16:47:26Z",
+  "checks": [
+    {
+      "name": "inspector-tab-changes-selected",
+      "pass": true,
+      "detail": "inspector-tab-changes selected=True"
+    },
+    {
+      "name": "changes-tab-files-selected",
+      "pass": true,
+      "detail": "changes-tab-files selected=True"
+    },
+    {
+      "name": "changes-file-list-present",
+      "pass": true,
+      "detail": "changes-file-list present"
+    },
+    {
+      "name": "changes-ready-empty",
+      "pass": true,
+      "detail": "'Host latest-session diff; workspace context is not a filter · ready · 0 files'"
+    },
+    {
+      "name": "changes-no-file-rows",
+      "pass": true,
+      "detail": "rows=[]"
+    }
+  ],
+  "pass": true
+}

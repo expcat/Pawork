@@ -104,4 +104,4 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 cargo test -p <crate> --offline --lib --tests
 ```
 
-仅在该包无测试或只需类型检查时改用 `cargo check -p <crate> --offline`。protocol golden、probe、spawn_e2e、desktop、`cargo check -p pawork` 默认不跑。合并 / 归档波追加 `cargo tree` 断言（无环、`cargo tree -p pawork` 闭包对比）。未来发布任务的全量门禁必须在该任务书中重新定义，不沿用历史默认动作。
+仅在该包无测试或只需类型检查时改用 `cargo check -p <crate> --offline`。protocol golden、probe、spawn_e2e、desktop、`cargo check -p pawork` 默认不跑（probe/spawn_e2e/app smoke 已按 required-features 门控，默认死表不再编译，复跑命令见包级 Spec）。合并 / 归档波追加 `cargo tree` 断言（无环、`cargo tree -p pawork` 闭包对比）。未来发布任务的全量门禁必须在该任务书中重新定义，不沿用历史默认动作。

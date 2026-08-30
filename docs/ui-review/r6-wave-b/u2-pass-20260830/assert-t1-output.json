@@ -1,0 +1,32 @@
+{
+  "phase": "t1-output",
+  "generated_at": "2026-08-29T16:36:29Z",
+  "checks": [
+    {
+      "name": "inspector-tab-terminal-selected",
+      "pass": true,
+      "detail": "inspector-tab-terminal selected=True"
+    },
+    {
+      "name": "terminal-output-present",
+      "pass": true,
+      "detail": "terminal-output present"
+    },
+    {
+      "name": "terminal-output-marker",
+      "pass": true,
+      "detail": "'b-t1%                                                                      ...\" identifier=\"terminal-output\" description=\"Terminal output\" help=\"workspace fx-alpha-app · . · 80×24 · running · resize confirmed\" enabled=1 focused=0 selected=0'"
+    },
+    {
+      "name": "terminal-input-cleared-after-write-receipt",
+      "pass": true,
+      "detail": "''"
+    },
+    {
+      "name": "terminal-created",
+      "pass": true,
+      "detail": "'Apply terminal size'"
+    }
+  ],
+  "pass": true
+}

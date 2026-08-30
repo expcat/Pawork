@@ -1,0 +1,17 @@
+{
+  "phase": "profile-disconnected",
+  "generated_at": "2026-08-29T16:58:10Z",
+  "checks": [
+    {
+      "name": "profile-disconnected-status",
+      "pass": true,
+      "detail": "'Disconnected · transport error: ConnectionClosed: peer closed the connection'"
+    },
+    {
+      "name": "reconnect-present",
+      "pass": true,
+      "detail": "reconnect present"
+    }
+  ],
+  "pass": true
+}

@@ -178,10 +178,19 @@ impl ChangesPanelState {
         &mut self,
         epoch: u64,
         path: &str,
+        session_id: Option<String>,
         file: Option<DiffFileDetail>,
     ) -> bool {
         if epoch != self.diff_epoch || self.selected.as_deref() != Some(path) {
             return false;
+        }
+        // diff_list 与 diff_get 都由 Host 的 latest session 解析。若两次请求
+        // 跨越了 latest-session 切换，不能把另一会话的内容挂到旧清单行上。
+        if session_id.is_some() && session_id != self.session_id
+            || file.is_some() && session_id != self.session_id
+        {
+            self.diff = DiffFetch::Failed("diff scope changed; refresh Changes".into());
+            return true;
         }
         self.diff = match file {
             Some(file) => DiffFetch::Ready(file),
@@ -335,7 +344,7 @@ impl AppView {
                     .border_color(dark().border.subtle)
                     .text_size(px(font::XS))
                     .text_color(dark().text.tertiary)
-                    .child("Current working tree · filtered to latest task paths"),
+                    .child("Host latest-session diff · workspace context is not a filter"),
             )
             .when_some(self.changes.stale_reason.clone(), |block, reason| {
                 block.child(
@@ -475,6 +484,7 @@ impl AppView {
                     .id("diff-view")
                     .flex()
                     .flex_col()
+                    .items_start()
                     .flex_1()
                     .min_h_0()
                     .track_scroll(&self.changes.diff_scroll)
@@ -499,8 +509,28 @@ impl AppView {
                             .child("No hunks in response."),
                     );
                 } else {
+                    // GPUI 的 ScrollHandle 只以直接 child bounds 计算 content
+                    // width；nowrap 文字的 paint overflow 不会扩大它。给单一
+                    // 内容列一个按最长行估算的明确宽度（1em/字符保守覆盖
+                    // CJK），短内容仍由 min_w_full 铺满 Inspector。
+                    let longest_line = file
+                        .hunks
+                        .iter()
+                        .flat_map(|hunk| {
+                            std::iter::once(hunk.header.chars().count()).chain(
+                                hunk.lines.iter().map(|line| line.text.chars().count() + 1),
+                            )
+                        })
+                        .max()
+                        .unwrap_or_default();
+                    let mut content = div()
+                        .flex()
+                        .flex_col()
+                        .flex_none()
+                        .min_w_full()
+                        .w(px((longest_line as f32 + 2.0) * font::SM));
                     for hunk in &file.hunks {
-                        body = body.child(
+                        content = content.child(
                             div()
                                 .w_full()
                                 .px_2()
@@ -522,7 +552,7 @@ impl AppView {
                                     (' ', dark().bg.panel, dark().text.primary)
                                 }
                             };
-                            body = body.child(
+                            content = content.child(
                                 div()
                                     .w_full()
                                     .px_2()
@@ -533,6 +563,7 @@ impl AppView {
                             );
                         }
                     }
+                    body = body.child(content);
                 }
                 body.into_any_element()
             }
@@ -763,6 +794,7 @@ mod tests {
         assert!(state.apply_diff(
             epoch,
             "a.rs",
+            Some("s-1".into()),
             Some(DiffFileDetail {
                 path: "a.rs".into(),
                 previous_path: None,
@@ -783,6 +815,7 @@ mod tests {
     #[test]
     fn apply_diff_rejects_stale_epoch_or_mismatched_selection() {
         let mut state = ChangesPanelState::default();
+        state.session_id = Some("s-1".into());
         let epoch = state.begin_diff_fetch("a.rs");
         let detail = || DiffFileDetail {
             path: "a.rs".into(),
@@ -793,9 +826,15 @@ mod tests {
             deletions: 0,
             hunks: Vec::new(),
         };
-        assert!(!state.apply_diff(epoch + 1, "a.rs", Some(detail())));
-        assert!(!state.apply_diff(epoch, "b.rs", Some(detail())));
-        assert!(state.apply_diff(epoch, "a.rs", None));
+        assert!(!state.apply_diff(epoch + 1, "a.rs", Some("s-1".into()), Some(detail())));
+        assert!(!state.apply_diff(epoch, "b.rs", Some("s-1".into()), Some(detail())));
+        assert!(state.apply_diff(epoch, "a.rs", Some("s-2".into()), Some(detail())));
+        assert_eq!(
+            state.diff,
+            DiffFetch::Failed("diff scope changed; refresh Changes".into())
+        );
+        let epoch = state.begin_diff_fetch("a.rs");
+        assert!(state.apply_diff(epoch, "a.rs", Some("s-1".into()), None));
         assert_eq!(
             state.diff,
             DiffFetch::Failed("file is no longer part of the diff".into())

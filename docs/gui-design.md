@@ -103,6 +103,7 @@ S7 的唯一主路径是：启动 Desktop → 连接本机 Host → 恢复 Snaps
 - Inspector 顶部预留 capability-driven `InspectorToolTabs`；Changes 是 S8 surface，Terminal 是 S10 surface，Files / Summary 仍是 Changes 内部二级 tab。折叠时 Inspector 宽度归零，Workspace 扩展，右上 `ActivityPopover` 摘要显示 Changes 行数与 Main / subagent 状态；点击摘要恢复对应 Inspector surface。折叠态 ActivityPopover 的触发器随 Workspace Header 落位右上，不由 StatusBar 承载；StatusBar 只保留状态信息。
 - ActivityPopover 的 Changes 分区随 S8 启用，Agent 状态列表随 S11 启用；不可用阶段隐藏对应分区，不做可点击假入口或截图演示数据。
 - 上述展示只消费 projection / Host capability，经 controller → `pawork-client` 获取；GUI 不直连 Provider、quota store、Git、PTY 或数据库。
+- R6 Wave B 已用真 Host/Desktop 九场景验证 Changes/Terminal/Resources、折叠恢复、task/latest-session scope 与断线重连；DiffView 横滚由真实 CGEvent 产生可观测 offset。该结构/交互证据不替代 R8 的三图 SSIM 与用户视觉签字。
 
 ---
 
@@ -256,11 +257,11 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [ ] 1440×1024 逐屏对照 design/ 三图（Timeline / 折叠 / Projects）
 - [ ] 纯键盘走查（基准 §3.6）：IME / 多步走查仍属 [R7/R8](../plan/R7-R8-ui-quality-gates.md)；R3 Wave B 已落地 Tab 链（scope→grouping→add-task→行→composer）、菜单 ↑/↓/Enter/Escape 与 grouping/scope 触发器 tab stop，剩余为 IME 与完整人工走查
 - [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
-- [ ] Reconnect 恢复：断线态点 Reconnect 回到 Connected，会话/run 状态保留（A.1 full2 的恢复半段）
+- [ ] Reconnect 恢复：R6 Wave B 已覆盖 Inspector/Terminal/Resources 与会话选择恢复；仍需 R8 汇总验证进行中 Run 的全应用生命周期
 - [ ] Connected 态 1080×720 最小窗：连接态下最小窗口 Composer / 状态栏 / Inspector 触发器可用（A.1 1080c 仅覆盖断线态布局）
 - [ ] 虚拟化四例（长会话）：滚动流畅 / 回底重挂 / Entry「···」菜单锚点 / 长标题 truncate
 - [ ] hover / active 交互态抽查（基准 §8.1 取值表）
-- [ ] DiffView 横滚：长 diff 行 `overflow_x_scroll` extent 与滚动条行为（基准 §8.5）
+- [x] DiffView 横滚：R6 Wave B 真窗口长行通过，AX 记录 horizontal offset `-720.0 / 2477.0`（[证据](ui-review/r6-wave-b/u2-rootfix-pass-20260830/)）
 - [ ] 千级事件会话滚动无卡顿、启动时间不回退（手测 + 帧率观察）
 
 ### A.3 漂移与定夺项

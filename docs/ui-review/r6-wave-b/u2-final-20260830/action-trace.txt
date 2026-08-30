@@ -1,0 +1,13 @@
+2026-08-29T16:31:15Z compile AX/key helpers
+2026-08-29T16:31:19Z seed/serve/desktop isolated fixture
+2026-08-29T16:31:29Z C1 canonical Changes files
+2026-08-29T16:31:29Z assert phase=c1-files
+2026-08-29T16:31:30Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-final-20260830/shot-c1-files.png
+2026-08-29T16:31:30Z C3 keyboard secondary tabs and file rows
+2026-08-29T16:31:58Z assert phase=c3-summary
+2026-08-29T16:32:05Z assert phase=c3-file-focus
+2026-08-29T16:32:06Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-final-20260830/shot-c3-file-focus.png
+2026-08-29T16:32:06Z assert phase=c3-long-line
+2026-08-29T16:32:07Z C3 horizontal scroll point=2220.0,594.0 delta=-720
+2026-08-29T16:32:07Z assert phase=c3-horizontal-scroll
+2026-08-29T16:32:37Z phase=c3-horizontal-scroll timeout rc=5

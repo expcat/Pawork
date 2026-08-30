@@ -1,0 +1,22 @@
+{
+  "phase": "c3-file-focus",
+  "generated_at": "2026-08-29T16:27:43Z",
+  "checks": [
+    {
+      "name": "changes-tab-files-selected",
+      "pass": true,
+      "detail": "changes-tab-files selected=True"
+    },
+    {
+      "name": "changes-file-src_2fnew_5ffeature.rs-focused",
+      "pass": true,
+      "detail": "changes-file-src_2fnew_5ffeature.rs focused=True"
+    },
+    {
+      "name": "changes-file-src_2fnew_5ffeature.rs-selected",
+      "pass": true,
+      "detail": "changes-file-src_2fnew_5ffeature.rs selected=True"
+    }
+  ],
+  "pass": true
+}

@@ -1,0 +1,32 @@
+{
+  "phase": "r1-matrix",
+  "generated_at": "2026-08-29T16:38:02Z",
+  "checks": [
+    {
+      "name": "inspector-tab-resources-selected",
+      "pass": true,
+      "detail": "inspector-tab-resources selected=True"
+    },
+    {
+      "name": "resources-refresh-present",
+      "pass": true,
+      "detail": "resources-refresh present"
+    },
+    {
+      "name": "resources-ready-two",
+      "pass": true,
+      "detail": "'Host MCP servers · ready · 2 servers'"
+    },
+    {
+      "name": "resources-connected-server",
+      "pass": true,
+      "detail": "{'value': 'connected · stdio · 2 tools', 'description': 'fixture-files', 'help': '', 'selected': False, 'focused': False, 'enabled': True, 'line': '            role=AXRow value=\"connected · stdio · 2 tools\" identifier=\"mcp-server-fixture-files\" description=\"fixture-files\" enabled=1 focused=0 selected=0'}"
+    },
+    {
+      "name": "resources-failed-server",
+      "pass": true,
+      "detail": "{'value': 'failed · stdio · 0 tools', 'description': 'fixture-broken', 'help': 'fixture scripted MCP startup failure', 'selected': False, 'focused': False, 'enabled': True, 'line': '            role=AXRow value=\"failed · stdio · 0 tools\" identifier=\"mcp-server-fixture-broken\" description=\"fixture-broken\" help=\"fixture scripted MCP startup failure\" enabled=1 focused=0 selected=0'}"
+    }
+  ],
+  "pass": true
+}

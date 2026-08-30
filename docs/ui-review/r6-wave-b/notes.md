@@ -1,32 +1,43 @@
 # R6 Wave B — Inspector 生命周期、键盘与重连
 
-> 状态：⏭️ 未收口，按用户指令跳过（2026-08-29 开启；同日停止）
+> 状态：🔵 实现与定向门禁已收口（2026-08-30）；审查后最终二进制的 U2 复跑被 macOS AX 注册 flake 阻断，待外部状态恢复后补录。R6 总阶段仍等待既定视觉退出口径。
 
-用户明确指令「跳过并忽略 R6，直接进行 R7」。因此本波停止，不继续补门禁、不勾选 R6 退出标准，也不把当前未提交工作树或局部验证追记为完成；现有资产原样保留供后续事实核对。
+## 结果
 
-## 范围与事实基线
+R6 Wave B 已在冻结 GUI wire 内完成：Changes、Terminal、Resources 与 Inspector 的状态归属、键盘/AX、失败/stale、snapshot/replay/reconnect 路径通过定向测试和真 Host/Desktop 九场景。生产 Desktop 仍只依赖 `pawork-client`，未增加 Git/PTY/MCP/Policy 直连，也未伪造 stage/unstage/hunk、Add tool 或 Terminal Stop。
 
-- Changes：保留 Files / Summary、真实 `diff_list_files` / `diff_get`、DiffView 横滚与 latest-session mismatch 诚实标注；补 workspace/scope 失效、断线 stale、重连刷新和键盘路径。
-- Terminal：只经 Host `terminal_create` / `terminal_write` / `terminal_resize` 与 `TerminalOutput`；补 workspace 归属、snapshot 选择/尺寸/状态恢复、失败/stale 展示、输入不丢与重连验证。
-- Resources：只读 Host `mcp_list`，不伪造 Add tool 或「已加载规则」；补 stale、重连刷新和键盘路径。
-- Inspector：顶层 tab、Changes 二级 tab、collapse/restore、refresh、Terminal 控件和文件行纳入普通 Tab/Enter/Space/方向键与 AX 同源验证；各 surface 独立滚动状态保持。
+核心修复：
 
-## 冻结边界与闸门
+- Changes：`diff_list_files` / `diff_get` 回执以 epoch + path + Host session id 三重校验；latest-session 切换时 fail-closed；scope 文案明确不是 workspace filter；长行建立真实横向 extent。
+- Terminal：多个 workspace 的 terminal、create 失败、草稿和 pending write/create 分别归属；output-before-create 先按 id 缓存，权威 workspace 回执前不上屏；成功回执清失败占位；UpToDate 合并非事件权威 snapshot，Replay 历史输出不会复活 exited/killed 终态。
+- Resources/重连：断线旧数据保留但标 stale；Fresh、SnapshotRequired、Replay、UpToDate 后均刷新当前打开的查询面。
+- Controller：terminal create 失败携 workspace；Changes/Resources 失败走可靠 channel；diff 内容携 Host 实际 session id。
+- Client 根因：Host 进程重启会重新分配 `client-0`，旧的 `client_id + 本地序号` 自动命令 id 会撞上持久化幂等账本。本波为每个 `GuiClient` 连接实例加入 request namespace；显式 `command_envelope` 的幂等语义不变。
 
-- Desktop 仍只依赖 `pawork-client`，不直连 Git、PTY、MCP、Provider、数据库或 Policy。
-- GUI wire 目前没有 terminal stop/close 命令，也没有 live exit/failure 事件。不得以写入 `exit`、本地 kill 或假按钮冒充通用停止能力；专用 Stop / live 终态若作为 R6 退出硬条件，须先立 ADR。
-- stage/unstage/hunk 与 Add tool surface registry 仍无冻结协议，不进入本波实现。
+## 真实界面证据
 
-## 计划门禁
+最近一次完整通过目录：[u2-rootfix-pass-20260830](u2-rootfix-pass-20260830/)：
 
-1. `cargo test -p pawork-desktop --offline --tests`：状态机、焦点/键盘、stale/reconnect、snapshot terminal 选择与现有回归。
-2. Python driver unittest：R6 Wave B AX 断言/状态机脚本。
-3. U2 真进程矩阵：Changes 文件/摘要/长行横滚；Terminal create/write/output/resize/reconnect 与 policy 失败；Resources empty/ready/failed；tab/二级 tab/折叠/focus/任务切换/断线重连。
-4. 只读模型审查读取 diff 与既有测试日志，不重复 Cargo。
+- `scenario-matrix.json`：`c1/c2/c3/t1/i1/s1/d1/r1/t2` 九场景齐全。
+- 19 份 `assert-*.json` 全部 `pass: true`；trace 以 `run done; all requested real-interface scenes passed` 结束。
+- C3 由真实 CGEvent 横向滚动，AX 记录 offset `-720.0 / 2477.0`，证明不是只画 nowrap 文本。
+- T2 在 Host 重启后真实命中 `ReadOnly` policy 拒绝，证明新连接请求未重放旧 `Accepted`。
+- fixture secret scan：87 files、0 hits。
 
-## 开启时已知缺口
+上述完整矩阵形成于最终只读审查之前。审查随后发现并修复两个矩阵未覆盖/诊断边角：create 回执前切 workspace 的 terminal 首段串屏，以及新 latest session 不含旧路径时空 `diff_get` 缺 session id。两项已由 app/desktop 定向回归覆盖。审查后尝试只补录一次完整矩阵，但 macOS AX 连续 3 次只返回递归 `AXApplication`，在任何业务场景前 fail-closed；证据见 [u2-reviewfix-ax-blocked-20260830](u2-reviewfix-ax-blocked-20260830/)。不把这次平台失败记为通过，也不原样重试。
 
-- Inspector 可见 tab 与多数按钮只有 mouse/AX press，无普通键盘 tab stop 与焦点恢复。
-- `TerminalState` 是全局单例，snapshot 只解析首个 terminal id；多 workspace、终端失效及尺寸/状态恢复不确定。
-- Changes / Resources 的旧成功数据断线后仍看似在线，Replay/UpToDate 重连不自动刷新；失败事件未携 epoch，旧失败可覆盖新请求。
-- Changes scope 由 workspace query + Host latest session 决定；本波必须显式显示真实范围，不能把它写成当前 turn 精确 diff。
+## 验证
+
+- `cargo test -p pawork-app --offline --lib --tests`：178/178 通过。
+- `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`：144/144 通过；3 个既有 dead-code warning。
+- `cargo test -p pawork-client --offline --lib --tests`：41/41 通过（lib 10、client_tests 22、contract 9）。
+- `python3 -m unittest scripts/test_ui_r6_wave_b_states.py`：6/6 通过。
+- `bash -n scripts/ui-r6-wave-b-states.sh`、`swiftc -typecheck scripts/ui-key-event.swift`、`git diff --check`：通过。
+- 只读模型审查：发现 P1 terminal 首段串屏与 P2 空 diff scope 诊断；均已最小修复并通过上述定向门禁，其余检查 clean。
+- 完整 U2 真进程矩阵：审查前 9 场景/19 断言通过；审查后唯一复跑在场景开始前被既有 macOS AX 注册 flake 阻断，仍待补录最终二进制证据。
+
+## 冻结边界与后续
+
+- GUI wire 仍无 terminal stop/close 命令和 live exit/failure 事件；不得以写入 `exit`、本地 kill 或假按钮冒充。若要新增，先立 ADR 演进 wire。
+- Changes 仍为 Host latest-session 只读 diff；stage/unstage/hunk 与 Add tool registry 没有冻结协议，不在本波。
+- 三张定稿图分区 SSIM、完整 VoiceOver/hover/性能与用户视觉签字仍由 R7/R8 汇总；本波的结构/交互通过不等于视觉终局通过。

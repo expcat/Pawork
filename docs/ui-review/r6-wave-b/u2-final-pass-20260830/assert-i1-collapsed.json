@@ -1,0 +1,22 @@
+{
+  "phase": "i1-collapsed",
+  "generated_at": "2026-08-29T16:46:51Z",
+  "checks": [
+    {
+      "name": "inspector-absent",
+      "pass": true,
+      "detail": "inspector absent"
+    },
+    {
+      "name": "inspector-toggle-present",
+      "pass": true,
+      "detail": "inspector-toggle present"
+    },
+    {
+      "name": "inspector-toggle-focused",
+      "pass": true,
+      "detail": "inspector-toggle focused=True"
+    }
+  ],
+  "pass": true
+}

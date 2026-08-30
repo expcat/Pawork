@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-08-26。生产连接、主要组件链路与 macOS AX 语义基座已经存在，但当前真实窗口未达到 design 的 99% 视觉目标，完整交互与模拟操作矩阵也未建立；验收以 [新 R1–R8](../../ROADMAP.md#2-顺序排期) 为准，Desktop 不得标为最终完成。
+> 基线日期：2026-08-30。生产连接、主要组件链路与 macOS AX 语义基座已经存在；R6 Wave B 的 Inspector 九场景真实交互矩阵已通过，但当前真实窗口仍未达到 design 的 99% 视觉目标，终局验收以 [R1–R8](../../ROADMAP.md#2-顺序排期) 为准。
 
 ## 1. 产品定位
 
@@ -26,7 +26,7 @@ flowchart LR
 | Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件须在 R4/R7/R8 重验。 |
 | Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。IME、粘贴、草稿与所有输入态纳入 R5/R8。 |
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
-| Inspector / Terminal | PTY 创建、输入、resize、流式输出 | 创建需 Policy；安全响应字段尚无完整说明渲染。 |
+| Inspector / Terminal | PTY 创建、输入、resize、流式输出；任务切换隔离草稿；失败、断线与 snapshot 终态诚实显示 | 创建需 Policy；冻结 wire 无 stop/close 命令与 live exit/failure 事件，不能宣称完整生命周期。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
 
 ## 3. 连接与状态模型
@@ -47,6 +47,7 @@ flowchart LR
 - 断开 Desktop 不取消正在运行的 Run。
 - Reconnect 后通过 resume 或 snapshot fallback 恢复；同一 session 切 branch 必须清空旧 timeline/seen/tombstone/tool anchors 后建立新 baseline。
 - request error 只交给匹配请求；连接级 error 进入全局状态，不能被事件流误吞。
+- 自动 Command/Query id 包含每个 `GuiClient` 连接实例的 namespace；Host 重启后即使 `client_id` 重新从 `client-0` 计数，也不能撞上持久化幂等账本里的旧请求。
 
 ## 4. 交互需求
 
@@ -59,8 +60,8 @@ flowchart LR
 | DESK-05 | Fork 只在 reducer 标记的闭合 Run 边界开放，动作入口再次校验。 | 已实现。 |
 | DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 生产逻辑已实现；R7/R8 覆盖全部菜单、锚点、键盘和滚轮边界。 |
 | DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | R5/R8 待真实 IME、paste 与系统级输入验收。 |
-| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | R6 Wave A 已落地默认 Changes、58/56px 两级 tab 与 Header Activity；R6 Wave B/R8 继续覆盖真实 diff、横滚、PTY、Resources 与恢复。 |
-| DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 生产逻辑已实现；R8 待真 Host/Desktop 生命周期验收。 |
+| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | R6 Wave B U2 已覆盖真实 diff/summary、长行横滚、PTY、Resources、折叠恢复与 task/latest-session scope；R8 仍负责终局视觉与跨阶段全矩阵。 |
+| DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | R6 Wave B 已以真 Host/Desktop 覆盖 Terminal/Resources/Changes 重连与 Host 重启后的 policy fail-closed；全应用生命周期仍由 R8 汇总验收。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 当前未通过完整门禁；R7/R8 必须覆盖 Connected 与边界状态。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现并通过真窗口语义 action；全组件 VoiceOver、动态状态与 Windows/Linux 平台实现仍待 R7/R8。 |
 
@@ -82,7 +83,7 @@ flowchart LR
 - Changes 的 Files/Summary/DiffView/ActivityPopover 是只读投影；任何 stage/unstage/hunk 都需新增 protocol command、审批语义和 ADR，不得从 UI 直接调用 Git。
 - Resources 只消费 `mcp_list`；无 host query 的“已加载规则”不能伪造占位数据。
 - `@` 引用由 host `expand_at_refs` 解析并作为独立 Text part；Desktop 不自行读取任意文件。候选浮层需新增受控 file-index query。
-- Terminal 只发协议命令；Desktop 不持有本机 PTY 服务。Policy 返回的 sandboxed/policy/approval_mode/note 应在未来渲染面任务中明确呈现。
+- Terminal 只发协议命令；Desktop 不持有本机 PTY 服务。当前仅有 create/write/resize 与流式 output；stop/close、live exit/failure 若要加入必须先演进 wire/ADR，不能以写入 `exit` 或本地 kill 冒充。Policy 拒绝必须原样 fail-closed；更完整的 policy 元数据说明仍待后续渲染面任务。
 
 ## 7. 当前验收合同
 

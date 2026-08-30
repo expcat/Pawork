@@ -1,0 +1,9 @@
+2026-08-29T16:08:47Z compile AX/key helpers
+2026-08-29T16:08:52Z seed/serve/desktop isolated fixture
+2026-08-29T16:09:10Z T1 terminal create/write/output
+2026-08-29T16:09:34Z assert phase=t1-idle
+2026-08-29T16:09:40Z assert phase=t1-ready
+2026-08-29T16:10:10Z assert phase=t1-resized
+2026-08-29T16:10:12Z assert phase=t1-output
+2026-08-29T16:10:13Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-resume-t1-20260830/shot-t1-output.png
+2026-08-29T16:10:13Z run done; all requested real-interface scenes passed

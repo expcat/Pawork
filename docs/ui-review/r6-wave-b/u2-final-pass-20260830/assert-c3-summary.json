@@ -1,0 +1,22 @@
+{
+  "phase": "c3-summary",
+  "generated_at": "2026-08-29T16:45:11Z",
+  "checks": [
+    {
+      "name": "inspector-tab-changes-selected",
+      "pass": true,
+      "detail": "inspector-tab-changes selected=True"
+    },
+    {
+      "name": "changes-tab-summary-selected",
+      "pass": true,
+      "detail": "changes-tab-summary selected=True"
+    },
+    {
+      "name": "changes-tab-summary-focused",
+      "pass": true,
+      "detail": "changes-tab-summary focused=True"
+    }
+  ],
+  "pass": true
+}

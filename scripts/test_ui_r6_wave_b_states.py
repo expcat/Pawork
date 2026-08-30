@@ -27,7 +27,7 @@ HELP_RE = re.compile(r'help="([^"]*)"')
 SCENES = {
     "c1": "real four-file Changes list from the existing alpha fixture",
     "c2": "clean beta task produces a real empty Changes result",
-    "c3": "Changes Files/Summary and file-row keyboard path",
+    "c3": "Changes Files/Summary, file-row keyboard path, and long-line horizontal scroll",
     "t1": "Terminal create/write/output/resize contract",
     "i1": "Inspector collapse/Activity restore and focus contract",
     "s1": "latest-session Changes scope remains honest after task switch",
@@ -36,7 +36,8 @@ SCENES = {
     "t2": "read_only Host profile rejects terminal create fail-closed",
 }
 PHASES = (
-    "c1-files", "c2-empty", "c3-summary", "c3-file-focus", "t1-idle", "t1-ready",
+    "c1-files", "c2-empty", "c3-summary", "c3-file-focus", "c3-long-line",
+    "c3-horizontal-scroll", "t1-idle", "t1-ready",
     "t1-resized", "t1-output", "i1-collapsed", "i1-restored",
     "s1-latest-scope", "d1-disconnected", "d1-reconnected",
     "r1-empty", "r1-matrix", "profile-disconnected", "t2-denied",
@@ -95,6 +96,10 @@ def phase_checks(nodes: dict, phase: str) -> list[dict]:
     checks: list[dict] = []
     if phase == "c1-files":
         checks += [selected(nodes, "inspector-tab-changes"), selected(nodes, "changes-tab-files")]
+        scope_help = nodes.get("changes", {}).get("help", "")
+        checks.append(check("changes-scope-honest", "Host latest-session diff" in scope_help
+                            and "workspace context is not a filter" in scope_help,
+                            repr(scope_help)))
         expected = {
             "changes-file-src_2fmain.rs": "modified",
             "changes-file-docs_2freport.md": "modified",
@@ -127,6 +132,19 @@ def phase_checks(nodes: dict, phase: str) -> list[dict]:
     elif phase == "c3-file-focus":
         checks += [selected(nodes, "changes-tab-files"), focused(nodes, "changes-file-src_2fnew_5ffeature.rs"),
                    selected(nodes, "changes-file-src_2fnew_5ffeature.rs")]
+    elif phase in {"c3-long-line", "c3-horizontal-scroll"}:
+        checks += [selected(nodes, "changes-tab-files"),
+                   selected(nodes, "changes-file-docs_2freport.md"),
+                   present(nodes, "changes-diff-view")]
+        help_text = nodes.get("changes-diff-view", {}).get("help", "")
+        match = re.fullmatch(r"horizontal offset (-?[0-9.]+) of ([0-9.]+)", help_text)
+        offset = float(match.group(1)) if match else 0.0
+        maximum = float(match.group(2)) if match else 0.0
+        if phase == "c3-horizontal-scroll":
+            checks.append(check("long-line-horizontal-overflow", bool(match and maximum > 1),
+                                repr(help_text)))
+            checks.append(check("long-line-horizontal-offset-changed",
+                                bool(match and abs(offset) > 1), repr(help_text)))
     elif phase == "t1-idle":
         checks += [selected(nodes, "inspector-tab-terminal"), present(nodes, "terminal"),
                    present(nodes, "terminal-input"), present(nodes, "terminal-start")]
@@ -296,6 +314,7 @@ class ContractTest(unittest.TestCase):
     def test_c1_requires_canonical_four_files_and_no_fake_actions(self):
         rows = [
             line("inspector-tab-changes", selected=True), line("changes-tab-files", selected=True),
+            line("changes", help="Host latest-session diff; workspace context is not a filter · ready · 4 files"),
             line("changes-file-src_2fmain.rs", value="modified · +2 / −3"),
             line("changes-file-docs_2freport.md", value="modified · +3 / −4"),
             line("changes-file-src_2fnew_5ffeature.rs", value="untracked · +3 / −0"),
@@ -303,6 +322,14 @@ class ContractTest(unittest.TestCase):
         ]
         self.assertEqual(self.run_phase("c1-files", rows)[0], 0)
         self.assertEqual(self.run_phase("c1-files", rows[:-1])[0], 5)
+
+        long_line = [line("changes-tab-files", selected=True),
+                     line("changes-file-docs_2freport.md", selected=True),
+                     line("changes-diff-view", help="horizontal offset 0.0 of 640.0")]
+        self.assertEqual(self.run_phase("c3-long-line", long_line)[0], 0)
+        self.assertEqual(self.run_phase("c3-horizontal-scroll", long_line)[0], 5)
+        long_line[-1] = line("changes-diff-view", help="horizontal offset -120.0 of 640.0")
+        self.assertEqual(self.run_phase("c3-horizontal-scroll", long_line)[0], 0)
 
     def test_terminal_contract_refuses_fake_stop_and_requires_honest_reconnect_state(self):
         idle = [line("inspector-tab-terminal", selected=True), line("terminal"),
@@ -392,8 +419,12 @@ class DriverGuardTest(unittest.TestCase):
         self.assertIn("r6-terminal", text)
         self.assertIn("r6-resources", text)
         self.assertIn("r6-read-only", text)
+        self.assertIn('press "session-$SESSION_A" t2-select-alpha', text)
         self.assertIn("project-add-Earlier_3afx-beta-lib", text)
         self.assertIn("screencapture", text)
+        self.assertIn("--scroll-at", text)
+        self.assertIn("--scroll-x", text)
+        self.assertIn("changes-diff-view", text)
         self.assertIn("3", text)
         self.assertNotRegex(text, r"^\s*sleep\s+[1-9]", re.M)
         self.assertIn("exit 4", text)

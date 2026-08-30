@@ -690,3 +690,12 @@ R5 已收口；Wave A/B 证据分别见 [r5-wave-a](ui-review/r5-wave-a/notes.md
 - **退出拍板（2026-08-29）**：用户指令按 ROADMAP 开启下一任务，确认将 State A/B Composer 分区 SSIM ≥0.99 同 R3/R4 先例移交 R8。Wave A 记录值 0.423 / 0.619 只是中间态，不追认为通过；R8 须在 fixture 演示数据重塑后重采 idle/running current 并重跑终局分区门禁。
 
 收口验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 129/129；脚本 unittest 40/40；U2 九场景 22 份断言全 PASS。未运行全 workspace gate。下一任务：R6 Wave A — Inspector/Changes 层级与 Workspace Header ActivityPopover。
+
+## 附：默认死表 opt-in 门控（2026-08-30，阶段外任务）
+
+用户要求清理多余测试与门禁以缩短开发期测试/构建耗时。盘点结论：仓库无 CI / 全量门禁可撤；三类关键测试与 UI 波次脚本（被 Spec 与 R8/R11 证据链引用）保留；protocol 测试箱合并仍留 R9。实际收敛三项默认不跑但每次仍被编译的测试箱为 required-features opt-in（沿用 ui-fixture / provider 通道既有模式），默认死表不再编译：
+
+- `pawork-client` `tests/probe.rs`（13 场景 self-test）→ feature `probe-self-test`；`tests/spawn_e2e.rs` → feature `spawn-e2e`。
+- `pawork-app` `tests/smoke.rs`（env 门控真实 API 冒烟，`#[ignore]`）→ feature `live-smoke`。
+
+复跑命令见 [client](spec/crates/client.md) / [app](spec/crates/app.md) 包级 Spec §7。验证：默认死表两包全绿且三箱不再出现在编译目标；opt-in 复跑 probe 13 场景绿、spawn_e2e 3 测试绿、smoke 编译通过。R9「probe flake 复查」与 R10 typed-client/headless 矩阵复跑时需显式启用对应 feature。未触碰生产代码与用户未提交改动。

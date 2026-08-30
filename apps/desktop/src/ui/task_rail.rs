@@ -783,7 +783,7 @@ impl AppView {
         self.scope_workspace_id = workspace_id;
         self.open_menu = None;
         self.menu_highlight = None;
-        self.reconcile_terminal_workspace();
+        self.reconcile_terminal_workspace(cx);
         // §3.6：切 scope 与切分组同规——active 保留 + 滚动到可见。
         self.rail_scroll_to_active = true;
         cx.notify();

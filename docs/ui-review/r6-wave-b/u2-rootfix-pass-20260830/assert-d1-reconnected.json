@@ -1,0 +1,27 @@
+{
+  "phase": "d1-reconnected",
+  "generated_at": "2026-08-29T16:57:34Z",
+  "checks": [
+    {
+      "name": "connected-status",
+      "pass": true,
+      "detail": "'Local · Connected · Up to date · 16'"
+    },
+    {
+      "name": "inspector-tab-terminal-selected",
+      "pass": true,
+      "detail": "inspector-tab-terminal selected=True"
+    },
+    {
+      "name": "terminal-output-present",
+      "pass": true,
+      "detail": "terminal-output present"
+    },
+    {
+      "name": "terminal-reconnect-state-honest",
+      "pass": true,
+      "detail": "'workspace fx-alpha-app · . · 80×24 · running'"
+    }
+  ],
+  "pass": true
+}

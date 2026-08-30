@@ -1,0 +1,11 @@
+[1788021801197] serve starting profile=r6-terminal
+[1788021801198] host_ready socket=/private/tmp/pawork-ui-fixture.exghNj/data/pawork-gui.sock
+ui_fixture serving on /private/tmp/pawork-ui-fixture.exghNj/data/pawork-gui.sock (barriers /private/tmp/pawork-ui-fixture.exghNj/barriers)
+[1788021803752] accepted connection connection-0
+[1788021806098] serve_stop request
+[1788021806098] shutdown complete
+ui_fixture serve stopped
+[1788021808353] serve starting profile=r6-read-only
+[1788021808354] host_ready socket=/private/tmp/pawork-ui-fixture.exghNj/data/pawork-gui.sock
+ui_fixture serving on /private/tmp/pawork-ui-fixture.exghNj/data/pawork-gui.sock (barriers /private/tmp/pawork-ui-fixture.exghNj/barriers)
+[1788021809051] accepted connection connection-0

@@ -1,0 +1,8 @@
+2026-08-29T16:26:48Z compile AX/key helpers
+2026-08-29T16:26:52Z seed/serve/desktop isolated fixture
+2026-08-29T16:27:07Z C3 keyboard secondary tabs and file rows
+2026-08-29T16:27:36Z assert phase=c3-summary
+2026-08-29T16:27:43Z assert phase=c3-file-focus
+2026-08-29T16:27:44Z screenshot /Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r6-wave-b/u2-resume-c3-3-20260830/shot-c3-file-focus.png
+2026-08-29T16:27:44Z assert phase=c3-long-line
+2026-08-29T16:28:14Z phase=c3-long-line timeout rc=5

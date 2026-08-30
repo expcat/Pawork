@@ -9,6 +9,9 @@ description = "Pawork GUI Connection Protocol typed 连接 SDK：握手、版本
 
 [features]
 default = []
+# probe self-test 与真实进程 e2e 默认不进死表编译；R9/R10 复跑时显式启用对应 feature。
+probe-self-test = []
+spawn-e2e = []
 
 [dependencies]
 pawork-domain = { path = "../domain" }
@@ -41,10 +44,12 @@ path = "tests/client_tests.rs"
 [[test]]
 name = "spawn_e2e"
 path = "tests/spawn_e2e.rs"
+required-features = ["spawn-e2e"]
 
 [[test]]
 name = "probe"
 path = "tests/probe.rs"
+required-features = ["probe-self-test"]
 
 [[example]]
 name = "probe"

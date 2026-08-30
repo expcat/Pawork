@@ -1,0 +1,32 @@
+{
+  "phase": "r1-empty",
+  "generated_at": "2026-08-29T16:58:01Z",
+  "checks": [
+    {
+      "name": "inspector-tab-resources-selected",
+      "pass": true,
+      "detail": "inspector-tab-resources selected=True"
+    },
+    {
+      "name": "resources-refresh-present",
+      "pass": true,
+      "detail": "resources-refresh present"
+    },
+    {
+      "name": "mcp-server-list-present",
+      "pass": true,
+      "detail": "mcp-server-list present"
+    },
+    {
+      "name": "resources-ready-empty",
+      "pass": true,
+      "detail": "'Host MCP servers · ready · 0 servers'"
+    },
+    {
+      "name": "resources-no-server-rows",
+      "pass": true,
+      "detail": "rows=[]"
+    }
+  ],
+  "pass": true
+}

@@ -1,0 +1,122 @@
+# ui-ax-dump
+# pid=18177
+# ax_trusted=true
+# generated_at=2026-08-29T16:35:56Z
+# max_depth=18 max_children=80
+#
+# CGWindowList (owner pid 18177), count=2
+#   wid=12813 owner="pawork-desktop" title="Pawork" layer=0 onscreen alpha=1.0 bounds={1000,208,1440,1024}
+#   wid=12814 owner="pawork-desktop" title="" layer=0 offscreen alpha=1.0 bounds={0,940,500,500}
+#
+# AX tree
+role=AXApplication title="pawork-desktop"
+  role=AXWindow subrole=AXStandardWindow title="Pawork" focused=0 actions=[AXRaise]
+    role=AXGroup identifier="pawork-root" description="Pawork" focused=0
+      role=AXGroup identifier="task-rail" description="Tasks" enabled=1 focused=0 selected=0
+        role=AXButton value="Timeline" identifier="task-rail-grouping" description="Group tasks · Timeline" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXButton value="All projects" identifier="project-scope" description="Project scope" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXStaticText value="Local · Connected" identifier="connection-status" description="Connection" enabled=1 focused=0 selected=0
+        role=AXButton identifier="add-task" description="New task" help="Create task is available." enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXList identifier="session-list" description="Sessions" enabled=1 focused=0 selected=0
+          role=AXStaticText identifier="date-group-Earlier" description="Earlier" enabled=1 focused=0 selected=0
+          role=AXButton value="3 tasks" identifier="project-Earlier_3afx-alpha-app" description="alpha-app" help="Expanded" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton identifier="project-add-Earlier_3afx-alpha-app" description="New task in alpha-app" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-alpha-today" description="Refactor launcher tabs" help="Session" enabled=1 focused=0 selected=1 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-alpha-yesterday" description="Investigate provider timeout" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-alpha-longtitle" description="超长标题回归样本——用于验证任务列表截断、tooltip 与选中态在 200+ 字符标题下的表现。本标题刻意超过二百个字符以触发 UI 的省略逻辑，同时保持可读的语义边界：这里的每一段填充文本都对应 Desktop Timeline 左侧 TaskRail 在窄窗与宽窗下的两种裁切路径，最终断言以完整标题进入 snapshot 为准，而不是以渲染截断为准。附加填充：一二三四五六七八九十一二三四五六七八九十" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton value="4 tasks" identifier="project-Earlier_3afx-beta-lib" description="fx-beta-lib" help="Expanded" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton identifier="project-add-Earlier_3afx-beta-lib" description="New task in fx-beta-lib" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-pending" description="Type the public API surface" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-toolfailed" description="Build after dependency bump" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-long" description="Virtualization stress session" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow identifier="session-fx-ses-beta-cancelled" description="Long batch refactor" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+      role=AXGroup identifier="workspace" description="Workspace" enabled=1 focused=0 selected=0
+        role=AXGroup identifier="workspace-header" description="Workspace header" enabled=1 focused=0 selected=0
+          role=AXStaticText identifier="header-title" description="Refactor launcher tabs" enabled=1 focused=0 selected=0
+          role=AXStaticText identifier="header-branch" description="main" help="Git branch" enabled=1 focused=0 selected=0
+          role=AXButton identifier="header-new-task" description="New task" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXList identifier="timeline" description="Timeline" enabled=1 focused=0 selected=0
+          role=AXRow value="approval requested · tool · edit_file 将写入 src/main.rs" identifier="timeline-entry-evt-fx-ses-alpha-today-27" description="Run" help="240d" enabled=1 focused=0 selected=0
+          role=AXRow value="approval approve_once" identifier="timeline-entry-evt-fx-ses-alpha-today-28" description="Run" help="240d" enabled=1 focused=0 selected=0
+          role=AXGroup identifier="tool-group-evt-fx-ses-alpha-today-34" description="Tool activity · 1 tools" enabled=1 focused=0 selected=0
+            role=AXRow value="Completed" identifier="tool-row-evt-fx-ses-alpha-today-34" description="Tool · edit_file" help="edit_file 完成（fixture）" enabled=1 focused=0 selected=0
+          role=AXRow value="approval requested · tool · edit_file 将写入 docs/report.md" identifier="timeline-entry-evt-fx-ses-alpha-today-36" description="Run" help="240d" enabled=1 focused=0 selected=0
+          role=AXRow value="approval approve_once" identifier="timeline-entry-evt-fx-ses-alpha-today-37" description="Run" help="240d" enabled=1 focused=0 selected=0
+          role=AXGroup identifier="tool-group-evt-fx-ses-alpha-today-43" description="Tool activity · 1 tools" enabled=1 focused=0 selected=0
+            role=AXRow value="Completed" identifier="tool-row-evt-fx-ses-alpha-today-43" description="Tool · write_file" help="write_file 完成（fixture）" enabled=1 focused=0 selected=0
+          role=AXRow value="approval requested · tool · write_file 将写入 src/new_feature.rs" identifier="timeline-entry-evt-fx-ses-alpha-today-45" description="Run" help="240d" enabled=1 focused=0 selected=0
+          role=AXRow value="approval approve_once" identifier="timeline-entry-evt-fx-ses-alpha-today-46" description="Run" help="240d" enabled=1 focused=0 selected=0
+          role=AXGroup identifier="tool-group-evt-fx-ses-alpha-today-51" description="Tool activity · 1 tools" enabled=1 focused=0 selected=0
+            role=AXRow value="Completed" identifier="tool-row-evt-fx-ses-alpha-today-51" description="Tool · apply_patch" help="apply_patch 完成（fixture）" enabled=1 focused=0 selected=0
+          role=AXRow value="approval requested · tool · apply_patch 将写入 legacy/old.txt" identifier="timeline-entry-evt-fx-ses-alpha-today-53" description="Run" help="240d" enabled=1 focused=0 selected=0
+          role=AXRow value="approval approve_once" identifier="timeline-entry-evt-fx-ses-alpha-today-54" description="Run" help="240d" enabled=1 focused=0 selected=0
+          role=AXGroup identifier="run-summary-evt-fx-ses-alpha-today-60" description="Run summary" enabled=1 focused=0 selected=0
+            role=AXStaticText identifier="run-summary-card-evt-fx-ses-alpha-today-60" description="Ready for review" help="The run finished. Review the changes from this turn." enabled=1 focused=0 selected=0
+            role=AXButton identifier="run-review-changes-evt-fx-ses-alpha-today-60" description="Review changes" enabled=1 focused=0 selected=0 actions=[AXPress]
+            role=AXStaticText identifier="run-footer-evt-fx-ses-alpha-today-60" description="Run completed · 240d" enabled=1 focused=0 selected=0
+            role=AXRow value="Run completed" identifier="timeline-entry-evt-fx-ses-alpha-today-60" description="Run" help="240d" enabled=1 focused=0 selected=0
+              role=AXButton identifier="entry-menu-evt-fx-ses-alpha-today-60" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="收个尾：总结本轮改动。" identifier="timeline-entry-evt-fx-ses-alpha-today-61" description="You" help="240d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-fx-ses-alpha-today-61" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRow value="run started" identifier="timeline-entry-evt-fx-ses-alpha-today-62" description="Run" help="240d" enabled=1 focused=0 selected=0
+          role=AXRow value="本轮共改动四个文件：两处修改、一处新增、一处删除；焦点与弹层问题已修复，回归已补。" identifier="timeline-entry-evt-fx-ses-alpha-today-69" description="Pawork" help="240d" enabled=1 focused=0 selected=0
+            role=AXButton identifier="entry-menu-evt-fx-ses-alpha-today-69" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXGroup identifier="run-summary-evt-fx-ses-alpha-today-70" description="Run summary" enabled=1 focused=0 selected=0
+            role=AXStaticText identifier="run-summary-card-evt-fx-ses-alpha-today-70" description="Ready for review" help="The run finished. Review the changes from this turn." enabled=1 focused=0 selected=0
+            role=AXButton identifier="run-review-changes-evt-fx-ses-alpha-today-70" description="Review changes" enabled=1 focused=0 selected=0 actions=[AXPress]
+            role=AXStaticText identifier="run-footer-evt-fx-ses-alpha-today-70" description="Run completed · 240d" enabled=1 focused=0 selected=0
+            role=AXRow value="Run completed" identifier="timeline-entry-evt-fx-ses-alpha-today-70" description="Run" help="240d" enabled=1 focused=0 selected=0
+              role=AXButton identifier="entry-menu-evt-fx-ses-alpha-today-70" description="Entry actions" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXGroup identifier="composer" description="Composer" enabled=1 focused=0 selected=0
+          role=AXTextArea identifier="composer-input" description="Message" enabled=1 focused=0 selected=0 settable=[AXValue,AXFocused]
+          role=AXButton value="mock / fixture-model" identifier="model-picker" description="Model" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXButton identifier="send" description="Send" enabled=0 focused=0 selected=0
+      role=AXGroup identifier="inspector" description="Inspector" enabled=1 focused=0 selected=0
+        role=AXTabGroup identifier="inspector-tabs" description="Inspector tabs" enabled=1 focused=0 selected=0
+          role=AXRadioButton identifier="inspector-tab-changes" description="Changes" enabled=1 focused=0 selected=0 actions=[AXPress]
+          role=AXRadioButton identifier="inspector-tab-terminal" description="Terminal" enabled=1 focused=0 selected=1 actions=[AXPress]
+          role=AXRadioButton identifier="inspector-tab-resources" description="Resources" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXButton identifier="inspector-collapse" description="Hide inspector" enabled=1 focused=0 selected=0 actions=[AXPress]
+        role=AXGroup identifier="terminal" description="Terminal" enabled=1 focused=0 selected=0
+          role=AXButton identifier="terminal-resize" description="Apply terminal size" enabled=0 focused=0 selected=0
+          role=AXStaticText value="Terminal output will appear here." identifier="terminal-output" description="Terminal output" help="workspace fx-alpha-app · . · 80×24 · stale · not started" enabled=1 focused=0 selected=0
+          role=AXTextArea identifier="terminal-input" description="Terminal input" enabled=1 focused=0 selected=0 settable=[AXValue,AXFocused]
+          role=AXButton identifier="terminal-start" description="Start terminal" enabled=1 focused=1 selected=0 actions=[AXPress]
+      role=AXGroup identifier="status-bar" description="Status" enabled=1 focused=0 selected=0
+        role=AXStaticText value="Task — tokens | Quota unavailable | — tok/s | Run idle" identifier="run-status" description="Run status" enabled=1 focused=0 selected=0
+    role=AXButton subrole=AXCloseButton enabled=1 focused=0 actions=[AXPress]
+    role=AXButton subrole=AXFullScreenButton help="this button also has an action to zoom the window" enabled=1 focused=0 actions=[AXPress,AXZoomWindow,AXShowMenu]
+      role=AXGroup focused=0
+        role=AXGroup focused=0
+    role=AXButton subrole=AXMinimizeButton enabled=1 focused=0 actions=[AXPress]
+#
+# summary nodes=80 truncated=0
+# roles AXApplication=1 AXButton=22 AXGroup=15 AXList=2 AXRadioButton=3 AXRow=23 AXStaticText=10 AXTabGroup=1 AXTextArea=2 AXWindow=1
+# identifiers pawork-root | task-rail | task-rail-grouping | project-scope | connection-status | add-task | session-list | date-group-Earlier | project-Earlier_3afx-alpha-app | project-add-Earlier_3afx-alpha-app | session-fx-ses-alpha-today | session-fx-ses-alpha-yesterday | session-fx-ses-alpha-longtitle | project-Earlier_3afx-beta-lib | project-add-Earlier_3afx-beta-lib | session-fx-ses-beta-pending | session-fx-ses-beta-toolfailed | session-fx-ses-beta-long | session-fx-ses-beta-cancelled | workspace | workspace-header | header-title | header-branch | header-new-task | timeline | timeline-entry-evt-fx-ses-alpha-today-27 | timeline-entry-evt-fx-ses-alpha-today-28 | tool-group-evt-fx-ses-alpha-today-34 | tool-row-evt-fx-ses-alpha-today-34 | timeline-entry-evt-fx-ses-alpha-today-36 | timeline-entry-evt-fx-ses-alpha-today-37 | tool-group-evt-fx-ses-alpha-today-43 | tool-row-evt-fx-ses-alpha-today-43 | timeline-entry-evt-fx-ses-alpha-today-45 | timeline-entry-evt-fx-ses-alpha-today-46 | tool-group-evt-fx-ses-alpha-today-51 | tool-row-evt-fx-ses-alpha-today-51 | timeline-entry-evt-fx-ses-alpha-today-53 | timeline-entry-evt-fx-ses-alpha-today-54 | run-summary-evt-fx-ses-alpha-today-60 | run-summary-card-evt-fx-ses-alpha-today-60 | run-review-changes-evt-fx-ses-alpha-today-60 | run-footer-evt-fx-ses-alpha-today-60 | timeline-entry-evt-fx-ses-alpha-today-60 | entry-menu-evt-fx-ses-alpha-today-60 | timeline-entry-evt-fx-ses-alpha-today-61 | entry-menu-evt-fx-ses-alpha-today-61 | timeline-entry-evt-fx-ses-alpha-today-62 | timeline-entry-evt-fx-ses-alpha-today-69 | entry-menu-evt-fx-ses-alpha-today-69 | run-summary-evt-fx-ses-alpha-today-70 | run-summary-card-evt-fx-ses-alpha-today-70 | run-review-changes-evt-fx-ses-alpha-today-70 | run-footer-evt-fx-ses-alpha-today-70 | timeline-entry-evt-fx-ses-alpha-today-70 | entry-menu-evt-fx-ses-alpha-today-70 | composer | composer-input | model-picker | send | inspector | inspector-tabs | inspector-tab-changes | inspector-tab-terminal | inspector-tab-resources | inspector-collapse | terminal | terminal-resize | terminal-output | terminal-input | terminal-start | status-bar | run-status
+# custom_hint depth=0 role=AXApplication title="pawork-desktop"
+# custom_hint depth=1 role=AXWindow subrole=AXStandardWindow title="Pawork" focused=0 actions=[AXRaise]
+# custom_hint depth=2 role=AXGroup identifier="pawork-root" description="Pawork" focused=0
+# custom_hint depth=4 role=AXButton value="Timeline" identifier="task-rail-grouping" description="Group tasks · Timeline" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=5 role=AXRow identifier="session-fx-ses-alpha-longtitle" description="超长标题回归样本——用于验证任务列表截断、tooltip 与选中态在 200+ 字符标题下的表现。本标题刻意超过二百个字符以触发 UI 的省略逻辑，同时保持可读的语义边界：这里的每一段填充文本都对应 Desktop Timeline 左侧 TaskRail 在窄窗与宽窗下的两种裁切路径，最终断言以完整标题进入 snapshot 为准，而不是以渲染截断为准。附加填充：一二三四五六七八九十一二三四五六七八九十" help="Session" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=4 role=AXList identifier="timeline" description="Timeline" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="approval requested · tool · edit_file 将写入 src/main.rs" identifier="timeline-entry-evt-fx-ses-alpha-today-27" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="approval approve_once" identifier="timeline-entry-evt-fx-ses-alpha-today-28" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="approval requested · tool · edit_file 将写入 docs/report.md" identifier="timeline-entry-evt-fx-ses-alpha-today-36" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="approval approve_once" identifier="timeline-entry-evt-fx-ses-alpha-today-37" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="approval requested · tool · write_file 将写入 src/new_feature.rs" identifier="timeline-entry-evt-fx-ses-alpha-today-45" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="approval approve_once" identifier="timeline-entry-evt-fx-ses-alpha-today-46" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="approval requested · tool · apply_patch 将写入 legacy/old.txt" identifier="timeline-entry-evt-fx-ses-alpha-today-53" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="approval approve_once" identifier="timeline-entry-evt-fx-ses-alpha-today-54" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=6 role=AXRow value="Run completed" identifier="timeline-entry-evt-fx-ses-alpha-today-60" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="收个尾：总结本轮改动。" identifier="timeline-entry-evt-fx-ses-alpha-today-61" description="You" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="run started" identifier="timeline-entry-evt-fx-ses-alpha-today-62" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRow value="本轮共改动四个文件：两处修改、一处新增、一处删除；焦点与弹层问题已修复，回归已补。" identifier="timeline-entry-evt-fx-ses-alpha-today-69" description="Pawork" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=6 role=AXRow value="Run completed" identifier="timeline-entry-evt-fx-ses-alpha-today-70" description="Run" help="240d" enabled=1 focused=0 selected=0
+# custom_hint depth=4 role=AXGroup identifier="composer" description="Composer" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXTextArea identifier="composer-input" description="Message" enabled=1 focused=0 selected=0 settable=[AXValue,AXFocused]
+# custom_hint depth=3 role=AXGroup identifier="inspector" description="Inspector" enabled=1 focused=0 selected=0
+# custom_hint depth=4 role=AXTabGroup identifier="inspector-tabs" description="Inspector tabs" enabled=1 focused=0 selected=0
+# custom_hint depth=5 role=AXRadioButton identifier="inspector-tab-changes" description="Changes" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=5 role=AXRadioButton identifier="inspector-tab-terminal" description="Terminal" enabled=1 focused=0 selected=1 actions=[AXPress]
+# custom_hint depth=5 role=AXRadioButton identifier="inspector-tab-resources" description="Resources" enabled=1 focused=0 selected=0 actions=[AXPress]
+# custom_hint depth=4 role=AXButton identifier="inspector-collapse" description="Hide inspector" enabled=1 focused=0 selected=0 actions=[AXPress]

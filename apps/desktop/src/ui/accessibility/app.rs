@@ -1669,9 +1669,11 @@ impl AppView {
         };
         let description = match &self.changes.stale_reason {
             Some(reason) => format!(
-                "Current working tree filtered to latest task paths · {fetch_state} · stale · {reason}"
+                "Host latest-session diff; workspace context is not a filter · {fetch_state} · stale · {reason}"
             ),
-            None => format!("Current working tree filtered to latest task paths · {fetch_state}"),
+            None => format!(
+                "Host latest-session diff; workspace context is not a filter · {fetch_state}"
+            ),
         };
         let mut changes = AxNode::new("changes", AxRole::Group, "Changes", frame)
             .description(description)
@@ -1765,6 +1767,25 @@ impl AppView {
                 );
             }
             changes = changes.child(files);
+            let diff_top = body_top + metrics::CHANGES_FILE_LIST_MAX_HEIGHT;
+            let horizontal_offset = f32::from(self.changes.diff_scroll.offset().x);
+            let horizontal_max = f32::from(self.changes.diff_scroll.max_offset().width);
+            changes = changes.child(
+                AxNode::new(
+                    "changes-diff-view",
+                    AxRole::Group,
+                    "Diff view",
+                    AxRect::new(
+                        frame.x + PAD,
+                        diff_top,
+                        frame.width - PAD * 2.0,
+                        (frame.height - (diff_top - frame.y)).max(ROW_HEIGHT),
+                    ),
+                )
+                .description(format!(
+                    "horizontal offset {horizontal_offset:.1} of {horizontal_max:.1}"
+                )),
+            );
         }
         changes
     }

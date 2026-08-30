@@ -215,6 +215,7 @@ pub(crate) async fn diff_get(
         .cloned()
     else {
         return Ok(AppResponse::Data(json!({
+            "session_id": session.as_str(),
             "path": path.as_str(),
             "files": [],
             "complete": true,

@@ -52,6 +52,10 @@ pub enum ControllerEvent {
         workspace_id: String,
         terminal_session_id: String,
     },
+    TerminalCreateFailed {
+        workspace_id: String,
+        reason: String,
+    },
     TerminalWriteSucceeded {
         terminal_session_id: String,
     },
@@ -79,6 +83,7 @@ pub enum ControllerEvent {
     DiffContentLoaded {
         epoch: u64,
         path: String,
+        session_id: Option<String>,
         file: Option<DiffFileDetail>,
     },
     /// mcp_list 成功（响应形状 {"servers":[{name,transport,state,tools,last_error}]}）。
@@ -703,8 +708,8 @@ impl DesktopController {
 
     pub fn terminal_create(&self, workspace_id: String, cwd: Option<String>) {
         let Some(client) = self.current_client() else {
-            self.emit_reliable(ControllerEvent::OperationFailed {
-                action: "create terminal",
+            self.emit_reliable(ControllerEvent::TerminalCreateFailed {
+                workspace_id,
                 reason: "not connected".into(),
             });
             return;
@@ -715,8 +720,8 @@ impl DesktopController {
                 Ok(command) => command,
                 Err(reason) => {
                     let _ = events
-                        .send(ControllerEvent::OperationFailed {
-                            action: "create terminal",
+                        .send(ControllerEvent::TerminalCreateFailed {
+                            workspace_id,
                             reason,
                         })
                         .await;
@@ -738,8 +743,8 @@ impl DesktopController {
                     }
                     None => {
                         let _ = events
-                            .send(ControllerEvent::OperationFailed {
-                                action: "create terminal",
+                            .send(ControllerEvent::TerminalCreateFailed {
+                                workspace_id,
                                 reason: format!("unexpected response: {:?}", response.response),
                             })
                             .await;
@@ -747,8 +752,8 @@ impl DesktopController {
                 },
                 Err(error) => {
                     let _ = events
-                        .send(ControllerEvent::OperationFailed {
-                            action: "create terminal",
+                        .send(ControllerEvent::TerminalCreateFailed {
+                            workspace_id,
                             reason: error.to_string(),
                         })
                         .await;
@@ -881,15 +886,10 @@ impl DesktopController {
     /// 响应原样带回，过期代次在 UI 侧丢弃。
     pub fn diff_list_files(&self, workspace_id: String, epoch: u64) {
         let Some(client) = self.current_client() else {
-            if let Some(events) = self.try_event_sender() {
-                try_emit(
-                    &events,
-                    ControllerEvent::DiffFilesFailed {
-                        epoch,
-                        reason: "not connected".into(),
-                    },
-                );
-            }
+            self.emit_reliable(ControllerEvent::DiffFilesFailed {
+                epoch,
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -911,16 +911,19 @@ impl DesktopController {
                             .await;
                     }
                     Err(reason) => {
-                        try_emit(&events, ControllerEvent::DiffFilesFailed { epoch, reason })
+                        let _ = events
+                            .send(ControllerEvent::DiffFilesFailed { epoch, reason })
+                            .await;
                     }
                 },
-                Err(error) => try_emit(
-                    &events,
-                    ControllerEvent::DiffFilesFailed {
-                        epoch,
-                        reason: error.to_string(),
-                    },
-                ),
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::DiffFilesFailed {
+                            epoch,
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
             }
         });
     }
@@ -929,16 +932,11 @@ impl DesktopController {
     /// 解析为 None。
     pub fn diff_get(&self, workspace_id: String, path: String, epoch: u64) {
         let Some(client) = self.current_client() else {
-            if let Some(events) = self.try_event_sender() {
-                try_emit(
-                    &events,
-                    ControllerEvent::DiffContentFailed {
-                        epoch,
-                        path,
-                        reason: "not connected".into(),
-                    },
-                );
-            }
+            self.emit_reliable(ControllerEvent::DiffContentFailed {
+                epoch,
+                path,
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -949,28 +947,35 @@ impl DesktopController {
                 .await
             {
                 Ok(response) => match parse_diff_file(&response) {
-                    Ok(file) => {
+                    Ok((session_id, file)) => {
                         let _ = events
-                            .send(ControllerEvent::DiffContentLoaded { epoch, path, file })
+                            .send(ControllerEvent::DiffContentLoaded {
+                                epoch,
+                                path,
+                                session_id,
+                                file,
+                            })
                             .await;
                     }
-                    Err(reason) => try_emit(
-                        &events,
-                        ControllerEvent::DiffContentFailed {
+                    Err(reason) => {
+                        let _ = events
+                            .send(ControllerEvent::DiffContentFailed {
+                                epoch,
+                                path,
+                                reason,
+                            })
+                            .await;
+                    }
+                },
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::DiffContentFailed {
                             epoch,
                             path,
-                            reason,
-                        },
-                    ),
-                },
-                Err(error) => try_emit(
-                    &events,
-                    ControllerEvent::DiffContentFailed {
-                        epoch,
-                        path,
-                        reason: error.to_string(),
-                    },
-                ),
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
             }
         });
     }
@@ -978,15 +983,10 @@ impl DesktopController {
     /// 拉取 Resources 页 MCP server 清单（mcp_list）。
     pub fn mcp_list(&self, epoch: u64) {
         let Some(client) = self.current_client() else {
-            if let Some(events) = self.try_event_sender() {
-                try_emit(
-                    &events,
-                    ControllerEvent::McpServersFailed {
-                        epoch,
-                        reason: "not connected".into(),
-                    },
-                );
-            }
+            self.emit_reliable(ControllerEvent::McpServersFailed {
+                epoch,
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -1003,16 +1003,19 @@ impl DesktopController {
                             .await;
                     }
                     Err(reason) => {
-                        try_emit(&events, ControllerEvent::McpServersFailed { epoch, reason })
+                        let _ = events
+                            .send(ControllerEvent::McpServersFailed { epoch, reason })
+                            .await;
                     }
                 },
-                Err(error) => try_emit(
-                    &events,
-                    ControllerEvent::McpServersFailed {
-                        epoch,
-                        reason: error.to_string(),
-                    },
-                ),
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::McpServersFailed {
+                            epoch,
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
             }
         });
     }
@@ -1395,15 +1398,19 @@ fn parse_diff_files(
     }
 }
 
-/// diff_get 响应：files 为空（路径不在 diff / 无会话）时返回 None。
-fn parse_diff_file(response: &AppResponseEnvelope) -> Result<Option<DiffFileDetail>, String> {
+/// diff_get 响应：带回 Host 实际解析的 latest session；files 为空（路径
+/// 不在 diff / 无会话）时 file 为 None。
+fn parse_diff_file(
+    response: &AppResponseEnvelope,
+) -> Result<(Option<String>, Option<DiffFileDetail>), String> {
     match &response.response {
         AppResponse::Data(data) => {
+            let session_id = optional_str(data, "session_id");
             let Some(files) = data.get("files").and_then(serde_json::Value::as_array) else {
                 return Err("diff response missing files".into());
             };
             let Some(entry) = files.first() else {
-                return Ok(None);
+                return Ok((session_id, None));
             };
             let hunks = entry
                 .get("hunks")
@@ -1445,27 +1452,30 @@ fn parse_diff_file(response: &AppResponseEnvelope) -> Result<Option<DiffFileDeta
                         .collect()
                 })
                 .unwrap_or_default();
-            Ok(Some(DiffFileDetail {
-                path: required_str(entry, "path")?,
-                previous_path: entry
-                    .get("previous_path")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string),
-                status: optional_str(entry, "status").unwrap_or_else(|| "unknown".into()),
-                binary: entry
-                    .get("binary")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false),
-                additions: entry
-                    .get("additions")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0),
-                deletions: entry
-                    .get("deletions")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0),
-                hunks,
-            }))
+            Ok((
+                session_id,
+                Some(DiffFileDetail {
+                    path: required_str(entry, "path")?,
+                    previous_path: entry
+                        .get("previous_path")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    status: optional_str(entry, "status").unwrap_or_else(|| "unknown".into()),
+                    binary: entry
+                        .get("binary")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    additions: entry
+                        .get("additions")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                    deletions: entry
+                        .get("deletions")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                    hunks,
+                }),
+            ))
         }
         AppResponse::Error(_) => Err("server returned an error response".into()),
         other => Err(format!("unexpected response: {other:?}")),
@@ -1656,7 +1666,8 @@ mod tests {
 
     #[test]
     fn parse_diff_file_reads_hunks_and_lines() {
-        let file = parse_diff_file(&envelope(serde_json::json!({
+        let (session_id, file) = parse_diff_file(&envelope(serde_json::json!({
+            "session_id": "s-1",
             "path": "src/app.rs",
             "files": [{
                 "path": "src/app.rs",
@@ -1675,8 +1686,9 @@ mod tests {
                 }]
             }]
         })))
-        .expect("parse diff file")
-        .expect("file present");
+        .expect("parse diff file");
+        assert_eq!(session_id.as_deref(), Some("s-1"));
+        let file = file.expect("file present");
         assert_eq!(file.hunks.len(), 1);
         assert_eq!(file.hunks[0].header, "@@ -1,2 +1,2 @@");
         assert_eq!(file.hunks[0].lines.len(), 3);
@@ -1684,12 +1696,14 @@ mod tests {
         assert_eq!(file.hunks[0].lines[2].kind, DiffLineKind::Deletion);
         assert_eq!(file.hunks[0].lines[2].text, "    println!(\"old\");");
 
-        let missing = parse_diff_file(&envelope(serde_json::json!({
+        let (session_id, missing) = parse_diff_file(&envelope(serde_json::json!({
+            "session_id": "s-2",
             "path": "gone.rs",
             "files": [],
             "complete": true
         })))
         .expect("empty diff parses");
+        assert_eq!(session_id.as_deref(), Some("s-2"));
         assert_eq!(missing, None);
     }
 

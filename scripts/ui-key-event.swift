@@ -27,6 +27,7 @@
 //   ui-key-event --pid <pid> --hover-at <x>,<y>   仅移动（hover 采图）
 //   ui-key-event --pid <pid> --press-at <x>,<y>   移动+按下（active 采图）
 //   ui-key-event --pid <pid> --release-at <x>,<y> 抬起（收尾；配对 press）
+//   ui-key-event --pid <pid> --scroll-at <x>,<y> --scroll-x <pixels>
 //   ui-key-event --pid <pid> --pin-ascii-input-source
 //   ui-key-event --pid <pid> --restore-input-source <id>
 //
@@ -51,6 +52,8 @@ struct Options {
     var hoverAt: String = ""
     var pressAt: String = ""
     var releaseAt: String = ""
+    var scrollAt: String = ""
+    var scrollX: Int32? = nil
     var pinAsciiInputSource = false
     var restoreInputSource = ""
 }
@@ -144,6 +147,13 @@ func parseArgs(_ argv: [String]) -> Options {
             opts.pressAt = needValue()
         case "--release-at":
             opts.releaseAt = needValue()
+        case "--scroll-at":
+            opts.scrollAt = needValue()
+        case "--scroll-x":
+            guard let value = Int32(needValue()), value != 0 else {
+                die("--scroll-x 必须是非零 Int32 pixel delta", code: 2)
+            }
+            opts.scrollX = value
         case "--pin-ascii-input-source":
             opts.pinAsciiInputSource = true
         case "--restore-input-source":
@@ -155,6 +165,7 @@ func parseArgs(_ argv: [String]) -> Options {
                     + "      ui-key-event --pid <pid> --hover-at <x>,<y>\n"
                     + "      ui-key-event --pid <pid> --press-at <x>,<y>\n"
                     + "      ui-key-event --pid <pid> --release-at <x>,<y>\n"
+                    + "      ui-key-event --pid <pid> --scroll-at <x>,<y> --scroll-x <pixels>\n"
                     + "      ui-key-event --pid <pid> --pin-ascii-input-source\n"
                     + "      ui-key-event --pid <pid> --restore-input-source <id>\n",
                 stderr)
@@ -169,7 +180,8 @@ func parseArgs(_ argv: [String]) -> Options {
         die("--down-only 与 --up-only 互斥", code: 2)
     }
     if opts.pinAsciiInputSource || !opts.restoreInputSource.isEmpty {
-        if !opts.key.isEmpty || !opts.clickAt.isEmpty || opts.downOnly || opts.upOnly {
+        if !opts.key.isEmpty || !opts.clickAt.isEmpty || !opts.scrollAt.isEmpty
+            || opts.downOnly || opts.upOnly {
             die("输入源模式与键盘/点击参数互斥", code: 2)
         }
         if opts.pinAsciiInputSource && !opts.restoreInputSource.isEmpty {
@@ -179,6 +191,7 @@ func parseArgs(_ argv: [String]) -> Options {
         let mouseModes = [
             ("--click-at", opts.clickAt), ("--hover-at", opts.hoverAt),
             ("--press-at", opts.pressAt), ("--release-at", opts.releaseAt),
+            ("--scroll-at", opts.scrollAt),
         ].filter { !$0.1.isEmpty }
         if mouseModes.count > 1 {
             die("鼠标模式互斥：" + mouseModes.map { $0.0 }.joined(separator: ","), code: 2)
@@ -188,6 +201,9 @@ func parseArgs(_ argv: [String]) -> Options {
         }
         if mouseModes.isEmpty && opts.key.isEmpty {
             die("必须提供 --key <name|code> 或鼠标坐标模式", code: 2)
+        }
+        if opts.scrollAt.isEmpty != (opts.scrollX == nil) {
+            die("--scroll-at 与 --scroll-x 必须同时提供", code: 2)
         }
     }
     return opts
@@ -339,6 +355,28 @@ if !opts.hoverAt.isEmpty || !opts.pressAt.isEmpty || !opts.releaseAt.isEmpty {
         postMouseEvent(source, flag == "--press-at" ? .leftMouseDown : .leftMouseUp, point)
     }
     fputs("ui-key-event pid=\(opts.pid) \(flag)=\(raw) posted\n", stderr)
+    exit(0)
+}
+if !opts.scrollAt.isEmpty {
+    let point = parsePoint(opts.scrollAt, flag: "--scroll-at")
+    guard let delta = opts.scrollX,
+          let source = CGEventSource(stateID: .combinedSessionState),
+          let moved = CGEvent(
+              mouseEventSource: source, mouseType: .mouseMoved,
+              mouseCursorPosition: point, mouseButton: .left),
+          let scroll = CGEvent(
+              scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2,
+              wheel1: 0, wheel2: delta, wheel3: 0)
+    else {
+        die("横向滚动事件构造失败", code: 3)
+    }
+    moved.post(tap: .cghidEventTap)
+    usleep(10_000)
+    scroll.location = point
+    scroll.post(tap: .cghidEventTap)
+    fputs(
+        "ui-key-event pid=\(opts.pid) scroll-at=\(opts.scrollAt) scroll-x=\(delta) posted\n",
+        stderr)
     exit(0)
 }
 if !opts.clickAt.isEmpty {
