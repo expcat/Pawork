@@ -1,6 +1,6 @@
 # R7 Wave A — 组件状态矩阵与 AX 基线
 
-> 状态：🔵 自动门禁已通过、人工验收中（2026-08-29 开启；2026-08-30 R6 退出后恢复）
+> 状态：🔵 自动门禁已通过、overlay 人工验收中；VoiceOver 按用户指令未执行（2026-08-29 开启；2026-08-30 R6 退出后恢复）
 
 ## 开启决策
 
@@ -14,7 +14,7 @@
 - 已归档 current 线索：[`r6-wave-a/connected/state-a/current.png`](../r6-wave-a/connected/state-a/current.png)。它早于当前未提交工作树，只用于定位；Wave A 改实现前必须以当前源码和同一 fixture 重采一份 fresh current / AX tree / run manifest，禁止把旧图当本波通过证据。
 - 组件清单起点：[`component-manifest.md`](../component-manifest.md)。其几何与 capability 枚举仍可用，但部分“现实现差异”停留在 R1，不能直接当当前事实；Wave A 先对照源码与真实 AX 树重建可执行矩阵。
 - 已知平台风险：macOS 26.6.2 对无 bundle debug 二进制的 AX server 注册会间歇返回递归 `AXApplication`。既有 AXWindows 回退与 Desktop restart≤3 只负责 fail-closed 取证，不算根治；本波优先比较 bundled/签名形态。
-- 当前工作树 Desktop 定向基线：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 为 **142 passed / 0 failed**。这只证明当前代码测试基线，不是 R7 Wave A 验收。
+- 当前工作树 Desktop 定向基线：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 为 **144 passed / 0 failed**。这只证明当前代码测试基线，不是 R7 Wave A 验收。
 
 ## 本波写入集
 
@@ -64,6 +64,13 @@
 - **A4 State A hover/active/focus 补充图（自动门禁通过）**：[state-supplement/](state-supplement/)（22:46 CST，bundled-adhoc 签名启动）九张成套：hover（grouping / session 行 / model-picker / inspector-tab-terminal / send）+ active（grouping 按住与菜单打开）+ focus（session 行 selected、composer-input focused）。Driver 修复：place-main 看门狗 wait 不得被 set -e 打断；AX dump 带超时；Escape 后重新 activate；session 行点击后焦点按产品合同落到 composer（断言 selected=1，不要求行级 focused=1）。attempt7–10 仍保留为 AX 递归劣化 fail-closed 包。
 - U0/U1：cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders 为 142 passed / 0 failed；python3 scripts/test_ui_r3_wave_b_tools.py 为 15/15。
 
+### 2026-08-30 overlay 续查
+
+- **发现与修复**：以五张同状态 hover 截图的逐像素 RGB 中位数为基线核对时，原 [`shot-hover-inspector-tab-terminal.png`](state-supplement/shot-hover-inspector-tab-terminal.png) 相对基线变化 **0 pixels**，未证明可见 hover；源码只把 `text.secondary` 改为 `text.primary`，也不符合 [`design/README.md` §8.1](../../../design/README.md) 的「hover / active 只改背景」合同。`ui/inspector.rs` 已收敛为 `surface.raised` 背景，active 复用同色，不改页签几何。
+- **定向验证**：Desktop 定向门禁 **144 passed / 0 failed**；当前源码以 bundled-adhoc 真窗口重采到 [`state-supplement-hoverfix/`](state-supplement-hoverfix/)。Terminal hover 图相对同轮五图 hover 中位基线变化 **5,577 pixels**，边界 `(1117, 0)–(1216, 56)`，精确落在 100×58 页签内；机器可读结果见 [`pixel-check.json`](state-supplement-hoverfix/pixel-check.json)。
+- **证据口径**：本次只替换受影响的 Terminal hover 图；其余八图仍以 [`state-supplement/`](state-supplement/) 为准。重复全套采集的第一张 grouping hover 因指针起始位置与目标重合而未再次触发 hover，不纳入新基准，也不把重跑当作通过依据。
+- **人工边界**：用户明确要求不使用 VoiceOver；本轮保持关闭且未执行该走查。该要求不自动等于豁免验收标准，Wave A 继续保持开启。
+
 ## 尚未执行
 
-- VoiceOver 人工走查与 overlay 签字（2026-08-30 已恢复，等待用户人工验收）。自动门禁与人工 overlay 分开记录。
+- State A 九图 overlay 用户签字；VoiceOver 人工走查未执行（用户要求不使用），等待用户决定豁免或替代门禁。自动门禁与人工 overlay 分开记录。

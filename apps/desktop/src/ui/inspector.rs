@@ -53,9 +53,11 @@ impl AppView {
             InspectorTab::Resources,
         ] {
             let selected = tab == current;
+            let hover = dark().surface.raised;
             tabs = tabs.child(
                 // R6 Wave A：页签不再是 Raised/Ghost 按钮，改为 58px 条内
-                // 文本级页签，选中态 accent 下划线（与二级 56px 层次区分）。
+                // 文本级页签，选中态 accent 下划线（与二级 56px 层次区分）；
+                // hover / active 只改背景，active 复用 hover 色（基准 §8.1）。
                 div()
                     .id(tab.button_id())
                     .relative()
@@ -74,7 +76,8 @@ impl AppView {
                     } else {
                         dark().text.secondary
                     })
-                    .hover(move |style| style.text_color(dark().text.primary))
+                    .hover(move |style| style.bg(hover))
+                    .active(move |style| style.bg(hover))
                     .child(div().child(tab.label()))
                     .when(selected, |tab| {
                         tab.child(

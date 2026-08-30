@@ -12,9 +12,9 @@
 | --- | --- |
 | 活动线 | **Desktop UI 99% 视觉还原与全功能交互验证（R1–R8）** |
 | 当前阶段 | **R7 — 全局交互、Accessibility 与响应式（Wave A 人工验收 🔵）** |
-| 下一任务 | 完成 R7 Wave A 的 VoiceOver 人工走查与 State A hover/active/focus 九图 overlay 签字；通过后关闭 Wave A，开启 Wave B（任务书 [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式)；证据 [r7-wave-a](docs/ui-review/r7-wave-a/notes.md)） |
+| 下一任务 | 完成 R7 Wave A 的 State A hover/active/focus 九图 overlay 签字；VoiceOver 因用户于 2026-08-30 明确要求不使用而保持未执行，须先由用户决定是否豁免或以其它门禁替代。两项处置完成后才能关闭 Wave A、开启 Wave B（任务书 [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式)；证据 [r7-wave-a](docs/ui-review/r7-wave-a/notes.md)） |
 | 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
-| 阻塞 | 实现与自动门禁无阻塞；当前只待用户完成 R7 Wave A 的 VoiceOver/overlay 人工验收。R6 已于 2026-08-30 经用户确认退出，State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，记录值不追认为通过。 |
+| 阻塞 | 实现与自动门禁无阻塞；当前待用户完成 overlay 签字，并处理「Wave A 要求 VoiceOver、但用户要求不使用」的验收口径冲突。R6 已于 2026-08-30 经用户确认退出，State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，记录值不追认为通过。 |
 
 状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞 · ⏭️用户跳过（未完成）。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
 
@@ -32,13 +32,13 @@ UI 是当前唯一主线。R1–R8 未完成前，不插入非安全紧急的代
 | R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | 🟢 |
 | R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R5 存档](docs/history.md#r5--composer-与运行控制2026-08-2829) | 🟢 |
 | R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | 🟢 |
-| R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | 🔵（Wave A 自动门禁 🟢；人工验收中） |
+| R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | 🔵（Wave A 自动门禁 🟢；overlay 人工验收中；VoiceOver 口径待处理） |
 | R8 | 模拟操作全功能验收 | 全组件端到端 UI suite、三状态逐图差分、重连/后台 Run/恢复、性能与失败证据、用户视觉签字 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--模拟操作全功能验收) | ⚪ |
 | R9 | UI 后一致性与代码债务 | 文档/Spec/断言一致、usage 幂等、依赖与注释漂移、路径内核、测试箱整理 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r9--一致性与代码债务收口) | ⚪ |
 | R10 | 关键回归与真实环境验证 | 三类关键回归、K-01、四通道/三客户端、OAuth refresh、历史人工冒烟与平台探针 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r10--关键回归与真实环境验证) | ⚪ |
 | R11 | 设计稿与实际 UI 终局比对 | 对照 v3 定稿图与已归档 current/diff，将不符合的显示效果归纳为下一阶段完善任务（只改文档） | [R9–R11](plan/R9-R11-post-ui-closeout.md#r11--设计稿与实际-ui-终局比对) | ⚪ |
 
-阶段默认严格串行：`R1 → R2 → … → R11`。2026-08-29 用户先授权 R6→R7 的单次跳过，后又明确恢复 R6 Wave B；Wave B 实现、定向门禁与审查后最终二进制 U2 于 2026-08-30 收口，同日用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 Wave A 既有自动门禁资产继续有效，当前恢复 VoiceOver/overlay 人工验收。R11 是文档任务：不查询、不修改代码。发布准备已移出本编号，见 §5。
+阶段默认严格串行：`R1 → R2 → … → R11`。2026-08-29 用户先授权 R6→R7 的单次跳过，后又明确恢复 R6 Wave B；Wave B 实现、定向门禁与审查后最终二进制 U2 于 2026-08-30 收口，同日用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 Wave A 既有自动门禁资产继续有效，当前进行 overlay 人工验收；VoiceOver 因用户要求不使用而未执行，未获豁免或替代决定前不关闭 Wave A。R11 是文档任务：不查询、不修改代码。发布准备已移出本编号，见 §5。
 
 ---
 
