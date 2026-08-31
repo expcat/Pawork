@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use crate::sqlite::{DatabaseActor, DatabaseError, MigrationError};
 use thiserror::Error;
 
-pub use catalog::SessionRecord;
+pub use catalog::{SessionRecord, WorkspaceRecord};
 pub use command_ledger::{
     CommandLedger, LedgerCheck, LedgerError, LedgerStats, WaitingToolCall,
     DEFAULT_COMMAND_LEDGER_CAPACITY,
@@ -141,6 +141,8 @@ pub enum SessionStoreError {
     Io(#[from] std::io::Error),
     #[error("session not found: {0}")]
     SessionNotFound(String),
+    #[error("workspace registry invariant failed: {0}")]
+    WorkspaceRegistryInvariant(String),
     #[error("branch not found for session {session_id}: {branch_id}")]
     BranchNotFound {
         session_id: String,

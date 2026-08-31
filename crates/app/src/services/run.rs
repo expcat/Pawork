@@ -43,7 +43,10 @@ impl RunService {
             payload,
         );
         core.store()?
-            .append_event(core.session_active_branch(session_id).await?, envelope.clone())
+            .append_event(
+                core.session_active_branch(session_id).await?,
+                envelope.clone(),
+            )
             .await?;
         Ok(envelope)
     }
@@ -95,8 +98,17 @@ impl RunService {
         ));
         let trigger = trigger.clone();
         core.ensure_plan_allows_execution(session_id).await?;
+        let run_workspace = core.workspace_for_session_or_unbound(session_id)?;
         let mut request_messages = messages;
-        if let Some(note) = crate::diff::git_status_note(&core.extensions.workspace_roots).await {
+        if let Err(error) = core
+            .extensions
+            .file_index
+            .scan_workspace(&run_workspace)
+            .await
+        {
+            tracing::warn!(error = %error, "file-index scan failed");
+        }
+        if let Some(note) = crate::diff::git_status_note(&run_workspace.roots).await {
             request_messages.insert(
                 0,
                 Message {
@@ -132,10 +144,10 @@ impl RunService {
             branch_id: core.session_active_branch(session_id).await?,
         };
         let mut turn_context = core.turn_context();
-        turn_context.injected_layers = core.load_injected_layers();
+        turn_context.injected_layers = core.load_injected_layers_for_session(session_id).await;
         let loop_ctx = SessionLoopCtx {
             scheduler: core.scheduler.clone(),
-            workspace_id: core.extensions.workspace_id.clone(),
+            workspace_id: run_workspace.id.clone(),
             run_id: run_id.clone(),
             next_message: &core.next_message,
             next_request: &core.next_request,
@@ -148,7 +160,7 @@ impl RunService {
             session_id: Some(session_id.clone()),
             token_estimator: Some(core.session_estimator.clone()),
             checkpoints: core.checkpoints.clone(),
-            workspace_roots: core.extensions.workspace_roots.clone(),
+            workspace_roots: run_workspace.roots.clone(),
         };
         let task_id = match core.tasks_start_agent(Some(session_id)) {
             Ok(task_id) => Some(task_id),
@@ -219,11 +231,9 @@ impl RunService {
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
     ) -> Result<Vec<Message>, AppError> {
+        let run_workspace = core.workspace_for_session_or_unbound(session_id)?;
         let messages = core.resume_messages(session_id).await?;
-        let trigger = messages
-            .last()
-            .cloned()
-            .ok_or(AppError::EmptyTurn)?;
+        let trigger = messages.last().cloned().ok_or(AppError::EmptyTurn)?;
         let n = core.next_request.fetch_add(1, Ordering::Relaxed);
         let request = assemble_request(
             RequestId::from(format!("req-compact-{n}")),
@@ -250,7 +260,7 @@ impl RunService {
         };
         let loop_ctx = SessionLoopCtx {
             scheduler: core.scheduler.clone(),
-            workspace_id: core.extensions.workspace_id.clone(),
+            workspace_id: run_workspace.id.clone(),
             run_id,
             next_message: &core.next_message,
             next_request: &core.next_request,
@@ -263,7 +273,7 @@ impl RunService {
             session_id: Some(session_id.clone()),
             token_estimator: Some(core.session_estimator.clone()),
             checkpoints: core.checkpoints.clone(),
-            workspace_roots: core.extensions.workspace_roots.clone(),
+            workspace_roots: run_workspace.roots.clone(),
         };
         Ok(run_manual_compaction(
             core.provider.as_ref(),
@@ -315,7 +325,7 @@ mod tests {
     use pawork_storage::session::{SessionStore, DEFAULT_BRANCH_ID};
     use pawork_testkit::{MockProvider, MockScript};
 
-    use crate::testsupport::{mock_core, RecordingEvents, user_hello};
+    use crate::testsupport::{mock_core, user_hello, RecordingEvents};
     use crate::AppCore;
 
     #[tokio::test]
@@ -350,7 +360,10 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].session_id, session.as_str());
         assert_eq!(
-            core.resolve_session("latest").await.expect("latest").as_str(),
+            core.resolve_session("latest")
+                .await
+                .expect("latest")
+                .as_str(),
             session.as_str()
         );
 
@@ -384,12 +397,7 @@ mod tests {
             .await
             .expect("replay")
             .into_iter()
-            .find(|event| {
-                matches!(
-                    &event.payload,
-                    AgentEvent::RunCompleted { .. }
-                )
-            })
+            .find(|event| matches!(&event.payload, AgentEvent::RunCompleted { .. }))
             .expect("run completed boundary");
         core.store()
             .expect("store")
@@ -441,22 +449,12 @@ mod tests {
         let first = core.create_session("one").await.expect("first");
         let second = core.create_session("two").await.expect("second");
         let sink = RecordingEvents::default();
-        core.chat_turn(
-            &first,
-            vec![user_hello()],
-            &sink,
-            CancellationToken::new(),
-        )
-        .await
-        .expect("first turn");
-        core.chat_turn(
-            &second,
-            vec![user_hello()],
-            &sink,
-            CancellationToken::new(),
-        )
-        .await
-        .expect("second turn");
+        core.chat_turn(&first, vec![user_hello()], &sink, CancellationToken::new())
+            .await
+            .expect("first turn");
+        core.chat_turn(&second, vec![user_hello()], &sink, CancellationToken::new())
+            .await
+            .expect("second turn");
 
         let first_messages = core.resume_messages(&first).await.expect("resume first");
         let second_messages = core.resume_messages(&second).await.expect("resume second");
@@ -482,17 +480,19 @@ mod tests {
         user.metadata
             .provider_metadata
             .insert("api_key".into(), serde_json::json!(secret));
-        core.chat_turn(&session, vec![user], &RecordingEvents::default(), CancellationToken::new())
-            .await
-            .expect("turn");
+        core.chat_turn(
+            &session,
+            vec![user],
+            &RecordingEvents::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
 
         let path = core.store().expect("store").path().to_path_buf();
         let bytes = std::fs::read(&path).expect("read db");
         let haystack = String::from_utf8_lossy(&bytes);
-        assert!(
-            !haystack.contains(secret),
-            "secret leaked into session.db"
-        );
+        assert!(!haystack.contains(secret), "secret leaked into session.db");
         let replayed = core
             .store()
             .expect("store")
@@ -547,7 +547,9 @@ mod tests {
         assert!(types.contains(&"ToolExecutionCompleted"));
         assert!(types.contains(&"RunCompleted"));
         let messages = core.resume_messages(&session).await.expect("resume");
-        assert!(messages.iter().any(|message| message.role == MessageRole::Tool));
+        assert!(messages
+            .iter()
+            .any(|message| message.role == MessageRole::Tool));
         let joined: String = messages
             .iter()
             .flat_map(|message| message.content.iter())
@@ -597,7 +599,10 @@ mod tests {
                 }
                 _ => false,
             });
-        assert!(found, "run sink must receive tasks_finish_failed Diagnostic");
+        assert!(
+            found,
+            "run sink must receive tasks_finish_failed Diagnostic"
+        );
         core.shutdown().await.expect("shutdown");
     }
 }

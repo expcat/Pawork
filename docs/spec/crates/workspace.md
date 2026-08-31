@@ -19,7 +19,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~200 | `Workspace{id,name,roots}` / `WorkspaceService::add/get`（roots `fs::canonicalize` + `dunce::simplified` + 平台感知去重，Windows 大小写不敏感）；`WorkspaceError` 七个 variant；子模块声明与 re-export |
+| `src/lib.rs` | ~200 | `Workspace{id,name,roots}` / `WorkspaceService::add/get`（roots `fs::canonicalize` + `dunce::simplified` + 平台感知去重，Windows 大小写不敏感）；`canonicalize_root` 公开同一规范化规则（ADR-044 持久登记前的去重键）；`WorkspaceError` 七个 variant；子模块声明与 re-export |
 | `src/path.rs` | ~250 | `resolve_relative_path(roots, relative) -> ResolvedPath{absolute, root, relative}`；本层拦截空路径 / 绝对路径 / Windows 盘符 / UNC（`\\`、`//`）/ 保留设备名（CON、PRN、AUX、NUL、COM1-9、LPT1-9，含尾随 `.`/空格变体），其余委托 `pawork_policy::resolve_workspace_path`；`WorkspacePathError` 与 `PathSafetyError` 的一一映射 |
 | `src/file_index.rs` | ~1040 | `FileIndex`：`scan_workspace`（`spawn_blocking` 全量扫描 + 原子替换，`generation` 递增）、`snapshot` / `search`（子序列模糊匹配）、`apply_changes` 增量、`start_debounced_updates`（有界通道去抖）、`watch_workspace`（`notify` watcher）；`IndexOptions` / `FileKey` / `IndexedFile` / `IndexSnapshot` / `PathChange` / `ChangeKind` / `DebouncedUpdateHandle` / `WorkspaceWatcher` / `FileIndexError` |
 
@@ -73,7 +73,7 @@
 
 **根服务（crate root）**
 - `WorkspaceService::add(id, name, roots)`：每个 root `fs::canonicalize` + `dunce::simplified`（去 Windows `\\?\` 前缀）后按平台键去重（Windows 大小写不敏感、`\`→`/`）。空集→`NoRoots`；不存在→`InvalidRoot{path, source}`；非目录→`RootIsNotDirectory`；重复 id→`AlreadyExists`；锁毒化→`Poisoned`。
-- `get(id) -> Result<Option<Workspace>, WorkspaceError>`。进程内 `Arc<RwLock<BTreeMap>>`，无持久化；`Workspace` 可 serde 序列化供上层快照。
+- `get(id) -> Result<Option<Workspace>, WorkspaceError>`。进程内 `Arc<RwLock<BTreeMap>>`，无持久化（持久注册表在 storage session 库 v14 `workspaces` 表，本包只提供 `canonicalize_root` 规范化）；`Workspace` 可 serde 序列化供上层快照。
 - `resolve_relative_path(roots, relative)`：按登记顺序命中第一个 root；错误矩阵见 §4.1。
 
 **文件索引**

@@ -60,16 +60,16 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_server/mod.rs` | ~180 | `GuiHost` trait（snapshot/timeline/query/command）、`GuiHostError`、`GuiServer`/`GuiServerConfig`（bind endpoint、accept 循环、按连接 spawn 会话任务）；re-export 连接层常量 |
 | `src/gui_server/connection.rs` | ~550 | `ConnectionManager`：客户端注册/心跳（`DEFAULT_HEARTBEAT_TIMEOUT` 30s idle 清理）/事件订阅；每连接有界 mpsc 队列（`DEFAULT_QUEUE_CAPACITY` 1024），慢客户端标记 `lagged` 丢新事件不阻塞发布者；断连**不**取消 run |
 | `src/gui_server/session.rs` | ~950 | 单连接握手与帧循环：协议版本检查、command 盖 client 戳、capability 门（未授予在宿主前拒绝）、Resume 三态调度（replay / SnapshotRequired / up-to-date）、Heartbeat→Pong、订阅确认、lagged→ReplayUnavailable 帧 |
-| `src/gui_host/mod.rs` | ~820 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进） |
+| `src/gui_host/mod.rs` | ~820 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建，Workspaces 段输出 v14 注册表全集合）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进） |
 | `src/gui_host/bus.rs` | ~275 | `GuiEventBus`（内部 `EventHub` 赋全局序 + replay；engine 终态上流时登记 run_id，供宿主合成终态兜底去重；`publish_raw` 合成事件序号从 `SYNTHETIC_SEQUENCE_BASE`=2^60 递增自取，不占真实持久化号段且排在既有时间线内容之后）、`GuiBroadcastSink`（AgentEvent→AppEvent 映射后广播）、`GuiRunRegistry`（活跃 GUI run 与 `CancellationToken` 登记） |
 | `src/gui_host/events.rs` | ~190 | `AgentEventEnvelope`→`AppEvent` 投影助手、诊断事件映射、幂等 client scope 推导 |
 | `src/gui_host/handlers/mod.rs` | ~10 | handler 子模块声明 |
-| `src/gui_host/handlers/terminal.rs` | ~420 | TerminalCreate/Write/Resize：经 `PtyService`；`terminal_create` 过 PolicyEngine（capability=Process；NeverAsk/ReadOnly 直拒，AskUser fail-closed 落 Deny）；输出经事件广播，需 terminal-streaming capability |
-| `src/gui_host/handlers/run_start.rs` | ~290 | RunStart：provider/model 切换校验（未知 fail-closed）→ `expand_at_refs` 展开 → 登记 `ActiveGuiRun` → spawn `chat_turn`；模型切换发诊断事件；engine 未报终态即死时才补发合成 `RunChanged{Failed}` + `run.failed` |
-| `src/gui_host/handlers/query.rs` | ~240 | WorkspaceList/SessionGet/ModelList（聚合 overview）/RunStatus/DiffListFiles/DiffGet（latest session 已解析时，路径缺失的空结果仍携 `session_id`，供客户端 fail-closed 判 scope）/QuotaOverview/McpList（`{"servers":[...]}`） |
-| `src/gui_host/handlers/session.rs` | ~120 | SessionCreate（建会话 + 绑 workspace）/SessionOpen/SessionFork（自指定事件建分支并切换 active branch） |
+| `src/gui_host/handlers/terminal.rs` | ~420 | TerminalCreate/Write/Resize：经 `PtyService`；`terminal_create` 过 PolicyEngine（capability=Process；NeverAsk/ReadOnly 直拒，AskUser fail-closed 落 Deny）；`resolve_terminal_cwd` 按注册表严格解析目标 workspace（未登记 fail-closed）；输出经事件广播，需 terminal-streaming capability |
+| `src/gui_host/handlers/run_start.rs` | ~290 | RunStart：provider/model 切换校验（未知 fail-closed）→ 按 session 归属 workspace `expand_at_refs` 展开 → 登记 `ActiveGuiRun`（快照 workspace id 与 roots）→ spawn `chat_turn`；模型切换发诊断事件；engine 未报终态即死时才补发合成 `RunChanged{Failed}` + `run.failed` |
+| `src/gui_host/handlers/query.rs` | ~240 | WorkspaceList（v14 持久注册表全集合，含 roots）/SessionGet/ModelList（聚合 overview）/RunStatus/DiffListFiles/DiffGet（按目标 workspace 的最新会话解析，该 workspace 无会话时返回空 files；latest session 已解析时，路径缺失的空结果仍携 `session_id`，供客户端 fail-closed 判 scope）/QuotaOverview/McpList（`{"servers":[...]}`） |
+| `src/gui_host/handlers/session.rs` | ~120 | SessionCreate（建会话 + 绑当前 workspace）/SessionOpen/SessionFork（自指定事件建分支并切换 active branch；无绑定会话诚实 Unassigned，不回退当前 workspace） |
 | `src/gui_host/handlers/approval.rs` | ~90 | ToolApprove：协议决定→domain 决定；live 决议 pending，非 live 走 session store 落 queued 决议、落库成功后经 `GuiBroadcastSink` 补广播（仅 `ToolCompleted` 上 wire）；写工具附预览 |
-| `src/gui_host/handlers/command.rs` | ~40 | WorkspaceAdd（追加 workspace）、RunCancel（翻转注册的 `CancellationToken`） |
+| `src/gui_host/handlers/command.rs` | ~40 | WorkspaceAdd（持久幂等登记入 v14 注册表，同 canonical root 复用 stable id）、RunCancel（翻转注册的 `CancellationToken`） |
 | `src/gui_host/tests.rs` | ~2050 | `cfg(test)` 内嵌测试集：双射 pin、timeline 分页、`@` 展开三态、幂等（重启存活/失败计数/InFlight 收敛）、审批三态与重启后广播收口、合成终态闸门（fail 不重复/cancel 不谎报/早死兜底）、fork、provider 切换、bus lagged 等 |
 | `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟（`--ignored`），不进默认测试路径（`live-smoke` feature 显式启用） |
 | `tests/timeline_projection_host.rs` | ~160 | host `timeline()` 与 protocol 投影 golden 对拍 |
@@ -86,17 +86,18 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 - `load_from` / `from_resolved` / `from_config`：跳过发现、注入已解析配置的低层装配入口（cli 测试与特殊装配路径用）。
 - `from_parts(provider, credential, model, provider_id, store)`：用注入件直接拼 Core，测试与 smoke 专用；测试内部另有 `from_parts_with_protocol` 可再注入 `AdapterProtocol` 与 `ModelRegistry`。
 - 装配后增量开口（`&mut self`）：
-  - `attach_workspace(root)`：以目录 basename 作为可见名称，通过 `WorkspaceService` 注册并保存 canonical roots，再重建内建工具注册表；当前仍使用单一 `ws-default` 作为进程内当前 workspace；
-  - `open_store(path)` / `open_checkpoints(root)` / `open_control_plane(dir)`：分别打开会话库、检查点服务、usage/quota/audit 运行时；
+  - `attach_workspace(root)`：以目录 basename 作为可见名称，通过 `WorkspaceService` 注册并保存 canonical roots，再重建内建工具注册表；空库首个 workspace 固定 `ws-default`，其后由 `allocate_workspace_id` 发号（ADR-044）；
+  - `open_store(path)`：打开会话库跑迁移后读 v14 项目注册表、对 legacy 启动目录补登记（注册表为空时固定 `ws-default`）、按注册表重建 WorkspaceService 与内建工具并预载全部 session 归属绑定；`open_checkpoints(root)` / `open_control_plane(dir)`：分别打开检查点服务、usage/quota/audit 运行时；
+  - `register_workspace(root) -> WorkspaceRecord`：持久幂等登记（同 canonical root 复用既有 stable id，同 id 异 root fail-closed），GUI `workspace_add` 入口；
   - `configure_approval(mode, trusted)`：设置审批模式与 workspace 信任并重建 `ToolScheduler` 配置；
   - `prime_extensions()`：file-index 扫描（失败仅 warn）+ MCP auto-start（失败不拖垮装配）。
 - `shutdown(self) -> Result<(), AppError>`：关停 MCP 客户端、落 tasks 快照、关闭 store；消费 self。
-- 只读访问器：`provider_id()` / `model()` / `adapter_protocol()` / `config()` / `auth_backend()` / `store()`（无 store 时 `Err`）/ `workspace_id()` / `workspace_name()` / `workspace_trusted()` / `approval_mode()` / `approval_host()` / `tool_names()` / `turn_context()`。
+- 只读访问器：`provider_id()` / `model()` / `adapter_protocol()` / `config()` / `auth_backend()` / `store()`（无 store 时 `Err`）/ `workspace_id()` / `workspace_name()` / `workspace_trusted()` / `approval_mode()` / `approval_host()` / `tool_names()` / `turn_context()`；workspace 注册表查询 `registered_workspaces()` / `workspace_by_id()` / `workspace_for_session()` / `latest_session_for_workspace()`。
 - `AppError`：30+ 变体的错误汇聚层，粗分为透传（Config/Auth/Provider/Engine/Session/Io/Workspace/Tools/Git/Mcp/Checkpoint/…，`#[from]`）与本包语义（MissingDefaultProvider/MissingCredential/OAuthLoginRequired/UnknownModel/StoreNotOpen/AmbiguousSession/EmptyTurn/PlanNotApproved/…）两类；`Display` 文案面向终端用户（含修复指引），任何变体不携带明文 secret。
 
 ### 3.2 会话与运行
 
-- `create_session(title) -> SessionId`；`create_session_with_workspace(title, workspace_id)` 额外绑定归属（ADR-043 起与 session/main 分支同事务持久化，跨 Host 重启保留；历史无绑定会话仍归 Unassigned）。
+- `create_session(title) -> SessionId`：以当前 workspace 归属建会话；`create_session_with_workspace(title, workspace_id)` 显式指定归属（ADR-043 起与 session/main 分支同事务持久化，跨 Host 重启保留；历史无绑定会话仍归 Unassigned）。
 - `list_sessions() -> Vec<SessionRecord>`；`get_session(&SessionId) -> SessionRecord`（含 `active_branch` 与可空 `workspace_id`）。
 - `resolve_session(spec)`：接受 id 前缀或列表序号，歧义/未命中报 `AppError`。
 - `next_sequence(&SessionId) -> u64`：该会话下一事件序号（宿主外持久化事件时用）。
@@ -122,14 +123,14 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 
 - `usage_overview(window)` → `UsageOverview`（含 `LedgerTotals` 与 `QuotaWindowLine`）；`session_usage(&SessionId) -> TokenUsage`；`last_run_usage`；`estimate_cost_for(model, usage) -> Option<Cost>`（无定价数据返回 None）。
 - `ControlPlaneRuntime::in_memory()` / `persistent(dir)`：usage/quota/audit 运行时装配（cli 直接消费 re-export 的报表行类型）。
-- `session_diff(&SessionId) -> SessionDiff`：git 仓走 `pawork-git` 全量 diff 后按 session 改动路径过滤（含 rename 前路径、untracked 补 hunk）；非 git / 无 git 二进制回退写前快照对比。`GitDiffHeader`（branch/work_dir/dirty_files）仅 git 路径返回。
+- `session_diff(&SessionId) -> SessionDiff`：git 仓走 `pawork-git` 全量 diff 后按 session 改动路径过滤（含 rename 前路径、untracked 补 hunk）；工作区根取 session 归属 workspace，不使用进程当前 workspace；非 git / 无 git 二进制回退写前快照对比。`GitDiffHeader`（branch/work_dir/dirty_files）仅 git 路径返回。
 - `paginate_diff(files, page, page_size) -> DiffPage`；`render_session_diff` / `render_diff_file`：统一 diff 文本渲染（二进制标注 `Binary files differ`）。
 - `git_status_note(roots) -> Option<String>`：短 git 状态行（branch + dirty 数），任何失败返回 None 不阻断对话。
 - `list_checkpoints(&SessionId) -> Vec<CheckpointSummary>`；`rollback(&SessionId, spec) -> RollbackOutcome`：按快照恢复文件并持久化 `CheckpointRolledBack` 事件。
 
 ### 3.5 扩展、MCP、导入、tasks/plan/编排
 
-- `expand_at_refs(text) -> Vec<ContentPart>`：`@token` 命中 file-index 时正文作为**独立** Text part 追加（不拼进 user text），单文件 64 KiB 截断并标记；无 `@` 时返回单 Text part。`complete_at(query, limit)` 补全候选。`workspace_root()`。
+- `expand_at_refs(session_id, text) -> Vec<ContentPart>`（async，ADR-044 起按 session 归属 workspace 的 file-index 路由）：`@token` 命中时正文作为**独立** Text part 追加（不拼进 user text），单文件 64 KiB 截断并标记；无 `@` 时返回单 Text part。`complete_at(query, limit)` 补全候选（未索引 workspace 自动先扫描）。`workspace_root()`。
 - `mcp_list() -> Vec<McpServerStatus>`（name/transport/state/tools/last_error）；`mcp_test(name?)`：真实建连 + ping + list_tools 并刷新 slot 状态。
 - `scan_local_sessions(source, home_root?)`：只读发现本机会话文件。
 - `preview_compat_import(tool, global_root?)` / `apply_compat_import(...)`：compat 配置导入两段式；apply 前用文件指纹快照校验 `sources_unchanged`，落盘 instructions / skills / MCP merge / profiles。`CompatTool::parse` 接受 claude/codex/grok/cursor/pi。
@@ -230,6 +231,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 - **usage 哨兵**：单机形态 ledger 记录 `record_id = "rec-<run_id>"`、默认 tenant/principal、`upstream_attempt = 1`，消费方不得把哨兵当真实上游账号。
 - **不按 Provider 名称走特例**（红线）：协议选择只读 `extra.provider_protocols` 配置与样例默认表（`protocol.rs` 是配置数据），未知值 fail-closed。
 - **`@` 展开 fail-closed**：无 `@` 零行为变化；展开失败整个 run_start 失败且不留 ActiveGuiRun；附件正文独立 ContentPart，不拼进 user text，单文件上限 64 KiB。
+- **workspace 注册表幂等**（ADR-044）：`workspace_add`/`register_workspace` 按 canonical root 幂等，同 root 重登复用 stable id，同 id 异 root fail-closed；Run/资源/diff/terminal cwd 按 session 归属 workspace 解析。注册表已有可用项目时，未绑定或未登记 workspace fail-closed，不得回退到当前/最近项目；仅无可用 root 的测试装配允许空的 `ws-unbound`。
 - **MCP 信任边界**：untrusted workspace 拒绝 stdio auto-start/test；stdio 走沙箱 + env 卫生；MCP secret 独立文件（不复用 Provider auth 后端）。
 - **Workspace 信任覆盖**：`AppLoadOptions::trust_workspaces` 只能由可信启动宿主显式提供，优先于全局配置且只存活于当前进程；workspace 内容不能通过自身配置提升信任，Secret/Policy/路径红线不因该覆盖取消。
 - **instance 名白名单**：`[A-Za-z0-9._-]` 且禁 `..`，拒绝路径逃逸。

@@ -780,3 +780,36 @@ Validated: `cargo test -p pawork-cli --offline --lib --tests`（84）；`cargo t
 Targeted regressions: CLI workspace trust opt-in、App workspace attach、Desktop Add project / Terminal 文本过滤、protocol Diagnostic live/history 一致性。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---
+
+## P1 片 1 — Session→Workspace 真窗口重启复验（2026-08-31）
+
+- 在正式 `desktop` 实例用当前 `main` 构建 Host/Desktop；旧 schema v12 数据库由正式启动路径迁移到 v13，历史两条 NULL 会话保持 Unassigned，不做回填。
+- 在真实 Pawork 项目中新建 `ses-1788165619178-1`；SQLite 外部核对为 `workspace_id=ws-default`，`schema_migrations` 最新为 v13 `session_workspace_binding`。
+- 通过真实 Provider Run 创建一次性 `p1-restart-probe.txt`，重启前 Changes 为 `untracked · +1 / −0`；真实 Terminal 输出仓库根 `/Volumes/SSD/Code/Lib/Pawork` 与 `pawork-p1-terminal-before`。
+- Desktop 保持打开，Host PID `15529 → 16229` 后走 SnapshotRequired 恢复；该 Task 仍在 Pawork 项目组，Timeline 全量重放，Changes 仍为同一文件与统计。切到历史 Unassigned 会话再重开该 Task 后，归属仍回到 `ws-default`。
+- Terminal 进程按既有协议诚实显示 stale / not started，不冒充恢复；新建 Terminal 后上下文仍为 `workspace ws-default · .`，`pwd` 仍是仓库根并输出 `pawork-p1-terminal-after`。
+- 一次性探针、Desktop 与两轮 Host 均已清理，未留下验证产物。片 1 自动门禁沿用 ADR-043 实现提交的 storage/app 定向测试；本轮只补真窗口双证据，不重复跑测试。
+- 复验后定位 P1 片 2 的真实缺口：`attach_workspace` 仍以固定 `ws-default` 替换单例，Run / resources / diff 使用全局 roots；已提出 [ADR-044](adr/ADR-044-persistent-workspace-registry.md)，等待用户确认后才允许 schema v14 与 Host 路由实现。
+
+Validated: `./scripts/pawork-desktop.sh build/start`；正式 Host 停止/重启；真窗口 Task/Timeline/Changes/Terminal；SQLite v13 行与 migration 表；`git status --short` / 探针内容；清理后 `git status --short --branch`。
+
+Targeted regressions: Session→Workspace 跨 Host 重启、历史 NULL 不回填、Task 重开、Timeline 重放、Changes 同会话 diff、Terminal 恢复诚实性与 workspace/cwd。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---
+
+## P1 片 2B — ADR-044 持久项目注册表与按会话 workspace 路由（2026-08-31）
+
+- ADR-044 经用户 Accepted 后执行：session schema 升 v14，新建 `workspaces` 注册表（`workspace_id` 主键、`root_path` UNIQUE、`created_at_ms`/`updated_at_ms`、`idx_workspaces_created`），纯追加不回填；v12→v14 升级测试钉住历史会话归属保持 NULL、注册表为空。
+- storage 新增 `WorkspaceRecord` 与 `SessionStore::register_workspace`/`list_workspaces`：按 canonical root 幂等（重登复用 stable id），同 id 异 root 报 `WorkspaceRegistryInvariant` fail-closed；`WorkspaceService::canonicalize_root` 公开与 `add` 同规则的规范化作去重键。
+- AppCore `open_store` 装配改为：读注册表 → legacy 启动目录补登记（空注册表固定 `ws-default`）→ 重建 WorkspaceService/内建工具 → 预载全部 session 归属绑定；`register_workspace`（GUI `workspace_add`）持久幂等，`workspace_list` 与 snapshot Workspaces 段输出注册表全集合；Run / `@` 展开 / 注入层 / git status / diff / terminal cwd 全部按 session 归属 workspace 解析，`DiffListFiles`/`DiffGet` 按目标 workspace 最新会话路由；`session_open`/`session_fork` 对无绑定会话诚实 Unassigned，不再静默回退当前 workspace；wire 契约不变（ADR-044 D4）。
+- 生产路径按 ADR-044 D3 fail-closed：注册表一旦有可用项目，未绑定或未登记 workspace 不得回退到当前/最近项目；`session_diff` 使用 session 归属 workspace 的 roots，而不是进程当前 workspace。仅当进程尚未登记任何可用 root 时，未绑定会话才落到空的 `ws-unbound`（既有测试 / 无项目装配）。
+
+Validated: `cargo test -p pawork-storage --offline --lib --tests`；`cargo test -p pawork-workspace --offline --lib --tests`；`cargo test -p pawork-app --offline --lib --tests`；`cargo test -p pawork-cli --offline --lib --tests`（全绿）。
+
+Targeted regressions: v12→v14 升级（历史归属不回填、注册表为空）、注册表幂等重登/跨重开存活/同 id 异 root fail-closed、`session_diff` 使用 session 归属 workspace roots、有可用项目时 Unassigned 会话 fail-closed、app/cli 既有套件复跑无回归。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

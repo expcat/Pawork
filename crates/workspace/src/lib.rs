@@ -46,6 +46,11 @@ impl WorkspaceService {
         Self::default()
     }
 
+    /// 以与 [`Self::add`] 相同的规则 canonicalize 单个 root。
+    pub fn canonicalize_root(root: impl Into<PathBuf>) -> Result<PathBuf, WorkspaceError> {
+        normalize_root(root.into())
+    }
+
     pub fn add(
         &self,
         id: WorkspaceId,
@@ -171,6 +176,10 @@ mod tests {
         assert_eq!(workspace.roots.len(), 2);
         assert_eq!(workspace.roots[0], simplified_canonical(first.path()));
         assert_eq!(workspace.roots[1], simplified_canonical(second.path()));
+        assert_eq!(
+            WorkspaceService::canonicalize_root(first.path()).expect("canonical root"),
+            workspace.roots[0]
+        );
         assert!(workspace
             .roots
             .iter()

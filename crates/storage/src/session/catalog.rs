@@ -1,5 +1,7 @@
+use std::path::{Path, PathBuf};
+
 use pawork_domain::{SessionId, WorkspaceId};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 use crate::session::{SessionStore, SessionStoreError};
 
@@ -16,7 +18,101 @@ pub struct SessionRecord {
     pub workspace_id: Option<String>,
 }
 
+/// ADR-044（schema v14）：Host 本地项目注册表的一行。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceRecord {
+    pub workspace_id: WorkspaceId,
+    pub name: String,
+    pub root_path: PathBuf,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+fn workspace_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceRecord> {
+    Ok(WorkspaceRecord {
+        workspace_id: WorkspaceId::from(row.get::<_, String>(0)?),
+        name: row.get(1)?,
+        root_path: PathBuf::from(row.get::<_, String>(2)?),
+        created_at_ms: row.get(3)?,
+        updated_at_ms: row.get(4)?,
+    })
+}
+
 impl SessionStore {
+    /// 幂等登记 canonical root：同 root 返回原 stable id；同 id 指向不同
+    /// root 时 fail-closed，禁止静默重绑历史 Session。
+    pub async fn register_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+        name: &str,
+        root_path: &Path,
+        now_ms: i64,
+    ) -> Result<WorkspaceRecord, SessionStoreError> {
+        let workspace_id = workspace_id.as_str().to_string();
+        let name = name.to_string();
+        let root_path = root_path.to_string_lossy().into_owned();
+        self.database()
+            .call(move |connection| -> Result<WorkspaceRecord, SessionStoreError> {
+                let transaction = connection
+                    .transaction_with_behavior(TransactionBehavior::Immediate)?;
+                if let Some(record) = transaction
+                    .query_row(
+                        "SELECT workspace_id, name, root_path, created_at_ms, updated_at_ms \
+                         FROM workspaces WHERE root_path=?1",
+                        params![root_path],
+                        workspace_record,
+                    )
+                    .optional()?
+                {
+                    transaction.commit()?;
+                    return Ok(record);
+                }
+                if let Some(existing_root) = transaction
+                    .query_row(
+                        "SELECT root_path FROM workspaces WHERE workspace_id=?1",
+                        params![workspace_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                {
+                    return Err(SessionStoreError::WorkspaceRegistryInvariant(format!(
+                        "workspace id {workspace_id} already points to {existing_root}"
+                    )));
+                }
+                transaction.execute(
+                    "INSERT INTO workspaces(\
+                         workspace_id, name, root_path, created_at_ms, updated_at_ms\
+                     ) VALUES (?1, ?2, ?3, ?4, ?4)",
+                    params![workspace_id, name, root_path, now_ms],
+                )?;
+                let record = transaction.query_row(
+                    "SELECT workspace_id, name, root_path, created_at_ms, updated_at_ms \
+                     FROM workspaces WHERE workspace_id=?1",
+                    params![workspace_id],
+                    workspace_record,
+                )?;
+                transaction.commit()?;
+                Ok(record)
+            })
+            .await?
+    }
+
+    pub async fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, SessionStoreError> {
+        self.database()
+            .call(|connection| -> rusqlite::Result<Vec<WorkspaceRecord>> {
+                let mut statement = connection.prepare(
+                    "SELECT workspace_id, name, root_path, created_at_ms, updated_at_ms \
+                     FROM workspaces ORDER BY created_at_ms, workspace_id",
+                )?;
+                let rows = statement
+                    .query_map([], workspace_record)?
+                    .collect::<rusqlite::Result<Vec<_>>>();
+                rows
+            })
+            .await?
+            .map_err(SessionStoreError::from)
+    }
+
     /// 列出全部已持久化的 Session→Workspace 归属，包括归档会话。
     pub async fn list_session_workspace_bindings(
         &self,
@@ -149,7 +245,7 @@ impl SessionStore {
 mod tests {
     use std::path::PathBuf;
 
-    use pawork_domain::{SessionId, Timestamp};
+    use pawork_domain::{SessionId, Timestamp, WorkspaceId};
 
     use crate::session::{SessionStore, SessionStoreError};
 
@@ -233,6 +329,51 @@ mod tests {
             error,
             SessionStoreError::SessionNotFound(ref id) if id == "missing"
         ));
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn workspace_registry_is_idempotent_and_survives_reopen() {
+        let root = tempfile::tempdir().expect("workspace");
+        let other = tempfile::tempdir().expect("other workspace");
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let first = store
+            .register_workspace(
+                &WorkspaceId::from("ws-stable"),
+                "demo",
+                root.path(),
+                10,
+            )
+            .await
+            .expect("register");
+        let repeated = store
+            .register_workspace(
+                &WorkspaceId::from("ws-other-candidate"),
+                "renamed",
+                root.path(),
+                20,
+            )
+            .await
+            .expect("same root");
+        assert_eq!(repeated, first);
+        let error = store
+            .register_workspace(
+                &WorkspaceId::from("ws-stable"),
+                "other",
+                other.path(),
+                30,
+            )
+            .await
+            .expect_err("same id cannot move");
+        assert!(matches!(
+            error,
+            SessionStoreError::WorkspaceRegistryInvariant(_)
+        ));
+        store.shutdown().await.expect("shutdown");
+
+        let (store, _) = SessionStore::open(&path).await.expect("reopen");
+        assert_eq!(store.list_workspaces().await.expect("list"), vec![first]);
         store.shutdown().await.expect("shutdown");
     }
 }

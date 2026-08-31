@@ -25,40 +25,38 @@ mod orchestration_host;
 mod persist;
 mod plan_host;
 mod protected;
-mod provider_assembly;
 mod protocol;
+mod provider_assembly;
 mod services;
 mod tasks_host;
 #[cfg(test)]
 mod testsupport;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use pawork_auth::{AuthError, FileBackend, MemoryBackend, SecretBackend};
+use pawork_domain::{
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, Cost, Message, ModelId,
+    ProviderId, RequestId, RunId, SessionId, TokenUsage, ToolDescriptor, WorkspaceId,
+};
 use pawork_domain::{
     CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
     ProviderErrorKind, ProviderEventSink, ResolvedCredential, ToolDefinition,
-};
-use pawork_workspace::config::{
-    ConfigError, Loader, PaworkConfig,
-};
-use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, Message, ModelId, ProviderId,
-    RequestId, RunId, SessionId,
-    ToolDescriptor, WorkspaceId, TokenUsage, Cost,
 };
 use pawork_engine::{
     AgentEventSink, ContextBudget, ContextLimits, EngineError, HeuristicEstimator,
     TokenEstimator as EngineTokenEstimator, TurnContext,
 };
-use pawork_auth::{AuthError, FileBackend, MemoryBackend, SecretBackend};
 use pawork_providers::ModelRegistry;
-use pawork_storage::session::{SessionStore, SessionStoreError};
+use pawork_storage::session::{SessionStore, SessionStoreError, WorkspaceRecord};
 use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
-use pawork_workspace::{FileIndexError, WorkspaceError, WorkspaceService};
+use pawork_workspace::config::{ConfigError, Loader, PaworkConfig};
+use pawork_workspace::{FileIndexError, Workspace, WorkspaceError, WorkspaceService};
 use thiserror::Error;
 
 use crate::provider_assembly::{
@@ -69,16 +67,20 @@ pub use approval::{
     parse_approval_mode, ApprovalAsk, ApprovalPromptHost, ApprovalResolve, DenyAllApprovals,
     GuiApprovalHost, PendingToolApproval,
 };
+pub use auth::{AuthChannelStatus, AuthSource, OAuthLogin};
+pub use channels::{
+    first_party_channel, is_first_party, ChannelKind, FirstPartyChannel, FIRST_PARTY_CHANNELS,
+};
 pub use checkpoint::{CheckpointSummary, RollbackOutcome};
+pub use control::{LedgerTotals, QuotaWindowLine, SessionUsageLine, UsageOverview};
 pub use data_dir::{
     artifact_store_path, artifact_store_path_for, audit_log_path_for, consume_data_dir_outcome,
-    default_data_dir, default_data_dir_outcome, instance_dir, normalize_instance, session_db_path,
-    session_db_path_for, protected_store_path_for, tasks_snapshot_path_for, usage_ledger_path_for,
-    DataDirOutcome,
-    DEFAULT_INSTANCE,
+    default_data_dir, default_data_dir_outcome, instance_dir, normalize_instance,
+    protected_store_path_for, session_db_path, session_db_path_for, tasks_snapshot_path_for,
+    usage_ledger_path_for, DataDirOutcome, DEFAULT_INSTANCE,
 };
 pub use diff::{paginate_diff, render_diff_file, render_session_diff, GitDiffHeader, SessionDiff};
-pub use pawork_git::{DiffFile, DiffPage};
+pub use extensions::{AtAttachment, McpServerStatus};
 pub use gui_host::{
     project_timeline_item, GuiBroadcastSink, GuiEventBus, GuiHostAdapter, GuiRunRegistry,
 };
@@ -87,29 +89,22 @@ pub use idempotency::{
     should_cache, IdempotencyCheck, IdempotencyError, IdempotencyStats, IdempotencyStore,
     DEFAULT_IDEMPOTENCY_CAPACITY,
 };
-pub use persist::PersistThenRender;
-pub use protocol::{AdapterProtocol, ProtocolError};
-pub use auth::{AuthChannelStatus, AuthSource, OAuthLogin};
-pub use channels::{
-    first_party_channel, is_first_party, ChannelKind, FirstPartyChannel, FIRST_PARTY_CHANNELS,
-};
-pub use extensions::{AtAttachment, McpServerStatus};
-pub use control::{
-    LedgerTotals, QuotaWindowLine, SessionUsageLine, UsageOverview,
-};
 pub use import_host::{
     parse_session_source, CompatImportItemView, CompatImportPreview, CompatImportReport,
     CompatTool, SessionImportFormat, SessionImportOutcome,
 };
 pub use orchestration_host::{MultiAgentDemoOptions, MultiAgentDemoReport};
-pub use pawork_workflow::plan::PlanSnapshot;
-pub use pawork_workflow::task::TaskSnapshot;
-pub use plan_host::review_status_label;
-pub use tasks_host::parse_task_kind;
-pub use pawork_workspace::import::ExternalSource as CompatExternalSource;
-pub use pawork_workspace::import::{LocalSessionFile, LocalSessionSource};
+pub use pawork_git::{DiffFile, DiffPage};
 pub use pawork_policy::{ApprovalMode, RiskLevel};
 pub use pawork_storage::session::{SessionExport, SessionRecord, EXPORT_SCHEMA_VERSION};
+pub use pawork_workflow::plan::PlanSnapshot;
+pub use pawork_workflow::task::TaskSnapshot;
+pub use pawork_workspace::import::ExternalSource as CompatExternalSource;
+pub use pawork_workspace::import::{LocalSessionFile, LocalSessionSource};
+pub use persist::PersistThenRender;
+pub use plan_host::review_status_label;
+pub use protocol::{AdapterProtocol, ProtocolError};
+pub use tasks_host::parse_task_kind;
 
 /// 从配置文件与 CLI 覆盖构造 [`AppCore`] 的选项。
 #[derive(Clone, Default)]
@@ -175,10 +170,7 @@ pub enum AppError {
     #[error("provider `{id}` 未配置 base_url")]
     MissingBaseUrl { id: String },
     #[error("provider {provider} 缺少凭证：pawork auth set-key {provider}（auth 文件）或环境变量 {env_name}")]
-    MissingCredential {
-        provider: String,
-        env_name: String,
-    },
+    MissingCredential { provider: String, env_name: String },
     #[error("provider {0} 缺少 OAuth 凭证：pawork auth login {0}")]
     OAuthLoginRequired(String),
     #[error("{0}")]
@@ -205,6 +197,10 @@ pub enum AppError {
     StoreNotOpen,
     #[error("session not found: {0}")]
     SessionNotFound(String),
+    #[error("session {0} has no workspace binding")]
+    SessionWorkspaceUnassigned(String),
+    #[error("workspace {0} is not registered or its root is unavailable")]
+    WorkspaceUnavailable(String),
     #[error("ambiguous session prefix `{prefix}` matches: {matches}")]
     AmbiguousSession { prefix: String, matches: String },
     #[error("chat turn requires at least one message")]
@@ -277,7 +273,10 @@ fn missing_credential_degrade(provider_id: &ProviderId) -> pawork_domain::Degrad
     pawork_domain::DegradeEvent::new(
         pawork_domain::DegradeKind::MissingCredential,
         pawork_domain::DegradeSeverity::Warning,
-        format!("provider {} has no credential; using catalog-only fallback", provider_id.as_str()),
+        format!(
+            "provider {} has no credential; using catalog-only fallback",
+            provider_id.as_str()
+        ),
         serde_json::json!({ "provider_id": provider_id.as_str() }),
     )
 }
@@ -365,6 +364,7 @@ pub struct AppCore {
     next_run: AtomicU64,
     next_session: AtomicU64,
     next_message: AtomicU64,
+    next_workspace: AtomicU64,
 }
 
 /// 把 engine 的完整估算器桥接到 session 侧窄口 trait（依赖倒置的宿主实现）。
@@ -439,7 +439,6 @@ impl AppCore {
         if let Some(root) = workspace_root.as_deref() {
             core.attach_workspace(root)?;
         }
-        core.prime_extensions().await?;
         let data_dir = if let Some(data_dir) = options.data_dir {
             data_dir
         } else {
@@ -452,6 +451,7 @@ impl AppCore {
         };
         core.open_store(session_db_path_for(&data_dir, instance))
             .await?;
+        core.prime_extensions().await?;
         core.open_checkpoints(artifact_store_path_for(&data_dir, instance))
             .await?;
         core.open_protected(protected_store_path_for(&data_dir, instance))
@@ -477,9 +477,9 @@ impl AppCore {
         } else if let Ok(cwd) = std::env::current_dir() {
             core.attach_workspace(&cwd)?;
         }
-        core.prime_extensions().await?;
         let store_path = store_path.as_ref();
         core.open_store(store_path).await?;
+        core.prime_extensions().await?;
         if let Some(parent) = store_path.parent() {
             core.open_checkpoints(parent.join("artifacts")).await?;
             core.open_protected(parent.join("protected")).await?;
@@ -572,7 +572,10 @@ impl AppCore {
             .default_provider
             .clone()
             .unwrap_or_else(|| "catalog".into());
-        let model_id = config.default_model.clone().unwrap_or_else(|| "unset".into());
+        let model_id = config
+            .default_model
+            .clone()
+            .unwrap_or_else(|| "unset".into());
         let provider_ref = ProviderId::from(provider_id.as_str());
         let channel = channels::first_party_channel(provider_id.as_str());
         let protocol = channel_protocol(channel, &config, provider_id.as_str())?;
@@ -601,7 +604,8 @@ impl AppCore {
                 std::sync::Arc::clone(&reasoning_protector)
                     as Arc<dyn pawork_providers::ReasoningProtector>,
             )
-            .await {
+            .await
+            {
                 Ok(assembled) => Self::from_parts_with_protocol(
                     assembled.adapter,
                     assembled.credential,
@@ -703,15 +707,12 @@ impl AppCore {
             next_run: AtomicU64::new(1),
             next_session: AtomicU64::new(1),
             next_message: AtomicU64::new(1),
+            next_workspace: AtomicU64::new(1),
         }
     }
 
     /// 装配后补全 host 状态（config + 凭证后端）。
-    fn with_state(
-        mut self,
-        config: PaworkConfig,
-        backend: Arc<dyn SecretBackend>,
-    ) -> Self {
+    fn with_state(mut self, config: PaworkConfig, backend: Arc<dyn SecretBackend>) -> Self {
         self.config = config;
         self.backend = backend;
         self
@@ -752,32 +753,93 @@ impl AppCore {
         self.approval.configure(mode, workspace_trusted, host);
     }
 
-    /// 把目录登记为当前 workspace root，并注册只读四件 + 写三件 + run_command。
+    /// 把目录登记进当前进程的 workspace 集合。生产 `workspace_add` 走
+    /// [`Self::register_workspace`] 持久化；本入口保留给启动 bootstrap 与测试。
     pub fn attach_workspace(&mut self, root: &Path) -> Result<(), AppError> {
-        let workspaces = WorkspaceService::new();
-        let workspace_id = WorkspaceId::from("ws-default");
-        let workspace_name = root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or("workspace")
-            .to_string();
+        let canonical = WorkspaceService::canonicalize_root(root)?;
+        if let Some(record) = self
+            .extensions
+            .workspace_catalog
+            .values()
+            .find(|record| record.root_path == canonical)
+            .cloned()
+        {
+            let workspace = self.workspace_by_id(&record.workspace_id)?;
+            self.extensions.workspace_id = record.workspace_id;
+            self.extensions.workspace_name = record.name;
+            self.extensions.workspace_roots = workspace.roots;
+            return Ok(());
+        }
+        let workspace_id = if self.extensions.workspace_catalog.is_empty() {
+            WorkspaceId::from("ws-default")
+        } else {
+            self.allocate_workspace_id()
+        };
+        let workspace_name = workspace_name_for_root(&canonical);
+        let workspaces = self.extensions.workspaces.clone();
         let workspace = workspaces.add(
             workspace_id.clone(),
             workspace_name.clone(),
-            [root.to_path_buf()],
+            [canonical.clone()],
         )?;
+        let now_ms =
+            i64::try_from(pawork_engine::now_timestamp().as_unix_millis()).unwrap_or(i64::MAX);
+        self.extensions.workspace_catalog.insert(
+            workspace_id.clone(),
+            WorkspaceRecord {
+                workspace_id: workspace_id.clone(),
+                name: workspace_name.clone(),
+                root_path: canonical,
+                created_at_ms: now_ms,
+                updated_at_ms: now_ms,
+            },
+        );
         self.install_builtin_tools(&workspaces)?;
-        self.extensions.resource_loader =
-            Some(services::extension::ExtensionService::resource_loader_for(
-                workspaces.clone(),
-            ));
+        self.extensions.resource_loader = Some(
+            services::extension::ExtensionService::resource_loader_for(workspaces.clone()),
+        );
         self.extensions.file_index = services::extension::ExtensionService::new_file_index();
-        self.extensions.workspaces = workspaces;
         self.extensions.workspace_id = workspace_id;
         self.extensions.workspace_name = workspace_name;
         self.extensions.workspace_roots = workspace.roots;
         Ok(())
+    }
+
+    /// 幂等持久登记 workspace；同一 canonical root 始终返回原 stable id。
+    pub async fn register_workspace(&mut self, root: &Path) -> Result<WorkspaceRecord, AppError> {
+        let canonical = WorkspaceService::canonicalize_root(root)?;
+        let candidate = self
+            .extensions
+            .workspace_catalog
+            .values()
+            .find(|record| record.root_path == canonical)
+            .map(|record| record.workspace_id.clone())
+            .unwrap_or_else(|| self.allocate_workspace_id());
+        let name = workspace_name_for_root(&canonical);
+        let now_ms =
+            i64::try_from(pawork_engine::now_timestamp().as_unix_millis()).unwrap_or(i64::MAX);
+        let record = self
+            .store()?
+            .register_workspace(&candidate, &name, &canonical, now_ms)
+            .await?;
+        let workspace = match self.extensions.workspaces.get(&record.workspace_id)? {
+            Some(workspace) => workspace,
+            None => self.extensions.workspaces.add(
+                record.workspace_id.clone(),
+                record.name.clone(),
+                [record.root_path.clone()],
+            )?,
+        };
+        self.extensions
+            .workspace_catalog
+            .insert(record.workspace_id.clone(), record.clone());
+        self.extensions.workspace_id = record.workspace_id.clone();
+        self.extensions.workspace_name = record.name.clone();
+        self.extensions.workspace_roots = workspace.roots.clone();
+        if let Err(error) = self.extensions.file_index.scan_workspace(&workspace).await {
+            tracing::warn!(error = %error, "file-index scan failed");
+        }
+        Ok(record)
     }
 
     pub async fn open_checkpoints(&mut self, root: impl AsRef<Path>) -> Result<(), AppError> {
@@ -795,12 +857,95 @@ impl AppCore {
             std::fs::create_dir_all(parent)?;
         }
         let (store, _) = SessionStore::open(path.as_ref()).await?;
+        let boot_root = self.extensions.workspace_roots.first().cloned();
+        let mut records = store.list_workspaces().await?;
+        let boot_record = if let Some(root) = boot_root {
+            let canonical = WorkspaceService::canonicalize_root(root)?;
+            if let Some(record) = records
+                .iter()
+                .find(|record| record.root_path == canonical)
+                .cloned()
+            {
+                Some(record)
+            } else {
+                let workspace_id = if records.is_empty() {
+                    WorkspaceId::from("ws-default")
+                } else {
+                    self.allocate_workspace_id()
+                };
+                let name = workspace_name_for_root(&canonical);
+                let now_ms = i64::try_from(pawork_engine::now_timestamp().as_unix_millis())
+                    .unwrap_or(i64::MAX);
+                let record = store
+                    .register_workspace(&workspace_id, &name, &canonical, now_ms)
+                    .await?;
+                if !records
+                    .iter()
+                    .any(|item| item.workspace_id == record.workspace_id)
+                {
+                    records.push(record.clone());
+                }
+                Some(record)
+            }
+        } else {
+            None
+        };
+
+        let workspaces = WorkspaceService::new();
+        let mut catalog = BTreeMap::new();
+        for record in &records {
+            catalog.insert(record.workspace_id.clone(), record.clone());
+            if let Err(error) = workspaces.add(
+                record.workspace_id.clone(),
+                record.name.clone(),
+                [record.root_path.clone()],
+            ) {
+                tracing::warn!(
+                    workspace_id = record.workspace_id.as_str(),
+                    root = %record.root_path.display(),
+                    error = %error,
+                    "registered workspace root is unavailable"
+                );
+            }
+        }
+        self.install_builtin_tools(&workspaces)?;
+        self.extensions.resource_loader = Some(
+            services::extension::ExtensionService::resource_loader_for(workspaces.clone()),
+        );
+        self.extensions.file_index = services::extension::ExtensionService::new_file_index();
+        self.extensions.workspaces = workspaces.clone();
+        self.extensions.workspace_catalog = catalog;
+        let selected = boot_record
+            .and_then(|record| {
+                workspaces
+                    .get(&record.workspace_id)
+                    .ok()
+                    .flatten()
+                    .map(|workspace| (record, workspace))
+            })
+            .or_else(|| {
+                records.iter().find_map(|record| {
+                    workspaces
+                        .get(&record.workspace_id)
+                        .ok()
+                        .flatten()
+                        .map(|workspace| (record.clone(), workspace))
+                })
+            });
+        if let Some((record, workspace)) = selected {
+            self.extensions.workspace_id = record.workspace_id;
+            self.extensions.workspace_name = record.name;
+            self.extensions.workspace_roots = workspace.roots;
+        } else {
+            self.extensions.workspace_id = WorkspaceId::from("ws-unbound");
+            self.extensions.workspace_name = "unbound".into();
+            self.extensions.workspace_roots.clear();
+        }
         let workspace_bindings = store.list_session_workspace_bindings().await?;
         self.store = Some(store);
         // ADR-043：存储打开与绑定读取全部成功后，再以持久化事实原子替换
         // 进程内缓存；重复 open_store 不保留旧库的陈旧归属。
-        self.session
-            .replace_workspace_cache(workspace_bindings);
+        self.session.replace_workspace_cache(workspace_bindings);
         Ok(())
     }
 
@@ -848,6 +993,88 @@ impl AppCore {
         &self.extensions.workspace_name
     }
 
+    pub fn registered_workspaces(&self) -> Vec<WorkspaceRecord> {
+        let mut records: Vec<_> = self
+            .extensions
+            .workspace_catalog
+            .values()
+            .cloned()
+            .collect();
+        records.sort_by(|left, right| {
+            left.created_at_ms
+                .cmp(&right.created_at_ms)
+                .then_with(|| left.workspace_id.as_str().cmp(right.workspace_id.as_str()))
+        });
+        records
+    }
+
+    pub fn workspace_by_id(&self, workspace_id: &WorkspaceId) -> Result<Workspace, AppError> {
+        self.extensions
+            .workspaces
+            .get(workspace_id)?
+            .ok_or_else(|| AppError::WorkspaceUnavailable(workspace_id.as_str().to_string()))
+    }
+
+    pub fn workspace_for_session(&self, session_id: &SessionId) -> Result<Workspace, AppError> {
+        let workspace_id = self
+            .session_workspace(session_id)
+            .ok_or_else(|| AppError::SessionWorkspaceUnassigned(session_id.as_str().to_string()))?;
+        self.workspace_by_id(&workspace_id)
+    }
+
+    /// ADR-044 D3：有可用项目时未绑定/未登记必须 fail-closed。
+    /// 仅测试与尚未登记任何 root 的进程允许落到空的 ws-unbound。
+    pub(crate) fn workspace_for_session_or_unbound(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Workspace, AppError> {
+        match self.workspace_for_session(session_id) {
+            Ok(workspace) => Ok(workspace),
+            Err(AppError::SessionWorkspaceUnassigned(_))
+                if !self.has_usable_registered_workspace() =>
+            {
+                Ok(unbound_workspace())
+            }
+            Err(AppError::WorkspaceUnavailable(ref workspace_id))
+                if workspace_id == "ws-unbound" && !self.has_usable_registered_workspace() =>
+            {
+                Ok(unbound_workspace())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn has_usable_registered_workspace(&self) -> bool {
+        self.extensions
+            .workspace_catalog
+            .keys()
+            .any(|workspace_id| {
+                self.workspace_by_id(workspace_id)
+                    .map(|workspace| !workspace.roots.is_empty())
+                    .unwrap_or(false)
+            })
+    }
+
+    pub async fn latest_session_for_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Option<SessionId>, AppError> {
+        Ok(self.list_sessions().await?.into_iter().find_map(|record| {
+            (record.workspace_id.as_deref() == Some(workspace_id.as_str()))
+                .then(|| SessionId::from(record.session_id))
+        }))
+    }
+
+    fn allocate_workspace_id(&self) -> WorkspaceId {
+        let sequence = self
+            .next_workspace
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        WorkspaceId::from(format!(
+            "ws-{}-{sequence}",
+            pawork_engine::now_timestamp().as_unix_millis()
+        ))
+    }
+
     pub fn workspace_trusted(&self) -> bool {
         self.approval.workspace_trusted()
     }
@@ -856,7 +1083,8 @@ impl AppCore {
     /// 供 devfixture 等不落库重建路径使用。生产初始绑定统一走
     /// create_session_with_workspace 原子落盘）。
     pub fn bind_session_workspace(&self, session_id: &SessionId, workspace_id: WorkspaceId) {
-        self.session.insert_workspace_cache(session_id, workspace_id);
+        self.session
+            .insert_workspace_cache(session_id, workspace_id);
     }
 
     pub fn session_workspace(&self, session_id: &SessionId) -> Option<WorkspaceId> {
@@ -1037,11 +1265,8 @@ impl AppCore {
         } else {
             4_096
         };
-        let budget = ContextBudget::from_context_window(
-            entry.context_window_tokens,
-            output_reserve,
-            0,
-        );
+        let budget =
+            ContextBudget::from_context_window(entry.context_window_tokens, output_reserve, 0);
         // 软限 = 硬限的 80%：提前压缩，避免贴着上限触发 provider 4xx。
         let soft_limit = budget.max_input_tokens / 5 * 4;
         TurnContext {
@@ -1163,6 +1388,22 @@ fn workspace_root_from_config_file(workspace_file: Option<&Path>) -> Option<Path
     }
 }
 
+fn workspace_name_for_root(root: &Path) -> String {
+    root.file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("workspace")
+        .to_string()
+}
+
+pub(crate) fn unbound_workspace() -> Workspace {
+    Workspace {
+        id: WorkspaceId::from("ws-unbound"),
+        name: "unbound".into(),
+        roots: Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use pawork_domain::{
@@ -1170,8 +1411,8 @@ mod tests {
     };
 
     use super::*;
-    use crate::testsupport::*;
     use crate::provider_assembly::apply_config_models;
+    use crate::testsupport::*;
 
     // RecordingEvents / ScriptedProvider / mock_core 等共享测试装配
     // 已随服务抽取迁至 crate::testsupport。
@@ -1210,7 +1451,10 @@ mod tests {
         };
         let env_row = glm(&core);
         assert_eq!(env_row.source.as_str(), "env");
-        assert!(env_row.masked.is_none(), "env source must not display value");
+        assert!(
+            env_row.masked.is_none(),
+            "env source must not display value"
+        );
 
         core.auth_set_key("glm-coding", secret).expect("set key");
         let file_row = glm(&core);
@@ -1268,7 +1512,6 @@ mod tests {
         assert!(context.estimator.is_some());
     }
 
-
     #[tokio::test]
     async fn compact_session_commits_summary_and_replaces_projection() {
         let (core, _dir) = mock_core(vec![
@@ -1312,9 +1555,7 @@ mod tests {
         let envelopes = sink.0.lock().expect("mutex").clone();
         let started = envelopes
             .iter()
-            .position(|envelope| {
-                matches!(&envelope.payload, AgentEvent::CompactionStarted { .. })
-            })
+            .position(|envelope| matches!(&envelope.payload, AgentEvent::CompactionStarted { .. }))
             .expect("CompactionStarted");
         let completed = envelopes
             .iter()
@@ -1416,13 +1657,9 @@ mod tests {
         .await
         .expect("approved plan allows turn");
 
-        core.plan_replace(
-            &session,
-            "changed",
-            vec!["new step".into()],
-        )
-        .await
-        .expect("replace");
+        core.plan_replace(&session, "changed", vec!["new step".into()])
+            .await
+            .expect("replace");
         let blocked_again = core
             .chat_turn(
                 &session,
@@ -1473,7 +1710,10 @@ mod tests {
             None,
             expected.parent().expect("parent").to_path_buf(),
         );
-        assert!(outcome.degrade.is_some(), "HOME fallback must produce DegradeEvent");
+        assert!(
+            outcome.degrade.is_some(),
+            "HOME fallback must produce DegradeEvent"
+        );
         let subscriber = crate::testsupport::RecordingSubscriber::new();
         let path = tracing::subscriber::with_default(subscriber.clone(), || {
             crate::data_dir::consume_data_dir_outcome(outcome.clone())
@@ -1486,7 +1726,11 @@ mod tests {
                 event.fields.get("code").map(String::as_str) == Some("degrade.home_dir_fallback")
             })
             .collect();
-        assert_eq!(emitted.len(), 1, "load_with consumer must warn once: {events:?}");
+        assert_eq!(
+            emitted.len(),
+            1,
+            "load_with consumer must warn once: {events:?}"
+        );
         let emitted = emitted[0];
         assert_eq!(emitted.level, "WARN");
         assert!(emitted.message.contains("HOME is unset"), "{emitted:?}");
@@ -1515,5 +1759,24 @@ mod tests {
             "consume_data_dir_outcome must stay silent when degrade is absent: {:?}",
             subscriber.events()
         );
+    }
+
+    #[tokio::test]
+    async fn unassigned_session_fails_closed_when_registry_has_a_project() {
+        let project = tempfile::tempdir().expect("project");
+        let (mut core, _dir) = mock_core(Vec::new()).await;
+        core.register_workspace(project.path())
+            .await
+            .expect("register");
+        let session = SessionId::from("ses-unassigned");
+        core.store()
+            .expect("store")
+            .create_session(&session, "unassigned", pawork_engine::now_timestamp())
+            .await
+            .expect("create unbound session");
+        let error = core
+            .workspace_for_session_or_unbound(&session)
+            .expect_err("must not borrow current project");
+        assert!(matches!(error, AppError::SessionWorkspaceUnassigned(_)));
     }
 }

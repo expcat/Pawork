@@ -8,29 +8,27 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
+use crate::gui_server::{GuiHost, GuiHostError};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
-use pawork_domain::{
-    CommandId, QueryId, SessionId, TenantId, WorkspaceId,
-};
-use pawork_exec::PtyService;
-use pawork_storage::session::{SessionRecord, SessionTree};
+use pawork_domain::{CommandId, QueryId, SessionId, TenantId, WorkspaceId};
 use pawork_engine::now_timestamp;
-use crate::gui_server::{GuiHost, GuiHostError};
+use pawork_exec::PtyService;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, GlobalSequence, Snapshot, SnapshotSection, SnapshotSectionKind,
     TimelinePage, DEFAULT_CONTROL_PLANE_TENANT,
 };
+use pawork_storage::session::{SessionRecord, SessionTree};
 
 #[cfg(test)]
 use pawork_domain::{AgentEvent, AgentEventEnvelope};
 #[cfg(test)]
 use pawork_engine::{AgentEventSink, EngineError};
+use pawork_protocol::app::registry::{command_wire_name, query_wire_name};
 #[cfg(test)]
 use pawork_protocol::API_VERSION;
 use serde_json::{json, Value};
-use pawork_protocol::app::registry::{command_wire_name, query_wire_name};
 
 use crate::{
     should_cache, AppCore, GuiApprovalHost, HubError, IdempotencyCheck, IdempotencyStore,
@@ -44,10 +42,9 @@ mod handlers;
 mod tests;
 
 pub use bus::{ActiveGuiRun, GuiBroadcastSink, GuiEventBus, GuiRunRegistry};
+use events::client_scope_from_source;
 #[cfg(test)]
 use handlers::run_start::{run_start_overview_owner, run_start_requested_provider_switch};
-use events::client_scope_from_source;
-
 
 fn session_tree_entry(record: &SessionRecord, workspace_id: Option<WorkspaceId>) -> Value {
     let mut data = json!({
@@ -107,9 +104,8 @@ impl GuiHostAdapter {
     }
 
     pub fn with_approvals(core: Arc<AppCore>, approvals: Arc<GuiApprovalHost>) -> Self {
-        let mut owned = Arc::try_unwrap(core).unwrap_or_else(|_| {
-            panic!("GuiHostAdapter requires a uniquely owned AppCore Arc")
-        });
+        let mut owned = Arc::try_unwrap(core)
+            .unwrap_or_else(|_| panic!("GuiHostAdapter requires a uniquely owned AppCore Arc"));
         let mode = owned.approval_mode();
         let trusted = owned.workspace_trusted();
         owned.configure_approval(mode, trusted, approvals.clone());
@@ -121,10 +117,8 @@ impl GuiHostAdapter {
         approvals: Arc<GuiApprovalHost>,
     ) -> Self {
         let stamp = now_timestamp().as_unix_millis();
-        let instance = pawork_domain::CoreInstanceId::from(format!(
-            "pawork-{stamp}-{}",
-            std::process::id()
-        ));
+        let instance =
+            pawork_domain::CoreInstanceId::from(format!("pawork-{stamp}-{}", std::process::id()));
         let bus = Arc::new(GuiEventBus::new(DEFAULT_HUB_CAPACITY));
         {
             let bus = Arc::clone(&bus);
@@ -180,7 +174,9 @@ impl GuiHostAdapter {
         self.instance.clone()
     }
 
-    pub async fn session_store(&self) -> Result<pawork_storage::session::SessionStore, GuiHostError> {
+    pub async fn session_store(
+        &self,
+    ) -> Result<pawork_storage::session::SessionStore, GuiHostError> {
         self.core
             .read()
             .await
@@ -278,17 +274,11 @@ impl GuiHostAdapter {
                 }
             }
         } else {
-            ledger
-                .release(tenant, command_id, idempotency_key)
-                .await;
+            ledger.release(tenant, command_id, idempotency_key).await;
         }
     }
 
-    fn on_command_record_failure(
-        &self,
-        command_id: &str,
-        error: &crate::IdempotencyError,
-    ) {
+    fn on_command_record_failure(&self, command_id: &str, error: &crate::IdempotencyError) {
         // IdempotencyStore::record already bumps record_failures. This helper
         // must not bump again (command() would double-count) and must not
         // swallow the error.
@@ -335,8 +325,8 @@ impl GuiHost for GuiHostAdapter {
                     if live.contains(item.tool_call.tool_call_id.as_str()) {
                         continue;
                     }
-                    let arguments = serde_json::from_str(&item.tool_call.arguments_json)
-                        .unwrap_or(Value::Null);
+                    let arguments =
+                        serde_json::from_str(&item.tool_call.arguments_json).unwrap_or(Value::Null);
                     pending.push(PendingToolApproval {
                         run_id: item.tool_call.run_id.clone(),
                         session_id: Some(item.session_id.clone()),
@@ -358,8 +348,10 @@ impl GuiHost for GuiHostAdapter {
         });
         let mut session_entries = Vec::new();
         for record in &sessions {
-            let mut entry =
-                session_tree_entry(record, core.session_workspace_for_record(&record.session_id));
+            let mut entry = session_tree_entry(
+                record,
+                core.session_workspace_for_record(&record.session_id),
+            );
             if let Ok(store) = core.store() {
                 if let Ok(tree) = store
                     .session_tree(&SessionId::from(record.session_id.as_str()))
@@ -374,11 +366,18 @@ impl GuiHost for GuiHostAdapter {
             SnapshotSection {
                 kind: SnapshotSectionKind::Workspaces,
                 revision: self.bus.next_revision(),
-                data: Some(json!([{
-                    "id": core.workspace_id().as_str(),
-                    "name": core.workspace_name(),
-                    "trusted": core.workspace_trusted(),
-                }])),
+                data: Some(Value::Array(
+                    core.registered_workspaces()
+                        .into_iter()
+                        .map(|record| {
+                            json!({
+                                "id": record.workspace_id.as_str(),
+                                "name": record.name,
+                                "trusted": core.workspace_trusted(),
+                            })
+                        })
+                        .collect(),
+                )),
                 artifact_id: None,
             },
             SnapshotSection {
@@ -523,9 +522,9 @@ impl GuiHost for GuiHostAdapter {
         let scope = client_scope_from_source(&envelope.source);
         let mut ledger = {
             let core = self.core.read().await;
-            let store = core.store().map_err(|_| {
-                Self::host_error("store_unavailable", "session store is not open")
-            })?;
+            let store = core
+                .store()
+                .map_err(|_| Self::host_error("store_unavailable", "session store is not open"))?;
             IdempotencyStore::for_store(store.command_ledger()).with_scope(scope)
         };
         // 进程内 Notify 必须跨 command() 共享；SQLite 仍是权威 CAS。
@@ -619,7 +618,11 @@ impl GuiHost for GuiHostAdapter {
         missed: Option<u64>,
         client_id: Option<&str>,
     ) -> Option<AppEventEnvelope> {
-        Some(self.bus.publish_event_stream_lagged(self.instance.clone(), missed, client_id).0)
+        Some(
+            self.bus
+                .publish_event_stream_lagged(self.instance.clone(), missed, client_id)
+                .0,
+        )
     }
 }
 
@@ -703,7 +706,9 @@ fn command_session_create<'a>(
     envelope: &'a AppCommandEnvelope,
     command: &'a AppCommand,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::session::session_create(adapter, envelope, command))
+    Box::pin(handlers::session::session_create(
+        adapter, envelope, command,
+    ))
 }
 
 fn command_session_open<'a>(
@@ -751,7 +756,9 @@ fn command_terminal_create<'a>(
     envelope: &'a AppCommandEnvelope,
     command: &'a AppCommand,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::terminal::terminal_create(adapter, envelope, command))
+    Box::pin(handlers::terminal::terminal_create(
+        adapter, envelope, command,
+    ))
 }
 
 fn command_terminal_write<'a>(
@@ -759,7 +766,9 @@ fn command_terminal_write<'a>(
     envelope: &'a AppCommandEnvelope,
     command: &'a AppCommand,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::terminal::terminal_write(adapter, envelope, command))
+    Box::pin(handlers::terminal::terminal_write(
+        adapter, envelope, command,
+    ))
 }
 
 fn command_terminal_resize<'a>(
@@ -767,7 +776,9 @@ fn command_terminal_resize<'a>(
     envelope: &'a AppCommandEnvelope,
     command: &'a AppCommand,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::terminal::terminal_resize(adapter, envelope, command))
+    Box::pin(handlers::terminal::terminal_resize(
+        adapter, envelope, command,
+    ))
 }
 
 static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[

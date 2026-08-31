@@ -5,8 +5,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, Message, MessageId,
-    MessageRole, SessionId, TextContent, ToolResultContent, WorkspaceId,
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, Message, MessageId, MessageRole,
+    SessionId, TextContent, ToolResultContent, WorkspaceId,
 };
 use pawork_engine::EngineError;
 use pawork_storage::session::SessionRecord;
@@ -27,11 +27,7 @@ impl SessionService {
         }
     }
 
-    pub(crate) fn insert_workspace_cache(
-        &self,
-        session_id: &SessionId,
-        workspace_id: WorkspaceId,
-    ) {
+    pub(crate) fn insert_workspace_cache(&self, session_id: &SessionId, workspace_id: WorkspaceId) {
         self.workspaces
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -39,10 +35,7 @@ impl SessionService {
     }
 
     /// 启动预载（ADR-043）：以存储中全部非 NULL 绑定原子替换缓存。
-    pub(crate) fn replace_workspace_cache(
-        &self,
-        bindings: Vec<(SessionId, WorkspaceId)>,
-    ) {
+    pub(crate) fn replace_workspace_cache(&self, bindings: Vec<(SessionId, WorkspaceId)>) {
         let mut workspaces = self
             .workspaces
             .lock()
@@ -75,9 +68,15 @@ impl SessionService {
         let n = core.next_session.fetch_add(1, Ordering::Relaxed);
         let ts = pawork_engine::now_timestamp();
         let id = SessionId::from(format!("ses-{}-{n}", ts.as_unix_millis()));
-        core.store()?
-            .create_session(&id, title, ts)
-            .await?;
+        let workspace_id = core.workspace_id().clone();
+        if workspace_id.as_str() != "ws-unbound" && core.workspace_by_id(&workspace_id).is_ok() {
+            core.store()?
+                .create_session_with_workspace(&id, title, ts, &workspace_id)
+                .await?;
+            self.insert_workspace_cache(&id, workspace_id);
+        } else {
+            core.store()?.create_session(&id, title, ts).await?;
+        }
         Ok(id)
     }
 
@@ -324,8 +323,7 @@ mod tests {
         // 第二个实例经 open_store 启动预载恢复绑定（ADR-043）。
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("session.db");
-        let backend: std::sync::Arc<dyn SecretBackend> =
-            std::sync::Arc::new(MemoryBackend::new());
+        let backend: std::sync::Arc<dyn SecretBackend> = std::sync::Arc::new(MemoryBackend::new());
 
         let mut core = crate::AppCore::from_config_inner(
             PaworkConfig::default(),
@@ -336,7 +334,8 @@ mod tests {
         )
         .await
         .expect("first core");
-        core.attach_workspace(dir.path()).expect("attach workspace 1");
+        core.attach_workspace(dir.path())
+            .expect("attach workspace 1");
         core.open_store(&path).await.expect("open store 1");
         let session = core
             .create_session_with_workspace("restart-demo", WorkspaceId::from("ws-default"))
@@ -375,15 +374,10 @@ mod tests {
             .expect("archive");
         core.shutdown().await.expect("shutdown 1");
 
-        let mut restarted = crate::AppCore::from_config_inner(
-            PaworkConfig::default(),
-            None,
-            None,
-            backend,
-            true,
-        )
-        .await
-        .expect("second core");
+        let mut restarted =
+            crate::AppCore::from_config_inner(PaworkConfig::default(), None, None, backend, true)
+                .await
+                .expect("second core");
         restarted
             .attach_workspace(dir.path())
             .expect("attach workspace 2");
@@ -423,20 +417,14 @@ mod tests {
                 message: pawork_domain::Message {
                     id: MessageId::from(id),
                     role: MessageRole::User,
-                    content: vec![ContentPart::Text(TextContent {
-                        text: id.into(),
-                    })],
+                    content: vec![ContentPart::Text(TextContent { text: id.into() })],
                     metadata: Default::default(),
                 },
             },
         )
     }
 
-    fn envelope(
-        session: &SessionId,
-        sequence: u64,
-        payload: AgentEvent,
-    ) -> AgentEventEnvelope {
+    fn envelope(session: &SessionId, sequence: u64, payload: AgentEvent) -> AgentEventEnvelope {
         AgentEventEnvelope::new(
             EventId::from(format!("event-{sequence}")),
             session.clone(),
@@ -539,10 +527,7 @@ mod tests {
             .await
             .expect("switch");
         store
-            .append_event(
-                "experiment",
-                committed(&session, 5, "m-fork"),
-            )
+            .append_event("experiment", committed(&session, 5, "m-fork"))
             .await
             .expect("fork message");
         store
@@ -652,7 +637,9 @@ mod tests {
         assert_eq!(waiting.tool_calls[0].state, "waiting_for_approval");
 
         let messages = core.resume_messages(&session).await.expect("resume");
-        assert!(messages.iter().any(|message| message.role == MessageRole::Tool));
+        assert!(messages
+            .iter()
+            .any(|message| message.role == MessageRole::Tool));
 
         let sealed = core
             .store()
@@ -669,12 +656,14 @@ mod tests {
             .replay_events(&session, 1, 64)
             .await
             .expect("replay");
-        let responded = replayed.iter().find_map(|envelope| match &envelope.payload {
-            AgentEvent::ToolApprovalResponded {
-                decision, comment, ..
-            } => Some((decision.clone(), comment.clone())),
-            _ => None,
-        });
+        let responded = replayed
+            .iter()
+            .find_map(|envelope| match &envelope.payload {
+                AgentEvent::ToolApprovalResponded {
+                    decision, comment, ..
+                } => Some((decision.clone(), comment.clone())),
+                _ => None,
+            });
         assert_eq!(
             responded,
             Some((
@@ -736,7 +725,9 @@ mod tests {
             .resume_messages_keep_pending(&session)
             .await
             .expect("keep pending");
-        assert!(messages.iter().all(|message| message.role != MessageRole::Tool));
+        assert!(messages
+            .iter()
+            .all(|message| message.role != MessageRole::Tool));
         let waiting = core
             .store()
             .expect("store")

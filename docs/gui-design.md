@@ -266,7 +266,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - [ ] 1440×1024 逐屏对照 design/ 三图（Timeline / 折叠 / Projects）
 - [ ] 纯键盘走查（基准 §3.6）：Tab 链、菜单 ↑/↓/Enter/Escape、task cycling / next-needs-attention、审批与焦点恢复；VoiceOver、IME 的系统级人工复核仍未执行
 - [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
-- [ ] Reconnect 恢复：Workspace 与 Changes 可恢复；Session→Workspace 重启归属进入 ROADMAP P1，进行中 Run 的全应用生命周期进入 P2
+- [x] Reconnect 恢复（P1 片 1）：Session→Workspace、Task/Timeline/Changes 跨 Host 重启恢复；Terminal 进程不恢复但 workspace/cwd 诚实恢复。多项目注册表与按会话路由已由 P1 片 2B 落地，Desktop 正式 UI 接线与真窗口验收由片 2C 承接；进行中 Run 的全应用生命周期进入 P2
 - [x] Connected 态 1080×720 最小窗：现有布局测试覆盖 100%/150% 几何；完整当前真窗口人工签字留 P4。
 - [ ] 虚拟化四例（长会话）：滚动流畅 / 回底重挂 / Entry「···」菜单锚点 / 长标题 truncate
 - [ ] hover / active 交互态抽查（基准 §8.1 取值表）

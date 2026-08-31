@@ -12,18 +12,19 @@ pub(crate) async fn workspace_list(
         unreachable!("workspace_list handler receives WorkspaceList")
     };
     let core = adapter.core.read().await;
-    let roots: Vec<Value> = core
-        .extensions
-        .workspace_roots
-        .iter()
-        .map(|path| json!({ "path": path.display().to_string() }))
+    let entries: Vec<Value> = core
+        .registered_workspaces()
+        .into_iter()
+        .map(|record| {
+            json!({
+                "id": record.workspace_id.as_str(),
+                "name": record.name,
+                "trusted": core.workspace_trusted(),
+                "roots": [{ "path": record.root_path.display().to_string() }],
+            })
+        })
         .collect();
-    Ok(AppResponse::Data(json!([{
-        "id": core.workspace_id().as_str(),
-        "name": core.workspace_name(),
-        "trusted": core.workspace_trusted(),
-        "roots": roots,
-    }])))
+    Ok(AppResponse::Data(Value::Array(entries)))
 }
 
 pub(crate) async fn session_get(
@@ -113,12 +114,12 @@ pub(crate) async fn diff_list_files(
     adapter: &GuiHostAdapter,
     query: &AppQuery,
 ) -> Result<AppResponse, GuiHostError> {
-    let AppQuery::DiffListFiles { .. } = query else {
+    let AppQuery::DiffListFiles { workspace_id } = query else {
         unreachable!("diff_list_files handler receives DiffListFiles")
     };
     let core = adapter.core.read().await;
-    match core.resolve_session("latest").await {
-        Ok(session) => {
+    match core.latest_session_for_workspace(workspace_id).await {
+        Ok(Some(session)) => {
             let diff = core
                 .session_diff(&session)
                 .await
@@ -139,9 +140,7 @@ pub(crate) async fn diff_list_files(
                 })),
             })))
         }
-        Err(crate::AppError::SessionNotFound(_)) => {
-            Ok(AppResponse::Data(json!({ "files": [] })))
-        }
+        Ok(None) => Ok(AppResponse::Data(json!({ "files": [] }))),
         Err(error) => Err(GuiHostAdapter::app_error(error)),
     }
 }
@@ -166,10 +165,9 @@ pub(crate) async fn quota_overview(
         .usage_overview(provider.as_deref(), session)
         .await
         .map_err(|error| GuiHostAdapter::host_error("quota", error.to_string()))?;
-    Ok(AppResponse::Data(
-        serde_json::to_value(overview)
-            .map_err(|error| GuiHostAdapter::host_error("internal", error.to_string()))?,
-    ))
+    Ok(AppResponse::Data(serde_json::to_value(overview).map_err(
+        |error| GuiHostAdapter::host_error("internal", error.to_string()),
+    )?))
 }
 
 pub(crate) async fn mcp_list(
@@ -189,13 +187,18 @@ pub(crate) async fn diff_get(
     adapter: &GuiHostAdapter,
     query: &AppQuery,
 ) -> Result<AppResponse, GuiHostError> {
-    let AppQuery::DiffGet { path, cursor, .. } = query else {
+    let AppQuery::DiffGet {
+        workspace_id,
+        path,
+        cursor,
+    } = query
+    else {
         unreachable!("diff_get handler receives DiffGet")
     };
     let core = adapter.core.read().await;
-    let session = match core.resolve_session("latest").await {
-        Ok(session) => session,
-        Err(crate::AppError::SessionNotFound(_)) => {
+    let session = match core.latest_session_for_workspace(workspace_id).await {
+        Ok(Some(session)) => session,
+        Ok(None) => {
             return Ok(AppResponse::Data(json!({
                 "path": path.as_str(),
                 "files": [],

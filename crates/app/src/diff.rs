@@ -3,13 +3,13 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use pawork_storage::blob::{ArtifactStore, FileSnapshot};
 use pawork_domain::{CancellationToken, SessionId};
 use pawork_git::diff::FileStatus;
 use pawork_git::{
     paginate, DiffFile, DiffHunk, DiffLine, DiffOptions, DiffPage, DiffService, GitError,
     GitService, Head, HunkId, LineKind, StatusService,
 };
+use pawork_storage::blob::{ArtifactStore, FileSnapshot};
 
 use crate::checkpoint::{first_snapshots, run_checkpoints, session_changed_paths, session_run_ids};
 use crate::{AppCore, AppError};
@@ -31,10 +31,7 @@ pub struct GitDiffHeader {
     pub dirty_files: usize,
 }
 
-pub async fn session_diff(
-    core: &AppCore,
-    session_id: &SessionId,
-) -> Result<SessionDiff, AppError> {
+pub async fn session_diff(core: &AppCore, session_id: &SessionId) -> Result<SessionDiff, AppError> {
     let runs = match core.checkpoints.as_ref() {
         Some(service) => {
             let run_ids = session_run_ids(core, session_id).await?;
@@ -43,25 +40,20 @@ pub async fn session_diff(
         None => Vec::new(),
     };
     let session_paths = session_changed_paths(&runs);
-    let root = core.extensions.workspace_roots.first().cloned();
+    let roots = core.workspace_for_session_or_unbound(session_id)?.roots;
+    let root = roots.first().cloned();
     let (files, git) = match root.as_deref() {
         Some(root) => match try_git_diff(root, &session_paths).await {
             Ok(pair) => pair,
-            Err(AppError::Git(GitError::NotARepository(_))) | Err(AppError::Git(GitError::GitNotFound(_))) => {
-                (
-                    snapshot_diff(
-                        core.artifacts.as_ref(),
-                        &core.extensions.workspace_roots,
-                        &runs,
-                    )
-                    .await?,
-                    None,
-                )
-            }
+            Err(AppError::Git(GitError::NotARepository(_)))
+            | Err(AppError::Git(GitError::GitNotFound(_))) => (
+                snapshot_diff(core.artifacts.as_ref(), &roots, &runs).await?,
+                None,
+            ),
             Err(error) => return Err(error),
         },
         None => (
-            snapshot_diff(core.artifacts.as_ref(), &core.extensions.workspace_roots, &runs).await?,
+            snapshot_diff(core.artifacts.as_ref(), &roots, &runs).await?,
             None,
         ),
     };
@@ -375,4 +367,48 @@ fn split_lines(text: &str) -> Vec<String> {
     text.split('\n')
         .map(|line| line.trim_end_matches('\r').to_string())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testsupport::mock_core;
+
+    fn init_git(path: &Path) {
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(path)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .status()
+            .expect("git init");
+        assert!(status.success(), "git init");
+    }
+
+    #[tokio::test]
+    async fn session_diff_uses_session_workspace_roots() {
+        let first = tempfile::tempdir().expect("first");
+        let second = tempfile::tempdir().expect("second");
+        init_git(first.path());
+        init_git(second.path());
+        let (mut core, _dir) = mock_core(Vec::new()).await;
+        let first_record = core
+            .register_workspace(first.path())
+            .await
+            .expect("register first");
+        let second_record = core
+            .register_workspace(second.path())
+            .await
+            .expect("register second");
+        core.attach_workspace(&first_record.root_path)
+            .expect("switch current to first");
+        let session = core
+            .create_session_with_workspace("in-second", second_record.workspace_id.clone())
+            .await
+            .expect("session in second");
+        let diff = core.session_diff(&session).await.expect("diff");
+        let git = diff.git.expect("git header");
+        assert_eq!(git.work_dir, second_record.root_path);
+        assert_ne!(git.work_dir, first_record.root_path);
+        core.shutdown().await.expect("shutdown");
+    }
 }

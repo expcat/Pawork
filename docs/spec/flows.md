@@ -65,9 +65,9 @@ Headless / ACP：
 | 契约 | 常量 | 位置 |
 | --- | --- | --- |
 | 事件信封（磁盘/线上 JSON） | `pawork_domain::events::CURRENT_SCHEMA_VERSION = 1` | `crates/domain/src/events.rs` |
-| Session SQLite 迁移 | `pawork_storage::session::CURRENT_SCHEMA_VERSION = 13` | `crates/storage/src/session/migration.rs` |
+| Session SQLite 迁移 | `pawork_storage::session::CURRENT_SCHEMA_VERSION = 14` | `crates/storage/src/session/migration.rs` |
 
-信封 golden：`crates/domain/tests/`（32 变体）。DDL 只追加；v11 是 `command_ledger`（不进 export）；v12（R6）`messages` 整表重建去 `DEFAULT 'main'`、回填即校验；v13（ADR-043）给 `sessions` 纯追加可空 `workspace_id` 弱引用列。lineage 升级 golden 检入 `crates/storage/src/session/fixtures/`。
+信封 golden：`crates/domain/tests/`（32 变体）。DDL 只追加；v11 是 `command_ledger`（不进 export）；v12（R6）`messages` 整表重建去 `DEFAULT 'main'`、回填即校验；v13（ADR-043）给 `sessions` 纯追加可空 `workspace_id` 弱引用列；v14（ADR-044）新建 `workspaces` 持久项目注册表（空表不回填，按 canonical root 幂等登记）。lineage 升级 golden 检入 `crates/storage/src/session/fixtures/`。
 
 写入：
 

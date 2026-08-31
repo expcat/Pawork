@@ -20,8 +20,8 @@ pub(crate) fn run_start_requested_provider_switch(
     requested_model: Option<&str>,
 ) -> Option<(String, Option<String>)> {
     let provider = requested_provider?;
-    let already = current_provider == provider
-        && requested_model.is_none_or(|model| current_model == model);
+    let already =
+        current_provider == provider && requested_model.is_none_or(|model| current_model == model);
     if already {
         None
     } else {
@@ -39,9 +39,9 @@ where
     P: AsRef<str> + 'a,
     M: AsRef<str> + 'a,
 {
-    overview.into_iter().find_map(|(provider, id)| {
-        (id.as_ref() == model).then(|| provider.as_ref().to_string())
-    })
+    overview
+        .into_iter()
+        .find_map(|(provider, id)| (id.as_ref() == model).then(|| provider.as_ref().to_string()))
 }
 
 pub(crate) async fn run_start(
@@ -59,10 +59,13 @@ pub(crate) async fn run_start(
     else {
         unreachable!("run_start handler receives RunStart")
     };
-    let history = {
+    let (history, workspace_id, workspace_roots) = {
         let core = adapter.core.read().await;
         core.get_session(session_id)
             .await
+            .map_err(GuiHostAdapter::app_error)?;
+        let workspace = core
+            .workspace_for_session_or_unbound(session_id)
             .map_err(GuiHostAdapter::app_error)?;
         if core.provider_pending() {
             return Ok(AppResponse::Error(ErrorContext {
@@ -78,9 +81,13 @@ pub(crate) async fn run_start(
                 diagnostics: Default::default(),
             }));
         }
-        core.resume_messages_keep_pending(session_id)
-            .await
-            .map_err(GuiHostAdapter::app_error)?
+        (
+            core.resume_messages_keep_pending(session_id)
+                .await
+                .map_err(GuiHostAdapter::app_error)?,
+            workspace.id.clone(),
+            workspace.roots.clone(),
+        )
     };
     let current = {
         let core = adapter.core.read().await;
@@ -129,18 +136,11 @@ pub(crate) async fn run_start(
         if let Some(model) = model {
             if model.as_str() != current.1 {
                 let mut core = adapter.core.write().await;
-                let switched = match core
-                    .switch_model(Some(session_id), model.as_str())
-                    .await
-                {
+                let switched = match core.switch_model(Some(session_id), model.as_str()).await {
                     Ok(()) => Ok(()),
                     Err(crate::AppError::ModelBelongsToProvider { owner, .. }) => {
-                        core.switch_provider(
-                            Some(session_id),
-                            &owner,
-                            Some(model.as_str()),
-                        )
-                        .await
+                        core.switch_provider(Some(session_id), &owner, Some(model.as_str()))
+                            .await
                     }
                     Err(error @ crate::AppError::UnknownModel { .. }) => {
                         let owner = core
@@ -152,11 +152,7 @@ pub(crate) async fn run_start(
                         match owner {
                             Some(owner) if owner != current.0 => {
                                 match core
-                                    .switch_provider(
-                                        Some(session_id),
-                                        &owner,
-                                        Some(model.as_str()),
-                                    )
+                                    .switch_provider(Some(session_id), &owner, Some(model.as_str()))
                                     .await
                                 {
                                     Ok(()) => Ok(()),
@@ -166,11 +162,8 @@ pub(crate) async fn run_start(
                                             .await
                                         {
                                             Ok(()) => {
-                                                core.switch_model(
-                                                    Some(session_id),
-                                                    model.as_str(),
-                                                )
-                                                .await
+                                                core.switch_model(Some(session_id), model.as_str())
+                                                    .await
                                             }
                                             Err(other) => Err(other),
                                         }
@@ -213,19 +206,19 @@ pub(crate) async fn run_start(
     // 必须在登记 ActiveGuiRun 之前完成：失败路径不能留下幽灵 run。
     let content = {
         let core = adapter.core.read().await;
-        core.expand_at_refs(user_message)
+        core.expand_at_refs(Some(session_id), user_message)
+            .await
             .map_err(GuiHostAdapter::app_error)?
     };
     let n = adapter.next_gui_run.fetch_add(1, Ordering::Relaxed);
-    let run_id = RunId::from(format!(
-        "run-gui-{}-{n}",
-        now_timestamp().as_unix_millis()
-    ));
+    let run_id = RunId::from(format!("run-gui-{}-{n}", now_timestamp().as_unix_millis()));
     let token = CancellationToken::new();
     adapter.runs.register(
         ActiveGuiRun {
             run_id: run_id.clone(),
             session_id: session_id.clone(),
+            workspace_id,
+            workspace_roots,
             started_at_ms: now_timestamp().as_unix_millis(),
         },
         token.clone(),
@@ -248,14 +241,8 @@ pub(crate) async fn run_start(
         let sink = GuiBroadcastSink::new(Arc::clone(&bus), instance.clone());
         let outcome = {
             let core = core.read().await;
-            core.chat_turn_with_run_id(
-                run.clone(),
-                &session,
-                messages,
-                &sink,
-                token,
-            )
-            .await
+            core.chat_turn_with_run_id(run.clone(), &session, messages, &sink, token)
+                .await
         };
         if let Err(error) = outcome {
             // fail/cancel 路径 engine 已在 Err 返回前经 sink 广播真实终态

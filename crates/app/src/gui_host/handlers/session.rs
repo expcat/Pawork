@@ -10,17 +10,19 @@ use super::super::GuiHostAdapter;
 
 fn session_view_json(
     session_id: &SessionId,
-    workspace_id: &WorkspaceId,
+    workspace_id: Option<&WorkspaceId>,
     title: &str,
     active_branch: Option<&str>,
 ) -> Value {
     let mut data = json!({
         "session_id": session_id.as_str(),
-        "workspace_id": workspace_id.as_str(),
         "title": title,
         "revision": 0,
         "open": true,
     });
+    if let Some(workspace_id) = workspace_id {
+        data["workspace_id"] = json!(workspace_id.as_str());
+    }
     if let Some(branch) = active_branch {
         data["active_branch"] = json!(branch);
     }
@@ -49,7 +51,7 @@ pub(crate) async fn session_create(
         .map_err(GuiHostAdapter::app_error)?;
     Ok(AppResponse::Data(session_view_json(
         &session_id,
-        workspace_id,
+        Some(workspace_id),
         &title,
         None,
     )))
@@ -68,12 +70,10 @@ pub(crate) async fn session_open(
         .get_session(session_id)
         .await
         .map_err(GuiHostAdapter::app_error)?;
-    let workspace_id = core
-        .session_workspace(session_id)
-        .unwrap_or_else(|| core.workspace_id().clone());
+    let workspace_id = core.session_workspace(session_id);
     Ok(AppResponse::Data(session_view_json(
         session_id,
-        &workspace_id,
+        workspace_id.as_ref(),
         &record.title,
         Some(&record.active_branch),
     )))
@@ -107,12 +107,10 @@ pub(crate) async fn session_fork(
         .switch_branch(session_id, &branch_id)
         .await
         .map_err(GuiHostAdapter::session_error)?;
-    let workspace_id = core
-        .session_workspace(session_id)
-        .unwrap_or_else(|| core.workspace_id().clone());
+    let workspace_id = core.session_workspace(session_id);
     let mut data = session_view_json(
         session_id,
-        &workspace_id,
+        workspace_id.as_ref(),
         &record.title,
         Some(&branch_id),
     );

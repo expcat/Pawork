@@ -13,11 +13,13 @@ pub(crate) async fn workspace_add(
         unreachable!("workspace_add handler receives WorkspaceAdd")
     };
     let mut core = adapter.core.write().await;
-    core.attach_workspace(std::path::Path::new(root_path))
+    let record = core
+        .register_workspace(std::path::Path::new(root_path))
+        .await
         .map_err(GuiHostAdapter::app_error)?;
     Ok(AppResponse::Data(json!({
-        "id": core.workspace_id().as_str(),
-        "name": core.workspace_name(),
+        "id": record.workspace_id.as_str(),
+        "name": record.name,
     })))
 }
 

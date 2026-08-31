@@ -13,13 +13,13 @@
 | 对话与文件 | ✅ 已验证 | 新建 Task、发送真实 Provider 消息、审批 `write_file`，磁盘生成两行标记文件 |
 | Git Changes | ✅ 已验证 | UI 显示 untracked、`+2 / −0` 与两行 diff，和仓库命令行事实一致 |
 | Terminal | ✅ 已验证 | 受现有 Policy 闸约束创建真实 PTY，执行 `pwd` 与输出标记；纯文本展示过滤 ANSI/VT 控制序列 |
-| 重启恢复 | ⚠️ 部分 | Workspace 目录可恢复；Session 与项目的稳定归属仍是后续 P1，不把进程内关联冒充持久化 |
+| 重启恢复 | ✅ 片 1 | schema v13 Session→Workspace 归属经真实 Host 重启恢复；Task/Timeline/Changes 保持，Terminal 进程不恢复但 workspace/cwd 诚实恢复，新 PTY 仍位于同一仓库 |
 
 ## 2. 设计与可用性结论
 
 优势：三栏信息架构清晰；Scope、Task、Timeline、Changes 与 Terminal 的主路径均有原生可访问节点；空态与 unavailable 状态没有用假内容填充。真实文件写入后，Changes 能把文件状态、增删统计和正文 diff 放在同一面板内，核对成本低；重启重放也不再把 `resources.injected` 等信息诊断误显示为 Error。
 
-当前风险：项目集合与 Session→Workspace 归属尚未形成完整的持久化生命周期；Terminal 是纯文本输出视图，不是完整 VT emulator；三张初始设计图尚未完成同状态人工视觉签字。以上均进入 [ROADMAP](../ROADMAP.md) 后续项，不以旧截图或旧阶段编号宣称已完成。
+当前风险：Host 已持久登记多个项目并按 Session 归属路由 Run / 资源 / diff / Terminal cwd，但 Desktop 添加 / 切换 / 重开项目与新建 / 续聊会话的正式 UI 接线仍待片 2C 真窗口验收；Terminal 是纯文本输出视图，不是完整 VT emulator；三张初始设计图尚未完成同状态人工视觉签字。以上均进入 [ROADMAP](../ROADMAP.md) 后续项，不以片 2B 通过冒充 P1 整体完成。
 
 Accessibility 口径：本轮真实路径已通过稳定 identifier 驱动项目、消息、Changes 与 Terminal。后续仍需完成 VoiceOver 阅读顺序、完整键盘回环和 100%/125%/150% 全状态人工验收。
 
@@ -32,4 +32,4 @@ Accessibility 口径：本轮真实路径已通过稳定 identifier 驱动项目
 
 ## 4. 下一门禁
 
-按 ROADMAP P1 先完成项目集合与 Session 归属持久化，再用同一个真实项目复验重启前后的 Task、Changes 与 Terminal 上下文；随后才进入完整视觉与 Accessibility 签字。
+P1 片 2B 已完成 Host 项目注册表与按会话路由；下一步用正式 Desktop UI 验收添加 / 切换 / 重开项目及新建 / 续聊会话，之后才进入完整视觉与 Accessibility 签字。

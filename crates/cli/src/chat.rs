@@ -2,13 +2,13 @@
 
 use std::io::{self, IsTerminal, Write};
 
-use pawork_domain::ProviderErrorKind;
+use pawork_app::gui_server::GuiHost;
 use pawork_app::{session_title_from_text, AppCore, AppError, GuiApprovalHost};
+use pawork_domain::ProviderErrorKind;
 use pawork_domain::{ContentPart, Message, MessageId, MessageRole, RunId, SessionId};
 use pawork_engine::{
     AgentEventSink, CancelHandle, CancelReason, EngineError, NoopProcessTreeCleaner,
 };
-use pawork_app::gui_server::GuiHost;
 use pawork_protocol::headless::translate::encode_protocol_response;
 use pawork_protocol::headless::{HeadlessResponse, ProtocolErrorKind};
 use pawork_protocol::{AppCommand, AppEvent, AppResponse, RunState};
@@ -56,18 +56,17 @@ pub async fn run_json(
 ) -> Result<(), CliError> {
     let prompt = prompt.ok_or_else(|| {
         CliError::Usage(
-            "--json 需要 --prompt 或使用 `pawork run`（REPL 不会把 envelope 打到 stdout）"
-                .into(),
+            "--json 需要 --prompt 或使用 `pawork run`（REPL 不会把 envelope 打到 stdout）".into(),
         )
     })?;
     switch_branch_if_requested(&core, resume.as_deref(), branch.as_deref()).await?;
-    let text = flatten_parts(&core.expand_at_refs(&prompt)?);
     let workspace_id = core.workspace_id().clone();
     let resume_id = if let Some(spec) = resume.as_deref() {
         Some(core.resolve_session(spec).await?)
     } else {
         None
     };
+    let text = flatten_parts(&core.expand_at_refs(resume_id.as_ref(), &prompt).await?);
     let adapter = adapter_from_locked(core, std::sync::Arc::new(GuiApprovalHost::new()));
     let mut events = adapter.subscribe_events();
 
@@ -231,7 +230,8 @@ async fn print_command(
 }
 
 fn print_headless(response: &HeadlessResponse) -> Result<(), CliError> {
-    let line = encode_protocol_response(response).map_err(|error| CliError::Usage(error.to_string()))?;
+    let line =
+        encode_protocol_response(response).map_err(|error| CliError::Usage(error.to_string()))?;
     println!("{line}");
     io::stdout().flush()?;
     Ok(())
@@ -253,7 +253,8 @@ async fn run_prompt(
     resume: Option<String>,
     one_shot: bool,
 ) -> Result<(), CliError> {
-    let (session, mut history, mut next_msg) = open_or_create(core, resume.as_deref(), prompt).await?;
+    let (session, mut history, mut next_msg) =
+        open_or_create(core, resume.as_deref(), prompt).await?;
     eprintln!("session {session}");
     run_one_turn(
         core,
@@ -446,8 +447,9 @@ async fn handle_plan_command(
                 eprintln!("plan: 没有活动会话");
                 return;
             };
-            core.plan_snapshot(&id).await.map(|snapshot| {
-                match snapshot {
+            core.plan_snapshot(&id)
+                .await
+                .map(|snapshot| match snapshot {
                     Some(plan) => format!(
                         "{}@{} {} {}",
                         plan.plan_id.as_str(),
@@ -456,8 +458,7 @@ async fn handle_plan_command(
                         pawork_app::review_status_label(plan.review_status)
                     ),
                     None => "no plan".into(),
-                }
-            })
+                })
         }
         "create" | "replace" => {
             let Some((title, steps)) = rest.split_once('|') else {
@@ -531,7 +532,7 @@ async fn run_one_turn(
     text: &str,
     one_shot: bool,
 ) -> Result<(), CliError> {
-    let content = core.expand_at_refs(text)?;
+    let content = core.expand_at_refs(Some(session), text).await?;
     history.push(Message {
         id: next_id(session, next_msg),
         role: MessageRole::User,
@@ -546,7 +547,10 @@ async fn run_one_turn(
     let outcome = drive_turn(core, session, history, &sink, handle).await;
     println!();
 
-    *history = core.resume_messages(session).await.unwrap_or_else(|_| history.clone());
+    *history = core
+        .resume_messages(session)
+        .await
+        .unwrap_or_else(|_| history.clone());
     *next_msg = next_message_counter(history);
 
     if outcome.is_ok() {
@@ -570,7 +574,13 @@ async fn print_usage_line(core: &AppCore, session: &SessionId) {
     };
     let cost = core
         .estimate_cost_for(core.model(), &total)
-        .map(|cost| format!(" | ~{} {:.4}", cost.currency, cost.amount_micros as f64 / 1_000_000.0))
+        .map(|cost| {
+            format!(
+                " | ~{} {:.4}",
+                cost.currency,
+                cost.amount_micros as f64 / 1_000_000.0
+            )
+        })
         .unwrap_or_default();
     eprintln!(
         "tokens: turn in {} out {} | session in {} out {} (cache read {} / write {}){cost}",
@@ -591,9 +601,7 @@ async fn compact_now(core: &AppCore, session: &SessionId) -> Result<usize, CliEr
         std::sync::Arc::new(NoopProcessTreeCleaner),
     );
     let sink = crate::render::TextSink::default();
-    let rebuilt = core
-        .compact_session(session, &sink, handle.token())
-        .await?;
+    let rebuilt = core.compact_session(session, &sink, handle.token()).await?;
     Ok(rebuilt.len())
 }
 
@@ -631,9 +639,9 @@ fn map_turn_error(error: pawork_app::AppError) -> Result<(), CliError> {
             eprintln!("已取消");
             Err(CliError::Cancelled)
         }
-        pawork_app::AppError::Engine(EngineError::MaxToolRounds(n)) => Err(CliError::Turn(format!(
-            "工具轮数已达上限 ({n})，已停止。"
-        ))),
+        pawork_app::AppError::Engine(EngineError::MaxToolRounds(n)) => {
+            Err(CliError::Turn(format!("工具轮数已达上限 ({n})，已停止。")))
+        }
         pawork_app::AppError::Provider(err) => Err(CliError::Turn(format_provider_error(&err))),
         pawork_app::AppError::Engine(EngineError::Provider(err)) => {
             Err(CliError::Turn(format_provider_error(&err)))

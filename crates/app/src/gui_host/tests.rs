@@ -943,6 +943,8 @@
             ActiveGuiRun {
                 run_id: RunId::from("run-x"),
                 session_id: SessionId::from("sess-x"),
+                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_roots: Vec::new(),
                 started_at_ms: 1,
             },
             token.clone(),
@@ -1788,6 +1790,8 @@
             ActiveGuiRun {
                 run_id: run_id.clone(),
                 session_id: session.clone(),
+                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_roots: Vec::new(),
                 started_at_ms: 1,
             },
             CancellationToken::new(),

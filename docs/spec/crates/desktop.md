@@ -282,7 +282,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 历史真窗口键盘与耐久脚本仍保留为回归资产：[scripts/ui-r3-wave-b-nav.sh](../../../scripts/ui-r3-wave-b-nav.sh)、[scripts/ui-key-event.swift](../../../scripts/ui-key-event.swift) 与 [scripts/ui-r7-wave-c-resilience.sh](../../../scripts/ui-r7-wave-c-resilience.sh)。旧截图已清理，任何新结论必须按当前 ROADMAP 重建证据。
 
-2026-08-31 当前真实主路径使用正式 Host/Desktop（无 fixture/seed/mock）完成：添加仓库项目、真实 Provider 对话、审批写入标记文件、Changes `untracked · +2 / −0` 与真实 PTY 命令。当前 Desktop 定向测试 147/147；Session→Workspace 重启归属与完整视觉/Accessibility 签字仍按 ROADMAP P1/P4 推进。
+2026-08-31 当前真实主路径使用正式 Host/Desktop（无 fixture/seed/mock）完成：添加仓库项目、真实 Provider 对话、审批写入标记文件、Changes `untracked · +2 / −0` 与真实 PTY 命令；P1 片 1 又以 schema v13 会话完成 Host 重启、Task 重开、Timeline/Changes 恢复与同 workspace/cwd 新 PTY 复验。当前 Desktop 定向测试 147/147；Host 多项目注册表与按会话路由已由 P1 片 2B 落地，Desktop 正式 UI 接线仍按 ROADMAP P1 片 2C 推进，完整视觉/Accessibility 签字仍属 P4。
 
 ## 8. 注意事项与已知限制
 

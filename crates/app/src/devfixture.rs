@@ -20,8 +20,8 @@ use pawork_domain::{
     ProviderId, RequestId, RunId, SessionId, StopReason, TextContent, Timestamp, TokenUsage,
     ToolCallId, ToolOutputStream, ToolResultContent, WorkspaceId,
 };
-use pawork_storage::blob::{ArtifactStore, CheckpointService};
 use pawork_policy::ApprovalMode;
+use pawork_storage::blob::{ArtifactStore, CheckpointService};
 use pawork_storage::session::SessionStore;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -184,9 +184,7 @@ impl FixtureHostProfile {
     fn approval(self) -> Option<(ApprovalMode, bool)> {
         match self {
             Self::Default => None,
-            Self::R6Terminal | Self::R6Resources => {
-                Some((ApprovalMode::AskForDangerous, true))
-            }
+            Self::R6Terminal | Self::R6Resources => Some((ApprovalMode::AskForDangerous, true)),
             Self::R6ReadOnly => Some((ApprovalMode::ReadOnly, true)),
         }
     }
@@ -591,6 +589,21 @@ pub fn attach_fixture_workspaces(
     core.install_builtin_tools(&service)?;
     core.extensions.resource_loader = Some(ExtensionService::resource_loader_for(service.clone()));
     core.extensions.file_index = ExtensionService::new_file_index();
+    core.extensions.workspace_catalog = entries
+        .iter()
+        .map(|entry| {
+            (
+                WorkspaceId::from(entry.id.as_str()),
+                pawork_storage::session::WorkspaceRecord {
+                    workspace_id: WorkspaceId::from(entry.id.as_str()),
+                    name: entry.name.clone(),
+                    root_path: entry.path.clone(),
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            )
+        })
+        .collect();
     core.extensions.workspaces = service;
     core.extensions.workspace_id = WorkspaceId::from(primary.id.as_str());
     core.extensions.workspace_name = primary.name.clone();

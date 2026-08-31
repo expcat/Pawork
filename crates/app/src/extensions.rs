@@ -4,23 +4,23 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pawork_domain::ContentPart;
-use pawork_engine::InjectedLayer;
 use pawork_auth::locator::MCP_AUTH_FILE_NAME;
 use pawork_auth::{FileBackend, SecretBackend};
+use pawork_domain::ContentPart;
+use pawork_engine::InjectedLayer;
 use pawork_exec::{
     default_secret_paths, FilesystemPolicy, NativeRestricted, NetworkMode, SandboxPolicy,
 };
 use pawork_tools::mcp::capabilities::register_server_tools;
 use pawork_tools::mcp::config::{McpConfig, StdioSandboxRuntime, TransportSpec};
-use pawork_tools::mcp::sandbox::apply_mcp_stdio_env_hygiene;
 use pawork_tools::mcp::manager::{ConnectionState, ManagedMcpClient};
+use pawork_tools::mcp::sandbox::apply_mcp_stdio_env_hygiene;
 use pawork_tools::mcp::{McpError, McpPeer};
-use pawork_workspace::resources::ResourceInstructionKind;
 use pawork_tools::{
     ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, RunCommandTool,
     SearchTextTool, ToolRegistry, ToolScheduler, ToolSchedulerConfig, WriteFileTool,
 };
+use pawork_workspace::resources::ResourceInstructionKind;
 use pawork_workspace::WorkspaceService;
 use serde::Serialize;
 
@@ -144,9 +144,7 @@ impl AppCore {
                     name: name.clone(),
                     transport,
                     state: "configured".into(),
-                    last_error: Some(
-                        "MCP auto-start is disabled in an untrusted workspace".into(),
-                    ),
+                    last_error: Some("MCP auto-start is disabled in an untrusted workspace".into()),
                     tools: Vec::new(),
                     client: None,
                 });
@@ -243,11 +241,8 @@ impl AppCore {
             ))));
         }
         let runtime = stdio_runtime(&workspace.roots, self.approval.workspace_trusted());
-        let client = Arc::new(server.build_client(
-            name.to_string(),
-            mcp_secret_backend(),
-            runtime,
-        )?);
+        let client =
+            Arc::new(server.build_client(name.to_string(), mcp_secret_backend(), runtime)?);
         client.ping().await?;
         let tools = client
             .list_tools()
@@ -285,17 +280,44 @@ impl AppCore {
         Ok(())
     }
 
-    pub(crate) fn load_injected_layers(&self) -> Vec<InjectedLayer> {
-        self.extensions.load_injected_layers(self)
+    pub(crate) async fn load_injected_layers_for_session(
+        &self,
+        session_id: &pawork_domain::SessionId,
+    ) -> Vec<InjectedLayer> {
+        let Ok(workspace) = self.workspace_for_session(session_id) else {
+            return Vec::new();
+        };
+        self.extensions.load_injected_layers(self, &workspace).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn load_injected_layers_for_current(&self) -> Vec<InjectedLayer> {
+        let Ok(workspace) = self.workspace_by_id(self.workspace_id()) else {
+            return Vec::new();
+        };
+        self.extensions.load_injected_layers(self, &workspace).await
     }
 
     /// 把 `@token` 解析为 file-index 命中，正文作为独立 Text part。
-    pub fn expand_at_refs(&self, text: &str) -> Result<Vec<ContentPart>, AppError> {
-        self.extensions.expand_at_refs(text)
+    pub async fn expand_at_refs(
+        &self,
+        session_id: Option<&pawork_domain::SessionId>,
+        text: &str,
+    ) -> Result<Vec<ContentPart>, AppError> {
+        let workspace = match session_id {
+            Some(session_id) => self.workspace_for_session_or_unbound(session_id)?,
+            None => self
+                .workspace_by_id(self.workspace_id())
+                .unwrap_or_else(|_| crate::unbound_workspace()),
+        };
+        self.extensions.expand_at_refs(&workspace, text).await
     }
 
-    pub fn complete_at(&self, query: &str, limit: usize) -> Result<Vec<String>, AppError> {
-        self.extensions.complete_at(query, limit)
+    pub async fn complete_at(&self, query: &str, limit: usize) -> Result<Vec<String>, AppError> {
+        let workspace = self
+            .workspace_by_id(self.workspace_id())
+            .unwrap_or_else(|_| crate::unbound_workspace());
+        self.extensions.complete_at(&workspace, query, limit).await
     }
 
     pub fn workspace_root(&self) -> Option<&Path> {
@@ -344,11 +366,7 @@ fn stdio_runtime(roots: &[PathBuf], trusted: bool) -> Option<StdioSandboxRuntime
     let mut policy = SandboxPolicy {
         filesystem: FilesystemPolicy {
             read_roots: roots.to_vec(),
-            write_roots: if trusted {
-                roots.to_vec()
-            } else {
-                Vec::new()
-            },
+            write_roots: if trusted { roots.to_vec() } else { Vec::new() },
             deny: default_secret_paths(),
         },
         network_mode: NetworkMode::Hint,
@@ -405,7 +423,7 @@ pub(crate) fn at_tokens(text: &str) -> Vec<String> {
             if index > start {
                 let mut token: String = chars[start..index].iter().collect();
                 token = token
-                    .trim_end_matches(|ch: char| matches!(ch, '.' | ',' | ';' | ':' | '/' ))
+                    .trim_end_matches(|ch: char| matches!(ch, '.' | ',' | ';' | ':' | '/'))
                     .to_string();
                 if !token.is_empty() {
                     tokens.push(token);

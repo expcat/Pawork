@@ -38,7 +38,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | PRD-GIT-01 / CAP-GIT-01 | git/app/cli/Desktop Changes | git/checkpoint/diff 定向测试、Desktop projection | 真窗口 Changes、真实 rollback | Core 已实现；Desktop 写操作未实现，横滚人工项待验。 |
 | PRD-RESOURCE-01 / CAP-RESOURCE-01 | workspace/tools/app/Desktop | resources/import/MCP contract | 外部配置、MCP stdio、真窗口 Resources | 主流程已实现；部分 GUI 出口为候选。 |
 | PRD-CLIENT-01 / CAP-CLIENT-01 | protocol/app/client/cli | frame/headless/ACP golden、registry、probe | Desktop probe、Zed ACP、json-stdio | 已实现；发布级客户端矩阵未执行，probe 有已登记偶发超时。 |
-| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张初始设计图、AX/IME、用户签字 | 正式构建、项目、消息/文件、Changes、Terminal 已完成本机真窗口验收；Session→Workspace 持久化、完整视觉/VoiceOver/跨平台仍待 [ROADMAP P1–P4](../../ROADMAP.md#4-后续计划)。 |
+| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张初始设计图、AX/IME、用户签字 | 正式构建、项目、消息/文件、Changes、Terminal 与 Session→Workspace 跨 Host 重启已完成本机真窗口验收；Host 多项目注册表已落地，Desktop 正式 UI 接线、完整视觉/VoiceOver/跨平台仍待 [ROADMAP P1–P4](../../ROADMAP.md#4-后续计划)。 |
 | PRD-OPS-01 / CAP-OPS-01 | cli ops/service、app data_dir | 路径/状态/doctor 定向测试 | macOS/Linux/Windows service 与恢复演练 | 入口已实现；无发布级三平台/恢复门禁。 |
 
 ## 4. 三类不可推迟的回归
@@ -56,7 +56,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | 缺口 | 状态 | 完成条件 |
 | --- | --- | --- |
 | Desktop 真实核心路径 | 已验证（2026-08-31） | 正式脚本构建/启动；真实项目、Provider Run、审批写文件、Git Changes 与 PTY Terminal 均有窗口与外部事实双证据。 |
-| Session→Workspace 重启归属 | 待 P1 | 同一 Session 在 Host 重启后仍恢复到原 Workspace，Task、Changes 与 Terminal 上下文一致。 |
+| Session→Workspace 重启归属 | ✅ P1 片 1 | 同一 Session 在 Host 重启后仍恢复到原 Workspace，Task/Timeline/Changes 一致；Terminal 进程诚实不恢复，workspace/cwd 恢复后新 PTY 仍在同一仓库。 |
 | 配置根闭环 | 未执行 | git 根/子目录/非 git 三态与六层配置文档一致，偏差已修或登记。 |
 | ChatGPT/xAI 自然临期 OAuth refresh | 待真实账号/临期窗口 | refresh → retry → success 与 `invalid_grant` 清理均有真实证据。 |
 | 三类关键回归发布矩阵 | 未立项 | 发布任务明确命令和环境后执行；普通改动仍同批跑受影响的定向种子。 |

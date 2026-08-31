@@ -5,7 +5,7 @@ use pawork_domain::{ToolCapability, WorkspaceId};
 use pawork_exec::{OwnerSessionId, PtyCreateSpec, PtyEvent, PtyWindowSize, TerminalId};
 use pawork_policy::{ApprovalMode, PolicyDecision, PolicyEngine, PolicyInput};
 use pawork_protocol::{
-    AppCommand, AppCommandEnvelope, AppResponse, AppEvent, WorkspaceRelativePath,
+    AppCommand, AppCommandEnvelope, AppEvent, AppResponse, WorkspaceRelativePath,
 };
 use pawork_workspace::resolve_relative_path;
 use serde_json::{json, Value};
@@ -69,15 +69,10 @@ impl GuiHostAdapter {
         workspace_id: &WorkspaceId,
         working_directory: Option<&WorkspaceRelativePath>,
     ) -> Result<Option<PathBuf>, GuiHostError> {
-        let roots = if workspace_id.as_str() == core.workspace_id().as_str() {
-            core.extensions.workspace_roots.clone()
-        } else {
-            core.extensions.workspaces
-                .get(workspace_id)
-                .map_err(|error| Self::host_error("app_error", error.to_string()))?
-                .map(|workspace| workspace.roots)
-                .unwrap_or_default()
-        };
+        let workspace = core
+            .workspace_by_id(workspace_id)
+            .map_err(GuiHostAdapter::app_error)?;
+        let roots = workspace.roots;
         match working_directory {
             None => Ok(roots.first().cloned()),
             Some(relative) => {

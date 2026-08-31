@@ -194,7 +194,8 @@ impl GuiEventBus {
         missed: Option<u64>,
         client_id: Option<&str>,
     ) -> (pawork_protocol::AppEventEnvelope, usize) {
-        self.hub.publish_lagged_degrade_envelope(instance, missed, client_id)
+        self.hub
+            .publish_lagged_degrade_envelope(instance, missed, client_id)
     }
 }
 
@@ -224,6 +225,10 @@ impl AgentEventSink for GuiBroadcastSink {
 pub struct ActiveGuiRun {
     pub run_id: RunId,
     pub session_id: SessionId,
+    /// Run 执行当时的 workspace 上下文快照；会话在 run 中途改绑时，仍由
+    /// 这组值承接当轮的 DiffChanged / 恢复展示。
+    pub workspace_id: pawork_domain::WorkspaceId,
+    pub workspace_roots: Vec<std::path::PathBuf>,
     pub started_at_ms: u64,
 }
 

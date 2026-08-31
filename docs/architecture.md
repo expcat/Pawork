@@ -2,7 +2,7 @@
 
 > 本文是**架构事实源**：架构红线、包布局与依赖方向、冻结契约与「追加不重写」三道保险、S13 安全拍板、ADR 索引。功能设计与候选池见 [design.md](design.md)；包内细节见 [包级 Spec](spec/README.md)；跨包链路见 [spec/flows.md](spec/flows.md)；历史沿革见 [history.md](history.md)。
 >
-> 基线：V3 R1 定稿布局（21 成员，ADR-039，2026-08-19）。冻结契约截至 2026-08-31：R6（session 分支模型，ADR-040）与 R7（沙箱信任模型，ADR-041）已按 ADR 完成版本化演进；Desktop AX 补救按 ADR-042 保持 GPUI 0.2.2、由应用侧原生 bridge 承载；Session→Workspace 归属按 ADR-043 以 schema v13 纯追加列持久化；此外的 schema/wire 演进须另立 ADR。
+> 基线：V3 R1 定稿布局（21 成员，ADR-039，2026-08-19）。冻结契约截至 2026-08-31：R6（session 分支模型，ADR-040）与 R7（沙箱信任模型，ADR-041）已按 ADR 完成版本化演进；Desktop AX 补救按 ADR-042 保持 GPUI 0.2.2、由应用侧原生 bridge 承载；Session→Workspace 归属按 ADR-043 以 schema v13 纯追加列持久化；持久项目注册表与按会话 workspace 路由按 ADR-044 以 schema v14 落地（`workspaces` 注册表，wire 不变）；此外的 schema/wire 演进须另立 ADR。
 
 ---
 
@@ -68,7 +68,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 | --- | --- | --- |
 | Provider 契约 | `ModelProvider`（`id`/`list_models`/`stream`）、`CanonicalModelRequest`、`ProviderStreamEvent`（13 变体，tag=`type`/content=`data`）、`ModelResponseSummary`、`ResolvedCredential`（Debug 脱敏、无 Serialize）、`ProviderError` | `crates/domain`（`provider_api`）+ tests/ 契约 golden |
 | 事件信封 | `AgentEventEnvelope`（`schema_version = 1`、`event_id/session_id/run_id/sequence/timestamp/parent_event_id/payload`）、`AgentEvent` 32 变体（含 `Diagnostic`）；与 SQLite migration 版本相互独立 | 信封字节 golden `crates/domain/tests/events_golden.rs` |
-| 会话存储 | `session_events` DDL（`UNIQUE(session_id, sequence)`、`CHECK(sequence > 0)`）、append-only 双触发器、`AppendReceipt`；DB `CURRENT_SCHEMA_VERSION = 13`（v11 = command_ledger 宿主幂等表，纯新增不进 export；v12 = 分支 lineage 原生化，`messages` 整表重建去 `DEFAULT 'main'`、回填即校验孤儿行 fail-closed；v13 = ADR-043 `sessions.workspace_id` 归属弱引用列，纯追加不回填）；import/export v3；fork 分支（`fork_from_event`） | DDL/迁移锚 `crates/storage/src/session/migration.rs`；升级 golden `crates/storage/src/session/fixtures/`（v9→v13 链；lineage 期望文件沿用 `v12_*`） |
+| 会话存储 | `session_events` DDL（`UNIQUE(session_id, sequence)`、`CHECK(sequence > 0)`）、append-only 双触发器、`AppendReceipt`；DB `CURRENT_SCHEMA_VERSION = 14`（v11 = command_ledger 宿主幂等表，纯新增不进 export；v12 = 分支 lineage 原生化，`messages` 整表重建去 `DEFAULT 'main'`、回填即校验孤儿行 fail-closed；v13 = ADR-043 `sessions.workspace_id` 归属弱引用列，纯追加不回填；v14 = ADR-044 `workspaces` 持久项目注册表，空表不回填、`root_path` UNIQUE）；import/export v3；fork 分支（`fork_from_event`） | DDL/迁移锚 `crates/storage/src/session/migration.rs`；升级 golden `crates/storage/src/session/fixtures/`（v9→v14 链；lineage 期望文件沿用 `v12_*`） |
 | 工具契约 | `AgentTool`（`descriptor`/`execute`）、`ToolEventSink`、`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）、`ToolDescriptor`（含 `requires_approval`/`read_only`/`allowed_in_untrusted_workspace`） | `crates/domain::tool_api` |
 | Policy 契约 | `PolicyDecision`（`Allow/Deny/AskUser/AllowWithConstraints`）、`ApprovalPrompt`+`RiskLevel`、`ApprovalMode`（默认 `ReadOnly`；旧 `on-failure` 仅兼容读入并映射 `NeverAsk`） | `crates/policy` 安全红线回归 |
 | 引擎语义 | 审批经 `ApprovalResolver` await（`ToolApprovalRequested/Responded` 事件对；Requested 在等待前落盘）、`CancelHandle`+`CancelReason`、`LoopContext` 工具执行注入点 | `crates/engine` 定向回归 |
@@ -106,7 +106,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 ## 5. ADR 索引
 
 - **ADR-001 ~ ADR-036**：随 V1 归档于 `../Pawork_v1/docs/adr/`，原则继续有效。常被引用：ADR-001 纯 Rust、ADR-019 无 TUI、ADR-031 沙箱可观测回退、ADR-032 blob 格式（PWB1）、ADR-035 gpui 锁定 `=0.2.2`、ADR-036 GUI 协议版本协商。
-- **本仓库现存**（[docs/adr/](adr/)，全部 Accepted）：
+- **本仓库现存**（[docs/adr/](adr/)；ADR-037～044 Accepted）：
   - [ADR-037](adr/ADR-037-s13-wave-b-contracts.md) S13 波 B 五项契约（trait 归 domain / 维持 ADR-031 / `ToolResultContent.artifacts` / `Revised` title+steps / `ResultArchived.task_id`）。
   - [ADR-038](adr/ADR-038-inventory-and-product-shape.md) 库存与产品形态（R0：单机形态、休眠库存归档裁决）。
   - [ADR-039](adr/ADR-039-package-layout-and-no-merge-list.md) 包布局与不合并清单（R1：37→21、扁平 `crates/`）。
@@ -114,4 +114,5 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
   - [ADR-041](adr/ADR-041-sandbox-trust-model.md) 沙箱信任模型（R7：macOS 写白名单正式化 + 读整盘 allow 挖洞、PTY 入闸、删 `network_allow_hosts`、shell 手写 tokenizer）。
   - [ADR-042](adr/ADR-042-desktop-accessibility-bridge.md) Desktop 原生 Accessibility bridge（保持 GPUI 0.2.2；显式语义树 + AppKit 虚拟 AX 元素 + action 回到既有 AppView gate）。
   - [ADR-043](adr/ADR-043-session-workspace-binding-persistence.md) Session→Workspace 归属持久化（schema v13 纯追加可空列，写穿 + 启动预载；否决 session_tags 借用与侧车双轨）。
-- 新决策继续以 ADR 记录，编号续接（下一个 ADR-044），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。
+  - [ADR-044](adr/ADR-044-persistent-workspace-registry.md) 持久项目注册表与会话级 Workspace 路由（schema v14；复用既有 wire，不新增协议变体）。
+- 新决策继续以 ADR 记录，编号续接（下一个 ADR-045），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。

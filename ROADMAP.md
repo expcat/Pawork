@@ -7,11 +7,11 @@
 | 字段 | 当前事实 |
 | --- | --- |
 | 活动线 | **P1 项目与会话生命周期** |
-| 状态 | 🔵 P1 进行中；E0–E2 🟢 已验证。片 1（Session→Workspace 归属持久化，ADR-043 / schema v13）已实现 + 定向门禁通过，真窗口复验待人工验收 |
-| 本轮结果 | `sessions` 表 v13 纯追加可空 `workspace_id` 弱引用列（不回填、无 FK、不进 export）；`create_session_with_workspace` 将 session/main 分支/归属原子落盘，Host 启动全量读取并替换缓存；devfixture 内存绑定语义不变。 |
-| 下一动作 | 真窗口复验片 1：同一真实项目下重启 Host，重开 Task 归属正确、Changes 与 Terminal 上下文不变；通过后拆 P1 片 2（添加/切换/重开项目与新建/续聊会话的完整正式 UI 路径）。 |
-| 本轮完成条件 | 片 1：绑定跨重启持久化具备定向测试与真窗口双证据；P1 整体退出以 §4 表为准。 |
-| 当前阻塞 | 无。完整终端 stop/close 与 live exit/failure 需要 wire/ADR 演进，不在 P1 内以 UI 本地实现绕过。 |
+| 状态 | 🔵 P1 进行中；E0–E2、片 1、片 2A 与片 2B 🟢 已完成。片 2B（ADR-044 / schema v14 项目注册表 + 按 session workspace 路由）已实现 + 定向门禁通过，真窗口验收并入片 2C。 |
+| 本轮结果 | session schema 升 v14 新建 `workspaces` 注册表（stable id 幂等登记、`root_path` UNIQUE、同 id 异 root fail-closed，纯追加不回填）；AppCore 启动读注册表并对 legacy 启动目录补登记（空注册表固定 `ws-default`）；Run / `@` 展开 / 注入层 / diff / terminal cwd 全部按 session 归属 workspace 解析；`workspace_add` 幂等、`workspace_list` 返回注册表全集合；wire 不变。 |
+| 下一动作 | 执行片 2C：Desktop 正式 UI 补添加 / 切换 / 重开项目与新建 / 续聊会话接线，真窗口验收后收口 P1。 |
+| 本轮完成条件 | storage/workspace/app/cli 定向门禁已通过；Host 能持久登记多个项目并按 Session 绑定解析 Run、资源、diff 上下文；P1 整体退出仍以 §4 表为准。 |
+| 当前阻塞 | 无。完整 Terminal stop/close 与 live exit/failure 仍不在 P1 内以 UI 本地实现绕过。 |
 
 状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。任何“已实现”“自动检查通过”“真窗口通过”“等待人工确认”必须分开记录。
 
@@ -43,6 +43,13 @@
 - 有现有定向测试能证明回归时复用；只有行为改动且现有测试无法捕获时，最多补一条主路径和一条关键失败路径。
 - 修复后从失败步骤复跑，最后再完整走一遍 E1，避免用局部绿灯代替用户路径。
 
+### P1 — 项目与会话生命周期 🔵
+
+- **片 1 ✅**：ADR-043 / schema v13 Session→Workspace 弱引用持久化；storage/app 定向门禁与正式 Host/Desktop 重启复验均通过。
+- **片 2A ✅**：ADR-044 已由用户 Accepted，冻结 stable workspace identity、本地注册表持久化、legacy `ws-default` 与按 session 路由边界。
+- **片 2B ✅**：schema v14 `workspaces` 注册表 + AppCore/GuiHost 按 session workspace 路由（Run / 资源 / `@` 展开 / diff / terminal cwd）；`workspace_add` 幂等登记、`workspace_list` 返回注册表全集合；不改 wire，storage/workspace/app/cli 定向门禁通过。
+- **片 2C ⚪**：只补现有 Desktop 仍缺的添加 / 切换 / 重开项目、新建 / 续聊会话接线；用正式 Host/Desktop 真窗口验收并收口 P1。
+
 ## 3. 本轮验收矩阵
 
 | 能力 | 通过条件 | 证据 |
@@ -52,7 +59,7 @@
 | 对话与文件 | 消息实际发送；Agent 完成文件写入；磁盘文件含 `Hello world` 与本轮日期时间。 | ✅ 真实 Provider Run + 显式写入审批；两行标记文件实测生成（一次性产物，已随清理移除） |
 | Git Changes | UI 文件状态、diff 与仓库命令行事实一致；空态/非 Git 目录诚实显示。 | ✅ UI `untracked · +2 / −0`；`git status --short` 与定向 diff 一致 |
 | Terminal | UI 可创建 Terminal、执行只读命令并显示真实 stdout；错误与断线不伪装成功。 | ✅ 真实 PTY 执行 `pwd` 与 `terminal-ok`；可见文本/AX 不再暴露 ANSI/VT 控制串 |
-| 恢复与诚实性 | 重新打开任务或重连后，项目、对话、Changes 与 Terminal 的可恢复部分符合现有协议；不可恢复能力明确说明。 | ⚠️ Workspace 与 Changes 可恢复；Session→Workspace 归属仍为进程内状态，列入 P1 |
+| 恢复与诚实性 | 重新打开任务或重连后，项目、对话、Changes 与 Terminal 的可恢复部分符合现有协议；不可恢复能力明确说明。 | ✅ P1 片 1：schema v13 `workspace_id=ws-default` 与 Task/Timeline/Changes 跨 Host 重启恢复；Terminal 进程不恢复但 workspace/cwd 仍正确，新 PTY `pwd` 为同一仓库。项目集合持久化继续由 P1 片 2 承接。 |
 
 真窗口证据只用于本轮报告，不重新堆入 `docs/ui-review/`。长期视觉基准只保留 [design/README.md](design/README.md) 所列三张初始设计图。
 

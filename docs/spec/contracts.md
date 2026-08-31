@@ -16,7 +16,7 @@
 | --- | --- | --- | --- | --- |
 | CON-PROVIDER-01 | Canonical Provider | `ModelProvider`、`CanonicalModelRequest`、`ProviderStreamEvent`、`ModelResponseSummary`、`ResolvedCredential`、`ProviderError` | providers adapter → engine/app | [domain provider API](../../crates/domain/src/provider_api.rs)；[architecture §3.2](../architecture.md#32-冻结契约激活即采用完整形状golden-先于实现改动) |
 | CON-EVENT-01 | Agent 事件信封 | `AgentEventEnvelope.schema_version = 1`；append-only、全局 sequence、parent link | engine/app → storage/protocol/projection | [domain events](../../crates/domain/src/events.rs)；事件 golden；[storage](../../crates/storage/src/session) |
-| CON-STORAGE-01 | Session SQLite | `CURRENT_SCHEMA_VERSION = 13`；v11 增 `command_ledger`，v12 原生 branch lineage，v13 持久化 Session→Workspace 归属 | app/storage → resume/fork/compact/import | [migration](../../crates/storage/src/session/migration.rs)；[升级 fixtures](../../crates/storage/src/session/fixtures) |
+| CON-STORAGE-01 | Session SQLite | `CURRENT_SCHEMA_VERSION = 14`；v11 增 `command_ledger`，v12 原生 branch lineage，v13 持久化 Session→Workspace 归属，v14 持久项目注册表 `workspaces` | app/storage → resume/fork/compact/import | [migration](../../crates/storage/src/session/migration.rs)；[升级 fixtures](../../crates/storage/src/session/fixtures) |
 | CON-EXPORT-01 | Session 导出 | `EXPORT_SCHEMA_VERSION = 3` | `sessions export` → import/外部备份 | [session import/export](../../crates/storage/src/session/import) |
 | CON-BLOB-01 | Artifact/Protected Blob | `PWB1_MAGIC`，`PWB1_VERSION = 1`；protected 使用 AEAD | checkpoint/reasoning → artifact/protected stores | [blob](../../crates/storage/src/blob)；[PWB1 golden](../../crates/storage/tests/golden) |
 | CON-POLICY-01 | Policy 决策 | `PolicyDecision` 四变体；`ApprovalMode` 五档，默认 `ReadOnly` | tools/app → CLI/Desktop/exec | [policy](../../crates/policy/src)；[security.md](security.md) |
@@ -48,7 +48,7 @@
 ### 4.1 事件与存储
 
 - 事件只能 append；已经发布的 envelope 字段含义不得重解释。
-- SQLite 迁移按版本追加。v1–v12 不回写；v12 的重建/回填失败必须整批 fail-closed；v13 只追加可空归属列，不回填历史会话。
+- SQLite 迁移按版本追加。v1–v12 不回写；v12 的重建/回填失败必须整批 fail-closed；v13 只追加可空归属列，不回填历史会话；v14 只建空 `workspaces` 注册表（stable id + `root_path` UNIQUE），不据历史归属猜 root。
 - branch 可见性由 storage lineage 单点决定；父支晚写/晚压缩不得污染旧 fork，兄弟分支互不可见。
 - `command_ledger` 保证相同 command 重试可 replay，InFlight/record 失败不得造成永久挂死或重复副作用。
 - export/import 必须显式声明版本；未知/损坏/含 Secret 输入不得静默生成残缺可信会话。
