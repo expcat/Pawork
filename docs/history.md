@@ -813,3 +813,24 @@ Validated: `cargo test -p pawork-storage --offline --lib --tests`；`cargo test 
 Targeted regressions: v12→v14 升级（历史归属不回填、注册表为空）、注册表幂等重登/跨重开存活/同 id 异 root fail-closed、`session_diff` 使用 session 归属 workspace roots、有可用项目时 Unassigned 会话 fail-closed、app/cli 既有套件复跑无回归。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---
+
+## P1 片 2C — Desktop 项目/会话生命周期接线验收与 P1 收口（2026-08-31）
+
+- 缺口审计（glm_worker，只读）：添加 / 切换 / 重开项目与新建 / 续聊会话五流程在既有 Desktop（R3 TaskRail 族 + 片 1/2B Host 侧）已完整接线，入口 / 命令 / 回执 / 诚实性四联证据齐全，**无真实缺口、零代码改动**。两条非缺口观察存档备查：① Projects 分组按会话聚合，零会话的已登记项目只出现在 scope 菜单（spec 语义如此，scope + 全局「+」路径可用）；② `session_create` 回执载荷未直接消费，Desktop 按冻结约定以 snapshot 最新会话定位新会话（有测试钉住）。
+- 真窗口验收在隔离实例 `p1-2c`（同一正式二进制与协议，无 fixture/seed/profile）完成，验收后实例数据与探针目录全部清理，用户 `desktop` 实例注册表零污染：
+  - **legacy 自动登记**：全新实例首启后 `workspaces` 表仅 `ws-default | Pawork | 仓库根`（2B 补登记路径端到端生效）。
+  - **新建会话（WorkspaceConfirm）**：scope=All projects 时全局「+」弹 WorkspaceConfirm（Pawork + Add project…），选 Pawork 建 `ses-…-1`，SQLite 归属 `ws-default`；真实 Provider Run 完成（assistant 回 `p1-2c-ok`，Run completed）。
+  - **添加项目**：scope 菜单 `Add project…` → 系统目录选择器选真实目录 `/tmp/p1-2c-proj` → 注册表新增 `ws-…-1 | p1-2c-proj | /private/tmp/p1-2c-proj`（canonical 路径），UI 自动切 scope 并提示 `Project opened · p1-2c-proj`；非 Git 目录 header 诚实不显示 branch。
+  - **新建会话（定向项目）**：scope=p1-2c-proj 时全局「+」直建（无二次确认），SQLite 归属 `ws-…-1`——按 session 归属 workspace 路由（2B）经 UI 端到端坐实。
+  - **切换项目**：scope 菜单 Pawork ↔ p1-2c-proj，rail 按 scope 过滤，active session 不被切换打断。
+  - **续聊会话**：task 行 AX press 重放持久化时间线（`evt-` 条目替换乐观回显行，含重启前消息与 Run completed）。
+  - **重开项目（双粒度）**：Desktop 全重启后 snapshot 复现注册表项目组与既有会话；杀掉 Host（Desktop 诚实显示 `Disconnected · ConnectionClosed` + Reconnect 按钮）再重启 Host，Reconnect 后 `Connected · Up to date · 0`，scope 菜单仍列全部两个项目，第二项目会话可正常重开。
+- 桌面进程窗口一度消失（CGWindowList 无标题窗口、进程存活、无崩溃报告），时段内窗口位置曾变动，倾向用户侧操作而非产品缺陷；以重启 Desktop 继续验收，未复现。
+
+Validated: `./scripts/pawork-desktop.sh build/start`（隔离实例 `p1-2c`）；真窗口 AX 取证（`scripts/ui-ax-dump.swift` press/set-value、System Events 驱动 NSOpenPanel、`PAWORK_UI_BARRIER_DIR` settle 信号）；SQLite 外部核对 `workspaces` 注册表与 `sessions.workspace_id` 归属；Host SIGINT 重启 + Reconnect；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（147/147）；清理后 `git status --short --branch` 干净。
+
+Targeted regressions: 零代码改动，无新增回归测试；既有 Desktop 定向门禁 147/147 复跑通过。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

@@ -19,7 +19,7 @@
 
 优势：三栏信息架构清晰；Scope、Task、Timeline、Changes 与 Terminal 的主路径均有原生可访问节点；空态与 unavailable 状态没有用假内容填充。真实文件写入后，Changes 能把文件状态、增删统计和正文 diff 放在同一面板内，核对成本低；重启重放也不再把 `resources.injected` 等信息诊断误显示为 Error。
 
-当前风险：Host 已持久登记多个项目并按 Session 归属路由 Run / 资源 / diff / Terminal cwd，但 Desktop 添加 / 切换 / 重开项目与新建 / 续聊会话的正式 UI 接线仍待片 2C 真窗口验收；Terminal 是纯文本输出视图，不是完整 VT emulator；三张初始设计图尚未完成同状态人工视觉签字。以上均进入 [ROADMAP](../ROADMAP.md) 后续项，不以片 2B 通过冒充 P1 整体完成。
+当前风险：Terminal 是纯文本输出视图，不是完整 VT emulator；三张初始设计图尚未完成同状态人工视觉签字；完整 Terminal stop/close 与 live exit/failure 仍以 UI 本地诚实实现绕过（P3 边界）。Host 多项目注册表与按会话路由（P1 片 2B）及 Desktop 添加 / 切换 / 重开项目与新建 / 续聊会话五流程接线（片 2C 审计 + 真窗口验收）均已落地，P1 收口。以上未决项进入 [ROADMAP](../ROADMAP.md) 后续项。
 
 Accessibility 口径：本轮真实路径已通过稳定 identifier 驱动项目、消息、Changes 与 Terminal。后续仍需完成 VoiceOver 阅读顺序、完整键盘回环和 100%/125%/150% 全状态人工验收。
 

@@ -4,7 +4,7 @@
 
 Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心。二进制 `pawork` 是 Core 的唯一正式宿主；Desktop GUI（GPUI，`apps/desktop`）作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
 
-**当前状态（2026-08-31）**：正式 Host/Desktop 的项目、对话、文件、Git Changes 和 Terminal 真实核心路径已经验收；Session→Workspace 归属已通过 Host 重启真窗口复验；ADR-044 持久项目注册表与按会话 workspace 路由（schema v14）已落地。下一步是 P1 片 2C：Desktop 正式 UI 接线与真窗口验收。当前指针与后续计划见 [ROADMAP.md](ROADMAP.md)，历史沿革见 [docs/history.md](docs/history.md)。V1 全量实现归档于仓库外 `../Pawork_v1/`。
+**当前状态（2026-08-31）**：正式 Host/Desktop 的项目、对话、文件、Git Changes 和 Terminal 真实核心路径已经验收；Session→Workspace 归属已通过 Host 重启真窗口复验；ADR-044 持久项目注册表与按会话 workspace 路由（schema v14）已落地。P1 项目与会话生命周期已收口：添加 / 切换 / 重开项目与新建 / 续聊会话五流程经审计确认完整接线并通过真窗口验收；下一步是 P2（Agent 主路径可靠性）。当前指针与后续计划见 [ROADMAP.md](ROADMAP.md)，历史沿革见 [docs/history.md](docs/history.md)。V1 全量实现归档于仓库外 `../Pawork_v1/`。
 
 ## 快速开始
 

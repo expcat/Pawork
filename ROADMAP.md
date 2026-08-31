@@ -6,12 +6,12 @@
 
 | 字段 | 当前事实 |
 | --- | --- |
-| 活动线 | **P1 项目与会话生命周期** |
-| 状态 | 🔵 P1 进行中；E0–E2、片 1、片 2A 与片 2B 🟢 已完成。片 2B（ADR-044 / schema v14 项目注册表 + 按 session workspace 路由）已实现 + 定向门禁通过，真窗口验收并入片 2C。 |
-| 本轮结果 | session schema 升 v14 新建 `workspaces` 注册表（stable id 幂等登记、`root_path` UNIQUE、同 id 异 root fail-closed，纯追加不回填）；AppCore 启动读注册表并对 legacy 启动目录补登记（空注册表固定 `ws-default`）；Run / `@` 展开 / 注入层 / diff / terminal cwd 全部按 session 归属 workspace 解析；`workspace_add` 幂等、`workspace_list` 返回注册表全集合；wire 不变。 |
-| 下一动作 | 执行片 2C：Desktop 正式 UI 补添加 / 切换 / 重开项目与新建 / 续聊会话接线，真窗口验收后收口 P1。 |
-| 本轮完成条件 | storage/workspace/app/cli 定向门禁已通过；Host 能持久登记多个项目并按 Session 绑定解析 Run、资源、diff 上下文；P1 整体退出仍以 §4 表为准。 |
-| 当前阻塞 | 无。完整 Terminal stop/close 与 live exit/failure 仍不在 P1 内以 UI 本地实现绕过。 |
+| 活动线 | **P2 Agent 主路径可靠性** |
+| 状态 | 🟢 P1 已收口：E0–E2、片 1、片 2A、片 2B 与片 2C 全部完成。片 2C 审计确认五流程接线已完整落地（零代码改动），正式 Host/Desktop 真窗口验收通过，Desktop 定向门禁 147/147。 |
+| 本轮结果 | 添加 / 切换 / 重开项目与新建 / 续聊会话五流程均经正式 UI 走通：真实目录经系统选择器注册为持久项目（schema v14 注册表），Desktop 重启与 Host 重启 + Reconnect 双粒度复现项目集合，按项目新建会话绑定各自 workspace，续聊会话重放持久化时间线，断线诚实显示 Disconnected + Reconnect。 |
+| 下一动作 | 按 §4 开启 P2（Agent 主路径可靠性），开启前再拆成数小时内可验收的小任务。 |
+| 本轮完成条件 | P1 退出条件「添加 / 切换 / 重开项目与新建 / 续聊会话均可通过正式 UI 完成」已满足（证据归档 [docs/history.md](docs/history.md)）。 |
+| 当前阻塞 | 无。完整 Terminal stop/close 与 live exit/failure 仍以 UI 本地诚实实现绕过，归 P3 边界。 |
 
 状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。任何“已实现”“自动检查通过”“真窗口通过”“等待人工确认”必须分开记录。
 
@@ -43,33 +43,32 @@
 - 有现有定向测试能证明回归时复用；只有行为改动且现有测试无法捕获时，最多补一条主路径和一条关键失败路径。
 - 修复后从失败步骤复跑，最后再完整走一遍 E1，避免用局部绿灯代替用户路径。
 
-### P1 — 项目与会话生命周期 🔵
+### P1 — 项目与会话生命周期 ✅
 
 - **片 1 ✅**：ADR-043 / schema v13 Session→Workspace 弱引用持久化；storage/app 定向门禁与正式 Host/Desktop 重启复验均通过。
 - **片 2A ✅**：ADR-044 已由用户 Accepted，冻结 stable workspace identity、本地注册表持久化、legacy `ws-default` 与按 session 路由边界。
 - **片 2B ✅**：schema v14 `workspaces` 注册表 + AppCore/GuiHost 按 session workspace 路由（Run / 资源 / `@` 展开 / diff / terminal cwd）；`workspace_add` 幂等登记、`workspace_list` 返回注册表全集合；不改 wire，storage/workspace/app/cli 定向门禁通过。
-- **片 2C ⚪**：只补现有 Desktop 仍缺的添加 / 切换 / 重开项目、新建 / 续聊会话接线；用正式 Host/Desktop 真窗口验收并收口 P1。
+- **片 2C ✅**：审计确认添加 / 切换 / 重开项目、新建 / 续聊会话五流程在既有 Desktop 已完整接线（零代码改动）；正式 Host/Desktop 真窗口验收通过（隔离实例双粒度重开 + 按项目归属绑定核对），Desktop 定向门禁 147/147；P1 收口。
 
 ## 3. 本轮验收矩阵
 
 | 能力 | 通过条件 | 证据 |
 | --- | --- | --- |
 | 构建/启动 | 脚本可从仓库根构建两个正式二进制并打开真窗口；重复启动不产生双 Host。 | ✅ `./scripts/pawork-desktop.sh build/start`；独立 `desktop` 实例；Connected 真窗口 |
-| 项目 | UI 可将一个真实目录注册为 workspace/project，并显示可辨识项目名。 | ✅ `Add project…` 选择仓库根；Host `workspace_add`；Scope 显示 `Pawork` |
+| 项目 | UI 可将一个真实目录注册为 workspace/project，并显示可辨识项目名。 | ✅ `Add project…` 选择仓库根；Host `workspace_add`；Scope 显示 `Pawork`。✅ P1 片 2C：系统选择器登记第二真实项目 `p1-2c-proj`，scope 切换与双粒度重开复现项目集合 |
 | 对话与文件 | 消息实际发送；Agent 完成文件写入；磁盘文件含 `Hello world` 与本轮日期时间。 | ✅ 真实 Provider Run + 显式写入审批；两行标记文件实测生成（一次性产物，已随清理移除） |
 | Git Changes | UI 文件状态、diff 与仓库命令行事实一致；空态/非 Git 目录诚实显示。 | ✅ UI `untracked · +2 / −0`；`git status --short` 与定向 diff 一致 |
 | Terminal | UI 可创建 Terminal、执行只读命令并显示真实 stdout；错误与断线不伪装成功。 | ✅ 真实 PTY 执行 `pwd` 与 `terminal-ok`；可见文本/AX 不再暴露 ANSI/VT 控制串 |
-| 恢复与诚实性 | 重新打开任务或重连后，项目、对话、Changes 与 Terminal 的可恢复部分符合现有协议；不可恢复能力明确说明。 | ✅ P1 片 1：schema v13 `workspace_id=ws-default` 与 Task/Timeline/Changes 跨 Host 重启恢复；Terminal 进程不恢复但 workspace/cwd 仍正确，新 PTY `pwd` 为同一仓库。项目集合持久化继续由 P1 片 2 承接。 |
+| 恢复与诚实性 | 重新打开任务或重连后，项目、对话、Changes 与 Terminal 的可恢复部分符合现有协议；不可恢复能力明确说明。 | ✅ P1 片 1：schema v13 `workspace_id=ws-default` 与 Task/Timeline/Changes 跨 Host 重启恢复；Terminal 进程不恢复但 workspace/cwd 仍正确，新 PTY `pwd` 为同一仓库。✅ P1 片 2C：项目集合（schema v14 注册表）与会话归属跨 Desktop 重启、Host 重启 + Reconnect 双粒度复现；断线诚实显示 Disconnected + Reconnect。 |
 
 真窗口证据只用于本轮报告，不重新堆入 `docs/ui-review/`。长期视觉基准只保留 [design/README.md](design/README.md) 所列三张初始设计图。
 
 ## 4. 后续计划
 
-E0–E2 已完成。后续按以下顺序推进；每项在开启前再拆成数小时内可验收的小任务，不预建兼容层或第二套实现。
+E0–E2 与 P1 已完成。后续按以下顺序推进；每项在开启前再拆成数小时内可验收的小任务，不预建兼容层或第二套实现。
 
 | 优先级 | 主题 | 进入条件 | 退出条件 |
 | --- | --- | --- | --- |
-| P1 | 项目与会话生命周期 | 本轮主路径明确项目新增、选择、持久化的真实缺口 | 添加/切换/重开项目与新建/续聊会话均可通过正式 UI 完成 |
 | P2 | Agent 主路径可靠性 | P1 可稳定复现真实 Run | 发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环 |
 | P3 | Changes / Terminal / Resources 完整性 | P2 产出真实工具与文件事件 | 三面板只展示 Host 权威数据，关键动作与错误恢复完整 |
 | P4 | Accessibility 与跨平台 | macOS 核心路径稳定 | 键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据 |
