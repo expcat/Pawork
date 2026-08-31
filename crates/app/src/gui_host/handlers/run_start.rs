@@ -2,15 +2,92 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use pawork_domain::{
-    CancellationToken, ErrorCategory, ErrorContext, Message, MessageId, MessageRole, RunId,
+    AgentEvent, CancellationToken, ErrorCategory, ErrorContext, Message, MessageId, MessageRole,
+    RunId, SessionId,
 };
-use pawork_engine::now_timestamp;
+use pawork_engine::{now_timestamp, AgentEventSink};
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppEvent, AppResponse, RunState};
 use serde_json::json;
 
 use crate::gui_server::GuiHostError;
 
 use super::super::{ActiveGuiRun, GuiBroadcastSink, GuiHostAdapter};
+
+/// engine 未报终态即死时的收口闸门（合成终态硬化）：先 best-effort 持久化
+/// 真实 `RunFailed`（persist-first，参照非 live ToolApprove durable seal），
+/// 成功后经正常映射补广播（携带真实持久化 sequence）；持久化失败才退回
+/// `publish_raw` 合成兜底。两种路径都补 `run.failed` 诊断供 GUI 展示原因。
+pub(crate) async fn seal_run_without_terminal(
+    core: &crate::AppCore,
+    bus: &Arc<super::super::bus::GuiEventBus>,
+    instance: pawork_domain::CoreInstanceId,
+    session_id: &SessionId,
+    run_id: &RunId,
+    error: &crate::AppError,
+) {
+    // fail/cancel 路径 engine 已在 Err 返回前经 sink 广播真实终态；此处
+    // 只处理未报终态即死（plan 闸门拒绝、宿主侧早退等），避免幽灵
+    // "Run failed" 重复插入时间线且把 cancel 谎报为 Failed。
+    if bus.terminal_reported(run_id.as_str()) {
+        return;
+    }
+    let message = error.to_string();
+    let sealed = async {
+        let mut sequence = core.next_sequence(session_id).await?;
+        core.append_payload(
+            session_id,
+            run_id,
+            &mut sequence,
+            AgentEvent::RunFailed {
+                error: ErrorContext {
+                    category: ErrorCategory::Internal,
+                    message: message.clone(),
+                    retryable: false,
+                    retry_after_ms: None,
+                    diagnostics: Default::default(),
+                },
+                usage: None,
+            },
+        )
+        .await
+    }
+    .await;
+    match sealed {
+        Ok(envelope) => {
+            // persist-first 已落库；复用 live 路径的广播 sink 经正常映射
+            // 补实时事件（RunFailed → RunChanged{Failed}，真实 sequence）。
+            let sink = GuiBroadcastSink::new(Arc::clone(bus), instance.clone());
+            if let Err(broadcast_error) = sink.emit(envelope).await {
+                tracing::warn!(
+                    run_id = run_id.as_str(),
+                    error = %broadcast_error,
+                    "run failed durable seal broadcast failed"
+                );
+            }
+        }
+        Err(seal_error) => {
+            tracing::warn!(
+                run_id = run_id.as_str(),
+                error = %seal_error,
+                "run failed durable seal unavailable; falling back to synthetic terminal"
+            );
+            bus.publish_raw(
+                instance.clone(),
+                session_id,
+                AppEvent::RunChanged {
+                    run_id: run_id.clone(),
+                    state: RunState::Failed,
+                },
+            );
+        }
+    }
+    bus.publish_diagnostic(
+        instance,
+        session_id,
+        "run.failed",
+        json!({ "message": message }),
+    );
+}
 
 /// 有 `RunStart.provider` 时按用户所选通道切换，禁止回退 catalog 首项。
 pub(crate) fn run_start_requested_provider_switch(
@@ -245,26 +322,8 @@ pub(crate) async fn run_start(
                 .await
         };
         if let Err(error) = outcome {
-            // fail/cancel 路径 engine 已在 Err 返回前经 sink 广播真实终态
-            // （RunChanged{Failed/Cancelled}）；此处只在 engine 未报终态即死
-            // （plan 闸门拒绝、宿主侧早退等）时补发合成终态对，避免幽灵
-            // "Run failed" 重复插入时间线且把 cancel 谎报为 Failed。
-            if !bus.terminal_reported(run.as_str()) {
-                bus.publish_raw(
-                    instance.clone(),
-                    &session,
-                    AppEvent::RunChanged {
-                        run_id: run.clone(),
-                        state: RunState::Failed,
-                    },
-                );
-                bus.publish_diagnostic(
-                    instance,
-                    &session,
-                    "run.failed",
-                    json!({ "message": error.to_string() }),
-                );
-            }
+            let core = core.read().await;
+            seal_run_without_terminal(&core, &bus, instance.clone(), &session, &run, &error).await;
         }
         approvals.clear_run(&run);
         runs.remove(&run);

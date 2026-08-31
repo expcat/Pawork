@@ -379,3 +379,45 @@ fn golden_sandbox_fallback_diagnostic_label_branches() {
         TimelineEntryKind::RunState(text) if text == "沙箱回退：history"
     ));
 }
+
+/// golden：checkpoint.snapshot_failed 在 live / history 两臂均渲染为同一条
+/// RunState 提示行，label 取 details JSON 的 message 键。
+#[test]
+fn golden_checkpoint_snapshot_failed_renders_identically_in_both_arms() {
+    let details = serde_json::json!({
+        "message": "checkpoint snapshot failed — write proceeded without rollback point",
+        "path": "../escape.txt",
+        "error": "parent traversal in \"../escape.txt\"",
+    })
+    .to_string();
+
+    let mut live = TimelineProjection::default();
+    assert!(live.apply_event(&diagnostic_envelope(
+        1,
+        "checkpoint.snapshot_failed",
+        &details
+    )));
+
+    let mut history = TimelineProjection::default();
+    history.apply_item(&TimelineItem {
+        sequence: 1,
+        event_id: "history-checkpoint-failed".into(),
+        kind: pawork_protocol::TimelineItemKind::Diagnostic,
+        run_id: Some("run-golden".into()),
+        text: None,
+        tool_name: None,
+        status: None,
+        detail: Some(format!("checkpoint.snapshot_failed: {details}")),
+        timestamp: "3001".into(),
+    });
+
+    assert_eq!(live.entries.len(), 1);
+    assert_eq!(history.entries.len(), 1);
+    for entries in [&live.entries, &history.entries] {
+        assert!(matches!(
+            &entries[0].kind,
+            TimelineEntryKind::RunState(text)
+                if text == "checkpoint snapshot failed — write proceeded without rollback point"
+        ));
+    }
+}

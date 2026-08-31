@@ -834,3 +834,48 @@ Validated: `./scripts/pawork-desktop.sh build/start`（隔离实例 `p1-2c`）�
 Targeted regressions: 零代码改动，无新增回归测试；既有 Desktop 定向门禁 147/147 复跑通过。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---
+
+## P2 — Agent 主路径可靠性（2026-09-01 收口）
+
+退出条件「发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环」已满足。四片全部完成；实现与验收均由 glm 子代理执行（审计 glm_explorer / 修复与验收 glm_worker），主代理负责拆片、证据抽查、Spec 回写与收口。
+
+### 片 1 — 六链路可靠性缺口审计（只读，零代码改动）
+
+- 结论：发送 / 取消 / 审批 / 重放四链路在正式 Host/Desktop 路径已闭环（取消三相位均有测试钉住，Desktop Cancel 全相位可达；审批含跨重启 pending 重建；重放三态 + lagged 有 golden）。
+- 两个真实缺口同根：①无终态事件的 run（Host 崩溃 / sink 持久化失败）在重放侧永远悬空——runs 表停 "running"、timeline 工具行永 "running"、启动无清扫、live 合成终态只上 wire 不落库；②checkpoint 止步于持久化层——快照失败仅 tracing::warn 静默跳过，Desktop 零消费。
+
+### 片 2A — 悬空 run 诚实收口（写入集 crates/app，4 文件，4 测试）
+
+- `open_store` 装配末尾 `SessionService::seal_interrupted_runs` 启动清扫：`runs.state=='running'` 的 run 追加持久化 `ToolExecutionCompleted{is_error, "run interrupted before completion"}`（非 waiting 悬空工具）+ `RunFailed{ErrorCategory::Internal, "host process ended before the run reached a terminal state"}`；`waiting_for_approval` 的 tool call 保持 pending 可决议（pending 重建只查 tool_calls 表，与 runs 表无关），但其所属 run 仍落 RunFailed（run 已是崩溃孤儿，审批决议只是后续清理）；幂等；单 session 失败 warn 不阻断启动。
+- live 合成终态闸改 persist-first（`seal_run_without_terminal`）：engine 未报终态即死时先 best-effort 持久化真实 `RunFailed` 再经 GuiBroadcastSink 正常映射广播；持久化失败（如 plan 闸门拒绝时该 run 无任何已落库事件）才退回 publish_raw 合成兜底（≥2^60 序号段语义不变）；两路径均补 `run.failed` 诊断。
+- 偏差记录：`ErrorCategory` 无 System 变体，新增属 wire/schema 演进，故用 Internal（最接近的宿主级类别）。
+
+### 片 2B — checkpoint 失败诚实化（写入集 engine/app/protocol，6 文件，2 测试）
+
+- `LoopContext::snapshot_write_tools` 增 `LoopEventEmitter` 参数（全仓仅 app SessionLoopCtx 与 engine 测试 mock 两个实现方；emitter 复用既有通用 `emit(AgentEvent)`，未加新方法）。
+- app checkpoint 快照失败时除 warn 外发 `Diagnostic{code:"checkpoint.snapshot_failed", details:{message,path,error}}`（persist-first 落库 + 广播，写入继续）；emit 失败只 warn 不中断（sink 真坏时 engine 下一次 emit 正常终止 run）。
+- protocol 投影两臂把 `checkpoint.snapshot_failed` 渲染为 RunState 提示行，完全沿用 sandbox.fallback 模式（helper 泛化为 `hint_diagnostic_label` / `historical_hint_diagnostic_message`），其它诊断渲染规则未动；零 wire/golden 夹具演进。
+
+### 片 3 — 真窗口闭环验收（隔离实例 p2-3，glm_worker 执行）
+
+- 发送+审批+文件写入：真实项目 /tmp/p2-3-proj 经系统选择器登记（schema v14 注册表），write_file 落盘 + git status 外部一致；ask-for-dangerous 下 workspace 内 write_file 免审批（既有策略设计），审批链路经危险命令（python3 -c）等价验证：审批卡 → Allow once → ToolCompleted → RunCompleted，SQLite 事件齐全。
+- 取消两相位：流式中 Cancel → RunCancelled（runs.state=cancelled）；审批等待中 Cancel → RunCancelled + pending 卡消失。
+- 失败恢复（2A 核心）：审批等待相位与工具执行相位各 kill -9 一次 Host → 重启 + Reconnect → 时间线诚实 RunFailed + 工具行 failed 闭合；全库零残留 running；二次重启事件数不增（幂等）。
+- 重放：续聊重放完整（evt- 条目含两条 RunFailed）；Reconnect 在三态设计下均走 SnapshotRequired（游标领先 live bus 时的诚实结果，Replay 文案路径由既有 multi_gui 集成测试覆盖）。
+- checkpoint 可见性（2B）：`pawork run` 写 `../p2-3-escape.txt` 真实触发 PathEscape → `checkpoint.snapshot_failed` 诊断落库（path/error 齐全）+ 工具层拒绝越界写 + run_completed 诚实终态；两臂渲染一致性由 protocol golden 测试钉住。
+- Desktop 定向门禁 147/147 复跑通过。
+
+### 遗留观察项（不阻塞 P2 收口，已登记 ROADMAP §5）
+
+- 审批等待相位取消后，waiting tool call 的工具行在 UI 显示 "running"（2A 设计如此：waiting 保持可决议；但 run 已有终态，该 waiting 不再被启动清扫覆盖，只剩用户决议一条闭合路径）。
+- `checkpoint.snapshot_failed` 文案 "write proceeded without rollback point" 在越界写被工具层拒绝的场景与实际行为不符（写未 proceed）。
+- 环境级：Desktop 进程被 SIGSTOP ≥30s（>心跳）后 AX 树永久退化、UI 冻结（与 P1 片 2C 窗口异常同类，倾向 macOS 环境非产品缺陷）；Host 启动 chatgpt probe 401 warn（静态目录 fallback，不影响在用通道）与重启后 usage ledger record id conflict warn（既有现象）。
+- 提交前审查（glm_reviewer，无 P0/P1）另记四点，均不阻塞：①多进程共享同一库时启动清扫会误收口他进程活跃 run——已在 app.md §4.6 补「单库单写进程」前提说明；②启动清扫对每个 session 做全量 message 解码，成本 O(所有 session 消息总量)，日后可先跑 `SELECT 1 FROM runs WHERE state='running'` 廉价预检；③persist-first 闸的 next_sequence→append 之间若并发追加则退回合成广播，run 暂留 running，靠下次启动清扫自愈（语义诚实）；④`SNAPSHOT_FAILED_MESSAGE`（app）与 `CHECKPOINT_SNAPSHOT_FAILED_LABEL`（protocol）同文案双份需手工同步，为避免新增依赖边接受重复。
+
+Validated: 片 3 六链路 AX + SQLite/磁盘/git 双证据；`cargo test -p pawork-app --offline --lib --tests`（165）；`cargo test -p pawork-engine -p pawork-app -p pawork-protocol --offline --lib --tests` 全绿；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（147/147）。
+
+Targeted regressions: 启动清扫幂等 / waiting 审批清扫后仍可决议闭合 / 合成闸 persist-first / checkpoint 快照失败诊断持久化+广播 / 两臂渲染一致。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

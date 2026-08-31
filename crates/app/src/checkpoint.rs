@@ -7,7 +7,11 @@ use pawork_storage::blob::{CheckpointService, FileSnapshot, RunCheckpoint};
 use pawork_domain::{
     AgentEvent, ArtifactId, CancellationToken, CheckpointId, RunId, SessionId,
 };
-use pawork_engine::{PendingToolInvocation, WriteCheckpoint};
+use pawork_engine::{LoopEventEmitter, PendingToolInvocation, WriteCheckpoint};
+
+/// 快照失败诊断的用户可见文案；与 protocol 投影的空 message 兜底一致。
+const SNAPSHOT_FAILED_MESSAGE: &str =
+    "checkpoint snapshot failed — write proceeded without rollback point";
 
 use crate::{AppCore, AppError};
 
@@ -53,6 +57,7 @@ pub(crate) async fn snapshot_write_tools(
     run_id: &RunId,
     roots: &[PathBuf],
     calls: &[PendingToolInvocation],
+    events: LoopEventEmitter<'_>,
     _cancel: CancellationToken,
 ) -> Vec<WriteCheckpoint> {
     let mut out = Vec::new();
@@ -90,6 +95,26 @@ pub(crate) async fn snapshot_write_tools(
                         error = %error,
                         "write-tool snapshot skipped"
                     );
+                    // 快照失败不能静默：用户会误以为存在回滚点。发诊断
+                    // （persist-first 落库并广播），写入仍继续。
+                    let details = serde_json::json!({
+                        "message": SNAPSHOT_FAILED_MESSAGE,
+                        "path": path,
+                        "error": error.to_string(),
+                    });
+                    if let Err(emit_error) = events
+                        .emit(AgentEvent::Diagnostic {
+                            code: "checkpoint.snapshot_failed".into(),
+                            details,
+                        })
+                        .await
+                    {
+                        tracing::warn!(
+                            run_id = run_id.as_str(),
+                            error = %emit_error,
+                            "checkpoint snapshot_failed diagnostic emit failed"
+                        );
+                    }
                 }
             }
         }

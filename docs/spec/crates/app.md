@@ -171,7 +171,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 6. spawn 异步任务执行 `RunService::chat_turn`（§4.2），响应帧先行返回 run 受理；run 事件在宿主内经 `PersistThenRender` 先落库，再交 `GuiBroadcastSink` 映射为 `AppEvent` 发进 `GuiEventBus`。
 7. `EventHub` 为每条事件赋连续 `global_sequence` 并写 ring buffer；`ConnectionManager` 将事件推入各订阅连接的有界 mpsc 队列；订阅 GUI 收到 Event 帧。
 8. 慢客户端队满被标记 lagged 并丢新事件——发布者与其它 GUI 不被阻塞；lagged 连接随后收到 ReplayUnavailable，走 snapshot 恢复（§4.3）。
-9. Run 收尾合成终态闸门：fail/cancel 路径 engine 在 Err 返回前已经 sink 广播真实终态（`RunChanged{Failed}` / `RunChanged{Cancelled}`），宿主据 `GuiEventBus` 的终态登记（`terminal_reported`）去重，不再补发；只在 engine 未报终态即死（plan 闸门拒绝、宿主侧早退等）时经 `publish_raw` 补发合成 `RunChanged{Failed}` + `run.failed` 诊断——`publish_raw` 的合成 `stream_sequence` 从 `SYNTHETIC_SEQUENCE_BASE`（2^60）递增自取：真实持久化 sequence 从 1 单调递增不会到达该段，既不触发 reducer seen 去重吞掉真实事件，也让合成条目有序插入落在既有时间线内容（含用户消息乐观回显）之后（seq-0 旧行为曾把合成 "Run failed" 插到时间线顶端，R4 Wave B 评审 P2 修复）；语义仍是宿主兜底而非 engine 事实。随后 `GuiRunRegistry` 摘除该 run 并清理终态登记（防无界增长）；成功响应按 `should_cache` 写回幂等 ledger；record 失败计数并释放 inflight（同 `command_id` 可重入），不吞错挂死。
+9. Run 收尾终态闸门（P2 片 2A 起 persist-first）：fail/cancel 路径 engine 在 Err 返回前已经 sink 广播真实终态（`RunChanged{Failed}` / `RunChanged{Cancelled}`），宿主据 `GuiEventBus` 的终态登记（`terminal_reported`）去重，不再补发；只在 engine 未报终态即死（plan 闸门拒绝、宿主侧早退等）时由 `seal_run_without_terminal` 收口——**先 best-effort 持久化真实 `RunFailed`**（`ErrorCategory::Internal`），成功后经 `GuiBroadcastSink` 正常映射补广播（携带真实持久化 sequence）；持久化失败（如该 run 尚无任何已落库事件）才退回 `publish_raw` 合成兜底——合成 `stream_sequence` 从 `SYNTHETIC_SEQUENCE_BASE`（2^60）递增自取：真实持久化 sequence 从 1 单调递增不会到达该段，既不触发 reducer seen 去重吞掉真实事件，也让合成条目有序插入落在既有时间线内容（含用户消息乐观回显）之后（seq-0 旧行为曾把合成 "Run failed" 插到时间线顶端，R4 Wave B 评审 P2 修复）；语义仍是宿主兜底而非 engine 事实。两条路径都补发 `run.failed` 诊断供 GUI 展示原因。随后 `GuiRunRegistry` 摘除该 run 并清理终态登记（防无界增长）；成功响应按 `should_cache` 写回幂等 ledger；record 失败计数并释放 inflight（同 `command_id` 可重入），不吞错挂死。
 
 ### 4.2 CLI chat_turn 单轮
 
@@ -215,6 +215,17 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 3. emit 并持久化 `CompactionStarted` / `CompactionCompleted`；active branch 切到压缩后分支。
 4. 后续 resume / fork 直接消费 storage lineage：fork 后 resume 只能看到祖先前缀；压缩过程中的存储错误显式上抛，禁止降级为"未发生"。
 
+### 4.6 启动清扫：悬空 run 诚实收口（P2 片 2A）
+
+宿主进程在终态前结束（崩溃 / sink 持久化失败）会在存储留下停在 `running` 的 run，重放侧永不闭合。`open_store` 装配末尾执行 `seal_interrupted_runs`：
+
+1. 遍历全部 session 的 projection，筛出 `runs.state == 'running'` 的 run。
+2. 对该 run 的悬空 tool call（非 `completed` 且非 `waiting_for_approval`）逐个追加持久化 `ToolExecutionCompleted{is_error:true, "run interrupted before completion"}`；`waiting_for_approval` 的调用不动——pending 重建只查 `tool_calls` 状态、与 runs 表无关，审批仍可经非 live durable seal 决议。
+3. 追加 `RunFailed{ErrorCategory::Internal, "host process ended before the run reached a terminal state"}`——含 waiting 审批的 run 同样收口（run 已是孤儿，审批决议只是后续清理）。
+4. 幂等：收口后状态不再是 `running`，重复清扫自然早退；单 session 失败只 warn 后继续，不阻断启动。
+
+前提：单个库只由一个宿主进程写入（默认拓扑 Desktop 与 CLI 各用独立 instance、各持独立库）。若两进程共享同一库，后启动者的清扫会把先启动者仍活跃的 run 收口为 failed，先启动者的下一次落库将因序号不连续显式报错——这是未支持的拓扑，不在清扫的存活判定范围内。
+
 以上流程的跨包端到端视角（CLI ↔ GUI ↔ engine ↔ storage）见 [../flows.md](../flows.md)。
 
 ## 5. 契约与不变量
@@ -225,6 +236,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 - **幂等权威在 SQLite**：`CommandLedger` CAS 是唯一权威；重复 `command_id` 返回缓存响应不重放副作用；key 冲突拒绝；`record` 失败必须计数并释放 inflight。幂等状态在进程重启后存活。
 - **EventHub 序列连续**：发布时重写 `global_sequence` 保证连续单调；replay 越界必须显式 `ReplayUnavailable`，禁止静默丢段。
 - **断连不取消 run**；慢客户端只降级自身（lagged），不得阻塞发布者或其它 GUI。
+- **无终态 run 必收口**：任何持久化了 `RunStarted` 的 run 最终必须有持久化终态——进程内由 engine/合成闸（persist-first）保证，进程死亡遗留由启动清扫（§4.6）幂等收口；重放侧不得出现永远 `running` 的 run。
 - **Secret 红线**：明文 key 不进 `AppError` 任何变体、不进日志与数据库；`auth_status` 只报来源；smoke 测试禁止打印 key。
 - **`let _` 非测试归零**：非测试代码不允许 `let _ =` 吞结果（当前全包仅 3 处且都在 `cfg(test)`）。
 - **HOME 回退单点告警**：只有 `consume_data_dir_outcome` 打一次结构化 warn（`degrade.home_dir_fallback`），路径 helper 保持静默，禁止静默落 temp。
@@ -270,7 +282,8 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
   - 分发表与 registry `gui.available` 双射 pin（`dispatch_tables_match_gui_available_registry_entries`）；
   - timeline 投影分页与 ModelList 聚合、McpList `{"servers":[...]}` 形状；
   - `run_start` 的 `@` 展开三态：展开成独立 part / 失败不留活跃 run / 无 `@` 单 Text part；二轮带历史；
-  - 合成终态闸门：engine fail 恰一条 `RunChanged{Failed}` 无合成重复、cancel 恰一条 `RunChanged{Cancelled}` 不被谎报 Failed、无终态早死（Draft plan 闸门拒绝）仍补发合成 `RunChanged{Failed}` + `run.failed` 兜底、且合成信封序号为 ≥2^60 合成段且按到达序递增；
+  - 合成终态闸门：engine fail 恰一条 `RunChanged{Failed}` 无合成重复、cancel 恰一条 `RunChanged{Cancelled}` 不被谎报 Failed、无终态早死（Draft plan 闸门拒绝）兜底 `RunChanged{Failed}` + `run.failed` 诊断、persist-first 成功路径落真实 `RunFailed`（持久化失败才退回 ≥2^60 合成段）；
+  - 启动清扫（§4.6）：悬空 run 收口幂等、waiting 审批保持 pending 且可决议闭合、tool 行诚实收口；
   - 幂等：replay 不重放副作用、跨 client 同 `command_id` 不撞、重启存活、record 失败计数不吞错、InFlight 共享 key 不挂死、唤醒丢失有界轮询收敛、失败释放 inflight 可重入；
   - ToolApprove 三态：live waiting 不 durable seal / 非 live 有 waiting 投影 durable / 无 waiting 保持 queued；
   - snapshot 重启后重建 pending approvals；SessionCreate / SessionFork（建分支并切换）；

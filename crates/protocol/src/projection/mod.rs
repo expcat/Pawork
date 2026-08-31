@@ -586,16 +586,19 @@ impl TimelineProjection {
             }
             TimelineItemKind::Diagnostic => {
                 // 持久化 Diagnostic 没有 level；与 live 臂保持一致，只把
-                // sandbox.fallback 作为运行提示展示。其它信息诊断（例如
+                // sandbox.fallback / checkpoint.snapshot_failed 作为运行提示
+                // 展示。其它信息诊断（例如
                 // resources.injected）不是用户错误，不能在重放后变成 Error。
-                if let Some(message) =
-                    historical_sandbox_fallback_message(item.detail.as_deref())
+                if let Some((message, fallback)) =
+                    historical_hint_diagnostic_message(item.detail.as_deref())
                 {
                     if self.seen.insert(item.sequence) {
                         self.insert_entry(TimelineEntry {
                             sequence: item.sequence,
                             event_id: item.event_id.clone(),
-                            kind: TimelineEntryKind::RunState(sandbox_fallback_label(message)),
+                            kind: TimelineEntryKind::RunState(hint_diagnostic_label(
+                                message, fallback,
+                            )),
                             fork_boundary: None,
                             timestamp: item.timestamp.clone(),
                             run_id: item.run_id.clone(),
@@ -729,11 +732,18 @@ impl TimelineProjection {
                     return true;
                 }
             AppEvent::Diagnostic { code, message, .. } => {
-                if code == "sandbox.fallback" && self.seen.insert(sequence) {
+                let fallback = match code.as_str() {
+                    "sandbox.fallback" => "沙箱回退：隔离已降级",
+                    "checkpoint.snapshot_failed" => CHECKPOINT_SNAPSHOT_FAILED_LABEL,
+                    _ => return false,
+                };
+                if self.seen.insert(sequence) {
                     self.insert_entry(TimelineEntry {
                         sequence,
                         event_id,
-                        kind: TimelineEntryKind::RunState(sandbox_fallback_label(message)),
+                        kind: TimelineEntryKind::RunState(hint_diagnostic_label(
+                            message, fallback,
+                        )),
                         fork_boundary: None,
                         timestamp,
                         run_id: None,
@@ -953,19 +963,35 @@ fn run_state_label(state: &RunState) -> &'static str {
     }
 }
 
-fn sandbox_fallback_label(message: &str) -> String {
+/// checkpoint 快照失败提示文案；与 app 侧 Diagnostic details 的 message 一致。
+const CHECKPOINT_SNAPSHOT_FAILED_LABEL: &str =
+    "checkpoint snapshot failed — write proceeded without rollback point";
+
+/// 运行提示类 Diagnostic 的 label：优先取 JSON details 的 message 键，
+/// 空串退回各 code 的默认文案，纯文本直传。
+fn hint_diagnostic_label(message: &str, fallback: &str) -> String {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
         if let Some(text) = value.get("message").and_then(serde_json::Value::as_str) {
             return text.to_string();
         }
     }
     if message.is_empty() {
-        "沙箱回退：隔离已降级".into()
+        fallback.to_string()
     } else {
         message.to_string()
     }
 }
 
-fn historical_sandbox_fallback_message(detail: Option<&str>) -> Option<&str> {
-    detail?.strip_prefix("sandbox.fallback: ")
+/// 历史臂 Diagnostic detail 形如 "<code>: <details JSON>"；只放行运行提示类
+/// code，返回 (message, 空 message 兜底文案)。
+fn historical_hint_diagnostic_message(detail: Option<&str>) -> Option<(&str, &'static str)> {
+    let detail = detail?;
+    detail
+        .strip_prefix("sandbox.fallback: ")
+        .map(|message| (message, "沙箱回退：隔离已降级"))
+        .or_else(|| {
+            detail
+                .strip_prefix("checkpoint.snapshot_failed: ")
+                .map(|message| (message, CHECKPOINT_SNAPSHOT_FAILED_LABEL))
+        })
 }

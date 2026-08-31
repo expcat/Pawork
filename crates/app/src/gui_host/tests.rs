@@ -823,6 +823,117 @@
     }
 
     #[tokio::test]
+    async fn run_terminal_gate_persists_run_failed_before_broadcast() {
+        // 合成闸硬化主路径：engine 未报终态即死且 run 行已存在时，宿主先
+        // 持久化真实 RunFailed（persist-first），再经正常映射补广播——
+        // RunChanged{Failed} 携带真实持久化 sequence，不占合成号段；
+        // run.failed 诊断保留。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider =
+            MockProvider::sequence(vec![MockScript::new().text("unreachable").complete()]);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("gate-durable-seal").await.expect("session");
+        let run = RunId::from("run-gate-seal");
+        core.store()
+            .expect("store")
+            .append_event(
+                pawork_storage::session::DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    pawork_domain::EventId::from("evt-gate-seed-1"),
+                    session.clone(),
+                    run.clone(),
+                    pawork_domain::EventSequence::new(1),
+                    now_timestamp(),
+                    AgentEvent::RunStarted {
+                        trigger_message_id: MessageId::from("msg-gate-seal"),
+                    },
+                ),
+            )
+            .await
+            .expect("seed run without terminal");
+
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let mut events = adapter.subscribe_events();
+        let error = crate::AppError::EmptyTurn;
+        {
+            let core = adapter.core.read().await;
+            super::handlers::run_start::seal_run_without_terminal(
+                &core,
+                &adapter.bus,
+                adapter.instance.clone(),
+                &session,
+                &run,
+                &error,
+            )
+            .await;
+        }
+
+        let persisted_sequence;
+        {
+            let core = adapter.core.read().await;
+            let sealed = core
+                .store()
+                .expect("store")
+                .replay_events(&session, 1, 100)
+                .await
+                .expect("replay");
+            let last = sealed.last().expect("durable seal appended");
+            persisted_sequence = last.sequence.value();
+            match &last.payload {
+                AgentEvent::RunFailed { error: context, .. } => {
+                    assert_eq!(context.category, pawork_domain::ErrorCategory::Internal);
+                    assert_eq!(context.message, error.to_string());
+                }
+                other => panic!("durable seal must append RunFailed: {other:?}"),
+            }
+        }
+
+        let envelopes = drain_wire_envelopes(&mut events);
+        let wire: Vec<AppEvent> = envelopes
+            .iter()
+            .map(|envelope| envelope.payload.clone())
+            .collect();
+        assert_eq!(
+            terminal_states_for(&wire, &run),
+            vec![RunState::Failed],
+            "durable seal must broadcast exactly one terminal RunChanged{{Failed}}: {wire:?}"
+        );
+        let terminal_envelope = envelopes
+            .iter()
+            .find(|envelope| {
+                matches!(
+                    &envelope.payload,
+                    AppEvent::RunChanged {
+                        run_id: id,
+                        state: RunState::Failed,
+                    } if id == &run
+                )
+            })
+            .expect("terminal envelope");
+        assert_eq!(
+            terminal_envelope.stream_sequence, persisted_sequence,
+            "terminal RunChanged must carry the persisted sequence: {envelopes:?}"
+        );
+        assert!(
+            terminal_envelope.stream_sequence < super::bus::SYNTHETIC_SEQUENCE_BASE,
+            "durable seal must not occupy the synthetic sequence space: {envelopes:?}"
+        );
+        assert!(
+            has_run_failed_diagnostic(&wire),
+            "run.failed diagnostic must survive the durable seal path: {wire:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))

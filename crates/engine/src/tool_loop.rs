@@ -104,9 +104,11 @@ pub trait LoopContext: Send + Sync {
     }
 
     /// 写工具执行前由宿主拍快照。engine 不依赖 blob/git；默认空。
+    /// 快照失败时宿主可经 `events` 发 `AgentEvent::Diagnostic`（写入继续）。
     async fn snapshot_write_tools(
         &self,
         _calls: &[PendingToolInvocation],
+        _events: LoopEventEmitter<'_>,
         _cancel: CancellationToken,
     ) -> Vec<WriteCheckpoint> {
         Vec::new()
@@ -296,7 +298,7 @@ pub async fn run_session(
                 }
 
                 let checkpoints = loop_ctx
-                    .snapshot_write_tools(&to_run, cancel.clone())
+                    .snapshot_write_tools(&to_run, loop_events.clone(), cancel.clone())
                     .await;
                 for checkpoint in checkpoints {
                     emitter
@@ -2200,6 +2202,7 @@ mod tests {
         async fn snapshot_write_tools(
             &self,
             calls: &[PendingToolInvocation],
+            _events: LoopEventEmitter<'_>,
             _cancel: CancellationToken,
         ) -> Vec<WriteCheckpoint> {
             calls

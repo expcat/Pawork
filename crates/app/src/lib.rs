@@ -946,6 +946,10 @@ impl AppCore {
         // ADR-043：存储打开与绑定读取全部成功后，再以持久化事实原子替换
         // 进程内缓存；重复 open_store 不保留旧库的陈旧归属。
         self.session.replace_workspace_cache(workspace_bindings);
+        // P2-2A 悬空 run 诚实收口：把上次进程在终态前结束遗留的 running
+        // run 落 RunFailed（幂等；waiting tool call 保持 pending 可决议；
+        // 单 session 失败只 warn，不阻断启动）。
+        self.session.seal_interrupted_runs(self).await;
         Ok(())
     }
 

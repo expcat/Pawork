@@ -48,7 +48,7 @@
 - `request_approval(calls, already_approved_for_run: bool, events, cancel) -> Result<Vec<ApprovalGate>, EngineError>`：对整批调用逐个给出闸门，返回向量必须与 `calls` 等长。`ApprovalGate::NotRequired` = 策略已放行不发审批事件；`ApprovalGate::Asked(decision)` = 用户可见审批。**实现契约（K-02）**：每次阻塞等待决策前必须先 emit `AgentEvent::ToolApprovalRequested`（含 batch 已批准的短路路径），reason 逐字为 ``tool `{name}` requires approval``；engine 只补发 `ToolApprovalResponded`。`already_approved_for_run = true` 时不应再询问用户。
 - `next_message_id() -> MessageId` / `next_request_id() -> RequestId`：为助手消息、工具消息、摘要消息与每轮新请求分配 id（内部摘要请求也从这里取 request_id）。
 - `compact_history(reason: AutoCompactionReason, summary_text: &str, cancel) -> Result<Option<CompactionOutcome>, EngineError>`：压缩回调，host（app）负责 session 侧 fork/snapshot 后回传元数据（`source_event_count` + `compacted_through`）。默认实现返回 `Ok(None)`（无持久化宿主时 engine 仍完成消息层压缩）；宿主侧失败**必须**返回 `Err`，engine 将终止当前 run，不静默吞掉。
-- `snapshot_write_tools(calls, cancel) -> Vec<WriteCheckpoint>`：写工具执行前由宿主拍快照，默认空；engine 只对每个返回项发 `AgentEvent::CheckpointCreated`，不依赖 blob/git。
+- `snapshot_write_tools(calls, events, cancel) -> Vec<WriteCheckpoint>`：写工具执行前由宿主拍快照，默认空；engine 只对每个返回项发 `AgentEvent::CheckpointCreated`，不依赖 blob/git。快照失败时宿主可经 `events`（`LoopEventEmitter::emit`）发 `AgentEvent::Diagnostic{code:"checkpoint.snapshot_failed"}`（P2 片 2B，写入继续，不阻断 run）。
 
 ### 3.4 手动压缩与单轮会话
 
@@ -83,6 +83,7 @@
 | `CheckpointCreated` | `snapshot_write_tools` 每个快照 |
 | `ToolExecutionStarted / ToolOutputDelta / ToolExecutionCompleted` | 放行调用执行前 / 执行中 / 结果回填时 |
 | `Diagnostic(sandbox.fallback)` | 工具结果 metadata 声明沙箱回退时 |
+| `Diagnostic(checkpoint.snapshot_failed)` | 宿主在 `snapshot_write_tools` 内经 `LoopEventEmitter` 发（快照失败但写入继续） |
 | `RunCompleted / RunCancelled / RunFailed` | 终态三选一（persist 失败时不补发） |
 
 ### 3.6 取消

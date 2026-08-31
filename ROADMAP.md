@@ -6,11 +6,11 @@
 
 | 字段 | 当前事实 |
 | --- | --- |
-| 活动线 | **P2 Agent 主路径可靠性** |
-| 状态 | 🟢 P1 已收口：E0–E2、片 1、片 2A、片 2B 与片 2C 全部完成。片 2C 审计确认五流程接线已完整落地（零代码改动），正式 Host/Desktop 真窗口验收通过，Desktop 定向门禁 147/147。 |
-| 本轮结果 | 添加 / 切换 / 重开项目与新建 / 续聊会话五流程均经正式 UI 走通：真实目录经系统选择器注册为持久项目（schema v14 注册表），Desktop 重启与 Host 重启 + Reconnect 双粒度复现项目集合，按项目新建会话绑定各自 workspace，续聊会话重放持久化时间线，断线诚实显示 Disconnected + Reconnect。 |
-| 下一动作 | 按 §4 开启 P2（Agent 主路径可靠性），开启前再拆成数小时内可验收的小任务。 |
-| 本轮完成条件 | P1 退出条件「添加 / 切换 / 重开项目与新建 / 续聊会话均可通过正式 UI 完成」已满足（证据归档 [docs/history.md](docs/history.md)）。 |
+| 活动线 | **P3 Changes / Terminal / Resources 完整性** |
+| 状态 | 🟢 P1 已收口：E0–E2、片 1、片 2A、片 2B 与片 2C 全部完成。片 2C 审计确认五流程接线已完整落地（零代码改动），正式 Host/Desktop 真窗口验收通过，Desktop 定向门禁 147/147。🟢 P2 已收口：片 1 审计（四链路闭环 + 两真实缺口）、片 2A（悬空 run 诚实收口）、片 2B（checkpoint 失败诚实化）、片 3 真窗口闭环验收全部通过，Desktop 定向门禁 147/147。 |
+| 本轮结果 | 发送 / 审批 / 取消（流式与审批等待两相位）/ 失败恢复（kill -9 两相位重启后诚实 RunFailed + 启动清扫幂等）/ 重放 / 文件写入六链路均经正式 UI 走通；无终态 run 启动清扫与合成终态 persist-first 落地，checkpoint 快照失败可持久化诊断并上时间线；UI 状态与 SQLite/磁盘/git 事实一致。 |
+| 下一动作 | 按 §4 开启 P3（Changes / Terminal / Resources 完整性），开启前再拆成数小时内可验收的小任务。 |
+| 本轮完成条件 | P2 退出条件「发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环」已满足（证据归档 [docs/history.md](docs/history.md)）。 |
 | 当前阻塞 | 无。完整 Terminal stop/close 与 live exit/failure 仍以 UI 本地诚实实现绕过，归 P3 边界。 |
 
 状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。任何“已实现”“自动检查通过”“真窗口通过”“等待人工确认”必须分开记录。
@@ -50,6 +50,17 @@
 - **片 2B ✅**：schema v14 `workspaces` 注册表 + AppCore/GuiHost 按 session workspace 路由（Run / 资源 / `@` 展开 / diff / terminal cwd）；`workspace_add` 幂等登记、`workspace_list` 返回注册表全集合；不改 wire，storage/workspace/app/cli 定向门禁通过。
 - **片 2C ✅**：审计确认添加 / 切换 / 重开项目、新建 / 续聊会话五流程在既有 Desktop 已完整接线（零代码改动）；正式 Host/Desktop 真窗口验收通过（隔离实例双粒度重开 + 按项目归属绑定核对），Desktop 定向门禁 147/147；P1 收口。
 
+### P2 — Agent 主路径可靠性 🔵
+
+退出条件（§4）：发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环。切片如下，每片数小时内可验收：
+
+- **片 1 ✅**：六链路（发送 / 审批 / 取消 / 失败恢复 / 重放 / 文件写入）可靠性缺口审计（glm_explorer，只读零改动）。结论：发送 / 取消（三相位均有测试钉住，Desktop Cancel 全相位可达）/ 审批（含重启恢复）/ 重放（三态 + lagged）四链路闭环；两个真实缺口同根——①无终态事件的 run（Host 崩溃 / sink 持久化失败）在重放侧永远悬空（runs 表停 "running"，timeline 工具行永 "running"，启动无清扫，合成终态只上 wire 不落库）；②checkpoint 止步于持久化层（快照失败仅 warn 静默跳过，Desktop 零消费）。
+- **片 2A ✅（已实现 + 定向门禁通过，待片 3 真窗口验证）**：悬空 run 诚实收口。open_store 启动清扫：state=running 的 run 追加持久化 ToolExecutionCompleted(is_error)（非 waiting 悬空工具）+ RunFailed(Internal)，waiting 审批保持 pending 可决议、幂等、单 session 失败不阻断启动；live 合成终态闸改 persist-first（持久化失败才退回 publish_raw 合成兜底）。写入集 crates/app 四文件，新增测试 4 条，cargo test -p pawork-app --offline --lib --tests 全绿；零 wire/schema 演进；app.md Spec 已同批回写（§4.1/§4.6/§5/§7）。
+- **片 2B ✅（已实现 + 定向门禁通过，待片 3 真窗口验证）**：checkpoint 失败诚实化。LoopContext::snapshot_write_tools 增 LoopEventEmitter 参数，快照失败经 emitter 发可持久化 Diagnostic{checkpoint.snapshot_failed}（写入继续）；protocol 投影两臂沿用 sandbox.fallback 模式渲染提示行。写入集 engine/app/protocol，新增测试 2 条，cargo test -p pawork-engine -p pawork-app -p pawork-protocol --offline --lib --tests 全绿；零 wire/schema 演进；engine.md/protocol.md Spec 已同批回写。不加回滚 UI（归候选池 A3）。
+- **片 3 ✅**：真窗口闭环验收通过（隔离实例 p2-3，glm_worker）：六链路一轮走通，UI（AX）+ SQLite/磁盘/git 双证据；取消两相位、kill -9 两相位失败恢复（诚实 RunFailed + 清扫幂等）、续聊重放、checkpoint 失败诊断真实触发落库；Desktop 门禁 147/147。三条观察项登记 §5。
+
+不改动范围：不演进 wire/schema；不新增包与生产依赖；Terminal stop/close 与 live exit/failure 仍归 P3 边界；不改 Provider 通道与多 Agent orchestration。
+
 ## 3. 本轮验收矩阵
 
 | 能力 | 通过条件 | 证据 |
@@ -65,11 +76,11 @@
 
 ## 4. 后续计划
 
-E0–E2 与 P1 已完成。后续按以下顺序推进；每项在开启前再拆成数小时内可验收的小任务，不预建兼容层或第二套实现。
+E0–E2、P1 与 P2 已完成。后续按以下顺序推进；每项在开启前再拆成数小时内可验收的小任务，不预建兼容层或第二套实现。
 
 | 优先级 | 主题 | 进入条件 | 退出条件 |
 | --- | --- | --- | --- |
-| P2 | Agent 主路径可靠性 | P1 可稳定复现真实 Run | 发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环 |
+| ~~P2~~ ✅ | Agent 主路径可靠性（已收口，2026-09-01） | P1 可稳定复现真实 Run | 发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环 |
 | P3 | Changes / Terminal / Resources 完整性 | P2 产出真实工具与文件事件 | 三面板只展示 Host 权威数据，关键动作与错误恢复完整 |
 | P4 | Accessibility 与跨平台 | macOS 核心路径稳定 | 键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据 |
 | P5 | 发布准备 | P1–P4 完成且用户授权发布任务 | License、供应链、安装/升级/回滚和三平台发布门禁另立任务并通过 |
@@ -82,6 +93,7 @@ E0–E2 与 P1 已完成。后续按以下顺序推进；每项在开启前再�
 - 若“添加项目”在现有 Desktop 不可达，优先复用冻结的 `workspace_add` 命令；任何需要新增 wire 的方案先停在 ADR 决策。
 - Terminal 现有协议没有通用 Stop/Close 与 live exit 事件时，UI 必须诚实表达，不用写入 `exit` 冒充正式能力。
 - 发布、提交、推送、生产部署与真实账户变更不在本轮授权范围。
+- P2 遗留观察项（不阻塞，归 P3 或后续任务评估）：①审批等待相位取消 run 后，waiting tool call 的工具行显示 "running"，只剩用户决议一条闭合路径；②`checkpoint.snapshot_failed` 文案 "write proceeded without rollback point" 在越界写被工具层拒绝的场景与实际不符；③Desktop 进程被 SIGSTOP ≥30s 后 AX 树永久退化（与 P1 片 2C 窗口异常同类，倾向 macOS 环境非产品缺陷）；④Host 启动 chatgpt probe 401 warn 与重启后 usage ledger record id conflict warn（既有现象）。
 
 ## 6. 计划事实源
 

@@ -309,6 +309,7 @@ impl LoopContext for SessionLoopCtx<'_> {
     async fn snapshot_write_tools(
         &self,
         calls: &[PendingToolInvocation],
+        events: LoopEventEmitter<'_>,
         cancel: CancellationToken,
     ) -> Vec<WriteCheckpoint> {
         let Some(checkpoints) = self.checkpoints.as_ref() else {
@@ -322,6 +323,7 @@ impl LoopContext for SessionLoopCtx<'_> {
             &self.run_id,
             &self.workspace_roots,
             calls,
+            events,
             cancel,
         )
         .await

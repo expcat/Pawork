@@ -5,8 +5,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, Message, MessageId, MessageRole,
-    SessionId, TextContent, ToolResultContent, WorkspaceId,
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, ErrorCategory, ErrorContext,
+    Message, MessageId, MessageRole, SessionId, TextContent, ToolResultContent, WorkspaceId,
 };
 use pawork_engine::EngineError;
 use pawork_storage::session::SessionRecord;
@@ -19,6 +19,12 @@ pub(crate) struct SessionService {
     /// 无绑定的历史 session 进 Unassigned。
     pub(crate) workspaces: Mutex<HashMap<String, WorkspaceId>>,
 }
+
+/// 启动清扫时对悬空 tool call 的诚实收语文案。
+pub(crate) const INTERRUPTED_TOOL_RESULT_MESSAGE: &str = "run interrupted before completion";
+/// 启动清扫时对无终态 run 的诚实收口文案。
+pub(crate) const INTERRUPTED_RUN_FAILED_MESSAGE: &str =
+    "host process ended before the run reached a terminal state";
 
 impl SessionService {
     pub(crate) fn new() -> Self {
@@ -163,6 +169,114 @@ impl SessionService {
                 ApprovalDecision::Denied,
                 "pending approval closed on resume",
                 &mut sequence,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// 启动清扫（悬空 run 诚实收口）：宿主进程在终态前结束（崩溃 / sink
+    /// 失败）遗留的 `running` run 在重放侧永远悬空。装配时对所有 session
+    /// 扫 projection，把仍在 `running` 的 run 收口：非 waiting 的悬空 tool
+    /// call 先落 `ToolExecutionCompleted(is_error)`，再落 `RunFailed`。
+    ///
+    /// - `waiting_for_approval` 的 tool call 不追加 ToolExecutionCompleted
+    ///   （保持 pending 可决议；pending 重建只看 tool_calls 状态，与 runs
+    ///   表无关），其所属 run 仍照常落 RunFailed——run 已是崩溃孤儿，
+    ///   审批决议只是后续清理；
+    /// - 幂等：收口后 run 进入 `failed`、tool call 进入 `completed`，
+    ///   重复清扫自然早退；中途失败下次启动收敛；
+    /// - 单 session 失败只 warn 后继续，不阻断启动。
+    pub(crate) async fn seal_interrupted_runs(&self, core: &AppCore) {
+        let sessions = match core.store() {
+            Ok(store) => store.list_sessions().await,
+            Err(error) => {
+                tracing::warn!(error = %error, "interrupted-run sweep skipped: store not open");
+                return;
+            }
+        };
+        let sessions = match sessions {
+            Ok(records) => records,
+            Err(error) => {
+                tracing::warn!(error = %error, "interrupted-run sweep skipped: list sessions failed");
+                return;
+            }
+        };
+        for record in sessions {
+            let session_id = SessionId::from(record.session_id.as_str());
+            if let Err(error) = self
+                .seal_interrupted_runs_for_session(core, &session_id)
+                .await
+            {
+                tracing::warn!(
+                    session_id = session_id.as_str(),
+                    error = %error,
+                    "interrupted-run sweep failed for session; continuing startup"
+                );
+            }
+        }
+    }
+
+    async fn seal_interrupted_runs_for_session(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+    ) -> Result<(), AppError> {
+        let snapshot = core.store()?.projection_snapshot(session_id).await?;
+        let running: Vec<_> = snapshot
+            .runs
+            .iter()
+            .filter(|run| run.state == "running")
+            .map(|run| run.run_id.clone())
+            .collect();
+        if running.is_empty() {
+            return Ok(());
+        }
+        let tool_calls: Vec<_> = snapshot.tool_calls.clone();
+        let mut sequence = self.next_sequence(core, session_id).await?;
+        for run_id in running {
+            for call in tool_calls
+                .iter()
+                .filter(|call| {
+                    call.run_id == run_id
+                        && call.state != "completed"
+                        && call.state != "waiting_for_approval"
+                })
+            {
+                core.append_payload(
+                    session_id,
+                    &run_id,
+                    &mut sequence,
+                    AgentEvent::ToolExecutionCompleted {
+                        tool_call_id: call.tool_call_id.clone(),
+                        result: ToolResultContent {
+                            tool_call_id: call.tool_call_id.clone(),
+                            tool_name: Some(call.name.clone()),
+                            content: vec![ContentPart::Text(TextContent {
+                                text: INTERRUPTED_TOOL_RESULT_MESSAGE.into(),
+                            })],
+                            is_error: true,
+                            metadata: serde_json::Value::Null,
+                            artifacts: Vec::new(),
+                        },
+                    },
+                )
+                .await?;
+            }
+            core.append_payload(
+                session_id,
+                &run_id,
+                &mut sequence,
+                AgentEvent::RunFailed {
+                    error: ErrorContext {
+                        category: ErrorCategory::Internal,
+                        message: INTERRUPTED_RUN_FAILED_MESSAGE.into(),
+                        retryable: false,
+                        retry_after_ms: None,
+                        diagnostics: Default::default(),
+                    },
+                    usage: None,
+                },
             )
             .await?;
         }
@@ -433,6 +547,328 @@ mod tests {
             pawork_engine::now_timestamp(),
             payload,
         )
+    }
+
+    async fn append_sweep_event(
+        store: &pawork_storage::session::SessionStore,
+        session: &SessionId,
+        run: &RunId,
+        sequence: u64,
+        payload: AgentEvent,
+    ) {
+        store
+            .append_event(
+                DEFAULT_BRANCH_ID,
+                AgentEventEnvelope::new(
+                    EventId::from(format!("evt-sweep-{sequence}")),
+                    session.clone(),
+                    run.clone(),
+                    EventSequence::new(sequence),
+                    pawork_engine::now_timestamp(),
+                    payload,
+                ),
+            )
+            .await
+            .expect("append sweep seed event");
+    }
+
+    #[tokio::test]
+    async fn startup_sweep_seals_interrupted_runs_idempotently() {
+        use pawork_auth::{MemoryBackend, SecretBackend};
+        use pawork_workspace::config::PaworkConfig;
+
+        // 直接经 storage 落一个「RunStarted + tool call 参数收集中、无终态」
+        // 的 run，模拟宿主在终态前崩溃；装配（open_store）触发启动清扫。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.db");
+        let session = SessionId::from("ses-sweep-interrupted");
+        let run = RunId::from("run-sweep-interrupted");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-sweep-1");
+        {
+            let (store, _) = pawork_storage::session::SessionStore::open(&path)
+                .await
+                .expect("store");
+            store
+                .create_session(&session, "sweep", pawork_engine::now_timestamp())
+                .await
+                .expect("session");
+            append_sweep_event(
+                &store,
+                &session,
+                &run,
+                1,
+                AgentEvent::RunStarted {
+                    trigger_message_id: MessageId::from("msg-sweep-1"),
+                },
+            )
+            .await;
+            append_sweep_event(
+                &store,
+                &session,
+                &run,
+                2,
+                AgentEvent::ToolCallStarted {
+                    tool_call_id: tool_call_id.clone(),
+                    name: "read_file".into(),
+                },
+            )
+            .await;
+            append_sweep_event(
+                &store,
+                &session,
+                &run,
+                3,
+                AgentEvent::ToolCallArgumentsDelta {
+                    tool_call_id,
+                    json_delta: "{\"path\":\"a.txt\"}".into(),
+                },
+            )
+            .await;
+        }
+
+        let backend: std::sync::Arc<dyn SecretBackend> =
+            std::sync::Arc::new(MemoryBackend::new());
+        let mut core = crate::AppCore::from_config_inner(
+            PaworkConfig::default(),
+            None,
+            None,
+            backend.clone(),
+            true,
+        )
+        .await
+        .expect("core");
+        core.attach_workspace(dir.path()).expect("attach workspace");
+        core.open_store(&path).await.expect("open store sweeps");
+
+        let store = core.store().expect("store");
+        let snapshot = store.projection_snapshot(&session).await.expect("snapshot");
+        assert_eq!(snapshot.runs[0].state, "failed", "{snapshot:?}");
+        assert_eq!(snapshot.tool_calls[0].state, "completed", "{snapshot:?}");
+        let result = snapshot.tool_calls[0]
+            .result
+            .as_ref()
+            .expect("interrupted tool result")
+            .to_string();
+        assert!(
+            result.contains(super::INTERRUPTED_TOOL_RESULT_MESSAGE),
+            "{result}"
+        );
+        let events = store.replay_events(&session, 1, 100).await.expect("replay");
+        let event_count = events.len();
+        match &events
+            .iter()
+            .rev()
+            .find(|event| matches!(event.payload, AgentEvent::RunFailed { .. }))
+            .expect("sweep must persist RunFailed")
+            .payload
+        {
+            AgentEvent::RunFailed { error, .. } => {
+                assert_eq!(error.category, pawork_domain::ErrorCategory::Internal);
+                assert_eq!(error.message, super::INTERRUPTED_RUN_FAILED_MESSAGE);
+            }
+            _ => unreachable!("matched RunFailed"),
+        }
+        core.shutdown().await.expect("shutdown");
+
+        // 幂等：再次装配不重复收口（事件数不变，run 仍 failed）。
+        let mut restarted = crate::AppCore::from_config_inner(
+            PaworkConfig::default(),
+            None,
+            None,
+            backend,
+            true,
+        )
+        .await
+        .expect("second core");
+        restarted
+            .attach_workspace(dir.path())
+            .expect("attach workspace 2");
+        restarted.open_store(&path).await.expect("open store 2");
+        let snapshot2 = restarted
+            .store()
+            .expect("store 2")
+            .projection_snapshot(&session)
+            .await
+            .expect("snapshot 2");
+        assert_eq!(snapshot2.runs[0].state, "failed");
+        let events2 = restarted
+            .store()
+            .expect("store 2")
+            .replay_events(&session, 1, 100)
+            .await
+            .expect("replay 2");
+        assert_eq!(
+            events2.len(),
+            event_count,
+            "second startup sweep must append nothing"
+        );
+        restarted.shutdown().await.expect("shutdown 2");
+    }
+
+    /// 落一个「RunStarted + tool call 停在 waiting_for_approval、无终态」的
+    /// run，模拟宿主在审批等待中崩溃。
+    async fn seed_waiting_run(path: &std::path::Path) -> SessionId {
+        let session = SessionId::from("ses-sweep-waiting");
+        let run = RunId::from("run-sweep-waiting");
+        let tool_call_id = pawork_domain::ToolCallId::from("call-sweep-wait");
+        let (store, _) = pawork_storage::session::SessionStore::open(path)
+            .await
+            .expect("store");
+        store
+            .create_session(&session, "waiting", pawork_engine::now_timestamp())
+            .await
+            .expect("session");
+        append_sweep_event(
+            &store,
+            &session,
+            &run,
+            1,
+            AgentEvent::RunStarted {
+                trigger_message_id: MessageId::from("msg-sweep-wait"),
+            },
+        )
+        .await;
+        append_sweep_event(
+            &store,
+            &session,
+            &run,
+            2,
+            AgentEvent::ToolCallStarted {
+                tool_call_id: tool_call_id.clone(),
+                name: "write_file".into(),
+            },
+        )
+        .await;
+        append_sweep_event(
+            &store,
+            &session,
+            &run,
+            3,
+            AgentEvent::ToolApprovalRequested {
+                tool_call_id,
+                reason: "needs approval".into(),
+            },
+        )
+        .await;
+        session
+    }
+
+    async fn open_core_with_sweep(
+        path: &std::path::Path,
+        workspace: &std::path::Path,
+    ) -> crate::AppCore {
+        use pawork_auth::{MemoryBackend, SecretBackend};
+        use pawork_workspace::config::PaworkConfig;
+
+        let backend: std::sync::Arc<dyn SecretBackend> =
+            std::sync::Arc::new(MemoryBackend::new());
+        let mut core = crate::AppCore::from_config_inner(
+            PaworkConfig::default(),
+            None,
+            None,
+            backend,
+            true,
+        )
+        .await
+        .expect("core");
+        core.attach_workspace(workspace).expect("attach workspace");
+        core.open_store(path).await.expect("open store");
+        core
+    }
+
+    #[tokio::test]
+    async fn startup_sweep_fails_waiting_run_but_keeps_call_pending() {
+        // waiting_for_approval 的 tool call 保持 pending 可决议，但其所属
+        // run 同样是崩溃孤儿：启动清扫必须把 run 收口为 failed。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.db");
+        let session = seed_waiting_run(&path).await;
+        let core = open_core_with_sweep(&path, dir.path()).await;
+
+        let store = core.store().expect("store");
+        let snapshot = store.projection_snapshot(&session).await.expect("snapshot");
+        assert_eq!(
+            snapshot.runs[0].state, "failed",
+            "waiting run is still a crash orphan and must be sealed"
+        );
+        assert_eq!(
+            snapshot.tool_calls[0].state, "waiting_for_approval",
+            "pending approval must stay resolvable after the sweep"
+        );
+        let events = store.replay_events(&session, 1, 100).await.expect("replay");
+        assert_eq!(
+            events.len(),
+            4,
+            "sweep must append exactly one RunFailed for the waiting run"
+        );
+        match &events.last().expect("sealed").payload {
+            AgentEvent::RunFailed { error, .. } => {
+                assert_eq!(error.category, pawork_domain::ErrorCategory::Internal);
+                assert_eq!(error.message, super::INTERRUPTED_RUN_FAILED_MESSAGE);
+            }
+            other => panic!("sweep must end with RunFailed: {other:?}"),
+        }
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn waiting_approval_resolves_after_startup_sweep() {
+        // 清扫后经 durable seal 决议 pending 审批：Responded /
+        // ToolExecutionCompleted 落在 RunFailed 之后，重放与投影不炸，
+        // tool 行正确闭合。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.db");
+        let session = seed_waiting_run(&path).await;
+        let core = open_core_with_sweep(&path, dir.path()).await;
+
+        let waiting = core
+            .store()
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("snapshot")
+            .tool_calls
+            .into_iter()
+            .find(|call| call.state == "waiting_for_approval")
+            .expect("waiting call survives sweep");
+        let mut sequence = core.next_sequence(&session).await.expect("next sequence");
+        core.resolve_waiting_tool_call(
+            &session,
+            &waiting,
+            pawork_domain::ApprovalDecision::Denied,
+            "resolved after sweep",
+            &mut sequence,
+        )
+        .await
+        .expect("resolve waiting tool call");
+
+        let store = core.store().expect("store");
+        let events = store.replay_events(&session, 1, 100).await.expect("replay");
+        let run_failed_at = events
+            .iter()
+            .position(|event| matches!(event.payload, AgentEvent::RunFailed { .. }))
+            .expect("sweep RunFailed");
+        let responded_at = events
+            .iter()
+            .position(|event| matches!(event.payload, AgentEvent::ToolApprovalResponded { .. }))
+            .expect("ToolApprovalResponded");
+        let completed_at = events
+            .iter()
+            .position(|event| matches!(event.payload, AgentEvent::ToolExecutionCompleted { .. }))
+            .expect("ToolExecutionCompleted");
+        assert!(
+            run_failed_at < responded_at && responded_at < completed_at,
+            "approval resolution must replay after the sweep RunFailed"
+        );
+        let snapshot = store.projection_snapshot(&session).await.expect("replayable");
+        assert_eq!(snapshot.tool_calls[0].state, "completed");
+        let result = snapshot.tool_calls[0]
+            .result
+            .as_ref()
+            .expect("closed tool result")
+            .to_string();
+        assert!(result.contains("resolved after sweep"), "{result}");
+        core.shutdown().await.expect("shutdown");
     }
 
     #[tokio::test]

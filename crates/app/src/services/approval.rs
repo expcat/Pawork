@@ -494,4 +494,114 @@ mod tests {
         drop(core);
         adapter.shutdown().await.expect("shutdown adapter");
     }
+
+    #[tokio::test]
+    async fn write_snapshot_failure_emits_diagnostic_persisted_and_broadcast() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let dir = tempfile::tempdir().expect("store");
+        let (store, _) = SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        // ../ 路径逃出 workspace roots：snapshot_before_write 判 PathEscape，
+        // 快照失败发诊断，写工具仍照常执行（工具层同样拒绝越界路径）。
+        let provider = MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call(
+                    "write_file",
+                    serde_json::json!({"path": "../escape.txt", "content": "nope"}),
+                )
+                .complete_with(pawork_domain::StopReason::ToolUse),
+            MockScript::new().text("write attempted").complete(),
+        ]);
+        let mut core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        core.open_checkpoints(dir.path().join("artifacts"))
+            .await
+            .expect("artifacts");
+        core.configure_approval(
+            ApprovalMode::AskForWrites,
+            true,
+            ScriptedHost::new(vec![ApprovalDecision::ApprovedOnce]),
+        );
+        core.attach_workspace(workspace.path()).expect("attach");
+        let session = core
+            .create_session("snapshot-failed")
+            .await
+            .expect("create");
+
+        let bus = Arc::new(crate::GuiEventBus::new(512));
+        let mut subscription = bus.subscribe();
+        let broadcast =
+            crate::GuiBroadcastSink::new(bus, pawork_domain::CoreInstanceId::from("instance-test"));
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &broadcast,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+
+        let replayed = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, usize::MAX)
+            .await
+            .expect("replay");
+        let diagnostic = replayed
+            .iter()
+            .find(|envelope| {
+                matches!(
+                    &envelope.payload,
+                    pawork_domain::AgentEvent::Diagnostic { code, .. }
+                        if code == "checkpoint.snapshot_failed"
+                )
+            })
+            .expect("snapshot failure diagnostic persisted");
+        let pawork_domain::AgentEvent::Diagnostic { details, .. } = &diagnostic.payload else {
+            unreachable!();
+        };
+        assert_eq!(
+            details.get("path").and_then(serde_json::Value::as_str),
+            Some("../escape.txt")
+        );
+        assert!(details
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .contains("parent traversal"));
+        assert!(replayed.iter().any(|envelope| matches!(
+            &envelope.payload,
+            pawork_domain::AgentEvent::RunCompleted { .. }
+        )));
+
+        let mut broadcast_found = false;
+        while let Ok(event) = subscription.try_recv() {
+            if let pawork_protocol::AppEvent::Diagnostic { code, message, .. } = &event.payload {
+                if code == "checkpoint.snapshot_failed" {
+                    broadcast_found = true;
+                    let parsed: serde_json::Value =
+                        serde_json::from_str(message).expect("details json");
+                    assert_eq!(
+                        parsed.get("path").and_then(serde_json::Value::as_str),
+                        Some("../escape.txt")
+                    );
+                    assert_eq!(
+                        parsed.get("message").and_then(serde_json::Value::as_str),
+                        Some("checkpoint snapshot failed — write proceeded without rollback point")
+                    );
+                }
+            }
+        }
+        assert!(
+            broadcast_found,
+            "diagnostic should broadcast to GUI clients"
+        );
+        core.shutdown().await.expect("shutdown");
+    }
 }
