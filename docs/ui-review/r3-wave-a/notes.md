@@ -1,6 +1,6 @@
 # R3 Wave A 收口记录（2026-08-27）
 
-> 范围：TaskRail 顶部 F-03（标题行 / scope 行 / 连接行三行节奏）与 F-04（日期桶 → 项目 → 任务列表、底部账户区 honest-hidden），按 [plan/R2-R3-ui-shell-navigation.md](../../../plan/R2-R3-ui-shell-navigation.md#r3--taskrail-与任务导航) 范围 1–4 的静态结构部分；导航状态与键盘（范围 5/6）留 Wave B。
+> 范围：TaskRail 顶部 F-03（标题行 / scope 行 / 连接行三行节奏）与 F-04（日期桶 → 项目 → 任务列表、底部账户区 honest-hidden）的旧静态结构部分；原任务书已清理，导航状态与键盘过程从 [history](../../history.md) 追溯。
 > 驱动：新增 [scripts/ui-r3-wave-a-projects.sh](../../../scripts/ui-r3-wave-a-projects.sh)（State C driver：seed → serve → desktop → AXPress 会话 → AXPress grouping → AXPress Projects 菜单项 → 截图 → normalize → 分区 diff）；[scripts/ui-wave-d-tools.py](../../../scripts/ui-wave-d-tools.py) 增 projects 相位断言。
 
 ## 1. 实现落点

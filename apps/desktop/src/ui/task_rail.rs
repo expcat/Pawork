@@ -351,13 +351,14 @@ impl AppView {
     fn scope_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
         let current = self.scope_workspace_id.clone();
         let options = self.projection.project_scope_options();
+        let add_project_ix = options.len();
         let highlight = self.menu_highlight_effective(
             options
                 .iter()
                 .position(|(workspace_id, _)| *workspace_id == current)
                 .unwrap_or(0),
         );
-        MenuPanel::new("scope-menu")
+        let mut panel = MenuPanel::new("scope-menu")
             .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
                 view.dismiss_menu_on_outside(MenuKind::Scope, event.position, cx);
             }))
@@ -380,7 +381,16 @@ impl AppView {
                                 view.on_select_scope(workspace_id.clone(), window, cx);
                             }))
                     }),
-            )
+            );
+        panel = panel.child(
+            MenuRow::new("scope-add-project")
+                .label("Add project…")
+                .highlighted(add_project_ix == highlight)
+                .on_click(cx.listener(|view, _event, window, cx| {
+                    view.on_open_project(window, cx);
+                })),
+        );
+        panel
     }
 
     fn task_rail_list(
@@ -610,9 +620,16 @@ impl AppView {
                     })),
             )
             .child(
-                Label::new(project.task_count().to_string())
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
+                div()
+                    .w(px(metrics::RAIL_META_SLOT_WIDTH))
+                    .flex_none()
+                    .flex()
+                    .justify_end()
+                    .child(
+                        Label::new(project.task_count().to_string())
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    ),
             );
         if !project.is_unassigned() {
             if let Some(workspace_id) = workspace_id {
@@ -712,21 +729,33 @@ impl AppView {
                                     .min_w_0()
                                     .truncate()
                                     .text_size(font::BODY)
-                                    .font_weight(if unread {
+                                    .font_weight(if is_active {
+                                        FontWeight::MEDIUM
+                                    } else if unread {
                                         FontWeight::SEMIBOLD
                                     } else {
                                         FontWeight::NORMAL
                                     })
-                                    .text_color(dark().text.emphasis)
+                                    .text_color(if is_active {
+                                        dark().text.primary
+                                    } else {
+                                        dark().text.emphasis
+                                    })
                                     .child(task.title.clone()),
                             ),
                     )
                     .child(
-                        div().ml_2().flex_none().child(
-                            Label::new(relative_activity(task.updated_at_ms, now_ms))
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                        ),
+                        div()
+                            .ml_2()
+                            .w(px(metrics::RAIL_META_SLOT_WIDTH))
+                            .flex_none()
+                            .flex()
+                            .justify_end()
+                            .child(
+                                Label::new(relative_activity(task.updated_at_ms, now_ms))
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.secondary),
+                            ),
                     )
                     .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
                         // 行级键盘激活后的同键 keyup 合成 click 在此吞除。

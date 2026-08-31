@@ -17,30 +17,30 @@
 
 ## 2. 模块与文件地图
 
-30 个 `.rs` 文件、约 21.4k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
+30 个 `.rs` 文件、约 21.6k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
 | `src/main.rs` | ~670 | 入口与手动 argv 解析（非 clap）；`PAWORK_UI_BARRIER_DIR` env 读取（空值视同未设置，None 全程零开销）；`run_app`（1440×1024 居中窗口 + `WINDOW_MIN_SIZE` 1080×720 最小尺寸——R2 Wave B 设计响应式底线，再窄击穿 Workspace ≥560 合同——+ 沉浸式 titlebar：TitlebarOptions appears_transparent，traffic lights 悬浮深色壳、内容视口贯通全窗，R2 Wave A；`install_keybindings`、聚焦 Composer、安装 macOS AX bridge）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器；1 个测试 |
-| `src/controller.rs` | ~1736 | `DesktopController`（connect / 事件泵 / 空闲心跳 / 全部 Command·Query 构造与响应解析）；`ControllerEvent` 对 terminal create 失败携带 workspace、对 diff 内容携带 Host 实际 session id，Changes/Resources 失败走可靠通道；`DiffFileSummary` / `DiffFileDetail` / `DiffHunkDetail` / `DiffLineDetail` / `GitDiffInfo` / `McpServerEntry` 视图模型；12 个测试 |
+| `src/controller.rs` | ~1736 | `DesktopController`（connect / 事件泵 / 空闲心跳 / 全部 Command·Query 构造与响应解析）；`open_workspace` 复用冻结 `workspace_add`，成功后刷新 snapshot 并发 `WorkspaceOpened{id,name}`；`ControllerEvent` 对 terminal create 失败携带 workspace、对 diff 内容携带 Host 实际 session id；12 个测试 |
 | `src/platform.rs` | ~230 | `Platform`（tokio multi_thread Runtime，`handle()` / `block_on()`）；`default_socket_path` / `socket_path_for_instance` / `token_path_for_instance` / `token_path_for_socket` 路径发现；deny-list 断言；4 个测试 |
 | `src/projection.rs` | ~3700 | `DesktopProjection` 渲染适配投影；`ConnectionState` / `ResumeState` / `ResumeApply` / `TerminalState` / `PendingApproval` / `ModelEntry` / `ActiveRun` / `SessionSummary` / `WorkspaceSummary` / `SessionLiveStatus`；R6 Wave B 按 workspace 保存多个 terminal 与 create 失败，占位/回执确定性归并，首段 output 在 create 回执给出权威 workspace 前只缓存不上屏，UpToDate 合并非事件权威 snapshot 且历史输出不复活 exited/killed 终态；Timeline/TaskRail/Run 状态与 F-13 谓词；39 个测试 |
-| `src/ui/mod.rs` | ~3166 | `AppView` 宿主：Workspace Header、Timeline、Composer 与 Inspector 三栏装配；R6 Wave A 的 Header Activity 触发器/Popover；R6 Wave B 将 terminal draft、pending write/create 按 workspace/terminal 归属；R7 Wave B 统一任务切换、审批与 Review changes 的焦点交接；R7 Wave C 增应用内 100%/125%/150% `TextScale`、放大/缩小/重置 action 与状态栏/AX 百分比，并在 render 安装平台显示偏好监听；连接恢复后刷新已打开的 Changes/Resources，并消费携 workspace 的 terminal create 失败与携 session 的 diff 回执；键位、焦点链、菜单互斥、1s tick 与 barrier settle；15 个测试 |
+| `src/ui/mod.rs` | ~3166 | `AppView` 宿主：Workspace Header、Timeline、Composer 与 Inspector 三栏装配；Scope/WorkspaceConfirm 的 `Add project…` 通过 GPUI 系统目录选择器调用 controller `open_workspace`，成功后切换 scope、同步 terminal 并显示项目名；其余承载 Activity、按 workspace 隔离的 terminal 草稿、焦点、字号、菜单、1s tick 与 barrier settle；15 个测试 |
 | `src/ui/shell_layout.rs` | ~295 | R2 Wave A 壳层几何合同：`resolve`（唯一计算入口，render 与 AX 树共享）——默认宽窗 rail=288 / Inspector 440，窗口宽 ≤1279 时 rail=240 且 Inspector 强制折叠（Workspace ≥560）；R7 Wave C 在 150% 字号下改用 320px rail，宽度不足 1320 时保持 Inspector 折叠，1080 窗口保留 760px Workspace；固定侧栏 `flex_none`，防长文本 min-content 挤窄 Inspector；rail 顶部 36px traffic-light 安全区；4 个 GPUI 布局测试 |
 | `src/ui/platform_preferences.rs` | ~123 | macOS Accessibility Display 偏好桥：读取 `NSWorkspace.accessibilityDisplayShouldIncreaseContrast`，监听 `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification` 并刷新窗口；状态保存在原子值中，非 macOS no-op。当前 UI 无动画，故 Reduce Motion 无渲染分支；无新增依赖、无主动修改系统设置。 |
 | `src/ui/accessibility.rs` | ~410 | 平台无关 `AxTree` / `AxNode` / role / action / request / rect 模型，identifier 唯一性、层级、focus / hit-test 约束；非 macOS no-op facade；3 个测试 |
-| `src/ui/accessibility/app.rs` | ~2096 | R4 Wave A 增 `header_ax`（标题 / branch / live 状态）与 `timeline_row_ax` 五类节点；R6 Wave A 将折叠态 `inspector-toggle` 与 ActivityPopover 语义树迁至 Header；从 `AppView` canonical UI 状态与布局 metric 构建三栏语义树；壳层几何与 render 共享 `shell_layout::resolve`，R7 Wave C 同源发布 150% 的 320px rail 与 `composer-status-hint` 百分比；TaskRail 几何、连接/会话文案、稳定 identifier、Composer/Send/Cancel、press/focus/set-value 白名单均与 render/业务 gate 同源；6 个测试 |
+| `src/ui/accessibility/app.rs` | ~2096 | R4 Wave A 增 `header_ax`（标题 / branch / live 状态）与 `timeline_row_ax` 五类节点；R6 Wave A 将折叠态 `inspector-toggle` 与 ActivityPopover 语义树迁至 Header；从 `AppView` canonical UI 状态与布局 metric 构建三栏语义树；壳层几何与 render 共享 `shell_layout::resolve`，R7 Wave C 同源发布 150% 的 320px rail 与 `composer-status-hint` 百分比；R9 同步 ActivityPopover heading / open-changes 两个受影响子节点的 inset/offset 断言；TaskRail 几何、连接/会话文案、稳定 identifier、Composer/Send/Cancel、press/focus/set-value 白名单均与 render/业务 gate 同源；6 个测试 |
 | `src/ui/accessibility/macos.rs` | ~940 | ADR-042 AppKit bridge：`GPUIView` AX root、`NSAccessibilityElement` 虚拟元素、frame / parent / hit-test / focus / notification / retain-release、settable/action 双门与 action 回调；结构不变（identifier/role/press 能力/子树形状）时原位刷新既有 element 而非整树重建，内部树同步 super 直调不触发 action 回调；6 个 macOS 测试 |
 | `src/ui/barriers.rs` | ~175 | UI fixture barrier 发射器（R1 Wave B）：`BarrierSink` 读 `PAWORK_UI_BARRIER_DIR`（None 零开销直通）；`timeline_stable`（settle_seq 单调自增 / session_id / entry_count）重写与 `approval_visible` 写/删；tmp+rename 原子替换、IO 失败静默；1 个测试 |
-| `src/ui/theme.rs` | ~655 | 深色主题 token：六组 29 色 + 以 16px 根字号表达的 `Rems` 字阶（100% 与原冻结 px 逐项相等）+ 100%/125%/150% `TextScale` + `metrics` 尺寸常量；`dark()` 默认读取平台 Increase Contrast 状态，`dark_for` 高对比分支只增强辅助文字、surface、边界与选区，默认 palette 不变；10 个定向测试 |
-| `src/ui/timeline.rs` | ~429 | Timeline 容器：gpui `list()` 变高虚拟化（R4 Wave A 自 Bottom 钉底改为 Top 对齐 + 显式跟随，F-06 短会话从 Header 下开始：贴底判定走滚动事件事实——`visible_range` 覆盖末项即贴底，handler 内不触 ListState 防 gpui 写借用重入 panic；`sync_list` 跟随态 scroll_to 末项、脱钩恢复钳制偏移）；`timeline_row_element` 五类渲染行组装（`timeline_rows()` 同源）、行距量图冻结值、可读列 max_w 618 左对齐；空态引导（无 active session 且条目数为 0 时居中 tertiary 一句，R2 Wave B）；`install_scroll_follow`（脱钩检测）；`sync_list`（统一 reset、脱钩恢复钳制偏移、Entry 菜单 close-on-reset）；`TIMELINE_OVERDRAW`=200px；回底控件接线 |
-| `src/ui/timeline_entry.rs` | ~843 | R4 Wave A 重写：F-07 消息层级（You/Pawork 标签行 + 时间、18px 正文行高默认 24 且随字号 rem 缩放、段落/• 列表两级切分）、F-08 `tool_group_element`（r5 描边面板、52 行高 / 2px 分隔线、状态 ✓/词诚实映射 succeeded→Completed 其余原文、无耗时字段不画）、`run_summary_element`（Ø40 状态圆随终态：Completed 绿 ✓ / Failed danger ✕ / Cancelled —；Ready for review + Review changes 主按钮，Open in editor 无 capability 不画）、`run_footer_element`、`error_entry_element`；`display_time`（epoch millis 串 → `relative_activity` 相对词 now/Nm/Nh/Nd，非法串原样兜底，render 与 AX 同源）；条目「···」fork 菜单迁入 message/error（identifier 冻结）；R7 Wave B 的 Review changes 展开后聚焦 Changes 选中页签，`on_fork` 入口级复核并在接受后聚焦 Composer；8 个测试 |
+| `src/ui/theme.rs` | ~679 | 深色主题 token：六组 29 色 + 以 16px 根字号表达的 `Rems` 字阶（100% 与原冻结 px 逐项相等）+ 100%/125%/150% `TextScale` + `metrics` 尺寸常量；R9 新增 56px rail meta、20/72/76px Changes 文件槽、36px diff header 与 24px gutter，并以既有 metrics 测试钉死；`dark()` 默认读取平台 Increase Contrast 状态，`dark_for` 高对比分支只增强辅助文字、surface、边界与选区，默认 palette 不变；10 个定向测试 |
+| `src/ui/timeline.rs` | ~436 | Timeline 容器：gpui `list()` 变高虚拟化（R4 Wave A 自 Bottom 钉底改为 Top 对齐 + 显式跟随，F-06 短会话从 Header 下开始：贴底判定走滚动事件事实——`visible_range` 覆盖末项即贴底，handler 内不触 ListState 防 gpui 写借用重入 panic；`sync_list` 跟随态 scroll_to 末项、脱钩恢复钳制偏移）；`timeline_row_element` 五类渲染行组装（`timeline_rows()` 同源），R9 统一满宽 + max_w 618 可读列，独立 RunSummary 使用 40px entry gap、tool→summary 保留 12px 组内 gap；空态引导（无 active session 且条目数为 0 时居中 tertiary 一句，R2 Wave B）；`install_scroll_follow`（脱钩检测）；`sync_list`（统一 reset、脱钩恢复钳制偏移、Entry 菜单 close-on-reset）；`TIMELINE_OVERDRAW`=200px；回底控件接线 |
+| `src/ui/timeline_entry.rs` | ~837 | R4 Wave A 重写：F-07 消息层级（You/Pawork 标签行 + 时间、18px 正文行高默认 24 且随字号 rem 缩放、段落/• 列表两级切分）、F-08 `tool_group_element`（r5 描边面板、52 行高 / 2px 分隔线、状态 ✓/词诚实映射 succeeded→Completed 其余原文、无耗时字段不画）、`run_summary_element`（Ø40 状态圆随终态：Completed 绿 ✓ / Failed danger ✕ / Cancelled —；Ready for review + Review changes 主按钮，Open in editor 无 capability 不画）、`run_footer_element`、`error_entry_element`；R9 把消息时间、tool detail、Run footer 与 Running/Pending 提升至 secondary；`display_time`（epoch millis 串 → `relative_activity` 相对词 now/Nm/Nh/Nd，非法串原样兜底，render 与 AX 同源）；条目「···」fork 菜单迁入 message/error（identifier 冻结）；R7 Wave B 的 Review changes 展开后聚焦 Changes 选中页签，`on_fork` 入口级复核并在接受后聚焦 Composer；8 个测试 |
 | `src/ui/approval_card.rs` | ~122 | 审批卡：警示卡 + Allow once / Allow for run / Deny 三按钮；app 级 focus handle（虚拟化卸载不丢失）；禁用原因 tooltip；R7 Wave B 的 mouse / keyboard / AX 三路径汇入同一 gate，决策后关闭旧菜单并把焦点交回 Composer |
-| `src/ui/input_area.rs` | ~545 | Composer（R5 Wave A 两行）：行 1 TextInput 单行常态 28px、多行向上增长并按面板 220 预算 clamp；行 2 footer（model Dropdown `provider / display_name` 触发器 max_w 220 truncate、只读 workspace Label max_w truncate、ContextMeter 文本、瞬态 `status_hint` Label、flex spacer、32×32 Send/Cancel 同槽 element id `composer-action`）；提示行删除，placeholder 只走状态机，Forked / 发送失败等瞬态反馈落 footer Label；WorkspaceConfirm 浮层保留；reasoning / 附件 / queue 诚实不画 |
-| `src/ui/inspector.rs` | ~281 | Inspector 面板：顶层 Changes / Terminal / Resources 三页签（`InspectorTab`，R6 Wave A 起默认 Changes）；顶层固定 100×58、18px 字与 2px 选中下划线，hover / active 只取 `surface.raised` 背景且不改几何；Terminal 页（cwd / size 行、FollowScroll 输出区 + 回底、终端输入 + Start/Size）；无输出占位文案 `TERMINAL_EMPTY_OUTPUT`（视觉与 AX 共源，R2 Wave B）；`ensure_terminal` 懒创建；1 个测试 |
-| `src/ui/changes.rs` | ~871 | Changes 面：Files / Summary 二级页签固定 96×56、17px 字与 2px 选中下划线；`ChangesPanelState`（双 epoch 防过期）、文件清单、DiffView（hunk 着色 + 按最长行建立真实横滚 extent）、latest-session mismatch fail-closed 与诚实 scope；折叠态 Header ActivityPopover 标题/Changes 权威摘要，不伪造 Agent；7 个测试 |
+| `src/ui/input_area.rs` | ~584 | Composer（R5 Wave A 两行）：行 1 TextInput 单行常态 28px、多行向上增长并按面板 220 预算 clamp；行 2 footer（model Dropdown `provider / display_name` 触发器 max_w 220 truncate、只读 workspace Label max_w truncate、ContextMeter 文本、瞬态 `status_hint` Label、flex spacer、32×32 Send/Cancel 同槽 element id `composer-action`）；R9 让两行共属既有 panel surface，并仅在稳定的 unavailable 文案上使用 tertiary、可用 Context 保持 secondary；提示行删除，placeholder 只走状态机，Forked / 发送失败等瞬态反馈落 footer Label；WorkspaceConfirm 浮层保留；reasoning / 附件 / queue 诚实不画 |
+| `src/ui/inspector.rs` | ~320 | Inspector 面板：顶层 Changes / Terminal / Resources 三页签；Terminal 页含 cwd/size、FollowScroll 输出、输入与 Start/Size；`plain_terminal_output` 在可见文本与 AX 共用路径移除 ANSI/VT 控制序列并归一换行（纯文本视图，不冒充 VT emulator）；`ensure_terminal` 懒创建；2 个测试 |
+| `src/ui/changes.rs` | ~987 | Changes 面：Files / Summary 二级页签固定 96×56、17px 字与 2px 选中下划线；`ChangesPanelState`（双 epoch 防过期）；R9 文件清单使用 20/72/76px glyph/status/delta 槽，DiffView 增横滚外 36px 只读路径 header、24px 语义 marker gutter 与中性正文，仍按最长行建立真实横滚 extent；latest-session mismatch fail-closed 与诚实 scope；折叠态 Header ActivityPopover 保持 320×320，标题下分隔并以 raised/bordered section 承载 Changes 权威摘要，不伪造 Agent；7 个测试 |
 | `src/ui/resources.rs` | ~210 | Resources 页：MCP server 只读表 + `ResourcesPanelState`（epoch 防过期）+ 手动刷新；1 个测试 |
-| `src/ui/task_rail.rs` | ~926 | Sessions 侧栏（F-03/F-04 定稿，R3 Wave A；R3 Wave B 增键盘导航与状态扩展）：顶部三行——标题行「Pawork」22px + ghost grouping 角标 28×28、全宽 raised scope 行（h36 / 1px 描边 / r4 / 18px 左对齐）、连接行（Ø10 状态点 + `connection_status_label` 17px + 28×28 全局「+」；R7 Wave C 将文案槽定为 rail 内容宽 − 全局「+」− 共享 8px 间隔，并在槽内 `overflow_hidden + truncate`，窄窗长断线原因显示省略号且不越过合同间隙，AX 仍提供完整状态值）；grouping / scope 菜单（MenuRow 键盘高亮）、日期桶头（18 medium secondary）与项目块（chevron + 名称 + 右对齐计数 + 28×28 定向「+」）折叠、44px 任务行（状态点 + 标题 `.truncate()` + 8px 保留间隔 + 17px 相对时间右对齐，150%/320px rail 下不相撞；选中 raised + r4；Blocked=danger 红实心、unread 标题 SEMIBOLD 同字号不改几何）、Reconnect 按钮（仅 Disconnected / ConnectFailed，Connecting 不显示，R2 Wave B）、连接状态徽标、「Local」页脚（honest-hidden，TR-12）；桶头 / 项目头 / 任务行平铺为滚动容器直接子元素（`ScrollHandle::scroll_to_item` 拿行级 bounds，grouping/scope 切换后把 active task 滚到可见，折叠项目退回头部行）；rail 内键盘导航 `handle_rail_navigation_key`（↑/↓ 沿焦点链移焦 clamp 不 wrap，项目头 ←/→ 收起/展开已处目标态 no-op，Enter/Space 经 ListRow 行级 key_down 直接调激活 handler（Slice 4）；Slice 5 菜单打开时 rail 让位不接管；rail 聚焦 Button——grouping/scope/add-task/项目定向「+」——裸 Enter/Space 行级激活同 click 路径，菜单已开时让位给根节点菜单 Enter 接管），带修饰键不接管 |
+| `src/ui/task_rail.rs` | ~945 | Sessions 侧栏（F-03/F-04 定稿，R3 Wave A；R3 Wave B 增键盘导航与状态扩展）：顶部三行——标题行「Pawork」22px + ghost grouping 角标 28×28、全宽 raised scope 行（h36 / 1px 描边 / r4 / 18px 左对齐）、连接行（Ø10 状态点 + `connection_status_label` 17px + 28×28 全局「+」；R7 Wave C 将文案槽定为 rail 内容宽 − 全局「+」− 共享 8px 间隔，并在槽内 `overflow_hidden + truncate`，窄窗长断线原因显示省略号且不越过合同间隙，AX 仍提供完整状态值）；grouping / scope 菜单（MenuRow 键盘高亮）、日期桶头（18 medium secondary）与项目块（chevron + 名称 + 56px 右对齐计数槽 + 28×28 定向「+」）折叠、44px 任务行（状态点 + 标题 `.truncate()` + 56px 相对时间槽，active 标题 medium/primary；150%/320px rail 下不相撞；选中 raised + r4；Blocked=danger 红实心、unread 标题 SEMIBOLD 同字号不改几何）、Reconnect 按钮（仅 Disconnected / ConnectFailed，Connecting 不显示，R2 Wave B）、连接状态徽标、「Local」页脚（honest-hidden，TR-12）；桶头 / 项目头 / 任务行平铺为滚动容器直接子元素（`ScrollHandle::scroll_to_item` 拿行级 bounds，grouping/scope 切换后把 active task 滚到可见，折叠项目退回头部行）；rail 内键盘导航 `handle_rail_navigation_key`（↑/↓ 沿焦点链移焦 clamp 不 wrap，项目头 ←/→ 收起/展开已处目标态 no-op，Enter/Space 经 ListRow 行级 key_down 直接调激活 handler（Slice 4）；Slice 5 菜单打开时 rail 让位不接管；rail 聚焦 Button——grouping/scope/add-task/项目定向「+」——裸 Enter/Space 行级激活同 click 路径，菜单已开时让位给根节点菜单 Enter 接管），带修饰键不接管 |
 | `src/ui/text_input.rs` | ~1300 | `TextInput`（Composer / 终端共用）：内容 / 动态 placeholder / IME marked_range / UTF-16 映射 / 视口 max_h + overflow scroll（TextElement 按完整内容高布局，视口由父容器 max_h 兑现，caret 滚进视口按 ScrollHandle 容器高计算；鼠标与 IME 坐标映射基于归一化布局原点 content_bounds——prepaint 时 origin 减 element_offset，与帧时序无关——再减 scroll offset，行高取 paint 时 last_line_height）/ 选择复制剪切 / Undo Redo / reset_text 草稿恢复；10 个测试 |
 | `src/ui/u1_probe.rs` | ~410 | R1 Wave C U1 spike：真实 TextInput/Button/overflow 探针；R5 Wave B 增 SelectAll/Copy/Cut/Undo/Redo、IME commit 单次入栈（真实 EntityInputHandler 路径）与空输入不可发送、Wave B 键位（含 Shift-Enter）经 keystroke→keymap→action 真实链路覆盖；14 个测试 |
 | `src/ui/components/mod.rs` | ~10 | 组件族模块声明 |
@@ -50,7 +50,7 @@
 | `src/ui/components/label.rs` | ~70 | `Label`（单行文本，token 化字号 / 颜色）与 `Badge`（状态徽标别名，默认 XS + text.secondary） |
 | `src/ui/components/list_row.rs` | ~130 | `ListRow`：Task 行（选中态底色，水平 `px_2`）与 ProjectHeader 行两形态，行高 44 + 垂直居中（R3 Wave A）；`min_w_0` 保证子项 truncate 拿到确定宽度；R3 Wave B 增 `track_focus` 键盘焦点三件套（tab_stop + track_focus + 聚焦 accent 描边，同 Button 模式）与 `on_activate` 行级键盘激活（裸 Enter / Space key_down 直接调与 click 同一激活 handler，Slice 4；禁合成 click 兜底；Slice 5 起 stop_propagation 由调用方 handler 决定——菜单打开时让位给根节点菜单 Enter 接管） |
 | `src/ui/components/panel.rs` | ~78 | `Panel`：`side_right`（TaskRail，右描边 + gap/p-2）与 `side_left`（Inspector，左描边）固定宽面板壳；固定宽时 `flex_none`，禁止 Workspace 长内容把侧栏挤窄 |
-| `src/ui/components/status_bar.rs` | ~70 | `StatusBar`：底部 24px 状态行容器（顶描边 + XS 次要文字）；F-13 信息串 `centered()` 行内绝对居中；R6 Wave A 起不再承载 Inspector/Activity 动作 |
+| `src/ui/components/status_bar.rs` | ~70 | `StatusBar`：底部 24px 状态行容器（顶描边 + 12px secondary 文字）；F-13 信息串在最小宽度为零、overflow hidden 的绝对居中槽内裁切；R6 Wave A 起不再承载 Inspector/Activity 动作 |
 
 ## 3. 用户可见界面与交互面
 
@@ -65,11 +65,13 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
 - `--probe`：不开窗，connect + snapshot + `model_list` 后打印一行 `connected: instance=… sessions=… models=… catalog=…` 退出（成功 0 / 失败 1）。
 - `--probe-smoke`：同一条 controller 路径跑真实冒烟——流式回合、切模型、写文件触发审批、取消 run、两次断线重连（持久化回放 + `disconnect_survive` 断言进行中 run 未被断线取消），打印签名行退出。
 - 正常模式：1440×1024 居中窗口、最小 1080×720（透明 titlebar，traffic lights 悬浮于壳层，rail 顶部留 36px 安全区），启动即聚焦 Composer。
+- 仓库入口 `scripts/pawork-desktop.sh` 支持 `build|start`：只构建正式 `pawork`/`pawork-desktop`，默认独立 `desktop` 实例与 `ask-for-dangerous` + 本进程 workspace 信任；不加载 fixture、seed 或测试 profile。macOS 通过最小 `.app` bundle 执行真实二进制以获得正常窗口/AX 注册。
 
 ### 3.2 三栏工作台（100%：侧栏 288 / Inspector 440 / 状态栏高 24；窗口宽 ≤1279 时侧栏 240 且 Inspector 默认折叠；150%：侧栏 320、宽度不足 1320 时 Inspector 折叠；Workspace ≥560）
 
 - **TaskRail（左侧栏）**
   - 顶部三行（F-03，R3 Wave A）：标题行「Pawork」（22px semibold）+ ghost grouping 角标 28×28（Timeline ◷ / Projects ▤）；全宽 raised scope 行（h36 / 1px 描边 / 圆角 4 / 18px，All projects / 各 workspace）；连接行 Ø10 状态点 + `Local · Connected[ · {resume 文案}]` / `Connecting…` / `Disconnected · {reason}` / `Connect failed · {reason}`（17px secondary，文字态不只靠颜色）+ 28×28 全局「+」。Reconnect 主按钮仅在 Disconnected / ConnectFailed 相位出现，Connecting 进行中不显示。
+  - Scope 菜单末项固定 `Add project…`；无 workspace 的 WorkspaceConfirm 菜单也提供同一入口。系统目录选择器取消不改变状态，成功后必须等 Host `workspace_add` 回执与 snapshot，再选择返回的 canonical workspace。
   - Timeline 分组 = 日期桶（Today / Yesterday / Previous 7 days / Earlier）→ 项目 → 任务；Projects 分组按 canonical workspace，缺 `workspace_id` 进 Unassigned（无「+」）。
   - 日期桶头 18px medium secondary；项目头可点折叠（chevron ▾/▸ + 名称 + 独立右对齐任务计数）；项目级 28×28「+」按该 workspace 新建任务。
   - 任务行（44px，选中 raised + 圆角 4）：状态点 Ø10（Needs input=琥珀实心 = 有待审批；Running=accent 蓝实心 = 该 session 有 active run；Blocked=danger 红实心 = R3 Wave B live 派生的 failed / interrupted 终态，优先级 Needs input > Running > Blocked；其余空心灰圆不声明语义；wire 无每会话终态字段故不画终态绿点）、标题单行 `.truncate()`（unread 时 SEMIBOLD，同字号同行高不改几何，不加 dot / 徽标）、8px 间隔、相对时间 17px 右对齐（now / Nm / Nh / Nd）；任务 click、行级 Enter、AX press、Cmd+Opt+↑/↓ 与 Cmd+Opt+N 都先关闭旧菜单并在切换后聚焦 Composer。激活当前 task 不重开 session 但仍关闭菜单；仅一个可见 task 时 cycling 不重开 session，仍聚焦 Composer。
@@ -148,7 +150,7 @@ AX 焦点口径（R7 Wave A）：浮层菜单打开时，触发器 AX 节点让�
 
 1. Composer Enter（先判 `is_composing()`，IME 组合中的 Enter 属输入法确认直接返回）或 Send 点击 / AX Send press（同样先判 composing）→ `can_send`（Connected + 有 active session + 无进行中 run + 文本 trim 非空）才可点；空/纯空白 Send disabled，tooltip「Message is empty.」。
 2. `run_start{ session_id, user_message[, provider, model] }`（模型取 `effective_model` = pending 优先于 selected，只影响下一轮）→ `Accepted{run_id}` → `MessageSent`（回执携带发送文本）调 `note_session_run`（乐观写入 `active_runs`，active session 同时设 `active_run_id`）与 `note_user_echo`（本地乐观回显：active session 立即上屏 UserMessage 行并 bump 时间线代次）并清空输入框，不等 live `RunChanged`；wire 无用户消息事件（`MessageCommitted` 不进实时流），重选 / 重连后由快照重放的持久化行替换回显行。
-3. live 事件流（`RunChanged` / `AssistantDelta` / `ToolStarted` / `ToolOutput` / `ToolCompleted` / `Diagnostic`）经 `projection.apply_event`：时间线语义（sequence 去重、有序插入、assistant 按 message_id 增量合并、committed 替换 tombstone、tool 双键锚点回填）全在共享 reducer；本包只更新 UI 态（run 跟踪、审批卡、blocked 派生、非 active session 的 unread 标记、`model.switched` Diagnostic 确认模型切换）。
+3. live 事件流（`RunChanged` / `AssistantDelta` / `ToolStarted` / `ToolOutput` / `ToolCompleted` / `Diagnostic`）经 `projection.apply_event`：时间线语义（sequence 去重、有序插入、assistant 按 message_id 增量合并、committed 替换 tombstone、tool 双键锚点回填）全在共享 reducer；本包只更新 UI 态（run 跟踪、审批卡、blocked 派生、非 active session 的 unread 标记、`model.switched` Diagnostic 确认模型切换）。共享 reducer 在 live / history 两臂均只展示 `sandbox.fallback` 运行提示，`resources.injected` 等信息诊断不会因历史重放变成 Error 行。
 4. 时间线每次变化 `timeline_changed()` 递增代次；render 前 `sync_list` 对 `ListState` 统一 `reset(len + pending_approval)`（projection 有条目替换语义，splice 不安全）。R4 Wave A 起为 Top 对齐 + 显式跟随：跟随态由 `timeline_following` 单一表达（滚动事件 `visible_range` 覆盖末项即贴底），reset 后跟随臂显式 `scroll_to` 末项底；脱钩读史恢复 reset 前偏移（item_ix 越界钳制），视口不跳；回底 = BackToBottom / 滚回底部重挂。
 5. run 终态（completed / cancelled / failed / interrupted）清 `active_run_id`（Composer 恢复可用）、清该 run 的审批卡，并触发 Changes 刷新；run 进行中由 1s 时钟驱动时长徽标重绘。
 
@@ -161,7 +163,7 @@ AX 焦点口径（R7 Wave A）：浮层菜单打开时，触发器 AX 节点让�
 ### 4.4 菜单开合与键盘激活语义
 
 - 六种浮层（`MenuKind`：Grouping / Scope / Model / Entry(event_id) / WorkspaceConfirm / Activity）共用单一 `Option<MenuKind>` 状态位：开新即关旧、至多一个打开。
-- 行级键盘激活（R3 Wave B Slice 4，design §3.6；Slice 5 P2b 扩展到 rail 聚焦 Button）：聚焦的 ListRow / Button 上裸 Enter / Space 在行级 `on_key_down` 直接调用与鼠标 click 同一激活 handler（task 行 `on_session_clicked`、项目头 `on_toggle_project`、grouping/scope/add-task/项目定向「+」按钮开菜单 / 新建），不走合成 click 兜底——GPUI 对聚焦 stateful 元素的 keyboard click 挂在 keyup 合成路径，真窗口注入取证不可达（[u2-nav slice3 enter-gap](../../ui-review/r3-wave-b/u2-nav/slice3/enter-gap.json)，Slice 4 修复后 enter_gap=0）。物理键盘下该合成 click 仍会到达：`pending_row_key_activate`（行）/ `pending_button_key_activate`（按钮）衔接标记吞除——Slice 5 起按「无按下位置 + 有未消费标记即吞」判定，行键 / 按钮 id 不匹配同样吞除（防跨行 / 跨元素误触发），鼠标真实 click（有按下位置）永不吞（防布尔反转回归）。带修饰键不接管；菜单打开时行级 / 按钮级让位（不 stop_propagation），Enter 由根节点菜单接管。
+- 行级键盘激活（design §3.6）：聚焦的 ListRow / Button 上裸 Enter / Space 在行级 `on_key_down` 直接调用与鼠标 click 同一激活 handler（task 行 `on_session_clicked`、项目头 `on_toggle_project`、grouping/scope/add-task/项目定向「+」按钮开菜单 / 新建），不走合成 click 兜底。物理键盘下该合成 click 仍会到达：`pending_row_key_activate`（行）/ `pending_button_key_activate`（按钮）衔接标记吞除；行键 / 按钮 id 不匹配同样吞除，鼠标真实 click 永不吞。带修饰键不接管；菜单打开时行级 / 按钮级让位，Enter 由根节点菜单接管。
 - Grouping / Scope / Model 菜单的键盘语义（R3 Wave B，design §3.6；Slice 5 修订）：菜单打开即接管（不再要求其触发器聚焦——Tab 移焦 / 外点后键盘仍归菜单），根节点 `on_key_down` 承接 ↑/↓ 移动键盘高亮（`menu_highlight`，wrap；None 时回落当前选中项）、Enter 走与点击同一 select 路径（`activate_menu_item`）、Escape 关闭并把焦点送回触发器；rail ↑/↓、行级与按钮级 Enter/Space 在菜单打开时让位（不 stop_propagation）保证冒泡到根节点。`pending_keyboard_menu_select` 衔接标记吞掉 Enter 选择后触发器同键 keyup 的合成 click，防止「选择即重开」（与外点衔接标记同构）。菜单任何关闭路径复位高亮。
 - 关闭路径：选择选项 / 再点触发器 / Escape（根节点 `on_key_down` 冒泡承接；面板经 `deferred` 绘制不可聚焦，组件层不可达）/ 外点（`MenuPanel::dismiss_on_outside` 的 `on_mouse_down_out`）。
 - 外点关闭先于触发器 click 到达时，以 `(MenuKind, 按下位置)` 衔接标记判定「同一次物理点击」——位置精确相等才视为关闭收尾不重开；键盘触发无位置永不误判。
@@ -186,6 +188,7 @@ AX 焦点口径（R7 Wave A）：浮层菜单打开时，触发器 AX 节点让�
 | 用户动作 | wire method | 结果（ControllerEvent） |
 | --- | --- | --- |
 | 连接 / 重连 | 握手 + resume + subscribe_all | `DesktopConnect{snapshot, resume, events}` |
+| 添加项目 | `workspace_add` → 重取 snapshot | `Snapshot` + `WorkspaceOpened{id,name}` |
 | 打开会话 | `session_get`（分页查询） | `TimelineLoaded`（逐页） |
 | 新建任务 | `session_create` → 重取 snapshot | `Snapshot` + `SessionCreated` |
 | 发送消息 | `run_start` | `MessageSent{run_id}` |
@@ -202,7 +205,8 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 5. 契约与不变量
 
-- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（三张 1440×1024 基准图 + §8 组件规范）与 [../../gui-design.md](../../gui-design.md)（Surface 与连接协议消费约定）。theme token 已于 R2 Wave A（2026-08-27）按设计事实源 §2.1 冻结色板落地源码（证据 [../../ui-review/r2-wave-a/](../../ui-review/r2-wave-a/)）；组件级视觉还原（F-03~F-09）随 R2 后续 wave 推进。hover / active 只改背景，active 复用 hover 色。
+- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（三张 1440×1024 初始设计图）与 [../../gui-design.md](../../gui-design.md)（Surface 与连接协议消费约定）。theme token 已按设计事实源冻结到源码；hover / active 只改背景，active 复用 hover 色。当前视觉验收状态只看 [UI Review](../../UI_Review.md) 与 [ROADMAP](../../../ROADMAP.md)。
+- **R9 可见层级合同**：Timeline 满宽 + 618px readable wrapper、40/12px summary 节奏；TaskRail 56px meta 槽；Composer surface 与 unavailable 对比；Changes 20/72/76px 文件槽、36px 横滚外 header、24px gutter；ActivityPopover 320×320 及 capability honesty 均已落地。这里只冻结 R9 可见实现，不宣称 Timeline/Changes 全状态 AX 几何或 R10 视觉门禁已经通过。
 - **审批 fail-closed**：无默认允许；决策只能来自显式点击或快捷键；断线禁用；run / tool 终态与 `ApprovalResponded` 清卡防幽灵审批。
 - **`gui.token` fail-closed**：token 缺失、不可读或为空即连接失败，禁止无认证静默连接；错误信息只含路径，token 内容不落日志。
 - **Enter / IME 语义**：keybinding 仅 `TextInput` 聚焦时生效；Enter 冒泡到 AppView 后结合 `is_composing()`（`marked_range` 存在即组合中）与发送可用性裁决；Shift+Enter 恒为换行；终端输入框同规则。
@@ -216,7 +220,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **重连三态可见**：Replay / SnapshotRequired / UpToDate 必须以文字在侧栏区分（不只靠颜色）；仅 SnapshotRequired 换基线重分页。
 - **TaskRail 状态点诚实语义（R3 Wave A + Wave B）**：`SessionLiveStatus` 三态——NeedsInput（该 session 有待审批）> Running（`active_runs` 成员，含 live `RunChanged` 非终态登记）> Blocked（R3 Wave B live 派生：该 session 最近一条 `RunChanged` 为终态且 state ∈ failed / interrupted，completed / cancelled 不算；同 session 任何其它 `RunChanged` 清除；快照重建清空——wire 无终态来源，Replay 重放终态事件可重新派生）；其余会话一律空心灰圆，wire 无每会话终态字段故不画终态绿点；apply_event 在 active-session 闸门前跨会话维护成员关系，终态按 run_id 移除并清 pendings。unread 为独立通道（`session_unread()`）：非 active session 的 Session-stream 活动事件（RunChanged / AssistantDelta / ToolStarted / ToolOutput / ToolCompleted / MessageSent / Diagnostic；MessageSent 为本地 composer 回执只属 active session，不经 wire）标记，`select_session` 清除，首连 / 快照重建不产生（无 last-seen 基线）。
 - **诚实显示**：tokens / quota / tok/s 无权威来源一律 `—`；ContextMeter 只用 catalog 的 `context_window_tokens`；Changes / Resources 未拉取显 unavailable 而非 0；`now_ms` 由 UI 注入，投影层不读系统时钟。
-- **终端约束**：`terminal_create` 的 cwd 只接受 workspace 相对路径（拒绝绝对路径、Windows 盘符前缀、`..` 分量）；终端面为滚动文本，无本地 PTY。输入草稿和 create 失败按 workspace 隔离，write 回执只清对应 terminal/草稿；snapshot 的 exited/killed 比 Replay 历史输出更权威。冻结 wire 无 stop/close 命令与 live exit/failure 事件，因此不显示伪 Stop，也不宣称完整终端生命周期。
+- **终端约束**：`terminal_create` 的 cwd 只接受 workspace 相对路径（拒绝绝对路径、Windows 盘符前缀、`..` 分量）；终端面为滚动纯文本，无本地 PTY/VT emulator。显示层与 AX 同源过滤 CSI/OSC 等 ANSI/VT 控制序列并归一 CR 换行，不修改 Host 保存的原始 output。输入草稿和 create 失败按 workspace 隔离；冻结 wire 无 stop/close 命令与 live exit/failure 事件，因此不显示伪 Stop，也不宣称完整终端生命周期。
 - **Changes scope**：Host 的 `diff_list_files` / `diff_get` 均解析 latest session；UI 明示该 scope，且两次请求的 session id 不一致时 fail-closed 要求刷新，不能把新会话内容挂到旧列表。
 - **心跳配比**：15 空闲 tick（≈15s）对 host 30s 超时的节拍不可静默改动；断线不取消 Run。
 - **窗口、字号与焦点**：默认 1440×1024、最小 1080×720（`WINDOW_MIN_SIZE`）；字体以 16px 根字号的 rem token 表达，100% 保持冻结视觉，125%/150% 只由应用快捷键调整窗口 `rem_size`，几何 px token 不随意缩放；消息正文 / 完成摘要行高以 24px 为 100% 基准并换算 rem，放大时避免多行正文负 leading。150% rail=320，1080 窗口仍保留 760px Workspace。macOS 透明 titlebar；启动与用户发起的任务切换、审批、Fork 后聚焦 Composer；激活当前 task 仍关闭菜单并聚焦 Composer；Review changes 展开 Inspector 后聚焦 Changes 选中页签；点击输入框显式拉回焦点。
@@ -240,7 +244,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 7. 测试与验证资产
 
-146 个测试全部内嵌于 bin target（`#[cfg(test)]` 模块；无 crate `tests/` 目录），按文件分布：
+147 个测试全部内嵌于 bin target（`#[cfg(test)]` 模块；无 crate `tests/` 目录），按文件分布：
 
 | 文件 | 数量 | 覆盖面 |
 | --- | --- | --- |
@@ -250,14 +254,14 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 | `platform.rs` | 4 | socket / token 默认路径与 instance 命名；socket→token 推导；deny-list 恰为 `{pawork-client}`；扫描器覆盖别名 / target 表（负例含 dev-dependencies 排除） |
 | `ui/mod.rs` | 15 | 既有键位、tab_stop、TaskRail 导航、Composer 与 per-session 草稿接线；R6 Wave A Header Activity；R6 Wave B Inspector 键盘目标、terminal gate 与 workspace 草稿/回执归属；R7 Wave C 钉字号放大/缩小/重置键位登记 |
 | `ui/accessibility.rs` | 3 | identifier 唯一与父子关系校验；focus 单一性；bounds hit-test 与无效树拒绝 |
-| `ui/accessibility/app.rs` | 6 | 动态 identifier 的转义稳定且无 escape-marker 碰撞；项目 identifier 的日期桶限定与 Projects 模式稳定；Timeline 摘要截尾保持 UTF-8 边界；会话行 AX description 携带状态词（Running / Needs input / Blocked 同源 + 「· Unread」unread 语义，R3 Wave A/B）；Composer AX 面板公式去掉 +68 漂移；R6 Wave A Header Activity 触发器与 Popover/摘要 frame 精确锚点公式 |
+| `ui/accessibility/app.rs` | 6 | 动态 identifier 的转义稳定且无 escape-marker 碰撞；项目 identifier 的日期桶限定与 Projects 模式稳定；Timeline 摘要截尾保持 UTF-8 边界；会话行 AX description 携带状态词（Running / Needs input / Blocked 同源 + 「· Unread」unread 语义，R3 Wave A/B）；Composer AX 面板公式去掉 +68 漂移；Header Activity 触发器、Popover 与 R9 heading/open-changes 子节点锚点公式 |
 | `ui/accessibility/macos.rs` | 6 | 顶左 bounds → AppKit parent space 坐标转换；value-change diff；结构骨架比较（属性变化不触发重建）；settable/action 双门拒绝越权 value / focus 写入；disabled action fail-closed（macOS） |
 | `ui/barriers.rs` | 1 | timeline_stable 重写且 settle_seq 单调、字段形状齐全；approval_visible 写入（含 tool 名）与消失删除；未启用（None）零写入 |
 | `ui/input_area.rs` | 3 | Composer placeholder 状态机；F-09 footer/model/workspace/context/action 槽结构；Send/Cancel 单槽互换与诚实缺省 |
-| `ui/theme.rs` | 10 | 既有 WCAG、TaskRail、Header/Timeline 与 Composer token；R7 Wave C 增 rem 在 100% 与冻结 px 逐项相等、TextScale 档位和 Increase Contrast palette 强化断言 |
+| `ui/theme.rs` | 10 | 既有 WCAG、TaskRail、Header/Timeline 与 Composer token；R7 Wave C 增 rem 在 100% 与冻结 px 逐项相等、TextScale 档位和 Increase Contrast palette 强化断言；R9 增 rail/Changes/Diff 固定槽 metric 断言 |
 | `ui/shell_layout.rs` | 4 | 1280 阈值 rail 288↔240；1440×1024 三栏；1080×720 Inspector 折叠 + Workspace ≥560；同一解析测试另钉 150% rail=320 且 Inspector 保持折叠 |
 | `ui/changes.rs` | 7 | ActivityPopover 摘要、二级页签、epoch/path/session 三重拒旧、断线 stale、latest-session mismatch 与真实横滚内容模型 |
-| `ui/inspector.rs` | 1 | R6 Wave A 顶层页签默认 Changes |
+| `ui/inspector.rs` | 2 | 顶层页签默认 Changes；Terminal 纯文本输出过滤 bracketed-paste ANSI/VT 控制序列并归一换行 |
 | `ui/resources.rs` | 2 | 默认 Idle、epoch 拒过期与断线保留旧数据但标记 stale |
 | `ui/timeline_entry.rs` | 8 | R4 Wave A 纯逻辑：tool 状态词映射（仅 succeeded→Completed）/ 状态分类 / ToolRowView 构造 / 消息段落与列表切分边界；`display_time` epoch 串 → 相对词（now/Nm/Nh/Nd 边界）与非法串原样兜底 |
 | `ui/text_input.rs` | 10 | 多行粘贴行计数；AX set-value 清 marked range；动态 placeholder；Composer 视口预算不破面板总高；Terminal 28–220 独立预算；shift 选择经 SelectLeft/SelectRight 真实 action；IME 经真实 EntityInputHandler 路径 commit 单次入栈且中间态不可 undo；80 行真窗口 overflow scroll（max_offset>0、视口 28–163、caret 滚入视口）；滚动态点击映回可见内容行；reset_text 恢复草稿且清 undo |
@@ -270,20 +274,23 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 ```
 
 - `--bins`：本包是 bin-only（无 lib target），任务指南默认的 `--lib --tests` 匹配不到任何 target。
-- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环（R10 起的标准口径，R7 Wave C 收口为 146/146 绿）。
+- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环。当前 Desktop 定向门禁为 147/147。
 
 本包 dev-dependencies 为 `tempfile`（workspace `3`，仅服务 `ui/barriers.rs` 的临时目录测试）与 `gpui` dev 条目（`=0.2.2` + `test-support` feature，R1 Wave C 起；仅测试构建启用 TestAppContext/VisualTestContext，resolver v2 下不进生产二进制闭包），均不计入生产 deny-list。
 
-**运行时验证资产**：`--probe`（连接 + snapshot + 模型目录一行摘要）与 `--probe-smoke`（流式回合 / 切模型 / 审批 / 取消 / 两次断线重连持久化 / `disconnect_survive`），配合隔离实例（`--instance` + `PAWORK_DATA_DIR`）在真实 host 上冒烟。R1 另提供 [scripts/ui-ax-dump.swift](../../../scripts/ui-ax-dump.swift) 做真窗口 AX tree / action 取证；补救前后证据分别见 [ax-gate](../../ui-review/wave-c/ax-gate/) 与 [ax-bridge](../../ui-review/wave-c/ax-bridge/)。端到端流程见 [../flows.md](../flows.md)；验证总策略见 [../README.md](../README.md)。
-R3 Wave B 起 [scripts/ui-r3-wave-b-nav.sh](../../../scripts/ui-r3-wave-b-nav.sh) 以真窗口键盘注入驱动导航回归；注入经 [scripts/ui-key-event.swift](../../../scripts/ui-key-event.swift)（CGEvent HID tap，R6 Wave B 增横向滚轮，R7 Wave C 增纵向滚轮及 `=`/`-` 字号键）。R5/R6/R7 的真窗口链路与失败证据均按波次归档；R7 Wave C 的 [耐久 driver](../../../scripts/ui-r7-wave-c-resilience.sh) 在临时派生的 1024 行数据库上覆盖 1080×720 Connected / ActivityPopover / Disconnected、纵向离底/回底、三轮宽窄 resize、焦点、重连与 100%→150%→100% 字号路径。默认字号 15 相位、完整三轮字号 17 相位、Task 标题/日期间隔修复后的受影响区域 13 相位均 `structural_pass=true`；最终 150% 截图已人工复核。主动系统偏好态依用户指令跳过，不计为通过；证据与 `baseline_only` 时延见 [r7-wave-c notes](../../ui-review/r7-wave-c/notes.md)。
+**运行时验证资产**：`--probe`（连接 + snapshot + 模型目录一行摘要）与 `--probe-smoke`（流式回合 / 切模型 / 审批 / 取消 / 两次断线重连持久化 / `disconnect_survive`），配合隔离实例（`--instance` + `PAWORK_DATA_DIR`）在真实 host 上冒烟。[scripts/ui-ax-dump.swift](../../../scripts/ui-ax-dump.swift) 可做真窗口 AX tree / action 取证；端到端流程见 [../flows.md](../flows.md)，验证总策略见 [../README.md](../README.md)。
+
+历史真窗口键盘与耐久脚本仍保留为回归资产：[scripts/ui-r3-wave-b-nav.sh](../../../scripts/ui-r3-wave-b-nav.sh)、[scripts/ui-key-event.swift](../../../scripts/ui-key-event.swift) 与 [scripts/ui-r7-wave-c-resilience.sh](../../../scripts/ui-r7-wave-c-resilience.sh)。旧截图已清理，任何新结论必须按当前 ROADMAP 重建证据。
+
+2026-08-31 当前真实主路径使用正式 Host/Desktop（无 fixture/seed/mock）完成：添加仓库项目、真实 Provider 对话、审批写入标记文件、Changes `untracked · +2 / −0` 与真实 PTY 命令。当前 Desktop 定向测试 147/147；Session→Workspace 重启归属与完整视觉/Accessibility 签字仍按 ROADMAP P1/P4 推进。
 
 ## 8. 注意事项与已知限制
 
-- **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic（旧 R8 波 A 实证 exit 134，真窗口自始无法启动）。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归；R1 已由 [Wave D](../../ui-review/wave-d/notes.md) 建立真窗口启动门禁，R10 继续扩面。
+- **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归，因此生产窗口启动仍是必需门禁。
 - **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
-- **渲染面自动门禁尚未完整**：R7 Wave A 的 State A hover/active/focus 九图已由用户签字，并依用户决定以原生 AX tree/action + 纯键盘 + U2 替代本波 VoiceOver；Wave B 的 focus/menu/approval 等价路径已收口；Wave C 已完成 1080×720、长内容、1024 行、resize/reconnect、应用内 100%/125%/150% 字号和连接 paint 门禁。主动 Reduce Motion / Increase Contrast 真系统态依用户指令跳过且不宣称通过；VoiceOver 未执行，性能阈值未冻结；三张定稿图分区 SSIM 与终局视觉签字留 R10。
-- **ActivityPopover 结构已取证，视觉终局未签字**：R6 Wave A 已在 Connected State A/B 三相位通过结构断言，触发器/Popover 锚点与层级成立；分区 SSIM 按 R3–R5 同口径移交 R10，不把结构通过冒充视觉通过。证据见 [r6-wave-a](../../ui-review/r6-wave-a/notes.md)。
+- **渲染面自动门禁尚未完整**：现有布局、主题、键盘与 AX 定向测试不覆盖完整 Timeline/Changes AX 几何、全组件 150%/hover/inactive、VoiceOver 或主动 Reduce Motion / Increase Contrast 真系统态；性能阈值未冻结；三张初始设计图的人工视觉签字留 ROADMAP P4。
+- **ActivityPopover 终局未签字**：divider/raised Changes section 与相关 AX 子节点已有定向测试；完整 screen-reader、动态状态与三张初始设计图的人工视觉签字仍属于 ROADMAP P4，不把结构测试冒充视觉终局。
 - **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
 - **早死 run 的回显行重选后消失（R4 Wave B 评审 P3，存量语义）**：plan 闸门在 `MessageCommitted` 之前拒绝时，用户消息从未持久化；乐观回显让用户先看见消息，重选 / 重连后快照重建时该行随基线清空消失。消息此前根本不显示，echo 只是使该语义可观察；是否把用户消息持久化提前到闸门之前属产品决策（ROADMAP §5 live wire 诚实缺口仍开放）。同理，合成兜底条目（≥2^60 序号）在屏时若同会话又有真实事件到达，真实事件按序号插到合成条目之前（深边角化妆性排序），重选即自愈。同一 run 的乐观回显行与稍后到达的持久化 UserMessage 在未经重选/重连时理论上可并存（echo 不进 seen）；实际触发面极窄——最新用户消息只经快照到达而快照会重建 timeline——重选即自愈。
 - **单主题**：仅深色 `dark()`；Increase Contrast 是同一深色主题的可访问 palette 变体，不是第二套主题。`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。

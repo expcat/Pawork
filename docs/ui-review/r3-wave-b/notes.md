@@ -1,6 +1,6 @@
 # R3 Wave B 收口记录（2026-08-28）
 
-> 范围：任务书范围 5/6（导航状态与键盘）+ Unread/Blocked 状态源，按 [plan/R2-R3-ui-shell-navigation.md](../../../plan/R2-R3-ui-shell-navigation.md#r3--taskrail-与任务导航)。Wave A（F-03/F-04 静态结构）证据见 [../r3-wave-a/](../r3-wave-a/)。
+> 范围：旧任务书范围 5/6（导航状态与键盘）+ Unread/Blocked 状态源；原任务书已清理。Wave A（F-03/F-04 静态结构）记录见 [../r3-wave-a/](../r3-wave-a/)。
 > 语义合同：Blocked = 该 session 最近一条 RunChanged 为 failed/interrupted 终态（live 派生，快照无此 wire 字段故重建后清空，Replay 可再派生）；Unread = 非 active session 收到 Session-stream 活动事件（打开即清，首连/快照不伪造已读）。两轴独立，状态点优先级 NeedsInput > Running > Blocked，Unread 只提标题字重不改几何。
 
 ## 1. 实现落点（Slice 1/2/4/5）

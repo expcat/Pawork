@@ -585,17 +585,22 @@ impl TimelineProjection {
                 }
             }
             TimelineItemKind::Diagnostic => {
-                if self.seen.insert(item.sequence) {
-                    self.insert_entry(TimelineEntry {
-                        sequence: item.sequence,
-                        event_id: item.event_id.clone(),
-                        kind: TimelineEntryKind::Error(
-                            item.detail.clone().unwrap_or_default(),
-                        ),
-                        fork_boundary: None,
-                        timestamp: item.timestamp.clone(),
-                        run_id: item.run_id.clone(),
-                    });
+                // 持久化 Diagnostic 没有 level；与 live 臂保持一致，只把
+                // sandbox.fallback 作为运行提示展示。其它信息诊断（例如
+                // resources.injected）不是用户错误，不能在重放后变成 Error。
+                if let Some(message) =
+                    historical_sandbox_fallback_message(item.detail.as_deref())
+                {
+                    if self.seen.insert(item.sequence) {
+                        self.insert_entry(TimelineEntry {
+                            sequence: item.sequence,
+                            event_id: item.event_id.clone(),
+                            kind: TimelineEntryKind::RunState(sandbox_fallback_label(message)),
+                            fork_boundary: None,
+                            timestamp: item.timestamp.clone(),
+                            run_id: item.run_id.clone(),
+                        });
+                    }
                 }
             }
             TimelineItemKind::Other => {}
@@ -959,4 +964,8 @@ fn sandbox_fallback_label(message: &str) -> String {
     } else {
         message.to_string()
     }
+}
+
+fn historical_sandbox_fallback_message(detail: Option<&str>) -> Option<&str> {
+    detail?.strip_prefix("sandbox.fallback: ")
 }

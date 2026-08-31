@@ -65,6 +65,7 @@
 | `--instance` | 隔离实例名（数据目录子路径，影响 socket / token / pid / db 命名） | `default` |
 | `--json` | 机器可读输出；chat/run 时 stdout 为 `HeadlessResponse` JSONL（无 hello） | 关 |
 | `--approval-mode MODE` | 审批强度五档（见 §4.7） | `read-only`（沿用 V1：不改模式就不会写入） |
+| `--trust-workspaces` | 显式信任本进程打开的 workspace；不写配置，仅供可信启动方使用 | 关 |
 
 ### 3.3 子命令（21 个顶级 clap 名，以源码 `Command` enum 为准）
 
@@ -139,7 +140,7 @@
 
 1. **启动与装配**（`run_inner`）：
    - clap 解析 → `normalize_instance`；`service` / `status` / `doctor` / `watch` / `shutdown` 五命令直接进入 pre-core 分支返回。
-   - 组装 `AppLoadOptions`（provider / model / instance / `parse_approval_mode` / approval_host）；gui / headless / acp 三命令强制换 `GuiApprovalHost`。
+   - 组装 `AppLoadOptions`（provider / model / instance / `parse_approval_mode` / `trust_workspaces` / approval_host）；`--trust-workspaces` 只设置本进程显式覆盖，不修改配置；gui / headless / acp 三命令强制换 `GuiApprovalHost`。
    - 目录与协议入口类命令（models / sessions / auth / diff / rollback / mcp / import / headless / acp / gui / usage / tasks / plan / agents）用 `AppCore::load_for_catalog`（容忍默认 provider 缺凭证的目录兜底装配），其余（chat / run）用 `AppCore::load`。
    - 普通命令路径在结果返回前执行 `core.shutdown()`，快路径命令（gui / headless / acp / json 驱动）各自负责收尾。
 2. **交互式 chat 一轮**：
@@ -168,6 +169,7 @@
    - Ctrl-C 关闭监听、删 pid 文件、关闭 pty 与 Core；关闭不取消已进入 Core 的 run（进程内 run 随进程结束，跨进程存活语义归 service）。
 7. **审批五档与宿主选择**：
    - `--approval-mode` 五档：`always-ask` / `ask-for-writes` / `ask-for-dangerous` / `never-ask` / `read-only`（kebab 与 snake 拼写均可；缺省 `read-only`）。已移除的旧档 `on-failure` 保持拼写兼容，**映射为 `NeverAsk`**；未知档报错并列出合法值。
+   - `--trust-workspaces` 与审批档正交：它只声明启动宿主对当前 workspace 的信任，不自动降低审批档，也不让 workspace 内容自我提权。
    - 宿主选择与档位正交：`--json` 或 stdin 非 TTY → `DenyAllApprovals`（fail-closed）；TTY 交互 → `InteractiveApprovals`；gui / headless / acp → `GuiApprovalHost`（审批经通道转发给客户端决策）。
 8. **sessions import 格式嗅探**（省略 `--format` 时的决策序）：
    - 文件名以 `.jsonl` 结尾 → 逐行读到首个**完整**非空行（不截断，超长首行也不误判）解析 JSON 签名：含 `timestamp` + `type` + `payload` → compat / Codex 信封；含 `sessionId` + `type` 且**无** `payload` → compat / Claude 本地行（首行常为 ai-title / queue-operation 等无 message 行）；签名不明确 → Pi 默认。
@@ -219,7 +221,7 @@
 
 | 资产 | 覆盖点 |
 | --- | --- |
-| `src/lib.rs` 内嵌 tests | 21 个子命令的 clap 解析矩阵（含 `sessions import` 三组互斥断言、`--branch`、`--instance`）；`--approval-mode` kebab 解析、`on-failure → NeverAsk` 兼容、未知档拒绝；default instance 的 socket / token 命名稳定性 |
+| `src/lib.rs` 内嵌 tests | 21 个子命令的 clap 解析矩阵（含 `sessions import` 三组互斥断言、`--branch`、`--instance`）；`--approval-mode` kebab 解析、`--trust-workspaces` 全局解析、`on-failure → NeverAsk` 兼容、未知档拒绝；default instance 的 socket / token 命名稳定性 |
 | `src/approval.rs` tests | 审批提示格式（tool / path / risk / preview；edit 与 apply_patch 的 hunk preview） |
 | `src/render.rs` tests | 工具活动行（成功字节数 / 失败原因）、`run_command` 取消提示、stderr 红色仅限彩色终端、`已截断` 检测、沙箱回退 notice（现行 / 旧版 Diagnostic 形状、空 note、message 直传与默认串） |
 | `src/sessions.rs` tests | `.jsonl` 首行签名嗅探（Codex / Claude / Pi、首行无 message、首行超 8K 不误判）、本地源白名单（拒绝 grok）、`format_millis` epoch 断言 |

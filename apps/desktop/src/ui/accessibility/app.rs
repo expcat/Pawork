@@ -11,8 +11,7 @@ use crate::projection::{
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
 use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::ANCHOR_GAP_Y;
-use crate::ui::inspector::InspectorTab;
-use crate::ui::inspector::TERMINAL_EMPTY_OUTPUT;
+use crate::ui::inspector::{plain_terminal_output, InspectorTab, TERMINAL_EMPTY_OUTPUT};
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
@@ -27,9 +26,9 @@ const PAD: f32 = 8.0;
 const CONTROL_HEIGHT: f32 = 28.0;
 const ROW_HEIGHT: f32 = 32.0;
 const TIMELINE_ROW_HEIGHT: f32 = 52.0;
-const ACTIVITY_CONTENT_INSET_X: f32 = 20.0;
-const ACTIVITY_HEADING_OFFSET_Y: f32 = 50.0;
-const ACTIVITY_SUMMARY_OFFSET_Y: f32 = 28.0;
+const ACTIVITY_CONTENT_INSET_X: f32 = 28.0;
+const ACTIVITY_HEADING_OFFSET_Y: f32 = 58.0;
+const ACTIVITY_SUMMARY_OFFSET_Y: f32 = 24.0;
 const ACTIVITY_HEADING_HEIGHT: f32 = 20.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -158,6 +157,9 @@ impl AppView {
         match identifier {
             "task-rail-grouping" => self.on_toggle_grouping_menu(None, window, cx),
             "project-scope" => self.on_toggle_scope_menu(None, window, cx),
+            "scope-add-project" | "workspace-confirm-add-project" => {
+                self.on_open_project(window, cx)
+            }
             "add-task" => self.on_new_session(window, cx),
             // F-05 Header 动作：与 rail 全局「+」同 handler / enable gate。
             "header-new-task" => self.on_new_session(window, cx),
@@ -645,6 +647,22 @@ impl AppView {
                     .action(AxAction::Press),
                 );
             }
+            let add_ix = options.len();
+            menu = menu.child(
+                AxNode::new(
+                    "scope-add-project",
+                    AxRole::Button,
+                    "Add project…",
+                    AxRect::new(
+                        inset,
+                        scope_menu_y + add_ix as f32 * ROW_HEIGHT,
+                        list_width,
+                        ROW_HEIGHT,
+                    ),
+                )
+                .focused(add_ix == highlight)
+                .action(AxAction::Press),
+            );
             sidebar = sidebar.child(menu);
         }
         sidebar
@@ -1463,6 +1481,27 @@ impl AppView {
                     .action(AxAction::Press),
                 );
             }
+            let add_ix = self
+                .projection
+                .project_scope_options()
+                .into_iter()
+                .filter(|(id, _)| id.is_some())
+                .count();
+            menu = menu.child(
+                AxNode::new(
+                    "workspace-confirm-add-project",
+                    AxRole::Button,
+                    "Add project…",
+                    AxRect::new(
+                        frame.x + pad,
+                        footer_y + metrics::COMPOSER_SEND_SIZE + add_ix as f32 * ROW_HEIGHT,
+                        280.0,
+                        ROW_HEIGHT,
+                    ),
+                )
+                .focused(add_ix == highlight)
+                .action(AxAction::Press),
+            );
             composer = composer.child(menu);
         }
         composer
@@ -1561,7 +1600,10 @@ impl AppView {
             // 与可见 Terminal 页占位同源（TERMINAL_EMPTY_OUTPUT）。
             TERMINAL_EMPTY_OUTPUT.to_string()
         } else {
-            tail_chars(&self.projection.terminal.output, 8_192)
+            tail_chars(
+                &plain_terminal_output(&self.projection.terminal.output),
+                8_192,
+            )
         };
         let owner = self
             .projection
@@ -2087,10 +2129,10 @@ mod tests {
 
         let popover = activity_popover_ax_geometry(header, trigger);
         assert_eq!(popover.frame, AxRect::new(735.0, 92.5, 320.0, 320.0));
-        assert_eq!(popover.heading, AxRect::new(755.0, 142.5, 280.0, 20.0));
+        assert_eq!(popover.heading, AxRect::new(763.0, 150.5, 264.0, 20.0));
         assert_eq!(
             popover.open_changes,
-            AxRect::new(755.0, 170.5, 280.0, ROW_HEIGHT)
+            AxRect::new(763.0, 174.5, 264.0, ROW_HEIGHT)
         );
     }
 }

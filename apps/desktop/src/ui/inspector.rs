@@ -16,6 +16,47 @@ use super::{terminal_can_operate, terminal_start_enabled, AppView};
 /// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
 pub(super) const TERMINAL_EMPTY_OUTPUT: &str = "Terminal output will appear here.";
 
+/// Terminal 面板当前是纯文本视图，不是 VT emulator。显示前移除 ANSI/VT
+/// 控制序列，避免把 bracketed-paste 等终端状态字节直接暴露给用户。
+pub(crate) fn plain_terminal_output(raw: &str) -> String {
+    let mut plain = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            plain.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('[') => {
+                for sequence_char in chars.by_ref() {
+                    if ('@'..='~').contains(&sequence_char) {
+                        break;
+                    }
+                }
+            }
+            Some(']') | Some('P') | Some('X') | Some('^') | Some('_') => {
+                let mut saw_escape = false;
+                for sequence_char in chars.by_ref() {
+                    if sequence_char == '\u{7}' || (saw_escape && sequence_char == '\\') {
+                        break;
+                    }
+                    saw_escape = sequence_char == '\u{1b}';
+                }
+            }
+            Some(_) | None => {}
+        }
+    }
+
+    plain
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Inspector 顶层页签（固定三页；R6 Wave A 起默认 Changes）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum InspectorTab {
@@ -142,7 +183,7 @@ impl AppView {
         let output = if terminal.output.is_empty() {
             TERMINAL_EMPTY_OUTPUT.to_string()
         } else {
-            terminal.output.clone()
+            plain_terminal_output(&terminal.output)
         };
         let size_label = format!("{}×{}", terminal.columns, terminal.rows);
         let cwd = terminal.cwd.clone();
@@ -334,5 +375,13 @@ mod tests {
     #[test]
     fn inspector_tab_defaults_to_changes() {
         assert_eq!(InspectorTab::default(), InspectorTab::Changes);
+    }
+
+    #[test]
+    fn terminal_output_hides_vt_control_sequences() {
+        assert_eq!(
+            plain_terminal_output("\u{1b}[?2004hpwd\u{1b}[?2004l\r\n/workspace\r\n"),
+            "pwd\n/workspace"
+        );
     }
 }

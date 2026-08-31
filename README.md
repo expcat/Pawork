@@ -4,17 +4,20 @@
 
 Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心。二进制 `pawork` 是 Core 的唯一正式宿主；Desktop GUI（GPUI，`apps/desktop`）作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
 
-**当前状态（2026-08-25）**：既有功能与结构阶段已归档；当前唯一主线从新 R1 开始，按 v3 定稿图完成 Desktop UI 99% 视觉还原、全组件真实交互与模拟操作测试：R8 与设计稿比对并输出 UI 优化文档，R9 修复比对发现的问题，R10 测试，R11 收尾（发布准备见 ROADMAP §5）。当前指针见 [ROADMAP.md](ROADMAP.md)，阶段细节见 [plan/](plan/)，历史沿革见 [docs/history.md](docs/history.md)。V1 全量实现归档于仓库外 `../Pawork_v1/`。
+**当前状态（2026-08-31）**：正式 Host/Desktop 的项目、对话、文件、Git Changes 和 Terminal 真实核心路径已经验收；下一步处理项目与会话的持久化生命周期。当前指针与后续计划见 [ROADMAP.md](ROADMAP.md)，历史沿革见 [docs/history.md](docs/history.md)。V1 全量实现归档于仓库外 `../Pawork_v1/`。
 
 ## 快速开始
 
 ```bash
-cargo build                      # workspace dev 构建
+./scripts/pawork-desktop.sh start # 构建正式 Host/Desktop 并打开 UI
+./scripts/pawork-desktop.sh build # 仅构建正式 Host/Desktop
 ./target/debug/pawork chat       # 流式多轮对话
 ./target/debug/pawork models     # 各通道聚合的模型列表
 ./target/debug/pawork sessions list
 ./target/debug/pawork gui serve  # 启动 GUI 连接服务
 ```
+
+Desktop 启动脚本不加载 fixture、seed 或测试 profile。它默认使用独立的真实实例 `desktop`，避免把日常 CLI 会话混入 UI 检查；可用 `PAWORK_DESKTOP_INSTANCE=<name>` 覆盖。脚本为本次 Host 进程显式信任 UI 选择的 workspace（不写配置），并默认使用 `ask-for-dangerous`：普通写入和默认 shell 可运行，危险命令仍需审批；这是现有 Terminal Policy 闸允许真实 PTY 的档位。可用 `PAWORK_DESKTOP_APPROVAL_MODE=ask-for-writes` 改为逐写审批（此时 Terminal 会按既定策略 fail-closed），或用 `PAWORK_DESKTOP_TRUST_WORKSPACES=0` 关闭进程级信任。上述参数只在脚本新启 Host 时生效；若复用已运行实例，则沿用该 Host 的设置。Desktop 退出时只关闭脚本自己启动的 Host，日志位于 `target/pawork-desktop-runtime/host.log`。
 
 凭证经 `pawork auth` 写入 `~/.pawork/auth.json`；env 变量仅作遗留 fallback。Secret 红线：key/token 不入日志、事件与任何可提交文件。
 
@@ -46,9 +49,9 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 ├── schemas/             # protocol typegen 检入的 .d.ts
 ├── fixtures/            # 测试夹具
 ├── scripts/             # 维护脚本（如 stale incremental 清理）
-├── design/              # GUI v3 定稿视觉基准（设计图）
+├── design/              # GUI 三张初始视觉基准图
 ├── docs/                # 架构、设计、Spec、参照、存档、ADR
-└── plan/                # 进行中阶段的任务书
+└── ROADMAP.md           # 当前任务与后续计划的唯一计划事实源
 ```
 
 21 成员（19 库 + 2 应用，ADR-039 定稿）。包清单、依赖方向与冻结契约见 [docs/architecture.md](docs/architecture.md)。
@@ -58,7 +61,6 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | 文档 | 职责 |
 | --- | --- |
 | [ROADMAP.md](ROADMAP.md) | 任务事实源：当前指针、剩余任务、未决登记、候选池、任务约定 |
-| [plan/](plan/) | 当前 R1–R11 任务书与 Agent UI/测试方法调研；已完成任务不保留在此目录 |
 | [docs/architecture.md](docs/architecture.md) | 架构事实源：红线、包布局与依赖方向、冻结契约、S13 安全拍板、ADR 索引 |
 | [docs/design.md](docs/design.md) | 功能设计事实源：功能域 ↔ 参照项目映射、已确认扩展功能族（G1–G7）、候选功能池 |
 | [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引：产品范围/能力/契约/安全/Desktop/验证/运维 + 21 包逐包 Spec + 跨包链路 |
@@ -74,10 +76,10 @@ V1 时期文档随 V1 归档于 `../Pawork_v1/docs/`，仓库内链接以 `../Pa
 
 ## 贡献
 
-- 工程约定见 [AGENTS.md](AGENTS.md)；任务开启/进行/收尾约定见 [ROADMAP.md](ROADMAP.md) §7。当前不设全量门禁，发布须用户明确授权后另立任务。
-- 架构决策以 ADR 记录（[docs/adr/](docs/adr/)，编号续接，下一个 ADR-042）。
+- 工程约定见 [AGENTS.md](AGENTS.md)；任务执行与收尾约定见 [ROADMAP.md](ROADMAP.md) §7。当前不设全量门禁，发布须用户明确授权后另立任务。
+- 架构决策以 ADR 记录（[docs/adr/](docs/adr/)，编号续接，下一个 ADR-043）。
 - 当前**不新增包**，只往既有包加模块；包布局变更须先过 ADR。
 
 ## 许可证
 
-待定（见 [ROADMAP.md](ROADMAP.md) §5 发布准备候选）。
+待定（见 [ROADMAP.md](ROADMAP.md) §4 P5 发布准备）。

@@ -78,6 +78,9 @@ pub struct Cli {
         help = "always-ask|ask-for-writes|ask-for-dangerous|never-ask|read-only"
     )]
     pub approval_mode: Option<String>,
+    /// 显式信任本进程打开的 workspace；只覆盖本次运行，不写配置文件。
+    #[arg(long, global = true)]
+    pub trust_workspaces: bool,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -396,6 +399,7 @@ async fn run_inner() -> Result<(), CliError> {
         Some(value) => Some(parse_approval_mode(value).map_err(CliError::Usage)?),
         None => None,
     };
+    options.trust_workspaces = cli.trust_workspaces.then_some(true);
     options.approval_host = Some(approval_host(cli.json));
     if matches!(
         &cli.command,
@@ -630,6 +634,7 @@ mod tests {
         assert_eq!(cli.model.as_deref(), Some("deepseek-v4-pro"));
         assert!(!cli.json);
         assert!(cli.approval_mode.is_none());
+        assert!(!cli.trust_workspaces);
         assert_eq!(cli.instance, DEFAULT_INSTANCE);
         match cli.command {
             Command::Chat {
@@ -742,6 +747,26 @@ mod tests {
                 .expect("known"),
             pawork_app::ApprovalMode::AskForWrites
         );
+    }
+
+    #[test]
+    fn parses_explicit_workspace_trust_without_persisting_config() {
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "--trust-workspaces",
+            "--approval-mode",
+            "ask-for-writes",
+            "gui",
+            "serve",
+        ])
+        .expect("parse");
+        assert!(cli.trust_workspaces);
+        assert!(matches!(
+            cli.command,
+            Command::Gui {
+                command: GuiCommand::Serve { socket: None }
+            }
+        ));
     }
 
     #[test]

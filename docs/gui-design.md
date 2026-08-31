@@ -1,10 +1,10 @@
 # Pawork Desktop GUI 设计
 
-> 本文是 Desktop GUI 的**设计事实源**（S7 波 0 于 2026-08-16 锁定信息架构；历史组件化完成不代表当前视觉已验收）。当前实现按新 R1–R8 主线还原既有壳，不另起一套信息架构。
+> 本文是 Desktop GUI 的**设计事实源**（S7 波 0 于 2026-08-16 锁定信息架构；历史组件化完成不代表当前视觉已验收）。当前任务状态与后续顺序只由 [ROADMAP](../ROADMAP.md) 维护，本文不保留旧阶段计划。
 >
 > 视觉实施基准：[../design/README.md](../design/README.md)（定稿图、TaskRail 双分组与响应式约束）
 >
-> 关联：[spec/desktop.md](spec/desktop.md)（当前 Desktop 产品/验收汇总，非视觉事实源）· [spec/crates/desktop.md](spec/crates/desktop.md)（包级 Spec）· [../ROADMAP.md](../ROADMAP.md) · [UI Review](UI_Review.md) · [R1 收口存档](history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) · [R7–R8 任务书](../plan/R7-R8-ui-quality-gates.md) · [history.md](history.md)（S7/S13 与旧 R8 交付原委）· [references.md](references.md) · 根仓 [Desktop GUI](../../Pawork_v1/docs/features/desktop-gui.md) · [GUI 连接](../../Pawork_v1/docs/features/gui-connection.md) · [ADR-035](../../Pawork_v1/docs/adr/ADR-035-gpui-desktop.md)
+> 关联：[spec/desktop.md](spec/desktop.md)（当前 Desktop 产品/验收汇总，非视觉事实源）· [spec/crates/desktop.md](spec/crates/desktop.md)（包级 Spec）· [../ROADMAP.md](../ROADMAP.md) · [UI Review](UI_Review.md) · [history.md](history.md)（历史原委）· [references.md](references.md) · 根仓 [Desktop GUI](../../Pawork_v1/docs/features/desktop-gui.md) · [GUI 连接](../../Pawork_v1/docs/features/gui-connection.md) · [ADR-035](../../Pawork_v1/docs/adr/ADR-035-gpui-desktop.md)
 
 ---
 
@@ -16,7 +16,7 @@
 
 - 不嵌入 Core，不直连 Provider / SQLite / 工具 / Keychain。
 - 不做 TUI，不做 WebView / JS 壳。
-- 不实现插件市场、Hooks 管理、WASM 安装器（整族未排期，见 [ROADMAP §5 候选池](../ROADMAP.md)）。
+- 不实现插件市场、Hooks 管理、WASM 安装器（整族未排期，见 [ROADMAP 后续计划](../ROADMAP.md#4-后续计划)）。
 - 不在 S7 做完整多窗口远程桌面、签名安装器、主题生态。
 
 架构红线沿用根仓：独立 GPUI 进程，只经 GUI Connection Protocol 连接 CLI；关闭窗口不取消已进入 Core 的 Run。
@@ -25,7 +25,7 @@
 
 ## 2. 参照与取舍
 
-对照现有 Agent GUI，只吸收可验证的「主对话壳」行为，不复制完整 IDE 或竞品视觉；Pawork 对自己的 v3 定稿图仍执行 [99% 一致性合同](UI_Review.md#01-99-一致性的硬定义)。下表按 2026-08-17 的官方公开资料核对：
+对照现有 Agent GUI，只吸收可验证的「主对话壳」行为，不复制完整 IDE 或竞品视觉；Pawork 以 [三张初始设计图](../design/README.md) 检查信息架构与视觉语言，以真窗口和真实数据判断功能是否通过。下表按 2026-08-17 的官方公开资料核对：
 
 | 参照 | 吸收 | 不吸收 |
 | --- | --- | --- |
@@ -103,7 +103,15 @@ S7 的唯一主路径是：启动 Desktop → 连接本机 Host → 恢复 Snaps
 - Inspector 顶部预留 capability-driven `InspectorToolTabs`；Changes 是 S8 surface，Terminal 是 S10 surface，Files / Summary 仍是 Changes 内部二级 tab。折叠时 Inspector 宽度归零，Workspace 扩展，右上 `ActivityPopover` 摘要显示 Changes 行数与 Main / subagent 状态；点击摘要恢复对应 Inspector surface。折叠态 ActivityPopover 的触发器随 Workspace Header 落位右上，不由 StatusBar 承载；StatusBar 只保留状态信息。
 - ActivityPopover 的 Changes 分区随 S8 启用，Agent 状态列表随 S11 启用；不可用阶段隐藏对应分区，不做可点击假入口或截图演示数据。
 - 上述展示只消费 projection / Host capability，经 controller → `pawork-client` 获取；GUI 不直连 Provider、quota store、Git、PTY 或数据库。
-- R6 Wave B 已用真 Host/Desktop 九场景验证 Changes/Terminal/Resources、折叠恢复、task/latest-session scope 与断线重连；DiffView 横滚由真实 CGEvent 产生可观测 offset。该结构/交互证据不替代 R10 的三图 SSIM 与用户视觉签字。
+- 当前 Changes/Terminal 主路径已在正式 Host/Desktop 上复验；Resources、完整断线恢复与三张初始设计图的人工视觉签字仍按 [ROADMAP P3/P4](../ROADMAP.md#4-后续计划) 推进。
+
+### 3.4 R9 可见层级收敛
+
+- Timeline 的所有消息、tool 与 summary wrapper 统一占满可用宽度并以 618px 可读列封顶；独立 RunSummary 使用 40px entry gap，只有紧邻 tool panel 的 summary 使用 12px 组内 gap。关键时间、tool detail、Run footer 和 Running/Pending 状态使用 secondary 层级。
+- TaskRail 的项目计数和任务时间使用 56px 右对齐 meta 槽；标题继续 `truncate`，active task 用 medium/primary。Workspace Header 标题改为 medium，StatusBar 保持 24px 高、正文使用 12px 并在窄窗裁切。
+- Composer 外层使用既有 panel surface 统一输入区与 footer 的归属；`Context · unavailable` 使用 tertiary，可用值仍为 secondary。88–94px 常态、220px 增长预算与 32px Send/Cancel 单槽不变。
+- Changes 文件行使用 20/72/76px glyph/status/delta 固定槽；DiffView 增加 36px 只读路径 header，并把 24px 增删 marker gutter 与中性代码正文分开。ActivityPopover 保持 320×320、右上锚定与 capability honesty，只增加分隔和真实 Changes raised section；没有伪造 Agents/Add tool。
+- 上述可见层级已进入当前实现；Timeline/Changes 全状态 AX/VoiceOver、全组件 150% 与三张初始设计图的人工签字仍属于 [ROADMAP P4](../ROADMAP.md#4-后续计划)。
 
 ---
 
@@ -177,10 +185,10 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 - `Enter` 仅在 IME 未组合时发送，`Shift+Enter` 换行；多行粘贴保持原文。
 - Timeline 只在用户位于底部时追随流式输出；用户向上阅读后不得抢滚动位置。
 - 连接、Run、tool 与审批状态必须有文本/图标语义，不能只靠颜色；主路径可全键盘操作。
-- Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离，role/value/enabled/focused/selected/bounds/action 随 canonical UI 状态同步；macOS 由 ADR-042 AppKit bridge 导出，AX action 回到既有 AppView handler 与 enable gate。应用内字号以 `Cmd+=` / `Cmd++`、`Cmd+-`、`Cmd+0` 在 100%/125%/150% 间切换，状态栏与 AX 发布百分比。新增可见交互必须同批补语义；Windows/Linux 平台实现仍属后续阶段。R7 Wave A 依用户决定以原生 AX tree/action + 纯键盘 + U2 替代该波 VoiceOver；VoiceOver 未执行。R7 Wave C 主动 Reduce Motion / Increase Contrast 系统态测试依用户最终指令跳过，设置已恢复且不宣称通过；当前 UI 无动画，Reduce Motion 无渲染分支。
+- Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离，role/value/enabled/focused/selected/bounds/action 随 canonical UI 状态同步；macOS 由 ADR-042 AppKit bridge 导出，AX action 回到既有 AppView handler 与 enable gate。应用内字号以 `Cmd+=` / `Cmd++`、`Cmd+-`、`Cmd+0` 在 100%/125%/150% 间切换，状态栏与 AX 发布百分比。新增可见交互必须同批补语义；Windows/Linux、VoiceOver 与主动 Reduce Motion / Increase Contrast 系统态验收仍属 [ROADMAP P4](../ROADMAP.md#4-后续计划)。当前 UI 无动画，Reduce Motion 无渲染分支。
 - 可交互控件必须有 hover 反馈与按下态，色值经 theme token；hover / active 只改背景，不引起布局移动（旧 V3 R8 波 B 起，取值表见 [视觉实施基准](../design/README.md) §8.1）。
 - 菜单为 `anchored()/deferred()` 浮层，不占布局流；同一时刻单开互斥，选择 / 再点触发器 / `Escape` / 点击浮层外关闭，打开时滚轮不穿透到下层滚动容器（形态细则见基准 §8.2）。
-- 焦点交接必须可预测：用户发起的 task click / Enter / AX press / cycling / next-needs-attention 切换、审批决策和 Fork 接受后回到 Composer；Review changes 展开 Inspector 后落到当前选中的 Changes 顶层页签；任何 session reset 先关闭旧菜单。AXPress 当前 task 仍须关闭菜单并聚焦 Composer；仅一个可见 task 时 cycling 不重开 session，但仍须交接焦点。R7 Wave B 已以导航 26 相位、审批/状态 14 相位及审查边角 3 相位真窗口 U2 验证这些路径（[证据](ui-review/r7-wave-b/notes.md)）。
+- 焦点交接必须可预测：用户发起的 task click / Enter / AX press / cycling / next-needs-attention 切换、审批决策和 Fork 接受后回到 Composer；Review changes 展开 Inspector 后落到当前选中的 Changes 顶层页签；任何 session reset 先关闭旧菜单。AXPress 当前 task 仍须关闭菜单并聚焦 Composer；仅一个可见 task 时 cycling 不重开 session，但仍须交接焦点。完整键盘与 VoiceOver 复验归 [ROADMAP P4](../ROADMAP.md#4-后续计划)。
 - 用户向上滚动脱钩跟随的滚动区（Timeline / 终端）提供回底控件，点击或自行滚到底即重挂跟随（基准 §8.3）。
 - Timeline 条目经变高虚拟化渲染，长会话滚动性能不随长度退化；侧栏长标题单行省略号截断（基准 §8.4，旧 V3 R8 波 C 起）。
 - Resources 页只读呈现 MCP 状态（name / transport / state / tools / last_error），字段缺失显示 unknown，不伪造；无 Host 出口的分区（如已加载规则）不画入口（基准 §8.5，旧 V3 R8 波 D 起）。
@@ -234,7 +242,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 
 ## 附录 A. 历史 K-03 取证记录（旧 R8 波 E，2026-08-24）
 
-> 本附录保存旧路线的取证，不再承担当前签字。未完成项已全部移交新任务书（比对见 [R7–R8](../plan/R7-R8-ui-quality-gates.md)，终局门禁见 [R9–R11](../plan/R9-R11-post-ui-closeout.md) R10），且 [UI Review](UI_Review.md) 已撤回会降低 99% 目标的旧偏差接受。
+> 本附录只保存历史决策背景，不承担当前签字；旧截图已清理，当前状态与未完成项统一看 [ROADMAP](../ROADMAP.md) 和 [UI Review](UI_Review.md)。
 
 验收环境：macOS 3440×1440 @1x；隔离实例 `r8e`（`PAWORK_DATA_DIR=/tmp/r8e.Xepxwh`），HEAD=8b0e3a0（波 D 收口）。
 
@@ -251,28 +259,28 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 | 菜单断线归一化 | ✅ 断线态 model 菜单不打开、触发器仅焦点环（model 翻假归一化） | /tmp/r8e-model.png |
 | 心跳保活 soak（D3 修复后二进制，未提交 diff） | ✅ 空闲 >2min 仍 Connected（修复前 ~30s 必断）；lsof 每 60s 采样实证对等连接 33min+ 持续存活（20/20 peers=2，归档 /tmp/r8e-keepalive.log，21:30:56–21:49:57） | /tmp/r8e-soak.png（Connected 态） |
 
-### A.2 历史未完成走查项（已移交新 R7–R8）
+### A.2 当前未完成走查项
 
 - [ ] IME：中文输入法组合中 Enter 不发送，候选窗位置正常（§6）
 - [ ] 多行粘贴：粘贴多行文本保持原文、Shift+Enter 换行（§6）
 - [ ] 1440×1024 逐屏对照 design/ 三图（Timeline / 折叠 / Projects）
-- [ ] 纯键盘走查（基准 §3.6）：R7 Wave B 已自动通过 Tab 链、菜单 ↑/↓/Enter/Escape、task cycling / next-needs-attention、审批与焦点恢复；VoiceOver、IME 的系统级人工复核与 R10 完整汇总仍未执行
+- [ ] 纯键盘走查（基准 §3.6）：Tab 链、菜单 ↑/↓/Enter/Escape、task cycling / next-needs-attention、审批与焦点恢复；VoiceOver、IME 的系统级人工复核仍未执行
 - [ ] 菜单三例：外点关闭后再点同触发器可重开；输入框聚焦时 Escape 关菜单不吞键；滚回底部重挂跟随时机
-- [ ] Reconnect 恢复：R6 Wave B 已覆盖 Inspector/Terminal/Resources 与会话选择恢复；仍需 R10 汇总验证进行中 Run 的全应用生命周期
-- [x] Connected 态 1080×720 最小窗：R7 Wave C 已以真实 Host / Desktop 覆盖 Connected、ActivityPopover、Disconnected、三轮宽窄 resize 与 100%→150%→100% 字号；150% 使用 320px rail，最终标题/日期间隔复验截图无遮挡。连接长文案 paint 门禁 `lit=0`（[证据](ui-review/r7-wave-c/notes.md)）。主动平台偏好态依用户指令跳过，不计为通过。
+- [ ] Reconnect 恢复：Workspace 与 Changes 可恢复；Session→Workspace 重启归属进入 ROADMAP P1，进行中 Run 的全应用生命周期进入 P2
+- [x] Connected 态 1080×720 最小窗：现有布局测试覆盖 100%/150% 几何；完整当前真窗口人工签字留 P4。
 - [ ] 虚拟化四例（长会话）：滚动流畅 / 回底重挂 / Entry「···」菜单锚点 / 长标题 truncate
 - [ ] hover / active 交互态抽查（基准 §8.1 取值表）
-- [x] DiffView 横滚：R6 Wave B 真窗口长行通过，AX 记录 horizontal offset `-720.0 / 2477.0`（[证据](ui-review/r6-wave-b/u2-reviewfix-pass-20260830/)）
-- [x] 千级事件功能门禁：R7 Wave C 临时派生 1024 行真实投影，虚拟化、离底 / 回底与 CJK/emoji 末尾哨兵通过，并归档单次时延基线（[证据](ui-review/r7-wave-c/u2-reviewfix-pass-20260830/performance-baseline.json)）。
+- [x] DiffView 横滚：现有实现与 AX offset 语义保留；当前视觉证据在 P4 重建。
+- [x] 千级事件功能门禁：现有虚拟化、离底 / 回底与 CJK/emoji 投影回归保留；性能阈值仍未冻结。
 - [ ] 千级事件性能回退门禁：仍需重复干净机器样本、阈值与帧率观察；当前 `baseline_only` 不宣称无回退。
 
 ### A.3 漂移与定夺项
 
 - D1 mod.rs 行数：824（波 C 达标 <900）→ 1031（波 D 三页签接线）——✅ 已拍板（2026-08-24）：接受 1031 为终态口径，不再重瘦。
-- D2 窄窗响应式：R7 Wave C 已实现 1080–1279 时 100% rail=240px + Inspector 默认折叠，150% rail=320px；真实 Host/Desktop 的 Connected、ActivityPopover、Disconnected、resize 与字号复验通过。该项不再是实现缺口，R10 只做终局汇总。
+- D2 窄窗响应式：1080–1279 时 100% rail=240px + Inspector 默认折叠，150% rail=320px；该项已实现，P4 只做当前真窗口人工签字。
 - D3 空闲 30s 断连：host 30s 心跳超时 + desktop 无周期心跳的机制性关闭，非 R8 回归——✅ 已修复（2026-08-24）：desktop controller 泵循环连续 15s 空闲发 `heartbeat()`，真窗口 soak >2min 不再断连实证，desktop 测试 41/41 绿。
 - D4 P3-4 Entry 菜单滚动卸载：菜单开着时条目滚出可视区被卸载、浮层消失但状态残留（滚回自现，Escape/外点仍有效）——✅ 已拍板接受（2026-08-24）：虚拟化卸载语义下浮层随条目回收属可接受行为。
 
 ### A.4 已收口免重复项
 
-Changes 四面 / Resources 行 /「@」端到端 bubble 双 part 已于波 D 真窗口逐项截图实证（/tmp/r8d-*.png）；旧 R8 过程与 S12-CR09 复核已归档于 [history](history.md)。这些历史截图不替代新 R10 的固定 fixture、同尺寸差分和用户签字。
+旧 Wave 过程与截图结论只在 [history](history.md) 中追溯，不再作为当前门禁。当前 Changes/Terminal 真实核心路径见 [UI Review](UI_Review.md)；Resources、完整 Accessibility 与视觉签字按 ROADMAP P3/P4 重建证据。

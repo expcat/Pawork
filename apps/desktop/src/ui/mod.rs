@@ -29,7 +29,7 @@ use std::time::Duration;
 use gpui::{
     actions, div, point, prelude::*, px, AnyView, App, AsyncWindowContext, ClickEvent, Context,
     Corner, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent, ListAlignment,
-    ListState, Pixels, Point, Render, Rgba, ScrollHandle, SharedString, Window,
+    ListState, PathPromptOptions, Pixels, Point, Render, Rgba, ScrollHandle, SharedString, Window,
 };
 use pawork_client::AppEvent;
 
@@ -771,7 +771,7 @@ impl AppView {
                                 .min_w_0()
                                 .truncate()
                                 .text_size(font::HEADER_TITLE)
-                                .font_weight(FontWeight::SEMIBOLD)
+                                .font_weight(FontWeight::MEDIUM)
                                 .text_color(dark().text.primary)
                                 .child(title),
                         )
@@ -1065,6 +1065,12 @@ impl AppView {
             }
             ControllerEvent::SessionCreated { session_id } => {
                 self.open_session(session_id, cx);
+            }
+            ControllerEvent::WorkspaceOpened { workspace_id, name } => {
+                self.scope_workspace_id = Some(workspace_id);
+                self.reconcile_terminal_workspace(cx);
+                self.rail_scroll_to_active = true;
+                self.status_hint = Some(format!("Project opened · {name}"));
             }
             ControllerEvent::SessionForked { session_id } => {
                 self.status_hint = Some(format!("Forked · {session_id}"));
@@ -1382,6 +1388,57 @@ impl AppView {
                 cx.notify();
             }
         }
+    }
+
+    pub(super) fn on_open_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_create_task() {
+            self.status_hint = Some("Opening a project needs a live connection.".into());
+            cx.notify();
+            return;
+        }
+        self.close_open_menu(cx);
+        self.status_hint = Some("Choose a project folder…".into());
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Open Project".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| match selection.await {
+            Ok(Ok(Some(mut paths))) => {
+                if let Some(path) = paths.pop() {
+                    this.update_in(cx, |view, _window, cx| {
+                        view.status_hint = Some("Opening project…".into());
+                        view.controller.open_workspace(path);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+            Ok(Ok(None)) => {
+                this.update(cx, |view, cx| {
+                    view.status_hint = Some("Open project cancelled.".into());
+                    cx.notify();
+                })
+                .ok();
+            }
+            Ok(Err(error)) => {
+                this.update(cx, |view, cx| {
+                    view.status_hint = Some(format!("Open project failed: {error}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+            Err(error) => {
+                this.update(cx, |view, cx| {
+                    view.status_hint = Some(format!("Open project failed: {error}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+        cx.notify();
     }
 
     fn create_task(
@@ -1750,15 +1807,17 @@ impl AppView {
     fn menu_item_count(&self) -> usize {
         match self.open_menu.as_ref() {
             Some(MenuKind::Grouping) => 2,
-            Some(MenuKind::Scope) => self.projection.project_scope_options().len(),
+            Some(MenuKind::Scope) => self.projection.project_scope_options().len() + 1,
             Some(MenuKind::Model) => self.projection.models.len(),
             Some(MenuKind::Entry(_)) => 1,
-            Some(MenuKind::WorkspaceConfirm) => self
-                .projection
-                .project_scope_options()
-                .into_iter()
-                .filter(|(id, _)| id.is_some())
-                .count(),
+            Some(MenuKind::WorkspaceConfirm) => {
+                self.projection
+                    .project_scope_options()
+                    .into_iter()
+                    .filter(|(id, _)| id.is_some())
+                    .count()
+                    + 1
+            }
             Some(MenuKind::Activity) => 1,
             None => 0,
         }
@@ -1832,10 +1891,11 @@ impl AppView {
                 self.on_select_grouping(mode, window, cx);
             }
             MenuKind::Scope => {
-                if let Some((workspace_id, _)) =
-                    self.projection.project_scope_options().get(ix).cloned()
-                {
+                let options = self.projection.project_scope_options();
+                if let Some((workspace_id, _)) = options.get(ix).cloned() {
                     self.on_select_scope(workspace_id, window, cx);
+                } else if ix == options.len() {
+                    self.on_open_project(window, cx);
                 }
             }
             MenuKind::Model => {
@@ -1850,14 +1910,16 @@ impl AppView {
                 }
             }
             MenuKind::WorkspaceConfirm => {
-                if let Some((workspace_id, _)) = self
+                let choices: Vec<_> = self
                     .projection
                     .project_scope_options()
                     .into_iter()
                     .filter_map(|(id, name)| id.map(|id| (id, name)))
-                    .nth(ix)
-                {
+                    .collect();
+                if let Some((workspace_id, _)) = choices.get(ix).cloned() {
                     self.on_confirm_workspace(workspace_id, window, cx);
+                } else if ix == choices.len() {
+                    self.on_open_project(window, cx);
                 }
             }
             MenuKind::Activity => {

@@ -47,6 +47,6 @@ GLM 只读审查未发现 P0/P1；唯一 P2 指出 Connected 真窗口取证受�
 
 ## 遗留与移交
 
-- 分区 SSIM ≥0.99 与 fixture 演示数据重塑：2026-08-30 经用户确认移交 R10 终局视觉门禁（条款见 [plan/R9-R11-post-ui-closeout.md](../../../plan/R9-R11-post-ui-closeout.md) R10 §2.3）。
+- 分区 SSIM ≥0.99 与 fixture 演示数据重塑：2026-08-30 经用户确认延期；旧任务书已清理，当前视觉验收只看 [ROADMAP](../../../ROADMAP.md)。
 - AX server 注册 flake 的产品侧复核（bundled/签名形态）：登记 ROADMAP §5，R7 VoiceOver/AX 门禁前复核；driver 层绕过已就位。
 - 断言覆盖已知子集缺口（收口审查 P2 登记）：popover 内部偏移（heading/summary offset、左右 inset 20/宽 280）与 `.max(header_frame.x)` 钳制未断言，本次采集值恰好全部吻合；需要时随 Wave B 补强。

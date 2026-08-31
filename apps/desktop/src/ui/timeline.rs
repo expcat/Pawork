@@ -100,7 +100,8 @@ pub(super) fn tool_status_label(status: &str) -> String {
 }
 
 /// 行与前一行的垂直间距（§4.2/§4.3 量图冻结值）：消息 / 错误 / 中间相位
-/// 40；独立 tool 组 48；摘要区域带组时 48（组面板即区域首元素），无组 12。
+/// 40；独立 tool 组 48；摘要区域带组时 48（组面板即区域首元素），无组按
+/// 普通 entry 保持 40。12 只用于 tool panel → summary 的组内间距。
 fn row_top_gap(row: &TimelineRow) -> f32 {
     match row {
         TimelineRow::Message { .. } | TimelineRow::Error { .. } | TimelineRow::RunPhase { .. } => {
@@ -111,7 +112,7 @@ fn row_top_gap(row: &TimelineRow) -> f32 {
             if group.is_some() {
                 metrics::TOOL_GROUP_TOP_GAP
             } else {
-                metrics::SUMMARY_CARD_GAP
+                metrics::MSG_ENTRY_GAP
             }
         }
     }
@@ -142,12 +143,14 @@ impl AppView {
                         if ix > 0 {
                             div()
                                 .mt(px(gap))
+                                .w_full()
                                 .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
                                 .min_w_0()
                                 .child(element)
                                 .into_any_element()
                         } else {
                             div()
+                                .w_full()
                                 .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
                                 .min_w_0()
                                 .child(element)
@@ -158,12 +161,14 @@ impl AppView {
                         if len > 0 {
                             div()
                                 .mt(px(metrics::MSG_ENTRY_GAP))
+                                .w_full()
                                 .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
                                 .min_w_0()
                                 .child(card)
                                 .into_any_element()
                         } else {
                             div()
+                                .w_full()
                                 .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
                                 .min_w_0()
                                 .child(card)
@@ -252,9 +257,11 @@ impl AppView {
                 let TimelineEntryKind::RunState(state) = &entry.kind else {
                     return div().into_any_element();
                 };
-                // 非终态中间相位保持现状单行（§4.5）：disabled 色，不纳入摘要。
+                // 非终态中间相位保持单行（§4.5），作为可读的次级状态，
+                // 不与正文争抢主层级，也不纳入摘要。
                 div()
-                    .text_color(dark().text.disabled)
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
                     .child(state.clone())
                     .into_any_element()
             }

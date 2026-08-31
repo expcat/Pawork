@@ -306,6 +306,9 @@ pub mod metrics {
     pub const RAIL_TASK_ROW_HEIGHT: f32 = 44.0;
     /// 8：项目块间距（量图 任务→下个项目头 52–54 − 行高 44）。
     pub const RAIL_PROJECT_BLOCK_GAP: f32 = 8.0;
+    /// 56：项目计数 / 相对时间共用的右对齐元信息槽；100%/150% 均保留
+    /// `now` / `244d` 与三位计数的稳定列，不让长标题挤占。
+    pub const RAIL_META_SLOT_WIDTH: f32 = 56.0;
     /// 24：底部状态栏高度。
     pub const STATUS_BAR_HEIGHT: f32 = 24.0;
     // ── Workspace Header / Timeline 几何（R4 Wave A，state-a §2.2/§2.3 与
@@ -427,6 +430,16 @@ pub mod metrics {
     pub const CHANGES_FILE_LIST_MAX_HEIGHT: f32 = 200.0;
     /// 88：Changes · Summary 行标签列宽。
     pub const SUMMARY_LABEL_WIDTH: f32 = 88.0;
+    /// 20：Changes 文件行装饰性 glyph 固定槽。
+    pub const CHANGES_FILE_GLYPH_WIDTH: f32 = 20.0;
+    /// 72：Changes 文件状态文字固定右对齐槽。
+    pub const CHANGES_FILE_STATUS_WIDTH: f32 = 72.0;
+    /// 76：Changes 文件增删统计固定右对齐槽。
+    pub const CHANGES_FILE_DELTA_WIDTH: f32 = 76.0;
+    /// 24：Diff 行 +/- 语义 gutter；正文保持中性 surface。
+    pub const DIFF_GUTTER_WIDTH: f32 = 24.0;
+    /// 36：Diff 当前文件只读 header 高度。
+    pub const DIFF_HEADER_HEIGHT: f32 = 36.0;
     /// 0：行高保护性比较。
     pub const ZERO: f32 = 0.0;
 }
@@ -576,6 +589,7 @@ mod tests {
         assert_eq!(metrics::RAIL_PROJECT_TO_TASK_GAP, 2.0);
         assert_eq!(metrics::RAIL_TASK_ROW_HEIGHT, 44.0);
         assert_eq!(metrics::RAIL_PROJECT_BLOCK_GAP, 8.0);
+        assert_eq!(metrics::RAIL_META_SLOT_WIDTH, 56.0);
     }
 
     /// R4 Wave A Workspace Header / Timeline 几何合同（state-a §2.2/§2.3 与
@@ -629,6 +643,11 @@ mod tests {
         assert_eq!(metrics::TAB_UNDERLINE_HEIGHT, 2.0);
         assert_eq!(metrics::ACTIVITY_POPOVER_WIDTH, 320.0);
         assert_eq!(metrics::ACTIVITY_POPOVER_HEIGHT, 320.0);
+        assert_eq!(metrics::CHANGES_FILE_GLYPH_WIDTH, 20.0);
+        assert_eq!(metrics::CHANGES_FILE_STATUS_WIDTH, 72.0);
+        assert_eq!(metrics::CHANGES_FILE_DELTA_WIDTH, 76.0);
+        assert_eq!(metrics::DIFF_GUTTER_WIDTH, 24.0);
+        assert_eq!(metrics::DIFF_HEADER_HEIGHT, 36.0);
     }
 
     /// R5 Wave A Composer 几何合同（design/README.md §2：常态总高 88–94，

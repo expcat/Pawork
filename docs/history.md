@@ -631,7 +631,7 @@ R8 K-03 签字与 R9 开启前,把常设文档从「导览地图 + 分散总结�
 
 ## 附：UI 优化路线重排（2026-08-25）
 
-经用户确认，旧 V3 阶段编号停止作为当前任务指针，既有功能与结构任务视为历史完成面；`plan/R8-gui-components.md` 与 `plan/R9-consistency-closeout.md` 退出活动任务目录。旧任务书中仍有价值但尚未获得新证据的 UI 缺口，全部并入新 R1–R8 的视觉合同、组件实现与全功能模拟操作门禁；非 UI 剩余项重新编排为 R9 一致性/代码债务、R10 关键回归/真实环境，发布准备仅在用户另行授权后进入 R11。当前事实源以 [ROADMAP](../ROADMAP.md) 与 [plan](../plan/) 为准，本节只记录编号迁移，不把历史“待签字/待验收”表述改写为已验证。
+经用户确认，旧 V3 阶段编号停止作为当前任务指针，既有功能与结构任务视为历史完成面；`plan/R8-gui-components.md` 与 `plan/R9-consistency-closeout.md` 退出活动任务目录。旧任务书中仍有价值但尚未获得新证据的 UI 缺口，全部并入新 R1–R8 的视觉合同、组件实现与全功能模拟操作门禁；非 UI 剩余项重新编排为 R9 一致性/代码债务、R10 关键回归/真实环境，发布准备仅在用户另行授权后进入 R11。当时事实源为 ROADMAP 与 plan；2026-08-31 清理后，当前计划事实只以 [ROADMAP](../ROADMAP.md) 为准。本节只记录编号迁移，不把历史“待签字/待验收”表述改写为已验证。
 
 2026-08-27 用户将尚未开始的 R11 从「发布准备（条件阶段）」改为「设计稿与实际 UI 终局比对」：只对照 `design/` v3 定稿图与已归档 UI 证据，把不符合的显示效果归纳为下一阶段完善任务；该阶段只改文档，不查询、不修改代码。原发布准备（License、供应链、安装/升级/回滚、三平台与全量门禁）退回 [ROADMAP §5](../ROADMAP.md) 候选池，需用户另行授权后立项。本节 2026-08-25 原文保留，以上为后续重定义。
 
@@ -656,7 +656,7 @@ R1 四波完成后退出活动任务目录；原任务书全文以 git 历史为
 
 ## R2 — Window shell 与全局视觉系统（2026-08-27）
 
-R2 三波完成后退出活动任务目录；原任务书正文仍在 [plan/R2-R3-ui-shell-navigation.md](../plan/R2-R3-ui-shell-navigation.md)（R3 已于同日开启 Wave A）。验证事实见 [r2-wave-a](ui-review/r2-wave-a/notes.md)、[r2-wave-b](ui-review/r2-wave-b/notes.md)、[r2-wave-c](ui-review/r2-wave-c/notes.md)。
+R2 三波完成后退出活动任务目录；原任务书正文曾位于 `plan/R2-R3-ui-shell-navigation.md`（2026-08-31 按用户要求清理）。验证事实见 [r2-wave-a](ui-review/r2-wave-a/notes.md)、[r2-wave-b](ui-review/r2-wave-b/notes.md)、[r2-wave-c](ui-review/r2-wave-c/notes.md)。
 
 - **Wave A · Window chrome 与根 token**：F-01 透明 titlebar、F-02 三栏骨架、design/README §2.1 根 token、1440/1080 layout invariant、State A 壳层证据。U1 74/74。
 - **Wave B · 窗口状态与 U2 driver**：空态引导、Reconnect 相位、F-13 StatusBar 居中与定稿语序、window_min_size 1080×720、U2 五相位（empty/focus-blur/narrow/restored/collapsed/resumed）。desktop 78/78 + 脚本 25/25；真窗口门禁通过。
@@ -667,27 +667,27 @@ R2 三波完成后退出活动任务目录；原任务书正文仍在 [plan/R2-R
 
 ## R3 — TaskRail 与任务导航（2026-08-27–28）
 
-R3 已收口；Wave A/B 证据 [r3-wave-a](ui-review/r3-wave-a/notes.md) 与 [r3-wave-b](ui-review/r3-wave-b/notes.md)。任务书正文仍在 [plan/R2-R3-ui-shell-navigation.md](../plan/R2-R3-ui-shell-navigation.md)。
+R3 已收口；Wave A/B 证据 [r3-wave-a](ui-review/r3-wave-a/notes.md) 与 [r3-wave-b](ui-review/r3-wave-b/notes.md)。原任务书 `plan/R2-R3-ui-shell-navigation.md` 已于 2026-08-31 按用户要求清理。
 
 - **Wave A · TaskRail F-03/F-04**：顶部三行（Pawork 22 / scope 36 / 连接行 Ø10 + 全局 +）、日期桶→项目→44px 任务行、底部「Local」honest-hidden；状态点诚实语义 NeedsInput > Running > 空心灰（无终态绿点）。live `RunChanged` 与 `MessageSent` 乐观登记跨会话维护 `active_runs`；后台审批进出闸门前入账。AX 与 render 共享 `metrics::RAIL_*`。desktop 84/84；脚本 55/55。真窗口 State A taskrail SSIM 0.6941、State C 0.3543（当时登记 ROADMAP §5；2026-08-28 拍板 c 后移交 R10）。
 - **Wave B · 导航状态与键盘 / Unread / Blocked**：`SessionLiveStatus::Blocked` live 派生（failed/interrupted，快照清空、Replay 再派生）与独立 unread 通道；断线保留 active/unread/blocked。键盘：Tab 链（AppKit NSEvent monitor，`BLOCK_IS_GLOBAL=1<<28`）、rail ↑/↓、Enter/Space 行级与按钮级激活、菜单打开即接管、Esc 回触发器、cmd-alt 循环（target==active 短路）与 next-needs-attention（NeedsInput > Blocked > Unread）。收口审查补 scope 焦点回退（`pending_scope_focus`）、空态/tooltip ASCII 快捷键（GPUI 默认字体无 ⌘/⌥ 级联）、`on_select_model` enable 门。U2 归档为 Slice 4 的 22 相位（label `r3-wave-b-u2-nav-slice4`，git_head 69d1fb3）；Slice 5 button-enter 相位写入驱动但按用户指示未复跑。Computer Use 真窗口截图见 [r3-wave-b/visual](ui-review/r3-wave-b/visual/)。
-- **退出拍板 c（2026-08-28 用户确认）**：R3 以结构门禁为准退出（同 R2 拍板 a 先例）；三状态 TaskRail 分区 SSIM ≥0.99 连同 fixture 演示数据重塑、State C reference tone 归一（设计基准变更，届时需用户批准）移交 R10 终局门禁，条款见 [plan/R9-R11-post-ui-closeout.md](../plan/R9-R11-post-ui-closeout.md) R10 §2.3。天花板量化分解（与归档 diff-report 一致 0.6941/0.3543）：State A ≈100% fixture 内容形状（标题/时间值已遮，行数/行位/密度/省略形状按合同须对齐，tone 校正上限 0.7490）；State C = tone 差 ≈50% + 内容形状 ≈50%（reference 中位 RGB (0,9,17) 比冻结 token base 0x07121a 更暗，非实现漂移；tone 校正后 0.6885）。遮罩调整方案合同不可行：§0.1 只允许遮「值本身」、禁止空白稀释，taskrail 遮罩已用 16.6%/14.9%（上限 35%），合法微调收益 ≤0.05。fixture 重塑估算 0.5–1 天（seed.json 数据形状 + golden + 约 18 文件断言同步 + 三状态重采集），最佳时机为 R10 重采集前一次完成。
+- **退出拍板 c（2026-08-28 用户确认）**：R3 以结构门禁为准退出（同 R2 拍板 a 先例）；三状态 TaskRail 分区 SSIM ≥0.99 连同 fixture 演示数据重塑、State C reference tone 归一（设计基准变更，届时需用户批准）移交当时的 R10 终局门禁，条款曾登记于已清理的 `plan/R9-R11-post-ui-closeout.md` R10 §2.3。天花板量化分解（与归档 diff-report 一致 0.6941/0.3543）：State A ≈100% fixture 内容形状（标题/时间值已遮，行数/行位/密度/省略形状按合同须对齐，tone 校正上限 0.7490）；State C = tone 差 ≈50% + 内容形状 ≈50%（reference 中位 RGB (0,9,17) 比冻结 token base 0x07121a 更暗，非实现漂移；tone 校正后 0.6885）。遮罩调整方案合同不可行：§0.1 只允许遮「值本身」、禁止空白稀释，taskrail 遮罩已用 16.6%/14.9%（上限 35%），合法微调收益 ≤0.05。fixture 重塑估算 0.5–1 天（seed.json 数据形状 + golden + 约 18 文件断言同步 + 三状态重采集），最佳时机为 R10 重采集前一次完成。
 
 收口验证：Wave A `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 84/84；Wave B 同命令 94/94；脚本 unittest 35/35（wave-b + wave-a + wave-d，bundled Python + Pillow）；U2 Slice 4 22 相位 PASS；Slice 5 button-enter 未复跑；ASCII 空态字形待支持 Computer Use 的模型复拍。未运行全 workspace gate。下一任务：R4 — Workspace、Timeline 与 Agent 状态。
 
 ## R4 — Workspace、Timeline 与 Agent 状态（2026-08-28）
 
-R4 已收口；Wave A/B 证据 [r4-wave-a](ui-review/r4-wave-a/notes.md) 与 [r4-wave-b](ui-review/r4-wave-b/notes.md)。任务书正文仍在 [plan/R4-R6-ui-workflows.md](../plan/R4-R6-ui-workflows.md)。
+R4 已收口；Wave A/B 证据 [r4-wave-a](ui-review/r4-wave-a/notes.md) 与 [r4-wave-b](ui-review/r4-wave-b/notes.md)。原任务书 `plan/R4-R6-ui-workflows.md` 已于 2026-08-31 按用户要求清理。
 
 - **Wave A · F-05–F-08**：Workspace Header 骨架常存（branch 仅 GitDiffInfo 诚实源、终态只画 live 可派生状态）；Timeline Top 对齐四合同（跟随态单一表达、滚动事件事实判定贴底，评审 P0 修 handler 内读 ListState 的 BorrowMutError）；消息层级 You/Pawork + 相对时间；连续同 run ToolCall 合组、紧邻终态吸收为 RunSummary（终态判定 = fork_boundary.is_some()）。desktop 107/107；State A 结构门禁 r4a-2 通过。
 - **Wave B · Agent 状态 U2 九场景**：Failed 摘要真实原因（live 诚实兜底 "The run failed."）；种子审批决议补广播（WS-3a，仅 ToolCompleted 上 wire）；用户消息乐观回显（WS-4a，local-echo 不进 seen）；entry-compare v2 三重合同；合成终态闸门（WS-5，terminal_reported 去重，cancel 不再谎报 Failed）。评审 P2：合成 seq-0 压回显 → publish_raw 从 2^60 递增自取。P3：早死 run 回显重选消失，登记 desktop Spec §8。app 156 / desktop 110 / 脚本 22；U2 r4b-6 14 相位 + entry-compare 全 PASS；State B shell r4b-shell-1 结构 PASS（composer-height=F-09，R5）。
-- **退出拍板 1（2026-08-28 用户确认）**：R4 以结构门禁与 U2 九场景为准退出（同 R2 拍板 a / R3 拍板 c）；State A/B 分区 SSIM ≥0.99 移交 R10 终局门禁，条款见 [plan/R9-R11-post-ui-closeout.md](../plan/R9-R11-post-ui-closeout.md) R10 §2.3。Wave A 记录值 timeline 0.665 / header-left 0.940 / header-right 0.883 / global 0.648，主因 fixture 演示内容形状差（重塑已在 R3 拍板 c 移交，本条不另开数据任务）。仍开放：live RunChanged 无失败原因 / 无用户消息 wire 事件是否立 ADR。
+- **退出拍板 1（2026-08-28 用户确认）**：R4 以结构门禁与 U2 九场景为准退出（同 R2 拍板 a / R3 拍板 c）；State A/B 分区 SSIM ≥0.99 移交当时的 R10 终局门禁，条款曾登记于已清理的 `plan/R9-R11-post-ui-closeout.md` R10 §2.3。Wave A 记录值 timeline 0.665 / header-left 0.940 / header-right 0.883 / global 0.648，主因 fixture 演示内容形状差（重塑已在 R3 拍板 c 移交，本条不另开数据任务）。仍开放：live RunChanged 无失败原因 / 无用户消息 wire 事件是否立 ADR。
 
 收口验证：`cargo test -p pawork-app --offline --lib --tests` 156/156；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 110/110；脚本 unittest 22/22；U2 r4b-6 全 PASS。未运行全 workspace gate。下一任务：R5 — Composer 与运行控制。
 
 ## R5 — Composer 与运行控制（2026-08-28–29）
 
-R5 已收口；Wave A/B 证据分别见 [r5-wave-a](ui-review/r5-wave-a/notes.md) 与 [r5-wave-b](ui-review/r5-wave-b/notes.md)，任务书正文仍在 [plan/R4-R6-ui-workflows.md](../plan/R4-R6-ui-workflows.md)（R6 已开启）。
+R5 已收口；Wave A/B 证据分别见 [r5-wave-a](ui-review/r5-wave-a/notes.md) 与 [r5-wave-b](ui-review/r5-wave-b/notes.md)，原任务书 `plan/R4-R6-ui-workflows.md` 已于 2026-08-31 按用户要求清理。
 
 - **Wave A · F-09 Composer 结构**：真窗口常态总高 156→91，进入 88–94 合同；输入区 + footer 两行结构、model/workspace/ContextMeter 与 32×32 Send/Cancel 同槽互换落地；彻除常驻提示行与幽灵 tab stop，Terminal TextInput 参数化解耦；无权威 capability 的 reasoning/附件/队列不画。State A 结构三轮 PASS，desktop 119/119。
 - **Wave B · 输入与 U2**：shift/鼠标选择、Copy/Cut/SelectAll、Undo/Redo、overflow scroll、IME composing 闸门、trim 发送、per-session 草稿与 Terminal 解耦落地；两轮评审发现的 P0–P2 均修复，含鼠标/IME 坐标映射根因（`content_bounds` 归一化）。desktop 129/129，Python 40/40，warnings 15 持平，零 wire 变更；U2 九场景 22 份断言全 PASS。
@@ -697,7 +697,7 @@ R5 已收口；Wave A/B 证据分别见 [r5-wave-a](ui-review/r5-wave-a/notes.md
 
 ## R6 — Inspector、Changes、Terminal 与 Activity（2026-08-29–30）
 
-R6 已收口；Wave A/B 证据分别见 [r6-wave-a](ui-review/r6-wave-a/notes.md) 与 [r6-wave-b](ui-review/r6-wave-b/notes.md)，任务书正文仍在 [plan/R4-R6-ui-workflows.md](../plan/R4-R6-ui-workflows.md)。
+R6 已收口；Wave A/B 证据分别见 [r6-wave-a](ui-review/r6-wave-a/notes.md) 与 [r6-wave-b](ui-review/r6-wave-b/notes.md)，原任务书 `plan/R4-R6-ui-workflows.md` 已于 2026-08-31 按用户要求清理。
 
 - **Wave A · Inspector 层级与 Header Activity**：Inspector 顶层 Changes/Terminal/Resources 与 Files/Summary 二级 strip、默认 Changes、440px 固定栏和 320×320 Header ActivityPopover 收口；只展示权威 Changes 摘要，不伪造 Add tool/Agent capability。render/AX/U1 132/132，Connected State A/B 三相位结构断言全 PASS。macOS 26.6.2 AX 注册 flake 以 AXWindows 回退 + desktop-restart≤3 fail-closed 取证。
 - **Wave B · 生命周期、键盘与重连**：Changes latest-session/scope/真实横滚，Terminal 多 workspace 草稿与 snapshot/replay/reconnect，Resources stale/刷新，Inspector 键盘/AX，以及 Host 重启后的 GuiClient request namespace 均在冻结 wire 内完成。审查发现的 terminal 首段串屏与空 diff scope 诊断已最小修复。
@@ -717,7 +717,7 @@ R6 已收口；Wave A/B 证据分别见 [r6-wave-a](ui-review/r6-wave-a/notes.md
 
 ## R7 — 全局交互、Accessibility 与响应式（2026-08-29–30）
 
-R7 已收口；Wave A/B/C 的证据分别见 [r7-wave-a](ui-review/r7-wave-a/notes.md)、[r7-wave-b](ui-review/r7-wave-b/notes.md) 与 [r7-wave-c](ui-review/r7-wave-c/notes.md)，任务书保留于 [plan/R7-R8-ui-quality-gates.md](../plan/R7-R8-ui-quality-gates.md)（R8 比对阶段待开启）。
+R7 已收口；Wave A/B/C 的证据分别见 [r7-wave-a](ui-review/r7-wave-a/notes.md)、[r7-wave-b](ui-review/r7-wave-b/notes.md) 与 [r7-wave-c](ui-review/r7-wave-c/notes.md)，原任务书 `plan/R7-R8-ui-quality-gates.md` 已于 2026-08-31 按用户要求清理。
 
 - **Wave A · 组件状态与 AX 基线**：45 组件状态矩阵、三路径焦点、原生 AX tree/action 与 State A hover/active/focus 九图收口；用户批准以原生 AX + 纯键盘 + U2 作为该波 VoiceOver 替代门禁。VoiceOver 未执行，屏幕朗读措辞/顺序不记为通过。
 - **Wave B · 全局焦点与菜单等价路径**：task click/Enter/AXPress/cycling、审批、Fork、Review changes 与单可见 task 边角统一回既有 handler/gate；导航 26 相位、审批/状态 14 相位及审查边角 3 相位真窗口 U2 全绿。Desktop 144/144，Python 17/17 + 22/22。
@@ -725,4 +725,51 @@ R7 已收口；Wave A/B/C 的证据分别见 [r7-wave-a](ui-review/r7-wave-a/not
 - **系统设置边界**：用户先授权临时切换，随后明确要求跳过一切需修改系统设置的测试并恢复原值。实际 Reduce Motion 未改变；短暂开启 Increase Contrast 时系统联动 Reduce Transparency，收到新指令后两者立即恢复。只读复核与最终 U2 均记录四项 Accessibility Display 偏好为 `false`。主动系统偏好 U3 记为 ⏭️，不计为通过。
 - **范围**：未改 GUI wire、Host、Policy、正式 fixture 业务数据或 1440 reference；无新增依赖。R6 及更早移交的分区 SSIM `≥0.99` 仍由 R10 在 fixture 演示数据重塑后统一重采，不把 R7 结构/交互通过冒充视觉终局。
 
-收口验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 146/146；Wave C Python 4/4；完整字号 U2 17 相位、间隔修复 13 相位与提交前行高修复 13 相位均 `structural_pass=true`；最终 150% / 1080×720 截图经 OCR 与像素尺寸检查可读无行叠。VoiceOver、主动系统偏好 U3、性能阈值与 Workspace Full Gate 均未运行/冻结。下一任务进入 R8（UI 终局比对与优化文档，只改文档）；`fixtures/ui/seed.json` 演示数据重塑、既有 golden/断言同步与 State C reference 底色归一拍板转为 R10 重采集前置（见 [plan/R9-R11-post-ui-closeout.md](../plan/R9-R11-post-ui-closeout.md) R10 §1）。
+收口验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 146/146；Wave C Python 4/4；完整字号 U2 17 相位、间隔修复 13 相位与提交前行高修复 13 相位均 `structural_pass=true`；最终 150% / 1080×720 截图经 OCR 与像素尺寸检查可读无行叠。VoiceOver、主动系统偏好 U3、性能阈值与 Workspace Full Gate 均未运行/冻结。下一任务进入 R8（UI 终局比对与优化文档，只改文档）；`fixtures/ui/seed.json` 演示数据重塑、既有 golden/断言同步与 State C reference 底色归一拍板转为当时的 R10 重采集前置（条款曾登记于已清理的 `plan/R9-R11-post-ui-closeout.md` R10 §1）。
+
+## R8 — UI 终局比对与优化文档（2026-08-31）
+
+R8 作为纯文档阶段完成并退出；当时的任务书 `plan/R7-R8-ui-quality-gates.md` 与交付物 `docs/ui-optimization.md` 已于 2026-08-31 按用户要求清理。
+
+- 逐区复核 Timeline + Inspector、Timeline + ActivityPopover、Projects + Inspector 三张 v3 定稿图与 R1–R7 最新可用归档证据；明确 State B `current.png` 为 Popover 关闭态，开态只能使用 `shot-activity-popover.png`，State C 也没有完整同态终局 diff。
+- 排除 fixture 内容形状、能力诚实隐藏、冻结几何和 State C tone 决策后，登记 UO-01…UO-06 六个可独立修复的缺口族：Timeline 阅读层级、全局字阶/语义对比、TaskRail 信息排布、Composer surface、Inspector/DiffView 质感、ActivityPopover 稀疏态。
+- 核对 Codex、Cursor、Zed、VS Code 及 Apple/Fluent/Radix 官方公开资料，只吸收主画布优先、渐进披露、语义 surface、type ramp 与稳定对齐等原则，不复制品牌样式或未接入能力。
+- 未查询或修改源码，未启动 Cargo/Desktop，未重拍 current，未修改 design PNG；fixture 重塑、State C tone、分区 SSIM `≥0.99` 与用户签字明确移交 R10。
+
+Validated: 文档证据路径、公开来源与三态覆盖核对；无代码测试（纯文档阶段）。
+
+Targeted regressions: none。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+## R9 — 修复 R8 发现的 UI 问题（2026-08-31）
+
+R9 已按当时 UI 优化清单的六个缺口族完成最小修复并退出；任务书 `plan/R9-R11-post-ui-closeout.md` 与 `docs/ui-optimization.md` 已于 2026-08-31 按用户要求清理，最终验收产物 `docs/ui-review/r9-final/` 亦作为一次性运行证据随同移除，结论保留在本节要点。
+
+- **UO-01/02**：Timeline row wrapper 统一满宽并以 618px 封顶；独立/组内 summary 间距分为 40/12px；关键元信息升至 secondary，Workspace Header 降为 medium，StatusBar 保持 24px 并改 12px 窄窗裁切。
+- **UO-03/04**：TaskRail project count / task time 统一 56px meta 槽；Composer input/footer 共属 panel surface，unavailable Context 使用 tertiary；冻结高度、增长预算和 Send/Cancel 单槽未改。
+- **UO-05/06**：Changes 文件 glyph/status/delta 使用 20/72/76px 固定槽；36px diff header 固定在横滚外，24px marker gutter 与中性正文分离；ActivityPopover 保持 320×320、既有锚点与 capability honesty，只增加 divider 和真实 Changes section，并同步两个受影响 AX 子节点断言。
+- **证据与边界**：Desktop 146/146；State A/B/C、Changes C3、idle/running Composer、1080×720、150%、1024 行、三轮 resize、断开/重连与 Popover 定向结构门禁通过。首次 A/B 运行遇到 macOS AX 注册只返回递归 `AXApplication`，脚本三次重启后 fail-closed；原始失败包保留，干净重跑通过。独立审查确认旧 Timeline/Changes 全状态 AX 几何不属于 R9 新增阻断，完整 AX/VoiceOver/系统偏好/全状态矩阵仍由 R10 承接。
+- 未修改 wire、Host、正式 fixture、design PNG 或能力面；没有新增依赖、假 Agents/Add tool/quota，也没有执行提交、推送或发布。
+
+Validated: `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（146/146）；真 Host/Desktop A/B/C、C3、running Composer 与 resilience 定向包。
+
+Targeted regressions: Timeline/TaskRail/Composer/Changes/ActivityPopover/StatusBar、Popover 受影响 AX 子节点、1080×720、150%、1024 行、resize/reconnect、DiffView 横滚。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。下一阶段为 R10；fixture 重塑、State C tone 用户决定、SSIM `≥0.99`、完整 VoiceOver/系统偏好和全功能矩阵均未提前通过。
+
+---
+
+## ROADMAP / PLAN 重置与真实 Desktop 主路径复验（2026-08-31）
+
+- 按用户要求清空 `plan/`，仓库 UI 图片只保留 `design/` 三张初始设计图；当前计划事实收敛到重写后的 [ROADMAP](../ROADMAP.md)，旧阶段编号、过程截图与任务书不再作为活动指针。
+- 新增 `scripts/pawork-desktop.sh` 与最小 macOS bundle metadata：`build` 构建正式 `pawork` / `pawork-desktop`，`start` 启动独立 `desktop` 实例的正式 Host 与真窗口，不使用 fixture、seed、probe 或测试 profile。
+- 真窗口完成 Add project → 新建 Task → 真实 Provider 对话 → 显式审批 `write_file` → 生成两行标记文件（`pawork-real-flow.txt`，一次性产物，已随清理移除）；Changes 的 untracked / `+2 / −0` 与 Git 命令行一致，Terminal 的 `pwd` / `terminal-ok` 来自真实 PTY。
+- 修复三项实测问题：添加项目此前无正式 UI 入口；Terminal 输出暴露 ANSI/VT 控制序列；历史重放把 `resources.injected` 信息诊断误标为 Error。后两项分别在 Desktop 与 protocol projection 定向回归中锁定。
+- 诚实边界：Workspace 可跨 Host 重启恢复，但 Session→Workspace 仍是进程内关联；Terminal wire 仍无通用 stop/close 与 live exit/failure。两项均未用 UI 本地假实现掩盖，前者进入新 ROADMAP P1，后者保留为协议/ADR 候选。
+
+Validated: `cargo test -p pawork-cli --offline --lib --tests`（84）；`cargo test -p pawork-app --offline --lib --tests`（178）；`cargo test -p pawork-protocol --offline --lib --tests`（144）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（147）；`./scripts/pawork-desktop.sh build/start`；真窗口与文件/Git/PTY 双证据；`git diff --check`、脚本语法与 Info.plist 校验。
+
+Targeted regressions: CLI workspace trust opt-in、App workspace attach、Desktop Add project / Terminal 文本过滤、protocol Diagnostic live/history 一致性。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

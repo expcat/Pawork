@@ -38,6 +38,10 @@ pub enum ControllerEvent {
     SessionCreated {
         session_id: String,
     },
+    WorkspaceOpened {
+        workspace_id: String,
+        name: String,
+    },
     /// 发送回执：text 随行携带，供 UI 在 wire 用户消息事件缺席时乐观回显。
     MessageSent {
         session_id: String,
@@ -497,6 +501,76 @@ impl DesktopController {
                         &events,
                         ControllerEvent::OperationFailed {
                             action: "create session",
+                            reason: error.to_string(),
+                        },
+                    );
+                }
+            }
+        });
+    }
+
+    /// 选择一个真实目录作为当前项目；成功后重取 snapshot，让 UI 只消费
+    /// Host 的 canonical workspace 结果，不在 Desktop 侧猜名称或 id。
+    pub fn open_workspace(&self, root_path: PathBuf) {
+        let Some(client) = self.current_client() else {
+            if let Some(events) = self.try_event_sender() {
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "open project",
+                        reason: "not connected".into(),
+                    },
+                );
+            }
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = workspace_add_command(&root_path);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "open project",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            let Some((workspace_id, name)) = workspace_opened(&response) else {
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "open project",
+                        reason: format!("unexpected response: {:?}", response.response),
+                    },
+                );
+                return;
+            };
+            match client.snapshot().await {
+                Ok(snapshot) => {
+                    if events
+                        .send(ControllerEvent::Snapshot(snapshot))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    let _ = events
+                        .send(ControllerEvent::WorkspaceOpened { workspace_id, name })
+                        .await;
+                }
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "open project",
                             reason: error.to_string(),
                         },
                     );
@@ -1099,6 +1173,14 @@ fn session_create_command(workspace_id: &str) -> AppCommand {
     .expect("session_create command shape is frozen")
 }
 
+fn workspace_add_command(root_path: &std::path::Path) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "workspace_add",
+        "params": { "root_path": root_path.to_string_lossy() }
+    }))
+    .expect("workspace_add command shape is frozen")
+}
+
 fn session_fork_command(session_id: &str, parent_event_id: &str) -> AppCommand {
     serde_json::from_value(json!({
         "method": "session_fork",
@@ -1169,6 +1251,16 @@ fn forked_session_id(response: &AppResponseEnvelope) -> Option<String> {
             .or_else(|| data.get("branch_id"))
             .and_then(|value| value.as_str())
             .map(str::to_string),
+        _ => None,
+    }
+}
+
+fn workspace_opened(response: &AppResponseEnvelope) -> Option<(String, String)> {
+    match &response.response {
+        AppResponse::Data(data) => Some((
+            data.get("id")?.as_str()?.to_string(),
+            data.get("name")?.as_str()?.to_string(),
+        )),
         _ => None,
     }
 }

@@ -119,6 +119,8 @@ pub struct AppLoadOptions {
     pub model: Option<String>,
     pub data_dir: Option<PathBuf>,
     pub approval_mode: Option<ApprovalMode>,
+    /// 仅供可信宿主的显式启动覆盖；None 时沿用 Builtin/Global 配置结果。
+    pub trust_workspaces: Option<bool>,
     pub approval_host: Option<Arc<dyn ApprovalPromptHost>>,
     /// 凭证后端覆盖（自动测试注入 MemoryBackend；默认 auth 文件）。
     pub auth_backend: Option<Arc<dyn SecretBackend>>,
@@ -135,6 +137,7 @@ impl std::fmt::Debug for AppLoadOptions {
             .field("model", &self.model)
             .field("data_dir", &self.data_dir)
             .field("approval_mode", &self.approval_mode)
+            .field("trust_workspaces", &self.trust_workspaces)
             .field("has_approval_host", &self.approval_host.is_some())
             .field("has_auth_backend", &self.auth_backend.is_some())
             .field("instance", &self.instance)
@@ -150,6 +153,7 @@ impl AppLoadOptions {
             model,
             data_dir: None,
             approval_mode: None,
+            trust_workspaces: None,
             approval_host: None,
             auth_backend: None,
             instance: crate::DEFAULT_INSTANCE.to_string(),
@@ -414,7 +418,9 @@ impl AppCore {
             .workspace_root
             .clone()
             .or_else(|| std::env::current_dir().ok());
-        let trusted = resolved.config.trust_workspaces.unwrap_or(false);
+        let trusted = options
+            .trust_workspaces
+            .unwrap_or_else(|| resolved.config.trust_workspaces.unwrap_or(false));
         let mut core = Self::from_config_inner(
             resolved.config,
             options.provider.as_deref(),
@@ -746,11 +752,21 @@ impl AppCore {
         self.approval.configure(mode, workspace_trusted, host);
     }
 
-    /// 把启动目录登记为默认 workspace root，并注册只读四件 + 写三件 + run_command。
+    /// 把目录登记为当前 workspace root，并注册只读四件 + 写三件 + run_command。
     pub fn attach_workspace(&mut self, root: &Path) -> Result<(), AppError> {
         let workspaces = WorkspaceService::new();
         let workspace_id = WorkspaceId::from("ws-default");
-        workspaces.add(workspace_id.clone(), "default", [root.to_path_buf()])?;
+        let workspace_name = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("workspace")
+            .to_string();
+        let workspace = workspaces.add(
+            workspace_id.clone(),
+            workspace_name.clone(),
+            [root.to_path_buf()],
+        )?;
         self.install_builtin_tools(&workspaces)?;
         self.extensions.resource_loader =
             Some(services::extension::ExtensionService::resource_loader_for(
@@ -759,8 +775,8 @@ impl AppCore {
         self.extensions.file_index = services::extension::ExtensionService::new_file_index();
         self.extensions.workspaces = workspaces;
         self.extensions.workspace_id = workspace_id;
-        self.extensions.workspace_name = "default".into();
-        self.extensions.workspace_roots = vec![root.to_path_buf()];
+        self.extensions.workspace_name = workspace_name;
+        self.extensions.workspace_roots = workspace.roots;
         Ok(())
     }
 

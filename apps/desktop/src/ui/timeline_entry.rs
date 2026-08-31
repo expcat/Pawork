@@ -152,7 +152,7 @@ fn split_message_blocks(text: &str) -> Vec<MessageBlock> {
     blocks
 }
 
-/// 标签行：角色（18px medium）+ 时间（17px tertiary，display_time 相对词）。
+/// 标签行：角色（18px medium）+ 时间（17px secondary，display_time 相对词）。
 fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div {
     div()
         .flex()
@@ -169,7 +169,7 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div 
         .child(
             div()
                 .text_size(font::BODY_SM)
-                .text_color(dark().text.tertiary)
+                .text_color(dark().text.secondary)
                 .truncate()
                 .child(time.to_string()),
         )
@@ -332,9 +332,8 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
     let word_color = match row.status {
         ToolRowStatus::Succeeded => dark().text.emphasis,
         ToolRowStatus::Failed | ToolRowStatus::Cancelled => dark().semantic.danger_text,
-        ToolRowStatus::Running | ToolRowStatus::Pending | ToolRowStatus::Other => {
-            dark().text.tertiary
-        }
+        ToolRowStatus::Running | ToolRowStatus::Pending => dark().text.secondary,
+        ToolRowStatus::Other => dark().text.tertiary,
     };
     let word = div()
         .text_size(font::BODY_SM)
@@ -397,7 +396,7 @@ fn tool_row_element(row: &ToolRowView) -> gpui::Div {
                 .min_w_0()
                 .truncate()
                 .text_size(font::BODY_SM)
-                .text_color(dark().text.tertiary)
+                .text_color(dark().text.secondary)
                 .child(detail.to_string()),
         );
     }
@@ -627,7 +626,7 @@ impl AppView {
             .child(button)
     }
 
-    /// F-08 Timeline 页脚：终态词（左）+ 终态时间（右），17px tertiary。
+    /// F-08 Timeline 页脚：终态词（左）+ 终态时间（右），17px secondary。
     /// 无终态时长字段，不画 “· 2m 14s”（量图耗时属演示数据）。
     pub(super) fn run_footer_element(&self, label: &str, time: &str) -> gpui::Div {
         div()
@@ -639,12 +638,12 @@ impl AppView {
             .child(
                 Label::new(label.to_string())
                     .size(font::BODY_SM)
-                    .color(dark().text.tertiary),
+                    .color(dark().text.secondary),
             )
             .child(
                 Label::new(time.to_string())
                     .size(font::BODY_SM)
-                    .color(dark().text.tertiary),
+                    .color(dark().text.secondary),
             )
     }
 

@@ -1,6 +1,6 @@
 # Pawork Spec 文档集
 
-> 基线日期：2026-08-25。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **21 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
+> 基线日期：2026-08-31。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **21 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
 
 ## 1. 文档范围
 
@@ -50,7 +50,7 @@
 
 [flows.md](flows.md)：Agent loop、GUI 连接、事件持久化与重放、凭证与脱敏四条跨包链路的速览与红线；进单包前的全局定位用。
 
-不在本目录重复维护：布局与依赖边（[architecture.md](../architecture.md)）、逐符号 API（源码/rustdoc/golden）、任务状态（[ROADMAP](../../ROADMAP.md) 与 [plan/](../../plan/)）、视觉 token 明细（[GUI 视觉基准](../../design/README.md)）。
+不在本目录重复维护：布局与依赖边（[architecture.md](../architecture.md)）、逐符号 API（源码/rustdoc/golden）、任务状态（[ROADMAP](../../ROADMAP.md)）、视觉 token 明细（[GUI 视觉基准](../../design/README.md)）。
 
 ## 2. 事实源优先级
 
@@ -58,7 +58,7 @@
 
 1. 当前分支源码、检入 schema/golden、工作区差异、实际运行日志与真实远程状态；
 2. 已 Accepted 的 ADR 与 [docs/architecture.md](../architecture.md) 中的布局/冻结契约；
-3. [ROADMAP.md](../../ROADMAP.md) 与对应 [plan/](../../plan/) 任务书中的活动状态；
+3. [ROADMAP.md](../../ROADMAP.md) 中的活动状态；
 4. 本 Spec 文档集（产品篇与包级 Spec）。
 
 Spec 中的能力状态不替代验证结论。某项“已实现”只说明生产路径存在；是否完成当前阶段复验、真实环境验收或发布门禁，必须再看 [verification.md](verification.md)。
@@ -86,7 +86,7 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 | V1 | P0–P19 | 历史任务书到 **P19**；共 224 个编号任务。P19-1～P19-16 为 Designed/未开始。2026-08-17 随 V1 归档。 |
 | V2 | S0–S13 | 已于 2026-08-18 收官；交付摘要见 [history.md](../history.md)。 |
 | V3 结构线 | R0–R9 | 已归档；旧编号和过程只在 [history](../history.md) / git 历史中检索。 |
-| UI 优化线 | R1–R11 | 当前活动线：R1–R7 已完成；R8 为 UI 终局比对与优化文档（只改文档），R9 修复比对发现的问题，R10 为测试（全功能验收 + 关键回归），R11 收尾；发布准备在 ROADMAP §5 候选，须另行授权。状态以 [ROADMAP](../../ROADMAP.md) 为准。 |
+| 真实 Desktop 线 | E0–E2 / P1–P5 | E0–E2 真实核心路径已验证；当前从 P1 项目与会话生命周期继续，完成状态与后续优先级只看 [ROADMAP](../../ROADMAP.md)。 |
 
 因此不会创建 P20 作为当前阶段。本目录使用领域化 Spec 名称；下一产品线的版本名和阶段编号只在用户选择真实产品目标并立项后确定。
 
@@ -97,5 +97,5 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 - Desktop 流程或可访问性变化：以 [gui-design.md](../gui-design.md) 和 [design/README.md](../../design/README.md) 为视觉/交互事实源，同批更新 `desktop.md`。
 - **包级 Spec**：写入集改了模块树、对外 API、`pawork-*` 依赖边、feature 门、红线相关行为或测试资产时，同批更新该包 `crates/<pkg>.md`；冲突以源码为准并回写。固定八节结构：职责与边界 · 模块树 · 对外 API 面 · 关键行为与语义 · 依赖与 feature · 红线与不变量 · 测试与 golden 资产 · 相关文档。
 - 验证只记录实际执行的命令与证据；缺凭证、缺平台或未签字必须如实标为 pending/fail-closed。
-- 小功能直接在任务书中写完整需求；只有跨任务共享且信息量足够时才从 [feature-template.md](feature-template.md) 建独立 Feature Spec。
+- 小功能直接在 ROADMAP 当前切片写清需求；只有跨任务共享且信息量足够时才从 [feature-template.md](feature-template.md) 建独立 Feature Spec。
 - 发布、License、安装器、三平台与供应链门禁未经用户明确授权，不得从候选改写成已交付。

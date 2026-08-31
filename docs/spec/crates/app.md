@@ -80,13 +80,13 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 
 ### 3.1 装配与生命周期
 
-- `AppLoadOptions { workspace_root, provider, model, auth_backend }`；`AppLoadOptions::from_cli(provider, model)` 是 CLI 覆盖入口。`auth_backend` 缺省为 `FileBackend`（auth 文件），测试可注入 `MemoryBackend`。
+- `AppLoadOptions { workspace_root, provider, model, data_dir, approval_mode, trust_workspaces, approval_host, auth_backend, instance }`；`AppLoadOptions::from_cli(provider, model)` 是 CLI 覆盖入口。`trust_workspaces: Option<bool>` 只供可信宿主显式覆盖本进程，`None` 沿用已解析全局配置；不写回配置。`auth_backend` 缺省为 `FileBackend`（auth 文件），测试可注入 `MemoryBackend`。
 - `AppCore::load(options) -> Result<AppCore, AppError>`：发现配置（Builtin → Global → Workspace → CLI 覆盖）→ 装配默认 provider（缺凭证即 `AppError::Auth` 失败）→ 打开 `session.db`、checkpoint/artifact/protected 存储与控制面。
 - `AppCore::load_for_catalog(options)`：同路径但缺凭证**不失败**，退回 `CatalogOnlyProvider`——目录、凭证、导入等命令可用；chat 在请求时报 `ProviderErrorKind::Authentication`（fail-closed，错误文案引导 `pawork auth set-key/login <id>`）。`provider_pending() -> bool` 暴露该状态。
 - `load_from` / `from_resolved` / `from_config`：跳过发现、注入已解析配置的低层装配入口（cli 测试与特殊装配路径用）。
 - `from_parts(provider, credential, model, provider_id, store)`：用注入件直接拼 Core，测试与 smoke 专用；测试内部另有 `from_parts_with_protocol` 可再注入 `AdapterProtocol` 与 `ModelRegistry`。
 - 装配后增量开口（`&mut self`）：
-  - `attach_workspace(root)`：注册 workspace 并重建内建工具注册表；
+  - `attach_workspace(root)`：以目录 basename 作为可见名称，通过 `WorkspaceService` 注册并保存 canonical roots，再重建内建工具注册表；当前仍使用单一 `ws-default` 作为进程内当前 workspace；
   - `open_store(path)` / `open_checkpoints(root)` / `open_control_plane(dir)`：分别打开会话库、检查点服务、usage/quota/audit 运行时；
   - `configure_approval(mode, trusted)`：设置审批模式与 workspace 信任并重建 `ToolScheduler` 配置；
   - `prime_extensions()`：file-index 扫描（失败仅 warn）+ MCP auto-start（失败不拖垮装配）。
@@ -231,6 +231,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 - **不按 Provider 名称走特例**（红线）：协议选择只读 `extra.provider_protocols` 配置与样例默认表（`protocol.rs` 是配置数据），未知值 fail-closed。
 - **`@` 展开 fail-closed**：无 `@` 零行为变化；展开失败整个 run_start 失败且不留 ActiveGuiRun；附件正文独立 ContentPart，不拼进 user text，单文件上限 64 KiB。
 - **MCP 信任边界**：untrusted workspace 拒绝 stdio auto-start/test；stdio 走沙箱 + env 卫生；MCP secret 独立文件（不复用 Provider auth 后端）。
+- **Workspace 信任覆盖**：`AppLoadOptions::trust_workspaces` 只能由可信启动宿主显式提供，优先于全局配置且只存活于当前进程；workspace 内容不能通过自身配置提升信任，Secret/Policy/路径红线不因该覆盖取消。
 - **instance 名白名单**：`[A-Za-z0-9._-]` 且禁 `..`，拒绝路径逃逸。
 - **compat import 防 TOCTOU**：apply 前对预览时快照的源文件做字节 + mtime 指纹复核，源已变化则 `sources_unchanged = false` 不落盘。
 - **tasks 快照原子写**：`tasks.json` 先写 `.json.tmp` 再 rename；persist 失败发 degrade 事件，不静默吞错。
@@ -300,7 +301,7 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
 - **protected 无本包 feature gate**：任务惯称"feature protected"指 storage 侧 feature，由本包 Cargo.toml 常开；`ProtectedBlobStore` 用 instance 级 `BlobScope`（`instance-reasoning`），是已接受偏差（非按 session 隔离）。
 - **`orchestration_host` 是 S11 demo**：固定样例 provider/model id 与固定 session id，仅供 `pawork` demo 命令演示 spawn/cancel-tree/budget-gate，不是通用多 Agent API。
 - **`AdapterProtocol::Responses`** 是 OAuth 通道装配用标记，不可经 `extra.provider_protocols` 配置（解析表只认 chat_completions/messages，未知值报错）。
-- **terminal 审批粒度**：`terminal_create` 在 AskUser 模式 fail-closed 落 Deny（命令级交互审批待 wire ADR，见 R7 ADR-041 D2）；会话内容不逐条审批。
+- **terminal 审批粒度**：`terminal_create` 在 AskUser 模式 fail-closed 落 Deny（命令级交互审批待 wire ADR，见 ADR-041 D2）；`AskForDangerous` 对默认 shell 返回 constrained allow，NeverAsk/ReadOnly 依 D2 拒绝；会话内容不逐条审批。
 - **tracing interest 缓存投毒**：与无 subscriber 测试共享 callsite 的断言测试会间歇丢事件（tracing-core 0.1.36 `Interest::never()` 缓存）；`RecordingCapture::install` 以双注册 Dispatch 治愈并钉住，窗口结束调 `dismiss()`。
 - **testsupport 环境写**：`set_env`/`remove_env` 直接写进程环境（unsafe），相关测试串行意识自负。
 - **gui_server 集成测试依赖 dev-features**：需要 pawork-transport 的 `local` + `memory`；生产依赖不开这两个 feature。本包仅声明默认关闭的 `ui-fixture` feature，用于 opt-in 编译 devfixture / example / 对应集成测试；providers / storage 的 features 仍由本包 Cargo.toml 固定开启。

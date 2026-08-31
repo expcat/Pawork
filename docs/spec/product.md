@@ -104,9 +104,9 @@ flowchart LR
 - 不提供已交付的远程 GUI、Web UI、Cloud 执行、组织 SSO、第一方 IDE 扩展或对外账户池网关。
 - `NativeRestricted` 不是对抗性隔离；Sandbox 不应被表述为能抵御主动读取全部本机数据的恶意进程。
 - Desktop Changes 不执行 stage/unstage/hunk；`@` 有 host 展开但无候选浮层；Resources 无“已加载规则”分区。
-- 新 R1–R10 UI 视觉/交互验收与终局回归/真实冒烟、OAuth 自然临期 refresh 尚未完成。
+- Desktop 真实核心路径已完成本机验收；完整视觉/Accessibility、跨平台、Provider 矩阵与 OAuth 自然临期 refresh 尚未完成。
 - License、安装器、自更新、发布/回滚 runbook、全量门禁与三平台发布矩阵未获授权，不属于当前交付。
 
 ## 7. 产品完成口径
 
-当前产品 Spec 认为“范围完整”是：需求、状态、限制、契约和证据入口均已记录。它不把产品或发布状态改成完成。Desktop 完成必须满足 [R10 退出标准](../../plan/R9-R11-post-ui-closeout.md#r10-退出标准)（UI 全功能验收与关键回归）；[R8](../../plan/R7-R8-ui-quality-gates.md#r8-退出标准) 输出 UI 优化文档，R9 完成修复，[R11](../../plan/R9-R11-post-ui-closeout.md#r11-退出标准) 完成一致性与代码债务收尾。发布仍需用户另行授权，不占用 R8–R11。
+当前产品 Spec 认为“范围完整”是：需求、状态、限制、契约和证据入口均已记录。它不把产品或发布状态改成完成。Desktop 后续完成口径以 [ROADMAP P1–P5](../../ROADMAP.md#4-后续计划) 为准；发布仍需用户另行授权。

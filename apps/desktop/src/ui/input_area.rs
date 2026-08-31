@@ -24,6 +24,7 @@ impl AppView {
         let model_menu_open = matches!(self.open_menu, Some(MenuKind::Model)) && can_switch_model;
         let composer_hint = self.composer_placeholder_hint();
         let context_meter = self.projection.context_meter_label();
+        let context_available = context_meter != "Context · unavailable";
         self.sync_composer_placeholder(composer_hint.clone(), cx);
 
         let model_tooltip = if can_switch_model {
@@ -143,6 +144,7 @@ impl AppView {
             .max_h(px(metrics::COMPOSER_PANEL_MAX_HEIGHT))
             .border_t_1()
             .border_color(dark().border.subtle)
+            .bg(dark().bg.panel)
             .child(
                 div()
                     .flex()
@@ -193,7 +195,11 @@ impl AppView {
                     .child(
                         Label::new(context_meter)
                             .size(font::XS)
-                            .color(dark().text.secondary),
+                            .color(if context_available {
+                                dark().text.secondary
+                            } else {
+                                dark().text.tertiary
+                            }),
                     )
                     .when_some(self.status_hint.as_ref(), |footer, hint| {
                         footer.child(
@@ -374,7 +380,7 @@ impl AppView {
             },
         ));
         if choices.is_empty() {
-            return panel.child(
+            panel = panel.child(
                 div()
                     .px_2()
                     .py_1()
@@ -384,6 +390,7 @@ impl AppView {
             );
         }
         let highlight = self.menu_highlight_effective(0);
+        let add_project_ix = choices.len();
         for (ix, (id, name)) in choices.into_iter().enumerate() {
             let pick = id.clone();
             panel = panel.child(
@@ -395,6 +402,14 @@ impl AppView {
                     })),
             );
         }
+        panel = panel.child(
+            MenuRow::new("workspace-confirm-add-project")
+                .label("Add project…")
+                .highlighted(add_project_ix == highlight)
+                .on_click(cx.listener(|view, _event, window, cx| {
+                    view.on_open_project(window, cx);
+                })),
+        );
         panel
     }
 

@@ -317,7 +317,8 @@ fn golden_sandbox_timeline_detail_branches() {
 }
 
 /// golden：sandbox_fallback_label 三分支——JSON message 提取、空串默认串、
-/// 纯文本直传；非 sandbox.fallback 的 Diagnostic 不进时间线。
+/// 纯文本直传；非 sandbox.fallback 的 Diagnostic 在 live / history 两臂均不
+/// 进时间线，不能在重放后变成 Error。
 #[test]
 fn golden_sandbox_fallback_diagnostic_label_branches() {
     let mut projection = TimelineProjection::default();
@@ -346,4 +347,35 @@ fn golden_sandbox_fallback_diagnostic_label_branches() {
             "plain notice",
         ]
     );
+
+    let mut history = TimelineProjection::default();
+    history.apply_item(&TimelineItem {
+        sequence: 1,
+        event_id: "history-fallback".into(),
+        kind: pawork_protocol::TimelineItemKind::Diagnostic,
+        run_id: Some("run-golden".into()),
+        text: None,
+        tool_name: None,
+        status: None,
+        detail: Some(
+            "sandbox.fallback: {\"message\":\"沙箱回退：history\"}".into(),
+        ),
+        timestamp: "3001".into(),
+    });
+    history.apply_item(&TimelineItem {
+        sequence: 2,
+        event_id: "history-info".into(),
+        kind: pawork_protocol::TimelineItemKind::Diagnostic,
+        run_id: Some("run-golden".into()),
+        text: None,
+        tool_name: None,
+        status: None,
+        detail: Some("resources.injected: {\"layers\":[]}".into()),
+        timestamp: "3002".into(),
+    });
+    assert_eq!(history.entries.len(), 1);
+    assert!(matches!(
+        &history.entries[0].kind,
+        TimelineEntryKind::RunState(text) if text == "沙箱回退：history"
+    ));
 }

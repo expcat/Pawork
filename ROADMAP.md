@@ -1,231 +1,113 @@
 # Pawork 路线图
 
-> 本文档是 Pawork 的**任务事实源**：只保留当前指针、未完成阶段、开放任务、候选池与任务约定。已完成阶段、旧编号和实现过程不在本文重复，统一从 [docs/history.md](docs/history.md) 检索。
->
-> 文档导航见 [README.md](README.md)；架构红线与冻结契约见 [docs/architecture.md](docs/architecture.md)；Desktop 视觉差异与 99% 门禁见 [docs/UI_Review.md](docs/UI_Review.md)；视觉事实源见 [design/README.md](design/README.md) 与 [docs/gui-design.md](docs/gui-design.md)。
-
----
+> 本文是当前任务与后续工作的唯一计划事实源，只保留未完成工作、验收标准和开放决策。已完成阶段与旧编号统一查阅 [docs/history.md](docs/history.md)；架构红线与冻结契约见 [docs/architecture.md](docs/architecture.md)。
 
 ## 1. 当前指针
 
-| 字段 | 值 |
+| 字段 | 当前事实 |
 | --- | --- |
-| 活动线 | **Desktop UI 比对、修复与 99%/全功能验证（R1–R10），R11 收尾** |
-| 当前阶段 | **R8 — UI 终局比对与优化文档（⚪ 待开启）** |
-| 下一任务 | 按 §7.1 开启 R8：Wave A 逐区对照三张 v3 定稿图与 R1–R7 已归档 current/diff 证据，Wave B 真实美观度与主流样式对照，Wave C 输出 `docs/ui-optimization.md`；只改文档，不查询/不修改代码、不重拍 current（任务书 [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--ui-终局比对与优化文档)；R7 收口证据 [r7-wave-c](docs/ui-review/r7-wave-c/notes.md)） |
-| 总目标 | 三张 v3 定稿图的结构与状态 100% 对齐；主区域分区相似度 `≥0.99`；所有可见组件具备真实交互、键盘/AX 语义与模拟操作测试 |
-| 阻塞 | R8 比对本身无代码阻塞，输入为 R1–R7 已归档证据。fixture 演示数据重塑、State C reference 底色归一拍板与 R2–R6 移交的分区 SSIM `≥0.99` 终局判定均移至 R10；R7 主动系统偏好 U3 已按用户指令跳过且不记为通过；VoiceOver 仍未执行，屏幕朗读措辞 / 顺序归 R10 系统级口径。 |
+| 活动线 | **P1 项目与会话生命周期** |
+| 状态 | 🟢 E0–E2 已验证；P1 待启动 |
+| 本轮结果 | 正式 Host/Desktop 已在无 fixture / seed / mock 数据的环境中完成构建启动、添加真实项目、真实对话写文件、Git Changes 与 Terminal 主路径。 |
+| 下一动作 | 让 Session→Workspace 归属跨 Host 重启持久化，并用同一真实项目复验重开 Task、Changes 与 Terminal 上下文。 |
+| 本轮完成条件 | 构建/启动、项目、对话/文件、Git Changes、Terminal 五项有真实窗口与外部事实双证据；恢复边界被如实记录并进入 P1；定向门禁和相关 Spec 同步。**已满足。** |
+| 当前阻塞 | 无。完整终端 stop/close 与 live exit/failure 需要 wire/ADR 演进，不在 P1 内以 UI 本地实现绕过。 |
 
-状态符号：⚪未开始 · 🔵进行中 · 🟢已完成 · ⚠️阻塞 · ⏭️用户跳过（未完成）。一次只推进一个阶段；事实冲突时**工作区实态 > 本表 > 任务书**，先同步文档再继续。
+状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。任何“已实现”“自动检查通过”“真窗口通过”“等待人工确认”必须分开记录。
 
----
+## 2. 当前执行顺序
 
-## 2. 顺序排期
+### E0 — 构建与启动入口 ✅
 
-UI 是当前唯一主线。R8–R10（比对/修复/测试）未完成前，不插入非安全紧急的代码债务或产品扩张；R11 为收尾。
+- 在 `scripts/` 提供一个最小脚本，支持构建和启动两个入口。
+- `build` 只构建正式 `pawork` 与 `pawork-desktop` 二进制；不编译或运行 fixture、probe、测试 target。
+- `start` 默认先构建，再启动正式 `pawork gui serve` 与 Desktop；Host 已运行时复用，不启动第二个实例。
+- Desktop 退出时只关闭由本脚本启动的 Host；日志写入忽略目录，不把 token、凭证或运行数据写入仓库。
+- README 给出用户可直接复制的命令和运行前提。
 
-| 阶段 | 目标 | 关键交付 | 任务书 | 状态 |
-| --- | --- | --- | --- | --- |
-| R1 | 视觉合同与测试基座 | 1440×1024 三状态、量图表、真实 fixture、组件/状态清单、UI driver 方案、reference/current/diff 基线 | [R1 存档](docs/history.md#r1--视觉合同固定-fixture-与-ui-测试基座2026-08-2527) | 🟢 |
-| R2 | Window shell 与全局视觉系统 | 深色沉浸式 titlebar、三栏几何、字体/图标/间距/surface、StatusBar、窗口级响应式基线 | [R2 存档](docs/history.md#r2--window-shell-与全局视觉系统2026-08-27) | 🟢 |
-| R3 | TaskRail 与任务导航 | Timeline/Projects、scope、project/task、连接、新建、账户区、选择/恢复/滚动与键盘导航 | [R3 存档](docs/history.md#r3--taskrail-与任务导航2026-08-2728) | 🟢 |
-| R4 | Workspace、Timeline 与 Agent 状态 | Header、消息、tool activity、审批、错误/取消、完成摘要、流式与长会话 | [R4–R6](plan/R4-R6-ui-workflows.md#r4--workspacetimeline-与-agent-状态) | 🟢 |
-| R5 | Composer 与运行控制 | 多行/IME/粘贴、模型/reasoning、workspace、Context、发送/取消、引用与所有输入状态 | [R5 存档](docs/history.md#r5--composer-与运行控制2026-08-2829) | 🟢 |
-| R6 | Inspector、Changes、Terminal 与 Activity | Files/Summary/DiffView、Terminal、Resources/Add tool、Inspector 折叠与右上 ActivityPopover | [R4–R6](plan/R4-R6-ui-workflows.md#r6--inspectorchangesterminal-与-activity) | 🟢 |
-| R7 | 全局交互、Accessibility 与响应式 | hover/active/focus、菜单/Popover、纯键盘、VoiceOver/AX、1080×720、长列表与边界状态 | [R7–R8](plan/R7-R8-ui-quality-gates.md#r7--全局交互accessibility-与响应式) | 🟢（主动系统偏好 U3 ⏭️；VoiceOver 未执行） |
-| R8 | UI 终局比对与优化文档 | 对照 v3 定稿图与 R1–R7 已归档 UI 证据，比对结构/组件样式/真实美观度并参考主流产品与设计体系样式，输出 UI 优化文档（只改文档） | [R7–R8](plan/R7-R8-ui-quality-gates.md#r8--ui-终局比对与优化文档) | ⚪ |
-| R9 | 修复 R8 发现的 UI 问题 | 按 UI 优化文档逐缺口族修复：结构对齐、组件样式、美观度；每 Wave 定向测试与受影响区域复验 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r9--修复-r8-发现的-ui-问题) | ⚪ |
-| R10 | 测试 | fixture 重塑与三状态重采集、全组件模拟操作 suite、分区 SSIM ≥0.99 与用户签字；三类关键回归、K-01、四通道/三客户端、OAuth refresh 与平台探针 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r10--测试) | ⚪ |
-| R11 | 收尾 | 文档/Spec/断言一致、usage 幂等、依赖与注释漂移、路径内核、测试箱整理；不含发布与新增门禁 | [R9–R11](plan/R9-R11-post-ui-closeout.md#r11--收尾) | ⚪ |
+### E1 — 真实核心路径 ✅
 
-阶段默认严格串行：`R1 → R2 → … → R11`。2026-08-29 用户先授权 R6→R7 的单次跳过，后又明确恢复 R6 Wave B；Wave B 实现、定向门禁与审查后最终二进制 U2 于 2026-08-30 收口，同日用户确认将 R6 State A/B Inspector/Activity 分区 SSIM `≥0.99` 移交 R8，R6 正式退出。R7 Wave A 的自动门禁与九图人工 overlay 已于 2026-08-30 通过；用户批准本波以原生 AX tree/action + 纯键盘 + U2 替代 VoiceOver，故 VoiceOver 仍记为未执行且不宣称屏幕朗读措辞 / 顺序通过。R7 Wave B 同日以 144/144 Desktop 测试、Python 17/17 + 22/22、两套主真窗口 U2 及一套 3 相位审查边角 U2 收口。Wave C 又完成 1080×720、长内容、1024 行、resize/reconnect 与应用内 100%/125%/150% 字号缩放；150% 最小窗最终以 320px rail 和受影响区域 U2 复验收口。Increase Contrast 生产路径及自动刷新已落地并由代码级定向测试覆盖，当前 UI 无动画故 Reduce Motion 无需渲染分支；按用户最终指令，任何需修改系统设置的主动 U3 均跳过且设置已恢复，不宣称真系统态通过。R7 至此退出。2026-08-31 用户重排 R8–R11：原 R11 比对前提到 R8，先与设计稿对比；R9 修复 R8 发现的问题；R10 测试（合并原 R8 全功能验收与原 R10 关键回归/真实环境验证，承接全部「移交 R8」条款）；R11 收尾（原 R9 一致性与代码债务，不涉及发布与新增门禁测试）。R8 是文档任务：不查询、不修改代码。发布准备保持在 §5 候选。
+严格使用正式 Host、真实数据库与真实 UI，不调用 `ui-fixture`、seed、probe 或测试 profile：
 
----
+1. 启动空态并确认 Host 显示 Connected。
+2. 从 UI 添加一个真实本地项目；项目必须由用户选择或输入的真实目录进入 Host，不能靠预置 workspace 冒充。
+3. 在该项目中新建对话并发送消息。
+4. 要求 Agent 在项目内创建一个文本文件，内容同时包含 `Hello world` 与执行时的本地日期时间标记。
+5. 在 Changes 中确认文件名、状态与 diff 内容正确，且与命令行 `git status` / `git diff` 的真实结果一致。
+6. 在 Terminal 中启动会话、执行只读命令、看到输出并验证输入/输出/resize 的基本生命周期；重连恢复单列为诚实性边界。
 
-## 3. UI 主线硬约束
+### E2 — 修复与复验 ✅
 
-### 3.1 事实源优先级
+- 每个失败先记录可观察现象和最短复现，再读源码定位根因。
+- 只修 E0/E1 主路径必需内容；不新增包、不演进 wire、不引入生产依赖，除非已证明现有契约无法承载且用户批准 ADR。
+- 有现有定向测试能证明回归时复用；只有行为改动且现有测试无法捕获时，最多补一条主路径和一条关键失败路径。
+- 修复后从失败步骤复跑，最后再完整走一遍 E1，避免用局部绿灯代替用户路径。
 
-1. 架构红线、协议契约、真实 capability 与数据真实性；
-2. [docs/gui-design.md](docs/gui-design.md) 的信息架构和交互规则；
-3. [design/README.md](design/README.md) 三张 v3 定稿图的视觉细节；
-4. [docs/UI_Review.md](docs/UI_Review.md) 的差异、容差、fixture 和验收合同；
-5. [Agent UI 参照调研](plan/UI-reference-research.md) 的交互经验。
+## 3. 本轮验收矩阵
 
-Codex 与其他 Agent 产品只提供**操作方式和状态反馈的参照**，不替代 Pawork design。发生冲突时保留 Pawork 的三栏视觉、协议边界和安全语义，不复制竞品品牌、文案或未接入能力。
-
-### 3.2 所有 UI 阶段共同完成条件
-
-- 设计稿可见的区域、组件、顺序和状态 100% 对齐；只允许 [UI Review §0.1](docs/UI_Review.md#01-99-一致性的硬定义) 规定的细微几何误差。
-- 每个可见控件必须有真实能力或诚实的 hidden/disabled/unavailable 状态；禁止假 quota、假 diff、假 Agent、假按钮和无效点击面。
-- 所有按钮、列表行、tabs、菜单、Popover、输入、滚动区和状态变化必须覆盖 mouse、keyboard、focus、AX name/role/value 与错误恢复。
-- 同一 State 的 reference/current/overlay/diff/mask/checklist 必须成套保存；不能只看全屏 SSIM，也不能用空白区域稀释差异。
-- 生产 UI 不写死 fixture 文案。测试数据必须经 Host、协议与实际 projection 进入 Desktop。
-- 每个阶段先补可观察回归，再改视觉/交互；R10 只汇总和补跨阶段缺口，不替代前置测试。
-
-### 3.3 模拟操作测试架构
-
-UI 自动化分四层，细节见 [R7–R8 任务书](plan/R7-R8-ui-quality-gates.md)：
-
-| 层 | 目的 | 最低证据 |
+| 能力 | 通过条件 | 证据 |
 | --- | --- | --- |
-| U0 状态/投影 | 固定 Session、Run、tool、approval、diff、terminal、disconnect 等输入 | deterministic fixture + projection 断言 |
-| U1 组件/窗口内 | 验证 GPUI 组件渲染状态、动作分发、焦点和布局不变量 | 组件场景测试 + 结构快照/几何断言 |
-| U2 真进程/真协议 | 隔离 `PAWORK_DATA_DIR` 启动 Host + Desktop，模拟点击、键入、快捷键、滚轮、resize 与重连 | driver action trace + screenshot + Host/event log |
-| U3 视觉/系统 | 1440 三状态、1080 响应式、AX/VoiceOver、IME 与性能 | R1 只验证证据管线和失败样本；R10 产出 reference/current/diff、AX tree、性能记录与用户签字 |
+| 构建/启动 | 脚本可从仓库根构建两个正式二进制并打开真窗口；重复启动不产生双 Host。 | ✅ `./scripts/pawork-desktop.sh build/start`；独立 `desktop` 实例；Connected 真窗口 |
+| 项目 | UI 可将一个真实目录注册为 workspace/project，并显示可辨识项目名。 | ✅ `Add project…` 选择仓库根；Host `workspace_add`；Scope 显示 `Pawork` |
+| 对话与文件 | 消息实际发送；Agent 完成文件写入；磁盘文件含 `Hello world` 与本轮日期时间。 | ✅ 真实 Provider Run + 显式写入审批；两行标记文件实测生成（一次性产物，已随清理移除） |
+| Git Changes | UI 文件状态、diff 与仓库命令行事实一致；空态/非 Git 目录诚实显示。 | ✅ UI `untracked · +2 / −0`；`git status --short` 与定向 diff 一致 |
+| Terminal | UI 可创建 Terminal、执行只读命令并显示真实 stdout；错误与断线不伪装成功。 | ✅ 真实 PTY 执行 `pwd` 与 `terminal-ok`；可见文本/AX 不再暴露 ANSI/VT 控制串 |
+| 恢复与诚实性 | 重新打开任务或重连后，项目、对话、Changes 与 Terminal 的可恢复部分符合现有协议；不可恢复能力明确说明。 | ⚠️ Workspace 与 Changes 可恢复；Session→Workspace 归属仍为进程内状态，列入 P1 |
 
-R10 的“全功能”含义是：所有组件清单中的可达状态都有脚本、断言和失败证据；不是只跑一条 happy path，也不是完全依赖人工点验。
+真窗口证据只用于本轮报告，不重新堆入 `docs/ui-review/`。长期视觉基准只保留 [design/README.md](design/README.md) 所列三张初始设计图。
 
-### 3.4 阶段门禁
+## 4. 后续计划
 
-```mermaid
-flowchart LR
-    A["R1 冻结视觉与测试基座"] --> B["R2-R3 壳层与导航"]
-    B --> C["R4-R6 核心 Agent 工作流"]
-    C --> D["R7 交互 / AX / 响应式"]
-    D --> E["R8 设计稿比对与优化文档"]
-    E --> F["R9 修复比对发现的问题"]
-    F --> G["R10 全组件测试与视觉终局"]
-    G -->|"任一组件或 State 未通过"| F
-    G -->|"全部通过"| H["R11 收尾"]
-```
+E0–E2 已完成。后续按以下顺序推进；每项在开启前再拆成数小时内可验收的小任务，不预建兼容层或第二套实现。
 
----
+| 优先级 | 主题 | 进入条件 | 退出条件 |
+| --- | --- | --- | --- |
+| P1 | 项目与会话生命周期 | 本轮主路径明确项目新增、选择、持久化的真实缺口 | 添加/切换/重开项目与新建/续聊会话均可通过正式 UI 完成 |
+| P2 | Agent 主路径可靠性 | P1 可稳定复现真实 Run | 发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环 |
+| P3 | Changes / Terminal / Resources 完整性 | P2 产出真实工具与文件事件 | 三面板只展示 Host 权威数据，关键动作与错误恢复完整 |
+| P4 | Accessibility 与跨平台 | macOS 核心路径稳定 | 键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据 |
+| P5 | 发布准备 | P1–P4 完成且用户授权发布任务 | License、供应链、安装/升级/回滚和三平台发布门禁另立任务并通过 |
 
-## 4. R8–R11 阶段任务
+## 5. 开放边界
 
-### 4.1 R8：UI 终局比对与优化文档
+- 凭证只从 Pawork 正式 auth store 或显式环境 fallback 读取，不进入脚本、截图、日志、数据库事件或提交文件。
+- 文件与命令操作继续受 Workspace、Policy、Sandbox 与审批约束；检查脚本只对该次 Host 进程显式启用 workspace trust 与 `ask-for-dangerous`，不修改持久配置，写文件仍经显式审批，危险命令仍受闸。
+- Desktop 仍是独立 GPUI 进程，只经 GUI Connection Protocol 访问 Core；不直连 Provider、Git、数据库或 PTY。
+- 若“添加项目”在现有 Desktop 不可达，优先复用冻结的 `workspace_add` 命令；任何需要新增 wire 的方案先停在 ADR 决策。
+- Terminal 现有协议没有通用 Stop/Close 与 live exit 事件时，UI 必须诚实表达，不用写入 `exit` 冒充正式能力。
+- 发布、提交、推送、生产部署与真实账户变更不在本轮授权范围。
 
-R8 只做文档：对照 [design/](design/README.md) 三张 v3 定稿图与 R1–R7 各波已归档的 current / overlay / diff / checklist，从**结构、UI 组件样式、真实美观度**三个维度评估实际 UI 与设计效果的差距，并参考主流 Agent/开发者工具与设计体系的公开样式实践，输出一份 UI 优化文档（`docs/ui-optimization.md`），告诉后续 Agent 该优化哪些 UI、样式与风格。不打开、不查询、不修改任何代码；不重跑实现、不重拍 current、不改 design。
+## 6. 计划事实源
 
-- 比对维度：结构（分区/组件/顺序/状态对齐）、组件样式（色/字/间距/圆角/描边/图标/控件质感）、真实美观度（视觉层级、密度节奏、对比留白、细节打磨）。
-- 主流样式参考：以 [UI 参照调研](plan/UI-reference-research.md) 为底，对 Codex、Zed、Cursor、VS Code 等主流产品及主流设计体系/组件库做公开资料级样式扫描，只吸收样式与质感经验，不复制品牌、文案或未接入能力。
-- 输入为设计图、gui-design / UI Review 合同、R1–R7 各波已入库的截图与量图证据，以及公开产品/设计资料；容差内或前置波次已接受的项不重复立项；结构未对齐、仍刺眼或明显落后于主流实践的可见差异必须登记，并附证据路径。
-- 交付物是 UI 优化文档：分区差异清单 + 主流样式对照 + R9 修复任务草案（含证据链接、优先级与验收线索），并回写后续指针。本阶段不修 UI；优化文档本身不授权实现。
-- fixture 演示数据重塑、State C 底色归一拍板与 R2–R6 移交的分区 SSIM 判定不属于本阶段，统一在 R10 前置处理。
+- 当前不保留进行中阶段任务书；`plan/` 为空，后续确有需要时再按数小时可验收粒度新建。
+- 活动目标、顺序、状态与候选统一登记在本文；已完成过程只进入 [docs/history.md](docs/history.md)，不回填旧计划。
+- 事实优先级：当前工作区 / 真实运行状态 > 源码与冻结契约 > 本文 > 历史记录。
 
-### 4.2 R9：修复 R8 发现的 UI 问题
-
-- 唯一输入是 R8 产出的 UI 优化文档；未登记的缺口先回写文档再实施。
-- 结构对齐优先，其次组件样式，最后美观度打磨；每个缺口族一个 Wave，修复后复拍受影响区域并运行写入集定向测试与 U2/截图复验。
-- 涉及 design 基准变更须先取得用户批准；不扩张 wire/能力，不借机重构无关代码。
-
-### 4.3 R10：测试
-
-合并原 R8（模拟操作全功能验收）与原 R10（关键回归与真实环境验证）：
-
-- 前置：fixture 演示数据重塑、State C reference 底色归一的用户拍板、三状态 reference/current 重采集。
-- UI 全功能验收：全量场景矩阵（启动/连接、TaskRail、Composer、Timeline、Changes、Terminal、Resources、Inspector/Activity、浮层快捷键、响应式/AX、生命周期）、U0–U3 执行策略与失败证据包、三状态结构门禁 + 分区 SSIM `≥0.99` + 人工 overlay、用户视觉签字；承接 R2–R6 全部「移交」条款。
-- 关键回归与真实环境：K-01 config 三态闭环；安全红线、持久化与重放、协议与解析三类关键回归；四个低消耗 Provider 通道与 `gui serve` + Desktop、Zed ACP、headless json-stdio、doctor；ChatGPT/xAI OAuth 自然临期 refresh 与真实 Anthropic/GLM Anthropic、fork/compact、kill -9、ACP 交错等人工项；Seatbelt 真机探针、Windows SCM/Job 等缺平台项如实登记，不以 mock 代替。
-- 任一 UI 项未通过即退回 R9 修复，不降级放行。R10 不是发布级 Workspace Full Gate。
-
-### 4.4 R11：收尾
-
-一致性与代码债务收口（原 R9 内容），不涉及发布准备（§5 候选）与新增门禁测试：
-
-- 常设文档、包级 Spec、ADR、候选与断言按当前 21 包布局复核；旧 R/S 编号只留 history。
-- 修复 usage record id 多轮冲突；清理 policy/workflow/orchestration 死依赖与过期描述/注释。
-- 到期后移除 `StoredCredential` serde alias；合并 protocol 测试箱并评估 client dev-dep。
-- 统一 resources 的 `canonical_within` 到 policy 路径内核。
-- 修复 transport local_unix accept 跨 await 持锁导致的 listener close 死锁（R1 Wave B 在 fixture example 侧以 abort accept 任务规避；生产 `pawork gui serve` 靠 select! 丢弃 accept future 不受影响）。
-- 复查 Claude import 五项 P3、上游多版本、usage 哨兵、shell wrapper、probe flake 与 UI 主线未顺带关闭的低风险残项；需要扩大行为或 wire 时另立 ADR。
-- 扩展 `scripts/clean-stale-incremental.py` 覆盖 deps 面：2026-08-26 发现 `target/debug/deps` 积累约 77.5 万个 V1/R1 时代 `*.rcgu.o` 与死包产物，冷态 readdir 需数分钟、拖死 rustc 启动扫描；已一次性外科手术清理，脚本化防护待补。
-
----
-
-## 5. 开放决策与候选池
-
-以下不进入 R1–R11，除非成为 UI 还原或安全正确性的硬前置：
-
-- HunkStageService 与 stage/unstage/hunk wire：需 ADR 定义协议与审批语义。
-- **State C reference 底色归一（R10 重采集前置，设计基准变更）**：R3 拍板 c 已把 TaskRail 分区 SSIM ≥0.99 与 fixture 演示数据重塑移交 R10（可执行条款见 [R9–R11 任务书](plan/R9-R11-post-ui-closeout.md) R10 §1/§2.3）。State C 定稿图中位 RGB (0,9,17) 比冻结 token base `0x07121a` 更暗；是否在生成 reference 时按冻结 token 归一底色，须 R10 重采集前由用户批准，不得把当前漂移追认为新基准。
-- **R4 State A/B 分区 SSIM（R10 终局，2026-08-28 拍板 1）**：R4 以结构门禁与 U2 九场景退出；Header/Timeline 等区域 SSIM ≥0.99 同 R3 先例移交 R10。主因仍是 fixture 演示内容与设计稿形状差（重塑已在 R3 拍板 c 移交 R10），不得把当前记录值追认为通过。
-- **live wire 诚实缺口（开放）**：live `RunChanged` 不带失败原因、无用户消息 wire 事件；R4 以乐观回显 + 重放兜底覆盖且零 wire 变更。是否接受现状或立 ADR 演进 wire（含把用户消息持久化提前到 plan 闸门之前）待拍板。
-- **macOS 26 AX server 注册 flake（R7/R10 人工验收风险）**：无 bundle debug 二进制的外部 AX 树间歇性只返回递归 `AXApplication`（自进程诞生即存在、激活无效、进程级持久、按时段成簇）；R6 Wave A 已在 driver 层以 AXWindows 回退 + desktop-restart ≤3 兜底绕过（fail-closed）。**2026-08-29 A3/A4 结论**：bundled/签名形态正常时 raw 46 / bundled 63 Pawork identifiers 均可注册且无需 AXWindows 回退；当晚 20:23 起平台时段性递归劣化对两种形态均生效且 desktop-restart 不恢复，22:46 窗口恢复后 State A hover/active/focus 九图已补录。判定为平台时段问题而非 app 形态根治。2026-08-30 用户批准 R7 Wave A 以原生 AX tree/action + 纯键盘 + U2 替代 VoiceOver；后续 AX / R10 系统验收若再出现递归树仍须 fail-closed 留证，不以重启成功冒充通过。
-- 命令级交互审批：当前 terminal AskUser fail-closed；新增承载需 ADR。
-- **Terminal stop / exit 生命周期 wire（R6 收口后候选）**：冻结 GUI 协议当前只有 `terminal_create` / `terminal_write` / `terminal_resize` 与 `TerminalOutput`，无 stop/close 命令及 live exit/failure 事件；不得把写入 `exit` 或本地进程操作伪装为通用停止能力。R6 已在现有合同内完成 create/write/output/resize/snapshot reconnect 与失败诚实展示并退出；未来若要求专用 Stop 与 live 终态，须另立 ADR 演进 wire。
-- `@` file-index 候选查询与 Resources“已加载规则”Host 出口：只有在目标 UI 真实展示对应入口时，才作为 R5/R6 前置接入。
-- 多账户 factory、远程 GUI、teams/goal/automation/monitor、GUI git 高级面、WASM 插件/市场/Hooks/LSP、artifact 流式与 egress broker：保持候选，资产位置见 [docs/history.md](docs/history.md) 与 [docs/design.md](docs/design.md)。
-- Windows CI/Job、跨平台真窗口驱动：R10 完成 macOS 主门禁并对 Linux/Windows 分别登记平台证据；发布级三平台矩阵见下方发布准备候选。
-- 发布准备：License、crates.io 占名、供应链、安装/升级/回滚、三平台与发布级全量门禁。需用户明确授权后另立阶段，不占用 R8–R11。
-
----
-
-## 6. 风险与缓解
-
-| 风险 | 缓解 |
-| --- | --- |
-| 用当前实现反改 design 以制造通过 | design 变更必须单独请求用户批准；UI 任务只能修实现 |
-| 全屏相似度被空白区域抬高 | 主区域独立比较 + 结构一票否决 + overlay 人工复核 |
-| fixture 侵入生产或伪造能力 | 测试专用种子，经真实 Host/协议/projection；生产组件无演示分支 |
-| UI driver 脆弱、只靠坐标 | 稳定 AX identifier/role + 语义定位；坐标只用于视觉几何验证 |
-| UI 优化破坏 Run/协议/安全 | Desktop 仍只经 GUI Connection Protocol；涉及 wire/审批先过 ADR 与关键回归 |
-| 只测 happy path | 每个组件矩阵同时列 idle/running/completed/failed/disabled/disconnected/overflow |
-| macOS 通过却跨平台退化 | R10 明确 macOS 主门禁，并对 Linux/Windows 编译、服务与窗口环境分别登记 |
-
----
-
-## 7. 任务约定（开启 / 进行 / 收尾）
+## 7. 执行与收尾纪律
 
 ### 7.1 任务开启
 
-波次任务从 §1 当前阶段对应的 `plan/*.md` 开启；一次只做一个 Wave：
+- 先写清目标、非目标、验收标准与不改动范围；进包前只读该写入集对应的 `docs/spec/crates/<pkg>.md`。
+- 先确认已有实现和未提交改动，再补剩余缺口；不为未来候选预建抽象、兼容层或第二套实现。
 
-```text
-按 ROADMAP.md §7 执行 plan/<任务书>.md 的〈阶段 / Wave〉。
-范围：〈写入集；不写则以任务书为准〉
-凭证：〈auth 已就绪 / 本任务无需真实 key〉
-```
+### 7.2 实现
 
-开启时主代理必须亲自核对：任务书全文、design/current 同状态证据、写入集包 Spec、相关协议/安全契约和已有测试。需要 ADR、真实凭证或用户视觉决策时先停在闸门，不自行降低目标。
+- 保留用户未提交改动；写入集只覆盖当前主路径修复及必要文档/Spec。
+- 涉及 wire/schema/架构红线、生产依赖或发布动作时先停下走 ADR/用户授权。
 
-子代理只用于边界独立的核查/实现/审查，提示必须包含写入集、验收证据、禁止范围以及“不得撤销他人改动”。文档事实源和阶段状态由主代理统一回写。
+### 7.3 验证
 
-### 7.2 进行中纪律
+- 按存在性与 diff → 写入集定向测试 → 正式二进制构建 → 真窗口主路径推进，前一层失败先收敛原因。
+- 默认命令为 `cargo test -p <crate> --offline --lib --tests`；无测试或只需类型检查时用 `cargo check -p <crate> --offline`。多包仍只开一个 Cargo 进程。
+- 不运行 `cargo clean` 或 workspace 全量门禁；只有发布任务另行定义全量门禁。
 
-- 每个 UI Wave 固定一个 reference State 和一个可重复 fixture；先采 current，再改，再用同输入复拍。
-- 先修结构与交互，再做 token/像素 polish；结构未通过不得靠阴影、渐变或动画掩盖。
-- 不新增 Node/Bun/V8/WebView；Desktop 仍为独立 GPUI 进程，只连接 `pawork` Host。
-- 保留用户未提交改动；写入集最小。新增依赖、提交、推送、发布须另获授权。
-- 无权威数据时保持诚实缺省；不可用组件不得假装可点击。
-- UI 用户可见行为、验证边界或状态变化同批更新 `docs/gui-design.md`、`design/README.md`、`docs/spec/desktop.md`、包级 Desktop Spec 与任务书。
+### 7.4 证据
 
-### 7.3 测试纪律
+- “已实现”“自动门禁通过”“真窗口通过”“等待人工验收”“已发布”分别表述。
+- 真窗口结论同时提供 UI 状态与至少一个源码外事实（文件、Git、Host、PTY 或真实 Provider）。
 
-- 普通实现仍按写入集运行关键定向测试；默认：`cargo test -p <crate> --offline --lib --tests`。多个相关包可在一个 Cargo 进程中追加 `-p`，不使用 `--workspace`。
-- UI Wave 还必须执行任务书列出的 U0/U1 场景；触及真窗口、输入、菜单、滚动、resize、重连或视觉时，由主代理执行对应 U2/U3 门禁。
-- 安全红线、持久化与重放、协议与解析三类关键测试不推迟；触及对应面时同批跑定向种子/golden。
-- 全会话同一时刻只允许一个 Cargo 进程。禁止 `cargo clean`；审查者读既有日志与 diff，不重复编译。
-- R10 不是发布级 Workspace Full Gate；只运行完整 UI suite、UI 关联包定向测试、三状态视觉/AX/性能门禁与三类关键回归。
-- R8 只改文档：对照已归档 design/current/diff 并调研主流产品与设计体系的公开样式资料，不跑 cargo、不重拍 current、不查源码。
+### 7.5 回写与报告
 
-### 7.4 测试通道与凭证
-
-通道事实源为 `crates/providers/src/channels/registry.rs`。真实 API 仅用于 R10 或任务书明确要求的冒烟；常规 UI fixture 不消耗真实 Provider。
-
-| 通道 | 默认低消耗模型 | 凭证 |
-| --- | --- | --- |
-| DeepSeek | `deepseek-v4-flash` | API key |
-| GLM Coding Plan | `glm-4.7` | API key |
-| OpenCode Go | `deepseek-v4-flash` | API key |
-| xAI Grok | `grok-4.3` | OAuth bearer |
-
-正式凭证只放 `$PAWORK_HOME/auth.json` / `~/.pawork/auth.json`；不得进入仓库、fixture、截图、日志或事件。凭证缺失即 fail-closed，不把 mock 写成真实冒烟。
-
-### 7.5 收尾与状态回写
-
-1. 只执行并记录本 Wave 的定向门禁；UI Wave 同时归档对应 State 的 current/overlay/diff 与 action trace。
-2. 回写任务书 Wave 状态、实际写入、验证、未做项和计划偏差。
-3. 回写本文 §1 当前指针；新发现放入 §5 或后续阶段，已完成细节移入 [docs/history.md](docs/history.md)，不留在 ROADMAP。
-4. 影响架构、功能、Spec、Desktop 或验证边界时，同批更新相应常设文档；设计基准变更必须先获用户批准。
-5. 最终报告至少包含：
-
-```text
-Implemented: <生产路径/用户入口，或 none>
-Validated: <实际命令、场景和结果，或 none + 原因>
-Targeted regressions: <安全/持久化/协议覆盖，或 none>
-Real-world evidence: <真窗口/Provider/OS/客户端，或 pending + 原因>
-Full workspace gate: NOT RUN（当前未设置全量门禁）
-```
-
-6. 不提交、不推送、不发布，除非用户当场要求。
+- 每次收尾更新 §1、§3 与 §4；包行为或边界变化同批回写对应 Spec。
+- 完成细节归入 [docs/history.md](docs/history.md)，ROADMAP 不累积过程日志。
+- 最终报告列出实际实现、实际命令/场景、定向回归、真窗口证据、未验证项，并固定声明 `Full workspace gate: NOT RUN（当前未设置全量门禁）`。

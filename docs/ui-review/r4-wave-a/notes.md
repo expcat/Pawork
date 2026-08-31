@@ -38,5 +38,5 @@
 
 - Header branch 图标用文本「⑂」（禁 emoji 约束下的字体回退）；与定稿图标的差异归 R8 终局比对登记。
 - 时间显示采用相对词（now/Nm/Nh/Nd）而非定稿的绝对钟点（如 10:40 AM）：规避 tz 依赖的拍板，mask 已遮动态时间值；终局一致性归 R8。
-- 审批交互、error/retry、断线重放一致、流式 follow、千级虚拟化、State B shell 回归：Wave B 范围（见 [plan/R4-R6-ui-workflows.md](../../../plan/R4-R6-ui-workflows.md)）。
+- 审批交互、error/retry、断线重放一致、流式 follow、千级虚拟化、State B shell 回归：旧 Wave B 范围；任务书已清理，过程改从 [history](../../history.md) 追溯。
 - composer-height 156（合同 88–94）= F-09，R5 范围；State B zones current 映射待 F-12（R6）后补齐。

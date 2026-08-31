@@ -431,22 +431,54 @@ impl AppView {
             let mut row = ListRow::task(format!("changes-file-{}", file.path), selected)
                 .child(
                     div()
+                        .w(px(metrics::CHANGES_FILE_GLYPH_WIDTH))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(font::SM)
+                        .text_color(dark().text.secondary)
+                        .child("▧"),
+                )
+                .child(
+                    div()
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(font::SM)
+                        .text_size(font::BASE)
                         .text_color(dark().text.primary)
                         .child(path.clone()),
                 )
                 .child(
-                    Label::new(file.status.clone())
-                        .size(font::XS)
-                        .color(dark().text.tertiary),
+                    div()
+                        .w(px(metrics::CHANGES_FILE_STATUS_WIDTH))
+                        .flex_none()
+                        .flex()
+                        .justify_end()
+                        .child(
+                            Label::new(file.status.clone())
+                                .size(font::SM)
+                                .color(dark().text.secondary),
+                        ),
                 )
                 .child(
-                    Label::new(format!("+{}/−{}", file.additions, file.deletions))
-                        .size(font::XS)
-                        .color(dark().text.secondary),
+                    div()
+                        .w(px(metrics::CHANGES_FILE_DELTA_WIDTH))
+                        .flex_none()
+                        .flex()
+                        .justify_end()
+                        .gap_1()
+                        .text_size(font::SM)
+                        .child(
+                            div()
+                                .text_color(dark().semantic.success_fg)
+                                .child(format!("+{}", file.additions)),
+                        )
+                        .child(
+                            div()
+                                .text_color(dark().semantic.danger_text)
+                                .child(format!("−{}", file.deletions)),
+                        ),
                 );
             if let Some(focus) = focus {
                 row = row.track_focus(&focus);
@@ -480,6 +512,44 @@ impl AppView {
                     .into_any_element()
             }
             DiffFetch::Ready(file) => {
+                let header = div()
+                    .w_full()
+                    .h(px(metrics::DIFF_HEADER_HEIGHT))
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .border_b_1()
+                    .border_color(dark().border.subtle)
+                    .bg(dark().surface.raised)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(dark().text.primary)
+                            .child(file.path.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(dark().text.secondary)
+                            .child(file.status.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(dark().semantic.success_fg)
+                            .child(format!("+{}", file.additions)),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(dark().semantic.danger_text)
+                            .child(format!("−{}", file.deletions)),
+                    );
                 let mut body = div()
                     .id("diff-view")
                     .flex()
@@ -527,20 +597,28 @@ impl AppView {
                         .flex_col()
                         .flex_none()
                         .min_w_full()
-                        .w(gpui::Rems((longest_line as f32 + 2.0) * font::SM.0));
+                        .w(gpui::Rems((longest_line as f32 + 4.0) * font::SM.0));
                     for hunk in &file.hunks {
                         content = content.child(
                             div()
                                 .w_full()
-                                .px_2()
-                                .py_1()
+                                .flex()
+                                .flex_row()
                                 .bg(dark().surface.raised)
                                 .text_color(dark().text.secondary)
-                                .whitespace_nowrap()
-                                .child(hunk.header.clone()),
+                                .child(div().w(px(metrics::DIFF_GUTTER_WIDTH)).flex_none())
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .px_2()
+                                        .py_1()
+                                        .whitespace_nowrap()
+                                        .child(hunk.header.clone()),
+                                ),
                         );
                         for line in &hunk.lines {
-                            let (prefix, bg, color) = match line.kind {
+                            let (prefix, gutter_bg, gutter_color) = match line.kind {
                                 DiffLineKind::Addition => {
                                     ('+', dark().semantic.success_bg, dark().text.on_accent)
                                 }
@@ -554,17 +632,43 @@ impl AppView {
                             content = content.child(
                                 div()
                                     .w_full()
-                                    .px_2()
-                                    .bg(bg)
-                                    .text_color(color)
-                                    .whitespace_nowrap()
-                                    .child(format!("{prefix}{}", line.text)),
+                                    .flex()
+                                    .flex_row()
+                                    .bg(dark().bg.panel)
+                                    .child(
+                                        div()
+                                            .w(px(metrics::DIFF_GUTTER_WIDTH))
+                                            .flex_none()
+                                            .flex()
+                                            .justify_center()
+                                            .py_1()
+                                            .bg(gutter_bg)
+                                            .text_color(gutter_color)
+                                            .child(prefix.to_string()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .px_2()
+                                            .py_1()
+                                            .text_color(dark().text.primary)
+                                            .whitespace_nowrap()
+                                            .child(line.text.clone()),
+                                    ),
                             );
                         }
                     }
                     body = body.child(content);
                 }
-                body.into_any_element()
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(header)
+                    .child(body)
+                    .into_any_element()
             }
         }
     }
@@ -640,22 +744,35 @@ impl AppView {
                     .gap_2()
                     .p_4()
                     .child(
-                        Label::new("Activity")
-                            .size(font::BODY)
-                            .color(dark().text.primary),
+                        div().border_b_1().border_color(dark().border.subtle).child(
+                            Label::new("Activity")
+                                .size(font::BODY)
+                                .color(dark().text.primary),
+                        ),
                     )
                     .child(
-                        Label::new("Changes")
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
-                    )
-                    .child(
-                        MenuRow::new("activity-open-changes")
-                            .label(summary)
-                            .highlighted(self.menu_highlight_effective(0) == 0)
-                            .on_click(cx.listener(|view, _event, window, cx| {
-                                view.on_activity_open_changes(window, cx);
-                            })),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .p_2()
+                            .border_1()
+                            .border_color(dark().border.subtle)
+                            .rounded(px(4.0))
+                            .bg(dark().surface.raised)
+                            .child(
+                                Label::new("Changes")
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.secondary),
+                            )
+                            .child(
+                                MenuRow::new("activity-open-changes")
+                                    .label(summary)
+                                    .highlighted(self.menu_highlight_effective(0) == 0)
+                                    .on_click(cx.listener(|view, _event, window, cx| {
+                                        view.on_activity_open_changes(window, cx);
+                                    })),
+                            ),
                     ),
             );
         // 与 Changes 面板同一 P2-1 标注：数据来自 latest 会话时如实说明。
