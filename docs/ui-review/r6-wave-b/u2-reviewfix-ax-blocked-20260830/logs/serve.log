@@ -1,7 +1,0 @@
-[1788024195093] serve starting profile=r6-terminal
-[1788024195093] host_ready socket=/private/tmp/pawork-ui-fixture.YTWSpA/data/pawork-gui.sock
-ui_fixture serving on /private/tmp/pawork-ui-fixture.YTWSpA/data/pawork-gui.sock (barriers /private/tmp/pawork-ui-fixture.YTWSpA/barriers)
-[1788024201200] accepted connection connection-0
-[1788024219209] accepted connection connection-1
-[1788024235445] accepted connection connection-2
-[1788024252610] accepted connection connection-3

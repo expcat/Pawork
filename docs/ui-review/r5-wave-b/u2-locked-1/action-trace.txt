@@ -1,7 +1,0 @@
-2026-08-28T11:39:14Z run start label=r5-wave-b-states out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r5-wave-b/u2
-2026-08-28T11:39:14Z compile helpers into /tmp/pawork-r5b-states-tools.2Hp9em
-2026-08-28T11:39:18Z seed fixture root=/private/tmp/pawork-ui-fixture.NsEs55
-2026-08-28T11:39:21Z serve fixture (wait host_ready barrier)
-2026-08-28T11:39:24Z host pid=14892
-2026-08-28T11:39:24Z launch desktop via ui-fixture
-2026-08-28T11:39:30Z desktop pid=15062

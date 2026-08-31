@@ -4,7 +4,7 @@
 
 ## 1. 目录布局
 
-每个 State 一个目录，Wave A 产出 reference/measurements/mask/checklist/crops，后续波次补 current/overlay/diff 运行产物：
+每个 State 一个目录，Wave A 产出合同文件（measurements / mask / zones / checklist），后续波次的 current/overlay/diff 等运行产物不再入库（见下方清理说明）：
 
 | 文件 | 产生波次 | 说明 |
 | --- | --- | --- |
@@ -20,7 +20,9 @@
 | component-manifest.md | R1-A | 三状态组件树 / z-order / 状态 / 能力映射 |
 | normalization-report.json | R1-A | 归一化机器可读记录 |
 
-State 定义：A = Timeline + Inspector 展开；B = Timeline + Inspector 折叠 + ActivityPopover；C = Projects。同一 State 的 reference/current/overlay/diff/mask/checklist 成套保存，不跨状态比较。
+State 定义：A = Timeline + Inspector 展开；B = Timeline + Inspector 折叠 + ActivityPopover；C = Projects。同一 State 的比较输入成套使用，不跨状态比较。
+
+> **2026-08-31 证据清理**：历史运行证据（reference/current/overlay/diff PNG、crops、zone-evidence、assert/ax-tree/geometry/action trace、run-manifest、日志、barrier 标记与 checklist-current.md）已整体移出仓库；各轮结论保留在对应 `notes.md` 与 [docs/history.md](../history.md)，实体可经 git 历史回溯。当前本目录仅保留：`state-{a,b,c}/` 的 `measurements.md` / `checklist.md` / `zones.json` / `mask.json`，根 `normalization-report.json` / `component-manifest.md` / `README.md`，以及各波次 `notes.md`。上表描述管线各产物的角色；`reference.png` 可由 §4 步骤 1 从 `design/` 源图重新生成。
 
 ## 2. 归一化记录（reference.png 怎么来）
 
@@ -61,7 +63,7 @@ State 定义：A = Timeline + Inspector 展开；B = Timeline + Inspector 折叠
     # 1) 重新生成三张归一参考图 + normalization-report.json
     $PY scripts/ui-normalize-reference.py
     # 2) 有了 current.png 之后跑分区差分（R1-D 起）
-    $PY scripts/ui-visual-diff.py --reference docs/ui-review/state-a/reference.png --current docs/ui-review/state-a/current.png --zones docs/ui-review/state-a/zones.json --masks docs/ui-review/state-a/mask.json --out docs/ui-review/state-a
+    $PY scripts/ui-visual-diff.py --reference docs/ui-review/state-a/reference.png --current docs/ui-review/state-a/current.png --zones docs/ui-review/state-a/zones.json --masks docs/ui-review/state-a/mask.json --out "$(mktemp -d /tmp/pawork-visual-diff.XXXXXX)"
     # 3) 修改 diff 管线后跑定向回归
     $PY -m unittest scripts/test_ui_visual_diff.py
     $PY -m unittest scripts/test_ui_wave_d_tools.py

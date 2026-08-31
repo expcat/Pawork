@@ -1,4 +1,0 @@
-2026-08-30T11:37:50Z run start label=r7-wave-c-reviewfix out=/Volumes/SSD/Code/Lib/Pawork/docs/ui-review/r7-wave-c/u2-reviewfix-pass-20260830
-2026-08-30T11:37:50Z compile AX/frame/input/platform helpers
-2026-08-30T11:37:55Z platform preferences captured read-only
-2026-08-30T11:37:55Z seed canonical fixture then derive 1024 logical rows in temp DB

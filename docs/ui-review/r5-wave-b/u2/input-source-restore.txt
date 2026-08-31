@@ -1,1 +1,0 @@
-ui-key-event input-source-before=com.apple.keylayout.ABC after=com.tencent.inputmethod.wetype.pinyin (restored)

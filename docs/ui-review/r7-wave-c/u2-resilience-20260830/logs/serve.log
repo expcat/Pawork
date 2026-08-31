@@ -1,6 +1,0 @@
-[1788078181382] serve starting profile=default
-[1788078181383] host_ready socket=/private/tmp/pawork-r7-wave-c-fixture.jaVuhu/data/pawork-gui.sock
-ui_fixture serving on /private/tmp/pawork-r7-wave-c-fixture.jaVuhu/data/pawork-gui.sock (barriers /private/tmp/pawork-r7-wave-c-fixture.jaVuhu/barriers)
-[1788078188159] accepted connection connection-0
-[1788078202574] drop_socket done
-[1788078203189] accepted connection connection-1

@@ -1,8 +1,0 @@
-2026-08-29T08:37:20Z compile AX/key helpers
-2026-08-29T08:37:24Z seed/serve/desktop isolated fixture
-2026-08-29T08:37:45Z C1 canonical Changes files
-2026-08-29T08:37:45Z assert phase=c1-files
-2026-08-29T08:37:45Z C3 keyboard secondary tabs and file rows
-2026-08-29T08:38:40Z assert phase=c3-summary
-2026-08-29T08:38:58Z assert phase=c3-file-focus
-2026-08-29T08:39:28Z phase=c3-file-focus timeout rc=5

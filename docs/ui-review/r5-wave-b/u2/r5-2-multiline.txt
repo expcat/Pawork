@@ -1,3 +1,0 @@
-fixture:hang
-R5 multiline draft
-second line 中文

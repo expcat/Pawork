@@ -1,9 +1,0 @@
-session_id              archived
-----------------------  --------
-fx-ses-alpha-longtitle  1
-fx-ses-alpha-today      1
-fx-ses-alpha-yesterday  1
-fx-ses-beta-cancelled   1
-fx-ses-beta-long        0
-fx-ses-beta-pending     1
-fx-ses-beta-toolfailed  1

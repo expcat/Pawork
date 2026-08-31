@@ -1,2 +1,0 @@
-e9b02b7f3780102bbcec6ee66c6182dba94aac105487c06238849d2af20e0c82  source-before-sign:/Volumes/SSD/Code/Lib/Pawork/target/debug/pawork-desktop
-caf2df963e778643f00c94c313809b1edfa9e1b0471c874f862e7a3de268dd47  launch-after-sign:/tmp/pawork-r7-ax-forms.5VVn2k/Pawork AX Forms.app/Contents/MacOS/pawork-desktop

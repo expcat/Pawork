@@ -1,4 +1,0 @@
-[1788021085056] serve starting profile=r6-terminal
-[1788021085057] host_ready socket=/private/tmp/pawork-ui-fixture.Dmienw/data/pawork-gui.sock
-ui_fixture serving on /private/tmp/pawork-ui-fixture.Dmienw/data/pawork-gui.sock (barriers /private/tmp/pawork-ui-fixture.Dmienw/barriers)
-[1788021087443] accepted connection connection-0

@@ -1,2 +1,0 @@
-e9b02b7f3780102bbcec6ee66c6182dba94aac105487c06238849d2af20e0c82  build-output:/Volumes/SSD/Code/Lib/Pawork/target/debug/pawork-desktop
-e9b02b7f3780102bbcec6ee66c6182dba94aac105487c06238849d2af20e0c82  raw-launch-copy:/tmp/pawork-r7-ax-forms.5VVn2k/raw/pawork-desktop
