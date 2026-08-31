@@ -31,7 +31,7 @@
 | [crates/exec.md](crates/exec.md) | `pawork-exec` | 进程执行 / 沙箱（Seatbelt/Landlock/AppContainer）/ PTY |
 | [crates/tools.md](crates/tools.md) | `pawork-tools` | 八个内置工具 + ToolScheduler + MCP client |
 | [crates/workspace.md](crates/workspace.md) | `pawork-workspace` | workspace 服务、file_index、resources、六层配置、五来源导入 |
-| [crates/storage.md](crates/storage.md) | `pawork-storage` | SQLite Actor + session 事件存储（schema v12）+ PWB1 blob |
+| [crates/storage.md](crates/storage.md) | `pawork-storage` | SQLite Actor + session 事件存储（schema v13）+ PWB1 blob |
 | [crates/providers.md](crates/providers.md) | `pawork-providers` | HTTP/SSE 传输 + registry/pricing/usage/negotiate/reasoning + 六通道 adapter |
 | [crates/auth.md](crates/auth.md) | `pawork-auth` | Secret 后端、OAuth（PKCE/Device）、credential locator、脱敏 |
 | [crates/git.md](crates/git.md) | `pawork-git` | Diff/Status/GitService/HunkStage/worktree/merge |

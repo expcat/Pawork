@@ -500,6 +500,12 @@ ADR 原文保留在 docs/adr/ 不删;编号续接 V1(ADR-001~035 随 V1 归档,�
 - 保持 `gpui = 0.2.2` 与 Desktop→client 唯一业务依赖不变;Desktop 以平台无关 `AxTree` 显式生成语义,macOS 用 AppKit 虚拟元素挂入 `GPUIView`,非 macOS 保留 no-op facade;AX action 回到既有 AppView handler / enable gate,未知请求 fail-closed。
 - 真窗口补救前仅 7 个系统节点;补救后 75 节点、0 截断,稳定 identifier/role/value/action 可用,`AXPress` 选会话与 `AXValue` 写 Composer 均产生可观察状态变化;证据见 `docs/ui-review/wave-c/{ax-gate,ax-bridge}/`。Windows/Linux 平台 AX 与全量 VoiceOver 仍属后续范围。
 
+#### ADR-043 — Session→Workspace 归属持久化(schema v13)
+
+- 状态:Accepted(用户 2026-08-31 确认);P1 片 1 已实现并通过自动定向门禁,真窗口重启复验仍在 ROADMAP 当前指针。
+- `sessions` 纯追加可空 `workspace_id TEXT` 弱引用列,历史行不回填、无 FK、不进 import/export;否决借用 `session_tags` 与 data_dir 侧车双轨。
+- 初始 session/main 分支/归属同一 SQLite 事务落盘;Host 开库读取全部非 NULL 绑定(含 archived)并原子替换进程内缓存,重复开库不泄漏旧库归属。自动回归覆盖 v12→v13、NULL 历史行、写读回/重启、归档绑定预载与旧缓存清理。
+
 ### 已闭环登记项存档
 
 自 ROADMAP §4(未决事项)与 §3.2(V2 遗留债务映射)提取:结论已闭环且无遗留未来动作的行。带「R9 复查/复跑」「人工验收」「另立 ADR 时」「触碰…时」「候选」「兼容期满」等未来动作的行仍留 ROADMAP,不收入本表。

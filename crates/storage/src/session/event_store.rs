@@ -1,6 +1,6 @@
 use pawork_domain::{
     canonical_hint_key, is_provider_hint_key, AgentEvent, AgentEventEnvelope, PrincipalId,
-    SessionId, TenantId, Timestamp, MAX_HINT_VALUE_BYTES,
+    SessionId, TenantId, Timestamp, WorkspaceId, MAX_HINT_VALUE_BYTES,
 };
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
@@ -29,6 +29,33 @@ pub struct AppendReceipt {
 }
 
 impl SessionStore {
+    /// ADR-043（schema v13）：Session→Workspace 归属写穿（UPDATE sessions 的
+    /// workspace_id 列）。弱引用：不校验 workspace 是否真实登记（跨 Host 不
+    /// 保证存在），尚未登记的 canonical id 原样保留。会话不存在报
+    /// [`SessionStoreError::SessionNotFound`]（fail-closed，不留半绑定）。
+    pub async fn set_session_workspace(
+        &self,
+        session_id: &SessionId,
+        workspace_id: &WorkspaceId,
+    ) -> Result<(), SessionStoreError> {
+        let session_id = session_id.to_string();
+        let workspace_id = workspace_id.to_string();
+        let lookup = session_id.clone();
+        let updated = self
+            .database()
+            .call(move |connection| {
+                connection.execute(
+                    "UPDATE sessions SET workspace_id=?1 WHERE session_id=?2",
+                    params![workspace_id, lookup],
+                )
+            })
+            .await??;
+        if updated == 0 {
+            return Err(SessionStoreError::SessionNotFound(session_id));
+        }
+        Ok(())
+    }
+
     pub async fn create_session(
         &self,
         session_id: &SessionId,
@@ -48,6 +75,25 @@ impl SessionStore {
         .await
     }
 
+    /// ADR-043：以默认本地身份原子创建 session、main 分支与 workspace 归属。
+    pub async fn create_session_with_workspace(
+        &self,
+        session_id: &SessionId,
+        title: impl Into<String>,
+        created_at: Timestamp,
+        workspace_id: &WorkspaceId,
+    ) -> Result<(), SessionStoreError> {
+        self.create_session_with_identity_and_workspace(
+            session_id,
+            title,
+            created_at,
+            &TenantId::new("local/default"),
+            &PrincipalId::new("local/user"),
+            Some(workspace_id),
+        )
+        .await
+    }
+
     /// 以显式身份上下文创建 session（P18-2）：tenant/principal 必须非空，
     /// 缺失身份由调用方（身份解析层）fail-closed 保证，存储层不默认补全。
     pub async fn create_session_with_identity(
@@ -58,10 +104,31 @@ impl SessionStore {
         tenant_id: &TenantId,
         principal_id: &PrincipalId,
     ) -> Result<(), SessionStoreError> {
+        self.create_session_with_identity_and_workspace(
+            session_id,
+            title,
+            created_at,
+            tenant_id,
+            principal_id,
+            None,
+        )
+        .await
+    }
+
+    async fn create_session_with_identity_and_workspace(
+        &self,
+        session_id: &SessionId,
+        title: impl Into<String>,
+        created_at: Timestamp,
+        tenant_id: &TenantId,
+        principal_id: &PrincipalId,
+        workspace_id: Option<&WorkspaceId>,
+    ) -> Result<(), SessionStoreError> {
         let session_id = session_id.to_string();
         let title = title.into();
         let tenant_id = tenant_id.to_string();
         let principal_id = principal_id.to_string();
+        let workspace_id = workspace_id.map(ToString::to_string);
         if tenant_id.trim().is_empty() || principal_id.trim().is_empty() {
             return Err(SessionStoreError::ProjectionInvariant(
                 "session identity tenant/principal must be non-blank".into(),
@@ -74,15 +141,16 @@ impl SessionStore {
             .call(move |connection| -> Result<(), SessionStoreError> {
                 let transaction = connection.transaction()?;
                 transaction.execute(
-                    "INSERT INTO sessions(session_id, title, created_at_ms, updated_at_ms, active_branch, tenant_id, principal_id) \
-                     VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO sessions(session_id, title, created_at_ms, updated_at_ms, active_branch, tenant_id, principal_id, workspace_id) \
+                     VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         session_id,
                         title,
                         timestamp,
                         DEFAULT_BRANCH_ID,
                         tenant_id,
-                        principal_id
+                        principal_id,
+                        workspace_id
                     ],
                 )?;
                 transaction.execute(

@@ -157,7 +157,7 @@
 
 ## 5. 契约与不变量
 
-- **信封版本独立**：`CURRENT_SCHEMA_VERSION = 1` 是磁盘/线上信封契约版本，与 session-store 的 SQLite migration 链版本（`crates/storage/src/session/migration.rs`，当前至 version 12）相互独立：加迁移不必动信封版本，反之亦然。
+- **信封版本独立**：`CURRENT_SCHEMA_VERSION = 1` 是磁盘/线上信封契约版本，与 session-store 的 SQLite migration 链版本（`crates/storage/src/session/migration.rs`，当前至 version 13）相互独立：加迁移不必动信封版本，反之亦然。
 - **字节级 golden**（形状漂移即测试失败，演进须 ADR + 显式重建）：
   - `crates/domain/tests/fixtures/agent_event_envelope_variants.jsonl`（32 变体信封逐行字节比对）与 `agent_event_envelope_parent.json`（parent_event_id 序列化）；
   - `crates/domain/tests/fixtures/provider_stream_event_13.jsonl`、`canonical_model_request_full.json`、`provider_error_full.json`、`tool_result_pair.jsonl`。

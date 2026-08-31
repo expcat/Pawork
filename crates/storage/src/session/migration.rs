@@ -4,7 +4,7 @@ use crate::sqlite::{DatabaseActor, Migration, MigrationReport};
 
 use crate::session::SessionStoreError;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 12;
+pub const CURRENT_SCHEMA_VERSION: u32 = 13;
 const SCHEMA_MIGRATIONS_TABLE: &str = "schema_migrations";
 
 pub(crate) const MIGRATIONS: &[Migration] = &[
@@ -335,6 +335,15 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
                 ON messages(session_id, branch_id, sequence);
         "#,
     },
+    Migration {
+        version: 13,
+        name: "session_workspace_binding",
+        // ADR-043（Accepted 2026-08-31）：Session→Workspace 归属跨 Host 重启
+        // 持久化。纯追加可空列，不回填：历史 NULL 继续诚实落入 Unassigned。
+        // 不加 FK——workspace 登记是 Host 进程内/按实例恢复的状态，跨 Host
+        // 不保证存在；归属列为弱引用，尚未登记的 canonical id 原样保留。
+        sql: "ALTER TABLE sessions ADD COLUMN workspace_id TEXT;",
+    },
 ];
 
 pub(crate) async fn migrate(
@@ -369,7 +378,7 @@ mod tests {
     use super::*;
     use crate::session::SessionStore;
     use crate::session::test_support as seed;
-    use pawork_domain::{AgentEventEnvelope, SessionId};
+    use pawork_domain::{AgentEventEnvelope, SessionId, Timestamp, WorkspaceId};
 
     fn temp_db(name: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -429,7 +438,7 @@ mod tests {
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(
             report.applied_versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         );
         assert!(report.backup_path.is_none());
         let tables: Vec<String> = store
@@ -515,7 +524,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("migrate");
         assert_eq!(report.from_version, 6);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![7, 8, 9, 10, 11, 12]);
+        assert_eq!(report.applied_versions, vec![7, 8, 9, 10, 11, 12, 13]);
         let (tenant, principal): (String, String) = store
             .database()
             .call(|connection| {
@@ -661,7 +670,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("migrate to v12");
         assert_eq!(report.from_version, 9);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![10, 11, 12]);
+        assert_eq!(report.applied_versions, vec![10, 11, 12, 13]);
 
         let rows: Vec<(String, String, i64)> = store
             .database()
@@ -709,7 +718,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("migrate to v12");
         assert_eq!(report.from_version, 10);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![11, 12]);
+        assert_eq!(report.applied_versions, vec![11, 12, 13]);
         let tables: Vec<String> = store
             .database()
             .call(|connection| {
@@ -858,7 +867,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("upgrade v10 -> v12");
         assert_eq!(report.from_version, 10);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![11, 12]);
+        assert_eq!(report.applied_versions, vec![11, 12, 13]);
         assert!(report.backup_path.as_ref().is_some_and(|path| path.exists()));
 
         let session = SessionId::from(scenario.session);
@@ -925,7 +934,7 @@ mod tests {
         let (store, report) = SessionStore::open(&path).await.expect("upgrade v11 -> v12");
         assert_eq!(report.from_version, 11);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.applied_versions, vec![12]);
+        assert_eq!(report.applied_versions, vec![12, 13]);
         assert!(report.backup_path.as_ref().is_some_and(|path| path.exists()));
 
         let session = SessionId::from(scenario.session);
@@ -983,7 +992,7 @@ mod tests {
 
         let (store, report) = SessionStore::open(&path).await.expect("upgrade v10 -> v12");
         assert_eq!(report.from_version, 10);
-        assert_eq!(report.applied_versions, vec![11, 12]);
+        assert_eq!(report.applied_versions, vec![11, 12, 13]);
 
         let session = SessionId::from(scenario.session);
         assert_lineage_golden(
@@ -1093,6 +1102,125 @@ mod tests {
             .expect("count messages");
         assert_eq!(total, 12);
         reader.shutdown().await.expect("reader shutdown");
+    }
+
+    #[tokio::test]
+    async fn v12_database_upgrades_to_v13_with_null_workspace_and_binding_roundtrip() {
+        let (_dir, path) = temp_db("v12-workspace-binding.sqlite3");
+        let actor = DatabaseActor::open(&path).await.expect("actor");
+        crate::sqlite::migrate(
+            &actor,
+            SCHEMA_MIGRATIONS_TABLE,
+            &MIGRATIONS[..12],
+            12,
+            &path,
+            false,
+        )
+        .await
+        .expect("apply v1\u{2013}v12");
+        actor
+            .call(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO sessions(\
+                         session_id, title, created_at_ms, updated_at_ms, \
+                         active_branch, tenant_id, principal_id\
+                     ) VALUES ('legacy-v12', 'old', 1, 1, 'main', 'local/default', 'local/user'); \
+                     INSERT INTO session_branches(session_id, branch_id, head_sequence) \
+                     VALUES ('legacy-v12', 'main', 0);",
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("seed v12 session");
+        actor.shutdown().await.expect("shutdown");
+
+        let (store, report) = SessionStore::open(&path).await.expect("migrate to v13");
+        assert_eq!(report.from_version, 12);
+        assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(report.applied_versions, vec![13]);
+        assert!(report.backup_path.as_ref().is_some_and(|path| path.exists()));
+
+        // v13 生效：workspace_id 列存在。
+        let columns: Vec<String> = store
+            .database()
+            .call(|connection| {
+                let mut statement = connection
+                    .prepare("PRAGMA table_info(sessions)")
+                    .expect("prepare");
+                statement
+                    .query_map([], |row| row.get::<_, String>(1))
+                    .expect("query")
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .expect("collect")
+            })
+            .await
+            .expect("actor");
+        assert!(
+            columns.iter().any(|column| column == "workspace_id"),
+            "v13 迁移必须添加 workspace_id 列: {columns:?}"
+        );
+
+        // 旧会话不回填：历史 NULL 继续落入 Unassigned。
+        let record = store
+            .get_session(&SessionId::from("legacy-v12"))
+            .await
+            .expect("get legacy");
+        assert_eq!(
+            record.workspace_id, None,
+            "历史会话 workspace_id 必须为 NULL"
+        );
+
+        // 绑定写穿 + 目录读回。
+        store
+            .set_session_workspace(&SessionId::from("legacy-v12"), &WorkspaceId::from("ws-1"))
+            .await
+            .expect("bind");
+        let record = store
+            .get_session(&SessionId::from("legacy-v12"))
+            .await
+            .expect("get bound");
+        assert_eq!(record.workspace_id.as_deref(), Some("ws-1"));
+        let listed = store.list_sessions().await.expect("list");
+        assert!(listed.iter().any(|record| {
+            record.session_id == "legacy-v12" && record.workspace_id.as_deref() == Some("ws-1")
+        }));
+        let atomic = SessionId::from("atomic-v13");
+        store
+            .create_session_with_workspace(
+                &atomic,
+                "atomic",
+                Timestamp::from_unix_millis(2),
+                &WorkspaceId::from("ws-atomic"),
+            )
+            .await
+            .expect("atomic create with workspace");
+        assert_eq!(
+            store
+                .get_session(&atomic)
+                .await
+                .expect("get atomic")
+                .workspace_id
+                .as_deref(),
+            Some("ws-atomic")
+        );
+
+        // 重启后绑定仍在；且不存在的会话 fail-closed。
+        store.shutdown().await.expect("shutdown");
+        let (store, _) = SessionStore::open(&path).await.expect("reopen");
+        let record = store
+            .get_session(&SessionId::from("legacy-v12"))
+            .await
+            .expect("get after reopen");
+        assert_eq!(record.workspace_id.as_deref(), Some("ws-1"));
+        let error = store
+            .set_session_workspace(&SessionId::from("missing"), &WorkspaceId::from("ws-1"))
+            .await
+            .expect_err("missing session");
+        assert!(matches!(
+            error,
+            SessionStoreError::SessionNotFound(ref id) if id == "missing"
+        ));
+        store.shutdown().await.expect("shutdown");
     }
 
     #[test]

@@ -27,11 +27,11 @@
 | `src/sqlite/mod.rs` | ~400 | `DatabaseActor`（专用线程 + `sync_channel(128)` 命令队列）、`DatabaseOptions`、`DatabaseError`、`backup_to`/`restore_from`、只读打开 |
 | `src/sqlite/migration.rs` | ~650 | 通用 migration 框架：`Migration`/`migrate`/`schema_version`/`MigrationReport`/`MigrationError`；账本表按命名空间隔离（不用 `PRAGMA user_version`），升级前 `.pre-migration-v<from>.bak` 备份，单事务整批应用 |
 | `src/session/mod.rs` | ~230 | `SessionStore`（open/open_read_only/schema_version/shutdown）、`SessionStoreError` 全量错误枚举、子模块 re-export（`compaction` 随 feature） |
-| `src/session/migration.rs` | ~1150 | `CURRENT_SCHEMA_VERSION = 12` 与 v1–v12 迁移清单；内嵌 v12 全链迁移测试、升级 golden 断言与孤儿 fail-closed 回归 |
-| `src/session/event_store.rs` | ~2180 | 事件读写核心：`create_session(_with_identity)`/`create_branch`/`switch_branch`/`append_event`/`replay_events`/`tail_events`/`events_by_branch`；写前 Secret 脱敏（`redact_sensitive_json`、`sanitize_reasoning_metadata`）与 legacy provider hint 键只读映射；`persist_event_in_transaction` 供导入复用 |
+| `src/session/migration.rs` | ~1280 | `CURRENT_SCHEMA_VERSION = 13` 与 v1–v13 迁移清单；内嵌 v12/v13 迁移测试、升级 golden 断言与孤儿 fail-closed 回归 |
+| `src/session/event_store.rs` | ~2250 | 事件读写核心：`create_session(_with_identity/_with_workspace)`/`create_branch`/`switch_branch`/`append_event`/`replay_events`/`tail_events`/`events_by_branch`；`set_session_workspace`（ADR-043 既有会话归属写穿）；写前 Secret 脱敏（`redact_sensitive_json`、`sanitize_reasoning_metadata`）与 legacy provider hint 键只读映射；`persist_event_in_transaction` 供导入复用 |
 | `src/session/projection.rs` | ~1590 | 投影写入 `apply_projection`、读取 `ProjectionSnapshot`（messages/runs/tool_calls/server_tool_events/program_output/screenshots/transcript_envelopes）、compaction 水位折叠、`rebuild_projection` |
 | `src/session/session_tree.rs` | ~580 | 分支树单点：`load_ancestor_lineage`/`visible_on_lineage`/`events_on_lineage`/`fork_from_event`/`session_tree`；fork 边界校验与幂等 |
-| `src/session/catalog.rs` | ~190 | 会话目录：`list_sessions`/`get_session` 与 `SessionRecord` |
+| `src/session/catalog.rs` | ~240 | 会话目录：`list_sessions`/`get_session` 与 `SessionRecord`（v13 起含 `workspace_id: Option<String>` 归属弱引用）；`list_session_workspace_bindings` 返回含 archived 的全部非 NULL 绑定 |
 | `src/session/command_ledger.rs` | ~730 | `CommandLedger`：`check`/`record`/`release`/`reclaim_inflight`/`stats`，容量 4096 全局淘汰；`waiting_tool_call(s)` 审批恢复查询 |
 | `src/session/client_adapter.rs` | ~530 | `SqliteClientSessionRegistryStore`：以 SQLite 实现 domain 的 `SessionRegistryStore`（load_all/insert/compare_and_swap/remove_if_owner，乐观并发） |
 | `src/session/test_support.rs` | ~340 | `cfg(test)` 种子场景（fork_tree/interleaved/compaction），供迁移 golden 复现历史库形态 |
@@ -67,13 +67,15 @@
 
 ### 3.2 session：SessionStore 生命周期
 
-- `SessionStore::open(path) -> (SessionStore, MigrationReport)`：打开写模式 Actor（路径不存在则建父目录新建库）→ 跑 session migration 到 v12（旧库自动升级并留备份）→ **回收 CommandLedger 全部 `inflight` 残留**（崩溃恢复，见 §4.4）。`MigrationReport` 供调用方记录升级轨迹。
+- `SessionStore::open(path) -> (SessionStore, MigrationReport)`：打开写模式 Actor（路径不存在则建父目录新建库）→ 跑 session migration 到 v13（旧库自动升级并留备份）→ **回收 CommandLedger 全部 `inflight` 残留**（崩溃恢复，见 §4.4）。`MigrationReport` 供调用方记录升级轨迹。
 - `SessionStore::open_read_only(path)`：只读打开并要求库版本**严格等于** `CURRENT_SCHEMA_VERSION`——只读模式无法就地迁移，低版本库同样报 `UnsupportedSchema`；适合诊断/取证场景与并行只读副本。
 - 其余：`schema_version()`、`database()`（借出 Actor 给同库子系统，如 client_adapter）、`path()`、`shutdown()`。错误统一 `SessionStoreError`：`Database`/`Sqlite`/`Ledger(LedgerError)`/`UnsupportedSchema`/`SessionNotFound`/`BranchNotFound`/`BranchAlreadyExists`/`BranchNotActive`/`ForkPointNotTurnBoundary`/`NonContiguousSequence`/`SequenceOverflow`/`ParentEventNotFound`/`ProjectionInvariant`/导入类（`CompatUnparseable`/`CompatSecretDetected`/`CompatValidationFailed`/`CompatImportConflict`/`InvalidHistoryCursor`）/导出身份与版本类（`ExportSchemaVersion`/`ExportIdentityMissing`/`ExportIdentityMismatch`/`EventSessionMismatch`），另有休眠变体 `LeaseHeld`/`LeaseNotHeld`/`SessionHasEvents`（见 §8）。
 
 ### 3.3 事件追加与读取
 
-- `create_session(session_id, title, created_at)` / `create_session_with_identity(…, tenant_id, principal_id)`：幂等；前者为 legacy 便捷入口，固定身份 tenant `local/default`、principal `local/user`；同时建 `main` 分支（`DEFAULT_BRANCH_ID`）并置为 active。
+- `create_session(session_id, title, created_at)` / `create_session_with_identity(…, tenant_id, principal_id)`：前者为 legacy 便捷入口，固定身份 tenant `local/default`、principal `local/user`；同时建 `main` 分支（`DEFAULT_BRANCH_ID`）并置为 active。`create_session_with_workspace(…, workspace_id)` 在同一事务内创建 session、main 分支与初始归属，任一步失败整批回滚。
+- `set_session_workspace(session_id, workspace_id)`（ADR-043，v13）：UPDATE `sessions.workspace_id` 归属列；弱引用不校验 workspace 是否登记，会话不存在报 `SessionNotFound`（fail-closed）；不进 import/export。
+- `list_session_workspace_bindings()`：读取全部非 NULL 归属（含 archived），供 AppCore 启动或重复开库时原子替换内存缓存。
 - `append_event(branch_id, AgentEventEnvelope) -> AppendReceipt`：显式点名分支且必须是当前 active 分支（否则 `BranchNotActive`）。sequence 为 **session 级全局单调**：必须 = 全 session 现有最大 sequence + 1（首条 = 1），否则 `NonContiguousSequence { expected, actual }`；因此各分支的事件序是全局序的互不重叠子序列。写前做 Secret 脱敏与 legacy 键规范化（§4.1）。`AppendReceipt { event_id, sequence, branch_id }`。
 - 读取三视图 + lineage 视图（`replay_events`/`tail_events` 对 `limit == 0` 直接返回空集）：
   - `replay_events(session, from_sequence, limit)`：全 session 账本视图（含所有分支），按全局 sequence 升序——历史兼容接口；
@@ -202,10 +204,10 @@
 
 ## 5. 契约与不变量
 
-- **版本体系相互独立**：`AgentEventEnvelope.schema_version = 1`（domain 信封，见 [domain.md](domain.md)）、session SQLite `CURRENT_SCHEMA_VERSION = 12`、export `schema_version = 3`、artifact/protected/checkpoint 各自 `SCHEMA_VERSION = 1`、PWB1 `version = 1`——升级互不牵连，migration 账本表按命名空间隔离。
+- **版本体系相互独立**：`AgentEventEnvelope.schema_version = 1`（domain 信封，见 [domain.md](domain.md)）、session SQLite `CURRENT_SCHEMA_VERSION = 13`、export `schema_version = 3`、artifact/protected/checkpoint 各自 `SCHEMA_VERSION = 1`、PWB1 `version = 1`——升级互不牵连，migration 账本表按命名空间隔离。
 - **常量冻结**：默认分支 `DEFAULT_BRANCH_ID = "main"`；`DEFAULT_COMMAND_LEDGER_CAPACITY = 4096`；脱敏占位符 `"[REDACTED]"`。
 - **`session_events` 账本冻结**：建表 DDL（v1）带 `UNIQUE(session_id, sequence)`（sequence 为 session 级全局单调连续，跨分支不复用编号；v12 迁移注释明示不动此约束）与 `CHECK(sequence > 0)`；v2 加 append-only 双触发器 `session_events_no_update` / `session_events_no_delete`（`RAISE(ABORT)`）——账本行一经写入不可改删，compaction 也只折叠投影。
-- **迁移史 append-only**：`MIGRATIONS` 数组 v1–v11 的 DDL 文本不可改写，演进只能追加新版本。全史：v1 `core_session_schema`（sessions / session_branches / session_events + 投影三表 messages / runs / tool_calls）；v2 `event_store_immutability`（append-only 双触发器）；v3 `active_branch` 列 + 分支序索引 + `session_leases`；v4 `session_tags`；v5 `server_tool_events` + `transcript_envelopes`；v6 `compat_import_identity`；v7 `client_adapter_sessions`；v8 sessions 补 `tenant_id`/`principal_id` 并回填 `local/default`、`local/user`；v9 `session_bindings`（归档预留，见 §8）；v10 messages 加 `branch_id DEFAULT 'main'` 并按事件回填；**v11 = R4 `command_ledger`**（含 `idempotency_key` 部分唯一索引）；**v12 = R6 branch lineage 原生化**——`messages` 整表重建去掉 `DEFAULT 'main'`（新表 `branch_id NOT NULL` 无默认值），回填按 `session_events` 反查真实分支，查不到归属的孤儿行经 TEMP 触发器 `RAISE(ABORT)` 整批回滚（fail-closed，升级前已留 `.pre-migration-v11.bak`）。
+- **迁移史 append-only**：`MIGRATIONS` 数组 v1–v12 的 DDL 文本不可改写，演进只能追加新版本。全史：v1 `core_session_schema`（sessions / session_branches / session_events + 投影三表 messages / runs / tool_calls）；v2 `event_store_immutability`（append-only 双触发器）；v3 `active_branch` 列 + 分支序索引 + `session_leases`；v4 `session_tags`；v5 `server_tool_events` + `transcript_envelopes`；v6 `compat_import_identity`；v7 `client_adapter_sessions`；v8 sessions 补 `tenant_id`/`principal_id` 并回填 `local/default`、`local/user`；v9 `session_bindings`（归档预留，见 §8）；v10 messages 加 `branch_id DEFAULT 'main'` 并按事件回填；**v11 = R4 `command_ledger`**（含 `idempotency_key` 部分唯一索引）；**v12 = R6 branch lineage 原生化**——`messages` 整表重建去掉 `DEFAULT 'main'`（新表 `branch_id NOT NULL` 无默认值），回填按 `session_events` 反查真实分支，查不到归属的孤儿行经 TEMP 触发器 `RAISE(ABORT)` 整批回滚（fail-closed，升级前已留 `.pre-migration-v11.bak`）；**v13 = ADR-043 Session→Workspace 归属持久化**——`sessions` 纯追加可空 `workspace_id TEXT` 列，不回填（历史 NULL 按 Unassigned）、无 FK（弱引用）。
 - **升级 golden**：`src/session/fixtures/v12_{fork_tree,interleaved,compaction}.*.jsonl`（7 份）锁定三个种子场景迁移后各分支 lineage 消息序列；重生成须显式 `PAWORK_WRITE_STORAGE_GOLDEN=1` 跑 ignored 测试。
 - **PWB1 冻结**：magic `PWB1`、version=1、algorithm=1（XChaCha20-Poly1305）、header 34 字节、AAD 形状（见 §4.7）；已知向量 `tests/golden/pwb1_valid.hex`（key=0x11×32、nonce=0x00..0x17、key_version=1）。
 - **export v3 形状冻结**：字段见 §3.8；读兼容 v1/v2（身份回填 `local/default`、`local/user`，v1 事件归 `main`），写只出 v3。`command_ledger`、`compat_import_identity` 等运维表**不进** export。
@@ -249,7 +251,7 @@ feature 依赖有传递关系：`compaction ⇒ session`，`checkpoint ⇒ blob`
 | --- | --- |
 | `sqlite/mod.rs` tests | PRAGMA 生效、串行执行、panic 隔离、backup/restore、只读拒写 |
 | `sqlite/migration.rs` tests | 全新建库、既有库备份、失败整批回滚、降级拒绝、账本命名空间隔离、非法表名/计划校验 |
-| `session/migration.rs` tests | v12 全链迁移、三个种子场景升级 golden（`fixtures/v12_*.jsonl`）、孤儿行 fail-closed、golden writer（ignored） |
+| `session/migration.rs` tests | v12 全链迁移、三个种子场景升级 golden（`fixtures/v12_*.jsonl`）、孤儿行 fail-closed、v13 归属列迁移与绑定写读回/重启存活、golden writer（ignored） |
 | `event_store.rs` tests | Secret 脱敏矩阵（provider metadata / server tool / envelope / reasoning hints 超限拒绝）、legacy 键映射与旧行读回、sequence/parent 校验、分支隔离分页 |
 | `projection.rs` tests | 折叠后投影窗口、事件-投影一致性、append-only 触发器、`rebuild_projection` 与增量投影等价 |
 | `session_tree.rs` tests | fork 四类边界与拒绝、幂等、lineage 排除 fork 后父分支追加 |

@@ -795,7 +795,12 @@ impl AppCore {
             std::fs::create_dir_all(parent)?;
         }
         let (store, _) = SessionStore::open(path.as_ref()).await?;
+        let workspace_bindings = store.list_session_workspace_bindings().await?;
         self.store = Some(store);
+        // ADR-043：存储打开与绑定读取全部成功后，再以持久化事实原子替换
+        // 进程内缓存；重复 open_store 不保留旧库的陈旧归属。
+        self.session
+            .replace_workspace_cache(workspace_bindings);
         Ok(())
     }
 
@@ -847,9 +852,11 @@ impl AppCore {
         self.approval.workspace_trusted()
     }
 
-    /// 记录 SessionCreate 带来的 canonical workspace（进程内）。
+    /// 记录 SessionCreate 带来的 canonical workspace（仅进程内缓存；
+    /// 供 devfixture 等不落库重建路径使用。生产初始绑定统一走
+    /// create_session_with_workspace 原子落盘）。
     pub fn bind_session_workspace(&self, session_id: &SessionId, workspace_id: WorkspaceId) {
-        self.session.bind_workspace(session_id, workspace_id);
+        self.session.insert_workspace_cache(session_id, workspace_id);
     }
 
     pub fn session_workspace(&self, session_id: &SessionId) -> Option<WorkspaceId> {

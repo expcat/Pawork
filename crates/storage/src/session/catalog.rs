@@ -1,4 +1,4 @@
-use pawork_domain::SessionId;
+use pawork_domain::{SessionId, WorkspaceId};
 use rusqlite::{params, OptionalExtension};
 
 use crate::session::{SessionStore, SessionStoreError};
@@ -11,16 +11,43 @@ pub struct SessionRecord {
     pub updated_at_ms: i64,
     pub archived: bool,
     pub active_branch: String,
+    /// ADR-043（schema v13）：Session→Workspace 归属，弱引用列；
+    /// 历史会话（迁移前创建）为 `None`，消费方按 Unassigned 处理。
+    pub workspace_id: Option<String>,
 }
 
 impl SessionStore {
+    /// 列出全部已持久化的 Session→Workspace 归属，包括归档会话。
+    pub async fn list_session_workspace_bindings(
+        &self,
+    ) -> Result<Vec<(SessionId, WorkspaceId)>, SessionStoreError> {
+        let rows = self
+            .database()
+            .call(|connection| -> rusqlite::Result<Vec<(String, String)>> {
+                let mut statement = connection.prepare(
+                    "SELECT session_id, workspace_id FROM sessions WHERE workspace_id IS NOT NULL ORDER BY session_id",
+                )?;
+                let rows = statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await??;
+        Ok(rows
+            .into_iter()
+            .map(|(session_id, workspace_id)| {
+                (SessionId::from(session_id), WorkspaceId::from(workspace_id))
+            })
+            .collect())
+    }
+
     /// 列出未归档会话，按 `updated_at_ms` 降序。
     pub async fn list_sessions(&self) -> Result<Vec<SessionRecord>, SessionStoreError> {
         let rows = self
             .database()
-            .call(|connection| -> rusqlite::Result<Vec<(String, String, i64, i64, i64, String)>> {
+            .call(|connection| -> rusqlite::Result<Vec<(String, String, i64, i64, i64, String, Option<String>)>> {
                 let mut statement = connection.prepare(
-                    "SELECT session_id, title, created_at_ms, updated_at_ms, archived, active_branch \
+                    "SELECT session_id, title, created_at_ms, updated_at_ms, archived, active_branch, workspace_id \
                      FROM sessions WHERE archived=0 ORDER BY updated_at_ms DESC",
                 )?;
                 let rows = statement
@@ -32,6 +59,7 @@ impl SessionStore {
                             row.get(3)?,
                             row.get(4)?,
                             row.get(5)?,
+                            row.get(6)?,
                         ))
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -41,7 +69,15 @@ impl SessionStore {
         Ok(rows
             .into_iter()
             .map(
-                |(session_id, title, created_at_ms, updated_at_ms, archived, active_branch)| {
+                |(
+                    session_id,
+                    title,
+                    created_at_ms,
+                    updated_at_ms,
+                    archived,
+                    active_branch,
+                    workspace_id,
+                )| {
                     SessionRecord {
                         session_id,
                         title,
@@ -49,6 +85,7 @@ impl SessionStore {
                         updated_at_ms,
                         archived: archived != 0,
                         active_branch,
+                        workspace_id,
                     }
                 },
             )
@@ -63,10 +100,10 @@ impl SessionStore {
         let lookup = session_id.clone();
         let row = self
             .database()
-            .call(move |connection| -> rusqlite::Result<Option<(String, String, i64, i64, i64, String)>> {
+            .call(move |connection| -> rusqlite::Result<Option<(String, String, i64, i64, i64, String, Option<String>)>> {
                 connection
                     .query_row(
-                        "SELECT session_id, title, created_at_ms, updated_at_ms, archived, active_branch \
+                        "SELECT session_id, title, created_at_ms, updated_at_ms, archived, active_branch, workspace_id \
                          FROM sessions WHERE session_id=?1",
                         params![lookup],
                         |row| {
@@ -77,13 +114,22 @@ impl SessionStore {
                                 row.get(3)?,
                                 row.get(4)?,
                                 row.get(5)?,
+                                row.get(6)?,
                             ))
                         },
                     )
                     .optional()
             })
             .await??;
-        let Some((session_id, title, created_at_ms, updated_at_ms, archived, active_branch)) = row
+        let Some((
+            session_id,
+            title,
+            created_at_ms,
+            updated_at_ms,
+            archived,
+            active_branch,
+            workspace_id,
+        )) = row
         else {
             return Err(SessionStoreError::SessionNotFound(session_id));
         };
@@ -94,6 +140,7 @@ impl SessionStore {
             updated_at_ms,
             archived: archived != 0,
             active_branch,
+            workspace_id,
         })
     }
 }

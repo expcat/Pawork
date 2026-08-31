@@ -7,10 +7,10 @@
 | 字段 | 当前事实 |
 | --- | --- |
 | 活动线 | **P1 项目与会话生命周期** |
-| 状态 | 🟢 E0–E2 已验证；P1 待启动 |
-| 本轮结果 | 正式 Host/Desktop 已在无 fixture / seed / mock 数据的环境中完成构建启动、添加真实项目、真实对话写文件、Git Changes 与 Terminal 主路径。 |
-| 下一动作 | 让 Session→Workspace 归属跨 Host 重启持久化，并用同一真实项目复验重开 Task、Changes 与 Terminal 上下文。 |
-| 本轮完成条件 | 构建/启动、项目、对话/文件、Git Changes、Terminal 五项有真实窗口与外部事实双证据；恢复边界被如实记录并进入 P1；定向门禁和相关 Spec 同步。**已满足。** |
+| 状态 | 🔵 P1 进行中；E0–E2 🟢 已验证。片 1（Session→Workspace 归属持久化，ADR-043 / schema v13）已实现 + 定向门禁通过，真窗口复验待人工验收 |
+| 本轮结果 | `sessions` 表 v13 纯追加可空 `workspace_id` 弱引用列（不回填、无 FK、不进 export）；`create_session_with_workspace` 将 session/main 分支/归属原子落盘，Host 启动全量读取并替换缓存；devfixture 内存绑定语义不变。 |
+| 下一动作 | 真窗口复验片 1：同一真实项目下重启 Host，重开 Task 归属正确、Changes 与 Terminal 上下文不变；通过后拆 P1 片 2（添加/切换/重开项目与新建/续聊会话的完整正式 UI 路径）。 |
+| 本轮完成条件 | 片 1：绑定跨重启持久化具备定向测试与真窗口双证据；P1 整体退出以 §4 表为准。 |
 | 当前阻塞 | 无。完整终端 stop/close 与 live exit/failure 需要 wire/ADR 演进，不在 P1 内以 UI 本地实现绕过。 |
 
 状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。任何“已实现”“自动检查通过”“真窗口通过”“等待人工确认”必须分开记录。

@@ -50,7 +50,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/tasks_host.rs` | ~90 | tasks 门面转发 + `parse_task_kind`；`tasks.json` 快照 load/replay 与原子写（tmp + rename） |
 | `src/persist.rs` | ~20 | `PersistThenRender`：先 `append_event`（用 session 当前 active branch）成功再交渲染 sink |
 | `src/services/mod.rs` | ~10 | 七服务模块声明（全 `pub(crate)`） |
-| `src/services/session.rs` | ~630 | `SessionService`：会话生命周期、workspace 绑定、事件序号 `next_sequence`、`resolve_session`（前缀/序号）、`resume_messages`（CLI：`seal_orphaned_approvals` 落 Denied）与 `resume_messages_keep_pending`（GUI：保留待审批）；`resolve_waiting_tool_call` 返回落库 envelope 序列供宿主补广播 |
+| `src/services/session.rs` | ~730 | `SessionService`：会话生命周期、workspace 绑定（ADR-043：初始绑定与 session/main 分支同事务落盘，启动时读取全部绑定并以 `replace_workspace_cache` 原子替换；`bind_session_workspace` 保持仅内存供 devfixture）、事件序号 `next_sequence`、`resolve_session`（前缀/序号）、`resume_messages`（CLI：`seal_orphaned_approvals` 落 Denied）与 `resume_messages_keep_pending`（GUI：保留待审批）；`resolve_waiting_tool_call` 返回落库 envelope 序列供宿主补广播 |
 | `src/services/run.rs` | ~600 | `RunService`：`chat_turn`/`chat_turn_with_run_id`（Plan gate → quota 预检 → TurnContext 装配含 `git_status_note` → engine `run_session` → usage 落账）、`compact_session` 手动压缩、`append_payload` 事件追加（返回 envelope 供补广播） |
 | `src/services/approval.rs` | ~500 | `ApprovalService`：审批模式与 workspace trust 配置、`ApprovalPromptHost` 委派、模式变更时重建 `ToolScheduler` 配置 |
 | `src/services/usage.rs` | ~400 | `UsageService`：持有 `ControlPlaneRuntime`；`projected_run_usage` 预算预检、`record_completed_usage` 落 `usage-ledger.sqlite3`、`usage_overview`/`session_usage`/`last_run_usage`/`estimate_cost_for` |
@@ -96,11 +96,11 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 
 ### 3.2 会话与运行
 
-- `create_session(title) -> SessionId`；`create_session_with_workspace(title, workspace_id)` 额外绑定归属。
-- `list_sessions() -> Vec<SessionRecord>`；`get_session(&SessionId) -> SessionRecord`（含 `active_branch`）。
+- `create_session(title) -> SessionId`；`create_session_with_workspace(title, workspace_id)` 额外绑定归属（ADR-043 起与 session/main 分支同事务持久化，跨 Host 重启保留；历史无绑定会话仍归 Unassigned）。
+- `list_sessions() -> Vec<SessionRecord>`；`get_session(&SessionId) -> SessionRecord`（含 `active_branch` 与可空 `workspace_id`）。
 - `resolve_session(spec)`：接受 id 前缀或列表序号，歧义/未命中报 `AppError`。
 - `next_sequence(&SessionId) -> u64`：该会话下一事件序号（宿主外持久化事件时用）。
-- `bind_session_workspace` / `session_workspace` / `session_workspace_for_record`：会话 ↔ workspace 映射维护与查询。
+- `bind_session_workspace`（仅进程内缓存，devfixture 用）/ `session_workspace` / `session_workspace_for_record`：会话 ↔ workspace 映射维护与查询；持久化绑定在开库时全量读取并替换缓存，重复开库不泄漏旧绑定；NULL 归 Unassigned，尚未登记的 canonical workspace id 原样保留。
 - `resume_messages(&SessionId) -> Vec<Message>`：**CLI resume 语义**——重放 active branch 构造消息序列，孤儿待审批工具调用持久 seal 为 Denied。
 - `resume_messages_keep_pending(&SessionId)`：**GUI resume 语义**——同重放但保留待审批，另返回 pending 列表供 snapshot 重建审批卡片。
 - `chat_turn(session, messages, sink, cancel) -> ModelResponseSummary`：单轮执行（详见 §4.2）；`sink` 是调用方渲染 sink，宿主内部自动套 `PersistThenRender`，调用方**不要**自己先落库。`chat_turn_with_run_id` 允许外部指定 `RunId`（GUI 路径用，保证响应与事件可关联）。

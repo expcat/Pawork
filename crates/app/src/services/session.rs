@@ -14,8 +14,9 @@ use pawork_storage::session::SessionRecord;
 use crate::{AppCore, AppError};
 
 pub(crate) struct SessionService {
-    /// 进程内 session → workspace 绑定。不改 S1 sessions DDL；
-    /// Host 重启后无绑定的历史 session 进 Unassigned。
+    /// 进程内 session → workspace 绑定缓存。生产创建路径（ADR-043）与
+    /// session/main 分支同事务落盘后更新本缓存；启动时从存储全量替换。
+    /// 无绑定的历史 session 进 Unassigned。
     pub(crate) workspaces: Mutex<HashMap<String, WorkspaceId>>,
 }
 
@@ -26,12 +27,32 @@ impl SessionService {
         }
     }
 
-    /// 记录 SessionCreate 带来的 canonical workspace（进程内）。
-    pub fn bind_workspace(&self, session_id: &SessionId, workspace_id: WorkspaceId) {
+    pub(crate) fn insert_workspace_cache(
+        &self,
+        session_id: &SessionId,
+        workspace_id: WorkspaceId,
+    ) {
         self.workspaces
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(session_id.as_str().to_string(), workspace_id);
+    }
+
+    /// 启动预载（ADR-043）：以存储中全部非 NULL 绑定原子替换缓存。
+    pub(crate) fn replace_workspace_cache(
+        &self,
+        bindings: Vec<(SessionId, WorkspaceId)>,
+    ) {
+        let mut workspaces = self
+            .workspaces
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        workspaces.clear();
+        workspaces.extend(
+            bindings
+                .into_iter()
+                .map(|(session_id, workspace_id)| (session_id.into_inner(), workspace_id)),
+        );
     }
 
     pub fn workspace(&self, session_id: &SessionId) -> Option<WorkspaceId> {
@@ -67,8 +88,13 @@ impl SessionService {
         title: impl Into<String>,
         workspace_id: WorkspaceId,
     ) -> Result<SessionId, AppError> {
-        let id = self.create_session(core, title).await?;
-        self.bind_workspace(&id, workspace_id);
+        let n = core.next_session.fetch_add(1, Ordering::Relaxed);
+        let ts = pawork_engine::now_timestamp();
+        let id = SessionId::from(format!("ses-{}-{n}", ts.as_unix_millis()));
+        core.store()?
+            .create_session_with_workspace(&id, title, ts, &workspace_id)
+            .await?;
+        self.insert_workspace_cache(&id, workspace_id);
         Ok(id)
     }
 
@@ -283,11 +309,108 @@ impl SessionService {
 mod tests {
     use pawork_domain::{
         AgentEvent, AgentEventEnvelope, ContentPart, EventId, EventSequence, MessageId,
-        MessageRole, RunId, SessionId, TextContent,
+        MessageRole, RunId, SessionId, TextContent, WorkspaceId,
     };
     use pawork_storage::session::DEFAULT_BRANCH_ID;
 
     use crate::testsupport::mock_core;
+
+    #[tokio::test]
+    async fn workspace_binding_survives_restart_via_startup_preload() {
+        use pawork_auth::{MemoryBackend, SecretBackend};
+        use pawork_workspace::config::PaworkConfig;
+
+        // 同一临时 data_dir 顺序开两个 AppCore：第一个实例写穿绑定并关停，
+        // 第二个实例经 open_store 启动预载恢复绑定（ADR-043）。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.db");
+        let backend: std::sync::Arc<dyn SecretBackend> =
+            std::sync::Arc::new(MemoryBackend::new());
+
+        let mut core = crate::AppCore::from_config_inner(
+            PaworkConfig::default(),
+            None,
+            None,
+            backend.clone(),
+            true,
+        )
+        .await
+        .expect("first core");
+        core.attach_workspace(dir.path()).expect("attach workspace 1");
+        core.open_store(&path).await.expect("open store 1");
+        let session = core
+            .create_session_with_workspace("restart-demo", WorkspaceId::from("ws-default"))
+            .await
+            .expect("create with workspace");
+        assert_eq!(
+            core.session_workspace(&session),
+            Some(WorkspaceId::from("ws-default")),
+            "写穿后首实例进程内缓存同步更新"
+        );
+        let unknown_session = SessionId::from("unknown-workspace");
+        core.store()
+            .expect("store 1")
+            .create_session_with_workspace(
+                &unknown_session,
+                "unknown",
+                pawork_engine::now_timestamp(),
+                &WorkspaceId::from("ws-missing"),
+            )
+            .await
+            .expect("create unknown workspace session");
+        core.store()
+            .expect("store 1")
+            .database()
+            .call({
+                let session_id = session.as_str().to_string();
+                move |connection| {
+                    connection.execute(
+                        "UPDATE sessions SET archived=1 WHERE session_id=?1",
+                        [session_id],
+                    )
+                }
+            })
+            .await
+            .expect("actor")
+            .expect("archive");
+        core.shutdown().await.expect("shutdown 1");
+
+        let mut restarted = crate::AppCore::from_config_inner(
+            PaworkConfig::default(),
+            None,
+            None,
+            backend,
+            true,
+        )
+        .await
+        .expect("second core");
+        restarted
+            .attach_workspace(dir.path())
+            .expect("attach workspace 2");
+        restarted.open_store(&path).await.expect("open store 2");
+        assert_eq!(
+            restarted.session_workspace_for_record(session.as_str()),
+            Some(WorkspaceId::from("ws-default")),
+            "重启后第二个实例必须从存储预载恢复归档会话的归属"
+        );
+        assert_eq!(
+            restarted.session_workspace_for_record(unknown_session.as_str()),
+            Some(WorkspaceId::from("ws-missing")),
+            "尚未登记的 canonical workspace id 必须原样保留"
+        );
+
+        let empty_path = dir.path().join("empty-session.db");
+        restarted
+            .open_store(&empty_path)
+            .await
+            .expect("open empty store");
+        assert_eq!(
+            restarted.session_workspace_for_record(session.as_str()),
+            None,
+            "重复 open_store 必须清掉旧库的陈旧绑定"
+        );
+        restarted.shutdown().await.expect("shutdown 2");
+    }
 
     fn committed(session: &SessionId, sequence: u64, id: &str) -> AgentEventEnvelope {
         AgentEventEnvelope::new(

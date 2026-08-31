@@ -55,7 +55,7 @@ flowchart LR
 | --- | --- | --- |
 | PRD-CORE-01 | `pawork` 必须是 Core 唯一正式宿主，保持纯 Rust 和单一生产装配点。 | 已实现；架构红线。 |
 | PRD-CHAT-01 | 必须支持流式多轮 chat、单次 run、模型选择、取消和可读错误。 | 已实现。 |
-| PRD-SESSION-01 | 必须持久化 Agent 事件并支持 list/show/resume/export/import/fork；重放结果须确定。 | 已实现；schema v12、export v3、envelope v1。 |
+| PRD-SESSION-01 | 必须持久化 Agent 事件并支持 list/show/resume/export/import/fork；重放结果须确定。 | 已实现；schema v13、export v3、envelope v1。 |
 | PRD-AGENT-01 | Agent loop 必须以 canonical request 驱动模型与工具，不得在 Engine 中写 Provider 特例。 | 已实现；依赖守护测试在位。 |
 | PRD-TOOL-01 | 必须提供工作区内读、查、写、补丁和命令执行工具，并让 descriptor 明确只读/审批语义。 | 已实现；八工具。 |
 | PRD-SAFE-01 | 文件与进程操作必须经过工作区路径、Policy、审批和 Sandbox 约束；不可静默放宽灾难地板。 | 已实现；平台能力与回退限制见 [security.md](security.md)。 |
