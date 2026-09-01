@@ -272,6 +272,7 @@ pub fn app_event_kind(event: &AppEvent) -> &'static str {
         AppEvent::ToolCompleted { .. } => "tool_completed",
         AppEvent::DiffChanged { .. } => "diff_changed",
         AppEvent::TerminalOutput { .. } => "terminal_output",
+        AppEvent::TerminalExited { .. } => "terminal_exited",
         AppEvent::AuthChanged { .. } => "auth_changed",
         AppEvent::ProviderStatus { .. } => "provider_status",
         AppEvent::PluginError { .. } => "plugin_error",

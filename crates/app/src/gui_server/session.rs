@@ -213,6 +213,9 @@ async fn run(
             event = event_rx.recv() => {
                 match event {
                     Some(envelope) => {
+                        if !deliverable_to_negotiated(&envelope.payload, negotiated) {
+                            continue;
+                        }
                         if send_frame(
                             connection.as_ref(),
                             &ServerFrame::Event(envelope),
@@ -784,6 +787,16 @@ fn negotiated_version(response: &HandshakeResponse) -> ApiVersion {
     }
 }
 
+/// ADR-045 D3：additive wire 演进按协商 minor 门控——新增事件变体不推给
+/// 老 minor 连接（老客户端 serde 遇未知 tag 会 decode 失败断流）；该连接仍
+/// 可从快照 terminal_sessions 的 state 获知终态，行为不劣于演进前。
+fn deliverable_to_negotiated(payload: &pawork_protocol::AppEvent, negotiated: ApiVersion) -> bool {
+    match payload {
+        pawork_protocol::AppEvent::TerminalExited { .. } => negotiated.minor >= 3,
+        _ => true,
+    }
+}
+
 fn granted_capabilities(response: &HandshakeResponse) -> Vec<GuiCapability> {
     match response {
         HandshakeResponse::Accepted { capabilities, .. } => capabilities.clone(),
@@ -906,8 +919,15 @@ fn manager_error_frame(request_id: Option<String>, error: &ManagerError) -> Serv
 }
 
 fn host_error_to_protocol(error: &GuiHostError) -> ProtocolError {
+    // ADR-045：not_found 是 wire 承诺的可观察语义（terminal_close 幂等
+    // 边界：未知/重复 id 报 not_found），映射到既有 RequestNotFound 码，
+    // 客户端可据码收敛而非解析 message；其余宿主错误维持 Internal 不变。
+    let code = match error.code.as_str() {
+        "not_found" => ProtocolErrorCode::RequestNotFound,
+        _ => ProtocolErrorCode::Internal,
+    };
     ProtocolError {
-        code: ProtocolErrorCode::Internal,
+        code,
         message: error.message.clone(),
         retryable: error.retryable,
     }
@@ -948,4 +968,29 @@ fn now_timestamp() -> pawork_domain::Timestamp {
             .map(|duration| duration.as_millis() as u64)
             .unwrap_or(0),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ADR-045：宿主 not_found（terminal_close 幂等边界）在 wire 上可观察
+    /// 为 RequestNotFound；其余宿主错误维持 Internal。
+    #[test]
+    fn host_error_maps_not_found_to_request_not_found() {
+        let not_found = host_error_to_protocol(&GuiHostError {
+            code: "not_found".into(),
+            message: "terminal pty-1 is not registered".into(),
+            retryable: false,
+        });
+        assert_eq!(not_found.code, ProtocolErrorCode::RequestNotFound);
+        assert_eq!(not_found.message, "terminal pty-1 is not registered");
+
+        let other = host_error_to_protocol(&GuiHostError {
+            code: "policy_denied".into(),
+            message: "denied".into(),
+            retryable: false,
+        });
+        assert_eq!(other.code, ProtocolErrorCode::Internal);
+    }
 }

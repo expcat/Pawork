@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use pawork_client::projection::TimelineProjection;
 use pawork_client::{
     AppEvent, AppEventEnvelope, EventStream, ResumeDisposition, ResumeOutcome, RunState, Snapshot,
-    TimelineItemKind, TimelinePage,
+    TerminalExitReason, TimelineItemKind, TimelinePage,
 };
 use serde_json::Value;
 
@@ -678,6 +678,45 @@ impl DesktopProjection {
         })
     }
 
+    /// ADR-045：live 终态事件与快照 state 同口径——runtime_state 记录
+    /// exited/killed/failed，availability 诚实降级 stale（旧输出不再复活，
+    /// 见 apply_terminal_output 的终态闸门）。
+    pub fn apply_terminal_exited(
+        &mut self,
+        terminal_session_id: &str,
+        reason: TerminalExitReason,
+    ) -> bool {
+        let state = match reason {
+            TerminalExitReason::Exited => "exited",
+            TerminalExitReason::Killed => "killed",
+            TerminalExitReason::Failed => "failed",
+        };
+        self.update_terminal(terminal_session_id, |terminal| {
+            terminal.runtime_state = Some(state.into());
+            terminal.availability = TerminalAvailability::Stale {
+                reason: format!("terminal {state}"),
+            };
+        })
+    }
+
+    /// terminal_close 清理已退出终端的回执：Host 已注销（该路径无 live
+    /// 事件），本地同步移除；当前终端被移除时回到 not started 占位。
+    pub fn remove_terminal(&mut self, terminal_session_id: &str) -> bool {
+        let existed = self
+            .terminals
+            .iter()
+            .any(|terminal| terminal.session_id.as_deref() == Some(terminal_session_id));
+        if !existed {
+            return false;
+        }
+        self.terminals
+            .retain(|terminal| terminal.session_id.as_deref() != Some(terminal_session_id));
+        if self.terminal.session_id.as_deref() == Some(terminal_session_id) {
+            self.terminal = TerminalState::default();
+        }
+        true
+    }
+
     pub fn mark_terminal_failed(
         &mut self,
         terminal_session_id: &str,
@@ -950,6 +989,14 @@ impl DesktopProjection {
         } = &envelope.payload
         {
             return self.apply_terminal_output(terminal_session_id, delta);
+        }
+        if let AppEvent::TerminalExited {
+            terminal_session_id,
+            reason,
+            ..
+        } = &envelope.payload
+        {
+            return self.apply_terminal_exited(terminal_session_id, *reason);
         }
         // R3 Wave A 审查修复（P1）：rail 状态点的 run 成员关系跨会话维护，
         // 必须先于 active-session 闸门——RunChanged 抵达时该会话可能并非
@@ -3040,6 +3087,73 @@ mod tests {
             }
         }))
         .expect("decode TerminalOutput")
+    }
+
+    fn terminal_exited(sequence: u64, terminal: &str, reason: &str) -> AppEventEnvelope {
+        serde_json::from_value(json!({
+            "api_version": { "major": 1, "minor": 3 },
+            "instance_id": "instance-1",
+            "event_id": format!("term-exit-{sequence}"),
+            "global_sequence": sequence,
+            "stream": { "type": "terminal", "id": terminal },
+            "stream_sequence": sequence,
+            "timestamp": 1_000 + sequence,
+            "source": { "type": "core" },
+            "payload": {
+                "type": "terminal_exited",
+                "data": {
+                    "terminal_session_id": terminal,
+                    "exit_code": 0,
+                    "reason": reason
+                }
+            }
+        }))
+        .expect("decode TerminalExited")
+    }
+
+    /// ADR-045：live 终态事件即时刷新（不等断连重连快照），且与快照终态
+    /// 同口径——旧输出不得复活终态终端。
+    #[test]
+    fn terminal_exited_event_marks_terminal_stale_and_blocks_resurrection() {
+        let mut projection = DesktopProjection::default();
+        projection.workspace_id = Some("ws-a".into());
+        projection.apply_terminal_created("ws-a".into(), "term-a".into());
+        assert_eq!(
+            projection.terminal.runtime_state.as_deref(),
+            Some("running")
+        );
+
+        assert!(projection.apply_event(&terminal_exited(1, "term-a", "killed")));
+        assert_eq!(projection.terminal.runtime_state.as_deref(), Some("killed"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Stale { .. }
+        ));
+        // 迟到输出仍追加（保留现场），但不得复活 running/Ready。
+        assert!(projection.apply_event(&terminal_output(2, "term-a", "late")));
+        assert_eq!(projection.terminal.runtime_state.as_deref(), Some("killed"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Stale { .. }
+        ));
+    }
+
+    /// ADR-045：Close 清理回执后本地移除条目；当前终端回到 not started。
+    #[test]
+    fn remove_terminal_clears_current_terminal_after_close() {
+        let mut projection = DesktopProjection::default();
+        projection.workspace_id = Some("ws-a".into());
+        projection.apply_terminal_created("ws-a".into(), "term-a".into());
+        projection.apply_event(&terminal_exited(1, "term-a", "exited"));
+
+        assert!(!projection.remove_terminal("term-unknown"));
+        assert!(projection.remove_terminal("term-a"));
+        assert!(projection.terminals.is_empty());
+        assert_eq!(projection.terminal.session_id, None);
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Stale { .. }
+        ));
     }
 
     #[test]

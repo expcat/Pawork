@@ -387,6 +387,9 @@ pub struct AppView {
     /// create 请求携带的 workspace 相对 cwd：Host 回执不带 cwd（wire 冻
     /// 结），成功后由 UI 补到新终端，避免显示退回默认 "."。
     terminal_pending_create_cwd: Option<String>,
+    /// 单一 Terminal close pending（ADR-045）：防连点重复提交；回执或
+    /// 断连时清除。
+    terminal_pending_close: Option<String>,
     /// 待应用的终端尺寸草稿：None 跟随 Host 权威 columns/rows；stepper
     /// 修改产生本地草稿，resize 回执或终端切换后复位。
     terminal_size_draft: Option<(u16, u16)>,
@@ -478,6 +481,7 @@ pub struct AppView {
     terminal_rows_inc_focus: FocusHandle,
     terminal_back_to_bottom_focus: FocusHandle,
     terminal_start_focus: FocusHandle,
+    terminal_close_focus: FocusHandle,
     /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
     /// 无副作用，随窗口生命周期回收）。
     rail_row_focus: BTreeMap<String, FocusHandle>,
@@ -544,6 +548,7 @@ impl AppView {
             terminal_pending_write: None,
             terminal_pending_create_workspace: None,
             terminal_pending_create_cwd: None,
+            terminal_pending_close: None,
             terminal_size_draft: None,
             terminal_pending_resize: None,
             event_task: None,
@@ -652,6 +657,10 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
             terminal_start_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_close_focus: cx
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
@@ -1063,6 +1072,7 @@ impl AppView {
                 self.terminal_pending_write = None;
                 self.terminal_pending_create_workspace = None;
                 self.terminal_pending_create_cwd = None;
+                self.terminal_pending_close = None;
                 self.terminal_pending_resize = None;
                 // 断连终止一切进行中分页，避免 settle barrier 永久停发。
                 self.timeline_paging = false;
@@ -1254,6 +1264,37 @@ impl AppView {
                 {
                     self.status_hint = Some(format!("Terminal resize failed: {reason}"));
                 }
+            }
+            ControllerEvent::TerminalCloseSucceeded {
+                terminal_session_id,
+            } => {
+                if self.terminal_pending_close.as_deref() == Some(terminal_session_id.as_str()) {
+                    self.terminal_pending_close = None;
+                }
+                // exited/killed 的 Close 清理路径：Host 已注销且不再发 live
+                // 事件，本地同步移除条目；running 的 Stop 路径终态由 live
+                // TerminalExited 刷新，回执不重复改 projection。
+                if self
+                    .projection
+                    .terminals
+                    .iter()
+                    .find(|terminal| {
+                        terminal.session_id.as_deref() == Some(terminal_session_id.as_str())
+                    })
+                    .is_some_and(terminal_known_exited)
+                {
+                    self.projection.remove_terminal(&terminal_session_id);
+                    self.status_hint = Some("Terminal closed.".into());
+                }
+            }
+            ControllerEvent::TerminalCloseFailed {
+                terminal_session_id,
+                reason,
+            } => {
+                if self.terminal_pending_close.as_deref() == Some(terminal_session_id.as_str()) {
+                    self.terminal_pending_close = None;
+                }
+                self.status_hint = Some(format!("Terminal close failed: {reason}"));
             }
             ControllerEvent::MessageSent {
                 session_id,
@@ -1851,6 +1892,13 @@ impl AppView {
             Some("terminal-rows-inc")
         } else if self.terminal_back_to_bottom_focus.is_focused(window) && activate {
             Some("terminal-back-to-bottom")
+        } else if self.terminal_close_focus.is_focused(window)
+            && activate
+            && self.terminal_pending_close.is_none()
+            && terminal_close_label(&self.projection.connection, &self.projection.terminal)
+                .is_some()
+        {
+            Some("terminal-close")
         } else if self.terminal_start_focus.is_focused(window)
             && activate
             && terminal_start_enabled(
@@ -1892,6 +1940,7 @@ impl AppView {
                 self.on_apply_terminal_size(window, cx)
             }
             "terminal-start" => self.on_start_terminal(window, cx),
+            "terminal-close" => self.on_close_terminal(window, cx),
             _ => unreachable!(),
         }
         cx.stop_propagation();
@@ -2879,6 +2928,24 @@ pub(crate) fn terminal_known_exited(terminal: &TerminalState) -> bool {
         terminal.runtime_state.as_deref(),
         Some("exited") | Some("killed")
     )
+}
+
+/// Terminal Stop/Close 的同槽谓词（ADR-045）：running → Some("Stop")（真实
+/// terminal_close 终止），已知 exited/killed → Some("Close")（清理 Host
+/// tombstone），其余 None。视觉按钮、AX 节点与键盘路径必须使用同一谓词。
+pub(crate) fn terminal_close_label(
+    connection: &ConnectionState,
+    terminal: &TerminalState,
+) -> Option<&'static str> {
+    if terminal_can_operate(connection, terminal) {
+        Some("Stop")
+    } else if terminal_known_exited(terminal)
+        && matches!(connection, ConnectionState::Connected { .. })
+    {
+        Some("Close")
+    } else {
+        None
+    }
 }
 
 /// 底部 Start/Size 的单槽谓词。已知 exited/killed 终端的 Start 恢复为

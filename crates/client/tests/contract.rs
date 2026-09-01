@@ -52,13 +52,17 @@ impl Harness {
             .await
             .expect("session store");
         let provider = MockProvider::new(script).with_id(ProviderId::from("mock"));
-        let core = Arc::new(AppCore::from_parts(
+        let mut core = AppCore::from_parts(
             Arc::new(provider),
             None,
             ModelId::from("model-1"),
             ProviderId::from("mock"),
             Some(store),
-        ));
+        );
+        // ADR-044 起 Run 按 workspace 路由：harness 须登记 ws-default
+        // （指向本测试 tempdir），否则 RunStart fail-closed。
+        core.attach_workspace(temp.path()).expect("attach workspace");
+        let core = Arc::new(core);
         let adapter = Arc::new(GuiHostAdapter::new(core));
         let handshake = HandshakeService::new(
             GuiHost::instance_id(adapter.as_ref()),

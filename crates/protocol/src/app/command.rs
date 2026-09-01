@@ -377,6 +377,9 @@ pub enum AppCommand {
         columns: u16,
         rows: u16,
     },
+    TerminalClose {
+        terminal_session_id: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -13,8 +13,8 @@ use std::time::Duration;
 use pawork_client::{
     ActorIdentity, AppCommand, AppEventEnvelope, AppQuery, AppResponse, AppResponseEnvelope,
     ClientAuthentication, ClientConfig, ClientError, CommandSource, ConnectOptions, GlobalSequence,
-    GuiCapability, GuiClient, GuiTransportClient, LocalTransport, ResumeDisposition, ResumeOutcome,
-    Snapshot, TimelinePage, TransportEndpoint, TOKEN_SCHEME,
+    GuiCapability, GuiClient, GuiTransportClient, LocalTransport, ProtocolErrorCode,
+    ResumeDisposition, ResumeOutcome, Snapshot, TimelinePage, TransportEndpoint, TOKEN_SCHEME,
 };
 use serde_json::json;
 
@@ -73,6 +73,15 @@ pub enum ControllerEvent {
         rows: u16,
     },
     TerminalResizeFailed {
+        terminal_session_id: String,
+        reason: String,
+    },
+    /// terminal_close 已被 Host 接受（ADR-045）。running 的终态由 live
+    /// TerminalExited 事件刷新；exited 清理由 UI 在回执后本地移除条目。
+    TerminalCloseSucceeded {
+        terminal_session_id: String,
+    },
+    TerminalCloseFailed {
         terminal_session_id: String,
         reason: String,
     },
@@ -922,6 +931,67 @@ impl DesktopController {
         });
     }
 
+    /// ADR-045：终止（running）或清理（exited/killed tombstone）终端会话。
+    /// 成功仅发 Succeeded 回执：running 的终态由 live TerminalExited 刷新，
+    /// exited 清理由 UI 在回执后本地移除条目，不在此重复改 projection。
+    pub fn terminal_close(&self, terminal_session_id: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::TerminalCloseFailed {
+                terminal_session_id,
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = terminal_close_command(&terminal_session_id);
+            match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) if !matches!(&response.response, AppResponse::Error(_)) => {
+                    let _ = events
+                        .send(ControllerEvent::TerminalCloseSucceeded {
+                            terminal_session_id,
+                        })
+                        .await;
+                }
+                Ok(response) => {
+                    let _ = events
+                        .send(ControllerEvent::TerminalCloseFailed {
+                            terminal_session_id,
+                            reason: format!("server returned {:?}", response.response),
+                        })
+                        .await;
+                }
+                Err(error) => {
+                    // ADR-045：Close 的目标已从 Host 注册表消失（如本端此前
+                    // 的 Stop 已就地注销）——not_found 是「条目不存在」的
+                    // 权威确认，清理目标确定达成，按成功收敛让 UI 移除本地
+                    // 条目，不把诚实 not_found 当失败卡死面板。
+                    if matches!(
+                        &error,
+                        ClientError::Protocol(protocol)
+                            if protocol.code == ProtocolErrorCode::RequestNotFound
+                    ) {
+                        let _ = events
+                            .send(ControllerEvent::TerminalCloseSucceeded {
+                                terminal_session_id,
+                            })
+                            .await;
+                        return;
+                    }
+                    let _ = events
+                        .send(ControllerEvent::TerminalCloseFailed {
+                            terminal_session_id,
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
+            }
+        });
+    }
+
     pub fn load_models(&self) {
         let Some(client) = self.current_client() else {
             return;
@@ -1242,6 +1312,16 @@ fn terminal_resize_command(terminal_session_id: &str, columns: u16, rows: u16) -
         }
     }))
     .expect("terminal_resize command shape is frozen")
+}
+
+fn terminal_close_command(terminal_session_id: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "terminal_close",
+        "params": {
+            "terminal_session_id": terminal_session_id
+        }
+    }))
+    .expect("terminal_close command shape is frozen")
 }
 
 fn forked_session_id(response: &AppResponseEnvelope) -> Option<String> {
@@ -1670,6 +1750,10 @@ mod tests {
         assert_eq!(resize["method"], "terminal_resize");
         assert_eq!(resize["params"]["columns"], 80);
         assert_eq!(resize["params"]["rows"], 24);
+
+        let close = serde_json::to_value(terminal_close_command("term-1")).unwrap();
+        assert_eq!(close["method"], "terminal_close");
+        assert_eq!(close["params"]["terminal_session_id"], "term-1");
     }
 
     #[test]

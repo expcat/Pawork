@@ -781,6 +781,16 @@ fn command_terminal_resize<'a>(
     ))
 }
 
+fn command_terminal_close<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::terminal::terminal_close(
+        adapter, envelope, command,
+    ))
+}
+
 static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
     ("workspace_list", query_workspace_list),
     ("session_get", query_session_get),
@@ -803,6 +813,7 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("terminal_create", command_terminal_create),
     ("terminal_write", command_terminal_write),
     ("terminal_resize", command_terminal_resize),
+    ("terminal_close", command_terminal_close),
 ];
 
 impl GuiHostAdapter {

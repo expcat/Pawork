@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 const V1_0: ApiVersion = ApiVersion { major: 1, minor: 0 };
 const V1_1: ApiVersion = ApiVersion { major: 1, minor: 1 };
 const V1_2: ApiVersion = ApiVersion { major: 1, minor: 2 };
+const V1_3: ApiVersion = ApiVersion { major: 1, minor: 3 };
 
 /// (wire 名, 最小 params 样本；None = unit 变体无 params)。
 fn command_samples() -> Vec<(&'static str, Option<Value>)> {
@@ -71,6 +72,10 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
         (
             "terminal_resize",
             Some(json!({"terminal_session_id": "t-1", "columns": 80, "rows": 24})),
+        ),
+        (
+            "terminal_close",
+            Some(json!({"terminal_session_id": "t-1"})),
         ),
     ]
 }
@@ -158,7 +163,7 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 19);
+    assert_eq!(commands.len(), 20);
     assert_eq!(queries.len(), 11);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
@@ -445,6 +450,16 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 V1_0,
+            ),
+            AppCommand::TerminalClose { .. } => assert_command_entry(
+                &command,
+                "terminal_close",
+                true,
+                Some(GuiCapability::TerminalStreaming),
+                None,
+                false,
+                false,
+                V1_3,
             ),
         }
     }

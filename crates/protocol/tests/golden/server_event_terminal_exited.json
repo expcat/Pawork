@@ -4,15 +4,16 @@
       "major": 1,
       "minor": 3
     },
-    "event_id": "event-1",
-    "global_sequence": 1,
+    "event_id": "event-2",
+    "global_sequence": 2,
     "instance_id": "instance-1",
     "payload": {
       "data": {
-        "delta": "echo hi\r\n",
+        "exit_code": 0,
+        "reason": "exited",
         "terminal_session_id": "terminal-1"
       },
-      "type": "terminal_output"
+      "type": "terminal_exited"
     },
     "source": {
       "type": "core"
@@ -21,8 +22,8 @@
       "id": "terminal-1",
       "type": "terminal"
     },
-    "stream_sequence": 1,
-    "timestamp": 4
+    "stream_sequence": 2,
+    "timestamp": 5
   },
   "type": "event"
 }

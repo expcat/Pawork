@@ -21,7 +21,8 @@ use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::display_time;
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
-    terminal_can_operate, terminal_known_exited, terminal_start_enabled, timeline, AppView,
+    terminal_can_operate, terminal_close_label, terminal_known_exited, terminal_start_enabled,
+    timeline, AppView,
     MenuKind, WORKSPACE_EMPTY_HINT,
 };
 
@@ -207,6 +208,7 @@ impl AppView {
                 }
             }
             "terminal-back-to-bottom" => self.terminal_scroll.jump_to_bottom(),
+            "terminal-close" => self.on_close_terminal(window, cx),
             "activity-open-changes" => self.on_activity_open_changes(window, cx),
             "group-timeline" => self.on_select_grouping(TaskRailGrouping::Timeline, window, cx),
             "group-projects" => self.on_select_grouping(TaskRailGrouping::Projects, window, cx),
@@ -1649,6 +1651,14 @@ impl AppView {
             self.terminal_pending_resize.is_some(),
         );
         let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
+        // 与可见按钮（inspector.rs）同 gate：running → Stop，已知
+        // exited/killed → Close，其余状态不发布节点。
+        let terminal_close_label =
+            terminal_close_label(&self.projection.connection, &self.projection.terminal)
+                .map(|label| match label {
+                    "Stop" => "Stop terminal",
+                    _ => "Close terminal",
+                });
         let mut terminal = AxNode::new("terminal", AxRole::Group, "Terminal", frame)
             // G1：头部尺寸组 = 列 stepper 对 + apply + 行 stepper 对，与可见
             // 控件同 gate / 同 id；apply 仍是唯一下发入口。
@@ -1797,6 +1807,26 @@ impl AppView {
                 .enabled(terminal_start_enabled)
                 .action(AxAction::Press),
             );
+        if let Some(close_label) = terminal_close_label {
+            terminal = terminal.child(
+                AxNode::new(
+                    "terminal-close",
+                    AxRole::Button,
+                    close_label,
+                    AxRect::new(
+                        frame.x + frame.width - PAD * 2.0 - button_width * 2.0,
+                        input_y,
+                        button_width,
+                        input_height,
+                    ),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.terminal_close_focus.is_focused(window),
+                )
+                .enabled(self.terminal_pending_close.is_none())
+                .action(AxAction::Press),
+            );
+        }
         // 与可见回到底部按钮（inspector.rs）一致：仅在滚动脱钩时发布。
         if !self.terminal_scroll.is_following() {
             terminal = terminal.child(

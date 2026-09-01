@@ -11,7 +11,10 @@ use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::panel::Panel;
 use crate::ui::theme::{dark, font, metrics};
 
-use super::{terminal_can_operate, terminal_known_exited, terminal_start_enabled, AppView};
+use super::{
+    terminal_can_operate, terminal_close_label, terminal_known_exited, terminal_start_enabled,
+    AppView,
+};
 
 /// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
 pub(super) const TERMINAL_EMPTY_OUTPUT: &str = "Terminal output will appear here.";
@@ -283,6 +286,11 @@ impl AppView {
             self.terminal_pending_resize.is_some(),
         );
         let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
+        // ADR-045：running 显示 Stop（真实 terminal_close 终止）；已知
+        // exited/killed 显示 Close（清理 Host tombstone 与本地条目）；其余
+        // 状态不占位。在途 close 期间禁用，防连点重复提交。
+        let terminal_close_action =
+            terminal_close_label(&self.projection.connection, terminal);
         div()
             .flex()
             .flex_col()
@@ -422,6 +430,25 @@ impl AppView {
                     .border_t_1()
                     .border_color(dark().border.subtle)
                     .child(div().flex_1().child(self.terminal_input.clone()))
+                    .when(terminal_close_action.is_some(), |row| {
+                        let label = terminal_close_action.unwrap_or("Stop");
+                        row.child(
+                            Button::new("terminal-close")
+                                .variant(ButtonVariant::Raised)
+                                .disabled(self.terminal_pending_close.is_some())
+                                .text_size(font::XS)
+                                .text_color(dark().text.primary)
+                                .disabled_text_color(dark().text.primary)
+                                .label(label)
+                                .track_focus(&self.terminal_close_focus)
+                                .on_click(cx.listener(move |view, event, window, cx| {
+                                    if view.consume_button_key_click("terminal-close", event) {
+                                        return;
+                                    }
+                                    view.on_close_terminal(window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         // 迁移前 terminal-start 未设文字色（继承 text.primary），
                         // 禁用态亦保持同色，显式钉住避免 Raised 默认的 disabled 色。
@@ -457,6 +484,29 @@ impl AppView {
 
     pub(super) fn on_start_terminal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.ensure_terminal(cx);
+        cx.notify();
+    }
+
+    /// ADR-045：Stop（running → terminal_close 终止）与 Close（已知
+    /// exited/killed → terminal_close 清理 Host tombstone）共用一个入口；
+    /// 语义差异由 Host 侧 kill 幂等承载，UI 不重复分叉。
+    pub(super) fn on_close_terminal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.terminal_pending_close.is_some() {
+            return;
+        }
+        if !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) {
+            self.status_hint = Some("Terminal needs a live connection.".into());
+            cx.notify();
+            return;
+        }
+        let Some(id) = self.projection.terminal.session_id.clone() else {
+            return;
+        };
+        self.terminal_pending_close = Some(id.clone());
+        self.controller.terminal_close(id);
         cx.notify();
     }
 

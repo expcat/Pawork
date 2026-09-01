@@ -115,4 +115,5 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
   - [ADR-042](adr/ADR-042-desktop-accessibility-bridge.md) Desktop 原生 Accessibility bridge（保持 GPUI 0.2.2；显式语义树 + AppKit 虚拟 AX 元素 + action 回到既有 AppView gate）。
   - [ADR-043](adr/ADR-043-session-workspace-binding-persistence.md) Session→Workspace 归属持久化（schema v13 纯追加可空列，写穿 + 启动预载；否决 session_tags 借用与侧车双轨）。
   - [ADR-044](adr/ADR-044-persistent-workspace-registry.md) 持久项目注册表与会话级 Workspace 路由（schema v14；复用既有 wire，不新增协议变体）。
-- 新决策继续以 ADR 记录，编号续接（下一个 ADR-045），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。
+  - [ADR-045](adr/ADR-045-terminal-lifecycle-wire-evolution.md) Terminal 生命周期 wire 演进（Accepted：`terminal_close` 命令 + `TerminalExited` live 事件、API minor 1.3、新事件按协商 minor 门控推送、golden 先行）。
+- 新决策继续以 ADR 记录，编号续接（下一个 ADR-046），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。

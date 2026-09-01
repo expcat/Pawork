@@ -24,10 +24,10 @@
 | `src/snapshot.rs` | ~40 | `Snapshot::validate`：每节 `data` 与 `artifact_id` 恰一存在；inline `data` ≤256 KiB，超限必须转 artifact |
 | `src/client_auth.rs` | ~400 | feature `client-auth`：`Token`（`getrandom` 32 字节、hex 64 字符、Debug 脱敏、`constant_time_eq`）、`TokenStore`（token 文件生成/加载/删除，Unix 父目录 0700 + 文件 0600）、`TokenAuthenticator`（实现 `ClientAuthenticator`，`TOKEN_SCHEME = "pawork-token"`）、`ClientAuthError` |
 | `src/app/mod.rs` | ~15 | 子模块声明；`command` / `event` / `query` / `quota` / `limits` / `version` glob 到 `app::*`（registry 不上 glob，走 `app::registry::` 路径） |
-| `src/app/version.rs` | ~200 | `ApiVersion`（major 相等即兼容、`bump_minor`）、`V1_0` / `V1_1` / `API_VERSION = 1.2`、`SUPPORTED_API_VERSIONS = [1.0, 1.1, 1.2]`、`ApiHandle{instance_id, api_version}`；文档性 `PROTOCOL_CRATE_COMPATIBILITY` 映射表；Control Plane 常量：`CONTROL_PLANE_SCHEMA_VERSION = 1`、默认 tenant / account / principal（`local-*`）、`ControlPlaneScope`（serde 缺省即默认 scope） |
-| `src/app/command.rs` | ~670 | `AppCommandEnvelope`（`api_version` / `command_id` / `source` / `identity` / `expected_revision?` / `idempotency_key?` / `issued_at`）；`CommandSource` 6 变体、`ActorIdentity` 6 变体（`canonical_principal()` 供审计）；`AppCommand` 19 变体（清单见 §3.1）；`ApprovalDecision`（approve_once / approve_for_run / deny / cancel）；`WorkspaceRelativePath`（构造即校验：拒绝绝对路径、`..`、Windows 盘符/UNC、反斜杠、控制字符；`FromStr` / serde 同路径校验）；IDE 上下文：`ClientContextSnapshot`（序列化 ≤1 MiB / ≤128 文档 / ≤1024 诊断 / URI ≤4 KiB 且拒 `..` / 诊断消息 ≤4 KiB，`validate()` fail-closed）及 `ClientDocumentContext` / `ClientDiagnostic` / `ClientTextRange` / `ClientTextPosition` / `ClientDiagnosticSeverity` |
+| `src/app/version.rs` | ~200 | `ApiVersion`（major 相等即兼容、`bump_minor`）、`V1_0` / `V1_1` / `V1_2` / `V1_3`、`API_VERSION = 1.3`、`SUPPORTED_API_VERSIONS = [1.0, 1.1, 1.2, 1.3]`、`ApiHandle{instance_id, api_version}`；文档性 `PROTOCOL_CRATE_COMPATIBILITY` 映射表；Control Plane 常量：`CONTROL_PLANE_SCHEMA_VERSION = 1`、默认 tenant / account / principal（`local-*`）、`ControlPlaneScope`（serde 缺省即默认 scope） |
+| `src/app/command.rs` | ~670 | `AppCommandEnvelope`（`api_version` / `command_id` / `source` / `identity` / `expected_revision?` / `idempotency_key?` / `issued_at`）；`CommandSource` 6 变体、`ActorIdentity` 6 变体（`canonical_principal()` 供审计）；`AppCommand` 20 变体（清单见 §3.1）；`ApprovalDecision`（approve_once / approve_for_run / deny / cancel）；`WorkspaceRelativePath`（构造即校验：拒绝绝对路径、`..`、Windows 盘符/UNC、反斜杠、控制字符；`FromStr` / serde 同路径校验）；IDE 上下文：`ClientContextSnapshot`（序列化 ≤1 MiB / ≤128 文档 / ≤1024 诊断 / URI ≤4 KiB 且拒 `..` / 诊断消息 ≤4 KiB，`validate()` fail-closed）及 `ClientDocumentContext` / `ClientDiagnostic` / `ClientTextRange` / `ClientTextPosition` / `ClientDiagnosticSeverity` |
 | `src/app/query.rs` | ~140 | `AppQueryEnvelope`（`api_version` / `request_id` / `source` / `identity` / `issued_at`）；`AppQuery` 11 变体（清单见 §3.1）；timeline 分页形状 `TimelinePage{items, next_sequence?, head_sequence, complete}`、`TimelineItem`（sequence / event_id / kind / run_id? / text? / tool_name? / status? / detail? / timestamp）、`TimelineItemKind` 14 变体；`AppResponseEnvelope` + `AppResponse` 4 变体 |
-| `src/app/event.rs` | ~620 | `AppEventEnvelope`（`global_sequence` 全序 + `stream` / `stream_sequence` 子流序，`validate_after` 双重单调校验）；`EventStream` 6 变体（Global / Workspace / Session / Run / Terminal / GuiClient，serde `tag="type", content="id"`）；`EventSource` 6 变体（Core / Command / Provider / Tool / Plugin / Mcp）；`AppEvent` 21 变体（清单见 §3.1）；`RunState` 12 态；`DiagnosticLevel` 3 档 + `from_degrade_severity_str` + `From<&DegradeEvent>`（DegradeEvent → `AppEvent::Diagnostic` 实时帧）；`AppEventOrderError`；Team 协作镜像类型（`TeamEvent` 18 变体、`TeamBoardTask` / `TeamPresence` / `TeamRecipients` / `TeamMemberRole` / `TeamTaskState` / `TeamPlanStepSnapshot` 等——源码注释称镜像自 `teams` crate，该 crate 已随 R0 归档，本处现为仓内唯一定义） |
+| `src/app/event.rs` | ~620 | `AppEventEnvelope`（`global_sequence` 全序 + `stream` / `stream_sequence` 子流序，`validate_after` 双重单调校验）；`EventStream` 6 变体（Global / Workspace / Session / Run / Terminal / GuiClient，serde `tag="type", content="id"`）；`EventSource` 6 变体（Core / Command / Provider / Tool / Plugin / Mcp）；`AppEvent` 22 变体（清单见 §3.1）；`RunState` 12 态；`DiagnosticLevel` 3 档 + `from_degrade_severity_str` + `From<&DegradeEvent>`（DegradeEvent → `AppEvent::Diagnostic` 实时帧）；`AppEventOrderError`；Team 协作镜像类型（`TeamEvent` 18 变体、`TeamBoardTask` / `TeamPresence` / `TeamRecipients` / `TeamMemberRole` / `TeamTaskState` / `TeamPlanStepSnapshot` 等——源码注释称镜像自 `teams` crate，该 crate 已随 R0 归档，本处现为仓内唯一定义） |
 | `src/app/quota.rs` | ~540 | 配额 canonical 视图：`QuotaOverviewQuery`（tenant / account / provider / credential 过滤 + `is_default_scope()`）、`QuotaOverviewView` / `QuotaScopeView` / `QuotaSnapshotView` / `QuotaFailureView` / `WindowReadView` / `WindowReadEntry`、`QuotaWindow` / `QuotaUnit` / `QuotaMeasure` / `QuotaConfidence` / `QuotaReset` / `QuotaAdapterKind` / `QuotaProvenanceView`；告警 `QuotaAlert`（`QuotaAlertKind` 5 变体：threshold / recovered / stale / reauthorization_required / partial_failure；severity 2 档）；`mask_credential_hint`（只留首尾各 2 字符，≤4 字符全掩码，空串 None）；默认 scope 常量 `DEFAULT_QUOTA_TENANT` 等 |
 | `src/app/limits.rs` | ~150 | 租户策略 / RBAC 协议镜像：`PrincipalRole` 4 变体（Admin / User / Service / Viewer）、`PolicyGate` 9 变体（RouteCandidate / LeaseAcquire / AgentSpawn / RequestAdmission / SessionQuery / UsageQuery / AuditQuery / AuditExport / Retention）、`PolicyDecisionKind` 4 变体（Allow / Deny / Limit / Fallback）、`TenantPolicyView` / `PermissionProfileView` / `PrincipalRoleBinding` / `AuditExportPolicyView` / `PolicyDecisionEventView`（审计导出行形状） |
 | `src/app/registry.rs` | ~460 | 单一授权事实源：`RegistryEntry`（`wire_name` / `gui: GuiChannelAccess{available, required_capability}` / `headless: Option<SdkCapability>` / `acp: bool` / `idempotent` / `since`）；静态表 `COMMANDS`（19 行）与 `QUERIES`（11 行）；穷尽 match `command_wire_name` / `query_wire_name` + 反查 `*_by_wire_name`（未登记 fail-closed 返回 None）+ `command_entry` / `query_entry`（表缺条目 panic fail-fast）；`GUI_INTRINSIC_CAPABILITIES = [Events, Snapshots]` 与派生函数 `gui_supported_capabilities()` |
@@ -47,10 +47,10 @@
 ### 3.1 core-api 信封与 registry（三通道共用词汇）
 
 - **命令**：`AppCommandEnvelope` 携带 `api_version`（兼容闸）、`command_id`（幂等键）、`source: CommandSource`（local_cli / local_gui / remote_gui / automation / plugin / mcp）、`identity: ActorIdentity`（local_user / authenticated_client / automation / plugin / mcp_server / system）、可选 `expected_revision` / `idempotency_key`。命令与查询 serde 均为 `tag="method", content="params", snake_case`。
-- **`AppCommand` 19 变体关键载荷**：`CoreInitialize`；`WorkspaceAdd{root_path}` / `WorkspaceTrust{workspace_id, trusted}`；`SessionCreate{workspace_id, title?}` / `SessionOpen{session_id}` / `SessionFork{session_id, parent_event_id}` / `SessionCompact{session_id}` / `SessionClientContextReplace{session_id, context}`；`RunStart{session_id, user_message, model?, provider?}` / `RunCancel{run_id}` / `RunRetry{run_id}` / `RunTool{run_id, tool_name, input}`；`AuthStart{provider_id, flow}` / `AuthRemove{provider_id}`；`ToolApprove{run_id, tool_call_id, decision}`；`GitStage{workspace_id, paths: Vec<WorkspaceRelativePath>}`；`TerminalCreate{working_directory?}` / `TerminalWrite{terminal_session_id, data}` / `TerminalResize{terminal_session_id, columns, rows}`。
+- **`AppCommand` 20 变体关键载荷**：`CoreInitialize`；`WorkspaceAdd{root_path}` / `WorkspaceTrust{workspace_id, trusted}`；`SessionCreate{workspace_id, title?}` / `SessionOpen{session_id}` / `SessionFork{session_id, parent_event_id}` / `SessionCompact{session_id}` / `SessionClientContextReplace{session_id, context}`；`RunStart{session_id, user_message, model?, provider?}` / `RunCancel{run_id}` / `RunRetry{run_id}` / `RunTool{run_id, tool_name, input}`；`AuthStart{provider_id, flow}` / `AuthRemove{provider_id}`；`ToolApprove{run_id, tool_call_id, decision}`；`GitStage{workspace_id, paths: Vec<WorkspaceRelativePath>}`；`TerminalCreate{working_directory?}` / `TerminalWrite{terminal_session_id, data}` / `TerminalResize{terminal_session_id, columns, rows}` / `TerminalClose{terminal_session_id}`（ADR-045，since 1.3）。
 - **`AppQuery` 11 变体**：`WorkspaceList` / `SessionGet{session_id, timeline_after_sequence?, timeline_limit?}` / `RunStatus{run_id}` / `ModelList{provider_id?}` / `DiffListFiles{workspace_id}` / `DiffGet{workspace_id, path, cursor?}` / `ArtifactRead{artifact_id, offset, limit}` / `QuotaOverview{query}` / `SnapshotFetch` / `PluginList` / `McpList`。
 - **响应**：`AppResponse::Accepted{command_id, run_id?}`（`run_id` 仅 `RunStart` 回带，并发来源各自携带）/ `Data(Value)`（形状由 query 决定；`SessionGet` 返回 `TimelinePage`）/ `Artifact{artifact_id, byte_length, media_type}`（大结果转工件引用）/ `Error(ErrorContext)`（复用 domain 安全错误形状）。
-- **registry 三通道登记全表**（GUI 列 = 可用性（+ 命令级所需能力）；headless 列 = 所需 `SdkCapability`，`—` 表示未映射、授权 fail-closed；未登记 wire 名一律拒绝）。命令 19 条：
+- **registry 三通道登记全表**（GUI 列 = 可用性（+ 命令级所需能力）；headless 列 = 所需 `SdkCapability`，`—` 表示未映射、授权 fail-closed；未登记 wire 名一律拒绝）。命令 20 条：
 
 | wire 名 | GUI | headless | ACP | 幂等 | since |
 | --- | --- | --- | --- | --- | --- |
@@ -73,6 +73,7 @@
 | `terminal_create` | ✓（需 TerminalStreaming） | — | ✗ | ✗ | 1.0 |
 | `terminal_write` | ✓（需 TerminalStreaming） | — | ✗ | ✗ | 1.0 |
 | `terminal_resize` | ✓（需 TerminalStreaming） | — | ✗ | ✓ | 1.0 |
+| `terminal_close` | ✓（需 TerminalStreaming） | — | ✗ | ✗（重复 close 报 not_found） | 1.3（ADR-045） |
 
 查询 11 条（幂等恒 ✓、ACP 恒 ✗）：
 
@@ -90,7 +91,7 @@
 | `plugin_list` | ✗ | — | 1.0 |
 | `mcp_list` | ✓ | — | 1.0 |
 
-- **事件**：`AppEventEnvelope{api_version, instance_id, event_id, global_sequence, stream, stream_sequence, timestamp, source, payload}` 双序号——`global_sequence` 全局单调（resume/ack 基准），`stream + stream_sequence` 子流单调；`EventStream` 定位归属（Global / Workspace(id) / Session(id) / Run(id) / Terminal(id) / GuiClient(id)），`EventSource` 标注产生方（Core / Command / Provider / Tool / Plugin / Mcp）。`AppEvent` 21 变体（GUI/headless 的**展示词汇**，与持久化 `AgentEvent` 32 变体不同层：粒度更粗、可裁剪、不承诺重放）：
+- **事件**：`AppEventEnvelope{api_version, instance_id, event_id, global_sequence, stream, stream_sequence, timestamp, source, payload}` 双序号——`global_sequence` 全局单调（resume/ack 基准），`stream + stream_sequence` 子流单调；`EventStream` 定位归属（Global / Workspace(id) / Session(id) / Run(id) / Terminal(id) / GuiClient(id)），`EventSource` 标注产生方（Core / Command / Provider / Tool / Plugin / Mcp）。`AppEvent` 22 变体（GUI/headless 的**展示词汇**，与持久化 `AgentEvent` 32 变体不同层：粒度更粗、可裁剪、不承诺重放）：
 
 | 变体 | 载荷要点 |
 | --- | --- |
@@ -104,6 +105,7 @@
 | `ToolCompleted` | `run_id`、`tool_call_id`、`success` |
 | `DiffChanged` | `workspace_id` |
 | `TerminalOutput` | `terminal_session_id`、`delta` |
+| `TerminalExited` | `terminal_session_id`、`exit_code?`、`signal?`、`reason: TerminalExitReason`（exited / killed / failed；ADR-045，1.3 起按协商 minor 门控推送） |
 | `AuthChanged` | `provider_id`、`authenticated` |
 | `ProviderStatus` | `provider_id`、`status`（Ready / Degraded / Unavailable / AuthenticationRequired） |
 | `PluginError` | `plugin_id`、`error: ErrorContext` |
@@ -184,9 +186,9 @@
 
 ## 5. 契约与不变量
 
-- **wire 冻结**：所有帧/信封 serde 形状由 golden 锁定——`crates/protocol/tests/golden/` 32 个 fixture，漂移即 `tests/golden.rs` 失败；重建需显式 `GUI_PROTOCOL_UPDATE_GOLDEN=1`。构成：
-  - 客户端帧 15 个（`client_*.json` 14 个 + `session_get_timeline.json`）：handshake / command（含 terminal_create、terminal_create_working_directory、terminal_resize、terminal_write 4 个终端专样）/ session_get query / subscribe / unsubscribe / resume / snapshot_request / ack / artifact_read / heartbeat / pong；
-  - 服务端帧 16 个（`server_*.json`）：handshake_accepted（含 up_to_date 变体）/ handshake_rejected / command_accepted / response(含 terminal_create 专样) / event（含 terminal_output 专样）/ snapshot / resume 三态各一 / artifact_chunk / error / heartbeat / pong；
+- **wire 冻结**：所有帧/信封 serde 形状由 golden 锁定——`crates/protocol/tests/golden/` 34 个 fixture，漂移即 `tests/golden.rs` 失败；重建需显式 `GUI_PROTOCOL_UPDATE_GOLDEN=1`。构成：
+  - 客户端帧 16 个（`client_*.json` 15 个 + `session_get_timeline.json`）：handshake / command（含 terminal_create、terminal_create_working_directory、terminal_resize、terminal_write、terminal_close 5 个终端专样）/ session_get query / subscribe / unsubscribe / resume / snapshot_request / ack / artifact_read / heartbeat / pong；
+  - 服务端帧 17 个（`server_*.json`）：handshake_accepted（含 up_to_date 变体）/ handshake_rejected / command_accepted / response(含 terminal_create 专样) / event（含 terminal_output、terminal_exited 专样）/ snapshot / resume 三态各一 / artifact_chunk / error / heartbeat / pong；
   - 类型样本 1 个：`timeline_page.json`（`TimelinePage` 形状）。
 - **headless fixture**：`crates/protocol/tests/fixtures/headless/` 四个 JSON 用例集驱动翻译层双向断言：
   - `translate_cases.json`（6 例：`input_line` → 期望 `TranslatedRequest`）；
@@ -195,7 +197,7 @@
   - `compat_response_cases.json`（3 例：compat 导入响应与 `request_id` 回填）。
 - **projection golden**：`crates/protocol/tests/fixtures/projection/` 三组 `.jsonl`（每行 domain / wire / item 三视图）+ `.expected.json` 终态快照（paged_interleave / lagged_to_snapshot / fork_branch_switch）。
 - **schemas 检入产物**：仓库根 `schemas/{core-api,gui-protocol,headless-json}/*.d.ts` 是 GUI/SDK 的 TS 契约事实源，`tests/typegen.rs` 强制与源码同步；三组各含 `index.d.ts` + `serde_json/JsonValue.d.ts`，`headless-json` 组额外覆盖 `HeadlessRequest` / `HeadlessResponse` / `SdkCapability` / `CompatImport*` / `ProtocolErrorKind`，`gui-protocol` 组覆盖 `ClientFrame` / `ServerFrame` / 握手与快照类型；schema/wire 演进只允许出现在 R6/R7 且须 ADR Accepted。
-- **版本纪律**：`API_VERSION = 1.2`，`SUPPORTED_API_VERSIONS = [1.0, 1.1, 1.2]`；同 major 兼容、加变体/字段须 bump minor 并在 registry 标 `since`（先例：session_get 分页 1.1、run_start.provider 1.2）；`CONTROL_PLANE_SCHEMA_VERSION = 1` 与 GUI wire 版本独立。
+- **版本纪律**：`API_VERSION = 1.3`，`SUPPORTED_API_VERSIONS = [1.0, 1.1, 1.2, 1.3]`；同 major 兼容、加变体/字段须 bump minor 并在 registry 标 `since`（先例：session_get 分页 1.1、run_start.provider 1.2、terminal_close + TerminalExited 随 ADR-045 进 1.3）；`CONTROL_PLANE_SCHEMA_VERSION = 1` 与 GUI wire 版本独立。
 - **Control Plane scope 兼容**：`ControlPlaneScope` 各字段 serde 缺省即本地默认租户（`local-*` 常量），单租户旧数据无需迁移即可解码；显式多租户字段只能由宿主写入。
 - **大小上限**（超限一律拒绝而非截断）：帧 1 MiB、artifact 块 64 KiB、snapshot 节 inline 256 KiB、headless 行 1 MiB、client context 序列化 1 MiB。
 - **安全不变量**：`ClientAuthentication` / `Token` Debug 脱敏、token 文件 0600 且父目录 0700、常数时间比较；`WorkspaceRelativePath` 拒绝路径逃逸（`GitStage` 等文件命令只收相对路径，serde 反序列化同样过校验、不能绕过构造器）；`ClientContextSnapshot.validate()` 限量限长、URI 拒 `..`；租户上下文只信宿主注入；`mask_credential_hint` 保证 quota 视图不外泄凭据 ID；registry 未登记 wire 名 fail-closed。
@@ -237,7 +239,7 @@
 
 ## 8. 注意事项与已知限制
 
-- `AppEvent`（21 变体，展示层）与 domain `AgentEvent`（32 变体，持久化层）是**两套词汇**：前者可裁剪不承诺重放，后者才是重放事实源；映射登记在 `headless/json_mapping.rs`。
+- `AppEvent`（22 变体，展示层）与 domain `AgentEvent`（32 变体，持久化层）是**两套词汇**：前者可裁剪不承诺重放，后者才是重放事实源；映射登记在 `headless/json_mapping.rs`。
 - 两套 `ApprovalDecision` 拼写不同（本包 `approve_once` vs domain `approved_once`），见 [domain.md](domain.md) §8。
 - `app::registry` 故意不 glob 到 crate 根，避免与变体名混淆；引用须写全路径 `app::registry::…`。
 - `headless` 的 wire / translate / json_mapping 无条件编译，仅 `stdio`（`Handler` / `run_loop`）在 feature `headless` 之后；tokio 是主依赖而非 feature 门控（源码注释：避免测试再开 feature）。

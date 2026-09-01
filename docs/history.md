@@ -878,4 +878,40 @@ Validated: 片 3 六链路 AX + SQLite/磁盘/git 双证据；`cargo test -p paw
 
 Targeted regressions: 启动清扫幂等 / waiting 审批清扫后仍可决议闭合 / 合成闸 persist-first / checkpoint 快照失败诊断持久化+广播 / 两臂渲染一致。
 
+## P3 — Changes / Terminal / Resources 完整性（2026-09-01 收口）
+
+退出条件「三面板只展示 Host 权威数据，关键动作与错误恢复完整」已满足。四片全部完成；审计/修复/真窗口验收由 glm 子代理执行，主代理负责拆片、收口 review、G4 的 ADR 起草与实施、Spec 回写。
+
+### 片 1 — 三面板完整性缺口审计（只读，零代码改动）
+
+- 结论：Changes 面（latest-session 三重 fail-closed、mismatch banner、断线 stale、重连刷新）与 Resources 面（mcp_list 权威数据、epoch 拒旧、stale 标记）在冻结契约内无真实缺口；缺口集中 Terminal 面——G1 resize 不可变参实为 no-op、G2 gate 单一化断 exited 重建与瞬态失败重试、G3 cwd 展示伪造；G4 完整终端生命周期（stop/close + live exit）为已登记 B 边界须 ADR；G5 mcp_test 类动作归候选池；P2 遗留 ①② 判定不归 P3。
+
+### 片 2 — Terminal 三修复（G1/G2/G3，冻结 wire 内）
+
+- G1 尺寸 stepper：−W/+W/−H/+H 本地草稿钳制 20–500 列 / 6–200 行，apply 走冻结 `terminal_resize`，可见/键盘/AX 三路径同 gate。
+- G2 恢复路径：已知 exited/killed 终端 Start 单槽变 New（同 workspace/cwd 新建，旧终端只读保留不伪造生命周期）；瞬态 write/resize 失败在 runtime running 时不锁死仅 status_hint。
+- G3 cwd 诚实：Host `terminal_snapshots()` 补 `cwd` 键（注册表值 `owner\0cwd` 编码，快照段不透明 JSON 零 wire 演进），Desktop 缺键显示 unknown。
+- 主代理收口修复：create 失败/断连后的 cwd 残留、New 在途重复触发、AX 未播报尺寸草稿、空 cwd 显示空白（`terminal_cwd_label` 根目录归一 `"."`）、resize 迟到回执跨 workspace 清错草稿。
+
+### 片 3 — 真窗口验收（隔离实例 p3-3，glm_worker，六场景 PASS）
+
+- G1 stepper Apply 后 PTY 真实 `stty size` 24x80→28x88；G2 `exit` 后断连重连快照得 exited → New 同 workspace/cwd 重建、旧输出只读；G3 外部客户端 `working_directory=src` 建终端，重连后面板 cwd=src 与 pwd 一致；Changes（diff 与 git status 一致）/ Resources（mcp_list 权威、断线 stale 诚实、Reconnect 刷新）冒烟通过。片 3 发现的 cwd 空白缺陷由主代理同波修复。
+
+### 片 4 — G4 Terminal 完整生命周期（ADR-045 wire 演进，用户 Accepted 后实施）
+
+- **ADR-045 决策**：`terminal_close` 命令（kill 幂等 + 注册表注销，未知/重复 id 报 `not_found`；否决 stop/close 双命令拆分）；`AppEvent::TerminalExited{exit_code?, signal?, reason: Exited|Killed|Failed}`（归既有 `EventStream::Terminal(id)` 子流）；API minor 1.2→1.3，新事件按协商 minor 门控推送（<1.3 连接仍从快照 `state` 获知终态）；golden 先行（34 fixture）；不新增 `GuiCapability` 变体（handshake 内嵌 Vec 遇未知枚举 decode 失败，破坏性强于 minor bump）。
+- **Host**：forwarder 由静默 `break` 改为终态唯一广播点——`PtyEvent::Exit` 按 PtyService 权威状态区分 Killed/Exited 并携真实退出码，IO 异常诚实 Failed 不臆造退出码；`terminal_close` handler 自身不广播（与自发 Exit 天然去重）。
+- **Desktop**：Stop/Close 同槽按钮（视觉/键盘/AX 三路径同源 `terminal_close_label` 谓词：running→Stop 真实终止、已知 exited/killed→Close 清理 tombstone）；live 终态即时刷新（不再依赖断连重连），旧输出不复活终态终端；Close 回执本地移除复位 not started。
+- **真窗口验收发现的两个真实缺陷（主代理修复）**：①`crates/cli` ACP `app_event_kind()` 穷尽 match 漏 `TerminalExited` 臂致 Host 编译失败（E0004）——补臂；②Stop 后 Close 报 `terminal is not registered` 面板卡死——根因是 Stop 已就地注销（ADR-045 D1），而 `host_error_to_protocol` 把一切宿主错误压平为 Internal 使 not_found 不可观察；修复为 not_found 映射到既有 `RequestNotFound` 码 + Desktop 对 close 的 `RequestNotFound` 按「清理目标已达成」收敛移除本地条目（Host not_found 语义按 ADR 保持不变）。
+- **真窗口复验（隔离实例 adr045，glm_worker）**：Stop→无重连即时 killed + `pgrep 'sleep 300'` 进程组击杀证据 + 按钮变 Close；Close→"Terminal closed." + 面板复位 not started + 快照清空；自然退出 `exit 7`→即时 exited + Close 清理正常；断线 stale 诚实性不回归。AX + Host 快照 + ps 三证据。
+- **顺带修复（非本任务缺口，同波收口干线健康）**：`pawork-client` contract 测试 harness 自 ADR-044 workspace 路由后未登记 ws-default 致 5 测预存失败（base 复现确认），补 `attach_workspace` 一行；headless fixture `hello_ack.json` negotiated 版本随 1.3 更新。
+
+### 遗留观察项（不阻塞 P3 收口，已登记 ROADMAP §5）
+
+- 多终端时面板粘住当前终端，外部客户端建的终端需任务往返切换才浮出；Changes Files 清单为 session-diff 语义（无 run 会话显示 0 files 如实标注 latest-session）；Terminal AX stepper/close 节点 bounds 为固定偏移近似，精确几何归 P4 签字。
+
+Validated: 真窗口 AX + Host 快照 + ps/SQLite 双证据（实例 p3-3 六场景、adr045 四场景 + S2 复验）；`cargo test -p pawork-protocol --offline --lib --tests`（145）；`cargo test -p pawork-app --offline --lib --tests`（192）；`cargo test -p pawork-cli --offline --lib --tests`（84）；`cargo test -p pawork-client --offline --lib --tests`（41）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（153/153）。
+
+Targeted regressions: terminal_close kill+注销+重复 not_found / 自然退出广播 Exited+exit_code / TerminalExited 按协商 minor 门控 / live 终态迟到输出不复活 / Close 回执 remove_terminal / host not_found→RequestNotFound 映射 / golden 34 fixture。
+
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

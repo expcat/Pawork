@@ -5,18 +5,17 @@
       "minor": 3
     },
     "command": {
-      "method": "session_create",
+      "method": "terminal_close",
       "params": {
-        "workspace_id": "workspace-1"
+        "terminal_session_id": "terminal-1"
       }
     },
-    "command_id": "command-1",
-    "expected_revision": 3,
+    "command_id": "command-terminal-1",
     "identity": {
       "actor_id": "actor-1",
       "type": "local_user"
     },
-    "issued_at": 1,
+    "issued_at": 2,
     "source": {
       "client_id": "gui-1",
       "connection_id": "connection-1",

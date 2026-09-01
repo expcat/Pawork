@@ -1021,4 +1021,139 @@ mod unix_tests {
         assert_eq!(visible.global_sequence, GlobalSequence(2));
         assert!(!matches!(visible.stream, EventStream::Terminal(_)));
     }
+
+    // ADR-045 D3：TerminalExited（1.3 引入）不推给协商 < 1.3 的连接；该连接
+    // 不因此断流（老客户端 serde 遇未知变体才会 decode 失败）。
+    #[tokio::test]
+    async fn terminal_exited_event_is_gated_by_negotiated_minor() {
+        let harness = open_harness("terminal-exited-gated").await;
+        harness
+            .client
+            .send(&ClientFrame::Handshake(HandshakeRequest {
+                request_id: "hs-1".into(),
+                client_name: "test-gui".into(),
+                client_version: "0.1.0".into(),
+                supported_api_versions: vec![ApiVersion::new(1, 2)],
+                capabilities: vec![
+                    GuiCapability::Events,
+                    GuiCapability::Snapshots,
+                    GuiCapability::TerminalStreaming,
+                ],
+                authentication: None,
+            }))
+            .await;
+        let ServerFrame::Handshake(HandshakeResponse::Accepted {
+            selected_api_version,
+            ..
+        }) = harness.client.recv().await
+        else {
+            panic!("expected handshake accepted");
+        };
+        assert_eq!(selected_api_version, ApiVersion::new(1, 2));
+        let ServerFrame::Snapshot(_) = harness.client.recv().await else {
+            panic!("expected snapshot after handshake");
+        };
+        harness.client.send(&subscribe_all()).await;
+        harness.client.send(&ClientFrame::Heartbeat { nonce: 1 }).await;
+        loop {
+            match harness.client.recv().await {
+                ServerFrame::Pong { nonce } => {
+                    assert_eq!(nonce, 1);
+                    break;
+                }
+                ServerFrame::Event(_) => continue,
+                other => panic!("unexpected frame while awaiting subscribe ack: {other:?}"),
+            }
+        }
+
+        let mut exited = event(1);
+        exited.stream = EventStream::Terminal("terminal-1".into());
+        exited.payload = AppEvent::TerminalExited {
+            terminal_session_id: "terminal-1".into(),
+            exit_code: Some(0),
+            signal: None,
+            reason: pawork_protocol::TerminalExitReason::Exited,
+        };
+        harness.host.publish(exited);
+        // 1.2 协商下只有信封 ≤1.2 的帧能送达；用它证明连接未因被门控的
+        // TerminalExited 断流。
+        let mut normal = event(2);
+        normal.api_version = ApiVersion::new(1, 2);
+        harness.host.publish(normal);
+
+        let ServerFrame::Event(visible) = harness.client.recv().await else {
+            panic!("expected the 1.2-compatible event after the gated one");
+        };
+        assert_eq!(visible.global_sequence, GlobalSequence(2));
+        assert!(matches!(visible.payload, AppEvent::RunChanged { .. }));
+    }
+
+    #[tokio::test]
+    async fn terminal_exited_event_is_delivered_at_1_3() {
+        let harness = open_harness_with_capabilities(
+            "terminal-exited-delivered",
+            None,
+            vec![
+                GuiCapability::Events,
+                GuiCapability::Snapshots,
+                GuiCapability::TerminalStreaming,
+            ],
+        )
+        .await;
+        harness
+            .client
+            .send(&handshake_frame_with_capabilities(vec![
+                GuiCapability::Events,
+                GuiCapability::Snapshots,
+                GuiCapability::TerminalStreaming,
+            ]))
+            .await;
+        let ServerFrame::Handshake(HandshakeResponse::Accepted {
+            selected_api_version,
+            ..
+        }) = harness.client.recv().await
+        else {
+            panic!("expected handshake accepted");
+        };
+        assert_eq!(selected_api_version, API_VERSION);
+        let ServerFrame::Snapshot(_) = harness.client.recv().await else {
+            panic!("expected snapshot after handshake");
+        };
+        harness.client.send(&subscribe_all()).await;
+        harness.client.send(&ClientFrame::Heartbeat { nonce: 1 }).await;
+        loop {
+            match harness.client.recv().await {
+                ServerFrame::Pong { nonce } => {
+                    assert_eq!(nonce, 1);
+                    break;
+                }
+                ServerFrame::Event(_) => continue,
+                other => panic!("unexpected frame while awaiting subscribe ack: {other:?}"),
+            }
+        }
+
+        let mut exited = event(1);
+        exited.stream = EventStream::Terminal("terminal-1".into());
+        exited.payload = AppEvent::TerminalExited {
+            terminal_session_id: "terminal-1".into(),
+            exit_code: Some(1),
+            signal: None,
+            reason: pawork_protocol::TerminalExitReason::Exited,
+        };
+        harness.host.publish(exited);
+
+        let ServerFrame::Event(visible) = harness.client.recv().await else {
+            panic!("expected TerminalExited at negotiated 1.3");
+        };
+        let AppEvent::TerminalExited {
+            terminal_session_id,
+            exit_code,
+            ..
+        } = visible.payload
+        else {
+            panic!("expected TerminalExited payload: {:?}", visible.payload);
+        };
+        assert_eq!(terminal_session_id, "terminal-1");
+        assert_eq!(exit_code, Some(1));
+    }
 }

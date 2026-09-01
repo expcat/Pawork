@@ -395,6 +395,12 @@ fn golden_additional_client_frames() {
             rows: 24,
         })),
     );
+    assert_golden(
+        "client_command_terminal_close.json",
+        encode_client(&client_terminal_command_frame(AppCommand::TerminalClose {
+            terminal_session_id: "terminal-1".into(),
+        })),
+    );
 }
 
 #[test]
@@ -444,6 +450,25 @@ fn golden_additional_server_frames() {
             payload: AppEvent::TerminalOutput {
                 terminal_session_id: "terminal-1".into(),
                 delta: "echo hi\r\n".into(),
+            },
+        })),
+    );
+    assert_golden(
+        "server_event_terminal_exited.json",
+        encode_server(&ServerFrame::Event(AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: CoreInstanceId::from("instance-1"),
+            event_id: EventId::from("event-2"),
+            global_sequence: GlobalSequence(2),
+            stream: EventStream::Terminal("terminal-1".into()),
+            stream_sequence: 2,
+            timestamp: Timestamp::from_unix_millis(5),
+            source: EventSource::Core,
+            payload: AppEvent::TerminalExited {
+                terminal_session_id: "terminal-1".into(),
+                exit_code: Some(0),
+                signal: None,
+                reason: pawork_protocol::TerminalExitReason::Exited,
             },
         })),
     );

@@ -30,8 +30,7 @@ use pawork_domain::{CommandId, ConnectionId, GuiClientId, QueryId, Timestamp};
 use pawork_protocol::{
     decode_server_frame, decode_server_frame_checked, encode_client_frame, ApiHandle,
     ClientFrame, HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError,
-    ProtocolErrorCode, ResumeRequest, ResumeResponse, ServerFrame, SubscribeRequest,
-    SUPPORTED_API_VERSIONS,
+    ResumeRequest, ResumeResponse, ServerFrame, SubscribeRequest, SUPPORTED_API_VERSIONS,
 };
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
@@ -46,8 +45,8 @@ pub use pawork_protocol::projection;
 pub use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope,
     AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ClientAuthentication,
-    CommandSource, EventStream, GlobalSequence, GuiCapability, RunState, Snapshot, TimelineItem,
-    TimelineItemKind, TimelinePage,
+    CommandSource, EventStream, GlobalSequence, GuiCapability, ProtocolErrorCode, RunState,
+    Snapshot, TerminalExitReason, TimelineItem, TimelineItemKind, TimelinePage,
 };
 pub use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 

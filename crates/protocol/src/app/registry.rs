@@ -10,7 +10,7 @@ use crate::headless::wire::SdkCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
-use super::version::{ApiVersion, V1_0, V1_1, API_VERSION};
+use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3};
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,7 +131,7 @@ static COMMANDS: &[RegistryEntry] = &[
         headless: Some(SdkCapability::Runs),
         acp: true,
         idempotent: false,
-        since: API_VERSION,
+        since: V1_2,
     },
     RegistryEntry {
         wire_name: "run_cancel",
@@ -239,6 +239,18 @@ static COMMANDS: &[RegistryEntry] = &[
         acp: false,
         idempotent: true,
         since: V1_0,
+    },
+    // ADR-045：终止并注销终端会话（重复 close 报 not_found，非幂等）。
+    RegistryEntry {
+        wire_name: "terminal_close",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: Some(GuiCapability::TerminalStreaming),
+        },
+        headless: None,
+        acp: false,
+        idempotent: false,
+        since: V1_3,
     },
 ];
 
@@ -368,6 +380,7 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::TerminalCreate { .. } => "terminal_create",
         AppCommand::TerminalWrite { .. } => "terminal_write",
         AppCommand::TerminalResize { .. } => "terminal_resize",
+        AppCommand::TerminalClose { .. } => "terminal_close",
     }
 }
 

@@ -152,6 +152,14 @@ pub enum AppEvent {
         terminal_session_id: String,
         delta: String,
     },
+    TerminalExited {
+        terminal_session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signal: Option<String>,
+        reason: TerminalExitReason,
+    },
     AuthChanged {
         provider_id: ProviderId,
         authenticated: bool,
@@ -189,6 +197,16 @@ pub enum AppEvent {
     TeamEvent {
         event: Box<TeamEvent>,
     },
+}
+
+/// 终端终态原因（ADR-045）：自然退出 / 经 terminal_close 终止 / 转发链路异常断流。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalExitReason {
+    Exited,
+    Killed,
+    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

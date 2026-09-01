@@ -2,10 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use pawork_domain::{ToolCapability, WorkspaceId};
-use pawork_exec::{OwnerSessionId, PtyCreateSpec, PtyEvent, PtyWindowSize, TerminalId};
+use pawork_exec::{
+    OwnerSessionId, PtyCreateSpec, PtyEvent, PtySessionState, PtyWindowSize, TerminalId,
+};
 use pawork_policy::{ApprovalMode, PolicyDecision, PolicyEngine, PolicyInput};
 use pawork_protocol::{
-    AppCommand, AppCommandEnvelope, AppEvent, AppResponse, WorkspaceRelativePath,
+    AppCommand, AppCommandEnvelope, AppEvent, AppResponse, TerminalExitReason,
+    WorkspaceRelativePath,
 };
 use pawork_workspace::resolve_relative_path;
 use serde_json::{json, Value};
@@ -41,11 +44,20 @@ impl GuiHostAdapter {
             );
     }
 
+    /// ADR-045 D1：close 后从注册表注销，快照 terminal_sessions 节不再出现该条目。
+    fn forget_terminal(&self, terminal_session_id: &str) {
+        self.terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(terminal_session_id);
+    }
+
     fn spawn_terminal_forwarder(&self, terminal_id: TerminalId, owner: OwnerSessionId) {
         let Ok(mut receiver) = self.pty.subscribe(&terminal_id, &owner) else {
             return;
         };
         let bus = Arc::clone(&self.bus);
+        let pty = Arc::clone(&self.pty);
         let instance = self.instance.clone();
         let terminal_session_id = terminal_id.as_str().to_string();
         tokio::spawn(async move {
@@ -61,8 +73,42 @@ impl GuiHostAdapter {
                             },
                         );
                     }
-                    Ok(PtyEvent::Exit { .. }) => break,
-                    Err(_) => break,
+                    // ADR-045 D2：终态事件上 wire，同一终端只发一条（forwarder
+                    // 是唯一广播点）。reason 以 PtyService 权威运行时状态为准：
+                    // kill 先置 Killed 再触发 waiter 的 Exit，自然退出置 Exited。
+                    Ok(PtyEvent::Exit { code, signal }) => {
+                        let reason = match pty.snapshot(&terminal_id, &owner) {
+                            Ok(snapshot) if snapshot.state == PtySessionState::Killed => {
+                                TerminalExitReason::Killed
+                            }
+                            _ => TerminalExitReason::Exited,
+                        };
+                        bus.publish_terminal(
+                            instance.clone(),
+                            &terminal_session_id,
+                            AppEvent::TerminalExited {
+                                terminal_session_id: terminal_session_id.clone(),
+                                exit_code: code,
+                                signal,
+                                reason,
+                            },
+                        );
+                        break;
+                    }
+                    // 转发链路异常断流（lagged / 广播关闭）：诚实 Failed，不臆造退出码。
+                    Err(_) => {
+                        bus.publish_terminal(
+                            instance.clone(),
+                            &terminal_session_id,
+                            AppEvent::TerminalExited {
+                                terminal_session_id: terminal_session_id.clone(),
+                                exit_code: None,
+                                signal: None,
+                                reason: TerminalExitReason::Failed,
+                            },
+                        );
+                        break;
+                    }
                 }
             }
         });
@@ -359,6 +405,34 @@ pub(crate) async fn terminal_resize(
         )
         .await
         .map_err(GuiHostAdapter::pty_error)?;
+    Ok(AppResponse::Accepted {
+        command_id: envelope.command_id.clone(),
+        run_id: None,
+    })
+}
+
+/// ADR-045 D1：终止并注销终端会话。running 终端经 PtyService::kill 终止进程组
+/// （kill 幂等；已自然退出条目仅清理），随后从注册表注销；未知 id 报 not_found。
+/// 终态事件由 forwarder 统一广播（reason=Killed 与自发 Exit 去重），本 handler
+/// 不广播。
+pub(crate) async fn terminal_close(
+    adapter: &GuiHostAdapter,
+    envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::TerminalClose {
+        terminal_session_id,
+    } = command
+    else {
+        unreachable!("terminal_close handler receives TerminalClose")
+    };
+    let owner = adapter.terminal_owner(terminal_session_id)?;
+    adapter
+        .pty
+        .kill(&TerminalId::new(terminal_session_id), &owner)
+        .await
+        .map_err(GuiHostAdapter::pty_error)?;
+    adapter.forget_terminal(terminal_session_id);
     Ok(AppResponse::Accepted {
         command_id: envelope.command_id.clone(),
         run_id: None,
