@@ -365,9 +365,7 @@ pub enum MonitorEvent {
         reason: Option<String>,
     },
     /// 注销：从运行时视图移除该 monitor；同一 id 可重新注册为全新记录。
-    Unregistered {
-        monitor_id: MonitorId,
-    },
+    Unregistered { monitor_id: MonitorId },
 }
 
 // =========================================================================

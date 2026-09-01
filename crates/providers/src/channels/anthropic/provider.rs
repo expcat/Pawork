@@ -11,15 +11,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use pawork_domain::{CancellationToken, ModelId, ProviderId, StopReason, TokenUsage};
 use pawork_domain::{
     CanonicalModelRequest, CapabilityFallback, CapabilityRequirements, ContentPart,
-    ModelCapabilities, ModelDefinition, ModelProvider,
-    ModelResponseSummary, ModelTransport, PromptCachePreference, ProviderError, ProviderErrorKind,
-    ProviderEventSink, ProviderStreamEvent, ReasoningConfig, ReasoningEffort, ReasoningItem,
-    ReasoningItemId, ReasoningStateCapability, ReasoningStateDescriptor, ResolvedCredential,
-    ThinkingConfig, ThinkingLevel,
+    ModelCapabilities, ModelDefinition, ModelProvider, ModelResponseSummary, ModelTransport,
+    PromptCachePreference, ProviderError, ProviderErrorKind, ProviderEventSink,
+    ProviderStreamEvent, ReasoningConfig, ReasoningEffort, ReasoningItem, ReasoningItemId,
+    ReasoningStateCapability, ReasoningStateDescriptor, ResolvedCredential, ThinkingConfig,
+    ThinkingLevel,
 };
-use pawork_domain::{CancellationToken, ModelId, ProviderId, StopReason, TokenUsage};
 use serde_json::{json, Value};
 
 use crate::memory_protector::InMemoryReasoningProtector;
@@ -165,7 +165,10 @@ impl AnthropicProvider {
         let requirements = requirements_from_request(request);
         let resolved = CapabilityNegotiator::negotiate(&evidence, &requirements);
         if let Some(reason) = first_reject(&resolved.fallback) {
-            return Err(ProviderError::new(ProviderErrorKind::InvalidRequest, reason));
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                reason,
+            ));
         }
 
         let write_cache = match request.prompt_cache {
@@ -698,7 +701,10 @@ mod tests {
     fn auth_headers_include_api_key_and_version() {
         let provider = AnthropicProvider::new(
             AnthropicConfig::new("https://gateway.example"),
-            Some(ResolvedCredential::new(CredentialKind::ApiKey, "sk-ant-test")),
+            Some(ResolvedCredential::new(
+                CredentialKind::ApiKey,
+                "sk-ant-test",
+            )),
         )
         .expect("构造 adapter");
         let headers = provider.auth_headers();
@@ -720,8 +726,9 @@ mod tests {
 
     #[test]
     fn auth_headers_without_credential_still_has_version() {
-        let provider = AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
-            .expect("构造 adapter");
+        let provider =
+            AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
+                .expect("构造 adapter");
         let headers = provider.auth_headers();
         assert!(headers.iter().all(|(key, _)| key != "x-api-key"));
         assert_eq!(
@@ -763,7 +770,10 @@ mod tests {
             .push(("x-api-key".into(), "sk-attacker".into()));
         let error = AnthropicProvider::new(
             config,
-            Some(ResolvedCredential::new(CredentialKind::ApiKey, "sk-ant-test")),
+            Some(ResolvedCredential::new(
+                CredentialKind::ApiKey,
+                "sk-ant-test",
+            )),
         )
         .err()
         .expect("duplicate credential header must fail");
@@ -780,9 +790,10 @@ mod tests {
                 ..ModelCapabilities::default()
             },
         );
-        let provider = AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
-            .expect("adapter")
-            .with_registry(Arc::new(registry));
+        let provider =
+            AnthropicProvider::new(AnthropicConfig::new("https://gateway.example"), None)
+                .expect("adapter")
+                .with_registry(Arc::new(registry));
         let request = CanonicalModelRequest {
             request_id: pawork_domain::RequestId::from("r1"),
             model: ModelId::from("unknown-model"),
@@ -912,9 +923,9 @@ mod tests {
         request.messages.push(pawork_domain::Message {
             id: pawork_domain::MessageId::new("sys"),
             role: pawork_domain::MessageRole::System,
-            content: vec![pawork_domain::ContentPart::Text(pawork_domain::TextContent {
-                text: "sys".into(),
-            })],
+            content: vec![pawork_domain::ContentPart::Text(
+                pawork_domain::TextContent { text: "sys".into() },
+            )],
             metadata: pawork_domain::MessageMetadata::default(),
         });
         let (body, plan) = provider.prepare_request(&request).await.expect("plan");
@@ -1009,7 +1020,9 @@ mod tests {
         request.thinking = None;
         let (body_off, plan_off) = provider.prepare_request(&request).await.expect("off");
         assert!(plan_off.thinking_budget.is_none());
-        let content_off = body_off["messages"][0]["content"].as_array().expect("content");
+        let content_off = body_off["messages"][0]["content"]
+            .as_array()
+            .expect("content");
         assert!(content_off.iter().all(|block| block["type"] != "thinking"));
     }
 

@@ -8,12 +8,12 @@
 use std::collections::BTreeMap;
 
 use crate::config::ConfigTier;
+use crate::resources::{ResourceInstructionKind, SkillManifest};
 use pawork_domain::{
     AgentProfileV2, ProfileIsolation, ProfileMemory, ProfileModel, ProfilePrompt, ProfileToolRules,
     ReasoningEffort,
 };
 use pawork_policy::ApprovalMode;
-use crate::resources::{ResourceInstructionKind, SkillManifest};
 use semver::Version;
 use serde_json::Value;
 

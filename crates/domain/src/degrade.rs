@@ -164,9 +164,18 @@ mod tests {
         let cases = [
             (DegradeKind::HomeDirFallback, "degrade.home_dir_fallback"),
             (DegradeKind::MissingCredential, "degrade.missing_credential"),
-            (DegradeKind::EventStreamLagged, "degrade.event_stream_lagged"),
-            (DegradeKind::TasksFinishFailed, "degrade.tasks_finish_failed"),
-            (DegradeKind::IdempotencyConflict, "degrade.idempotency_conflict"),
+            (
+                DegradeKind::EventStreamLagged,
+                "degrade.event_stream_lagged",
+            ),
+            (
+                DegradeKind::TasksFinishFailed,
+                "degrade.tasks_finish_failed",
+            ),
+            (
+                DegradeKind::IdempotencyConflict,
+                "degrade.idempotency_conflict",
+            ),
             (DegradeKind::AcpState, "degrade.acp_state"),
         ];
         for (kind, expected) in cases {
@@ -238,8 +247,12 @@ mod tests {
     /// 非 object details 包裹进 "context" 键,出口仍为 object。
     #[test]
     fn to_agent_event_wraps_non_object_details() {
-        let event =
-            DegradeEvent::new(DegradeKind::AcpState, DegradeSeverity::Error, "m", json!("raw"));
+        let event = DegradeEvent::new(
+            DegradeKind::AcpState,
+            DegradeSeverity::Error,
+            "m",
+            json!("raw"),
+        );
         let AgentEvent::Diagnostic { details, .. } = event.to_agent_event() else {
             panic!("degrade must map to AgentEvent::Diagnostic");
         };

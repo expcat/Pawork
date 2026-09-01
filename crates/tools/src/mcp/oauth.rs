@@ -236,7 +236,12 @@ mod tests {
             backend.as_ref(),
             ProviderId::new("mcp-refresh"),
             "refresh",
-            &token_set("expired-access", Some("expired-refresh"), Some(0), Some("read")),
+            &token_set(
+                "expired-access",
+                Some("expired-refresh"),
+                Some(0),
+                Some("read"),
+            ),
             vec!["read".into()],
         )
         .expect("store");

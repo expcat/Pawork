@@ -3,13 +3,13 @@
 use std::io::Cursor;
 
 use pawork_domain::{CoreInstanceId, Timestamp};
-use pawork_protocol::{GlobalSequence, API_VERSION};
 use pawork_protocol::{
     decode_length_prefixed, encode_client_frame, encode_length_prefixed, read_client_frame,
     read_frame, read_server_frame, write_client_frame, write_frame, write_server_frame,
     ClientFrame, HandshakeRequest, ProtocolCodecError, ServerFrame, Snapshot, SnapshotSection,
     SnapshotSectionKind, FRAME_LENGTH_PREFIX_BYTES, MAX_PROTOCOL_FRAME_BYTES,
 };
+use pawork_protocol::{GlobalSequence, API_VERSION};
 use serde_json::json;
 
 fn handshake_frame() -> ClientFrame {

@@ -51,7 +51,9 @@ impl UsageService {
             &core.model,
             usage,
             cost.as_ref().map(|item| item.amount_micros).unwrap_or(0),
-            cost.as_ref().map(|item| item.currency.as_str()).unwrap_or(""),
+            cost.as_ref()
+                .map(|item| item.currency.as_str())
+                .unwrap_or(""),
         );
         self.control
             .ledger
@@ -119,11 +121,7 @@ impl UsageService {
         core: &AppCore,
         session_id: &SessionId,
     ) -> Result<(TokenUsage, Option<TokenUsage>), AppError> {
-        let runs = core
-            .store()?
-            .projection_snapshot(session_id)
-            .await?
-            .runs;
+        let runs = core.store()?.projection_snapshot(session_id).await?.runs;
         let mut total = TokenUsage::default();
         let mut last = None;
         for run in runs
@@ -173,8 +171,8 @@ fn usage_from_run_json(data: &serde_json::Value) -> Option<TokenUsage> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     use async_trait::async_trait;
     use pawork_domain::{
@@ -185,9 +183,8 @@ mod tests {
     use pawork_providers::ModelRegistry;
 
     use crate::testsupport::{
-        RecordingEvents, core_with_registry, mock_core_with_usage, user_hello,
+        core_with_registry, mock_core_with_usage, user_hello, RecordingEvents,
     };
-
 
     #[tokio::test]
     async fn session_usage_accumulates_completed_runs() {
@@ -309,12 +306,22 @@ mod tests {
         );
         let session = core.create_session("stepped").await.expect("create");
         let sink = RecordingEvents::default();
-        core.chat_turn(&session, vec![user_hello()], &sink, CancellationToken::new())
-            .await
-            .expect("turn 1");
-        core.chat_turn(&session, vec![user_hello()], &sink, CancellationToken::new())
-            .await
-            .expect("turn 2");
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn 1");
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn 2");
 
         let last = core
             .last_run_usage(&session)

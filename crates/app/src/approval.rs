@@ -317,8 +317,14 @@ fn preview_apply_patch(input: &serde_json::Value) -> Option<String> {
     }
     let mut out = String::new();
     for op in ops {
-        let kind = op.get("op").and_then(|value| value.as_str()).unwrap_or("update");
-        let path = op.get("path").and_then(|value| value.as_str()).unwrap_or("-");
+        let kind = op
+            .get("op")
+            .and_then(|value| value.as_str())
+            .unwrap_or("update");
+        let path = op
+            .get("path")
+            .and_then(|value| value.as_str())
+            .unwrap_or("-");
         match kind {
             "rename" => {
                 let to = op.get("to").and_then(|value| value.as_str()).unwrap_or("-");
@@ -507,16 +513,15 @@ mod tests {
             risk: RiskLevel::Moderate,
             preview: None,
         };
-        let kind = host.resolve(
-            &ask.run_id,
-            &ask.tool_call_id,
-            ApprovalDecision::ApprovedOnce,
-        )
-        .expect("queue");
+        let kind = host
+            .resolve(
+                &ask.run_id,
+                &ask.tool_call_id,
+                ApprovalDecision::ApprovedOnce,
+            )
+            .expect("queue");
         assert_eq!(kind, ApprovalResolve::Queued);
-        let decision = host
-            .decide(&ask, CancellationToken::new())
-            .await;
+        let decision = host.decide(&ask, CancellationToken::new()).await;
         assert_eq!(decision, ApprovalDecision::ApprovedOnce);
         assert!(host.pending().is_empty());
     }

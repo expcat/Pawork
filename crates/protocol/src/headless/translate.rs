@@ -5,7 +5,7 @@
 //! unknown / unsupported 有独立类别。
 
 use super::wire::{
-    CompatHistoryQuery, CompatImportRequest, HeadlessRequest, HeadlessResponse, HeadlessError,
+    CompatHistoryQuery, CompatImportRequest, HeadlessError, HeadlessRequest, HeadlessResponse,
     ProtocolErrorKind, TranslatedRequest, MAX_FRAME_BYTES,
 };
 use crate::{AppEventEnvelope, AppResponseEnvelope};

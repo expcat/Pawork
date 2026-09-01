@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use async_trait::async_trait;
 use pawork_domain::AgentTool;
 use pawork_domain::ToolError;
 use pawork_domain::ToolEventSink;
@@ -17,10 +18,9 @@ use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
 };
-use async_trait::async_trait;
+use pawork_workspace::WorkspaceService;
 use serde::Serialize;
 use serde_json::{json, Value};
-use pawork_workspace::WorkspaceService;
 
 use crate::common::atomic_write;
 use crate::common::opt_bool;
@@ -465,12 +465,16 @@ mod tests {
 
     #[test]
     fn create_over_existing_is_restored_after_partial_failure() {
-        assert_existing_file_restored(json!({"op": "create", "path": "target.txt", "content": "replacement"}));
+        assert_existing_file_restored(
+            json!({"op": "create", "path": "target.txt", "content": "replacement"}),
+        );
     }
 
     #[test]
     fn update_is_restored_after_partial_failure() {
-        assert_existing_file_restored(json!({"op": "update", "path": "target.txt", "content": "replacement"}));
+        assert_existing_file_restored(
+            json!({"op": "update", "path": "target.txt", "content": "replacement"}),
+        );
     }
 
     #[test]

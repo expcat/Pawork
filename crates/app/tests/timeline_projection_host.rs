@@ -21,14 +21,11 @@ fn load_fixture_events() -> (Vec<AgentEventEnvelope>, Vec<TimelineItem>) {
     let mut items = Vec::new();
     for line in raw.lines().filter(|line| !line.trim().is_empty()) {
         let value: serde_json::Value = serde_json::from_str(line).expect("parse fixture line");
-        envelopes.push(
-            serde_json::from_value(value["domain"].clone())
-                .expect("decode domain envelope"),
-        );
+        envelopes
+            .push(serde_json::from_value(value["domain"].clone()).expect("decode domain envelope"));
         if !value["item"].is_null() {
-            items.push(
-                serde_json::from_value(value["item"].clone()).expect("decode expected item"),
-            );
+            items
+                .push(serde_json::from_value(value["item"].clone()).expect("decode expected item"));
         }
     }
     (envelopes, items)

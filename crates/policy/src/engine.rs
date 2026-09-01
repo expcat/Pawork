@@ -1,7 +1,7 @@
 //! 策略引擎：综合审批模式、能力、信任与命令风险给出裁决。
 
-use serde_json::Value;
 use pawork_domain::ToolCapability;
+use serde_json::Value;
 
 use crate::decision::{
     ApprovalPrompt, CommandRisk, ExecutionConstraints, PolicyDecision, RiskLevel,
@@ -55,12 +55,9 @@ impl PolicyEngine {
         // 灾难命令地板：即使 trusted + NeverAsk 也不得静默执行。
         if matches!(cap, ToolCapability::Process) && command_hits_danger_floor(&input.input) {
             return match mode {
-                ApprovalMode::NeverAsk | ApprovalMode::ReadOnly => {
-                    PolicyDecision::Deny {
-                        reason: "catastrophic command cannot run without explicit pre-approval"
-                            .into(),
-                    }
-                }
+                ApprovalMode::NeverAsk | ApprovalMode::ReadOnly => PolicyDecision::Deny {
+                    reason: "catastrophic command cannot run without explicit pre-approval".into(),
+                },
                 ApprovalMode::AlwaysAsk
                 | ApprovalMode::AskForWrites
                 | ApprovalMode::AskForDangerous => ask(cap, input, RiskLevel::Dangerous),
@@ -217,8 +214,8 @@ mod tests {
     use super::{PolicyEngine, PolicyInput};
     use crate::decision::{CommandRisk, PolicyDecision, RiskLevel};
     use crate::mode::ApprovalMode;
-    use serde_json::json;
     use pawork_domain::ToolCapability;
+    use serde_json::json;
 
     fn input(
         cap: ToolCapability,
@@ -548,5 +545,4 @@ mod tests {
         let eng = PolicyEngine::new(ApprovalMode::AskForDangerous);
         assert_eq!(eng.mode(), ApprovalMode::AskForDangerous);
     }
-
 }

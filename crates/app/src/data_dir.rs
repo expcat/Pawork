@@ -224,19 +224,19 @@ mod tests {
         let expected = PathBuf::from("/tmp/process-temp/pawork");
         let subscriber = crate::testsupport::RecordingSubscriber::new();
         let outcome = tracing::subscriber::with_default(subscriber.clone(), || {
-            resolve_data_dir_outcome(
-                None,
-                None,
-                None,
-                PathBuf::from("/tmp/process-temp"),
-            )
+            resolve_data_dir_outcome(None, None, None, PathBuf::from("/tmp/process-temp"))
         });
         assert_eq!(outcome.path, expected);
-        let degrade = outcome.degrade.expect("HOME fallback must emit DegradeEvent");
+        let degrade = outcome
+            .degrade
+            .expect("HOME fallback must emit DegradeEvent");
         assert_eq!(degrade.code(), "degrade.home_dir_fallback");
         assert_eq!(degrade.kind, DegradeKind::HomeDirFallback);
         assert_eq!(degrade.severity, DegradeSeverity::Warning);
-        assert_eq!(degrade.details["path"], json!(expected.display().to_string()));
+        assert_eq!(
+            degrade.details["path"],
+            json!(expected.display().to_string())
+        );
         let events = subscriber.events();
         assert!(
             events.iter().all(|event| {
@@ -249,12 +249,8 @@ mod tests {
     #[test]
     fn consume_data_dir_outcome_warns_once_and_path_helper_stays_silent() {
         let expected = PathBuf::from("/tmp/process-temp/pawork");
-        let outcome = resolve_data_dir_outcome(
-            None,
-            None,
-            None,
-            PathBuf::from("/tmp/process-temp"),
-        );
+        let outcome =
+            resolve_data_dir_outcome(None, None, None, PathBuf::from("/tmp/process-temp"));
         let subscriber = crate::testsupport::RecordingSubscriber::new();
         let path = tracing::subscriber::with_default(subscriber.clone(), || {
             consume_data_dir_outcome(outcome.clone())

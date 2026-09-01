@@ -15,12 +15,9 @@ use pawork_client::{GuiClient, ResumeDisposition};
 use pawork_domain::{ActorId, WorkspaceId};
 use pawork_protocol::client_auth::TOKEN_SCHEME;
 use pawork_protocol::{
-    ActorIdentity, AppCommand, AppEvent, AppQuery, AppResponse, ClientAuthentication,
-    CommandSource,
+    ActorIdentity, AppCommand, AppEvent, AppQuery, AppResponse, ClientAuthentication, CommandSource,
 };
-use pawork_transport::{
-    ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint,
-};
+use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -168,15 +165,10 @@ fn load_gui_authentication(token_path: Option<&str>) -> Result<ClientAuthenticat
         Some(path) => PathBuf::from(path),
         None => gui_token_path(default_data_dir(), DEFAULT_INSTANCE),
     };
-    let bytes = std::fs::read(&path).map_err(|error| {
-        format!(
-            "读取 token 失败 ({}): {error}",
-            path.display()
-        )
-    })?;
-    let text = String::from_utf8(bytes).map_err(|_| {
-        format!("token 文件为空或不是有效 UTF-8: {}", path.display())
-    })?;
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("读取 token 失败 ({}): {error}", path.display()))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| format!("token 文件为空或不是有效 UTF-8: {}", path.display()))?;
     let proof = text.trim();
     if proof.is_empty() {
         return Err(format!("token 文件为空或格式错误: {}", path.display()));
@@ -255,11 +247,15 @@ async fn live_two_gui(endpoint: &str, token_path: Option<&str>) -> Result<String
         .await
         .map_err(|error| format!("B snapshot: {error}"))?;
     let b_sees_a_session = snap_b.sections.iter().any(|section| {
-        section.data.as_ref().and_then(serde_json::Value::as_array).is_some_and(|entries| {
-            entries.iter().any(|entry| {
-                entry.get("title").and_then(|title| title.as_str()) == Some("s10-live-a")
+        section
+            .data
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    entry.get("title").and_then(|title| title.as_str()) == Some("s10-live-a")
+                })
             })
-        })
     });
     if !b_sees_a_session {
         return Err("B 的 Snapshot 看不到 A 新建的会话（状态串台或未共享）".into());
@@ -304,7 +300,10 @@ async fn live_two_gui(endpoint: &str, token_path: Option<&str>) -> Result<String
     let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
     let mut a_saw_output = false;
     while tokio::time::Instant::now() < deadline {
-        match client_a.next_event_timeout(Duration::from_millis(400)).await {
+        match client_a
+            .next_event_timeout(Duration::from_millis(400))
+            .await
+        {
             Ok(event) => {
                 last_a = event.global_sequence;
                 let _ = client_a.ack(event.global_sequence).await;
@@ -325,7 +324,10 @@ async fn live_two_gui(endpoint: &str, token_path: Option<&str>) -> Result<String
     let mut b_saw_output = false;
     let wait_b = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < wait_b {
-        match client_b.next_event_timeout(Duration::from_millis(400)).await {
+        match client_b
+            .next_event_timeout(Duration::from_millis(400))
+            .await
+        {
             Ok(event) => {
                 let _ = client_b.ack(event.global_sequence).await;
                 if matches!(
@@ -364,7 +366,10 @@ async fn live_two_gui(endpoint: &str, token_path: Option<&str>) -> Result<String
     let mut last_b = client_b.last_acked_sequence();
     let drain_b = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < drain_b {
-        match client_b.next_event_timeout(Duration::from_millis(400)).await {
+        match client_b
+            .next_event_timeout(Duration::from_millis(400))
+            .await
+        {
             Ok(event) => {
                 last_b = event.global_sequence;
                 let _ = client_b.ack(event.global_sequence).await;
@@ -514,10 +519,7 @@ async fn live_pty(endpoint: &str, token_path: Option<&str>) -> Result<String, St
         }
     }
     if !output.contains("s10-pty") {
-        return Err(format!(
-            "PTY 未回显 s10-pty；已收 {} 字节",
-            output.len()
-        ));
+        return Err(format!("PTY 未回显 s10-pty；已收 {} 字节", output.len()));
     }
     client
         .close()

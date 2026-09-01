@@ -1,8 +1,8 @@
 //! 握手服务端逻辑：版本协商、capabilities 筛选、ClientAuthentication 验证钩子，
 //! 以及信封 api_version 与协商结果的解码校验（IncompatibleVersion 产生路径）。
 
-use pawork_domain::{ConnectionId, CoreInstanceId, GuiClientId};
 use crate::app::{ApiHandle, ApiVersion, GlobalSequence};
+use pawork_domain::{ConnectionId, CoreInstanceId, GuiClientId};
 
 use crate::resume::{compute_resume_disposition, ResumeContext};
 use crate::{

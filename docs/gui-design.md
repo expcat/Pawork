@@ -16,7 +16,7 @@
 
 - 不嵌入 Core，不直连 Provider / SQLite / 工具 / Keychain。
 - 不做 TUI，不做 WebView / JS 壳。
-- 不实现插件市场、Hooks 管理、WASM 安装器（整族未排期，见 [ROADMAP 后续计划](../ROADMAP.md#4-后续计划)）。
+- 不实现插件市场、Hooks 管理、WASM 安装器（整族未排期，见 [产品候选](spec/backlog.md)）。
 - 不在 S7 做完整多窗口远程桌面、签名安装器、主题生态。
 
 架构红线沿用根仓：独立 GPUI 进程，只经 GUI Connection Protocol 连接 CLI；关闭窗口不取消已进入 Core 的 Run。
@@ -105,7 +105,7 @@ S7 的唯一主路径是：启动 Desktop → 连接本机 Host → 恢复 Snaps
 - Inspector 顶部预留 capability-driven `InspectorToolTabs`；Changes 是 S8 surface，Terminal 是 S10 surface，Files / Summary 仍是 Changes 内部二级 tab。折叠时 Inspector 宽度归零，Workspace 扩展，右上 `ActivityPopover` 摘要显示 Changes 行数与 Main / subagent 状态；点击摘要恢复对应 Inspector surface。折叠态 ActivityPopover 的触发器随 Workspace Header 落位右上，不由 StatusBar 承载；StatusBar 只保留状态信息。
 - ActivityPopover 的 Changes 分区随 S8 启用，Agent 状态列表随 S11 启用；不可用阶段隐藏对应分区，不做可点击假入口或截图演示数据。
 - 上述展示只消费 projection / Host capability，经 controller → `pawork-client` 获取；GUI 不直连 Provider、quota store、Git、PTY 或数据库。
-- 当前 Changes/Terminal 主路径已在正式 Host/Desktop 上复验；Resources、完整断线恢复与三张初始设计图的人工视觉签字仍按 [ROADMAP P3/P4](../ROADMAP.md#4-后续计划) 推进。
+- 当前 Changes/Terminal 主路径已在正式 Host/Desktop 上复验；剩余验证与当前 Settings 顺序分别见 [验证规格](spec/verification.md) 和 [ROADMAP](../ROADMAP.md)。
 
 ### 3.4 R9 可见层级收敛
 
@@ -113,7 +113,7 @@ S7 的唯一主路径是：启动 Desktop → 连接本机 Host → 恢复 Snaps
 - TaskRail 的项目计数和任务时间使用 56px 右对齐 meta 槽；标题继续 `truncate`，active task 用 medium/primary。Workspace Header 标题改为 medium，StatusBar 保持 24px 高、正文使用 12px 并在窄窗裁切。
 - Composer 外层使用既有 panel surface 统一输入区与 footer 的归属；`Context · unavailable` 使用 tertiary，可用值仍为 secondary。88–94px 常态、220px 增长预算与 32px Send/Cancel 单槽不变。
 - Changes 文件行使用 20/72/76px glyph/status/delta 固定槽；DiffView 增加 36px 只读路径 header，并把 24px 增删 marker gutter 与中性代码正文分开。ActivityPopover 保持 320×320、右上锚定与 capability honesty，只增加分隔和真实 Changes raised section；没有伪造 Agents/Add tool。
-- 上述可见层级已进入当前实现；Timeline/Changes 全状态 AX/VoiceOver、全组件 150% 与三张初始设计图的人工签字仍属于 [ROADMAP P4](../ROADMAP.md#4-后续计划)。
+- 上述可见层级已进入当前实现；Timeline/Changes 全状态 AX/VoiceOver、全组件 150% 与三张初始设计图的人工签字仍登记在 [验证规格](spec/verification.md)。
 
 ### 3.5 Settings Surface（当前设计）
 
@@ -204,7 +204,7 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 | S7 | 最小 `gui serve` + 单客户端协议 | 本设计的 Agent 壳：日期内项目分组 TaskRail / 紧凑 Composer / Context / 取消 / 模型 / 审批按钮；状态栏只显示已有权威字段 |
 | S8 | diff / checkpoint / rollback | InspectorToolTabs 激活 Changes；折叠态 ActivityPopover 显示文件数与增删行摘要 |
 | S9 | MCP / AGENTS.md / `@file` | Composer `@` 补全；Resources 只读：MCP 列表、已加载规则 |
-| S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal；本机多窗口未做（ROADMAP 候选池） |
+| S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal；本机多窗口未做（见 [产品候选](spec/backlog.md)） |
 | S11 | Plan / 后台任务 / usage / 多 Agent | Workflow 与完整用量/quota 状态条；ActivityPopover 激活 Main / subagent 状态列表 |
 | S12 | 全项目 Code Review | 只读核对 Desktop 四层边界、状态投影、能力声明、可访问性及 S7–S11 GUI 需求/证据；不改界面、不启动窗口 |
 | Settings（当前） | provider/auth/catalog/config 的 Host 门面 | Settings Rail；先启用模型与供应商，其它页面按真实能力逐页加入 |
@@ -228,10 +228,10 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 - `Enter` 仅在 IME 未组合时发送，`Shift+Enter` 换行；多行粘贴保持原文。
 - Timeline 只在用户位于底部时追随流式输出；用户向上阅读后不得抢滚动位置。
 - 连接、Run、tool 与审批状态必须有文本/图标语义，不能只靠颜色；主路径可全键盘操作。
-- Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离，role/value/enabled/focused/selected/bounds/action 随 canonical UI 状态同步；macOS 由 ADR-042 AppKit bridge 导出，AX action 回到既有 AppView handler 与 enable gate。应用内字号以 `Cmd+=` / `Cmd++`、`Cmd+-`、`Cmd+0` 在 100%/125%/150% 间切换，状态栏与 AX 发布百分比。新增可见交互必须同批补语义；Windows/Linux、VoiceOver 与主动 Reduce Motion / Increase Contrast 系统态验收仍属 [ROADMAP P4](../ROADMAP.md#4-后续计划)。当前 UI 无动画，Reduce Motion 无渲染分支。
+- Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离，role/value/enabled/focused/selected/bounds/action 随 canonical UI 状态同步；macOS 由 ADR-042 AppKit bridge 导出，AX action 回到既有 AppView handler 与 enable gate。应用内字号以 `Cmd+=` / `Cmd++`、`Cmd+-`、`Cmd+0` 在 100%/125%/150% 间切换，状态栏与 AX 发布百分比。新增可见交互必须同批补语义；Windows/Linux、VoiceOver 与主动 Reduce Motion / Increase Contrast 系统态验收见 [验证规格](spec/verification.md)。当前 UI 无动画，Reduce Motion 无渲染分支。
 - 可交互控件必须有 hover 反馈与按下态，色值经 theme token；hover / active 只改背景，不引起布局移动（旧 V3 R8 波 B 起，取值表见 [视觉实施基准](../design/README.md) §8.1）。
 - 菜单为 `anchored()/deferred()` 浮层，不占布局流；同一时刻单开互斥，选择 / 再点触发器 / `Escape` / 点击浮层外关闭，打开时滚轮不穿透到下层滚动容器（形态细则见基准 §8.2）。
-- 焦点交接必须可预测：用户发起的 task click / Enter / AX press / cycling / next-needs-attention 切换、审批决策和 Fork 接受后回到 Composer；Review changes 展开 Inspector 后落到当前选中的 Changes 顶层页签；任何 session reset 先关闭旧菜单。AXPress 当前 task 仍须关闭菜单并聚焦 Composer；仅一个可见 task 时 cycling 不重开 session，但仍须交接焦点。完整键盘与 VoiceOver 复验归 [ROADMAP P4](../ROADMAP.md#4-后续计划)。
+- 焦点交接必须可预测：用户发起的 task click / Enter / AX press / cycling / next-needs-attention 切换、审批决策和 Fork 接受后回到 Composer；Review changes 展开 Inspector 后落到当前选中的 Changes 顶层页签；任何 session reset 先关闭旧菜单。AXPress 当前 task 仍须关闭菜单并聚焦 Composer；仅一个可见 task 时 cycling 不重开 session，但仍须交接焦点。完整键盘与 VoiceOver 复验见 [验证规格](spec/verification.md)。
 - 用户向上滚动脱钩跟随的滚动区（Timeline / 终端）提供回底控件，点击或自行滚到底即重挂跟随（基准 §8.3）。
 - Timeline 条目经变高虚拟化渲染，长会话滚动性能不随长度退化；侧栏长标题单行省略号截断（基准 §8.4，旧 V3 R8 波 C 起）。
 - Resources 页只读呈现 MCP 状态（name / transport / state / tools / last_error），字段缺失显示 unknown，不伪造；无 Host 出口的分区（如已加载规则）不画入口（基准 §8.5，旧 V3 R8 波 D 起）。
@@ -246,7 +246,7 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 - Domain 已有 `PluginId`、`ToolCapability::ExternalPlugin`；时间线按普通 tool 事件渲染即可，不识别插件品牌。
 - Snapshot / capability 集合预留扩展位；未知 capability 隐藏，不报错、不画灰掉的市场入口。
 - 不激活 `plugin` feature（`pawork-domain` 的空锚 `plugin = []`）、不建 wasm-host / marketplace 页面。
-- 决策记录见 [ROADMAP §5 候选池](../ROADMAP.md)。
+- 决策与复活条件见 [产品候选](spec/backlog.md)。
 
 ---
 
@@ -326,4 +326,4 @@ GUI 与协议现在就要避开「以后为插件推倒重来」：
 
 ### A.4 已收口免重复项
 
-旧 Wave 过程与截图结论只在 [history](history.md) 中追溯，不再作为当前门禁。当前 Changes/Terminal 真实核心路径见 [UI Review](UI_Review.md)；Resources、完整 Accessibility 与视觉签字按 ROADMAP P3/P4 重建证据。
+旧 Wave 过程与截图结论只在 [history](history.md) 中追溯，不再作为当前门禁。当前 Changes/Terminal 真实核心路径见 [UI Review](UI_Review.md)；Resources、完整 Accessibility 与视觉签字按 [验证规格](spec/verification.md) 重新取证。

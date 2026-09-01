@@ -188,7 +188,7 @@
 
 ## 8. 注意事项与已知限制
 
-- 归档资产不存在于本包：account-control-v1 九模块、binding/schema、OTel exporter、identity_schema（复活条件见 [../../../ROADMAP.md](../../../ROADMAP.md) §5）。RBAC 三类型（role / permission / profile）保留。
+- 归档资产不存在于本包：account-control-v1 九模块、binding/schema、OTel exporter、identity_schema（复活条件见 [产品候选](../backlog.md)）。RBAC 三类型（role / permission / profile）保留。
 - `mask_credential_hint` **不在本包**（在 `pawork-protocol`，见 [protocol.md](protocol.md)）；本包 quota 的脱敏工具（`redact_endpoint` / `redact_secrets` / `redact_source`）在私有模块 `quota/util.rs`，对外不可见。
 - `quota::service` 的 `QuotaRead` / `QuotaOverview` / `WindowRead` / `ScopeMatch` / `QuotaFailure` 需走 `quota::service::` 路径（`quota::` 只 re-export `QuotaService` / `QuotaClock` / `CacheRead` / `CacheOverview`）。
 - `SqliteUsageLedger` 与 `pawork-storage` DatabaseActor 是**两条独立连接**；同库并发访问依赖 SQLite 自身锁。

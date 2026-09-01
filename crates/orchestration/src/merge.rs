@@ -8,16 +8,16 @@
 //! 调用方（编排宿主）依据本模块结果发出；本模块本身无事件日志。
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 #[cfg(any(test, feature = "git"))]
 use std::path::Component;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use pawork_domain::{AgentId, SessionId};
 use async_trait::async_trait;
 #[cfg(feature = "git")]
 use pawork_domain::CancellationToken;
+use pawork_domain::{AgentId, SessionId};
 #[cfg(feature = "git")]
 use pawork_git::{DiffOptions, DiffService, GitRunner};
 

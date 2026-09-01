@@ -12,7 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use pawork_cli::channels::acp::{AcpCommandHost, AcpHost, AcpHostError, JsonRpcError, JsonRpcMessage};
+use pawork_cli::channels::acp::{
+    AcpCommandHost, AcpHost, AcpHostError, JsonRpcError, JsonRpcMessage,
+};
 use pawork_domain::{
     CommandId, CoreInstanceId, EventId, QueryId, RunId, SessionId, Timestamp, ToolCallId,
     WorkspaceId,
@@ -175,10 +177,14 @@ impl MockAcpCommandHost {
             "ws-{}",
             self.inner.next_id.fetch_add(1, Ordering::SeqCst)
         ));
-        self.inner.workspaces.lock().expect("workspaces").push(WorkspaceEntry {
-            id: id.clone(),
-            root,
-        });
+        self.inner
+            .workspaces
+            .lock()
+            .expect("workspaces")
+            .push(WorkspaceEntry {
+                id: id.clone(),
+                root,
+            });
         id
     }
 

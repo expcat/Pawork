@@ -157,7 +157,10 @@ async fn show(core: &AppCore, spec: &str, json: bool) -> Result<(), CliError> {
             let from_model = switch["from"]["model"].as_str().unwrap_or("?");
             let to_provider = switch["to"]["provider"].as_str().unwrap_or("?");
             let to_model = switch["to"]["model"].as_str().unwrap_or("?");
-            println!("  [{}] {from_provider} {from_model} -> {to_provider} {to_model}", format_millis(timestamp));
+            println!(
+                "  [{}] {from_provider} {from_model} -> {to_provider} {to_model}",
+                format_millis(timestamp)
+            );
         }
     }
     Ok(())
@@ -302,7 +305,11 @@ async fn import(
                     "imported compat session {} ({} events{})",
                     report.session_id,
                     report.imported_events,
-                    if report.deduplicated { ", deduplicated" } else { "" }
+                    if report.deduplicated {
+                        ", deduplicated"
+                    } else {
+                        ""
+                    }
                 );
             }
         }
@@ -355,11 +362,7 @@ async fn import_from_local(core: &AppCore, from: &str, json: bool) -> Result<(),
     let mut failed = 0usize;
     for file in files {
         let entry = match core
-            .import_session_file(
-                &file.path,
-                SessionImportFormat::Compat,
-                Some(compat_source),
-            )
+            .import_session_file(&file.path, SessionImportFormat::Compat, Some(compat_source))
             .await
         {
             Ok(SessionImportOutcome::Compat(report)) => {
@@ -492,13 +495,7 @@ fn detect_session_format(
 /// ai-title/queue-operation 等无 message 行)→ compat/claude;签名不明确 → None(维持 Pi 默认)。
 fn sniff_jsonl_session(
     path: &std::path::Path,
-) -> Result<
-    Option<(
-        SessionImportFormat,
-        pawork_storage::session::ExternalSource,
-    )>,
-    CliError,
-> {
+) -> Result<Option<(SessionImportFormat, pawork_storage::session::ExternalSource)>, CliError> {
     use std::io::{BufRead as _, BufReader};
 
     let file = std::fs::File::open(path)?;
@@ -524,10 +521,7 @@ fn sniff_jsonl_session(
     let Some(obj) = value.as_object() else {
         return Ok(None);
     };
-    if obj.contains_key("timestamp")
-        && obj.contains_key("type")
-        && obj.contains_key("payload")
-    {
+    if obj.contains_key("timestamp") && obj.contains_key("type") && obj.contains_key("payload") {
         return Ok(Some((
             SessionImportFormat::Compat,
             pawork_storage::session::ExternalSource::Codex,
@@ -535,10 +529,7 @@ fn sniff_jsonl_session(
     }
     // Claude Code 本地行:sessionId 必有,message 可缺(标题/噪声行先行);
     // payload 不存在用于排除 Codex 信封形态。
-    if obj.contains_key("sessionId")
-        && !obj.contains_key("payload")
-        && obj.contains_key("type")
-    {
+    if obj.contains_key("sessionId") && !obj.contains_key("payload") && obj.contains_key("type") {
         return Ok(Some((
             SessionImportFormat::Compat,
             pawork_storage::session::ExternalSource::Claude,

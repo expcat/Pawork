@@ -3,9 +3,9 @@
 //! 每个 `data: {json}` 对应一个 OpenAI Chat Completions 流式 chunk。本模块把
 //! delta（文本 / tool_calls）、usage 与 finish_reason 映射为 canonical 事件。
 
-use pawork_domain::{TokenUsage, ToolCallId};
-use pawork_domain::ProviderStreamEvent;
 use crate::usage::{map_stop_reason, normalize_usage};
+use pawork_domain::ProviderStreamEvent;
+use pawork_domain::{TokenUsage, ToolCallId};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -131,8 +131,8 @@ pub fn is_done(data: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_domain::StopReason;
     use pawork_domain::ProviderStreamEvent;
+    use pawork_domain::StopReason;
 
     #[test]
     fn text_delta_maps() {

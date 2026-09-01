@@ -7,8 +7,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use pawork_domain::{ProviderId, Timestamp};
 use pawork_domain::{CredentialKind, ResolvedCredential};
+use pawork_domain::{ProviderId, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::SecretBackend;
@@ -106,10 +106,7 @@ impl StoredCredential {
 
     /// 返回 SecretBackend 定位所需的 `(service, account)`。
     pub fn secret_backend_ref(&self) -> (&str, &str) {
-        (
-            self.secret_service.as_str(),
-            self.secret_account.as_str(),
-        )
+        (self.secret_service.as_str(), self.secret_account.as_str())
     }
 }
 
@@ -367,8 +364,7 @@ mod tests {
         assert!(rewritten.contains("\"secret_account\""));
         assert!(!rewritten.contains("keychain_service"));
         assert!(!rewritten.contains("keychain_account"));
-        let round_tripped: StoredCredential =
-            serde_json::from_str(&rewritten).expect("round trip");
+        let round_tripped: StoredCredential = serde_json::from_str(&rewritten).expect("round trip");
         assert_eq!(round_tripped, decoded);
     }
 

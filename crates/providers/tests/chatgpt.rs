@@ -3,13 +3,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pawork_domain::{
+    CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
+    StopReason, TextContent,
+};
+use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference, ProviderError,
     ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, RequestBudget, ResolvedCredential,
     ResponseFormat, ToolChoice,
-};
-use pawork_domain::{
-    CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
-    StopReason, TextContent,
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{ChatGptConfig, ChatGptProvider};

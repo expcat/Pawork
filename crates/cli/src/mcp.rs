@@ -4,11 +4,7 @@ use pawork_app::AppCore;
 
 use crate::{CliError, McpCommand};
 
-pub async fn run_mcp(
-    core: &mut AppCore,
-    command: McpCommand,
-    json: bool,
-) -> Result<(), CliError> {
+pub async fn run_mcp(core: &mut AppCore, command: McpCommand, json: bool) -> Result<(), CliError> {
     match command {
         McpCommand::List => print_status(core.mcp_list(), json),
         McpCommand::Test { name } => {

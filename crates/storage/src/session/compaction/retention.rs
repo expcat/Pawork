@@ -561,7 +561,8 @@ mod tests {
         assert_eq!(policy, RetentionPolicy::default());
         assert_eq!(policy.retained_turns, DEFAULT_RETAINED_TURNS);
         assert_eq!(
-            policy.retained_reasoning_items, DEFAULT_RETAINED_REASONING_ITEMS
+            policy.retained_reasoning_items,
+            DEFAULT_RETAINED_REASONING_ITEMS
         );
         assert!(policy.keep_unresolved_tasks);
     }

@@ -9,7 +9,9 @@ fn protocol_to_domain_decision(
     decision: &pawork_protocol::ApprovalDecision,
 ) -> pawork_domain::ApprovalDecision {
     match decision {
-        pawork_protocol::ApprovalDecision::ApproveOnce => pawork_domain::ApprovalDecision::ApprovedOnce,
+        pawork_protocol::ApprovalDecision::ApproveOnce => {
+            pawork_domain::ApprovalDecision::ApprovedOnce
+        }
         pawork_protocol::ApprovalDecision::ApproveForRun => {
             pawork_domain::ApprovalDecision::ApprovedForRun
         }
@@ -73,8 +75,7 @@ pub(crate) async fn tool_approve(
                         .map_err(GuiHostAdapter::app_error)?;
                     // persist-first 已落库；复用 live 路径的广播 sink 补实时事件。
                     // broadcast_event 过滤后仅 ToolCompleted 上 wire，契约不变。
-                    let sink =
-                        GuiBroadcastSink::new(adapter.bus.clone(), adapter.instance.clone());
+                    let sink = GuiBroadcastSink::new(adapter.bus.clone(), adapter.instance.clone());
                     for envelope in envelopes {
                         if let Err(error) = sink.emit(envelope).await {
                             tracing::warn!(error = %error, "queued approval closure broadcast failed");

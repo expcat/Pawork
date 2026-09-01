@@ -207,8 +207,12 @@ pub enum Command {
 #[derive(Subcommand, Debug)]
 pub enum TasksCommand {
     List,
-    Status { task: String },
-    Cancel { task: String },
+    Status {
+        task: String,
+    },
+    Cancel {
+        task: String,
+    },
     Register {
         #[arg(long)]
         kind: Option<String>,
@@ -340,9 +344,7 @@ pub enum McpCommand {
     /// 列出已配置 MCP server 与已发现工具
     List,
     /// ping / list_tools 探测一个或全部已配置 server
-    Test {
-        name: Option<String>,
-    },
+    Test { name: Option<String> },
 }
 
 #[derive(Subcommand, Debug)]
@@ -652,14 +654,8 @@ mod tests {
 
     #[test]
     fn parses_sessions_run_resume_and_json() {
-        let cli = Cli::try_parse_from([
-            "pawork",
-            "--json",
-            "chat",
-            "--resume",
-            "latest",
-        ])
-        .expect("parse");
+        let cli =
+            Cli::try_parse_from(["pawork", "--json", "chat", "--resume", "latest"]).expect("parse");
         assert!(cli.json);
         match cli.command {
             Command::Chat { resume, .. } => assert_eq!(resume.as_deref(), Some("latest")),
@@ -733,18 +729,11 @@ mod tests {
 
     #[test]
     fn parses_approval_mode_kebab() {
-        let cli = Cli::try_parse_from([
-            "pawork",
-            "--approval-mode",
-            "ask-for-writes",
-            "run",
-            "hi",
-        ])
-        .expect("parse");
+        let cli = Cli::try_parse_from(["pawork", "--approval-mode", "ask-for-writes", "run", "hi"])
+            .expect("parse");
         assert_eq!(cli.approval_mode.as_deref(), Some("ask-for-writes"));
         assert_eq!(
-            parse_approval_mode(cli.approval_mode.as_deref().expect("mode"))
-                .expect("known"),
+            parse_approval_mode(cli.approval_mode.as_deref().expect("mode")).expect("known"),
             pawork_app::ApprovalMode::AskForWrites
         );
     }
@@ -771,14 +760,8 @@ mod tests {
 
     #[test]
     fn parses_on_failure_approval_mode() {
-        let cli = Cli::try_parse_from([
-            "pawork",
-            "--approval-mode",
-            "on-failure",
-            "run",
-            "hi",
-        ])
-        .expect("parse");
+        let cli = Cli::try_parse_from(["pawork", "--approval-mode", "on-failure", "run", "hi"])
+            .expect("parse");
         assert_eq!(cli.approval_mode.as_deref(), Some("on-failure"));
         assert_eq!(
             parse_approval_mode(cli.approval_mode.as_deref().expect("mode")).expect("known"),
@@ -887,12 +870,13 @@ mod tests {
         .expect("parse sessions import");
         match cli.command {
             Command::Sessions {
-                command: SessionsCommand::Import {
-                    path,
-                    format,
-                    source,
-                    from,
-                },
+                command:
+                    SessionsCommand::Import {
+                        path,
+                        format,
+                        source,
+                        from,
+                    },
             } => {
                 assert_eq!(path, Some(std::path::PathBuf::from("ses.export.json")));
                 assert_eq!(format.as_deref(), Some("export"));
@@ -912,7 +896,12 @@ mod tests {
         ])
         .is_err());
         assert!(Cli::try_parse_from([
-            "pawork", "sessions", "import", "ses.export.json", "--from", "claude",
+            "pawork",
+            "sessions",
+            "import",
+            "ses.export.json",
+            "--from",
+            "claude",
         ])
         .is_err());
     }
@@ -954,14 +943,8 @@ mod tests {
                 command: ServiceCommand::Start { apply: true }
             }
         ));
-        let cli = Cli::try_parse_from([
-            "pawork",
-            "--json",
-            "service",
-            "install",
-            "--apply",
-        ])
-        .expect("json apply");
+        let cli = Cli::try_parse_from(["pawork", "--json", "service", "install", "--apply"])
+            .expect("json apply");
         assert!(cli.json);
         assert!(matches!(
             cli.command,
@@ -974,7 +957,9 @@ mod tests {
         assert_eq!(cli.instance, "dev");
         assert!(matches!(cli.command, Command::Status));
         assert!(matches!(
-            Cli::try_parse_from(["pawork", "watch"]).expect("watch").command,
+            Cli::try_parse_from(["pawork", "watch"])
+                .expect("watch")
+                .command,
             Command::Watch
         ));
         assert!(matches!(
@@ -984,7 +969,9 @@ mod tests {
             Command::Shutdown
         ));
         assert!(matches!(
-            Cli::try_parse_from(["pawork", "doctor"]).expect("doctor").command,
+            Cli::try_parse_from(["pawork", "doctor"])
+                .expect("doctor")
+                .command,
             Command::Doctor
         ));
         let cli = Cli::try_parse_from(["pawork", "usage", "--session", "latest"]).expect("usage");
@@ -1001,15 +988,7 @@ mod tests {
             }
         ));
         let cli = Cli::try_parse_from([
-            "pawork",
-            "plan",
-            "create",
-            "--title",
-            "t",
-            "--step",
-            "a",
-            "--step",
-            "b",
+            "pawork", "plan", "create", "--title", "t", "--step", "a", "--step", "b",
         ])
         .expect("plan");
         match cli.command {
@@ -1070,15 +1049,9 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
 
-        let cli = Cli::try_parse_from([
-            "pawork",
-            "chat",
-            "--resume",
-            "ses-1",
-            "--branch",
-            "fork-1",
-        ])
-        .expect("parse branch");
+        let cli =
+            Cli::try_parse_from(["pawork", "chat", "--resume", "ses-1", "--branch", "fork-1"])
+                .expect("parse branch");
         match cli.command {
             Command::Chat { resume, branch, .. } => {
                 assert_eq!(resume.as_deref(), Some("ses-1"));

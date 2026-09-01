@@ -236,12 +236,13 @@ pub(crate) fn parse_file(path: &Path) -> Result<(ConfigValue, PaworkConfig), Con
     })?;
     let mut json_value: Value = toml_to_json(toml_value);
     sanitize_secrets(&mut json_value);
-    let mut config: PaworkConfig = serde_json::from_value(json_value.clone()).map_err(|source| {
-        ConfigError::Parse(ConfigParseError::Schema {
-            path: path.to_path_buf(),
-            source: Box::new(source),
-        })
-    })?;
+    let mut config: PaworkConfig =
+        serde_json::from_value(json_value.clone()).map_err(|source| {
+            ConfigError::Parse(ConfigParseError::Schema {
+                path: path.to_path_buf(),
+                source: Box::new(source),
+            })
+        })?;
     config.extra.remove("api_key");
     Ok((ConfigValue::new(json_value), config))
 }
@@ -483,9 +484,9 @@ fn extract_profile_overrides(merged: &Value, name: &str) -> Option<ConfigValue> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::schema::{RunOverrides, SessionOverrides};
     use super::super::ConfigTier;
+    use super::*;
     use serde_json::json;
 
     #[test]
@@ -597,10 +598,7 @@ mod tests {
             workspace.value.as_value()["providers"][0].get("base_url"),
             None
         );
-        assert_eq!(
-            workspace.value.as_value()["providers"][0]["id"],
-            "openai"
-        );
+        assert_eq!(workspace.value.as_value()["providers"][0]["id"], "openai");
 
         let proxy_only = Loader::new()
             .with_value(

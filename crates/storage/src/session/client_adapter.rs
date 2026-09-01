@@ -243,8 +243,9 @@ fn load_one(
     connection: &rusqlite::Connection,
     id: &ClientSessionId,
 ) -> Result<ClientSessionRecord, SessionRegistryError> {
-    load_optional(connection, id)?
-        .ok_or_else(|| SessionRegistryError::Unavailable("conflicting registry row disappeared".into()))
+    load_optional(connection, id)?.ok_or_else(|| {
+        SessionRegistryError::Unavailable("conflicting registry row disappeared".into())
+    })
 }
 
 fn decode_record(

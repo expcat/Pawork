@@ -39,7 +39,10 @@ fn list(core: &AppCore, json: bool) -> Result<(), CliError> {
         println!("{}", serde_json::to_string(&payload).map_err(json_err)?);
         return Ok(());
     }
-    println!("{:<16} {:<8} {:<9} {:<20} {}", "PROVIDER", "KIND", "SOURCE", "MASKED", "EXPIRES");
+    println!(
+        "{:<16} {:<8} {:<9} {:<20} {}",
+        "PROVIDER", "KIND", "SOURCE", "MASKED", "EXPIRES"
+    );
     for row in rows {
         let masked = row.masked.as_deref().unwrap_or("-");
         let expires = row
@@ -105,7 +108,10 @@ async fn login(core: &AppCore, provider: &str, json: bool) -> Result<(), CliErro
 fn logout(core: &AppCore, provider: &str, json: bool) -> Result<(), CliError> {
     core.auth_logout(provider)?;
     if json {
-        println!("{}", serde_json::json!({"provider": provider, "status": "logged_out"}));
+        println!(
+            "{}",
+            serde_json::json!({"provider": provider, "status": "logged_out"})
+        );
     } else {
         eprintln!("已删除 auth 文件 default 条目：{provider}（env fallback 不受影响）");
     }

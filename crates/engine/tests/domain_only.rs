@@ -79,9 +79,9 @@ fn production_pawork_dependencies(manifest: &str) -> std::collections::BTreeSet<
             .and_then(|(_, field)| field.split_once('='))
             .and_then(|(_, value)| {
                 value
-                .split('"')
-                .nth(1)
-                .filter(|package| package.starts_with("pawork-"))
+                    .split('"')
+                    .nth(1)
+                    .filter(|package| package.starts_with("pawork-"))
             })
         {
             dependencies.insert(package.to_string());

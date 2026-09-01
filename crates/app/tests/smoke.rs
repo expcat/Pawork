@@ -12,12 +12,12 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use pawork_domain::{CredentialKind, ModelProvider, ResolvedCredential};
 use pawork_app::AppCore;
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, Message, MessageId,
     MessageRole, ModelId, ProviderId, TextContent,
 };
+use pawork_domain::{CredentialKind, ModelProvider, ResolvedCredential};
 use pawork_engine::{AgentEventSink, EngineError};
 use pawork_providers::{
     AnthropicConfig, AnthropicProvider, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
@@ -45,8 +45,8 @@ async fn smoke_stream_receives_text_delta_and_completed() {
     let model = std::env::var("PAWORK_SMOKE_MODEL")
         .expect("PAWORK_SMOKE_MODEL is required for ignored smoke");
 
-    let protocol = std::env::var("PAWORK_SMOKE_PROTOCOL")
-        .unwrap_or_else(|_| "chat_completions".into());
+    let protocol =
+        std::env::var("PAWORK_SMOKE_PROTOCOL").unwrap_or_else(|_| "chat_completions".into());
     let credential = ResolvedCredential::new(CredentialKind::ApiKey, api_key);
     let provider: Arc<dyn ModelProvider> = match protocol.as_str() {
         "messages" | "anthropic-messages" => Arc::new(

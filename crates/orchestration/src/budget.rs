@@ -19,10 +19,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use pawork_control_plane::{UsageLedger, UsageRecord, AUTO_RECORD_ID_PREFIX};
 use pawork_domain::{AgentId, ModelId, PrincipalId, ProviderId, RunId, SessionId, TenantId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
-use pawork_control_plane::{UsageLedger, UsageRecord, AUTO_RECORD_ID_PREFIX};
 
 /// 为每个逻辑控制器分配进程内唯一 ID，隔离不同控制器的 flush 幂等键。
 static NEXT_BUDGET_CONTROLLER_ID: AtomicU64 = AtomicU64::new(0);
@@ -419,9 +419,9 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pawork_control_plane::{InMemoryUsageLedger, UsageLedgerError, UsageQuery, UsageTotals};
     use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, Mutex};
-    use pawork_control_plane::{InMemoryUsageLedger, UsageLedgerError, UsageQuery, UsageTotals};
 
     fn limits() -> WorkerBudgetLimits {
         WorkerBudgetLimits {

@@ -1,8 +1,8 @@
 //! 配额适配器抽象与获取方式分类。
 
 use async_trait::async_trait;
-use pawork_domain::ResolvedCredential;
 use pawork_domain::CancellationToken;
+use pawork_domain::ResolvedCredential;
 use serde::{Deserialize, Serialize};
 
 use crate::quota::{QuotaError, QuotaRequest, QuotaSnapshot};

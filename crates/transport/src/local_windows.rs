@@ -2,11 +2,9 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
+use crate::{ConnectOptions, GuiConnection, GuiListener, TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
-use crate::{
-    ConnectOptions, GuiConnection, GuiListener, TransportError, TransportErrorKind,
-};
 
 use super::{connection_closed, connection_info, transport_error, StreamConnection};
 
@@ -199,11 +197,11 @@ impl GuiListener for NamedPipeListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LocalTransport, DEFAULT_MAX_FRAME_BYTES};
     use crate::{
         ConnectOptions, GuiTransportClient, GuiTransportServer, TransportEndpoint,
         TransportErrorKind, TransportFrame,
     };
+    use crate::{LocalTransport, DEFAULT_MAX_FRAME_BYTES};
 
     fn options(max_frame_bytes: u64) -> ConnectOptions {
         ConnectOptions {

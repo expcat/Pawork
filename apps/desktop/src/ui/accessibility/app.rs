@@ -17,8 +17,8 @@ use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::ANCHOR_GAP_Y;
 use crate::ui::inspector::{
     plain_terminal_output, terminal_header_height, terminal_resize_status_label,
-    terminal_size_for_display, terminal_stepper_ax_rects, InspectorTab,
-    TERMINAL_COLUMNS_STEP, TERMINAL_EMPTY_OUTPUT, TERMINAL_ROWS_STEP,
+    terminal_size_for_display, terminal_stepper_ax_rects, InspectorTab, TERMINAL_COLUMNS_STEP,
+    TERMINAL_EMPTY_OUTPUT, TERMINAL_ROWS_STEP,
 };
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::provider_status_lines;
@@ -28,8 +28,7 @@ use crate::ui::timeline_entry::display_time;
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
     terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended,
-    terminal_start_enabled, timeline, AppRoute, AppView,
-    MenuKind, WORKSPACE_EMPTY_HINT,
+    terminal_start_enabled, timeline, AppRoute, AppView, MenuKind, WORKSPACE_EMPTY_HINT,
 };
 
 const PAD: f32 = 8.0;
@@ -1261,20 +1260,14 @@ impl AppView {
         let approval_top = visible_items
             .iter()
             .find_map(|(ix, top, height)| (*ix == total).then_some((*top, *height)));
-        if let (Some(pending), Some((approval_top, approval_height))) = (
-            self.projection.pending_approval.as_ref(),
-            approval_top,
-        ) {
+        if let (Some(pending), Some((approval_top, approval_height))) =
+            (self.projection.pending_approval.as_ref(), approval_top)
+        {
             // P4 片 3：卡高与 approval_card.rs 布局同源（标题 / reason 行
             // 数 + 可选 detail + p_2 + 32px 按钮行）。P4 片 2F（D2）及
             // review：卡作为真实 list 末项参与 start/offset/可见性计算；
             // 滚离底部时不发布不可见审批动作，跟随溢出时首项可部分可见。
-            let approval = AxRect::new(
-                column_x,
-                approval_top,
-                column_width,
-                approval_height,
-            );
+            let approval = AxRect::new(column_x, approval_top, column_width, approval_height);
             let button_row_y = approval_button_row_y(approval, rem_px);
             let button_gap = APPROVAL_BUTTON_ROW_GAP_REMS * rem_px;
             let enabled = self.can_approve();
@@ -1939,11 +1932,12 @@ impl AppView {
         // 与可见按钮（inspector.rs）同 gate：running → Stop，已知
         // exited/killed/failed → Close，其余状态不发布节点。
         let terminal_close_label =
-            terminal_close_label(&self.projection.connection, &self.projection.terminal)
-                .map(|label| match label {
+            terminal_close_label(&self.projection.connection, &self.projection.terminal).map(
+                |label| match label {
                     "Stop" => "Stop terminal",
                     _ => "Close terminal",
-                });
+                },
+            );
         let mut terminal = AxNode::new("terminal", AxRole::Group, "Terminal", frame)
             // G1：头部尺寸组 = 列 stepper 对 + apply + 行 stepper 对，与可见
             // 控件同 gate / 同 id；apply 仍是唯一下发入口。
@@ -2082,9 +2076,7 @@ impl AppView {
                         input_height,
                     ),
                 )
-                .focused(
-                    self.open_menu.is_none() && self.terminal_close_focus.is_focused(window),
-                )
+                .focused(self.open_menu.is_none() && self.terminal_close_focus.is_focused(window))
                 .enabled(self.terminal_pending_close.is_none())
                 .action(AxAction::Press),
             );
@@ -2571,8 +2563,7 @@ mod tests {
     fn timeline_row_layouts_stack_with_content_heights_and_gaps() {
         use crate::projection::{TimelineEntry, TimelineEntryKind, TimelineRow};
         use crate::ui::timeline::{
-            row_top_gap, timeline_following_window, timeline_row_height,
-            timeline_visible_item_tops,
+            row_top_gap, timeline_following_window, timeline_row_height, timeline_visible_item_tops,
         };
 
         fn entry(seq: u64, kind: TimelineEntryKind) -> TimelineEntry {
@@ -2586,7 +2577,12 @@ mod tests {
             }
         }
         let timeline = vec![
-            entry(1, TimelineEntryKind::UserMessage { text: "Plan:".into() }),
+            entry(
+                1,
+                TimelineEntryKind::UserMessage {
+                    text: "Plan:".into(),
+                },
+            ),
             entry(
                 2,
                 TimelineEntryKind::ToolCall {
@@ -2636,10 +2632,7 @@ mod tests {
             assert!(pair[0].1 + layouts[pair[0].0].1 <= pair[1].1);
         }
         // 125%：消息行高随字号档缩放（标签 36 + 12 + 正文 30）。
-        assert_eq!(
-            timeline_row_height(&rows[0], &timeline, 618.0, 20.0),
-            78.0
-        );
+        assert_eq!(timeline_row_height(&rows[0], &timeline, 618.0, 20.0), 78.0);
         // 跟随态窗口：视口装不下全部（65+48+104+40+28=285>200）时，
         // 首个部分可见项仍保留，item 1 内偏移 20；全部装得下则从 0 开始。
         assert_eq!(timeline_following_window(&layouts, 200.0), (1, 20.0));
@@ -2666,11 +2659,7 @@ mod tests {
             (metrics::MSG_ENTRY_GAP, 104.0),
             (metrics::MSG_ENTRY_GAP, card_height),
         ];
-        let flow_top = content_top
-            + 65.0
-            + metrics::MSG_ENTRY_GAP
-            + 104.0
-            + metrics::MSG_ENTRY_GAP;
+        let flow_top = content_top + 65.0 + metrics::MSG_ENTRY_GAP + 104.0 + metrics::MSG_ENTRY_GAP;
         let short_window = timeline_following_window(&short, viewport_height);
         assert_eq!(short_window, (0, 0.0));
         let short_tops = timeline_visible_item_tops(

@@ -8,14 +8,14 @@ use std::time::Duration;
 use pawork_domain::{
     CommandId, EventId, ModelId, QueryId, RunId, SessionId, Timestamp, WorkspaceId,
 };
+use pawork_protocol::headless::wire::{
+    CompatHistoryEntry, CompatImportReport, CompatSource, HeadlessRequest, HeadlessResponse,
+    SdkCapability, TranslatedRequest,
+};
 use pawork_protocol::{
     ActorIdentity, ApiHandle, ApiVersion, AppCommand, AppCommandEnvelope, AppEventEnvelope,
     AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, CommandSource, EventStream,
     RunState,
-};
-use pawork_protocol::headless::wire::{
-    CompatHistoryEntry, CompatImportReport, CompatSource, HeadlessRequest, HeadlessResponse,
-    SdkCapability, TranslatedRequest,
 };
 use serde::Deserialize;
 use serde_json::Value;

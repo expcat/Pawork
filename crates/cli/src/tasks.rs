@@ -4,11 +4,7 @@ use crate::CliError;
 
 use super::TasksCommand;
 
-pub async fn run_tasks(
-    core: &AppCore,
-    command: TasksCommand,
-    json: bool,
-) -> Result<(), CliError> {
+pub async fn run_tasks(core: &AppCore, command: TasksCommand, json: bool) -> Result<(), CliError> {
     match command {
         TasksCommand::List => {
             let tasks = core.tasks_list();

@@ -315,7 +315,6 @@ pub struct QuotaAlert {
     pub credential_hint: Option<String>,
 }
 
-
 /// 把凭证元数据 ID 脱敏为安全提示：保留首尾各 2 字符，中间以 `*` 替代；
 /// 过短或空值返回 `None`。永不包含 secret/token/cookie 原文。
 pub fn mask_credential_hint(id: &str) -> Option<String> {
@@ -535,5 +534,4 @@ mod tests {
             assert_eq!(decoded, kind);
         }
     }
-
 }

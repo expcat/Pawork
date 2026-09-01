@@ -11,13 +11,13 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use async_trait::async_trait;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::{
     ConnectOptions, ConnectionInfo, ConnectionLocality, GuiConnection, GuiListener,
     GuiTransportClient, GuiTransportServer, TransportEndpoint, TransportError, TransportErrorKind,
     TransportFrame, DEFAULT_MAX_FRAME_BYTES,
 };
+use async_trait::async_trait;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[cfg(unix)]
 #[path = "local_unix.rs"]

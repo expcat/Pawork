@@ -207,7 +207,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 ## 5. 契约与不变量
 
 - **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（三张 1440×1024 初始设计图）与 [../../gui-design.md](../../gui-design.md)（Surface 与连接协议消费约定）。theme token 已按设计事实源冻结到源码；hover / active 只改背景，active 复用 hover 色。当前视觉验收状态只看 [UI Review](../../UI_Review.md) 与 [ROADMAP](../../../ROADMAP.md)。
-- **R9 可见层级合同**：Timeline 满宽 + 618px readable wrapper、40/12px summary 节奏；TaskRail 56px meta 槽；Composer surface 与 unavailable 对比；Changes 20/72/76px 文件槽、36px 横滚外 header、24px gutter；ActivityPopover 320×320 及 capability honesty 均已落地。这里只冻结 R9 可见实现，不宣称 Timeline/Changes 全状态 AX 几何或 R10 视觉门禁已经通过。
+- **R9 可见层级合同**：Timeline 满宽 + 618px readable wrapper、40/12px summary 节奏；TaskRail 56px meta 槽；Composer surface 与 unavailable 对比；Changes 20/72/76px 文件槽、36px 横滚外 header、24px gutter；ActivityPopover 320×320 及 capability honesty 均已落地。这里只冻结 R9 可见实现，不宣称 Timeline/Changes 全状态 AX 几何或终局视觉门禁已经通过。
 - **审批 fail-closed**：无默认允许；决策只能来自显式点击或快捷键；断线禁用；run / tool 终态与 `ApprovalResponded` 清卡防幽灵审批。
 - **`gui.token` fail-closed**：token 缺失、不可读或为空即连接失败，禁止无认证静默连接；错误信息只含路径，token 内容不落日志。
 - **Enter / IME 语义**：keybinding 仅 `TextInput` 聚焦时生效；Enter 冒泡到 AppView 后结合 `is_composing()`（`marked_range` 存在即组合中）与发送可用性裁决；Shift+Enter 恒为换行；终端输入框同规则。
@@ -290,10 +290,10 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 - **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归，因此生产窗口启动仍是必需门禁。
 - **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
-- **渲染面自动门禁尚未完整**：现有布局、主题、键盘与 AX 定向测试不覆盖完整 Timeline/Changes AX 几何、全组件 150%/hover/inactive、VoiceOver 或主动 Reduce Motion / Increase Contrast 真系统态；性能阈值未冻结；三张初始设计图的人工视觉签字留 ROADMAP P4。
-- **ActivityPopover 终局未签字**：divider/raised Changes section 与相关 AX 子节点已有定向测试；完整 screen-reader、动态状态与三张初始设计图的人工视觉签字仍属于 ROADMAP P4，不把结构测试冒充视觉终局。
+- **渲染面自动门禁尚未完整**：现有布局、主题、键盘与 AX 定向测试不覆盖完整 Timeline/Changes AX 几何、全组件 150%/hover/inactive、VoiceOver 或主动 Reduce Motion / Increase Contrast 真系统态；性能阈值未冻结；三张初始设计图的人工视觉签字仍待专项验收。
+- **ActivityPopover 终局未签字**：divider/raised Changes section 与相关 AX 子节点已有定向测试；完整 screen-reader、动态状态与三张初始设计图的人工视觉签字仍待专项验收，不把结构测试冒充视觉终局。
 - **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
-- **早死 run 的回显行重选后消失（R4 Wave B 评审 P3，存量语义）**：plan 闸门在 `MessageCommitted` 之前拒绝时，用户消息从未持久化；乐观回显让用户先看见消息，重选 / 重连后快照重建时该行随基线清空消失。消息此前根本不显示，echo 只是使该语义可观察；是否把用户消息持久化提前到闸门之前属产品决策（ROADMAP §5 live wire 诚实缺口仍开放）。同理，合成兜底条目（≥2^60 序号）在屏时若同会话又有真实事件到达，真实事件按序号插到合成条目之前（深边角化妆性排序），重选即自愈。同一 run 的乐观回显行与稍后到达的持久化 UserMessage 在未经重选/重连时理论上可并存（echo 不进 seen）；实际触发面极窄——最新用户消息只经快照到达而快照会重建 timeline——重选即自愈。
+- **早死 run 的回显行重选后消失（R4 Wave B 评审 P3，存量语义）**：plan 闸门在 `MessageCommitted` 之前拒绝时，用户消息从未持久化；乐观回显让用户先看见消息，重选 / 重连后快照重建时该行随基线清空消失。消息此前根本不显示，echo 只是使该语义可观察；是否把用户消息持久化提前到闸门之前属 [产品候选](../backlog.md)。同理，合成兜底条目（≥2^60 序号）在屏时若同会话又有真实事件到达，真实事件按序号插到合成条目之前（深边角化妆性排序），重选即自愈。同一 run 的乐观回显行与稍后到达的持久化 UserMessage 在未经重选/重连时理论上可并存（echo 不进 seen）；实际触发面极窄——最新用户消息只经快照到达而快照会重建 timeline——重选即自愈。
 - **单主题**：仅深色 `dark()`；Increase Contrast 是同一深色主题的可访问 palette 变体，不是第二套主题。`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。
 - **文件尺寸口径**：`ui/mod.rs` 约 3166 行；这是工程结构口径，不构成新 UI 视觉或交互放行条件。
 - **`text_input.rs` 血统**：改自 gpui 0.2.2 `examples/input.rs`（Apache-2.0）。R5 Wave B 已对照上游补齐 Copy / Cut / SelectAll / 拖选 / Undo / Redo / overflow scroll；ShowCharacterPalette 仍裁剪。

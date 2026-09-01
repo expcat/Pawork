@@ -5,6 +5,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use globset::GlobSet;
+use ignore::WalkBuilder;
 use pawork_domain::AgentTool;
 use pawork_domain::ToolError;
 use pawork_domain::ToolEventSink;
@@ -15,12 +18,9 @@ use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
 };
-use async_trait::async_trait;
-use globset::GlobSet;
-use ignore::WalkBuilder;
+use pawork_workspace::WorkspaceService;
 use regex::Regex;
 use serde_json::{json, Value};
-use pawork_workspace::WorkspaceService;
 
 use crate::common::opt_bool;
 use crate::common::opt_u64;
@@ -497,7 +497,10 @@ mod tests {
         assert!(text.contains("ok.txt"), "{text}");
         assert!(!text.contains("auth-link"), "{text}");
         assert!(!text.contains("etc-link"), "{text}");
-        assert!(!text.contains(&outside.path().display().to_string()), "{text}");
+        assert!(
+            !text.contains(&outside.path().display().to_string()),
+            "{text}"
+        );
 
         let res = search(
             &service,

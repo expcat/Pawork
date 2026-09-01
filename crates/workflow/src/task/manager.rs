@@ -5,8 +5,8 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use pawork_domain::{BackgroundTaskId, CancellationToken, TaskEvent, TaskKind, TaskStatus};
 use pawork_domain::AgentEvent;
+use pawork_domain::{BackgroundTaskId, CancellationToken, TaskEvent, TaskKind, TaskStatus};
 use tokio::sync::broadcast;
 
 use crate::task::error::TaskManagerError;
@@ -253,7 +253,6 @@ impl TaskManager {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
-
 }
 
 impl Default for TaskManager {

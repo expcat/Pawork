@@ -3,11 +3,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use pawork_app::{gui_server::GuiHost, ApprovalMode};
 use pawork_client::{ClientConfig, ClientError, GuiClient, ResumeDisposition};
 use pawork_domain::{
     ArtifactId, CommandId, EventId, ProviderId, RunId, SessionId, TenantId, Timestamp,
 };
-use pawork_app::{gui_server::GuiHost, ApprovalMode};
 use pawork_protocol::{
     decode_server_frame, encode_server_frame, mask_credential_hint, ApiVersion, AppCommand,
     AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppResponse, ArtifactChunk,
@@ -77,7 +77,9 @@ async fn run_scenario(name: &str) -> Result<(), String> {
 
 async fn session_events() -> Result<(), String> {
     let mut harness = Harness::new("session-events", streaming_script()).await;
-    let client = harness.connect_gui("session-events", "session-events").await?;
+    let client = harness
+        .connect_gui("session-events", "session-events")
+        .await?;
     if client.initial_snapshot().is_none() {
         return Err("握手后应消费首帧 Snapshot".into());
     }
@@ -136,10 +138,7 @@ async fn snapshot_reconnect() -> Result<(), String> {
         .map_err(|error| format!("subscribe: {error}"))?;
     let run_id = harness.start_run_cli(&session_id, "long run").await?;
     wait_until(|| harness.adapter.runs().contains(&run_id)).await?;
-    let (done, events) = recv_until(&client, |event| {
-        run_state(event, &run_id).is_some()
-    })
-    .await?;
+    let (done, events) = recv_until(&client, |event| run_state(event, &run_id).is_some()).await?;
     let last_sequence = if done {
         events
             .iter()
@@ -282,9 +281,10 @@ async fn three_gui_sync() -> Result<(), String> {
 
     let run_id = harness.start_run_cli(&session_id, "cli run").await?;
     for (name, gui) in [("A", &gui_a), ("B", &gui_b), ("C", &gui_c)] {
-        let (done, _) =
-            recv_until(gui, |event| run_state(event, &run_id) == Some(RunState::Completed))
-                .await?;
+        let (done, _) = recv_until(gui, |event| {
+            run_state(event, &run_id) == Some(RunState::Completed)
+        })
+        .await?;
         if !done {
             return Err(format!("GUI {name} 未收到 CLI Run 的 Completed"));
         }
@@ -409,18 +409,27 @@ async fn terminal_gate() -> Result<(), String> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     if terminal_session_id.is_empty() {
-        return Err(format!("放行路径 terminal_session_id 应非空，got {value:?}"));
+        return Err(format!(
+            "放行路径 terminal_session_id 应非空，got {value:?}"
+        ));
     }
     if value.get("sandboxed") != Some(&Value::Bool(false)) {
         return Err(format!("放行路径 sandboxed 应为 false，got {value:?}"));
     }
     if value.get("approval_mode").and_then(Value::as_str) != Some("ask_for_dangerous") {
-        return Err(format!("放行路径 approval_mode 应为 ask_for_dangerous，got {value:?}"));
+        return Err(format!(
+            "放行路径 approval_mode 应为 ask_for_dangerous，got {value:?}"
+        ));
     }
     if value.get("policy").and_then(Value::as_str) != Some("allow_with_constraints") {
-        return Err(format!("放行路径 policy 应为 allow_with_constraints，got {value:?}"));
+        return Err(format!(
+            "放行路径 policy 应为 allow_with_constraints，got {value:?}"
+        ));
     }
-    let note = value.get("note").and_then(Value::as_str).unwrap_or_default();
+    let note = value
+        .get("note")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if !note.contains("policy 闸") {
         return Err(format!("放行路径 note 应含 policy 闸，got {value:?}"));
     }
@@ -456,7 +465,10 @@ async fn terminal_gate() -> Result<(), String> {
             }
         }
         Ok(envelope) => {
-            return Err(format!("拒绝路径应为 ClientError，got {:?}", envelope.response));
+            return Err(format!(
+                "拒绝路径应为 ClientError，got {:?}",
+                envelope.response
+            ));
         }
     }
     Ok(())
@@ -479,11 +491,7 @@ async fn artifact_chunks() -> Result<(), String> {
     match response {
         Ok(envelope) => match envelope.response {
             AppResponse::Error(_) => {}
-            other => {
-                return Err(format!(
-                    "缺失 artifact 应为 Error，got {other:?}"
-                ))
-            }
+            other => return Err(format!("缺失 artifact 应为 Error，got {other:?}")),
         },
         Err(error) => {
             let text = error.to_string();
@@ -661,9 +669,12 @@ fn quota_alert_roundtrip() -> Result<(), String> {
         detail: "credential rejected".into(),
         retry_after_ms: Some(30_000),
     };
-    let failure_json = serde_json::to_string(&failure_with_kind).map_err(|error| error.to_string())?;
+    let failure_json =
+        serde_json::to_string(&failure_with_kind).map_err(|error| error.to_string())?;
     if !failure_json.contains("\"adapter_kind\":\"api_key_api\"") {
-        return Err(format!("adapter_kind Some 应按冻结形态序列化: {failure_json}"));
+        return Err(format!(
+            "adapter_kind Some 应按冻结形态序列化: {failure_json}"
+        ));
     }
     let decoded_failure: QuotaFailureView =
         serde_json::from_str(&failure_json).map_err(|error| error.to_string())?;
@@ -754,7 +765,11 @@ async fn mcp_list() -> Result<(), String> {
     let mut harness = Harness::new("mcp-list", streaming_script()).await;
     let client = harness.connect_gui("mcp-list", "mcp-list").await?;
     let response = client
-        .query(AppQuery::McpList, harness::gui_source(&client), harness::local_user())
+        .query(
+            AppQuery::McpList,
+            harness::gui_source(&client),
+            harness::local_user(),
+        )
         .await
         .map_err(|error| format!("McpList: {error}"))?;
     let AppResponse::Data(data) = &response.response else {

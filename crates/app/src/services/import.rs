@@ -6,10 +6,7 @@
 use std::path::Path;
 
 use pawork_domain::SessionId;
-use pawork_storage::session::{
-    ExternalSource as SessionExternalSource,
-    SessionExport,
-};
+use pawork_storage::session::{ExternalSource as SessionExternalSource, SessionExport};
 use pawork_workspace::config::ConfigTier;
 use pawork_workspace::import::{
     scan_local_sessions as scan_workspace_local_sessions, CompatLoader, ExternalSource,
@@ -139,7 +136,14 @@ impl ImportService {
         core: &AppCore,
         tool: ExternalSource,
         global_root: Option<&Path>,
-    ) -> Result<(pawork_workspace::import::CompatPlan, Vec<std::path::PathBuf>, Vec<FileSnapshot>), AppError> {
+    ) -> Result<
+        (
+            pawork_workspace::import::CompatPlan,
+            Vec<std::path::PathBuf>,
+            Vec<FileSnapshot>,
+        ),
+        AppError,
+    > {
         let workspace = core
             .workspace_root()
             .ok_or_else(|| AppError::Import("workspace is not attached".into()))?;
@@ -149,7 +153,11 @@ impl ImportService {
         };
         let globals = [GlobalSource::new(tool, home.clone())];
         let loader = CompatLoader::default();
-        let mut plan = loader.scan(Some(workspace), &globals, Some(&core.extensions.workspace_id))?;
+        let mut plan = loader.scan(
+            Some(workspace),
+            &globals,
+            Some(&core.extensions.workspace_id),
+        )?;
         plan.items.retain(|item| item.source.external == tool);
         plan.sources.retain(|source| *source == tool);
         plan.sort_deterministically();
@@ -237,7 +245,10 @@ mod tests {
         let before = std::fs::metadata(&source).expect("meta").modified().ok();
         let before_bytes = std::fs::read(&source).expect("bytes");
         let report = core
-            .apply_compat_import(pawork_workspace::import::ExternalSource::Claude, Some(home.path()))
+            .apply_compat_import(
+                pawork_workspace::import::ExternalSource::Claude,
+                Some(home.path()),
+            )
             .expect("import");
         assert!(report.sources_unchanged);
         assert_eq!(
@@ -259,10 +270,8 @@ mod tests {
             .expect("claude session");
         let codex = home.path().join(".codex/sessions/2026");
         std::fs::create_dir_all(&codex).expect("codex dirs");
-        std::fs::write(codex.join("rollout-b.jsonl"), "pending content\n")
-            .expect("codex rollout");
-        std::fs::write(codex.join("plain.jsonl"), "pending content\n")
-            .expect("non-rollout");
+        std::fs::write(codex.join("rollout-b.jsonl"), "pending content\n").expect("codex rollout");
+        std::fs::write(codex.join("plain.jsonl"), "pending content\n").expect("non-rollout");
 
         let (core, _store) = crate::testsupport::mock_core(Vec::new()).await;
         let claude_files = core
@@ -289,7 +298,10 @@ mod tests {
             .export_session_doc(Some(session.as_str()))
             .await
             .expect("export");
-        assert_eq!(export.schema_version, pawork_storage::session::EXPORT_SCHEMA_VERSION);
+        assert_eq!(
+            export.schema_version,
+            pawork_storage::session::EXPORT_SCHEMA_VERSION
+        );
         let dir = tempfile::tempdir().expect("import store");
         let path = dir.path().join("session.db");
         let (store, _) = pawork_storage::session::SessionStore::open(&path)

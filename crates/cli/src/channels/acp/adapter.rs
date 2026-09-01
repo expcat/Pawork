@@ -18,11 +18,11 @@ use pawork_protocol::adapter::{
     ClientAdapter, ClientAdapterFactory, ClientCapability, ClientProtocol, ClientSessionId,
     ClientSessionRecord, ClientSessionState, SessionRegistry, CLIENT_ADAPTER_SCHEMA_VERSION,
 };
+use pawork_protocol::app::registry::command_entry;
 use pawork_protocol::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery,
     AppQueryEnvelope, CommandSource, API_VERSION,
 };
-use pawork_protocol::app::registry::command_entry;
 use serde_json::Value;
 
 use crate::channels::acp::map;

@@ -16,27 +16,26 @@
 //! - 自动测试只用 [`MemoryBackend`] 或显式临时路径的 [`FileBackend`]，不读取真实
 //!   auth 文件。
 
-mod base64url;
 mod backend;
-mod file_backend;
+mod base64url;
 mod credential;
 mod default_credential;
 mod error;
-mod masked;
+mod file_backend;
 pub mod locator;
+mod masked;
 pub mod oauth;
 mod resolve;
 
 pub use backend::{MemoryBackend, SecretBackend};
-pub use file_backend::FileBackend;
 pub use credential::{ApiKeyCredential, CredentialId, StoredCredential};
 pub use default_credential::{
     default_oauth_needs_refresh, delete_default_oauth_token, load_default_oauth_credential,
-    load_default_oauth_meta, refresh_default_oauth_credential_if_needed,
-    store_default_oauth_token,
+    load_default_oauth_meta, refresh_default_oauth_credential_if_needed, store_default_oauth_token,
     update_default_oauth_token, DefaultOAuthMeta, OAUTH_DEFAULT_ACCOUNT,
 };
 pub use error::AuthError;
+pub use file_backend::FileBackend;
 pub use masked::MaskedCredential;
 pub use oauth::{
     exchange_pkce_code, needs_refresh, poll_device_token, random_state, read_refresh_token,

@@ -7,15 +7,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::net::http::HttpClientConfig;
+use crate::ReasoningProtector;
 use async_trait::async_trait;
+use pawork_domain::{CancellationToken, ModelId, ProviderId};
 use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelCapabilities, ModelDefinition, ModelProvider,
     ModelResponseSummary, ModelTransport, ProviderError, ProviderErrorKind, ProviderEventSink,
     ResolvedCredential,
 };
-use pawork_domain::{CancellationToken, ModelId, ProviderId};
-use crate::net::http::HttpClientConfig;
-use crate::ReasoningProtector;
 use serde_json::Value;
 
 use crate::responses::{ResponsesTransport, ResponsesTransportConfig, ResponsesWireOptions};

@@ -15,8 +15,8 @@ pub mod tenant;
 pub mod usage;
 
 pub use audit::{
-    AUDIT_SCHEMA_VERSION, AuditAction, AuditDecision, AuditDimensions, AuditError, AuditEventV1,
-    AuditSink, AuditStore, AuditTargetKind, FileAuditStore, InMemoryAuditStore,
+    AuditAction, AuditDecision, AuditDimensions, AuditError, AuditEventV1, AuditSink, AuditStore,
+    AuditTargetKind, FileAuditStore, InMemoryAuditStore, AUDIT_SCHEMA_VERSION,
 };
 pub use decision::{sanitize_reason, PolicyDecisionEvent, PolicyDecisionKind, PolicyGate};
 pub use identity::{

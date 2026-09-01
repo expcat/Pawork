@@ -28,13 +28,13 @@ use std::time::Duration;
 
 use pawork_domain::{CommandId, ConnectionId, GuiClientId, QueryId, Timestamp};
 use pawork_protocol::{
-    decode_server_frame, decode_server_frame_checked, encode_client_frame, ApiHandle,
-    ClientFrame, HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError,
-    ResumeRequest, ResumeResponse, ServerFrame, SubscribeRequest, SUPPORTED_API_VERSIONS,
+    decode_server_frame, decode_server_frame_checked, encode_client_frame, ApiHandle, ClientFrame,
+    HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError, ResumeRequest,
+    ResumeResponse, ServerFrame, SubscribeRequest, SUPPORTED_API_VERSIONS,
 };
+use pawork_transport::{ConnectionInfo, GuiConnection, TransportError, TransportFrame};
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
-use pawork_transport::{ConnectionInfo, GuiConnection, TransportError, TransportFrame};
 
 /// 重连 disposition（服务端判定结果，[`SessionInfo`] / [`ResumeOutcome`] 使用）。
 pub use pawork_protocol::ResumeDisposition;
@@ -245,8 +245,14 @@ impl GuiClient {
         options: ConnectOptions,
         authentication: Option<ClientAuthentication>,
     ) -> Result<Self, ClientError> {
-        Self::connect_with_config(transport, endpoint, options, authentication, ClientConfig::default())
-            .await
+        Self::connect_with_config(
+            transport,
+            endpoint,
+            options,
+            authentication,
+            ClientConfig::default(),
+        )
+        .await
     }
 
     /// 连接 + 握手（自定义配置）。
@@ -294,9 +300,14 @@ impl GuiClient {
         last_global_sequence: Option<GlobalSequence>,
         config: ClientConfig,
     ) -> Result<(Self, Option<ResumeOutcome>), ClientError> {
-        let client =
-            Self::connect_with_config(Arc::clone(&transport), endpoint, options, authentication, config)
-                .await?;
+        let client = Self::connect_with_config(
+            Arc::clone(&transport),
+            endpoint,
+            options,
+            authentication,
+            config,
+        )
+        .await?;
         let outcome = match last_global_sequence {
             Some(last) => Some(client.resume(last).await?),
             None => None,
@@ -343,14 +354,14 @@ impl GuiClient {
         // Snapshot 是协商能力：未获授时服务端不得发送，客户端也不得阻塞等待。
         let snapshot = if capabilities.contains(&GuiCapability::Snapshots) {
             Some(
-            match recv_frame(conn.as_ref(), config.timeout, Some(handle.api_version)).await? {
-                ServerFrame::Snapshot(snapshot) => snapshot,
-                other => return Err(unexpected_frame("initial snapshot", &other)),
+                match recv_frame(conn.as_ref(), config.timeout, Some(handle.api_version)).await? {
+                    ServerFrame::Snapshot(snapshot) => snapshot,
+                    other => return Err(unexpected_frame("initial snapshot", &other)),
                 },
             )
         } else {
             None
-            };
+        };
         let info = Arc::new(SessionInfo {
             handle: handle.clone(),
             client_id,
@@ -1004,9 +1015,9 @@ mod tests {
     use pawork_domain::{CommandId, QueryId};
     use pawork_protocol::GuiCapability;
     use pawork_protocol::{encode_server_frame, AppResponse, AppResponseEnvelope, API_VERSION};
+    use pawork_transport::{ConnectionLocality, TransportErrorKind};
     use std::future::Future;
     use std::pin::Pin;
-    use pawork_transport::{ConnectionLocality, TransportErrorKind};
 
     #[test]
     fn request_namespaces_do_not_repeat_within_a_process() {
@@ -1098,16 +1109,22 @@ mod tests {
         // Desktop 握手自行声明 TerminalStreaming；默认配置不强制，避免影响既有契约装配。
         let mut config = ClientConfig::default();
         config.capabilities.push(GuiCapability::TerminalStreaming);
-        assert!(config.capabilities.contains(&GuiCapability::TerminalStreaming));
+        assert!(config
+            .capabilities
+            .contains(&GuiCapability::TerminalStreaming));
     }
 
     #[tokio::test]
     async fn recv_frame_rejects_mismatched_version() {
         // 协商为 1.0，服务端帧信封带当前 API_VERSION（minor 过高）：拒绝并归类 Version。
         let conn = mock(vec![TransportFrame::new(response_bytes(API_VERSION))]);
-        let error = recv_frame(&conn, Duration::from_millis(100), Some(ApiVersion::new(1, 0)))
-            .await
-            .expect_err("too-high minor must be rejected");
+        let error = recv_frame(
+            &conn,
+            Duration::from_millis(100),
+            Some(ApiVersion::new(1, 0)),
+        )
+        .await
+        .expect_err("too-high minor must be rejected");
         assert!(matches!(error, ClientError::Version(_)));
         assert_eq!(error.kind(), ClientErrorKind::Version);
         assert!(error.is_incompatible_version());

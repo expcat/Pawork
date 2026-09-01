@@ -3,6 +3,7 @@
 //! 精确替换、多段编辑、上下文校验、模糊匹配、冲突报告（结构化 diff）。
 //! 全部替换先在内存中预演；任一段冲突则不落盘。
 
+use async_trait::async_trait;
 use pawork_domain::AgentTool;
 use pawork_domain::ToolError;
 use pawork_domain::ToolEventSink;
@@ -13,11 +14,10 @@ use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
 };
-use async_trait::async_trait;
+use pawork_workspace::WorkspaceService;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs;
-use pawork_workspace::WorkspaceService;
 
 use crate::common::atomic_write;
 use crate::common::opt_bool;
@@ -387,12 +387,7 @@ mod tests {
     fn precise_single_replacement() {
         let (service, id, root, _ws_dir) = make_service();
         fs::write(root.join("a.txt"), "alpha\nbeta\n").unwrap();
-        edit(
-            &service,
-            &id,
-            &single_edit("a.txt", "alpha", "ALPHA"),
-        )
-        .expect("edit");
+        edit(&service, &id, &single_edit("a.txt", "alpha", "ALPHA")).expect("edit");
         assert_eq!(
             fs::read_to_string(root.join("a.txt")).unwrap(),
             "ALPHA\nbeta\n"

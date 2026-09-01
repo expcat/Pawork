@@ -5,14 +5,14 @@
 
 use std::time::Duration;
 
-use pawork_domain::{CancellationToken, ModelId, ProviderId, StopReason, TokenUsage};
+use crate::net::http::{HttpClient, HttpClientConfig};
+use crate::net::sse::SseParser;
 use async_trait::async_trait;
+use pawork_domain::{CancellationToken, ModelId, ProviderId, StopReason, TokenUsage};
 use pawork_domain::{
     CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider, ModelResponseSummary,
     ProviderError, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, ResolvedCredential,
 };
-use crate::net::http::{HttpClient, HttpClientConfig};
-use crate::net::sse::SseParser;
 use serde_json::Value;
 
 use crate::stream::{chunk_to_events, is_done, ChunkState};
@@ -302,7 +302,8 @@ mod tests {
 
     #[test]
     fn provider_id_is_configurable() {
-        let config = OpenAiCompatibleConfig::new("https://api.example.com/v1").with_provider_id("test");
+        let config =
+            OpenAiCompatibleConfig::new("https://api.example.com/v1").with_provider_id("test");
         let p = OpenAiCompatibleProvider::new(config, None).expect("构造 adapter");
         assert_eq!(p.id().as_str(), "test");
     }
@@ -314,10 +315,8 @@ mod tests {
             .http
             .extra_headers
             .push(("Authorization".into(), "Bearer attacker".into()));
-        let credential = ResolvedCredential::new(
-            pawork_domain::CredentialKind::ApiKey,
-            "real-credential",
-        );
+        let credential =
+            ResolvedCredential::new(pawork_domain::CredentialKind::ApiKey, "real-credential");
         let error = OpenAiCompatibleProvider::new(config, Some(credential))
             .err()
             .expect("duplicate credential header must fail");

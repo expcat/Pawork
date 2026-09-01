@@ -154,9 +154,8 @@ pub(crate) async fn seed_scenario(database: &DatabaseActor, scenario: &SeedScena
                 let branch_id = branch.to_string();
                 database
                     .call(move |connection| {
-                        let transaction = connection
-                            .transaction()
-                            .expect("seed append transaction");
+                        let transaction =
+                            connection.transaction().expect("seed append transaction");
                         persist_event_in_transaction(&transaction, &branch_id, &envelope)
                             .expect("seed append persist");
                         transaction.commit().expect("seed append commit");
@@ -192,9 +191,7 @@ pub(crate) fn lineage_payload_lines(
         .collect::<Result<Vec<_>, _>>()
         .expect("collect events");
     rows.into_iter()
-        .filter(|(_, event_branch, sequence)| {
-            visible_on_lineage(&lineage, event_branch, *sequence)
-        })
+        .filter(|(_, event_branch, sequence)| visible_on_lineage(&lineage, event_branch, *sequence))
         .map(|(payload, _, _)| payload)
         .collect()
 }

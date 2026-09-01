@@ -3941,7 +3941,11 @@ mod tests {
                     "tool_completed",
                     json!({ "tool_name": "read_file", "status": "succeeded" }),
                 ),
-                history_item(3, "approval_requested", json!({ "tool_name": "run_command" })),
+                history_item(
+                    3,
+                    "approval_requested",
+                    json!({ "tool_name": "run_command" }),
+                ),
             ],
             true,
         ));

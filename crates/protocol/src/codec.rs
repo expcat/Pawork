@@ -191,7 +191,10 @@ where
         .write_all(&length.to_le_bytes())
         .await
         .map_err(ProtocolCodecError::Io)?;
-    writer.write_all(payload).await.map_err(ProtocolCodecError::Io)?;
+    writer
+        .write_all(payload)
+        .await
+        .map_err(ProtocolCodecError::Io)?;
     Ok(())
 }
 

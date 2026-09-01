@@ -4,7 +4,9 @@
 //! resume 三态基线、run 态文案两端一致（CR08-08）。
 
 use pawork_protocol::projection::{TimelineEntryKind, TimelineProjection};
-use pawork_protocol::{AppEventEnvelope, GlobalSequence, ResumeDisposition, TimelineItem, TimelineItemKind};
+use pawork_protocol::{
+    AppEventEnvelope, GlobalSequence, ResumeDisposition, TimelineItem, TimelineItemKind,
+};
 
 fn event(sequence: u64, payload: serde_json::Value) -> AppEventEnvelope {
     serde_json::from_value(serde_json::json!({
@@ -88,7 +90,13 @@ fn history_item(sequence: u64, kind: TimelineItemKind) -> TimelineItem {
     }
 }
 
-fn item_with(mut item: TimelineItem, text: Option<&str>, tool_name: Option<&str>, status: Option<&str>, detail: Option<&str>) -> TimelineItem {
+fn item_with(
+    mut item: TimelineItem,
+    text: Option<&str>,
+    tool_name: Option<&str>,
+    status: Option<&str>,
+    detail: Option<&str>,
+) -> TimelineItem {
     item.text = text.map(str::to_string);
     item.tool_name = tool_name.map(str::to_string);
     item.status = status.map(str::to_string);
@@ -123,10 +131,34 @@ fn timeline_items_dedup_by_sequence_and_merge_committed_text() {
     let mut projection = TimelineProjection::default();
 
     let first = vec![
-        item_with(history_item(1, TimelineItemKind::UserMessage), Some("hi"), None, None, None),
-        item_with(history_item(2, TimelineItemKind::AssistantDelta), Some("He"), None, None, None),
-        item_with(history_item(3, TimelineItemKind::AssistantDelta), Some("llo"), None, None, None),
-        item_with(history_item(4, TimelineItemKind::AssistantMessage), Some("Hello"), None, None, None),
+        item_with(
+            history_item(1, TimelineItemKind::UserMessage),
+            Some("hi"),
+            None,
+            None,
+            None,
+        ),
+        item_with(
+            history_item(2, TimelineItemKind::AssistantDelta),
+            Some("He"),
+            None,
+            None,
+            None,
+        ),
+        item_with(
+            history_item(3, TimelineItemKind::AssistantDelta),
+            Some("llo"),
+            None,
+            None,
+            None,
+        ),
+        item_with(
+            history_item(4, TimelineItemKind::AssistantMessage),
+            Some("Hello"),
+            None,
+            None,
+            None,
+        ),
     ];
     for item in &first {
         projection.apply_item(item);
@@ -144,10 +176,34 @@ fn timeline_items_dedup_by_sequence_and_merge_committed_text() {
     assert_eq!(projection.entries[1].sequence, 4);
 
     let second = vec![
-        item_with(history_item(3, TimelineItemKind::AssistantDelta), Some("llo"), None, None, None),
-        item_with(history_item(5, TimelineItemKind::ToolStarted), None, Some("fs_read"), Some("running"), None),
-        item_with(history_item(6, TimelineItemKind::ToolOutput), Some("42 bytes"), None, None, None),
-        item_with(history_item(7, TimelineItemKind::ToolCompleted), None, Some("fs_read"), Some("succeeded"), None),
+        item_with(
+            history_item(3, TimelineItemKind::AssistantDelta),
+            Some("llo"),
+            None,
+            None,
+            None,
+        ),
+        item_with(
+            history_item(5, TimelineItemKind::ToolStarted),
+            None,
+            Some("fs_read"),
+            Some("running"),
+            None,
+        ),
+        item_with(
+            history_item(6, TimelineItemKind::ToolOutput),
+            Some("42 bytes"),
+            None,
+            None,
+            None,
+        ),
+        item_with(
+            history_item(7, TimelineItemKind::ToolCompleted),
+            None,
+            Some("fs_read"),
+            Some("succeeded"),
+            None,
+        ),
     ];
     for item in &second {
         projection.apply_item(item);
@@ -426,7 +482,13 @@ fn live_tool_survives_earlier_page_insert_without_duplicate() {
             if name == "fs_read" && status == "running"
     ));
 
-    projection.apply_item(&item_with(history_item(5, TimelineItemKind::UserMessage), Some("hi"), None, None, None));
+    projection.apply_item(&item_with(
+        history_item(5, TimelineItemKind::UserMessage),
+        Some("hi"),
+        None,
+        None,
+        None,
+    ));
     assert_eq!(projection.entries.len(), 2);
     assert!(matches!(
         &projection.entries[0].kind,
@@ -452,7 +514,13 @@ fn live_assistant_survives_earlier_page_insert_without_split() {
     let mut projection = TimelineProjection::default();
 
     assert!(projection.apply_event(&assistant_delta(10, "m-1", "Hello")));
-    projection.apply_item(&item_with(history_item(5, TimelineItemKind::UserMessage), Some("hi"), None, None, None));
+    projection.apply_item(&item_with(
+        history_item(5, TimelineItemKind::UserMessage),
+        Some("hi"),
+        None,
+        None,
+        None,
+    ));
     assert!(projection.apply_event(&assistant_delta(11, "m-1", " world")));
 
     assert_eq!(assistant_texts(&projection), vec!["Hello world"]);
@@ -597,17 +665,23 @@ fn fifty_thousand_timeline_entries_iter_without_clone() {
     let mut projection = TimelineProjection::default();
     projection.entries.reserve(50_000);
     for sequence in 0..50_000u64 {
-        projection.entries.push(pawork_protocol::projection::TimelineEntry {
-            sequence,
-            event_id: format!("e{sequence}"),
-            kind: TimelineEntryKind::RunState("x".into()),
-            fork_boundary: None,
-            timestamp: "1".into(),
-            run_id: None,
-        });
+        projection
+            .entries
+            .push(pawork_protocol::projection::TimelineEntry {
+                sequence,
+                event_id: format!("e{sequence}"),
+                kind: TimelineEntryKind::RunState("x".into()),
+                fork_boundary: None,
+                timestamp: "1".into(),
+                run_id: None,
+            });
     }
     let started = std::time::Instant::now();
-    let count = projection.entries.iter().map(|entry| entry.sequence).count();
+    let count = projection
+        .entries
+        .iter()
+        .map(|entry| entry.sequence)
+        .count();
     let elapsed = started.elapsed();
     assert_eq!(count, 50_000);
     assert!(

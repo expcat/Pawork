@@ -20,8 +20,8 @@
 //! 并记录 `ClampedEffort`。clamp helper 供 adapter 复用（不形成双轨）。
 
 use pawork_domain::{
-    CapabilityFallback, CapabilityRequirements, ModelCapabilities, ModelTransport,
-    ReasoningConfig, ReasoningEffort, ResolvedCapabilities, ThinkingConfig, ThinkingLevel,
+    CapabilityFallback, CapabilityRequirements, ModelCapabilities, ModelTransport, ReasoningConfig,
+    ReasoningEffort, ResolvedCapabilities, ThinkingConfig, ThinkingLevel,
 };
 
 use crate::registry::CapabilityEvidence;

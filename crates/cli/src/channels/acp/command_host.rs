@@ -4,7 +4,9 @@
 //! 扇出。审计 / 控制面留给 S11，本层不做。
 
 use async_trait::async_trait;
-use pawork_protocol::{AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope};
+use pawork_protocol::{
+    AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope,
+};
 use thiserror::Error;
 
 /// ACP 通道调用 Core 失败。

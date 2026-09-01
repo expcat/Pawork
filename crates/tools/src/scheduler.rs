@@ -806,10 +806,7 @@ mod tests {
             }
         }
 
-        let scheduler = make_scheduler(
-            vec![Arc::new(WaitTool)],
-            ToolSchedulerConfig::default(),
-        );
+        let scheduler = make_scheduler(vec![Arc::new(WaitTool)], ToolSchedulerConfig::default());
         let cancel = CancellationToken::new();
         let exec = scheduler.execute_named(
             "wait",

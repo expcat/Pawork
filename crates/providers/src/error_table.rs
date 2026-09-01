@@ -117,7 +117,10 @@ pub const VENDOR_ERROR_RULES: &[VendorErrorRule] = &[
 /// 按 adapter id 过滤规则并细化错误；未命中或无专属规则时原样返回。
 pub fn normalize_vendor_error(vendor: &str, mut error: ProviderError) -> ProviderError {
     let message = error.message.to_ascii_lowercase();
-    for rule in VENDOR_ERROR_RULES.iter().filter(|rule| rule.vendor == vendor) {
+    for rule in VENDOR_ERROR_RULES
+        .iter()
+        .filter(|rule| rule.vendor == vendor)
+    {
         if rule.needles.iter().all(|needle| message.contains(needle)) {
             error.kind = rule.kind.clone();
             error.retryable = rule.retryable;

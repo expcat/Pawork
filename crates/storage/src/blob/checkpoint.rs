@@ -933,9 +933,7 @@ mod tests {
             "dedupe path must not leak an extra blob ref"
         );
 
-        svc.rollback_tool_call("run", "tc")
-            .await
-            .expect("rollback");
+        svc.rollback_tool_call("run", "tc").await.expect("rollback");
         assert_eq!(std::fs::read(h.ws.join("f.txt")).expect("read"), b"x");
         assert_eq!(h.store.release(&blob).await.expect("release"), 0);
         let report = h.store.gc().await.expect("gc");

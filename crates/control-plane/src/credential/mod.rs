@@ -19,8 +19,8 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use pawork_domain::{AgentId, PrincipalId, ProviderId, SessionId, TenantId};
 use async_trait::async_trait;
+use pawork_domain::{AgentId, PrincipalId, ProviderId, SessionId, TenantId};
 use serde::{Deserialize, Serialize};
 
 // 账号与凭据标识已在 P18-1 上移至 `agent-domain`（opaque ID/value object 留在
@@ -35,7 +35,6 @@ pub use lease::{
     LeaseProjectionError, LeaseRecord, LeaseState, LeaseTransitionError, NullLeaseProjection,
     ReclaimReport, SystemLeaseClock, LEASE_SCHEMA_VERSION,
 };
-
 
 /// 控制面 schema 版本（与 `core-api` / `app-database` 控制面迁移对齐，ADR-033）。
 ///

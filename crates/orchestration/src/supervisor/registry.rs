@@ -1,7 +1,7 @@
 //! 注册表：worker 条目、状态查询、事件日志与终态取守卫。
 
-use pawork_domain::{AgentId, CancellationToken, ModelId};
 use pawork_control_plane::credential::LeaseGuard;
+use pawork_domain::{AgentId, CancellationToken, ModelId};
 
 use crate::budget::WorkerBudgetController;
 use crate::identity::AgentInstance;
@@ -23,7 +23,6 @@ pub struct WorkerEntry {
     /// spawn 请求携带的模型（用于 ledger 归属）。
     pub model: Option<ModelId>,
 }
-
 
 /// complete / fail 锁内取出的守卫与归属。
 pub(crate) struct TerminalTake {
@@ -58,7 +57,6 @@ impl AgentSupervisor {
         Ok(())
     }
 
-
     /// 查询 agent 的取消令牌。
     pub fn cancel_token(&self, agent_id: &AgentId) -> Option<CancellationToken> {
         self.cancel_tokens
@@ -85,7 +83,6 @@ impl AgentSupervisor {
             .clone()
     }
 
-
     /// 追加一条事件。
     pub(crate) fn emit(&self, event: OrchestrationEvent) {
         self.event_log
@@ -93,7 +90,6 @@ impl AgentSupervisor {
             .unwrap_or_else(|poison| poison.into_inner())
             .push(event);
     }
-
 
     /// 从父的 children 列表中移除（幂等）。
     pub(crate) fn remove_child(&self, parent: Option<&AgentId>, child: &AgentId) {
@@ -109,7 +105,6 @@ impl AgentSupervisor {
             kids.retain(|id| id != child);
         }
     }
-
 
     /// 测试辅助：活动 worker 与在途并发预约计数（`tenant = None` 时全局）。
     #[cfg(test)]
@@ -135,7 +130,6 @@ impl AgentSupervisor {
             .count() as u64;
         reserved + active
     }
-
 
     /// 锁内状态机转换并取出 lease / worktree / budget 守卫（complete / fail 共用）。
     pub(crate) fn apply_terminal_and_take(
@@ -174,5 +168,4 @@ impl AgentSupervisor {
             ticket,
         })
     }
-
 }

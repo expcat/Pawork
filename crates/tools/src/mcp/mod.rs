@@ -5,8 +5,8 @@
 
 use std::time::Duration;
 
-use pawork_domain::CancellationToken;
 use async_trait::async_trait;
+use pawork_domain::CancellationToken;
 use serde_json::{Map, Value};
 
 pub mod capabilities;
@@ -114,14 +114,12 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
+    use crate::ToolRegistry;
     use async_trait::async_trait;
     use pawork_domain::{
         AgentTool, ToolError, ToolEventSink, ToolExecutionContext, ToolRequest, ToolResult,
     };
-    use pawork_domain::{
-        CancellationToken, ToolCapability, ToolDescriptor, ToolHosting, ToolKind,
-    };
-    use crate::ToolRegistry;
+    use pawork_domain::{CancellationToken, ToolCapability, ToolDescriptor, ToolHosting, ToolKind};
     use serde_json::json;
 
     use crate::mcp::capabilities::{register_server_tools, McpToolAdapter};

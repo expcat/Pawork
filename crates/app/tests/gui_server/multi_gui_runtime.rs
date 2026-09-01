@@ -12,10 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use pawork_domain::{CommandId, CoreInstanceId, EventId, GuiClientId, RunId, SessionId, Timestamp};
 use pawork_app::gui_server::{
     ConnectionManager, ConnectionManagerConfig, GuiHost, GuiHostError, GuiServer, GuiServerConfig,
 };
+use pawork_domain::{CommandId, CoreInstanceId, EventId, GuiClientId, RunId, SessionId, Timestamp};
 use pawork_protocol::{
     decode_server_frame, encode_client_frame, ActorIdentity, AppCommand, AppCommandEnvelope,
     AppEvent, AppEventEnvelope, AppQueryEnvelope, AppResponse, ClientFrame, CommandSource,
@@ -129,9 +129,12 @@ impl GuiHost for MockHost {
     }
 
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
-        self.commands.lock().expect("commands").push(RecordedCommand {
-            command: envelope.command.clone(),
-        });
+        self.commands
+            .lock()
+            .expect("commands")
+            .push(RecordedCommand {
+                command: envelope.command.clone(),
+            });
         Ok(AppResponse::Accepted {
             command_id: envelope.command_id.clone(),
             run_id: None,
@@ -255,8 +258,7 @@ impl Runtime {
             vec![GuiCapability::Events, GuiCapability::Snapshots],
         );
         let memory = Arc::new(MemoryTransport::new());
-        let connections =
-            connections.unwrap_or_else(|| Arc::new(ConnectionManager::default()));
+        let connections = connections.unwrap_or_else(|| Arc::new(ConnectionManager::default()));
         let (server_transport, client_transport) = match transports {
             Some(pair) => pair,
             None => (
@@ -610,8 +612,11 @@ async fn reconnect_replays_missing_events() {
     let deadline = Instant::now() + WAIT;
     let mut saw_replay = false;
     while Instant::now() < deadline {
-        match tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), fresh.recv())
-            .await
+        match tokio::time::timeout(
+            deadline.saturating_duration_since(Instant::now()),
+            fresh.recv(),
+        )
+        .await
         {
             Ok(ServerFrame::Resume(response)) => {
                 assert_eq!(response.request_id, "resume-1");
@@ -670,8 +675,11 @@ async fn resume_falls_back_to_snapshot_when_replay_unavailable() {
     let mut saw_snapshot = false;
     let deadline = Instant::now() + WAIT;
     while Instant::now() < deadline {
-        match tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), gui.recv())
-            .await
+        match tokio::time::timeout(
+            deadline.saturating_duration_since(Instant::now()),
+            gui.recv(),
+        )
+        .await
         {
             Ok(ServerFrame::Resume(response)) => {
                 assert_eq!(response.request_id, "resume-fallback");

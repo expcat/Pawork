@@ -6,9 +6,7 @@ pub fn format_provider_error(err: &ProviderError) -> String {
     match &err.kind {
         ProviderErrorKind::Authentication => {
             let code = err.http_status.unwrap_or(401);
-            format!(
-                "认证失败 ({code})。检查环境变量 PAWORK_API_KEY_<PROVIDER_ID> 是否有效。"
-            )
+            format!("认证失败 ({code})。检查环境变量 PAWORK_API_KEY_<PROVIDER_ID> 是否有效。")
         }
         ProviderErrorKind::RateLimited => {
             let code = err.http_status.unwrap_or(429);
@@ -60,10 +58,7 @@ mod tests {
         );
 
         assert_eq!(
-            format_provider_error(&ProviderError::new(
-                ProviderErrorKind::Timeout,
-                "timed out"
-            )),
+            format_provider_error(&ProviderError::new(ProviderErrorKind::Timeout, "timed out")),
             "请求超时。检查网络或稍后重试。"
         );
 

@@ -249,12 +249,7 @@ impl FileIndex {
             notify::recommended_watcher(move |result: notify::Result<Event>| match result {
                 Ok(event) => {
                     for change in watcher_changes(event, &rescan_roots) {
-                        if !enqueue_watcher_change(
-                            &sender,
-                            &errors,
-                            &dropped_events,
-                            change,
-                        ) {
+                        if !enqueue_watcher_change(&sender, &errors, &dropped_events, change) {
                             break;
                         }
                     }

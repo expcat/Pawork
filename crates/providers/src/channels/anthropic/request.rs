@@ -290,9 +290,9 @@ fn flush_pending_tool_user(pending: &mut Vec<Value>, out: &mut Vec<Value>) {
         return;
     }
     let blocks = std::mem::take(pending);
-    let (mut tool_results, others): (Vec<_>, Vec<_>) = blocks.into_iter().partition(|block| {
-        block.get("type").and_then(Value::as_str) == Some("tool_result")
-    });
+    let (mut tool_results, others): (Vec<_>, Vec<_>) = blocks
+        .into_iter()
+        .partition(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"));
     tool_results.extend(others);
     out.push(json!({"role": "user", "content": tool_results}));
 }
@@ -372,10 +372,12 @@ fn contains_cache_control(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_domain::{PromptCachePreference, RequestBudget, ThinkingConfig, ThinkingLevel, ToolDefinition};
     use pawork_domain::{
         ImageContent, MessageId, MessageMetadata, TextContent, ToolCallContent, ToolCallId,
         ToolResultContent,
+    };
+    use pawork_domain::{
+        PromptCachePreference, RequestBudget, ThinkingConfig, ThinkingLevel, ToolDefinition,
     };
     use std::collections::BTreeMap;
 
@@ -417,9 +419,7 @@ mod tests {
             content: vec![ContentPart::ToolResult(ToolResultContent {
                 tool_call_id: ToolCallId::from(call_id),
                 tool_name: Some("read_file".into()),
-                content: vec![ContentPart::Text(TextContent {
-                    text: body.into(),
-                })],
+                content: vec![ContentPart::Text(TextContent { text: body.into() })],
                 is_error: false,
                 metadata: Value::Null,
                 artifacts: Vec::new(),
@@ -783,7 +783,11 @@ mod tests {
                 })],
             },
         );
-        let omitted_content = omitted["messages"][1]["content"].as_array().expect("content");
-        assert!(omitted_content.iter().all(|block| block["type"] != "thinking"));
+        let omitted_content = omitted["messages"][1]["content"]
+            .as_array()
+            .expect("content");
+        assert!(omitted_content
+            .iter()
+            .all(|block| block["type"] != "thinking"));
     }
 }

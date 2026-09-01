@@ -190,9 +190,7 @@ impl SessionStore {
             .await??)
     }
 
-    pub async fn waiting_tool_calls(
-        &self,
-    ) -> Result<Vec<WaitingToolCall>, SessionStoreError> {
+    pub async fn waiting_tool_calls(&self) -> Result<Vec<WaitingToolCall>, SessionStoreError> {
         Ok(self
             .database()
             .call(|connection| load_waiting_tool_calls(connection))
@@ -487,9 +485,19 @@ fn load_waiting_tool_call(
             },
         )
         .optional()?;
-    row.map(|(session_id, tool_call_id, run_id, name, state, arguments_json, result)| {
-        map_waiting_row(session_id, tool_call_id, run_id, name, state, arguments_json, result)
-    })
+    row.map(
+        |(session_id, tool_call_id, run_id, name, state, arguments_json, result)| {
+            map_waiting_row(
+                session_id,
+                tool_call_id,
+                run_id,
+                name,
+                state,
+                arguments_json,
+                result,
+            )
+        },
+    )
     .transpose()
 }
 
@@ -513,9 +521,19 @@ fn load_waiting_tool_calls(
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     rows.into_iter()
-        .map(|(session_id, tool_call_id, run_id, name, state, arguments_json, result)| {
-            map_waiting_row(session_id, tool_call_id, run_id, name, state, arguments_json, result)
-        })
+        .map(
+            |(session_id, tool_call_id, run_id, name, state, arguments_json, result)| {
+                map_waiting_row(
+                    session_id,
+                    tool_call_id,
+                    run_id,
+                    name,
+                    state,
+                    arguments_json,
+                    result,
+                )
+            },
+        )
         .collect()
 }
 
@@ -710,13 +728,19 @@ mod tests {
                 .expect("reserve inflight"),
             LedgerCheck::New
         );
-        store.shutdown().await.expect("close writer before read-only");
+        store
+            .shutdown()
+            .await
+            .expect("close writer before read-only");
 
         let readonly = SessionStore::open_read_only(&path)
             .await
             .expect("open_read_only");
         let stats = readonly.command_ledger().stats().await;
-        assert_eq!(stats.inflight, 1, "read-only open must not reclaim inflight rows");
+        assert_eq!(
+            stats.inflight, 1,
+            "read-only open must not reclaim inflight rows"
+        );
         readonly.shutdown().await.expect("close read-only");
 
         let (store, _) = SessionStore::open(&path).await.expect("reopen reclaim");

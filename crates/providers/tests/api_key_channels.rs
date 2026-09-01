@@ -9,13 +9,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pawork_domain::{
+    CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
+    StopReason, TextContent,
+};
+use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelProvider, ModelTransport, PromptCachePreference,
     ProviderError, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, RequestBudget,
     ResolvedCredential, ResponseFormat, ToolChoice,
-};
-use pawork_domain::{
-    CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
-    StopReason, TextContent,
 };
 use pawork_providers::channels::registry::{
     channel_preset, is_enabled, ChannelKind, ChannelPreset, CHANNEL_REGISTRY,
@@ -99,22 +99,13 @@ fn sse_body(chunks: &[&str]) -> String {
 #[test]
 fn default_ids_and_base_urls_cover_all_channels() {
     let expected = [
-        (
-            "glm-coding",
-            "https://api.z.ai/api/coding/paas/v4",
-        ),
-        (
-            "opencode-go",
-            "https://opencode.ai/zen/go/v1",
-        ),
+        ("glm-coding", "https://api.z.ai/api/coding/paas/v4"),
+        ("opencode-go", "https://opencode.ai/zen/go/v1"),
         (
             "qwen-token-plan",
             "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         ),
-        (
-            "deepseek",
-            "https://api.deepseek.com",
-        ),
+        ("deepseek", "https://api.deepseek.com"),
     ];
 
     let presets = api_key_presets();
@@ -146,9 +137,10 @@ fn non_api_key_preset_is_fail_closed() {
 #[test]
 fn missing_or_wrong_credential_is_fail_closed_for_all_channels() {
     for preset in api_key_presets() {
-        let missing = ApiKeyChannelProvider::new(ApiKeyChannelConfig::new(preset).expect("config"), None)
-            .err()
-            .expect("missing credential must fail");
+        let missing =
+            ApiKeyChannelProvider::new(ApiKeyChannelConfig::new(preset).expect("config"), None)
+                .err()
+                .expect("missing credential must fail");
         assert_eq!(missing.kind, ProviderErrorKind::Authentication);
 
         let empty = ApiKeyChannelProvider::new(
@@ -242,7 +234,11 @@ async fn declared_model_transport_selects_responses_without_channel_branching() 
         .with_model_transport("test-model", ModelTransport::Responses);
     let provider = ApiKeyChannelProvider::new(config, Some(api_key())).unwrap();
     provider
-        .stream(request(), &RecordingProviderSink::default(), CancellationToken::new())
+        .stream(
+            request(),
+            &RecordingProviderSink::default(),
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
     server.verify().await;

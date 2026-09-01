@@ -85,7 +85,11 @@ pub(crate) fn load_ancestor_lineage(
     Ok(lineage)
 }
 
-pub(crate) fn visible_on_lineage(lineage: &[(String, i64)], branch_id: &str, sequence: i64) -> bool {
+pub(crate) fn visible_on_lineage(
+    lineage: &[(String, i64)],
+    branch_id: &str,
+    sequence: i64,
+) -> bool {
     lineage
         .iter()
         .any(|(bound_branch, max_sequence)| bound_branch == branch_id && sequence <= *max_sequence)
@@ -226,30 +230,32 @@ impl SessionStore {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let json_rows = self
             .database()
-            .call(move |connection| -> Result<Vec<String>, SessionStoreError> {
-                let lineage = load_ancestor_lineage(connection, &session_id, &branch_id)?;
-                let mut statement = connection.prepare(
-                    "SELECT payload_json, branch_id, sequence FROM session_events \
+            .call(
+                move |connection| -> Result<Vec<String>, SessionStoreError> {
+                    let lineage = load_ancestor_lineage(connection, &session_id, &branch_id)?;
+                    let mut statement = connection.prepare(
+                        "SELECT payload_json, branch_id, sequence FROM session_events \
                      WHERE session_id=?1 AND sequence>=?2 ORDER BY sequence ASC",
-                )?;
-                let rows = statement
-                    .query_map(params![session_id, from_sequence], |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, i64>(2)?,
-                        ))
-                    })?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                Ok(rows
-                    .into_iter()
-                    .filter(|(_, event_branch, sequence)| {
-                        visible_on_lineage(&lineage, event_branch, *sequence)
-                    })
-                    .take(usize::try_from(limit).unwrap_or(usize::MAX))
-                    .map(|(json, _, _)| json)
-                    .collect())
-            })
+                    )?;
+                    let rows = statement
+                        .query_map(params![session_id, from_sequence], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, i64>(2)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(rows
+                        .into_iter()
+                        .filter(|(_, event_branch, sequence)| {
+                            visible_on_lineage(&lineage, event_branch, *sequence)
+                        })
+                        .take(usize::try_from(limit).unwrap_or(usize::MAX))
+                        .map(|(json, _, _)| json)
+                        .collect())
+                },
+            )
             .await??;
         json_rows
             .into_iter()
@@ -295,9 +301,9 @@ mod tests {
             message: pawork_domain::Message {
                 id: MessageId::from(id),
                 role: pawork_domain::MessageRole::User,
-                content: vec![pawork_domain::ContentPart::Text(pawork_domain::TextContent {
-                    text: id.into(),
-                })],
+                content: vec![pawork_domain::ContentPart::Text(
+                    pawork_domain::TextContent { text: id.into() },
+                )],
                 metadata: Default::default(),
             },
         }
@@ -414,11 +420,7 @@ mod tests {
         store
             .append_event(
                 DEFAULT_BRANCH_ID,
-                event(
-                    &session,
-                    1,
-                    committed("m-not-boundary"),
-                ),
+                event(&session, 1, committed("m-not-boundary")),
             )
             .await
             .expect("append");
@@ -434,14 +436,7 @@ mod tests {
         ));
 
         store
-            .append_event(
-                DEFAULT_BRANCH_ID,
-                event(
-                    &session,
-                    2,
-                    fork_boundary(),
-                ),
-            )
+            .append_event(DEFAULT_BRANCH_ID, event(&session, 2, fork_boundary()))
             .await
             .expect("append boundary");
         store
@@ -492,21 +487,11 @@ mod tests {
             .await
             .expect("session");
         store
-            .append_event(
-                DEFAULT_BRANCH_ID,
-                event(&session, 1, committed("m-1")),
-            )
+            .append_event(DEFAULT_BRANCH_ID, event(&session, 1, committed("m-1")))
             .await
             .expect("append 1");
         store
-            .append_event(
-                DEFAULT_BRANCH_ID,
-                event(
-                    &session,
-                    2,
-                    fork_boundary(),
-                ),
-            )
+            .append_event(DEFAULT_BRANCH_ID, event(&session, 2, fork_boundary()))
             .await
             .expect("append boundary");
         store
@@ -517,11 +502,7 @@ mod tests {
             store
                 .append_event(
                     DEFAULT_BRANCH_ID,
-                    event(
-                        &session,
-                        sequence,
-                        committed(&format!("m-{sequence}")),
-                    ),
+                    event(&session, sequence, committed(&format!("m-{sequence}"))),
                 )
                 .await
                 .expect("append");

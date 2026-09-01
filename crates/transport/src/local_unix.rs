@@ -5,12 +5,10 @@ use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::{ConnectOptions, GuiConnection, GuiListener, TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
-use crate::{
-    ConnectOptions, GuiConnection, GuiListener, TransportError, TransportErrorKind,
-};
 
 use super::{connection_closed, connection_info, transport_error, StreamConnection};
 
@@ -52,12 +50,14 @@ pub(super) fn bind(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
-            transport_error(
-                TransportErrorKind::BindFailed,
-                format!("failed to restrict unix socket mode {address}: {error}"),
-            )
-        })?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(
+            |error| {
+                transport_error(
+                    TransportErrorKind::BindFailed,
+                    format!("failed to restrict unix socket mode {address}: {error}"),
+                )
+            },
+        )?;
     }
     Ok(Box::new(UnixSocketListener {
         path: path.to_path_buf(),
@@ -156,11 +156,11 @@ impl GuiListener for UnixSocketListener {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LocalTransport, DEFAULT_MAX_FRAME_BYTES};
     use crate::{
         ConnectOptions, GuiTransportClient, GuiTransportServer, TransportEndpoint,
         TransportErrorKind, TransportFrame,
     };
+    use crate::{LocalTransport, DEFAULT_MAX_FRAME_BYTES};
 
     fn options(max_frame_bytes: u64) -> ConnectOptions {
         ConnectOptions {

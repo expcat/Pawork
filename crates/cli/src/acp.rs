@@ -3,14 +3,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use pawork_app::AppCore;
-use crate::channels::acp::wire::{ERROR_PARSE, JsonRpcError};
+use crate::channels::acp::wire::{JsonRpcError, ERROR_PARSE};
 use crate::channels::acp::OutboxItem;
 use crate::channels::{AcpHost, JsonRpcMessage};
+use pawork_app::AppCore;
 use pawork_protocol::adapter::SessionRegistry;
 use pawork_storage::session::SqliteClientSessionRegistryStore;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
+use tokio::io::{stdin, stdout, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -40,11 +40,7 @@ pub async fn run_acp_serve(core: AppCore) -> Result<(), CliError> {
     run_loop(host, BufReader::new(stdin()), stdout()).await
 }
 
-async fn run_loop<R, W>(
-    host: Arc<AcpHost>,
-    reader: R,
-    writer: W,
-) -> Result<(), CliError>
+async fn run_loop<R, W>(host: Arc<AcpHost>, reader: R, writer: W) -> Result<(), CliError>
 where
     R: tokio::io::AsyncBufRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,

@@ -393,8 +393,8 @@ mod tests {
     use crate::sqlite::{DatabaseActor, Migration, MigrationError};
 
     use super::*;
-    use crate::session::SessionStore;
     use crate::session::test_support as seed;
+    use crate::session::SessionStore;
     use pawork_domain::{AgentEventEnvelope, SessionId, Timestamp, WorkspaceId};
 
     fn temp_db(name: &str) -> (tempfile::TempDir, PathBuf) {
@@ -595,7 +595,8 @@ mod tests {
         plan[7] = Migration {
             version: 8,
             name: MIGRATIONS[7].name,
-            sql: "ALTER TABLE sessions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local/default'; \
+            sql:
+                "ALTER TABLE sessions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local/default'; \
                   CREATE TABL invalid syntax",
         };
         let error = crate::sqlite::migrate(
@@ -770,7 +771,10 @@ mod tests {
             .await
             .expect("actor")
             .expect("unique probe");
-        assert!(unique_ok, "idempotency_key unique index must reject duplicates");
+        assert!(
+            unique_ok,
+            "idempotency_key unique index must reject duplicates"
+        );
         store.shutdown().await.expect("shutdown");
         let (store, second) = SessionStore::open(&path).await.expect("reopen");
         assert!(second.applied_versions.is_empty());
@@ -822,7 +826,8 @@ mod tests {
             .await
             .expect("lineage events");
         assert_eq!(
-            render_lineage(events), fixture,
+            render_lineage(events),
+            fixture,
             "lineage golden mismatch on {branch}"
         );
     }
@@ -841,9 +846,7 @@ mod tests {
                     )
                     .expect("prepare messages");
                 statement
-                    .query_map([session], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                    })
+                    .query_map([session], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                     .expect("query messages")
                     .collect::<Result<Vec<_>, _>>()
                     .expect("collect messages")
@@ -885,7 +888,10 @@ mod tests {
         assert_eq!(report.from_version, 10);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(report.applied_versions, vec![11, 12, 13, 14]);
-        assert!(report.backup_path.as_ref().is_some_and(|path| path.exists()));
+        assert!(report
+            .backup_path
+            .as_ref()
+            .is_some_and(|path| path.exists()));
 
         let session = SessionId::from(scenario.session);
         assert_lineage_golden(
@@ -952,7 +958,10 @@ mod tests {
         assert_eq!(report.from_version, 11);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(report.applied_versions, vec![12, 13, 14]);
-        assert!(report.backup_path.as_ref().is_some_and(|path| path.exists()));
+        assert!(report
+            .backup_path
+            .as_ref()
+            .is_some_and(|path| path.exists()));
 
         let session = SessionId::from(scenario.session);
         assert_lineage_golden(
@@ -1062,11 +1071,17 @@ mod tests {
         let Err(error) = SessionStore::open(&path).await else {
             panic!("孤儿投影行必须 fail-closed，open 不应成功");
         };
-        let SessionStoreError::MigrationFailed { version, message, .. } = &error else {
+        let SessionStoreError::MigrationFailed {
+            version, message, ..
+        } = &error
+        else {
             panic!("v12 必须以 MigrationFailed 失败: {error:?}");
         };
         assert_eq!(*version, 12);
-        assert!(message.contains("lacks backing session_event"), "unexpected: {message}");
+        assert!(
+            message.contains("lacks backing session_event"),
+            "unexpected: {message}"
+        );
 
         // 失败后：账本仍 v11、messages 原样、v10 的 DEFAULT 仍在 DDL 上（未重建）。
         let actor = DatabaseActor::open(&path).await.expect("verify actor");
@@ -1109,7 +1124,9 @@ mod tests {
 
         // 旧路径只读：v11 库可被 raw read-only 打开核对（SessionStore 层
         // 的 v12 闸门由 open_read_only 常量比较保证，不在此重复断言）。
-        let reader = DatabaseActor::open_read_only(&path).await.expect("read-only open");
+        let reader = DatabaseActor::open_read_only(&path)
+            .await
+            .expect("read-only open");
         let total: i64 = reader
             .call(|connection| {
                 connection.query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
@@ -1155,7 +1172,10 @@ mod tests {
         assert_eq!(report.from_version, 12);
         assert_eq!(report.to_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(report.applied_versions, vec![13, 14]);
-        assert!(report.backup_path.as_ref().is_some_and(|path| path.exists()));
+        assert!(report
+            .backup_path
+            .as_ref()
+            .is_some_and(|path| path.exists()));
 
         // v13 生效：workspace_id 列存在。
         let columns: Vec<String> = store
@@ -1178,7 +1198,11 @@ mod tests {
         );
 
         // v14 只建空注册表，不根据 legacy session 归属猜 root。
-        assert!(store.list_workspaces().await.expect("list workspaces").is_empty());
+        assert!(store
+            .list_workspaces()
+            .await
+            .expect("list workspaces")
+            .is_empty());
 
         // 旧会话不回填：历史 NULL 继续落入 Unassigned。
         let record = store
@@ -1281,11 +1305,7 @@ mod tests {
                     let scenario_session = scenario.session;
                     let lines = actor
                         .call(move |connection| {
-                            seed::lineage_payload_lines(
-                                connection,
-                                scenario_session,
-                                branch,
-                            )
+                            seed::lineage_payload_lines(connection, scenario_session, branch)
                         })
                         .await
                         .expect("actor");

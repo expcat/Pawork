@@ -40,7 +40,7 @@
 
 ## 2. 主要对标项目
 
-Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [design.md](design.md) §4，转正登记见 [../ROADMAP.md](../ROADMAP.md) §5 候选池）。通用红线：纯 Rust 不引入 JS 运行时（排除 JS 插件生态路线）；无 TUI（CLI 交互模式 + S7 起的 GPUI Desktop，设计见 [gui-design.md](gui-design.md)）。
+Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [design.md](design.md) §4，转正规则见 [产品候选](spec/backlog.md)）。通用红线：纯 Rust 不引入 JS 运行时（排除 JS 插件生态路线）；无 TUI（CLI 交互模式 + S7 起的 GPUI Desktop，设计见 [gui-design.md](gui-design.md)）。
 
 ### 2.1 OpenCode
 
@@ -233,7 +233,7 @@ F1–F6 与 [design.md](design.md) §3 已确认扩展功能族（G1–G7）的�
 | 阶段 | 主参照 | 对照 / 反例 | 关键参照点 |
 | --- | --- | --- | --- |
 | **旧 R8** GUI 组件化与 Desktop 收口 | [gpui-component](https://github.com/longbridge/gpui-component) **v0.5.1 tag**（Apache-2.0；该版依赖 crates.io gpui ^0.2.2 与本仓 ADR-035 锁定一致，主干已改跟 Zed git 主干，勿参主干） | Zed [`crates/ui`](https://github.com/zed-industries/zed/tree/main/crates/ui)/`crates/theme`（**GPL-3.0：只参 API 形状不抄代码**）；Codex Desktop / OpenCode Desktop 壳形态（既有 S7 参照） | gpui-component：60+ 组件、`ThemeColor` 语义 token、`VirtualList` 与 Zed `ButtonLike`/`ContextMenu` 只作历史组件组织参照 |
-| **旧 R9** 一致性收口 | —（内部核对） | — | 已由当前 R10/R11 任务书重新整理未完成部分 |
+| **旧 R9** 一致性收口 | —（内部核对） | — | 后续收口过程已归档；当前状态只看 ROADMAP/history |
 
 ### 7.2 使用纪律
 
@@ -499,7 +499,7 @@ V1 已有大量同构资产（详见 V1 归档 [provider-control-plane](../../Pa
 
 ## 附录 B 分功能方案 F1–F6（原 research/multi-account-quota-proposals.md）
 
-> 状态：**已确认**（2026-08-14 用户按推荐通过全部方案 F1–F6，决策原则：**减少实现复杂度、优先缓存命中**）。**2026-08-25 并入本手册**：每项选定方案与理由完整保留，对比过程压缩；原文全文见 git 历史 `docs/research/multi-account-quota-proposals.md`。决策记录见 [附录 C](#附录-c-决策记录-d1d8-与并入约定原-researchmulti-account-quota-plan-mergemd)；外部依据见 [附录 A](#附录-a-多账户配额缓存机制调研原-researchmulti-account-quota-referencemd)（下文引用记作「A §N」）+ Pawork V1 既有资产（`provider-control` 13.5k 行、`quota-service` 核心约 6k 行、`usage-ledger`、orchestration budget-gate，对照见 A §7）。文中 S0–S13 阶段编号为撰写时点 V2 规划语境（历史）；转正落点按 [../ROADMAP.md](../ROADMAP.md) §5 候选池重新登记（见附录 C §4）。
+> 状态：**已确认**（2026-08-14 用户按推荐通过全部方案 F1–F6，决策原则：**减少实现复杂度、优先缓存命中**）。**2026-08-25 并入本手册**：每项选定方案与理由完整保留，对比过程压缩；原文全文见 git 历史 `docs/research/multi-account-quota-proposals.md`。决策记录见 [附录 C](#附录-c-决策记录-d1d8-与并入约定原-researchmulti-account-quota-plan-mergemd)；外部依据见 [附录 A](#附录-a-多账户配额缓存机制调研原-researchmulti-account-quota-referencemd)（下文引用记作「A §N」）+ Pawork V1 既有资产（`provider-control` 13.5k 行、`quota-service` 核心约 6k 行、`usage-ledger`、orchestration budget-gate，对照见 A §7）。文中 S0–S13 阶段编号为撰写时点 V2 规划语境（历史）；转正落点按 [产品候选](spec/backlog.md) 重新登记（见附录 C §4）。
 >
 > 全文适用的架构红线：Agent Engine 不按 Provider 名走特例（能力差异一律经 registry/capability 数据表达）；Secret 不落数据库、不入日志/事件流/仓库（账户凭证走 `pawork-auth` 的仓库外 `auth.json`，0600、原子写、损坏 fail-closed）；canonical domain 纯净（厂商字段不进 `pawork-domain`/`pawork-api` 核心类型）；所有路由/切换决策事件化、可持久化、可重放。
 
@@ -602,7 +602,7 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 **问题**：是否让 `pawork` 像 opencodex/CLIProxyAPI 那样对外暴露 OpenAI/Anthropic 兼容端点，把自己的账户池服务给其他客户端？
 
 **选定（F6-A：不内建）**：近期需求两条腿走——① Pawork 作为消费者，经 openai-compatible adapter 把外部网关（opencodex、CLIProxyAPI、Codex Router 等）当上游（仅需 base_url，已支持）；② Pawork 自身多账户能力对内服务（F1–F4）。
-- F6-B（长期候选，P3）：以 channels 扩展 feature 评估——V1 `client-claude-gateway` / `client-codex-app-server`（14.4k 行 channels 资产）已有「外部客户端协议 → Pawork」翻译层，反向暴露「模型代理端点」是其邻接能力；若未来有真实需求（如团队共享账户池），按 [../ROADMAP.md](../ROADMAP.md) §5 候选池流程评估。
+- F6-B（长期候选，P3）：以 channels 扩展 feature 评估——V1 `client-claude-gateway` / `client-codex-app-server`（14.4k 行 channels 资产）已有「外部客户端协议 → Pawork」翻译层，反向暴露「模型代理端点」是其邻接能力；若未来有真实需求（如团队共享账户池），按 [产品候选](spec/backlog.md) 流程评估。
 - F6-C（不做）：独立网关 app——偏离产品定位（Coding Agent 而非 API 网关），且订阅账户转售式代理的 ToS 风险最重（A §6 第 7 条）。
 
 ### B §7 分阶段落地图（确认时点的 V2 规划语境，历史对照）
@@ -719,4 +719,4 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 
 ### C §4 并入计划任务书（历史，落点已失效）
 
-原 §4 为「把 F/G 方案并入 `plan/S*.md`」的任务书：前置条件 D1–D8 已于 2026-08-14 全部确认。V3 更新（2026-08-18）：所列落点文件 `plan/S*.md` 已随 V2 收官删除，且 R0 已归档 account-control-v1 装配面（原 plan/R0 任务书 D2）；本节保留为**方案内容清单**（F/G/D 决议仍有效）——多账户任务转正时按 [../ROADMAP.md](../ROADMAP.md) §5 候选池重新登记落点（V3 布局下另立任务书），方案 → 阶段映射见 [附录 B](#附录-b-分功能方案-f1f6原-researchmulti-account-quota-proposalsmd) §7 落地图（历史对照）。执行约束沿用 C §1 凭证约定；明确不做项沿用 B §7（请求级默认轮换、in-band 子代理标签、身份伪装、响应缓存、独立网关 app）；99% release 目标保留为未来发布任务输入。原逐文件写入内容清单见 git 历史。
+原 §4 为「把 F/G 方案并入 `plan/S*.md`」的任务书：前置条件 D1–D8 已于 2026-08-14 全部确认。V3 更新（2026-08-18）：所列落点文件 `plan/S*.md` 已随 V2 收官删除，且 R0 已归档 account-control-v1 装配面（原 plan/R0 任务书 D2）；本节保留为**方案内容清单**（F/G/D 决议仍有效）——多账户任务转正时按 [产品候选](spec/backlog.md) 重新登记落点（V3 布局下另立任务书），方案 → 阶段映射见 [附录 B](#附录-b-分功能方案-f1f6原-researchmulti-account-quota-proposalsmd) §7 落地图（历史对照）。执行约束沿用 C §1 凭证约定；明确不做项沿用 B §7（请求级默认轮换、in-band 子代理标签、身份伪装、响应缓存、独立网关 app）；99% release 目标保留为未来发布任务输入。原逐文件写入内容清单见 git 历史。

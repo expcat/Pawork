@@ -22,9 +22,7 @@ impl AppCore {
         steps: Vec<String>,
     ) -> Result<PlanSnapshot, AppError> {
         let service = self.plan_service(session_id).await?;
-        let event = service
-            .create_plan(title, steps)
-            .map_err(plan_error)?;
+        let event = service.create_plan(title, steps).map_err(plan_error)?;
         self.persist_plan_event(session_id, event).await?;
         self.plan_snapshot(session_id)
             .await?
@@ -38,9 +36,7 @@ impl AppCore {
         steps: Vec<String>,
     ) -> Result<PlanSnapshot, AppError> {
         let service = self.plan_service(session_id).await?;
-        let event = service
-            .replace_plan(title, steps)
-            .map_err(plan_error)?;
+        let event = service.replace_plan(title, steps).map_err(plan_error)?;
         self.persist_plan_event(session_id, event).await?;
         self.plan_snapshot(session_id)
             .await?
@@ -155,7 +151,10 @@ impl AppCore {
     }
 
     async fn plan_service(&self, session_id: &SessionId) -> Result<PlanService, AppError> {
-        let events = self.store()?.replay_events(session_id, 1, usize::MAX).await?;
+        let events = self
+            .store()?
+            .replay_events(session_id, 1, usize::MAX)
+            .await?;
         let plan_events: Vec<&PlanEvent> = events
             .iter()
             .filter_map(|envelope| match &envelope.payload {

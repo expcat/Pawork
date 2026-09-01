@@ -80,19 +80,21 @@ impl SessionStore {
 
         let title = title.unwrap_or_else(|| "imported".into());
         self.database()
-            .call(move |connection| -> Result<PiImportReport, SessionStoreError> {
-                let transaction =
-                    connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                persist_pi_in_transaction(
-                    &transaction,
-                    &session_id,
-                    &title,
-                    ordered,
-                    &mut report,
-                )?;
-                transaction.commit()?;
-                Ok(report)
-            })
+            .call(
+                move |connection| -> Result<PiImportReport, SessionStoreError> {
+                    let transaction =
+                        connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    persist_pi_in_transaction(
+                        &transaction,
+                        &session_id,
+                        &title,
+                        ordered,
+                        &mut report,
+                    )?;
+                    transaction.commit()?;
+                    Ok(report)
+                },
+            )
             .await?
     }
 }
@@ -323,10 +325,7 @@ mod tests {
             r#"{"branch":true}"#,
         );
 
-        let report = store
-            .import_pi_jsonl_lines(content)
-            .await
-            .expect("import");
+        let report = store.import_pi_jsonl_lines(content).await.expect("import");
         assert_eq!(report.imported_branches, 3);
 
         let session = SessionId::from("pi-branch");
@@ -340,16 +339,11 @@ mod tests {
             "Pi Branch marker 不创建 branch 行，树始终只有 main"
         );
 
-        let events = store
-            .replay_events(&session, 1, 100)
-            .await
-            .expect("replay");
+        let events = store.replay_events(&session, 1, 100).await.expect("replay");
         let collapsed: Vec<&serde_json::Value> = events
             .iter()
             .filter_map(|envelope| match &envelope.payload {
-                AgentEvent::Diagnostic { code, details }
-                    if code == "pi.branch_collapsed" =>
-                {
+                AgentEvent::Diagnostic { code, details } if code == "pi.branch_collapsed" => {
                     Some(details)
                 }
                 _ => None,
@@ -360,16 +354,15 @@ mod tests {
             collapsed[0].get("source_branch"),
             Some(&serde_json::json!("feature-x"))
         );
-        assert_eq!(
-            collapsed[0].get("parent"),
-            Some(&serde_json::json!("main"))
-        );
+        assert_eq!(collapsed[0].get("parent"), Some(&serde_json::json!("main")));
         assert_eq!(
             collapsed[1].get("source_branch"),
             Some(&serde_json::json!("main"))
         );
         assert!(
-            collapsed[1].get("parent").is_some_and(serde_json::Value::is_null),
+            collapsed[1]
+                .get("parent")
+                .is_some_and(serde_json::Value::is_null),
             "无 parent 的 marker 以 null 保留字段形状: {:?}",
             collapsed[1]
         );
@@ -381,7 +374,9 @@ mod tests {
             collapsed[2]
         );
         assert!(
-            collapsed[2].get("parent").is_some_and(serde_json::Value::is_null),
+            collapsed[2]
+                .get("parent")
+                .is_some_and(serde_json::Value::is_null),
             "无 branch_id/parent 的 marker 保留 null 字段形状: {:?}",
             collapsed[2]
         );

@@ -181,14 +181,12 @@ pub(super) fn message_block_line_counts(text: &str, width_px: f32, font_px: f32)
     };
     split_message_blocks(text)
         .into_iter()
-        .map(|block| {
-            match block {
-                MessageBlock::Paragraph(lines) => {
-                    lines.iter().map(|line| line_count(line, 0)).sum::<usize>()
-                }
-                MessageBlock::List(items) => {
-                    items.iter().map(|item| line_count(item, 2)).sum::<usize>()
-                }
+        .map(|block| match block {
+            MessageBlock::Paragraph(lines) => {
+                lines.iter().map(|line| line_count(line, 0)).sum::<usize>()
+            }
+            MessageBlock::List(items) => {
+                items.iter().map(|item| line_count(item, 2)).sum::<usize>()
             }
         })
         .collect()

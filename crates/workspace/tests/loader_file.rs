@@ -92,7 +92,10 @@ trust_workspaces = true
         .expect("resolve s0 defaults");
 
     assert_eq!(resolved.config.trust_workspaces, Some(true));
-    assert_eq!(resolved.config.default_provider.as_deref(), Some("global-p"));
+    assert_eq!(
+        resolved.config.default_provider.as_deref(),
+        Some("global-p")
+    );
     assert_eq!(resolved.config.default_model.as_deref(), Some("ws-m"));
 
     let tiers: Vec<ConfigTier> = resolved.sources.iter().map(|s| s.span.tier).collect();

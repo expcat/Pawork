@@ -15,8 +15,7 @@ use std::sync::Mutex;
 use pawork_domain::{DegradeEvent, DegradeKind, DegradeSeverity, EventId};
 use pawork_engine::now_timestamp;
 use pawork_protocol::{
-    AppEvent, AppEventEnvelope, EventSource, EventStream, GlobalSequence,
-    API_VERSION,
+    AppEvent, AppEventEnvelope, EventSource, EventStream, GlobalSequence, API_VERSION,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -87,7 +86,10 @@ impl EventHub {
 
     /// Assign a contiguous global_sequence, retain the event, and broadcast it.
     /// Returns the sequenced envelope plus the number of live subscribers that received it.
-    pub(crate) fn publish_with_envelope(&self, mut envelope: AppEventEnvelope) -> (AppEventEnvelope, usize) {
+    pub(crate) fn publish_with_envelope(
+        &self,
+        mut envelope: AppEventEnvelope,
+    ) -> (AppEventEnvelope, usize) {
         let sequence = self.next_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         envelope.global_sequence = GlobalSequence(sequence);
         {
@@ -109,7 +111,8 @@ impl EventHub {
         missed: Option<u64>,
         client_id: Option<&str>,
     ) -> usize {
-        self.publish_lagged_degrade_envelope(instance_id, missed, client_id).1
+        self.publish_lagged_degrade_envelope(instance_id, missed, client_id)
+            .1
     }
 
     /// Same as [`EventHub::publish_lagged_degrade`], returning the sequenced envelope
@@ -252,7 +255,9 @@ fn lock<T>(inner: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 mod tests {
     use super::*;
     use pawork_domain::{CoreInstanceId, EventId, RunId, Timestamp};
-    use pawork_protocol::{AppEvent, DiagnosticLevel, EventSource, EventStream, RunState, API_VERSION};
+    use pawork_protocol::{
+        AppEvent, DiagnosticLevel, EventSource, EventStream, RunState, API_VERSION,
+    };
 
     fn envelope(sequence: u64) -> AppEventEnvelope {
         AppEventEnvelope {
@@ -401,7 +406,11 @@ mod tests {
         );
         let event = subscription.try_recv().expect("lagged frame");
         match event.payload {
-            AppEvent::Diagnostic { level, code, message } => {
+            AppEvent::Diagnostic {
+                level,
+                code,
+                message,
+            } => {
                 assert_eq!(level, DiagnosticLevel::Warning);
                 assert_eq!(code, "degrade.event_stream_lagged");
                 assert_eq!(message, "event stream subscriber lagged");

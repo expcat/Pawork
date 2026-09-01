@@ -7,11 +7,11 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use pawork_domain::{
-    ProviderError, ProviderEventSink, ProviderStreamEvent, ToolOutputChannel, ToolStreamEvent,
-};
-use pawork_domain::{
     AgentEvent, AgentEventEnvelope, EventId, EventSequence, MessageId, RunId, SessionId, Timestamp,
     ToolCallId, ToolOutputStream,
+};
+use pawork_domain::{
+    ProviderError, ProviderEventSink, ProviderStreamEvent, ToolOutputChannel, ToolStreamEvent,
 };
 use thiserror::Error;
 
@@ -83,7 +83,6 @@ impl<'a> EventEmitter<'a> {
         self.sink.emit(envelope).await?;
         Ok(sequence)
     }
-
 }
 
 /// 可 Clone 的 Loop 事件发射器；复制的是 sequence 与 sink 的引用。
@@ -149,7 +148,10 @@ impl<'a> LoopSink<'a> {
     }
 
     pub(crate) fn take_persist_error(&self) -> Option<EngineError> {
-        self.persist_error.lock().expect("persist error mutex").take()
+        self.persist_error
+            .lock()
+            .expect("persist error mutex")
+            .take()
     }
 }
 
@@ -171,7 +173,10 @@ impl ProviderEventSink for LoopSink<'_> {
 }
 
 /// V1 `LoopSink` 单轮映射。未列出的变体只缓冲给 AssembledTurn。
-pub fn map_provider_event(event: &ProviderStreamEvent, message_id: &MessageId) -> Option<AgentEvent> {
+pub fn map_provider_event(
+    event: &ProviderStreamEvent,
+    message_id: &MessageId,
+) -> Option<AgentEvent> {
     match event {
         ProviderStreamEvent::TextDelta(delta) => Some(AgentEvent::AssistantTextDelta {
             message_id: message_id.clone(),

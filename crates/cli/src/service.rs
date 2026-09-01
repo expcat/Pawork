@@ -154,7 +154,10 @@ fn execute_service_action(
                 std::fs::write(&unit, install_definition(exe, name, instance))?;
                 Ok(())
             }
-            "start" => run_cmd("systemctl", &["--user", "start", &format!("{name}.service")]),
+            "start" => run_cmd(
+                "systemctl",
+                &["--user", "start", &format!("{name}.service")],
+            ),
             "stop" => apply_teardown(&linux_stop_steps(name, &unit)),
             _ => Err(CliError::Usage(format!("unknown service action {action}"))),
         }
@@ -218,19 +221,11 @@ fn linux_stop_steps(name: &str, unit_path: &Path) -> Vec<TeardownStep> {
     vec![
         TeardownStep::Run {
             program: "systemctl".into(),
-            args: vec![
-                "--user".into(),
-                "stop".into(),
-                format!("{name}.service"),
-            ],
+            args: vec!["--user".into(), "stop".into(), format!("{name}.service")],
         },
         TeardownStep::Run {
             program: "systemctl".into(),
-            args: vec![
-                "--user".into(),
-                "disable".into(),
-                format!("{name}.service"),
-            ],
+            args: vec!["--user".into(), "disable".into(), format!("{name}.service")],
         },
         TeardownStep::RemoveFile {
             path: unit_path.to_path_buf(),
@@ -308,10 +303,7 @@ mod tests {
                 args,
             } => {
                 got_program == program
-                    && args
-                        .iter()
-                        .map(String::as_str)
-                        .eq(expected.iter().copied())
+                    && args.iter().map(String::as_str).eq(expected.iter().copied())
             }
             TeardownStep::RemoveFile { .. } => false,
         }
@@ -322,9 +314,11 @@ mod tests {
         let unit = PathBuf::from("/tmp/.config/systemd/user/pawork.dev.service");
         let steps = linux_stop_steps("pawork.dev", &unit);
         assert!(
-            steps
-                .iter()
-                .any(|step| run_args_eq(step, "systemctl", &["--user", "stop", "pawork.dev.service"])),
+            steps.iter().any(|step| run_args_eq(
+                step,
+                "systemctl",
+                &["--user", "stop", "pawork.dev.service"]
+            )),
             "Linux stop must systemctl --user stop: {steps:?}"
         );
         assert!(

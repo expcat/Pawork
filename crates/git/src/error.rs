@@ -57,12 +57,12 @@ impl From<pawork_exec::ProcessError> for GitError {
                     GitError::Other(format!("failed to spawn `{program}`: {source}"))
                 }
             }
-            pawork_exec::ProcessError::ProcessTree { program, source } => GitError::Other(
-                format!("failed to secure process tree for `{program}`: {source}"),
-            ),
-            pawork_exec::ProcessError::Isolation { program, source } => GitError::Other(
-                format!("failed to prepare isolation for `{program}`: {source}"),
-            ),
+            pawork_exec::ProcessError::ProcessTree { program, source } => GitError::Other(format!(
+                "failed to secure process tree for `{program}`: {source}"
+            )),
+            pawork_exec::ProcessError::Isolation { program, source } => GitError::Other(format!(
+                "failed to prepare isolation for `{program}`: {source}"
+            )),
             pawork_exec::ProcessError::KillTimeout { .. } => GitError::Timeout,
             pawork_exec::ProcessError::Io(io) => GitError::Io(io),
         }

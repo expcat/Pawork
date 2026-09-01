@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use pawork_app::{AppCore, GuiHostAdapter};
 use pawork_app::gui_server::GuiHost;
+use pawork_app::{AppCore, GuiHostAdapter};
 use pawork_domain::SessionId;
 use pawork_protocol::headless::stdio::{self, Handler, LoopConfig};
 use pawork_protocol::headless::{
@@ -83,32 +83,31 @@ impl HeadlessHandler {
 #[async_trait]
 impl Handler for HeadlessHandler {
     async fn handshake(&mut self, hello: HelloRequest) -> HeadlessResponse {
-        let response = match negotiate_api_version_with(
-            &hello.supported_api_versions,
-            SUPPORTED_API_VERSIONS,
-        ) {
-            Some(negotiated) => {
-                let granted = hello
-                    .capabilities
-                    .iter()
-                    .copied()
-                    .filter(|capability| HOST_CAPABILITIES.contains(capability))
-                    .collect();
-                HeadlessResponse::HelloAck {
-                    instance_id: self.adapter.instance_id().as_str().to_string(),
-                    negotiated,
-                    granted,
+        let response =
+            match negotiate_api_version_with(&hello.supported_api_versions, SUPPORTED_API_VERSIONS)
+            {
+                Some(negotiated) => {
+                    let granted = hello
+                        .capabilities
+                        .iter()
+                        .copied()
+                        .filter(|capability| HOST_CAPABILITIES.contains(capability))
+                        .collect();
+                    HeadlessResponse::HelloAck {
+                        instance_id: self.adapter.instance_id().as_str().to_string(),
+                        negotiated,
+                        granted,
+                    }
                 }
-            }
-            None => HeadlessResponse::Error {
-                request_id: None,
-                kind: ProtocolErrorKind::IncompatibleApiVersion,
-                message: format!(
-                    "no common api version: client offered {:?}, host supports {:?}",
-                    hello.supported_api_versions, SUPPORTED_API_VERSIONS
-                ),
-            },
-        };
+                None => HeadlessResponse::Error {
+                    request_id: None,
+                    kind: ProtocolErrorKind::IncompatibleApiVersion,
+                    message: format!(
+                        "no common api version: client offered {:?}, host supports {:?}",
+                        hello.supported_api_versions, SUPPORTED_API_VERSIONS
+                    ),
+                },
+            };
         self.granted = match &response {
             HeadlessResponse::HelloAck { granted, .. } => granted.clone(),
             _ => Vec::new(),
@@ -125,7 +124,8 @@ impl Handler for HeadlessHandler {
                 ) {
                     return vec![error];
                 }
-                if let AppCommand::SessionClientContextReplace { session_id, .. } = &envelope.command
+                if let AppCommand::SessionClientContextReplace { session_id, .. } =
+                    &envelope.command
                 {
                     if !self.owned_sessions.contains(session_id) {
                         return vec![HeadlessResponse::Error {
@@ -377,15 +377,16 @@ mod tests {
             workspace_id: pawork_domain::WorkspaceId::from("ws-1"),
             title: None,
         };
-        assert_eq!(command_entry(&command).headless, Some(SdkCapability::Sessions));
-        assert!(
-            gate_capability(
-                &[SdkCapability::Sessions],
-                command_entry(&command).headless,
-                Some("req-2".into()),
-            )
-            .is_none()
+        assert_eq!(
+            command_entry(&command).headless,
+            Some(SdkCapability::Sessions)
         );
+        assert!(gate_capability(
+            &[SdkCapability::Sessions],
+            command_entry(&command).headless,
+            Some("req-2".into()),
+        )
+        .is_none());
     }
 
     #[test]

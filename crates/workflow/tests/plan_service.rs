@@ -1,11 +1,11 @@
 //! P16-1/P16-2 Plan service 定向测试：步骤/评审状态机、重放一致性、版本链、
 //! 修订、审批 gate、行锚点评审意见、只读断言、canonical 序列化。
 
+use pawork_domain::AgentEvent;
 use pawork_domain::{
     CheckpointId, PlanCommentAnchor, PlanEvent, PlanId, PlanReviewStatus, PlanStepId,
     PlanStepSnapshot, PlanStepStatus, PlanVersionId,
 };
-use pawork_domain::AgentEvent;
 use pawork_workflow::plan::{apply, replay, PlanError, PlanService, PlanState};
 
 fn step_id_at(event: &PlanEvent, idx: usize) -> PlanStepId {
@@ -677,9 +677,7 @@ fn review_flow_replays_identically() {
     // revise 以传入 steps 全量替换(29dfbc2 起语义);原样传 Vec::new() 会把
     // 步骤清空,导致下文 steps[0] 越界——携现有步骤修订才符合本测试意图。
     let existing_steps = svc.plan_snapshot().unwrap().steps.clone();
-    events.push(
-        svc.revise(&v2, &v1, "revised", existing_steps).unwrap(),
-    );
+    events.push(svc.revise(&v2, &v1, "revised", existing_steps).unwrap());
     events.push(svc.request_review(&v2).unwrap());
     let anchor = PlanCommentAnchor {
         step_id: svc.plan_snapshot().unwrap().steps[0].step_id.clone(),
@@ -729,7 +727,12 @@ fn review_events_round_trip_through_agent_event() {
     svc.request_review(&v1).unwrap();
     svc.request_changes(&v1).unwrap();
     let revised = svc
-        .revise(&PlanVersionId::new("planver_99"), &v1, "revised-99", Vec::new())
+        .revise(
+            &PlanVersionId::new("planver_99"),
+            &v1,
+            "revised-99",
+            Vec::new(),
+        )
         .unwrap();
     svc.request_review(&PlanVersionId::new("planver_99"))
         .unwrap();

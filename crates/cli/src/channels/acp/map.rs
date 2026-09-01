@@ -10,11 +10,10 @@ use pawork_protocol::{AppEvent, AppResponse, AppResponseEnvelope, ApprovalDecisi
 use serde_json::Value;
 
 use crate::channels::acp::wire::{
-    ContentBlock, JsonRpcError, PermissionOption, PermissionOptionKind,
-    RequestPermissionParams, SessionUpdate, ToolCallContent, ToolCallStatus,
-    ToolCallUpdate, ToolKind, ERROR_AUTH_REQUIRED, ERROR_INTERNAL, ERROR_INVALID_PARAMS,
-    ERROR_INVALID_REQUEST, ERROR_METHOD_NOT_FOUND, ERROR_REQUEST_CANCELLED,
-    ERROR_RESOURCE_NOT_FOUND,
+    ContentBlock, JsonRpcError, PermissionOption, PermissionOptionKind, RequestPermissionParams,
+    SessionUpdate, ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind, ERROR_AUTH_REQUIRED,
+    ERROR_INTERNAL, ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ERROR_METHOD_NOT_FOUND,
+    ERROR_REQUEST_CANCELLED, ERROR_RESOURCE_NOT_FOUND,
 };
 
 /// 首轮提供的权限选项（optionId 稳定，供 golden fixture 与客户端 UI 复用）。

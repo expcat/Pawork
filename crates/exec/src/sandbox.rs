@@ -583,8 +583,8 @@ fn env_matches(pattern: &str, name: &str) -> bool {
 /// ~/.git-credentials、~/.docker、~/.npmrc、~/.pypirc 与
 /// ~/.cargo/credentials.toml）。
 pub fn default_secret_paths() -> Vec<PathBuf> {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from);
+    let home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
     let pawork_home = std::env::var_os("PAWORK_HOME").map(PathBuf::from);
     let pawork_data_dir = std::env::var_os("PAWORK_DATA_DIR");
     #[cfg(windows)]
@@ -787,17 +787,16 @@ mod tests {
         if selection.id != "sandbox_exec" {
             return;
         }
-        assert_eq!(
-            selection.isolation,
-            IsolationLevel::HardWritesAndNetwork
-        );
-        assert_eq!(
-            selection.isolation.as_str(),
-            "hard_writes_and_network"
-        );
-        assert!(!selection.fallback, "backend is usable; fallback must stay false");
+        assert_eq!(selection.isolation, IsolationLevel::HardWritesAndNetwork);
+        assert_eq!(selection.isolation.as_str(), "hard_writes_and_network");
         assert!(
-            selection.note.contains("file-read allowed disk-wide except secret deny holes"),
+            !selection.fallback,
+            "backend is usable; fallback must stay false"
+        );
+        assert!(
+            selection
+                .note
+                .contains("file-read allowed disk-wide except secret deny holes"),
             "note must honestly report the formal read model: {}",
             selection.note
         );
@@ -1164,9 +1163,7 @@ mod tests {
         }
         let with_home = secret_paths_for(Some(&home), Some(Path::new("/opt/pawork")));
         assert!(
-            with_home
-                .iter()
-                .any(|p| p == &PathBuf::from("/opt/pawork")),
+            with_home.iter().any(|p| p == &PathBuf::from("/opt/pawork")),
             "PAWORK_HOME 目录必须进入 deny"
         );
         assert!(

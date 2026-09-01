@@ -136,7 +136,10 @@ fn message_entry_height(text: &str, column_width: f32, rem_px: f32) -> f32 {
     let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
     let body_width = (column_width - ENTRY_ACTIONS_SLOT_ESTIMATE).max(0.0);
     let blocks = message_block_line_counts(text, body_width, body_font_px);
-    let body = blocks.iter().map(|lines| *lines as f32 * body_line_height).sum::<f32>()
+    let body = blocks
+        .iter()
+        .map(|lines| *lines as f32 * body_line_height)
+        .sum::<f32>()
         + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32;
     label + metrics::MSG_LABEL_BODY_GAP + body
 }

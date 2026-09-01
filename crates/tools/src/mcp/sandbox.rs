@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::task::Poll;
 
-use pawork_domain::CancellationToken;
 use async_trait::async_trait;
+use pawork_domain::CancellationToken;
 use pawork_exec::{
     CancellationToken as ExecCancellationToken, CommandSpec, ProcessError, ProcessEvent,
     ProcessHandle, ProcessInput, SandboxBackend, SandboxPolicy, SandboxProcessSpec,
@@ -84,10 +84,7 @@ fn is_provider_api_key_env(name: &str) -> bool {
 
 fn bridge_exec_cancel(
     domain: &CancellationToken,
-) -> (
-    ExecCancellationToken,
-    Option<tokio::task::JoinHandle<()>>,
-) {
+) -> (ExecCancellationToken, Option<tokio::task::JoinHandle<()>>) {
     let exec = ExecCancellationToken::new();
     if domain.is_cancelled() {
         exec.cancel();
@@ -545,11 +542,8 @@ mod tests {
         let root = std::env::temp_dir();
         let mut policy = policy(&root);
         apply_mcp_stdio_env_hygiene(&mut policy);
-        let spawner = SandboxedStdioSpawner::new(
-            Arc::new(NativeRestricted::new()),
-            policy,
-            vec![root],
-        );
+        let spawner =
+            SandboxedStdioSpawner::new(Arc::new(NativeRestricted::new()), policy, vec![root]);
         let script = format!("printf 'MARK=%s' \"${ENV_NAME}\"");
         let cfg = StdioTransportConfig::new("sh")
             .with_args(["-c", &script])
@@ -559,7 +553,10 @@ mod tests {
             Err(error) => panic!("spawn failed: {error}"),
         };
         let (got, terminal) = read_until_terminal(&mut spawned.read).await;
-        assert!(terminal.is_none(), "stdio should exit cleanly: {terminal:?}");
+        assert!(
+            terminal.is_none(),
+            "stdio should exit cleanly: {terminal:?}"
+        );
         let text = String::from_utf8_lossy(&got);
         assert!(
             !text.contains(CANARY),

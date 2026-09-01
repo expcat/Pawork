@@ -13,11 +13,11 @@ mod tool_loop;
 
 use std::collections::BTreeMap;
 
+use pawork_domain::{CancellationToken, Message, ModelId, RequestId};
 use pawork_domain::{
     CanonicalModelRequest, ModelProvider, ModelResponseSummary, PromptCachePreference,
     ProviderError, ProviderEventSink, RequestBudget, ResponseFormat, ToolChoice, ToolDefinition,
 };
-use pawork_domain::{CancellationToken, Message, ModelId, RequestId};
 
 pub use appender::{tool_results_message, AssembledTurn, PendingToolCall, ToolCallResult};
 pub use cancel::{
@@ -100,11 +100,11 @@ mod tests {
 
     use async_trait::async_trait;
     use pawork_domain::{
-        ModelDefinition, ProviderErrorKind, ProviderStreamEvent, ResolvedCredential, ToolDefinition,
-    };
-    use pawork_domain::{
         ContentPart, MessageId, MessageRole, ProviderId, StopReason, TextContent, TokenUsage,
         ToolCallId,
+    };
+    use pawork_domain::{
+        ModelDefinition, ProviderErrorKind, ProviderStreamEvent, ResolvedCredential, ToolDefinition,
     };
 
     use super::*;
@@ -369,14 +369,9 @@ mod tests {
         token.cancel();
         let sink = RecordingSink::default();
 
-        let error = run_turn(
-            &PanicIfCalledProvider,
-            sample_request(),
-            &sink,
-            token,
-        )
-        .await
-        .expect_err("pre-cancelled turn must fail");
+        let error = run_turn(&PanicIfCalledProvider, sample_request(), &sink, token)
+            .await
+            .expect_err("pre-cancelled turn must fail");
 
         assert_eq!(error.kind, ProviderErrorKind::Cancelled);
         assert!(sink.snapshot().is_empty());

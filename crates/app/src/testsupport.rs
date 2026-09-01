@@ -3,13 +3,13 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use pawork_domain::{AgentEvent, AgentEventEnvelope};
 use pawork_domain::{
-    CanonicalModelRequest, CancellationToken, ContentPart, Message, MessageId, MessageRole,
+    CancellationToken, CanonicalModelRequest, ContentPart, Message, MessageId, MessageRole,
     ModelDefinition, ModelId, ModelProvider, ModelResponseSummary, ProviderError, ProviderId,
     ProviderStreamEvent, ResolvedCredential, StopReason, TextContent, TokenUsage,
 };
 use pawork_engine::{AgentEventSink, EngineError};
-use pawork_domain::{AgentEvent, AgentEventEnvelope};
 use pawork_providers::ModelRegistry;
 use pawork_storage::session::SessionStore;
 use pawork_workspace::config::{PaworkConfig, ProviderConfig};
@@ -27,9 +27,7 @@ impl RecordingEvents {
             .expect("mutex")
             .iter()
             .map(|envelope| match &envelope.payload {
-                AgentEvent::MessageCommitted { message }
-                    if message.role == MessageRole::User =>
-                {
+                AgentEvent::MessageCommitted { message } if message.role == MessageRole::User => {
                     "user"
                 }
                 AgentEvent::MessageCommitted { .. } => "assistant",
@@ -130,9 +128,7 @@ pub(crate) fn user_hello() -> Message {
     }
 }
 
-pub(crate) async fn mock_core(
-    events: Vec<ProviderStreamEvent>,
-) -> (AppCore, tempfile::TempDir) {
+pub(crate) async fn mock_core(events: Vec<ProviderStreamEvent>) -> (AppCore, tempfile::TempDir) {
     mock_core_with_usage(events, TokenUsage::default()).await
 }
 
@@ -189,7 +185,6 @@ pub(crate) fn core_with_registry(registry: ModelRegistry, model: &str) -> AppCor
         registry,
     )
 }
-
 
 /// Captures structured tracing fields for degrade emission tests.
 #[derive(Clone, Debug, Default)]
@@ -259,7 +254,10 @@ impl tracing::field::Visit for FieldVisitor {
         if field.name() == "message" {
             self.message = Some(rendered.trim_matches('"').to_string());
         } else {
-            self.fields.insert(field.name().to_string(), rendered.trim_matches('"').to_string());
+            self.fields.insert(
+                field.name().to_string(),
+                rendered.trim_matches('"').to_string(),
+            );
         }
     }
 
@@ -267,20 +265,24 @@ impl tracing::field::Visit for FieldVisitor {
         if field.name() == "message" {
             self.message = Some(value.to_string());
         } else {
-            self.fields.insert(field.name().to_string(), value.to_string());
+            self.fields
+                .insert(field.name().to_string(), value.to_string());
         }
     }
 
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        self.fields.insert(field.name().to_string(), value.to_string());
+        self.fields
+            .insert(field.name().to_string(), value.to_string());
     }
 
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        self.fields.insert(field.name().to_string(), value.to_string());
+        self.fields
+            .insert(field.name().to_string(), value.to_string());
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        self.fields.insert(field.name().to_string(), value.to_string());
+        self.fields
+            .insert(field.name().to_string(), value.to_string());
     }
 }
 
@@ -358,13 +360,17 @@ mod capture_regression_tests {
 
         // 2) 无 scoped default 的线程首次命中 probe_a：
         //    「JustOne → get_default → NONE」路径缓存 Interest::never()（投毒）。
-        std::thread::spawn(|| probe_a("poison")).join().expect("poison thread");
+        std::thread::spawn(|| probe_a("poison"))
+            .join()
+            .expect("poison thread");
 
         // 3) install()：第二次注册治愈 never 缓存，并令 has_just_one 保持 false。
         let capture = RecordingCapture::install();
 
         // 4) pin 存活期间，另一无 default 线程首次命中 probe_b：不应再被投毒。
-        std::thread::spawn(|| probe_b("late")).join().expect("late thread");
+        std::thread::spawn(|| probe_b("late"))
+            .join()
+            .expect("late thread");
 
         // 5) 窗口内的 emit 必须全部被捕获。
         probe_a("inside-window");

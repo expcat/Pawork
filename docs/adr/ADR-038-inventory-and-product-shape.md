@@ -55,7 +55,7 @@ V2 收官(S0–S13,存档见 [history.md](../history.md) 第一部分)后,worksp
 ## 后果
 
 - 归档/删除合计约 3.3 万行(D2–D8、D15、D16 为主);workspace members 39 → 37(memory/review 整包出树),其余为包内模块级裁减。`cargo tree -p pawork` 闭包只减不增,波 C 收口前后快照对比归档。
-- 「归档」= 移出 workspace members + 删除源目录;不复制到仓库其它位置;复活条件登记 [ROADMAP](../../ROADMAP.md) §5 候选池。domain canonical 事件类型(Plan/Goal/Task/Team 等)一律保留,历史事件可重放。
+- 「归档」= 移出 workspace members + 删除源目录;不复制到仓库其它位置;复活条件现登记于 [产品候选](../spec/backlog.md)。domain canonical 事件类型(Plan/Goal/Task/Team 等)一律保留,历史事件可重放。
 - `session_bindings` 孤儿表:留表 + 注释登记「预留」,不回滚 DDL(append-only)。
 - S13 拍板([architecture.md](../architecture.md) §4)不回退;安全红线定向回归、持久化/重放 golden、协议 golden 在每波收口保持绿。
 - 破坏式内部改动(删 public API、feature)允许;磁盘/线上冻结契约形状零变更([architecture.md](../architecture.md) §3.2 清单)。
@@ -79,6 +79,6 @@ V2 收官(S0–S13,存档见 [history.md](../history.md) 第一部分)后,worksp
 ## 相关
 
 - 原任务书 plan/R0-inventory-decisions.md 已随收口删除(git 历史);R0 交付存档见 [history.md](../history.md) R0 节
-- [ROADMAP.md](../../ROADMAP.md) §4 未决事项、§5 候选池
+- [history.md](../history.md)（当时 ROADMAP 未决/候选记录）· [产品候选](../spec/backlog.md)
 - 冻结契约与 S13 拍板现行事实源:[architecture.md](../architecture.md) §3.2/§4(原 v2-summary §4/§5 存档见 [history.md](../history.md))
 - ADR-033 控制面分离(随 V1 归档,原则继续有效)

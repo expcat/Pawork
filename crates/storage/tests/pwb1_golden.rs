@@ -23,8 +23,8 @@ use pawork_storage::blob::{
 const GOLDEN_HEX: &str = include_str!("golden/pwb1_valid.hex");
 const GOLDEN_KEY: [u8; 32] = [0x11; 32];
 const GOLDEN_NONCE: [u8; 24] = [
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
-    0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
 ];
 const GOLDEN_KEY_VERSION: u32 = 1;
 const GOLDEN_PLAINTEXT: &[u8] = b"reasoning-secret-that-must-never-appear-on-disk";
@@ -89,8 +89,14 @@ fn hand_seal() -> Vec<u8> {
 fn pwb1_valid_hex_matches_known_key_nonce_frame() {
     let golden = decode_hex(GOLDEN_HEX);
     let constructed = hand_seal();
-    assert_eq!(golden, constructed, "committed hex must match known-vector seal");
-    assert_eq!(golden.len(), PWB1_HEADER_LEN + (golden.len() - PWB1_HEADER_LEN));
+    assert_eq!(
+        golden, constructed,
+        "committed hex must match known-vector seal"
+    );
+    assert_eq!(
+        golden.len(),
+        PWB1_HEADER_LEN + (golden.len() - PWB1_HEADER_LEN)
+    );
     assert_eq!(&golden[..4], PWB1_MAGIC);
     assert_eq!(golden[4], PWB1_VERSION);
     assert_eq!(golden[5], PWB1_ALGORITHM);

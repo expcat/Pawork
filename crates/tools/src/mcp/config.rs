@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use pawork_auth::SecretBackend;
-use pawork_workspace::config::ResolvedConfig;
 use pawork_exec::{SandboxBackend, SandboxPolicy};
+use pawork_workspace::config::ResolvedConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
@@ -487,8 +487,8 @@ fn validate_server_name(name: &str) -> Result<(), McpError> {
 mod tests {
     use super::*;
     use pawork_auth::MemoryBackend;
-    use pawork_workspace::config::{ConfigTier, Loader};
     use pawork_exec::{NativeRestricted, SandboxPolicy};
+    use pawork_workspace::config::{ConfigTier, Loader};
     use serde_json::json;
 
     fn stdio_server(command: &str) -> Value {
@@ -687,10 +687,7 @@ mod tests {
         let config = McpConfig::from_resolved(&resolved).expect("from_resolved");
         let fs = config.server("filesystem").expect("filesystem merged");
         assert_eq!(fs.transport.kind(), "stdio");
-        assert!(
-            !fs.auto_start,
-            "workspace must not self-grant auto_start"
-        );
+        assert!(!fs.auto_start, "workspace must not self-grant auto_start");
         assert!(!fs.trusted, "workspace must not self-grant trusted");
         assert_eq!(fs.timeout_ms, Some(30_000));
         assert!(config.server("remote").is_some());

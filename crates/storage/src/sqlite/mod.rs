@@ -8,9 +8,7 @@
 
 mod migration;
 
-pub use migration::{
-    migrate, schema_version, Migration, MigrationError, MigrationReport,
-};
+pub use migration::{migrate, schema_version, Migration, MigrationError, MigrationReport};
 
 use std::{
     any::Any,

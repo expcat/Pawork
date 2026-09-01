@@ -10,7 +10,7 @@ P3 片 1 审计确认 Changes / Resources 面在冻结契约内无缺口，Termi
 - wire 只有 `terminal_create` / `terminal_write` / `terminal_resize` 三个命令与 `TerminalOutput` 一个事件，没有终止 / 关闭终端的命令。
 - Host 底层能力已具备但不上 wire：`PtyService::kill`（含进程组终止）存在；`PtyEvent::Exit{code, signal}` 已产生，GuiHost forwarder 收到后只 `break` 不广播；forwarder 的 IO 错误分支同样静默 `break`。
 - 后果：Desktop 无法提供真实 Stop；终端自然退出后，在线客户端收不到任何通知，只能靠断连重连后的 `terminal_sessions` 快照 `state` 字段得知 exited；exited 条目也没有清理路径。
-- ROADMAP §5 已明令禁止用写入 `exit` 文本冒充正式能力（shell 不一定处于可接受退出命令的状态，且伪造生命周期）。
+- 当时任务登记已明令禁止用写入 `exit` 文本冒充正式能力（shell 不一定处于可接受退出命令的状态，且伪造生命周期；现存档于 [history](../history.md)）。
 
 冻结契约规定 wire 演进必须 ADR、golden 先于实现。本 ADR 只拍板 wire 词汇与版本策略，不改动 schema、不新增 crate 与生产依赖。
 
@@ -47,7 +47,7 @@ P3 片 1 审计确认 Changes / Resources 面在冻结契约内无缺口，Termi
 
 ## 否决支
 
-- **写入 `exit` 文本或控制字符冒充终止**：伪造生命周期，shell 状态不可控，ROADMAP §5 已明令禁止。
+- **写入 `exit` 文本或控制字符冒充终止**：伪造生命周期，shell 状态不可控，当时任务登记已明令禁止。
 - **只加快照状态、不加 live 事件**：即现状——必须断连重连才能发现 exited，不满足 G4 的 live 要求，且违背事件驱动架构引入客户端轮询。
 - **新增 `GuiCapability` 变体宣告该能力**：老客户端 handshake decode 未知枚举即失败，破坏性强于 minor bump。
 - **复用 `terminal_write` 携带语义化控制参数**：污染字节流语义，write 保持纯数据通道。
@@ -56,5 +56,5 @@ P3 片 1 审计确认 Changes / Resources 面在冻结契约内无缺口，Termi
 ## 后果与实施切片
 
 - Accepted 后按序推进：① protocol（新变体 + registry 登记 + API 1.3 + golden 先行，定向测试）；② app / GuiHost（close handler、forwarder 广播、按协商 minor 门控推送，含 kill 与自发 Exit 去重）；③ Desktop（Stop / Close 接线与 live 刷新，定向门禁 + 真窗口验收）。
-- 预计写入包 `pawork-protocol`、`pawork-app`、`pawork-desktop`；Spec 同批回写 protocol.md / app.md / desktop.md / flows.md 终端段；ROADMAP §5 对应边界行在实施完成后更新。
+- 预计写入包 `pawork-protocol`、`pawork-app`、`pawork-desktop`；Spec 同批回写 protocol.md / app.md / desktop.md / flows.md 终端段；当时 ROADMAP 对应边界行在实施完成后更新，现见 [history](../history.md)。
 - 不改动 schema、import/export、capability 基线与其余冻结契约；不新增 crate 与生产依赖。

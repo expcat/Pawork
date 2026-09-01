@@ -20,7 +20,9 @@ use std::sync::Arc;
 
 use pawork_domain::{EventId, Message, SessionId};
 
-use crate::session::compaction::retention::{apply, RetentionDecision, RetentionInputs, RetentionPolicy};
+use crate::session::compaction::retention::{
+    apply, RetentionDecision, RetentionInputs, RetentionPolicy,
+};
 use crate::session::compaction::snapshot::{CompactionSnapshot, SnapshotVersion};
 use crate::session::compaction::{CompactionError, TokenEstimator};
 use crate::session::SessionStore;
@@ -161,8 +163,8 @@ impl<'a> CompactionEngine<'a> {
             .filter(|entry| retained_ids.contains(&entry.event_id))
             .map(|entry| estimate_message_tokens(&entry.message, self.estimator.as_ref()))
             .fold(0u64, u64::saturating_add);
-        let token_usage_after = retained_message_tokens
-            .saturating_add(self.estimator.count_text(summary_text));
+        let token_usage_after =
+            retained_message_tokens.saturating_add(self.estimator.count_text(summary_text));
 
         let snapshot = CompactionSnapshot {
             version: SnapshotVersion::current(),
@@ -312,12 +314,7 @@ mod tests {
         }
     }
 
-    async fn append(
-        store: &SessionStore,
-        session: &SessionId,
-        sequence: u64,
-        payload: AgentEvent,
-    ) {
+    async fn append(store: &SessionStore, session: &SessionId, sequence: u64, payload: AgentEvent) {
         store
             .append_event(DEFAULT_BRANCH_ID, event(session, sequence, payload))
             .await
@@ -662,8 +659,7 @@ mod tests {
             result.snapshot.recovery_branch_id.as_deref(),
             Some("compaction-recovery-experiment-2")
         );
-        let forked =
-            read_forked_from(&store, &session, "compaction-recovery-experiment-2").await;
+        let forked = read_forked_from(&store, &session, "compaction-recovery-experiment-2").await;
         assert_eq!(forked.as_deref(), Some("event-2"));
         assert_eq!(
             result.decision.retained_event_ids,
@@ -684,10 +680,7 @@ mod tests {
         // 无 usage metadata：走注入的估算器（FixedEstimator.message_tokens = 7）。
         let mut estimated = committed("estimated", MessageRole::User);
         estimated.metadata.usage = None;
-        assert_eq!(
-            estimate_message_tokens(&estimated, estimator().as_ref()),
-            7
-        );
+        assert_eq!(estimate_message_tokens(&estimated, estimator().as_ref()), 7);
     }
 
     #[tokio::test]

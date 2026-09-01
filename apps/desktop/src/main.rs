@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size,
+    prelude::*, px, size, App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
 };
 
 use crate::controller::ControllerEvent;
@@ -72,7 +72,8 @@ fn parse_args() -> Result<Args, String> {
         probe: false,
         probe_smoke: false,
     };
-    let usage = "usage: pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]";
+    let usage =
+        "usage: pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]";
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -167,9 +168,7 @@ async fn probe_smoke(
     let first = pick_model(&models, "glm-coding", "glm-4.7")
         .or_else(|| pick_model(&models, "deepseek", "deepseek-v4-flash"))
         .cloned()
-        .ok_or_else(|| {
-            "host ModelList is missing glm-4.7 and deepseek-v4-flash".to_string()
-        })?;
+        .ok_or_else(|| "host ModelList is missing glm-4.7 and deepseek-v4-flash".to_string())?;
     projection.set_pending_model(first.provider_id.clone(), first.id.clone());
     controller.send_message(
         session_id.clone(),
@@ -194,11 +193,11 @@ async fn probe_smoke(
 
     controller.send_message(
         session_id.clone(),
-        "Write target/s7-wave-d-smoke.txt containing exactly hello-s7d. Use the write tool."
-            .into(),
+        "Write target/s7-wave-d-smoke.txt containing exactly hello-s7d. Use the write tool.".into(),
         Some((first.provider_id.clone(), first.id.clone())),
     );
-    let approval = wait_for_approval_or_turn(&events, &mut projection, Duration::from_secs(90)).await?;
+    let approval =
+        wait_for_approval_or_turn(&events, &mut projection, Duration::from_secs(90)).await?;
     if approval {
         let pending = projection
             .pending_approval
@@ -393,17 +392,22 @@ async fn wait_for_session(
     events: &smol::channel::Receiver<ControllerEvent>,
     projection: &mut DesktopProjection,
 ) -> Result<String, String> {
-    wait_event(events, projection, Duration::from_secs(15), |event, projection| match event {
-        ControllerEvent::Snapshot(snapshot) => {
-            projection.merge_snapshot(snapshot);
-            None
-        }
-        ControllerEvent::SessionCreated { session_id } => Some(session_id.clone()),
-        ControllerEvent::OperationFailed { action, reason } => {
-            Some(format!("FAIL {action}: {reason}"))
-        }
-        _ => None,
-    })
+    wait_event(
+        events,
+        projection,
+        Duration::from_secs(15),
+        |event, projection| match event {
+            ControllerEvent::Snapshot(snapshot) => {
+                projection.merge_snapshot(snapshot);
+                None
+            }
+            ControllerEvent::SessionCreated { session_id } => Some(session_id.clone()),
+            ControllerEvent::OperationFailed { action, reason } => {
+                Some(format!("FAIL {action}: {reason}"))
+            }
+            _ => None,
+        },
+    )
     .await
     .and_then(|value| {
         if value.starts_with("FAIL ") {
@@ -419,20 +423,25 @@ async fn wait_for_run_id(
     projection: &mut DesktopProjection,
     timeout: Duration,
 ) -> Result<String, String> {
-    wait_event(events, projection, timeout, |event, projection| match event {
-        ControllerEvent::MessageSent { run_id, .. } => {
-            projection.active_run_id = Some(run_id.clone());
-            Some(run_id.clone())
-        }
-        ControllerEvent::Event(envelope) => {
-            projection.apply_event(envelope);
-            projection.active_run_id.clone()
-        }
-        ControllerEvent::OperationFailed { action, reason } => {
-            Some(format!("FAIL {action}: {reason}"))
-        }
-        _ => None,
-    })
+    wait_event(
+        events,
+        projection,
+        timeout,
+        |event, projection| match event {
+            ControllerEvent::MessageSent { run_id, .. } => {
+                projection.active_run_id = Some(run_id.clone());
+                Some(run_id.clone())
+            }
+            ControllerEvent::Event(envelope) => {
+                projection.apply_event(envelope);
+                projection.active_run_id.clone()
+            }
+            ControllerEvent::OperationFailed { action, reason } => {
+                Some(format!("FAIL {action}: {reason}"))
+            }
+            _ => None,
+        },
+    )
     .await
     .and_then(|value| {
         if value.starts_with("FAIL ") {
@@ -448,29 +457,41 @@ async fn wait_for_turn(
     projection: &mut DesktopProjection,
     timeout: Duration,
 ) -> Result<String, String> {
-    wait_event(events, projection, timeout, |event, projection| match event {
-        ControllerEvent::MessageSent { run_id, .. } => {
-            projection.active_run_id = Some(run_id.clone());
-            None
-        }
-        ControllerEvent::Event(envelope) => {
-            projection.apply_event(envelope);
-            if projection.active_run_id.is_none() {
-                let text = projection.timeline.iter().rev().find_map(|entry| match &entry.kind {
-                    TimelineEntryKind::AssistantMessage { text } => Some(text.clone()),
-                    TimelineEntryKind::Error(message) => Some(format!("error:{message}")),
-                    _ => None,
-                });
-                Some(text.unwrap_or_else(|| "completed".into()))
-            } else {
+    wait_event(
+        events,
+        projection,
+        timeout,
+        |event, projection| match event {
+            ControllerEvent::MessageSent { run_id, .. } => {
+                projection.active_run_id = Some(run_id.clone());
                 None
             }
-        }
-        ControllerEvent::OperationFailed { action, reason } => {
-            Some(format!("FAIL {action}: {reason}"))
-        }
-        _ => None,
-    })
+            ControllerEvent::Event(envelope) => {
+                projection.apply_event(envelope);
+                if projection.active_run_id.is_none() {
+                    let text =
+                        projection
+                            .timeline
+                            .iter()
+                            .rev()
+                            .find_map(|entry| match &entry.kind {
+                                TimelineEntryKind::AssistantMessage { text } => Some(text.clone()),
+                                TimelineEntryKind::Error(message) => {
+                                    Some(format!("error:{message}"))
+                                }
+                                _ => None,
+                            });
+                    Some(text.unwrap_or_else(|| "completed".into()))
+                } else {
+                    None
+                }
+            }
+            ControllerEvent::OperationFailed { action, reason } => {
+                Some(format!("FAIL {action}: {reason}"))
+            }
+            _ => None,
+        },
+    )
     .await
     .and_then(|value| {
         if value.starts_with("FAIL ") {
@@ -486,26 +507,31 @@ async fn wait_for_approval_or_turn(
     projection: &mut DesktopProjection,
     timeout: Duration,
 ) -> Result<bool, String> {
-    wait_event(events, projection, timeout, |event, projection| match event {
-        ControllerEvent::MessageSent { run_id, .. } => {
-            projection.active_run_id = Some(run_id.clone());
-            None
-        }
-        ControllerEvent::Event(envelope) => {
-            projection.apply_event(envelope);
-            if projection.pending_approval.is_some() {
-                Some("approval".into())
-            } else if projection.active_run_id.is_none() {
-                Some("turn".into())
-            } else {
+    wait_event(
+        events,
+        projection,
+        timeout,
+        |event, projection| match event {
+            ControllerEvent::MessageSent { run_id, .. } => {
+                projection.active_run_id = Some(run_id.clone());
                 None
             }
-        }
-        ControllerEvent::OperationFailed { action, reason } => {
-            Some(format!("FAIL {action}: {reason}"))
-        }
-        _ => None,
-    })
+            ControllerEvent::Event(envelope) => {
+                projection.apply_event(envelope);
+                if projection.pending_approval.is_some() {
+                    Some("approval".into())
+                } else if projection.active_run_id.is_none() {
+                    Some("turn".into())
+                } else {
+                    None
+                }
+            }
+            ControllerEvent::OperationFailed { action, reason } => {
+                Some(format!("FAIL {action}: {reason}"))
+            }
+            _ => None,
+        },
+    )
     .await
     .and_then(|value| match value.as_str() {
         "approval" => Ok(true),
@@ -520,24 +546,29 @@ async fn wait_for_timeline(
     projection: &mut DesktopProjection,
     timeout: Duration,
 ) -> Result<usize, String> {
-    wait_event(events, projection, timeout, |event, projection| match event {
-        ControllerEvent::TimelineLoaded { page, .. } => {
-            projection.apply_timeline_page(page);
-            if page.complete {
-                Some(projection.timeline.len().to_string())
-            } else {
+    wait_event(
+        events,
+        projection,
+        timeout,
+        |event, projection| match event {
+            ControllerEvent::TimelineLoaded { page, .. } => {
+                projection.apply_timeline_page(page);
+                if page.complete {
+                    Some(projection.timeline.len().to_string())
+                } else {
+                    None
+                }
+            }
+            ControllerEvent::Event(envelope) => {
+                projection.apply_event(envelope);
                 None
             }
-        }
-        ControllerEvent::Event(envelope) => {
-            projection.apply_event(envelope);
-            None
-        }
-        ControllerEvent::OperationFailed { action, reason } => {
-            Some(format!("FAIL {action}: {reason}"))
-        }
-        _ => None,
-    })
+            ControllerEvent::OperationFailed { action, reason } => {
+                Some(format!("FAIL {action}: {reason}"))
+            }
+            _ => None,
+        },
+    )
     .await
     .and_then(|value| {
         if value.starts_with("FAIL ") {
@@ -555,20 +586,25 @@ async fn wait_for_cancel(
     projection: &mut DesktopProjection,
     timeout: Duration,
 ) -> Result<(), String> {
-    wait_event(events, projection, timeout, |event, projection| match event {
-        ControllerEvent::Event(envelope) => {
-            projection.apply_event(envelope);
-            if projection.active_run_id.is_none() {
-                Some("cancelled".into())
-            } else {
-                None
+    wait_event(
+        events,
+        projection,
+        timeout,
+        |event, projection| match event {
+            ControllerEvent::Event(envelope) => {
+                projection.apply_event(envelope);
+                if projection.active_run_id.is_none() {
+                    Some("cancelled".into())
+                } else {
+                    None
+                }
             }
-        }
-        ControllerEvent::OperationFailed { action, reason } => {
-            Some(format!("FAIL {action}: {reason}"))
-        }
-        _ => None,
-    })
+            ControllerEvent::OperationFailed { action, reason } => {
+                Some(format!("FAIL {action}: {reason}"))
+            }
+            _ => None,
+        },
+    )
     .await
     .and_then(|value| {
         if value.starts_with("FAIL ") {
@@ -648,12 +684,10 @@ fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
                         let executor = app.foreground_executor().clone();
                         executor
                             .spawn(async move {
-                                let _ = accessibility_window.update(
-                                    &mut app,
-                                    |view, window, cx| {
+                                let _ =
+                                    accessibility_window.update(&mut app, |view, window, cx| {
                                         view.handle_accessibility_request(request, window, cx);
-                                    },
-                                );
+                                    });
                             })
                             .detach();
                     },

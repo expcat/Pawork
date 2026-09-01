@@ -6,9 +6,9 @@
 use std::fmt;
 use std::time::Duration;
 
-use pawork_domain::CancellationToken;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
+use pawork_domain::CancellationToken;
 use pawork_domain::{ProviderError, ProviderErrorKind};
 use std::pin::Pin;
 
@@ -295,8 +295,10 @@ impl HttpClient {
 
 /// 判断目标 host 是否为本机/回环（显式代理不应劫持本地网关流量）。
 pub fn is_local_target(host: &str) -> bool {
-    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]" | "0.0.0.0")
-        || host.ends_with(".local")
+    matches!(
+        host,
+        "localhost" | "127.0.0.1" | "::1" | "[::1]" | "0.0.0.0"
+    ) || host.ends_with(".local")
         || host.ends_with(".localhost")
 }
 

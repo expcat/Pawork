@@ -3,13 +3,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pawork_domain::{
+    CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
+    StopReason, TextContent,
+};
+use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference, ProviderError,
     ProviderEventSink, ProviderStreamEvent, RequestBudget, ResolvedCredential, ResponseFormat,
     ToolChoice,
-};
-use pawork_domain::{
-    CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
-    StopReason, TextContent,
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{XaiConfig, XaiProvider};
@@ -37,12 +37,20 @@ fn request(model: &str) -> CanonicalModelRequest {
             content: vec![ContentPart::Text(TextContent { text: "hi".into() })],
             metadata: MessageMetadata::default(),
         }],
-        tools: Vec::new(), hosted_tools: Vec::new(), extensions: Vec::new(),
-        tool_choice: ToolChoice::Auto, thinking: None, reasoning: None,
-        temperature: None, max_output_tokens: None, stop_sequences: Vec::new(),
+        tools: Vec::new(),
+        hosted_tools: Vec::new(),
+        extensions: Vec::new(),
+        tool_choice: ToolChoice::Auto,
+        thinking: None,
+        reasoning: None,
+        temperature: None,
+        max_output_tokens: None,
+        stop_sequences: Vec::new(),
         response_format: ResponseFormat::Text,
         prompt_cache: PromptCachePreference::Automatic,
-        budget: RequestBudget::default(), provider_options: BTreeMap::new(), trace_id: None,
+        budget: RequestBudget::default(),
+        provider_options: BTreeMap::new(),
+        trace_id: None,
     }
 }
 
@@ -51,8 +59,12 @@ fn provider(server: &MockServer) -> XaiProvider {
     config.http = HttpClientConfig::builder().disable_system_proxy().build();
     XaiProvider::new(
         config,
-        Some(ResolvedCredential::new(CredentialKind::OAuthBearer, "oauth-xai")),
-    ).unwrap()
+        Some(ResolvedCredential::new(
+            CredentialKind::OAuthBearer,
+            "oauth-xai",
+        )),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -72,8 +84,22 @@ async fn model_capability_selects_responses_or_chat() {
         )).expect(1).mount(&server).await;
 
     let provider = provider(&server);
-    provider.stream(request("grok-4"), &Sink::default(), CancellationToken::new()).await.unwrap();
-    provider.stream(request("grok-3"), &Sink::default(), CancellationToken::new()).await.unwrap();
+    provider
+        .stream(
+            request("grok-4"),
+            &Sink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    provider
+        .stream(
+            request("grok-3"),
+            &Sink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
     server.verify().await;
 }
 

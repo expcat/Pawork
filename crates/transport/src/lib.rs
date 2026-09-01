@@ -19,6 +19,4 @@ pub use api::*;
 pub use local::LocalTransport;
 
 #[cfg(feature = "memory")]
-pub use memory::{
-    MemoryListener, MemoryTransport,
-};
+pub use memory::{MemoryListener, MemoryTransport};

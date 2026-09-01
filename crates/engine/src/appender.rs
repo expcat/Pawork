@@ -4,11 +4,11 @@
 
 use std::collections::BTreeMap;
 
-use pawork_domain::{ModelResponseSummary, ProviderStreamEvent, ToolResult};
 use pawork_domain::{
     ContentPart, Message, MessageId, MessageMetadata, MessageRole, ReasoningItem, StopReason,
     TextContent, ThinkingContent, TokenUsage, ToolCallContent, ToolCallId, ToolResultContent,
 };
+use pawork_domain::{ModelResponseSummary, ProviderStreamEvent, ToolResult};
 use serde_json::Value;
 
 /// 流式组装过程中累积的一组 tool call。

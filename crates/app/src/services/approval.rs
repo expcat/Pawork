@@ -50,8 +50,8 @@ impl ApprovalService {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
     use std::sync::Mutex;
 
     use async_trait::async_trait;
@@ -59,8 +59,8 @@ mod tests {
     use pawork_storage::session::SessionStore;
     use pawork_testkit::{MockProvider, MockScript};
 
-    use crate::testsupport::{RecordingEvents, user_hello};
     use crate::gui_server::GuiHost;
+    use crate::testsupport::{user_hello, RecordingEvents};
     use crate::{AppCore, ApprovalAsk, ApprovalMode, ApprovalPromptHost, DenyAllApprovals};
 
     struct ScriptedHost {
@@ -131,9 +131,13 @@ mod tests {
     async fn ask_for_writes_approved_once_persists_file_and_event_pair() {
         let workspace = tempfile::tempdir().expect("workspace");
         let host = ScriptedHost::new(vec![ApprovalDecision::ApprovedOnce]);
-        let (core, _dir) =
-            write_ready_core(ApprovalMode::AskForWrites, true, host.clone(), workspace.path())
-                .await;
+        let (core, _dir) = write_ready_core(
+            ApprovalMode::AskForWrites,
+            true,
+            host.clone(),
+            workspace.path(),
+        )
+        .await;
         let session = core.create_session("write").await.expect("create");
         let sink = RecordingEvents::default();
         core.chat_turn(
@@ -312,7 +316,6 @@ mod tests {
         core.shutdown().await.expect("shutdown");
     }
 
-
     struct HangHost;
 
     #[async_trait]
@@ -356,7 +359,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let turn_session = session.clone();
         let handle = tokio::spawn(async move {
-            core.chat_turn(&turn_session, vec![user_hello()], &sink, cancel).await
+            core.chat_turn(&turn_session, vec![user_hello()], &sink, cancel)
+                .await
         });
         let mut waiting = None;
         for _ in 0..100 {
@@ -380,7 +384,9 @@ mod tests {
 
         let (store, _) = SessionStore::open(&db).await.expect("reopen after crash");
         let mut core = AppCore::from_parts(
-            Arc::new(MockProvider::sequence(vec![MockScript::new().text("idle").complete()])),
+            Arc::new(MockProvider::sequence(vec![MockScript::new()
+                .text("idle")
+                .complete()])),
             None,
             pawork_domain::ModelId::from("model-1"),
             pawork_domain::ProviderId::from("mock"),
@@ -392,7 +398,9 @@ mod tests {
             .resume_messages_keep_pending(&session)
             .await
             .expect("keep pending");
-        assert!(messages.iter().all(|message| message.role != MessageRole::Tool));
+        assert!(messages
+            .iter()
+            .all(|message| message.role != MessageRole::Tool));
         let snap = core
             .store()
             .expect("store")
@@ -433,7 +441,9 @@ mod tests {
                 pawork_domain::AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested",
                 pawork_domain::AgentEvent::ToolApprovalResponded { .. } => "ToolApprovalResponded",
                 pawork_domain::AgentEvent::ToolExecutionStarted { .. } => "ToolExecutionStarted",
-                pawork_domain::AgentEvent::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
+                pawork_domain::AgentEvent::ToolExecutionCompleted { .. } => {
+                    "ToolExecutionCompleted"
+                }
                 pawork_domain::AgentEvent::MessageCommitted { message }
                     if message.role == MessageRole::Tool =>
                 {
@@ -447,19 +457,24 @@ mod tests {
         assert!(types.contains(&"ToolExecutionCompleted"));
         assert!(types.contains(&"MessageCommitted.tool"));
         assert!(!types.contains(&"ToolExecutionStarted"));
-        let responded = after.iter().find_map(|envelope| match &envelope.payload {
-            pawork_domain::AgentEvent::ToolApprovalResponded { decision, comment, .. } => {
-                Some((decision.clone(), comment.clone()))
-            }
-            _ => None,
-        }).expect("responded payload");
+        let responded = after
+            .iter()
+            .find_map(|envelope| match &envelope.payload {
+                pawork_domain::AgentEvent::ToolApprovalResponded {
+                    decision, comment, ..
+                } => Some((decision.clone(), comment.clone())),
+                _ => None,
+            })
+            .expect("responded payload");
         assert_eq!(responded.0, ApprovalDecision::Denied);
         assert_eq!(
             responded.1.as_deref(),
             Some("approval resolved after restart; tool not executed")
         );
         let completed_err = after.iter().find_map(|envelope| match &envelope.payload {
-            pawork_domain::AgentEvent::ToolExecutionCompleted { result, .. } => Some(result.is_error),
+            pawork_domain::AgentEvent::ToolExecutionCompleted { result, .. } => {
+                Some(result.is_error)
+            }
             _ => None,
         });
         assert_eq!(completed_err, Some(true));
@@ -468,11 +483,16 @@ mod tests {
             pawork_domain::AgentEvent::MessageCommitted { .. }
         )));
         assert!(!workspace.path().join("notes.txt").exists());
-        let sequences: Vec<_> = after.iter().map(|envelope| envelope.sequence.value()).collect();
+        let sequences: Vec<_> = after
+            .iter()
+            .map(|envelope| envelope.sequence.value())
+            .collect();
         assert_eq!(sequences, (1..=after.len() as u64).collect::<Vec<_>>());
         let store = adapter.session_store().await.expect("store clone");
         let core = AppCore::from_parts(
-            std::sync::Arc::new(MockProvider::sequence(vec![MockScript::new().text("idle").complete()])),
+            std::sync::Arc::new(MockProvider::sequence(vec![MockScript::new()
+                .text("idle")
+                .complete()])),
             None,
             pawork_domain::ModelId::from("model-1"),
             pawork_domain::ProviderId::from("mock"),

@@ -14,7 +14,9 @@ use crate::decision::PolicyDecisionEvent;
 use crate::identity::{default_tenant, DEFAULT_TENANT};
 use crate::rbac::{AuditExportPolicy, Permission, PermissionProfile, PrincipalRole};
 
-pub use pawork_domain::{AccountId, AgentId, ModelId, PrincipalId, ProviderId, SessionId, TenantId};
+pub use pawork_domain::{
+    AccountId, AgentId, ModelId, PrincipalId, ProviderId, SessionId, TenantId,
+};
 
 /// 租户级策略：并发 / 预算 / 模型白名单。
 ///

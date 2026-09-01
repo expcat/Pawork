@@ -15,7 +15,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use pawork_domain::{ConnectionId, GuiClientId};
 use pawork_protocol::HandshakeService;
-use pawork_transport::{GuiConnection, GuiListener, GuiTransportServer, TransportEndpoint, TransportError};
+use pawork_transport::{
+    GuiConnection, GuiListener, GuiTransportServer, TransportEndpoint, TransportError,
+};
 
 pub use connection::{
     ClientRegistration, ConnectionManager, ConnectionManagerConfig, GuiClientSession,
@@ -57,7 +59,9 @@ pub trait GuiHost: Send + Sync {
         &self,
         envelope: &pawork_protocol::AppCommandEnvelope,
     ) -> Result<pawork_protocol::AppResponse, GuiHostError>;
-    fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<pawork_protocol::AppEventEnvelope>;
+    fn subscribe_events(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<pawork_protocol::AppEventEnvelope>;
 
     fn current_sequence(&self) -> pawork_protocol::GlobalSequence {
         pawork_protocol::GlobalSequence(0)

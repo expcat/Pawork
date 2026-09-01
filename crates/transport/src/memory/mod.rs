@@ -10,13 +10,13 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use async_trait::async_trait;
-use tokio::sync::mpsc;
 use crate::{
     ConnectOptions, ConnectionInfo, ConnectionLocality, GuiConnection, GuiListener,
     GuiTransportClient, GuiTransportServer, TransportEndpoint, TransportError, TransportErrorKind,
     TransportFrame,
 };
+use async_trait::async_trait;
+use tokio::sync::mpsc;
 
 /// channel 名 → 已绑定 listener 的入站队列。
 type Registry = Mutex<HashMap<String, mpsc::UnboundedSender<Box<dyn GuiConnection>>>>;
@@ -273,7 +273,7 @@ fn lock(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     fn options(max_frame_bytes: u64) -> ConnectOptions {
         ConnectOptions {
             timeout_ms: 100,

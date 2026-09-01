@@ -5,19 +5,19 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use pawork_domain::{AgentId, CancellationToken, ModelId};
 use pawork_control_plane::credential::LeaseOutcome;
+use pawork_control_plane::UsageQuery;
 use pawork_control_plane::{
     IdentityContext, Permission, PolicyDecisionEvent, PolicyDecisionKind, PolicyGate,
 };
-use pawork_control_plane::UsageQuery;
+use pawork_domain::{AgentId, CancellationToken, ModelId};
 
 use crate::budget::WorkerBudgetController;
+use crate::budget::WorkerBudgetLimits;
 use crate::identity::{AgentInstance, WorkerRole};
 use crate::lifecycle::{OrchestrationEvent, WorkerState, WorkerStateMachine, WorkerTransition};
 use crate::task_graph::{AgentTask, TaskId, TaskState};
 use crate::worktree::WorktreeGuard;
-use crate::budget::WorkerBudgetLimits;
 
 use super::{now_ms, AgentSupervisor, SupervisorError, WorkerEntry};
 
@@ -47,7 +47,6 @@ pub struct SpawnRequest {
     pub task_max_retries: Option<u32>,
 }
 
-
 /// 并发预约失败原因（区分全局本地闸门与租户策略闸门，便于审计）。
 pub(crate) enum ConcurrencyReservationError {
     /// 全局 agent 并发上限（本地闸门）。
@@ -71,7 +70,6 @@ impl Drop for ConcurrencyReservation {
             .remove(&self.agent_id);
     }
 }
-
 
 impl AgentSupervisor {
     /// 创建并启动一个 worker。
@@ -99,9 +97,7 @@ impl AgentSupervisor {
         if let Some(max_depth) = self.config.max_worker_depth {
             let depth = self.worker_depth(req.parent_id.as_ref());
             if depth > max_depth {
-                let reason = format!(
-                    "worker depth limit exceeded: depth={depth} max={max_depth}"
-                );
+                let reason = format!("worker depth limit exceeded: depth={depth} max={max_depth}");
                 self.record_policy_denial(&req, PolicyGate::AgentSpawn, &reason);
                 self.emit(OrchestrationEvent::ConcurrencyDenied {
                     kind: "depth".to_string(),
@@ -526,7 +522,6 @@ impl AgentSupervisor {
         Ok(agent_id)
     }
 
-
     /// 记录一次策略拒绝决策（versioned，reason 统一脱敏）。
     fn record_policy_denial(
         &self,
@@ -557,7 +552,6 @@ impl AgentSupervisor {
             now_ms(),
         ));
     }
-
 
     /// 原子并发预约：在单一临界区内把「活动 worker + 在途 reservations」合并
     /// 计数，校验全局本地上限与租户策略 `max_concurrent_agents`，通过后插入
@@ -615,8 +609,6 @@ impl AgentSupervisor {
         })
     }
 
-
-
     /// parent 必须存在于 workers、与本次请求同 tenant / session，且状态允许派生
     ///（活动且非 Cancelling）。失败返回 PolicyDenied，调用方不得写 children / workers。
     fn validate_parent(&self, req: &SpawnRequest) -> Result<(), SupervisorError> {
@@ -672,11 +664,12 @@ impl AgentSupervisor {
                 break;
             }
             depth = depth.saturating_add(1);
-            current = workers.get(&id).and_then(|entry| entry.instance.parent_id.clone());
+            current = workers
+                .get(&id)
+                .and_then(|entry| entry.instance.parent_id.clone());
         }
         depth
     }
-
 }
 
 /// 校验 pool 返回的 lease 作用域与本次 spawn 的 canonical 请求一致。
@@ -715,7 +708,6 @@ fn validate_lease_scope(
     }
     Ok(())
 }
-
 
 /// 一天的毫秒数（日预算窗口按 UTC 日对齐）。
 const MS_PER_DAY: u64 = 86_400_000;

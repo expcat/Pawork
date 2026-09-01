@@ -70,10 +70,13 @@ impl AgentEventSink for TextSink {
                     .map_err(|error| EngineError::sink(error.to_string()))?;
             }
             AgentEvent::ToolCallStarted { tool_call_id, name } => {
-                self.tools
-                    .lock()
-                    .expect("sink tools mutex")
-                    .insert(tool_call_id, ToolActivity { name, ..Default::default() });
+                self.tools.lock().expect("sink tools mutex").insert(
+                    tool_call_id,
+                    ToolActivity {
+                        name,
+                        ..Default::default()
+                    },
+                );
             }
             AgentEvent::ToolCallArgumentsDelta {
                 tool_call_id,
@@ -456,10 +459,7 @@ mod tests {
             paint_stream(ToolOutputStream::Stderr, "boom\n", false),
             "boom\n"
         );
-        assert_eq!(
-            paint_stream(ToolOutputStream::Stdout, "ok\n", true),
-            "ok\n"
-        );
+        assert_eq!(paint_stream(ToolOutputStream::Stdout, "ok\n", true), "ok\n");
     }
 
     #[test]
@@ -487,7 +487,9 @@ mod tests {
                     "note": "seatbelt unavailable"
                 }
             })),
-            Some("沙箱回退：isolation=soft backend=native_restricted（seatbelt unavailable）".into())
+            Some(
+                "沙箱回退：isolation=soft backend=native_restricted（seatbelt unavailable）".into()
+            )
         );
         assert_eq!(
             sandbox_fallback_notice(&serde_json::json!({

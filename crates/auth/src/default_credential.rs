@@ -114,9 +114,7 @@ pub fn load_default_oauth_meta(
     match backend.get(&oauth_secret_service(provider), &meta_account()) {
         Ok(meta_json) => serde_json::from_str(&meta_json)
             .map(Some)
-            .map_err(|error| {
-                AuthError::MalformedMetadata(format!("default oauth meta: {error}"))
-            }),
+            .map_err(|error| AuthError::MalformedMetadata(format!("default oauth meta: {error}"))),
         Err(AuthError::NotFound) => Ok(None),
         Err(error) => Err(error),
     }
@@ -168,8 +166,11 @@ pub fn update_default_oauth_token(
     // 刷新响应通常不携带 id_token：保留旧 meta 的 account_id，避免 ChatGPT
     // 路由头信息在自动刷新后丢失。
     let previous_meta = load_default_oauth_meta(backend, &stored.provider)?;
-    let account_id = chatgpt_account_id(tokens)
-        .or_else(|| previous_meta.as_ref().and_then(|meta| meta.account_id.clone()));
+    let account_id = chatgpt_account_id(tokens).or_else(|| {
+        previous_meta
+            .as_ref()
+            .and_then(|meta| meta.account_id.clone())
+    });
     let meta = DefaultOAuthMeta {
         masked: updated.masked.clone(),
         created_at_ms: updated.created_at.as_unix_millis(),
@@ -205,10 +206,7 @@ fn default_oauth_needs_refresh_with_skew(
 
 /// 到期判断（与 oauth::needs_refresh 同语义：无 expires 视为需要刷新）。
 pub fn default_oauth_needs_refresh(stored: &StoredCredential) -> bool {
-    default_oauth_needs_refresh_with_skew(
-        stored,
-        Duration::from_millis(REFRESH_GRACE_MILLIS),
-    )
+    default_oauth_needs_refresh_with_skew(stored, Duration::from_millis(REFRESH_GRACE_MILLIS))
 }
 
 /// default OAuth 请求前置刷新：复用通用 singleflight gate，并以 default 专用写入
@@ -289,8 +287,8 @@ fn now_unix_millis() -> u64 {
 mod tests {
     use super::*;
     use crate::backend::MemoryBackend;
-    use crate::FileBackend;
     use crate::oauth::read_refresh_token;
+    use crate::FileBackend;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -340,7 +338,10 @@ mod tests {
             store_default_oauth_token(&backend, ProviderId::new("xai"), &tokens),
             Err(AuthError::InvalidSecret(message)) if message == "refresh_token is empty"
         ));
-        assert!(backend.is_empty(), "invalid token set must not be partially stored");
+        assert!(
+            backend.is_empty(),
+            "invalid token set must not be partially stored"
+        );
     }
 
     #[test]
@@ -489,25 +490,18 @@ mod tests {
         let http = reqwest::Client::new();
 
         assert!(
-            refresh_default_oauth_credential_if_needed(
-                &mut first,
-                &backend,
-                &config,
-                &http,
-            )
-            .await
-            .expect("first refresh")
+            refresh_default_oauth_credential_if_needed(&mut first, &backend, &config, &http,)
+                .await
+                .expect("first refresh")
         );
-        assert!(
-            !refresh_default_oauth_credential_if_needed(
-                &mut delayed,
-                &backend,
-                &config,
-                &http,
-            )
-            .await
-            .expect("reuse published refresh")
-        );
+        assert!(!refresh_default_oauth_credential_if_needed(
+            &mut delayed,
+            &backend,
+            &config,
+            &http,
+        )
+        .await
+        .expect("reuse published refresh"));
         assert_eq!(delayed.masked, first.masked);
         assert_eq!(delayed.expires_at, first.expires_at);
         assert_eq!(delayed.scopes, first.scopes);
@@ -606,10 +600,7 @@ mod tests {
                 .arg("--ignored")
                 .arg("--nocapture")
                 .env(PROCESS_CHILD_AUTH_PATH, &auth_path)
-                .env(
-                    PROCESS_CHILD_TOKEN_URL,
-                    format!("{}/token", server.uri()),
-                )
+                .env(PROCESS_CHILD_TOKEN_URL, format!("{}/token", server.uri()))
                 .env(PROCESS_CHILD_READY_PATH, ready_path)
                 .env(PROCESS_CHILD_GO_PATH, &go_path)
                 .stdout(std::process::Stdio::piped())

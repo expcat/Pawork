@@ -26,8 +26,8 @@ use std::ops::Deref;
 
 use pawork_domain::{AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, MessageRole};
 
-use crate::ResumeDisposition;
 use crate::app::{AppEvent, AppEventEnvelope, RunState, TimelineItem, TimelineItemKind};
+use crate::ResumeDisposition;
 
 const TOOL_CONTEXT_ID_KEY: &str = "_pawork_tool_call_id";
 const TOOL_CONTEXT_DETAIL_KEY: &str = "detail";
@@ -87,9 +87,9 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
         } => {
             let display_detail = sandbox_timeline_detail(&result.metadata);
             (
-            TimelineItemKind::ToolCompleted,
-            Some(join_text(&result.content)),
-            result.tool_name.clone(),
+                TimelineItemKind::ToolCompleted,
+                Some(join_text(&result.content)),
+                result.tool_name.clone(),
                 Some(
                     if result.is_error {
                         "failed"
@@ -118,15 +118,9 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
             Some(decision_status(decision)),
             None,
         ),
-        AgentEvent::RunStarted { .. } => {
-            (TimelineItemKind::RunStarted, None, None, None, None)
-        }
-        AgentEvent::RunCompleted { .. } => {
-            (TimelineItemKind::RunCompleted, None, None, None, None)
-        }
-        AgentEvent::RunCancelled { .. } => {
-            (TimelineItemKind::RunCancelled, None, None, None, None)
-        }
+        AgentEvent::RunStarted { .. } => (TimelineItemKind::RunStarted, None, None, None, None),
+        AgentEvent::RunCompleted { .. } => (TimelineItemKind::RunCompleted, None, None, None, None),
+        AgentEvent::RunCancelled { .. } => (TimelineItemKind::RunCancelled, None, None, None, None),
         AgentEvent::RunFailed { error, .. } => (
             TimelineItemKind::RunFailed,
             None,
@@ -250,9 +244,17 @@ fn decision_status(decision: &ApprovalDecision) -> String {
 /// 渲染态条目种类（纯数据，非 wire 类型，不进帧）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TimelineEntryKind {
-    UserMessage { text: String },
-    AssistantMessage { text: String },
-    ToolCall { name: String, status: String, detail: Option<String> },
+    UserMessage {
+        text: String,
+    },
+    AssistantMessage {
+        text: String,
+    },
+    ToolCall {
+        name: String,
+        status: String,
+        detail: Option<String>,
+    },
     RunState(String),
     Error(String),
 }
@@ -379,13 +381,13 @@ impl TimelineProjection {
                     anchor.run_id == item.run_id && anchor.sequence < item.sequence
                 });
                 if let Some(anchor) = matching_anchor {
-                        if let Some(index) =
-                            self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
-                        {
-                            if matches!(
-                                self.entries.get(index).map(|entry| &entry.kind),
-                                Some(TimelineEntryKind::AssistantMessage { .. })
-                            ) {
+                    if let Some(index) =
+                        self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
+                    {
+                        if matches!(
+                            self.entries.get(index).map(|entry| &entry.kind),
+                            Some(TimelineEntryKind::AssistantMessage { .. })
+                        ) {
                             // committed 采用自己的 sequence；必须移除后重新按序
                             // 插入，不能原位改 sequence，否则中间到达的 tool/run
                             // 条目会让 entries 失序。
@@ -410,10 +412,10 @@ impl TimelineProjection {
                                     sequence: item.sequence,
                                     committed: true,
                                 });
-                                return;
-                            }
+                            return;
                         }
                     }
+                }
                 self.insert_entry(TimelineEntry {
                     sequence: item.sequence,
                     event_id: item.event_id.clone(),
@@ -635,7 +637,11 @@ impl TimelineProjection {
                     return true;
                 }
             }
-            AppEvent::AssistantDelta { run_id, message_id, delta } => {
+            AppEvent::AssistantDelta {
+                run_id,
+                message_id,
+                delta,
+            } => {
                 if !self.seen.insert(sequence) {
                     return false;
                 }
@@ -648,7 +654,11 @@ impl TimelineProjection {
                     delta,
                 );
             }
-            AppEvent::ToolStarted { run_id, tool_call_id, name } => {
+            AppEvent::ToolStarted {
+                run_id,
+                tool_call_id,
+                name,
+            } => {
                 if !self.seen.insert(sequence) {
                     // 历史页可能先以同 sequence 建立条目；live 重放虽然不应
                     // 重复渲染，仍需补上历史 wire 未显式暴露的 tool_call_id，
@@ -717,20 +727,20 @@ impl TimelineProjection {
                 ) {
                     return true;
                 }
-                    self.insert_entry(TimelineEntry {
-                        sequence,
-                        event_id,
-                        kind: TimelineEntryKind::ToolCall {
-                            name: tool_call_id.as_str().to_string(),
-                            status: status.into(),
-                            detail: None,
-                        },
-                        fork_boundary: None,
-                        timestamp,
-                        run_id: Some(run_id.as_str().to_string()),
-                    });
-                    return true;
-                }
+                self.insert_entry(TimelineEntry {
+                    sequence,
+                    event_id,
+                    kind: TimelineEntryKind::ToolCall {
+                        name: tool_call_id.as_str().to_string(),
+                        status: status.into(),
+                        detail: None,
+                    },
+                    fork_boundary: None,
+                    timestamp,
+                    run_id: Some(run_id.as_str().to_string()),
+                });
+                return true;
+            }
             AppEvent::Diagnostic { code, message, .. } => {
                 let fallback = match code.as_str() {
                     "sandbox.fallback" => "沙箱回退：隔离已降级",
@@ -741,9 +751,7 @@ impl TimelineProjection {
                     self.insert_entry(TimelineEntry {
                         sequence,
                         event_id,
-                        kind: TimelineEntryKind::RunState(hint_diagnostic_label(
-                            message, fallback,
-                        )),
+                        kind: TimelineEntryKind::RunState(hint_diagnostic_label(message, fallback)),
                         fork_boundary: None,
                         timestamp,
                         run_id: None,

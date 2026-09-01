@@ -14,10 +14,7 @@ pub(in crate::gui_host) fn broadcast_event(envelope: &AgentEventEnvelope) -> Opt
             message_id: message_id.clone(),
             delta: delta.clone(),
         },
-        AgentEvent::ToolCallStarted {
-            tool_call_id,
-            name,
-        } => AppEvent::ToolStarted {
+        AgentEvent::ToolCallStarted { tool_call_id, name } => AppEvent::ToolStarted {
             run_id: run,
             tool_call_id: tool_call_id.clone(),
             name: name.clone(),

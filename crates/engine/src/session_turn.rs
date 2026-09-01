@@ -3,11 +3,11 @@
 use std::sync::atomic::AtomicU64;
 
 use pawork_domain::{
-    CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ProviderStreamEvent,
-};
-use pawork_domain::{
     AgentEvent, CancellationToken, ErrorContext, Message, MessageId, MessageMetadata, ModelId,
     ProviderId, RunId, SessionId, Timestamp, TokenUsage,
+};
+use pawork_domain::{
+    CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ProviderStreamEvent,
 };
 
 use crate::appender::AssembledTurn;
@@ -200,12 +200,12 @@ mod tests {
 
     use async_trait::async_trait;
     use pawork_domain::{
-        ModelDefinition, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent,
-        ResolvedCredential,
-    };
-    use pawork_domain::{
         AgentEvent, AgentEventEnvelope, ContentPart, EventSequence, MessageId, MessageRole,
         RequestId, StopReason, TextContent, TokenUsage,
+    };
+    use pawork_domain::{
+        ModelDefinition, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent,
+        ResolvedCredential,
     };
 
     use crate::assemble_request;
@@ -448,7 +448,10 @@ mod tests {
         let envelopes = sink.snapshot();
         for (index, envelope) in envelopes.iter().enumerate() {
             assert_eq!(envelope.sequence, EventSequence::new((index + 1) as u64));
-            assert_eq!(envelope.event_id.as_str(), format!("evt-run-1-{}", index + 1));
+            assert_eq!(
+                envelope.event_id.as_str(),
+                format!("evt-run-1-{}", index + 1)
+            );
         }
         let assistant = envelopes
             .iter()
@@ -612,15 +615,11 @@ mod tests {
         };
         run_session_turn(
             &provider,
-            assemble_request(
-                RequestId::from("request-2"),
-                ModelId::from("model-1"),
-                {
-                    let mut history = committed;
-                    history.push(resume.trigger_message.clone());
-                    history
-                },
-            ),
+            assemble_request(RequestId::from("request-2"), ModelId::from("model-1"), {
+                let mut history = committed;
+                history.push(resume.trigger_message.clone());
+                history
+            }),
             resume,
             &resume_sink,
             CancellationToken::new(),
@@ -628,10 +627,7 @@ mod tests {
         .await
         .expect("resume");
         assert_eq!(resume_sink.snapshot()[0].sequence, EventSequence::new(6));
-        assert_eq!(
-            resume_sink.snapshot()[0].event_id.as_str(),
-            "evt-run-2-6"
-        );
+        assert_eq!(resume_sink.snapshot()[0].event_id.as_str(), "evt-run-2-6");
         assert_eq!(
             resume_sink
                 .types()

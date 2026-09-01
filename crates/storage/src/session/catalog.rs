@@ -52,48 +52,50 @@ impl SessionStore {
         let name = name.to_string();
         let root_path = root_path.to_string_lossy().into_owned();
         self.database()
-            .call(move |connection| -> Result<WorkspaceRecord, SessionStoreError> {
-                let transaction = connection
-                    .transaction_with_behavior(TransactionBehavior::Immediate)?;
-                if let Some(record) = transaction
-                    .query_row(
-                        "SELECT workspace_id, name, root_path, created_at_ms, updated_at_ms \
+            .call(
+                move |connection| -> Result<WorkspaceRecord, SessionStoreError> {
+                    let transaction =
+                        connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    if let Some(record) = transaction
+                        .query_row(
+                            "SELECT workspace_id, name, root_path, created_at_ms, updated_at_ms \
                          FROM workspaces WHERE root_path=?1",
-                        params![root_path],
-                        workspace_record,
-                    )
-                    .optional()?
-                {
-                    transaction.commit()?;
-                    return Ok(record);
-                }
-                if let Some(existing_root) = transaction
-                    .query_row(
-                        "SELECT root_path FROM workspaces WHERE workspace_id=?1",
-                        params![workspace_id],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .optional()?
-                {
-                    return Err(SessionStoreError::WorkspaceRegistryInvariant(format!(
-                        "workspace id {workspace_id} already points to {existing_root}"
-                    )));
-                }
-                transaction.execute(
-                    "INSERT INTO workspaces(\
+                            params![root_path],
+                            workspace_record,
+                        )
+                        .optional()?
+                    {
+                        transaction.commit()?;
+                        return Ok(record);
+                    }
+                    if let Some(existing_root) = transaction
+                        .query_row(
+                            "SELECT root_path FROM workspaces WHERE workspace_id=?1",
+                            params![workspace_id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?
+                    {
+                        return Err(SessionStoreError::WorkspaceRegistryInvariant(format!(
+                            "workspace id {workspace_id} already points to {existing_root}"
+                        )));
+                    }
+                    transaction.execute(
+                        "INSERT INTO workspaces(\
                          workspace_id, name, root_path, created_at_ms, updated_at_ms\
                      ) VALUES (?1, ?2, ?3, ?4, ?4)",
-                    params![workspace_id, name, root_path, now_ms],
-                )?;
-                let record = transaction.query_row(
-                    "SELECT workspace_id, name, root_path, created_at_ms, updated_at_ms \
+                        params![workspace_id, name, root_path, now_ms],
+                    )?;
+                    let record = transaction.query_row(
+                        "SELECT workspace_id, name, root_path, created_at_ms, updated_at_ms \
                      FROM workspaces WHERE workspace_id=?1",
-                    params![workspace_id],
-                    workspace_record,
-                )?;
-                transaction.commit()?;
-                Ok(record)
-            })
+                        params![workspace_id],
+                        workspace_record,
+                    )?;
+                    transaction.commit()?;
+                    Ok(record)
+                },
+            )
             .await?
     }
 
@@ -339,12 +341,7 @@ mod tests {
         let (_dir, path) = temp_db();
         let (store, _) = SessionStore::open(&path).await.expect("store");
         let first = store
-            .register_workspace(
-                &WorkspaceId::from("ws-stable"),
-                "demo",
-                root.path(),
-                10,
-            )
+            .register_workspace(&WorkspaceId::from("ws-stable"), "demo", root.path(), 10)
             .await
             .expect("register");
         let repeated = store
@@ -358,12 +355,7 @@ mod tests {
             .expect("same root");
         assert_eq!(repeated, first);
         let error = store
-            .register_workspace(
-                &WorkspaceId::from("ws-stable"),
-                "other",
-                other.path(),
-                30,
-            )
+            .register_workspace(&WorkspaceId::from("ws-stable"), "other", other.path(), 30)
             .await
             .expect_err("same id cannot move");
         assert!(matches!(

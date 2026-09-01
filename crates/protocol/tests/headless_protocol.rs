@@ -1,7 +1,9 @@
 //! 协议集成测试：JSON fixture 驱动的翻译往返、错误帧与 run_loop 输出。
 
 use pawork_domain::{CommandId, QueryId, RunId, Timestamp};
-use pawork_protocol::headless::translate::{encode_protocol_response, error_frame, translate_request_line};
+use pawork_protocol::headless::translate::{
+    encode_protocol_response, error_frame, translate_request_line,
+};
 use pawork_protocol::headless::wire::{
     CompatSource, HeadlessRequest, HeadlessResponse, ProtocolErrorKind, SdkCapability,
     TranslatedRequest,
@@ -9,7 +11,10 @@ use pawork_protocol::headless::wire::{
 use serde_json::{json, Value};
 
 fn fixture(name: &str) -> Value {
-    let path = format!("{}/tests/fixtures/headless/{name}", env!("CARGO_MANIFEST_DIR"));
+    let path = format!(
+        "{}/tests/fixtures/headless/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("read fixture {path}: {error}"));
     serde_json::from_str(&text).expect("fixture is valid JSON")
@@ -365,7 +370,10 @@ mod stdio_tests {
                 granted,
             } => {
                 assert_eq!(instance_id, "test-instance");
-                assert_eq!(negotiated, pawork_protocol::ApiVersion { major: 1, minor: 0 });
+                assert_eq!(
+                    negotiated,
+                    pawork_protocol::ApiVersion { major: 1, minor: 0 }
+                );
                 assert_eq!(
                     granted,
                     vec![SdkCapability::Sessions, SdkCapability::Streaming]

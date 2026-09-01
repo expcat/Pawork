@@ -39,10 +39,7 @@ pub trait ReasoningProtector: Send + Sync {
     async fn protect(&self, payload: &[u8]) -> Result<ProtectedBlobRef, ReasoningProtectError>;
 
     /// 解析稳定逻辑引用指向的 payload（实现负责解密），不解释其内容。
-    async fn resolve(
-        &self,
-        blob_ref: &ProtectedBlobRef,
-    ) -> Result<Vec<u8>, ReasoningProtectError>;
+    async fn resolve(&self, blob_ref: &ProtectedBlobRef) -> Result<Vec<u8>, ReasoningProtectError>;
 }
 
 #[cfg(test)]

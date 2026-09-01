@@ -6,10 +6,10 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use pawork_domain::{
-    LEGACY_HINT_KEY_MAP, OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT, ReasoningMappingError,
-};
 use pawork_domain::{ProtectedBlobRef, ReasoningItem, ReasoningItemId};
+use pawork_domain::{
+    ReasoningMappingError, LEGACY_HINT_KEY_MAP, OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT,
+};
 use serde_json::Value;
 
 const SUMMARY_ENTRIES_KEY: &str = OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT;
@@ -122,14 +122,12 @@ pub(crate) fn to_input(
 /// 读规范命名空间键；兼容 R5 前落盘的旧拼写（从 domain 冻结映射表派生，
 /// 生产者只写规范键）。
 fn summary_entries_metadata(item: &ReasoningItem) -> Option<&Value> {
-    item.opaque_metadata
-        .get(SUMMARY_ENTRIES_KEY)
-        .or_else(|| {
-            LEGACY_HINT_KEY_MAP
-                .iter()
-                .filter(|(_, canonical)| *canonical == SUMMARY_ENTRIES_KEY)
-                .find_map(|(legacy, _)| item.opaque_metadata.get(*legacy))
-        })
+    item.opaque_metadata.get(SUMMARY_ENTRIES_KEY).or_else(|| {
+        LEGACY_HINT_KEY_MAP
+            .iter()
+            .filter(|(_, canonical)| *canonical == SUMMARY_ENTRIES_KEY)
+            .find_map(|(legacy, _)| item.opaque_metadata.get(*legacy))
+    })
 }
 
 fn summary_entries(item: &Value) -> Result<Vec<Value>, ReasoningMappingError> {
@@ -153,9 +151,7 @@ fn validate_summary_entries(entries: &[Value]) -> Result<Vec<Value>, ReasoningMa
                 "reasoning summary entry has unmapped fields",
             ));
         }
-        if required_str(entry, "type", "reasoning summary entry without type")?
-            != "summary_text"
-        {
+        if required_str(entry, "type", "reasoning summary entry without type")? != "summary_text" {
             return Err(ReasoningMappingError::unsupported(
                 "unsupported reasoning summary entry type",
             ));
@@ -226,7 +222,10 @@ mod tests {
 
     #[test]
     fn to_input_reads_legacy_summary_hint_spellings() {
-        for legacy in ["responses.summary_entries", "openai.responses.summary_entries"] {
+        for legacy in [
+            "responses.summary_entries",
+            "openai.responses.summary_entries",
+        ] {
             assert_eq!(
                 pawork_domain::canonical_hint_key(legacy),
                 Some(OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT)

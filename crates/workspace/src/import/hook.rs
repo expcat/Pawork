@@ -33,7 +33,9 @@ pub enum HandlerLifecycle {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HookScope {
-    Workspace { workspace_id: WorkspaceId },
+    Workspace {
+        workspace_id: WorkspaceId,
+    },
     #[default]
     Global,
 }

@@ -42,7 +42,7 @@
 Builtin < Global < Profile < Workspace < Session < Run
 ```
 
-- 工作区配置位于仓库根 `.pawork/` 体系；R10 K-01 仍要复核从 git 子目录/非 git 目录发现根的闭环。
+- 工作区配置位于仓库根 `.pawork/` 体系；从 git 子目录/非 git 目录发现根的闭环仍需专项复核。
 - CLI provider/model/instance/approval 覆盖属于运行入口，不应写回包含 Secret 的配置。
 - `ProviderConfig` 无 `api_key`；凭证通过 `pawork auth` 或受控 env fallback 提供。
 - 配置/会话导入先 dry-run/预览；扫描不得执行 hook、启动 MCP 或联网。
@@ -87,14 +87,14 @@ Builtin < Global < Profile < Workspace < Session < Run
 | 命令被拒或降级 | Policy reason、trust、command risk、Sandbox isolation/note | 隐藏 fallback、将 NativeRestricted 称为强隔离 |
 | Provider 401/429/超时 | `auth list` 脱敏状态、模型目录、Retry-After、通道配置 | 打印 token/request body、静默换用别的账号 |
 | 会话/导入失败 | 文件版本、Secret 检测、损坏行、branch lineage | 部分导入后宣称完整成功 |
-| usage 冲突告警 | ROADMAP 已登记的 record_id/dedup 问题、重试队列 | 清空账本以消除告警 |
+| usage 冲突告警 | history/backlog 中的 record_id/dedup 登记、重试队列 | 清空账本以消除告警 |
 
 ## 7. 服务、平台与发布边界
 
 - `service` 默认 dry-run；只有用户明确选择并传入 apply 语义时才修改系统服务。
 - Windows SCM 实机验收、Linux/Windows Sandbox/服务矩阵未构成当前发布证明。
 - License 仍待定；crates.io 占名、安装器、自更新、签名、公证、SBOM、供应链与发布回滚均未立项。
-- 当前 R1–R11 明确不运行发布级 Workspace Full Gate。正式发布必须经用户另行授权后重新定义（现为 [ROADMAP §5](../../ROADMAP.md) 候选，不占用 R8–R11），不能沿用历史默认门禁。
+- 当前 Settings 活动线明确不运行发布级 Workspace Full Gate。正式发布必须经用户另行授权后重新定义，不能沿用历史默认门禁。
 - 远程 GUI、LAN/Web、Cloud 和外部账户池网关未交付；不要把本机 socket 服务暴露为远程控制面。
 
 ## 8. 运维完成条件

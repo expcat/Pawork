@@ -19,18 +19,21 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_app::{AppCore, GuiHostAdapter};
 use pawork_client::{ClientConfig, ClientError, GuiClient, ResumeDisposition, SessionInfo};
 use pawork_domain::{ActorId, ModelId, ProviderId, RunId, SessionId, WorkspaceId};
-use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppEvent, AppEventEnvelope, AppQuery, AppResponse,
-    CommandSource, GlobalSequence, GuiCapability, HandshakeService,
-    ProtocolErrorCode, RunState, SnapshotSectionKind, API_VERSION, SUPPORTED_API_VERSIONS,
+    CommandSource, GlobalSequence, GuiCapability, HandshakeService, ProtocolErrorCode, RunState,
+    SnapshotSectionKind, API_VERSION, SUPPORTED_API_VERSIONS,
 };
 use pawork_storage::session::SessionStore;
 use pawork_testkit::{MockProvider, MockScript};
-use pawork_transport::{ConnectOptions, GuiConnection, GuiListener, GuiTransportClient, LocalTransport, TransportEndpoint};
+use pawork_transport::{
+    ConnectOptions, GuiConnection, GuiListener, GuiTransportClient, LocalTransport,
+    TransportEndpoint,
+};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -61,16 +64,14 @@ impl Harness {
         );
         // ADR-044 起 Run 按 workspace 路由：harness 须登记 ws-default
         // （指向本测试 tempdir），否则 RunStart fail-closed。
-        core.attach_workspace(temp.path()).expect("attach workspace");
+        core.attach_workspace(temp.path())
+            .expect("attach workspace");
         let core = Arc::new(core);
         let adapter = Arc::new(GuiHostAdapter::new(core));
         let handshake = HandshakeService::new(
             GuiHost::instance_id(adapter.as_ref()),
             SUPPORTED_API_VERSIONS.to_vec(),
-            vec![
-                GuiCapability::Events,
-                GuiCapability::Snapshots,
-            ],
+            vec![GuiCapability::Events, GuiCapability::Snapshots],
         );
         let transport = Arc::new(LocalTransport::default());
         let server = GuiServer::new(GuiServerConfig {
@@ -124,7 +125,6 @@ impl Harness {
         self.sessions.push(session);
         client
     }
-
 }
 
 #[tokio::test]
@@ -207,16 +207,25 @@ fn run_state(event: &AppEventEnvelope, run_id: &RunId) -> Option<RunState> {
 }
 
 async fn session_id_from_snapshot(client: &GuiClient, title: &str) -> SessionId {
-    let snapshot = client.snapshot().await.expect("snapshot after SessionCreate");
+    let snapshot = client
+        .snapshot()
+        .await
+        .expect("snapshot after SessionCreate");
     let section = snapshot
         .sections
         .iter()
         .find(|section| section.kind == SnapshotSectionKind::SessionTree)
         .expect("SessionTree section");
-    let sessions = section.data.as_ref().expect("SessionTree data").as_array().expect("sessions");
-    let found = sessions.iter().find(|item| item["title"] == json!(title)).unwrap_or_else(|| {
-        sessions.first().expect("at least one session")
-    });
+    let sessions = section
+        .data
+        .as_ref()
+        .expect("SessionTree data")
+        .as_array()
+        .expect("sessions");
+    let found = sessions
+        .iter()
+        .find(|item| item["title"] == json!(title))
+        .unwrap_or_else(|| sessions.first().expect("at least one session"));
     SessionId::from(found["session_id"].as_str().expect("session_id"))
 }
 
@@ -261,7 +270,10 @@ async fn create_session_send_message_and_receive_streaming_run_events() {
     let info: &SessionInfo = client.info();
     assert_eq!(info.client_id.as_str(), "client-0");
     assert_eq!(info.handle.api_version, API_VERSION);
-    assert!(client.initial_snapshot().is_some(), "握手后应有首帧 Snapshot");
+    assert!(
+        client.initial_snapshot().is_some(),
+        "握手后应有首帧 Snapshot"
+    );
 
     let source = gui_source(&client);
     let identity = local_user();
@@ -293,22 +305,33 @@ async fn create_session_send_message_and_receive_streaming_run_events() {
         )
         .await
         .expect("RunStart");
-    let AppResponse::Accepted { run_id: Some(run_id), .. } = &run.response else {
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &run.response
+    else {
         panic!("RunStart 应 Accepted 且携带 run id，got {:?}", run.response);
     };
     let run_id = run_id.clone();
 
-    let (done, events) = recv_until(&client, |e| run_state(e, &run_id) == Some(RunState::Completed)).await;
+    let (done, events) = recv_until(&client, |e| {
+        run_state(e, &run_id) == Some(RunState::Completed)
+    })
+    .await;
     assert!(done, "应收到 Run 的 Completed 事件");
     assert!(
-        events.iter().any(|e| matches!(&e.payload, AppEvent::AssistantDelta { .. })),
+        events
+            .iter()
+            .any(|e| matches!(&e.payload, AppEvent::AssistantDelta { .. })),
         "应收到流式增量事件"
     );
 
     // V2 RunStatus 在 registry 摘除后为 unknown，不再承诺 completed 字面量。
     let status = client
         .query(
-            AppQuery::RunStatus { run_id: run_id.clone() },
+            AppQuery::RunStatus {
+                run_id: run_id.clone(),
+            },
             gui_source(&client),
             local_user(),
         )
@@ -353,13 +376,24 @@ async fn snapshot_and_reconnect_resume_replays_missing_events() {
         )
         .await
         .expect("RunStart");
-    let AppResponse::Accepted { run_id: Some(run_id), .. } = &run.response else {
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &run.response
+    else {
         panic!("RunStart 应 Accepted 且携带 run id，got {:?}", run.response);
     };
     let run_id = run_id.clone();
-    let (done, events) = recv_until(&client, |e| run_state(e, &run_id) == Some(RunState::Created)).await;
+    let (done, events) = recv_until(&client, |e| {
+        run_state(e, &run_id) == Some(RunState::Created)
+    })
+    .await;
     assert!(done, "第一段连接应看到 RunCreated");
-    let last_sequence = events.iter().map(|e| e.global_sequence.0).max().expect("至少一个事件");
+    let last_sequence = events
+        .iter()
+        .map(|e| e.global_sequence.0)
+        .max()
+        .expect("至少一个事件");
 
     let drain_deadline = Instant::now() + Duration::from_millis(300);
     while Instant::now() < drain_deadline {
@@ -376,13 +410,22 @@ async fn snapshot_and_reconnect_resume_replays_missing_events() {
         .iter()
         .find(|section| section.kind == SnapshotSectionKind::ActiveRuns)
         .expect("ActiveRuns section");
-    let runs = active_runs.data.as_ref().expect("ActiveRuns data").as_array().expect("runs array");
+    let runs = active_runs
+        .data
+        .as_ref()
+        .expect("ActiveRuns data")
+        .as_array()
+        .expect("runs array");
     assert!(
-        runs.iter().any(|run| run["run_id"] == json!(run_id.as_str())),
+        runs.iter()
+            .any(|run| run["run_id"] == json!(run_id.as_str())),
         "快照应包含活跃 Run"
     );
 
-    client.ack(GlobalSequence(last_sequence)).await.expect("ack");
+    client
+        .ack(GlobalSequence(last_sequence))
+        .await
+        .expect("ack");
     client.close().await.expect("close");
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(
@@ -394,7 +437,9 @@ async fn snapshot_and_reconnect_resume_replays_missing_events() {
     let cancel_client = harness.connect_gui("contract-b-cancel").await;
     cancel_client
         .command(
-            AppCommand::RunCancel { run_id: run_id.clone() },
+            AppCommand::RunCancel {
+                run_id: run_id.clone(),
+            },
             gui_source(&cancel_client),
             local_user(),
         )
@@ -438,9 +483,15 @@ async fn snapshot_and_reconnect_resume_replays_missing_events() {
         .iter()
         .find(|section| section.kind == SnapshotSectionKind::ActiveRuns)
         .expect("ActiveRuns section");
-    let runs = active_runs.data.as_ref().expect("ActiveRuns data").as_array().expect("runs array");
+    let runs = active_runs
+        .data
+        .as_ref()
+        .expect("ActiveRuns data")
+        .as_array()
+        .expect("runs array");
     assert!(
-        runs.iter().all(|run| run["run_id"] != json!(run_id.as_str())),
+        runs.iter()
+            .all(|run| run["run_id"] != json!(run_id.as_str())),
         "取消后的快照不应再列出该 Run"
     );
     let nonce = reconnected.heartbeat().await.expect("heartbeat");
@@ -479,24 +530,48 @@ async fn resume_falls_back_to_snapshot_required_when_replay_unavailable() {
         )
         .await
         .expect("RunStart");
-    let AppResponse::Accepted { run_id: Some(run_id), .. } = &run.response else {
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &run.response
+    else {
         panic!("RunStart 应 Accepted 且携带 run id，got {:?}", run.response);
     };
     let run_id = run_id.clone();
-    let (done, events) = recv_until(&client, |e| run_state(e, &run_id) == Some(RunState::Completed)).await;
+    let (done, events) = recv_until(&client, |e| {
+        run_state(e, &run_id) == Some(RunState::Completed)
+    })
+    .await;
     assert!(done, "应先产生可重放事件");
-    let last = events.iter().map(|e| e.global_sequence.0).max().expect("events");
+    let last = events
+        .iter()
+        .map(|e| e.global_sequence.0)
+        .max()
+        .expect("events");
     // 有 last_ack 且 host 能 replay（同连接仍持有 replay 源）则 Replay。
-    let replay = client.resume(GlobalSequence(0)).await.expect("same-connection replay");
+    let replay = client
+        .resume(GlobalSequence(0))
+        .await
+        .expect("same-connection replay");
     assert!(
         matches!(replay.disposition, ResumeDisposition::Replay { .. }),
-        "有 last_ack 且 host 能 replay 则 Replay，got {:?}", replay.disposition
+        "有 last_ack 且 host 能 replay 则 Replay，got {:?}",
+        replay.disposition
     );
     assert!(!replay.replayed.is_empty());
-    assert!(replay.replayed.windows(2).all(|w| w[1].global_sequence.0 > w[0].global_sequence.0));
-    let outcome = client.resume(GlobalSequence(last + 100)).await.expect("resume ahead");
+    assert!(replay
+        .replayed
+        .windows(2)
+        .all(|w| w[1].global_sequence.0 > w[0].global_sequence.0));
+    let outcome = client
+        .resume(GlobalSequence(last + 100))
+        .await
+        .expect("resume ahead");
     assert!(
-        matches!(outcome.disposition, ResumeDisposition::SnapshotRequired { .. }),
+        matches!(
+            outcome.disposition,
+            ResumeDisposition::SnapshotRequired { .. }
+        ),
         "领先于服务端当前序列应 SnapshotRequired，got {:?}",
         outcome.disposition
     );
@@ -542,12 +617,17 @@ async fn three_gui_clients_sync_runs_from_cli_and_each_other() {
         )
         .await
         .expect("gui a RunStart");
-    let AppResponse::Accepted { run_id: Some(run_id), .. } = &run.response else {
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &run.response
+    else {
         panic!("RunStart 应 Accepted 且携带 run id，got {:?}", run.response);
     };
     let run_id = run_id.clone();
     for (name, gui) in [("A", &gui_a), ("B", &gui_b)] {
-        let (done, _) = recv_until(gui, |e| run_state(e, &run_id) == Some(RunState::Completed)).await;
+        let (done, _) =
+            recv_until(gui, |e| run_state(e, &run_id) == Some(RunState::Completed)).await;
         assert!(done, "GUI {name} 应收到 Run 的 Completed");
     }
 }
@@ -615,20 +695,32 @@ async fn gui_disconnect_does_not_cancel_run() {
         )
         .await
         .expect("RunStart");
-    let AppResponse::Accepted { run_id: Some(run_id), .. } = &run.response else {
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = &run.response
+    else {
         panic!("RunStart 应 Accepted 且携带 run id，got {:?}", run.response);
     };
     let run_id = run_id.clone();
-    let (done, _) = recv_until(&client, |e| run_state(e, &run_id) == Some(RunState::Created)).await;
+    let (done, _) = recv_until(&client, |e| {
+        run_state(e, &run_id) == Some(RunState::Created)
+    })
+    .await;
     assert!(done, "Run 应进入 Created");
     client.close().await.expect("close");
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(harness.adapter.runs().contains(&run_id), "GUI 断线不得取消 Run");
+    assert!(
+        harness.adapter.runs().contains(&run_id),
+        "GUI 断线不得取消 Run"
+    );
 
     let cleaner = harness.connect_gui("contract-g-clean").await;
     cleaner
         .command(
-            AppCommand::RunCancel { run_id: run_id.clone() },
+            AppCommand::RunCancel {
+                run_id: run_id.clone(),
+            },
             gui_source(&cleaner),
             local_user(),
         )
@@ -646,10 +738,22 @@ async fn ack_and_heartbeat_round_trip() {
     let mut harness = Harness::new("contract-hb", streaming_script()).await;
     let client = harness.connect_gui("contract-hb").await;
     assert_eq!(client.heartbeat().await.expect("heartbeat"), 0);
-    assert_eq!(client.heartbeat_with_nonce(42).await.expect("heartbeat with nonce"), 42);
+    assert_eq!(
+        client
+            .heartbeat_with_nonce(42)
+            .await
+            .expect("heartbeat with nonce"),
+        42
+    );
     client.ack(GlobalSequence(3)).await.expect("ack");
     assert_eq!(client.last_acked_sequence(), GlobalSequence(3));
-    assert_eq!(client.heartbeat_with_nonce(43).await.expect("heartbeat after ack"), 43);
+    assert_eq!(
+        client
+            .heartbeat_with_nonce(43)
+            .await
+            .expect("heartbeat after ack"),
+        43
+    );
     assert!(client.is_connected());
     client.close().await.expect("close");
     assert!(!client.is_connected());

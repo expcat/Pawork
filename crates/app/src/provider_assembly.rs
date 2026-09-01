@@ -6,22 +6,22 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use pawork_auth::locator::api_key_env_name;
 use pawork_auth::{
     load_default_oauth_credential, load_default_oauth_meta,
     refresh_default_oauth_credential_if_needed, resolve_oauth_credential,
-    resolve_provider_credential, ApiKeyCredential, AuthError, CredentialSource,
-    OAuthRefreshConfig, SecretBackend,
+    resolve_provider_credential, ApiKeyCredential, AuthError, CredentialSource, OAuthRefreshConfig,
+    SecretBackend,
 };
 use pawork_domain::{
     AgentEvent, ModelDefinition, ModelId, ModelProvider, ProviderId, ResolvedCredential, RunId,
     SessionId,
 };
+use pawork_providers::ReasoningProtector;
 use pawork_providers::{
     AnthropicConfig, AnthropicProvider, ApiKeyChannelConfig, ApiKeyChannelProvider, CatalogEntry,
     ModelRegistry, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
-use pawork_providers::ReasoningProtector;
-use pawork_auth::locator::api_key_env_name;
 use pawork_workspace::config::{PaworkConfig, ProviderConfig};
 
 use crate::channels::{self, ChannelKind};
@@ -196,20 +196,20 @@ impl AppCore {
                 );
             }
             Ok(probe) => {
-            for definition in &probe.definitions {
-                if catalog.resolve(definition.id.as_str()).is_none() {
-                    catalog.extend_with(vec![CatalogEntry {
-                        id: definition.id.clone(),
-                        provider: self.provider_id.clone(),
-                        display_name: definition.display_name.clone(),
-                        context_window_tokens: definition.context_window_tokens,
-                        max_output_tokens: definition.max_output_tokens,
-                        capabilities: definition.capabilities.clone(),
-                        pricing: None,
-                        aliases: Vec::new(),
-                    }]);
+                for definition in &probe.definitions {
+                    if catalog.resolve(definition.id.as_str()).is_none() {
+                        catalog.extend_with(vec![CatalogEntry {
+                            id: definition.id.clone(),
+                            provider: self.provider_id.clone(),
+                            display_name: definition.display_name.clone(),
+                            context_window_tokens: definition.context_window_tokens,
+                            max_output_tokens: definition.max_output_tokens,
+                            capabilities: definition.capabilities.clone(),
+                            pricing: None,
+                            aliases: Vec::new(),
+                        }]);
+                    }
                 }
-            }
             }
         }
         catalog.list().into_iter().cloned().collect()
@@ -256,7 +256,8 @@ impl AppCore {
                     false,
                     Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
                 )
-                .await {
+                .await
+                {
                     Ok(assembled) => Some((assembled.adapter, assembled.credential)),
                     Err(_) => None,
                 }
@@ -269,8 +270,8 @@ impl AppCore {
         // 单通道探测若挂起（临期 OAuth / 不可达厂商），不得拖死 Desktop
         // ModelList：客户端默认 10s 超时，静态目录已含 §1.1 低消耗模型。
         const OVERVIEW_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
-        let probe_results = futures::future::join_all(probe_jobs.into_iter().map(
-            |(id, adapter, credential)| {
+        let probe_results =
+            futures::future::join_all(probe_jobs.into_iter().map(|(id, adapter, credential)| {
                 let catalog = catalog_for_probe.clone();
                 async move {
                     let result = match tokio::time::timeout(
@@ -286,9 +287,8 @@ impl AppCore {
                     };
                     (id, result)
                 }
-            },
-        ))
-        .await;
+            }))
+            .await;
         for (id, result) in probe_results {
             match result {
                 Err(error) => {
@@ -467,11 +467,9 @@ pub(crate) async fn assemble_provider(
             let mut chatgpt_config =
                 pawork_providers::ChatGptConfig::new(account_id).with_base_url(base_url);
             chatgpt_config.http.proxy = config.proxy_url.clone();
-            let provider = pawork_providers::ChatGptProvider::new(
-                chatgpt_config,
-                Some(credential.clone()),
-            )?
-            .with_reasoning_protector(Arc::clone(&reasoning_protector));
+            let provider =
+                pawork_providers::ChatGptProvider::new(chatgpt_config, Some(credential.clone()))?
+                    .with_reasoning_protector(Arc::clone(&reasoning_protector));
             (
                 Arc::new(provider) as Arc<dyn ModelProvider>,
                 Some(credential),
@@ -484,8 +482,9 @@ pub(crate) async fn assemble_provider(
                 config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
             let mut xai_config = pawork_providers::XaiConfig::new(base_url);
             xai_config.http.proxy = config.proxy_url.clone();
-            let provider = pawork_providers::XaiProvider::new(xai_config, Some(credential.clone()))?
-                .with_reasoning_protector(Arc::clone(&reasoning_protector));
+            let provider =
+                pawork_providers::XaiProvider::new(xai_config, Some(credential.clone()))?
+                    .with_reasoning_protector(Arc::clone(&reasoning_protector));
             (
                 Arc::new(provider) as Arc<dyn ModelProvider>,
                 Some(credential),
@@ -515,9 +514,8 @@ pub(crate) async fn assemble_provider(
         }
         None => {
             let _provider = find_provider(&config.providers, id)?;
-            let base_url = config_base.ok_or_else(|| AppError::MissingBaseUrl {
-                id: id.to_string(),
-            })?;
+            let base_url =
+                config_base.ok_or_else(|| AppError::MissingBaseUrl { id: id.to_string() })?;
             let (credential, _source) = resolve_api_key_credential(backend, id)?;
             let protocol = resolve_adapter_protocol(config, id)?;
             let adapter: Arc<dyn ModelProvider> = match protocol {
@@ -568,8 +566,7 @@ fn resolve_api_key_credential(
 ) -> Result<(ResolvedCredential, crate::AuthSource), AppError> {
     match resolve_provider_credential(backend.as_ref(), id)? {
         CredentialSource::AuthFile(stored) => {
-            let credential = ApiKeyCredential::from_stored(stored)?
-                .resolve(backend.as_ref())?;
+            let credential = ApiKeyCredential::from_stored(stored)?.resolve(backend.as_ref())?;
             Ok((credential, crate::AuthSource::File))
         }
         CredentialSource::EnvFallback(credential) => Ok((credential, crate::AuthSource::Env)),
@@ -711,13 +708,13 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use pawork_auth::locator::api_key_env_name;
     use pawork_auth::SecretBackend;
     use pawork_domain::{
         AgentEvent, ModelId, ModelResponseSummary, ProviderId, StopReason, TokenUsage,
     };
     use pawork_providers::ModelRegistry;
     use pawork_storage::session::SessionStore;
-    use pawork_auth::locator::api_key_env_name;
     use pawork_workspace::config::{PaworkConfig, ProviderConfig};
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -732,8 +729,8 @@ mod tests {
 
     #[test]
     fn from_resolved_requires_provider_and_model() {
-        let err = AppCore::from_resolved(PaworkConfig::default(), None, None)
-            .expect_err("empty config");
+        let err =
+            AppCore::from_resolved(PaworkConfig::default(), None, None).expect_err("empty config");
         assert!(matches!(err, AppError::MissingDefaultProvider));
 
         let err = AppCore::from_resolved(
@@ -805,14 +802,22 @@ mod tests {
             .map(|entry| entry.provider.as_str().to_string())
             .collect();
         // chatgpt 无静态目录（Codex backend 模型只能登录后运行期探测）。
-        for expected in ["xai", "glm-coding", "opencode-go", "qwen-token-plan", "deepseek"] {
+        for expected in [
+            "xai",
+            "glm-coding",
+            "opencode-go",
+            "qwen-token-plan",
+            "deepseek",
+        ] {
             assert!(
                 providers.contains(expected),
                 "missing provider {expected} in overview: {providers:?}"
             );
         }
-        assert!(overview.iter().any(|entry| entry.id.as_str() == "grok-4"),
-            "xai static models missing");
+        assert!(
+            overview.iter().any(|entry| entry.id.as_str() == "grok-4"),
+            "xai static models missing"
+        );
     }
 
     #[tokio::test]
@@ -829,12 +834,8 @@ mod tests {
 
         let provider_id = ProviderId::from("runtime-catalog-provider");
         let backend = Arc::new(pawork_auth::MemoryBackend::new());
-        pawork_auth::store_default_api_key(
-            backend.as_ref(),
-            &provider_id,
-            "not-a-real-key",
-        )
-        .expect("store test credential");
+        pawork_auth::store_default_api_key(backend.as_ref(), &provider_id, "not-a-real-key")
+            .expect("store test credential");
         let backend: Arc<dyn SecretBackend> = backend;
         let config = PaworkConfig {
             providers: vec![ProviderConfig {
@@ -844,16 +845,12 @@ mod tests {
             }],
             ..PaworkConfig::default()
         };
-        let mut core = core_with_registry(ModelRegistry::empty(), "initial")
-            .with_state(config, backend);
+        let mut core =
+            core_with_registry(ModelRegistry::empty(), "initial").with_state(config, backend);
 
-        core.switch_provider(
-            None,
-            provider_id.as_str(),
-            Some("runtime-only-model"),
-        )
-        .await
-        .expect("ModelList runtime entry must be selectable");
+        core.switch_provider(None, provider_id.as_str(), Some("runtime-only-model"))
+            .await
+            .expect("ModelList runtime entry must be selectable");
 
         assert_eq!(core.provider_id(), &provider_id);
         assert_eq!(core.model().as_str(), "runtime-only-model");
@@ -915,10 +912,12 @@ mod tests {
             .expect("replay");
         let switches: Vec<_> = events
             .iter()
-            .filter(|envelope| matches!(
-                &envelope.payload,
-                AgentEvent::Diagnostic { code, .. } if code == "model.switched"
-            ))
+            .filter(|envelope| {
+                matches!(
+                    &envelope.payload,
+                    AgentEvent::Diagnostic { code, .. } if code == "model.switched"
+                )
+            })
             .collect();
         assert_eq!(switches.len(), 1, "model.switched event missing");
         match &switches[0].payload {
@@ -1097,9 +1096,12 @@ mod tests {
         assert!(core.provider_pending(), "core should be pending");
         let events = capture.events();
         capture.dismiss();
-        let emitted = events.iter().find(|event| {
-            event.fields.get("code").map(String::as_str) == Some("degrade.missing_credential")
-        }).unwrap_or_else(|| panic!("missing credential must emit tracing: {events:?}"));
+        let emitted = events
+            .iter()
+            .find(|event| {
+                event.fields.get("code").map(String::as_str) == Some("degrade.missing_credential")
+            })
+            .unwrap_or_else(|| panic!("missing credential must emit tracing: {events:?}"));
         assert_eq!(emitted.level, "WARN");
         assert_eq!(
             emitted.fields.get("provider_id").map(String::as_str),
@@ -1108,7 +1110,9 @@ mod tests {
         );
         let field_names: Vec<&str> = emitted.fields.keys().map(String::as_str).collect();
         assert!(
-            field_names.iter().all(|name| matches!(*name, "code" | "provider_id")),
+            field_names
+                .iter()
+                .all(|name| matches!(*name, "code" | "provider_id")),
             "details must only contain provider_id: {emitted:?}"
         );
         let encoded = format!("{emitted:?}").to_lowercase();
@@ -1133,10 +1137,7 @@ mod tests {
         assert_eq!(core.model().as_str(), "deepseek-v4-pro");
         assert_eq!(core.adapter_protocol(), AdapterProtocol::ChatCompletions);
         let debug = format!("{core:?}");
-        assert!(
-            !debug.contains(secret),
-            "secret leaked in Debug: {debug}"
-        );
+        assert!(!debug.contains(secret), "secret leaked in Debug: {debug}");
         assert!(debug.contains("[REDACTED]"), "{debug}");
     }
 

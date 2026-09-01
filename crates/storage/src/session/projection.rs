@@ -493,39 +493,43 @@ impl SessionStore {
     ) -> Result<ProjectionSnapshot, SessionStoreError> {
         let session_id = session_id.to_string();
         self.database()
-            .call(move |connection| -> Result<ProjectionSnapshot, SessionStoreError> {
-                let transaction = connection.transaction()?;
-                transaction.execute("DELETE FROM tool_calls WHERE session_id=?1", [&session_id])?;
-                transaction.execute(
-                    "DELETE FROM server_tool_events WHERE session_id=?1",
-                    [&session_id],
-                )?;
-                transaction.execute(
-                    "DELETE FROM transcript_envelopes WHERE session_id=?1",
-                    [&session_id],
-                )?;
-                transaction.execute("DELETE FROM messages WHERE session_id=?1", [&session_id])?;
-                transaction.execute("DELETE FROM runs WHERE session_id=?1", [&session_id])?;
-                let rows = {
-                    let mut statement = transaction.prepare(
-                        "SELECT payload_json, branch_id FROM session_events \
-                         WHERE session_id=?1 ORDER BY sequence ASC",
+            .call(
+                move |connection| -> Result<ProjectionSnapshot, SessionStoreError> {
+                    let transaction = connection.transaction()?;
+                    transaction
+                        .execute("DELETE FROM tool_calls WHERE session_id=?1", [&session_id])?;
+                    transaction.execute(
+                        "DELETE FROM server_tool_events WHERE session_id=?1",
+                        [&session_id],
                     )?;
-                    let rows = statement
-                        .query_map([&session_id], |row| {
-                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    rows
-                };
-                for (json, branch_id) in rows {
-                    let event = crate::session::event_store::decode_persisted_event(&json)?;
-                    apply_projection(&transaction, &event, &branch_id)?;
-                }
-                let snapshot = load_snapshot(&transaction, &session_id, None)?;
-                transaction.commit()?;
-                Ok(snapshot)
-            })
+                    transaction.execute(
+                        "DELETE FROM transcript_envelopes WHERE session_id=?1",
+                        [&session_id],
+                    )?;
+                    transaction
+                        .execute("DELETE FROM messages WHERE session_id=?1", [&session_id])?;
+                    transaction.execute("DELETE FROM runs WHERE session_id=?1", [&session_id])?;
+                    let rows = {
+                        let mut statement = transaction.prepare(
+                            "SELECT payload_json, branch_id FROM session_events \
+                         WHERE session_id=?1 ORDER BY sequence ASC",
+                        )?;
+                        let rows = statement
+                            .query_map([&session_id], |row| {
+                                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()?;
+                        rows
+                    };
+                    for (json, branch_id) in rows {
+                        let event = crate::session::event_store::decode_persisted_event(&json)?;
+                        apply_projection(&transaction, &event, &branch_id)?;
+                    }
+                    let snapshot = load_snapshot(&transaction, &session_id, None)?;
+                    transaction.commit()?;
+                    Ok(snapshot)
+                },
+            )
             .await?
     }
 }
@@ -804,7 +808,10 @@ fn lineage_compacted_through(
             continue;
         }
         let envelope = crate::session::event_store::decode_persisted_event(&json)?;
-        if let AgentEvent::CompactionCompleted { compacted_through, .. } = envelope.payload {
+        if let AgentEvent::CompactionCompleted {
+            compacted_through, ..
+        } = envelope.payload
+        {
             let value = i64::try_from(compacted_through.value())
                 .map_err(|_| SessionStoreError::SequenceOverflow)?;
             through = through.max(value);
@@ -872,9 +879,7 @@ mod tests {
                     )
                     .expect("prepare");
                 statement
-                    .query_map([session], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                    })
+                    .query_map([session], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                     .expect("query")
                     .collect::<rusqlite::Result<Vec<_>>>()
                     .expect("collect")
@@ -935,7 +940,13 @@ mod tests {
         store
             .append_event(
                 DEFAULT_BRANCH_ID,
-                event(&session, 4, AgentEvent::CompactionStarted { source_event_count: 2 }),
+                event(
+                    &session,
+                    4,
+                    AgentEvent::CompactionStarted {
+                        source_event_count: 2,
+                    },
+                ),
             )
             .await
             .expect("seq 4");
@@ -1189,9 +1200,13 @@ mod tests {
         store
             .append_event(
                 DEFAULT_BRANCH_ID,
-                event(&session, 1, AgentEvent::MessageCommitted {
-                    message: text_message("m-1", "t-1"),
-                }),
+                event(
+                    &session,
+                    1,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-1", "t-1"),
+                    },
+                ),
             )
             .await
             .expect("append 1");
@@ -1215,7 +1230,10 @@ mod tests {
                         &session,
                         sequence,
                         AgentEvent::MessageCommitted {
-                            message: text_message(&format!("m-{sequence}"), &format!("t-{sequence}")),
+                            message: text_message(
+                                &format!("m-{sequence}"),
+                                &format!("t-{sequence}"),
+                            ),
                         },
                     ),
                 )
@@ -1261,9 +1279,13 @@ mod tests {
         store
             .append_event(
                 DEFAULT_BRANCH_ID,
-                event(&session, 1, AgentEvent::MessageCommitted {
-                    message: text_message("m-1", "t-1"),
-                }),
+                event(
+                    &session,
+                    1,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-1", "t-1"),
+                    },
+                ),
             )
             .await
             .expect("append 1");
@@ -1287,7 +1309,10 @@ mod tests {
                         &session,
                         sequence,
                         AgentEvent::MessageCommitted {
-                            message: text_message(&format!("m-{sequence}"), &format!("t-{sequence}")),
+                            message: text_message(
+                                &format!("m-{sequence}"),
+                                &format!("t-{sequence}"),
+                            ),
                         },
                     ),
                 )
@@ -1374,15 +1399,23 @@ mod tests {
         let (store, _) = SessionStore::open(&path).await.expect("store");
         let session = SessionId::from("session-parent-late-compact");
         store
-            .create_session(&session, "parent-late-compact", Timestamp::from_unix_millis(1))
+            .create_session(
+                &session,
+                "parent-late-compact",
+                Timestamp::from_unix_millis(1),
+            )
             .await
             .expect("session");
         store
             .append_event(
                 DEFAULT_BRANCH_ID,
-                event(&session, 1, AgentEvent::MessageCommitted {
-                    message: text_message("m-1", "t-1"),
-                }),
+                event(
+                    &session,
+                    1,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-1", "t-1"),
+                    },
+                ),
             )
             .await
             .expect("append 1");
@@ -1391,7 +1424,11 @@ mod tests {
             .await
             .expect("append boundary");
         store
-            .fork_from_event(&session, "old-fork", &pawork_domain::EventId::from("event-2"))
+            .fork_from_event(
+                &session,
+                "old-fork",
+                &pawork_domain::EventId::from("event-2"),
+            )
             .await
             .expect("fork");
         for sequence in 3..=4u64 {
@@ -1402,7 +1439,10 @@ mod tests {
                         &session,
                         sequence,
                         AgentEvent::MessageCommitted {
-                            message: text_message(&format!("m-{sequence}"), &format!("t-{sequence}")),
+                            message: text_message(
+                                &format!("m-{sequence}"),
+                                &format!("t-{sequence}"),
+                            ),
                         },
                     ),
                 )
@@ -1412,9 +1452,13 @@ mod tests {
         store
             .append_event(
                 DEFAULT_BRANCH_ID,
-                event(&session, 5, AgentEvent::MessageCommitted {
-                    message: text_message("m-summary", "late summary"),
-                }),
+                event(
+                    &session,
+                    5,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-summary", "late summary"),
+                    },
+                ),
             )
             .await
             .expect("append summary");
@@ -1495,9 +1539,13 @@ mod tests {
         store
             .append_event(
                 DEFAULT_BRANCH_ID,
-                event(&session, 1, AgentEvent::MessageCommitted {
-                    message: text_message("m-1", "t-1"),
-                }),
+                event(
+                    &session,
+                    1,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-1", "t-1"),
+                    },
+                ),
             )
             .await
             .expect("append 1");
@@ -1521,9 +1569,13 @@ mod tests {
         store
             .append_event(
                 "sib-a",
-                event(&session, 3, AgentEvent::MessageCommitted {
-                    message: text_message("m-a", "a-only"),
-                }),
+                event(
+                    &session,
+                    3,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-a", "a-only"),
+                    },
+                ),
             )
             .await
             .expect("append a");
@@ -1549,9 +1601,13 @@ mod tests {
         store
             .append_event(
                 "sib-b",
-                event(&session, 5, AgentEvent::MessageCommitted {
-                    message: text_message("m-b", "b-only"),
-                }),
+                event(
+                    &session,
+                    5,
+                    AgentEvent::MessageCommitted {
+                        message: text_message("m-b", "b-only"),
+                    },
+                ),
             )
             .await
             .expect("append b");

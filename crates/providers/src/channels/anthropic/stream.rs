@@ -7,10 +7,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use pawork_domain::{Citation, ServerToolEvent, ServerToolMappingError, TokenUsage, ToolCallId};
 use pawork_domain::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
-use pawork_domain::{
-    Citation, ServerToolEvent, ServerToolMappingError, TokenUsage, ToolCallId,
-};
 use serde_json::Value;
 
 use crate::usage::{map_stop_reason, normalize_usage};
@@ -57,7 +55,9 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
         "message_start" => {
             if let Some(message) = value.get("message") {
                 let response_id = message.get("id").and_then(|i| i.as_str()).map(String::from);
-                outputs.push(StreamOutput::Event(ProviderStreamEvent::ResponseStarted { response_id }));
+                outputs.push(StreamOutput::Event(ProviderStreamEvent::ResponseStarted {
+                    response_id,
+                }));
                 if let Some(usage) = message.get("usage") {
                     let normalized = normalize_usage(usage);
                     if normalized != TokenUsage::default() {
@@ -67,7 +67,9 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
                         if normalized.output_tokens > 0 {
                             state.output_tokens = normalized.output_tokens;
                         }
-                        outputs.push(StreamOutput::Event(ProviderStreamEvent::UsageUpdated(normalized)));
+                        outputs.push(StreamOutput::Event(ProviderStreamEvent::UsageUpdated(
+                            normalized,
+                        )));
                     }
                 }
             }
@@ -99,7 +101,8 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
                             .and_then(|i| i.as_str())
                             .map(String::from)
                             .unwrap_or_else(|| format!("thinking-{index}"));
-                        let redacted = block.get("type").and_then(|t| t.as_str()) == Some("redacted_thinking");
+                        let redacted =
+                            block.get("type").and_then(|t| t.as_str()) == Some("redacted_thinking");
                         let signature = block
                             .get("signature")
                             .and_then(|s| s.as_str())
@@ -138,9 +141,9 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
                             .map(String::from)
                             .unwrap_or_default();
                         if name.is_empty() {
-                            outputs.push(StreamOutput::MappingError(ServerToolMappingError::unsupported(
-                                "server_tool_use missing name",
-                            )));
+                            outputs.push(StreamOutput::MappingError(
+                                ServerToolMappingError::unsupported("server_tool_use missing name"),
+                            ));
                         } else {
                             state.server_tool_ids.insert(index, id.clone());
                             state.last_server_tool_id = Some(id.clone());
@@ -174,17 +177,21 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
                     "text_delta" => {
                         if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
                             if !text.is_empty() {
-                                outputs.push(StreamOutput::Event(ProviderStreamEvent::TextDelta(text.to_string())));
+                                outputs.push(StreamOutput::Event(ProviderStreamEvent::TextDelta(
+                                    text.to_string(),
+                                )));
                             }
                         }
                     }
                     "input_json_delta" => {
                         if let Some(partial) = delta.get("partial_json").and_then(|t| t.as_str()) {
                             if let Some(id) = state.tool_ids.get(&index) {
-                                outputs.push(StreamOutput::Event(ProviderStreamEvent::ToolCallArgumentsDelta {
-                                    id: ToolCallId::new(id.clone()),
-                                    json: partial.to_string(),
-                                }));
+                                outputs.push(StreamOutput::Event(
+                                    ProviderStreamEvent::ToolCallArgumentsDelta {
+                                        id: ToolCallId::new(id.clone()),
+                                        json: partial.to_string(),
+                                    },
+                                ));
                             } else if let Some(id) = state.server_tool_ids.get(&index) {
                                 outputs.push(StreamOutput::Event(ProviderStreamEvent::ServerTool(
                                     ServerToolEvent::ArgumentsDelta {
@@ -201,7 +208,9 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
                                 if let Some(block) = state.thinking.get_mut(&index) {
                                     block.text.push_str(text);
                                 }
-                                outputs.push(StreamOutput::Event(ProviderStreamEvent::ThinkingDelta(text.to_string())));
+                                outputs.push(StreamOutput::Event(
+                                    ProviderStreamEvent::ThinkingDelta(text.to_string()),
+                                ));
                             }
                         }
                     }
@@ -236,9 +245,11 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
         "content_block_stop" => {
             let index = value.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
             if let Some(id) = state.tool_ids.get(&index).cloned() {
-                outputs.push(StreamOutput::Event(ProviderStreamEvent::ToolCallCompleted {
-                    id: ToolCallId::new(id),
-                }));
+                outputs.push(StreamOutput::Event(
+                    ProviderStreamEvent::ToolCallCompleted {
+                        id: ToolCallId::new(id),
+                    },
+                ));
             }
             if let Some(id) = state.server_tool_ids.get(&index).cloned() {
                 if state.completed_server_tools.insert(id.clone()) {
@@ -272,23 +283,29 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
                 if normalized.cache_write_tokens > 0 {
                     state.cache_write_tokens = normalized.cache_write_tokens;
                 }
-                outputs.push(StreamOutput::Event(ProviderStreamEvent::UsageUpdated(TokenUsage {
-                    input_tokens: state.input_tokens,
-                    output_tokens: state.output_tokens,
-                    cache_read_tokens: state.cache_read_tokens,
-                    cache_write_tokens: state.cache_write_tokens,
-                })));
+                outputs.push(StreamOutput::Event(ProviderStreamEvent::UsageUpdated(
+                    TokenUsage {
+                        input_tokens: state.input_tokens,
+                        output_tokens: state.output_tokens,
+                        cache_read_tokens: state.cache_read_tokens,
+                        cache_write_tokens: state.cache_write_tokens,
+                    },
+                )));
             }
         }
         "message_stop" => {
             let has_tool_calls = !state.tool_ids.is_empty();
             let stop = map_stop_reason(state.stop_reason.as_deref(), has_tool_calls);
-            outputs.push(StreamOutput::Event(ProviderStreamEvent::ResponseCompleted(stop)));
+            outputs.push(StreamOutput::Event(ProviderStreamEvent::ResponseCompleted(
+                stop,
+            )));
             state.finished = true;
         }
         "ping" => {}
         "error" => {
-            outputs.push(StreamOutput::Event(ProviderStreamEvent::Error(map_error_event(&value))));
+            outputs.push(StreamOutput::Event(ProviderStreamEvent::Error(
+                map_error_event(&value),
+            )));
         }
         _ => {}
     }
@@ -323,9 +340,19 @@ fn map_citation(value: Option<&Value>) -> Citation {
     Citation {
         index: value.get("index").and_then(Value::as_u64),
         url: value.get("url").and_then(Value::as_str).map(str::to_string),
-        title: value.get("title").and_then(Value::as_str).map(str::to_string),
-        snippet: value.get("snippet").and_then(Value::as_str).map(str::to_string),
-        text: value.get("text").or_else(|| value.get("cited_text")).and_then(Value::as_str).map(str::to_string),
+        title: value
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        snippet: value
+            .get("snippet")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        text: value
+            .get("text")
+            .or_else(|| value.get("cited_text"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
         document_index: value.get("document_index").and_then(Value::as_u64),
         source_kind: pawork_domain::CitationSourceKind::Unknown,
     }
@@ -358,7 +385,11 @@ fn pending_signature_from(block: ThinkingBlockState) -> StreamOutput {
     };
     StreamOutput::PendingSignature {
         id: block.id,
-        summary: if block.text.is_empty() { None } else { Some(block.text) },
+        summary: if block.text.is_empty() {
+            None
+        } else {
+            Some(block.text)
+        },
         payload,
         redacted: block.redacted,
     }
@@ -481,7 +512,9 @@ mod tests {
         let events = event_to_events(r#"{"type":"message_stop"}"#, &mut state);
         assert!(matches!(
             events.as_slice(),
-            [ProviderStreamEvent::ResponseCompleted(StopReason::Completed)]
+            [ProviderStreamEvent::ResponseCompleted(
+                StopReason::Completed
+            )]
         ));
         assert!(state.finished);
     }
@@ -525,10 +558,7 @@ mod tests {
             &mut state,
         );
         assert!(signature_delta.is_empty());
-        let stop = parse_event(
-            r#"{"type":"content_block_stop","index":0}"#,
-            &mut state,
-        );
+        let stop = parse_event(r#"{"type":"content_block_stop","index":0}"#, &mut state);
         assert!(matches!(
             &stop[0],
             StreamOutput::PendingSignature { payload, .. }
@@ -550,10 +580,7 @@ mod tests {
             &started[0],
             ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. }) if name == "web_search"
         ));
-        let completed = event_to_events(
-            r#"{"type":"content_block_stop","index":1}"#,
-            &mut state,
-        );
+        let completed = event_to_events(r#"{"type":"content_block_stop","index":1}"#, &mut state);
         assert!(matches!(
             &completed[0],
             ProviderStreamEvent::ServerTool(ServerToolEvent::Completed { tool_call_id, .. })
@@ -631,10 +658,7 @@ mod tests {
             &started[0],
             ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. }) if name == "web_search"
         ));
-        let first_stop = event_to_events(
-            r#"{"type":"content_block_stop","index":0}"#,
-            &mut state,
-        );
+        let first_stop = event_to_events(r#"{"type":"content_block_stop","index":0}"#, &mut state);
         assert_eq!(
             first_stop
                 .iter()
@@ -649,10 +673,7 @@ mod tests {
             r#"{"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srv"}}"#,
             &mut state,
         );
-        let second_stop = event_to_events(
-            r#"{"type":"content_block_stop","index":1}"#,
-            &mut state,
-        );
+        let second_stop = event_to_events(r#"{"type":"content_block_stop","index":1}"#, &mut state);
         assert!(second_stop.iter().all(|event| {
             !matches!(
                 event,

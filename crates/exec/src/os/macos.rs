@@ -327,13 +327,7 @@ pub(crate) mod macos_process_tree {
         // SAFETY: `info` 是本函数栈上的 `proc_bsdinfo`；`proc_pidinfo` 至多写入
         // `size` 字节。失败（进程已退出 / 无权限）按 Linux `/proc` 缺席处理。
         let got = unsafe {
-            libc::proc_pidinfo(
-                pid,
-                libc::PROC_PIDTBSDINFO,
-                0,
-                (&raw mut info).cast(),
-                size,
-            )
+            libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size)
         };
         if got <= 0 || got != size {
             return Ok(None);
@@ -650,9 +644,7 @@ mod tests {
                 Ok(output) => format!("sandbox-exec probe exit={}", output.status),
                 Err(error) => format!("sandbox-exec probe failed: {error}"),
             };
-            eprintln!(
-                "SKIPPED seatbelt_denies_cat_of_secret_paths: {reason}"
-            );
+            eprintln!("SKIPPED seatbelt_denies_cat_of_secret_paths: {reason}");
             return;
         }
 
@@ -715,7 +707,12 @@ mod tests {
                 continue;
             };
             let output = std::process::Command::new(SANDBOX_EXEC_PATH)
-                .args(["-p", &default_profile, "/bin/cat", &target.to_string_lossy()])
+                .args([
+                    "-p",
+                    &default_profile,
+                    "/bin/cat",
+                    &target.to_string_lossy(),
+                ])
                 .output()
                 .expect("sandbox-exec cat default secret");
             assert!(
@@ -731,7 +728,10 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn first_regular_file(dir: &std::path::Path) -> Option<PathBuf> {
         let entries = std::fs::read_dir(dir).ok()?;
-        entries.flatten().map(|entry| entry.path()).find(|p| p.is_file())
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|p| p.is_file())
     }
 
     /// macOS 真机行为种子（ADR-041 D1 正式模型；sandbox-exec 探测失败自动跳过）：
@@ -754,9 +754,7 @@ mod tests {
                 Ok(output) => format!("sandbox-exec probe exit={}", output.status),
                 Err(error) => format!("sandbox-exec probe failed: {error}"),
             };
-            eprintln!(
-                "SKIPPED seatbelt_enforces_formal_write_whitelist_and_holes: {reason}"
-            );
+            eprintln!("SKIPPED seatbelt_enforces_formal_write_whitelist_and_holes: {reason}");
             return;
         }
 

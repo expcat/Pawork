@@ -12,9 +12,7 @@ pub async fn run_usage(
     } else {
         None
     };
-    let overview = core
-        .usage_overview(None, session_id.as_ref())
-        .await?;
+    let overview = core.usage_overview(None, session_id.as_ref()).await?;
     if json {
         println!(
             "{}",

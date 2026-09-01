@@ -8,19 +8,16 @@
 //! GOLDEN_UPDATE=1 cargo test -p pawork-domain --test contract_golden
 //! ```
 
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use pawork_domain::{
-    ArtifactId, ArtifactReference, CanonicalModelRequest, ContentPart, ErrorCategory,
-    ErrorContext, ExtensionToolRequest, HostedToolRequest, Message, MessageId, MessageMetadata,
-    MessageRole, ModelId, PromptCachePreference, ProtectedBlobRef, ProviderError,
-    ProviderErrorKind, ProviderStreamEvent, ProviderTranscriptEnvelope, ReasoningConfig,
-    ReasoningEffort, ReasoningItem, ReasoningItemId, RequestBudget, RequestId, ResponseFormat,
-    ServerToolEvent, StopReason, TextContent, ThinkingConfig, ThinkingLevel, TokenUsage,
-    ToolCallId, ToolCapabilityTag, ToolChoice, ToolDefinition, ToolResult, TranscriptItem,
+    ArtifactId, ArtifactReference, CanonicalModelRequest, ContentPart, ErrorCategory, ErrorContext,
+    ExtensionToolRequest, HostedToolRequest, Message, MessageId, MessageMetadata, MessageRole,
+    ModelId, PromptCachePreference, ProtectedBlobRef, ProviderError, ProviderErrorKind,
+    ProviderStreamEvent, ProviderTranscriptEnvelope, ReasoningConfig, ReasoningEffort,
+    ReasoningItem, ReasoningItemId, RequestBudget, RequestId, ResponseFormat, ServerToolEvent,
+    StopReason, TextContent, ThinkingConfig, ThinkingLevel, TokenUsage, ToolCallId,
+    ToolCapabilityTag, ToolChoice, ToolDefinition, ToolResult, TranscriptItem,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -138,9 +135,7 @@ fn full_request() -> CanonicalModelRequest {
         messages: vec![Message {
             id: MessageId::from("message-1"),
             role: MessageRole::User,
-            content: vec![ContentPart::Text(TextContent {
-                text: "hi".into(),
-            })],
+            content: vec![ContentPart::Text(TextContent { text: "hi".into() })],
             metadata: MessageMetadata::default(),
         }],
         tools: vec![ToolDefinition {
@@ -184,7 +179,10 @@ fn full_request() -> CanonicalModelRequest {
             max_cost_micros: Some(1500),
             max_input_tokens: Some(8192),
         },
-        provider_options: BTreeMap::from([("custom".to_owned(), serde_json::json!({"enabled": true}))]),
+        provider_options: BTreeMap::from([(
+            "custom".to_owned(),
+            serde_json::json!({"enabled": true}),
+        )]),
         trace_id: Some("trace-1".into()),
     }
 }

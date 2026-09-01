@@ -21,10 +21,10 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use async_trait::async_trait;
 use pawork_domain::{
     AccountId, AgentId, CredentialId, PrincipalId, ProviderId, SessionId, TenantId, Timestamp,
 };
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

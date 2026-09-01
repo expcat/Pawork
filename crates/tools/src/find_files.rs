@@ -2,6 +2,9 @@
 //!
 //! glob 匹配、类型过滤、ignore、最大深度/结果、稳定字典序排序。
 
+use async_trait::async_trait;
+use globset::GlobSet;
+use ignore::WalkBuilder;
 use pawork_domain::AgentTool;
 use pawork_domain::ToolError;
 use pawork_domain::ToolEventSink;
@@ -12,11 +15,8 @@ use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
 };
-use async_trait::async_trait;
-use globset::GlobSet;
-use ignore::WalkBuilder;
-use serde_json::{json, Value};
 use pawork_workspace::WorkspaceService;
+use serde_json::{json, Value};
 
 use crate::common::opt_u64;
 use crate::common::require_str;

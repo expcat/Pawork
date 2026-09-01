@@ -4,22 +4,21 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use pawork_app::gui_server::{
+    ConnectionManager, ConnectionManagerConfig, GuiHost, GuiHostError, GuiServer, GuiServerConfig,
+};
 use pawork_domain::{
     CommandId, CoreInstanceId, EventId, QueryId, RunId, SessionId, Timestamp, ToolCallId,
     WorkspaceId,
 };
-use pawork_app::gui_server::{
-    ConnectionManager, ConnectionManagerConfig, GuiHost, GuiHostError, GuiServer, GuiServerConfig,
-};
 use pawork_protocol::{
     decode_server_frame, encode_client_frame, ActorIdentity, ApiVersion, AppCommand,
     AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
-    ClientContextSnapshot, ClientFrame, CommandSource, EventSource, EventStream, GlobalSequence,
-    ApprovalDecision, GuiCapability,
-    HandshakeRequest, HandshakeResponse, HandshakeService, ProtocolErrorCode, ResumeDisposition,
-    ResumeRequest, ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind, SubscribeRequest,
-    TimelineItem,
-    TimelineItemKind, TimelinePage, API_VERSION, SUPPORTED_API_VERSIONS,
+    ApprovalDecision, ClientContextSnapshot, ClientFrame, CommandSource, EventSource, EventStream,
+    GlobalSequence, GuiCapability, HandshakeRequest, HandshakeResponse, HandshakeService,
+    ProtocolErrorCode, ResumeDisposition, ResumeRequest, ServerFrame, Snapshot, SnapshotSection,
+    SnapshotSectionKind, SubscribeRequest, TimelineItem, TimelineItemKind, TimelinePage,
+    API_VERSION, SUPPORTED_API_VERSIONS,
 };
 use pawork_transport::{
     ConnectOptions, GuiConnection, GuiListener, GuiTransportClient, LocalTransport,
@@ -109,10 +108,10 @@ impl GuiHost for MockHost {
             generated_at: Timestamp::from_unix_millis(seq),
             sections: vec![
                 SnapshotSection {
-                kind: SnapshotSectionKind::ActiveRuns,
-                revision: 1,
-                data: Some(serde_json::json!({"run_ids": []})),
-                artifact_id: None,
+                    kind: SnapshotSectionKind::ActiveRuns,
+                    revision: 1,
+                    data: Some(serde_json::json!({"run_ids": []})),
+                    artifact_id: None,
                 },
                 SnapshotSection {
                     kind: SnapshotSectionKind::TerminalSessions,
@@ -134,11 +133,10 @@ impl GuiHost for MockHost {
         after: Option<u64>,
         limit: Option<u32>,
     ) -> Result<TimelinePage, GuiHostError> {
-        self.timelines.lock().expect("timelines").push((
-            session_id.clone(),
-            after,
-            limit,
-        ));
+        self.timelines
+            .lock()
+            .expect("timelines")
+            .push((session_id.clone(), after, limit));
         Ok(TimelinePage {
             items: vec![TimelineItem {
                 sequence: after.unwrap_or(0) + 1,
@@ -183,11 +181,14 @@ impl GuiHost for MockHost {
     }
 
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
-        self.commands.lock().expect("commands").push(RecordedCommand {
-            source: envelope.source.clone(),
-            identity: envelope.identity.clone(),
-            command: envelope.command.clone(),
-        });
+        self.commands
+            .lock()
+            .expect("commands")
+            .push(RecordedCommand {
+                source: envelope.source.clone(),
+                identity: envelope.identity.clone(),
+                command: envelope.command.clone(),
+            });
         Ok(AppResponse::Accepted {
             command_id: envelope.command_id.clone(),
             run_id: None,
@@ -469,14 +470,19 @@ mod unix_tests {
     async fn handshake_round_trip_then_snapshot() {
         let harness = open_harness("hs").await;
         let (response, snapshot) = handshake_and_snapshot(&harness.client).await;
-        assert!(matches!(response, HandshakeResponse::Accepted { selected_api_version, .. } if selected_api_version == API_VERSION));
+        assert!(
+            matches!(response, HandshakeResponse::Accepted { selected_api_version, .. } if selected_api_version == API_VERSION)
+        );
         assert_eq!(snapshot.instance_id.as_str(), "gui-server-test");
     }
 
     #[tokio::test]
     async fn non_handshake_first_frame_is_rejected_and_closed() {
         let harness = open_harness("bad-first").await;
-        harness.client.send(&ClientFrame::Heartbeat { nonce: 1 }).await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 1 })
+            .await;
         let ServerFrame::Error(envelope) = harness.client.recv().await else {
             panic!("expected error");
         };
@@ -589,7 +595,10 @@ mod unix_tests {
         let ServerFrame::Resume(resume) = harness.client.recv().await else {
             panic!("expected resume");
         };
-        assert!(matches!(resume.disposition, ResumeDisposition::UpToDate { .. }));
+        assert!(matches!(
+            resume.disposition,
+            ResumeDisposition::UpToDate { .. }
+        ));
 
         for seq in 1..=3 {
             harness.host.publish(event(seq));
@@ -629,7 +638,10 @@ mod unix_tests {
                 global_sequence: GlobalSequence(3),
             })
             .await;
-        harness.client.send(&ClientFrame::Heartbeat { nonce: 9 }).await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 9 })
+            .await;
         assert_eq!(harness.client.recv().await, ServerFrame::Pong { nonce: 9 });
         harness
             .client
@@ -641,7 +653,10 @@ mod unix_tests {
         let ServerFrame::Resume(resume) = harness.client.recv().await else {
             panic!("expected ack-influenced resume");
         };
-        assert!(matches!(resume.disposition, ResumeDisposition::UpToDate { .. }));
+        assert!(matches!(
+            resume.disposition,
+            ResumeDisposition::UpToDate { .. }
+        ));
 
         harness
             .client
@@ -663,7 +678,10 @@ mod unix_tests {
     async fn heartbeat_gets_pong() {
         let harness = open_harness("hb").await;
         let _ = handshake_and_snapshot(&harness.client).await;
-        harness.client.send(&ClientFrame::Heartbeat { nonce: 42 }).await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 42 })
+            .await;
         assert_eq!(harness.client.recv().await, ServerFrame::Pong { nonce: 42 });
     }
 
@@ -675,7 +693,9 @@ mod unix_tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let commands = harness.host.recorded_commands();
         assert!(
-            commands.iter().all(|item| !matches!(item.command, AppCommand::RunCancel { .. })),
+            commands
+                .iter()
+                .all(|item| !matches!(item.command, AppCommand::RunCancel { .. })),
             "disconnect must not issue RunCancel"
         );
     }
@@ -753,7 +773,10 @@ mod unix_tests {
         let started = std::time::Instant::now();
         harness.host.publish(event(82));
         assert!(started.elapsed() < Duration::from_millis(100));
-        harness.client.send(&ClientFrame::Heartbeat { nonce: 1 }).await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 1 })
+            .await;
         // drain until pong arrives; live events may have been dropped from the bounded queue.
         loop {
             match harness.client.recv().await {
@@ -819,7 +842,8 @@ mod unix_tests {
             panic!("expected handshake accepted");
         };
         let HandshakeResponse::Accepted {
-            capabilities: granted, ..
+            capabilities: granted,
+            ..
         } = handshake
         else {
             panic!("expected handshake accepted");
@@ -1054,7 +1078,10 @@ mod unix_tests {
             panic!("expected snapshot after handshake");
         };
         harness.client.send(&subscribe_all()).await;
-        harness.client.send(&ClientFrame::Heartbeat { nonce: 1 }).await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 1 })
+            .await;
         loop {
             match harness.client.recv().await {
                 ServerFrame::Pong { nonce } => {
@@ -1120,7 +1147,10 @@ mod unix_tests {
             panic!("expected snapshot after handshake");
         };
         harness.client.send(&subscribe_all()).await;
-        harness.client.send(&ClientFrame::Heartbeat { nonce: 1 }).await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 1 })
+            .await;
         loop {
             match harness.client.recv().await {
                 ServerFrame::Pong { nonce } => {

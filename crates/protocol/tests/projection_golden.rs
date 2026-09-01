@@ -40,13 +40,19 @@ fn load_fixture(name: &str) -> Vec<FixtureLine> {
                     .unwrap_or_else(|error| panic!("decode domain envelope in {name}: {error}")),
                 wire: match value["wire"].is_null() {
                     true => None,
-                    false => Some(serde_json::from_value(value["wire"].clone())
-                        .unwrap_or_else(|error| panic!("decode wire envelope in {name}: {error}"))),
+                    false => Some(
+                        serde_json::from_value(value["wire"].clone()).unwrap_or_else(|error| {
+                            panic!("decode wire envelope in {name}: {error}")
+                        }),
+                    ),
                 },
                 item: match value["item"].is_null() {
                     true => None,
-                    false => Some(serde_json::from_value(value["item"].clone())
-                        .unwrap_or_else(|error| panic!("decode timeline item in {name}: {error}"))),
+                    false => Some(
+                        serde_json::from_value(value["item"].clone()).unwrap_or_else(|error| {
+                            panic!("decode timeline item in {name}: {error}")
+                        }),
+                    ),
                 },
             }
         })
@@ -72,7 +78,11 @@ fn render_kind(kind: &TimelineEntryKind) -> serde_json::Value {
         TimelineEntryKind::AssistantMessage { text } => {
             serde_json::json!({ "assistant_message": { "text": text } })
         }
-        TimelineEntryKind::ToolCall { name, status, detail } => {
+        TimelineEntryKind::ToolCall {
+            name,
+            status,
+            detail,
+        } => {
             serde_json::json!({ "tool_call": { "name": name, "status": status, "detail": detail } })
         }
         TimelineEntryKind::RunState(text) => serde_json::json!({ "run_state": text }),
@@ -116,9 +126,7 @@ fn tool_completed_envelope(sequence: u64, metadata: serde_json::Value) -> AgentE
             result: ToolResultContent {
                 tool_call_id: ToolCallId::from("tool-golden"),
                 tool_name: Some("run_command".into()),
-                content: vec![ContentPart::Text(TextContent {
-                    text: "ok".into(),
-                })],
+                content: vec![ContentPart::Text(TextContent { text: "ok".into() })],
                 is_error: false,
                 metadata,
                 artifacts: Vec::new(),
@@ -199,7 +207,8 @@ fn golden_paged_interleave_and_live_history_parity() {
                 entry.run_id.clone(),
             ))
             .collect::<Vec<_>>(),
-        history.iter()
+        history
+            .iter()
             .map(|entry| (
                 entry.sequence,
                 entry.kind.clone(),
@@ -236,7 +245,10 @@ fn golden_lagged_to_snapshot_rebuilds_baseline() {
     projection.apply_resume_disposition(&ResumeDisposition::SnapshotRequired {
         earliest_available_sequence: GlobalSequence(5),
     });
-    assert!(projection.entries.is_empty(), "snapshot required resets baseline");
+    assert!(
+        projection.entries.is_empty(),
+        "snapshot required resets baseline"
+    );
     apply_history(&mut projection, &lines);
     assert_eq!(
         render(&projection),
@@ -310,10 +322,7 @@ fn golden_sandbox_timeline_detail_branches() {
     let context: serde_json::Value =
         serde_json::from_str(item.detail.as_deref().expect("detail present"))
             .expect("context json");
-    assert_eq!(
-        context,
-        json!({"_pawork_tool_call_id": "tool-golden"})
-    );
+    assert_eq!(context, json!({"_pawork_tool_call_id": "tool-golden"}));
 }
 
 /// golden：sandbox_fallback_label 三分支——JSON message 提取、空串默认串、
@@ -357,9 +366,7 @@ fn golden_sandbox_fallback_diagnostic_label_branches() {
         text: None,
         tool_name: None,
         status: None,
-        detail: Some(
-            "sandbox.fallback: {\"message\":\"沙箱回退：history\"}".into(),
-        ),
+        detail: Some("sandbox.fallback: {\"message\":\"沙箱回退：history\"}".into()),
         timestamp: "3001".into(),
     });
     history.apply_item(&TimelineItem {

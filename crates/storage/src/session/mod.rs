@@ -3,8 +3,8 @@
 //! `session_events` 是事实来源；其他表均为可删除、可从事件重建的 Projection。
 
 mod catalog;
-mod command_ledger;
 mod client_adapter;
+mod command_ledger;
 mod event_store;
 pub mod import;
 mod migration;
@@ -22,27 +22,27 @@ use std::path::{Path, PathBuf};
 use crate::sqlite::{DatabaseActor, DatabaseError, MigrationError};
 use thiserror::Error;
 
+pub use crate::sqlite::MigrationReport;
 pub use catalog::{SessionRecord, WorkspaceRecord};
+pub use client_adapter::SqliteClientSessionRegistryStore;
 pub use command_ledger::{
     CommandLedger, LedgerCheck, LedgerError, LedgerStats, WaitingToolCall,
     DEFAULT_COMMAND_LEDGER_CAPACITY,
 };
-pub use client_adapter::SqliteClientSessionRegistryStore;
+#[cfg(feature = "compaction")]
+pub use compaction::*;
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
-pub use session_tree::{BranchNode, SessionTree};
 pub use import::{
     parse_pi_line, CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport,
     ExportedBranch, ExportedEvent, ExternalRecord, ExternalSource, ParsedExternalSession,
     PiEntryKind, PiImportReport, PiParsedEntry, PiPayload, SessionExport, EXPORT_SCHEMA_VERSION,
 };
 pub use migration::CURRENT_SCHEMA_VERSION;
-pub use crate::sqlite::MigrationReport;
 pub use projection::{
     ProjectedProgramOutput, ProjectedRun, ProjectedScreenshot, ProjectedServerToolEvent,
     ProjectedToolCall, ProjectedTranscriptEnvelope, ProjectionSnapshot,
 };
-#[cfg(feature = "compaction")]
-pub use compaction::*;
+pub use session_tree::{BranchNode, SessionTree};
 
 #[derive(Clone)]
 pub struct SessionStore {
@@ -157,7 +157,10 @@ pub enum SessionStoreError {
         "fork point event {event_id} ({event_type}) is not a stable turn boundary; \
          allowed: run_completed / run_cancelled / run_failed / compaction_completed"
     )]
-    ForkPointNotTurnBoundary { event_id: String, event_type: String },
+    ForkPointNotTurnBoundary {
+        event_id: String,
+        event_type: String,
+    },
     #[error(
         "branch {requested_branch} is not the active branch of session {session_id}; active is {active_branch}"
     )]

@@ -17,8 +17,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use pawork_domain::{ProviderId, Timestamp};
 use pawork_domain::{CredentialKind, ResolvedCredential};
+use pawork_domain::{ProviderId, Timestamp};
 use serde_json::Value;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
@@ -523,8 +523,7 @@ pub fn update_oauth_token(
     }
     let expected_service = oauth_secret_service(&stored.provider);
     let expected_access_account = format!("{}.access", stored.id.as_str());
-    if stored.secret_service != expected_service
-        || stored.secret_account != expected_access_account
+    if stored.secret_service != expected_service || stored.secret_account != expected_access_account
     {
         return Err(AuthError::MalformedMetadata(
             "credential is not an OAuth token record".into(),
@@ -636,11 +635,7 @@ impl RefreshGate {
         }
     }
 
-    fn apply_latest(
-        &self,
-        stored: &mut StoredCredential,
-        backend: &dyn SecretBackend,
-    ) -> bool {
+    fn apply_latest(&self, stored: &mut StoredCredential, backend: &dyn SecretBackend) -> bool {
         let latest = self
             .latest
             .lock()
@@ -652,10 +647,7 @@ impl RefreshGate {
         if latest.metadata_matches(stored) {
             return false;
         }
-        let Ok(current_access) = backend.get(
-            &stored.secret_service,
-            &stored.secret_account,
-        ) else {
+        let Ok(current_access) = backend.get(&stored.secret_service, &stored.secret_account) else {
             return false;
         };
         if secret_fingerprint(&current_access) != latest.access_fingerprint {
@@ -689,10 +681,7 @@ static REFRESH_GATES: OnceLock<StdMutex<HashMap<RefreshGateKey, Arc<RefreshGate>
 
 fn refresh_gate_for(stored: &StoredCredential) -> Arc<RefreshGate> {
     let gates = REFRESH_GATES.get_or_init(|| StdMutex::new(HashMap::new()));
-    let key = (
-        stored.secret_service.clone(),
-        stored.secret_account.clone(),
-    );
+    let key = (stored.secret_service.clone(), stored.secret_account.clone());
     let mut gates = gates.lock().expect("OAuth refresh gate mutex poisoned");
     gates
         .entry(key)
@@ -725,9 +714,7 @@ fn backend_token_snapshot(
     })
 }
 
-async fn acquire_backend_refresh_lock(
-    path: &std::path::Path,
-) -> Result<FileLockGuard, AuthError> {
+async fn acquire_backend_refresh_lock(path: &std::path::Path) -> Result<FileLockGuard, AuthError> {
     let started = Instant::now();
     loop {
         if let Some(guard) = try_acquire_file_lock(path)? {
@@ -1265,7 +1252,7 @@ mod tests {
             access_token: "ya29.access-secret-token-abcdefgh".into(),
             refresh_token: Some("1//refresh-secret-token-12345".into()),
             id_token: None,
-             expires_in: Some(3600),
+            expires_in: Some(3600),
             token_type: "Bearer".into(),
             scope: Some("read write".into()),
         };
@@ -1363,7 +1350,7 @@ mod tests {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
                 id_token: None,
-                 expires_in: Some(1),
+                expires_in: Some(1),
                 token_type: "Bearer".into(),
                 scope: Some("read".into()),
             },
@@ -1378,7 +1365,7 @@ mod tests {
                 access_token: "new-access".into(),
                 refresh_token: Some("new-refresh".into()),
                 id_token: None,
-                 expires_in: Some(3600),
+                expires_in: Some(3600),
                 token_type: "Bearer".into(),
                 scope: Some("read write".into()),
             },
@@ -1413,7 +1400,7 @@ mod tests {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
                 id_token: None,
-                 expires_in: Some(60),
+                expires_in: Some(60),
                 token_type: "Bearer".into(),
                 scope: None,
             },
@@ -1652,7 +1639,7 @@ mod tests {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
                 id_token: None,
-                 expires_in: Some(0),
+                expires_in: Some(0),
                 token_type: "Bearer".into(),
                 scope: Some("read".into()),
             },
@@ -1713,7 +1700,7 @@ mod tests {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
                 id_token: None,
-                 expires_in: Some(0),
+                expires_in: Some(0),
                 token_type: "Bearer".into(),
                 scope: Some("read".into()),
             },

@@ -3,8 +3,8 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::config::ConfigTier;
-use pawork_domain::WorkspaceId;
 use crate::WorkspaceService;
+use pawork_domain::WorkspaceId;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -359,8 +359,8 @@ mod tests {
 
     use pawork_domain::WorkspaceId;
 
-    use super::*;
     use super::super::{ResourceSelection, WorkspaceRelativePath};
+    use super::*;
 
     fn loader_for(root: &Path) -> ResourceLoader {
         let workspaces = WorkspaceService::new();

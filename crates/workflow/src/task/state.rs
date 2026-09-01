@@ -261,7 +261,6 @@ impl TaskManagerState {
         self.tasks.get(task_id).map(|r| r.cancel_token.clone())
     }
 
-
     /// 命令辅助：收集 `root` 及其全部后代（沿 parent_task_id 链，含 root）。
     pub(crate) fn subtree(&self, root: &BackgroundTaskId) -> Vec<BackgroundTaskId> {
         let mut children: BTreeMap<BackgroundTaskId, Vec<BackgroundTaskId>> = BTreeMap::new();
@@ -312,4 +311,3 @@ fn event_task_id(event: &TaskEvent) -> &BackgroundTaskId {
         | TaskEvent::Finished { task_id, .. } => task_id,
     }
 }
-

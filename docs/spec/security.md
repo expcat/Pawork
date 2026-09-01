@@ -74,6 +74,14 @@ Policy 输出固定为 `Allow`、`Deny`、`AskUser`、`AllowWithConstraints`。�
 - protected reasoning 只存于 PWB1 AEAD 信封；事件只保留 `ProtectedBlobRef`。
 - 日志、usage、audit、CLI JSONL、GUI Diagnostic 与测试 fixture 均不得出现真实凭证。
 
+### 5.3 Desktop Settings 输入
+
+- Settings 的 API key 输入必须走待 ADR 锁定的**非重放 Secret 路径**：不得进入 command ledger payload、事件、数据库、响应 replay、诊断或 AX value。
+- Desktop 只持有提交所需的瞬时缓冲，提交、取消或离开页面后清空；Host 验证成功后才原子写入既有 auth backend。
+- 替换凭证失败必须保留旧条目；OAuth token 只由 Host 换取/刷新/持久化，Desktop 只见授权步骤和脱敏状态。
+- 未协商 Settings capability、断线、未知 provider/auth method 或损坏状态均 fail-closed；禁止降级为 Desktop 直写 `auth.json` 或配置文件。
+- 详细威胁与回归见 [settings.md](settings.md) §5；生产实现须先完成 ADR-046。
+
 ## 6. Sandbox 真实边界
 
 `pawork-exec` 按平台探测 Seatbelt、bwrap/Landlock、AppContainer，并可回退 `NativeRestricted`：
@@ -106,4 +114,4 @@ Policy 输出固定为 `Allow`、`Deny`、`AskUser`、`AllowWithConstraints`。�
 6. 用户可见的拒绝/降级文案，不吞错、不静默 fallback；
 7. 需要改 wire/schema/架构红线时先过 ADR。
 
-发布级安全矩阵尚未立项；任何任务触及安全边界时仍须同批运行对应定向回归，不得推迟。后续顺序见 [ROADMAP](../../ROADMAP.md#4-后续计划)。
+发布级安全矩阵尚未立项；任何任务触及安全边界时仍须同批运行对应定向回归，不得推迟。Settings 的当前顺序见 [ROADMAP](../../ROADMAP.md) 与 [settings.md](settings.md)。

@@ -37,8 +37,8 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use crate::{UsageLedger, UsageQuery};
+use async_trait::async_trait;
 use pawork_domain::{CancellationToken, Timestamp};
 
 use crate::quota::{

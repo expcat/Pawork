@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use pawork_app::{consume_data_dir_outcome, default_data_dir_outcome, instance_dir, session_db_path_for, DEFAULT_INSTANCE};
+use pawork_app::{
+    consume_data_dir_outcome, default_data_dir_outcome, instance_dir, session_db_path_for,
+    DEFAULT_INSTANCE,
+};
 use pawork_client::{ClientConfig, GuiClient};
 use pawork_protocol::client_auth::TOKEN_SCHEME;
 use pawork_protocol::headless::translate::encode_protocol_response;
@@ -12,9 +15,7 @@ use pawork_protocol::{
     headless::HeadlessResponse, AppEvent, ClientAuthentication, GuiCapability,
     SUPPORTED_API_VERSIONS,
 };
-use pawork_transport::{
-    ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint,
-};
+use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 
 use crate::CliError;
 
@@ -96,7 +97,8 @@ pub async fn run_status(instance: &str, json: bool) -> Result<(), CliError> {
 pub async fn run_doctor(instance: &str, json: bool) -> Result<(), CliError> {
     let mut report = inspect_instance(instance).await;
     if report.listening {
-        report.handshake = Some(probe_handshake(&report.socket, &report.data_dir, &report.instance).await);
+        report.handshake =
+            Some(probe_handshake(&report.socket, &report.data_dir, &report.instance).await);
     }
     print_report("doctor", &report, json)
 }
@@ -286,7 +288,15 @@ fn print_report(kind: &str, report: &InstanceReport, json: bool) -> Result<(), C
     } else {
         println!("instance: {}", report.instance);
         println!("data_dir: {}", report.data_dir);
-        println!("socket: {} ({})", report.socket, if report.listening { "listening" } else { "down" });
+        println!(
+            "socket: {} ({})",
+            report.socket,
+            if report.listening {
+                "listening"
+            } else {
+                "down"
+            }
+        );
         println!("session_db: {}", report.session_db);
         if let Some(pid) = report.pid {
             println!("pid: {pid}");

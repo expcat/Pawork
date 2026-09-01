@@ -49,7 +49,7 @@ S4 沙箱以「诚实标签」交付(能力有限但如实上报),V2 期间未�
 
 - 删除 `SandboxPolicy.network_allow_hosts` 字段与 os/macos.rs 的 K-09 注释;`NetworkMode` 三档(Off/Hint/Enforce,默认 Enforce)语义不变——网络只有 allow-all/deny-all 两档事实,标签如实。
 - 依据:字段无配置入口、无生产赋值(恒空)、唯一消费者是注释行;保留它持续制造「可按 host 白名单」的假象。
-- 选项 (a)(egress broker:本地策略代理 + 沙箱内仅放行 loopback 代理端口 + 域名白名单,参照 codex-network-proxy + srt 两层模型)登记 ROADMAP §5 候选池,激活时另立任务书。
+- 选项 (a)(egress broker:本地策略代理 + 沙箱内仅放行 loopback 代理端口 + 域名白名单,参照 codex-network-proxy + srt 两层模型)登记于 [产品候选](../spec/backlog.md),激活时另立任务书。
 - 否决 (c)(维持全拒+文档标注):死字段不删除,诚实标签与 API 面继续失真。
 
 ### D4 — shell 风险分类:手写轻量 tokenizer 替换空白切分

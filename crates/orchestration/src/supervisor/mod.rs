@@ -26,25 +26,27 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use pawork_domain::{AgentId, CancellationToken, ModelId, ProviderId};
 use pawork_control_plane::credential::{CredentialPool, LeaseOutcome};
 use pawork_control_plane::{TenantPolicyEngine, UsageLedger};
+use pawork_domain::{AgentId, CancellationToken, ModelId, ProviderId};
 
 #[cfg(test)]
-use pawork_control_plane::{InMemoryUsageLedger, UsageLedgerError, UsageRecord, UsageTotals};
-#[cfg(test)]
 use pawork_control_plane::UsageQuery;
+#[cfg(test)]
+use pawork_control_plane::{InMemoryUsageLedger, UsageLedgerError, UsageRecord, UsageTotals};
 
 use crate::budget::{LedgerContext, WorkerBudgetController, WorkerBudgetLimits};
 #[cfg(test)]
 use crate::identity::WorkerRole;
-use crate::lifecycle::{OrchestrationEvent, WorkerTransition};
 #[cfg(test)]
 use crate::lifecycle::{replay_workers, WorkerState};
-use crate::merge::{ConflictReport, MergeDecision, MergeOutcome, PatchMerger, PatchProposal, WorkerPatch};
-use crate::task_graph::{TaskGraph, TaskId};
+use crate::lifecycle::{OrchestrationEvent, WorkerTransition};
+use crate::merge::{
+    ConflictReport, MergeDecision, MergeOutcome, PatchMerger, PatchProposal, WorkerPatch,
+};
 #[cfg(test)]
 use crate::task_graph::TaskState;
+use crate::task_graph::{TaskGraph, TaskId};
 use crate::worktree::WorktreeAllocator;
 
 use registry::TerminalTake;
@@ -115,7 +117,6 @@ pub enum SupervisorError {
         pending: Vec<AgentId>,
     },
 }
-
 
 /// 编排 Supervisor：集中拥有 spawn / assign / cancel_tree / 恢复。
 pub struct AgentSupervisor {
@@ -200,7 +201,6 @@ impl AgentSupervisor {
         self
     }
 
-
     /// 正常完成：释放 lease（`LeaseOutcome::Completed`，幂等）→ Complete →
     /// `WorkerCompleted` → 从父的活跃 children 中移除。同时把该 worker 的
     /// 累计用量 flush 到注入的 usage ledger（无用量时为空操作）。归属从
@@ -262,7 +262,6 @@ impl AgentSupervisor {
         flush_outcome
     }
 
-
     /// 失败：释放 lease（`LeaseOutcome::Failed`，计入连续失败）→ Fail →
     /// `WorkerFailed` → 从父的活跃 children 中移除。worktree 显式释放；
     /// TaskGraph 推进为 Failed 并发出 TaskFailed。终态前把累计用量 flush 到
@@ -322,7 +321,6 @@ impl AgentSupervisor {
         flush_outcome
     }
 
-
     /// 重试任务（W2）：仅复位 TaskGraph 中的任务状态并发出 `TaskRetried`。
     ///
     /// 注意：worker 生命周期仍是 `Failed` 终态，重跑需要新的 spawn；本方法
@@ -340,7 +338,6 @@ impl AgentSupervisor {
         self.emit(OrchestrationEvent::TaskRetried { task_id, attempt });
         Ok(attempt)
     }
-
 
     /// 收集并检测 patch 冲突（W3）：存入待审批表并发出 `PatchProposed`；
     /// 存在冲突时同时发出 `PatchConflict`。
@@ -431,7 +428,6 @@ impl AgentSupervisor {
         }
         Ok(outcome)
     }
-
 }
 
 fn now_ms() -> u64 {
@@ -444,20 +440,20 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_domain::{ModelId, PrincipalId, SessionId, TenantId};
     use async_trait::async_trait;
     use pawork_control_plane::credential::{
         AccountId, AcquireRequest, CredentialLease, CredentialPool, InMemoryCredentialPool,
         LeaseGuard, LeaseId, LeaseOutcome, PoolError, ReleaseReceipt,
     };
-    use std::collections::BTreeMap;
-    use std::path::Path;
-    use std::sync::Mutex;
     use pawork_control_plane::{
         InMemoryTenantPolicyEngine, PermissionProfile, PolicyDecisionKind, PolicyGate,
         PrincipalRole, TenantPolicy,
     };
     use pawork_control_plane::{InMemoryUsageLedger, UsageQuery};
+    use pawork_domain::{ModelId, PrincipalId, SessionId, TenantId};
+    use std::collections::BTreeMap;
+    use std::path::Path;
+    use std::sync::Mutex;
 
     use crate::merge::{DiffProvider, MergeError};
     use crate::worktree::{WorkerWorktree, WorktreeError};
@@ -521,12 +517,7 @@ mod tests {
                 );
             }
         }
-        AgentSupervisor::new(
-            pool,
-            policy,
-            Arc::new(InMemoryUsageLedger::new()),
-            config,
-        )
+        AgentSupervisor::new(pool, policy, Arc::new(InMemoryUsageLedger::new()), config)
     }
 
     fn spawn_request(agent_acquire: Option<AcquireRequest>) -> SpawnRequest {
@@ -936,13 +927,11 @@ mod tests {
         assert!(supervisor.state(&AgentId::new("c")).is_none());
         assert!(supervisor.cancel_token(&AgentId::new("a")).is_none());
         assert!(supervisor.events().is_empty());
-        assert!(
-            supervisor
-                .children
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .is_empty()
-        );
+        assert!(supervisor
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .is_empty());
         assert_eq!(supervisor.active_worker_count(None), 0);
     }
 
@@ -962,20 +951,16 @@ mod tests {
         assert!(supervisor.state(&AgentId::new("no-such-parent")).is_none());
         assert_eq!(supervisor.active_worker_count(None), 0);
         assert!(supervisor.events().is_empty());
-        assert!(
-            supervisor
-                .children
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .is_empty()
-        );
-        assert!(
-            supervisor
-                .workers
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .is_empty()
-        );
+        assert!(supervisor
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .is_empty());
+        assert!(supervisor
+            .workers
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .is_empty());
     }
 
     #[tokio::test]
@@ -1011,14 +996,12 @@ mod tests {
 
         assert_eq!(supervisor.state(&parent), Some(WorkerState::Starting));
         assert_eq!(supervisor.active_worker_count(None), 1);
-        assert!(
-            supervisor
-                .children
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .get(&parent)
-                .is_none()
-        );
+        assert!(supervisor
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&parent)
+            .is_none());
         assert_eq!(
             supervisor
                 .workers
@@ -1052,14 +1035,12 @@ mod tests {
             matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("cannot spawn")),
             "{err:?}"
         );
-        assert!(
-            supervisor
-                .children
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .get(&parent)
-                .is_none()
-        );
+        assert!(supervisor
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&parent)
+            .is_none());
         assert_eq!(supervisor.active_worker_count(None), 0);
     }
 
@@ -1609,7 +1590,10 @@ mod tests {
             self.inner.active_count(account)
         }
 
-        fn account_health(&self, account: &AccountId) -> pawork_control_plane::credential::AccountHealth {
+        fn account_health(
+            &self,
+            account: &AccountId,
+        ) -> pawork_control_plane::credential::AccountHealth {
             self.inner.account_health(account)
         }
     }
@@ -2117,7 +2101,6 @@ mod tests {
             )
         }));
     }
-
 }
 
 /// 失败计数测试专用：包装 [`InMemoryUsageLedger`]，前 `fail_until` 次 `record`
@@ -2265,12 +2248,12 @@ impl pawork_control_plane::UsageLedger for BlockingLedger {
 #[cfg(test)]
 mod terminal_flush_tests {
     use super::*;
-    use pawork_domain::{PrincipalId, SessionId, TenantId};
     use pawork_control_plane::credential::{AcquireRequest, InMemoryCredentialPool};
-    use std::collections::BTreeSet;
     use pawork_control_plane::{
         InMemoryTenantPolicyEngine, PermissionProfile, PrincipalRole, TenantPolicy,
     };
+    use pawork_domain::{PrincipalId, SessionId, TenantId};
+    use std::collections::BTreeSet;
     // usage_ledger 类型（InMemoryUsageLedger / UsageQuery / UsageRecord 等）经
     // 文件级 cfg(test) `use` + `super::*` 可见。
 
@@ -2743,4 +2726,3 @@ mod terminal_flush_tests {
     // UsageRecord 由 ledger 内部产生；保留导入以表明 query 返回类型。
     const _: fn(&UsageRecord) = |_| {};
 }
-

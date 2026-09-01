@@ -130,9 +130,7 @@ impl UsageAccumulator {
 fn add_usage(dst: &mut TokenUsage, src: &TokenUsage) {
     dst.input_tokens = dst.input_tokens.saturating_add(src.input_tokens);
     dst.output_tokens = dst.output_tokens.saturating_add(src.output_tokens);
-    dst.cache_read_tokens = dst
-        .cache_read_tokens
-        .saturating_add(src.cache_read_tokens);
+    dst.cache_read_tokens = dst.cache_read_tokens.saturating_add(src.cache_read_tokens);
     dst.cache_write_tokens = dst
         .cache_write_tokens
         .saturating_add(src.cache_write_tokens);
@@ -215,7 +213,10 @@ mod tests {
             map_stop_reason(Some("end_turn"), false),
             StopReason::Completed
         );
-        assert_eq!(map_stop_reason(Some("length"), false), StopReason::MaxTokens);
+        assert_eq!(
+            map_stop_reason(Some("length"), false),
+            StopReason::MaxTokens
+        );
         assert_eq!(map_stop_reason(Some("STOP"), false), StopReason::Completed);
         assert_eq!(
             map_stop_reason(Some("content_filter"), false),

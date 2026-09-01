@@ -105,10 +105,7 @@ impl SecretBackend for MemoryBackend {
     }
 
     fn store_batch(&self, entries: &[(&str, &str, &str)]) -> Result<(), AuthError> {
-        let mut stored = self
-            .entries
-            .lock()
-            .expect("MemoryBackend mutex poisoned");
+        let mut stored = self.entries.lock().expect("MemoryBackend mutex poisoned");
         for &(service, account, secret) in entries {
             stored.insert(
                 (service.to_string(), account.to_string()),

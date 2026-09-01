@@ -10,14 +10,14 @@
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, ArtifactId, AutomationEvent,
     AutomationTriggerKind, BackgroundTaskId, CheckpointId, Citation, CitationSourceKind,
-    CriterionKind, CURRENT_SCHEMA_VERSION, ErrorCategory, ErrorContext, EventId, EventSequence,
-    GoalEvent, GoalId, MemoryEvent, MemoryId, MemoryPrivacy, Message, MessageId, MessageMetadata,
-    MessageRole, MonitorEvent, MonitorId, MonitorSourceKind, PlanEvent, PlanId, PlanStepId,
-    PlanStepSnapshot, PlanStepStatus, PlanVersionId, ProgramStream, ProviderId,
-    ProviderTranscriptContinuation, ProviderTranscriptEnvelope, RequestId, ReviewEvent,
-    ReviewSessionId, RunId, ServerToolEvent, SessionId, StopReason, SuccessCriterionSnapshot,
-    TaskEvent, TaskKind, Timestamp, TokenUsage, ToolCallId, ToolKind, ToolOutputStream,
-    ToolResultContent, TranscriptItem,
+    CriterionKind, ErrorCategory, ErrorContext, EventId, EventSequence, GoalEvent, GoalId,
+    MemoryEvent, MemoryId, MemoryPrivacy, Message, MessageId, MessageMetadata, MessageRole,
+    MonitorEvent, MonitorId, MonitorSourceKind, PlanEvent, PlanId, PlanStepId, PlanStepSnapshot,
+    PlanStepStatus, PlanVersionId, ProgramStream, ProviderId, ProviderTranscriptContinuation,
+    ProviderTranscriptEnvelope, RequestId, ReviewEvent, ReviewSessionId, RunId, ServerToolEvent,
+    SessionId, StopReason, SuccessCriterionSnapshot, TaskEvent, TaskKind, Timestamp, TokenUsage,
+    ToolCallId, ToolKind, ToolOutputStream, ToolResultContent, TranscriptItem,
+    CURRENT_SCHEMA_VERSION,
 };
 use serde_json::Value;
 

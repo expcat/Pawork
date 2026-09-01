@@ -54,9 +54,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[cfg(feature = "sqlite")]
-use std::path::Path;
-#[cfg(feature = "sqlite")]
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+#[cfg(feature = "sqlite")]
+use std::path::Path;
 
 /// 自动生成记录 ID 的保留前缀。
 ///

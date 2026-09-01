@@ -7,19 +7,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::net::http::{HttpClient, HttpClientConfig};
+use crate::net::sse::SseParser;
+use crate::{clamp_reasoning_to_thinking, ReasoningProtector};
 use futures::StreamExt;
-use pawork_domain::{
-    CanonicalModelRequest, ModelDefinition, ModelResponseSummary, ProviderError,
-    ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, ReasoningEffort, ResponseFormat,
-    ResolvedCredential, ThinkingLevel, ToolChoice, ToolDefinition,
-};
 use pawork_domain::{
     CancellationToken, ContentPart, ImageContent, ImageSource, Message, MessageRole, ProviderId,
     StopReason, TokenUsage, ToolCallId,
 };
-use crate::net::http::{HttpClient, HttpClientConfig};
-use crate::net::sse::SseParser;
-use crate::{clamp_reasoning_to_thinking, ReasoningProtector};
+use pawork_domain::{
+    CanonicalModelRequest, ModelDefinition, ModelResponseSummary, ProviderError, ProviderErrorKind,
+    ProviderEventSink, ProviderStreamEvent, ReasoningEffort, ResolvedCredential, ResponseFormat,
+    ThinkingLevel, ToolChoice, ToolDefinition,
+};
 use serde_json::{json, Map, Value};
 
 use crate::error_table::normalize_vendor_error;
@@ -133,12 +133,7 @@ impl ResponsesTransport {
     /// 使用与 Responses 请求相同的 OAuth/API bearer 与固定头读取 JSON。
     pub async fn get_json(&self, url: &str) -> Result<Value, ProviderError> {
         self.client
-            .get_json_with_headers(
-                url,
-                None,
-                &self.request_headers(),
-                CancellationToken::new(),
-            )
+            .get_json_with_headers(url, None, &self.request_headers(), CancellationToken::new())
             .await
             .map_err(|error| normalize_vendor_error(self.config.provider_id.as_str(), error))
     }
@@ -191,9 +186,7 @@ impl ResponsesTransport {
                     continue;
                 }
                 for assembled in assembler.feed(data.trim()) {
-                    saw_completion |= self
-                        .emit_assembled(assembled, sink, &mut summary)
-                        .await?;
+                    saw_completion |= self.emit_assembled(assembled, sink, &mut summary).await?;
                 }
             }
         }
@@ -201,9 +194,7 @@ impl ResponsesTransport {
             let data = event.data.trim();
             if !data.is_empty() && data != "[DONE]" {
                 for assembled in assembler.feed(data) {
-                    saw_completion |= self
-                        .emit_assembled(assembled, sink, &mut summary)
-                        .await?;
+                    saw_completion |= self.emit_assembled(assembled, sink, &mut summary).await?;
                 }
             }
         }
@@ -235,10 +226,8 @@ impl ResponsesTransport {
         match event {
             ResponsesAssemblyEvent::Canonical(event) => {
                 if let ProviderStreamEvent::Error(error) = &event {
-                    let error = normalize_vendor_error(
-                        self.config.provider_id.as_str(),
-                        error.clone(),
-                    );
+                    let error =
+                        normalize_vendor_error(self.config.provider_id.as_str(), error.clone());
                     sink.emit(ProviderStreamEvent::Error(error.clone())).await?;
                     return Err(error);
                 }
@@ -311,7 +300,10 @@ pub fn to_responses_body(
         input.extend(message_to_input(message));
     }
     if !instructions.is_empty() {
-        body.insert("instructions".into(), Value::String(instructions.join("\n")));
+        body.insert(
+            "instructions".into(),
+            Value::String(instructions.join("\n")),
+        );
     }
     body.insert("input".into(), Value::Array(input));
 
@@ -324,7 +316,8 @@ pub fn to_responses_body(
         body.insert("parallel_tool_calls".into(), Value::Bool(true));
     }
 
-    let clamped = clamp_reasoning_to_thinking(request.reasoning.as_ref(), request.thinking.as_ref());
+    let clamped =
+        clamp_reasoning_to_thinking(request.reasoning.as_ref(), request.thinking.as_ref());
     let effort = request
         .reasoning
         .as_ref()
@@ -339,10 +332,7 @@ pub fn to_responses_body(
         body.insert("reasoning".into(), json!({"effort": effort}));
     }
     if wire.include_encrypted_reasoning {
-        body.insert(
-            "include".into(),
-            json!(["reasoning.encrypted_content"]),
-        );
+        body.insert("include".into(), json!(["reasoning.encrypted_content"]));
     }
     if let Some(store) = wire.store {
         body.insert("store".into(), Value::Bool(store));
@@ -366,7 +356,10 @@ pub fn to_responses_body(
         }
     }
     if let Some(Value::String(previous)) = request.provider_options.get("previous_response_id") {
-        body.insert("previous_response_id".into(), Value::String(previous.clone()));
+        body.insert(
+            "previous_response_id".into(),
+            Value::String(previous.clone()),
+        );
     }
     for (key, value) in &request.provider_options {
         if is_reserved_option(key) {
@@ -436,7 +429,10 @@ fn message_to_input(message: &Message) -> Vec<Value> {
         }
     }
     if !content.is_empty() {
-        items.insert(0, json!({"type": "message", "role": role, "content": content}));
+        items.insert(
+            0,
+            json!({"type": "message", "role": role, "content": content}),
+        );
     }
     items
 }
@@ -536,7 +532,9 @@ async fn resolve_reasoning_inputs(
             };
             match to_input(item, &content) {
                 Ok(input) => inputs.push(input),
-                Err(error) => tracing::debug!(reasoning_item_id = %item.id.as_str(), %error, "reasoning continuation cannot be rebuilt"),
+                Err(error) => {
+                    tracing::debug!(reasoning_item_id = %item.id.as_str(), %error, "reasoning continuation cannot be rebuilt")
+                }
             }
         }
     }
@@ -806,7 +804,9 @@ fn string_delta(
 }
 
 fn response(value: &Value) -> Option<&Value> {
-    value.get("response").filter(|response| response.is_object())
+    value
+        .get("response")
+        .filter(|response| response.is_object())
 }
 
 #[derive(Clone, Debug)]
@@ -829,19 +829,35 @@ mod tests {
             ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::TextDelta(_))
         ));
         assembler.feed(r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read"}}"#);
-        assembler.feed(r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{}"}"#);
+        assembler.feed(
+            r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{}"}"#,
+        );
         let done = assembler.feed(r#"{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read","arguments":"{}"}}"#);
-        assert!(done.iter().any(|event| matches!(event, ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::ToolCallCompleted { .. }))));
+        assert!(done.iter().any(|event| matches!(
+            event,
+            ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::ToolCallCompleted { .. })
+        )));
         let completed = assembler.feed(r#"{"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":3,"output_tokens":2}}}"#);
-        assert!(completed.iter().any(|event| matches!(event, ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::UsageUpdated(_)))));
-        assert!(completed.iter().any(|event| matches!(event, ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::ResponseCompleted(StopReason::ToolUse)))));
+        assert!(completed.iter().any(|event| matches!(
+            event,
+            ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::UsageUpdated(_))
+        )));
+        assert!(completed.iter().any(|event| matches!(
+            event,
+            ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::ResponseCompleted(
+                StopReason::ToolUse
+            ))
+        )));
     }
 
     #[test]
     fn fixed_headers_cannot_override_auth() {
         let mut config = ResponsesTransportConfig::new("https://example.com", "test");
-        config.request_headers.push(("Authorization".into(), "attacker".into()));
-        let credential = ResolvedCredential::new(pawork_domain::CredentialKind::OAuthBearer, "token");
+        config
+            .request_headers
+            .push(("Authorization".into(), "attacker".into()));
+        let credential =
+            ResolvedCredential::new(pawork_domain::CredentialKind::OAuthBearer, "token");
         let error = ResponsesTransport::new(config, credential).err().unwrap();
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
 

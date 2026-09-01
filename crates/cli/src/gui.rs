@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
 use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
-use pawork_protocol::client_auth::{TokenAuthenticator, TokenStore};
+use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
 use pawork_protocol::app::registry::gui_supported_capabilities;
+use pawork_protocol::client_auth::{TokenAuthenticator, TokenStore};
 use pawork_protocol::{HandshakeService, SUPPORTED_API_VERSIONS};
 use pawork_transport::{
     ConnectOptions, GuiTransportClient, GuiTransportServer, LocalTransport, TransportEndpoint,
@@ -23,7 +23,11 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
     let GuiCommand::Serve { socket } = command;
     let approvals = Arc::new(GuiApprovalHost::new());
     let mut core = core;
-    core.configure_approval(core.approval_mode(), core.workspace_trusted(), approvals.clone());
+    core.configure_approval(
+        core.approval_mode(),
+        core.workspace_trusted(),
+        approvals.clone(),
+    );
     let core = Arc::new(tokio::sync::RwLock::new(core));
     let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
     let pty = adapter.pty();

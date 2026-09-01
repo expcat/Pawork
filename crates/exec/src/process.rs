@@ -570,8 +570,8 @@ unsafe fn configure_unix_child(command: &mut Command, spec: &CommandSpec) -> std
             };
             if libc::setrlimit(libc::RLIMIT_AS, &limit) == -1 {
                 let err = std::io::Error::last_os_error();
-                let skip_einval = cfg!(target_os = "macos")
-                    && err.raw_os_error() == Some(libc::EINVAL);
+                let skip_einval =
+                    cfg!(target_os = "macos") && err.raw_os_error() == Some(libc::EINVAL);
                 if !skip_einval {
                     return Err(err);
                 }

@@ -218,7 +218,8 @@ pub fn parse_claude(content: &str) -> Result<ParsedExternalSession, SessionStore
     if let Ok(value) = serde_json::from_str::<Value>(content) {
         if let Some(obj) = value.as_object() {
             let is_export = ["chat_messages", "messages"].iter().any(|key| {
-                obj.get(*key).is_some_and(|messages| messages.as_array().is_some())
+                obj.get(*key)
+                    .is_some_and(|messages| messages.as_array().is_some())
             });
             if is_export {
                 return parse_claude_export(obj);
@@ -316,7 +317,13 @@ fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, Sess
                     *skipped.entry("skipped_sidechain".into()).or_default() += 1;
                     continue;
                 }
-                claude_local_message_records(obj, line_type, idx, &mut parsed.records, &mut skipped);
+                claude_local_message_records(
+                    obj,
+                    line_type,
+                    idx,
+                    &mut parsed.records,
+                    &mut skipped,
+                );
             }
             "ai-title" | "custom-title" => {
                 // 真实本地格式的标题键是 aiTitle / customTitle(2026-08-23 本机
@@ -800,7 +807,9 @@ fn codex_response_item_records(
                     }
                 }
                 "developer" | "system" => {
-                    *skipped.entry("skipped_developer_message".into()).or_default() += 1;
+                    *skipped
+                        .entry("skipped_developer_message".into())
+                        .or_default() += 1;
                 }
                 _ => {
                     *skipped.entry("skipped_message".into()).or_default() += 1;
@@ -832,7 +841,12 @@ fn codex_response_item_records(
                 .get("arguments")
                 .and_then(Value::as_str)
                 .map(String::from)
-                .or_else(|| payload.get("input").and_then(Value::as_str).map(String::from));
+                .or_else(|| {
+                    payload
+                        .get("input")
+                        .and_then(Value::as_str)
+                        .map(String::from)
+                });
             records.push(ExternalRecord::ToolCall {
                 tool_call_id,
                 name,
@@ -850,7 +864,12 @@ fn codex_response_item_records(
                 .get("output")
                 .and_then(Value::as_str)
                 .map(String::from)
-                .or_else(|| payload.get("content").and_then(Value::as_str).map(String::from))
+                .or_else(|| {
+                    payload
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .map(String::from)
+                })
                 .unwrap_or_default();
             let is_error = payload
                 .get("is_error")
@@ -914,12 +933,20 @@ fn codex_token_count_usage(payload: &Value) -> ExternalRecord {
     let input_tokens = payload
         .get("input_tokens")
         .and_then(Value::as_u64)
-        .or_else(|| totals.and_then(|t| t.get("input_tokens")).and_then(Value::as_u64))
+        .or_else(|| {
+            totals
+                .and_then(|t| t.get("input_tokens"))
+                .and_then(Value::as_u64)
+        })
         .unwrap_or(0);
     let output_tokens = payload
         .get("output_tokens")
         .and_then(Value::as_u64)
-        .or_else(|| totals.and_then(|t| t.get("output_tokens")).and_then(Value::as_u64))
+        .or_else(|| {
+            totals
+                .and_then(|t| t.get("output_tokens"))
+                .and_then(Value::as_u64)
+        })
         .unwrap_or(0);
     ExternalRecord::Usage {
         input_tokens,
@@ -1688,7 +1715,10 @@ mod tests {
     #[test]
     fn parse_claude_local_jsonl_maps_records_and_counts_skips() {
         let parsed = parse_claude(CLAUDE_LOCAL_JSONL).unwrap();
-        assert_eq!(parsed.original_id.as_deref(), Some("claude-local-synthetic"));
+        assert_eq!(
+            parsed.original_id.as_deref(),
+            Some("claude-local-synthetic")
+        );
         assert_eq!(parsed.title.as_deref(), Some("synthetic demo"));
         // user 文本 + assistant(文本、tool_call) + tool_result + 未知类型 Raw。
         assert_eq!(parsed.records.len(), 5);
@@ -1721,11 +1751,17 @@ mod tests {
             ExternalRecord::Raw { ref kind, .. } if kind == "claude.type:attachment"
         ));
         assert_eq!(
-            parsed.unknown_fields.get("skipped_sidechain").map(String::as_str),
+            parsed
+                .unknown_fields
+                .get("skipped_sidechain")
+                .map(String::as_str),
             Some("1")
         );
         assert_eq!(
-            parsed.unknown_fields.get("skipped_thinking").map(String::as_str),
+            parsed
+                .unknown_fields
+                .get("skipped_thinking")
+                .map(String::as_str),
             Some("1")
         );
         assert_eq!(
@@ -1818,10 +1854,7 @@ mod tests {
     #[test]
     fn parse_codex_envelope_maps_payloads_and_counts_skips() {
         let parsed = parse_codex(CODEX_ENVELOPE_JSONL).unwrap();
-        assert_eq!(
-            parsed.original_id.as_deref(),
-            Some("rollout-synthetic-7")
-        );
+        assert_eq!(parsed.original_id.as_deref(), Some("rollout-synthetic-7"));
         // user + assistant + user_message + agent_message + tool call + tool result
         // + usage + 未知 payload Raw;encrypted-only agent_message 无文本不落记录。
         assert_eq!(parsed.records.len(), 8);
@@ -1841,10 +1874,7 @@ mod tests {
             parsed.records[3],
             ExternalRecord::AssistantMessage { ref text } if text == "synthetic agent reply"
         ));
-        assert!(matches!(
-            parsed.records[4],
-            ExternalRecord::ToolCall { .. }
-        ));
+        assert!(matches!(parsed.records[4], ExternalRecord::ToolCall { .. }));
         assert!(matches!(
             parsed.records[5],
             ExternalRecord::ToolResult { ref tool_call_id, is_error: false, .. }
@@ -1852,7 +1882,10 @@ mod tests {
         ));
         assert!(matches!(
             parsed.records[6],
-            ExternalRecord::Usage { input_tokens: 120, output_tokens: 30 }
+            ExternalRecord::Usage {
+                input_tokens: 120,
+                output_tokens: 30
+            }
         ));
         assert!(matches!(
             parsed.records[7],

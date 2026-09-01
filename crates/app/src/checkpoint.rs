@@ -3,11 +3,9 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use pawork_storage::blob::{CheckpointService, FileSnapshot, RunCheckpoint};
-use pawork_domain::{
-    AgentEvent, ArtifactId, CancellationToken, CheckpointId, RunId, SessionId,
-};
+use pawork_domain::{AgentEvent, ArtifactId, CancellationToken, CheckpointId, RunId, SessionId};
 use pawork_engine::{LoopEventEmitter, PendingToolInvocation, WriteCheckpoint};
+use pawork_storage::blob::{CheckpointService, FileSnapshot, RunCheckpoint};
 
 /// 快照失败诊断的用户可见文案；与 protocol 投影的空 message 兜底一致。
 const SNAPSHOT_FAILED_MESSAGE: &str =
@@ -73,12 +71,7 @@ pub(crate) async fn snapshot_write_tools(
         let mut any = false;
         for path in &paths {
             match checkpoints
-                .snapshot_before_write(
-                    run_id.as_str(),
-                    call.tool_call_id.as_str(),
-                    roots,
-                    path,
-                )
+                .snapshot_before_write(run_id.as_str(), call.tool_call_id.as_str(), roots, path)
                 .await
             {
                 Ok(snap) => {

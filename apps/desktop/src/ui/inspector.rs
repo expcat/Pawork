@@ -338,8 +338,7 @@ impl AppView {
         // exited/killed/failed 显示 Close（清理 Host tombstone 与本地条目）；
         // 其余
         // 状态不占位。在途 close 期间禁用，防连点重复提交。
-        let terminal_close_action =
-            terminal_close_label(&self.projection.connection, terminal);
+        let terminal_close_action = terminal_close_label(&self.projection.connection, terminal);
         div()
             .flex()
             .flex_col()
@@ -560,10 +559,9 @@ impl AppView {
         let Some(id) = self.projection.terminal.session_id.clone() else {
             return;
         };
-        let Some(action) = terminal_close_label(
-            &self.projection.connection,
-            &self.projection.terminal,
-        ) else {
+        let Some(action) =
+            terminal_close_label(&self.projection.connection, &self.projection.terminal)
+        else {
             return;
         };
         let remove_on_success = action == "Close";

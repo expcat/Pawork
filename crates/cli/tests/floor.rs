@@ -7,11 +7,17 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use pawork_cli::channels::acp::wire::{ERROR_INVALID_REQUEST, ERROR_RESOURCE_NOT_FOUND, PROTOCOL_VERSION};
+use pawork_cli::channels::acp::wire::{
+    ERROR_INVALID_REQUEST, ERROR_RESOURCE_NOT_FOUND, PROTOCOL_VERSION,
+};
 use pawork_cli::channels::acp::{AcpCommandHost, AcpHost, JsonRpcError};
-use pawork_protocol::adapter::{ClientSessionId, ClientSessionState, InMemorySessionRegistryStore, SessionRegistry};
-use pawork_protocol::{AppQuery, AppQueryEnvelope, AppResponse, CommandSource, ActorIdentity, API_VERSION};
 use pawork_domain::{QueryId, Timestamp};
+use pawork_protocol::adapter::{
+    ClientSessionId, ClientSessionState, InMemorySessionRegistryStore, SessionRegistry,
+};
+use pawork_protocol::{
+    ActorIdentity, AppQuery, AppQueryEnvelope, AppResponse, CommandSource, API_VERSION,
+};
 use serde_json::{json, Value};
 
 use common::{collect_outbox, find_outbox, wait_until, MockScript};
@@ -634,7 +640,9 @@ async fn pump_loop(host: Arc<AcpHost>) {
 
 #[tokio::test]
 async fn resume_across_new_connection_uses_authoritative_registry() {
-    let mock = Arc::new(common::MockAcpCommandHost::new(MockScript::new().complete()));
+    let mock = Arc::new(common::MockAcpCommandHost::new(
+        MockScript::new().complete(),
+    ));
     let store = Arc::new(InMemorySessionRegistryStore::default());
     let registry = Arc::new(SessionRegistry::new(store).await.expect("registry"));
     let dir = temp_dir("acp-host-resume-");
@@ -1145,7 +1153,9 @@ async fn query_run_status(harness: &common::TestHarness, run_id: &pawork_domain:
 
 #[tokio::test]
 async fn diagnostic_events_are_not_emitted_on_acp_session_update() {
-    use pawork_protocol::{AppEvent, AppEventEnvelope, DiagnosticLevel, EventSource, EventStream, GlobalSequence};
+    use pawork_protocol::{
+        AppEvent, AppEventEnvelope, DiagnosticLevel, EventSource, EventStream, GlobalSequence,
+    };
     let harness =
         common::TestHarness::new(MockScript::new().text("started ").wait_for_cancellation()).await;
     let dir = temp_dir("acp-host-diagnostic-pin-");
@@ -1190,7 +1200,9 @@ async fn diagnostic_events_are_not_emitted_on_acp_session_update() {
         .await;
     let frames = harness.take_outbox();
     assert!(
-        frames.iter().all(|frame| frame.get("method").and_then(Value::as_str) != Some("session/update")),
+        frames
+            .iter()
+            .all(|frame| frame.get("method").and_then(Value::as_str) != Some("session/update")),
         "Diagnostic must not be encoded as ACP session/update, got {frames:?}"
     );
     harness
@@ -1252,14 +1264,20 @@ async fn interleaved_prompts_from_two_clients_keep_session_serial_and_cancel_unb
         .expect_err("same-session overlap from a second client must be rejected");
     assert_eq!(rejected.code, ERROR_INVALID_REQUEST);
     assert!(
-        rejected.message.contains("already has an active prompt turn"),
+        rejected
+            .message
+            .contains("already has an active prompt turn"),
         "got {}",
         rejected.message
     );
     let second = spawn_prompt(&harness, 53, &session2, "client-b other session");
     let sid2 = ClientSessionId::new(&session2);
     assert!(
-        wait_until(|| harness.host.pending_run(&sid2).is_some(), Duration::from_secs(10)).await,
+        wait_until(
+            || harness.host.pending_run(&sid2).is_some(),
+            Duration::from_secs(10)
+        )
+        .await,
         "second client prompt on another session must register without waiting for the first",
     );
     harness

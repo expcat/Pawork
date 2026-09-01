@@ -916,7 +916,10 @@ impl QuotaService {
     /// [`CacheRead::NoData`] when there is no cached entry. `scope` is still
     /// validated (`tenant_id` / `account_id` / `provider_id` non-empty); an
     /// invalid scope surfaces as a plain [`QuotaError`] via [`Result::Err`].
-    pub fn read_cache_only(&self, request: &crate::quota::QuotaRequest) -> Result<CacheRead, QuotaError> {
+    pub fn read_cache_only(
+        &self,
+        request: &crate::quota::QuotaRequest,
+    ) -> Result<CacheRead, QuotaError> {
         validate_scope(&request.scope)?;
         let key = CacheKey {
             scope: request.scope.clone(),
@@ -1086,7 +1089,10 @@ async fn read_impl(
     }
 }
 
-fn candidates_for(inner: &Inner, request: &crate::quota::QuotaRequest) -> Vec<Arc<dyn QuotaAdapter>> {
+fn candidates_for(
+    inner: &Inner,
+    request: &crate::quota::QuotaRequest,
+) -> Vec<Arc<dyn QuotaAdapter>> {
     inner
         .registry
         .lock()
@@ -1211,9 +1217,9 @@ async fn overlay_ledger_delta(
 mod tests {
     use std::sync::atomic::AtomicU64;
 
+    use crate::{InMemoryUsageLedger, UsageLedger, UsageRecord};
     use async_trait::async_trait;
     use pawork_domain::{CredentialKind, ResolvedCredential};
-    use crate::{InMemoryUsageLedger, UsageLedger, UsageRecord};
 
     use super::*;
     use crate::quota::{

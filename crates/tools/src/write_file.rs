@@ -2,6 +2,7 @@
 //!
 //! 原子写（tmp+sync+rename）、建父目录、保留已有文件权限。路径走 policy 安全内核。
 
+use async_trait::async_trait;
 use pawork_domain::AgentTool;
 use pawork_domain::ToolError;
 use pawork_domain::ToolEventSink;
@@ -12,9 +13,8 @@ use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
 };
-use async_trait::async_trait;
-use serde_json::{json, Value};
 use pawork_workspace::WorkspaceService;
+use serde_json::{json, Value};
 
 use crate::common::atomic_write;
 use crate::common::require_str;
@@ -205,10 +205,7 @@ mod tests {
         let (service, id, root, _ws_dir) = make_service();
         fs::write(root.join("c.txt"), "original").unwrap();
         write(&service, &id, &write_input("c.txt", "changed")).expect("write");
-        assert_eq!(
-            fs::read_to_string(root.join("c.txt")).unwrap(),
-            "changed"
-        );
+        assert_eq!(fs::read_to_string(root.join("c.txt")).unwrap(), "changed");
     }
 
     #[test]
@@ -216,12 +213,7 @@ mod tests {
         let (service, id, root, _ws_dir) = make_service();
         fs::write(root.join("ok.txt"), "hi").unwrap();
         let abs = root.join("ok.txt");
-        let err = write(
-            &service,
-            &id,
-            &write_input(&abs.display().to_string(), "x"),
-        )
-        .unwrap_err();
+        let err = write(&service, &id, &write_input(&abs.display().to_string(), "x")).unwrap_err();
         assert!(matches!(
             err,
             WriteFileError::Common(BuiltinToolError::PolicyPath(PathSafetyError::AbsolutePath))

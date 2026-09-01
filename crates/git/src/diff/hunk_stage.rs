@@ -17,8 +17,8 @@
 
 use std::path::{Path, PathBuf};
 
-use pawork_domain::CancellationToken;
 use crate::{GitError, GitRunner, StageService};
+use pawork_domain::CancellationToken;
 
 use super::model::{DiffFile, DiffHunk, DiffLine, FileStatus, HunkId, LineKind};
 

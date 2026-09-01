@@ -26,13 +26,19 @@ impl fmt::Display for Base64UrlDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Padding => {
-                write!(formatter, "padding character '=' is not accepted (unpadded input required)")
+                write!(
+                    formatter,
+                    "padding character '=' is not accepted (unpadded input required)"
+                )
             }
             Self::InvalidCharacter { index } => {
                 write!(formatter, "invalid base64url symbol at offset {index}")
             }
             Self::InvalidLastSymbol { index } => {
-                write!(formatter, "non-zero trailing bits in last symbol at offset {index}")
+                write!(
+                    formatter,
+                    "non-zero trailing bits in last symbol at offset {index}"
+                )
             }
             Self::InvalidLength => {
                 write!(formatter, "encoded input length is invalid (len % 4 == 1)")
@@ -192,10 +198,7 @@ mod tests {
     fn golden_vectors_decode_and_roundtrip() {
         for (input, expected) in GOLDEN_VECTORS {
             assert_eq!(decode(expected).expect("golden decode"), *input);
-            assert_eq!(
-                decode(&encode(input)).expect("roundtrip decode"),
-                *input
-            );
+            assert_eq!(decode(&encode(input)).expect("roundtrip decode"), *input);
         }
     }
 
@@ -203,10 +206,7 @@ mod tests {
     fn url_alphabet_symbols_are_covered() {
         // 62/63/62/63 → 显式覆盖 `-` 与 `_` 符号。
         assert_eq!(encode(&[0xFB, 0xFF, 0xBF]), "-_-_");
-        assert_eq!(
-            decode("-_-_").expect("decode -_-_"),
-            vec![0xFB, 0xFF, 0xBF]
-        );
+        assert_eq!(decode("-_-_").expect("decode -_-_"), vec![0xFB, 0xFF, 0xBF]);
     }
 
     #[test]

@@ -57,10 +57,7 @@ pub async fn run_plan(core: &AppCore, command: PlanCommand, json: bool) -> Resul
     }
 }
 
-async fn resolve_or_latest(
-    core: &AppCore,
-    session: Option<String>,
-) -> Result<SessionId, CliError> {
+async fn resolve_or_latest(core: &AppCore, session: Option<String>) -> Result<SessionId, CliError> {
     core.resolve_session(session.as_deref().unwrap_or("latest"))
         .await
         .map_err(CliError::from)
@@ -96,7 +93,11 @@ fn print_plan(snapshot: &PlanSnapshot, json: bool) -> Result<(), CliError> {
         review_status_label(snapshot.review_status)
     );
     for step in &snapshot.steps {
-        println!("  - [{}] {}", format!("{:?}", step.status).to_ascii_lowercase(), step.text);
+        println!(
+            "  - [{}] {}",
+            format!("{:?}", step.status).to_ascii_lowercase(),
+            step.text
+        );
     }
     Ok(())
 }

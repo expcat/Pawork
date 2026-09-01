@@ -151,7 +151,9 @@ impl IdempotencyStore {
     }
 
     fn ledger(&self) -> Result<&CommandLedger, IdempotencyError> {
-        self.ledger.as_ref().ok_or(IdempotencyError::StoreUnavailable)
+        self.ledger
+            .as_ref()
+            .ok_or(IdempotencyError::StoreUnavailable)
     }
 
     fn bump_replay(&self) {
@@ -612,7 +614,11 @@ mod tests {
         ));
         assert!(matches!(
             store
-                .check(&tenant("tenant-a"), &CommandId::from("cmd-2"), Some("key-1"))
+                .check(
+                    &tenant("tenant-a"),
+                    &CommandId::from("cmd-2"),
+                    Some("key-1")
+                )
                 .await
                 .expect("inflight"),
             IdempotencyCheck::InFlight(_)
@@ -638,7 +644,11 @@ mod tests {
             .expect("record");
         assert!(matches!(
             store
-                .check(&tenant("tenant-a"), &CommandId::from("cmd-3"), Some("key-1"))
+                .check(
+                    &tenant("tenant-a"),
+                    &CommandId::from("cmd-3"),
+                    Some("key-1")
+                )
                 .await
                 .expect("replay"),
             IdempotencyCheck::Replay(_)

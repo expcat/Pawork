@@ -7,7 +7,7 @@
 pub mod acp;
 
 pub use acp::{
+    wire::{JsonRpcMessage, PROTOCOL_VERSION},
     AcpClientAdapter, AcpClientAdapterFactory, AcpCommandHost, AcpHost, AcpHostError, CwdResolver,
     SessionResolver,
-    wire::{JsonRpcMessage, PROTOCOL_VERSION},
 };

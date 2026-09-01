@@ -12,9 +12,9 @@ mod identity;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use pawork_domain::{ConnectionId, SessionId, Timestamp};
-use async_trait::async_trait;
 use crate::{AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope};
+use async_trait::async_trait;
+use pawork_domain::{ConnectionId, SessionId, Timestamp};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -183,9 +183,15 @@ pub trait ClientAdapter: Send + Sync {
         &self,
         frame: AdapterWireFrame,
     ) -> Result<CanonicalClientRequest, AdapterError>;
-    async fn encode_payload(&self, frame: CanonicalCoreFrame) -> Result<AdapterWireFrame, AdapterError>;
+    async fn encode_payload(
+        &self,
+        frame: CanonicalCoreFrame,
+    ) -> Result<AdapterWireFrame, AdapterError>;
 
-    async fn decode(&self, frame: AdapterWireFrame) -> Result<CanonicalClientRequest, AdapterError> {
+    async fn decode(
+        &self,
+        frame: AdapterWireFrame,
+    ) -> Result<CanonicalClientRequest, AdapterError> {
         frame.validate()?;
         self.decode_payload(frame).await
     }
@@ -318,7 +324,10 @@ impl ClientAdapter for MockClientAdapter {
             .map_err(|error| AdapterError::InvalidFrame(error.to_string()))
     }
 
-    async fn encode_payload(&self, frame: CanonicalCoreFrame) -> Result<AdapterWireFrame, AdapterError> {
+    async fn encode_payload(
+        &self,
+        frame: CanonicalCoreFrame,
+    ) -> Result<AdapterWireFrame, AdapterError> {
         let (request_id, method) = match &frame {
             CanonicalCoreFrame::Response(envelope) => (
                 envelope.request_id.as_str().to_string(),
@@ -838,11 +847,11 @@ mod tests {
 
     #[tokio::test]
     async fn mock_adapter_encodes_all_canonical_frames() {
-        use pawork_domain::{CoreInstanceId, QueryId};
         use crate::{
             AppEvent, AppEventEnvelope, AppResponse, AppResponseEnvelope, EventSource, EventStream,
             GlobalSequence, API_VERSION,
         };
+        use pawork_domain::{CoreInstanceId, QueryId};
 
         let adapter = MockClientAdapter::new(snapshot()).expect("adapter");
         let response = CanonicalCoreFrame::Response(AppResponseEnvelope {

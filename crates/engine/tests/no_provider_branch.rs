@@ -41,7 +41,10 @@ fn forbidden_provider_names() -> Vec<&'static str> {
 #[test]
 fn guard_list_derives_from_channel_registry() {
     let names = forbidden_provider_names();
-    assert!(!names.is_empty(), "registry-derived guard list must not be empty");
+    assert!(
+        !names.is_empty(),
+        "registry-derived guard list must not be empty"
+    );
     for expected in [
         "chatgpt",
         "xai",

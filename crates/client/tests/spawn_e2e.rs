@@ -10,10 +10,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use pawork_domain::{SessionId, WorkspaceId};
 use pawork_client::headless::{BackpressurePolicy, PaworkClient, PaworkOptions, SdkErrorKind};
-use pawork_protocol::{AppCommand, AppQuery, AppResponse, EventStream};
+use pawork_domain::{SessionId, WorkspaceId};
 use pawork_protocol::headless::{CompatSource, ProtocolErrorKind, SdkCapability};
+use pawork_protocol::{AppCommand, AppQuery, AppResponse, EventStream};
 use serde_json::Value;
 
 fn pawork_binary() -> Option<PathBuf> {
@@ -74,7 +74,10 @@ async fn spawns_real_pawork_and_round_trips() {
         .expect("spawn + handshake");
 
     // 握手元信息。
-    assert_eq!(client.api_version().await, Some(pawork_protocol::API_VERSION));
+    assert_eq!(
+        client.api_version().await,
+        Some(pawork_protocol::API_VERSION)
+    );
     let instance_id = client.instance_id().await.expect("instance id");
     assert!(!instance_id.is_empty());
     let capabilities = client.capabilities().await;
@@ -186,10 +189,7 @@ async fn run_start_without_provider_returns_error_response() {
                 "PAWORK_DATA_DIR".into(),
                 data_dir.path().display().to_string(),
             ),
-            (
-                "PAWORK_HOME".into(),
-                data_dir.path().display().to_string(),
-            ),
+            ("PAWORK_HOME".into(), data_dir.path().display().to_string()),
         ],
         ..PaworkOptions::default()
     };

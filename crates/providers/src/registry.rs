@@ -14,8 +14,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Waker};
 
-use pawork_domain::{ModelCapabilities, ModelDefinition, ModelProvider, ResolvedCredential};
 use pawork_domain::{Cost, ModelId, ProviderId, TokenUsage};
+use pawork_domain::{ModelCapabilities, ModelDefinition, ModelProvider, ResolvedCredential};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -209,15 +209,15 @@ pub fn merge_capabilities(sources: &[&ModelCapabilities]) -> ModelCapabilities {
     // `hosted_tool_tags` 的空集合会被 serde skip 掉，不能把缺键误判为
     // 「未声明」。present 的每个证据来源都显式声明完整 ModelCapabilities，
     // 因此这里按真实集合再做一次交集，让空集合能够收窄为不支持。
-    let hosted_tool_tags = sources[1..].iter().fold(
-        sources[0].hosted_tool_tags.clone(),
-        |current, source| {
-            current
-                .intersection(&source.hosted_tool_tags)
-                .cloned()
-                .collect()
-        },
-    );
+    let hosted_tool_tags =
+        sources[1..]
+            .iter()
+            .fold(sources[0].hosted_tool_tags.clone(), |current, source| {
+                current
+                    .intersection(&source.hosted_tool_tags)
+                    .cloned()
+                    .collect()
+            });
 
     // 反序列化失败（如新字段未带 serde(default)）时整体降级为「全部不支持」
     // （fail-closed），不放大任何能力。
@@ -347,8 +347,9 @@ impl ModelRegistry {
         for entry in entries {
             // 覆盖语义：同 id 直接替换；别名以新条目为准（覆盖旧映射）。
             let normalized_id = normalized_model_id(&entry.id);
-            self.alias_to_id
-                .retain(|alias, mapped_id| mapped_id != &normalized_id && alias != normalized_id.as_str());
+            self.alias_to_id.retain(|alias, mapped_id| {
+                mapped_id != &normalized_id && alias != normalized_id.as_str()
+            });
             for alias in &entry.aliases {
                 let normalized_alias = alias.to_ascii_lowercase();
                 // 无 Result 的动态覆盖路径里，真实 model id 始终优先；与其它
@@ -912,11 +913,11 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use async_trait::async_trait;
+    use pawork_domain::CancellationToken;
     use pawork_domain::{
         CanonicalModelRequest, ModelResponseSummary, ProviderError, ProviderErrorKind,
         ProviderEventSink,
     };
-    use pawork_domain::CancellationToken;
 
     fn test_entry(id: &str, provider: &str, capabilities: ModelCapabilities) -> CatalogEntry {
         CatalogEntry {
@@ -1256,15 +1257,10 @@ mod tests {
         }];
         registry.extend_with(discovered);
 
-        let entry = registry
-            .resolve("deepseek-v4-pro")
-            .expect("覆盖后仍可解析");
+        let entry = registry.resolve("deepseek-v4-pro").expect("覆盖后仍可解析");
         assert_eq!(entry.provider, ProviderId::new("opencode-go"));
         assert_eq!(entry.context_window_tokens, 512_000, "动态发现覆盖窗口");
-        assert!(
-            entry.pricing.is_some(),
-            "动态发现的定价覆盖内置定价"
-        );
+        assert!(entry.pricing.is_some(), "动态发现的定价覆盖内置定价");
         assert_eq!(
             registry.resolve("deepseek").map(|entry| entry.id.clone()),
             Some(ModelId::new("deepseek-v4-pro"))
@@ -1929,9 +1925,7 @@ mod tests {
             vec![mock_definition("factory-only-model", v2)],
         )];
         registry.merge_provider_source(&extra);
-        let added = registry
-            .capability_evidence("factory-only-model")
-            .unwrap();
+        let added = registry.capability_evidence("factory-only-model").unwrap();
         assert_eq!(
             added.provider.as_ref().map(ProviderId::as_str),
             Some("factory-a")

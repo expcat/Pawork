@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use async_trait::async_trait;
-use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
 use crate::channels::{AcpCommandHost, AcpHostError};
-use pawork_domain::{CommandId, QueryId, Timestamp};
+use async_trait::async_trait;
 use pawork_app::gui_server::GuiHost;
+use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
+use pawork_domain::{CommandId, QueryId, Timestamp};
 use pawork_protocol::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, CommandSource, API_VERSION,
@@ -27,17 +27,13 @@ pub fn adapter_with_gui_approvals(core: AppCore) -> GuiHostAdapter {
 
 pub fn stamp_automation(mut envelope: AppCommandEnvelope, name: &str) -> AppCommandEnvelope {
     envelope.source = CommandSource::Automation;
-    envelope.identity = ActorIdentity::Automation {
-        name: name.into(),
-    };
+    envelope.identity = ActorIdentity::Automation { name: name.into() };
     envelope
 }
 
 pub fn stamp_query(mut envelope: AppQueryEnvelope, name: &str) -> AppQueryEnvelope {
     envelope.source = CommandSource::Automation;
-    envelope.identity = ActorIdentity::Automation {
-        name: name.into(),
-    };
+    envelope.identity = ActorIdentity::Automation { name: name.into() };
     envelope
 }
 
@@ -57,9 +53,7 @@ pub fn command_envelope(command: AppCommand, name: &str) -> AppCommandEnvelope {
             api_version: API_VERSION,
             command_id: CommandId::from(format!("cli-{name}-{n}")),
             source: CommandSource::Automation,
-            identity: ActorIdentity::Automation {
-                name: name.into(),
-            },
+            identity: ActorIdentity::Automation { name: name.into() },
             expected_revision: None,
             idempotency_key: None,
             issued_at: now_timestamp(),

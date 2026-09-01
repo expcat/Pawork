@@ -8,6 +8,8 @@
 
 use std::sync::Arc;
 
+use crate::ToolRegistry;
+use async_trait::async_trait;
 use pawork_domain::{
     AgentTool, ToolError, ToolErrorKind, ToolEventSink, ToolExecutionContext, ToolRequest,
     ToolResult,
@@ -16,9 +18,7 @@ use pawork_domain::{
     CancellationToken, ErrorCategory, ErrorContext, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind,
 };
-use async_trait::async_trait;
 use serde_json::Value;
-use crate::ToolRegistry;
 
 use crate::mcp::codec::apply_tool_result_budget;
 use crate::mcp::config::McpPermissions;
@@ -133,8 +133,7 @@ impl AgentTool for McpToolAdapter {
             supports_concurrency: self.capability.permits_concurrent_execution(),
             default_timeout_ms: None,
             max_output_bytes: self.permissions.max_output_bytes,
-            allowed_in_untrusted_workspace: self.read_only
-                || (self.trusted && self.host_trusted),
+            allowed_in_untrusted_workspace: self.read_only || (self.trusted && self.host_trusted),
         }
     }
 
@@ -250,14 +249,8 @@ pub fn register_discovered_tools(
             continue;
         }
         let adapter = Arc::new(
-            McpToolAdapter::new(
-                server,
-                tool,
-                peer.clone(),
-                permissions.clone(),
-                trusted,
-            )
-            .with_host_trusted(host_trusted),
+            McpToolAdapter::new(server, tool, peer.clone(), permissions.clone(), trusted)
+                .with_host_trusted(host_trusted),
         );
         descriptors.push(adapter.descriptor());
         registry.register(adapter)?;
@@ -300,10 +293,10 @@ fn mcp_error_result(error: &McpError) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::NoopToolEventSink;
     use pawork_domain::{ContentPart, RunId, WorkspaceId};
     use serde_json::json;
     use std::collections::BTreeSet;
-    use crate::NoopToolEventSink;
 
     #[derive(Clone)]
     struct MockPeer {

@@ -8,8 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
-use pawork_domain::CancellationToken;
 use crate::{validate_position_arg, GitError, GitRunner};
+use pawork_domain::CancellationToken;
 
 use super::model::{DiffFile, FileStatus};
 use super::parser::parse_unified_with_start;
@@ -541,7 +541,10 @@ mod tests {
             .find(|f| f.path == "fresh.txt")
             .expect("untracked file must appear");
         assert_eq!(fresh.status, FileStatus::Untracked);
-        assert!(fresh.hunks.is_empty(), "untracked is listed, not text-hunked");
+        assert!(
+            fresh.hunks.is_empty(),
+            "untracked is listed, not text-hunked"
+        );
     }
 
     #[tokio::test]
@@ -565,7 +568,10 @@ mod tests {
         run_git(&parent, &["add", "f.txt"]);
         run_git(&parent, &["commit", "-q", "-m", "init"]);
         let cacheinfo = format!("160000,{sha},sub");
-        run_git(&parent, &["update-index", "--add", "--cacheinfo", &cacheinfo]);
+        run_git(
+            &parent,
+            &["update-index", "--add", "--cacheinfo", &cacheinfo],
+        );
 
         let svc = DiffService::new(GitRunner::new(), &parent);
         let opts = DiffOptions {

@@ -1,7 +1,7 @@
 //! 取消树：递归取消子孙并以 Cancelled 释放 lease（不惩罚账号健康）。
 
-use pawork_domain::{AgentId, ModelId, ProviderId};
 use pawork_control_plane::credential::LeaseOutcome;
+use pawork_domain::{AgentId, ModelId, ProviderId};
 
 use crate::lifecycle::{OrchestrationEvent, WorkerTransition};
 use crate::task_graph::TaskId;
@@ -16,7 +16,6 @@ pub struct CancelTreeReceipt {
     /// 本次实际释放的 lease 数量。
     pub leases_released: u64,
 }
-
 
 impl AgentSupervisor {
     /// 取消树：取消 `agent_id` 及其全部后代（BFS 遍历 children 图）。
@@ -169,5 +168,4 @@ impl AgentSupervisor {
             })
         }
     }
-
 }

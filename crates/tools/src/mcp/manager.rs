@@ -4,9 +4,9 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pawork_domain::ToolResult;
-use pawork_domain::CancellationToken;
 use async_trait::async_trait;
+use pawork_domain::CancellationToken;
+use pawork_domain::ToolResult;
 use tokio::sync::Mutex;
 
 use crate::mcp::codec::{self, ClientPeer, RunningClient};
@@ -73,7 +73,10 @@ impl ManagedMcpClient {
         }
     }
 
-    pub(crate) fn with_defaults(connector: Arc<dyn McpConnector>, name: impl Into<Arc<str>>) -> Self {
+    pub(crate) fn with_defaults(
+        connector: Arc<dyn McpConnector>,
+        name: impl Into<Arc<str>>,
+    ) -> Self {
         Self::new(
             connector,
             ManagedMcpClientOptions {
@@ -416,9 +419,10 @@ mod tests {
             .call_tool(echo_call(), CancellationToken::new())
             .await
             .expect("call_tool");
-        let echoed = result.content.iter().any(|c| {
-            matches!(c, ContentPart::Text(t) if t.text.contains("echo: echo"))
-        });
+        let echoed = result
+            .content
+            .iter()
+            .any(|c| matches!(c, ContentPart::Text(t) if t.text.contains("echo: echo")));
         assert!(echoed, "expected echoed content, got {result:?}");
 
         client.ping().await.expect("ping");

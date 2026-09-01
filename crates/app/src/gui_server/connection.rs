@@ -14,10 +14,12 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use pawork_domain::{ConnectionId, GuiClientId, Timestamp};
-use pawork_protocol::{ActorIdentity, AppEventEnvelope, EventStream, GlobalSequence, GuiCapability};
+use pawork_protocol::{
+    ActorIdentity, AppEventEnvelope, EventStream, GlobalSequence, GuiCapability,
+};
+use pawork_transport::ConnectionLocality;
 use thiserror::Error;
 use tokio::sync::mpsc;
-use pawork_transport::ConnectionLocality;
 
 /// 默认心跳超时：连接在超时内没有任何入站帧即视为断线。
 pub const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);

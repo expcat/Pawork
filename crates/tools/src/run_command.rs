@@ -3,6 +3,7 @@
 //! 非 PTY 执行：经 SandboxSelector 选择隔离后端，并保留流式输出、timeout、
 //! cancel、资源限制与进程树清理语义。审批走 scheduler + policy。
 
+use async_trait::async_trait;
 use pawork_domain::AgentTool;
 use pawork_domain::ToolError;
 use pawork_domain::ToolEventSink;
@@ -15,14 +16,13 @@ use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
 };
+use pawork_exec::CancellationToken as ExecCancellationToken;
 use pawork_exec::{
     default_env_allowlist, default_secret_paths, CommandSpec, FilesystemPolicy, NetworkMode,
     ProcessEvent, ProcessRuntime, ResourceLimits, SandboxPolicy, SandboxProcessSpec,
     SandboxSelector,
 };
-use pawork_exec::CancellationToken as ExecCancellationToken;
 use pawork_workspace::WorkspaceService;
-use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::common::opt_str;
@@ -141,10 +141,7 @@ impl AgentTool for RunCommandTool {
 /// 把 domain 取消令牌桥到 exec 令牌：已取消则立刻 cancel；否则后台等待后再 cancel。
 fn bridge_exec_cancel(
     domain: &CancellationToken,
-) -> (
-    ExecCancellationToken,
-    Option<tokio::task::JoinHandle<()>>,
-) {
+) -> (ExecCancellationToken, Option<tokio::task::JoinHandle<()>>) {
     let exec = ExecCancellationToken::new();
     if domain.is_cancelled() {
         exec.cancel();
@@ -700,7 +697,14 @@ mod tests {
         keys.sort_unstable();
         assert_eq!(
             keys,
-            vec!["attempted", "backend", "fallback", "isolation", "limits", "note"]
+            vec![
+                "attempted",
+                "backend",
+                "fallback",
+                "isolation",
+                "limits",
+                "note"
+            ]
         );
 
         let limits = &sandbox["limits"];

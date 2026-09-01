@@ -7,23 +7,23 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use pawork_domain::{
-    CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ProviderEventSink,
-    ProviderStreamEvent, ToolResult,
-};
-use pawork_domain::{
     AgentEvent, ApprovalDecision, ArtifactId, CancellationToken, CheckpointId, ContentPart,
     ErrorCategory, ErrorContext, EventSequence, Message, MessageId, MessageMetadata, MessageRole,
     ModelId, RequestId, TextContent, TokenUsage, ToolCallId, ToolResultContent,
+};
+use pawork_domain::{
+    CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError, ProviderEventSink,
+    ProviderStreamEvent, ToolResult,
 };
 
 use crate::appender::{tool_results_message, AssembledTurn, ToolCallResult};
 use crate::context::{
     compute_compaction, reply_primer_tokens, AutoCompactionReason, ContextBudgetBreakdown,
-    InjectedLayer, ToolSchema, TokenEstimator, TurnContext,
+    InjectedLayer, TokenEstimator, ToolSchema, TurnContext,
 };
 use crate::event::{AgentEventSink, EngineError, EventEmitter, LoopEventEmitter, LoopSink};
-use crate::session_turn::SessionTurn;
 use crate::run_turn;
+use crate::session_turn::SessionTurn;
 
 /// 每 run 默认最大工具轮数（防失控）。达到后事件化终止，不再开下一轮 stream。
 pub const DEFAULT_MAX_TOOL_ROUNDS: u64 = 20;
@@ -268,10 +268,7 @@ pub async fn run_session(
                 let (to_run, mut decided) = if mismatch {
                     let mut decided = BTreeMap::new();
                     for invocation in &invocations {
-                        decided.insert(
-                            invocation.tool_call_id.clone(),
-                            ApprovalDecision::Denied,
-                        );
+                        decided.insert(invocation.tool_call_id.clone(), ApprovalDecision::Denied);
                     }
                     (Vec::new(), decided)
                 } else {
@@ -364,8 +361,7 @@ pub async fn run_session(
                     }
                 }
 
-                let tool_message =
-                    tool_results_message(loop_ctx.next_message_id(), results);
+                let tool_message = tool_results_message(loop_ctx.next_message_id(), results);
                 emitter
                     .emit(AgentEvent::MessageCommitted {
                         message: tool_message.clone(),
@@ -378,8 +374,7 @@ pub async fn run_session(
 
                 tool_rounds += 1;
                 if tool_rounds >= max_tool_rounds {
-                    let message =
-                        format!("maximum tool rounds exceeded ({max_tool_rounds})");
+                    let message = format!("maximum tool rounds exceeded ({max_tool_rounds})");
                     emitter
                         .emit(AgentEvent::RunFailed {
                             error: ErrorContext {
@@ -547,8 +542,7 @@ async fn apply_context_limits(
     estimate: &mut InputEstimate,
     cancel: CancellationToken,
 ) -> Result<(), EngineError> {
-    let (Some(limits), Some(estimator)) =
-        (context.limits.as_ref(), context.estimator.as_deref())
+    let (Some(limits), Some(estimator)) = (context.limits.as_ref(), context.estimator.as_deref())
     else {
         return Ok(());
     };
@@ -821,9 +815,7 @@ async fn compact_messages(
     let summary = Message {
         id: loop_ctx.next_message_id(),
         role: MessageRole::User,
-        content: vec![ContentPart::Text(TextContent {
-            text: summary_text,
-        })],
+        content: vec![ContentPart::Text(TextContent { text: summary_text })],
         metadata: Default::default(),
     };
     emitter
@@ -935,11 +927,14 @@ fn pending_invocations(assembled: &AssembledTurn) -> Vec<PendingToolInvocation> 
         .tool_call_order
         .iter()
         .filter_map(|id| {
-            assembled.tool_calls.get(id).map(|call| PendingToolInvocation {
-                tool_call_id: id.clone(),
-                name: call.name.clone(),
-                arguments: call.arguments(),
-            })
+            assembled
+                .tool_calls
+                .get(id)
+                .map(|call| PendingToolInvocation {
+                    tool_call_id: id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments(),
+                })
         })
         .collect()
 }
@@ -1066,15 +1061,15 @@ mod tests {
 
     use async_trait::async_trait;
     use pawork_domain::{
-        AgentTool, CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError,
-        ProviderEventSink, ToolDefinition, ToolError, ToolErrorKind, ToolEventSink,
-        ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
-    };
-    use pawork_domain::{
         AgentEvent, AgentEventEnvelope, ApprovalDecision, ArtifactId, ArtifactReference,
         CancellationToken, CheckpointId, ContentPart, ErrorCategory, EventId, EventSequence,
         Message, MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId, SessionId,
         StopReason, TextContent, Timestamp, TokenUsage, ToolCallId, WorkspaceId,
+    };
+    use pawork_domain::{
+        AgentTool, CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError,
+        ProviderEventSink, ToolDefinition, ToolError, ToolErrorKind, ToolEventSink,
+        ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
     };
     use pawork_testkit::{MockProvider, MockScript, MockTool};
 
@@ -1360,9 +1355,7 @@ mod tests {
         sink.snapshot()
             .into_iter()
             .filter_map(|envelope| match envelope.payload {
-                AgentEvent::MessageCommitted { message }
-                    if message.role == MessageRole::Tool =>
-                {
+                AgentEvent::MessageCommitted { message } if message.role == MessageRole::Tool => {
                     Some(message)
                 }
                 _ => None,
@@ -1504,7 +1497,8 @@ mod tests {
                     json: "{}".into(),
                 })
                 .await?;
-                sink.emit(ProviderStreamEvent::ToolCallCompleted { id }).await?;
+                sink.emit(ProviderStreamEvent::ToolCallCompleted { id })
+                    .await?;
                 StopReason::ToolUse
             };
             sink.emit(ProviderStreamEvent::ResponseCompleted(stop_reason.clone()))
@@ -1542,9 +1536,7 @@ mod tests {
         ]));
         let echo = MockTool::new(
             "echo",
-            ToolResult::success(vec![ContentPart::Text(TextContent {
-                text: "hi".into(),
-            })]),
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "hi".into() })]),
         );
         let ctx = TestContext::new(vec![echo]);
         let sink = RecordingEvents::default();
@@ -1607,15 +1599,11 @@ mod tests {
         ]));
         let read_file = MockTool::new(
             "read_file",
-            ToolResult::success(vec![ContentPart::Text(TextContent {
-                text: "a".into(),
-            })]),
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "a".into() })]),
         );
         let list_directory = MockTool::new(
             "list_directory",
-            ToolResult::success(vec![ContentPart::Text(TextContent {
-                text: ".".into(),
-            })]),
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: ".".into() })]),
         );
         let ctx = TestContext::new(vec![read_file.clone(), list_directory.clone()]);
         let sink = RecordingEvents::default();
@@ -1871,11 +1859,10 @@ mod tests {
         ]));
         let write = MockTool::new(
             "write_file",
-            ToolResult::success(vec![ContentPart::Text(TextContent {
-                text: "ok".into(),
-            })]),
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "ok".into() })]),
         );
-        let ctx = ScriptedApprovalCtx::new(vec![write.clone()], vec![ApprovalDecision::ApprovedOnce]);
+        let ctx =
+            ScriptedApprovalCtx::new(vec![write.clone()], vec![ApprovalDecision::ApprovedOnce]);
         let sink = RecordingEvents::default();
 
         run_session(
@@ -1907,12 +1894,13 @@ mod tests {
         assert!(requested < responded);
         assert!(responded < started);
         assert_eq!(write.calls().len(), 1);
-        let decision = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
+        let decision = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
                 AgentEvent::ToolApprovalResponded { decision, .. } => Some(decision),
                 _ => None,
-            }
-        });
+            });
         assert_eq!(decision, Some(ApprovalDecision::ApprovedOnce));
     }
 
@@ -1971,9 +1959,7 @@ mod tests {
         ]));
         let write = MockTool::new(
             "write_file",
-            ToolResult::success(vec![ContentPart::Text(TextContent {
-                text: "ok".into(),
-            })]),
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "ok".into() })]),
         );
         let ctx = EmptyGateCtx::new(vec![write.clone()]);
         let sink = RecordingEvents::default();
@@ -2006,9 +1992,8 @@ mod tests {
             content_hash: None,
             label: Some("out".into()),
         };
-        let mut result = ToolResult::success(vec![ContentPart::Text(TextContent {
-            text: "ok".into(),
-        })]);
+        let mut result =
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "ok".into() })]);
         result.artifacts = vec![artifact.clone()];
         let provider = RecordingProvider::new(MockProvider::sequence(vec![
             MockScript::new()
@@ -2033,25 +2018,27 @@ mod tests {
         .await
         .expect("tool artifacts");
 
-        let completed = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
+        let completed = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
                 AgentEvent::ToolExecutionCompleted { result, .. } => Some(result),
                 _ => None,
-            }
-        });
+            });
         let completed = completed.expect("ToolExecutionCompleted");
         assert_eq!(completed.artifacts, vec![artifact.clone()]);
 
-        let tool_message = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
-                AgentEvent::MessageCommitted { message }
-                    if message.role == MessageRole::Tool =>
-                {
-                    Some(message)
-                }
-                _ => None,
-            }
-        });
+        let tool_message =
+            sink.snapshot()
+                .into_iter()
+                .find_map(|envelope| match envelope.payload {
+                    AgentEvent::MessageCommitted { message }
+                        if message.role == MessageRole::Tool =>
+                    {
+                        Some(message)
+                    }
+                    _ => None,
+                });
         let tool_message = tool_message.expect("tool message");
         match &tool_message.content[0] {
             ContentPart::ToolResult(content) => {
@@ -2063,9 +2050,8 @@ mod tests {
 
     #[tokio::test]
     async fn sandbox_fallback_emits_diagnostic() {
-        let mut result = ToolResult::success(vec![ContentPart::Text(TextContent {
-            text: "ok".into(),
-        })]);
+        let mut result =
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "ok".into() })]);
         result.metadata = serde_json::json!({
             "sandbox": {
                 "backend": "native_restricted",
@@ -2101,14 +2087,15 @@ mod tests {
         .await
         .expect("sandbox fallback");
 
-        let diagnostic = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
+        let diagnostic = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
                 AgentEvent::Diagnostic { code, details } if code == "sandbox.fallback" => {
                     Some(details)
                 }
                 _ => None,
-            }
-        });
+            });
         let details = diagnostic.expect("sandbox.fallback Diagnostic");
         assert_eq!(details["fallback"], true);
         assert!(details["message"]
@@ -2147,12 +2134,13 @@ mod tests {
         .await
         .expect_err("provider error");
 
-        let recorded = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
+        let recorded = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
                 AgentEvent::RunFailed { usage, .. } => usage,
                 _ => None,
-            }
-        });
+            });
         assert_eq!(recorded, Some(usage));
     }
 
@@ -2229,9 +2217,7 @@ mod tests {
         ]));
         let write = MockTool::new(
             "write_file",
-            ToolResult::success(vec![ContentPart::Text(TextContent {
-                text: "ok".into(),
-            })]),
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "ok".into() })]),
         );
         let ctx = CheckpointingCtx::new(vec![write]);
         let sink = RecordingEvents::default();
@@ -2259,21 +2245,19 @@ mod tests {
             .position(|name| *name == "ToolExecutionStarted")
             .expect("started");
         assert!(created < started);
-        let checkpoint = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
+        let checkpoint = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
                 AgentEvent::CheckpointCreated {
                     checkpoint_id,
                     artifacts,
                 } => Some((checkpoint_id, artifacts)),
                 _ => None,
-            }
-        });
+            });
         assert_eq!(
             checkpoint,
-            Some((
-                CheckpointId::from("run-1/mock-tool-call-0"),
-                Vec::new()
-            ))
+            Some((CheckpointId::from("run-1/mock-tool-call-0"), Vec::new()))
         );
     }
 
@@ -2287,9 +2271,7 @@ mod tests {
         ]));
         let write = MockTool::new(
             "write_file",
-            ToolResult::success(vec![ContentPart::Text(TextContent {
-                text: "ok".into(),
-            })]),
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "ok".into() })]),
         );
         let ctx = CheckpointingCtx::new(vec![write]);
         let sink = RecordingEvents::default();
@@ -2324,10 +2306,7 @@ mod tests {
 
         let snapshot = sink.snapshot();
         let sequences: Vec<u64> = snapshot.iter().map(|e| e.sequence.value()).collect();
-        assert_eq!(
-            sequences,
-            (1..=snapshot.len() as u64).collect::<Vec<_>>()
-        );
+        assert_eq!(sequences, (1..=snapshot.len() as u64).collect::<Vec<_>>());
         assert_eq!(
             event_type(&snapshot.last().expect("last").payload),
             "CheckpointRolledBack"
@@ -2374,12 +2353,9 @@ mod tests {
         match &tool.content[0] {
             ContentPart::ToolResult(result) => {
                 assert!(result.is_error);
-                assert!(
-                    result
-                        .content
-                        .iter()
-                        .any(|part| matches!(part, ContentPart::Text(text) if text.text.contains("denied")))
-                );
+                assert!(result.content.iter().any(
+                    |part| matches!(part, ContentPart::Text(text) if text.text.contains("denied"))
+                ));
             }
             other => panic!("expected tool result, got {other:?}"),
         }
@@ -2398,9 +2374,7 @@ mod tests {
         ]));
         let write = MockTool::new(
             "write_file",
-            ToolResult::success(vec![ContentPart::Text(TextContent {
-                text: "ok".into(),
-            })]),
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "ok".into() })]),
         );
         let ctx = ScriptedApprovalCtx::new(
             vec![write.clone()],
@@ -2514,8 +2488,7 @@ mod tests {
     impl crate::ProcessTreeCleaner for CountingCleaner {
         fn cleanup(&self, run_id: &RunId) -> usize {
             assert_eq!(run_id, &self.run);
-            self.count
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             1
         }
     }
@@ -2707,9 +2680,7 @@ mod tests {
         ]));
         let echo = MockTool::new(
             "echo",
-            ToolResult::success(vec![ContentPart::Text(TextContent {
-                text: "hi".into(),
-            })]),
+            ToolResult::success(vec![ContentPart::Text(TextContent { text: "hi".into() })]),
         );
         let ctx = TestContext::new(vec![echo]);
         let sink = RecordingEvents::default();
@@ -2742,9 +2713,8 @@ mod tests {
 
     #[tokio::test]
     async fn injected_layers_prepend_system_and_emit_diagnostic() {
-        let provider = RecordingProvider::new(MockProvider::new(
-            MockScript::new().text("ok").complete(),
-        ));
+        let provider =
+            RecordingProvider::new(MockProvider::new(MockScript::new().text("ok").complete()));
         let sink = RecordingEvents::default();
         let ctx = TestContext::new(Vec::new());
         let mut context = TurnContext {
@@ -2852,21 +2822,25 @@ mod tests {
         assert!(summary_commit.0 < completed);
         assert!(!types.contains(&"Diagnostic"));
 
-        let completed = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
+        let completed = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
                 AgentEvent::CompactionCompleted {
                     summary_message_id,
                     compacted_through,
- } => Some((summary_message_id, compacted_through)),
+                } => Some((summary_message_id, compacted_through)),
                 _ => None,
-            }
-        }).expect("CompactionCompleted payload");
-        let started_payload = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
+            })
+            .expect("CompactionCompleted payload");
+        let started_payload = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
                 AgentEvent::CompactionStarted { source_event_count } => Some(source_event_count),
                 _ => None,
-            }
-        }).expect("CompactionStarted payload");
+            })
+            .expect("CompactionStarted payload");
         // 默认 host 回调返回 None：source_event_count 用被压缩消息数（6 - retained 2）。
         assert_eq!(started_payload, 4);
         // 无 outcome 的 completed 水位 fail-safe 为 0：不得取新摘要自身 sequence。
@@ -2885,8 +2859,14 @@ mod tests {
         assert_eq!(requests[1].messages[0].role, MessageRole::User);
         assert!(matches!(&requests[1].messages[0].content[0],
             ContentPart::Text(text) if text.text == "summary of earlier work"));
-        assert!(requests[1].messages[1].id.as_str().contains("msg-history-4"));
-        assert!(requests[1].messages[2].id.as_str().contains("msg-history-5"));
+        assert!(requests[1].messages[1]
+            .id
+            .as_str()
+            .contains("msg-history-4"));
+        assert!(requests[1].messages[2]
+            .id
+            .as_str()
+            .contains("msg-history-5"));
     }
 
     #[tokio::test]
@@ -2894,10 +2874,9 @@ mod tests {
         let messages: Vec<Message> = (0..10)
             .map(|n| user_text(&format!("msg-history-{n}"), &"x".repeat(400)))
             .collect();
-        let provider =
-            RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
-                .text("ok")
-                .complete()]));
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
+            .text("ok")
+            .complete()]));
         let ctx = TestContext::new(Vec::new());
         let sink = RecordingEvents::default();
 
@@ -2918,25 +2897,30 @@ mod tests {
         assert_eq!(requests.len(), 1);
         let request = &requests[0];
         // 永不丢最后 retained_messages 条：仅保留 msg-8 / msg-9。
-        assert_eq!(request.messages, vec![messages[8].clone(), messages[9].clone()]);
+        assert_eq!(
+            request.messages,
+            vec![messages[8].clone(), messages[9].clone()]
+        );
         assert!(estimate_request_tokens(request) <= 250);
 
-        let diagnostic = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
+        let diagnostic = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
                 AgentEvent::Diagnostic { code, details } => Some((code, details)),
                 _ => None,
-            }
-        }).expect("Diagnostic");
+            })
+            .expect("Diagnostic");
         assert_eq!(diagnostic.0, "context_hard_truncated");
         assert_eq!(diagnostic.1["dropped_messages"], serde_json::json!(8));
         // 2 * (framing 4 + role 1 + 100) + primer 3 = 213
-        assert_eq!(diagnostic.1["estimated_input_tokens"], serde_json::json!(213));
+        assert_eq!(
+            diagnostic.1["estimated_input_tokens"],
+            serde_json::json!(213)
+        );
 
         // ContextPrepared 重发反映截断后值；首条反映截断前。
-        assert_eq!(
-            context_prepared_events(&sink),
-            vec![(10, 1053), (2, 213)]
-        );
+        assert_eq!(context_prepared_events(&sink), vec![(10, 1053), (2, 213)]);
         assert!(!sink.types().contains(&"CompactionStarted"));
     }
 
@@ -3022,19 +3006,25 @@ mod tests {
         .expect("soft-limit with host outcome");
 
         assert_eq!(ctx.calls.load(Ordering::SeqCst), 1);
-        let started = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
+        let started = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
                 AgentEvent::CompactionStarted { source_event_count } => Some(source_event_count),
                 _ => None,
-            }
-        }).expect("CompactionStarted");
+            })
+            .expect("CompactionStarted");
         assert_eq!(started, 99);
-        let completed = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
-                AgentEvent::CompactionCompleted { compacted_through, .. } => Some(compacted_through),
+        let completed = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
+                AgentEvent::CompactionCompleted {
+                    compacted_through, ..
+                } => Some(compacted_through),
                 _ => None,
-            }
-        }).expect("CompactionCompleted");
+            })
+            .expect("CompactionCompleted");
         assert_eq!(completed, EventSequence::new(42));
     }
 
@@ -3085,9 +3075,9 @@ mod tests {
             }
         }
 
-        let provider = RecordingProvider::new(MockProvider::sequence(vec![
-            MockScript::new().text("summary that will not be committed").complete(),
-        ]));
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
+            .text("summary that will not be committed")
+            .complete()]));
         let ctx = FailingCompactCtx {
             inner: TestContext::new(Vec::new()),
         };
@@ -3122,9 +3112,9 @@ mod tests {
 
     #[tokio::test]
     async fn manual_compaction_emits_events_and_returns_rebuilt_messages() {
-        let provider = RecordingProvider::new(MockProvider::sequence(vec![
-            MockScript::new().text("manual summary").complete(),
-        ]));
+        let provider = RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
+            .text("manual summary")
+            .complete()]));
         let messages = numbered_messages(5, "manual body");
         let ctx = TestContext::new(Vec::new());
         let sink = RecordingEvents::default();
@@ -3151,17 +3141,25 @@ mod tests {
         // 不是 run：没有 RunStarted / RunCancelled / ContextPrepared。
         assert_eq!(
             sink.types(),
-            vec!["CompactionStarted", "MessageCommitted.user", "CompactionCompleted"]
+            vec![
+                "CompactionStarted",
+                "MessageCommitted.user",
+                "CompactionCompleted"
+            ]
         );
         let requests = provider.requests();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].tools.is_empty());
-        let completed = sink.snapshot().into_iter().find_map(|envelope| {
-            match envelope.payload {
-                AgentEvent::CompactionCompleted { summary_message_id, .. } => Some(summary_message_id),
+        let completed = sink
+            .snapshot()
+            .into_iter()
+            .find_map(|envelope| match envelope.payload {
+                AgentEvent::CompactionCompleted {
+                    summary_message_id, ..
+                } => Some(summary_message_id),
                 _ => None,
-            }
-        }).expect("CompactionCompleted");
+            })
+            .expect("CompactionCompleted");
         assert_eq!(rebuilt[0].id, completed);
     }
 

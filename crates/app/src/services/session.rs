@@ -235,14 +235,11 @@ impl SessionService {
         let tool_calls: Vec<_> = snapshot.tool_calls.clone();
         let mut sequence = self.next_sequence(core, session_id).await?;
         for run_id in running {
-            for call in tool_calls
-                .iter()
-                .filter(|call| {
-                    call.run_id == run_id
-                        && call.state != "completed"
-                        && call.state != "waiting_for_approval"
-                })
-            {
+            for call in tool_calls.iter().filter(|call| {
+                call.run_id == run_id
+                    && call.state != "completed"
+                    && call.state != "waiting_for_approval"
+            }) {
                 core.append_payload(
                     session_id,
                     &run_id,
@@ -626,8 +623,7 @@ mod tests {
             .await;
         }
 
-        let backend: std::sync::Arc<dyn SecretBackend> =
-            std::sync::Arc::new(MemoryBackend::new());
+        let backend: std::sync::Arc<dyn SecretBackend> = std::sync::Arc::new(MemoryBackend::new());
         let mut core = crate::AppCore::from_config_inner(
             PaworkConfig::default(),
             None,
@@ -671,15 +667,10 @@ mod tests {
         core.shutdown().await.expect("shutdown");
 
         // 幂等：再次装配不重复收口（事件数不变，run 仍 failed）。
-        let mut restarted = crate::AppCore::from_config_inner(
-            PaworkConfig::default(),
-            None,
-            None,
-            backend,
-            true,
-        )
-        .await
-        .expect("second core");
+        let mut restarted =
+            crate::AppCore::from_config_inner(PaworkConfig::default(), None, None, backend, true)
+                .await
+                .expect("second core");
         restarted
             .attach_workspace(dir.path())
             .expect("attach workspace 2");
@@ -760,17 +751,11 @@ mod tests {
         use pawork_auth::{MemoryBackend, SecretBackend};
         use pawork_workspace::config::PaworkConfig;
 
-        let backend: std::sync::Arc<dyn SecretBackend> =
-            std::sync::Arc::new(MemoryBackend::new());
-        let mut core = crate::AppCore::from_config_inner(
-            PaworkConfig::default(),
-            None,
-            None,
-            backend,
-            true,
-        )
-        .await
-        .expect("core");
+        let backend: std::sync::Arc<dyn SecretBackend> = std::sync::Arc::new(MemoryBackend::new());
+        let mut core =
+            crate::AppCore::from_config_inner(PaworkConfig::default(), None, None, backend, true)
+                .await
+                .expect("core");
         core.attach_workspace(workspace).expect("attach workspace");
         core.open_store(path).await.expect("open store");
         core
@@ -860,7 +845,10 @@ mod tests {
             run_failed_at < responded_at && responded_at < completed_at,
             "approval resolution must replay after the sweep RunFailed"
         );
-        let snapshot = store.projection_snapshot(&session).await.expect("replayable");
+        let snapshot = store
+            .projection_snapshot(&session)
+            .await
+            .expect("replayable");
         assert_eq!(snapshot.tool_calls[0].state, "completed");
         let result = snapshot.tool_calls[0]
             .result

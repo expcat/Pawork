@@ -13,25 +13,26 @@ mod sandbox;
 mod tree;
 
 pub use cancel::CancellationToken;
-pub use process::{
-    CommandSpec, ProcessError, ProcessEvent, ProcessHandle, ProcessInput, ProcessLimits,
-    ProcessOutput, ProcessRuntime,
-};
 #[cfg(target_os = "linux")]
 // R0 D21:包外零消费,降为 crate 内保留;R7 沙箱演进将重新消费,届时恢复可见性。
 #[allow(unused_imports)]
 pub(crate) use process::LinuxLandlockPolicy;
-pub use sandbox::{
-    default_env_allowlist, default_secret_paths, BackendSelection, FilesystemPolicy, IsolationLevel,
-    NativeRestricted, NetworkMode, ProbeOutcome, ResourceLimits, SandboxBackend, SandboxError,
-    SandboxInteractiveProcess, SandboxPolicy, SandboxProcess, SandboxProcessSpec, SandboxSelector,
+pub use process::{
+    CommandSpec, ProcessError, ProcessEvent, ProcessHandle, ProcessInput, ProcessLimits,
+    ProcessOutput, ProcessRuntime,
 };
-pub use tree::ProcessTreeGuard;
 pub use pty::{
-    OwnerSessionId, OutputCursor, PtyCreateSpec, PtyError, PtyEvent, PtyOutputChunk, PtyService,
+    OutputCursor, OwnerSessionId, PtyCreateSpec, PtyError, PtyEvent, PtyOutputChunk, PtyService,
     PtySessionState, PtySnapshot, PtyWindowSize, RingBuffer, RingReadError, TerminalId,
     DEFAULT_BUFFER_CAPACITY,
 };
+pub use sandbox::{
+    default_env_allowlist, default_secret_paths, BackendSelection, FilesystemPolicy,
+    IsolationLevel, NativeRestricted, NetworkMode, ProbeOutcome, ResourceLimits, SandboxBackend,
+    SandboxError, SandboxInteractiveProcess, SandboxPolicy, SandboxProcess, SandboxProcessSpec,
+    SandboxSelector,
+};
+pub use tree::ProcessTreeGuard;
 
 #[allow(unused_imports)]
 pub(crate) use os::linux::{

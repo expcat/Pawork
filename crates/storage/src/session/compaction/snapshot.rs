@@ -125,8 +125,7 @@ mod tests {
                 "recovery_branch_id": "compaction-recovery-main-6",
             })
         );
-        let decoded: CompactionSnapshot =
-            serde_json::from_value(value).expect("deserialize");
+        let decoded: CompactionSnapshot = serde_json::from_value(value).expect("deserialize");
         assert_eq!(decoded, sample());
     }
 

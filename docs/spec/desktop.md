@@ -55,7 +55,7 @@ flowchart LR
 
 | ID | 要求 | 状态 |
 | --- | --- | --- |
-| DESK-01 | 用户能添加/选择真实项目并新建/切换会话，选中态与标题在长列表中可辨认。 | 项目选择、新建和切换生产入口已实现；稳定的多项目集合与 Session 归属持久化列入 ROADMAP P1。 |
+| DESK-01 | 用户能添加/选择真实项目并新建/切换会话，选中态与标题在长列表中可辨认。 | 项目选择、新建和切换生产入口已实现；多项目集合与 Session 归属已持久化并通过重启复验。 |
 | DESK-02 | Timeline 能按确定顺序投影历史和 live 事件，去重且不跨 Run 串线。 | 已实现；共享 reducer/golden。 |
 | DESK-03 | 流式输出时默认跟随底部；用户上滚后脱钩，显式回底后重挂。 | 生产逻辑已实现；长会话与性能按风险定向重验。 |
 | DESK-04 | 工具请求以审批卡呈现 ApproveOnce/ApproveForRun/Deny；取消动作可见。 | 生产逻辑已实现；本轮真实 `write_file` 审批路径已通过。 |
@@ -63,7 +63,7 @@ flowchart LR
 | DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 生产逻辑已实现；全部菜单和滚轮边界仍需完整人工走查。 |
 | DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | 生产逻辑已实现；真实 IME、paste 与系统级输入仍待人工验收。 |
 | DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 本轮真实 Changes 与 Terminal 主路径已通过；Resources 和跨会话全矩阵仍按后续任务复验。 |
-| DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启仍是 P1 缺口。 |
+| DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启已复验。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 生产响应式路径已实现；完整视觉签字仍待人工验收。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；本轮主路径可经 AX 驱动，全组件 VoiceOver 与 Windows/Linux 平台仍未验收。 |
 | DESK-12 | Settings 从 TaskRail 进入，以 Host capability 驱动供应商认证/模型目录；返回时保持工作台状态，secure input 不泄漏 AX value。 | 壳与只读供应商页已实现（SET-3）：gear / Rail / 返回与 stale 只读状态落地，进入退出不动会话、草稿、Inspector、Run；认证写操作与 secure input 属 SET-4/SET-5，见 [settings.md](settings.md)。 |

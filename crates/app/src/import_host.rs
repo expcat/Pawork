@@ -3,13 +3,15 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use pawork_workspace::import::mcp::McpServerConfig as CompatMcpServer;
-use pawork_workspace::import::{CompatPayload, ExternalSource, LocalSessionFile, LocalSessionSource};
-use pawork_workspace::config::{workspace_config_path, PaworkConfig};
 use pawork_domain::SessionId;
 use pawork_storage::session::{
     CompatImportReport as SessionCompatReport, ExternalSource as SessionExternalSource,
     PiImportReport, SessionExport,
+};
+use pawork_workspace::config::{workspace_config_path, PaworkConfig};
+use pawork_workspace::import::mcp::McpServerConfig as CompatMcpServer;
+use pawork_workspace::import::{
+    CompatPayload, ExternalSource, LocalSessionFile, LocalSessionSource,
 };
 use serde::Serialize;
 
@@ -115,8 +117,7 @@ impl AppCore {
         tool: ExternalSource,
         global_root: Option<&Path>,
     ) -> Result<CompatImportPreview, AppError> {
-        self.imports
-            .preview_compat_import(self, tool, global_root)
+        self.imports.preview_compat_import(self, tool, global_root)
     }
 
     pub fn apply_compat_import(
@@ -219,8 +220,9 @@ fn merge_mcp_server(
 ) -> Result<(), AppError> {
     let mut config = if config_path.is_file() {
         let text = std::fs::read_to_string(config_path)?;
-        toml::from_str::<PaworkConfig>(&text)
-            .map_err(|error| AppError::Import(format!("parse {}: {error}", config_path.display())))?
+        toml::from_str::<PaworkConfig>(&text).map_err(|error| {
+            AppError::Import(format!("parse {}: {error}", config_path.display()))
+        })?
     } else {
         PaworkConfig::default()
     };

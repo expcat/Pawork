@@ -5,7 +5,9 @@
 //! [`AppEventEnvelope`]，不另造协议；`compat_*` 帧是本层定义的稳定协议入口，
 //! 由 Host 接线映射到 `session-store` 的 compat 导入实现（P16-10）。
 
-use crate::{ApiVersion, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope};
+use crate::{
+    ApiVersion, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 #[cfg(feature = "typegen")]
@@ -135,9 +137,7 @@ pub enum HeadlessResponse {
         granted: Vec<SdkCapability>,
     },
     /// 命令/查询响应信封（直通 [`AppResponseEnvelope`]）。
-    Response {
-        envelope: AppResponseEnvelope,
-    },
+    Response { envelope: AppResponseEnvelope },
     /// 事件信封（直通 [`AppEventEnvelope`]）。
     Event { envelope: AppEventEnvelope },
     /// compat 导入结果。

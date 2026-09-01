@@ -1948,10 +1948,14 @@ mod tests {
         let mapped: serde_json::Value =
             decode_persisted_json(legacy).expect("legacy hint must map");
         assert!(
-            mapped["opaque_metadata"].get(pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT).is_some(),
+            mapped["opaque_metadata"]
+                .get(pawork_domain::OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT)
+                .is_some(),
             "{mapped:?}"
         );
-        assert!(mapped["opaque_metadata"].get("responses.summary_entries").is_none());
+        assert!(mapped["opaque_metadata"]
+            .get("responses.summary_entries")
+            .is_none());
     }
 
     #[tokio::test]

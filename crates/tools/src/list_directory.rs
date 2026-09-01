@@ -7,6 +7,7 @@ use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use async_trait::async_trait;
 use pawork_domain::AgentTool;
 use pawork_domain::ToolError;
 use pawork_domain::ToolEventSink;
@@ -17,10 +18,9 @@ use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
 };
-use async_trait::async_trait;
+use pawork_workspace::WorkspaceService;
 use serde::Serialize;
 use serde_json::{json, Value};
-use pawork_workspace::WorkspaceService;
 
 use crate::common::opt_u64;
 use crate::common::require_str;
@@ -417,13 +417,16 @@ mod tests {
             _ => panic!("text"),
         };
         let meta = res.metadata.to_string();
-        assert!(!text.contains("/etc/passwd"), "body leaked host path: {text}");
-        assert!(!meta.contains("/etc/passwd"), "json leaked host path: {meta}");
-        assert!(!text.contains("/etc"), "body leaked host dir: {text}");
         assert!(
-            !meta.contains("/etc"),
-            "json leaked host dir: {meta}"
+            !text.contains("/etc/passwd"),
+            "body leaked host path: {text}"
         );
+        assert!(
+            !meta.contains("/etc/passwd"),
+            "json leaked host path: {meta}"
+        );
+        assert!(!text.contains("/etc"), "body leaked host dir: {text}");
+        assert!(!meta.contains("/etc"), "json leaked host dir: {meta}");
     }
 
     #[test]

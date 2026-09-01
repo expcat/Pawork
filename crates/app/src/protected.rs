@@ -11,9 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use pawork_domain::{ProtectedBlobRef, ProviderId, SessionId};
-use pawork_providers::{
-    InMemoryReasoningProtector, ReasoningProtectError, ReasoningProtector,
-};
+use pawork_providers::{InMemoryReasoningProtector, ReasoningProtectError, ReasoningProtector};
 use pawork_storage::blob::{
     AeadKey, BlobScope, ProtectedBlobError, ProtectedBlobStore, ProtectedKeyResolver,
 };
@@ -126,10 +124,7 @@ impl ReasoningProtector for PersistentReasoningProtector {
             .map_err(map_blob_error)
     }
 
-    async fn resolve(
-        &self,
-        blob_ref: &ProtectedBlobRef,
-    ) -> Result<Vec<u8>, ReasoningProtectError> {
+    async fn resolve(&self, blob_ref: &ProtectedBlobRef) -> Result<Vec<u8>, ReasoningProtectError> {
         self.store
             .get(&self.scope, blob_ref)
             .await
@@ -155,10 +150,7 @@ impl SwappableReasoningProtector {
     }
 
     pub fn current(&self) -> Arc<dyn ReasoningProtector> {
-        self.inner
-            .read()
-            .expect("reasoning protector lock")
-            .clone()
+        self.inner.read().expect("reasoning protector lock").clone()
     }
 }
 
@@ -177,10 +169,7 @@ impl ReasoningProtector for SwappableReasoningProtector {
         self.current().protect(payload).await
     }
 
-    async fn resolve(
-        &self,
-        blob_ref: &ProtectedBlobRef,
-    ) -> Result<Vec<u8>, ReasoningProtectError> {
+    async fn resolve(&self, blob_ref: &ProtectedBlobRef) -> Result<Vec<u8>, ReasoningProtectError> {
         self.current().resolve(blob_ref).await
     }
 }
@@ -350,8 +339,7 @@ fn validate_master_key_identity(
     opened_metadata: &fs::Metadata,
 ) -> Result<(), AppError> {
     use std::os::unix::fs::MetadataExt;
-    if path_metadata.dev() != opened_metadata.dev()
-        || path_metadata.ino() != opened_metadata.ino()
+    if path_metadata.dev() != opened_metadata.dev() || path_metadata.ino() != opened_metadata.ino()
     {
         return Err(AppError::Protected(
             "protected master key changed while it was being opened".into(),
@@ -415,10 +403,7 @@ fn write_new_file_0600(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 #[cfg(not(unix))]
 fn write_new_file_0600(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     file.write_all(bytes)
         .and_then(|()| file.flush())
         .and_then(|()| file.sync_all())
@@ -521,7 +506,10 @@ mod tests {
                 .expect("store"),
         );
         let protector = PersistentReasoningProtector::new(store, ProviderId::from("anthropic"));
-        let blob_ref = protector.protect(b"signature-secret").await.expect("protect");
+        let blob_ref = protector
+            .protect(b"signature-secret")
+            .await
+            .expect("protect");
         assert_eq!(
             protector.resolve(&blob_ref).await.expect("resolve"),
             b"signature-secret"
@@ -540,7 +528,10 @@ mod tests {
     async fn swappable_starts_in_memory_then_binds_persistent() {
         let swappable = SwappableReasoningProtector::in_memory();
         let first = swappable.protect(b"mem").await.expect("mem protect");
-        assert_eq!(swappable.resolve(&first).await.expect("mem resolve"), b"mem");
+        assert_eq!(
+            swappable.resolve(&first).await.expect("mem resolve"),
+            b"mem"
+        );
 
         let dir = tempfile::tempdir().expect("tempdir");
         let resolver = Arc::new(FileKeyResolver::open(dir.path()).expect("resolver"));
@@ -555,15 +546,18 @@ mod tests {
         ));
         swappable.bind(persistent);
         let second = swappable.protect(b"disk").await.expect("disk protect");
-        assert_eq!(swappable.resolve(&second).await.expect("disk resolve"), b"disk");
+        assert_eq!(
+            swappable.resolve(&second).await.expect("disk resolve"),
+            b"disk"
+        );
         assert!(swappable.resolve(&first).await.is_err());
         assert!(!format!("{swappable:?}").contains("disk"));
     }
 
     #[tokio::test]
     async fn load_with_binds_same_swappable_onto_assembled_adapter() {
-        use pawork_workspace::config::{PaworkConfig, ProviderConfig};
         use pawork_auth::locator::api_key_env_name;
+        use pawork_workspace::config::{PaworkConfig, ProviderConfig};
 
         let dir = tempfile::tempdir().expect("tempdir");
         let id = "r5c-protector-identity";

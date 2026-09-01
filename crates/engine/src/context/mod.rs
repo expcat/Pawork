@@ -17,8 +17,8 @@ pub use budget::{ContextBudget, ContextBudgetBreakdown};
 pub use compaction::{
     compute_compaction, AutoCompactionReason, CompactionReason, CompactionTrigger,
 };
-pub use token::{HeuristicEstimator, TokenEstimator, ToolSchema};
 pub(crate) use token::reply_primer_tokens;
+pub use token::{HeuristicEstimator, TokenEstimator, ToolSchema};
 pub use tool_result_trim::{
     byte_len_of_tool_result, trim_tool_result, trim_tool_result_with, ResultSize, TrimStrategy,
     TrimThresholds, TrimmedToolResult,

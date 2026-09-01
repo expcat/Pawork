@@ -43,7 +43,6 @@ impl Drop for FlushTicket {
     }
 }
 
-
 impl AgentSupervisor {
     /// 记录一次用量并检查预算（B1）：对硬超限维度发出 `BudgetExceeded`。
     ///
@@ -106,7 +105,6 @@ impl AgentSupervisor {
         }
         Ok(())
     }
-
 
     /// 显式重试终态 worker 的用量 flush。
     ///
@@ -202,7 +200,6 @@ impl AgentSupervisor {
         }
     }
 
-
     /// 终态 flush：把 controller 的累计用量写入 ledger。成功返回 `Ok`
     /// （controller 被消费）；失败时把 controller 与归属 ctx 放回 budget /
     /// flush_ctx 表，返回 [`SupervisorError::UsageFlushPending`]，调用方可经
@@ -253,5 +250,4 @@ impl AgentSupervisor {
             }
         }
     }
-
 }

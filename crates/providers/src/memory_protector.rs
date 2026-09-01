@@ -5,15 +5,15 @@
 //! `ProtectedBlobStore`；本类型仍用于测试与 store 打开前的默认装配，
 //! 不提供跨进程恢复保证。
 
-use std::collections::HashMap;
 use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
-use pawork_domain::ProtectedBlobRef;
 use crate::{ReasoningProtectError, ReasoningProtector};
+use pawork_domain::ProtectedBlobRef;
 
 /// 只保证同一实例、同一进程内回放的 reasoning protector。
 pub struct InMemoryReasoningProtector {
@@ -50,10 +50,8 @@ impl fmt::Debug for InMemoryReasoningProtector {
 impl ReasoningProtector for InMemoryReasoningProtector {
     async fn protect(&self, payload: &[u8]) -> Result<ProtectedBlobRef, ReasoningProtectError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let blob_ref = ProtectedBlobRef::new(format!(
-            "memory-reasoning-{:016x}-{id}",
-            self.namespace
-        ));
+        let blob_ref =
+            ProtectedBlobRef::new(format!("memory-reasoning-{:016x}-{id}", self.namespace));
         self.blobs
             .write()
             .map_err(|_| ReasoningProtectError::Unavailable)?
@@ -61,10 +59,7 @@ impl ReasoningProtector for InMemoryReasoningProtector {
         Ok(blob_ref)
     }
 
-    async fn resolve(
-        &self,
-        blob_ref: &ProtectedBlobRef,
-    ) -> Result<Vec<u8>, ReasoningProtectError> {
+    async fn resolve(&self, blob_ref: &ProtectedBlobRef) -> Result<Vec<u8>, ReasoningProtectError> {
         self.blobs
             .read()
             .map_err(|_| ReasoningProtectError::Unavailable)?

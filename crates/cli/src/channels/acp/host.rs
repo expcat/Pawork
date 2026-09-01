@@ -25,7 +25,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use pawork_domain::{ConnectionId, DegradeEvent, DegradeKind, DegradeSeverity, QueryId, RunId, SessionId, ToolCallId, WorkspaceId};
+use pawork_domain::{
+    ConnectionId, DegradeEvent, DegradeKind, DegradeSeverity, QueryId, RunId, SessionId,
+    ToolCallId, WorkspaceId,
+};
 use pawork_protocol::adapter::{
     AdapterError, AdapterSessionContext, AdapterWireFrame, CanonicalClientRequest,
     CanonicalCoreFrame, CapabilitySnapshot, ClientAdapter, ClientCapability, ClientProtocol,
@@ -291,15 +294,17 @@ impl AcpHost {
         // 该 runtime；GuiHostAdapter 的工作线程不受此循环占用。
         if let Err(error) = std::thread::Builder::new()
             .name("pawork-acp-actor".into())
-            .spawn(move || match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime.block_on(actor.run()),
-                Err(error) => report_acp_state(
-                    "failed to start ACP actor runtime",
-                    json!({ "error": error.to_string() }),
-                ),
+            .spawn(move || {
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime.block_on(actor.run()),
+                    Err(error) => report_acp_state(
+                        "failed to start ACP actor runtime",
+                        json!({ "error": error.to_string() }),
+                    ),
+                }
             })
         {
             report_acp_state(
@@ -773,7 +778,9 @@ impl AcpActor {
             },
             CanonicalClientRequest::Reattach { .. } => {
                 self.release_reservation(reserved_session);
-                Ok(RequestStart::Ready(self.session_resume(&params, request).await?))
+                Ok(RequestStart::Ready(
+                    self.session_resume(&params, request).await?,
+                ))
             }
             CanonicalClientRequest::Disconnect { .. } => {
                 self.release_reservation(reserved_session);
@@ -809,14 +816,13 @@ impl AcpActor {
                 Ok(())
             }
             "$/cancel_request" => {
-                let params = serde_json::from_value::<CancelRequestParams>(params).map_err(
-                    |error| {
+                let params =
+                    serde_json::from_value::<CancelRequestParams>(params).map_err(|error| {
                         JsonRpcError::new(
                             crate::channels::acp::wire::ERROR_INVALID_PARAMS,
                             error.to_string(),
                         )
-                    },
-                )?;
+                    })?;
                 self.cancel_request(&params.request_id).await;
                 Ok(())
             }
@@ -998,7 +1004,10 @@ impl AcpActor {
         )
     }
 
-    async fn session_new(&mut self, request: CanonicalClientRequest) -> Result<Value, JsonRpcError> {
+    async fn session_new(
+        &mut self,
+        request: CanonicalClientRequest,
+    ) -> Result<Value, JsonRpcError> {
         let adapter = self.adapter()?;
         let placeholder = AdapterSessionContext {
             adapter: Arc::clone(&adapter) as Arc<dyn ClientAdapter>,
@@ -1052,10 +1061,8 @@ impl AcpActor {
                 "session attach did not produce a session state",
             ));
         };
-        self.session_contexts.insert(
-            client_session_id,
-            (record.ownership_epoch, record.revision),
-        );
+        self.session_contexts
+            .insert(client_session_id, (record.ownership_epoch, record.revision));
         tracing::debug!(session_id, "acp session/new attached");
         serialize_value(SessionNewResult { session_id }, "SessionNewResult")
     }
@@ -1223,7 +1230,10 @@ impl AcpActor {
         Ok(json!({}))
     }
 
-    async fn session_close(&mut self, request: CanonicalClientRequest) -> Result<Value, JsonRpcError> {
+    async fn session_close(
+        &mut self,
+        request: CanonicalClientRequest,
+    ) -> Result<Value, JsonRpcError> {
         let CanonicalClientRequest::Disconnect {
             client_session_id,
             ownership_epoch,
@@ -1457,7 +1467,11 @@ impl AcpActor {
         }
     }
 
-    async fn emit_update(&mut self, client_session_id: ClientSessionId, envelope: &AppEventEnvelope) {
+    async fn emit_update(
+        &mut self,
+        client_session_id: ClientSessionId,
+        envelope: &AppEventEnvelope,
+    ) {
         let result = async {
             let adapter = self.adapter()?;
             let frame = adapter
@@ -1493,10 +1507,7 @@ impl AcpActor {
             reason,
             "acp host fail-closed: releasing all in-flight prompts"
         );
-        report_acp_state(
-            "acp host fail-closed",
-            json!({ "reason": reason }),
-        );
+        report_acp_state("acp host fail-closed", json!({ "reason": reason }));
         self.occupancy.clear();
         let prompts = std::mem::take(&mut self.pending_prompts);
         self.pending_permissions.clear();
@@ -1596,23 +1607,23 @@ impl AcpActor {
         &mut self,
         client_session_id: &ClientSessionId,
     ) -> Result<AdapterSessionContext, JsonRpcError> {
-        let (ownership_epoch, revision) = match self.session_contexts.get(client_session_id).copied()
-        {
-            Some(epoch_revision) => epoch_revision,
-            None => {
-                let record = self.registry.get(client_session_id).await.ok_or_else(|| {
-                    JsonRpcError::new(
-                        crate::channels::acp::wire::ERROR_RESOURCE_NOT_FOUND,
-                        format!("unknown client session `{}`", client_session_id.0),
-                    )
-                })?;
-                self.session_contexts.insert(
-                    client_session_id.clone(),
-                    (record.ownership_epoch, record.revision),
-                );
-                (record.ownership_epoch, record.revision)
-            }
-        };
+        let (ownership_epoch, revision) =
+            match self.session_contexts.get(client_session_id).copied() {
+                Some(epoch_revision) => epoch_revision,
+                None => {
+                    let record = self.registry.get(client_session_id).await.ok_or_else(|| {
+                        JsonRpcError::new(
+                            crate::channels::acp::wire::ERROR_RESOURCE_NOT_FOUND,
+                            format!("unknown client session `{}`", client_session_id.0),
+                        )
+                    })?;
+                    self.session_contexts.insert(
+                        client_session_id.clone(),
+                        (record.ownership_epoch, record.revision),
+                    );
+                    (record.ownership_epoch, record.revision)
+                }
+            };
         Ok(AdapterSessionContext {
             adapter: Arc::clone(&self.adapter()?) as Arc<dyn ClientAdapter>,
             client_session_id: client_session_id.clone(),
@@ -1809,7 +1820,8 @@ impl AcpActor {
                 "attach capability snapshot does not match negotiated adapter".into(),
             ));
         }
-        if record.ownership_epoch != context.ownership_epoch || record.revision != context.revision {
+        if record.ownership_epoch != context.ownership_epoch || record.revision != context.revision
+        {
             return Err(AdapterError::InvalidFrame(format!(
                 "attach ownership {}/{} does not match negotiated context {}/{}",
                 record.ownership_epoch, record.revision, context.ownership_epoch, context.revision
@@ -2089,10 +2101,7 @@ fn serialize_value<T: serde::Serialize>(value: T, what: &str) -> Result<Value, J
     })
 }
 
-
-fn wait_std<T>(
-    rx: std::sync::mpsc::Receiver<T>,
-) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
+fn wait_std<T>(rx: std::sync::mpsc::Receiver<T>) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
     rx.recv_timeout(std::time::Duration::from_secs(2))
 }
 fn actor_unavailable() -> JsonRpcError {

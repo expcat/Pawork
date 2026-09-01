@@ -456,10 +456,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use pawork_domain::{
-        PromptCachePreference, RequestBudget, ResponseFormat, ToolChoice, ToolErrorKind,
+        ContentPart, Message, MessageId, MessageMetadata, MessageRole, TextContent,
     };
     use pawork_domain::{
-        ContentPart, Message, MessageId, MessageMetadata, MessageRole, TextContent,
+        PromptCachePreference, RequestBudget, ResponseFormat, ToolChoice, ToolErrorKind,
     };
 
     use super::*;
@@ -565,7 +565,10 @@ mod tests {
         let (second, second_events) = stream(&provider, "request-2").await;
         let (third, third_events) = stream(&provider, "request-3").await;
 
-        assert_eq!(first.expect("first script").stop_reason, StopReason::Completed);
+        assert_eq!(
+            first.expect("first script").stop_reason,
+            StopReason::Completed
+        );
         assert_eq!(
             second.expect("second script").stop_reason,
             StopReason::ToolUse

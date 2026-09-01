@@ -4,6 +4,6 @@
 //! `http` / `parsers` feature；SSE 解析器始终可用，并保留 `SseParseError` →
 //! `ProviderError` 映射。
 
-pub mod sse;
 pub mod http;
 pub mod retry;
+pub mod sse;

@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
+use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_app::{AppCore, ApprovalMode, DenyAllApprovals, GuiHostAdapter};
 use pawork_client::{ClientConfig, GuiClient};
 use pawork_domain::{ActorId, CommandId, ModelId, ProviderId, RunId, SessionId, Timestamp};
-use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppResponse, CommandSource, GuiCapability,
     HandshakeService, API_VERSION, SUPPORTED_API_VERSIONS,
@@ -54,11 +54,7 @@ impl Harness {
         );
         // R7 波 B:terminal_create 已入 policy 闸;进程内装配用可创建档位
         // (AskForDangerous + trusted,AskUser 一律 fail-closed 由闸内处理)。
-        core.configure_approval(
-            mode,
-            trusted,
-            Arc::new(DenyAllApprovals),
-        );
+        core.configure_approval(mode, trusted, Arc::new(DenyAllApprovals));
         let core = Arc::new(core);
         let adapter = Arc::new(GuiHostAdapter::new(core));
         let handshake = HandshakeService::new(
@@ -106,12 +102,19 @@ impl Harness {
         }
     }
 
-    pub async fn connect_gui(&mut self, harness_label: &str, client_label: &str) -> Result<GuiClient, String> {
+    pub async fn connect_gui(
+        &mut self,
+        harness_label: &str,
+        client_label: &str,
+    ) -> Result<GuiClient, String> {
         let listener = Arc::clone(&self.listener);
         let accept = tokio::spawn(async move { listener.accept().await });
         let transport: Arc<dyn GuiTransportClient> = self.transport.clone();
         let mut config = ClientConfig::default();
-        if !config.capabilities.contains(&GuiCapability::TerminalStreaming) {
+        if !config
+            .capabilities
+            .contains(&GuiCapability::TerminalStreaming)
+        {
             config.capabilities.push(GuiCapability::TerminalStreaming);
         }
         let client = GuiClient::connect_with_config(

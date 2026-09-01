@@ -8,13 +8,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pawork_domain::{
+    CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
+    StopReason, TextContent,
+};
+use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference, ProviderError,
     ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, RequestBudget, ResolvedCredential,
     ResponseFormat, ToolChoice,
-};
-use pawork_domain::{
-    CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
-    StopReason, TextContent,
 };
 use pawork_providers::{AnthropicConfig, AnthropicProvider, ANTHROPIC_VERSION};
 use wiremock::matchers::{header, method, path};
@@ -67,9 +67,9 @@ mod contract {
             _ => unreachable!(),
         };
         assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id: cid } if cid == &id)),
+            events.iter().any(
+                |e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id: cid } if cid == &id)
+            ),
             "tool call {id} 应被 Completed 闭合"
         );
     }
@@ -170,7 +170,10 @@ fn provider(server: &MockServer) -> AnthropicProvider {
         .build();
     AnthropicProvider::new(
         config,
-        Some(ResolvedCredential::new(CredentialKind::ApiKey, "sk-ant-test")),
+        Some(ResolvedCredential::new(
+            CredentialKind::ApiKey,
+            "sk-ant-test",
+        )),
     )
     .expect("构造 adapter")
 }
@@ -217,7 +220,11 @@ async fn contract_text_stream() {
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
     let summary = p
-        .stream(request("claude-3-5-sonnet"), &sink, CancellationToken::new())
+        .stream(
+            request("claude-3-5-sonnet"),
+            &sink,
+            CancellationToken::new(),
+        )
         .await
         .expect("stream ok");
     contract::assert_text_stream(&sink.events());
@@ -259,9 +266,13 @@ async fn contract_single_tool_call() {
 
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
-    p.stream(request("claude-3-5-sonnet"), &sink, CancellationToken::new())
-        .await
-        .expect("stream ok");
+    p.stream(
+        request("claude-3-5-sonnet"),
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("stream ok");
     contract::assert_single_tool_call(&sink.events());
 }
 
@@ -286,9 +297,13 @@ async fn contract_parallel_tool_calls() {
 
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
-    p.stream(request("claude-3-5-sonnet"), &sink, CancellationToken::new())
-        .await
-        .expect("stream ok");
+    p.stream(
+        request("claude-3-5-sonnet"),
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("stream ok");
     contract::assert_parallel_tool_calls(&sink.events());
 }
 
@@ -314,7 +329,11 @@ async fn contract_cancel_mid_stream() {
         .stream(request("claude-3-5-sonnet"), &sink, cancel)
         .await
         .expect_err("收到首个 delta 后取消应失败");
-    contract::assert_error_kind(&recording.events(), Some(&err), ProviderErrorKind::Cancelled);
+    contract::assert_error_kind(
+        &recording.events(),
+        Some(&err),
+        ProviderErrorKind::Cancelled,
+    );
     assert!(recording
         .events()
         .iter()
@@ -361,7 +380,11 @@ async fn contract_rate_limit_is_normalized() {
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
     let err = p
-        .stream(request("claude-3-5-sonnet"), &sink, CancellationToken::new())
+        .stream(
+            request("claude-3-5-sonnet"),
+            &sink,
+            CancellationToken::new(),
+        )
         .await
         .expect_err("429 应失败");
     contract::assert_error_kind(&sink.events(), Some(&err), ProviderErrorKind::RateLimited);
@@ -381,7 +404,11 @@ async fn contract_missing_message_stop_is_interrupted() {
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
     let err = p
-        .stream(request("claude-3-5-sonnet"), &sink, CancellationToken::new())
+        .stream(
+            request("claude-3-5-sonnet"),
+            &sink,
+            CancellationToken::new(),
+        )
         .await
         .expect_err("缺 message_stop 应 StreamInterrupted");
     contract::assert_error_kind(
@@ -436,9 +463,7 @@ async fn contract_prompt_cache_and_thinking_are_written() {
         Message {
             id: MessageId::new("sys"),
             role: MessageRole::System,
-            content: vec![ContentPart::Text(TextContent {
-                text: "sys".into(),
-            })],
+            content: vec![ContentPart::Text(TextContent { text: "sys".into() })],
             metadata: MessageMetadata::default(),
         },
     );
@@ -535,5 +560,8 @@ async fn contract_thinking_signature_is_protected_not_emitted() {
         serde_json::json!("claude-3-5-sonnet")
     );
     let dumped = format!("{events:?}");
-    assert!(!dumped.contains("sig-secret"), "signature must not leak into events: {dumped}");
+    assert!(
+        !dumped.contains("sig-secret"),
+        "signature must not leak into events: {dumped}"
+    );
 }

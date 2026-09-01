@@ -848,8 +848,8 @@ fn make_entry(skill: &LoadedSkill, status: ResourceDiagnosticStatus) -> Resource
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::source::ResourceIssueSeverity;
+    use super::*;
     use std::fs;
     use tempfile::tempdir;
 

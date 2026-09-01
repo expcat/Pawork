@@ -9,18 +9,20 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use pawork_domain::{
-    ToolError, ToolEventSink, ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
-};
-use pawork_domain::{
     ApprovalDecision, CancellationToken, ContentPart, ErrorContext, EventId, EventSequence,
     MessageId, RequestId, RunId, TextContent, ToolCallId, ToolDescriptor, WorkspaceId,
 };
-use pawork_storage::blob::CheckpointService;
+use pawork_domain::{
+    ToolError, ToolEventSink, ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
+};
 use pawork_engine::{
     now_timestamp, ApprovalGate, AutoCompactionReason, CompactionOutcome, LoopContext,
     LoopEventEmitter, PendingToolInvocation, ToolCallResult, WriteCheckpoint,
 };
-use pawork_policy::{ApprovalMode, ApprovalPrompt, PolicyDecision, PolicyEngine, PolicyInput, RiskLevel};
+use pawork_policy::{
+    ApprovalMode, ApprovalPrompt, PolicyDecision, PolicyEngine, PolicyInput, RiskLevel,
+};
+use pawork_storage::blob::CheckpointService;
 use pawork_storage::session::{
     CompactionEngine, CompactionReason as SessionCompactionReason, RetentionInputs,
     RetentionMessage, RetentionToolCall, SessionStore, ToolCallRetentionState,
@@ -195,9 +197,11 @@ impl LoopContext for SessionLoopCtx<'_> {
         summary_text: &str,
         _cancel: CancellationToken,
     ) -> Result<Option<CompactionOutcome>, pawork_engine::EngineError> {
-        let (Some(store), Some(session_id), Some(estimator)) =
-            (self.store, self.session_id.clone(), self.token_estimator.clone())
-        else {
+        let (Some(store), Some(session_id), Some(estimator)) = (
+            self.store,
+            self.session_id.clone(),
+            self.token_estimator.clone(),
+        ) else {
             return Ok(None);
         };
         let session_reason = match reason {
@@ -227,8 +231,10 @@ impl LoopContext for SessionLoopCtx<'_> {
                 ))
             })?;
         let mut inputs = RetentionInputs::default();
-        let mut started_tools: std::collections::BTreeMap<pawork_domain::ToolCallId, (EventId, bool)> =
-            Default::default();
+        let mut started_tools: std::collections::BTreeMap<
+            pawork_domain::ToolCallId,
+            (EventId, bool),
+        > = Default::default();
         for envelope in &events {
             match &envelope.payload {
                 pawork_domain::AgentEvent::MessageCommitted { message } => {
@@ -238,10 +244,7 @@ impl LoopContext for SessionLoopCtx<'_> {
                     });
                 }
                 pawork_domain::AgentEvent::ToolCallStarted { tool_call_id, .. } => {
-                    started_tools.insert(
-                        tool_call_id.clone(),
-                        (envelope.event_id.clone(), false),
-                    );
+                    started_tools.insert(tool_call_id.clone(), (envelope.event_id.clone(), false));
                 }
                 pawork_domain::AgentEvent::ToolExecutionCompleted { tool_call_id, .. } => {
                     if let Some(entry) = started_tools.get_mut(tool_call_id) {
@@ -282,9 +285,7 @@ impl LoopContext for SessionLoopCtx<'_> {
             )
             .await
             .map_err(|error| {
-                pawork_engine::EngineError::sink(format!(
-                    "history compaction failed: {error}"
-                ))
+                pawork_engine::EngineError::sink(format!("history compaction failed: {error}"))
             })?;
         let retained_event_ids: std::collections::HashSet<&pawork_domain::EventId> =
             result.decision.retained_event_ids.iter().collect();

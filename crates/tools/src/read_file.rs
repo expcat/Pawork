@@ -3,6 +3,8 @@
 //! 只读读取工作区相对文件：行号、offset/limit、编码检测与二进制检测；
 //! 路径基于 `workspace_id + relative_path`，经 policy 内核校验。
 
+use async_trait::async_trait;
+use chardetng::EncodingDetector;
 use pawork_domain::AgentTool;
 use pawork_domain::ToolError;
 use pawork_domain::ToolEventSink;
@@ -13,11 +15,9 @@ use pawork_domain::{
     CancellationToken, ContentPart, TextContent, ToolCapability, ToolDescriptor, ToolHosting,
     ToolKind, WorkspaceId,
 };
-use async_trait::async_trait;
-use chardetng::EncodingDetector;
+use pawork_workspace::WorkspaceService;
 use serde_json::{json, Value};
 use tokio::io::AsyncReadExt;
-use pawork_workspace::WorkspaceService;
 
 use crate::common::opt_u64;
 use crate::common::require_str;

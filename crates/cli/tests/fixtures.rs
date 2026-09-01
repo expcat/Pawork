@@ -11,15 +11,21 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use pawork_cli::channels::acp::wire::{ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ERROR_METHOD_NOT_FOUND};
-use pawork_cli::channels::acp::{AcpClientAdapterFactory, CwdResolver, JsonRpcMessage, SessionResolver};
+use pawork_cli::channels::acp::wire::{
+    ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ERROR_METHOD_NOT_FOUND,
+};
+use pawork_cli::channels::acp::{
+    AcpClientAdapterFactory, CwdResolver, JsonRpcMessage, SessionResolver,
+};
 use pawork_domain::{CoreInstanceId, EventId, MessageId, RunId, ToolCallId, WorkspaceId};
 use pawork_protocol::adapter::{
     AdapterError, CanonicalCoreFrame, CapabilitySnapshot, ClientAdapter, ClientCapability,
     ClientProtocol, ClientSessionId, InMemorySessionRegistryStore, SessionRegistry,
     CLIENT_ADAPTER_SCHEMA_VERSION,
 };
-use pawork_protocol::{AppEvent, AppEventEnvelope, EventSource, EventStream, GlobalSequence, API_VERSION};
+use pawork_protocol::{
+    AppEvent, AppEventEnvelope, EventSource, EventStream, GlobalSequence, API_VERSION,
+};
 use serde_json::{json, Value};
 
 use common::{acp_notification, acp_request, parse, MockScript, TestHarness};
@@ -296,7 +302,10 @@ async fn golden_permission_response_cancelled_matches_fixture() {
     let decision = adapter
         .decode_permission_response(fixture("fixtures/v1/permission-response-cancelled.json"))
         .expect("cancelled 响应可解析");
-    assert_eq!(decision, pawork_cli::channels::acp::PermissionDecision::Cancelled);
+    assert_eq!(
+        decision,
+        pawork_cli::channels::acp::PermissionDecision::Cancelled
+    );
 }
 
 #[tokio::test]

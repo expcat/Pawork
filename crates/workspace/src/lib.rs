@@ -84,7 +84,9 @@ impl WorkspaceService {
     }
 }
 
-fn normalize_roots(roots: impl IntoIterator<Item = PathBuf>) -> Result<Vec<PathBuf>, WorkspaceError> {
+fn normalize_roots(
+    roots: impl IntoIterator<Item = PathBuf>,
+) -> Result<Vec<PathBuf>, WorkspaceError> {
     let mut normalized = Vec::new();
     let mut seen = HashSet::new();
     for path in roots {
@@ -100,10 +102,11 @@ fn normalize_roots(roots: impl IntoIterator<Item = PathBuf>) -> Result<Vec<PathB
 }
 
 fn normalize_root(path: PathBuf) -> Result<PathBuf, WorkspaceError> {
-    let canonical = canonicalize_simplified(&path).map_err(|source| WorkspaceError::InvalidRoot {
-        path: path.clone(),
-        source,
-    })?;
+    let canonical =
+        canonicalize_simplified(&path).map_err(|source| WorkspaceError::InvalidRoot {
+            path: path.clone(),
+            source,
+        })?;
     if !canonical.is_dir() {
         return Err(WorkspaceError::RootIsNotDirectory(canonical));
     }

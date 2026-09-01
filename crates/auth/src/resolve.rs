@@ -10,12 +10,12 @@
 //! env 值只进入 [`ResolvedCredential`]（`Debug` 已脱敏），不落任何日志或 Debug
 //! 泄漏字段；env 名推导与 service 命名统一由 [`crate::locator`] 单一事实源提供。
 
-use pawork_domain::{CredentialKind, ResolvedCredential};
 use pawork_domain::{CredentialId, ProviderId};
+use pawork_domain::{CredentialKind, ResolvedCredential};
 
 use crate::backend::SecretBackend;
-use crate::error::AuthError;
 use crate::credential::StoredCredential;
+use crate::error::AuthError;
 use crate::locator::{read_api_key_from_env, secret_service_for};
 use crate::masked::MaskedCredential;
 
@@ -134,7 +134,10 @@ mod tests {
     #[test]
     fn env_name_uppercases_and_replaces_hyphens() {
         assert_eq!(api_key_env_name("glm-coding"), "PAWORK_API_KEY_GLM_CODING");
-        assert_eq!(api_key_env_name("opencode-go"), "PAWORK_API_KEY_OPENCODE_GO");
+        assert_eq!(
+            api_key_env_name("opencode-go"),
+            "PAWORK_API_KEY_OPENCODE_GO"
+        );
     }
 
     #[test]

@@ -82,7 +82,10 @@ pub fn token_path_for_socket(socket: &std::path::Path) -> PathBuf {
 }
 
 fn instance_file_name(stem: &str, extension: &str, instance: Option<&str>) -> String {
-    match instance.map(str::trim).filter(|name| !name.is_empty() && *name != "default") {
+    match instance
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "default")
+    {
         Some(name) => format!("{stem}-{name}.{extension}"),
         None => format!("{stem}.{extension}"),
     }
@@ -178,9 +181,7 @@ pawork-engine = { path = "../../crates/engine" }
         );
     }
 
-    fn production_pawork_dependencies(
-        manifest: &str,
-    ) -> std::collections::BTreeSet<String> {
+    fn production_pawork_dependencies(manifest: &str) -> std::collections::BTreeSet<String> {
         let mut in_production_dependencies = false;
         let mut dependencies = std::collections::BTreeSet::new();
         for raw in manifest.lines() {
@@ -221,9 +222,9 @@ pawork-engine = { path = "../../crates/engine" }
                 .and_then(|(_, field)| field.split_once('='))
                 .and_then(|(_, value)| {
                     value
-                    .split('"')
-                    .nth(1)
-                    .filter(|package| package.starts_with("pawork-"))
+                        .split('"')
+                        .nth(1)
+                        .filter(|package| package.starts_with("pawork-"))
                 })
             {
                 dependencies.insert(package.to_string());

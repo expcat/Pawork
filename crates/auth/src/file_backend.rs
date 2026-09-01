@@ -224,8 +224,8 @@ pub(crate) fn acquire_file_lock(
 #[cfg(unix)]
 pub(crate) fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>, AuthError> {
     use std::os::fd::AsRawFd;
-    use std::os::unix::fs::OpenOptionsExt;
     use std::os::raw::c_int;
+    use std::os::unix::fs::OpenOptionsExt;
 
     unsafe extern "C" {
         fn flock(fd: c_int, operation: c_int) -> c_int;
@@ -285,7 +285,12 @@ pub(crate) fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>
 #[cfg(not(any(unix, windows)))]
 pub(crate) fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>, AuthError> {
     create_parent(path)?;
-    match OpenOptions::new().read(true).write(true).create_new(true).open(path) {
+    match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
         Ok(file) => Ok(Some(FileLockGuard {
             file,
             path: path.to_path_buf(),
@@ -307,7 +312,8 @@ fn create_parent(path: &Path) -> Result<(), AuthError> {
 }
 
 fn non_empty_parent(path: &Path) -> Option<&Path> {
-    path.parent().filter(|parent| !parent.as_os_str().is_empty())
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
 }
 
 fn unique_temp_path(path: &Path) -> PathBuf {
@@ -317,11 +323,7 @@ fn unique_temp_path(path: &Path) -> PathBuf {
         .and_then(|name| name.to_str())
         .unwrap_or("auth.json");
     let sequence = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    directory.join(format!(
-        ".{name}.{}.{}.tmp",
-        std::process::id(),
-        sequence
-    ))
+    directory.join(format!(".{name}.{}.{}.tmp", std::process::id(), sequence))
 }
 
 /// 默认 auth 文件路径：$PAWORK_HOME/auth.json 或 ~/.pawork/auth.json。
@@ -357,10 +359,7 @@ fn write_new_file_0600(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn write_new_file_0600(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     file.write_all(bytes)
         .and_then(|()| file.flush())
         .and_then(|()| file.sync_all())
@@ -399,9 +398,7 @@ mod tests {
 
     #[test]
     fn auth_file_path_missing_or_empty_override_uses_base_home() {
-        let expected = PathBuf::from("base-home")
-            .join(".pawork")
-            .join("auth.json");
+        let expected = PathBuf::from("base-home").join(".pawork").join("auth.json");
         assert_eq!(
             resolve_auth_file_path(None, Some(PathBuf::from("base-home"))),
             expected
@@ -413,10 +410,8 @@ mod tests {
     }
 
     fn temp_path(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "pawork-file-backend-{name}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("pawork-file-backend-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("auth.json")
@@ -460,7 +455,10 @@ mod tests {
         let path = temp_path("corrupt");
         std::fs::write(&path, b"{ not json").unwrap();
         let backend = FileBackend::with_path(&path);
-        assert!(matches!(backend.get("any", "any"), Err(AuthError::Storage(_))));
+        assert!(matches!(
+            backend.get("any", "any"),
+            Err(AuthError::Storage(_))
+        ));
     }
 
     #[cfg(unix)]
@@ -553,7 +551,11 @@ mod tests {
                 let backend = FileBackend::with_path(path);
                 barrier.wait();
                 backend
-                    .store("svc", &format!("account-{index}"), &format!("value-{index}"))
+                    .store(
+                        "svc",
+                        &format!("account-{index}"),
+                        &format!("value-{index}"),
+                    )
                     .expect("concurrent store");
             }));
         }

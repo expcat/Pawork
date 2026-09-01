@@ -1,11 +1,13 @@
 //! pawork-client::headless 契约测试：mock transport 驱动握手、往返、事件流、背压、
 //! 取消与 compat 入口；JSON fixture 覆盖固定协议样例。
 
-use pawork_domain::{EventId, QueryId, RunId, SessionId, Timestamp, WorkspaceId};
 use pawork_client::headless::mock::MockTransport;
-use pawork_client::headless::{BackpressurePolicy, PaworkClient, PaworkOptions, SdkError, SdkErrorKind};
-use pawork_protocol::{AppQuery, AppResponse, EventStream, GlobalSequence, RunState};
+use pawork_client::headless::{
+    BackpressurePolicy, PaworkClient, PaworkOptions, SdkError, SdkErrorKind,
+};
+use pawork_domain::{EventId, QueryId, RunId, SessionId, Timestamp, WorkspaceId};
 use pawork_protocol::headless::{CompatSource, HeadlessResponse, ProtocolErrorKind};
+use pawork_protocol::{AppQuery, AppResponse, EventStream, GlobalSequence, RunState};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -68,7 +70,10 @@ fn run_changed(run: &str, state: &str) -> Value {
 async fn handshake_exposes_version_instance_and_capabilities() {
     let mock = hello_ack();
     let client = connect(&mock).await;
-    assert_eq!(client.api_version().await, Some(pawork_protocol::API_VERSION));
+    assert_eq!(
+        client.api_version().await,
+        Some(pawork_protocol::API_VERSION)
+    );
     assert_eq!(
         client.instance_id().await.as_deref(),
         Some("core-fixture-1")

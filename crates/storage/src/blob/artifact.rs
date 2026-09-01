@@ -590,14 +590,16 @@ impl ArtifactStore {
                     report.deleted += 1;
                     report.reclaimed_bytes += size.max(0) as u64;
                 }
-                let mut known_statement =
-                    connection.prepare("SELECT hash FROM artifact_blobs")?;
+                let mut known_statement = connection.prepare("SELECT hash FROM artifact_blobs")?;
                 let known = known_statement
                     .query_map([], |row| row.get::<_, String>(0))?
                     .collect::<rusqlite::Result<HashSet<_>>>()?;
                 drop(known_statement);
-                let (final_orphans, final_bytes) =
-                    reclaim_stale_final_orphans(&root.join(BLOBS_DIR), &known, FINAL_ORPHAN_MAX_AGE)?;
+                let (final_orphans, final_bytes) = reclaim_stale_final_orphans(
+                    &root.join(BLOBS_DIR),
+                    &known,
+                    FINAL_ORPHAN_MAX_AGE,
+                )?;
                 report.deleted_final_orphans = final_orphans;
                 report.reclaimed_bytes += final_bytes;
                 Ok(report)
@@ -1148,13 +1150,19 @@ mod tests {
         assert_eq!(report.deleted, 0);
         assert_eq!(report.deleted_final_orphans, 1);
         assert_eq!(report.reclaimed_bytes, orphan_content.len() as u64);
-        assert!(!orphan_path.exists(), "stale final orphan must be reclaimed");
+        assert!(
+            !orphan_path.exists(),
+            "stale final orphan must be reclaimed"
+        );
         assert!(
             fresh_path.exists(),
             "fresh final orphan must survive safety delay"
         );
         assert!(store.blob_path(&kept).exists());
-        assert_eq!(store.get(&kept).await.expect("kept readable"), b"has db row");
+        assert_eq!(
+            store.get(&kept).await.expect("kept readable"),
+            b"has db row"
+        );
 
         store.shutdown().await.expect("shutdown");
         cleanup(&root);

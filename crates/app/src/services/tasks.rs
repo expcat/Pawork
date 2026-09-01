@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use pawork_domain::{BackgroundTaskId, DegradeEvent, DegradeKind, DegradeSeverity, SessionId, TaskKind, TaskStatus};
+use pawork_domain::{
+    BackgroundTaskId, DegradeEvent, DegradeKind, DegradeSeverity, SessionId, TaskKind, TaskStatus,
+};
 use pawork_workflow::task::{TaskManager, TaskSnapshot};
 use serde_json::json;
 
@@ -87,7 +89,10 @@ impl TaskService {
         detail: Option<String>,
     ) -> Result<(), AppError> {
         let degrade = self.tasks_finish_with_degrade(task_id, status, detail)?;
-        *self.last_degrade.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = degrade.clone();
+        *self
+            .last_degrade
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = degrade.clone();
         if let Some(degrade) = degrade {
             tracing::error!(
                 code = %degrade.code(),
@@ -224,8 +229,9 @@ mod tests {
             .expect("second");
         assert_ne!(second, first);
         let listed = core.tasks_list();
-        assert!(listed.iter().any(|task| task.task_id == first
-            && task.status == pawork_domain::TaskStatus::Completed));
+        assert!(listed.iter().any(
+            |task| task.task_id == first && task.status == pawork_domain::TaskStatus::Completed
+        ));
         assert!(listed.iter().any(|task| task.task_id == second));
         core.shutdown().await.expect("shutdown");
     }
