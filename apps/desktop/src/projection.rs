@@ -354,6 +354,225 @@ pub struct ModelEntry {
     pub context_window_tokens: Option<u64>,
 }
 
+/// SET-3 只读供应商页：Host `provider_auth_status` 的单个 provider 认证
+/// 状态投影。只承载 Host 权威事实（wire 形状见 gui_host
+/// handlers/settings.rs），不含写操作状态。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProviderAuthState {
+    Connected {
+        method: String,
+        masked_credential: Option<String>,
+    },
+    NotConnected,
+    Connecting,
+    Error {
+        message: String,
+    },
+}
+
+/// 目录三态（与 Host catalog_state 同口径）：remote 探测成功 /
+/// 固定回退快照 / 不可用（带原因）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProviderCatalogState {
+    Remote { fetched_at: String },
+    FixedFallback { snapshot_label: String },
+    Unavailable { error: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderStatusEntry {
+    pub provider_id: String,
+    pub display_name: String,
+    pub endpoint_label: String,
+    pub auth_methods: Vec<String>,
+    pub auth: ProviderAuthState,
+    pub catalog: ProviderCatalogState,
+}
+
+fn auth_method_display_name(method: &str) -> &str {
+    match method {
+        "api_key" => "API key",
+        "oauth" => "OAuth",
+        other => other,
+    }
+}
+
+impl ProviderStatusEntry {
+    /// 认证方式显示名（api_key → API key；oauth → OAuth；未知值原样，
+    /// 不臆造能力）。
+    pub fn auth_methods_label(&self) -> String {
+        self.auth_methods
+            .iter()
+            .map(|method| auth_method_display_name(method))
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+
+    /// 连接状态文案（render 与 AX 同源；masked credential 只显示 Host
+    /// 已脱敏值）。
+    pub fn auth_label(&self) -> String {
+        match &self.auth {
+            ProviderAuthState::Connected {
+                method,
+                masked_credential,
+            } => {
+                let mut label = format!("Connected · {}", auth_method_display_name(method));
+                if let Some(masked) = masked_credential {
+                    label.push_str(" · ");
+                    label.push_str(masked);
+                }
+                label
+            }
+            ProviderAuthState::NotConnected => "Not connected".into(),
+            ProviderAuthState::Connecting => "Connecting…".into(),
+            ProviderAuthState::Error { message } => format!("Error · {message}"),
+        }
+    }
+
+    /// 目录来源文案（render 与 AX 同源）。
+    pub fn catalog_label(&self) -> String {
+        match &self.catalog {
+            ProviderCatalogState::Remote { fetched_at } => {
+                format!("Remote catalog · fetched {fetched_at}")
+            }
+            ProviderCatalogState::FixedFallback { snapshot_label } => {
+                format!("Built-in catalog fallback · {snapshot_label}")
+            }
+            ProviderCatalogState::Unavailable { error } => {
+                format!("Catalog unavailable · {error}")
+            }
+        }
+    }
+}
+
+/// Settings「模型与供应商」页整体状态（SET-3 只读）：加载态、断线 stale
+/// 标注与最后成功数据；断线保留 stale 只读结果，不伪造刷新。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SettingsProvidersState {
+    pub loading: bool,
+    pub stale_reason: Option<String>,
+    pub error: Option<String>,
+    pub providers: Vec<ProviderStatusEntry>,
+}
+
+impl SettingsProvidersState {
+    pub fn begin_loading(&mut self) {
+        self.loading = true;
+        // 加载只在已连接时发起（controller 未派出时不进入 loading），
+        // 新一轮请求开始即弃置旧 stale 标注；断线由 Disconnected 重新标记。
+        self.stale_reason = None;
+    }
+
+    /// 新数据到达：清 stale / error / loading，替换列表。
+    pub fn apply_loaded(&mut self, providers: Vec<ProviderStatusEntry>) {
+        self.loading = false;
+        self.stale_reason = None;
+        self.error = None;
+        self.providers = providers;
+    }
+
+    /// 查询失败：保留旧列表供只读（不伪造空态），记录失败原因。
+    pub fn apply_failed(&mut self, reason: &str) {
+        self.loading = false;
+        self.error = Some(reason.to_string());
+    }
+
+    /// 断线：终止在途加载，保留最后只读结果并标注 stale。
+    pub fn mark_stale(&mut self, reason: &str) {
+        self.loading = false;
+        self.stale_reason = Some(reason.to_string());
+    }
+}
+
+/// 解析 Host `provider_auth_status` 的 `AppResponse::Data` 载荷
+///（`{"providers":[…]}`）。缺字段 / 未知状态 fail-closed，不静默丢条目。
+pub fn parse_provider_status_entries(data: &Value) -> Result<Vec<ProviderStatusEntry>, String> {
+    let Some(list) = data.get("providers").and_then(Value::as_array) else {
+        return Err("provider status missing providers array".into());
+    };
+    list.iter().map(parse_provider_status_entry).collect()
+}
+
+fn parse_provider_status_entry(entry: &Value) -> Result<ProviderStatusEntry, String> {
+    let provider_id = json_str(entry, "provider_id")?;
+    let auth = entry
+        .get("auth")
+        .ok_or_else(|| format!("provider {provider_id} missing auth"))?;
+    let auth_kind = auth
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("provider {provider_id} auth missing type"))?;
+    let auth_state = match auth_kind {
+        "connected" => ProviderAuthState::Connected {
+            method: json_str(auth, "method")?,
+            masked_credential: auth
+                .get("masked_credential")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        },
+        "none" => ProviderAuthState::NotConnected,
+        "connecting" => ProviderAuthState::Connecting,
+        "error" => ProviderAuthState::Error {
+            message: json_str(auth, "message")?,
+        },
+        other => return Err(format!("provider {provider_id} unknown auth type {other}")),
+    };
+    let catalog = entry
+        .get("catalog")
+        .ok_or_else(|| format!("provider {provider_id} missing catalog"))?;
+    let catalog_kind = catalog
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("provider {provider_id} catalog missing type"))?;
+    let catalog_state = match catalog_kind {
+        "remote" => ProviderCatalogState::Remote {
+            fetched_at: json_str(catalog, "fetched_at")?,
+        },
+        "fixed_fallback" => ProviderCatalogState::FixedFallback {
+            snapshot_label: json_str(catalog, "snapshot_label")?,
+        },
+        "unavailable" => ProviderCatalogState::Unavailable {
+            error: json_str(catalog, "error")?,
+        },
+        other => {
+            return Err(format!(
+                "provider {provider_id} unknown catalog type {other}"
+            ))
+        }
+    };
+    // 认证方式 fail-closed：缺失 / 非数组 / 含非字符串项即报错，不静默
+    //默认空列表（空列表会被当成「无认证方式」渲染，属伪造能力）。
+    let auth_methods = entry
+        .get("auth_methods")
+        .ok_or_else(|| format!("provider {provider_id} missing auth_methods"))?
+        .as_array()
+        .ok_or_else(|| format!("provider {provider_id} auth_methods is not an array"))?
+        .iter()
+        .map(|method| {
+            method
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("provider {provider_id} auth_methods entry is not a string"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(ProviderStatusEntry {
+        provider_id: provider_id.clone(),
+        display_name: json_str(entry, "display_name")?,
+        endpoint_label: json_str(entry, "endpoint_label")?,
+        auth_methods,
+        auth: auth_state,
+        catalog: catalog_state,
+    })
+}
+
+fn json_str(value: &Value, field: &str) -> Result<String, String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("missing string field {field}"))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveRun {
     pub run_id: String,
@@ -420,6 +639,8 @@ pub struct DesktopProjection {
     pub models: Vec<ModelEntry>,
     pub selected_model: Option<(String, String)>,
     pub pending_model: Option<(String, String)>,
+    /// SET-3 Settings 供应商页只读状态（加载 / stale / Host 权威列表）。
+    pub settings_providers: SettingsProvidersState,
     pub active_runs: Vec<ActiveRun>,
     pub active_run_started_at_ms: Option<u64>,
     pub resume: ResumeState,
@@ -1784,6 +2005,95 @@ mod tests {
             ]
         }))
         .expect("decode Snapshot")
+    }
+
+    #[test]
+    fn provider_status_entries_map_host_wire_to_readonly_labels() {
+        let data = json!({
+            "providers": [
+                {
+                    "provider_id": "glm-coding",
+                    "display_name": "Z.AI GLM Coding Plan",
+                    "endpoint_label": "https://api.z.ai",
+                    "auth_methods": ["api_key"],
+                    "auth": {
+                        "type": "connected",
+                        "method": "api_key",
+                        "masked_credential": "sk-…ab12"
+                    },
+                    "catalog": { "type": "remote", "fetched_at": "2026-09-02T08:00:00Z" }
+                },
+                {
+                    "provider_id": "kimi",
+                    "display_name": "Kimi",
+                    "endpoint_label": "https://api.moonshot.cn",
+                    "auth_methods": ["api_key", "oauth"],
+                    "auth": { "type": "none" },
+                    "catalog": {
+                        "type": "fixed_fallback",
+                        "snapshot_label": "models.dev@v1",
+                        "fetched_at": null
+                    }
+                }
+            ]
+        });
+        let entries = parse_provider_status_entries(&data).expect("parse provider status");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].auth_methods_label(), "API key");
+        assert_eq!(entries[0].auth_label(), "Connected · API key · sk-…ab12");
+        assert_eq!(
+            entries[0].catalog_label(),
+            "Remote catalog · fetched 2026-09-02T08:00:00Z"
+        );
+        assert_eq!(entries[1].auth_methods_label(), "API key / OAuth");
+        assert_eq!(entries[1].auth_label(), "Not connected");
+        assert_eq!(
+            entries[1].catalog_label(),
+            "Built-in catalog fallback · models.dev@v1"
+        );
+    }
+
+    #[test]
+    fn provider_status_entries_fail_closed_on_malformed_payload() {
+        // 缺 providers 数组：整体 fail-closed。
+        assert!(parse_provider_status_entries(&json!({ "providers": "nope" })).is_err());
+        // 单条缺 auth / 未知 auth 状态：不静默丢条目。
+        assert!(parse_provider_status_entries(&json!({ "providers": [
+            { "provider_id": "glm-coding", "display_name": "Z.AI", "endpoint_label": "e" }
+        ] }))
+        .is_err());
+        // auth_methods 缺失 / 非数组 / 含非字符串项：fail-closed，不默认空表。
+        assert!(parse_provider_status_entries(&json!({ "providers": [
+            {
+                "provider_id": "glm-coding",
+                "display_name": "Z.AI",
+                "endpoint_label": "e",
+                "auth": { "type": "none" },
+                "catalog": { "type": "remote", "fetched_at": "t" }
+            }
+        ] }))
+        .is_err());
+        assert!(parse_provider_status_entries(&json!({ "providers": [
+            {
+                "provider_id": "glm-coding",
+                "display_name": "Z.AI",
+                "endpoint_label": "e",
+                "auth_methods": "api_key",
+                "auth": { "type": "none" },
+                "catalog": { "type": "remote", "fetched_at": "t" }
+            }
+        ] }))
+        .is_err());
+        assert!(parse_provider_status_entries(&json!({ "providers": [
+            {
+                "provider_id": "glm-coding",
+                "display_name": "Z.AI",
+                "endpoint_label": "e",
+                "auth": { "type": "mystery" },
+                "catalog": { "type": "remote", "fetched_at": "t" }
+            }
+        ] }))
+        .is_err());
     }
 
     fn session_entry(id: &str, title: &str, updated: u64) -> Value {

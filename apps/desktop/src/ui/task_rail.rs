@@ -298,13 +298,48 @@ impl AppView {
         }
         content = content.child(self.task_rail_list(now_ms, can_create, cx));
         // TR-12 honest-hidden：只保留「Local」本机身份行，不画头像 / 姓名 /
-        // 齿轮 / quota（无权威账户 capability）。
+        // quota（无权威账户 capability）。SET-3 起右侧 gear 是真实 Settings
+        // 入口（可见 / 键盘 / AX 同 gate），不是占位图标。
+        let settings_focus = self.settings_focus.clone();
         content = content.child(
-            div().mt_auto().pt_2().child(
-                Label::new("Local")
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            ),
+            div()
+                .mt_auto()
+                .pt_2()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div().flex_1().min_w_0().child(
+                        Label::new("Local")
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    ),
+                )
+                .child(
+                    Button::new("open-settings")
+                        .track_focus(&settings_focus)
+                        .variant(ButtonVariant::Ghost)
+                        .padding(ButtonPadding::None)
+                        .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
+                        .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
+                        .center()
+                        .radius(4.0)
+                        .text_size(font::BASE)
+                        .label("⚙")
+                        .tooltip("Settings")
+                        .on_click(cx.listener(|view, event, window, cx| {
+                            if view.consume_button_key_click("open-settings", event) {
+                                return;
+                            }
+                            view.on_open_settings(window, cx);
+                        }))
+                        .on_activate(cx.listener(|view, _event, window, cx| {
+                            view.note_button_key_activate("open-settings");
+                            view.on_open_settings(window, cx);
+                            cx.stop_propagation();
+                        })),
+                ),
         );
 
         Panel::side_right(rail_width)

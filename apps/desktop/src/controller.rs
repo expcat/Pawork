@@ -18,7 +18,9 @@ use pawork_client::{
 };
 use serde_json::json;
 
-use crate::projection::{sessions_in_snapshot, ModelEntry};
+use crate::projection::{
+    parse_provider_status_entries, sessions_in_snapshot, ModelEntry, ProviderStatusEntry,
+};
 
 const PAGE_LIMIT: u32 = 500;
 const MAX_PAGES: usize = 200;
@@ -49,6 +51,8 @@ pub enum ControllerEvent {
         text: String,
     },
     ModelsLoaded(Vec<ModelEntry>),
+    /// provider_auth_status 查询成功（SET-3 只读供应商页）。
+    ProviderStatusLoaded(Vec<ProviderStatusEntry>),
     SessionForked {
         session_id: String,
     },
@@ -1026,6 +1030,49 @@ impl DesktopController {
         });
     }
 
+    /// 拉取 Settings「模型与供应商」页只读状态（provider_auth_status，
+    /// provider_id=None → 全部）。返回是否已派出（断线时由 UI 保留 stale
+    /// 只读结果，不进入 loading）。
+    pub fn load_provider_status(&self) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            match client
+                .query(
+                    provider_auth_status_query(),
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                Ok(response) => match parse_provider_status_response(&response) {
+                    Ok(providers) => {
+                        let _ = events
+                            .send(ControllerEvent::ProviderStatusLoaded(providers))
+                            .await;
+                    }
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "load provider status",
+                            reason,
+                        },
+                    ),
+                },
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "load provider status",
+                        reason: error.to_string(),
+                    },
+                ),
+            }
+        });
+        true
+    }
+
     /// 拉取 Changes 面文件清单（diff_list_files）。epoch 由 UI 递增，
     /// 响应原样带回，过期代次在 UI 侧丢弃。
     pub fn diff_list_files(&self, workspace_id: String, epoch: u64) {
@@ -1440,6 +1487,14 @@ fn model_list_query() -> AppQuery {
     .expect("model_list query shape is frozen")
 }
 
+fn provider_auth_status_query() -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "provider_auth_status",
+        "params": {}
+    }))
+    .expect("provider_auth_status query shape is frozen")
+}
+
 fn diff_list_files_query(workspace_id: &str) -> AppQuery {
     serde_json::from_value(json!({
         "method": "diff_list_files",
@@ -1492,6 +1547,18 @@ fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEntry>, Strin
                 })
                 .collect())
         }
+        AppResponse::Error(_) => Err("server returned an error response".into()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 provider_auth_status 信封：`AppResponse::Data` 载荷形如
+/// `{"providers":[…]}`，条目解析在 projection（纯状态可单测）。
+fn parse_provider_status_response(
+    response: &AppResponseEnvelope,
+) -> Result<Vec<ProviderStatusEntry>, String> {
+    match &response.response {
+        AppResponse::Data(data) => parse_provider_status_entries(data),
         AppResponse::Error(_) => Err("server returned an error response".into()),
         other => Err(format!("unexpected response: {other:?}")),
     }

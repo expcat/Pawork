@@ -981,3 +981,20 @@ Known gaps: Settings 页 AX 卡片几何为固定估值、不随滚动（登记 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 注（2026-09-02 Settings 主线提交）：本条目为原任务线自述记录；SET-3 代码（apps/desktop 写入集）未随该次提交进入 main，由其原任务线另行审查提交。
+
+---
+
+## 2026-09-02 — Settings SET-3 审查提交（main）
+
+- 原任务线审查 SET-3 写入集并提交 main：apps/desktop 5 改 1 增（controller / projection / ui/mod / task_rail / accessibility-app + 新增 ui/settings.rs）与 3 份文档（gui-design、spec/desktop、spec/crates/desktop）。审查另发现并同批修复两处：(1) `ui/accessibility/app.rs` 中 SET-3 函数误插到 `project_ax_nodes` 的 doc 注释与 fn 之间导致文档错挂，“Settings 左栏” doc 归位 `settings_rail_ax`、“项目块 AX 投影” doc 归还原 fn；(2) `ui/mod.rs` `on_connected` 在 `load_models()` 后补调 `refresh_provider_status()`，重连后刷新只读供应商状态、清除断线 stale 标注。
+- 提交切分：以过滤 patch 仅 stage SET-3 语义 hunk，剔除另一会话并行进行的全仓 rustfmt 与文档链接重布线 hunk；本审查另发现并纠正 `docs/gui-design.md` 误入的两行重布线（插件市场条目与“人工签字”条目恢复 ROADMAP 原链接）。
+
+Validated: staged tree `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（163 绿，含 SET-3 定向 3 条）；三份状态文档仅链接/状态回写，未跑 Cargo。
+
+Targeted regressions: 复用 SET-3 既有 3 条（解析主路径、畸形载荷 fail-closed、Settings 路由快捷键守卫），本次未新增。
+
+Real-world evidence: pending（真窗口收口属 SET-7）。
+
+Known gaps: Settings 页 AX 卡片几何为固定估值、不随滚动（登记 SET-7）；写操作与其余页面未开放（SET-4～SET-6）。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

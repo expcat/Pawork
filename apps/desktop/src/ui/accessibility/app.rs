@@ -21,13 +21,14 @@ use crate::ui::inspector::{
     TERMINAL_COLUMNS_STEP, TERMINAL_EMPTY_OUTPUT, TERMINAL_ROWS_STEP,
 };
 use crate::ui::resources::ResourcesFetch;
+use crate::ui::settings::provider_status_lines;
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::display_time;
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
     terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended,
-    terminal_start_enabled, timeline, AppView,
+    terminal_start_enabled, timeline, AppRoute, AppView,
     MenuKind, WORKSPACE_EMPTY_HINT,
 };
 
@@ -197,6 +198,9 @@ impl AppView {
                 self.on_new_session(window, cx)
             }
             "reconnect" => self.on_reconnect(window, cx),
+            // SET-3：Settings 进出与可见 / 键盘路径同一 handler。
+            "open-settings" => self.on_open_settings(window, cx),
+            "settings-back" => self.on_close_settings(window, cx),
             "model-picker" => {
                 window.focus(&self.model_focus);
                 self.on_toggle_model_menu(None, window, cx)
@@ -397,26 +401,46 @@ impl AppView {
         let workspace_width = (width - sidebar_width - inspector_width).max(0.0);
         let workspace_x = sidebar_width;
 
-        let mut tree = AxTree::new(width, height)
-            .child(self.sidebar_ax(window, AxRect::new(0.0, 0.0, sidebar_width, content_height)))
-            .child(self.workspace_ax(
-                window,
-                cx,
-                AxRect::new(workspace_x, 0.0, workspace_width, content_height),
-                shell.inspector_open,
-            ));
-        if shell.inspector_open {
-            tree = tree.child(self.inspector_ax(
-                window,
-                cx,
-                AxRect::new(
-                    width - inspector_width,
+        // SET-3 顶层路由：Settings 壳与工作台互斥（与 render 同源）。
+        let tree = if self.route == AppRoute::Settings {
+            AxTree::new(width, height)
+                .child(
+                    self.settings_rail_ax(
+                        window,
+                        AxRect::new(0.0, 0.0, sidebar_width, content_height),
+                    ),
+                )
+                .child(self.settings_page_ax(AxRect::new(
+                    workspace_x,
                     0.0,
-                    inspector_width,
+                    (width - sidebar_width).max(0.0),
                     content_height,
-                ),
-            ));
-        }
+                )))
+        } else {
+            let mut tree = AxTree::new(width, height)
+                .child(
+                    self.sidebar_ax(window, AxRect::new(0.0, 0.0, sidebar_width, content_height)),
+                )
+                .child(self.workspace_ax(
+                    window,
+                    cx,
+                    AxRect::new(workspace_x, 0.0, workspace_width, content_height),
+                    shell.inspector_open,
+                ));
+            if shell.inspector_open {
+                tree = tree.child(self.inspector_ax(
+                    window,
+                    cx,
+                    AxRect::new(
+                        width - inspector_width,
+                        0.0,
+                        inspector_width,
+                        content_height,
+                    ),
+                ));
+            }
+            tree
+        };
         // StatusBar 视觉上不覆盖左栏账户区；AX frame 与 render 同源。
         tree.child(self.status_ax(AxRect::new(
             sidebar_width,
@@ -611,6 +635,25 @@ impl AppView {
         }
         sidebar = sidebar.child(list);
 
+        // TR-12 页脚（SET-3）：右下角 Settings gear，与可见按钮同 gate
+        //（render：content px(RAIL_INNER_PAD) + Panel p_2 → 右缘 inset 20，
+        // mt_auto 钉底）。
+        sidebar = sidebar.child(
+            AxNode::new(
+                "open-settings",
+                AxRole::Button,
+                "Settings",
+                AxRect::new(
+                    (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
+                    (frame.height - PAD - metrics::RAIL_ICON_BUTTON_SIZE).max(list_top),
+                    metrics::RAIL_ICON_BUTTON_SIZE,
+                    metrics::RAIL_ICON_BUTTON_SIZE,
+                ),
+            )
+            .focused(self.open_menu.is_none() && self.settings_focus.is_focused(window))
+            .action(AxAction::Press),
+        );
+
         if matches!(self.open_menu, Some(MenuKind::Grouping)) {
             // 浮层贴 grouping 角标下方：标题行顶 = PAD + 36 安全区 + PAD，
             // 行高 36；旧 CONTROL_HEIGHT=28 的锚点会把菜单抬到 traffic-light 带。
@@ -743,6 +786,109 @@ impl AppView {
                 .map(|project| (None, project))
                 .collect(),
         }
+    }
+
+    /// Settings 左栏（SET-3）：返回按钮 + 首页导航项。几何与
+    /// settings.rs render 同源（Panel p_2 + 36px 安全区 + gap_2 + mt_2）。
+    fn settings_rail_ax(&self, window: &Window, frame: AxRect) -> AxNode {
+        let back_y = PAD + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT + PAD;
+        let nav_y = back_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD + PAD;
+        let width = (frame.width - PAD * 2.0).max(0.0);
+        AxNode::new("settings-rail", AxRole::Group, "Settings", frame)
+            .child(
+                AxNode::new(
+                    "settings-back",
+                    AxRole::Button,
+                    "Back to workspace",
+                    AxRect::new(
+                        frame.x + PAD,
+                        frame.y + back_y,
+                        width,
+                        metrics::RAIL_TOP_ROW_HEIGHT,
+                    ),
+                )
+                .focused(self.settings_back_focus.is_focused(window))
+                .action(AxAction::Press),
+            )
+            .child(
+                AxNode::new(
+                    "settings-nav-providers",
+                    AxRole::StaticText,
+                    "Models & providers",
+                    AxRect::new(
+                        frame.x + PAD,
+                        frame.y + nav_y,
+                        width,
+                        metrics::RAIL_TOP_ROW_HEIGHT,
+                    ),
+                )
+                .value("Selected"),
+            )
+    }
+
+    /// Settings 全宽内容（SET-3 只读供应商页）：标题 / 状态行 / Provider
+    /// 只读卡片（StaticText，无写操作 action）。卡片高度按四行文本 + 内边
+    /// 距的固定估值（只读节点，不参与 hit-test action 门控）。
+    fn settings_page_ax(&self, frame: AxRect) -> AxNode {
+        const HEADING_HEIGHT: f32 = 28.0;
+        const SUBTITLE_HEIGHT: f32 = 20.0;
+        const STATUS_HEIGHT: f32 = 20.0;
+        const PROVIDER_CARD_HEIGHT: f32 = 124.0;
+        let state = &self.projection.settings_providers;
+        let mut page = AxNode::new("settings-page", AxRole::Group, "Models & providers", frame)
+            .child(
+                AxNode::new(
+                    "settings-page-title",
+                    AxRole::StaticText,
+                    "Models & providers",
+                    AxRect::new(
+                        frame.x + 16.0,
+                        frame.y + 16.0,
+                        (frame.width - 32.0).max(0.0),
+                        HEADING_HEIGHT + SUBTITLE_HEIGHT,
+                    ),
+                )
+                .value("Connection status and catalog source for each provider"),
+            );
+        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+        let width = (frame.width - 32.0).max(0.0);
+        // 与 render 同源（SET-3 修复 2）：stale / loading / error / 空态各自
+        // 独立发布，stale 与 error 可同时存在，不再三选一合并。
+        for (kind, label) in provider_status_lines(state) {
+            page = page.child(
+                AxNode::new(
+                    format!("settings-status-{kind}"),
+                    AxRole::StaticText,
+                    "Provider status",
+                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                )
+                .value(label),
+            );
+            y += STATUS_HEIGHT + 8.0;
+        }
+        for (ix, provider) in state.providers.iter().enumerate() {
+            page = page.child(
+                AxNode::new(
+                    dynamic_identifier("settings-provider", &provider.provider_id),
+                    AxRole::StaticText,
+                    provider.display_name.clone(),
+                    AxRect::new(
+                        frame.x + 16.0,
+                        y + ix as f32 * (PROVIDER_CARD_HEIGHT + 8.0),
+                        width,
+                        PROVIDER_CARD_HEIGHT,
+                    ),
+                )
+                .value(format!(
+                    "{} · {} · {}",
+                    provider.auth_methods_label(),
+                    provider.auth_label(),
+                    provider.catalog_label()
+                ))
+                .description(provider.endpoint_label.clone()),
+            );
+        }
+        page
     }
 
     /// 项目块 AX 投影（对齐 task_rail.rs project_block）：折叠头 + 项目内新建

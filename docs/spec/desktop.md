@@ -12,12 +12,13 @@ Pawork Desktop 是本机单窗口 GPUI Agent 工作台。它只负责呈现、�
 
 ```mermaid
 flowchart LR
-    R["TaskRail\n会话 / 新任务"] --> T["Timeline\n消息 / 工具 / 审批 / 诊断"]
+    R["TaskRail\n会话 / 新任务 / Settings"] --> T["Timeline\n消息 / 工具 / 审批 / 诊断"]
     T --> C["Composer\n输入 / 发送 / @引用"]
     T --> I["Inspector"]
     I --> CH["Changes\n只读"]
     I --> PTY["Terminal"]
     I --> RES["Resources\nMCP只读"]
+    R --> SET["Settings\n供应商 / 模型 / 其它设置"]
 ```
 
 | 区域 | 必须呈现 | 当前限制 |
@@ -28,6 +29,7 @@ flowchart LR
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、Stop/Close、流式输出与 live/snapshot 终态；任务切换隔离草稿；失败与断线诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；ADR-045 的 `terminal_close` / `TerminalExited` 自 API 1.3 起可用，旧 minor 仍只从 snapshot 获知终态。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
+| Settings | 独立 Settings Rail + 全宽内容；首个页面为模型与供应商 | 壳与只读供应商页已实现（SET-3）：TaskRail gear 进入、返回恢复工作台状态、断线保留 stale 只读标注；写操作与其它页面等待 SET-4–SET-6。 |
 
 ## 3. 连接与状态模型
 
@@ -64,6 +66,7 @@ flowchart LR
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启仍是 P1 缺口。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 生产响应式路径已实现；完整视觉签字仍待人工验收。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；本轮主路径可经 AX 驱动，全组件 VoiceOver 与 Windows/Linux 平台仍未验收。 |
+| DESK-12 | Settings 从 TaskRail 进入，以 Host capability 驱动供应商认证/模型目录；返回时保持工作台状态，secure input 不泄漏 AX value。 | 壳与只读供应商页已实现（SET-3）：gear / Rail / 返回与 stale 只读状态落地，进入退出不动会话、草稿、Inspector、Run；认证写操作与 secure input 属 SET-4/SET-5，见 [settings.md](settings.md)。 |
 
 ### 4.1 可见合同（已实现，非终局签字）
 
@@ -97,7 +100,7 @@ flowchart LR
 
 ## 7. 当前验收合同
 
-当前执行入口只有 [ROADMAP](../../ROADMAP.md)。真实 Desktop 主路径至少覆盖：正式启动、添加真实项目、新建 Task、发送消息、文件写入与审批、Git Changes、Terminal 输入输出；不使用 fixture、seed、probe 或测试 profile 冒充通过。
+当前执行入口只有 [ROADMAP](../../ROADMAP.md)。Settings 的专项行为与证据见 [settings.md](settings.md)。真实 Desktop 主路径至少覆盖：正式启动、添加真实项目、新建 Task、发送消息、文件写入与审批、Git Changes、Terminal 输入输出；不使用 fixture、seed、probe 或测试 profile 冒充通过。
 
 边界口径：
 
@@ -106,4 +109,4 @@ flowchart LR
 - Desktop Changes 只读是当前协议边界，Git 写操作仍需 ADR，不得用假按钮补图；
 - `@` 候选浮层和 Resources 规则分区只有 Host capability 存在时才可展示。
 
-证据必须记录实际窗口状态、连接态、真实操作 trace、文件/Git/PTY 外部事实和实际执行的自动检查。三张初始设计图的视觉签字、VoiceOver 与发布门禁均需单独记录，不能由本轮功能通过替代。
+证据必须记录实际窗口状态、连接态、真实操作 trace、文件/Git/PTY/Provider 外部事实和实际执行的自动检查。主工作台三张初始设计图、Settings 真窗口、VoiceOver 与发布状态均需单独记录，不能由功能测试互相替代。

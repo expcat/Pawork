@@ -1,6 +1,6 @@
 # Settings 活动线任务书
 
-> 状态：SET-0～SET-2 已审查提交；SET-3 Settings 壳（gear/Settings Rail/返回工作台/只读供应商页）实现完成，待原任务线另行审查提交；写操作未开放。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
+> 状态：SET-0～SET-3 已审查提交（SET-3：gear/Settings Rail/返回工作台/只读供应商页）；写操作未开放。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
 
 ## 1. 开工合同
 
@@ -111,9 +111,9 @@
 
 **定向回归上限**：主路径一条；另加 Secret 不落 ledger/日志或替换失败保旧中的一个关键失败路径。现有测试可覆盖时不新增。
 
-### SET-3 — Settings 壳与只读供应商页 🔵（实现完成，待另行审查提交）
+### SET-3 — Settings 壳与只读供应商页 🟢
 
-> 2026-09-02 完成：TaskRail `Local` 行 gear（可见/键盘/AX 同 gate）+ AppRoute 顶层路由（Settings 与工作台互斥渲染，工作台状态全保留）+ Settings Rail（返回 + 唯一真实导航项）+ 只读供应商页（provider_auth_status 全量查询，auth 四态/catalog 三态，断线 stale 标注）。审查修复四处：Settings 路由下九个工作台快捷键加 route 守卫（防隐形取消 Run/审批）、AX 状态行与 render 改同源逐行发布、stale 语义（加载清 stale/迟到响应重标）、auth_methods 解析 fail-closed。新增测试 3 条（解析主路径、畸形载荷 fail-closed、路由快捷键守卫）。已知缺口登记 SET-7：Settings 页 AX 卡片几何为固定估值、不随滚动，真窗口 VoiceOver 验收时重点核。
+> 2026-09-02 完成：TaskRail `Local` 行 gear（可见/键盘/AX 同 gate）+ AppRoute 顶层路由（Settings 与工作台互斥渲染，工作台状态全保留）+ Settings Rail（返回 + 唯一真实导航项）+ 只读供应商页（provider_auth_status 全量查询，auth 四态/catalog 三态，断线 stale 标注）。审查修复六处：Settings 路由下九个工作台快捷键加 route 守卫（防隐形取消 Run/审批）、AX 状态行与 render 改同源逐行发布、stale 语义（加载清 stale/迟到响应重标）、auth_methods 解析 fail-closed；2026-09-02 原任务线审查提交 main 时再修两处：ui/accessibility/app.rs 文档注释归位（SET-3 函数误插到 project_ax_nodes 的 doc 与 fn 之间，“Settings 左栏”与“项目块 AX 投影”各归其位）、on_connected 重连后调用 refresh_provider_status() 清除断线 stale 标注。新增测试 3 条（解析主路径、畸形载荷 fail-closed、路由快捷键守卫）。已知缺口登记 SET-7：Settings 页 AX 卡片几何为固定估值、不随滚动，真窗口 VoiceOver 验收时重点核。
 
 **目标**：先接真实只读状态，再开放写操作。
 

@@ -12,6 +12,7 @@ mod input_area;
 mod inspector;
 mod platform_preferences;
 mod resources;
+mod settings;
 mod shell_layout;
 mod task_rail;
 pub mod text_input;
@@ -105,12 +106,32 @@ pub(crate) const RAIL_TAB_INDEX_ADD_TASK: isize = -18;
 /// 路径补全）；不渲染时自动退出 Tab 链。
 pub(crate) const RAIL_TAB_INDEX_RECONNECT: isize = -17;
 pub(crate) const RAIL_TAB_INDEX_ROWS: isize = -16;
+/// TaskRail 页脚 Settings gear（SET-3）：位于行级 -16 之后，rail 焦点链尾。
+pub(crate) const RAIL_TAB_INDEX_SETTINGS: isize = -15;
 /// composer 在 Tab 链中的位次：链尾（1 档），主路径 0 档之后。
 pub(crate) const COMPOSER_TAB_INDEX: isize = 1;
 
 /// Inspector 控件与其它主路径控件同属 0 档；可见元素的 render 顺序决定
 /// 顶层 tabs → collapse → 当前 surface 控件 → Composer 的普通 Tab 顺序。
 pub(crate) const INSPECTOR_TAB_INDEX: isize = 0;
+
+/// 顶层路由（SET-3）：Workspace 三栏装配与 Settings 壳互斥渲染。工作台
+/// 状态（草稿 / Timeline / Inspector / Run）全部保存在 AppView 字段，
+/// 切换路由只换渲染，不触碰任何工作台状态。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AppRoute {
+    #[default]
+    Workspace,
+    Settings,
+}
+
+/// 工作台专属 action 在当前路由是否生效（SET-3 审查修复 1）：审批 /
+/// 取消 Run / 新建任务 / Inspector / 任务导航的全局键绑定在 Settings 路由
+/// 下全部旁路（Settings 壳内这些控件不渲染，键绑定也不得穿透路由）；
+/// 文字缩放等应用级键不经此守卫。
+fn workspace_action_active(route: AppRoute) -> bool {
+    matches!(route, AppRoute::Workspace)
+}
 
 /// 主路径按钮的可测 tab_stop 标记。
 pub(crate) const MAIN_PATH_TAB_STOP_IDS: &[&str] = &[
@@ -497,6 +518,14 @@ pub struct AppView {
     /// 折叠后回焦 Header Activity；恢复后回焦当前顶层 tab。目标元素可能
     /// 要到下一帧才进入树，因此由 render 在 AX 同步前兑现。
     pending_inspector_focus: Option<InspectorFocusTarget>,
+    /// 顶层路由（SET-3）：Settings 壳与工作台互斥渲染，切换不动工作台状态。
+    route: AppRoute,
+    /// TaskRail 页脚 Settings gear（可见 / 键盘 / AX 同 gate）。
+    settings_focus: FocusHandle,
+    /// Settings Rail「← Back to workspace」焦点（进入 Settings 后首停）。
+    settings_back_focus: FocusHandle,
+    /// Settings 内容滚动句柄（供应商列表可能超出视口）。
+    settings_scroll: ScrollHandle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -670,6 +699,13 @@ impl AppView {
             rail_scroll_to_active: false,
             pending_scope_focus: false,
             pending_inspector_focus: None,
+            route: AppRoute::default(),
+            settings_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(RAIL_TAB_INDEX_SETTINGS),
+            settings_back_focus: cx.focus_handle().tab_stop(true),
+            settings_scroll: ScrollHandle::new(),
         };
         timeline::install_scroll_follow(&view.timeline_list, &cx.weak_entity());
         // R3 Wave B Slice 4：composer 挂 1 档作为 Tab 链尾（rail 负档 →
@@ -1002,6 +1038,8 @@ impl AppView {
         self.status_hint = self.projection.resume.label();
         self.timeline_changed();
         self.controller.load_models();
+        // SET-3：重连后刷新只读供应商状态，清除断线 stale 标注。
+        self.refresh_provider_status();
         self.consume_events(events, cx);
         // 连接建立即武装 1s tick：barrier 启用而无 run 时也要常驻探测。
         self.arm_run_clock(cx);
@@ -1070,6 +1108,8 @@ impl AppView {
                     .set_connection(ConnectionState::Disconnected { reason });
                 self.changes.mark_stale(&stale_reason);
                 self.resources.mark_stale(&stale_reason);
+                // SET-3：Settings 供应商页同样保留 stale 只读结果。
+                self.projection.settings_providers.mark_stale(&stale_reason);
                 self.terminal_pending_write = None;
                 self.terminal_pending_create_workspace = None;
                 self.terminal_pending_create_cwd = None;
@@ -1317,9 +1357,23 @@ impl AppView {
             ControllerEvent::ModelsLoaded(models) => {
                 self.projection.set_models(models);
             }
+            ControllerEvent::ProviderStatusLoaded(providers) => {
+                self.projection.settings_providers.apply_loaded(providers);
+                // 迟到响应不丢断线标注：旧连接的回执在断线后到达时，
+                // 数据照收（只读无害），但重新标 stale 保持诚实。
+                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
+                    let stale = format!("connection lost · {reason}");
+                    self.projection.settings_providers.mark_stale(&stale);
+                }
+            }
             ControllerEvent::OperationFailed { action, reason } => {
                 if action == "open session" {
                     self.timeline_paging = false;
+                }
+                if action == "load provider status" {
+                    self.projection
+                        .settings_providers
+                        .apply_failed(reason.as_str());
                 }
                 self.status_hint = Some(format!("{action} failed: {reason}"));
             }
@@ -2203,6 +2257,9 @@ impl AppView {
     }
 
     fn on_task_cycle_up(&mut self, _: &TaskCycleUp, window: &mut Window, cx: &mut Context<Self>) {
+        if !workspace_action_active(self.route) {
+            return;
+        }
         self.cycle_active_task(false, window, cx);
     }
 
@@ -2212,6 +2269,9 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !workspace_action_active(self.route) {
+            return;
+        }
         self.cycle_active_task(true, window, cx);
     }
 
@@ -2221,11 +2281,46 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !workspace_action_active(self.route) {
+            return;
+        }
         self.open_next_needs_attention(window, cx);
     }
 
     fn on_reconnect(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.start_connect(cx);
+    }
+
+    /// 进入 Settings（SET-3）：只切路由 + 拉取只读供应商状态。工作台
+    /// 组件不渲染但状态全部保留在 AppView 字段；Run 不受影响。
+    fn on_open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.route = AppRoute::Settings;
+        // 路由切换时关闭任何打开的菜单，Settings 壳内没有菜单宿主。
+        self.open_menu = None;
+        self.menu_highlight = None;
+        self.refresh_provider_status();
+        window.focus(&self.settings_back_focus);
+        cx.notify();
+    }
+
+    /// 返回工作台（SET-3）：恢复渲染即恢复进入前状态（会话 / 草稿 /
+    /// Inspector / Timeline / Run 均未离开 AppView 字段），焦点回到入口。
+    fn on_close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.route = AppRoute::Workspace;
+        window.focus(&self.settings_focus);
+        cx.notify();
+    }
+
+    /// 拉取只读供应商状态（provider_auth_status）。断线时不进入 loading，
+    /// 保留 stale 只读结果（controller 未派出时由 stale_reason 标注）。
+    fn refresh_provider_status(&mut self) {
+        if self.controller.load_provider_status() {
+            self.projection.settings_providers.begin_loading();
+        } else {
+            self.projection
+                .settings_providers
+                .mark_stale("not connected");
+        }
     }
 
     fn on_send_message(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
@@ -2430,6 +2525,9 @@ impl AppView {
     }
 
     fn on_approve_once(&mut self, _: &ApproveOnce, window: &mut Window, cx: &mut Context<Self>) {
+        if !workspace_action_active(self.route) {
+            return;
+        }
         self.on_approve("approve_once", window, cx);
     }
 
@@ -2439,14 +2537,23 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !workspace_action_active(self.route) {
+            return;
+        }
         self.on_approve("approve_for_run", window, cx);
     }
 
     fn on_deny(&mut self, _: &Deny, window: &mut Window, cx: &mut Context<Self>) {
+        if !workspace_action_active(self.route) {
+            return;
+        }
         self.on_approve("deny", window, cx);
     }
 
     fn on_cancel_run(&mut self, _: &CancelRun, window: &mut Window, cx: &mut Context<Self>) {
+        if !workspace_action_active(self.route) {
+            return;
+        }
         self.on_cancel_clicked(window, cx);
     }
 
@@ -2490,6 +2597,9 @@ impl AppView {
     }
 
     fn on_new_task_action(&mut self, _: &NewTask, window: &mut Window, cx: &mut Context<Self>) {
+        if !workspace_action_active(self.route) {
+            return;
+        }
         self.on_new_session(window, cx);
     }
 
@@ -2499,6 +2609,9 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !workspace_action_active(self.route) {
+            return;
+        }
         self.on_toggle_inspector(window, cx);
     }
 
@@ -3052,32 +3165,55 @@ impl Render for AppView {
             matches!(self.open_menu, Some(MenuKind::Activity)),
         );
 
-        let sidebar = self.sidebar_element(px(shell.rail_width), cx);
-        let header =
-            self.workspace_header_element(activity_trigger_visible, activity_popover_open, cx);
-        let timeline_area = self.timeline_area(cx);
-        let composer = self.composer_element(cx);
-        let workspace = div()
-            .id("shell-workspace")
-            .debug_selector(|| "shell-workspace".into())
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w_0()
-            .child(header)
-            .child(timeline_area)
-            .child(composer);
-
-        let mut main = div().flex().flex_row().flex_1().min_w_0().child(workspace);
-        if inspector_open {
-            main = main.child(
-                div()
-                    .id("shell-inspector")
-                    .debug_selector(|| "shell-inspector".into())
+        // SET-3 顶层路由：Settings 壳与工作台互斥渲染。工作台状态全部
+        // 保留在 AppView 字段，返回即原样恢复。
+        let (sidebar, main) = match self.route {
+            AppRoute::Workspace => {
+                let sidebar = self.sidebar_element(px(shell.rail_width), cx);
+                let header = self.workspace_header_element(
+                    activity_trigger_visible,
+                    activity_popover_open,
+                    cx,
+                );
+                let timeline_area = self.timeline_area(cx);
+                let composer = self.composer_element(cx);
+                let workspace = div()
+                    .id("shell-workspace")
+                    .debug_selector(|| "shell-workspace".into())
                     .flex()
-                    .child(self.inspector_element(connected, cx)),
-            );
-        }
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(header)
+                    .child(timeline_area)
+                    .child(composer);
+
+                let mut main = div().flex().flex_row().flex_1().min_w_0().child(workspace);
+                if inspector_open {
+                    main = main.child(
+                        div()
+                            .id("shell-inspector")
+                            .debug_selector(|| "shell-inspector".into())
+                            .flex()
+                            .child(self.inspector_element(connected, cx)),
+                    );
+                }
+                (sidebar, main)
+            }
+            AppRoute::Settings => {
+                let sidebar = self.settings_rail_element(px(shell.rail_width), cx);
+                let main = div().flex().flex_row().flex_1().min_w_0().child(
+                    div()
+                        .id("shell-settings")
+                        .debug_selector(|| "shell-settings".into())
+                        .flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(self.settings_page_element()),
+                );
+                (sidebar, main)
+            }
+        };
         div()
             .key_context("AppView")
             .track_focus(&self.focus_handle)
@@ -3354,6 +3490,16 @@ mod tests {
         assert!(!should_swallow_keyboard_click(false, Some("row-a")));
         assert!(!should_swallow_keyboard_click(false, Some("row-b")));
         assert!(!should_swallow_keyboard_click(false, None));
+    }
+
+    /// SET-3 审查修复 1：Settings 路由下工作台快捷键（审批 cmd-enter /
+    /// cmd-1..3、取消 cmd-.、新建 cmd-n、Inspector cmd-i、任务导航
+    /// cmd-alt-↑↓ / cmd-alt-n）全部旁路——九个 action handler 均先经
+    /// workspace_action_active 守卫，键绑定不得穿透路由。
+    #[test]
+    fn settings_route_blocks_workspace_shortcut_actions() {
+        assert!(workspace_action_active(AppRoute::Workspace));
+        assert!(!workspace_action_active(AppRoute::Settings));
     }
 
     #[test]

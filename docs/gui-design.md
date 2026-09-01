@@ -10,7 +10,7 @@
 
 ## 1. 目标与非目标
 
-**目标**：先交付一个能真实驱动 `pawork` 的最小 Agent 窗口——选会话、看时间线、发消息、取消当轮、切换已配置模型。界面从最简模型长出，而不是按 V1 Phase 19 一次性铺满 Settings / Diff / Terminal / Workflow。
+**目标**：维持能真实驱动 `pawork` 的本机 Agent 工作台，并在不改变四层架构的前提下增量加入 Settings。当前活动增量是“模型与供应商”：连接供应商、认证、获取模型和设置默认项；不一次性铺满所有设置页。
 
 **非目标（本设计明确不做）**：
 
@@ -40,7 +40,7 @@ S7 的产品形状：**一个本地 Coding Agent 聊天窗**，不是工作站�
 
 ---
 
-## 3. 最小信息架构（S7 只做这些）
+## 3. 信息架构
 
 ```text
 ┌──────────────────┬──────────────────────────────────────┐
@@ -64,7 +64,9 @@ S7 的产品形状：**一个本地 Coding Agent 聊天窗**，不是工作站�
 | Timeline | user、assistant 流式、tool 调用起止、错误 | citation、Artifact 分页、thinking 精细折叠（有事件就只读展示，不做专门产品页） |
 | Composer | 纯文本发送、取消当轮、下拉已配置 model/provider | `@file`、附件、profile（S9 再长） |
 | Approval | 时间线内嵌仅本次允许 / 本轮运行允许 / 拒绝（复用 S3 语义） | 完整 Policy 说明页、信任向导 |
-| Changes / Terminal / Settings / Resources / Workflow | 占位或隐藏 | 分别随 S8–S11 增量 |
+| Changes / Terminal / Resources | 已实现的 Host-driven Surface | 写能力仍按各自契约增量 |
+| Settings | 当前活动增量；独立 Settings Rail + 全宽内容，首个页面为模型与供应商 | 其它设置页在真实 capability 到位后逐页启用 |
+| Workflow | 隐藏 | 真实产品面另行立项 |
 
 空态：无会话时主区只有一句提示和 Composer。不以假卡片冒充未实现能力。
 
@@ -113,11 +115,51 @@ S7 的唯一主路径是：启动 Desktop → 连接本机 Host → 恢复 Snaps
 - Changes 文件行使用 20/72/76px glyph/status/delta 固定槽；DiffView 增加 36px 只读路径 header，并把 24px 增删 marker gutter 与中性代码正文分开。ActivityPopover 保持 320×320、右上锚定与 capability honesty，只增加分隔和真实 Changes raised section；没有伪造 Agents/Add tool。
 - 上述可见层级已进入当前实现；Timeline/Changes 全状态 AX/VoiceOver、全组件 150% 与三张初始设计图的人工签字仍属于 [ROADMAP P4](../ROADMAP.md#4-后续计划)。
 
+### 3.5 Settings Surface（当前设计）
+
+Settings 沿用现有深色主题、8px 节奏和 1440×1024 基线，不把工作台改造成 Dashboard：
+
+~~~text
+┌──────────────────┬────────────────────────────────────────────┐
+│ Settings Rail    │  模型与供应商                              │
+│ ← 返回工作台     │  连接状态 / 默认项                         │
+│                  │                                            │
+│ 模型与供应商     │  已连接供应商                              │
+│ 通用 *           │  Z.AI · API key · 远端/内置目录             │
+│ 权限与审批 *     │  Kimi · OAuth/API key · 状态                │
+│ 工具与 MCP *     │  DeepSeek · API key · 状态                  │
+│ 终端 *           │  xAI · OAuth/API key · 状态                 │
+│ 外观 *           │                                            │
+│ 高级 *           │  [添加供应商]                              │
+│ 关于 *           │                                            │
+└──────────────────┴────────────────────────────────────────────┘
+* 仅在对应真实 capability 到位后显示
+~~~
+
+- 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入 Settings 时，左栏整体替换为 Settings Rail；Timeline、Composer、Inspector 不渲染，右侧完整交给设置内容。
+- `← 返回工作台` 恢复进入前的 active session、Timeline 位置、Composer 草稿、Inspector 状态和 Run；Settings 不改变或取消 Run。
+- 首个可用页面固定为“模型与供应商”。添加流程在内容区内完成“供应商 → 认证方式 → 登录/录入 key → 验证 → 模型”，不另开第二个应用窗口。
+- Provider 卡片只呈现 Host 权威名称、认证方式、连接状态、模型数量/目录来源和操作；认证成功与目录成功是两个状态，不显示无来源 quota。
+- 认证方式由 Host capability 声明。Desktop 不按 Z.AI/Kimi/DeepSeek/xAI 名称硬编码 OAuth/API key 分支。
+- API key 使用 secure input；完整值不得发布到 AX tree、日志或状态文本。OAuth 显示授权 URL、device code、到期/取消状态，不接触 token。
+- 断线保留最后只读结果并统一标 stale；新增、验证、刷新、设默认和移除均 fail-closed。
+- 1080×720 时 Settings Rail 收敛至 240px，内容使用单列；100/125/150% 字号下主操作、错误与返回入口保持可达。
+- 导航顺序为模型与供应商 → 通用 → 权限与审批 → 工具与 MCP → 终端 → 外观 → 高级 → 关于。星标页面不是占位入口：没有真实读写能力就不显示。
+
+> 2026-09-02 SET-3 已落地：TaskRail 页脚 gear 入口、Settings Rail、
+> 「← 返回工作台」与首个只读「模型与供应商」页（Host `provider_auth_status`
+> 权威数据，断线保留 stale 只读标注；可见 / 键盘 / AX 三路径同 gate）。
+> 「添加供应商」与星标页面仍按 capability 隐藏，写操作属 SET-4/SET-5。
+
+行为、供应商认证矩阵、模型目录回退和安全边界以 [Settings Spec](spec/settings.md) 为准。引用会话给出的信息架构足以指导实现，本轮不新增 bitmap；实现真窗口出现实际布局偏差时再生成/锁定 Settings 定稿图。
+
 ---
 
 ## 4. 协议与分层（S7 最小切片）
 
 GUI 仍走冻结契约形状（[architecture.md](architecture.md) §3.2 GUI 协议）：帧、Command / Query / Event / Snapshot 用 V1 完整字段，S7 **只消费**对话所需子集。
+
+Settings 不沿用“S7 只消费”作为变更授权。它可以复用现有 `ModelList`、`AuthStart` / `AuthRemove`，但 GUI auth status、非重放 Secret 写入、OAuth 进度与默认项 mutation 仍须先经 ADR/golden；无 capability 时隐藏写入口。
 
 | 切片 | S7 必做 | S10 再补 |
 | --- | --- | --- |
@@ -165,6 +207,7 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 | S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal；本机多窗口未做（ROADMAP 候选池） |
 | S11 | Plan / 后台任务 / usage / 多 Agent | Workflow 与完整用量/quota 状态条；ActivityPopover 激活 Main / subagent 状态列表 |
 | S12 | 全项目 Code Review | 只读核对 Desktop 四层边界、状态投影、能力声明、可访问性及 S7–S11 GUI 需求/证据；不改界面、不启动窗口 |
+| Settings（当前） | provider/auth/catalog/config 的 Host 门面 | Settings Rail；先启用模型与供应商，其它页面按真实能力逐页加入 |
 | 待决策 | WASM 插件 / Hooks / LSP / 市场 | 预留 Resources 空位与协议扩展点，**不画假市场页** |
 
 后续阶段任务书必须带一行「GUI 增量」；没有对应投影/命令就不做按钮。
