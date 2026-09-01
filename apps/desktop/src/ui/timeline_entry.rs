@@ -152,6 +152,48 @@ fn split_message_blocks(text: &str) -> Vec<MessageBlock> {
     blocks
 }
 
+/// gpui 默认行高（TextStyle::default 的 φ 比例，经 line_height_in_pixels
+/// 四舍五入）。render 未显式设 line_height 的文本按此推导高度；AX 几何
+/// 公式与 render 同源共用本函数，不另造第二套行高。
+pub(super) fn default_text_line_height(font_px: f32) -> f32 {
+    (font_px * 1.618_034).round()
+}
+
+/// 公式化换行估算（AX 几何用）：平均字符宽按 0.6 × 字号估计，逐显式行
+/// 折算可见行数。gpui 实际按像素 wrap（CJK 更宽），这是有界的诚实近似，
+/// 不是精确布局回填。
+pub(super) fn estimated_wrapped_lines(text: &str, width_px: f32, font_px: f32) -> usize {
+    let chars_per_line = ((width_px / (font_px * 0.6)).floor() as usize).max(1);
+    text.lines()
+        .map(|line| line.chars().count().div_ceil(chars_per_line).max(1))
+        .sum()
+}
+
+/// 消息正文的块 / 行模型（与 render 的 split_message_blocks 同源）：返回
+/// 每块的估算行数（列表项计入「• 」前缀），块间由 MSG_PARAGRAPH_GAP 分隔。
+/// AX 行高公式共用，保证段落切分口径一致。
+pub(super) fn message_block_line_counts(text: &str, width_px: f32, font_px: f32) -> Vec<usize> {
+    let chars_per_line = ((width_px / (font_px * 0.6)).floor() as usize).max(1);
+    let line_count = |raw: &str, extra_chars: usize| {
+        (raw.chars().count() + extra_chars)
+            .div_ceil(chars_per_line)
+            .max(1)
+    };
+    split_message_blocks(text)
+        .into_iter()
+        .map(|block| {
+            match block {
+                MessageBlock::Paragraph(lines) => {
+                    lines.iter().map(|line| line_count(line, 0)).sum::<usize>()
+                }
+                MessageBlock::List(items) => {
+                    items.iter().map(|item| line_count(item, 2)).sum::<usize>()
+                }
+            }
+        })
+        .collect()
+}
+
 /// 标签行：角色（18px medium）+ 时间（17px secondary，display_time 相对词）。
 fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div {
     div()

@@ -961,20 +961,13 @@ impl DesktopProjection {
             // reducer；这里只保留历史条目携带的 UI 态副作用。
             self.timeline.apply_item(item);
             match &item.kind {
-                TimelineItemKind::ToolCompleted => {
-                    let status = item.status.as_deref().unwrap_or("succeeded");
-                    if matches!(status, "succeeded" | "failed" | "cancelled") {
-                        self.pending_approval = None;
-                    }
-                }
                 TimelineItemKind::RunCompleted
                 | TimelineItemKind::RunCancelled
                 | TimelineItemKind::RunFailed => {
+                    // run 终态可证明该 run 不再有未决议审批；历史中的工具
+                    // 完成 / 审批响应则可能属于同 run 的更早工具，不能据此
+                    // 清除 snapshot 权威的当前 pending。
                     self.clear_pending_for_run(item.run_id.as_deref());
-                }
-                TimelineItemKind::ApprovalResponded => {
-                    self.pending_approval = None;
-                    self.snapshot_pendings.clear();
                 }
                 _ => {}
             }
@@ -3559,6 +3552,95 @@ mod tests {
             "history approval_responded should remain, got {labels:?}"
         );
         assert!(projection.pending_approval.is_none());
+    }
+
+    #[test]
+    fn timeline_repagination_keeps_outstanding_pending_approval() {
+        // D3：重开会话重放历史时，其它 run 的 approval_responded /
+        // tool_completed 不能改写 snapshot 权威的未决议审批（含
+        // tool_call_id，供冻结 tool_approve 使用）。
+        let snapshot = snapshot_with_runs_and_approvals(
+            vec![json!({
+                "run_id": "r-2",
+                "session_id": "s-1",
+                "started_at_ms": 20_u64
+            })],
+            vec![json!({
+                "run_id": "r-2",
+                "session_id": "s-1",
+                "tool_call_id": "call-2",
+                "tool_name": "run_command",
+                "message": "Approve command"
+            })],
+        );
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        projection.select_session("s-1");
+        assert!(projection.pending_approval.is_some());
+        projection.apply_timeline_page(&page(
+            vec![
+                history_item(
+                    1,
+                    "approval_requested",
+                    json!({ "tool_name": "run_command" }),
+                ),
+                history_item(2, "approval_responded", json!({ "status": "approve_once" })),
+                history_item(
+                    3,
+                    "tool_completed",
+                    json!({ "tool_name": "run_command", "status": "succeeded" }),
+                ),
+                history_item(
+                    4,
+                    "approval_requested",
+                    json!({ "tool_name": "run_command", "run_id": "r-2" }),
+                ),
+            ],
+            true,
+        ));
+        let pending = projection
+            .pending_approval
+            .as_ref()
+            .expect("outstanding approval must survive timeline repagination");
+        assert_eq!(pending.run_id, "r-2");
+        assert_eq!(pending.tool_call_id, "call-2");
+    }
+
+    #[test]
+    fn timeline_earlier_items_in_same_run_keep_later_pending_approval() {
+        // 同一 run 可串行执行多个工具：更早工具的 responded/completed
+        // 历史条目不能清除 snapshot 中更晚工具的当前审批。历史 wire 的
+        // approval_responded 不含 tool_call_id，无法安全做工具级清除。
+        let snapshot = snapshot_with_runs_and_approvals(
+            vec![],
+            vec![json!({
+                "run_id": "r-1",
+                "session_id": "s-1",
+                "tool_call_id": "call-2",
+                "tool_name": "run_command",
+                "message": "Approve command"
+            })],
+        );
+        let mut projection = DesktopProjection::from_snapshot(&snapshot);
+        projection.select_session("s-1");
+        assert!(projection.pending_approval.is_some());
+        projection.apply_timeline_page(&page(
+            vec![
+                history_item(1, "approval_responded", json!({ "status": "approve_once" })),
+                history_item(
+                    2,
+                    "tool_completed",
+                    json!({ "tool_name": "read_file", "status": "succeeded" }),
+                ),
+                history_item(3, "approval_requested", json!({ "tool_name": "run_command" })),
+            ],
+            true,
+        ));
+        let pending = projection
+            .pending_approval
+            .as_ref()
+            .expect("later pending approval in the same run must survive history replay");
+        assert_eq!(pending.run_id, "r-1");
+        assert_eq!(pending.tool_call_id, "call-2");
     }
 
     /// R1 Wave B Phase C：读取 `fixtures/ui/expected/snapshot.json`（由

@@ -1,12 +1,47 @@
 //! 审批卡（ApprovalCard）：pending approval 的警示卡与 Allow once /
 //! Allow for run / Deny 操作（R8 波 C 自 ui/mod.rs 逐样式迁移）。
 
-use gpui::{div, prelude::*, Context, SharedString};
+use gpui::{div, prelude::*, px, Context, SharedString};
 
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::theme::{dark, font};
+use crate::ui::timeline_entry::{default_text_line_height, estimated_wrapped_lines};
 
 use super::AppView;
+
+/// 审批卡几何（render 与 AX 同源，P4 片 3）：p_2 内边距 + 标题 / reason
+/// （SM 默认行高）+ 可选 detail（XS 默认行高）+ 32px 按钮行；文本换行按
+/// 公式化估算（gpui 实际按像素 wrap）。
+pub(crate) const APPROVAL_CARD_PAD_REMS: f32 = 0.5;
+pub(crate) const APPROVAL_BUTTON_ROW_GAP_REMS: f32 = 0.5;
+pub(crate) const APPROVAL_BUTTON_HEIGHT: f32 = 32.0;
+/// AX 按钮槽宽（顺序 once / for-run / deny）：按钮实际宽随文案与字号档
+/// 缩放，此处为冻结估计槽，保证顺序排布与 gap_2 间距可公式化。
+pub(crate) const APPROVAL_BUTTON_SLOT_WIDTHS: [f32; 3] = [104.0, 116.0, 72.0];
+
+/// 审批卡内容高度公式（AX 卡 rect 与 render 布局同源；行数按估算）。
+pub(crate) fn approval_card_height(
+    reason: &str,
+    detail: Option<&str>,
+    card_width: f32,
+    rem_px: f32,
+) -> f32 {
+    let pad = APPROVAL_CARD_PAD_REMS * rem_px;
+    let sm_px = font::SM.0 * rem_px;
+    let xs_px = font::XS.0 * rem_px;
+    let inner_width = (card_width - pad * 2.0).max(0.0);
+    let sm_line = default_text_line_height(sm_px);
+    let reason_lines = estimated_wrapped_lines(reason, inner_width, sm_px).max(1);
+    let detail_lines = detail
+        .filter(|detail| !detail.is_empty())
+        .map(|detail| estimated_wrapped_lines(detail, inner_width, xs_px).max(1))
+        .unwrap_or(0);
+    pad * 2.0
+        + sm_line
+        + sm_line * reason_lines as f32
+        + default_text_line_height(xs_px) * detail_lines as f32
+        + APPROVAL_BUTTON_HEIGHT
+}
 
 impl AppView {
     /// 审批卡作为 timeline list 的末项渲染；仅在 pending 存在时挂载。
@@ -90,6 +125,9 @@ impl AppView {
                 let mut button = Button::new(id)
                     .variant(variant)
                     .disabled(!can_approve)
+                    // P4 片 3：按钮行 32px 槽位与 AX rect 同源。
+                    .height(px(APPROVAL_BUTTON_HEIGHT))
+                    .center()
                     .track_focus(&focus)
                     .label(label)
                     .tooltip(tooltip);

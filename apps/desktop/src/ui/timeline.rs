@@ -32,7 +32,10 @@ use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::label::Label;
 use crate::ui::theme::{dark, font, metrics};
 
-use super::timeline_entry::{display_time, RunSummaryTerminal, RunSummaryView, ToolRowView};
+use super::timeline_entry::{
+    default_text_line_height, display_time, estimated_wrapped_lines, message_block_line_counts,
+    RunSummaryTerminal, RunSummaryView, ToolRowView,
+};
 use super::{now_unix_ms, AppView, MenuKind, WORKSPACE_EMPTY_HINT};
 
 /// list() 视口外上下方向的预渲染量（px，非视觉尺寸；仅影响滚动顺滑度）。
@@ -102,7 +105,7 @@ pub(super) fn tool_status_label(status: &str) -> String {
 /// 行与前一行的垂直间距（§4.2/§4.3 量图冻结值）：消息 / 错误 / 中间相位
 /// 40；独立 tool 组 48；摘要区域带组时 48（组面板即区域首元素），无组按
 /// 普通 entry 保持 40。12 只用于 tool panel → summary 的组内间距。
-fn row_top_gap(row: &TimelineRow) -> f32 {
+pub(super) fn row_top_gap(row: &TimelineRow) -> f32 {
     match row {
         TimelineRow::Message { .. } | TimelineRow::Error { .. } | TimelineRow::RunPhase { .. } => {
             metrics::MSG_ENTRY_GAP
@@ -116,6 +119,143 @@ fn row_top_gap(row: &TimelineRow) -> f32 {
             }
         }
     }
+}
+
+/// entry_shell 右侧「···」菜单槽 + gap_2 的合并宽度估计（消息正文列宽
+/// 折算用；按钮实际宽随文案缩放，取冻结估计槽）。
+const ENTRY_ACTIONS_SLOT_ESTIMATE: f32 = 32.0;
+
+/// 消息 / 错误条目内容高度（entry_shell 同源）：标签行（BODY 与 BODY_SM
+/// 默认行高取大）+ MSG_LABEL_BODY_GAP + 正文（行高 1.5rem、块间
+/// MSG_PARAGRAPH_GAP，行数按公式估算）。正文列恒高于右侧「···」按钮，
+/// 不再与按钮行取大。
+fn message_entry_height(text: &str, column_width: f32, rem_px: f32) -> f32 {
+    let label = default_text_line_height(font::BODY.0 * rem_px)
+        .max(default_text_line_height(font::BODY_SM.0 * rem_px));
+    let body_font_px = font::BODY.0 * rem_px;
+    let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
+    let body_width = (column_width - ENTRY_ACTIONS_SLOT_ESTIMATE).max(0.0);
+    let blocks = message_block_line_counts(text, body_width, body_font_px);
+    let body = blocks.iter().map(|lines| *lines as f32 * body_line_height).sum::<f32>()
+        + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32;
+    label + metrics::MSG_LABEL_BODY_GAP + body
+}
+
+/// Run 摘要卡高度（run_summary_element 同源）：py_6×2 + max(左列, 40 槽)；
+/// 左列 = max(Ø40, 标题行) + gap_4 + 说明（line_clamp 2，行高 1.5rem）。
+fn run_summary_card_height(terminal: &TimelineEntry, column_width: f32, rem_px: f32) -> f32 {
+    let description = run_summary_texts(terminal)
+        .map(|(_, description)| description)
+        .unwrap_or_default();
+    let desc_font_px = font::BODY_SM.0 * rem_px;
+    // 说明列宽估计：卡内容（pl 15 + pr_5）- gap_6 - 168 按钮槽 - Ø40 占位 - gap_4。
+    let desc_width = (column_width
+        - (metrics::TOOL_GROUP_INNER_INSET
+            + 1.25 * rem_px
+            + 1.5 * rem_px
+            + metrics::SUMMARY_BUTTON_WIDTH
+            + metrics::SUMMARY_CHECK_CIRCLE
+            + 1.0 * rem_px))
+        .max(0.0);
+    let desc_lines = estimated_wrapped_lines(&description, desc_width, desc_font_px).clamp(1, 2);
+    let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
+    let left_column = metrics::SUMMARY_CHECK_CIRCLE
+        .max(default_text_line_height(font::BODY.0 * rem_px))
+        + 1.0 * rem_px
+        + desc_lines as f32 * body_line_height;
+    let content = left_column.max(metrics::SUMMARY_BUTTON_HEIGHT);
+    3.0 * rem_px + content
+}
+
+/// Timeline 单行内容高度公式（render 组装同源；AX 行 rect 共用）。文本
+/// 行数按 estimated_wrapped_lines 公式化估算，固定槽位走 theme metrics；
+/// ToolGroup 行走 border-box（分隔线不增高）。
+pub(super) fn timeline_row_height(
+    row: &TimelineRow,
+    timeline: &[TimelineEntry],
+    column_width: f32,
+    rem_px: f32,
+) -> f32 {
+    match row {
+        TimelineRow::Message { entry_index } | TimelineRow::Error { entry_index } => {
+            let text = match &timeline[*entry_index].kind {
+                TimelineEntryKind::UserMessage { text }
+                | TimelineEntryKind::AssistantMessage { text }
+                | TimelineEntryKind::Error(text) => text,
+                _ => "",
+            };
+            message_entry_height(text, column_width, rem_px)
+        }
+        TimelineRow::RunPhase { entry_index } => {
+            // 非终态中间相位保持单行（§4.5）；与 render 相同只认 RunState。
+            let TimelineEntryKind::RunState(state) = &timeline[*entry_index].kind else {
+                return 0.0;
+            };
+            let font_px = font::BODY_SM.0 * rem_px;
+            default_text_line_height(font_px)
+                * estimated_wrapped_lines(state, column_width, font_px).max(1) as f32
+        }
+        TimelineRow::ToolGroup { entry_indices } => {
+            metrics::TOOL_ROW_HEIGHT * entry_indices.len() as f32
+        }
+        TimelineRow::RunSummary { group, terminal } => {
+            let mut height = 0.0;
+            if let Some(group) = group {
+                height += metrics::TOOL_ROW_HEIGHT * group.len() as f32 + metrics::SUMMARY_CARD_GAP;
+            }
+            height += run_summary_card_height(&timeline[*terminal], column_width, rem_px);
+            height += metrics::TIMELINE_FOOTER_GAP;
+            // 页脚行（BODY_SM 标签恒高于「···」按钮）。
+            height += default_text_line_height(font::BODY_SM.0 * rem_px);
+            height
+        }
+    }
+}
+
+/// 公式化可见窗口：自 start item 起按（上间距, 内容高）堆叠，返回
+/// （item 序号, 内容 top）。全局首项无上间距；其余项的上间距归属该项
+///（与 render 的 `mt` 一致）。`offset_in_first_item` 对应 GPUI
+/// `ListOffset::offset_in_item`，因此首项可只露出尾部；完全不可见的项不发布。
+pub(super) fn timeline_visible_item_tops(
+    layouts: &[(f32, f32)],
+    content_top: f32,
+    viewport_height: f32,
+    start: usize,
+    offset_in_first_item: f32,
+) -> Vec<(usize, f32)> {
+    let bottom = content_top + viewport_height;
+    let mut tops = Vec::new();
+    let mut item_top = content_top - offset_in_first_item.max(0.0);
+    for (ix, (gap, height)) in layouts.iter().enumerate().skip(start) {
+        let top = item_top + if ix > 0 { *gap } else { 0.0 };
+        if top >= bottom {
+            break;
+        }
+        if top + height > content_top {
+            tops.push((ix, top));
+        }
+        item_top = top + height;
+    }
+    tops
+}
+
+/// 跟随态窗口：从末项向前累加（上间距 + 内容高），返回 GPUI Top list
+/// 等价的（首项序号, 首项内偏移）。溢出的首项仍保留为部分可见；全部装得
+/// 下时回到 `(0, 0)`，保持短内容从顶部开始。
+pub(super) fn timeline_following_window(
+    layouts: &[(f32, f32)],
+    viewport_height: f32,
+) -> (usize, f32) {
+    let mut accumulated = 0.0;
+    for ix in (0..layouts.len()).rev() {
+        let (gap, height) = layouts[ix];
+        let outer = height + if ix > 0 { gap } else { 0.0 };
+        accumulated += outer;
+        if accumulated >= viewport_height {
+            return (ix, (accumulated - viewport_height).max(0.0));
+        }
+    }
+    (0, 0.0)
 }
 
 impl AppView {

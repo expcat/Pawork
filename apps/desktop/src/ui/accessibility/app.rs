@@ -9,10 +9,15 @@ use crate::projection::{
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
+use crate::ui::approval_card::{
+    approval_card_height, APPROVAL_BUTTON_HEIGHT, APPROVAL_BUTTON_ROW_GAP_REMS,
+    APPROVAL_BUTTON_SLOT_WIDTHS, APPROVAL_CARD_PAD_REMS,
+};
 use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::ANCHOR_GAP_Y;
 use crate::ui::inspector::{
-    plain_terminal_output, terminal_resize_status_label, terminal_size_for_display, InspectorTab,
+    plain_terminal_output, terminal_header_height, terminal_resize_status_label,
+    terminal_size_for_display, terminal_stepper_ax_rects, InspectorTab,
     TERMINAL_COLUMNS_STEP, TERMINAL_EMPTY_OUTPUT, TERMINAL_ROWS_STEP,
 };
 use crate::ui::resources::ResourcesFetch;
@@ -29,7 +34,6 @@ use crate::ui::{
 const PAD: f32 = 8.0;
 const CONTROL_HEIGHT: f32 = 28.0;
 const ROW_HEIGHT: f32 = 32.0;
-const TIMELINE_ROW_HEIGHT: f32 = 52.0;
 const ACTIVITY_CONTENT_INSET_X: f32 = 28.0;
 const ACTIVITY_HEADING_OFFSET_Y: f32 = 58.0;
 const ACTIVITY_SUMMARY_OFFSET_Y: f32 = 24.0;
@@ -81,6 +85,11 @@ fn activity_popover_ax_geometry(
         heading,
         open_changes,
     }
+}
+
+/// 按钮行 y 自卡底内缩（p_2 + 32px 按钮槽），随卡位置整体移动。
+fn approval_button_row_y(card: AxRect, rem_px: f32) -> f32 {
+    card.y + card.height - APPROVAL_CARD_PAD_REMS * rem_px - APPROVAL_BUTTON_HEIGHT
 }
 
 impl AppView {
@@ -159,16 +168,39 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> bool {
         match identifier {
-            "task-rail-grouping" => self.on_toggle_grouping_menu(None, window, cx),
-            "project-scope" => self.on_toggle_scope_menu(None, window, cx),
+            // D1（P4 片 2F）：AXPress 开菜单与可见点击同源移焦——鼠标按下
+            // 会把 GPUI 焦点交给触发器按钮，菜单打开后 Enter 由根节点菜单
+            // 裁决；AX 不移焦时焦点滞留 composer，Enter 误触 SendMessage。
+            // 先移焦再 toggle（mousedown → click 顺序）；enable gate 仍由
+            // permits 按当前树核对，三路径语义不变。
+            "task-rail-grouping" => {
+                window.focus(&self.grouping_focus);
+                self.on_toggle_grouping_menu(None, window, cx)
+            }
+            "project-scope" => {
+                window.focus(&self.scope_focus);
+                self.on_toggle_scope_menu(None, window, cx)
+            }
             "scope-add-project" | "workspace-confirm-add-project" => {
                 self.on_open_project(window, cx)
             }
-            "add-task" => self.on_new_session(window, cx),
+            // D1 同类：All-projects 态会开 WorkspaceConfirm 菜单，AXPress
+            // 同样先移焦触发器，否则焦点滞留 composer、Enter 误触 SendMessage
+            //（已解析 workspace 时 create_task 随后聚焦 composer，无害）。
+            "add-task" => {
+                window.focus(&self.add_task_focus);
+                self.on_new_session(window, cx)
+            }
             // F-05 Header 动作：与 rail 全局「+」同 handler / enable gate。
-            "header-new-task" => self.on_new_session(window, cx),
+            "header-new-task" => {
+                window.focus(&self.header_new_task_focus);
+                self.on_new_session(window, cx)
+            }
             "reconnect" => self.on_reconnect(window, cx),
-            "model-picker" => self.on_toggle_model_menu(None, window, cx),
+            "model-picker" => {
+                window.focus(&self.model_focus);
+                self.on_toggle_model_menu(None, window, cx)
+            }
             "cancel" => self.on_cancel_clicked(window, cx),
             "send" => {
                 // 与键盘 Enter 路径（on_send_message）一致：IME 组合中不发送。
@@ -184,7 +216,10 @@ impl AppView {
             // Inspector 折叠态触发器的可见语义是弹出 ActivityPopover（R6
             // Wave A 起位于 Workspace Header），摘要行才展开 Inspector；
             // 展开态由 inspector-collapse 收起。
-            "inspector-toggle" => self.toggle_menu(MenuKind::Activity, None, cx),
+            "inspector-toggle" => {
+                window.focus(&self.inspector_activity_focus);
+                self.toggle_menu(MenuKind::Activity, None, cx)
+            }
             "inspector-collapse" => self.on_toggle_inspector(window, cx),
             "inspector-tab-changes" => self.select_inspector_tab(InspectorTab::Changes, cx),
             "inspector-tab-terminal" => self.select_inspector_tab(InspectorTab::Terminal, cx),
@@ -292,6 +327,11 @@ impl AppView {
                     .iter()
                     .find(|entry| entry_menu_identifier(&entry.event_id) == identifier)
                 {
+                    // D1：条目「···」触发器同样与点击同源移焦（句柄尚缺时
+                    // 保持当前焦点，不伪造）。
+                    if let Some(focus) = self.timeline_entry_action_focus.get(&entry.event_id) {
+                        window.focus(focus);
+                    }
                     self.toggle_menu(MenuKind::Entry(entry.event_id.clone()), None, cx);
                     return true;
                 }
@@ -953,13 +993,109 @@ impl AppView {
         let rows = self.projection.timeline_rows();
         let total = rows.len();
         let empty_hint_visible = self.projection.workspace_empty_hint_visible();
-        let capacity = ((frame.height / TIMELINE_ROW_HEIGHT).ceil() as usize).max(1);
-        let start = if self.timeline_following {
-            total.saturating_sub(capacity)
+        // P4 片 3：与 timeline.rs render 同源——列 = pl(TIMELINE_CONTENT_INSET)
+        // + 可读列宽；行高 / 行间距按内容公式化推导（gpui list 实际按像素
+        // 布局，此为同源公式）。滚动位置沿用已验证安全的 logical_scroll_top()
+        // 只读，不触碰写借用。
+        let rem_px = f32::from(window.rem_size());
+        let column_x = frame.x + metrics::TIMELINE_CONTENT_INSET;
+        let column_width = (frame.width - metrics::TIMELINE_CONTENT_INSET)
+            .min(metrics::TIMELINE_READABLE_WIDTH)
+            .max(0.0);
+        let layouts: Vec<(f32, f32)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    timeline::row_top_gap(row),
+                    timeline::timeline_row_height(
+                        row,
+                        &self.projection.timeline,
+                        column_width,
+                        rem_px,
+                    ),
+                )
+            })
+            .collect();
+        let approval_height = self.projection.pending_approval.as_ref().map(|pending| {
+            approval_card_height(
+                &pending.reason,
+                pending.detail.as_deref(),
+                column_width,
+                rem_px,
+            )
+        });
+        // render 的 list count = timeline rows + 可选 approval 末项；AX 使用
+        // 同一 item 序列，approval 的 MSG_ENTRY_GAP 也属于末项自身。
+        let mut item_layouts = layouts.clone();
+        if let Some(height) = approval_height {
+            item_layouts.push((
+                if rows.is_empty() {
+                    0.0
+                } else {
+                    metrics::MSG_ENTRY_GAP
+                },
+                height,
+            ));
+        }
+        let viewport_height = (frame.height - metrics::TIMELINE_TOP_GAP).max(0.0);
+        let measured_viewport = self.timeline_list.viewport_bounds();
+        let has_measured_layout = f32::from(measured_viewport.size.height) > 0.0;
+        let (start, offset_in_first_item) = if has_measured_layout {
+            // AX 同步发生在本帧 list 构建前；上一帧的 ListState 是已完成
+            // prepaint 的真实滚动事实，可安全只读（handler 内仍禁止读取）。
+            let scroll = self.timeline_list.logical_scroll_top();
+            (
+                scroll.item_ix.min(item_layouts.len()),
+                f32::from(scroll.offset_in_item),
+            )
+        } else if self.timeline_following {
+            timeline::timeline_following_window(&item_layouts, viewport_height)
         } else {
-            self.timeline_list.logical_scroll_top().item_ix.min(total)
+            (0, 0.0)
         };
-        let end = (start + capacity).min(total);
+        let content_top = frame.y + metrics::TIMELINE_TOP_GAP;
+        let formula_items = timeline::timeline_visible_item_tops(
+            &item_layouts,
+            content_top,
+            viewport_height,
+            start,
+            offset_in_first_item,
+        );
+        let content_bottom = content_top + viewport_height;
+        let measured_items = if has_measured_layout {
+            // 稳定帧直接沿 ListState 已测 item 连续枚举；若仍先用公式裁出
+            // 候选，长文本（尤其 CJK）估高偏差可能漏掉实际可见的后续项。
+            // bounds_for_item 对未渲染项返回 None，故在可见/overdraw 实测段
+            // 结束处自然停止，成本只随已测窗口增长。
+            let mut items = Vec::new();
+            let mut saw_bounds = false;
+            for ix in start..item_layouts.len() {
+                let Some(bounds) = self.timeline_list.bounds_for_item(ix) else {
+                    break;
+                };
+                saw_bounds = true;
+                let gap = if ix > 0 { item_layouts[ix].0 } else { 0.0 };
+                // GPUI bounds_for_item 返回 item 外框且不含 list padding；
+                // render 的 mt(gap) 属于 item，故内容 rect 再内缩 gap。
+                let top = f32::from(bounds.origin.y) + metrics::TIMELINE_TOP_GAP + gap;
+                let height = (f32::from(bounds.size.height) - gap).max(0.0);
+                if top >= content_bottom {
+                    break;
+                }
+                if top + height > content_top {
+                    items.push((ix, top, height));
+                }
+            }
+            saw_bounds.then_some(items)
+        } else {
+            None
+        };
+        let visible_items: Vec<(usize, f32, f32)> = measured_items.unwrap_or_else(|| {
+            formula_items
+                .into_iter()
+                .map(|(ix, top)| (ix, top, item_layouts[ix].1))
+                .collect()
+        });
         let mut list = AxNode::new("timeline", AxRole::List, "Timeline", frame);
         if empty_hint_visible {
             // 空态引导只读节点：与 timeline_area 可见条件同源（projection
@@ -972,66 +1108,62 @@ impl AppView {
                 AxRect::new(frame.x, hint_y, frame.width, ROW_HEIGHT),
             ));
         }
-        for (visible_ix, row) in rows[start..end].iter().enumerate() {
-            let rect = AxRect::new(
-                frame.x + PAD,
-                frame.y + PAD + visible_ix as f32 * TIMELINE_ROW_HEIGHT,
-                (frame.width - PAD * 2.0).max(0.0),
-                TIMELINE_ROW_HEIGHT,
-            );
-            list = list.child(self.timeline_row_ax(window, row, rect));
+        for &(ix, top, height) in visible_items.iter().filter(|(ix, _, _)| *ix < total) {
+            let rect = AxRect::new(column_x, top, column_width, height);
+            list = list.child(self.timeline_row_ax(window, &rows[ix], rect));
         }
-        if let Some(pending) = self.projection.pending_approval.as_ref() {
-            let approval_height = 112.0_f32.min(frame.height);
+        let approval_top = visible_items
+            .iter()
+            .find_map(|(ix, top, height)| (*ix == total).then_some((*top, *height)));
+        if let (Some(pending), Some((approval_top, approval_height))) = (
+            self.projection.pending_approval.as_ref(),
+            approval_top,
+        ) {
+            // P4 片 3：卡高与 approval_card.rs 布局同源（标题 / reason 行
+            // 数 + 可选 detail + p_2 + 32px 按钮行）。P4 片 2F（D2）及
+            // review：卡作为真实 list 末项参与 start/offset/可见性计算；
+            // 滚离底部时不发布不可见审批动作，跟随溢出时首项可部分可见。
             let approval = AxRect::new(
-                frame.x + PAD,
-                (frame.y + frame.height - approval_height - PAD).max(frame.y),
-                (frame.width - PAD * 2.0).max(0.0),
+                column_x,
+                approval_top,
+                column_width,
                 approval_height,
             );
+            let button_row_y = approval_button_row_y(approval, rem_px);
+            let button_gap = APPROVAL_BUTTON_ROW_GAP_REMS * rem_px;
             let enabled = self.can_approve();
-            list = list.child(
+            let focused = [
+                self.open_menu.is_none() && self.approve_once_focus.is_focused(window),
+                self.open_menu.is_none() && self.approve_for_run_focus.is_focused(window),
+                self.open_menu.is_none() && self.deny_focus.is_focused(window),
+            ];
+            let mut approval_node =
                 AxNode::new("approval-card", AxRole::Group, "Approval", approval)
-                    .value(format!("{} · {}", pending.tool_name, pending.reason))
-                    .child(
-                        AxNode::new(
-                            "approve-once",
-                            AxRole::Button,
-                            "Allow once",
-                            AxRect::new(approval.x, approval.y + 72.0, 104.0, 32.0),
-                        )
-                        .enabled(enabled)
-                        .focused(
-                            self.open_menu.is_none() && self.approve_once_focus.is_focused(window),
-                        )
-                        .action(AxAction::Press),
+                    .value(format!("{} · {}", pending.tool_name, pending.reason));
+            let mut button_x = approval.x;
+            for (ix, (id, label)) in [
+                ("approve-once", "Allow once"),
+                ("approve-for-run", "Allow for run"),
+                ("approve-deny", "Deny"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let width = APPROVAL_BUTTON_SLOT_WIDTHS[ix];
+                approval_node = approval_node.child(
+                    AxNode::new(
+                        id,
+                        AxRole::Button,
+                        label,
+                        AxRect::new(button_x, button_row_y, width, APPROVAL_BUTTON_HEIGHT),
                     )
-                    .child(
-                        AxNode::new(
-                            "approve-for-run",
-                            AxRole::Button,
-                            "Allow for run",
-                            AxRect::new(approval.x + 112.0, approval.y + 72.0, 116.0, 32.0),
-                        )
-                        .enabled(enabled)
-                        .focused(
-                            self.open_menu.is_none()
-                                && self.approve_for_run_focus.is_focused(window),
-                        )
-                        .action(AxAction::Press),
-                    )
-                    .child(
-                        AxNode::new(
-                            "approve-deny",
-                            AxRole::Button,
-                            "Deny",
-                            AxRect::new(approval.x + 236.0, approval.y + 72.0, 72.0, 32.0),
-                        )
-                        .enabled(enabled)
-                        .focused(self.open_menu.is_none() && self.deny_focus.is_focused(window))
-                        .action(AxAction::Press),
-                    ),
-            );
+                    .enabled(enabled)
+                    .focused(focused[ix])
+                    .action(AxAction::Press),
+                );
+                button_x += width + button_gap;
+            }
+            list = list.child(approval_node);
         }
         if !self.timeline_following {
             list = list.child(
@@ -1603,6 +1735,13 @@ impl AppView {
     }
 
     fn terminal_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
+        let rem_px = f32::from(window.rem_size());
+        let header_height = terminal_header_height(rem_px);
+        // P4 片 3：五按钮 rect 与 inspector.rs 可见 stepper 行同源
+        //（terminal_stepper_ax_rects：px_2 / py_1 / gap_1 + 冻结槽位）。
+        let stepper = terminal_stepper_ax_rects(frame.x, frame.x + frame.width, frame.y, rem_px);
+        let stepper_rect =
+            |ix: usize| AxRect::new(stepper[ix].0, stepper[ix].1, stepper[ix].2, stepper[ix].3);
         let input_height = 40.0;
         let input_y = frame.y + frame.height - input_height - PAD;
         let button_width = 72.0;
@@ -1667,12 +1806,7 @@ impl AppView {
                     "terminal-cols-dec",
                     AxRole::Button,
                     "Fewer terminal columns",
-                    AxRect::new(
-                        frame.x + frame.width - PAD - 192.0,
-                        frame.y,
-                        28.0,
-                        CONTROL_HEIGHT,
-                    ),
+                    stepper_rect(0),
                 )
                 .focused(
                     self.open_menu.is_none() && self.terminal_cols_dec_focus.is_focused(window),
@@ -1685,12 +1819,7 @@ impl AppView {
                     "terminal-cols-inc",
                     AxRole::Button,
                     "More terminal columns",
-                    AxRect::new(
-                        frame.x + frame.width - PAD - 162.0,
-                        frame.y,
-                        28.0,
-                        CONTROL_HEIGHT,
-                    ),
+                    stepper_rect(1),
                 )
                 .focused(
                     self.open_menu.is_none() && self.terminal_cols_inc_focus.is_focused(window),
@@ -1703,12 +1832,7 @@ impl AppView {
                     "terminal-resize",
                     AxRole::Button,
                     "Apply terminal size",
-                    AxRect::new(
-                        frame.x + frame.width - PAD - 132.0,
-                        frame.y,
-                        72.0,
-                        CONTROL_HEIGHT,
-                    ),
+                    stepper_rect(2),
                 )
                 .focused(self.open_menu.is_none() && self.terminal_resize_focus.is_focused(window))
                 .enabled(terminal_resize_enabled)
@@ -1720,12 +1844,7 @@ impl AppView {
                     "terminal-rows-dec",
                     AxRole::Button,
                     "Fewer terminal rows",
-                    AxRect::new(
-                        frame.x + frame.width - PAD - 58.0,
-                        frame.y,
-                        28.0,
-                        CONTROL_HEIGHT,
-                    ),
+                    stepper_rect(3),
                 )
                 .focused(
                     self.open_menu.is_none() && self.terminal_rows_dec_focus.is_focused(window),
@@ -1738,12 +1857,7 @@ impl AppView {
                     "terminal-rows-inc",
                     AxRole::Button,
                     "More terminal rows",
-                    AxRect::new(
-                        frame.x + frame.width - PAD - 28.0,
-                        frame.y,
-                        28.0,
-                        CONTROL_HEIGHT,
-                    ),
+                    stepper_rect(4),
                 )
                 .focused(
                     self.open_menu.is_none() && self.terminal_rows_inc_focus.is_focused(window),
@@ -1758,9 +1872,9 @@ impl AppView {
                     "Terminal output",
                     AxRect::new(
                         frame.x + PAD,
-                        frame.y + CONTROL_HEIGHT,
+                        frame.y + header_height,
                         frame.width - PAD * 2.0,
-                        frame.height - input_height - CONTROL_HEIGHT - PAD * 2.0,
+                        frame.height - input_height - header_height - PAD * 2.0,
                     ),
                 )
                 .value(output)
@@ -1838,7 +1952,7 @@ impl AppView {
                     "Back to bottom",
                     AxRect::new(
                         frame.x + frame.width - 140.0,
-                        (input_y - 40.0).max(frame.y + CONTROL_HEIGHT),
+                        (input_y - 40.0).max(frame.y + header_height),
                         132.0,
                         32.0,
                     ),
@@ -2265,5 +2379,294 @@ mod tests {
             popover.open_changes,
             AxRect::new(763.0, 174.5, 264.0, ROW_HEIGHT)
         );
+    }
+
+    /// P4 片 3：Terminal stepper 五按钮几何与 render 同源公式一致——右缘
+    /// px_2 对齐、gap_1 间距、冻结 28/28/72/28/28 槽位且互不重叠，间距与
+    /// 内边距随字号档（rem）缩放而槽位 px 不变。
+    #[test]
+    fn terminal_stepper_ax_geometry_matches_shared_formula() {
+        let rects = crate::ui::inspector::terminal_stepper_ax_rects(100.0, 540.0, 200.0, 16.0);
+        // 100%：px_2=8 / py_1=4 / gap_1=4。
+        assert_eq!(rects[4], (540.0 - 8.0 - 28.0, 204.0, 28.0, 28.0));
+        assert_eq!(rects[3].0, rects[4].0 - 4.0 - 28.0);
+        assert_eq!(rects[2].2, 72.0);
+        assert_eq!(rects[2].0, rects[3].0 - 4.0 - 72.0);
+        assert_eq!(rects[1].0, rects[2].0 - 4.0 - 28.0);
+        assert_eq!(rects[0].0, rects[1].0 - 4.0 - 28.0);
+        for pair in rects.windows(2) {
+            assert!(pair[0].0 + pair[0].2 <= pair[1].0);
+        }
+        // 125%：gap / 内边距随 rem 缩放（5 / 10），槽位 px 不变。
+        let scaled = crate::ui::inspector::terminal_stepper_ax_rects(100.0, 540.0, 200.0, 20.0);
+        assert_eq!(scaled[4].0, 540.0 - 10.0 - 28.0);
+        assert_eq!(scaled[3].0, scaled[4].0 - 5.0 - 28.0);
+        assert_eq!(scaled[4].1, 205.0);
+    }
+
+    /// P4 片 3：审批卡高度随 reason / detail 行数变化（公式与
+    /// approval_card.rs render 同源），单行 reason 的 100% 值逐项可推导。
+    #[test]
+    fn approval_card_ax_height_scales_with_reason_lines() {
+        let short = approval_card_height("Use bash", None, 618.0, 16.0);
+        let wrapped = approval_card_height(&"x".repeat(160), None, 618.0, 16.0);
+        let with_detail =
+            approval_card_height(&"x".repeat(160), Some(&"y".repeat(160)), 618.0, 16.0);
+        assert!(short < wrapped && wrapped < with_detail);
+        // pad 16 + 标题 19 + reason 19 + 按钮行 32。
+        assert_eq!(short, 86.0);
+        // 125%：p_2=10、SM=15px（行高 24）→ 20 + 24 + 24 + 32。
+        assert_eq!(approval_card_height("Use bash", None, 618.0, 20.0), 100.0);
+    }
+
+    /// P4 片 3：Timeline 行 rect 相邻不重叠、行间距与 row_top_gap 一致，
+    /// 行高按内容公式化（tool 组 = 行数×52；消息 = 标签 + 12 + 正文）。
+    #[test]
+    fn timeline_row_layouts_stack_with_content_heights_and_gaps() {
+        use crate::projection::{TimelineEntry, TimelineEntryKind, TimelineRow};
+        use crate::ui::timeline::{
+            row_top_gap, timeline_following_window, timeline_row_height,
+            timeline_visible_item_tops,
+        };
+
+        fn entry(seq: u64, kind: TimelineEntryKind) -> TimelineEntry {
+            TimelineEntry {
+                sequence: seq,
+                event_id: format!("e{seq}"),
+                kind,
+                fork_boundary: None,
+                timestamp: "1800000000000".into(),
+                run_id: None,
+            }
+        }
+        let timeline = vec![
+            entry(1, TimelineEntryKind::UserMessage { text: "Plan:".into() }),
+            entry(
+                2,
+                TimelineEntryKind::ToolCall {
+                    name: "read".into(),
+                    status: "succeeded".into(),
+                    detail: None,
+                },
+            ),
+            entry(
+                3,
+                TimelineEntryKind::ToolCall {
+                    name: "bash".into(),
+                    status: "running".into(),
+                    detail: None,
+                },
+            ),
+            entry(4, TimelineEntryKind::RunState("Running".into())),
+        ];
+        let rows = vec![
+            TimelineRow::Message { entry_index: 0 },
+            TimelineRow::ToolGroup {
+                entry_indices: vec![1, 2],
+            },
+            TimelineRow::RunPhase { entry_index: 3 },
+        ];
+        let layouts: Vec<(f32, f32)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row_top_gap(row),
+                    timeline_row_height(row, &timeline, 618.0, 16.0),
+                )
+            })
+            .collect();
+        // 100%：消息 = 标签 29 + 12 + 正文 24；tool 组 = 2×52；相位 = 28。
+        assert_eq!(layouts[0].1, 65.0);
+        assert_eq!(layouts[1].1, 104.0);
+        assert_eq!(layouts[2].1, 28.0);
+        // 行间距与 row_top_gap 同源：消息→tool 组 48，tool 组→相位 40。
+        assert_eq!(layouts[1].0, metrics::TOOL_GROUP_TOP_GAP);
+        assert_eq!(layouts[2].0, metrics::MSG_ENTRY_GAP);
+        let tops = timeline_visible_item_tops(&layouts, 100.0, 400.0, 0, 0.0);
+        assert_eq!(tops[0], (0, 100.0));
+        assert_eq!(tops[1], (1, 100.0 + 65.0 + 48.0));
+        assert_eq!(tops[2], (2, tops[1].1 + 104.0 + 40.0));
+        for pair in tops.windows(2) {
+            assert!(pair[0].1 + layouts[pair[0].0].1 <= pair[1].1);
+        }
+        // 125%：消息行高随字号档缩放（标签 36 + 12 + 正文 30）。
+        assert_eq!(
+            timeline_row_height(&rows[0], &timeline, 618.0, 20.0),
+            78.0
+        );
+        // 跟随态窗口：视口装不下全部（65+48+104+40+28=285>200）时，
+        // 首个部分可见项仍保留，item 1 内偏移 20；全部装得下则从 0 开始。
+        assert_eq!(timeline_following_window(&layouts, 200.0), (1, 20.0));
+        assert_eq!(timeline_following_window(&layouts, 400.0), (0, 0.0));
+        let tail = timeline_visible_item_tops(&layouts, 100.0, 200.0, 1, 20.0);
+        assert_eq!(tail[0], (1, 128.0));
+        assert_eq!(tail[1], (2, 272.0));
+    }
+
+    /// P4 片 2F（D2）：审批卡 AX 位置按内容流推导（渲染为 timeline list
+    /// 末项）——短内容卡顶 = 内容顶 + Σ行 + MSG_ENTRY_GAP，不贴视口底；
+    /// 内容+卡超出视口（跟随态滚到底）才贴底；按钮行随卡底同步移动。
+    #[test]
+    fn approval_card_ax_position_follows_content_flow_until_overflow() {
+        use crate::ui::timeline::{timeline_following_window, timeline_visible_item_tops};
+
+        let frame = AxRect::new(288.0, 56.0, 712.0, 800.0);
+        let content_top = frame.y + metrics::TIMELINE_TOP_GAP;
+        let viewport_height = frame.height - metrics::TIMELINE_TOP_GAP;
+        let card_height = approval_card_height("Use bash", None, 618.0, 16.0);
+        // 短内容：approval 与 rows 组成同一 item 序列，全量远小于视口。
+        let short = vec![
+            (0.0f32, 65.0f32),
+            (metrics::MSG_ENTRY_GAP, 104.0),
+            (metrics::MSG_ENTRY_GAP, card_height),
+        ];
+        let flow_top = content_top
+            + 65.0
+            + metrics::MSG_ENTRY_GAP
+            + 104.0
+            + metrics::MSG_ENTRY_GAP;
+        let short_window = timeline_following_window(&short, viewport_height);
+        assert_eq!(short_window, (0, 0.0));
+        let short_tops = timeline_visible_item_tops(
+            &short,
+            content_top,
+            viewport_height,
+            short_window.0,
+            short_window.1,
+        );
+        let short_y = short_tops[2].1;
+        assert_eq!(short_y, flow_top);
+        assert!(short_y + card_height <= frame.y + frame.height);
+        // 空时间线：卡即首项，无上间距。
+        let empty = vec![(0.0, card_height)];
+        assert_eq!(
+            timeline_visible_item_tops(&empty, content_top, viewport_height, 0, 0.0)[0].1,
+            content_top
+        );
+        // 长内容：跟随态保留首个部分可见项，approval 末项贴视口底。
+        let tall = vec![
+            (0.0f32, 700.0f32),
+            (metrics::MSG_ENTRY_GAP, 300.0),
+            (metrics::MSG_ENTRY_GAP, card_height),
+        ];
+        let tall_window = timeline_following_window(&tall, viewport_height);
+        let tall_tops = timeline_visible_item_tops(
+            &tall,
+            content_top,
+            viewport_height,
+            tall_window.0,
+            tall_window.1,
+        );
+        let pinned_y = frame.y + frame.height - card_height;
+        assert_eq!(tall_tops.last(), Some(&(2, pinned_y)));
+        // 脱钩读史时 approval 在视口外，不得发布不可见审批动作。
+        let detached = timeline_visible_item_tops(&tall, content_top, viewport_height, 0, 0.0);
+        assert!(detached.iter().all(|(ix, _)| *ix != 2));
+        // 按钮行 y = 卡底 − p_2 − 32：两臂均自卡底推导（随卡移动）。
+        assert_eq!(
+            approval_button_row_y(AxRect::new(288.0, short_y, 618.0, card_height), 16.0),
+            short_y + card_height - APPROVAL_CARD_PAD_REMS * 16.0 - APPROVAL_BUTTON_HEIGHT
+        );
+        assert_eq!(
+            approval_button_row_y(AxRect::new(288.0, pinned_y, 618.0, card_height), 16.0),
+            pinned_y + card_height - APPROVAL_CARD_PAD_REMS * 16.0 - APPROVAL_BUTTON_HEIGHT
+        );
+    }
+
+    /// P4 片 2F（D1）：AXPress 开 grouping/scope 菜单与真实点击同源移焦
+    /// ——焦点必须离开 composer 落到触发器，后续 Enter 才由根节点菜单
+    /// 裁决而非触发 SendMessage。AppView 不作窗口根渲染（规避测试线程
+    /// AppKit 安装），仅驱动 AX dispatch 本身。
+    #[gpui::test]
+    fn ax_press_menu_trigger_moves_focus_off_composer(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        struct AxPressHost {
+            view: gpui::Entity<AppView>,
+        }
+        impl gpui::Render for AxPressHost {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("p4-2f-ax-press.sock");
+        let (host, cx) = cx.add_window_view(|_window, cx| {
+            let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
+            AxPressHost { view }
+        });
+        let view = cx.update(|_window, cx| host.read(cx).view.clone());
+        for identifier in [
+            "task-rail-grouping",
+            "project-scope",
+            "add-task",
+            "header-new-task",
+        ] {
+            cx.update(|window, cx| {
+                // add-task / header-new-task 经 can_create_task 门控：注入
+                // Connected 使 AX press 不被 fail-closed 拒绝（真实点击同理）。
+                view.update(cx, |view, _cx| {
+                    view.projection.set_connection(ConnectionState::Connected {
+                        instance_id: "test".into(),
+                    });
+                });
+                let composer = view.read(cx).composer_focus_handle(cx);
+                window.focus(&composer);
+            });
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.handle_accessibility_request(
+                        AxRequest {
+                            identifier: identifier.to_string(),
+                            action: AxAction::Press,
+                            value: None,
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            });
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                assert!(
+                    !view.composer_focus_handle(cx).is_focused(window),
+                    "{identifier}: AX press must move focus off the composer"
+                );
+                let trigger_focused = match identifier {
+                    "task-rail-grouping" => view.grouping_focus.is_focused(window),
+                    "project-scope" => view.scope_focus.is_focused(window),
+                    "add-task" => view.add_task_focus.is_focused(window),
+                    _ => view.header_new_task_focus.is_focused(window),
+                };
+                assert!(
+                    trigger_focused,
+                    "{identifier}: AX press must focus the trigger like a click"
+                );
+            });
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    let kind = view.open_menu.clone().expect("AX press should open a menu");
+                    view.close_menu_and_focus_trigger(kind, window, cx);
+                });
+            });
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                let trigger_focused = match identifier {
+                    "task-rail-grouping" => view.grouping_focus.is_focused(window),
+                    "project-scope" => view.scope_focus.is_focused(window),
+                    "add-task" => view.add_task_focus.is_focused(window),
+                    _ => view.header_new_task_focus.is_focused(window),
+                };
+                assert!(
+                    trigger_focused,
+                    "{identifier}: Escape-style close must restore the originating trigger"
+                );
+            });
+        }
     }
 }

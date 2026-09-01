@@ -6,12 +6,12 @@
 
 | 字段 | 当前事实 |
 | --- | --- |
-| 活动线 | **无（P3 已收口；下一阶段 P4 Accessibility 与跨平台待用户开启）** |
-| 状态 | 🟢 P3 已收口（2026-09-01）：片 1 审计 ✅、片 2 Terminal 三修复 ✅、片 3 真窗口验收 ✅、片 4 G4 [ADR-045](docs/adr/ADR-045-terminal-lifecycle-wire-evolution.md) ✅（实现 + 定向门禁 + 真窗口验收全过）。P1 / P2 / P3 均已收口，过程与证据归档 [docs/history.md](docs/history.md)。 |
-| 本轮结果 | Changes / Resources 冻结契约内无缺口（真窗口冒烟确认权威数据、刷新、断线 stale 诚实）；Terminal 面 G1 尺寸 stepper 真实 resize（stty 24x80→28x88）、G2 exited 重建（New 入口同 workspace/cwd 新建、旧终端只读）、G3 cwd 诚实显示（快照 cwd 键 + unknown 兜底 + 根目录标签归一）、G4 完整生命周期（ADR-045：`terminal_close` + `TerminalExited` live 事件、API 1.3 按协商 minor 门控推送、Desktop Stop/Close 真实接线、live 终态即时刷新、Close 清理 GuiHost tombstone 与 PTY service 条目、Failed 终态可 Close 清理后回到 Start）全部落地并经真窗口验证；提交后 review 另补齐检入 TypeScript schema/typegen 门禁并修复 PTY 清理、Stop/Close 回执竞态与 Failed 锁死；门禁结果见片 4 与 history。 |
-| 下一动作 | 待用户开启 P4（Accessibility 与跨平台）或指派阶段外任务；P2 / P3 遗留观察项见 §5。 |
-| 本轮完成条件 | §4 P3 退出条件已满足：三面板只展示 Host 权威数据，关键动作与错误恢复完整。 |
-| 当前阻塞 | 无。 |
+| 活动线 | **P4 — Accessibility 与跨平台（2026-09-01 开启）** |
+| 状态 | 🔵 P4 进行中：片 1 缺口审计 ✅、片 3 AX 精确几何 ✅、片 2 真窗口走查 ✅、片 2F 缺陷修复与真窗口复验 ✅（D1/D2/D3 均通过，定向门禁 160/160；D4 登记观察）。P1 / P2 / P3 均已收口，过程与证据归档 [docs/history.md](docs/history.md)。 |
+| 本轮结果 | 片 1 审计：键盘/AX 主路径多数代码层闭环；A 级缺口二项——A1 VoiceOver+键盘+IME 真窗口人工验收未执行（[docs/gui-design.md](docs/gui-design.md):267 挂账本体），A2 AX bounds 固定偏移近似不止 P3-③ stepper（审批卡固定 112px 高、Timeline 行统一 52px 假高 vs render 变高 list）；B 级五项（Timeline 键盘滚动、Announcement 语义、终端 AX 截断、字符面板、非 macOS AX no-op）；跨平台 XP1–XP9，核心为 XP1 快捷键全 `cmd-` 前缀（gpui 解析为 platform 修饰键，Linux=Super、Windows=Win）、XP2 非 macOS 零 AX、XP8 无双目标编译证据；transport 双栈 / portable-pty / 进程树 / 沙箱分支已具备。片 3（A2 修复，提前于片 2 执行以免 VO 走查带已知几何偏差签字）：stepper 五按钮 / 审批卡 / Timeline 行高三处几何改与 render 同源公式推导（stepper 冻结 28/72×28 槽 + rem 缩放间距；审批卡高随 reason/detail 行数；Timeline 行高按内容 + row_top_gap 堆叠，滚动起始/容量不再用 52px 假高），行高为公式化近似（CJK 偏窄估）已在代码与 Spec 诚实标注；几何断言 6→9 条，desktop.md 同批回写。片 2F review 再修正同 run 早期历史误清后续审批、部分可见首项/脱钩审批 AX 发布与 WorkspaceConfirm 回焦来源；正式 Host/Desktop 以 AX frame 中心真实点击、焦点与落盘/终态双证据复验通过。 |
+| 下一动作 | 片 4 Timeline 键盘可达 → 片 5 快捷键别名 → 片 6 双目标编译 → 片 7 真机冒烟；VO 播报与系统 IME 真实组合待用户人工签字。 |
+| 本轮完成条件 | §4 P4 退出条件：键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据。 |
+| 当前阻塞 | 无（片 2 的 VoiceOver 人工签字与片 7 真机冒烟需用户配合）。 |
 
 状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。任何“已实现”“自动检查通过”“真窗口通过”“等待人工确认”必须分开记录。
 
@@ -73,6 +73,21 @@
 
 不改动范围：不再演进 wire schema（仅补齐 ADR-045 已接受版本的检入 TypeScript 生成物）；Terminal stop/close 与 live exit/failure 已经 ADR-045 拍板实施，其余 wire 冻结不变；Changes 面维持只读（git_stage 接线仍属 ADR 候选）；不新增包与生产依赖；Timeline / Composer / 审批主链路非本片范围；不跑全量门禁。
 
+### P4 — Accessibility 与跨平台（2026-09-01 开启）
+
+退出条件（§4）：键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据。切片如下，每片数小时内可验收：
+
+- **片 1 ✅**：Accessibility 与跨平台缺口审计（glm_explorer，只读零改动，未跑 cargo）。主路径判定：Composer 输入发送、审批决议、面板切换、Terminal 输入与 stepper 键盘闭环（代码层，三路径同 gate、IME 双门）；AX 标签/角色诚实性与动作 dispatch 闭环（代码层，identifier 白名单 + fail-closed）；全 App 焦点遍历、AX 树覆盖（Timeline 仅可见窗口节点）、AX 通知（仅三类，无 live-region）、VoiceOver（推断部分闭环）为部分闭环。A 级缺口：A1 VoiceOver+键盘+IME 真窗口人工验收未执行（docs/gui-design.md:267 挂账本体；既有定向门禁为结构级，不替代签字）；A2 AX bounds 固定偏移近似不止 P3-③ stepper——审批卡固定 112px 高（accessibility/app.rs:1005-1060）、Timeline 行统一 52px 假高而 render 为变高 list（app.rs:956-980 vs ui/timeline.rs:104-165）。B 级：B1 Timeline 无键盘滚动、B2 无 Announcement/live-region、B3 Terminal AX 输出 8192 截断且未声明、B4 ShowCharacterPalette 裁剪、B5 非 macOS AX no-op（跨平台归 XP2）。跨平台：已具备 transport 双栈（unix 0600 / Windows named pipe owner-only DACL）、portable-pty、进程树（setpgid / Job Object）、沙箱三分支、Windows 路径与文件锁分支；缺口 XP1 快捷键全 `cmd-` 前缀（gpui 解析为 platform 修饰键，Linux=Super、Windows=Win，主路径不可用且文案硬编码 Cmd，未用 `secondary-` 别名）、XP2 非 macOS 零 AX（gpui 0.2.2 无跨平台 a11y）、XP3 Tab 平台二分未验证、XP4 pipe 名长路径 256 字节边界、XP5 token/目录权限仅 unix 收紧、XP6 Windows 沙箱 Degraded、XP7 Increase Contrast 仅 macOS、XP8 未做双目标编译、XP9 ConPTY 下 Stop 树击杀语义未验证。
+- **片 2 ✅（真窗口走查通过，发现 D1–D3 转片 2F；VO/IME 人工签字仍挂起）**：macOS 真窗口键盘+AX 走查（隔离实例 p4-2，glm_worker，九项全过，记录 /tmp/p4-s2-walkthrough.md 75 行 + AX dump/截图证据）：Tab 链 18 步 + Shift-Tab 反向与 design §3.6 完全一致；菜单 ↑/↓/Enter/Esc 回焦触发器；Cmd+I / 页签 ←/→ / Cmd+Opt+↓↑ / Cmd+Opt+N 跳 Needs input；审批三路径（真实点击 / Cmd+1 / AXPress）三文件真实落盘；断线 Disconnected+Reconnect 诚实恢复。片 3 几何逐项吻合：审批卡高手算=实测 105（pad16+标题19+reason 2×19+按钮32）、按钮槽宽/gap 精确；stepper 五按钮与公式逐像素吻合（右缘 body_right−8、gap 4、header 36@100%）；Timeline 行高 28~204 随内容变化无重叠。发现缺陷：**D1** AXPress 开菜单不移 GPUI 焦点，Enter 落 composer SendMessage（VO 路径无法键盘选菜单、有误发风险）；**D2** 审批卡 AX 位置按视口底发布 vs 渲染内容流末项，短内容垂直偏差 ~453px，指针/VO 按 AX 坐标点击落空；**D3** 切走会话再 Cmd+Opt+N 跳回审批卡不恢复（host requested=4/responded=3，重放侧未从未决议 requested 事件重建 pending），run 挂起只能 Cancel；**D4**（观察项）外部应用抢前台后 Desktop 降级（渲染冻结/键盘死/AX 部分陈旧），重启恢复，根因未定位，与 P2-③ SIGSTOP 退化同族待分诊。待用户人工签字：VoiceOver 真实播报/导航/光标框；系统 IME 真实 composing（代码门 app.rs:178 is_composing 已在场）。
+- **片 2F ✅（已实现 + 定向门禁 160/160 + 真窗口复验通过）**：走查缺陷修复（glm_worker ×2 + 主代理 review 收口）。D1：七个菜单触发器（grouping/scope/model/inspector-toggle/entry「···」/add-task/header-new-task）AXPress 与可见点击同源先移焦再 toggle，Enter 不再误触 SendMessage；WorkspaceConfirm 关闭按真实来源回到 add-task 或 header-new-task。D2：Timeline 行与 approval 组成同一 list item 序列；已完成布局优先读取 `ListState::bounds_for_item` 的真实 item bounds，首帧才走 `timeline_visible_item_tops` / `timeline_following_window` 公式回退；部分可见首项保留，脱钩读史时视口外 approval 不发布可执行 AX 节点，按钮行随卡底移动。D3：snapshot `pending_tool_approvals` 是重开会话的当前权威；历史 ToolCompleted / ApprovalResponded 可能属于同 run 的更早工具，分页重放不再改写 pending，只有历史 run 终态按 run 清除；live ToolCompleted 仍按 run + tool_call_id 精确清除。review 修复三项：同 run 早期历史误清后续审批、部分可见首项/视口外审批发布、WorkspaceConfirm 回焦来源。定向测试新增 4 条，`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 160/160；正式 `p4-review` Host/Desktop 复验 D1 菜单回焦、D2 AX frame 中心真实点击后文件落盘与 Run completed、D3 同 run 前置工具后切会话跳回仍恢复审批，三场景均通过；desktop.md 同批回写。
+- **片 3 ✅（已实现 + 最终定向门禁 160/160 + 真窗口验证通过；提前于片 2 执行）**：AX 精确几何（A2，glm_worker）。terminal stepper 五按钮走 `terminal_stepper_ax_rects`（inspector.rs 同源：px_2/py_1/gap_1 rem 常量 + 冻结 28/72×28 槽）；审批卡高走 `approval_card_height`（标题/reason/detail 行数 + p_2 + 32px 按钮行，按钮行自卡底推导）；Timeline 行走 `timeline_row_height` + `row_top_gap` 公式化堆叠，滚动窗口走 `timeline_visible_item_tops` + `timeline_following_window`，已有 prepaint 时由 `ListState::bounds_for_item` 回填真实 item bounds（删 52px 统一假高；ListState 只读不触 handler 写借用）。写入集 apps/desktop 五文件（accessibility/app.rs、timeline.rs、timeline_entry.rs、inspector.rs、approval_card.rs），新增几何断言 3 条（6→9）。判断点（已接受并诚实标注）：stepper/apply 与审批按钮钉冻结槽位（按钮约 +3~10px、Terminal 头部行高 26.5→36，按既有冻结槽模式处理）；仅首帧/无测量布局时行高使用公式近似（0.6×字号字符宽估换行，CJK 偏窄估），稳定帧 AX 读真实 list bounds。desktop.md 同批回写。
+- **片 4**：Timeline 键盘可达（B1）——PageUp/Down 或空焦点 ↑/↓ 滚动与/或焦点化当前行语义，同批补 AX List 滚动联动；验收：纯键盘可回看历史并回底。
+- **片 5**：跨平台快捷键别名（XP1，小改）——APP_VIEW_KEYBINDINGS 增加 `secondary-`/`ctrl-` 别名并让文案按平台显示修饰键；macOS 全量定向门禁回归。
+- **片 6**：双目标编译证据（XP8）——rustup 添加 linux/windows target 后 `cargo check` 双目标，产出能力与缺口文档（P4 退出条件真实平台证据的第一层）。
+- **片 7**：Linux/Windows 真机冒烟清单（XP3/4/5/9）——pipe 连通+token 路径、PTY 创建/输入/Stop、Tab 遍历、快捷键别名、高对比不可用时默认态；无真机则明确登记「未验证」。
+
+不改动范围：Linux/Windows 平台 AX（XP2）只登记缺口与方案调研，不承诺实现；不演进 wire/schema；不新增包与生产依赖；不跑全量门禁；发布仍属 P5 且需用户授权。
+
 ## 3. 本轮验收矩阵
 
 | 能力 | 通过条件 | 证据 |
@@ -94,7 +109,7 @@ E0–E2、P1、P2 与 P3 已完成。后续按以下顺序推进；每项在开�
 | --- | --- | --- | --- |
 | ~~P2~~ ✅ | Agent 主路径可靠性（已收口，2026-09-01） | P1 可稳定复现真实 Run | 发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环 |
 | ~~P3~~ ✅ | Changes / Terminal / Resources 完整性（已收口，2026-09-01） | P2 产出真实工具与文件事件（已满足） | 三面板只展示 Host 权威数据，关键动作与错误恢复完整 |
-| P4 | Accessibility 与跨平台 | macOS 核心路径稳定 | 键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据 |
+| P4 🔵 | Accessibility 与跨平台（2026-09-01 开启，片 1 审计 ✅） | macOS 核心路径稳定（已满足） | 键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据 |
 | P5 | 发布准备 | P1–P4 完成且用户授权发布任务 | License、供应链、安装/升级/回滚和三平台发布门禁另立任务并通过 |
 
 ## 5. 开放边界

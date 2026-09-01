@@ -1964,6 +1964,9 @@ impl AppView {
                 .get(&event_id)
                 .cloned()
                 .unwrap_or_else(|| self.focus_handle.clone()),
+            MenuKind::WorkspaceConfirm if self.header_new_task_focus.is_focused(window) => {
+                self.header_new_task_focus.clone()
+            }
             MenuKind::WorkspaceConfirm => self.add_task_focus.clone(),
             MenuKind::Activity => self.inspector_activity_focus.clone(),
         };

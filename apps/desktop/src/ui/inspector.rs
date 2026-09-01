@@ -28,6 +28,16 @@ const TERMINAL_COLUMNS_MAX: u16 = 500;
 const TERMINAL_ROWS_MIN: u16 = 6;
 const TERMINAL_ROWS_MAX: u16 = 200;
 
+/// Terminal 头部尺寸 stepper 行几何（render 与 AX 同源，P4 片 3）：内边距
+/// 与间距以 rem 表达（px_2 / py_1 / gap_1，随字号档缩放），按钮槽位为
+/// 冻结 px（与 rail 28×28 控件槽同族）。
+pub(crate) const TERMINAL_STEPPER_STEP_WIDTH: f32 = 28.0;
+pub(crate) const TERMINAL_STEPPER_APPLY_WIDTH: f32 = 72.0;
+pub(crate) const TERMINAL_STEPPER_BUTTON_HEIGHT: f32 = 28.0;
+const TERMINAL_STEPPER_GAP_REMS: f32 = 0.25;
+const TERMINAL_HEADER_PAD_X_REMS: f32 = 0.5;
+const TERMINAL_HEADER_PAD_Y_REMS: f32 = 0.25;
+
 /// 纯函数：按增量调整终端尺寸并钳制在安全边界内（G1，可测）。
 pub(crate) fn step_terminal_size(columns: u16, rows: u16, dcolumns: i32, drows: i32) -> (u16, u16) {
     let columns = (i32::from(columns) + dcolumns).clamp(
@@ -61,6 +71,40 @@ pub(crate) fn terminal_resize_status_label(
     } else {
         None
     }
+}
+
+/// Terminal 页头部行高（render py_1×2 + 按钮槽高；AX output rect 同源）。
+pub(crate) fn terminal_header_height(rem_px: f32) -> f32 {
+    TERMINAL_STEPPER_BUTTON_HEIGHT + 2.0 * TERMINAL_HEADER_PAD_Y_REMS * rem_px
+}
+
+/// stepper 五按钮 AX rect（渲染顺序 cols-dec / cols-inc / apply / rows-dec /
+/// rows-inc）：自右缘 px_2 内边距向左按 gap_1 排布，槽宽与 render 固定
+/// 尺寸同源；窄面板钳制到左缘。
+pub(crate) fn terminal_stepper_ax_rects(
+    body_x: f32,
+    body_right: f32,
+    body_y: f32,
+    rem_px: f32,
+) -> [(f32, f32, f32, f32); 5] {
+    let widths = [
+        TERMINAL_STEPPER_STEP_WIDTH,
+        TERMINAL_STEPPER_STEP_WIDTH,
+        TERMINAL_STEPPER_APPLY_WIDTH,
+        TERMINAL_STEPPER_STEP_WIDTH,
+        TERMINAL_STEPPER_STEP_WIDTH,
+    ];
+    let gap = TERMINAL_STEPPER_GAP_REMS * rem_px;
+    let right = body_right - TERMINAL_HEADER_PAD_X_REMS * rem_px;
+    let y = body_y + TERMINAL_HEADER_PAD_Y_REMS * rem_px;
+    let total: f32 = widths.iter().sum::<f32>() + gap * (widths.len() - 1) as f32;
+    let mut x = body_x.max(right - total);
+    let mut rects = [(0.0, 0.0, 0.0, 0.0); 5];
+    for (rect, width) in rects.iter_mut().zip(widths) {
+        *rect = (x, y, width, TERMINAL_STEPPER_BUTTON_HEIGHT);
+        x += width + gap;
+    }
+    rects
 }
 
 /// Terminal 面板当前是纯文本视图，不是 VT emulator。显示前移除 ANSI/VT
@@ -147,6 +191,10 @@ fn terminal_stepper(
         .variant(ButtonVariant::Ghost)
         .disabled(!enabled)
         .padding(ButtonPadding::None)
+        // P4 片 3：槽位与 AX rect 同源（terminal_stepper_ax_rects）。
+        .width(px(TERMINAL_STEPPER_STEP_WIDTH))
+        .height(px(TERMINAL_STEPPER_BUTTON_HEIGHT))
+        .center()
         .text_size(font::XS)
         .label(label)
         .tooltip(tooltip)
@@ -303,8 +351,10 @@ impl AppView {
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .px_2()
-                    .py_1()
+                    // 几何与 AX 同源（P4 片 3）：px_2 / py_1 以共享 rem
+                    // 常量表达，值不变。
+                    .px(gpui::rems(TERMINAL_HEADER_PAD_X_REMS))
+                    .py(gpui::rems(TERMINAL_HEADER_PAD_Y_REMS))
                     .text_size(font::XS)
                     .text_color(dark().text.secondary)
                     .min_w_0()
@@ -320,7 +370,8 @@ impl AppView {
                             .flex()
                             .flex_row()
                             .items_center()
-                            .gap_1()
+                            // gap_1 以共享 rem 常量表达（值不变）。
+                            .gap(gpui::rems(TERMINAL_STEPPER_GAP_REMS))
                             .flex_none()
                             .child(terminal_stepper(
                                 "terminal-cols-dec",
@@ -347,6 +398,9 @@ impl AppView {
                                     .variant(ButtonVariant::Ghost)
                                     .disabled(!terminal_resize_enabled)
                                     .padding(ButtonPadding::None)
+                                    .width(px(TERMINAL_STEPPER_APPLY_WIDTH))
+                                    .height(px(TERMINAL_STEPPER_BUTTON_HEIGHT))
+                                    .center()
                                     .label(size_label)
                                     .tooltip("Apply terminal size")
                                     .track_focus(&self.terminal_resize_focus)
