@@ -7,11 +7,11 @@
 | 字段 | 当前事实 |
 | --- | --- |
 | 活动线 | **P3 Changes / Terminal / Resources 完整性** |
-| 状态 | 🟢 P1 已收口：E0–E2、片 1、片 2A、片 2B 与片 2C 全部完成。片 2C 审计确认五流程接线已完整落地（零代码改动），正式 Host/Desktop 真窗口验收通过，Desktop 定向门禁 147/147。🟢 P2 已收口：片 1 审计（四链路闭环 + 两真实缺口）、片 2A（悬空 run 诚实收口）、片 2B（checkpoint 失败诚实化）、片 3 真窗口闭环验收全部通过，Desktop 定向门禁 147/147。 |
-| 本轮结果 | 发送 / 审批 / 取消（流式与审批等待两相位）/ 失败恢复（kill -9 两相位重启后诚实 RunFailed + 启动清扫幂等）/ 重放 / 文件写入六链路均经正式 UI 走通；无终态 run 启动清扫与合成终态 persist-first 落地，checkpoint 快照失败可持久化诊断并上时间线；UI 状态与 SQLite/磁盘/git 事实一致。 |
-| 下一动作 | 按 §4 开启 P3（Changes / Terminal / Resources 完整性），开启前再拆成数小时内可验收的小任务。 |
-| 本轮完成条件 | P2 退出条件「发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环」已满足（证据归档 [docs/history.md](docs/history.md)）。 |
-| 当前阻塞 | 无。完整 Terminal stop/close 与 live exit/failure 仍以 UI 本地诚实实现绕过，归 P3 边界。 |
+| 状态 | 🔵 P3 待收口：片 1 审计 ✅、片 2 Terminal 三修复 ✅、片 3 真窗口验收 ✅（六场景 PASS + 主代理修复片 3 发现的 cwd 空白缺陷）。P1 / P2 已收口，过程与证据归档 [docs/history.md](docs/history.md)。 |
+| 本轮结果 | Changes / Resources 冻结契约内无缺口（真窗口冒烟确认权威数据、刷新、断线 stale 诚实）；Terminal 面 G1 尺寸 stepper 真实 resize（stty 24x80→28x88）、G2 exited 重建（New 入口同 workspace/cwd 新建、旧终端只读）、G3 cwd 诚实显示（快照 cwd 键 + unknown 兜底 + 根目录标签归一）全部落地并经真窗口验证；Desktop 门禁 151/151、app 门禁 187。 |
+| 下一动作 | 等用户拍板 G4：是否为 Terminal 完整生命周期（stop/close + live exit/failure）启动 ADR 演进 wire；若否，P3 以「冻结 wire 内完整 + 诚实降级」收口并归档 history.md。 |
+| 本轮完成条件 | §4 P3 退出条件：Changes / Terminal / Resources 三面板只展示 Host 权威数据，关键动作与错误恢复完整。 |
+| 当前阻塞 | G4 决策待用户（ADR 闸门，主代理不代拍）。其余无阻塞。 |
 
 状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。任何“已实现”“自动检查通过”“真窗口通过”“等待人工确认”必须分开记录。
 
@@ -61,6 +61,16 @@
 
 不改动范围：不演进 wire/schema；不新增包与生产依赖；Terminal stop/close 与 live exit/failure 仍归 P3 边界；不改 Provider 通道与多 Agent orchestration。
 
+### P3 — Changes / Terminal / Resources 完整性 🔵
+
+退出条件（§4）：三面板只展示 Host 权威数据，关键动作与错误恢复完整。切片如下，每片数小时内可验收：
+
+- **片 1 ✅**：三面板完整性缺口审计（glm_explorer，只读零改动）。结论：Changes 面（latest-session 三重 fail-closed、mismatch banner、断线 stale、重连刷新）与 Resources 面（mcp_list 权威数据、epoch 拒旧、stale 标记）在冻结契约内无真实缺口；缺口集中 Terminal 面——G1 resize 不可变参实为 no-op（A）、G2 gate 单一化断 exited 重建与瞬态失败重试（A）、G3 cwd 展示伪造（A）；G4 完整终端生命周期（stop/close + live exit）为已登记 B 边界须 ADR；G5 mcp_test 类动作归候选池；P2 遗留 ①② 不归 P3（①建议独立任务：Host 取消收口补 ToolCompleted；②engine 文案分支）。
+- **片 2 ✅（已实现 + 定向门禁通过，待片 3 真窗口验证）**：G1 Terminal 尺寸 stepper（−W/+W/−H/+H 本地草稿钳制 20–500 列 / 6–200 行，apply 走冻结 `terminal_resize`，可见/键盘/AX 三路径同 gate，匹配回执或终端切换后草稿复位）；G2 已知 exited/killed 终端 Start 单槽变 New（同 workspace/cwd 新建，旧终端只读保留不伪造生命周期）、瞬态 write/resize 失败在 runtime running 时不锁死仅 status_hint 报错；G3 Host `terminal_snapshots()` 补 `cwd` 键（注册表值 `owner\0cwd` 编码，快照段不透明 JSON 零 wire/golden 演进，缺键省略）、Desktop 缺键诚实显示 unknown。主代理收口与 review：回滚 worker 越界的 20 文件 import 重排（纯 churn）；修复 create 失败/断连后的 cwd 残留、New 在途仍可重复触发、AX 未播报尺寸草稿、空 cwd 显示空白，以及 resize 迟到回执跨 workspace 清错草稿/新终端误用当前终端尺寸；`cargo test -p pawork-app --offline --lib --tests`（187）与 `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（151，新增 4 条且扩展既有 gate 测试）复跑全绿；desktop.md / app.md Spec 已同批回写。AX 侧 stepper 节点 bounds 为固定偏移近似，精确几何归 P4 签字。
+- **片 3 ✅**：真窗口验收通过（隔离实例 p3-3，glm_worker，六场景 PASS，UI（AX）+ stty/pwd/git/SQLite/快照双证据）：G1 stepper Apply 后 PTY 真实 `stty size` 24x80→28x88、AX 四节点 press 可达；G2 `exit` 后经断连重连快照得 exited → Start 变 New → 新终端同 workspace/cwd（pwd 一致）、旧输出只读保留、无伪造 Stop（Host 重启变体不适用：注册表进程内，快照无终端如实 not started）；G3 外部客户端以 `working_directory=src` 建终端，重连后面板 cwd=src 与 pwd 一致；Changes（diff 与 git status 一致）/ Resources（mcp_list 权威、断线 stale 不伪装、Reconnect 恢复刷新）冒烟通过；Desktop 门禁 151/151 复跑。片 3 发现一真实缺陷已由主代理同波修复：Desktop 首次 Start 传 `.`，策略层归一为空串记账导致重连后面板 cwd 空白——`terminal_cwd_label` 根目录标签归一 + 定向测试 1 条（app 门禁 187 全绿）。
+
+不改动范围：不演进 wire/schema（Terminal stop/close 与 live exit/failure 方案先停 ADR）；Changes 面维持只读（git_stage 接线仍属 ADR 候选）；不新增包与生产依赖；Timeline / Composer / 审批主链路非本片范围；不跑全量门禁。
+
 ## 3. 本轮验收矩阵
 
 | 能力 | 通过条件 | 证据 |
@@ -81,7 +91,7 @@ E0–E2、P1 与 P2 已完成。后续按以下顺序推进；每项在开启前
 | 优先级 | 主题 | 进入条件 | 退出条件 |
 | --- | --- | --- | --- |
 | ~~P2~~ ✅ | Agent 主路径可靠性（已收口，2026-09-01） | P1 可稳定复现真实 Run | 发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环 |
-| P3 | Changes / Terminal / Resources 完整性 | P2 产出真实工具与文件事件 | 三面板只展示 Host 权威数据，关键动作与错误恢复完整 |
+| **P3** 🔵 | Changes / Terminal / Resources 完整性 | P2 产出真实工具与文件事件（已满足） | 三面板只展示 Host 权威数据，关键动作与错误恢复完整 |
 | P4 | Accessibility 与跨平台 | macOS 核心路径稳定 | 键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据 |
 | P5 | 发布准备 | P1–P4 完成且用户授权发布任务 | License、供应链、安装/升级/回滚和三平台发布门禁另立任务并通过 |
 
@@ -93,7 +103,8 @@ E0–E2、P1 与 P2 已完成。后续按以下顺序推进；每项在开启前
 - 若“添加项目”在现有 Desktop 不可达，优先复用冻结的 `workspace_add` 命令；任何需要新增 wire 的方案先停在 ADR 决策。
 - Terminal 现有协议没有通用 Stop/Close 与 live exit 事件时，UI 必须诚实表达，不用写入 `exit` 冒充正式能力。
 - 发布、提交、推送、生产部署与真实账户变更不在本轮授权范围。
-- P2 遗留观察项（不阻塞，归 P3 或后续任务评估）：①审批等待相位取消 run 后，waiting tool call 的工具行显示 "running"，只剩用户决议一条闭合路径；②`checkpoint.snapshot_failed` 文案 "write proceeded without rollback point" 在越界写被工具层拒绝的场景与实际不符；③Desktop 进程被 SIGSTOP ≥30s 后 AX 树永久退化（与 P1 片 2C 窗口异常同类，倾向 macOS 环境非产品缺陷）；④Host 启动 chatgpt probe 401 warn 与重启后 usage ledger record id conflict warn（既有现象）。
+- P2 遗留观察项（不阻塞；经 P3 片 1 审计判定 ①② 不归 P3，各立独立小任务——①冻结 wire 内 Host 取消收口补 `ToolCompleted{success:false}`，②engine 侧按写入被拒/继续分支措辞）：①审批等待相位取消 run 后，waiting tool call 的工具行显示 "running"，只剩用户决议一条闭合路径；②`checkpoint.snapshot_failed` 文案 "write proceeded without rollback point" 在越界写被工具层拒绝的场景与实际不符；③Desktop 进程被 SIGSTOP ≥30s 后 AX 树永久退化（与 P1 片 2C 窗口异常同类，倾向 macOS 环境非产品缺陷）；④Host 启动 chatgpt probe 401 warn 与重启后 usage ledger record id conflict warn（既有现象）。
+- P3 遗留观察项（不阻塞，归后续任务评估）：①多终端时面板粘住当前终端，外部客户端建的终端需任务往返切换才浮出（running 优先 + 最小 session_id 的选择设计，P4 或独立任务评估）；②Changes Files 清单为 session-diff 语义——无 run 的会话显示 0 files 并如实标注 latest-session，终端直接写入只体现在 Summary 的 dirty_files（设计事实，非缺口）；③Terminal AX stepper 节点 bounds 为固定偏移近似，精确几何归 P4 签字。
 
 ## 6. 计划事实源
 

@@ -11,15 +11,18 @@ use crate::projection::{
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
 use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::ANCHOR_GAP_Y;
-use crate::ui::inspector::{plain_terminal_output, InspectorTab, TERMINAL_EMPTY_OUTPUT};
+use crate::ui::inspector::{
+    plain_terminal_output, terminal_resize_status_label, terminal_size_for_display, InspectorTab,
+    TERMINAL_COLUMNS_STEP, TERMINAL_EMPTY_OUTPUT, TERMINAL_ROWS_STEP,
+};
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::display_time;
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
-    terminal_can_operate, terminal_start_enabled, timeline, AppView, MenuKind,
-    WORKSPACE_EMPTY_HINT,
+    terminal_can_operate, terminal_known_exited, terminal_start_enabled, timeline, AppView,
+    MenuKind, WORKSPACE_EMPTY_HINT,
 };
 
 const PAD: f32 = 8.0;
@@ -190,8 +193,14 @@ impl AppView {
             "changes-refresh" => self.refresh_changes(cx),
             "resources-refresh" => self.refresh_resources(cx),
             "terminal-resize" => self.on_apply_terminal_size(window, cx),
+            "terminal-cols-dec" => self.adjust_terminal_size(-TERMINAL_COLUMNS_STEP, 0, cx),
+            "terminal-cols-inc" => self.adjust_terminal_size(TERMINAL_COLUMNS_STEP, 0, cx),
+            "terminal-rows-dec" => self.adjust_terminal_size(0, -TERMINAL_ROWS_STEP, cx),
+            "terminal-rows-inc" => self.adjust_terminal_size(0, TERMINAL_ROWS_STEP, cx),
             "terminal-start" => {
-                if self.projection.terminal.session_id.is_some() {
+                // 与可见按钮同一语义：可操作单槽是 Size；已知 exited 终端与
+                // 未创建一样走 Start（新建终端）。
+                if terminal_can_operate(&self.projection.connection, &self.projection.terminal) {
                     self.on_apply_terminal_size(window, cx);
                 } else {
                     self.on_start_terminal(window, cx);
@@ -1611,11 +1620,13 @@ impl AppView {
             .workspace_id
             .as_deref()
             .unwrap_or("unassigned");
+        let (columns, rows) =
+            terminal_size_for_display(&self.projection.terminal, self.terminal_size_draft);
         let mut terminal_description = format!(
             "workspace {owner} · {} · {}×{} · {}",
             self.projection.terminal.cwd,
-            self.projection.terminal.columns,
-            self.projection.terminal.rows,
+            columns,
+            rows,
             self.projection.terminal.availability_label()
         );
         if self.projection.terminal.dropped_events > 0 {
@@ -1624,8 +1635,10 @@ impl AppView {
                 self.projection.terminal.dropped_events
             ));
         }
-        if self.projection.terminal.resize_confirmed {
-            terminal_description.push_str(" · resize confirmed");
+        if let Some(resize_status) =
+            terminal_resize_status_label(&self.projection.terminal, self.terminal_size_draft)
+        {
+            terminal_description.push_str(&format!(" · {resize_status}"));
         }
         let terminal_operable =
             terminal_can_operate(&self.projection.connection, &self.projection.terminal);
@@ -1633,16 +1646,98 @@ impl AppView {
             &self.projection.connection,
             &self.projection.terminal,
             self.terminal_pending_create_workspace.as_ref(),
+            self.terminal_pending_resize.is_some(),
         );
+        let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
         let mut terminal = AxNode::new("terminal", AxRole::Group, "Terminal", frame)
+            // G1：头部尺寸组 = 列 stepper 对 + apply + 行 stepper 对，与可见
+            // 控件同 gate / 同 id；apply 仍是唯一下发入口。
+            .child(
+                AxNode::new(
+                    "terminal-cols-dec",
+                    AxRole::Button,
+                    "Fewer terminal columns",
+                    AxRect::new(
+                        frame.x + frame.width - PAD - 192.0,
+                        frame.y,
+                        28.0,
+                        CONTROL_HEIGHT,
+                    ),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.terminal_cols_dec_focus.is_focused(window),
+                )
+                .enabled(terminal_operable)
+                .action(AxAction::Press),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-cols-inc",
+                    AxRole::Button,
+                    "More terminal columns",
+                    AxRect::new(
+                        frame.x + frame.width - PAD - 162.0,
+                        frame.y,
+                        28.0,
+                        CONTROL_HEIGHT,
+                    ),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.terminal_cols_inc_focus.is_focused(window),
+                )
+                .enabled(terminal_operable)
+                .action(AxAction::Press),
+            )
             .child(
                 AxNode::new(
                     "terminal-resize",
                     AxRole::Button,
                     "Apply terminal size",
-                    AxRect::new(frame.x + frame.width - 80.0, frame.y, 72.0, CONTROL_HEIGHT),
+                    AxRect::new(
+                        frame.x + frame.width - PAD - 132.0,
+                        frame.y,
+                        72.0,
+                        CONTROL_HEIGHT,
+                    ),
                 )
                 .focused(self.open_menu.is_none() && self.terminal_resize_focus.is_focused(window))
+                .enabled(terminal_resize_enabled)
+                .value(format!("{columns}×{rows}"))
+                .action(AxAction::Press),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-rows-dec",
+                    AxRole::Button,
+                    "Fewer terminal rows",
+                    AxRect::new(
+                        frame.x + frame.width - PAD - 58.0,
+                        frame.y,
+                        28.0,
+                        CONTROL_HEIGHT,
+                    ),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.terminal_rows_dec_focus.is_focused(window),
+                )
+                .enabled(terminal_operable)
+                .action(AxAction::Press),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-rows-inc",
+                    AxRole::Button,
+                    "More terminal rows",
+                    AxRect::new(
+                        frame.x + frame.width - PAD - 28.0,
+                        frame.y,
+                        28.0,
+                        CONTROL_HEIGHT,
+                    ),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.terminal_rows_inc_focus.is_focused(window),
+                )
                 .enabled(terminal_operable)
                 .action(AxAction::Press),
             )
@@ -1683,7 +1778,11 @@ impl AppView {
                     "terminal-start",
                     AxRole::Button,
                     if self.projection.terminal.session_id.is_some() {
-                        "Apply terminal size"
+                        if terminal_known_exited(&self.projection.terminal) {
+                            "Start new terminal"
+                        } else {
+                            "Apply terminal size"
+                        }
                     } else {
                         "Start terminal"
                     },

@@ -21,6 +21,7 @@ impl GuiHostAdapter {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(terminal_session_id)
             .cloned()
+            .map(|registration| decode_terminal_registration(&registration).0.to_string())
             .map(OwnerSessionId::new)
             .ok_or_else(|| {
                 Self::host_error(
@@ -30,11 +31,14 @@ impl GuiHostAdapter {
             })
     }
 
-    fn remember_terminal(&self, terminal_id: &TerminalId, owner: &OwnerSessionId) {
+    fn remember_terminal(&self, terminal_id: &TerminalId, owner: &OwnerSessionId, cwd: &str) {
         self.terminals
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(terminal_id.as_str().to_string(), owner.as_str().to_string());
+            .insert(
+                terminal_id.as_str().to_string(),
+                encode_terminal_registration(owner, cwd),
+            );
     }
 
     fn spawn_terminal_forwarder(&self, terminal_id: TerminalId, owner: OwnerSessionId) {
@@ -68,13 +72,13 @@ impl GuiHostAdapter {
         core: &crate::AppCore,
         workspace_id: &WorkspaceId,
         working_directory: Option<&WorkspaceRelativePath>,
-    ) -> Result<Option<PathBuf>, GuiHostError> {
+    ) -> Result<(Option<PathBuf>, String), GuiHostError> {
         let workspace = core
             .workspace_by_id(workspace_id)
             .map_err(GuiHostAdapter::app_error)?;
         let roots = workspace.roots;
         match working_directory {
-            None => Ok(roots.first().cloned()),
+            None => Ok((roots.first().cloned(), ".".to_string())),
             Some(relative) => {
                 if roots.is_empty() {
                     return Err(Self::host_error(
@@ -83,7 +87,12 @@ impl GuiHostAdapter {
                     ));
                 }
                 resolve_relative_path(&roots, relative.as_str())
-                    .map(|resolved| Some(resolved.absolute))
+                    .map(|resolved| {
+                        (
+                            Some(resolved.absolute),
+                            terminal_cwd_label(resolved.relative),
+                        )
+                    })
                     .map_err(|error| Self::host_error("invalid_argument", error.to_string()))
             }
         }
@@ -99,20 +108,54 @@ impl GuiHostAdapter {
             .collect();
         registered
             .into_iter()
-            .filter_map(|(id, owner)| {
+            .filter_map(|(id, registration)| {
+                let (owner, cwd) = decode_terminal_registration(&registration);
                 let terminal_id = TerminalId::new(id);
                 let owner = OwnerSessionId::new(owner);
                 let snapshot = self.pty.snapshot(&terminal_id, &owner).ok()?;
-                Some(json!({
+                let mut entry = json!({
                     "terminal_session_id": snapshot.terminal_id.as_str(),
                     "owner_session": snapshot.owner_session.as_str(),
                     "state": format!("{:?}", snapshot.state).to_ascii_lowercase(),
                     "columns": snapshot.size.cols,
                     "rows": snapshot.size.rows,
                     "dropped_events": snapshot.dropped_events,
-                }))
+                });
+                // 快照段 data 是不透明 JSON Value（非 golden 锁定的帧 serde
+                // 形状）；Desktop 需要创建时的 workspace 相对 cwd 做如实展示
+                // 与 exited 后重建。记账缺失（不可能经本进程 create 产生）时
+                // 省略键，Desktop 诚实显示 unknown 而非臆造工作区根。
+                if let Some(cwd) = cwd {
+                    entry["cwd"] = Value::String(cwd.to_string());
+                }
+                Some(entry)
             })
             .collect()
+    }
+}
+
+/// `terminals` 注册表值编码：`owner\u{0}workspace 相对 cwd`。字段声明位于
+/// gui_host/mod.rs，值类型保持 String 不动；编码/解码集中在这两个函数，
+/// 读写注册表的三处（owner 解析 / create 记账 / 快照回填）同源使用。
+fn encode_terminal_registration(owner: &OwnerSessionId, cwd: &str) -> String {
+    format!("{}\u{0}{}", owner.as_str(), cwd)
+}
+
+fn decode_terminal_registration(registration: &str) -> (&str, Option<&str>) {
+    match registration.split_once('\u{0}') {
+        Some((owner, cwd)) => (owner, Some(cwd)),
+        None => (registration, None),
+    }
+}
+
+/// 记账/快照的 cwd 标签口径：策略层把根目录归一为空串（`resolve "."` 的
+/// canonical 形），标签统一回落 `"."`（与 None 分支同口径），避免面板
+/// cwd 空白（片 3 真窗口缺陷）。
+fn terminal_cwd_label(relative: String) -> String {
+    if relative.is_empty() {
+        ".".to_string()
+    } else {
+        relative
     }
 }
 
@@ -131,7 +174,7 @@ pub(crate) async fn terminal_create(
     let core = adapter.core.read().await;
     let approval_mode = core.approval.mode();
     let workspace_trusted = core.approval.workspace_trusted();
-    let cwd =
+    let (cwd, cwd_label) =
         GuiHostAdapter::resolve_terminal_cwd(&core, workspace_id, working_directory.as_ref())?;
     drop(core);
     let owner = OwnerSessionId::new(workspace_id.as_str());
@@ -158,7 +201,7 @@ pub(crate) async fn terminal_create(
         .create(spec)
         .await
         .map_err(GuiHostAdapter::pty_error)?;
-    adapter.remember_terminal(&terminal_id, &owner);
+    adapter.remember_terminal(&terminal_id, &owner, &cwd_label);
     adapter.spawn_terminal_forwarder(terminal_id.clone(), owner);
     Ok(AppResponse::Data(terminal_create_payload(
         &terminal_id,
@@ -233,9 +276,9 @@ pub(crate) fn decide_terminal_create(
         approval_mode: mode,
     }) {
         PolicyDecision::Allow => TerminalCreateGate::Allow { policy: "allow" },
-        PolicyDecision::AllowWithConstraints { .. } => {
-            TerminalCreateGate::Allow { policy: "allow_with_constraints" }
-        }
+        PolicyDecision::AllowWithConstraints { .. } => TerminalCreateGate::Allow {
+            policy: "allow_with_constraints",
+        },
         PolicyDecision::Deny { reason } => TerminalCreateGate::Deny {
             reason: format!("terminal 创建被 policy 拒绝:{reason}"),
         },
@@ -325,6 +368,14 @@ pub(crate) async fn terminal_resize(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 片 3 缺陷：`resolve "."` 经策略层归一为空串，cwd 标签必须回落
+    /// `"."`（与未传 working_directory 同口径），子目录原样保留。
+    #[test]
+    fn terminal_cwd_label_maps_root_to_dot() {
+        assert_eq!(terminal_cwd_label(String::new()), ".");
+        assert_eq!(terminal_cwd_label("src".to_string()), "src");
+    }
 
     fn deny_reason(gate: TerminalCreateGate) -> String {
         match gate {

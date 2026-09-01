@@ -135,6 +135,9 @@ pub enum ResumeApply {
 }
 
 /// Inspector Terminal 面：滚动文本，不是 VT100 / 本地 PTY。
+///
+/// cwd 只承载 Host 可证事实：快照缺 cwd 键（旧 Host / 记账缺失）时用
+/// [TERMINAL_CWD_UNKNOWN] 诚实占位，不臆造工作区根 "."。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalState {
     pub session_id: Option<String>,
@@ -156,6 +159,9 @@ pub struct TerminalState {
     pub resize_confirmed: bool,
     pub availability: TerminalAvailability,
 }
+
+/// Host 快照未提供 cwd 时的诚实占位（区别于「将创建在工作区根」的 "."）。
+pub(crate) const TERMINAL_CWD_UNKNOWN: &str = "unknown";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TerminalAvailability {
@@ -198,6 +204,12 @@ impl TerminalState {
             .get("state")
             .and_then(Value::as_str)
             .map(str::to_string);
+        let cwd = entry
+            .get("cwd")
+            .and_then(Value::as_str)
+            .filter(|cwd| !cwd.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| TERMINAL_CWD_UNKNOWN.to_string());
         let availability = match runtime_state.as_deref() {
             Some("running") => TerminalAvailability::Ready,
             Some(state @ ("exited" | "killed")) => TerminalAvailability::Stale {
@@ -230,6 +242,7 @@ impl TerminalState {
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
             availability,
+            cwd,
             ..Self::default()
         })
     }
@@ -477,7 +490,11 @@ impl DesktopProjection {
                     .find(|old| old.session_id == terminal.session_id)
                 {
                     terminal.output = old.output.clone();
-                    terminal.cwd = old.cwd.clone();
+                    // Host 快照是 cwd 的权威来源；只有快照缺键（unknown）时
+                    // 才沿用本地已知值，避免跨进程恢复被本地默认 "." 污染。
+                    if terminal.cwd == TERMINAL_CWD_UNKNOWN {
+                        terminal.cwd = old.cwd.clone();
+                    }
                 }
             }
             self.terminals = terminals;
@@ -672,6 +689,41 @@ impl DesktopProjection {
         })
     }
 
+    /// write/resize 的瞬态失败归因：终端本体仍 running（Host 事实未变）
+    /// 时不降级可用性——wire 无 live exit/failure 事件，一次 IO 失败不能
+    /// 把可写终端锁死，报错交给调用方的 status_hint；非 running（含状态
+    /// 未知）保持既有 Failed 归因。
+    pub fn note_terminal_io_failed(
+        &mut self,
+        terminal_session_id: &str,
+        reason: impl Into<String>,
+    ) -> bool {
+        let running = self
+            .terminals
+            .iter()
+            .find(|terminal| terminal.session_id.as_deref() == Some(terminal_session_id))
+            .or_else(|| {
+                (self.terminal.session_id.as_deref() == Some(terminal_session_id))
+                    .then(|| &self.terminal)
+            })
+            .is_some_and(|terminal| terminal.runtime_state.as_deref() == Some("running"));
+        if running {
+            return false;
+        }
+        let reason = reason.into();
+        self.update_terminal(terminal_session_id, |terminal| {
+            terminal.mark_failed(reason.clone());
+        })
+    }
+
+    /// create 回执不带 cwd（wire 冻结）；成功后由 UI 把请求 cwd 补到新
+    /// 终端上，避免本地显示退回默认 "."。
+    pub fn apply_terminal_cwd(&mut self, terminal_session_id: &str, cwd: &str) -> bool {
+        self.update_terminal(terminal_session_id, |terminal| {
+            terminal.cwd = cwd.to_string();
+        })
+    }
+
     /// terminal_create 尚无 terminal id，按请求 workspace 保存失败归属；
     /// 用户切回该 workspace 时仍能看到真实原因，且不会污染当前 workspace。
     pub fn mark_terminal_create_failed(&mut self, workspace_id: &str, reason: impl Into<String>) {
@@ -690,8 +742,7 @@ impl DesktopProjection {
             });
         failed.mark_failed(reason);
         if let Some(existing) = self.terminals.iter_mut().find(|terminal| {
-            terminal.workspace_id.as_deref() == Some(workspace_id)
-                && terminal.session_id.is_none()
+            terminal.workspace_id.as_deref() == Some(workspace_id) && terminal.session_id.is_none()
         }) {
             *existing = failed.clone();
         } else {
@@ -755,15 +806,15 @@ impl DesktopProjection {
             .cloned()
             .or_else(|| {
                 self.terminals
-                .iter()
-                .filter(|terminal| terminal.workspace_id.as_deref() == workspace_id)
-                .min_by_key(|terminal| {
-                    (
-                        usize::from(terminal.runtime_state.as_deref() != Some("running")),
-                        terminal.session_id.clone().unwrap_or_default(),
-                    )
-                })
-                .cloned()
+                    .iter()
+                    .filter(|terminal| terminal.workspace_id.as_deref() == workspace_id)
+                    .min_by_key(|terminal| {
+                        (
+                            usize::from(terminal.runtime_state.as_deref() != Some("running")),
+                            terminal.session_id.clone().unwrap_or_default(),
+                        )
+                    })
+                    .cloned()
             })
             .unwrap_or_else(|| TerminalState {
                 workspace_id: workspace_id.map(str::to_string),
@@ -3092,6 +3143,62 @@ mod tests {
         assert!(matches!(
             projection.terminal.availability,
             TerminalAvailability::Stale { .. }
+        ));
+    }
+
+    /// G3：快照恢复解析 Host 回报的 workspace 相对 cwd；缺键（旧 Host /
+    /// 记账缺失）时诚实显示 unknown，不臆造工作区根 "."。
+    #[test]
+    fn terminal_snapshot_restores_cwd_or_shows_unknown() {
+        let with_cwd = TerminalState::from_snapshot(&json!({
+            "terminal_session_id": "term-a",
+            "owner_session": "ws-a",
+            "state": "running",
+            "columns": 80,
+            "rows": 24,
+            "cwd": "src/app"
+        }))
+        .expect("terminal with cwd");
+        assert_eq!(with_cwd.cwd, "src/app");
+
+        let without_cwd = TerminalState::from_snapshot(&json!({
+            "terminal_session_id": "term-b",
+            "owner_session": "ws-a",
+            "state": "running"
+        }))
+        .expect("terminal without cwd");
+        assert_eq!(without_cwd.cwd, TERMINAL_CWD_UNKNOWN);
+
+        let empty_cwd = TerminalState::from_snapshot(&json!({
+            "terminal_session_id": "term-c",
+            "owner_session": "ws-a",
+            "state": "running",
+            "cwd": ""
+        }))
+        .expect("terminal with empty cwd");
+        assert_eq!(empty_cwd.cwd, TERMINAL_CWD_UNKNOWN);
+    }
+
+    /// G2：write/resize 瞬态失败不把 running 终端锁死（可用性保持
+    /// Ready，报错走 status_hint）；非 running 终端保留 Failed 归因。
+    #[test]
+    fn terminal_io_failure_keeps_running_terminal_operable() {
+        let mut projection = DesktopProjection::default();
+        projection.workspace_id = Some("ws-a".into());
+        projection.apply_terminal_created("ws-a".into(), "term-a".into());
+
+        assert!(!projection.note_terminal_io_failed("term-a", "transient write error"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Ready
+        ));
+
+        projection.terminals[0].runtime_state = Some("exited".into());
+        projection.terminal.runtime_state = Some("exited".into());
+        assert!(projection.note_terminal_io_failed("term-a", "io error after exit"));
+        assert!(matches!(
+            projection.terminal.availability,
+            TerminalAvailability::Failed { .. }
         ));
     }
 

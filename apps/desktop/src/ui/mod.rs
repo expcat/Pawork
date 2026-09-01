@@ -384,6 +384,16 @@ pub struct AppView {
     /// 单一 Terminal create pending（按 Inspector 所属 workspace 去重）。
     /// Host 只回 terminal id，因此双击/快速键盘连打不得发出第二个 create。
     terminal_pending_create_workspace: Option<String>,
+    /// create 请求携带的 workspace 相对 cwd：Host 回执不带 cwd（wire 冻
+    /// 结），成功后由 UI 补到新终端，避免显示退回默认 "."。
+    terminal_pending_create_cwd: Option<String>,
+    /// 待应用的终端尺寸草稿：None 跟随 Host 权威 columns/rows；stepper
+    /// 修改产生本地草稿，resize 回执或终端切换后复位。
+    terminal_size_draft: Option<(u16, u16)>,
+    /// 单一 resize 在途请求（terminal id + 请求尺寸）。提交期间 Apply/Size
+    /// 三路径同 gate 禁用；回执只清与其一致的当前草稿，防跨 workspace
+    /// 或用户继续调节后的迟到回执抹掉新草稿。
+    terminal_pending_resize: Option<(String, u16, u16)>,
     /// 当前连接的事件消费任务。重连前必须替换并丢弃旧 receiver，防止旧
     /// 连接迟到的 terminal 回执污染新连接上的 pending 状态。
     event_task: Option<gpui::Task<()>>,
@@ -462,6 +472,10 @@ pub struct AppView {
     changes_file_focus: BTreeMap<String, FocusHandle>,
     resources_refresh_focus: FocusHandle,
     terminal_resize_focus: FocusHandle,
+    terminal_cols_dec_focus: FocusHandle,
+    terminal_cols_inc_focus: FocusHandle,
+    terminal_rows_dec_focus: FocusHandle,
+    terminal_rows_inc_focus: FocusHandle,
     terminal_back_to_bottom_focus: FocusHandle,
     terminal_start_focus: FocusHandle,
     /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
@@ -529,6 +543,9 @@ impl AppView {
             terminal_scroll: FollowScroll::new(),
             terminal_pending_write: None,
             terminal_pending_create_workspace: None,
+            terminal_pending_create_cwd: None,
+            terminal_size_draft: None,
+            terminal_pending_resize: None,
             event_task: None,
             status_hint: None,
             text_scale: font::TextScale::default(),
@@ -611,6 +628,22 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
             terminal_resize_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_cols_dec_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_cols_inc_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_rows_dec_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_rows_inc_focus: cx
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
@@ -1029,6 +1062,8 @@ impl AppView {
                 self.resources.mark_stale(&stale_reason);
                 self.terminal_pending_write = None;
                 self.terminal_pending_create_workspace = None;
+                self.terminal_pending_create_cwd = None;
+                self.terminal_pending_resize = None;
                 // 断连终止一切进行中分页，避免 settle barrier 永久停发。
                 self.timeline_paging = false;
                 self.status_hint = Some("Connection lost. Click Reconnect.".into());
@@ -1080,18 +1115,38 @@ impl AppView {
                 workspace_id,
                 terminal_session_id,
             } => {
-                if self.terminal_pending_create_workspace.as_deref() == Some(workspace_id.as_str())
-                {
+                let pending_create_match = self.terminal_pending_create_workspace.as_deref()
+                    == Some(workspace_id.as_str());
+                if pending_create_match {
                     self.terminal_pending_create_workspace = None;
                 }
+                let pending_create_cwd = if pending_create_match {
+                    self.terminal_pending_create_cwd.take()
+                } else {
+                    None
+                };
                 self.projection
                     .apply_terminal_created(workspace_id, terminal_session_id.clone());
+                if let Some(cwd) = pending_create_cwd {
+                    // 回执不带 cwd；用请求值让新终端立即如实显示。
+                    self.projection
+                        .apply_terminal_cwd(&terminal_session_id, &cwd);
+                }
+                // 先取新终端自己的尺寸，再切回当前 workspace；否则用户在
+                // create 回执前切项目时，会把另一终端的尺寸误发给新终端。
+                let (columns, rows) = self
+                    .projection
+                    .terminals
+                    .iter()
+                    .find(|terminal| {
+                        terminal.session_id.as_deref() == Some(terminal_session_id.as_str())
+                    })
+                    .map(|terminal| (terminal.columns, terminal.rows))
+                    .unwrap_or((80, 24));
                 self.reconcile_terminal_workspace(cx);
-                self.controller.terminal_resize(
-                    terminal_session_id,
-                    self.projection.terminal.columns,
-                    self.projection.terminal.rows,
-                );
+                self.terminal_pending_resize = Some((terminal_session_id.clone(), columns, rows));
+                self.controller
+                    .terminal_resize(terminal_session_id, columns, rows);
                 // 新终端从空输出开始，恢复跟随态。
                 self.terminal_scroll.jump_to_bottom();
                 if !self.inspector_open {
@@ -1111,6 +1166,7 @@ impl AppView {
                 if self.terminal_pending_create_workspace.as_deref() == Some(workspace_id.as_str())
                 {
                     self.terminal_pending_create_workspace = None;
+                    self.terminal_pending_create_cwd = None;
                 }
                 self.projection
                     .mark_terminal_create_failed(&workspace_id, reason.clone());
@@ -1147,7 +1203,7 @@ impl AppView {
             } => {
                 self.terminal_pending_write = None;
                 self.projection
-                    .mark_terminal_failed(&terminal_session_id, reason.clone());
+                    .note_terminal_io_failed(&terminal_session_id, reason.clone());
                 self.status_hint = Some(format!("Terminal write failed: {reason}"));
             }
             ControllerEvent::TerminalResizeSucceeded {
@@ -1157,15 +1213,47 @@ impl AppView {
             } => {
                 self.projection
                     .apply_terminal_resize(&terminal_session_id, columns, rows);
-                self.status_hint = Some(format!("Terminal size · {columns}×{rows}"));
+                if self.terminal_pending_resize.as_ref().is_some_and(
+                    |(pending_id, pending_columns, pending_rows)| {
+                        pending_id == &terminal_session_id
+                            && *pending_columns == columns
+                            && *pending_rows == rows
+                    },
+                ) {
+                    self.terminal_pending_resize = None;
+                }
+                if terminal_resize_receipt_clears_draft(
+                    self.projection.terminal.session_id.as_deref(),
+                    self.terminal_size_draft,
+                    &terminal_session_id,
+                    (columns, rows),
+                ) {
+                    self.terminal_size_draft = None;
+                }
+                if self.projection.terminal.session_id.as_deref()
+                    == Some(terminal_session_id.as_str())
+                {
+                    self.status_hint = Some(format!("Terminal size · {columns}×{rows}"));
+                }
             }
             ControllerEvent::TerminalResizeFailed {
                 terminal_session_id,
                 reason,
             } => {
+                if self
+                    .terminal_pending_resize
+                    .as_ref()
+                    .is_some_and(|(pending_id, _, _)| pending_id == &terminal_session_id)
+                {
+                    self.terminal_pending_resize = None;
+                }
                 self.projection
-                    .mark_terminal_failed(&terminal_session_id, reason.clone());
-                self.status_hint = Some(format!("Terminal resize failed: {reason}"));
+                    .note_terminal_io_failed(&terminal_session_id, reason.clone());
+                if self.projection.terminal.session_id.as_deref()
+                    == Some(terminal_session_id.as_str())
+                {
+                    self.status_hint = Some(format!("Terminal resize failed: {reason}"));
+                }
             }
             ControllerEvent::MessageSent {
                 session_id,
@@ -1738,8 +1826,29 @@ impl AppView {
         } else if self.terminal_resize_focus.is_focused(window)
             && activate
             && terminal_can_operate(&self.projection.connection, &self.projection.terminal)
+            && self.terminal_pending_resize.is_none()
         {
             Some("terminal-resize")
+        } else if self.terminal_cols_dec_focus.is_focused(window)
+            && activate
+            && terminal_can_operate(&self.projection.connection, &self.projection.terminal)
+        {
+            Some("terminal-cols-dec")
+        } else if self.terminal_cols_inc_focus.is_focused(window)
+            && activate
+            && terminal_can_operate(&self.projection.connection, &self.projection.terminal)
+        {
+            Some("terminal-cols-inc")
+        } else if self.terminal_rows_dec_focus.is_focused(window)
+            && activate
+            && terminal_can_operate(&self.projection.connection, &self.projection.terminal)
+        {
+            Some("terminal-rows-dec")
+        } else if self.terminal_rows_inc_focus.is_focused(window)
+            && activate
+            && terminal_can_operate(&self.projection.connection, &self.projection.terminal)
+        {
+            Some("terminal-rows-inc")
         } else if self.terminal_back_to_bottom_focus.is_focused(window) && activate {
             Some("terminal-back-to-bottom")
         } else if self.terminal_start_focus.is_focused(window)
@@ -1748,6 +1857,7 @@ impl AppView {
                 &self.projection.connection,
                 &self.projection.terminal,
                 self.terminal_pending_create_workspace.as_ref(),
+                self.terminal_pending_resize.is_some(),
             )
         {
             Some("terminal-start")
@@ -1764,11 +1874,21 @@ impl AppView {
             "changes-refresh" => self.refresh_changes(cx),
             "resources-refresh" => self.refresh_resources(cx),
             "terminal-resize" => self.on_apply_terminal_size(window, cx),
+            "terminal-cols-dec" => {
+                self.adjust_terminal_size(-inspector::TERMINAL_COLUMNS_STEP, 0, cx)
+            }
+            "terminal-cols-inc" => {
+                self.adjust_terminal_size(inspector::TERMINAL_COLUMNS_STEP, 0, cx)
+            }
+            "terminal-rows-dec" => self.adjust_terminal_size(0, -inspector::TERMINAL_ROWS_STEP, cx),
+            "terminal-rows-inc" => self.adjust_terminal_size(0, inspector::TERMINAL_ROWS_STEP, cx),
             "terminal-back-to-bottom" => {
                 self.terminal_scroll.jump_to_bottom();
                 cx.notify();
             }
-            "terminal-start" if self.projection.terminal.session_id.is_some() => {
+            "terminal-start"
+                if terminal_can_operate(&self.projection.connection, &self.projection.terminal) =>
+            {
                 self.on_apply_terminal_size(window, cx)
             }
             "terminal-start" => self.on_start_terminal(window, cx),
@@ -2236,6 +2356,9 @@ impl AppView {
         }
         self.projection
             .select_terminal_for_workspace(workspace_id.as_deref());
+        // 终端选择变化后，尺寸草稿跟随新终端的 Host 权威值，避免把为旧
+        // 终端准备的尺寸应用到新终端。
+        self.terminal_size_draft = None;
     }
 
     /// 拉取 MCP server 清单（mcp_list）。
@@ -2750,20 +2873,47 @@ pub(crate) fn terminal_can_operate(connection: &ConnectionState, terminal: &Term
         )
 }
 
-/// 底部 Start/Size 的单槽谓词。已有 Stale/Failed 终端时禁止继续按 Size，
-/// 未创建时由 create-pending 去重防快速双击生成多个终端。
+/// Host 快照已证明 exited/killed 的终端（不是 Failed 之类的本地降级）。
+pub(crate) fn terminal_known_exited(terminal: &TerminalState) -> bool {
+    matches!(
+        terminal.runtime_state.as_deref(),
+        Some("exited") | Some("killed")
+    )
+}
+
+/// 底部 Start/Size 的单槽谓词。已知 exited/killed 终端的 Start 恢复为
+/// 「新建终端」入口（旧终端只读保留，不伪造生命周期）；其余 Stale/Failed
+/// 仍锁死；create / resize 在途时同 gate 禁用，防重复提交与迟到回执覆盖。
 pub(crate) fn terminal_start_enabled(
     connection: &ConnectionState,
     terminal: &TerminalState,
     pending_create_workspace: Option<&String>,
+    resize_pending: bool,
 ) -> bool {
     if !matches!(connection, ConnectionState::Connected { .. }) {
         return false;
     }
-    if terminal.session_id.is_some() {
-        return terminal_can_operate(connection, terminal);
+    if pending_create_workspace.is_some() {
+        return false;
     }
-    pending_create_workspace.is_none()
+    if terminal.session_id.is_some() {
+        if terminal_can_operate(connection, terminal) && resize_pending {
+            return false;
+        }
+        return terminal_can_operate(connection, terminal) || terminal_known_exited(terminal);
+    }
+    true
+}
+
+/// resize 回执只在「仍查看同一终端」且「草稿仍等于该次请求」时清草稿；
+/// 切 workspace 或请求后继续 stepper 的新草稿都必须保留。
+fn terminal_resize_receipt_clears_draft(
+    current_terminal_id: Option<&str>,
+    draft: Option<(u16, u16)>,
+    receipt_terminal_id: &str,
+    receipt_size: (u16, u16),
+) -> bool {
+    current_terminal_id == Some(receipt_terminal_id) && draft == Some(receipt_size)
 }
 
 impl Render for AppView {
@@ -3163,26 +3313,92 @@ mod tests {
             ..TerminalState::default()
         };
         assert!(terminal_can_operate(&connected, &terminal));
-        assert!(terminal_start_enabled(&connected, &terminal, None));
+        assert!(terminal_start_enabled(&connected, &terminal, None, false));
+        assert!(!terminal_start_enabled(&connected, &terminal, None, true));
         assert!(!terminal_can_operate(&disconnected, &terminal));
-        assert!(!terminal_start_enabled(&disconnected, &terminal, None));
+        assert!(!terminal_start_enabled(
+            &disconnected,
+            &terminal,
+            None,
+            false
+        ));
 
         terminal.availability = TerminalAvailability::Stale {
             reason: "connection lost".into(),
         };
         assert!(!terminal_can_operate(&connected, &terminal));
-        assert!(!terminal_start_enabled(&connected, &terminal, None));
+        assert!(!terminal_start_enabled(&connected, &terminal, None, false));
 
         terminal.session_id = None;
         terminal.availability = TerminalAvailability::Stale {
             reason: "not started".into(),
         };
-        assert!(terminal_start_enabled(&connected, &terminal, None));
+        assert!(terminal_start_enabled(&connected, &terminal, None, false));
         let pending = "ws-a".to_string();
         assert!(!terminal_start_enabled(
             &connected,
             &terminal,
-            Some(&pending)
+            Some(&pending),
+            false
+        ));
+
+        assert!(terminal_resize_receipt_clears_draft(
+            Some("term-a"),
+            Some((88, 28)),
+            "term-a",
+            (88, 28)
+        ));
+        assert!(!terminal_resize_receipt_clears_draft(
+            Some("term-b"),
+            Some((88, 28)),
+            "term-a",
+            (88, 28)
+        ));
+        assert!(!terminal_resize_receipt_clears_draft(
+            Some("term-a"),
+            Some((96, 28)),
+            "term-a",
+            (88, 28)
+        ));
+    }
+
+    /// G2：已知 exited/killed 终端的 Start 恢复为「新建终端」入口（可操
+    /// 作性仍锁，输入/Size 不放开）；状态未知的终端不猜生命周期。
+    #[test]
+    fn known_exited_terminal_start_reopens_instead_of_locking() {
+        use crate::projection::TerminalAvailability;
+
+        let connected = ConnectionState::Connected {
+            instance_id: "instance-1".into(),
+        };
+        let exited = TerminalState {
+            session_id: Some("term-a".into()),
+            workspace_id: Some("ws-a".into()),
+            runtime_state: Some("exited".into()),
+            availability: TerminalAvailability::Stale {
+                reason: "terminal exited".into(),
+            },
+            ..TerminalState::default()
+        };
+        assert!(!terminal_can_operate(&connected, &exited));
+        assert!(terminal_start_enabled(&connected, &exited, None, false));
+        assert!(!terminal_start_enabled(
+            &connected,
+            &exited,
+            Some(&"ws-a".to_string()),
+            false
+        ));
+
+        let unknown_state = TerminalState {
+            session_id: Some("term-b".into()),
+            runtime_state: None,
+            ..TerminalState::default()
+        };
+        assert!(!terminal_start_enabled(
+            &connected,
+            &unknown_state,
+            None,
+            false
         ));
     }
 
